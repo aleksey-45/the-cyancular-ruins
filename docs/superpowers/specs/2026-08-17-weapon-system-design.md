@@ -80,6 +80,9 @@ Scenes/Weapons/
 由发出它的武器决定伤害与冲击。这样敌方子弹以后用同一 BulletBase + 敌人自己的
 `apply_hit`（对称）。
 
+> ⚠ 边界：切枪时旧武器的在途子弹，其 `source` 可能已被 `free()`。
+> 命中回调前用 `is_instance_valid(source)` 守卫——此时子弹无害消失，不报错。
+
 ### 行为
 - `_ready`：按 `size`/`bullet_color` 生成简单子弹贴图。
 - `_physics_process`：`move_and_collide`；命中敌人组 → `source.apply_hit(...)`；
