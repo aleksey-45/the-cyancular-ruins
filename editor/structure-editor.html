@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Structure Editor of CyR</title>
+<style>
+:root {
+  --bg: #17191d;
+  --panel: #1f2329;
+  --panel-2: #262b32;
+  --border: #343b45;
+  --text: #d7dde5;
+  --text-dim: #8b94a1;
+  --accent: #54a0ff;
+  --danger: #e05a5a;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+button { cursor: pointer; }
+.hidden { display: none !important; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.topbar-actions { display: flex; gap: 8px; }
+button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px;
+}
+button:hover { background: #2f363f; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #0b0e12; font-weight: 600; }
+button.danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+.main { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 264px; flex: none; display: flex; flex-direction: column; gap: 10px;
+  padding: 10px; background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto;
+}
+.panel { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin: 0 0 8px; }
+
+#library-list {
+  list-style: none; margin: 0 0 8px; padding: 0; max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+#library-list li {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 8px; font-size: 13px; cursor: pointer;
+}
+#library-list li:hover { background: #2f363f; }
+#library-list li.selected { background: var(--accent); color: #0b0e12; }
+#library-list li .sz { font-size: 11px; color: var(--text-dim); }
+#library-list li.selected .sz { color: #0b0e12; }
+.lib-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.lib-actions button { flex: 1 1 auto; padding: 5px 8px; font-size: 12px; }
+
+.props-panel .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.props-panel label { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.props-panel input[type=number] {
+  width: 58px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px;
+}
+
+#palette { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.swatch {
+  aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; cursor: pointer; color: #0b0e12; user-select: none;
+}
+.swatch.sw-air {
+  background: repeating-conic-gradient(#2a2f37 0 25%, #20242b 0 50%) 0 0/16px 16px;
+  border: 1px dashed #4a5462; color: var(--text-dim);
+}
+.swatch.selected { outline: 2px solid #fff; outline-offset: 1px; }
+.swatch.s1 { background: #54778d; }
+.swatch.s2 { background: #9d7a5c; }
+.swatch.s3 { background: #6fae8f; }
+.swatch.s4 { background: #c98a5e; }
+.swatch.s5 { background: #8a6fc9; }
+.swatch.s6 { background: #c96fb0; }
+.swatch.s7 { background: #5ec9c0; }
+.swatch.s8 { background: #c9c95e; }
+.swatch.s9 { background: #e0e0e0; }
+.hint { font-size: 12px; color: var(--text-dim); margin: 8px 0 0; }
+
+.canvas-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.canvas-toolbar {
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.canvas-toolbar .tool-btn.active { background: var(--accent); border-color: var(--accent); color: #0b0e12; }
+.canvas-toolbar .spacer { flex: 1; }
+#canvas-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+#canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#statusbar {
+  padding: 5px 12px; font-size: 12px; color: var(--text-dim);
+  background: var(--panel); border-top: 1px solid var(--border);
+}
+
+#modal-overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center; z-index: 10;
+}
+.modal { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; width: 300px; }
+.modal h3 { margin: 0 0 12px; font-size: 14px; }
+.modal input {
+  width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 14px; margin-bottom: 8px;
+}
+.modal .err { color: var(--danger); font-size: 12px; margin: 0 0 8px; min-height: 16px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Structure Editor of CyR</h1>
+    <div class="topbar-actions">
+      <button id="btn-import">导入</button>
+      <button id="btn-export" class="primary">导出库</button>
+      <input type="file" id="file-import" accept=".txt,.cyr,text/plain" hidden>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <section class="panel">
+        <h2>结构库</h2>
+        <ul id="library-list"></ul>
+        <div class="lib-actions">
+          <button id="btn-add">新建</button>
+          <button id="btn-dup">复制</button>
+          <button id="btn-rename">重命名</button>
+          <button id="btn-del" class="danger">删除</button>
+        </div>
+      </section>
+      <section class="panel props-panel">
+        <h2>画布尺寸</h2>
+        <div class="row">
+          <label>宽 <input type="number" id="size-w" min="1"  value="12"></label>
+          <label>高 <input type="number" id="size-h" min="1"  value="12"></label>
+        </div>
+        <button id="btn-resize" class="primary" style="width:100%">应用尺寸</button>
+      </section>
+      <section class="panel">
+        <h2>Tile 调色板</h2>
+        <div id="palette"></div>
+        <p class="hint">0 = 空气 · 1–9 = 墙（纹理待接入）</p>
+      </section>
+    </aside>
+
+    <main class="canvas-area">
+      <div class="canvas-toolbar">
+        <button data-tool="paint" class="tool-btn active">画笔</button>
+        <button data-tool="rect" class="tool-btn">矩形</button>
+        <button data-tool="fill" class="tool-btn">油漆桶</button>
+        <button data-tool="erase" class="tool-btn">橡皮</button>
+        <span class="spacer"></span>
+        <button id="btn-undo" title="Ctrl+Z">撤销</button>
+        <button id="btn-redo" title="Ctrl+Y">重做</button>
+        <span class="spacer"></span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="grid-toggle" checked> 网格</label>
+        <button id="btn-fit">适配</button>
+      </div>
+      <div id="canvas-wrap">
+        <canvas id="canvas"></canvas>
+      </div>
+      <div id="statusbar"></div>
+    </main>
+  </div>
+
+  <div id="modal-overlay" class="hidden">
+    <div class="modal">
+      <h3 id="modal-title"></h3>
+      <input id="modal-input" type="text">
+      <p id="modal-err" class="err"></p>
+      <div class="modal-actions">
+        <button id="modal-cancel">取消</button>
+        <button id="modal-ok" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  globalThis.Core = (function () {
+    'use strict';
+
+    function sanitizeName(name) {
+      var n = String(name == null ? '' : name).trim();
+      n = n.replace(/\s+/g, '_');
+      n = n.replace(/[^A-Za-z0-9_\u4e00-\u9fa5-]/g, '');
+      n = n.replace(/^-+/, '');
+      if (n.length > 32) n = n.slice(0, 32);
+      if (n === '') return 'structure';
+      return n;
+    }
+
+    function validateGrid(grid) {
+      if (!Array.isArray(grid) || grid.length === 0) return { ok: false, error: '网格不能为空' };
+      if (!Array.isArray(grid[0])) return { ok: false, error: '首行不是数组' };
+      var w = grid[0].length;
+      if (w === 0) return { ok: false, error: '网格宽度不能为 0' };
+      for (var y = 0; y < grid.length; y++) {
+        var row = grid[y];
+        if (!Array.isArray(row) || row.length !== w) return { ok: false, error: '第 ' + y + ' 行宽度不一致' };
+        for (var x = 0; x < w; x++) {
+          var v = row[x];
+          if (!Number.isInteger(v) || v < 0 || v > 9) {
+            return { ok: false, error: '(' + x + ',' + y + ') 处 tile 值非法: ' + v };
+          }
+        }
+      }
+      return { ok: true, error: '' };
+    }
+
+  function parseLibrary(text) {
+    var structs = [];
+    var cur = null;
+    var atBlockStart = true;
+    var lines = String(text).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line === '') { atBlockStart = true; continue; }
+      if (line.charAt(0) === '#') {
+        var name = line.slice(1).trim();
+        if (name !== '' && atBlockStart) {
+          cur = { name: sanitizeName(name), grid: [] };
+          structs.push(cur);
+          atBlockStart = false;
+        }
+        continue;
+      }
+      atBlockStart = false;
+      var row = [];
+      for (var j = 0; j < line.length; j++) {
+        var d = line.charCodeAt(j) - 48;
+        if (d < 0 || d > 9) {
+          throw new Error('第 ' + (i + 1) + ' 行含非法字符 "' + line.charAt(j) + '"（只允许 0–9）');
+        }
+        row.push(d);
+      }
+      if (cur === null) {
+        throw new Error('第 ' + (i + 1) + ' 行的数据出现在任何结构名之前');
+      }
+      cur.grid.push(row);
+    }
+    var result = structs.filter(function (s) { return s.grid.length > 0; });
+    for (var k = 0; k < result.length; k++) {
+      var v = validateGrid(result[k].grid);
+      if (!v.ok) throw new Error('结构 "' + result[k].name + '" 校验失败: ' + v.error);
+    }
+    return result;
+  }
+
+  function serializeLibrary(structs) {
+    var blocks = [];
+    for (var i = 0; i < structs.length; i++) {
+      var s = structs[i];
+      var v = validateGrid(s.grid);
+      if (!v.ok) throw new Error('结构 "' + s.name + '" 校验失败: ' + v.error);
+      blocks.push('# ' + sanitizeName(s.name) + '\n' + s.grid.map(function (row) { return row.join(''); }).join('\n'));
+    }
+    return blocks.length === 0 ? '' : blocks.join('\n\n') + '\n';
+  }
+
+  function resizeGrid(grid, newW, newH) {
+    var out = [];
+    for (var y = 0; y < newH; y++) {
+      var row = [];
+      for (var x = 0; x < newW; x++) {
+        row.push(y < grid.length && x < grid[y].length ? grid[y][x] : 0);
+      }
+      out.push(row);
+    }
+    return out;
+  }
+
+  function rectFill(grid, x0, y0, x1, y1, tile) {
+    var out = grid.map(function (r) { return r.slice(); });
+    var minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
+    var minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+    for (var y = minY; y <= maxY; y++) {
+      for (var x = minX; x <= maxX; x++) {
+        if (y >= 0 && y < out.length && x >= 0 && x < out[y].length) out[y][x] = tile;
+      }
+    }
+    return out;
+  }
+
+  function floodFill(grid, x, y, tile) {
+    var out = grid.map(function (r) { return r.slice(); });
+    var h = out.length;
+    if (h === 0) return out;
+    var w = out[0].length;
+    if (x < 0 || x >= w || y < 0 || y >= h) return out;
+    var target = out[y][x];
+    if (target === tile) return out;
+    var stack = [[x, y]];
+    while (stack.length > 0) {
+      var p = stack.pop();
+      var cx = p[0], cy = p[1];
+      if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+      if (out[cy][cx] !== target) continue;
+      out[cy][cx] = tile;
+      stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+    }
+    return out;
+  }
+
+    return {
+      sanitizeName: sanitizeName,
+      validateGrid: validateGrid,
+      serializeLibrary: serializeLibrary,
+      parseLibrary: parseLibrary,
+      resizeGrid: resizeGrid,
+      rectFill: rectFill,
+      floodFill: floodFill
+    };
+  })();
+  </script>
+
+  <script>
+  (function () {
+    'use strict';
+
+    var TILE_COLORS = {
+      0: null,
+      1: '#54778d', 2: '#9d7a5c', 3: '#6fae8f', 4: '#c98a5e',
+      5: '#8a6fc9', 6: '#c96fb0', 7: '#5ec9c0', 8: '#c9c95e', 9: '#e0e0e0'
+    };
+
+    var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true };
+    var view = { zoom: 28, panX: 40, panY: 40 };
+    var nextId = 1;
+    var history = [];
+    var redoStack = [];
+    var spaceDown = false;
+    var drag = null;
+    var dpr = 1;
+    var els = {};
+    var canvas, ctx, wrap;
+
+    // ── helpers ──
+    function sel() {
+      for (var i = 0; i < state.library.length; i++) {
+        if (state.library[i].id === state.selectedId) return state.library[i];
+      }
+      return null;
+    }
+    function uid() { return nextId++; }
+    function cloneGrid(g) { return g.map(function (r) { return r.slice(); }); }
+    function clampMin(v, min, def) {
+      var n = parseInt(v, 10);
+      if (isNaN(n)) n = def;
+      return Math.max(min, n);
+    }
+    function uniqueName(base, lib) {
+      var name = Core.sanitizeName(base);
+      var used = {};
+      for (var i = 0; i < lib.length; i++) used[lib[i].name] = true;
+      if (!used[name]) return name;
+      var k = 2;
+      while (used[name + '_' + k]) k++;
+      return name + '_' + k;
+    }
+    function hexToRgba(hex, a) {
+      var n = parseInt(hex.slice(1), 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    }
+
+    // ── canvas sizing / rendering ──
+    function resizeCanvas() {
+      dpr = window.devicePixelRatio || 1;
+      var w = wrap.clientWidth, h = wrap.clientHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+    }
+    function renderCanvas() {
+      if (!ctx) return;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = '#17191d';
+      ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+
+      var s = sel();
+      if (s) {
+        var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+        ctx.fillStyle = '#0d1117';
+        ctx.fillRect(view.panX, view.panY, w * z, h * z);
+        for (var y = 0; y < h; y++) {
+          for (var x = 0; x < w; x++) {
+            var t = s.grid[y][x];
+            if (t !== 0) {
+              ctx.fillStyle = TILE_COLORS[t];
+              ctx.fillRect(view.panX + x * z, view.panY + y * z, z, z);
+            }
+          }
+        }
+        if (state.gridOn) {
+          ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (var gx = 0; gx <= w; gx++) {
+            ctx.moveTo(view.panX + gx * z, view.panY);
+            ctx.lineTo(view.panX + gx * z, view.panY + h * z);
+          }
+          for (var gy = 0; gy <= h; gy++) {
+            ctx.moveTo(view.panX, view.panY + gy * z);
+            ctx.lineTo(view.panX + w * z, view.panY + gy * z);
+          }
+          ctx.stroke();
+        }
+        ctx.strokeStyle = '#54a0ff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(view.panX, view.panY, w * z, h * z);
+      }
+      ctx.restore();
+    }
+    function zoomAt(mx, my, factor) {
+      var nz = Math.min(128, Math.max(4, view.zoom * factor));
+      if (nz === view.zoom) return;
+      view.panX = mx - (mx - view.panX) * (nz / view.zoom);
+      view.panY = my - (my - view.panY) * (nz / view.zoom);
+      view.zoom = nz;
+      renderCanvas();
+    }
+    function fit() {
+      var s = sel();
+      if (!s) return;
+      var w = s.grid[0].length, h = s.grid.length;
+      var availW = wrap.clientWidth - 60, availH = wrap.clientHeight - 60;
+      if (availW <= 0 || availH <= 0) return;
+      var z = Math.min(availW / w, availH / h);
+      z = Math.max(4, Math.floor(Math.min(48, z)));
+      view.zoom = z;
+      view.panX = Math.max(0, (wrap.clientWidth - w * z) / 2);
+      view.panY = Math.max(0, (wrap.clientHeight - h * z) / 2);
+      renderCanvas();
+    }
+    function cellAt(mx, my) {
+      var s = sel();
+      if (!s) return null;
+      var x = Math.floor((mx - view.panX) / view.zoom);
+      var y = Math.floor((my - view.panY) / view.zoom);
+      if (x < 0 || y < 0 || y >= s.grid.length || x >= s.grid[y].length) return null;
+      return { x: x, y: y };
+    }
+
+    // ── library list ──
+    function renderLibrary() {
+      var list = els.libraryList;
+      list.innerHTML = '';
+      state.library.forEach(function (s) {
+        var li = document.createElement('li');
+        li.dataset.id = s.id;
+        if (s.id === state.selectedId) li.classList.add('selected');
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = s.name;
+        var sz = document.createElement('span');
+        sz.className = 'sz';
+        sz.textContent = s.grid[0].length + '×' + s.grid.length;
+        li.appendChild(nameSpan);
+        li.appendChild(sz);
+        li.addEventListener('click', function () { selectStructure(s.id); });
+        list.appendChild(li);
+      });
+    }
+    function selectStructure(id) {
+      if (state.selectedId === id) return;
+      state.selectedId = id;
+      syncSizeInputs();
+      fit();
+      render();
+    }
+    function syncSizeInputs() {
+      var s = sel();
+      if (s) {
+        els.sizeW.value = s.grid[0].length;
+        els.sizeH.value = s.grid.length;
+      }
+    }
+
+    // ── status bar ──
+    function renderStatus() {
+      var s = sel();
+      var parts = [];
+      if (s) {
+        parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length);
+        parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮' })[state.tool] || state.tool));
+        parts.push('tile: ' + state.palette + (state.palette === 0 ? ' (空气)' : ' (墙)'));
+        parts.push('撤销 ' + history.length + ' · 重做 ' + redoStack.length);
+      } else {
+        parts.push('无结构 — 点击左侧"新建"');
+      }
+      els.statusbar.textContent = parts.join('   ·   ');
+    }
+
+    // ── palette ──
+    function buildPalette() {
+      els.palette.innerHTML = '';
+      for (var t = 0; t <= 9; t++) {
+        var sw = document.createElement('div');
+        sw.className = 'swatch' + (t === 0 ? ' sw-air' : ' s' + t);
+        sw.textContent = String(t);
+        sw.title = t === 0 ? '0 · 空气' : t + ' · 墙';
+        if (t === state.palette) sw.classList.add('selected');
+        (function (tile) {
+          sw.addEventListener('click', function () {
+            state.palette = tile;
+            var all = els.palette.querySelectorAll('.swatch');
+            all.forEach(function (x) { x.classList.remove('selected'); });
+            sw.classList.add('selected');
+            renderStatus();
+          });
+        })(t);
+        els.palette.appendChild(sw);
+      }
+    }
+
+    // ── undo / redo ──
+    function pushHistory(s) {
+      history.push({ id: s.id, grid: cloneGrid(s.grid) });
+      if (history.length > 100) history.shift();
+      redoStack.length = 0;
+    }
+    function undo() {
+      if (history.length === 0) return;
+      var s = sel();
+      if (!s) return;
+      var snap = history.pop();
+      if (snap.id !== s.id) { history.push(snap); return; }
+      redoStack.push({ id: snap.id, grid: cloneGrid(s.grid) });
+      s.grid = snap.grid;
+      syncSizeInputs();
+      render();
+    }
+    function redo() {
+      if (redoStack.length === 0) return;
+      var s = sel();
+      if (!s) return;
+      var snap = redoStack.pop();
+      if (snap.id !== s.id) { redoStack.push(snap); return; }
+      history.push({ id: snap.id, grid: cloneGrid(s.grid) });
+      s.grid = snap.grid;
+      syncSizeInputs();
+      render();
+    }
+
+    // ── painting ──
+    function paintAt(x, y, tile) {
+      var s = sel();
+      if (!s) return;
+      if (y >= 0 && y < s.grid.length && x >= 0 && x < s.grid[y].length) s.grid[y][x] = tile;
+    }
+    function linePaint(x0, y0, x1, y1, tile) {
+      var s = sel();
+      if (!s) return;
+      var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+      var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      var err = dx - dy;
+      var x = x0, y = y0;
+      for (;;) {
+        if (y >= 0 && y < s.grid.length && x >= 0 && x < s.grid[y].length) s.grid[y][x] = tile;
+        if (x === x1 && y === y1) break;
+        var e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+      }
+    }
+    function drawRectPreview(x0, y0, x1, y1, erase) {
+      var s = sel();
+      if (!s) return;
+      var minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
+      var minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+      var z = view.zoom;
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = erase ? 'rgba(255,255,255,0.25)' : hexToRgba(TILE_COLORS[state.palette] || '#0d1117', 0.5);
+      ctx.fillRect(view.panX + minX * z, view.panY + minY * z, (maxX - minX + 1) * z, (maxY - minY + 1) * z);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(view.panX + minX * z, view.panY + minY * z, (maxX - minX + 1) * z, (maxY - minY + 1) * z);
+      ctx.restore();
+    }
+
+    // ── pointer handlers ──
+    function onPointerDown(e) {
+      if (e.button === 1 || spaceDown) {
+        e.preventDefault();
+        drag = { mode: 'pan', sx: e.offsetX, sy: e.offsetY, ox: view.panX, oy: view.panY };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      var s = sel();
+      if (!s) return;
+      var cell = cellAt(e.offsetX, e.offsetY);
+      if (!cell) return;
+      var erase = e.button === 2 || e.altKey || state.tool === 'erase';
+      var tile = erase ? 0 : state.palette;
+      if (state.tool === 'fill') {
+        if (s.grid[cell.y][cell.x] !== tile) {
+          pushHistory(s);
+          s.grid = Core.floodFill(s.grid, cell.x, cell.y, tile);
+        }
+        render();
+        return;
+      }
+      if (state.tool === 'rect') {
+        drag = { mode: 'rect', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase };
+        canvas.setPointerCapture(e.pointerId);
+        renderCanvas();
+        return;
+      }
+      pushHistory(s);
+      paintAt(cell.x, cell.y, tile);
+      drag = { mode: 'paint', lastX: cell.x, lastY: cell.y, tile: tile };
+      canvas.setPointerCapture(e.pointerId);
+      renderCanvas();
+    }
+    function onPointerMove(e) {
+      if (!drag) return;
+      if (drag.mode === 'pan') {
+        view.panX = drag.ox + (e.offsetX - drag.sx);
+        view.panY = drag.oy + (e.offsetY - drag.sy);
+        renderCanvas();
+        return;
+      }
+      var cell = cellAt(e.offsetX, e.offsetY);
+      if (!cell) return;
+      if (drag.mode === 'rect') {
+        drag.lastX = cell.x;
+        drag.lastY = cell.y;
+        renderCanvas();
+        drawRectPreview(drag.sx, drag.sy, cell.x, cell.y, drag.erase);
+        return;
+      }
+      if (drag.mode === 'paint') {
+        linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
+        drag.lastX = cell.x;
+        drag.lastY = cell.y;
+        renderCanvas();
+      }
+    }
+    function onPointerUp() {
+      if (!drag) return;
+      if (drag.mode === 'rect') {
+        var s = sel();
+        if (s) {
+          pushHistory(s);
+          s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
+        }
+      }
+      drag = null;
+      render();
+    }
+    function onPointerCancel() {
+      drag = null;
+      renderCanvas();
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    }
+
+    // ── modal name prompt ──
+    function promptName(title, initial, excludeName) {
+      return new Promise(function (resolve) {
+        els.modalTitle.textContent = title;
+        els.modalInput.value = initial || '';
+        els.modalErr.textContent = '';
+        els.modalOverlay.classList.remove('hidden');
+        els.modalInput.focus();
+        els.modalInput.select();
+        function finish(val) {
+          els.modalOverlay.classList.add('hidden');
+          els.modalOk.removeEventListener('click', onOk);
+          els.modalCancel.removeEventListener('click', onCancel);
+          els.modalInput.removeEventListener('keydown', onKey);
+          resolve(val);
+        }
+        function onOk() {
+          var raw = els.modalInput.value;
+          var name = Core.sanitizeName(raw);
+          if (name === 'structure' && raw.trim() === '') {
+            els.modalErr.textContent = '名称不能为空';
+            return;
+          }
+          if (state.library.some(function (s) { return s.name === name && s.name !== excludeName; })) {
+            els.modalErr.textContent = '名称已存在：' + name;
+            return;
+          }
+          finish(name);
+        }
+        function onCancel() { finish(null); }
+        function onKey(e) {
+          if (e.key === 'Enter') onOk();
+          if (e.key === 'Escape') onCancel();
+        }
+        els.modalOk.addEventListener('click', onOk);
+        els.modalCancel.addEventListener('click', onCancel);
+        els.modalInput.addEventListener('keydown', onKey);
+      });
+    }
+
+    // ── library actions ──
+    function addStructure() {
+      var w = clampMin(els.sizeW.value, 1, 12);
+      var h = clampMin(els.sizeH.value, 1, 12);
+      promptName('新建结构', uniqueName('structure', state.library)).then(function (name) {
+        if (!name) return;
+        var grid = [];
+        for (var y = 0; y < h; y++) {
+          var r = new Array(w);
+          for (var x = 0; x < w; x++) r[x] = 0;
+          grid.push(r);
+        }
+        var s = { id: uid(), name: name, grid: grid };
+        state.library.push(s);
+        state.selectedId = s.id;
+        syncSizeInputs();
+        fit();
+        render();
+      });
+    }
+    function duplicateStructure() {
+      var s = sel();
+      if (!s) return;
+      var copy = { id: uid(), name: uniqueName(s.name, state.library), grid: cloneGrid(s.grid) };
+      state.library.push(copy);
+      state.selectedId = copy.id;
+      syncSizeInputs();
+      fit();
+      render();
+    }
+    function renameStructure() {
+      var s = sel();
+      if (!s) return;
+      promptName('重命名结构', s.name, s.name).then(function (name) {
+        if (!name) return;
+        s.name = name;
+        render();
+      });
+    }
+    function deleteStructure() {
+      var s = sel();
+      if (!s) return;
+      if (!window.confirm('删除结构 "' + s.name + '"？')) return;
+      var idx = state.library.indexOf(s);
+      state.library.splice(idx, 1);
+      if (state.library.length === 0) {
+        state.selectedId = null;
+      } else {
+        state.selectedId = state.library[Math.min(idx, state.library.length - 1)].id;
+      }
+      syncSizeInputs();
+      fit();
+      render();
+    }
+    function applySize() {
+      var s = sel();
+      if (!s) return;
+      var w = clampMin(els.sizeW.value, 1, 12);
+      var h = clampMin(els.sizeH.value, 1, 12);
+      if (s.grid[0].length !== w || s.grid.length !== h) {
+        pushHistory(s);
+        s.grid = Core.resizeGrid(s.grid, w, h);
+      }
+      syncSizeInputs();
+      render();
+    }
+
+    // ── import / export ──
+    function exportLibrary() {
+      if (state.library.length === 0) {
+        window.alert('库为空，无可导出');
+        return;
+      }
+      var emptyOnes = state.library.filter(function (s) {
+        return s.grid.every(function (row) { return row.every(function (v) { return v === 0; }); });
+      });
+      if (emptyOnes.length > 0) {
+        var names = emptyOnes.map(function (s) { return s.name; }).join('、');
+        if (!window.confirm('以下结构全是空气（0）：' + names + '\n仍要导出吗？')) return;
+      }
+      var text;
+      try {
+        text = Core.serializeLibrary(state.library);
+      } catch (err) {
+        window.alert('导出失败：' + err.message);
+        return;
+      }
+      var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'cyr_structures.txt';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+    function importLibrary() {
+      var file = els.fileImport.files && els.fileImport.files[0];
+      if (!file) return;
+      els.fileImport.value = '';
+      var reader = new FileReader();
+      reader.onload = function () {
+        var imported;
+        try {
+          imported = Core.parseLibrary(String(reader.result));
+        } catch (err) {
+          window.alert('导入失败：' + err.message);
+          return;
+        }
+        if (imported.length === 0) {
+          window.alert('文件里没有可用的结构');
+          return;
+        }
+        var firstId = null;
+        imported.forEach(function (st) {
+          var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid };
+          state.library.push(s);
+          if (firstId === null) firstId = s.id;
+        });
+        state.selectedId = firstId;
+        syncSizeInputs();
+        fit();
+        render();
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+
+    function render() {
+      renderLibrary();
+      renderCanvas();
+      renderStatus();
+    }
+
+    function boot() {
+      els = {
+        libraryList: document.getElementById('library-list'),
+        sizeW: document.getElementById('size-w'),
+        sizeH: document.getElementById('size-h'),
+        palette: document.getElementById('palette'),
+        canvas: document.getElementById('canvas'),
+        canvasWrap: document.getElementById('canvas-wrap'),
+        statusbar: document.getElementById('statusbar'),
+        gridToggle: document.getElementById('grid-toggle'),
+        btnFit: document.getElementById('btn-fit'),
+        modalOverlay: document.getElementById('modal-overlay'),
+        modalTitle: document.getElementById('modal-title'),
+        modalInput: document.getElementById('modal-input'),
+        modalErr: document.getElementById('modal-err'),
+        modalOk: document.getElementById('modal-ok'),
+        modalCancel: document.getElementById('modal-cancel')
+      };
+      canvas = els.canvas;
+      ctx = canvas.getContext('2d');
+      wrap = els.canvasWrap;
+
+      state.library.push({
+        id: uid(),
+        name: 'demo',
+        grid: [
+          [0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,1,1,1,1,1,1,1,1,1,1,0],
+          [0,1,0,0,0,0,0,0,0,0,1,0],
+          [0,1,0,1,1,0,0,1,1,0,1,0],
+          [0,1,0,1,1,0,0,1,1,0,1,0],
+          [0,1,0,0,0,0,0,0,0,0,1,0],
+          [0,1,1,1,1,1,1,1,1,1,1,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0]
+        ]
+      });
+      state.selectedId = state.library[0].id;
+
+      buildPalette();
+
+      els.gridToggle.addEventListener('change', function () {
+        state.gridOn = els.gridToggle.checked;
+        renderCanvas();
+      });
+      els.btnFit.addEventListener('click', fit);
+      els.palette.addEventListener('click', function (e) {
+        var sw = e.target.closest('.swatch');
+        if (!sw) return;
+        state.palette = parseInt(sw.textContent, 10);
+        var all = els.palette.querySelectorAll('.swatch');
+        all.forEach(function (x) { x.classList.remove('selected'); });
+        sw.classList.add('selected');
+        renderStatus();
+      });
+      els.libraryList.addEventListener('click', function (e) {
+        var li = e.target.closest('li');
+        if (li && li.dataset.id) selectStructure(parseInt(li.dataset.id, 10));
+      });
+      canvas.addEventListener('wheel', onWheel, { passive: false });
+      canvas.addEventListener('pointerdown', onPointerDown);
+      canvas.addEventListener('pointermove', onPointerMove);
+      canvas.addEventListener('pointerup', onPointerUp);
+      canvas.addEventListener('pointercancel', onPointerCancel);
+      canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+      document.addEventListener('keydown', function (e) {
+        var tag = e.target && e.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+        if (e.code === 'Space') spaceDown = true;
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+          e.preventDefault();
+          if (e.shiftKey) redo(); else undo();
+        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') {
+          e.preventDefault();
+          redo();
+        }
+      });
+      document.addEventListener('keyup', function (e) {
+        if (e.code === 'Space') spaceDown = false;
+      });
+      window.addEventListener('blur', function () { spaceDown = false; });
+
+      function onResize() { resizeCanvas(); renderCanvas(); }
+      window.addEventListener('resize', onResize);
+      if (window.ResizeObserver) new ResizeObserver(onResize).observe(wrap);
+
+      resizeCanvas();
+      fit();
+      render();
+
+      var toolBtns = document.querySelectorAll('.tool-btn');
+      toolBtns.forEach(function (b) {
+        b.addEventListener('click', function () {
+          state.tool = b.dataset.tool;
+          toolBtns.forEach(function (x) { x.classList.remove('active'); });
+          b.classList.add('active');
+          renderStatus();
+        });
+      });
+      document.getElementById('btn-undo').addEventListener('click', undo);
+      document.getElementById('btn-redo').addEventListener('click', redo);
+      document.getElementById('btn-add').addEventListener('click', addStructure);
+      document.getElementById('btn-dup').addEventListener('click', duplicateStructure);
+      document.getElementById('btn-rename').addEventListener('click', renameStructure);
+      document.getElementById('btn-del').addEventListener('click', deleteStructure);
+      document.getElementById('btn-resize').addEventListener('click', applySize);
+      els.fileImport = document.getElementById('file-import');
+      document.getElementById('btn-import').addEventListener('click', function () {
+        els.fileImport.click();
+      });
+      document.getElementById('btn-export').addEventListener('click', exportLibrary);
+      els.fileImport.addEventListener('change', importLibrary);
+    }
+
+    var canBoot = typeof document !== 'undefined' && document && typeof document.getElementById === 'function';
+    if (canBoot) boot();
+  })();
+  </script>
+</body>
+</html>
