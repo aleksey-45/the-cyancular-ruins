@@ -26,8 +26,8 @@ const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time
 @export var bullet_speed: float = 900.0
 # 子弹射程(px),超过即消失
 @export var bullet_range: float = 600.0
-# 子弹体积(信息字段;实际大小由 bullet.tscn 场景决定)
-@export var bullet_size: float = 5.0
+# 子弹放大倍数(1.0=场景原始大小;缩放贴图与碰撞体)
+@export var bullet_size: float = 1.0
 # 子弹贴图染色(白色=原样显示 Bullets.png 贴图;想改子弹颜色就设这里)
 @export var bullet_color: Color = Color.WHITE
 
@@ -57,7 +57,7 @@ const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time
 
 # ── 激光(heavy_aim 用)──
 # 预瞄激光线长度(px)
-@export var laser_length: float = 500.0
+@export var laser_length: float = 600.0
 # 激光颜色
 @export var laser_color: Color = Color(1.0, 0.2, 0.2, 0.6)
 

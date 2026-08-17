@@ -4,7 +4,7 @@ extends CharacterBody2D
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
 var speed: float = 0.0
-var size: float = 5.0
+var size: float = 1.0  # 子弹放大倍数(setup 时应用为节点缩放)
 var gravity_factor: float = 0.0   # 重力下坠倍率(枪械=0,以后敌方弹药可>0)
 var breaks_terrain: bool = false
 var has_aoe: bool = false
@@ -21,6 +21,7 @@ func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: No
 	bullet_color = col
 	source = src
 	rotation = velocity_vec.angle()
+	scale = Vector2(size, size)  # 放大倍数作用于整颗子弹(贴图+碰撞体)
 
 func _ready() -> void:
 	# 子弹贴图与碰撞体由场景(bullet.tscn)配置:贴图是 Bullets.png 的 Sprite2D,
