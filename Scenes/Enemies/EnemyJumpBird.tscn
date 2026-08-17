@@ -158,13 +158,13 @@ scale = Vector2(2.5, 2.5)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("1_ej")
+hp = 40
+contact_damage = 3
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
 texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_688rj")
-animation = &"wake_up"
-frame = 1
-frame_progress = 0.0536908
+animation = &"sleeping"
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="."]
 visible = false

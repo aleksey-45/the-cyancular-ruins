@@ -17,9 +17,8 @@ var _sleep_anim_timer: float = 0.0  # 入睡动画剩余时间(播完定格 slee
 
 func _ready() -> void:
 	super._ready()
-	knockback_strength = EnemyParams.JumpBird.knockback
-	hp = EnemyParams.JumpBird.hp
-	contact_damage = EnemyParams.shared.contact_damage
+	# 战斗数值(hp/击退/接触伤害)由场景 @export 提供,可在检查器直接改;
+	# 不再从 EnemyParams 覆盖(与武器场景同风格)。
 	_anim = $AnimatedSprite2D
 	_set_state(State.SLEEP)
 	_anim.play("sleeping")  # 睡觉是常态;入睡动画在靠近时触发
@@ -122,13 +121,10 @@ func _ai(delta: float) -> void:
 				_set_state(State.CHASE)
 				_hop_timer = 0.15
 
-func hurt(damage: int, knock_dir: Vector2) -> void:
+func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
 	if is_dead:
 		return
-	hp -= damage
-	velocity += knock_dir.normalized() * knockback_strength
-	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
-	_hit_flash_time = EnemyParams.shared.hit_flash
+	_apply_hit(damage, knock_dir, knock_strength)
 	if hp <= 0:
 		is_dead = true
 		_anim.play("dead")  # 死亡动画(一次性),播完消失

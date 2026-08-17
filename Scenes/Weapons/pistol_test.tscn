@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3 uid="uid://c74i61mtflay5"]
+
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://AssetBundle/Sprites/Weapons.png" id="2_wpn"]
+
+[node name="PistolTest" type="Node2D"]
+script = ExtResource("1_wb")
+weapon_name = "Pistol"
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+position = Vector2(24, 5.6)
+texture = ExtResource("2_wpn")
+region_enabled = true
+region_rect = Rect2(2, 1.85493, 17.1001, 12.347)
+
+[node name="Muzzle" type="Marker2D" parent="."]
+position = Vector2(31.6, 2)

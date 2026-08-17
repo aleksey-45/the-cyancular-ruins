@@ -31,7 +31,6 @@ target = NodePath("../Player")
 [node name="Player" parent="WorldViewport" instance=ExtResource("2_uec86")]
 texture_filter = 1
 position = Vector2(4, -20)
-collision_mask = 1
 
 [node name="WallLayer" type="TileMapLayer" parent="WorldViewport"]
 

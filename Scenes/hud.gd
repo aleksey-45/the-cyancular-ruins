@@ -1,6 +1,7 @@
 class_name HUD
 extends CanvasLayer
 
+const LAYER := 129  # 在 post-process(128)之上,不受桶形/CRT/变灰影响
 const BAR_W: int = 220
 const BAR_H: int = 18
 const MARGIN: int = 24
@@ -8,7 +9,7 @@ const MARGIN: int = 24
 var _fill: ColorRect
 
 func _ready() -> void:
-	layer = 129  # 在 post-process(128)之上,不受桶形/CRT/变灰影响
+	layer = LAYER
 	var bg := ColorRect.new()
 	bg.position = Vector2(MARGIN, MARGIN)
 	bg.size = Vector2(BAR_W, BAR_H)
