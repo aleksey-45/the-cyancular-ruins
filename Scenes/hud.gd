@@ -4,13 +4,15 @@ extends CanvasLayer
 const LAYER := 129  # 在 post-process(128)之上,不受桶形/CRT/变灰影响
 const MARGIN := Vector2(24, 24)
 const SEG_W := 5        # 每根竖条宽
-const SEG_H := 18       # 竖条高
-const SEG_GAP := 2      # 竖条之间的间隔
-const COLOR_NORMAL := Color(0.25, 0.85, 0.9)  # 青色
-const COLOR_LOW := Color(0.9, 0.25, 0.2)      # 血量 <25% 变红
+const SEG_H := 30       # 竖条高
+const SEG_GAP := 1      # 竖条之间的间隔
+const COLOR_NORMAL := Color(0.35, 0.85, 0.9)  # 青色
+const COLOR_LOW := Color(0.8, 0.45, 0.4)      # 血量 <25% 变红
 const LOW_RATIO := 0.25
 
 var _segments: Array[ColorRect] = []
+var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
+var _last_cur := 0
 
 func _ready() -> void:
 	layer = LAYER
@@ -29,10 +31,43 @@ func _build_segments(count: int) -> void:
 		seg.color = COLOR_NORMAL
 		add_child(seg)
 		_segments.append(seg)
+		_ghost_tweens.append(null)
 
 func _on_hp(cur: int, max_hp: int) -> void:
 	var ratio := float(cur) / float(max(1, max_hp))
 	var color := COLOR_LOW if ratio < LOW_RATIO else COLOR_NORMAL
 	for i in _segments.size():
-		_segments[i].visible = i < cur
-		_segments[i].color = color
+		var seg := _segments[i]
+		seg.color = color
+		if i < cur:
+			# 存活段:清掉可能残留的淡出 tween,恢复不透明
+			_kill_ghost(i)
+			seg.modulate = Color.WHITE
+			seg.visible = true
+		else:
+			seg.visible = false
+	# 新掉血的段(旧血量→新血量之间):白闪后淡出,提示伤害
+	for i in range(max(cur, 0), _last_cur):
+		_start_ghost(i)
+	_last_cur = cur
+
+# 掉血段效果:变白,停顿片刻后淡出消失。
+func _start_ghost(i: int) -> void:
+	var seg := _segments[i]
+	_kill_ghost(i)
+	seg.color = Color.WHITE
+	seg.modulate = Color.WHITE
+	seg.visible = true
+	var tw := create_tween()
+	tw.tween_interval(0.3)                          # 白闪停顿
+	tw.tween_property(seg, "modulate:a", 0.0, 0.5)  # 淡出
+	tw.tween_callback(func():
+		seg.visible = false
+		seg.modulate = Color.WHITE
+	)
+	_ghost_tweens[i] = tw
+
+func _kill_ghost(i: int) -> void:
+	if _ghost_tweens[i] != null and _ghost_tweens[i].is_valid():
+		_ghost_tweens[i].kill()
+		_ghost_tweens[i] = null
