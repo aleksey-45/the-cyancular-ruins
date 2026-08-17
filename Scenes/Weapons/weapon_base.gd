@@ -160,7 +160,9 @@ func _recoil_recover(delta: float) -> void:
 # 世界坐标系下从玩家指向鼠标的单位向量(未钳制俯仰)。
 func _aim_world_dir() -> Vector2:
 	var cam: Camera2D = get_viewport().get_camera_2d()
-	var sub: SubViewport = get_viewport()
+	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),
+	# 若标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
+	var sub: Viewport = get_viewport()
 	if cam == null or sub == null:
 		return Vector2(float(get_facing()), 0.0)
 	var win: Viewport = sub.get_window()

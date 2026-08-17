@@ -112,6 +112,38 @@ func _initialize() -> void:
 	# ── Task 9: 地图尺寸读取(map_size) ──
 	_check(MazeGenerator.map_size() == Vector2i(540, 324), "map_size: 从地图文件读取列/行数")
 
+	# ── Task: 武器场景参数 + 开火命中 ──
+	var stub := StubPlayer.new()
+	root.add_child(stub)
+	stub.global_position = Vector2(400, 400)
+	var pistol: PackedScene = load("res://Scenes/Weapons/pistol_test.tscn")
+	var rifle: PackedScene = load("res://Scenes/Weapons/rifle_test.tscn")
+	var sniper: PackedScene = load("res://Scenes/Weapons/m82a1.tscn")
+	_check(pistol != null and rifle != null and sniper != null, "三把武器场景加载")
+	var w = pistol.instantiate()
+	stub.add_child(w)
+	w.equip(stub)
+	# 避免 -s 静态引用 WeaponBase(编译期连带预加载 bullet_base.gd 引用 autoload
+	# 实例变量 GameParameters.MAP_WIDTH,而 -s 阶段 autoload 尚未实例化)→ 用运行时
+	# load()+脚本比较代替 is WeaponBase。
+	_check(w.get_script() == load("res://Scenes/Weapons/weapon_base.gd"), "武器继承 WeaponBase")
+	_check(w.weapon_name == "Pistol", "手枪参数")
+	var e_scene: PackedScene = load("res://Scenes/Enemies/EnemyJumpBird.tscn")
+	# 复用上面 Task 4 已声明的 e(已 free 过,不能重复 var 声明)
+	e = e_scene.instantiate()
+	root.add_child(e)
+	e.global_position = Vector2(520, 400)
+	var hp_before: int = e.hp
+	w.fire()
+	for i in range(30):
+		await physics_frame
+		if not is_instance_valid(e):
+			break
+	_check(e.hp == hp_before - w.damage, "子弹命中扣血")
+	_check(e.velocity.length() > 0.0, "子弹命中击退")
+	e.free()
+	stub.free()
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)
