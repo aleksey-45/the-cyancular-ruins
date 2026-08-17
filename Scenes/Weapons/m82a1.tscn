@@ -4,6 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://AssetBundle/Sprites/Weapons.png" id="2_wpn"]
 
 [node name="M82A1" type="Node2D"]
+position = Vector2(6, 3)
 script = ExtResource("1_wb")
 tier = 2
 weapon_name = "M82A1"
@@ -22,12 +23,13 @@ move_penalty = 0.55
 jump_penalty = 0.55
 penalty_mode = 2
 laser_length = 800.0
+pitch_clamp_deg = 60.0
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
-position = Vector2(54, 6)
+position = Vector2(18, 6)
 texture = ExtResource("2_wpn")
 region_enabled = true
 region_rect = Rect2(22, 0.351734, 84, 17.6483)
 
 [node name="Muzzle" type="Marker2D" parent="."]
-position = Vector2(49, 2)
+position = Vector2(48, 2)

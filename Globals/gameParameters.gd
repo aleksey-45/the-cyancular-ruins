@@ -32,9 +32,6 @@ const cam_deadzone: float = 8.0       # 死区像素（小于此值镜头不动�
 const enemy_count: int = 40
 const enemy_spawn_min_dist: float = 300.0
 
-# ── 武器瞄准(其余武器参数归各武器场景 @export)──
-const aim_pitch_deg: float = 45.0
-
 # ── 玩家战斗 ──
 const player_max_hp: int = 40
 const iframes_time: float = 1.0

@@ -4,6 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://AssetBundle/Sprites/Weapons.png" id="2_wpn"]
 
 [node name="RifleTest" type="Node2D"]
+position = Vector2(4, 2)
 script = ExtResource("1_wb")
 tier = 1
 weapon_name = "Rifle"
@@ -20,12 +21,13 @@ cam_shake_time = 0.12
 move_penalty = 0.75
 jump_penalty = 0.75
 penalty_mode = 1
+pitch_clamp_deg = 30.0
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
-position = Vector2(36, 7)
+position = Vector2(7, 7)
 texture = ExtResource("2_wpn")
 region_enabled = true
 region_rect = Rect2(108, 2, 55, 20)
 
 [node name="Muzzle" type="Marker2D" parent="."]
-position = Vector2(53, 2)
+position = Vector2(30, 2)

@@ -1,26 +1,13 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=3 format=3 uid="uid://c74i61mtflay5"]
 
-[ext_resource type="Script" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
-[ext_resource type="Texture2D" path="res://AssetBundle/Sprites/Weapons.png" id="2_wpn"]
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://AssetBundle/Sprites/Weapons.png" id="2_wpn"]
 
 [node name="PistolTest" type="Node2D"]
 script = ExtResource("1_wb")
-tier = 0
 weapon_name = "Pistol"
-full_auto = false
 fire_cooldown = 0.12
-bullet_speed = 900.0
-bullet_range = 600.0
-bullet_size = 5.0
-damage = 1
-impact = 60.0
-recoil_push = 0.0
-recoil_kick = 4.0
-cam_shake = 2.0
-cam_shake_time = 0.1
-move_penalty = 1.0
-jump_penalty = 1.0
-penalty_mode = 0
+pitch_clamp_deg = 45.0
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 position = Vector2(24, 5.6)

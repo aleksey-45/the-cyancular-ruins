@@ -27,6 +27,7 @@ const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time
 @export var penalty_mode: PenaltyMode = PenaltyMode.NONE
 @export var laser_length: float = 500.0
 @export var laser_color: Color = Color(1.0, 0.2, 0.2, 0.6)
+@export var pitch_clamp_deg: float = 45.0  # 本枪仰角钳制角(每枪独立,枪口/激光/出弹共用)
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
@@ -40,9 +41,9 @@ var _aiming: bool = false
 var _laser: Line2D = null
 
 # 俯仰角:把面向折进 dir.x,相对水平线求角并钳制到 ±45°。
-static func clamp_pitch(dir: Vector2, facing: int) -> float:
+static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> float:
 	var local := Vector2(dir.x * float(facing), dir.y)
-	var limit := deg_to_rad(GameParameters.aim_pitch_deg)
+	var limit := deg_to_rad(limit_deg)
 	return clampf(local.angle(), -limit, limit)
 
 func _ready() -> void:
@@ -136,7 +137,7 @@ func get_movement_multiplier() -> Vector2:
 # local.x 按 facing 折叠,还原到世界坐标时再乘回 facing,与 _auto_aim 的旋转一致。
 func _clamped_aim_dir() -> Vector2:
 	var facing := get_facing()
-	var pitch := clamp_pitch(_aim_world_dir(), facing)
+	var pitch := clamp_pitch(_aim_world_dir(), facing, pitch_clamp_deg)
 	var local := Vector2.from_angle(pitch)
 	return Vector2(local.x * float(facing), local.y)
 
@@ -148,7 +149,7 @@ func _auto_aim() -> void:
 		facing = get_facing()
 	# 朝向镜像(scale.x=-1)会翻转旋转方向。clamp_pitch 已按 facing 折叠 dir.x,
 	# 返回值乘 facing 取反:朝左时镜像后的枪口才指向正确的俯仰象限。
-	rotation = clamp_pitch(dir, facing) * float(facing)
+	rotation = clamp_pitch(dir, facing, pitch_clamp_deg) * float(facing)
 	scale.x = float(facing)
 
 func _update_laser() -> void:
