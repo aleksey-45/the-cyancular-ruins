@@ -48,7 +48,7 @@ static func clamp_pitch(dir: Vector2, facing: int) -> float:
 func _ready() -> void:
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
-	_laser.width = 2.0
+	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
 	_laser.default_color = laser_color
 	_laser.visible = false
 	add_child(_laser)
@@ -96,7 +96,7 @@ func fire() -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = fire_cooldown
-	var dir := _aim_world_dir()
+	var dir := _clamped_aim_dir()
 	var b: BulletBase = BULLET_SCENE.instantiate()
 	b.setup(dir, bullet_speed, bullet_range, bullet_size, bullet_color, self)
 	b.global_position = muzzle.global_position
@@ -132,6 +132,14 @@ func get_movement_multiplier() -> Vector2:
 		return Vector2.ONE
 	return Vector2(move_penalty, jump_penalty)
 
+# 与枪口相同的出弹方向:经过 ±45° 仰角钳制后的世界单位向量(fire 出弹用)。
+# local.x 按 facing 折叠,还原到世界坐标时再乘回 facing,与 _auto_aim 的旋转一致。
+func _clamped_aim_dir() -> Vector2:
+	var facing := get_facing()
+	var pitch := clamp_pitch(_aim_world_dir(), facing)
+	var local := Vector2.from_angle(pitch)
+	return Vector2(local.x * float(facing), local.y)
+
 func _auto_aim() -> void:
 	var facing: int = get_facing()
 	var dir := _aim_world_dir()
@@ -148,10 +156,8 @@ func _update_laser() -> void:
 		return
 	_laser.visible = _aiming
 	if _aiming:
-		# 激光跟随真实(未钳制)瞄准方向:与 fire() 的出弹方向一致,不受枪口 ±45° 钳制影响
-		_laser.global_position = muzzle.global_position
-		_laser.global_rotation = _aim_world_dir().angle()
-		_laser.points = PackedVector2Array([Vector2.ZERO, Vector2(laser_length, 0.0)])
+		# 激光继承枪口的钳制旋转:仰角限制与枪口一致,且与出弹方向(同样钳制)对齐。
+		_laser.points = PackedVector2Array([muzzle.position, muzzle.position + Vector2(laser_length, 0.0)])
 
 func _recoil_recover(delta: float) -> void:
 	if _recoil_timer > 0.0:
