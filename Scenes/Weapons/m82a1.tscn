@@ -23,7 +23,7 @@ move_penalty = 0.55
 jump_penalty = 0.55
 penalty_mode = 2
 laser_length = 800.0
-pitch_clamp_deg = 60.0
+pitch_clamp_deg = 75.0
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 position = Vector2(18, 6)

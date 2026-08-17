@@ -6,8 +6,6 @@
 [node name="PistolTest" type="Node2D"]
 script = ExtResource("1_wb")
 weapon_name = "Pistol"
-fire_cooldown = 0.12
-pitch_clamp_deg = 45.0
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 position = Vector2(24, 5.6)

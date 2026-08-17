@@ -9,19 +9,19 @@ script = ExtResource("1_wb")
 tier = 1
 weapon_name = "Rifle"
 full_auto = true
-fire_cooldown = 0.25
+fire_cooldown = 0.1
 bullet_speed = 1200.0
 bullet_range = 1200.0
 damage = 2
-impact = 150.0
-recoil_push = 30.0
+impact = 200.0
+recoil_push = 100.0
 recoil_kick = 6.0
 cam_shake = 3.0
 cam_shake_time = 0.12
-move_penalty = 0.75
-jump_penalty = 0.75
+move_penalty = 0.7
+jump_penalty = 0.8
 penalty_mode = 1
-pitch_clamp_deg = 30.0
+pitch_clamp_deg = 55.0
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 position = Vector2(7, 7)
