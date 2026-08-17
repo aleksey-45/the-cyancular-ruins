@@ -6,14 +6,8 @@ extends RefCounted
 
 class shared:
 	const hit_flash: float = 0.1        # 受击白闪时长(秒)
-	const contact_damage: int = 1       # 接触玩家伤害
-	const knockback: float = 150.0      # 受击击退力度
-	const hp: int = 3                   # 默认血量
 
 class JumpBird:
-	const hp: int = 3
-	const knockback: float = 150.0
-	const hit_flash: float = 0.1
 	const wake_radius: float = 900.0    # 玩家多近苏醒
 	const give_up_radius: float = 1100.0 # 玩家多远放弃追击
 	const lunge_range: float = 400.0    # 冲刺触发距离

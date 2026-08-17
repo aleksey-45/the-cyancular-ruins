@@ -1,5 +1,17 @@
 extends SceneTree
 
+class StubPlayer:
+	extends Node2D
+	var facing: int = 1
+	func get_facing() -> int:
+		return facing
+	func set_facing(v: int) -> void:
+		facing = 1 if v >= 0 else -1
+	func is_downed() -> bool:
+		return false
+	func apply_recoil(_push: float) -> void:
+		pass
+
 var _failures: Array[String] = []
 
 func _check(cond: bool, name: String) -> void:
@@ -47,11 +59,11 @@ func _initialize() -> void:
 	# ── Task 6: 子弹 ──
 	# 清掉 Task 4 遗留的敌人(在原点,碰撞层2);否则子弹出生即命中并立即消失
 	e.free()
-	var bscene: PackedScene = load("res://Scenes/Bullet.tscn")
+	var bscene: PackedScene = load("res://Scenes/Weapons/bullet.tscn")
 	_check(bscene != null, "子弹场景加载")
-	var b = bscene.instantiate()   # untyped, NOT `var b: Bullet`
+	var b = bscene.instantiate()   # untyped, 不标 BulletBase 避免依赖
 	root.add_child(b)
-	b.setup(Vector2.RIGHT, 1000.0, 300.0, 1)
+	b.setup(Vector2.RIGHT, 1000.0, 300.0, 5.0, Color(1.0, 0.95, 0.6), null)
 	await physics_frame
 	_check(b.global_position.x > 0.0, "子弹移动")
 	var freed := false
@@ -62,15 +74,16 @@ func _initialize() -> void:
 			break
 	_check(freed, "子弹超射程消失")
 
-	# ── Task 7: clamp_pitch ──
-	var gun_script := load("res://Scenes/player_gun.gd")
-	_check(gun_script != null, "PlayerGun 脚本加载")
-	_check(gun_script.has_method("clamp_pitch"), "clamp_pitch 存在")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(1, 0), 1), 0.0), "pitch 水平")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(0, -1), 1), -deg_to_rad(45.0)), "pitch 上钳制")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(0, 1), 1), deg_to_rad(45.0)), "pitch 下钳制")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(-1, 0), 1), deg_to_rad(45.0)), "pitch 身后钳制")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(0, 1), -1), deg_to_rad(45.0)), "pitch 左朝向")
+	# ── Task 7: clamp_pitch(迁到 WeaponBase)──
+	# 用 load()+资源调用,避免 -s 编译期解析 WeaponBase 时连带预加载 bullet_base.gd
+	# (autoload 实例变量在 -s 主脚本编译期不可解析,见 bullet_base.gd 的 GameParameters.MAP_WIDTH)。
+	var wb := load("res://Scenes/Weapons/weapon_base.gd")
+	_check(wb != null, "WeaponBase 脚本加载")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(1, 0), 1), 0.0), "pitch 水平")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, -1), 1), -deg_to_rad(45.0)), "pitch 上钳制")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, 1), 1), deg_to_rad(45.0)), "pitch 下钳制")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(-1, 0), 1), deg_to_rad(45.0)), "pitch 身后钳制")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, 1), -1), deg_to_rad(45.0)), "pitch 左朝向")
 
 	# ── Task 8: 环面锚定(敌人/子弹跟随主角取模) ──
 	const W := 8640.0
@@ -96,6 +109,52 @@ func _initialize() -> void:
 
 	# ── Task 9: 地图尺寸读取(map_size) ──
 	_check(MazeGenerator.map_size() == Vector2i(540, 324), "map_size: 从地图文件读取列/行数")
+
+	# ── Task: 武器场景参数 + 开火命中 ──
+	var stub := StubPlayer.new()
+	root.add_child(stub)
+	stub.global_position = Vector2(400, 400)
+	var pistol: PackedScene = load("res://Scenes/Weapons/pistol_test.tscn")
+	var rifle: PackedScene = load("res://Scenes/Weapons/rifle_test.tscn")
+	var sniper: PackedScene = load("res://Scenes/Weapons/m82a1.tscn")
+	_check(pistol != null and rifle != null and sniper != null, "三把武器场景加载")
+	var w = pistol.instantiate()
+	stub.add_child(w)
+	w.equip(stub)
+	# 避免 -s 静态引用 WeaponBase(编译期连带预加载 bullet_base.gd 引用 autoload
+	# 实例变量 GameParameters.MAP_WIDTH,而 -s 阶段 autoload 尚未实例化)→ 用运行时
+	# load()+脚本比较代替 is WeaponBase。
+	_check(w.get_script() == load("res://Scenes/Weapons/weapon_base.gd"), "武器继承 WeaponBase")
+	_check(w.weapon_name == "Pistol", "手枪参数")
+	var e_scene: PackedScene = load("res://Scenes/Enemies/EnemyJumpBird.tscn")
+	# 复用上面 Task 4 已声明的 e(已 free 过,不能重复 var 声明)
+	e = e_scene.instantiate()
+	root.add_child(e)
+	e.global_position = Vector2(520, 400)
+	var hp_before: int = e.hp
+	w.fire()
+	for i in range(30):
+		await physics_frame
+		if not is_instance_valid(e):
+			break
+	_check(e.hp == hp_before - w.damage, "子弹命中扣血")
+	_check(absf(e.velocity.x) > 0.0, "子弹命中击退")
+	e.free()
+	stub.free()
+
+	# ── Task: 玩家装备/切枪 ──
+	var player_scene: PackedScene = load("res://Scenes/Player.tscn")
+	_check(player_scene != null, "Player 场景加载")
+	var p = player_scene.instantiate()
+	root.add_child(p)
+	await physics_frame
+	_check(p._weapon != null, "默认装备手枪")
+	if p._weapon != null:
+		_check(p._weapon.weapon_name == "Pistol", "默认武器是手枪")
+		p._equip_weapon("res://Scenes/Weapons/rifle_test.tscn")
+		await physics_frame
+		_check(p._weapon.weapon_name == "Rifle", "切枪到步枪")
+	p.free()
 
 	if _failures.is_empty():
 		print("SMOKE OK")
