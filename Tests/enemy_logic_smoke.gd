@@ -1,5 +1,19 @@
 extends SceneTree
 
+class StubPlayer:
+	extends Node2D
+	var facing: int = 1
+	func get_facing() -> int:
+		return facing
+	func set_facing(v: int) -> void:
+		facing = 1 if v >= 0 else -1
+	func is_downed() -> bool:
+		return false
+	func is_squatting() -> bool:
+		return false
+	func apply_recoil(_push: float) -> void:
+		pass
+
 var _failures: Array[String] = []
 
 func _check(cond: bool, name: String) -> void:
@@ -47,11 +61,11 @@ func _initialize() -> void:
 	# ── Task 6: 子弹 ──
 	# 清掉 Task 4 遗留的敌人(在原点,碰撞层2);否则子弹出生即命中并立即消失
 	e.free()
-	var bscene: PackedScene = load("res://Scenes/Bullet.tscn")
+	var bscene: PackedScene = load("res://Scenes/Weapons/bullet.tscn")
 	_check(bscene != null, "子弹场景加载")
-	var b = bscene.instantiate()   # untyped, NOT `var b: Bullet`
+	var b = bscene.instantiate()   # untyped, 不标 BulletBase 避免依赖
 	root.add_child(b)
-	b.setup(Vector2.RIGHT, 1000.0, 300.0, 1)
+	b.setup(Vector2.RIGHT, 1000.0, 300.0, 5.0, Color(1.0, 0.95, 0.6), null)
 	await physics_frame
 	_check(b.global_position.x > 0.0, "子弹移动")
 	var freed := false
@@ -62,15 +76,16 @@ func _initialize() -> void:
 			break
 	_check(freed, "子弹超射程消失")
 
-	# ── Task 7: clamp_pitch ──
-	var gun_script := load("res://Scenes/player_gun.gd")
-	_check(gun_script != null, "PlayerGun 脚本加载")
-	_check(gun_script.has_method("clamp_pitch"), "clamp_pitch 存在")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(1, 0), 1), 0.0), "pitch 水平")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(0, -1), 1), -deg_to_rad(45.0)), "pitch 上钳制")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(0, 1), 1), deg_to_rad(45.0)), "pitch 下钳制")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(-1, 0), 1), deg_to_rad(45.0)), "pitch 身后钳制")
-	_check(is_equal_approx(gun_script.clamp_pitch(Vector2(0, 1), -1), deg_to_rad(45.0)), "pitch 左朝向")
+	# ── Task 7: clamp_pitch(迁到 WeaponBase)──
+	# 用 load()+资源调用,避免 -s 编译期解析 WeaponBase 时连带预加载 bullet_base.gd
+	# (autoload 实例变量在 -s 主脚本编译期不可解析,见 bullet_base.gd 的 GameParameters.MAP_WIDTH)。
+	var wb := load("res://Scenes/Weapons/weapon_base.gd")
+	_check(wb != null, "WeaponBase 脚本加载")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(1, 0), 1), 0.0), "pitch 水平")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, -1), 1), -deg_to_rad(45.0)), "pitch 上钳制")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, 1), 1), deg_to_rad(45.0)), "pitch 下钳制")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(-1, 0), 1), deg_to_rad(45.0)), "pitch 身后钳制")
+	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, 1), -1), deg_to_rad(45.0)), "pitch 左朝向")
 
 	# ── Task 8: 环面锚定(敌人/子弹跟随主角取模) ──
 	const W := 8640.0
