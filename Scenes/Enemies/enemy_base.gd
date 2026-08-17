@@ -4,12 +4,12 @@ extends CharacterBody2D
 # 物理基础(子类可覆写:扑击时关闭重力)
 var use_gravity: bool = true
 
-@export_group("战斗数值(可在检查器调,场景值优先)")
-@export_tooltip("血量")
+# 战斗数值(可在检查器调,场景值优先)
+# 血量
 @export var hp: int = 3
-@export_tooltip("接触玩家伤害")
+# 接触玩家伤害
 @export var contact_damage: int = 1
-@export_tooltip("受击击退力度")
+# 受击击退力度
 @export var knockback_strength: float = 150.0
 
 # 环面接缝兜底:物理 Area 用欧氏距离,跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)
