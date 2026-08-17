@@ -9,7 +9,7 @@ const LAYER := 128  # 世界后处理层,低于 HUD(129),不遮 HUD
 var _mat: ShaderMaterial = null
 
 # 窗口尺寸 / 世界视口尺寸:把窗口映射到世界视口的中心裁剪区。
-# 枪的瞄准换算(player_gun)与 shader 采样都用它,收敛到单一来源,改一处不偏。
+# 枪的瞄准换算(weapon_base)与 shader 采样都用它,收敛到单一来源,改一处不偏。
 static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 	return Vector2(win_size.x / world_vp_size.x, win_size.y / world_vp_size.y)
 

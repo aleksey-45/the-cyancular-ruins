@@ -12,7 +12,7 @@ func shake(amount: float, duration: float) -> void:
 	_shake_time = duration
 	_shake_dur = duration
 
-# 无抖动时的基准位置。瞄准换算(player_gun)用它,避免镜头抖动影响准星。
+# 无抖动时的基准位置。瞄准换算(weapon_base)用它,避免镜头抖动影响准星。
 func get_base_global_position() -> Vector2:
 	return _base_pos
 

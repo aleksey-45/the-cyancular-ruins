@@ -260,6 +260,9 @@ func _equip_weapon(scene_path: String) -> void:
 	if scene == null:
 		push_error("weapon scene not found: " + scene_path)
 		return
+	if weapon_slot == null:
+		push_error("weapon_slot not assigned")
+		return
 	_weapon = scene.instantiate() as WeaponBase
 	weapon_slot.add_child(_weapon)
 	_weapon.equip(self)
@@ -273,9 +276,6 @@ func apply_recoil(push: float) -> void:
 	if is_squat:
 		return
 	velocity.x -= facing_direction * push
-
-func is_squatting() -> bool:
-	return is_squat
 
 func _downed() -> void:
 	downed = true

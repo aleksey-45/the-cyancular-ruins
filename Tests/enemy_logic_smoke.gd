@@ -9,8 +9,6 @@ class StubPlayer:
 		facing = 1 if v >= 0 else -1
 	func is_downed() -> bool:
 		return false
-	func is_squatting() -> bool:
-		return false
 	func apply_recoil(_push: float) -> void:
 		pass
 
@@ -140,7 +138,7 @@ func _initialize() -> void:
 		if not is_instance_valid(e):
 			break
 	_check(e.hp == hp_before - w.damage, "子弹命中扣血")
-	_check(e.velocity.length() > 0.0, "子弹命中击退")
+	_check(absf(e.velocity.x) > 0.0, "子弹命中击退")
 	e.free()
 	stub.free()
 

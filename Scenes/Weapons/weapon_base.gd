@@ -148,7 +148,10 @@ func _update_laser() -> void:
 		return
 	_laser.visible = _aiming
 	if _aiming:
-		_laser.points = PackedVector2Array([muzzle.position, muzzle.position + Vector2(laser_length, 0.0)])
+		# 激光跟随真实(未钳制)瞄准方向:与 fire() 的出弹方向一致,不受枪口 ±45° 钳制影响
+		_laser.global_position = muzzle.global_position
+		_laser.global_rotation = _aim_world_dir().angle()
+		_laser.points = PackedVector2Array([Vector2.ZERO, Vector2(laser_length, 0.0)])
 
 func _recoil_recover(delta: float) -> void:
 	if _recoil_timer > 0.0:
