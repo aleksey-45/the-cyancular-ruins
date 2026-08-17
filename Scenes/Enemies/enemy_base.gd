@@ -77,18 +77,20 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_wrap()
 
-func hurt(damage: int, knock_dir: Vector2) -> void:
+func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
 	if is_dead:
 		return
-	_apply_hit(damage, knock_dir)
+	_apply_hit(damage, knock_dir, knock_strength)
 	if hp <= 0:
 		is_dead = true
 		queue_free()
 
 # 受击通用逻辑:扣血、击退、白闪。子类覆写 hurt() 时也应调用本方法,避免逻辑分叉。
-func _apply_hit(damage: int, knock_dir: Vector2) -> void:
+# knock_strength <= 0 时回落敌人自身 knockback_strength(旧两参调用行为不变)。
+func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
 	hp -= damage
-	velocity += knock_dir.normalized() * knockback_strength
+	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
+	velocity += knock_dir.normalized() * ks
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
 
