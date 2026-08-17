@@ -40,29 +40,37 @@ var downed: bool = false
 
 signal hp_changed(current: int, max: int)
 
+# 姿态状态机（与 JumpBird 的枚举风格统一）。
+enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }
+const POSE_ANIM: Dictionary = {
+	Pose.STAND: "idle", Pose.MOVE: "move", Pose.FLY: "fly",
+	Pose.CHARGE: "charge", Pose.SQUAT: "squat",
+}
+const POSE_NODE: Dictionary = {
+	Pose.STAND: "CollisionShape2D_stand", Pose.MOVE: "CollisionShape2D_move",
+	Pose.FLY: "CollisionShape2D_fly", Pose.CHARGE: "CollisionShape2D_charge",
+	Pose.SQUAT: "CollisionShape2D_squat",
+}
+
 # 姿态切换锁：进入某姿态后锁定一小段时间，防止 is_on_floor()/velocity
 # 抖动导致 move↔fly 等高频切换（走路抽搐）。
-var state: String = "stand"
+var state: Pose = Pose.STAND
 var state_lock_timer: float = 0.0
 const STATE_LOCK_TIME := 0.15   # 秒，切换后的最短停留时长
 
-# 各动作碰撞箱节点（场景里已按此命名）
-var coll_charge: CollisionPolygon2D
-var coll_squat: CollisionPolygon2D
-var coll_fly: CollisionPolygon2D
-var coll_move: CollisionPolygon2D
-var coll_stand: CollisionPolygon2D
+const STOP_SNAP := 1.0              # 水平速度低于此值直接归零，避免贴地滑行
+const IFRAME_BLINK_RATE := 10.0     # 无敌帧闪烁频率（每秒明暗切换次数）
+
+# 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
+var _coll_by_pose: Dictionary = {}
 
 
 func _ready() -> void:
 	add_to_group("player")
 
-	# 缓存各动作碰撞箱节点
-	coll_charge = $CollisionShape2D_charge
-	coll_squat = $CollisionShape2D_squat
-	coll_fly = $CollisionShape2D_fly
-	coll_move = $CollisionShape2D_move
-	coll_stand = $CollisionShape2D_stand
+	# 缓存各姿态碰撞箱节点
+	for pose in Pose.values():
+		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
 
 	hp_changed.emit(hp, max_hp)
 
@@ -81,7 +89,7 @@ func _physics_process(delta: float) -> void:
 	iframes = maxf(iframes - delta, 0.0)
 	# 无敌帧闪烁
 	if iframes > 0.0:
-		modulate.a = 0.4 if int(iframes * 10) % 2 == 0 else 1.0
+		modulate.a = 0.4 if int(iframes * IFRAME_BLINK_RATE) % 2 == 0 else 1.0
 	else:
 		modulate.a = 1.0
 
@@ -154,7 +162,7 @@ func _physics_process(delta: float) -> void:
 			else:
 				velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
 			# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
-			if absf(velocity.x) < 1.0:
+			if absf(velocity.x) < STOP_SNAP:
 				velocity.x = 0.0
 
 	# ---------- 面朝方向更新 ----------
@@ -171,15 +179,15 @@ func _physics_process(delta: float) -> void:
 	# ---------- 姿态切换（带切换锁，禁止频繁切换） ----------
 	# 期望姿态由输入/接触状态决定；进入某姿态后锁定一小段时间，
 	# 避免 is_on_floor()/velocity 抖动导致 move↔fly 高频切换（走路抽搐）。
-	var desired := "stand"
+	var desired: Pose = Pose.STAND
 	if is_charge:
-		desired = "charge"
+		desired = Pose.CHARGE
 	elif is_squat:
-		desired = "squat"
+		desired = Pose.SQUAT
 	elif not is_on_floor():
-		desired = "fly"
+		desired = Pose.FLY
 	elif velocity.x != 0:
-		desired = "move"
+		desired = Pose.MOVE
 
 	if state_lock_timer > 0.0:
 		state_lock_timer -= delta
@@ -188,44 +196,28 @@ func _physics_process(delta: float) -> void:
 		state_lock_timer = STATE_LOCK_TIME
 
 	# ---------- 动画状态（跟随锁定后的姿态） ----------
-	match state:
-		"charge":
-			animator.play("charge")
-		"squat":
-			animator.play("squat")
-		"fly":
-			animator.play("fly")
-		"move":
-			animator.play("move")
-		_:
-			animator.play("idle")
+	animator.play(POSE_ANIM[state])
 
 	# ---------- 碰撞箱切换 ----------
-	# 每个动作对应一个 CollisionPolygon2D（多边形可在编辑器里分别调整），
+	# 每个姿态对应一个 CollisionPolygon2D（多边形可在编辑器里分别调整），
 	# 运行时只启用当前姿态对应的碰撞箱。
-	coll_charge.disabled = state != "charge"
-	coll_squat.disabled = state != "squat"
-	coll_fly.disabled = state != "fly"
-	coll_move.disabled = state != "move"
-	coll_stand.disabled = state != "stand"
+	for pose in _coll_by_pose:
+		_coll_by_pose[pose].disabled = pose != state
 
 	# ---------- 执行移动 ----------
 	move_and_slide()
 
 	# 环面回卷：玩家只能在中间副本，离开时取模送回
-	if global_position.x >= GameParameters.MAP_WIDTH:
-		global_position.x -= GameParameters.MAP_WIDTH
-	elif global_position.x < 0.0:
-		global_position.x += GameParameters.MAP_WIDTH
-	if global_position.y >= GameParameters.MAP_HEIGHT:
-		global_position.y -= GameParameters.MAP_HEIGHT
-	elif global_position.y < 0.0:
-		global_position.y += GameParameters.MAP_HEIGHT
+	global_position = MazeGenerator.wrap_to_range(global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
 func take_hit(source_pos: Vector2, damage: int) -> void:
 	if downed or iframes > 0.0:
 		return
+	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
+	is_charge = false
+	charge_timer = 0.0
 	hp -= damage
 	iframes = GameParameters.iframes_time
 	var away := (global_position - source_pos).normalized()

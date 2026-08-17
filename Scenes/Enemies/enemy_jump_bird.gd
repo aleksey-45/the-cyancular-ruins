@@ -125,10 +125,7 @@ func _ai(delta: float) -> void:
 func hurt(damage: int, knock_dir: Vector2) -> void:
 	if is_dead:
 		return
-	hp -= damage
-	velocity += knock_dir.normalized() * knockback_strength
-	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
-	_hit_flash_time = EnemyParams.shared.hit_flash
+	_apply_hit(damage, knock_dir)
 	if hp <= 0:
 		is_dead = true
 		_anim.play("dead")  # 死亡动画(一次性),播完消失

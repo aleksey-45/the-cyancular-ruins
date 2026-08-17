@@ -11,6 +11,9 @@ var use_gravity: bool = true
 # 环面接缝兜底:物理 Area 用欧氏距离,跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)
 const CONTACT_RADIUS: float = 40.0
 
+const GROUND_FRICTION: float = 0.85  # 落地时水平速度衰减系数
+const STOP_EPSILON: float = 5.0      # 水平速度低于此值直接归零,避免贴地滑行
+
 var is_dead: bool = false
 var _hit_flash_time: float = 0.0
 var _player_overlapping: bool = false
@@ -57,8 +60,8 @@ func _physics_process(delta: float) -> void:
 	# 避免跳跃/冲刺/击飞的残留速度让敌人在地面滑行。
 	# 放在 _ai 之前,这样 _ai 里新设的跳跃/冲刺初速不受当帧摩擦影响。
 	if use_gravity and is_on_floor():
-		velocity.x *= 0.85
-		if absf(velocity.x) < 5.0:
+		velocity.x *= GROUND_FRICTION
+		if absf(velocity.x) < STOP_EPSILON:
 			velocity.x = 0.0
 	_ai(delta)
 	_anim_update()
@@ -77,13 +80,17 @@ func _physics_process(delta: float) -> void:
 func hurt(damage: int, knock_dir: Vector2) -> void:
 	if is_dead:
 		return
+	_apply_hit(damage, knock_dir)
+	if hp <= 0:
+		is_dead = true
+		queue_free()
+
+# 受击通用逻辑:扣血、击退、白闪。子类覆写 hurt() 时也应调用本方法,避免逻辑分叉。
+func _apply_hit(damage: int, knock_dir: Vector2) -> void:
 	hp -= damage
 	velocity += knock_dir.normalized() * knockback_strength
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
-	if hp <= 0:
-		is_dead = true
-		queue_free()
 
 func toroidal_dist_to_player() -> float:
 	return toroidal_delta_to_player().length()
@@ -109,14 +116,8 @@ func _wrap() -> void:
 	var p := get_tree().get_first_node_in_group("player") as Node2D
 	if p == null:
 		# 无玩家(场景切换/加载中)时退回绝对取模,防止敌人无限漂移
-		if global_position.x >= GameParameters.MAP_WIDTH:
-			global_position.x -= GameParameters.MAP_WIDTH
-		elif global_position.x < 0.0:
-			global_position.x += GameParameters.MAP_WIDTH
-		if global_position.y >= GameParameters.MAP_HEIGHT:
-			global_position.y -= GameParameters.MAP_HEIGHT
-		elif global_position.y < 0.0:
-			global_position.y += GameParameters.MAP_HEIGHT
+		global_position = MazeGenerator.wrap_to_range(global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)

@@ -126,7 +126,7 @@ animator = NodePath("AnimatedSprite2D")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
 sprite_frames = SubResource("SpriteFrames_dewec")
-animation = &"fly"
+animation = &"idle"
 autoplay = "idle"
 
 [node name="CollisionShape2D_charge" type="CollisionPolygon2D" parent="."]

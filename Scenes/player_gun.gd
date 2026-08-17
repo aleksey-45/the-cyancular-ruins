@@ -57,7 +57,7 @@ func fire() -> void:
 	var b: Bullet = BULLET_SCENE.instantiate()
 	b.setup(dir, GameParameters.bullet_speed, GameParameters.bullet_range, GameParameters.bullet_damage)
 	b.global_position = muzzle.global_position
-	get_parent().get_parent().add_child(b)  # 加入 WorldViewport
+	get_viewport().add_child(b)  # 枪在 WorldViewport 内,get_viewport() 即世界视口
 	_recoil_timer = GameParameters.recoil_time
 	sprite.position = _base_sprite_pos - Vector2(1.0, 0.0) * GameParameters.recoil_kick
 	var cam: Camera2D = get_viewport().get_camera_2d()
@@ -79,8 +79,12 @@ func _aim_world_dir() -> Vector2:
 	# cam.global_position + (鼠标 - 窗口中心) / crop。
 	var win_size := win.get_visible_rect().size
 	var mouse := win.get_mouse_position()
-	var crop := Vector2(win_size.x / sub.size.x, win_size.y / sub.size.y)
-	var world_mouse := cam.global_position + (mouse - win_size * 0.5) / crop
+	var crop := PostProcess.crop_scale(win_size, sub.size)
+	# 用相机无抖动的基准位置,避免镜头抖动让准星跟着跳
+	var cam_center: Vector2 = cam.global_position
+	if cam.has_method("get_base_global_position"):
+		cam_center = cam.get_base_global_position()
+	var world_mouse := cam_center + (mouse - win_size * 0.5) / crop
 	var dir := world_mouse - (get_parent() as Node2D).global_position
 	if dir.length_squared() < 0.0001:
 		return Vector2(float(get_facing()), 0.0)

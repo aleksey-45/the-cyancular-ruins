@@ -1,15 +1,22 @@
 class_name PostProcess
 extends CanvasLayer
 
+const LAYER := 128  # 世界后处理层,低于 HUD(129),不遮 HUD
+
 @export var world_viewport: SubViewport = null
 @export var barrel_strength: float = 0.4
 
 var _mat: ShaderMaterial = null
 
+# 窗口尺寸 / 世界视口尺寸:把窗口映射到世界视口的中心裁剪区。
+# 枪的瞄准换算(player_gun)与 shader 采样都用它,收敛到单一来源,改一处不偏。
+static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
+	return Vector2(win_size.x / world_vp_size.x, win_size.y / world_vp_size.y)
+
 
 func _ready() -> void:
 	add_to_group("post_process")
-	layer = 128
+	layer = LAYER
 
 	if world_viewport == null:
 		push_error("PostProcess: no world viewport assigned!")
@@ -33,8 +40,7 @@ func _ready() -> void:
 
 	# crop_scale = 窗口 / 世界视口，让 shader 只在世界纹理的中心窗口区采样。
 	var vsize := get_viewport().get_visible_rect().size
-	var vp_size := world_viewport.size
-	_mat.set_shader_parameter("crop_scale", Vector2(vsize.x / vp_size.x, vsize.y / vp_size.y))
+	_mat.set_shader_parameter("crop_scale", crop_scale(vsize, world_viewport.size))
 
 	rect.material = _mat
 

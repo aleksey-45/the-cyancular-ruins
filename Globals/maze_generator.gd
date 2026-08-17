@@ -44,6 +44,20 @@ static func anchor_to_nearest(pos: Vector2, anchor: Vector2, w: float, h: float)
 	return p
 
 
+# 把点取模回 [0,w)×[0,h) 绝对区间(玩家锚点自身用;实体锚定玩家副本见 anchor_to_nearest)。
+static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
+	var p := pos
+	if p.x >= w:
+		p.x -= w
+	elif p.x < 0.0:
+		p.x += w
+	if p.y >= h:
+		p.y -= h
+	elif p.y < 0.0:
+		p.y += h
+	return p
+
+
 # 读取地图文件的列/行数(格子级),供 GameParameters 初始化 MAP 像素尺寸。
 # 逻辑与 load_map_file 一致:跳过空行与 # 注释行,以首个有效行为宽度,
 # 宽度不一致的行(如抬头)不计入行数。

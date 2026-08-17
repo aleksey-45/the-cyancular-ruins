@@ -3,7 +3,8 @@ extends CharacterBody2D
 
 var velocity_vec: Vector2 = Vector2.ZERO
 var damage: int = 1
-var max_range: float = 700.0
+# 默认与全局射程一致(setup() 会再覆盖)
+var max_range: float = GameParameters.bullet_range
 var traveled: float = 0.0
 
 func setup(dir: Vector2, speed: float, range: float, dmg: int) -> void:
@@ -39,14 +40,8 @@ func _wrap() -> void:
 	# 与敌人一致:锚定到离玩家最近的副本(跟着主角取模),接缝附近不消失。
 	var p := get_tree().get_first_node_in_group("player") as Node2D
 	if p == null:
-		if global_position.x >= GameParameters.MAP_WIDTH:
-			global_position.x -= GameParameters.MAP_WIDTH
-		elif global_position.x < 0.0:
-			global_position.x += GameParameters.MAP_WIDTH
-		if global_position.y >= GameParameters.MAP_HEIGHT:
-			global_position.y -= GameParameters.MAP_HEIGHT
-		elif global_position.y < 0.0:
-			global_position.y += GameParameters.MAP_HEIGHT
+		global_position = MazeGenerator.wrap_to_range(global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
