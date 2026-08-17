@@ -38,6 +38,17 @@ var hp: int = GameParameters.player_max_hp
 var iframes: float = 0.0
 var downed: bool = false
 
+@export var weapon_slot: Node2D
+
+# 武器注册表:动作名 -> 场景路径(与 project.godot 输入动作 1/2/3 对应)。
+const WEAPONS: Dictionary = {
+	"1": "res://Scenes/Weapons/pistol_test.tscn",
+	"2": "res://Scenes/Weapons/rifle_test.tscn",
+	"3": "res://Scenes/Weapons/m82a1.tscn",
+}
+
+var _weapon: WeaponBase = null
+
 signal hp_changed(current: int, max: int)
 
 # 姿态状态机（与 JumpBird 的枚举风格统一）。
@@ -74,6 +85,8 @@ func _ready() -> void:
 
 	hp_changed.emit(hp, max_hp)
 
+	_equip_weapon(WEAPONS["1"])
+
 
 # 指数缓动：朝目标值逼近。rate 越大越跟手；
 # 起步快后渐缓、松键带滑行、转身平滑穿过 0，避免线性 move_toward 的生硬。
@@ -93,6 +106,8 @@ func _physics_process(delta: float) -> void:
 	else:
 		modulate.a = 1.0
 
+	var mult := _movement_multiplier()
+
 	var horizontal_input = Input.get_axis("left", "right")
 
 	# ---------- 垂直逻辑（土狼时间 / 跳跃缓冲 / 可变高度） ----------
@@ -110,7 +125,7 @@ func _physics_process(delta: float) -> void:
 
 	# 触发跳跃：有缓冲输入且在地面或土狼窗口内
 	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
-		velocity.y = jump_velocity
+		velocity.y = jump_velocity * mult.y
 		jump_buffer_timer = 0.0
 		coyote_timer = 0.0
 		jump_cut_applied = false
@@ -150,7 +165,7 @@ func _physics_process(delta: float) -> void:
 			is_charge = false
 			velocity.x -= charge_velocity * facing_direction * 0.5
 	else:
-		var target_velocity_x = horizontal_input * move_speed
+		var target_velocity_x = horizontal_input * move_speed * mult.x
 		if horizontal_input != 0 and not is_squat:
 			if is_on_floor():
 				velocity.x = _approach(velocity.x, target_velocity_x, accel_ground, delta)
@@ -238,8 +253,34 @@ func set_facing(v: int) -> void:
 func is_downed() -> bool:
 	return downed
 
+func _equip_weapon(scene_path: String) -> void:
+	if _weapon != null:
+		_weapon.queue_free()
+	var scene: PackedScene = load(scene_path)
+	if scene == null:
+		push_error("weapon scene not found: " + scene_path)
+		return
+	_weapon = scene.instantiate() as WeaponBase
+	weapon_slot.add_child(_weapon)
+	_weapon.equip(self)
+
+func _movement_multiplier() -> Vector2:
+	if _weapon == null:
+		return Vector2.ONE
+	return _weapon.get_movement_multiplier()
+
+func apply_recoil(push: float) -> void:
+	if is_squat:
+		return
+	velocity.x -= facing_direction * push
+
+func is_squatting() -> bool:
+	return is_squat
+
 func _downed() -> void:
 	downed = true
+	if _weapon != null:
+		_weapon.cancel_aim()
 	velocity = Vector2.ZERO
 	rotation = -PI / 2.0 * float(facing_direction)
 	if animator != null:
@@ -251,5 +292,11 @@ func _downed() -> void:
 			pp.set_downed(true)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if downed and event.is_action_pressed("R"):
-		get_tree().reload_current_scene()
+	if downed:
+		if event.is_action_pressed("R"):
+			get_tree().reload_current_scene()
+		return
+	for slot in ["1", "2", "3"]:
+		if event.is_action_pressed(slot):
+			_equip_weapon(WEAPONS[slot])
+			return

@@ -144,6 +144,20 @@ func _initialize() -> void:
 	e.free()
 	stub.free()
 
+	# ── Task: 玩家装备/切枪 ──
+	var player_scene: PackedScene = load("res://Scenes/Player.tscn")
+	_check(player_scene != null, "Player 场景加载")
+	var p = player_scene.instantiate()
+	root.add_child(p)
+	await physics_frame
+	_check(p._weapon != null, "默认装备手枪")
+	if p._weapon != null:
+		_check(p._weapon.weapon_name == "Pistol", "默认武器是手枪")
+		p._equip_weapon("res://Scenes/Weapons/rifle_test.tscn")
+		await physics_frame
+		_check(p._weapon.weapon_name == "Rifle", "切枪到步枪")
+	p.free()
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)

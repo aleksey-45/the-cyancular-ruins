@@ -1,9 +1,7 @@
-[gd_scene load_steps=18 format=3 uid="uid://bbmqsehc1n6nm"]
+[gd_scene load_steps=16 format=3 uid="uid://bbmqsehc1n6nm"]
 
 [ext_resource type="Script" uid="uid://c3lcpld4toenv" path="res://Scenes/player.gd" id="1_kyqiw"]
 [ext_resource type="Texture2D" uid="uid://tkrxu88e0hfa" path="res://AssetBundle/Sprites/Player.png" id="1_rpqav"]
-[ext_resource type="Script" uid="uid://cj2jpf4pseeuq" path="res://Scenes/player_gun.gd" id="3_gun"]
-[ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://AssetBundle/Sprites/Weapons.png" id="4_wpn"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_miouo"]
 atlas = ExtResource("1_rpqav")
@@ -117,12 +115,13 @@ animations = [{
 "speed": 1.5
 }]
 
-[node name="Player" type="CharacterBody2D" node_paths=PackedStringArray("animator")]
+[node name="Player" type="CharacterBody2D" node_paths=PackedStringArray("animator", "weapon_slot")]
 scale = Vector2(2.5, 2.5)
 collision_layer = 2
 collision_mask = 3
 script = ExtResource("1_kyqiw")
 animator = NodePath("AnimatedSprite2D")
+weapon_slot = NodePath("WeaponSlot")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
 sprite_frames = SubResource("SpriteFrames_dewec")
@@ -153,14 +152,4 @@ visible = false
 position = Vector2(-14.1668, -9.25019)
 polygon = PackedVector2Array(5.3668, -10.7498, -1.8332, -6.74981, -3.8332, -1.54981, -3.8332, 13.6502, 2.9668, 20.4502, 2.9668, 32.0502, 20.1668, 32.0502, 20.1668, 20.4502, 28.1668, 13.6502, 28.1668, -3.94981, 23.3668, -9.54981, 18.1668, -10.7498)
 
-[node name="Gun" type="Node2D" parent="."]
-script = ExtResource("3_gun")
-
-[node name="Sprite2D" type="Sprite2D" parent="Gun"]
-position = Vector2(24, 5.6)
-texture = ExtResource("4_wpn")
-region_enabled = true
-region_rect = Rect2(2, 1.85493, 17.1001, 12.347)
-
-[node name="Muzzle" type="Marker2D" parent="Gun"]
-position = Vector2(31.6, 2)
+[node name="WeaponSlot" type="Node2D" parent="."]

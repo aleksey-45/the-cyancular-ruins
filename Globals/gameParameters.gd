@@ -32,19 +32,8 @@ const cam_deadzone: float = 8.0       # 死区像素（小于此值镜头不动�
 const enemy_count: int = 40
 const enemy_spawn_min_dist: float = 300.0
 
-# ── 子弹 ──
-const bullet_damage: int = 1
-const bullet_speed: float = 1500.0
-const bullet_range: float = 1200.0
-const bullet_radius: float = 5.0
-
-# ── 手枪 ──
-const fire_cooldown: float = 0.15
+# ── 武器瞄准(其余武器参数归各武器场景 @export)──
 const aim_pitch_deg: float = 45.0
-const recoil_kick: float = 4.0
-const recoil_time: float = 0.06
-const cam_shake: float = 2.0
-const cam_shake_time: float = 0.1
 
 # ── 玩家战斗 ──
 const player_max_hp: int = 40
