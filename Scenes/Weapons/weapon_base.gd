@@ -7,27 +7,78 @@ enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 const BULLET_SCENE: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
 
+# ── 武器参数(Inspect 里按组显示,悬停有 tooltip 说明)──
+@export_group("分类")
+@export_tooltip("模板分类(轻/中/重),仅作信息/分组用")
 @export var tier: Tier = Tier.LIGHT
+@export_tooltip("显示名,切枪/识别用")
 @export var weapon_name: String = "weapon"
+
+@export_group("开火")
+@export_tooltip("true=全自动(按住连发);false=半自动(按一下打一发)")
 @export var full_auto: bool = false
-@export var fire_cooldown: float = 0.2
+@export_tooltip("两次射击最小间隔(秒),越小射速越快")
+@export_range(0.02, 5.0, 0.01)
+var fire_cooldown: float = 0.2
+@export_tooltip("true=重武器:按住左键进入激光预瞄,松开才发射")
 @export var heavy_aim: bool = false
-@export var bullet_speed: float = 900.0
-@export var bullet_range: float = 600.0
-@export var bullet_size: float = 5.0
-@export var bullet_color: Color = Color.WHITE  # 子弹纹理本底;需要染色时各武器再设
-@export var damage: int = 1
-@export var impact: float = 60.0
-@export var recoil_push: float = 0.0
-@export var recoil_kick: float = 4.0
-@export var cam_shake: float = 2.0
-@export var cam_shake_time: float = 0.1
-@export var move_penalty: float = 1.0
-@export var jump_penalty: float = 1.0
+
+@export_group("子弹")
+@export_tooltip("子弹速度(px/s),越大弹道越直、越难闪避")
+@export_range(100.0, 5000.0, 50.0)
+var bullet_speed: float = 900.0
+@export_tooltip("子弹射程(px),超过即消失")
+@export_range(100.0, 10000.0, 50.0)
+var bullet_range: float = 600.0
+@export_tooltip("子弹体积(信息字段;实际大小由 bullet.tscn 场景决定)")
+@export_range(1.0, 50.0, 0.5)
+var bullet_size: float = 5.0
+@export_tooltip("子弹贴图染色(白色=原样显示 Bullets.png 贴图;想改子弹颜色就设这里)")
+@export var bullet_color: Color = Color.WHITE
+
+@export_group("伤害")
+@export_tooltip("命中敌人扣除的 HP")
+@export_range(1, 100, 1)
+var damage: int = 1
+@export_tooltip("命中击退力度(>0 会覆盖敌人自身 knockback_strength)")
+@export_range(0.0, 2000.0, 10.0)
+var impact: float = 60.0
+
+@export_group("后坐/镜头")
+@export_tooltip("开火把玩家向后推的力度(蹲下时不推)")
+@export_range(0.0, 500.0, 5.0)
+var recoil_push: float = 0.0
+@export_tooltip("枪口上跳幅度(枪精灵位移,纯视觉)")
+@export_range(0.0, 50.0, 1.0)
+var recoil_kick: float = 4.0
+@export_tooltip("开火镜头抖动幅度")
+@export_range(0.0, 50.0, 0.5)
+var cam_shake: float = 2.0
+@export_tooltip("镜头抖动时长(秒)")
+@export_range(0.02, 2.0, 0.02)
+var cam_shake_time: float = 0.1
+
+@export_group("移动惩罚")
+@export_tooltip("惩罚生效期间的水平移速倍率(1.0=不减,0.55=只剩 55%)")
+@export_range(0.1, 1.0, 0.05)
+var move_penalty: float = 1.0
+@export_tooltip("惩罚生效期间的跳跃初速倍率(1.0=不减)")
+@export_range(0.1, 1.0, 0.05)
+var jump_penalty: float = 1.0
+@export_tooltip("惩罚生效时机:NONE 永不 / WHILE_FIRING 开火后冷却中 / WHILE_AIM_OR_COOLDOWN 预瞄或冷却中")
 @export var penalty_mode: PenaltyMode = PenaltyMode.NONE
-@export var laser_length: float = 500.0
+
+@export_group("激光(heavy_aim 用)")
+@export_tooltip("预瞄激光线长度(px)")
+@export_range(100.0, 5000.0, 50.0)
+var laser_length: float = 500.0
+@export_tooltip("激光颜色")
 @export var laser_color: Color = Color(1.0, 0.2, 0.2, 0.6)
-@export var pitch_clamp_deg: float = 45.0  # 本枪仰角钳制角(每枪独立,枪口/激光/出弹共用)
+
+@export_group("瞄准")
+@export_tooltip("本枪仰角钳制角(枪口/激光/出弹方向共用)")
+@export_range(5.0, 85.0, 5.0)
+var pitch_clamp_deg: float = 45.0
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
