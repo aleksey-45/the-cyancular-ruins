@@ -13,7 +13,9 @@
 - Godot 4.4 mono console exe：`"D:/Program Files/Godot_v4.4.1-stable_mono_win64/Godot_v4.4.1-stable_mono_win64_console.exe"`（headless 跑冒烟/游戏启动用；工作目录 `E:/Workspace/godot/the-cyancular-ruins`）。
 - 冒烟脚本：`Tests/enemy_logic_smoke.gd`，命令：`... --headless --path . -s res://Tests/enemy_logic_smoke.gd`，成功打印 `SMOKE OK` 退出 0。
 - 环面世界：`MAP_WIDTH/MAP_HEIGHT` 由地图文件读出（540×324 格 × 16px = 8640×5184）。实体跨接缝锚定玩家副本（`MazeGenerator.anchor_to_nearest`）；无玩家时 `wrap_to_range` 绝对取模。
-- 物理层：墙 layer 1；玩家 layer 2 mask 3；敌人 layer 2 mask 1；子弹 layer 0 mask 3；ContactArea mask 2。
+- 物理层：墙 layer 1；玩家 layer 2 mask 3；敌人 layer 2 mask 3；子弹 layer 0 mask 3；ContactArea mask 2。
+  注（final review 定案）：玩家与敌人 mask 均为 3 → 互相**实体阻挡**，这是**有意设计**（用户决定保留），
+  与 enemies-combat 早期「敌人穿过玩家」不同；接触伤害仍由 ContactArea + 环面兜底处理。
 - 武器参数全部放各自场景 `@export`；`GameParameters` 只保留 `aim_pitch_deg`。旧 `bullet_*`/`fire_cooldown`/`recoil_*`/`cam_shake*` 常量删除。
 - 新增输入动作 `1`/`2`/`3` 为**空动作占位**（`"events": []`），键位由用户在编辑器 Input Map 映射（规范原文：键位由用户映射）。
 - 三把武器精灵区域先全部复用现有手枪区域 `Rect2(2, 1.85493, 17.1001, 12.347)`（占位），`Sprite2D.position`/`Muzzle.position`/`region_rect` 之后在编辑器手动调整。
