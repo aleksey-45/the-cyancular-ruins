@@ -77,7 +77,10 @@ region = Rect2(0, 0, 48, 48)
 
 [sub_resource type="SpriteFrames" id="SpriteFrames_0uvy8"]
 animations = [{
-"frames": [],
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_pc5nu")
+}],
 "loop": 1,
 "name": &"dashing",
 "speed": 5.0

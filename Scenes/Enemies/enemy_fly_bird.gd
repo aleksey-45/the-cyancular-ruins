@@ -117,6 +117,10 @@ func _ai(delta: float) -> void:
 			if intent == Intent.CHARGE:
 				if _try_charge():
 					return
+				# LOS 被堵:不再原地抛弹,退回 FLY 拉距离找 LOS(对齐 spec §1.4)
+				_set_state(State.FLY)
+				_schedule_repath()
+				return
 			elif dist > EnemyParams.FlyBird.shoot_range + EnemyParams.FlyBird.shoot_reacquire_margin:
 				_set_state(State.FLY)
 				_schedule_repath()
@@ -159,6 +163,7 @@ func _die_self() -> void:
 		return
 	is_dead = true
 	collision_layer = 0
+	collision_mask = 1  # 只与地形碰撞(坠落落地),不压在玩家头上
 	use_gravity = true
 	_apply_flight_collision(true)
 
@@ -329,6 +334,7 @@ func _try_charge() -> bool:
 
 func _start_charge() -> void:
 	_set_state(State.CHARGE)
+	use_gravity = false  # 冲撞为水平直线,不吃重力
 	var dir := toroidal_dir_to_player()
 	velocity = dir * EnemyParams.FlyBird.charge_speed
 	_anim.play("dashing")
