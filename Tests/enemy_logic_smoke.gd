@@ -255,6 +255,35 @@ func _initialize() -> void:
 	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线墙阻挡")
 	MazeGenerator.current_grid = []
 
+	# ── Task 3: 敌方抛物线子弹 ──
+	var bscene_e: PackedScene = load("res://Scenes/Enemies/enemy_bullet.tscn")
+	_check(bscene_e != null, "敌方子弹场景加载")
+	var eb := bscene_e.instantiate()
+	eb.global_position = Vector2(400, 400)
+	root.add_child(eb)
+	eb.launch(Vector2(100.0, 0.0), 2000.0, Color(1.0, 0.6, 0.2), 2, 1.0)
+	var start_vy: float = eb.velocity_vec.y
+	for i in range(10):
+		await physics_frame
+	_check(eb.velocity_vec.y > start_vy, "敌方子弹受重力下坠")
+	_check(is_instance_valid(eb) and eb.traveled > 0.0, "敌方子弹在飞行")
+	eb.free()
+	# 命中玩家组 → take_hit(damage)
+	var combat2 := StubCombatPlayer.new()
+	combat2.global_position = Vector2(400, 400)
+	root.add_child(combat2)
+	var eb2 := bscene_e.instantiate()
+	eb2.global_position = Vector2(400, 400)
+	root.add_child(eb2)
+	eb2.launch(Vector2(300.0, 0.0), 2000.0, Color(1.0, 0.6, 0.2), 2, 1.0)
+	for i in range(5):
+		await physics_frame
+		if not is_instance_valid(eb2):
+			break
+	_check(not is_instance_valid(eb2), "敌方子弹命中玩家后消失")
+	_check(combat2.hit_log.has(2), "敌方子弹命中造成伤害 2")
+	combat2.free()
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)
