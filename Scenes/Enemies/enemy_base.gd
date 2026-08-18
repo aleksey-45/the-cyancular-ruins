@@ -70,7 +70,8 @@ func _physics_process(delta: float) -> void:
 	_ai(delta)
 	_anim_update()
 	# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
-	if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
+	# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
+	if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
 		var p := get_tree().get_first_node_in_group("player")
 		if p != null and p.has_method("take_hit"):
 			p.take_hit(global_position, contact_damage)

@@ -284,6 +284,24 @@ func _initialize() -> void:
 	_check(combat2.hit_log.has(2), "敌方子弹命中造成伤害 2")
 	combat2.free()
 
+	# ── Task 4: 接触伤害守卫(contact_damage<=0 不触发)──
+	var combat3 := StubCombatPlayer.new()
+	combat3.global_position = Vector2(400, 400)
+	root.add_child(combat3)
+	var ej := jump2.instantiate()
+	ej.global_position = Vector2(400, 400)
+	root.add_child(ej)
+	ej.contact_damage = 0
+	for i in range(5):
+		await physics_frame
+	_check(combat3.hit_log.is_empty(), "contact_damage=0 不触发接触伤害")
+	ej.contact_damage = 4
+	for i in range(5):
+		await physics_frame
+	_check(combat3.hit_log.has(4), "contact_damage>0 触发接触伤害")
+	ej.free()
+	combat3.free()
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)
