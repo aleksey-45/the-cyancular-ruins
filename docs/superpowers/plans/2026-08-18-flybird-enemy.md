@@ -233,7 +233,8 @@ static func _rebuild_path(prev: Dictionary, start: Vector2i, goal: Vector2i) -> 
 	return path
 
 
-# 环面网格 LOS:按两格最短方向逐格步进,途中任一 SOLID 即阻断。
+# 环面网格 LOS:整数 Bresenham 沿直线采样两格之间的格子,途中任一 SOLID 即阻断。
+# 不能用「每步双轴各进一」的斜对角走法——|dx|≠|dy| 时会越过目标行/列、采样到线外的格子。
 static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	var grid := current_grid
 	if grid.is_empty():
@@ -243,16 +244,25 @@ static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	var d := _toroidal_step(from_cell, to_cell, cols, rows)
 	if d == Vector2i.ZERO:
 		return true
-	var cur := from_cell
-	var steps := maxi(absi(d.x), absi(d.y))
-	for i in range(1, steps + 1):
-		var nx := posmod(cur.x + signi(d.x), cols) if d.x != 0 else cur.x
-		var ny := posmod(cur.y + signi(d.y), rows) if d.y != 0 else cur.y
-		cur = Vector2i(nx, ny)
-		if grid[cur.y][cur.x] == SOLID:
+	var x := from_cell.x
+	var y := from_cell.y
+	var sx := 1 if d.x > 0 else -1
+	var sy := 1 if d.y > 0 else -1
+	var dx := absi(d.x)
+	var dy := absi(d.y)
+	var err := dx - dy
+	while true:
+		if grid[y][x] == SOLID:
 			return false
-		if cur == to_cell:
+		if x == to_cell.x and y == to_cell.y:
 			break
+		var e2 := 2 * err
+		if e2 > -dy:
+			err -= dy
+			x = posmod(x + sx, cols)
+		if e2 < dx:
+			err += dx
+			y = posmod(y + sy, rows)
 	return true
 
 
@@ -287,12 +297,17 @@ static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Ve
 	_check(not pth.is_empty() and pth[-1] == Vector2i(5, 6), "BFS 全通网格有路")
 	_check(pth[0] != Vector2i(2, 2), "BFS 路径不含起点")
 	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 2)).is_empty(), "BFS 同格返回空")
-	g[4][2] = MazeGenerator.SOLID
-	g[4][3] = MazeGenerator.SOLID
-	g[4][4] = MazeGenerator.SOLID
-	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 6)).is_empty(), "BFS 墙隔断无路")
-	_check(MazeGenerator.bfs_path(Vector2i(2, 6), Vector2i(2, 2)).is_empty(), "BFS 反向也无路")
-	_check(MazeGenerator.bfs_path(Vector2i(0, 0), Vector2i(15, 15), 8).is_empty(), "BFS 超预算无路")
+	# 两条整行墙(第 4/14 行)把环面切成隔离带;跨带必经墙行,才算"隔断"。
+	# 3 格短墙在环面上有绕行路,不能证明隔断。
+	for x in range(20):
+		g[4][x] = MazeGenerator.SOLID
+		g[14][x] = MazeGenerator.SOLID
+	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 8)).is_empty(), "BFS 墙带隔断无路")
+	_check(MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 2)).is_empty(), "BFS 反向也无路")
+	_check(not MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 12)).is_empty(), "BFS 同带仍有路")
+	# 限量预算: 同带可达、曼哈顿距离 14 > 预算 8 → 视为无路
+	_check(not MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12)).is_empty(), "BFS 预算内可达")
+	_check(MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12), 8).is_empty(), "BFS 超预算无路")
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 0)), "LOS 直线通视")
 	var g2: Array[Array] = []
 	for _y in range(20):
@@ -305,6 +320,20 @@ static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Ve
 	MazeGenerator.current_grid = g2
 	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 2), Vector2i(6, 2)), "LOS 墙阻挡")
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(6, 0)), "LOS 无墙通视")
+	# LOS 斜线(旧实现的斜对角走法在 |dx|≠|dy| 时会越过目标行/列,采样到线外格子)
+	var g3: Array[Array] = []
+	for _y in range(20):
+		var row5: Array[int] = []
+		row5.resize(20)
+		row5.fill(MazeGenerator.EMPTY)
+		g3.append(row5)
+	MazeGenerator.current_grid = g3
+	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线通视")
+	g3[5][5] = MazeGenerator.SOLID  # 在旧实现越行路径上,不在直线上 → 不应阻挡
+	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线旁路墙不阻挡")
+	g3[5][5] = MazeGenerator.EMPTY
+	g3[2][3] = MazeGenerator.SOLID  # 直线上格(3,2) → 阻挡
+	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线墙阻挡")
 	MazeGenerator.current_grid = []
 ```
 
@@ -679,6 +708,7 @@ func _die_self() -> void:
 		return
 	is_dead = true
 	collision_layer = 0
+	collision_mask = 1  # 只与地形碰撞(坠落落地),不压在玩家头上
 	use_gravity = true
 	_apply_flight_collision(true)
 
@@ -812,9 +842,10 @@ func _hover_to_anchor(delta: float) -> void:
 
 func _fire_parabolic() -> void:
 	# 平抛:水平初速 + 重力,落点按玩家坐标 + 玩家即时速度预测。
-	var dy := global_position.y - _player_pos().y
-	dy = maxf(dy, EnemyParams.FlyBird.bullet_min_drop)
-	var t := sqrt(2.0 * dy / GameParameters.gravity0)
+	# 落差 = 玩家.y − 鸟.y(玩家在鸟下方为正)。玩家高于鸟时夹到下限,弹道偏近属预期。
+	var drop := _player_pos().y - global_position.y
+	drop = maxf(drop, EnemyParams.FlyBird.bullet_min_drop)
+	var t := sqrt(2.0 * drop / GameParameters.gravity0)
 	var pred := _player_pos() + _player_velocity() * t
 	var dx := pred.x - global_position.x
 	if absf(dx) > GameParameters.MAP_WIDTH * 0.5:
@@ -966,6 +997,19 @@ const TYPES: Dictionary = {
 	_check(fb.contact_damage == 0, "FlyBird 无接触伤害")
 	_check(fb.collision_layer == 3, "FlyBird 占层3")
 	_check(is_equal_approx(fb.scale.x, 2.0), "FlyBird scale=2.0")
+	# 全宽地板:让睡眠的鸟落在地板上,避免自由落体导致其低于玩家(否则平抛弹够不到);
+	# 同时供死亡坠落落地。
+	var floor_b := StaticBody2D.new()
+	var fshape_b := CollisionShape2D.new()
+	var frect_b := RectangleShape2D.new()
+	frect_b.size = Vector2(5000, 40)
+	fshape_b.shape = frect_b
+	fshape_b.position = Vector2(0, -20)
+	floor_b.add_child(fshape_b)
+	floor_b.position = Vector2(2400, 1240)
+	floor_b.collision_layer = 1
+	floor_b.collision_mask = 0
+	root.add_child(floor_b)
 	# 玩家远离 → 保持睡眠
 	var far_player := StubCombatPlayer.new()
 	far_player.global_position = Vector2(2888, 2392)
@@ -993,18 +1037,7 @@ const TYPES: Dictionary = {
 	_check(reached_shoot, "FlyBird 进入射击状态")
 	_check(fired, "FlyBird 发射过投弹")
 	_check(near_player.hit_log.has(2), "投弹命中玩家造成 2 伤害")
-	# 杀死 → 坠落落地消失
-	var floor_b := StaticBody2D.new()
-	var fshape_b := CollisionShape2D.new()
-	var frect_b := RectangleShape2D.new()
-	frect_b.size = Vector2(800, 40)
-	fshape_b.shape = frect_b
-	fshape_b.position = Vector2(0, -20)
-	floor_b.add_child(fshape_b)
-	floor_b.position = Vector2(500, 1300)
-	floor_b.collision_layer = 1
-	floor_b.collision_mask = 0
-	root.add_child(floor_b)
+	# 杀死 → 坠落落地消失(地板已在上面铺好,全宽覆盖任意锚点/击退漂移)
 	fb.hurt(99, Vector2.RIGHT)
 	await physics_frame
 	_check(fb.is_dead, "FlyBird 受击死亡")
@@ -1106,6 +1139,10 @@ git commit -m "feat: FlyBird 核心状态机(睡眠/起飞/飞行/斜上射击/�
 			if intent == Intent.CHARGE:
 				if _try_charge():
 					return
+				# LOS 被堵:不再原地抛弹,退回 FLY 拉距离找 LOS(对齐 spec §1.4)
+				_set_state(State.FLY)
+				_schedule_repath()
+				return
 			elif dist > EnemyParams.FlyBird.shoot_range + EnemyParams.FlyBird.shoot_reacquire_margin:
 				_set_state(State.FLY)
 				_schedule_repath()
@@ -1196,6 +1233,7 @@ func _try_charge() -> bool:
 
 func _start_charge() -> void:
 	_set_state(State.CHARGE)
+	use_gravity = false  # 冲撞为水平直线,不吃重力
 	var dir := toroidal_dir_to_player()
 	velocity = dir * EnemyParams.FlyBird.charge_speed
 	_anim.play("dashing")

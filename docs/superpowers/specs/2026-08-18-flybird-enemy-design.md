@@ -72,6 +72,8 @@ CHARGE ──(撞墙 / 撞玩家 / 超时 charge_timeout)──▶ 自毁
 
 - 锁定起冲方向 = 朝玩家当前坐标(冲撞期间不追踪预测),`charge_speed` 高速直线,
   无重力,播 `dashing`。
+  (注:场景 `dashing` 动画帧需填充——复用 `flying` 的一帧,否则冲撞时不可见并报
+  "frames is empty" 警告。)
 - `_physics_process` 在 super 之后检查 `get_slide_collision_count() > 0`:
   - 撞到玩家组 → `player.take_hit(global_position, charge_damage=5)` → 自毁
   - 撞到地形 / 超时 `charge_timeout`(未撞到任何东西) → 自毁
@@ -112,7 +114,7 @@ CHARGE ──(撞墙 / 撞玩家 / 超时 charge_timeout)──▶ 自毁
   → `move_and_collide` → 命中玩家组 → `take_hit(global_position, damage=2)` → 消失;
   命中地形 / 超射程 → 消失。伤害 2,纯普通投掷弹,无附加效果。
 - 平抛落点计算(开火时,`SHOOT` 状态):
-  - 落差 `dy = 鸟.y − 玩家.y`,下限夹 `bullet_min_drop`(30px,玩家高于鸟时的兜底);
+  - 落差 `drop = 玩家.y − 鸟.y`(玩家在鸟下方为正;玩家高于鸟时夹到下限,弹道偏近属预期);
   - 下落时间 `t = sqrt(2·dy / gravity0)`;
   - 预测落点 `pred = 玩家位置 + 玩家.velocity · t`(玩家"即时速度"超前量);
   - 水平环面位移 `dx = 鸟→pred 的水平分量`;
