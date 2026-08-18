@@ -379,6 +379,104 @@ func _initialize() -> void:
 	near_player.free()
 	MazeGenerator.current_grid = []
 
+	# ── Task 6: FlyBird 冲撞 + 返程 ──
+	var fb2_grid: Array[Array] = []
+	for _y in range(150):
+		var row4: Array[int] = []
+		row4.resize(300)
+		row4.fill(MazeGenerator.EMPTY)
+		fb2_grid.append(row4)
+	MazeGenerator.current_grid = fb2_grid
+	# 冲撞: HP<25% + LOS 通 → 撞玩家 5 伤并自毁
+	var fb2 := fb_scene.instantiate()
+	fb2.global_position = Vector2(488, 1208)
+	root.add_child(fb2)
+	await physics_frame
+	fb2.hp = 4
+	var charge_player := StubCombatPlayer.new()
+	charge_player.global_position = Vector2(700, 1208)
+	root.add_child(charge_player)
+	var entered_charge := false
+	for i in range(240):
+		await physics_frame
+		if fb2.state == 4:
+			entered_charge = true
+			break
+	_check(entered_charge, "FlyBird 低血量进入冲撞")
+	for i in range(120):
+		await physics_frame
+		if not is_instance_valid(fb2):
+			break
+	_check(charge_player.hit_log.has(5), "冲撞造成 5 伤害")
+	_check(not is_instance_valid(fb2) or fb2.is_dead, "冲撞后自毁")
+	if is_instance_valid(fb2):
+		fb2.free()
+	charge_player.free()
+	# 冲撞超时: 起冲后移走玩家 → 超时自毁
+	var fb3 := fb_scene.instantiate()
+	fb3.global_position = Vector2(488, 1208)
+	root.add_child(fb3)
+	await physics_frame
+	fb3.hp = 4
+	var timeout_player := StubCombatPlayer.new()
+	timeout_player.global_position = Vector2(700, 1208)
+	root.add_child(timeout_player)
+	var charged := false
+	for i in range(240):
+		await physics_frame
+		if fb3.state == 4:
+			charged = true
+			break
+	_check(charged, "FlyBird 再次进入冲撞")
+	timeout_player.global_position = Vector2(2888, 2392)
+	var timed_out := false
+	for i in range(200):
+		await physics_frame
+		if fb3.is_dead:
+			timed_out = true
+			break
+	_check(timed_out, "冲撞超时自毁")
+	if is_instance_valid(fb3):
+		fb3.free()
+	timeout_player.free()
+	# 返程: 玩家跑出追击范围 → 回家落地入睡
+	var floor_r := StaticBody2D.new()
+	var fshape_r := CollisionShape2D.new()
+	var frect_r := RectangleShape2D.new()
+	frect_r.size = Vector2(400, 40)
+	fshape_r.shape = frect_r
+	fshape_r.position = Vector2(0, -20)
+	floor_r.add_child(fshape_r)
+	floor_r.position = Vector2(488, 1256)
+	floor_r.collision_layer = 1
+	floor_r.collision_mask = 0
+	root.add_child(floor_r)
+	var fb4 := fb_scene.instantiate()
+	fb4.global_position = Vector2(488, 1208)
+	root.add_child(fb4)
+	await physics_frame
+	var ret_player := StubCombatPlayer.new()
+	ret_player.global_position = Vector2(600, 1208)
+	root.add_child(ret_player)
+	var engaged := false
+	for i in range(240):
+		await physics_frame
+		if fb4.state == 2 or fb4.state == 3:
+			engaged = true
+			break
+	_check(engaged, "FlyBird 进入战斗状态")
+	ret_player.global_position = Vector2(2888, 2392)
+	var returned := false
+	for i in range(600):
+		await physics_frame
+		if fb4.state == 0:
+			returned = true
+			break
+	_check(returned, "FlyBird 返程后入睡")
+	floor_r.free()
+	ret_player.free()
+	MazeGenerator.current_grid = []
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)

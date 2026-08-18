@@ -47,6 +47,16 @@ func _physics_process(delta: float) -> void:
 		_update_death(delta)
 		return
 	super._physics_process(delta)
+	# 冲撞撞到东西(super 已执行 move_and_slide)
+	if state == State.CHARGE and get_slide_collision_count() > 0:
+		_on_charge_impact()
+	elif state == State.RETURN and _landing and is_on_floor():
+		# 返程落地 → 入睡(先播 fall_asleep 一次性动画)
+		_anim.play("fall_asleep")
+		_sleep_anim_timer = _anim_duration("fall_asleep")
+		_set_state(State.SLEEP)
+		_apply_flight_collision(false)
+		_landing = false
 
 
 func _ai(delta: float) -> void:
@@ -80,17 +90,34 @@ func _ai(delta: float) -> void:
 				_schedule_repath()
 		State.FLY:
 			_anim.play("flying")
-			if dist <= EnemyParams.FlyBird.shoot_range:
+			if _player_home_dist() > EnemyParams.FlyBird.home_range:
+				_start_return()
+				return
+			_update_charge_intent_if_needed()
+			if intent == Intent.CHARGE:
+				if _try_charge():
+					return
+			elif dist <= EnemyParams.FlyBird.shoot_range:
 				_start_shoot()
 				return
 			_repath_timer -= delta
 			if _repath_timer <= 0.0:
 				_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
 				_repath_to(_cell_of(_player_pos()))
+				if _path.is_empty():
+					_start_return()
+					return
 			_follow_path(delta)
 		State.SHOOT:
 			_anim.play("flying")
-			if dist > EnemyParams.FlyBird.shoot_range + EnemyParams.FlyBird.shoot_reacquire_margin:
+			if _player_home_dist() > EnemyParams.FlyBird.home_range:
+				_start_return()
+				return
+			_update_charge_intent_if_needed()
+			if intent == Intent.CHARGE:
+				if _try_charge():
+					return
+			elif dist > EnemyParams.FlyBird.shoot_range + EnemyParams.FlyBird.shoot_reacquire_margin:
 				_set_state(State.FLY)
 				_schedule_repath()
 				return
@@ -100,8 +127,22 @@ func _ai(delta: float) -> void:
 			if _shoot_timer <= 0.0:
 				_fire_parabolic()
 				_shoot_timer = EnemyParams.FlyBird.shoot_cooldown
-		State.CHARGE, State.RETURN:
-			pass  # Task 6 实现
+		State.CHARGE:
+			_state_timer += delta
+			if _state_timer >= EnemyParams.FlyBird.charge_timeout:
+				_die_self()
+		State.RETURN:
+			_anim.play("flying")
+			if _landing:
+				pass
+			elif _home_reached():
+				_start_landing()
+			else:
+				_repath_timer -= delta
+				if _repath_timer <= 0.0:
+					_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
+					_repath_to(_home_cell)
+				_follow_path(delta)
 
 
 func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
@@ -267,6 +308,58 @@ func _fire_parabolic() -> void:
 			EnemyParams.FlyBird.bullet_gravity)
 	b.global_position = global_position
 	get_viewport().add_child(b)
+
+
+# ── 冲撞与返程 ──
+
+func _update_charge_intent_if_needed() -> void:
+	# 血量跌穿 25% 单向切冲撞意图(HP 只减不增)。
+	if intent == Intent.SHOOT and hp < _max_hp * EnemyParams.FlyBird.charge_hp_fraction:
+		intent = Intent.CHARGE
+
+
+func _try_charge() -> bool:
+	if toroidal_dist_to_player() > EnemyParams.FlyBird.charge_range:
+		return false
+	if not MazeGenerator.has_line_of_sight(_cell_of(global_position), _cell_of(_player_pos())):
+		return false
+	_start_charge()
+	return true
+
+
+func _start_charge() -> void:
+	_set_state(State.CHARGE)
+	var dir := toroidal_dir_to_player()
+	velocity = dir * EnemyParams.FlyBird.charge_speed
+	_anim.play("dashing")
+
+
+func _on_charge_impact() -> void:
+	for i in range(get_slide_collision_count()):
+		var collider := get_slide_collision(i).get_collider()
+		if collider != null and collider.is_in_group("player") and collider.has_method("take_hit"):
+			collider.take_hit(global_position, EnemyParams.FlyBird.charge_damage)
+			break
+	_die_self()
+
+
+func _start_return() -> void:
+	_set_state(State.RETURN)
+	_landing = false
+	_anim.play("flying")
+	_repath_to(_home_cell)
+
+
+func _home_reached() -> bool:
+	return _toroidal_dist_to(_spawn_pos) <= EnemyParams.FlyBird.arrival_radius
+
+
+func _start_landing() -> void:
+	_landing = true
+	_path = []
+	use_gravity = true
+	velocity = Vector2.ZERO
+	_apply_flight_collision(false)  # 落地用站立碰撞箱
 
 
 func _takeoff_velocity() -> void:
