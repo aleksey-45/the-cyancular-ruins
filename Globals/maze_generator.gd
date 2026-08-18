@@ -104,3 +104,98 @@ static func load_map_file() -> Array[Array]:
 	if grid.is_empty():
 		push_error("MazeGenerator: 地图文件 %s 无有效行" % MAP_FILE)
 	return grid
+
+
+# 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
+static var current_grid: Array[Array] = []
+
+
+# 像素坐标 → 环面格子坐标(取模回 [0,cols)×[0,rows))。
+static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
+	var c := Vector2i(floori(pos.x / ts), floori(pos.y / ts))
+	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
+
+
+# 环面 4 邻居 BFS:返回从 from_cell 到 to_cell 的格序列(不含起点,含终点)。
+# 只走 EMPTY 格;限量访问 max_visit,超限视为无路。同格/无路返回空数组。
+static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 8000) -> Array[Vector2i]:
+	var grid := current_grid
+	if grid.is_empty():
+		return []
+	var rows := grid.size()
+	var cols := grid[0].size()
+	if from_cell == to_cell:
+		return []
+	var visited := {from_cell: true}
+	var prev := {}
+	var queue: Array[Vector2i] = [from_cell]
+	var head := 0
+	while head < queue.size():
+		var cur := queue[head]
+		head += 1
+		if visited.size() > max_visit:
+			return []
+		for n in _neighbors4(cur, cols, rows):
+			if visited.has(n) or grid[n.y][n.x] == SOLID:
+				continue
+			visited[n] = true
+			prev[n] = cur
+			if n == to_cell:
+				return _rebuild_path(prev, from_cell, to_cell)
+			queue.append(n)
+	return []
+
+
+static func _neighbors4(c: Vector2i, cols: int, rows: int) -> Array[Vector2i]:
+	return [
+		Vector2i((c.x + 1) % cols, c.y),
+		Vector2i((c.x - 1 + cols) % cols, c.y),
+		Vector2i(c.x, (c.y + 1) % rows),
+		Vector2i(c.x, (c.y - 1 + rows) % rows),
+	]
+
+
+static func _rebuild_path(prev: Dictionary, start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
+	var path: Array[Vector2i] = []
+	var cur := goal
+	while cur != start:
+		path.push_front(cur)
+		cur = prev[cur]
+	return path
+
+
+# 环面网格 LOS:按两格最短方向逐格步进,途中任一 SOLID 即阻断。
+static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
+	var grid := current_grid
+	if grid.is_empty():
+		return false
+	var rows := grid.size()
+	var cols := grid[0].size()
+	var d := _toroidal_step(from_cell, to_cell, cols, rows)
+	if d == Vector2i.ZERO:
+		return true
+	var cur := from_cell
+	var steps := maxi(absi(d.x), absi(d.y))
+	for i in range(1, steps + 1):
+		var nx := posmod(cur.x + signi(d.x), cols) if d.x != 0 else cur.x
+		var ny := posmod(cur.y + signi(d.y), rows) if d.y != 0 else cur.y
+		cur = Vector2i(nx, ny)
+		if grid[cur.y][cur.x] == SOLID:
+			return false
+		if cur == to_cell:
+			break
+	return true
+
+
+static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Vector2i:
+	var dx := b.x - a.x
+	if dx > cols / 2:
+		dx -= cols
+	elif dx < -cols / 2:
+		dx += cols
+	var dy := b.y - a.y
+	if dy > rows / 2:
+		dy -= rows
+	elif dy < -rows / 2:
+		dy += rows
+	return Vector2i(dx, dy)

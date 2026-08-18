@@ -204,6 +204,38 @@ func _initialize() -> void:
 	_check(combat.hit_log.is_empty(), "玩家未被自己子弹命中")
 	combat.free()
 
+	# ── Task 2: MazeGenerator BFS + LOS ──
+	var g: Array[Array] = []
+	for _y in range(20):
+		var row: Array[int] = []
+		row.resize(20)
+		row.fill(MazeGenerator.EMPTY)
+		g.append(row)
+	MazeGenerator.current_grid = g
+	var pth := MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(5, 6))
+	_check(not pth.is_empty() and pth[-1] == Vector2i(5, 6), "BFS 全通网格有路")
+	_check(pth[0] != Vector2i(2, 2), "BFS 路径不含起点")
+	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 2)).is_empty(), "BFS 同格返回空")
+	g[4][2] = MazeGenerator.SOLID
+	g[4][3] = MazeGenerator.SOLID
+	g[4][4] = MazeGenerator.SOLID
+	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 6)).is_empty(), "BFS 墙隔断无路")
+	_check(MazeGenerator.bfs_path(Vector2i(2, 6), Vector2i(2, 2)).is_empty(), "BFS 反向也无路")
+	_check(MazeGenerator.bfs_path(Vector2i(0, 0), Vector2i(15, 15), 8).is_empty(), "BFS 超预算无路")
+	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 0)), "LOS 直线通视")
+	var g2: Array[Array] = []
+	for _y in range(20):
+		var row2: Array[int] = []
+		row2.resize(20)
+		row2.fill(MazeGenerator.EMPTY)
+		g2.append(row2)
+	for x in range(1, 6):
+		g2[2][x] = MazeGenerator.SOLID
+	MazeGenerator.current_grid = g2
+	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 2), Vector2i(6, 2)), "LOS 墙阻挡")
+	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(6, 0)), "LOS 无墙通视")
+	MazeGenerator.current_grid = []
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)
