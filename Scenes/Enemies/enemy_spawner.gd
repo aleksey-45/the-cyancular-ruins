@@ -4,6 +4,7 @@ extends Node2D
 # 类型注册表:加新敌人 = 一个 .tscn + 一行(string 路径,load() 时取)。
 const TYPES: Dictionary = {
 	"jump_bird": "res://Scenes/Enemies/EnemyJumpBird.tscn",
+	"fly_bird": "res://Scenes/Enemies/EnemyFlyBird.tscn",
 }
 
 # 在 grid 的空位里随机取 count 个、且距 player_cell 的环面距离 >= min_dist_cells 的格子。

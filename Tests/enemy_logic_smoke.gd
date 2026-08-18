@@ -302,6 +302,81 @@ func _initialize() -> void:
 	ej.free()
 	combat3.free()
 
+	# ── Task 5: FlyBird 基础(睡眠/唤醒/起飞/射击/死亡)──
+	var fb_grid: Array[Array] = []
+	for _y in range(150):
+		var row3: Array[int] = []
+		row3.resize(300)
+		row3.fill(MazeGenerator.EMPTY)
+		fb_grid.append(row3)
+	MazeGenerator.current_grid = fb_grid
+	var fb_scene: PackedScene = load("res://Scenes/Enemies/EnemyFlyBird.tscn")
+	_check(fb_scene != null, "FlyBird 场景加载")
+	var fb := fb_scene.instantiate()
+	fb.global_position = Vector2(488, 1208)
+	root.add_child(fb)
+	await physics_frame
+	_check(fb.get_script() == load("res://Scenes/Enemies/enemy_fly_bird.gd"), "FlyBird 实例类型")
+	_check(fb.state == 0, "FlyBird 初始休眠")
+	_check(fb.is_in_group("enemies"), "FlyBird 加入 enemies 组")
+	_check(fb.get_node_or_null("ContactArea") != null, "FlyBird ContactArea 创建")
+	_check(fb.hp == 20, "FlyBird hp=20")
+	_check(fb.contact_damage == 0, "FlyBird 无接触伤害")
+	_check(fb.collision_layer == 3, "FlyBird 占层3")
+	_check(is_equal_approx(fb.scale.x, 2.0), "FlyBird scale=2.0")
+	# 玩家远离 → 保持睡眠
+	var far_player := StubCombatPlayer.new()
+	far_player.global_position = Vector2(2888, 2392)
+	root.add_child(far_player)
+	for i in range(30):
+		await physics_frame
+	_check(fb.state == 0, "玩家远处保持睡眠")
+	far_player.free()
+	# 玩家接近 → 苏醒→起飞→飞行→射击并命中
+	var near_player := StubCombatPlayer.new()
+	near_player.global_position = Vector2(600, 1208)
+	root.add_child(near_player)
+	var eb_script := load("res://Scenes/Enemies/enemy_bullet.gd")
+	var reached_shoot := false
+	var fired := false
+	for i in range(240):
+		await physics_frame
+		if fb.state == 3:
+			reached_shoot = true
+		if not fired:
+			for child in root.get_children():
+				if child.get_script() == eb_script:
+					fired = true
+					break
+	_check(reached_shoot, "FlyBird 进入射击状态")
+	_check(fired, "FlyBird 发射过投弹")
+	_check(near_player.hit_log.has(2), "投弹命中玩家造成 2 伤害")
+	# 杀死 → 坠落落地消失
+	var floor_b := StaticBody2D.new()
+	var fshape_b := CollisionShape2D.new()
+	var frect_b := RectangleShape2D.new()
+	frect_b.size = Vector2(800, 40)
+	fshape_b.shape = frect_b
+	fshape_b.position = Vector2(0, -20)
+	floor_b.add_child(fshape_b)
+	floor_b.position = Vector2(500, 1300)
+	floor_b.collision_layer = 1
+	floor_b.collision_mask = 0
+	root.add_child(floor_b)
+	fb.hurt(99, Vector2.RIGHT)
+	await physics_frame
+	_check(fb.is_dead, "FlyBird 受击死亡")
+	var died := false
+	for i in range(180):
+		await physics_frame
+		if not is_instance_valid(fb):
+			died = true
+			break
+	_check(died, "FlyBird 死亡坠落落地后消失")
+	floor_b.free()
+	near_player.free()
+	MazeGenerator.current_grid = []
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)
