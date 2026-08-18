@@ -4,11 +4,11 @@
 [ext_resource type="Texture2D" uid="uid://cbxquhfl3xc11" path="res://AssetBundle/Sprites/Bullets.png" id="2_14wxs"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_8bitv"]
-size = Vector2(8, 6)
+size = Vector2(12, 6)
 
 [node name="Bullet" type="CharacterBody2D"]
 collision_layer = 0
-collision_mask = 3
+collision_mask = 5
 motion_mode = 1
 script = ExtResource("1_bl")
 
@@ -19,4 +19,4 @@ shape = SubResource("RectangleShape2D_8bitv")
 texture_filter = 1
 texture = ExtResource("2_14wxs")
 region_enabled = true
-region_rect = Rect2(7, 1, 6, 3)
+region_rect = Rect2(2, 1, 11, 4)

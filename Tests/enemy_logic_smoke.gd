@@ -12,6 +12,24 @@ class StubPlayer:
 	func apply_recoil(_push: float) -> void:
 		pass
 
+# 带碰撞体的战斗桩玩家:入 player 组、占层2,记录 take_hit 伤害。
+class StubCombatPlayer:
+	extends CharacterBody2D
+	var hit_log: Array = []
+	func _init() -> void:
+		add_to_group("player")
+		collision_layer = 2
+		collision_mask = 0
+		var shape := CollisionShape2D.new()
+		var rect := RectangleShape2D.new()
+		rect.size = Vector2(40, 40)
+		shape.shape = rect
+		add_child(shape)
+	func take_hit(_source_pos: Vector2, damage: int) -> void:
+		hit_log.append(damage)
+	func is_downed() -> bool:
+		return false
+
 var _failures: Array[String] = []
 
 func _check(cond: bool, name: String) -> void:
@@ -57,7 +75,7 @@ func _initialize() -> void:
 	_check(e.get_node_or_null("ContactArea") != null, "ContactArea 创建")
 
 	# ── Task 6: 子弹 ──
-	# 清掉 Task 4 遗留的敌人(在原点,碰撞层2);否则子弹出生即命中并立即消失
+	# 清掉 Task 4 遗留的敌人(在原点,碰撞层3);否则子弹出生即命中并立即消失
 	e.free()
 	var bscene: PackedScene = load("res://Scenes/Weapons/bullet.tscn")
 	_check(bscene != null, "子弹场景加载")
@@ -155,6 +173,36 @@ func _initialize() -> void:
 		await physics_frame
 		_check(p._weapon.weapon_name == "Rifle", "切枪到步枪")
 	p.free()
+
+	# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
+	var jump2: PackedScene = load("res://Scenes/Enemies/EnemyJumpBird.tscn")
+	var e2 := jump2.instantiate()
+	root.add_child(e2)
+	_check(e2.collision_layer == 3, "敌人占用层3")
+	e2.free()
+	var bm := bscene.instantiate()
+	_check(bm.collision_mask == 5, "玩家子弹 mask=5(地形+敌人)")
+	bm.free()
+	var pc2 := player_scene.instantiate()
+	root.add_child(pc2)
+	await physics_frame
+	_check(pc2.collision_mask == 5, "玩家 mask=5(地形+敌人)")
+	pc2.free()
+	# 玩家子弹穿过玩家身体(不再打自己)
+	var combat := StubCombatPlayer.new()
+	combat.global_position = Vector2(600, 400)
+	root.add_child(combat)
+	var pb := bscene.instantiate()
+	root.add_child(pb)
+	pb.setup(Vector2.RIGHT, 1000.0, 800.0, 1.0, Color.WHITE, null)
+	pb.global_position = Vector2(400, 400)
+	for i in range(15):
+		await physics_frame
+		if not is_instance_valid(pb):
+			break
+	_check(is_instance_valid(pb) and pb.global_position.x > 600.0, "玩家子弹穿过玩家不触发")
+	_check(combat.hit_log.is_empty(), "玩家未被自己子弹命中")
+	combat.free()
 
 	if _failures.is_empty():
 		print("SMOKE OK")
