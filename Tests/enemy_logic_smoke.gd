@@ -324,6 +324,19 @@ func _initialize() -> void:
 	_check(fb.contact_damage == 0, "FlyBird 无接触伤害")
 	_check(fb.collision_layer == 3, "FlyBird 占层3")
 	_check(is_equal_approx(fb.scale.x, 2.0), "FlyBird scale=2.0")
+	# 全宽地板:让睡眠的鸟落在地板上,避免自由落体导致其低于玩家(否则平抛弹够不到);
+	# 同时供死亡坠落落地。
+	var floor_b := StaticBody2D.new()
+	var fshape_b := CollisionShape2D.new()
+	var frect_b := RectangleShape2D.new()
+	frect_b.size = Vector2(5000, 40)
+	fshape_b.shape = frect_b
+	fshape_b.position = Vector2(0, -20)
+	floor_b.add_child(fshape_b)
+	floor_b.position = Vector2(2400, 1240)
+	floor_b.collision_layer = 1
+	floor_b.collision_mask = 0
+	root.add_child(floor_b)
 	# 玩家远离 → 保持睡眠
 	var far_player := StubCombatPlayer.new()
 	far_player.global_position = Vector2(2888, 2392)
@@ -351,18 +364,7 @@ func _initialize() -> void:
 	_check(reached_shoot, "FlyBird 进入射击状态")
 	_check(fired, "FlyBird 发射过投弹")
 	_check(near_player.hit_log.has(2), "投弹命中玩家造成 2 伤害")
-	# 杀死 → 坠落落地消失
-	var floor_b := StaticBody2D.new()
-	var fshape_b := CollisionShape2D.new()
-	var frect_b := RectangleShape2D.new()
-	frect_b.size = Vector2(800, 40)
-	fshape_b.shape = frect_b
-	fshape_b.position = Vector2(0, -20)
-	floor_b.add_child(fshape_b)
-	floor_b.position = Vector2(500, 1300)
-	floor_b.collision_layer = 1
-	floor_b.collision_mask = 0
-	root.add_child(floor_b)
+	# 杀死 → 坠落落地消失(地板已在上面铺好,全宽覆盖任意锚点/击退漂移)
 	fb.hurt(99, Vector2.RIGHT)
 	await physics_frame
 	_check(fb.is_dead, "FlyBird 受击死亡")

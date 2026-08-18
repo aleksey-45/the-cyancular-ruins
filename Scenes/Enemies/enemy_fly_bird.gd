@@ -251,9 +251,10 @@ func _hover_to_anchor(delta: float) -> void:
 
 func _fire_parabolic() -> void:
 	# 平抛:水平初速 + 重力,落点按玩家坐标 + 玩家即时速度预测。
-	var dy := global_position.y - _player_pos().y
-	dy = maxf(dy, EnemyParams.FlyBird.bullet_min_drop)
-	var t := sqrt(2.0 * dy / GameParameters.gravity0)
+	# 落差 = 玩家.y − 鸟.y(玩家在鸟下方为正)。玩家高于鸟时夹到下限,弹道偏近属预期。
+	var drop := _player_pos().y - global_position.y
+	drop = maxf(drop, EnemyParams.FlyBird.bullet_min_drop)
+	var t := sqrt(2.0 * drop / GameParameters.gravity0)
 	var pred := _player_pos() + _player_velocity() * t
 	var dx := pred.x - global_position.x
 	if absf(dx) > GameParameters.MAP_WIDTH * 0.5:
