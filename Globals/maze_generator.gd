@@ -164,7 +164,8 @@ static func _rebuild_path(prev: Dictionary, start: Vector2i, goal: Vector2i) -> 
 	return path
 
 
-# 环面网格 LOS:按两格最短方向逐格步进,途中任一 SOLID 即阻断。
+# 环面网格 LOS:整数 Bresenham 沿直线采样两格之间的格子,途中任一 SOLID 即阻断。
+# 不能用「每步双轴各进一」的斜对角走法——|dx|≠|dy| 时会越过目标行/列、采样到线外的格子。
 static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	var grid := current_grid
 	if grid.is_empty():
@@ -174,16 +175,25 @@ static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	var d := _toroidal_step(from_cell, to_cell, cols, rows)
 	if d == Vector2i.ZERO:
 		return true
-	var cur := from_cell
-	var steps := maxi(absi(d.x), absi(d.y))
-	for i in range(1, steps + 1):
-		var nx := posmod(cur.x + signi(d.x), cols) if d.x != 0 else cur.x
-		var ny := posmod(cur.y + signi(d.y), rows) if d.y != 0 else cur.y
-		cur = Vector2i(nx, ny)
-		if grid[cur.y][cur.x] == SOLID:
+	var x := from_cell.x
+	var y := from_cell.y
+	var sx := 1 if d.x > 0 else -1
+	var sy := 1 if d.y > 0 else -1
+	var dx := absi(d.x)
+	var dy := absi(d.y)
+	var err := dx - dy
+	while true:
+		if grid[y][x] == SOLID:
 			return false
-		if cur == to_cell:
+		if x == to_cell.x and y == to_cell.y:
 			break
+		var e2 := 2 * err
+		if e2 > -dy:
+			err -= dy
+			x = posmod(x + sx, cols)
+		if e2 < dx:
+			err += dx
+			y = posmod(y + sy, rows)
 	return true
 
 

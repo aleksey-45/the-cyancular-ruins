@@ -239,6 +239,20 @@ func _initialize() -> void:
 	MazeGenerator.current_grid = g2
 	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 2), Vector2i(6, 2)), "LOS 墙阻挡")
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(6, 0)), "LOS 无墙通视")
+	# LOS 斜线(旧实现的斜对角走法在 |dx|≠|dy| 时会越过目标行/列,采样到线外格子)
+	var g3: Array[Array] = []
+	for _y in range(20):
+		var row5: Array[int] = []
+		row5.resize(20)
+		row5.fill(MazeGenerator.EMPTY)
+		g3.append(row5)
+	MazeGenerator.current_grid = g3
+	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线通视")
+	g3[5][5] = MazeGenerator.SOLID  # 在旧实现越行路径上,不在直线上 → 不应阻挡
+	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线旁路墙不阻挡")
+	g3[5][5] = MazeGenerator.EMPTY
+	g3[2][3] = MazeGenerator.SOLID  # 直线上格(3,2) → 阻挡
+	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线墙阻挡")
 	MazeGenerator.current_grid = []
 
 	if _failures.is_empty():
