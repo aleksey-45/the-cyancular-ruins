@@ -216,12 +216,17 @@ func _initialize() -> void:
 	_check(not pth.is_empty() and pth[-1] == Vector2i(5, 6), "BFS 全通网格有路")
 	_check(pth[0] != Vector2i(2, 2), "BFS 路径不含起点")
 	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 2)).is_empty(), "BFS 同格返回空")
-	g[4][2] = MazeGenerator.SOLID
-	g[4][3] = MazeGenerator.SOLID
-	g[4][4] = MazeGenerator.SOLID
-	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 6)).is_empty(), "BFS 墙隔断无路")
-	_check(MazeGenerator.bfs_path(Vector2i(2, 6), Vector2i(2, 2)).is_empty(), "BFS 反向也无路")
-	_check(MazeGenerator.bfs_path(Vector2i(0, 0), Vector2i(15, 15), 8).is_empty(), "BFS 超预算无路")
+	# 两条整行墙(第 4/14 行)把环面切成隔离带;跨带必经墙行,才算"隔断"。
+	# 3 格短墙在环面上有绕行路,不能证明隔断。
+	for x in range(20):
+		g[4][x] = MazeGenerator.SOLID
+		g[14][x] = MazeGenerator.SOLID
+	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 8)).is_empty(), "BFS 墙带隔断无路")
+	_check(MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 2)).is_empty(), "BFS 反向也无路")
+	_check(not MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 12)).is_empty(), "BFS 同带仍有路")
+	# 限量预算: 同带可达、曼哈顿距离 14 > 预算 8 → 视为无路
+	_check(not MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12)).is_empty(), "BFS 预算内可达")
+	_check(MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12), 8).is_empty(), "BFS 超预算无路")
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 0)), "LOS 直线通视")
 	var g2: Array[Array] = []
 	for _y in range(20):
