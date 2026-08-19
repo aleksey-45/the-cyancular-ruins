@@ -167,6 +167,21 @@ func _initialize() -> void:
 	_check(e.hp == hp_before - w.damage, "子弹命中扣血")
 	_check(absf(e.velocity.x) > 0.0, "子弹命中击退")
 	e.free()
+	# 多弹丸(霰弹):fire() 按 pellet_count 生成多颗子弹
+	w.pellet_count = 3
+	w.spread_deg = 8.0
+	var bullet_script := load("res://Scenes/Weapons/bullet_base.gd")
+	var b_before := 0
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			b_before += 1
+	w.fire()
+	var b_after := 0
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			b_after += 1
+	_check(b_after - b_before == 3, "多弹丸开火生成 3 颗子弹")
+	w.queue_free()
 	stub.free()
 
 	# ── Task: 玩家装备/切枪 ──

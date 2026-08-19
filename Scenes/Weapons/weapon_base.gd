@@ -31,6 +31,12 @@ const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time
 # 子弹贴图染色(白色=原样显示 Bullets.png 贴图;想改子弹颜色就设这里)
 @export var bullet_color: Color = Color.WHITE
 
+# ── 霰弹/多弹丸 ──
+# 每次开火弹丸数(1=单发,与旧版一致;>1 为霰弹)
+@export var pellet_count: int = 1
+# 弹丸散布半角(度):每颗弹丸在瞄准方向 ±spread_deg 内随机角度
+@export var spread_deg: float = 0.0
+
 # ── 伤害 ──
 # 命中敌人扣除的 HP
 @export var damage: int = 1
@@ -133,11 +139,14 @@ func fire() -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = fire_cooldown
-	var dir := _clamped_aim_dir()
-	var b: BulletBase = BULLET_SCENE.instantiate()
-	b.setup(dir, bullet_speed, bullet_range, bullet_size, bullet_color, self)
-	b.global_position = muzzle.global_position
-	get_viewport().add_child(b)
+	var base_dir := _clamped_aim_dir()
+	var spread := deg_to_rad(spread_deg)
+	for i in range(pellet_count):
+		var b: BulletBase = BULLET_SCENE.instantiate()
+		var ang := base_dir.angle() + randf_range(-spread, spread)
+		b.setup(Vector2.from_angle(ang), bullet_speed, bullet_range, bullet_size, bullet_color, self)
+		b.global_position = muzzle.global_position
+		get_viewport().add_child(b)
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME
