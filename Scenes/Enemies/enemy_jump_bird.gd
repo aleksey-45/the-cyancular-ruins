@@ -121,12 +121,13 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
 		collision_layer = 0  # 死亡后不再阻挡/被子弹命中
 		collision_mask = 0
 		use_gravity = false
-		velocity = Vector2.ZERO
+		# 死亡不清击退速度:保留速度滑出(尸体带击退飞出后消失)
 
 func _physics_process(delta: float) -> void:
 	if is_dead:
 		if _death_timer > 0.0:
 			_death_timer -= delta
+			move_and_slide()  # 死亡带击退速度滑出(collision_mask=0,穿过地形消失)
 			if _death_timer <= 0.0:
 				queue_free()
 		return

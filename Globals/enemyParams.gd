@@ -56,4 +56,4 @@ class FlyBird:
 	const landing_time: float = 0.4       # 到家落地后多久直接入睡(不再等地板接触)
 	const path_max_visit: int = 4000      # 寻路(A*)展开格数上限(预算超限时走直线兜底)
 	const escape_search_range: int = 40   # 死区逃逸时向左右搜索的格数上限
-	const death_flash_time: float = 0.4   # 死亡白闪时长(秒),闪完销毁
+	const death_flash_time: float = 0.5   # 死亡白闪时长(秒),闪完销毁
