@@ -184,6 +184,15 @@ func _initialize() -> void:
 	w.queue_free()
 	stub.free()
 
+	# 霰弹枪场景加载 + 参数
+	var sg_scene: PackedScene = load("res://Scenes/Weapons/s686.tscn")
+	_check(sg_scene != null, "霰弹枪场景加载")
+	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
+	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 8.0), "霰弹枪 8 丸 ±8°")
+	_check(sg.damage == 4 and is_equal_approx(sg.bullet_range, 400.0), "霰弹枪单丸4伤/短射程")
+	_check(sg.tier == 0, "霰弹枪轻武器")
+	sg.queue_free()
+
 	# ── Task: 玩家装备/切枪 ──
 	var player_scene: PackedScene = load("res://Scenes/Player/Player.tscn")
 	_check(player_scene != null, "Player 场景加载")
