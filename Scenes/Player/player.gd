@@ -47,6 +47,7 @@ const WEAPONS: Dictionary = {
 	"1": "res://Scenes/Weapons/pistol_test.tscn",
 	"2": "res://Scenes/Weapons/rifle_test.tscn",
 	"3": "res://Scenes/Weapons/m82a1.tscn",
+	"4": "res://Scenes/Weapons/s686.tscn",
 }
 
 var _weapon: WeaponBase = null
@@ -305,7 +306,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.is_action_pressed("R"):
 			get_tree().reload_current_scene()
 		return
-	for slot in ["1", "2", "3"]:
+	for slot in ["1", "2", "3", "4"]:
 		if event.is_action_pressed(slot):
 			_equip_weapon(WEAPONS[slot])
 			return
