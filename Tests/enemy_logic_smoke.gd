@@ -167,10 +167,34 @@ func _initialize() -> void:
 	_check(e.hp == hp_before - w.damage, "子弹命中扣血")
 	_check(absf(e.velocity.x) > 0.0, "子弹命中击退")
 	e.free()
+	# 多弹丸(霰弹):fire() 按 pellet_count 生成多颗子弹
+	w.pellet_count = 3
+	w.spread_deg = 8.0
+	var bullet_script := load("res://Scenes/Weapons/bullet_base.gd")
+	var b_before := 0
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			b_before += 1
+	w.fire()
+	var b_after := 0
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			b_after += 1
+	_check(b_after - b_before == 3, "多弹丸开火生成 3 颗子弹")
+	w.queue_free()
 	stub.free()
 
+	# 霰弹枪场景加载 + 参数
+	var sg_scene: PackedScene = load("res://Scenes/Weapons/s686.tscn")
+	_check(sg_scene != null, "霰弹枪场景加载")
+	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
+	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 8.0), "霰弹枪 8 丸 ±8°")
+	_check(sg.damage == 4 and is_equal_approx(sg.bullet_range, 400.0), "霰弹枪单丸4伤/短射程")
+	_check(sg.tier == 0, "霰弹枪轻武器")
+	sg.queue_free()
+
 	# ── Task: 玩家装备/切枪 ──
-	var player_scene: PackedScene = load("res://Scenes/Player.tscn")
+	var player_scene: PackedScene = load("res://Scenes/Player/Player.tscn")
 	_check(player_scene != null, "Player 场景加载")
 	var p = player_scene.instantiate()
 	root.add_child(p)

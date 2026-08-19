@@ -20,6 +20,7 @@ var _strafe_target: Vector2 = Vector2.INF  # 开火后短距随机移动目标;I
 var _strafe_timer: float = 0.0             # 短距移动剩余时长
 var _landing: bool = false           # RETURN 落地阶段
 var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设好位置再取,否则是 (0,0))
+var _death_timer: float = -1.0      # 死亡白闪剩余;<0 表示未死亡
 
 
 func _ready() -> void:
@@ -40,7 +41,8 @@ func _physics_process(delta: float) -> void:
 		_spawn_pos = global_position
 		_home_cell = _cell_of(global_position)
 		_spawn_captured = true
-	if is_dead:  # 死亡直接销毁(本帧末 queue_free),不再处理物理
+	if is_dead:  # 死亡:保留击退速度飞出 + 白闪,闪完销毁
+		_death_update(delta)
 		return
 	super._physics_process(delta)
 	# 冲撞撞到东西(super 已执行 move_and_slide)
@@ -182,7 +184,22 @@ func _die_self() -> void:
 	if is_dead:
 		return
 	is_dead = true
-	queue_free()
+	_death_timer = EnemyParams.FlyBird.death_flash_time
+	# 死亡不清击退速度:保留速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
+	use_gravity = true
+
+
+# 死亡物理:保留击退/冲撞速度 + 重力坠落,白闪后销毁。
+func _death_update(delta: float) -> void:
+	_death_timer -= delta
+	if _death_timer <= 0.0:
+		queue_free()
+		return
+	velocity.y += GameParameters.gravity0 * delta
+	move_and_slide()
+	_wrap()
+	# 白闪闪烁(受击白闪 3x 与半透明交替)
+	modulate = Color(3.0, 3.0, 3.0, 1.0) if int(_death_timer * 20.0) % 2 == 0 else Color(1.0, 1.0, 1.0, 0.35)
 
 
 # ── 射击 ──
