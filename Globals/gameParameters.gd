@@ -34,7 +34,7 @@ const enemy_spawn_min_dist: float = 500.0
 
 # ── 玩家战斗 ──
 const player_max_hp: int = 50
-const iframes_time: float = 0.2
+const iframes_time: float = 0.25
 const player_hit_knockback: float = 400.0
 const player_hit_knockback_up: float = 200.0
 

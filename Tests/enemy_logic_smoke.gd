@@ -242,6 +242,13 @@ func _initialize() -> void:
 	# 限量预算: 同带可达、曼哈顿距离 14 > 预算 8 → 视为无路
 	_check(not MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12)).is_empty(), "BFS 预算内可达")
 	_check(MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12), 8).is_empty(), "BFS 超预算无路")
+	# A* 版: 行为与 bfs_path_nearest 一致(可达直达 / 墙带隔断降级 / 同格空)
+	var an := MazeGenerator.astar_path_nearest(Vector2i(2, 2), Vector2i(2, 8))
+	_check(not an.is_empty(), "astar_path_nearest 目标不可达仍有降级路径")
+	_check(an[-1] != Vector2i(2, 8), "astar_path_nearest 终点不是被隔断的目标")
+	_check(MazeGenerator.astar_path_nearest(Vector2i(2, 2), Vector2i(2, 2)).is_empty(), "astar_path_nearest 同格返回空")
+	_check(MazeGenerator.astar_path_nearest(Vector2i(2, 8), Vector2i(2, 12))[-1] == Vector2i(2, 12), "astar_path_nearest 可达时直达终点")
+	_check(MazeGenerator.astar_path_nearest(Vector2i(0, 8), Vector2i(10, 12), 8)[-1] != Vector2i(10, 12), "astar_path_nearest 超预算到不了目标")
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 0)), "LOS 直线通视")
 	var g2: Array[Array] = []
 	for _y in range(20):

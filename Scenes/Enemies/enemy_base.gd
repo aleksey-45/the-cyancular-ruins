@@ -21,6 +21,10 @@ const STOP_EPSILON: float = 5.0      # 水平速度低于此值直接归零,避�
 var is_dead: bool = false
 var _hit_flash_time: float = 0.0
 var _player_overlapping: bool = false
+# 状态机与动画(子类共用)。state 用 int 承载各子类自己的 enum 常量(见 JumpBird/FlyBird 的 enum State)。
+var state: int = 0
+var _state_timer: float = 0.0
+var _anim: AnimatedSprite2D
 
 # ── 行为钩子(子类覆写)──
 func _ai(_delta: float) -> void:
@@ -98,6 +102,52 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) ->
 	velocity += knock_dir.normalized() * ks
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
+
+
+# ── 共享工具(子类通用)──
+
+func _set_state(s: int) -> void:
+	state = s
+	_state_timer = 0.0
+
+
+func _anim_duration(name: String) -> float:
+	if _anim == null:
+		return 0.0
+	var spf := _anim.sprite_frames
+	return float(spf.get_frame_count(name)) / spf.get_animation_speed(name)
+
+
+func _player_pos() -> Vector2:
+	var p := get_tree().get_first_node_in_group("player") as Node2D
+	return p.global_position if p != null else global_position
+
+
+func _player_velocity() -> Vector2:
+	var p := get_tree().get_first_node_in_group("player")
+	if p != null and "velocity" in p:
+		return p.velocity
+	return Vector2.ZERO
+
+
+func _cell_of(pos: Vector2) -> Vector2i:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return Vector2i.ZERO
+	return MazeGenerator.cell_of(pos, GameParameters.TILE_SIZE, grid[0].size(), grid.size())
+
+
+func _cell_is_solid(cell: Vector2i) -> bool:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return false
+	return grid[cell.y][cell.x] == MazeGenerator.SOLID
+
+
+func _toroidal_dist_to(pos: Vector2) -> float:
+	return MazeGenerator.toroidal_delta_px(global_position, pos,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+
 
 func toroidal_dist_to_player() -> float:
 	return toroidal_delta_to_player().length()

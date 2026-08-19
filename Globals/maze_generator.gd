@@ -199,6 +199,99 @@ static func bfs_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: 
 	return _rebuild_path(prev, from_cell, best)
 
 
+# A* 版 bfs_path_nearest:启发式 = 环面曼哈顿距离(4 邻域,可采纳且一致)。优先队列用
+# 数组隐式二叉堆(O(log n) 推/弹;排序数组的 O(n) 插入反而比 BFS 慢)。预算 max_visit
+# 是弹出(展开)节点数上限,与 bfs 的 visited 上限语义对齐。目标不可达/预算超限时同样
+# 返回「最近可达格」的路径。空旷区 BFS 波前会铺满半径内所有格,预算很快耗尽;A* 靠
+# 启发式直奔目标,展开节点少一个量级——这正是玩家站在高平台时鸟"上不去"的根因。
+static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
+		passable_pred: Callable = Callable()) -> Array[Vector2i]:
+	var grid := current_grid
+	if grid.is_empty():
+		return []
+	var rows := grid.size()
+	var cols := grid[0].size()
+	if from_cell == to_cell:
+		return []
+	var g := {from_cell: 0}
+	var prev := {}
+	var heap: Array = []  # 元素 [f: int, cell: Vector2i],小根堆按 f 排序
+	var best := from_cell
+	var best_d := toroidal_dist(from_cell, to_cell, cols, rows)
+	_heap_push(heap, [toroidal_dist(from_cell, to_cell, cols, rows), from_cell])
+	var expanded := 0
+	while not heap.is_empty():
+		var item := _heap_pop(heap)
+		var cur: Vector2i = item[1]
+		var g_cur: int = g[cur]
+		# 惰性删除:该格后来被更优路径更新过,旧堆项作废。
+		if item[0] > g_cur + toroidal_dist(cur, to_cell, cols, rows):
+			continue
+		expanded += 1
+		if expanded > max_visit:
+			break
+		if cur == to_cell:
+			return _rebuild_path(prev, from_cell, to_cell)
+		var cd := toroidal_dist(cur, to_cell, cols, rows)
+		if cd < best_d:
+			best_d = cd
+			best = cur
+		for n in _neighbors4(cur, cols, rows):
+			if passable_pred.is_valid():
+				if not passable_pred.call(n):
+					continue
+			elif grid[n.y][n.x] == SOLID:
+				continue
+			var ng := g_cur + 1
+			if g.has(n) and g[n] <= ng:
+				continue
+			g[n] = ng
+			prev[n] = cur
+			_heap_push(heap, [ng + toroidal_dist(n, to_cell, cols, rows), n])
+	if best == from_cell:
+		return []
+	return _rebuild_path(prev, from_cell, best)
+
+
+# 隐式二叉堆(小根堆,按 f 排序)。item = [f: int, cell: Vector2i]。
+static func _heap_push(heap: Array, item: Array) -> void:
+	heap.append(item)
+	var i := heap.size() - 1
+	while i > 0:
+		var p := (i - 1) >> 1
+		if heap[i][0] < heap[p][0]:
+			var t: Array = heap[i]
+			heap[i] = heap[p]
+			heap[p] = t
+			i = p
+		else:
+			break
+
+
+static func _heap_pop(heap: Array) -> Array:
+	var top: Array = heap[0]
+	var last: Array = heap.pop_back()
+	if heap.size() > 0:
+		heap[0] = last
+		var i := 0
+		var n := heap.size()
+		while true:
+			var l := i * 2 + 1
+			var r := l + 1
+			var s := i
+			if l < n and heap[l][0] < heap[s][0]:
+				s = l
+			if r < n and heap[r][0] < heap[s][0]:
+				s = r
+			if s == i:
+				break
+			var t: Array = heap[i]
+			heap[i] = heap[s]
+			heap[s] = t
+			i = s
+	return top
+
+
 static func _neighbors4(c: Vector2i, cols: int, rows: int) -> Array[Vector2i]:
 	return [
 		Vector2i((c.x + 1) % cols, c.y),
