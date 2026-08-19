@@ -5,13 +5,11 @@
 
 [node name="S686" type="Node2D" unique_id=1871974505]
 script = ExtResource("1_wb")
-tier = 0
 weapon_name = "S686"
-full_auto = false
 fire_cooldown = 0.5
 bullet_speed = 1100.0
 bullet_range = 400.0
-bullet_size = 0.5
+bullet_size = 0.8
 pellet_count = 8
 spread_deg = 8.0
 damage = 4
@@ -19,15 +17,15 @@ impact = 180.0
 recoil_push = 450.0
 recoil_kick = 11.0
 cam_shake = 5.0
-cam_shake_time = 0.1
 move_penalty = 0.9
 penalty_mode = 1
 pitch_clamp_deg = 55.0
 
-[node name="Sprite2D" type="Sprite2D" parent="."]
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1073007659]
+position = Vector2(24, 9)
 texture = ExtResource("2_wpn")
 region_enabled = true
 region_rect = Rect2(3, 19, 59, 14)
 
-[node name="Muzzle" type="Marker2D" parent="."]
-position = Vector2(56, 4)
+[node name="Muzzle" type="Marker2D" parent="." unique_id=1901121497]
+position = Vector2(46, 4)
