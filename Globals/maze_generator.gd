@@ -104,3 +104,254 @@ static func load_map_file() -> Array[Array]:
 	if grid.is_empty():
 		push_error("MazeGenerator: 地图文件 %s 无有效行" % MAP_FILE)
 	return grid
+
+
+# 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
+static var current_grid: Array[Array] = []
+
+
+# 像素坐标 → 环面格子坐标(取模回 [0,cols)×[0,rows))。
+static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
+	var c := Vector2i(floori(pos.x / ts), floori(pos.y / ts))
+	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
+
+
+# 环面 4 邻居 BFS:返回从 from_cell 到 to_cell 的格序列(不含起点,含终点)。
+# 只走 EMPTY 格;限量访问 max_visit,超限视为无路。同格/无路返回空数组。
+# passable_pred 可传入可走性判定(如飞行敌人按自身碰撞箱是否挤得过);为空时用
+# 默认「EMPTY 可走」。传 max_visit 时需一并给出,否则默认 4000。
+static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
+		passable_pred: Callable = Callable()) -> Array[Vector2i]:
+	var grid := current_grid
+	if grid.is_empty():
+		return []
+	var rows := grid.size()
+	var cols := grid[0].size()
+	if from_cell == to_cell:
+		return []
+	var visited := {from_cell: true}
+	var prev := {}
+	var queue: Array[Vector2i] = [from_cell]
+	var head := 0
+	while head < queue.size():
+		var cur := queue[head]
+		head += 1
+		if visited.size() > max_visit:
+			return []
+		for n in _neighbors4(cur, cols, rows):
+			if visited.has(n):
+				continue
+			if passable_pred.is_valid():
+				if not passable_pred.call(n):
+					continue
+			elif grid[n.y][n.x] == SOLID:
+				continue
+			visited[n] = true
+			prev[n] = cur
+			if n == to_cell:
+				return _rebuild_path(prev, from_cell, to_cell)
+			queue.append(n)
+	return []
+
+
+# 与 bfs_path 相同,但目标不可达(墙隔断/挤不进/预算超限)时返回「能到达的格中离
+# to_cell 最近一格」的路径,而不是空数组。给飞行敌人当降级目标:目标格是墙或太窄
+# 时仍能沿迷宫里最近的可达格靠近,而不是空路径后直线硬冲卡墙。可达时行为与 bfs_path 一致。
+static func bfs_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
+		passable_pred: Callable = Callable()) -> Array[Vector2i]:
+	var grid := current_grid
+	if grid.is_empty():
+		return []
+	var rows := grid.size()
+	var cols := grid[0].size()
+	if from_cell == to_cell:
+		return []
+	var visited := {from_cell: true}
+	var prev := {}
+	var queue: Array[Vector2i] = [from_cell]
+	var head := 0
+	var best := from_cell
+	var best_d := toroidal_dist(from_cell, to_cell, cols, rows)
+	while head < queue.size():
+		var cur := queue[head]
+		head += 1
+		if visited.size() > max_visit:
+			break
+		var cd := toroidal_dist(cur, to_cell, cols, rows)
+		if cd < best_d:
+			best_d = cd
+			best = cur
+		for n in _neighbors4(cur, cols, rows):
+			if visited.has(n):
+				continue
+			if passable_pred.is_valid():
+				if not passable_pred.call(n):
+					continue
+			elif grid[n.y][n.x] == SOLID:
+				continue
+			visited[n] = true
+			prev[n] = cur
+			if n == to_cell:
+				return _rebuild_path(prev, from_cell, to_cell)
+			queue.append(n)
+	if best == from_cell:
+		return []
+	return _rebuild_path(prev, from_cell, best)
+
+
+# A* 版 bfs_path_nearest:启发式 = 环面曼哈顿距离(4 邻域,可采纳且一致)。优先队列用
+# 数组隐式二叉堆(O(log n) 推/弹;排序数组的 O(n) 插入反而比 BFS 慢)。预算 max_visit
+# 是弹出(展开)节点数上限,与 bfs 的 visited 上限语义对齐。目标不可达/预算超限时同样
+# 返回「最近可达格」的路径。空旷区 BFS 波前会铺满半径内所有格,预算很快耗尽;A* 靠
+# 启发式直奔目标,展开节点少一个量级——这正是玩家站在高平台时鸟"上不去"的根因。
+static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
+		passable_pred: Callable = Callable()) -> Array[Vector2i]:
+	var grid := current_grid
+	if grid.is_empty():
+		return []
+	var rows := grid.size()
+	var cols := grid[0].size()
+	if from_cell == to_cell:
+		return []
+	var g := {from_cell: 0}
+	var prev := {}
+	var heap: Array = []  # 元素 [f: int, cell: Vector2i],小根堆按 f 排序
+	var best := from_cell
+	var best_d := toroidal_dist(from_cell, to_cell, cols, rows)
+	_heap_push(heap, [toroidal_dist(from_cell, to_cell, cols, rows), from_cell])
+	var expanded := 0
+	while not heap.is_empty():
+		var item := _heap_pop(heap)
+		var cur: Vector2i = item[1]
+		var g_cur: int = g[cur]
+		# 惰性删除:该格后来被更优路径更新过,旧堆项作废。
+		if item[0] > g_cur + toroidal_dist(cur, to_cell, cols, rows):
+			continue
+		expanded += 1
+		if expanded > max_visit:
+			break
+		if cur == to_cell:
+			return _rebuild_path(prev, from_cell, to_cell)
+		var cd := toroidal_dist(cur, to_cell, cols, rows)
+		if cd < best_d:
+			best_d = cd
+			best = cur
+		for n in _neighbors4(cur, cols, rows):
+			if passable_pred.is_valid():
+				if not passable_pred.call(n):
+					continue
+			elif grid[n.y][n.x] == SOLID:
+				continue
+			var ng := g_cur + 1
+			if g.has(n) and g[n] <= ng:
+				continue
+			g[n] = ng
+			prev[n] = cur
+			_heap_push(heap, [ng + toroidal_dist(n, to_cell, cols, rows), n])
+	if best == from_cell:
+		return []
+	return _rebuild_path(prev, from_cell, best)
+
+
+# 隐式二叉堆(小根堆,按 f 排序)。item = [f: int, cell: Vector2i]。
+static func _heap_push(heap: Array, item: Array) -> void:
+	heap.append(item)
+	var i := heap.size() - 1
+	while i > 0:
+		var p := (i - 1) >> 1
+		if heap[i][0] < heap[p][0]:
+			var t: Array = heap[i]
+			heap[i] = heap[p]
+			heap[p] = t
+			i = p
+		else:
+			break
+
+
+static func _heap_pop(heap: Array) -> Array:
+	var top: Array = heap[0]
+	var last: Array = heap.pop_back()
+	if heap.size() > 0:
+		heap[0] = last
+		var i := 0
+		var n := heap.size()
+		while true:
+			var l := i * 2 + 1
+			var r := l + 1
+			var s := i
+			if l < n and heap[l][0] < heap[s][0]:
+				s = l
+			if r < n and heap[r][0] < heap[s][0]:
+				s = r
+			if s == i:
+				break
+			var t: Array = heap[i]
+			heap[i] = heap[s]
+			heap[s] = t
+			i = s
+	return top
+
+
+static func _neighbors4(c: Vector2i, cols: int, rows: int) -> Array[Vector2i]:
+	return [
+		Vector2i((c.x + 1) % cols, c.y),
+		Vector2i((c.x - 1 + cols) % cols, c.y),
+		Vector2i(c.x, (c.y + 1) % rows),
+		Vector2i(c.x, (c.y - 1 + rows) % rows),
+	]
+
+
+static func _rebuild_path(prev: Dictionary, start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
+	var path: Array[Vector2i] = []
+	var cur := goal
+	while cur != start:
+		path.push_front(cur)
+		cur = prev[cur]
+	return path
+
+
+# 环面网格 LOS:整数 Bresenham 沿直线采样两格之间的格子,途中任一 SOLID 即阻断。
+# 不能用「每步双轴各进一」的斜对角走法——|dx|≠|dy| 时会越过目标行/列、采样到线外的格子。
+static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
+	var grid := current_grid
+	if grid.is_empty():
+		return false
+	var rows := grid.size()
+	var cols := grid[0].size()
+	var d := _toroidal_step(from_cell, to_cell, cols, rows)
+	if d == Vector2i.ZERO:
+		return true
+	var x := from_cell.x
+	var y := from_cell.y
+	var sx := 1 if d.x > 0 else -1
+	var sy := 1 if d.y > 0 else -1
+	var dx := absi(d.x)
+	var dy := absi(d.y)
+	var err := dx - dy
+	while true:
+		if grid[y][x] == SOLID:
+			return false
+		if x == to_cell.x and y == to_cell.y:
+			break
+		var e2 := 2 * err
+		if e2 > -dy:
+			err -= dy
+			x = posmod(x + sx, cols)
+		if e2 < dx:
+			err += dx
+			y = posmod(y + sy, rows)
+	return true
+
+
+static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Vector2i:
+	var dx := b.x - a.x
+	if dx > cols / 2:
+		dx -= cols
+	elif dx < -cols / 2:
+		dx += cols
+	var dy := b.y - a.y
+	if dy > rows / 2:
+		dy -= rows
+	elif dy < -rows / 2:
+		dy += rows
+	return Vector2i(dx, dy)

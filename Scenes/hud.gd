@@ -55,14 +55,11 @@ func _on_hp(cur: int, max_hp: int) -> void:
 func _start_ghost(i: int) -> void:
 	var seg := _segments[i]
 	_kill_ghost(i)
-	seg.color = Color.WHITE
-	seg.modulate = Color.WHITE
 	seg.visible = true
 	var tw := create_tween()
-	tw.tween_interval(0.2)                          # 白闪停顿
 	# 闪烁两下:每次先隐藏再显示
 	for _b in range(2):
-		tw.tween_property(seg, "modulate:a", 0.0, 0.08)  # 隐
+		tw.tween_property(seg, "modulate:a", 0.0, 0.08)
 		tw.tween_property(seg, "modulate:a", 1.0, 0.08)  # 显
 	tw.tween_property(seg, "modulate:a", 0.0, 0.2)   # 最后淡出
 	tw.tween_callback(func():

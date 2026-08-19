@@ -1,20 +1,20 @@
-[gd_scene load_steps=3 format=3 uid="uid://dnurwen8tun30"]
+[gd_scene format=3 uid="uid://dnurwen8tun30"]
 
 [ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
 [ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://AssetBundle/Sprites/Weapons.png" id="2_wpn"]
 
-[node name="RifleTest" type="Node2D"]
+[node name="RifleTest" type="Node2D" unique_id=77899377]
 position = Vector2(4, 2)
 script = ExtResource("1_wb")
 tier = 1
 weapon_name = "Rifle"
 full_auto = true
 fire_cooldown = 0.1
-bullet_speed = 1200.0
-bullet_range = 1200.0
-damage = 2
-impact = 200.0
-recoil_push = 100.0
+bullet_speed = 1600.0
+bullet_range = 1400.0
+damage = 4
+impact = 500.0
+recoil_push = 80.0
 recoil_kick = 6.0
 cam_shake = 3.0
 cam_shake_time = 0.12
@@ -23,11 +23,11 @@ jump_penalty = 0.8
 penalty_mode = 1
 pitch_clamp_deg = 55.0
 
-[node name="Sprite2D" type="Sprite2D" parent="."]
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=139203024]
 position = Vector2(7, 7)
 texture = ExtResource("2_wpn")
 region_enabled = true
 region_rect = Rect2(108, 2, 55, 20)
 
-[node name="Muzzle" type="Marker2D" parent="."]
+[node name="Muzzle" type="Marker2D" parent="." unique_id=139278856]
 position = Vector2(30, 2)

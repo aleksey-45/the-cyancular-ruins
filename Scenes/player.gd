@@ -70,7 +70,7 @@ var state_lock_timer: float = 0.0
 const STATE_LOCK_TIME := 0.15   # 秒，切换后的最短停留时长
 
 const STOP_SNAP := 1.0              # 水平速度低于此值直接归零，避免贴地滑行
-const IFRAME_BLINK_RATE := 10.0     # 无敌帧闪烁频率（每秒明暗切换次数）
+const IFRAME_BLINK_RATE := 20.0     # 无敌帧闪烁频率（每秒明暗切换次数）
 
 # 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
 var _coll_by_pose: Dictionary = {}
@@ -227,8 +227,9 @@ func _physics_process(delta: float) -> void:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
-func take_hit(source_pos: Vector2, damage: int) -> void:
-	if downed or iframes > 0.0:
+func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false) -> void:
+	# ignore_iframes: 特殊攻击(如冲撞)穿透无敌帧,但命中后照常刷新 iframes。
+	if downed or (iframes > 0.0 and not ignore_iframes):
 		return
 	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
 	is_charge = false

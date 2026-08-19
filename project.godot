@@ -8,12 +8,17 @@
 
 config_version=5
 
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
 [application]
 
 config/name="The Cyancular Ruins"
+config/version="rediculously early test 001"
 run/main_scene="uid://c1xl4jcmy2e6c"
-config/features=PackedStringArray("4.4", "Mobile")
-config/icon="res://icon.svg"
+config/features=PackedStringArray("4.7", "Mobile")
+config/icon="uid://dccomu5fn6od5"
 
 [autoload]
 
