@@ -24,7 +24,7 @@ func _process(delta: float) -> void:
 	# 直接跟随玩家。玩家跨接缝时位置取模,相机跟随即可;
 	# 视野跳变由环形世界的渲染层处理(见 level_0 的 3x3 铺贴)。
 	_base_pos.x = target.global_position.x
-	_base_pos.y = target.global_position.y + GameParameters.cam_y_bias
+	_base_pos.y = target.global_position.y + PlayerParams.cam_y_bias
 	global_position = _base_pos
 	if _shake_time > 0.0:
 		_shake_time = maxf(_shake_time - delta, 0.0)

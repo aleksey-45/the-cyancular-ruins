@@ -4,22 +4,22 @@ extends CharacterBody2D
 
 # --- 物理参数（推荐从全局读取） ---
 var gravity: float = GameParameters.gravity0
-var jump_velocity: float = GameParameters.jump_velocity
-var charge_down_velocity: float = GameParameters.charge_down_velocity
-var charge_velocity: float = GameParameters.charge_velocity   # 冲刺速度
-var charge_duration: float = GameParameters.charge_duration   # 冲刺持续时间（秒）
-var move_speed: float = GameParameters.move_speed
+var jump_velocity: float = PlayerParams.jump_velocity
+var charge_down_velocity: float = PlayerParams.charge_down_velocity
+var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
+var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间（秒）
+var move_speed: float = PlayerParams.move_speed
 
 # 水平加速/刹车/转身的指数缓动系数（越大越跟手）
-var accel_ground: float = GameParameters.accel_ground
-var accel_air: float = GameParameters.accel_air
-var brake_ground: float = GameParameters.brake_ground
-var brake_air: float = GameParameters.brake_air
+var accel_ground: float = PlayerParams.accel_ground
+var accel_air: float = PlayerParams.accel_air
+var brake_ground: float = PlayerParams.brake_ground
+var brake_air: float = PlayerParams.brake_air
 
 # 跳跃手感：土狼时间 / 跳跃缓冲 / 可变高度
-var coyote_time: float = GameParameters.coyote_time
-var jump_buffer_time: float = GameParameters.jump_buffer_time
-var jump_cut_factor: float = GameParameters.jump_cut_factor
+var coyote_time: float = PlayerParams.coyote_time
+var jump_buffer_time: float = PlayerParams.jump_buffer_time
+var jump_cut_factor: float = PlayerParams.jump_cut_factor
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 var jump_cut_applied: bool = false   # 本次跳跃是否已截断（可变高度）
@@ -31,10 +31,12 @@ var facing_direction: int = 1   # 1=右，-1=左
 
 # 冲刺计时
 var charge_timer: float = 0.0
+var _last_move_dir: int = 1            # 最近水平移动方向(1右/-1左)
+var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0 表示最近在走)
 
 # ── 战斗 ──
-var max_hp: int = GameParameters.player_max_hp
-var hp: int = GameParameters.player_max_hp
+var max_hp: int = PlayerParams.player_max_hp
+var hp: int = PlayerParams.player_max_hp
 var iframes: float = 0.0
 var downed: bool = false
 
@@ -152,10 +154,9 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_just_pressed("charge"):
 			is_charge = true
 			charge_timer = charge_duration
-			if animator.flip_h:
-				facing_direction = -1
-			else:
-				facing_direction = 1
+			# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
+			if _last_move_timer > 0.0:
+				facing_direction = _last_move_dir
 
 	# ---------- 水平速度计算 ----------
 	if is_charge:
@@ -184,6 +185,10 @@ func _physics_process(delta: float) -> void:
 	# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向
 	if not is_charge and horizontal_input != 0:
 		facing_direction = 1 if horizontal_input > 0 else -1
+		_last_move_dir = facing_direction
+		_last_move_timer = PlayerParams.charge_dir_window
+	else:
+		_last_move_timer = maxf(_last_move_timer - delta, 0.0)
 
 	# ---------- 动画翻转 ----------
 	if facing_direction < 0:
@@ -235,12 +240,12 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false) ->
 	is_charge = false
 	charge_timer = 0.0
 	hp -= damage
-	iframes = GameParameters.iframes_time
+	iframes = PlayerParams.iframes_time
 	var away := (global_position - source_pos).normalized()
 	if away == Vector2.ZERO:
 		away = Vector2(-float(facing_direction), 0.0)
-	velocity.x = away.x * GameParameters.player_hit_knockback
-	velocity.y = away.y * GameParameters.player_hit_knockback - GameParameters.player_hit_knockback_up
+	velocity.x = away.x * PlayerParams.player_hit_knockback
+	velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
 	hp_changed.emit(hp, max_hp)
 	if hp <= 0:
 		_downed()
@@ -249,6 +254,9 @@ func get_facing() -> int:
 	return facing_direction
 
 func set_facing(v: int) -> void:
+	# 冲刺期间朝向即冲刺方向,锁定不被枪瞄改写(_auto_aim 每帧 set_facing)。
+	if is_charge:
+		return
 	facing_direction = 1 if v >= 0 else -1
 
 func is_downed() -> bool:

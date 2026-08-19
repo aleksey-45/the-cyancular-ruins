@@ -170,7 +170,7 @@ func _initialize() -> void:
 	stub.free()
 
 	# ── Task: 玩家装备/切枪 ──
-	var player_scene: PackedScene = load("res://Scenes/Player.tscn")
+	var player_scene: PackedScene = load("res://Scenes/Player/Player.tscn")
 	_check(player_scene != null, "Player 场景加载")
 	var p = player_scene.instantiate()
 	root.add_child(p)
