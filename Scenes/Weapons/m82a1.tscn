@@ -12,7 +12,7 @@ fire_cooldown = 1.2
 heavy_aim = true
 bullet_speed = 3000.0
 bullet_range = 3000.0
-bullet_size = 1.0
+bullet_size = 1.25
 damage = 30
 impact = 1800.0
 recoil_push = 1200.0
@@ -22,7 +22,7 @@ cam_shake_time = 0.2
 move_penalty = 0.5
 jump_penalty = 0.6
 penalty_mode = 2
-pitch_clamp_deg = 75.0
+pitch_clamp_deg = 80.0
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 position = Vector2(18, 6)

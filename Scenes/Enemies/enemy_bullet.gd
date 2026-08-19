@@ -6,15 +6,17 @@ extends BulletBase
 var damage: int = 2
 
 
-# 抛物线初速版 setup:直接设初速向量(平抛/投掷用),bullets 由发射者决定。
-func launch(vel: Vector2, rng: float, col: Color, dmg: int, grav: float) -> void:
+# 抛物线初速版 setup:直接设初速向量(平抛/投掷用)。不染色,子弹用贴图本底色。
+# siz 是放大倍数(默认 1.0 不动),与 BulletBase.setup() 一样作用于整颗子弹。
+func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -> void:
 	velocity_vec = vel
 	speed = vel.length()
 	max_range = rng
-	bullet_color = col
 	damage = dmg
 	gravity_factor = grav
+	size = siz
 	rotation = vel.angle()
+	scale = Vector2(size, size)
 
 
 func _physics_process(delta: float) -> void:

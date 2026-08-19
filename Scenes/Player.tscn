@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3 uid="uid://bbmqsehc1n6nm"]
+[gd_scene format=3 uid="uid://bbmqsehc1n6nm"]
 
 [ext_resource type="Script" uid="uid://c3lcpld4toenv" path="res://Scenes/player.gd" id="1_kyqiw"]
 [ext_resource type="Texture2D" uid="uid://tkrxu88e0hfa" path="res://AssetBundle/Sprites/Player.png" id="1_rpqav"]
@@ -57,7 +57,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_miouo")
 }],
-"loop": true,
+"loop": 1,
 "name": &"charge",
 "speed": 5.0
 }, {
@@ -65,7 +65,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_bhhdu")
 }],
-"loop": true,
+"loop": 1,
 "name": &"fly",
 "speed": 5.0
 }, {
@@ -76,7 +76,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_gntrk")
 }],
-"loop": true,
+"loop": 1,
 "name": &"idle",
 "speed": 2.0
 }, {
@@ -93,7 +93,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_52ee3")
 }],
-"loop": true,
+"loop": 1,
 "name": &"move",
 "speed": 8.0
 }, {
@@ -110,12 +110,12 @@ animations = [{
 "duration": 0.5,
 "texture": SubResource("AtlasTexture_glx4g")
 }],
-"loop": true,
+"loop": 1,
 "name": &"squat",
 "speed": 1.5
 }]
 
-[node name="Player" type="CharacterBody2D" node_paths=PackedStringArray("animator", "weapon_slot")]
+[node name="Player" type="CharacterBody2D" unique_id=722796191 node_paths=PackedStringArray("animator", "weapon_slot")]
 scale = Vector2(2.5, 2.5)
 collision_layer = 2
 collision_mask = 5
@@ -123,33 +123,34 @@ script = ExtResource("1_kyqiw")
 animator = NodePath("AnimatedSprite2D")
 weapon_slot = NodePath("WeaponSlot")
 
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=29481906]
+texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_dewec")
 animation = &"idle"
 autoplay = "idle"
 
-[node name="CollisionShape2D_charge" type="CollisionPolygon2D" parent="."]
+[node name="CollisionShape2D_charge" type="CollisionPolygon2D" parent="." unique_id=1281605673]
 visible = false
 position = Vector2(-12.8, -14)
 polygon = PackedVector2Array(6.8, -4.8, -0.633179, -0.749813, -3.03318, 4.45019, -2.8, 18, -7.6, 21.2, -6.4, 26, 4.4, 26, -0.400001, 32.8, 2.4, 36, 18.8, 37.2, 20.4, 25.6, 24.8, 23.2, 30.8, 24, 34.8, 25.2, 36.8, 22.8, 36.8, 19.2, 32, 18, 28.8, 17.2, 28.8, 2.4, 25.3668, -2.74981, 18.8, -4.8)
 
-[node name="CollisionShape2D_squat" type="CollisionPolygon2D" parent="."]
+[node name="CollisionShape2D_squat" type="CollisionPolygon2D" parent="." unique_id=1827580601]
 visible = false
 position = Vector2(-14.1668, -9.25019)
 polygon = PackedVector2Array(6.16682, -4.74981, -0.633179, -0.749813, -3.03318, 4.45019, -3.03318, 18.0502, 0.166821, 24.0502, 2.9668, 26.4502, 2.9668, 32.0502, 20.1668, 32.0502, 20.1668, 26.4502, 24.9668, 24.4502, 29.3668, 20.0502, 29.3668, 2.45019, 25.3668, -2.74981, 18.9668, -4.74981)
 
-[node name="CollisionShape2D_fly" type="CollisionPolygon2D" parent="."]
+[node name="CollisionShape2D_fly" type="CollisionPolygon2D" parent="." unique_id=577506980]
 position = Vector2(-14.1668, -9.25019)
 polygon = PackedVector2Array(4.9668, -7.54981, -1.8332, -3.54981, -3.4332, 1.25019, -3.4332, 15.2502, 0.5668, 23.6502, 3.7668, 24.8502, 3.7668, 32.0502, 20.5668, 32.0502, 20.5668, 24.8502, 22.9668, 22.8502, 27.7668, 16.8502, 27.7668, -0.749809, 25.3668, -4.74981, 18.1668, -7.54981)
 
-[node name="CollisionShape2D_move" type="CollisionPolygon2D" parent="."]
+[node name="CollisionShape2D_move" type="CollisionPolygon2D" parent="." unique_id=1489651497]
 visible = false
 position = Vector2(-15.6, -16)
 polygon = PackedVector2Array(6.16682, -4.74981, -0.633179, -0.749813, -3.03318, 4.45019, -3.03318, 18.0502, 4.4, 26.4, 4.4, 38.8, 21.6, 38.8, 21.6, 26.4, 29.3668, 20.0502, 29.3668, 2.45019, 25.3668, -2.74981, 18.9668, -4.74981)
 
-[node name="CollisionShape2D_stand" type="CollisionPolygon2D" parent="."]
+[node name="CollisionShape2D_stand" type="CollisionPolygon2D" parent="." unique_id=1207791762]
 visible = false
 position = Vector2(-14.1668, -9.25019)
 polygon = PackedVector2Array(5.3668, -10.7498, -1.8332, -6.74981, -3.8332, -1.54981, -3.8332, 13.6502, 2.9668, 20.4502, 2.9668, 32.0502, 20.1668, 32.0502, 20.1668, 20.4502, 28.1668, 13.6502, 28.1668, -3.94981, 23.3668, -9.54981, 18.1668, -10.7498)
 
-[node name="WeaponSlot" type="Node2D" parent="."]
+[node name="WeaponSlot" type="Node2D" parent="." unique_id=1424965295]

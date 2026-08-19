@@ -175,7 +175,7 @@ CHARGE ──(撞墙 / 撞玩家 / 超时 charge_timeout)──▶ 自毁
 | repath_interval | 0.5 | 重寻路间隔 |
 | arrival_radius | 50 | 到路径格判定 |
 
-场景 @export: `hp = 20`(25% = 5,即 HP<5 冲撞)、`contact_damage = 0`、
+场景 @export: `hp = 25`(25% = 6.25,即 HP≤6 冲撞)、`contact_damage = 0`、
 `knockback_strength = 200`(同 JumpBird)、`scale = 2.0`(用户指定;节点缩放作用于
 精灵与碰撞多边形)。
 

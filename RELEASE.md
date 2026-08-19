@@ -1,0 +1,146 @@
+# The Cyancular Ruins — 编译与发布手册
+
+本文档记录本项目的 **单文件 exe demo** 发布流程,以及自定义裁剪模板的编译方法。
+
+> 目标:发布一个"仅单 exe"的 demo,体积约 **37 MB**(未裁剪的官方模板约 109 MB)。
+
+---
+
+## 0. 关键结论(先记住这三条)
+
+1. **必须用 4.7.1 标准(非 mono)编辑器导出** —— 用 4.4.1 mono 编辑器会走 mono 模板,exe 直接 100MB+。
+2. **永远不要对模板或成品 exe 用 UPX** —— Godot 4.7 把 PCK 内嵌在 exe 的一个 PE 节(`pck`)里,UPX 会弄丢这个节,导出直接报 `可执行文件"pck"区未找到`,或运行时空窗/闪退。
+3. **裁剪 profile 里 webp 模块必须保留** —— Godot 4.7 导入无损贴图默认存成 WebP,运行时靠 `module_webp` 解码;关掉它所有贴图加载失败、游戏闪退(已踩过坑)。
+
+---
+
+## 1. 日常发布流程(每次改完游戏后)
+
+### 1.1 开发与自测
+- 用 **4.7.1 标准编辑器** 打开项目开发:
+  `D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe`
+- 改完先在编辑器里 playtest 确认没问题。
+
+### 1.2 重新导出(二选一)
+
+**图形界面**:项目 → 导出 → Windows Desktop → 导出项目
+
+**命令行**(推荐,一条命令):
+```bash
+"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless \
+  --path E:\Workspace\godot\the-cyancular-ruins \
+  --export-release "Windows Desktop" "E:\Workspace\godot\the-cyancular-ruins\The Cyancular Ruins.exe"
+```
+
+### 1.3 验证
+- **把 exe 拷到项目目录外的干净文件夹再运行**(比如桌面/临时目录)。在项目目录里跑时,Godot 可能从本地文件系统补齐缺失文件,会**掩盖打包漏项**——这是最容易误判的地方。
+- 完整玩一遍(移动/射击/HUD/后处理/死亡效果),并确认地图/关卡正常生成。
+- 单文件大小 ≈ 37 MB + 新增资源;只要资源不涨,体积基本不变。
+
+### 1.4 发布
+把 `The Cyancular Ruins.exe` 这一个文件发出去即可。
+
+---
+
+## 2. 首次搭建自定义模板(一次性)
+
+> 已经搭好,正常开发不用重做。只有以下情况需要重做:
+> 重装/更新模板、升级 Godot 大版本、换机器。
+
+### 2.1 环境要求
+| 依赖 | 说明 |
+|---|---|
+| Python 3.10+ | `python -m pip install scons` 装 SCons |
+| MSVC | VS 2022 Community(`vcvarsall.bat` 路径见 2.4) |
+| git | 用于拉源码 |
+| Godot 4.7.1 源码 | 见 2.2 |
+
+### 2.2 获取源码
+GitHub 直连在国内不稳定,用 Gitee 镜像:
+```bash
+git clone --depth 1 --branch 4.7.1-stable https://gitee.com/mirrors/godot.git E:\Workspace\godot\godot-4.7.1-src
+```
+> 源码路径:**`E:\Workspace\godot\godot-4.7.1-src`**
+
+### 2.3 裁剪配置(profile)
+- 文件:**项目根 `cyancular_build_profile.gdbuild`**
+- 它定义:
+  - `disabled_build_options`:关闭的模块(3D、音频格式、网络、导航、XR、图片格式等)+ `disable_3d`。
+  - `disabled_classes`:游戏没用到的类(音频播放器、粒子、AnimationPlayer、GUI 控件等)。
+- 游戏用到的类**全部保留**在 profile 之外(`CharacterBody2D`/`Area2D`/`TileMapLayer`/`Parallax2D`/`CanvasLayer`/`Control`/`ColorRect`/`Tween`/`Timer`/`AtlasTexture`/`SpriteFrames` 等)。
+
+### 2.4 编译模板
+构建脚本:**`E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat`**。等价命令:
+
+```bat
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
+cd /d E:\Workspace\godot\godot-4.7.1-src
+python -m SCons platform=windows target=template_release production=yes optimize=size arch=x86_64 ^
+    accesskit=no d3d12=no ^
+    build_profile=E:\Workspace\godot\the-cyancular-ruins\cyancular_build_profile.gdbuild -j 8
+```
+
+- 首次全量编译约 13 分钟;改 profile 后增量编译 1~2 分钟。
+- 产物:**`E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64.exe`**(约 36 MB)。
+
+### 2.5 安装模板
+```bash
+# 备份官方模板(如尚未备份)
+cp "%APPDATA%\Godot\export_templates\4.7.1.stable\windows_release_x86_64.exe" \
+   "%APPDATA%\Godot\export_templates\4.7.1.stable\windows_release_x86_64.orig.exe"
+
+# 覆盖安装自定义模板
+cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64.exe" \
+   "%APPDATA%\Godot\export_templates\4.7.1.stable\windows_release_x86_64.exe"
+```
+
+### 2.6 重新导出 + 验证
+按第 1 节导出,然后**必须实际运行游戏验证**(改 profile 后只编译+导出不够,会漏运行时错误)。
+
+---
+
+## 3. 故障排查
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| 导出报 `可执行文件"pck"区未找到` | 模板被 UPX 过 / 缺 `pck` 节 | 恢复模板:把 `.orig.exe` 拷回,或重新编译模板 |
+| 启动即闪退,stderr 一堆 `.ctex` / `CompressedTexture2D` 贴图错误 | **webp 模块被关**(贴图是 WebP 存的) | profile 里保留 `module_webp`,重编+重导出 |
+| 运行时报 `missing class X` / 场景加载失败 | profile 裁掉了游戏要用的类 | 把类名从 `disabled_classes` 里移除,重编+重导出 |
+| exe 突然变回 ~109 MB | 模板目录被官方模板覆盖(编辑器更新/重装) | 重新拷贝编译产物,见 2.5 |
+| exe 一直是 Godot 默认图标,自定义 icon 不生效 | 导出预设 `application/modify_resources=false` | 在导出预设里把 `modify_resources` 勾上(=true),重导出 |
+| exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.txt`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `map/*.txt`,重导出 |
+| 在项目目录里测 exe 一切正常,拷出去就缺东西 | 项目目录运行时 Godot 用本地文件补齐,掩盖了打包漏项 | 务必**拷到项目外**测试打包完整性 |
+| 用了 4.4.1 mono 编辑器导出 | 强行走 mono 模板 | 换 4.7.1 标准编辑器 |
+
+### 查看闪退错误的方法
+GUI 版 exe 错误打到 stderr,用命令行跑并重定向:
+```bash
+cd E:\Workspace\godot\the-cyancular-ruins
+"./The Cyancular Ruins.exe" > stdout.log 2> stderr.log
+cat stderr.log
+```
+
+---
+
+## 4. 升级 Godot 大版本(如 4.8)
+
+1. 重新下载对应版本源码(Gitee 镜像),clone 到新目录。
+2. 复用/复查 `cyancular_build_profile.gdbuild`:类名、模块名可能随版本变化(比如 `disable_advanced_gui` 在 4.7 已失效)。
+3. 按 2.4~2.6 重新编译、安装、导出、验证。
+4. 编辑器、导出模板、源码三者的版本必须一致。
+
+---
+
+## 附:相关路径速查
+
+| 用途 | 路径 |
+|---|---|
+| 项目 | `E:\Workspace\godot\the-cyancular-ruins` |
+| 4.7.1 标准编辑器 | `D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe` |
+| 导出模板目录 | `%APPDATA%\Godot\export_templates\4.7.1.stable\` |
+| 官方模板备份 | `%APPDATA%\Godot\export_templates\4.7.1.stable\windows_release_x86_64.orig.exe` |
+| Godot 源码 | `E:\Workspace\godot\godot-4.7.1-src` |
+| 裁剪 profile | `E:\Workspace\godot\the-cyancular-ruins\cyancular_build_profile.gdbuild` |
+| 构建脚本 | `E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat` |
+| 编译产物 | `E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64.exe` |
+| 发布 exe | `E:\Workspace\godot\the-cyancular-ruins\The Cyancular Ruins.exe` |

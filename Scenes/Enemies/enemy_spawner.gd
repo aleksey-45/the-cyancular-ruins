@@ -7,22 +7,26 @@ const TYPES: Dictionary = {
 	"fly_bird": "res://Scenes/Enemies/EnemyFlyBird.tscn",
 }
 
-# 在 grid 的空位里随机取 count 个、且距 player_cell 的环面距离 >= min_dist_cells 的格子。
+# 在 grid 里随机取 count 个「地板格」、且距 player_cell 的环面距离 >= min_dist_cells。
+# 地板格 = EMPTY 且正下方(y+1,环面取模)是 SOLID:敌人站立/落地有实心表面托底,
+# 否则返程落地时没有 is_on_floor() 的地面,会坠穿空洞(见 FlyBird 回家入睡 bug)。
 static func sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 		count: int, min_dist_cells: int) -> Array[Vector2i]:
-	var empty: Array[Vector2i] = []
-	for y in range(grid.size()):
-		for x in range(grid[y].size()):
-			if grid[y][x] == MazeGenerator.EMPTY:
-				empty.append(Vector2i(x, y))
+	var rows := grid.size()
+	var cols := grid[0].size()
+	var floor_cells: Array[Vector2i] = []
+	for y in range(rows):
+		for x in range(cols):
+			if grid[y][x] == MazeGenerator.EMPTY and grid[posmod(y + 1, rows)][x] == MazeGenerator.SOLID:
+				floor_cells.append(Vector2i(x, y))
 	var chosen: Array[Vector2i] = []
-	var pool: Array[Vector2i] = empty.duplicate()
+	var pool: Array[Vector2i] = floor_cells.duplicate()
 	var attempts := pool.size() * 4
 	while chosen.size() < count and attempts > 0 and not pool.is_empty():
 		attempts -= 1
 		var i := randi() % pool.size()
 		var cand := pool[i]
-		if MazeGenerator.toroidal_dist(cand, player_cell, grid[0].size(), grid.size()) >= min_dist_cells:
+		if MazeGenerator.toroidal_dist(cand, player_cell, cols, rows) >= min_dist_cells:
 			chosen.append(cand)
 			pool.remove_at(i)
 	return chosen

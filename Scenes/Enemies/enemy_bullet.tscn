@@ -1,22 +1,22 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene format=3 uid="uid://bivmosso83o6a"]
 
-[ext_resource type="Script" path="res://Scenes/Enemies/enemy_bullet.gd" id="1_bl"]
+[ext_resource type="Script" uid="uid://capgs802kxsi7" path="res://Scenes/Enemies/enemy_bullet.gd" id="1_bl"]
 [ext_resource type="Texture2D" uid="uid://cbxquhfl3xc11" path="res://AssetBundle/Sprites/Bullets.png" id="2_14wxs"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_8bitv"]
-size = Vector2(12, 6)
+size = Vector2(10, 10)
 
-[node name="EnemyBullet" type="CharacterBody2D"]
+[node name="EnemyBullet" type="CharacterBody2D" unique_id=23499240]
 collision_layer = 0
 collision_mask = 3
 motion_mode = 1
 script = ExtResource("1_bl")
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=1796540343]
 shape = SubResource("RectangleShape2D_8bitv")
 
-[node name="Sprite2D" type="Sprite2D" parent="."]
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=112481146]
 texture_filter = 1
 texture = ExtResource("2_14wxs")
 region_enabled = true
-region_rect = Rect2(2, 1, 11, 4)
+region_rect = Rect2(28, 1, 10, 9)

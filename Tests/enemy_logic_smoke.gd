@@ -25,7 +25,7 @@ class StubCombatPlayer:
 		rect.size = Vector2(40, 40)
 		shape.shape = rect
 		add_child(shape)
-	func take_hit(_source_pos: Vector2, damage: int) -> void:
+	func take_hit(_source_pos: Vector2, damage: int, _ignore_iframes: bool = false) -> void:
 		hit_log.append(damage)
 	func is_downed() -> bool:
 		return false
@@ -51,6 +51,10 @@ func _initialize() -> void:
 		row.resize(10)
 		row.fill(MazeGenerator.EMPTY)
 		grid.append(row)
+	# 底部整行地板:让 y=8 成为「地板格」(正下方 SOLID),否则全 EMPTY 无格可选。
+	# 环面取模后 y=8 与原点距离 ≥3 的候选仍有 9 个,距离断言不受影响。
+	for x in range(10):
+		grid[9][x] = MazeGenerator.SOLID
 	var cells := EnemySpawner.sample_spawn_cells(grid, Vector2i(0, 0), 5, 3)
 	_check(cells.size() == 5, "spawn 取 5 格")
 	var all_far := true
@@ -58,6 +62,11 @@ func _initialize() -> void:
 		if MazeGenerator.toroidal_dist(c, Vector2i(0, 0), 10, 10) < 3:
 			all_far = false
 	_check(all_far, "spawn 全部满足最小距离")
+	var all_on_floor := true
+	for c in cells:
+		if grid[posmod(c.y + 1, 10)][c.x] != MazeGenerator.SOLID:
+			all_on_floor = false
+	_check(all_on_floor, "spawn 全部位于地板上面")
 
 	# ── Task 3: EnemyBase 加载 ──
 	_check(load("res://Scenes/Enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
@@ -178,7 +187,7 @@ func _initialize() -> void:
 	var jump2: PackedScene = load("res://Scenes/Enemies/EnemyJumpBird.tscn")
 	var e2 := jump2.instantiate()
 	root.add_child(e2)
-	_check(e2.collision_layer == 3, "敌人占用层3")
+	_check(e2.collision_layer == 4, "敌人占用层3")
 	e2.free()
 	var bm := bscene.instantiate()
 	_check(bm.collision_mask == 5, "玩家子弹 mask=5(地形+敌人)")
@@ -223,6 +232,12 @@ func _initialize() -> void:
 		g[14][x] = MazeGenerator.SOLID
 	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 8)).is_empty(), "BFS 墙带隔断无路")
 	_check(MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 2)).is_empty(), "BFS 反向也无路")
+	# 目标被隔断(BFS 无路)→ bfs_path_nearest 仍返回"最近可达格"的路径,而非空
+	var pn := MazeGenerator.bfs_path_nearest(Vector2i(2, 2), Vector2i(2, 8))
+	_check(not pn.is_empty(), "bfs_path_nearest 目标不可达仍有降级路径")
+	_check(pn[-1] != Vector2i(2, 8), "bfs_path_nearest 终点不是被隔断的目标")
+	_check(MazeGenerator.bfs_path_nearest(Vector2i(2, 2), Vector2i(2, 2)).is_empty(), "bfs_path_nearest 同格返回空")
+	_check(MazeGenerator.bfs_path_nearest(Vector2i(2, 8), Vector2i(2, 12))[-1] == Vector2i(2, 12), "bfs_path_nearest 可达时直达终点")
 	_check(not MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 12)).is_empty(), "BFS 同带仍有路")
 	# 限量预算: 同带可达、曼哈顿距离 14 > 预算 8 → 视为无路
 	_check(not MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12)).is_empty(), "BFS 预算内可达")
@@ -261,7 +276,7 @@ func _initialize() -> void:
 	var eb := bscene_e.instantiate()
 	eb.global_position = Vector2(400, 400)
 	root.add_child(eb)
-	eb.launch(Vector2(100.0, 0.0), 2000.0, Color(1.0, 0.6, 0.2), 2, 1.0)
+	eb.launch(Vector2(100.0, 0.0), 2000.0, 2, 1.0)
 	var start_vy: float = eb.velocity_vec.y
 	for i in range(10):
 		await physics_frame
@@ -275,7 +290,7 @@ func _initialize() -> void:
 	var eb2 := bscene_e.instantiate()
 	eb2.global_position = Vector2(400, 400)
 	root.add_child(eb2)
-	eb2.launch(Vector2(300.0, 0.0), 2000.0, Color(1.0, 0.6, 0.2), 2, 1.0)
+	eb2.launch(Vector2(300.0, 0.0), 2000.0, 2, 1.0)
 	for i in range(5):
 		await physics_frame
 		if not is_instance_valid(eb2):
@@ -320,9 +335,9 @@ func _initialize() -> void:
 	_check(fb.state == 0, "FlyBird 初始休眠")
 	_check(fb.is_in_group("enemies"), "FlyBird 加入 enemies 组")
 	_check(fb.get_node_or_null("ContactArea") != null, "FlyBird ContactArea 创建")
-	_check(fb.hp == 20, "FlyBird hp=20")
+	_check(fb.hp == 25, "FlyBird hp=25")
 	_check(fb.contact_damage == 0, "FlyBird 无接触伤害")
-	_check(fb.collision_layer == 3, "FlyBird 占层3")
+	_check(fb.collision_layer == 4, "FlyBird 占层3")
 	_check(is_equal_approx(fb.scale.x, 2.0), "FlyBird scale=2.0")
 	# 全宽地板:让睡眠的鸟落在地板上,避免自由落体导致其低于玩家(否则平抛弹够不到);
 	# 同时供死亡坠落落地。
@@ -364,9 +379,8 @@ func _initialize() -> void:
 	_check(reached_shoot, "FlyBird 进入射击状态")
 	_check(fired, "FlyBird 发射过投弹")
 	_check(near_player.hit_log.has(2), "投弹命中玩家造成 2 伤害")
-	# 杀死 → 坠落落地消失(地板已在上面铺好,全宽覆盖任意锚点/击退漂移)
+	# 杀死 → 直接销毁(hurt 内 queue_free,同帧末释放)
 	fb.hurt(99, Vector2.RIGHT)
-	await physics_frame
 	_check(fb.is_dead, "FlyBird 受击死亡")
 	var died := false
 	for i in range(180):
@@ -374,7 +388,7 @@ func _initialize() -> void:
 		if not is_instance_valid(fb):
 			died = true
 			break
-	_check(died, "FlyBird 死亡坠落落地后消失")
+	_check(died, "FlyBird 死亡直接销毁")
 	floor_b.free()
 	near_player.free()
 	MazeGenerator.current_grid = []
@@ -432,7 +446,7 @@ func _initialize() -> void:
 	var timed_out := false
 	for i in range(200):
 		await physics_frame
-		if fb3.is_dead:
+		if not is_instance_valid(fb3) or fb3.is_dead:
 			timed_out = true
 			break
 	_check(timed_out, "冲撞超时自毁")

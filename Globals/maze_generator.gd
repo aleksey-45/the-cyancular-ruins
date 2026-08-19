@@ -118,7 +118,10 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 
 # 环面 4 邻居 BFS:返回从 from_cell 到 to_cell 的格序列(不含起点,含终点)。
 # 只走 EMPTY 格;限量访问 max_visit,超限视为无路。同格/无路返回空数组。
-static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 8000) -> Array[Vector2i]:
+# passable_pred 可传入可走性判定(如飞行敌人按自身碰撞箱是否挤得过);为空时用
+# 默认「EMPTY 可走」。传 max_visit 时需一并给出,否则默认 4000。
+static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
+		passable_pred: Callable = Callable()) -> Array[Vector2i]:
 	var grid := current_grid
 	if grid.is_empty():
 		return []
@@ -136,7 +139,12 @@ static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 80
 		if visited.size() > max_visit:
 			return []
 		for n in _neighbors4(cur, cols, rows):
-			if visited.has(n) or grid[n.y][n.x] == SOLID:
+			if visited.has(n):
+				continue
+			if passable_pred.is_valid():
+				if not passable_pred.call(n):
+					continue
+			elif grid[n.y][n.x] == SOLID:
 				continue
 			visited[n] = true
 			prev[n] = cur
@@ -144,6 +152,51 @@ static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 80
 				return _rebuild_path(prev, from_cell, to_cell)
 			queue.append(n)
 	return []
+
+
+# 与 bfs_path 相同,但目标不可达(墙隔断/挤不进/预算超限)时返回「能到达的格中离
+# to_cell 最近一格」的路径,而不是空数组。给飞行敌人当降级目标:目标格是墙或太窄
+# 时仍能沿迷宫里最近的可达格靠近,而不是空路径后直线硬冲卡墙。可达时行为与 bfs_path 一致。
+static func bfs_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
+		passable_pred: Callable = Callable()) -> Array[Vector2i]:
+	var grid := current_grid
+	if grid.is_empty():
+		return []
+	var rows := grid.size()
+	var cols := grid[0].size()
+	if from_cell == to_cell:
+		return []
+	var visited := {from_cell: true}
+	var prev := {}
+	var queue: Array[Vector2i] = [from_cell]
+	var head := 0
+	var best := from_cell
+	var best_d := toroidal_dist(from_cell, to_cell, cols, rows)
+	while head < queue.size():
+		var cur := queue[head]
+		head += 1
+		if visited.size() > max_visit:
+			break
+		var cd := toroidal_dist(cur, to_cell, cols, rows)
+		if cd < best_d:
+			best_d = cd
+			best = cur
+		for n in _neighbors4(cur, cols, rows):
+			if visited.has(n):
+				continue
+			if passable_pred.is_valid():
+				if not passable_pred.call(n):
+					continue
+			elif grid[n.y][n.x] == SOLID:
+				continue
+			visited[n] = true
+			prev[n] = cur
+			if n == to_cell:
+				return _rebuild_path(prev, from_cell, to_cell)
+			queue.append(n)
+	if best == from_cell:
+		return []
+	return _rebuild_path(prev, from_cell, best)
 
 
 static func _neighbors4(c: Vector2i, cols: int, rows: int) -> Array[Vector2i]:

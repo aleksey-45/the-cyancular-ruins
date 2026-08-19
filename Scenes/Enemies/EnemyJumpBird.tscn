@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3 uid="uid://bp1qruo0scwah"]
+[gd_scene format=3 uid="uid://bp1qruo0scwah"]
 
 [ext_resource type="Script" uid="uid://dyb7bjjo3dkml" path="res://Scenes/Enemies/enemy_jump_bird.gd" id="1_ej"]
 [ext_resource type="Texture2D" uid="uid://d0qpd4812ihfi" path="res://AssetBundle/Sprites/Jump_Bird.png" id="2_uxahq"]
@@ -73,7 +73,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_pgx5m")
 }],
-"loop": true,
+"loop": 1,
 "name": &"dashing",
 "speed": 5.0
 }, {
@@ -81,7 +81,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_uxahq")
 }],
-"loop": true,
+"loop": 1,
 "name": &"dead",
 "speed": 5.0
 }, {
@@ -98,7 +98,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_kdv2j")
 }],
-"loop": true,
+"loop": 1,
 "name": &"fall_asleep",
 "speed": 8.0
 }, {
@@ -109,7 +109,7 @@ animations = [{
 "duration": 0.8,
 "texture": SubResource("AtlasTexture_xk620")
 }],
-"loop": true,
+"loop": 1,
 "name": &"jump",
 "speed": 1.0
 }, {
@@ -117,7 +117,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_688rj")
 }],
-"loop": true,
+"loop": 1,
 "name": &"sleeping",
 "speed": 5.0
 }, {
@@ -131,7 +131,7 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_63t12")
 }],
-"loop": true,
+"loop": 1,
 "name": &"turn_dash",
 "speed": 8.0
 }, {
@@ -148,25 +148,25 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_r5tme")
 }],
-"loop": true,
+"loop": 1,
 "name": &"wake_up",
 "speed": 8.0
 }]
 
-[node name="EnemyJumpBird" type="CharacterBody2D"]
+[node name="EnemyJumpBird" type="CharacterBody2D" unique_id=1399832467]
 scale = Vector2(2.5, 2.5)
-collision_layer = 3
-collision_mask = 3
+collision_layer = 4
+collision_mask = 7
 script = ExtResource("1_ej")
 hp = 30
 contact_damage = 4
 knockback_strength = 200.0
 
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1953313436]
 texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_688rj")
 animation = &"sleeping"
 
-[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="."]
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=740945204]
 visible = false
 polygon = PackedVector2Array(-21.2, 20.8, 7.2, -14.8, 14, -14.8, 20, -8.4, 16, -5.2, 14, 6, 9.2, 10.8, 7.2, 20.8)
