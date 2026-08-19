@@ -3,9 +3,6 @@ extends EnemyBase
 
 enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP }
 
-var state: State = State.SLEEP
-var _anim: AnimatedSprite2D
-var _state_timer: float = 0.0
 var _hop_timer: float = 0.0
 var _back_hop_cd: float = 0.0
 var _lunge_dir: Vector2 = Vector2.RIGHT
@@ -37,14 +34,6 @@ func _align_contact_area() -> void:
 				child.shape = area_shape
 				child.position = Vector2(0, 4.5)
 				break
-
-func _anim_duration(name: String) -> float:
-	var spf := _anim.sprite_frames
-	return float(spf.get_frame_count(name)) / spf.get_animation_speed(name)
-
-func _set_state(s: State) -> void:
-	state = s
-	_state_timer = 0.0
 
 func _ai(delta: float) -> void:
 	var dist := toroidal_dist_to_player()

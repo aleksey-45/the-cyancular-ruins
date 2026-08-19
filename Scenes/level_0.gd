@@ -16,6 +16,7 @@ func _ready() -> void:
 	if grid.is_empty():
 		push_error("Level0: 地图加载失败，跳过建图")
 		return
+	MazeGenerator.current_grid = grid
 
 	# 地图文件尺寸固定，据此回写环形回绕的像素尺寸
 	GameParameters.MAP_WIDTH = grid[0].size() * GameParameters.TILE_SIZE
