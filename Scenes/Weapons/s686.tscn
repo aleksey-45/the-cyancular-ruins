@@ -6,15 +6,15 @@
 [node name="S686" type="Node2D" unique_id=1871974505]
 script = ExtResource("1_wb")
 weapon_name = "S686"
-fire_cooldown = 0.5
+fire_cooldown = 0.8
 bullet_speed = 1100.0
-bullet_range = 400.0
+bullet_range = 650.0
 bullet_size = 0.8
 pellet_count = 8
-spread_deg = 8.0
+spread_deg = 7.0
 damage = 4
-impact = 180.0
-recoil_push = 450.0
+impact = 200.0
+recoil_push = 750.0
 recoil_kick = 11.0
 cam_shake = 5.0
 move_penalty = 0.9
