@@ -14,7 +14,7 @@ class StubEnemy:
 		rect.size = Vector2(40, 40)
 		shape.shape = rect
 		add_child(shape)
-	func hurt(damage: int, _dir: Vector2, _knock: float = 0.0) -> void:
+	func hurt(damage: int, _dir: Vector2, _knock: float = 0.0, _set_velocity: bool = false) -> void:
 		hp -= damage
 		hits.append([damage, _dir, _knock])
 
@@ -22,12 +22,14 @@ class StubEnemy:
 class StubPlayer:
 	extends CharacterBody2D
 	var hit_log: Array = []
+	var knock_log: float = -1.0
 	func _init() -> void:
 		add_to_group("player")
 		collision_layer = 2
 		collision_mask = 0
-	func take_hit(_source_pos: Vector2, damage: int, _ignore_iframes: bool = false) -> void:
+	func take_hit(_source_pos: Vector2, damage: int, _ignore_iframes: bool = false, knockback: float = -1.0) -> void:
 		hit_log.append(damage)
+		knock_log = knockback
 	func is_downed() -> bool:
 		return false
 
@@ -83,13 +85,13 @@ func _test_aoe() -> void:
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
 	_check(e2.hp == 50, "AoE 边缘 0 伤")
 	e2.free()
-	# 中段衰减: d=64, inner=44.8 → 35*(1-(64-44.8)/83.2)=26
+	# 中段衰减(1-t²): d=64, inner=51.2 → t=(64-51.2)/76.8=0.167, 35*(1-0.028)=34
 	var e3 := StubEnemy.new()
 	e3.global_position = Vector2(200, 200) + Vector2(64, 0)
 	root.add_child(e3)
 	await physics_frame
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
-	_check(e3.hp == 50 - 26, "AoE 中段线性衰减")
+	_check(e3.hp == 50 - 34, "AoE 中段平缓衰减")
 	e3.free()
 	# 冲击波向外:方向为从爆心指向目标
 	var e4 := StubEnemy.new()
@@ -106,6 +108,7 @@ func _test_aoe() -> void:
 	await physics_frame
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
 	_check(p.hit_log.has(35), "玩家友伤满值 35")
+	_check(is_equal_approx(p.knock_log, 900.0), "玩家受击收到满值击退 900")
 	p.free()
 	# LOS 遮挡:墙列 x=4 挡住「向左绕行的环面最短路径」→ 0 伤;右侧开阔 → 满伤
 	var g: Array[Array] = []
@@ -123,7 +126,7 @@ func _test_aoe() -> void:
 	root.add_child(walled)
 	await physics_frame
 	exp.apply_aoe(Vector2(5 * 16, 12 * 16), 300.0, 35, 900.0)
-	_check(walled.hp == 50, "墙后敌人 0 伤(LOS 遮挡)")
+	_check(walled.hp == 50 - 26, "墙后敌人保留 75% 伤(26)")
 	walled.free()
 	# 爆心(5,12)→(8,12):右弧 5→6→7→8 无墙 → 满伤
 	var open := StubEnemy.new()
@@ -147,20 +150,34 @@ func _test_fuse() -> void:
 	await physics_frame
 	_check(bg.velocity_vec.y > 0.0, "基类重力生效(gravity_factor>0)")
 	bg.free()
-	# ── 直接命中敌人:10 直接伤 + 立即爆炸(中心 35)──
+	# ── 直接命中敌人:10 直接伤立即 + 反弹 + 引信 hit_fuse_time(0.1s)短延时爆炸 ──
 	var b = _make_bullet()
+	b.set("hit_fuse_time", 0.1)
 	root.add_child(b)
 	var enemy := StubEnemy.new()
 	enemy.global_position = Vector2(300, 200)
 	root.add_child(enemy)
 	b.global_position = Vector2(200, 200)
 	b.setup(Vector2.RIGHT, 1000.0, 2000.0, 1.0, Color.WHITE, null)
+	# 命中瞬间:直接伤 10 立扣,子弹反弹(速度方向反转)未销毁
+	var hit_seen := false
+	var bounced := false
 	for i in range(60):
 		await physics_frame
+		if is_instance_valid(enemy) and enemy.hp == 50 - 10:
+			hit_seen = true
+			if is_instance_valid(b) and b.velocity_vec.x < 0.0:
+				bounced = true
+				break
+	_check(hit_seen and bounced, "命中敌人:10 直接伤立即,子弹反弹(方向反转)不销毁")
+	# 短引信:命中后约 0.1s(≈6 帧)爆炸,不是长 fuse_time(默认 0.5s)——15 帧内必须炸
+	var exploded2 := false
+	for i in range(15):
+		await physics_frame
 		if not is_instance_valid(b):
+			exploded2 = true
 			break
-	_check(not is_instance_valid(b), "命中敌人后榴弹销毁")
-	_check(enemy.hp == 50 - 10 - 35, "直接命中 = 10 直接 + 35 爆炸")
+	_check(exploded2, "命中敌人反弹后约 0.1s 短引信爆炸")
 	enemy.free()
 	# ── 撞墙 → 停驻 → 0.5s 后才爆(飞行中不炸)──
 	var wall := StaticBody2D.new()
@@ -186,14 +203,14 @@ func _test_fuse() -> void:
 		if b2.global_position.x >= 280.0 and is_instance_valid(b2):
 			stopped = true
 			break
-	_check(stopped and is_instance_valid(b2), "撞墙后停驻且未销毁")
+	_check(stopped and is_instance_valid(b2), "撞墙后反弹且未销毁")
 	var exploded := false
 	for i in range(60):
 		await physics_frame
 		if not is_instance_valid(b2):
 			exploded = true
 			break
-	_check(exploded, "撞墙停驻后约 0.5s 爆炸")
+	_check(exploded, "撞墙后约 0.5s 爆炸")
 	far.free()
 	wall.free()
 

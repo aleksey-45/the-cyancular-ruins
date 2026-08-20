@@ -1,6 +1,8 @@
 class_name BulletBase
 extends CharacterBody2D
 
+const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
+
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
 var speed: float = 0.0
@@ -15,15 +17,17 @@ var source: Node = null
 
 # ── 爆炸弹(榴弹等) ──
 @export var explodes: bool = false        # 是否爆炸弹
-@export var direct_hit_damage: int = 10   # 命中敌人的直接伤害
-@export var fuse_time: float = 0.5        # 碰撞停驻后延时(秒);命中敌人则立即爆炸
+@export var direct_hit_damage: int = 10   # 命中敌人的直接伤害(立即结算)
+@export var fuse_time: float = 0.5        # 撞墙反弹后延时(秒)
+@export var hit_fuse_time: float = 0.1    # 命中敌人反弹后延时(秒);直接伤立即,反弹后短引信
 @export var explosion_radius: float = 128.0
 @export var explosion_damage: int = 35
 @export var explosion_knockback: float = 900.0
 @export var explosion_visual: PackedScene = null
 
-var _fuse_active: bool = false   # 撞墙停驻后才开始计时
+var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
 var _fuse_elapsed: float = 0.0
+var _fuse_duration: float = 0.0  # 本次引信时长(撞墙=fuse_time,命中敌人=hit_fuse_time)
 
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
@@ -49,7 +53,7 @@ func _physics_process(delta: float) -> void:
 			rotation = velocity_vec.angle()
 	if explodes and _fuse_active:
 		_fuse_elapsed += delta
-		if _fuse_elapsed >= fuse_time:
+		if _fuse_elapsed >= _fuse_duration:
 			_explode()
 			queue_free()
 			return
@@ -59,15 +63,18 @@ func _physics_process(delta: float) -> void:
 	if col:
 		var hit := col.get_collider()
 		if explodes:
-			# 命中敌人:10 直接伤 + 立即爆炸(无延时)
+			# 命中敌人:直接伤立即结算;与撞墙一样反弹(带衰减),引信用短时长 hit_fuse_time(0.1s)
 			if hit != null and hit.is_in_group("enemies"):
 				_direct_hit(hit)
-				_explode()
-				queue_free()
-				return
-			# 撞墙停驻,碰撞后才开始引信(不立即爆炸)
-			velocity_vec = Vector2.ZERO
-			_fuse_active = true
+				_start_fuse(hit_fuse_time)
+			else:
+				# 撞墙:反弹(带衰减),首次碰撞后开始引信(fuse_time);不直接清零速度
+				_start_fuse(fuse_time)
+			var normal := col.get_normal()
+			var reflected := velocity_vec.bounce(normal)
+			velocity_vec = reflected * BOUNCE_DAMPING
+			if not velocity_vec.is_zero_approx():
+				rotation = velocity_vec.angle()
 			return
 		# 切枪后旧武器可能已 free():在途子弹的 source 失效时无害消失。
 		if hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
@@ -95,6 +102,13 @@ func _direct_hit(hit: Node) -> void:
 	if hit.has_method("hurt"):
 		var dir := velocity_vec.normalized() if not velocity_vec.is_zero_approx() else Vector2.RIGHT
 		hit.hurt(direct_hit_damage, dir)
+
+# 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
+# 后续反弹不重置时长(首次碰撞决定引信时长,不因再撞墙/再撞敌人刷新)。
+func _start_fuse(duration: float) -> void:
+	if not _fuse_active:
+		_fuse_duration = duration
+	_fuse_active = true
 
 func _explode() -> void:
 	if explosion_visual != null:

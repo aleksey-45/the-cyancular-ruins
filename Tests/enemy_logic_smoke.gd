@@ -188,8 +188,8 @@ func _initialize() -> void:
 	var sg_scene: PackedScene = load("res://Scenes/Weapons/s686.tscn")
 	_check(sg_scene != null, "霰弹枪场景加载")
 	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
-	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 8.0), "霰弹枪 8 丸 ±8°")
-	_check(sg.damage == 4 and is_equal_approx(sg.bullet_range, 400.0), "霰弹枪单丸4伤/短射程")
+	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 5.0), "霰弹枪 8 丸 ±5°")
+	_check(sg.damage == 4 and is_equal_approx(sg.bullet_range, 700.0), "霰弹枪单丸4伤/射程700")
 	_check(sg.tier == 0, "霰弹枪轻武器")
 	sg.queue_free()
 
@@ -410,7 +410,7 @@ func _initialize() -> void:
 	_check(reached_shoot, "FlyBird 进入射击状态")
 	_check(fired, "FlyBird 发射过投弹")
 	_check(near_player.hit_log.has(2), "投弹命中玩家造成 2 伤害")
-	# 杀死 → 直接销毁(hurt 内 queue_free,同帧末释放)
+	# 杀死 → 直接销毁(白闪计时后销毁,物理走 super 统一路径)
 	fb.hurt(99, Vector2.RIGHT)
 	_check(fb.is_dead, "FlyBird 受击死亡")
 	var died := false
@@ -420,6 +420,42 @@ func _initialize() -> void:
 			died = true
 			break
 	_check(died, "FlyBird 死亡直接销毁")
+	# 死亡物理与生前一致:爆炸式击退在尸体上不折入,knock_velocity 仍独立衰减
+	var fb_d := fb_scene.instantiate()
+	fb_d.global_position = Vector2(1000, 400)
+	root.add_child(fb_d)
+	await physics_frame
+	fb_d.hurt(99, Vector2.RIGHT, 1000.0, true)  # 爆炸式击退
+	_check(fb_d.is_dead, "飞鸟受击死亡(爆炸)")
+	_check(is_equal_approx(fb_d.knock_velocity.x, 1000.0), "尸体保留独立击退向量(未折入)")
+	var fd0: float = fb_d.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(fb_d.knock_velocity.x < fd0, "尸体击退向量随帧衰减(与生前同物理)")
+	fb_d.free()
+	# 吞冲击波回归:先打死尸体,后续爆炸仍能推动尸体(只吃击退不吃伤)
+	var fd2 := fb_scene.instantiate()
+	fd2.set("hp", 5)
+	fd2.global_position = Vector2(1000, 400)
+	root.add_child(fd2)
+	await physics_frame
+	fd2.hurt(99, Vector2.RIGHT)  # 直接打死
+	_check(fd2.is_dead, "飞鸟尸体已死")
+	fd2.hurt(1, Vector2.LEFT, 1500.0, true)  # 爆炸式冲击推尸体
+	_check(fd2.knock_velocity.x < 0.0, "尸体被后续爆炸推动(吞冲击波回归)")
+	fd2.free()
+	# 尸体基础速度也衰减(死后滑行逐渐停住,不匀速滑到底)
+	var fd3 := fb_scene.instantiate()
+	fd3.global_position = Vector2(1000, 400)
+	root.add_child(fd3)
+	await physics_frame
+	fd3.hurt(99, Vector2.RIGHT)  # 打死,velocity += 200
+	_check(fd3.velocity.x > 100.0, "尸体有基础滑行速度")
+	var vx0: float = fd3.velocity.x
+	for i in range(10):
+		await physics_frame
+	_check(fd3.velocity.x < vx0, "尸体基础速度随帧衰减(不匀速滑到底)")
+	fd3.free()
 	floor_b.free()
 	near_player.free()
 	MazeGenerator.current_grid = []
@@ -484,6 +520,31 @@ func _initialize() -> void:
 	if is_instance_valid(fb3):
 		fb3.free()
 	timeout_player.free()
+	# 冲撞中被射杀(未撞到东西): 清冲撞速度, 尸体白闪期间不再续冲
+	var fb4 := fb_scene.instantiate()
+	fb4.global_position = Vector2(488, 1208)
+	root.add_child(fb4)
+	await physics_frame
+	fb4.hp = 4
+	var charge_kill_player := StubCombatPlayer.new()
+	charge_kill_player.global_position = Vector2(700, 1208)
+	root.add_child(charge_kill_player)
+	var charged2 := false
+	for i in range(240):
+		await physics_frame
+		if fb4.state == 4:
+			charged2 = true
+			break
+	_check(charged2, "冲撞中被射杀前置:进入冲撞")
+	fb4.hurt(99, Vector2.RIGHT)
+	_check(fb4.is_dead, "冲撞中被射杀死亡")
+	_check(fb4.velocity.x == 0.0, "冲撞死清水平速度,不再续冲")
+	for i in range(5):
+		await physics_frame
+	_check(fb4.velocity.x == 0.0, "尸体白闪期间持续无水平续冲")
+	charge_kill_player.free()
+	if is_instance_valid(fb4):
+		fb4.free()
 	# 返程: 玩家跑出追击范围 → 回家落地入睡
 	var floor_r := StaticBody2D.new()
 	var fshape_r := CollisionShape2D.new()
@@ -496,9 +557,9 @@ func _initialize() -> void:
 	floor_r.collision_layer = 1
 	floor_r.collision_mask = 0
 	root.add_child(floor_r)
-	var fb4 := fb_scene.instantiate()
-	fb4.global_position = Vector2(488, 1208)
-	root.add_child(fb4)
+	var fb5 := fb_scene.instantiate()
+	fb5.global_position = Vector2(488, 1208)
+	root.add_child(fb5)
 	await physics_frame
 	var ret_player := StubCombatPlayer.new()
 	ret_player.global_position = Vector2(600, 1208)
@@ -506,7 +567,7 @@ func _initialize() -> void:
 	var engaged := false
 	for i in range(240):
 		await physics_frame
-		if fb4.state == 2 or fb4.state == 3:
+		if fb5.state == 2 or fb5.state == 3:
 			engaged = true
 			break
 	_check(engaged, "FlyBird 进入战斗状态")
@@ -514,13 +575,149 @@ func _initialize() -> void:
 	var returned := false
 	for i in range(600):
 		await physics_frame
-		if fb4.state == 0:
+		if fb5.state == 0:
 			returned = true
 			break
 	_check(returned, "FlyBird 返程后入睡")
 	floor_r.free()
 	ret_player.free()
 	MazeGenerator.current_grid = []
+
+	# ── Task 7: A* 扁平数组 + 路径缓存 ──
+	# 大网格(demo 全尺寸)上跑 A*:不崩、路径逐格相邻且在界内(扁平数组索引正确)。
+	var big_grid := MazeGenerator.load_map_file()
+	MazeGenerator.current_grid = big_grid
+	var far := MazeGenerator.astar_path_nearest(Vector2i(10, 10), Vector2i(400, 200))
+	var far_valid := true
+	var prev_cell := Vector2i(10, 10)
+	for c in far:
+		if c.x < 0 or c.x >= 540 or c.y < 0 or c.y >= 324:
+			far_valid = false
+			break
+		var dxc := absi(c.x - prev_cell.x)
+		var dyc := absi(c.y - prev_cell.y)
+		dxc = mini(dxc, 540 - dxc)
+		dyc = mini(dyc, 324 - dyc)
+		if not (dxc + dyc == 1):
+			far_valid = false
+			break
+		prev_cell = c
+	_check(far_valid, "大网格 A* 路径逐格相邻且在界内")
+	# 路径缓存:目标格未变且路径还在 → 不重跑 A*(astar_calls 不涨)
+	var cache_grid: Array[Array] = []
+	for _y in range(60):
+		var row_c: Array[int] = []
+		row_c.resize(60)
+		row_c.fill(MazeGenerator.EMPTY)
+		cache_grid.append(row_c)
+	MazeGenerator.current_grid = cache_grid
+	var fb_cache := fb_scene.instantiate()
+	fb_cache.global_position = Vector2(2000, 400)  # 远离 Task6 遗留的睡眠鸟(488,1208),不被当障碍
+	root.add_child(fb_cache)
+	await physics_frame
+	# 无玩家在组:鸟保持睡眠(不自己 repath),且 _collect_obstacles 只对 ≤600px 的实体收障碍
+	var calls0: int = MazeGenerator.astar_calls
+	fb_cache._repath_to(Vector2i(40, 20))
+	var calls1: int = MazeGenerator.astar_calls
+	_check(calls1 - calls0 == 1, "首次 repath 跑一次 A*")
+	fb_cache._repath_to(Vector2i(40, 20))
+	_check(MazeGenerator.astar_calls - calls1 == 0, "同目标且路径未空 → 缓存命中跳过 A*")
+	fb_cache._repath_to(Vector2i(41, 20))
+	_check(MazeGenerator.astar_calls - calls1 == 1, "目标变化 → 重跑 A*")
+	fb_cache._repath_to(Vector2i(41, 20))
+	_check(MazeGenerator.astar_calls - calls1 == 1, "同目标再跳一次")
+	fb_cache.free()
+	MazeGenerator.current_grid = []
+
+	# ── 爆炸独立击退向量(大冲击+迅速衰减)vs 枪击叠加 ──
+	var ov_grid: Array[Array] = []
+	for _y in range(60):
+		var row_o: Array[int] = []
+		row_o.resize(60)
+		row_o.fill(MazeGenerator.EMPTY)
+		ov_grid.append(row_o)
+	MazeGenerator.current_grid = ov_grid
+	var ov := fb_scene.instantiate()
+	ov.global_position = Vector2(1000, 400)
+	root.add_child(ov)
+	await physics_frame
+	# 枪击(默认叠加):原速度 500 + 击退 300 = 800
+	ov.velocity = Vector2(500, 0)
+	ov.hurt(1, Vector2.RIGHT, 300.0)
+	_check(is_equal_approx(ov.velocity.x, 800.0), "枪击击退叠加 500+300=800")
+	# 爆炸(set_velocity=true):设独立击退向量,不覆盖移动速度
+	ov.velocity = Vector2(500, 0)
+	ov.hurt(1, Vector2.RIGHT, 300.0, true)
+	_check(is_equal_approx(ov.knock_velocity.x, 300.0), "爆炸设独立击退向量 300")
+	_check(is_equal_approx(ov.velocity.x, 500.0), "爆炸不覆盖移动速度(500 保留)")
+	_check(is_equal_approx(ov.knock_velocity.y, 0.0), "爆炸击退纯径向(y=0)")
+	# 击退向量随帧指数衰减
+	var ov0: float = ov.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(ov.knock_velocity.x < ov0, "爆炸击退向量随帧衰减")
+	ov.free()
+	MazeGenerator.current_grid = []
+
+	# ── 玩家爆炸击退独立向量:take_hit 传击退 → 向量生效并衰减 ──
+	var pk := player_scene.instantiate()
+	pk.global_position = Vector2(1000, 400)
+	root.add_child(pk)
+	await physics_frame
+	pk.take_hit(Vector2(800, 400), 5, false, 800.0)
+	_check(is_equal_approx(pk.knock_velocity.x, 800.0), "玩家爆炸击退设独立向量")
+	var pk0: float = pk.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(pk.knock_velocity.x < pk0, "玩家击退向量随帧衰减")
+	pk.free()
+	# 上方爆炸:玩家站在地面时应被往下压(不产生向上速度)——回归:旧"叠加再减回"实现会把玩家弹起
+	var pk_floor := StaticBody2D.new()
+	var pk_fshape := CollisionShape2D.new()
+	var pk_frect := RectangleShape2D.new()
+	pk_frect.size = Vector2(500, 40)
+	pk_fshape.shape = pk_frect
+	pk_fshape.position = Vector2(0, -20)
+	pk_floor.add_child(pk_fshape)
+	pk_floor.position = Vector2(1000, 430)
+	pk_floor.collision_layer = 1
+	pk_floor.collision_mask = 0
+	root.add_child(pk_floor)
+	var pk2 := player_scene.instantiate()
+	pk2.global_position = Vector2(1000, 400)
+	root.add_child(pk2)
+	for i in range(5):
+		await physics_frame
+	pk2.take_hit(Vector2(1000, 200), 5, false, 800.0)  # 爆心在玩家上方
+	_check(pk2.knock_velocity.y > 0.0, "上方爆炸击退向量向下(+y)")
+	for i in range(3):
+		await physics_frame
+	_check(pk2.velocity.y > -100.0, "玩家不被上方爆炸弹起(velocity.y 无显著上跳)")
+	pk2.free()
+	pk_floor.free()
+	# 玩家倒地不取消物理:保留击退向量并随帧衰减(与敌人统一)
+	var pd := player_scene.instantiate()
+	pd.global_position = Vector2(1000, 400)
+	root.add_child(pd)
+	await physics_frame
+	pd.take_hit(Vector2(800, 400), 999, false, 1000.0)  # 爆炸式击退 + 秒杀
+	_check(pd.downed, "玩家倒地")
+	_check(pd.knock_velocity.x > 0.0, "倒地保留击退向量(未清零)")
+	var pd0: float = pd.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(pd.knock_velocity.x < pd0, "倒地击退向量随帧衰减(物理未取消)")
+	pd.free()
+	# 死亡保留碰撞(与飞鸟统一):JumpBird 死亡后碰撞箱不清空
+	var jdc := jump2.instantiate()
+	jdc.global_position = Vector2(1000, 800)
+	root.add_child(jdc)
+	await physics_frame
+	jdc.hurt(99, Vector2.RIGHT)
+	_check(jdc.is_dead, "JumpBird 受击死亡")
+	_check(jdc.collision_layer == 4, "JumpBird 死亡保留碰撞层")
+	_check(jdc.collision_mask == 7, "JumpBird 死亡保留碰撞掩码")
+	jdc.free()
 
 	if _failures.is_empty():
 		print("SMOKE OK")

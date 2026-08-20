@@ -16,6 +16,7 @@ var _fly_box_max: Vector2 = Vector2.ZERO   # 飞行碰撞箱 AABB 最大角(已�
 var _obstacle_boxes: Array[Rect2] = []     # 本次寻路的场上实体碰撞箱(玩家/其他敌人),当矩形障碍
 var _path: Array[Vector2i] = []
 var _path_index: int = 0
+var _path_target: Vector2i = Vector2i(-1, -1)  # 上次寻路目标格;未变且路径还在时跳过重寻(静态战斗砍搜索量)
 var _repath_timer: float = 0.0
 var _repath_phase: float = 0.0             # 随机错峰,避免 40 只鸟同帧 BFS
 var _escape_target: Vector2 = Vector2.INF  # 死区逃逸目标(寻路空路径时水平脱离悬挑)
@@ -213,6 +214,12 @@ func _repath_to(cell: Vector2i) -> void:
 	# 按鸟自身碰撞箱能否通过 + 场上实体碰撞箱是否挡路判定可走性(见 _bird_can_pass)。
 	# 目标格不可达(墙/挤不进/预算超限)时 astar_path_nearest 返回最近可达格的路径,
 	# 避免空路径后直线硬冲卡墙。A* 启发式直扑目标,空旷区展开节点远少于 BFS。
+	# 缓存:目标格没变、上次路径还没走完 → 跳过昂贵的 A*。玩家静止时射击位/回家路
+	# 不变,鸟群不再每 0.5s 反复搜索;路径走完或目标格变化才重寻(障碍碰撞由
+	# move_and_slide 兜底,不会穿墙)。
+	if cell == _path_target and not _path.is_empty():
+		return
+	_path_target = cell
 	_collect_obstacles()
 	_path = MazeGenerator.astar_path_nearest(_cell_of(global_position), cell,
 			EnemyParams.FlyBird.path_max_visit, _bird_can_pass)
