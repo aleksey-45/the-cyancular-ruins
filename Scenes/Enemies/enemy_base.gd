@@ -13,6 +13,12 @@ var use_gravity: bool = true
 @export var knockback_strength: float = 150.0
 # 死亡时尸体飞行速度上限(爆炸级击退也能保留击退感但不瞬移出屏)
 @export var max_death_fly_speed: float = 900.0
+# 爆炸专属击退向量:独立于 AI 移动速度,每帧叠加后指数衰减(大冲击+迅速衰减)
+var knock_velocity: Vector2 = Vector2.ZERO
+# 击退向量指数衰减率(越大停得越快;约 0.15s 衰减到 ~10%)
+@export var knock_decay_rate: float = 15.0
+# 爆炸设 knock_velocity 时的封顶(防止大击退把活怪轰出屏)
+@export var max_knock_velocity: float = 2500.0
 
 # 环面接缝兜底:物理 Area 用欧氏距离,跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)
 const CONTACT_RADIUS: float = 40.0
@@ -75,6 +81,8 @@ func _physics_process(delta: float) -> void:
 			velocity.x = 0.0
 	_ai(delta)
 	_anim_update()
+	# 爆炸击退向量叠加:独立于 AI 移动速度,叠加后 move_and_slide 再还原,指数衰减
+	velocity += knock_velocity
 	# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
 	# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
 	if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
@@ -86,25 +94,35 @@ func _physics_process(delta: float) -> void:
 		if _hit_flash_time == 0.0:
 			modulate = Color.WHITE
 	move_and_slide()
+	velocity -= knock_velocity
+	knock_velocity *= exp(-knock_decay_rate * delta)
 	_wrap()
 
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
+func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
 		return
-	_apply_hit(damage, knock_dir, knock_strength)
+	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		is_dead = true
 		queue_free()
 
 # 受击通用逻辑:扣血、击退、白闪。子类覆写 hurt() 时也应调用本方法,避免逻辑分叉。
 # knock_strength <= 0 时回落敌人自身 knockback_strength(旧两参调用行为不变)。
-func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
+# set_velocity=true(爆炸):设独立击退向量 knock_velocity(封顶),不覆盖移动速度;false(枪击):叠加到原速度。
+func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
-	velocity += knock_dir.normalized() * ks
-	# 死亡:限制尸体飞行速度(爆炸级击退 2500 会把尸体瞬移出屏,压到可看的速度)
-	if hp <= 0 and velocity.length() > max_death_fly_speed:
-		velocity = velocity.normalized() * max_death_fly_speed
+	if set_velocity:
+		# 爆炸:设独立击退向量(封顶),不覆盖移动速度;死亡时折入尸体速度
+		knock_velocity = knock_dir.normalized() * minf(ks, max_knock_velocity)
+	else:
+		velocity += knock_dir.normalized() * ks
+	if hp <= 0:
+		velocity += knock_velocity
+		knock_velocity = Vector2.ZERO
+		# 死亡:限制尸体飞行速度(爆炸级击退 2500 会把尸体瞬移出屏,压到可看的速度)
+		if velocity.length() > max_death_fly_speed:
+			velocity = velocity.normalized() * max_death_fly_speed
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
 

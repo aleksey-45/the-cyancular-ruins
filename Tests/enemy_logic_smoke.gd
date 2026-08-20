@@ -414,12 +414,18 @@ func _initialize() -> void:
 	fb.hurt(99, Vector2.RIGHT)
 	_check(fb.is_dead, "FlyBird 受击死亡")
 	var died := false
+	var decayed := false
+	var prev_vx: float = fb.velocity.x
 	for i in range(180):
 		await physics_frame
 		if not is_instance_valid(fb):
 			died = true
 			break
+		if not decayed and fb.velocity.x < prev_vx - 1.0:
+			decayed = true
+		prev_vx = fb.velocity.x
 	_check(died, "FlyBird 死亡直接销毁")
+	_check(decayed, "尸体白闪期间水平速度衰减(死亡滑行有阻力)")
 	floor_b.free()
 	near_player.free()
 	MazeGenerator.current_grid = []
@@ -591,6 +597,36 @@ func _initialize() -> void:
 	fb_cache._repath_to(Vector2i(41, 20))
 	_check(MazeGenerator.astar_calls - calls1 == 1, "同目标再跳一次")
 	fb_cache.free()
+	MazeGenerator.current_grid = []
+
+	# ── 爆炸独立击退向量(大冲击+迅速衰减)vs 枪击叠加 ──
+	var ov_grid: Array[Array] = []
+	for _y in range(60):
+		var row_o: Array[int] = []
+		row_o.resize(60)
+		row_o.fill(MazeGenerator.EMPTY)
+		ov_grid.append(row_o)
+	MazeGenerator.current_grid = ov_grid
+	var ov := fb_scene.instantiate()
+	ov.global_position = Vector2(1000, 400)
+	root.add_child(ov)
+	await physics_frame
+	# 枪击(默认叠加):原速度 500 + 击退 300 = 800
+	ov.velocity = Vector2(500, 0)
+	ov.hurt(1, Vector2.RIGHT, 300.0)
+	_check(is_equal_approx(ov.velocity.x, 800.0), "枪击击退叠加 500+300=800")
+	# 爆炸(set_velocity=true):设独立击退向量,不覆盖移动速度
+	ov.velocity = Vector2(500, 0)
+	ov.hurt(1, Vector2.RIGHT, 300.0, true)
+	_check(is_equal_approx(ov.knock_velocity.x, 300.0), "爆炸设独立击退向量 300")
+	_check(is_equal_approx(ov.velocity.x, 500.0), "爆炸不覆盖移动速度(500 保留)")
+	_check(is_equal_approx(ov.knock_velocity.y, 0.0), "爆炸击退纯径向(y=0)")
+	# 击退向量随帧指数衰减
+	var ov0: float = ov.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(ov.knock_velocity.x < ov0, "爆炸击退向量随帧衰减")
+	ov.free()
 	MazeGenerator.current_grid = []
 
 	if _failures.is_empty():
