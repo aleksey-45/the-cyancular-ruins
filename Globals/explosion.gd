@@ -2,7 +2,7 @@ class_name Explosion
 extends RefCounted
 
 # 爆炸 AoE 判定:分段衰减 + 遮挡检测 + 友伤。纯静态,冒烟测试可直接调用。
-const INNER_FRACTION: float = 0.35  # 内圈半径比例,内圈内满伤
+const INNER_FRACTION: float = 0.4  # 内圈半径比例,内圈内满伤
 const BLOCKED_FRACTION: float = 0.75  # 墙后(LOS 遮挡)伤害/击退保留比例
 
 static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float) -> void:
@@ -64,7 +64,7 @@ static func _has_los(center: Vector2, target: Node2D, grid: Array[Array]) -> boo
 	var target_cell := MazeGenerator.cell_of(target.global_position, ts, grid[0].size(), grid.size())
 	return MazeGenerator.has_line_of_sight(center_cell, target_cell)
 
-# 平滑衰减:内圈满值,smoothstep 渐变到 0(两端斜率归零,消除线性衰减在内外圈交接处的折角)
+# 平缓衰减:内圈满值,二次方(1-t²)渐变到 0——比 smoothstep 平缓,中远距离保留更多伤害/击退
 static func _falloff(d: float, radius: float, max_val: float) -> float:
 	var inner := radius * INNER_FRACTION
 	if d < inner:
@@ -72,5 +72,4 @@ static func _falloff(d: float, radius: float, max_val: float) -> float:
 	if d >= radius:
 		return 0.0
 	var t := (d - inner) / (radius - inner)
-	var s := t * t * (3.0 - 2.0 * t)  # smoothstep(t)
-	return max_val * (1.0 - s)
+	return max_val * (1.0 - t * t)
