@@ -110,24 +110,24 @@ func _ai(delta: float) -> void:
 				_set_state(State.CHASE)
 				_hop_timer = 0.15
 
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
+func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
+		# 尸体:只吃击退不吃伤(冲击波仍能推动尸体)
+		_apply_knock_only(knock_dir, knock_strength, set_velocity)
 		return
-	_apply_hit(damage, knock_dir, knock_strength)
+	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		is_dead = true
 		_anim.play("dead")  # 死亡动画(一次性),播完消失
 		_death_timer = _anim_duration("dead")
-		collision_layer = 0  # 死亡后不再阻挡/被子弹命中
-		collision_mask = 0
-		use_gravity = false
-		# 死亡不清击退速度:保留速度滑出(尸体带击退飞出后消失)
+		# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
+		# is_dead 后 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
 
 func _physics_process(delta: float) -> void:
 	if is_dead:
 		if _death_timer > 0.0:
 			_death_timer -= delta
-			move_and_slide()  # 死亡带击退速度滑出(collision_mask=0,穿过地形消失)
+			super._physics_process(delta)  # 物理与生前一致(重力/摩擦/击退衰减)
 			if _death_timer <= 0.0:
 				queue_free()
 		return

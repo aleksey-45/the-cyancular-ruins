@@ -11,6 +11,10 @@ var use_gravity: bool = true
 @export var contact_damage: int = 1
 # 受击击退力度
 @export var knockback_strength: float = 150.0
+# 爆炸专属击退向量:独立于 AI 移动速度,每帧叠加后指数衰减(大冲击+迅速衰减)
+var knock_velocity: Vector2 = Vector2.ZERO
+# 击退向量指数衰减率(越大停得越快;约 0.23s 衰减到 ~10%)
+@export var knock_decay_rate: float = 10.0
 
 # 环面接缝兜底:物理 Area 用欧氏距离,跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)
 const CONTACT_RADIUS: float = 40.0
@@ -60,8 +64,6 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = false
 
 func _physics_process(delta: float) -> void:
-	if is_dead:
-		return
 	if use_gravity and not is_on_floor():
 		velocity.y += GameParameters.gravity0 * delta
 	# 地面摩擦:落地且非冲刺(use_gravity=true)时,水平速度平滑衰减,
@@ -71,37 +73,63 @@ func _physics_process(delta: float) -> void:
 		velocity.x *= GROUND_FRICTION
 		if absf(velocity.x) < STOP_EPSILON:
 			velocity.x = 0.0
-	_ai(delta)
-	_anim_update()
-	# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
-	# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
-	if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
-		var p := get_tree().get_first_node_in_group("player")
-		if p != null and p.has_method("take_hit"):
-			p.take_hit(global_position, contact_damage)
+	# 死亡:AI 不行动,但物理(重力/摩擦/击退/碰撞)与生前完全一致。
+	if not is_dead:
+		_ai(delta)
+		_anim_update()
+		# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
+		# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
+		if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
+			var p := get_tree().get_first_node_in_group("player")
+			if p != null and p.has_method("take_hit"):
+				p.take_hit(global_position, contact_damage)
 	if _hit_flash_time > 0.0:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
 		if _hit_flash_time == 0.0:
 			modulate = Color.WHITE
+	if is_dead:
+		# 尸体:基础速度也按击退速率指数衰减,滑行逐渐停住(不匀速滑到底);
+		# 下落也随之变慢到"终端速度",更接近失去意识的尸体。
+		velocity *= exp(-knock_decay_rate * delta)
+	# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity
+	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
+	move_and_collide(knock_velocity * delta)
+	knock_velocity *= exp(-knock_decay_rate * delta)
 	move_and_slide()
 	_wrap()
 
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
+func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
+		# 尸体:不再扣血/触发死亡,但冲击波仍能推动(不吞冲击波)
+		_apply_knock_only(knock_dir, knock_strength, set_velocity)
 		return
-	_apply_hit(damage, knock_dir, knock_strength)
+	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		is_dead = true
 		queue_free()
 
 # 受击通用逻辑:扣血、击退、白闪。子类覆写 hurt() 时也应调用本方法,避免逻辑分叉。
 # knock_strength <= 0 时回落敌人自身 knockback_strength(旧两参调用行为不变)。
-func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
+# set_velocity=true(爆炸):设独立击退向量 knock_velocity(封顶),不覆盖移动速度;false(枪击):叠加到原速度。
+func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
-	velocity += knock_dir.normalized() * ks
+	if set_velocity:
+		# 爆炸:设独立击退向量(不封顶),不覆盖移动速度
+		knock_velocity = knock_dir.normalized() * ks
+	else:
+		velocity += knock_dir.normalized() * ks
+	# 死亡:击退不折入,尸体与生前一致——knock_velocity 继续独立衰减,由 _physics_process 统一结算。
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
+
+# 尸体专用:只施加击退(爆炸=设独立向量、枪击=叠加速度),不扣血、不触发死亡/白闪。
+func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: bool) -> void:
+	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
+	if set_velocity:
+		knock_velocity = knock_dir.normalized() * ks
+	else:
+		velocity += knock_dir.normalized() * ks
 
 
 # ── 共享工具(子类通用)──

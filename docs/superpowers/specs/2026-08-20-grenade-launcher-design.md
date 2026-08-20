@@ -55,7 +55,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
   - `d < 内圈(=0.35×radius)` → 满值(35)
   - `内圈 ≤ d < radius` → 线性衰减到 0
   - `d ≥ radius` → 0
-- **遮挡检测**: `MazeGenerator.has_line_of_sight(cell_of(center), cell_of(target))` 不通 → **0 伤害(硬掩体)**。`current_grid` 为空(离线/测试无地图)时跳过遮挡判定,避免误全挡。
+- **遮挡检测**: `MazeGenerator.has_line_of_sight(cell_of(center), cell_of(target))` 不通 → **减半伤(部分掩体,伤害与击退 ×0.5)**。`current_grid` 为空(离线/测试无地图)时跳过遮挡判定。
 - **冲击波**: 方向 = `toroidal_delta_px(center, target).normalized()`(向外),力度按同一分段。敌人走 `hurt(dmg, dir, knock)`。
 - **友伤**: 玩家在半径内且 LOS 通且未倒地 → `player.take_hit(center, dmg)`(take_hit 按 source 方向推 = 天然向外冲击波,玩家也被推)。
 
@@ -129,4 +129,4 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 2. 冒烟测试新增(纯函数,直接调 `Explosion.apply_aoe`):
    - 中心敌人 = 35,半径边缘 ≈ 0,墙后敌人 = 0(LOS 遮挡),范围内玩家掉血(友伤)。
    - `BulletBase` 默认 `explodes=false` 行为不变 → SMOKE OK。
-3. playtest: 按 5 切枪 → 按住看弧线 + 爆炸点标记 → 松开发射抛物线 → 命中敌人 10+立即爆炸 → 撞墙停驻 0.5s 后才炸(飞行中不炸) → 墙后敌人不受伤 → 自己站在爆炸范围内掉血被推。
+3. playtest: 按 5 切枪 → 按住看弧线 + 爆炸点标记 → 松开发射抛物线 → 命中敌人 10+立即爆炸 → 撞墙反弹(衰减0.6)、首次碰撞后 0.5s 才炸(飞行中不炸) → 墙后敌人减半伤 → 自己站在爆炸范围内掉血被推。

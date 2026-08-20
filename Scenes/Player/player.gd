@@ -39,6 +39,7 @@ var max_hp: int = PlayerParams.player_max_hp
 var hp: int = PlayerParams.player_max_hp
 var iframes: float = 0.0
 var downed: bool = false
+var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量(独立于移动速度,指数衰减)
 
 @export var weapon_slot: Node2D
 
@@ -100,8 +101,22 @@ func _approach(current: float, target: float, rate: float, delta: float) -> floa
 
 func _physics_process(delta: float) -> void:
 	if downed:
-		velocity = Vector2.ZERO
+		# 死亡(倒地):不取消物理——重力/制动/击退照常,只是不吃输入、不结算战斗
+		if is_on_floor():
+			coyote_timer = coyote_time
+		else:
+			velocity.y += gravity * delta
+		if is_on_floor():
+			velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+		else:
+			velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
+		if absf(velocity.x) < STOP_SNAP:
+			velocity.x = 0.0
+		move_and_collide(knock_velocity * delta)
+		knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 		move_and_slide()
+		global_position = MazeGenerator.wrap_to_range(global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	iframes = maxf(iframes - delta, 0.0)
 	# 无敌帧闪烁
@@ -226,6 +241,11 @@ func _physics_process(delta: float) -> void:
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 
+	# ---------- 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity ----------
+	# (地面把向下击退吃掉后再减回去会把玩家弹起,改用独立位移结算)
+	move_and_collide(knock_velocity * delta)
+	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
+
 	# ---------- 执行移动 ----------
 	move_and_slide()
 
@@ -234,7 +254,7 @@ func _physics_process(delta: float) -> void:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
-func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false) -> void:
+func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
 	# ignore_iframes: 特殊攻击(如冲撞)穿透无敌帧,但命中后照常刷新 iframes。
 	if downed or (iframes > 0.0 and not ignore_iframes):
 		return
@@ -246,8 +266,13 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false) ->
 	var away := (global_position - source_pos).normalized()
 	if away == Vector2.ZERO:
 		away = Vector2(-float(facing_direction), 0.0)
-	velocity.x = away.x * PlayerParams.player_hit_knockback
-	velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
+	if knockback < 0.0:
+		# 常规命中:固定击退直接覆盖(原行为)
+		velocity.x = away.x * PlayerParams.player_hit_knockback
+		velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
+	else:
+		# 爆炸:设独立击退向量(叠加,不覆盖移动),随帧指数衰减
+		knock_velocity = away * knockback
 	hp_changed.emit(hp, max_hp)
 	if hp <= 0:
 		_downed()
@@ -292,7 +317,7 @@ func _downed() -> void:
 	downed = true
 	if _weapon != null:
 		_weapon.cancel_aim()
-	velocity = Vector2.ZERO
+	# 不取消物理:保留当前速度/击退,尸体继续受重力/冲击(与敌人统一)
 	rotation = -PI / 2.0 * float(facing_direction)
 	if animator != null:
 		animator.stop()

@@ -22,3 +22,7 @@ desktop.ini
 
 # 编辑器工具产物
 editor/_build/
+
+# 构建产物与杂项
+*.exe
+test
