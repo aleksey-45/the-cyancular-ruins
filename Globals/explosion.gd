@@ -19,14 +19,18 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		var dmg := _falloff(d, radius, max_damage) * (0.5 if blocked else 1.0)
 		if dmg <= 0:
 			continue
+		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
-				_falloff(d, radius, max_knockback) * (0.5 if blocked else 1.0))
+				_falloff(d, radius, max_knockback) * (0.5 if blocked else 1.0), true)
 	var p := tree.get_first_node_in_group("player")
 	if p != null and p.has_method("take_hit") and not (p.has_method("is_downed") and p.is_downed()):
 		var d := _dist(center, (p as Node2D).global_position)
 		if d <= radius:
 			var blocked := has_grid and not _has_los(center, p as Node2D, grid)
-			p.take_hit(center, int(_falloff(d, radius, max_damage) * (0.5 if blocked else 1.0)))
+			var mult := 0.5 if blocked else 1.0
+			# 击退随距离衰减传入玩家(独立击退向量结算)
+			p.take_hit(center, int(_falloff(d, radius, max_damage) * mult), false,
+					_falloff(d, radius, max_knockback) * mult)
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
 static func _tree() -> SceneTree:
