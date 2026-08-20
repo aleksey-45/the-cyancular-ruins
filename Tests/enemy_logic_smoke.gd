@@ -672,6 +672,19 @@ func _initialize() -> void:
 	_check(pk2.velocity.y > -100.0, "玩家不被上方爆炸弹起(velocity.y 无显著上跳)")
 	pk2.free()
 	pk_floor.free()
+	# 玩家倒地不取消物理:保留击退向量并随帧衰减(与敌人统一)
+	var pd := player_scene.instantiate()
+	pd.global_position = Vector2(1000, 400)
+	root.add_child(pd)
+	await physics_frame
+	pd.take_hit(Vector2(800, 400), 999, false, 1000.0)  # 爆炸式击退 + 秒杀
+	_check(pd.downed, "玩家倒地")
+	_check(pd.knock_velocity.x > 0.0, "倒地保留击退向量(未清零)")
+	var pd0: float = pd.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(pd.knock_velocity.x < pd0, "倒地击退向量随帧衰减(物理未取消)")
+	pd.free()
 	# 死亡保留碰撞(与飞鸟统一):JumpBird 死亡后碰撞箱不清空
 	var jdc := jump2.instantiate()
 	jdc.global_position = Vector2(1000, 800)

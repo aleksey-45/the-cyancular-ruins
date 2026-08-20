@@ -101,8 +101,22 @@ func _approach(current: float, target: float, rate: float, delta: float) -> floa
 
 func _physics_process(delta: float) -> void:
 	if downed:
-		velocity = Vector2.ZERO
+		# 死亡(倒地):不取消物理——重力/制动/击退照常,只是不吃输入、不结算战斗
+		if is_on_floor():
+			coyote_timer = coyote_time
+		else:
+			velocity.y += gravity * delta
+		if is_on_floor():
+			velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+		else:
+			velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
+		if absf(velocity.x) < STOP_SNAP:
+			velocity.x = 0.0
+		move_and_collide(knock_velocity * delta)
+		knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 		move_and_slide()
+		global_position = MazeGenerator.wrap_to_range(global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	iframes = maxf(iframes - delta, 0.0)
 	# 无敌帧闪烁
@@ -301,10 +315,9 @@ func apply_recoil(push: float) -> void:
 
 func _downed() -> void:
 	downed = true
-	knock_velocity = Vector2.ZERO  # 倒地锁速,清掉残留冲击
 	if _weapon != null:
 		_weapon.cancel_aim()
-	velocity = Vector2.ZERO
+	# 不取消物理:保留当前速度/击退,尸体继续受重力/冲击(与敌人统一)
 	rotation = -PI / 2.0 * float(facing_direction)
 	if animator != null:
 		animator.stop()
