@@ -11,6 +11,8 @@ var use_gravity: bool = true
 @export var contact_damage: int = 1
 # 受击击退力度
 @export var knockback_strength: float = 150.0
+# 死亡时尸体飞行速度上限(爆炸级击退也能保留击退感但不瞬移出屏)
+@export var max_death_fly_speed: float = 900.0
 
 # 环面接缝兜底:物理 Area 用欧氏距离,跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)
 const CONTACT_RADIUS: float = 40.0
@@ -100,6 +102,9 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) ->
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
 	velocity += knock_dir.normalized() * ks
+	# 死亡:限制尸体飞行速度(爆炸级击退 2500 会把尸体瞬移出屏,压到可看的速度)
+	if hp <= 0 and velocity.length() > max_death_fly_speed:
+		velocity = velocity.normalized() * max_death_fly_speed
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
 
