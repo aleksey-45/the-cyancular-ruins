@@ -665,6 +665,16 @@ func _initialize() -> void:
 	_check(pk2.velocity.y > -100.0, "玩家不被上方爆炸弹起(velocity.y 无显著上跳)")
 	pk2.free()
 	pk_floor.free()
+	# 死亡保留碰撞(与飞鸟统一):JumpBird 死亡后碰撞箱不清空
+	var jdc := jump2.instantiate()
+	jdc.global_position = Vector2(1000, 800)
+	root.add_child(jdc)
+	await physics_frame
+	jdc.hurt(99, Vector2.RIGHT)
+	_check(jdc.is_dead, "JumpBird 受击死亡")
+	_check(jdc.collision_layer == 4, "JumpBird 死亡保留碰撞层")
+	_check(jdc.collision_mask == 7, "JumpBird 死亡保留碰撞掩码")
+	jdc.free()
 
 	if _failures.is_empty():
 		print("SMOKE OK")
