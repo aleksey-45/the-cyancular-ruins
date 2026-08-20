@@ -85,13 +85,13 @@ func _test_aoe() -> void:
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
 	_check(e2.hp == 50, "AoE 边缘 0 伤")
 	e2.free()
-	# 中段衰减: d=64, inner=44.8 → 35*(1-(64-44.8)/83.2)=26
+	# 中段衰减(smoothstep): d=64, inner=44.8 → t=(64-44.8)/83.2=0.231, s=0.135, 35*(1-0.135)=30
 	var e3 := StubEnemy.new()
 	e3.global_position = Vector2(200, 200) + Vector2(64, 0)
 	root.add_child(e3)
 	await physics_frame
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
-	_check(e3.hp == 50 - 26, "AoE 中段线性衰减")
+	_check(e3.hp == 50 - 30, "AoE 中段平滑衰减")
 	e3.free()
 	# 冲击波向外:方向为从爆心指向目标
 	var e4 := StubEnemy.new()
@@ -126,7 +126,7 @@ func _test_aoe() -> void:
 	root.add_child(walled)
 	await physics_frame
 	exp.apply_aoe(Vector2(5 * 16, 12 * 16), 300.0, 35, 900.0)
-	_check(walled.hp == 50 - 17, "墙后敌人减半伤(17)")
+	_check(walled.hp == 50 - 26, "墙后敌人保留 75% 伤(26)")
 	walled.free()
 	# 爆心(5,12)→(8,12):右弧 5→6→7→8 无墙 → 满伤
 	var open := StubEnemy.new()
