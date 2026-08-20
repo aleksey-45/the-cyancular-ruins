@@ -51,9 +51,9 @@ class FlyBird:
 	const charge_impact: float = 1500.0    # 冲撞冲击力(撞飞玩家水平速度)
 	const charge_impact_up: float = 500.0 # 冲撞冲击力(上跳分量)
 	const shoot_recoil: float = 500.0      # 开火后座力(鸟沿发射反方向被推)
-	const repath_interval: float = 0.5    # 重寻路间隔(秒)
+	const repath_interval: float = 0.75    # 重寻路间隔(秒)
 	const arrival_radius: float = 50.0    # 到路径格/回家判定
 	const landing_time: float = 0.4       # 到家落地后多久直接入睡(不再等地板接触)
-	const path_max_visit: int = 3000      # 寻路(A*)展开格数上限(预算超限时走直线兜底)
-	const escape_search_range: int = 40   # 死区逃逸时向左右搜索的格数上限
+	const path_max_visit: int = 2000      # 寻路(A*)展开格数上限(预算超限时走直线兜底)
+	const escape_search_range: int = 80   # 死区逃逸时向左右搜索的格数上限
 	const death_flash_time: float = 0.5   # 死亡白闪时长(秒),闪完销毁
