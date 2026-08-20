@@ -433,6 +433,17 @@ func _initialize() -> void:
 		await physics_frame
 	_check(fb_d.knock_velocity.x < fd0, "尸体击退向量随帧衰减(与生前同物理)")
 	fb_d.free()
+	# 吞冲击波回归:先打死尸体,后续爆炸仍能推动尸体(只吃击退不吃伤)
+	var fd2 := fb_scene.instantiate()
+	fd2.set("hp", 5)
+	fd2.global_position = Vector2(1000, 400)
+	root.add_child(fd2)
+	await physics_frame
+	fd2.hurt(99, Vector2.RIGHT)  # 直接打死
+	_check(fd2.is_dead, "飞鸟尸体已死")
+	fd2.hurt(1, Vector2.LEFT, 1500.0, true)  # 爆炸式冲击推尸体
+	_check(fd2.knock_velocity.x < 0.0, "尸体被后续爆炸推动(吞冲击波回归)")
+	fd2.free()
 	floor_b.free()
 	near_player.free()
 	MazeGenerator.current_grid = []

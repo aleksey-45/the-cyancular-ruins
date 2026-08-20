@@ -112,6 +112,8 @@ func _ai(delta: float) -> void:
 
 func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
+		# 尸体:只吃击退不吃伤(冲击波仍能推动尸体)
+		_apply_knock_only(knock_dir, knock_strength, set_velocity)
 		return
 	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:

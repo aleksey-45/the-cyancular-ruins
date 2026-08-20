@@ -96,6 +96,8 @@ func _physics_process(delta: float) -> void:
 
 func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
+		# 尸体:不再扣血/触发死亡,但冲击波仍能推动(不吞冲击波)
+		_apply_knock_only(knock_dir, knock_strength, set_velocity)
 		return
 	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
@@ -116,6 +118,14 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, se
 	# 死亡:击退不折入,尸体与生前一致——knock_velocity 继续独立衰减,由 _physics_process 统一结算。
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
+
+# 尸体专用:只施加击退(爆炸=设独立向量、枪击=叠加速度),不扣血、不触发死亡/白闪。
+func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: bool) -> void:
+	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
+	if set_velocity:
+		knock_velocity = knock_dir.normalized() * ks
+	else:
+		velocity += knock_dir.normalized() * ks
 
 
 # ── 共享工具(子类通用)──
