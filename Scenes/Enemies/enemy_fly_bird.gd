@@ -5,8 +5,8 @@ enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
 enum Intent { SHOOT, CHARGE }
 
 const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
-# 死亡滑行水平阻力:每帧乘此系数。尸体保留击退初速但快速衰减停住,
-# 不会以 max_death_fly_speed(900)匀速滑满 0.5s(≈450px)。60fps 下 0.5s 剩 ~2%。
+# 死亡滑行水平阻力:每帧乘此系数。尸体保留完整击退初速但快速衰减停住
+# (死亡速度不再封顶,靠这个阻力收住,不会匀速滑满 0.5s)。60fps 下 0.5s 剩 ~2%。
 const DEATH_HORIZONTAL_DRAG: float = 0.88
 
 var intent: Intent = Intent.SHOOT

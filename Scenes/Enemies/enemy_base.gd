@@ -11,8 +11,6 @@ var use_gravity: bool = true
 @export var contact_damage: int = 1
 # 受击击退力度
 @export var knockback_strength: float = 150.0
-# 死亡时尸体飞行速度上限(爆炸级击退也能保留击退感但不瞬移出屏)
-@export var max_death_fly_speed: float = 900.0
 # 爆炸专属击退向量:独立于 AI 移动速度,每帧叠加后指数衰减(大冲击+迅速衰减)
 var knock_velocity: Vector2 = Vector2.ZERO
 # 击退向量指数衰减率(越大停得越快;约 0.15s 衰减到 ~10%)
@@ -118,11 +116,9 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, se
 	else:
 		velocity += knock_dir.normalized() * ks
 	if hp <= 0:
+		# 死亡:把击退折入尸体速度,不封顶(完整冲击力),靠各子类死亡滑动/阻力收住
 		velocity += knock_velocity
 		knock_velocity = Vector2.ZERO
-		# 死亡:限制尸体飞行速度(爆炸级击退 2500 会把尸体瞬移出屏,压到可看的速度)
-		if velocity.length() > max_death_fly_speed:
-			velocity = velocity.normalized() * max_death_fly_speed
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
 
