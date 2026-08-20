@@ -14,17 +14,19 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		var d := _dist(center, (e as Node2D).global_position)
 		if d > radius:
 			continue
-		if has_grid and not _has_los(center, e as Node2D, grid):
-			continue  # 遮挡(硬掩体):0 伤
-		var dmg := _falloff(d, radius, max_damage)
+		# 遮挡(墙后)= 部分掩体:伤害/击退减半;无遮挡全额
+		var blocked := has_grid and not _has_los(center, e as Node2D, grid)
+		var dmg := _falloff(d, radius, max_damage) * (0.5 if blocked else 1.0)
 		if dmg <= 0:
 			continue
-		e.hurt(dmg, _outward_dir(center, (e as Node2D).global_position), _falloff(d, radius, max_knockback))
+		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
+				_falloff(d, radius, max_knockback) * (0.5 if blocked else 1.0))
 	var p := tree.get_first_node_in_group("player")
 	if p != null and p.has_method("take_hit") and not (p.has_method("is_downed") and p.is_downed()):
 		var d := _dist(center, (p as Node2D).global_position)
-		if d <= radius and (not has_grid or _has_los(center, p as Node2D, grid)):
-			p.take_hit(center, _falloff(d, radius, max_damage))  # take_hit 按 source 方向推 = 向外冲击波
+		if d <= radius:
+			var blocked := has_grid and not _has_los(center, p as Node2D, grid)
+			p.take_hit(center, int(_falloff(d, radius, max_damage) * (0.5 if blocked else 1.0)))
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
 static func _tree() -> SceneTree:

@@ -123,7 +123,7 @@ func _test_aoe() -> void:
 	root.add_child(walled)
 	await physics_frame
 	exp.apply_aoe(Vector2(5 * 16, 12 * 16), 300.0, 35, 900.0)
-	_check(walled.hp == 50, "墙后敌人 0 伤(LOS 遮挡)")
+	_check(walled.hp == 50 - 17, "墙后敌人减半伤(17)")
 	walled.free()
 	# 爆心(5,12)→(8,12):右弧 5→6→7→8 无墙 → 满伤
 	var open := StubEnemy.new()
