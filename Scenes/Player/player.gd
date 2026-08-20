@@ -227,13 +227,13 @@ func _physics_process(delta: float) -> void:
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 
-	# ---------- 爆炸击退向量叠加(独立衰减,不污染移动速度) ----------
-	velocity += knock_velocity
+	# ---------- 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity ----------
+	# (地面把向下击退吃掉后再减回去会把玩家弹起,改用独立位移结算)
+	move_and_collide(knock_velocity * delta)
+	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 
 	# ---------- 执行移动 ----------
 	move_and_slide()
-	velocity -= knock_velocity
-	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 
 	# 环面回卷：玩家只能在中间副本，离开时取模送回
 	global_position = MazeGenerator.wrap_to_range(global_position,

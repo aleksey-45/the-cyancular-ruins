@@ -79,8 +79,6 @@ func _physics_process(delta: float) -> void:
 			velocity.x = 0.0
 	_ai(delta)
 	_anim_update()
-	# 爆炸击退向量叠加:独立于 AI 移动速度,叠加后 move_and_slide 再还原,指数衰减
-	velocity += knock_velocity
 	# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
 	# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
 	if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
@@ -91,9 +89,11 @@ func _physics_process(delta: float) -> void:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
 		if _hit_flash_time == 0.0:
 			modulate = Color.WHITE
-	move_and_slide()
-	velocity -= knock_velocity
+	# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity
+	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
+	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
+	move_and_slide()
 	_wrap()
 
 func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:

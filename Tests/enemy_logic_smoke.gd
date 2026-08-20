@@ -641,6 +641,30 @@ func _initialize() -> void:
 		await physics_frame
 	_check(pk.knock_velocity.x < pk0, "玩家击退向量随帧衰减")
 	pk.free()
+	# 上方爆炸:玩家站在地面时应被往下压(不产生向上速度)——回归:旧"叠加再减回"实现会把玩家弹起
+	var pk_floor := StaticBody2D.new()
+	var pk_fshape := CollisionShape2D.new()
+	var pk_frect := RectangleShape2D.new()
+	pk_frect.size = Vector2(500, 40)
+	pk_fshape.shape = pk_frect
+	pk_fshape.position = Vector2(0, -20)
+	pk_floor.add_child(pk_fshape)
+	pk_floor.position = Vector2(1000, 430)
+	pk_floor.collision_layer = 1
+	pk_floor.collision_mask = 0
+	root.add_child(pk_floor)
+	var pk2 := player_scene.instantiate()
+	pk2.global_position = Vector2(1000, 400)
+	root.add_child(pk2)
+	for i in range(5):
+		await physics_frame
+	pk2.take_hit(Vector2(1000, 200), 5, false, 800.0)  # 爆心在玩家上方
+	_check(pk2.knock_velocity.y > 0.0, "上方爆炸击退向量向下(+y)")
+	for i in range(3):
+		await physics_frame
+	_check(pk2.velocity.y > -100.0, "玩家不被上方爆炸弹起(velocity.y 无显著上跳)")
+	pk2.free()
+	pk_floor.free()
 
 	if _failures.is_empty():
 		print("SMOKE OK")
