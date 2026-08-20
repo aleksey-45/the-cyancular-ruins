@@ -14,7 +14,8 @@
 - **一脚本多场景**: `BulletBase`/`WeaponBase` 加 @export 参数,榴弹/榴弹发射器各为一个新 .tscn 填参,不新增子类。
 - **爆炸特效 = 独立纯视觉场景**(`explosion.tscn`),不含伤害逻辑;伤害判定在子弹侧。
 - **爆炸动画先占位**(程序化白闪光),用户后补手绘 `FX_Explosion.png` 六帧,届时替换视觉节点,判定代码不改。
-- 弹道参数(初速/重力/引信)归武器单一来源,预览与飞行必然一致。
+- 初速/重力是发射参数,归武器(与现有 `bullet_speed` 同惯例),发射时注入子弹;爆炸特性(`explodes`/引信/爆炸威力)归子弹。
+- **预瞄只是参考**: 弧线用武器自己的参考时长 `preview_time` 绘制,不读子弹引信;真实爆炸时机由子弹 `fuse_time` 决定,两者允许有偏差(玩家按预览适应)。
 
 ## 1. `BulletBase` 爆炸支持(`bullet_base.gd`)
 
@@ -63,9 +64,9 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 `CharacterBody2D` + `bullet_base.gd`。节点:`Sprite2D`(**榴弹贴图先占位**——小圆点/复用 Bullets.png 区域染色,用户后画)、`CollisionShape2D`(小圆 `CircleShape2D`)。
 
 检查器(爆炸特性,属子弹):
-`explodes=true`、`direct_hit_damage=10`、`fuse_time=0.5`(仅兜底默认,武器发射时按 `bullet_fuse_time` 覆盖)、`explosion_radius=128`、`explosion_damage=35`、`explosion_knockback=900`、`explosion_visual=explosion.tscn`。`collision_mask=5`(地形+敌人,不含玩家 → 榴弹本体不直击玩家,友伤只来自爆炸)。
+`explodes=true`、`direct_hit_damage=10`、`fuse_time=0.5`(爆炸属性,纯属子弹,武器不注入)、`explosion_radius=128`、`explosion_damage=35`、`explosion_knockback=900`、`explosion_visual=explosion.tscn`。`collision_mask=5`(地形+敌人,不含玩家 → 榴弹本体不直击玩家,友伤只来自爆炸)。
 
-弹道参数(初速/重力/引信)由武器发射时注入,场景里的 fuse_time 只是脱离武器直接 spawn 时(如测试)的默认值。
+初速/重力由武器发射时注入(`bullet_speed`/`bullet_gravity`);引信与爆炸威力是子弹自身属性,不受武器影响。
 
 ## 4. 新场景 `Scenes/Weapons/grenade_launcher.tscn`
 
@@ -82,7 +83,6 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 | bullet_speed | 1500.0 | 榴弹初速(比子弹慢,0.5s 引信内水平约 750px) |
 | bullet_range | 2000.0 | 射程填很大,防提前消失 |
 | bullet_gravity | 0.3 | 轻微重力下坠 |
-| bullet_fuse_time | 0.5 | 与榴弹 fuse_time 同源,注入子弹 |
 | damage | 10 | 与 direct_hit_damage 一致(爆炸弹不走 weapon.apply_hit,仅占位/显示) |
 | recoil_push | 900.0 | 重后坐 |
 | recoil_kick | 10.0 | 枪口上跳 |
@@ -98,10 +98,11 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 ## 5. `WeaponBase` 弹道预览(`weapon_base.gd`)
 
 - `const BULLET_SCENE` → `@export var bullet_scene: PackedScene`(默认仍 `bullet.tscn`,现有武器不变)。
-- 新增 `@export var bullet_gravity: float = 0.0`、`@export var bullet_fuse_time: float = 0.5`、`@export var preview_arc: bool = false`。
-- `fire()`: `var b = bullet_scene.instantiate(); b.setup(...); b.gravity_factor = bullet_gravity; b.fuse_time = bullet_fuse_time`(弹道参数单一来源=武器,预览与飞行必然同源)。
+- 新增 `@export var bullet_gravity: float = 0.0`、`@export var preview_arc: bool = false`、`@export var preview_time: float = 0.5`(预瞄参考时长,仅供画弧线;真实爆炸时机由子弹 `fuse_time` 决定,预瞄只是参考)。
+- `fire()`: `var b = bullet_scene.instantiate(); b.setup(...); b.gravity_factor = bullet_gravity`(初速/重力由武器注入;爆炸属性走子弹场景)。
+  **不注入 fuse_time** —— 引信是子弹的爆炸属性,预瞄用 `preview_time` 画弧,二者允许偏差。
 - `_update_laser()`: `preview_arc=true` 时改画弧线:
-  - 采样: `p0 = muzzle.global_position`, `v0 = _clamped_aim_dir() * bullet_speed`, `g = bullet_gravity * gravity0`,步长 1/60s,采样到 `t = bullet_fuse_time`,途中任一格 SOLID 即截断(榴弹撞墙停住,停在爆炸点)。转武器局部坐标填入 `Line2D.points`。
+  - 采样: `p0 = muzzle.global_position`, `v0 = _clamped_aim_dir() * bullet_speed`, `g = bullet_gravity * gravity0`,步长 1/60s,采样到 `t = preview_time`,途中任一格 SOLID 即截断(榴弹撞墙停住,停在爆炸点)。转武器局部坐标填入 `Line2D.points`。
   - 弧线末端画**爆炸点标记**(小 Sprite2D/ColorRect),让玩家看清落点。
   - `preview_arc=false` 时维持原直线激光,逐位不变。
 
