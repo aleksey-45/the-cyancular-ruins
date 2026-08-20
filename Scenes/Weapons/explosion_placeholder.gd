@@ -1,10 +1,12 @@
 extends Node2D
 
-# 占位爆炸特效:软圆白贴图放大淡出自毁。不含伤害逻辑(伤害在子弹侧)。
-# 用户手绘 FX_Explosion.png 六帧到货后,把本节点换成 AnimatedSprite2D + SpriteFrames,自毁逻辑保留。
+# 爆炸特效:先用 Effects.png 全图(暂不切帧,用户后续自己切为 AnimatedSprite2D + SpriteFrames)。
+# 不含伤害逻辑(伤害在子弹侧)。
+const EFFECTS_TEXTURE := preload("res://AssetBundle/Sprites/Effects.png")
+
 func _ready() -> void:
 	var sprite := Sprite2D.new()
-	sprite.texture = Explosion.make_circle_texture(64)
+	sprite.texture = EFFECTS_TEXTURE
 	sprite.z_index = 5
 	add_child(sprite)
 	var tw := create_tween()
