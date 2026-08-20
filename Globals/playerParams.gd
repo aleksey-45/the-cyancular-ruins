@@ -37,4 +37,4 @@ const player_max_hp: int = 50
 const iframes_time: float = 0.25
 const player_hit_knockback: float = 400.0
 const player_hit_knockback_up: float = 200.0
-const player_knock_decay_rate: float = 20.0  # 爆炸击退向量指数衰减率(越大停得越快)
+const player_knock_decay_rate: float = 10.0  # 爆炸击退向量指数衰减率(越大停得越快)

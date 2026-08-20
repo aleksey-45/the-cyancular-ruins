@@ -13,8 +13,8 @@ var use_gravity: bool = true
 @export var knockback_strength: float = 150.0
 # 爆炸专属击退向量:独立于 AI 移动速度,每帧叠加后指数衰减(大冲击+迅速衰减)
 var knock_velocity: Vector2 = Vector2.ZERO
-# 击退向量指数衰减率(越大停得越快;约 0.1s 衰减到 ~13%)
-@export var knock_decay_rate: float = 20.0
+# 击退向量指数衰减率(越大停得越快;约 0.23s 衰减到 ~10%)
+@export var knock_decay_rate: float = 10.0
 
 # 环面接缝兜底:物理 Area 用欧氏距离,跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)
 const CONTACT_RADIUS: float = 40.0
