@@ -87,6 +87,10 @@ func _physics_process(delta: float) -> void:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
 		if _hit_flash_time == 0.0:
 			modulate = Color.WHITE
+	if is_dead:
+		# 尸体:基础速度也按击退速率指数衰减,滑行逐渐停住(不匀速滑到底);
+		# 下落也随之变慢到"终端速度",更接近失去意识的尸体。
+		velocity *= exp(-knock_decay_rate * delta)
 	# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity
 	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)

@@ -444,6 +444,18 @@ func _initialize() -> void:
 	fd2.hurt(1, Vector2.LEFT, 1500.0, true)  # 爆炸式冲击推尸体
 	_check(fd2.knock_velocity.x < 0.0, "尸体被后续爆炸推动(吞冲击波回归)")
 	fd2.free()
+	# 尸体基础速度也衰减(死后滑行逐渐停住,不匀速滑到底)
+	var fd3 := fb_scene.instantiate()
+	fd3.global_position = Vector2(1000, 400)
+	root.add_child(fd3)
+	await physics_frame
+	fd3.hurt(99, Vector2.RIGHT)  # 打死,velocity += 200
+	_check(fd3.velocity.x > 100.0, "尸体有基础滑行速度")
+	var vx0: float = fd3.velocity.x
+	for i in range(10):
+		await physics_frame
+	_check(fd3.velocity.x < vx0, "尸体基础速度随帧衰减(不匀速滑到底)")
+	fd3.free()
 	floor_b.free()
 	near_player.free()
 	MazeGenerator.current_grid = []
