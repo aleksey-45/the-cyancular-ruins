@@ -117,22 +117,6 @@ func _start_fuse(duration: float) -> void:
 func _explode() -> void:
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
-		get_viewport().add_child(fx)
 		fx.global_position = global_position
-		# 特效随爆炸范围缩放:最终帧大小≈爆心半径(半径越大特效越大)
-		if fx is Node2D:
-			(fx as Node2D).scale = Vector2.ONE * (explosion_radius / maxf(_fx_frame_width(fx), 1.0))
+		get_viewport().add_child(fx)
 	Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback)
-
-# 取爆炸特效第一帧贴图宽度,用于按范围缩放;取不到时回落 48。
-func _fx_frame_width(fx: Node) -> float:
-	var anim: AnimatedSprite2D = fx as AnimatedSprite2D
-	if anim != null and anim.sprite_frames != null:
-		var names := anim.sprite_frames.get_animation_names()
-		if names.size() > 0:
-			var tex := anim.sprite_frames.get_frame_texture(names[0], 0)
-			if tex is AtlasTexture:
-				return (tex as AtlasTexture).region.size.x
-			if tex != null:
-				return float(tex.get_width())
-	return 48.0

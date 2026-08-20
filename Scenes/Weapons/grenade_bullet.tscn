@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://cy1fv8ws23gnb"]
 
 [ext_resource type="Script" uid="uid://dy03viwkb5gno" path="res://Scenes/Weapons/bullet_base.gd" id="1_bl"]
-[ext_resource type="PackedScene" path="res://Scenes/Weapons/explosion.tscn" id="2_fx"]
+[ext_resource type="PackedScene" uid="uid://bxrxsvcvmwgkd" path="res://Scenes/Weapons/explosion.tscn" id="2_fx"]
 [ext_resource type="Texture2D" uid="uid://cbxquhfl3xc11" path="res://AssetBundle/Sprites/Bullets.png" id="3_f4em0"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ofh50"]
@@ -16,7 +16,7 @@ script = ExtResource("1_bl")
 explodes = true
 fuse_time = 0.4
 hit_fuse_time = 0.15
-explosion_radius = 450.0
+explosion_radius = 325.0
 explosion_knockback = 2000.0
 explosion_visual = ExtResource("2_fx")
 
