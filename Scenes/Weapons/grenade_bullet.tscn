@@ -1,0 +1,28 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://Scenes/Weapons/bullet_base.gd" id="1_bl"]
+[ext_resource type="PackedScene" path="res://Scenes/Weapons/explosion.tscn" id="2_fx"]
+[ext_resource type="Script" path="res://Scenes/Weapons/grenade_visual_placeholder.gd" id="3_vis"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_g"]
+radius = 6.0
+
+[node name="GrenadeBullet" type="CharacterBody2D"]
+collision_layer = 0
+collision_mask = 5
+motion_mode = 1
+script = ExtResource("1_bl")
+explodes = true
+direct_hit_damage = 10
+fuse_time = 0.5
+explosion_radius = 128.0
+explosion_damage = 35
+explosion_knockback = 900.0
+explosion_visual = ExtResource("2_fx")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+script = ExtResource("3_vis")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_g")
