@@ -199,13 +199,24 @@ static func bfs_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: 
 	return _rebuild_path(prev, from_cell, best)
 
 
-# A* 版 bfs_path_nearest:启发式 = 环面曼哈顿距离(4 邻域,可采纳且一致)。优先队列用
-# 数组隐式二叉堆(O(log n) 推/弹;排序数组的 O(n) 插入反而比 BFS 慢)。预算 max_visit
+# A* 版 bfs_path_nearest:启发式 = 环面曼哈顿距离(4 邻域,可采纳且一致)。预算 max_visit
 # 是弹出(展开)节点数上限,与 bfs 的 visited 上限语义对齐。目标不可达/预算超限时同样
 # 返回「最近可达格」的路径。空旷区 BFS 波前会铺满半径内所有格,预算很快耗尽;A* 靠
 # 启发式直奔目标,展开节点少一个量级——这正是玩家站在高平台时鸟"上不去"的根因。
+#
+# 性能:g/prev 从 Dictionary(Vector2i 键)换成扁平 PackedInt32Array(线性索引
+# y*cols+x),visited 用 g≥0 标记;堆从「Array 装嵌套 Array」换成两条并行
+# PackedInt32Array(_heap_f 存 f、_heap_c 存 cell 索引),不打包 → 无溢出风险。
+# 静态缓冲区复用、每搜索只 fill 一遍 → 零字典分配、无 GC 压力,同预算下快一个量级。
+static var _g_cost: PackedInt32Array = PackedInt32Array()
+static var _prev: PackedInt32Array = PackedInt32Array()
+static var _heap_f: PackedInt32Array = PackedInt32Array()
+static var _heap_c: PackedInt32Array = PackedInt32Array()
+static var astar_calls: int = 0  # A* 调用计数(冒烟测试验证路径缓存命中用)
+
 static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
 		passable_pred: Callable = Callable()) -> Array[Vector2i]:
+	astar_calls += 1
 	var grid := current_grid
 	if grid.is_empty():
 		return []
@@ -213,83 +224,137 @@ static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit
 	var cols := grid[0].size()
 	if from_cell == to_cell:
 		return []
-	var g := {from_cell: 0}
-	var prev := {}
-	var heap: Array = []  # 元素 [f: int, cell: Vector2i],小根堆按 f 排序
-	var best := from_cell
-	var best_d := toroidal_dist(from_cell, to_cell, cols, rows)
-	_heap_push(heap, [toroidal_dist(from_cell, to_cell, cols, rows), from_cell])
+	var n := rows * cols
+	if _g_cost.size() < n:
+		_g_cost.resize(n)
+		_prev.resize(n)
+	_g_cost.fill(-1)
+	_prev.fill(-1)
+	var start_idx := from_cell.y * cols + from_cell.x
+	var goal_idx := to_cell.y * cols + to_cell.x
+	_g_cost[start_idx] = 0
+	_heap_f.clear()
+	_heap_c.clear()
+	var start_f := toroidal_dist(from_cell, to_cell, cols, rows)
+	_astar_heap_push(start_f, start_idx)
 	var expanded := 0
-	while not heap.is_empty():
-		var item := _heap_pop(heap)
-		var cur: Vector2i = item[1]
-		var g_cur: int = g[cur]
+	var best_idx := start_idx
+	var best_d := start_f
+	while _heap_f.size() > 0:
+		var pop := _astar_heap_pop()
+		var f := pop.x
+		var cur_idx := pop.y
+		var g_cur: int = _g_cost[cur_idx]
+		var cx := cur_idx % cols
+		var cy := cur_idx / cols
 		# 惰性删除:该格后来被更优路径更新过,旧堆项作废。
-		if item[0] > g_cur + toroidal_dist(cur, to_cell, cols, rows):
+		if f > g_cur + toroidal_dist(Vector2i(cx, cy), to_cell, cols, rows):
 			continue
 		expanded += 1
 		if expanded > max_visit:
 			break
-		if cur == to_cell:
-			return _rebuild_path(prev, from_cell, to_cell)
-		var cd := toroidal_dist(cur, to_cell, cols, rows)
+		if cur_idx == goal_idx:
+			return _rebuild_path_flat(start_idx, goal_idx, cols, rows)
+		var cd := toroidal_dist(Vector2i(cx, cy), to_cell, cols, rows)
 		if cd < best_d:
 			best_d = cd
-			best = cur
-		for n in _neighbors4(cur, cols, rows):
-			if passable_pred.is_valid():
-				if not passable_pred.call(n):
-					continue
-			elif grid[n.y][n.x] == SOLID:
-				continue
-			var ng := g_cur + 1
-			if g.has(n) and g[n] <= ng:
-				continue
-			g[n] = ng
-			prev[n] = cur
-			_heap_push(heap, [ng + toroidal_dist(n, to_cell, cols, rows), n])
-	if best == from_cell:
+			best_idx = cur_idx
+		_astar_relax(cx, cy, cols, rows, grid, passable_pred, to_cell, g_cur + 1, cur_idx)
+	if best_idx == start_idx:
 		return []
-	return _rebuild_path(prev, from_cell, best)
+	return _rebuild_path_flat(start_idx, best_idx, cols, rows)
 
 
-# 隐式二叉堆(小根堆,按 f 排序)。item = [f: int, cell: Vector2i]。
-static func _heap_push(heap: Array, item: Array) -> void:
-	heap.append(item)
-	var i := heap.size() - 1
+# 4 邻域偏移(右/左/下/上,与旧 _neighbors4 顺序一致,保摊平后的平局行为)。
+const _DIRS4: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+
+# 展开当前格:对每个邻居做「可走 + 更优」判定,通过则更新 g/prev 并入堆。
+static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Array],
+		passable_pred: Callable, to_cell: Vector2i, ng: int, cur_idx: int) -> void:
+	for d in _DIRS4:
+		var nx: int = cx + d.x
+		var ny: int = cy + d.y
+		if nx >= cols:
+			nx = 0
+		elif nx < 0:
+			nx = cols - 1
+		if ny >= rows:
+			ny = 0
+		elif ny < 0:
+			ny = rows - 1
+		if passable_pred.is_valid():
+			if not passable_pred.call(Vector2i(nx, ny)):
+				continue
+		elif grid[ny][nx] == SOLID:
+			continue
+		var ni: int = ny * cols + nx
+		var old := _g_cost[ni]
+		if old >= 0 and old <= ng:
+			continue
+		_g_cost[ni] = ng
+		_prev[ni] = cur_idx
+		_astar_heap_push(ng + toroidal_dist(Vector2i(nx, ny), to_cell, cols, rows), ni)
+
+
+# 隐式二叉堆(小根堆,按 f 排序;两条并行 PackedInt32Array 一起交换)。
+static func _astar_heap_push(f: int, c: int) -> void:
+	_heap_f.append(f)
+	_heap_c.append(c)
+	var i := _heap_f.size() - 1
 	while i > 0:
 		var p := (i - 1) >> 1
-		if heap[i][0] < heap[p][0]:
-			var t: Array = heap[i]
-			heap[i] = heap[p]
-			heap[p] = t
+		if _heap_f[i] < _heap_f[p]:
+			var tf := _heap_f[i]
+			_heap_f[i] = _heap_f[p]
+			_heap_f[p] = tf
+			var tc := _heap_c[i]
+			_heap_c[i] = _heap_c[p]
+			_heap_c[p] = tc
 			i = p
 		else:
 			break
 
 
-static func _heap_pop(heap: Array) -> Array:
-	var top: Array = heap[0]
-	var last: Array = heap.pop_back()
-	if heap.size() > 0:
-		heap[0] = last
+static func _astar_heap_pop() -> Vector2i:
+	var top := Vector2i(_heap_f[0], _heap_c[0])
+	var last_f: int = _heap_f[_heap_f.size() - 1]
+	_heap_f.resize(_heap_f.size() - 1)
+	var last_c: int = _heap_c[_heap_c.size() - 1]
+	_heap_c.resize(_heap_c.size() - 1)
+	if _heap_f.size() > 0:
+		_heap_f[0] = last_f
+		_heap_c[0] = last_c
 		var i := 0
-		var n := heap.size()
+		var m := _heap_f.size()
 		while true:
 			var l := i * 2 + 1
 			var r := l + 1
 			var s := i
-			if l < n and heap[l][0] < heap[s][0]:
+			if l < m and _heap_f[l] < _heap_f[s]:
 				s = l
-			if r < n and heap[r][0] < heap[s][0]:
+			if r < m and _heap_f[r] < _heap_f[s]:
 				s = r
 			if s == i:
 				break
-			var t: Array = heap[i]
-			heap[i] = heap[s]
-			heap[s] = t
+			var tf := _heap_f[i]
+			_heap_f[i] = _heap_f[s]
+			_heap_f[s] = tf
+			var tc := _heap_c[i]
+			_heap_c[i] = _heap_c[s]
+			_heap_c[s] = tc
 			i = s
 	return top
+
+
+# 从 prev 扁平链重建格序列(不含起点含终点)。
+static func _rebuild_path_flat(start_idx: int, goal_idx: int, cols: int, rows: int) -> Array[Vector2i]:
+	var path: Array[Vector2i] = []
+	var idx := goal_idx
+	while idx != start_idx:
+		path.push_front(Vector2i(idx % cols, idx / cols))
+		idx = _prev[idx]
+	return path
 
 
 static func _neighbors4(c: Vector2i, cols: int, rows: int) -> Array[Vector2i]:

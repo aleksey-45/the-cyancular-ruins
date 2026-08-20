@@ -100,7 +100,9 @@ func _ai(delta: float) -> void:
 				# 目标是斜上射击位(玩家上方),让下方的鸟绕道爬升到能打的位置。
 				_repath_to(_shoot_cell())
 			# 空路径(BFS 无路/预算超限)时直线飞向射击位,不再原地返程发呆。
-			_follow_path(delta, _shoot_pos())
+			# 三元惰性求值:只在路径为空时才现算 _shoot_pos()(内含 Bresenham LOS),
+			# 路径还在时传 INF——否则每帧给每只追玩家的鸟白付 1~2 次全图视线扫描。
+			_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
 		State.SHOOT:
 			_anim.play("flying")
 			if _player_home_dist() > EnemyParams.FlyBird.home_range:
@@ -179,13 +181,17 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
 		_die_self()
 
 
-# 死亡:直接销毁,不坠落(冲撞自毁与受击死亡同走本方法)。
+# 死亡:白闪后销毁(冲撞自毁与受击死亡同走本方法)。
 func _die_self() -> void:
 	if is_dead:
 		return
 	is_dead = true
 	_death_timer = EnemyParams.FlyBird.death_flash_time
-	# 死亡不清击退速度:保留速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
+	# 冲撞中死(含被打死/超时):清冲撞速度,尸体不再续冲。撞墙/撞玩家的死亡已由
+	# move_and_slide 抵消速度,归零无副作用;普通受击仍保留击退滑出感。
+	if state == State.CHARGE:
+		velocity = Vector2.ZERO
+	# 其余死亡保留击退速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
 	use_gravity = true
 
 

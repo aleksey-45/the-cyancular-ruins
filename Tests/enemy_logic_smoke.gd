@@ -188,8 +188,8 @@ func _initialize() -> void:
 	var sg_scene: PackedScene = load("res://Scenes/Weapons/s686.tscn")
 	_check(sg_scene != null, "霰弹枪场景加载")
 	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
-	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 8.0), "霰弹枪 8 丸 ±8°")
-	_check(sg.damage == 4 and is_equal_approx(sg.bullet_range, 400.0), "霰弹枪单丸4伤/短射程")
+	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 5.0), "霰弹枪 8 丸 ±5°")
+	_check(sg.damage == 4 and is_equal_approx(sg.bullet_range, 700.0), "霰弹枪单丸4伤/射程700")
 	_check(sg.tier == 0, "霰弹枪轻武器")
 	sg.queue_free()
 
@@ -484,6 +484,31 @@ func _initialize() -> void:
 	if is_instance_valid(fb3):
 		fb3.free()
 	timeout_player.free()
+	# 冲撞中被射杀(未撞到东西): 清冲撞速度, 尸体白闪期间不再续冲
+	var fb4 := fb_scene.instantiate()
+	fb4.global_position = Vector2(488, 1208)
+	root.add_child(fb4)
+	await physics_frame
+	fb4.hp = 4
+	var charge_kill_player := StubCombatPlayer.new()
+	charge_kill_player.global_position = Vector2(700, 1208)
+	root.add_child(charge_kill_player)
+	var charged2 := false
+	for i in range(240):
+		await physics_frame
+		if fb4.state == 4:
+			charged2 = true
+			break
+	_check(charged2, "冲撞中被射杀前置:进入冲撞")
+	fb4.hurt(99, Vector2.RIGHT)
+	_check(fb4.is_dead, "冲撞中被射杀死亡")
+	_check(fb4.velocity.x == 0.0, "冲撞死清水平速度,不再续冲")
+	for i in range(5):
+		await physics_frame
+	_check(fb4.velocity.x == 0.0, "尸体白闪期间持续无水平续冲")
+	charge_kill_player.free()
+	if is_instance_valid(fb4):
+		fb4.free()
 	# 返程: 玩家跑出追击范围 → 回家落地入睡
 	var floor_r := StaticBody2D.new()
 	var fshape_r := CollisionShape2D.new()
@@ -496,9 +521,9 @@ func _initialize() -> void:
 	floor_r.collision_layer = 1
 	floor_r.collision_mask = 0
 	root.add_child(floor_r)
-	var fb4 := fb_scene.instantiate()
-	fb4.global_position = Vector2(488, 1208)
-	root.add_child(fb4)
+	var fb5 := fb_scene.instantiate()
+	fb5.global_position = Vector2(488, 1208)
+	root.add_child(fb5)
 	await physics_frame
 	var ret_player := StubCombatPlayer.new()
 	ret_player.global_position = Vector2(600, 1208)
@@ -506,7 +531,7 @@ func _initialize() -> void:
 	var engaged := false
 	for i in range(240):
 		await physics_frame
-		if fb4.state == 2 or fb4.state == 3:
+		if fb5.state == 2 or fb5.state == 3:
 			engaged = true
 			break
 	_check(engaged, "FlyBird 进入战斗状态")
@@ -514,12 +539,58 @@ func _initialize() -> void:
 	var returned := false
 	for i in range(600):
 		await physics_frame
-		if fb4.state == 0:
+		if fb5.state == 0:
 			returned = true
 			break
 	_check(returned, "FlyBird 返程后入睡")
 	floor_r.free()
 	ret_player.free()
+	MazeGenerator.current_grid = []
+
+	# ── Task 7: A* 扁平数组 + 路径缓存 ──
+	# 大网格(demo 全尺寸)上跑 A*:不崩、路径逐格相邻且在界内(扁平数组索引正确)。
+	var big_grid := MazeGenerator.load_map_file()
+	MazeGenerator.current_grid = big_grid
+	var far := MazeGenerator.astar_path_nearest(Vector2i(10, 10), Vector2i(400, 200))
+	var far_valid := true
+	var prev_cell := Vector2i(10, 10)
+	for c in far:
+		if c.x < 0 or c.x >= 540 or c.y < 0 or c.y >= 324:
+			far_valid = false
+			break
+		var dxc := absi(c.x - prev_cell.x)
+		var dyc := absi(c.y - prev_cell.y)
+		dxc = mini(dxc, 540 - dxc)
+		dyc = mini(dyc, 324 - dyc)
+		if not (dxc + dyc == 1):
+			far_valid = false
+			break
+		prev_cell = c
+	_check(far_valid, "大网格 A* 路径逐格相邻且在界内")
+	# 路径缓存:目标格未变且路径还在 → 不重跑 A*(astar_calls 不涨)
+	var cache_grid: Array[Array] = []
+	for _y in range(60):
+		var row_c: Array[int] = []
+		row_c.resize(60)
+		row_c.fill(MazeGenerator.EMPTY)
+		cache_grid.append(row_c)
+	MazeGenerator.current_grid = cache_grid
+	var fb_cache := fb_scene.instantiate()
+	fb_cache.global_position = Vector2(2000, 400)  # 远离 Task6 遗留的睡眠鸟(488,1208),不被当障碍
+	root.add_child(fb_cache)
+	await physics_frame
+	# 无玩家在组:鸟保持睡眠(不自己 repath),且 _collect_obstacles 只对 ≤600px 的实体收障碍
+	var calls0: int = MazeGenerator.astar_calls
+	fb_cache._repath_to(Vector2i(40, 20))
+	var calls1: int = MazeGenerator.astar_calls
+	_check(calls1 - calls0 == 1, "首次 repath 跑一次 A*")
+	fb_cache._repath_to(Vector2i(40, 20))
+	_check(MazeGenerator.astar_calls - calls1 == 0, "同目标且路径未空 → 缓存命中跳过 A*")
+	fb_cache._repath_to(Vector2i(41, 20))
+	_check(MazeGenerator.astar_calls - calls1 == 1, "目标变化 → 重跑 A*")
+	fb_cache._repath_to(Vector2i(41, 20))
+	_check(MazeGenerator.astar_calls - calls1 == 1, "同目标再跳一次")
+	fb_cache.free()
 	MazeGenerator.current_grid = []
 
 	if _failures.is_empty():
