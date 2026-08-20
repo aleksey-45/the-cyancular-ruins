@@ -6,7 +6,7 @@
 
 ## 概述
 
-新增第 5 把武器榴弹发射器(重型武器)。子弹为榴弹:轻微重力抛物线飞行、命中敌人直接 10 伤并立即爆炸、未命中则 0.5s 引信后爆炸。爆炸:中心 35 伤、圆形范围、向外冲击波、分段函数衰减、遮挡检测、**有友伤**。使用 heavy_aim 预瞄(狙击同款按住-松开发射),但预瞄画的是**抛物线轨迹弧线 + 爆炸点标记**,取代直线激光。
+新增第 5 把武器榴弹发射器(重型武器)。子弹为榴弹:轻微重力抛物线飞行、命中敌人直接 10 伤并立即爆炸、未命中则**碰撞停驻后**延时 0.5s 爆炸(**引信碰撞后才开始计时**,不在飞行中累计)。爆炸:中心 35 伤、圆形范围、向外冲击波、分段函数衰减、遮挡检测、**有友伤**。使用 heavy_aim 预瞄(狙击同款按住-松开发射),但预瞄画的是**抛物线轨迹弧线 + 爆炸点标记**,取代直线激光。
 
 直接命中敌人的榴弹: 10(直接) + 爆炸中心 35 = **45 总伤**。
 
@@ -32,10 +32,10 @@
 `_physics_process` 改造:
 
 - 重力上移: `if gravity_factor > 0.0: velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta`(原只在 EnemyBullet;EnemyBullet 覆写 `_physics_process` 且不调 super,行为不变,保持原样)。
-- 引爆时序(优先命中,其次引信):
-  1. `move_and_collide` 命中敌人且 `explodes` → `hurt(direct_hit_damage, 弹道方向)` 直接伤 + `_explode()` + `queue_free()`。
-  2. `move_and_collide` 撞墙且 `explodes` → **停住**(`velocity_vec = Vector2.ZERO`),不销毁,继续引信,到点爆炸(用户确认:撞墙停住等引信,非立刻炸)。
-  3. 每帧 `if explodes: _fuse_elapsed += delta`,到 `fuse_time` → `_explode()` + `queue_free()`(无论空中/撞墙停驻)。
+- 引爆时序(**引信碰撞后才开始计时**,不在飞行中累计):
+  1. `move_and_collide` 命中敌人且 `explodes` → `hurt(direct_hit_damage, 弹道方向)` 直接伤 + **立即** `_explode()` + `queue_free()`(命中敌人无延时)。
+  2. `move_and_collide` 撞墙且 `explodes` → **停住**(`velocity_vec = Vector2.ZERO`),置引信开启标记,**此刻才开始累计** `fuse_time`,到点 `_explode()` + `queue_free()`。
+  3. 飞行中不累计引信;兜底: `traveled >= max_range` 时 `_explode()` + `queue_free()`(bullet_range 填很大,正常情况撞墙先到)。
   4. `explodes=false` 时走原逻辑(命中敌人 `source.apply_hit`、其他撞墙消失、超射程消失),逐位不变。
 
 `_explode()`:
@@ -129,4 +129,4 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 2. 冒烟测试新增(纯函数,直接调 `Explosion.apply_aoe`):
    - 中心敌人 = 35,半径边缘 ≈ 0,墙后敌人 = 0(LOS 遮挡),范围内玩家掉血(友伤)。
    - `BulletBase` 默认 `explodes=false` 行为不变 → SMOKE OK。
-3. playtest: 按 5 切枪 → 按住看弧线 + 爆炸点标记 → 松开发射抛物线 → 命中敌人 10+爆炸 → 空爆 0.5s → 墙后敌人不受伤 → 自己站在爆炸范围内掉血被推。
+3. playtest: 按 5 切枪 → 按住看弧线 + 爆炸点标记 → 松开发射抛物线 → 命中敌人 10+立即爆炸 → 撞墙停驻 0.5s 后才炸(飞行中不炸) → 墙后敌人不受伤 → 自己站在爆炸范围内掉血被推。
