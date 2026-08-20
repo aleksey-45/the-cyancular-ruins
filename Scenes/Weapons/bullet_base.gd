@@ -65,8 +65,9 @@ func _physics_process(delta: float) -> void:
 				_explode()
 				queue_free()
 				return
-			# 撞墙停驻,碰撞后才开始引信(不立即爆炸)
+			# 撞墙停驻,碰撞后才开始引信(不立即爆炸);落地平放
 			velocity_vec = Vector2.ZERO
+			rotation = 0.0
 			_fuse_active = true
 			return
 		# 切枪后旧武器可能已 free():在途子弹的 source 失效时无害消失。
