@@ -4,7 +4,7 @@ extends Node2D
 enum Tier { LIGHT, MEDIUM, HEAVY }
 enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 
-const BULLET_SCENE: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
+@export var bullet_scene: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
 
 # ── 武器参数(说明见各参数上方注释)──
@@ -71,6 +71,14 @@ const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time
 # 本枪仰角钳制角(枪口/激光/出弹方向共用)
 @export var pitch_clamp_deg: float = 45.0
 
+# ── 弹道/预览(榴弹等抛体用)──
+# 重力下坠倍率,发射时注入子弹(0=直线)
+@export var bullet_gravity: float = 0.0
+# true=重武器预瞄画抛物线弧线(取代直线激光);false=原直线激光
+@export var preview_arc: bool = false
+# 预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定,预瞄只是参考
+@export var preview_time: float = 0.5
+
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
 
@@ -81,6 +89,7 @@ var _recoil_timer: float = 0.0
 var _base_sprite_pos: Vector2 = Vector2.ZERO
 var _aiming: bool = false
 var _laser: Line2D = null
+var _explosion_marker: Sprite2D = null
 
 # 俯仰角:把面向折进 dir.x,相对水平线求角并钳制到 ±45°。
 static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> float:
@@ -95,6 +104,11 @@ func _ready() -> void:
 	_laser.default_color = laser_color
 	_laser.visible = false
 	add_child(_laser)
+	_explosion_marker = Sprite2D.new()
+	_explosion_marker.texture = Explosion.make_circle_texture(16)
+	_explosion_marker.modulate = Color(1.0, 0.4, 0.2, 0.9)
+	_explosion_marker.visible = false
+	add_child(_explosion_marker)
 
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
@@ -142,9 +156,10 @@ func fire() -> void:
 	var base_dir := _clamped_aim_dir()
 	var spread := deg_to_rad(spread_deg)
 	for i in range(pellet_count):
-		var b: BulletBase = BULLET_SCENE.instantiate()
+		var b: BulletBase = bullet_scene.instantiate()
 		var ang := base_dir.angle() + randf_range(-spread, spread)
 		b.setup(Vector2.from_angle(ang), bullet_speed, bullet_range, bullet_size, bullet_color, self)
+		b.gravity_factor = bullet_gravity
 		b.global_position = muzzle.global_position
 		get_viewport().add_child(b)
 	if player != null and player.has_method("apply_recoil"):
@@ -201,9 +216,49 @@ func _update_laser() -> void:
 	if _laser == null or muzzle == null:
 		return
 	_laser.visible = _aiming
-	if _aiming:
+	if not _aiming:
+		_update_explosion_marker(false)
+		return
+	if preview_arc:
+		_laser.points = _sample_arc_points()
+		_update_explosion_marker(true)
+	else:
 		# 激光继承枪口的钳制旋转:仰角限制与枪口一致,且与出弹方向(同样钳制)对齐。
 		_laser.points = PackedVector2Array([muzzle.position, muzzle.position + Vector2(laser_length, 0.0)])
+		_update_explosion_marker(false)
+
+# 预瞄抛物线:与 fire 同源(v0=钳制瞄准方向*speed, g=bullet_gravity*gravity0),
+# 1/60s 采样到 preview_time,途中遇 SOLID 格截断(榴弹撞墙停驻处 = 爆炸点)。
+func _sample_arc_points() -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	var p := muzzle.global_position
+	var v := _clamped_aim_dir() * bullet_speed
+	var g := bullet_gravity * GameParameters.gravity0
+	var dt := 1.0 / 60.0
+	var t := 0.0
+	pts.append(to_local(p))
+	while t < preview_time:
+		v.y += g * dt
+		p += v * dt
+		t += dt
+		if _cell_solid_at(p):
+			break
+		pts.append(to_local(p))
+	return pts
+
+func _cell_solid_at(world_pos: Vector2) -> bool:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return false
+	var cell := MazeGenerator.cell_of(world_pos, GameParameters.TILE_SIZE, grid[0].size(), grid.size())
+	return grid[cell.y][cell.x] == MazeGenerator.SOLID
+
+func _update_explosion_marker(show: bool) -> void:
+	if _explosion_marker == null:
+		return
+	_explosion_marker.visible = show
+	if show and _laser.points.size() > 0:
+		_explosion_marker.position = _laser.points[_laser.points.size() - 1]
 
 func _recoil_recover(delta: float) -> void:
 	if _recoil_timer > 0.0:
