@@ -228,10 +228,12 @@ func _update_laser() -> void:
 		_update_explosion_marker(false)
 
 # 预瞄抛物线:与 fire 同源(v0=钳制瞄准方向*speed, g=bullet_gravity*gravity0),
-# 1/60s 采样到 preview_time,途中遇 SOLID 格截断(榴弹撞墙停驻处 = 爆炸点)。
+# 1/60s 采样到 preview_time,途中遇 SOLID 格截断(榴弹撞墙停驻处 = 爆炸点),
+# 并封顶 bullet_range(榴弹超射程兜底爆炸,不会再飞)。
 func _sample_arc_points() -> PackedVector2Array:
 	var pts := PackedVector2Array()
 	var p := muzzle.global_position
+	var start := p
 	var v := _clamped_aim_dir() * bullet_speed
 	var g := bullet_gravity * GameParameters.gravity0
 	var dt := 1.0 / 60.0
@@ -242,6 +244,8 @@ func _sample_arc_points() -> PackedVector2Array:
 		p += v * dt
 		t += dt
 		if _cell_solid_at(p):
+			break
+		if p.distance_to(start) >= bullet_range:
 			break
 		pts.append(to_local(p))
 	return pts

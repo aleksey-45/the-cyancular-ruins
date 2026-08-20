@@ -7,7 +7,6 @@
 load_path = "res://.godot/imported/Weapons.png-c4a6c69d089b50848ba40f862b49769f.ctex"
 
 [node name="GrenadeLauncher" type="Node2D" unique_id=1484159833]
-position = Vector2(-4, 0)
 script = ExtResource("1_wb")
 bullet_scene = ExtResource("2_gb")
 tier = 2
@@ -16,24 +15,25 @@ fire_cooldown = 1.4
 heavy_aim = true
 bullet_range = 2500.0
 damage = 10
-recoil_push = 900.0
-recoil_kick = 10.0
-cam_shake = 8.0
-cam_shake_time = 0.2
+recoil_push = 1100.0
+recoil_kick = 20.0
+cam_shake = 15.0
+cam_shake_time = 0.3
 move_penalty = 0.5
 jump_penalty = 0.6
 penalty_mode = 2
 laser_length = 2000.0
-pitch_clamp_deg = 80.0
+pitch_clamp_deg = 55.0
 bullet_gravity = 0.3
 preview_arc = true
+preview_time = 2.0
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1705220904]
 texture_filter = 1
-position = Vector2(18, 6)
+position = Vector2(11, 8)
 texture = SubResource("CompressedTexture2D_ofh50")
 region_enabled = true
 region_rect = Rect2(3, 35, 51, 21)
 
 [node name="Muzzle" type="Marker2D" parent="." unique_id=1183012513]
-position = Vector2(38, 6)
+position = Vector2(31, 8)
