@@ -110,10 +110,10 @@ func _ai(delta: float) -> void:
 				_set_state(State.CHASE)
 				_hop_timer = 0.15
 
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
+func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
 		return
-	_apply_hit(damage, knock_dir, knock_strength)
+	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		is_dead = true
 		_anim.play("dead")  # 死亡动画(一次性),播完消失

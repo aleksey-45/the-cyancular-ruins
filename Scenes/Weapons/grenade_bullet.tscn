@@ -14,8 +14,10 @@ motion_mode = 1
 wall_min_slide_angle = 0.5235988
 script = ExtResource("1_bl")
 explodes = true
-explosion_radius = 256.0
-explosion_knockback = 1000.0
+fuse_time = 0.4
+hit_fuse_time = 0.1
+explosion_radius = 400.0
+explosion_knockback = 5000.0
 explosion_visual = ExtResource("2_fx")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=174510963]

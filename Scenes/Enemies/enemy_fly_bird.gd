@@ -5,6 +5,9 @@ enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
 enum Intent { SHOOT, CHARGE }
 
 const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
+# 死亡滑行水平阻力:每帧乘此系数。尸体保留击退初速但快速衰减停住,
+# 不会以 max_death_fly_speed(900)匀速滑满 0.5s(≈450px)。60fps 下 0.5s 剩 ~2%。
+const DEATH_HORIZONTAL_DRAG: float = 0.88
 
 var intent: Intent = Intent.SHOOT
 
@@ -173,10 +176,10 @@ func _ai(delta: float) -> void:
 				_follow_path(delta, _spawn_pos)
 
 
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0) -> void:
+func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
 		return
-	_apply_hit(damage, knock_dir, knock_strength)
+	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		_die_self()
 
@@ -202,6 +205,8 @@ func _death_update(delta: float) -> void:
 		queue_free()
 		return
 	velocity.y += GameParameters.gravity0 * delta
+	# 水平阻力:尸体滑出初速后逐渐停住,不匀速飞出老远(见 DEATH_HORIZONTAL_DRAG)
+	velocity.x *= DEATH_HORIZONTAL_DRAG
 	move_and_slide()
 	_wrap()
 	# 白闪闪烁(受击白闪 3x 与半透明交替)
