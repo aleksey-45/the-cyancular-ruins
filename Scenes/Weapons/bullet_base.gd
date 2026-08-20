@@ -13,6 +13,18 @@ var max_range: float = 0.0
 var traveled: float = 0.0
 var source: Node = null
 
+# ── 爆炸弹(榴弹等) ──
+@export var explodes: bool = false        # 是否爆炸弹
+@export var direct_hit_damage: int = 10   # 命中敌人的直接伤害
+@export var fuse_time: float = 0.5        # 碰撞停驻后延时(秒);命中敌人则立即爆炸
+@export var explosion_radius: float = 128.0
+@export var explosion_damage: int = 35
+@export var explosion_knockback: float = 900.0
+@export var explosion_visual: PackedScene = null
+
+var _fuse_active: bool = false   # 撞墙停驻后才开始计时
+var _fuse_elapsed: float = 0.0
+
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
 	speed = spd
@@ -31,17 +43,40 @@ func _ready() -> void:
 		sp.modulate = bullet_color
 
 func _physics_process(delta: float) -> void:
+	if gravity_factor > 0.0:
+		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
+		if not velocity_vec.is_zero_approx():
+			rotation = velocity_vec.angle()
+	if explodes and _fuse_active:
+		_fuse_elapsed += delta
+		if _fuse_elapsed >= fuse_time:
+			_explode()
+			queue_free()
+			return
 	var step := velocity_vec * delta
 	traveled += step.length()
 	var col := move_and_collide(step)
 	if col:
 		var hit := col.get_collider()
+		if explodes:
+			# 命中敌人:10 直接伤 + 立即爆炸(无延时)
+			if hit != null and hit.is_in_group("enemies"):
+				_direct_hit(hit)
+				_explode()
+				queue_free()
+				return
+			# 撞墙停驻,碰撞后才开始引信(不立即爆炸)
+			velocity_vec = Vector2.ZERO
+			_fuse_active = true
+			return
 		# 切枪后旧武器可能已 free():在途子弹的 source 失效时无害消失。
 		if hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
 			source.apply_hit(hit, velocity_vec)
 		queue_free()
 		return
 	if traveled >= max_range:
+		if explodes:
+			_explode()
 		queue_free()
 		return
 	_wrap()
@@ -55,3 +90,15 @@ func _wrap() -> void:
 		return
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+
+func _direct_hit(hit: Node) -> void:
+	if hit.has_method("hurt"):
+		var dir := velocity_vec.normalized() if not velocity_vec.is_zero_approx() else Vector2.RIGHT
+		hit.hurt(direct_hit_damage, dir)
+
+func _explode() -> void:
+	if explosion_visual != null:
+		var fx: Node = explosion_visual.instantiate()
+		fx.global_position = global_position
+		get_viewport().add_child(fx)
+	Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback)

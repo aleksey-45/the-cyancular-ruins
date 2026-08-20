@@ -5,9 +5,10 @@ extends RefCounted
 const INNER_FRACTION: float = 0.35  # 内圈半径比例,内圈内满伤
 
 static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float) -> void:
+	var tree := _tree()
 	var grid := MazeGenerator.current_grid
 	var has_grid := not grid.is_empty()
-	for e in get_tree().get_nodes_in_group("enemies"):
+	for e in tree.get_nodes_in_group("enemies"):
 		if not (e is Node2D):
 			continue
 		var d := _dist(center, (e as Node2D).global_position)
@@ -19,11 +20,15 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		if dmg <= 0:
 			continue
 		e.hurt(dmg, _outward_dir(center, (e as Node2D).global_position), _falloff(d, radius, max_knockback))
-	var p := get_tree().get_first_node_in_group("player")
+	var p := tree.get_first_node_in_group("player")
 	if p != null and p.has_method("take_hit") and not (p.has_method("is_downed") and p.is_downed()):
 		var d := _dist(center, (p as Node2D).global_position)
 		if d <= radius and (not has_grid or _has_los(center, p as Node2D, grid)):
 			p.take_hit(center, _falloff(d, radius, max_damage))  # take_hit 按 source 方向推 = 向外冲击波
+
+# 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
+static func _tree() -> SceneTree:
+	return Engine.get_main_loop() as SceneTree
 
 # 软圆白贴图:占位爆炸/榴弹占位/预瞄爆点标记共用。
 static func make_circle_texture(size: int) -> ImageTexture:
