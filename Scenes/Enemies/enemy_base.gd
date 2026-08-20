@@ -13,10 +13,8 @@ var use_gravity: bool = true
 @export var knockback_strength: float = 150.0
 # 爆炸专属击退向量:独立于 AI 移动速度,每帧叠加后指数衰减(大冲击+迅速衰减)
 var knock_velocity: Vector2 = Vector2.ZERO
-# 击退向量指数衰减率(越大停得越快;约 0.15s 衰减到 ~10%)
-@export var knock_decay_rate: float = 15.0
-# 爆炸设 knock_velocity 时的封顶(防止大击退把活怪轰出屏)
-@export var max_knock_velocity: float = 2500.0
+# 击退向量指数衰减率(越大停得越快;约 0.1s 衰减到 ~13%)
+@export var knock_decay_rate: float = 20.0
 
 # 环面接缝兜底:物理 Area 用欧氏距离,跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)
 const CONTACT_RADIUS: float = 40.0
@@ -111,8 +109,8 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, se
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
 	if set_velocity:
-		# 爆炸:设独立击退向量(封顶),不覆盖移动速度
-		knock_velocity = knock_dir.normalized() * minf(ks, max_knock_velocity)
+		# 爆炸:设独立击退向量(不封顶),不覆盖移动速度
+		knock_velocity = knock_dir.normalized() * ks
 	else:
 		velocity += knock_dir.normalized() * ks
 	# 死亡:击退不折入,尸体与生前一致——knock_velocity 继续独立衰减,由 _physics_process 统一结算。
