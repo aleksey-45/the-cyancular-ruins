@@ -39,6 +39,7 @@ var max_hp: int = PlayerParams.player_max_hp
 var hp: int = PlayerParams.player_max_hp
 var iframes: float = 0.0
 var downed: bool = false
+var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量(独立于移动速度,指数衰减)
 
 @export var weapon_slot: Node2D
 
@@ -226,15 +227,20 @@ func _physics_process(delta: float) -> void:
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 
+	# ---------- 爆炸击退向量叠加(独立衰减,不污染移动速度) ----------
+	velocity += knock_velocity
+
 	# ---------- 执行移动 ----------
 	move_and_slide()
+	velocity -= knock_velocity
+	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 
 	# 环面回卷：玩家只能在中间副本，离开时取模送回
 	global_position = MazeGenerator.wrap_to_range(global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
-func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false) -> void:
+func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
 	# ignore_iframes: 特殊攻击(如冲撞)穿透无敌帧,但命中后照常刷新 iframes。
 	if downed or (iframes > 0.0 and not ignore_iframes):
 		return
@@ -246,8 +252,13 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false) ->
 	var away := (global_position - source_pos).normalized()
 	if away == Vector2.ZERO:
 		away = Vector2(-float(facing_direction), 0.0)
-	velocity.x = away.x * PlayerParams.player_hit_knockback
-	velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
+	if knockback < 0.0:
+		# 常规命中:固定击退直接覆盖(原行为)
+		velocity.x = away.x * PlayerParams.player_hit_knockback
+		velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
+	else:
+		# 爆炸:设独立击退向量(叠加,不覆盖移动),随帧指数衰减
+		knock_velocity = away * knockback
 	hp_changed.emit(hp, max_hp)
 	if hp <= 0:
 		_downed()
@@ -290,6 +301,7 @@ func apply_recoil(push: float) -> void:
 
 func _downed() -> void:
 	downed = true
+	knock_velocity = Vector2.ZERO  # 倒地锁速,清掉残留冲击
 	if _weapon != null:
 		_weapon.cancel_aim()
 	velocity = Vector2.ZERO

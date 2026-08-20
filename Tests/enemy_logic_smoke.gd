@@ -629,6 +629,19 @@ func _initialize() -> void:
 	ov.free()
 	MazeGenerator.current_grid = []
 
+	# ── 玩家爆炸击退独立向量:take_hit 传击退 → 向量生效并衰减 ──
+	var pk := player_scene.instantiate()
+	pk.global_position = Vector2(1000, 400)
+	root.add_child(pk)
+	await physics_frame
+	pk.take_hit(Vector2(800, 400), 5, false, 800.0)
+	_check(is_equal_approx(pk.knock_velocity.x, 800.0), "玩家爆炸击退设独立向量")
+	var pk0: float = pk.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(pk.knock_velocity.x < pk0, "玩家击退向量随帧衰减")
+	pk.free()
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)
