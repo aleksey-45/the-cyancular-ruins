@@ -1,6 +1,8 @@
 class_name BulletBase
 extends CharacterBody2D
 
+const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
+
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
 var speed: float = 0.0
@@ -65,9 +67,13 @@ func _physics_process(delta: float) -> void:
 				_explode()
 				queue_free()
 				return
-			# 撞墙停驻,碰撞后才开始引信(不立即爆炸)
-			velocity_vec = Vector2.ZERO
+			# 撞墙:反弹(带衰减),首次碰撞后开始引信;不直接清零速度
 			_fuse_active = true
+			var normal := col.get_normal()
+			var reflected := velocity_vec.bounce(normal)
+			velocity_vec = reflected * BOUNCE_DAMPING
+			if not velocity_vec.is_zero_approx():
+				rotation = velocity_vec.angle()
 			return
 		# 切枪后旧武器可能已 free():在途子弹的 source 失效时无害消失。
 		if hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):

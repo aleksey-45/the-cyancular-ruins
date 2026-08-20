@@ -186,14 +186,14 @@ func _test_fuse() -> void:
 		if b2.global_position.x >= 280.0 and is_instance_valid(b2):
 			stopped = true
 			break
-	_check(stopped and is_instance_valid(b2), "撞墙后停驻且未销毁")
+	_check(stopped and is_instance_valid(b2), "撞墙后反弹且未销毁")
 	var exploded := false
 	for i in range(60):
 		await physics_frame
 		if not is_instance_valid(b2):
 			exploded = true
 			break
-	_check(exploded, "撞墙停驻后约 0.5s 爆炸")
+	_check(exploded, "撞墙后约 0.5s 爆炸")
 	far.free()
 	wall.free()
 
