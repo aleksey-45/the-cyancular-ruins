@@ -38,3 +38,5 @@ const iframes_time: float = 0.25
 const player_hit_knockback: float = 400.0
 const player_hit_knockback_up: float = 200.0
 const player_knock_decay_rate: float = 10.0  # 爆炸击退向量指数衰减率(越大停得越快)
+const hit_cam_shake: float = 8.0        # 大伤害(一次扣血 >25% 最大血)相机震动基准幅度
+const hit_cam_shake_time: float = 0.25  # 大伤害相机震动时长(秒)
