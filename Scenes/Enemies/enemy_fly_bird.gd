@@ -6,8 +6,8 @@ enum Intent { SHOOT, CHARGE }
 
 const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
 # 死亡滑行水平阻力:每帧乘此系数。尸体保留击退初速但快速衰减停住,
-# 不被爆炸(击退上限 2500)轰出老远;60fps 下 0.5s 剩 0.7^30≈0.0002。
-const DEATH_HORIZONTAL_DRAG: float = 0.7
+# 不被爆炸(击退上限 2500)轰出老远;60fps 下 0.5s 剩 0.5^30≈9e-10。
+const DEATH_HORIZONTAL_DRAG: float = 0.5
 
 var intent: Intent = Intent.SHOOT
 
