@@ -5,9 +5,6 @@ enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
 enum Intent { SHOOT, CHARGE }
 
 const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
-# 死亡滑行水平阻力:每帧乘此系数。尸体保留击退初速但快速衰减停住,
-# 不被爆炸(击退上限 2500)轰出老远;60fps 下 0.5s 剩 0.5^30≈9e-10。
-const DEATH_HORIZONTAL_DRAG: float = 0.5
 
 var intent: Intent = Intent.SHOOT
 
@@ -44,8 +41,14 @@ func _physics_process(delta: float) -> void:
 		_spawn_pos = global_position
 		_home_cell = _cell_of(global_position)
 		_spawn_captured = true
-	if is_dead:  # 死亡:保留击退速度飞出 + 白闪,闪完销毁
-		_death_update(delta)
+	if is_dead:
+		# 死亡:物理与生前完全一致(走 super 同一套),只处理销毁计时 + 白闪
+		_death_timer -= delta
+		if _death_timer <= 0.0:
+			queue_free()
+			return
+		modulate = Color(3.0, 3.0, 3.0, 1.0) if int(_death_timer * 20.0) % 2 == 0 else Color(1.0, 1.0, 1.0, 0.35)
+		super._physics_process(delta)
 		return
 	super._physics_process(delta)
 	# 冲撞撞到东西(super 已执行 move_and_slide)
@@ -196,21 +199,6 @@ func _die_self() -> void:
 		velocity = Vector2.ZERO
 	# 其余死亡保留击退速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
 	use_gravity = true
-
-
-# 死亡物理:保留击退/冲撞速度 + 重力坠落,白闪后销毁。
-func _death_update(delta: float) -> void:
-	_death_timer -= delta
-	if _death_timer <= 0.0:
-		queue_free()
-		return
-	velocity.y += GameParameters.gravity0 * delta
-	# 水平阻力:尸体滑出初速后逐渐停住,不匀速飞出老远(见 DEATH_HORIZONTAL_DRAG)
-	velocity.x *= DEATH_HORIZONTAL_DRAG
-	move_and_slide()
-	_wrap()
-	# 白闪闪烁(受击白闪 3x 与半透明交替)
-	modulate = Color(3.0, 3.0, 3.0, 1.0) if int(_death_timer * 20.0) % 2 == 0 else Color(1.0, 1.0, 1.0, 0.35)
 
 
 # ── 射击 ──

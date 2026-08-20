@@ -410,22 +410,29 @@ func _initialize() -> void:
 	_check(reached_shoot, "FlyBird 进入射击状态")
 	_check(fired, "FlyBird 发射过投弹")
 	_check(near_player.hit_log.has(2), "投弹命中玩家造成 2 伤害")
-	# 杀死 → 直接销毁(hurt 内 queue_free,同帧末释放)
+	# 杀死 → 直接销毁(白闪计时后销毁,物理走 super 统一路径)
 	fb.hurt(99, Vector2.RIGHT)
 	_check(fb.is_dead, "FlyBird 受击死亡")
 	var died := false
-	var decayed := false
-	var prev_vx: float = fb.velocity.x
 	for i in range(180):
 		await physics_frame
 		if not is_instance_valid(fb):
 			died = true
 			break
-		if not decayed and fb.velocity.x < prev_vx - 1.0:
-			decayed = true
-		prev_vx = fb.velocity.x
 	_check(died, "FlyBird 死亡直接销毁")
-	_check(decayed, "尸体白闪期间水平速度衰减(死亡滑行有阻力)")
+	# 死亡物理与生前一致:爆炸式击退在尸体上不折入,knock_velocity 仍独立衰减
+	var fb_d := fb_scene.instantiate()
+	fb_d.global_position = Vector2(1000, 400)
+	root.add_child(fb_d)
+	await physics_frame
+	fb_d.hurt(99, Vector2.RIGHT, 1000.0, true)  # 爆炸式击退
+	_check(fb_d.is_dead, "飞鸟受击死亡(爆炸)")
+	_check(is_equal_approx(fb_d.knock_velocity.x, 1000.0), "尸体保留独立击退向量(未折入)")
+	var fd0: float = fb_d.knock_velocity.x
+	for i in range(5):
+		await physics_frame
+	_check(fb_d.knock_velocity.x < fd0, "尸体击退向量随帧衰减(与生前同物理)")
+	fb_d.free()
 	floor_b.free()
 	near_player.free()
 	MazeGenerator.current_grid = []

@@ -118,15 +118,14 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 		is_dead = true
 		_anim.play("dead")  # 死亡动画(一次性),播完消失
 		_death_timer = _anim_duration("dead")
-		use_gravity = false
-		# 死亡不清击退速度、保留碰撞箱(与飞鸟统一):尸体带击退滑出,撞墙/落地会停;
+		# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
 		# is_dead 后 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
 
 func _physics_process(delta: float) -> void:
 	if is_dead:
 		if _death_timer > 0.0:
 			_death_timer -= delta
-			move_and_slide()  # 死亡带击退速度滑出(保留碰撞,撞墙/落地会停)
+			super._physics_process(delta)  # 物理与生前一致(重力/摩擦/击退衰减)
 			if _death_timer <= 0.0:
 				queue_free()
 		return

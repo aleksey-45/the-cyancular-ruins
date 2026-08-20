@@ -66,8 +66,6 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = false
 
 func _physics_process(delta: float) -> void:
-	if is_dead:
-		return
 	if use_gravity and not is_on_floor():
 		velocity.y += GameParameters.gravity0 * delta
 	# 地面摩擦:落地且非冲刺(use_gravity=true)时,水平速度平滑衰减,
@@ -77,14 +75,16 @@ func _physics_process(delta: float) -> void:
 		velocity.x *= GROUND_FRICTION
 		if absf(velocity.x) < STOP_EPSILON:
 			velocity.x = 0.0
-	_ai(delta)
-	_anim_update()
-	# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
-	# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
-	if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
-		var p := get_tree().get_first_node_in_group("player")
-		if p != null and p.has_method("take_hit"):
-			p.take_hit(global_position, contact_damage)
+	# 死亡:AI 不行动,但物理(重力/摩擦/击退/碰撞)与生前完全一致。
+	if not is_dead:
+		_ai(delta)
+		_anim_update()
+		# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
+		# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
+		if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
+			var p := get_tree().get_first_node_in_group("player")
+			if p != null and p.has_method("take_hit"):
+				p.take_hit(global_position, contact_damage)
 	if _hit_flash_time > 0.0:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
 		if _hit_flash_time == 0.0:
@@ -111,14 +111,11 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, se
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
 	if set_velocity:
-		# 爆炸:设独立击退向量(封顶),不覆盖移动速度;死亡时折入尸体速度
+		# 爆炸:设独立击退向量(封顶),不覆盖移动速度
 		knock_velocity = knock_dir.normalized() * minf(ks, max_knock_velocity)
 	else:
 		velocity += knock_dir.normalized() * ks
-	if hp <= 0:
-		# 死亡:把击退折入尸体速度,不封顶(完整冲击力),靠各子类死亡滑动/阻力收住
-		velocity += knock_velocity
-		knock_velocity = Vector2.ZERO
+	# 死亡:击退不折入,尸体与生前一致——knock_velocity 继续独立衰减,由 _physics_process 统一结算。
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
 
