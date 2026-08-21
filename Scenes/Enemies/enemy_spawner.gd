@@ -1,6 +1,9 @@
 class_name EnemySpawner
 extends Node2D
 
+# 每生成一个敌人发射一次(HUD 等接上去监听 enemy.died 做击杀计数)
+signal enemy_spawned(enemy: Node)
+
 # 类型注册表:加新敌人 = 一个 .tscn + 一行(string 路径,load() 时取)。
 const TYPES: Dictionary = {
 	"jump_bird": "res://Scenes/Enemies/EnemyJumpBird.tscn",
@@ -46,4 +49,5 @@ func spawn_all(grid: Array[Array], player_pos: Vector2) -> void:
 		var e := scene.instantiate()
 		world.add_child(e)
 		e.global_position = Vector2(c.x * ts + ts / 2.0, c.y * ts + ts / 2.0)
+		enemy_spawned.emit(e)
 	print("[EnemySpawner] spawned %d enemies" % cells.size())

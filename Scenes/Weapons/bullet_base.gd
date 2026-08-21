@@ -14,6 +14,8 @@ var bullet_color: Color = Color.WHITE  # 纹理本底;武器如需染色再设
 var max_range: float = 0.0
 var traveled: float = 0.0
 var source: Node = null
+var hit_damage: int = 0    # 命中伤害(武器 fire 注入;切枪后 source 失效时兜底直接结算)
+var hit_impact: float = 0.0  # 命中击退(同上)
 
 # ── 爆炸弹(榴弹等) ──
 @export var explodes: bool = false        # 是否爆炸弹
@@ -76,9 +78,11 @@ func _physics_process(delta: float) -> void:
 			if not velocity_vec.is_zero_approx():
 				rotation = velocity_vec.angle()
 			return
-		# 切枪后旧武器可能已 free():在途子弹的 source 失效时无害消失。
+		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时,用子弹自带 damage/impact 兜底直接结算。
 		if hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
 			source.apply_hit(hit, velocity_vec)
+		elif hit.is_in_group("enemies"):
+			hit.hurt(hit_damage, velocity_vec, hit_impact)
 		queue_free()
 		return
 	if traveled >= max_range:

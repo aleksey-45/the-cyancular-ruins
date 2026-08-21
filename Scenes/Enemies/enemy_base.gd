@@ -1,6 +1,9 @@
 class_name EnemyBase
 extends CharacterBody2D
 
+# 进入死亡状态时发射一次(用于击杀计数等 UI;撞人自毁同算,见 FlyBird._die_self)
+signal died
+
 # 物理基础(子类可覆写:扑击时关闭重力)
 var use_gravity: bool = true
 
@@ -106,6 +109,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		is_dead = true
+		died.emit()
 		queue_free()
 
 # 受击通用逻辑:扣血、击退、白闪。子类覆写 hurt() 时也应调用本方法,避免逻辑分叉。
