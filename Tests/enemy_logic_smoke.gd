@@ -251,9 +251,9 @@ func _initialize() -> void:
 	arc_stub.add_child(arc_w)
 	arc_w.equip(arc_stub)
 	arc_w.bullet_gravity = 0.0   # 直线水平,便于定位;枪口世界 y=147 在墙行下方 3px,小球擦墙
-	var arc_pts := arc_w._sample_arc_points()
+	var arc_pts: PackedVector2Array = arc_w._sample_arc_points()
 	_check(arc_pts.size() > 1, "预瞄小球:弧线未空")
-	var arc_last := arc_w.to_global(arc_pts[arc_pts.size() - 1])
+	var arc_last: Vector2 = arc_w.to_global(arc_pts[arc_pts.size() - 1])
 	_check(arc_last.x < 160.0, "预瞄小球:体积擦墙即截断,落点在墙前")
 	arc_w.queue_free()
 	arc_stub.free()
@@ -789,6 +789,74 @@ func _initialize() -> void:
 	_check(jdc.collision_layer == 4, "JumpBird 死亡保留碰撞层")
 	_check(jdc.collision_mask == 7, "JumpBird 死亡保留碰撞掩码")
 	jdc.free()
+
+	# ── Task 7: FlyBird 死区先下飞(逐行下探)──
+	# 宽天花板:行 10..12 全实心横跨 300 列。鸟被压到行 13,该行按飞行高度判全撞墙
+	# (A* 空路径)。旧逃逸只在当前行左右扫,找不到列就原地悬停;新逻辑逐行下探到
+	# 行 17(箱体 y∈[218,272],全在天花板 208 之下)取可走格,鸟真正下潜。
+	var esc_grid: Array[Array] = []
+	for _y in range(30):
+		var row_e: Array[int] = []
+		row_e.resize(300)
+		row_e.fill(MazeGenerator.EMPTY)
+		esc_grid.append(row_e)
+	for _r in range(10, 13):
+		for _c in range(300):
+			esc_grid[_r][_c] = MazeGenerator.SOLID
+	MazeGenerator.current_grid = esc_grid
+	var esc := fb_scene.instantiate()
+	esc.global_position = Vector2(2400, 13 * 16 + 8)
+	root.add_child(esc)
+	await physics_frame
+	var esc_t: Vector2 = esc._find_escape_column()
+	_check(esc_t.y > esc.global_position.y, "死区逃逸先下飞(目标在鸟下方)")
+	var esc_cell := MazeGenerator.cell_of(esc_t, 16, 300, 30)
+	_check(esc._bird_can_pass(esc_cell), "下潜目标格可走(A* 可起路)")
+	# 下潜运动:_follow_path 逃逸分支应给向下的速度(旧实现锁 y,只水平飞)
+	esc._path = []
+	esc._escape_target = esc_t
+	esc._follow_path(0.01, Vector2.ZERO)
+	_check(esc.velocity.y > 0.0, "死区逃逸对角下潜(velocity.y>0)")
+	# 窄檐回归:天花板只覆盖部分列,鸟仍能逃到可走格,不原地卡死
+	var esc2_grid: Array[Array] = []
+	for _y in range(30):
+		var row_e2: Array[int] = []
+		row_e2.resize(300)
+		row_e2.fill(MazeGenerator.EMPTY)
+		esc2_grid.append(row_e2)
+	for _r in range(10, 13):
+		for _c in range(80):
+			esc2_grid[_r][_c] = MazeGenerator.SOLID
+	MazeGenerator.current_grid = esc2_grid
+	var esc2 := fb_scene.instantiate()
+	esc2.global_position = Vector2(640, 13 * 16 + 8)
+	root.add_child(esc2)
+	await physics_frame
+	var esc2_t: Vector2 = esc2._find_escape_column()
+	_check(esc2_t != esc2.global_position, "窄檐仍能逃逸(不停在原地)")
+	var esc2_cell := MazeGenerator.cell_of(esc2_t, 16, 300, 30)
+	_check(esc2._bird_can_pass(esc2_cell), "窄檐逃逸目标格可走")
+	esc.free()
+	esc2.free()
+	MazeGenerator.current_grid = []
+
+	# ── Task: 地图 spawn 元数据解析 ──
+	_check(MazeGenerator.parse_spawn_metadata([
+			"# demo_2", "# player 12 34",
+			"# enemy jump_bird 100 50", "# enemy fly_bird 200 60",
+			"00110"]).get("player") == Vector2i(12, 34),
+			"parse_spawn_metadata: player 解析")
+	var meta_enemies: Array = MazeGenerator.parse_spawn_metadata([
+			"# enemy jump_bird 100 50", "# enemy fly_bird 200 60"]).get("enemies", [])
+	_check(meta_enemies.size() == 2 and meta_enemies[0]["type"] == "jump_bird"
+			and meta_enemies[0]["cell"] == Vector2i(100, 50)
+			and meta_enemies[1]["type"] == "fly_bird",
+			"parse_spawn_metadata: enemies 列表")
+	_check(MazeGenerator.parse_spawn_metadata(["# 纯注释", "000"]).is_empty(),
+			"parse_spawn_metadata: 无 spawn 指令返回空")
+	_check(MazeGenerator.parse_spawn_metadata(
+			["# player 12 34", "# player 56 78"]).get("player") == Vector2i(56, 78),
+			"parse_spawn_metadata: player 最后一行生效")
 
 	if _failures.is_empty():
 		print("SMOKE OK")
