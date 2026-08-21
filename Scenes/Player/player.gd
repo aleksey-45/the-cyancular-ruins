@@ -273,6 +273,12 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	else:
 		# 爆炸:设独立击退向量(叠加,不覆盖移动),随帧指数衰减
 		knock_velocity = away * knockback
+	# 大伤害反馈:一次扣血 >25% 最大血 → 相机震动(幅度随伤害比例增强)
+	var hit_ratio := float(damage) / float(max_hp)
+	if hit_ratio > 0.25:
+		var cam: Camera2D = get_viewport().get_camera_2d()
+		if cam != null and cam.has_method("shake"):
+			cam.shake(PlayerParams.hit_cam_shake * (hit_ratio / 0.25), PlayerParams.hit_cam_shake_time)
 	hp_changed.emit(hp, max_hp)
 	if hp <= 0:
 		_downed()

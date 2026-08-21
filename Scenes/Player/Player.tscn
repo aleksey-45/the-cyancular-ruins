@@ -126,7 +126,7 @@ weapon_slot = NodePath("WeaponSlot")
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=29481906]
 texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_dewec")
-animation = &"idle"
+animation = &"move"
 autoplay = "idle"
 
 [node name="CollisionShape2D_charge" type="CollisionPolygon2D" parent="." unique_id=1281605673]
@@ -140,17 +140,17 @@ position = Vector2(-14.1668, -9.25019)
 polygon = PackedVector2Array(6.16682, -4.74981, -0.633179, -0.749813, -3.03318, 4.45019, -3.03318, 18.0502, 0.166821, 24.0502, 2.9668, 26.4502, 2.9668, 32.0502, 20.1668, 32.0502, 20.1668, 26.4502, 24.9668, 24.4502, 29.3668, 20.0502, 29.3668, 2.45019, 25.3668, -2.74981, 18.9668, -4.74981)
 
 [node name="CollisionShape2D_fly" type="CollisionPolygon2D" parent="." unique_id=577506980]
+visible = false
 position = Vector2(-14.1668, -9.25019)
 polygon = PackedVector2Array(4.9668, -7.54981, -1.8332, -3.54981, -3.4332, 1.25019, -3.4332, 15.2502, 0.5668, 23.6502, 3.7668, 24.8502, 3.7668, 32.0502, 20.5668, 32.0502, 20.5668, 24.8502, 22.9668, 22.8502, 27.7668, 16.8502, 27.7668, -0.749809, 25.3668, -4.74981, 18.1668, -7.54981)
 
 [node name="CollisionShape2D_move" type="CollisionPolygon2D" parent="." unique_id=1489651497]
-visible = false
 position = Vector2(-15.6, -16)
-polygon = PackedVector2Array(6.16682, -4.74981, -0.633179, -0.749813, -3.03318, 4.45019, -3.03318, 18.0502, 4.4, 26.4, 4.4, 38.8, 21.6, 38.8, 21.6, 26.4, 29.3668, 20.0502, 29.3668, 2.45019, 25.3668, -2.74981, 18.9668, -4.74981)
+polygon = PackedVector2Array(6.16682, -4.74981, -0.633179, -0.749813, -3.03318, 4.45019, -3.03318, 18.0502, 4.8, 26.8, 4.8, 38.8, 21.599998, 38.8, 21.599998, 26.8, 28.8, 19.999998, 29.3668, 2.45019, 25.3668, -2.74981, 18.9668, -4.74981)
 
 [node name="CollisionShape2D_stand" type="CollisionPolygon2D" parent="." unique_id=1207791762]
 visible = false
 position = Vector2(-14.1668, -9.25019)
-polygon = PackedVector2Array(5.3668, -10.7498, -1.8332, -6.74981, -3.8332, -1.54981, -3.8332, 13.6502, 2.9668, 20.4502, 2.9668, 32.0502, 20.1668, 32.0502, 20.1668, 20.4502, 28.1668, 13.6502, 28.1668, -3.94981, 23.3668, -9.54981, 18.1668, -10.7498)
+polygon = PackedVector2Array(5.3668, -10.7498, -1.8332, -6.74981, -3.8332, -1.54981, -3.8332, 13.6502, 3.3668003, 20.450188, 3.3668003, 32.05019, 20.1668, 32.0502, 20.1668, 20.4502, 28.1668, 13.6502, 28.1668, -3.94981, 23.3668, -9.54981, 18.1668, -10.7498)
 
 [node name="WeaponSlot" type="Node2D" parent="." unique_id=1424965295]

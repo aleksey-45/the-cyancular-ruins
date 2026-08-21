@@ -113,7 +113,6 @@
         "HTTPRequest",
         "ItemList",
         "JSONRPC",
-        "Label",
         "Light2D",
         "LightOccluder2D",
         "LineEdit",

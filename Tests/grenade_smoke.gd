@@ -232,6 +232,23 @@ func _test_non_explosive_default() -> void:
 			break
 	_check(enemy.hp == 50 - 5, "非爆炸弹直击走 apply_hit(武器 damage=5)")
 	enemy.free()
+	# 切枪后 source 失效:在途子弹用自带 damage/impact 兜底仍造成伤害(回归)
+	var b3 = _make_bullet()
+	b3.set("explodes", false)
+	root.add_child(b3)
+	var enemy3 := StubEnemy.new()
+	enemy3.global_position = Vector2(300, 200)
+	root.add_child(enemy3)
+	b3.global_position = Vector2(200, 200)
+	b3.set("hit_damage", 5)
+	b3.set("hit_impact", 0.0)
+	b3.setup(Vector2.RIGHT, 1000.0, 2000.0, 1.0, Color.WHITE, null)  # source=null 模拟切枪后失效
+	for i in range(60):
+		await physics_frame
+		if not is_instance_valid(b3):
+			break
+	_check(enemy3.hp == 50 - 5, "切枪后子弹仍造成伤害(source失效兜底)")
+	enemy3.free()
 
 # 直接 new bullet_base.gd,补碰撞体;返回已设 explodes=true、关特效的子弹。
 # 无类型返回:setup/explodes/gravity_factor 都是脚本自定义成员,须动态分派。

@@ -160,6 +160,8 @@ func fire() -> void:
 		var ang := base_dir.angle() + randf_range(-spread, spread)
 		b.setup(Vector2.from_angle(ang), bullet_speed, bullet_range, bullet_size, bullet_color, self)
 		b.gravity_factor = bullet_gravity
+		b.hit_damage = damage
+		b.hit_impact = impact
 		b.global_position = muzzle.global_position
 		get_viewport().add_child(b)
 	if player != null and player.has_method("apply_recoil"):

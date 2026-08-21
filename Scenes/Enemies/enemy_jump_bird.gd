@@ -118,6 +118,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		is_dead = true
+		died.emit()
 		_anim.play("dead")  # 死亡动画(一次性),播完消失
 		_death_timer = _anim_duration("dead")
 		# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
