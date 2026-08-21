@@ -7,6 +7,15 @@ const EMPTY: int = 0
 
 const MAP_FILE: String = "res://map/demo.txt"
 
+# ── 临时开发钩子(可移除)──
+# 若 exe 旁存在 map.txt,优先读它(玩家/开发者外置自定义地图测试用),
+# 否则读打包进 exe 的 res://map/demo.txt。外置地图的 spawn 元数据一并生效。
+static func map_file_path() -> String:
+	var external := OS.get_executable_path().get_base_dir().path_join("map.txt")
+	if FileAccess.file_exists(external):
+		return external
+	return MAP_FILE
+
 # 环面曼哈顿距离(格子级)。cols/rows 由调用方按实际地图传入,
 # 不依赖全局常量——地图文件变更后距离计算不会失真。
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
@@ -62,10 +71,11 @@ static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 # 逻辑与 load_map_file 一致:跳过空行与 # 注释行,以首个有效行为宽度,
 # 宽度不一致的行(如抬头)不计入行数。
 static func map_size() -> Vector2i:
-	if not FileAccess.file_exists(MAP_FILE):
-		push_error("MazeGenerator: 找不到地图文件 %s" % MAP_FILE)
+	var path := map_file_path()
+	if not FileAccess.file_exists(path):
+		push_error("MazeGenerator: 找不到地图文件 %s" % path)
 		return Vector2i.ZERO
-	var f := FileAccess.open(MAP_FILE, FileAccess.READ)
+	var f := FileAccess.open(path, FileAccess.READ)
 	var cols := -1
 	var rows := 0
 	while not f.eof_reached():
@@ -82,10 +92,11 @@ static func map_size() -> Vector2i:
 
 
 static func load_map_file() -> Array[Array]:
-	if not FileAccess.file_exists(MAP_FILE):
-		push_error("MazeGenerator: 找不到地图文件 %s" % MAP_FILE)
+	var path := map_file_path()
+	if not FileAccess.file_exists(path):
+		push_error("MazeGenerator: 找不到地图文件 %s" % path)
 		return []
-	var f := FileAccess.open(MAP_FILE, FileAccess.READ)
+	var f := FileAccess.open(path, FileAccess.READ)
 	var grid: Array[Array] = []
 	var row_len := -1
 	while not f.eof_reached():
@@ -147,10 +158,11 @@ static func parse_spawn_metadata(lines: Array) -> Dictionary:
 
 # 从地图文件读取 spawn 元数据(与 load_map_file 各自读一遍;小文件可接受)。
 static func load_spawns() -> Dictionary:
-	if not FileAccess.file_exists(MAP_FILE):
-		push_error("MazeGenerator: 找不到地图文件 %s" % MAP_FILE)
+	var path := map_file_path()
+	if not FileAccess.file_exists(path):
+		push_error("MazeGenerator: 找不到地图文件 %s" % path)
 		return {}
-	var f := FileAccess.open(MAP_FILE, FileAccess.READ)
+	var f := FileAccess.open(path, FileAccess.READ)
 	var lines: Array = []
 	while not f.eof_reached():
 		lines.append(f.get_line())

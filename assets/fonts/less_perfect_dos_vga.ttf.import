@@ -2,13 +2,13 @@
 
 importer="font_data_dynamic"
 type="FontFile"
-uid="uid://bpetnmtgr21fh"
-path="res://.godot/imported/less_perfect_dos_vga.ttf-ed2d0259add8c6c2edbff95493f6744d.fontdata"
+uid="uid://c0pv8l2vamgkx"
+path="res://.godot/imported/less_perfect_dos_vga.ttf-da7f1175b5ea39d552dee39793b740af.fontdata"
 
 [deps]
 
-source_file="res://Assets/fonts/less_perfect_dos_vga.ttf"
-dest_files=["res://.godot/imported/less_perfect_dos_vga.ttf-ed2d0259add8c6c2edbff95493f6744d.fontdata"]
+source_file="res://assets/fonts/less_perfect_dos_vga.ttf"
+dest_files=["res://.godot/imported/less_perfect_dos_vga.ttf-da7f1175b5ea39d552dee39793b740af.fontdata"]
 
 [params]
 

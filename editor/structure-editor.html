@@ -165,10 +165,10 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <div id="palette"></div>
         <p class="hint">0 = 空气 · 1–9 = 墙（纹理待接入）</p>
       </section>
-      <section class="panel spawn-panel hidden">
+      <section class="panel spawn-panel">
         <h2>出生点</h2>
         <div id="spawn-tools" class="spawn-tools"></div>
-        <p class="hint">整图模式下点格放置出生点,右键移除。</p>
+        <p class="hint">选中工具后点格放置,右键移除。</p>
       </section>
     </aside>
 
@@ -184,11 +184,8 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <button id="btn-redo" title="Ctrl+Y">重做</button>
         <span class="spacer"></span>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="grid-toggle" checked> 网格</label>
-        <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="map-mode-toggle"> 整图模式</label>
-        <button id="btn-torus" title="跨接缝重复绘制、无边界平移(整图模式)">环面预览</button>
-        <button id="btn-map-import">导入整图</button>
-        <button id="btn-map-export" class="primary">导出整图</button>
-        <input type="file" id="file-map-import" accept=".txt,text/plain" hidden>
+        <button id="btn-torus" title="跨接缝重复绘制、无边界平移">环面预览</button>
+        <button id="btn-structure-export" class="primary" title="导出当前结构为地图格式(关卡用:保存为 map/demo.txt)">导出结构</button>
         <button id="btn-fit">适配</button>
       </div>
       <div id="canvas-wrap">
@@ -202,6 +199,12 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
     <div class="modal">
       <h3 id="modal-title"></h3>
       <input id="modal-input" type="text">
+      <div id="modal-size-row" class="hidden" style="display:flex;gap:8px;">
+        <label style="flex:1;font-size:12px;color:var(--text-dim);">宽
+          <input id="modal-size-w" type="number" min="1" value="540" style="width:100%;"></label>
+        <label style="flex:1;font-size:12px;color:var(--text-dim);">高
+          <input id="modal-size-h" type="number" min="1" value="324" style="width:100%;"></label>
+      </div>
       <p id="modal-err" class="err"></p>
       <div class="modal-actions">
         <button id="modal-cancel">取消</button>
@@ -260,56 +263,6 @@ window.ENEMY_REGISTRY = [
       }
       return { ok: true, error: '' };
     }
-
-  function parseLibrary(text) {
-    var structs = [];
-    var cur = null;
-    var atBlockStart = true;
-    var lines = String(text).split(/\r?\n/);
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (line === '') { atBlockStart = true; continue; }
-      if (line.charAt(0) === '#') {
-        var name = line.slice(1).trim();
-        if (name !== '' && atBlockStart) {
-          cur = { name: sanitizeName(name), grid: [] };
-          structs.push(cur);
-          atBlockStart = false;
-        }
-        continue;
-      }
-      atBlockStart = false;
-      var row = [];
-      for (var j = 0; j < line.length; j++) {
-        var d = line.charCodeAt(j) - 48;
-        if (d < 0 || d > 9) {
-          throw new Error('第 ' + (i + 1) + ' 行含非法字符 "' + line.charAt(j) + '"（只允许 0–9）');
-        }
-        row.push(d);
-      }
-      if (cur === null) {
-        throw new Error('第 ' + (i + 1) + ' 行的数据出现在任何结构名之前');
-      }
-      cur.grid.push(row);
-    }
-    var result = structs.filter(function (s) { return s.grid.length > 0; });
-    for (var k = 0; k < result.length; k++) {
-      var v = validateGrid(result[k].grid);
-      if (!v.ok) throw new Error('结构 "' + result[k].name + '" 校验失败: ' + v.error);
-    }
-    return result;
-  }
-
-  function serializeLibrary(structs) {
-    var blocks = [];
-    for (var i = 0; i < structs.length; i++) {
-      var s = structs[i];
-      var v = validateGrid(s.grid);
-      if (!v.ok) throw new Error('结构 "' + s.name + '" 校验失败: ' + v.error);
-      blocks.push('# ' + sanitizeName(s.name) + '\n' + s.grid.map(function (row) { return row.join(''); }).join('\n'));
-    }
-    return blocks.length === 0 ? '' : blocks.join('\n\n') + '\n';
-  }
 
   function resizeGrid(grid, newW, newH) {
     var out = [];
@@ -396,16 +349,75 @@ window.ENEMY_REGISTRY = [
       return lines.join('\n') + '\n';
     }
 
+    // 画笔块偏移:返回以指针格为中心的 lo(上/左)/hi(下/右)扩展量,保证 lo+1+hi===size。
+    // 奇数尺寸对称(lo===hi);偶数尺寸偏下右一格 —— 否则(旧 r=floor((size-1)/2))偶数会缩小一格。
+    function brushOffsets(size) {
+      return { lo: Math.floor((size - 1) / 2), hi: Math.ceil((size - 1) / 2) };
+    }
+
+    // 结构库整库 JSON(含 spawn)。grid 保留 0-9(编辑器装饰色,导出关卡时归一化)。
+    function serializeLibraryJSON(structs) {
+      return JSON.stringify({
+        version: 1,
+        structures: structs.map(function (s) {
+          return { name: sanitizeName(s.name), grid: s.grid,
+                   player: s.player || null, enemies: s.enemies || [] };
+        })
+      }, null, 2) + '\n';
+    }
+    function parseLibraryJSON(text) {
+      var parsed;
+      try { parsed = JSON.parse(text); }
+      catch (e) { throw new Error('JSON 解析失败: ' + e.message); }
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.structures)) {
+        throw new Error('结构库 JSON 缺少 structures 数组');
+      }
+      var out = [];
+      parsed.structures.forEach(function (st, i) {
+        if (!st || !Array.isArray(st.grid)) throw new Error('第 ' + (i + 1) + ' 个结构缺少 grid');
+        var v = validateGrid(st.grid);
+        if (!v.ok) throw new Error('结构 "' + (st.name || i) + '" 校验失败: ' + v.error);
+        var player = (st.player && typeof st.player === 'object'
+            && Number.isInteger(st.player.x) && Number.isInteger(st.player.y))
+          ? { x: st.player.x, y: st.player.y } : null;
+        var enemies = (Array.isArray(st.enemies) ? st.enemies : []).filter(function (e) {
+          return e && typeof e.type === 'string' && Number.isInteger(e.x) && Number.isInteger(e.y);
+        }).map(function (e) { return { type: e.type, x: e.x, y: e.y }; });
+        out.push({ name: sanitizeName(st.name || ('structure_' + (i + 1))), grid: st.grid,
+                   player: player, enemies: enemies });
+      });
+      return out;
+    }
+    // 单结构地图格式导出:名字行 + spawn 行 + 0/1 网格(非 0 当墙)。
+    function serializeMapStructure(s) {
+      var norm = s.grid.map(function (row) { return row.map(function (v) { return v === 0 ? 0 : 1; }); });
+      return serializeMap({ comments: [sanitizeName(s.name)], player: s.player,
+                           enemies: s.enemies || [], grid: norm });
+    }
+    // 新建空结构(数据部分,id/name 由 UI 补)。
+    function createEmptyStructure(w, h) {
+      var grid = [];
+      for (var y = 0; y < h; y++) {
+        var row = [];
+        for (var x = 0; x < w; x++) row.push(0);
+        grid.push(row);
+      }
+      return { grid: grid, player: null, enemies: [] };
+    }
+
     return {
       sanitizeName: sanitizeName,
       validateGrid: validateGrid,
-      serializeLibrary: serializeLibrary,
-      parseLibrary: parseLibrary,
       resizeGrid: resizeGrid,
       rectFill: rectFill,
       floodFill: floodFill,
       parseMap: parseMap,
-      serializeMap: serializeMap
+      serializeMap: serializeMap,
+      brushOffsets: brushOffsets,
+      serializeLibraryJSON: serializeLibraryJSON,
+      parseLibraryJSON: parseLibraryJSON,
+      serializeMapStructure: serializeMapStructure,
+      createEmptyStructure: createEmptyStructure
     };
   })();
   </script>
@@ -421,7 +433,7 @@ window.ENEMY_REGISTRY = [
     };
 
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true, brushSize: 1,
-                  mapMode: false, map: null, torusMode: false, spawnTool: null };
+                  torusMode: false, spawnTool: null };
     var view = { zoom: 28, panX: 40, panY: 40 };
     var PLAYER_TILES = 7.5;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 16px
     var playerImg = new Image();
@@ -470,15 +482,15 @@ window.ENEMY_REGISTRY = [
       return null;
     }
     // 整图渲染:只画可见区内的墙格;环面模式下把地图沿两轴各 ±1 副本平移后裁剪。
-    function renderWholeMap() {
-      var map = state.map;
-      var w = map.grid[0].length, h = map.grid.length, z = view.zoom;
+    // 结构渲染:可见区裁剪,只画非 0 格;环面模式 2×2 平铺(跨接缝重复 + 内部边界两条接缝线)。
+    function renderStructure(s) {
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
       ctx.fillStyle = '#0d1117';
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
       var vx0 = -view.panX / z, vy0 = -view.panY / z;
       var vx1 = vx0 + wrap.clientWidth / z, vy1 = vy0 + wrap.clientHeight / z;
-      var dxs = state.torusMode ? [-1, 0, 1] : [0];
-      var dys = state.torusMode ? [-1, 0, 1] : [0];
+      var dxs = state.torusMode ? [0, 1] : [0];
+      var dys = state.torusMode ? [0, 1] : [0];
       for (var di = 0; di < dxs.length; di++) {
         for (var dj = 0; dj < dys.length; dj++) {
           var ox = dxs[di] * w, oy = dys[dj] * h;
@@ -490,7 +502,7 @@ window.ENEMY_REGISTRY = [
           for (var y = y0; y <= y1; y++) {
             var mpy = y - oy;
             for (var x = x0; x <= x1; x++) {
-              var t = map.grid[mpy][x - ox];
+              var t = s.grid[mpy][x - ox];
               if (t !== 0) {
                 ctx.fillStyle = TILE_COLORS[t];
                 ctx.fillRect(view.panX + x * z, view.panY + y * z, z, z);
@@ -499,22 +511,58 @@ window.ENEMY_REGISTRY = [
           }
         }
       }
-      drawSpawnMarkers();
     }
-    function drawSpawnMarkers() {
-      var map = state.map;
-      var dxs = state.torusMode ? [-1, 0, 1] : [0];
-      var dys = state.torusMode ? [-1, 0, 1] : [0];
+    function drawSpawnMarkers(s) {
+      var w = s.grid[0].length, h = s.grid.length;
+      var dxs = state.torusMode ? [0, 1] : [0];
+      var dys = state.torusMode ? [0, 1] : [0];
       for (var di = 0; di < dxs.length; di++) {
         for (var dj = 0; dj < dys.length; dj++) {
-          var ox = dxs[di] * map.grid[0].length, oy = dys[dj] * map.grid.length;
-          if (map.player) drawSpawnMarker('#54a0ff', map.player.x + ox, map.player.y + oy, 'P');
-          (map.enemies || []).forEach(function (e) {
+          var ox = dxs[di] * w, oy = dys[dj] * h;
+          if (s.player) drawSpawnMarker('#54a0ff', s.player.x + ox, s.player.y + oy, 'P');
+          (s.enemies || []).forEach(function (e) {
             var en = enemyById(e.type);
             drawSpawnMarker(en ? en.color : '#888888', e.x + ox, e.y + oy, en ? en.name.charAt(0) : '?');
           });
         }
       }
+    }
+    function drawGridLines(s) {
+      if (!state.gridOn) return;
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (var gx = 0; gx <= w; gx++) {
+        ctx.moveTo(view.panX + gx * z, view.panY);
+        ctx.lineTo(view.panX + gx * z, view.panY + h * z);
+      }
+      for (var gy = 0; gy <= h; gy++) {
+        ctx.moveTo(view.panX, view.panY + gy * z);
+        ctx.lineTo(view.panX + w * z, view.panY + gy * z);
+      }
+      ctx.stroke();
+    }
+    function drawBorder(s) {
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+      ctx.strokeStyle = '#54a0ff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(view.panX, view.panY, w * z, h * z);
+    }
+    function drawPlayerReference() {
+      // 左下角主角尺寸参考(真实大小:120世界px = 7.5格,随 zoom 缩放;超大时封顶不溢出画布)
+      var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
+      var ppad = 8;
+      var pdx = ppad, pdy = wrap.clientHeight - ppad - pz;
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
+        ctx.drawImage(playerImg, pdx, pdy, pz, pz);
+      } else {
+        ctx.fillStyle = '#54a0ff';
+        ctx.fillRect(pdx, pdy, pz, pz);
+      }
+      ctx.restore();
     }
     function drawSpawnMarker(color, gx, gy, label) {
       var z = view.zoom, px = view.panX + (gx + 0.5) * z, py = view.panY + (gy + 0.5) * z;
@@ -534,6 +582,20 @@ window.ENEMY_REGISTRY = [
       }
     }
 
+    function drawBrushPreview() {
+      if (!hoverCell || (state.tool !== 'paint' && state.tool !== 'erase') || view.zoom < 8) return;
+      var o = Core.brushOffsets(state.brushSize);
+      var bz = view.zoom;
+      var bbx = view.panX + (hoverCell.x - o.lo) * bz, bby = view.panY + (hoverCell.y - o.lo) * bz;
+      var bbs = (o.lo + o.hi + 1) * bz;
+      var col = TILE_COLORS[state.palette];
+      ctx.fillStyle = state.tool === 'erase' ? 'rgba(255,255,255,0.15)' : hexToRgba(col || '#0d1117', 0.4);
+      ctx.fillRect(bbx, bby, bbs, bbs);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bbx, bby, bbs, bbs);
+    }
+
     // ── canvas sizing / rendering ──
     function resizeCanvas() {
       dpr = window.devicePixelRatio || 1;
@@ -545,75 +607,21 @@ window.ENEMY_REGISTRY = [
     }
     function renderCanvas() {
       if (!ctx) return;
+      var s = sel();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
       ctx.scale(dpr, dpr);
       ctx.fillStyle = '#17191d';
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
-      if (state.mapMode) {
-        if (state.map) renderWholeMap();
-        ctx.restore();
-        return;
-      }
-
-      var s = sel();
       if (s) {
-        var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
-        ctx.fillStyle = '#0d1117';
-        ctx.fillRect(view.panX, view.panY, w * z, h * z);
-        for (var y = 0; y < h; y++) {
-          for (var x = 0; x < w; x++) {
-            var t = s.grid[y][x];
-            if (t !== 0) {
-              ctx.fillStyle = TILE_COLORS[t];
-              ctx.fillRect(view.panX + x * z, view.panY + y * z, z, z);
-            }
-          }
-        }
-        if (state.gridOn) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          for (var gx = 0; gx <= w; gx++) {
-            ctx.moveTo(view.panX + gx * z, view.panY);
-            ctx.lineTo(view.panX + gx * z, view.panY + h * z);
-          }
-          for (var gy = 0; gy <= h; gy++) {
-            ctx.moveTo(view.panX, view.panY + gy * z);
-            ctx.lineTo(view.panX + w * z, view.panY + gy * z);
-          }
-          ctx.stroke();
-        }
-        ctx.strokeStyle = '#54a0ff';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(view.panX, view.panY, w * z, h * z);
+        renderStructure(s);
+        drawSpawnMarkers(s);
+        drawGridLines(s);
+        drawBorder(s);
       }
-      // 画笔大小预览(缩放足够大时显示)
-      if (hoverCell && (state.tool === 'paint' || state.tool === 'erase') && view.zoom >= 8) {
-        var br = Math.floor((state.brushSize - 1) / 2);
-        var bz = view.zoom;
-        var bbx = view.panX + (hoverCell.x - br) * bz, bby = view.panY + (hoverCell.y - br) * bz;
-        var bbs = (br * 2 + 1) * bz;
-        ctx.fillStyle = state.tool === 'erase' ? 'rgba(255,255,255,0.15)' : hexToRgba(TILE_COLORS[state.palette] || '#0d1117', 0.4);
-        ctx.fillRect(bbx, bby, bbs, bbs);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bbx, bby, bbs, bbs);
-      }
-      // 左下角主角尺寸参考(真实大小:120世界px = 7.5格,随 zoom 缩放;超大时封顶不溢出画布)
-      var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
-      var ppad = 8;
-      var pdx = ppad, pdy = wrap.clientHeight - ppad - pz;
-      ctx.save();
-      ctx.globalAlpha = 0.85;
-      if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
-        ctx.drawImage(playerImg, pdx, pdy, pz, pz);
-      } else {
-        ctx.fillStyle = '#54a0ff';
-        ctx.fillRect(pdx, pdy, pz, pz);
-      }
-      ctx.restore();
+      drawBrushPreview();
+      drawPlayerReference();
       ctx.restore();
     }
     function zoomAt(mx, my, factor) {
@@ -625,15 +633,9 @@ window.ENEMY_REGISTRY = [
       renderCanvas();
     }
     function fit() {
-      var w, h;
-      if (state.mapMode) {
-        if (!state.map) return;
-        w = state.map.grid[0].length; h = state.map.grid.length;
-      } else {
-        var s = sel();
-        if (!s) return;
-        w = s.grid[0].length; h = s.grid.length;
-      }
+      var s = sel();
+      if (!s) return;
+      var w = s.grid[0].length, h = s.grid.length;
       var availW = wrap.clientWidth - 60, availH = wrap.clientHeight - 60;
       if (availW <= 0 || availH <= 0) return;
       var z = Math.min(availW / w, availH / h);
@@ -644,14 +646,10 @@ window.ENEMY_REGISTRY = [
       renderCanvas();
     }
     function cellAt(mx, my) {
-      var x = Math.floor((mx - view.panX) / view.zoom);
-      var y = Math.floor((my - view.panY) / view.zoom);
-      if (state.mapMode) {
-        if (!state.map) return null;
-        return { x: x, y: y };
-      }
       var s = sel();
       if (!s) return null;
+      var x = Math.floor((mx - view.panX) / view.zoom);
+      var y = Math.floor((my - view.panY) / view.zoom);
       if (x < 0 || y < 0 || y >= s.grid.length || x >= s.grid[y].length) return null;
       return { x: x, y: y };
     }
@@ -694,23 +692,14 @@ window.ENEMY_REGISTRY = [
     // ── status bar ──
     function renderStatus() {
       var parts = [];
-      if (state.mapMode) {
-        if (state.map) {
-          parts.push('整图 ' + state.map.grid[0].length + '×' + state.map.grid.length
-            + (state.torusMode ? ' · 环面' : ''));
-          parts.push('出生点:玩家' + (state.map.player ? '1' : '0') + ' · 敌人 ' + (state.map.enemies || []).length);
-        } else {
-          parts.push('整图模式 — 导入整图或保持结构库');
-        }
-        els.statusbar.textContent = parts.join('   ·   ');
-        return;
-      }
       var s = sel();
       if (s) {
-        parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length);
+        parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length
+          + (state.torusMode ? ' · 环面' : ''));
         parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮' })[state.tool] || state.tool));
         parts.push('tile: ' + state.palette + (state.palette === 0 ? ' (空气)' : ' (墙)'));
         parts.push('画笔 ' + state.brushSize);
+        parts.push('出生点:玩家' + (s.player ? '1' : '0') + ' · 敌人 ' + (s.enemies || []).length);
         parts.push('撤销 ' + history.length + ' · 重做 ' + redoStack.length);
       } else {
         parts.push('无结构 — 点击左侧"新建"');
@@ -749,13 +738,6 @@ window.ENEMY_REGISTRY = [
     function undo() {
       if (history.length === 0) return;
       var snap = history.pop();
-      if (state.mapMode) {
-        if (snap.id !== -1) { history.push(snap); return; }
-        redoStack.push({ id: -1, grid: cloneGrid(state.map.grid) });
-        state.map.grid = snap.grid;
-        render();
-        return;
-      }
       var s = sel();
       if (!s) return;
       if (snap.id !== s.id) { history.push(snap); return; }
@@ -767,13 +749,6 @@ window.ENEMY_REGISTRY = [
     function redo() {
       if (redoStack.length === 0) return;
       var snap = redoStack.pop();
-      if (state.mapMode) {
-        if (snap.id !== -1) { redoStack.push(snap); return; }
-        history.push({ id: -1, grid: cloneGrid(state.map.grid) });
-        state.map.grid = snap.grid;
-        render();
-        return;
-      }
       var s = sel();
       if (!s) return;
       if (snap.id !== s.id) { redoStack.push(snap); return; }
@@ -787,21 +762,12 @@ window.ENEMY_REGISTRY = [
     function paintAt(x, y, tile) {
       var s = sel();
       if (!s) return;
-      var r = Math.floor((state.brushSize - 1) / 2);
-      for (var dy = -r; dy <= r; dy++) {
-        for (var dx = -r; dx <= r; dx++) {
+      var o = Core.brushOffsets(state.brushSize);
+      for (var dy = -o.lo; dy <= o.hi; dy++) {
+        for (var dx = -o.lo; dx <= o.hi; dx++) {
           var cy = y + dy, cx = x + dx;
           if (cy >= 0 && cy < s.grid.length && cx >= 0 && cx < s.grid[cy].length) s.grid[cy][cx] = tile;
         }
-      }
-    }
-    function pushMapHistory() { history.push({ id: -1, grid: cloneGrid(state.map.grid) }); if (history.length > 100) history.shift(); redoStack.length = 0; }
-    function paintMapAt(x, y, tile) {
-      var g = state.map.grid, w = g[0].length, h = g.length;
-      var r = Math.floor((state.brushSize - 1) / 2);
-      for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
-        var cy = y + dy, cx = x + dx;
-        if (cy >= 0 && cy < h && cx >= 0 && cx < w) g[cy][cx] = tile;
       }
     }
     function linePaint(x0, y0, x1, y1, tile) {
@@ -841,53 +807,25 @@ window.ENEMY_REGISTRY = [
         canvas.setPointerCapture(e.pointerId);
         return;
       }
-      // 整图模式 + 选中 spawn 工具:右键移除该格 spawn
-      if (state.mapMode && e.button === 2 && state.spawnTool) {
-        var cell2 = cellAt(e.offsetX, e.offsetY);
-        if (cell2 && state.map) {
-          if (state.map.player && state.map.player.x === cell2.x && state.map.player.y === cell2.y) {
-            state.map.player = null;
-          }
-          var list = state.map.enemies || [];
-          for (var i = list.length - 1; i >= 0; i--) {
-            if (list[i].x === cell2.x && list[i].y === cell2.y) list.splice(i, 1);
-          }
-          renderCanvas();
-        }
-        return;
-      }
       var s = sel();
       var cell = cellAt(e.offsetX, e.offsetY);
-      if (!cell) return;
-      if (state.mapMode) {
-        if (state.spawnTool) {
-          placeSpawn(cell.x, cell.y);
-          return;
+      if (!cell || !s) return;
+      // 选中 spawn 工具:右键移除该格 spawn
+      if (e.button === 2 && state.spawnTool) {
+        if (s.player && s.player.x === cell.x && s.player.y === cell.y) {
+          s.player = null;
         }
-        var erase = e.button === 2 || e.altKey || state.tool === 'erase';
-        var tile = erase ? 0 : 1;  // 整图模式只画 0/1
-        if (state.tool === 'fill') {
-          if (state.map.grid[cell.y][cell.x] !== tile) {
-            pushMapHistory();
-            state.map.grid = Core.floodFill(state.map.grid, cell.x, cell.y, tile);
-          }
-          renderCanvas();
-          return;
+        var list = s.enemies || [];
+        for (var i = list.length - 1; i >= 0; i--) {
+          if (list[i].x === cell.x && list[i].y === cell.y) list.splice(i, 1);
         }
-        if (state.tool === 'rect') {
-          drag = { mode: 'rect', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase };
-          canvas.setPointerCapture(e.pointerId);
-          renderCanvas();
-          return;
-        }
-        pushMapHistory();
-        paintMapAt(cell.x, cell.y, tile);
-        drag = { mode: 'paint', lastX: cell.x, lastY: cell.y, tile: tile };
-        canvas.setPointerCapture(e.pointerId);
         renderCanvas();
         return;
       }
-      if (!s) return;  // 结构模式:需选中结构
+      if (state.spawnTool) {
+        placeSpawn(cell.x, cell.y);
+        return;
+      }
       var erase = e.button === 2 || e.altKey || state.tool === 'erase';
       var tile = erase ? 0 : state.palette;
       if (state.tool === 'fill') {
@@ -937,8 +875,7 @@ window.ENEMY_REGISTRY = [
         return;
       }
       if (drag.mode === 'paint') {
-        if (state.mapMode) paintMapAt(cell.x, cell.y, drag.tile);
-        else linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
+        linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
         drag.lastX = cell.x;
         drag.lastY = cell.y;
         renderCanvas();
@@ -947,15 +884,10 @@ window.ENEMY_REGISTRY = [
     function onPointerUp() {
       if (!drag) return;
       if (drag.mode === 'rect') {
-        if (state.mapMode) {
-          pushMapHistory();
-          state.map.grid = Core.rectFill(state.map.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : 1);
-        } else {
-          var s = sel();
-          if (s) {
-            pushHistory(s);
-            s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
-          }
+        var s = sel();
+        if (s) {
+          pushHistory(s);
+          s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
         }
       }
       drag = null;
@@ -971,16 +903,25 @@ window.ENEMY_REGISTRY = [
     }
 
     // ── modal name prompt ──
-    function promptName(title, initial, excludeName) {
+    function promptName(title, initial, excludeName, opts) {
+      opts = opts || {};
       return new Promise(function (resolve) {
         els.modalTitle.textContent = title;
         els.modalInput.value = initial || '';
         els.modalErr.textContent = '';
+        if (opts.withSize) {
+          els.modalSizeRow.classList.remove('hidden');
+          els.modalSizeW.value = opts.defaultW != null ? opts.defaultW : 540;
+          els.modalSizeH.value = opts.defaultH != null ? opts.defaultH : 324;
+        } else {
+          els.modalSizeRow.classList.add('hidden');
+        }
         els.modalOverlay.classList.remove('hidden');
         els.modalInput.focus();
         els.modalInput.select();
         function finish(val) {
           els.modalOverlay.classList.add('hidden');
+          els.modalSizeRow.classList.add('hidden');
           els.modalOk.removeEventListener('click', onOk);
           els.modalCancel.removeEventListener('click', onCancel);
           els.modalInput.removeEventListener('keydown', onKey);
@@ -1012,17 +953,12 @@ window.ENEMY_REGISTRY = [
 
     // ── library actions ──
     function addStructure() {
-      var w = clampMin(els.sizeW.value, 1, 12);
-      var h = clampMin(els.sizeH.value, 1, 12);
-      promptName('新建结构', uniqueName('structure', state.library)).then(function (name) {
+      promptName('新建结构', uniqueName('structure', state.library), null, { withSize: true }).then(function (name) {
         if (!name) return;
-        var grid = [];
-        for (var y = 0; y < h; y++) {
-          var r = new Array(w);
-          for (var x = 0; x < w; x++) r[x] = 0;
-          grid.push(r);
-        }
-        var s = { id: uid(), name: name, grid: grid };
+        var w = clampMin(els.modalSizeW.value, 1, 540);
+        var h = clampMin(els.modalSizeH.value, 1, 324);
+        var data = Core.createEmptyStructure(w, h);
+        var s = { id: uid(), name: name, grid: data.grid, player: data.player, enemies: data.enemies };
         state.library.push(s);
         state.selectedId = s.id;
         syncSizeInputs();
@@ -1033,7 +969,8 @@ window.ENEMY_REGISTRY = [
     function duplicateStructure() {
       var s = sel();
       if (!s) return;
-      var copy = { id: uid(), name: uniqueName(s.name, state.library), grid: cloneGrid(s.grid) };
+      var copy = { id: uid(), name: uniqueName(s.name, state.library), grid: cloneGrid(s.grid),
+                   player: s.player || null, enemies: (s.enemies || []).slice() };
       state.library.push(copy);
       state.selectedId = copy.id;
       syncSizeInputs();
@@ -1092,20 +1029,34 @@ window.ENEMY_REGISTRY = [
       }
       var text;
       try {
-        text = Core.serializeLibrary(state.library);
+        text = Core.serializeLibraryJSON(state.library);
       } catch (err) {
         window.alert('导出失败：' + err.message);
         return;
       }
-      var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      var blob = new Blob([text], { type: 'application/json;charset=utf-8' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
       a.href = url;
-      a.download = 'cyr_structures.txt';
+      a.download = 'cyr_structures.json';
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+    function exportStructure() {
+      var s = sel();
+      if (!s) { window.alert('无结构可导出'); return; }
+      var blob = new Blob([Core.serializeMapStructure(s)], { type: 'text/plain;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = s.name + '.txt';  // 关卡用:导出后保存为 map/demo.txt
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+    function structureFromMap(p) {
+      var name = (p.comments && p.comments[0]) ? p.comments[0] : 'structure';
+      return [{ name: name, grid: p.grid, player: p.player, enemies: p.enemies }];
     }
     function importLibrary() {
       var file = els.fileImport.files && els.fileImport.files[0];
@@ -1113,20 +1064,25 @@ window.ENEMY_REGISTRY = [
       els.fileImport.value = '';
       var reader = new FileReader();
       reader.onload = function () {
+        var raw = String(reader.result).trim();
         var imported;
         try {
-          imported = Core.parseLibrary(String(reader.result));
+          // 自动识别:JSON 结构库 或 地图格式(demo.txt)
+          imported = (raw.charAt(0) === '{')
+            ? Core.parseLibraryJSON(raw)
+            : structureFromMap(Core.parseMap(raw));
         } catch (err) {
           window.alert('导入失败：' + err.message);
           return;
         }
-        if (imported.length === 0) {
+        if (!imported || imported.length === 0) {
           window.alert('文件里没有可用的结构');
           return;
         }
         var firstId = null;
         imported.forEach(function (st) {
-          var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid };
+          var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid,
+                    player: st.player || null, enemies: st.enemies || [] };
           state.library.push(s);
           if (firstId === null) firstId = s.id;
         });
@@ -1136,33 +1092,6 @@ window.ENEMY_REGISTRY = [
         render();
       };
       reader.readAsText(file, 'utf-8');
-    }
-    function importWholeMap() {
-      var file = els.fileMapImport.files && els.fileMapImport.files[0];
-      if (!file) return;
-      els.fileMapImport.value = '';
-      var reader = new FileReader();
-      reader.onload = function () {
-        var parsed;
-        try { parsed = Core.parseMap(String(reader.result)); }
-        catch (err) { window.alert('导入整图失败:' + err.message); return; }
-        if (parsed.grid.length === 0) { window.alert('导入整图失败:网格为空'); return; }
-        state.map = parsed;
-        state.mapMode = true;
-        els.mapModeToggle.checked = true;
-        document.querySelector('.spawn-panel').classList.remove('hidden');
-        render();  // render() 在 mapMode 下刷新 spawn 工具列表
-      };
-      reader.readAsText(file, 'utf-8');
-    }
-    function exportWholeMap() {
-      if (!state.map) { window.alert('无整图可导出'); return; }
-      var blob = new Blob([Core.serializeMap(state.map)], { type: 'text/plain;charset=utf-8' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url; a.download = 'demo.txt';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
     function renderSpawnTools() {
       var box = els.spawnTools;
@@ -1186,13 +1115,16 @@ window.ENEMY_REGISTRY = [
       box.appendChild(b);
     }
     function placeSpawn(gx, gy) {
-      var g = state.map.grid, h = g.length, w = g[0].length;
+      var s = sel();
+      if (!s) return;
+      var g = s.grid, h = g.length, w = g[0].length;
       if (gx < 0 || gy < 0 || gx >= w || gy >= h) return;
       if (state.spawnTool === 'player') {
-        state.map.player = { x: gx, y: gy };
+        s.player = { x: gx, y: gy };
       } else {
-        // 同一格已有敌人先移除(避免重叠),再追加;允许同类型多只放在不同格
-        var list = state.map.enemies || [];
+        // 结构可能没有 enemies 字段(默认 demo / 复制的结构)→ 先初始化,否则 push 进临时数组被静默丢弃
+        if (!Array.isArray(s.enemies)) s.enemies = [];
+        var list = s.enemies;
         for (var i = list.length - 1; i >= 0; i--) {
           if (list[i].x === gx && list[i].y === gy) list.splice(i, 1);
         }
@@ -1203,7 +1135,7 @@ window.ENEMY_REGISTRY = [
 
     function render() {
       renderLibrary();
-      if (state.mapMode) renderSpawnTools();
+      renderSpawnTools();
       renderCanvas();
       renderStatus();
     }
@@ -1220,18 +1152,18 @@ window.ENEMY_REGISTRY = [
         gridToggle: document.getElementById('grid-toggle'),
         brushSize: document.getElementById('brush-size'),
         btnFit: document.getElementById('btn-fit'),
-        mapModeToggle: document.getElementById('map-mode-toggle'),
         btnTorus: document.getElementById('btn-torus'),
-        btnMapImport: document.getElementById('btn-map-import'),
-        btnMapExport: document.getElementById('btn-map-export'),
-        fileMapImport: document.getElementById('file-map-import'),
+        btnStructureExport: document.getElementById('btn-structure-export'),
         spawnTools: document.getElementById('spawn-tools'),
         modalOverlay: document.getElementById('modal-overlay'),
         modalTitle: document.getElementById('modal-title'),
         modalInput: document.getElementById('modal-input'),
         modalErr: document.getElementById('modal-err'),
         modalOk: document.getElementById('modal-ok'),
-        modalCancel: document.getElementById('modal-cancel')
+        modalCancel: document.getElementById('modal-cancel'),
+        modalSizeRow: document.getElementById('modal-size-row'),
+        modalSizeW: document.getElementById('modal-size-w'),
+        modalSizeH: document.getElementById('modal-size-h')
       };
       canvas = els.canvas;
       ctx = canvas.getContext('2d');
@@ -1240,6 +1172,8 @@ window.ENEMY_REGISTRY = [
       state.library.push({
         id: uid(),
         name: 'demo',
+        player: null,
+        enemies: [],
         grid: [
           [0,0,0,0,0,0,0,0,0,0,0,0],
           [0,1,1,1,1,1,1,1,1,1,1,0],
@@ -1260,7 +1194,9 @@ window.ENEMY_REGISTRY = [
         renderCanvas();
       });
       els.brushSize.addEventListener('change', function () {
-        state.brushSize = clampMin(els.brushSize.value, 1, 15);
+        var n = parseInt(els.brushSize.value, 10);
+        if (isNaN(n)) n = 1;
+        state.brushSize = Math.min(15, Math.max(1, n));  // 限制在 1..15
         els.brushSize.value = state.brushSize;
         renderStatus();
       });
@@ -1332,21 +1268,12 @@ window.ENEMY_REGISTRY = [
       });
       document.getElementById('btn-export').addEventListener('click', exportLibrary);
       els.fileImport.addEventListener('change', importLibrary);
-      els.mapModeToggle.addEventListener('change', function () {
-        state.mapMode = els.mapModeToggle.checked;
-        state.spawnTool = null;
-        document.querySelector('.spawn-panel').classList.toggle('hidden', !state.mapMode);
-        render();  // render() 在 mapMode 下刷新 spawn 工具列表
-      });
       els.btnTorus.addEventListener('click', function () {
-        if (!state.mapMode) return;
         state.torusMode = !state.torusMode;
         els.btnTorus.classList.toggle('active', state.torusMode);
         renderCanvas();
       });
-      els.btnMapImport.addEventListener('click', function () { els.fileMapImport.click(); });
-      els.fileMapImport.addEventListener('change', importWholeMap);
-      els.btnMapExport.addEventListener('click', exportWholeMap);
+      els.btnStructureExport.addEventListener('click', exportStructure);
     }
 
     var canBoot = typeof document !== 'undefined' && document && typeof document.getElementById === 'function';

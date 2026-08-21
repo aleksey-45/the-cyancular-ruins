@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dnfsk3tad320a"
-path="res://.godot/imported/lotus.png-9c1ed9ab750bfd7d084f531a7c2df4d1.ctex"
+uid="uid://clykx3v8dy6gb"
+path="res://.godot/imported/lotus.png-0f7351d41478651e292fade1372a5f8b.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Assets/textures/lotus.png"
-dest_files=["res://.godot/imported/lotus.png-9c1ed9ab750bfd7d084f531a7c2df4d1.ctex"]
+source_file="res://assets/textures/lotus.png"
+dest_files=["res://.godot/imported/lotus.png-0f7351d41478651e292fade1372a5f8b.ctex"]
 
 [params]
 
