@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://dy03viwkb5gno" path="res://Scenes/Weapons/bullet_base.gd" id="1_bl"]
 [ext_resource type="PackedScene" uid="uid://bxrxsvcvmwgkd" path="res://Scenes/Weapons/explosion.tscn" id="2_fx"]
-[ext_resource type="Texture2D" uid="uid://cbxquhfl3xc11" path="res://AssetBundle/Sprites/Bullets.png" id="3_f4em0"]
+[ext_resource type="Texture2D" uid="uid://cbxquhfl3xc11" path="res://assets/textures/bullets.png" id="3_f4em0"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ofh50"]
 size = Vector2(12, 8)
