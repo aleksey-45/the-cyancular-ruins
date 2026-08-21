@@ -812,8 +812,8 @@ func _initialize() -> void:
 	_check(esc_t.y > esc.global_position.y, "死区逃逸先下飞(目标在鸟下方)")
 	var esc_cell := MazeGenerator.cell_of(esc_t, 16, 300, 30)
 	_check(esc._bird_can_pass(esc_cell), "下潜目标格可走(A* 可起路)")
-	# 下潜运动:_follow_path 逃逸分支应给向下的速度(旧实现锁 y,只水平飞)
-	esc._path = []
+	# 下潜运动:_follow_path 逃逸分支应给向下的速度(旧实现锁 y,只水平飞)。
+	# _path 新实例本为空,不必(也不能)赋 untyped [](_path 是 Array[Vector2i])。
 	esc._escape_target = esc_t
 	esc._follow_path(0.01, Vector2.ZERO)
 	_check(esc.velocity.y > 0.0, "死区逃逸对角下潜(velocity.y>0)")
