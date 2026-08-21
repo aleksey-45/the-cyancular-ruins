@@ -99,12 +99,15 @@ grep -rn 'res://assets' --include='*.tscn' --include='*.gd' .
 
 期望：第一条无输出；第二条列出 12 处新路径（11 场景 + hud.gd）。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: 提交（只用受影响的路径，避免卷进另一 agent 的改动）**
 
 ```bash
-git add -A
+git add assets AssetBundle Assets
+git status --porcelain   # 期望只出现 assets/、AssetBundle/、Assets/ 相关条目;不得出现 Globals/enemyParams.gd、Scenes/Level0.tscn
 git commit -m "refactor: 素材统一到 assets/ 单根 + 引用路径更新(snake_case)"
 ```
+
+> 若 `git status --porcelain` 里出现 `Globals/enemyParams.gd` 或 `Scenes/Level0.tscn`，**不要提交**，停下来找用户确认。
 
 ---
 
@@ -188,21 +191,14 @@ grep -rn 'AssetBundle\|res://Assets\|Assets/fonts' --include='*.tscn' --include=
 
 > 注意：**不要**扫 `*.import`——`.import` 内部的 `source_file`/`path` 字段会保留旧路径直到用户开编辑器重导入自改，这是设计 §2 的预期行为，不是残留引用。
 
-- [ ] **Step 3: 检查 git 状态只剩本分支的改动**
+- [ ] **Step 3: 检查 git 状态 + 提交（如必要）**
 
 ```bash
 git status --porcelain
 ```
 
-期望：`assets/` 新增 + 旧文件删除 + 改的 .tscn/.gd；**不应出现** `Globals/enemyParams.gd`、`Scenes/Level0.tscn`（那是另一 agent 的改动）。
+期望：`assets/` 新增 + 旧文件删除 + 改的 .tscn/.gd；**不应出现** `Globals/enemyParams.gd`、`Scenes/Level0.tscn`（那是另一 agent 的改动）。空目录删除 git 不跟踪，此步通常无新改动可提交——若 status 干净则跳过提交；若有残留改动只暂存相关路径后提交。
 
-- [ ] **Step 4: 提交清理**
-
-```bash
-git add -A
-git commit -m "chore: 移除空的 AssetBundle/、Assets/ 旧目录"
-```
-
-- [ ] **Step 5: 交付用户验证**
+- [ ] **Step 4: 交付用户验证**
 
 告知用户：开一次 Godot 编辑器（或自跑冒烟测试 `Godot_v4.7.1-stable_win64_console.exe --headless --path . -s res://Tests/enemy_logic_smoke.gd`）确认无 missing resource；确认无误后 `refactor/standardize-assets` 分支可合入 main。
