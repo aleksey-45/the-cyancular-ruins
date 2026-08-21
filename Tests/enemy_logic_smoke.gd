@@ -135,7 +135,7 @@ func _initialize() -> void:
 			"锚定:自身不变")
 
 	# ── Task 9: 地图尺寸读取(map_size) ──
-	_check(MazeGenerator.map_size() == Vector2i(540, 324), "map_size: 从地图文件读取列/行数")
+	_check(MazeGenerator.map_size() == Vector2i(500, 300), "map_size: 从地图文件读取列/行数")
 
 	# ── Task: 武器场景参数 + 开火命中 ──
 	var stub := StubPlayer.new()
@@ -662,13 +662,13 @@ func _initialize() -> void:
 	var far_valid := true
 	var prev_cell := Vector2i(10, 10)
 	for c in far:
-		if c.x < 0 or c.x >= 540 or c.y < 0 or c.y >= 324:
+		if c.x < 0 or c.x >= 500 or c.y < 0 or c.y >= 300:
 			far_valid = false
 			break
 		var dxc := absi(c.x - prev_cell.x)
 		var dyc := absi(c.y - prev_cell.y)
-		dxc = mini(dxc, 540 - dxc)
-		dyc = mini(dyc, 324 - dyc)
+		dxc = mini(dxc, 500 - dxc)
+		dyc = mini(dyc, 300 - dyc)
 		if not (dxc + dyc == 1):
 			far_valid = false
 			break
