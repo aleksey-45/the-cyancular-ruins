@@ -110,6 +110,17 @@ eq(Core.floodFill([[0, 0, 1], [0, 1, 1], [1, 1, 1]], 0, 0, 2), [[2, 2, 1], [2, 1
 eq(Core.floodFill([[0, 0, 1], [0, 1, 1], [1, 1, 1]], 0, 0, 0), [[0, 0, 1], [0, 1, 1], [1, 1, 1]], 'floodFill: 同值不修改');
 eq(Core.floodFill([[1, 1], [1, 0]], 0, 0, 9), [[9, 9], [9, 0]], 'floodFill: 从角落扩展');
 
+// ---- Task: 整图格式 parseMap / serializeMap ----
+const mapText = '# demo\n# player 12 34\n# enemy jump_bird 100 50\n001\n010\n111\n';
+const parsedMap = Core.parseMap(mapText);
+eq(parsedMap.player, { x: 12, y: 34 }, 'parseMap: player');
+eq(parsedMap.enemies, [{ type: 'jump_bird', x: 100, y: 50 }], 'parseMap: enemy');
+eq(parsedMap.grid, [[0, 0, 1], [0, 1, 0], [1, 1, 1]], 'parseMap: 网格 0/1');
+eq(parsedMap.comments, ['demo'], 'parseMap: 普通 # 注释保留');
+eq(Core.serializeMap(parsedMap), mapText, 'parseMap→serializeMap round-trip');
+throws(() => Core.parseMap('00\n0x\n'), 'parseMap: 网格含非 0/1 字符报错');
+throws(() => Core.parseMap('00\n000\n'), 'parseMap: 宽度不一致报错');
+
 // ---- Task: 敌人注册表(HTML 内嵌,来自 enemies.json)----
 ok(Array.isArray(fakeWindow.ENEMY_REGISTRY) && fakeWindow.ENEMY_REGISTRY.length >= 2,
   'ENEMY_REGISTRY 已内嵌且含敌人');

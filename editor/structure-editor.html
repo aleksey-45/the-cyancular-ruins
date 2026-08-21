@@ -339,6 +339,47 @@ window.ENEMY_REGISTRY = [
     return out;
   }
 
+    // 整图地图格式:0/1 网格行 + # 元数据(player/enemy 指令与普通注释)。
+    // 返回 { grid, player, enemies, comments }。
+    function parseMap(text) {
+      var lines = String(text).split(/\r?\n/);
+      var grid = [], player = null, enemies = [], comments = [], width = -1;
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line === '') continue;
+        if (line.charAt(0) === '#') {
+          var parts = line.slice(1).trim().split(/\s+/);
+          if (parts[0] === 'player' && parts.length >= 3) {
+            player = { x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) };
+          } else if (parts[0] === 'enemy' && parts.length >= 4) {
+            enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
+          } else {
+            comments.push(line.slice(1).trim());
+          }
+          continue;
+        }
+        var row = [];
+        for (var j = 0; j < line.length; j++) {
+          var ch = line.charAt(j);
+          if (ch !== '0' && ch !== '1') throw new Error('第 ' + (i + 1) + ' 行含非法字符 "' + ch + '"（整图网格只允许 0/1）');
+          row.push(ch === '1' ? 1 : 0);
+        }
+        if (width === -1) width = row.length;
+        else if (row.length !== width) throw new Error('第 ' + (i + 1) + ' 行宽度 ' + row.length + ' 与首行 ' + width + ' 不一致');
+        grid.push(row);
+      }
+      return { grid: grid, player: player, enemies: enemies, comments: comments };
+    }
+
+    function serializeMap(map) {
+      var lines = [];
+      (map.comments || []).forEach(function (c) { lines.push('# ' + c); });
+      if (map.player) lines.push('# player ' + map.player.x + ' ' + map.player.y);
+      (map.enemies || []).forEach(function (e) { lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y); });
+      map.grid.forEach(function (row) { lines.push(row.join('')); });
+      return lines.join('\n') + '\n';
+    }
+
     return {
       sanitizeName: sanitizeName,
       validateGrid: validateGrid,
@@ -346,7 +387,9 @@ window.ENEMY_REGISTRY = [
       parseLibrary: parseLibrary,
       resizeGrid: resizeGrid,
       rectFill: rectFill,
-      floodFill: floodFill
+      floodFill: floodFill,
+      parseMap: parseMap,
+      serializeMap: serializeMap
     };
   })();
   </script>
