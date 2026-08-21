@@ -2,22 +2,24 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d0qpd4812ihfi"
-path="res://.godot/imported/Jump_Bird.png-80aaad9b78019ac6058d2ccf71966f35.ctex"
+uid="uid://tkrxu88e0hfa"
+path="res://.godot/imported/player.png-fa9681215b562a16a2268626b2949739.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://AssetBundle/Sprites/Jump_Bird.png"
-dest_files=["res://.godot/imported/Jump_Bird.png-80aaad9b78019ac6058d2ccf71966f35.ctex"]
+source_file="res://Assets/textures/player.png"
+dest_files=["res://.godot/imported/player.png-fa9681215b562a16a2268626b2949739.ctex"]
 
 [params]
 
 compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
+compress/uastc_level=0
+compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
@@ -25,6 +27,10 @@ mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
+process/channel_remap/red=0
+process/channel_remap/green=1
+process/channel_remap/blue=2
+process/channel_remap/alpha=3
 process/fix_alpha_border=true
 process/premult_alpha=false
 process/normal_map_invert_y=false

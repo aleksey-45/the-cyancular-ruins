@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://dnurwen8tun30"]
 
 [ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
-[ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://AssetBundle/Sprites/Weapons.png" id="2_wpn"]
+[ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://assets/textures/weapons.png" id="2_wpn"]
 
 [node name="RifleTest" type="Node2D" unique_id=77899377]
 script = ExtResource("1_wb")

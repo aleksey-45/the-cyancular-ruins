@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cfbhunkx3526n"
-path="res://.godot/imported/Weapons.png-c4a6c69d089b50848ba40f862b49769f.ctex"
+uid="uid://dnfsk3tad320a"
+path="res://.godot/imported/lotus.png-9c1ed9ab750bfd7d084f531a7c2df4d1.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://AssetBundle/Sprites/Weapons.png"
-dest_files=["res://.godot/imported/Weapons.png-c4a6c69d089b50848ba40f862b49769f.ctex"]
+source_file="res://Assets/textures/lotus.png"
+dest_files=["res://.godot/imported/lotus.png-9c1ed9ab750bfd7d084f531a7c2df4d1.ctex"]
 
 [params]
 
