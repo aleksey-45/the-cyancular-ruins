@@ -67,7 +67,8 @@ git clone --depth 1 --branch 4.7.1-stable https://gitee.com/mirrors/godot.git E:
 - 它定义:
   - `disabled_build_options`:关闭的模块(3D、音频格式、网络、导航、XR、图片格式等)+ `disable_3d`。
   - `disabled_classes`:游戏没用到的类(音频播放器、粒子、AnimationPlayer、GUI 控件等)。
-- 游戏用到的类**全部保留**在 profile 之外(`CharacterBody2D`/`Area2D`/`TileMapLayer`/`Parallax2D`/`CanvasLayer`/`Control`/`ColorRect`/`Tween`/`Timer`/`AtlasTexture`/`SpriteFrames` 等)。
+- 游戏用到的类**全部保留**在 profile 之外(`CharacterBody2D`/`Area2D`/`TileMapLayer`/`Parallax2D`/`CanvasLayer`/`Control`/`ColorRect`/`Label`/`Tween`/`Timer`/`AtlasTexture`/`SpriteFrames` 等)。
+  > `Label` 是击杀计数(HUD 文本)首次引入的 GUI 类——**每新增一个之前没用过的类,就要从 `disabled_classes` 移除它并重编模板**(见 3 排查表)。
 
 ### 2.4 编译模板
 构建脚本:**`E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat`**。等价命令:
@@ -106,6 +107,7 @@ cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64
 | 导出报 `可执行文件"pck"区未找到` | 模板被 UPX 过 / 缺 `pck` 节 | 恢复模板:把 `.orig.exe` 拷回,或重新编译模板 |
 | 启动即闪退,stderr 一堆 `.ctex` / `CompressedTexture2D` 贴图错误 | **webp 模块被关**(贴图是 WebP 存的) | profile 里保留 `module_webp`,重编+重导出 |
 | 运行时报 `missing class X` / 场景加载失败 | profile 裁掉了游戏要用的类 | 把类名从 `disabled_classes` 里移除,重编+重导出 |
+| 发布 exe 报 `Could not find type "Label"`(hud.gd 解析失败),项目目录里一切正常 | 加了项目之前没用过的 GUI 类(首个文本 UI 就是 `Label`)但 profile 仍裁着它 | 从 `disabled_classes` 移除该类,重编模板+重导出(见 2.4~2.6) |
 | exe 突然变回 ~109 MB | 模板目录被官方模板覆盖(编辑器更新/重装) | 重新拷贝编译产物,见 2.5 |
 | exe 一直是 Godot 默认图标,自定义 icon 不生效 | 导出预设 `application/modify_resources=false` | 在导出预设里把 `modify_resources` 勾上(=true),重导出 |
 | exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.txt`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `map/*.txt`,重导出 |
