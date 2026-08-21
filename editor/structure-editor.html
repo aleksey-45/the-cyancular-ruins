@@ -165,10 +165,10 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <div id="palette"></div>
         <p class="hint">0 = 空气 · 1–9 = 墙（纹理待接入）</p>
       </section>
-      <section class="panel spawn-panel hidden">
+      <section class="panel spawn-panel">
         <h2>出生点</h2>
         <div id="spawn-tools" class="spawn-tools"></div>
-        <p class="hint">整图模式下点格放置出生点,右键移除。</p>
+        <p class="hint">选中工具后点格放置,右键移除。</p>
       </section>
     </aside>
 
@@ -184,12 +184,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <button id="btn-redo" title="Ctrl+Y">重做</button>
         <span class="spacer"></span>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="grid-toggle" checked> 网格</label>
-        <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="map-mode-toggle"> 整图模式</label>
-        <button id="btn-torus" title="跨接缝重复绘制、无边界平移(整图模式)">环面预览</button>
-        <button id="btn-map-new" title="新建一张空白整图(默认 540x324)">新建整图</button>
-        <button id="btn-map-import">导入整图</button>
-        <button id="btn-map-export" class="primary">导出整图</button>
-        <input type="file" id="file-map-import" accept=".txt,text/plain" hidden>
+        <button id="btn-torus" title="跨接缝重复绘制、无边界平移">环面预览</button>
         <button id="btn-fit">适配</button>
       </div>
       <div id="canvas-wrap">
@@ -495,7 +490,7 @@ window.ENEMY_REGISTRY = [
     };
 
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true, brushSize: 1,
-                  mapMode: false, map: null, torusMode: false, spawnTool: null };
+                  torusMode: false, spawnTool: null };
     var view = { zoom: 28, panX: 40, panY: 40 };
     var PLAYER_TILES = 7.5;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 16px
     var playerImg = new Image();
@@ -544,14 +539,14 @@ window.ENEMY_REGISTRY = [
       return null;
     }
     // 整图渲染:只画可见区内的墙格;环面模式下把地图沿两轴各 ±1 副本平移后裁剪。
-    function renderWholeMap() {
-      var map = state.map;
-      var w = map.grid[0].length, h = map.grid.length, z = view.zoom;
+    // 结构渲染:可见区裁剪,只画非 0 格;环面模式 2×2 平铺(跨接缝重复 + 内部边界两条接缝线)。
+    function renderStructure(s) {
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
       ctx.fillStyle = '#0d1117';
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
       var vx0 = -view.panX / z, vy0 = -view.panY / z;
       var vx1 = vx0 + wrap.clientWidth / z, vy1 = vy0 + wrap.clientHeight / z;
-      var dxs = state.torusMode ? [0, 1] : [0];  // 2×2 平铺:基准 + 右侧/下方各一份,内部边界展示两条接缝
+      var dxs = state.torusMode ? [0, 1] : [0];
       var dys = state.torusMode ? [0, 1] : [0];
       for (var di = 0; di < dxs.length; di++) {
         for (var dj = 0; dj < dys.length; dj++) {
@@ -564,7 +559,7 @@ window.ENEMY_REGISTRY = [
           for (var y = y0; y <= y1; y++) {
             var mpy = y - oy;
             for (var x = x0; x <= x1; x++) {
-              var t = map.grid[mpy][x - ox];
+              var t = s.grid[mpy][x - ox];
               if (t !== 0) {
                 ctx.fillStyle = TILE_COLORS[t];
                 ctx.fillRect(view.panX + x * z, view.panY + y * z, z, z);
@@ -573,22 +568,58 @@ window.ENEMY_REGISTRY = [
           }
         }
       }
-      drawSpawnMarkers();
     }
-    function drawSpawnMarkers() {
-      var map = state.map;
+    function drawSpawnMarkers(s) {
+      var w = s.grid[0].length, h = s.grid.length;
       var dxs = state.torusMode ? [0, 1] : [0];
       var dys = state.torusMode ? [0, 1] : [0];
       for (var di = 0; di < dxs.length; di++) {
         for (var dj = 0; dj < dys.length; dj++) {
-          var ox = dxs[di] * map.grid[0].length, oy = dys[dj] * map.grid.length;
-          if (map.player) drawSpawnMarker('#54a0ff', map.player.x + ox, map.player.y + oy, 'P');
-          (map.enemies || []).forEach(function (e) {
+          var ox = dxs[di] * w, oy = dys[dj] * h;
+          if (s.player) drawSpawnMarker('#54a0ff', s.player.x + ox, s.player.y + oy, 'P');
+          (s.enemies || []).forEach(function (e) {
             var en = enemyById(e.type);
             drawSpawnMarker(en ? en.color : '#888888', e.x + ox, e.y + oy, en ? en.name.charAt(0) : '?');
           });
         }
       }
+    }
+    function drawGridLines(s) {
+      if (!state.gridOn) return;
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (var gx = 0; gx <= w; gx++) {
+        ctx.moveTo(view.panX + gx * z, view.panY);
+        ctx.lineTo(view.panX + gx * z, view.panY + h * z);
+      }
+      for (var gy = 0; gy <= h; gy++) {
+        ctx.moveTo(view.panX, view.panY + gy * z);
+        ctx.lineTo(view.panX + w * z, view.panY + gy * z);
+      }
+      ctx.stroke();
+    }
+    function drawBorder(s) {
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+      ctx.strokeStyle = '#54a0ff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(view.panX, view.panY, w * z, h * z);
+    }
+    function drawPlayerReference() {
+      // 左下角主角尺寸参考(真实大小:120世界px = 7.5格,随 zoom 缩放;超大时封顶不溢出画布)
+      var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
+      var ppad = 8;
+      var pdx = ppad, pdy = wrap.clientHeight - ppad - pz;
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
+        ctx.drawImage(playerImg, pdx, pdy, pz, pz);
+      } else {
+        ctx.fillStyle = '#54a0ff';
+        ctx.fillRect(pdx, pdy, pz, pz);
+      }
+      ctx.restore();
     }
     function drawSpawnMarker(color, gx, gy, label) {
       var z = view.zoom, px = view.panX + (gx + 0.5) * z, py = view.panY + (gy + 0.5) * z;
@@ -614,7 +645,7 @@ window.ENEMY_REGISTRY = [
       var bz = view.zoom;
       var bbx = view.panX + (hoverCell.x - o.lo) * bz, bby = view.panY + (hoverCell.y - o.lo) * bz;
       var bbs = (o.lo + o.hi + 1) * bz;
-      var col = state.mapMode ? TILE_COLORS[1] : TILE_COLORS[state.palette];
+      var col = TILE_COLORS[state.palette];
       ctx.fillStyle = state.tool === 'erase' ? 'rgba(255,255,255,0.15)' : hexToRgba(col || '#0d1117', 0.4);
       ctx.fillRect(bbx, bby, bbs, bbs);
       ctx.strokeStyle = '#ffffff';
@@ -633,65 +664,21 @@ window.ENEMY_REGISTRY = [
     }
     function renderCanvas() {
       if (!ctx) return;
+      var s = sel();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
       ctx.scale(dpr, dpr);
       ctx.fillStyle = '#17191d';
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
-      if (state.mapMode) {
-        if (state.map) renderWholeMap();
-        drawBrushPreview();
-        ctx.restore();
-        return;
-      }
-
-      var s = sel();
       if (s) {
-        var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
-        ctx.fillStyle = '#0d1117';
-        ctx.fillRect(view.panX, view.panY, w * z, h * z);
-        for (var y = 0; y < h; y++) {
-          for (var x = 0; x < w; x++) {
-            var t = s.grid[y][x];
-            if (t !== 0) {
-              ctx.fillStyle = TILE_COLORS[t];
-              ctx.fillRect(view.panX + x * z, view.panY + y * z, z, z);
-            }
-          }
-        }
-        if (state.gridOn) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          for (var gx = 0; gx <= w; gx++) {
-            ctx.moveTo(view.panX + gx * z, view.panY);
-            ctx.lineTo(view.panX + gx * z, view.panY + h * z);
-          }
-          for (var gy = 0; gy <= h; gy++) {
-            ctx.moveTo(view.panX, view.panY + gy * z);
-            ctx.lineTo(view.panX + w * z, view.panY + gy * z);
-          }
-          ctx.stroke();
-        }
-        ctx.strokeStyle = '#54a0ff';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(view.panX, view.panY, w * z, h * z);
+        renderStructure(s);
+        drawSpawnMarkers(s);
+        drawGridLines(s);
+        drawBorder(s);
       }
       drawBrushPreview();
-      // 左下角主角尺寸参考(真实大小:120世界px = 7.5格,随 zoom 缩放;超大时封顶不溢出画布)
-      var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
-      var ppad = 8;
-      var pdx = ppad, pdy = wrap.clientHeight - ppad - pz;
-      ctx.save();
-      ctx.globalAlpha = 0.85;
-      if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
-        ctx.drawImage(playerImg, pdx, pdy, pz, pz);
-      } else {
-        ctx.fillStyle = '#54a0ff';
-        ctx.fillRect(pdx, pdy, pz, pz);
-      }
-      ctx.restore();
+      drawPlayerReference();
       ctx.restore();
     }
     function zoomAt(mx, my, factor) {
@@ -703,15 +690,9 @@ window.ENEMY_REGISTRY = [
       renderCanvas();
     }
     function fit() {
-      var w, h;
-      if (state.mapMode) {
-        if (!state.map) return;
-        w = state.map.grid[0].length; h = state.map.grid.length;
-      } else {
-        var s = sel();
-        if (!s) return;
-        w = s.grid[0].length; h = s.grid.length;
-      }
+      var s = sel();
+      if (!s) return;
+      var w = s.grid[0].length, h = s.grid.length;
       var availW = wrap.clientWidth - 60, availH = wrap.clientHeight - 60;
       if (availW <= 0 || availH <= 0) return;
       var z = Math.min(availW / w, availH / h);
@@ -722,14 +703,10 @@ window.ENEMY_REGISTRY = [
       renderCanvas();
     }
     function cellAt(mx, my) {
-      var x = Math.floor((mx - view.panX) / view.zoom);
-      var y = Math.floor((my - view.panY) / view.zoom);
-      if (state.mapMode) {
-        if (!state.map) return null;
-        return { x: x, y: y };
-      }
       var s = sel();
       if (!s) return null;
+      var x = Math.floor((mx - view.panX) / view.zoom);
+      var y = Math.floor((my - view.panY) / view.zoom);
       if (x < 0 || y < 0 || y >= s.grid.length || x >= s.grid[y].length) return null;
       return { x: x, y: y };
     }
@@ -772,23 +749,14 @@ window.ENEMY_REGISTRY = [
     // ── status bar ──
     function renderStatus() {
       var parts = [];
-      if (state.mapMode) {
-        if (state.map) {
-          parts.push('整图 ' + state.map.grid[0].length + '×' + state.map.grid.length
-            + (state.torusMode ? ' · 环面' : ''));
-          parts.push('出生点:玩家' + (state.map.player ? '1' : '0') + ' · 敌人 ' + (state.map.enemies || []).length);
-        } else {
-          parts.push('整图模式 — 导入整图或保持结构库');
-        }
-        els.statusbar.textContent = parts.join('   ·   ');
-        return;
-      }
       var s = sel();
       if (s) {
-        parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length);
+        parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length
+          + (state.torusMode ? ' · 环面' : ''));
         parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮' })[state.tool] || state.tool));
         parts.push('tile: ' + state.palette + (state.palette === 0 ? ' (空气)' : ' (墙)'));
         parts.push('画笔 ' + state.brushSize);
+        parts.push('出生点:玩家' + (s.player ? '1' : '0') + ' · 敌人 ' + (s.enemies || []).length);
         parts.push('撤销 ' + history.length + ' · 重做 ' + redoStack.length);
       } else {
         parts.push('无结构 — 点击左侧"新建"');
@@ -827,13 +795,6 @@ window.ENEMY_REGISTRY = [
     function undo() {
       if (history.length === 0) return;
       var snap = history.pop();
-      if (state.mapMode) {
-        if (snap.id !== -1) { history.push(snap); return; }
-        redoStack.push({ id: -1, grid: cloneGrid(state.map.grid) });
-        state.map.grid = snap.grid;
-        render();
-        return;
-      }
       var s = sel();
       if (!s) return;
       if (snap.id !== s.id) { history.push(snap); return; }
@@ -845,13 +806,6 @@ window.ENEMY_REGISTRY = [
     function redo() {
       if (redoStack.length === 0) return;
       var snap = redoStack.pop();
-      if (state.mapMode) {
-        if (snap.id !== -1) { redoStack.push(snap); return; }
-        history.push({ id: -1, grid: cloneGrid(state.map.grid) });
-        state.map.grid = snap.grid;
-        render();
-        return;
-      }
       var s = sel();
       if (!s) return;
       if (snap.id !== s.id) { redoStack.push(snap); return; }
@@ -871,29 +825,6 @@ window.ENEMY_REGISTRY = [
           var cy = y + dy, cx = x + dx;
           if (cy >= 0 && cy < s.grid.length && cx >= 0 && cx < s.grid[cy].length) s.grid[cy][cx] = tile;
         }
-      }
-    }
-    function pushMapHistory() { history.push({ id: -1, grid: cloneGrid(state.map.grid) }); if (history.length > 100) history.shift(); redoStack.length = 0; }
-    function paintMapAt(x, y, tile) {
-      var g = state.map.grid, w = g[0].length, h = g.length;
-      var o = Core.brushOffsets(state.brushSize);
-      for (var dy = -o.lo; dy <= o.hi; dy++) for (var dx = -o.lo; dx <= o.hi; dx++) {
-        var cy = y + dy, cx = x + dx;
-        if (cy >= 0 && cy < h && cx >= 0 && cx < w) g[cy][cx] = tile;
-      }
-    }
-    // 整图版 linePaint:Bresenham 沿线逐格刷,快速拖拽不断点
-    function linePaintMap(x0, y0, x1, y1, tile) {
-      var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-      var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-      var err = dx - dy;
-      var x = x0, y = y0;
-      for (;;) {
-        paintMapAt(x, y, tile);
-        if (x === x1 && y === y1) break;
-        var e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x += sx; }
-        if (e2 < dx) { err += dx; y += sy; }
       }
     }
     function linePaint(x0, y0, x1, y1, tile) {
@@ -933,53 +864,25 @@ window.ENEMY_REGISTRY = [
         canvas.setPointerCapture(e.pointerId);
         return;
       }
-      // 整图模式 + 选中 spawn 工具:右键移除该格 spawn
-      if (state.mapMode && e.button === 2 && state.spawnTool) {
-        var cell2 = cellAt(e.offsetX, e.offsetY);
-        if (cell2 && state.map) {
-          if (state.map.player && state.map.player.x === cell2.x && state.map.player.y === cell2.y) {
-            state.map.player = null;
-          }
-          var list = state.map.enemies || [];
-          for (var i = list.length - 1; i >= 0; i--) {
-            if (list[i].x === cell2.x && list[i].y === cell2.y) list.splice(i, 1);
-          }
-          renderCanvas();
-        }
-        return;
-      }
       var s = sel();
       var cell = cellAt(e.offsetX, e.offsetY);
-      if (!cell) return;
-      if (state.mapMode) {
-        if (state.spawnTool) {
-          placeSpawn(cell.x, cell.y);
-          return;
+      if (!cell || !s) return;
+      // 选中 spawn 工具:右键移除该格 spawn
+      if (e.button === 2 && state.spawnTool) {
+        if (s.player && s.player.x === cell.x && s.player.y === cell.y) {
+          s.player = null;
         }
-        var erase = e.button === 2 || e.altKey || state.tool === 'erase';
-        var tile = erase ? 0 : 1;  // 整图模式只画 0/1
-        if (state.tool === 'fill') {
-          if (state.map.grid[cell.y][cell.x] !== tile) {
-            pushMapHistory();
-            state.map.grid = Core.floodFill(state.map.grid, cell.x, cell.y, tile);
-          }
-          renderCanvas();
-          return;
+        var list = s.enemies || [];
+        for (var i = list.length - 1; i >= 0; i--) {
+          if (list[i].x === cell.x && list[i].y === cell.y) list.splice(i, 1);
         }
-        if (state.tool === 'rect') {
-          drag = { mode: 'rect', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase };
-          canvas.setPointerCapture(e.pointerId);
-          renderCanvas();
-          return;
-        }
-        pushMapHistory();
-        paintMapAt(cell.x, cell.y, tile);
-        drag = { mode: 'paint', lastX: cell.x, lastY: cell.y, tile: tile };
-        canvas.setPointerCapture(e.pointerId);
         renderCanvas();
         return;
       }
-      if (!s) return;  // 结构模式:需选中结构
+      if (state.spawnTool) {
+        placeSpawn(cell.x, cell.y);
+        return;
+      }
       var erase = e.button === 2 || e.altKey || state.tool === 'erase';
       var tile = erase ? 0 : state.palette;
       if (state.tool === 'fill') {
@@ -1029,8 +932,7 @@ window.ENEMY_REGISTRY = [
         return;
       }
       if (drag.mode === 'paint') {
-        if (state.mapMode) linePaintMap(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
-        else linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
+        linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
         drag.lastX = cell.x;
         drag.lastY = cell.y;
         renderCanvas();
@@ -1039,15 +941,10 @@ window.ENEMY_REGISTRY = [
     function onPointerUp() {
       if (!drag) return;
       if (drag.mode === 'rect') {
-        if (state.mapMode) {
-          pushMapHistory();
-          state.map.grid = Core.rectFill(state.map.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : 1);
-        } else {
-          var s = sel();
-          if (s) {
-            pushHistory(s);
-            s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
-          }
+        var s = sel();
+        if (s) {
+          pushHistory(s);
+          s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
         }
       }
       drag = null;
@@ -1229,51 +1126,6 @@ window.ENEMY_REGISTRY = [
       };
       reader.readAsText(file, 'utf-8');
     }
-    function importWholeMap() {
-      var file = els.fileMapImport.files && els.fileMapImport.files[0];
-      if (!file) return;
-      els.fileMapImport.value = '';
-      var reader = new FileReader();
-      reader.onload = function () {
-        var parsed;
-        try { parsed = Core.parseMap(String(reader.result)); }
-        catch (err) { window.alert('导入整图失败:' + err.message); return; }
-        if (parsed.grid.length === 0) { window.alert('导入整图失败:网格为空'); return; }
-        state.map = parsed;
-        state.mapMode = true;
-        els.mapModeToggle.checked = true;
-        document.querySelector('.spawn-panel').classList.remove('hidden');
-        fit();  // 视图适配到整图(否则仍停在结构库缩放,看不到图)
-        render();  // render() 在 mapMode 下刷新 spawn 工具列表
-      };
-      reader.readAsText(file, 'utf-8');
-    }
-    function exportWholeMap() {
-      if (!state.map) { window.alert('无整图可导出'); return; }
-      var blob = new Blob([Core.serializeMap(state.map)], { type: 'text/plain;charset=utf-8' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url; a.download = 'map.txt';  // 全图导出命名 map.txt,可直接放 exe 旁做外置地图
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-    }
-    function newWholeMap() {
-      var input = window.prompt('新建整图尺寸(宽x高,默认 540x324):', '540x324');
-      var w = 540, h = 324;
-      if (input != null && input.trim() !== '') {
-        var parts = input.split(/[x×,，\s]+/);
-        var nw = parseInt(parts[0], 10), nh = parseInt(parts[1], 10);
-        if (!isNaN(nw) && !isNaN(nh) && nw >= 1 && nh >= 1) { w = nw; h = nh; }
-      }
-      state.map = Core.createEmptyMap(w, h);
-      state.mapMode = true;
-      state.torusMode = false;
-      els.btnTorus.classList.remove('active');
-      els.mapModeToggle.checked = true;
-      document.querySelector('.spawn-panel').classList.remove('hidden');
-      fit();
-      render();
-    }
     function renderSpawnTools() {
       var box = els.spawnTools;
       box.innerHTML = '';
@@ -1296,13 +1148,15 @@ window.ENEMY_REGISTRY = [
       box.appendChild(b);
     }
     function placeSpawn(gx, gy) {
-      var g = state.map.grid, h = g.length, w = g[0].length;
+      var s = sel();
+      if (!s) return;
+      var g = s.grid, h = g.length, w = g[0].length;
       if (gx < 0 || gy < 0 || gx >= w || gy >= h) return;
       if (state.spawnTool === 'player') {
-        state.map.player = { x: gx, y: gy };
+        s.player = { x: gx, y: gy };
       } else {
         // 同一格已有敌人先移除(避免重叠),再追加;允许同类型多只放在不同格
-        var list = state.map.enemies || [];
+        var list = s.enemies || [];
         for (var i = list.length - 1; i >= 0; i--) {
           if (list[i].x === gx && list[i].y === gy) list.splice(i, 1);
         }
@@ -1313,7 +1167,7 @@ window.ENEMY_REGISTRY = [
 
     function render() {
       renderLibrary();
-      if (state.mapMode) renderSpawnTools();
+      renderSpawnTools();
       renderCanvas();
       renderStatus();
     }
@@ -1330,12 +1184,7 @@ window.ENEMY_REGISTRY = [
         gridToggle: document.getElementById('grid-toggle'),
         brushSize: document.getElementById('brush-size'),
         btnFit: document.getElementById('btn-fit'),
-        mapModeToggle: document.getElementById('map-mode-toggle'),
         btnTorus: document.getElementById('btn-torus'),
-        btnMapNew: document.getElementById('btn-map-new'),
-        btnMapImport: document.getElementById('btn-map-import'),
-        btnMapExport: document.getElementById('btn-map-export'),
-        fileMapImport: document.getElementById('file-map-import'),
         spawnTools: document.getElementById('spawn-tools'),
         modalOverlay: document.getElementById('modal-overlay'),
         modalTitle: document.getElementById('modal-title'),
@@ -1445,23 +1294,11 @@ window.ENEMY_REGISTRY = [
       });
       document.getElementById('btn-export').addEventListener('click', exportLibrary);
       els.fileImport.addEventListener('change', importLibrary);
-      els.mapModeToggle.addEventListener('change', function () {
-        state.mapMode = els.mapModeToggle.checked;
-        state.spawnTool = null;
-        document.querySelector('.spawn-panel').classList.toggle('hidden', !state.mapMode);
-        if (state.mapMode && state.map) fit();  // 重新进入整图模式也适配视图
-        render();  // render() 在 mapMode 下刷新 spawn 工具列表
-      });
       els.btnTorus.addEventListener('click', function () {
-        if (!state.mapMode) return;
         state.torusMode = !state.torusMode;
         els.btnTorus.classList.toggle('active', state.torusMode);
         renderCanvas();
       });
-      els.btnMapNew.addEventListener('click', newWholeMap);
-      els.btnMapImport.addEventListener('click', function () { els.fileMapImport.click(); });
-      els.fileMapImport.addEventListener('change', importWholeMap);
-      els.btnMapExport.addEventListener('click', exportWholeMap);
     }
 
     var canBoot = typeof document !== 'undefined' && document && typeof document.getElementById === 'function';
