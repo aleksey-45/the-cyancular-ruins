@@ -57,9 +57,10 @@ func _waypoint_world(cell: Vector2i) -> Vector2:
 func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 	if _path.is_empty():
 		if fallback_target != Vector2.INF:
-			# 死区逃逸:寻路空路径时先水平脱离悬挑(保持当前高度),别直线撞墙。
+			# 死区逃逸:寻路空路径时朝逃逸目标巡航(先下潜到可走格,窄檐则水平挪出悬挑),
+			# 别直线撞墙。目标带 y,鸟真正下飞,不再锁死当前高度。
 			if _escape_target != Vector2.INF:
-				_fly_straight_to(Vector2(_escape_target.x, global_position.y), delta)
+				_fly_straight_to(_escape_target, delta)
 			else:
 				_fly_straight_to(fallback_target, delta)
 		return
@@ -88,16 +89,26 @@ func _fly_straight_to(target: Vector2, delta: float) -> void:
 	velocity = to_target.normalized() * spd
 
 
-# 死区逃逸目标:鸟被悬挑墙压到飞行高度以下时,周围格子按飞行高度判全撞墙(A* 空路径),
-# 但它当前高度的空间是空的。在鸟当前行向左右搜索最近的"飞行高度可走"格,水平朝它巡航
-# 脱离悬挑,下次重寻路就能规划爬升。
+# 死区逃逸目标:寻路空路径(A* 无路)时鸟找不到可走的飞行格。先在当前列逐行下探,
+# 找第一个「鸟所在格可走」的行 —— 越贴近地面越开阔,宽天花板/悬挑基本必能脱困;
+# 下潜失败(如地板级矮檐)退回当前行水平逃逸(与改动前一致)。目标是可走格的格中心
+# (不是飞行高度):鸟必须真的落进这个可走格,A* 才能从该格起路;飞行高度中心会让鸟
+# 停在格上两行(悬停高度 40px ≈ 2.5 格)、重回死区。
 func _find_escape_column() -> Vector2:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
 		return global_position
 	var cols := grid[0].size()
+	var rows := grid.size()
 	var bc := _cell_of(global_position)
 	var ts := GameParameters.TILE_SIZE
+	for drop in range(1, EnemyParams.FlyBird.escape_max_descent + 1):
+		var row := posmod(bc.y + drop, rows)
+		for dist in range(1, EnemyParams.FlyBird.escape_search_range + 1):
+			for side in [-1, 1]:
+				var cell := Vector2i(posmod(bc.x + side * dist, cols), row)
+				if _bird_can_pass(cell):
+					return Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5)
 	for dist in range(1, EnemyParams.FlyBird.escape_search_range + 1):
 		for side in [-1, 1]:
 			var cell := Vector2i(posmod(bc.x + side * dist, cols), bc.y)

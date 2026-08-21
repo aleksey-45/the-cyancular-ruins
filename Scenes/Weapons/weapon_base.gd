@@ -6,6 +6,8 @@ enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 
 @export var bullet_scene: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
+# 预瞄碰撞小球半径基数(px, ×bullet_size):近似子弹碰撞体积判墙,只查中心点会漏"体积擦墙"
+const PREVIEW_COLLISION_RADIUS: float = 6.0
 
 # ── 武器参数(说明见各参数上方注释)──
 # 模板分类(轻/中/重),仅作信息/分组用
@@ -88,6 +90,7 @@ var fire_cd_timer: float = 0.0
 var _recoil_timer: float = 0.0
 var _base_sprite_pos: Vector2 = Vector2.ZERO
 var _aiming: bool = false
+var _fire_buffered: bool = false
 var _laser: Line2D = null
 var _explosion_marker: Sprite2D = null
 
@@ -113,15 +116,22 @@ func _ready() -> void:
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
 
-func equip(p: Node2D) -> void:
+func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
-	fire_cd_timer = 0.0
+	# 切枪继承旧武器剩余冷却:后摇不能被切枪刷掉(否则可切枪连射)
+	fire_cd_timer = maxf(inherit_cooldown, 0.0)
+	# 缓冲开火不随切枪继承:旧武器 freed 标记随之消失,新武器从无缓冲开始
+	_fire_buffered = false
 	cancel_aim()
 
 func _process(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
+	# 缓冲开火:冷却结束且末尾按过开火 → 自动打出(土狼时间式;切枪即弃)
+	if _fire_buffered and fire_cd_timer == 0.0:
+		_fire_buffered = false
+		fire()
 	_auto_aim()
 	if heavy_aim:
 		_update_laser()
@@ -146,6 +156,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:
+		# 冷却>0.5 的武器:最后 20% 内按开火不丢弃,改为缓冲,冷却结束自动打
+		if fire_cooldown > 0.5 and fire_cd_timer <= fire_cooldown * 0.2:
+			_fire_buffered = true
 		return
 	fire()
 
@@ -245,19 +258,38 @@ func _sample_arc_points() -> PackedVector2Array:
 		v.y += g * dt
 		p += v * dt
 		t += dt
-		if _cell_solid_at(p):
+		if _disk_overlaps_solid(p):
 			break
 		if p.distance_to(start) >= bullet_range:
 			break
 		pts.append(to_local(p))
 	return pts
 
-func _cell_solid_at(world_pos: Vector2) -> bool:
+# 预瞄判墙:以 center 为圆心、半径 r(=6×bullet_size)的小球是否压到任一 SOLID 格(环面)。
+# 小球按格子 AABB 粗查:球很小,最多跨 2 格,不会漏;比精确圆简单且略保守(宁多判墙不少判)。
+func _disk_overlaps_solid(center: Vector2) -> bool:
+	var r := PREVIEW_COLLISION_RADIUS * bullet_size
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
 		return false
-	var cell := MazeGenerator.cell_of(world_pos, GameParameters.TILE_SIZE, grid[0].size(), grid.size())
-	return grid[cell.y][cell.x] == MazeGenerator.SOLID
+	var cols := grid[0].size()
+	var rows := grid.size()
+	var ts := GameParameters.TILE_SIZE
+	var min_c := MazeGenerator.cell_of(center - Vector2(r, r), ts, cols, rows)
+	var max_c := MazeGenerator.cell_of(center + Vector2(r, r), ts, cols, rows)
+	var span_x := max_c.x - min_c.x
+	if span_x < 0:
+		span_x += cols
+	var span_y := max_c.y - min_c.y
+	if span_y < 0:
+		span_y += rows
+	for dy in range(span_y + 1):
+		var y := posmod(min_c.y + dy, rows)
+		for dx in range(span_x + 1):
+			var x := posmod(min_c.x + dx, cols)
+			if grid[y][x] == MazeGenerator.SOLID:
+				return true
+	return false
 
 func _update_explosion_marker(show: bool) -> void:
 	if _explosion_marker == null:

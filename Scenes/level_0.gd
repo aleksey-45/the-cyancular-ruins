@@ -28,8 +28,10 @@ func _ready() -> void:
 	_paint_maze(wall_layer, grid)
 
 	_build_wall_collision(grid)
-	_place_player(grid)
-	$EnemySpawner.spawn_all(grid, $WorldViewport/Player.global_position)
+	EnemySpawner.load_types()
+	var spawns := MazeGenerator.load_spawns()
+	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
+	$EnemySpawner.spawn_all(grid, $WorldViewport/Player.global_position, spawns)
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
@@ -131,16 +133,21 @@ func _build_wall_collision(grid: Array[Array]) -> void:
 	print("[Level0] wall collision shapes: %d" % total_shapes)
 
 
-func _place_player(_grid: Array[Array]) -> void:
+func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 	var player: CharacterBody2D = $WorldViewport/Player
 	var ts: int = GameParameters.TILE_SIZE
-	var empty_cells: Array[Vector2i] = []
-	for y in range(_grid.size()):
-		for x in range(_grid[y].size()):
-			if _grid[y][x] == MazeGenerator.EMPTY:
-				empty_cells.append(Vector2i(x, y))
-	if empty_cells.is_empty():
-		push_error("No empty cells to place player!")
-		return
-	var pos = empty_cells[randi() % empty_cells.size()]
+	var pos := Vector2i(-1, -1)
+	if spawn_cell.x >= 0 and spawn_cell.y >= 0:
+		pos = spawn_cell
+	else:
+		# 回退:随机空格(地图无 # player 时)
+		var empty_cells: Array[Vector2i] = []
+		for y in range(_grid.size()):
+			for x in range(_grid[y].size()):
+				if _grid[y][x] == MazeGenerator.EMPTY:
+					empty_cells.append(Vector2i(x, y))
+		if empty_cells.is_empty():
+			push_error("No empty cells to place player!")
+			return
+		pos = empty_cells[randi() % empty_cells.size()]
 	player.position = Vector2(pos.x * ts + ts / 2.0, pos.y * ts + ts / 2.0)
