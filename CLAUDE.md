@@ -29,7 +29,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 ## 架构
 
 ### 环面世界与地图
-- 地图:ASCII 文本 `map/demo.txt`,`1`=墙(SOLID)、`0`=空(EMPTY),`#` 开头的行是注释。当前 540×324 格 × 16px 瓦片 = 8640×5184 世界像素。改了地图 → 记得 `map/*.txt` 已在导出 include_filter 里。
+- 地图:ASCII 文本 `map/demo.txt`,`1`=墙(SOLID)、`0`=空(EMPTY),`#` 开头的行是注释。当前 500×300 格 × 16px 瓦片 = 8000×4800 世界像素。改了地图 → 记得 `map/*.txt` 已在导出 include_filter 里。
 - `MazeGenerator`(Globals/maze_generator.gd,`RefCounted`,非 autoload)是地图与环面核心:
   - 读图:`load_map_file()` / `map_size()`(行宽不一致的抬头行会被跳过);
   - 环面数学:`toroidal_dist`(格级)、`toroidal_delta_px`(像素最短向量)、`anchor_to_nearest`(实体锚到玩家最近副本)、`wrap_to_range`(取模回中间副本);
