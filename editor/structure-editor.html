@@ -534,6 +534,20 @@ window.ENEMY_REGISTRY = [
       }
     }
 
+    function drawBrushPreview() {
+      if (!hoverCell || (state.tool !== 'paint' && state.tool !== 'erase') || view.zoom < 8) return;
+      var br = Math.floor((state.brushSize - 1) / 2);
+      var bz = view.zoom;
+      var bbx = view.panX + (hoverCell.x - br) * bz, bby = view.panY + (hoverCell.y - br) * bz;
+      var bbs = (br * 2 + 1) * bz;
+      var col = state.mapMode ? TILE_COLORS[1] : TILE_COLORS[state.palette];
+      ctx.fillStyle = state.tool === 'erase' ? 'rgba(255,255,255,0.15)' : hexToRgba(col || '#0d1117', 0.4);
+      ctx.fillRect(bbx, bby, bbs, bbs);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bbx, bby, bbs, bbs);
+    }
+
     // ── canvas sizing / rendering ──
     function resizeCanvas() {
       dpr = window.devicePixelRatio || 1;
@@ -553,6 +567,7 @@ window.ENEMY_REGISTRY = [
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
       if (state.mapMode) {
         if (state.map) renderWholeMap();
+        drawBrushPreview();
         ctx.restore();
         return;
       }
@@ -589,18 +604,7 @@ window.ENEMY_REGISTRY = [
         ctx.lineWidth = 2;
         ctx.strokeRect(view.panX, view.panY, w * z, h * z);
       }
-      // 画笔大小预览(缩放足够大时显示)
-      if (hoverCell && (state.tool === 'paint' || state.tool === 'erase') && view.zoom >= 8) {
-        var br = Math.floor((state.brushSize - 1) / 2);
-        var bz = view.zoom;
-        var bbx = view.panX + (hoverCell.x - br) * bz, bby = view.panY + (hoverCell.y - br) * bz;
-        var bbs = (br * 2 + 1) * bz;
-        ctx.fillStyle = state.tool === 'erase' ? 'rgba(255,255,255,0.15)' : hexToRgba(TILE_COLORS[state.palette] || '#0d1117', 0.4);
-        ctx.fillRect(bbx, bby, bbs, bbs);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bbx, bby, bbs, bbs);
-      }
+      drawBrushPreview();
       // 左下角主角尺寸参考(真实大小:120世界px = 7.5格,随 zoom 缩放;超大时封顶不溢出画布)
       var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
       var ppad = 8;
@@ -804,6 +808,20 @@ window.ENEMY_REGISTRY = [
         if (cy >= 0 && cy < h && cx >= 0 && cx < w) g[cy][cx] = tile;
       }
     }
+    // 整图版 linePaint:Bresenham 沿线逐格刷,快速拖拽不断点
+    function linePaintMap(x0, y0, x1, y1, tile) {
+      var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+      var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      var err = dx - dy;
+      var x = x0, y = y0;
+      for (;;) {
+        paintMapAt(x, y, tile);
+        if (x === x1 && y === y1) break;
+        var e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+      }
+    }
     function linePaint(x0, y0, x1, y1, tile) {
       var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
       var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
@@ -937,7 +955,7 @@ window.ENEMY_REGISTRY = [
         return;
       }
       if (drag.mode === 'paint') {
-        if (state.mapMode) paintMapAt(cell.x, cell.y, drag.tile);
+        if (state.mapMode) linePaintMap(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
         else linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
         drag.lastX = cell.x;
         drag.lastY = cell.y;
@@ -1261,7 +1279,9 @@ window.ENEMY_REGISTRY = [
         renderCanvas();
       });
       els.brushSize.addEventListener('change', function () {
-        state.brushSize = clampMin(els.brushSize.value, 1, 15);
+        var n = parseInt(els.brushSize.value, 10);
+        if (isNaN(n)) n = 1;
+        state.brushSize = Math.min(15, Math.max(1, n));  // 限制在 1..15
         els.brushSize.value = state.brushSize;
         renderStatus();
       });
