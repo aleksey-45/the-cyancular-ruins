@@ -4,11 +4,23 @@ extends Node2D
 # 每生成一个敌人发射一次(HUD 等接上去监听 enemy.died 做击杀计数)
 signal enemy_spawned(enemy: Node)
 
-# 类型注册表:加新敌人 = 一个 .tscn + 一行(string 路径,load() 时取)。
-const TYPES: Dictionary = {
-	"jump_bird": "res://Scenes/Enemies/EnemyJumpBird.tscn",
-	"fly_bird": "res://Scenes/Enemies/EnemyFlyBird.tscn",
-}
+# 敌人注册表(id → scene)。唯一来源 editor/enemies.json(与 HTML 编辑器共享)。
+static var TYPES: Dictionary = {}
+
+# 从 res://editor/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
+static func load_types() -> void:
+	TYPES = {}
+	var json_text := FileAccess.get_file_as_string("res://editor/enemies.json")
+	if json_text.is_empty():
+		push_error("EnemySpawner: 读不到 res://editor/enemies.json")
+		return
+	var parsed: Variant = JSON.parse_string(json_text)
+	if typeof(parsed) != TYPE_DICTIONARY or not (parsed.get("enemies", []) is Array):
+		push_error("EnemySpawner: enemies.json 格式非法")
+		return
+	for e in parsed["enemies"]:
+		if typeof(e) == TYPE_DICTIONARY and e.has("id") and e.has("scene"):
+			TYPES[str(e["id"])] = str(e["scene"])
 
 # 在 grid 里随机取 count 个「地板格」、且距 player_cell 的环面距离 >= min_dist_cells。
 # 地板格 = EMPTY 且正下方(y+1,环面取模)是 SOLID:敌人站立/落地有实心表面托底,

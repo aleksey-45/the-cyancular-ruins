@@ -858,6 +858,11 @@ func _initialize() -> void:
 			["# player 12 34", "# player 56 78"]).get("player") == Vector2i(56, 78),
 			"parse_spawn_metadata: player 最后一行生效")
 
+	# ── Task: EnemySpawner.TYPES 从 enemies.json 加载 ──
+	EnemySpawner.load_types()
+	_check(EnemySpawner.TYPES.has("jump_bird") and EnemySpawner.TYPES.has("fly_bird")
+			and EnemySpawner.TYPES.size() == 2, "EnemySpawner.TYPES 从 enemies.json 加载")
+
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)
