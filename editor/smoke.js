@@ -142,6 +142,22 @@ eq(Core.parseLibrary('# x\n#\n00\n'), [{ name: 'x', grid: [[0, 0]] }], 'parseLib
 eq(Core.validateGrid([null]).ok, false, 'validateGrid: 首行 null 报错');
 eq(Core.validateGrid([42]).ok, false, 'validateGrid: 首行非数组报错');
 
+// ---- brushOffsets: 画笔块偏移(偶数尺寸不缩小,回归 2026-08-22 修复)----
+eq(Core.brushOffsets(1), { lo: 0, hi: 0 }, 'brushOffsets: 1 → 1×1');
+eq(Core.brushOffsets(2), { lo: 0, hi: 1 }, 'brushOffsets: 2 → 2×2(偏下右)');
+eq(Core.brushOffsets(3), { lo: 1, hi: 1 }, 'brushOffsets: 3 → 3×3');
+eq(Core.brushOffsets(4), { lo: 1, hi: 2 }, 'brushOffsets: 4 → 4×4(偏下右)');
+eq(Core.brushOffsets(5), { lo: 2, hi: 2 }, 'brushOffsets: 5 → 5×5');
+eq(Core.brushOffsets(15), { lo: 7, hi: 7 }, 'brushOffsets: 15 → 15×15');
+(function () {
+  var bad = false;
+  for (var s = 1; s <= 15; s++) {
+    var o = Core.brushOffsets(s);
+    if (!o || o.lo + o.hi + 1 !== s || o.lo < 0 || o.hi < o.lo) bad = true;
+  }
+  ok(!bad, 'brushOffsets: 1..15 全部满足 lo+1+hi===尺寸 且 lo≤hi');
+})();
+
 console.log('');
 console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
 process.exit(fail === 0 ? 0 : 1);

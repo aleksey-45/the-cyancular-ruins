@@ -396,6 +396,12 @@ window.ENEMY_REGISTRY = [
       return lines.join('\n') + '\n';
     }
 
+    // 画笔块偏移:返回以指针格为中心的 lo(上/左)/hi(下/右)扩展量,保证 lo+1+hi===size。
+    // 奇数尺寸对称(lo===hi);偶数尺寸偏下右一格 —— 否则(旧 r=floor((size-1)/2))偶数会缩小一格。
+    function brushOffsets(size) {
+      return { lo: Math.floor((size - 1) / 2), hi: Math.ceil((size - 1) / 2) };
+    }
+
     return {
       sanitizeName: sanitizeName,
       validateGrid: validateGrid,
@@ -405,7 +411,8 @@ window.ENEMY_REGISTRY = [
       rectFill: rectFill,
       floodFill: floodFill,
       parseMap: parseMap,
-      serializeMap: serializeMap
+      serializeMap: serializeMap,
+      brushOffsets: brushOffsets
     };
   })();
   </script>
@@ -536,10 +543,10 @@ window.ENEMY_REGISTRY = [
 
     function drawBrushPreview() {
       if (!hoverCell || (state.tool !== 'paint' && state.tool !== 'erase') || view.zoom < 8) return;
-      var br = Math.floor((state.brushSize - 1) / 2);
+      var o = Core.brushOffsets(state.brushSize);
       var bz = view.zoom;
-      var bbx = view.panX + (hoverCell.x - br) * bz, bby = view.panY + (hoverCell.y - br) * bz;
-      var bbs = (br * 2 + 1) * bz;
+      var bbx = view.panX + (hoverCell.x - o.lo) * bz, bby = view.panY + (hoverCell.y - o.lo) * bz;
+      var bbs = (o.lo + o.hi + 1) * bz;
       var col = state.mapMode ? TILE_COLORS[1] : TILE_COLORS[state.palette];
       ctx.fillStyle = state.tool === 'erase' ? 'rgba(255,255,255,0.15)' : hexToRgba(col || '#0d1117', 0.4);
       ctx.fillRect(bbx, bby, bbs, bbs);
@@ -791,9 +798,9 @@ window.ENEMY_REGISTRY = [
     function paintAt(x, y, tile) {
       var s = sel();
       if (!s) return;
-      var r = Math.floor((state.brushSize - 1) / 2);
-      for (var dy = -r; dy <= r; dy++) {
-        for (var dx = -r; dx <= r; dx++) {
+      var o = Core.brushOffsets(state.brushSize);
+      for (var dy = -o.lo; dy <= o.hi; dy++) {
+        for (var dx = -o.lo; dx <= o.hi; dx++) {
           var cy = y + dy, cx = x + dx;
           if (cy >= 0 && cy < s.grid.length && cx >= 0 && cx < s.grid[cy].length) s.grid[cy][cx] = tile;
         }
@@ -802,8 +809,8 @@ window.ENEMY_REGISTRY = [
     function pushMapHistory() { history.push({ id: -1, grid: cloneGrid(state.map.grid) }); if (history.length > 100) history.shift(); redoStack.length = 0; }
     function paintMapAt(x, y, tile) {
       var g = state.map.grid, w = g[0].length, h = g.length;
-      var r = Math.floor((state.brushSize - 1) / 2);
-      for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
+      var o = Core.brushOffsets(state.brushSize);
+      for (var dy = -o.lo; dy <= o.hi; dy++) for (var dx = -o.lo; dx <= o.hi; dx++) {
         var cy = y + dy, cx = x + dx;
         if (cy >= 0 && cy < h && cx >= 0 && cx < w) g[cy][cx] = tile;
       }
