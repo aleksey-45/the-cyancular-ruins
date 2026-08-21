@@ -35,21 +35,29 @@
 
 ```
 ```
-for drop in 0..escape_max_descent:
+# 下飞优先:逐行下探,找第一个「鸟所在格可走」的行
+for drop in 1..escape_max_descent:
     row = posmod(bc.y + drop, rows)        # 行取模,环面竖直也连续
-    for dist in 1..escape_search_range:    # 现有水平扫描原样保留
+    for dist in 1..escape_search_range:    # 每行再扫列,取最近可走格
         for side in [-1, 1]:
             cell = (posmod(bc.x + side*dist, cols), row)
             if _bird_can_pass(cell):
-                y = global_position.y if drop == 0 else (row * ts + ts / 2) - hover_altitude
-                return Vector2(cell.x * ts + ts * 0.5, y)
+                return Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5)
+# 下潜失败(如地板级矮檐)→ 退回当前行水平逃逸(与改动前一致)
+for dist in 1..escape_search_range:
+    for side in [-1, 1]:
+        cell = (posmod(bc.x + side*dist, cols), bc.y)
+        if _bird_can_pass(cell):
+            return Vector2(cell.x * ts + ts * 0.5, global_position.y)
 return global_position                     # 全空 → 退回现状(悬停),不更糟
 ```
 
-- drop=0 走现有逻辑(窄檐直接横向挪出，零回归)，逃逸目标 y 保持 `global_position.y`
-  —— 避免把被压到低檐下的鸟**往上**拉回悬挑，重新撞墙;
-- drop>0 真正下探 —— 宽天花板当前行全堵时，往下找**最近**可走行;
-- drop>0 逃逸目标 y = 该行飞行高度 `(row * ts + ts / 2) - hover_altitude`(在悬挑下方，重寻路时与寻路格对齐)。
+- **下飞优先**: 宽天花板当前行全堵时,先往下找**最近**可走行,鸟对角下潜过去;
+  地板级矮檐下探无解时,当前行水平逃逸原样保留(窄檐横向挪出,零回归);
+- **目标取可走格的格中心**(`cell.y * ts + ts / 2`),**不是飞行高度**: 鸟必须真的落进这个可走格,
+  A* 才能从该格起路。飞行高度中心(格中心上方 `hover_altitude`=40px ≈ 2.5 格)会让鸟落在
+  格上两行,那个格按飞行高度判仍堵 → 重寻路又空路径 → 原地振荡。这是实现计划阶段修正的设计点
+  (spec 初稿写的是飞行高度,经盒体几何核算后改为格中心)。
 
 ### 3. `_follow_path()` 逃逸分支
 
@@ -69,8 +77,9 @@ return global_position                     # 全空 → 退回现状(悬停),不
 天花板下(该行 `_bird_can_pass` 全 false)，断言:
 
 - `_find_escape_column()` 返回目标 y > 鸟当前 y(确实下探);
-- 目标格 `_bird_can_pass` 为真(落在开阔行);
-- drop=0 的窄檐场景行为不变(横向可走列仍被优先返回)。
+- 目标格 `_bird_can_pass` 为真(落在开阔行,A* 可起路);
+- `_follow_path` 逃逸分支给向下的速度(velocity.y > 0,验证真在"下飞"而非锁 y 水平飞);
+- 窄檐回归: 鸟仍能逃到可走格、不原地卡死(目标格 `_bird_can_pass` 为真)。
 
 ## 风险与回退
 
