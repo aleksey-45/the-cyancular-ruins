@@ -4,18 +4,34 @@ extends CanvasLayer
 const LAYER := 129  # 在 post-process(128)之上,不受桶形/CRT/变灰影响
 const MARGIN := Vector2(24, 24)
 const SEG_W := 5        # 每根竖条宽
-const SEG_H := 30       # 竖条高
+const SEG_H := 32       # 竖条高
 const SEG_GAP := 1      # 竖条之间的间隔
 const COLOR_NORMAL := Color(0.35, 0.85, 0.9)  # 青色
-const COLOR_LOW := Color(0.8, 0.45, 0.4)      # 血量 <25% 变红
+const COLOR_LOW := Color(0.9, 0.4, 0.4)      # 血量 <25% 变红
 const LOW_RATIO := 0.25
+
+const KILL_COLOR := Color(0.0, 0.4, 0.5, 0.7)  # 击杀数:半透明(0.75)深青色
+const KILL_FONT_SIZE := 48
+# 像素字体:Less Perfect DOS VGA(8×16 经典 VGA 计数器,作者已收窄字距)。
+# 字号保持 16 的整数倍才像素锐利(48=3×16)。
+const KILL_FONT_PATH := "res://Assets/fonts/LessPerfectDOSVGA.ttf"
+const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
+const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
+const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板
+const BACK_PAD := 4                            # 底板相对竖条的外扩 padding
 
 var _segments: Array[ColorRect] = []
 var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
 var _last_cur := 0
+var _kill_label: Label
+var _kills := 0
 
 func _ready() -> void:
 	layer = LAYER
+	_build_kill_label()
+	var spawner := get_parent().get_node_or_null("EnemySpawner")
+	if spawner != null and spawner.has_signal("enemy_spawned"):
+		spawner.enemy_spawned.connect(_on_enemy_spawned)
 	var p := get_tree().get_first_node_in_group("player")
 	if p != null and p.has_signal("hp_changed"):
 		_build_segments(p.max_hp)
@@ -23,7 +39,15 @@ func _ready() -> void:
 		_on_hp(p.hp, p.max_hp)
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;无边框。
+# 竖条背后垫一层半透明白色底板,整体更易读。
 func _build_segments(count: int) -> void:
+	var bar_w := count * (SEG_W + SEG_GAP) - SEG_GAP
+	var back := ColorRect.new()
+	back.position = Vector2(MARGIN.x - BACK_PAD, MARGIN.y - BACK_PAD)
+	back.size = Vector2(bar_w + BACK_PAD * 2, SEG_H + BACK_PAD * 2)
+	back.color = BACK_COLOR
+	add_child(back)  # 先加,绘制在竖条底下
+
 	for i in range(count):
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
@@ -51,20 +75,22 @@ func _on_hp(cur: int, max_hp: int) -> void:
 		_start_ghost(i)
 	_last_cur = cur
 
-# 掉血段效果:变白,停顿片刻后淡出消失。
+# 掉血段效果:闪烁两下(闪白回到底色),最后淡出消失。
 func _start_ghost(i: int) -> void:
 	var seg := _segments[i]
 	_kill_ghost(i)
 	seg.visible = true
+	var base := seg.color  # 当前底色(青/红)
 	var tw := create_tween()
-	# 闪烁两下:每次先隐藏再显示
+	# 闪烁两下:每次先闪白再回到底色(原来的变透明改为变白)
 	for _b in range(2):
-		tw.tween_property(seg, "modulate:a", 0.0, 0.08)
-		tw.tween_property(seg, "modulate:a", 1.0, 0.08)  # 显
+		tw.tween_property(seg, "color", Color.WHITE, 0.08)
+		tw.tween_property(seg, "color", base, 0.08)
 	tw.tween_property(seg, "modulate:a", 0.0, 0.2)   # 最后淡出
 	tw.tween_callback(func():
 		seg.visible = false
 		seg.modulate = Color.WHITE
+		seg.color = base
 	)
 	_ghost_tweens[i] = tw
 
@@ -72,3 +98,37 @@ func _kill_ghost(i: int) -> void:
 	if _ghost_tweens[i] != null and _ghost_tweens[i].is_valid():
 		_ghost_tweens[i].kill()
 		_ghost_tweens[i] = null
+
+# 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
+func _build_kill_label() -> void:
+	_kill_label = Label.new()
+	_kill_label.text = "%03d" % _kills
+	_kill_label.add_theme_color_override("font_color", KILL_COLOR)
+	_kill_label.add_theme_font_size_override("font_size", KILL_FONT_SIZE)
+	var pf: FontFile = load(KILL_FONT_PATH) as FontFile
+	if pf != null:
+		# 像素字体:关抗锯齿/子像素/提示,整数倍字号下保持像素边缘锐利
+		pf.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+		pf.hinting = TextServer.HINTING_NONE
+		pf.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+		_kill_label.add_theme_font_override("font", pf)
+	# 锚定右上角,右对齐,文本向左生长
+	_kill_label.anchor_left = 1.0
+	_kill_label.anchor_right = 1.0
+	_kill_label.anchor_top = 0.0
+	_kill_label.anchor_bottom = 0.0
+	_kill_label.offset_left = -KILL_LABEL_W
+	_kill_label.offset_top = KILL_MARGIN.y
+	_kill_label.offset_right = -KILL_MARGIN.x
+	_kill_label.offset_bottom = KILL_MARGIN.y + KILL_FONT_SIZE * 1.4
+	_kill_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_kill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	add_child(_kill_label)
+
+func _on_enemy_spawned(enemy: Node) -> void:
+	if enemy.has_signal("died"):
+		enemy.died.connect(_on_enemy_died)
+
+func _on_enemy_died() -> void:
+	_kills += 1
+	_kill_label.text = "%03d" % _kills

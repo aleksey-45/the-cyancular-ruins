@@ -194,6 +194,7 @@ func _die_self() -> void:
 	if is_dead:
 		return
 	is_dead = true
+	died.emit()
 	_death_timer = EnemyParams.FlyBird.death_flash_time
 	# 冲撞中死(含被打死/超时):清冲撞速度,尸体不再续冲。撞墙/撞玩家的死亡已由
 	# move_and_slide 抵消速度,归零无副作用;普通受击仍保留击退滑出感。
