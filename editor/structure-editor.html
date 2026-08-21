@@ -969,7 +969,8 @@ window.ENEMY_REGISTRY = [
     function duplicateStructure() {
       var s = sel();
       if (!s) return;
-      var copy = { id: uid(), name: uniqueName(s.name, state.library), grid: cloneGrid(s.grid) };
+      var copy = { id: uid(), name: uniqueName(s.name, state.library), grid: cloneGrid(s.grid),
+                   player: s.player || null, enemies: (s.enemies || []).slice() };
       state.library.push(copy);
       state.selectedId = copy.id;
       syncSizeInputs();
@@ -1121,8 +1122,9 @@ window.ENEMY_REGISTRY = [
       if (state.spawnTool === 'player') {
         s.player = { x: gx, y: gy };
       } else {
-        // 同一格已有敌人先移除(避免重叠),再追加;允许同类型多只放在不同格
-        var list = s.enemies || [];
+        // 结构可能没有 enemies 字段(默认 demo / 复制的结构)→ 先初始化,否则 push 进临时数组被静默丢弃
+        if (!Array.isArray(s.enemies)) s.enemies = [];
+        var list = s.enemies;
         for (var i = list.length - 1; i >= 0; i--) {
           if (list[i].x === gx && list[i].y === gy) list.splice(i, 1);
         }
@@ -1170,6 +1172,8 @@ window.ENEMY_REGISTRY = [
       state.library.push({
         id: uid(),
         name: 'demo',
+        player: null,
+        enemies: [],
         grid: [
           [0,0,0,0,0,0,0,0,0,0,0,0],
           [0,1,1,1,1,1,1,1,1,1,1,0],
