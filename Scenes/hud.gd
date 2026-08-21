@@ -14,7 +14,7 @@ const KILL_COLOR := Color(0.0, 0.4, 0.5, 0.7)  # 击杀数:半透明(0.75)深青
 const KILL_FONT_SIZE := 48
 # 像素字体:Less Perfect DOS VGA(8×16 经典 VGA 计数器,作者已收窄字距)。
 # 字号保持 16 的整数倍才像素锐利(48=3×16)。
-const KILL_FONT_PATH := "res://Assets/fonts/LessPerfectDOSVGA.ttf"
+const KILL_FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
 const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
 const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
 const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板

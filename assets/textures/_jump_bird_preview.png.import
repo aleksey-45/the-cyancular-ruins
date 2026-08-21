@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbxquhfl3xc11"
-path="res://.godot/imported/Bullets.png-6fd67a92beafef05d2f285f0431a9716.ctex"
+uid="uid://chtymof36clr4"
+path="res://.godot/imported/_jump_bird_preview.png-183e7bc0ec8f8a6ce56a973d51e9d2f8.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://AssetBundle/Sprites/Bullets.png"
-dest_files=["res://.godot/imported/Bullets.png-6fd67a92beafef05d2f285f0431a9716.ctex"]
+source_file="res://Assets/textures/_jump_bird_preview.png"
+dest_files=["res://.godot/imported/_jump_bird_preview.png-183e7bc0ec8f8a6ce56a973d51e9d2f8.ctex"]
 
 [params]
 
