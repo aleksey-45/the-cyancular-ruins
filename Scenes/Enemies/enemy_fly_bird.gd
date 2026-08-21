@@ -18,7 +18,6 @@ var _hover_anchor: Vector2 = Vector2.ZERO
 var _hover_side: float = 1.0
 var _strafe_target: Vector2 = Vector2.INF  # 开火后短距随机移动目标;INF=未在移动
 var _strafe_timer: float = 0.0             # 短距移动剩余时长
-var _stale_timer: float = 0.0              # 停留计时(FLY/SHOOT 停住过久触发随机挪窝)
 var _landing: bool = false           # RETURN 落地阶段
 var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设好位置再取,否则是 (0,0))
 var _death_timer: float = -1.0      # 死亡白闪剩余;<0 表示未死亡
@@ -61,16 +60,6 @@ func _ai(delta: float) -> void:
 	var dist := toroidal_dist_to_player()
 	if state != State.SLEEP:
 		_update_facing()
-	# 停留 > max_idle_time → 随机移动(防固定炮台/原地挂机):FLY/SHOOT 停住过久就挪窝。
-	# 挪窝复用开火后短距随机移动(_start_strafe);进行中(非 INF)不重复触发。
-	if (state == State.FLY or state == State.SHOOT) and _strafe_target == Vector2.INF:
-		if velocity.length() <= EnemyParams.FlyBird.idle_still_speed:
-			_stale_timer += delta
-			if _stale_timer >= EnemyParams.FlyBird.max_idle_time:
-				_stale_timer = 0.0
-				_start_strafe()
-		else:
-			_stale_timer = 0.0
 	match state:
 		State.SLEEP:
 			if _wake_timer > 0.0:
@@ -110,13 +99,6 @@ func _ai(delta: float) -> void:
 					return
 			elif dist <= EnemyParams.FlyBird.shoot_range and _shot_clear() and _near_shoot_pos():
 				_start_shoot()
-				return
-			# 停留超时的随机挪窝:FLY 也吃 _start_strafe(到点/超时后继续原寻路)
-			if _strafe_target != Vector2.INF:
-				_strafe_timer -= delta
-				_glide_to(_strafe_target, delta)
-				if _strafe_timer <= 0.0 or (_strafe_target - global_position).length() <= EnemyParams.FlyBird.fly_speed * delta:
-					_strafe_target = Vector2.INF
 				return
 			_repath_timer -= delta
 			if _repath_timer <= 0.0:
