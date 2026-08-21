@@ -403,6 +403,56 @@ window.ENEMY_REGISTRY = [
       return { lo: Math.floor((size - 1) / 2), hi: Math.ceil((size - 1) / 2) };
     }
 
+    // 结构库整库 JSON(含 spawn)。grid 保留 0-9(编辑器装饰色,导出关卡时归一化)。
+    function serializeLibraryJSON(structs) {
+      return JSON.stringify({
+        version: 1,
+        structures: structs.map(function (s) {
+          return { name: sanitizeName(s.name), grid: s.grid,
+                   player: s.player || null, enemies: s.enemies || [] };
+        })
+      }, null, 2) + '\n';
+    }
+    function parseLibraryJSON(text) {
+      var parsed;
+      try { parsed = JSON.parse(text); }
+      catch (e) { throw new Error('JSON 解析失败: ' + e.message); }
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.structures)) {
+        throw new Error('结构库 JSON 缺少 structures 数组');
+      }
+      var out = [];
+      parsed.structures.forEach(function (st, i) {
+        if (!st || !Array.isArray(st.grid)) throw new Error('第 ' + (i + 1) + ' 个结构缺少 grid');
+        var v = validateGrid(st.grid);
+        if (!v.ok) throw new Error('结构 "' + (st.name || i) + '" 校验失败: ' + v.error);
+        var player = (st.player && typeof st.player === 'object'
+            && Number.isInteger(st.player.x) && Number.isInteger(st.player.y))
+          ? { x: st.player.x, y: st.player.y } : null;
+        var enemies = (Array.isArray(st.enemies) ? st.enemies : []).filter(function (e) {
+          return e && typeof e.type === 'string' && Number.isInteger(e.x) && Number.isInteger(e.y);
+        }).map(function (e) { return { type: e.type, x: e.x, y: e.y }; });
+        out.push({ name: sanitizeName(st.name || ('structure_' + (i + 1))), grid: st.grid,
+                   player: player, enemies: enemies });
+      });
+      return out;
+    }
+    // 单结构地图格式导出:名字行 + spawn 行 + 0/1 网格(非 0 当墙)。
+    function serializeMapStructure(s) {
+      var norm = s.grid.map(function (row) { return row.map(function (v) { return v === 0 ? 0 : 1; }); });
+      return serializeMap({ comments: [sanitizeName(s.name)], player: s.player,
+                           enemies: s.enemies || [], grid: norm });
+    }
+    // 新建空结构(数据部分,id/name 由 UI 补)。
+    function createEmptyStructure(w, h) {
+      var grid = [];
+      for (var y = 0; y < h; y++) {
+        var row = [];
+        for (var x = 0; x < w; x++) row.push(0);
+        grid.push(row);
+      }
+      return { grid: grid, player: null, enemies: [] };
+    }
+
     // 新建空整图:全 0 网格 + 空 spawn(地图唯一来源格式)。
     function createEmptyMap(w, h) {
       var grid = [];
@@ -425,7 +475,11 @@ window.ENEMY_REGISTRY = [
       parseMap: parseMap,
       serializeMap: serializeMap,
       brushOffsets: brushOffsets,
-      createEmptyMap: createEmptyMap
+      createEmptyMap: createEmptyMap,
+      serializeLibraryJSON: serializeLibraryJSON,
+      parseLibraryJSON: parseLibraryJSON,
+      serializeMapStructure: serializeMapStructure,
+      createEmptyStructure: createEmptyStructure
     };
   })();
   </script>

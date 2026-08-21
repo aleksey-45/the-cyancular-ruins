@@ -165,6 +165,41 @@ eq(emptyMap.player, null, 'createEmptyMap: 无玩家');
 eq(emptyMap.enemies, [], 'createEmptyMap: 无敌人');
 eq(Core.serializeMap(Core.createEmptyMap(2, 2)), '00\n00\n', 'createEmptyMap→serializeMap: 空图可导出');
 
+// ---- Task: 统一结构的 JSON 库 / 单结构地图导出 ----
+(function () {
+  var lib = [
+    { id: 1, name: 'demo_2', grid: [[0, 0, 1], [0, 1, 9]], player: { x: 0, y: 1 },
+      enemies: [{ type: 'jump_bird', x: 2, y: 0 }] },
+    { id: 2, name: 'tower', grid: [[1, 1], [1, 1]], player: null, enemies: [] }
+  ];
+  var json = Core.serializeLibraryJSON(lib);
+  eq(JSON.parse(json).version, 1, 'serializeLibraryJSON: 带 version');
+  var back = Core.parseLibraryJSON(json);
+  eq(back.length, 2, 'parseLibraryJSON: 数量');
+  eq(back[0].name, 'demo_2', 'parseLibraryJSON: 名字');
+  eq(back[0].grid, [[0, 0, 1], [0, 1, 9]], 'parseLibraryJSON: 0-9 网格原样');
+  eq(back[0].player, { x: 0, y: 1 }, 'parseLibraryJSON: player');
+  eq(back[0].enemies, [{ type: 'jump_bird', x: 2, y: 0 }], 'parseLibraryJSON: enemies');
+  eq(back[1].player, null, 'parseLibraryJSON: 无 player 为 null');
+  throws(function () { Core.parseLibraryJSON('{bad json'); }, 'parseLibraryJSON: 坏 JSON 报错');
+  throws(function () { Core.parseLibraryJSON('{}'); }, 'parseLibraryJSON: 缺 structures 报错');
+
+  var ms = { id: 9, name: 'levels', grid: [[0, 1, 9, 0], [0, 0, 1, 1]],
+    player: { x: 0, y: 0 }, enemies: [{ type: 'fly_bird', x: 3, y: 1 }] };
+  var text = Core.serializeMapStructure(ms);
+  eq(text.split('\n')[0], '# levels', 'serializeMapStructure: 名字行');
+  eq(text.indexOf('# player 0 0') >= 0, true, 'serializeMapStructure: player 行');
+  eq(text.indexOf('# enemy fly_bird 3 1') >= 0, true, 'serializeMapStructure: enemy 行');
+  eq(text.indexOf('0110\n0011') >= 0, true, 'serializeMapStructure: 1-9→1 归一化');
+
+  var es = Core.createEmptyStructure(3, 2);
+  eq(es.grid, [[0, 0, 0], [0, 0, 0]], 'createEmptyStructure: 全 0');
+  eq(es.player, null, 'createEmptyStructure: 无 player');
+  eq(es.enemies.length, 0, 'createEmptyStructure: 无 enemies');
+  eq(Core.serializeMapStructure({ id: 1, name: 'blank', grid: es.grid, player: es.player, enemies: es.enemies }),
+    '# blank\n000\n000\n', 'createEmptyStructure→serializeMapStructure: 空图可导出');
+})();
+
 console.log('');
 console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
 process.exit(fail === 0 ? 0 : 1);
