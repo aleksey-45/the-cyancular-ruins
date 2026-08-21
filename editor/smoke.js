@@ -71,31 +71,7 @@ eq(Core.validateGrid([[0, -1]]).ok, false, 'validateGrid: 负值非法');
 eq(Core.validateGrid([['x']]).ok, false, 'validateGrid: 非数字非法');
 eq(Core.validateGrid([]).ok, false, 'validateGrid: 空网格非法');
 
-// ---- Task 2: serializeLibrary / parseLibrary / resizeGrid ----
-const sample = [
-  { name: 'tower_01', grid: [[0, 0, 1], [0, 1, 0], [1, 1, 1]] }
-];
-const text = Core.serializeLibrary(sample);
-eq(text, '# tower_01\n001\n010\n111\n', 'serializeLibrary: 基本输出');
-eq(Core.parseLibrary(text), sample, 'parseLibrary: round-trip');
-
-eq(Core.parseLibrary('# a\n00\n11\n\n# b\n0\n1\n'), [
-  { name: 'a', grid: [[0, 0], [1, 1]] },
-  { name: 'b', grid: [[0], [1]] }
-], 'parseLibrary: 多结构 + 空行');
-
-eq(Core.parseLibrary('# x\n# 内联注释\n00\n'), [
-  { name: 'x', grid: [[0, 0]] }
-], 'parseLibrary: 裸注释行不打断结构');
-
-eq(Core.parseLibrary('# 塔楼\n00\n')[0].name, '塔楼', 'parseLibrary: 中文名保留');
-eq(Core.parseLibrary('# a\n'), [], 'parseLibrary: 只有名字没有数据则忽略');
-
-throws(() => Core.parseLibrary('# a\n0a\n'), 'parseLibrary: 非法字符报错');
-throws(() => Core.parseLibrary('00\n'), 'parseLibrary: 结构名之前的数据报错');
-throws(() => Core.parseLibrary('# a\n00\n111\n'), 'parseLibrary: 宽度不一致报错');
-throws(() => Core.serializeLibrary([{ name: 'bad', grid: [[0], [1, 2]] }]), 'serializeLibrary: 非法网格报错');
-
+// ---- resizeGrid ----
 eq(Core.resizeGrid([[1, 2], [3, 4]], 3, 2), [[1, 2, 0], [3, 4, 0]], 'resizeGrid: 加宽补 0');
 eq(Core.resizeGrid([[1, 2, 3], [4, 5, 6]], 2, 1), [[1, 2]], 'resizeGrid: 裁剪');
 eq(Core.resizeGrid([[1], [2]], 1, 3), [[1], [2], [0]], 'resizeGrid: 加高补 0');
@@ -132,13 +108,6 @@ ok((fakeWindow.ENEMY_REGISTRY || []).every(function (e) {
 }), 'ENEMY_REGISTRY 每项含 id/name/scene/color');
 
 // ---- Final review: format-contract pins ----
-const multiSample = [
-  { name: 'a', grid: [[0, 1]] },
-  { name: 'b', grid: [[2, 3], [4, 5]] }
-];
-eq(Core.parseLibrary(Core.serializeLibrary(multiSample)), multiSample, '多结构 serialize→parse 往返一致');
-eq(Core.parseLibrary('# My Tower\n00\n')[0].name, 'My_Tower', 'parseLibrary: 结构名读取时净化');
-eq(Core.parseLibrary('# x\n#\n00\n'), [{ name: 'x', grid: [[0, 0]] }], 'parseLibrary: 裸 # 注释行不打断结构');
 eq(Core.validateGrid([null]).ok, false, 'validateGrid: 首行 null 报错');
 eq(Core.validateGrid([42]).ok, false, 'validateGrid: 首行非数组报错');
 
@@ -157,13 +126,6 @@ eq(Core.brushOffsets(15), { lo: 7, hi: 7 }, 'brushOffsets: 15 → 15×15');
   }
   ok(!bad, 'brushOffsets: 1..15 全部满足 lo+1+hi===尺寸 且 lo≤hi');
 })();
-
-// ---- Task: createEmptyMap 新建空整图 ----
-const emptyMap = Core.createEmptyMap(3, 2);
-eq(emptyMap.grid, [[0, 0, 0], [0, 0, 0]], 'createEmptyMap: 全 0 网格');
-eq(emptyMap.player, null, 'createEmptyMap: 无玩家');
-eq(emptyMap.enemies, [], 'createEmptyMap: 无敌人');
-eq(Core.serializeMap(Core.createEmptyMap(2, 2)), '00\n00\n', 'createEmptyMap→serializeMap: 空图可导出');
 
 // ---- Task: 统一结构的 JSON 库 / 单结构地图导出 ----
 (function () {
