@@ -840,6 +840,36 @@ func _initialize() -> void:
 	esc2.free()
 	MazeGenerator.current_grid = []
 
+	# ── Task: FlyBird 停留超时随机移动(防固定炮台)──
+	var st_grid: Array[Array] = []
+	for _y in range(60):
+		var row_st: Array[int] = []
+		row_st.resize(120)
+		row_st.fill(MazeGenerator.EMPTY)
+		st_grid.append(row_st)
+	MazeGenerator.current_grid = st_grid
+	var st_player := StubCombatPlayer.new()
+	st_player.global_position = Vector2(400, 400)
+	root.add_child(st_player)
+	var st_bird := fb_scene.instantiate()
+	st_bird.global_position = Vector2(800, 300)
+	root.add_child(st_bird)
+	await physics_frame
+	st_bird.set("state", 3)  # SHOOT
+	st_bird.set("use_gravity", false)  # 不落地,保持悬停
+	st_bird.set("velocity", Vector2.ZERO)
+	st_bird.set("_shoot_timer", 10.0)  # 测试期间不自动开火,专心测停留逻辑
+	var strafed := false
+	for i in range(300):  # ~5s: 滑到锚点(~0.6s) + 停留 3s 触发
+		await physics_frame
+		if st_bird._strafe_target != Vector2.INF:
+			strafed = true
+			break
+	_check(strafed, "FlyBird 停留超 3 秒随机移动")
+	st_player.free()
+	st_bird.free()
+	MazeGenerator.current_grid = []
+
 	# ── Task: 地图 spawn 元数据解析 ──
 	_check(MazeGenerator.parse_spawn_metadata([
 			"# demo_2", "# player 12 34",

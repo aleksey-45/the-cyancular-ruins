@@ -36,6 +36,8 @@ class FlyBird:
 	const shoot_cooldown: float = 1.6     # 抛弹间隔(秒)
 	const strafe_range: float = 180.0    # 开火后短距随机移动最大偏移(px)
 	const strafe_duration: float = 0.3   # 短距移动最长时长(秒,到点或超时结束)
+	const max_idle_time: float = 3.0     # 停留超过此时长(秒)→ 随机移动(防固定炮台/原地挂机)
+	const idle_still_speed: float = 12.0 # 速度低于此值视为"停住"(触发停留判定)
 	const bullet_damage: int = 2          # 投弹伤害
 	const bullet_range: float = 2000.0    # 投弹射程
 	const bullet_gravity: float = 0.85     # 投弹重力倍率
