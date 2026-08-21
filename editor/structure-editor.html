@@ -1151,6 +1151,7 @@ window.ENEMY_REGISTRY = [
         state.mapMode = true;
         els.mapModeToggle.checked = true;
         document.querySelector('.spawn-panel').classList.remove('hidden');
+        fit();  // 视图适配到整图(否则仍停在结构库缩放,看不到图)
         render();  // render() 在 mapMode 下刷新 spawn 工具列表
       };
       reader.readAsText(file, 'utf-8');
@@ -1336,6 +1337,7 @@ window.ENEMY_REGISTRY = [
         state.mapMode = els.mapModeToggle.checked;
         state.spawnTool = null;
         document.querySelector('.spawn-panel').classList.toggle('hidden', !state.mapMode);
+        if (state.mapMode && state.map) fit();  // 重新进入整图模式也适配视图
         render();  // render() 在 mapMode 下刷新 spawn 工具列表
       });
       els.btnTorus.addEventListener('click', function () {
