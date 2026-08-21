@@ -4,11 +4,23 @@ extends Node2D
 # 每生成一个敌人发射一次(HUD 等接上去监听 enemy.died 做击杀计数)
 signal enemy_spawned(enemy: Node)
 
-# 类型注册表:加新敌人 = 一个 .tscn + 一行(string 路径,load() 时取)。
-const TYPES: Dictionary = {
-	"jump_bird": "res://Scenes/Enemies/EnemyJumpBird.tscn",
-	"fly_bird": "res://Scenes/Enemies/EnemyFlyBird.tscn",
-}
+# 敌人注册表(id → scene)。唯一来源 editor/enemies.json(与 HTML 编辑器共享)。
+static var TYPES: Dictionary = {}
+
+# 从 res://editor/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
+static func load_types() -> void:
+	TYPES = {}
+	var json_text := FileAccess.get_file_as_string("res://editor/enemies.json")
+	if json_text.is_empty():
+		push_error("EnemySpawner: 读不到 res://editor/enemies.json")
+		return
+	var parsed: Variant = JSON.parse_string(json_text)
+	if typeof(parsed) != TYPE_DICTIONARY or not (parsed.get("enemies", []) is Array):
+		push_error("EnemySpawner: enemies.json 格式非法")
+		return
+	for e in parsed["enemies"]:
+		if typeof(e) == TYPE_DICTIONARY and e.has("id") and e.has("scene"):
+			TYPES[str(e["id"])] = str(e["scene"])
 
 # 在 grid 里随机取 count 个「地板格」、且距 player_cell 的环面距离 >= min_dist_cells。
 # 地板格 = EMPTY 且正下方(y+1,环面取模)是 SOLID:敌人站立/落地有实心表面托底,
@@ -35,15 +47,39 @@ static func sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 	return chosen
 
 # Level0._ready 里调用。敌人加入 WorldViewport 子节点(与墙壁/玩家同空间)。
-func spawn_all(grid: Array[Array], player_pos: Vector2) -> void:
+# spawns 为 MazeGenerator.load_spawns() 的字典;有 enemies 列表按地图生成,否则回退随机采样。
+func spawn_all(grid: Array[Array], player_pos: Vector2, spawns: Dictionary = {}) -> void:
 	var world := get_parent().get_node("WorldViewport")
 	var ts: int = GameParameters.TILE_SIZE
+	var enemies_meta: Array = spawns.get("enemies", [])
+	if not enemies_meta.is_empty():
+		for entry in enemies_meta:
+			if typeof(entry) != TYPE_DICTIONARY:
+				continue
+			var type_name: String = str(entry.get("type", ""))
+			var cell: Variant = entry.get("cell")
+			if type_name.is_empty() or typeof(cell) != TYPE_VECTOR2I:
+				push_warning("EnemySpawner: 忽略非法 spawn 条目 %s" % str(entry))
+				continue
+			if not TYPES.has(type_name):
+				push_warning("EnemySpawner: 未知敌人类型 %s" % type_name)
+				continue
+			var scene: PackedScene = load(TYPES[type_name])
+			var e := scene.instantiate()
+			world.add_child(e)
+			e.global_position = Vector2(cell.x * ts + ts / 2.0, cell.y * ts + ts / 2.0)
+			enemy_spawned.emit(e)
+		print("[EnemySpawner] spawned %d enemies from map" % enemies_meta.size())
+		return
+	# 回退:随机采样(地图无 # enemy 时)
 	var min_dist_cells := int(GameParameters.enemy_spawn_min_dist / ts)
 	var player_cell := Vector2i(int(player_pos.x / ts), int(player_pos.y / ts))
 	var cells := sample_spawn_cells(grid, player_cell,
 			GameParameters.enemy_count, min_dist_cells)
 	var type_names := TYPES.keys()
 	for c in cells:
+		if type_names.is_empty():
+			break
 		var type_name: String = type_names[randi() % type_names.size()]
 		var scene: PackedScene = load(TYPES[type_name])
 		var e := scene.instantiate()

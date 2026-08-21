@@ -296,7 +296,10 @@ func is_downed() -> bool:
 	return downed
 
 func _equip_weapon(scene_path: String) -> void:
+	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)
+	var inherit_cd := 0.0
 	if _weapon != null:
+		inherit_cd = _weapon.fire_cd_timer
 		_weapon.queue_free()
 	var scene: PackedScene = load(scene_path)
 	if scene == null:
@@ -307,7 +310,7 @@ func _equip_weapon(scene_path: String) -> void:
 		return
 	_weapon = scene.instantiate() as WeaponBase
 	weapon_slot.add_child(_weapon)
-	_weapon.equip(self)
+	_weapon.equip(self, inherit_cd)
 
 func _movement_multiplier() -> Vector2:
 	if _weapon == null:

@@ -106,6 +106,58 @@ static func load_map_file() -> Array[Array]:
 	return grid
 
 
+# 解析地图文件的 spawn 元数据行(坐标=格,空格分隔)。
+# 支持:# player <col> <row> 与 # enemy <type_id> <col> <row>。
+# 返回 {"player": Vector2i, "enemies": [{"type": String, "cell": Vector2i}]};
+# 无任何 spawn 指令返回空 Dictionary。player 多行时最后一行生效。非法行 push_warning 跳过。
+static func parse_spawn_metadata(lines: Array) -> Dictionary:
+	var result := {}
+	var enemies: Array = []
+	for line in lines:
+		var text := String(line).strip_edges()
+		if not text.begins_with("#"):
+			continue
+		var parts := text.substr(1).strip_edges().split(" ", false)
+		if parts.is_empty():
+			continue
+		match parts[0]:
+			"player":
+				if parts.size() >= 3:
+					var x := int(parts[1])
+					var y := int(parts[2])
+					if x >= 0 and y >= 0:
+						result["player"] = Vector2i(x, y)
+					else:
+						push_warning("MazeGenerator: 非法 player 坐标 %s" % text)
+			"enemy":
+				if parts.size() >= 4:
+					var type_id := parts[1]
+					var x := int(parts[2])
+					var y := int(parts[3])
+					if x >= 0 and y >= 0 and not type_id.is_empty():
+						enemies.append({"type": type_id, "cell": Vector2i(x, y)})
+					else:
+						push_warning("MazeGenerator: 非法 enemy 行 %s" % text)
+			_:
+				pass  # 普通 # 注释,忽略
+	if enemies.size() > 0:
+		result["enemies"] = enemies
+	return result
+
+
+# 从地图文件读取 spawn 元数据(与 load_map_file 各自读一遍;小文件可接受)。
+static func load_spawns() -> Dictionary:
+	if not FileAccess.file_exists(MAP_FILE):
+		push_error("MazeGenerator: 找不到地图文件 %s" % MAP_FILE)
+		return {}
+	var f := FileAccess.open(MAP_FILE, FileAccess.READ)
+	var lines: Array = []
+	while not f.eof_reached():
+		lines.append(f.get_line())
+	f.close()
+	return parse_spawn_metadata(lines)
+
+
 # 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
 static var current_grid: Array[Array] = []
 
