@@ -193,6 +193,72 @@ func _initialize() -> void:
 	_check(sg.tier == 0, "霰弹枪轻武器")
 	sg.queue_free()
 
+	# ── Task: 缓冲开火(冷却>0.5 武器,最后 20% 按开火→冷却结束自动打)──
+	# 先清掉前面测试遗留的弹丸,避免污染弹丸计数
+	var bf_leftovers: Array = []
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			bf_leftovers.append(child)
+	for bl in bf_leftovers:
+		bl.free()
+	var buf_stub := StubPlayer.new()
+	root.add_child(buf_stub)
+	buf_stub.global_position = Vector2(400, 400)
+	var buf_w = sg_scene.instantiate()   # s686 fire_cooldown 0.75 > 0.5
+	buf_stub.add_child(buf_w)
+	buf_w.equip(buf_stub)
+	buf_w.fire_cd_timer = 0.1   # 0.75*0.2=0.15 窗口内(最后 20%)
+	var bf_before := 0
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			bf_before += 1
+	buf_w.try_fire()
+	_check(buf_w._fire_buffered, "冷却末尾按开火→缓冲")
+	var bf_mid := 0
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			bf_mid += 1
+	_check(bf_mid == bf_before, "缓冲期不立即开火")
+	for i in range(30):
+		await physics_frame
+		if not is_instance_valid(buf_w):
+			break
+	var bf_after := 0
+	for child in root.get_children():
+		if child.get_script() == bullet_script:
+			bf_after += 1
+	_check(bf_after == bf_before + buf_w.pellet_count, "冷却结束自动开火")
+	buf_w.queue_free()
+	buf_stub.free()
+
+	# ── Task: 预瞄算子弹碰撞体积(小球判墙,中心点不穿但体积擦墙即截断)──
+	var gl_scene: PackedScene = load("res://Scenes/Weapons/grenade_launcher.tscn")
+	_check(gl_scene != null, "榴弹场景加载")
+	var grid_arc: Array[Array] = []
+	for y in range(20):
+		var row: Array[int] = []
+		row.resize(20)
+		row.fill(MazeGenerator.EMPTY)
+		grid_arc.append(row)
+	# 水平墙:第 8 行、列 10..14(世界 x∈[160,240), y∈[128,144))
+	for x in range(10, 15):
+		grid_arc[8][x] = MazeGenerator.SOLID
+	MazeGenerator.current_grid = grid_arc
+	var arc_stub := StubPlayer.new()
+	root.add_child(arc_stub)
+	arc_stub.global_position = Vector2(100, 139)
+	var arc_w = gl_scene.instantiate()
+	arc_stub.add_child(arc_w)
+	arc_w.equip(arc_stub)
+	arc_w.bullet_gravity = 0.0   # 直线水平,便于定位;枪口世界 y=147 在墙行下方 3px,小球擦墙
+	var arc_pts := arc_w._sample_arc_points()
+	_check(arc_pts.size() > 1, "预瞄小球:弧线未空")
+	var arc_last := arc_w.to_global(arc_pts[arc_pts.size() - 1])
+	_check(arc_last.x < 160.0, "预瞄小球:体积擦墙即截断,落点在墙前")
+	arc_w.queue_free()
+	arc_stub.free()
+	MazeGenerator.current_grid = []
+
 	# ── Task: 玩家装备/切枪 ──
 	var player_scene: PackedScene = load("res://Scenes/Player/Player.tscn")
 	_check(player_scene != null, "Player 场景加载")
@@ -205,6 +271,11 @@ func _initialize() -> void:
 		p._equip_weapon("res://Scenes/Weapons/rifle_test.tscn")
 		await physics_frame
 		_check(p._weapon.weapon_name == "Rifle", "切枪到步枪")
+		# 切枪冷却继承:旧武器剩余冷却不能被切枪刷掉。
+		# equip() 同步执行,不 await(否则 _process 已扣掉一帧冷却)。
+		p._weapon.fire_cd_timer = 0.7
+		p._equip_weapon("res://Scenes/Weapons/pistol_test.tscn")
+		_check(is_equal_approx(p._weapon.fire_cd_timer, 0.7), "切枪继承剩余冷却")
 	p.free()
 
 	# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
