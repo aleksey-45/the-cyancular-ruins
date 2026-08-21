@@ -195,6 +195,25 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
   </div>
 
   <script>
+  /*__ENEMY_REGISTRY_BEGIN__*/
+window.ENEMY_REGISTRY = [
+  {
+    "id": "jump_bird",
+    "name": "JumpBird",
+    "scene": "res://Scenes/Enemies/EnemyJumpBird.tscn",
+    "color": "#6fae8f"
+  },
+  {
+    "id": "fly_bird",
+    "name": "FlyBird",
+    "scene": "res://Scenes/Enemies/EnemyFlyBird.tscn",
+    "color": "#c96fb0"
+  }
+];
+/*__ENEMY_REGISTRY_END__*/
+  </script>
+
+  <script>
   globalThis.Core = (function () {
     'use strict';
 

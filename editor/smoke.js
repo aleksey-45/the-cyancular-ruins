@@ -110,6 +110,16 @@ eq(Core.floodFill([[0, 0, 1], [0, 1, 1], [1, 1, 1]], 0, 0, 2), [[2, 2, 1], [2, 1
 eq(Core.floodFill([[0, 0, 1], [0, 1, 1], [1, 1, 1]], 0, 0, 0), [[0, 0, 1], [0, 1, 1], [1, 1, 1]], 'floodFill: 同值不修改');
 eq(Core.floodFill([[1, 1], [1, 0]], 0, 0, 9), [[9, 9], [9, 0]], 'floodFill: 从角落扩展');
 
+// ---- Task: 敌人注册表(HTML 内嵌,来自 enemies.json)----
+ok(Array.isArray(fakeWindow.ENEMY_REGISTRY) && fakeWindow.ENEMY_REGISTRY.length >= 2,
+  'ENEMY_REGISTRY 已内嵌且含敌人');
+var regIds = (fakeWindow.ENEMY_REGISTRY || []).map(function (e) { return e.id; });
+ok(regIds.indexOf('jump_bird') >= 0 && regIds.indexOf('fly_bird') >= 0,
+  'ENEMY_REGISTRY 含 jump_bird / fly_bird');
+ok((fakeWindow.ENEMY_REGISTRY || []).every(function (e) {
+  return e.id && e.name && e.scene && e.color;
+}), 'ENEMY_REGISTRY 每项含 id/name/scene/color');
+
 // ---- Final review: format-contract pins ----
 const multiSample = [
   { name: 'a', grid: [[0, 1]] },
