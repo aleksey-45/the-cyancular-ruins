@@ -93,6 +93,12 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
 .swatch.s8 { background: #c9c95e; }
 .swatch.s9 { background: #e0e0e0; }
 .hint { font-size: 12px; color: var(--text-dim); margin: 8px 0 0; }
+.spawn-tools { display: flex; flex-direction: column; gap: 6px; }
+.spawn-tools .spawn-btn {
+  text-align: left; border-left: 3px solid #888; background: var(--panel);
+  padding: 5px 8px; font-size: 12px;
+}
+.spawn-tools .spawn-btn.active { outline: 2px solid #fff; }
 
 .canvas-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .canvas-toolbar {
@@ -835,11 +841,29 @@ window.ENEMY_REGISTRY = [
         canvas.setPointerCapture(e.pointerId);
         return;
       }
+      // 整图模式 + 选中 spawn 工具:右键移除该格 spawn
+      if (state.mapMode && e.button === 2 && state.spawnTool) {
+        var cell2 = cellAt(e.offsetX, e.offsetY);
+        if (cell2 && state.map) {
+          if (state.map.player && state.map.player.x === cell2.x && state.map.player.y === cell2.y) {
+            state.map.player = null;
+          }
+          var list = state.map.enemies || [];
+          for (var i = list.length - 1; i >= 0; i--) {
+            if (list[i].x === cell2.x && list[i].y === cell2.y) list.splice(i, 1);
+          }
+          renderCanvas();
+        }
+        return;
+      }
       var s = sel();
-      if (!s) return;
       var cell = cellAt(e.offsetX, e.offsetY);
       if (!cell) return;
       if (state.mapMode) {
+        if (state.spawnTool) {
+          placeSpawn(cell.x, cell.y);
+          return;
+        }
         var erase = e.button === 2 || e.altKey || state.tool === 'erase';
         var tile = erase ? 0 : 1;  // 整图模式只画 0/1
         if (state.tool === 'fill') {
@@ -863,6 +887,7 @@ window.ENEMY_REGISTRY = [
         renderCanvas();
         return;
       }
+      if (!s) return;  // 结构模式:需选中结构
       var erase = e.button === 2 || e.altKey || state.tool === 'erase';
       var tile = erase ? 0 : state.palette;
       if (state.tool === 'fill') {
@@ -1126,7 +1151,7 @@ window.ENEMY_REGISTRY = [
         state.mapMode = true;
         els.mapModeToggle.checked = true;
         document.querySelector('.spawn-panel').classList.remove('hidden');
-        render();  // spawn 工具列表的刷新由 Task 8 补(renderSpawnTools)
+        render();  // render() 在 mapMode 下刷新 spawn 工具列表
       };
       reader.readAsText(file, 'utf-8');
     }
@@ -1139,9 +1164,46 @@ window.ENEMY_REGISTRY = [
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
+    function renderSpawnTools() {
+      var box = els.spawnTools;
+      box.innerHTML = '';
+      addSpawnToolButton(box, 'player', '玩家', '#54a0ff');
+      var reg = (typeof window !== 'undefined' && window.ENEMY_REGISTRY) || [];
+      reg.forEach(function (e) {
+        addSpawnToolButton(box, e.id, e.name, e.color);
+      });
+    }
+    function addSpawnToolButton(box, id, label, color) {
+      var b = document.createElement('button');
+      b.textContent = (id === 'player' ? '玩家' : label);
+      b.className = 'spawn-btn' + (state.spawnTool === id ? ' active' : '');
+      b.style.borderLeftColor = color;
+      b.addEventListener('click', function () {
+        state.spawnTool = (state.spawnTool === id) ? null : id;
+        renderSpawnTools();
+        renderCanvas();
+      });
+      box.appendChild(b);
+    }
+    function placeSpawn(gx, gy) {
+      var g = state.map.grid, h = g.length, w = g[0].length;
+      if (gx < 0 || gy < 0 || gx >= w || gy >= h) return;
+      if (state.spawnTool === 'player') {
+        state.map.player = { x: gx, y: gy };
+      } else {
+        // 同一格已有敌人先移除(避免重叠),再追加;允许同类型多只放在不同格
+        var list = state.map.enemies || [];
+        for (var i = list.length - 1; i >= 0; i--) {
+          if (list[i].x === gx && list[i].y === gy) list.splice(i, 1);
+        }
+        list.push({ type: state.spawnTool, x: gx, y: gy });
+      }
+      renderCanvas();
+    }
 
     function render() {
       renderLibrary();
+      if (state.mapMode) renderSpawnTools();
       renderCanvas();
       renderStatus();
     }
@@ -1274,7 +1336,7 @@ window.ENEMY_REGISTRY = [
         state.mapMode = els.mapModeToggle.checked;
         state.spawnTool = null;
         document.querySelector('.spawn-panel').classList.toggle('hidden', !state.mapMode);
-        render();  // spawn 工具列表的刷新由 Task 8 补(renderSpawnTools)
+        render();  // render() 在 mapMode 下刷新 spawn 工具列表
       });
       els.btnTorus.addEventListener('click', function () {
         if (!state.mapMode) return;
