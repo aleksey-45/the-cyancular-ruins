@@ -477,8 +477,8 @@ window.ENEMY_REGISTRY = [
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
       var vx0 = -view.panX / z, vy0 = -view.panY / z;
       var vx1 = vx0 + wrap.clientWidth / z, vy1 = vy0 + wrap.clientHeight / z;
-      var dxs = state.torusMode ? [-1, 0, 1] : [0];
-      var dys = state.torusMode ? [-1, 0, 1] : [0];
+      var dxs = state.torusMode ? [0, 1] : [0];  // 2×2 平铺:基准 + 右侧/下方各一份,内部边界展示两条接缝
+      var dys = state.torusMode ? [0, 1] : [0];
       for (var di = 0; di < dxs.length; di++) {
         for (var dj = 0; dj < dys.length; dj++) {
           var ox = dxs[di] * w, oy = dys[dj] * h;
@@ -503,8 +503,8 @@ window.ENEMY_REGISTRY = [
     }
     function drawSpawnMarkers() {
       var map = state.map;
-      var dxs = state.torusMode ? [-1, 0, 1] : [0];
-      var dys = state.torusMode ? [-1, 0, 1] : [0];
+      var dxs = state.torusMode ? [0, 1] : [0];
+      var dys = state.torusMode ? [0, 1] : [0];
       for (var di = 0; di < dxs.length; di++) {
         for (var dj = 0; dj < dys.length; dj++) {
           var ox = dxs[di] * map.grid[0].length, oy = dys[dj] * map.grid.length;
