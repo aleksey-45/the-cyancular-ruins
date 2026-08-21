@@ -31,7 +31,7 @@ func _ready() -> void:
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
-	$EnemySpawner.spawn_all(grid, $WorldViewport/Player.global_position, spawns)
+	$EnemySpawner.spawn_all(spawns)
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
@@ -140,14 +140,15 @@ func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 	if spawn_cell.x >= 0 and spawn_cell.y >= 0:
 		pos = spawn_cell
 	else:
-		# 回退:随机空格(地图无 # player 时)
-		var empty_cells: Array[Vector2i] = []
+		# 地图无 # player:固定用左上第一个空格(地图唯一来源)
 		for y in range(_grid.size()):
 			for x in range(_grid[y].size()):
 				if _grid[y][x] == MazeGenerator.EMPTY:
-					empty_cells.append(Vector2i(x, y))
-		if empty_cells.is_empty():
+					pos = Vector2i(x, y)
+					break
+			if pos.x >= 0:
+				break
+		if pos.x < 0:
 			push_error("No empty cells to place player!")
 			return
-		pos = empty_cells[randi() % empty_cells.size()]
 	player.position = Vector2(pos.x * ts + ts / 2.0, pos.y * ts + ts / 2.0)
