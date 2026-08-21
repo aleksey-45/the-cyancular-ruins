@@ -85,16 +85,13 @@ var spawns := MazeGenerator.load_spawns()
 _place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 ```
 
-`_place_player(grid, spawn_cell)` 改为:先试 `spawn_cell`;`(-1,-1)` 哨兵 → 回退现有随机空格。
+`_place_player(grid, spawn_cell)` 改为:先试 `spawn_cell`;`(-1,-1)` 哨兵 → 固定用左上第一个空格(地图唯一来源,不再随机)。
 
 ### 敌人生成(`Scenes/Enemies/enemy_spawner.gd`)
 
-`spawn_all(grid, player_pos)` 改为:
+`spawn_all(spawns)` 改为:地图是唯一来源——读取 `enemies` 列表,逐条按 `type` 取场景、按 `cell` 放像素中心,跳过未知 type(警告);无 `# enemy` 即 0 只。
 
-1. `MazeGenerator.load_spawns()`;若有 `enemies` 列表 → 逐条按 `type` 取场景、按 `cell` 放像素中心,跳过未知 type(警告)。
-2. 否则回退现有 `sample_spawn_cells` 随机采样。
-
-`GameParameters.enemy_count` / `enemy_spawn_min_dist` 仍用于回退路径,不动。
+`sample_spawn_cells` 保留为独立工具(冒烟测试仍覆盖),spawn_all 不再调用随机回退。`GameParameters.enemy_count` / `enemy_spawn_min_dist` 不再被 spawn_all 使用。
 
 ## 4. 编辑器改动(`editor/structure-editor.html`)
 
@@ -144,4 +141,4 @@ _place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 | 环面预览 | 环面平铺平移(跨接缝重复 + 无边界拖拽) |
 | spawn 记录格式 | `#` 注释元数据行(网格保持纯 0/1) |
 | 敌人同步 | 共享 `editor/enemies.json` 单一来源 + node 生成脚本 |
-| 无元数据时 | 游戏回退现有随机出生逻辑(向后兼容) |
+| 无元数据时 | 地图唯一来源:无 # enemy → 0 只敌人;无 # player → 左上第一个空格(2026-08-22 改为,去掉随机回退) |

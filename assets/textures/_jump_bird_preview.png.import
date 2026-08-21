@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://chtymof36clr4"
-path="res://.godot/imported/_jump_bird_preview.png-183e7bc0ec8f8a6ce56a973d51e9d2f8.ctex"
+uid="uid://busigayrqs4tn"
+path="res://.godot/imported/_jump_bird_preview.png-278a2e2ccd8d1f47d5b902d20da32fcc.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Assets/textures/_jump_bird_preview.png"
-dest_files=["res://.godot/imported/_jump_bird_preview.png-183e7bc0ec8f8a6ce56a973d51e9d2f8.ctex"]
+source_file="res://assets/textures/_jump_bird_preview.png"
+dest_files=["res://.godot/imported/_jump_bird_preview.png-278a2e2ccd8d1f47d5b902d20da32fcc.ctex"]
 
 [params]
 
