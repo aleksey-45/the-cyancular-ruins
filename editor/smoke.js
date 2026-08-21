@@ -158,6 +158,13 @@ eq(Core.brushOffsets(15), { lo: 7, hi: 7 }, 'brushOffsets: 15 → 15×15');
   ok(!bad, 'brushOffsets: 1..15 全部满足 lo+1+hi===尺寸 且 lo≤hi');
 })();
 
+// ---- Task: createEmptyMap 新建空整图 ----
+const emptyMap = Core.createEmptyMap(3, 2);
+eq(emptyMap.grid, [[0, 0, 0], [0, 0, 0]], 'createEmptyMap: 全 0 网格');
+eq(emptyMap.player, null, 'createEmptyMap: 无玩家');
+eq(emptyMap.enemies, [], 'createEmptyMap: 无敌人');
+eq(Core.serializeMap(Core.createEmptyMap(2, 2)), '00\n00\n', 'createEmptyMap→serializeMap: 空图可导出');
+
 console.log('');
 console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
 process.exit(fail === 0 ? 0 : 1);

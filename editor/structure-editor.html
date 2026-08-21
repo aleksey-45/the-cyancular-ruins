@@ -186,6 +186,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="grid-toggle" checked> 网格</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="map-mode-toggle"> 整图模式</label>
         <button id="btn-torus" title="跨接缝重复绘制、无边界平移(整图模式)">环面预览</button>
+        <button id="btn-map-new" title="新建一张空白整图(默认 540x324)">新建整图</button>
         <button id="btn-map-import">导入整图</button>
         <button id="btn-map-export" class="primary">导出整图</button>
         <input type="file" id="file-map-import" accept=".txt,text/plain" hidden>
@@ -402,6 +403,17 @@ window.ENEMY_REGISTRY = [
       return { lo: Math.floor((size - 1) / 2), hi: Math.ceil((size - 1) / 2) };
     }
 
+    // 新建空整图:全 0 网格 + 空 spawn(地图唯一来源格式)。
+    function createEmptyMap(w, h) {
+      var grid = [];
+      for (var y = 0; y < h; y++) {
+        var row = [];
+        for (var x = 0; x < w; x++) row.push(0);
+        grid.push(row);
+      }
+      return { grid: grid, player: null, enemies: [], comments: [] };
+    }
+
     return {
       sanitizeName: sanitizeName,
       validateGrid: validateGrid,
@@ -412,7 +424,8 @@ window.ENEMY_REGISTRY = [
       floodFill: floodFill,
       parseMap: parseMap,
       serializeMap: serializeMap,
-      brushOffsets: brushOffsets
+      brushOffsets: brushOffsets,
+      createEmptyMap: createEmptyMap
     };
   })();
   </script>
@@ -1190,6 +1203,23 @@ window.ENEMY_REGISTRY = [
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
+    function newWholeMap() {
+      var input = window.prompt('新建整图尺寸(宽x高,默认 540x324):', '540x324');
+      var w = 540, h = 324;
+      if (input != null && input.trim() !== '') {
+        var parts = input.split(/[x×,，\s]+/);
+        var nw = parseInt(parts[0], 10), nh = parseInt(parts[1], 10);
+        if (!isNaN(nw) && !isNaN(nh) && nw >= 1 && nh >= 1) { w = nw; h = nh; }
+      }
+      state.map = Core.createEmptyMap(w, h);
+      state.mapMode = true;
+      state.torusMode = false;
+      els.btnTorus.classList.remove('active');
+      els.mapModeToggle.checked = true;
+      document.querySelector('.spawn-panel').classList.remove('hidden');
+      fit();
+      render();
+    }
     function renderSpawnTools() {
       var box = els.spawnTools;
       box.innerHTML = '';
@@ -1248,6 +1278,7 @@ window.ENEMY_REGISTRY = [
         btnFit: document.getElementById('btn-fit'),
         mapModeToggle: document.getElementById('map-mode-toggle'),
         btnTorus: document.getElementById('btn-torus'),
+        btnMapNew: document.getElementById('btn-map-new'),
         btnMapImport: document.getElementById('btn-map-import'),
         btnMapExport: document.getElementById('btn-map-export'),
         fileMapImport: document.getElementById('file-map-import'),
@@ -1373,6 +1404,7 @@ window.ENEMY_REGISTRY = [
         els.btnTorus.classList.toggle('active', state.torusMode);
         renderCanvas();
       });
+      els.btnMapNew.addEventListener('click', newWholeMap);
       els.btnMapImport.addEventListener('click', function () { els.fileMapImport.click(); });
       els.fileMapImport.addEventListener('change', importWholeMap);
       els.btnMapExport.addEventListener('click', exportWholeMap);
