@@ -159,6 +159,11 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <div id="palette"></div>
         <p class="hint">0 = 空气 · 1–9 = 墙（纹理待接入）</p>
       </section>
+      <section class="panel spawn-panel hidden">
+        <h2>出生点</h2>
+        <div id="spawn-tools" class="spawn-tools"></div>
+        <p class="hint">整图模式下点格放置出生点,右键移除。</p>
+      </section>
     </aside>
 
     <main class="canvas-area">
@@ -173,6 +178,11 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <button id="btn-redo" title="Ctrl+Y">重做</button>
         <span class="spacer"></span>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="grid-toggle" checked> 网格</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="map-mode-toggle"> 整图模式</label>
+        <button id="btn-torus" title="跨接缝重复绘制、无边界平移(整图模式)">环面预览</button>
+        <button id="btn-map-import">导入整图</button>
+        <button id="btn-map-export" class="primary">导出整图</button>
+        <input type="file" id="file-map-import" accept=".txt,text/plain" hidden>
         <button id="btn-fit">适配</button>
       </div>
       <div id="canvas-wrap">
@@ -404,7 +414,8 @@ window.ENEMY_REGISTRY = [
       5: '#8a6fc9', 6: '#c96fb0', 7: '#5ec9c0', 8: '#c9c95e', 9: '#e0e0e0'
     };
 
-    var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true, brushSize: 1 };
+    var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true, brushSize: 1,
+                  mapMode: false, map: null, torusMode: false, spawnTool: null };
     var view = { zoom: 28, panX: 40, panY: 40 };
     var PLAYER_TILES = 7.5;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 16px
     var playerImg = new Image();
@@ -447,6 +458,76 @@ window.ENEMY_REGISTRY = [
       return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     }
 
+    function enemyById(id) {
+      var reg = (typeof window !== 'undefined' && window.ENEMY_REGISTRY) || [];
+      for (var i = 0; i < reg.length; i++) if (reg[i].id === id) return reg[i];
+      return null;
+    }
+    // 整图渲染:只画可见区内的墙格;环面模式下把地图沿两轴各 ±1 副本平移后裁剪。
+    function renderWholeMap() {
+      var map = state.map;
+      var w = map.grid[0].length, h = map.grid.length, z = view.zoom;
+      ctx.fillStyle = '#0d1117';
+      ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+      var vx0 = -view.panX / z, vy0 = -view.panY / z;
+      var vx1 = vx0 + wrap.clientWidth / z, vy1 = vy0 + wrap.clientHeight / z;
+      var dxs = state.torusMode ? [-1, 0, 1] : [0];
+      var dys = state.torusMode ? [-1, 0, 1] : [0];
+      for (var di = 0; di < dxs.length; di++) {
+        for (var dj = 0; dj < dys.length; dj++) {
+          var ox = dxs[di] * w, oy = dys[dj] * h;
+          var cx0 = Math.max(vx0, ox), cy0 = Math.max(vy0, oy);
+          var cx1 = Math.min(vx1, ox + w), cy1 = Math.min(vy1, oy + h);
+          if (cx1 <= cx0 || cy1 <= cy0) continue;
+          var y0 = Math.floor(cy0), y1 = Math.ceil(cy1) - 1;  // 可见格下标范围(含两端)
+          var x0 = Math.floor(cx0), x1 = Math.ceil(cx1) - 1;
+          for (var y = y0; y <= y1; y++) {
+            var mpy = y - oy;
+            for (var x = x0; x <= x1; x++) {
+              var t = map.grid[mpy][x - ox];
+              if (t !== 0) {
+                ctx.fillStyle = TILE_COLORS[t];
+                ctx.fillRect(view.panX + x * z, view.panY + y * z, z, z);
+              }
+            }
+          }
+        }
+      }
+      drawSpawnMarkers();
+    }
+    function drawSpawnMarkers() {
+      var map = state.map;
+      var dxs = state.torusMode ? [-1, 0, 1] : [0];
+      var dys = state.torusMode ? [-1, 0, 1] : [0];
+      for (var di = 0; di < dxs.length; di++) {
+        for (var dj = 0; dj < dys.length; dj++) {
+          var ox = dxs[di] * map.grid[0].length, oy = dys[dj] * map.grid.length;
+          if (map.player) drawSpawnMarker('#54a0ff', map.player.x + ox, map.player.y + oy, 'P');
+          (map.enemies || []).forEach(function (e) {
+            var en = enemyById(e.type);
+            drawSpawnMarker(en ? en.color : '#888888', e.x + ox, e.y + oy, en ? en.name.charAt(0) : '?');
+          });
+        }
+      }
+    }
+    function drawSpawnMarker(color, gx, gy, label) {
+      var z = view.zoom, px = view.panX + (gx + 0.5) * z, py = view.panY + (gy + 0.5) * z;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(3, z * 0.3), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#0b0e12';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      if (z >= 8) {
+        ctx.fillStyle = '#0b0e12';
+        ctx.font = 'bold ' + Math.max(8, z * 0.5) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, px, py);
+      }
+    }
+
     // ── canvas sizing / rendering ──
     function resizeCanvas() {
       dpr = window.devicePixelRatio || 1;
@@ -464,6 +545,11 @@ window.ENEMY_REGISTRY = [
       ctx.scale(dpr, dpr);
       ctx.fillStyle = '#17191d';
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+      if (state.mapMode) {
+        if (state.map) renderWholeMap();
+        ctx.restore();
+        return;
+      }
 
       var s = sel();
       if (s) {
@@ -533,9 +619,15 @@ window.ENEMY_REGISTRY = [
       renderCanvas();
     }
     function fit() {
-      var s = sel();
-      if (!s) return;
-      var w = s.grid[0].length, h = s.grid.length;
+      var w, h;
+      if (state.mapMode) {
+        if (!state.map) return;
+        w = state.map.grid[0].length; h = state.map.grid.length;
+      } else {
+        var s = sel();
+        if (!s) return;
+        w = s.grid[0].length; h = s.grid.length;
+      }
       var availW = wrap.clientWidth - 60, availH = wrap.clientHeight - 60;
       if (availW <= 0 || availH <= 0) return;
       var z = Math.min(availW / w, availH / h);
@@ -546,10 +638,14 @@ window.ENEMY_REGISTRY = [
       renderCanvas();
     }
     function cellAt(mx, my) {
-      var s = sel();
-      if (!s) return null;
       var x = Math.floor((mx - view.panX) / view.zoom);
       var y = Math.floor((my - view.panY) / view.zoom);
+      if (state.mapMode) {
+        if (!state.map) return null;
+        return { x: x, y: y };
+      }
+      var s = sel();
+      if (!s) return null;
       if (x < 0 || y < 0 || y >= s.grid.length || x >= s.grid[y].length) return null;
       return { x: x, y: y };
     }
@@ -591,8 +687,19 @@ window.ENEMY_REGISTRY = [
 
     // ── status bar ──
     function renderStatus() {
-      var s = sel();
       var parts = [];
+      if (state.mapMode) {
+        if (state.map) {
+          parts.push('整图 ' + state.map.grid[0].length + '×' + state.map.grid.length
+            + (state.torusMode ? ' · 环面' : ''));
+          parts.push('出生点:玩家' + (state.map.player ? '1' : '0') + ' · 敌人 ' + (state.map.enemies || []).length);
+        } else {
+          parts.push('整图模式 — 导入整图或保持结构库');
+        }
+        els.statusbar.textContent = parts.join('   ·   ');
+        return;
+      }
+      var s = sel();
       if (s) {
         parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length);
         parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮' })[state.tool] || state.tool));
@@ -635,9 +742,16 @@ window.ENEMY_REGISTRY = [
     }
     function undo() {
       if (history.length === 0) return;
+      var snap = history.pop();
+      if (state.mapMode) {
+        if (snap.id !== -1) { history.push(snap); return; }
+        redoStack.push({ id: -1, grid: cloneGrid(state.map.grid) });
+        state.map.grid = snap.grid;
+        render();
+        return;
+      }
       var s = sel();
       if (!s) return;
-      var snap = history.pop();
       if (snap.id !== s.id) { history.push(snap); return; }
       redoStack.push({ id: snap.id, grid: cloneGrid(s.grid) });
       s.grid = snap.grid;
@@ -646,9 +760,16 @@ window.ENEMY_REGISTRY = [
     }
     function redo() {
       if (redoStack.length === 0) return;
+      var snap = redoStack.pop();
+      if (state.mapMode) {
+        if (snap.id !== -1) { redoStack.push(snap); return; }
+        history.push({ id: -1, grid: cloneGrid(state.map.grid) });
+        state.map.grid = snap.grid;
+        render();
+        return;
+      }
       var s = sel();
       if (!s) return;
-      var snap = redoStack.pop();
       if (snap.id !== s.id) { redoStack.push(snap); return; }
       history.push({ id: snap.id, grid: cloneGrid(s.grid) });
       s.grid = snap.grid;
@@ -666,6 +787,15 @@ window.ENEMY_REGISTRY = [
           var cy = y + dy, cx = x + dx;
           if (cy >= 0 && cy < s.grid.length && cx >= 0 && cx < s.grid[cy].length) s.grid[cy][cx] = tile;
         }
+      }
+    }
+    function pushMapHistory() { history.push({ id: -1, grid: cloneGrid(state.map.grid) }); if (history.length > 100) history.shift(); redoStack.length = 0; }
+    function paintMapAt(x, y, tile) {
+      var g = state.map.grid, w = g[0].length, h = g.length;
+      var r = Math.floor((state.brushSize - 1) / 2);
+      for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
+        var cy = y + dy, cx = x + dx;
+        if (cy >= 0 && cy < h && cx >= 0 && cx < w) g[cy][cx] = tile;
       }
     }
     function linePaint(x0, y0, x1, y1, tile) {
@@ -709,6 +839,30 @@ window.ENEMY_REGISTRY = [
       if (!s) return;
       var cell = cellAt(e.offsetX, e.offsetY);
       if (!cell) return;
+      if (state.mapMode) {
+        var erase = e.button === 2 || e.altKey || state.tool === 'erase';
+        var tile = erase ? 0 : 1;  // 整图模式只画 0/1
+        if (state.tool === 'fill') {
+          if (state.map.grid[cell.y][cell.x] !== tile) {
+            pushMapHistory();
+            state.map.grid = Core.floodFill(state.map.grid, cell.x, cell.y, tile);
+          }
+          renderCanvas();
+          return;
+        }
+        if (state.tool === 'rect') {
+          drag = { mode: 'rect', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase };
+          canvas.setPointerCapture(e.pointerId);
+          renderCanvas();
+          return;
+        }
+        pushMapHistory();
+        paintMapAt(cell.x, cell.y, tile);
+        drag = { mode: 'paint', lastX: cell.x, lastY: cell.y, tile: tile };
+        canvas.setPointerCapture(e.pointerId);
+        renderCanvas();
+        return;
+      }
       var erase = e.button === 2 || e.altKey || state.tool === 'erase';
       var tile = erase ? 0 : state.palette;
       if (state.tool === 'fill') {
@@ -758,7 +912,8 @@ window.ENEMY_REGISTRY = [
         return;
       }
       if (drag.mode === 'paint') {
-        linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
+        if (state.mapMode) paintMapAt(cell.x, cell.y, drag.tile);
+        else linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
         drag.lastX = cell.x;
         drag.lastY = cell.y;
         renderCanvas();
@@ -767,10 +922,15 @@ window.ENEMY_REGISTRY = [
     function onPointerUp() {
       if (!drag) return;
       if (drag.mode === 'rect') {
-        var s = sel();
-        if (s) {
-          pushHistory(s);
-          s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
+        if (state.mapMode) {
+          pushMapHistory();
+          state.map.grid = Core.rectFill(state.map.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : 1);
+        } else {
+          var s = sel();
+          if (s) {
+            pushHistory(s);
+            s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
+          }
         }
       }
       drag = null;
@@ -952,6 +1112,33 @@ window.ENEMY_REGISTRY = [
       };
       reader.readAsText(file, 'utf-8');
     }
+    function importWholeMap() {
+      var file = els.fileMapImport.files && els.fileMapImport.files[0];
+      if (!file) return;
+      els.fileMapImport.value = '';
+      var reader = new FileReader();
+      reader.onload = function () {
+        var parsed;
+        try { parsed = Core.parseMap(String(reader.result)); }
+        catch (err) { window.alert('导入整图失败:' + err.message); return; }
+        if (parsed.grid.length === 0) { window.alert('导入整图失败:网格为空'); return; }
+        state.map = parsed;
+        state.mapMode = true;
+        els.mapModeToggle.checked = true;
+        document.querySelector('.spawn-panel').classList.remove('hidden');
+        render();  // spawn 工具列表的刷新由 Task 8 补(renderSpawnTools)
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+    function exportWholeMap() {
+      if (!state.map) { window.alert('无整图可导出'); return; }
+      var blob = new Blob([Core.serializeMap(state.map)], { type: 'text/plain;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = 'demo.txt';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
 
     function render() {
       renderLibrary();
@@ -971,6 +1158,12 @@ window.ENEMY_REGISTRY = [
         gridToggle: document.getElementById('grid-toggle'),
         brushSize: document.getElementById('brush-size'),
         btnFit: document.getElementById('btn-fit'),
+        mapModeToggle: document.getElementById('map-mode-toggle'),
+        btnTorus: document.getElementById('btn-torus'),
+        btnMapImport: document.getElementById('btn-map-import'),
+        btnMapExport: document.getElementById('btn-map-export'),
+        fileMapImport: document.getElementById('file-map-import'),
+        spawnTools: document.getElementById('spawn-tools'),
         modalOverlay: document.getElementById('modal-overlay'),
         modalTitle: document.getElementById('modal-title'),
         modalInput: document.getElementById('modal-input'),
@@ -1077,6 +1270,21 @@ window.ENEMY_REGISTRY = [
       });
       document.getElementById('btn-export').addEventListener('click', exportLibrary);
       els.fileImport.addEventListener('change', importLibrary);
+      els.mapModeToggle.addEventListener('change', function () {
+        state.mapMode = els.mapModeToggle.checked;
+        state.spawnTool = null;
+        document.querySelector('.spawn-panel').classList.toggle('hidden', !state.mapMode);
+        render();  // spawn 工具列表的刷新由 Task 8 补(renderSpawnTools)
+      });
+      els.btnTorus.addEventListener('click', function () {
+        if (!state.mapMode) return;
+        state.torusMode = !state.torusMode;
+        els.btnTorus.classList.toggle('active', state.torusMode);
+        renderCanvas();
+      });
+      els.btnMapImport.addEventListener('click', function () { els.fileMapImport.click(); });
+      els.fileMapImport.addEventListener('change', importWholeMap);
+      els.btnMapExport.addEventListener('click', exportWholeMap);
     }
 
     var canBoot = typeof document !== 'undefined' && document && typeof document.getElementById === 'function';
