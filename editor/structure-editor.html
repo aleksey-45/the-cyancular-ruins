@@ -1160,7 +1160,7 @@ window.ENEMY_REGISTRY = [
       var blob = new Blob([Core.serializeMap(state.map)], { type: 'text/plain;charset=utf-8' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
-      a.href = url; a.download = 'demo.txt';
+      a.href = url; a.download = 'map.txt';  // 全图导出命名 map.txt,可直接放 exe 旁做外置地图
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
