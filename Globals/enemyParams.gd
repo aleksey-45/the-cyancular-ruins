@@ -19,6 +19,7 @@ class JumpBird:
 	const hop_jump_velocity: float = -750.0   # 跳跃高度
 	const back_hop_up: float = -520.0   # 后跳高度
 	const back_hop_away: float = 320.0  # 后跳距离
+	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁
 
 class FlyBird:
 	const wake_radius: float = 1000.0     # 视野半径,屏幕外可见
@@ -65,6 +66,8 @@ class BlackBird:
 	const wander_speed: float = 240.0    # 随机游走速度
 	const wander_min_t: float = 0.7      # 换向间隔下限(秒)
 	const wander_max_t: float = 1.8      # 换向间隔上限(秒)
+	const wander_jump_velocity: float = -500.0  # 游走遇墙小跳(翻越矮墙)
+	const take_off_jump_velocity: float = -600.0  # 起飞竖直上跳高度
 	const flank_check_interval: float = 1.6  # 游走中瞬移判定周期(秒)
 	const flank_distance: float = 400.0  # 玩家后方目标距离(px)
 	const flank_search_cells: int = 4    # 理想落点周围搜索半径(格)

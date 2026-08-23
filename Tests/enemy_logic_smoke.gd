@@ -875,6 +875,7 @@ func _initialize() -> void:
 	_check(bk.contact_damage == 0, "BlackBird 无接触伤害")
 	_check(bk.collision_layer == 4, "BlackBird 占层3")
 	_check(is_equal_approx(bk.scale.x, 2.5), "BlackBird scale=2.5")
+	_check(bk.get_node("AnimatedSprite2D").texture_filter == 1, "BlackBird 像素滤镜(nearest)")
 	# 玩家远处 → 保持睡眠
 	var bk_far := StubCombatPlayer.new()
 	bk_far.global_position = Vector2(60, 200)
@@ -900,15 +901,19 @@ func _initialize() -> void:
 	_check(absf(bk_wander_vx) == EnemyParams.BlackBird.wander_speed, "黑鸟游走速度")
 	# 瞬移判定成功 → 起飞 → 落地 → 冲锋命中 6 伤(穿透无敌帧)
 	var bk_reached_takeoff := false
+	var bk_takeoff_jumping := false
 	var bk_got_hit := false
 	for _i in range(240):
 		await physics_frame
 		if bk.state == 3:  # TAKE_OFF
 			bk_reached_takeoff = true
+			if bk.velocity.y < 0.0:
+				bk_takeoff_jumping = true
 		if bk_player.hit_log.has(6):
 			bk_got_hit = true
 			break
 	_check(bk_reached_takeoff, "黑鸟进入起飞动作")
+	_check(bk_takeoff_jumping, "黑鸟起飞竖直上跳")
 	_check(bk_got_hit, "黑鸟冲锋命中玩家 6 伤")
 	_check(bk.state == 5, "黑鸟命中后大后跳")  # BACK_HOP
 	# 后跳落地 → 回游走

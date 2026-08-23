@@ -228,6 +228,7 @@ contact_damage = 0
 knockback_strength = 200.0
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1365150420]
+texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_a04ey")
 animation = &"sleep"
 

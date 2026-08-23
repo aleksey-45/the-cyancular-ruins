@@ -81,11 +81,14 @@ func _ai(delta: float) -> void:
 				_wander_timer = randf_range(EnemyParams.BlackBird.wander_min_t, EnemyParams.BlackBird.wander_max_t)
 				_wander_dir = 1.0 if randf() < 0.5 else -1.0
 			velocity.x = _wander_dir * EnemyParams.BlackBird.wander_speed
+			# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳同款判定)
+			if is_on_wall():
+				velocity.y = EnemyParams.BlackBird.wander_jump_velocity
 			_flank_check_timer -= delta
 			if _flank_check_timer <= 0.0:
 				_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
 				if _find_flank_cell():
-					velocity.x = 0.0
+					velocity = Vector2(0.0, EnemyParams.BlackBird.take_off_jump_velocity)
 					_set_state(State.TAKE_OFF)
 					_anim.play("take_off")
 					_state_timer = _anim_duration("take_off")
