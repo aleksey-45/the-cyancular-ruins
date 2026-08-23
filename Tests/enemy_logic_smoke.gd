@@ -902,6 +902,8 @@ func _initialize() -> void:
 	# 瞬移判定成功 → 起飞 → 落地 → 冲锋命中 6 伤(穿透无敌帧)
 	var bk_reached_takeoff := false
 	var bk_takeoff_jumping := false
+	var bk_takeoff_flashing := false
+	var bk_arrival_flashing := false
 	var bk_got_hit := false
 	for _i in range(240):
 		await physics_frame
@@ -909,11 +911,18 @@ func _initialize() -> void:
 			bk_reached_takeoff = true
 			if bk.velocity.y < 0.0:
 				bk_takeoff_jumping = true
+			if bk.modulate.r > 1.0:
+				bk_takeoff_flashing = true
+		elif bk.state == 4:  # CHARGE(含瞬移后落地)
+			if bk.modulate.r > 1.0:
+				bk_arrival_flashing = true
 		if bk_player.hit_log.has(6):
 			bk_got_hit = true
 			break
 	_check(bk_reached_takeoff, "黑鸟进入起飞动作")
 	_check(bk_takeoff_jumping, "黑鸟起飞竖直上跳")
+	_check(bk_takeoff_flashing, "黑鸟起飞白闪(瞬移前)")
+	_check(bk_arrival_flashing, "黑鸟瞬移后白闪(到达)")
 	_check(bk_got_hit, "黑鸟冲锋命中玩家 6 伤")
 	_check(bk.state == 5, "黑鸟命中后大后跳")  # BACK_HOP
 	# 后跳落地 → 回游走
@@ -966,9 +975,11 @@ func _initialize() -> void:
 	var bk2_player := StubCombatPlayer.new()
 	bk2_player.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)
 	root.add_child(bk2_player)
-	# 玩家面朝右(默认 facing=1),理想落点 = 玩家格 − 12 列 = 列 48;把列 44..52 整列墙堵死
-	var bk_wall_c0 := posmod(60 - int(EnemyParams.BlackBird.flank_distance / 32) - 4, 120)
-	for _c in range(bk_wall_c0, bk_wall_c0 + 9):
+	# 玩家面朝右(默认 facing=1),理想落点 = 玩家格 − flank_distance/32 列;把整个搜索半径的列墙堵死
+	var bk_ideal_x := posmod(60 - int(EnemyParams.BlackBird.flank_distance / 32), 120)
+	var bk_radius := EnemyParams.BlackBird.flank_search_cells
+	var bk_wall_c0 := posmod(bk_ideal_x - bk_radius, 120)
+	for _c in range(bk_wall_c0, bk_wall_c0 + 2 * bk_radius + 1):
 		for _y in range(58):
 			bk2_grid[_y][posmod(_c, 120)] = MazeGenerator.SOLID
 	MazeGenerator.current_grid = bk2_grid
@@ -980,7 +991,7 @@ func _initialize() -> void:
 			break
 	_check(not bk_flanked, "黑鸟背墙不瞬移(仍游走)")
 	# 拆墙 → 应能瞬移
-	for _c in range(bk_wall_c0, bk_wall_c0 + 9):
+	for _c in range(bk_wall_c0, bk_wall_c0 + 2 * bk_radius + 1):
 		for _y in range(58):
 			bk2_grid[_y][posmod(_c, 120)] = MazeGenerator.EMPTY
 	MazeGenerator.current_grid = bk2_grid

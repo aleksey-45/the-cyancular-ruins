@@ -19,6 +19,7 @@ var _back_hop_cd: float = 0.0        # 后跳落地冷却
 var _death_timer: float = -1.0       # 死亡白闪剩余;<0 表示未死亡
 var _body_min: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最小角(按 scale 换算)
 var _body_max: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最大角(按 scale 换算)
+var _teleport_flash_timer: float = 0.0  # 瞬移前后白闪剩余(过曝白,结束恢复)
 
 
 func _ready() -> void:
@@ -101,6 +102,7 @@ func _ai(delta: float) -> void:
 				_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
 				if _find_flank_cell():
 					velocity = Vector2(0.0, EnemyParams.BlackBird.take_off_jump_velocity)
+					_teleport_flash_timer = EnemyParams.BlackBird.teleport_flash_time  # 瞬移前白闪
 					_set_state(State.TAKE_OFF)
 					_anim.play("take_off")
 					_state_timer = _anim_duration("take_off")
@@ -207,6 +209,7 @@ func _teleport_to_flank() -> void:
 	global_position = Vector2(_flank_cell.x * ts + ts * 0.5,
 			_flank_cell.y * ts + ts * 0.5 - EnemyParams.BlackBird.teleport_drop)
 	velocity = Vector2.ZERO
+	_teleport_flash_timer = EnemyParams.BlackBird.teleport_flash_time  # 瞬移后白闪(到达提示)
 	_flank_cell = Vector2i(-1, -1)
 	_wrap()  # 锚定到玩家最近副本(环面)
 
@@ -260,4 +263,10 @@ func _physics_process(delta: float) -> void:
 		modulate = Color(3.0, 3.0, 3.0, 1.0) if int(_death_timer * 20.0) % 2 == 0 else Color(1.0, 1.0, 1.0, 0.35)
 		super._physics_process(delta)
 		return
+	# 瞬移前后白闪:过曝白常亮,时长结束恢复白色
+	if _teleport_flash_timer > 0.0:
+		_teleport_flash_timer = maxf(_teleport_flash_timer - delta, 0.0)
+		modulate = Color(3.0, 3.0, 3.0, 1.0)
+		if _teleport_flash_timer == 0.0:
+			modulate = Color.WHITE
 	super._physics_process(delta)
