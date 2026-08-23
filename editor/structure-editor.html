@@ -79,7 +79,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
   font-size: 12px; font-weight: 600; cursor: pointer; color: #0b0e12; user-select: none;
 }
 .swatch.sw-air {
-  background: repeating-conic-gradient(#2a2f37 0 25%, #20242b 0 50%) 0 0/16px 16px;
+  background: repeating-conic-gradient(#2a2f37 0 25%, #20242b 0 50%) 0 0/32px 32px;
   border: 1px dashed #4a5462; color: var(--text-dim);
 }
 .swatch.selected { outline: 2px solid #fff; outline-offset: 1px; }
@@ -201,9 +201,9 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
       <input id="modal-input" type="text">
       <div id="modal-size-row" class="hidden" style="display:flex;gap:8px;">
         <label style="flex:1;font-size:12px;color:var(--text-dim);">宽
-          <input id="modal-size-w" type="number" min="1" value="540" style="width:100%;"></label>
+          <input id="modal-size-w" type="number" min="1" value="250" style="width:100%;"></label>
         <label style="flex:1;font-size:12px;color:var(--text-dim);">高
-          <input id="modal-size-h" type="number" min="1" value="324" style="width:100%;"></label>
+          <input id="modal-size-h" type="number" min="1" value="150" style="width:100%;"></label>
       </div>
       <p id="modal-err" class="err"></p>
       <div class="modal-actions">
@@ -227,6 +227,12 @@ window.ENEMY_REGISTRY = [
     "name": "FlyBird",
     "scene": "res://Scenes/Enemies/EnemyFlyBird.tscn",
     "color": "#c96fb0"
+  },
+  {
+    "id": "black_bird",
+    "name": "BlackBird",
+    "scene": "res://Scenes/Enemies/EnemyBlackBird.tscn",
+    "color": "#8a8f98"
   }
 ];
 /*__ENEMY_REGISTRY_END__*/
@@ -435,7 +441,7 @@ window.ENEMY_REGISTRY = [
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true, brushSize: 1,
                   torusMode: false, spawnTool: null };
     var view = { zoom: 28, panX: 40, panY: 40 };
-    var PLAYER_TILES = 7.5;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 16px
+    var PLAYER_TILES = 3.75;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 32px
     var playerImg = new Image();
     playerImg.src = '../icon.svg';
     var hoverCell = null;
@@ -911,8 +917,8 @@ window.ENEMY_REGISTRY = [
         els.modalErr.textContent = '';
         if (opts.withSize) {
           els.modalSizeRow.classList.remove('hidden');
-          els.modalSizeW.value = opts.defaultW != null ? opts.defaultW : 540;
-          els.modalSizeH.value = opts.defaultH != null ? opts.defaultH : 324;
+          els.modalSizeW.value = opts.defaultW != null ? opts.defaultW : 250;
+          els.modalSizeH.value = opts.defaultH != null ? opts.defaultH : 150;
         } else {
           els.modalSizeRow.classList.add('hidden');
         }
@@ -955,8 +961,8 @@ window.ENEMY_REGISTRY = [
     function addStructure() {
       promptName('新建结构', uniqueName('structure', state.library), null, { withSize: true }).then(function (name) {
         if (!name) return;
-        var w = clampMin(els.modalSizeW.value, 1, 540);
-        var h = clampMin(els.modalSizeH.value, 1, 324);
+        var w = clampMin(els.modalSizeW.value, 1, 250);
+        var h = clampMin(els.modalSizeH.value, 1, 150);
         var data = Core.createEmptyStructure(w, h);
         var s = { id: uid(), name: name, grid: data.grid, player: data.player, enemies: data.enemies };
         state.library.push(s);
