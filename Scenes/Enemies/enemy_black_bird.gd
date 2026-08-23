@@ -17,6 +17,7 @@ var _landing_timer: float = 0.0      # 瞬移后落地兜底
 var _prep_timer: float = 0.0         # 起飞落地后/传送落地后停顿剩余
 var _wait_land: bool = false         # 起飞/传送后是否还在空中(等落地)
 var _left_ground: bool = false       # 起飞/传送跳是否已离地(排除进状态帧 is_on_floor 的旧值)
+	var _teleport_cooldown: float = 0.0  # 冲锋结束后瞬移冷却剩余
 var _charge_timer: float = 0.0       # 冲锋超时
 var _back_hop_cd: float = 0.0        # 后跳落地冷却
 var _death_timer: float = -1.0       # 死亡白闪剩余;<0 表示未死亡
@@ -108,8 +109,9 @@ func _ai(delta: float) -> void:
 			# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳同款判定)
 			if is_on_wall():
 				velocity.y = EnemyParams.BlackBird.wander_jump_velocity
+			_teleport_cooldown = maxf(_teleport_cooldown - delta, 0.0)
 			_flank_check_timer -= delta
-			if _flank_check_timer <= 0.0:
+			if _flank_check_timer <= 0.0 and _teleport_cooldown <= 0.0:
 				_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
 				if _find_flank_cell():
 					velocity = Vector2(0.0, EnemyParams.BlackBird.take_off_jump_velocity)
@@ -173,6 +175,7 @@ func _ai(delta: float) -> void:
 			var dir := toroidal_dir_to_player()
 			velocity.x = dir.x * EnemyParams.BlackBird.charge_speed
 			if is_on_wall():
+				velocity.x = 0.0  # 越障跳纯上跳,不叠加水平分量
 				velocity.y = EnemyParams.BlackBird.charge_jump_velocity
 		State.BACK_HOP:
 			if is_on_floor() and _back_hop_cd <= 0.0:
@@ -276,6 +279,7 @@ func _start_back_hop() -> void:
 	var away := toroidal_dir_to_player()
 	velocity = Vector2(-away.x * EnemyParams.BlackBird.back_hop_away, EnemyParams.BlackBird.back_hop_up)
 	_back_hop_cd = 0.35
+	_teleport_cooldown = EnemyParams.BlackBird.teleport_cooldown
 
 
 func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:

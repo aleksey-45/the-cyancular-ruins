@@ -22,7 +22,7 @@ class JumpBird:
 	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁
 
 class FlyBird:
-	const wake_radius: float = 1000.0     # 视野半径,屏幕外可见
+	const wake_radius: float = 1100.0     # 视野半径,屏幕外可见
 	const max_chase_distance: float = 2000.0  # 距玩家超此值不启动任何寻路(直接返程)
 	const home_range: float = 2000.0      # 玩家距出生点超此值 → 放弃，然后返程
 	const hover_altitude: float = 40.0    # 巡航高度(路径格上方 px)
@@ -61,25 +61,26 @@ class FlyBird:
 	const death_flash_time: float = 0.5   # 死亡白闪时长(秒),闪完销毁
 
 class BlackBird:
-	const wake_radius: float = 950.0     # 玩家多近苏醒
+	const wake_radius: float = 1000.0     # 玩家多近苏醒
 	const sleep_radius: float = 1200.0   # 玩家多远入睡(离开范围)
-	const wander_speed: float = 200.0    # 随机游走速度
-	const wander_min_t: float = 0.8      # 换向间隔下限(秒)
-	const wander_max_t: float = 1.8      # 换向间隔上限(秒)
+	const wander_speed: float = 250.0    # 随机游走速度
+	const wander_min_t: float = 1.0      # 换向间隔下限(秒)
+	const wander_max_t: float = 2.0      # 换向间隔上限(秒)
 	const wander_jump_velocity: float = -500.0  # 游走遇墙小跳(翻越矮墙)
-	const take_off_jump_velocity: float = -1000.0  # 起飞竖直上跳高度
+	const take_off_jump_velocity: float = -1200.0  # 起飞竖直上跳高度
 	const flank_check_interval: float = 1.6  # 游走中瞬移判定周期(秒)
-	const flank_distance: float = 400.0  # 玩家后方目标距离(px)
+	const flank_distance: float = 600.0  # 玩家后方目标距离(px)
 	const flank_search_cells: int = 6    # 理想落点周围搜索半径(格)
-	const teleport_drop: float = 200.0    # 瞬移到落点上方高度(px),再下落
+	const teleport_drop: float = 250.0    # 瞬移到落点上方高度(px),再下落
 	const landing_timeout: float = 0.6   # 落地兜底(秒)
 	const teleport_prep_time: float = 0.25  # 起飞落地后停顿(传送前),鸟落地且停水平移动
 	const charge_prep_time: float = 0.5     # 传送落地后停顿(冲锋前)
+	const teleport_cooldown: float = 3.0    # 冲锋结束后瞬移冷却(秒),期间不判定瞬移
 	const teleport_flash_time: float = 0.25  # 传送瞬间白闪时长(秒)
-	const charge_speed: float = 850.0   # 冲锋水平速度
+	const charge_speed: float = 800.0   # 冲锋水平速度
 	const charge_damage: int = 6         # 冲锋伤害(穿透无敌帧)
-	const charge_timeout: float = 1.2    # 冲锋超时 → 未命中大后跳
+	const charge_timeout: float = 1.5    # 冲锋超时 → 未命中大后跳
 	const charge_jump_velocity: float = -650.0  # 遇墙自动跳初速
-	const back_hop_up: float = -600.0    # 大后跳高度
-	const back_hop_away: float = 550.0   # 大后跳距离
+	const back_hop_up: float = -550.0    # 大后跳高度
+	const back_hop_away: float = 600.0   # 大后跳距离
 	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁
