@@ -73,7 +73,8 @@ class BlackBird:
 	const flank_search_cells: int = 6    # 理想落点周围搜索半径(格)
 	const teleport_drop: float = 200.0    # 瞬移到落点上方高度(px),再下落
 	const landing_timeout: float = 0.6   # 落地兜底(秒)
-	const teleport_prep_time: float = 0.5  # 起飞落地后/传送落地后停顿(秒),再闪光/冲锋
+	const teleport_prep_time: float = 0.25  # 起飞落地后停顿(传送前),鸟落地且停水平移动
+	const charge_prep_time: float = 0.5     # 传送落地后停顿(冲锋前)
 	const teleport_flash_time: float = 0.25  # 传送瞬间白闪时长(秒)
 	const charge_speed: float = 850.0   # 冲锋水平速度
 	const charge_damage: int = 6         # 冲锋伤害(穿透无敌帧)

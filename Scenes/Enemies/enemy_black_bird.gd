@@ -131,6 +131,7 @@ func _ai(delta: float) -> void:
 						_left_ground = true
 			elif _prep_timer > 0.0:
 				_prep_timer -= delta
+				velocity.x = 0.0  # 停顿期间停止左右移动
 			else:
 				if _flank_cell == Vector2i(-1, -1):
 					_set_state(State.WANDER)  # 兜底:无落点不该进 TAKE_OFF
@@ -144,18 +145,18 @@ func _ai(delta: float) -> void:
 				_anim.play("run")
 		State.CHARGE:
 			_anim.play("run")
-			# 瞬移后落地 → 停顿 teleport_prep_time → 才冲锋
+			# 瞬移后落地 → 停顿 charge_prep_time → 才冲锋
 			if _wait_land:
 				if is_on_floor():
 					if _left_ground:
 						_wait_land = false
-						_prep_timer = EnemyParams.BlackBird.teleport_prep_time
+						_prep_timer = EnemyParams.BlackBird.charge_prep_time
 					else:
 						_left_ground = true
 				_landing_timer -= delta
 				if _landing_timer <= 0.0:
 					_wait_land = false
-					_prep_timer = EnemyParams.BlackBird.teleport_prep_time  # 兜底:超时也进停顿
+					_prep_timer = EnemyParams.BlackBird.charge_prep_time  # 兜底:超时也进停顿
 				velocity.x = 0.0
 				return
 			elif _prep_timer > 0.0:
