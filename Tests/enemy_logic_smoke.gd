@@ -900,6 +900,7 @@ func _initialize() -> void:
 	_check(bk_reached_wander, "黑鸟进入游走")
 	_check(absf(bk_wander_vx) == EnemyParams.BlackBird.wander_speed, "黑鸟游走速度")
 	# 瞬移判定成功 → 起飞 → 落地 → 冲锋命中 6 伤(穿透无敌帧)
+	var bk_sil_mat := bk.get_node("AnimatedSprite2D").material as ShaderMaterial
 	var bk_reached_takeoff := false
 	var bk_takeoff_jumping := false
 	var bk_takeoff_flashing := false
@@ -911,10 +912,10 @@ func _initialize() -> void:
 			bk_reached_takeoff = true
 			if bk.velocity.y < 0.0:
 				bk_takeoff_jumping = true
-			if bk.modulate.r > 1.0:
+			if bk_sil_mat != null and bk_sil_mat.get_shader_parameter("silhouette") > 0.5:
 				bk_takeoff_flashing = true
 		elif bk.state == 4:  # CHARGE(含瞬移后落地)
-			if bk.modulate.r > 1.0:
+			if bk_sil_mat != null and bk_sil_mat.get_shader_parameter("silhouette") > 0.5:
 				bk_arrival_flashing = true
 		if bk_player.hit_log.has(6):
 			bk_got_hit = true

@@ -19,12 +19,20 @@ var _back_hop_cd: float = 0.0        # 后跳落地冷却
 var _death_timer: float = -1.0       # 死亡白闪剩余;<0 表示未死亡
 var _body_min: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最小角(按 scale 换算)
 var _body_max: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最大角(按 scale 换算)
-var _teleport_flash_timer: float = 0.0  # 瞬移前后白闪剩余(过曝白,结束恢复)
+var _teleport_flash_timer: float = 0.0  # 瞬移前后白闪剩余(纯白剪影,结束恢复)
+var _silhouette_mat: ShaderMaterial = null  # 纯白剪影着色器材质
 
 
 func _ready() -> void:
 	super._ready()
 	_anim = $AnimatedSprite2D
+	# 纯白剪影材质:每实例独立创建——tscn 里共享 sub_resource 材质会导致一只鸟白闪
+	# 全屏鸟跟着白闪(跨实例),且编辑器重存 tscn 会把场景材质冲掉;代码挂最稳。
+	var bb_shader := load("res://Scenes/Enemies/black_bird_silhouette.gdshader") as Shader
+	var bb_mat := ShaderMaterial.new()
+	bb_mat.shader = bb_shader
+	_anim.material = bb_mat
+	_silhouette_mat = bb_mat
 	_set_state(State.SLEEP)
 	_anim.play("sleep")
 	_align_contact_area()
@@ -255,6 +263,8 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 
 func _physics_process(delta: float) -> void:
 	if is_dead:
+		if _silhouette_mat != null:
+			_silhouette_mat.set_shader_parameter("silhouette", 0.0)
 		_death_timer -= delta
 		if _death_timer <= 0.0:
 			queue_free()
@@ -263,10 +273,11 @@ func _physics_process(delta: float) -> void:
 		modulate = Color(3.0, 3.0, 3.0, 1.0) if int(_death_timer * 20.0) % 2 == 0 else Color(1.0, 1.0, 1.0, 0.35)
 		super._physics_process(delta)
 		return
-	# 瞬移前后白闪:过曝白常亮,时长结束恢复白色
+	# 瞬移前后白闪:纯白剪影(silhouette shader),时长结束恢复
 	if _teleport_flash_timer > 0.0:
 		_teleport_flash_timer = maxf(_teleport_flash_timer - delta, 0.0)
-		modulate = Color(3.0, 3.0, 3.0, 1.0)
-		if _teleport_flash_timer == 0.0:
-			modulate = Color.WHITE
+		if _silhouette_mat != null:
+			_silhouette_mat.set_shader_parameter("silhouette", 1.0)
+		if _teleport_flash_timer == 0.0 and _silhouette_mat != null:
+			_silhouette_mat.set_shader_parameter("silhouette", 0.0)
 	super._physics_process(delta)
