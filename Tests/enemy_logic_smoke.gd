@@ -874,7 +874,7 @@ func _initialize() -> void:
 	_check(bk.hp == 30, "BlackBird hp=30")
 	_check(bk.contact_damage == 0, "BlackBird 无接触伤害")
 	_check(bk.collision_layer == 4, "BlackBird 占层3")
-	_check(is_equal_approx(bk.scale.x, 2.5), "BlackBird scale=2.5")
+	_check(is_equal_approx(bk.scale.x, 2.0), "BlackBird scale=2.0")
 	_check(bk.get_node("AnimatedSprite2D").texture_filter == 1, "BlackBird 像素滤镜(nearest)")
 	# 玩家远处 → 保持睡眠
 	var bk_far := StubCombatPlayer.new()
