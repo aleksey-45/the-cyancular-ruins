@@ -58,3 +58,22 @@ class FlyBird:
 	const escape_search_range: int = 90   # 死区逃逸时向左右搜索的格数上限
 	const escape_max_descent: int = 40      # 死区逃逸下探行数上限(当前行无解时往下逐行找)
 	const death_flash_time: float = 0.5   # 死亡白闪时长(秒),闪完销毁
+
+class BlackBird:
+	const wake_radius: float = 950.0     # 玩家多近苏醒
+	const sleep_radius: float = 1200.0   # 玩家多远入睡(离开范围)
+	const wander_speed: float = 240.0    # 随机游走速度
+	const wander_min_t: float = 0.7      # 换向间隔下限(秒)
+	const wander_max_t: float = 1.8      # 换向间隔上限(秒)
+	const flank_check_interval: float = 1.6  # 游走中瞬移判定周期(秒)
+	const flank_distance: float = 400.0  # 玩家后方目标距离(px)
+	const flank_search_cells: int = 4    # 理想落点周围搜索半径(格)
+	const teleport_drop: float = 60.0    # 瞬移到落点上方高度(px),再下落
+	const landing_timeout: float = 0.6   # 落地兜底(秒)
+	const charge_speed: float = 1100.0   # 冲锋水平速度
+	const charge_damage: int = 6         # 冲锋伤害(穿透无敌帧)
+	const charge_timeout: float = 1.2    # 冲锋超时 → 未命中大后跳
+	const charge_jump_velocity: float = -650.0  # 遇墙自动跳初速
+	const back_hop_up: float = -720.0    # 大后跳高度
+	const back_hop_away: float = 460.0   # 大后跳距离
+	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁
