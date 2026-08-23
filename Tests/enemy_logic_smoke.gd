@@ -903,18 +903,15 @@ func _initialize() -> void:
 	var bk_sil_mat := bk.get_node("AnimatedSprite2D").material as ShaderMaterial
 	var bk_reached_takeoff := false
 	var bk_takeoff_jumping := false
-	var bk_takeoff_flashing := false
 	var bk_arrival_flashing := false
 	var bk_got_hit := false
-	for _i in range(240):
+	for _i in range(360):
 		await physics_frame
 		if bk.state == 3:  # TAKE_OFF
 			bk_reached_takeoff = true
 			if bk.velocity.y < 0.0:
 				bk_takeoff_jumping = true
-			if bk_sil_mat != null and bk_sil_mat.get_shader_parameter("silhouette") > 0.5:
-				bk_takeoff_flashing = true
-		elif bk.state == 4:  # CHARGE(含瞬移后落地)
+		elif bk.state == 4:  # CHARGE(含瞬移后落地停顿)
 			if bk_sil_mat != null and bk_sil_mat.get_shader_parameter("silhouette") > 0.5:
 				bk_arrival_flashing = true
 		if bk_player.hit_log.has(6):
@@ -922,7 +919,6 @@ func _initialize() -> void:
 			break
 	_check(bk_reached_takeoff, "黑鸟进入起飞动作")
 	_check(bk_takeoff_jumping, "黑鸟起飞竖直上跳")
-	_check(bk_takeoff_flashing, "黑鸟起飞白闪(瞬移前)")
 	_check(bk_arrival_flashing, "黑鸟瞬移后白闪(到达)")
 	_check(bk_got_hit, "黑鸟冲锋命中玩家 6 伤")
 	_check(bk.state == 5, "黑鸟命中后大后跳")  # BACK_HOP

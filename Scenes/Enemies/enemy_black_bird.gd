@@ -14,6 +14,9 @@ var _wander_dir: float = 1.0         # 游走方向(±1)
 var _flank_check_timer: float = 0.0  # 瞬移判定周期剩余
 var _flank_cell: Vector2i = Vector2i(-1, -1)  # 选定落点格
 var _landing_timer: float = 0.0      # 瞬移后落地兜底
+var _prep_timer: float = 0.0         # 起飞落地后/传送落地后停顿剩余
+var _wait_land: bool = false         # 起飞/传送后是否还在空中(等落地)
+var _left_ground: bool = false       # 起飞/传送跳是否已离地(排除进状态帧 is_on_floor 的旧值)
 var _charge_timer: float = 0.0       # 冲锋超时
 var _back_hop_cd: float = 0.0        # 后跳落地冷却
 var _death_timer: float = -1.0       # 死亡白闪剩余;<0 表示未死亡
@@ -110,31 +113,55 @@ func _ai(delta: float) -> void:
 				_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
 				if _find_flank_cell():
 					velocity = Vector2(0.0, EnemyParams.BlackBird.take_off_jump_velocity)
-					_teleport_flash_timer = EnemyParams.BlackBird.teleport_flash_time  # 瞬移前白闪
+					_wait_land = true
+					_left_ground = false
+					_prep_timer = 0.0
 					_set_state(State.TAKE_OFF)
 					_anim.play("take_off")
-					_state_timer = _anim_duration("take_off")
 		State.TAKE_OFF:
-			_state_timer -= delta
-			if _state_timer <= 0.0:
+			_anim.play("take_off")
+			# 起飞竖直上跳 → 落地 → 停顿 teleport_prep_time → 闪光+瞬移
+			if _wait_land:
+				# 进状态那帧 is_on_floor 是旧的(上帧在地面),要求先离地再落地才算数
+				if is_on_floor():
+					if _left_ground:
+						_wait_land = false
+						_prep_timer = EnemyParams.BlackBird.teleport_prep_time
+					else:
+						_left_ground = true
+			elif _prep_timer > 0.0:
+				_prep_timer -= delta
+			else:
 				if _flank_cell == Vector2i(-1, -1):
 					_set_state(State.WANDER)  # 兜底:无落点不该进 TAKE_OFF
 					return
-				_teleport_to_flank()
+				_teleport_to_flank()  # 白闪在 _teleport_to_flank 内触发(传送瞬间)
 				_set_state(State.CHARGE)
 				_charge_timer = EnemyParams.BlackBird.charge_timeout
 				_landing_timer = EnemyParams.BlackBird.landing_timeout
+				_wait_land = true
+				_left_ground = false
 				_anim.play("run")
 		State.CHARGE:
 			_anim.play("run")
-			# 瞬移后先落地(只受重力),落地或兜底后才开始水平冲锋
-			if _landing_timer > 0.0:
+			# 瞬移后落地 → 停顿 teleport_prep_time → 才冲锋
+			if _wait_land:
+				if is_on_floor():
+					if _left_ground:
+						_wait_land = false
+						_prep_timer = EnemyParams.BlackBird.teleport_prep_time
+					else:
+						_left_ground = true
 				_landing_timer -= delta
-				if is_on_floor() or _landing_timer <= 0.0:
-					_landing_timer = 0.0
-				else:
-					velocity.x = 0.0
-					return
+				if _landing_timer <= 0.0:
+					_wait_land = false
+					_prep_timer = EnemyParams.BlackBird.teleport_prep_time  # 兜底:超时也进停顿
+				velocity.x = 0.0
+				return
+			elif _prep_timer > 0.0:
+				_prep_timer -= delta
+				velocity.x = 0.0
+				return
 			if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
 				_on_charge_hit_player()
 				return

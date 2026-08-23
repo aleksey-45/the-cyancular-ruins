@@ -67,13 +67,14 @@ class BlackBird:
 	const wander_min_t: float = 0.8      # 换向间隔下限(秒)
 	const wander_max_t: float = 1.8      # 换向间隔上限(秒)
 	const wander_jump_velocity: float = -500.0  # 游走遇墙小跳(翻越矮墙)
-	const take_off_jump_velocity: float = -600.0  # 起飞竖直上跳高度
+	const take_off_jump_velocity: float = -1000.0  # 起飞竖直上跳高度
 	const flank_check_interval: float = 1.6  # 游走中瞬移判定周期(秒)
 	const flank_distance: float = 400.0  # 玩家后方目标距离(px)
 	const flank_search_cells: int = 6    # 理想落点周围搜索半径(格)
 	const teleport_drop: float = 200.0    # 瞬移到落点上方高度(px),再下落
 	const landing_timeout: float = 0.6   # 落地兜底(秒)
-	const teleport_flash_time: float = 0.5  # 瞬移前后白闪时长(秒)
+	const teleport_prep_time: float = 0.5  # 起飞落地后/传送落地后停顿(秒),再闪光/冲锋
+	const teleport_flash_time: float = 0.25  # 传送瞬间白闪时长(秒)
 	const charge_speed: float = 850.0   # 冲锋水平速度
 	const charge_damage: int = 6         # 冲锋伤害(穿透无敌帧)
 	const charge_timeout: float = 1.2    # 冲锋超时 → 未命中大后跳
