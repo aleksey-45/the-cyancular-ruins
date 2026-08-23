@@ -993,6 +993,21 @@ func _initialize() -> void:
 	_check(bk_flanked2, "黑鸟拆墙后可瞬移")
 	bk2_player.free()
 	bk2.free()
+	# 落点清空判定(瞬移不穿墙):碰撞箱压到实心格返回 false
+	var clr_grid: Array[Array] = []
+	for _y in range(20):
+		var row_clr: Array[int] = []
+		row_clr.resize(40)
+		row_clr.fill(MazeGenerator.EMPTY)
+		clr_grid.append(row_clr)
+	clr_grid[10][10] = MazeGenerator.SOLID  # 单墙
+	MazeGenerator.current_grid = clr_grid
+	var bk_clr = bk_scene.instantiate()
+	root.add_child(bk_clr)
+	await physics_frame
+	_check(not bk_clr._body_clear_at(Vector2(10 * 32 + 16, 10 * 32 + 16)), "黑鸟落点压墙判定(墙内 false)")
+	_check(bk_clr._body_clear_at(Vector2(5 * 32 + 16, 15 * 32 + 16)), "黑鸟落点压墙判定(空地 true)")
+	bk_clr.free()
 	bk_floor.free()
 	MazeGenerator.current_grid = []
 

@@ -17,6 +17,8 @@ var _landing_timer: float = 0.0      # 瞬移后落地兜底
 var _charge_timer: float = 0.0       # 冲锋超时
 var _back_hop_cd: float = 0.0        # 后跳落地冷却
 var _death_timer: float = -1.0       # 死亡白闪剩余;<0 表示未死亡
+var _body_min: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最小角(按 scale 换算)
+var _body_max: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最大角(按 scale 换算)
 
 
 func _ready() -> void:
@@ -25,6 +27,16 @@ func _ready() -> void:
 	_set_state(State.SLEEP)
 	_anim.play("sleep")
 	_align_contact_area()
+	# 记录碰撞箱 AABB(按 scale 换算),供瞬移落点清空判定用
+	var cp := get_node_or_null("CollisionPolygon2D") as CollisionPolygon2D
+	if cp != null and cp.polygon.size() > 0:
+		var mn := cp.polygon[0]
+		var mx := cp.polygon[0]
+		for p in cp.polygon:
+			mn = mn.min(p)
+			mx = mx.max(p)
+		_body_min = mn * scale
+		_body_max = mx * scale
 
 
 # 接触范围与身体对齐:黑鸟碰撞箱按 scale 2.5 世界约 100px,ContactArea 由 EnemyBase
@@ -152,7 +164,12 @@ func _find_flank_cell() -> bool:
 				if max(abs(dx), abs(dy)) != radius:
 					continue
 				var c := Vector2i(posmod(ideal.x + dx, cols), posmod(ideal.y + dy, rows))
-				if _is_floor_cell(c) and MazeGenerator.has_line_of_sight(c, player_cell):
+				if not _is_floor_cell(c):
+					continue
+				# 瞬移落点上方必须有空间:碰撞箱在「下落起点」处不压到任何实心格,
+				# 否则会穿进天花板/檐下/矮洞(落点格是地板但头顶有墙)。
+				var drop_pos := Vector2(c.x * ts + ts * 0.5, c.y * ts + ts * 0.5 - EnemyParams.BlackBird.teleport_drop)
+				if _body_clear_at(drop_pos) and MazeGenerator.has_line_of_sight(c, player_cell):
 					_flank_cell = c
 					return true
 	return false
@@ -163,6 +180,26 @@ func _is_floor_cell(c: Vector2i) -> bool:
 	if grid.is_empty():
 		return false
 	return grid[c.y][c.x] == MazeGenerator.EMPTY and grid[posmod(c.y + 1, grid.size())][c.x] == MazeGenerator.SOLID
+
+
+# 黑鸟碰撞箱(按 scale 换算)在 pos 处覆盖的格子是否全是 EMPTY。
+# 用于瞬移落点清空判定:落点/下落路径不能穿墙。
+func _body_clear_at(pos: Vector2) -> bool:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return true
+	var rows := grid.size()
+	var cols := grid[0].size()
+	var ts := GameParameters.TILE_SIZE
+	var x0 := floori((pos.x + _body_min.x) / ts)
+	var x1 := floori((pos.x + _body_max.x) / ts)
+	var y0 := floori((pos.y + _body_min.y) / ts)
+	var y1 := floori((pos.y + _body_max.y) / ts)
+	for gy in range(y0, y1 + 1):
+		for gx in range(x0, x1 + 1):
+			if grid[posmod(gy, rows)][posmod(gx, cols)] == MazeGenerator.SOLID:
+				return false
+	return true
 
 
 func _teleport_to_flank() -> void:
