@@ -110,7 +110,7 @@ cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64
 | 发布 exe 报 `Could not find type "Label"`(hud.gd 解析失败),项目目录里一切正常 | 加了项目之前没用过的 GUI 类(首个文本 UI 就是 `Label`)但 profile 仍裁着它 | 从 `disabled_classes` 移除该类,重编模板+重导出(见 2.4~2.6) |
 | exe 突然变回 ~109 MB | 模板目录被官方模板覆盖(编辑器更新/重装) | 重新拷贝编译产物,见 2.5 |
 | exe 一直是 Godot 默认图标,自定义 icon 不生效 | 导出预设 `application/modify_resources=false` | 在导出预设里把 `modify_resources` 勾上(=true),重导出 |
-| exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.txt`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `map/*.txt`,重导出 |
+| exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.cyrm`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `map/*.cyrm`,重导出 |
 | 在项目目录里测 exe 一切正常,拷出去就缺东西 | 项目目录运行时 Godot 用本地文件补齐,掩盖了打包漏项 | 务必**拷到项目外**测试打包完整性 |
 | 用了 4.4.1 mono 编辑器导出 | 强行走 mono 模板 | 换 4.7.1 标准编辑器 |
 

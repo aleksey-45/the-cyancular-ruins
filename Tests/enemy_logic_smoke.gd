@@ -866,7 +866,8 @@ func _initialize() -> void:
 	var bk_scene: PackedScene = load("res://Scenes/Enemies/EnemyBlackBird.tscn")
 	_check(bk_scene != null, "BlackBird 场景加载")
 	var bk = bk_scene.instantiate()
-	bk.global_position = Vector2(60, 57 * 32 + 16)  # 地板格(row57, 下方 row58 实心)
+	# 放地图中段(远离环面接缝),避免「身后」落点跨接缝翻到玩家远副本、冲锋够不着
+	bk.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)  # 地板格(row57, 下方 row58 实心)
 	root.add_child(bk)
 	await physics_frame
 	_check(bk.get_script() == load("res://Scenes/Enemies/enemy_black_bird.gd"), "BlackBird 实例类型")
@@ -874,7 +875,7 @@ func _initialize() -> void:
 	_check(bk.hp == 30, "BlackBird hp=30")
 	_check(bk.contact_damage == 0, "BlackBird 无接触伤害")
 	_check(bk.collision_layer == 4, "BlackBird 占层3")
-	_check(is_equal_approx(bk.scale.x, 2.0), "BlackBird scale=2.0")
+	_check(is_equal_approx(bk.scale.x, 2.5), "BlackBird scale=2.5")
 	_check(bk.get_node("AnimatedSprite2D").texture_filter == 1, "BlackBird 像素滤镜(nearest)")
 	# 玩家远处 → 保持睡眠
 	var bk_far := StubCombatPlayer.new()
@@ -886,7 +887,7 @@ func _initialize() -> void:
 	bk_far.free()
 	# 玩家接近 → 苏醒 → 游走(验证游走速度,再等瞬移判定)
 	var bk_player := StubCombatPlayer.new()
-	bk_player.global_position = Vector2(400, 57 * 32 + 16)
+	bk_player.global_position = Vector2(66 * 32 + 16, 57 * 32 + 16)  # 鸟右侧 6 格(面朝右,身后落点在鸟附近)
 	root.add_child(bk_player)
 	var bk_reached_wander := false
 	var bk_wander_vx := 0.0
@@ -972,13 +973,11 @@ func _initialize() -> void:
 	var bk2_player := StubCombatPlayer.new()
 	bk2_player.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)
 	root.add_child(bk2_player)
-	# 玩家面朝右(默认 facing=1),理想落点 = 玩家格 − flank_distance/32 列;把整个搜索半径的列墙堵死
-	var bk_ideal_x := posmod(60 - int(EnemyParams.BlackBird.flank_distance / 32), 120)
-	var bk_radius := EnemyParams.BlackBird.flank_search_cells
-	var bk_wall_c0 := posmod(bk_ideal_x - bk_radius, 120)
-	for _c in range(bk_wall_c0, bk_wall_c0 + 2 * bk_radius + 1):
+	# 玩家面朝右(默认 facing=1);新落点判定:距鸟 teleport_min~max_tiles(3~8)格环形带。
+	# 把 0..119 列的行 0..57 全墙堵死(唯一地板行 58 保留)→ 环形带内无任何落点 → 不瞬移
+	for _c in range(120):
 		for _y in range(58):
-			bk2_grid[_y][posmod(_c, 120)] = MazeGenerator.SOLID
+			bk2_grid[_y][_c] = MazeGenerator.SOLID
 	MazeGenerator.current_grid = bk2_grid
 	var bk_flanked := false
 	for _i in range(240):
@@ -988,9 +987,9 @@ func _initialize() -> void:
 			break
 	_check(not bk_flanked, "黑鸟背墙不瞬移(仍游走)")
 	# 拆墙 → 应能瞬移
-	for _c in range(bk_wall_c0, bk_wall_c0 + 2 * bk_radius + 1):
+	for _c in range(120):
 		for _y in range(58):
-			bk2_grid[_y][posmod(_c, 120)] = MazeGenerator.EMPTY
+			bk2_grid[_y][_c] = MazeGenerator.EMPTY
 	MazeGenerator.current_grid = bk2_grid
 	var bk_flanked2 := false
 	for _i in range(240):

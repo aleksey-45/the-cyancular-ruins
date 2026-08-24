@@ -1,7 +1,55 @@
 [gd_scene format=3 uid="uid://bymb8tqfewfrx"]
 
 [ext_resource type="Texture2D" uid="uid://dmgthts2jye4q" path="res://assets/textures/black_bird.png" id="1_76tcf"]
-[ext_resource type="Script" path="res://Scenes/Enemies/enemy_black_bird.gd" id="1_bb"]
+[ext_resource type="Script" uid="uid://7x5i7fwoame7" path="res://Scenes/Enemies/enemy_black_bird.gd" id="1_bb"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_hfraj"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(48, 144, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_njuno"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(0, 144, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_pimxl"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(144, 96, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_f3twv"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(48, 48, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_otkpn"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(0, 48, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_skrdp"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(0, 0, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_wpcey"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(0, 0, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_our6w"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(0, 48, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_3q04y"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(48, 48, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_x774o"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(144, 96, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_rabmm"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(0, 144, 48, 48)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_8dj6e"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(48, 144, 48, 48)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_76tcf"]
 atlas = ExtResource("1_76tcf")
@@ -87,6 +135,10 @@ region = Rect2(0, 48, 48, 48)
 atlas = ExtResource("1_76tcf")
 region = Rect2(48, 48, 48, 48)
 
+[sub_resource type="AtlasTexture" id="AtlasTexture_yrfqh"]
+atlas = ExtResource("1_76tcf")
+region = Rect2(0, 48, 48, 48)
+
 [sub_resource type="AtlasTexture" id="AtlasTexture_fdfsl"]
 atlas = ExtResource("1_76tcf")
 region = Rect2(0, 96, 48, 48)
@@ -109,6 +161,52 @@ region = Rect2(144, 0, 48, 48)
 
 [sub_resource type="SpriteFrames" id="SpriteFrames_a04ey"]
 animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_hfraj")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_njuno")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_pimxl")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_f3twv")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_otkpn")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_skrdp")
+}],
+"loop": 1,
+"name": &"appear",
+"speed": 10.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_wpcey")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_our6w")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_3q04y")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_x774o")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_rabmm")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_8dj6e")
+}],
+"loop": 1,
+"name": &"disappear",
+"speed": 10.0
+}, {
 "frames": [{
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_76tcf")
@@ -184,18 +282,21 @@ animations = [{
 "speed": 5.0
 }, {
 "frames": [{
-"duration": 1.0,
+"duration": 1.5,
 "texture": SubResource("AtlasTexture_kc1i3")
 }, {
 "duration": 1.0,
 "texture": SubResource("AtlasTexture_434ps")
 }, {
-"duration": 1.0,
+"duration": 1.5,
 "texture": SubResource("AtlasTexture_2rdji")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_yrfqh")
 }],
 "loop": 1,
 "name": &"take_off",
-"speed": 5.0
+"speed": 8.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -219,18 +320,19 @@ animations = [{
 }]
 
 [node name="EnemyBlackBird" type="CharacterBody2D" unique_id=59898956]
-scale = Vector2(2.0, 2.0)
+scale = Vector2(2.5, 2.5)
 collision_layer = 4
 collision_mask = 7
 script = ExtResource("1_bb")
-hp = 30
+hp = 40
 contact_damage = 0
 knockback_strength = 200.0
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1365150420]
 texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_a04ey")
-animation = &"sleep"
+animation = &"appear"
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=1634011558]
-polygon = PackedVector2Array(10, -18, -16, 11, -6, 11, -8, 21, 12, 21, 6, 10, 13, 4, 17, -8, 23, -10)
+visible = false
+polygon = PackedVector2Array(8.5, -16.5, -21, 12.5, -21, 15.5, -7, 20.5, 12, 20.5, 13, 4, 20.5, -9, 19.5, -15.5)

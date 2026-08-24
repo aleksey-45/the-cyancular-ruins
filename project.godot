@@ -18,8 +18,8 @@ config/name="The Cyancular Ruins"
 config/version="rediculously early test 001"
 run/main_scene="uid://c1xl4jcmy2e6c"
 config/features=PackedStringArray("4.7", "Mobile")
-config/icon="uid://dccomu5fn6od5"
 run/max_fps=60
+config/icon="uid://dccomu5fn6od5"
 
 [autoload]
 
@@ -31,7 +31,6 @@ window/size/viewport_width=1920
 window/size/viewport_height=1440
 window/size/resizable=false
 window/stretch/mode="viewport"
-window/vsync/vsync_mode=1
 
 [dotnet]
 

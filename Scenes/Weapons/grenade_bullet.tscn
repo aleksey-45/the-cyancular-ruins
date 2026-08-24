@@ -18,7 +18,7 @@ direct_hit_damage = 5
 fuse_time = 0.4
 hit_fuse_time = 0.15
 explosion_radius = 350.0
-explosion_knockback = 2000.0
+explosion_knockback = 3000.0
 explosion_visual = ExtResource("2_fx")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=174510963]

@@ -9,7 +9,6 @@ var _lunge_dir: Vector2 = Vector2.RIGHT
 var _lunge_traveled: float = 0.0
 var _turn_timer: float = 0.0    # 冲刺启动动画剩余时间(播完切 dashing 常态)
 var _dash_timer: float = 0.0    # 冲刺总超时保险(防止永久卡在冲刺)
-var _death_timer: float = -1.0  # 死亡动画剩余时间;<0 表示未死亡
 var _sleep_anim_timer: float = 0.0  # 入睡动画剩余时间(播完定格 sleeping)
 
 func _ready() -> void:
@@ -38,10 +37,10 @@ func _align_contact_area() -> void:
 func _ai(delta: float) -> void:
 	var dist := toroidal_dist_to_player()
 	_back_hop_cd = maxf(_back_hop_cd - delta, 0.0)
-	# 面朝玩家:所有精灵帧朝右,玩家在左时翻转
+	# 面朝玩家:所有精灵帧朝右,玩家在左时翻转(经 _set_facing 锁转向频率)
 	var dir_to_player := toroidal_dir_to_player()
 	if state != State.SLEEP and absf(dir_to_player.x) > 0.05:
-		_anim.flip_h = dir_to_player.x < 0.0
+		_set_facing(dir_to_player.x < 0.0)
 
 	match state:
 		State.SLEEP:
@@ -117,19 +116,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 		return
 	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
-		is_dead = true
-		died.emit()
-		_anim.play("dead")  # 死亡动画(一次性),播完消失
-		_death_timer = _anim_duration("dead")
+		_begin_death()  # 死亡白闪计时 + 到期销毁由基类统一
+		_anim.play("dead")  # 死亡动画(一次性)
 		# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
 		# is_dead 后 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
-
-func _physics_process(delta: float) -> void:
-	if is_dead:
-		if _death_timer > 0.0:
-			_death_timer -= delta
-			super._physics_process(delta)  # 物理与生前一致(重力/摩擦/击退衰减)
-			if _death_timer <= 0.0:
-				queue_free()
-		return
-	super._physics_process(delta)

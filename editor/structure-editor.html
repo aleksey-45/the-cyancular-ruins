@@ -136,7 +136,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
     <div class="topbar-actions">
       <button id="btn-import">导入</button>
       <button id="btn-export" class="primary">导出库</button>
-      <input type="file" id="file-import" accept=".txt,.cyr,text/plain" hidden>
+      <input type="file" id="file-import" accept=".cyrm,.txt,text/plain" hidden>
     </div>
   </header>
 
@@ -185,7 +185,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <span class="spacer"></span>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="grid-toggle" checked> 网格</label>
         <button id="btn-torus" title="跨接缝重复绘制、无边界平移">环面预览</button>
-        <button id="btn-structure-export" class="primary" title="导出当前结构为地图格式(关卡用:保存为 map/demo.txt)">导出结构</button>
+        <button id="btn-structure-export" class="primary" title="导出当前结构为地图格式(关卡用:保存为 map/demo.cyrm)">导出结构</button>
         <button id="btn-fit">适配</button>
       </div>
       <div id="canvas-wrap">
@@ -1056,7 +1056,7 @@ window.ENEMY_REGISTRY = [
       var blob = new Blob([Core.serializeMapStructure(s)], { type: 'text/plain;charset=utf-8' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
-      a.href = url; a.download = s.name + '.txt';  // 关卡用:导出后保存为 map/demo.txt
+      a.href = url; a.download = s.name + '.cyrm';  // 关卡用:导出后保存为 map/demo.cyrm
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
@@ -1073,7 +1073,7 @@ window.ENEMY_REGISTRY = [
         var raw = String(reader.result).trim();
         var imported;
         try {
-          // 自动识别:JSON 结构库 或 地图格式(demo.txt)
+          // 自动识别:JSON 结构库 或 地图格式(.cyrm / .txt)
           imported = (raw.charAt(0) === '{')
             ? Core.parseLibraryJSON(raw)
             : structureFromMap(Core.parseMap(raw));
