@@ -20,7 +20,6 @@ var _strafe_target: Vector2 = Vector2.INF  # 开火后短距随机移动目标;I
 var _strafe_timer: float = 0.0             # 短距移动剩余时长
 var _landing: bool = false           # RETURN 落地阶段
 var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设好位置再取,否则是 (0,0))
-var _death_timer: float = -1.0      # 死亡白闪剩余;<0 表示未死亡
 
 
 func _ready() -> void:
@@ -41,15 +40,7 @@ func _physics_process(delta: float) -> void:
 		_spawn_pos = global_position
 		_home_cell = _cell_of(global_position)
 		_spawn_captured = true
-	if is_dead:
-		# 死亡:物理与生前完全一致(走 super 同一套),只处理销毁计时 + 白闪
-		_death_timer -= delta
-		if _death_timer <= 0.0:
-			queue_free()
-			return
-		modulate = Color(3.0, 3.0, 3.0, 1.0) if int(_death_timer * 20.0) % 2 == 0 else Color(1.0, 1.0, 1.0, 0.35)
-		super._physics_process(delta)
-		return
+	# 死亡白闪/销毁由基类统一处理(物理与生前一致走 super 同一套)。
 	super._physics_process(delta)
 	# 冲撞撞到东西(super 已执行 move_and_slide)
 	if state == State.CHARGE and get_slide_collision_count() > 0:
@@ -193,9 +184,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 func _die_self() -> void:
 	if is_dead:
 		return
-	is_dead = true
-	died.emit()
-	_death_timer = EnemyParams.FlyBird.death_flash_time
+	_begin_death()  # 死亡白闪计时 + 到期销毁由基类统一
 	# 冲撞中死(含被打死/超时):清冲撞速度,尸体不再续冲。撞墙/撞玩家的死亡已由
 	# move_and_slide 抵消速度,归零无副作用;普通受击仍保留击退滑出感。
 	if state == State.CHARGE:
@@ -433,8 +422,8 @@ func _update_facing() -> void:
 		# v0 为 0(玩家近正上方)时不翻转,保持上一帧朝向防抖。
 		var v0 := _bullet_v0()
 		if v0 != 0.0:
-			_anim.flip_h = v0 < 0.0
+			_set_facing(v0 < 0.0)
 	else:
 		var vx := velocity.x
 		if absf(vx) > 5.0:
-			_anim.flip_h = vx < 0.0
+			_set_facing(vx < 0.0)

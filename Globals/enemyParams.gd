@@ -6,6 +6,8 @@ extends RefCounted
 
 class shared:
 	const hit_flash: float = 0.1        # 受击白闪时长(秒)
+	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁(全敌人统一)
+	const turn_min_interval: float = 0.5  # 敌人最小转向间隔(秒),防止来回抖
 
 class JumpBird:
 	const wake_radius: float = 900.0    # 玩家多近苏醒
@@ -21,7 +23,7 @@ class JumpBird:
 	const back_hop_away: float = 320.0  # 后跳距离
 
 class FlyBird:
-	const wake_radius: float = 1000.0     # 视野半径,屏幕外可见
+	const wake_radius: float = 1100.0     # 视野半径,屏幕外可见
 	const max_chase_distance: float = 2000.0  # 距玩家超此值不启动任何寻路(直接返程)
 	const home_range: float = 2000.0      # 玩家距出生点超此值 → 放弃，然后返程
 	const hover_altitude: float = 40.0    # 巡航高度(路径格上方 px)
@@ -51,10 +53,36 @@ class FlyBird:
 	const charge_impact: float = 1500.0    # 冲撞冲击力(撞飞玩家水平速度)
 	const charge_impact_up: float = 500.0 # 冲撞冲击力(上跳分量)
 	const shoot_recoil: float = 500.0      # 开火后座力(鸟沿发射反方向被推)
-	const repath_interval: float = 0.7    # 重寻路间隔(秒)
+	const repath_interval: float = 0.75    # 重寻路间隔(秒)
 	const arrival_radius: float = 50.0    # 到路径格/回家判定
 	const landing_time: float = 0.4       # 到家落地后多久直接入睡(不再等地板接触)
-	const path_max_visit: int = 1000      # 寻路(A*)展开格数上限(预算超限时走直线兜底)
-	const escape_search_range: int = 120   # 死区逃逸时向左右搜索的格数上限
-	const escape_max_descent: int = 8      # 死区逃逸下探行数上限(当前行无解时往下逐行找)
-	const death_flash_time: float = 0.5   # 死亡白闪时长(秒),闪完销毁
+	const path_max_visit: int = 1200      # 寻路(A*)展开格数上限(预算超限时走直线兜底)
+	const escape_search_range: int = 90   # 死区逃逸时向左右搜索的格数上限
+	const escape_max_descent: int = 40      # 死区逃逸下探行数上限(当前行无解时往下逐行找)
+
+class BlackBird:
+	const wake_radius: float = 1000.0     # 玩家多近苏醒
+	const sleep_radius: float = 1200.0   # 玩家多远入睡(离开范围)
+	const wander_speed: float = 250.0    # 随机游走速度
+	const wander_min_t: float = 1.0      # 一段行走时长下限(秒)
+	const wander_max_t: float = 2.0      # 一段行走时长上限(秒)
+	const wander_idle_max: float = 1.5   # 行走后随机停顿上限(秒,0~此值)
+	const wander_jump_velocity: float = -500.0  # 游走遇墙小跳(翻越矮墙)
+	const take_off_jump_velocity: float = -1000.0  # 起飞竖直上跳高度
+	const flank_check_interval: float = 1.6  # 游走中瞬移判定周期(秒)
+	const teleport_min_tiles: int = 4    # 传送落点距玩家的最短格数(环面距离,随机)
+	const teleport_max_tiles: int = 8    # 传送落点距玩家的最长格数(环面距离,随机)
+	const teleport_drop: float = 250.0    # 瞬移到落点上方高度(px),再下落
+	const landing_timeout: float = 0.6   # 落地兜底(秒)
+	const teleport_prep_time: float = 0.25  # 落地播 disappear 的最小停顿(传送前)
+	const charge_prep_time: float = 0.5     # appear 落地后停顿(冲锋前)
+	const teleport_cooldown: float = 3.0    # 冲锋结束后瞬移冷却(秒),期间不判定瞬移
+	const teleport_flash_time: float = 0.1  # 传送白闪时长(秒;消散→到达全程覆盖)
+	const charge_speed: float = 800.0   # 冲锋水平速度
+	const charge_damage: int = 7         # 冲锋伤害(穿透无敌帧)
+	const charge_impact: float = 1000.0  # 冲锋冲击力(撞飞玩家水平速度,同飞鸟)
+	const charge_impact_up: float = 500.0  # 冲锋冲击力(上跳分量,同飞鸟)
+	const charge_timeout: float = 2.0    # 冲锋超时 → 未命中大后跳
+	const charge_jump_velocity: float = -650.0  # 遇墙自动跳初速
+	const back_hop_up: float = -550.0    # 大后跳高度
+	const back_hop_away: float = 600.0   # 大后跳距离

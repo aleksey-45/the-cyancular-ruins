@@ -24,16 +24,33 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
 				_falloff(d, radius, max_knockback) * (BLOCKED_FRACTION if blocked else 1.0), true)
 	var p := tree.get_first_node_in_group("player")
+	if p != null:
+		_cam_shake(center, radius, p as Node2D)
 	if p != null and p.has_method("take_hit") and not (p.has_method("is_downed") and p.is_downed()):
 		var d := _dist(center, (p as Node2D).global_position)
 		if d <= radius:
 			var blocked := has_grid and not _has_los(center, p as Node2D, grid)
 			var mult := BLOCKED_FRACTION if blocked else 1.0
-			# 击退随距离衰减传入玩家(独立击退向量结算)
-			p.take_hit(center, int(_falloff(d, radius, max_damage) * mult), false,
+			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
+			p.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
+# 爆炸相机震动:爆心越贴近玩家震得越猛,随距离线性衰减;超出影响距离无震动。
+# 与伤害分支独立——玩家倒地/在爆区外也能看到震动。
+static func _cam_shake(center: Vector2, radius: float, p: Node2D) -> void:
+	if p == null:
+		return
+	var d := _dist(center, p.global_position)
+	var reach := maxf(radius * 2.5, 400.0)
+	if d > reach:
+		return
+	var cam: Camera2D = p.get_viewport().get_camera_2d()
+	if cam == null or not cam.has_method("shake"):
+		return
+	var amt := PlayerParams.explosion_cam_shake * (1.0 - d / reach)
+	cam.shake(amt, PlayerParams.explosion_cam_shake_time)
+
 static func _tree() -> SceneTree:
 	return Engine.get_main_loop() as SceneTree
 

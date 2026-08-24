@@ -5,7 +5,7 @@ extends Node
 
 # ── 物理基础(共享)──
 const gravity0: float = 1600.0
-const TILE_SIZE: int = 16
+const TILE_SIZE: int = 32
 
 # ── 敌人生成 ──
 const enemy_count: int = 35

@@ -27,7 +27,9 @@ const STOP_EPSILON: float = 5.0      # 水平速度低于此值直接归零,避�
 
 var is_dead: bool = false
 var _hit_flash_time: float = 0.0
+var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
 var _player_overlapping: bool = false
+var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
 # 状态机与动画(子类共用)。state 用 int 承载各子类自己的 enum 常量(见 JumpBird/FlyBird 的 enum State)。
 var state: int = 0
 var _state_timer: float = 0.0
@@ -67,6 +69,7 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = false
 
 func _physics_process(delta: float) -> void:
+	_turn_cooldown = maxf(_turn_cooldown - delta, 0.0)
 	if use_gravity and not is_on_floor():
 		velocity.y += GameParameters.gravity0 * delta
 	# 地面摩擦:落地且非冲刺(use_gravity=true)时,水平速度平滑衰减,
@@ -86,10 +89,15 @@ func _physics_process(delta: float) -> void:
 			var p := get_tree().get_first_node_in_group("player")
 			if p != null and p.has_method("take_hit"):
 				p.take_hit(global_position, contact_damage)
+	# 受击/死亡白闪统一:计时 + 渲染(子类可覆写 _flash_update 换渲染方式,如黑鸟 silhouette)
 	if _hit_flash_time > 0.0:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
-		if _hit_flash_time == 0.0:
-			modulate = Color.WHITE
+	if _death_timer > 0.0:
+		_death_timer -= delta
+		if _death_timer <= 0.0:
+			queue_free()
+			return
+	_flash_update()
 	if is_dead:
 		# 尸体:基础速度也按击退速率指数衰减,滑行逐渐停住(不匀速滑到底);
 		# 下落也随之变慢到"终端速度",更接近失去意识的尸体。
@@ -108,9 +116,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 		return
 	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
-		is_dead = true
-		died.emit()
-		queue_free()
+		_begin_death()
 
 # 受击通用逻辑:扣血、击退、白闪。子类覆写 hurt() 时也应调用本方法,避免逻辑分叉。
 # knock_strength <= 0 时回落敌人自身 knockback_strength(旧两参调用行为不变)。
@@ -134,6 +140,32 @@ func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: 
 		knock_velocity = knock_dir.normalized() * ks
 	else:
 		velocity += knock_dir.normalized() * ks
+
+
+# 死亡白闪统一入口:置死亡状态、发信号、起白闪计时(渲染由 _flash_update 统一处理,
+# 到期在基类 _physics_process 销毁)。子类可在调用后追加专属处理(JumpBird 播 dead、
+# FlyBird 清冲撞速度)。
+func _begin_death() -> void:
+	if is_dead:
+		return
+	is_dead = true
+	died.emit()
+	_death_timer = EnemyParams.shared.death_flash_time
+
+
+# 白闪渲染:受击/死亡任一激活即纯白,否则恢复。默认走 modulate;黑鸟因 silhouette
+# shader 覆写 COLOR 而 modulate 失效,覆写本方法改走 shader 参数。
+func _flash_update() -> void:
+	modulate = Color(3.0, 3.0, 3.0, 1.0) if _hit_flash_time > 0.0 or _death_timer > 0.0 else Color.WHITE
+
+
+# 统一转向:两次翻转朝向至少间隔 turn_min_interval,防止敌人来回抖(看起来像 bug)。
+# 朝向未变时不消耗冷却(持续面向玩家不会因此锁死)。
+func _set_facing(facing_left: bool) -> void:
+	if _turn_cooldown > 0.0 or _anim.flip_h == facing_left:
+		return
+	_turn_cooldown = EnemyParams.shared.turn_min_interval
+	_anim.flip_h = facing_left
 
 
 # ── 共享工具(子类通用)──

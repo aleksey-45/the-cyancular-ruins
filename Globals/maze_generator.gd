@@ -5,16 +5,36 @@ class_name MazeGenerator
 const SOLID: int = 1
 const EMPTY: int = 0
 
-const MAP_FILE: String = "res://map/demo.txt"
+const MAP_DIR: String = "res://map"
 
-# ── 临时开发钩子(可移除)──
-# 若 exe 旁存在 map.txt,优先读它(玩家/开发者外置自定义地图测试用),
-# 否则读打包进 exe 的 res://map/demo.txt。外置地图的 spawn 元数据一并生效。
+# ── 地图文件(.cyrm)──
+# 先随机取 exe 旁的 .cyrm(玩家/开发者外置自定义地图),否则随机取 res://map/*.cyrm;
+# 同目录多份 .cyrm 随机读一份。选中的地图整个会话固定(缓存在 _picked_map),
+# 保证 map_size / load_map_file / parse_spawn_metadata 读的是同一份。
+static var _picked_map: String = ""
 static func map_file_path() -> String:
-	var external := OS.get_executable_path().get_base_dir().path_join("map.txt")
-	if FileAccess.file_exists(external):
-		return external
-	return MAP_FILE
+	if _picked_map != "":
+		return _picked_map
+	var ext := _random_cyrm(OS.get_executable_path().get_base_dir())
+	_picked_map = ext if ext != "" else _random_cyrm(MAP_DIR)
+	return _picked_map
+
+# 在 dir 目录下随机挑一个 .cyrm 地图;没有则返回 ""。
+static func _random_cyrm(dir: String) -> String:
+	var da := DirAccess.open(dir)
+	if da == null:
+		return ""
+	var maps: Array[String] = []
+	da.list_dir_begin()
+	var f := da.get_next()
+	while f != "":
+		if not da.current_is_dir() and f.to_lower().ends_with(".cyrm"):
+			maps.append(dir.path_join(f))
+		f = da.get_next()
+	da.list_dir_end()
+	if maps.is_empty():
+		return ""
+	return maps[randi() % maps.size()]
 
 # 环面曼哈顿距离(格子级)。cols/rows 由调用方按实际地图传入,
 # 不依赖全局常量——地图文件变更后距离计算不会失真。
@@ -113,7 +133,7 @@ static func load_map_file() -> Array[Array]:
 		row_len = line.length()
 	f.close()
 	if grid.is_empty():
-		push_error("MazeGenerator: 地图文件 %s 无有效行" % MAP_FILE)
+		push_error("MazeGenerator: 地图文件 %s 无有效行" % map_file_path())
 	return grid
 
 
