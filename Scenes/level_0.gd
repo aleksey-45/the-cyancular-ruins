@@ -3,11 +3,15 @@ extends Node2D
 
 # 运行时破坏支持:瓦片被破坏(变空气)后,由 TileDefs.damage_tile 回调刷新瓦片层 + 重建碰撞。
 static var wall_layer: TileMapLayer = null
+static var water_layer: TileMapLayer = null
+static var water_surface_layer: TileMapLayer = null
 static var _grid_ref: Array[Array] = []
 # 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
 static var _dirty_chunks: Dictionary = {}
+# 水面晃动计时(秒)
+var _water_sway_time: float = 0.0
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
@@ -38,6 +42,11 @@ func _ready() -> void:
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = tile_set
 	_paint_maze(wl, grid)
+	Level0.water_layer = $WorldViewport/WaterLayer
+	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
+	Level0.water_layer.tile_set = tile_set
+	Level0.water_surface_layer.tile_set = tile_set
+	_paint_water(grid)
 
 	_build_wall_collision(grid)
 	EnemySpawner.load_types()
@@ -55,17 +64,17 @@ func _create_wall_tileset() -> TileSet:
 	var half: int = ts / 2                          # 32 子格
 	var texture: Texture2D = load("res://assets/textures/structure.png")
 	var src_img: Image = texture.get_image()
-	# 20 块源砖(两行 32×32,每行 10 块)→ 最近邻 2× 放大成 64×64
+	# 22 块源砖(两行 32×32 + 第3行两块水)→ 最近邻 2× 放大成 64×64
 	var bricks: Array[Image] = []
-	for i in range(20):
+	for i in range(22):
 		var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
 		img.blit_rect(src_img, Rect2i((i % 10) * 32, (i / 10) * 32, 32, 32), Vector2i.ZERO)
 		img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
 		bricks.append(img)
-	# atlas:16 列(形状 0-15)× 20 行(纹理 1-20),空气象限透明
-	var atlas_img := Image.create(16 * ts, 20 * ts, false, Image.FORMAT_RGBA8)
+	# atlas:16 列(形状 0-15)× 22 行(纹理 1-22),空气象限透明
+	var atlas_img := Image.create(16 * ts, 22 * ts, false, Image.FORMAT_RGBA8)
 	atlas_img.fill(Color(0, 0, 0, 0))
-	for tex in range(20):
+	for tex in range(22):
 		for shape in range(16):
 			var tile := bricks[tex].duplicate()
 			for sy in range(2):
@@ -82,7 +91,7 @@ func _create_wall_tileset() -> TileSet:
 	tile_set.add_source(atlas)
 	# 瓦片坐标 = (形状列, 纹理行);空气(shape 0)含全透明瓦片,铺图时跳过即可
 	for shape in range(16):
-		for tex in range(20):
+		for tex in range(22):
 			atlas.create_tile(Vector2i(shape, tex))
 
 	return tile_set
@@ -103,12 +112,45 @@ func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
 					var v: int = row[x]
 					if v == MazeGenerator.EMPTY:
 						continue
+					if Water.is_liquid(MazeGenerator.texture_of(v)):
+						continue  # 水由 _paint_water 分层铺
 					# packed → atlas 坐标(形状列, 纹理行)
 					layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
 							Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
 
 
-func _process(_delta: float) -> void:
+# 水格分层铺:liquid 且上方非 liquid → 水面层(纹理 22,atlas 行 21);否则水体层(纹理 21,行 20)。
+func _paint_water(grid: Array[Array]) -> void:
+	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
+	const SURF_ROW := 21   # 纹理 22(水面)的 atlas 行
+	var cols := grid[0].size()
+	var rows := grid.size()
+	var wl: TileMapLayer = Level0.water_layer
+	var sl: TileMapLayer = Level0.water_surface_layer
+	for ty in range(-1, 2):
+		for tx in range(-1, 2):
+			var ox := tx * cols
+			var oy := ty * rows
+			for y in range(rows):
+				var row: Array = grid[y]
+				for x in range(cols):
+					var v: int = row[x]
+					if v == MazeGenerator.EMPTY:
+						continue
+					if not Water.is_liquid(MazeGenerator.texture_of(v)):
+						continue
+					var above: int = grid[posmod(y - 1, rows)][x]
+					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
+					var target := sl if is_surface else wl
+					target.set_cell(Vector2i(x + ox, y + oy), 0,
+							Vector2i(MazeGenerator.shape_of(v), SURF_ROW if is_surface else BODY_ROW))
+
+
+func _process(delta: float) -> void:
+	_water_sway_time += delta
+	if Level0.water_surface_layer != null:
+		Level0.water_surface_layer.position.x = roundf(
+				sin(_water_sway_time * GameParameters.water_sway_speed) * GameParameters.water_sway_amp)
 	if not _dirty_chunks.is_empty():
 		var chunks := _dirty_chunks.keys()
 		_dirty_chunks.clear()

@@ -34,6 +34,10 @@ position = Vector2(4, -20)
 
 [node name="WallLayer" type="TileMapLayer" parent="WorldViewport" unique_id=191518324]
 
+[node name="WaterLayer" type="TileMapLayer" parent="WorldViewport" unique_id=191518325]
+
+[node name="WaterSurfaceLayer" type="TileMapLayer" parent="WorldViewport" unique_id=191518326]
+
 [node name="EnemySpawner" type="Node2D" parent="." unique_id=604711374]
 script = ExtResource("4_spn")
 
