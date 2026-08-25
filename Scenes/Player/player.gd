@@ -34,27 +34,21 @@ var charge_timer: float = 0.0
 var _last_move_dir: int = 1            # 最近水平移动方向(1右/-1左)
 var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0 表示最近在走)
 
-# ── 战斗 ──
-var max_hp: int = PlayerParams.player_max_hp
-var hp: int = PlayerParams.player_max_hp
-var iframes: float = 0.0
-var downed: bool = false
-var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量(独立于移动速度,指数衰减)
-
 @export var weapon_slot: Node2D
 
-# 武器注册表:动作名 -> 场景路径(与 project.godot 输入动作 1/2/3 对应)。
-const WEAPONS: Dictionary = {
-	"1": "res://Scenes/Weapons/pistol_test.tscn",
-	"2": "res://Scenes/Weapons/rifle_test.tscn",
-	"3": "res://Scenes/Weapons/m82a1.tscn",
-	"4": "res://Scenes/Weapons/s686.tscn",
-	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
-}
+@onready var climb: ClimbComponent = $Climb
+@onready var weapons: WeaponComponent = $Weapons
+@onready var combat: CombatComponent = $Combat
 
-var _weapon: WeaponBase = null
+signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
 
-signal hp_changed(current: int, max: int)
+# 公开只读属性:HUD 直接读 hp/max_hp 建血条(hud.gd),数据在 combat,根暴露只读口。
+var hp: int:
+	get:
+		return combat.hp
+var max_hp: int:
+	get:
+		return combat.max_hp
 
 # 姿态状态机（与 JumpBird 的枚举风格统一）。
 enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }
@@ -75,7 +69,6 @@ var state_lock_timer: float = 0.0
 const STATE_LOCK_TIME := 0.15   # 秒，切换后的最短停留时长
 
 const STOP_SNAP := 1.0              # 水平速度低于此值直接归零，避免贴地滑行
-const IFRAME_BLINK_RATE := 20.0     # 无敌帧闪烁频率（每秒明暗切换次数）
 
 # 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
 var _coll_by_pose: Dictionary = {}
@@ -84,13 +77,16 @@ var _coll_by_pose: Dictionary = {}
 func _ready() -> void:
 	add_to_group("player")
 
+	# 转发 combat 的生命/倒地信号到根(外部只认根上的 hp_changed;倒地 → 取消瞄准)
+	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
+	combat.went_down.connect(func() -> void: weapons.cancel_aim())
+	hp_changed.emit(combat.hp, combat.max_hp)
+
 	# 缓存各姿态碰撞箱节点
 	for pose in Pose.values():
 		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
 
-	hp_changed.emit(hp, max_hp)
-
-	_equip_weapon(WEAPONS["1"])
+	weapons.equip("1")
 
 
 # 指数缓动：朝目标值逼近。rate 越大越跟手；
@@ -100,7 +96,7 @@ func _approach(current: float, target: float, rate: float, delta: float) -> floa
 
 
 func _physics_process(delta: float) -> void:
-	if downed:
+	if combat.is_downed():
 		# 死亡(倒地):不取消物理——重力/制动/击退照常,只是不吃输入、不结算战斗
 		if is_on_floor():
 			coyote_timer = coyote_time
@@ -112,62 +108,62 @@ func _physics_process(delta: float) -> void:
 			velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
 		if absf(velocity.x) < STOP_SNAP:
 			velocity.x = 0.0
-		move_and_collide(knock_velocity * delta)
-		knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
+		combat.apply_knock(delta)
 		move_and_slide()
 		global_position = MazeGenerator.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
-	iframes = maxf(iframes - delta, 0.0)
-	# 无敌帧闪烁
-	if iframes > 0.0:
-		modulate.a = 0.4 if int(iframes * IFRAME_BLINK_RATE) % 2 == 0 else 1.0
-	else:
-		modulate.a = 1.0
+	combat.update_iframe_blink(delta)
 
-	var mult := _movement_multiplier()
+	var mult := weapons.movement_multiplier()
 
 	var horizontal_input = Input.get_axis("left", "right")
 
+	# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
+	var climbing := climb.update(mult, delta, is_squat)
+	var latched := climb.is_latched()
+
 	# ---------- 垂直逻辑（土狼时间 / 跳跃缓冲 / 可变高度） ----------
-	if is_on_floor():
-		coyote_timer = coyote_time
-	else:
-		velocity.y += gravity * delta
-		coyote_timer = maxf(coyote_timer - delta, 0.0)
+	if not latched:
+		if is_on_floor():
+			coyote_timer = coyote_time
+		else:
+			velocity.y += gravity * delta
+			coyote_timer = maxf(coyote_timer - delta, 0.0)
 
-	# 跳跃缓冲：落地前提前按跳，落地瞬间生效
-	if Input.is_action_just_pressed("up"):
-		jump_buffer_timer = jump_buffer_time
-	else:
-		jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
+		# 跳跃缓冲：落地前提前按跳，落地瞬间生效
+		if Input.is_action_just_pressed("up"):
+			jump_buffer_timer = jump_buffer_time
+		else:
+			jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
 
-	# 触发跳跃：有缓冲输入且在地面或土狼窗口内
-	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
-		velocity.y = jump_velocity * mult.y
-		jump_buffer_timer = 0.0
-		coyote_timer = 0.0
-		jump_cut_applied = false
+		# 触发跳跃：有缓冲输入且在地面或土狼窗口内
+		if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
+			velocity.y = jump_velocity * mult.y
+			jump_buffer_timer = 0.0
+			coyote_timer = 0.0
+			jump_cut_applied = false
 
-	# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
-	if not jump_cut_applied and Input.is_action_just_released("up") and velocity.y < 0.0:
-		velocity.y *= jump_cut_factor
-		jump_cut_applied = true
+		# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
+		if not jump_cut_applied and Input.is_action_just_released("up") and velocity.y < 0.0:
+			velocity.y *= jump_cut_factor
+			jump_cut_applied = true
 
 	# ---------- 下蹲 ----------
-	if is_on_floor():
-		if Input.is_action_just_pressed("down"):
-			velocity.x = 0
-			is_charge = false
-			is_squat = true
-		if Input.is_action_just_released("down"):
-			is_squat = false
-	else:
-		if Input.is_action_just_pressed("down"):
-			velocity.y = charge_down_velocity
+	if not latched:
+		if is_on_floor():
+			if Input.is_action_just_pressed("down"):
+				velocity.x = 0
+				is_charge = false
+				is_squat = true
+			if Input.is_action_just_released("down"):
+				is_squat = false
+		else:
+			if Input.is_action_just_pressed("down"):
+				velocity.y = charge_down_velocity
 
 	# ---------- 冲刺输入 ----------
-	if not is_charge and not is_squat:
+	if not latched and not is_charge and not is_squat:
 		if Input.is_action_just_pressed("charge"):
 			is_charge = true
 			charge_timer = charge_duration
@@ -175,28 +171,29 @@ func _physics_process(delta: float) -> void:
 			if _last_move_timer > 0.0:
 				facing_direction = _last_move_dir
 
-	# ---------- 水平速度计算 ----------
-	if is_charge:
-		velocity.x = charge_velocity * facing_direction
-		charge_timer -= delta
-		if charge_timer <= 0:
-			is_charge = false
-			velocity.x -= charge_velocity * facing_direction * 0.5
-	else:
-		var target_velocity_x = horizontal_input * move_speed * mult.x
-		if horizontal_input != 0 and not is_squat:
-			if is_on_floor():
-				velocity.x = _approach(velocity.x, target_velocity_x, accel_ground, delta)
-			else:
-				velocity.x = _approach(velocity.x, target_velocity_x, accel_air, delta)
+	# ---------- 水平速度计算(垂直攀爬中已在 _update_climb 里停水平;攀附空闲可水平走离) ----------
+	if not climbing:
+		if is_charge:
+			velocity.x = charge_velocity * facing_direction
+			charge_timer -= delta
+			if charge_timer <= 0:
+				is_charge = false
+				velocity.x -= charge_velocity * facing_direction * 0.5
 		else:
-			if is_on_floor():
-				velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+			var target_velocity_x = horizontal_input * move_speed * mult.x
+			if horizontal_input != 0 and not is_squat:
+				if is_on_floor():
+					velocity.x = _approach(velocity.x, target_velocity_x, accel_ground, delta)
+				else:
+					velocity.x = _approach(velocity.x, target_velocity_x, accel_air, delta)
 			else:
-				velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
-			# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
-			if absf(velocity.x) < STOP_SNAP:
-				velocity.x = 0.0
+				if is_on_floor():
+					velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+				else:
+					velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
+				# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
+				if absf(velocity.x) < STOP_SNAP:
+					velocity.x = 0.0
 
 	# ---------- 面朝方向更新 ----------
 	# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向
@@ -243,11 +240,22 @@ func _physics_process(delta: float) -> void:
 
 	# ---------- 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity ----------
 	# (地面把向下击退吃掉后再减回去会把玩家弹起,改用独立位移结算)
-	move_and_collide(knock_velocity * delta)
-	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
+	combat.apply_knock(delta)
 
 	# ---------- 执行移动 ----------
 	move_and_slide()
+
+	# ---------- 弹性瓦片（如树叶）:弱反弹 ----------
+	for i in range(get_slide_collision_count()):
+		var sc := get_slide_collision(i)
+		if sc == null:
+			continue
+		var ec := MazeGenerator.cell_of(sc.get_position(), GameParameters.TILE_SIZE,
+				MazeGenerator.current_grid[0].size(), MazeGenerator.current_grid.size())
+		var ev: int = MazeGenerator.current_grid[ec.y][ec.x]
+		if ev != 0 and TileDefs.elastic(MazeGenerator.texture_of(ev)):
+			velocity += sc.get_normal() * PlayerParams.elastic_bounce
+			break
 
 	# 环面回卷：玩家只能在中间副本，离开时取模送回
 	global_position = MazeGenerator.wrap_to_range(global_position,
@@ -255,33 +263,7 @@ func _physics_process(delta: float) -> void:
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
-	# ignore_iframes: 特殊攻击(如冲撞)穿透无敌帧,但命中后照常刷新 iframes。
-	if downed or (iframes > 0.0 and not ignore_iframes):
-		return
-	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
-	is_charge = false
-	charge_timer = 0.0
-	hp -= damage
-	iframes = PlayerParams.iframes_time
-	var away := (global_position - source_pos).normalized()
-	if away == Vector2.ZERO:
-		away = Vector2(-float(facing_direction), 0.0)
-	if knockback < 0.0:
-		# 常规命中:固定击退直接覆盖(原行为)
-		velocity.x = away.x * PlayerParams.player_hit_knockback
-		velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
-	else:
-		# 爆炸:设独立击退向量(叠加,不覆盖移动),随帧指数衰减
-		knock_velocity = away * knockback
-	# 大伤害反馈:一次扣血 >25% 最大血 → 相机震动(幅度随伤害比例增强)
-	var hit_ratio := float(damage) / float(max_hp)
-	if hit_ratio > 0.25:
-		var cam: Camera2D = get_viewport().get_camera_2d()
-		if cam != null and cam.has_method("shake"):
-			cam.shake(PlayerParams.hit_cam_shake * (hit_ratio / 0.25), PlayerParams.hit_cam_shake_time)
-	hp_changed.emit(hp, max_hp)
-	if hp <= 0:
-		_downed()
+	combat.take_hit(source_pos, damage, ignore_iframes, knockback)
 
 func get_facing() -> int:
 	return facing_direction
@@ -293,55 +275,28 @@ func set_facing(v: int) -> void:
 	facing_direction = 1 if v >= 0 else -1
 
 func is_downed() -> bool:
-	return downed
-
-func _equip_weapon(scene_path: String) -> void:
-	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)
-	var inherit_cd := 0.0
-	if _weapon != null:
-		inherit_cd = _weapon.fire_cd_timer
-		_weapon.queue_free()
-	var scene: PackedScene = load(scene_path)
-	if scene == null:
-		push_error("weapon scene not found: " + scene_path)
-		return
-	if weapon_slot == null:
-		push_error("weapon_slot not assigned")
-		return
-	_weapon = scene.instantiate() as WeaponBase
-	weapon_slot.add_child(_weapon)
-	_weapon.equip(self, inherit_cd)
-
-func _movement_multiplier() -> Vector2:
-	if _weapon == null:
-		return Vector2.ONE
-	return _weapon.get_movement_multiplier()
+	return combat.is_downed()
 
 func apply_recoil(push: float) -> void:
-	if is_squat:
-		return
-	velocity.x -= facing_direction * push
+	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
-func _downed() -> void:
-	downed = true
-	if _weapon != null:
-		_weapon.cancel_aim()
-	# 不取消物理:保留当前速度/击退,尸体继续受重力/冲击(与敌人统一)
-	rotation = -PI / 2.0 * float(facing_direction)
-	if animator != null:
-		animator.stop()
-	var tree := get_tree()
-	if tree != null:
-		var pp := tree.get_first_node_in_group("post_process")
-		if pp != null and pp.has_method("set_downed"):
-			pp.set_downed(true)
+# 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
+func cancel_jump_state() -> void:
+	jump_buffer_timer = 0.0
+	coyote_timer = 0.0
+	jump_cut_applied = false
+
+# combat 命中落地时调用:冲刺被打断,否则下一帧 is_charge 分支会用冲刺速度覆盖击退。
+func cancel_charge() -> void:
+	is_charge = false
+	charge_timer = 0.0
 
 func _unhandled_input(event: InputEvent) -> void:
-	if downed:
+	if combat.is_downed():
 		if event.is_action_pressed("R"):
 			get_tree().reload_current_scene()
 		return
 	for slot in ["1", "2", "3", "4", "5"]:
 		if event.is_action_pressed(slot):
-			_equip_weapon(WEAPONS[slot])
+			weapons.equip(slot)
 			return
