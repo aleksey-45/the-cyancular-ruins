@@ -22,6 +22,7 @@ func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -
 func _physics_process(delta: float) -> void:
 	velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 	rotation = velocity_vec.angle()
+	_apply_water_drag(delta)
 	var step := velocity_vec * delta
 	traveled += step.length()
 	var col := move_and_collide(step)

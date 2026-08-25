@@ -38,6 +38,11 @@ func _init() -> void:
 	_check(Water.submerged(Vector2(5 * 64 + 32, 6 * 64), 5 * 64), "中心在水面线下=没顶")
 	_check(not Water.submerged(Vector2(5 * 64 + 32, 5 * 64), 5 * 64), "中心在水面线=浮着不算")
 
+	# 子弹水中阻力
+	var f := Water.bullet_drag_factor(true, 2.0, 0.1)
+	_check_approx(f, exp(-0.2), 1e-4, "水中阻力 exp(-0.2)")
+	_check_approx(Water.bullet_drag_factor(false, 2.0, 0.1), 1.0, 1e-6, "岸上无阻力")
+
 	# 爆炸:目标在水里 ×0.25,岸上 ×1.0
 	var g := MazeGenerator.current_grid
 	_check_approx(Water.water_mult(Vector2(5 * 64 + 32, 5 * 64 + 32), g), 0.25, 1e-6, "目标在水里 ×0.25")

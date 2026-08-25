@@ -63,6 +63,11 @@ static func water_mult(pos: Vector2, grid: Array[Array]) -> float:
 	return 1.0
 
 
+# 子弹水中速度阻力系数(纯函数,-s 可测):在水里返回 exp(-drag·Δt),否则 1.0。
+static func bullet_drag_factor(in_water: bool, drag: float, delta: float) -> float:
+	return exp(-drag * delta) if in_water else 1.0
+
+
 # 实体脚底相对原点偏移(世界 px):取活动碰撞箱底边;找不到回退 24。
 static func feet_offset(body: Node) -> float:
 	var offset := 24.0

@@ -60,6 +60,7 @@ func _physics_process(delta: float) -> void:
 			_explode()
 			queue_free()
 			return
+	_apply_water_drag(delta)
 	var step := velocity_vec * delta
 	traveled += step.length()
 	var col := move_and_collide(step)
@@ -99,6 +100,13 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 		return
 	_wrap()
+
+# 子弹在水里受速度方向阻力:velocity_vec *= exp(-drag·Δt)(纯系数在 Water.bullet_drag_factor)。
+func _apply_water_drag(delta: float) -> void:
+	var factor := Water.bullet_drag_factor(Water.is_in_water(global_position), GameParameters.water_bullet_drag, delta)
+	if factor < 1.0:
+		velocity_vec *= factor
+
 
 func _wrap() -> void:
 	# 与敌人一致:锚定到离玩家最近的副本(跟着主角取模),接缝附近不消失。
