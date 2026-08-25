@@ -42,9 +42,10 @@ static func _value_to_texture_char(v: int) -> String:
 	return str(v)
 
 static func _shape_char_to_value(ch: String) -> int:
-	var n := ch.to_int()
-	if n >= 0 and n <= 9:
-		return n
+	if ch.is_valid_int():
+		var n := ch.to_int()
+		if n >= 0 and n <= 9:
+			return n
 	match ch:
 		"A", "a": return 10
 		"B", "b": return 11
@@ -223,9 +224,10 @@ static func _parse_old_grid(lines: Array) -> Array[Array]:
 	return grid
 
 # 旧 2×2 → 新 1 格 packed。宽高需偶数;奇数丢弃多余行列。
-static func convert_old_grid(old: Array[Array]) -> Array[Array]:
+# 参数用未类型化 Array(调用方可能传 `:=` 推断的类型数组,Array[Array] 会拒收 Array[int] 元素)。
+static func convert_old_grid(old: Array) -> Array[Array]:
 	var rows := old.size()
-	var cols := old[0].size()
+	var cols := (old[0] as Array).size()
 	var out: Array[Array] = []
 	for ny in range(rows / 2):
 		var row: Array[int] = []
@@ -234,7 +236,7 @@ static func convert_old_grid(old: Array[Array]) -> Array[Array]:
 			var tex := 0
 			for sy in range(2):
 				for sx in range(2):
-					var ov: int = old[ny * 2 + sy][nx * 2 + sx]
+					var ov: int = (old[ny * 2 + sy] as Array)[nx * 2 + sx]
 					if ov != 0:
 						shape |= 1 << (sy * 2 + sx)
 						if tex == 0:
@@ -244,7 +246,7 @@ static func convert_old_grid(old: Array[Array]) -> Array[Array]:
 	return out
 
 # v2 网格序列化:125 格/行,每格 2 字符。供地图转换脚本(单一转换源)。
-static func serialize_v2_grid(grid: Array[Array]) -> Array[String]:
+static func serialize_v2_grid(grid: Array) -> Array[String]:
 	var out: Array[String] = []
 	for row in grid:
 		var sb := ""

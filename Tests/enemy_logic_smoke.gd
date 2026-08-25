@@ -148,7 +148,7 @@ func _initialize() -> void:
 	var old4 := [[1, 1], [1, 1]]
 	_check(MazeGenerator.convert_old_grid(old4) == [[31]], "旧 2×2 全实心 → 全砖 31")
 	var old_mixed := [[3, 0], [7, 0]]
-	_check(MazeGenerator.convert_old_grid(old_mixed) == [[3 * 16 + 4]], "旧混合纹理取首个实体(左上 3 → 纹理3)")
+	_check(MazeGenerator.convert_old_grid(old_mixed) == [[3 * 16 + 5]], "旧混合纹理取首个实体(左上 3 → 纹理3; 左上+左下 → 形状5)")
 
 	# ── Task: 武器场景参数 + 开火命中 ──
 	var stub := StubPlayer.new()
