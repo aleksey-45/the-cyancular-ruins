@@ -137,7 +137,8 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 	var y1 := floori((oy + _fly_box_max.y) / ts)
 	for gy in range(y0, y1 + 1):
 		for gx in range(x0, x1 + 1):
-			if TileDefs.is_blocked(grid[posmod(gy, rows)][posmod(gx, cols)]):
+			var v: int = grid[posmod(gy, rows)][posmod(gx, cols)]
+			if TileDefs.is_blocked(v) or Water.is_liquid(v / 16):
 				return false
 	if _obstacle_boxes.size() > 0:
 		# 箱体锚到本鸟坐标的环面副本(与 _collect_obstacles 同帧),否则地图接缝处
