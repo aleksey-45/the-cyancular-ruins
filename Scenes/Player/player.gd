@@ -43,6 +43,8 @@ var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量(独立于
 
 @export var weapon_slot: Node2D
 
+@onready var climb: ClimbComponent = $Climb
+
 # 武器注册表:动作名 -> 场景路径(与 project.godot 输入动作 1/2/3 对应)。
 const WEAPONS: Dictionary = {
 	"1": "res://Scenes/Weapons/pistol_test.tscn",
@@ -129,45 +131,51 @@ func _physics_process(delta: float) -> void:
 
 	var horizontal_input = Input.get_axis("left", "right")
 
+	# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
+	var climbing := climb.update(mult, delta, is_squat)
+	var latched := climb.is_latched()
+
 	# ---------- 垂直逻辑（土狼时间 / 跳跃缓冲 / 可变高度） ----------
-	if is_on_floor():
-		coyote_timer = coyote_time
-	else:
-		velocity.y += gravity * delta
-		coyote_timer = maxf(coyote_timer - delta, 0.0)
+	if not latched:
+		if is_on_floor():
+			coyote_timer = coyote_time
+		else:
+			velocity.y += gravity * delta
+			coyote_timer = maxf(coyote_timer - delta, 0.0)
 
-	# 跳跃缓冲：落地前提前按跳，落地瞬间生效
-	if Input.is_action_just_pressed("up"):
-		jump_buffer_timer = jump_buffer_time
-	else:
-		jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
+		# 跳跃缓冲：落地前提前按跳，落地瞬间生效
+		if Input.is_action_just_pressed("up"):
+			jump_buffer_timer = jump_buffer_time
+		else:
+			jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
 
-	# 触发跳跃：有缓冲输入且在地面或土狼窗口内
-	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
-		velocity.y = jump_velocity * mult.y
-		jump_buffer_timer = 0.0
-		coyote_timer = 0.0
-		jump_cut_applied = false
+		# 触发跳跃：有缓冲输入且在地面或土狼窗口内
+		if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
+			velocity.y = jump_velocity * mult.y
+			jump_buffer_timer = 0.0
+			coyote_timer = 0.0
+			jump_cut_applied = false
 
-	# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
-	if not jump_cut_applied and Input.is_action_just_released("up") and velocity.y < 0.0:
-		velocity.y *= jump_cut_factor
-		jump_cut_applied = true
+		# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
+		if not jump_cut_applied and Input.is_action_just_released("up") and velocity.y < 0.0:
+			velocity.y *= jump_cut_factor
+			jump_cut_applied = true
 
 	# ---------- 下蹲 ----------
-	if is_on_floor():
-		if Input.is_action_just_pressed("down"):
-			velocity.x = 0
-			is_charge = false
-			is_squat = true
-		if Input.is_action_just_released("down"):
-			is_squat = false
-	else:
-		if Input.is_action_just_pressed("down"):
-			velocity.y = charge_down_velocity
+	if not latched:
+		if is_on_floor():
+			if Input.is_action_just_pressed("down"):
+				velocity.x = 0
+				is_charge = false
+				is_squat = true
+			if Input.is_action_just_released("down"):
+				is_squat = false
+		else:
+			if Input.is_action_just_pressed("down"):
+				velocity.y = charge_down_velocity
 
 	# ---------- 冲刺输入 ----------
-	if not is_charge and not is_squat:
+	if not latched and not is_charge and not is_squat:
 		if Input.is_action_just_pressed("charge"):
 			is_charge = true
 			charge_timer = charge_duration
@@ -175,28 +183,29 @@ func _physics_process(delta: float) -> void:
 			if _last_move_timer > 0.0:
 				facing_direction = _last_move_dir
 
-	# ---------- 水平速度计算 ----------
-	if is_charge:
-		velocity.x = charge_velocity * facing_direction
-		charge_timer -= delta
-		if charge_timer <= 0:
-			is_charge = false
-			velocity.x -= charge_velocity * facing_direction * 0.5
-	else:
-		var target_velocity_x = horizontal_input * move_speed * mult.x
-		if horizontal_input != 0 and not is_squat:
-			if is_on_floor():
-				velocity.x = _approach(velocity.x, target_velocity_x, accel_ground, delta)
-			else:
-				velocity.x = _approach(velocity.x, target_velocity_x, accel_air, delta)
+	# ---------- 水平速度计算(垂直攀爬中已在 _update_climb 里停水平;攀附空闲可水平走离) ----------
+	if not climbing:
+		if is_charge:
+			velocity.x = charge_velocity * facing_direction
+			charge_timer -= delta
+			if charge_timer <= 0:
+				is_charge = false
+				velocity.x -= charge_velocity * facing_direction * 0.5
 		else:
-			if is_on_floor():
-				velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+			var target_velocity_x = horizontal_input * move_speed * mult.x
+			if horizontal_input != 0 and not is_squat:
+				if is_on_floor():
+					velocity.x = _approach(velocity.x, target_velocity_x, accel_ground, delta)
+				else:
+					velocity.x = _approach(velocity.x, target_velocity_x, accel_air, delta)
 			else:
-				velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
-			# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
-			if absf(velocity.x) < STOP_SNAP:
-				velocity.x = 0.0
+				if is_on_floor():
+					velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+				else:
+					velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
+				# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
+				if absf(velocity.x) < STOP_SNAP:
+					velocity.x = 0.0
 
 	# ---------- 面朝方向更新 ----------
 	# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向
@@ -248,6 +257,18 @@ func _physics_process(delta: float) -> void:
 
 	# ---------- 执行移动 ----------
 	move_and_slide()
+
+	# ---------- 弹性瓦片（如树叶）:弱反弹 ----------
+	for i in range(get_slide_collision_count()):
+		var sc := get_slide_collision(i)
+		if sc == null:
+			continue
+		var ec := MazeGenerator.cell_of(sc.get_position(), GameParameters.TILE_SIZE,
+				MazeGenerator.current_grid[0].size(), MazeGenerator.current_grid.size())
+		var ev: int = MazeGenerator.current_grid[ec.y][ec.x]
+		if ev != 0 and TileDefs.elastic(MazeGenerator.texture_of(ev)):
+			velocity += sc.get_normal() * PlayerParams.elastic_bounce
+			break
 
 	# 环面回卷：玩家只能在中间副本，离开时取模送回
 	global_position = MazeGenerator.wrap_to_range(global_position,
@@ -320,7 +341,15 @@ func _movement_multiplier() -> Vector2:
 func apply_recoil(push: float) -> void:
 	if is_squat:
 		return
+	if climb.is_latched():
+		push *= 0.1  # 攀爬时后坐力降到 0.1(在梯/锁链上开火基本不后推)
 	velocity.x -= facing_direction * push
+
+# 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
+func cancel_jump_state() -> void:
+	jump_buffer_timer = 0.0
+	coyote_timer = 0.0
+	jump_cut_applied = false
 
 func _downed() -> void:
 	downed = true
