@@ -672,17 +672,17 @@ func _initialize() -> void:
 	# 大网格(demo 全尺寸)上跑 A*:不崩、路径逐格相邻且在界内(扁平数组索引正确)。
 	var big_grid := MazeGenerator.load_map_file()
 	MazeGenerator.current_grid = big_grid
-	var far := MazeGenerator.astar_path_nearest(Vector2i(10, 10), Vector2i(240, 120))
+	var far := MazeGenerator.astar_path_nearest(Vector2i(10, 10), Vector2i(110, 60))
 	var far_valid := true
 	var prev_cell := Vector2i(10, 10)
 	for c in far:
-		if c.x < 0 or c.x >= 250 or c.y < 0 or c.y >= 150:
+		if c.x < 0 or c.x >= 125 or c.y < 0 or c.y >= 75:
 			far_valid = false
 			break
 		var dxc := absi(c.x - prev_cell.x)
 		var dyc := absi(c.y - prev_cell.y)
-		dxc = mini(dxc, 250 - dxc)
-		dyc = mini(dyc, 150 - dyc)
+		dxc = mini(dxc, 125 - dxc)
+		dyc = mini(dyc, 75 - dyc)
 		if not (dxc + dyc == 1):
 			far_valid = false
 			break
@@ -872,7 +872,7 @@ func _initialize() -> void:
 	bkshape.shape = bkrect
 	bkshape.position = Vector2(0, -20)
 	bk_floor.add_child(bkshape)
-	bk_floor.position = Vector2(1920, 1896)  # 地板顶面 y=1856(row58 顶),覆盖 [-80,3920]
+	bk_floor.position = Vector2(1920, 58 * GameParameters.TILE_SIZE + 40)  # 地板顶面 y=58*TILE(row58 顶),覆盖 [-80,3920]
 	bk_floor.collision_layer = 1
 	bk_floor.collision_mask = 0
 	root.add_child(bk_floor)
@@ -880,7 +880,7 @@ func _initialize() -> void:
 	_check(bk_scene != null, "BlackBird 场景加载")
 	var bk = bk_scene.instantiate()
 	# 放地图中段(远离环面接缝),避免「身后」落点跨接缝翻到玩家远副本、冲锋够不着
-	bk.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)  # 地板格(row57, 下方 row58 实心)
+	bk.global_position = Vector2(60 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2, 57 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2)  # 地板格(row57, 下方 row58 实心)
 	root.add_child(bk)
 	await physics_frame
 	_check(bk.get_script() == load("res://Scenes/Enemies/enemy_black_bird.gd"), "BlackBird 实例类型")
@@ -900,7 +900,7 @@ func _initialize() -> void:
 	bk_far.free()
 	# 玩家接近 → 苏醒 → 游走(验证游走速度,再等瞬移判定)
 	var bk_player := StubCombatPlayer.new()
-	bk_player.global_position = Vector2(66 * 32 + 16, 57 * 32 + 16)  # 鸟右侧 6 格(面朝右,身后落点在鸟附近)
+	bk_player.global_position = Vector2(66 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2, 57 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2)  # 鸟右侧 6 格(面朝右,身后落点在鸟附近)
 	root.add_child(bk_player)
 	var bk_reached_wander := false
 	var bk_wander_vx := 0.0
@@ -957,7 +957,7 @@ func _initialize() -> void:
 	bk.free()
 	# 死亡:白闪闪烁后销毁,物理与生前一致
 	var bk_dead = bk_scene.instantiate()
-	bk_dead.global_position = Vector2(300, 57 * 32 + 16)
+	bk_dead.global_position = Vector2(300, 57 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2)
 	root.add_child(bk_dead)
 	await physics_frame
 	bk_dead.hurt(99, Vector2.RIGHT)
@@ -980,11 +980,11 @@ func _initialize() -> void:
 		bk2_grid[58][_x] = MazeGenerator.SOLID
 	MazeGenerator.current_grid = bk2_grid
 	var bk2 = bk_scene.instantiate()
-	bk2.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)
+	bk2.global_position = Vector2(60 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2, 57 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2)
 	root.add_child(bk2)
 	await physics_frame
 	var bk2_player := StubCombatPlayer.new()
-	bk2_player.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)
+	bk2_player.global_position = Vector2(60 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2, 57 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2)
 	root.add_child(bk2_player)
 	# 玩家面朝右(默认 facing=1);新落点判定:距鸟 teleport_min~max_tiles(3~8)格环形带。
 	# 把 0..119 列的行 0..57 全墙堵死(唯一地板行 58 保留)→ 环形带内无任何落点 → 不瞬移
@@ -1025,8 +1025,8 @@ func _initialize() -> void:
 	var bk_clr = bk_scene.instantiate()
 	root.add_child(bk_clr)
 	await physics_frame
-	_check(not bk_clr._body_clear_at(Vector2(10 * 32 + 16, 10 * 32 + 16)), "黑鸟落点压墙判定(墙内 false)")
-	_check(bk_clr._body_clear_at(Vector2(5 * 32 + 16, 15 * 32 + 16)), "黑鸟落点压墙判定(空地 true)")
+	_check(not bk_clr._body_clear_at(Vector2(10 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2, 10 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2)), "黑鸟落点压墙判定(墙内 false)")
+	_check(bk_clr._body_clear_at(Vector2(5 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2, 15 * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE / 2)), "黑鸟落点压墙判定(空地 true)")
 	bk_clr.free()
 	bk_floor.free()
 	MazeGenerator.current_grid = []
