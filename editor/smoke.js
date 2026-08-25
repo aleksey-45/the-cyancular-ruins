@@ -66,6 +66,8 @@ eq(Core.sanitizeName('塔楼 #1'), '塔楼_1', 'sanitizeName: 保留中文');
 eq(Core.validateGrid([[0, 1], [1, 9]]), { ok: true, error: '' }, 'validateGrid: 合法 0–9');
 eq(Core.validateGrid([[0]]), { ok: true, error: '' }, 'validateGrid: 1×1 合法');
 eq(Core.validateGrid([[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]]), { ok: true, error: '' }, 'validateGrid: 全部 0–9 值合法');
+eq(Core.validateGrid([[0, 175]]), { ok: true, error: '' }, 'validateGrid: packed 0-175 合法');
+eq(Core.validateGrid([[176]]).ok, false, 'validateGrid: packed >175 非法');
 eq(Core.validateGrid([[0], [1, 2]]).ok, false, 'validateGrid: 宽度不一致');
 eq(Core.validateGrid([[0, -1]]).ok, false, 'validateGrid: 负值非法');
 eq(Core.validateGrid([['x']]).ok, false, 'validateGrid: 非数字非法');
@@ -86,16 +88,22 @@ eq(Core.floodFill([[0, 0, 1], [0, 1, 1], [1, 1, 1]], 0, 0, 2), [[2, 2, 1], [2, 1
 eq(Core.floodFill([[0, 0, 1], [0, 1, 1], [1, 1, 1]], 0, 0, 0), [[0, 0, 1], [0, 1, 1], [1, 1, 1]], 'floodFill: 同值不修改');
 eq(Core.floodFill([[1, 1], [1, 0]], 0, 0, 9), [[9, 9], [9, 0]], 'floodFill: 从角落扩展');
 
-// ---- Task: 整图格式 parseMap / serializeMap ----
-const mapText = '# demo\n# player 12 34\n# enemy jump_bird 100 50\n001\n010\n111\n';
+// ---- Task: v2 整图格式 parseMap / serializeMap ----
+const mapText = '# cyrm-v2\n# demo\n# player 12 34\n# enemy jump_bird 100 50\n001F31\n';
 const parsedMap = Core.parseMap(mapText);
-eq(parsedMap.player, { x: 12, y: 34 }, 'parseMap: player');
-eq(parsedMap.enemies, [{ type: 'jump_bird', x: 100, y: 50 }], 'parseMap: enemy');
-eq(parsedMap.grid, [[0, 0, 1], [0, 1, 0], [1, 1, 1]], 'parseMap: 网格 0/1');
-eq(parsedMap.comments, ['demo'], 'parseMap: 普通 # 注释保留');
-eq(Core.serializeMap(parsedMap), mapText, 'parseMap→serializeMap round-trip');
-throws(() => Core.parseMap('00\n0x\n'), 'parseMap: 网格含非 0/1 字符报错');
-throws(() => Core.parseMap('00\n000\n'), 'parseMap: 宽度不一致报错');
+eq(parsedMap.player, { x: 12, y: 34 }, 'parseMap v2: player');
+eq(parsedMap.enemies, [{ type: 'jump_bird', x: 100, y: 50 }], 'parseMap v2: enemy');
+eq(parsedMap.grid, [[0, 31, 49]], 'parseMap v2: 网格 0/31(全砖)/49(纹理3左上1/4)');
+eq(parsedMap.comments, ['demo'], 'parseMap v2: 普通 # 注释保留(标记行不算注释)');
+eq(Core.serializeMap(parsedMap), mapText, 'v2 parseMap→serializeMap round-trip');
+throws(() => Core.parseMap('# cyrm-v2\n00\n0x\n'), 'parseMap v2: 非法形状字符报错');
+throws(() => Core.parseMap('# cyrm-v2\n00\n000\n'), 'parseMap v2: 宽度不一致报错');
+throws(() => Core.parseMap('# cyrm-v2\n00\n001\n'), 'parseMap v2: 奇数行字符数报错');
+// 旧格式自动转换(无标记,单字符):2×2 全实心 → 全砖 31,spawn ÷2
+const oldParsed = Core.parseMap('# old\n# player 112 95\n11\n11\n');
+eq(oldParsed.player, { x: 56, y: 47 }, 'parseMap old: player ÷2');
+eq(oldParsed.grid, [[31]], 'parseMap old: 2×2 全实心 → 全砖 31');
+eq(Core.serializeMap(oldParsed), '# cyrm-v2\n# old\n# player 56 47\n1F\n', '旧图转换后导出 v2');
 
 // ---- Task: 敌人注册表(HTML 内嵌,来自 enemies.json)----
 ok(Array.isArray(fakeWindow.ENEMY_REGISTRY) && fakeWindow.ENEMY_REGISTRY.length >= 2,
@@ -146,20 +154,21 @@ eq(Core.brushOffsets(15), { lo: 7, hi: 7 }, 'brushOffsets: 15 → 15×15');
   throws(function () { Core.parseLibraryJSON('{bad json'); }, 'parseLibraryJSON: 坏 JSON 报错');
   throws(function () { Core.parseLibraryJSON('{}'); }, 'parseLibraryJSON: 缺 structures 报错');
 
-  var ms = { id: 9, name: 'levels', grid: [[0, 1, 9, 0], [0, 0, 1, 1]],
+  var ms = { id: 9, name: 'levels', grid: [[0, 31, 159, 175], [0, 0, 31, 31]],
     player: { x: 0, y: 0 }, enemies: [{ type: 'fly_bird', x: 3, y: 1 }] };
   var text = Core.serializeMapStructure(ms);
-  eq(text.split('\n')[0], '# levels', 'serializeMapStructure: 名字行');
+  eq(text.split('\n')[0], '# cyrm-v2', 'serializeMapStructure: v2 标记');
+  eq(text.indexOf('# levels') >= 0, true, 'serializeMapStructure: 名字行');
   eq(text.indexOf('# player 0 0') >= 0, true, 'serializeMapStructure: player 行');
   eq(text.indexOf('# enemy fly_bird 3 1') >= 0, true, 'serializeMapStructure: enemy 行');
-  eq(text.indexOf('0110\n0011') >= 0, true, 'serializeMapStructure: 1-9→1 归一化');
+  eq(text.indexOf('001F9FAF\n00001F1F') >= 0, true, 'serializeMapStructure: packed 序列化 0/31/159/175');
 
   var es = Core.createEmptyStructure(3, 2);
   eq(es.grid, [[0, 0, 0], [0, 0, 0]], 'createEmptyStructure: 全 0');
   eq(es.player, null, 'createEmptyStructure: 无 player');
   eq(es.enemies.length, 0, 'createEmptyStructure: 无 enemies');
   eq(Core.serializeMapStructure({ id: 1, name: 'blank', grid: es.grid, player: es.player, enemies: es.enemies }),
-    '# blank\n000\n000\n', 'createEmptyStructure→serializeMapStructure: 空图可导出');
+    '# cyrm-v2\n# blank\n000000\n000000\n', 'createEmptyStructure→serializeMapStructure: 空图可导出(v2)');
 })();
 
 console.log('');

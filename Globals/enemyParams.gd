@@ -70,8 +70,8 @@ class BlackBird:
 	const wander_jump_velocity: float = -500.0  # 游走遇墙小跳(翻越矮墙)
 	const take_off_jump_velocity: float = -1000.0  # 起飞竖直上跳高度
 	const flank_check_interval: float = 1.6  # 游走中瞬移判定周期(秒)
-	const teleport_min_tiles: int = 4    # 传送落点距玩家的最短格数(环面距离,随机)
-	const teleport_max_tiles: int = 8    # 传送落点距玩家的最长格数(环面距离,随机)
+	const teleport_min_tiles: int = 2    # 传送落点距玩家的最短格数(环面距离,随机)
+	const teleport_max_tiles: int = 4    # 传送落点距玩家的最长格数(环面距离,随机)
 	const teleport_drop: float = 250.0    # 瞬移到落点上方高度(px),再下落
 	const landing_timeout: float = 0.6   # 落地兜底(秒)
 	const teleport_prep_time: float = 0.25  # 落地播 disappear 的最小停顿(传送前)
