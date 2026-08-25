@@ -44,17 +44,7 @@ var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量(独立于
 @export var weapon_slot: Node2D
 
 @onready var climb: ClimbComponent = $Climb
-
-# 武器注册表:动作名 -> 场景路径(与 project.godot 输入动作 1/2/3 对应)。
-const WEAPONS: Dictionary = {
-	"1": "res://Scenes/Weapons/pistol_test.tscn",
-	"2": "res://Scenes/Weapons/rifle_test.tscn",
-	"3": "res://Scenes/Weapons/m82a1.tscn",
-	"4": "res://Scenes/Weapons/s686.tscn",
-	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
-}
-
-var _weapon: WeaponBase = null
+@onready var weapons: WeaponComponent = $Weapons
 
 signal hp_changed(current: int, max: int)
 
@@ -92,7 +82,7 @@ func _ready() -> void:
 
 	hp_changed.emit(hp, max_hp)
 
-	_equip_weapon(WEAPONS["1"])
+	weapons.equip("1")
 
 
 # 指数缓动：朝目标值逼近。rate 越大越跟手；
@@ -127,7 +117,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		modulate.a = 1.0
 
-	var mult := _movement_multiplier()
+	var mult := weapons.movement_multiplier()
 
 	var horizontal_input = Input.get_axis("left", "right")
 
@@ -316,34 +306,8 @@ func set_facing(v: int) -> void:
 func is_downed() -> bool:
 	return downed
 
-func _equip_weapon(scene_path: String) -> void:
-	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)
-	var inherit_cd := 0.0
-	if _weapon != null:
-		inherit_cd = _weapon.fire_cd_timer
-		_weapon.queue_free()
-	var scene: PackedScene = load(scene_path)
-	if scene == null:
-		push_error("weapon scene not found: " + scene_path)
-		return
-	if weapon_slot == null:
-		push_error("weapon_slot not assigned")
-		return
-	_weapon = scene.instantiate() as WeaponBase
-	weapon_slot.add_child(_weapon)
-	_weapon.equip(self, inherit_cd)
-
-func _movement_multiplier() -> Vector2:
-	if _weapon == null:
-		return Vector2.ONE
-	return _weapon.get_movement_multiplier()
-
 func apply_recoil(push: float) -> void:
-	if is_squat:
-		return
-	if climb.is_latched():
-		push *= 0.1  # 攀爬时后坐力降到 0.1(在梯/锁链上开火基本不后推)
-	velocity.x -= facing_direction * push
+	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:
@@ -353,8 +317,7 @@ func cancel_jump_state() -> void:
 
 func _downed() -> void:
 	downed = true
-	if _weapon != null:
-		_weapon.cancel_aim()
+	weapons.cancel_aim()
 	# 不取消物理:保留当前速度/击退,尸体继续受重力/冲击(与敌人统一)
 	rotation = -PI / 2.0 * float(facing_direction)
 	if animator != null:
@@ -372,5 +335,5 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	for slot in ["1", "2", "3", "4", "5"]:
 		if event.is_action_pressed(slot):
-			_equip_weapon(WEAPONS[slot])
+			weapons.equip(slot)
 			return

@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://c3lcpld4toenv" path="res://Scenes/Player/player.gd" id="1_kyqiw"]
 [ext_resource type="Texture2D" uid="uid://tkrxu88e0hfa" path="res://assets/textures/player.png" id="1_rpqav"]
 [ext_resource type="Script" path="res://Scenes/Player/climb_component.gd" id="3_climb"]
+[ext_resource type="Script" path="res://Scenes/Player/weapon_component.gd" id="4_wpn"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_miouo"]
 atlas = ExtResource("1_rpqav")
@@ -158,3 +159,6 @@ polygon = PackedVector2Array(5.3668, -10.7498, -1.8332, -6.74981, -3.8332, -1.54
 
 [node name="Climb" type="Node" parent="."]
 script = ExtResource("3_climb")
+
+[node name="Weapons" type="Node" parent="."]
+script = ExtResource("4_wpn")
