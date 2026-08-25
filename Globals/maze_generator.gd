@@ -1,9 +1,81 @@
 extends RefCounted
 class_name MazeGenerator
 
-# 地图格子值
-const SOLID: int = 1
+# 地图格子值:packed = 纹理*16 + 形状掩码(0-175)。0 = 空气。
+# 形状掩码 4bit = 2×2 子格(1<<(sy*2+sx):bit0 左上/bit1 右上/bit2 左下/bit3 右下),15=全砖。
 const EMPTY: int = 0
+const SOLID: int = 31  # pack(1, 15) = 纹理1 全砖;测试/网格里"实体格"一律用此常量
+
+# 纹理(1-10,structure.png 顶行 10 块砖)× 形状(0-15)打包成单 int;shape 或 texture 为 0 → 空气。
+static func pack(texture: int, shape: int) -> int:
+	if shape == 0 or texture == 0:
+		return 0
+	return texture * 16 + shape
+
+static func texture_of(v: int) -> int:
+	return v / 16
+
+static func shape_of(v: int) -> int:
+	return v % 16
+
+# v2 每格 2 字符:[纹理][形状hex]。纹理字符沿用旧表(0-9/A),形状字符 hex 0-F。
+static func _texture_char_to_value(ch: String) -> int:
+	match ch:
+		"0": return 0
+		"1": return 1
+		"2": return 2
+		"3": return 3
+		"4": return 4
+		"5": return 5
+		"6": return 6
+		"7": return 7
+		"8": return 8
+		"9": return 9
+		"A", "a": return 10
+		_:
+			push_warning("MazeGenerator: 非法纹理字符 \"%s\"，按空气处理" % ch)
+			return 0
+
+static func _value_to_texture_char(v: int) -> String:
+	if v == 10:
+		return "A"
+	return str(v)
+
+static func _shape_char_to_value(ch: String) -> int:
+	var n := ch.to_int()
+	if n >= 0 and n <= 9:
+		return n
+	match ch:
+		"A", "a": return 10
+		"B", "b": return 11
+		"C", "c": return 12
+		"D", "d": return 13
+		"E", "e": return 14
+		"F", "f": return 15
+		_:
+			push_warning("MazeGenerator: 非法形状字符 \"%s\"，按 0 处理" % ch)
+			return 0
+
+static func _value_to_shape_char(v: int) -> String:
+	return "0123456789ABCDEF"[v]
+
+# .cyrm 单字符 → 瓦片值:0-9 → 0-9,'A'/'a' → 10;非法字符按 0 处理。
+static func _tile_char_to_value(ch: String) -> int:
+	match ch:
+		"0": return 0
+		"1": return 1
+		"2": return 2
+		"3": return 3
+		"4": return 4
+		"5": return 5
+		"6": return 6
+		"7": return 7
+		"8": return 8
+		"9": return 9
+		"A", "a": return 10
+		_:
+			push_warning("MazeGenerator: 非法瓦片字符 \"%s\"，按 0 处理" % ch)
+			return EMPTY
 
 const MAP_DIR: String = "res://map"
 
@@ -128,7 +200,7 @@ static func load_map_file() -> Array[Array]:
 			continue
 		var row: Array[int] = []
 		for ch in line:
-			row.append(SOLID if ch == "1" else EMPTY)
+			row.append(_tile_char_to_value(ch))
 		grid.append(row)
 		row_len = line.length()
 	f.close()
@@ -228,7 +300,7 @@ static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 40
 			if passable_pred.is_valid():
 				if not passable_pred.call(n):
 					continue
-			elif grid[n.y][n.x] == SOLID:
+			elif grid[n.y][n.x] != EMPTY:
 				continue
 			visited[n] = true
 			prev[n] = cur
@@ -271,7 +343,7 @@ static func bfs_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: 
 			if passable_pred.is_valid():
 				if not passable_pred.call(n):
 					continue
-			elif grid[n.y][n.x] == SOLID:
+			elif grid[n.y][n.x] != EMPTY:
 				continue
 			visited[n] = true
 			prev[n] = cur
@@ -370,7 +442,7 @@ static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Arr
 		if passable_pred.is_valid():
 			if not passable_pred.call(Vector2i(nx, ny)):
 				continue
-		elif grid[ny][nx] == SOLID:
+		elif grid[ny][nx] != EMPTY:
 			continue
 		var ni: int = ny * cols + nx
 		var old := _g_cost[ni]
@@ -478,7 +550,7 @@ static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	var dy := absi(d.y)
 	var err := dx - dy
 	while true:
-		if grid[y][x] == SOLID:
+		if grid[y][x] != EMPTY:
 			return false
 		if x == to_cell.x and y == to_cell.y:
 			break
