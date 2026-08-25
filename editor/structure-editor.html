@@ -847,11 +847,12 @@ window.ENEMY_REGISTRY = [
 
     // ── palette ──
     function setWallSwatchBg(sw, t) {
-      // 纹理加载后,swatch 用全砖(形状15)64px 图当背景
-      if (t <= 0) return;
-      var img = tileImage(Core.packCell(t, 15));
-      sw.style.backgroundImage = "url('" + img.toDataURL() + "')";
-      sw.style.backgroundSize = 'cover';
+      // 纹理加载后,swatch 用 structure.png 顶行第 t-1 块当背景(1-10 ↔ 砖块)。
+      // 直接引源图 URL 做 CSS 背景,不走 canvas toDataURL —— file:// 下 canvas 会 taint 抛安全错误。
+      if (t <= 0 || !wallImg || !wallImg.complete || wallImg.naturalWidth <= 0) return;
+      sw.style.backgroundImage = "url('" + wallImg.src + "')";
+      sw.style.backgroundSize = '1000% 1000%';
+      sw.style.backgroundPosition = ((t - 1) * 100 / 9) + '% 0%';
     }
     function buildPalette() {
       els.palette.innerHTML = '';
