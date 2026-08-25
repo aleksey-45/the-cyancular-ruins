@@ -137,10 +137,11 @@ func _initialize() -> void:
 	# ── Task 9: 地图尺寸读取(map_size) ──
 	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
 
-	# ── v2 解析 round-trip ──
-	var v2_rows := MazeGenerator.serialize_v2_grid([[0, 31, 49], [31, 0, 0]])
-	_check(v2_rows[0] == "001F31", "serialize_v2_grid: 空气/全砖/纹理3左上1/4")
-	_check(MazeGenerator._parse_v2_grid(v2_rows) == [[0, 31, 49], [31, 0, 0]], "v2 网格 round-trip")
+	# ── v3 解析 round-trip(纹理 3 位 0xx + 形状 hex)──
+	var v3_rows := MazeGenerator.serialize_v3_grid([[0, 31, 49], [31, 0, 0]])
+	_check(v3_rows[0] == "0000001F0031", "serialize_v3_grid: 空气/全砖/纹理3左上1/4")
+	_check(v3_rows[1] == "001F00000000", "serialize_v3_grid: 第2行")
+	_check(MazeGenerator._parse_v3_grid(v3_rows) == [[0, 31, 49], [31, 0, 0]], "v3 网格 round-trip")
 	# ── 旧格式自动转换(2×2→1,掩码+纹理)──
 	var old2 := [[0, 1], [1, 0]]
 	var conv := MazeGenerator.convert_old_grid(old2)

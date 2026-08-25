@@ -94,6 +94,16 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
 .swatch.s8 { background: #496a7a; }
 .swatch.s9 { background: #446879; }
 .swatch.s10 { background: #4e7282; }
+.swatch.s11 { background: #8a7a5c; }
+.swatch.s12 { background: #8a8f98; }
+.swatch.s13 { background: #8a8f98; }
+.swatch.s14 { background: #8a8f98; }
+.swatch.s15 { background: #6fae8f; }
+.swatch.s16 { background: #6fae8f; }
+.swatch.s17 { background: #6fae8f; }
+.swatch.s18 { background: #6fae8f; }
+.swatch.s19 { background: #8a6f5e; }
+.swatch.s20 { background: #8a6f5e; }
 .hint { font-size: 12px; color: var(--text-dim); margin: 8px 0 0; }
 .spawn-tools { display: flex; flex-direction: column; gap: 6px; }
 .spawn-tools .spawn-btn {
@@ -279,8 +289,8 @@ window.ENEMY_REGISTRY = [
         if (!Array.isArray(row) || row.length !== w) return { ok: false, error: '第 ' + y + ' 行宽度不一致' };
         for (var x = 0; x < w; x++) {
           var v = row[x];
-          if (!Number.isInteger(v) || v < 0 || v > 175) {
-            return { ok: false, error: '(' + x + ',' + y + ') 处 tile 值非法(packed 0-175): ' + v };
+          if (!Number.isInteger(v) || v < 0 || v > 335) {
+            return { ok: false, error: '(' + x + ',' + y + ') 处 tile 值非法(packed 0-335): ' + v };
           }
         }
       }
@@ -331,11 +341,12 @@ window.ENEMY_REGISTRY = [
     return out;
   }
 
-    // v2 每格 = packed 纹理*16 + 形状掩码(0-175)。文件里每格 2 字符:[纹理][形状hex]。
-    // 纹理字符同旧表(0-9/A);形状字符 hex 0-F;空气 = "00"。
-    var V2_MARKER = '# cyrm-v2';
-    var TILE_TEXTURE_CHAR = { 0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'A' };
-    var TILE_TEXTURE_VALUE = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'a': 10 };
+    // v3 每格 = packed 纹理*16 + 形状掩码。文件里每格 4 字符:[纹理 3 位 0xx][形状hex]。
+    // 纹理 000=空气,001/002/...;形状字符 hex 0-F;空气 = "0000"。纹理用 3 位数字,不用字母。
+    var V3_MARKER = '# cyrm-v3';
+    var TILE_TEXTURE_VALUE = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'a': 10,
+                               'B': 11, 'b': 11, 'C': 12, 'c': 12, 'D': 13, 'd': 13, 'E': 14, 'e': 14, 'F': 15, 'f': 15,
+                               'G': 16, 'g': 16, 'H': 17, 'h': 17, 'I': 18, 'i': 18, 'J': 19, 'j': 19, 'K': 20, 'k': 20 };
     var SHAPE_HEX_CHAR = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
     var SHAPE_HEX_VALUE = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
                             'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'a': 10, 'b': 11, 'c': 12, 'd': 13, 'e': 14, 'f': 15 };
@@ -365,12 +376,12 @@ window.ENEMY_REGISTRY = [
       return out;
     }
 
-    // 整图地图格式:v2 = `# cyrm-v2` 标记 + 每格 2 字符[纹理][形状hex];旧格式 = 单字符
+    // 整图地图格式:v3 = `# cyrm-v3` 标记 + 每格 4 字符[纹理 3 位 0xx][形状hex];旧格式 = 单字符
     // 0-9/A(无标记)→ 自动 2×2 转换(packed)并 ÷2 spawn 坐标。
     // 返回 { grid, player, enemies, comments }。
     function parseMap(text) {
       var lines = String(text).split(/\r?\n/);
-      var isV2 = lines.some(function (l) { return l.trim().indexOf(V2_MARKER) === 0; });
+      var isV3 = lines.some(function (l) { return l.trim().indexOf(V3_MARKER) === 0; });
       var grid = [], player = null, enemies = [], comments = [], width = -1;
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim();
@@ -381,7 +392,7 @@ window.ENEMY_REGISTRY = [
             player = { x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) };
           } else if (parts[0] === 'enemy' && parts.length >= 4) {
             enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
-          } else if (parts[0] === 'cyrm-v2') {
+          } else if (parts[0] === 'cyrm-v3') {
             // 版本标记行不当作注释
           } else {
             comments.push(line.slice(1).trim());
@@ -389,13 +400,13 @@ window.ENEMY_REGISTRY = [
           continue;
         }
         var row = [];
-        if (isV2) {
-          if (line.length % 2 !== 0) throw new Error('第 ' + (i + 1) + ' 行 v2 字符数必须为偶数');
-          for (var j = 0; j < line.length; j += 2) {
-            var tv = TILE_TEXTURE_VALUE[line.charAt(j)];
-            var sv = SHAPE_HEX_VALUE[line.charAt(j + 1)];
-            if (tv === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法纹理字符 "' + line.charAt(j) + '"');
-            if (sv === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法形状字符 "' + line.charAt(j + 1) + '"');
+        if (isV3) {
+          if (line.length % 4 !== 0) throw new Error('第 ' + (i + 1) + ' 行 v3 字符数必须为 4 的倍数');
+          for (var j = 0; j < line.length; j += 4) {
+            var tv = parseInt(line.slice(j, j + 3), 10);
+            var sv = SHAPE_HEX_VALUE[line.charAt(j + 3)];
+            if (isNaN(tv) || tv < 0 || tv > 999) throw new Error('第 ' + (i + 1) + ' 行含非法纹理数字 "' + line.slice(j, j + 3) + '"');
+            if (sv === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法形状字符 "' + line.charAt(j + 3) + '"');
             row.push(packCell(tv, sv));
           }
         } else {
@@ -409,7 +420,7 @@ window.ENEMY_REGISTRY = [
         else if (row.length !== width) throw new Error('第 ' + (i + 1) + ' 行宽度 ' + row.length + ' 与首行 ' + width + ' 不一致');
         grid.push(row);
       }
-      if (!isV2) {
+      if (!isV3) {
         grid = convertOldGrid(grid);
         if (player) { player.x = Math.floor(player.x / 2); player.y = Math.floor(player.y / 2); }
         enemies.forEach(function (e) { e.x = Math.floor(e.x / 2); e.y = Math.floor(e.y / 2); });
@@ -418,14 +429,13 @@ window.ENEMY_REGISTRY = [
     }
 
     function serializeMap(map) {
-      var lines = [V2_MARKER];
+      var lines = [V3_MARKER];
       (map.comments || []).forEach(function (c) { lines.push('# ' + c); });
       if (map.player) lines.push('# player ' + map.player.x + ' ' + map.player.y);
       (map.enemies || []).forEach(function (e) { lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y); });
       map.grid.forEach(function (row) {
         lines.push(row.map(function (v) {
-          if (v === 0) return '00';
-          return TILE_TEXTURE_CHAR[textureOf(v)] + hexOf(shapeOf(v));
+          return String(textureOf(v)).padStart(3, '0') + hexOf(shapeOf(v));
         }).join(''));
       });
       return lines.join('\n') + '\n';
@@ -508,6 +518,8 @@ window.ENEMY_REGISTRY = [
   })();
   </script>
 
+  <script src="tile_defs.js"></script>
+
   <script>
   (function () {
     'use strict';
@@ -515,7 +527,9 @@ window.ENEMY_REGISTRY = [
     var TILE_COLORS = {
       0: null,
       1: '#527789', 2: '#528989', 3: '#528977', 4: '#526589', 5: '#528965',
-      6: '#4b6d7d', 7: '#5e8191', 8: '#496a7a', 9: '#446879', 10: '#4e7282'
+      6: '#4b6d7d', 7: '#5e8191', 8: '#496a7a', 9: '#446879', 10: '#4e7282',
+      11: '#8a7a5c', 12: '#8a8f98', 13: '#8a8f98', 14: '#8a8f98', 15: '#6fae8f',
+      16: '#6fae8f', 17: '#6fae8f', 18: '#6fae8f', 19: '#8a6f5e', 20: '#8a6f5e'
     };
 
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, shape: 15, gridOn: true,
@@ -577,9 +591,10 @@ window.ENEMY_REGISTRY = [
       var c = document.createElement('canvas'); c.width = 64; c.height = 64;
       var g = c.getContext('2d'); g.imageSmoothingEnabled = false;
       if (wallImg && wallImg.complete && wallImg.naturalWidth > 0) {
+        var _sx0 = ((tex - 1) % 10) * 32, _sy0 = Math.floor((tex - 1) / 10) * 32;
         for (var qy = 0; qy < 2; qy++) for (var qx = 0; qx < 2; qx++) {
           if (shape & (1 << (qy * 2 + qx))) {
-            g.drawImage(wallImg, (tex - 1) * 32 + qx * 16, qy * 16, 16, 16, qx * 32, qy * 32, 32, 32);
+            g.drawImage(wallImg, _sx0 + qx * 16, _sy0 + qy * 16, 16, 16, qx * 32, qy * 32, 32, 32);
           }
         }
       } else {
@@ -835,7 +850,8 @@ window.ENEMY_REGISTRY = [
         parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length
           + (state.torusMode ? ' · 环面' : ''));
         parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮' })[state.tool] || state.tool));
-        parts.push('纹理: ' + state.palette + (state.palette === 0 ? ' (空气)' : '') + ' · 形状 ' + state.shape);
+        var tn = state.palette === 0 ? '' : tileName(state.palette);
+        parts.push('纹理: ' + state.palette + (state.palette === 0 ? ' (空气)' : (tn ? ' ' + tn : '')) + ' · 形状 ' + state.shape);
         parts.push('画笔 ' + state.brushSize);
         parts.push('出生点:玩家' + (s.player ? '1' : '0') + ' · 敌人 ' + (s.enemies || []).length);
         parts.push('撤销 ' + history.length + ' · 重做 ' + redoStack.length);
@@ -846,21 +862,28 @@ window.ENEMY_REGISTRY = [
     }
 
     // ── palette ──
+    function tileName(t) {
+      var defs = (typeof window !== 'undefined' && window.TILE_DEFS) || null;
+      var d = defs && defs.tiles && defs.tiles[String(t)];
+      return d ? d.name : '';
+    }
     function setWallSwatchBg(sw, t) {
-      // 纹理加载后,swatch 用 structure.png 顶行第 t-1 块当背景(1-10 ↔ 砖块)。
+      // 纹理加载后,swatch 用 structure.png 第 (t-1) 块当背景(两行,每行 10 块:1-10 顶行,11-20 次行)。
       // 直接引源图 URL 做 CSS 背景,不走 canvas toDataURL —— file:// 下 canvas 会 taint 抛安全错误。
       if (t <= 0 || !wallImg || !wallImg.complete || wallImg.naturalWidth <= 0) return;
       sw.style.backgroundImage = "url('" + wallImg.src + "')";
       sw.style.backgroundSize = '1000% 1000%';
-      sw.style.backgroundPosition = ((t - 1) * 100 / 9) + '% 0%';
+      var _row = Math.floor((t - 1) / 10), _col = (t - 1) % 10;
+      sw.style.backgroundPosition = (_col * 100 / 9) + '% ' + (_row * 100 / 9) + '%';
     }
     function buildPalette() {
       els.palette.innerHTML = '';
-      for (var t = 0; t <= 10; t++) {
+      for (var t = 0; t <= 20; t++) {
         var sw = document.createElement('div');
         sw.className = 'swatch' + (t === 0 ? ' sw-air' : ' s' + t);
         sw.textContent = String(t);
-        sw.title = t === 0 ? '0 · 空气' : t + ' · 纹理';
+        var tname = tileName(t);
+        sw.title = t === 0 ? '0 · 空气' : (t + ' · ' + (tname || '纹理'));
         if (t === state.palette) sw.classList.add('selected');
         setWallSwatchBg(sw, t);
         (function (tile) {
