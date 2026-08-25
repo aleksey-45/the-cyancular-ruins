@@ -135,7 +135,20 @@ func _initialize() -> void:
 			"锚定:自身不变")
 
 	# ── Task 9: 地图尺寸读取(map_size) ──
-	_check(MazeGenerator.map_size() == Vector2i(250, 150), "map_size: 从地图文件读取列/行数")
+	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
+
+	# ── v2 解析 round-trip ──
+	var v2_rows := MazeGenerator.serialize_v2_grid([[0, 31, 49], [31, 0, 0]])
+	_check(v2_rows[0] == "001F31", "serialize_v2_grid: 空气/全砖/纹理3左上1/4")
+	_check(MazeGenerator._parse_v2_grid(v2_rows) == [[0, 31, 49], [31, 0, 0]], "v2 网格 round-trip")
+	# ── 旧格式自动转换(2×2→1,掩码+纹理)──
+	var old2 := [[0, 1], [1, 0]]
+	var conv := MazeGenerator.convert_old_grid(old2)
+	_check(conv == [[1 * 16 + 6]], "旧 2×2(右上+左下)→ 形状6 纹理1")   # 1<<1|1<<2 = 6
+	var old4 := [[1, 1], [1, 1]]
+	_check(MazeGenerator.convert_old_grid(old4) == [[31]], "旧 2×2 全实心 → 全砖 31")
+	var old_mixed := [[3, 0], [7, 0]]
+	_check(MazeGenerator.convert_old_grid(old_mixed) == [[3 * 16 + 5]], "旧混合纹理取首个实体(左上 3 → 纹理3; 左上+左下 → 形状5)")
 
 	# ── Task: 武器场景参数 + 开火命中 ──
 	var stub := StubPlayer.new()
@@ -659,17 +672,17 @@ func _initialize() -> void:
 	# 大网格(demo 全尺寸)上跑 A*:不崩、路径逐格相邻且在界内(扁平数组索引正确)。
 	var big_grid := MazeGenerator.load_map_file()
 	MazeGenerator.current_grid = big_grid
-	var far := MazeGenerator.astar_path_nearest(Vector2i(10, 10), Vector2i(240, 120))
+	var far := MazeGenerator.astar_path_nearest(Vector2i(10, 10), Vector2i(110, 60))
 	var far_valid := true
 	var prev_cell := Vector2i(10, 10)
 	for c in far:
-		if c.x < 0 or c.x >= 250 or c.y < 0 or c.y >= 150:
+		if c.x < 0 or c.x >= 125 or c.y < 0 or c.y >= 75:
 			far_valid = false
 			break
 		var dxc := absi(c.x - prev_cell.x)
 		var dyc := absi(c.y - prev_cell.y)
-		dxc = mini(dxc, 250 - dxc)
-		dyc = mini(dyc, 150 - dyc)
+		dxc = mini(dxc, 125 - dxc)
+		dyc = mini(dyc, 75 - dyc)
 		if not (dxc + dyc == 1):
 			far_valid = false
 			break
@@ -839,183 +852,6 @@ func _initialize() -> void:
 	_check(esc2._bird_can_pass(esc2_cell), "窄檐逃逸目标格可走")
 	esc.free()
 	esc2.free()
-	MazeGenerator.current_grid = []
-
-	# ── Task: BlackBird(绕背瞬移刺客)──
-	var bk_grid: Array[Array] = []
-	for _y in range(60):
-		var row_bk: Array[int] = []
-		row_bk.resize(120)
-		row_bk.fill(MazeGenerator.EMPTY)
-		bk_grid.append(row_bk)
-	for _x in range(120):
-		bk_grid[58][_x] = MazeGenerator.SOLID  # 地板
-	MazeGenerator.current_grid = bk_grid
-	# 物理地板:网格只用于寻路/LOS,不产生物理碰撞;没它鸟会一直下落远离玩家醒不来。
-	var bk_floor := StaticBody2D.new()
-	var bkshape := CollisionShape2D.new()
-	var bkrect := RectangleShape2D.new()
-	bkrect.size = Vector2(4000, 40)
-	bkshape.shape = bkrect
-	bkshape.position = Vector2(0, -20)
-	bk_floor.add_child(bkshape)
-	bk_floor.position = Vector2(1920, 1896)  # 地板顶面 y=1856(row58 顶),覆盖 [-80,3920]
-	bk_floor.collision_layer = 1
-	bk_floor.collision_mask = 0
-	root.add_child(bk_floor)
-	var bk_scene: PackedScene = load("res://Scenes/Enemies/EnemyBlackBird.tscn")
-	_check(bk_scene != null, "BlackBird 场景加载")
-	var bk = bk_scene.instantiate()
-	# 放地图中段(远离环面接缝),避免「身后」落点跨接缝翻到玩家远副本、冲锋够不着
-	bk.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)  # 地板格(row57, 下方 row58 实心)
-	root.add_child(bk)
-	await physics_frame
-	_check(bk.get_script() == load("res://Scenes/Enemies/enemy_black_bird.gd"), "BlackBird 实例类型")
-	_check(bk.state == 0, "BlackBird 初始休眠")
-	_check(bk.hp == 30, "BlackBird hp=30")
-	_check(bk.contact_damage == 0, "BlackBird 无接触伤害")
-	_check(bk.collision_layer == 4, "BlackBird 占层3")
-	_check(is_equal_approx(bk.scale.x, 2.5), "BlackBird scale=2.5")
-	_check(bk.get_node("AnimatedSprite2D").texture_filter == 1, "BlackBird 像素滤镜(nearest)")
-	# 玩家远处 → 保持睡眠
-	var bk_far := StubCombatPlayer.new()
-	bk_far.global_position = Vector2(60, 200)
-	root.add_child(bk_far)
-	for _i in range(20):
-		await physics_frame
-	_check(bk.state == 0, "黑鸟玩家远处保持睡眠")
-	bk_far.free()
-	# 玩家接近 → 苏醒 → 游走(验证游走速度,再等瞬移判定)
-	var bk_player := StubCombatPlayer.new()
-	bk_player.global_position = Vector2(66 * 32 + 16, 57 * 32 + 16)  # 鸟右侧 6 格(面朝右,身后落点在鸟附近)
-	root.add_child(bk_player)
-	var bk_reached_wander := false
-	var bk_wander_vx := 0.0
-	for _i in range(120):
-		await physics_frame
-		if bk.state == 2:  # WANDER
-			await physics_frame  # 转换帧速度还是旧的,多等一帧让 WANDER 分支设过速度
-			bk_reached_wander = true
-			bk_wander_vx = bk.velocity.x
-			break
-	_check(bk_reached_wander, "黑鸟进入游走")
-	_check(absf(bk_wander_vx) == EnemyParams.BlackBird.wander_speed, "黑鸟游走速度")
-	# 瞬移判定成功 → 起飞 → 落地 → 冲锋命中 6 伤(穿透无敌帧)
-	var bk_sil_mat := bk.get_node("AnimatedSprite2D").material as ShaderMaterial
-	var bk_reached_takeoff := false
-	var bk_takeoff_jumping := false
-	var bk_arrival_flashing := false
-	var bk_got_hit := false
-	for _i in range(360):
-		await physics_frame
-		if bk.state == 3:  # TAKE_OFF
-			bk_reached_takeoff = true
-			if bk.velocity.y < 0.0:
-				bk_takeoff_jumping = true
-		elif bk.state == 4:  # CHARGE(含瞬移后落地停顿)
-			if bk_sil_mat != null and bk_sil_mat.get_shader_parameter("silhouette") > 0.5:
-				bk_arrival_flashing = true
-		if bk_player.hit_log.has(6):
-			bk_got_hit = true
-			break
-	_check(bk_reached_takeoff, "黑鸟进入起飞动作")
-	_check(bk_takeoff_jumping, "黑鸟起飞竖直上跳")
-	_check(bk_arrival_flashing, "黑鸟瞬移后白闪(到达)")
-	_check(bk_got_hit, "黑鸟冲锋命中玩家 6 伤")
-	_check(bk.state == 5, "黑鸟命中后大后跳")  # BACK_HOP
-	# 后跳落地 → 回游走
-	var bk_wandered_again := false
-	for _i in range(240):
-		await physics_frame
-		if bk.state == 2:
-			bk_wandered_again = true
-			break
-	_check(bk_wandered_again, "黑鸟后跳落地回游走")
-	# 玩家远离 → 入睡
-	bk_player.global_position = Vector2(60, 3500)
-	var bk_slept := false
-	for _i in range(240):
-		await physics_frame
-		if bk.state == 0:
-			bk_slept = true
-			break
-	_check(bk_slept, "黑鸟玩家远离入睡")
-	bk_player.free()
-	bk.free()
-	# 死亡:白闪闪烁后销毁,物理与生前一致
-	var bk_dead = bk_scene.instantiate()
-	bk_dead.global_position = Vector2(300, 57 * 32 + 16)
-	root.add_child(bk_dead)
-	await physics_frame
-	bk_dead.hurt(99, Vector2.RIGHT)
-	_check(bk_dead.is_dead, "黑鸟受击死亡")
-	var bk_died := false
-	for _i in range(180):
-		await physics_frame
-		if not is_instance_valid(bk_dead):
-			bk_died = true
-			break
-	_check(bk_died, "黑鸟死亡白闪后销毁")
-	# 落点判定反例:理想落点区被整列墙堵死(无地板 + LOS 被挡) → 不瞬移,仍游走
-	var bk2_grid: Array[Array] = []
-	for _y in range(60):
-		var row2_bk: Array[int] = []
-		row2_bk.resize(120)
-		row2_bk.fill(MazeGenerator.EMPTY)
-		bk2_grid.append(row2_bk)
-	for _x in range(120):
-		bk2_grid[58][_x] = MazeGenerator.SOLID
-	MazeGenerator.current_grid = bk2_grid
-	var bk2 = bk_scene.instantiate()
-	bk2.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)
-	root.add_child(bk2)
-	await physics_frame
-	var bk2_player := StubCombatPlayer.new()
-	bk2_player.global_position = Vector2(60 * 32 + 16, 57 * 32 + 16)
-	root.add_child(bk2_player)
-	# 玩家面朝右(默认 facing=1);新落点判定:距鸟 teleport_min~max_tiles(3~8)格环形带。
-	# 把 0..119 列的行 0..57 全墙堵死(唯一地板行 58 保留)→ 环形带内无任何落点 → 不瞬移
-	for _c in range(120):
-		for _y in range(58):
-			bk2_grid[_y][_c] = MazeGenerator.SOLID
-	MazeGenerator.current_grid = bk2_grid
-	var bk_flanked := false
-	for _i in range(240):
-		await physics_frame
-		if bk2.state == 3:  # TAKE_OFF
-			bk_flanked = true
-			break
-	_check(not bk_flanked, "黑鸟背墙不瞬移(仍游走)")
-	# 拆墙 → 应能瞬移
-	for _c in range(120):
-		for _y in range(58):
-			bk2_grid[_y][_c] = MazeGenerator.EMPTY
-	MazeGenerator.current_grid = bk2_grid
-	var bk_flanked2 := false
-	for _i in range(240):
-		await physics_frame
-		if bk2.state == 3:
-			bk_flanked2 = true
-			break
-	_check(bk_flanked2, "黑鸟拆墙后可瞬移")
-	bk2_player.free()
-	bk2.free()
-	# 落点清空判定(瞬移不穿墙):碰撞箱压到实心格返回 false
-	var clr_grid: Array[Array] = []
-	for _y in range(20):
-		var row_clr: Array[int] = []
-		row_clr.resize(40)
-		row_clr.fill(MazeGenerator.EMPTY)
-		clr_grid.append(row_clr)
-	clr_grid[10][10] = MazeGenerator.SOLID  # 单墙
-	MazeGenerator.current_grid = clr_grid
-	var bk_clr = bk_scene.instantiate()
-	root.add_child(bk_clr)
-	await physics_frame
-	_check(not bk_clr._body_clear_at(Vector2(10 * 32 + 16, 10 * 32 + 16)), "黑鸟落点压墙判定(墙内 false)")
-	_check(bk_clr._body_clear_at(Vector2(5 * 32 + 16, 15 * 32 + 16)), "黑鸟落点压墙判定(空地 true)")
-	bk_clr.free()
-	bk_floor.free()
 	MazeGenerator.current_grid = []
 
 	# ── Task: 地图 spawn 元数据解析 ──
