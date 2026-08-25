@@ -159,28 +159,132 @@ static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 	return p
 
 
+# ── 地图格式(.cyrm v1/v2)──
+# v2:首行带 `# cyrm-v2` 标记,每格 2 字符 [纹理][形状hex](纹理 0=空气/1-9/A=10,形状 0-F)。
+# v1(旧):单字符 0-9/A(250×150),无标记 → 加载时自动 2×2 转换并 ÷2 spawn 坐标。
+const V2_MARKER: String = "# cyrm-v2"
+
+# 任一非空行以标记开头 → v2 格式;否则按旧格式(自动转换)。
+static func _has_v2_marker(lines: Array) -> bool:
+	for l in lines:
+		var s := String(l).strip_edges()
+		if s.begins_with(V2_MARKER):
+			return true
+	return false
+
+# 从原始行里取出网格行(跳过空行与 # 注释)。
+static func _grid_lines(lines: Array) -> Array:
+	var out: Array = []
+	for l in lines:
+		var s := String(l).strip_edges()
+		if s.is_empty() or s.begins_with("#"):
+			continue
+		out.append(s)
+	return out
+
+# v2 网格:每行 125 格 × 2 字符。宽度(字符数)不一致的抬头行跳过。
+static func _parse_v2_grid(lines: Array) -> Array[Array]:
+	var grid: Array[Array] = []
+	var row_len := -1
+	for raw in lines:
+		var line := String(raw).strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		var cells: Array[int] = []
+		var i := 0
+		while i + 1 < line.length():
+			cells.append(pack(_texture_char_to_value(line[i]), _shape_char_to_value(line[i + 1])))
+			i += 2
+		if row_len < 0:
+			row_len = cells.size()
+		elif cells.size() != row_len:
+			push_warning("MazeGenerator: v2 第 %d 行格数 %d 与首行 %d 不一致，已跳过" % [grid.size() + 1, cells.size(), row_len])
+			continue
+		grid.append(cells)
+		row_len = cells.size()
+	return grid
+
+# 旧格式(单字符 0-10)→ 0-10 网格。
+static func _parse_old_grid(lines: Array) -> Array[Array]:
+	var grid: Array[Array] = []
+	var row_len := -1
+	for raw in lines:
+		var line := String(raw).strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		var row: Array[int] = []
+		for ch in line:
+			row.append(_tile_char_to_value(ch))
+		if row_len >= 0 and row.size() != row_len:
+			push_warning("MazeGenerator: 旧格式第 %d 行长度 %d 与首行 %d 不一致，已跳过" % [grid.size() + 1, row.size(), row_len])
+			continue
+		grid.append(row)
+		row_len = row.size()
+	return grid
+
+# 旧 2×2 → 新 1 格 packed。宽高需偶数;奇数丢弃多余行列。
+static func convert_old_grid(old: Array[Array]) -> Array[Array]:
+	var rows := old.size()
+	var cols := old[0].size()
+	var out: Array[Array] = []
+	for ny in range(rows / 2):
+		var row: Array[int] = []
+		for nx in range(cols / 2):
+			var shape := 0
+			var tex := 0
+			for sy in range(2):
+				for sx in range(2):
+					var ov: int = old[ny * 2 + sy][nx * 2 + sx]
+					if ov != 0:
+						shape |= 1 << (sy * 2 + sx)
+						if tex == 0:
+							tex = ov
+			row.append(pack(tex, shape))
+		out.append(row)
+	return out
+
+# v2 网格序列化:125 格/行,每格 2 字符。供地图转换脚本(单一转换源)。
+static func serialize_v2_grid(grid: Array[Array]) -> Array[String]:
+	var out: Array[String] = []
+	for row in grid:
+		var sb := ""
+		for v in row:
+			if v == 0:
+				sb += "00"
+			else:
+				sb += _value_to_texture_char(texture_of(v)) + _value_to_shape_char(shape_of(v))
+		out.append(sb)
+	return out
+
+
 # 读取地图文件的列/行数(格子级),供 GameParameters 初始化 MAP 像素尺寸。
 # 逻辑与 load_map_file 一致:跳过空行与 # 注释行,以首个有效行为宽度,
-# 宽度不一致的行(如抬头)不计入行数。
+# 宽度不一致的行(如抬头)不计入行数。返回转换后的游戏网格尺寸(v2 125×75,旧图同)。
 static func map_size() -> Vector2i:
 	var path := map_file_path()
 	if not FileAccess.file_exists(path):
 		push_error("MazeGenerator: 找不到地图文件 %s" % path)
 		return Vector2i.ZERO
 	var f := FileAccess.open(path, FileAccess.READ)
+	var lines: Array = []
+	while not f.eof_reached():
+		lines.append(f.get_line())
+	f.close()
+	var grid_lines := _grid_lines(lines)
 	var cols := -1
 	var rows := 0
-	while not f.eof_reached():
-		var line: String = f.get_line().strip_edges()
-		if line.is_empty() or line.begins_with("#"):
-			continue
+	for line in grid_lines:
+		var l := String(line)
 		if cols < 0:
-			cols = line.length()
-		elif line.length() != cols:
+			cols = l.length()
+		elif l.length() != cols:
 			continue
 		rows += 1
-	f.close()
-	return Vector2i(cols, rows)
+	if rows == 0 or cols < 0:
+		return Vector2i.ZERO
+	if _has_v2_marker(lines):
+		return Vector2i(cols / 2, rows)   # v2:每格 2 字符
+	return Vector2i(cols / 2, rows / 2)   # 旧:转换后 2×2 → 1
 
 
 static func load_map_file() -> Array[Array]:
@@ -189,24 +293,17 @@ static func load_map_file() -> Array[Array]:
 		push_error("MazeGenerator: 找不到地图文件 %s" % path)
 		return []
 	var f := FileAccess.open(path, FileAccess.READ)
-	var grid: Array[Array] = []
-	var row_len := -1
+	var lines: Array = []
 	while not f.eof_reached():
-		var line: String = f.get_line().strip_edges()
-		if line.is_empty() or line.begins_with("#"):
-			continue
-		if row_len >= 0 and line.length() != row_len:
-			push_warning("MazeGenerator: 第 %d 行长度 %d 与首行 %d 不一致，已跳过" % [grid.size() + 1, line.length(), row_len])
-			continue
-		var row: Array[int] = []
-		for ch in line:
-			row.append(_tile_char_to_value(ch))
-		grid.append(row)
-		row_len = line.length()
+		lines.append(f.get_line())
 	f.close()
+	if _has_v2_marker(lines):
+		return _parse_v2_grid(lines)
+	var grid := _parse_old_grid(lines)
 	if grid.is_empty():
 		push_error("MazeGenerator: 地图文件 %s 无有效行" % map_file_path())
-	return grid
+		return []
+	return convert_old_grid(grid)
 
 
 # 解析地图文件的 spawn 元数据行(坐标=格,空格分隔)。
@@ -259,7 +356,17 @@ static func load_spawns() -> Dictionary:
 	while not f.eof_reached():
 		lines.append(f.get_line())
 	f.close()
-	return parse_spawn_metadata(lines)
+	var result := parse_spawn_metadata(lines)
+	if _has_v2_marker(lines):
+		return result
+	# 旧格式:网格 2×2 → 1,spawn 坐标同步 ÷2。
+	if result.has("player"):
+		result["player"] = Vector2i(result["player"].x / 2, result["player"].y / 2)
+	if result.has("enemies"):
+		var enemies: Array = result["enemies"]
+		for i in range(enemies.size()):
+			enemies[i]["cell"] = Vector2i(enemies[i]["cell"].x / 2, enemies[i]["cell"].y / 2)
+	return result
 
 
 # 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。

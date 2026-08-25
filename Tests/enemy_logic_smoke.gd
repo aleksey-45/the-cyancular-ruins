@@ -135,7 +135,20 @@ func _initialize() -> void:
 			"锚定:自身不变")
 
 	# ── Task 9: 地图尺寸读取(map_size) ──
-	_check(MazeGenerator.map_size() == Vector2i(250, 150), "map_size: 从地图文件读取列/行数")
+	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
+
+	# ── v2 解析 round-trip ──
+	var v2_rows := MazeGenerator.serialize_v2_grid([[0, 31, 49], [31, 0, 0]])
+	_check(v2_rows[0] == "001F31", "serialize_v2_grid: 空气/全砖/纹理3左上1/4")
+	_check(MazeGenerator._parse_v2_grid(v2_rows) == [[0, 31, 49], [31, 0, 0]], "v2 网格 round-trip")
+	# ── 旧格式自动转换(2×2→1,掩码+纹理)──
+	var old2 := [[0, 1], [1, 0]]
+	var conv := MazeGenerator.convert_old_grid(old2)
+	_check(conv == [[1 * 16 + 6]], "旧 2×2(右上+左下)→ 形状6 纹理1")   # 1<<1|1<<2 = 6
+	var old4 := [[1, 1], [1, 1]]
+	_check(MazeGenerator.convert_old_grid(old4) == [[31]], "旧 2×2 全实心 → 全砖 31")
+	var old_mixed := [[3, 0], [7, 0]]
+	_check(MazeGenerator.convert_old_grid(old_mixed) == [[3 * 16 + 4]], "旧混合纹理取首个实体(左上 3 → 纹理3)")
 
 	# ── Task: 武器场景参数 + 开火命中 ──
 	var stub := StubPlayer.new()
