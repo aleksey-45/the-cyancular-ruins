@@ -8,6 +8,15 @@ class shared:
 	const hit_flash: float = 0.1        # 受击白闪时长(秒)
 	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁(全敌人统一)
 	const turn_min_interval: float = 0.5  # 敌人最小转向间隔(秒),防止来回抖
+	# ── 水 ──
+	const bird_swim_speed: float = 260.0   # 落水鸟朝玩家游的速度
+	const bird_buoyancy_k: float = 6.0     # 浮力弹簧刚度(回水面)
+	const bird_max_float: float = 260.0    # 上浮最大速度
+	const bird_max_sink: float = 160.0     # 下沉最大速度
+	const bird_water_damp: float = 5.0     # 水中垂直速度阻尼
+	const drown_delay: float = 5.0         # 没顶累计超过此值开始扣血
+	const drown_interval: float = 1.0      # 扣血间隔(秒)
+	const drown_damage: int = 5            # 每次扣血
 
 class JumpBird:
 	const wake_radius: float = 900.0    # 玩家多近苏醒

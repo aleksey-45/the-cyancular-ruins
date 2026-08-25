@@ -374,3 +374,7 @@ func _flash_update() -> void:
 	if _silhouette_mat != null:
 		_silhouette_mat.set_shader_parameter("silhouette",
 				1.0 if _hit_flash_time > 0.0 or _death_timer > 0.0 or _teleport_flash_timer > 0.0 else 0.0)
+
+# 落水:朝玩家水平游(不朝岸边,保持追击感)。
+func _water_swim_dir() -> Vector2:
+	return toroidal_dir_to_player()

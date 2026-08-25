@@ -30,6 +30,9 @@ var _hit_flash_time: float = 0.0
 var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
 var _player_overlapping: bool = false
 var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
+var _in_water: bool = false
+var _water_time: float = 0.0     # 没顶累计(秒)
+var _drown_tick: float = 0.0     # 扣血倒计时
 # 状态机与动画(子类共用)。state 用 int 承载各子类自己的 enum 常量(见 JumpBird/FlyBird 的 enum State)。
 var state: int = 0
 var _state_timer: float = 0.0
@@ -41,6 +44,10 @@ func _ai(_delta: float) -> void:
 
 func _anim_update() -> void:
 	pass
+
+# 落水时水平游泳方向(基类默认零=漂着;JumpBird/BlackBird 覆写为朝玩家)。
+func _water_swim_dir() -> Vector2:
+	return Vector2.ZERO
 
 func _ready() -> void:
 	add_to_group("enemies")
@@ -102,6 +109,7 @@ func _physics_process(delta: float) -> void:
 		# 尸体:基础速度也按击退速率指数衰减,滑行逐渐停住(不匀速滑到底);
 		# 下落也随之变慢到"终端速度",更接近失去意识的尸体。
 		velocity *= exp(-knock_decay_rate * delta)
+	_apply_water(delta)
 	# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity
 	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)
@@ -140,6 +148,37 @@ func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: 
 		knock_velocity = knock_dir.normalized() * ks
 	else:
 		velocity += knock_dir.normalized() * ks
+
+
+func _approach(current: float, target: float, rate: float, delta: float) -> float:
+	return lerp(current, target, 1.0 - exp(-rate * delta))
+
+
+# 落水浮力:弹簧把身体中心拉回水面线(半没入);水平朝 _water_swim_dir 游;没顶累计溺水。
+func _apply_water(delta: float) -> void:
+	var feet := Vector2(global_position.x, global_position.y + Water.feet_offset(self))
+	_in_water = Water.is_in_water(feet)
+	if not _in_water:
+		_water_time = 0.0
+		_drown_tick = 0.0
+		return
+	var surface_y := Water.surface_y_at(global_position)
+	var target_vy := clampf((surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
+			-EnemyParams.shared.bird_max_float, EnemyParams.shared.bird_max_sink)
+	velocity.y = _approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
+	var dir := _water_swim_dir()
+	velocity.x = _approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
+			EnemyParams.shared.bird_water_damp, delta)
+	if Water.submerged(global_position, surface_y):
+		_water_time += delta
+		if _water_time > EnemyParams.shared.drown_delay:
+			_drown_tick -= delta
+			if _drown_tick <= 0.0:
+				_drown_tick = EnemyParams.shared.drown_interval
+				hurt(EnemyParams.shared.drown_damage, Vector2.ZERO)
+	else:
+		_water_time = 0.0
+		_drown_tick = 0.0
 
 
 # 死亡白闪统一入口:置死亡状态、发信号、起白闪计时(渲染由 _flash_update 统一处理,

@@ -120,3 +120,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 		_anim.play("dead")  # 死亡动画(一次性)
 		# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
 		# is_dead 后 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
+
+# 落水:朝玩家水平游(不朝岸边,保持追击感)。
+func _water_swim_dir() -> Vector2:
+	return toroidal_dir_to_player()
