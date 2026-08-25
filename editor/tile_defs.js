@@ -168,6 +168,24 @@ window.TILE_DEFS = {
       "bullet_destroyable": true,
       "explosion_destroyable": true,
       "elastic": false
+    },
+    "21": {
+      "name": "水",
+      "type": "liquid",
+      "hp": 1,
+      "bullet_destroyable": false,
+      "explosion_destroyable": false,
+      "elastic": false,
+      "explosion_decay": 0.25
+    },
+    "22": {
+      "name": "水面",
+      "type": "liquid",
+      "hp": 1,
+      "bullet_destroyable": false,
+      "explosion_destroyable": false,
+      "elastic": false,
+      "explosion_decay": 0.25
     }
   }
 };
