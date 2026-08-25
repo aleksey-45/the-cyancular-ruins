@@ -95,13 +95,35 @@ func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
 
 
 func _build_wall_collision(grid: Array[Array]) -> void:
+	var half: int = GameParameters.TILE_SIZE / 2   # 32 子格
+	var cols = grid[0].size()   # 125
+	var rows = grid.size()      # 75
+	# 形状掩码展开成 250×150 的 32px 子格(每 64px 格 → 2×2)
+	var sub: Array[Array] = []
+	for _r in range(rows * 2):
+		var srow: Array[int] = []
+		srow.resize(cols * 2)
+		srow.fill(MazeGenerator.EMPTY)
+		sub.append(srow)
+	for y in range(rows):
+		for x in range(cols):
+			var shape: int = MazeGenerator.shape_of(grid[y][x])
+			if shape == 0:
+				continue
+			for qy in range(2):
+				for qx in range(2):
+					if shape & (1 << (qy * 2 + qx)):
+						sub[y * 2 + qy][x * 2 + qx] = MazeGenerator.SOLID
+	_greedy_rects(sub, half)
+
+
+func _greedy_rects(grid: Array[Array], ts: int) -> void:
 	var walls = StaticBody2D.new()
 	walls.name = "WallCollision"
 	$WorldViewport.add_child(walls)
 
 	var cols = grid[0].size()
 	var rows = grid.size()
-	var ts: int = GameParameters.TILE_SIZE
 
 	# 贪心合并连续墙格为尽可能大的矩形（先横向扩展、再纵向扩展，并标记已访问），
 	# 把形状数从「每行每段一个」压到「每块矩形一个」。需覆盖环面 3×3 展开区域，
