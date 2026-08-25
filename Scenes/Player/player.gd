@@ -39,6 +39,7 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 @onready var climb: ClimbComponent = $Climb
 @onready var weapons: WeaponComponent = $Weapons
 @onready var combat: CombatComponent = $Combat
+@onready var swim: SwimComponent = $Swim
 
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
 
@@ -119,12 +120,21 @@ func _physics_process(delta: float) -> void:
 
 	var horizontal_input = Input.get_axis("left", "right")
 
-	# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
-	var climbing := climb.update(mult, delta, is_squat)
-	var latched := climb.is_latched()
+	# ---------- 水中(浮水/游泳):速度由 swim 设置,跳过攀爬/重力/跳跃/下蹲/冲刺 ----------
+	var in_water := swim.update(self, delta, mult)
+	var climbing := false
+	var latched := false
+	if not in_water:
+		# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
+		climbing = climb.update(mult, delta, is_squat)
+		latched = climb.is_latched()
+	else:
+		# 水中:清掉冲刺/下蹲残留,避免姿态锁死
+		is_charge = false
+		is_squat = false
 
 	# ---------- 垂直逻辑（土狼时间 / 跳跃缓冲 / 可变高度） ----------
-	if not latched:
+	if not latched and not in_water:
 		if is_on_floor():
 			coyote_timer = coyote_time
 		else:
@@ -150,7 +160,7 @@ func _physics_process(delta: float) -> void:
 			jump_cut_applied = true
 
 	# ---------- 下蹲 ----------
-	if not latched:
+	if not latched and not in_water:
 		if is_on_floor():
 			if Input.is_action_just_pressed("down"):
 				velocity.x = 0
@@ -163,7 +173,7 @@ func _physics_process(delta: float) -> void:
 				velocity.y = charge_down_velocity
 
 	# ---------- 冲刺输入 ----------
-	if not latched and not is_charge and not is_squat:
+	if not latched and not is_charge and not is_squat and not in_water:
 		if Input.is_action_just_pressed("charge"):
 			is_charge = true
 			charge_timer = charge_duration
@@ -172,7 +182,7 @@ func _physics_process(delta: float) -> void:
 				facing_direction = _last_move_dir
 
 	# ---------- 水平速度计算(垂直攀爬中已在 _update_climb 里停水平;攀附空闲可水平走离) ----------
-	if not climbing:
+	if not climbing and not in_water:
 		if is_charge:
 			velocity.x = charge_velocity * facing_direction
 			charge_timer -= delta
@@ -214,7 +224,9 @@ func _physics_process(delta: float) -> void:
 	# 期望姿态由输入/接触状态决定；进入某姿态后锁定一小段时间，
 	# 避免 is_on_floor()/velocity 抖动导致 move↔fly 高频切换（走路抽搐）。
 	var desired: Pose = Pose.STAND
-	if is_charge:
+	if in_water:
+		desired = Pose.MOVE if absf(velocity.x) > 1.0 else Pose.STAND
+	elif is_charge:
 		desired = Pose.CHARGE
 	elif is_squat:
 		desired = Pose.SQUAT

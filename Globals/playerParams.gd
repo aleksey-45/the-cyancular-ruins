@@ -24,6 +24,16 @@ const charge_velocity: float = 1500.0
 const charge_duration: float = 0.6
 const charge_dir_window: float = 0.3  # 冲刺方向沿用最近移动方向的窗口(秒)
 
+# ── 游泳 ──
+const player_swim_speed: float = 420.0    # 水中水平移速(≈0.6×700)
+const player_swim_up: float = -480.0      # 上浮速度
+const player_swim_down: float = 420.0     # 下沉速度
+const player_swim_accel: float = 6.0      # 水中水平缓动系数
+const player_buoyancy_k: float = 6.0      # 浮力弹簧刚度(回水面)
+const player_max_float: float = 300.0     # 上浮最大速度
+const player_max_sink: float = 200.0      # 下沉最大速度
+const player_water_damp: float = 4.0      # 水中垂直速度阻尼
+
 # ── 镜头手感(方案 A)──
 const cam_lookahead_x: float = 100.0   # 满速时的水平前瞻像素
 const cam_lookahead_y: float = 80.0    # 满速上升/下落时的垂直前瞻像素
