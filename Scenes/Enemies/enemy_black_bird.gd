@@ -213,7 +213,7 @@ func _ai(delta: float) -> void:
 
 
 # 游走中瞬移判定:在「距玩家 3~8 格(随机)、且位于玩家相对鸟的另一侧」的环形带
-# (环面取模)搜地板格(EMPTY 且正下方 SOLID),且该格到玩家格 LOS 通 → 可瞬移冲锋。
+# (环面取模)搜地板格(EMPTY 且正下方非 EMPTY),且该格到玩家格 LOS 通 → 可瞬移冲锋。
 func _find_flank_cell() -> bool:
 	var p := get_tree().get_first_node_in_group("player") as Node2D
 	var grid := MazeGenerator.current_grid
@@ -273,7 +273,7 @@ func _is_floor_cell(c: Vector2i) -> bool:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
 		return false
-	return grid[c.y][c.x] == MazeGenerator.EMPTY and grid[posmod(c.y + 1, grid.size())][c.x] == MazeGenerator.SOLID
+	return grid[c.y][c.x] == MazeGenerator.EMPTY and TileDefs.is_blocked(grid[posmod(c.y + 1, grid.size())][c.x])
 
 
 # 黑鸟碰撞箱(按 scale 换算)在 pos 处覆盖的格子是否全是 EMPTY。
@@ -291,7 +291,7 @@ func _body_clear_at(pos: Vector2) -> bool:
 	var y1 := floori((pos.y + _body_max.y) / ts)
 	for gy in range(y0, y1 + 1):
 		for gx in range(x0, x1 + 1):
-			if grid[posmod(gy, rows)][posmod(gx, cols)] == MazeGenerator.SOLID:
+			if TileDefs.is_blocked(grid[posmod(gy, rows)][posmod(gx, cols)]):
 				return false
 	return true
 

@@ -2,6 +2,7 @@ class_name BulletBase
 extends CharacterBody2D
 
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
+const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
 
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
@@ -81,9 +82,16 @@ func _physics_process(delta: float) -> void:
 		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时,用子弹自带 damage/impact 兜底直接结算。
 		if hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
 			source.apply_hit(hit, velocity_vec)
+			queue_free()
 		elif hit.is_in_group("enemies"):
 			hit.hurt(hit_damage, velocity_vec, hit_impact)
-		queue_free()
+			queue_free()
+		else:
+			# 撞墙:可破坏(树叶/树干)→ 扣血;不可破坏墙 → 子弹消失。延迟销毁确保破坏回调跑完。
+			_damage_tile_at(col.get_position(), col.get_normal())
+			set_physics_process(false)
+			velocity_vec = Vector2.ZERO
+			get_tree().create_timer(0.05).timeout.connect(queue_free)
 		return
 	if traveled >= max_range:
 		if explodes:
@@ -101,6 +109,27 @@ func _wrap() -> void:
 		return
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+
+# 撞墙处理:若该格可子弹破坏(树叶/树干)则扣血 + 受击粒子;破坏后变空气(Level0 刷新渲染/碰撞)。
+func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return
+	var ts: int = GameParameters.TILE_SIZE
+	var cols := grid[0].size()
+	var rows := grid.size()
+	# 候选格:碰撞点、沿法线推入墙内 0.5/1 格 —— 处理贴边命中/边界浮点映射到墙前空格。
+	# normal 指向远离墙(朝子弹),-normal 即推入墙内。
+	var probes := [Vector2.ZERO, -normal * (ts * 0.5), -normal * ts]
+	for off in probes:
+		var cell := MazeGenerator.cell_of(pos + off, ts, cols, rows)
+		var v: int = grid[cell.y][cell.x]
+		if v != 0:
+			var tex: int = v / 16
+			if TileDefs.bullet_destroyable(tex):
+				TileDefs.damage_tile(cell, hit_damage, "bullet")
+				TileHitFx.spawn(get_viewport(), pos, tex)
+			return
 
 func _direct_hit(hit: Node) -> void:
 	if hit.has_method("hurt"):

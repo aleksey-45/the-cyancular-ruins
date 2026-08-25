@@ -69,9 +69,9 @@ class BlackBird:
 	const wander_idle_max: float = 1.5   # 行走后随机停顿上限(秒,0~此值)
 	const wander_jump_velocity: float = -500.0  # 游走遇墙小跳(翻越矮墙)
 	const take_off_jump_velocity: float = -1000.0  # 起飞竖直上跳高度
-	const flank_check_interval: float = 1.6  # 游走中瞬移判定周期(秒)
+	const flank_check_interval: float = 1.5  # 游走中瞬移判定周期(秒)
 	const teleport_min_tiles: int = 2    # 传送落点距玩家的最短格数(环面距离,随机)
-	const teleport_max_tiles: int = 4    # 传送落点距玩家的最长格数(环面距离,随机)
+	const teleport_max_tiles: int = 6    # 传送落点距玩家的最长格数(环面距离,随机)
 	const teleport_drop: float = 250.0    # 瞬移到落点上方高度(px),再下落
 	const landing_timeout: float = 0.6   # 落地兜底(秒)
 	const teleport_prep_time: float = 0.25  # 落地播 disappear 的最小停顿(传送前)
@@ -82,7 +82,7 @@ class BlackBird:
 	const charge_damage: int = 7         # 冲锋伤害(穿透无敌帧)
 	const charge_impact: float = 1000.0  # 冲锋冲击力(撞飞玩家水平速度,同飞鸟)
 	const charge_impact_up: float = 500.0  # 冲锋冲击力(上跳分量,同飞鸟)
-	const charge_timeout: float = 2.0    # 冲锋超时 → 未命中大后跳
+	const charge_timeout: float = 2.5    # 冲锋超时 → 未命中大后跳
 	const charge_jump_velocity: float = -650.0  # 遇墙自动跳初速
 	const back_hop_up: float = -550.0    # 大后跳高度
 	const back_hop_away: float = 600.0   # 大后跳距离

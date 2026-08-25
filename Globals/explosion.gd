@@ -34,6 +34,35 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			p.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
+	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
+	if has_grid:
+		_damage_tiles(center, radius, max_damage, grid)
+
+# 爆炸对可破坏瓦片(树叶/树干)扣血:按距离衰减 × tile_defs 爆炸衰减(0.75),破坏后变空气。
+static func _damage_tiles(center: Vector2, radius: float, max_damage: int, grid: Array[Array]) -> void:
+	var ts: int = GameParameters.TILE_SIZE
+	var rows := grid.size()
+	var cols := grid[0].size()
+	var cc := MazeGenerator.cell_of(center, ts, cols, rows)
+	var reach_cells := ceili(radius / ts) + 1
+	for dy in range(-reach_cells, reach_cells + 1):
+		for dx in range(-reach_cells, reach_cells + 1):
+			var cx := posmod(cc.x + dx, cols)
+			var cy := posmod(cc.y + dy, rows)
+			var v: int = grid[cy][cx]
+			if v == 0:
+				continue
+			var tex: int = v / 16
+			if not TileDefs.explosion_destroyable(tex):
+				continue
+			var d := _dist(center, Vector2(cx * ts + ts * 0.5, cy * ts + ts * 0.5))
+			if d > radius:
+				continue
+			var dmg := int(_falloff(d, radius, max_damage) * TileDefs.explosion_decay())
+			if dmg <= 0:
+				continue
+			TileDefs.damage_tile(Vector2i(cx, cy), dmg, "explosion")
+
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
 # 爆炸相机震动:爆心越贴近玩家震得越猛,随距离线性衰减;超出影响距离无震动。

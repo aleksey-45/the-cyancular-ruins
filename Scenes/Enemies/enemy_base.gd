@@ -205,7 +205,7 @@ func _cell_is_solid(cell: Vector2i) -> bool:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
 		return false
-	return grid[cell.y][cell.x] == MazeGenerator.SOLID
+	return TileDefs.is_blocked(grid[cell.y][cell.x])
 
 
 func _toroidal_dist_to(pos: Vector2) -> float:

@@ -7,6 +7,11 @@ var _shake_time: float = 0.0
 var _shake_dur: float = 0.0
 var _base_pos: Vector2 = Vector2.ZERO
 
+func _ready() -> void:
+	# 视野大小由 zoom 决定:窗口固定 1920×1440,zoom<1 时看到的世界范围 = 窗口/zoom
+	# (如 0.75 → 2560×1920)。数值在 PlayerParams,统一调这里。
+	zoom = Vector2(PlayerParams.cam_zoom, PlayerParams.cam_zoom)
+
 func shake(amount: float, duration: float) -> void:
 	_shake_amt = amount
 	_shake_time = duration

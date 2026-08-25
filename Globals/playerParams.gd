@@ -31,6 +31,12 @@ const cam_y_bias: float = -100.0       # 基础向上偏移(保留原 100px)
 const cam_smooth_x: float = 10.0       # X 平滑指数系数
 const cam_smooth_y: float = 8.0        # Y 平滑指数系数
 const cam_deadzone: float = 8.0        # 死区像素(小于此值镜头不动)
+# 相机缩放(<1 = 视野更大;0.75 = 4→3 整数下采样,像素缩放最干净、无滚动抖动)
+const cam_zoom: float = 0.75
+
+# ── 攀爬 / 弹性 ──
+const climb_speed: float = 300.0   # 攀爬基准速度(上爬 × tile_defs climb_speed:梯 1.6/锁链 2.0)
+const elastic_bounce: float = 150.0  # 弹性瓦片(树叶)弱反弹冲量
 
 # ── 玩家战斗 ──
 const player_max_hp: int = 50
