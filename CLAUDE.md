@@ -29,15 +29,16 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 ## 架构
 
 ### 环面世界与地图
-- 地图:ASCII 文本 **`.cyrm`**(如 `map/demo.cyrm`),`1`=墙(SOLID)、`0`=空(EMPTY),`#` 开头的行是注释。当前 250×150 格 × 32px 瓦片 = 8000×4800 世界像素。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `map/*.cyrm`(**同目录多份随机读一份**,会话内固定);`map/*.cyrm` 已在导出 include_filter 里。编辑器输出 `.cyrm`、可导入 `.cyrm`/`.txt`。
+- 地图:ASCII 文本 **`.cyrm`**(如 `map/demo.cyrm`)。**v2 格式**(带 `# cyrm-v2` 标记):125×75 格 × 64px 瓦片 = 8000×4800 世界像素;每格 **2 字符 = [纹理][形状hex]**(纹理 `0`=空气/`1`-`9`/`A`=10;形状 hex `0`-`F` = 2×2 子格掩码,15=全砖,0=空气占位)。**旧格式**(250×150 单字符,无标记)加载时自动 2×2 转换(packed 值 + spawn 坐标 ÷2)。`#` 开头的行是注释。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `map/*.cyrm`(**同目录多份随机读一份**,会话内固定);`map/*.cyrm` 已在导出 include_filter 里。编辑器输出 `.cyrm`、可导入 `.cyrm`/`.txt`。
 - `MazeGenerator`(Globals/maze_generator.gd,`RefCounted`,非 autoload)是地图与环面核心:
-  - 读图:`load_map_file()` / `map_size()`(行宽不一致的抬头行会被跳过);
+  - 格值 = packed `texture*16 + shape`(0-175,`pack/texture_of/shape_of`);`EMPTY=0`、`SOLID=31`(纹理1 全砖),任意非 0 即实体格(半砖也算整格实体);
+  - 读图:`load_map_file()` / `map_size()`(v2 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过);`convert_old_grid()` / `serialize_v2_grid()` 是单一转换源;
   - 环面数学:`toroidal_dist`(格级)、`toroidal_delta_px`(像素最短向量)、`anchor_to_nearest`(实体锚到玩家最近副本)、`wrap_to_range`(取模回中间副本);
   - 寻路:`bfs_path` / `bfs_path_nearest` / `astar_path_nearest` / `has_line_of_sight`(Bresenham)。`current_grid` 静态变量由 Level0 赋值,空网格一律无路。
 - **关键区分**:玩家每帧 `wrap_to_range`(只留中间副本);敌人/子弹用 `anchor_to_nearest`(锚定到玩家附近的副本)。墙体按 3×3 铺贴,相机跨接缝才能看到另一侧——实体若取模回 `[0,MAP)` 会在接缝处"消失"。
 
 ### 参数体系(重要约定)
-- **唯一 autoload 是 `GameParameters`**(Globals/gameParameters.gd):gravity0、TILE_SIZE=32、地图像素尺寸、敌人数/出生距离。`_ready()` 里从 `MazeGenerator.map_size()` 回写 `MAP_WIDTH/HEIGHT`。
+- **唯一 autoload 是 `GameParameters`**(Globals/gameParameters.gd):gravity0、TILE_SIZE=64、地图像素尺寸、敌人数/出生距离。`_ready()` 里从 `MazeGenerator.map_size()` 回写 `MAP_WIDTH/HEIGHT`。
 - 玩家/敌人参数**不是** autoload:`PlayerParams`、`EnemyParams` 是 `RefCounted` + `const`,静态访问(如 `EnemyParams.FlyBird.wake_radius`)。加新敌人 = 在 `EnemyParams` 加一个嵌套类。
 
 ### 敌人(Scenes/Enemies/)
@@ -46,7 +47,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 - `EnemyFlyBase`:飞行寻路。A* 按**鸟自身飞行碰撞箱 + 场上实体碰撞箱**判可走(`_bird_can_pass`);空路径直线兜底;被悬挑墙压到(死区)时水平逃逸;站/飞碰撞箱切换(`_apply_flight_collision`)。寻路参数耦合 `EnemyParams.FlyBird`(当前唯一飞行敌人,接受该耦合)。
 - `EnemyFlyBird`:状态机 SLEEP/TAKE_OFF/FLY/SHOOT/CHARGE/RETURN。平抛投弹(玩家速度预测);HP<25% 单向切 CHARGE 冲撞(穿透无敌帧、撞后自毁);死亡白闪后销毁(物理与生前一致,保留碰撞);返程回家落地入睡。
 - `EnemyJumpBird`:近战跳跃怪(跳/后跳/扑击);死亡物理与生前一致、保留碰撞(与飞鸟统一,不再清碰撞箱)。
-- `EnemyBlackBird`:绕背瞬移刺客(睡眠→随机游走→周期性判定玩家另一侧、距玩家 3~8 格(随机)的地板格落点(地板格 + LOS)→起飞上跳→落地播 disappear→白闪→传送→闪后空中播 appear→落地→带跳跃冲锋打 6 伤(穿透无敌帧)→大后跳(命中/未命中都)→回游走,玩家远离入睡);死亡白闪后销毁。数值在 `EnemyParams.BlackBird`。
+- `EnemyBlackBird`:绕背瞬移刺客(睡眠→随机游走→周期性判定玩家另一侧、距玩家 2~4 格(随机)的地板格落点(地板格 + LOS)→起飞上跳→落地播 disappear→白闪→传送→闪后空中播 appear→落地→带跳跃冲锋打 6 伤(穿透无敌帧)→大后跳(命中/未命中都)→回游走,玩家远离入睡);死亡白闪后销毁。数值在 `EnemyParams.BlackBird`。
 - **加新敌人** = 一个 .tscn + `EnemySpawner.TYPES` 加一行(键名 → 场景路径),spawner 随机取"地板格"(EMPTY 且正下方 SOLID)布点。
 
 ### 武器与子弹(Scenes/Weapons/)
@@ -60,12 +61,14 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 
 ### 渲染管线(Level0.tscn)
 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体/玩家/敌人)渲染进 SubViewport,`PostProcess`(post_process.gd)做像素缩放裁切 + 倒地暗角。相机 `camera_2d.gd` 带前瞻/死区。注意:冒烟测试把武器挂到根 Window 而非 SubViewport(见 weapon_base 的鼠标坐标注释)。
+- **墙体 64px 砖块渲染**:`_create_wall_tileset()` 运行时把 structure.png 顶行 10 块 32px 砖最近邻 2× 放大成 64px,对每(纹理×形状)生成 16×10 atlas(空气象限透明),TileSet tile_size=64,`_paint_maze` 按 `Vector2i(shape, texture-1)` 铺 125×75 ×3×3 环面。
+- **碰撞**:`_build_wall_collision` 把形状掩码展开成 250×150 的 32px 子格(每 64px 格 → 2×2),`_greedy_rects` 贪心合并矩形(ts=32),覆盖 3×3 环面。
 
 ### 碰撞层(按位)
 层1=地形、层2=玩家、层3=敌人。玩家/玩家子弹 mask=5(1+3);敌人占层 3(值4)、mask 侦测玩家。
 
 ### 编辑器工具
-`editor/structure-editor.html` + `editor/smoke.js` 是独立浏览器地图编辑器(大图缩放/画笔),与 Godot 引擎无关。
+`editor/structure-editor.html` + `editor/smoke.js` 是独立浏览器地图编辑器(大图缩放/画笔),与 Godot 引擎无关。编辑 125×75 网格,**砖块纹理调色板(0-10)+ 2×2 砖形面板**(点四象限翻转或选预设 1/4/半/3/4/全砖);导入旧格式自动 2×2 转换,导出写 v2(`# cyrm-v2` + 每格 2 字符)。`node editor/smoke.js` 跑 Core 测试。
 
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。
