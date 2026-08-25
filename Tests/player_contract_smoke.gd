@@ -27,6 +27,9 @@ func _initialize() -> void:
 		"add_to_group(\"player\")",
 	]:
 		_check(src.contains(sig), "player.gd 含 " + sig)
+	# 公开只读属性(HUD 直接读,见 hud.gd:37/39)
+	_check(src.contains("var hp: int:"), "player.gd 公开 hp 属性")
+	_check(src.contains("var max_hp: int:"), "player.gd 公开 max_hp 属性")
 	# 三个组件文件 + class_name
 	var comps: Array = [
 		[lsrc, "climb_component.gd", "class_name ClimbComponent"],
