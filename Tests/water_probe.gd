@@ -29,6 +29,15 @@ func _init() -> void:
 	_check_approx(TileDefs.explosion_decay_of(21), 0.25, 1e-6, "tex21 decay 0.25")
 	_check_approx(TileDefs.explosion_decay_of(15), TileDefs.explosion_decay(), 1e-6, "落叶回落全局 0.75")
 
+	# Water 判定(合成网格:y=5 整行水,y=6 墙)
+	var surf := Vector2(5 * 64 + 32, 5 * 64 + 32)
+	_check(Water.is_in_water(surf), "水格判水")
+	_check(not Water.is_in_water(Vector2(5 * 64 + 32, 4 * 64 + 32)), "水面上方不是水")
+	_check_eq(Water.surface_y_at(Vector2(5 * 64 + 32, 5 * 64 + 32)), 5 * 64, "水面线=第5行顶")
+	_check_eq(Water.surface_y_at(Vector2(5 * 64 + 32, 4 * 64 + 32)), 4 * 64 + 32, "不在水里回传 pos.y")
+	_check(Water.submerged(Vector2(5 * 64 + 32, 6 * 64), 5 * 64), "中心在水面线下=没顶")
+	_check(not Water.submerged(Vector2(5 * 64 + 32, 5 * 64), 5 * 64), "中心在水面线=浮着不算")
+
 	if _failed:
 		quit(1)
 	else:
