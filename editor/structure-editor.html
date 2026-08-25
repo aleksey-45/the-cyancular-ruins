@@ -109,9 +109,6 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
 .shape-mini .quad { border-radius: 3px; border: 1px solid #0b0e12; }
 .shape-mini .quad.on { background: #527789; }
 .shape-mini .quad.off { background: #2a2f37; }
-.shape-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.shape-presets button { padding: 4px 2px; font-size: 11px; }
-.shape-presets button.active { background: var(--accent); border-color: var(--accent); color: #0b0e12; }
 
 .canvas-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .canvas-toolbar {
@@ -182,9 +179,8 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <h2>砖形(2×2 子格)</h2>
         <div class="shape-panel">
           <div class="shape-mini" id="shape-mini"></div>
-          <div class="shape-presets" id="shape-presets"></div>
         </div>
-        <p class="hint">点四格翻转 · 掩码 0–15(15=全砖)</p>
+        <p class="hint">点四格翻转 · 默认全满,不能清成全空</p>
       </section>
       <section class="panel spawn-panel">
         <h2>出生点</h2>
@@ -879,13 +875,7 @@ window.ENEMY_REGISTRY = [
       }
     }
 
-    // ── 砖形面板:2×2 象限点击翻转 + 预设 ──
-    var SHAPE_PRESETS = [
-      { v: 15, label: '全' }, { v: 3, label: '上' }, { v: 12, label: '下' },
-      { v: 5, label: '左' }, { v: 10, label: '右' },
-      { v: 1, label: '↖' }, { v: 2, label: '↗' }, { v: 4, label: '↙' }, { v: 8, label: '↘' },
-      { v: 7, label: '◧' }, { v: 11, label: '◨' }, { v: 13, label: '◪' }, { v: 14, label: '◩' }
-    ];
+    // ── 砖形面板:2×2 象限点击翻转。默认全满(15);禁止清成全空(移除最后一个 1/4 无效)。──
     function renderShapePanel() {
       var box = els.shapeMini;
       if (!box) return;
@@ -896,27 +886,15 @@ window.ENEMY_REGISTRY = [
         q.title = '象限 bit' + i;
         (function (bit) {
           q.addEventListener('click', function () {
-            state.shape ^= (1 << bit);
+            var next = state.shape ^ (1 << bit);
+            if (next === 0) return;   // 禁止全空:最后一个实心象限不能移除
+            state.shape = next;
             renderShapePanel();
             renderCanvas();
           });
         })(i);
         box.appendChild(q);
       }
-      var presets = els.shapePresets;
-      presets.innerHTML = '';
-      SHAPE_PRESETS.forEach(function (p) {
-        var b = document.createElement('button');
-        b.textContent = p.label;
-        b.title = '形状掩码 ' + p.v;
-        if (state.shape === p.v) b.classList.add('active');
-        b.addEventListener('click', function () {
-          state.shape = p.v;
-          renderShapePanel();
-          renderCanvas();
-        });
-        presets.appendChild(b);
-      });
     }
 
     // ── undo / redo ──
@@ -1367,7 +1345,6 @@ window.ENEMY_REGISTRY = [
         sizeH: document.getElementById('size-h'),
         palette: document.getElementById('palette'),
         shapeMini: document.getElementById('shape-mini'),
-        shapePresets: document.getElementById('shape-presets'),
         canvas: document.getElementById('canvas'),
         canvasWrap: document.getElementById('canvas-wrap'),
         statusbar: document.getElementById('statusbar'),
