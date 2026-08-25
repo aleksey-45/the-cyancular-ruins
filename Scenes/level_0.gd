@@ -1,7 +1,5 @@
 extends Node2D
 
-const WALL_COLOR: Color = Color("54778d")
-
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
 # 在根级把未处理输入手动转发进 WorldViewport。
@@ -39,22 +37,39 @@ func _ready() -> void:
 
 
 func _create_wall_tileset() -> TileSet:
-	var ts: int = GameParameters.TILE_SIZE
-	var image = Image.create(ts * 2, ts, false, Image.FORMAT_RGBA8)
-	image.fill(Color.TRANSPARENT)
-	image.fill_rect(Rect2i(ts, 0, ts, ts), WALL_COLOR)
-
-	var texture = ImageTexture.create_from_image(image)
-
+	var ts: int = GameParameters.TILE_SIZE          # 64
+	var half: int = ts / 2                          # 32 子格
+	var texture: Texture2D = load("res://assets/textures/structure.png")
+	var src_img: Image = texture.get_image()
+	# 10 块源砖(顶行 32×32)→ 最近邻 2× 放大成 64×64
+	var bricks: Array[Image] = []
+	for i in range(10):
+		var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+		img.blit_rect(src_img, Rect2i(i * 32, 0, 32, 32), Vector2i.ZERO)
+		img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
+		bricks.append(img)
+	# atlas:16 列(形状 0-15)× 10 行(纹理 1-10),空气象限透明
+	var atlas_img := Image.create(16 * ts, 10 * ts, false, Image.FORMAT_RGBA8)
+	atlas_img.fill(Color(0, 0, 0, 0))
+	for tex in range(10):
+		for shape in range(16):
+			var tile := bricks[tex].duplicate()
+			for sy in range(2):
+				for sx in range(2):
+					if (shape & (1 << (sy * 2 + sx))) == 0:
+						tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
+			atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, tex * ts))
+	var atlas_tex := ImageTexture.create_from_image(atlas_img)
 	var tile_set = TileSet.new()
 	tile_set.tile_size = Vector2i(ts, ts)
-
 	var atlas = TileSetAtlasSource.new()
 	atlas.texture_region_size = Vector2i(ts, ts)
-	atlas.texture = texture
+	atlas.texture = atlas_tex
 	tile_set.add_source(atlas)
-	atlas.create_tile(Vector2i(0, 0))
-	atlas.create_tile(Vector2i(1, 0))
+	# 瓦片坐标 = (形状列, 纹理行);空气(shape 0)含全透明瓦片,铺图时跳过即可
+	for shape in range(16):
+		for tex in range(10):
+			atlas.create_tile(Vector2i(shape, tex))
 
 	return tile_set
 
@@ -71,9 +86,12 @@ func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
 			for y in range(rows):
 				var row: Array = grid[y]
 				for x in range(cols):
-					if row[x] != MazeGenerator.SOLID:
+					var v: int = row[x]
+					if v == MazeGenerator.EMPTY:
 						continue
-					layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id, Vector2i(1, 0))
+					# packed → atlas 坐标(形状列, 纹理行)
+					layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
+							Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
 
 
 func _build_wall_collision(grid: Array[Array]) -> void:
@@ -101,18 +119,18 @@ func _build_wall_collision(grid: Array[Array]) -> void:
 				used.append(urow)
 			for y in range(rows):
 				for x in range(cols):
-					if grid[y][x] != MazeGenerator.SOLID or used[y][x]:
+					if grid[y][x] == MazeGenerator.EMPTY or used[y][x]:
 						continue
 					# 横向扩展整行连续墙段
 					var x2 := x
-					while x2 + 1 < cols and grid[y][x2 + 1] == MazeGenerator.SOLID and not used[y][x2 + 1]:
+					while x2 + 1 < cols and grid[y][x2 + 1] != MazeGenerator.EMPTY and not used[y][x2 + 1]:
 						x2 += 1
 					# 纵向扩展:要求下行整段都是未访问的墙
 					var y2 := y
 					while y2 + 1 < rows:
 						var can := true
 						for cx in range(x, x2 + 1):
-							if grid[y2 + 1][cx] != MazeGenerator.SOLID or used[y2 + 1][cx]:
+							if grid[y2 + 1][cx] == MazeGenerator.EMPTY or used[y2 + 1][cx]:
 								can = false
 								break
 						if not can:
