@@ -101,6 +101,17 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
   padding: 5px 8px; font-size: 12px;
 }
 .spawn-tools .spawn-btn.active { outline: 2px solid #fff; }
+.shape-panel { display: flex; flex-direction: column; gap: 8px; }
+.shape-mini {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 76px; height: 76px;
+  border: 1px solid var(--border); border-radius: 5px; padding: 2px; cursor: pointer; background: var(--panel);
+}
+.shape-mini .quad { border-radius: 3px; border: 1px solid #0b0e12; }
+.shape-mini .quad.on { background: #527789; }
+.shape-mini .quad.off { background: #2a2f37; }
+.shape-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.shape-presets button { padding: 4px 2px; font-size: 11px; }
+.shape-presets button.active { background: var(--accent); border-color: var(--accent); color: #0b0e12; }
 
 .canvas-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .canvas-toolbar {
@@ -163,9 +174,17 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <button id="btn-resize" class="primary" style="width:100%">应用尺寸</button>
       </section>
       <section class="panel">
-        <h2>Tile 调色板</h2>
+        <h2>砖块纹理</h2>
         <div id="palette"></div>
-        <p class="hint">0 = 空气 · 1–10 = 墙（structure.png）</p>
+        <p class="hint">0 = 空气 · 1–10 = 砖块纹理</p>
+      </section>
+      <section class="panel">
+        <h2>砖形(2×2 子格)</h2>
+        <div class="shape-panel">
+          <div class="shape-mini" id="shape-mini"></div>
+          <div class="shape-presets" id="shape-presets"></div>
+        </div>
+        <p class="hint">点四格翻转 · 掩码 0–15(15=全砖)</p>
       </section>
       <section class="panel spawn-panel">
         <h2>出生点</h2>
@@ -203,9 +222,9 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
       <input id="modal-input" type="text">
       <div id="modal-size-row" class="hidden" style="display:flex;gap:8px;">
         <label style="flex:1;font-size:12px;color:var(--text-dim);">宽
-          <input id="modal-size-w" type="number" min="1" value="250" style="width:100%;"></label>
+          <input id="modal-size-w" type="number" min="1" value="125" style="width:100%;"></label>
         <label style="flex:1;font-size:12px;color:var(--text-dim);">高
-          <input id="modal-size-h" type="number" min="1" value="150" style="width:100%;"></label>
+          <input id="modal-size-h" type="number" min="1" value="75" style="width:100%;"></label>
       </div>
       <p id="modal-err" class="err"></p>
       <div class="modal-actions">
@@ -503,10 +522,11 @@ window.ENEMY_REGISTRY = [
       6: '#4b6d7d', 7: '#5e8191', 8: '#496a7a', 9: '#446879', 10: '#4e7282'
     };
 
-    var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true, brushSize: 1,
-                  torusMode: false, spawnTool: null };
+    var state = { library: [], selectedId: null, tool: 'paint', palette: 1, shape: 15, gridOn: true,
+                  brushSize: 1, torusMode: false, spawnTool: null };
     var view = { zoom: 28, panX: 40, panY: 40, playerRef: null };
-    var PLAYER_TILES = 3.75;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 32px
+    var PLAYER_TILES = 1.875;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 64px
+    var tileCache = {};        // packed → 64×64 canvas(纹理×形状掩码)
     var playerImg = new Image();
     playerImg.src = '../icon.svg';
     var wallImg = new Image();
@@ -554,6 +574,26 @@ window.ENEMY_REGISTRY = [
       return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     }
 
+    // packed → 64×64 砖块图(纹理 32px 源最近邻 2× 放大,空象限透明)。缓存复用。
+    function tileImage(packed) {
+      if (tileCache[packed]) return tileCache[packed];
+      var tex = Core.textureOf(packed), shape = Core.shapeOf(packed);
+      var c = document.createElement('canvas'); c.width = 64; c.height = 64;
+      var g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+      if (wallImg && wallImg.complete && wallImg.naturalWidth > 0) {
+        for (var qy = 0; qy < 2; qy++) for (var qx = 0; qx < 2; qx++) {
+          if (shape & (1 << (qy * 2 + qx))) {
+            g.drawImage(wallImg, (tex - 1) * 32 + qx * 16, qy * 16, 16, 16, qx * 32, qy * 32, 32, 32);
+          }
+        }
+      } else {
+        g.fillStyle = TILE_COLORS[tex] || '#527789';
+        g.fillRect(0, 0, 64, 64);
+      }
+      tileCache[packed] = c;
+      return c;
+    }
+
     function enemyById(id) {
       var reg = (typeof window !== 'undefined' && window.ENEMY_REGISTRY) || [];
       for (var i = 0; i < reg.length; i++) if (reg[i].id === id) return reg[i];
@@ -583,12 +623,7 @@ window.ENEMY_REGISTRY = [
               var t = s.grid[mpy][x - ox];
               if (t !== 0) {
                 var px = view.panX + x * z, py = view.panY + y * z;
-                if (wallImg && wallImg.complete && wallImg.naturalWidth > 0) {
-                  ctx.drawImage(wallImg, (t - 1) * 32, 0, 32, 32, px, py, z, z);
-                } else {
-                  ctx.fillStyle = TILE_COLORS[t];
-                  ctx.fillRect(px, py, z, z);
-                }
+                ctx.drawImage(tileImage(t), 0, 0, 64, 64, px, py, z, z);
               }
             }
           }
@@ -804,7 +839,7 @@ window.ENEMY_REGISTRY = [
         parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length
           + (state.torusMode ? ' · 环面' : ''));
         parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮' })[state.tool] || state.tool));
-        parts.push('tile: ' + state.palette + (state.palette === 0 ? ' (空气)' : ' (墙)'));
+        parts.push('纹理: ' + state.palette + (state.palette === 0 ? ' (空气)' : '') + ' · 形状 ' + state.shape);
         parts.push('画笔 ' + state.brushSize);
         parts.push('出生点:玩家' + (s.player ? '1' : '0') + ' · 敌人 ' + (s.enemies || []).length);
         parts.push('撤销 ' + history.length + ' · 重做 ' + redoStack.length);
@@ -816,11 +851,11 @@ window.ENEMY_REGISTRY = [
 
     // ── palette ──
     function setWallSwatchBg(sw, t) {
-      // 纹理加载后,swatch 用 structure.png 顶行第 t-1 块当背景(1-10 ↔ 砖块)
-      if (t <= 0 || !wallImg || !wallImg.complete || wallImg.naturalWidth <= 0) return;
-      sw.style.backgroundImage = "url('" + wallImg.src + "')";
-      sw.style.backgroundSize = '1000% 1000%';
-      sw.style.backgroundPosition = ((t - 1) * 100 / 9) + '% 0%';
+      // 纹理加载后,swatch 用全砖(形状15)64px 图当背景
+      if (t <= 0) return;
+      var img = tileImage(Core.packCell(t, 15));
+      sw.style.backgroundImage = "url('" + img.toDataURL() + "')";
+      sw.style.backgroundSize = 'cover';
     }
     function buildPalette() {
       els.palette.innerHTML = '';
@@ -828,7 +863,7 @@ window.ENEMY_REGISTRY = [
         var sw = document.createElement('div');
         sw.className = 'swatch' + (t === 0 ? ' sw-air' : ' s' + t);
         sw.textContent = String(t);
-        sw.title = t === 0 ? '0 · 空气' : t + ' · 墙';
+        sw.title = t === 0 ? '0 · 空气' : t + ' · 纹理';
         if (t === state.palette) sw.classList.add('selected');
         setWallSwatchBg(sw, t);
         (function (tile) {
@@ -842,6 +877,46 @@ window.ENEMY_REGISTRY = [
         })(t);
         els.palette.appendChild(sw);
       }
+    }
+
+    // ── 砖形面板:2×2 象限点击翻转 + 预设 ──
+    var SHAPE_PRESETS = [
+      { v: 15, label: '全' }, { v: 3, label: '上' }, { v: 12, label: '下' },
+      { v: 5, label: '左' }, { v: 10, label: '右' },
+      { v: 1, label: '↖' }, { v: 2, label: '↗' }, { v: 4, label: '↙' }, { v: 8, label: '↘' },
+      { v: 7, label: '◧' }, { v: 11, label: '◨' }, { v: 13, label: '◪' }, { v: 14, label: '◩' }
+    ];
+    function renderShapePanel() {
+      var box = els.shapeMini;
+      if (!box) return;
+      box.innerHTML = '';
+      for (var i = 0; i < 4; i++) {
+        var q = document.createElement('div');
+        q.className = 'quad ' + ((state.shape & (1 << i)) ? 'on' : 'off');
+        q.title = '象限 bit' + i;
+        (function (bit) {
+          q.addEventListener('click', function () {
+            state.shape ^= (1 << bit);
+            renderShapePanel();
+            renderCanvas();
+          });
+        })(i);
+        box.appendChild(q);
+      }
+      var presets = els.shapePresets;
+      presets.innerHTML = '';
+      SHAPE_PRESETS.forEach(function (p) {
+        var b = document.createElement('button');
+        b.textContent = p.label;
+        b.title = '形状掩码 ' + p.v;
+        if (state.shape === p.v) b.classList.add('active');
+        b.addEventListener('click', function () {
+          state.shape = p.v;
+          renderShapePanel();
+          renderCanvas();
+        });
+        presets.appendChild(b);
+      });
     }
 
     // ── undo / redo ──
@@ -955,7 +1030,7 @@ window.ENEMY_REGISTRY = [
         return;
       }
       var erase = e.button === 2 || e.altKey || state.tool === 'erase';
-      var tile = erase ? 0 : state.palette;
+      var tile = erase ? 0 : Core.packCell(state.palette, state.shape);
       if (state.tool === 'fill') {
         if (s.grid[cell.y][cell.x] !== tile) {
           pushHistory(s);
@@ -1055,8 +1130,8 @@ window.ENEMY_REGISTRY = [
         els.modalErr.textContent = '';
         if (opts.withSize) {
           els.modalSizeRow.classList.remove('hidden');
-          els.modalSizeW.value = opts.defaultW != null ? opts.defaultW : 250;
-          els.modalSizeH.value = opts.defaultH != null ? opts.defaultH : 150;
+          els.modalSizeW.value = opts.defaultW != null ? opts.defaultW : 125;
+          els.modalSizeH.value = opts.defaultH != null ? opts.defaultH : 75;
         } else {
           els.modalSizeRow.classList.add('hidden');
         }
@@ -1280,6 +1355,7 @@ window.ENEMY_REGISTRY = [
     function render() {
       renderLibrary();
       renderSpawnTools();
+      renderShapePanel();
       renderCanvas();
       renderStatus();
     }
@@ -1290,6 +1366,8 @@ window.ENEMY_REGISTRY = [
         sizeW: document.getElementById('size-w'),
         sizeH: document.getElementById('size-h'),
         palette: document.getElementById('palette'),
+        shapeMini: document.getElementById('shape-mini'),
+        shapePresets: document.getElementById('shape-presets'),
         canvas: document.getElementById('canvas'),
         canvasWrap: document.getElementById('canvas-wrap'),
         statusbar: document.getElementById('statusbar'),
@@ -1320,12 +1398,12 @@ window.ENEMY_REGISTRY = [
         enemies: [],
         grid: [
           [0,0,0,0,0,0,0,0,0,0,0,0],
-          [0,1,1,1,1,1,1,1,1,1,1,0],
-          [0,1,0,0,0,0,0,0,0,0,1,0],
-          [0,1,0,1,1,0,0,1,1,0,1,0],
-          [0,1,0,1,1,0,0,1,1,0,1,0],
-          [0,1,0,0,0,0,0,0,0,0,1,0],
-          [0,1,1,1,1,1,1,1,1,1,1,0],
+          [0,31,31,31,31,31,31,31,31,31,31,0],
+          [0,31,0,0,0,0,0,0,0,0,31,0],
+          [0,31,0,31,31,0,0,31,31,0,31,0],
+          [0,31,0,31,31,0,0,31,31,0,31,0],
+          [0,31,0,0,0,0,0,0,0,0,31,0],
+          [0,31,31,31,31,31,31,31,31,31,31,0],
           [0,0,0,0,0,0,0,0,0,0,0,0]
         ]
       });
