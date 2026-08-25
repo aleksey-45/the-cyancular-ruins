@@ -49,6 +49,20 @@ static func submerged(center: Vector2, surface_y: float) -> bool:
 	return center.y > surface_y
 
 
+# 目标所在格是水 → 爆炸伤害/击退按该水格 explosion_decay(0.25)保留,否则 1.0。
+static func water_mult(pos: Vector2, grid: Array[Array]) -> float:
+	if grid.is_empty():
+		return 1.0
+	var c := MazeGenerator.cell_of(pos, TILE_TS, grid[0].size(), grid.size())
+	var v: int = grid[c.y][c.x]
+	if v == 0:
+		return 1.0
+	var tex: int = v / 16
+	if is_liquid(tex):
+		return TileDefs.explosion_decay_of(tex)
+	return 1.0
+
+
 # 实体脚底相对原点偏移(世界 px):取活动碰撞箱底边;找不到回退 24。
 static func feet_offset(body: Node) -> float:
 	var offset := 24.0

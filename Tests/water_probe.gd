@@ -38,6 +38,11 @@ func _init() -> void:
 	_check(Water.submerged(Vector2(5 * 64 + 32, 6 * 64), 5 * 64), "中心在水面线下=没顶")
 	_check(not Water.submerged(Vector2(5 * 64 + 32, 5 * 64), 5 * 64), "中心在水面线=浮着不算")
 
+	# 爆炸:目标在水里 ×0.25,岸上 ×1.0
+	var g := MazeGenerator.current_grid
+	_check_approx(Water.water_mult(Vector2(5 * 64 + 32, 5 * 64 + 32), g), 0.25, 1e-6, "目标在水里 ×0.25")
+	_check_approx(Water.water_mult(Vector2(5 * 64 + 32, 4 * 64 + 32), g), 1.0, 1e-6, "目标在岸上 ×1.0")
+
 	if _failed:
 		quit(1)
 	else:
