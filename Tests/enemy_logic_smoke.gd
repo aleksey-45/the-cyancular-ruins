@@ -280,17 +280,17 @@ func _initialize() -> void:
 	var p = player_scene.instantiate()
 	root.add_child(p)
 	await physics_frame
-	_check(p._weapon != null, "默认装备手枪")
-	if p._weapon != null:
-		_check(p._weapon.weapon_name == "Pistol", "默认武器是手枪")
-		p._equip_weapon("res://Scenes/Weapons/rifle_test.tscn")
+	_check(p.weapons._weapon != null, "默认装备手枪")
+	if p.weapons._weapon != null:
+		_check(p.weapons._weapon.weapon_name == "Pistol", "默认武器是手枪")
+		p.weapons.equip("2")   # 步枪(WEAPONS 注册表槽 2;组件化后按槽键,不再传场景路径)
 		await physics_frame
-		_check(p._weapon.weapon_name == "Rifle", "切枪到步枪")
+		_check(p.weapons._weapon.weapon_name == "Rifle", "切枪到步枪")
 		# 切枪冷却继承:旧武器剩余冷却不能被切枪刷掉。
 		# equip() 同步执行,不 await(否则 _process 已扣掉一帧冷却)。
-		p._weapon.fire_cd_timer = 0.7
-		p._equip_weapon("res://Scenes/Weapons/pistol_test.tscn")
-		_check(is_equal_approx(p._weapon.fire_cd_timer, 0.7), "切枪继承剩余冷却")
+		p.weapons._weapon.fire_cd_timer = 0.7
+		p.weapons.equip("1")
+		_check(is_equal_approx(p.weapons._weapon.fire_cd_timer, 0.7), "切枪继承剩余冷却")
 	p.free()
 
 	# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
@@ -751,11 +751,11 @@ func _initialize() -> void:
 	root.add_child(pk)
 	await physics_frame
 	pk.take_hit(Vector2(800, 400), 5, false, 800.0)
-	_check(is_equal_approx(pk.knock_velocity.x, 800.0), "玩家爆炸击退设独立向量")
-	var pk0: float = pk.knock_velocity.x
+	_check(is_equal_approx(pk.combat.knock_velocity.x, 800.0), "玩家爆炸击退设独立向量")
+	var pk0: float = pk.combat.knock_velocity.x
 	for i in range(5):
 		await physics_frame
-	_check(pk.knock_velocity.x < pk0, "玩家击退向量随帧衰减")
+	_check(pk.combat.knock_velocity.x < pk0, "玩家击退向量随帧衰减")
 	pk.free()
 	# 上方爆炸:玩家站在地面时应被往下压(不产生向上速度)——回归:旧"叠加再减回"实现会把玩家弹起
 	var pk_floor := StaticBody2D.new()
@@ -775,7 +775,7 @@ func _initialize() -> void:
 	for i in range(5):
 		await physics_frame
 	pk2.take_hit(Vector2(1000, 200), 5, false, 800.0)  # 爆心在玩家上方
-	_check(pk2.knock_velocity.y > 0.0, "上方爆炸击退向量向下(+y)")
+	_check(pk2.combat.knock_velocity.y > 0.0, "上方爆炸击退向量向下(+y)")
 	for i in range(3):
 		await physics_frame
 	_check(pk2.velocity.y > -100.0, "玩家不被上方爆炸弹起(velocity.y 无显著上跳)")
@@ -787,12 +787,12 @@ func _initialize() -> void:
 	root.add_child(pd)
 	await physics_frame
 	pd.take_hit(Vector2(800, 400), 999, false, 1000.0)  # 爆炸式击退 + 秒杀
-	_check(pd.downed, "玩家倒地")
-	_check(pd.knock_velocity.x > 0.0, "倒地保留击退向量(未清零)")
-	var pd0: float = pd.knock_velocity.x
+	_check(pd.combat.downed, "玩家倒地")
+	_check(pd.combat.knock_velocity.x > 0.0, "倒地保留击退向量(未清零)")
+	var pd0: float = pd.combat.knock_velocity.x
 	for i in range(5):
 		await physics_frame
-	_check(pd.knock_velocity.x < pd0, "倒地击退向量随帧衰减(物理未取消)")
+	_check(pd.combat.knock_velocity.x < pd0, "倒地击退向量随帧衰减(物理未取消)")
 	pd.free()
 	# 死亡保留碰撞(与飞鸟统一):JumpBird 死亡后碰撞箱不清空
 	var jdc := jump2.instantiate()

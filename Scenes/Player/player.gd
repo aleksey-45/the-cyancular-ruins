@@ -246,16 +246,18 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	# ---------- 弹性瓦片（如树叶）:弱反弹 ----------
-	for i in range(get_slide_collision_count()):
-		var sc := get_slide_collision(i)
-		if sc == null:
-			continue
-		var ec := MazeGenerator.cell_of(sc.get_position(), GameParameters.TILE_SIZE,
-				MazeGenerator.current_grid[0].size(), MazeGenerator.current_grid.size())
-		var ev: int = MazeGenerator.current_grid[ec.y][ec.x]
-		if ev != 0 and TileDefs.elastic(MazeGenerator.texture_of(ev)):
-			velocity += sc.get_normal() * PlayerParams.elastic_bounce
-			break
+	# 空网格跳过(冒烟测试会清空 current_grid;真实游戏 Level0 总会赋值)
+	if not MazeGenerator.current_grid.is_empty():
+		for i in range(get_slide_collision_count()):
+			var sc := get_slide_collision(i)
+			if sc == null:
+				continue
+			var ec := MazeGenerator.cell_of(sc.get_position(), GameParameters.TILE_SIZE,
+					MazeGenerator.current_grid[0].size(), MazeGenerator.current_grid.size())
+			var ev: int = MazeGenerator.current_grid[ec.y][ec.x]
+			if ev != 0 and TileDefs.elastic(MazeGenerator.texture_of(ev)):
+				velocity += sc.get_normal() * PlayerParams.elastic_bounce
+				break
 
 	# 环面回卷：玩家只能在中间副本，离开时取模送回
 	global_position = MazeGenerator.wrap_to_range(global_position,
