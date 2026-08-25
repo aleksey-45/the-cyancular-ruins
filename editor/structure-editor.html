@@ -77,21 +77,23 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
   aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600; cursor: pointer; color: #0b0e12; user-select: none;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff;
 }
 .swatch.sw-air {
   background: repeating-conic-gradient(#2a2f37 0 25%, #20242b 0 50%) 0 0/32px 32px;
   border: 1px dashed #4a5462; color: var(--text-dim);
 }
 .swatch.selected { outline: 2px solid #fff; outline-offset: 1px; }
-.swatch.s1 { background: #54778d; }
-.swatch.s2 { background: #9d7a5c; }
-.swatch.s3 { background: #6fae8f; }
-.swatch.s4 { background: #c98a5e; }
-.swatch.s5 { background: #8a6fc9; }
-.swatch.s6 { background: #c96fb0; }
-.swatch.s7 { background: #5ec9c0; }
-.swatch.s8 { background: #c9c95e; }
-.swatch.s9 { background: #e0e0e0; }
+.swatch.s1 { background: #527789; }
+.swatch.s2 { background: #528989; }
+.swatch.s3 { background: #528977; }
+.swatch.s4 { background: #526589; }
+.swatch.s5 { background: #528965; }
+.swatch.s6 { background: #4b6d7d; }
+.swatch.s7 { background: #5e8191; }
+.swatch.s8 { background: #496a7a; }
+.swatch.s9 { background: #446879; }
+.swatch.s10 { background: #4e7282; }
 .hint { font-size: 12px; color: var(--text-dim); margin: 8px 0 0; }
 .spawn-tools { display: flex; flex-direction: column; gap: 6px; }
 .spawn-tools .spawn-btn {
@@ -136,7 +138,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
     <div class="topbar-actions">
       <button id="btn-import">导入</button>
       <button id="btn-export" class="primary">导出库</button>
-      <input type="file" id="file-import" accept=".cyrm,.txt,text/plain" hidden>
+      <input type="file" id="file-import" accept=".cyrm,.txt,.json,text/plain,application/json" hidden>
     </div>
   </header>
 
@@ -163,7 +165,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
       <section class="panel">
         <h2>Tile 调色板</h2>
         <div id="palette"></div>
-        <p class="hint">0 = 空气 · 1–9 = 墙（纹理待接入）</p>
+        <p class="hint">0 = 空气 · 1–10 = 墙（structure.png）</p>
       </section>
       <section class="panel spawn-panel">
         <h2>出生点</h2>
@@ -262,8 +264,8 @@ window.ENEMY_REGISTRY = [
         if (!Array.isArray(row) || row.length !== w) return { ok: false, error: '第 ' + y + ' 行宽度不一致' };
         for (var x = 0; x < w; x++) {
           var v = row[x];
-          if (!Number.isInteger(v) || v < 0 || v > 9) {
-            return { ok: false, error: '(' + x + ',' + y + ') 处 tile 值非法: ' + v };
+          if (!Number.isInteger(v) || v < 0 || v > 175) {
+            return { ok: false, error: '(' + x + ',' + y + ') 处 tile 值非法(packed 0-175): ' + v };
           }
         }
       }
@@ -314,10 +316,46 @@ window.ENEMY_REGISTRY = [
     return out;
   }
 
-    // 整图地图格式:0/1 网格行 + # 元数据(player/enemy 指令与普通注释)。
+    // v2 每格 = packed 纹理*16 + 形状掩码(0-175)。文件里每格 2 字符:[纹理][形状hex]。
+    // 纹理字符同旧表(0-9/A);形状字符 hex 0-F;空气 = "00"。
+    var V2_MARKER = '# cyrm-v2';
+    var TILE_TEXTURE_CHAR = { 0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'A' };
+    var TILE_TEXTURE_VALUE = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'a': 10 };
+    var SHAPE_HEX_CHAR = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
+    var SHAPE_HEX_VALUE = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+                            'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'a': 10, 'b': 11, 'c': 12, 'd': 13, 'e': 14, 'f': 15 };
+    function packCell(texture, shape) {
+      if (shape === 0 || texture === 0) return 0;
+      return texture * 16 + shape;
+    }
+    function textureOf(v) { return Math.floor(v / 16); }
+    function shapeOf(v) { return v % 16; }
+    function hexOf(v) { return SHAPE_HEX_CHAR[v]; }
+    // 旧格式 2×2 → 新 1 格 packed(掩码 + 纹理=组内首个实体格)。
+    function convertOldGrid(old) {
+      var h = old.length, w = old[0].length;
+      var out = [];
+      for (var ny = 0; ny < h / 2; ny++) {
+        var row = [];
+        for (var nx = 0; nx < w / 2; nx++) {
+          var shape = 0, tex = 0;
+          for (var sy = 0; sy < 2; sy++) for (var sx = 0; sx < 2; sx++) {
+            var ov = old[ny * 2 + sy][nx * 2 + sx];
+            if (ov !== 0) { shape |= 1 << (sy * 2 + sx); if (tex === 0) tex = ov; }
+          }
+          row.push(packCell(tex, shape));
+        }
+        out.push(row);
+      }
+      return out;
+    }
+
+    // 整图地图格式:v2 = `# cyrm-v2` 标记 + 每格 2 字符[纹理][形状hex];旧格式 = 单字符
+    // 0-9/A(无标记)→ 自动 2×2 转换(packed)并 ÷2 spawn 坐标。
     // 返回 { grid, player, enemies, comments }。
     function parseMap(text) {
       var lines = String(text).split(/\r?\n/);
+      var isV2 = lines.some(function (l) { return l.trim().indexOf(V2_MARKER) === 0; });
       var grid = [], player = null, enemies = [], comments = [], width = -1;
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim();
@@ -328,30 +366,53 @@ window.ENEMY_REGISTRY = [
             player = { x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) };
           } else if (parts[0] === 'enemy' && parts.length >= 4) {
             enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
+          } else if (parts[0] === 'cyrm-v2') {
+            // 版本标记行不当作注释
           } else {
             comments.push(line.slice(1).trim());
           }
           continue;
         }
         var row = [];
-        for (var j = 0; j < line.length; j++) {
-          var ch = line.charAt(j);
-          if (ch !== '0' && ch !== '1') throw new Error('第 ' + (i + 1) + ' 行含非法字符 "' + ch + '"（整图网格只允许 0/1）');
-          row.push(ch === '1' ? 1 : 0);
+        if (isV2) {
+          if (line.length % 2 !== 0) throw new Error('第 ' + (i + 1) + ' 行 v2 字符数必须为偶数');
+          for (var j = 0; j < line.length; j += 2) {
+            var tv = TILE_TEXTURE_VALUE[line.charAt(j)];
+            var sv = SHAPE_HEX_VALUE[line.charAt(j + 1)];
+            if (tv === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法纹理字符 "' + line.charAt(j) + '"');
+            if (sv === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法形状字符 "' + line.charAt(j + 1) + '"');
+            row.push(packCell(tv, sv));
+          }
+        } else {
+          for (var k = 0; k < line.length; k++) {
+            var v = TILE_TEXTURE_VALUE[line.charAt(k)];
+            if (v === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法字符 "' + line.charAt(k) + '"（旧格式只允许 0-9/A）');
+            row.push(v);
+          }
         }
         if (width === -1) width = row.length;
         else if (row.length !== width) throw new Error('第 ' + (i + 1) + ' 行宽度 ' + row.length + ' 与首行 ' + width + ' 不一致');
         grid.push(row);
       }
+      if (!isV2) {
+        grid = convertOldGrid(grid);
+        if (player) { player.x = Math.floor(player.x / 2); player.y = Math.floor(player.y / 2); }
+        enemies.forEach(function (e) { e.x = Math.floor(e.x / 2); e.y = Math.floor(e.y / 2); });
+      }
       return { grid: grid, player: player, enemies: enemies, comments: comments };
     }
 
     function serializeMap(map) {
-      var lines = [];
+      var lines = [V2_MARKER];
       (map.comments || []).forEach(function (c) { lines.push('# ' + c); });
       if (map.player) lines.push('# player ' + map.player.x + ' ' + map.player.y);
       (map.enemies || []).forEach(function (e) { lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y); });
-      map.grid.forEach(function (row) { lines.push(row.join('')); });
+      map.grid.forEach(function (row) {
+        lines.push(row.map(function (v) {
+          if (v === 0) return '00';
+          return TILE_TEXTURE_CHAR[textureOf(v)] + hexOf(shapeOf(v));
+        }).join(''));
+      });
       return lines.join('\n') + '\n';
     }
 
@@ -394,11 +455,10 @@ window.ENEMY_REGISTRY = [
       });
       return out;
     }
-    // 单结构地图格式导出:名字行 + spawn 行 + 0/1 网格(非 0 当墙)。
+    // 单结构地图格式导出:名字行 + spawn 行 + 0-9/A 网格(保留 1-10 瓦片值,供游戏按格值渲染不同砖块)。
     function serializeMapStructure(s) {
-      var norm = s.grid.map(function (row) { return row.map(function (v) { return v === 0 ? 0 : 1; }); });
       return serializeMap({ comments: [sanitizeName(s.name)], player: s.player,
-                           enemies: s.enemies || [], grid: norm });
+                           enemies: s.enemies || [], grid: s.grid });
     }
     // 新建空结构(数据部分,id/name 由 UI 补)。
     function createEmptyStructure(w, h) {
@@ -423,7 +483,12 @@ window.ENEMY_REGISTRY = [
       serializeLibraryJSON: serializeLibraryJSON,
       parseLibraryJSON: parseLibraryJSON,
       serializeMapStructure: serializeMapStructure,
-      createEmptyStructure: createEmptyStructure
+      createEmptyStructure: createEmptyStructure,
+      packCell: packCell,
+      textureOf: textureOf,
+      shapeOf: shapeOf,
+      hexOf: hexOf,
+      convertOldGrid: convertOldGrid
     };
   })();
   </script>
@@ -434,16 +499,23 @@ window.ENEMY_REGISTRY = [
 
     var TILE_COLORS = {
       0: null,
-      1: '#54778d', 2: '#9d7a5c', 3: '#6fae8f', 4: '#c98a5e',
-      5: '#8a6fc9', 6: '#c96fb0', 7: '#5ec9c0', 8: '#c9c95e', 9: '#e0e0e0'
+      1: '#527789', 2: '#528989', 3: '#528977', 4: '#526589', 5: '#528965',
+      6: '#4b6d7d', 7: '#5e8191', 8: '#496a7a', 9: '#446879', 10: '#4e7282'
     };
 
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, gridOn: true, brushSize: 1,
                   torusMode: false, spawnTool: null };
-    var view = { zoom: 28, panX: 40, panY: 40 };
+    var view = { zoom: 28, panX: 40, panY: 40, playerRef: null };
     var PLAYER_TILES = 3.75;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 32px
     var playerImg = new Image();
     playerImg.src = '../icon.svg';
+    var wallImg = new Image();
+    wallImg.src = 'structure.png';  // 编辑器自包含副本(与 assets/textures 同步维护)
+    wallImg.onload = function () {
+      if (!els.palette) return;  // 图片可能在 boot() 前已缓存加载
+      buildPalette();
+      renderCanvas();
+    };
     var hoverCell = null;
     var nextId = 1;
     var history = [];
@@ -510,8 +582,13 @@ window.ENEMY_REGISTRY = [
             for (var x = x0; x <= x1; x++) {
               var t = s.grid[mpy][x - ox];
               if (t !== 0) {
-                ctx.fillStyle = TILE_COLORS[t];
-                ctx.fillRect(view.panX + x * z, view.panY + y * z, z, z);
+                var px = view.panX + x * z, py = view.panY + y * z;
+                if (wallImg && wallImg.complete && wallImg.naturalWidth > 0) {
+                  ctx.drawImage(wallImg, (t - 1) * 32, 0, 32, 32, px, py, z, z);
+                } else {
+                  ctx.fillStyle = TILE_COLORS[t];
+                  ctx.fillRect(px, py, z, z);
+                }
               }
             }
           }
@@ -555,20 +632,44 @@ window.ENEMY_REGISTRY = [
       ctx.lineWidth = 2;
       ctx.strokeRect(view.panX, view.panY, w * z, h * z);
     }
-    function drawPlayerReference() {
-      // 左下角主角尺寸参考(真实大小:120世界px = 7.5格,随 zoom 缩放;超大时封顶不溢出画布)
+    function playerRefRect() {
+      // 玩家参考图当前屏幕位置/尺寸(真实大小:120世界px = 3.75格,随 zoom 缩放;超大时封顶不溢出画布)
       var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
       var ppad = 8;
-      var pdx = ppad, pdy = wrap.clientHeight - ppad - pz;
+      var x, y;
+      if (view.playerRef) { x = view.playerRef.x; y = view.playerRef.y; }
+      else { x = ppad; y = wrap.clientHeight - ppad - pz; }
+      x = Math.max(0, Math.min(x, wrap.clientWidth - pz));
+      y = Math.max(0, Math.min(y, wrap.clientHeight - pz));
+      return { x: x, y: y, w: pz, h: pz };
+    }
+    function drawPlayerReference() {
+      // 左下角主角尺寸参考;可左键拖到任意位置,双击复位到左下角
+      var r = playerRefRect();
       ctx.save();
       ctx.globalAlpha = 0.85;
       if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
-        ctx.drawImage(playerImg, pdx, pdy, pz, pz);
+        ctx.drawImage(playerImg, r.x, r.y, r.w, r.h);
       } else {
         ctx.fillStyle = '#54a0ff';
-        ctx.fillRect(pdx, pdy, pz, pz);
+        ctx.fillRect(r.x, r.y, r.w, r.h);
       }
       ctx.restore();
+    }
+    // 拖拽位置记忆(localStorage 存取失败时静默忽略,会话内仍可用)
+    function savePlayerRef() {
+      try {
+        if (view.playerRef) localStorage.setItem('cyr_editor_player_ref', JSON.stringify(view.playerRef));
+        else localStorage.removeItem('cyr_editor_player_ref');
+      } catch (e) {}
+    }
+    function loadPlayerRef() {
+      try {
+        var raw = localStorage.getItem('cyr_editor_player_ref');
+        if (!raw) return;
+        var p = JSON.parse(raw);
+        if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) view.playerRef = { x: p.x, y: p.y };
+      } catch (e) {}
     }
     function drawSpawnMarker(color, gx, gy, label) {
       var z = view.zoom, px = view.panX + (gx + 0.5) * z, py = view.panY + (gy + 0.5) * z;
@@ -714,14 +815,22 @@ window.ENEMY_REGISTRY = [
     }
 
     // ── palette ──
+    function setWallSwatchBg(sw, t) {
+      // 纹理加载后,swatch 用 structure.png 顶行第 t-1 块当背景(1-10 ↔ 砖块)
+      if (t <= 0 || !wallImg || !wallImg.complete || wallImg.naturalWidth <= 0) return;
+      sw.style.backgroundImage = "url('" + wallImg.src + "')";
+      sw.style.backgroundSize = '1000% 1000%';
+      sw.style.backgroundPosition = ((t - 1) * 100 / 9) + '% 0%';
+    }
     function buildPalette() {
       els.palette.innerHTML = '';
-      for (var t = 0; t <= 9; t++) {
+      for (var t = 0; t <= 10; t++) {
         var sw = document.createElement('div');
         sw.className = 'swatch' + (t === 0 ? ' sw-air' : ' s' + t);
         sw.textContent = String(t);
         sw.title = t === 0 ? '0 · 空气' : t + ' · 墙';
         if (t === state.palette) sw.classList.add('selected');
+        setWallSwatchBg(sw, t);
         (function (tile) {
           sw.addEventListener('click', function () {
             state.palette = tile;
@@ -813,6 +922,19 @@ window.ENEMY_REGISTRY = [
         canvas.setPointerCapture(e.pointerId);
         return;
       }
+      // 左键按下玩家参考图 → 拖动参考图(优先于画笔/spawn)
+      if (e.button === 0) {
+        var pr = playerRefRect();
+        if (e.offsetX >= pr.x && e.offsetX <= pr.x + pr.w &&
+            e.offsetY >= pr.y && e.offsetY <= pr.y + pr.h) {
+          if (!view.playerRef) view.playerRef = { x: pr.x, y: pr.y };
+          drag = { mode: 'playerRef', sx: e.offsetX, sy: e.offsetY, ox: view.playerRef.x, oy: view.playerRef.y };
+          canvas.style.cursor = 'grabbing';
+          canvas.setPointerCapture(e.pointerId);
+          renderCanvas();
+          return;
+        }
+      }
       var s = sel();
       var cell = cellAt(e.offsetX, e.offsetY);
       if (!cell || !s) return;
@@ -863,11 +985,23 @@ window.ENEMY_REGISTRY = [
           hoverCell = cell;
           if (view.zoom >= 8) renderCanvas();  // 低缩放不刷预览,避免大图卡顿
         }
+        // 悬停玩家参考图 → 抓手提示
+        var pr = playerRefRect();
+        var overRef = (e.offsetX >= pr.x && e.offsetX <= pr.x + pr.w &&
+                       e.offsetY >= pr.y && e.offsetY <= pr.y + pr.h);
+        canvas.style.cursor = overRef ? 'grab' : '';
         return;
       }
       if (drag.mode === 'pan') {
         view.panX = drag.ox + (e.offsetX - drag.sx);
         view.panY = drag.oy + (e.offsetY - drag.sy);
+        renderCanvas();
+        return;
+      }
+      if (drag.mode === 'playerRef') {
+        var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
+        view.playerRef.x = Math.max(0, Math.min(drag.ox + (e.offsetX - drag.sx), wrap.clientWidth - pz));
+        view.playerRef.y = Math.max(0, Math.min(drag.oy + (e.offsetY - drag.sy), wrap.clientHeight - pz));
         renderCanvas();
         return;
       }
@@ -895,6 +1029,10 @@ window.ENEMY_REGISTRY = [
           pushHistory(s);
           s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
         }
+      }
+      if (drag.mode === 'playerRef') {
+        savePlayerRef();
+        canvas.style.cursor = 'grab';
       }
       drag = null;
       render();
@@ -1226,6 +1364,15 @@ window.ENEMY_REGISTRY = [
       canvas.addEventListener('pointerup', onPointerUp);
       canvas.addEventListener('pointercancel', onPointerCancel);
       canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+      canvas.addEventListener('dblclick', function (e) {
+        var pr = playerRefRect();
+        if (e.offsetX >= pr.x && e.offsetX <= pr.x + pr.w &&
+            e.offsetY >= pr.y && e.offsetY <= pr.y + pr.h) {
+          view.playerRef = null;
+          savePlayerRef();
+          renderCanvas();
+        }
+      });
 
       document.addEventListener('keydown', function (e) {
         var tag = e.target && e.target.tagName;
@@ -1248,6 +1395,7 @@ window.ENEMY_REGISTRY = [
       window.addEventListener('resize', onResize);
       if (window.ResizeObserver) new ResizeObserver(onResize).observe(wrap);
 
+      loadPlayerRef();
       resizeCanvas();
       fit();
       render();
