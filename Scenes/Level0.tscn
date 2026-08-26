@@ -10,7 +10,7 @@
 script = ExtResource("1_v3lif")
 
 [node name="WorldViewport" type="SubViewport" parent="." unique_id=1741884642]
-size = Vector2i(2496, 1872)
+size = Vector2i(2208, 1656)
 render_target_update_mode = 4
 
 [node name="Background" type="Node2D" parent="WorldViewport" unique_id=1764831220]
