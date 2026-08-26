@@ -149,7 +149,7 @@ func _paint_water(grid: Array[Array]) -> void:
 func _process(delta: float) -> void:
 	_water_sway_time += delta
 	if Level0.water_surface_layer != null:
-		Level0.water_surface_layer.position.x = roundf(
+		Level0.water_surface_layer.position.y = roundf(
 				sin(_water_sway_time * GameParameters.water_sway_speed) * GameParameters.water_sway_amp)
 	if not _dirty_chunks.is_empty():
 		var chunks := _dirty_chunks.keys()
