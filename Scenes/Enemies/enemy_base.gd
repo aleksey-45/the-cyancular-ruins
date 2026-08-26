@@ -52,7 +52,7 @@ func _water_swim_dir() -> Vector2:
 func _ready() -> void:
 	add_to_group("enemies")
 	_setup_contact_area()
-	add_child(WaterFx.new())
+	add_child.call_deferred(WaterFx.new())
 
 func _setup_contact_area() -> void:
 	var area := Area2D.new()
