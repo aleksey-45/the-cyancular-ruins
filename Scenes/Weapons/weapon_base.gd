@@ -260,6 +260,9 @@ func _sample_arc_points() -> PackedVector2Array:
 	pts.append(to_local(p))
 	while t < preview_time:
 		v.y += g * dt
+		# 水中阻力:与真实子弹一致(water_bullet_drag),入水后减速 → 弧线在水里更垂/更短
+		if Water.is_in_water(p):
+			v *= Water.bullet_drag_factor(true, GameParameters.water_bullet_drag, dt)
 		p += v * dt
 		t += dt
 		if escape and p.distance_to(start) < GameParameters.TILE_SIZE:
