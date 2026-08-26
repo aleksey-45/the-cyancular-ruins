@@ -20,7 +20,8 @@ const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
 const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板
 const BACK_PAD := 4                            # 底板相对竖条的外扩 padding
 const WATERPROOF_H := 6            # 防水值条高(细长)
-const WATERPROOF_GAP := 8          # 防水值条与血条间距
+const WATERPROOF_GAP := 12         # 防水值条与血条间距(下移)
+const WATERPROOF_W := 6            # 每点防水值宽度(px)
 const WATERPROOF_COLOR := Color(0.12, 0.2, 0.55)  # 深蓝
 const WATERPROOF_BACK := Color(0, 0, 0, 0.4)      # 底板
 
@@ -88,7 +89,7 @@ func _on_hp(cur: int, max_hp: int) -> void:
 
 # 防水值(氧气)条:血条下方深蓝细长条,长度按防水值/上限。
 func _build_waterproof(max_hp: int) -> void:
-	_wp_w = max_hp * (SEG_W + SEG_GAP) - SEG_GAP
+	_wp_w = WATERPROOF_W * max_hp
 	var y := MARGIN.y + SEG_H + WATERPROOF_GAP
 	_wp_back = ColorRect.new()
 	_wp_back.position = Vector2(MARGIN.x, y)
@@ -103,7 +104,7 @@ func _build_waterproof(max_hp: int) -> void:
 
 func _on_waterproof(cur: int, max: int) -> void:
 	if _wp_bar != null:
-		_wp_bar.size.x = _wp_w * float(cur) / float(max(1, max))
+		_wp_bar.size.x = WATERPROOF_W * cur
 
 # 掉血段效果:闪烁两下(闪白回到底色),最后淡出消失。
 func _start_ghost(i: int) -> void:
