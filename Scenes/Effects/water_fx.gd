@@ -63,5 +63,5 @@ func _spawn(host: Node, at: Vector2, splash: bool) -> void:
 	p.scale_amount_min = 1.0 if splash else 0.5
 	p.scale_amount_max = 2.5 if splash else 1.0
 	p.color = Color(0.75, 0.88, 1.0, 0.9) if splash else Color(0.75, 0.88, 1.0, 0.6)
-	host.add_child(p)
+	host.add_child.call_deferred(p)
 	host.get_tree().create_timer(p.lifetime + 0.1).timeout.connect(p.queue_free)
