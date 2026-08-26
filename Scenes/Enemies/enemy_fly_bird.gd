@@ -5,6 +5,8 @@ enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
 enum Intent { SHOOT, CHARGE }
 
 const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
+	# FlyBird 独有:攻击水里的玩家伤害 ×1.5(自爆冲击 + 子弹),写死
+const WATER_DAMAGE_MULT: float = 1.5
 
 var intent: Intent = Intent.SHOOT
 
@@ -289,6 +291,14 @@ func _shot_clear() -> bool:
 	return MazeGenerator.has_line_of_sight(_cell_of(global_position), _cell_of(_player_pos()))
 
 
+# 攻击水里玩家的伤害:自爆冲击/子弹对水中玩家 ×1.5(FlyBird 独有)。
+func _water_boosted_damage(base: int) -> int:
+	var p := get_tree().get_first_node_in_group("player") as Node2D
+	if p != null and Water.is_in_water(p.global_position):
+		return roundi(base * WATER_DAMAGE_MULT)
+	return base
+
+
 func _fire_parabolic() -> void:
 	# 平抛:水平初速 + 重力,落点按玩家坐标 + 玩家即时速度预测。
 	var v0 := _bullet_v0()
@@ -296,6 +306,7 @@ func _fire_parabolic() -> void:
 	b.launch(Vector2(v0, 0.0), EnemyParams.FlyBird.bullet_range,
 			EnemyParams.FlyBird.bullet_damage, EnemyParams.FlyBird.bullet_gravity,
 			EnemyParams.FlyBird.bullet_size)
+	b.water_mult = WATER_DAMAGE_MULT
 	b.global_position = global_position
 	get_viewport().add_child(b)
 	# 开火后座:沿发射反方向轻推鸟(v0 符号即发射方向)。
@@ -347,7 +358,7 @@ func _on_charge_impact() -> void:
 		var collider := get_slide_collision(i).get_collider()
 		if collider != null and collider.is_in_group("player") and collider.has_method("take_hit"):
 			# 冲撞穿透无敌帧,命中必掉血(自杀攻击的威慑)
-			collider.take_hit(global_position, EnemyParams.FlyBird.charge_damage, true)
+			collider.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
 			_apply_charge_impact(collider)
 			break
 	_die_self()
@@ -360,7 +371,7 @@ func _on_charge_hit_player() -> void:
 	var p := get_tree().get_first_node_in_group("player")
 	if p != null and p.has_method("take_hit"):
 		# 冲撞穿透无敌帧,命中必掉血(自杀攻击的威慑)
-		p.take_hit(global_position, EnemyParams.FlyBird.charge_damage, true)
+		p.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
 		_apply_charge_impact(p)
 	_die_self()
 
