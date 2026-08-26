@@ -33,6 +33,7 @@ var _kills := 0
 var _wp_bar: ColorRect = null
 var _wp_back: ColorRect = null
 var _wp_w := 0.0
+var _wp_tween: Tween = null
 
 func _ready() -> void:
 	layer = LAYER
@@ -105,8 +106,18 @@ func _build_waterproof(max_hp: int) -> void:
 func _on_waterproof(cur: int, max: int) -> void:
 	if _wp_bar != null:
 		_wp_bar.size.x = WATERPROOF_W * cur
+		# 满值(陆地恢复满)→ 淡出;非满(开始消耗)→ 淡入
+		_fade_waterproof(0.0 if cur >= max else 1.0)
 
 # 掉血段效果:闪烁两下(闪白回到底色),最后淡出消失。
+
+func _fade_waterproof(a: float) -> void:
+	if _wp_tween != null and _wp_tween.is_valid():
+		_wp_tween.kill()
+	_wp_tween = create_tween()
+	_wp_tween.tween_property(_wp_bar, "modulate:a", a, 0.4)
+	_wp_tween.parallel().tween_property(_wp_back, "modulate:a", a, 0.4)
+
 func _start_ghost(i: int) -> void:
 	var seg := _segments[i]
 	_kill_ghost(i)
