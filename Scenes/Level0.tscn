@@ -13,17 +13,6 @@ script = ExtResource("1_v3lif")
 size = Vector2i(2208, 1656)
 render_target_update_mode = 4
 
-[node name="Background" type="Node2D" parent="WorldViewport" unique_id=1764831220]
-z_index = -100
-
-[node name="CloudFar" type="Parallax2D" parent="WorldViewport/Background" unique_id=264133677]
-
-[node name="Sprite2D" type="Sprite2D" parent="WorldViewport/Background/CloudFar" unique_id=1751468785]
-
-[node name="CloudNear" type="Parallax2D" parent="WorldViewport/Background" unique_id=749918617]
-
-[node name="Sprite2D" type="Sprite2D" parent="WorldViewport/Background/CloudNear" unique_id=331110100]
-
 [node name="Camera2D" type="Camera2D" parent="WorldViewport" unique_id=212233193 node_paths=PackedStringArray("target")]
 script = ExtResource("2_gw158")
 target = NodePath("../Player")

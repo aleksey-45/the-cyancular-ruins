@@ -19,7 +19,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
-	RenderingServer.set_default_clear_color("bbeeff")
+	RenderingServer.set_default_clear_color("c2ebf8")
 
 	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
 	var grid = MazeGenerator.load_map_file()
