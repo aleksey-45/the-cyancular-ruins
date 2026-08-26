@@ -56,7 +56,7 @@ func _ready() -> void:
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
-	$EnemySpawner.spawn_all(spawns)
+	$EnemySpawner.spawn_all.call_deferred(spawns)
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
