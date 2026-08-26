@@ -123,7 +123,7 @@ func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
 							Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
 
 
-# 水格分层铺:liquid 且上方非 liquid → 水面层(纹理 22,atlas 行 21);否则水体层(纹理 21,行 20)。
+# 水格铺图:所有液体格铺水体蓝底(T理纡 21,atlas 行 20);上方非 liquid 的格额外铺水面亮线(22,行 21)——水面拉伸露出的顶部缝隙被蓝底盖住。
 func _paint_water(grid: Array[Array]) -> void:
 	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
 	const SURF_ROW := 21   # 纹理 22(水面)的 atlas 行
@@ -145,9 +145,12 @@ func _paint_water(grid: Array[Array]) -> void:
 						continue
 					var above: int = grid[posmod(y - 1, rows)][x]
 					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-					var target := sl if is_surface else wl
-					target.set_cell(Vector2i(x + ox, y + oy), 0,
-							Vector2i(MazeGenerator.shape_of(v), SURF_ROW if is_surface else BODY_ROW))
+					# 所有液体格都铺水体蓝底(水面拉伸露出的顶部缝隙被蓝底盖住)
+					wl.set_cell(Vector2i(x + ox, y + oy), 0,
+							Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
+					if is_surface:
+						sl.set_cell(Vector2i(x + ox, y + oy), 0,
+							Vector2i(MazeGenerator.shape_of(v), SURF_ROW))
 
 
 func _process(_delta: float) -> void:
