@@ -234,7 +234,7 @@ func _repath_to(cell: Vector2i) -> void:
 	_path_target = cell
 	_collect_obstacles()
 	_path = MazeGenerator.astar_path_nearest(_cell_of(global_position), cell,
-			EnemyParams.FlyBird.path_max_visit, _bird_can_pass)
+			EnemyParams.FlyBird.path_max_visit, _bird_can_pass, EnemyParams.FlyBird.search_radius_cells)
 	_path_index = 0
 	# 寻路失败(死区)→ 记逃逸目标,先水平挪出悬挑,下次重寻路即可爬升。
 	_escape_target = _find_escape_column() if _path.is_empty() else Vector2.INF
