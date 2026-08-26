@@ -119,7 +119,7 @@ func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
 							Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
 
 
-# 水格铺图:所有液体格铺水体蓝底(T理纡 21,atlas 行 20);上方非 liquid 的格额外铺水面亮线(22,行 21)——水面拉伸露出的顶部缝隙被蓝底盖住。
+# 水格铺图:水体格铺水体瓦片(T理纡 21,atlas 行 20);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
 func _paint_water(grid: Array[Array]) -> void:
 	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
 	var ts := GameParameters.TILE_SIZE
@@ -139,8 +139,6 @@ func _paint_water(grid: Array[Array]) -> void:
 						continue
 					if not Water.is_liquid(MazeGenerator.texture_of(v)):
 						continue
-					wl.set_cell(Vector2i(x + ox, y + oy), 0,
-						Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
 					var above: int = grid[posmod(y - 1, rows)][x]
 					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
 					if is_surface:
@@ -152,6 +150,9 @@ func _paint_water(grid: Array[Array]) -> void:
 						sp.offset = Vector2(0, -ts * 0.5)
 						sp.phase_offset = (x + ox) * 1.7 + (y + oy) * 2.3
 						surf.call_deferred("add_child", sp)
+					else:
+						wl.set_cell(Vector2i(x + ox, y + oy), 0,
+							Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
 
 
 func _process(_delta: float) -> void:
