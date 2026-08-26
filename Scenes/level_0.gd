@@ -4,7 +4,8 @@ extends Node2D
 # 运行时破坏支持:瓦片被破坏(变空气)后,由 TileDefs.damage_tile 回调刷新瓦片层 + 重建碰撞。
 static var wall_layer: TileMapLayer = null
 static var water_layer: TileMapLayer = null
-static var water_surface_layer: TileMapLayer = null
+static var surface_texture: Texture2D = null
+static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 # 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
@@ -43,14 +44,8 @@ func _ready() -> void:
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = tile_set
-	Level0.water_surface_layer.tile_set = tile_set
 	_paint_water(grid)
-	# 水面起伏 shader:每格正弦上下拉伸(锚底无缝),相位逐格错开;水体层不挂
-	var wsm := ShaderMaterial.new()
-	wsm.shader = load("res://Scenes/Effects/water_surface.gdshader")
-	wsm.set_shader_parameter("amp", GameParameters.water_sway_amp)
-	wsm.set_shader_parameter("speed", GameParameters.water_sway_speed)
-	Level0.water_surface_layer.material = wsm
+
 
 	_build_wall_collision(grid)
 	EnemySpawner.load_types()
@@ -75,6 +70,7 @@ func _create_wall_tileset() -> TileSet:
 		img.blit_rect(src_img, Rect2i((i % 10) * 32, (i / 10) * 32, 32, 32), Vector2i.ZERO)
 		img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
 		bricks.append(img)
+	Level0.surface_texture = ImageTexture.create_from_image(bricks[21])  # 水面单格贴图(供 Sprite)
 	# atlas:16 列(形状 0-15)× 22 行(纹理 1-22),空气象限透明
 	var atlas_img := Image.create(16 * ts, 22 * ts, false, Image.FORMAT_RGBA8)
 	atlas_img.fill(Color(0, 0, 0, 0))
@@ -126,11 +122,11 @@ func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
 # 水格铺图:所有液体格铺水体蓝底(T理纡 21,atlas 行 20);上方非 liquid 的格额外铺水面亮线(22,行 21)——水面拉伸露出的顶部缝隙被蓝底盖住。
 func _paint_water(grid: Array[Array]) -> void:
 	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
-	const SURF_ROW := 21   # 纹理 22(水面)的 atlas 行
+	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
-	var sl: TileMapLayer = Level0.water_surface_layer
+	var surf: Node2D = Level0.water_surface_layer
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
 			var ox := tx * cols
@@ -143,11 +139,19 @@ func _paint_water(grid: Array[Array]) -> void:
 						continue
 					if not Water.is_liquid(MazeGenerator.texture_of(v)):
 						continue
+					wl.set_cell(Vector2i(x + ox, y + oy), 0,
+						Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
 					var above: int = grid[posmod(y - 1, rows)][x]
 					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-					var target := sl if is_surface else wl
-					target.set_cell(Vector2i(x + ox, y + oy), 0,
-							Vector2i(MazeGenerator.shape_of(v), SURF_ROW if is_surface else BODY_ROW))
+					if is_surface:
+						# 水面格用 Sprite(TileMap 顶点位移不可靠),锚格底伸缩,相位逐格错开
+						var sp := WaterSurfaceCell.new()
+						sp.texture = Level0.surface_texture
+						sp.centered = true
+						sp.position = Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts)
+						sp.offset = Vector2(0, -ts * 0.5)
+						sp.phase_offset = (x + ox) * 1.7 + (y + oy) * 2.3
+						surf.add_child(sp)
 
 
 func _process(_delta: float) -> void:
