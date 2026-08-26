@@ -10,7 +10,7 @@
 script = ExtResource("1_v3lif")
 
 [node name="WorldViewport" type="SubViewport" parent="." unique_id=1741884642]
-size = Vector2i(2208, 1656)
+size = Vector2i(2208, 1728)
 render_target_update_mode = 4
 
 [node name="Camera2D" type="Camera2D" parent="WorldViewport" unique_id=212233193 node_paths=PackedStringArray("target")]
