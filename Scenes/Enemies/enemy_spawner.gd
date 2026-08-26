@@ -23,7 +23,7 @@ static func load_types() -> void:
 			TYPES[str(e["id"])] = str(e["scene"])
 
 # 在 grid 里随机取 count 个「地板格」、且距 player_cell 的环面距离 >= min_dist_cells。
-# 地板格 = EMPTY 且正下方(y+1,环面取模)是 SOLID:敌人站立/落地有实心表面托底,
+# 地板格 = EMPTY 且正下方(y+1,环面取模)是非 EMPTY:敌人站立/落地有实心表面托底,
 # 否则返程落地时没有 is_on_floor() 的地面,会坠穿空洞(见 FlyBird 回家入睡 bug)。
 static func sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 		count: int, min_dist_cells: int) -> Array[Vector2i]:
@@ -32,7 +32,7 @@ static func sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 	var floor_cells: Array[Vector2i] = []
 	for y in range(rows):
 		for x in range(cols):
-			if grid[y][x] == MazeGenerator.EMPTY and grid[posmod(y + 1, rows)][x] == MazeGenerator.SOLID:
+			if grid[y][x] == MazeGenerator.EMPTY and TileDefs.is_blocked(grid[posmod(y + 1, rows)][x]):
 				floor_cells.append(Vector2i(x, y))
 	var chosen: Array[Vector2i] = []
 	var pool: Array[Vector2i] = floor_cells.duplicate()

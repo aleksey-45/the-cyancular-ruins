@@ -6,8 +6,8 @@ enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 
 @export var bullet_scene: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
-# 预瞄碰撞小球半径基数(px, ×bullet_size):近似子弹碰撞体积判墙,只查中心点会漏"体积擦墙"
-const PREVIEW_COLLISION_RADIUS: float = 6.0
+# 预瞄判墙小球半径(px): PREVIEW_COLLISION_RADIUS×bullet_size 
+const PREVIEW_COLLISION_RADIUS: float = 4.0
 
 # ── 武器参数(说明见各参数上方注释)──
 # 模板分类(轻/中/重),仅作信息/分组用
@@ -128,11 +128,13 @@ func _process(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
+	# 先刷新朝向/枪口旋转:缓冲开火必须取本帧最新瞄准朝向,否则 fire() 读到的是
+	# 上一物理帧被移动输入覆盖的 facing(如后退时朝左),clamp_pitch 折出最大仰角、子弹打偏。
+	_auto_aim()
 	# 缓冲开火:冷却结束且末尾按过开火 → 自动打出(土狼时间式;切枪即弃)
 	if _fire_buffered and fire_cd_timer == 0.0:
 		_fire_buffered = false
 		fire()
-	_auto_aim()
 	if heavy_aim:
 		_update_laser()
 	elif full_auto and Input.is_action_pressed("attack"):
@@ -243,7 +245,7 @@ func _update_laser() -> void:
 		_update_explosion_marker(false)
 
 # 预瞄抛物线:与 fire 同源(v0=钳制瞄准方向*speed, g=bullet_gravity*gravity0),
-# 1/60s 采样到 preview_time,途中遇 SOLID 格截断(榴弹撞墙停驻处 = 爆炸点),
+# 1/60s 采样到 preview_time,途中遇墙(非 EMPTY)格截断(榴弹撞墙停驻处 = 爆炸点),
 # 并封顶 bullet_range(榴弹超射程兜底爆炸,不会再飞)。
 func _sample_arc_points() -> PackedVector2Array:
 	var pts := PackedVector2Array()
@@ -253,11 +255,15 @@ func _sample_arc_points() -> PackedVector2Array:
 	var g := bullet_gravity * GameParameters.gravity0
 	var dt := 1.0 / 60.0
 	var t := 0.0
+	# 枪口起点判墙 → 真实榴弹会挣脱墙继续飞;跳过起点段判墙,避免弧线退化成贴脸短弧
+	var escape := _disk_overlaps_solid(start)
 	pts.append(to_local(p))
 	while t < preview_time:
 		v.y += g * dt
 		p += v * dt
 		t += dt
+		if escape and p.distance_to(start) < GameParameters.TILE_SIZE:
+			continue  # 起点挣脱段:不判墙、不截断,榴弹正从枪口墙体里飞出
 		if _disk_overlaps_solid(p):
 			break
 		if p.distance_to(start) >= bullet_range:
@@ -265,10 +271,10 @@ func _sample_arc_points() -> PackedVector2Array:
 		pts.append(to_local(p))
 	return pts
 
-# 预瞄判墙:以 center 为圆心、半径 r(=6×bullet_size)的小球是否压到任一 SOLID 格(环面)。
+# 预瞄判墙:以 center 为圆心、半径 r(=6px)的小球是否压到任一墙(非 EMPTY)格(环面)。
 # 小球按格子 AABB 粗查:球很小,最多跨 2 格,不会漏;比精确圆简单且略保守(宁多判墙不少判)。
 func _disk_overlaps_solid(center: Vector2) -> bool:
-	var r := PREVIEW_COLLISION_RADIUS * bullet_size
+	var r := PREVIEW_COLLISION_RADIUS*bullet_size
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
 		return false
@@ -287,7 +293,7 @@ func _disk_overlaps_solid(center: Vector2) -> bool:
 		var y := posmod(min_c.y + dy, rows)
 		for dx in range(span_x + 1):
 			var x := posmod(min_c.x + dx, cols)
-			if grid[y][x] == MazeGenerator.SOLID:
+			if TileDefs.is_blocked(grid[y][x]):
 				return true
 	return false
 
@@ -318,16 +324,18 @@ func _aim_world_dir() -> Vector2:
 		return Vector2(float(get_facing()), 0.0)
 	# 窗口鼠标 -> 世界坐标。鼠标用根 Window 的真实坐标(SubViewport 的
 	# get_mouse_position 是被 push 进去的窗口坐标,不能直接用)。
-	# 相机把屏幕中心映射到 cam.global_position,故 world_mouse =
-	# cam.global_position + (鼠标 - 窗口中心) / crop。
+	# 相机把屏幕中心映射到 cam.global_position,world_mouse = 相机基准 + 鼠标偏移。
 	var win_size := win.get_visible_rect().size
 	var mouse := win.get_mouse_position()
-	var crop := PostProcess.crop_scale(win_size, sub.size)
 	# 用相机无抖动的基准位置,避免镜头抖动让准星跟着跳
 	var cam_center: Vector2 = cam.global_position
 	if cam.has_method("get_base_global_position"):
 		cam_center = cam.get_base_global_position()
-	var world_mouse := cam_center + (mouse - win_size * 0.5) / crop
+	# PostProcess 是中心裁剪(显示世界视口中心窗口大小区域);相机 zoom(<1 视野更大)
+	# 让 窗口 1px = 世界 1/zoom px,鼠标偏移按 zoom 放大回世界坐标(如 zoom=0.75 → ÷0.75)。
+	# 不能 ÷crop_scale:crop 只定裁剪比例、不改像素换算,÷ 它(×1.3)会放大偏移,
+	# 瞄准"水平"实际偏下,而榴弹枪口离地极近,弧线几步内就撞地板 → 预瞄贴在玩家身上。
+	var world_mouse := cam_center + (mouse - win_size * 0.5) / cam.zoom
 	var origin := player.global_position if player != null else global_position
 	var dir := world_mouse - origin
 	if dir.length_squared() < 0.0001:

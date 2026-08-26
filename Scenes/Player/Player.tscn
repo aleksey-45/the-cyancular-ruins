@@ -5,6 +5,7 @@
 [ext_resource type="Script" path="res://Scenes/Player/climb_component.gd" id="3_climb"]
 [ext_resource type="Script" path="res://Scenes/Player/weapon_component.gd" id="4_wpn"]
 [ext_resource type="Script" path="res://Scenes/Player/combat_component.gd" id="5_cmb"]
+[ext_resource type="Script" path="res://Scenes/Player/swim_component.gd" id="6_swim"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_miouo"]
 atlas = ExtResource("1_rpqav")
@@ -166,3 +167,6 @@ script = ExtResource("4_wpn")
 
 [node name="Combat" type="Node" parent="."]
 script = ExtResource("5_cmb")
+
+[node name="Swim" type="Node" parent="."]
+script = ExtResource("6_swim")
