@@ -145,12 +145,9 @@ func _paint_water(grid: Array[Array]) -> void:
 						continue
 					var above: int = grid[posmod(y - 1, rows)][x]
 					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-					# 所有液体格都铺水体蓝底(水面拉伸露出的顶部缝隙被蓝底盖住)
-					wl.set_cell(Vector2i(x + ox, y + oy), 0,
-							Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
-					if is_surface:
-						sl.set_cell(Vector2i(x + ox, y + oy), 0,
-							Vector2i(MazeGenerator.shape_of(v), SURF_ROW))
+					var target := sl if is_surface else wl
+					target.set_cell(Vector2i(x + ox, y + oy), 0,
+							Vector2i(MazeGenerator.shape_of(v), SURF_ROW if is_surface else BODY_ROW))
 
 
 func _process(_delta: float) -> void:
