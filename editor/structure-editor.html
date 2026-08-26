@@ -205,6 +205,8 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <button data-tool="rect" class="tool-btn">矩形</button>
         <button data-tool="fill" class="tool-btn">油漆桶</button>
         <button data-tool="erase" class="tool-btn">橡皮</button>
+        <button data-tool="select" class="tool-btn">选框</button>
+        <button data-tool="line" class="tool-btn">直线</button>
         <label class="brush-label">画笔 <input type="number" id="brush-size" min="1" max="15" value="1"></label>
         <span class="spacer"></span>
         <button id="btn-undo" title="Ctrl+Z">撤销</button>
@@ -340,6 +342,56 @@ window.ENEMY_REGISTRY = [
     }
     return out;
   }
+
+    // Bresenham 直线路径格坐标(x0,y0)→(x1,y1,含两端)。直线工具 + 画笔拖拽共用。
+    function lineCells(x0, y0, x1, y1) {
+      var cells = [];
+      var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+      var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      var err = dx - dy;
+      var x = x0, y = y0;
+      for (;;) {
+        cells.push([x, y]);
+        if (x === x1 && y === y1) break;
+        var e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+      }
+      return cells;
+    }
+
+    // 矩形区域归一化:任意两角点 → { x, y, w, h }(含两端)。
+    function normRegion(x0, y0, x1, y1) {
+      return { x: Math.min(x0, x1), y: Math.min(y0, y1),
+               w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
+    }
+
+    // 平移区域:先取 region 内容 → 原区域清 0 → 贴到 (region+dx, region+dy)(出界裁剪)。不修改入参。
+    // 对越界 region 防御:网格外的源格按 0 取、只清/只贴网格内的部分。
+    function moveRegion(grid, region, dx, dy) {
+      var out = grid.map(function (r) { return r.slice(); });
+      var h = out.length, w = h > 0 ? out[0].length : 0;
+      var sub = [];
+      for (var i = 0; i < region.h; i++) {
+        var row = [];
+        for (var j = 0; j < region.w; j++) {
+          var sy = region.y + i, sx = region.x + j;
+          row.push(sy >= 0 && sy < h && sx >= 0 && sx < w ? out[sy][sx] : 0);
+        }
+        sub.push(row);
+      }
+      for (i = 0; i < region.h; i++)
+        for (j = 0; j < region.w; j++) {
+          var cy2 = region.y + i, cx2 = region.x + j;
+          if (cy2 >= 0 && cy2 < h && cx2 >= 0 && cx2 < w) out[cy2][cx2] = 0;
+        }
+      for (i = 0; i < region.h; i++)
+        for (j = 0; j < region.w; j++) {
+          var ty = region.y + dy + i, tx = region.x + dx + j;
+          if (ty >= 0 && ty < h && tx >= 0 && tx < w) out[ty][tx] = sub[i][j];
+        }
+      return out;
+    }
 
     // v3 每格 = packed 纹理*16 + 形状掩码。文件里每格 4 字符:[纹理 3 位 0xx][形状hex]。
     // 纹理 000=空气,001/002/...;形状字符 hex 0-F;空气 = "0000"。纹理用 3 位数字,不用字母。
@@ -502,6 +554,9 @@ window.ENEMY_REGISTRY = [
       resizeGrid: resizeGrid,
       rectFill: rectFill,
       floodFill: floodFill,
+      lineCells: lineCells,
+      normRegion: normRegion,
+      moveRegion: moveRegion,
       parseMap: parseMap,
       serializeMap: serializeMap,
       brushOffsets: brushOffsets,
@@ -529,11 +584,12 @@ window.ENEMY_REGISTRY = [
       1: '#527789', 2: '#528989', 3: '#528977', 4: '#526589', 5: '#528965',
       6: '#4b6d7d', 7: '#5e8191', 8: '#496a7a', 9: '#446879', 10: '#4e7282',
       11: '#8a7a5c', 12: '#8a8f98', 13: '#8a8f98', 14: '#8a8f98', 15: '#6fae8f',
-      16: '#6fae8f', 17: '#6fae8f', 18: '#6fae8f', 19: '#8a6f5e', 20: '#8a6f5e'
+      16: '#6fae8f', 17: '#6fae8f', 18: '#6fae8f', 19: '#8a6f5e', 20: '#8a6f5e',
+      21: '#3f7fb0', 22: '#7fb7dc'
     };
 
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, shape: 15, gridOn: true,
-                  brushSize: 1, torusMode: false, spawnTool: null };
+                  brushSize: 1, torusMode: false, spawnTool: null, selection: null };
     var view = { zoom: 28, panX: 40, panY: 40, playerRef: null };
     var PLAYER_TILES = 1.875;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 64px
     var tileCache = {};        // packed → 64×64 canvas(纹理×形状掩码)
@@ -768,11 +824,21 @@ window.ENEMY_REGISTRY = [
       ctx.fillStyle = '#17191d';
       ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
       if (s) {
-        renderStructure(s);
-        drawSpawnMarkers(s);
-        drawGridLines(s);
-        drawBorder(s);
+        // 选框移动预览:临时用预览网格渲染(结构本体尺寸不变),松手才提交
+        if (drag && drag.mode === 'move' && drag.previewGrid) {
+          var disp = { grid: drag.previewGrid, player: s.player, enemies: s.enemies };
+          renderStructure(disp);
+          drawSpawnMarkers(disp);
+          drawGridLines(disp);
+          drawBorder(disp);
+        } else {
+          renderStructure(s);
+          drawSpawnMarkers(s);
+          drawGridLines(s);
+          drawBorder(s);
+        }
       }
+      drawSelection();
       drawBrushPreview();
       drawPlayerReference();
       ctx.restore();
@@ -830,6 +896,7 @@ window.ENEMY_REGISTRY = [
       if (state.selectedId === id) return;
       state.selectedId = id;
       hoverCell = null;  // 切换结构清掉旧的画笔预览
+      state.selection = null;  // 选区也随结构切换清掉
       syncSizeInputs();
       fit();
       render();
@@ -849,11 +916,15 @@ window.ENEMY_REGISTRY = [
       if (s) {
         parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length
           + (state.torusMode ? ' · 环面' : ''));
-        parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮' })[state.tool] || state.tool));
+        parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮', select: '选框', line: '直线' })[state.tool] || state.tool));
         var tn = state.palette === 0 ? '' : tileName(state.palette);
         parts.push('纹理: ' + state.palette + (state.palette === 0 ? ' (空气)' : (tn ? ' ' + tn : '')) + ' · 形状 ' + state.shape);
         parts.push('画笔 ' + state.brushSize);
         parts.push('出生点:玩家' + (s.player ? '1' : '0') + ' · 敌人 ' + (s.enemies || []).length);
+        if (state.selection) {
+          parts.push('选区: ' + state.selection.x + ',' + state.selection.y
+            + ' ' + state.selection.w + '×' + state.selection.h);
+        }
         parts.push('撤销 ' + history.length + ' · 重做 ' + redoStack.length);
       } else {
         parts.push('无结构 — 点击左侧"新建"');
@@ -963,17 +1034,11 @@ window.ENEMY_REGISTRY = [
       }
     }
     function linePaint(x0, y0, x1, y1, tile) {
-      var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-      var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-      var err = dx - dy;
-      var x = x0, y = y0;
-      for (;;) {
-        paintAt(x, y, tile);  // 画笔:沿线刷 N×N 块
-        if (x === x1 && y === y1) break;
-        var e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x += sx; }
-        if (e2 < dx) { err += dx; y += sy; }
-      }
+      var cells = Core.lineCells(x0, y0, x1, y1);
+      for (var i = 0; i < cells.length; i++) paintAt(cells[i][0], cells[i][1], tile);  // 画笔:沿线刷 N×N 块
+    }
+    function inRegion(x, y, r) {
+      return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
     }
     function drawRectPreview(x0, y0, x1, y1, erase) {
       var s = sel();
@@ -988,6 +1053,43 @@ window.ENEMY_REGISTRY = [
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1;
       ctx.strokeRect(view.panX + minX * z, view.panY + minY * z, (maxX - minX + 1) * z, (maxY - minY + 1) * z);
+      ctx.restore();
+    }
+    function drawLinePreview(x0, y0, x1, y1) {
+      var s = sel();
+      if (!s) return;
+      var z = view.zoom;
+      var o = Core.brushOffsets(state.brushSize);
+      var cells = Core.lineCells(x0, y0, x1, y1);
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = (drag && drag.erase) ? 'rgba(255,255,255,0.25)'
+        : hexToRgba(TILE_COLORS[state.palette] || '#0d1117', 0.5);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      for (var i = 0; i < cells.length; i++) {
+        var bbx = view.panX + (cells[i][0] - o.lo) * z, bby = view.panY + (cells[i][1] - o.lo) * z;
+        var bbs = (o.lo + o.hi + 1) * z;
+        ctx.fillRect(bbx, bby, bbs, bbs);  // 与 paintAt 的画笔块一致,预览即结果
+        if (i === 0) ctx.strokeRect(bbx + 0.5, bby + 0.5, bbs - 1, bbs - 1);  // 起点描边
+      }
+      ctx.restore();
+    }
+    function drawSelection() {
+      // 在 renderCanvas 已 scale(dpr) 的作用域内调用,不能再 self-scale(否则 dpr² 双重缩放,选框脱离网格)
+      var r = state.selection;
+      if (drag && drag.mode === 'move' && drag.previewSel) r = drag.previewSel;
+      if (!r) return;
+      var z = view.zoom;
+      var px = view.panX + r.x * z, py = view.panY + r.y * z;
+      ctx.save();
+      ctx.fillStyle = 'rgba(84,160,255,0.12)';
+      ctx.fillRect(px, py, r.w * z, r.h * z);
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = '#54a0ff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px + 0.5, py + 0.5, r.w * z - 1, r.h * z - 1);
+      ctx.setLineDash([]);
       ctx.restore();
     }
 
@@ -1031,18 +1133,59 @@ window.ENEMY_REGISTRY = [
         placeSpawn(cell.x, cell.y);
         return;
       }
+
+      // 选框工具:左键选区内=移动、选区外=重新框选;右键/Alt=清除选区
+      if (state.tool === 'select') {
+        if (e.button === 2 || e.altKey) {
+          if (state.selection) { state.selection = null; renderCanvas(); }
+          return;
+        }
+        if (state.selection && inRegion(cell.x, cell.y, state.selection)) {
+          drag = { mode: 'move', sx: cell.x, sy: cell.y, sel: state.selection };
+          canvas.setPointerCapture(e.pointerId);
+          renderCanvas();
+          return;
+        }
+        state.selection = Core.normRegion(cell.x, cell.y, cell.x, cell.y);
+        drag = { mode: 'marquee', sx: cell.x, sy: cell.y };
+        canvas.setPointerCapture(e.pointerId);
+        renderCanvas();
+        return;
+      }
+
       var erase = e.button === 2 || e.altKey || state.tool === 'erase';
       var tile = erase ? 0 : Core.packCell(state.palette, state.shape);
       if (state.tool === 'fill') {
-        if (s.grid[cell.y][cell.x] !== tile) {
-          pushHistory(s);
-          s.grid = Core.floodFill(s.grid, cell.x, cell.y, tile);
+        if (state.selection && inRegion(cell.x, cell.y, state.selection)) {
+          // 选区激活 + 点在选区内 → 整个选区刷成当前纹理+形状(按矩形,非连通)
+          var r = state.selection;
+          var same = true;
+          for (var ry = r.y; ry < r.y + r.h && same; ry++)
+            for (var rx = r.x; rx < r.x + r.w; rx++)
+              if (s.grid[ry][rx] !== tile) { same = false; break; }
+          if (!same) {
+            pushHistory(s);
+            s.grid = Core.rectFill(s.grid, r.x, r.y, r.x + r.w - 1, r.y + r.h - 1, tile);
+          }
+        } else {
+          // 无选区;点在选区外 → 先清掉选区,再正常连通填充
+          if (state.selection) state.selection = null;
+          if (s.grid[cell.y][cell.x] !== tile) {
+            pushHistory(s);
+            s.grid = Core.floodFill(s.grid, cell.x, cell.y, tile);
+          }
         }
         render();
         return;
       }
       if (state.tool === 'rect') {
-        drag = { mode: 'rect', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase };
+        drag = { mode: 'rect', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase, tile: tile };
+        canvas.setPointerCapture(e.pointerId);
+        renderCanvas();
+        return;
+      }
+      if (state.tool === 'line') {
+        drag = { mode: 'line', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase, tile: tile };
         canvas.setPointerCapture(e.pointerId);
         renderCanvas();
         return;
@@ -1084,11 +1227,37 @@ window.ENEMY_REGISTRY = [
       }
       var cell = cellAt(e.offsetX, e.offsetY);
       if (!cell) return;
+      if (drag.mode === 'marquee') {
+        state.selection = Core.normRegion(drag.sx, drag.sy, cell.x, cell.y);
+        renderCanvas();
+        return;
+      }
+      if (drag.mode === 'move') {
+        var ms = sel();
+        if (ms) {
+          // 约束在网格内:选区不越界,拖到边缘即停(内容不丢,左右边缘互移仍可覆盖环面换边)
+          var maxDX = ms.grid[0].length - drag.sel.w;
+          var maxDY = ms.grid.length - drag.sel.h;
+          var dx = Math.max(-drag.sel.x, Math.min(cell.x - drag.sx, maxDX));
+          var dy = Math.max(-drag.sel.y, Math.min(cell.y - drag.sy, maxDY));
+          drag.previewSel = { x: drag.sel.x + dx, y: drag.sel.y + dy, w: drag.sel.w, h: drag.sel.h };
+          drag.previewGrid = Core.moveRegion(ms.grid, drag.sel, dx, dy);
+        }
+        renderCanvas();
+        return;
+      }
       if (drag.mode === 'rect') {
         drag.lastX = cell.x;
         drag.lastY = cell.y;
         renderCanvas();
         drawRectPreview(drag.sx, drag.sy, cell.x, cell.y, drag.erase);
+        return;
+      }
+      if (drag.mode === 'line') {
+        drag.lastX = cell.x;
+        drag.lastY = cell.y;
+        renderCanvas();
+        drawLinePreview(drag.sx, drag.sy, cell.x, cell.y);
         return;
       }
       if (drag.mode === 'paint') {
@@ -1100,11 +1269,22 @@ window.ENEMY_REGISTRY = [
     }
     function onPointerUp() {
       if (!drag) return;
-      if (drag.mode === 'rect') {
-        var s = sel();
-        if (s) {
+      var s = sel();
+      if (drag.mode === 'rect' && s) {
+        pushHistory(s);
+        s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.tile);
+      }
+      if (drag.mode === 'line' && s) {
+        pushHistory(s);
+        var cells = Core.lineCells(drag.sx, drag.sy, drag.lastX, drag.lastY);
+        for (var i = 0; i < cells.length; i++) paintAt(cells[i][0], cells[i][1], drag.tile);
+      }
+      if (drag.mode === 'move' && s && drag.previewGrid) {
+        var moved = drag.previewSel.x !== drag.sel.x || drag.previewSel.y !== drag.sel.y;
+        if (moved) {
           pushHistory(s);
-          s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.erase ? 0 : state.palette);
+          s.grid = drag.previewGrid;
+          state.selection = drag.previewSel;
         }
       }
       if (drag.mode === 'playerRef') {
@@ -1115,6 +1295,7 @@ window.ENEMY_REGISTRY = [
       render();
     }
     function onPointerCancel() {
+      if (drag && drag.mode === 'marquee') state.selection = null;
       drag = null;
       renderCanvas();
     }
@@ -1230,6 +1411,7 @@ window.ENEMY_REGISTRY = [
       if (s.grid[0].length !== w || s.grid.length !== h) {
         pushHistory(s);
         s.grid = Core.resizeGrid(s.grid, w, h);
+        state.selection = null;  // 尺寸变化后旧选区可能越界,直接清掉
       }
       syncSizeInputs();
       render();
@@ -1457,6 +1639,27 @@ window.ENEMY_REGISTRY = [
         var tag = e.target && e.target.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
         if (e.code === 'Space') spaceDown = true;
+        // 选区:Del/Backspace 清空选区内砖块;Esc 取消选区
+        if ((e.code === 'Delete' || e.code === 'Backspace') && state.selection) {
+          e.preventDefault();
+          var s = sel();
+          if (s) {
+            var r = state.selection;
+            var any = false;
+            for (var yy = r.y; yy < r.y + r.h && !any; yy++)
+              for (var xx = r.x; xx < r.x + r.w; xx++)
+                if (s.grid[yy][xx] !== 0) { any = true; break; }
+            if (any) {
+              pushHistory(s);
+              s.grid = Core.rectFill(s.grid, r.x, r.y, r.x + r.w - 1, r.y + r.h - 1, 0);
+            }
+          }
+          render();
+        }
+        if (e.code === 'Escape' && state.selection) {
+          state.selection = null;
+          renderCanvas();
+        }
         if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
           e.preventDefault();
           if (e.shiftKey) redo(); else undo();
