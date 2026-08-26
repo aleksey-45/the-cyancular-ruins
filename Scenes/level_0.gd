@@ -127,6 +127,7 @@ func _paint_water(grid: Array[Array]) -> void:
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
+	var surface_cells: Array = []
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
 			var ox := tx * cols
@@ -142,26 +143,36 @@ func _paint_water(grid: Array[Array]) -> void:
 					var above: int = grid[posmod(y - 1, rows)][x]
 					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
 					if is_surface:
-						# 水面格用 Sprite(TileMap 顶点位移不可靠),锚格底伸缩,相位逐格错开
-						var sp := WaterSurfaceCell.new()
-						sp.texture = Level0.surface_texture
-						sp.centered = true
-						sp.position = Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts)
-						sp.offset = Vector2(0, -ts * 0.5)
-						sp.phase_offset = (x + ox) * 1.7 + (y + oy) * 2.3
-						surf.call_deferred("add_child", sp)
+						# 收集水面格,合批成一个 canvas item(替代 N 个 Sprite,省 draw call,画面不变)
+						surface_cells.append({
+							"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
+							"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
+						})
 					else:
 						wl.set_cell(Vector2i(x + ox, y + oy), 0,
 							Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
 
 
+	# 合批:一个 canvas item 画所有水面格(替代 N 个 Sprite,省 draw call,画面不变)
+	if not surface_cells.is_empty():
+		var batch := WaterSurfaceBatch.new()
+		batch.setup(surface_cells, Level0.surface_texture, ts)
+		surf.call_deferred("add_child", batch)
+
+
 func _process(_delta: float) -> void:
 	if not _dirty_chunks.is_empty():
+		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
+		const MAX_REBUILD_PER_FRAME := 2
+		var processed := 0
 		var chunks := _dirty_chunks.keys()
 		_dirty_chunks.clear()
 		for ch in chunks:
-			# 只重建被摧毁砖所在分块(块内一次贪心 + 9 环面副本),永久墙建一次不动
+			if processed >= MAX_REBUILD_PER_FRAME:
+				_dirty_chunks[ch] = true  # 放回下帧继续
+				continue
 			CollisionBuilder.rebuild_chunk(_destructible_sub, ch, $WorldViewport)
+			processed += 1
 
 
 # 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。
