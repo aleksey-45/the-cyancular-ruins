@@ -26,8 +26,8 @@ const charge_dir_window: float = 0.3  # 冲刺方向沿用最近移动方向的�
 
 # ── 游泳 ──
 const player_swim_speed: float = 420.0    # 水中水平移速(≈0.6×700)
-const player_swim_up: float = -480.0      # 上浮速度
-const player_swim_down: float = 420.0     # 下沉速度
+const player_swim_up: float = -420.0      # 上浮速度
+const player_swim_down: float = 360.0     # 下沉速度
 const player_swim_accel: float = 6.0      # 水中水平缓动系数
 const player_buoyancy_k: float = 6.0      # 浮力弹簧刚度(回水面)
 const player_max_float: float = 300.0     # 上浮最大速度
