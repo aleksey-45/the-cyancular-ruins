@@ -46,14 +46,14 @@ func _build_segments(count: int) -> void:
 	back.position = Vector2(MARGIN.x - BACK_PAD, MARGIN.y - BACK_PAD)
 	back.size = Vector2(bar_w + BACK_PAD * 2, SEG_H + BACK_PAD * 2)
 	back.color = BACK_COLOR
-	add_child(back)  # 先加,绘制在竖条底下
+	call_deferred("add_child", back)  # 先加,绘制在竖条底下
 
 	for i in range(count):
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
 		seg.size = Vector2(SEG_W, SEG_H)
 		seg.color = COLOR_NORMAL
-		add_child(seg)
+		call_deferred("add_child", seg)
 		_segments.append(seg)
 		_ghost_tweens.append(null)
 
@@ -123,7 +123,7 @@ func _build_kill_label() -> void:
 	_kill_label.offset_bottom = KILL_MARGIN.y + KILL_FONT_SIZE * 1.4
 	_kill_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_kill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	add_child(_kill_label)
+	call_deferred("add_child", _kill_label)
 
 func _on_enemy_spawned(enemy: Node) -> void:
 	if enemy.has_signal("died"):

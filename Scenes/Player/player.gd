@@ -88,7 +88,7 @@ func _ready() -> void:
 		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
 
 	weapons.equip("1")
-	add_child.call_deferred(WaterFx.new())
+	call_deferred("add_child", WaterFx.new())
 
 
 # 指数缓动：朝目标值逼近。rate 越大越跟手；

@@ -106,12 +106,12 @@ func _ready() -> void:
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
 	_laser.default_color = laser_color
 	_laser.visible = false
-	add_child(_laser)
+	call_deferred("add_child", _laser)
 	_explosion_marker = Sprite2D.new()
 	_explosion_marker.texture = Explosion.make_circle_texture(16)
 	_explosion_marker.modulate = Color(1.0, 0.4, 0.2, 0.9)
 	_explosion_marker.visible = false
-	add_child(_explosion_marker)
+	call_deferred("add_child", _explosion_marker)
 
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())

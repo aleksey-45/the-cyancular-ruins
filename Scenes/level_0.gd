@@ -55,7 +55,7 @@ func _ready() -> void:
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
-	add_child.call_deferred(pp)
+	call_deferred("add_child", pp)
 
 
 func _create_wall_tileset() -> TileSet:
@@ -151,7 +151,7 @@ func _paint_water(grid: Array[Array]) -> void:
 						sp.position = Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts)
 						sp.offset = Vector2(0, -ts * 0.5)
 						sp.phase_offset = (x + ox) * 1.7 + (y + oy) * 2.3
-						surf.add_child.call_deferred(sp)
+						surf.call_deferred("add_child", sp)
 
 
 func _process(_delta: float) -> void:
