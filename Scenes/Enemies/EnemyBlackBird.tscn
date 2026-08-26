@@ -271,7 +271,7 @@ animations = [{
 }],
 "loop": 1,
 "name": &"run",
-"speed": 20.0
+"speed": 24.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -331,7 +331,8 @@ knockback_strength = 200.0
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1365150420]
 texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_a04ey")
-animation = &"appear"
+animation = &"run"
+frame_progress = 0.12144421
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=1634011558]
 visible = false

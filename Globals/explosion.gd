@@ -17,12 +17,13 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			continue
 		# 遮挡(墙后)= 部分掩体:伤害/击退保留 BLOCKED_FRACTION;无遮挡全额
 		var blocked := has_grid and not _has_los(center, e as Node2D, grid)
-		var dmg := _falloff(d, radius, max_damage) * (BLOCKED_FRACTION if blocked else 1.0)
+		var wmult := Water.water_mult((e as Node2D).global_position, grid)  # 目标在水里:×水格 decay
+		var dmg := _falloff(d, radius, max_damage) * (BLOCKED_FRACTION if blocked else 1.0) * wmult
 		if dmg <= 0:
 			continue
 		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
-				_falloff(d, radius, max_knockback) * (BLOCKED_FRACTION if blocked else 1.0), true)
+				_falloff(d, radius, max_knockback) * (BLOCKED_FRACTION if blocked else 1.0) * wmult, true)
 	var p := tree.get_first_node_in_group("player")
 	if p != null:
 		_cam_shake(center, radius, p as Node2D)
@@ -31,9 +32,39 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		if d <= radius:
 			var blocked := has_grid and not _has_los(center, p as Node2D, grid)
 			var mult := BLOCKED_FRACTION if blocked else 1.0
+			mult *= Water.water_mult(p.global_position, grid)  # 目标在水里:×0.25
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			p.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
+	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
+	if has_grid:
+		_damage_tiles(center, radius, max_damage, grid)
+
+# 爆炸对可破坏瓦片(树叶/树干)扣血:按距离衰减 × tile_defs 爆炸衰减(0.75),破坏后变空气。
+static func _damage_tiles(center: Vector2, radius: float, max_damage: int, grid: Array[Array]) -> void:
+	var ts: int = GameParameters.TILE_SIZE
+	var rows := grid.size()
+	var cols := grid[0].size()
+	var cc := MazeGenerator.cell_of(center, ts, cols, rows)
+	var reach_cells := ceili(radius / ts) + 1
+	for dy in range(-reach_cells, reach_cells + 1):
+		for dx in range(-reach_cells, reach_cells + 1):
+			var cx := posmod(cc.x + dx, cols)
+			var cy := posmod(cc.y + dy, rows)
+			var v: int = grid[cy][cx]
+			if v == 0:
+				continue
+			var tex: int = v / 16
+			if not TileDefs.explosion_destroyable(tex):
+				continue
+			var d := _dist(center, Vector2(cx * ts + ts * 0.5, cy * ts + ts * 0.5))
+			if d > radius:
+				continue
+			var dmg := int(_falloff(d, radius, max_damage) * TileDefs.explosion_decay())
+			if dmg <= 0:
+				continue
+			TileDefs.damage_tile(Vector2i(cx, cy), dmg, "explosion")
+
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
 # 爆炸相机震动:爆心越贴近玩家震得越猛,随距离线性衰减;超出影响距离无震动。
