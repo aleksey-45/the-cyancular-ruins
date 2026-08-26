@@ -47,7 +47,7 @@ func _ready() -> void:
 	_paint_water(grid)
 
 
-	_build_wall_collision(grid)
+	_build_wall_collision.call_deferred(grid)
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
@@ -55,7 +55,7 @@ func _ready() -> void:
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
-	add_child(pp)
+	add_child.call_deferred(pp)
 
 
 func _create_wall_tileset() -> TileSet:
@@ -151,7 +151,7 @@ func _paint_water(grid: Array[Array]) -> void:
 						sp.position = Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts)
 						sp.offset = Vector2(0, -ts * 0.5)
 						sp.phase_offset = (x + ox) * 1.7 + (y + oy) * 2.3
-						surf.add_child(sp)
+						surf.add_child.call_deferred(sp)
 
 
 func _process(_delta: float) -> void:
