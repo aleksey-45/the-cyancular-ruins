@@ -8,8 +8,8 @@ const gravity0: float = 1600.0
 const TILE_SIZE: int = 64
 
 # ── 水 ──
-const water_sway_amp: float = 3.0        # 水面起伏幅度(px,顶部拉伸)
-const water_sway_speed: float = 0.8      # 水面晃动角速度(rad/s)
+const water_sway_amp: float = 2.0        # 水面起伏幅度(px,顶部拉伸)
+const water_sway_speed: float = 1.6      # 水面晃动角速度(rad/s)
 const water_bullet_drag: float = 2.0     # 子弹水中速度指数阻力(exp(-drag·Δt))
 const water_fx_move_threshold: float = 40.0   # 实体移动速度低于此值不发射水粒子
 const water_fx_splash_band: float = 20.0     # 脚底距水面线 ≤ 此值算溅水花
