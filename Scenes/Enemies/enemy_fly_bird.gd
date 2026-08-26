@@ -28,6 +28,7 @@ func _ready() -> void:
 	# 出生点不在此抓取:spawner 是 add_child 之后才设位置,_ready 里抓到的是 (0,0),
 	# 会害 _player_home_dist()/返程全错(鸟一醒就返程、不追玩家)。改在首帧物理补抓。
 	_max_hp = hp
+	wake_radius = EnemyParams.FlyBird.wake_radius
 	_repath_phase = randf() * EnemyParams.FlyBird.repath_interval
 	_set_state(State.SLEEP)
 	_anim.play("sleeping")

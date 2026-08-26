@@ -32,6 +32,7 @@ var _appear_timer: float = 0.0         # 传送后 appear 播完剩余(期间空
 func _ready() -> void:
 	super._ready()
 	_anim = $AnimatedSprite2D
+	wake_radius = EnemyParams.BlackBird.wake_radius
 	# 纯白剪影材质:每实例独立创建——tscn 里共享 sub_resource 材质会导致一只鸟白闪
 	# 全屏鸟跟着白闪(跨实例),且编辑器重存 tscn 会把场景材质冲掉;代码挂最稳。
 	var bb_shader := load("res://Scenes/Enemies/black_bird_silhouette.gdshader") as Shader

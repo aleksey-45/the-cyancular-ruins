@@ -16,6 +16,7 @@ func _ready() -> void:
 	# 战斗数值(hp/击退/接触伤害)由场景 @export 提供,可在检查器直接改;
 	# 不再从 EnemyParams 覆盖(与武器场景同风格)。
 	_anim = $AnimatedSprite2D
+	wake_radius = EnemyParams.JumpBird.wake_radius
 	_set_state(State.SLEEP)
 	_anim.play("sleeping")  # 睡觉是常态;入睡动画在靠近时触发
 	_align_contact_area()

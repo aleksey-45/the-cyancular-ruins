@@ -30,6 +30,7 @@ var _hit_flash_time: float = 0.0
 var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
 var _player_overlapping: bool = false
 var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
+var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
 var _in_water: bool = false
 var _water_time: float = 0.0     # 没顶累计(秒)
 var _drown_tick: float = 0.0     # 扣血倒计时
@@ -64,7 +65,7 @@ func _setup_contact_area() -> void:
 	rect.size = Vector2(44, 40)
 	shape.shape = rect
 	area.add_child(shape)
-	call_deferred("add_child", area)
+	add_child(area)
 	area.body_entered.connect(_on_contact_body_entered)
 	area.body_exited.connect(_on_contact_body_exited)
 
@@ -77,6 +78,11 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = false
 
 func _physics_process(delta: float) -> void:
+	# 远处睡眠优化:距玩家超唤醒半径且落地静止 → 只播睡,跳过重力/滑行/水/移动(省 CPU)
+	if _is_far_sleeping():
+		_ai(delta)
+		_wrap()
+		return
 	_turn_cooldown = maxf(_turn_cooldown - delta, 0.0)
 	if use_gravity and not is_on_floor():
 		velocity.y += GameParameters.gravity0 * delta
@@ -149,6 +155,19 @@ func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: 
 		knock_velocity = knock_dir.normalized() * ks
 	else:
 		velocity += knock_dir.normalized() * ks
+
+
+# 远处睡眠判定:距玩家超唤醒半径、落地静止、非受击/死亡/非SLEEP → true。
+func _is_far_sleeping() -> bool:
+	if is_dead or _hit_flash_time > 0.0 or _death_timer > 0.0:
+		return false
+	if state != 0:
+		return false  # 非 SLEEP(所有子类 State.SLEEP=0)
+	if not is_on_floor():
+		return false
+	if absf(velocity.x) > 5.0 or absf(velocity.y) > 5.0:
+		return false
+	return toroidal_dist_to_player() > wake_radius
 
 
 func _approach(current: float, target: float, rate: float, delta: float) -> float:
