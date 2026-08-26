@@ -56,6 +56,7 @@ var max_hp: int:
 var waterproof: int = PlayerParams.player_waterproof_max
 var max_waterproof: int = PlayerParams.player_waterproof_max
 var _waterproof_timer: float = 0.0
+var _was_submerged: bool = false
 var _waterproof_drown_timer: float = 0.0
 
 # 姿态状态机（与 JumpBird 的枚举风格统一）。
@@ -320,6 +321,9 @@ func _update_waterproof(delta: float) -> void:
 	if swim.in_water:
 		var surface_y := Water.surface_y_at(global_position)
 		submerged = Water.submerged(global_position, surface_y)
+	if submerged != _was_submerged:
+		_was_submerged = submerged
+		_waterproof_timer = 0.0  # 状态切换重置:入水满 0.5s 才扣第一次
 	if submerged:
 		_waterproof_timer += delta
 		if _waterproof_timer >= GameParameters.water_drain_interval:

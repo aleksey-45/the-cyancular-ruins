@@ -193,11 +193,13 @@ func _apply_water(delta: float) -> void:
 			EnemyParams.shared.bird_water_damp, delta)
 	# 防水值(氧气):没顶掉,暴露空气回;空后每秒扣血
 	if submerged:
+		_waterproof_recover_timer = 0.0
 		_waterproof_drain_timer += delta
 		if _waterproof_drain_timer >= GameParameters.water_drain_interval:
 			_waterproof_drain_timer = 0.0
 			_waterproof = maxi(_waterproof - 1, 0)
 	else:
+		_waterproof_drain_timer = 0.0
 		_waterproof_recover_timer += delta
 		if _waterproof_recover_timer >= GameParameters.water_recover_interval:
 			_waterproof_recover_timer = 0.0
