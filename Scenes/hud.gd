@@ -19,10 +19,10 @@ const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
 const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
 const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板
 const BACK_PAD := 4                            # 底板相对竖条的外扩 padding
-const WATERPROOF_H := 8            # 防水值条高(细长)
-const WATERPROOF_GAP := 16         # 防水值条与血条间距(下移)
-const WATERPROOF_W := 16            # 每点防水值宽度(px)
-const WATERPROOF_COLOR := Color(0.143, 0.236, 0.65, 0.85)  # 深蓝
+const WATERPROOF_H := 10            # 防水值条高(细长)
+const WATERPROOF_GAP := 18         # 防水值条与血条间距(下移)
+const WATERPROOF_W := 18            # 每点防水值宽度(px)
+const WATERPROOF_COLOR := Color(0.161, 0.26, 0.8, 0.702)  # 深蓝
 const WATERPROOF_BACK := Color(1, 1, 1, 0.4)      # 底板
 
 var _segments: Array[ColorRect] = []
