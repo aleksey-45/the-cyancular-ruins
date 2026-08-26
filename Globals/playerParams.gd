@@ -33,6 +33,8 @@ const player_buoyancy_k: float = 6.0      # 浮力弹簧刚度(回水面)
 const player_max_float: float = 300.0     # 上浮最大速度
 const player_max_sink: float = 200.0      # 下沉最大速度
 const player_water_damp: float = 4.0      # 水中垂直速度阻尼
+const player_waterproof_max: int = 10        # 防水值(氧气)上限
+const player_waterproof_damage: int = 5      # 防水值空后每秒扣血
 
 # ── 镜头手感(方案 A)──
 const cam_lookahead_x: float = 100.0   # 满速时的水平前瞻像素

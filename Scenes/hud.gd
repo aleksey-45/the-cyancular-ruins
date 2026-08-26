@@ -19,12 +19,19 @@ const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
 const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
 const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板
 const BACK_PAD := 4                            # 底板相对竖条的外扩 padding
+const WATERPROOF_H := 6            # 防水值条高(细长)
+const WATERPROOF_GAP := 8          # 防水值条与血条间距
+const WATERPROOF_COLOR := Color(0.12, 0.2, 0.55)  # 深蓝
+const WATERPROOF_BACK := Color(0, 0, 0, 0.4)      # 底板
 
 var _segments: Array[ColorRect] = []
 var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
 var _last_cur := 0
 var _kill_label: Label
 var _kills := 0
+var _wp_bar: ColorRect = null
+var _wp_back: ColorRect = null
+var _wp_w := 0.0
 
 func _ready() -> void:
 	layer = LAYER
@@ -37,6 +44,10 @@ func _ready() -> void:
 		_build_segments(p.max_hp)
 		p.hp_changed.connect(_on_hp)
 		_on_hp(p.hp, p.max_hp)
+		if p.has_signal("waterproof_changed"):
+			_build_waterproof(p.max_hp)
+			p.waterproof_changed.connect(_on_waterproof)
+			_on_waterproof(p.waterproof, p.max_waterproof)
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;无边框。
 # 竖条背后垫一层半透明白色底板,整体更易读。
@@ -74,6 +85,25 @@ func _on_hp(cur: int, max_hp: int) -> void:
 	for i in range(max(cur, 0), _last_cur):
 		_start_ghost(i)
 	_last_cur = cur
+
+# 防水值(氧气)条:血条下方深蓝细长条,长度按防水值/上限。
+func _build_waterproof(max_hp: int) -> void:
+	_wp_w = max_hp * (SEG_W + SEG_GAP) - SEG_GAP
+	var y := MARGIN.y + SEG_H + WATERPROOF_GAP
+	_wp_back = ColorRect.new()
+	_wp_back.position = Vector2(MARGIN.x, y)
+	_wp_back.size = Vector2(_wp_w, WATERPROOF_H)
+	_wp_back.color = WATERPROOF_BACK
+	call_deferred("add_child", _wp_back)
+	_wp_bar = ColorRect.new()
+	_wp_bar.position = Vector2(MARGIN.x, y)
+	_wp_bar.size = Vector2(_wp_w, WATERPROOF_H)
+	_wp_bar.color = WATERPROOF_COLOR
+	call_deferred("add_child", _wp_bar)
+
+func _on_waterproof(cur: int, max: int) -> void:
+	if _wp_bar != null:
+		_wp_bar.size.x = _wp_w * float(cur) / float(max(1, max))
 
 # 掉血段效果:闪烁两下(闪白回到底色),最后淡出消失。
 func _start_ghost(i: int) -> void:

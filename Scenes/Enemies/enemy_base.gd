@@ -32,7 +32,10 @@ var _player_overlapping: bool = false
 var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
 var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
 var _in_water: bool = false
-var _water_time: float = 0.0     # 没顶累计(秒)
+var _waterproof: int = 6                 # 防水值(氧气),没顶每 0.5s 掉 1
+var waterproof_max: int = 6              # 上限:black/jump 6,fly 10
+var _waterproof_drain_timer: float = 0.0
+var _waterproof_recover_timer: float = 0.0
 var _drown_tick: float = 0.0     # 扣血倒计时
 # 状态机与动画(子类共用)。state 用 int 承载各子类自己的 enum 常量(见 JumpBird/FlyBird 的 enum State)。
 var state: int = 0
@@ -178,29 +181,32 @@ func _approach(current: float, target: float, rate: float, delta: float) -> floa
 func _apply_water(delta: float) -> void:
 	var feet := Vector2(global_position.x, global_position.y + Water.feet_offset(self))
 	_in_water = Water.is_in_water(feet)
-	if not _in_water:
-		_water_time = 0.0
-		_drown_tick = 0.0
-		return
-	var surface_y := Water.surface_y_at(global_position)
-	var target_vy := clampf((surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
+	var submerged := false
+	if _in_water:
+		var surface_y := Water.surface_y_at(global_position)
+		submerged = Water.submerged(global_position, surface_y)
+		var target_vy := clampf((surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
 			-EnemyParams.shared.bird_max_float, EnemyParams.shared.bird_max_sink)
-	velocity.y = _approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
-	var dir := _water_swim_dir()
-	velocity.x = _approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
+		velocity.y = _approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
+		var dir := _water_swim_dir()
+		velocity.x = _approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
 			EnemyParams.shared.bird_water_damp, delta)
-	if Water.submerged(global_position, surface_y):
-		_water_time += delta
-		if _water_time > EnemyParams.shared.drown_delay:
-			_drown_tick -= delta
-			if _drown_tick <= 0.0:
-				_drown_tick = EnemyParams.shared.drown_interval
-				hurt(EnemyParams.shared.drown_damage, Vector2.ZERO)
+	# 防水值(氧气):没顶掉,暴露空气回;空后每秒扣血
+	if submerged:
+		_waterproof_drain_timer += delta
+		if _waterproof_drain_timer >= GameParameters.water_drain_interval:
+			_waterproof_drain_timer = 0.0
+			_waterproof = maxi(_waterproof - 1, 0)
 	else:
-		_water_time = 0.0
-		_drown_tick = 0.0
-
-
+		_waterproof_recover_timer += delta
+		if _waterproof_recover_timer >= GameParameters.water_recover_interval:
+			_waterproof_recover_timer = 0.0
+			_waterproof = mini(_waterproof + 1, waterproof_max)
+	if _waterproof <= 0:
+		_drown_tick -= delta
+		if _drown_tick <= 0.0:
+			_drown_tick = EnemyParams.shared.drown_interval
+			hurt(EnemyParams.shared.drown_damage, Vector2.ZERO)
 # 死亡白闪统一入口:置死亡状态、发信号、起白闪计时(渲染由 _flash_update 统一处理,
 # 到期在基类 _physics_process 销毁)。子类可在调用后追加专属处理(JumpBird 播 dead、
 # FlyBird 清冲撞速度)。

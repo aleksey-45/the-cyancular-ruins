@@ -42,6 +42,7 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 @onready var swim: SwimComponent = $Swim
 
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
+signal waterproof_changed(current: int, max: int)   # 防水值(氧气)变化,HUD 更新
 
 # 公开只读属性:HUD 直接读 hp/max_hp 建血条(hud.gd),数据在 combat,根暴露只读口。
 var hp: int:
@@ -50,6 +51,12 @@ var hp: int:
 var max_hp: int:
 	get:
 		return combat.max_hp
+
+# 防水值(氧气):完全浸水每 0.5s 掉 1,暴露空气每 0.3s 回 1;空后每秒扣血。
+var waterproof: int = PlayerParams.player_waterproof_max
+var max_waterproof: int = PlayerParams.player_waterproof_max
+var _waterproof_timer: float = 0.0
+var _waterproof_drown_timer: float = 0.0
 
 # 姿态状态机（与 JumpBird 的枚举风格统一）。
 enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }
@@ -123,6 +130,7 @@ func _physics_process(delta: float) -> void:
 
 	# ---------- 水中(浮水/游泳):速度由 swim 设置,跳过攀爬/重力/跳跃/下蹲/冲刺 ----------
 	var in_water := swim.update(self, delta, mult)
+	_update_waterproof(delta)
 	var climbing := false
 	var latched := false
 	if not in_water:
@@ -305,6 +313,33 @@ func cancel_jump_state() -> void:
 func cancel_charge() -> void:
 	is_charge = false
 	charge_timer = 0.0
+
+# 防水值(氧气):没顶(中心低于水面线)每 water_drain_interval 掉 1,暴露空气回 1;空后每秒扣血。
+func _update_waterproof(delta: float) -> void:
+	var submerged := false
+	if swim.in_water:
+		var surface_y := Water.surface_y_at(global_position)
+		submerged = Water.submerged(global_position, surface_y)
+	if submerged:
+		_waterproof_timer += delta
+		if _waterproof_timer >= GameParameters.water_drain_interval:
+			_waterproof_timer = 0.0
+			_set_waterproof(waterproof - 1)
+	else:
+		_waterproof_timer += delta
+		if _waterproof_timer >= GameParameters.water_recover_interval:
+			_waterproof_timer = 0.0
+			_set_waterproof(waterproof + 1)
+	if waterproof <= 0:
+		_waterproof_drown_timer += delta
+		if _waterproof_drown_timer >= GameParameters.water_drown_damage_interval:
+			_waterproof_drown_timer = 0.0
+			take_hit(global_position, PlayerParams.player_waterproof_damage, true)
+
+func _set_waterproof(v: int) -> void:
+	waterproof = clampi(v, 0, max_waterproof)
+	waterproof_changed.emit(waterproof, max_waterproof)
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	if combat.is_downed():

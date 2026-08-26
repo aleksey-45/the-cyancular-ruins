@@ -31,6 +31,7 @@ func _ready() -> void:
 	# 会害 _player_home_dist()/返程全错(鸟一醒就返程、不追玩家)。改在首帧物理补抓。
 	_max_hp = hp
 	wake_radius = EnemyParams.FlyBird.wake_radius
+	waterproof_max = 10
 	_repath_phase = randf() * EnemyParams.FlyBird.repath_interval
 	_set_state(State.SLEEP)
 	_anim.play("sleeping")

@@ -14,8 +14,7 @@ class shared:
 	const bird_max_float: float = 260.0    # 上浮最大速度
 	const bird_max_sink: float = 160.0     # 下沉最大速度
 	const bird_water_damp: float = 5.0     # 水中垂直速度阻尼
-	const drown_delay: float = 5.0         # 没顶累计超过此值开始扣血
-	const drown_interval: float = 1.0      # 扣血间隔(秒)
+	const drown_interval: float = 1.0      # 防水值空后扣血间隔(秒)
 	const drown_damage: int = 5            # 每次扣血
 
 class JumpBird:
