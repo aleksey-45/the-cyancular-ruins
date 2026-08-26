@@ -19,11 +19,11 @@ const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
 const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
 const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板
 const BACK_PAD := 4                            # 底板相对竖条的外扩 padding
-const WATERPROOF_H := 6            # 防水值条高(细长)
-const WATERPROOF_GAP := 12         # 防水值条与血条间距(下移)
-const WATERPROOF_W := 6            # 每点防水值宽度(px)
-const WATERPROOF_COLOR := Color(0.12, 0.2, 0.55)  # 深蓝
-const WATERPROOF_BACK := Color(0, 0, 0, 0.4)      # 底板
+const WATERPROOF_H := 8            # 防水值条高(细长)
+const WATERPROOF_GAP := 16         # 防水值条与血条间距(下移)
+const WATERPROOF_W := 16            # 每点防水值宽度(px)
+const WATERPROOF_COLOR := Color(0.143, 0.236, 0.65, 0.85)  # 深蓝
+const WATERPROOF_BACK := Color(1, 1, 1, 0.4)      # 底板
 
 var _segments: Array[ColorRect] = []
 var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
@@ -47,7 +47,7 @@ func _ready() -> void:
 		p.hp_changed.connect(_on_hp)
 		_on_hp(p.hp, p.max_hp)
 		if p.has_signal("waterproof_changed"):
-			_build_waterproof(p.max_hp)
+			_build_waterproof(p.max_waterproof)
 			p.waterproof_changed.connect(_on_waterproof)
 			_on_waterproof(p.waterproof, p.max_waterproof)
 
@@ -89,8 +89,8 @@ func _on_hp(cur: int, max_hp: int) -> void:
 	_last_cur = cur
 
 # 防水值(氧气)条:血条下方深蓝细长条,长度按防水值/上限。
-func _build_waterproof(max_hp: int) -> void:
-	_wp_w = WATERPROOF_W * max_hp
+func _build_waterproof(wp_max: int) -> void:
+	_wp_w = WATERPROOF_W * wp_max
 	var y := MARGIN.y + SEG_H + WATERPROOF_GAP
 	_wp_back = ColorRect.new()
 	_wp_back.position = Vector2(MARGIN.x, y)
