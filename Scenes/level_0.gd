@@ -10,8 +10,6 @@ static var _grid_ref: Array[Array] = []
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
 static var _dirty_chunks: Dictionary = {}
-# 水面晃动计时(秒)
-var _water_sway_time: float = 0.0
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
@@ -47,6 +45,12 @@ func _ready() -> void:
 	Level0.water_layer.tile_set = tile_set
 	Level0.water_surface_layer.tile_set = tile_set
 	_paint_water(grid)
+	# 水面起伏 shader:每格正弦上下拉伸(锚底无缝),相位逐格错开;水体层不挂
+	var wsm := ShaderMaterial.new()
+	wsm.shader = load("res://Scenes/Effects/water_surface.gdshader")
+	wsm.set_shader_parameter("amp", GameParameters.water_sway_amp)
+	wsm.set_shader_parameter("speed", GameParameters.water_sway_speed)
+	Level0.water_surface_layer.material = wsm
 
 	_build_wall_collision(grid)
 	EnemySpawner.load_types()
@@ -146,11 +150,7 @@ func _paint_water(grid: Array[Array]) -> void:
 							Vector2i(MazeGenerator.shape_of(v), SURF_ROW if is_surface else BODY_ROW))
 
 
-func _process(delta: float) -> void:
-	_water_sway_time += delta
-	if Level0.water_surface_layer != null:
-		Level0.water_surface_layer.position.y = roundf(
-				sin(_water_sway_time * GameParameters.water_sway_speed) * GameParameters.water_sway_amp)
+func _process(_delta: float) -> void:
 	if not _dirty_chunks.is_empty():
 		var chunks := _dirty_chunks.keys()
 		_dirty_chunks.clear()
