@@ -24,6 +24,7 @@ config/icon="uid://dccomu5fn6od5"
 [autoload]
 
 GameParameters="*res://Globals/gameParameters.gd"
+NetBus="*res://Globals/net_bus.gd"
 
 [display]
 
