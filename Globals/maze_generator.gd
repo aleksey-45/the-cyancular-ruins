@@ -310,6 +310,14 @@ static func parse_spawn_metadata(lines: Array) -> Dictionary:
 						result["player"] = Vector2i(x, y)
 					else:
 						push_warning("MazeGenerator: 非法 player 坐标 %s" % text)
+			"player2":
+				if parts.size() >= 3:
+					var x := int(parts[1])
+					var y := int(parts[2])
+					if x >= 0 and y >= 0:
+						result["player2"] = Vector2i(x, y)
+					else:
+						push_warning("MazeGenerator: 非法 player2 坐标 %s" % text)
 			"enemy":
 				if parts.size() >= 4:
 					var type_id := parts[1]
@@ -343,6 +351,8 @@ static func load_spawns() -> Dictionary:
 	# 旧格式:网格 2×2 → 1,spawn 坐标同步 ÷2。
 	if result.has("player"):
 		result["player"] = Vector2i(result["player"].x / 2, result["player"].y / 2)
+	if result.has("player2"):
+		result["player2"] = Vector2i(result["player2"].x / 2, result["player2"].y / 2)
 	if result.has("enemies"):
 		var enemies: Array = result["enemies"]
 		for i in range(enemies.size()):

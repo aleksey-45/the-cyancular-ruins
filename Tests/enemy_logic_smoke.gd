@@ -68,6 +68,12 @@ func _initialize() -> void:
 			all_on_floor = false
 	_check(all_on_floor, "spawn 全部位于地板上面")
 
+	# ── Task 4: 双出生点解析(# player2)──
+	var meta := MazeGenerator.parse_spawn_metadata(["# player2 3 4"])
+	_check(meta.get("player2") == Vector2i(3, 4), "player2 spawn 解析")
+	var meta2 := MazeGenerator.parse_spawn_metadata(["# player 1 2", "# player2 5 6"])
+	_check(meta2.get("player") == Vector2i(1, 2) and meta2.get("player2") == Vector2i(5, 6), "player+player2 并存")
+
 	# ── Task 3: EnemyBase 加载 ──
 	_check(load("res://Scenes/Enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
 
