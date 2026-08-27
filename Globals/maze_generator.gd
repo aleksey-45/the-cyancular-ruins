@@ -72,6 +72,10 @@ static func map_file_path() -> String:
 	_picked_map = ext if ext != "" else _random_cyrm(MAP_DIR)
 	return _picked_map
 
+# 钉住地图文件(PvP:服务器定图,客户端加载同名文件;覆盖会话随机读的缓存)。
+static func set_map_file(path: String) -> void:
+	_picked_map = path
+
 # 在 dir 目录下随机挑一个 .cyrm 地图;没有则返回 ""。
 static func _random_cyrm(dir: String) -> String:
 	var da := DirAccess.open(dir)

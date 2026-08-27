@@ -140,6 +140,10 @@ func _initialize() -> void:
 	_check(MazeGenerator.anchor_to_nearest(Vector2(500, 500), Vector2(500, 500), W, H) == Vector2(500, 500),
 			"锚定:自身不变")
 
+	# ── Task 2: 钉住地图 ──
+	MazeGenerator.set_map_file("res://map/demo.cyrm")
+	_check(MazeGenerator.map_file_path() == "res://map/demo.cyrm", "set_map_file 钉住地图")
+
 	# ── Task 9: 地图尺寸读取(map_size) ──
 	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
 
