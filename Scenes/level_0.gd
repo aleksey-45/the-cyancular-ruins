@@ -22,20 +22,14 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color("b0e5f6")
 
 	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
-	var grid = MazeGenerator.load_map_file()
+	var grid := WorldBuilder.load_grid()
 	if grid.is_empty():
 		push_error("Level0: 地图加载失败，跳过建图")
 		return
-	MazeGenerator.current_grid = grid
-	TileDefs.load_defs()
 	_grid_ref = grid
 	Level0.wall_layer = $WorldViewport/WallLayer
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 	TileDefs.init_hp(grid)
-
-	# 地图文件尺寸固定，据此回写环形回绕的像素尺寸
-	GameParameters.MAP_WIDTH = grid[0].size() * GameParameters.TILE_SIZE
-	GameParameters.MAP_HEIGHT = grid.size() * GameParameters.TILE_SIZE
 
 	var tile_set = _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
@@ -192,13 +186,8 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 
 
 func _build_wall_collision(grid: Array[Array]) -> void:
-	# 永久墙(1-14)建一次整图节点;可破坏(15-20)按分块存节点,摧毁时只重建所在块
-	CollisionBuilder.build_permanent(CollisionBuilder.build_sub(grid, false),
-			$WorldViewport, "WallCollision")
-	_destructible_sub = CollisionBuilder.build_sub(grid, true)
-	CollisionBuilder.build_destructible_chunks(_destructible_sub, $WorldViewport)
-	# 攀爬结构基座薄碰撞条(梯子顶/锁链顶底),供玩家停留/落脚
-	CollisionBuilder.build_climb_ledges(grid, $WorldViewport)
+	# 永久墙 + 可破坏分块 + 攀爬基座条,逻辑迁到 WorldBuilder.build_sim(服务器复用)
+	_destructible_sub = WorldBuilder.build_sim($WorldViewport, grid)
 
 
 func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
