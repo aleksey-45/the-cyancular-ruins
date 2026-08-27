@@ -12,6 +12,9 @@ static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
 static var _dirty_chunks: Dictionary = {}
 
+# PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
+static var pvp_mode: bool = false
+
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
 # 在根级把未处理输入手动转发进 WorldViewport。
@@ -42,6 +45,8 @@ func _ready() -> void:
 
 
 	_build_wall_collision.call_deferred(grid)
+	if pvp_mode:
+		return  # 世界已建;敌人/单玩家放置/后处理交给 PvP 场景
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
