@@ -41,6 +41,16 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 @onready var combat: CombatComponent = $Combat
 @onready var swim: SwimComponent = $Swim
 
+# 输入来源(行为不变重构):默认委托真实 Input;服务器注入 NetworkInputSource 驱动远端玩家。
+var input_source: InputSource = InputSource.new()
+
+func set_input_source(src: InputSource) -> void:
+	input_source = src
+
+# 瞄准覆盖:本地返回 ZERO → 武器用鼠标;服务器注入的网络输入返回瞄准方向。
+func get_aim_dir_override() -> Vector2:
+	return input_source.get_aim_dir_override()
+
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
 signal waterproof_changed(current: int, max: int)   # 防水值(氧气)变化,HUD 更新
 
@@ -127,7 +137,7 @@ func _physics_process(delta: float) -> void:
 
 	var mult := weapons.movement_multiplier()
 
-	var horizontal_input = Input.get_axis("left", "right")
+	var horizontal_input = input_source.get_axis("left", "right")
 
 	# ---------- 水中(浮水/游泳):速度由 swim 设置,跳过攀爬/重力/跳跃/下蹲/冲刺 ----------
 	var in_water := swim.update(self, delta, mult)
@@ -152,7 +162,7 @@ func _physics_process(delta: float) -> void:
 			coyote_timer = maxf(coyote_timer - delta, 0.0)
 
 		# 跳跃缓冲：落地前提前按跳，落地瞬间生效
-		if Input.is_action_just_pressed("up"):
+		if input_source.is_action_just_pressed("up"):
 			jump_buffer_timer = jump_buffer_time
 		else:
 			jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
@@ -165,26 +175,26 @@ func _physics_process(delta: float) -> void:
 			jump_cut_applied = false
 
 		# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
-		if not jump_cut_applied and Input.is_action_just_released("up") and velocity.y < 0.0:
+		if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
 			velocity.y *= jump_cut_factor
 			jump_cut_applied = true
 
 	# ---------- 下蹲 ----------
 	if not latched and not in_water:
 		if is_on_floor():
-			if Input.is_action_just_pressed("down"):
+			if input_source.is_action_just_pressed("down"):
 				velocity.x = 0
 				is_charge = false
 				is_squat = true
-			if Input.is_action_just_released("down"):
+			if input_source.is_action_just_released("down"):
 				is_squat = false
 		else:
-			if Input.is_action_just_pressed("down"):
+			if input_source.is_action_just_pressed("down"):
 				velocity.y = charge_down_velocity
 
 	# ---------- 冲刺输入 ----------
 	if not latched and not is_charge and not is_squat and not in_water:
-		if Input.is_action_just_pressed("charge"):
+		if input_source.is_action_just_pressed("charge"):
 			is_charge = true
 			charge_timer = charge_duration
 			# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
