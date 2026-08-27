@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="The Cyancular Ruins"
 config/version="rediculously early test 001"
-run/main_scene="uid://c1xl4jcmy2e6c"
+run/main_scene="res://Scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 run/max_fps=60
 config/icon="uid://dccomu5fn6od5"
