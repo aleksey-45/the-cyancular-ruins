@@ -33,7 +33,7 @@ func equip(slot: String) -> void:
 		push_error("weapon_slot not assigned")
 		return
 	_weapon = scene.instantiate() as WeaponBase
-	body.weapon_slot.add_child(_weapon)
+	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
 
 func movement_multiplier() -> Vector2:

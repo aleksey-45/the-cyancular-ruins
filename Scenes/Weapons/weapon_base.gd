@@ -91,6 +91,8 @@ var _recoil_timer: float = 0.0
 var _base_sprite_pos: Vector2 = Vector2.ZERO
 var _aiming: bool = false
 var _fire_buffered: bool = false
+var _aim_facing: int = 1          # 最近一次明确的瞄准侧(近垂直瞄时用,不随走路翻侧)
+var _current_aim_facing: int = 1  # 本帧实际生效的朝向(含冲刺锁定回落),弹道与枪口共用
 var _laser: Line2D = null
 var _explosion_marker: Sprite2D = null
 
@@ -106,12 +108,12 @@ func _ready() -> void:
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
 	_laser.default_color = laser_color
 	_laser.visible = false
-	add_child(_laser)
+	call_deferred("add_child", _laser)
 	_explosion_marker = Sprite2D.new()
 	_explosion_marker.texture = Explosion.make_circle_texture(16)
 	_explosion_marker.modulate = Color(1.0, 0.4, 0.2, 0.9)
 	_explosion_marker.visible = false
-	add_child(_explosion_marker)
+	call_deferred("add_child", _explosion_marker)
 
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
@@ -128,8 +130,8 @@ func _process(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
-	# 先刷新朝向/枪口旋转:缓冲开火必须取本帧最新瞄准朝向,否则 fire() 读到的是
-	# 上一物理帧被移动输入覆盖的 facing(如后退时朝左),clamp_pitch 折出最大仰角、子弹打偏。
+	# 每帧同步朝向/枪口旋转(瞄准与预览弧线);fire() 内部还会再同步一次,
+	# 覆盖直接开火等不经本帧 _process 的路径,避免读到走路覆盖的旧朝向。
 	_auto_aim()
 	# 缓冲开火:冷却结束且末尾按过开火 → 自动打出(土狼时间式;切枪即弃)
 	if _fire_buffered and fire_cd_timer == 0.0:
@@ -168,6 +170,10 @@ func fire() -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = fire_cooldown
+	# 开火瞬间同步朝向/枪口到鼠标:直接开火(_unhandled_input, input 阶段)先于 _process,
+	# 读到的是上一物理帧被走路覆盖的 get_facing(),clamp_pitch 会折到走路侧、子弹打偏。
+	# 统一先 _auto_aim:所有开火路径(直接/缓冲/连发/重武器)都取本帧最新瞄准方向。
+	_auto_aim()
 	var base_dir := _clamped_aim_dir()
 	var spread := deg_to_rad(spread_deg)
 	for i in range(pellet_count):
@@ -212,18 +218,26 @@ func get_movement_multiplier() -> Vector2:
 
 # 与枪口相同的出弹方向:经过 ±45° 仰角钳制后的世界单位向量(fire 出弹用)。
 # local.x 按 facing 折叠,还原到世界坐标时再乘回 facing,与 _auto_aim 的旋转一致。
+# 折叠用 _current_aim_facing(_auto_aim 算出的瞄准侧,含冲刺锁定回落),不用 get_facing():
+# 后者会被走路输入覆盖,朝向与鼠标反侧时子弹翻折到走路侧。
 func _clamped_aim_dir() -> Vector2:
-	var facing := get_facing()
+	var facing := _current_aim_facing
 	var pitch := clamp_pitch(_aim_world_dir(), facing, pitch_clamp_deg)
 	var local := Vector2.from_angle(pitch)
 	return Vector2(local.x * float(facing), local.y)
 
 func _auto_aim() -> void:
-	var facing: int = get_facing()
 	var dir := _aim_world_dir()
+	# 瞄准朝向:鼠标有明确水平分量则跟随鼠标并记住(近垂直瞄时用上次明确侧,不随走路翻侧)。
+	var facing := _aim_facing
+	if absf(dir.x) > 0.1:
+		facing = 1 if dir.x > 0.0 else -1
+		_aim_facing = facing
+	# 玩家精灵朝向:只在明确瞄向一侧时翻转(冲刺锁定/无玩家时回落 get_facing)。
 	if player != null and player.has_method("set_facing") and absf(dir.x) > 0.1:
-		player.set_facing(1 if dir.x > 0.0 else -1)
+		player.set_facing(facing)
 		facing = get_facing()
+	_current_aim_facing = facing
 	# 朝向镜像(scale.x=-1)会翻转旋转方向。clamp_pitch 已按 facing 折叠 dir.x,
 	# 返回值乘 facing 取反:朝左时镜像后的枪口才指向正确的俯仰象限。
 	rotation = clamp_pitch(dir, facing, pitch_clamp_deg) * float(facing)
@@ -260,6 +274,9 @@ func _sample_arc_points() -> PackedVector2Array:
 	pts.append(to_local(p))
 	while t < preview_time:
 		v.y += g * dt
+		# 水中阻力:与真实子弹一致(water_bullet_drag),入水后减速 → 弧线在水里更垂/更短
+		if Water.is_in_water(p):
+			v *= Water.bullet_drag_factor(true, GameParameters.water_bullet_drag, dt)
 		p += v * dt
 		t += dt
 		if escape and p.distance_to(start) < GameParameters.TILE_SIZE:

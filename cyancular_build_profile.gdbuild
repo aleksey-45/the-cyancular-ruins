@@ -92,7 +92,6 @@
         "CodeEdit",
         "ColorPicker",
         "ColorPickerButton",
-        "CPUParticles2D",
         "CPUParticles3D",
         "DirectionalLight2D",
         "DTLSServer",

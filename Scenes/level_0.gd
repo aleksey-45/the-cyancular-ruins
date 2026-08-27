@@ -4,7 +4,8 @@ extends Node2D
 # 运行时破坏支持:瓦片被破坏(变空气)后,由 TileDefs.damage_tile 回调刷新瓦片层 + 重建碰撞。
 static var wall_layer: TileMapLayer = null
 static var water_layer: TileMapLayer = null
-static var water_surface_layer: TileMapLayer = null
+static var surface_texture: Texture2D = null
+static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 # 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
@@ -18,7 +19,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
-	RenderingServer.set_default_clear_color("bbeeff")
+	RenderingServer.set_default_clear_color("b0e5f6")
 
 	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
 	var grid = MazeGenerator.load_map_file()
@@ -43,24 +44,18 @@ func _ready() -> void:
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = tile_set
-	Level0.water_surface_layer.tile_set = tile_set
 	_paint_water(grid)
-	# 水面起伏 shader:每格正弦上下拉伸(锚底无缝),相位逐格错开;水体层不挂
-	var wsm := ShaderMaterial.new()
-	wsm.shader = load("res://Scenes/Effects/water_surface.gdshader")
-	wsm.set_shader_parameter("amp", GameParameters.water_sway_amp)
-	wsm.set_shader_parameter("speed", GameParameters.water_sway_speed)
-	Level0.water_surface_layer.material = wsm
 
-	_build_wall_collision(grid)
+
+	_build_wall_collision.call_deferred(grid)
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
-	$EnemySpawner.spawn_all(spawns)
+	$EnemySpawner.spawn_all.call_deferred(spawns)
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
-	add_child(pp)
+	call_deferred("add_child", pp)
 
 
 func _create_wall_tileset() -> TileSet:
@@ -75,6 +70,7 @@ func _create_wall_tileset() -> TileSet:
 		img.blit_rect(src_img, Rect2i((i % 10) * 32, (i / 10) * 32, 32, 32), Vector2i.ZERO)
 		img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
 		bricks.append(img)
+	Level0.surface_texture = ImageTexture.create_from_image(bricks[21])  # 水面单格贴图(供 Sprite)
 	# atlas:16 列(形状 0-15)× 22 行(纹理 1-22),空气象限透明
 	var atlas_img := Image.create(16 * ts, 22 * ts, false, Image.FORMAT_RGBA8)
 	atlas_img.fill(Color(0, 0, 0, 0))
@@ -123,14 +119,15 @@ func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
 							Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
 
 
-# 水格铺图:所有液体格铺水体蓝底(T理纡 21,atlas 行 20);上方非 liquid 的格额外铺水面亮线(22,行 21)——水面拉伸露出的顶部缝隙被蓝底盖住。
+# 水格铺图:水体格铺水体瓦片(T理纡 21,atlas 行 20);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
 func _paint_water(grid: Array[Array]) -> void:
 	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
-	const SURF_ROW := 21   # 纹理 22(水面)的 atlas 行
+	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
-	var sl: TileMapLayer = Level0.water_surface_layer
+	var surf: Node2D = Level0.water_surface_layer
+	var surface_cells: Array = []
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
 			var ox := tx * cols
@@ -145,18 +142,37 @@ func _paint_water(grid: Array[Array]) -> void:
 						continue
 					var above: int = grid[posmod(y - 1, rows)][x]
 					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-					var target := sl if is_surface else wl
-					target.set_cell(Vector2i(x + ox, y + oy), 0,
-							Vector2i(MazeGenerator.shape_of(v), SURF_ROW if is_surface else BODY_ROW))
+					if is_surface:
+						# 收集水面格,合批成一个 canvas item(替代 N 个 Sprite,省 draw call,画面不变)
+						surface_cells.append({
+							"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
+							"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
+						})
+					else:
+						wl.set_cell(Vector2i(x + ox, y + oy), 0,
+							Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
+
+
+	# 合批:一个 canvas item 画所有水面格(替代 N 个 Sprite,省 draw call,画面不变)
+	if not surface_cells.is_empty():
+		var batch := WaterSurfaceBatch.new()
+		batch.setup(surface_cells, Level0.surface_texture, ts)
+		surf.call_deferred("add_child", batch)
 
 
 func _process(_delta: float) -> void:
 	if not _dirty_chunks.is_empty():
+		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
+		const MAX_REBUILD_PER_FRAME := 2
+		var processed := 0
 		var chunks := _dirty_chunks.keys()
 		_dirty_chunks.clear()
 		for ch in chunks:
-			# 只重建被摧毁砖所在分块(块内一次贪心 + 9 环面副本),永久墙建一次不动
+			if processed >= MAX_REBUILD_PER_FRAME:
+				_dirty_chunks[ch] = true  # 放回下帧继续
+				continue
 			CollisionBuilder.rebuild_chunk(_destructible_sub, ch, $WorldViewport)
+			processed += 1
 
 
 # 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。

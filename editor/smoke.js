@@ -135,6 +135,40 @@ eq(Core.brushOffsets(15), { lo: 7, hi: 7 }, 'brushOffsets: 15 → 15×15');
   ok(!bad, 'brushOffsets: 1..15 全部满足 lo+1+hi===尺寸 且 lo≤hi');
 })();
 
+// ---- Task: lineCells / normRegion / moveRegion(直线 + 选框工具) ----
+eq(Core.lineCells(0, 0, 4, 0), [[0,0],[1,0],[2,0],[3,0],[4,0]], 'lineCells: 水平线');
+eq(Core.lineCells(2, 2, 2, 5), [[2,2],[2,3],[2,4],[2,5]], 'lineCells: 垂直线');
+eq(Core.lineCells(0, 0, 2, 2), [[0,0],[1,1],[2,2]], 'lineCells: 对角线');
+eq(Core.lineCells(4, 0, 0, 0), [[4,0],[3,0],[2,0],[1,0],[0,0]], 'lineCells: 反向水平');
+eq(Core.lineCells(1, 1, 1, 1), [[1,1]], 'lineCells: 单点');
+eq(Core.lineCells(0, 0, 4, 2), [[0,0],[1,0],[2,1],[3,1],[4,2]], 'lineCells: 缓坡 Bresenham 锚定');
+(function () {
+  var last = Core.lineCells(3, 5, 7, 9);
+  ok(last[last.length - 1][0] === 7 && last[last.length - 1][1] === 9, 'lineCells: 终点含在内');
+})();
+
+eq(Core.normRegion(3, 2, 1, 5), { x: 1, y: 2, w: 3, h: 4 }, 'normRegion: 反向角归一化');
+eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格');
+
+eq(Core.moveRegion([[1,2,3],[4,5,6],[7,8,9]], {x:0,y:0,w:1,h:1}, 1, 1),
+   [[0,2,3],[4,1,6],[7,8,9]], 'moveRegion: 单格平移,原处清 0');
+eq(Core.moveRegion([[1,2,3],[4,5,6],[7,8,9]], {x:1,y:1,w:1,h:1}, 0, -1),
+   [[1,5,3],[4,0,6],[7,8,9]], 'moveRegion: 上移一格,只清原格');
+eq(Core.moveRegion([[1,1],[1,1]], {x:0,y:0,w:2,h:2}, -1, 0),
+   [[1,0],[1,0]], 'moveRegion: 左移 1,右列保留其余裁剪');
+eq(Core.moveRegion([[1,1],[1,1]], {x:0,y:0,w:2,h:2}, -2, 0),
+   [[0,0],[0,0]], 'moveRegion: 整体移出左侧,裁剪为空');
+eq(Core.moveRegion([[1,1,1],[1,1,1],[1,1,1]], {x:0,y:0,w:2,h:2}, 1, 1),
+   [[0,0,1],[0,1,1],[1,1,1]], 'moveRegion: 重叠位移,快照内容不被清');
+(function () {
+  var g = [[1,1],[1,1]];
+  Core.moveRegion(g, {x:0,y:0,w:2,h:2}, 1, 1);
+  eq(g, [[1,1],[1,1]], 'moveRegion: 不修改入参');
+})();
+
+// ---- Task: 矩形工具回归(填 packed 值而非纹理号) ----
+eq(Core.rectFill([[0,0],[0,0]], 0, 0, 1, 1, Core.packCell(1, 15)), [[31,31],[31,31]], 'rectFill: packed 全砖(矩形工具回归)');
+
 // ---- Task: 统一结构的 JSON 库 / 单结构地图导出 ----
 (function () {
   var lib = [

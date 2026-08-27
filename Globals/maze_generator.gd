@@ -459,7 +459,7 @@ static var _heap_c: PackedInt32Array = PackedInt32Array()
 static var astar_calls: int = 0  # A* 调用计数(冒烟测试验证路径缓存命中用)
 
 static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
-		passable_pred: Callable = Callable()) -> Array[Vector2i]:
+		passable_pred: Callable = Callable(), max_search_dist: int = -1) -> Array[Vector2i]:
 	astar_calls += 1
 	var grid := current_grid
 	if grid.is_empty():
@@ -503,7 +503,7 @@ static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit
 		if cd < best_d:
 			best_d = cd
 			best_idx = cur_idx
-		_astar_relax(cx, cy, cols, rows, grid, passable_pred, to_cell, g_cur + 1, cur_idx)
+		_astar_relax(cx, cy, cols, rows, grid, passable_pred, to_cell, g_cur + 1, cur_idx, from_cell, max_search_dist)
 	if best_idx == start_idx:
 		return []
 	return _rebuild_path_flat(start_idx, best_idx, cols, rows)
@@ -515,7 +515,8 @@ const _DIRS4: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i
 
 # 展开当前格:对每个邻居做「可走 + 更优」判定,通过则更新 g/prev 并入堆。
 static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Array],
-		passable_pred: Callable, to_cell: Vector2i, ng: int, cur_idx: int) -> void:
+		passable_pred: Callable, to_cell: Vector2i, ng: int, cur_idx: int,
+		from_cell: Vector2i, max_search_dist: int) -> void:
 	for d in _DIRS4:
 		var nx: int = cx + d.x
 		var ny: int = cy + d.y
@@ -527,6 +528,9 @@ static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Arr
 			ny = 0
 		elif ny < 0:
 			ny = rows - 1
+		# 搜索范围上限:不展开超出 from_cell 半径的节点(鸟的寻路不搜太远)
+		if max_search_dist > 0 and toroidal_dist(from_cell, Vector2i(nx, ny), cols, rows) > max_search_dist:
+			continue
 		if passable_pred.is_valid():
 			if not passable_pred.call(Vector2i(nx, ny)):
 				continue
