@@ -330,6 +330,12 @@ func _recoil_recover(delta: float) -> void:
 
 # 世界坐标系下从玩家指向鼠标的单位向量(未钳制俯仰)。
 func _aim_world_dir() -> Vector2:
+	# 网络驱动的玩家(服务器上的远端模拟)用注入的瞄准;本地玩家返回 ZERO → 落回鼠标。
+	# has_method 守卫:冒烟里的 StubPlayer 没有该方法时跳过,不破坏测试。
+	if player != null and player.has_method("get_aim_dir_override"):
+		var override: Vector2 = player.get_aim_dir_override()
+		if override != Vector2.ZERO:
+			return override
 	var cam: Camera2D = get_viewport().get_camera_2d()
 	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),
 	# 若标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
