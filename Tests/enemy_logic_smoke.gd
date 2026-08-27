@@ -68,6 +68,12 @@ func _initialize() -> void:
 			all_on_floor = false
 	_check(all_on_floor, "spawn 全部位于地板上面")
 
+	# ── Task 4: 双出生点解析(# player2)──
+	var meta := MazeGenerator.parse_spawn_metadata(["# player2 3 4"])
+	_check(meta.get("player2") == Vector2i(3, 4), "player2 spawn 解析")
+	var meta2 := MazeGenerator.parse_spawn_metadata(["# player 1 2", "# player2 5 6"])
+	_check(meta2.get("player") == Vector2i(1, 2) and meta2.get("player2") == Vector2i(5, 6), "player+player2 并存")
+
 	# ── Task 3: EnemyBase 加载 ──
 	_check(load("res://Scenes/Enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
 
@@ -133,6 +139,10 @@ func _initialize() -> void:
 	# 与玩家重合 → 不变
 	_check(MazeGenerator.anchor_to_nearest(Vector2(500, 500), Vector2(500, 500), W, H) == Vector2(500, 500),
 			"锚定:自身不变")
+
+	# ── Task 2: 钉住地图 ──
+	MazeGenerator.set_map_file("res://map/demo.cyrm")
+	_check(MazeGenerator.map_file_path() == "res://map/demo.cyrm", "set_map_file 钉住地图")
 
 	# ── Task 9: 地图尺寸读取(map_size) ──
 	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
