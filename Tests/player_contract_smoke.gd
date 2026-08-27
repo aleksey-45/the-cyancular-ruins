@@ -30,6 +30,9 @@ func _initialize() -> void:
 	# 公开只读属性(HUD 直接读,见 hud.gd:37/39)
 	_check(src.contains("var hp: int:"), "player.gd 公开 hp 属性")
 	_check(src.contains("var max_hp: int:"), "player.gd 公开 max_hp 属性")
+	# 输入源抽象(行为不变重构):根不再直接读全局 Input,且可注入
+	_check(src.contains("input_source.get_axis"), "player.gd 输入走 input_source")
+	_check(src.contains("func set_input_source("), "player.gd 输入可注入")
 	# 三个组件文件 + class_name
 	var comps: Array = [
 		[lsrc, "climb_component.gd", "class_name ClimbComponent"],

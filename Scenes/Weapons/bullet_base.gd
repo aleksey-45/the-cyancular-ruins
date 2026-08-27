@@ -15,6 +15,7 @@ var bullet_color: Color = Color.WHITE  # 纹理本底;武器如需染色再设
 var max_range: float = 0.0
 var traveled: float = 0.0
 var source: Node = null
+var shooter: Node = null  # 射手玩家(击杀归因用):本地=武器持有者;服务器=权威模拟里的玩家
 var hit_damage: int = 0    # 命中伤害(武器 fire 注入;切枪后 source 失效时兜底直接结算)
 var hit_impact: float = 0.0  # 命中击退(同上)
 

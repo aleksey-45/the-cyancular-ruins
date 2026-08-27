@@ -72,6 +72,10 @@ static func map_file_path() -> String:
 	_picked_map = ext if ext != "" else _random_cyrm(MAP_DIR)
 	return _picked_map
 
+# 钉住地图文件(PvP:服务器定图,客户端加载同名文件;覆盖会话随机读的缓存)。
+static func set_map_file(path: String) -> void:
+	_picked_map = path
+
 # 在 dir 目录下随机挑一个 .cyrm 地图;没有则返回 ""。
 static func _random_cyrm(dir: String) -> String:
 	var da := DirAccess.open(dir)
@@ -310,6 +314,14 @@ static func parse_spawn_metadata(lines: Array) -> Dictionary:
 						result["player"] = Vector2i(x, y)
 					else:
 						push_warning("MazeGenerator: 非法 player 坐标 %s" % text)
+			"player2":
+				if parts.size() >= 3:
+					var x := int(parts[1])
+					var y := int(parts[2])
+					if x >= 0 and y >= 0:
+						result["player2"] = Vector2i(x, y)
+					else:
+						push_warning("MazeGenerator: 非法 player2 坐标 %s" % text)
 			"enemy":
 				if parts.size() >= 4:
 					var type_id := parts[1]
@@ -343,6 +355,8 @@ static func load_spawns() -> Dictionary:
 	# 旧格式:网格 2×2 → 1,spawn 坐标同步 ÷2。
 	if result.has("player"):
 		result["player"] = Vector2i(result["player"].x / 2, result["player"].y / 2)
+	if result.has("player2"):
+		result["player2"] = Vector2i(result["player2"].x / 2, result["player2"].y / 2)
 	if result.has("enemies"):
 		var enemies: Array = result["enemies"]
 		for i in range(enemies.size()):
