@@ -38,7 +38,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 - **关键区分**:玩家每帧 `wrap_to_range`(只留中间副本);敌人/子弹用 `anchor_to_nearest`(锚定到玩家附近的副本)。墙体按 3×3 铺贴,相机跨接缝才能看到另一侧——实体若取模回 `[0,MAP)` 会在接缝处"消失"。
 
 ### 参数体系(重要约定)
-- **唯一 autoload 是 `GameParameters`**(Globals/gameParameters.gd):gravity0、TILE_SIZE=64、地图像素尺寸、敌人数/出生距离。`_ready()` 里从 `MazeGenerator.map_size()` 回写 `MAP_WIDTH/HEIGHT`。
+- **autoload 两个**:`GameParameters`(Globals/gameParameters.gd):gravity0、TILE_SIZE=64、地图像素尺寸、敌人数/出生距离。`_ready()` 里从 `MazeGenerator.map_size()` 回写 `MAP_WIDTH/HEIGHT`;`NetBus`(Globals/net_bus.gd,第二个 autoload,PvP 网络 RPC 唯一收口):服务器/客户端共用 `/root/NetBus` 跨场景常驻,RPC 才能路由;建房/加入/断线经转交信号给 RoomManager。
 - 玩家/敌人参数**不是** autoload:`PlayerParams`、`EnemyParams` 是 `RefCounted` + `const`,静态访问(如 `EnemyParams.FlyBird.wake_radius`)。加新敌人 = 在 `EnemyParams` 加一个嵌套类。
 
 ### 敌人(Scenes/Enemies/)
@@ -89,6 +89,12 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 
 ### 编辑器工具
 `editor/structure-editor.html` + `editor/smoke.js` 是独立浏览器地图编辑器(大图缩放/画笔),与 Godot 引擎无关。编辑 125×75 网格,**砖块纹理调色板(0-22)+ 2×2 砖形面板**(点四象限翻转或选预设 1/4/半/3/4/全砖);导入旧格式自动 2×2 转换,导出写 v3(`# cyrm-v3` + 每格 4 字符 [纹理 3 位 0xx][形状hex])。工具栏含 画笔/矩形/油漆桶/橡皮/选框/直线(直线跟随画笔大小);选框支持框选后整体移动、Del/Backspace 删除、油漆桶点在选区内=填整个选区(点外清选区+正常连通填充)、Esc 取消。`node editor/smoke.js` 跑 Core 测试。
+
+### 网络与 PvP(阶段 1:匹配与进图)
+- 服务器:`server/server_main.tscn` 入口(headless 运行,`--headless --path . res://server/server_main.tscn`),`server/room_manager.gd`(`RoomManager`)房间注册表:建房签房间号、加入、2 人就绪发 `match_start`(含 role/出生点/地图文件名)。
+- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号)→ `pvp_game`(`pvp_client.gd`:Level0 pvp_mode 世界 + 本地玩家 C2 能动 + 补后处理)。
+- 会话配置 `Globals/pvp_session.gd`(`PvpSession` 静态,非 autoload):server_address/role/spawn/map_path。地图由服务器定、客户端 `MazeGenerator.set_map_file` 钉住同一张。
+- 测试:`Tests/pvp_room_smoke.sh` 起服务器+双客户端,断言建房/加入/开局(loopback)。**对局互通(输入/快照/远端副本)= 阶段 2,未做**;玩家互不可见、无对战。
 
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。
