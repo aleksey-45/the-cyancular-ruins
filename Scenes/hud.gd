@@ -19,12 +19,21 @@ const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
 const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
 const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板
 const BACK_PAD := 4                            # 底板相对竖条的外扩 padding
+const WATERPROOF_H := 10            # 防水值条高(细长)
+const WATERPROOF_GAP := 18         # 防水值条与血条间距(下移)
+const WATERPROOF_W := 18            # 每点防水值宽度(px)
+const WATERPROOF_COLOR := Color(0.161, 0.26, 0.8, 0.702)  # 深蓝
+const WATERPROOF_BACK := Color(1, 1, 1, 0.4)      # 底板
 
 var _segments: Array[ColorRect] = []
 var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
 var _last_cur := 0
 var _kill_label: Label
 var _kills := 0
+var _wp_bar: ColorRect = null
+var _wp_back: ColorRect = null
+var _wp_w := 0.0
+var _wp_tween: Tween = null
 
 func _ready() -> void:
 	layer = LAYER
@@ -37,6 +46,10 @@ func _ready() -> void:
 		_build_segments(p.max_hp)
 		p.hp_changed.connect(_on_hp)
 		_on_hp(p.hp, p.max_hp)
+		if p.has_signal("waterproof_changed"):
+			_build_waterproof(p.max_waterproof)
+			p.waterproof_changed.connect(_on_waterproof)
+			_on_waterproof(p.waterproof, p.max_waterproof)
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;无边框。
 # 竖条背后垫一层半透明白色底板,整体更易读。
@@ -46,14 +59,14 @@ func _build_segments(count: int) -> void:
 	back.position = Vector2(MARGIN.x - BACK_PAD, MARGIN.y - BACK_PAD)
 	back.size = Vector2(bar_w + BACK_PAD * 2, SEG_H + BACK_PAD * 2)
 	back.color = BACK_COLOR
-	add_child(back)  # 先加,绘制在竖条底下
+	call_deferred("add_child", back)  # 先加,绘制在竖条底下
 
 	for i in range(count):
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
 		seg.size = Vector2(SEG_W, SEG_H)
 		seg.color = COLOR_NORMAL
-		add_child(seg)
+		call_deferred("add_child", seg)
 		_segments.append(seg)
 		_ghost_tweens.append(null)
 
@@ -75,7 +88,36 @@ func _on_hp(cur: int, max_hp: int) -> void:
 		_start_ghost(i)
 	_last_cur = cur
 
+# 防水值(氧气)条:血条下方深蓝细长条,长度按防水值/上限。
+func _build_waterproof(wp_max: int) -> void:
+	_wp_w = WATERPROOF_W * wp_max
+	var y := MARGIN.y + SEG_H + WATERPROOF_GAP
+	_wp_back = ColorRect.new()
+	_wp_back.position = Vector2(MARGIN.x, y)
+	_wp_back.size = Vector2(_wp_w, WATERPROOF_H)
+	_wp_back.color = WATERPROOF_BACK
+	call_deferred("add_child", _wp_back)
+	_wp_bar = ColorRect.new()
+	_wp_bar.position = Vector2(MARGIN.x, y)
+	_wp_bar.size = Vector2(_wp_w, WATERPROOF_H)
+	_wp_bar.color = WATERPROOF_COLOR
+	call_deferred("add_child", _wp_bar)
+
+func _on_waterproof(cur: int, max: int) -> void:
+	if _wp_bar != null:
+		_wp_bar.size.x = WATERPROOF_W * cur
+		# 满值(陆地恢复满)→ 淡出;非满(开始消耗)→ 淡入
+		_fade_waterproof(0.0 if cur >= max else 1.0)
+
 # 掉血段效果:闪烁两下(闪白回到底色),最后淡出消失。
+
+func _fade_waterproof(a: float) -> void:
+	if _wp_tween != null and _wp_tween.is_valid():
+		_wp_tween.kill()
+	_wp_tween = create_tween()
+	_wp_tween.tween_property(_wp_bar, "modulate:a", a, 0.4)
+	_wp_tween.parallel().tween_property(_wp_back, "modulate:a", a, 0.4)
+
 func _start_ghost(i: int) -> void:
 	var seg := _segments[i]
 	_kill_ghost(i)
@@ -123,7 +165,7 @@ func _build_kill_label() -> void:
 	_kill_label.offset_bottom = KILL_MARGIN.y + KILL_FONT_SIZE * 1.4
 	_kill_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_kill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	add_child(_kill_label)
+	call_deferred("add_child", _kill_label)
 
 func _on_enemy_spawned(enemy: Node) -> void:
 	if enemy.has_signal("died"):

@@ -4,6 +4,7 @@ extends BulletBase
 # 敌方投弹:由发射者给定初速向量与重力倍率,重力抛物线飞行,命中玩家造成 damage。
 # 场景 collision_mask=3(层1地形+层2玩家),不含层3 → 不撞自己/其他敌人。
 var damage: int = 2
+var water_mult: float = 1.0  # FlyBird 子弹独有:攻击水里的玩家伤害 ×1.5
 
 
 # 抛物线初速版 setup:直接设初速向量(平抛/投掷用)。不染色,子弹用贴图本底色。
@@ -29,7 +30,10 @@ func _physics_process(delta: float) -> void:
 	if col:
 		var hit := col.get_collider()
 		if hit != null and hit.is_in_group("player") and hit.has_method("take_hit"):
-			hit.take_hit(global_position, damage)
+			var dmg: int = damage
+			if water_mult > 1.0 and Water.is_in_water((hit as Node2D).global_position):
+				dmg = roundi(damage * water_mult)
+			hit.take_hit(global_position, dmg)
 		queue_free()
 		return
 	if traveled >= max_range:
