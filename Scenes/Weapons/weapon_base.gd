@@ -180,6 +180,7 @@ func fire() -> void:
 		var b: BulletBase = bullet_scene.instantiate()
 		var ang := base_dir.angle() + randf_range(-spread, spread)
 		b.setup(Vector2.from_angle(ang), bullet_speed, bullet_range, bullet_size, bullet_color, self)
+		b.shooter = player
 		b.gravity_factor = bullet_gravity
 		b.hit_damage = damage
 		b.hit_impact = impact
