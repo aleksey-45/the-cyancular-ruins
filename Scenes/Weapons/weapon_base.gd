@@ -118,6 +118,22 @@ func _ready() -> void:
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
 
+# 攻击输入查询:优先走 player 的注入输入(NetworkInputSource);本地/冒烟无该方法时回退真实 Input。
+func _attack_pressed() -> bool:
+	if player != null and player.has_method("is_attack_pressed"):
+		return player.is_attack_pressed()
+	return Input.is_action_pressed("attack")
+
+func _attack_just_pressed() -> bool:
+	if player != null and player.has_method("is_attack_just_pressed"):
+		return player.is_attack_just_pressed()
+	return Input.is_action_just_pressed("attack")
+
+func _attack_just_released() -> bool:
+	if player != null and player.has_method("is_attack_just_released"):
+		return player.is_attack_just_released()
+	return Input.is_action_just_released("attack")
+
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
 	# 切枪继承旧武器剩余冷却:后摇不能被切枪刷掉(否则可切枪连射)
@@ -137,26 +153,22 @@ func _process(delta: float) -> void:
 	if _fire_buffered and fire_cd_timer == 0.0:
 		_fire_buffered = false
 		fire()
+	# 攻击输入轮询:heavy_aim 预瞄/松开发射,全自动按住连发,半自动按下单发。
 	if heavy_aim:
-		_update_laser()
-	elif full_auto and Input.is_action_pressed("attack"):
-		try_fire()
-	_recoil_recover(delta)
-
-func _unhandled_input(event: InputEvent) -> void:
-	if not _player_ok():
-		return
-	if heavy_aim:
-		if event.is_action_pressed("attack"):
+		if _attack_just_pressed():
 			_aiming = true
-			_update_laser()
-		elif event.is_action_released("attack"):
+		if _attack_just_released():
 			_aiming = false
 			_update_laser()
 			try_fire()
-		return
-	if not full_auto and event.is_action_pressed("attack"):
-		try_fire()
+		_update_laser()
+	elif full_auto:
+		if _attack_pressed():
+			try_fire()
+	else:
+		if _attack_just_pressed():
+			try_fire()
+	_recoil_recover(delta)
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:

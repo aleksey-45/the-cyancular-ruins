@@ -51,6 +51,16 @@ func set_input_source(src: InputSource) -> void:
 func get_aim_dir_override() -> Vector2:
 	return input_source.get_aim_dir_override()
 
+# 攻击查询:weapon_base 经 has_method 守卫调用(本地委托真实 Input;服务器注入网络输入)。
+func is_attack_pressed() -> bool:
+	return input_source.is_attack_pressed()
+
+func is_attack_just_pressed() -> bool:
+	return input_source.is_attack_just_pressed()
+
+func is_attack_just_released() -> bool:
+	return input_source.is_attack_just_released()
+
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
 signal waterproof_changed(current: int, max: int)   # 防水值(氧气)变化,HUD 更新
 
@@ -134,6 +144,11 @@ func _physics_process(delta: float) -> void:
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	combat.update_iframe_blink(delta)
+
+	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
+	var wslot := input_source.get_weapon_slot_pressed()
+	if wslot > 0:
+		weapons.equip(str(wslot))
 
 	var mult := weapons.movement_multiplier()
 
@@ -357,10 +372,7 @@ func _set_waterproof(v: int) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if combat.is_downed():
-		if event.is_action_pressed("R"):
+		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。
+		if not Level0.pvp_mode and event.is_action_pressed("R"):
 			get_tree().reload_current_scene()
 		return
-	for slot in ["1", "2", "3", "4", "5"]:
-		if event.is_action_pressed(slot):
-			weapons.equip(slot)
-			return
