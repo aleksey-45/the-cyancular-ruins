@@ -8,7 +8,7 @@ extends Node
 var players: Dictionary = {}        # role(int) -> Player
 var input_sources: Dictionary = {}  # role -> NetworkInputSource
 var peer_by_role: Dictionary = {}   # role -> peer_id
-var _pending_input: Dictionary = {} # role -> 最新输入包
+var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消费不丢 just_pressed 边沿
 var grid: Array = []
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
@@ -52,16 +52,23 @@ func _exit_tree() -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-			_pending_input[role] = pkt
+			# 按序缓冲队列:每个包都保留(尤其 just_pressed 边沿),服务器每 tick 消费一个。
+			# 覆盖式(只留最新)会丢前序包的抓梯/跳跃/开火边沿 → 服务器模拟与客户端脱节。
+			if not _pending_input.has(role):
+				_pending_input[role] = []
+			(_pending_input[role] as Array).append(pkt)
 			return
 
 func _physics_process(delta: float) -> void:
-	# 消费输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)
+	# 消费输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
+	# 每 tick 从队列弹出一个包(按序,不丢边沿);队列空=缺包,沿用上一 tick 输入。
 	for role in input_sources:
 		var src: NetworkInputSource = input_sources[role]
 		src.begin_tick()
 		if _pending_input.has(role):
-			src.apply_packet(_pending_input[role])
+			var q: Array = _pending_input[role]
+			if not q.is_empty():
+				src.apply_packet(q.pop_front())
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
 	_adjudicate_bullets()
