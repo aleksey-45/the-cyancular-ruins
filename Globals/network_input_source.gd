@@ -2,7 +2,11 @@ class_name NetworkInputSource
 extends InputSource
 
 # 网络注入输入(服务器权威模拟的唯一消费方):从输入包取轴/按键/边沿/切枪/瞄准。
-# 服务器 Match 每物理帧 begin_tick()+apply_packet() 后,玩家 _physics_process 读到的就是注入状态。
+# 设计(修正版):
+# - held/axis/aim/weapon:每次新包到达即覆盖为最新 → 服务器紧跟客户端,几乎无滞后。
+# - just_pressed/just_released 边沿:累积(|=)不覆盖 → 即使两包批量到达也不丢边沿
+#   (抓梯/跳跃/开火都靠边沿,丢了服务器模拟就与客户端脱节,是回拉的真正根因)。
+# - 缺包时(无新包到达)held 保持上一包,边沿由 MatchHost 每帧末 clear_edges() 清空 → 沿用上一 tick 输入。
 
 const BIT_UP := 1
 const BIT_DOWN := 2
@@ -11,24 +15,27 @@ const BIT_ATTACK := 8
 
 var _axis := 0.0
 var _held := 0
-var _pressed := 0
-var _released := 0
-var _weapon := 0
 var _aim := Vector2.ZERO   # 注入的瞄准方向(世界坐标系)
+var _weapon := 0
+var _pressed := 0          # 累积的 just_pressed 边沿(玩家读取,MatchHost 每帧末清除)
+var _released := 0         # 累积的 just_released 边沿
 
-# 清空边沿(每 tick 消费新包前调用,避免上一 tick 边沿残留)。
-func begin_tick() -> void:
-	_pressed = 0
-	_released = 0
-	_weapon = 0
-
+# 新包到达(服务器 RPC 回调里调用):held/axis/aim/weapon 取最新,边沿累积。
 func apply_packet(pkt: Dictionary) -> void:
 	_axis = pkt.get("ax", 0.0)
 	_held = pkt.get("held", 0)
-	_pressed = pkt.get("pressed", 0)
-	_released = pkt.get("released", 0)
-	_weapon = pkt.get("weapon", 0)
 	_aim = pkt.get("aim", Vector2.ZERO)
+	var w: int = pkt.get("weapon", 0)
+	if w > 0:
+		_weapon = w
+	_pressed |= pkt.get("pressed", 0)
+	_released |= pkt.get("released", 0)
+
+# 每帧末清除已消费边沿与切枪(玩家 _physics_process 之后)。held/axis/aim 保留(缺包沿用)。
+func clear_edges() -> void:
+	_pressed = 0
+	_released = 0
+	_weapon = 0
 
 func get_axis(_neg: String, _pos: String) -> float:
 	return _axis

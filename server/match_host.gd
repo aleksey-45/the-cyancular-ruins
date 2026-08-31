@@ -52,23 +52,25 @@ func _exit_tree() -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-			# 按序缓冲队列:每个包都保留(尤其 just_pressed 边沿),服务器每 tick 消费一个。
-			# 覆盖式(只留最新)会丢前序包的抓梯/跳跃/开火边沿 → 服务器模拟与客户端脱节。
+			# 缓冲本帧到达的包,下一物理帧开头统一应用:
+			#   held/axis 取最新(覆盖,服务器紧跟客户端不滞后);
+			#   just_pressed 边沿累积(|=),不丢抓梯/跳跃/开火边沿(这是服务器模拟与客户端脱节的根因)。
 			if not _pending_input.has(role):
 				_pending_input[role] = []
 			(_pending_input[role] as Array).append(pkt)
 			return
 
 func _physics_process(delta: float) -> void:
-	# 消费输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
-	# 每 tick 从队列弹出一个包(按序,不丢边沿);队列空=缺包,沿用上一 tick 输入。
+	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
+	# 先清上一物理帧已读的边沿,再把本帧缓冲的包统一应用(held 最新、边沿累积)。
 	for role in input_sources:
 		var src: NetworkInputSource = input_sources[role]
-		src.begin_tick()
+		src.clear_edges()
 		if _pending_input.has(role):
 			var q: Array = _pending_input[role]
-			if not q.is_empty():
-				src.apply_packet(q.pop_front())
+			for pkt in q:
+				src.apply_packet(pkt)
+			q.clear()
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
 	_adjudicate_bullets()
