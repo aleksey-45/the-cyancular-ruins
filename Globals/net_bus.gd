@@ -12,6 +12,8 @@ signal local_server_message(text: String)
 signal room_create_requested(caller: int)
 signal room_join_requested(caller: int, code: String)
 signal peer_left(peer_id: int)
+# 服务器端 → MatchHost 的输入包
+signal input_received(caller: int, pkt: Dictionary)
 
 const DEFAULT_PORT := 7777
 
@@ -56,6 +58,10 @@ func create_room() -> void:
 @rpc("any_peer", "reliable")
 func join_room(code: String) -> void:
 	room_join_requested.emit(multiplayer.get_remote_sender_id(), code)
+
+@rpc("any_peer", "reliable")
+func send_input(pkt: Dictionary) -> void:
+	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
 
 # ── 服务器 → 客户端(权威方=peer1 可调)──
 @rpc("authority", "reliable")

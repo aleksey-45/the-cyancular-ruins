@@ -341,6 +341,10 @@ func _recoil_recover(delta: float) -> void:
 		if _recoil_timer == 0.0:
 			sprite.position = _base_sprite_pos
 
+# 当前瞄准方向(世界坐标系):本地=鼠标计算,网络=注入方向。PvP 输入包上报用。
+func get_current_aim_dir() -> Vector2:
+	return _aim_world_dir()
+
 # 世界坐标系下从玩家指向鼠标的单位向量(未钳制俯仰)。
 func _aim_world_dir() -> Vector2:
 	# 网络驱动的玩家(服务器上的远端模拟)用注入的瞄准;本地玩家返回 ZERO → 落回鼠标。
@@ -349,11 +353,13 @@ func _aim_world_dir() -> Vector2:
 		var override: Vector2 = player.get_aim_dir_override()
 		if override != Vector2.ZERO:
 			return override
-	var cam: Camera2D = get_viewport().get_camera_2d()
 	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),
 	# 若标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
 	var sub: Viewport = get_viewport()
-	if cam == null or sub == null:
+	if sub == null:
+		return Vector2(float(get_facing()), 0.0)
+	var cam: Camera2D = sub.get_camera_2d()
+	if cam == null:
 		return Vector2(float(get_facing()), 0.0)
 	var win: Viewport = sub.get_window()
 	if win == null:

@@ -61,6 +61,14 @@ func is_attack_just_pressed() -> bool:
 func is_attack_just_released() -> bool:
 	return input_source.is_attack_just_released()
 
+# 当前瞄准方向(世界坐标系):委托当前武器的实际瞄准(本地=鼠标,服务器=注入方向)。
+# PvP 客户端每 tick 打包上报用。
+func get_current_aim_dir() -> Vector2:
+	var w := weapons.current_weapon()
+	if w != null:
+		return w.get_current_aim_dir()
+	return Vector2(float(facing_direction), 0.0)
+
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
 signal waterproof_changed(current: int, max: int)   # 防水值(氧气)变化,HUD 更新
 

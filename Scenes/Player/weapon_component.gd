@@ -36,6 +36,9 @@ func equip(slot: String) -> void:
 	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
 
+func current_weapon() -> WeaponBase:
+	return _weapon
+
 func movement_multiplier() -> Vector2:
 	if _weapon == null:
 		return Vector2.ONE
