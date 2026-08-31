@@ -1,7 +1,13 @@
 extends Node2D
 # PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
 
-const SELF_CORRECT_DIST := 96.0  # 位置校正阈值(px)
+# ── 自校正参数 ──
+# C2 本地玩家领先服务器快照是常态(快照 30Hz + 网络延迟)。硬拉会造成"移动后卡一下又回去"。
+# 因此:小分歧不管(预测优先,手感不打断);中等分歧按比例平滑靠拢;只有真性大分歧(传送/卡墙)才硬回。
+const SELF_CORRECT_IGNORE := 64.0    # 分歧 ≤ 此值:忽略(预测领先的正常区间)
+const SELF_CORRECT_RATE := 0.35      # 每帧向服务器位置靠拢的比例(平滑,不硬跳)
+const SELF_CORRECT_SNAP := 3.0 * 64.0  # 分歧 > 3 格:真性大分歧,直接回位(避免越积越歪)
+var _last_snap_tick := 0
 
 var _local: Node2D = null
 var _remote_replica: Node2D = null
@@ -80,6 +86,11 @@ func _physics_process(_delta: float) -> void:
 func _on_snapshot(snap: Dictionary) -> void:
 	if _local == null:
 		return
+	# 丢弃乱序旧快照(unreliable 通道可能乱序;应用旧快照会把玩家拉回过去位置)
+	var snap_tick := int(snap.get("tick", 0))
+	if snap_tick < _last_snap_tick:
+		return
+	_last_snap_tick = snap_tick
 	var players_snap: Dictionary = snap["players"]
 	for role_str in players_snap:
 		var role := int(role_str)
@@ -98,11 +109,17 @@ func _self_correct(data: Dictionary) -> void:
 	var downed := bool(data["downed"])
 	if _local.hp != hp or _local.waterproof != wp or _local.is_downed() != downed:
 		_local.apply_authoritative_state(hp, wp, downed)
-	# 位置:差异超阈值才校正(最短路径增量,不 set 绝对位置)
+	# 位置:最短路径增量,分档处理——
+	#   小分歧忽略(预测领先正常区间,手感不打断);
+	#   中等分歧按比例平滑靠拢(防"卡一下又回去");
+	#   大分歧(传送/卡墙)直接回位。
 	var d := MazeGenerator.toroidal_delta_px(_local.global_position, data["pos"],
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	if d.length() > SELF_CORRECT_DIST:
+	var dist := d.length()
+	if dist > SELF_CORRECT_SNAP:
 		_local.global_position += d
+	elif dist > SELF_CORRECT_IGNORE:
+		_local.global_position += d * SELF_CORRECT_RATE
 
 # 服务器广播的对手子弹 → 本地生成确定性视觉副本(不裁决伤害,只出轨迹/特效)。
 func _on_bullet_spawn(data: Dictionary) -> void:

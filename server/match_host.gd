@@ -16,6 +16,7 @@ var _snapshot_accum := 0.0
 const SNAPSHOT_INTERVAL := 1.0 / 30.0   # 30Hz 快照(unreliable)
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
+var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
 
 func _init(map_path: String, role_peers: Dictionary) -> void:
 	MazeGenerator.set_map_file(map_path)
@@ -90,8 +91,10 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 
 # 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
+# 带递增序号 tick:客户端靠它丢弃乱序到达的旧快照(unreliable 通道可能乱序)。
 func _broadcast_snapshot() -> void:
-	var snap := {"players": {}}
+	_snap_tick += 1
+	var snap := {"tick": _snap_tick, "players": {}}
 	for role in players:
 		var p: Node2D = players[role]
 		snap["players"][str(role)] = {
