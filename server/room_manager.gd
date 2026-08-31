@@ -4,6 +4,9 @@ extends Node
 # 房间注册表(服务器端):房间号 → 玩家;2 人就绪发 match_start。
 # 由 NetBus 转交信号驱动(建房/加入/断线),不硬依赖 NetBus 调用本类方法。
 
+# PvP 固定竞技场地图(1v1,含 # player / # player2 出生点)。
+const PVP_MAP := "res://factory_1V1(260827).cyrm"
+
 class Room:
 	var code: String = ""
 	var players: Array[int] = []          # peer ids
@@ -60,6 +63,8 @@ func on_peer_left(peer_id: int) -> void:
 			print("房间 %s 关闭" % code)
 
 func _start_match(room: Room) -> void:
+	# PvP 固定用 1v1 竞技场地图(含 player/player2 出生点);客户端加载同名文件。
+	MazeGenerator.set_map_file(PVP_MAP)
 	var map_path := MazeGenerator.map_file_path()
 	var spawns := MazeGenerator.load_spawns()
 	var s1: Vector2i = spawns.get("player", Vector2i(-1, -1))
