@@ -90,11 +90,14 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 ### 编辑器工具
 `editor/structure-editor.html` + `editor/smoke.js` 是独立浏览器地图编辑器(大图缩放/画笔),与 Godot 引擎无关。编辑 125×75 网格,**砖块纹理调色板(0-22)+ 2×2 砖形面板**(点四象限翻转或选预设 1/4/半/3/4/全砖);导入旧格式自动 2×2 转换,导出写 v3(`# cyrm-v3` + 每格 4 字符 [纹理 3 位 0xx][形状hex])。工具栏含 画笔/矩形/油漆桶/橡皮/选框/直线(直线跟随画笔大小);选框支持框选后整体移动、Del/Backspace 删除、油漆桶点在选区内=填整个选区(点外清选区+正常连通填充)、Esc 取消。`node editor/smoke.js` 跑 Core 测试。
 
-### 网络与 PvP(阶段 1:匹配与进图)
-- 服务器:`server/server_main.tscn` 入口(headless 运行,`--headless --path . res://server/server_main.tscn`),`server/room_manager.gd`(`RoomManager`)房间注册表:建房签房间号、加入、2 人就绪发 `match_start`(含 role/出生点/地图文件名)。
-- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号)→ `pvp_game`(`pvp_client.gd`:Level0 pvp_mode 世界 + 本地玩家 C2 能动 + 补后处理)。
-- 会话配置 `Globals/pvp_session.gd`(`PvpSession` 静态,非 autoload):server_address/role/spawn/map_path。地图由服务器定、客户端 `MazeGenerator.set_map_file` 钉住同一张。
-- 测试:`Tests/pvp_room_smoke.sh` 起服务器+双客户端,断言建房/加入/开局(loopback)。**对局互通(输入/快照/远端副本)= 阶段 2,未做**;玩家互不可见、无对战。
+### 网络与 PvP(阶段 1 + 阶段 2:匹配进图 + 对局互通)
+- 服务器:`server/server_main.tscn` 入口(headless 运行,`--headless --path . res://server/server_main.tscn`),`server/room_manager.gd`(`RoomManager`)房间注册表:建房签房间号、加入、2 人就绪发 `match_start`(含 role/出生点/地图文件名)+ 建 `server/match_host.gd`(`MatchHost`)权威对局。
+- **`MatchHost`(每房间一个)**:建世界(WorldBuilder 只碰撞不渲染)+ 两个 `Player.tscn` 实例注入 `NetworkInputSource` 权威模拟;每物理帧消费双方输入包、30Hz 广播快照、裁决子弹命中并广播 `bullet_spawn`/`hit_event`。
+- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号)→ `pvp_game`(`pvp_client.gd`:Level0 pvp_mode 世界 + 本地玩家 C2 + 补后处理 + 每 tick 上报输入 + 快照自校正 + `PlayerReplica` 远端副本最短路径插值 + 收子弹事件生成本地视觉副本)。
+- 协议(经 `NetBus` autoload RPC):输入包(60Hz reliable,`send_input`:轴/held/pressed/released 位掩码+切枪+瞄准方向)、快照包(30Hz unreliable,`snapshot`:每玩家 pos/vel/facing/pose/weapon/hp/waterproof/downed)、事件包(reliable,`bullet_spawn`/`hit_event`)。**环面纪律**:协议只传 canonical 坐标、渲染各端归最近副本、插值走 `toroidal_delta_px` 最短路径。
+- 输入抽象:`InputSource` 基类(本地委托真实 Input)+ `NetworkInputSource`(消费输入包,服务器唯一消费方)。`weapon_base` 攻击经 player 查询(`is_attack_pressed` 等,has_method 守卫回退 Input);`BulletBase.apply_damage=false` = 客户端视觉副本(不裁决,伤害由服务器裁决)。
+- PvP 固定地图 `factory_1V1(260827).cyrm`(150×100,`# player 17 65` + `# player2 133 64`)。
+- 测试:`Tests/pvp_room_smoke.sh` 断言建房/加入/开局;`Tests/pvp_match_smoke.sh` 断言输入→模拟→快照→子弹广播链路(loopback)。**阶段 3(回合/记分/复活/换边)未做**;死亡即倒地、不复活。
 
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。
