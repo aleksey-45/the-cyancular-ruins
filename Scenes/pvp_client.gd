@@ -6,7 +6,7 @@ extends Node2D
 # 因此:小分歧不管(预测优先,手感不打断);中等分歧按比例平滑靠拢;只有真性大分歧(传送/卡墙)才硬回。
 const SELF_CORRECT_IGNORE := 64.0    # 分歧 ≤ 此值:忽略(预测领先的正常区间)
 const SELF_CORRECT_RATE := 0.35      # 每帧向服务器位置靠拢的比例(平滑,不硬跳)
-const SELF_CORRECT_SNAP := 3.0 * 64.0  # 分歧 > 3 格:真性大分歧,直接回位(避免越积越歪)
+const SELF_CORRECT_SNAP := 2.0 * 64.0  # 分歧 > 2 格:真性大分歧,直接回位(避免越积越歪)
 var _last_snap_tick := 0
 
 var _local: Node2D = null

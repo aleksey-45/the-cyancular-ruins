@@ -163,13 +163,13 @@ func _physics_process(delta: float) -> void:
 	var horizontal_input = input_source.get_axis("left", "right")
 
 	# ---------- 水中(浮水/游泳):速度由 swim 设置,跳过攀爬/重力/跳跃/下蹲/冲刺 ----------
-	var in_water := swim.update(self, delta, mult)
+	var in_water := swim.update(self, delta, mult, input_source)
 	_update_waterproof(delta)
 	var climbing := false
 	var latched := false
 	if not in_water:
 		# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
-		climbing = climb.update(mult, delta, is_squat)
+		climbing = climb.update(mult, delta, is_squat, input_source)
 		latched = climb.is_latched()
 	else:
 		# 水中:清掉冲刺/下蹲残留,避免姿态锁死
