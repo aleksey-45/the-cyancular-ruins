@@ -16,6 +16,8 @@ signal peer_left(peer_id: int)
 signal input_received(caller: int, pkt: Dictionary)
 # 服务器 → 客户端
 signal local_snapshot(snap: Dictionary)
+signal local_bullet_spawn(data: Dictionary)
+signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
 
 const DEFAULT_PORT := 7777
 
@@ -69,6 +71,14 @@ func send_input(pkt: Dictionary) -> void:
 @rpc("authority", "unreliable")
 func snapshot(snap: Dictionary) -> void:
 	local_snapshot.emit(snap)
+
+@rpc("authority", "reliable")
+func bullet_spawn(data: Dictionary) -> void:
+	local_bullet_spawn.emit(data)
+
+@rpc("authority", "reliable")
+func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
+	local_hit_event.emit(victim_role, damage, source_pos)
 
 @rpc("authority", "reliable")
 func room_created(code: String) -> void:

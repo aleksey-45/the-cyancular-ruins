@@ -14,6 +14,8 @@ var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
 const SNAPSHOT_INTERVAL := 1.0 / 30.0   # 30Hz 快照(unreliable)
+const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
+var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
 
 func _init(map_path: String, role_peers: Dictionary) -> void:
 	MazeGenerator.set_map_file(map_path)
@@ -60,6 +62,8 @@ func _physics_process(delta: float) -> void:
 		if _pending_input.has(role):
 			src.apply_packet(_pending_input[role])
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
+	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
+	_adjudicate_bullets()
 	# 快照广播(玩家移动后)
 	_snapshot_accum += delta
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
@@ -102,3 +106,68 @@ func _broadcast_snapshot() -> void:
 		}
 	for role in peer_by_role:
 		NetBus.rpc_id(peer_by_role[role], "snapshot", snap)
+
+# 子弹裁决:遍历 bullet 组。新子弹广播给非射手客户端;命中判定 = 与对手玩家的 toroidal 距离 < HIT_RADIUS。
+func _adjudicate_bullets() -> void:
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if not is_instance_valid(b):
+			continue
+		var bullet := b as CharacterBody2D
+		# 新子弹:广播给非射手客户端(射手已本地生成视觉)
+		var bid: int = bullet.get_instance_id()
+		if not _seen_bullets.has(bid):
+			_seen_bullets[bid] = true
+			_broadcast_bullet_spawn(bullet)
+		# 命中裁决:对非射手玩家算 toroidal 距离
+		for role in players:
+			var p: Node2D = players[role]
+			if p == bullet.shooter:
+				continue
+			var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+			if d < HIT_RADIUS:
+				_on_bullet_hit(bullet, p, role)
+				break
+
+func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
+	var scene_path := ""
+	if bullet.scene_file_path != "":
+		scene_path = bullet.scene_file_path
+	elif bullet.has_meta("scene_path"):
+		scene_path = bullet.get_meta("scene_path")
+	# 协议只传 canonical [0,MAP):子弹锚到射手最近副本后可能是副本偏移坐标,归位。
+	var canonical_pos := MazeGenerator.wrap_to_range(bullet.global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var data := {
+		"scene": scene_path,
+		"pos": canonical_pos,
+		"vel": bullet.velocity_vec,
+		"speed": bullet.speed,
+		"range": bullet.max_range,
+		"size": bullet.size,
+		"color": bullet.bullet_color,
+		"gravity": bullet.gravity_factor,
+		"hit_damage": bullet.hit_damage,
+		"hit_impact": bullet.hit_impact,
+		"explodes": bullet.explodes,
+		"direct_damage": bullet.direct_hit_damage,
+		"fuse": bullet.fuse_time,
+		"hit_fuse": bullet.hit_fuse_time,
+		"radius": bullet.explosion_radius,
+		"expl_damage": bullet.explosion_damage,
+		"expl_knock": bullet.explosion_knockback,
+	}
+	if bullet.explosion_visual != null:
+		data["visual"] = bullet.explosion_visual.resource_path
+	# 发给非射手客户端
+	for role in peer_by_role:
+		if players.has(role) and players[role] != bullet.shooter:
+			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
+
+func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
+	if victim.has_method("take_hit"):
+		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
+		# 广播命中事件给双方客户端(受害者白闪/击退反馈)
+		for role in peer_by_role:
+			NetBus.rpc_id(peer_by_role[role], "hit_event", victim_role, bullet.hit_damage, bullet.global_position)
+	bullet.queue_free()

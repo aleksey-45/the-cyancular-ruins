@@ -197,6 +197,10 @@ func fire() -> void:
 		b.hit_damage = damage
 		b.hit_impact = impact
 		b.global_position = muzzle.global_position
+		# PvP:本地生成的子弹只做视觉(不裁决伤害);服务器权威子弹(Level0.pvp_mode=false)照常裁决。
+		b.apply_damage = not Level0.pvp_mode
+		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)
+		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)

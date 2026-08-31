@@ -5,13 +5,15 @@ const SELF_CORRECT_DIST := 96.0  # 位置校正阈值(px)
 
 var _local: Node2D = null
 var _remote_replica: Node2D = null
+var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 
 func _ready() -> void:
 	MazeGenerator.set_map_file(PvpSession.map_path)
 	Level0.pvp_mode = true
 	var level0: Node = load("res://Scenes/Level0.tscn").instantiate()
 	add_child(level0)
-	var local: Node2D = level0.get_node("WorldViewport/Player")
+	_world = level0.get_node("WorldViewport")
+	var local: Node2D = _world.get_node("Player")
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	_local = local
@@ -24,8 +26,10 @@ func _ready() -> void:
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
-	# 快照消费
+	# 快照/事件消费
 	NetBus.local_snapshot.connect(_on_snapshot)
+	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
+	NetBus.local_hit_event.connect(_on_hit_event)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -99,3 +103,36 @@ func _self_correct(data: Dictionary) -> void:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	if d.length() > SELF_CORRECT_DIST:
 		_local.global_position += d
+
+# 服务器广播的对手子弹 → 本地生成确定性视觉副本(不裁决伤害,只出轨迹/特效)。
+func _on_bullet_spawn(data: Dictionary) -> void:
+	if _world == null:
+		return
+	var scene: PackedScene = load(data["scene"])
+	if scene == null:
+		return
+	var b: BulletBase = scene.instantiate()
+	b.setup(data["vel"].normalized(), data["speed"], data["range"], data["size"], data["color"], null)
+	b.gravity_factor = data["gravity"]
+	b.hit_damage = data["hit_damage"]
+	b.hit_impact = data["hit_impact"]
+	b.apply_damage = false   # 视觉副本:不裁决伤害
+	if data["explodes"]:
+		b.explodes = true
+		b.direct_hit_damage = data["direct_damage"]
+		b.fuse_time = data["fuse"]
+		b.hit_fuse_time = data["hit_fuse"]
+		b.explosion_radius = data["radius"]
+		b.explosion_damage = data["expl_damage"]
+		b.explosion_knockback = data["expl_knock"]
+		if data.has("visual"):
+			b.explosion_visual = load(data["visual"])
+	b.global_position = data["pos"]
+	_world.add_child(b)
+
+# 服务器裁决命中:本地玩家被击中 → 即时反馈(白闪/击退),血量以快照权威为准。
+func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
+	if _local == null:
+		return
+	if victim_role == PvpSession.role:
+		_local.take_hit(source_pos, damage, false, -1.0)
