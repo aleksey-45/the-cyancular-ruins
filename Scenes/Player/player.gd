@@ -337,6 +337,17 @@ func is_downed() -> bool:
 func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
+# 服务器快照权威状态:血量/防水/倒地直接采纳(本地 hit 事件只做视觉,血量以快照为准)。
+func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: bool) -> void:
+	combat.hp = clampi(hp_val, 0, combat.max_hp)
+	combat.hp_changed.emit(combat.hp, combat.max_hp)
+	waterproof = clampi(waterproof_val, 0, max_waterproof)
+	waterproof_changed.emit(waterproof, max_waterproof)
+	if downed_val and not combat.is_downed():
+		combat.force_down()
+	elif not downed_val and combat.is_downed():
+		combat.revive()
+
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:
 	jump_buffer_timer = 0.0

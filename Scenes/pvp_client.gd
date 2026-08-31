@@ -1,7 +1,10 @@
 extends Node2D
-# PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报。
+# PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
+
+const SELF_CORRECT_DIST := 96.0  # 位置校正阈值(px)
 
 var _local: Node2D = null
+var _remote_replica: Node2D = null
 
 func _ready() -> void:
 	MazeGenerator.set_map_file(PvpSession.map_path)
@@ -16,6 +19,13 @@ func _ready() -> void:
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
+	# 远端副本(角色 = 3 - 自己的 role,1v1)
+	var replica := preload("res://Scenes/Player/player_replica.tscn").instantiate()
+	replica.name = "RemoteReplica"
+	level0.get_node("WorldViewport").add_child(replica)
+	_remote_replica = replica
+	# 快照消费
+	NetBus.local_snapshot.connect(_on_snapshot)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -62,3 +72,30 @@ func _physics_process(_delta: float) -> void:
 		"aim": aim,
 	}
 	NetBus.rpc_id(1, "send_input", pkt)
+
+func _on_snapshot(snap: Dictionary) -> void:
+	if _local == null:
+		return
+	var players_snap: Dictionary = snap["players"]
+	for role_str in players_snap:
+		var role := int(role_str)
+		var data: Dictionary = players_snap[role_str]
+		if role == PvpSession.role:
+			_self_correct(data)
+		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
+			_remote_replica.apply_snapshot(data, _local.global_position)
+
+func _self_correct(data: Dictionary) -> void:
+	if _local == null:
+		return
+	# 血量/防水/倒地:服务器权威,直接采纳
+	var hp := int(data["hp"])
+	var wp := int(data["waterproof"])
+	var downed := bool(data["downed"])
+	if _local.hp != hp or _local.waterproof != wp or _local.is_downed() != downed:
+		_local.apply_authoritative_state(hp, wp, downed)
+	# 位置:差异超阈值才校正(最短路径增量,不 set 绝对位置)
+	var d := MazeGenerator.toroidal_delta_px(_local.global_position, data["pos"],
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	if d.length() > SELF_CORRECT_DIST:
+		_local.global_position += d

@@ -14,6 +14,7 @@ const WEAPONS: Dictionary = {
 }
 
 var _weapon: WeaponBase = null
+var _current_slot: int = 1
 var body: CharacterBody2D
 
 func _ready() -> void:
@@ -22,6 +23,7 @@ func _ready() -> void:
 func equip(slot: String) -> void:
 	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)
 	var inherit_cd := 0.0
+	_current_slot = int(slot)
 	if _weapon != null:
 		inherit_cd = _weapon.fire_cd_timer
 		_weapon.queue_free()
@@ -38,6 +40,9 @@ func equip(slot: String) -> void:
 
 func current_weapon() -> WeaponBase:
 	return _weapon
+
+func current_slot_int() -> int:
+	return _current_slot
 
 func movement_multiplier() -> Vector2:
 	if _weapon == null:

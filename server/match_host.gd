@@ -12,6 +12,8 @@ var _pending_input: Dictionary = {} # role -> 最新输入包
 var grid: Array = []
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
+var _snapshot_accum := 0.0
+const SNAPSHOT_INTERVAL := 1.0 / 30.0   # 30Hz 快照(unreliable)
 
 func _init(map_path: String, role_peers: Dictionary) -> void:
 	MazeGenerator.set_map_file(map_path)
@@ -58,6 +60,11 @@ func _physics_process(delta: float) -> void:
 		if _pending_input.has(role):
 			src.apply_packet(_pending_input[role])
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
+	# 快照广播(玩家移动后)
+	_snapshot_accum += delta
+	if _snapshot_accum >= SNAPSHOT_INTERVAL:
+		_snapshot_accum = 0.0
+		_broadcast_snapshot()
 	# 分帧重建可破坏碰撞块(爆炸拆墙)
 	if not _dirty_chunks.is_empty():
 		var processed := 0
@@ -77,3 +84,21 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 			for qx in range(2):
 				destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+
+# 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
+func _broadcast_snapshot() -> void:
+	var snap := {"players": {}}
+	for role in players:
+		var p: Node2D = players[role]
+		snap["players"][str(role)] = {
+			"pos": p.global_position,
+			"vel": p.velocity,
+			"facing": p.get_facing(),
+			"pose": p.state,
+			"weapon": p.weapons.current_slot_int(),
+			"hp": p.hp,
+			"waterproof": p.waterproof,
+			"downed": p.is_downed(),
+		}
+	for role in peer_by_role:
+		NetBus.rpc_id(peer_by_role[role], "snapshot", snap)

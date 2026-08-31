@@ -65,6 +65,21 @@ func apply_knock(delta: float) -> void:
 	body.move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 
+# 服务器权威倒地/复活(PvP 用;单人按 R 重载场景不涉及)。
+func force_down() -> void:
+	if not downed:
+		_downed()
+
+func revive() -> void:
+	if not downed:
+		return
+	downed = false
+	hp = max_hp
+	body.rotation = 0.0
+	var animator: AnimatedSprite2D = body.animator
+	if animator != null:
+		animator.play("idle")
+
 func _downed() -> void:
 	downed = true
 	# 不取消物理:保留当前速度/击退,尸体继续受重力/冲击(与敌人统一)
