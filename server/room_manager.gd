@@ -11,6 +11,7 @@ class Room:
 	var code: String = ""
 	var players: Array[int] = []          # peer ids
 	var player_role: Dictionary = {}      # peer id -> 1/2
+	var match_host: Node = null           # MatchHost 权威对局模拟
 
 var rooms: Dictionary = {}   # code -> Room
 
@@ -59,6 +60,8 @@ func on_peer_left(peer_id: int) -> void:
 		room.players.erase(peer_id)
 		room.player_role.erase(peer_id)
 		if room.players.is_empty():
+			if room.match_host != null:
+				room.match_host.queue_free()
 			rooms.erase(code)
 			print("房间 %s 关闭" % code)
 
@@ -74,4 +77,11 @@ func _start_match(room: Room) -> void:
 		var spawn := s1 if role == 1 else s2
 		NetBus.rpc_id(peer_id, "match_start", role, spawn, map_path)
 		NetBus.rpc_id(peer_id, "server_message", "对局开始")
+	# 创建权威对局模拟(每房间一个 MatchHost)。role_peers = role -> peer_id。
+	var role_peers := {}
+	for peer_id in room.players:
+		role_peers[room.player_role[peer_id]] = peer_id
+	var match_host := MatchHost.new(map_path, role_peers)
+	add_child(match_host)
+	room.match_host = match_host
 	print("房间 %s 开局" % room.code)
