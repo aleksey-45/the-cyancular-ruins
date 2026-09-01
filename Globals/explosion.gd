@@ -24,17 +24,26 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
 				_falloff(d, radius, max_knockback) * (BLOCKED_FRACTION if blocked else 1.0) * wmult, true)
-	var p := tree.get_first_node_in_group("player")
-	if p != null:
-		_cam_shake(center, radius, p as Node2D)
-	if p != null and p.has_method("take_hit") and not (p.has_method("is_downed") and p.is_downed()):
-		var d := _dist(center, (p as Node2D).global_position)
+	# 遍历所有玩家(PvP 服务器两个玩家;单机组里只有一个 → 行为不变)
+	var first_player: Node2D = null
+	for p in tree.get_nodes_in_group("player"):
+		if not (p is Node2D):
+			continue
+		var pp := p as Node2D
+		if first_player == null:
+			first_player = pp
+			_cam_shake(center, radius, pp)
+		if not pp.has_method("take_hit"):
+			continue
+		if pp.has_method("is_downed") and pp.is_downed():
+			continue
+		var d := _dist(center, pp.global_position)
 		if d <= radius:
-			var blocked := has_grid and not _has_los(center, p as Node2D, grid)
+			var blocked := has_grid and not _has_los(center, pp, grid)
 			var mult := BLOCKED_FRACTION if blocked else 1.0
-			mult *= Water.water_mult(p.global_position, grid)  # 目标在水里:×0.25
+			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
-			p.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
+			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:

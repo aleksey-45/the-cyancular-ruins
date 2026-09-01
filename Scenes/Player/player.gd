@@ -51,6 +51,24 @@ func set_input_source(src: InputSource) -> void:
 func get_aim_dir_override() -> Vector2:
 	return input_source.get_aim_dir_override()
 
+# 攻击查询:weapon_base 经 has_method 守卫调用(本地委托真实 Input;服务器注入网络输入)。
+func is_attack_pressed() -> bool:
+	return input_source.is_attack_pressed()
+
+func is_attack_just_pressed() -> bool:
+	return input_source.is_attack_just_pressed()
+
+func is_attack_just_released() -> bool:
+	return input_source.is_attack_just_released()
+
+# 当前瞄准方向(世界坐标系):委托当前武器的实际瞄准(本地=鼠标,服务器=注入方向)。
+# PvP 客户端每 tick 打包上报用。
+func get_current_aim_dir() -> Vector2:
+	var w := weapons.current_weapon()
+	if w != null:
+		return w.get_current_aim_dir()
+	return Vector2(float(facing_direction), 0.0)
+
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
 signal waterproof_changed(current: int, max: int)   # 防水值(氧气)变化,HUD 更新
 
@@ -92,6 +110,36 @@ const STOP_SNAP := 1.0              # 水平速度低于此值直接归零，避
 # 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
 var _coll_by_pose: Dictionary = {}
 
+# ── PvP 服务器渲染模式:本地玩家不跑移动物理,位置/姿态/朝向由 30Hz 快照驱动 ──
+# 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
+# 根治:本地玩家完全由快照驱动(与远端副本同款最短路径插值),只保留武器/瞄准/受击反馈。
+var server_rendered: bool = false
+var _server_target := Vector2.ZERO   # 服务器 canonical 位置(本地玩家恒在中间副本)
+var _server_have_target := false
+var _server_pose: int = 0            # Pose 枚举值,见 POSE_ANIM
+var _server_facing: int = 1
+const SERVER_INTERP_RATE := 30.0     # 紧跟踪服务器位置(60Hz 快照下滞后约 1 帧;接缝不爬行)
+
+func set_server_rendered(enabled: bool) -> void:
+	server_rendered = enabled
+
+# PvP 客户端每帧喂服务器快照:存目标/姿态/朝向 + 权威采纳血量/防水/倒地。
+func apply_server_snapshot(data: Dictionary) -> void:
+	_server_target = data.get("pos", _server_target)
+	_server_have_target = true
+	_server_pose = int(data.get("pose", _server_pose))
+	_server_facing = int(data.get("facing", facing_direction))
+	velocity = data.get("vel", velocity)   # 供 water_fx 等读速度做视觉
+	# 武器槽位以服务器权威为准(本地切枪已在 _update_server_rendered 即时反馈,这里防脱同步)
+	var wslot := int(data.get("weapon", 0))
+	if wslot > 0 and wslot != weapons.current_slot_int():
+		weapons.equip(str(wslot))
+	var hp := int(data.get("hp", self.hp))
+	var wp := int(data.get("waterproof", waterproof))
+	var downed := bool(data.get("downed", combat.is_downed()))
+	if hp != self.hp or wp != waterproof or downed != combat.is_downed():
+		apply_authoritative_state(hp, wp, downed)
+
 
 func _ready() -> void:
 	add_to_group("player")
@@ -116,6 +164,9 @@ func _approach(current: float, target: float, rate: float, delta: float) -> floa
 
 
 func _physics_process(delta: float) -> void:
+	if server_rendered:
+		_update_server_rendered(delta)
+		return
 	if combat.is_downed():
 		# 死亡(倒地):不取消物理——重力/制动/击退照常,只是不吃输入、不结算战斗
 		if is_on_floor():
@@ -135,18 +186,23 @@ func _physics_process(delta: float) -> void:
 		return
 	combat.update_iframe_blink(delta)
 
+	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
+	var wslot := input_source.get_weapon_slot_pressed()
+	if wslot > 0:
+		weapons.equip(str(wslot))
+
 	var mult := weapons.movement_multiplier()
 
 	var horizontal_input = input_source.get_axis("left", "right")
 
 	# ---------- 水中(浮水/游泳):速度由 swim 设置,跳过攀爬/重力/跳跃/下蹲/冲刺 ----------
-	var in_water := swim.update(self, delta, mult)
+	var in_water := swim.update(self, delta, mult, input_source)
 	_update_waterproof(delta)
 	var climbing := false
 	var latched := false
 	if not in_water:
 		# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
-		climbing = climb.update(mult, delta, is_squat)
+		climbing = climb.update(mult, delta, is_squat, input_source)
 		latched = climb.is_latched()
 	else:
 		# 水中:清掉冲刺/下蹲残留,避免姿态锁死
@@ -314,6 +370,39 @@ func is_downed() -> bool:
 func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
+# 服务器快照权威状态:血量/防水/倒地直接采纳(本地 hit 事件只做视觉,血量以快照为准)。
+func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: bool) -> void:
+	combat.hp = clampi(hp_val, 0, combat.max_hp)
+	combat.hp_changed.emit(combat.hp, combat.max_hp)
+	waterproof = clampi(waterproof_val, 0, max_waterproof)
+	waterproof_changed.emit(waterproof, max_waterproof)
+	if downed_val and not combat.is_downed():
+		combat.force_down()
+	elif not downed_val and combat.is_downed():
+		combat.revive()
+
+# PvP 服务器渲染:位置最短路径插值 + 姿态/朝向由快照驱动(不跑本地物理,服务器权威)。
+func _update_server_rendered(delta: float) -> void:
+	combat.update_iframe_blink(delta)   # 受击无敌闪烁仍本地播放
+	# 切枪:服务器渲染模式跳过移动路径里的切枪轮询,这里补(本地即时反馈;服务器从输入包同切)。
+	var wslot := input_source.get_weapon_slot_pressed()
+	if wslot > 0:
+		weapons.equip(str(wslot))
+	if not _server_have_target:
+		return
+	# 当前 canonical 位置 → 服务器 canonical 位置的最短向量,指数插值(跨接缝连续)
+	var d := MazeGenerator.toroidal_delta_px(global_position, _server_target,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	global_position += d * (1.0 - exp(-SERVER_INTERP_RATE * delta))
+	# 回中间副本:插值可能跨接缝进入邻副本,取模回 canonical(本地玩家恒在中间副本)
+	global_position = MazeGenerator.wrap_to_range(global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# 朝向 + 姿态动画(倒地由 combat 停动画/转体,这里不覆盖)
+	facing_direction = 1 if _server_facing >= 0 else -1
+	animator.flip_h = facing_direction < 0
+	if not combat.is_downed():
+		animator.play(POSE_ANIM[clampi(_server_pose, Pose.STAND, Pose.SQUAT)])
+
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:
 	jump_buffer_timer = 0.0
@@ -357,10 +446,7 @@ func _set_waterproof(v: int) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if combat.is_downed():
-		if event.is_action_pressed("R"):
+		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。
+		if not Level0.pvp_mode and event.is_action_pressed("R"):
 			get_tree().reload_current_scene()
 		return
-	for slot in ["1", "2", "3", "4", "5"]:
-		if event.is_action_pressed(slot):
-			weapons.equip(slot)
-			return

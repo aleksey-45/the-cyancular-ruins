@@ -4,6 +4,20 @@ set -e
 GODOT="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
 cd "$(dirname "$0")/.."
 
+# Windows 下 bash `kill` 杀不死 headless Godot 进程(会留僵尸占 7777),改用 taskkill 强杀。
+kill_procs() {
+	for p in "$@"; do
+		taskkill //F //PID "$p" >/dev/null 2>&1 || true
+	done
+}
+# 按端口强杀服务器:Git Bash 的 $! 不一定等于 Windows 进程 PID(实测 taskkill 按 $! 杀不掉),
+# 用 netstat 找持有 7777 的 PID 才是权威。
+kill_port() {
+	for pid in $(netstat -ano 2>/dev/null | grep -i ":7777" | awk '{print $NF}' | sort -u); do
+		taskkill //F //PID "$pid" >/dev/null 2>&1 || true
+	done
+}
+
 echo "== 启动服务器 =="
 "$GODOT" --headless --path . res://server/server_main.tscn > /tmp/pvp_server.log 2>&1 &
 SERVER_PID=$!
@@ -21,7 +35,7 @@ for i in $(seq 1 30); do
   sleep 0.5
 done
 if [ -z "$CODE" ]; then
-  echo "SMOKE FAIL: 建房客户端未拿到房间号"; cat /tmp/pvp_a.log; kill $SERVER_PID $A_PID 2>/dev/null; exit 1
+  echo "SMOKE FAIL: 建房客户端未拿到房间号"; cat /tmp/pvp_a.log; kill_procs $SERVER_PID $A_PID; kill_port; exit 1
 fi
 echo "房间号=$CODE"
 
@@ -38,7 +52,8 @@ done
 
 wait $A_PID 2>/dev/null || true
 wait $B_PID 2>/dev/null || true
-kill $SERVER_PID 2>/dev/null || true
+kill_procs $SERVER_PID $A_PID $B_PID
+kill_port
 
 if [ -n "$OK" ]; then
   echo "SMOKE PASS"
