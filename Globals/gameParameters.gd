@@ -28,6 +28,12 @@ var MAP_HEIGHT: int
 
 func _ready() -> void:
 	# 地图尺寸以实际地图文件为准(不再用固定常量,避免地图变更后失真)。
+	refresh_map_size()
+
+# 按当前 pin 的地图文件重算世界像素尺寸。PvP 服务器开局 pin 固定地图后必须重调一次:
+# _ready 在启动时算的是当时随机挑的地图(如 demo 125×75 → 8000 宽),若 PvP 图尺寸不同
+# (factory 150×100 → 9600 宽)而不重算,环面回绕/最短路径会按错边界,玩家在图中间被"空气墙"弹走。
+func refresh_map_size() -> void:
 	var cells := MazeGenerator.map_size()
 	MAP_WIDTH = cells.x * TILE_SIZE
 	MAP_HEIGHT = cells.y * TILE_SIZE

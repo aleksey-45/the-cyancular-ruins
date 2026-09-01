@@ -20,6 +20,9 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 # headless 启动游戏 90 帧后退出(看脚本报错)
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
 
+# PvP 服务端(headless,监听 7777;保持终端开着=运行中)。更省事:双击仓库根 start_server.bat。
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
+
 # 导出单 exe 发布版
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
 ```
@@ -92,12 +95,12 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 
 ### 网络与 PvP(阶段 1 + 阶段 2:匹配进图 + 对局互通)
 - 服务器:`server/server_main.tscn` 入口(headless 运行,`--headless --path . res://server/server_main.tscn`),`server/room_manager.gd`(`RoomManager`)房间注册表:建房签房间号、加入、2 人就绪发 `match_start`(含 role/出生点/地图文件名)+ 建 `server/match_host.gd`(`MatchHost`)权威对局。
-- **`MatchHost`(每房间一个)**:建世界(WorldBuilder 只碰撞不渲染)+ 两个 `Player.tscn` 实例注入 `NetworkInputSource` 权威模拟;每物理帧消费双方输入包、30Hz 广播快照、裁决子弹命中并广播 `bullet_spawn`/`hit_event`。
-- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号)→ `pvp_game`(`pvp_client.gd`:Level0 pvp_mode 世界 + 本地玩家 C2 + 补后处理 + 每 tick 上报输入 + 快照自校正 + `PlayerReplica` 远端副本最短路径插值 + 收子弹事件生成本地视觉副本)。
-- 协议(经 `NetBus` autoload RPC):输入包(60Hz reliable,`send_input`:轴/held/pressed/released 位掩码+切枪+瞄准方向)、快照包(30Hz unreliable,`snapshot`:每玩家 pos/vel/facing/pose/weapon/hp/waterproof/downed)、事件包(reliable,`bullet_spawn`/`hit_event`)。**环面纪律**:协议只传 canonical 坐标、渲染各端归最近副本、插值走 `toroidal_delta_px` 最短路径。
-- 输入抽象:`InputSource` 基类(本地委托真实 Input)+ `NetworkInputSource`(消费输入包,服务器唯一消费方)。`weapon_base` 攻击经 player 查询(`is_attack_pressed` 等,has_method 守卫回退 Input);`BulletBase.apply_damage=false` = 客户端视觉副本(不裁决,伤害由服务器裁决)。
-- PvP 固定地图 `factory_1V1(260827).cyrm`(150×100,`# player 17 65` + `# player2 133 64`)。
-- 测试:`Tests/pvp_room_smoke.sh` 断言建房/加入/开局;`Tests/pvp_match_smoke.sh` 断言输入→模拟→快照→子弹广播链路(loopback)。**阶段 3(回合/记分/复活/换边)未做**;死亡即倒地、不复活。
+- **`MatchHost`(每房间一个)**:建世界(WorldBuilder 只碰撞不渲染)+ 两个 `Player.tscn` 实例注入 `NetworkInputSource` 权威模拟;每物理帧消费双方输入包、60Hz 广播快照、裁决子弹命中并广播 `bullet_spawn`/`hit_event`。开局 pin PvP 地图后要调 `GameParameters.refresh_map_size()` 重算世界尺寸(_ready 启动时算的是随机 demo 图,工厂图 9600 宽不同,不重算则环面回绕按错边界出现空气墙)。
+- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号)→ `pvp_game`(`pvp_client.gd`:Level0 pvp_mode 世界 + 补后处理 + 每 tick 上报输入 + 快照消费)。**本地玩家 = 服务器渲染(放弃 C2 客户端预测)**:`player.gd` 的 `server_rendered` 模式下跳过全部移动物理,位置/姿态/朝向由快照插值(`apply_server_snapshot` + `_update_server_rendered`),血量/防水/倒地直接采纳;只保留鼠标瞄准/开火/受击反馈等本地视觉。根因:C2 对梯子等"边沿+位置敏感"机制与服务器权威打架 → 大量回拉,故放弃。远端对手 = `PlayerReplica` 纯视觉副本。**副本取模纪律(重要)**:`player_replica` 每帧把目标锚到本地玩家最近副本、把当前渲染位置锚到目标副本空间再普通差量插值,最后锚回本地玩家——**不要用 `toroidal_delta_px` 做最短路径插值**(渲染位置与目标相隔整幅地图时最短向量=0,副本一旦落到远副本就永远留在那 → 对手渲染到屏幕外「看不见」)。
+- 协议(经 `NetBus` autoload RPC):输入包(60Hz reliable,`send_input`:轴/held/pressed/released 位掩码+切枪+瞄准方向)、快照包(60Hz unreliable,`snapshot`:每玩家 pos/vel/facing/pose/weapon/hp/waterproof/downed)、事件包(reliable,`bullet_spawn`/`hit_event`/**`tile_destroyed`**——服务器拆墙广播,客户端 `TileDefs.damage_tile(cell,大伤,"explosion")` 触发 Level0 清瓦片渲染,否则建筑"看着没被炸坏")。**环面纪律**:协议只传 canonical 坐标、渲染各端归最近副本、插值走 `toroidal_delta_px` 最短路径。
+- 输入抽象:`InputSource` 基类(本地委托真实 Input)+ `NetworkInputSource`(消费输入包,服务器唯一消费方)。`NetworkInputSource.get_axis` **垂直轴由 held 位推导、水平轴返回 `ax`**(输入包只传水平轴,`climb_component` 用 `get_axis("up","down")` 读垂直——曾一律返回水平轴致服务器挂梯不动)。`weapon_base` 攻击经 player 查询(`is_attack_pressed` 等,has_method 守卫回退 Input);`BulletBase.apply_damage=false` = 客户端视觉副本(不裁决,伤害由服务器裁决)。
+- PvP 固定地图 `factory_1V1(260827).cyrm`(150×100,`# player 17 65` + `# player2 133 64`;两出生点相距约 2200px 超视野,走近才互见)。
+- 测试:`Tests/pvp_room_smoke.sh` 断言建房/加入/开局;`Tests/pvp_match_smoke.sh` 断言输入→模拟→快照→子弹广播链路(loopback)。脚本收尾用 `taskkill` 按 PID + `kill_port`(netstat 找 7777 持有者)强杀——**Windows 下 bash `kill` 杀不死 headless Godot,会留僵尸占 7777**。**阶段 3(回合/记分/复活/换边)未做**;死亡即倒地、不复活。
 
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。

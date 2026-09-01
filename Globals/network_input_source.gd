@@ -37,7 +37,22 @@ func clear_edges() -> void:
 	_released = 0
 	_weapon = 0
 
-func get_axis(_neg: String, _pos: String) -> float:
+func get_axis(neg: String, pos: String) -> float:
+	# 垂直轴由 held 位推导:输入包只传水平 ax,up/down 已并入 held 位掩码。
+	# 原实现一律返回水平 _axis → climb_component 的 get_axis("up","down") 在服务器上恒为 0,
+	# 服务器玩家攀附后挂梯不动、客户端正常上爬 → 大分歧 → 快照回拉(梯子回拉根因)。
+	if neg == "up" and pos == "down":
+		if _held & BIT_UP != 0:
+			return -1.0
+		if _held & BIT_DOWN != 0:
+			return 1.0
+		return 0.0
+	if neg == "down" and pos == "up":
+		if _held & BIT_DOWN != 0:
+			return -1.0
+		if _held & BIT_UP != 0:
+			return 1.0
+		return 0.0
 	return _axis
 
 func is_action_pressed(action: String) -> bool:

@@ -68,6 +68,9 @@ func on_peer_left(peer_id: int) -> void:
 func _start_match(room: Room) -> void:
 	# PvP 固定用 1v1 竞技场地图(含 player/player2 出生点);客户端加载同名文件。
 	MazeGenerator.set_map_file(PVP_MAP)
+	# 重算世界尺寸:GameParameters._ready 在启动时算的是随机 demo 图(8000 宽),
+	# factory 图是 9600 宽,不重算则环面回绕按错边界 → 玩家在图中间被空气墙弹走。
+	GameParameters.refresh_map_size()
 	var map_path := MazeGenerator.map_file_path()
 	var spawns := MazeGenerator.load_spawns()
 	var s1: Vector2i = spawns.get("player", Vector2i(-1, -1))

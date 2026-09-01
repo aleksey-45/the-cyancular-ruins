@@ -13,7 +13,7 @@ var grid: Array = []
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
-const SNAPSHOT_INTERVAL := 1.0 / 30.0   # 30Hz 快照(unreliable)
+const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 模拟,本地玩家靠快照渲染,30Hz 太卡)
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
 var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
@@ -98,6 +98,10 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 			for qx in range(2):
 				destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+	# 广播拆墙给双方客户端:客户端子弹是视觉副本(apply_damage=false)不判伤害,
+	# 服务器拆的墙必须由事件驱动客户端清瓦片渲染,否则建筑"看着没被炸坏"。
+	for role in peer_by_role:
+		NetBus.rpc_id(peer_by_role[role], "tile_destroyed", cell)
 
 # 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
 # 带递增序号 tick:客户端靠它丢弃乱序到达的旧快照(unreliable 通道可能乱序)。
