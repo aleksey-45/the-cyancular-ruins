@@ -41,6 +41,9 @@ func _ready() -> void:
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
+	NetBus.local_round_state.connect(_on_round_state)
+	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
+	add_child(PvpHud.new())
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -148,3 +151,10 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	TileDefs.damage_tile(cell, 999999, "explosion")
+
+# 回合状态:MATCH_OVER → 延时后断连回主菜单(记分显示由 PvpHud 负责)。
+func _on_round_state(data: Dictionary) -> void:
+	if int(data.get("state", 0)) == 3:   # MatchHost.RoundState.MATCH_OVER
+		get_tree().create_timer(5.0).timeout.connect(func() -> void:
+			NetBus.stop()
+			get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))

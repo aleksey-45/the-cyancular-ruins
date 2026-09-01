@@ -14,6 +14,7 @@ var _last_pos := Vector2(-999999, -999999)
 var _moved := false
 var _got_snapshot := false
 var _got_bullet_spawn := false
+var _got_round_state := false   # 回合制:收到 round_state(初始 COUNTDOWN 广播)
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -28,6 +29,7 @@ func _ready() -> void:
 	NetBus.local_match_start.connect(func(r: int, _s: Vector2i, _m: String) -> void: my_role = r)
 	NetBus.local_snapshot.connect(_on_snapshot)
 	NetBus.local_bullet_spawn.connect(func(_d: Dictionary) -> void: _got_bullet_spawn = true)
+	NetBus.local_round_state.connect(func(_d: Dictionary) -> void: _got_round_state = true)
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
 		printerr("SMOKE_MATCH FAIL: 连接失败")
@@ -82,15 +84,15 @@ func _physics_process(_delta: float) -> void:
 		NetBus.rpc_id(1, "send_input", pkt)
 	# 成功判定
 	if role == "create":
-		if _got_snapshot and _moved and _frames > 240:
-			print("SMOKE_MATCH OK create: snapshot+own pos moved")
+		if _got_snapshot and _got_round_state and _moved and _frames > 240:
+			print("SMOKE_MATCH OK create: snapshot+round_state+own pos moved")
 			get_tree().quit(0)
 	else:
-		if _got_snapshot and _got_bullet_spawn and _frames > 240:
-			print("SMOKE_MATCH OK join: snapshot+bullet_spawn received")
+		if _got_snapshot and _got_round_state and _got_bullet_spawn and _frames > 240:
+			print("SMOKE_MATCH OK join: snapshot+round_state+bullet_spawn received")
 			get_tree().quit(0)
 	# 超时
 	if _frames > 600:
-		printerr("SMOKE_MATCH FAIL: 超时 role=%s snapshot=%s moved=%s bullet_spawn=%s" % [
-			role, _got_snapshot, _moved, _got_bullet_spawn])
+		printerr("SMOKE_MATCH FAIL: 超时 role=%s snapshot=%s round=%s moved=%s bullet_spawn=%s" % [
+			role, _got_snapshot, _got_round_state, _moved, _got_bullet_spawn])
 		get_tree().quit(1)

@@ -79,6 +79,12 @@ func revive() -> void:
 	var animator: AnimatedSprite2D = body.animator
 	if animator != null:
 		animator.play("idle")
+	# 复位倒地变灰:_downed() 只 set_downed(true),不复位则复活后屏幕一直灰(PvP 回合复活)。
+	var tree := body.get_tree()
+	if tree != null:
+		var pp := tree.get_first_node_in_group("post_process")
+		if pp != null and pp.has_method("set_downed"):
+			pp.set_downed(false)
 
 func _downed() -> void:
 	downed = true

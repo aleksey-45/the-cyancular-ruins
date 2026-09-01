@@ -19,6 +19,8 @@ signal local_snapshot(snap: Dictionary)
 signal local_bullet_spawn(data: Dictionary)
 signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
 signal local_tile_destroyed(cell: Vector2i)
+signal local_round_state(data: Dictionary)
+signal local_kill_event(killer: int, victim: int)
 
 const DEFAULT_PORT := 7777
 
@@ -84,6 +86,14 @@ func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 @rpc("authority", "reliable")
 func tile_destroyed(cell: Vector2i) -> void:
 	local_tile_destroyed.emit(cell)
+
+@rpc("authority", "reliable")
+func round_state(data: Dictionary) -> void:
+	local_round_state.emit(data)
+
+@rpc("authority", "reliable")
+func kill_event(killer: int, victim: int) -> void:
+	local_kill_event.emit(killer, victim)
 
 @rpc("authority", "reliable")
 func room_created(code: String) -> void:

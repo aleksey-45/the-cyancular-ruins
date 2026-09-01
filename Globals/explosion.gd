@@ -5,7 +5,7 @@ extends RefCounted
 const INNER_FRACTION: float = 0.4  # 内圈半径比例,内圈内满伤
 const BLOCKED_FRACTION: float = 0.75  # 墙后(LOS 遮挡)伤害/击退保留比例
 
-static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float) -> void:
+static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float, shooter: Node = null) -> void:
 	var tree := _tree()
 	var grid := MazeGenerator.current_grid
 	var has_grid := not grid.is_empty()
@@ -45,6 +45,9 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
+			# 击杀归因:爆炸把玩家打到倒地(上面已跳过已倒地)→ 记射手,供 MatchHost 倒地转换检测计分
+			if pp.has_method("is_downed") and pp.is_downed():
+				pp.set_meta("pvp_killer", shooter)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, grid)

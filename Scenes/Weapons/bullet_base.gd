@@ -168,4 +168,4 @@ func _explode() -> void:
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
 	if apply_damage:
-		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback)
+		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)
