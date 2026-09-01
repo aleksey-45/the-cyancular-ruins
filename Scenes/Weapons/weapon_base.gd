@@ -118,6 +118,22 @@ func _ready() -> void:
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
 
+# 攻击输入查询:优先走 player 的注入输入(NetworkInputSource);本地/冒烟无该方法时回退真实 Input。
+func _attack_pressed() -> bool:
+	if player != null and player.has_method("is_attack_pressed"):
+		return player.is_attack_pressed()
+	return Input.is_action_pressed("attack")
+
+func _attack_just_pressed() -> bool:
+	if player != null and player.has_method("is_attack_just_pressed"):
+		return player.is_attack_just_pressed()
+	return Input.is_action_just_pressed("attack")
+
+func _attack_just_released() -> bool:
+	if player != null and player.has_method("is_attack_just_released"):
+		return player.is_attack_just_released()
+	return Input.is_action_just_released("attack")
+
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
 	# 切枪继承旧武器剩余冷却:后摇不能被切枪刷掉(否则可切枪连射)
@@ -137,26 +153,22 @@ func _process(delta: float) -> void:
 	if _fire_buffered and fire_cd_timer == 0.0:
 		_fire_buffered = false
 		fire()
+	# 攻击输入轮询:heavy_aim 预瞄/松开发射,全自动按住连发,半自动按下单发。
 	if heavy_aim:
-		_update_laser()
-	elif full_auto and Input.is_action_pressed("attack"):
-		try_fire()
-	_recoil_recover(delta)
-
-func _unhandled_input(event: InputEvent) -> void:
-	if not _player_ok():
-		return
-	if heavy_aim:
-		if event.is_action_pressed("attack"):
+		if _attack_just_pressed():
 			_aiming = true
-			_update_laser()
-		elif event.is_action_released("attack"):
+		if _attack_just_released():
 			_aiming = false
 			_update_laser()
 			try_fire()
-		return
-	if not full_auto and event.is_action_pressed("attack"):
-		try_fire()
+		_update_laser()
+	elif full_auto:
+		if _attack_pressed():
+			try_fire()
+	else:
+		if _attack_just_pressed():
+			try_fire()
+	_recoil_recover(delta)
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:
@@ -185,6 +197,10 @@ func fire() -> void:
 		b.hit_damage = damage
 		b.hit_impact = impact
 		b.global_position = muzzle.global_position
+		# PvP:本地生成的子弹只做视觉(不裁决伤害);服务器权威子弹(Level0.pvp_mode=false)照常裁决。
+		b.apply_damage = not Level0.pvp_mode
+		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)
+		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
@@ -329,6 +345,10 @@ func _recoil_recover(delta: float) -> void:
 		if _recoil_timer == 0.0:
 			sprite.position = _base_sprite_pos
 
+# 当前瞄准方向(世界坐标系):本地=鼠标计算,网络=注入方向。PvP 输入包上报用。
+func get_current_aim_dir() -> Vector2:
+	return _aim_world_dir()
+
 # 世界坐标系下从玩家指向鼠标的单位向量(未钳制俯仰)。
 func _aim_world_dir() -> Vector2:
 	# 网络驱动的玩家(服务器上的远端模拟)用注入的瞄准;本地玩家返回 ZERO → 落回鼠标。
@@ -337,11 +357,13 @@ func _aim_world_dir() -> Vector2:
 		var override: Vector2 = player.get_aim_dir_override()
 		if override != Vector2.ZERO:
 			return override
-	var cam: Camera2D = get_viewport().get_camera_2d()
 	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),
 	# 若标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
 	var sub: Viewport = get_viewport()
-	if cam == null or sub == null:
+	if sub == null:
+		return Vector2(float(get_facing()), 0.0)
+	var cam: Camera2D = sub.get_camera_2d()
+	if cam == null:
 		return Vector2(float(get_facing()), 0.0)
 	var win: Viewport = sub.get_window()
 	if win == null:

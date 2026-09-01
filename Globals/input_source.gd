@@ -20,3 +20,20 @@ func is_action_just_released(action: String) -> bool:
 # 瞄准覆盖:本地返回 ZERO → 武器落回鼠标计算;网络驱动的玩家返回注入的瞄准方向。
 func get_aim_dir_override() -> Vector2:
 	return Vector2.ZERO
+
+# ── 攻击与切枪(本地委托真实 Input;NetworkInputSource 覆写)──
+func is_attack_pressed() -> bool:
+	return Input.is_action_pressed("attack")
+
+func is_attack_just_pressed() -> bool:
+	return Input.is_action_just_pressed("attack")
+
+func is_attack_just_released() -> bool:
+	return Input.is_action_just_released("attack")
+
+# 本轮按下的武器槽位(0=无,1-5)。本地用 Input 事件,网络由注入包提供。
+func get_weapon_slot_pressed() -> int:
+	for i in range(1, 6):
+		if Input.is_action_just_pressed(str(i)):
+			return i
+	return 0

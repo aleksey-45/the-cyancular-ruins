@@ -20,7 +20,11 @@ func is_latched() -> bool:
 # **到顶 = 脚底进入梯子上方一格才停**(以脚底为参考格);再按上 = 跳离梯子。
 # 上爬按瓦片 climb_speed 倍(梯 1.6/锁链 2.0),下降按 climb_descent_speed 倍(梯 2.0),
 # 锁链无下降倍率(0)→ 解除攀附交给重力自由落体;松开挂住。返回「正在垂直攀爬」。
-func update(mult: Vector2, delta: float, is_squat: bool) -> bool:
+func update(mult: Vector2, delta: float, is_squat: bool,
+		src: InputSource = null) -> bool:
+	# src=null(冒烟等直接调用)回落真实 Input;本地玩家传入自己的 input_source,服务器传入注入源。
+	if src == null:
+		src = InputSource.new()
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty() or is_squat:
 		_latched = false
@@ -36,10 +40,10 @@ func update(mult: Vector2, delta: float, is_squat: bool) -> bool:
 	var cs: float = maxf(TileDefs.climb_speed(fv / 16), TileDefs.climb_speed(cv / 16))
 	var foot_in_channel := fv != 0 and TileDefs.climb_speed(fv / 16) > 0.0
 	var center_in_channel := cv != 0 and TileDefs.climb_speed(cv / 16) > 0.0
-	var climb_input := Input.get_axis("up", "down")
+	var climb_input := src.get_axis("up", "down")
 	# 进入攀附:中心或脚底在通道格且「刚按下上」(主动抓;不是按住——跳离梯子后按着上也抓不回)
 	# 退出:中心与脚底都不在通道格,且脚底不在梯顶(到顶 = 挂住不算退出)
-	if not _latched and (center_in_channel or foot_in_channel) and Input.is_action_just_pressed("up"):
+	if not _latched and (center_in_channel or foot_in_channel) and src.is_action_just_pressed("up"):
 		_latched = true
 	if _latched and not center_in_channel and not foot_in_channel and not _foot_at_ladder_top(foot_cell):
 		_latched = false
@@ -55,7 +59,7 @@ func update(mult: Vector2, delta: float, is_squat: bool) -> bool:
 				body.velocity.x = 0.0
 			return true
 		# 脚底进入梯子上方一格 → 到顶:再按上 = 跳离梯子,进入上方空间
-		if Input.is_action_just_pressed("up"):
+		if src.is_action_just_pressed("up"):
 			_latched = false
 			body.velocity.y = PlayerParams.jump_velocity * mult.y
 			body.cancel_jump_state()

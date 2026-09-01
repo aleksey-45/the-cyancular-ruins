@@ -18,6 +18,7 @@ var source: Node = null
 var shooter: Node = null  # 射手玩家(击杀归因用):本地=武器持有者;服务器=权威模拟里的玩家
 var hit_damage: int = 0    # 命中伤害(武器 fire 注入;切枪后 source 失效时兜底直接结算)
 var hit_impact: float = 0.0  # 命中击退(同上)
+var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨迹,不裁决伤害(伤害由服务器裁决)
 
 # ── 爆炸弹(榴弹等) ──
 @export var explodes: bool = false        # 是否爆炸弹
@@ -49,6 +50,8 @@ func _ready() -> void:
 	var sp := get_node_or_null("Sprite2D") as Sprite2D
 	if sp != null:
 		sp.modulate = bullet_color
+	# 服务器裁决用:所有子弹进 bullet 组,MatchHost 遍历做命中判定/广播
+	add_to_group("bullet")
 
 func _physics_process(delta: float) -> void:
 	if gravity_factor > 0.0:
@@ -82,10 +85,11 @@ func _physics_process(delta: float) -> void:
 				rotation = velocity_vec.angle()
 			return
 		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时,用子弹自带 damage/impact 兜底直接结算。
-		if hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
+		# 视觉副本(apply_damage=false)不裁决伤害,直接消失。
+		if apply_damage and hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
 			source.apply_hit(hit, velocity_vec)
 			queue_free()
-		elif hit.is_in_group("enemies"):
+		elif apply_damage and hit.is_in_group("enemies"):
 			hit.hurt(hit_damage, velocity_vec, hit_impact)
 			queue_free()
 		else:
@@ -111,7 +115,11 @@ func _apply_water_drag(delta: float) -> void:
 
 func _wrap() -> void:
 	# 与敌人一致:锚定到离玩家最近的副本(跟着主角取模),接缝附近不消失。
+	# PvP 服务器上有两个玩家在 player 组:优先锚到射手(否则 role2 子弹会锚到 role1 副本)。
+	# 客户端视觉副本 shooter 为 null → 回落第一个玩家(即本地玩家)。
 	var p := get_tree().get_first_node_in_group("player") as Node2D
+	if shooter != null and is_instance_valid(shooter) and shooter is Node2D and shooter.is_in_group("player"):
+		p = shooter as Node2D
 	if p == null:
 		global_position = MazeGenerator.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
@@ -141,6 +149,8 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 			return
 
 func _direct_hit(hit: Node) -> void:
+	if not apply_damage:
+		return
 	if hit.has_method("hurt"):
 		var dir := velocity_vec.normalized() if not velocity_vec.is_zero_approx() else Vector2.RIGHT
 		hit.hurt(direct_hit_damage, dir)
@@ -157,4 +167,5 @@ func _explode() -> void:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
-	Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback)
+	if apply_damage:
+		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback)

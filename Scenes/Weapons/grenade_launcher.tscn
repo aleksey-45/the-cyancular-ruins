@@ -3,7 +3,7 @@
 [ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
 [ext_resource type="PackedScene" uid="uid://cy1fv8ws23gnb" path="res://Scenes/Weapons/grenade_bullet.tscn" id="2_gb"]
 
-[ext_resource type="Texture2D" uid="uid://cfbhunkx3526n" path="res://assets/textures/weapons.png" id="2_wpn"]
+[ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
 
 [node name="GrenadeLauncher" type="Node2D" unique_id=1484159833]
 script = ExtResource("1_wb")
