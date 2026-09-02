@@ -69,6 +69,7 @@ git clone --depth 1 --branch 4.7.1-stable https://gitee.com/mirrors/godot.git E:
   - `disabled_classes`:游戏没用到的类(音频播放器、粒子、AnimationPlayer、GUI 控件等)。
 - 游戏用到的类**全部保留**在 profile 之外(`CharacterBody2D`/`Area2D`/`TileMapLayer`/`Parallax2D`/`CanvasLayer`/`Control`/`ColorRect`/`Label`/`Tween`/`Timer`/`AtlasTexture`/`SpriteFrames` 等)。
   > `Label` 是击杀计数(HUD 文本)首次引入的 GUI 类——**每新增一个之前没用过的类,就要从 `disabled_classes` 移除它并重编模板**(见 3 排查表)。
+  > **别加一个类就重编一次**:改 classes/模块列表 = 近全量重编 10~15 分钟(见 §2.4),把缺的类一次集齐再烘焙。
 
 ### 2.4 编译模板
 构建脚本:**`E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat`**。等价命令:
@@ -81,7 +82,9 @@ python -m SCons platform=windows target=template_release production=yes optimize
     build_profile=E:\Workspace\godot\the-cyancular-ruins\cyancular_build_profile.gdbuild -j 8
 ```
 
-- 首次全量编译约 13 分钟;改 profile 后增量编译 1~2 分钟。
+- 首次全量编译约 13 分钟。
+- **改 profile 不是 1~2 分钟的廉价增量,实测近全量、10~15 分钟**:`disabled_classes` 一改 → 重生成 `core/disabled_classes.gen.h` → 它被 `core/object/class_db.h` include → 全引擎数百个 .cpp 连锁重编(实测只放开几十个类就重编了 377/1519 个 obj,约 13 分钟);开关整个模块还会重生成 `modules/modules_enabled.gen.h` + 第三方库,更接近全量。真正 1~2 分钟的增量只有「**不改 profile**、单改引擎源码文件」这一种情况。
+- **迭代建议**:发现导出 exe 报 `missing class X`,先用**官方全功能模板**导个全量版跑一遍,一次性记下所有缺的类,再一次放开、一次烘焙;平时改 GDScript 只需重导出、不要重编模板。
 - 产物:**`E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64.exe`**(约 36 MB)。
 
 ### 2.5 安装模板
@@ -106,7 +109,8 @@ cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64
 |---|---|---|
 | 导出报 `可执行文件"pck"区未找到` | 模板被 UPX 过 / 缺 `pck` 节 | 恢复模板:把 `.orig.exe` 拷回,或重新编译模板 |
 | 启动即闪退,stderr 一堆 `.ctex` / `CompressedTexture2D` 贴图错误 | **webp 模块被关**(贴图是 WebP 存的) | profile 里保留 `module_webp`,重编+重导出 |
-| 运行时报 `missing class X` / 场景加载失败 | profile 裁掉了游戏要用的类 | 把类名从 `disabled_classes` 里移除,重编+重导出 |
+| 运行时报 `missing class X` / 场景加载失败 | profile 裁掉了游戏要用的类 | 把类名从 `disabled_classes` 里移除,重编+重导出;缺多个就**一次集齐再烘焙**(单次≈10~15 分钟近全量) |
+| 重编模板一次 10~15 分钟,不像「增量 1~2 分钟」 | 改 classes/模块列表连锁重编 gen 头,**正常现象** | 迭代用官方模板定位缺类;profile 改动攒批一次烘焙(见 §2.4) |
 | 发布 exe 报 `Could not find type "Label"`(hud.gd 解析失败),项目目录里一切正常 | 加了项目之前没用过的 GUI 类(首个文本 UI 就是 `Label`)但 profile 仍裁着它 | 从 `disabled_classes` 移除该类,重编模板+重导出(见 2.4~2.6) |
 | exe 突然变回 ~109 MB | 模板目录被官方模板覆盖(编辑器更新/重装) | 重新拷贝编译产物,见 2.5 |
 | exe 一直是 Godot 默认图标,自定义 icon 不生效 | 导出预设 `application/modify_resources=false` | 在导出预设里把 `modify_resources` 勾上(=true),重导出 |
