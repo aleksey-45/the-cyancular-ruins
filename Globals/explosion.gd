@@ -45,9 +45,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
-			# 击杀归因:爆炸把玩家打到倒地(上面已跳过已倒地)→ 记射手,供 MatchHost 倒地转换检测计分
-			if pp.has_method("is_downed") and pp.is_downed():
-				pp.set_meta("pvp_killer", shooter)
+			# PvP 击杀计分统一在 MatchHost(对方死亡都算),此处不需记射手 meta
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, grid)

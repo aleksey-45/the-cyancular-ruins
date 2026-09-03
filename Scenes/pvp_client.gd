@@ -10,6 +10,9 @@ var _last_snap_tick := 0
 var _local: Node2D = null
 var _remote_replica: Node2D = null
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
+var _hud: PvpHud = null
+var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
+var _ping_acc := 0.0
 
 func _ready() -> void:
 	MazeGenerator.set_map_file(PvpSession.map_path)
@@ -42,13 +45,20 @@ func _ready() -> void:
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
+	NetBus.local_opponent_left.connect(_on_opponent_left)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
-	add_child(PvpHud.new())
+	_hud = PvpHud.new()
+	add_child(_hud)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
 	if _local == null:
 		return
+	# 周期测延迟(右下角 HUD)
+	_ping_acc += _delta
+	if _ping_acc >= 0.5:
+		_ping_acc = 0.0
+		NetBus.send_ping()
 	var src: InputSource = _local.input_source
 	# 位映射:NetworkInputSource 的常量(输入包协议与服务器共用)
 	const UP := NetworkInputSource.BIT_UP
@@ -141,20 +151,35 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	b.global_position = data["pos"]
 	_world.add_child(b)
 
-# 服务器裁决命中:本地玩家被击中 → 即时反馈(白闪/击退),血量以快照权威为准。
+# 服务器裁决命中:被打的是自己 → 即时反馈(白闪/击退),血量以快照权威为准;
+# 被打的是对手 → 副本受击闪烁,让射手看到自己打中了。
 func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 	if _local == null:
 		return
 	if victim_role == PvpSession.role:
 		_local.take_hit(source_pos, damage, false, -1.0)
+	elif _remote_replica != null and _remote_replica.has_method("play_hit"):
+		_remote_replica.play_hit(source_pos)
 
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	TileDefs.damage_tile(cell, 999999, "explosion")
 
-# 回合状态:MATCH_OVER → 延时后断连回主菜单(记分显示由 PvpHud 负责)。
+# 回合状态:MATCH_OVER → 延时后断连回主菜单(记分/胜利失败显示由 PvpHud 负责)。
 func _on_round_state(data: Dictionary) -> void:
 	if int(data.get("state", 0)) == 3:   # MatchHost.RoundState.MATCH_OVER
+		_match_ended = true
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
 			NetBus.stop()
 			get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
+
+# 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
+func _on_opponent_left() -> void:
+	if _match_ended or _local == null:
+		return
+	_match_ended = true
+	if _hud != null:
+		_hud.show_notice("对手已离开", "对局结束")
+	get_tree().create_timer(2.5).timeout.connect(func() -> void:
+		NetBus.stop()
+		get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))

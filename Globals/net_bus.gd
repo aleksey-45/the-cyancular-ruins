@@ -21,10 +21,15 @@ signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
 signal local_tile_destroyed(cell: Vector2i)
 signal local_round_state(data: Dictionary)
 signal local_kill_event(killer: int, victim: int)
+signal local_opponent_left          # 对局中途对手断线(服务器 → 存活方,播报后回菜单)
+signal ping_updated(ms: int)        # 平滑后延迟 ms
 
 const DEFAULT_PORT := 7777
 
 var is_server_mode: bool = false
+
+var ping_ms := 0        # 平滑后 RTT(ms),0=尚未采样
+var _ping_sent_ms := 0
 
 func _ready() -> void:
 	multiplayer.peer_connected.connect(func(id: int) -> void: print("NetBus: 玩家连入 peer=%d" % id))
@@ -110,3 +115,25 @@ func match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 @rpc("authority", "reliable")
 func server_message(text: String) -> void:
 	local_server_message.emit(text)
+
+# ── 延迟测量:客户端周期 ping → 服务器原样回 pong → 客户端算 RTT(EWMA 平滑)──
+func send_ping() -> void:
+	_ping_sent_ms = Time.get_ticks_msec()
+	rpc_id(1, "ping")
+
+@rpc("any_peer", "reliable")
+func ping() -> void:
+	rpc_id(multiplayer.get_remote_sender_id(), "pong")
+
+@rpc("authority", "reliable")
+func pong() -> void:
+	var ms := Time.get_ticks_msec() - _ping_sent_ms
+	if ms < 0:
+		return
+	ping_ms = ms if ping_ms == 0 else int(round(ping_ms * 0.6 + ms * 0.4))
+	ping_updated.emit(ping_ms)
+
+# 对局中途对手断线(1v1 无法继续 → 存活方播报后回菜单)
+@rpc("authority", "reliable")
+func opponent_left() -> void:
+	local_opponent_left.emit()

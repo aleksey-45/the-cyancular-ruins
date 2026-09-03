@@ -245,7 +245,8 @@ func _physics_process(delta: float) -> void:
 			if input_source.is_action_just_released("down"):
 				is_squat = false
 		else:
-			if input_source.is_action_just_pressed("down"):
+			# 空中下冲:身在梯/链格上不能下冲(否则跳上去按↓可直接穿梯/链),只能抓住爬。
+			if input_source.is_action_just_pressed("down") and not climb.is_over_climb_tile():
 				velocity.y = charge_down_velocity
 
 	# ---------- 冲刺输入 ----------
@@ -419,7 +420,10 @@ func _update_waterproof(delta: float) -> void:
 	var submerged := false
 	if swim.in_water:
 		var surface_y := Water.surface_y_at(global_position)
-		submerged = Water.submerged(global_position, surface_y)
+		# 呼吸按「大部分没入」扣:参考线比中心低 water_breath_line_offset(≈胸口下沿),
+		# 水面到这条线就扣,要浮到水面低于它才回气(头能露出仍扣)。
+		var breath_point := global_position + Vector2(0.0, PlayerParams.water_breath_line_offset)
+		submerged = Water.submerged(breath_point, surface_y)
 	if submerged != _was_submerged:
 		_was_submerged = submerged
 		_waterproof_timer = 0.0  # 状态切换重置:入水满 0.5s 才扣第一次

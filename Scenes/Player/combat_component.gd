@@ -39,7 +39,16 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	body.cancel_charge()
 	hp -= damage
 	iframes = PlayerParams.iframes_time
+	# 击退方向用环面最短向量,不用绝对相减:
+	# PvP 服务器权威下,命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与该玩家 canonical
+	# 相差约整幅地图(跨接缝对枪)——绝对 (body - source) 会得出反向击退(受击被打向射手)。
+	# 最短位移保证"沿命中来向把玩家推离"(与命中判定/HitEvent 的 toroidal 距离一致)。
 	var away := (body.global_position - source_pos).normalized()
+	if GameParameters.MAP_WIDTH > 0.0 and GameParameters.MAP_HEIGHT > 0.0:
+		var short_vec := MazeGenerator.toroidal_delta_px(source_pos, body.global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		if not short_vec.is_zero_approx():
+			away = short_vec.normalized()
 	if away == Vector2.ZERO:
 		away = Vector2(-float(body.get_facing()), 0.0)
 	if knockback < 0.0:

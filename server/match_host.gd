@@ -20,7 +20,7 @@ var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
 
 # ── 回合制(阶段4):回合状态机 / 记分 / 复活 / 换边 ──
 enum RoundState { COUNTDOWN, PLAYING, ROUND_OVER, MATCH_OVER }
-const KILLS_TO_WIN := 10     # 每局先到 10 击杀赢
+const KILLS_TO_WIN := 5      # 每局先到 5 击杀赢
 const ROUNDS_TO_WIN := 2     # 三局两胜
 const COUNTDOWN_TIME := 3.0
 const ROUND_OVER_TIME := 4.0
@@ -33,6 +33,7 @@ var _round_timer := 0.0
 var _side_swap := false          # true 时 P1 用 player2 出生点(每局换边)
 var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
+var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
 
 func _init(map_path: String, role_peers: Dictionary) -> void:
 	MazeGenerator.set_map_file(map_path)
@@ -134,6 +135,10 @@ func _broadcast_snapshot() -> void:
 	var snap := {"tick": _snap_tick, "players": {}}
 	for role in players:
 		var p: Node2D = players[role]
+		# 是否正在预瞄(heavy_aim 蓄力):给对手副本画预瞄红线/弧(所有有预瞄的武器)。
+		var previewing := false
+		if p.weapons != null and p.weapons.current_weapon() != null:
+			previewing = p.weapons.current_weapon().is_previewing()
 		snap["players"][str(role)] = {
 			"pos": p.global_position,
 			"vel": p.velocity,
@@ -143,9 +148,14 @@ func _broadcast_snapshot() -> void:
 			"hp": p.hp,
 			"waterproof": p.waterproof,
 			"downed": p.is_downed(),
+			"aim": p.get_current_aim_dir(),
+			"previewing": previewing,
 		}
+	# 只发给仍在线的 peer(对方中途退出后 room teardown 前残留的帧不再刷错)
+	var live_peers := multiplayer.get_peers()
 	for role in peer_by_role:
-		NetBus.rpc_id(peer_by_role[role], "snapshot", snap)
+		if live_peers.has(peer_by_role[role]):
+			NetBus.rpc_id(peer_by_role[role], "snapshot", snap)
 
 # 子弹裁决:遍历 bullet 组。新子弹广播给非射手客户端;命中判定 = 与对手玩家的 toroidal 距离 < HIT_RADIUS。
 func _adjudicate_bullets() -> void:
@@ -206,12 +216,8 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	if victim.has_method("take_hit"):
-		var was_down: bool = victim.has_method("is_downed") and victim.is_downed()
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
-		# 击杀归因:本击致命(存活→倒地)→ 记射手,由 _match_round_tick 倒地转换检测计分
-		# (溺水/自伤/无射手 = 不设 meta → 不计分)
-		if not was_down and victim.has_method("is_downed") and victim.is_downed():
-			victim.set_meta("pvp_killer", bullet.shooter)
+		# 击杀计分不在命中点做(归因统一在 _match_round_tick:对方死亡都算)
 		# 广播命中事件给双方客户端(受害者白闪/击退反馈)
 		for role in peer_by_role:
 			NetBus.rpc_id(peer_by_role[role], "hit_event", victim_role, bullet.hit_damage, bullet.global_position)
@@ -219,12 +225,10 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -
 
 # ── 回合制 ──
 
-# 玩家节点 → role(0=无)。玩家是服务器权威模拟里的 Player 实例。
-func _role_of(node: Node) -> int:
-	if node == null:
-		return 0
+# 某角色的对手 role(1v1,players 恰两个角色;找不到返回 0)。
+func _opponent_of(role: int) -> int:
 	for r in players:
-		if players[r] == node:
+		if int(r) != role:
 			return int(r)
 	return 0
 
@@ -234,23 +238,30 @@ func _spawn_cell(role: int) -> Vector2i:
 	var key := "player" if (role == 1) != _side_swap else "player2"
 	return spawns.get(key, Vector2i(-1, -1))
 
-# 每物理帧:倒地转换检测(击杀归因/计分/安排复活) + 回合状态机推进。
+# 每物理帧:倒地转换检测(击杀计分/安排复活) + 回合状态机推进。
 func _match_round_tick(delta: float) -> void:
-	# 击杀:直击在 _on_bullet_hit 记 pvp_killer,爆炸在 apply_aoe 记,统一这里计分。
 	for role in players:
+		var p: Node2D = players[role]
+		if not p.is_downed():
+			continue
+		# 复活调度独立于计分闩锁:PLAYING 内倒地、未安排复活即安排。
+		# (旧实现把调度塞在计分闩锁内,且读击杀用 get_meta_or_null —— 该方法 Godot 4.7 不存在,
+		#  倒地判定在赋值 killer 时抛错中断 → 复活永不安排、击杀不计分、局永远推不完。)
+		if _round_state == RoundState.PLAYING and not _respawn_pending.has(role):
+			_respawn_pending[role] = RESPAWN_DELAY
 		if _down_counted.get(role, false):
 			continue
-		var p: Node2D = players[role]
-		if p.is_downed():
-			_down_counted[role] = true
-			var killer := _role_of(p.get_meta_or_null("pvp_killer"))
-			p.remove_meta("pvp_killer")
-			if killer != 0 and killer != role:
-				_scores[killer] = int(_scores.get(killer, 0)) + 1
-				_broadcast_kill(killer, role)
-				_broadcast_round_state()
-			if _round_state == RoundState.PLAYING:
-				_respawn_pending[role] = RESPAWN_DELAY
+		_down_counted[role] = true
+		# 击杀定义:对方死亡都算 —— 不分死因(枪杀/爆炸/溺水/自伤/无射手)一律记给对方 +1。
+		# (旧实现靠 pvp_killer 射手归因、无射手不计分,已废弃。)
+		var scorer := _opponent_of(role)
+		if scorer != 0:
+			_scores[scorer] = int(_scores.get(scorer, 0)) + 1
+			_broadcast_kill(scorer, role)
+			_broadcast_round_state()
+			# 击杀后双方复位:死者照常走 _respawn_player(2s 后满血复活);
+			# 活着的「我方」立刻回本方出生点但保留当前血量(不回血,防复活点连杀)。
+			_reset_survivor(scorer)
 	match _round_state:
 		RoundState.COUNTDOWN:
 			_round_timer -= delta
@@ -291,9 +302,23 @@ func _respawn_player(role: int) -> void:
 		p.weapons.equip("1")
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
-	p.remove_meta("pvp_killer")
+
+# 击杀后活方「复位」:回到本方出生点但保留血量/防水,不治疗。死者(另一 role)照常满血复活。
+func _reset_survivor(role: int) -> void:
+	if not players.has(role):
+		return
+	var p: Node2D = players[role]
+	if p.is_downed():   # 同归于尽:双方都是死者、无活方,各走自己的复活流程
+		return
+	var spawn := _spawn_cell(role)
+	var ts := GameParameters.TILE_SIZE
+	p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
+	p.velocity = Vector2.ZERO
+	if p.has_method("cancel_jump_state"):
+		p.cancel_jump_state()
 
 func _round_over(winner: int) -> void:
+	_last_round_winner = winner
 	_rounds_won[winner] = int(_rounds_won.get(winner, 0)) + 1
 	_round_state = RoundState.ROUND_OVER
 	_round_timer = ROUND_OVER_TIME
@@ -326,8 +351,23 @@ func _broadcast_round_state() -> void:
 		"rounds_won": _rounds_won,
 		"timer": _round_timer,
 	}
+	# 客户端按自己 role 播报"本局胜利/落败"(ROUND_OVER)与"胜利/失败"(MATCH_OVER)
+	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
+		data["winner"] = _last_round_winner
+	if _round_state == RoundState.MATCH_OVER:
+		data["match_winner"] = _match_winner()
 	for role in peer_by_role:
 		NetBus.rpc_id(peer_by_role[role], "round_state", data)
+
+func _match_winner() -> int:
+	var best_role := 0
+	var best_n := -1
+	for role in players:
+		var n: int = int(_rounds_won.get(role, 0))
+		if n > best_n:
+			best_n = n
+			best_role = int(role)
+	return best_role
 
 func _broadcast_kill(killer: int, victim: int) -> void:
 	for role in peer_by_role:

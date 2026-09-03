@@ -16,10 +16,26 @@ func _ready() -> void:
 func is_latched() -> bool:
 	return _latched
 
+# 中心或脚底是否在梯/链(攀爬通道)格内——即使未攀附也算。用在梯/链上不能空中下冲:
+# 按↓只能下移/下落,不能触发 charge_down 快速下坠穿过梯/链(要上下得先按↑抓住)。
+func is_over_climb_tile() -> bool:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return false
+	var cols := grid[0].size()
+	var rows := grid.size()
+	var foot_cell := MazeGenerator.cell_of(body.global_position + Vector2(0.0, _climb_foot_offset()),
+			GameParameters.TILE_SIZE, cols, rows)
+	var center_cell := MazeGenerator.cell_of(body.global_position, GameParameters.TILE_SIZE, cols, rows)
+	var fv: int = grid[foot_cell.y][foot_cell.x]
+	var cv: int = grid[center_cell.y][center_cell.x]
+	return TileDefs.climb_speed(fv / 16) > 0.0 or TileDefs.climb_speed(cv / 16) > 0.0
+
 # 攀爬判定与攀附状态机:中心(或脚底)在通道格按上主动攀附(不受重力)。
 # **到顶 = 脚底进入梯子上方一格才停**(以脚底为参考格);再按上 = 跳离梯子。
 # 上爬按瓦片 climb_speed 倍(梯 1.6/锁链 2.0),下降按 climb_descent_speed 倍(梯 2.0),
 # 锁链无下降倍率(0)→ 解除攀附交给重力自由落体;松开挂住。返回「正在垂直攀爬」。
+# 上爬与梯子下行再整体 × PlayerParams.climb_vertical_mult(1.2;锁链下行=自由落体不受影响)。
 func update(mult: Vector2, delta: float, is_squat: bool,
 		src: InputSource = null) -> bool:
 	# src=null(冒烟等直接调用)回落真实 Input;本地玩家传入自己的 input_source,服务器传入注入源。
@@ -51,8 +67,8 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 		return false
 	if climb_input < 0.0:
 		if foot_in_channel or not _foot_at_ladder_top(foot_cell):
-			# 脚底还没跨过梯顶(在梯子里/在梯子下方)→ 上爬:climb_speed × 瓦片倍率
-			var spd := PlayerParams.climb_speed * cs * mult.y
+			# 脚底还没跨过梯顶(在梯子里/在梯子下方)→ 上爬:climb_speed × 瓦片倍率 × 上行倍率
+			var spd := PlayerParams.climb_speed * cs * PlayerParams.climb_vertical_mult * mult.y
 			body.velocity.y = climb_input * spd
 			body.velocity.x = _approach(body.velocity.x, 0.0, PlayerParams.brake_ground, delta)
 			if absf(body.velocity.x) < STOP_SNAP:
@@ -72,7 +88,7 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 			# 锁链(无下降倍率)= 自由落体:解除攀附交给重力,落下不再抓回
 			_latched = false
 			return false
-		body.velocity.y = climb_input * PlayerParams.climb_speed * dcs * mult.y
+		body.velocity.y = climb_input * PlayerParams.climb_speed * dcs * PlayerParams.climb_vertical_mult * mult.y
 		body.velocity.x = _approach(body.velocity.x, 0.0, PlayerParams.brake_ground, delta)
 		if absf(body.velocity.x) < STOP_SNAP:
 			body.velocity.x = 0.0

@@ -57,11 +57,24 @@ func join_room(caller: int, code: String) -> void:
 func on_peer_left(peer_id: int) -> void:
 	for code in rooms.keys():
 		var room: Room = rooms[code]
+		if not room.players.has(peer_id):
+			continue
 		room.players.erase(peer_id)
 		room.player_role.erase(peer_id)
+		# 对局中途断线:1v1 无法继续 → 通知存活方(播报后回菜单),整房拆除
+		# (设计:检测到对端退出 → 通知另一客户端 → 回菜单;不做断线恢复。)
+		if room.match_host != null and not room.players.is_empty():
+			print("房间 %s 对局中断(玩家 %d 退出),通知存活方" % [code, peer_id])
+			for survivor in room.players:
+				NetBus.rpc_id(survivor, "opponent_left")
+			room.match_host.queue_free()
+			room.match_host = null
+			rooms.erase(code)
+			continue
 		if room.players.is_empty():
 			if room.match_host != null:
 				room.match_host.queue_free()
+				room.match_host = null
 			rooms.erase(code)
 			print("房间 %s 关闭" % code)
 
