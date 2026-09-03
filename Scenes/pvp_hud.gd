@@ -51,7 +51,7 @@ func _ready() -> void:
 	add_child(_center)
 
 	# ── 记分:左下角 ──
-	_score_label = _make_label(26, COLOR_SCORE)
+	_score_label = _make_label(34, COLOR_SCORE)
 	_score_label.anchor_top = 1.0
 	_score_label.anchor_bottom = 1.0
 	_score_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -128,7 +128,7 @@ func _on_round_state(data: Dictionary) -> void:
 	var s2: int = int(scores.get(2, 0))
 	var w1: int = int(rounds_won.get(1, 0))
 	var w2: int = int(rounds_won.get(2, 0))
-	_score_label.text = "P1 击杀 %d    P2 击杀 %d    |    局胜 %d - %d    第 %d 局" % [s1, s2, w1, w2, round]
+	_score_label.text = "P1 击杀 %d    P2 击杀 %d    -    局胜 %d - %d    第 %d 局" % [s1, s2, w1, w2, round]
 	var me: int = PvpSession.role
 	match state:
 		ST_COUNTDOWN:

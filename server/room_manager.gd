@@ -5,7 +5,7 @@ extends Node
 # 由 NetBus 转交信号驱动(建房/加入/断线),不硬依赖 NetBus 调用本类方法。
 
 # PvP 固定竞技场地图(1v1,含 # player / # player2 出生点)。
-const PVP_MAP := "res://factory_1V1(260827).cyrm"
+const PVP_MAP := "res://map/factory1v1.cyrm"
 
 class Room:
 	var code: String = ""

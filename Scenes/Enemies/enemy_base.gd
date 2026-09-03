@@ -29,8 +29,10 @@ var is_dead: bool = false
 var _hit_flash_time: float = 0.0
 var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
 var _player_overlapping: bool = false
+var _overlapping_players: Array = []  # 当前接触到的玩家节点(1v1 PvP 里可能同时撞到两人,受击取最近者)
 var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
 var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
+var network_canonical: bool = false  # PvP 服务器权威:敌人位置存 canonical [0,MAP)(_wrap 取模);单机/客户端 false=锚玩家副本渲染
 var _in_water: bool = false
 var _waterproof: int = 6                 # 防水值(氧气),没顶每 0.5s 掉 1
 var waterproof_max: int = 6              # 上限:black/jump 6,fly 10
@@ -75,10 +77,13 @@ func _setup_contact_area() -> void:
 func _on_contact_body_entered(body: Node) -> void:
 	if body.is_in_group("player"):
 		_player_overlapping = true
+		if not _overlapping_players.has(body):
+			_overlapping_players.append(body)
 
 func _on_contact_body_exited(body: Node) -> void:
 	if body.is_in_group("player"):
-		_player_overlapping = false
+		_overlapping_players.erase(body)
+		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
 	# 远处睡眠优化:距玩家超唤醒半径且落地静止 → 只播睡,跳过重力/滑行/水/移动(省 CPU)
@@ -103,7 +108,7 @@ func _physics_process(delta: float) -> void:
 		# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底
 		# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
 		if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
-			var p := get_tree().get_first_node_in_group("player")
+			var p := _contact_victim()
 			if p != null and p.has_method("take_hit"):
 				p.take_hit(global_position, contact_damage)
 	# 受击/死亡白闪统一:计时 + 渲染(子类可覆写 _flash_update 换渲染方式,如黑鸟 silhouette)
@@ -249,13 +254,43 @@ func _anim_duration(name: String) -> float:
 	return float(spf.get_frame_count(name)) / spf.get_animation_speed(name)
 
 
+# 多玩家目标:取组里距自己最近的玩家(单机唯一玩家 → 行为不变)。无玩家返回 null。
+func _nearest_player() -> Node2D:
+	var best: Node2D = null
+	var best_d := INF
+	for p in get_tree().get_nodes_in_group("player"):
+		var n := p as Node2D
+		if n == null:
+			continue
+		var d := _toroidal_dist_to(n.global_position)
+		if d < best_d:
+			best_d = d
+			best = n
+	return best
+
+# 接触受击目标:重叠的玩家里取最近者;无重叠时若环面距离兜底内(接缝 Area 不重叠)→ 全局最近玩家。
+func _contact_victim() -> Node2D:
+	var best: Node2D = null
+	var best_d := INF
+	for b in _overlapping_players:
+		var n := b as Node2D
+		if n == null or not is_instance_valid(n):
+			continue
+		var d := _toroidal_dist_to(n.global_position)
+		if d < best_d:
+			best_d = d
+			best = n
+	if best != null:
+		return best
+	return _nearest_player() if toroidal_dist_to_player() <= CONTACT_RADIUS else null
+
 func _player_pos() -> Vector2:
-	var p := get_tree().get_first_node_in_group("player") as Node2D
+	var p := _nearest_player() as Node2D
 	return p.global_position if p != null else global_position
 
 
 func _player_velocity() -> Vector2:
-	var p := get_tree().get_first_node_in_group("player")
+	var p := _nearest_player()
 	if p != null and "velocity" in p:
 		return p.velocity
 	return Vector2.ZERO
@@ -290,18 +325,23 @@ func toroidal_dir_to_player() -> Vector2:
 	return delta.normalized()
 
 func toroidal_delta_to_player() -> Vector2:
-	var p := get_tree().get_first_node_in_group("player")
+	var p := _nearest_player()
 	if p == null:
 		return Vector2.INF
 	return MazeGenerator.toroidal_delta_px(global_position, (p as Node2D).global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 func _wrap() -> void:
+	# PvP 服务器权威:位置存 canonical [0,MAP),不做玩家副本锚定(副本归各端渲染)。
+	if network_canonical:
+		global_position = MazeGenerator.wrap_to_range(global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		return
 	# 环面渲染回绕:把自己锚定到离玩家最近的副本(跟着主角一起取模)。
 	# 墙体按 3x3 铺贴,相机在接缝处能看到另一侧的墙副本;若敌人仍取模到
 	# [0,MAP),接缝附近就渲染到远副本而「消失」。每次按玩家当前位置重算,
 	# 玩家跨接缝时敌人相对位置连续,不会像之前相机方案那样累计漂移。
-	var p := get_tree().get_first_node_in_group("player") as Node2D
+	var p := _nearest_player() as Node2D
 	if p == null:
 		# 无玩家(场景切换/加载中)时退回绝对取模,防止敌人无限漂移
 		global_position = MazeGenerator.wrap_to_range(global_position,

@@ -6,6 +6,7 @@ extends Node
 
 signal hp_changed(current: int, max: int)
 signal went_down   # 倒地瞬间触发,根连到 weapons.cancel_aim(保持旧 _downed 里的取消瞄准)
+signal took_hit(source_pos: Vector2, damage: int)  # 实际造成一次伤害(服务器 MatchHost 接它广播受击反馈)
 
 var max_hp: int = PlayerParams.player_max_hp
 var hp: int = PlayerParams.player_max_hp
@@ -38,6 +39,7 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
 	body.cancel_charge()
 	hp -= damage
+	took_hit.emit(source_pos, damage)
 	iframes = PlayerParams.iframes_time
 	# 击退方向用环面最短向量,不用绝对相减:
 	# PvP 服务器权威下,命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与该玩家 canonical

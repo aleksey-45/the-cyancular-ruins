@@ -18,6 +18,10 @@ const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的�
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
 var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
 
+# ── PvPvE 中立鸟:服务器权威模拟,位置 canonical,快照+spawn/died 事件同步 ──
+var birds: Dictionary = {}   # bird_id(int) -> EnemyBase
+var _next_bird_id := 1
+
 # ── 回合制(阶段4):回合状态机 / 记分 / 复活 / 换边 ──
 enum RoundState { COUNTDOWN, PLAYING, ROUND_OVER, MATCH_OVER }
 const KILLS_TO_WIN := 5      # 每局先到 5 击杀赢
@@ -70,6 +74,12 @@ func _ready() -> void:
 	# 开局回合:玩家已在 _init 摆位,进 COUNTDOWN
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
+	# 受击反馈:任意来源(子弹/鸟接触/鸟弹/爆炸)实际扣血 → combat.took_hit → 广播 hit_event
+	for role in players:
+		var combat = (players[role] as Node).get("combat")
+		if combat != null and combat.has_signal("took_hit"):
+			combat.took_hit.connect(_on_player_hit.bind(role))
+	_spawn_round_birds()
 	_broadcast_round_state()
 
 func _on_input(caller: int, pkt: Dictionary) -> void:
@@ -128,6 +138,52 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 	for role in peer_by_role:
 		NetBus.rpc_id(peer_by_role[role], "tile_destroyed", cell)
 
+# ── PvPvE 中立鸟:读地图 # enemy meta,每局固定一批,死不补,换局/开局重置 ──
+func _spawn_round_birds() -> void:
+	_clear_birds()
+	EnemySpawner.load_types()
+	var spawns := MazeGenerator.load_spawns()
+	var meta: Array = spawns.get("enemies", [])
+	var ts := GameParameters.TILE_SIZE
+	var roster: Array = []
+	for entry in meta:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var type_name: String = str(entry.get("type", ""))
+		var cell: Variant = entry.get("cell")
+		if type_name.is_empty() or typeof(cell) != TYPE_VECTOR2I or not EnemySpawner.TYPES.has(type_name):
+			continue
+		var scene: PackedScene = load(EnemySpawner.TYPES[type_name])
+		if scene == null:
+			continue
+		var e: CharacterBody2D = scene.instantiate()
+		e.set("network_canonical", true)   # 服务器权威:位置存 canonical
+		add_child(e)
+		e.global_position = Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5)
+		var id := _next_bird_id
+		_next_bird_id += 1
+		birds[id] = e
+		if e.has_signal("died"):
+			e.died.connect(_on_bird_died.bind(id))
+		roster.append({"id": id, "scene": EnemySpawner.TYPES[type_name], "pos": e.global_position})
+	# 本局鸟清单发给两端客户端(建副本用;之后每帧快照带位置/动画)
+	for role in peer_by_role:
+		NetBus.rpc_id(peer_by_role[role], "enemy_spawn", roster)
+	print("MatchHost: 刷鸟 %d 只" % roster.size())
+
+func _clear_birds() -> void:
+	for id in birds:
+		var e: Node = birds[id]
+		if is_instance_valid(e):
+			e.queue_free()
+	birds.clear()
+	_next_bird_id = 1
+
+func _on_bird_died(id: int) -> void:
+	birds.erase(id)
+	for role in peer_by_role:
+		NetBus.rpc_id(peer_by_role[role], "enemy_died", id)
+
 # 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
 # 带递增序号 tick:客户端靠它丢弃乱序到达的旧快照(unreliable 通道可能乱序)。
 func _broadcast_snapshot() -> void:
@@ -151,6 +207,20 @@ func _broadcast_snapshot() -> void:
 			"aim": p.get_current_aim_dir(),
 			"previewing": previewing,
 		}
+	# 中立鸟:canonical 位置 + 当前动画名 + 朝向(副本照播;死亡由 enemy_died 事件移除)
+	var birds_snap := {}
+	for id in birds:
+		var e: Node2D = birds[id]
+		if not is_instance_valid(e):
+			continue
+		var anim = e.get("_anim")
+		var flip := false
+		var anim_name := ""
+		if anim != null:
+			flip = bool(anim.flip_h)
+			anim_name = str(anim.animation)
+		birds_snap[str(id)] = {"pos": e.global_position, "flip": flip, "anim": anim_name}
+	snap["enemies"] = birds_snap
 	# 只发给仍在线的 peer(对方中途退出后 room teardown 前残留的帧不再刷错)
 	var live_peers := multiplayer.get_peers()
 	for role in peer_by_role:
@@ -168,6 +238,9 @@ func _adjudicate_bullets() -> void:
 		if not _seen_bullets.has(bid):
 			_seen_bullets[bid] = true
 			_broadcast_bullet_spawn(bullet)
+		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉、不做半径补刀。
+		if bullet.shooter == null:
+			continue
 		# 命中裁决:对非射手玩家算 toroidal 距离
 		for role in players:
 			var p: Node2D = players[role]
@@ -214,14 +287,17 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 		if players.has(role) and players[role] != bullet.shooter:
 			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
 
-func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
+func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
 	if victim.has_method("take_hit"):
+		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
-		# 击杀计分不在命中点做(归因统一在 _match_round_tick:对方死亡都算)
-		# 广播命中事件给双方客户端(受害者白闪/击退反馈)
-		for role in peer_by_role:
-			NetBus.rpc_id(peer_by_role[role], "hit_event", victim_role, bullet.hit_damage, bullet.global_position)
 	bullet.queue_free()
+
+# 玩家受击反馈:实际扣血(子弹/鸟接触/鸟弹/爆炸) → 广播 hit_event 给两端客户端。
+# 客户端按 victim_role:是自己 → 白闪/击退;是对手 → 对手副本受击闪烁。
+func _on_player_hit(role: int, source_pos: Vector2, damage: int) -> void:
+	for r in peer_by_role:
+		NetBus.rpc_id(peer_by_role[r], "hit_event", role, damage, source_pos)
 
 # ── 回合制 ──
 
@@ -339,6 +415,7 @@ func _start_next_round() -> void:
 	_down_counted = {}
 	for role in players:
 		_respawn_player(role)
+	_spawn_round_birds()   # 换局:清上一局鸟 + 按地图 meta 重刷
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
 	_broadcast_round_state()

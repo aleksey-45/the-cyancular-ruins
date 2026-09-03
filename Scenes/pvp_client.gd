@@ -9,6 +9,7 @@ var _last_snap_tick := 0
 
 var _local: Node2D = null
 var _remote_replica: Node2D = null
+var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica(中立鸟视觉副本)
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 var _hud: PvpHud = null
 var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
@@ -46,9 +47,13 @@ func _ready() -> void:
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_opponent_left.connect(_on_opponent_left)
+	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
+	NetBus.local_enemy_died.connect(_on_enemy_died)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
 	_hud = PvpHud.new()
 	add_child(_hud)
+	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
+	_apply_p2_tint()
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -116,7 +121,15 @@ func _on_snapshot(snap: Dictionary) -> void:
 		if role == PvpSession.role:
 			_apply_local_state(data)
 		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
-			_remote_replica.apply_snapshot(data, _local.global_position)
+			_remote_replica.apply_snapshot(data, _local.global_position, snap_tick)
+	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)
+	var enemies_snap: Dictionary = snap.get("enemies", {})
+	for id_str in enemies_snap:
+		var bid := int(id_str)
+		if _enemy_replicas.has(bid):
+			var r: Node = _enemy_replicas[bid]
+			if r != null and r.has_method("apply_remote"):
+				r.apply_remote(enemies_snap[id_str], _local.global_position, snap_tick)
 
 # 本地玩家完全由服务器快照驱动:权威状态直接采纳,位置/姿态/朝向由 player 插值渲染。
 func _apply_local_state(data: Dictionary) -> void:
@@ -183,3 +196,50 @@ func _on_opponent_left() -> void:
 	get_tree().create_timer(2.5).timeout.connect(func() -> void:
 		NetBus.stop()
 		get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
+
+# ── 中立鸟(服务器权威):roster → 建视觉副本;每帧快照 apply_remote;died → 移除 ──
+func _on_enemy_spawn(roster: Array) -> void:
+	_clear_enemy_replicas()
+	if _world == null or _local == null:
+		return
+	for entry in roster:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var scene_path := str(entry.get("scene", ""))
+		var bid := int(entry.get("id", 0))
+		if scene_path == "" or bid <= 0:
+			continue
+		var r: Node2D = preload("res://Scenes/Enemies/enemy_replica.gd").new()
+		_world.add_child(r)
+		r.setup(bid, scene_path, entry.get("pos", _local.global_position), _local.global_position)
+		_enemy_replicas[bid] = r
+
+func _clear_enemy_replicas() -> void:
+	for r in _enemy_replicas.values():
+		if is_instance_valid(r):
+			r.queue_free()
+	_enemy_replicas.clear()
+
+func _on_enemy_died(id: int) -> void:
+	if not _enemy_replicas.has(id):
+		return
+	var r: Node = _enemy_replicas[id]
+	if is_instance_valid(r):
+		r.queue_free()
+	_enemy_replicas.erase(id)
+
+# P2(role 2)玩家角色本体色相 -20:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
+# 只给角色 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/无敌半透明仍正常),武器不染。
+func _apply_p2_tint() -> void:
+	var body: Node = null
+	if PvpSession.role == 2 and _local != null:
+		body = _local.get_node_or_null("AnimatedSprite2D")
+	elif PvpSession.role == 1 and _remote_replica != null:
+		body = _remote_replica.get_node_or_null("AnimatedSprite2D")
+	var canvas := body as CanvasItem
+	if canvas == null:
+		return
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://Scenes/Player/player_p2_hue.gdshader")
+	mat.set_shader_parameter("hue_shift", -20.0)
+	canvas.material = mat

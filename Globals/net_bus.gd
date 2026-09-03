@@ -23,6 +23,8 @@ signal local_round_state(data: Dictionary)
 signal local_kill_event(killer: int, victim: int)
 signal local_opponent_left          # 对局中途对手断线(服务器 → 存活方,播报后回菜单)
 signal ping_updated(ms: int)        # 平滑后延迟 ms
+signal local_enemy_spawn(roster: Array)  # 服务器:本局鸟清单 [{id,scene,pos}],客户端建副本
+signal local_enemy_died(id: int)         # 服务器:某只鸟死亡(id),客户端移除副本
 
 const DEFAULT_PORT := 7777
 
@@ -99,6 +101,14 @@ func round_state(data: Dictionary) -> void:
 @rpc("authority", "reliable")
 func kill_event(killer: int, victim: int) -> void:
 	local_kill_event.emit(killer, victim)
+
+@rpc("authority", "reliable")
+func enemy_spawn(roster: Array) -> void:
+	local_enemy_spawn.emit(roster)
+
+@rpc("authority", "reliable")
+func enemy_died(id: int) -> void:
+	local_enemy_died.emit(id)
 
 @rpc("authority", "reliable")
 func room_created(code: String) -> void:
