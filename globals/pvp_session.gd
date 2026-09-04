@@ -7,7 +7,7 @@ static var server_address: String = "120.53.107.140"   # 默认服务器(云)
 static var port: int = 7777
 static var room_code: String = ""
 static var role: int = 1          # 1=P1, 2=P2
-static var player_name: String = "玩家"   # 玩家在匹配界面输入的昵称(头上显示;会话内不清)
+static var player_name: String = "Anon"   # 玩家在匹配界面输入的昵称(默认 Anon;头上显示;会话内不清)
 static var map_path: String = ""
 static var spawn: Vector2i = Vector2i(-1, -1)
 

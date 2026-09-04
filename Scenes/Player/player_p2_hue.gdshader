@@ -3,7 +3,7 @@ shader_type canvas_item;
 // 只染本体,武器/预瞄线等其它节点不受影响。结果 × COLOR,保住受击白闪(modulate 放大)与
 // 无敌帧半透明(modulate.a)的既有效果。
 
-uniform float hue_shift : hint_range(-180.0, 180.0) = -45.0;  // 度:P2 色相旋转量(负=反向),白/灰不变
+uniform float hue_shift : hint_range(-180.0, 180.0) = -65.0;  // 度:P2 色相旋转量(负=反向),白/灰不变
 
 vec3 rgb2hsv(vec3 c) {
 	vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);

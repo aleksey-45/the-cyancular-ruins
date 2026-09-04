@@ -313,7 +313,6 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	var canonical_pos := MazeGenerator.wrap_to_range(bullet.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var data := {
-		"bid": bullet.get_instance_id(),   # 服务器子弹身份:中弹端据此移除对应视觉弹
 		"scene": scene_path,
 		"pos": canonical_pos,
 		"vel": bullet.velocity_vec,
@@ -339,22 +338,10 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 		if players.has(role) and players[role] != bullet.shooter:
 			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
 
-func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
+func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
-	# 命中即移除子弹视觉(PvP 无无敌帧、每发一次):中弹端按 bid 移除,射手端移除最接近命中的本地弹
-	var bid := bullet.get_instance_id()
-	var shooter_role := 0
-	if bullet.shooter != null:
-		for r in players:
-			if players[r] == bullet.shooter:
-				shooter_role = int(r)
-				break
-	var hit_pos := MazeGenerator.wrap_to_range(bullet.global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	for r in peer_by_role:
-		NetBus.rpc_id(peer_by_role[r], "bullet_hit", victim_role, shooter_role, bid, hit_pos)
 	bullet.queue_free()
 
 # 玩家受击反馈:实际扣血(子弹/鸟接触/鸟弹/爆炸) → 广播 hit_event 给两端客户端。

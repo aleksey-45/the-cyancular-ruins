@@ -24,16 +24,37 @@ class Room:
 	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
 
 var rooms: Dictionary = {}   # code -> Room
+var _peer_names: Dictionary = {}   # peer id -> 昵称(客户端连上大厅时上报,列表/建房展示)
 
 func _enter_tree() -> void:
 	NetBus.room_create_requested.connect(create_room)
 	NetBus.room_join_requested.connect(join_room)
+	NetBus.room_list_requested.connect(on_list_rooms)
+	NetBus.lobby_name_set.connect(on_lobby_name)
 	NetBus.peer_left.connect(on_peer_left)
 
 func _exit_tree() -> void:
 	NetBus.room_create_requested.disconnect(create_room)
 	NetBus.room_join_requested.disconnect(join_room)
+	NetBus.room_list_requested.disconnect(on_list_rooms)
+	NetBus.lobby_name_set.disconnect(on_lobby_name)
 	NetBus.peer_left.disconnect(on_peer_left)
+
+func on_lobby_name(caller: int, name: String) -> void:
+	_peer_names[caller] = name if not name.is_empty() else "Anon"
+
+# 刷新房间列表:回当前所有非空房间(号码 + 人数 + 在房玩家昵称;人数≥2 为已满,客户端据此禁用/排序)。
+func on_list_rooms(caller: int) -> void:
+	var arr: Array = []
+	for code in rooms:
+		var room: Room = rooms[code]
+		if room.players.is_empty():
+			continue
+		var names: Array = []
+		for peer_id in room.players:
+			names.append(_peer_names.get(peer_id, "玩家"))
+		arr.append({"code": code, "players": room.players.size(), "names": names})
+	NetBus.rpc_id(caller, "room_list", arr)
 
 func _generate_code() -> String:
 	return "%04d" % (randi() % 10000)
@@ -65,6 +86,7 @@ func join_room(caller: int, code: String) -> void:
 	_start_match(room)
 
 func on_peer_left(peer_id: int) -> void:
+	_peer_names.erase(peer_id)
 	for code in rooms.keys():
 		var room: Room = rooms[code]
 		if not room.players.has(peer_id):

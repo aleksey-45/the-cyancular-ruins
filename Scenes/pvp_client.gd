@@ -14,7 +14,6 @@ var _remote_replica: Node2D = null
 var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica(中立鸟视觉副本)
 var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibles
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
-var _remote_bullets: Dictionary = {}   # 服务器子弹 bid -> 视觉弹(对手开的枪;命中按 bid 移除)
 var _hud: PvpHud = null
 var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
 var _ping_acc := 0.0
@@ -55,7 +54,6 @@ func _ready() -> void:
 	# 快照/事件消费
 	NetBus.local_snapshot.connect(_on_snapshot)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
-	NetBus.local_bullet_hit.connect(_on_remove_bullet)
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
@@ -177,37 +175,6 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
 	_world.add_child(b)
-	# 登记 bid,命中(bullet_hit)时移除这发视觉弹;自身过期(撞墙/射程)时自动清登记
-	var bid := int(data.get("bid", 0))
-	if bid > 0:
-		_remote_bullets[bid] = b
-		b.tree_exited.connect(func() -> void: _remote_bullets.erase(bid))
-
-# 服务器判定子弹命中对手 → 移除视觉弹:
-#  我=中弹者:按 bid 移除对手这发;我=射手:移除自己最接近命中点的本地弹丸(命中即消失,霰弹逐发爆开)。
-func _on_remove_bullet(victim_role: int, shooter_role: int, bid: int, hit_pos: Vector2) -> void:
-	if victim_role == PvpSession.role and _remote_bullets.has(bid):
-		var b: Node = _remote_bullets[bid]
-		if is_instance_valid(b):
-			(b as Node).queue_free()
-		_remote_bullets.erase(bid)
-	if shooter_role == PvpSession.role and shooter_role != 0:
-		_remove_nearest_local_bullet(hit_pos)
-
-func _remove_nearest_local_bullet(pos: Vector2) -> void:
-	var best: Node2D = null
-	var best_d := INF
-	for b in get_tree().get_nodes_in_group("bullet"):
-		var n := b as Node2D
-		if n == null:
-			continue
-		var d := MazeGenerator.toroidal_delta_px(n.global_position, pos,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
-		if d < best_d:
-			best_d = d
-			best = n
-	if best != null and is_instance_valid(best):
-		best.queue_free()
 
 # 服务器裁决命中:被打的是自己 → 即时反馈(白闪/击退),血量以快照权威为准;
 # 被打的是对手 → 副本受击闪烁,让射手看到自己打中了。
@@ -312,7 +279,7 @@ func _apply_p2_tint() -> void:
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://scenes/Player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", -45.0)   # P2 本体色相旋转 -45°
+	mat.set_shader_parameter("hue_shift", -65.0)   # P2 本体色相旋转 -65°
 	canvas.material = mat
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──

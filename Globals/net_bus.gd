@@ -5,12 +5,15 @@ extends Node
 
 signal local_room_created(code: String)
 signal local_room_joined(role: int)
+signal local_room_list(rooms: Array)   # 大厅回复房间列表 [{code,players}]
 signal local_match_start(role: int, spawn: Vector2i, map_path: String)
 signal local_server_message(text: String)
 
 # 服务器端 → RoomManager 的转交信号
 signal room_create_requested(caller: int)
 signal room_join_requested(caller: int, code: String)
+signal room_list_requested(caller: int)
+signal lobby_name_set(caller: int, name: String)   # 客户端连上大厅时报昵称(房间列表显示)
 signal peer_left(peer_id: int)
 # 服务器端 → MatchHost 的输入包
 signal input_received(caller: int, pkt: Dictionary)
@@ -22,7 +25,6 @@ signal local_bullet_spawn(data: Dictionary)
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
 signal local_peer_info(names: Dictionary)     # worker 开局:双方昵称 {role(int) -> name}(头上显示)
 signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
-signal local_bullet_hit(victim_role: int, shooter_role: int, bid: int, hit_pos: Vector2)  # 命中即移除子弹视觉
 signal local_tile_destroyed(cell: Vector2i)
 signal local_round_state(data: Dictionary)
 signal local_kill_event(killer: int, victim: int)
@@ -78,6 +80,16 @@ func create_room() -> void:
 func join_room(code: String) -> void:
 	room_join_requested.emit(multiplayer.get_remote_sender_id(), code)
 
+# 客户端:请求当前全部房间(刷新房间列表)
+@rpc("any_peer", "reliable")
+func list_rooms() -> void:
+	room_list_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端→大厅:上报昵称(房间列表展示在房玩家)
+@rpc("any_peer", "reliable")
+func lobby_name(name: String) -> void:
+	lobby_name_set.emit(multiplayer.get_remote_sender_id(), name)
+
 @rpc("any_peer", "reliable")
 func send_input(pkt: Dictionary) -> void:
 	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
@@ -100,12 +112,6 @@ func bullet_spawn(data: Dictionary) -> void:
 @rpc("authority", "reliable")
 func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 	local_hit_event.emit(victim_role, damage, source_pos)
-
-# 服务器判定某发子弹命中对手 → 广播:中弹端按 bid 移除对应视觉弹,射手端移除最接近命中的本地弹。
-# (配合 PvP 取消无敌帧:每发结算一次、命中即消失,不会穿透连打/不会帧伤)
-@rpc("authority", "reliable")
-func bullet_hit(victim_role: int, shooter_role: int, bid: int, hit_pos: Vector2) -> void:
-	local_bullet_hit.emit(victim_role, shooter_role, bid, hit_pos)
 
 @rpc("authority", "reliable")
 func tile_destroyed(cell: Vector2i) -> void:
@@ -134,6 +140,11 @@ func room_created(code: String) -> void:
 @rpc("authority", "reliable")
 func room_joined(role: int) -> void:
 	local_room_joined.emit(role)
+
+# 大厅 → 客户端:房间列表 [{code:String, players:int}]
+@rpc("authority", "reliable")
+func room_list(rooms: Array) -> void:
+	local_room_list.emit(rooms)
 
 @rpc("authority", "reliable")
 func match_start(role: int, spawn: Vector2i, map_path: String) -> void:

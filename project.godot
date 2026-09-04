@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="The Cyancular Ruins"
 config/version="rediculously early test 001"
-run/main_scene="res://Scenes/main_menu.tscn"
+run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 run/max_fps=60
 config/icon="uid://dccomu5fn6od5"
@@ -24,8 +24,8 @@ run/main_scene.dedicated_server="res://server/server_main.tscn"
 
 [autoload]
 
-GameParameters="*res://Globals/gameParameters.gd"
-NetBus="*res://Globals/net_bus.gd"
+GameParameters="*res://globals/gameParameters.gd"
+NetBus="*res://globals/net_bus.gd"
 
 [display]
 
