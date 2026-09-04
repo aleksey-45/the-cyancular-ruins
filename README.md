@@ -94,3 +94,4 @@ tools/    发布/控制台脚本(build_release.py、make_server_console.py)
 ```
 
 技术细节(环面数学/敌人 AI/网络协议/发布)见 `CLAUDE.md` 与 `RELEASE.md`。
+"# the-cyancular-ruins" 
