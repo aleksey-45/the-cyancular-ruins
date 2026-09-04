@@ -24,7 +24,7 @@ SERVER_PID=$!
 sleep 3
 
 echo "== 客户端 A 建房(后台,等 match_start 才退出) =="
-"$GODOT" --headless --path . res://Tests/pvp_smoke_client.tscn -- --role create > /tmp/pvp_a.log 2>&1 &
+"$GODOT" --headless --path . res://tests/pvp_smoke_client.tscn -- --role create > /tmp/pvp_a.log 2>&1 &
 A_PID=$!
 
 # 轮询 A 打印的房间号(最长 15s)
@@ -40,7 +40,7 @@ fi
 echo "房间号=$CODE"
 
 echo "== 客户端 B 加入 =="
-"$GODOT" --headless --path . res://Tests/pvp_smoke_client.tscn -- --role join --code "$CODE" > /tmp/pvp_b.log 2>&1 &
+"$GODOT" --headless --path . res://tests/pvp_smoke_client.tscn -- --role join --code "$CODE" > /tmp/pvp_b.log 2>&1 &
 B_PID=$!
 
 # 轮询 B 收到 match_start(最长 15s)

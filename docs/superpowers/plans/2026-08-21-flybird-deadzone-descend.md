@@ -12,7 +12,7 @@
 
 - **测试由用户自己跑,不要代跑**(CLAUDE.md 约定)。计划里每个 Run 步骤给出命令与期望输出,执行时交用户运行。
 - Godot 不在 PATH,用绝对路径(4.7.1 标准 console):
-  `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd`
+  `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
 - 成功输出 `SMOKE OK` 且退出码 0;有断言失败则打印 `FAILURES: [...]` 且退出码非 0。
 - `-s` 阶段 autoload 未实例化:`GameParameters.MAP_WIDTH/HEIGHT` 为 0,但 `toroidal_delta_px`/`anchor_to_nearest` 在 w/h=0 时是安全的 no-op,不要为测试补设它们。
 - 所有敌人参数进 `EnemyParams.FlyBird`(RefCounted const 类,静态访问)。
@@ -89,7 +89,7 @@
 - [ ] **Step 2: 跑冒烟,确认三个新断言失败(红)**
 
 Run(用户执行):
-`"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd`
+`"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
 
 Expected:
 - `FAIL - 死区逃逸先下飞(目标在鸟下方)`(旧 `_find_escape_column` 返回 `global_position`,y 不变)

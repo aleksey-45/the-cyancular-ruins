@@ -2,7 +2,7 @@ class_name BulletBase
 extends CharacterBody2D
 
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
-const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
+const TileHitFx := preload("res://scenes/Effects/tile_hit_fx.gd")
 
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
@@ -94,7 +94,12 @@ func _physics_process(delta: float) -> void:
 			queue_free()
 		else:
 			# 撞墙:可破坏(树叶/树干)→ 扣血;不可破坏墙 → 子弹消失。延迟销毁确保破坏回调跑完。
-			_damage_tile_at(col.get_position(), col.get_normal())
+			# PvP 视觉子弹副本(apply_damage=false)不裁决伤害,也不准拆本地瓦片:
+			# 若在此拆,客户端 grid/子格会跑在服务器权威之前——双方随机散布/瞄准时点不同,
+			# 客户端常拆掉服务器从未破坏的树叶 → 本地看着是缺口、服务器那侧碰撞还在(幽灵墙)。
+			# 拆墙一律只由服务器 tile_destroyed 事件驱动客户端刷新。
+			if apply_damage:
+				_damage_tile_at(col.get_position(), col.get_normal())
 			set_physics_process(false)
 			velocity_vec = Vector2.ZERO
 			get_tree().create_timer(0.05).timeout.connect(queue_free)
@@ -168,4 +173,4 @@ func _explode() -> void:
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
 	if apply_damage:
-		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback)
+		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)

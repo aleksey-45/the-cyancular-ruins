@@ -7,6 +7,8 @@ static var water_layer: TileMapLayer = null
 static var surface_texture: Texture2D = null
 static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
+# 建图时的原始(未破坏)网格深拷贝:每局复位用它重铺瓦片/碰撞(不被运行时 damage_tile 污染)。
+static var _pristine_grid: Array[Array] = []
 # 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
@@ -30,6 +32,7 @@ func _ready() -> void:
 		push_error("Level0: 地图加载失败，跳过建图")
 		return
 	_grid_ref = grid
+	_pristine_grid = MazeGenerator.copy_grid(grid)
 	Level0.wall_layer = $WorldViewport/WallLayer
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 	TileDefs.init_hp(grid)
@@ -188,6 +191,24 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 			for qx in range(2):
 				_destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+
+
+# PvP 换局复位:把可破坏砖/碰撞/瓦片全量还原成建图时的原始状态(当前网格重置为基线深拷贝)。
+# 服务器每局开赛也做同样复位,双方从同一基线出发 → 不存在"客户端多拆/少拆"的幽灵墙。
+# CollisionBuilder 的 build 幂等(同名节点先 free 再建),可安全整体重建。
+func reset_destructibles() -> void:
+	if _pristine_grid.is_empty():
+		return
+	var g := MazeGenerator.copy_grid(_pristine_grid)
+	MazeGenerator.current_grid = g
+	_grid_ref = g
+	TileDefs.init_hp(g)
+	# 瓦片层整层重铺(清掉 -1 残留,恢复被拆砖的贴图)
+	var wl := Level0.wall_layer
+	if wl != null:
+		_paint_maze(wl, g)
+	# 碰撞:可破坏分块 + 永久墙 + 攀爬条整体重建为基线
+	_destructible_sub = WorldBuilder.build_sim($WorldViewport, g)
 
 
 func _build_wall_collision(grid: Array[Array]) -> void:

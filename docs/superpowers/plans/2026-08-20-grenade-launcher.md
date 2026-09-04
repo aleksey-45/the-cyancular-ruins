@@ -14,7 +14,7 @@
   - 编辑器：`D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe`
   - headless console（冒烟/import）：`D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe`
 - **测试由用户自己运行**（项目记忆约定）：执行者写完测试/实现后**不要自己跑**，把运行命令交给用户执行并回报结果。
-- 现有冒烟 `res://Tests/enemy_logic_smoke.gd` 必须保持 `SMOKE OK`（回归门禁）。
+- 现有冒烟 `res://tests/enemy_logic_smoke.gd` 必须保持 `SMOKE OK`（回归门禁）。
 - 新建含 `class_name` 的 `.gd` 后，必须跑一次 `--headless --import` 注册全局类缓存，否则 `Explosion` 等类名解析失败。
 - 手写 `.tscn` 一律不写 uid 属性，靠 `--headless --import` 自动补；ext_resource 用 `path=` 引用（不带 uid）。
 - 爆炸/特效禁用粒子节点（profile 裁掉）。
@@ -219,7 +219,7 @@ func _test_aoe() -> void:
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/grenade_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/grenade_smoke.gd
 ```
 Expected: 报 `Explosion` 解析失败/FAIL（刚建类,先 import 再跑即通过）。
 
@@ -424,7 +424,7 @@ func _test_non_explosive_default() -> void:
 # 直接 new bullet_base.gd,补碰撞体;返回已设 explodes=true、关特效的子弹。
 # 无类型返回:setup/explodes/gravity_factor 都是脚本自定义成员,须动态分派。
 func _make_bullet():
-	var b = (load("res://Scenes/Weapons/bullet_base.gd") as GDScript).new()
+	var b = (load("res://scenes/Weapons/bullet_base.gd") as GDScript).new()
 	var cshape := CollisionShape2D.new()
 	var circ := CircleShape2D.new()
 	circ.radius = 6.0
@@ -440,14 +440,14 @@ func _make_bullet():
 - [ ] **Step 3: 用户运行冒烟**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/grenade_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/grenade_smoke.gd
 ```
 Expected: `GRENADE SMOKE OK`，退出 0。
 
 - [ ] **Step 4: 用户跑既有冒烟确认回归**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 Expected: `SMOKE OK`，退出 0（`explodes=false` 默认路径未变）。
 
@@ -468,7 +468,7 @@ git commit -m "feat: BulletBase 爆炸支持 — 命中敌人10+立即炸/撞墙
 
 **Interfaces:**
 - Consumes: `Explosion.make_circle_texture`（Task 1）
-- Produces: `res://Scenes/Weapons/explosion.tscn`（纯视觉自毁，供 `grenade_bullet.tscn` 的 `explosion_visual` 引用）
+- Produces: `res://scenes/Weapons/explosion.tscn`（纯视觉自毁，供 `grenade_bullet.tscn` 的 `explosion_visual` 引用）
 
 - [ ] **Step 1: 写 `explosion_placeholder.gd`**
 
@@ -495,7 +495,7 @@ func _ready() -> void:
 ```
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://Scenes/Weapons/explosion_placeholder.gd" id="1_pl"]
+[ext_resource type="Script" path="res://scenes/Weapons/explosion_placeholder.gd" id="1_pl"]
 
 [node name="Explosion" type="Node2D"]
 script = ExtResource("1_pl")
@@ -505,7 +505,7 @@ script = ExtResource("1_pl")
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/grenade_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/grenade_smoke.gd
 ```
 Expected: `GRENADE SMOKE OK`，无报错。
 
@@ -529,9 +529,9 @@ git commit -m "feat: 爆炸占位特效(程序化软圆放大淡出,自毁;待�
 
 - [ ] **Step 1: 改常量与字段**
 
-把 `const BULLET_SCENE: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")` 改为：
+把 `const BULLET_SCENE: PackedScene = preload("res://scenes/Weapons/bullet.tscn")` 改为：
 ```gdscript
-@export var bullet_scene: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
+@export var bullet_scene: PackedScene = preload("res://scenes/Weapons/bullet.tscn")
 ```
 
 在武器参数区新增：
@@ -626,7 +626,7 @@ func _update_explosion_marker(show: bool) -> void:
 - [ ] **Step 5: 用户跑既有冒烟确认回归（默认直线武器路径不变）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 Expected: `SMOKE OK`，退出 0。
 
@@ -648,7 +648,7 @@ git commit -m "feat: WeaponBase — bullet_scene 参数化 + 抛物线预瞄弧�
 
 **Interfaces:**
 - Consumes: `bullet_base.gd`（Task 2）、`explosion.tscn`（Task 3）、`weapon_base.gd`（Task 4）
-- Produces: `res://Scenes/Weapons/grenade_bullet.tscn`、`res://Scenes/Weapons/grenade_launcher.tscn`（供 Task 6 注册到 `player.gd`）
+- Produces: `res://scenes/Weapons/grenade_bullet.tscn`、`res://scenes/Weapons/grenade_launcher.tscn`（供 Task 6 注册到 `player.gd`）
 
 - [ ] **Step 1: 写占位圆点脚本 + `grenade_bullet.tscn`**
 
@@ -664,9 +664,9 @@ func _ready() -> void:
 ```
 [gd_scene load_steps=5 format=3]
 
-[ext_resource type="Script" path="res://Scenes/Weapons/bullet_base.gd" id="1_bl"]
-[ext_resource type="PackedScene" path="res://Scenes/Weapons/explosion.tscn" id="2_fx"]
-[ext_resource type="Script" path="res://Scenes/Weapons/grenade_visual_placeholder.gd" id="3_vis"]
+[ext_resource type="Script" path="res://scenes/Weapons/bullet_base.gd" id="1_bl"]
+[ext_resource type="PackedScene" path="res://scenes/Weapons/explosion.tscn" id="2_fx"]
+[ext_resource type="Script" path="res://scenes/Weapons/grenade_visual_placeholder.gd" id="3_vis"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_g"]
 radius = 6.0
@@ -697,8 +697,8 @@ shape = SubResource("CircleShape2D_g")
 ```
 [gd_scene load_steps=4 format=3]
 
-[ext_resource type="Script" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
-[ext_resource type="PackedScene" path="res://Scenes/Weapons/grenade_bullet.tscn" id="2_gb"]
+[ext_resource type="Script" path="res://scenes/Weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="PackedScene" path="res://scenes/Weapons/grenade_bullet.tscn" id="2_gb"]
 [ext_resource type="Texture2D" path="res://AssetBundle/Sprites/Weapons.png" id="3_wpn"]
 
 [node name="GrenadeLauncher" type="Node2D"]
@@ -773,8 +773,8 @@ git commit -m "feat: 榴弹/榴弹发射器场景(爆炸参数/抛物线弹道/�
 
 `WEAPONS` 字典加一行：
 ```gdscript
-	"4": "res://Scenes/Weapons/s686.tscn",
-	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
+	"4": "res://scenes/Weapons/s686.tscn",
+	"5": "res://scenes/Weapons/grenade_launcher.tscn",
 ```
 
 `_unhandled_input` 切枪循环：
@@ -785,7 +785,7 @@ git commit -m "feat: 榴弹/榴弹发射器场景(爆炸参数/抛物线弹道/�
 - [ ] **Step 3: 用户跑既有冒烟确认无回归**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 Expected: `SMOKE OK`。
 
@@ -807,8 +807,8 @@ git commit -m "feat: 第5武器槽接入榴弹发射器(输入动作 5)"
 - [ ] **Step 1: 用户跑两个冒烟**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/grenade_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/grenade_smoke.gd
 ```
 Expected: 各自 `SMOKE OK` / `GRENADE SMOKE OK`，退出 0。
 

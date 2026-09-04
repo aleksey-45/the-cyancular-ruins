@@ -101,8 +101,8 @@ func get_aim_dir_override() -> Vector2:
 - [ ] **Step 5: 跑两个冒烟，确认绿**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/player_contract_smoke.gd
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: `CONTRACT OK` + `SMOKE OK`，均退出 0。
@@ -143,7 +143,7 @@ git commit -m "refactor: 玩家输入走可注入 InputSource(本地委托真实
 - [ ] **Step 2: 跑冒烟确认绿**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: `SMOKE OK`，退出 0（冒烟挂武器到根 Window 开火，短路不触发 → 走原鼠标路径）。
@@ -188,7 +188,7 @@ var shooter: Node = null  # 射手玩家(击杀归因用):本地=武器持有者
 - [ ] **Step 3: 跑冒烟确认绿**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: `SMOKE OK`，退出 0。
@@ -226,7 +226,7 @@ git commit -m "refactor: 子弹带 shooter 引用(击杀归因前置,本地无�
 跑一次确认失败：
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: 打印 `FAIL - player2 spawn 解析`，退出 1。
@@ -258,7 +258,7 @@ Expected: 打印 `FAIL - player2 spawn 解析`，退出 1。
 - [ ] **Step 4: 跑冒烟确认绿**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: `SMOKE OK`，退出 0；新增两断言 `ok`。
@@ -371,7 +371,7 @@ func _build_wall_collision(grid: Array[Array]) -> void:
 - [ ] **Step 4: 跑冒烟确认绿**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: `SMOKE OK`，退出 0。
@@ -417,7 +417,7 @@ static var pvp_mode: bool = false
 - [ ] **Step 3: 跑冒烟确认绿**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: `SMOKE OK`，退出 0。

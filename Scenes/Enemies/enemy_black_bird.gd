@@ -35,7 +35,7 @@ func _ready() -> void:
 	wake_radius = EnemyParams.BlackBird.wake_radius
 	# 纯白剪影材质:每实例独立创建——tscn 里共享 sub_resource 材质会导致一只鸟白闪
 	# 全屏鸟跟着白闪(跨实例),且编辑器重存 tscn 会把场景材质冲掉;代码挂最稳。
-	var bb_shader := load("res://Scenes/Enemies/black_bird_silhouette.gdshader") as Shader
+	var bb_shader := load("res://scenes/Enemies/black_bird_silhouette.gdshader") as Shader
 	var bb_mat := ShaderMaterial.new()
 	bb_mat.shader = bb_shader
 	_anim.material = bb_mat
@@ -216,7 +216,7 @@ func _ai(delta: float) -> void:
 # 游走中瞬移判定:在「距玩家 3~8 格(随机)、且位于玩家相对鸟的另一侧」的环形带
 # (环面取模)搜地板格(EMPTY 且正下方非 EMPTY),且该格到玩家格 LOS 通 → 可瞬移冲锋。
 func _find_flank_cell() -> bool:
-	var p := get_tree().get_first_node_in_group("player") as Node2D
+	var p := _nearest_player() as Node2D
 	var grid := MazeGenerator.current_grid
 	if p == null or grid.is_empty():
 		return false
@@ -310,7 +310,7 @@ func _teleport_to_flank() -> void:
 
 
 func _player_facing() -> int:
-	var p := get_tree().get_first_node_in_group("player")
+	var p := _nearest_player()
 	if p != null and p.has_method("get_facing"):
 		return p.get_facing()
 	return 1
@@ -323,7 +323,7 @@ func _update_facing() -> void:
 
 # 冲锋命中玩家:穿透无敌帧打伤 + 猛推飞玩家,随后大后跳。
 func _on_charge_hit_player() -> void:
-	var p := get_tree().get_first_node_in_group("player")
+	var p := _nearest_player()
 	if p != null and p.has_method("take_hit"):
 		p.take_hit(global_position, EnemyParams.BlackBird.charge_damage, true)
 		_apply_charge_impact(p)

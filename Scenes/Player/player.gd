@@ -53,12 +53,18 @@ func get_aim_dir_override() -> Vector2:
 
 # 攻击查询:weapon_base 经 has_method 守卫调用(本地委托真实 Input;服务器注入网络输入)。
 func is_attack_pressed() -> bool:
+	if _controls_locked:
+		return false
 	return input_source.is_attack_pressed()
 
 func is_attack_just_pressed() -> bool:
+	if _controls_locked:
+		return false
 	return input_source.is_attack_just_pressed()
 
 func is_attack_just_released() -> bool:
+	if _controls_locked:
+		return false
 	return input_source.is_attack_just_released()
 
 # 当前瞄准方向(世界坐标系):委托当前武器的实际瞄准(本地=鼠标,服务器=注入方向)。
@@ -122,6 +128,12 @@ const SERVER_INTERP_RATE := 30.0     # 紧跟踪服务器位置(60Hz 快照下�
 
 func set_server_rendered(enabled: bool) -> void:
 	server_rendered = enabled
+
+# PvP COUNTDOWN 冻结:锁住本地武器开火查询(避免倒计时里打空枪)。
+# 移动冻结由服务器权威(不喂输入)完成,本地玩家是服务器渲染、自然不动。
+var _controls_locked := false
+func set_controls_locked(locked: bool) -> void:
+	_controls_locked = locked
 
 # PvP 客户端每帧喂服务器快照:存目标/姿态/朝向 + 权威采纳血量/防水/倒地。
 func apply_server_snapshot(data: Dictionary) -> void:
@@ -245,7 +257,8 @@ func _physics_process(delta: float) -> void:
 			if input_source.is_action_just_released("down"):
 				is_squat = false
 		else:
-			if input_source.is_action_just_pressed("down"):
+			# 空中下冲:身在梯/链格上不能下冲(否则跳上去按↓可直接穿梯/链),只能抓住爬。
+			if input_source.is_action_just_pressed("down") and not climb.is_over_climb_tile():
 				velocity.y = charge_down_velocity
 
 	# ---------- 冲刺输入 ----------
@@ -419,7 +432,10 @@ func _update_waterproof(delta: float) -> void:
 	var submerged := false
 	if swim.in_water:
 		var surface_y := Water.surface_y_at(global_position)
-		submerged = Water.submerged(global_position, surface_y)
+		# 呼吸按「大部分没入」扣:参考线比中心低 water_breath_line_offset(≈胸口下沿),
+		# 水面到这条线就扣,要浮到水面低于它才回气(头能露出仍扣)。
+		var breath_point := global_position + Vector2(0.0, PlayerParams.water_breath_line_offset)
+		submerged = Water.submerged(breath_point, surface_y)
 	if submerged != _was_submerged:
 		_was_submerged = submerged
 		_waterproof_timer = 0.0  # 状态切换重置:入水满 0.5s 才扣第一次

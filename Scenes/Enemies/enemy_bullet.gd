@@ -29,7 +29,8 @@ func _physics_process(delta: float) -> void:
 	var col := move_and_collide(step)
 	if col:
 		var hit := col.get_collider()
-		if hit != null and hit.is_in_group("player") and hit.has_method("take_hit"):
+		# 视觉副本(apply_damage=false):只飞,碰到目标直接消失,不裁决伤害(伤害服务器裁决)。
+		if apply_damage and hit != null and hit.is_in_group("player") and hit.has_method("take_hit"):
 			var dmg: int = damage
 			if water_mult > 1.0 and Water.is_in_water((hit as Node2D).global_position):
 				dmg = roundi(damage * water_mult)
@@ -40,3 +41,12 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 		return
 	_wrap()
+
+# 服务器权威世界有 2 玩家且敌方子弹无射手 → 位置存 canonical(别锚到某个玩家副本漂走);
+# 单机/客户端(=1 玩家)回落 BulletBase:锚本地玩家副本渲染,接缝不消失。
+func _wrap() -> void:
+	if get_tree().get_nodes_in_group("player").size() >= 2:
+		global_position = MazeGenerator.wrap_to_range(global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		return
+	super._wrap()

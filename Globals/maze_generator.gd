@@ -144,6 +144,18 @@ static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 	return p
 
 
+# 深拷贝网格(每行复制 int),用于保存"未破坏"基线 / 每局复位。返回强类型 Array[Array],
+# 以便赋回 MazeGenerator.current_grid / Level0._grid_ref 等强类型成员(普通 Array 赋给强类型会运行时报错)。
+static func copy_grid(grid: Array) -> Array[Array]:
+	var out: Array[Array] = []
+	for row in grid:
+		var r: Array = []
+		for v in row:
+			r.append(v)
+		out.append(r)
+	return out
+
+
 # ── 地图格式(.cyrm v1/v3)──
 # v3:首行带 `# cyrm-v3` 标记,每格 4 字符 [纹理 3 位 0xx][形状hex](纹理 000=空气,001/002/...;形状 0-F)。
 # v1(旧):单字符 0-9/A(250×150),无标记 → 加载时自动 2×2 转换并 ÷2 spawn 坐标。

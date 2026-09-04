@@ -4,8 +4,14 @@ extends Node
 # 战斗子系统:生命/无敌帧/爆炸击退向量/倒地。hp_changed 由根转发给 HUD。
 # 由根 player.gd 驱动(take_hit 经根转发、apply_knock/update_iframe_blink 每物理帧)。
 
+# PvP 对局:取消命中无敌帧——每发子弹都要能结算(否则霰弹只算第一丸)。
+# 帧伤防范靠「每发弹丸命中即销毁、只结算一次」,由服务器裁决保证。
+static var pvp_arena := false
+
+
 signal hp_changed(current: int, max: int)
 signal went_down   # 倒地瞬间触发,根连到 weapons.cancel_aim(保持旧 _downed 里的取消瞄准)
+signal took_hit(source_pos: Vector2, damage: int)  # 实际造成一次伤害(服务器 MatchHost 接它广播受击反馈)
 
 var max_hp: int = PlayerParams.player_max_hp
 var hp: int = PlayerParams.player_max_hp
@@ -33,13 +39,24 @@ func update_iframe_blink(delta: float) -> void:
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
 	# ignore_iframes: 特殊攻击(如冲撞)穿透无敌帧,但命中后照常刷新 iframes。
-	if downed or (iframes > 0.0 and not ignore_iframes):
+	# PvP:取消无敌帧阻挡(pvp_arena),但仍每发结算一次(命中即销毁由裁决保证)。
+	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
 		return
 	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
 	body.cancel_charge()
 	hp -= damage
+	took_hit.emit(source_pos, damage)
 	iframes = PlayerParams.iframes_time
+	# 击退方向用环面最短向量,不用绝对相减:
+	# PvP 服务器权威下,命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与该玩家 canonical
+	# 相差约整幅地图(跨接缝对枪)——绝对 (body - source) 会得出反向击退(受击被打向射手)。
+	# 最短位移保证"沿命中来向把玩家推离"(与命中判定/HitEvent 的 toroidal 距离一致)。
 	var away := (body.global_position - source_pos).normalized()
+	if GameParameters.MAP_WIDTH > 0.0 and GameParameters.MAP_HEIGHT > 0.0:
+		var short_vec := MazeGenerator.toroidal_delta_px(source_pos, body.global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		if not short_vec.is_zero_approx():
+			away = short_vec.normalized()
 	if away == Vector2.ZERO:
 		away = Vector2(-float(body.get_facing()), 0.0)
 	if knockback < 0.0:
@@ -79,6 +96,12 @@ func revive() -> void:
 	var animator: AnimatedSprite2D = body.animator
 	if animator != null:
 		animator.play("idle")
+	# 复位倒地变灰:_downed() 只 set_downed(true),不复位则复活后屏幕一直灰(PvP 回合复活)。
+	var tree := body.get_tree()
+	if tree != null:
+		var pp := tree.get_first_node_in_group("post_process")
+		if pp != null and pp.has_method("set_downed"):
+			pp.set_downed(false)
 
 func _downed() -> void:
 	downed = true

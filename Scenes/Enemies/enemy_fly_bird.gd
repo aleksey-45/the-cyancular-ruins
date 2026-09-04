@@ -4,7 +4,7 @@ extends EnemyFlyBase
 enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
 enum Intent { SHOOT, CHARGE }
 
-const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
+const ENEMY_BULLET_SCENE: PackedScene = preload("res://scenes/Enemies/enemy_bullet.tscn")
 	# FlyBird 独有:攻击水里的玩家伤害 ×1.5(自爆冲击 + 子弹),写死
 const WATER_DAMAGE_MULT: float = 1.5
 
@@ -294,7 +294,7 @@ func _shot_clear() -> bool:
 
 # 攻击水里玩家的伤害:自爆冲击/子弹对水中玩家 ×1.5(FlyBird 独有)。
 func _water_boosted_damage(base: int) -> int:
-	var p := get_tree().get_first_node_in_group("player") as Node2D
+	var p := _nearest_player() as Node2D
 	if p != null and Water.is_in_water(p.global_position):
 		return roundi(base * WATER_DAMAGE_MULT)
 	return base
@@ -369,7 +369,7 @@ func _on_charge_impact() -> void:
 func _on_charge_hit_player() -> void:
 	if is_dead:
 		return
-	var p := get_tree().get_first_node_in_group("player")
+	var p := _nearest_player()
 	if p != null and p.has_method("take_hit"):
 		# 冲撞穿透无敌帧,命中必掉血(自杀攻击的威慑)
 		p.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)

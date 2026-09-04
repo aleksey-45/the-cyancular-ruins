@@ -6,11 +6,11 @@ extends Node
 # apply_recoil 由 weapon_base 经根转发)。
 
 const WEAPONS: Dictionary = {
-	"1": "res://Scenes/Weapons/pistol_test.tscn",
-	"2": "res://Scenes/Weapons/rifle_test.tscn",
-	"3": "res://Scenes/Weapons/m82a1.tscn",
-	"4": "res://Scenes/Weapons/s686.tscn",
-	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
+	"1": "res://scenes/Weapons/pistol_test.tscn",
+	"2": "res://scenes/Weapons/rifle_test.tscn",
+	"3": "res://scenes/Weapons/m82a1.tscn",
+	"4": "res://scenes/Weapons/s686.tscn",
+	"5": "res://scenes/Weapons/grenade_launcher.tscn",
 }
 
 var _weapon: WeaponBase = null

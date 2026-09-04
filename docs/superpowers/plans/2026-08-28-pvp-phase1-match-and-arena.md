@@ -115,10 +115,10 @@ func server_message(text: String) -> void:
 
 - [ ] **Step 2: 注册 autoload（改 `project.godot`）**
 
-`[autoload]` 段在 `GameParameters="*res://Globals/gameParameters.gd"` 下一行加：
+`[autoload]` 段在 `GameParameters="*res://globals/gameParameters.gd"` 下一行加：
 
 ```
-NetBus="*res://Globals/net_bus.gd"
+NetBus="*res://globals/net_bus.gd"
 ```
 
 - [ ] **Step 3: 验证——headless 启动 5 帧无报错**
@@ -200,7 +200,7 @@ static func set_map_file(path: String) -> void:
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import 2>&1 | grep -E "PvpSession" ; \
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd 2>&1 | grep -E "set_map_file|SMOKE OK|FAIL"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | grep -E "set_map_file|SMOKE OK|FAIL"
 ```
 
 Expected: `ok - set_map_file 钉住地图` + `SMOKE OK`，退出 0。
@@ -242,7 +242,7 @@ func _ready() -> void:
 	single.size = Vector2(200, 48)
 	single.pressed.connect(func() -> void:
 		Level0.pvp_mode = false  # 复位 PvP 标志,避免上次 PvP 残留
-		get_tree().change_scene_to_file("res://Scenes/Level0.tscn"))
+		get_tree().change_scene_to_file("res://scenes/Level0.tscn"))
 	add_child(single)
 
 	var multi := Button.new()
@@ -251,7 +251,7 @@ func _ready() -> void:
 	multi.size = Vector2(200, 48)
 	multi.pressed.connect(func() -> void:
 		PvpSession.reset()
-		get_tree().change_scene_to_file("res://Scenes/matchmaking.tscn"))
+		get_tree().change_scene_to_file("res://scenes/matchmaking.tscn"))
 	add_child(multi)
 ```
 
@@ -259,7 +259,7 @@ func _ready() -> void:
 
 ```
 [gd_scene format=3 uid="uid://mainmenu0000a1"]
-[ext_resource type="Script" path="res://Scenes/main_menu.gd" id="1"]
+[ext_resource type="Script" path="res://scenes/main_menu.gd" id="1"]
 [node name="MainMenu" type="Control"]
 script = ExtResource("1")
 ```
@@ -271,7 +271,7 @@ script = ExtResource("1")
 `run/main_scene="uid://c1xl4jcmy2e6c"` 改为：
 
 ```
-run/main_scene="res://Scenes/main_menu.tscn"
+run/main_scene="res://scenes/main_menu.tscn"
 ```
 
 - [ ] **Step 4: 验证——headless 启动 5 帧（应进主菜单,无脚本错误）**
@@ -454,7 +454,7 @@ func _ready() -> void:
 	var join_btn := _make_button(Vector2(280, 240), "加入", _on_join_pressed)
 	var back_btn := _make_button(Vector2(60, 400), "返回", func() -> void:
 		NetBus.stop()
-		get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
+		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 
 	NetBus.local_room_created.connect(_on_room_created)
 	NetBus.local_room_joined.connect(_on_room_joined)
@@ -508,14 +508,14 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
 	PvpSession.spawn = spawn
 	PvpSession.map_path = map_path
-	get_tree().change_scene_to_file("res://Scenes/pvp_game.tscn")
+	get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
 ```
 
 - [ ] **Step 2: 新建 `Scenes/matchmaking.tscn`**
 
 ```
 [gd_scene format=3 uid="uid://matchmake0000a1"]
-[ext_resource type="Script" path="res://Scenes/matchmaking.gd" id="1"]
+[ext_resource type="Script" path="res://scenes/matchmaking.gd" id="1"]
 [node name="Matchmaking" type="Control"]
 script = ExtResource("1")
 ```
@@ -523,7 +523,7 @@ script = ExtResource("1")
 - [ ] **Step 3: 验证——headless 启动 5 帧（进匹配场景无报错）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://Scenes/matchmaking.tscn --quit-after 5 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/matchmaking.tscn --quit-after 5 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 Expected: 无 `SCRIPT ERROR`。
@@ -555,7 +555,7 @@ extends Node2D
 func _ready() -> void:
 	MazeGenerator.set_map_file(PvpSession.map_path)
 	Level0.pvp_mode = true
-	var level0: Node = load("res://Scenes/Level0.tscn").instantiate()
+	var level0: Node = load("res://scenes/Level0.tscn").instantiate()
 	add_child(level0)
 	var local: Node2D = level0.get_node("WorldViewport/Player")
 	var ts := GameParameters.TILE_SIZE
@@ -571,7 +571,7 @@ func _ready() -> void:
 
 ```
 [gd_scene format=3 uid="uid://pvpgame000000a1"]
-[ext_resource type="Script" path="res://Scenes/pvp_client.gd" id="1"]
+[ext_resource type="Script" path="res://scenes/pvp_client.gd" id="1"]
 [node name="PvpGame" type="Node2D"]
 script = ExtResource("1")
 ```
@@ -579,7 +579,7 @@ script = ExtResource("1")
 - [ ] **Step 3: 验证——headless 启动 60 帧（应进 pvp 世界,本地玩家能跑物理,无脚本错误）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://Scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "进入竞技场|SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "进入竞技场|SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 > 直接跑 pvp_game 时 `PvpSession.map_path` 为空 → `set_map_file("")` 会把缓存置空 → `load_map_file` 重新随机选图（可接受,仅验证用）。实际流程里 map_path 由服务器下发。
@@ -660,7 +660,7 @@ func _on_match_start(_role: int, _spawn: Vector2i, _map_path: String) -> void:
 
 ```
 [gd_scene format=3 uid="uid://pvpsmokec0000a1"]
-[ext_resource type="Script" path="res://Tests/pvp_smoke_client.gd" id="1"]
+[ext_resource type="Script" path="res://tests/pvp_smoke_client.gd" id="1"]
 [node name="PvpSmokeClient" type="Node"]
 script = ExtResource("1")
 ```
@@ -680,7 +680,7 @@ SERVER_PID=$!
 sleep 3
 
 echo "== 客户端 A 建房 =="
-"$GODOT" --headless --path . res://Tests/pvp_smoke_client.tscn -- --role create > /tmp/pvp_a.log 2>&1 || true
+"$GODOT" --headless --path . res://tests/pvp_smoke_client.tscn -- --role create > /tmp/pvp_a.log 2>&1 || true
 CODE=$(grep -oP 'ROOM_CODE=\K[0-9]+' /tmp/pvp_a.log | head -1)
 if [ -z "$CODE" ]; then
   echo "SMOKE FAIL: 建房客户端未拿到房间号"; cat /tmp/pvp_a.log; kill $SERVER_PID; exit 1
@@ -688,7 +688,7 @@ fi
 echo "房间号=$CODE"
 
 echo "== 客户端 B 加入 =="
-"$GODOT" --headless --path . res://Tests/pvp_smoke_client.tscn -- --role join --code "$CODE" > /tmp/pvp_b.log 2>&1 || true
+"$GODOT" --headless --path . res://tests/pvp_smoke_client.tscn -- --role join --code "$CODE" > /tmp/pvp_b.log 2>&1 || true
 
 kill $SERVER_PID 2>/dev/null || true
 grep -q "match_start" /tmp/pvp_b.log && echo "SMOKE PASS" || { echo "SMOKE FAIL: B 未收到 match_start"; cat /tmp/pvp_a.log; cat /tmp/pvp_b.log; cat /tmp/pvp_server.log; exit 1; }

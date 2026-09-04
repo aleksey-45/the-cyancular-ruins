@@ -24,7 +24,7 @@ SERVER_PID=$!
 sleep 3
 
 echo "== 客户端 A 建房(后台,移动+开火) =="
-"$GODOT" --headless --path . res://Tests/pvp_match_smoke.tscn -- --role create > /tmp/pvp2_a.log 2>&1 &
+"$GODOT" --headless --path . res://tests/pvp_match_smoke.tscn -- --role create > /tmp/pvp2_a.log 2>&1 &
 A_PID=$!
 sleep 2
 
@@ -36,7 +36,7 @@ fi
 echo "房间号=$CODE"
 
 echo "== 客户端 B 加入 =="
-"$GODOT" --headless --path . res://Tests/pvp_match_smoke.tscn -- --role join --code "$CODE" > /tmp/pvp2_b.log 2>&1 &
+"$GODOT" --headless --path . res://tests/pvp_match_smoke.tscn -- --role join --code "$CODE" > /tmp/pvp2_b.log 2>&1 &
 B_PID=$!
 
 wait $A_PID 2>/dev/null || true

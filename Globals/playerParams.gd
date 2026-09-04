@@ -31,6 +31,10 @@ const player_swim_down: float = 320.0     # 下沉速度
 const player_swim_accel: float = 6.0      # 水中水平缓动系数
 const player_waterproof_max: int = 10        # 防水值(氧气)上限
 const player_waterproof_damage: int = 5      # 防水值空后每秒扣血
+# 呼吸扣减触发线:原判定「水面没过角色原点(≈胸口)才扣」;把参考线下移该像素到胸口下沿,
+# 使「大部分(约2/3)没入、头能露出」时就开始扣呼吸,且要浮到水面低于此线才回气。
+# (可调:越大=越早扣、要浮得越高才回气)
+const water_breath_line_offset: float = 10.0
 
 # ── 镜头手感(方案 A)──
 const cam_lookahead_x: float = 100.0   # 满速时的水平前瞻像素
@@ -44,6 +48,8 @@ const cam_zoom: float = 0.75
 
 # ── 攀爬 / 弹性 ──
 const climb_speed: float = 300.0   # 攀爬基准速度(上爬 × tile_defs climb_speed:梯 1.6/锁链 2.0)
+# 上行/梯子下行整体倍率:上爬(梯&锁链)与梯子下行都 ×1.2;锁链下行=自由落体不受影响。
+const climb_vertical_mult: float = 1.2
 const elastic_bounce: float = 150.0  # 弹性瓦片(树叶)弱反弹冲量
 
 # ── 玩家战斗 ──

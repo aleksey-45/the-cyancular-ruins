@@ -4,7 +4,7 @@ extends Node2D
 enum Tier { LIGHT, MEDIUM, HEAVY }
 enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 
-@export var bullet_scene: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
+@export var bullet_scene: PackedScene = preload("res://scenes/Weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
 # 预瞄判墙小球半径(px): PREVIEW_COLLISION_RADIUS×bullet_size 
 const PREVIEW_COLLISION_RADIUS: float = 4.0
@@ -219,6 +219,26 @@ func cancel_aim() -> void:
 	_aiming = false
 	if _laser != null:
 		_laser.visible = false
+
+# 是否正在预瞄(heavy_aim 蓄力中):只有 heavy_aim 武器会置 _aiming。PvP 服务器快照读它,
+# 让对手副本能看到"这人在蓄力瞄准"。非重武器恒 false(无预瞄)。
+func is_previewing() -> bool:
+	return _aiming
+
+# PvP:服务器权威方向驱动"副本武器外观"(远端对手枪):只画朝向 + 预瞄线/弧,不读鼠标、不开火。
+# 副本武器不 equip(player==null),_process 早退,由 player_replica 每帧调用本方法替代:
+# 复刻 _auto_aim 的镜像/旋转(俯仰随枪 clamp),并同步 _laser/_explosion_marker 可见性。
+func drive_remote_visual(aim_dir: Vector2, facing: int, show_preview: bool) -> void:
+	if _laser == null or muzzle == null:
+		return   # _ready 的 call_deferred 尚未建好(换枪当帧),下帧再驱动
+	if aim_dir == Vector2.ZERO:
+		aim_dir = Vector2(float(facing), 0.0)
+	_aim_facing = facing
+	_current_aim_facing = facing
+	rotation = clamp_pitch(aim_dir, facing, pitch_clamp_deg) * float(facing)
+	scale.x = float(facing)
+	_aiming = show_preview
+	_update_laser()
 
 func get_movement_multiplier() -> Vector2:
 	var active := false

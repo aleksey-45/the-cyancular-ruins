@@ -12,7 +12,7 @@
 
 - **禁止运行测试**:项目约定测试由用户本人运行(见记忆 `user-runs-tests-themselves`)。实现者绝不执行冒烟测试命令;每个任务完成后,请用户运行并确认。
 - 冒烟测试命令(用户执行):
-  `"D:\Program Files\Godot_v4.4.1-stable_mono_win64\Godot_v4.4.1-stable_mono_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd`
+  `"D:\Program Files\Godot_v4.4.1-stable_mono_win64\Godot_v4.4.1-stable_mono_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
   期望输出含 `SMOKE OK`(任何 `FAIL` 都要反馈并修复后重跑)。
 - 代码注释用中文,与现有 `enemy_jump_bird.gd` 风格一致(`EnemyParams.X.xxx` 全名引用,不用别名)。
 - 新 `.gd` 文件的 `.uid` 由 Godot 首次打开编辑器时自动生成;`.tscn` 对脚本用**路径引用**(不写 uid),headless 冒烟可立即加载。
@@ -116,7 +116,7 @@ class StubCombatPlayer:
 
 ```gdscript
 	# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
-	var jump2: PackedScene = load("res://Scenes/Enemies/EnemyJumpBird.tscn")
+	var jump2: PackedScene = load("res://scenes/Enemies/EnemyJumpBird.tscn")
 	var e2 := jump2.instantiate()
 	root.add_child(e2)
 	_check(e2.collision_layer == 3, "敌人占用层3")
@@ -406,7 +406,7 @@ func _physics_process(delta: float) -> void:
 ```tscn
 [gd_scene load_steps=4 format=3]
 
-[ext_resource type="Script" path="res://Scenes/Enemies/enemy_bullet.gd" id="1_bl"]
+[ext_resource type="Script" path="res://scenes/Enemies/enemy_bullet.gd" id="1_bl"]
 [ext_resource type="Texture2D" uid="uid://cbxquhfl3xc11" path="res://AssetBundle/Sprites/Bullets.png" id="2_14wxs"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_8bitv"]
@@ -434,7 +434,7 @@ region_rect = Rect2(2, 1, 11, 4)
 
 ```gdscript
 	# ── Task 3: 敌方抛物线子弹 ──
-	var bscene_e: PackedScene = load("res://Scenes/Enemies/enemy_bullet.tscn")
+	var bscene_e: PackedScene = load("res://scenes/Enemies/enemy_bullet.tscn")
 	_check(bscene_e != null, "敌方子弹场景加载")
 	var eb := bscene_e.instantiate()
 	eb.global_position = Vector2(400, 400)
@@ -594,7 +594,7 @@ extends EnemyBase
 enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
 enum Intent { SHOOT, CHARGE }
 
-const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
+const ENEMY_BULLET_SCENE: PackedScene = preload("res://scenes/Enemies/enemy_bullet.tscn")
 
 var state: State = State.SLEEP
 var intent: Intent = Intent.SHOOT
@@ -891,7 +891,7 @@ func _anim_duration(name: String) -> float:
 **(b)** 在 `[ext_resource type="Texture2D" uid="uid://cfdgmkl0cnjbk" path="res://AssetBundle/Sprites/Fly_Bird.png" id="1_jclwe"]` 之后加一行:
 
 ```tscn
-[ext_resource type="Script" path="res://Scenes/Enemies/enemy_fly_bird.gd" id="2_script"]
+[ext_resource type="Script" path="res://scenes/Enemies/enemy_fly_bird.gd" id="2_script"]
 ```
 
 **(c)** 根节点:
@@ -946,14 +946,14 @@ polygon = PackedVector2Array(4, -13, -22, -16, -17, 0, -16, 13, 5, 13, 23, -3)
 
 ```gdscript
 const TYPES: Dictionary = {
-	"jump_bird": "res://Scenes/Enemies/EnemyJumpBird.tscn",
+	"jump_bird": "res://scenes/Enemies/EnemyJumpBird.tscn",
 }
 ```
 改为:
 ```gdscript
 const TYPES: Dictionary = {
-	"jump_bird": "res://Scenes/Enemies/EnemyJumpBird.tscn",
-	"fly_bird": "res://Scenes/Enemies/EnemyFlyBird.tscn",
+	"jump_bird": "res://scenes/Enemies/EnemyJumpBird.tscn",
+	"fly_bird": "res://scenes/Enemies/EnemyFlyBird.tscn",
 }
 ```
 
@@ -983,13 +983,13 @@ const TYPES: Dictionary = {
 		row3.fill(MazeGenerator.EMPTY)
 		fb_grid.append(row3)
 	MazeGenerator.current_grid = fb_grid
-	var fb_scene: PackedScene = load("res://Scenes/Enemies/EnemyFlyBird.tscn")
+	var fb_scene: PackedScene = load("res://scenes/Enemies/EnemyFlyBird.tscn")
 	_check(fb_scene != null, "FlyBird 场景加载")
 	var fb := fb_scene.instantiate()
 	fb.global_position = Vector2(488, 1208)
 	root.add_child(fb)
 	await physics_frame
-	_check(fb.get_script() == load("res://Scenes/Enemies/enemy_fly_bird.gd"), "FlyBird 实例类型")
+	_check(fb.get_script() == load("res://scenes/Enemies/enemy_fly_bird.gd"), "FlyBird 实例类型")
 	_check(fb.state == 0, "FlyBird 初始休眠")
 	_check(fb.is_in_group("enemies"), "FlyBird 加入 enemies 组")
 	_check(fb.get_node_or_null("ContactArea") != null, "FlyBird ContactArea 创建")
@@ -1022,7 +1022,7 @@ const TYPES: Dictionary = {
 	var near_player := StubCombatPlayer.new()
 	near_player.global_position = Vector2(600, 1208)
 	root.add_child(near_player)
-	var eb_script := load("res://Scenes/Enemies/enemy_bullet.gd")
+	var eb_script := load("res://scenes/Enemies/enemy_bullet.gd")
 	var reached_shoot := false
 	var fired := false
 	for i in range(240):
