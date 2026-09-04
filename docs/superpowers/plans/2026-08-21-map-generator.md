@@ -57,7 +57,7 @@
 
 Run:
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 Expected: 新 4 条断言 FAIL(函数未定义)。**注意:这条命令由用户跑,实现者不代跑;确认失败改由用户反馈。**
 
@@ -171,8 +171,8 @@ Expected: 新 3 条 FAIL(HTML 尚无 `ENEMY_REGISTRY`)。
 ```json
 {
   "enemies": [
-    { "id": "jump_bird", "name": "JumpBird", "scene": "res://Scenes/Enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
-    { "id": "fly_bird", "name": "FlyBird", "scene": "res://Scenes/Enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
+    { "id": "jump_bird", "name": "JumpBird", "scene": "res://scenes/Enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
+    { "id": "fly_bird", "name": "FlyBird", "scene": "res://scenes/Enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
   ]
 }
 ```
@@ -271,7 +271,7 @@ git commit -m "feat: 敌人注册表共享 enemies.json + sync-enemies.js 生成
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd`
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
 Expected: 新断言 FAIL(`load_types` 不存在)。实现者不代跑,由用户反馈。
 
 - [ ] **Step 3: 改 enemy_spawner.gd**
@@ -281,8 +281,8 @@ Expected: 新断言 FAIL(`load_types` 不存在)。实现者不代跑,由用户�
 ```gdscript
 # 类型注册表:加新敌人 = 一个 .tscn + 一行(string 路径,load() 时取)。
 const TYPES: Dictionary = {
-	"jump_bird": "res://Scenes/Enemies/EnemyJumpBird.tscn",
-	"fly_bird": "res://Scenes/Enemies/EnemyFlyBird.tscn",
+	"jump_bird": "res://scenes/Enemies/EnemyJumpBird.tscn",
+	"fly_bird": "res://scenes/Enemies/EnemyFlyBird.tscn",
 }
 ```
 
@@ -428,7 +428,7 @@ func spawn_all(grid: Array[Array], player_pos: Vector2, spawns: Dictionary = {})
 
 - [ ] **Step 3: 验证(用户跑)**
 
-Run: 冒烟测试 `res://Tests/enemy_logic_smoke.gd` 全 PASS;再实际启动游戏(用户可 `--quit-after 90` 或直接玩),确认:地图无 spawn 元数据时行为不变(玩家随机、敌人随机)。
+Run: 冒烟测试 `res://tests/enemy_logic_smoke.gd` 全 PASS;再实际启动游戏(用户可 `--quit-after 90` 或直接玩),确认:地图无 spawn 元数据时行为不变(玩家随机、敌人随机)。
 
 - [ ] **Step 4: Commit**
 

@@ -10,6 +10,7 @@ var input_sources: Dictionary = {}  # role -> NetworkInputSource
 var peer_by_role: Dictionary = {}   # role -> peer_id
 var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消费不丢 just_pressed 边沿
 var grid: Array = []
+var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
@@ -19,6 +20,8 @@ var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次
 var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
 
 # ── PvPvE 中立鸟:服务器权威模拟,位置 canonical,快照+spawn/died 事件同步 ──
+# 发布开关:true=对局生成中立鸟;false=暂时不上鸟(PvP 纯净 1v1)。鸟代码保留,需要时翻回 true。
+const ENABLE_BIRDS := false
 var birds: Dictionary = {}   # bird_id(int) -> EnemyBase
 var _next_bird_id := 1
 
@@ -46,16 +49,20 @@ func _init(map_path: String, role_peers: Dictionary) -> void:
 	if grid.is_empty():
 		push_error("MatchHost: 地图加载失败")
 		return
+	_base_grid = MazeGenerator.copy_grid(grid)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 	TileDefs.init_hp(grid)
 	destructible_sub = WorldBuilder.build_sim(self, grid)
+	# PvP 权威对局:取消命中无敌帧(每发结算一次);双方玩家(层2)互相物理碰撞
+	CombatComponent.pvp_arena = true
 	# 生成两个玩家(Player.tscn 完整物理模拟,注入 NetworkInputSource)
 	peer_by_role = role_peers.duplicate()
 	for role in role_peers:
-		var p: Node2D = preload("res://Scenes/Player/Player.tscn").instantiate()
+		var p: Node2D = preload("res://scenes/Player/Player.tscn").instantiate()
 		var src := NetworkInputSource.new()
 		p.set_input_source(src)
 		add_child(p)
+		p.collision_mask |= 2   # 与对方玩家(层2)物理碰撞;自身节点互不作用由 Godot 排除
 		players[role] = p
 		input_sources[role] = src
 		# 首局直接摆位(_respawn_player 依赖 combat/weapons,需玩家 _ready 后才能调,放到 _ready/_start_next_round)
@@ -79,7 +86,7 @@ func _ready() -> void:
 		var combat = (players[role] as Node).get("combat")
 		if combat != null and combat.has_signal("took_hit"):
 			combat.took_hit.connect(_on_player_hit.bind(role))
-	_spawn_round_birds()
+	_spawn_round_birds()  # 内部按 ENABLE_BIRDS 守卫,关闭时开局/换局都不刷
 	_broadcast_round_state()
 
 func _on_input(caller: int, pkt: Dictionary) -> void:
@@ -101,6 +108,11 @@ func _physics_process(delta: float) -> void:
 		src.clear_edges()
 		if _pending_input.has(role):
 			var q: Array = _pending_input[role]
+			# COUNTDOWN(开局/换局 3 秒):双方禁止移动/开火——只清空缓冲不喂输入,
+			# 玩家站在出生点不动(权威冻结;客户端是服务器渲染,自然跟随)。
+			if _round_state == RoundState.COUNTDOWN:
+				q.clear()
+				continue
 			for pkt in q:
 				src.apply_packet(pkt)
 			q.clear()
@@ -140,6 +152,8 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 
 # ── PvPvE 中立鸟:读地图 # enemy meta,每局固定一批,死不补,换局/开局重置 ──
 func _spawn_round_birds() -> void:
+	if not ENABLE_BIRDS:
+		return  # 发布开关关闭:任何时机(开局/换局)都不刷鸟
 	_clear_birds()
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
@@ -156,10 +170,11 @@ func _spawn_round_birds() -> void:
 		var scene: PackedScene = load(EnemySpawner.TYPES[type_name])
 		if scene == null:
 			continue
+		var spawn_cell := _nearest_floor_cell(cell)
 		var e: CharacterBody2D = scene.instantiate()
 		e.set("network_canonical", true)   # 服务器权威:位置存 canonical
 		add_child(e)
-		e.global_position = Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5)
+		e.global_position = Vector2(spawn_cell.x * ts + ts * 0.5, spawn_cell.y * ts + ts * 0.5)
 		var id := _next_bird_id
 		_next_bird_id += 1
 		birds[id] = e
@@ -170,6 +185,42 @@ func _spawn_round_birds() -> void:
 	for role in peer_by_role:
 		NetBus.rpc_id(peer_by_role[role], "enemy_spawn", roster)
 	print("MatchHost: 刷鸟 %d 只" % roster.size())
+
+# 把地图 meta 给的鸟出生格吸附到最近合法地板格(EMPTY、正下方 SOLID、头上留空)。
+# 原因:PvP 的 # enemy 格未必是地板格(单机 EnemySpawner 只挑地板格,meta 常直接给半空/卡墙格),
+# 直接照格出生会让鸟开局带睡姿自由落体或卡在几何里重力越积越大(空中睡姿的另一个来源)。
+func _nearest_floor_cell(from: Vector2i) -> Vector2i:
+	if _is_floor_cell(from):
+		return from
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return from
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	for radius in range(1, 32):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius:
+					continue
+				var c := Vector2i(posmod(from.x + dx, cols), posmod(from.y + dy, rows))
+				if _is_floor_cell(c):
+					return c
+	return from  # 找不到就保持原格(宁可原样,不丢鸟)
+
+func _is_floor_cell(c: Vector2i) -> bool:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return false
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	if c.y < 0 or c.x < 0 or c.y >= rows or c.x >= cols:
+		return false
+	if grid[c.y][c.x] != MazeGenerator.EMPTY:
+		return false
+	if not TileDefs.is_blocked(grid[posmod(c.y + 1, rows)][posmod(c.x, cols)]):
+		return false
+	# 头上留一格空,避免贴着天花板/嵌进头顶实心
+	return grid[posmod(c.y - 1, rows)][posmod(c.x, cols)] == MazeGenerator.EMPTY
 
 func _clear_birds() -> void:
 	for id in birds:
@@ -262,6 +313,7 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	var canonical_pos := MazeGenerator.wrap_to_range(bullet.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var data := {
+		"bid": bullet.get_instance_id(),   # 服务器子弹身份:中弹端据此移除对应视觉弹
 		"scene": scene_path,
 		"pos": canonical_pos,
 		"vel": bullet.velocity_vec,
@@ -287,15 +339,28 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 		if players.has(role) and players[role] != bullet.shooter:
 			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
 
-func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
+func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
+	# 命中即移除子弹视觉(PvP 无无敌帧、每发一次):中弹端按 bid 移除,射手端移除最接近命中的本地弹
+	var bid := bullet.get_instance_id()
+	var shooter_role := 0
+	if bullet.shooter != null:
+		for r in players:
+			if players[r] == bullet.shooter:
+				shooter_role = int(r)
+				break
+	var hit_pos := MazeGenerator.wrap_to_range(bullet.global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	for r in peer_by_role:
+		NetBus.rpc_id(peer_by_role[r], "bullet_hit", victim_role, shooter_role, bid, hit_pos)
 	bullet.queue_free()
 
 # 玩家受击反馈:实际扣血(子弹/鸟接触/鸟弹/爆炸) → 广播 hit_event 给两端客户端。
 # 客户端按 victim_role:是自己 → 白闪/击退;是对手 → 对手副本受击闪烁。
-func _on_player_hit(role: int, source_pos: Vector2, damage: int) -> void:
+# bind(role) 在 Godot 里把绑定参数追加在信号参数之后 → 实际入参顺序为 (source_pos, damage, role)。
+func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	for r in peer_by_role:
 		NetBus.rpc_id(peer_by_role[r], "hit_event", role, damage, source_pos)
 
@@ -400,6 +465,22 @@ func _round_over(winner: int) -> void:
 	_round_timer = ROUND_OVER_TIME
 	_broadcast_round_state()
 
+# 换局复位(服务器权威):清掉场上所有子弹 + 把可破坏砖/碰撞整层还原为建局基线。
+# 客户端在同一时刻收到新一轮 COUNTDOWN 也做同款复位(Level0.reset_destructibles),
+# 双方从同一基线出发 → 消除"客户端多拆/少拆砖"造成的幽灵碰撞,旧子弹不跨局残留。
+func _reset_world_and_clear_dynamics() -> void:
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	_seen_bullets.clear()
+	if _base_grid.is_empty():
+		return
+	var g := MazeGenerator.copy_grid(_base_grid)
+	grid = g
+	MazeGenerator.current_grid = g
+	TileDefs.init_hp(g)
+	destructible_sub = WorldBuilder.build_sim(self, g)
+
 func _start_next_round() -> void:
 	# 三局两胜:先赢 2 局 → MATCH_OVER
 	for role in players:
@@ -408,6 +489,7 @@ func _start_next_round() -> void:
 			_broadcast_round_state()
 			return
 	# 换边 + 下一局
+	_reset_world_and_clear_dynamics()
 	_side_swap = not _side_swap
 	_round_num += 1
 	_scores = {}

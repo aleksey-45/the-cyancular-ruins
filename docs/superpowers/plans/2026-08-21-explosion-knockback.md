@@ -14,8 +14,8 @@
 - **只改爆炸击退**;枪击(现有 `velocity +=`)一律不动。
 - 代码注释用中文,与项目现状一致。
 - 测试命令(实施者跑 headless 冒烟验证;playtest 由用户跑):
-  - `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd`
-  - `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/grenade_smoke.gd`
+  - `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
+  - `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/grenade_smoke.gd`
 - 提交只 `git add` 本任务涉及的文件,不 `git add -A`(工作区有其他未提交改动)。
 
 ---

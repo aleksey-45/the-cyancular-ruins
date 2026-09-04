@@ -45,10 +45,10 @@ func _check(cond: bool, name: String) -> void:
 		printerr("  FAIL - " + name)
 
 func _initialize() -> void:
-	var src := FileAccess.get_file_as_string("res://Scenes/Player/player.gd")
-	var lsrc := FileAccess.get_file_as_string("res://Scenes/Player/climb_component.gd")
-	var csrc := FileAccess.get_file_as_string("res://Scenes/Player/combat_component.gd")
-	var wsrc := FileAccess.get_file_as_string("res://Scenes/Player/weapon_component.gd")
+	var src := FileAccess.get_file_as_string("res://scenes/Player/player.gd")
+	var lsrc := FileAccess.get_file_as_string("res://scenes/Player/climb_component.gd")
+	var csrc := FileAccess.get_file_as_string("res://scenes/Player/combat_component.gd")
+	var wsrc := FileAccess.get_file_as_string("res://scenes/Player/weapon_component.gd")
 	# 根公开方法(外部调用方依赖,签名必须保持)
 	for sig in [
 		"func take_hit(",
@@ -87,7 +87,7 @@ func _initialize() -> void:
 
 - [ ] **Step 2: 运行契约守卫,确认对组件部分 RED**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/player_contract_smoke.gd`
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根公开接口 7 项 ok;组件 3 项 FAIL(climb/combat/weapon_component.gd 还不存在);weapon 注册表 5 项 FAIL;根驱动 3 项 FAIL(尚未接入)。退出码 1。
 
 - [ ] **Step 3: 跑一次 headless 基线启动,确认重构前游戏正常**
@@ -216,10 +216,10 @@ func _approach(current: float, target: float, rate: float, delta: float) -> floa
 
 - [ ] **Step 2: Player.tscn 加 Climb 节点**
 
-在 `[ext_resource ... "res://Scenes/Player/Player.tscn"]` 现有 ext_resource 行后追加一行(uid 缺省,首次在编辑器打开时补):
+在 `[ext_resource ... "res://scenes/Player/Player.tscn"]` 现有 ext_resource 行后追加一行(uid 缺省,首次在编辑器打开时补):
 
 ```
-[ext_resource type="Script" path="res://Scenes/Player/climb_component.gd" id="3_climb"]
+[ext_resource type="Script" path="res://scenes/Player/climb_component.gd" id="3_climb"]
 ```
 
 在 `[node name="WeaponSlot" ...]` 行后追加:
@@ -278,7 +278,7 @@ func cancel_jump_state() -> void:
 
 - [ ] **Step 4: 验证**
 
-Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/player_contract_smoke.gd`
+Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根接口 7 项 ok;`climb_component.gd` 检查 ok、根驱动 `climb.update` ok;combat/weapon 组件 + 武器注册表 + 根驱动 combat/weapon 2 项仍 FAIL。退出码 1(预期,其余组件未抽)。
 
 Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90`
@@ -315,11 +315,11 @@ extends Node
 # apply_recoil 由 weapon_base 经根转发)。
 
 const WEAPONS: Dictionary = {
-	"1": "res://Scenes/Weapons/pistol_test.tscn",
-	"2": "res://Scenes/Weapons/rifle_test.tscn",
-	"3": "res://Scenes/Weapons/m82a1.tscn",
-	"4": "res://Scenes/Weapons/s686.tscn",
-	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
+	"1": "res://scenes/Weapons/pistol_test.tscn",
+	"2": "res://scenes/Weapons/rifle_test.tscn",
+	"3": "res://scenes/Weapons/m82a1.tscn",
+	"4": "res://scenes/Weapons/s686.tscn",
+	"5": "res://scenes/Weapons/grenade_launcher.tscn",
 }
 
 var _weapon: WeaponBase = null
@@ -367,7 +367,7 @@ func cancel_aim() -> void:
 ext_resource 行后追加:
 
 ```
-[ext_resource type="Script" path="res://Scenes/Player/weapon_component.gd" id="4_wpn"]
+[ext_resource type="Script" path="res://scenes/Player/weapon_component.gd" id="4_wpn"]
 ```
 
 Climb 节点后追加:
@@ -423,7 +423,7 @@ func apply_recoil(push: float) -> void:
 
 - [ ] **Step 4: 验证**
 
-Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/player_contract_smoke.gd`
+Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根接口 ok、climb ok、weapon 组件 + 注册表 5 槽 ok、`weapons.movement_multiplier()` 驱动 ok;仅 combat 组件 + `combat.apply_knock` 驱动 2 项仍 FAIL。退出码 1。
 
 Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90`
@@ -539,7 +539,7 @@ func _downed() -> void:
 ext_resource 行后追加:
 
 ```
-[ext_resource type="Script" path="res://Scenes/Player/combat_component.gd" id="5_cmb"]
+[ext_resource type="Script" path="res://scenes/Player/combat_component.gd" id="5_cmb"]
 ```
 
 Weapons 节点后追加:
@@ -658,7 +658,7 @@ func cancel_charge() -> void:
 
 - [ ] **Step 4: 验证**
 
-Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/player_contract_smoke.gd`
+Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 全部 ok,末尾打印 `CONTRACT OK`,退出码 0。
 
 Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90`
@@ -682,7 +682,7 @@ git commit -m "refactor: 战斗/生命/倒地抽到 CombatComponent(行为不变
 - [ ] **Step 1: 跑共享依赖冒烟 + 契约 + 启动三连**
 
 Run 1(现有冒烟,确认共享依赖无回归):
-`"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd`
+`"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
 Expected: 打印 `SMOKE OK` 退出码 0。
 
 Run 2(契约): 同 Task 4 Step 4 Run 1,Expected `CONTRACT OK`。

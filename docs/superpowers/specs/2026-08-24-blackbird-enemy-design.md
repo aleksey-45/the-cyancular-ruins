@@ -99,6 +99,6 @@ class BlackBird:
 
 ## 验证
 
-1. headless 跑冒烟测试 `-s res://Tests/enemy_logic_smoke.gd`(SMOKE OK)
+1. headless 跑冒烟测试 `-s res://tests/enemy_logic_smoke.gd`(SMOKE OK)
 2. headless 启动 `--quit-after 90` 无脚本报错
 3. 用户 playtest(瞬移手感、冲锋速度、后跳幅度)

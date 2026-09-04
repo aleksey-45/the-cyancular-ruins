@@ -32,6 +32,10 @@
   --export-release "Windows Desktop" "E:\Workspace\godot\the-cyancular-ruins\The Cyancular Ruins.exe"
 ```
 
+> 一键打包(客户端 + 服务端并把服务端打回控制台):`python tools/build_release.py`。历史日期构建统一放 `builds/`,根目录只保留两个固定名 exe(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`)。
+
+> **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云/防火墙需放行 **7777 与 7800~7999 的 UDP**;局域网/本机不受限。
+
 ### 1.3 验证
 - **把 exe 拷到项目目录外的干净文件夹再运行**(比如桌面/临时目录)。在项目目录里跑时,Godot 可能从本地文件系统补齐缺失文件,会**掩盖打包漏项**——这是最容易误判的地方。
 - 完整玩一遍(移动/射击/HUD/后处理/死亡效果),并确认地图/关卡正常生成。

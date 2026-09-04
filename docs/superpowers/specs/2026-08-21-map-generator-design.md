@@ -55,9 +55,9 @@ static func load_spawns() -> Dictionary
 {
   "enemies": [
     { "id": "jump_bird", "name": "JumpBird",
-      "scene": "res://Scenes/Enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
+      "scene": "res://scenes/Enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
     { "id": "fly_bird", "name": "FlyBird",
-      "scene": "res://Scenes/Enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
+      "scene": "res://scenes/Enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
   ]
 }
 ```

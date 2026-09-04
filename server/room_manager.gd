@@ -1,17 +1,27 @@
 class_name RoomManager
 extends Node
 
-# 房间注册表(服务器端):房间号 → 玩家;2 人就绪发 match_start。
-# 由 NetBus 转交信号驱动(建房/加入/断线),不硬依赖 NetBus 调用本类方法。
+# 房间注册表(大厅进程,端口 7777):房间号 → 玩家;2 人就绪配对。
+# 不再在大厅进程建 MatchHost——配对完成后为每局拉起一个独立 headless worker 子进程
+# (独占一个 UDP 端口),对局全程在 worker 内运行 → 各局内存天然隔离,共享全局(current_grid/
+# TileDefs)不会跨局互踩。worker 由 NetBus 转交信号驱动,不硬依赖 RoomManager 类型。
 
 # PvP 固定竞技场地图(1v1,含 # player / # player2 出生点)。
 const PVP_MAP := "res://map/factory1v1.cyrm"
+# 对局 worker 端口分配:每次 spawn 发**不重复**的端口。注意不能用本进程 bind 探测"空闲"
+# —— worker 是独立进程,大厅本进程绑定测试看不到其它进程已占的 socket(并发时会把同端口
+# 发给两个 worker,后者绑定失败退出)。唯一递增 + 占用集合即可保证并发零冲突。
+const WORKER_PORT_BASE := 7800
+const WORKER_PORT_SPAN := 500
+var _next_port := WORKER_PORT_BASE
+var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 
 class Room:
 	var code: String = ""
 	var players: Array[int] = []          # peer ids
 	var player_role: Dictionary = {}      # peer id -> 1/2
-	var match_host: Node = null           # MatchHost 权威对局模拟
+	var match_host: Node = null           # 保留字段:worker 模式下大厅恒为 null
+	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
 
 var rooms: Dictionary = {}   # code -> Room
 
@@ -61,43 +71,68 @@ func on_peer_left(peer_id: int) -> void:
 			continue
 		room.players.erase(peer_id)
 		room.player_role.erase(peer_id)
-		# 对局中途断线:1v1 无法继续 → 通知存活方(播报后回菜单),整房拆除
-		# (设计:检测到对端退出 → 通知另一客户端 → 回菜单;不做断线恢复。)
-		if room.match_host != null and not room.players.is_empty():
-			print("房间 %s 对局中断(玩家 %d 退出),通知存活方" % [code, peer_id])
-			for survivor in room.players:
-				NetBus.rpc_id(survivor, "opponent_left")
-			room.match_host.queue_free()
-			room.match_host = null
-			rooms.erase(code)
-			continue
+		# worker 模式下大厅无对局;玩家转连 worker 后的断开只是清房间。
+		# 若某方在配对前掉线 → 房间不满、等另一方(或一直空着由时间清理)。
 		if room.players.is_empty():
-			if room.match_host != null:
-				room.match_host.queue_free()
-				room.match_host = null
+			_worker_ports.erase(room.worker_port)   # 关房归还端口
 			rooms.erase(code)
 			print("房间 %s 关闭" % code)
 
+# ── 配对完成 → 拉起对局 worker 并让两端转连 ──
 func _start_match(room: Room) -> void:
-	# PvP 固定用 1v1 竞技场地图(含 player/player2 出生点);客户端加载同名文件。
-	MazeGenerator.set_map_file(PVP_MAP)
-	# 重算世界尺寸:GameParameters._ready 在启动时算的是随机 demo 图(8000 宽),
-	# factory 图是 9600 宽,不重算则环面回绕按错边界 → 玩家在图中间被空气墙弹走。
+	var port := _pick_worker_port()
+	if port < 0:
+		NetBus.rpc_id(room.players[0], "server_message", "无法分配对局端口")
+		return
+	room.worker_port = port
+	if not _spawn_worker(port):
+		_worker_ports.erase(port)
+		NetBus.rpc_id(room.players[0], "server_message", "无法启动对局")
+		return
+	# 稍等 worker 完成 bind,再通知两端转连(worker 很快,300ms 足够)
+	await get_tree().create_timer(0.3).timeout
+	for peer_id in room.players:
+		NetBus.rpc_id(peer_id, "go_match", room.player_role[peer_id], port)
+	print("房间 %s 配对完成 → worker 端口 %d" % [room.code, port])
+
+# 分配一个当前未占用的 worker 端口(唯一递增 + 占用集合;见类头注释,勿用 bind 探测)。
+func _pick_worker_port() -> int:
+	for _tries in range(WORKER_PORT_SPAN):
+		var p := _next_port
+		_next_port += 1
+		if _next_port >= WORKER_PORT_BASE + WORKER_PORT_SPAN:
+			_next_port = WORKER_PORT_BASE
+		if not _worker_ports.has(p):
+			_worker_ports[p] = true
+			return p
+	return -1
+
+# 拉起 headless worker 子进程(同一可执行文件 + --worker)。editor(开发)要带 --path 与场景;
+# 导出的专用服务端 exe(disable_path_overrides)靠 main_scene.dedicated_server 起 server_main。
+func _spawn_worker(port: int) -> bool:
+	var exe := OS.get_executable_path()
+	var args: PackedStringArray
+	if OS.has_feature("editor"):
+		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+				"res://server/server_main.tscn", "--", "--worker", "--port", str(port)])
+	else:
+		args = PackedStringArray(["--headless", "--", "--worker", "--port", str(port)])
+	var pid := OS.create_process(exe, args)
+	print("[lobby] spawn worker pid=%d port=%d editor=%s" % [pid, port, str(OS.has_feature("editor"))])
+	return pid > 0
+
+# ── 建局(在 worker 进程调用):重算世界尺寸 + 给两端发 match_start + 建权威 MatchHost ──
+# 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态;role_peers = {role: peer_id}。
+static func start_match_on(role_peers: Dictionary, map_path: String = PVP_MAP) -> Node:
+	MazeGenerator.set_map_file(map_path)
 	GameParameters.refresh_map_size()
-	var map_path := MazeGenerator.map_file_path()
 	var spawns := MazeGenerator.load_spawns()
 	var s1: Vector2i = spawns.get("player", Vector2i(-1, -1))
 	var s2: Vector2i = spawns.get("player2", Vector2i(-1, -1))
-	for peer_id in room.players:
-		var role: int = room.player_role[peer_id]
+	for role in role_peers:
+		var peer_id: int = role_peers[role]
 		var spawn := s1 if role == 1 else s2
 		NetBus.rpc_id(peer_id, "match_start", role, spawn, map_path)
 		NetBus.rpc_id(peer_id, "server_message", "对局开始")
-	# 创建权威对局模拟(每房间一个 MatchHost)。role_peers = role -> peer_id。
-	var role_peers := {}
-	for peer_id in room.players:
-		role_peers[room.player_role[peer_id]] = peer_id
-	var match_host := MatchHost.new(map_path, role_peers)
-	add_child(match_host)
-	room.match_host = match_host
-	print("房间 %s 开局" % room.code)
+	var host := MatchHost.new(map_path, role_peers)
+	return host
