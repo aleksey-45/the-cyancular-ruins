@@ -24,6 +24,8 @@ func _ready() -> void:
 		_run_worker(port)
 		return
 	# ── 大厅 ──
+	# 先杀掉还占着 7777 的旧服务端(上次没关干净会 bind 失败→闪退),再监听
+	_kill_port_holder(NetBus.DEFAULT_PORT)
 	var err := NetBus.start_server()
 	if err != OK:
 		push_error("服务器: 监听失败 %d" % err)
@@ -31,6 +33,13 @@ func _ready() -> void:
 		return
 	add_child(RoomManager.new())
 	print("服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)")
+
+# 杀掉还监听该 UDP 端口的旧进程(Windows:PowerShell 取 UDP 端点属主进程→Stop-Process)。
+# 供大厅启动前用,避免旧服务端没关导致新实例 bind 失败瞬间退出(双击 exe 闪退)。
+func _kill_port_holder(port: int) -> void:
+	var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
+			" | % OwningProcess | sort -u; if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
+	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, true)
 
 # ── worker:独占端口等两端 claim_role,收齐建局 ──
 func _run_worker(port: int) -> void:

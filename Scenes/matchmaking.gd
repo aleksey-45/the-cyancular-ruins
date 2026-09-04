@@ -8,7 +8,11 @@ var _code_edit: LineEdit
 var _status: Label
 var _list_box: VBoxContainer
 var _connected := false
+var _connected_addr := ""          # 当前连的是哪个地址(地址框改了要重连)
 var _auto_refreshed := false   # 「点了看起来未满却已满」后只自动刷新一次,手动刷新再放开
+var _pending_action: Callable = Callable()   # 连上后要执行的建房/加入/刷新
+var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜底提示)
+var _go_start_ms := 0
 
 func _ready() -> void:
 	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址", PvpSession.server_address)
@@ -38,7 +42,7 @@ func _ready() -> void:
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 
 	var cap := Label.new()
-	cap.text = "房间列表(未满优先,点方块加入)"
+	cap.text = "房间列表(只读展示;加入请在上方填房间号)"
 	cap.position = Vector2(60, 460)
 	cap.size = Vector2(700, 30)
 	add_child(cap)
@@ -58,11 +62,8 @@ func _ready() -> void:
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_go_match.connect(_on_go_match)
 	NetBus.local_server_message.connect(_on_server_message)
-	multiplayer.connected_to_server.connect(_on_lobby_connected, CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
-		_status.text = "连接服务器失败,请检查地址", CONNECT_ONE_SHOT)
-	var err := NetBus.start_client(PvpSession.server_address)
-	_status.text = "正在连接服务器…" if err == OK else "启动连接失败(%d)" % err
+	multiplayer.connected_to_server.connect(_on_lobby_connected)
+	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 
 func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
 	var le := LineEdit.new()
@@ -83,48 +84,74 @@ func _make_button(pos: Vector2, text: String, fn: Callable) -> Button:
 	return b
 
 func _on_lobby_connected() -> void:
+	if _connecting_worker:
+		return   # 转连对局 worker 的连接走 _on_go_match,不在这里接管
 	_connected = true
+	_connected_addr = PvpSession.server_address
 	_push_lobby_name()
-	_status.text = "已连接,点「刷新」查看房间,或 建房"
+	var act := _pending_action
+	if act.is_valid():
+		_pending_action = Callable()
+		act.call()
+	else:
+		_status.text = "已连接,点「刷新」查看房间,或 建房"
+
+func _on_lobby_connect_failed() -> void:
+	if _connecting_worker:
+		return
+	_connected = false
+	_pending_action = Callable()
+	_status.text = "连接服务器失败,请检查地址"
 
 # 把当前昵称上报给大厅(房间列表展示在房玩家)
 func _push_lobby_name() -> void:
 	if _connected:
 		NetBus.rpc_id(1, "lobby_name", PvpSession.player_name)
 
-func _on_create_pressed() -> void:
-	PvpSession.server_address = _addr_edit.text.strip_edges() if _addr_edit.text != "" else PvpSession.server_address
-	if not _connected:
-		_status.text = "尚未连上服务器,稍候再点"
+# 按当前地址框连大厅;已连同一地址则直接执行。改地址会自动重连(不会连到旧地址)。
+func _with_lobby(action: Callable) -> void:
+	var addr := _addr_edit.text.strip_edges()
+	if addr == "":
+		addr = "127.0.0.1"
+	PvpSession.server_address = addr
+	if _connected and _connected_addr == addr:
+		action.call()
 		return
-	NetBus.rpc_id(1, "create_room")
-	_status.text = "建房中…(拿到房间号后可刷新让对手看到)"
+	_status.text = "正在连接服务器…"
+	_connected = false
+	_pending_action = action
+	NetBus.stop()
+	var err := NetBus.start_client(addr)
+	if err != OK:
+		_status.text = "启动连接失败(%d)" % err
+		_pending_action = Callable()
+
+func _on_create_pressed() -> void:
+	_with_lobby(func() -> void:
+		NetBus.rpc_id(1, "create_room")
+		_status.text = "建房中…(拿到房间号后可刷新让对手看到)")
 
 func _on_join_pressed() -> void:
 	_join_code(_code_edit.text.strip_edges())
 
-# 加入某房间号(手动输入 / 点房间方块共用)
+# 加入某房间号(手动输入)
 func _join_code(code: String) -> void:
 	if code.is_empty():
 		_status.text = "请填房间号"
 		return
-	if not _connected:
-		_status.text = "尚未连上服务器,稍候再点"
-		return
 	PvpSession.room_code = code
-	_status.text = "加入房间 %s,等待配对…" % code
-	NetBus.rpc_id(1, "join_room", code)
+	_with_lobby(func() -> void:
+		_status.text = "加入房间 %s,等待配对…" % code
+		NetBus.rpc_id(1, "join_room", code))
 
 func _on_refresh_pressed() -> void:
 	_auto_refreshed = false
 	_request_list("刷新房间列表…")
 
 func _request_list(msg: String) -> void:
-	if not _connected:
-		_status.text = "尚未连上服务器"
-		return
-	_status.text = msg
-	NetBus.rpc_id(1, "list_rooms")
+	_with_lobby(func() -> void:
+		_status.text = msg
+		NetBus.rpc_id(1, "list_rooms"))
 
 # 房间列表:未满优先在前,已满置灰不可点
 func _on_room_list(rooms: Array) -> void:
@@ -147,7 +174,6 @@ func _on_room_list(rooms: Array) -> void:
 	for r in order:
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
-		var is_full := players >= 2
 		var occ: String = ""
 		var names: Array = r.get("names", [])
 		if not names.is_empty():
@@ -155,10 +181,12 @@ func _on_room_list(rooms: Array) -> void:
 		var btn := Button.new()
 		btn.text = "房间 %s      %d/2%s" % [code, players, occ]
 		btn.custom_minimum_size = Vector2(600, 46)
-		btn.disabled = is_full
-		btn.pressed.connect(_join_code.bind(code))
+		# 只读展示:保持正常外观(不置灰),但忽略鼠标 → 点不了
+		btn.disabled = false
+		btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		btn.focus_mode = Control.FOCUS_NONE
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个房间(未满优先;已满置灰不可点)" % order.size()
+	_status.text = "共 %d 个房间(未满优先)" % order.size()
 
 func _on_server_message(t: String) -> void:
 	if t == "房间已满":
@@ -185,12 +213,22 @@ func _on_go_match(role: int, port: int) -> void:
 	multiplayer.connection_failed.connect(func() -> void:
 		_status.text = "连接对局服务器失败,请返回重试", CONNECT_ONE_SHOT)
 	NetBus.stop()
+	_connecting_worker = true
+	_go_start_ms = Time.get_ticks_msec()
 	var err := NetBus.start_client(PvpSession.server_address, port)
 	if err != OK:
+		_connecting_worker = false
 		_status.text = "连接对局服务器失败(%d)" % err
 
 func _claim_role_worker(role: int) -> void:
+	_connecting_worker = false
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
+
+# 转连 worker 超时兜底:UDP 连不上不会立刻报失败,这里 12 秒给明确提示(别无限卡着)
+func _process(_delta: float) -> void:
+	if _connecting_worker and Time.get_ticks_msec() - _go_start_ms > 12000:
+		_connecting_worker = false
+		_status.text = "连接对局服务器超时——请检查:对局端口(7800~7999 UDP)是否放行、服务端是否最新"
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
