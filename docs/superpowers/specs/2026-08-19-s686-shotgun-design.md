@@ -60,7 +60,7 @@ for i in range(pellet_count):
 
 ## 3. 第 4 槽接入
 
-- `player.gd` `WEAPONS` 加 `"4": "res://Scenes/Weapons/shotgun_s686.tscn"`;`_unhandled_input` 切枪循环 `["1","2","3"]` → `["1","2","3","4"]`。
+- `player.gd` `WEAPONS` 加 `"4": "res://scenes/Weapons/shotgun_s686.tscn"`;`_unhandled_input` 切枪循环 `["1","2","3"]` → `["1","2","3","4"]`。
 - `project.godot` `[input]` 加动作 `"4"`(键盘 4,physical_keycode=52)。
 
 ## 4. 平衡说明

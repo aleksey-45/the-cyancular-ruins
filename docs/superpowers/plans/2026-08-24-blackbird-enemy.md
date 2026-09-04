@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Godot 不在 PATH,冒烟命令用绝对路径:
-  `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd`
+  `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
 - 冒烟测试约定 `-s` 阶段 autoload 未实例化:测试代码只用 `GameParameters.TILE_SIZE`(const),不静态引用 autoload 实例变量。
 - 碰撞层:层1=地形、层2=玩家、层3=敌人(值4)。敌人 `collision_layer=4`、`collision_mask=7`。
 - 敌人数值放 `EnemyParams` 嵌套类;战斗数值(hp/contact_damage/knockback_strength)由场景 @export 提供。
@@ -31,7 +31,7 @@
 
 **Interfaces:**
 - Produces: `EnemyBlackBird`(class_name)、`EnemyParams.BlackBird`(嵌套类,常量见下)、`EnemyBlackBird.tscn`(可实例化,`state==0` 初始休眠)。
-- Later tasks 依赖: 冒烟测试 `load("res://Scenes/Enemies/EnemyBlackBird.tscn")` 后 `instantiate()`; `EnemySpawner.TYPES` 经 enemies.json 注册( Task 2 )。
+- Later tasks 依赖: 冒烟测试 `load("res://scenes/Enemies/EnemyBlackBird.tscn")` 后 `instantiate()`; `EnemySpawner.TYPES` 经 enemies.json 注册( Task 2 )。
 
 - [ ] **Step 1: 加 EnemyParams.BlackBird**
 
@@ -293,7 +293,7 @@ func _physics_process(delta: float) -> void:
 `Scenes/Enemies/EnemyBlackBird.tscn` 顶部 `[ext_resource ...]` 块(第 3 行后)加脚本引用:
 
 ```
-[ext_resource type="Script" path="res://Scenes/Enemies/enemy_black_bird.gd" id="1_bb"]
+[ext_resource type="Script" path="res://scenes/Enemies/enemy_black_bird.gd" id="1_bb"]
 ```
 
 根节点(第 220 行 `[node name="EnemyBlackBird" ...]`)补:
@@ -312,7 +312,7 @@ knockback_strength = 200.0
 
 - [ ] **Step 4: 验证无回归**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd 2>&1 | tail -3`
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | tail -3`
 Expected: 末尾 `SMOKE OK`(现有测试不受影响;脚本编译错误会在 import 时报出)。
 
 - [ ] **Step 5: 提交**
@@ -340,7 +340,7 @@ git commit -m "feat: BlackBird 敌人(参数/脚本/场景)"
 `editor/enemies.json` 的 `"enemies"` 数组加一行:
 
 ```json
-    { "id": "black_bird", "name": "BlackBird", "scene": "res://Scenes/Enemies/EnemyBlackBird.tscn", "color": "#8a8f98" },
+    { "id": "black_bird", "name": "BlackBird", "scene": "res://scenes/Enemies/EnemyBlackBird.tscn", "color": "#8a8f98" },
 ```
 
 - [ ] **Step 2: 编辑器 HTML 注册**
@@ -351,7 +351,7 @@ git commit -m "feat: BlackBird 敌人(参数/脚本/场景)"
   {
     "id": "black_bird",
     "name": "BlackBird",
-    "scene": "res://Scenes/Enemies/EnemyBlackBird.tscn",
+    "scene": "res://scenes/Enemies/EnemyBlackBird.tscn",
     "color": "#8a8f98"
   }
 ```
@@ -368,7 +368,7 @@ git commit -m "feat: BlackBird 敌人(参数/脚本/场景)"
 
 - [ ] **Step 4: 验证**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd 2>&1 | tail -3`
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | tail -3`
 Expected: `SMOKE OK`(spawner 的 TYPES 测试断言 `size()==2` 会 FAIL——Task 3 一并改,本任务先不管该 FAIL 之外的回归)。
 
 - [ ] **Step 5: 提交**
@@ -404,13 +404,13 @@ git commit -m "feat: BlackBird 注册进编辑器与地图"
 	for _x in range(120):
 		bk_grid[58][_x] = MazeGenerator.SOLID  # 地板
 	MazeGenerator.current_grid = bk_grid
-	var bk_scene: PackedScene = load("res://Scenes/Enemies/EnemyBlackBird.tscn")
+	var bk_scene: PackedScene = load("res://scenes/Enemies/EnemyBlackBird.tscn")
 	_check(bk_scene != null, "BlackBird 场景加载")
 	var bk = bk_scene.instantiate()
 	bk.global_position = Vector2(60, 57 * 32 + 16)  # 地板格(row57, 下方 row58 实心)
 	root.add_child(bk)
 	await physics_frame
-	_check(bk.get_script() == load("res://Scenes/Enemies/enemy_black_bird.gd"), "BlackBird 实例类型")
+	_check(bk.get_script() == load("res://scenes/Enemies/enemy_black_bird.gd"), "BlackBird 实例类型")
 	_check(bk.state == 0, "BlackBird 初始休眠")
 	_check(bk.hp == 30, "BlackBird hp=30")
 	_check(bk.contact_damage == 0, "BlackBird 无接触伤害")
@@ -545,7 +545,7 @@ git commit -m "feat: BlackBird 注册进编辑器与地图"
 
 - [ ] **Step 3: 跑冒烟测试直到 SMOKE OK**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd 2>&1 | tail -40`
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | tail -40`
 Expected: 末尾 `SMOKE OK`,黑鸟相关断言全 `ok`。若有 FAIL,按输出修正脚本/测试(常见:瞬移判定时序、冲锋命中窗口、后跳落地判定)。
 
 - [ ] **Step 4: 提交**
@@ -572,7 +572,7 @@ git commit -m "test: BlackBird 冒烟测试(游走/瞬移/冲锋/后跳/入睡/�
 
 - [ ] **Step 2: 最终验证**
 
-Run 冒烟:`... --headless --path . -s res://Tests/enemy_logic_smoke.gd 2>&1 | tail -3` → `SMOKE OK`
+Run 冒烟:`... --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | tail -3` → `SMOKE OK`
 Run 启动:`... --headless --path . --quit-after 90 2>&1 | grep -iE "error|SCRIPT ERROR"` → 无输出。
 
 - [ ] **Step 3: 提交**

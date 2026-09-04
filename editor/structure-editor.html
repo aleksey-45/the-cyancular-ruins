@@ -248,19 +248,19 @@ window.ENEMY_REGISTRY = [
   {
     "id": "jump_bird",
     "name": "JumpBird",
-    "scene": "res://Scenes/Enemies/EnemyJumpBird.tscn",
+    "scene": "res://scenes/Enemies/EnemyJumpBird.tscn",
     "color": "#6fae8f"
   },
   {
     "id": "fly_bird",
     "name": "FlyBird",
-    "scene": "res://Scenes/Enemies/EnemyFlyBird.tscn",
+    "scene": "res://scenes/Enemies/EnemyFlyBird.tscn",
     "color": "#c96fb0"
   },
   {
     "id": "black_bird",
     "name": "BlackBird",
-    "scene": "res://Scenes/Enemies/EnemyBlackBird.tscn",
+    "scene": "res://scenes/Enemies/EnemyBlackBird.tscn",
     "color": "#8a8f98"
   }
 ];
@@ -428,20 +428,30 @@ window.ENEMY_REGISTRY = [
       return out;
     }
 
+    // 出生点统一用 players 数组(任意多个,自动编号;旧结构可能只存单 player,做兼容)。
+    function playersOf(s) {
+      if (s == null) return [];
+      if (Array.isArray(s.players)) return s.players;
+      if (s.player && typeof s.player === 'object'
+          && Number.isInteger(s.player.x) && Number.isInteger(s.player.y)) return [s.player];
+      return [];
+    }
+
     // 整图地图格式:v3 = `# cyrm-v3` 标记 + 每格 4 字符[纹理 3 位 0xx][形状hex];旧格式 = 单字符
     // 0-9/A(无标记)→ 自动 2×2 转换(packed)并 ÷2 spawn 坐标。
-    // 返回 { grid, player, enemies, comments }。
+    // 返回 { grid, players, enemies, comments }。
     function parseMap(text) {
       var lines = String(text).split(/\r?\n/);
       var isV3 = lines.some(function (l) { return l.trim().indexOf(V3_MARKER) === 0; });
-      var grid = [], player = null, enemies = [], comments = [], width = -1;
+      var grid = [], players = [], enemies = [], comments = [], width = -1;
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim();
         if (line === '') continue;
         if (line.charAt(0) === '#') {
           var parts = line.slice(1).trim().split(/\s+/);
-          if (parts[0] === 'player' && parts.length >= 3) {
-            player = { x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) };
+          var pm = /^player(\d*)$/.exec(parts[0]);
+          if (pm && parts.length >= 3) {
+            players.push({ x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) });
           } else if (parts[0] === 'enemy' && parts.length >= 4) {
             enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
           } else if (parts[0] === 'cyrm-v3') {
@@ -474,16 +484,21 @@ window.ENEMY_REGISTRY = [
       }
       if (!isV3) {
         grid = convertOldGrid(grid);
-        if (player) { player.x = Math.floor(player.x / 2); player.y = Math.floor(player.y / 2); }
+        players.forEach(function (p) { p.x = Math.floor(p.x / 2); p.y = Math.floor(p.y / 2); });
         enemies.forEach(function (e) { e.x = Math.floor(e.x / 2); e.y = Math.floor(e.y / 2); });
       }
-      return { grid: grid, player: player, enemies: enemies, comments: comments };
+      return { grid: grid, players: players, enemies: enemies, comments: comments };
     }
 
     function serializeMap(map) {
       var lines = [V3_MARKER];
       (map.comments || []).forEach(function (c) { lines.push('# ' + c); });
-      if (map.player) lines.push('# player ' + map.player.x + ' ' + map.player.y);
+      // 任意多个出生点:第1个写 # player、第2个写 # player2、其后 # playerN(与运行侧解析一致)。
+      var ps = playersOf(map);
+      ps.forEach(function (p, i) {
+        var kw = i === 0 ? 'player' : (i === 1 ? 'player2' : 'player' + (i + 1));
+        lines.push('# ' + kw + ' ' + p.x + ' ' + p.y);
+      });
       (map.enemies || []).forEach(function (e) { lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y); });
       map.grid.forEach(function (row) {
         lines.push(row.map(function (v) {
@@ -504,8 +519,9 @@ window.ENEMY_REGISTRY = [
       return JSON.stringify({
         version: 1,
         structures: structs.map(function (s) {
+          var ps = playersOf(s);
           return { name: sanitizeName(s.name), grid: s.grid,
-                   player: s.player || null, enemies: s.enemies || [] };
+                   player: ps[0] || null, players: ps.slice(), enemies: s.enemies || [] };
         })
       }, null, 2) + '\n';
     }
@@ -521,20 +537,24 @@ window.ENEMY_REGISTRY = [
         if (!st || !Array.isArray(st.grid)) throw new Error('第 ' + (i + 1) + ' 个结构缺少 grid');
         var v = validateGrid(st.grid);
         if (!v.ok) throw new Error('结构 "' + (st.name || i) + '" 校验失败: ' + v.error);
-        var player = (st.player && typeof st.player === 'object'
-            && Number.isInteger(st.player.x) && Number.isInteger(st.player.y))
-          ? { x: st.player.x, y: st.player.y } : null;
+        var players = (Array.isArray(st.players) ? st.players : []).filter(function (p) {
+          return p && Number.isInteger(p.x) && Number.isInteger(p.y);
+        }).map(function (p) { return { x: p.x, y: p.y }; });
+        if (players.length === 0 && st.player && typeof st.player === 'object'
+            && Number.isInteger(st.player.x) && Number.isInteger(st.player.y)) {
+          players.push({ x: st.player.x, y: st.player.y });
+        }
         var enemies = (Array.isArray(st.enemies) ? st.enemies : []).filter(function (e) {
           return e && typeof e.type === 'string' && Number.isInteger(e.x) && Number.isInteger(e.y);
         }).map(function (e) { return { type: e.type, x: e.x, y: e.y }; });
         out.push({ name: sanitizeName(st.name || ('structure_' + (i + 1))), grid: st.grid,
-                   player: player, enemies: enemies });
+                   players: players, enemies: enemies });
       });
       return out;
     }
     // 单结构地图格式导出:名字行 + spawn 行 + 0-9/A 网格(保留 1-10 瓦片值,供游戏按格值渲染不同砖块)。
     function serializeMapStructure(s) {
-      return serializeMap({ comments: [sanitizeName(s.name)], player: s.player,
+      return serializeMap({ comments: [sanitizeName(s.name)], players: playersOf(s),
                            enemies: s.enemies || [], grid: s.grid });
     }
     // 新建空结构(数据部分,id/name 由 UI 补)。
@@ -545,7 +565,7 @@ window.ENEMY_REGISTRY = [
         for (var x = 0; x < w; x++) row.push(0);
         grid.push(row);
       }
-      return { grid: grid, player: null, enemies: [] };
+      return { grid: grid, players: [], enemies: [] };
     }
 
     return {
@@ -564,6 +584,7 @@ window.ENEMY_REGISTRY = [
       parseLibraryJSON: parseLibraryJSON,
       serializeMapStructure: serializeMapStructure,
       createEmptyStructure: createEmptyStructure,
+      playersOf: playersOf,
       packCell: packCell,
       textureOf: textureOf,
       shapeOf: shapeOf,
@@ -704,7 +725,10 @@ window.ENEMY_REGISTRY = [
       for (var di = 0; di < dxs.length; di++) {
         for (var dj = 0; dj < dys.length; dj++) {
           var ox = dxs[di] * w, oy = dys[dj] * h;
-          if (s.player) drawSpawnMarker('#54a0ff', s.player.x + ox, s.player.y + oy, 'P');
+          var PC = ['#54a0ff', '#ffb03f', '#a06bff', '#ff5f6d', '#3fc99a', '#e056fd', '#f0932b', '#4aa3df'];
+          Core.playersOf(s).forEach(function (p, i) {
+            drawSpawnMarker(PC[i % PC.length], p.x + ox, p.y + oy, 'P' + (i + 1));
+          });
           (s.enemies || []).forEach(function (e) {
             var en = enemyById(e.type);
             drawSpawnMarker(en ? en.color : '#888888', e.x + ox, e.y + oy, en ? en.name.charAt(0) : '?');
@@ -826,7 +850,7 @@ window.ENEMY_REGISTRY = [
       if (s) {
         // 选框移动预览:临时用预览网格渲染(结构本体尺寸不变),松手才提交
         if (drag && drag.mode === 'move' && drag.previewGrid) {
-          var disp = { grid: drag.previewGrid, player: s.player, enemies: s.enemies };
+          var disp = { grid: drag.previewGrid, players: Core.playersOf(s).slice(), enemies: s.enemies };
           renderStructure(disp);
           drawSpawnMarkers(disp);
           drawGridLines(disp);
@@ -920,7 +944,7 @@ window.ENEMY_REGISTRY = [
         var tn = state.palette === 0 ? '' : tileName(state.palette);
         parts.push('纹理: ' + state.palette + (state.palette === 0 ? ' (空气)' : (tn ? ' ' + tn : '')) + ' · 形状 ' + state.shape);
         parts.push('画笔 ' + state.brushSize);
-        parts.push('出生点:玩家' + (s.player ? '1' : '0') + ' · 敌人 ' + (s.enemies || []).length);
+        parts.push('出生点:玩家 ' + Core.playersOf(s).length + ' · 敌人 ' + (s.enemies || []).length);
         if (state.selection) {
           parts.push('选区: ' + state.selection.x + ',' + state.selection.y
             + ' ' + state.selection.w + '×' + state.selection.h);
@@ -1117,10 +1141,11 @@ window.ENEMY_REGISTRY = [
       var s = sel();
       var cell = cellAt(e.offsetX, e.offsetY);
       if (!cell || !s) return;
-      // 选中 spawn 工具:右键移除该格 spawn
+      // 选中 spawn 工具:右键移除该格 spawn(玩家出生点任意多个,逐个删)
       if (e.button === 2 && state.spawnTool) {
-        if (s.player && s.player.x === cell.x && s.player.y === cell.y) {
-          s.player = null;
+        var pls = Core.playersOf(s);
+        for (var pi = pls.length - 1; pi >= 0; pi--) {
+          if (pls[pi].x === cell.x && pls[pi].y === cell.y) pls.splice(pi, 1);
         }
         var list = s.enemies || [];
         for (var i = list.length - 1; i >= 0; i--) {
@@ -1360,7 +1385,7 @@ window.ENEMY_REGISTRY = [
         var w = clampMin(els.modalSizeW.value, 1, 250);
         var h = clampMin(els.modalSizeH.value, 1, 150);
         var data = Core.createEmptyStructure(w, h);
-        var s = { id: uid(), name: name, grid: data.grid, player: data.player, enemies: data.enemies };
+        var s = { id: uid(), name: name, grid: data.grid, players: data.players, enemies: data.enemies };
         state.library.push(s);
         state.selectedId = s.id;
         syncSizeInputs();
@@ -1372,7 +1397,7 @@ window.ENEMY_REGISTRY = [
       var s = sel();
       if (!s) return;
       var copy = { id: uid(), name: uniqueName(s.name, state.library), grid: cloneGrid(s.grid),
-                   player: s.player || null, enemies: (s.enemies || []).slice() };
+                   players: Core.playersOf(s).slice(), enemies: (s.enemies || []).slice() };
       state.library.push(copy);
       state.selectedId = copy.id;
       syncSizeInputs();
@@ -1459,7 +1484,7 @@ window.ENEMY_REGISTRY = [
     }
     function structureFromMap(p) {
       var name = (p.comments && p.comments[0]) ? p.comments[0] : 'structure';
-      return [{ name: name, grid: p.grid, player: p.player, enemies: p.enemies }];
+      return [{ name: name, grid: p.grid, players: Core.playersOf(p).slice(), enemies: p.enemies }];
     }
     function importLibrary() {
       var file = els.fileImport.files && els.fileImport.files[0];
@@ -1485,7 +1510,7 @@ window.ENEMY_REGISTRY = [
         var firstId = null;
         imported.forEach(function (st) {
           var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid,
-                    player: st.player || null, enemies: st.enemies || [] };
+                    players: Core.playersOf(st).slice(), enemies: st.enemies || [] };
           state.library.push(s);
           if (firstId === null) firstId = s.id;
         });
@@ -1523,7 +1548,13 @@ window.ENEMY_REGISTRY = [
       var g = s.grid, h = g.length, w = g[0].length;
       if (gx < 0 || gy < 0 || gx >= w || gy >= h) return;
       if (state.spawnTool === 'player') {
-        s.player = { x: gx, y: gy };
+        // 任意多个出生点:点空格追加一个(P1/P2/P3…自动编号);同格已有则不动(可右键删后再放)。
+        if (!Array.isArray(s.players)) s.players = Core.playersOf(s).slice();
+        var dup = false;
+        for (var i = 0; i < s.players.length; i++) {
+          if (s.players[i].x === gx && s.players[i].y === gy) { dup = true; break; }
+        }
+        if (!dup) s.players.push({ x: gx, y: gy });
       } else {
         // 结构可能没有 enemies 字段(默认 demo / 复制的结构)→ 先初始化,否则 push 进临时数组被静默丢弃
         if (!Array.isArray(s.enemies)) s.enemies = [];
@@ -1577,7 +1608,7 @@ window.ENEMY_REGISTRY = [
       state.library.push({
         id: uid(),
         name: 'demo',
-        player: null,
+        players: [],
         enemies: [],
         grid: [
           [0,0,0,0,0,0,0,0,0,0,0,0],

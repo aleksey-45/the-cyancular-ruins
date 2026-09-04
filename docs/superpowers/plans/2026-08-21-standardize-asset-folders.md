@@ -201,4 +201,4 @@ git status --porcelain
 
 - [ ] **Step 4: 交付用户验证**
 
-告知用户：开一次 Godot 编辑器（或自跑冒烟测试 `Godot_v4.7.1-stable_win64_console.exe --headless --path . -s res://Tests/enemy_logic_smoke.gd`）确认无 missing resource；确认无误后 `refactor/standardize-assets` 分支可合入 main。
+告知用户：开一次 Godot 编辑器（或自跑冒烟测试 `Godot_v4.7.1-stable_win64_console.exe --headless --path . -s res://tests/enemy_logic_smoke.gd`）确认无 missing resource；确认无误后 `refactor/standardize-assets` 分支可合入 main。

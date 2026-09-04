@@ -108,7 +108,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 
 ## 6. 第 5 槽接入
 
-- `player.gd`: `WEAPONS` 加 `"5": "res://Scenes/Weapons/grenade_launcher.tscn"`;切枪循环 `["1","2","3","4"]` → `["1","2","3","4","5"]`。
+- `player.gd`: `WEAPONS` 加 `"5": "res://scenes/Weapons/grenade_launcher.tscn"`;切枪循环 `["1","2","3","4"]` → `["1","2","3","4","5"]`。
 - `project.godot` `[input]`: 加动作 `"5"`(键盘 5,physical_keycode=53)。
 
 ## 7. 爆炸动画占位(`explosion.tscn`)

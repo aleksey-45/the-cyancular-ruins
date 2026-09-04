@@ -265,8 +265,8 @@ func _attack_just_released() -> bool:
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import 2>&1 | grep -E "NetworkInputSource" ; \
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd 2>&1 | grep -E "SMOKE OK|FAIL" ; \
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/player_contract_smoke.gd 2>&1 | grep -E "CONTRACT OK|FAIL"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | grep -E "SMOKE OK|FAIL" ; \
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd 2>&1 | grep -E "CONTRACT OK|FAIL"
 ```
 
 Expected: `SMOKE OK` + `CONTRACT OK`，退出 0。
@@ -370,7 +370,7 @@ func get_current_aim_dir() -> Vector2:
 - [ ] **Step 3: 验证——headless 起 pvp_game 60 帧无报错**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://Scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 > 无服务器时 `rpc_id` 会告警但不崩溃；仅验证脚本无 Parse Error。
@@ -429,7 +429,7 @@ func _init(map_path: String, room_players: Dictionary, role_peers: Dictionary) -
 	# 生成两个玩家
 	var spawns := MazeGenerator.load_spawns()
 	for role in role_peers:
-		var p: Node2D = preload("res://Scenes/Player/Player.tscn").instantiate()
+		var p: Node2D = preload("res://scenes/Player/Player.tscn").instantiate()
 		var src := NetworkInputSource.new()
 		p.set_input_source(src)
 		add_child(p)
@@ -624,7 +624,7 @@ var _have_target := false
 
 func _ready() -> void:
 	# 复用 Player.tscn 的内联 SpriteFrames
-	var tmp := preload("res://Scenes/Player/Player.tscn").instantiate()
+	var tmp := preload("res://scenes/Player/Player.tscn").instantiate()
 	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
 	tmp.free()
 
@@ -655,7 +655,7 @@ func _process(delta: float) -> void:
 ```
 [gd_scene format=3 uid="uid://replica00000a1"]
 
-[ext_resource type="Script" path="res://Scenes/Player/player_replica.gd" id="1"]
+[ext_resource type="Script" path="res://scenes/Player/player_replica.gd" id="1"]
 
 [node name="PlayerReplica" type="Node2D"]
 scale = Vector2(2.5, 2.5)
@@ -675,7 +675,7 @@ autoplay = "idle"
 ```gdscript
 	NetBus.local_snapshot.connect(_on_snapshot)
 	# 远端副本(角色 = 3 - 自己的 role)
-	var replica := preload("res://Scenes/Player/player_replica.tscn").instantiate()
+	var replica := preload("res://scenes/Player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
@@ -755,7 +755,7 @@ func revive() -> void:
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import 2>&1 | grep -E "PlayerReplica" ; \
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://Scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 - [ ] **Step 8: 提交**
@@ -993,7 +993,7 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 - [ ] **Step 6: 验证——headless 起 pvp_game 60 帧无报错**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://Scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 - [ ] **Step 7: 提交**
@@ -1080,7 +1080,7 @@ func _physics_process(_delta: float) -> void:
 
 ```
 [gd_scene format=3 uid="uid://pvpmatches000a1"]
-[ext_resource type="Script" path="res://Tests/pvp_match_smoke.gd" id="1"]
+[ext_resource type="Script" path="res://tests/pvp_match_smoke.gd" id="1"]
 [node name="PvpMatchSmoke" type="Node"]
 script = ExtResource("1")
 ```
@@ -1100,7 +1100,7 @@ SERVER_PID=$!
 sleep 3
 
 echo "== 客户端 A 建房 =="
-"$GODOT" --headless --path . res://Tests/pvp_match_smoke.tscn -- --role create > /tmp/pvp2_a.log 2>&1 &
+"$GODOT" --headless --path . res://tests/pvp_match_smoke.tscn -- --role create > /tmp/pvp2_a.log 2>&1 &
 A_PID=$!
 sleep 2
 CODE=$(grep -oP '房间号 \K[0-9]+' /tmp/pvp2_server.log | head -1)
@@ -1110,7 +1110,7 @@ fi
 echo "房间号=$CODE"
 
 echo "== 客户端 B 加入 =="
-"$GODOT" --headless --path . res://Tests/pvp_match_smoke.tscn -- --role join --code "$CODE" > /tmp/pvp2_b.log 2>&1 &
+"$GODOT" --headless --path . res://tests/pvp_match_smoke.tscn -- --role join --code "$CODE" > /tmp/pvp2_b.log 2>&1 &
 B_PID=$!
 
 wait $A_PID 2>/dev/null || true

@@ -91,7 +91,7 @@ eq(Core.floodFill([[1, 1], [1, 0]], 0, 0, 9), [[9, 9], [9, 0]], 'floodFill: 从�
 // ---- Task: v3 整图格式 parseMap / serializeMap ----
 const mapText = '# cyrm-v3\n# demo\n# player 12 34\n# enemy jump_bird 100 50\n0000001F0031\n';
 const parsedMap = Core.parseMap(mapText);
-eq(parsedMap.player, { x: 12, y: 34 }, 'parseMap v3: player');
+eq(parsedMap.players, [{ x: 12, y: 34 }], 'parseMap v3: players');
 eq(parsedMap.enemies, [{ type: 'jump_bird', x: 100, y: 50 }], 'parseMap v3: enemy');
 eq(parsedMap.grid, [[0, 31, 49]], 'parseMap v3: 网格 0/31(全砖)/49(纹理3左上1/4)');
 eq(parsedMap.comments, ['demo'], 'parseMap v3: 普通 # 注释保留(标记行不算注释)');
@@ -101,7 +101,7 @@ throws(() => Core.parseMap('# cyrm-v3\n0000\n00000000\n'), 'parseMap v3: 宽度�
 throws(() => Core.parseMap('# cyrm-v3\n0000\n00000\n'), 'parseMap v3: 字符数非 4 倍数报错');
 // 旧格式自动转换(无标记,单字符):2×2 全实心 → 全砖 31,spawn ÷2
 const oldParsed = Core.parseMap('# old\n# player 112 95\n11\n11\n');
-eq(oldParsed.player, { x: 56, y: 47 }, 'parseMap old: player ÷2');
+eq(oldParsed.players, [{ x: 56, y: 47 }], 'parseMap old: players ÷2');
 eq(oldParsed.grid, [[31]], 'parseMap old: 2×2 全实心 → 全砖 31');
 eq(Core.serializeMap(oldParsed), '# cyrm-v3\n# old\n# player 56 47\n001F\n', '旧图转换后导出 v3');
 
@@ -182,9 +182,9 @@ eq(Core.rectFill([[0,0],[0,0]], 0, 0, 1, 1, Core.packCell(1, 15)), [[31,31],[31,
   eq(back.length, 2, 'parseLibraryJSON: 数量');
   eq(back[0].name, 'demo_2', 'parseLibraryJSON: 名字');
   eq(back[0].grid, [[0, 0, 1], [0, 1, 9]], 'parseLibraryJSON: 0-9 网格原样');
-  eq(back[0].player, { x: 0, y: 1 }, 'parseLibraryJSON: player');
+  eq(back[0].players, [{ x: 0, y: 1 }], 'parseLibraryJSON: players');
   eq(back[0].enemies, [{ type: 'jump_bird', x: 2, y: 0 }], 'parseLibraryJSON: enemies');
-  eq(back[1].player, null, 'parseLibraryJSON: 无 player 为 null');
+  eq(back[1].players, [], 'parseLibraryJSON: 无 player 为 []');
   throws(function () { Core.parseLibraryJSON('{bad json'); }, 'parseLibraryJSON: 坏 JSON 报错');
   throws(function () { Core.parseLibraryJSON('{}'); }, 'parseLibraryJSON: 缺 structures 报错');
 
@@ -199,7 +199,7 @@ eq(Core.rectFill([[0,0],[0,0]], 0, 0, 1, 1, Core.packCell(1, 15)), [[31,31],[31,
 
   var es = Core.createEmptyStructure(3, 2);
   eq(es.grid, [[0, 0, 0], [0, 0, 0]], 'createEmptyStructure: 全 0');
-  eq(es.player, null, 'createEmptyStructure: 无 player');
+  eq(es.players, [], 'createEmptyStructure: 无 player');
   eq(es.enemies.length, 0, 'createEmptyStructure: 无 enemies');
   eq(Core.serializeMapStructure({ id: 1, name: 'blank', grid: es.grid, player: es.player, enemies: es.enemies }),
     '# cyrm-v3\n# blank\n000000000000\n000000000000\n', 'createEmptyStructure→serializeMapStructure: 空图可导出(v3)');
