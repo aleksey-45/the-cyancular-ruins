@@ -36,6 +36,12 @@ var _wp_w := 0.0
 var _wp_tween: Tween = null
 var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
+var _ammo_label: Label = null
+var _player: Node = null
+var _reload_bar: ColorRect = null
+var _bar_back: ColorRect = null
+
+const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
 
 func _ready() -> void:
 	layer = LAYER
@@ -53,9 +59,33 @@ func _ready() -> void:
 			p.waterproof_changed.connect(_on_waterproof)
 			_on_waterproof(p.waterproof, p.max_waterproof)
 		if "weapons" in p:
+			_player = p
 			_build_weapon_display(p)
 			p.weapons.weapon_changed.connect(_on_weapon_changed)
 			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
+
+
+func _process(_delta: float) -> void:
+	# 残弹数(实验性换弹):剪影/名称右侧实时刷新;关闭换弹玩法时隐藏
+	if _ammo_label == null:
+		return
+	var w: WeaponBase = null
+	if _player != null and is_instance_valid(_player) and "weapons" in _player:
+		w = _player.weapons.current_weapon()
+	var show := Settings.reload_enabled and w != null and w.reload_active()
+	_ammo_label.visible = show
+	# 换弹进度条:剪影下方细条,随进度填充;非换弹状态隐藏
+	var prog := -1.0
+	if show and w != null:
+		prog = w.reload_progress()
+	if _reload_bar != null:
+		_reload_bar.visible = prog >= 0.0
+		_bar_back.visible = prog >= 0.0
+		if prog >= 0.0:
+			_reload_bar.size.x = WEAPON_ICON_W * clampf(prog, 0.0, 1.0)
+	if not show:
+		return
+	_ammo_label.text = "装填中…" if w.is_reloading() else "%d/%d" % [w.mag_ammo, w.mag_size]
 
 
 # 左下角:当前武器纯白像素剪影 + 名称(HUD 游玩界面辨识)。
@@ -76,9 +106,26 @@ func _build_weapon_display(p: Node) -> void:
 	_weapon_icon = TextureRect.new()
 	_weapon_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_weapon_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_weapon_icon.custom_minimum_size = Vector2(96, 60)
+	_weapon_icon.custom_minimum_size = Vector2(WEAPON_ICON_W, 60)
 	_weapon_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	box.add_child(_weapon_icon)
+	# 剪影与换弹进度条纵向排布
+	var icon_box := VBoxContainer.new()
+	icon_box.add_theme_constant_override("separation", 3)
+	box.add_child(icon_box)
+	icon_box.add_child(_weapon_icon)
+	var bar_holder := Control.new()
+	bar_holder.custom_minimum_size = Vector2(WEAPON_ICON_W, 5)
+	icon_box.add_child(bar_holder)
+	_bar_back = ColorRect.new()
+	_bar_back.color = Color(1, 1, 1, 0.22)
+	_bar_back.size = Vector2(WEAPON_ICON_W, 4)
+	_bar_back.visible = false
+	bar_holder.add_child(_bar_back)
+	_reload_bar = ColorRect.new()
+	_reload_bar.color = Color(0.95, 0.85, 0.55)
+	_reload_bar.size = Vector2(0, 4)
+	_reload_bar.visible = false
+	bar_holder.add_child(_reload_bar)
 
 	_weapon_name = Label.new()
 	_weapon_name.add_theme_font_size_override("font_size", 24)
@@ -92,6 +139,17 @@ func _build_weapon_display(p: Node) -> void:
 	_weapon_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_weapon_name.size_flags_vertical = Control.SIZE_FILL
 	box.add_child(_weapon_name)
+
+	# 残弹数(实验性换弹):名称右侧,"12/30";换弹时"装填中…"
+	_ammo_label = Label.new()
+	_ammo_label.add_theme_font_size_override("font_size", 24)
+	_ammo_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.55))
+	if pf != null:
+		_ammo_label.add_theme_font_override("font", pf)
+	_ammo_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_ammo_label.size_flags_vertical = Control.SIZE_FILL
+	_ammo_label.visible = false
+	box.add_child(_ammo_label)
 
 
 func _on_weapon_changed(slot: int) -> void:

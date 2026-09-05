@@ -5,6 +5,8 @@
 
 [node name="PistolTest" type="Node2D" unique_id=1099092741]
 script = ExtResource("1_wb")
+mag_size = 12
+reload_time = 1.0
 weapon_name = "Pistol"
 fire_cooldown = 0.3
 bullet_speed = 1400.0

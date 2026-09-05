@@ -20,6 +20,7 @@ signal weapon_changed(slot: int)   # equip 成功后发射(菜单图标/HUD 武�
 
 var _weapon: WeaponBase = null
 var _current_slot: int = 1
+var _mag_state: Dictionary = {}   # 换弹玩法:各槽位残弹记忆(切枪不回满弹)
 var body: CharacterBody2D
 
 # 纯白像素剪影缓存(slot → Texture2D):从武器场景的 Sprite2D 图集切片,
@@ -95,10 +96,14 @@ func equip(slot: String) -> void:
 		return
 	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)
 	var inherit_cd := 0.0
-	_current_slot = int(slot)
-	if _weapon != null:
+	# 换弹玩法:记住旧枪残弹(防"切枪回满弹"漏洞),新枪按槽位恢复
+	var old_slot := _current_slot
+	if _weapon != null and is_instance_valid(_weapon):
 		inherit_cd = _weapon.fire_cd_timer
+		if _weapon.reload_active():
+			_mag_state[old_slot] = _weapon.mag_ammo
 		_weapon.queue_free()
+	_current_slot = int(slot)
 	var scene: PackedScene = load(WEAPONS[slot])
 	if scene == null:
 		push_error("weapon scene not found: " + str(WEAPONS[slot]))
@@ -109,8 +114,17 @@ func equip(slot: String) -> void:
 	_weapon = scene.instantiate() as WeaponBase
 	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
+	if _weapon.reload_active() and _mag_state.has(_current_slot):
+		# 武器 _ready(入树时)会把 mag_ammo 重置为满:恢复必须排在 deferred add 之后
+		var restored_slot := _current_slot
+		var restored_ammo := int(clampi(_mag_state[restored_slot], 0, _weapon.mag_size))
+		_restore_mag.call_deferred(_weapon, restored_ammo)
 	Sfx.play("switch")
 	weapon_changed.emit(int(slot))
+
+func _restore_mag(w: WeaponBase, ammo: int) -> void:
+	if is_instance_valid(w):
+		w.mag_ammo = ammo
 
 func current_weapon() -> WeaponBase:
 	return _weapon

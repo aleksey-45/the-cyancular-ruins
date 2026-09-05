@@ -5,6 +5,8 @@
 
 [node name="RifleTest" type="Node2D" unique_id=77899377]
 script = ExtResource("1_wb")
+mag_size = 30
+reload_time = 1.8
 tier = 1
 weapon_name = "Rifle"
 full_auto = true

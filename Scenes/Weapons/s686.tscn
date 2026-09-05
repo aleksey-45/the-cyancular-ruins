@@ -5,6 +5,8 @@
 
 [node name="S686" type="Node2D" unique_id=1871974505]
 script = ExtResource("1_wb")
+mag_size = 2
+reload_time = 2.2
 weapon_name = "S686"
 fire_cooldown = 0.75
 bullet_speed = 1100.0

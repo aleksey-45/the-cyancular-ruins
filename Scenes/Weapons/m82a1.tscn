@@ -6,6 +6,8 @@
 [node name="M82A1" type="Node2D" unique_id=285650997]
 position = Vector2(6, 3)
 script = ExtResource("1_wb")
+mag_size = 5
+reload_time = 2.6
 tier = 2
 weapon_name = "M82A1"
 fire_cooldown = 1.2

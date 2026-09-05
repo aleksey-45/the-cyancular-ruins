@@ -7,6 +7,8 @@
 
 [node name="GrenadeLauncher" type="Node2D" unique_id=1484159833]
 script = ExtResource("1_wb")
+mag_size = 4
+reload_time = 2.8
 bullet_scene = ExtResource("2_gb")
 tier = 2
 weapon_name = "Grenade Launcher"
