@@ -19,6 +19,11 @@ static var pvp_mode: bool = false
 
 # 主菜单演示模式:只铺地图做背景(无玩家物理/敌人/碰撞/HUD),镜头由主菜单驱动匀速左移。
 static var menu_demo: bool = false
+# 保活的演示世界实例:脱离场景树挂起,回主菜单时 revive_demo() 复位重用。
+# (反复构建/释放含大量碰撞体的世界会在场景切换时偶发原生段错误,故演示世界永不中途释放)
+static var menu_demo_instance: Level0 = null
+
+var _demo_spawn := Vector2i(-1, -1)   # 演示世界出生格(revive_demo 复位玩家用)
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
@@ -52,19 +57,29 @@ func _ready() -> void:
 	# 主菜单背景:实机演示——真实玩家由注入式 AI 驱动追打演示鸟,镜头正常跟随。
 	# 有碰撞/敌人(死光自动补),HUD 隐藏。(menu_demo 残留防护:主菜单进 PvP 不重置也不生效)
 	if menu_demo and not pvp_mode:
-		_build_wall_collision.call_deferred(grid)
+		# 演示世界只建出生点周边碰撞(AI 活动半径内):体量小一个量级,切场景释放不炸物理层
 		EnemySpawner.load_types()
 		var spawns := MazeGenerator.load_spawns()
-		_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
-		var demo_player: CharacterBody2D = $WorldViewport/Player
-		var ai_src := MenuDemoAi.DemoInputSource.new()
-		demo_player.set_input_source(ai_src)
-		var ai := MenuDemoAi.new()
-		ai.setup(demo_player, ai_src)
-		demo_player.add_child(ai)
+		var demo_spawn: Vector2i = spawns.get("player", Vector2i(-1, -1))
+		if demo_spawn.x < 0:
+			demo_spawn = Vector2i(grid[0].size() / 2, grid.size() / 2)
+		var r := 20
+		var region := Rect2i(demo_spawn.x - r, demo_spawn.y - r, r * 2 + 1, r * 2 + 1)
+		CollisionBuilder.build_permanent_region(CollisionBuilder.build_sub(grid, false),
+				$WorldViewport, "DemoCollision", region)
+		_place_player(grid, demo_spawn)
+		if not OS.get_cmdline_user_args().has("--demo-noai"):
+			var demo_player: CharacterBody2D = $WorldViewport/Player
+			var ai_src := MenuDemoAi.DemoInputSource.new()
+			demo_player.set_input_source(ai_src)
+			var ai := MenuDemoAi.new()
+			ai.setup(demo_player, ai_src)
+			demo_player.add_child(ai)
 		var demo_hud: Node = get_node_or_null("HUD")
 		if demo_hud != null:
 			demo_hud.visible = false
+		_demo_spawn = demo_spawn
+		menu_demo_instance = self
 		return
 
 	_build_wall_collision.call_deferred(grid)
@@ -84,6 +99,29 @@ func _ready() -> void:
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
 	call_deferred("add_child", pp)
+
+
+# 演示世界复位重用(脱离场景树保活后,回主菜单时调用):
+# 重连被真对局覆盖过的静态引用、玩家满血回出生点、清残留演示鸟(AI 会自动补波)。
+func revive_demo() -> void:
+	visible = true
+	Level0.wall_layer = $WorldViewport/WallLayer
+	Level0.water_layer = $WorldViewport/WaterLayer
+	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
+	MazeGenerator.current_grid = _grid_ref
+	GameParameters.MAP_WIDTH = _grid_ref[0].size() * GameParameters.TILE_SIZE
+	GameParameters.MAP_HEIGHT = _grid_ref.size() * GameParameters.TILE_SIZE
+	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
+	TileDefs.init_hp(_grid_ref)
+	var demo_player: CharacterBody2D = $WorldViewport/Player
+	if demo_player.is_downed():
+		demo_player.combat.revive()
+	demo_player.global_position = Vector2(_demo_spawn.x * GameParameters.TILE_SIZE + 32.0,
+			_demo_spawn.y * GameParameters.TILE_SIZE + 32.0)
+	demo_player.velocity = Vector2.ZERO
+	for c in $WorldViewport.get_children():
+		if c.is_in_group("enemies"):
+			c.queue_free()   # 残留演示鸟清掉,MenuDemoAi 的补波计时器会重新刷
 
 
 # 难度 → 鸟数量:简单=随机留一半;普通=原样;困难=在远离出生点的地板格补采

@@ -346,8 +346,9 @@ func _on_go_match(role: int, port: int) -> void:
 
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
-	# 携带本端选项:规则项服务器取房主(role1)的;颜色各自带
-	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name, {
+	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
+	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
+	NetBusExt.rpc_id(1, "player_options", {
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": Settings.pvp_round_full_heal,
 		"disabled_weapons": Settings.pvp_disabled_weapons,

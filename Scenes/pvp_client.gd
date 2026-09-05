@@ -25,6 +25,7 @@ var _id_self: Node2D = null
 var _id_opp: Node2D = null
 var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
 var _minimap: Minimap = null      # 小地图(设置开启时创建)
+var _opp_hues: Dictionary = {}    # 双方角色颜色 {role -> 色相}(扩展 peer_hues 下发)
 
 func _ready() -> void:
 	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
@@ -68,7 +69,8 @@ func _ready() -> void:
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
-	NetBus.local_match_options.connect(_on_match_options)
+	NetBusExt.local_match_options.connect(_on_match_options)
+	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
@@ -309,8 +311,8 @@ func _apply_tint(body: Node, hue_deg: float) -> void:
 	mat.set_shader_parameter("hue_shift", hue_deg)
 	canvas.material = mat
 
-# ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称/颜色}),两端据此显示 ──
-func _on_peer_info(names: Dictionary, hues: Dictionary = {}) -> void:
+# ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称})(原版协议)──
+func _on_peer_info(names: Dictionary) -> void:
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:
 		return
@@ -320,10 +322,19 @@ func _on_peer_info(names: Dictionary, hues: Dictionary = {}) -> void:
 	var nm_opp := str(names.get(opp, "对手"))
 	_id_self.set_label(nm_self, ROLE_COLOR.get(me, Color.WHITE))
 	_id_opp.set_label(nm_opp, ROLE_COLOR.get(opp, Color.WHITE))
-	# 对手角色染色(对方自选色相;缺省回落旧规则 P2 -65)
-	if _remote_replica != null:
-		_apply_tint(_remote_replica.get_node_or_null("AnimatedSprite2D"),
-				float(hues.get(opp, -65.0 if opp == 2 else 0.0)))
+	_apply_opp_hue()
+
+# 对手角色颜色:走扩展 peer_hues(原版 worker 不发 → 缺省回落旧规则 P2 -65)
+func _on_peer_hues(hues: Dictionary) -> void:
+	_opp_hues = hues
+	_apply_opp_hue()
+
+func _apply_opp_hue() -> void:
+	if _remote_replica == null:
+		return
+	var opp := 3 - PvpSession.role
+	_apply_tint(_remote_replica.get_node_or_null("AnimatedSprite2D"),
+			float(_opp_hues.get(opp, -65.0 if opp == 2 else 0.0)))
 
 # 服务器下发的生效选项:同步禁用武器(本地数字键/滚轮同样被挡,出生枪自动改首个启用槽)
 func _on_match_options(opts: Dictionary) -> void:

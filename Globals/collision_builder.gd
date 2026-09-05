@@ -127,6 +127,18 @@ static func build_permanent(sub: Array[Array], parent: Node, node_name: String) 
 	return total
 
 
+# 只在 cell_rect(64px 格坐标,含环面外圈截断)范围内建永久墙碰撞——
+# 主菜单演示世界用:碰撞体量缩小一个量级,场景切换时的释放压力随之大幅降低。
+static func build_permanent_region(sub: Array[Array], parent: Node, node_name: String,
+		cell_rect: Rect2i) -> int:
+	var srect := Rect2i(cell_rect.position.x * 2, cell_rect.position.y * 2,
+			cell_rect.size.x * 2, cell_rect.size.y * 2)
+	var rects := _greedy_region(sub, srect, SUB_TS)
+	var total := _instantiate(rects, parent, node_name, sub[0].size(), sub.size(), SUB_TS)
+	print("[CollisionBuilder] %s shapes: %d(区域 %s)" % [node_name, total, cell_rect])
+	return total
+
+
 # 建可破坏层所有分块节点。返回总 shape 数。
 static func build_destructible_chunks(sub: Array[Array], parent: Node) -> int:
 	var total := 0

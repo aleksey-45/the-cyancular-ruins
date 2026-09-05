@@ -23,6 +23,9 @@ func _run() -> void:
 	elif mode == "sp":
 		_press_by_text(tree.current_scene, "单 人 模 式")
 		await tree.create_timer(0.4).timeout
+		if "--sp-easy" in OS.get_cmdline_user_args():
+			Settings.sp_difficulty = 0
+			RunOptions.difficulty = 0
 		_press_by_text(tree.current_scene, "开 始 探 索")
 	elif mode == "mp":
 		_press_by_text(tree.current_scene, "多 人 对 战")

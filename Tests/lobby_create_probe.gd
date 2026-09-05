@@ -12,19 +12,19 @@ func _ready() -> void:
 			_addr = a
 	print("PROBE: 目标大厅 %s:7777" % _addr)
 	NetBus.local_room_created.connect(func(code: String) -> void:
-		print("PROBE: 建房成功!房间号 = %s(当前客户端协议与大厅完全兼容)" % code)
+		print("PROBE: 建房成功!房间号 = %s" % code)
 		NetBus.rpc_id(1, "list_rooms"))
 	NetBus.local_room_list.connect(func(rooms: Array) -> void:
 		print("PROBE: 房间列表 %d 条: %s" % [rooms.size(), str(rooms)])
 		print("PROBE: DONE")
 		get_tree().quit(0))
+	NetBus.local_server_message.connect(func(t: String) -> void:
+		print("PROBE: 服务器消息: \"%s\"" % t))
 	multiplayer.connected_to_server.connect(func() -> void:
-		if "--list" in OS.get_cmdline_user_args():
-			print("PROBE: 已连上大厅,发送 list_rooms…")
-			NetBus.rpc_id(1, "list_rooms")
-		else:
-			print("PROBE: 已连上大厅,发送 create_room…")
-			NetBus.rpc_id(1, "create_room"))
+		# 完整复刻原版客户端时序:连上先报昵称,再建房
+		print("PROBE: 已连上大厅,先 lobby_name 再 create_room…")
+		NetBus.rpc_id(1, "lobby_name", "探针")
+		NetBus.rpc_id(1, "create_room"))
 	multiplayer.connection_failed.connect(func() -> void:
 		print("PROBE: 连接失败")
 		get_tree().quit(1))

@@ -17,14 +17,13 @@ signal lobby_name_set(caller: int, name: String)   # 客户端连上大厅时报
 signal peer_left(peer_id: int)
 # 服务器端 → MatchHost 的输入包
 signal input_received(caller: int, pkt: Dictionary)
-# worker:客户端连上后 claim_role 转交(caller=peer id, role=角色, player_name=昵称, opts=本端选项)
-signal role_claimed(caller: int, role: int, player_name: String, opts: Dictionary)
+# worker:客户端连上后 claim_role 转交(caller=peer id, role=客户端在大厅领的角色, player_name=昵称)
+signal role_claimed(caller: int, role: int, player_name: String)
 # 服务器 → 客户端
 signal local_snapshot(snap: Dictionary)
 signal local_bullet_spawn(data: Dictionary)
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
-signal local_peer_info(names: Dictionary, hues: Dictionary)     # worker 开局:双方昵称/角色颜色 {role -> 值}
-signal local_match_options(opts: Dictionary)  # worker:生效对局选项(房主下发:禁武器/回合回血)
+signal local_peer_info(names: Dictionary)     # worker 开局:双方昵称 {role(int) -> name}(头上显示)
 signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
 signal local_tile_destroyed(cell: Vector2i)
 signal local_round_state(data: Dictionary)
@@ -95,12 +94,11 @@ func lobby_name(name: String) -> void:
 func send_input(pkt: Dictionary) -> void:
 	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
 
-# 客户端→worker:报到自己在对局里的角色+昵称+本端选项(role 大厅已发;player_name 头上显示;
-# opts 携带 角色颜色/规则偏好——服务器权威项以房主(role1)为准)。
-# worker 据此建 role→peer 映射,并在两人到齐后把双方昵称/颜色回传给各端(peer_info)。
+# 客户端→worker:报到自己在对局里的角色+昵称(role 大厅已发;player_name 用于对方头上显示)。
+# worker 据此建 role→peer 映射,并在两人到齐后把双方昵称回传给各端(peer_info)。
 @rpc("any_peer", "reliable")
-func claim_role(role: int, player_name: String, opts: Dictionary = {}) -> void:
-	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name, opts)
+func claim_role(role: int, player_name: String) -> void:
+	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name)
 
 # ── 服务器 → 客户端(权威方=peer1 可调)──
 @rpc("authority", "unreliable")
@@ -157,15 +155,10 @@ func match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 func go_match(role: int, port: int) -> void:
 	local_go_match.emit(role, port)
 
-# worker→客户端:开局广播双方昵称/角色颜色(role -> 值),两端据此显示头顶 ID 与染色。
+# worker→客户端:开局广播双方昵称(role -> name),两端据此在头上显示各自 ID。
 @rpc("authority", "reliable")
-func peer_info(names: Dictionary, hues: Dictionary) -> void:
-	local_peer_info.emit(names, hues)
-
-# worker→客户端:本局生效选项(房主下发)。客户端据此同步禁用武器等。
-@rpc("authority", "reliable")
-func match_options(opts: Dictionary) -> void:
-	local_match_options.emit(opts)
+func peer_info(names: Dictionary) -> void:
+	local_peer_info.emit(names)
 
 @rpc("authority", "reliable")
 func server_message(text: String) -> void:

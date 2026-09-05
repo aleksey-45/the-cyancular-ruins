@@ -104,10 +104,11 @@ func _ready() -> void:
 	_broadcast_match_options()
 
 # 生效选项广播:客户端据此同步禁武器(本地切枪同样被挡)。服务器权威,进局发一次。
+# (走扩展节点 NetBusExt——原版 worker 没有此 RPC,原版客户端收不到也不影响对局)
 func _broadcast_match_options() -> void:
 	var opts := {"disabled_weapons": _disabled_weapons, "round_full_heal": _round_full_heal}
 	for role in peer_by_role:
-		NetBus.rpc_id(peer_by_role[role], "match_options", opts)
+		NetBusExt.rpc_id(peer_by_role[role], "match_options", opts)
 
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:

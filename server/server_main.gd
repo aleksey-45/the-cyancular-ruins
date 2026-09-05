@@ -50,10 +50,18 @@ func _run_worker(port: int) -> void:
 		get_tree().quit(1)
 		return
 	NetBus.role_claimed.connect(_on_role_claimed)
+	NetBusExt.player_options_received.connect(_on_player_options)
 	NetBus.peer_left.connect(_on_peer_left)
 	print("worker 就绪,等待两名玩家……(port %d)" % port)
 
-func _on_role_claimed(caller: int, role: int, player_name: String, opts: Dictionary = {}) -> void:
+# 本端选项(颜色等)经扩展节点上报,可能先于/晚于 claim 到达,按 caller 归档
+func _on_player_options(caller: int, opts: Dictionary) -> void:
+	for r in _claims:
+		if _claims[r] == caller:
+			_claim_opts[r] = opts
+			return
+
+func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 	# 防串线:对局已开始、或该 role 已被其他 peer 占用 → 这个连接不属于本局,直接踢。
 	# (端口复用竞态下,迟到的客户端可能连到旧 worker;不能让它静默留在局里收快照/子弹。)
 	if _host != null or (_claims.has(role) and _claims[role] != caller):
@@ -64,16 +72,16 @@ func _on_role_claimed(caller: int, role: int, player_name: String, opts: Diction
 		return
 	_claims[role] = caller
 	_claim_names[role] = player_name
-	_claim_opts[role] = opts
 	print("worker: 角色 %d = peer %d (%d/2)" % [role, caller, _claims.size()])
 	if _claims.size() >= 2:
 		NetBus.role_claimed.disconnect(_on_role_claimed)
-		# 服务器权威规则项以房主(role1)选项为准
+		# 服务器权威规则项以房主(role1)选项为准(经 NetBusExt 上报;缺省=全默认)
 		_host = RoomManager.start_match_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}))
 		add_child(_host)
-		# 把双方昵称/颜色回传各端(头顶 ID + 角色染色)
+		# 双方昵称走原版 peer_info(兼容);颜色走扩展 peer_hues
 		for r in _claims:
-			NetBus.rpc_id(_claims[r], "peer_info", _claim_names, _claim_hues())
+			NetBus.rpc_id(_claims[r], "peer_info", _claim_names)
+			NetBusExt.rpc_id(_claims[r], "peer_hues", _claim_hues())
 		print("worker: 对局开始")
 
 # 各 role 自选的角色颜色(色相旋转度数;缺省 0)

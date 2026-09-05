@@ -26,6 +26,7 @@ run/main_scene.dedicated_server="res://server/server_main.tscn"
 
 GameParameters="*res://Globals/gameParameters.gd"
 NetBus="*res://Globals/net_bus.gd"
+NetBusExt="*res://Globals/net_bus_ext.gd"
 Settings="*res://Globals/settings.gd"
 
 [display]

@@ -13,6 +13,20 @@ static var _log_cache: Array = []
 var _ui_layer: CanvasLayer = null
 var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
 var _ver_panel: PanelContainer = null   # 版本信息面板(弹出式)
+var _demo_level0: Node = null           # 背景演示世界(切场景前要先拆它的碰撞体,见 _leave_menu)
+
+
+# 切换场景前把演示世界从场景树摘下挂起(而非释放):实测场景切换时释放含大量
+# 碰撞体的物理世界会偶发原生段错误;脱离场景树的节点完全停止处理且不被 change_scene 释放。
+func _leave_menu(path: String) -> void:
+	if _demo_level0 != null and is_instance_valid(_demo_level0):
+		Level0.menu_demo_instance = _demo_level0
+		var parent := _demo_level0.get_parent()
+		if parent != null:
+			parent.remove_child(_demo_level0)
+		_demo_level0.visible = false
+	await get_tree().process_frame
+	get_tree().change_scene_to_file(path)
 
 
 func _ready() -> void:
@@ -93,14 +107,21 @@ static func commit_log() -> Array:
 
 # ── 新版 UI ──
 func _build_new_ui() -> void:
-	# 背景:实机演示(Level0.menu_demo 分支:AI 玩家打鸟,有碰撞有敌人)
-	Level0.menu_demo = true
-	var level0: Node = load("res://scenes/Level0.tscn").instantiate()
-	add_child(level0)
-	Level0.menu_demo = false   # 只影响本次实例化
+	# 背景:实机演示。优先复用保活的演示世界(避免反复构建/释放物理世界 → 原生段错误)
+	if Level0.menu_demo_instance != null and is_instance_valid(Level0.menu_demo_instance):
+		var reused: Node = Level0.menu_demo_instance
+		add_child(reused)
+		reused.revive_demo()
+		_demo_level0 = reused
+	else:
+		Level0.menu_demo = true
+		var level0: Node = load("res://Scenes/Level0.tscn").instantiate()
+		add_child(level0)
+		Level0.menu_demo = false   # 只影响本次实例化
+		_demo_level0 = level0
 	# 后处理(与游戏内一致的画面),再叠一层暗化让 UI 突出
 	var pp := PostProcess.new()
-	pp.world_viewport = level0.get_node("WorldViewport")
+	pp.world_viewport = _demo_level0.get_node("WorldViewport")
 	add_child(pp)
 
 	_ui_layer = CanvasLayer.new()
@@ -126,7 +147,8 @@ func _build_new_ui() -> void:
 	title.modulate.a = 0.0
 	_ui_layer.add_child(title)
 
-	var ver := _pixel_label(version_string(), 30, Color(0.75, 0.85, 0.9, 0.9))
+	var ver := _pixel_label("dev" if "--nover" in OS.get_cmdline_user_args() else version_string(),
+			30, Color(0.75, 0.85, 0.9, 0.9))
 	ver.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	ver.anchor_left = 0.5
 	ver.anchor_right = 0.5
@@ -152,10 +174,10 @@ func _build_new_ui() -> void:
 	var multi_btn := _pixel_button("多 人 对 战", 38)
 	multi_btn.pressed.connect(func() -> void:
 		PvpSession.reset()
-		get_tree().change_scene_to_file("res://Scenes/matchmaking.tscn"))
+		_leave_menu("res://Scenes/matchmaking.tscn"))
 	var settings_btn := _pixel_button("设      置", 38)
 	settings_btn.pressed.connect(func() -> void:
-		get_tree().change_scene_to_file("res://Scenes/settings_menu.tscn"))
+		_leave_menu("res://Scenes/settings_menu.tscn"))
 	var ver_btn := _pixel_button("版 本 信 息", 38)
 	ver_btn.pressed.connect(_on_version_pressed)
 	var quit_btn := _pixel_button("退      出", 38)
@@ -292,7 +314,7 @@ func _build_sp_panel() -> PanelContainer:
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		RunOptions.difficulty = Settings.sp_difficulty
-		get_tree().change_scene_to_file("res://Scenes/Level0.tscn"))
+		_leave_menu("res://Scenes/Level0.tscn"))
 	var back := _pixel_button("返回", 34)
 	back.pressed.connect(func() -> void: panel.visible = false)
 	row.add_child(go)
@@ -328,7 +350,7 @@ func _build_old_ui() -> void:
 	single.pressed.connect(func() -> void:
 		Level0.pvp_mode = false
 		CombatComponent.pvp_arena = false
-		get_tree().change_scene_to_file("res://Scenes/Level0.tscn"))
+		_leave_menu("res://Scenes/Level0.tscn"))
 	add_child(single)
 
 	var multi := Button.new()
@@ -337,7 +359,7 @@ func _build_old_ui() -> void:
 	multi.size = Vector2(200, 48)
 	multi.pressed.connect(func() -> void:
 		PvpSession.reset()
-		get_tree().change_scene_to_file("res://Scenes/matchmaking.tscn"))
+		_leave_menu("res://Scenes/matchmaking.tscn"))
 	add_child(multi)
 
 	var settings := Button.new()
@@ -345,7 +367,7 @@ func _build_old_ui() -> void:
 	settings.position = Vector2(60, 300)
 	settings.size = Vector2(200, 48)
 	settings.pressed.connect(func() -> void:
-		get_tree().change_scene_to_file("res://Scenes/settings_menu.tscn"))
+		_leave_menu("res://Scenes/settings_menu.tscn"))
 	add_child(settings)
 
 

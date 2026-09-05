@@ -18,6 +18,8 @@ var _respawn_timer := 0.0
 var _wander_timer := 0.0
 var _wander_dir := 1.0
 var _world: Node = null
+var _home := Vector2.ZERO        # 出生点世界坐标(AI 活动范围与复活参考)
+var _down_t := 0.0               # 倒地累计(演示里倒地太久就自动复活重置)
 
 
 class DemoInputSource:
@@ -67,6 +69,7 @@ func setup(p: CharacterBody2D, s: MenuDemoAi.DemoInputSource) -> void:
 	player = p
 	src = s
 	_world = p.get_parent()
+	_home = p.global_position
 
 
 func _ready() -> void:
@@ -74,8 +77,22 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if player == null or not is_instance_valid(player) or player.is_downed():
+	if player == null or not is_instance_valid(player):
 		return
+	# 演示里被打倒:2 秒后原地满血复活(背景演出不能一直躺着)
+	if player.is_downed():
+		_down_t += delta
+		if _down_t > 2.0:
+			_down_t = 0.0
+			player.combat.revive()
+			player.global_position = _home
+			player.velocity = Vector2.ZERO
+		return
+	_down_t = 0.0
+	# 活动范围钳制:离出生点太远就往回走(碰撞只建了出生点周边)
+	var to_home := MazeGenerator.toroidal_delta_px(player.global_position, _home,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var far_from_home := to_home.length() > 1150.0
 	_respawn_timer -= delta
 	if _respawn_timer <= 0.0:
 		_respawn_timer = RESPAWN_CHECK
@@ -101,11 +118,13 @@ func _physics_process(delta: float) -> void:
 				and player.is_on_floor()):
 			src.press_jump()
 	else:
-		# 没目标:左右游走等补怪
+		# 没目标:左右游走等补怪;跑出活动区就先回家
 		_wander_timer -= delta
 		if _wander_timer <= 0.0:
 			_wander_timer = WANDER_FLIP
 			_wander_dir = -_wander_dir
+		if far_from_home and absf(to_home.x) > 40.0:
+			_wander_dir = 1.0 if to_home.x > 0.0 else -1.0
 		src.demo_axis = _wander_dir
 		src.demo_aim = Vector2(_wander_dir, 0.0)
 		src.demo_fire = false
