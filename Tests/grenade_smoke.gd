@@ -126,7 +126,8 @@ func _test_aoe() -> void:
 	root.add_child(walled)
 	await physics_frame
 	exp.apply_aoe(Vector2(5 * 16, 12 * 16), 300.0, 35, 900.0)
-	_check(walled.hp == 50 - 26, "墙后敌人保留 75% 伤(26)")
+	# 528f4e9 起内圈(≤40% 半径=120px)免疫掩护衰减:目标距爆心 64px 在内圈 → 满伤
+	_check(walled.hp == 50 - 35, "内圈目标免疫掩护衰减(满伤 35)")
 	walled.free()
 	# 爆心(5,12)→(8,12):右弧 5→6→7→8 无墙 → 满伤
 	var open := StubEnemy.new()
