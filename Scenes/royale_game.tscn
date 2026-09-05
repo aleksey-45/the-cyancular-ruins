@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://royalegame000001"]
+
+[ext_resource type="Script" path="res://Scenes/royale_game.gd" id="1"]
+
+[node name="RoyaleGame" type="Node2D"]
+script = ExtResource("1")

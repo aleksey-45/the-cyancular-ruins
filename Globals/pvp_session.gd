@@ -11,6 +11,7 @@ static var player_name: String = "Anon"   # 玩家在匹配界面输入的昵称
 static var map_path: String = ""
 static var spawn: Vector2i = Vector2i(-1, -1)
 static var disabled_weapons: Array[int] = []   # 本局生效的禁用武器(服务器 match_options 下发)
+static var royale: bool = false                # 大乱斗局(RoyaleServer 分支):N 人限时死斗
 
 static func reset() -> void:
 	server_address = "120.53.107.140"
@@ -20,3 +21,4 @@ static func reset() -> void:
 	map_path = ""
 	spawn = Vector2i(-1, -1)
 	disabled_weapons = []
+	royale = false

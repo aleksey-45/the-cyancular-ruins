@@ -13,6 +13,9 @@ var _dot_self: ColorRect
 var _dot_enemy: ColorRect
 var _local_provider: Callable = Callable()   # () -> Vector2 本地玩家世界坐标
 var _enemy_provider: Callable = Callable()   # () -> Vector2 对手世界坐标(INF=无)
+# 多目标模式(大乱斗):others_provider () -> Array[Vector2],按需扩点位池
+var _others_provider: Callable = Callable()
+var _other_dots: Array[ColorRect] = []
 
 const SELF_COLOR := Color(0.6, 0.95, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.4, 0.35)
@@ -21,6 +24,12 @@ const ENEMY_COLOR := Color(1.0, 0.4, 0.35)
 func setup(local_provider: Callable, enemy_provider: Callable) -> void:
 	_local_provider = local_provider
 	_enemy_provider = enemy_provider
+
+
+# 大乱斗多目标版:others_provider 返回全部对手世界坐标数组
+func setup_multi(local_provider: Callable, others_provider: Callable) -> void:
+	_local_provider = local_provider
+	_others_provider = others_provider
 
 
 func _ready() -> void:
@@ -75,6 +84,19 @@ func _process(_delta: float) -> void:
 		if p.is_finite():
 			_dot_self.visible = true
 			_dot_self.position = _world_to_map(p) - _dot_self.size * 0.5
+	if _others_provider.is_valid():
+		# 多目标(大乱斗):按需扩池,显隐随设置
+		var others: Array = _others_provider.call()
+		while _other_dots.size() < others.size():
+			_other_dots.append(_make_dot(ENEMY_COLOR))
+		for i in range(_other_dots.size()):
+			var dot := _other_dots[i]
+			var show := Settings.pvp_minimap_show_enemy and i < others.size() \
+					and (others[i] as Vector2).is_finite()
+			dot.visible = show
+			if show:
+				dot.position = _world_to_map(others[i]) - dot.size * 0.5
+		return
 	if _dot_enemy != null and _enemy_provider.is_valid():
 		var e: Vector2 = _enemy_provider.call()
 		var show := Settings.pvp_minimap_show_enemy and e.is_finite()

@@ -25,3 +25,51 @@ func match_options(opts: Dictionary) -> void:
 @rpc("authority", "reliable")
 func peer_hues(hues: Dictionary) -> void:
 	local_peer_hues.emit(hues)
+
+# ── 大乱斗大厅(自建服务器,与 1v1 大厅协议并存;RPC 名不同互不干扰)──
+# 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。
+
+signal royale_create_requested(caller: int, opts: Dictionary)
+signal royale_join_requested(caller: int, code: String, invite: String)
+signal royale_leave_requested(caller: int)
+signal royale_list_requested(caller: int)
+signal royale_start_requested(caller: int)
+signal local_royale_rooms(rooms: Array)        # 大厅 → 客户端:公开大乱斗房间列表
+signal local_royale_room_state(state: Dictionary)  # 大厅 → 客户端:所在房间实时状态(等待室)
+
+# 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String, max_players:int,
+#   round_full_heal:bool, disabled_weapons:Array}(规则项随房存,开局随房主生效)
+@rpc("any_peer", "reliable")
+func royale_create(opts: Dictionary) -> void:
+	royale_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
+
+# 客户端 → 大厅:加入(私密房须带邀请码)
+@rpc("any_peer", "reliable")
+func royale_join(code: String, invite: String) -> void:
+	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite)
+
+# 客户端 → 大厅:退出所在大乱斗房间(开局前)
+@rpc("any_peer", "reliable")
+func royale_leave() -> void:
+	royale_leave_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端 → 大厅:请求公开大乱斗房间列表
+@rpc("any_peer", "reliable")
+func royale_list() -> void:
+	royale_list_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端 → 大厅:房主请求开局(仅房主有效;人数 ≥2 才开)
+@rpc("any_peer", "reliable")
+func royale_start() -> void:
+	royale_start_requested.emit(multiplayer.get_remote_sender_id())
+
+# 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
+@rpc("authority", "reliable")
+func royale_rooms(rooms: Array) -> void:
+	local_royale_rooms.emit(rooms)
+
+# 大厅 → 客户端:所在房间实时状态 {code, is_public, invite_code, max_players, host_role,
+#   players: [{role, name}], in_match}(等待室 UI 靠它刷新;仅发给房内成员)
+@rpc("authority", "reliable")
+func royale_room_state(state: Dictionary) -> void:
+	local_royale_room_state.emit(state)
