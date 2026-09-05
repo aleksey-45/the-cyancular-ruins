@@ -16,6 +16,7 @@ var _wait_timer := 0.0
 var _royale := false
 var _expected_players := 2
 var _claim_wait := 0.0
+var _understaffed_wait := 0.0   # 开局前可用玩家 <2 的持续时长(超时退出释放端口)
 var _match_started := false
 
 func _ready() -> void:
@@ -77,6 +78,13 @@ func _process(delta: float) -> void:
 		if _claim_wait > 20.0:
 			print("worker: 报到超时(%d/%d),按已到人数开局" % [_claims.size(), _expected_players])
 			_begin_match()
+	# 大乱斗:可用玩家不足 2 人(开局前全部掉线)→ 宽限后退出释放端口
+	# (原 M1:只重置计时继续等 → worker 僵死占端口,大厅 30s 回收后撞车新对局)
+	elif _royale and not _match_started and _host == null and _claims.size() < 2:
+		_understaffed_wait += delta
+		if _understaffed_wait > 10.0:
+			print("worker: 可用玩家 %d/2,超时退出释放端口" % _claims.size())
+			get_tree().quit(0)
 
 # 本端选项(颜色等)经扩展节点上报,可能先于/晚于 claim 到达,按 caller 归档
 func _on_player_options(caller: int, opts: Dictionary) -> void:

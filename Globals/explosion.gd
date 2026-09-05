@@ -50,6 +50,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			# 击杀归因(大乱斗 RoyaleHost 读 last_damager 判击杀分);1v1 MatchHost 不读,无行为变化
 			if shooter != null and shooter != pp:
 				pp.set_meta("last_damager", shooter)
+				pp.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效(RoyaleHost.ATTRIB_WINDOW)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, grid)
