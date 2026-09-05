@@ -82,6 +82,8 @@ func _ready() -> void:
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
 	_hud = PvpHud.new()
 	add_child(_hud)
+	# Esc 菜单(PvP:不暂停树,回主菜单=断开连接,worker 检测断线自动拆局)
+	add_child(PauseMenu.new(true))
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# 小地图需要在 post_process 之上才可见,但 CanvasLayer 无层级冲突(layer 131)→ 已在 _ready 建好

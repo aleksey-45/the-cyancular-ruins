@@ -49,18 +49,22 @@ func _ready() -> void:
 	Level0.water_layer.tile_set = tile_set
 	_paint_water(grid)
 
-	# 主菜单背景:地图铺完即止。关掉场景自带玩家/HUD,镜头由主菜单驱动。
-	# (menu_demo 残留防护:主菜单进 PvP 不重置也不生效)
+	# 主菜单背景:实机演示——真实玩家由注入式 AI 驱动追打演示鸟,镜头正常跟随。
+	# 有碰撞/敌人(死光自动补),HUD 隐藏。(menu_demo 残留防护:主菜单进 PvP 不重置也不生效)
 	if menu_demo and not pvp_mode:
-		var demo_player: Node = get_node_or_null("WorldViewport/Player")
-		if demo_player != null:
-			demo_player.set_physics_process(false)
-			demo_player.visible = false
+		_build_wall_collision.call_deferred(grid)
+		EnemySpawner.load_types()
+		var spawns := MazeGenerator.load_spawns()
+		_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
+		var demo_player: CharacterBody2D = $WorldViewport/Player
+		var ai_src := MenuDemoAi.DemoInputSource.new()
+		demo_player.set_input_source(ai_src)
+		var ai := MenuDemoAi.new()
+		ai.setup(demo_player, ai_src)
+		demo_player.add_child(ai)
 		var demo_hud: Node = get_node_or_null("HUD")
 		if demo_hud != null:
 			demo_hud.visible = false
-		var demo_cam: Camera2D = $WorldViewport/Camera2D
-		demo_cam.target = null
 		return
 
 	_build_wall_collision.call_deferred(grid)
@@ -73,6 +77,9 @@ func _ready() -> void:
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单人开局选项:禁用的武器槽位应用到玩家(数字键/滚轮都会跳过)
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)
+
+	# Esc 暂停菜单(隐藏待命,PauseMenu 自行处理 ui_cancel 并截获,不会透进世界)
+	add_child(PauseMenu.new(false))
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport

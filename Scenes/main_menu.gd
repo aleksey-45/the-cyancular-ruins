@@ -1,18 +1,18 @@
 extends Control
-# 主菜单(实验分支 KikuchiHeinr):像素粗体大标题 + 模式按钮从屏幕中央依次浮现,
-# 背景 = 单人地图奔跑演示(Level0.menu_demo:镜头向左匀速运镜,主角向左奔跑)。
-# Settings.old_ui=true 时保留旧版简洁布局(可在设置里切回)。
+# 主菜单(实验分支):像素粗体大标题 + 模式按钮浮现动画,
+# 背景 = 实机演示(MenuDemoAi 驱动真实玩家追打演示鸟,镜头正常跟随)。
+# 标题下方显示版本号(分支名 + git 提交序号);「版本信息」列出本分支提交历史。
+# Settings.old_ui=true 时保留旧版简洁布局。
 
 const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
-const PAN_SPEED := 240.0            # 背景镜头向左匀速运镜(px/s)
-const RUNNER_SCREEN_X := 260.0      # 主角在镜头前方的水平偏移(px)
 const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器"}
 
-var _cam: Camera2D = null
-var _runner: AnimatedSprite2D = null
-var _runner_y := 0.0
+static var _version_cache := ""
+static var _log_cache: Array = []
+
 var _ui_layer: CanvasLayer = null
 var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
+var _ver_panel: PanelContainer = null   # 版本信息面板(弹出式)
 
 
 func _ready() -> void:
@@ -30,7 +30,7 @@ func _ready() -> void:
 	else:
 		_build_new_ui()
 
-	# 自动流转探针( Tests/menu_autotest.gd ):命令行 -- --autotest-sp / --autotest-mp / --autotest-level
+	# 自动流转探针( Tests/menu_autotest.gd ):命令行 -- --autotest-sp / --autotest-mp / --autotest-set
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--autotest-"):
 			var probe := Node.new()
@@ -40,41 +40,64 @@ func _ready() -> void:
 			break
 
 
-func _process(delta: float) -> void:
-	if _cam == null:
-		return
-	# 镜头向左匀速运镜;取模回中央副本范围内(3×3 铺贴保证跨接缝画面连续)
-	_cam.global_position.x = wrapf(_cam.global_position.x - PAN_SPEED * delta, 0.0,
-			GameParameters.MAP_WIDTH)
-	_cam.global_position.y = _runner_y
-	# 主角跟镜头同步向左跑,保持固定屏幕位置(世界在向后流动)
-	if _runner != null:
-		_runner.global_position = Vector2(_cam.global_position.x - RUNNER_SCREEN_X, _runner_y)
+# ── 版本号 / 提交历史(git,结果缓存)──
+
+# 读 git 输出为 UTF-8 文本。OS.execute 在中文 Windows 上按系统码页解码 → 中文乱码;
+# execute_with_pipe 拿原始流,FileAccess.get_as_text 显式按 UTF-8 解。
+static func _git_text(args: Array) -> String:
+	var res: Variant = OS.execute_with_pipe("git", args, true)
+	if res is Dictionary and res.has("stdio"):
+		var f: FileAccess = res["stdio"]
+		if f != null:
+			# 分块读到 EOF,攒原始字节后显式按 UTF-8 解码
+			# (get_as_text/get_buffer 单次在中文 Windows 会因系统码页/时机导致乱码或截断)
+			var bytes := PackedByteArray()
+			var guard := 0
+			while not f.eof_reached() and guard < 1000:
+				guard += 1
+				var chunk := f.get_buffer(4096)
+				if chunk.size() == 0:
+					break
+				bytes.append_array(chunk)
+			if bytes.size() > 0:
+				return bytes.get_string_from_utf8()
+	var out: Array = []
+	OS.execute("git", args, out, true)
+	return str(out[0]) if out.size() > 0 else ""
+
+
+static func version_string() -> String:
+	if _version_cache != "":
+		return _version_cache
+	var branch := _git_text(["rev-parse", "--abbrev-ref", "HEAD"]).strip_edges()
+	var n := _git_text(["rev-list", "--count", "HEAD"]).strip_edges()
+	_version_cache = ("%s #%s" % [branch, n]) if branch != "" else "dev"
+	return _version_cache
+
+
+# 提交历史(新→旧,最多 20 条):[{hash,time,subject}]
+static func commit_log() -> Array:
+	if not _log_cache.is_empty():
+		return _log_cache
+	for line in _git_text(["-c", "i18n.logOutputEncoding=UTF-8",
+			"log", "--pretty=%h|%cI|%s", "-20"]).split("\n"):
+		var parts := line.strip_edges().split("|", true, 2)
+		if parts.size() == 3:
+			_log_cache.append({
+				"hash": parts[0],
+				"time": parts[1].replace("T", " ").substr(0, 16),
+				"subject": parts[2],
+			})
+	return _log_cache
 
 
 # ── 新版 UI ──
 func _build_new_ui() -> void:
-	# 背景:地图奔跑演示。menu_demo 已置位,Level0 只铺图不建玩家/敌人。
+	# 背景:实机演示(Level0.menu_demo 分支:AI 玩家打鸟,有碰撞有敌人)
 	Level0.menu_demo = true
-	var level0: Node = load("res://Scenes/Level0.tscn").instantiate()
+	var level0: Node = load("res://scenes/Level0.tscn").instantiate()
 	add_child(level0)
 	Level0.menu_demo = false   # 只影响本次实例化
-	_cam = level0.get_node("WorldViewport/Camera2D")
-	var spawns := MazeGenerator.load_spawns()
-	var spawn: Vector2i = spawns.get("player", Vector2i(int(MazeGenerator.map_size().x / 2.0), 0))
-	_runner_y = spawn.y * GameParameters.TILE_SIZE + GameParameters.TILE_SIZE * 0.5
-	_cam.global_position = Vector2(spawn.x * GameParameters.TILE_SIZE, _runner_y)
-	# 主角(纯视觉):借 Player.tscn 的 SpriteFrames 播奔跑,朝左跑
-	var tmp: Node = preload("res://Scenes/Player/Player.tscn").instantiate()
-	var frames: SpriteFrames = tmp.get_node("AnimatedSprite2D").sprite_frames
-	var body_scale: Vector2 = tmp.scale
-	tmp.free()
-	_runner = AnimatedSprite2D.new()
-	_runner.sprite_frames = frames
-	_runner.scale = body_scale
-	_runner.flip_h = true
-	_runner.play("move")
-	level0.get_node("WorldViewport").add_child(_runner)
 	# 后处理(与游戏内一致的画面),再叠一层暗化让 UI 突出
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
@@ -84,59 +107,74 @@ func _build_new_ui() -> void:
 	_ui_layer.layer = 140   # 盖过 PostProcess(128)/HUD(129)
 	add_child(_ui_layer)
 	var dim := ColorRect.new()
-	dim.color = Color(0.0, 0.02, 0.05, 0.55)
+	dim.color = Color(0.0, 0.02, 0.05, 0.45)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_layer.add_child(dim)
 
-	# 大标题:中央浮现(淡入 + 轻微上移)
+	# 大标题:中央浮现(描边同色加粗);下面一行版本号
 	var title := _pixel_label("The Cyancular Ruins", 104, Color(0.55, 0.95, 1.0))
+	title.add_theme_constant_override("outline_size", 12)
+	title.add_theme_color_override("font_outline_color", Color(0.55, 0.95, 1.0))
 	title.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	title.anchor_left = 0.5
 	title.anchor_right = 0.5
 	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	title.offset_top = 220.0
-	title.offset_bottom = 360.0
+	title.offset_top = 200.0
+	title.offset_bottom = 340.0
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.modulate.a = 0.0
-	title.position.y += 40.0
 	_ui_layer.add_child(title)
+
+	var ver := _pixel_label(version_string(), 30, Color(0.75, 0.85, 0.9, 0.9))
+	ver.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	ver.anchor_left = 0.5
+	ver.anchor_right = 0.5
+	ver.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	ver.offset_top = 352.0
+	ver.offset_bottom = 392.0
+	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ver.modulate.a = 0.0
+	_ui_layer.add_child(ver)
 
 	# 模式按钮:标题之后从中央依次浮现
 	var box := VBoxContainer.new()
 	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
-	box.offset_top = 120.0
-	box.add_theme_constant_override("separation", 22)
+	box.offset_top = 130.0
+	box.add_theme_constant_override("separation", 18)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_ui_layer.add_child(box)
 
-	var start_btn := _pixel_button("单 人 模 式", 40)
+	var start_btn := _pixel_button("单 人 模 式", 38)
 	start_btn.pressed.connect(_on_single_pressed)
-	var multi_btn := _pixel_button("多 人 对 战", 40)
+	var multi_btn := _pixel_button("多 人 对 战", 38)
 	multi_btn.pressed.connect(func() -> void:
 		PvpSession.reset()
 		get_tree().change_scene_to_file("res://Scenes/matchmaking.tscn"))
-	var settings_btn := _pixel_button("设      置", 40)
+	var settings_btn := _pixel_button("设      置", 38)
 	settings_btn.pressed.connect(func() -> void:
 		get_tree().change_scene_to_file("res://Scenes/settings_menu.tscn"))
-	var quit_btn := _pixel_button("退      出", 40)
+	var ver_btn := _pixel_button("版 本 信 息", 38)
+	ver_btn.pressed.connect(_on_version_pressed)
+	var quit_btn := _pixel_button("退      出", 38)
 	quit_btn.pressed.connect(func() -> void: get_tree().quit())
-	for b in [start_btn, multi_btn, settings_btn, quit_btn]:
+	for b in [start_btn, multi_btn, settings_btn, ver_btn, quit_btn]:
 		box.add_child(b)
 
-	# 浮现动画:标题先出(淡入+上浮),按钮依次淡入
+	# 浮现动画:标题先出(淡入),按钮依次淡入
 	var tw := create_tween()
 	tw.tween_interval(0.1)
 	tw.tween_property(title, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(ver, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	var delay := 0.9
-	for b in [start_btn, multi_btn, settings_btn, quit_btn]:
+	for b in [start_btn, multi_btn, settings_btn, ver_btn, quit_btn]:
 		_emerge(b, delay, 0.5)
-		delay += 0.18
+		delay += 0.16
 
 
-# 元素浮现:延迟后淡入。按钮由容器管理布局,只做透明度;标题的位移在其外部单独处理。
+# 元素浮现:延迟后淡入。按钮由容器管理布局,只做透明度。
 func _emerge(c: Control, delay: float, dur: float) -> void:
 	c.modulate.a = 0.0
 	var tw := create_tween()
@@ -150,6 +188,53 @@ func _on_single_pressed() -> void:
 		return
 	_sp_panel = _build_sp_panel()
 	_ui_layer.add_child(_sp_panel)
+
+
+func _on_version_pressed() -> void:
+	Sfx.play("ui")
+	if _ver_panel != null:
+		_ver_panel.visible = not _ver_panel.visible
+		return
+	_ver_panel = _build_ver_panel()
+	_ui_layer.add_child(_ver_panel)
+
+
+# ── 版本信息面板:当前版本 + 提交历史 ──
+func _build_ver_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	vb.custom_minimum_size = Vector2(1180, 0)
+	panel.add_child(vb)
+
+	vb.add_child(_pixel_label("—— 版本信息 ——", 44, Color(0.6, 0.95, 1.0)))
+	vb.add_child(_pixel_label("当前版本: %s(分支名 + 提交序号)" % version_string(), 26))
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(1160, 620)
+	vb.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 6)
+	list.custom_minimum_size = Vector2(1120, 0)
+	scroll.add_child(list)
+
+	var log := commit_log()
+	if log.is_empty():
+		list.add_child(_pixel_label("(读不到 git 历史:仓库不可用或未安装 git)", 24, Color(0.9, 0.6, 0.5)))
+	var total := log.size()
+	for i in range(log.size()):
+		var e: Dictionary = log[i]
+		var row := _pixel_label("%s  %s  %s" % [str(e["hash"]), str(e["time"]), str(e["subject"])],
+				22, Color(0.92, 0.95, 1.0))
+		list.add_child(row)
+
+	var back := _pixel_button("返 回", 30)
+	back.pressed.connect(func() -> void: panel.visible = false)
+	vb.add_child(back)
+	return panel
 
 
 # ── 单人开局面板:禁用武器 + 难度(鸟密度)──
@@ -209,14 +294,13 @@ func _build_sp_panel() -> PanelContainer:
 		RunOptions.difficulty = Settings.sp_difficulty
 		get_tree().change_scene_to_file("res://Scenes/Level0.tscn"))
 	var back := _pixel_button("返回", 34)
-	back.pressed.connect(func() -> void:
-		panel.visible = false)
+	back.pressed.connect(func() -> void: panel.visible = false)
 	row.add_child(go)
 	row.add_child(back)
 	return panel
 
 
-# ── 旧版 UI(Settings.old_ui=true):保留原布局,追加设置入口 ──
+# ── 旧版 UI(Settings.old_ui=true):保留原布局,追加设置/版本信息入口 ──
 func _build_old_ui() -> void:
 	# 深色底(与原版默认灰底观感一致;全局清屏色被 Level0 改浅蓝后白字看不清)
 	var bg := ColorRect.new()
@@ -229,6 +313,13 @@ func _build_old_ui() -> void:
 	title.position = Vector2(60, 60)
 	title.add_theme_font_size_override("font_size", 40)
 	add_child(title)
+
+	var ver := Label.new()
+	ver.text = version_string()
+	ver.position = Vector2(60, 112)
+	ver.add_theme_font_size_override("font_size", 20)
+	ver.add_theme_color_override("font_color", Color(0.7, 0.8, 0.9))
+	add_child(ver)
 
 	var single := Button.new()
 	single.text = "单人"
@@ -285,6 +376,6 @@ func _pixel_button(text: String, font_size: int) -> Button:
 	var b := Button.new()
 	b.text = text
 	_style_control(b, font_size)
-	b.custom_minimum_size = Vector2(360, 64)
+	b.custom_minimum_size = Vector2(360, 60)
 	b.pressed.connect(func() -> void: Sfx.play("ui"))
 	return b

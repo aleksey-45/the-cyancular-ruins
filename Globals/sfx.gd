@@ -25,6 +25,7 @@ static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> vo
 	var p := AudioStreamPlayer.new()
 	p.stream = stream
 	p.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
+	p.process_mode = Node.PROCESS_MODE_ALWAYS   # 单机暂停树时 UI 音效仍可播
 	p.volume_db = volume_db
 	p.pitch_scale = pitch * (randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
 	# 游戏启动链(_ready 里 equip→switch 音)树正在建子节点,直接 add_child 会被拒:
