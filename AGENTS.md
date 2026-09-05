@@ -109,11 +109,18 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - PvP 固定地图 `factory_1V1(260827).cyrm`(150×100,`# player 17 65` + `# player2 133 64`;两出生点相距约 2200px 超视野,走近才互见)。
 - PvP HUD:`Scenes/pvp_hud.gd`(`class_name PvpHud`,CanvasLayer layer=130 盖在 PostProcess 128 / 单机 HUD 129 之上)显示双方击杀/局胜/局号 + 中央状态(准备倒计时/胜局/获胜),MATCH_OVER 后 `pvp_client` 延时回主菜单。复活视觉:`combat.revive()` 已补 `post_process.set_downed(false)`(复活后屏幕不再变灰)。
 - 测试:`Tests/pvp_room_smoke.sh` 断言建房/加入/开局;`Tests/pvp_match_smoke.sh` 断言输入→模拟→快照→子弹广播链路 + **round_state 广播**(loopback)。脚本收尾用 `taskkill` 按 PID + `kill_port`(netstat 找 7777 持有者)强杀——**Windows 下 bash `kill` 杀不死 headless Godot,会留僵尸占 7777**。
+- **大乱斗模式(限时死斗,RoyaleServer 分支)**:主菜单「大乱斗」→ `Scenes/royale_lobby.tscn`(建房:公开/私密+邀请码/2~8 人上限/禁武器选项;房间列表点击加入;等待室显示房内成员,房主开局,房主掉线自动转移)。协议全走 NetBusExt(`royale_create/join/leave/list/start` → 广播 `royale_rooms`/`royale_room_state`),原版 NetBus 未动。开局:大厅 `RoomManager.royale_start`(≥2 人,`in_match` 防重入)拉起 `--headless --worker --royale --port P --players N` worker → `server_main` 收 claim(≥2 人且 20s 超时即开)→ `server/royale_host.gd`(`class_name RoyaleHost extends MatchHost`)N 人权威对局:**开局地板格散点**(两两环面距离 ≥15 格,不够放宽)、**死亡 2s 复活无限次**(复用 `MatchHost._handle_respawns`;复活点离存活敌人 ≥8 格)、**限时 5 分钟、击杀最多者胜**(平局无人胜)。**击杀归因**:命中瞬间把射手记到受害者 meta `last_damager`(RoyaleHost 覆写 `_on_bullet_hit` + `Explosion.apply_aoe` 玩家分支),倒地边沿读 meta 计分;无源死亡(溺水/环境)不计分。排行榜/比分/倒计时经 round_state 载荷扩展(`names/scores/alive/left/timer/match_winner`,签名不变)下发,客户端 `Scenes/royale_hud.gd` 左上角排行榜 + 中央倒计时/胜负广播。对局客户端 `Scenes/royale_game.tscn`(N 个 PlayerReplica 副本 + 头顶 ID/血条 + 小地图 `setup_multi` 多目标)。中途掉线 = 移出对局标「离开」,在线 <2 人提前终局。**RoyaleServer 分支不含 test-reload 的换弹内容**(两分支各自独立)。
 
 ### 测试
-无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。**约定:冒烟测试由用户自己跑;代理只跑"诊断探针"**:`Tests/menu_autotest.gd`(GUI/HEADLESS 经 `-- --autotest-sp|mp|set|level` 自动流转主菜单,sp 含 Esc 暂停+回主菜单验证)、`Tests/lobby_ping_probe.gd`(大厅 UDP 可达性)、`Tests/lobby_create_probe.gd`(对大厅建房+列表全链路,场景模式跑)。
+无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。**约定:冒烟测试由用户自己跑;代理只跑"诊断探针"**:`Tests/menu_autotest.gd`(GUI/HEADLESS 经 `-- --autotest-sp|mp|set|level` 自动流转主菜单,sp 含 Esc 暂停+回主菜单验证)、`Tests/lobby_ping_probe.gd`(大厅 UDP 可达性)、`Tests/lobby_create_probe.gd`(对大厅建房+列表全链路,场景模式跑)、`Tests/royale_probe.tscn`(大乱斗全链路,场景模式:本进程当大厅 + c1/c2 headless 子进程走私密建房→错邀请码应拒→对码加入→开局→转连 worker→断言 match_start/round_state/match_options/60Hz 快照 ≥30;子进程 stdout 不落父进程,排查看各自 `user://logs/` 轮转日志)。
 
 ## 进度与计划(2026-09-05 更新,KikuchiHeinr 实验分支)
+
+### 大乱斗模式落地(2026-09-06,RoyaleServer 分支)
+- 主菜单新入口「大乱斗」→ 大厅建房/公开房列表/等待室(公开或私密+邀请码、2~8 人上限、禁武器选项沿用 1v1 那套)→ 房主开局 → `--royale --players N` worker → `RoyaleHost` **限时 5 分钟死斗**:死无限复活、击杀最多者胜、左上角排行榜。协议全走 NetBusExt,原版 NetBus 逐字节未动;详见「网络与 PvP」末节。
+- E2E 探针 `Tests/royale_probe.tscn` **ALL-OK**:私密房+邀请码(错码被拒)+开局+双端 claim+match_start/round_state/match_options/快照 153/134 全通过,进程干净退出。
+- 期间修的三个真 bug:royale_probe 裸 `READ`/`WRITE` 枚举(解析失败→Godot 静默回退主菜单,headless 表现为「无输出挂死」,错误只在 `user://logs` 轮转日志里)、`RoyaleRoom` 漏声明 `worker_port` 字段(赋值即运行时报错,开局链路中断)、`toroidal_dist` 调用缺 cols/rows 参数(RoyaleHost 编译失败连带 worker 起不了局)。
+- 注意:本分支不含 test-reload 的换弹内容;GUI 实测前需重导出 exe(embed_pck)——旧 exe 无大乱斗按钮/场景。
 
 ### 三个实测 bug 的排查结论(2026-09-05 第二轮,均已定位)
 | 症状 | 根因 | 状态 |

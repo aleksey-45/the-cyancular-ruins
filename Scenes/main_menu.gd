@@ -176,6 +176,11 @@ func _build_new_ui() -> void:
 	multi_btn.pressed.connect(func() -> void:
 		PvpSession.reset()
 		_leave_menu("res://Scenes/matchmaking.tscn"))
+	var royale_btn := _pixel_button("大 乱 斗", 38)
+	royale_btn.pressed.connect(func() -> void:
+		PvpSession.reset()
+		PvpSession.royale = true
+		_leave_menu("res://Scenes/royale_lobby.tscn"))
 	var settings_btn := _pixel_button("设      置", 38)
 	settings_btn.pressed.connect(func() -> void:
 		_leave_menu("res://Scenes/settings_menu.tscn"))
@@ -183,7 +188,7 @@ func _build_new_ui() -> void:
 	ver_btn.pressed.connect(_on_version_pressed)
 	var quit_btn := _pixel_button("退      出", 38)
 	quit_btn.pressed.connect(func() -> void: get_tree().quit())
-	for b in [start_btn, multi_btn, settings_btn, ver_btn, quit_btn]:
+	for b in [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]:
 		box.add_child(b)
 
 	# 浮现动画:标题先出(淡入),按钮依次淡入
@@ -192,7 +197,7 @@ func _build_new_ui() -> void:
 	tw.tween_property(title, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	tw.parallel().tween_property(ver, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	var delay := 0.9
-	for b in [start_btn, multi_btn, settings_btn, ver_btn, quit_btn]:
+	for b in [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]:
 		_emerge(b, delay, 0.5)
 		delay += 0.16
 
@@ -365,9 +370,19 @@ func _build_old_ui() -> void:
 		_leave_menu("res://Scenes/matchmaking.tscn"))
 	add_child(multi)
 
+	var royale := Button.new()
+	royale.text = "大乱斗"
+	royale.position = Vector2(60, 300)
+	royale.size = Vector2(200, 48)
+	royale.pressed.connect(func() -> void:
+		PvpSession.reset()
+		PvpSession.royale = true
+		_leave_menu("res://Scenes/royale_lobby.tscn"))
+	add_child(royale)
+
 	var settings := Button.new()
 	settings.text = "设置"
-	settings.position = Vector2(60, 300)
+	settings.position = Vector2(60, 360)
 	settings.size = Vector2(200, 48)
 	settings.pressed.connect(func() -> void:
 		_leave_menu("res://Scenes/settings_menu.tscn"))
