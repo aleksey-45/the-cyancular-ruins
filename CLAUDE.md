@@ -106,31 +106,34 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。
 
-## 进度与计划(2026-09-04)
+## 进度与计划(2026-09-05 更新,KikuchiHeinr 实验分支)
 
-### 已完成
-- **全面源码解析**(只读通读,**未改任何代码**):覆盖 Globals 全部静态工具与 autoload、玩家根+四组件、武器/子弹/爆炸、三种敌人 AI(基类/飞行基类)、Level0 渲染与碰撞构建、水/攀爬/破坏、PvP 全链路(大厅/worker/MatchHost/客户端/双副本插值)、`.cyrm` 地图格式与浏览器编辑器、测试与发布脚本。结论:本文件与代码基本一致,可直接在其上迭代。
-- 摸清 5 把枪数值全在各自 `.tscn` @export;敌人注册表单一来源已是 `editor/enemies.json`。
-- 发现 4 处文档漂移(见下),均以代码为准。
-
-### 已知文档漂移(待修正)
-1. 本文件旧文写树叶 hp20/树干 hp80 → 实际 `tile_defs.json`:树叶 **hp 8**、树干 **hp 30**。
-2. "加敌人 = `EnemySpawner.TYPES` 加一行"已过时 → 注册表在 **`editor/enemies.json`**(加一行 + 地图 `# enemy` 行即可)。
-3. `player.gd`/`enemy_base.gd` 注释写防水"每 0.5s 掉 1" → 实际 `water_drain_interval = 1.0s`。
-4. 黑鸟头注释"距玩家 3~8 格" → 实际 `EnemyParams.BlackBird.teleport_min/max_tiles` = **2~6**。
+### 实验分支已完成(commit 528f4e9,exe 已重导出并实测)
+- **大厅 UI 改版**:像素标题+按钮浮现动画;背景=`Level0.menu_demo` 地图奔跑演示(镜头左移,主角纯视觉借 Player.tscn SpriteFrames)。`Settings.old_ui=true` 切回老版。
+- **设置系统**:`Settings` autoload(第 3 个 autoload,`user://settings.cfg` 持久化)+ `Scenes/settings_menu.tscn`(键鼠重映射/主音量/音效/滚轮切枪/老版UI);运行时建 SFX/Music 总线。
+- **8bit 音效**:`Globals/sfx.gd` 程序合成(方波/噪声/滑音,零素材);播放节点延迟入树(`add_child.call_deferred` + `call_deferred("play")`,启动链里直接播会被拒)。
+- **受击反馈**:每次受击小震+红闪(shader `hit_red`),大伤害原强震保留。
+- **单人开局选项**:`RunOptions`(禁武器+难度=鸟密度 0.5/1/1.5);`WeaponComponent.set_enabled_slots` 是数字键/滚轮/服务器三端共用的禁用闸门。
+- **多人选项**:协议扩参 `claim_role(role,name,opts)`、`peer_info(names,hues)`、新增 `match_options`;规则项(回合回满血/禁武器)以房主 role1 为准;视觉项(轨迹/血条/小地图/自己颜色)本地即选即用;房间列表点击即加入。
+- **fix 爆炸衰减倒挂**:内圈(≤40% 半径)免疫 LOS 掩护衰减(原"贴墙爆心被棱角判遮挡扣 25% < 开阔边缘");`Tests/explosion_falloff_probe.gd` 可验(未代跑)。
+- **fix 多房间串线**:worker 端口改 30s 延迟归还(原:转连瞬间房间清空立刻还端口,旧 worker 还活着→同端口串线);worker 踢掉串线连接且 `_on_peer_left` 只认本局双方(防误拆局)。
+- **chore 路径大小写统一**:所有 `res://scenes|globals|shaders|tests/` 引用改为真实目录大小写,git 索引同步规范化——根治"Class X hides a global script class"解析错误与满屏 case 警告(Windows 上大小写不同的路径=两个资源,类名会重复注册)。
 
 ### 重要决策与约定(继续遵守)
 - **环面纪律**:实体间方向/距离/插值一律 `MazeGenerator.toroidal_*`,禁止裸坐标相减。
-- **单机/PvP 双路径分叉点**:改玩家/瓦片/子弹逻辑时核对 `Level0.pvp_mode`、`CombatComponent.pvp_arena`、`BulletBase.apply_damage`、`player.server_rendered` 四处。
-- **参数分层**:共享=`GameParameters`;玩家=`PlayerParams`;敌人=`EnemyParams` 嵌套类;武器=tscn @export;瓦片=`tile_defs.json`。新增数值按层归位,不塞进 autoload。
-- **PvPvE 中立鸟已实现但关闭**(`match_host.gd` `ENABLE_BIRDS=false`),启用=翻 true。
-- `GameParameters.enemy_count/enemy_spawn_min_dist` 已无引用(随机刷怪已删,敌人只来自地图 `# enemy` meta),属残留常量。
+- **单机/PvP 双路径分叉点**:`Level0.pvp_mode`、`CombatComponent.pvp_arena`、`BulletBase.apply_damage`、`player.server_rendered`,新增实验开关走 `Settings`/`RunOptions`/`PvpSession`,别再加全局散变量。
+- **参数分层**:共享=`GameParameters`;玩家=`PlayerParams`;敌人=`EnemyParams` 嵌套类;武器=tscn @export;瓦片=`tile_defs.json`;持久偏好=`Settings`。
+- **MatchHost._init 里不能碰玩家 @onready**(combat/weapons 未就绪),进树后(_ready)才能调。
+- **PvPvE 中立鸟已实现但关闭**(`match_host.gd` `ENABLE_BIRDS=false`)。
+- `GameParameters.enemy_count/enemy_spawn_min_dist`:前者已无引用;后者被单机难度补采复用。
 
-### 待完成
-- 修正上述 4 处文档/注释漂移(本文件 + `player.gd`/`enemy_base.gd` 注释)。
-- 玩法更新方向待定;候选:调武器/敌人数值、加新武器或敌人、改 PvP 规则、开中立鸟 PvPvE、换 PvP 地图。
+### 已知文档漂移(尚未修正)
+1. 树叶/树干 hp:代码 `tile_defs.json` 为 8/30(旧文档写 20/80)。
+2. 加敌人注册表在 `editor/enemies.json`(旧文档写 TYPES 加一行)。
+3. `player.gd`/`enemy_base.gd` 防水注释写 0.5s,实际 `water_drain_interval=1.0s`。
+4. 黑鸟瞬移距离实为 2~6 格(注释写 3~8)。
 
-### 下一步计划
-1. 等用户定更新方向,按上文"修改指南"对应子系统动手(加武器=`weapon_component.gd` WEAPONS 注册表;加敌人=`editor/enemies.json`;改规则=`match_host.gd` 顶部常量)。
-2. 涉及玩家公开接口的改动先对照 `Tests/player_contract_smoke.gd` 的契约清单。
-3. 改动后由用户自跑冒烟(`enemy_logic_smoke.gd`;约定测试不代跑),PvP 链路另跑 `Tests/pvp_room_smoke.sh`/`pvp_match_smoke.sh`。
+### 待完成/下一步
+- 用户实测:主菜单动画/设置页键位捕获/滚轮切枪/单机难度/PvP 各选项(需两端联机验证 match_options/peer_info 扩参后的协议)。
+- 跑冒烟:`Tests/explosion_falloff_probe.gd`(新)、`enemy_logic_smoke.gd`、PvP 两个 .sh(注意 `claim_role` 扩参后冒烟脚本若直接调 RPC 需同步签名)。
+- 候选迭代:菜单背景主角遇墙的视觉处理、BGM(Music 总线已留)、键位组合键、小地图 destroyed 砖实时刷新。
