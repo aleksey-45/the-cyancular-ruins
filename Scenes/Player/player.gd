@@ -477,3 +477,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			# reload_current_scene 同步析构全量碰撞世界会偶发原生段错误 → 走退役挂起式重载
 			Level0.safe_change_scene(get_tree(), scene_file_path)
 		return
+	# R 换弹(实验性,单机):给当前武器上弹(倒地时 R 是重载场景,见上)
+	if event.is_action_pressed("R") and Settings.reload_enabled and not Level0.pvp_mode:
+		var w := weapons.current_weapon()
+		if w != null:
+			w.start_reload()

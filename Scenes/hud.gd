@@ -36,6 +36,8 @@ var _wp_w := 0.0
 var _wp_tween: Tween = null
 var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
+var _ammo_label: Label = null
+var _player: Node = null
 
 func _ready() -> void:
 	layer = LAYER
@@ -53,9 +55,24 @@ func _ready() -> void:
 			p.waterproof_changed.connect(_on_waterproof)
 			_on_waterproof(p.waterproof, p.max_waterproof)
 		if "weapons" in p:
+			_player = p
 			_build_weapon_display(p)
 			p.weapons.weapon_changed.connect(_on_weapon_changed)
 			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
+
+
+func _process(_delta: float) -> void:
+	# 残弹数(实验性换弹):剪影/名称右侧实时刷新;关闭换弹玩法时隐藏
+	if _ammo_label == null:
+		return
+	var w: WeaponBase = null
+	if _player != null and is_instance_valid(_player) and "weapons" in _player:
+		w = _player.weapons.current_weapon()
+	var show := Settings.reload_enabled and w != null and w.reload_active()
+	_ammo_label.visible = show
+	if not show:
+		return
+	_ammo_label.text = "装填中…" if w.is_reloading() else "%d/%d" % [w.mag_ammo, w.mag_size]
 
 
 # 左下角:当前武器纯白像素剪影 + 名称(HUD 游玩界面辨识)。
@@ -92,6 +109,17 @@ func _build_weapon_display(p: Node) -> void:
 	_weapon_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_weapon_name.size_flags_vertical = Control.SIZE_FILL
 	box.add_child(_weapon_name)
+
+	# 残弹数(实验性换弹):名称右侧,"12/30";换弹时"装填中…"
+	_ammo_label = Label.new()
+	_ammo_label.add_theme_font_size_override("font_size", 24)
+	_ammo_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.55))
+	if pf != null:
+		_ammo_label.add_theme_font_override("font", pf)
+	_ammo_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_ammo_label.size_flags_vertical = Control.SIZE_FILL
+	_ammo_label.visible = false
+	box.add_child(_ammo_label)
 
 
 func _on_weapon_changed(slot: int) -> void:

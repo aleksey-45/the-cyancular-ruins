@@ -67,6 +67,7 @@ static func _build(kind: String) -> PackedFloat32Array:
 		"kill":         return _arp([620.0, 440.0, 300.0], 0.07, 0.5)
 		"switch":       return _arp([500.0, 820.0], 0.05, 0.5)
 		"deny":         return _sweep_square(150.0, 110.0, 0.12, 0.25, 0.0)
+		"reload":       return _arp([180.0, 320.0], 0.06, 0.4)   # 换弹:两段机械咔哒
 		"ui":           return _arp([700.0, 1050.0], 0.04, 0.5)
 		"teleport":     return _sweep_square(300.0, 1200.0, 0.20, 0.5, 0.0)
 	push_warning("Sfx: 未知音效 \"%s\"" % kind)

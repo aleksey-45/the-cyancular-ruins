@@ -42,6 +42,9 @@ func _ready() -> void:
 	vb.add_child(_check("鼠标滚轮切枪", Settings.wheel_switch, func(on: bool) -> void:
 		Settings.wheel_switch = on
 		Settings.save()))
+	vb.add_child(_check("换弹装填(实验性,仅单机)", Settings.reload_enabled, func(on: bool) -> void:
+		Settings.reload_enabled = on
+		Settings.save()))
 	vb.add_child(_check("使用老版主菜单 UI", Settings.old_ui, func(on: bool) -> void:
 		Settings.old_ui = on
 		Settings.save()))

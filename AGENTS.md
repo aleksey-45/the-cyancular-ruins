@@ -152,6 +152,13 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **chore 路径大小写统一**:所有 `res://scenes|globals|shaders|tests/` 引用改为真实目录大小写,根治"Class X hides a global script class"解析错误。
 - **Esc 暂停菜单 / 主菜单实机演示 / 版本号(分支+提交序号)/ 版本信息面板**(a3aec8c);**NetBus 协议兼容修复**(55c39e7)。
 
+### 换弹实验玩法(test-reload 分支)
+- `Settings.reload_enabled`(默认开,设置页「换弹装填(实验性,仅单机)」可关;关闭=旧版无限弹)。**仅单机生效**(`WeaponBase.reload_active()` = 开关且非 pvp_mode;PvP 服务器权威、输入包无换弹事件,不同步)。
+- `WeaponBase` 新增 `@export mag_size/reload_time` + `mag_ammo/is_reloading()/start_reload()`;fire() 开火闸:装填中不开火、空夹自动换弹、每发 -1。per-枪数值在 5 个 tscn:手枪 12/1.0s、步枪 30/1.8s、重狙 5/2.6s、霰弹 2/2.2s、榴弹 4/2.8s。
+- 手动换弹 = **R 键**(站立时;倒地时 R 仍是重载场景,见 player._unhandled_input);换弹音效 `Sfx.play("reload")`(两段咔哒),完成播 "switch"。
+- HUD 左下角:剪影 + 武器名 + 残弹「12/30」/「装填中…」(关换弹时残弹隐藏;剪影名称始终显示)。
+- **武器白剪影**:`WeaponComponent.silhouette(slot)` 程序化生成(weapons.png 图集切片→全白保 alpha→3× 最近邻),静态缓存;单人/多人武器选择栏 CheckButton 图标 + HUD 剪影共用;武器显示名统一 `WeaponComponent.DISPLAY_NAMES`。
+
 ### 重要决策与约定(继续遵守)
 - **环面纪律**:实体间方向/距离/插值一律 `MazeGenerator.toroidal_*`,禁止裸坐标相减。
 - **单机/PvP 双路径分叉点**:`Level0.pvp_mode`、`CombatComponent.pvp_arena`、`BulletBase.apply_damage`、`player.server_rendered`,新增实验开关走 `Settings`/`RunOptions`/`PvpSession`,别再加全局散变量。

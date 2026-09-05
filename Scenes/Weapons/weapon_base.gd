@@ -81,6 +81,27 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定,预瞄只是参考
 @export var preview_time: float = 0.5
 
+# ── 换弹(实验性玩法):Settings.reload_enabled 关闭 = 旧版无限弹 ──
+# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。
+@export var mag_size: int = 12        # 弹夹容量
+@export var reload_time: float = 1.2  # 换弹全程耗时(秒)
+var mag_ammo: int = 0                 # 弹夹内残弹
+var _reloading := false
+var _reload_t := 0.0
+
+func reload_active() -> bool:
+	return Settings.reload_enabled and not Level0.pvp_mode
+
+func is_reloading() -> bool:
+	return _reloading
+
+func start_reload() -> void:
+	if not reload_active() or _reloading or mag_ammo >= mag_size:
+		return
+	_reloading = true
+	_reload_t = reload_time
+	Sfx.play("reload")
+
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
 
@@ -103,6 +124,7 @@ static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> f
 	return clampf(local.angle(), -limit, limit)
 
 func _ready() -> void:
+	mag_ammo = mag_size
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
@@ -146,6 +168,13 @@ func _process(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
+	# 换弹计时:完成后上满弹夹(上膛轻音提示)
+	if _reloading:
+		_reload_t -= delta
+		if _reload_t <= 0.0:
+			_reloading = false
+			mag_ammo = mag_size
+			Sfx.play("switch")
 	# 每帧同步朝向/枪口旋转(瞄准与预览弧线);fire() 内部还会再同步一次,
 	# 覆盖直接开火等不经本帧 _process 的路径,避免读到走路覆盖的旧朝向。
 	_auto_aim()
@@ -181,6 +210,13 @@ func try_fire() -> void:
 func fire() -> void:
 	if not _player_ok():
 		return
+	# 换弹(实验性):装填中不可开火;空弹夹自动换弹
+	if reload_active():
+		if _reloading:
+			return
+		if mag_ammo <= 0:
+			start_reload()
+			return
 	fire_cd_timer = fire_cooldown
 	# 开火瞬间同步朝向/枪口到鼠标:直接开火(_unhandled_input, input 阶段)先于 _process,
 	# 读到的是上一物理帧被走路覆盖的 get_facing(),clamp_pitch 会折到走路侧、子弹打偏。
@@ -204,6 +240,11 @@ func fire() -> void:
 		get_viewport().add_child(b)
 	# 8bit 音效:重武器(预瞄)/霰弹/普通枪三种音色
 	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
+	# 换弹(实验性):每次开火消耗一发,打空自动换弹
+	if reload_active():
+		mag_ammo = maxi(mag_ammo - 1, 0)
+		if mag_ammo == 0:
+			start_reload()
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME
