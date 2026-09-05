@@ -31,6 +31,9 @@ var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡
 var _player_overlapping: bool = false
 var _overlapping_players: Array = []  # 当前接触到的玩家节点(1v1 PvP 里可能同时撞到两人,受击取最近者)
 var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
+# 玩家组每帧缓存:同一物理帧内 _players_frame() 只建一次数组,砍掉每帧每敌多次 get_nodes_in_group 分配。
+var _players_frame_cache: Array = []
+var _players_frame_id: int = -1
 var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
 var network_canonical: bool = false  # PvP 服务器权威:敌人位置存 canonical [0,MAP)(_wrap 取模);单机/客户端 false=锚玩家副本渲染
 var _in_water: bool = false
@@ -254,11 +257,23 @@ func _anim_duration(name: String) -> float:
 	return float(spf.get_frame_count(name)) / spf.get_animation_speed(name)
 
 
+# 玩家组引用(单机 1 人 / PvP 服务器 2 人通用)。物理帧内按帧缓存一次、帧内复用;
+# 非物理上下文(如测试直调内部方法)每次现查,避免用过期的缓存位置。
+func _players_frame() -> Array:
+	if Engine.is_in_physics_frame():
+		var fid := Engine.get_physics_frames()
+		if fid != _players_frame_id:
+			_players_frame_cache = get_tree().get_nodes_in_group("player")
+			_players_frame_id = fid
+		return _players_frame_cache
+	return get_tree().get_nodes_in_group("player")
+
+
 # 多玩家目标:取组里距自己最近的玩家(单机唯一玩家 → 行为不变)。无玩家返回 null。
 func _nearest_player() -> Node2D:
 	var best: Node2D = null
 	var best_d := INF
-	for p in get_tree().get_nodes_in_group("player"):
+	for p in _players_frame():
 		var n := p as Node2D
 		if n == null:
 			continue

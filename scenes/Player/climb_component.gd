@@ -70,9 +70,7 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 			# 脚底还没跨过梯顶(在梯子里/在梯子下方)→ 上爬:climb_speed × 瓦片倍率 × 上行倍率
 			var spd := PlayerParams.climb_speed * cs * PlayerParams.climb_vertical_mult * mult.y
 			body.velocity.y = climb_input * spd
-			body.velocity.x = _approach(body.velocity.x, 0.0, PlayerParams.brake_ground, delta)
-			if absf(body.velocity.x) < STOP_SNAP:
-				body.velocity.x = 0.0
+			# 攀爬不锁横移:左右交给根的移动逻辑(爬的同时也能横向走)
 			return true
 		# 脚底进入梯子上方一格 → 到顶:再按上 = 跳离梯子,进入上方空间
 		if src.is_action_just_pressed("up"):
@@ -89,10 +87,7 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 			_latched = false
 			return false
 		body.velocity.y = climb_input * PlayerParams.climb_speed * dcs * PlayerParams.climb_vertical_mult * mult.y
-		body.velocity.x = _approach(body.velocity.x, 0.0, PlayerParams.brake_ground, delta)
-		if absf(body.velocity.x) < STOP_SNAP:
-			body.velocity.x = 0.0
-		return true
+		return true   # 攀爬不锁横移,左右由根处理
 	body.velocity.y = 0.0  # 挂住:不受重力,原地停留
 	return false
 

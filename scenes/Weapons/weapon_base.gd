@@ -142,12 +142,17 @@ func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	_fire_buffered = false
 	cancel_aim()
 
-func _process(delta: float) -> void:
+# 武器帧逻辑由所属 Player 的物理 tick 显式驱动(tick(),player.gd 每物理帧调用),
+# 不再跑 idle _process:冷却/缓冲开火/重武器松开/预瞄/后坐必须落在固定的物理 tick 上,
+# 否则同一输入在客户端预测重放/服务器权威模拟下会落在不同 tick(rollback 需要确定性)。
+# delta 恒为物理帧 1/60,不随渲染帧率抖动。未被 Player 驱动的实例(如对手副本武器,
+# player==null)由 drive_remote_visual 外部驱动,不进 tick。
+func tick(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
 	# 每帧同步朝向/枪口旋转(瞄准与预览弧线);fire() 内部还会再同步一次,
-	# 覆盖直接开火等不经本帧 _process 的路径,避免读到走路覆盖的旧朝向。
+	# 覆盖直接开火等不经本帧 tick 的路径,避免读到走路覆盖的旧朝向。
 	_auto_aim()
 	# 缓冲开火:冷却结束且末尾按过开火 → 自动打出(土狼时间式;切枪即弃)
 	if _fire_buffered and fire_cd_timer == 0.0:
@@ -377,6 +382,11 @@ func _aim_world_dir() -> Vector2:
 		var override: Vector2 = player.get_aim_dir_override()
 		if override != Vector2.ZERO:
 			return override
+		# override 存在但为 ZERO(网络玩家还没收到瞄准/瞄准为零):
+		# 网络驱动 → 永不读宿主机 OS 鼠标(服务器 headless 上没有鼠标,读了是垃圾方向),用朝向兜底。
+		# 本地 InputSource 的 override 恒为 ZERO → is_network_driven()==false → 走下面鼠标路径。
+		if player.has_method("input_is_network") and player.input_is_network():
+			return Vector2(float(get_facing()), 0.0)
 	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),
 	# 若标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
 	var sub: Viewport = get_viewport()

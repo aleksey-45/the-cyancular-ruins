@@ -49,6 +49,12 @@ func movement_multiplier() -> Vector2:
 		return Vector2.ONE
 	return _weapon.get_movement_multiplier()
 
+# 武器帧逻辑(冷却/缓冲开火/预瞄/后坐)由根每物理帧显式驱动:
+# 保证与 body 跑在同一个固定 tick 上(rollback 重放需要确定性),不再依赖 idle _process。
+func tick(delta: float) -> void:
+	if _weapon != null:
+		_weapon.tick(delta)
+
 func apply_recoil(push: float, is_squat: bool, is_latched: bool) -> void:
 	if is_squat:
 		return

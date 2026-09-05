@@ -9,7 +9,7 @@ const TILE_TS: int = 64
 
 
 static func is_liquid(texture: int) -> bool:
-	return TileDefs.type_of(texture) == "liquid"
+	return TileDefs.is_liquid(texture)
 
 
 static func is_in_water(pos: Vector2) -> bool:
@@ -69,7 +69,30 @@ static func bullet_drag_factor(in_water: bool, drag: float, delta: float) -> flo
 
 
 # 实体脚底相对原点偏移(世界 px):取活动碰撞箱底边;找不到回退 24。
+# 该值只随「启用的碰撞体集合」变化(纯平移/固定几何下相对偏移不变),故按签名缓存:
+# 签名 = 各 CollisionShape2D 的 instance_id 带 disabled 符号求和(固定节点集下,不同
+# 启用组合的和互不相同)。命中缓存直接返回,免去每帧对多边形顶点做 to_global 扫描。
 static func feet_offset(body: Node) -> float:
+	var sig := _feet_signature(body)
+	if body.has_meta("_water_feet_off") and body.has_meta("_water_feet_sig") \
+			and int(body.get_meta("_water_feet_sig")) == sig:
+		return float(body.get_meta("_water_feet_off"))
+	var off := _feet_offset_compute(body)
+	body.set_meta("_water_feet_off", off)
+	body.set_meta("_water_feet_sig", sig)
+	return off
+
+
+static func _feet_signature(body: Node) -> int:
+	var sig := 0
+	for child in body.get_children():
+		if child is CollisionShape2D:
+			var id := int(child.get_instance_id())
+			sig += id if not (child as CollisionShape2D).disabled else -id
+	return sig
+
+
+static func _feet_offset_compute(body: Node) -> float:
 	var offset := 24.0
 	for child in body.get_children():
 		if not (child is CollisionShape2D):

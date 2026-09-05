@@ -79,6 +79,10 @@ func get_weapon_slot_pressed() -> int:
 func get_aim_dir_override() -> Vector2:
 	return _aim
 
+# 网络注入 → 服务器/远端模拟的玩家武器瞄准不读宿主机鼠标(注入 ZERO 用朝向兜底)。
+func is_network_driven() -> bool:
+	return true
+
 static func _bit(action: String) -> int:
 	match action:
 		"up": return BIT_UP

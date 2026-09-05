@@ -26,3 +26,7 @@ editor/_build/
 # 构建产物与杂项
 *.exe
 test
+
+# 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
+builds/
+backup/

@@ -4,3 +4,28 @@
 
 [node name="MainMenu" type="Control"]
 script = ExtResource("1")
+
+[node name="TitleLabel" type="Label" parent="."]
+offset_left = 60.0
+offset_top = 60.0
+offset_right = 1900.0
+offset_bottom = 112.0
+theme_override_font_sizes/font_size = 40
+text = "The Cyancular Ruins"
+
+[node name="SingleButton" type="Button" parent="."]
+offset_left = 60.0
+offset_top = 180.0
+offset_right = 260.0
+offset_bottom = 228.0
+text = "单人"
+
+[node name="MultiButton" type="Button" parent="."]
+offset_left = 60.0
+offset_top = 240.0
+offset_right = 260.0
+offset_bottom = 288.0
+text = "多人"
+
+[connection signal="pressed" from="SingleButton" to="." method="_on_single_pressed"]
+[connection signal="pressed" from="MultiButton" to="." method="_on_multi_pressed"]

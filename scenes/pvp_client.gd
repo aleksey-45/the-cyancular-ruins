@@ -7,6 +7,11 @@ const TileHitFx := preload("res://scenes/Effects/tile_hit_fx.gd")
 # 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
 # 根治:本地玩家不再本地跑移动物理,位置/姿态/朝向由快照插值(与远端副本同款),
 #      只保留鼠标瞄准/开火/受击反馈等本地视觉。服务器是唯一真相,天然无回拉。
+#
+# C2(客户端预测 rollback)开关:阶段4 rollback 接入前保持 false → 上面这条服务器渲染路径。
+# 复盘见 docs/pvp-c2-retrospective.md;推进按其中 P1-P7 与计划文件阶段走。
+const LOCAL_PREDICTION_ENABLED := false
+var _input_seq := 0   # 本地每物理帧单调的输入序号(rollback ack 用;阶段3 起服务器消费)
 var _last_snap_tick := 0
 
 var _local: Node2D = null
@@ -40,7 +45,8 @@ func _ready() -> void:
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	_local = local
 	# 本地玩家改由服务器快照驱动(不做客户端预测):根治梯子等机制"预测 vs 权威"打架回拉。
-	if _local.has_method("set_server_rendered"):
+	# C2(阶段4)开启后:本地玩家跑全量本地 sim 预测,由 pvp_client 接 rollback。
+	if not LOCAL_PREDICTION_ENABLED and _local.has_method("set_server_rendered"):
 		_local.set_server_rendered(true)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)
 	var pp := PostProcess.new()
@@ -61,8 +67,8 @@ func _ready() -> void:
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
-	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
-	_hud = PvpHud.new()
+	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
+	_hud = preload("res://scenes/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
@@ -108,7 +114,9 @@ func _physics_process(_delta: float) -> void:
 	if src.is_action_just_released("attack"):
 		released |= ATTACK
 	var aim: Vector2 = _local.get_current_aim_dir()
+	_input_seq += 1
 	var pkt := {
+		"seq": _input_seq,   # 单调输入序号(阶段3 服务器按序消费并回带 ack,rollback 用)
 		"ax": src.get_axis("left", "right"),
 		"held": held,
 		"pressed": pressed,

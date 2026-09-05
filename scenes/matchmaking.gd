@@ -1,12 +1,14 @@
 extends Control
-# 匹配场景:建房 / 加入 / 房间列表。
+# 匹配场景:建房 / 加入 / 房间列表。布局与按钮连接在 matchmaking.tscn,这里只留网络/列表逻辑。
 # 连上大厅(默认 120.53.107.140:7777)后,「IP 右侧 刷新」列出全部房间(方块=房间号+人数,
 # 未满优先排前、可点击加入;已满置灰不可点)。点入后由大厅配对发 go_match → 转连该局 worker。
 
-var _addr_edit: LineEdit
-var _code_edit: LineEdit
-var _status: Label
-var _list_box: VBoxContainer
+@onready var _addr_edit: LineEdit = $AddrEdit
+@onready var _name_edit: LineEdit = $NameEdit
+@onready var _code_edit: LineEdit = $CodeEdit
+@onready var _status: Label = $StatusLabel
+@onready var _list_box: VBoxContainer = $Scroll/RoomList
+
 var _connected := false
 var _connected_addr := ""          # 当前连的是哪个地址(地址框改了要重连)
 var _auto_refreshed := false   # 「点了看起来未满却已满」后只自动刷新一次,手动刷新再放开
@@ -15,47 +17,8 @@ var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜
 var _go_start_ms := 0
 
 func _ready() -> void:
-	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址", PvpSession.server_address)
-	var refresh := Button.new()
-	refresh.text = "刷新"
-	refresh.position = Vector2(330, 120)
-	refresh.size = Vector2(90, 36)
-	refresh.pressed.connect(_on_refresh_pressed)
-	add_child(refresh)
-
-	var name_le := _make_line_edit(Vector2(60, 60), "昵称(头上显示)", PvpSession.player_name)
-	name_le.text_changed.connect(func(t: String) -> void:
-		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
-		_push_lobby_name())
-
-	_code_edit = _make_line_edit(Vector2(60, 180), "房间号(加入时填)", "")
-
-	_status = Label.new()
-	_status.position = Vector2(60, 320)
-	_status.size = Vector2(720, 60)
-	add_child(_status)
-
-	_make_button(Vector2(60, 240), "建房", _on_create_pressed)
-	_make_button(Vector2(260, 240), "加入", _on_join_pressed)
-	_make_button(Vector2(60, 400), "返回", func() -> void:
-		NetBus.stop()
-		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
-
-	var cap := Label.new()
-	cap.text = "房间列表(只读展示;加入请在上方填房间号)"
-	cap.position = Vector2(60, 460)
-	cap.size = Vector2(700, 30)
-	add_child(cap)
-
-	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(60, 500)
-	scroll.size = Vector2(640, 560)
-	add_child(scroll)
-	var vb := VBoxContainer.new()
-	vb.custom_minimum_size = Vector2(600, 0)
-	scroll.add_child(vb)
-	_list_box = vb
-
+	_addr_edit.text = PvpSession.server_address
+	_name_edit.text = PvpSession.player_name
 	NetBus.local_room_created.connect(_on_room_created)
 	NetBus.local_room_joined.connect(_on_room_joined)
 	NetBus.local_room_list.connect(_on_room_list)
@@ -65,23 +28,10 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 
-func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
-	var le := LineEdit.new()
-	le.position = pos
-	le.size = Vector2(240, 36)
-	le.placeholder_text = placeholder
-	le.text = initial
-	add_child(le)
-	return le
-
-func _make_button(pos: Vector2, text: String, fn: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.position = pos
-	b.size = Vector2(180, 48)
-	b.pressed.connect(fn)
-	add_child(b)
-	return b
+func _on_name_changed(new_text: String) -> void:
+	var t := new_text.strip_edges()
+	PvpSession.player_name = t if not t.is_empty() else "Anon"
+	_push_lobby_name()
 
 func _on_lobby_connected() -> void:
 	if _connecting_worker:
@@ -153,7 +103,7 @@ func _request_list(msg: String) -> void:
 		_status.text = msg
 		NetBus.rpc_id(1, "list_rooms"))
 
-# 房间列表:未满优先在前,已满置灰不可点
+# 房间列表:未满优先在前,已满置灰不可点(只读展示)
 func _on_room_list(rooms: Array) -> void:
 	for c in _list_box.get_children():
 		c.queue_free()
@@ -223,6 +173,10 @@ func _on_go_match(role: int, port: int) -> void:
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
+
+func _on_back_pressed() -> void:
+	NetBus.stop()
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 # 转连 worker 超时兜底:UDP 连不上不会立刻报失败,这里 12 秒给明确提示(别无限卡着)
 func _process(_delta: float) -> void:

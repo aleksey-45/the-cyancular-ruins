@@ -21,6 +21,11 @@ func is_action_just_released(action: String) -> bool:
 func get_aim_dir_override() -> Vector2:
 	return Vector2.ZERO
 
+# 该输入源是否网络注入(NetworkInputSource=true)。网络驱动玩家的武器瞄准**永不读 OS 鼠标**:
+# 注入方向为 ZERO 时用玩家朝向兜底(见 weapon_base._aim_world_dir)。
+func is_network_driven() -> bool:
+	return false
+
 # ── 攻击与切枪(本地委托真实 Input;NetworkInputSource 覆写)──
 func is_attack_pressed() -> bool:
 	return Input.is_action_pressed("attack")

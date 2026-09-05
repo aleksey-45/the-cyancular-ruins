@@ -156,8 +156,8 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 # 每格都和全图几十个实体判重叠。
 func _collect_obstacles() -> void:
 	_obstacle_boxes.clear()
-	# PvP 有两个玩家:两人都当飞行障碍物(寻路别从对方身上/头顶穿)。
-	for p in get_tree().get_nodes_in_group("player"):
+	# PvP 有两个玩家:两人都当飞行障碍物(寻路别从对方身上/头顶穿)。走帧缓存去 group 分配。
+	for p in _players_frame():
 		var p2 := p as Node2D
 		if p2 != null and _toroidal_dist_to(p2.global_position) <= 600.0:
 			_obstacle_boxes.append(_collision_rect_of(p2))

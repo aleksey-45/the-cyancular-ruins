@@ -243,9 +243,15 @@ func _initialize() -> void:
 		if child.get_script() == bullet_script:
 			bf_mid += 1
 	_check(bf_mid == bf_before, "缓冲期不立即开火")
-	for i in range(30):
-		await physics_frame
+	# 武器帧逻辑已从 idle _process 挪到所属 Player 的物理 tick(tick());stub 无 Player 驱动,
+	# 这里模拟每物理帧驱动 tick() 推进冷却,验证冷却结束自动开火。fire() 会把冷却重新拉满,
+	# 故「tick 后冷却反而变大」= 已自动打出一次。
+	for i in range(60):
 		if not is_instance_valid(buf_w):
+			break
+		var prev_cd: float = buf_w.fire_cd_timer
+		buf_w.tick(1.0 / 60.0)
+		if buf_w.fire_cd_timer > prev_cd:
 			break
 	var bf_after := 0
 	for child in root.get_children():

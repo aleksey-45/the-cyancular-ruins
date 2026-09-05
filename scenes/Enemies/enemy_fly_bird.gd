@@ -20,6 +20,22 @@ var _hover_anchor: Vector2 = Vector2.ZERO
 var _hover_side: float = 1.0
 var _strafe_target: Vector2 = Vector2.INF  # 开火后短距随机移动目标;INF=未在移动
 var _strafe_timer: float = 0.0             # 短距移动剩余时长
+
+# ── LOS/射击侧缓存:砍每帧重复视线扫描 ──
+# _shot_clear:同一对(鸟格,玩家格)在 TTL 物理帧内复用上次结果;拆/堵墙、格子移动最迟
+# ~150ms(@60Hz)反映。用物理帧数而非墙钟门控,headless 快进冒烟里也能按帧失效、行为确定。
+# (SHOOT 判定、进 SHOOT 门槛、低血冲锋前提共用同一缓存——端点相同,复用安全)
+const SHOT_CLEAR_TTL_FRAMES: int = 9
+var _shot_clear_ok := false
+var _shot_clear_at_frame := -100000
+var _shot_clear_from := Vector2i(-1, -1)
+var _shot_clear_to := Vector2i(-1, -1)
+# _shoot_side(斜上射击位所在侧,内部各做一次 LOS):玩家格/几何侧不变且未超 TTL 则复用,
+# 避免 _near_shoot_pos 每帧为每只追玩家的鸟白付 1~2 次 Bresenham。
+var _side_cache := 1.0
+var _side_at_frame := -100000
+var _side_player_cell := Vector2i(-1, -1)
+var _side_geo := 1.0
 var _landing: bool = false           # RETURN 落地阶段
 var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设好位置再取,否则是 (0,0))
 
@@ -203,7 +219,20 @@ func _die_self() -> void:
 # 世界坐标与格坐标共用同一侧,保证寻路目标可到、直线兜底同向。
 # 侧向优先取 LOS 通的一侧:几何侧对玩家无视线(被墙挡,如玩家站高平台一侧有墙)时,
 # 鸟会一直停在射击位进不了 SHOOT——换另一侧绕过去攻击。两侧都堵才退回几何侧。
+# 结果按(玩家格,几何侧)缓存,TTL 物理帧内复用(几何/位置变化最迟 ~150ms 反映)。
 func _shoot_side() -> float:
+	var now := Engine.get_physics_frames()
+	var pcell := _cell_of(_player_pos())
+	var geo := _shoot_side_geo()
+	if pcell != _side_player_cell or geo != _side_geo or now - _side_at_frame > SHOT_CLEAR_TTL_FRAMES:
+		_side_player_cell = pcell
+		_side_geo = geo
+		_side_at_frame = now
+		_side_cache = _shoot_side_compute()
+	return _side_cache
+
+
+func _shoot_side_compute() -> float:
 	var geo := _shoot_side_geo()
 	var p := _player_pos()
 	for side in [geo, -geo]:
@@ -288,8 +317,17 @@ func _start_strafe() -> void:
 
 
 # 弹道无遮挡:鸟与玩家格子之间无墙(平抛子弹会被地形挡住)。
+# 结果按(鸟格,玩家格)缓存 SHOT_CLEAR_TTL_FRAMES,墙被拆/堵或任一方换格(超时兜底)才重算。
 func _shot_clear() -> bool:
-	return MazeGenerator.has_line_of_sight(_cell_of(global_position), _cell_of(_player_pos()))
+	var from := _cell_of(global_position)
+	var to := _cell_of(_player_pos())
+	var now := Engine.get_physics_frames()
+	if from != _shot_clear_from or to != _shot_clear_to or now - _shot_clear_at_frame > SHOT_CLEAR_TTL_FRAMES:
+		_shot_clear_from = from
+		_shot_clear_to = to
+		_shot_clear_at_frame = now
+		_shot_clear_ok = MazeGenerator.has_line_of_sight(from, to)
+	return _shot_clear_ok
 
 
 # 攻击水里玩家的伤害:自爆冲击/子弹对水中玩家 ×1.5(FlyBird 独有)。
@@ -338,7 +376,8 @@ func _update_charge_intent_if_needed() -> void:
 func _try_charge() -> bool:
 	if toroidal_dist_to_player() > EnemyParams.FlyBird.charge_range:
 		return false
-	if not MazeGenerator.has_line_of_sight(_cell_of(global_position), _cell_of(_player_pos())):
+	# LOS 端点与 _shot_clear 相同(鸟格→玩家格),复用缓存,不重复全图扫描。
+	if not _shot_clear():
 		return false
 	_start_charge()
 	return true
