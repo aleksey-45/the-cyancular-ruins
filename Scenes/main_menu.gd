@@ -18,6 +18,7 @@ var _demo_level0: Node = null           # 背景演示世界(切场景前要先�
 
 # 切换场景前把演示世界从场景树摘下挂起(而非释放):实测场景切换时释放含大量
 # 碰撞体的物理世界会偶发原生段错误;脱离场景树的节点完全停止处理且不被 change_scene 释放。
+# (回主菜单方向的游戏世界退役走 Level0.safe_change_scene,见其注释)
 func _leave_menu(path: String) -> void:
 	if _demo_level0 != null and is_instance_valid(_demo_level0):
 		Level0.menu_demo_instance = _demo_level0
@@ -120,9 +121,10 @@ func _build_new_ui() -> void:
 		Level0.menu_demo = false   # 只影响本次实例化
 		_demo_level0 = level0
 	# 后处理(与游戏内一致的画面),再叠一层暗化让 UI 突出
-	var pp := PostProcess.new()
-	pp.world_viewport = _demo_level0.get_node("WorldViewport")
-	add_child(pp)
+	if _demo_level0 != null:
+		var pp := PostProcess.new()
+		pp.world_viewport = _demo_level0.get_node("WorldViewport")
+		add_child(pp)
 
 	_ui_layer = CanvasLayer.new()
 	_ui_layer.layer = 140   # 盖过 PostProcess(128)/HUD(129)

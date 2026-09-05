@@ -81,7 +81,9 @@ func go_menu() -> void:
 	Sfx.play("ui")
 	if is_pvp:
 		NetBus.stop()   # 断开对局(worker 检测断线自动拆局)
-	get_tree().change_scene_to_file("res://Scenes/main_menu.tscn")
+	# 游戏世界含全量碰撞,change_scene 同步析构会偶发原生段错误(死亡后回菜单必现路径)
+	# → 走退役挂起式切换,见 Level0.safe_change_scene
+	Level0.safe_change_scene(get_tree(), "res://Scenes/main_menu.tscn")
 
 
 # ── 控件工厂(像素风格)──

@@ -23,6 +23,30 @@ static var menu_demo: bool = false
 # (反复构建/释放含大量碰撞体的世界会在场景切换时偶发原生段错误,故演示世界永不中途释放)
 static var menu_demo_instance: Level0 = null
 
+
+# ── 安全场景切换:游戏世界(全量碰撞)退役挂起,不再释放 ──
+# change_scene_to_file 会在切换时同步 memdelete 当前场景;单机/PvP 游戏世界含数万碰撞体,
+# 同步析构偶发原生段错误(实测死亡后回菜单/按 R 重载都会触发)。做法:新场景手动实例化
+# 并接管 current_scene,旧世界摘树挂起、永不释放(同演示世界保活策略;每次退役先释放
+# 上一具挂起世界,稳态最多挂一具)。
+# 注意:摘树必须在 process_frame 信号上下文之外进行……见 _retire_old。
+static var _retired: Node = null   # 挂起的上一具游戏世界(最多一具,新的退役时释放旧的)
+
+static func safe_change_scene(tree: SceneTree, path: String) -> void:
+	# 先回到帧末再动树:调用方(按钮按下/R 重载的输入处理)可能正处于旧场景节点发出的
+	# 信号调用栈里,立刻摘树会触发 CanvasItem EXIT_TREE 状态错误(headless 实测)。
+	await tree.process_frame
+	var old: Node = tree.current_scene
+	var next: Node = load(path).instantiate()
+	tree.root.add_child(next)      # 新场景 _ready 先跑(旧世界仍在树上,静态引用完好)
+	tree.current_scene = next      # 接管 current_scene 指针,旧场景不再被 change 流程释放
+	if old != null and old != next:
+		tree.root.remove_child(old)
+		old.visible = false
+		if _retired != null and is_instance_valid(_retired):
+			_retired.free()        # 释放更早的那一具(此鱼已在树上挂了整局时间,最稳)
+		_retired = old
+
 var _demo_spawn := Vector2i(-1, -1)   # 演示世界出生格(revive_demo 复位玩家用)
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
@@ -150,10 +174,6 @@ func _apply_difficulty(grid: Array[Array], spawns: Dictionary) -> Array:
 	for cell in extra:
 		out.append({"type": types[randi() % types.size()], "cell": cell})
 	return out
-
-	var pp := PostProcess.new()
-	pp.world_viewport = $WorldViewport
-	call_deferred("add_child", pp)
 
 
 func _create_wall_tileset() -> TileSet:

@@ -474,5 +474,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。
 		if not Level0.pvp_mode and event.is_action_pressed("R"):
-			get_tree().reload_current_scene()
+			# reload_current_scene 同步析构全量碰撞世界会偶发原生段错误 → 走退役挂起式重载
+			Level0.safe_change_scene(get_tree(), scene_file_path)
 		return

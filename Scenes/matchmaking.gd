@@ -18,6 +18,7 @@ var _auto_refreshed := false   # 「点了看起来未满却已满」后只自�
 var _pending_action: Callable = Callable()   # 连上后要执行的建房/加入/刷新
 var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜底提示)
 var _go_start_ms := 0
+var _lobby_start_ms := 0   # 连大厅计时(UDP 被静默丢包时 connection_failed 要等很久,8s 给明确提示)
 
 func _ready() -> void:
 	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址", PvpSession.server_address)
@@ -204,6 +205,7 @@ func _make_button(pos: Vector2, text: String, fn: Callable) -> Button:
 func _on_lobby_connected() -> void:
 	if _connecting_worker:
 		return   # 转连对局 worker 的连接走 _on_go_match,不在这里接管
+	_lobby_start_ms = 0
 	_connected = true
 	_connected_addr = PvpSession.server_address
 	_push_lobby_name()
@@ -217,6 +219,7 @@ func _on_lobby_connected() -> void:
 func _on_lobby_connect_failed() -> void:
 	if _connecting_worker:
 		return
+	_lobby_start_ms = 0
 	_connected = false
 	_pending_action = Callable()
 	_status.text = "连接服务器失败,请检查地址"
@@ -230,7 +233,8 @@ func _push_lobby_name() -> void:
 func _with_lobby(action: Callable) -> void:
 	var addr := _addr_edit.text.strip_edges()
 	if addr == "":
-		addr = "127.0.0.1"
+		addr = PvpSession.server_address   # 空地址回退默认大厅(127.0.0.1 必失败且超时极慢)
+		_addr_edit.text = addr
 	PvpSession.server_address = addr
 	if _connected and _connected_addr == addr:
 		action.call()
@@ -243,6 +247,8 @@ func _with_lobby(action: Callable) -> void:
 	if err != OK:
 		_status.text = "启动连接失败(%d)" % err
 		_pending_action = Callable()
+	else:
+		_lobby_start_ms = Time.get_ticks_msec()
 
 func _on_create_pressed() -> void:
 	_with_lobby(func() -> void:
@@ -359,6 +365,13 @@ func _process(_delta: float) -> void:
 	if _connecting_worker and Time.get_ticks_msec() - _go_start_ms > 12000:
 		_connecting_worker = false
 		_status.text = "连接对局服务器超时——请检查:对局端口(7800~7999 UDP)是否放行、服务端是否最新"
+		return
+	# 大厅连接超时兜底:同因(UDP 静默丢包),8 秒仍没连上就给明确提示
+	if not _connecting_worker and _lobby_start_ms > 0 and not _connected \
+			and Time.get_ticks_msec() - _lobby_start_ms > 8000:
+		_lobby_start_ms = 0
+		_pending_action = Callable()
+		_status.text = "连接大厅超时——请检查地址/网络(UDP 7777)"
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role

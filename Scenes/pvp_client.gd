@@ -251,7 +251,7 @@ func _on_round_state(data: Dictionary) -> void:
 		_match_ended = true
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
 			NetBus.stop()
-			get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
+			Level0.safe_change_scene(get_tree(), "res://Scenes/main_menu.tscn"))
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
 func _on_opponent_left() -> void:
@@ -262,7 +262,7 @@ func _on_opponent_left() -> void:
 		_hud.show_notice("对手已离开", "对局结束")
 	get_tree().create_timer(2.5).timeout.connect(func() -> void:
 		NetBus.stop()
-		get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
+		Level0.safe_change_scene(get_tree(), "res://Scenes/main_menu.tscn"))
 
 # ── 中立鸟(服务器权威):roster → 建视觉副本;每帧快照 apply_remote;died → 移除 ──
 func _on_enemy_spawn(roster: Array) -> void:

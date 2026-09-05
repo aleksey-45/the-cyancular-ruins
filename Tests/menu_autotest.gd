@@ -39,6 +39,7 @@ func _run() -> void:
 	_dump_render_chain(tree, cur)
 	if mode == "sp":
 		await _verify_pause(tree)
+		await _verify_go_menu(tree)
 	await _shot(tree, "autotest_%s.png" % mode)
 	print("AUTOTEST[%s]: DONE" % mode)
 	tree.quit(0)
@@ -64,10 +65,24 @@ func _verify_pause(tree: SceneTree) -> void:
 	print("AUTOTEST: Esc后 paused=", tree.paused, "(应为 true)")
 	await tree.process_frame
 	await tree.process_frame
-	tree.root.get_texture().get_image().save_png("user://autotest_sp_pause.png")
+	_save_root_png(tree, "user://autotest_sp_pause.png")
 	_press_esc()
 	await tree.create_timer(0.5).timeout
 	print("AUTOTEST: 再Esc后 paused=", tree.paused, "(应为 false)")
+
+
+# 回主菜单验证(safe_change_scene 路径):开暂停层点「回 到 主 菜 单」,场景应回到 main_menu
+func _verify_go_menu(tree: SceneTree) -> void:
+	_press_esc()
+	await tree.create_timer(0.4).timeout
+	_press_by_text(tree.current_scene, "回到主菜单")
+	await tree.create_timer(1.5).timeout
+	var cur := tree.current_scene
+	var ok := cur != null and cur.scene_file_path.ends_with("main_menu.tscn")
+	print("AUTOTEST: 回主菜单后场景 = %s %s" % [
+		cur.scene_file_path if cur != null else "<null>", "(OK)" if ok else "(失败!应回到 main_menu.tscn)"])
+	if not ok:
+		tree.quit(1)
 
 
 # 注入一次 Esc(ui_cancel)
@@ -78,12 +93,21 @@ func _press_esc() -> void:
 	Input.parse_input_event(ev)
 
 
-# 截取玩家所见(root 视口)存档
+# 截取玩家所见(root 视口)存档;headless 无视口纹理,安全跳过
 func _shot(tree: SceneTree, file: String) -> void:
 	await tree.process_frame
 	await tree.process_frame
-	tree.root.get_texture().get_image().save_png("user://" + file)
+	_save_root_png(tree, "user://" + file)
 	print("AUTOTEST: 截图已存 user://" + file)
+
+
+func _save_root_png(tree: SceneTree, path: String) -> void:
+	var tex := tree.root.get_texture()
+	var img: Image = tex.get_image() if tex != null else null
+	if img == null:
+		print("AUTOTEST: 无视口纹理(headless),跳过截图 ", path)
+		return
+	img.save_png(path)
 
 
 # 按文字前缀找按钮并触发(去空格匹配;浮现动画不阻塞 pressed)
