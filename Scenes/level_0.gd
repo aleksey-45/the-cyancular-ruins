@@ -69,19 +69,14 @@ func _ready() -> void:
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 	TileDefs.init_hp(grid)
 
-	var args_diag := OS.get_cmdline_user_args()
-	if args_diag.has("--diag-nopaint"):   # TEMP 诊断开关:跳过瓦片/水铺图,验证后删除
-		Level0.water_layer = $WorldViewport/WaterLayer
-		Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
-	else:
-		var tile_set = _create_wall_tileset()
-		var wl: TileMapLayer = $WorldViewport/WallLayer
-		wl.tile_set = tile_set
-		_paint_maze(wl, grid)
-		Level0.water_layer = $WorldViewport/WaterLayer
-		Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
-		Level0.water_layer.tile_set = tile_set
-		_paint_water(grid)
+	var tile_set = _create_wall_tileset()
+	var wl: TileMapLayer = $WorldViewport/WallLayer
+	wl.tile_set = tile_set
+	_paint_maze(wl, grid)
+	Level0.water_layer = $WorldViewport/WaterLayer
+	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
+	Level0.water_layer.tile_set = tile_set
+	_paint_water(grid)
 
 	# 主菜单背景:实机演示——真实玩家由注入式 AI 驱动追打演示鸟,镜头正常跟随。
 	# 有碰撞/敌人(死光自动补),HUD 隐藏。(menu_demo 残留防护:主菜单进 PvP 不重置也不生效)
@@ -123,11 +118,7 @@ func _ready() -> void:
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)
 
 	# Esc 暂停菜单(隐藏待命,PauseMenu 自行处理 ui_cancel 并截获,不会透进世界)
-	if not args_diag.has("--diag-nopause"):   # TEMP 诊断开关,验证后删除
-		add_child(PauseMenu.new(false))
-	var hud_node := get_node_or_null("HUD")
-	if hud_node != null and args_diag.has("--diag-nohud"):   # TEMP 诊断开关,验证后删除
-		hud_node.visible = false
+	add_child(PauseMenu.new(false))
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport

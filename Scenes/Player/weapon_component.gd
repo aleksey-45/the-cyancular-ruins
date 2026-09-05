@@ -13,9 +13,45 @@ const WEAPONS: Dictionary = {
 	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
 }
 
+# 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
+const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器"}
+
+signal weapon_changed(slot: int)   # equip 成功后发射(菜单图标/HUD 武器显示跟随)
+
 var _weapon: WeaponBase = null
 var _current_slot: int = 1
 var body: CharacterBody2D
+
+# 纯白像素剪影缓存(slot → Texture2D):从武器场景的 Sprite2D 图集切片,
+# 全像素刷白保留 alpha,3× 最近邻放大(与瓦片/8bit 音效同风格,零美术素材)。
+static var _silhouette_cache: Dictionary = {}
+
+static func silhouette(slot: int) -> Texture2D:
+	if _silhouette_cache.has(slot):
+		return _silhouette_cache[slot]
+	var tex: Texture2D = null
+	var scene: PackedScene = load(WEAPONS.get(str(slot), "")) if WEAPONS.has(str(slot)) else null
+	if scene != null:
+		var inst := scene.instantiate()
+		var sprites := inst.find_children("*", "Sprite2D", true, false)
+		if not sprites.is_empty():
+			var spr: Sprite2D = sprites[0]
+			if spr.region_enabled and spr.texture != null:
+				var atlas := spr.texture.get_image()
+				if atlas != null:
+					if atlas.is_compressed():
+						atlas.decompress()
+					var r: Rect2 = spr.region_rect
+					var img := atlas.get_region(Rect2i(r.position, r.size))
+					for y in img.get_height():
+						for x in img.get_width():
+							if img.get_pixel(x, y).a > 0.05:
+								img.set_pixel(x, y, Color.WHITE)
+					img.resize(img.get_width() * 3, img.get_height() * 3, Image.INTERPOLATE_NEAREST)
+					tex = ImageTexture.create_from_image(img)
+		inst.free()
+	_silhouette_cache[slot] = tex
+	return tex
 
 # 启用的武器槽位(1-5)。单机由 Level0 按 RunOptions 设置;PvP 由 pvp_client 按服务器
 # 下发的 match_options 设置。数字键/滚轮切枪都会跳过禁用槽位。
@@ -74,6 +110,7 @@ func equip(slot: String) -> void:
 	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
 	Sfx.play("switch")
+	weapon_changed.emit(int(slot))
 
 func current_weapon() -> WeaponBase:
 	return _weapon

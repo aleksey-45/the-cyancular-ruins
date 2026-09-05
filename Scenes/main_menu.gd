@@ -5,7 +5,6 @@ extends Control
 # Settings.old_ui=true 时保留旧版简洁布局。
 
 const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
-const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器"}
 
 static var _version_cache := ""
 static var _log_cache: Array = []
@@ -278,7 +277,9 @@ func _build_sp_panel() -> PanelContainer:
 	var checks: Array[CheckButton] = []
 	for slot in [1, 2, 3, 4, 5]:
 		var cb := CheckButton.new()
-		cb.text = "%d. %s" % [slot, WEAPON_NAMES[slot]]
+		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
+		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
+		cb.expand_icon = false
 		_style_control(cb, 26)
 		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)
 		checks.append(cb)

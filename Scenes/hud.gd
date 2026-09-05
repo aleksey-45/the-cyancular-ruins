@@ -34,6 +34,8 @@ var _wp_bar: ColorRect = null
 var _wp_back: ColorRect = null
 var _wp_w := 0.0
 var _wp_tween: Tween = null
+var _weapon_icon: TextureRect = null
+var _weapon_name: Label = null
 
 func _ready() -> void:
 	layer = LAYER
@@ -50,6 +52,52 @@ func _ready() -> void:
 			_build_waterproof(p.max_waterproof)
 			p.waterproof_changed.connect(_on_waterproof)
 			_on_waterproof(p.waterproof, p.max_waterproof)
+		if "weapons" in p:
+			_build_weapon_display(p)
+			p.weapons.weapon_changed.connect(_on_weapon_changed)
+			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
+
+
+# 左下角:当前武器纯白像素剪影 + 名称(HUD 游玩界面辨识)。
+func _build_weapon_display(p: Node) -> void:
+	var box := HBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	box.anchor_left = 0.0
+	box.anchor_right = 0.0
+	box.anchor_top = 1.0
+	box.anchor_bottom = 1.0
+	box.offset_left = MARGIN.x
+	box.offset_top = -96
+	box.offset_right = MARGIN.x + 260
+	box.offset_bottom = -MARGIN.y
+	box.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	add_child(box)
+
+	_weapon_icon = TextureRect.new()
+	_weapon_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_weapon_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_weapon_icon.custom_minimum_size = Vector2(96, 60)
+	_weapon_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	box.add_child(_weapon_icon)
+
+	_weapon_name = Label.new()
+	_weapon_name.add_theme_font_size_override("font_size", 24)
+	_weapon_name.add_theme_color_override("font_color", Color(0.85, 0.93, 0.98))
+	var pf: FontFile = load(KILL_FONT_PATH) as FontFile
+	if pf != null:
+		pf.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+		pf.hinting = TextServer.HINTING_NONE
+		pf.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+		_weapon_name.add_theme_font_override("font", pf)
+	_weapon_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_weapon_name.size_flags_vertical = Control.SIZE_FILL
+	box.add_child(_weapon_name)
+
+
+func _on_weapon_changed(slot: int) -> void:
+	if _weapon_icon != null:
+		_weapon_icon.texture = WeaponComponent.silhouette(slot)
+		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "?")
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;无边框。
 # 竖条背后垫一层半透明白色底板,整体更易读。

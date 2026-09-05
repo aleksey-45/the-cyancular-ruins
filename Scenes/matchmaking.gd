@@ -6,7 +6,6 @@ extends Control
 # 服务器权威项(回合回血/禁武器)以房主(role1)为准,随 claim_role 上报。
 
 const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
-const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹"}
 
 var _addr_edit: LineEdit
 var _code_edit: LineEdit
@@ -134,8 +133,10 @@ func _build_options_panel() -> void:
 	vb.add_child(wrow)
 	for slot in [1, 2, 3, 4, 5]:
 		var cb := CheckButton.new()
-		cb.text = "%d %s" % [slot, WEAPON_NAMES[slot]]
+		cb.text = "%d %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
+		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
 		cb.button_pressed = Settings.pvp_disabled_weapons.has(slot)
+		cb.add_theme_font_size_override("font_size", 24)
 		cb.toggled.connect(func(on: bool) -> void:
 			if on and not Settings.pvp_disabled_weapons.has(slot):
 				Settings.pvp_disabled_weapons.append(slot)
