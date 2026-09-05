@@ -147,6 +147,10 @@ func _on_snapshot(snap: Dictionary) -> void:
 				if _hp_bars.has(role):
 					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
 							/ float(PlayerParams.player_max_hp)
+	# 清理已离开玩家(掉线者从快照消失):副本/头顶ID/血条一并移除(自检 M3 幽灵残留)
+	for role_str in _replicas.keys():
+		if not players_snap.has(str(role_str)):
+			_remove_replica(int(role_str))
 	# 中立鸟(大乱斗默认无鸟;协议保留兼容)
 	var enemies_snap: Dictionary = snap.get("enemies", {})
 	for id_str in enemies_snap:
@@ -171,6 +175,26 @@ func _ensure_replica(role: int) -> void:
 		var bar := EnemyHpBar.new()
 		_world.add_child(bar)
 		_hp_bars[role] = bar
+	_refresh_names()
+
+
+# 移除已离开玩家的视觉件:副本/头顶ID/血条(自检 M3 幽灵残留)
+func _remove_replica(role: int) -> void:
+	if _replicas.has(role):
+		var r: Node2D = _replicas[role]
+		if is_instance_valid(r):
+			r.queue_free()
+		_replicas.erase(role)
+	if _id_labels.has(role):
+		var l: Node = _id_labels[role]
+		if is_instance_valid(l):
+			l.queue_free()
+		_id_labels.erase(role)
+	if _hp_bars.has(role):
+		var b: Node = _hp_bars[role]
+		if is_instance_valid(b):
+			b.queue_free()
+		_hp_bars.erase(role)
 	_refresh_names()
 
 func _on_bullet_spawn(data: Dictionary) -> void:
@@ -229,9 +253,15 @@ func _on_round_state(data: Dictionary) -> void:
 		_local.set_controls_locked(state == 0)   # COUNTDOWN 锁开火(移动由服务器权威冻结)
 	if state == 3 and not _match_ended:   # MATCH_OVER → 展示结果 6s 后回主菜单
 		_match_ended = true
+		if _local != null and _local.has_method("set_controls_locked"):
+			_local.set_controls_locked(true)   # 结算画面锁输入(自检 L6:原还能跑动开枪)
+		# 捕获 tree/autoload 引用:玩家若在 6s 内经暂停菜单退出,本节点已释放,
+		# 到点时对已释放实例调 get_tree() 会报错(自检 L6)
+		var tree := get_tree()
+		var netbus := NetBus
 		get_tree().create_timer(6.0).timeout.connect(func() -> void:
-			NetBus.stop()
-			Level0.safe_change_scene(get_tree(), "res://Scenes/main_menu.tscn"))
+			netbus.stop()
+			Level0.safe_change_scene(tree, "res://Scenes/main_menu.tscn"))
 
 # ── 中立鸟兼容(大乱斗默认无鸟)──
 func _on_enemy_spawn(roster: Array) -> void:

@@ -18,6 +18,9 @@ const WORKER_PORT_SPAN := 500
 # 立刻复用会把同端口发给新 worker → bind 冲突,或旧 worker 抢到新局的客户端(跨房间串线)。
 # 30s 足够旧 worker 走完收尾;极端情况(客户端僵死不断开)由 500 端口轮回兜底。
 const WORKER_PORT_REUSE_DELAY := 30.0
+# 大乱斗 worker 的端口归还延迟:一局最长 5 分钟(RoyaleHost.MATCH_TIME=300)+ 收尾,
+# 沿用 30s 会让对局中途端口被发给新 worker(串线/bind 冲突)——自检 M2。
+const ROYALE_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 
@@ -94,6 +97,10 @@ func _generate_code() -> String:
 	return "%04d" % (randi() % 10000)
 
 func create_room(caller: int) -> void:
+	# 1v1/大乱斗互斥(自检 L5):同一客户端同时挂两种房会收到双重 go_match 互相覆盖
+	if _royale_room_of(caller) != null:
+		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间,请先退出再创建 1v1 房间")
+		return
 	var code := _generate_code()
 	while rooms.has(code):
 		code = _generate_code()
@@ -112,6 +119,9 @@ func join_room(caller: int, code: String) -> void:
 	var room: Room = rooms[code]
 	if room.players.size() >= 2:
 		NetBus.rpc_id(caller, "server_message", "房间已满")
+		return
+	if _royale_room_of(caller) != null:
+		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间,请先退出再加入 1v1 房间")
 		return
 	room.players.append(caller)
 	room.player_role[caller] = 2
@@ -143,8 +153,9 @@ func on_peer_left(peer_id: int) -> void:
 		if rr.players.is_empty():
 			royale_rooms.erase(rcode)
 			if rr.worker_port > 0:
-				_release_port_later(rr.worker_port)
-			print("大乱斗房 %s 关闭" % rcode)
+				# 大乱斗一局最长 5 分钟:端口回收延迟远长于 1v1(自检 M2)
+				_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
+			print("大乱斗房 %s 关闭(端口 %d 将于 %ds 后回收)" % [rcode, rr.worker_port, int(ROYALE_PORT_REUSE_DELAY)])
 		else:
 			if rr.host_peer == peer_id:
 				rr.host_peer = rr.players[0]
@@ -164,8 +175,11 @@ func _broadcast_royale_state(rr: RoyaleRoom) -> void:
 		"max_players": rr.max_players, "host_role": rr.player_role.get(rr.host_peer, 0),
 		"players": plist, "in_match": rr.in_match,
 	}
+	var live_peers := multiplayer.get_peers()
 	for peer_id in rr.players:
-		NetBusExt.rpc_id(peer_id, "royale_room_state", state)
+		# 只发给仍在线的 peer:对已断开连接 rpc_id 会报 channel 错误(自检日志实测)
+		if live_peers.has(peer_id):
+			NetBusExt.rpc_id(peer_id, "royale_room_state", state)
 
 func _royale_room_of(caller: int) -> RoyaleRoom:
 	for r in royale_rooms:
@@ -173,9 +187,19 @@ func _royale_room_of(caller: int) -> RoyaleRoom:
 			return royale_rooms[r]
 	return null
 
+# 该 caller 是否已在某个 1v1 房间(大乱斗/1v1 互斥,自检 L5)
+func _in_1v1_room(caller: int) -> bool:
+	for code in rooms:
+		if (rooms[code] as Room).players.has(caller):
+			return true
+	return false
+
 func royale_create(caller: int, opts: Dictionary) -> void:
 	if _royale_room_of(caller) != null:
 		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间中")
+		return
+	if _in_1v1_room(caller):
+		NetBus.rpc_id(caller, "server_message", "你已在 1v1 房间,请先退出再创建大乱斗房间")
 		return
 	var code := _generate_code()
 	while royale_rooms.has(code):
@@ -206,6 +230,9 @@ func royale_join(caller: int, code: String, invite: String) -> void:
 		return
 	if _royale_room_of(caller) != null:
 		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间中")
+		return
+	if _in_1v1_room(caller):
+		NetBus.rpc_id(caller, "server_message", "你已在 1v1 房间,请先退出再加入大乱斗房间")
 		return
 	var rr: RoyaleRoom = royale_rooms[code]
 	if rr.in_match:
@@ -289,7 +316,8 @@ func royale_start(caller: int) -> void:
 func _spawn_royale_worker(port: int, players: int) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
-	if OS.has_feature("editor"):
+	# editor 与 template_debug(调试引擎)都要带 --path+场景;仅导出 exe 可省(dedicated_server 主场景)
+	if OS.has_feature("editor") or OS.has_feature("template_debug"):
 		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--royale",
 				"--port", str(port), "--players", str(players)])
@@ -318,10 +346,11 @@ func _start_match(room: Room) -> void:
 	print("房间 %s 配对完成 → worker 端口 %d" % [room.code, port])
 
 # 延迟归还 worker 端口:给旧 worker 留足退出时间,防止端口被立刻复用导致串线。
-func _release_port_later(port: int) -> void:
+# delay:1v1=30s;大乱斗房传 ROYALE_PORT_REUSE_DELAY(一局可长达 5 分钟)。
+func _release_port_later(port: int, delay: float = WORKER_PORT_REUSE_DELAY) -> void:
 	if port <= 0:
 		return
-	await get_tree().create_timer(WORKER_PORT_REUSE_DELAY).timeout
+	await get_tree().create_timer(delay).timeout
 	_worker_ports.erase(port)
 
 
@@ -342,7 +371,7 @@ func _pick_worker_port() -> int:
 func _spawn_worker(port: int) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
-	if OS.has_feature("editor"):
+	if OS.has_feature("editor") or OS.has_feature("template_debug"):
 		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--port", str(port)])
 	else:

@@ -187,3 +187,9 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - 段错误遗留:进图方向(菜单→游戏)的约 50% headless 段错误未根治(见「段错误排查重大进展」)——用户 GUI 若仍偶发闪退属同一问题,下次专攻抓原生调用栈;回菜单/重载方向已由 safe_change_scene 治理(若 GUI 仍卡退,把 `_retired` 改为永不释放)。
 - 跑冒烟(用户自己跑):`Tests/explosion_falloff_probe.gd`、`enemy_logic_smoke.gd`、PvP 两个 .sh(注意 `claim_role` 扩参后冒烟脚本若直接调 RPC 需同步签名)。
 - 候选迭代:菜单背景主角遇墙的视觉处理、BGM(Music 总线已留)、键位组合键、小地图 destroyed 砖实时刷新。
+
+### 大乱斗 5 机器人试玩(RoyaleServer-debug 分支)
+- 试玩工具:`Tests/royale_bot.tscn`(--role=create|join --index=N)+ `royale_bot_helper.gd`(存活场景切换,挂 BotInputSource:随机走/跳/周期开火/旋转瞄准),1 大厅 + 1 worker + 5 客户端整局无脚本错误;击倒→自动复活链路实战验证。
+- 试玩中发现并已修:worker 拉起分支缺 template_debug 支持(调试引擎下 worker 秒退,`_spawn_worker/_spawn_royale_worker` 已补 `OS.has_feature("template_debug")` 分支)。
+- 已知非致命:worker 开局瞬间向未完成转连的 peer 广播会刷 "Unable to send packet channel 0"(ENet 噪音,不影响对局);机器人互射命中较低,击杀计分边沿仍靠探针覆盖。
+- 运行限制:多会话并存时避免用 `taskkill //IM Godot*` 清场(会互杀),按端口/PID 清理。

@@ -25,8 +25,14 @@ static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {}) -> void:
+	# 散点必须在 super._init() 之前就绪:父类 _init 摆位会虚调 _spawn_cell(role),
+	# 若 _round_spawns 尚为空,首次摆位拿到 (-1,-1) 且被 _spawned_once 闩锁,
+	# 全体玩家挤到地图回卷角落、散点/复活设计失效(自检 S1 严重 bug)。
+	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
+		MazeGenerator.set_map_file(map_path)
+		WorldBuilder.load_grid()
+	_round_spawns = plan_spawns(role_peers.keys())
 	super._init(map_path, role_peers, options)
-	_round_spawns = plan_spawns(role_peers.size())
 
 
 # ── 开局(在 worker 进程调用):算散点出生 → 逐角色 match_start → 建 RoyaleHost ──
@@ -36,7 +42,7 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 	# plan_spawns 依赖 current_grid:先预载网格(MatchHost._init 里再 load_grid 幂等)
 	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
 		WorldBuilder.load_grid()
-	var spawns := plan_spawns(role_peers.size())
+	var spawns := plan_spawns(role_peers.keys())
 	for role in role_peers:
 		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
 		NetBus.rpc_id(role_peers[role], "server_message", "大乱斗开始")
@@ -76,8 +82,11 @@ static func _floor_cells() -> Array:
 	return _floor_cell_cache
 
 
-# 开局散点:洗牌后贪心取两两环面距离 ≥ SPAWN_CLEARANCE 的 N 个格;不够就放宽(全量补齐)
-static func plan_spawns(n: int) -> Dictionary:
+# 开局散点:洗牌后贪心取两两环面距离 ≥ SPAWN_CLEARANCE 的 N 个格;不够就放宽(全量补齐)。
+# roles = 实际参战 role 列表:缺员降级开局时 role 不连续(如剩 {1,3}),
+# 必须按实际键返回,否则 spawns[role] 缺键抛错、对局卡死(自检 S2 严重 bug)。
+static func plan_spawns(roles: Array) -> Dictionary:
+	var n := roles.size()
 	var cells: Array = _floor_cells().duplicate()
 	cells.shuffle()
 	var picked: Array = []
@@ -95,9 +104,8 @@ static func plan_spawns(n: int) -> Dictionary:
 				picked.append(c)
 		clearance -= 5   # 地板格不足时放宽间距重收
 	var out := {}
-	var roles := range(1, n + 1)
 	for i in range(n):
-		out[roles[i]] = picked[i] if i < picked.size() else Vector2i(-1, -1)
+		out[int(roles[i])] = picked[i] if i < picked.size() else Vector2i(-1, -1)
 	return out
 
 
@@ -146,6 +154,11 @@ func _match_round_tick(delta: float) -> void:
 			if _round_timer <= 0.0:
 				_round_state = RoundState.PLAYING
 				_broadcast_round_state()
+			# 倒计时每 0.5s 重播:客户端切场景/建 HUD 有延迟,_ready 只广播一次会漏收
+			_hud_sync -= delta
+			if _hud_sync <= 0.0:
+				_hud_sync = 0.5
+				_broadcast_round_state()
 		RoundState.PLAYING:
 			_match_time = maxf(_match_time - delta, 0.0)
 			# 复活调度(同父类:PLAYING 内倒地即安排 2s 复活)+ 复活执行
@@ -176,13 +189,20 @@ func _match_round_tick(delta: float) -> void:
 			pass   # 结果展示阶段:客户端 6s 后自行回菜单
 
 
-# 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role
+# 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role。
+# 带时效:伤害超过 ATTRIB_WINDOW 秒前的射手不再归因(防止"被打一枪后溺水"误计)。
+const ATTRIB_WINDOW := 10000   # ms
+
 func _attributed_killer(victim: Node2D) -> int:
 	if not victim.has_meta("last_damager"):
 		return 0
 	var shooter: Node = victim.get_meta("last_damager")
 	if shooter == null or not is_instance_valid(shooter) or shooter == victim:
 		return 0
+	if victim.has_meta("last_damager_time"):
+		var age := Time.get_ticks_msec() - int(victim.get_meta("last_damager_time"))
+		if age > ATTRIB_WINDOW:
+			return 0
 	for role in players:
 		if players[role] == shooter:
 			return int(role)
@@ -215,10 +235,16 @@ func _match_winner() -> int:
 func _broadcast_round_state() -> void:
 	var names := {}
 	var alive := {}
+	# 在房玩家 + 已离开者都保留昵称行(离开玩家在排行榜标「离开」,原 M4:整行消失)
 	for role in peer_by_role:
 		names[int(role)] = _display_names.get(int(role), "玩家%d" % int(role))
+	for role in _left:
+		if not names.has(int(role)):
+			names[int(role)] = _display_names.get(int(role), "玩家%d" % int(role))
+	# alive=未倒地(倒地者 HUD 显示「复活中」,原 M4:恒 true 不可达)
 	for role in players:
-		alive[int(role)] = true
+		var p: Node2D = players[role]
+		alive[int(role)] = is_instance_valid(p) and not p.is_downed()
 	var data := {
 		"state": _round_state,
 		"round": 1,
@@ -275,4 +301,14 @@ func mark_disconnected(role: int) -> void:
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	if bullet.shooter != null and is_instance_valid(bullet.shooter) and bullet.shooter != victim:
 		victim.set_meta("last_damager", bullet.shooter)
+		victim.set_meta("last_damager_time", Time.get_ticks_msec())
 	super._on_bullet_hit(bullet, victim, victim_role)
+
+
+# 复活时清空归因 meta:复活后的环境死亡(溺水等)不再记到复活前最后射手头上(自检 M5)
+func _respawn_player(role: int) -> void:
+	super._respawn_player(role)
+	var p: Node2D = players.get(role)
+	if p != null and is_instance_valid(p):
+		p.remove_meta("last_damager")
+		p.remove_meta("last_damager_time")
