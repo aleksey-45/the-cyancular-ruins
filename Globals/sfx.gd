@@ -16,6 +16,8 @@ const PITCH_VARIATION := ["shoot", "shoot_heavy", "shotgun", "hit"]
 
 ## 播放一个音效。kind 见 _build;pitch 缩放音调;volume_db 附加增益(负值更轻)。
 static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> void:
+	if OS.get_cmdline_user_args().has("--diag-nosfx"):
+		return   # TEMP 诊断开关:静默所有音效,二分段错误用,验证后删除
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null or tree.root == null:
 		return

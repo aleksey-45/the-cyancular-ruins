@@ -135,8 +135,10 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 **WIP 段错误现在 headless 可稳定复现**(此前"headless 不复现"结论是样本太少):GUI/HEADLESS 跑 `-- --autotest-sp` 或 `-- --autotest-level`,约 50~60% 概率段错误(退出码 139),崩在进图后 0~2 秒。二分排除结论:
 - **无关**:敌人数量(0 只也崩)、难度、碰撞构建(`--diag-nocollide` 跳过 build_sim 仍崩)、PostProcess(跳过仍崩)、演示世界是否存在(`--diag-nodemo` 仍崩)、我的全部本轮改动(stash 基线同样崩)。
 - **强相关**:直接启动 Level0 场景(不经菜单/切换)**0/9 从不崩**;只要经过"主菜单→change_scene→游戏"流程就概率崩。即触发条件 ≈ change_scene 切换 + 新游戏世界运行,但把菜单→游戏也改成手动接管(safe_change_scene)并未消除 → 崩点在引擎原生层更深处,非脚本可完全规避。
+- **第二轮二分(诊断开关 --diag-*)**:敌人(0 只也崩)/碰撞构建/瓦片+水铺图/HUD/暂停层/后处理 全部排除(关掉任意一项崩溃率仍 ~50%);Sfx 禁用两批 1/6 与 7/10 抽样噪声无法区分,暂列排除。**游戏侧已无可关的灯 → 炸点在引擎原生层**,唯一正解 = 带符号调试引擎拿调用栈。
 - 已试未果:菜单→游戏改走 safe_change_scene(仍 6/8 崩);敌人生成延一帧(无效,已回退)。
-- 下次专攻建议:搭 Godot 调试构建(RELEASE.md 模板链路)或配 WER LocalDumps 抓原生调用栈;先用 `--log-file` 复跑(缓冲会吞崩溃前输出,日志文件不吞)。
+- **进行中**:本机(VS18 + Python3.14)从 Gitee 克隆 4.7.1-stable 源码到 `C:\Users\21559\godot-4.7.1-src`,用仓库 `cyancular_build_profile.gdbuild` 编 `target=template_debug debug_symbols=yes`(build_debug.bat;注意 cmd 批处理必须 CRLF、路径不能含中文);跑 `-- --autotest-sp` 复现 → 崩溃处理器(Windows StackWalker + PDB)应输出符号化调用栈。
+- 用户实测补充:困难单人进入后「蓝屏无渲染」= 崩溃发生在建图 deferred flush 内、PostProcess 首次绘制之前(清屏色已设、世界还没画出来),与 headless 复现的崩点一致。
 
 ### 实验分支已完成(commit 528f4e9 起,exe 已重导出并实测)
 - **大厅 UI 改版**:像素标题+按钮浮现动画;背景=`Level0.menu_demo` 地图奔跑演示(镜头左移,主角纯视觉借 Player.tscn SpriteFrames)。`Settings.old_ui=true` 切回老版。
