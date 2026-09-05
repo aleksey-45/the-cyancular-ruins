@@ -17,6 +17,9 @@ static var _dirty_chunks: Dictionary = {}
 # PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
 static var pvp_mode: bool = false
 
+# 主菜单演示模式:只铺地图做背景(无玩家物理/敌人/碰撞/HUD),镜头由主菜单驱动匀速左移。
+static var menu_demo: bool = false
+
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
 # 在根级把未处理输入手动转发进 WorldViewport。
@@ -46,6 +49,19 @@ func _ready() -> void:
 	Level0.water_layer.tile_set = tile_set
 	_paint_water(grid)
 
+	# 主菜单背景:地图铺完即止。关掉场景自带玩家/HUD,镜头由主菜单驱动。
+	# (menu_demo 残留防护:主菜单进 PvP 不重置也不生效)
+	if menu_demo and not pvp_mode:
+		var demo_player: Node = get_node_or_null("WorldViewport/Player")
+		if demo_player != null:
+			demo_player.set_physics_process(false)
+			demo_player.visible = false
+		var demo_hud: Node = get_node_or_null("HUD")
+		if demo_hud != null:
+			demo_hud.visible = false
+		var demo_cam: Camera2D = $WorldViewport/Camera2D
+		demo_cam.target = null
+		return
 
 	_build_wall_collision.call_deferred(grid)
 	if pvp_mode:
@@ -53,7 +69,38 @@ func _ready() -> void:
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
+	spawns["enemies"] = _apply_difficulty(grid, spawns)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
+	# 单人开局选项:禁用的武器槽位应用到玩家(数字键/滚轮都会跳过)
+	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)
+
+
+# 难度 → 鸟数量:简单=随机留一半;普通=原样;困难=在远离出生点的地板格补采
+# (EnemySpawner.sample_spawn_cells 已保证"EMPTY 且正下方 SOLID"),类型随机复用场上已有的。
+func _apply_difficulty(grid: Array[Array], spawns: Dictionary) -> Array:
+	var meta: Array = spawns.get("enemies", [])
+	var mult := RunOptions.difficulty_mult()
+	if meta.is_empty() or is_equal_approx(mult, 1.0):
+		return meta
+	var target := int(round(meta.size() * mult))
+	if target <= meta.size():
+		var thin := meta.duplicate()
+		thin.shuffle()
+		return thin.slice(0, target)
+	var types: Array = []
+	for entry in meta:
+		var t: String = str(entry.get("type", ""))
+		if t != "" and not types.has(t):
+			types.append(t)
+	var player_cell: Vector2i = spawns.get("player", Vector2i(-1, -1))
+	if player_cell.x < 0:
+		player_cell = Vector2i(grid[0].size() / 2, grid.size() / 2)
+	var extra := EnemySpawner.sample_spawn_cells(grid, player_cell,
+			target - meta.size(), int(GameParameters.enemy_spawn_min_dist / GameParameters.TILE_SIZE))
+	var out := meta.duplicate()
+	for cell in extra:
+		out.append({"type": types[randi() % types.size()], "cell": cell})
+	return out
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport

@@ -13,6 +13,11 @@ const PVP_MAP := "res://map/factory1v1.cyrm"
 # 发给两个 worker,后者绑定失败退出)。唯一递增 + 占用集合即可保证并发零冲突。
 const WORKER_PORT_BASE := 7800
 const WORKER_PORT_SPAN := 500
+# 端口归还延迟(秒)。不能在房间清空时立刻归还:玩家转连 worker 的瞬间大厅就关房,
+# 而旧 worker 要等客户端真正断开(对局结束/退菜单)才退出,窗口期可达数分钟;
+# 立刻复用会把同端口发给新 worker → bind 冲突,或旧 worker 抢到新局的客户端(跨房间串线)。
+# 30s 足够旧 worker 走完收尾;极端情况(客户端僵死不断开)由 500 端口轮回兜底。
+const WORKER_PORT_REUSE_DELAY := 30.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 
@@ -96,9 +101,9 @@ func on_peer_left(peer_id: int) -> void:
 		# worker 模式下大厅无对局;玩家转连 worker 后的断开只是清房间。
 		# 若某方在配对前掉线 → 房间不满、等另一方(或一直空着由时间清理)。
 		if room.players.is_empty():
-			_worker_ports.erase(room.worker_port)   # 关房归还端口
+			_release_port_later(room.worker_port)   # 延迟归还(见 WORKER_PORT_REUSE_DELAY 注释)
 			rooms.erase(code)
-			print("房间 %s 关闭" % code)
+			print("房间 %s 关闭(端口 %d 将于 %ds 后回收)" % [code, room.worker_port, int(WORKER_PORT_REUSE_DELAY)])
 
 # ── 配对完成 → 拉起对局 worker 并让两端转连 ──
 func _start_match(room: Room) -> void:
@@ -116,6 +121,14 @@ func _start_match(room: Room) -> void:
 	for peer_id in room.players:
 		NetBus.rpc_id(peer_id, "go_match", room.player_role[peer_id], port)
 	print("房间 %s 配对完成 → worker 端口 %d" % [room.code, port])
+
+# 延迟归还 worker 端口:给旧 worker 留足退出时间,防止端口被立刻复用导致串线。
+func _release_port_later(port: int) -> void:
+	if port <= 0:
+		return
+	await get_tree().create_timer(WORKER_PORT_REUSE_DELAY).timeout
+	_worker_ports.erase(port)
+
 
 # 分配一个当前未占用的 worker 端口(唯一递增 + 占用集合;见类头注释,勿用 bind 探测)。
 func _pick_worker_port() -> int:
@@ -144,8 +157,10 @@ func _spawn_worker(port: int) -> bool:
 	return pid > 0
 
 # ── 建局(在 worker 进程调用):重算世界尺寸 + 给两端发 match_start + 建权威 MatchHost ──
-# 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态;role_peers = {role: peer_id}。
-static func start_match_on(role_peers: Dictionary, map_path: String = PVP_MAP) -> Node:
+# 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态;role_peers = {role: peer_id};
+# options = 房主(role1)的对局选项(禁武器/回合回血等,见 MatchHost)。
+static func start_match_on(role_peers: Dictionary, map_path: String = PVP_MAP,
+		options: Dictionary = {}) -> Node:
 	MazeGenerator.set_map_file(map_path)
 	GameParameters.refresh_map_size()
 	var spawns := MazeGenerator.load_spawns()
@@ -156,5 +171,5 @@ static func start_match_on(role_peers: Dictionary, map_path: String = PVP_MAP) -
 		var spawn := s1 if role == 1 else s2
 		NetBus.rpc_id(peer_id, "match_start", role, spawn, map_path)
 		NetBus.rpc_id(peer_id, "server_message", "对局开始")
-	var host := MatchHost.new(map_path, role_peers)
+	var host := MatchHost.new(map_path, role_peers, options)
 	return host

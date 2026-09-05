@@ -1,7 +1,7 @@
 extends Node2D
 # PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
 
-const TileHitFx := preload("res://scenes/Effects/tile_hit_fx.gd")
+const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
 
 # ── 本地玩家渲染:完全由服务器快照驱动(放弃客户端预测) ──
 # 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
@@ -23,15 +23,18 @@ const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,�
 const ROLE_COLOR := {1: Color(0.72, 0.93, 1.0), 2: Color(1.0, 0.82, 0.62)}
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
+var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
+var _minimap: Minimap = null      # 小地图(设置开启时创建)
 
 func _ready() -> void:
 	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
+	Level0.menu_demo = false           # 清主菜单背景演示残留(双保险,见 level_0 判定)
 	MazeGenerator.set_map_file(PvpSession.map_path)
 	# 重算世界尺寸:_ready 启动时算的是随机 demo 图(8000 宽),PvP 固定图是 9600 宽,
 	# 不重算则本地插值/回绕按错边界 → 玩家在图中间被空气墙弹走。
 	GameParameters.refresh_map_size()
 	Level0.pvp_mode = true
-	var level0: Node = load("res://scenes/Level0.tscn").instantiate()
+	var level0: Node = load("res://Scenes/Level0.tscn").instantiate()
 	add_child(level0)
 	_level0 = level0
 	_world = level0.get_node("WorldViewport")
@@ -47,10 +50,14 @@ func _ready() -> void:
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
 	# 远端副本(角色 = 3 - 自己的 role,1v1)
-	var replica := preload("res://scenes/Player/player_replica.tscn").instantiate()
+	var replica := preload("res://Scenes/Player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
+	# 对手头顶血条(设置开启时;挂 WorldViewport 走世界坐标,每帧贴到头顶)
+	if Settings.pvp_show_enemy_hp:
+		_hp_bar = EnemyHpBar.new()
+		_world.add_child(_hp_bar)
 	# 快照/事件消费
 	NetBus.local_snapshot.connect(_on_snapshot)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
@@ -61,11 +68,23 @@ func _ready() -> void:
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
+	NetBus.local_match_options.connect(_on_match_options)
+	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
+	if Settings.pvp_show_minimap:
+		_minimap = Minimap.new()
+		_minimap.setup(
+			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
+			func() -> Vector2:
+				if _remote_replica != null and is_instance_valid(_remote_replica):
+					return (_remote_replica as Node2D).global_position
+				return Vector2.INF)
+		add_child(_minimap)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
 	_hud = PvpHud.new()
 	add_child(_hud)
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
+	# 小地图需要在 post_process 之上才可见,但 CanvasLayer 无层级冲突(layer 131)→ 已在 _ready 建好
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -134,6 +153,9 @@ func _on_snapshot(snap: Dictionary) -> void:
 			_apply_local_state(data)
 		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
 			_remote_replica.apply_snapshot(data, _local.global_position, snap_tick)
+			# 对手血条:快照 hp → 比例(上限取 PlayerParams 玩家最大血)
+			if _hp_bar != null:
+				_hp_bar.ratio = float(data.get("hp", PlayerParams.player_max_hp)) / float(PlayerParams.player_max_hp)
 	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)
 	var enemies_snap: Dictionary = snap.get("enemies", {})
 	for id_str in enemies_snap:
@@ -175,6 +197,9 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
 	_world.add_child(b)
+	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
+	if Settings.pvp_show_trajectories:
+		BulletTrail.attach(b, data["color"])
 
 # 服务器裁决命中:被打的是自己 → 即时反馈(白闪/击退),血量以快照权威为准;
 # 被打的是对手 → 副本受击闪烁,让射手看到自己打中了。
@@ -222,7 +247,7 @@ func _on_round_state(data: Dictionary) -> void:
 		_match_ended = true
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
 			NetBus.stop()
-			get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+			get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
 func _on_opponent_left() -> void:
@@ -233,7 +258,7 @@ func _on_opponent_left() -> void:
 		_hud.show_notice("对手已离开", "对局结束")
 	get_tree().create_timer(2.5).timeout.connect(func() -> void:
 		NetBus.stop()
-		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+		get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
 
 # ── 中立鸟(服务器权威):roster → 建视觉副本;每帧快照 apply_remote;died → 移除 ──
 func _on_enemy_spawn(roster: Array) -> void:
@@ -247,7 +272,7 @@ func _on_enemy_spawn(roster: Array) -> void:
 		var bid := int(entry.get("id", 0))
 		if scene_path == "" or bid <= 0:
 			continue
-		var r: Node2D = preload("res://scenes/Enemies/enemy_replica.gd").new()
+		var r: Node2D = preload("res://Scenes/Enemies/enemy_replica.gd").new()
 		_world.add_child(r)
 		r.setup(bid, scene_path, entry.get("pos", _local.global_position), _local.global_position)
 		_enemy_replicas[bid] = r
@@ -266,24 +291,24 @@ func _on_enemy_died(id: int) -> void:
 		r.queue_free()
 	_enemy_replicas.erase(id)
 
-# P2(role 2)玩家角色本体色相 -20:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
+# 角色染色:自己 = 设置里选的色相(即选即用);对手 = 对方 claim_role 上报的色相(见 _on_peer_info)。
 # 只给角色 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/无敌半透明仍正常),武器不染。
 func _apply_p2_tint() -> void:
-	var body: Node = null
-	if PvpSession.role == 2 and _local != null:
-		body = _local.get_node_or_null("AnimatedSprite2D")
-	elif PvpSession.role == 1 and _remote_replica != null:
-		body = _remote_replica.get_node_or_null("AnimatedSprite2D")
+	if _local != null:
+		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
+
+
+func _apply_tint(body: Node, hue_deg: float) -> void:
 	var canvas := body as CanvasItem
-	if canvas == null:
+	if canvas == null or is_zero_approx(hue_deg):
 		return
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/Player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", -65.0)   # P2 本体色相旋转 -65°
+	mat.shader = load("res://Scenes/Player/player_p2_hue.gdshader")
+	mat.set_shader_parameter("hue_shift", hue_deg)
 	canvas.material = mat
 
-# ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
-func _on_peer_info(names: Dictionary) -> void:
+# ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称/颜色}),两端据此显示 ──
+func _on_peer_info(names: Dictionary, hues: Dictionary = {}) -> void:
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:
 		return
@@ -293,15 +318,28 @@ func _on_peer_info(names: Dictionary) -> void:
 	var nm_opp := str(names.get(opp, "对手"))
 	_id_self.set_label(nm_self, ROLE_COLOR.get(me, Color.WHITE))
 	_id_opp.set_label(nm_opp, ROLE_COLOR.get(opp, Color.WHITE))
+	# 对手角色染色(对方自选色相;缺省回落旧规则 P2 -65)
+	if _remote_replica != null:
+		_apply_tint(_remote_replica.get_node_or_null("AnimatedSprite2D"),
+				float(hues.get(opp, -65.0 if opp == 2 else 0.0)))
+
+# 服务器下发的生效选项:同步禁用武器(本地数字键/滚轮同样被挡,出生枪自动改首个启用槽)
+func _on_match_options(opts: Dictionary) -> void:
+	var disabled: Array[int] = []
+	for v in opts.get("disabled_weapons", []):
+		disabled.append(int(v))
+	PvpSession.disabled_weapons = disabled
+	if _local != null:
+		_local.weapons.set_enabled_slots(disabled)
 
 func _ensure_id_labels() -> void:
 	if _world == null:
 		return
 	if _id_self == null:
-		_id_self = load("res://scenes/Player/world_label.gd").new()
+		_id_self = load("res://Scenes/Player/world_label.gd").new()
 		_world.add_child(_id_self)
 	if _id_opp == null:
-		_id_opp = load("res://scenes/Player/world_label.gd").new()
+		_id_opp = load("res://Scenes/Player/world_label.gd").new()
 		_world.add_child(_id_opp)
 
 func _process(_delta: float) -> void:
@@ -310,3 +348,6 @@ func _process(_delta: float) -> void:
 		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET
 	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
+	# 对手血条贴在 ID 上方(倒地转体不影响,世界空间独立节点)
+	if _hp_bar != null and _remote_replica != null and is_instance_valid(_remote_replica):
+		_hp_bar.global_position = (_remote_replica as Node2D).global_position + Vector2(0.0, -116.0)

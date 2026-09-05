@@ -12,10 +12,10 @@ func _check(cond: bool, name: String) -> void:
 		printerr("  FAIL - " + name)
 
 func _initialize() -> void:
-	var src := FileAccess.get_file_as_string("res://scenes/Player/player.gd")
-	var lsrc := FileAccess.get_file_as_string("res://scenes/Player/climb_component.gd")
-	var csrc := FileAccess.get_file_as_string("res://scenes/Player/combat_component.gd")
-	var wsrc := FileAccess.get_file_as_string("res://scenes/Player/weapon_component.gd")
+	var src := FileAccess.get_file_as_string("res://Scenes/Player/player.gd")
+	var lsrc := FileAccess.get_file_as_string("res://Scenes/Player/climb_component.gd")
+	var csrc := FileAccess.get_file_as_string("res://Scenes/Player/combat_component.gd")
+	var wsrc := FileAccess.get_file_as_string("res://Scenes/Player/weapon_component.gd")
 	# 根公开方法(外部调用方依赖,签名必须保持)
 	for sig in [
 		"func take_hit(",

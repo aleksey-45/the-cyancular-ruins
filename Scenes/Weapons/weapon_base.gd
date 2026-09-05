@@ -4,7 +4,7 @@ extends Node2D
 enum Tier { LIGHT, MEDIUM, HEAVY }
 enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 
-@export var bullet_scene: PackedScene = preload("res://scenes/Weapons/bullet.tscn")
+@export var bullet_scene: PackedScene = preload("res://Scenes/Weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
 # 预瞄判墙小球半径(px): PREVIEW_COLLISION_RADIUS×bullet_size 
 const PREVIEW_COLLISION_RADIUS: float = 4.0
@@ -202,6 +202,8 @@ func fire() -> void:
 		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)
 		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
+	# 8bit 音效:重武器(预瞄)/霰弹/普通枪三种音色
+	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME

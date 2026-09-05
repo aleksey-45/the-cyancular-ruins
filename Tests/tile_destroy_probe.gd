@@ -1,7 +1,7 @@
 extends SceneTree
 
 # 破坏机制诊断:隔离验证 tile_defs.json 加载 + damage_tile 逻辑(无需完整游戏)。
-# 用法:godot --headless --path . -s res://tests/tile_destroy_probe.gd
+# 用法:godot --headless --path . -s res://Tests/tile_destroy_probe.gd
 
 func _init() -> void:
 	TileDefs.load_defs()

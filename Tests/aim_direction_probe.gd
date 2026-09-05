@@ -37,14 +37,14 @@ func _initialize() -> void:
 	root.add_child(stub)
 	await physics_frame
 
-	var pistol: PackedScene = load("res://scenes/Weapons/pistol_test.tscn")
+	var pistol: PackedScene = load("res://Scenes/Weapons/pistol_test.tscn")
 	var w = pistol.instantiate()
 	stub.add_child(w)
 	w.equip(stub)
 	w.set_process(false)   # 停掉每帧 _auto_aim,只测 fire() 本体路径
 	await physics_frame
 
-	var bullet_script := load("res://scenes/Weapons/bullet_base.gd")
+	var bullet_script := load("res://Scenes/Weapons/bullet_base.gd")
 
 	# 场景1: 走路把朝向覆盖为左(-1),瞄准方向在右(相机右移) → 子弹必须朝右
 	stub.facing = -1

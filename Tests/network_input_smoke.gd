@@ -1,7 +1,7 @@
 extends SceneTree
 # 网络输入源单元冒烟:验证 NetworkInputSource.get_axis 的轴语义。
 # 回归覆盖:get_axis("up","down") 曾一律返回水平 ax → 服务器攀爬方向恒 0 → 梯子大量回拉。
-# 用法: godot --headless --path . -s res://tests/network_input_smoke.gd
+# 用法: godot --headless --path . -s res://Tests/network_input_smoke.gd
 # (NetworkInputSource 是纯 RefCounted,不依赖 autoload,-s 阶段可安全引用)
 
 func _initialize() -> void:

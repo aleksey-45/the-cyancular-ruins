@@ -2,8 +2,8 @@ extends SceneTree
 # 对比 A(旧行为)与 B(修复后)的像素差: 差集区域 = 修复后敌人精灵出现的位置。
 
 func _init() -> void:
-	var a := Image.load_from_file("res://tests/_seam_a_old.png")
-	var b := Image.load_from_file("res://tests/_seam_b_fixed.png")
+	var a := Image.load_from_file("res://Tests/_seam_a_old.png")
+	var b := Image.load_from_file("res://Tests/_seam_b_fixed.png")
 	var count := 0
 	var minx := 1e9
 	var maxx := -1

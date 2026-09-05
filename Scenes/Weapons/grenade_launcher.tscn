@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://ctuidmnnf0vf5"]
 
-[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/Weapons/weapon_base.gd" id="1_wb"]
-[ext_resource type="PackedScene" uid="uid://cy1fv8ws23gnb" path="res://scenes/Weapons/grenade_bullet.tscn" id="2_gb"]
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://Scenes/Weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="PackedScene" uid="uid://cy1fv8ws23gnb" path="res://Scenes/Weapons/grenade_bullet.tscn" id="2_gb"]
 
 [ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
 

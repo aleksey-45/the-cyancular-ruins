@@ -1,6 +1,6 @@
 extends SceneTree
 # 水逻辑冒烟。用户自跑:
-#   "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/water_probe.gd
+#   "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/water_probe.gd
 # 成功打印 WATER OK 退出 0。-s 阶段 autoload 未实例化,静态代码不得引 autoload。
 
 var _failed := false

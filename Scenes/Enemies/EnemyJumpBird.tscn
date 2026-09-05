@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://bp1qruo0scwah"]
 
-[ext_resource type="Script" uid="uid://dyb7bjjo3dkml" path="res://scenes/Enemies/enemy_jump_bird.gd" id="1_ej"]
+[ext_resource type="Script" uid="uid://dyb7bjjo3dkml" path="res://Scenes/Enemies/enemy_jump_bird.gd" id="1_ej"]
 [ext_resource type="Texture2D" uid="uid://dg5t7bgfwer3r" path="res://assets/textures/jump_bird.png" id="2_uxahq"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_pgx5m"]

@@ -2,7 +2,7 @@ class_name BulletBase
 extends CharacterBody2D
 
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
-const TileHitFx := preload("res://scenes/Effects/tile_hit_fx.gd")
+const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
 
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
@@ -88,9 +88,11 @@ func _physics_process(delta: float) -> void:
 		# 视觉副本(apply_damage=false)不裁决伤害,直接消失。
 		if apply_damage and hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
 			source.apply_hit(hit, velocity_vec)
+			Sfx.play("hit")
 			queue_free()
 		elif apply_damage and hit.is_in_group("enemies"):
 			hit.hurt(hit_damage, velocity_vec, hit_impact)
+			Sfx.play("hit")
 			queue_free()
 		else:
 			# 撞墙:可破坏(树叶/树干)→ 扣血;不可破坏墙 → 子弹消失。延迟销毁确保破坏回调跑完。
@@ -168,6 +170,7 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
+	Sfx.play("explosion")
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position

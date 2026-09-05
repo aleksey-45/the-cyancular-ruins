@@ -222,6 +222,7 @@ func _begin_death() -> void:
 		return
 	is_dead = true
 	died.emit()
+	Sfx.play("kill")
 	_death_timer = EnemyParams.shared.death_flash_time
 
 

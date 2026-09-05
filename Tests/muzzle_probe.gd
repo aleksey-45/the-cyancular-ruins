@@ -20,7 +20,7 @@ func _initialize() -> void:
 	var rows := grid.size()
 	var cols := grid[0].size()
 
-	var player = (load("res://scenes/Player/Player.tscn") as PackedScene).instantiate()
+	var player = (load("res://Scenes/Player/Player.tscn") as PackedScene).instantiate()
 	root.add_child(player)
 	await physics_frame
 	var weapon = player.get("_weapon")

@@ -7,6 +7,7 @@ const LAYER := 128  # 世界后处理层,低于 HUD(129),不遮 HUD
 @export var barrel_strength: float = 0.4
 
 var _mat: ShaderMaterial = null
+var _hit_red: float = 0.0   # 受击红闪当前强度(每帧衰减,见 flash_hit)
 
 # 窗口尺寸 / 世界视口尺寸:把窗口映射到世界视口的中心裁剪区。
 # 枪的瞄准换算(weapon_base)与 shader 采样都用它,收敛到单一来源,改一处不偏。
@@ -28,7 +29,7 @@ func _ready() -> void:
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	call_deferred("add_child", rect)
 
-	var shader := load("res://shaders/post_process.gdshader") as Shader
+	var shader := load("res://Shaders/post_process.gdshader") as Shader
 	if shader == null:
 		push_error("PostProcess: failed to load shader!")
 		return
@@ -56,3 +57,14 @@ func _unhandled_input(event: InputEvent) -> void:
 func set_downed(v: bool) -> void:
 	if _mat:
 		_mat.set_shader_parameter("desat", 1.0 if v else 0.0)
+
+# 受击红闪:strength 0-1(伤害越大越红),约 0.2s 衰减完。
+# combat.take_hit(单机)与 PvP hit_event→take_hit 都走这里,不用重复接线。
+func flash_hit(strength: float = 1.0) -> void:
+	_hit_red = maxf(_hit_red, clampf(strength, 0.0, 1.0))
+
+func _process(delta: float) -> void:
+	if _hit_red > 0.0:
+		_hit_red = maxf(_hit_red - delta * 5.0, 0.0)
+		if _mat != null:
+			_mat.set_shader_parameter("hit_red", _hit_red)

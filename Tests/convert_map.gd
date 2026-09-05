@@ -6,7 +6,7 @@ extends SceneTree
 #     格子坐标已是游戏网格坐标,spawn 坐标不改。
 #   - 旧 v1 单字符(无标记):250×150,自动 2×2 转换(convert_old_grid),spawn 坐标 ÷2。
 # 已是 v3(带 # cyrm-v3 标记)则跳过。
-# 用法:godot --headless --path . -s res://tests/convert_map.gd [路径;默认 res://map/demo.cyrm]
+# 用法:godot --headless --path . -s res://Tests/convert_map.gd [路径;默认 res://map/demo.cyrm]
 
 const OLD_V2_MARKER := "# cyrm-v2"
 const TEX_CHARS := "0123456789ABCDEFGHIJKLM"   # 索引=纹理值(0-22),兼容字母版

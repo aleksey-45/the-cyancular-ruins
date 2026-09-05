@@ -35,7 +35,7 @@ func _ready() -> void:
 	wake_radius = EnemyParams.BlackBird.wake_radius
 	# 纯白剪影材质:每实例独立创建——tscn 里共享 sub_resource 材质会导致一只鸟白闪
 	# 全屏鸟跟着白闪(跨实例),且编辑器重存 tscn 会把场景材质冲掉;代码挂最稳。
-	var bb_shader := load("res://scenes/Enemies/black_bird_silhouette.gdshader") as Shader
+	var bb_shader := load("res://Scenes/Enemies/black_bird_silhouette.gdshader") as Shader
 	var bb_mat := ShaderMaterial.new()
 	bb_mat.shader = bb_shader
 	_anim.material = bb_mat

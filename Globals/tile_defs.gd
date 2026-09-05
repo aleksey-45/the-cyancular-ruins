@@ -4,7 +4,7 @@ extends RefCounted
 # 砖块属性表(Globals/tile_defs.json 单一来源)。level_0._ready 调用 load_defs() 后使用。
 # 未加载时默认"非 0 即墙"(旧行为),保证早期调用/冒烟测试兼容。
 
-const PATH: String = "res://globals/tile_defs.json"
+const PATH: String = "res://Globals/tile_defs.json"
 const MAX_TEXTURE: int = 22
 
 static var _defs: Dictionary = {}

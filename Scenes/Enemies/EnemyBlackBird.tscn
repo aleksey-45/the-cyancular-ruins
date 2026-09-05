@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://bymb8tqfewfrx"]
 
 [ext_resource type="Texture2D" uid="uid://dmgthts2jye4q" path="res://assets/textures/black_bird.png" id="1_76tcf"]
-[ext_resource type="Script" uid="uid://7x5i7fwoame7" path="res://scenes/Enemies/enemy_black_bird.gd" id="1_bb"]
+[ext_resource type="Script" uid="uid://7x5i7fwoame7" path="res://Scenes/Enemies/enemy_black_bird.gd" id="1_bb"]
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_hfraj"]
 atlas = ExtResource("1_76tcf")

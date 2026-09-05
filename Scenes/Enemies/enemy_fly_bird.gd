@@ -4,7 +4,7 @@ extends EnemyFlyBase
 enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
 enum Intent { SHOOT, CHARGE }
 
-const ENEMY_BULLET_SCENE: PackedScene = preload("res://scenes/Enemies/enemy_bullet.tscn")
+const ENEMY_BULLET_SCENE: PackedScene = preload("res://Scenes/Enemies/enemy_bullet.tscn")
 	# FlyBird 独有:攻击水里的玩家伤害 ×1.5(自爆冲击 + 子弹),写死
 const WATER_DAMAGE_MULT: float = 1.5
 

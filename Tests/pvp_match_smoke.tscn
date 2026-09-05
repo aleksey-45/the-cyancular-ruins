@@ -1,4 +1,4 @@
 [gd_scene format=3 uid="uid://037kk85pobm1"]
-[ext_resource type="Script" path="res://tests/pvp_match_smoke.gd" id="1"]
+[ext_resource type="Script" path="res://Tests/pvp_match_smoke.gd" id="1"]
 [node name="PvpMatchSmoke" type="Node"]
 script = ExtResource("1")

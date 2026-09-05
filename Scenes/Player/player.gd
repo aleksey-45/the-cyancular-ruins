@@ -165,7 +165,7 @@ func _ready() -> void:
 	for pose in Pose.values():
 		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
 
-	weapons.equip("1")
+	weapons.equip(weapons.default_slot())
 	call_deferred("add_child", WaterFx.new())
 
 
@@ -241,6 +241,7 @@ func _physics_process(delta: float) -> void:
 			jump_buffer_timer = 0.0
 			coyote_timer = 0.0
 			jump_cut_applied = false
+			Sfx.play("jump")
 
 		# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
 		if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
@@ -461,6 +462,15 @@ func _set_waterproof(v: int) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切
+	if Settings.wheel_switch and not combat.is_downed() \
+			and event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			weapons.cycle_slot(-1)
+			return
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			weapons.cycle_slot(1)
+			return
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。
 		if not Level0.pvp_mode and event.is_action_pressed("R"):

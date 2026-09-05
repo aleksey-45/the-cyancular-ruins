@@ -33,7 +33,7 @@ func _initialize() -> void:
 		vp.add_child(line)
 
 	# 敌人: 物理上在左端副本(100),环面上紧挨玩家
-	var scene: PackedScene = load("res://scenes/Enemies/EnemyJumpBird.tscn")
+	var scene: PackedScene = load("res://Scenes/Enemies/EnemyJumpBird.tscn")
 	var e = scene.instantiate()
 	vp.add_child(e)
 	e.global_position = Vector2(100, 200)
@@ -47,7 +47,7 @@ func _initialize() -> void:
 	await process_frame
 	await process_frame
 	var img_a := vp.get_texture().get_image()
-	img_a.save_png("res://tests/_seam_a_old.png")
+	img_a.save_png("res://Tests/_seam_a_old.png")
 	print("A: 无锚点,敌人位置=", e.global_position, " → 应屏外消失")
 
 	# ── B: 修复后(锚点回归 → 锚定玩家最近副本 2500,屏内) ──
@@ -55,7 +55,7 @@ func _initialize() -> void:
 	await process_frame
 	await process_frame
 	var img_b := vp.get_texture().get_image()
-	img_b.save_png("res://tests/_seam_b_fixed.png")
+	img_b.save_png("res://Tests/_seam_b_fixed.png")
 	print("B: 有锚点,敌人位置=", e.global_position, " → 应屏内(W 右侧副本)")
 
 	anchor.add_to_group("player")

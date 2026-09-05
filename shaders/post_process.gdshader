@@ -7,6 +7,8 @@ uniform float barrel_strength : hint_range(0.0, 0.5) = 0.3;
 // 窗口尺寸 / 世界视口尺寸，把窗口 uv 映射到世界纹理的中心裁剪区。
 uniform vec2 crop_scale = vec2(1.0);
 uniform float desat : hint_range(0.0, 1.0) = 0.0;
+// 受击红闪:0=无,1=纯红罩。由 PostProcess.flash_hit() 置峰后每帧衰减。
+uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
 
 void fragment() {
 	vec2 uv = SCREEN_UV;
@@ -23,6 +25,10 @@ void fragment() {
 	uv = (uv - 0.5) * crop_scale + 0.5;
 
 	COLOR = texture(screen_tex, uv);
+	if (hit_red > 0.0) {
+		// 画面微红一瞬间:向红色偏移(保留暗部细节,不做纯色覆盖)
+		COLOR.rgb = mix(COLOR.rgb, vec3(0.85, 0.05, 0.05), hit_red * 0.45);
+	}
 	if (desat > 0.0) {
 		float g = dot(COLOR.rgb, vec3(0.299, 0.587, 0.114));
 		COLOR.rgb = mix(COLOR.rgb, vec3(g), desat);

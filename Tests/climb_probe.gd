@@ -1,7 +1,7 @@
 extends SceneTree
 
 # 攀爬诊断:把真实玩家放到 demo 地图的梯子上,模拟按上,追踪它停在哪、能否到顶。
-# 用法:godot --headless --path . -s res://tests/climb_probe.gd
+# 用法:godot --headless --path . -s res://Tests/climb_probe.gd
 
 func _initialize() -> void:
 	TileDefs.load_defs()
@@ -16,7 +16,7 @@ func _initialize() -> void:
 	CollisionBuilder.build_destructible_chunks(CollisionBuilder.build_sub(grid, true), host)
 	CollisionBuilder.build_climb_ledges(grid, host)
 
-	var player_scene: PackedScene = load("res://scenes/Player/Player.tscn")
+	var player_scene: PackedScene = load("res://Scenes/Player/Player.tscn")
 	var p = player_scene.instantiate()
 	root.add_child(p)
 

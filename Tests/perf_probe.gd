@@ -4,7 +4,7 @@ extends SceneTree
 #  1) 可破坏层:旧 9× 全图贪心基线 vs 分块构建(计数/覆盖率/单块重建/200 次摧毁)
 #  2) N 只飞鸟:障碍收集 + A* + 死区逃逸耗时
 #  3) 全场景每帧物理基准(真实 CollisionBuilder 建的永久墙 + 可破坏块 + N 只鸟)
-# 用法:godot --headless --path . -s res://tests/perf_probe.gd
+# 用法:godot --headless --path . -s res://Tests/perf_probe.gd
 
 func _initialize() -> void:
 	TileDefs.load_defs()
@@ -105,7 +105,7 @@ func _initialize() -> void:
 	print("[perf] 薄条位置检查(y%%64∈{3顶,61底}): %s" % ("通过" if pos_ok else "失败"))
 
 	# ── 2) 飞鸟寻路 ──
-	var fly_scene: PackedScene = load("res://scenes/Enemies/EnemyFlyBird.tscn")
+	var fly_scene: PackedScene = load("res://Scenes/Enemies/EnemyFlyBird.tscn")
 	var player := Node2D.new()
 	player.name = "StubPlayer"
 	player.add_to_group("player")

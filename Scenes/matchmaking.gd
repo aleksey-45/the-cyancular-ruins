@@ -1,7 +1,12 @@
 extends Control
-# 匹配场景:建房 / 加入 / 房间列表。
+# 匹配场景:建房 / 加入 / 房间列表(点击即加入)。
 # 连上大厅(默认 120.53.107.140:7777)后,「IP 右侧 刷新」列出全部房间(方块=房间号+人数,
-# 未满优先排前、可点击加入;已满置灰不可点)。点入后由大厅配对发 go_match → 转连该局 worker。
+# 未满优先排前;点击方块直接加入)。点入后由大厅配对发 go_match → 转连该局 worker。
+# 右侧为对战选项面板(像素风,实验分支 KikuchiHeinr):本地视觉项即选即用;
+# 服务器权威项(回合回血/禁武器)以房主(role1)为准,随 claim_role 上报。
+
+const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
+const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹"}
 
 var _addr_edit: LineEdit
 var _code_edit: LineEdit
@@ -39,7 +44,7 @@ func _ready() -> void:
 	_make_button(Vector2(260, 240), "加入", _on_join_pressed)
 	_make_button(Vector2(60, 400), "返回", func() -> void:
 		NetBus.stop()
-		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+		get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
 
 	var cap := Label.new()
 	cap.text = "房间列表(只读展示;加入请在上方填房间号)"
@@ -64,6 +69,110 @@ func _ready() -> void:
 	NetBus.local_server_message.connect(_on_server_message)
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
+
+	_build_options_panel()
+	_apply_pixel_font(self)
+
+
+# ── 像素风格:递归给已有控件挂像素字体 ──
+func _apply_pixel_font(root: Node) -> void:
+	for n in [root] + root.get_children():
+		if n is Control and not (n is PanelContainer or n is VBoxContainer or n is HBoxContainer \
+				or n is GridContainer or n is ScrollContainer):
+			var pf: FontFile = load(PIXEL_FONT)
+			if pf != null:
+				(n as Control).add_theme_font_override("font", pf)
+		_apply_pixel_font(n)
+
+
+# ── 对战选项面板(右侧)──
+func _build_options_panel() -> void:
+	var panel := PanelContainer.new()
+	panel.position = Vector2(980, 60)
+	panel.custom_minimum_size = Vector2(640, 0)
+	add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	panel.add_child(vb)
+
+	vb.add_child(_opt_label("—— 对战选项 ——", 36, Color(0.55, 0.95, 1.0)))
+	vb.add_child(_opt_label("(规则项以房主设置为准)", 20, Color(0.7, 0.75, 0.8)))
+
+	vb.add_child(_opt_check("显示敌方武器轨迹", Settings.pvp_show_trajectories, func(on: bool) -> void:
+		Settings.pvp_show_trajectories = on
+		Settings.save()))
+	vb.add_child(_opt_check("每回合开始回满血(房主生效)", Settings.pvp_round_full_heal, func(on: bool) -> void:
+		Settings.pvp_round_full_heal = on
+		Settings.save()))
+	vb.add_child(_opt_check("显示敌方血量条", Settings.pvp_show_enemy_hp, func(on: bool) -> void:
+		Settings.pvp_show_enemy_hp = on
+		Settings.save()))
+	vb.add_child(_opt_check("打开小地图", Settings.pvp_show_minimap, func(on: bool) -> void:
+		Settings.pvp_show_minimap = on
+		Settings.save()))
+	vb.add_child(_opt_check("小地图显示敌方位置", Settings.pvp_minimap_show_enemy, func(on: bool) -> void:
+		Settings.pvp_minimap_show_enemy = on
+		Settings.save()))
+
+	# 禁用武器(房主生效)
+	vb.add_child(_opt_label("禁用武器(房主生效):", 24))
+	var wrow := HBoxContainer.new()
+	wrow.add_theme_constant_override("separation", 6)
+	vb.add_child(wrow)
+	for slot in [1, 2, 3, 4, 5]:
+		var cb := CheckButton.new()
+		cb.text = "%d %s" % [slot, WEAPON_NAMES[slot]]
+		cb.button_pressed = Settings.pvp_disabled_weapons.has(slot)
+		cb.toggled.connect(func(on: bool) -> void:
+			if on and not Settings.pvp_disabled_weapons.has(slot):
+				Settings.pvp_disabled_weapons.append(slot)
+			elif not on:
+				Settings.pvp_disabled_weapons.erase(slot)
+			Settings.save())
+		wrow.add_child(cb)
+
+	# 角色颜色(色相 0-360,即选即用,双方各自染自己)
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("separation", 12)
+	vb.add_child(crow)
+	crow.add_child(_opt_label("自己角色颜色:", 24))
+	var hue_slider := HSlider.new()
+	hue_slider.min_value = 0.0
+	hue_slider.max_value = 360.0
+	hue_slider.step = 5.0
+	hue_slider.value = Settings.pvp_color_hue
+	hue_slider.custom_minimum_size = Vector2(280, 24)
+	crow.add_child(hue_slider)
+	var chip := ColorRect.new()
+	chip.custom_minimum_size = Vector2(48, 24)
+	chip.color = _hue_preview_color(Settings.pvp_color_hue)
+	crow.add_child(chip)
+	hue_slider.value_changed.connect(func(v: float) -> void:
+		Settings.pvp_color_hue = v
+		Settings.save()
+		chip.color = _hue_preview_color(v))
+
+
+# 色相预览(玩家本体是青蓝系,按色相旋转取近似展示色)
+func _hue_preview_color(hue_deg: float) -> Color:
+	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
+
+
+func _opt_label(text: String, size: int, color: Color = Color.WHITE) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_color_override("font_color", color)
+	l.add_theme_font_size_override("font_size", size)
+	return l
+
+
+func _opt_check(text: String, initial: bool, on_toggle: Callable) -> CheckButton:
+	var cb := CheckButton.new()
+	cb.text = text
+	cb.button_pressed = initial
+	cb.add_theme_font_size_override("font_size", 24)
+	cb.toggled.connect(func(on: bool) -> void: on_toggle.call(on))
+	return cb
 
 func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
 	var le := LineEdit.new()
@@ -181,10 +290,16 @@ func _on_room_list(rooms: Array) -> void:
 		var btn := Button.new()
 		btn.text = "房间 %s      %d/2%s" % [code, players, occ]
 		btn.custom_minimum_size = Vector2(600, 46)
-		# 只读展示:保持正常外观(不置灰),但忽略鼠标 → 点不了
+		# 点击方块直接加入(已满的由服务器拒绝并自动刷新列表)
 		btn.disabled = false
-		btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.focus_mode = Control.FOCUS_NONE
+		btn.focus_mode = Control.FOCUS_ALL
+		btn.add_theme_font_size_override("font_size", 24)
+		var pf: FontFile = load(PIXEL_FONT)
+		if pf != null:
+			btn.add_theme_font_override("font", pf)
+		btn.pressed.connect(func() -> void:
+			Sfx.play("ui")
+			_join_code(code))
 		_list_box.add_child(btn)
 	_status.text = "共 %d 个房间(未满优先)" % order.size()
 
@@ -222,7 +337,12 @@ func _on_go_match(role: int, port: int) -> void:
 
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
-	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
+	# 携带本端选项:规则项服务器取房主(role1)的;颜色各自带
+	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name, {
+		"hue": Settings.pvp_color_hue,
+		"round_full_heal": Settings.pvp_round_full_heal,
+		"disabled_weapons": Settings.pvp_disabled_weapons,
+	})
 
 # 转连 worker 超时兜底:UDP 连不上不会立刻报失败,这里 12 秒给明确提示(别无限卡着)
 func _process(_delta: float) -> void:
@@ -234,4 +354,4 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
 	PvpSession.spawn = spawn
 	PvpSession.map_path = map_path
-	get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
+	get_tree().change_scene_to_file("res://Scenes/pvp_game.tscn")

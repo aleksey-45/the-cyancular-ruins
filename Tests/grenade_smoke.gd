@@ -68,7 +68,7 @@ func _initialize() -> void:
 func _test_aoe() -> void:
 	MazeGenerator.current_grid = []  # 空网格:跳过 LOS
 	# Explosion 经 load 运行时解析:其内部引用 autoload,-s 静态引用会连带编译失败
-	var exp = load("res://globals/explosion.gd")
+	var exp = load("res://Globals/explosion.gd")
 	# 中心满伤
 	var e1 := StubEnemy.new()
 	e1.global_position = Vector2(200, 200)
@@ -253,7 +253,7 @@ func _test_non_explosive_default() -> void:
 # 直接 new bullet_base.gd,补碰撞体;返回已设 explodes=true、关特效的子弹。
 # 无类型返回:setup/explodes/gravity_factor 都是脚本自定义成员,须动态分派。
 func _make_bullet():
-	var b = (load("res://scenes/Weapons/bullet_base.gd") as GDScript).new()
+	var b = (load("res://Scenes/Weapons/bullet_base.gd") as GDScript).new()
 	var cshape := CollisionShape2D.new()
 	var circ := CircleShape2D.new()
 	circ.radius = 6.0

@@ -39,7 +39,7 @@ var _render_tick := -1.0           # 渲染时钟(服务器 tick 域,浮点);-1 
 
 func _ready() -> void:
 	# 复用 Player.tscn 的内联 SpriteFrames
-	var tmp := preload("res://scenes/Player/Player.tscn").instantiate()
+	var tmp := preload("res://Scenes/Player/Player.tscn").instantiate()
 	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
 	tmp.free()
 	_weapon_slot_node = Node2D.new()
