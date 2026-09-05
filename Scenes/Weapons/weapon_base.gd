@@ -88,6 +88,12 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 var mag_ammo: int = 0                 # 弹夹内残弹
 var _reloading := false
 var _reload_t := 0.0
+var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
+
+# 换弹动画:进度 0→1 期间枪口下压再回位(sin 包络),中段带机械微抖。
+# 作用于精灵局部坐标(换弹下压),与根节点的瞄准旋转/镜像互不干扰。
+const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
+const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
 
 func reload_active() -> bool:
 	return Settings.reload_enabled and not Level0.pvp_mode
@@ -95,12 +101,30 @@ func reload_active() -> bool:
 func is_reloading() -> bool:
 	return _reloading
 
+# 换弹进度 0→1(未在换弹时返回 -1;HUD 进度条用)
+func reload_progress() -> float:
+	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
+
 func start_reload() -> void:
 	if not reload_active() or _reloading or mag_ammo >= mag_size:
 		return
 	_reloading = true
 	_reload_t = reload_time
 	Sfx.play("reload")
+
+# 换弹姿态:每帧在 _recoil_recover 之后调用(换弹压枪优先级高于后坐复位)。
+func _update_reload_pose() -> void:
+	if _reloading:
+		_reload_pose = true
+		var p := clampf(1.0 - _reload_t / maxf(reload_time, 0.01), 0.0, 1.0)
+		var k := sin(p * PI)          # 0→1→0:前段压下,末段回位
+		var jiggle := sin(p * 34.0) * 1.2 * k   # 中段机械微抖(频率固定,幅度随包络)
+		sprite.rotation = RELOAD_TILT * k
+		sprite.position = _base_sprite_pos + RELOAD_OFFSET * k + Vector2(jiggle, 0.0)
+	elif _reload_pose:
+		_reload_pose = false
+		sprite.rotation = 0.0
+		sprite.position = _base_sprite_pos
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
@@ -198,6 +222,7 @@ func _process(delta: float) -> void:
 		if _attack_just_pressed():
 			try_fire()
 	_recoil_recover(delta)
+	_update_reload_pose()
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:

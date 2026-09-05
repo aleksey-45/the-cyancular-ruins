@@ -38,6 +38,10 @@ var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
 var _ammo_label: Label = null
 var _player: Node = null
+var _reload_bar: ColorRect = null
+var _bar_back: ColorRect = null
+
+const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
 
 func _ready() -> void:
 	layer = LAYER
@@ -70,6 +74,15 @@ func _process(_delta: float) -> void:
 		w = _player.weapons.current_weapon()
 	var show := Settings.reload_enabled and w != null and w.reload_active()
 	_ammo_label.visible = show
+	# 换弹进度条:剪影下方细条,随进度填充;非换弹状态隐藏
+	var prog := -1.0
+	if show and w != null:
+		prog = w.reload_progress()
+	if _reload_bar != null:
+		_reload_bar.visible = prog >= 0.0
+		_bar_back.visible = prog >= 0.0
+		if prog >= 0.0:
+			_reload_bar.size.x = WEAPON_ICON_W * clampf(prog, 0.0, 1.0)
 	if not show:
 		return
 	_ammo_label.text = "装填中…" if w.is_reloading() else "%d/%d" % [w.mag_ammo, w.mag_size]
@@ -93,9 +106,26 @@ func _build_weapon_display(p: Node) -> void:
 	_weapon_icon = TextureRect.new()
 	_weapon_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_weapon_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_weapon_icon.custom_minimum_size = Vector2(96, 60)
+	_weapon_icon.custom_minimum_size = Vector2(WEAPON_ICON_W, 60)
 	_weapon_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	box.add_child(_weapon_icon)
+	# 剪影与换弹进度条纵向排布
+	var icon_box := VBoxContainer.new()
+	icon_box.add_theme_constant_override("separation", 3)
+	box.add_child(icon_box)
+	icon_box.add_child(_weapon_icon)
+	var bar_holder := Control.new()
+	bar_holder.custom_minimum_size = Vector2(WEAPON_ICON_W, 5)
+	icon_box.add_child(bar_holder)
+	_bar_back = ColorRect.new()
+	_bar_back.color = Color(1, 1, 1, 0.22)
+	_bar_back.size = Vector2(WEAPON_ICON_W, 4)
+	_bar_back.visible = false
+	bar_holder.add_child(_bar_back)
+	_reload_bar = ColorRect.new()
+	_reload_bar.color = Color(0.95, 0.85, 0.55)
+	_reload_bar.size = Vector2(0, 4)
+	_reload_bar.visible = false
+	bar_holder.add_child(_reload_bar)
 
 	_weapon_name = Label.new()
 	_weapon_name.add_theme_font_size_override("font_size", 24)
