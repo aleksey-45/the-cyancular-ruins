@@ -74,6 +74,10 @@ func _ready() -> void:
 	# 单人开局选项:禁用的武器槽位应用到玩家(数字键/滚轮都会跳过)
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)
 
+	var pp := PostProcess.new()
+	pp.world_viewport = $WorldViewport
+	call_deferred("add_child", pp)
+
 
 # 难度 → 鸟数量:简单=随机留一半;普通=原样;困难=在远离出生点的地板格补采
 # (EnemySpawner.sample_spawn_cells 已保证"EMPTY 且正下方 SOLID"),类型随机复用场上已有的。

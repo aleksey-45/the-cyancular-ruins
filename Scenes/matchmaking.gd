@@ -70,18 +70,27 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 
+	# 不透明深色底:全局清屏色被 Level0 设成浅蓝后,白字界面会看不清。
+	# 本场景根节点 Control 无满矩形锚(尺寸 0),满矩形子节点会跟着为 0 → 显式给固定窗口尺寸。
+	var bg := ColorRect.new()
+	bg.color = Color(0.07, 0.09, 0.13)
+	bg.size = get_viewport_rect().size
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
+	move_child(bg, 0)   # 垫底,不挡后续控件
+
 	_build_options_panel()
 	_apply_pixel_font(self)
 
 
 # ── 像素风格:递归给已有控件挂像素字体 ──
 func _apply_pixel_font(root: Node) -> void:
-	for n in [root] + root.get_children():
-		if n is Control and not (n is PanelContainer or n is VBoxContainer or n is HBoxContainer \
-				or n is GridContainer or n is ScrollContainer):
-			var pf: FontFile = load(PIXEL_FONT)
-			if pf != null:
-				(n as Control).add_theme_font_override("font", pf)
+	if root is Control and not (root is PanelContainer or root is VBoxContainer or root is HBoxContainer \
+			or root is GridContainer or root is ScrollContainer):
+		var pf: FontFile = load(PIXEL_FONT)
+		if pf != null:
+			(root as Control).add_theme_font_override("font", pf)
+	for n in root.get_children():
 		_apply_pixel_font(n)
 
 

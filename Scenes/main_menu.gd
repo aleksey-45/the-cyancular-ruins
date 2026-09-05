@@ -30,6 +30,15 @@ func _ready() -> void:
 	else:
 		_build_new_ui()
 
+	# 自动流转探针( Tests/menu_autotest.gd ):命令行 -- --autotest-sp / --autotest-mp / --autotest-level
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--autotest-"):
+			var probe := Node.new()
+			probe.set_script(load("res://Tests/menu_autotest.gd"))
+			probe.set("mode", arg.trim_prefix("--autotest-"))
+			get_tree().root.add_child.call_deferred(probe)
+			break
+
 
 func _process(delta: float) -> void:
 	if _cam == null:
@@ -209,6 +218,12 @@ func _build_sp_panel() -> PanelContainer:
 
 # ── 旧版 UI(Settings.old_ui=true):保留原布局,追加设置入口 ──
 func _build_old_ui() -> void:
+	# 深色底(与原版默认灰底观感一致;全局清屏色被 Level0 改浅蓝后白字看不清)
+	var bg := ColorRect.new()
+	bg.color = Color(0.13, 0.13, 0.15)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(bg)
+
 	var title := Label.new()
 	title.text = "The Cyancular Ruins"
 	title.position = Vector2(60, 60)

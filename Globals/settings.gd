@@ -65,9 +65,18 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 
 # ── 键位重映射 ──
 # 每动作单键位(鼠标或键盘)。存 InputEventKey.physical_keycode / InputEventMouseButton.button_index。
+# ── 键位重映射 ──
+# 每动作支持**多个**键位(原作默认:up=W+空格、down=S+Shift),存取都保序完整往返。
 func get_binding(action: String) -> InputEvent:
 	var evs := InputMap.action_get_events(action)
 	return evs[0] if evs.size() > 0 else null
+
+# 显示用:一个动作的全部键位名,如 "W / Space"
+func get_binding_names(action: String) -> String:
+	var names: Array[String] = []
+	for ev in InputMap.action_get_events(action):
+		names.append(_event_display_name(ev))
+	return " / ".join(names)
 
 func set_binding(action: String, event: InputEvent) -> void:
 	if not action in InputMap.get_actions():
@@ -81,6 +90,19 @@ func set_binding(action: String, event: InputEvent) -> void:
 func reset_bindings() -> void:
 	InputMap.load_from_project_settings()
 	save()
+
+func _event_display_name(ev: InputEvent) -> String:
+	if ev is InputEventKey:
+		return OS.get_keycode_string((ev as InputEventKey).physical_keycode)
+	if ev is InputEventMouseButton:
+		match (ev as InputEventMouseButton).button_index:
+			MOUSE_BUTTON_LEFT: return "鼠标左键"
+			MOUSE_BUTTON_RIGHT: return "鼠标右键"
+			MOUSE_BUTTON_MIDDLE: return "鼠标中键"
+			MOUSE_BUTTON_WHEEL_UP: return "滚轮上"
+			MOUSE_BUTTON_WHEEL_DOWN: return "滚轮下"
+			_: return "鼠标键 %d" % (ev as InputEventMouseButton).button_index
+	return "?"
 
 # ── 持久化 ──
 func save() -> void:
@@ -99,11 +121,14 @@ func save() -> void:
 	cf.set_value("pvp", "show_minimap", pvp_show_minimap)
 	cf.set_value("pvp", "minimap_show_enemy", pvp_minimap_show_enemy)
 	for action in REMAPPABLE_ACTIONS:
-		var ev := get_binding(action)
-		if ev is InputEventKey:
-			cf.set_value("bindings", action, {"k": ev.physical_keycode})
-		elif ev is InputEventMouseButton:
-			cf.set_value("bindings", action, {"m": ev.button_index})
+		var arr: Array = []
+		for ev in InputMap.action_get_events(action):
+			if ev is InputEventKey:
+				arr.append({"k": (ev as InputEventKey).physical_keycode})
+			elif ev is InputEventMouseButton:
+				arr.append({"m": (ev as InputEventMouseButton).button_index})
+		if not arr.is_empty():
+			cf.set_value("bindings", action, arr)
 	cf.save(SAVE_PATH)
 
 func load_settings() -> void:
@@ -125,12 +150,15 @@ func load_settings() -> void:
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
-		var data = cf.get_value("bindings", action, null)
-		if data is Dictionary:
-			if data.has("k"):
-				_apply_binding(action, _make_key(int(data["k"])))
-			elif data.has("m"):
-				_apply_binding(action, _make_mouse(int(data["m"])))
+		var arr = cf.get_value("bindings", action, null)
+		if arr is Array and not (arr as Array).is_empty():
+			InputMap.action_erase_events(action)
+			for item in arr:
+				if item is Dictionary:
+					if item.has("k"):
+						InputMap.action_add_event(action, _make_key(int(item["k"])))
+					elif item.has("m"):
+						InputMap.action_add_event(action, _make_mouse(int(item["m"])))
 
 func _apply_binding(action: String, ev: InputEvent) -> void:
 	if ev == null or not action in InputMap.get_actions():

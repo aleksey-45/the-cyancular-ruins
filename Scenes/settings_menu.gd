@@ -14,6 +14,12 @@ var _bind_buttons: Dictionary = {}   # action -> Button
 
 
 func _ready() -> void:
+	# 不透明深色底:进过单机后全局清屏色是浅蓝,白字会看不清(Esc 仍在 _unhandled_input 处理)
+	var bg := ColorRect.new()
+	bg.color = Color(0.07, 0.09, 0.13)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(bg)
+
 	var vb := VBoxContainer.new()
 	vb.position = Vector2(80, 50)
 	vb.custom_minimum_size = Vector2(900, 0)
@@ -43,7 +49,7 @@ func _ready() -> void:
 	# ── 键位 ──
 	vb.add_child(_label("按键映射(点击后按新键;Esc 取消)", 30))
 	var grid := GridContainer.new()
-	grid.columns = 3
+	grid.columns = 4   # (名称,键位) 成对一行放两组,避免键位串行
 	grid.add_theme_constant_override("h_separation", 18)
 	grid.add_theme_constant_override("v_separation", 8)
 	vb.add_child(grid)
@@ -140,8 +146,7 @@ func _refresh_bind_label_for(btn: Button) -> void:
 		return _bind_buttons.get(a) == btn)
 	if action.is_empty():
 		return
-	var ev := Settings.get_binding(action[0])
-	btn.text = _event_name(ev) if ev != null else "未设置"
+	btn.text = Settings.get_binding_names(action[0])
 
 
 func _event_name(ev: InputEvent) -> String:
