@@ -16,6 +16,8 @@ var _connected := false
 var _connected_addr := ""
 var _pending_action: Callable = Callable()
 var _lobby_start_ms := 0
+var _royale_ack := true       # 建房/加入后是否已收到服务器 royale_room_state
+var _royale_sent_ms := 0
 
 # ── 建房面板控件 ──
 var _public_check: CheckButton
@@ -55,7 +57,12 @@ func _ready() -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
-	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址", PvpSession.server_address)
+	# 大乱斗协议在 NetBusExt(自建服务端才有):原作者云服不支持 → 默认本机,不默认云地址
+	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址(大乱斗=自建服)", "127.0.0.1")
+	var addr_hint := _label("大乱斗需自建服务器:开服方双击 start_server.bat,其他人填其 IP;原作者云服(默认地址)不支持大乱斗", 18, Color(0.75, 0.8, 0.85))
+	addr_hint.position = Vector2(60, 160)
+	addr_hint.size = Vector2(900, 26)
+	add_child(addr_hint)
 	var refresh := _make_button(Vector2(330, 114), "刷新列表", _on_refresh_pressed)
 
 	var cap := _label("公开房间列表(点击直接加入)", 26, Color(0.55, 0.95, 1.0))
@@ -218,7 +225,7 @@ func _with_lobby(action: Callable) -> void:
 		return
 	var addr := _addr_edit.text.strip_edges()
 	if addr == "":
-		addr = PvpSession.server_address
+		addr = "127.0.0.1"   # 大乱斗需自建服:空地址回退本机,不回退云地址
 		_addr_edit.text = addr
 	PvpSession.server_address = addr
 	if _connected and _connected_addr == addr:
@@ -266,6 +273,10 @@ func _process(_delta: float) -> void:
 		_lobby_start_ms = 0
 		_pending_action = Callable()
 		_status.text = "连接大厅超时——请检查地址/网络(UDP 7777)"
+	# 建房/加入 8s 无应答:NetBusExt 协议在自建服务端才有,原作者云服会静默丢弃
+	if not _royale_ack and _royale_sent_ms > 0 and Time.get_ticks_msec() - _royale_sent_ms > 8000:
+		_royale_sent_ms = 0
+		_status.text = "8 秒无响应——该服务器不支持大乱斗(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
 
 
 # ── 动作 ──
@@ -284,6 +295,8 @@ func _on_create_pressed() -> void:
 			disabled.append(int(cb.get_meta("slot", 0)))
 	_with_lobby(func() -> void:
 		_status.text = "建房中…"
+		_royale_ack = false
+		_royale_sent_ms = Time.get_ticks_msec()
 		NetBusExt.rpc_id(1, "royale_create", {
 			"is_public": _public_check.button_pressed,
 			"invite_code": _create_invite_edit.text.strip_edges(),
@@ -301,6 +314,8 @@ func _join_room(code: String, invite: String) -> void:
 		return
 	_with_lobby(func() -> void:
 		_status.text = "加入房间 %s …" % code
+		_royale_ack = false
+		_royale_sent_ms = Time.get_ticks_msec()
 		NetBusExt.rpc_id(1, "royale_join", code, invite))
 
 
@@ -343,6 +358,7 @@ func _on_server_message(t: String) -> void:
 # 房间实时状态 → 等待室面板
 func _on_room_state(state: Dictionary) -> void:
 	_in_room = true
+	_royale_ack = true
 	_my_room = state
 	var my_role := _my_role_in(state)
 	_host = int(state.get("host_role", 0)) == my_role
