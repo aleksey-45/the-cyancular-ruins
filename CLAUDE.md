@@ -15,16 +15,16 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 
 ```bash
 # 冒烟测试(唯一的"测试",SceneTree 脚本;成功打印 SMOKE OK 退出 0)
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
+"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 
 # headless 启动游戏 90 帧后退出(看脚本报错)
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
 
 # PvP 服务端(headless,监听 7777;保持终端开着=运行中)。更省事:双击仓库根 start_server.bat。
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
+"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
 
 # 导出单 exe 发布版
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
+"C:/Godot/Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
 ```
 
 约定:**测试由用户自己跑,不要代跑**。发布/裁剪模板细节见 `RELEASE.md`(单 exe 靠自定义裁剪模板,勿用 UPX,保留 webp 模块)。模板重编只在**改裁剪 profile(增删类/模块)**时需要,单次≈10~15 分钟近全量(RELEASE.md §2.4);平时改 GDScript 只需重导出,别去重编模板。
@@ -105,3 +105,32 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。
+
+## 进度与计划(2026-09-04)
+
+### 已完成
+- **全面源码解析**(只读通读,**未改任何代码**):覆盖 Globals 全部静态工具与 autoload、玩家根+四组件、武器/子弹/爆炸、三种敌人 AI(基类/飞行基类)、Level0 渲染与碰撞构建、水/攀爬/破坏、PvP 全链路(大厅/worker/MatchHost/客户端/双副本插值)、`.cyrm` 地图格式与浏览器编辑器、测试与发布脚本。结论:本文件与代码基本一致,可直接在其上迭代。
+- 摸清 5 把枪数值全在各自 `.tscn` @export;敌人注册表单一来源已是 `editor/enemies.json`。
+- 发现 4 处文档漂移(见下),均以代码为准。
+
+### 已知文档漂移(待修正)
+1. 本文件旧文写树叶 hp20/树干 hp80 → 实际 `tile_defs.json`:树叶 **hp 8**、树干 **hp 30**。
+2. "加敌人 = `EnemySpawner.TYPES` 加一行"已过时 → 注册表在 **`editor/enemies.json`**(加一行 + 地图 `# enemy` 行即可)。
+3. `player.gd`/`enemy_base.gd` 注释写防水"每 0.5s 掉 1" → 实际 `water_drain_interval = 1.0s`。
+4. 黑鸟头注释"距玩家 3~8 格" → 实际 `EnemyParams.BlackBird.teleport_min/max_tiles` = **2~6**。
+
+### 重要决策与约定(继续遵守)
+- **环面纪律**:实体间方向/距离/插值一律 `MazeGenerator.toroidal_*`,禁止裸坐标相减。
+- **单机/PvP 双路径分叉点**:改玩家/瓦片/子弹逻辑时核对 `Level0.pvp_mode`、`CombatComponent.pvp_arena`、`BulletBase.apply_damage`、`player.server_rendered` 四处。
+- **参数分层**:共享=`GameParameters`;玩家=`PlayerParams`;敌人=`EnemyParams` 嵌套类;武器=tscn @export;瓦片=`tile_defs.json`。新增数值按层归位,不塞进 autoload。
+- **PvPvE 中立鸟已实现但关闭**(`match_host.gd` `ENABLE_BIRDS=false`),启用=翻 true。
+- `GameParameters.enemy_count/enemy_spawn_min_dist` 已无引用(随机刷怪已删,敌人只来自地图 `# enemy` meta),属残留常量。
+
+### 待完成
+- 修正上述 4 处文档/注释漂移(本文件 + `player.gd`/`enemy_base.gd` 注释)。
+- 玩法更新方向待定;候选:调武器/敌人数值、加新武器或敌人、改 PvP 规则、开中立鸟 PvPvE、换 PvP 地图。
+
+### 下一步计划
+1. 等用户定更新方向,按上文"修改指南"对应子系统动手(加武器=`weapon_component.gd` WEAPONS 注册表;加敌人=`editor/enemies.json`;改规则=`match_host.gd` 顶部常量)。
+2. 涉及玩家公开接口的改动先对照 `Tests/player_contract_smoke.gd` 的契约清单。
+3. 改动后由用户自跑冒烟(`enemy_logic_smoke.gd`;约定测试不代跑),PvP 链路另跑 `Tests/pvp_room_smoke.sh`/`pvp_match_smoke.sh`。

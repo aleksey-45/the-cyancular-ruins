@@ -19,7 +19,7 @@ echo   Starting PvP lobby on port 7777 (workers auto-spawn)...
 echo   Wait for "server ready" output below, then keep this window open.
 echo   Close this window = stop the lobby.
 echo ============================================
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
+"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
 echo.
 echo Server exited. If "listen failed" appeared above, port 7777 is in use.
 pause
