@@ -316,7 +316,8 @@ func royale_start(caller: int) -> void:
 func _spawn_royale_worker(port: int, players: int) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
-	if OS.has_feature("editor"):
+	# editor 与 template_debug(调试引擎)都要带 --path+场景;仅导出 exe 可省(dedicated_server 主场景)
+	if OS.has_feature("editor") or OS.has_feature("template_debug"):
 		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--royale",
 				"--port", str(port), "--players", str(players)])
@@ -370,7 +371,7 @@ func _pick_worker_port() -> int:
 func _spawn_worker(port: int) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
-	if OS.has_feature("editor"):
+	if OS.has_feature("editor") or OS.has_feature("template_debug"):
 		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--port", str(port)])
 	else:
