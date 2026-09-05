@@ -18,6 +18,7 @@ var _pending_action: Callable = Callable()   # 连上后要执行的建房/加�
 var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜底提示)
 var _go_start_ms := 0
 var _lobby_start_ms := 0   # 连大厅计时(UDP 被静默丢包时 connection_failed 要等很久,8s 给明确提示)
+var _claimed_ms := 0       # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
 
 func _ready() -> void:
 	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址", PvpSession.server_address)
@@ -246,6 +247,7 @@ func _with_lobby(action: Callable) -> void:
 	_status.text = "正在连接服务器…"
 	_connected = false
 	_pending_action = action
+	_clear_room_list()   # 换服务器重连:清掉旧列表(旧房间号在新服上必然「房间不存在」)
 	NetBus.stop()
 	var err := NetBus.start_client(addr)
 	if err != OK:
@@ -253,6 +255,15 @@ func _with_lobby(action: Callable) -> void:
 		_pending_action = Callable()
 	else:
 		_lobby_start_ms = Time.get_ticks_msec()
+
+# 清空房间列表区(重连/换地址时旧列表是陈旧数据,点了必失败)
+func _clear_room_list() -> void:
+	for c in _list_box.get_children():
+		c.queue_free()
+	var tip := Label.new()
+	tip.text = "正在连接服务器获取房间列表…"
+	tip.add_theme_font_size_override("font_size", 24)
+	_list_box.add_child(tip)
 
 func _on_create_pressed() -> void:
 	_with_lobby(func() -> void:
@@ -323,15 +334,15 @@ func _on_room_list(rooms: Array) -> void:
 	_status.text = "共 %d 个房间(未满优先)" % order.size()
 
 func _on_server_message(t: String) -> void:
-	if t == "房间已满":
-		# 点了看起来未满、实际已满 → 提示并自动刷新一次
+	if t == "房间已满" or t == "房间不存在":
+		# 点了失效/已满的房间 → 提示并自动刷新一次(列表常驻陈旧房间,点了必失败)
 		# 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,
 		# 栈内立刻 NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误
 		if not _auto_refreshed:
 			_auto_refreshed = true
-			_request_list.call_deferred("房间已满 → 已自动刷新")
+			_request_list.call_deferred("%s → 已自动刷新列表" % t)
 		else:
-			_status.text = "房间已满"
+			_status.text = t
 	else:
 		_status.text = t
 
@@ -376,6 +387,7 @@ func _do_go_match() -> void:
 
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
+	_claimed_ms = Time.get_ticks_msec()
 	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 	NetBusExt.rpc_id(1, "player_options", {
@@ -396,6 +408,13 @@ func _process(_delta: float) -> void:
 		_lobby_start_ms = 0
 		_pending_action = Callable()
 		_status.text = "连接大厅超时——请检查地址/网络(UDP 7777)"
+	# claim 后 25s 仍未 match_start:对方未就绪(房间失效/对端掉线/云服无降级开局)→
+	# 放弃本局并自动重连大厅,恢复列表/建房能力(原「连接对局服务器」永久卡死)
+	if _claimed_ms > 0 and Time.get_ticks_msec() - _claimed_ms > 25000:
+		_claimed_ms = 0
+		NetBus.stop()
+		NetBus.start_client(PvpSession.server_address)
+		_status.text = "对手未就绪(房间可能已失效),已返回大厅——可刷新列表换一个房间"
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
