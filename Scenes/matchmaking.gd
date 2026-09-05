@@ -83,6 +83,9 @@ func _ready() -> void:
 	_build_options_panel()
 	_apply_pixel_font(self)
 
+	# 进页自动连大厅拉房间列表(列表区域不再是一片空白;手动刷新仍可用)
+	_request_list.call_deferred("正在连接服务器获取房间列表…")
+
 
 # ── 像素风格:递归给已有控件挂像素字体 ──
 func _apply_pixel_font(root: Node) -> void:
@@ -214,7 +217,7 @@ func _on_lobby_connected() -> void:
 		_pending_action = Callable()
 		act.call()
 	else:
-		_status.text = "已连接,点「刷新」查看房间,或 建房"
+		_request_list("已连接,正在获取房间列表…")   # 连上即自动刷新,无需手点
 
 func _on_lobby_connect_failed() -> void:
 	if _connecting_worker:
@@ -321,9 +324,11 @@ func _on_room_list(rooms: Array) -> void:
 func _on_server_message(t: String) -> void:
 	if t == "房间已满":
 		# 点了看起来未满、实际已满 → 提示并自动刷新一次
+		# 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,
+		# 栈内立刻 NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误
 		if not _auto_refreshed:
 			_auto_refreshed = true
-			_request_list("房间已满 → 已自动刷新")
+			_request_list.call_deferred("房间已满 → 已自动刷新")
 		else:
 			_status.text = "房间已满"
 	else:
@@ -336,9 +341,27 @@ func _on_room_joined(role: int) -> void:
 	_status.text = "已加入,等待开战……"
 
 # 大厅配对完成:断开大厅 → 转连对局 worker,并 claim 大厅分配的角色。
+# go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),
+# 正在 poll 的 peer 引用被清零、在自己的调用栈内被 free → 偶发原生段错误
+# (实测「对手连入配对完成的一瞬间」闪退)。故把整个切换推迟到帧末(deferred
+# flush 已脱离 poll 栈)执行。
+var _pending_go_role := -1
+var _pending_go_port := -1
+
 func _on_go_match(role: int, port: int) -> void:
-	PvpSession.role = role
+	_pending_go_role = role
+	_pending_go_port = port
 	_status.text = "配对成功,连接对局服务器……"
+	_do_go_match.call_deferred()
+
+func _do_go_match() -> void:
+	if _pending_go_role < 0:
+		return
+	var role := _pending_go_role
+	var port := _pending_go_port
+	_pending_go_role = -1
+	_pending_go_port = -1
+	PvpSession.role = role
 	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
 		_status.text = "连接对局服务器失败,请返回重试", CONNECT_ONE_SHOT)

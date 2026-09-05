@@ -125,6 +125,8 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 ### 本轮修复(fix commit)
 - `Level0.safe_change_scene(tree, path)`:先 `await process_frame` 脱离调用方信号栈,新场景手动实例化接管 current_scene,旧世界摘树挂起、不立即释放(静态 `_retired` 稳态最多一具,新退役时才释放上一具);接入 go_menu / R 重载 / pvp_client 两处回菜单。headless 验证:凡走到回主菜单的运行 100% 成功;立刻摘树(不 await)或 1s 延迟 free 都会概率性死亡。
 - `matchmaking`:空地址回退默认云大厅(原 127.0.0.1 必失败且超时极慢);大厅连接 8s 超时明确提示(UDP 静默丢包时 connection_failed 要等很久)。
+- **房间列表进页自动拉取**(原必须手点「刷新」,不点列表区一片空白;连上大厅也自动刷新),昵称已随 room_list.names 展示;headless 探针实测对云大厅全链路 OK。
+- **go_match/房间已满 的断开重连延迟到帧末**:这些事件在大厅 peer 的 `poll()` 调用栈内作为 RPC/通知到达,栈内立刻 `NetBus.stop()` 会把正在 poll 的 peer 引用清零、在自己的调用栈内被 free → 偶发原生段错误(对应实测「对手连入配对完成的一瞬间」闪退);`_do_go_match`/`_request_list.call_deferred` 已脱离 poll 栈。本地 PvP 房间冒烟(建房→加入→双方 go_match→claim→match_start)通过。
 - `menu_autotest` sp 分支追加「回到主菜单」验证步(覆盖 safe_change_scene);截图 headless 下安全跳过(get_image() 返回 null 而非 get_texture())。
 - shader `post_process.gdshader` 补 `hit_red` uniform(受击红闪,上次会话遗留未提交)。
 - 删 `_apply_difficulty` 末尾不可达死代码(单人白屏回归残骸)。
