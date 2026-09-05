@@ -1,7 +1,7 @@
 extends Node2D
 # PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
 
-const TileHitFx := preload("res://scenes/Effects/tile_hit_fx.gd")
+const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 
 # ── 本地玩家渲染:完全由服务器快照驱动(放弃客户端预测) ──
 # 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
@@ -53,7 +53,7 @@ func _ready() -> void:
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
 	# 远端副本(角色 = 3 - 自己的 role,1v1)
-	var replica := preload("res://scenes/Player/player_replica.tscn").instantiate()
+	var replica := preload("res://scenes/player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
@@ -68,7 +68,7 @@ func _ready() -> void:
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
-	_hud = preload("res://scenes/pvp_hud.tscn").instantiate() as PvpHud
+	_hud = preload("res://ui/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
@@ -255,7 +255,7 @@ func _on_enemy_spawn(roster: Array) -> void:
 		var bid := int(entry.get("id", 0))
 		if scene_path == "" or bid <= 0:
 			continue
-		var r: Node2D = preload("res://scenes/Enemies/enemy_replica.gd").new()
+		var r: Node2D = preload("res://scenes/enemies/enemy_replica.gd").new()
 		_world.add_child(r)
 		r.setup(bid, scene_path, entry.get("pos", _local.global_position), _local.global_position)
 		_enemy_replicas[bid] = r
@@ -286,7 +286,7 @@ func _apply_p2_tint() -> void:
 	if canvas == null:
 		return
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/Player/player_p2_hue.gdshader")
+	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
 	mat.set_shader_parameter("hue_shift", -65.0)   # P2 本体色相旋转 -65°
 	canvas.material = mat
 
@@ -306,10 +306,10 @@ func _ensure_id_labels() -> void:
 	if _world == null:
 		return
 	if _id_self == null:
-		_id_self = load("res://scenes/Player/world_label.gd").new()
+		_id_self = load("res://scenes/player/world_label.gd").new()
 		_world.add_child(_id_self)
 	if _id_opp == null:
-		_id_opp = load("res://scenes/Player/world_label.gd").new()
+		_id_opp = load("res://scenes/player/world_label.gd").new()
 		_world.add_child(_id_opp)
 
 func _process(_delta: float) -> void:

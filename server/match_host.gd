@@ -58,7 +58,7 @@ func _init(map_path: String, role_peers: Dictionary) -> void:
 	# 生成两个玩家(Player.tscn 完整物理模拟,注入 NetworkInputSource)
 	peer_by_role = role_peers.duplicate()
 	for role in role_peers:
-		var p: Node2D = preload("res://scenes/Player/Player.tscn").instantiate()
+		var p: Node2D = preload("res://scenes/player/Player.tscn").instantiate()
 		var src := NetworkInputSource.new()
 		p.set_input_source(src)
 		add_child(p)

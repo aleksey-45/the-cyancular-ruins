@@ -105,7 +105,7 @@ func _initialize() -> void:
 	print("[perf] 薄条位置检查(y%%64∈{3顶,61底}): %s" % ("通过" if pos_ok else "失败"))
 
 	# ── 2) 飞鸟寻路 ──
-	var fly_scene: PackedScene = load("res://scenes/Enemies/EnemyFlyBird.tscn")
+	var fly_scene: PackedScene = load("res://scenes/enemies/EnemyFlyBird.tscn")
 	var player := Node2D.new()
 	player.name = "StubPlayer"
 	player.add_to_group("player")

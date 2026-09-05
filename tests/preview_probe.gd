@@ -12,7 +12,7 @@ const RANGE: float = 2500.0
 const DISC_R: float = 4.0 * 1.5    # PREVIEW_COLLISION_RADIUS * bullet_size
 
 func _initialize() -> void:
-	MazeGenerator._picked_map = "res://map/demo.cyrm"
+	MazeGenerator._picked_map = "res://maps/demo.cyrm"
 	var grid: Array[Array] = MazeGenerator.load_map_file()
 	if grid.is_empty():
 		printerr("地图加载失败")

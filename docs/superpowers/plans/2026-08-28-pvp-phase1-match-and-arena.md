@@ -115,10 +115,10 @@ func server_message(text: String) -> void:
 
 - [ ] **Step 2: 注册 autoload（改 `project.godot`）**
 
-`[autoload]` 段在 `GameParameters="*res://globals/gameParameters.gd"` 下一行加：
+`[autoload]` 段在 `GameParameters="*res://core/game_parameters.gd"` 下一行加：
 
 ```
-NetBus="*res://globals/net_bus.gd"
+NetBus="*res://core/net_bus.gd"
 ```
 
 - [ ] **Step 3: 验证——headless 启动 5 帧无报错**
@@ -190,8 +190,8 @@ static func set_map_file(path: String) -> void:
 
 ```gdscript
 	# ── Task 2: 钉住地图 ──
-	MazeGenerator.set_map_file("res://map/demo.cyrm")
-	_check(MazeGenerator.map_file_path() == "res://map/demo.cyrm", "set_map_file 钉住地图")
+	MazeGenerator.set_map_file("res://maps/demo.cyrm")
+	_check(MazeGenerator.map_file_path() == "res://maps/demo.cyrm", "set_map_file 钉住地图")
 ```
 
 > 该行之后的 `map_size` 检查改读 demo.cyrm（125×75，断言不变）。跑一次冒烟应 FAIL（`set_map_file` 尚未定义 → `map_file_path` 返回随机路径）。

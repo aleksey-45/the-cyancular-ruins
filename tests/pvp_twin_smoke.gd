@@ -50,7 +50,7 @@ func _ready() -> void:
 		COLS, ROWS, spawn, TOTAL, RESTORE_EVERY])
 
 func _make_player(host: Node2D, nm: String, pos: Vector2):
-	var p = preload("res://scenes/Player/Player.tscn").instantiate()
+	var p = preload("res://scenes/player/Player.tscn").instantiate()
 	p.name = nm
 	var src := NetworkInputSource.new()
 	p.set_input_source(src)

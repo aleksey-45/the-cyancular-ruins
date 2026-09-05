@@ -75,15 +75,15 @@ func _initialize() -> void:
 	_check(meta2.get("player") == Vector2i(1, 2) and meta2.get("player2") == Vector2i(5, 6), "player+player2 并存")
 
 	# ── Task 3: EnemyBase 加载 ──
-	_check(load("res://scenes/Enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
+	_check(load("res://scenes/enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
 
 	# ── Task 4: 敌人实例化 ──
-	var scene: PackedScene = load("res://scenes/Enemies/EnemyJumpBird.tscn")
+	var scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
 	_check(scene != null, "JumpBird 场景加载")
 	var e = scene.instantiate()
 	root.add_child(e)
 	await physics_frame
-	_check(e.get_script() == load("res://scenes/Enemies/enemy_jump_bird.gd"), "JumpBird 实例类型")
+	_check(e.get_script() == load("res://scenes/enemies/enemy_jump_bird.gd"), "JumpBird 实例类型")
 	const SLEEP_STATE := 0
 	_check(e.get("state") == SLEEP_STATE, "初始休眠状态")
 	_check(e.is_in_group("enemies"), "加入 enemies 组")
@@ -92,7 +92,7 @@ func _initialize() -> void:
 	# ── Task 6: 子弹 ──
 	# 清掉 Task 4 遗留的敌人(在原点,碰撞层3);否则子弹出生即命中并立即消失
 	e.free()
-	var bscene: PackedScene = load("res://scenes/Weapons/bullet.tscn")
+	var bscene: PackedScene = load("res://scenes/weapons/bullet.tscn")
 	_check(bscene != null, "子弹场景加载")
 	var b = bscene.instantiate()   # untyped, 不标 BulletBase 避免依赖
 	root.add_child(b)
@@ -110,7 +110,7 @@ func _initialize() -> void:
 	# ── Task 7: clamp_pitch(迁到 WeaponBase)──
 	# 用 load()+资源调用,避免 -s 编译期解析 WeaponBase 时连带预加载 bullet_base.gd
 	# (autoload 实例变量在 -s 主脚本编译期不可解析,见 bullet_base.gd 的 GameParameters.MAP_WIDTH)。
-	var wb := load("res://scenes/Weapons/weapon_base.gd")
+	var wb := load("res://scenes/weapons/weapon_base.gd")
 	_check(wb != null, "WeaponBase 脚本加载")
 	_check(is_equal_approx(wb.clamp_pitch(Vector2(1, 0), 1), 0.0), "pitch 水平")
 	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, -1), 1), -deg_to_rad(45.0)), "pitch 上钳制")
@@ -141,8 +141,8 @@ func _initialize() -> void:
 			"锚定:自身不变")
 
 	# ── Task 2: 钉住地图 ──
-	MazeGenerator.set_map_file("res://map/demo.cyrm")
-	_check(MazeGenerator.map_file_path() == "res://map/demo.cyrm", "set_map_file 钉住地图")
+	MazeGenerator.set_map_file("res://maps/demo.cyrm")
+	_check(MazeGenerator.map_file_path() == "res://maps/demo.cyrm", "set_map_file 钉住地图")
 
 	# ── Task 9: 地图尺寸读取(map_size) ──
 	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
@@ -165,9 +165,9 @@ func _initialize() -> void:
 	var stub := StubPlayer.new()
 	root.add_child(stub)
 	stub.global_position = Vector2(400, 400)
-	var pistol: PackedScene = load("res://scenes/Weapons/pistol_test.tscn")
-	var rifle: PackedScene = load("res://scenes/Weapons/rifle_test.tscn")
-	var sniper: PackedScene = load("res://scenes/Weapons/m82a1.tscn")
+	var pistol: PackedScene = load("res://scenes/weapons/pistol_test.tscn")
+	var rifle: PackedScene = load("res://scenes/weapons/rifle_test.tscn")
+	var sniper: PackedScene = load("res://scenes/weapons/m82a1.tscn")
 	_check(pistol != null and rifle != null and sniper != null, "三把武器场景加载")
 	var w = pistol.instantiate()
 	stub.add_child(w)
@@ -175,9 +175,9 @@ func _initialize() -> void:
 	# 避免 -s 静态引用 WeaponBase(编译期连带预加载 bullet_base.gd 引用 autoload
 	# 实例变量 GameParameters.MAP_WIDTH,而 -s 阶段 autoload 尚未实例化)→ 用运行时
 	# load()+脚本比较代替 is WeaponBase。
-	_check(w.get_script() == load("res://scenes/Weapons/weapon_base.gd"), "武器继承 WeaponBase")
+	_check(w.get_script() == load("res://scenes/weapons/weapon_base.gd"), "武器继承 WeaponBase")
 	_check(w.weapon_name == "Pistol", "手枪参数")
-	var e_scene: PackedScene = load("res://scenes/Enemies/EnemyJumpBird.tscn")
+	var e_scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
 	# 复用上面 Task 4 已声明的 e(已 free 过,不能重复 var 声明)
 	e = e_scene.instantiate()
 	root.add_child(e)
@@ -194,7 +194,7 @@ func _initialize() -> void:
 	# 多弹丸(霰弹):fire() 按 pellet_count 生成多颗子弹
 	w.pellet_count = 3
 	w.spread_deg = 8.0
-	var bullet_script := load("res://scenes/Weapons/bullet_base.gd")
+	var bullet_script := load("res://scenes/weapons/bullet_base.gd")
 	var b_before := 0
 	for child in root.get_children():
 		if child.get_script() == bullet_script:
@@ -209,7 +209,7 @@ func _initialize() -> void:
 	stub.free()
 
 	# 霰弹枪场景加载 + 参数
-	var sg_scene: PackedScene = load("res://scenes/Weapons/s686.tscn")
+	var sg_scene: PackedScene = load("res://scenes/weapons/s686.tscn")
 	_check(sg_scene != null, "霰弹枪场景加载")
 	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
 	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 5.0), "霰弹枪 8 丸 ±5°")
@@ -262,7 +262,7 @@ func _initialize() -> void:
 	buf_stub.free()
 
 	# ── Task: 预瞄算子弹碰撞体积(小球判墙,中心点不穿但体积擦墙即截断)──
-	var gl_scene: PackedScene = load("res://scenes/Weapons/grenade_launcher.tscn")
+	var gl_scene: PackedScene = load("res://scenes/weapons/grenade_launcher.tscn")
 	_check(gl_scene != null, "榴弹场景加载")
 	var grid_arc: Array[Array] = []
 	for y in range(20):
@@ -291,7 +291,7 @@ func _initialize() -> void:
 	MazeGenerator.current_grid = []
 
 	# ── Task: 玩家装备/切枪 ──
-	var player_scene: PackedScene = load("res://scenes/Player/Player.tscn")
+	var player_scene: PackedScene = load("res://scenes/player/Player.tscn")
 	_check(player_scene != null, "Player 场景加载")
 	var p = player_scene.instantiate()
 	root.add_child(p)
@@ -310,7 +310,7 @@ func _initialize() -> void:
 	p.free()
 
 	# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
-	var jump2: PackedScene = load("res://scenes/Enemies/EnemyJumpBird.tscn")
+	var jump2: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
 	var e2 := jump2.instantiate()
 	root.add_child(e2)
 	_check(e2.collision_layer == 4, "敌人占用层3")
@@ -404,7 +404,7 @@ func _initialize() -> void:
 	MazeGenerator.current_grid = []
 
 	# ── Task 3: 敌方抛物线子弹 ──
-	var bscene_e: PackedScene = load("res://scenes/Enemies/enemy_bullet.tscn")
+	var bscene_e: PackedScene = load("res://scenes/enemies/enemy_bullet.tscn")
 	_check(bscene_e != null, "敌方子弹场景加载")
 	var eb := bscene_e.instantiate()
 	eb.global_position = Vector2(400, 400)
@@ -458,13 +458,13 @@ func _initialize() -> void:
 		row3.fill(MazeGenerator.EMPTY)
 		fb_grid.append(row3)
 	MazeGenerator.current_grid = fb_grid
-	var fb_scene: PackedScene = load("res://scenes/Enemies/EnemyFlyBird.tscn")
+	var fb_scene: PackedScene = load("res://scenes/enemies/EnemyFlyBird.tscn")
 	_check(fb_scene != null, "FlyBird 场景加载")
 	var fb := fb_scene.instantiate()
 	fb.global_position = Vector2(488, 1208)
 	root.add_child(fb)
 	await physics_frame
-	_check(fb.get_script() == load("res://scenes/Enemies/enemy_fly_bird.gd"), "FlyBird 实例类型")
+	_check(fb.get_script() == load("res://scenes/enemies/enemy_fly_bird.gd"), "FlyBird 实例类型")
 	_check(fb.state == 0, "FlyBird 初始休眠")
 	_check(fb.is_in_group("enemies"), "FlyBird 加入 enemies 组")
 	_check(fb.get_node_or_null("ContactArea") != null, "FlyBird ContactArea 创建")
@@ -497,7 +497,7 @@ func _initialize() -> void:
 	var near_player := StubCombatPlayer.new()
 	near_player.global_position = Vector2(600, 1208)
 	root.add_child(near_player)
-	var eb_script := load("res://scenes/Enemies/enemy_bullet.gd")
+	var eb_script := load("res://scenes/enemies/enemy_bullet.gd")
 	var reached_shoot := false
 	var fired := false
 	for i in range(240):

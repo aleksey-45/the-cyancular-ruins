@@ -1,7 +1,0 @@
-{
-  "enemies": [
-    { "id": "jump_bird", "name": "JumpBird", "scene": "res://scenes/Enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
-    { "id": "fly_bird", "name": "FlyBird", "scene": "res://scenes/Enemies/EnemyFlyBird.tscn", "color": "#c96fb0" },
-    { "id": "black_bird", "name": "BlackBird", "scene": "res://scenes/Enemies/EnemyBlackBird.tscn", "color": "#8a8f98" }
-  ]
-}

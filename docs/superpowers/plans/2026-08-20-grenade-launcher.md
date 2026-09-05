@@ -424,7 +424,7 @@ func _test_non_explosive_default() -> void:
 # 直接 new bullet_base.gd,补碰撞体;返回已设 explodes=true、关特效的子弹。
 # 无类型返回:setup/explodes/gravity_factor 都是脚本自定义成员,须动态分派。
 func _make_bullet():
-	var b = (load("res://scenes/Weapons/bullet_base.gd") as GDScript).new()
+	var b = (load("res://scenes/weapons/bullet_base.gd") as GDScript).new()
 	var cshape := CollisionShape2D.new()
 	var circ := CircleShape2D.new()
 	circ.radius = 6.0
@@ -468,7 +468,7 @@ git commit -m "feat: BulletBase 爆炸支持 — 命中敌人10+立即炸/撞墙
 
 **Interfaces:**
 - Consumes: `Explosion.make_circle_texture`（Task 1）
-- Produces: `res://scenes/Weapons/explosion.tscn`（纯视觉自毁，供 `grenade_bullet.tscn` 的 `explosion_visual` 引用）
+- Produces: `res://scenes/weapons/explosion.tscn`（纯视觉自毁，供 `grenade_bullet.tscn` 的 `explosion_visual` 引用）
 
 - [ ] **Step 1: 写 `explosion_placeholder.gd`**
 
@@ -495,7 +495,7 @@ func _ready() -> void:
 ```
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://scenes/Weapons/explosion_placeholder.gd" id="1_pl"]
+[ext_resource type="Script" path="res://scenes/weapons/explosion_placeholder.gd" id="1_pl"]
 
 [node name="Explosion" type="Node2D"]
 script = ExtResource("1_pl")
@@ -529,9 +529,9 @@ git commit -m "feat: 爆炸占位特效(程序化软圆放大淡出,自毁;待�
 
 - [ ] **Step 1: 改常量与字段**
 
-把 `const BULLET_SCENE: PackedScene = preload("res://scenes/Weapons/bullet.tscn")` 改为：
+把 `const BULLET_SCENE: PackedScene = preload("res://scenes/weapons/bullet.tscn")` 改为：
 ```gdscript
-@export var bullet_scene: PackedScene = preload("res://scenes/Weapons/bullet.tscn")
+@export var bullet_scene: PackedScene = preload("res://scenes/weapons/bullet.tscn")
 ```
 
 在武器参数区新增：
@@ -648,7 +648,7 @@ git commit -m "feat: WeaponBase — bullet_scene 参数化 + 抛物线预瞄弧�
 
 **Interfaces:**
 - Consumes: `bullet_base.gd`（Task 2）、`explosion.tscn`（Task 3）、`weapon_base.gd`（Task 4）
-- Produces: `res://scenes/Weapons/grenade_bullet.tscn`、`res://scenes/Weapons/grenade_launcher.tscn`（供 Task 6 注册到 `player.gd`）
+- Produces: `res://scenes/weapons/grenade_bullet.tscn`、`res://scenes/weapons/grenade_launcher.tscn`（供 Task 6 注册到 `player.gd`）
 
 - [ ] **Step 1: 写占位圆点脚本 + `grenade_bullet.tscn`**
 
@@ -664,9 +664,9 @@ func _ready() -> void:
 ```
 [gd_scene load_steps=5 format=3]
 
-[ext_resource type="Script" path="res://scenes/Weapons/bullet_base.gd" id="1_bl"]
-[ext_resource type="PackedScene" path="res://scenes/Weapons/explosion.tscn" id="2_fx"]
-[ext_resource type="Script" path="res://scenes/Weapons/grenade_visual_placeholder.gd" id="3_vis"]
+[ext_resource type="Script" path="res://scenes/weapons/bullet_base.gd" id="1_bl"]
+[ext_resource type="PackedScene" path="res://scenes/weapons/explosion.tscn" id="2_fx"]
+[ext_resource type="Script" path="res://scenes/weapons/grenade_visual_placeholder.gd" id="3_vis"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_g"]
 radius = 6.0
@@ -697,8 +697,8 @@ shape = SubResource("CircleShape2D_g")
 ```
 [gd_scene load_steps=4 format=3]
 
-[ext_resource type="Script" path="res://scenes/Weapons/weapon_base.gd" id="1_wb"]
-[ext_resource type="PackedScene" path="res://scenes/Weapons/grenade_bullet.tscn" id="2_gb"]
+[ext_resource type="Script" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="PackedScene" path="res://scenes/weapons/grenade_bullet.tscn" id="2_gb"]
 [ext_resource type="Texture2D" path="res://AssetBundle/Sprites/Weapons.png" id="3_wpn"]
 
 [node name="GrenadeLauncher" type="Node2D"]
@@ -773,8 +773,8 @@ git commit -m "feat: 榴弹/榴弹发射器场景(爆炸参数/抛物线弹道/�
 
 `WEAPONS` 字典加一行：
 ```gdscript
-	"4": "res://scenes/Weapons/s686.tscn",
-	"5": "res://scenes/Weapons/grenade_launcher.tscn",
+	"4": "res://scenes/weapons/s686.tscn",
+	"5": "res://scenes/weapons/grenade_launcher.tscn",
 ```
 
 `_unhandled_input` 切枪循环：

@@ -4,7 +4,7 @@
 
 **Goal:** 新增地面敌人「BlackBird」——睡眠→随机游走→瞬移到玩家面朝反方向的地面落点→带跳跃的冲锋打 6 伤→大后跳(命中/未命中都)→回游走→玩家远离入睡。
 
-**Architecture:** `EnemyBlackBird extends EnemyBase`(同 JumpBird 模式,地面敌人,不用飞行寻路)。独立状态机 `enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }`,数值集中到 `EnemyParams.BlackBird` 嵌套类。场景 `EnemyBlackBird.tscn` 已存在(贴图/动画/碰撞体),需补脚本/scale/碰撞层/数值。注册到 `editor/enemies.json`(与 HTML 编辑器共用)。
+**Architecture:** `EnemyBlackBird extends EnemyBase`(同 JumpBird 模式,地面敌人,不用飞行寻路)。独立状态机 `enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }`,数值集中到 `EnemyParams.BlackBird` 嵌套类。场景 `EnemyBlackBird.tscn` 已存在(贴图/动画/碰撞体),需补脚本/scale/碰撞层/数值。注册到 `data/enemies.json`(与 HTML 编辑器共用)。
 
 **Tech Stack:** Godot 4.7.1 标准版(GDScript)。唯一"测试"是 `Tests/enemy_logic_smoke.gd`(`extends SceneTree`, `-s` 跑,成功打印 `SMOKE OK`)。
 
@@ -31,7 +31,7 @@
 
 **Interfaces:**
 - Produces: `EnemyBlackBird`(class_name)、`EnemyParams.BlackBird`(嵌套类,常量见下)、`EnemyBlackBird.tscn`(可实例化,`state==0` 初始休眠)。
-- Later tasks 依赖: 冒烟测试 `load("res://scenes/Enemies/EnemyBlackBird.tscn")` 后 `instantiate()`; `EnemySpawner.TYPES` 经 enemies.json 注册( Task 2 )。
+- Later tasks 依赖: 冒烟测试 `load("res://scenes/enemies/EnemyBlackBird.tscn")` 后 `instantiate()`; `EnemySpawner.TYPES` 经 enemies.json 注册( Task 2 )。
 
 - [ ] **Step 1: 加 EnemyParams.BlackBird**
 
@@ -293,7 +293,7 @@ func _physics_process(delta: float) -> void:
 `Scenes/Enemies/EnemyBlackBird.tscn` 顶部 `[ext_resource ...]` 块(第 3 行后)加脚本引用:
 
 ```
-[ext_resource type="Script" path="res://scenes/Enemies/enemy_black_bird.gd" id="1_bb"]
+[ext_resource type="Script" path="res://scenes/enemies/enemy_black_bird.gd" id="1_bb"]
 ```
 
 根节点(第 220 行 `[node name="EnemyBlackBird" ...]`)补:
@@ -327,20 +327,20 @@ git commit -m "feat: BlackBird 敌人(参数/脚本/场景)"
 ### Task 2: 注册 + 地图出生点
 
 **Files:**
-- Modify: `editor/enemies.json`
+- Modify: `data/enemies.json`
 - Modify: `editor/structure-editor.html`
 - Modify: `map/demo.txt`
 
 **Interfaces:**
-- Produces: `EnemySpawner.TYPES`(由 `res://editor/enemies.json` 加载)含 `black_bird` → EnemyBlackBird.tscn;地图含 3 个 `black_bird` 出生点。
+- Produces: `EnemySpawner.TYPES`(由 `res://data/enemies.json` 加载)含 `black_bird` → EnemyBlackBird.tscn;地图含 3 个 `black_bird` 出生点。
 - Later tasks 依赖: Task 3 冒烟测试断言 `EnemySpawner.TYPES.has("black_bird")`。
 
 - [ ] **Step 1: enemies.json 注册**
 
-`editor/enemies.json` 的 `"enemies"` 数组加一行:
+`data/enemies.json` 的 `"enemies"` 数组加一行:
 
 ```json
-    { "id": "black_bird", "name": "BlackBird", "scene": "res://scenes/Enemies/EnemyBlackBird.tscn", "color": "#8a8f98" },
+    { "id": "black_bird", "name": "BlackBird", "scene": "res://scenes/enemies/EnemyBlackBird.tscn", "color": "#8a8f98" },
 ```
 
 - [ ] **Step 2: 编辑器 HTML 注册**
@@ -351,7 +351,7 @@ git commit -m "feat: BlackBird 敌人(参数/脚本/场景)"
   {
     "id": "black_bird",
     "name": "BlackBird",
-    "scene": "res://scenes/Enemies/EnemyBlackBird.tscn",
+    "scene": "res://scenes/enemies/EnemyBlackBird.tscn",
     "color": "#8a8f98"
   }
 ```
@@ -374,7 +374,7 @@ Expected: `SMOKE OK`(spawner 的 TYPES 测试断言 `size()==2` 会 FAIL——Ta
 - [ ] **Step 5: 提交**
 
 ```bash
-git add editor/enemies.json editor/structure-editor.html map/demo.txt
+git add data/enemies.json editor/structure-editor.html map/demo.txt
 git commit -m "feat: BlackBird 注册进编辑器与地图"
 ```
 
@@ -404,13 +404,13 @@ git commit -m "feat: BlackBird 注册进编辑器与地图"
 	for _x in range(120):
 		bk_grid[58][_x] = MazeGenerator.SOLID  # 地板
 	MazeGenerator.current_grid = bk_grid
-	var bk_scene: PackedScene = load("res://scenes/Enemies/EnemyBlackBird.tscn")
+	var bk_scene: PackedScene = load("res://scenes/enemies/EnemyBlackBird.tscn")
 	_check(bk_scene != null, "BlackBird 场景加载")
 	var bk = bk_scene.instantiate()
 	bk.global_position = Vector2(60, 57 * 32 + 16)  # 地板格(row57, 下方 row58 实心)
 	root.add_child(bk)
 	await physics_frame
-	_check(bk.get_script() == load("res://scenes/Enemies/enemy_black_bird.gd"), "BlackBird 实例类型")
+	_check(bk.get_script() == load("res://scenes/enemies/enemy_black_bird.gd"), "BlackBird 实例类型")
 	_check(bk.state == 0, "BlackBird 初始休眠")
 	_check(bk.hp == 30, "BlackBird hp=30")
 	_check(bk.contact_damage == 0, "BlackBird 无接触伤害")

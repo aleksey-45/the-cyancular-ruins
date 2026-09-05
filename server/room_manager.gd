@@ -7,7 +7,7 @@ extends Node
 # TileDefs)不会跨局互踩。worker 由 NetBus 转交信号驱动,不硬依赖 RoomManager 类型。
 
 # PvP 固定竞技场地图(1v1,含 # player / # player2 出生点)。
-const PVP_MAP := "res://map/factory1v1.cyrm"
+const PVP_MAP := "res://maps/factory1v1.cyrm"
 # 对局 worker 端口分配:每次 spawn 发**不重复**的端口。注意不能用本进程 bind 探测"空闲"
 # —— worker 是独立进程,大厅本进程绑定测试看不到其它进程已占的 socket(并发时会把同端口
 # 发给两个 worker,后者绑定失败退出)。唯一递增 + 占用集合即可保证并发零冲突。
