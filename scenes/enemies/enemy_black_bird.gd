@@ -317,6 +317,10 @@ func _player_facing() -> int:
 
 
 func _update_facing() -> void:
+	# 后跳:滞空水平速度刻意背离玩家(倒退跳),按它翻转会让鸟背对玩家转身;
+	# 保持冲锋时已朝向玩家的朝向,落地回 WANDER 再恢复按移动方向走。
+	if state == State.BACK_HOP:
+		return
 	if absf(velocity.x) > 5.0:
 		_set_facing(velocity.x < 0.0)
 

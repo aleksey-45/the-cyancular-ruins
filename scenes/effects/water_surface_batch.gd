@@ -13,12 +13,14 @@ uniform float sway_speed = 1.6;
 uniform float sway_amp = 2.0;
 uniform float tile_ts = 64.0;
 void vertex() {
-	// 格底局部 y=0 锚定,顶边(局部 -tile_ts)按相位伸缩;相位烘在顶点色 r(0..1 → 0..TAU)
-	float s = 1.0 + sin(TIME * sway_speed + COLOR.r * 6.2831853) * (sway_amp / tile_ts);
-	VERTEX.y *= s;
+	// 相位烘在顶点色 r(0..1→0..TAU);格底相对高度 f 烘在 g(0=底边 1=顶边)。
+	// 位移 = f·sin·amp 纯平移:底边锚定不动,顶边 ±sway_amp(与原逐格缩放视觉一致)。
+	float f = COLOR.g;
+	float lift = sin(TIME * sway_speed + COLOR.r * 6.2831853) * (sway_amp * f);
+	VERTEX.y += lift;
 }
 void fragment() {
-	// 顶点色 r 只作相位通道,不参与着色(照常采样水面贴图)
+	// 顶点色仅作数据通道(r=相位,g=高度),不参与着色(照常采样水面贴图)
 	COLOR = texture(surf, UV);
 }
 """
@@ -39,8 +41,10 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 	var vi := 0
 	for c in cells:
 		var pos: Vector2 = c["pos"]
-		# 相位归一化到 [0,1),顶点色 r 作相位通道
+		# 相位归一化到 [0,1) 进 r;g=0 给底边两顶点(锚定)、g=1 给顶边两顶点
 		var ph := fposmod(float(c["phase"]), TAU) / TAU
+		var tint_bottom := Color(ph, 0.0, 0.0, 1.0)
+		var tint_top := Color(ph, 1.0, 0.0, 1.0)
 		var bl := Vector2(pos.x - half, pos.y)
 		var br := Vector2(pos.x + half, pos.y)
 		var tr := Vector2(pos.x + half, pos.y - ts)
@@ -53,9 +57,10 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 		uvs.append(Vector2(1, 1))
 		uvs.append(Vector2(1, 0))
 		uvs.append(Vector2(0, 0))
-		var tint := Color(ph, 0.0, 0.0, 1.0)
-		for _k in range(4):
-			cols.append(tint)
+		cols.append(tint_bottom)
+		cols.append(tint_bottom)
+		cols.append(tint_top)
+		cols.append(tint_top)
 		idx.append(vi)
 		idx.append(vi + 1)
 		idx.append(vi + 2)
