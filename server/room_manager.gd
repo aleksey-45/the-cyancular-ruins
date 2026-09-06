@@ -22,9 +22,15 @@ class Room:
 	var player_role: Dictionary = {}      # peer id -> 1/2
 	var match_host: Node = null           # 保留字段:worker 模式下大厅恒为 null
 	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
+	var created_at: float = 0.0           # 创建时间戳(unix 秒;超时清理用)
 
 var rooms: Dictionary = {}   # code -> Room
 var _peer_names: Dictionary = {}   # peer id -> 昵称(客户端连上大厅时上报,列表/建房展示)
+
+# ── 僵尸房间定时清理:每 SWEEP_INTERVAL 秒扫一次,存在超 MAX_ROOM_AGE 的房间连 worker 一起杀 ──
+const SWEEP_INTERVAL := 600.0       # 清理扫描周期(秒=10min)
+const MAX_ROOM_AGE := 7200.0        # 房间允许存在上限(秒=2h)
+var _sweep_acc := 0.0
 
 func _enter_tree() -> void:
 	NetBus.room_create_requested.connect(create_room)
@@ -67,6 +73,7 @@ func create_room(caller: int) -> void:
 	room.code = code
 	room.players.append(caller)
 	room.player_role[caller] = 1
+	room.created_at = Time.get_unix_time_from_system()
 	rooms[code] = room
 	print("房间 %s 创建(房主 peer=%d)" % [code, caller])
 	NetBus.rpc_id(caller, "room_created", code)
@@ -142,6 +149,48 @@ func _spawn_worker(port: int) -> bool:
 	var pid := OS.create_process(exe, args)
 	print("[lobby] spawn worker pid=%d port=%d editor=%s" % [pid, port, str(OS.has_feature("editor"))])
 	return pid > 0
+
+# ── 定时扫描:每 SWEEP_INTERVAL 清理存在超 MAX_ROOM_AGE 的僵尸房间(连 worker 一起杀)──
+func _process(delta: float) -> void:
+	_sweep_acc += delta
+	if _sweep_acc >= SWEEP_INTERVAL:
+		_sweep_acc = 0.0
+		_sweep_stale_rooms()
+
+# 清理:房间从创建起超 MAX_ROOM_AGE 秒 → 杀其 worker(若有)→ 踢房内玩家 → 删房归还端口。
+func _sweep_stale_rooms() -> void:
+	var now := Time.get_unix_time_from_system()
+	var stale: Array = []
+	for code in rooms:
+		var room: Room = rooms[code]
+		if now - room.created_at > MAX_ROOM_AGE:
+			stale.append(room)
+	if stale.is_empty():
+		return
+	print("[lobby] 清理 %d 个超龄房间(>%.0f 秒)" % [stale.size(), MAX_ROOM_AGE])
+	for room in stale:
+		if room.worker_port > 0:
+			_kill_worker(room.worker_port)
+			_worker_ports.erase(room.worker_port)
+		# 通知并断开仍连着的房内玩家(触发 peer_left → on_peer_left 会再清一次,无害)
+		for peer_id in room.players:
+			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
+				NetBus.rpc_id(peer_id, "server_message", "房间超时(>2h),已关闭")
+		rooms.erase(room.code)
+		print("房间 %s 超时清理(存活 %.0f 秒)" % [room.code, now - room.created_at])
+	# 立即断开被清理房间的玩家(等 peer_left 收尾;避免它们还留在半满房间表里)
+	for room in stale:
+		for peer_id in room.players:
+			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
+				multiplayer.disconnect_peer(peer_id)
+
+# 杀指定 UDP 端口的进程(worker)。Windows:PowerShell 取该端口属主进程 → Stop-Process。
+# 与 server_main._kill_port_holder 同法;不能只靠 OS.create_process 返回的 pid(跨进程需查端口)。
+func _kill_worker(port: int) -> void:
+	var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
+			" -ErrorAction SilentlyContinue | Select -ExpandProperty OwningProcess -Unique; " + \
+			"if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
+	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, true)
 
 # ── 建局(在 worker 进程调用):重算世界尺寸 + 给两端发 match_start + 建权威 MatchHost ──
 # 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态;role_peers = {role: peer_id}。
