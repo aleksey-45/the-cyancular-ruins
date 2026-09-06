@@ -10,6 +10,10 @@ extends Control
 #   agent_runner.gd(Claude CLI 进程) ui_kit.gd(控件工厂)
 
 const BG_COLOR := Color(0.07, 0.09, 0.13)
+const LOG_CAP_CHARS := 200_000   # 日志缓冲上限(超出丢头部,防长任务撑爆 TextEdit)
+
+## 默认 CLI 额外参数:git/Godot 白名单(计划约定的安全默认;勾「全自动」才换 bypassPermissions)
+const DEFAULT_EXTRA_FLAGS := "--allowed-tools \"Edit Write Read Glob Grep Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git log:*) Bash(git diff:*)\""
 
 var _current_type := CardSchema.TYPE_OPERATOR
 var _save_status: Label = null
@@ -19,6 +23,19 @@ var _tab_wp: Button = null
 var _list_panel: CardListPanel = null
 var _form_panel: CardFormPanel = null
 var _portrait: PortraitView = null
+
+# Agent 对接状态
+var _agent: AgentRunner = null
+var _btn_send: Button = null
+var _btn_stop: Button = null
+var _busy_label: Label = null
+var _cli_label: Label = null
+var _bypass_chk: CheckButton = null
+var _extra_args: LineEdit = null
+var _log_panel: TextEdit = null
+var _log_buffer := ""
+var _pending_flags: Array = []       # CARD-DONE 后要翻转的 .state.json 标记
+var _pending_template := ""
 
 
 func _ready() -> void:
@@ -46,6 +63,10 @@ func _ready() -> void:
 	_body_hbox.add_theme_constant_override("separation", 16)
 	root.add_child(_body_hbox)
 	_build_body()
+	_agent = AgentRunner.new()
+	_agent.log_line.connect(_append_log)
+	_agent.finished.connect(_on_agent_finished)
+	add_child(_agent)
 	root.add_child(_build_agent_bar())
 	root.add_child(_build_log_panel())
 
@@ -102,25 +123,132 @@ func _on_save_failed(errs: Array[String]) -> void:
 	_save_status.add_theme_color_override("font_color", Color(0.95, 0.6, 0.5))
 
 
-# ── Agent 对接栏(commit 3 接入真按钮,先占位)──
+# ── Agent 对接栏:生成提示词 / 发送 Claude Code / 停止 / 权限档位 / CLI 状态 ──
 func _build_agent_bar() -> Control:
 	var bar := HBoxContainer.new()
 	bar.custom_minimum_size = Vector2(0, 72)
-	bar.add_theme_constant_override("separation", 16)
-	bar.add_child(DevUIKit.label("Agent 对接:生成提示词 / 发送 Claude Code / 日志(下一提交接入)", 20, Color(0.5, 0.55, 0.6)))
+	bar.add_theme_constant_override("separation", 12)
+	bar.add_child(DevUIKit.label("Agent", 24, Color(0.55, 0.95, 1.0)))
+	bar.add_child(DevUIKit.button("生成提示词→剪贴板", 18, _on_copy_prompt))
+	_btn_send = DevUIKit.button("发送给 Claude Code", 18, _on_send_agent)
+	bar.add_child(_btn_send)
+	_btn_stop = DevUIKit.button("停 止", 18, func() -> void: _agent.stop())
+	_btn_stop.disabled = true
+	bar.add_child(_btn_stop)
+	_busy_label = DevUIKit.label("", 18, Color(0.95, 0.85, 0.4))
+	bar.add_child(_busy_label)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.add_child(spacer)
+	_bypass_chk = DevUIKit.check("全自动(跳过权限确认,慎用)", false)
+	_bypass_chk.tooltip_text = "默认 acceptEdits+白名单;勾上后 CLI 改用 bypassPermissions(agent 无审批改文件/跑命令)"
+	bar.add_child(_bypass_chk)
+	bar.add_child(DevUIKit.label("CLI额外参数", 16, Color(0.5, 0.55, 0.6)))
+	_extra_args = DevUIKit.line_edit("", DEFAULT_EXTRA_FLAGS)
+	_extra_args.custom_minimum_size = Vector2(420, 40)
+	_extra_args.tooltip_text = "追加给 claude -p 的原样参数(默认 git/Godot 白名单)"
+	bar.add_child(_extra_args)
+	bar.add_child(DevUIKit.button("日志目录", 16, _on_open_log_dir))
+	_cli_label = DevUIKit.label("", 16, Color(0.5, 0.55, 0.6))
+	bar.add_child(_cli_label)
+	_probe_cli.call_deferred()
 	return bar
 
 
 func _build_log_panel() -> Control:
-	var log := TextEdit.new()
-	log.custom_minimum_size = Vector2(0, 260)
-	log.editable = false
-	log.placeholder_text = "Agent 运行日志(下一提交接入)"
+	_log_panel = TextEdit.new()
+	_log_panel.custom_minimum_size = Vector2(0, 240)
+	_log_panel.editable = false
+	_log_panel.placeholder_text = "Agent 运行日志(生成提示词/发送 Claude Code 后在此滚动)"
 	var pf := DevUIKit.font()
 	if pf != null:
-		log.add_theme_font_override("font", pf)
-		log.add_theme_font_size_override("font_size", 16)
-	return log
+		_log_panel.add_theme_font_override("font", pf)
+		_log_panel.add_theme_font_size_override("font_size", 16)
+	return _log_panel
+
+
+# ── Agent 动作 ──
+
+## CLI 预探测(延后一帧,不卡 _ready);失败只提示,不拦「复制提示词」兜底
+func _probe_cli() -> void:
+	var probe := AgentRunner.cli_available()
+	if bool(probe["ok"]):
+		_cli_label.text = "CLI 就绪"
+		_cli_label.add_theme_color_override("font_color", Color(0.65, 0.9, 0.65))
+	else:
+		_cli_label.text = "CLI 不可用→用复制兜底"
+		_cli_label.add_theme_color_override("font_color", Color(0.95, 0.75, 0.4))
+
+
+## 取当前选中卡并生成提示词;返回 PromptBuilder 结果(失败广播日志并返回空字典)
+func _build_prompt_for_current() -> Dictionary:
+	var card := _list_panel.current_card()
+	if card.is_empty():
+		_append_log("[提示] 先在左侧选中(或新建)一张卡再生成提示词")
+		return {}
+	var built := PromptBuilder.build(card, CardStore.load_state())
+	_append_log("[提示词] %s(%s / %s rev%d)已生成并复制到剪贴板,%d 字" % [
+			str(built["template"]), str(card.get("card_type", "")), str(card.get("id", "")),
+			int(card.get("rev", 0)), str(built["prompt"]).length()])
+	return built
+
+
+func _on_copy_prompt() -> void:
+	var built := _build_prompt_for_current()
+	if built.is_empty():
+		return
+	DisplayServer.clipboard_set(str(built["prompt"]))
+
+
+func _on_send_agent() -> void:
+	var built := _build_prompt_for_current()
+	if built.is_empty():
+		return
+	var perm := "bypassPermissions" if _bypass_chk.button_pressed else "acceptEdits"
+	_pending_flags = built["set_flags"]
+	_pending_template = str(built["template"])
+	var tag := _agent.run(_list_panel.current_card(), str(built["prompt"]), _extra_args.text, perm)
+	if not tag.is_empty():
+		_set_busy(true)
+
+
+func _on_agent_finished(ok: bool, card_done: bool, _summary: String) -> void:
+	_set_busy(false)
+	# 施工完成后刷新当前卡头像(agent 可能生成了新 PNG)
+	_portrait.set_card(_list_panel.current_card())
+	if card_done and not _pending_flags.is_empty():
+		var state := CardStore.load_state()
+		for f in _pending_flags:
+			state[f] = true
+		CardStore.save_state(state)
+		_append_log("[状态] .state.json 标记已翻转:%s(下次同类卡走 NEXT 模板)" % ", ".join(PackedStringArray(_pending_flags)))
+	elif ok and not card_done:
+		_append_log("[提醒] CLI 正常退出但日志里没有 CARD-DONE 完成标记——请人工检查施工结果与 .state.json")
+	elif not ok:
+		_append_log("[提醒] CLI 异常退出(看上方日志/日志目录里完整输出);.state.json 未动")
+	_pending_flags = []
+	_pending_template = ""
+
+
+func _set_busy(busy: bool) -> void:
+	_btn_send.disabled = busy
+	_btn_stop.disabled = not busy
+	_busy_label.text = "施工中…" if busy else ""
+
+
+func _on_open_log_dir() -> void:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(AgentRunner.LOG_DIR))
+	OS.shell_open(ProjectSettings.globalize_path(AgentRunner.LOG_DIR))
+
+
+func _append_log(text: String) -> void:
+	if _log_panel == null:
+		return
+	_log_buffer += text + "\n"
+	if _log_buffer.length() > LOG_CAP_CHARS:
+		_log_buffer = _log_buffer.substr(_log_buffer.length() - LOG_CAP_CHARS / 2)
+	_log_panel.text = _log_buffer
+	_log_panel.scroll_to_line(_log_panel.get_line_count() - 1)
 
 
 # ── 页签切换:列表重载(选中第一张会经 card_selected 驱动表单/头像)──

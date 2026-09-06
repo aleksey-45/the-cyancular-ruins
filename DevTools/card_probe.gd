@@ -15,8 +15,10 @@ func _initialize() -> void:
 	_check_roundtrip(fails)
 	_check_state(fails)
 	_check_placeholder(fails)
+	_check_templates(fails)
+	_check_cli_bat(fails)
 	if fails.is_empty():
-		print("CARDS-PROBE OK(schema/校验/往返/状态/占位图 全部通过)")
+		print("CARDS-PROBE OK(schema/校验/往返/状态/占位图/模板/CLI启动器 全部通过)")
 		quit(0)
 	else:
 		print("CARDS-PROBE FAIL | " + "; ".join(fails))
@@ -121,3 +123,61 @@ func _check_placeholder(fails: Array[String]) -> void:
 	var t2 := PortraitView.make_placeholder(CardSchema.TYPE_OPERATOR, "probe")
 	if t.get_image().get_data() != t2.get_image().get_data():
 		fails.append("占位徽章同种子不同图")
+
+
+func _check_templates(fails: Array[String]) -> void:
+	# 分派矩阵:干员 FIRST/NEXT 由 operator_skeleton_done 决定
+	var op := CardSchema.make_default(CardSchema.TYPE_OPERATOR, "op_probe_tmpl")
+	op["name"] = "模板探针"
+	var r := PromptBuilder.build(op, {"operator_skeleton_done": false})
+	if str(r["template"]) != "OPERATOR_FIRST":
+		fails.append("骨架未完成应派 OPERATOR_FIRST,实际 %s" % str(r["template"]))
+	if not (r["set_flags"] as Array).has("operator_skeleton_done"):
+		fails.append("OPERATOR_FIRST 应回传 operator_skeleton_done 标记")
+	r = PromptBuilder.build(op, {"operator_skeleton_done": true})
+	if str(r["template"]) != "OPERATOR_NEXT" or not (r["set_flags"] as Array).is_empty():
+		fails.append("骨架完成后应派 OPERATOR_NEXT 且无新标记")
+	# 武器三态:纯设计稿 / 扩槽 FIRST / NEXT
+	var wp := CardSchema.make_default(CardSchema.TYPE_WEAPON, "wp_probe_tmpl")
+	wp["name"] = "模板探针枪"
+	wp["slot"] = 0
+	r = PromptBuilder.build(wp, {})
+	if str(r["template"]) != "WEAPON_DESIGN":
+		fails.append("slot=0 应派 WEAPON_DESIGN,实际 %s" % str(r["template"]))
+	wp["slot"] = 6
+	r = PromptBuilder.build(wp, {"slot6_refactor_done": false})
+	if str(r["template"]) != "WEAPON_FIRST":
+		fails.append("slot>5 且未重构应派 WEAPON_FIRST,实际 %s" % str(r["template"]))
+	if not (r["set_flags"] as Array).has("slot6_refactor_done"):
+		fails.append("WEAPON_FIRST 应回传 slot6_refactor_done 标记")
+	r = PromptBuilder.build(wp, {"slot6_refactor_done": true})
+	if str(r["template"]) != "WEAPON_NEXT":
+		fails.append("重构后应派 WEAPON_NEXT,实际 %s" % str(r["template"]))
+	# 近战分支(未做过近战 → 模板附带近战段与标记)
+	wp["slot"] = 2
+	wp["kind"] = "melee"
+	r = PromptBuilder.build(wp, {"melee_branch_done": false})
+	if not (r["set_flags"] as Array).has("melee_branch_done"):
+		fails.append("近战卡应回传 melee_branch_done 标记")
+	# 公共骨架:每份提示词都必须含 id / 完成标记 / 提交纪律(git)
+	for card in [op, wp]:
+		var p := str(PromptBuilder.build(card, {"operator_skeleton_done": true, "slot6_refactor_done": true, "melee_branch_done": true})["prompt"])
+		if not p.contains(str(card["id"])):
+			fails.append("%s 提示词缺自身 id" % str(card["id"]))
+		if not p.contains("CARD-DONE"):
+			fails.append("%s 提示词缺 CARD-DONE 回报约定" % str(card["id"]))
+		if not p.contains("git"):
+			fails.append("%s 提示词缺提交纪律段" % str(card["id"]))
+
+
+func _check_cli_bat(fails: Array[String]) -> void:
+	var bat := PromptBuilder.build_cli_bat("C:/repo", "C:/p.md", "C:/l.log", "--allowed-tools \"Read\"")
+	for needle in ["claude -p", "--permission-mode acceptEdits", PromptBuilder.HEAD_MARK, "< \"C:/p.md\"", "> \"C:/l.log\"", "setlocal enabledelayedexpansion", "cd /d \"C:/repo\""]:
+		if not bat.contains(needle):
+			fails.append("bat 启动器缺关键片段:%s" % needle)
+	if not bat.contains("\r\n"):
+		fails.append("bat 启动器必须 CRLF 换行")
+	# 全自动档位:permission-mode 被替换而非追加
+	var bat2 := PromptBuilder.build_cli_bat("C:/repo", "C:/p.md", "C:/l.log", "", "bypassPermissions")
+	if not bat2.contains("--permission-mode bypassPermissions") or bat2.contains("acceptEdits"):
+		fails.append("bypassPermissions 档位未正确替换 acceptEdits")
