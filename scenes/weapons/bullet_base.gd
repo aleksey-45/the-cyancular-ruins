@@ -93,13 +93,12 @@ func _physics_process(delta: float) -> void:
 			hit.hurt(hit_damage, velocity_vec, hit_impact)
 			queue_free()
 		else:
-			# 撞墙:可破坏(树叶/树干)→ 扣血;不可破坏墙 → 子弹消失。延迟销毁确保破坏回调跑完。
-			# PvP 视觉子弹副本(apply_damage=false)不裁决伤害,也不准拆本地瓦片:
-			# 若在此拆,客户端 grid/子格会跑在服务器权威之前——双方随机散布/瞄准时点不同,
-			# 客户端常拆掉服务器从未破坏的树叶 → 本地看着是缺口、服务器那侧碰撞还在(幽灵墙)。
-			# 拆墙一律只由服务器 tile_destroyed 事件驱动客户端刷新。
-			if apply_damage:
-				_damage_tile_at(col.get_position(), col.get_normal())
+			# 撞墙:可破坏(树叶/树干)→ 播受击碎片 + (权威侧)扣血;不可破坏墙 → 子弹消失。
+			# 延迟销毁确保破坏回调跑完。
+			# PvP 视觉子弹副本(apply_damage=false)也走这里——只播碎片(即时命中反馈),
+			# 但 damage_tile 只在 apply_damage(权威侧)执行,客户端绝不自拆本地瓦片(幽灵墙纪律,
+			# 拆墙渲染只由服务器 tile_destroyed 事件驱动刷新)。
+			_damage_tile_at(col.get_position(), col.get_normal())
 			set_physics_process(false)
 			velocity_vec = Vector2.ZERO
 			get_tree().create_timer(0.05).timeout.connect(queue_free)
@@ -132,7 +131,9 @@ func _wrap() -> void:
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
-# 撞墙处理:若该格可子弹破坏(树叶/树干)则扣血 + 受击粒子;破坏后变空气(Level0 刷新渲染/碰撞)。
+# 撞墙处理:命中可子弹破坏的格(树叶/树干)→ 播受击碎片(无条件,单机/PvP 视觉副本同款即时反馈);
+# damage_tile 扣血只在权威侧(apply_damage=true)执行,破坏后变空气(Level0 刷新渲染/碰撞)。
+# 视觉副本(apply_damage=false)只播碎片、绝不拆本地 grid——拆墙渲染由服务器 tile_destroyed 事件驱动。
 func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
@@ -149,8 +150,9 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 		if v != 0:
 			var tex: int = v / 16
 			if TileDefs.bullet_destroyable(tex):
-				TileDefs.damage_tile(cell, hit_damage, "bullet")
-				TileHitFx.spawn(get_viewport(), pos, tex)
+				TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
+				if apply_damage:
+					TileDefs.damage_tile(cell, hit_damage, "bullet")
 			return
 
 func _direct_hit(hit: Node) -> void:
