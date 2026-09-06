@@ -133,11 +133,15 @@ const SERVER_INTERP_RATE := 30.0     # 紧跟踪服务器位置(60Hz 快照下�
 func set_server_rendered(enabled: bool) -> void:
 	server_rendered = enabled
 
-# PvP COUNTDOWN 冻结:锁住本地武器开火查询(避免倒计时里打空枪)。
-# 移动冻结由服务器权威(不喂输入)完成,本地玩家是服务器渲染、自然不动。
+# PvP COUNTDOWN/局间冻结:锁住本地玩家输入——武器开火查询 + (C2 预测下)移动。
+# 服务器渲染路径:本地玩家不跑物理,锁开火即可,移动本就由快照跟随;
+# C2 预测路径(engine 自步进读真实输入):只锁开火不够——必须把输入源一并冻结,
+# 否则本地预测在服务器权威冻结的倒计时里照常移动,PLAYING 起 ack 跳变 → 大 rollback。
 var _controls_locked := false
 func set_controls_locked(locked: bool) -> void:
 	_controls_locked = locked
+	if input_source != null:
+		input_source.frozen = locked
 
 # PvP 客户端每帧喂服务器快照:存目标/姿态/朝向 + 权威采纳血量/防水/倒地。
 func apply_server_snapshot(data: Dictionary) -> void:

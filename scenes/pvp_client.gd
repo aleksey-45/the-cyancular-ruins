@@ -8,11 +8,18 @@ const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 # 根治:本地玩家不再本地跑移动物理,位置/姿态/朝向由快照插值(与远端副本同款),
 #      只保留鼠标瞄准/开火/受击反馈等本地视觉。服务器是唯一真相,天然无回拉。
 #
-# C2(客户端预测 rollback)开关:阶段4 rollback 接入前保持 false → 上面这条服务器渲染路径。
-# 复盘见 docs/pvp-c2-retrospective.md;推进按其中 P1-P7 与计划文件阶段走。
-const LOCAL_PREDICTION_ENABLED := false
-var _input_seq := 0   # 本地每物理帧单调的输入序号(rollback ack 用;阶段3 起服务器消费)
+# C2(客户端预测 rollback)开关:true=本地玩家跑本地预测 + PredictionRollback 权威锚定重放;
+# false=回落上面这条服务器渲染路径(保底)。复盘见 docs/pvp-c2-retrospective.md(P1-P7)。
+# 2026-09-06 使能:服务器 FIFO/ack 已落地、控制器 + reconcile/twin 冒烟全绿、COUNTDOWN 冻结已补。
+const LOCAL_PREDICTION_ENABLED := true
+var _input_seq := 0   # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
 var _last_snap_tick := 0
+# C2(开关开):本地玩家跑全量本地 sim 预测 + PredictionRollback 权威锚定重放(见 core/prediction_rollback.gd)。
+# 变体 B:不 set_server_rendered、引擎照常自步进(读真实 Input,aim/手感=单机);
+# 本客户端每帧在玩家步进前 reconcile,并把每 tick 的预测整态/输入记录喂给控制器。
+var _rollback = null
+var _have_prev_seq := false
+var _prev_sent_seq := 0
 
 var _local: Node2D = null
 var _remote_replica: Node2D = null
@@ -48,6 +55,11 @@ func _ready() -> void:
 	# C2(阶段4)开启后:本地玩家跑全量本地 sim 预测,由 pvp_client 接 rollback。
 	if not LOCAL_PREDICTION_ENABLED and _local.has_method("set_server_rendered"):
 		_local.set_server_rendered(true)
+	elif LOCAL_PREDICTION_ENABLED:
+		# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从快照 ack_seq/c2 喂入。
+		if _rollback == null:
+			_rollback = PredictionRollback.new()
+		_rollback.bind(_local)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
@@ -82,6 +94,12 @@ func _physics_process(_delta: float) -> void:
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
 		NetBus.send_ping()
+	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
+	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
+	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+		if _have_prev_seq:
+			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
+			_rollback.reconcile()
 	var src: InputSource = _local.input_source
 	# 位映射:NetworkInputSource 的常量(输入包协议与服务器共用)
 	const UP := NetworkInputSource.BIT_UP
@@ -125,6 +143,10 @@ func _physics_process(_delta: float) -> void:
 		"aim": aim,
 	}
 	NetBus.rpc_id(1, "send_input", pkt)
+	_prev_sent_seq = _input_seq
+	_have_prev_seq = true
+	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 func _on_snapshot(snap: Dictionary) -> void:
 	if _local == null:
@@ -139,7 +161,14 @@ func _on_snapshot(snap: Dictionary) -> void:
 		var role := int(role_str)
 		var data: Dictionary = players_snap[role_str]
 		if role == PvpSession.role:
-			_apply_local_state(data)
+			if LOCAL_PREDICTION_ENABLED and _rollback != null:
+				# C2:权威整态/ack 喂控制器(reconcile 在下一帧步进前处理)
+				var ack := int(data.get("ack_seq", 0))
+				var c2: Dictionary = data.get("c2", {})
+				if not c2.is_empty():
+					_rollback.on_authoritative(ack, c2)
+			else:
+				_apply_local_state(data)
 		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
 			_remote_replica.apply_snapshot(data, _local.global_position, snap_tick)
 	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)

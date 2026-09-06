@@ -41,16 +41,23 @@
 ## 3. 重试 C2 的硬前提(checklist,做不到就别上)
 
 > 以下任意一条不满足,新的 C2 会以同样的方式死掉。重试前逐条打勾。
+> 状态(2026-09-06):P1/P2/P5 已落地并有冒烟钉死;P3/P4/P6/P7 已按实现落实,尚欠「真机联调」最终验收。
 
-- [ ] **P1 输入包带序号** + 快照带 tick(快照已带)。客户端能算"服务器已确认到哪个输入/哪一帧状态"。
-- [ ] **P2 校正 = 权威锚定 + 未确认输入重放**(rollback to last acked + re-simulate buffered inputs),
-      或等价物;禁止"定期往服务器位置拉"的橡皮筋式校正作为主机制。
-- [ ] **P3 孪生保真**:player.gd + 全部子组件(climb/swim/combat/weapon)的**每一个**输入/鼠标/随机读口
-      都走注入源;服务器进程禁止触碰全局 `Input`/鼠标。加一个"服务器上全局输入全零仍能正确模拟"的守卫。
-- [ ] **P4 确定性**:两端同帧时序;物理/数值路径禁 `randf` 差异(子弹散射等必须确定性种子或仅视觉端掷定)。
-- [ ] **P5 孪生冒烟**:同一输入轨迹喂客户端模拟与服务器模拟,断言每帧收敛(先于任何真机对打)。
-- [ ] **P6 阈值从物理量推**:允许的分歧 = 速度×RTT + 引擎容差 + 输入到达抖动;不接受拍脑袋常数。
-- [ ] **P7 环面纪律**:校正/重放全程 canonical + `toroidal_delta_px` 最短向量,绝不 naive set canonical。
+- [x] **P1 输入包带序号** + 快照带 tick + `ack_seq`:输入包带单调 `seq`;服务器每物理 tick 恰好消费 1 个 FIFO 包并回带 ack;快照带 tick 序号(乱序丢弃)。落地:`match_host._ack_seq`/FIFO + `pvp_match_smoke` 断言 ack 推进。
+- [x] **P2 校正 = 权威锚定 + 未确认输入重放**(rollback to last acked + re-simulate buffered inputs):
+      不做橡皮筋拉拢。落地:`core/prediction_rollback.gd`(`on_authoritative` 到期 → 分歧则 `restore_state` + 按 `_inputs` 重放);`pvp_reconcile_smoke` 注入外部传送断言一次性 rollback 收敛。
+- [ ] **P3 孪生保真**(已按实现落实,无自动守卫):player.gd + climb/swim/combat/weapon 的输入读口
+      已全部走注入源(swim/climb/weapon 注入重构先于本重试落地);武器瞄准经 `input_is_network` 分叉,
+      服务器永不读全局 Input。缺:一处"全局输入全零仍能正确模拟"的守卫冒烟。
+- [ ] **P4 确定性**(已按实现落实,火力路径欠测):同一 Player.tscn、同 1/60 物理步、输入走注入源;
+      玩家状态整态(影响判定的 pos/vel/姿态/血/武器冷却)不含 randf;子弹散射 randf 只落视觉/权威侧。
+      缺:`twin/reconcile` 冒烟均不开火(武器 0、无攻击位),火力下两端收敛未自动钉死。
+- [x] **P5 孪生冒烟**:同一输入轨迹喂 A/B 两端模拟断言收敛。落地:`pvp_twin_smoke`(capture/restore 完整性,
+      restore every 12 tick 仍逐 tick 收敛)+ `pvp_reconcile_smoke`(权威/预测 + 人工 ack 延迟 + 外部事件)。
+- [ ] **P6 阈值从物理量推**(现状为经验容差):`_close_enough` 用 pos 1px/vel 20 拍脑袋常数,但 reconcile 冒烟
+      D=8 下事件前 dev 恒 <1px 支撑该容差。欠:按"速度×RTT+抖动"从物理量推导 + 真机抖动验证。
+- [x] **P7 环面纪律**:capture/restore/重放全程 canonical(两端同 Player 物理自带 wrap_to_range),无 naive
+      set canonical 拉拢;渲染/副本插值已有 `toroidal_delta_px` 最短向量纪律(见 CLAUDE.md)。
 
 ## 4. 为何放弃"服务器渲染"这条现成的路不在讨论内
 

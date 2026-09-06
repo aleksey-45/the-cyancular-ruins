@@ -18,6 +18,9 @@ const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
 var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
+# C2 rollback:每物理 tick 恰好消费一个输入包(FIFO),role -> 刚消费包的 seq(ack)。
+# 客户端据 ack 锚定"服务器已确认到哪一输入",重放 seq>ack 的本地输入——1:1 同序,无 tick 映射漂移。
+var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入包 seq
 
 # ── PvPvE 中立鸟:服务器权威模拟,位置 canonical,快照+spawn/died 事件同步 ──
 # 发布开关:true=对局生成中立鸟;false=暂时不上鸟(PvP 纯净 1v1)。鸟代码保留,需要时翻回 true。
@@ -92,9 +95,9 @@ func _ready() -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-			# 缓冲本帧到达的包,下一物理帧开头统一应用:
-			#   held/axis 取最新(覆盖,服务器紧跟客户端不滞后);
-			#   just_pressed 边沿累积(|=),不丢抓梯/跳跃/开火边沿(这是服务器模拟与客户端脱节的根因)。
+			# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个(见 _physics_process):
+			# 1 包/ tick → 服务器权威模拟与客户端"重放未确认输入"1:1 同序(C2 rollback 需要,
+			# 见 docs/pvp-c2-retrospective.md P1)。held/axis 由被消费的那包决定,边沿不丢。
 			if not _pending_input.has(role):
 				_pending_input[role] = []
 			(_pending_input[role] as Array).append(pkt)
@@ -102,7 +105,9 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 
 func _physics_process(delta: float) -> void:
 	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
-	# 先清上一物理帧已读的边沿,再把本帧缓冲的包统一应用(held 最新、边沿累积)。
+	# 每 tick 每 role 恰好消费一个 FIFO 包(最早的)→ 权威模拟与客户端重放 1:1 同序;
+	# 队列空 = 缺包,沿用上一包 held/轴(NetworkInputSource.clear_edges 不清 held)。
+	# ack = 刚消费包的 seq(快照回带,客户端 rollback 锚点)。
 	for role in input_sources:
 		var src: NetworkInputSource = input_sources[role]
 		src.clear_edges()
@@ -112,10 +117,12 @@ func _physics_process(delta: float) -> void:
 			# 玩家站在出生点不动(权威冻结;客户端是服务器渲染,自然跟随)。
 			if _round_state == RoundState.COUNTDOWN:
 				q.clear()
+				src.reset_state()   # 连 held/axis 一起清,防上一包方向让服务器玩家在冻结期漂移(C2 分歧源)
 				continue
-			for pkt in q:
+			if not q.is_empty():
+				var pkt: Dictionary = q.pop_front()
 				src.apply_packet(pkt)
-			q.clear()
+				_ack_seq[role] = int(pkt.get("seq", _ack_seq.get(role, 0)))
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
 	_adjudicate_bullets()
@@ -246,6 +253,11 @@ func _broadcast_snapshot() -> void:
 		var previewing := false
 		if p.weapons != null and p.weapons.current_weapon() != null:
 			previewing = p.weapons.current_weapon().is_previewing()
+		# C2 rollback:快照带 ack_seq(服务器已消费到哪一输入)+ 权威整态(capture_state,替代上面散字段;
+		# 旧字段保留给服务器渲染/副本/阶段切换兼容)。
+		var c2 := {}
+		if p.has_method("capture_state"):
+			c2 = p.capture_state()
 		snap["players"][str(role)] = {
 			"pos": p.global_position,
 			"vel": p.velocity,
@@ -257,6 +269,8 @@ func _broadcast_snapshot() -> void:
 			"downed": p.is_downed(),
 			"aim": p.get_current_aim_dir(),
 			"previewing": previewing,
+			"ack_seq": _ack_seq.get(role, 0),
+			"c2": c2,
 		}
 	# 中立鸟:canonical 位置 + 当前动画名 + 朝向(副本照播;死亡由 enemy_died 事件移除)
 	var birds_snap := {}
