@@ -27,14 +27,19 @@
 
 **命令行**(推荐,一条命令):
 ```bash
-"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless \
-  --path E:\Workspace\godot\the-cyancular-ruins \
-  --export-release "Windows Desktop" "E:\Workspace\godot\the-cyancular-ruins\The Cyancular Ruins.exe"
+python tools/build_release.py                      # 客户端+服务端+服务端打回控制台+时间戳归档,一键全做
 ```
 
-> 一键打包(客户端 + 服务端并把服务端打回控制台 + 自动时间戳归档):`python tools/build_release.py`。
->
-> **发布归档命名习惯**:每次导出的成品按时间戳归档到 `builds/`,文件名 = `<原名> <YYYYMMDDHHMM>.exe`(如 `The Cyancular Ruins 202609062126.exe`、`Cyancular Ruins Server 202609062126.exe`);**根目录只保留两个固定名 exe**(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`,固定名=当前最新版,给 start_server.bat / 立即测试用)。`builds/` 不入库(gitignore 已配)。`build_release.py` 每次导完自动归档一份时间戳副本;想用别的历史名可 `python tools/build_release.py --stamp 202609062126`。手动重导出(下方命令行)只更新固定名,归档请另跑 `tools/archive_build.py`(见 §1.5)或手动复制。
+> 只想手动重导出(不开一键脚本)时,按序做:**① 导客户端** → **② 导服务端** → **③ 服务端打回 CONSOLE** → **④ 归档**(见 §1.5):
+> ```bash
+> "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
+> "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Dedicated Server" "Cyancular Ruins Server.exe"
+> python tools/make_server_console.py "Cyancular Ruins Server.exe"   # ③ 必须做:否则双击服务端无控制台(看不见日志)
+> python tools/archive_build.py                                       # ④ 可选,按时间戳归档
+> ```
+> **⚠️ 服务端 exe 导出一出来就是 GUI 子系统(双击后台静默、无控制台)**——`make_server_console.py` 这步**不能漏**。漏了 = 双击服务端没窗口、以为没起来(2026-09-06 已踩坑)。`build_release.py` 自动做 ①②③④,不会漏。
+
+> **发布归档命名习惯**:每次导出的成品按时间戳归档到 `builds/`,文件名 = `<原名> <YYYYMMDDHHMM>.exe`(如 `The Cyancular Ruins 202609062126.exe`、`Cyancular Ruins Server 202609062126.exe`);**根目录只保留两个固定名 exe**(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`,固定名=当前最新版,给 start_server.bat / 立即测试用)。`builds/` 不入库(gitignore 已配)。`build_release.py` 每次导完自动归档一份时间戳副本;想用别的历史名可 `python tools/build_release.py --stamp 202609062126`。手动重导出(上方命令行)只更新固定名,归档请另跑 `tools/archive_build.py`(见 §1.5)或手动复制。
 
 > **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云/防火墙需放行 **7777 与 7800~7999 的 UDP**;局域网/本机不受限。
 
