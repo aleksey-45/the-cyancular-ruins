@@ -273,22 +273,27 @@ func _build_sp_panel() -> PanelContainer:
 	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 14)
-	vb.custom_minimum_size = Vector2(560, 0)
+	vb.custom_minimum_size = Vector2(660, 0)
 	panel.add_child(vb)
 
 	vb.add_child(_pixel_label("—— 单人开局 ——", 44, Color(0.6, 0.95, 1.0)))
 	vb.add_child(_pixel_label("禁用武器(勾选 = 本局不可用)", 26))
 
-	var checks: Array[CheckButton] = []
+	var checks: Array = []
+	# 2 列网格 + 定尺寸剪影(与 1v1/大乱斗选择面板同款排版)
+	var wgrid := GridContainer.new()
+	wgrid.columns = 2
+	wgrid.add_theme_constant_override("h_separation", 10)
+	wgrid.add_theme_constant_override("v_separation", 6)
+	vb.add_child(wgrid)
 	for slot in [1, 2, 3, 4, 5]:
-		var cb := CheckButton.new()
-		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
-		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
-		cb.expand_icon = false
-		_style_control(cb, 26)
+		var cell := WeaponComponent.make_weapon_check(slot, Settings.sp_disabled_weapons.has(slot),
+				24, func(on: bool) -> void: pass)
+		var cb: CheckButton = cell.get_meta("cb")
+		_style_control(cb, 24)
 		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)
 		checks.append(cb)
-		vb.add_child(cb)
+		wgrid.add_child(cell)
 
 	vb.add_child(_pixel_label("难度(影响敌人密度)", 26))
 	var diff_row := HBoxContainer.new()
