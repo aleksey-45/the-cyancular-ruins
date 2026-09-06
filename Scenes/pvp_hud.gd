@@ -23,6 +23,8 @@ var _center: CenterContainer
 var _big: Label          # 广播主文案(巨字)
 var _sub: Label          # 广播副文案(第几局/局胜比分)
 var _ping_label: Label
+var _kill_feed: RichTextLabel   # 击杀播报横幅(顶部居中,像素风)
+var _kill_feed_age := 0.0
 var _countdown := 0.0
 var _in_countdown := false
 
@@ -82,6 +84,36 @@ func _ready() -> void:
 	_score_label.text = ""
 	_set_broadcast(true, "对战开始", "第 1 局")
 
+	# ── 击杀播报:顶部居中,大标题同款像素风(青=击杀者,金=被击杀者,粗黑描边)──
+	_kill_feed = RichTextLabel.new()
+	_kill_feed.bbcode_enabled = true
+	_kill_feed.scroll_active = false
+	_kill_feed.anchor_left = 0.5
+	_kill_feed.anchor_right = 0.5
+	_kill_feed.offset_left = -500
+	_kill_feed.offset_right = 500
+	_kill_feed.offset_top = 24
+	_kill_feed.offset_bottom = 92
+	_kill_feed.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_kill_feed.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_kill_feed.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_kill_feed.add_theme_font_override("normal_font", load(FONT_PATH))
+	_kill_feed.add_theme_font_override("bold_font", load(FONT_PATH))
+	_kill_feed.add_theme_font_size_override("normal_font_size", 44)
+	_kill_feed.add_theme_font_size_override("bold_font_size", 44)
+	_kill_feed.add_theme_color_override("default_color", Color(0.92, 0.96, 1.0))
+	_kill_feed.add_theme_constant_override("outline_size", 12)
+	_kill_feed.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12, 0.95))
+	_kill_feed.visible = false
+	add_child(_kill_feed)
+
+# 击杀播报(实验性):kill_event → 顶部像素横幅,2.2s 后淡出
+func show_kill(killer: String, victim: String) -> void:
+	var clean := func(s: String) -> String: return s.replace("[", "")
+	_kill_feed.text = "[color=#8cf2ff]%s[/color]  击杀了  [color=#ffd76e]%s[/color]" % [clean.call(killer), clean.call(victim)]
+	_kill_feed.visible = true
+	_kill_feed_age = 0.0
+
 func _make_label(size: int, color: Color) -> Label:
 	var l := Label.new()
 	l.add_theme_color_override("font_color", color)
@@ -115,6 +147,14 @@ func _process(delta: float) -> void:
 		_big.text = str(maxi(ceili(_countdown), 1))
 	else:
 		_in_countdown = false
+	# 击杀播报淡出:2.2s 停留 + 0.5s 淡出
+	if _kill_feed != null and _kill_feed.visible:
+		_kill_feed_age += delta
+		if _kill_feed_age > 2.2:
+			_kill_feed.modulate.a = maxf(1.0 - (_kill_feed_age - 2.2) / 0.5, 0.0)
+			if _kill_feed.modulate.a <= 0.0:
+				_kill_feed.visible = false
+				_kill_feed.modulate.a = 1.0
 
 func _on_ping(ms: int) -> void:
 	_ping_label.text = "延迟 %d ms" % ms
