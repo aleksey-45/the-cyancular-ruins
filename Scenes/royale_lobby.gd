@@ -28,6 +28,7 @@ var _weapon_checks: Array[CheckButton] = []
 
 # ── 等待室 ──
 var _wait_panel: PanelContainer = null
+var _create_panel: PanelContainer = null   # 右列创建面板(进等待室时隐藏)
 var _wait_title: Label
 var _wait_players: VBoxContainer
 var _wait_count: Label
@@ -45,6 +46,9 @@ var _pending_go_port := -1
 
 
 func _ready() -> void:
+	# 根 Control 默认尺寸 0×0:居中面板(PRESET_CENTER)按零尺寸父级计算会飞到屏幕外
+	# (自检实测等待室在 (-320,-149));设满矩形锚点让根铺满 1920×1440 视口
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var bg := ColorRect.new()
 	bg.color = Color(0.07, 0.09, 0.13)
 	bg.size = get_viewport_rect().size
@@ -114,6 +118,7 @@ func _build_create_panel() -> void:
 	panel.position = Vector2(1000, 60)
 	panel.custom_minimum_size = Vector2(620, 0)
 	add_child(panel)
+	_create_panel = panel   # 成员引用:进等待室时隐藏、退房恢复
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 12)
 	panel.add_child(vb)
@@ -363,6 +368,8 @@ func _on_room_state(state: Dictionary) -> void:
 	_my_room = state
 	var my_role := _my_role_in(state)
 	_host = int(state.get("host_role", 0)) == my_role
+	if _create_panel != null:
+		_create_panel.visible = false   # 进等待室:隐藏右列创建面板(与等待室并存太挤)
 	if _wait_panel == null:
 		_build_wait_panel()
 	_wait_panel.visible = true
@@ -396,9 +403,6 @@ func _my_role_in(state: Dictionary) -> int:
 
 func _build_wait_panel() -> void:
 	_wait_panel = PanelContainer.new()
-	_wait_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_wait_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_wait_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 14)
 	vb.custom_minimum_size = Vector2(640, 0)
@@ -434,6 +438,10 @@ func _build_wait_panel() -> void:
 	leave.pressed.connect(_on_leave_room)
 	vb.add_child(leave)
 	add_child(_wait_panel)
+	# 居中锚点必须在入树之后设置:未入树时父级尺寸为 0,面板会飞到屏幕左上角外(自检实测)
+	_wait_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_wait_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_wait_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 
 func _on_leave_room() -> void:
 	NetBusExt.rpc_id(1, "royale_leave")
@@ -441,6 +449,8 @@ func _on_leave_room() -> void:
 	_my_room = {}
 	if _wait_panel != null:
 		_wait_panel.visible = false
+	if _create_panel != null:
+		_create_panel.visible = true   # 退房恢复创建面板
 	_request_list.call_deferred("已退出房间")
 
 

@@ -39,15 +39,15 @@ func _ready() -> void:
 	layer = LAYER
 	_my_name = PvpSession.player_name
 
-	# ── 左上角排行榜(半透明底 + VBox 行) ──
+	# ── 排行榜(右上角、击杀计数下方;血条在左上角,不重叠)──
 	_board_bg = ColorRect.new()
 	_board_bg.color = Color(0.0, 0.0, 0.0, 0.4)
-	_board_bg.position = Vector2(16, 16)
+	_board_bg.position = Vector2(1920 - 480 - 16, 96)
 	_board_bg.size = Vector2(480, 64)
 	_board_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_board_bg)
 	_board_vbox = VBoxContainer.new()
-	_board_vbox.position = Vector2(28, 22)
+	_board_vbox.position = Vector2(1920 - 480 - 4, 102)
 	_board_vbox.custom_minimum_size = Vector2(456, 0)
 	_board_vbox.add_theme_constant_override("separation", 4)
 	_board_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
