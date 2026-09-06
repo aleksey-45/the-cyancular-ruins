@@ -408,6 +408,10 @@ func set_facing(v: int) -> void:
 func is_downed() -> bool:
 	return combat.is_downed()
 
+# 是否冲刺中(武器判断用):冲刺锁身体朝向(见 set_facing),但枪口应保持鼠标瞄准侧不跟随翻转。
+func is_charging() -> bool:
+	return is_charge
+
 func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
