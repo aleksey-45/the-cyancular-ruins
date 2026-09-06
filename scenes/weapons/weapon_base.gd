@@ -281,7 +281,9 @@ func _auto_aim() -> void:
 		# 冲刺时 player.set_facing 被锁(身体保持冲刺方向,位移需要);此时枪口**不跟随身体翻转**,
 		# 保持鼠标瞄准侧(_aim_facing/本帧 facing)。非冲刺:set_facing 成功、身体已翻到瞄准侧,
 		# get_facing() 读回一致,无差异。
-		var charging := player.has_method("is_charging") and player.is_charging()
+		var charging := false
+		if player.has_method("is_charging"):
+			charging = bool(player.is_charging())
 		if not charging:
 			facing = get_facing()
 	_current_aim_facing = facing
