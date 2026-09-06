@@ -137,9 +137,9 @@ func _begin_match() -> void:
 		# 服务器权威规则项以房主(role1)选项为准(经 NetBusExt 上报;缺省=全默认)
 		_host = RoomManager.start_match_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	add_child(_host)
-	# AI 补位昵称进 peer_info(客户端头顶显示);颜色缺省
+	# AI 补位昵称:唯一名 + -computer 后缀(排行榜/头顶显示,地位与真人等同)
 	for ai_r in _ai_roles:
-		_claim_names[int(ai_r)] = "电脑玩家"
+		_claim_names[int(ai_r)] = "电脑玩家%d-computer" % int(ai_r)
 	# 昵称走原版 peer_info(兼容);颜色走扩展 peer_hues
 	for r in _claims:
 		NetBus.rpc_id(_claims[r], "peer_info", _claim_names)

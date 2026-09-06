@@ -238,13 +238,17 @@ func _match_winner() -> int:
 func _broadcast_round_state() -> void:
 	var names := {}
 	var alive := {}
-	# 在房玩家 + 已离开者都保留昵称行(离开玩家在排行榜标「离开」,原 M4:整行消失)
+	# 昵称行覆盖:真人(peer_by_role)+ 已离开者 + **AI 补位(players 里无 peer 的 role)**
+	# AI 此前没进排行榜,因为 names 只遍历 peer_by_role(真人)
 	for role in peer_by_role:
 		names[int(role)] = _display_names.get(int(role), "玩家%d" % int(role))
+	for role in players:
+		if not names.has(int(role)):
+			names[int(role)] = _display_names.get(int(role), "玩家%d" % int(role))
 	for role in _left:
 		if not names.has(int(role)):
 			names[int(role)] = _display_names.get(int(role), "玩家%d" % int(role))
-	# alive=未倒地(倒地者 HUD 显示「复活中」,原 M4:恒 true 不可达)
+	# alive=未倒地(倒地者 HUD 显示「复活中」,原 M4:恒 true 不可达);AI 同样参与
 	for role in players:
 		var p: Node2D = players[role]
 		alive[int(role)] = is_instance_valid(p) and not p.is_downed()

@@ -24,6 +24,7 @@ var _elapsed := 0.0
 var _result_written := false
 var _room_written := false
 var _started_sent := false
+var _names_logged := false
 var _ai_fill := "--ai-fill" in OS.get_cmdline_user_args()
 
 func _ready() -> void:
@@ -127,6 +128,9 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
+	if not _names_logged and data.has("names"):
+		_names_logged = true
+		print("BOT[%d]: 排行榜昵称 %s" % [_index, str(data.get("names", {}))])
 	if int(data.get("match_winner", -1)) >= 0:
 		_winner_seen = true
 	if data.has("scores"):
