@@ -17,6 +17,7 @@ var _axis := 0.0
 var _held := 0
 var _aim := Vector2.ZERO   # 注入的瞄准方向(世界坐标系)
 var _weapon := 0
+var _reload_req := false   # 换弹请求边沿(实验性;玩家消费一次即清)
 var _pressed := 0          # 累积的 just_pressed 边沿(玩家读取,MatchHost 每帧末清除)
 var _released := 0         # 累积的 just_released 边沿
 
@@ -30,12 +31,21 @@ func apply_packet(pkt: Dictionary) -> void:
 		_weapon = w
 	_pressed |= pkt.get("pressed", 0)
 	_released |= pkt.get("released", 0)
+	if bool(pkt.get("rl", false)):
+		_reload_req = true
+
+# 换弹请求边沿(实验性):玩家消费一次即清
+func consume_reload_request() -> bool:
+	var v := _reload_req
+	_reload_req = false
+	return v
 
 # 每帧末清除已消费边沿与切枪(玩家 _physics_process 之后)。held/axis/aim 保留(缺包沿用)。
 func clear_edges() -> void:
 	_pressed = 0
 	_released = 0
 	_weapon = 0
+	_reload_req = false
 
 func get_axis(neg: String, pos: String) -> float:
 	# 垂直轴由 held 位推导:输入包只传水平 ax,up/down 已并入 held 位掩码。

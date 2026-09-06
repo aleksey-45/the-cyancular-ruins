@@ -127,6 +127,8 @@ func _physics_process(_delta: float) -> void:
 	var net_slot: int = _local.weapons.consume_net_slot()
 	if net_slot > 0:
 		pkt["weapon"] = net_slot
+	# 换弹请求(实验性):R 边沿随包上行,服务器权威玩家消费
+	pkt["rl"] = src.is_action_just_pressed("R") or Input.is_action_just_pressed("R")
 	NetBus.rpc_id(1, "send_input", pkt)
 
 func _on_snapshot(snap: Dictionary) -> void:

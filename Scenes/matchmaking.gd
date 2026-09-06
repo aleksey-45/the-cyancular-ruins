@@ -134,24 +134,23 @@ func _build_options_panel() -> void:
 		Settings.pvp_minimap_show_enemy = on
 		Settings.save()))
 
-	# 禁用武器(房主生效)
+	# 禁用武器(房主生效):2 列网格 + 定尺寸剪影(横排会溢出屏幕)
 	vb.add_child(_opt_label("禁用武器(房主生效):", 24))
-	var wrow := HBoxContainer.new()
-	wrow.add_theme_constant_override("separation", 6)
-	vb.add_child(wrow)
+	var wgrid := GridContainer.new()
+	wgrid.columns = 2
+	wgrid.add_theme_constant_override("h_separation", 10)
+	wgrid.add_theme_constant_override("v_separation", 6)
+	vb.add_child(wgrid)
 	for slot in [1, 2, 3, 4, 5]:
-		var cb := CheckButton.new()
-		cb.text = "%d %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
-		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
-		cb.button_pressed = Settings.pvp_disabled_weapons.has(slot)
-		cb.add_theme_font_size_override("font_size", 24)
-		cb.toggled.connect(func(on: bool) -> void:
-			if on and not Settings.pvp_disabled_weapons.has(slot):
-				Settings.pvp_disabled_weapons.append(slot)
-			elif not on:
-				Settings.pvp_disabled_weapons.erase(slot)
-			Settings.save())
-		wrow.add_child(cb)
+		var slot := slot
+		var cell := WeaponComponent.make_weapon_check(slot, Settings.pvp_disabled_weapons.has(slot),
+				24, func(on: bool) -> void:
+				if on and not Settings.pvp_disabled_weapons.has(slot):
+					Settings.pvp_disabled_weapons.append(slot)
+				elif not on:
+					Settings.pvp_disabled_weapons.erase(slot)
+				Settings.save())
+		wgrid.add_child(cell)
 
 	# 角色颜色(色相 0-360,即选即用,双方各自染自己)
 	var crow := HBoxContainer.new()

@@ -146,6 +146,10 @@ func apply_server_snapshot(data: Dictionary) -> void:
 	var wslot := int(data.get("weapon", 0))
 	if wslot > 0 and wslot != weapons.current_slot_int():
 		weapons.equip(str(wslot))
+	# 换弹(实验性):镜像服务器权威弹夹状态到本地当前武器(HUD/开火闸共用)
+	var mag := int(data.get("mag", -1))
+	if mag >= 0 and weapons.current_weapon() != null:
+		weapons.current_weapon().set_net_reload(mag, bool(data.get("rl", false)))
 	var hp := int(data.get("hp", self.hp))
 	var wp := int(data.get("waterproof", waterproof))
 	var downed := bool(data.get("downed", combat.is_downed()))

@@ -82,13 +82,16 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 @export var preview_time: float = 0.5
 
 # ── 换弹(实验性玩法):Settings.reload_enabled 关闭 = 旧版无限弹 ──
-# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。
+# 状态归属:单机/服务器权威玩家 = 本地模拟(自动扣弹/换弹计时);
+# PvP 客户端本地玩家(服务器渲染)= 镜像模式——弹夹/换弹状态由快照写入
+# (apply_server_snapshot → set_net_reload),fire() 按镜像状态闸门,不本地模拟。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
 var _reloading := false
 var _reload_t := 0.0
 var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
+var _net_reloading := false           # 镜像模式:服务器下发的换弹状态
 
 # 换弹动画:进度 0→1 期间枪口下压再回位(sin 包络),中段带机械微抖。
 # 作用于精灵局部坐标(换弹下压),与根节点的瞄准旋转/镜像互不干扰。
@@ -96,7 +99,19 @@ const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
 const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
 
 func reload_active() -> bool:
-	return Settings.reload_enabled and not Level0.pvp_mode
+	return Settings.reload_enabled
+
+# 该武器实例是否本地模拟换弹(false = PvP 客户端镜像,状态由快照驱动)
+func _reload_sim_local() -> bool:
+	if not Level0.pvp_mode:
+		return true
+	return not (player != null and bool(player.get("server_rendered")))
+
+# 镜像模式:由 apply_server_snapshot 写入服务器权威状态
+func set_net_reload(mag: int, reloading: bool) -> void:
+	mag_ammo = clampi(mag, 0, mag_size)
+	_net_reloading = reloading
+	_reloading = reloading
 
 func is_reloading() -> bool:
 	return _reloading
@@ -192,8 +207,9 @@ func _process(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
-	# 换弹计时:完成后上满弹夹(上膛轻音提示)
-	if _reloading:
+	# 换弹计时:仅本地模拟模式(单机/服务器权威玩家)走本地计时;
+	# PvP 客户端镜像模式的状态由快照写入(_reloading 由服务器权威驱动)
+	if _reloading and _reload_sim_local():
 		_reload_t -= delta
 		if _reload_t <= 0.0:
 			_reloading = false
@@ -235,12 +251,16 @@ func try_fire() -> void:
 func fire() -> void:
 	if not _player_ok():
 		return
-	# 换弹(实验性):装填中不可开火;空弹夹自动换弹
+	# 换弹(实验性):装填中不可开火;空弹夹自动换弹。
+	# 镜像模式(PvP 客户端):状态由快照驱动,只读闸门不本地模拟。
 	if reload_active():
 		if _reloading:
 			return
-		if mag_ammo <= 0:
-			start_reload()
+		if _reload_sim_local():
+			if mag_ammo <= 0:
+				start_reload()
+				return
+		elif mag_ammo <= 0:
 			return
 	fire_cd_timer = fire_cooldown
 	# 开火瞬间同步朝向/枪口到鼠标:直接开火(_unhandled_input, input 阶段)先于 _process,
@@ -265,8 +285,9 @@ func fire() -> void:
 		get_viewport().add_child(b)
 	# 8bit 音效:重武器(预瞄)/霰弹/普通枪三种音色
 	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
-	# 换弹(实验性):每次开火消耗一发,打空自动换弹
-	if reload_active():
+	# 换弹(实验性):仅本地模拟模式扣弹(镜像模式的弹夹由服务器快照镜像);
+	# 打空自动换弹
+	if reload_active() and _reload_sim_local():
 		mag_ammo = maxi(mag_ammo - 1, 0)
 		if mag_ammo == 0:
 			start_reload()

@@ -156,23 +156,25 @@ func _build_create_panel() -> void:
 	mrow.add_child(_max_label)
 
 	vb.add_child(_label("禁用武器(房主生效,开局带进对局):", 24))
-	var wrow := HBoxContainer.new()
-	wrow.add_theme_constant_override("separation", 6)
-	vb.add_child(wrow)
+	# 2 列网格 + 定尺寸剪影(横排会溢出屏幕)
+	var wgrid := GridContainer.new()
+	wgrid.columns = 2
+	wgrid.add_theme_constant_override("h_separation", 10)
+	wgrid.add_theme_constant_override("v_separation", 6)
+	vb.add_child(wgrid)
 	for slot in [1, 2, 3, 4, 5]:
-		var cb := CheckButton.new()
-		cb.text = "%d %s" % [slot, WEAPON_NAMES[slot]]
-		cb.set_meta("slot", slot)
-		cb.button_pressed = Settings.pvp_disabled_weapons.has(slot)
-		cb.add_theme_font_size_override("font_size", 22)
-		cb.toggled.connect(func(on: bool) -> void:
-			if on and not Settings.pvp_disabled_weapons.has(slot):
-				Settings.pvp_disabled_weapons.append(slot)
-			elif not on:
-				Settings.pvp_disabled_weapons.erase(slot)
-			Settings.save())
+		var slot_i := slot
+		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
+				22, func(on: bool) -> void:
+				if on and not Settings.pvp_disabled_weapons.has(slot_i):
+					Settings.pvp_disabled_weapons.append(slot_i)
+				elif not on:
+					Settings.pvp_disabled_weapons.erase(slot_i)
+				Settings.save())
+		var cb: CheckButton = cell.get_meta("cb")
+		cb.set_meta("slot", slot_i)
 		_weapon_checks.append(cb)
-		wrow.add_child(cb)
+		wgrid.add_child(cell)
 
 	vb.add_child(_label("(小地图/轨迹/血条/颜色等视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 20, Color(0.7, 0.75, 0.8)))
 
