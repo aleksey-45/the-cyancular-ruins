@@ -34,6 +34,8 @@ signal royale_join_requested(caller: int, code: String, invite: String)
 signal royale_leave_requested(caller: int)
 signal royale_list_requested(caller: int)
 signal royale_start_requested(caller: int)
+signal ai_duel_requested(caller: int)             # 1v1:房主请求与 AI 对战(实验性)
+signal royale_start_ai_requested(caller: int)     # 大乱斗:房主请求 AI 补位开局(实验性)
 signal local_royale_rooms(rooms: Array)        # 大厅 → 客户端:公开大乱斗房间列表
 signal local_royale_room_state(state: Dictionary)  # 大厅 → 客户端:所在房间实时状态(等待室)
 
@@ -62,6 +64,16 @@ func royale_list() -> void:
 @rpc("any_peer", "reliable")
 func royale_start() -> void:
 	royale_start_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端 → 大厅:1v1 房主请求与 AI 对战(实验性;仅自建服务端支持)
+@rpc("any_peer", "reliable")
+func ai_duel() -> void:
+	ai_duel_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端 → 大厅:大乱斗房主请求 AI 补位开局(实验性;仅自建服务端支持)
+@rpc("any_peer", "reliable")
+func royale_start_ai() -> void:
+	royale_start_ai_requested.emit(multiplayer.get_remote_sender_id())
 
 # 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")

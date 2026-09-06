@@ -10,6 +10,7 @@ const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
 var _addr_edit: LineEdit
 var _code_edit: LineEdit
 var _status: Label
+var _ai_duel_btn: Button = null
 var _list_box: VBoxContainer
 var _connected := false
 var _connected_addr := ""          # 当前连的是哪个地址(地址框改了要重连)
@@ -43,6 +44,12 @@ func _ready() -> void:
 
 	_make_button(Vector2(60, 240), "建房", _on_create_pressed)
 	_make_button(Vector2(260, 240), "加入", _on_join_pressed)
+	# AI 补位对战(实验性):建房等待期房主可改为与 AI 开局(仅自建服务端支持)
+	_ai_duel_btn = _make_button(Vector2(460, 240), "AI 对战", func() -> void:
+		_status.text = "AI 补位开局中…"
+		_ai_duel_btn.visible = false
+		NetBusExt.rpc_id(1, "ai_duel"))
+	_ai_duel_btn.visible = false
 	_make_button(Vector2(60, 400), "返回", func() -> void:
 		NetBus.stop()
 		get_tree().change_scene_to_file("res://Scenes/main_menu.tscn"))
@@ -348,9 +355,11 @@ func _on_server_message(t: String) -> void:
 
 func _on_room_created(code: String) -> void:
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
+	_ai_duel_btn.visible = true   # 房主等待期可选与 AI 对战(实验性,仅自建服)
 
 func _on_room_joined(role: int) -> void:
 	_status.text = "已加入,等待开战……"
+	_ai_duel_btn.visible = false   # 真人已补位,不需要 AI
 
 # 大厅配对完成:断开大厅 → 转连对局 worker,并 claim 大厅分配的角色。
 # go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),

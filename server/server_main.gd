@@ -15,6 +15,7 @@ var _wait_timer := 0.0
 # ── 大乱斗 worker(--royale --players N):N 人限时死斗 ──
 var _royale := false
 var _expected_players := 2
+var _ai_roles: Array = []    # AI 补位的 role 列表(实验性;这些 role 不等 claim,由服务端 AI 驱动)
 var _claim_wait := 0.0
 var _understaffed_wait := 0.0   # 开局前可用玩家 <2 的持续时长(超时退出释放端口)
 var _match_started := false
@@ -35,6 +36,12 @@ func _ready() -> void:
 			"--players":
 				if i + 1 < args.size():
 					_expected_players = clampi(int(args[i + 1]), 2, 8)
+			"--ai-roles":
+				if i + 1 < args.size():
+					for tok in str(args[i + 1]).split(","):
+						var r := int(tok.strip_edges())
+						if r >= 1 and r <= 8:
+							_ai_roles.append(r)
 	if is_worker:
 		_run_worker(port)
 		return
@@ -107,34 +114,39 @@ func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 	_claims[role] = caller
 	_claim_names[role] = player_name
 	if _royale:
-		print("worker: 大乱斗角色 %d = peer %d (%d/%d)" % [role, caller, _claims.size(), _expected_players])
-		if _claims.size() >= _expected_players:
+		print("worker: 大乱斗角色 %d = peer %d (%d/%d 人,另有 %d 个 AI)" % [role, caller,
+				_claims.size(), _expected_players - _ai_roles.size(), _ai_roles.size()])
+		# 收齐全部人类(其余角色由 AI 补位)即开局
+		if _claims.size() >= _expected_players - _ai_roles.size():
 			_begin_match()
 	else:
 		print("worker: 角色 %d = peer %d (%d/2)" % [role, caller, _claims.size()])
-		if _claims.size() >= 2:
+		if _claims.size() >= 2 - _ai_roles.size():
 			_begin_match()
 
 func _begin_match() -> void:
-	if _match_started or _host != null or _claims.size() < 2:
+	if _match_started or _host != null or _claims.size() + _ai_roles.size() < 2:
 		return
 	_match_started = true
 	if NetBus.role_claimed.is_connected(_on_role_claimed):
 		NetBus.role_claimed.disconnect(_on_role_claimed)
 	if _royale:
 		# 房主(role1)规则项随 claim 上报生效; RoyaleHost.start_on 负责散点出生 + match_start
-		_host = RoyaleHost.start_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}))
+		_host = RoyaleHost.start_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	else:
 		# 服务器权威规则项以房主(role1)选项为准(经 NetBusExt 上报;缺省=全默认)
-		_host = RoomManager.start_match_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}))
+		_host = RoomManager.start_match_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	add_child(_host)
+	# AI 补位昵称进 peer_info(客户端头顶显示);颜色缺省
+	for ai_r in _ai_roles:
+		_claim_names[int(ai_r)] = "电脑玩家"
 	# 昵称走原版 peer_info(兼容);颜色走扩展 peer_hues
 	for r in _claims:
 		NetBus.rpc_id(_claims[r], "peer_info", _claim_names)
 		NetBusExt.rpc_id(_claims[r], "peer_hues", _claim_hues())
 	if _royale and _host.has_method("set_display_names"):
 		_host.set_display_names(_claim_names)   # 排行榜昵称表
-	print("worker: 对局开始%s" % ("(大乱斗 %d 人)" % _claims.size() if _royale else ""))
+	print("worker: 对局开始%s" % ("(大乱斗 %d 人,其中 AI %d)" % [_claims.size() + _ai_roles.size(), _ai_roles.size()] if _royale else ""))
 
 # 各 role 自选的角色颜色(色相旋转度数;缺省 0)
 func _claim_hues() -> Dictionary:

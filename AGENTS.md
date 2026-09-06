@@ -193,3 +193,11 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - 试玩中发现并已修:worker 拉起分支缺 template_debug 支持(调试引擎下 worker 秒退,`_spawn_worker/_spawn_royale_worker` 已补 `OS.has_feature("template_debug")` 分支)。
 - 已知非致命:worker 开局瞬间向未完成转连的 peer 广播会刷 "Unable to send packet channel 0"(ENet 噪音,不影响对局);机器人互射命中较低,击杀计分边沿仍靠探针覆盖。
 - 运行限制:多会话并存时避免用 `taskkill //IM Godot*` 清场(会互杀),按端口/PID 清理。
+
+### 多人模式 AI 补位(KH-Royale-reload-merge-ai 分支,实验性)
+- `Globals/ai_input_source.gd`(AIInputSource,AI 的"手柄")+ `server/ai_player.gd`(AINavigator,每物理帧写输入:锁定最近存活对手→瞄准加抖动→有视线 620px 内节奏点射;远追/近拉/中距横移,卡墙跳)。服务端权威视角知道全场位置,与真人输入包走同一消费路径;COUNTDOWN/MATCH_OVER 待机。
+- `MatchHost._init` 新增 ai_roles 参数:这些 role 同样建 Player.tscn(输入源换 AIInputSource+挂导航器),进 players 字典 → 快照/命中/计分/复活全自动;不在 peer_by_role(无网络 peer,快照只发给真人)。
+- server_main:`--ai-roles 2,3` 解析;开局条件按"人类 claim 数 + AI 数 ≥ 2"判定;peer_info/排行榜给 AI 注入昵称「电脑玩家」。
+- room_manager:`ai_duel`(1v1 房主改与 AI 对战,NetBusExt.ai_duel_requested)、`royale_start_ai`(大乱斗 AI 补到 max_players,NetBusExt.royale_start_ai_requested);`_spawn_worker/_spawn_royale_worker` 透传 `--ai-roles`。
+- 客户端零改动:AI 对手靠快照副本自然显示(1v1 副本/大乱斗懒建副本)。1v1 与大乱斗等待 UI 各加「AI 补位开局(实验性)」按钮(仅自建服有效,云服不支持)。
+- 验证:1v1 AI 对战(980 快照/20s,AI 移动 ✓);大乱斗 1 真人+7 AI 整局(快照 8 人,真人移动 ✓,零脚本错误)。

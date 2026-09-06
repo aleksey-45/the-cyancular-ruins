@@ -46,13 +46,16 @@ var _side_swap := false          # true 时 P1 用 player2 出生点(每局换�
 var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
 var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
+var _ai_roles: Array = []              # AI 补位的 role 列表(实验性;这些 role 无网络 peer)
 
-func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {}) -> void:
+func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
+		ai_roles: Array = []) -> void:
 	_options = options
 	_round_full_heal = bool(options.get("round_full_heal", false))
 	var raw_disabled: Array = options.get("disabled_weapons", [])
 	for v in raw_disabled:
 		_disabled_weapons.append(int(v))
+	_ai_roles = ai_roles
 	MazeGenerator.set_map_file(map_path)
 	# 建世界:碰撞 + 瓦片属性(不渲染)。服务器进程走场景模式,autoload/静态类已就绪。
 	grid = WorldBuilder.load_grid()
@@ -80,6 +83,25 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {}) -
 		var ts := GameParameters.TILE_SIZE
 		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
 		print("MatchHost: 角色 %d 出生点 %s" % [role, spawn])
+	# AI 补位(实验性):同一 Player.tscn,输入源换 AIInputSource,由 AINavigator 驱动;
+	# 快照/命中裁决/计分/复活全部按 players 迭代 → 客户端副本零改动
+	for ai_role in _ai_roles:
+		var role := int(ai_role)
+		var p: Node2D = preload("res://Scenes/Player/Player.tscn").instantiate()
+		var src := AIInputSource.new()
+		p.set_input_source(src)
+		add_child(p)
+		p.collision_mask |= 2
+		players[role] = p
+		var nav := AINavigator.new()
+		nav.host = self
+		nav.role = role
+		nav.src = src
+		p.add_child(nav)
+		var spawn := _spawn_cell(role)
+		var ts := GameParameters.TILE_SIZE
+		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
+		print("MatchHost: AI 角色 %d 出生点 %s" % [role, spawn])
 
 func _enter_tree() -> void:
 	NetBus.input_received.connect(_on_input)

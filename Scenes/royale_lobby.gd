@@ -32,6 +32,7 @@ var _wait_title: Label
 var _wait_players: VBoxContainer
 var _wait_count: Label
 var _start_btn: Button
+var _ai_fill_btn: Button
 var _in_room := false
 var _my_room := {}     # 最近一次 royale_room_state
 var _host := false
@@ -365,6 +366,8 @@ func _on_room_state(state: Dictionary) -> void:
 	if _wait_panel == null:
 		_build_wait_panel()
 	_wait_panel.visible = true
+	if _ai_fill_btn != null:
+		_ai_fill_btn.visible = _host and not bool(state.get("in_match", false))
 	var code := str(state.get("code", ""))
 	var invite := str(state.get("invite_code", "")) if not bool(state.get("is_public", true)) else ""
 	_wait_title.text = "—— 大乱斗房间 %s ——%s" % [code, "  邀请码 %s" % invite if invite != "" else ""]
@@ -415,6 +418,15 @@ func _build_wait_panel() -> void:
 		_status.text = "开局中…"
 		NetBusExt.rpc_id(1, "royale_start"))
 	vb.add_child(_start_btn)
+	# AI 补位开局(实验性):真人不足时用电脑玩家补满上限(仅自建服务端支持)
+	_ai_fill_btn = Button.new()
+	_ai_fill_btn.text = "AI 补位开局(实验性)"
+	_ai_fill_btn.custom_minimum_size = Vector2(360, 48)
+	_ai_fill_btn.add_theme_font_size_override("font_size", 26)
+	_ai_fill_btn.pressed.connect(func() -> void:
+		_status.text = "AI 补位开局中…"
+		NetBusExt.rpc_id(1, "royale_start_ai"))
+	vb.add_child(_ai_fill_btn)
 	var leave := Button.new()
 	leave.text = "退出房间"
 	leave.custom_minimum_size = Vector2(360, 48)

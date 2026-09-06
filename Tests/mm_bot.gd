@@ -1,7 +1,8 @@
 extends Node
 
-# 1v1 匹配 UI 自动化测试(复现「点房间列表里的房间连不进去」):
+# 1v1 匹配 UI 自动化测试(复现「点房间列表里的房间连不进去」+ AI 对战观察):
 #   --role=create : 点「建房」→ 等状态栏出现房间号 → 写 user://mm_room.txt → 等 pvp_game
+#                   (加 --ai:建房后点「AI 对战」并观察 AI 是否真的在动)
 #   --role=list   : 等列表自动刷新出现房间按钮 → 点第一个房间按钮(复现用户操作)→ 等 pvp_game
 # 结果写 user://mm_test_result_<index>.txt。挂 root 存活场景切换。
 
@@ -53,7 +54,13 @@ func _run() -> void:
 			_fail("建房无房间号 status=" + mm._status.text)
 			return
 		FileAccess.open("user://mm_room.txt", FileAccess.WRITE).store_string(code)
-		_wait_game(_index)
+		if "--ai" in OS.get_cmdline_user_args():
+			await get_tree().create_timer(1.0).timeout
+			_press(mm, "AI对战")   # 点「AI 对战」按钮(实验性 AI 补位)
+			print("MM[%d]: 已点 AI 对战" % _index)
+			await _watch_ai(_index)
+			return
+		await _wait_game(_index)
 
 	elif _role == "list":
 		# 等自动刷新把房间列表填上(最多 25s)
@@ -97,6 +104,7 @@ func _run() -> void:
 				return
 		_fail("4 次点击均未进对局 status=" + mm._status.text)
 
+
 func _wait_game(idx: int) -> void:
 	# 等 pvp_game 场景(最多 40s)
 	for i in range(80):
@@ -112,6 +120,32 @@ func _wait_game(idx: int) -> void:
 	var st: String = mm._status.text if mm != null and "_status" in mm else "<scene=%s>" % (mm.scene_file_path if mm != null else "null")
 	_fail("40s 未进对局 status=" + st)
 
+
+# AI 对局观察:进 pvp_game 后盯快照,验证 AI(role2)真的在动
+# (注意:GDScript lambda 按值捕获局部变量 → 计数必须放字典里按引用改)
+func _watch_ai(idx: int) -> void:
+	var stat := {"snaps": 0, "ai_moved": false, "ai_pos": Vector2.INF}
+	var on_snap := func(s: Dictionary) -> void:
+		stat["snaps"] += 1
+		var players: Dictionary = s.get("players", {})
+		var p2: Dictionary = players.get("2", {})
+		if not p2.is_empty():
+			var pos: Vector2 = p2.get("pos", Vector2.INF)
+			if stat["ai_pos"] != Vector2.INF and pos.distance_to(stat["ai_pos"]) > 12.0:
+				stat["ai_moved"] = true
+			stat["ai_pos"] = pos
+	NetBus.local_snapshot.connect(on_snap)
+	for i in range(40):   # 20s
+		await get_tree().create_timer(0.5).timeout
+		if i % 4 == 0:
+			print("MM[%d]: t=%.1f snaps=%d ai_moved=%s" % [idx, i * 0.5, stat["snaps"], stat["ai_moved"]])
+	NetBus.local_snapshot.disconnect(on_snap)
+	var f := FileAccess.open("user://mm_test_result_%d.txt" % idx, FileAccess.WRITE)
+	f.store_string("entered=true\nai_moved=%s\nsnaps=%d\n" % [stat["ai_moved"], stat["snaps"]])
+	print("MM[%d]: AI WATCH DONE ai_moved=%s snaps=%d" % [idx, stat["ai_moved"], stat["snaps"]])
+	get_tree().quit(0 if stat["ai_moved"] else 1)
+
+
 func _press(n: Node, text: String) -> void:
 	for c in n.get_children():
 		if c is Button and (c as Button).text.replace(" ", "").begins_with(text.replace(" ", "")):
@@ -119,6 +153,7 @@ func _press(n: Node, text: String) -> void:
 			(c as Button).pressed.emit()
 			return
 		_press(c, text)
+
 
 func _fail(msg: String) -> void:
 	print("MM[%d]: FAIL %s" % [_index, msg])

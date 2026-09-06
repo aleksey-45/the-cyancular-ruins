@@ -64,6 +64,8 @@ func _enter_tree() -> void:
 	NetBusExt.royale_leave_requested.connect(royale_leave)
 	NetBusExt.royale_list_requested.connect(royale_list)
 	NetBusExt.royale_start_requested.connect(royale_start)
+	NetBusExt.ai_duel_requested.connect(ai_duel)
+	NetBusExt.royale_start_ai_requested.connect(royale_start_ai)
 
 func _exit_tree() -> void:
 	NetBus.room_create_requested.disconnect(create_room)
@@ -76,6 +78,8 @@ func _exit_tree() -> void:
 	NetBusExt.royale_leave_requested.disconnect(royale_leave)
 	NetBusExt.royale_list_requested.disconnect(royale_list)
 	NetBusExt.royale_start_requested.disconnect(royale_start)
+	NetBusExt.ai_duel_requested.disconnect(ai_duel)
+	NetBusExt.royale_start_ai_requested.disconnect(royale_start_ai)
 
 func on_lobby_name(caller: int, name: String) -> void:
 	_peer_names[caller] = name if not name.is_empty() else "Anon"
@@ -312,8 +316,69 @@ func royale_start(caller: int) -> void:
 	for peer_id in rr.players:
 		NetBus.rpc_id(peer_id, "go_match", rr.player_role[peer_id], port)
 
+# ── AI 补位对战(实验性):1v1 房主可请求与 AI 对战;大乱斗房主可 AI 补位开局 ──
+
+# 1v1:房主请求 AI 对战 → 单人 go_match,role2 由服务端 AI 驱动
+func ai_duel(caller: int) -> void:
+	var host_room: Room = null
+	for code in rooms:
+		var room: Room = rooms[code]
+		if room.players.has(caller) and int(room.player_role.get(caller, 0)) == 1:
+			host_room = room
+			break
+	if host_room == null:
+		NetBus.rpc_id(caller, "server_message", "只有建房(房主)才能开 AI 对战")
+		return
+	var port := _pick_worker_port()
+	if port < 0:
+		NetBus.rpc_id(caller, "server_message", "无法分配对局端口")
+		return
+	host_room.worker_port = port
+	if not _spawn_worker(port, [2]):
+		_worker_ports.erase(port)
+		NetBus.rpc_id(caller, "server_message", "无法启动对局")
+		return
+	rooms.erase(host_room.code)   # 对局消费掉房间(AI 不占第二人位)
+	print("房间 %s → AI 对战开局(1 人 + AI)→ worker 端口 %d" % [host_room.code, port])
+	await get_tree().create_timer(0.3).timeout
+	NetBus.rpc_id(caller, "go_match", 1, port)
+
+# 大乱斗:房主 AI 补位开局 → 现有真人 + AI 补到 max_players
+func royale_start_ai(caller: int) -> void:
+	var rr := _royale_room_of(caller)
+	if rr == null:
+		return
+	if rr.host_peer != caller:
+		NetBus.rpc_id(caller, "server_message", "只有房主能开始游戏")
+		return
+	if rr.in_match:
+		return
+	var ai_count := rr.max_players - rr.players.size()
+	if ai_count <= 0:
+		NetBus.rpc_id(caller, "server_message", "房间已满,无需 AI 补位")
+		return
+	var port := _pick_worker_port()
+	if port < 0:
+		NetBus.rpc_id(caller, "server_message", "无法分配对局端口")
+		return
+	rr.worker_port = port
+	rr.in_match = true
+	# AI role = 现有 role 序列之后的连续编号
+	var ai_roles: Array = []
+	for i in range(ai_count):
+		ai_roles.append(rr.players.size() + 1 + i)
+	if not _spawn_royale_worker(port, rr.max_players, ai_roles):
+		rr.in_match = false
+		_worker_ports.erase(port)
+		NetBus.rpc_id(caller, "server_message", "无法启动对局")
+		return
+	print("大乱斗房 %s AI 补位开局(%d 真人 + %d AI)→ worker 端口 %d" % [rr.code, rr.players.size(), ai_count, port])
+	await get_tree().create_timer(0.3).timeout
+	for peer_id in rr.players:
+		NetBus.rpc_id(peer_id, "go_match", rr.player_role[peer_id], port)
+
 # 拉起 N 人大乱斗 worker(--royale --players N;其余同 _spawn_worker)
-func _spawn_royale_worker(port: int, players: int) -> bool:
+func _spawn_royale_worker(port: int, players: int, ai_roles: Array = []) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	# editor 与 template_debug(调试引擎)都要带 --path+场景;仅导出 exe 可省(dedicated_server 主场景)
@@ -324,8 +389,14 @@ func _spawn_royale_worker(port: int, players: int) -> bool:
 	else:
 		args = PackedStringArray(["--headless", "--", "--worker", "--royale",
 				"--port", str(port), "--players", str(players)])
+	if not ai_roles.is_empty():
+		var roles := []
+		for r in ai_roles:
+			roles.append(str(int(r)))
+		args.append("--ai-roles")
+		args.append(",".join(roles))
 	var pid := OS.create_process(exe, args)
-	print("[lobby] spawn royale worker pid=%d port=%d players=%d" % [pid, port, players])
+	print("[lobby] spawn royale worker pid=%d port=%d players=%d ai=%s" % [pid, port, players, str(ai_roles)])
 	return pid > 0
 
 # ── 配对完成 → 拉起对局 worker 并让两端转连 ──
@@ -368,23 +439,32 @@ func _pick_worker_port() -> int:
 
 # 拉起 headless worker 子进程(同一可执行文件 + --worker)。editor(开发)要带 --path 与场景;
 # 导出的专用服务端 exe(disable_path_overrides)靠 main_scene.dedicated_server 起 server_main。
-func _spawn_worker(port: int) -> bool:
+# ai_roles 非空 → 透传 --ai-roles(worker 侧这些 role 由服务端 AI 驱动,不等 claim)。
+func _spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
-		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+		args = PackedStringArray(["--headless", "--log-file", "C:/Users/21559/worker_debug.log",
+				"--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--port", str(port)])
 	else:
 		args = PackedStringArray(["--headless", "--", "--worker", "--port", str(port)])
+	if not ai_roles.is_empty():
+		var roles := []
+		for r in ai_roles:
+			roles.append(str(int(r)))
+		args.append("--ai-roles")
+		args.append(",".join(roles))
 	var pid := OS.create_process(exe, args)
-	print("[lobby] spawn worker pid=%d port=%d editor=%s" % [pid, port, str(OS.has_feature("editor"))])
+	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s" % [pid, port, str(OS.has_feature("editor")), str(ai_roles)])
 	return pid > 0
 
 # ── 建局(在 worker 进程调用):重算世界尺寸 + 给两端发 match_start + 建权威 MatchHost ──
 # 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态;role_peers = {role: peer_id};
 # options = 房主(role1)的对局选项(禁武器/回合回血等,见 MatchHost)。
+# ai_roles = AI 补位 role 列表(实验性):这些 role 由服务端 AI 驱动,不发 match_start。
 static func start_match_on(role_peers: Dictionary, map_path: String = PVP_MAP,
-		options: Dictionary = {}) -> Node:
+		options: Dictionary = {}, ai_roles: Array = []) -> Node:
 	MazeGenerator.set_map_file(map_path)
 	GameParameters.refresh_map_size()
 	var spawns := MazeGenerator.load_spawns()
@@ -395,5 +475,5 @@ static func start_match_on(role_peers: Dictionary, map_path: String = PVP_MAP,
 		var spawn := s1 if role == 1 else s2
 		NetBus.rpc_id(peer_id, "match_start", role, spawn, map_path)
 		NetBus.rpc_id(peer_id, "server_message", "对局开始")
-	var host := MatchHost.new(map_path, role_peers, options)
+	var host := MatchHost.new(map_path, role_peers, options, ai_roles)
 	return host
