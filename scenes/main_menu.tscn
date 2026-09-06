@@ -1,11 +1,14 @@
-[gd_scene format=3 uid="uid://mainmenu0000a1"]
+[gd_scene format=3 uid="uid://cos8gqdkpr3pq"]
 
-[ext_resource type="Script" path="res://scenes/main_menu.gd" id="1"]
+[ext_resource type="Script" uid="uid://c4lcaanwqhven" path="res://scenes/main_menu.gd" id="1"]
 
-[node name="MainMenu" type="Control"]
+[node name="MainMenu" type="Control" unique_id=1982871453]
+layout_mode = 3
+anchors_preset = 0
 script = ExtResource("1")
 
-[node name="TitleLabel" type="Label" parent="."]
+[node name="TitleLabel" type="Label" parent="." unique_id=840223161]
+layout_mode = 0
 offset_left = 60.0
 offset_top = 60.0
 offset_right = 1900.0
@@ -13,14 +16,16 @@ offset_bottom = 112.0
 theme_override_font_sizes/font_size = 40
 text = "The Cyancular Ruins"
 
-[node name="SingleButton" type="Button" parent="."]
+[node name="SingleButton" type="Button" parent="." unique_id=1687773719]
+layout_mode = 0
 offset_left = 60.0
 offset_top = 180.0
 offset_right = 260.0
 offset_bottom = 228.0
 text = "单人"
 
-[node name="MultiButton" type="Button" parent="."]
+[node name="MultiButton" type="Button" parent="." unique_id=2068569725]
+layout_mode = 0
 offset_left = 60.0
 offset_top = 240.0
 offset_right = 260.0
