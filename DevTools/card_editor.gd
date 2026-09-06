@@ -16,8 +16,8 @@ var _save_status: Label = null
 var _body_hbox: HBoxContainer = null
 var _tab_op: Button = null
 var _tab_wp: Button = null
-var _list_slot: Control = null    # 列表占位/真面板的挂点
-var _form_slot: Control = null    # 表单占位/真面板的挂点
+var _list_panel: CardListPanel = null
+var _form_panel: CardFormPanel = null
 var _portrait: PortraitView = null
 
 
@@ -72,26 +72,34 @@ func _build_top_bar() -> Control:
 	return bar
 
 
-# ── 主体:卡列表 | 表单 | 头像页(列表/表单在后续提交接入真面板,先占位)──
+# ── 主体:卡列表 | 表单 | 头像页 ──
 func _build_body() -> void:
-	_list_slot = _placeholder_panel("卡列表(下一提交接入)", 380)
-	_body_hbox.add_child(_list_slot)
-	_form_slot = _placeholder_panel("表单(下一提交接入)", 0)
-	_form_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body_hbox.add_child(_form_slot)
+	_list_panel = CardListPanel.new()
+	_list_panel.card_selected.connect(_on_card_selected)
+	_body_hbox.add_child(_list_panel)
+	_form_panel = CardFormPanel.new()
+	_form_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_form_panel.card_saved.connect(_on_card_saved)
+	_form_panel.save_failed.connect(_on_save_failed)
+	_body_hbox.add_child(_form_panel)
 	_portrait = PortraitView.new()
 	_body_hbox.add_child(_portrait)
 
 
-func _placeholder_panel(text: String, min_width: int) -> Control:
-	var panel := PanelContainer.new()
-	if min_width > 0:
-		panel.custom_minimum_size = Vector2(min_width, 0)
-	var center := CenterContainer.new()
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	panel.add_child(center)
-	center.add_child(DevUIKit.label(text, 22, Color(0.5, 0.55, 0.6)))
-	return panel
+func _on_card_selected(card: Dictionary) -> void:
+	_form_panel.set_card(card)
+	_portrait.set_card(card)
+
+
+func _on_card_saved(card: Dictionary) -> void:
+	_save_status.text = "已保存 %s(rev %d)" % [Time.get_time_string_from_system(), int(card.get("rev", 0))]
+	_save_status.add_theme_color_override("font_color", Color(0.65, 0.9, 0.65))
+	_list_panel.reload_list(true)   # 静默刷新条目名(改名后列表同步;不打断表单输入)
+
+
+func _on_save_failed(errs: Array[String]) -> void:
+	_save_status.text = "未保存:%s" % " / ".join(errs)
+	_save_status.add_theme_color_override("font_color", Color(0.95, 0.6, 0.5))
 
 
 # ── Agent 对接栏(commit 3 接入真按钮,先占位)──
@@ -115,7 +123,7 @@ func _build_log_panel() -> Control:
 	return log
 
 
-# ── 页签切换 ──
+# ── 页签切换:列表重载(选中第一张会经 card_selected 驱动表单/头像)──
 func _select_type(type: String) -> void:
 	_current_type = type
-	_portrait.set_card({})
+	_list_panel.set_type(type)
