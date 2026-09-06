@@ -462,14 +462,21 @@ func _set_waterproof(v: int) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切
+	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切。
+	# PvP:滚轮事件不在输入包协议里,只本地切会被快照防脱同步切回 → 走
+	# request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
 	if Settings.wheel_switch and not combat.is_downed() \
 			and event is InputEventMouseButton and event.pressed:
+		var dir := 0
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			weapons.cycle_slot(-1)
-			return
-		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			weapons.cycle_slot(1)
+			dir = -1
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			dir = 1
+		if dir != 0:
+			if Level0.pvp_mode:
+				weapons.request_net_cycle(dir)
+			else:
+				weapons.cycle_slot(dir)
 			return
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。

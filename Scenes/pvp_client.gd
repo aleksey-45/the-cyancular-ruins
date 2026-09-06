@@ -139,6 +139,10 @@ func _physics_process(_delta: float) -> void:
 		"weapon": src.get_weapon_slot_pressed(),
 		"aim": aim,
 	}
+	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
+	var net_slot: int = _local.weapons.consume_net_slot()
+	if net_slot > 0:
+		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
 
 func _on_snapshot(snap: Dictionary) -> void:
