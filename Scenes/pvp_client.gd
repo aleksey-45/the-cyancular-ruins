@@ -8,6 +8,7 @@ const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
 # 根治:本地玩家不再本地跑移动物理,位置/姿态/朝向由快照插值(与远端副本同款),
 #      只保留鼠标瞄准/开火/受击反馈等本地视觉。服务器是唯一真相,天然无回拉。
 var _last_snap_tick := 0
+var _names := {}   # role(int) -> 昵称(peer_info 下发,击杀播报用)
 
 var _local: Node2D = null
 var _remote_replica: Node2D = null
@@ -67,6 +68,7 @@ func _ready() -> void:
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_peer_info.connect(_on_peer_info)
 	NetBus.local_opponent_left.connect(_on_opponent_left)
+	NetBus.local_kill_event.connect(_on_kill_event)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBusExt.local_match_options.connect(_on_match_options)
@@ -270,6 +272,12 @@ func _on_opponent_left() -> void:
 		NetBus.stop()
 		Level0.safe_change_scene(get_tree(), "res://Scenes/main_menu.tscn"))
 
+# 击杀播报:kill_event → HUD 顶部像素横幅(击杀者青色/被击杀者金色)
+func _on_kill_event(killer: int, victim: int) -> void:
+	if _hud != null:
+		_hud.show_kill(str(_names.get(killer, "玩家%d" % killer)),
+				str(_names.get(victim, "玩家%d" % victim)))
+
 # ── 中立鸟(服务器权威):roster → 建视觉副本;每帧快照 apply_remote;died → 移除 ──
 func _on_enemy_spawn(roster: Array) -> void:
 	_clear_enemy_replicas()
@@ -319,6 +327,7 @@ func _apply_tint(body: Node, hue_deg: float) -> void:
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称})(原版协议)──
 func _on_peer_info(names: Dictionary) -> void:
+	_names = names
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:
 		return

@@ -25,6 +25,9 @@ var _board_vbox: VBoxContainer
 var _board_title: Label
 var _board_bg: ColorRect
 var _timer_label: Label
+var _names := {}               # role(int) -> 昵称(round_state 下发,击杀播报用)
+var _kill_feed: RichTextLabel  # 击杀播报横幅(顶部居中,像素风)
+var _kill_feed_age := -1.0
 var _mask: ColorRect
 var _center: CenterContainer
 var _big: Label
@@ -99,6 +102,38 @@ func _ready() -> void:
 	NetBus.ping_updated.connect(_on_ping)
 	_set_broadcast(true, "大乱斗", "等待开局…")
 
+	# ── 击杀播报:顶部居中,大标题同款像素风(青=击杀者,金=被击杀者,粗黑描边)──
+	_kill_feed = RichTextLabel.new()
+	_kill_feed.bbcode_enabled = true
+	_kill_feed.scroll_active = false
+	_kill_feed.anchor_left = 0.5
+	_kill_feed.anchor_right = 0.5
+	_kill_feed.offset_left = -500
+	_kill_feed.offset_right = 500
+	_kill_feed.offset_top = 20
+	_kill_feed.offset_bottom = 88
+	_kill_feed.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_kill_feed.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_kill_feed.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_kill_feed.add_theme_font_override("normal_font", load(FONT_PATH))
+	_kill_feed.add_theme_font_override("bold_font", load(FONT_PATH))
+	_kill_feed.add_theme_font_size_override("normal_font_size", 44)
+	_kill_feed.add_theme_font_size_override("bold_font_size", 44)
+	_kill_feed.add_theme_color_override("default_color", Color(0.92, 0.96, 1.0))
+	_kill_feed.add_theme_constant_override("outline_size", 12)
+	_kill_feed.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12, 0.95))
+	_kill_feed.visible = false
+	add_child(_kill_feed)
+
+# 击杀播报:kill_event 的 role → 昵称(round_state 已缓存),顶部像素横幅 2.2s 淡出
+func show_kill(killer_role: int, victim_role: int) -> void:
+	var kn := str(_names.get(killer_role, "玩家%d" % killer_role)).replace("[", "")
+	var vn := str(_names.get(victim_role, "玩家%d" % victim_role)).replace("[", "")
+	_kill_feed.text = "[color=#8cf2ff]%s[/color]  击杀了  [color=#ffd76e]%s[/color]" % [kn, vn]
+	_kill_feed.visible = true
+	_kill_feed.modulate.a = 1.0
+	_kill_feed_age = 0.0
+
 func _make_label(size: int, color: Color) -> Label:
 	var l := Label.new()
 	l.add_theme_color_override("font_color", color)
@@ -132,6 +167,14 @@ func _process(delta: float) -> void:
 			_in_countdown = false
 			if _state == ST_PLAYING:
 				_set_broadcast(false, "", "")
+	# 击杀播报淡出:2.2s 停留 + 0.5s 淡出
+	if _kill_feed != null and _kill_feed.visible:
+		_kill_feed_age += delta
+		if _kill_feed_age > 2.2:
+			_kill_feed.modulate.a = maxf(1.0 - (_kill_feed_age - 2.2) / 0.5, 0.0)
+			if _kill_feed.modulate.a <= 0.0:
+				_kill_feed.visible = false
+				_kill_feed.modulate.a = 1.0
 	# 剩余时间本地走秒微调(每秒有服务器广播校正)
 	if _state == ST_PLAYING and not _in_countdown and _timer_label.has_meta("remain"):
 		var remain := float(_timer_label.get_meta("remain")) - delta
@@ -148,6 +191,7 @@ func _on_round_state(data: Dictionary) -> void:
 	var names: Dictionary = data.get("names", {})
 	var alive: Dictionary = data.get("alive", {})
 	var left: Array = data.get("left", [])
+	_names = names   # 击杀播报用(role → 昵称)
 	# ── 排行榜:按击杀降序 ──
 	for c in _board_vbox.get_children():
 		if c != _board_title and c != _timer_label:

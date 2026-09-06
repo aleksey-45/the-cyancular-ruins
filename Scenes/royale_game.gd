@@ -52,6 +52,7 @@ func _ready() -> void:
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
+	NetBus.local_kill_event.connect(_on_kill_event)
 	NetBus.local_peer_info.connect(_on_peer_info)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
@@ -252,6 +253,11 @@ func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	TileDefs.damage_tile(cell, 999999, "explosion")
 	var ts := GameParameters.TILE_SIZE
 	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
+
+# 击杀播报:kill_event → HUD 顶部像素横幅
+func _on_kill_event(killer: int, victim: int) -> void:
+	if _hud != null:
+		_hud.show_kill(killer, victim)
 
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
