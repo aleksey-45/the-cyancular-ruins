@@ -8,7 +8,9 @@ var jump_velocity: float = PlayerParams.jump_velocity
 var charge_down_velocity: float = PlayerParams.charge_down_velocity
 var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
 var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间（秒）
+var charge_air_gravity_mult: float = PlayerParams.charge_air_gravity_mult  # 空中冲刺重力倍率
 var move_speed: float = PlayerParams.move_speed
+var crouch_walk_speed: float = PlayerParams.crouch_walk_speed  # 蹲走水平速度
 
 # 水平加速/刹车/转身的指数缓动系数（越大越跟手）
 var accel_ground: float = PlayerParams.accel_ground

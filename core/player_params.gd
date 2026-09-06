@@ -18,10 +18,14 @@ const coyote_time: float = 0.1      # 离开地面后仍可起跳的时间(秒)
 const jump_buffer_time: float = 0.12  # 落地前提前按跳的缓冲时间(秒)
 const jump_cut_factor: float = 0.5  # 上升中松键时向上速度的衰减比例
 
+# ── 下蹲 ──
+const crouch_walk_speed: float = 245.0   # 蹲走水平速度(≈0.35×move_speed)
+
 # ── 冲刺 ──
 const charge_down_velocity: float = 2000.0
 const charge_velocity: float = 1500.0
-const charge_duration: float = 0.6
+const charge_duration: float = 0.4    # 0.6→0.4(600px,保留长距离但可跳/墙打断)
+const charge_air_gravity_mult: float = 0.35   # 空中冲刺重力倍率(<1=变平)
 const charge_dir_window: float = 0.3  # 冲刺方向沿用最近移动方向的窗口(秒)
 
 # ── 游泳 ──
