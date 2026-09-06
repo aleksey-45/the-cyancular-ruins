@@ -63,7 +63,7 @@ static func make_weapon_check(slot: int, checked: bool, font_size: int, on_toggl
 	var cb := CheckButton.new()
 	cb.button_pressed = checked
 	cb.toggled.connect(func(on: bool) -> void: on_toggle.call(on))
-	cb.set_meta("cb", cb)
+	cell.set_meta("cb", cb)   # 挂 cell 上(调用方统一 cell.get_meta("cb") 取勾选框)
 	cell.add_child(cb)
 	var icon := TextureRect.new()
 	icon.texture = silhouette(slot)
