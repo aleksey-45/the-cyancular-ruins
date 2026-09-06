@@ -124,6 +124,9 @@ func _ready() -> void:
 	pp.world_viewport = $WorldViewport
 	call_deferred("add_child", pp)
 
+	# 打击反馈层(命中 X 标记/「击杀 XXX」播报;单机路径独有,menu_demo/pvp 早退不走这里)
+	CombatFeedback.spawn(self)
+
 
 # 演示世界复位重用(脱离场景树保活后,回主菜单时调用):
 # 重连被真对局覆盖过的静态引用、玩家满血回出生点、清残留演示鸟(AI 会自动补波)。

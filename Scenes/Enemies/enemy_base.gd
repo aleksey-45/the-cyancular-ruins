@@ -222,7 +222,9 @@ func _begin_death() -> void:
 		return
 	is_dead = true
 	died.emit()
-	Sfx.play("kill")
+	# 击杀播报(CombatFeedback):只有玩家造成的死亡才出「击杀 XXX」文字+音效
+	# (子弹/爆炸命中时写入的 last_damager meta 归因;溺水等环境死安静销毁)
+	CombatFeedback.notify_enemy_killed(self)
 	_death_timer = EnemyParams.shared.death_flash_time
 
 

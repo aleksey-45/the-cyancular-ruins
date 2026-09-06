@@ -25,6 +25,10 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
 				_falloff(d, radius, max_knockback) * cover * wmult, true)
+		# 击杀归因 + 命中标记(单机:玩家榴弹炸到敌人;服务器进程无 CombatFeedback 实例则空转)
+		if shooter != null and is_instance_valid(shooter) and shooter != e:
+			e.set_meta("last_damager", shooter)
+		CombatFeedback.hit_marker()
 	# 遍历所有玩家(PvP 服务器两个玩家;单机组里只有一个 → 行为不变)
 	var first_player: Node2D = null
 	for p in tree.get_nodes_in_group("player"):

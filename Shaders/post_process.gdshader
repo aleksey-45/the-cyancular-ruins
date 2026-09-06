@@ -26,8 +26,8 @@ void fragment() {
 
 	COLOR = texture(screen_tex, uv);
 	if (hit_red > 0.0) {
-		// 画面微红一瞬间:向红色偏移(保留暗部细节,不做纯色覆盖)
-		COLOR.rgb = mix(COLOR.rgb, vec3(0.85, 0.05, 0.05), hit_red * 0.45);
+		// 画面微红一瞬间:向红色偏移(保留暗部细节,不做纯色覆盖);0.6 = 可感知但不糊画面
+		COLOR.rgb = mix(COLOR.rgb, vec3(0.85, 0.05, 0.05), hit_red * 0.6);
 	}
 	if (desat > 0.0) {
 		float g = dot(COLOR.rgb, vec3(0.299, 0.587, 0.114));

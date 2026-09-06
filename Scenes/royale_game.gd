@@ -57,6 +57,8 @@ func _ready() -> void:
 	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBusExt.local_match_options.connect(_on_match_options)
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
+	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
+	NetBus.local_kill_event.connect(_on_kill_event)
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
@@ -73,6 +75,8 @@ func _ready() -> void:
 	_hud = RoyaleHud.new()
 	add_child(_hud)
 	add_child(PauseMenu.new(true))
+	# 打击反馈层(命中 X 标记/击杀播报,layer 131 盖在排行榜之上)
+	CombatFeedback.spawn(self)
 	# 自己的染色(设置色相)
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
@@ -123,6 +127,10 @@ func _physics_process(_delta: float) -> void:
 		"weapon": src.get_weapon_slot_pressed(),
 		"aim": aim,
 	}
+	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
+	var net_slot: int = _local.weapons.consume_net_slot()
+	if net_slot > 0:
+		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
 
 func _on_snapshot(snap: Dictionary) -> void:
@@ -232,6 +240,16 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 	elif _replicas.has(victim_role) and is_instance_valid(_replicas[victim_role]) \
 			and _replicas[victim_role].has_method("play_hit"):
 		_replicas[victim_role].play_hit(source_pos)
+
+# 命中确认(服务器裁决的弹直击,NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)
+func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
+	if shooter_role == PvpSession.role:
+		CombatFeedback.hit_marker()
+
+# 击杀播报:我击杀对手 → 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)
+func _on_kill_event(killer: int, victim: int) -> void:
+	if killer == PvpSession.role and victim != PvpSession.role:
+		CombatFeedback.kill(str(_names.get(victim, "玩家%d" % victim)))
 
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	if _world == null:

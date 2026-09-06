@@ -9,6 +9,7 @@ extends Node
 
 signal local_match_options(opts: Dictionary)      # worker → 客户端:生效对局选项(房主下发)
 signal local_peer_hues(hues: Dictionary)          # worker → 客户端:双方自选角色颜色 {role -> 色相}
+signal local_hit_confirm(shooter_role: int, victim_role: int)  # worker → 射手客户端:你的子弹命中了玩家
 signal player_options_received(caller: int, opts: Dictionary)  # worker:某客户端上报的本端选项
 
 # 客户端 → worker:本端选项(角色颜色/规则偏好)。服务器权威项以房主(role1)为准。
@@ -25,6 +26,12 @@ func match_options(opts: Dictionary) -> void:
 @rpc("authority", "reliable")
 func peer_hues(hues: Dictionary) -> void:
 	local_peer_hues.emit(hues)
+
+# worker → 射手客户端:你的子弹命中了一名玩家(FPS 式命中反馈,只发给射手本人)。
+# 仅弹直击(服务器裁决 _on_bullet_hit)发;爆炸 AoE 不发(伤害方不明确,击杀仍有 kill_event)。
+@rpc("authority", "reliable")
+func hit_confirm(shooter_role: int, victim_role: int) -> void:
+	local_hit_confirm.emit(shooter_role, victim_role)
 
 # ── 大乱斗大厅(自建服务器,与 1v1 大厅协议并存;RPC 名不同互不干扰)──
 # 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。

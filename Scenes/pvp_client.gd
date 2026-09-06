@@ -26,6 +26,7 @@ var _id_opp: Node2D = null
 var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
 var _minimap: Minimap = null      # 小地图(设置开启时创建)
 var _opp_hues: Dictionary = {}    # 双方角色颜色 {role -> 色相}(扩展 peer_hues 下发)
+var _names: Dictionary = {}       # role(int) -> 昵称(peer_info 下发;击杀播报取名字用)
 
 func _ready() -> void:
 	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
@@ -71,6 +72,8 @@ func _ready() -> void:
 	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBusExt.local_match_options.connect(_on_match_options)
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
+	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
+	NetBus.local_kill_event.connect(_on_kill_event)
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
@@ -84,6 +87,8 @@ func _ready() -> void:
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
 	_hud = PvpHud.new()
 	add_child(_hud)
+	# 打击反馈层(命中 X 标记/击杀播报,layer 131 盖在 PvP HUD 之上)
+	CombatFeedback.spawn(self)
 	# Esc 菜单(PvP:不暂停树,回主菜单=断开连接,worker 检测断线自动拆局)
 	add_child(PauseMenu.new(true))
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
@@ -139,6 +144,10 @@ func _physics_process(_delta: float) -> void:
 		"weapon": src.get_weapon_slot_pressed(),
 		"aim": aim,
 	}
+	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
+	var net_slot: int = _local.weapons.consume_net_slot()
+	if net_slot > 0:
+		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
 
 func _on_snapshot(snap: Dictionary) -> void:
@@ -214,6 +223,16 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 		_local.take_hit(source_pos, damage, false, -1.0)
 	elif _remote_replica != null and _remote_replica.has_method("play_hit"):
 		_remote_replica.play_hit(source_pos)
+
+# 命中确认(服务器裁决的弹直击,NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)
+func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
+	if shooter_role == PvpSession.role:
+		CombatFeedback.hit_marker()
+
+# 击杀播报:我击杀对手 → 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)
+func _on_kill_event(killer: int, victim: int) -> void:
+	if killer == PvpSession.role and victim != PvpSession.role:
+		CombatFeedback.kill(str(_names.get(victim, "对手")))
 
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
@@ -313,6 +332,7 @@ func _apply_tint(body: Node, hue_deg: float) -> void:
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称})(原版协议)──
 func _on_peer_info(names: Dictionary) -> void:
+	_names = names
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:
 		return

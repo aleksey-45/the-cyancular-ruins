@@ -65,6 +65,6 @@ func flash_hit(strength: float = 1.0) -> void:
 
 func _process(delta: float) -> void:
 	if _hit_red > 0.0:
-		_hit_red = maxf(_hit_red - delta * 5.0, 0.0)
+		_hit_red = maxf(_hit_red - delta * 4.0, 0.0)   # 衰减放慢:微红可感知地停留 ~0.25s
 		if _mat != null:
 			_mat.set_shader_parameter("hit_red", _hit_red)

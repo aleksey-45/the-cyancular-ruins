@@ -201,3 +201,10 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - room_manager:`ai_duel`(1v1 房主改与 AI 对战,NetBusExt.ai_duel_requested)、`royale_start_ai`(大乱斗 AI 补到 max_players,NetBusExt.royale_start_ai_requested);`_spawn_worker/_spawn_royale_worker` 透传 `--ai-roles`。
 - 客户端零改动:AI 对手靠快照副本自然显示(1v1 副本/大乱斗懒建副本)。1v1 与大乱斗等待 UI 各加「AI 补位开局(实验性)」按钮(仅自建服有效,云服不支持)。
 - 验证:1v1 AI 对战(980 快照/20s,AI 移动 ✓);大乱斗 1 真人+7 AI 整局(快照 8 人,真人移动 ✓,零脚本错误)。
+
+### 打击反馈三件套(KH-hit-feedback 分支)
+- `Scenes/Effects/combat_feedback.gd`(`class_name CombatFeedback extends CanvasLayer`,layer 131 盖在 PvpHud/RoyaleHud 之上):**命中 X 标记**(内含 HitMarker 自绘控件:四段斜线白芯深描边,0.22s 缺口外扩+淡出)+ **「击杀 XXX」像素播报**(击杀者屏幕中央,金黄字+描边,pop 回落 + 0.9s 停留 + 0.35s 淡出,伴随 `Sfx.play("kill")`)。静态入口 `spawn/hit_marker/kill`,`current` 为 null(headless 服务器/主菜单)时全部静默空转,调用方无需判空。
+- **单机接入**:`bullet_base._register_player_hit`(直击两分支+榴弹 `_direct_hit`)写受害者 `last_damager` meta + `CombatFeedback.hit_marker()`;`Explosion.apply_aoe` 敌人分支同;`EnemyBase._begin_death` 改走 `CombatFeedback.notify_enemy_killed(self)`——**只有玩家造成的死亡才播报**(读 meta 归因,溺水等环境死不再乱播 kill 音效);敌人中文名对照 `CombatFeedback.ENEMY_NAMES`(键=场景名去 Enemy 前缀)。挂载点:Level0 单机路径(menu_demo/pvp 早退不挂)。
+- **联机接入**:MatchHost `_on_bullet_hit` 裁决命中后经 **NetBusExt 新 RPC `hit_confirm(shooter_role, victim_role)` 只发射手本人**(原 NetBus 未动;爆炸 AoE 不发——伤害方不明确,击杀仍有 kill_event);pvp_client/royale_game 消费:shooter==自己 → X 标记;`local_kill_event` killer==自己 → 「击杀 <名字>」+音效(1v1 名字来自 peer_info 存的 `_names`,大乱斗同)。
+- **受击反馈增强**(原"每次受击小震+红闪"太弱):红闪强度下限 0.35→0.5、shader 混合 0.45→0.6、衰减 5.0→4.0(可感知 ~0.25s);小伤害震屏 4.0/0.12s→6.0/0.15s;大伤害强震不变。
+- 验证:`Tests/feedback_probe.tscn`(场景模式,代理可跑)ALL-OK——无实例空转/X 标记显隐/击杀播报动画/归因(玩家杀才播、环境死与非玩家杀不播)/kill 音效流。注意探针时序:`process_frame` 信号先于节点 `_process`,动画断言要多等一帧。

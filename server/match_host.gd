@@ -381,10 +381,20 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 		if players.has(role) and players[role] != bullet.shooter:
 			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
 
-func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
+func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
+	# 命中确认(NetBusExt):告诉射手"你打中了"→ 客户端屏幕中心 X 标记。只发射手本人;
+	# RoyaleHost 覆写先写归因 meta 再 super 到这里,大乱斗同样生效。
+	var shooter_role := 0
+	for r in players:
+		if players[r] == bullet.shooter:
+			shooter_role = int(r)
+			break
+	if shooter_role != 0 and peer_by_role.has(shooter_role) \
+			and multiplayer.get_peers().has(peer_by_role[shooter_role]):
+		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, victim_role)
 	bullet.queue_free()
 
 # 玩家受击反馈:实际扣血(子弹/鸟接触/鸟弹/爆炸) → 广播 hit_event 给两端客户端。
