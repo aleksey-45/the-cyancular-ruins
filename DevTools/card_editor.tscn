@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cardeditor0001"]
+
+[ext_resource type="Script" path="res://DevTools/card_editor.gd" id="1"]
+
+[node name="CardEditor" type="Control"]
+script = ExtResource("1")

@@ -23,6 +23,10 @@ desktop.ini
 # 编辑器工具产物
 editor/_build/
 
+# DevTools 卡编辑器的临时产物(提示词留档/agent 日志)
+DevTools/cards/.prompts/
+DevTools/cards/.logs/
+
 # 构建产物与杂项
 *.exe
 test
