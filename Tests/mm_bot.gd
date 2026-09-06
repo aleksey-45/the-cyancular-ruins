@@ -124,7 +124,9 @@ func _wait_game(idx: int) -> void:
 # AI 对局观察:进 pvp_game 后盯快照,验证 AI(role2)真的在动
 # (注意:GDScript lambda 按值捕获局部变量 → 计数必须放字典里按引用改)
 func _watch_ai(idx: int) -> void:
-	var stat := {"snaps": 0, "ai_moved": false, "ai_pos": Vector2.INF}
+	Settings.wheel_switch = true
+	var stat := {"snaps": 0, "ai_moved": false, "ai_pos": Vector2.INF,
+			"r1_w": -1, "r1_switched": false}
 	var on_snap := func(s: Dictionary) -> void:
 		stat["snaps"] += 1
 		var players: Dictionary = s.get("players", {})
@@ -134,16 +136,31 @@ func _watch_ai(idx: int) -> void:
 			if stat["ai_pos"] != Vector2.INF and pos.distance_to(stat["ai_pos"]) > 12.0:
 				stat["ai_moved"] = true
 			stat["ai_pos"] = pos
+		# 服务器权威槽位(role1)变化 = 滚轮切枪确实同步到了服务器
+		var w1: int = int(players.get("1", {}).get("weapon", 0))
+		if stat["r1_w"] == -1:
+			stat["r1_w"] = w1
+		elif w1 != stat["r1_w"]:
+			stat["r1_switched"] = true
+			stat["r1_w"] = w1
 	NetBus.local_snapshot.connect(on_snap)
 	for i in range(40):   # 20s
 		await get_tree().create_timer(0.5).timeout
+		if i % 8 == 3:   # 每 4s 注入一次滚轮上滚
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_WHEEL_UP
+			ev.pressed = true
+			Input.parse_input_event(ev)
 		if i % 4 == 0:
-			print("MM[%d]: t=%.1f snaps=%d ai_moved=%s" % [idx, i * 0.5, stat["snaps"], stat["ai_moved"]])
+			print("MM[%d]: t=%.1f snaps=%d ai_moved=%s r1_switched=%s" %
+					[idx, i * 0.5, stat["snaps"], stat["ai_moved"], stat["r1_switched"]])
 	NetBus.local_snapshot.disconnect(on_snap)
 	var f := FileAccess.open("user://mm_test_result_%d.txt" % idx, FileAccess.WRITE)
-	f.store_string("entered=true\nai_moved=%s\nsnaps=%d\n" % [stat["ai_moved"], stat["snaps"]])
-	print("MM[%d]: AI WATCH DONE ai_moved=%s snaps=%d" % [idx, stat["ai_moved"], stat["snaps"]])
-	get_tree().quit(0 if stat["ai_moved"] else 1)
+	f.store_string("entered=true\nai_moved=%s\nsnaps=%d\nr1_switched=%s\n" %
+			[stat["ai_moved"], stat["snaps"], stat["r1_switched"]])
+	print("MM[%d]: AI WATCH DONE ai_moved=%s r1_switched=%s snaps=%d" %
+			[idx, stat["ai_moved"], stat["r1_switched"], stat["snaps"]])
+	get_tree().quit(0 if (stat["ai_moved"] and stat["r1_switched"]) else 1)
 
 
 func _press(n: Node, text: String) -> void:

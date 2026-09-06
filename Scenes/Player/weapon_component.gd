@@ -78,16 +78,37 @@ func default_slot() -> String:
 
 # 滚轮切枪:沿 dir 方向循环到下一个启用槽位(禁用的直接跳过)。
 func cycle_slot(dir: int) -> void:
+	equip(str(_peek_cycle(dir)))
+
+# 计算滚轮方向的目标槽位(不切换)
+func _peek_cycle(dir: int) -> int:
 	var order: Array = enabled_slots.duplicate()
 	order.sort()
 	if order.is_empty():
-		return
+		return _current_slot
 	var idx := order.find(_current_slot)
 	if idx < 0:
 		idx = 0
-	var next: int = order[(idx + dir + order.size() * 2) % order.size()]
-	if next != _current_slot:
-		equip(str(next))
+	return order[(idx + dir + order.size() * 2) % order.size()]
+
+# ── PvP 滚轮切枪:本地立即切(即时反馈),目标槽位打包进输入包由服务器权威同步 ──
+# (滚轮事件不在输入包协议里,只本地切会被快照的防脱同步切回旧槽位 →「只有音效」)
+var _net_slot := 0   # 待发切枪槽位(>0 = 待发;打包后清零)
+
+func request_net_cycle(dir: int) -> void:
+	var next := _peek_cycle(dir)
+	if next == _current_slot:
+		return
+	push_net_slot(next)
+	equip(str(next))
+
+func push_net_slot(slot: int) -> void:
+	_net_slot = slot
+
+func consume_net_slot() -> int:
+	var v := _net_slot
+	_net_slot = 0
+	return v
 
 func equip(slot: String) -> void:
 	# 禁用槽位拒绝切换(提示音),防止数字键/网络包绕过
