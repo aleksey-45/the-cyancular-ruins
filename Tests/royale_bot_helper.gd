@@ -14,6 +14,7 @@ var _was_downed := false
 var _pos_changed := false
 var _last_pos := Vector2.INF
 var _snaps := 0
+var _players_max := 0   # 快照中出现的最大对局人数(验证 AI 补位)
 var _result_written := false
 
 
@@ -101,6 +102,8 @@ func _run() -> void:
 	_src = BotInputSource.new()
 	_player.set_input_source(_src)
 	print("BOT[%d]: Bot 输入源已挂载" % _bot_index)
+	NetBus.local_snapshot.connect(func(s: Dictionary) -> void:
+		_players_max = maxi(_players_max, (s.get("players", {}) as Dictionary).size()))
 	set_process(true)
 
 
@@ -116,7 +119,7 @@ func _process(delta: float) -> void:
 		if _player != null and is_instance_valid(_player):
 			pos = _player.global_position
 			downed = _player.is_downed()
-		print("BOT[%d]: t=%d snaps=%d pos=%s downed=%s" % [_bot_index, int(_elapsed), _snaps, pos, downed])
+		print("BOT[%d]: t=%d snaps=%d pos=%s downed=%s 人数=%d" % [_bot_index, int(_elapsed), _snaps, pos, downed, _players_max])
 	# 位置变化检测(快照是否真的在驱动本地玩家)
 	if _player != null and is_instance_valid(_player):
 		var p := _player.global_position

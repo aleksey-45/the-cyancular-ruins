@@ -24,6 +24,7 @@ var _elapsed := 0.0
 var _result_written := false
 var _room_written := false
 var _started_sent := false
+var _ai_fill := "--ai-fill" in OS.get_cmdline_user_args()
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -69,9 +70,13 @@ func _on_royale_state(state: Dictionary) -> void:
 			FileAccess.open("user://" + ROOM_FILE, FileAccess.WRITE).store_string(code)
 	if bool(state.get("in_match", false)):
 		return
-	# 房主:凑齐 5 人自动请求开局
+	# 房主:凑齐 5 人自动请求开局;--ai-fill 时改为 AI 补位开局
 	var plist: Array = state.get("players", [])
-	if plist.size() >= 5 and not _started_sent:
+	if _ai_fill and not _started_sent:
+		_started_sent = true
+		NetBusExt.rpc_id(1, "royale_start_ai")
+		print("BOT[%d]: royale_start_ai 已发送(%d 真人)" % [_index, plist.size()])
+	elif plist.size() >= 5 and not _started_sent:
 		_started_sent = true
 		NetBusExt.rpc_id(1, "royale_start")
 		print("BOT[%d]: royale_start 已发送(%d 人)" % [_index, plist.size()])

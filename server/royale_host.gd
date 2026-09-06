@@ -24,29 +24,32 @@ var _left: Dictionary = {}            # role -> true(中途掉线,已移出对�
 static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆不刷新,够用)
 
 
-func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {}) -> void:
+func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
+		ai_roles: Array = []) -> void:
 	# 散点必须在 super._init() 之前就绪:父类 _init 摆位会虚调 _spawn_cell(role),
 	# 若 _round_spawns 尚为空,首次摆位拿到 (-1,-1) 且被 _spawned_once 闩锁,
 	# 全体玩家挤到地图回卷角落、散点/复活设计失效(自检 S1 严重 bug)。
 	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
 		MazeGenerator.set_map_file(map_path)
 		WorldBuilder.load_grid()
-	_round_spawns = plan_spawns(role_peers.keys())
-	super._init(map_path, role_peers, options)
+	_round_spawns = plan_spawns(role_peers.keys() + ai_roles)
+	super._init(map_path, role_peers, options, ai_roles)
 
 
 # ── 开局(在 worker 进程调用):算散点出生 → 逐角色 match_start → 建 RoyaleHost ──
-static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {}) -> Node:
+# ai_roles = AI 补位 role 列表(这些 role 由服务端 AI 驱动,不发 match_start)
+static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {},
+		ai_roles: Array = []) -> Node:
 	MazeGenerator.set_map_file(map_path)
 	GameParameters.refresh_map_size()
 	# plan_spawns 依赖 current_grid:先预载网格(MatchHost._init 里再 load_grid 幂等)
 	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
 		WorldBuilder.load_grid()
-	var spawns := plan_spawns(role_peers.keys())
+	var spawns := plan_spawns(role_peers.keys() + ai_roles)
 	for role in role_peers:
 		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
 		NetBus.rpc_id(role_peers[role], "server_message", "大乱斗开始")
-	var host := RoyaleHost.new(map_path, role_peers, options)
+	var host := RoyaleHost.new(map_path, role_peers, options, ai_roles)
 	host._round_spawns = spawns
 	return host
 
