@@ -32,7 +32,9 @@
   --export-release "Windows Desktop" "E:\Workspace\godot\the-cyancular-ruins\The Cyancular Ruins.exe"
 ```
 
-> 一键打包(客户端 + 服务端并把服务端打回控制台):`python tools/build_release.py`。历史日期构建统一放 `builds/`,根目录只保留两个固定名 exe(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`)。
+> 一键打包(客户端 + 服务端并把服务端打回控制台 + 自动时间戳归档):`python tools/build_release.py`。
+>
+> **发布归档命名习惯**:每次导出的成品按时间戳归档到 `builds/`,文件名 = `<原名> <YYYYMMDDHHMM>.exe`(如 `The Cyancular Ruins 202609062126.exe`、`Cyancular Ruins Server 202609062126.exe`);**根目录只保留两个固定名 exe**(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`,固定名=当前最新版,给 start_server.bat / 立即测试用)。`builds/` 不入库(gitignore 已配)。`build_release.py` 每次导完自动归档一份时间戳副本;想用别的历史名可 `python tools/build_release.py --stamp 202609062126`。手动重导出(下方命令行)只更新固定名,归档请另跑 `tools/archive_build.py`(见 §1.5)或手动复制。
 
 > **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云/防火墙需放行 **7777 与 7800~7999 的 UDP**;局域网/本机不受限。
 
@@ -43,6 +45,15 @@
 
 ### 1.4 发布
 把 `The Cyancular Ruins.exe` 这一个文件发出去即可。
+
+### 1.5 时间戳归档(手动重导出后用)
+只跑了 §1.2 的手动命令行(仅更新固定名)时,补一份时间戳副本进 `builds/`:
+```bash
+python tools/archive_build.py                      # 归档根目录两个固定名 exe,时间戳取当前时间
+python tools/archive_build.py --stamp 202609062126 # 指定归档时间戳(追溯/对齐用)
+python tools/archive_build.py --file "Some.exe"    # 只归档指定文件
+```
+`build_release.py`(§1.2 一键打包)导出后已自动调用它,无需再手动归档。
 
 ---
 
