@@ -33,6 +33,7 @@ var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨
 var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
 var _fuse_elapsed: float = 0.0
 var _fuse_duration: float = 0.0  # 本次引信时长(撞墙=fuse_time,命中敌人=hit_fuse_time)
+var prev_pos := Vector2.INF      # 上一采样点位置(服务器扫掠命中判定用)
 
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
@@ -65,6 +66,7 @@ func _physics_process(delta: float) -> void:
 			queue_free()
 			return
 	_apply_water_drag(delta)
+	prev_pos = global_position   # 记录移动前位置(扫掠命中判定:采样点之间的路径也算命中)
 	var step := velocity_vec * delta
 	traveled += step.length()
 	var col := move_and_collide(step)

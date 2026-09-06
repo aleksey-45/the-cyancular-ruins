@@ -17,6 +17,7 @@ var _snapshot_accum := 0.0
 var _ack_seq: Dictionary = {}        # role(int) -> 已消费输入包 seq(C2 rollback 锚点,随快照回带)
 const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 模拟,本地玩家靠快照渲染,30Hz 太卡)
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
+const BODY_RADIUS := 30.0  # 扫掠判定半径:玩家身体近似圆(线段扫掠防快速子弹跳过身体)
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
 var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
 
@@ -302,7 +303,7 @@ func _broadcast_snapshot() -> void:
 		if p.weapons != null and p.weapons.current_weapon() != null:
 			previewing = p.weapons.current_weapon().is_previewing()
 		# C2 rollback:快照带 ack_seq(服务器已消费到哪一输入)+ 权威整态(capture_state,替代上面散字段;
-		# 旧字段保留给服务器渲染/副本/阶段切换兼容)。
+		# 旧字段保留给服务器渲染/副本/阶段切换兼容)。换弹 mag/rl 亦随 capture_state 下发(并入 34e67a5 时该处由 c2 取代)。
 		var c2 := {}
 		if p.has_method("capture_state"):
 			c2 = p.capture_state()
@@ -345,7 +346,7 @@ func _adjudicate_bullets() -> void:
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if not is_instance_valid(b):
 			continue
-		var bullet := b as CharacterBody2D
+		var bullet := b as BulletBase
 		# 新子弹:广播给非射手客户端(射手已本地生成视觉)
 		var bid: int = bullet.get_instance_id()
 		if not _seen_bullets.has(bid):
@@ -360,14 +361,27 @@ func _adjudicate_bullets() -> void:
 		# 跳过 = 让它自己落地起爆,AoE(Explosion.apply_aoe)自会把爆心半径内的对手算进去。
 		if bullet.explodes:
 			continue
-		# 命中裁决:对非射手玩家算 toroidal 距离
+		# 命中裁决:对非射手玩家算 toroidal 距离。双重判定防漏判(自检「视觉重合却不判中」,自 34e67a5 并入):
+		#  a) 点判定:子弹当前点距对手 < HIT_RADIUS(40,原判定);
+		#  b) 扫掠判定:上一采样点→当前点的线段距对手身体圆 < BODY_RADIUS
+		#     (快速子弹逐帧采样间距可达 50px+,单点采样会"跳过"身体)。
+		# 玩家位置按环面最短修正到子弹附近(跨接缝判定);段长>150 视为过缝跳跃,跳过扫掠。
 		for role in players:
 			var p: Node2D = players[role]
 			if p == bullet.shooter:
 				continue
-			var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
+			var corrected := MazeGenerator.anchor_to_nearest(p.global_position, bullet.global_position,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+			var point_d := MazeGenerator.toroidal_delta_px(bullet.global_position, corrected,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
-			if d < HIT_RADIUS:
+			var hit := point_d < HIT_RADIUS
+			if not hit and bullet.prev_pos != Vector2.INF:
+				var seg := bullet.global_position - bullet.prev_pos
+				if seg.length() <= 150.0:
+					var closest := Geometry2D.get_closest_point_to_segment(corrected,
+							bullet.prev_pos, bullet.global_position)
+					hit = closest.distance_to(corrected) < BODY_RADIUS
+			if hit:
 				_on_bullet_hit(bullet, p, role)
 				break
 
