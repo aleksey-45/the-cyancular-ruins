@@ -9,6 +9,10 @@ var charge_down_velocity: float = PlayerParams.charge_down_velocity
 var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
 var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间（秒）
 var move_speed: float = PlayerParams.move_speed
+# 干员(实验性):卡片覆盖的字段(OperatorComponent.apply_operator 写入)
+var armor := 0                 # 固定减伤(take_hit 时扣)
+var operator_name := ""        # HUD 左上角显示当前干员名
+var _operator: OperatorComponent = null
 
 # 水平加速/刹车/转身的指数缓动系数（越大越跟手）
 var accel_ground: float = PlayerParams.accel_ground
@@ -159,6 +163,7 @@ func apply_server_snapshot(data: Dictionary) -> void:
 
 func _ready() -> void:
 	add_to_group("player")
+	_operator = get_node_or_null("OperatorComponent")
 
 	# 转发 combat 的生命/倒地信号到根(外部只认根上的 hp_changed;倒地 → 取消瞄准)
 	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
@@ -206,8 +211,25 @@ func _physics_process(delta: float) -> void:
 	var wslot := input_source.get_weapon_slot_pressed()
 	if wslot > 0:
 		weapons.equip(str(wslot))
+	# R 换弹请求(网络玩家):输入包携带 rl 边沿,服务器权威玩家在此消费
+	if input_source.has_method("consume_reload_request") and input_source.consume_reload_request():
+		weapons.start_reload()
 
 	var mult := weapons.movement_multiplier()
+
+	# ---------- 干员技能(实验性):组件驱动 + 冲刺接管 + 掩体减速 ----------
+	if _operator != null:
+		_operator.update_skills(delta, input_source)
+		# 冲刺接管水平速度(冲刺期间免疫击退)
+		if _operator.dash_left > 0.0:
+			_operator.dash_left -= delta
+			velocity.x = _operator.dash_dir * _operator.DASH_SPEED
+			if velocity.y > 0.0:
+				velocity.y = 0.0
+			combat.knock_velocity = Vector2.ZERO
+		if _operator.shield_left > 0.0:
+			_operator.shield_left -= delta
+			mult.x *= _operator.shield_speed_mult()
 
 	var horizontal_input = input_source.get_axis("left", "right")
 
@@ -371,6 +393,14 @@ func _physics_process(delta: float) -> void:
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
+	# 干员护甲(实验性):固定减伤,最低保底 1 点
+	if armor > 0:
+		damage = maxi(damage - armor, 1)
+	# 掩体姿态(实验性):正面(伤害来源与朝向同侧)受伤减半
+	if _operator != null and _operator.shield_left > 0.0:
+		var from_front := signf(source_pos.x - global_position.x) == signf(float(facing_direction))
+		if from_front:
+			damage = maxi(ceili(damage * 0.5), 1)
 	combat.take_hit(source_pos, damage, ignore_iframes, knockback)
 
 func get_facing() -> int:

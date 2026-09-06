@@ -116,6 +116,13 @@ func _ready() -> void:
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单人开局选项:禁用的武器槽位应用到玩家(数字键/滚轮都会跳过)
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)
+	# 干员(实验性):单机路径按选人结果应用卡参数(HP/护甲/移速/外貌/技能)
+	if RunOptions.operator_id != "":
+		var card: Dictionary = OperatorRegistry.get_operator(RunOptions.operator_id)
+		if not card.is_empty():
+			var op_comp: Node = get_node_or_null("WorldViewport/Player/OperatorComponent")
+			if op_comp != null:
+				op_comp.apply_operator(card)
 
 	# Esc 暂停菜单(隐藏待命,PauseMenu 自行处理 ui_cancel 并截获,不会透进世界)
 	add_child(PauseMenu.new(false))

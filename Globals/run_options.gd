@@ -6,6 +6,7 @@ extends RefCounted
 
 static var disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-5)
 static var difficulty: int = 1                 # 0=简单 1=普通 2=困难
+static var operator_id := ""                   # 干员卡 id(实验性;空 = 默认角色)
 
 # 难度 → 鸟密度倍率(相对地图 # enemy 元数据数量;困难在图上补采地板格刷新鸟)
 const DENSITY: Array[float] = [0.5, 1.0, 1.5]
@@ -17,3 +18,4 @@ static func difficulty_mult() -> float:
 static func reset() -> void:
 	disabled_weapons = []
 	difficulty = 1
+	operator_id = ""

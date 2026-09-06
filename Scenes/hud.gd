@@ -63,6 +63,17 @@ func _ready() -> void:
 			_build_weapon_display(p)
 			p.weapons.weapon_changed.connect(_on_weapon_changed)
 			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
+		# 干员名(实验性):左上角血条上方显示当前干员(默认角色不显示)
+		if "operator_name" in p and str(p.operator_name) != "":
+			var op_l := Label.new()
+			op_l.text = "干员:" + str(p.operator_name)
+			op_l.add_theme_font_size_override("font_size", 22)
+			op_l.add_theme_color_override("font_color", Color(0.85, 0.93, 0.98))
+			var pf2: FontFile = load(KILL_FONT_PATH) as FontFile
+			if pf2 != null:
+				op_l.add_theme_font_override("font", pf2)
+			op_l.position = Vector2(MARGIN.x, MARGIN.y + SEG_H + WATERPROOF_GAP + WATERPROOF_H + 8)
+			call_deferred("add_child", op_l)
 
 
 func _process(_delta: float) -> void:

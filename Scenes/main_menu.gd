@@ -314,6 +314,46 @@ func _build_sp_panel() -> PanelContainer:
 		diff_btns.append(b)
 		diff_row.add_child(b)
 
+	# ── 选干员(实验性):头像+名字点选;空 = 默认角色 ──
+	vb.add_child(_pixel_label("选择干员(实验性)", 26))
+	var op_row := HBoxContainer.new()
+	op_row.add_theme_constant_override("separation", 14)
+	vb.add_child(op_row)
+	var op_btns: Array[Button] = []
+	var op_ids: Array[String] = [""]
+	OperatorRegistry.load_all()
+	for op_id in OperatorRegistry._operators:
+		op_ids.append(op_id)
+	for op_id in op_ids:
+		var card: Dictionary = OperatorRegistry.get_operator(op_id)
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(128, 150)
+		b.toggle_mode = true
+		b.button_pressed = RunOptions.operator_id == op_id
+		b.pressed.connect(func() -> void:
+			RunOptions.operator_id = op_id
+			for other in op_btns:
+				other.set_pressed_no_signal(other == b))
+		var av := TextureRect.new()
+		av.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		av.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		av.custom_minimum_size = Vector2(96, 96)
+		av.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		if op_id != "" and ResourceLoader.exists("res://DevTools/cards/operators/%s.png" % op_id):
+			av.texture = load("res://DevTools/cards/operators/%s.png" % op_id)
+		b.add_child(av)
+		var nm := _pixel_label("默认角色" if op_id == "" else str(card.get("name", op_id)), 20, Color(0.85, 0.9, 0.95))
+		nm.position = Vector2(8, 100)
+		nm.size = Vector2(112, 44)
+		nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		b.add_child(nm)
+		var skill_names := PackedStringArray()
+		for sk in card.get("skills", []):
+			skill_names.append(str(sk.get("name", "")))
+		b.tooltip_text = ("技能:" + ", ".join(skill_names)) if skill_names.size() > 0 else "无干员技能"
+		op_btns.append(b)
+		op_row.add_child(b)
+
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 24)
@@ -355,6 +395,20 @@ func _build_old_ui() -> void:
 	ver.add_theme_font_size_override("font_size", 20)
 	ver.add_theme_color_override("font_color", Color(0.7, 0.8, 0.9))
 	add_child(ver)
+
+	var op_cycle := Button.new()
+	op_cycle.text = "干员:" + (OperatorRegistry.get_operator(RunOptions.operator_id).get("name", "默认") if RunOptions.operator_id != "" else "默认")
+	op_cycle.position = Vector2(60, 300)
+	op_cycle.size = Vector2(200, 48)
+	op_cycle.pressed.connect(func() -> void:
+		OperatorRegistry.load_all()
+		var ids: Array[String] = [""]
+		for oid in OperatorRegistry._operators:
+			ids.append(oid)
+		var idx := ids.find(RunOptions.operator_id)
+		RunOptions.operator_id = ids[(idx + 1) % ids.size()]
+		op_cycle.text = "干员:" + (OperatorRegistry.get_operator(RunOptions.operator_id).get("name", "默认") if RunOptions.operator_id != "" else "默认"))
+	add_child(op_cycle)
 
 	var single := Button.new()
 	single.text = "单人"
