@@ -36,9 +36,12 @@ func _ready() -> void:
 
 # 杀掉还监听该 UDP 端口的旧进程(Windows:PowerShell 取 UDP 端点属主进程→Stop-Process)。
 # 供大厅启动前用,避免旧服务端没关导致新实例 bind 失败瞬间退出(双击 exe 闪退)。
+# 注意:`% OwningProcess` 这种写法取不到属性(ForEach-Object 后接裸名字不展开 $_),实测拿空→杀不掉,
+# 7777 被旧进程占着新实例照旧 bind 失败。必须 `Select -Expand OwningProcess`(2026-09-06 修)。
 func _kill_port_holder(port: int) -> void:
 	var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
-			" | % OwningProcess | sort -u; if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
+			" -ErrorAction SilentlyContinue | Select -ExpandProperty OwningProcess -Unique; " + \
+			"if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
 	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, true)
 
 # ── worker:独占端口等两端 claim_role,收齐建局 ──
