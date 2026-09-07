@@ -126,7 +126,8 @@ func _wait_game(idx: int) -> void:
 func _watch_ai(idx: int) -> void:
 	Settings.wheel_switch = true
 	var stat := {"snaps": 0, "ai_moved": false, "ai_pos": Vector2.INF,
-			"r1_w": -1, "r1_switched": false}
+			"r1_w": -1, "r1_switched": false,
+			"m1_last": -1, "m1_min": 99, "rl_seen": false, "m1_refill": false}
 	var on_snap := func(s: Dictionary) -> void:
 		stat["snaps"] += 1
 		var players: Dictionary = s.get("players", {})
@@ -143,24 +144,50 @@ func _watch_ai(idx: int) -> void:
 		elif w1 != stat["r1_w"]:
 			stat["r1_switched"] = true
 			stat["r1_w"] = w1
+		# 换弹链路:服务器权威弹夹 mag 递减 → rl=true(换弹中)→ 回满
+		var p1: Dictionary = players.get("1", {})
+		if p1.has("mag"):
+			var m1 := int(p1["mag"])
+			if stat["m1_last"] == -1:
+				stat["m1_last"] = m1
+				stat["m1_min"] = m1
+			if m1 < stat["m1_last"]:
+				stat["m1_dec"] = true
+			stat["m1_last"] = m1
+			stat["m1_min"] = mini(stat["m1_min"], m1)
+			if bool(p1.get("rl", false)):
+				stat["rl_seen"] = true
+			if stat["m1_dec"] and stat["rl_seen"] and m1 > stat["m1_min"]:
+				stat["m1_refill"] = true
 	NetBus.local_snapshot.connect(on_snap)
-	for i in range(40):   # 20s
+	for i in range(80):   # 40s:周期开火(手枪 12 发打空→自动换弹→继续)
 		await get_tree().create_timer(0.5).timeout
+		if i % 2 == 0:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = true
+			Input.parse_input_event(ev)
+		elif i % 2 == 1:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = false
+			Input.parse_input_event(ev)
 		if i % 8 == 3:   # 每 4s 注入一次滚轮上滚
 			var ev := InputEventMouseButton.new()
 			ev.button_index = MOUSE_BUTTON_WHEEL_UP
 			ev.pressed = true
 			Input.parse_input_event(ev)
 		if i % 4 == 0:
-			print("MM[%d]: t=%.1f snaps=%d ai_moved=%s r1_switched=%s" %
-					[idx, i * 0.5, stat["snaps"], stat["ai_moved"], stat["r1_switched"]])
+			print("MM[%d]: t=%.1f snaps=%d ai_moved=%s r1_switched=%s m1_min=%s rl=%s" %
+					[idx, i * 0.5, stat["snaps"], stat["ai_moved"], stat["r1_switched"],
+					stat["m1_min"], stat["rl_seen"]])
 	NetBus.local_snapshot.disconnect(on_snap)
 	var f := FileAccess.open("user://mm_test_result_%d.txt" % idx, FileAccess.WRITE)
-	f.store_string("entered=true\nai_moved=%s\nsnaps=%d\nr1_switched=%s\n" %
-			[stat["ai_moved"], stat["snaps"], stat["r1_switched"]])
-	print("MM[%d]: AI WATCH DONE ai_moved=%s r1_switched=%s snaps=%d" %
-			[idx, stat["ai_moved"], stat["r1_switched"], stat["snaps"]])
-	get_tree().quit(0 if (stat["ai_moved"] and stat["r1_switched"]) else 1)
+	f.store_string("entered=true\nai_moved=%s\nr1_switched=%s\nm1_refill=%s\nrl_seen=%s\nsnaps=%d\n" %
+			[stat["ai_moved"], stat["r1_switched"], stat["m1_refill"], stat["rl_seen"], stat["snaps"]])
+	print("MM[%d]: AI WATCH DONE ai_moved=%s r1_switched=%s m1_refill=%s rl_seen=%s snaps=%d" %
+			[idx, stat["ai_moved"], stat["r1_switched"], stat["m1_refill"], stat["rl_seen"], stat["snaps"]])
+	get_tree().quit(0 if (stat["ai_moved"] and stat["r1_switched"] and stat["m1_refill"]) else 1)
 
 
 func _press(n: Node, text: String) -> void:

@@ -57,7 +57,7 @@ static func enemy_display_name(victim: Node) -> String:
 
 
 var _marker: HitMarker = null
-var _kill_label: Label = null
+var _kill_label: RichTextLabel = null
 var _hit_age := -1.0    # <0 = 隐藏
 var _kill_age := -1.0
 
@@ -76,19 +76,28 @@ func _ready() -> void:
 	_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_marker.visible = false
 	root.add_child(_marker)
-	# 击杀播报:全屏 Label 居中对齐,整体上移一点避开正中心的 X 标记
-	_kill_label = Label.new()
-	_kill_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_kill_label.offset_top = -112
-	_kill_label.offset_bottom = -112
+	# 击杀播报:全屏富文本居中,大标题同款像素风——青色「击杀」+ 金色被击杀者名,
+	# 粗黑描边;固定条带位于屏幕中心上方,避开正中心的 X 标记
+	_kill_label = RichTextLabel.new()
+	_kill_label.bbcode_enabled = true
+	_kill_label.scroll_active = false
+	_kill_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_kill_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_kill_label.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_kill_label.offset_left = -600
+	_kill_label.offset_right = 600
+	_kill_label.offset_top = -166
+	_kill_label.offset_bottom = -66
 	_kill_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_kill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_kill_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_kill_label.add_theme_font_override("font", load(PIXEL_FONT))
-	_kill_label.add_theme_font_size_override("font_size", 44)
-	_kill_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
-	_kill_label.add_theme_constant_override("outline_size", 12)
-	_kill_label.add_theme_color_override("font_outline_color", Color(0.08, 0.05, 0.02, 0.9))
+	_kill_label.add_theme_font_override("normal_font", load(PIXEL_FONT))
+	_kill_label.add_theme_font_override("bold_font", load(PIXEL_FONT))
+	_kill_label.add_theme_font_size_override("normal_font_size", 68)
+	_kill_label.add_theme_font_size_override("bold_font_size", 68)
+	_kill_label.add_theme_color_override("default_color", Color(0.55, 0.95, 1.0))   # 标题青
+	_kill_label.add_theme_constant_override("outline_size", 16)
+	_kill_label.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12, 0.95))
 	_kill_label.modulate.a = 0.0
 	root.add_child(_kill_label)
 
@@ -106,7 +115,8 @@ func _show_hit() -> void:
 
 
 func _show_kill(who: String) -> void:
-	_kill_label.text = "击杀 %s" % who
+	# 击杀名里的 "[" 去掉,防止用户昵称拼进 BBCode
+	_kill_label.text = "击杀 [color=#ffd76e]%s[/color]" % who.replace("[", "")
 	_kill_age = 0.0
 	Sfx.play("kill")
 

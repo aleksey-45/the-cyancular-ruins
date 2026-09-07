@@ -202,6 +202,9 @@ func _physics_process(delta: float) -> void:
 	var wslot := input_source.get_weapon_slot_pressed()
 	if wslot > 0:
 		weapons.equip(str(wslot))
+	# R 换弹请求(网络玩家):输入包携带 rl 边沿,服务器权威玩家在此消费
+	if input_source.has_method("consume_reload_request") and input_source.consume_reload_request():
+		weapons.start_reload()
 
 	var mult := weapons.movement_multiplier()
 

@@ -54,6 +54,30 @@ static func silhouette(slot: int) -> Texture2D:
 	_silhouette_cache[slot] = tex
 	return tex
 
+# 武器选择格(共用):勾选框 + 固定尺寸白剪影 + 名称。
+# 剪影原始宽度可达 252px,直接挂 CheckButton.icon 会把横排面板撑出屏幕(实测),
+# 这里用固定尺寸 TextureRect 约束。CheckButton 引用存 meta("cb") 供调用方读取状态。
+static func make_weapon_check(slot: int, checked: bool, font_size: int, on_toggle: Callable) -> HBoxContainer:
+	var cell := HBoxContainer.new()
+	cell.add_theme_constant_override("separation", 6)
+	var cb := CheckButton.new()
+	cb.button_pressed = checked
+	cb.toggled.connect(func(on: bool) -> void: on_toggle.call(on))
+	cell.set_meta("cb", cb)   # 挂 cell 上(调用方统一 cell.get_meta("cb") 取勾选框)
+	cell.add_child(cb)
+	var icon := TextureRect.new()
+	icon.texture = silhouette(slot)
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.custom_minimum_size = Vector2(96, 30)
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	cell.add_child(icon)
+	var l := Label.new()
+	l.text = "%d %s" % [slot, DISPLAY_NAMES[slot]]
+	l.add_theme_font_size_override("font_size", font_size)
+	cell.add_child(l)
+	return cell
+
 # 启用的武器槽位(1-5)。单机由 Level0 按 RunOptions 设置;PvP 由 pvp_client 按服务器
 # 下发的 match_options 设置。数字键/滚轮切枪都会跳过禁用槽位。
 var enabled_slots: Array = [1, 2, 3, 4, 5]

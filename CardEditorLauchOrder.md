@@ -1,0 +1,1 @@
+"C:\Godot\Godot_v4.7.1-stable_win64.exe" --path "C:\Users\21559\Desktop\WorkShop\别人的游戏demo\the-cyancular-ruins" res://DevTools/card_editor.tscn
