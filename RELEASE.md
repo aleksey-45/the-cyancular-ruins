@@ -92,7 +92,8 @@ git clone --depth 1 --branch 4.7.1-stable https://gitee.com/mirrors/godot.git E:
   > **别加一个类就重编一次**:改 classes/模块列表 = 近全量重编 10~15 分钟(见 §2.4),把缺的类一次集齐再烘焙。
 
 ### 2.4 编译模板
-构建脚本:**`E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat`**。等价命令:
+构建脚本:**仓库内 `tools/build_cyancular.bat`**(已入库,来源副本;使用时拷贝到引擎源码根
+`E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat` 后运行,或直接改脚本内路径)。等价命令:
 
 ```bat
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
