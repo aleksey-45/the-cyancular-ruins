@@ -352,6 +352,10 @@ func _on_server_message(t: String) -> void:
 			_request_list.call_deferred("%s → 已自动刷新列表" % t)
 		else:
 			_status.text = t
+	elif t.begins_with("配对已取消"):
+		# 已入房后房主/对端掉线被大厅取消:房间已不在,直接刷新恢复可操作(不叠加 _auto_refreshed 门)
+		_join_sent_ms = 0
+		_request_list.call_deferred("配对已取消(对手离开)——已刷新列表,请重选")
 	else:
 		_status.text = t
 
@@ -360,7 +364,8 @@ func _on_room_created(code: String) -> void:
 	_ai_duel_btn.visible = true   # 房主等待期可选与 AI 对战(实验性,仅自建服)
 
 func _on_room_joined(role: int) -> void:
-	_join_sent_ms = 0   # 已入房,配对应答在路上(go_match 或对端超时由 _process 兜底)
+	# 注意:此处不清 _join_sent_ms——入房后到 go_match 之间若房主掉线、大厅关房,
+	# 客户端会收不到 go_match 也没有任何后续;保留该兜底计时(超时自动刷新回大厅)。
 	_status.text = "已加入,等待开战……"
 	_ai_duel_btn.visible = false   # 真人已补位,不需要 AI
 

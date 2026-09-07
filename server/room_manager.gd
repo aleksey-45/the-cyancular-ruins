@@ -151,6 +151,10 @@ func on_peer_left(peer_id: int) -> void:
 		# 旧逻辑会留下 1/2 幽灵房:对局实际已死,房却常驻列表可被反复加入、重复拉起 worker。
 		# 改为:started 房一方掉线即整房作废,防幽灵房/连环僵尸 worker。
 		if room.players.is_empty() or room.started:
+			# 开局后仍留在房内的一方(还没收到 go_match/还没转连):告知并放走,别让它干等
+			if not room.players.is_empty():
+				for survivor in room.players:
+					NetBus.rpc_id(survivor, "server_message", "配对已取消(对手离开),请刷新列表")
 			_release_port_later(room.worker_port)   # 延迟归还(见 WORKER_PORT_REUSE_DELAY 注释)
 			rooms.erase(code)
 			print("房间 %s 关闭(端口 %d 将于 %ds 后回收)" % [code, room.worker_port, int(WORKER_PORT_REUSE_DELAY)])
