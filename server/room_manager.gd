@@ -28,6 +28,7 @@ class Room:
 	var code: String = ""
 	var players: Array[int] = []          # peer ids
 	var player_role: Dictionary = {}      # peer id -> 1/2
+	var started := false                 # 已拉起 worker/已配对:拒绝再次加入,一方掉线即整房作废
 	var match_host: Node = null           # 保留字段:worker 模式下大厅恒为 null
 	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
 
@@ -121,6 +122,10 @@ func join_room(caller: int, code: String) -> void:
 		NetBus.rpc_id(caller, "server_message", "房间不存在")
 		return
 	var room: Room = rooms[code]
+	if room.started:
+		# 已开局(worker 已拉起):双方已转连对局,列表残留期间拒绝第三人误入
+		NetBus.rpc_id(caller, "server_message", "房间已满")
+		return
 	if room.players.size() >= 2:
 		NetBus.rpc_id(caller, "server_message", "房间已满")
 		return
@@ -141,9 +146,11 @@ func on_peer_left(peer_id: int) -> void:
 			continue
 		room.players.erase(peer_id)
 		room.player_role.erase(peer_id)
-		# worker 模式下大厅无对局;玩家转连 worker 后的断开只是清房间。
-		# 若某方在配对前掉线 → 房间不满、等另一方(或一直空着由时间清理)。
-		if room.players.is_empty():
+		# 关房条件:空房,或已开局(worker 已拉起)后任一方掉线。
+		# 开局后双方会相继转连 worker 断开大厅;若只走掉一方(如房主在配对瞬间掉线),
+		# 旧逻辑会留下 1/2 幽灵房:对局实际已死,房却常驻列表可被反复加入、重复拉起 worker。
+		# 改为:started 房一方掉线即整房作废,防幽灵房/连环僵尸 worker。
+		if room.players.is_empty() or room.started:
 			_release_port_later(room.worker_port)   # 延迟归还(见 WORKER_PORT_REUSE_DELAY 注释)
 			rooms.erase(code)
 			print("房间 %s 关闭(端口 %d 将于 %ds 后回收)" % [code, room.worker_port, int(WORKER_PORT_REUSE_DELAY)])
@@ -401,17 +408,31 @@ func _spawn_royale_worker(port: int, players: int, ai_roles: Array = []) -> bool
 
 # ── 配对完成 → 拉起对局 worker 并让两端转连 ──
 func _start_match(room: Room) -> void:
+	# 先置 started:配对瞬间任何一方掉线都走 on_peer_left 的「started 即关房」分支,
+	# 不会留下 1/2 幽灵房;同时也挡住第三人在这 0.3s 窗口误入重复拉起 worker。
+	room.started = true
 	var port := _pick_worker_port()
 	if port < 0:
+		# 起不来局:房间作废,通知双方(不再滞留)
 		NetBus.rpc_id(room.players[0], "server_message", "无法分配对局端口")
+		for peer_id in room.players:
+			NetBus.rpc_id(peer_id, "server_message", "配对失败,房间已关闭——请重新建房/加入")
+		room.worker_port = 0
+		rooms.erase(room.code)
 		return
 	room.worker_port = port
 	if not _spawn_worker(port):
 		_worker_ports.erase(port)
 		NetBus.rpc_id(room.players[0], "server_message", "无法启动对局")
+		for peer_id in room.players:
+			NetBus.rpc_id(peer_id, "server_message", "配对失败,房间已关闭——请重新建房/加入")
+		room.worker_port = 0
+		rooms.erase(room.code)
 		return
 	# 稍等 worker 完成 bind,再通知两端转连(worker 很快,300ms 足够)
 	await get_tree().create_timer(0.3).timeout
+	if not rooms.has(room.code):   # 0.3s 内已有玩家掉线触发关房 → 别再给幽灵房发 go_match
+		return
 	for peer_id in room.players:
 		NetBus.rpc_id(peer_id, "go_match", room.player_role[peer_id], port)
 	print("房间 %s 配对完成 → worker 端口 %d" % [room.code, port])

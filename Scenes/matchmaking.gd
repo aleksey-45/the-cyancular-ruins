@@ -19,6 +19,7 @@ var _pending_action: Callable = Callable()   # 连上后要执行的建房/加�
 var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜底提示)
 var _go_start_ms := 0
 var _lobby_start_ms := 0   # 连大厅计时(UDP 被静默丢包时 connection_failed 要等很久,8s 给明确提示)
+var _join_sent_ms := 0     # 刚发出 join_room 的时间戳:服务端无任何应答(幽灵房间)时兜底回大厅刷新
 var _claimed_ms := 0       # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
 
 func _ready() -> void:
@@ -287,6 +288,7 @@ func _join_code(code: String) -> void:
 	PvpSession.room_code = code
 	_with_lobby(func() -> void:
 		_status.text = "加入房间 %s,等待配对…" % code
+		_join_sent_ms = Time.get_ticks_msec()
 		NetBus.rpc_id(1, "join_room", code))
 
 func _on_refresh_pressed() -> void:
@@ -344,6 +346,7 @@ func _on_server_message(t: String) -> void:
 		# 点了失效/已满的房间 → 提示并自动刷新一次(列表常驻陈旧房间,点了必失败)
 		# 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,
 		# 栈内立刻 NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误
+		_join_sent_ms = 0   # 服务端已明确应答,停掉 join 兜底
 		if not _auto_refreshed:
 			_auto_refreshed = true
 			_request_list.call_deferred("%s → 已自动刷新列表" % t)
@@ -357,6 +360,7 @@ func _on_room_created(code: String) -> void:
 	_ai_duel_btn.visible = true   # 房主等待期可选与 AI 对战(实验性,仅自建服)
 
 func _on_room_joined(role: int) -> void:
+	_join_sent_ms = 0   # 已入房,配对应答在路上(go_match 或对端超时由 _process 兜底)
 	_status.text = "已加入,等待开战……"
 	_ai_duel_btn.visible = false   # 真人已补位,不需要 AI
 
@@ -371,6 +375,7 @@ var _pending_go_port := -1
 func _on_go_match(role: int, port: int) -> void:
 	_pending_go_role = role
 	_pending_go_port = port
+	_join_sent_ms = 0   # 配对成功:停 join 兜底,转由转连 worker/claim 兜底接管
 	_status.text = "配对成功,连接对局服务器……"
 	_do_go_match.call_deferred()
 
@@ -384,7 +389,10 @@ func _do_go_match() -> void:
 	PvpSession.role = role
 	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
-		_status.text = "连接对局服务器失败,请返回重试", CONNECT_ONE_SHOT)
+		if _connecting_worker:
+			# 对局 worker 连不上(幽灵房间/端口已死)→ 停本段等待,自动回大厅刷新
+			_return_to_lobby("对局服务器连接失败——房间可能已失效,已返回大厅并刷新")
+	, CONNECT_ONE_SHOT)
 	NetBus.stop()
 	_connecting_worker = true
 	_go_start_ms = Time.get_ticks_msec()
@@ -404,11 +412,28 @@ func _claim_role_worker(role: int) -> void:
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 	})
 
-# 转连 worker 超时兜底:UDP 连不上不会立刻报失败,这里 12 秒给明确提示(别无限卡着)
+# 幽灵房间/死 worker 兜底:断开当前连接回大厅,连上后 _on_lobby_connected 自动刷新列表。
+func _return_to_lobby(msg: String) -> void:
+	_connecting_worker = false
+	_claimed_ms = 0
+	_join_sent_ms = 0
+	NetBus.stop()
+	_connected = false
+	_status.text = msg
+	NetBus.start_client(PvpSession.server_address)
+
+# 转连 worker / 入房应答超时兜底:UDP 连不上不会立刻报失败,这里定时自动回大厅,
+# 不让「点了幽灵房间」永久停在"正在连接对局服务器/等待配对"。
 func _process(_delta: float) -> void:
+	# 1) 转连 worker 12s 无连接(死端口):不再只是提示,直接回大厅并刷新
 	if _connecting_worker and Time.get_ticks_msec() - _go_start_ms > 12000:
-		_connecting_worker = false
-		_status.text = "连接对局服务器超时——请检查:对局端口(7800~7999 UDP)是否放行、服务端是否最新"
+		_return_to_lobby("对局服务器无响应(房间可能已失效)——已返回大厅并刷新,请换一个房间")
+		return
+	# 2) join_room 发出去 10s 服务端无任何应答(幽灵房间/丢包):自动刷新列表恢复可操作
+	if not _connecting_worker and _claimed_ms == 0 and _join_sent_ms > 0 \
+			and Time.get_ticks_msec() - _join_sent_ms > 10000:
+		_join_sent_ms = 0
+		_request_list("房间无响应(可能已失效)——已自动刷新列表,请重选")
 		return
 	# 大厅连接超时兜底:同因(UDP 静默丢包),8 秒仍没连上就给明确提示
 	if not _connecting_worker and _lobby_start_ms > 0 and not _connected \
@@ -419,10 +444,7 @@ func _process(_delta: float) -> void:
 	# claim 后 25s 仍未 match_start:对方未就绪(房间失效/对端掉线/云服无降级开局)→
 	# 放弃本局并自动重连大厅,恢复列表/建房能力(原「连接对局服务器」永久卡死)
 	if _claimed_ms > 0 and Time.get_ticks_msec() - _claimed_ms > 25000:
-		_claimed_ms = 0
-		NetBus.stop()
-		NetBus.start_client(PvpSession.server_address)
-		_status.text = "对手未就绪(房间可能已失效),已返回大厅——可刷新列表换一个房间"
+		_return_to_lobby("对手未就绪(房间可能已失效)——已返回大厅并刷新,请换一个房间")
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
