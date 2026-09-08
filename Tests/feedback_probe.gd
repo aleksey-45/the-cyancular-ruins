@@ -35,7 +35,12 @@ func _ready() -> void:
 	# 击杀播报:文本 + 浮现(alpha > 0)
 	fx._kill_label.modulate.a = 0.0
 	CF.kill("测试鸟")
-	if fx._kill_label.text != "击杀 测试鸟":
+	# v1.1.1 击杀播报为富文本(青色「击杀」+ 金色人名):断言前剥掉 BBCode 标签再比内容
+	var kill_text: String = fx._kill_label.text
+	var bbcode_tag := RegEx.new()
+	bbcode_tag.compile("\\[[^\\]]*\\]")
+	kill_text = bbcode_tag.sub(kill_text, "", true)
+	if kill_text != "击杀 测试鸟":
 		failures.append("击杀文本错误:「%s」" % fx._kill_label.text)
 	await get_tree().process_frame
 	await get_tree().process_frame   # process_frame 信号先于节点 _process:多等一帧让动画跑起来
