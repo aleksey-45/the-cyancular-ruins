@@ -255,8 +255,8 @@ horizontal_alignment = 2
 
 - [ ] **Step 3: 解析验证(不代跑视觉)**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 60`
-Expected: 无脚本解析报错即可(单机世界能起)。名字颜色/两行居中的实际观感由用户进 PvP 肉眼确认。
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe" --headless --path . --import 2>&1`
+Expected: 输出无 `SCRIPT ERROR`/`Parse Error`(项目级脚本编译扫过 pvp_client/pvp_hud)。名字颜色/两行居中的实际观感由用户进 PvP 肉眼确认。
 
 - [ ] **Step 4: Commit**
 
@@ -290,7 +290,7 @@ git commit -m "tweak: PvP 头顶名字统一中性亮白(删 ROLE_COLOR);PvP 中
 # 单机 ESC 菜单:呼出=暂停整份模拟,退出=解暂停后回主菜单。
 # (PvP 菜单由 pvp_client._ready 自建——PvP 下本方法不会被调,见 _ready 的 pvp_mode 早 return。)
 func _build_esc_menu() -> void:
-	var esc := (load("res://ui/esc_menu.tscn") as PackedScene).instantiate()
+	var esc := (load("res://ui/esc_menu.tscn") as PackedScene).instantiate() as EscMenu
 	add_child(esc)
 	esc.exit_callback = func() -> void:
 		get_tree().paused = false   # 先复位暂停再切场景,别把暂停带进主菜单
@@ -301,8 +301,8 @@ func _build_esc_menu() -> void:
 
 - [ ] **Step 2: 解析验证 + 用户手感验收**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 60`
-Expected: 无解析报错。**用户手动**:单机开局按 ESC → 菜单出现且敌人/子弹/玩家全冻结;再按 ESC → 恢复;点「退出」→ 回主菜单、主菜单能正常点按钮(未残留暂停)。
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe" --headless --path . --import 2>&1`
+Expected: 输出无 `SCRIPT ERROR`/`Parse Error`(会编译到引用 `EscMenu` 的 level_0)。**用户手动**:单机开局按 ESC → 菜单出现且敌人/子弹/玩家全冻结;再按 ESC → 恢复;点「退出」→ 回主菜单、主菜单能正常点按钮(未残留暂停)。
 
 - [ ] **Step 3: Commit**
 
@@ -327,7 +327,7 @@ git commit -m "feat: 单机 ESC 菜单接线——呼出暂停(process_mode ALWA
 `scenes/pvp_client.gd` 字段区(约 L30 附近,`_match_ended` 下)追加:
 
 ```gdscript
-var _esc_menu: CanvasLayer = null
+var _esc_menu: EscMenu = null
 var _round_locked := false   # COUNTDOWN 冻结态(菜单关时按它还原,别把倒计时里提前解锁)
 ```
 
@@ -337,7 +337,7 @@ var _round_locked := false   # COUNTDOWN 冻结态(菜单关时按它还原,别�
 
 ```gdscript
 	# ESC 菜单(PvP 不暂停,对手实时):打开锁本地输入,退出断连回主菜单
-	var esc: CanvasLayer = (load("res://ui/esc_menu.tscn") as PackedScene).instantiate()
+	var esc := (load("res://ui/esc_menu.tscn") as PackedScene).instantiate() as EscMenu
 	add_child(esc)
 	_esc_menu = esc
 	esc.exit_callback = _esc_exit
@@ -388,8 +388,8 @@ func _esc_exit() -> void:
 
 - [ ] **Step 5: 解析验证 + 用户手感验收**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 60`
-Expected: 无解析报错。**用户手动**(双开本地服务端 + 两端 PvP):局内按 ESC → 弹菜单、本地角色不响应移动/开火;点「退出」→ 断连回主菜单,对手端弹出「对手已离开」并回主菜单。
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe" --headless --path . --import 2>&1`
+Expected: 输出无 `SCRIPT ERROR`/`Parse Error`(编译到引用 `EscMenu` 的 pvp_client)。**用户手动**(双开本地服务端 + 两端 PvP):局内按 ESC → 弹菜单、本地角色不响应移动/开火;点「退出」→ 断连回主菜单,对手端弹出「对手已离开」并回主菜单。
 
 - [ ] **Step 6: Commit**
 
