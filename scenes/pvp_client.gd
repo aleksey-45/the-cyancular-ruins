@@ -29,6 +29,8 @@ var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibl
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 var _hud: PvpHud = null
 var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
+var _esc_menu: EscMenu = null   # ESC 菜单(对局结束/对手已走后关掉,见 _match_ended)
+var _round_locked := false      # COUNTDOWN 冻结态(菜单关时按它还原,别把倒计时里提前解锁)
 var _ping_acc := 0.0
 
 # ── 头上 ID(自己/对手昵称):世界空间文字,每帧贴到头顶 ──
@@ -87,6 +89,12 @@ func _ready() -> void:
 	add_child(_hud)
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
+	# ESC 菜单(PvP 不暂停,对手实时):打开锁本地输入,退出断连回主菜单
+	var esc := (load("res://ui/esc_menu.tscn") as PackedScene).instantiate() as EscMenu
+	add_child(esc)
+	_esc_menu = esc
+	esc.exit_callback = _esc_exit
+	esc.toggled.connect(_on_esc_toggled)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -277,7 +285,8 @@ func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
 	# COUNTDOWN(开局/换局 3 秒):锁本地武器开火(移动由服务器权威冻结,本地玩家服务器渲染自然不动)。
 	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(state == 0)
+		_round_locked = state == 0
+		_local.set_controls_locked(_round_locked)
 	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
 		for b in get_tree().get_nodes_in_group("bullet"):
 			if is_instance_valid(b):
@@ -286,6 +295,8 @@ func _on_round_state(data: Dictionary) -> void:
 			_level0.reset_destructibles()
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
+		if _esc_menu != null:
+			_esc_menu.can_toggle = false
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
 			NetBus.stop()
 			get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
@@ -376,3 +387,15 @@ func _process(_delta: float) -> void:
 		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET
 	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
+
+# ESC 菜单开关:打开期间连 COUNTDOWN 冻结一起锁本地输入;关闭按当前对局冻结态还原。
+func _on_esc_toggled(open: bool) -> void:
+	if _local != null and _local.has_method("set_controls_locked"):
+		_local.set_controls_locked(open or _round_locked)
+
+# ESC 菜单「退出」:断连对局回主菜单(与断线/MATCH_OVER 同路径;服务器拆局、对手看到离开)。
+func _esc_exit() -> void:
+	if _match_ended:
+		return   # 已排程自动回菜单(NetBus.stop 幂等但不必重复切场景)
+	NetBus.stop()
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
