@@ -29,6 +29,28 @@ func _leave_menu(path: String) -> void:
 	get_tree().change_scene_to_file(path)
 
 
+# 单机进关卡(Level0 = 全量物理世界)。不能直接 change_scene:旧场景销毁若与新世界的
+# 「建图 deferred flush(WorldBuilder.build_sim,数万静态体)」同帧发生,会偶发原生段错误
+# (蓝屏;headless autotest 实测 ~1/4~1/2,而直接启动 Level0 从不崩——崩点不在建图本身,
+# 而在「销毁旧场景 × 构建新大世界」的并发)。做法:先把演示世界摘树(同上),再实例化
+# Level0 让它跑完 _ready + deferred 建图/刷怪/首批物理注册并稳定数帧,之后才把菜单场景
+# (纯 UI,无大物理)摘树释放——两件事在时间上彻底错开。
+func _enter_level0() -> void:
+	# 复位对局全局:menu_demo 可能被上一轮主菜单残留为 true(复用演示世界路径不改它),
+	# 不清会误走 Level0 的演示分支(HUD 隐藏/AI 驱动,单机开局异常)。
+	Level0.pvp_mode = false
+	Level0.menu_demo = false
+	CombatComponent.pvp_arena = false
+	if _demo_level0 != null and is_instance_valid(_demo_level0):
+		Level0.menu_demo_instance = _demo_level0
+		var parent := _demo_level0.get_parent()
+		if parent != null:
+			parent.remove_child(_demo_level0)
+		_demo_level0.visible = false
+	await get_tree().process_frame
+	await Level0.enter_game_staged(get_tree())
+
+
 func _ready() -> void:
 	# 复位对局相关全局(进过 PvP/开过 demo 回来不残留)
 	Level0.pvp_mode = false
@@ -322,7 +344,7 @@ func _build_sp_panel() -> PanelContainer:
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		RunOptions.difficulty = Settings.sp_difficulty
-		_leave_menu("res://Scenes/Level0.tscn"))
+		_enter_level0())
 	var back := _pixel_button("返回", 34)
 	back.pressed.connect(func() -> void: panel.visible = false)
 	row.add_child(go)
@@ -356,9 +378,7 @@ func _build_old_ui() -> void:
 	single.position = Vector2(60, 180)
 	single.size = Vector2(200, 48)
 	single.pressed.connect(func() -> void:
-		Level0.pvp_mode = false
-		CombatComponent.pvp_arena = false
-		_leave_menu("res://Scenes/Level0.tscn"))
+		_enter_level0())
 	add_child(single)
 
 	var multi := Button.new()

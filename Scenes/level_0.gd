@@ -47,6 +47,27 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 			_retired.free()        # 释放更早的那一具(此鱼已在树上挂了整局时间,最稳)
 		_retired = old
 
+
+# 主菜单→单机进图的分阶段接管(由 main_menu._enter_level0 调用)。
+# change_scene 会在同帧内「销毁旧菜单场景 × 构建新 Level0 大物理世界」,原生层偶发段错误
+# (蓝屏;headless autotest-sp 实测 ~1/4~1/2,而直接启动 Level0 从不崩)。这里把两步错开:
+# 新世界先入树跑完 _ready + deferred 建图(WorldBuilder.build_sim)/刷怪/首批物理注册并
+# 稳定数帧,旧菜单在此期间只隐藏;稳定后才把旧菜单(纯 UI,无大物理)摘树释放。
+static func enter_game_staged(tree: SceneTree) -> void:
+	var old: Node = tree.current_scene
+	var next: Node = load("res://Scenes/Level0.tscn").instantiate()
+	if old != null and is_instance_valid(old):
+		old.visible = false      # 先藏旧菜单,避免与新世界重叠渲染/接输入
+	tree.root.add_child(next)    # 新世界 _ready 先跑(旧场景仍在树上,静态引用完好)
+	tree.current_scene = next
+	# call_deferred 在帧末 flush:等建图/刷怪完成,再让几帧物理把静态体注册完
+	for i in 3:
+		await tree.process_frame
+		await tree.physics_frame
+	if old != null and is_instance_valid(old) and old != next:
+		tree.root.remove_child(old)
+		old.queue_free()
+
 var _demo_spawn := Vector2i(-1, -1)   # 演示世界出生格(revive_demo 复位玩家用)
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
