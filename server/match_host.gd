@@ -136,6 +136,8 @@ func _physics_process(delta: float) -> void:
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
 	_adjudicate_bullets()
+	# 即时光束武器(激光)权威开火上报:读各角色武器里待广播的光束,发给非射手端
+	_broadcast_pending_beams()
 	# 回合制:击杀倒地转换检测 + 状态机推进(倒计时/复活/回合结束/换边)
 	_match_round_tick(delta)
 	# 分帧重建可破坏碰撞块(爆炸拆墙)
@@ -356,6 +358,31 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	for role in peer_by_role:
 		if players.has(role) and players[role] != bullet.shooter:
 			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
+
+# 即时光束武器(激光)权威开火上报:每物理帧轮询各角色当前武器,把"本帧要广播的光束"发给非射手端。
+# 时序与子弹广播同款:MatchHost 父先于子 → 这里读到的是上一物理帧玩家步进里 fire 记下的上报,
+# 晚 1 tick 无感(光束 0.25s 存续)。COUNTDOWN 不喂输入 → 无 fire → 无上报,天然冻结。
+# 非光束武器没有 collect_pending_beam_report(has_method 守卫跳过)。换枪 free 旧武器时上报随节点消失。
+func _broadcast_pending_beams() -> void:
+	for role in players:
+		var p: Node2D = players[role]
+		if p == null or p.weapons == null:
+			continue
+		# w 显式 Variant:collect_pending_beam_report 只存在于 LaserWeaponBase 子类(不在 WeaponBase 上)
+		var w: Variant = p.weapons.current_weapon()
+		if w == null or not w.has_method("collect_pending_beam_report"):
+			continue
+		var rep: Dictionary = w.collect_pending_beam_report()
+		if rep.is_empty():
+			continue
+		_broadcast_beam_fired(int(role), rep)
+
+func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
+	rep["shooter_role"] = shooter_role
+	# 只发给非射手端:射手自己客户端已本地预测画自己的光束,再收会双光束。
+	for r in peer_by_role:
+		if int(r) != shooter_role and players.has(int(r)):
+			NetBus.rpc_id(peer_by_role[r], "beam_fired", rep)
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
 	if victim.has_method("take_hit"):

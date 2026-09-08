@@ -192,6 +192,24 @@ func fire() -> void:
 	# 统一先 _auto_aim:所有开火路径(直接/缓冲/连发/重武器)都取本帧最新瞄准方向。
 	_auto_aim()
 	var base_dir := _clamped_aim_dir()
+	_spawn_projectiles(base_dir)
+	if player != null and player.has_method("apply_recoil"):
+		player.apply_recoil(recoil_push)
+	_recoil_timer = RECOIL_TIME
+	sprite.position = _base_sprite_pos - Vector2(1.0, 0.0) * recoil_kick
+	var cam: Camera2D = get_viewport().get_camera_2d()
+	if cam != null and cam.has_method("shake"):
+		cam.shake(cam_shake, cam_shake_time)
+
+# 命中回调:伤害/冲击由枪械管理(BulletBase 不含伤害)。
+func apply_hit(target: Node, dir: Vector2) -> void:
+	if target != null and target.has_method("hurt"):
+		target.hurt(damage, dir, impact)
+
+# 出弹钩子:fire() 同步朝向/冷却后调用。基类默认按 pellet 出物理子弹;
+# 即时光束类武器(激光)覆写本方法,用一次性几何追踪替代逐帧飞行的弹丸。
+# base_dir 是已钳制仰角的瞄准方向(世界系),与默认出弹同一来源。
+func _spawn_projectiles(base_dir: Vector2) -> void:
 	var spread := deg_to_rad(spread_deg)
 	for i in range(pellet_count):
 		var b: BulletBase = bullet_scene.instantiate()
@@ -207,18 +225,6 @@ func fire() -> void:
 		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)
 		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
-	if player != null and player.has_method("apply_recoil"):
-		player.apply_recoil(recoil_push)
-	_recoil_timer = RECOIL_TIME
-	sprite.position = _base_sprite_pos - Vector2(1.0, 0.0) * recoil_kick
-	var cam: Camera2D = get_viewport().get_camera_2d()
-	if cam != null and cam.has_method("shake"):
-		cam.shake(cam_shake, cam_shake_time)
-
-# 命中回调:伤害/冲击由枪械管理(BulletBase 不含伤害)。
-func apply_hit(target: Node, dir: Vector2) -> void:
-	if target != null and target.has_method("hurt"):
-		target.hurt(damage, dir, impact)
 
 func cancel_aim() -> void:
 	_aiming = false

@@ -22,6 +22,7 @@ signal role_claimed(caller: int, role: int, player_name: String)
 # 服务器 → 客户端
 signal local_snapshot(snap: Dictionary)
 signal local_bullet_spawn(data: Dictionary)
+signal local_beam_fired(data: Dictionary)   # 即时光束武器(激光)权威开火:对手端据此画光束视觉副本
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
 signal local_peer_info(names: Dictionary)     # worker 开局:双方昵称 {role(int) -> name}(头上显示)
 signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
@@ -108,6 +109,12 @@ func snapshot(snap: Dictionary) -> void:
 @rpc("authority", "reliable")
 func bullet_spawn(data: Dictionary) -> void:
 	local_bullet_spawn.emit(data)
+
+# 即时光束武器(激光)权威开火:服务器把本发光束几何广播给非射手客户端画视觉副本
+# (物理子弹走 bullet_spawn;即时光束无移动实体,只能事件里带整条折线)。
+@rpc("authority", "reliable")
+func beam_fired(data: Dictionary) -> void:
+	local_beam_fired.emit(data)
 
 @rpc("authority", "reliable")
 func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:

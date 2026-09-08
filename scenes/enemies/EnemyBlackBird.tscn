@@ -335,5 +335,4 @@ animation = &"run"
 frame_progress = 0.12144421
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=1634011558]
-visible = false
-polygon = PackedVector2Array(8.5, -16.5, -21, 12.5, -21, 15.5, -7, 20.5, 12, 20.5, 13, 4, 20.5, -9, 19.5, -15.5)
+polygon = PackedVector2Array(8.5, -16.5, -21, 12.5, -21, 15.5, -7, 20.5, 12, 20.5, 13, 4, 20.5, -9, 20.8, -16.4)

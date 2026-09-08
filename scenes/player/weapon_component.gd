@@ -11,6 +11,7 @@ const WEAPONS: Dictionary = {
 	"3": "res://scenes/weapons/m82a1.tscn",
 	"4": "res://scenes/weapons/s686.tscn",
 	"5": "res://scenes/weapons/grenade_launcher.tscn",
+	"6": "res://scenes/weapons/laser_gun.tscn",
 }
 
 var _weapon: WeaponBase = null

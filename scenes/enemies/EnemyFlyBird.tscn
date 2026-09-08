@@ -178,12 +178,12 @@ knockback_strength = 200.0
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=736759762]
 texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_0uvy8")
-animation = &"fall_asleep"
+animation = &"flying"
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=1488681478]
 visible = false
 polygon = PackedVector2Array(5, -14, -19, 8, -23, 21, 2, 21, 6, 7, 20, -9)
 
 [node name="CollisionPolygon2D_fly" type="CollisionPolygon2D" parent="." unique_id=283299039]
-polygon = PackedVector2Array(16.5, -6.5, -9.5, -11, -23, 4.5, -8.5, 16, 6, 11.5, 15, 1)
+polygon = PackedVector2Array(19, -6, -7.5, -15.5, -23, 4.5, -9, 16.5, 6, 11.5, 19, -2)
 disabled = true
