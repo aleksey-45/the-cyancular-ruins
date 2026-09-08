@@ -1,13 +1,26 @@
 extends Node2D
 # PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
 
-const TileHitFx := preload("res://scenes/Effects/tile_hit_fx.gd")
+const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
+const LaserVisual := preload("res://core/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── 本地玩家渲染:完全由服务器快照驱动(放弃客户端预测) ──
 # 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
 # 根治:本地玩家不再本地跑移动物理,位置/姿态/朝向由快照插值(与远端副本同款),
 #      只保留鼠标瞄准/开火/受击反馈等本地视觉。服务器是唯一真相,天然无回拉。
+#
+# C2(客户端预测 rollback)开关:true=本地玩家跑本地预测 + PredictionRollback 权威锚定重放;
+# false=回落上面这条服务器渲染路径(保底)。复盘见 docs/pvp-c2-retrospective.md(P1-P7)。
+# 2026-09-06 使能:服务器 FIFO/ack 已落地、控制器 + reconcile/twin 冒烟全绿、COUNTDOWN 冻结已补。
+const LOCAL_PREDICTION_ENABLED := true
+var _input_seq := 0   # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
 var _last_snap_tick := 0
+# C2(开关开):本地玩家跑全量本地 sim 预测 + PredictionRollback 权威锚定重放(见 core/prediction_rollback.gd)。
+# 变体 B:不 set_server_rendered、引擎照常自步进(读真实 Input,aim/手感=单机);
+# 本客户端每帧在玩家步进前 reconcile,并把每 tick 的预测整态/输入记录喂给控制器。
+var _rollback = null
+var _have_prev_seq := false
+var _prev_sent_seq := 0
 
 var _local: Node2D = null
 var _remote_replica: Node2D = null
@@ -16,11 +29,14 @@ var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibl
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 var _hud: PvpHud = null
 var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
+var _esc_menu: EscMenu = null   # ESC 菜单(对局结束/对手已走后关掉,见 _match_ended)
+var _round_locked := false      # COUNTDOWN 冻结态(菜单关时按它还原,别把倒计时里提前解锁)
 var _ping_acc := 0.0
 
 # ── 头上 ID(自己/对手昵称):世界空间文字,每帧贴到头顶 ──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,现往下压一点)
-const ROLE_COLOR := {1: Color(0.72, 0.93, 1.0), 2: Color(1.0, 0.82, 0.62)}
+# 头顶名字统一中性亮白(不再按角色区分颜色;P2 靠身体色相 shader 区分)。world_label 内部再叠 0.85 alpha。
+const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
 
@@ -40,20 +56,27 @@ func _ready() -> void:
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	_local = local
 	# 本地玩家改由服务器快照驱动(不做客户端预测):根治梯子等机制"预测 vs 权威"打架回拉。
-	if _local.has_method("set_server_rendered"):
+	# C2(阶段4)开启后:本地玩家跑全量本地 sim 预测,由 pvp_client 接 rollback。
+	if not LOCAL_PREDICTION_ENABLED and _local.has_method("set_server_rendered"):
 		_local.set_server_rendered(true)
+	elif LOCAL_PREDICTION_ENABLED:
+		# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从快照 ack_seq/c2 喂入。
+		if _rollback == null:
+			_rollback = PredictionRollback.new()
+		_rollback.bind(_local)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
 	# 远端副本(角色 = 3 - 自己的 role,1v1)
-	var replica := preload("res://scenes/Player/player_replica.tscn").instantiate()
+	var replica := preload("res://scenes/player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
 	# 快照/事件消费
 	NetBus.local_snapshot.connect(_on_snapshot)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
+	NetBus.local_beam_fired.connect(_on_beam_fired)
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
@@ -61,11 +84,17 @@ func _ready() -> void:
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
-	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上)
-	_hud = PvpHud.new()
+	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
+	_hud = preload("res://ui/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
+	# ESC 菜单(PvP 不暂停,对手实时):打开锁本地输入,退出断连回主菜单
+	var esc := (load("res://ui/esc_menu.tscn") as PackedScene).instantiate() as EscMenu
+	add_child(esc)
+	_esc_menu = esc
+	esc.exit_callback = _esc_exit
+	esc.toggled.connect(_on_esc_toggled)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -76,6 +105,12 @@ func _physics_process(_delta: float) -> void:
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
 		NetBus.send_ping()
+	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
+	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
+	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+		if _have_prev_seq:
+			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
+			_rollback.reconcile()
 	var src: InputSource = _local.input_source
 	# 位映射:NetworkInputSource 的常量(输入包协议与服务器共用)
 	const UP := NetworkInputSource.BIT_UP
@@ -108,7 +143,9 @@ func _physics_process(_delta: float) -> void:
 	if src.is_action_just_released("attack"):
 		released |= ATTACK
 	var aim: Vector2 = _local.get_current_aim_dir()
+	_input_seq += 1
 	var pkt := {
+		"seq": _input_seq,   # 单调输入序号(阶段3 服务器按序消费并回带 ack,rollback 用)
 		"ax": src.get_axis("left", "right"),
 		"held": held,
 		"pressed": pressed,
@@ -117,6 +154,10 @@ func _physics_process(_delta: float) -> void:
 		"aim": aim,
 	}
 	NetBus.rpc_id(1, "send_input", pkt)
+	_prev_sent_seq = _input_seq
+	_have_prev_seq = true
+	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 func _on_snapshot(snap: Dictionary) -> void:
 	if _local == null:
@@ -131,7 +172,14 @@ func _on_snapshot(snap: Dictionary) -> void:
 		var role := int(role_str)
 		var data: Dictionary = players_snap[role_str]
 		if role == PvpSession.role:
-			_apply_local_state(data)
+			if LOCAL_PREDICTION_ENABLED and _rollback != null:
+				# C2:权威整态/ack 喂控制器(reconcile 在下一帧步进前处理)
+				var ack := int(data.get("ack_seq", 0))
+				var c2: Dictionary = data.get("c2", {})
+				if not c2.is_empty():
+					_rollback.on_authoritative(ack, c2)
+			else:
+				_apply_local_state(data)
 		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
 			_remote_replica.apply_snapshot(data, _local.global_position, snap_tick)
 	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)
@@ -176,6 +224,32 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	b.global_position = data["pos"]
 	_world.add_child(b)
 
+# 服务器权威开火(即时光束武器,激光):对手端据此画光束视觉副本(不开物理子弹,
+# 无 bullet_spawn 实体可跟)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)→
+# 逐点锚到射手副本当前渲染位置(_remote_replica.global_position 已由 player_replica 每帧
+# 归到本地玩家最近副本、滞后 ~1 tick 无碍)。光束整条路径 ≤ bullet_range 远小于半图 →
+# 逐点 anchor_to_nearest 会把整条折线搬到可见副本、跨接缝连续。
+# 只画对手那发:自己(射手)这发已由本地预测自画,再收服务器版会双光束。
+func _on_beam_fired(data: Dictionary) -> void:
+	if _world == null or _remote_replica == null:
+		return
+	if int(data.get("shooter_role", 0)) == PvpSession.role:
+		return
+	var raw: PackedVector2Array = data.get("pts", PackedVector2Array())
+	if raw.is_empty():
+		return
+	var anchor: Vector2 = (_remote_replica as Node2D).global_position
+	var w := GameParameters.MAP_WIDTH
+	var h := GameParameters.MAP_HEIGHT
+	var pts := PackedVector2Array()
+	for p in raw:
+		pts.append(MazeGenerator.anchor_to_nearest(p, anchor, w, h))
+	var color: Color = data.get("color", Color(0.1, 0.35, 1.0, 1.0))
+	var half_width := float(data.get("half_width", 2.0))
+	var lifetime := float(data.get("lifetime", 0.25))
+	LaserVisual.spawn_muzzle_orb(_world, pts[0], color, half_width, lifetime)
+	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
+
 # 服务器裁决命中:被打的是自己 → 即时反馈(白闪/击退),血量以快照权威为准;
 # 被打的是对手 → 副本受击闪烁,让射手看到自己打中了。
 func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
@@ -211,7 +285,8 @@ func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
 	# COUNTDOWN(开局/换局 3 秒):锁本地武器开火(移动由服务器权威冻结,本地玩家服务器渲染自然不动)。
 	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(state == 0)
+		_round_locked = state == 0
+		_local.set_controls_locked(_round_locked)
 	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
 		for b in get_tree().get_nodes_in_group("bullet"):
 			if is_instance_valid(b):
@@ -220,6 +295,8 @@ func _on_round_state(data: Dictionary) -> void:
 			_level0.reset_destructibles()
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
+		if _esc_menu != null:
+			_esc_menu.can_toggle = false
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
 			NetBus.stop()
 			get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
@@ -247,7 +324,7 @@ func _on_enemy_spawn(roster: Array) -> void:
 		var bid := int(entry.get("id", 0))
 		if scene_path == "" or bid <= 0:
 			continue
-		var r: Node2D = preload("res://scenes/Enemies/enemy_replica.gd").new()
+		var r: Node2D = preload("res://scenes/enemies/enemy_replica.gd").new()
 		_world.add_child(r)
 		r.setup(bid, scene_path, entry.get("pos", _local.global_position), _local.global_position)
 		_enemy_replicas[bid] = r
@@ -278,7 +355,7 @@ func _apply_p2_tint() -> void:
 	if canvas == null:
 		return
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/Player/player_p2_hue.gdshader")
+	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
 	mat.set_shader_parameter("hue_shift", -65.0)   # P2 本体色相旋转 -65°
 	canvas.material = mat
 
@@ -291,17 +368,17 @@ func _on_peer_info(names: Dictionary) -> void:
 	var opp := 3 - me
 	var nm_self := str(names.get(me, PvpSession.player_name))
 	var nm_opp := str(names.get(opp, "对手"))
-	_id_self.set_label(nm_self, ROLE_COLOR.get(me, Color.WHITE))
-	_id_opp.set_label(nm_opp, ROLE_COLOR.get(opp, Color.WHITE))
+	_id_self.set_label(nm_self, NAME_COLOR)
+	_id_opp.set_label(nm_opp, NAME_COLOR)
 
 func _ensure_id_labels() -> void:
 	if _world == null:
 		return
 	if _id_self == null:
-		_id_self = load("res://scenes/Player/world_label.gd").new()
+		_id_self = load("res://scenes/player/world_label.gd").new()
 		_world.add_child(_id_self)
 	if _id_opp == null:
-		_id_opp = load("res://scenes/Player/world_label.gd").new()
+		_id_opp = load("res://scenes/player/world_label.gd").new()
 		_world.add_child(_id_opp)
 
 func _process(_delta: float) -> void:
@@ -310,3 +387,15 @@ func _process(_delta: float) -> void:
 		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET
 	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
+
+# ESC 菜单开关:打开期间连 COUNTDOWN 冻结一起锁本地输入;关闭按当前对局冻结态还原。
+func _on_esc_toggled(open: bool) -> void:
+	if _local != null and _local.has_method("set_controls_locked"):
+		_local.set_controls_locked(open or _round_locked)
+
+# ESC 菜单「退出」:断连对局回主菜单(与断线/MATCH_OVER 同路径;服务器拆局、对手看到离开)。
+func _esc_exit() -> void:
+	if _match_ended:
+		return   # 已排程自动回菜单(NetBus.stop 幂等但不必重复切场景)
+	NetBus.stop()
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")

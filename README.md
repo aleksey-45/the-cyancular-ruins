@@ -67,7 +67,7 @@ python tools/build_release.py
 
 ## 测试
 
-无单测框架;`Tests/` 下是 `-s` 冒烟/诊断脚本:
+无单测框架;`tests/` 下是 `-s` 冒烟/诊断脚本:
 
 ```bash
 # 敌人/武器/环面逻辑主冒烟
@@ -85,11 +85,11 @@ bash tests/pvp_match_smoke.sh
 
 ```
 scenes/   场景(Godot 惯例 PascalCase 的 .tscn;脚本 snake_case)
-globals/  autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
+core/  autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
 server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
 tests/    -s 冒烟/探针
 editor/   浏览器地图编辑器(structure-editor.html + smoke.js)
-map/      .cyrm 文本地图
+maps/      .cyrm 文本地图
 tools/    发布/控制台脚本(build_release.py、make_server_console.py)
 ```
 

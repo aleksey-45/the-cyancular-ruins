@@ -71,7 +71,7 @@ res://assets/
 | `Scenes/Weapons/s686.tscn` | path → assets/textures/weapons.png |
 | `Scenes/hud.gd` | KILL_FONT_PATH → res://assets/fonts/less_perfect_dos_vga.ttf |
 
-`Globals/maze_generator.gd` 的 `MAP_FILE = "res://map/demo.txt"` 引用 `map/`，`map/` 不动，无需改。
+`Globals/maze_generator.gd` 的 `MAP_FILE = "res://maps/demo.txt"` 引用 `map/`，`map/` 不动，无需改。
 
 ## 5. 验证
 

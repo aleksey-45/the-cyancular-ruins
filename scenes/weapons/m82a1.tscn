@@ -1,0 +1,34 @@
+[gd_scene format=3 uid="uid://c5al3bxdhqncx"]
+
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
+
+[node name="M82A1" type="Node2D" unique_id=285650997]
+position = Vector2(6, 3)
+script = ExtResource("1_wb")
+tier = 2
+weapon_name = "M82A1"
+fire_cooldown = 1.2
+heavy_aim = true
+bullet_speed = 3000.0
+bullet_range = 2000.0
+bullet_size = 1.25
+damage = 30
+impact = 1800.0
+recoil_push = 1200.0
+recoil_kick = 12.0
+cam_shake = 8.0
+cam_shake_time = 0.2
+move_penalty = 0.5
+jump_penalty = 0.6
+penalty_mode = 2
+pitch_clamp_deg = 65.0
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1487935171]
+position = Vector2(18, 6)
+texture = ExtResource("2_wpn")
+region_enabled = true
+region_rect = Rect2(22, 0.351734, 84, 17.6483)
+
+[node name="Muzzle" type="Marker2D" parent="." unique_id=1299677973]
+position = Vector2(48, 2)

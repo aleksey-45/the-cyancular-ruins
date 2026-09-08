@@ -9,7 +9,7 @@ const DT: float = 1.0 / 60.0
 const RANGE: float = 2500.0
 
 func _initialize() -> void:
-	MazeGenerator._picked_map = "res://map/demo.cyrm"
+	MazeGenerator._picked_map = "res://maps/demo.cyrm"
 	var grid: Array[Array] = MazeGenerator.load_map_file()
 	if grid.is_empty():
 		printerr("地图加载失败")
@@ -20,7 +20,7 @@ func _initialize() -> void:
 	var rows := grid.size()
 	var cols := grid[0].size()
 
-	var player = (load("res://scenes/Player/Player.tscn") as PackedScene).instantiate()
+	var player = (load("res://scenes/player/Player.tscn") as PackedScene).instantiate()
 	root.add_child(player)
 	await physics_frame
 	var weapon = player.get("_weapon")

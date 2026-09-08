@@ -78,7 +78,7 @@ class BlackBird:
 1. `Globals/enemyParams.gd` — 加 `class BlackBird`
 2. `Scenes/Enemies/enemy_black_bird.gd` — 新脚本(状态机 + 瞬移/冲锋/后跳)
 3. `Scenes/Enemies/EnemyBlackBird.tscn` — 补 script/scale/collision 层/hp/contact_damage/knockback
-4. `editor/enemies.json` — 注册 `black_bird` → EnemyBlackBird.tscn(含 name/color)
+4. `data/enemies.json` — 注册 `black_bird` → EnemyBlackBird.tscn(含 name/color)
 5. `editor/structure-editor.html` — ENEMY_REGISTRY 同步加一行
 6. `map/demo.txt` — 加 3 个 `black_bird` 出生点(地板格)
 7. `Tests/enemy_logic_smoke.gd` — 加 BlackBird 冒烟 Task

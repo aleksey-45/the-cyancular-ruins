@@ -429,7 +429,7 @@ func _init(map_path: String, room_players: Dictionary, role_peers: Dictionary) -
 	# 生成两个玩家
 	var spawns := MazeGenerator.load_spawns()
 	for role in role_peers:
-		var p: Node2D = preload("res://scenes/Player/Player.tscn").instantiate()
+		var p: Node2D = preload("res://scenes/player/Player.tscn").instantiate()
 		var src := NetworkInputSource.new()
 		p.set_input_source(src)
 		add_child(p)
@@ -624,7 +624,7 @@ var _have_target := false
 
 func _ready() -> void:
 	# 复用 Player.tscn 的内联 SpriteFrames
-	var tmp := preload("res://scenes/Player/Player.tscn").instantiate()
+	var tmp := preload("res://scenes/player/Player.tscn").instantiate()
 	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
 	tmp.free()
 
@@ -655,7 +655,7 @@ func _process(delta: float) -> void:
 ```
 [gd_scene format=3 uid="uid://replica00000a1"]
 
-[ext_resource type="Script" path="res://scenes/Player/player_replica.gd" id="1"]
+[ext_resource type="Script" path="res://scenes/player/player_replica.gd" id="1"]
 
 [node name="PlayerReplica" type="Node2D"]
 scale = Vector2(2.5, 2.5)
@@ -675,7 +675,7 @@ autoplay = "idle"
 ```gdscript
 	NetBus.local_snapshot.connect(_on_snapshot)
 	# 远端副本(角色 = 3 - 自己的 role)
-	var replica := preload("res://scenes/Player/player_replica.tscn").instantiate()
+	var replica := preload("res://scenes/player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica

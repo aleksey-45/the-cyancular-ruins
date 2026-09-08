@@ -1,0 +1,1751 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Structure Editor of CyR</title>
+<style>
+:root {
+  --bg: #17191d;
+  --panel: #1f2329;
+  --panel-2: #262b32;
+  --border: #343b45;
+  --text: #d7dde5;
+  --text-dim: #8b94a1;
+  --accent: #54a0ff;
+  --danger: #e05a5a;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+button { cursor: pointer; }
+.hidden { display: none !important; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.topbar-actions { display: flex; gap: 8px; }
+button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px;
+}
+button:hover { background: #2f363f; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #0b0e12; font-weight: 600; }
+button.danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+.main { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 264px; flex: none; display: flex; flex-direction: column; gap: 10px;
+  padding: 10px; background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto;
+}
+.panel { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin: 0 0 8px; }
+
+#library-list {
+  list-style: none; margin: 0 0 8px; padding: 0; max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+#library-list li {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 8px; font-size: 13px; cursor: pointer;
+}
+#library-list li:hover { background: #2f363f; }
+#library-list li.selected { background: var(--accent); color: #0b0e12; }
+#library-list li .sz { font-size: 11px; color: var(--text-dim); }
+#library-list li.selected .sz { color: #0b0e12; }
+.lib-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.lib-actions button { flex: 1 1 auto; padding: 5px 8px; font-size: 12px; }
+
+.props-panel .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.props-panel label { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.props-panel input[type=number] {
+  width: 58px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px;
+}
+
+#palette { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.swatch {
+  aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; cursor: pointer; color: #0b0e12; user-select: none;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff;
+}
+.swatch.sw-air {
+  background: repeating-conic-gradient(#2a2f37 0 25%, #20242b 0 50%) 0 0/32px 32px;
+  border: 1px dashed #4a5462; color: var(--text-dim);
+}
+.swatch.selected { outline: 2px solid #fff; outline-offset: 1px; }
+.swatch.s1 { background: #527789; }
+.swatch.s2 { background: #528989; }
+.swatch.s3 { background: #528977; }
+.swatch.s4 { background: #526589; }
+.swatch.s5 { background: #528965; }
+.swatch.s6 { background: #4b6d7d; }
+.swatch.s7 { background: #5e8191; }
+.swatch.s8 { background: #496a7a; }
+.swatch.s9 { background: #446879; }
+.swatch.s10 { background: #4e7282; }
+.swatch.s11 { background: #8a7a5c; }
+.swatch.s12 { background: #8a8f98; }
+.swatch.s13 { background: #8a8f98; }
+.swatch.s14 { background: #8a8f98; }
+.swatch.s15 { background: #6fae8f; }
+.swatch.s16 { background: #6fae8f; }
+.swatch.s17 { background: #6fae8f; }
+.swatch.s18 { background: #6fae8f; }
+.swatch.s19 { background: #8a6f5e; }
+.swatch.s20 { background: #8a6f5e; }
+.hint { font-size: 12px; color: var(--text-dim); margin: 8px 0 0; }
+.spawn-tools { display: flex; flex-direction: column; gap: 6px; }
+.spawn-tools .spawn-btn {
+  text-align: left; border-left: 3px solid #888; background: var(--panel);
+  padding: 5px 8px; font-size: 12px;
+}
+.spawn-tools .spawn-btn.active { outline: 2px solid #fff; }
+.shape-panel { display: flex; flex-direction: column; gap: 8px; }
+.shape-mini {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 76px; height: 76px;
+  border: 1px solid var(--border); border-radius: 5px; padding: 2px; cursor: pointer; background: var(--panel);
+}
+.shape-mini .quad { border-radius: 3px; border: 1px solid #0b0e12; }
+.shape-mini .quad.on { background: #527789; }
+.shape-mini .quad.off { background: #2a2f37; }
+
+.canvas-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.canvas-toolbar {
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.canvas-toolbar .tool-btn.active { background: var(--accent); border-color: var(--accent); color: #0b0e12; }
+.canvas-toolbar .spacer { flex: 1; }
+.canvas-toolbar .brush-label { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+.canvas-toolbar input[type=number] { width: 46px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; }
+#canvas-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+#canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#statusbar {
+  padding: 5px 12px; font-size: 12px; color: var(--text-dim);
+  background: var(--panel); border-top: 1px solid var(--border);
+}
+
+#modal-overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center; z-index: 10;
+}
+.modal { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; width: 300px; }
+.modal h3 { margin: 0 0 12px; font-size: 14px; }
+.modal input {
+  width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 14px; margin-bottom: 8px;
+}
+.modal .err { color: var(--danger); font-size: 12px; margin: 0 0 8px; min-height: 16px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Structure Editor of CyR</h1>
+    <div class="topbar-actions">
+      <button id="btn-import">导入</button>
+      <button id="btn-export" class="primary">导出库</button>
+      <input type="file" id="file-import" accept=".cyrm,.txt,.json,text/plain,application/json" hidden>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <section class="panel">
+        <h2>结构库</h2>
+        <ul id="library-list"></ul>
+        <div class="lib-actions">
+          <button id="btn-add">新建</button>
+          <button id="btn-dup">复制</button>
+          <button id="btn-rename">重命名</button>
+          <button id="btn-del" class="danger">删除</button>
+        </div>
+      </section>
+      <section class="panel props-panel">
+        <h2>画布尺寸</h2>
+        <div class="row">
+          <label>宽 <input type="number" id="size-w" min="1"  value="12"></label>
+          <label>高 <input type="number" id="size-h" min="1"  value="12"></label>
+        </div>
+        <button id="btn-resize" class="primary" style="width:100%">应用尺寸</button>
+      </section>
+      <section class="panel">
+        <h2>砖块纹理</h2>
+        <div id="palette"></div>
+        <p class="hint">0 = 空气 · 1–10 = 砖块纹理</p>
+      </section>
+      <section class="panel">
+        <h2>砖形(2×2 子格)</h2>
+        <div class="shape-panel">
+          <div class="shape-mini" id="shape-mini"></div>
+        </div>
+        <p class="hint">点四格翻转 · 默认全满,不能清成全空</p>
+      </section>
+      <section class="panel spawn-panel">
+        <h2>出生点</h2>
+        <div id="spawn-tools" class="spawn-tools"></div>
+        <p class="hint">选中工具后点格放置,右键移除。</p>
+      </section>
+    </aside>
+
+    <main class="canvas-area">
+      <div class="canvas-toolbar">
+        <button data-tool="paint" class="tool-btn active">画笔</button>
+        <button data-tool="rect" class="tool-btn">矩形</button>
+        <button data-tool="fill" class="tool-btn">油漆桶</button>
+        <button data-tool="erase" class="tool-btn">橡皮</button>
+        <button data-tool="select" class="tool-btn">选框</button>
+        <button data-tool="line" class="tool-btn">直线</button>
+        <label class="brush-label">画笔 <input type="number" id="brush-size" min="1" max="15" value="1"></label>
+        <span class="spacer"></span>
+        <button id="btn-undo" title="Ctrl+Z">撤销</button>
+        <button id="btn-redo" title="Ctrl+Y">重做</button>
+        <span class="spacer"></span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" id="grid-toggle" checked> 网格</label>
+        <button id="btn-torus" title="跨接缝重复绘制、无边界平移">环面预览</button>
+        <button id="btn-structure-export" class="primary" title="导出当前结构为地图格式(关卡用:保存为 map/demo.cyrm)">导出结构</button>
+        <button id="btn-fit">适配</button>
+      </div>
+      <div id="canvas-wrap">
+        <canvas id="canvas"></canvas>
+      </div>
+      <div id="statusbar"></div>
+    </main>
+  </div>
+
+  <div id="modal-overlay" class="hidden">
+    <div class="modal">
+      <h3 id="modal-title"></h3>
+      <input id="modal-input" type="text">
+      <div id="modal-size-row" class="hidden" style="display:flex;gap:8px;">
+        <label style="flex:1;font-size:12px;color:var(--text-dim);">宽
+          <input id="modal-size-w" type="number" min="1" value="125" style="width:100%;"></label>
+        <label style="flex:1;font-size:12px;color:var(--text-dim);">高
+          <input id="modal-size-h" type="number" min="1" value="75" style="width:100%;"></label>
+      </div>
+      <p id="modal-err" class="err"></p>
+      <div class="modal-actions">
+        <button id="modal-cancel">取消</button>
+        <button id="modal-ok" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  /*__ENEMY_REGISTRY_BEGIN__*/
+window.ENEMY_REGISTRY = [
+  {
+    "id": "jump_bird",
+    "name": "JumpBird",
+    "scene": "res://scenes/enemies/EnemyJumpBird.tscn",
+    "color": "#6fae8f"
+  },
+  {
+    "id": "fly_bird",
+    "name": "FlyBird",
+    "scene": "res://scenes/enemies/EnemyFlyBird.tscn",
+    "color": "#c96fb0"
+  },
+  {
+    "id": "black_bird",
+    "name": "BlackBird",
+    "scene": "res://scenes/enemies/EnemyBlackBird.tscn",
+    "color": "#8a8f98"
+  }
+];
+/*__ENEMY_REGISTRY_END__*/
+  </script>
+
+  <script>
+  globalThis.Core = (function () {
+    'use strict';
+
+    function sanitizeName(name) {
+      var n = String(name == null ? '' : name).trim();
+      n = n.replace(/\s+/g, '_');
+      n = n.replace(/[^A-Za-z0-9_\u4e00-\u9fa5-]/g, '');
+      n = n.replace(/^-+/, '');
+      if (n.length > 32) n = n.slice(0, 32);
+      if (n === '') return 'structure';
+      return n;
+    }
+
+    function validateGrid(grid) {
+      if (!Array.isArray(grid) || grid.length === 0) return { ok: false, error: '网格不能为空' };
+      if (!Array.isArray(grid[0])) return { ok: false, error: '首行不是数组' };
+      var w = grid[0].length;
+      if (w === 0) return { ok: false, error: '网格宽度不能为 0' };
+      for (var y = 0; y < grid.length; y++) {
+        var row = grid[y];
+        if (!Array.isArray(row) || row.length !== w) return { ok: false, error: '第 ' + y + ' 行宽度不一致' };
+        for (var x = 0; x < w; x++) {
+          var v = row[x];
+          if (!Number.isInteger(v) || v < 0 || v > 335) {
+            return { ok: false, error: '(' + x + ',' + y + ') 处 tile 值非法(packed 0-335): ' + v };
+          }
+        }
+      }
+      return { ok: true, error: '' };
+    }
+
+  function resizeGrid(grid, newW, newH) {
+    var out = [];
+    for (var y = 0; y < newH; y++) {
+      var row = [];
+      for (var x = 0; x < newW; x++) {
+        row.push(y < grid.length && x < grid[y].length ? grid[y][x] : 0);
+      }
+      out.push(row);
+    }
+    return out;
+  }
+
+  function rectFill(grid, x0, y0, x1, y1, tile) {
+    var out = grid.map(function (r) { return r.slice(); });
+    var minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
+    var minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+    for (var y = minY; y <= maxY; y++) {
+      for (var x = minX; x <= maxX; x++) {
+        if (y >= 0 && y < out.length && x >= 0 && x < out[y].length) out[y][x] = tile;
+      }
+    }
+    return out;
+  }
+
+  function floodFill(grid, x, y, tile) {
+    var out = grid.map(function (r) { return r.slice(); });
+    var h = out.length;
+    if (h === 0) return out;
+    var w = out[0].length;
+    if (x < 0 || x >= w || y < 0 || y >= h) return out;
+    var target = out[y][x];
+    if (target === tile) return out;
+    var stack = [[x, y]];
+    while (stack.length > 0) {
+      var p = stack.pop();
+      var cx = p[0], cy = p[1];
+      if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+      if (out[cy][cx] !== target) continue;
+      out[cy][cx] = tile;
+      stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+    }
+    return out;
+  }
+
+    // Bresenham 直线路径格坐标(x0,y0)→(x1,y1,含两端)。直线工具 + 画笔拖拽共用。
+    function lineCells(x0, y0, x1, y1) {
+      var cells = [];
+      var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+      var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      var err = dx - dy;
+      var x = x0, y = y0;
+      for (;;) {
+        cells.push([x, y]);
+        if (x === x1 && y === y1) break;
+        var e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+      }
+      return cells;
+    }
+
+    // 矩形区域归一化:任意两角点 → { x, y, w, h }(含两端)。
+    function normRegion(x0, y0, x1, y1) {
+      return { x: Math.min(x0, x1), y: Math.min(y0, y1),
+               w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
+    }
+
+    // 平移区域:先取 region 内容 → 原区域清 0 → 贴到 (region+dx, region+dy)(出界裁剪)。不修改入参。
+    // 对越界 region 防御:网格外的源格按 0 取、只清/只贴网格内的部分。
+    function moveRegion(grid, region, dx, dy) {
+      var out = grid.map(function (r) { return r.slice(); });
+      var h = out.length, w = h > 0 ? out[0].length : 0;
+      var sub = [];
+      for (var i = 0; i < region.h; i++) {
+        var row = [];
+        for (var j = 0; j < region.w; j++) {
+          var sy = region.y + i, sx = region.x + j;
+          row.push(sy >= 0 && sy < h && sx >= 0 && sx < w ? out[sy][sx] : 0);
+        }
+        sub.push(row);
+      }
+      for (i = 0; i < region.h; i++)
+        for (j = 0; j < region.w; j++) {
+          var cy2 = region.y + i, cx2 = region.x + j;
+          if (cy2 >= 0 && cy2 < h && cx2 >= 0 && cx2 < w) out[cy2][cx2] = 0;
+        }
+      for (i = 0; i < region.h; i++)
+        for (j = 0; j < region.w; j++) {
+          var ty = region.y + dy + i, tx = region.x + dx + j;
+          if (ty >= 0 && ty < h && tx >= 0 && tx < w) out[ty][tx] = sub[i][j];
+        }
+      return out;
+    }
+
+    // v3 每格 = packed 纹理*16 + 形状掩码。文件里每格 4 字符:[纹理 3 位 0xx][形状hex]。
+    // 纹理 000=空气,001/002/...;形状字符 hex 0-F;空气 = "0000"。纹理用 3 位数字,不用字母。
+    var V3_MARKER = '# cyrm-v3';
+    var TILE_TEXTURE_VALUE = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'a': 10,
+                               'B': 11, 'b': 11, 'C': 12, 'c': 12, 'D': 13, 'd': 13, 'E': 14, 'e': 14, 'F': 15, 'f': 15,
+                               'G': 16, 'g': 16, 'H': 17, 'h': 17, 'I': 18, 'i': 18, 'J': 19, 'j': 19, 'K': 20, 'k': 20 };
+    var SHAPE_HEX_CHAR = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
+    var SHAPE_HEX_VALUE = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+                            'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'a': 10, 'b': 11, 'c': 12, 'd': 13, 'e': 14, 'f': 15 };
+    function packCell(texture, shape) {
+      if (shape === 0 || texture === 0) return 0;
+      return texture * 16 + shape;
+    }
+    function textureOf(v) { return Math.floor(v / 16); }
+    function shapeOf(v) { return v % 16; }
+    function hexOf(v) { return SHAPE_HEX_CHAR[v]; }
+    // 旧格式 2×2 → 新 1 格 packed(掩码 + 纹理=组内首个实体格)。
+    function convertOldGrid(old) {
+      var h = old.length, w = old[0].length;
+      var out = [];
+      for (var ny = 0; ny < h / 2; ny++) {
+        var row = [];
+        for (var nx = 0; nx < w / 2; nx++) {
+          var shape = 0, tex = 0;
+          for (var sy = 0; sy < 2; sy++) for (var sx = 0; sx < 2; sx++) {
+            var ov = old[ny * 2 + sy][nx * 2 + sx];
+            if (ov !== 0) { shape |= 1 << (sy * 2 + sx); if (tex === 0) tex = ov; }
+          }
+          row.push(packCell(tex, shape));
+        }
+        out.push(row);
+      }
+      return out;
+    }
+
+    // 出生点统一用 players 数组(任意多个,自动编号;旧结构可能只存单 player,做兼容)。
+    function playersOf(s) {
+      if (s == null) return [];
+      if (Array.isArray(s.players)) return s.players;
+      if (s.player && typeof s.player === 'object'
+          && Number.isInteger(s.player.x) && Number.isInteger(s.player.y)) return [s.player];
+      return [];
+    }
+
+    // 整图地图格式:v3 = `# cyrm-v3` 标记 + 每格 4 字符[纹理 3 位 0xx][形状hex];旧格式 = 单字符
+    // 0-9/A(无标记)→ 自动 2×2 转换(packed)并 ÷2 spawn 坐标。
+    // 返回 { grid, players, enemies, comments }。
+    function parseMap(text) {
+      var lines = String(text).split(/\r?\n/);
+      var isV3 = lines.some(function (l) { return l.trim().indexOf(V3_MARKER) === 0; });
+      var grid = [], players = [], enemies = [], comments = [], width = -1;
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line === '') continue;
+        if (line.charAt(0) === '#') {
+          var parts = line.slice(1).trim().split(/\s+/);
+          var pm = /^player(\d*)$/.exec(parts[0]);
+          if (pm && parts.length >= 3) {
+            players.push({ x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) });
+          } else if (parts[0] === 'enemy' && parts.length >= 4) {
+            enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
+          } else if (parts[0] === 'cyrm-v3') {
+            // 版本标记行不当作注释
+          } else {
+            comments.push(line.slice(1).trim());
+          }
+          continue;
+        }
+        var row = [];
+        if (isV3) {
+          if (line.length % 4 !== 0) throw new Error('第 ' + (i + 1) + ' 行 v3 字符数必须为 4 的倍数');
+          for (var j = 0; j < line.length; j += 4) {
+            var tv = parseInt(line.slice(j, j + 3), 10);
+            var sv = SHAPE_HEX_VALUE[line.charAt(j + 3)];
+            if (isNaN(tv) || tv < 0 || tv > 999) throw new Error('第 ' + (i + 1) + ' 行含非法纹理数字 "' + line.slice(j, j + 3) + '"');
+            if (sv === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法形状字符 "' + line.charAt(j + 3) + '"');
+            row.push(packCell(tv, sv));
+          }
+        } else {
+          for (var k = 0; k < line.length; k++) {
+            var v = TILE_TEXTURE_VALUE[line.charAt(k)];
+            if (v === undefined) throw new Error('第 ' + (i + 1) + ' 行含非法字符 "' + line.charAt(k) + '"（旧格式只允许 0-9/A）');
+            row.push(v);
+          }
+        }
+        if (width === -1) width = row.length;
+        else if (row.length !== width) throw new Error('第 ' + (i + 1) + ' 行宽度 ' + row.length + ' 与首行 ' + width + ' 不一致');
+        grid.push(row);
+      }
+      if (!isV3) {
+        grid = convertOldGrid(grid);
+        players.forEach(function (p) { p.x = Math.floor(p.x / 2); p.y = Math.floor(p.y / 2); });
+        enemies.forEach(function (e) { e.x = Math.floor(e.x / 2); e.y = Math.floor(e.y / 2); });
+      }
+      return { grid: grid, players: players, enemies: enemies, comments: comments };
+    }
+
+    function serializeMap(map) {
+      var lines = [V3_MARKER];
+      (map.comments || []).forEach(function (c) { lines.push('# ' + c); });
+      // 任意多个出生点:第1个写 # player、第2个写 # player2、其后 # playerN(与运行侧解析一致)。
+      var ps = playersOf(map);
+      ps.forEach(function (p, i) {
+        var kw = i === 0 ? 'player' : (i === 1 ? 'player2' : 'player' + (i + 1));
+        lines.push('# ' + kw + ' ' + p.x + ' ' + p.y);
+      });
+      (map.enemies || []).forEach(function (e) { lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y); });
+      map.grid.forEach(function (row) {
+        lines.push(row.map(function (v) {
+          return String(textureOf(v)).padStart(3, '0') + hexOf(shapeOf(v));
+        }).join(''));
+      });
+      return lines.join('\n') + '\n';
+    }
+
+    // 画笔块偏移:返回以指针格为中心的 lo(上/左)/hi(下/右)扩展量,保证 lo+1+hi===size。
+    // 奇数尺寸对称(lo===hi);偶数尺寸偏下右一格 —— 否则(旧 r=floor((size-1)/2))偶数会缩小一格。
+    function brushOffsets(size) {
+      return { lo: Math.floor((size - 1) / 2), hi: Math.ceil((size - 1) / 2) };
+    }
+
+    // 结构库整库 JSON(含 spawn)。grid 保留 0-9(编辑器装饰色,导出关卡时归一化)。
+    function serializeLibraryJSON(structs) {
+      return JSON.stringify({
+        version: 1,
+        structures: structs.map(function (s) {
+          var ps = playersOf(s);
+          return { name: sanitizeName(s.name), grid: s.grid,
+                   player: ps[0] || null, players: ps.slice(), enemies: s.enemies || [] };
+        })
+      }, null, 2) + '\n';
+    }
+    function parseLibraryJSON(text) {
+      var parsed;
+      try { parsed = JSON.parse(text); }
+      catch (e) { throw new Error('JSON 解析失败: ' + e.message); }
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.structures)) {
+        throw new Error('结构库 JSON 缺少 structures 数组');
+      }
+      var out = [];
+      parsed.structures.forEach(function (st, i) {
+        if (!st || !Array.isArray(st.grid)) throw new Error('第 ' + (i + 1) + ' 个结构缺少 grid');
+        var v = validateGrid(st.grid);
+        if (!v.ok) throw new Error('结构 "' + (st.name || i) + '" 校验失败: ' + v.error);
+        var players = (Array.isArray(st.players) ? st.players : []).filter(function (p) {
+          return p && Number.isInteger(p.x) && Number.isInteger(p.y);
+        }).map(function (p) { return { x: p.x, y: p.y }; });
+        if (players.length === 0 && st.player && typeof st.player === 'object'
+            && Number.isInteger(st.player.x) && Number.isInteger(st.player.y)) {
+          players.push({ x: st.player.x, y: st.player.y });
+        }
+        var enemies = (Array.isArray(st.enemies) ? st.enemies : []).filter(function (e) {
+          return e && typeof e.type === 'string' && Number.isInteger(e.x) && Number.isInteger(e.y);
+        }).map(function (e) { return { type: e.type, x: e.x, y: e.y }; });
+        out.push({ name: sanitizeName(st.name || ('structure_' + (i + 1))), grid: st.grid,
+                   players: players, enemies: enemies });
+      });
+      return out;
+    }
+    // 单结构地图格式导出:名字行 + spawn 行 + 0-9/A 网格(保留 1-10 瓦片值,供游戏按格值渲染不同砖块)。
+    function serializeMapStructure(s) {
+      return serializeMap({ comments: [sanitizeName(s.name)], players: playersOf(s),
+                           enemies: s.enemies || [], grid: s.grid });
+    }
+    // 新建空结构(数据部分,id/name 由 UI 补)。
+    function createEmptyStructure(w, h) {
+      var grid = [];
+      for (var y = 0; y < h; y++) {
+        var row = [];
+        for (var x = 0; x < w; x++) row.push(0);
+        grid.push(row);
+      }
+      return { grid: grid, players: [], enemies: [] };
+    }
+
+    return {
+      sanitizeName: sanitizeName,
+      validateGrid: validateGrid,
+      resizeGrid: resizeGrid,
+      rectFill: rectFill,
+      floodFill: floodFill,
+      lineCells: lineCells,
+      normRegion: normRegion,
+      moveRegion: moveRegion,
+      parseMap: parseMap,
+      serializeMap: serializeMap,
+      brushOffsets: brushOffsets,
+      serializeLibraryJSON: serializeLibraryJSON,
+      parseLibraryJSON: parseLibraryJSON,
+      serializeMapStructure: serializeMapStructure,
+      createEmptyStructure: createEmptyStructure,
+      playersOf: playersOf,
+      packCell: packCell,
+      textureOf: textureOf,
+      shapeOf: shapeOf,
+      hexOf: hexOf,
+      convertOldGrid: convertOldGrid
+    };
+  })();
+  </script>
+
+  <script src="tile_defs.js"></script>
+
+  <script>
+  (function () {
+    'use strict';
+
+    var TILE_COLORS = {
+      0: null,
+      1: '#527789', 2: '#528989', 3: '#528977', 4: '#526589', 5: '#528965',
+      6: '#4b6d7d', 7: '#5e8191', 8: '#496a7a', 9: '#446879', 10: '#4e7282',
+      11: '#8a7a5c', 12: '#8a8f98', 13: '#8a8f98', 14: '#8a8f98', 15: '#6fae8f',
+      16: '#6fae8f', 17: '#6fae8f', 18: '#6fae8f', 19: '#8a6f5e', 20: '#8a6f5e',
+      21: '#3f7fb0', 22: '#7fb7dc'
+    };
+
+    var state = { library: [], selectedId: null, tool: 'paint', palette: 1, shape: 15, gridOn: true,
+                  brushSize: 1, torusMode: false, spawnTool: null, selection: null };
+    var view = { zoom: 28, panX: 40, panY: 40, playerRef: null };
+    var PLAYER_TILES = 1.875;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 64px
+    var tileCache = {};        // packed → 64×64 canvas(纹理×形状掩码)
+    var playerImg = new Image();
+    playerImg.src = '../icon.svg';
+    var wallImg = new Image();
+    wallImg.src = 'structure.png';  // 编辑器自包含副本(与 assets/textures 同步维护)
+    wallImg.onload = function () {
+      if (!els.palette) return;  // 图片可能在 boot() 前已缓存加载
+      buildPalette();
+      renderCanvas();
+    };
+    var hoverCell = null;
+    var nextId = 1;
+    var history = [];
+    var redoStack = [];
+    var spaceDown = false;
+    var drag = null;
+    var dpr = 1;
+    var els = {};
+    var canvas, ctx, wrap;
+
+    // ── helpers ──
+    function sel() {
+      for (var i = 0; i < state.library.length; i++) {
+        if (state.library[i].id === state.selectedId) return state.library[i];
+      }
+      return null;
+    }
+    function uid() { return nextId++; }
+    function cloneGrid(g) { return g.map(function (r) { return r.slice(); }); }
+    function clampMin(v, min, def) {
+      var n = parseInt(v, 10);
+      if (isNaN(n)) n = def;
+      return Math.max(min, n);
+    }
+    function uniqueName(base, lib) {
+      var name = Core.sanitizeName(base);
+      var used = {};
+      for (var i = 0; i < lib.length; i++) used[lib[i].name] = true;
+      if (!used[name]) return name;
+      var k = 2;
+      while (used[name + '_' + k]) k++;
+      return name + '_' + k;
+    }
+    function hexToRgba(hex, a) {
+      var n = parseInt(hex.slice(1), 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    }
+
+    // packed → 64×64 砖块图(纹理 32px 源最近邻 2× 放大,空象限透明)。缓存复用。
+    function tileImage(packed) {
+      if (tileCache[packed]) return tileCache[packed];
+      var tex = Core.textureOf(packed), shape = Core.shapeOf(packed);
+      var c = document.createElement('canvas'); c.width = 64; c.height = 64;
+      var g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+      if (wallImg && wallImg.complete && wallImg.naturalWidth > 0) {
+        var _sx0 = ((tex - 1) % 10) * 32, _sy0 = Math.floor((tex - 1) / 10) * 32;
+        for (var qy = 0; qy < 2; qy++) for (var qx = 0; qx < 2; qx++) {
+          if (shape & (1 << (qy * 2 + qx))) {
+            g.drawImage(wallImg, _sx0 + qx * 16, _sy0 + qy * 16, 16, 16, qx * 32, qy * 32, 32, 32);
+          }
+        }
+      } else {
+        g.fillStyle = TILE_COLORS[tex] || '#527789';
+        g.fillRect(0, 0, 64, 64);
+      }
+      tileCache[packed] = c;
+      return c;
+    }
+
+    function enemyById(id) {
+      var reg = (typeof window !== 'undefined' && window.ENEMY_REGISTRY) || [];
+      for (var i = 0; i < reg.length; i++) if (reg[i].id === id) return reg[i];
+      return null;
+    }
+    // 整图渲染:只画可见区内的墙格;环面模式下把地图沿两轴各 ±1 副本平移后裁剪。
+    // 结构渲染:可见区裁剪,只画非 0 格;环面模式 2×2 平铺(跨接缝重复 + 内部边界两条接缝线)。
+    function renderStructure(s) {
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+      ctx.fillStyle = '#0d1117';
+      ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+      var vx0 = -view.panX / z, vy0 = -view.panY / z;
+      var vx1 = vx0 + wrap.clientWidth / z, vy1 = vy0 + wrap.clientHeight / z;
+      var dxs = state.torusMode ? [0, 1] : [0];
+      var dys = state.torusMode ? [0, 1] : [0];
+      for (var di = 0; di < dxs.length; di++) {
+        for (var dj = 0; dj < dys.length; dj++) {
+          var ox = dxs[di] * w, oy = dys[dj] * h;
+          var cx0 = Math.max(vx0, ox), cy0 = Math.max(vy0, oy);
+          var cx1 = Math.min(vx1, ox + w), cy1 = Math.min(vy1, oy + h);
+          if (cx1 <= cx0 || cy1 <= cy0) continue;
+          var y0 = Math.floor(cy0), y1 = Math.ceil(cy1) - 1;  // 可见格下标范围(含两端)
+          var x0 = Math.floor(cx0), x1 = Math.ceil(cx1) - 1;
+          for (var y = y0; y <= y1; y++) {
+            var mpy = y - oy;
+            for (var x = x0; x <= x1; x++) {
+              var t = s.grid[mpy][x - ox];
+              if (t !== 0) {
+                var px = view.panX + x * z, py = view.panY + y * z;
+                ctx.drawImage(tileImage(t), 0, 0, 64, 64, px, py, z, z);
+              }
+            }
+          }
+        }
+      }
+    }
+    function drawSpawnMarkers(s) {
+      var w = s.grid[0].length, h = s.grid.length;
+      var dxs = state.torusMode ? [0, 1] : [0];
+      var dys = state.torusMode ? [0, 1] : [0];
+      for (var di = 0; di < dxs.length; di++) {
+        for (var dj = 0; dj < dys.length; dj++) {
+          var ox = dxs[di] * w, oy = dys[dj] * h;
+          var PC = ['#54a0ff', '#ffb03f', '#a06bff', '#ff5f6d', '#3fc99a', '#e056fd', '#f0932b', '#4aa3df'];
+          Core.playersOf(s).forEach(function (p, i) {
+            drawSpawnMarker(PC[i % PC.length], p.x + ox, p.y + oy, 'P' + (i + 1));
+          });
+          (s.enemies || []).forEach(function (e) {
+            var en = enemyById(e.type);
+            drawSpawnMarker(en ? en.color : '#888888', e.x + ox, e.y + oy, en ? en.name.charAt(0) : '?');
+          });
+        }
+      }
+    }
+    function drawGridLines(s) {
+      if (!state.gridOn) return;
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (var gx = 0; gx <= w; gx++) {
+        ctx.moveTo(view.panX + gx * z, view.panY);
+        ctx.lineTo(view.panX + gx * z, view.panY + h * z);
+      }
+      for (var gy = 0; gy <= h; gy++) {
+        ctx.moveTo(view.panX, view.panY + gy * z);
+        ctx.lineTo(view.panX + w * z, view.panY + gy * z);
+      }
+      ctx.stroke();
+    }
+    function drawBorder(s) {
+      var w = s.grid[0].length, h = s.grid.length, z = view.zoom;
+      ctx.strokeStyle = '#54a0ff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(view.panX, view.panY, w * z, h * z);
+    }
+    function playerRefRect() {
+      // 玩家参考图当前屏幕位置/尺寸(真实大小:120世界px = 3.75格,随 zoom 缩放;超大时封顶不溢出画布)
+      var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
+      var ppad = 8;
+      var x, y;
+      if (view.playerRef) { x = view.playerRef.x; y = view.playerRef.y; }
+      else { x = ppad; y = wrap.clientHeight - ppad - pz; }
+      x = Math.max(0, Math.min(x, wrap.clientWidth - pz));
+      y = Math.max(0, Math.min(y, wrap.clientHeight - pz));
+      return { x: x, y: y, w: pz, h: pz };
+    }
+    function drawPlayerReference() {
+      // 左下角主角尺寸参考;可左键拖到任意位置,双击复位到左下角
+      var r = playerRefRect();
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
+        ctx.drawImage(playerImg, r.x, r.y, r.w, r.h);
+      } else {
+        ctx.fillStyle = '#54a0ff';
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+      }
+      ctx.restore();
+    }
+    // 拖拽位置记忆(localStorage 存取失败时静默忽略,会话内仍可用)
+    function savePlayerRef() {
+      try {
+        if (view.playerRef) localStorage.setItem('cyr_editor_player_ref', JSON.stringify(view.playerRef));
+        else localStorage.removeItem('cyr_editor_player_ref');
+      } catch (e) {}
+    }
+    function loadPlayerRef() {
+      try {
+        var raw = localStorage.getItem('cyr_editor_player_ref');
+        if (!raw) return;
+        var p = JSON.parse(raw);
+        if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) view.playerRef = { x: p.x, y: p.y };
+      } catch (e) {}
+    }
+    function drawSpawnMarker(color, gx, gy, label) {
+      var z = view.zoom, px = view.panX + (gx + 0.5) * z, py = view.panY + (gy + 0.5) * z;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(3, z * 0.3), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#0b0e12';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      if (z >= 8) {
+        ctx.fillStyle = '#0b0e12';
+        ctx.font = 'bold ' + Math.max(8, z * 0.5) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, px, py);
+      }
+    }
+
+    function drawBrushPreview() {
+      if (!hoverCell || (state.tool !== 'paint' && state.tool !== 'erase') || view.zoom < 8) return;
+      var o = Core.brushOffsets(state.brushSize);
+      var bz = view.zoom;
+      var bbx = view.panX + (hoverCell.x - o.lo) * bz, bby = view.panY + (hoverCell.y - o.lo) * bz;
+      var bbs = (o.lo + o.hi + 1) * bz;
+      var col = TILE_COLORS[state.palette];
+      ctx.fillStyle = state.tool === 'erase' ? 'rgba(255,255,255,0.15)' : hexToRgba(col || '#0d1117', 0.4);
+      ctx.fillRect(bbx, bby, bbs, bbs);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bbx, bby, bbs, bbs);
+    }
+
+    // ── canvas sizing / rendering ──
+    function resizeCanvas() {
+      dpr = window.devicePixelRatio || 1;
+      var w = wrap.clientWidth, h = wrap.clientHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+    }
+    function renderCanvas() {
+      if (!ctx) return;
+      var s = sel();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = '#17191d';
+      ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+      if (s) {
+        // 选框移动预览:临时用预览网格渲染(结构本体尺寸不变),松手才提交
+        if (drag && drag.mode === 'move' && drag.previewGrid) {
+          var disp = { grid: drag.previewGrid, players: Core.playersOf(s).slice(), enemies: s.enemies };
+          renderStructure(disp);
+          drawSpawnMarkers(disp);
+          drawGridLines(disp);
+          drawBorder(disp);
+        } else {
+          renderStructure(s);
+          drawSpawnMarkers(s);
+          drawGridLines(s);
+          drawBorder(s);
+        }
+      }
+      drawSelection();
+      drawBrushPreview();
+      drawPlayerReference();
+      ctx.restore();
+    }
+    function zoomAt(mx, my, factor) {
+      var nz = Math.min(128, Math.max(0.25, view.zoom * factor));
+      if (nz === view.zoom) return;
+      view.panX = mx - (mx - view.panX) * (nz / view.zoom);
+      view.panY = my - (my - view.panY) * (nz / view.zoom);
+      view.zoom = nz;
+      renderCanvas();
+    }
+    function fit() {
+      var s = sel();
+      if (!s) return;
+      var w = s.grid[0].length, h = s.grid.length;
+      var availW = wrap.clientWidth - 60, availH = wrap.clientHeight - 60;
+      if (availW <= 0 || availH <= 0) return;
+      var z = Math.min(availW / w, availH / h);
+      z = Math.min(48, Math.max(0.25, z));  // 大图允许缩到 0.25px/格
+      view.zoom = z;
+      view.panX = Math.max(0, (wrap.clientWidth - w * z) / 2);
+      view.panY = Math.max(0, (wrap.clientHeight - h * z) / 2);
+      renderCanvas();
+    }
+    function cellAt(mx, my) {
+      var s = sel();
+      if (!s) return null;
+      var x = Math.floor((mx - view.panX) / view.zoom);
+      var y = Math.floor((my - view.panY) / view.zoom);
+      if (x < 0 || y < 0 || y >= s.grid.length || x >= s.grid[y].length) return null;
+      return { x: x, y: y };
+    }
+
+    // ── library list ──
+    function renderLibrary() {
+      var list = els.libraryList;
+      list.innerHTML = '';
+      state.library.forEach(function (s) {
+        var li = document.createElement('li');
+        li.dataset.id = s.id;
+        if (s.id === state.selectedId) li.classList.add('selected');
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = s.name;
+        var sz = document.createElement('span');
+        sz.className = 'sz';
+        sz.textContent = s.grid[0].length + '×' + s.grid.length;
+        li.appendChild(nameSpan);
+        li.appendChild(sz);
+        li.addEventListener('click', function () { selectStructure(s.id); });
+        list.appendChild(li);
+      });
+    }
+    function selectStructure(id) {
+      if (state.selectedId === id) return;
+      state.selectedId = id;
+      hoverCell = null;  // 切换结构清掉旧的画笔预览
+      state.selection = null;  // 选区也随结构切换清掉
+      syncSizeInputs();
+      fit();
+      render();
+    }
+    function syncSizeInputs() {
+      var s = sel();
+      if (s) {
+        els.sizeW.value = s.grid[0].length;
+        els.sizeH.value = s.grid.length;
+      }
+    }
+
+    // ── status bar ──
+    function renderStatus() {
+      var parts = [];
+      var s = sel();
+      if (s) {
+        parts.push(s.name + ' · ' + s.grid[0].length + '×' + s.grid.length
+          + (state.torusMode ? ' · 环面' : ''));
+        parts.push('工具: ' + (({ paint: '画笔', rect: '矩形', fill: '油漆桶', erase: '橡皮', select: '选框', line: '直线' })[state.tool] || state.tool));
+        var tn = state.palette === 0 ? '' : tileName(state.palette);
+        parts.push('纹理: ' + state.palette + (state.palette === 0 ? ' (空气)' : (tn ? ' ' + tn : '')) + ' · 形状 ' + state.shape);
+        parts.push('画笔 ' + state.brushSize);
+        parts.push('出生点:玩家 ' + Core.playersOf(s).length + ' · 敌人 ' + (s.enemies || []).length);
+        if (state.selection) {
+          parts.push('选区: ' + state.selection.x + ',' + state.selection.y
+            + ' ' + state.selection.w + '×' + state.selection.h);
+        }
+        parts.push('撤销 ' + history.length + ' · 重做 ' + redoStack.length);
+      } else {
+        parts.push('无结构 — 点击左侧"新建"');
+      }
+      els.statusbar.textContent = parts.join('   ·   ');
+    }
+
+    // ── palette ──
+    function tileName(t) {
+      var defs = (typeof window !== 'undefined' && window.TILE_DEFS) || null;
+      var d = defs && defs.tiles && defs.tiles[String(t)];
+      return d ? d.name : '';
+    }
+    function setWallSwatchBg(sw, t) {
+      // 纹理加载后,swatch 用 structure.png 第 (t-1) 块当背景(两行,每行 10 块:1-10 顶行,11-20 次行)。
+      // 直接引源图 URL 做 CSS 背景,不走 canvas toDataURL —— file:// 下 canvas 会 taint 抛安全错误。
+      if (t <= 0 || !wallImg || !wallImg.complete || wallImg.naturalWidth <= 0) return;
+      sw.style.backgroundImage = "url('" + wallImg.src + "')";
+      sw.style.backgroundSize = '1000% 1000%';
+      var _row = Math.floor((t - 1) / 10), _col = (t - 1) % 10;
+      sw.style.backgroundPosition = (_col * 100 / 9) + '% ' + (_row * 100 / 9) + '%';
+    }
+    function buildPalette() {
+      els.palette.innerHTML = '';
+      for (var t = 0; t <= 22; t++) {
+        var sw = document.createElement('div');
+        sw.className = 'swatch' + (t === 0 ? ' sw-air' : ' s' + t);
+        sw.textContent = String(t);
+        var tname = tileName(t);
+        sw.title = t === 0 ? '0 · 空气' : (t + ' · ' + (tname || '纹理'));
+        if (t === state.palette) sw.classList.add('selected');
+        setWallSwatchBg(sw, t);
+        (function (tile) {
+          sw.addEventListener('click', function () {
+            state.palette = tile;
+            var all = els.palette.querySelectorAll('.swatch');
+            all.forEach(function (x) { x.classList.remove('selected'); });
+            sw.classList.add('selected');
+            renderStatus();
+          });
+        })(t);
+        els.palette.appendChild(sw);
+      }
+    }
+
+    // ── 砖形面板:2×2 象限点击翻转。默认全满(15);禁止清成全空(移除最后一个 1/4 无效)。──
+    function renderShapePanel() {
+      var box = els.shapeMini;
+      if (!box) return;
+      box.innerHTML = '';
+      for (var i = 0; i < 4; i++) {
+        var q = document.createElement('div');
+        q.className = 'quad ' + ((state.shape & (1 << i)) ? 'on' : 'off');
+        q.title = '象限 bit' + i;
+        (function (bit) {
+          q.addEventListener('click', function () {
+            var next = state.shape ^ (1 << bit);
+            if (next === 0) return;   // 禁止全空:最后一个实心象限不能移除
+            state.shape = next;
+            renderShapePanel();
+            renderCanvas();
+          });
+        })(i);
+        box.appendChild(q);
+      }
+    }
+
+    // ── undo / redo ──
+    function pushHistory(s) {
+      history.push({ id: s.id, grid: cloneGrid(s.grid) });
+      if (history.length > 100) history.shift();
+      redoStack.length = 0;
+    }
+    function undo() {
+      if (history.length === 0) return;
+      var snap = history.pop();
+      var s = sel();
+      if (!s) return;
+      if (snap.id !== s.id) { history.push(snap); return; }
+      redoStack.push({ id: snap.id, grid: cloneGrid(s.grid) });
+      s.grid = snap.grid;
+      syncSizeInputs();
+      render();
+    }
+    function redo() {
+      if (redoStack.length === 0) return;
+      var snap = redoStack.pop();
+      var s = sel();
+      if (!s) return;
+      if (snap.id !== s.id) { redoStack.push(snap); return; }
+      history.push({ id: snap.id, grid: cloneGrid(s.grid) });
+      s.grid = snap.grid;
+      syncSizeInputs();
+      render();
+    }
+
+    // ── painting ──
+    function paintAt(x, y, tile) {
+      var s = sel();
+      if (!s) return;
+      var o = Core.brushOffsets(state.brushSize);
+      for (var dy = -o.lo; dy <= o.hi; dy++) {
+        for (var dx = -o.lo; dx <= o.hi; dx++) {
+          var cy = y + dy, cx = x + dx;
+          if (cy >= 0 && cy < s.grid.length && cx >= 0 && cx < s.grid[cy].length) s.grid[cy][cx] = tile;
+        }
+      }
+    }
+    function linePaint(x0, y0, x1, y1, tile) {
+      var cells = Core.lineCells(x0, y0, x1, y1);
+      for (var i = 0; i < cells.length; i++) paintAt(cells[i][0], cells[i][1], tile);  // 画笔:沿线刷 N×N 块
+    }
+    function inRegion(x, y, r) {
+      return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+    }
+    function drawRectPreview(x0, y0, x1, y1, erase) {
+      var s = sel();
+      if (!s) return;
+      var minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
+      var minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+      var z = view.zoom;
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = erase ? 'rgba(255,255,255,0.25)' : hexToRgba(TILE_COLORS[state.palette] || '#0d1117', 0.5);
+      ctx.fillRect(view.panX + minX * z, view.panY + minY * z, (maxX - minX + 1) * z, (maxY - minY + 1) * z);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(view.panX + minX * z, view.panY + minY * z, (maxX - minX + 1) * z, (maxY - minY + 1) * z);
+      ctx.restore();
+    }
+    function drawLinePreview(x0, y0, x1, y1) {
+      var s = sel();
+      if (!s) return;
+      var z = view.zoom;
+      var o = Core.brushOffsets(state.brushSize);
+      var cells = Core.lineCells(x0, y0, x1, y1);
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.fillStyle = (drag && drag.erase) ? 'rgba(255,255,255,0.25)'
+        : hexToRgba(TILE_COLORS[state.palette] || '#0d1117', 0.5);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      for (var i = 0; i < cells.length; i++) {
+        var bbx = view.panX + (cells[i][0] - o.lo) * z, bby = view.panY + (cells[i][1] - o.lo) * z;
+        var bbs = (o.lo + o.hi + 1) * z;
+        ctx.fillRect(bbx, bby, bbs, bbs);  // 与 paintAt 的画笔块一致,预览即结果
+        if (i === 0) ctx.strokeRect(bbx + 0.5, bby + 0.5, bbs - 1, bbs - 1);  // 起点描边
+      }
+      ctx.restore();
+    }
+    function drawSelection() {
+      // 在 renderCanvas 已 scale(dpr) 的作用域内调用,不能再 self-scale(否则 dpr² 双重缩放,选框脱离网格)
+      var r = state.selection;
+      if (drag && drag.mode === 'move' && drag.previewSel) r = drag.previewSel;
+      if (!r) return;
+      var z = view.zoom;
+      var px = view.panX + r.x * z, py = view.panY + r.y * z;
+      ctx.save();
+      ctx.fillStyle = 'rgba(84,160,255,0.12)';
+      ctx.fillRect(px, py, r.w * z, r.h * z);
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = '#54a0ff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px + 0.5, py + 0.5, r.w * z - 1, r.h * z - 1);
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // ── pointer handlers ──
+    function onPointerDown(e) {
+      if (e.button === 1 || spaceDown) {
+        e.preventDefault();
+        drag = { mode: 'pan', sx: e.offsetX, sy: e.offsetY, ox: view.panX, oy: view.panY };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      // 左键按下玩家参考图 → 拖动参考图(优先于画笔/spawn)
+      if (e.button === 0) {
+        var pr = playerRefRect();
+        if (e.offsetX >= pr.x && e.offsetX <= pr.x + pr.w &&
+            e.offsetY >= pr.y && e.offsetY <= pr.y + pr.h) {
+          if (!view.playerRef) view.playerRef = { x: pr.x, y: pr.y };
+          drag = { mode: 'playerRef', sx: e.offsetX, sy: e.offsetY, ox: view.playerRef.x, oy: view.playerRef.y };
+          canvas.style.cursor = 'grabbing';
+          canvas.setPointerCapture(e.pointerId);
+          renderCanvas();
+          return;
+        }
+      }
+      var s = sel();
+      var cell = cellAt(e.offsetX, e.offsetY);
+      if (!cell || !s) return;
+      // 选中 spawn 工具:右键移除该格 spawn(玩家出生点任意多个,逐个删)
+      if (e.button === 2 && state.spawnTool) {
+        var pls = Core.playersOf(s);
+        for (var pi = pls.length - 1; pi >= 0; pi--) {
+          if (pls[pi].x === cell.x && pls[pi].y === cell.y) pls.splice(pi, 1);
+        }
+        var list = s.enemies || [];
+        for (var i = list.length - 1; i >= 0; i--) {
+          if (list[i].x === cell.x && list[i].y === cell.y) list.splice(i, 1);
+        }
+        renderCanvas();
+        return;
+      }
+      if (state.spawnTool) {
+        placeSpawn(cell.x, cell.y);
+        return;
+      }
+
+      // 选框工具:左键选区内=移动、选区外=重新框选;右键/Alt=清除选区
+      if (state.tool === 'select') {
+        if (e.button === 2 || e.altKey) {
+          if (state.selection) { state.selection = null; renderCanvas(); }
+          return;
+        }
+        if (state.selection && inRegion(cell.x, cell.y, state.selection)) {
+          drag = { mode: 'move', sx: cell.x, sy: cell.y, sel: state.selection };
+          canvas.setPointerCapture(e.pointerId);
+          renderCanvas();
+          return;
+        }
+        state.selection = Core.normRegion(cell.x, cell.y, cell.x, cell.y);
+        drag = { mode: 'marquee', sx: cell.x, sy: cell.y };
+        canvas.setPointerCapture(e.pointerId);
+        renderCanvas();
+        return;
+      }
+
+      var erase = e.button === 2 || e.altKey || state.tool === 'erase';
+      var tile = erase ? 0 : Core.packCell(state.palette, state.shape);
+      if (state.tool === 'fill') {
+        if (state.selection && inRegion(cell.x, cell.y, state.selection)) {
+          // 选区激活 + 点在选区内 → 整个选区刷成当前纹理+形状(按矩形,非连通)
+          var r = state.selection;
+          var same = true;
+          for (var ry = r.y; ry < r.y + r.h && same; ry++)
+            for (var rx = r.x; rx < r.x + r.w; rx++)
+              if (s.grid[ry][rx] !== tile) { same = false; break; }
+          if (!same) {
+            pushHistory(s);
+            s.grid = Core.rectFill(s.grid, r.x, r.y, r.x + r.w - 1, r.y + r.h - 1, tile);
+          }
+        } else {
+          // 无选区;点在选区外 → 先清掉选区,再正常连通填充
+          if (state.selection) state.selection = null;
+          if (s.grid[cell.y][cell.x] !== tile) {
+            pushHistory(s);
+            s.grid = Core.floodFill(s.grid, cell.x, cell.y, tile);
+          }
+        }
+        render();
+        return;
+      }
+      if (state.tool === 'rect') {
+        drag = { mode: 'rect', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase, tile: tile };
+        canvas.setPointerCapture(e.pointerId);
+        renderCanvas();
+        return;
+      }
+      if (state.tool === 'line') {
+        drag = { mode: 'line', sx: cell.x, sy: cell.y, lastX: cell.x, lastY: cell.y, erase: erase, tile: tile };
+        canvas.setPointerCapture(e.pointerId);
+        renderCanvas();
+        return;
+      }
+      pushHistory(s);
+      paintAt(cell.x, cell.y, tile);
+      drag = { mode: 'paint', lastX: cell.x, lastY: cell.y, tile: tile };
+      canvas.setPointerCapture(e.pointerId);
+      renderCanvas();
+    }
+    function onPointerMove(e) {
+      if (!drag) {
+        var cell = cellAt(e.offsetX, e.offsetY);
+        var key = cell ? (cell.x + ',' + cell.y) : null;
+        var prev = hoverCell ? (hoverCell.x + ',' + hoverCell.y) : null;
+        if (key !== prev) {
+          hoverCell = cell;
+          if (view.zoom >= 8) renderCanvas();  // 低缩放不刷预览,避免大图卡顿
+        }
+        // 悬停玩家参考图 → 抓手提示
+        var pr = playerRefRect();
+        var overRef = (e.offsetX >= pr.x && e.offsetX <= pr.x + pr.w &&
+                       e.offsetY >= pr.y && e.offsetY <= pr.y + pr.h);
+        canvas.style.cursor = overRef ? 'grab' : '';
+        return;
+      }
+      if (drag.mode === 'pan') {
+        view.panX = drag.ox + (e.offsetX - drag.sx);
+        view.panY = drag.oy + (e.offsetY - drag.sy);
+        renderCanvas();
+        return;
+      }
+      if (drag.mode === 'playerRef') {
+        var pz = Math.min(PLAYER_TILES * view.zoom, wrap.clientHeight * 0.6);
+        view.playerRef.x = Math.max(0, Math.min(drag.ox + (e.offsetX - drag.sx), wrap.clientWidth - pz));
+        view.playerRef.y = Math.max(0, Math.min(drag.oy + (e.offsetY - drag.sy), wrap.clientHeight - pz));
+        renderCanvas();
+        return;
+      }
+      var cell = cellAt(e.offsetX, e.offsetY);
+      if (!cell) return;
+      if (drag.mode === 'marquee') {
+        state.selection = Core.normRegion(drag.sx, drag.sy, cell.x, cell.y);
+        renderCanvas();
+        return;
+      }
+      if (drag.mode === 'move') {
+        var ms = sel();
+        if (ms) {
+          // 约束在网格内:选区不越界,拖到边缘即停(内容不丢,左右边缘互移仍可覆盖环面换边)
+          var maxDX = ms.grid[0].length - drag.sel.w;
+          var maxDY = ms.grid.length - drag.sel.h;
+          var dx = Math.max(-drag.sel.x, Math.min(cell.x - drag.sx, maxDX));
+          var dy = Math.max(-drag.sel.y, Math.min(cell.y - drag.sy, maxDY));
+          drag.previewSel = { x: drag.sel.x + dx, y: drag.sel.y + dy, w: drag.sel.w, h: drag.sel.h };
+          drag.previewGrid = Core.moveRegion(ms.grid, drag.sel, dx, dy);
+        }
+        renderCanvas();
+        return;
+      }
+      if (drag.mode === 'rect') {
+        drag.lastX = cell.x;
+        drag.lastY = cell.y;
+        renderCanvas();
+        drawRectPreview(drag.sx, drag.sy, cell.x, cell.y, drag.erase);
+        return;
+      }
+      if (drag.mode === 'line') {
+        drag.lastX = cell.x;
+        drag.lastY = cell.y;
+        renderCanvas();
+        drawLinePreview(drag.sx, drag.sy, cell.x, cell.y);
+        return;
+      }
+      if (drag.mode === 'paint') {
+        linePaint(drag.lastX, drag.lastY, cell.x, cell.y, drag.tile);
+        drag.lastX = cell.x;
+        drag.lastY = cell.y;
+        renderCanvas();
+      }
+    }
+    function onPointerUp() {
+      if (!drag) return;
+      var s = sel();
+      if (drag.mode === 'rect' && s) {
+        pushHistory(s);
+        s.grid = Core.rectFill(s.grid, drag.sx, drag.sy, drag.lastX, drag.lastY, drag.tile);
+      }
+      if (drag.mode === 'line' && s) {
+        pushHistory(s);
+        var cells = Core.lineCells(drag.sx, drag.sy, drag.lastX, drag.lastY);
+        for (var i = 0; i < cells.length; i++) paintAt(cells[i][0], cells[i][1], drag.tile);
+      }
+      if (drag.mode === 'move' && s && drag.previewGrid) {
+        var moved = drag.previewSel.x !== drag.sel.x || drag.previewSel.y !== drag.sel.y;
+        if (moved) {
+          pushHistory(s);
+          s.grid = drag.previewGrid;
+          state.selection = drag.previewSel;
+        }
+      }
+      if (drag.mode === 'playerRef') {
+        savePlayerRef();
+        canvas.style.cursor = 'grab';
+      }
+      drag = null;
+      render();
+    }
+    function onPointerCancel() {
+      if (drag && drag.mode === 'marquee') state.selection = null;
+      drag = null;
+      renderCanvas();
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    }
+
+    // ── modal name prompt ──
+    function promptName(title, initial, excludeName, opts) {
+      opts = opts || {};
+      return new Promise(function (resolve) {
+        els.modalTitle.textContent = title;
+        els.modalInput.value = initial || '';
+        els.modalErr.textContent = '';
+        if (opts.withSize) {
+          els.modalSizeRow.classList.remove('hidden');
+          els.modalSizeW.value = opts.defaultW != null ? opts.defaultW : 125;
+          els.modalSizeH.value = opts.defaultH != null ? opts.defaultH : 75;
+        } else {
+          els.modalSizeRow.classList.add('hidden');
+        }
+        els.modalOverlay.classList.remove('hidden');
+        els.modalInput.focus();
+        els.modalInput.select();
+        function finish(val) {
+          els.modalOverlay.classList.add('hidden');
+          els.modalSizeRow.classList.add('hidden');
+          els.modalOk.removeEventListener('click', onOk);
+          els.modalCancel.removeEventListener('click', onCancel);
+          els.modalInput.removeEventListener('keydown', onKey);
+          resolve(val);
+        }
+        function onOk() {
+          var raw = els.modalInput.value;
+          var name = Core.sanitizeName(raw);
+          if (name === 'structure' && raw.trim() === '') {
+            els.modalErr.textContent = '名称不能为空';
+            return;
+          }
+          if (state.library.some(function (s) { return s.name === name && s.name !== excludeName; })) {
+            els.modalErr.textContent = '名称已存在：' + name;
+            return;
+          }
+          finish(name);
+        }
+        function onCancel() { finish(null); }
+        function onKey(e) {
+          if (e.key === 'Enter') onOk();
+          if (e.key === 'Escape') onCancel();
+        }
+        els.modalOk.addEventListener('click', onOk);
+        els.modalCancel.addEventListener('click', onCancel);
+        els.modalInput.addEventListener('keydown', onKey);
+      });
+    }
+
+    // ── library actions ──
+    function addStructure() {
+      promptName('新建结构', uniqueName('structure', state.library), null, { withSize: true }).then(function (name) {
+        if (!name) return;
+        var w = clampMin(els.modalSizeW.value, 1, 250);
+        var h = clampMin(els.modalSizeH.value, 1, 150);
+        var data = Core.createEmptyStructure(w, h);
+        var s = { id: uid(), name: name, grid: data.grid, players: data.players, enemies: data.enemies };
+        state.library.push(s);
+        state.selectedId = s.id;
+        syncSizeInputs();
+        fit();
+        render();
+      });
+    }
+    function duplicateStructure() {
+      var s = sel();
+      if (!s) return;
+      var copy = { id: uid(), name: uniqueName(s.name, state.library), grid: cloneGrid(s.grid),
+                   players: Core.playersOf(s).slice(), enemies: (s.enemies || []).slice() };
+      state.library.push(copy);
+      state.selectedId = copy.id;
+      syncSizeInputs();
+      fit();
+      render();
+    }
+    function renameStructure() {
+      var s = sel();
+      if (!s) return;
+      promptName('重命名结构', s.name, s.name).then(function (name) {
+        if (!name) return;
+        s.name = name;
+        render();
+      });
+    }
+    function deleteStructure() {
+      var s = sel();
+      if (!s) return;
+      if (!window.confirm('删除结构 "' + s.name + '"？')) return;
+      var idx = state.library.indexOf(s);
+      state.library.splice(idx, 1);
+      if (state.library.length === 0) {
+        state.selectedId = null;
+      } else {
+        state.selectedId = state.library[Math.min(idx, state.library.length - 1)].id;
+      }
+      syncSizeInputs();
+      fit();
+      render();
+    }
+    function applySize() {
+      var s = sel();
+      if (!s) return;
+      var w = clampMin(els.sizeW.value, 1, 12);
+      var h = clampMin(els.sizeH.value, 1, 12);
+      if (s.grid[0].length !== w || s.grid.length !== h) {
+        pushHistory(s);
+        s.grid = Core.resizeGrid(s.grid, w, h);
+        state.selection = null;  // 尺寸变化后旧选区可能越界,直接清掉
+      }
+      syncSizeInputs();
+      render();
+    }
+
+    // ── import / export ──
+    function exportLibrary() {
+      if (state.library.length === 0) {
+        window.alert('库为空，无可导出');
+        return;
+      }
+      var emptyOnes = state.library.filter(function (s) {
+        return s.grid.every(function (row) { return row.every(function (v) { return v === 0; }); });
+      });
+      if (emptyOnes.length > 0) {
+        var names = emptyOnes.map(function (s) { return s.name; }).join('、');
+        if (!window.confirm('以下结构全是空气（0）：' + names + '\n仍要导出吗？')) return;
+      }
+      var text;
+      try {
+        text = Core.serializeLibraryJSON(state.library);
+      } catch (err) {
+        window.alert('导出失败：' + err.message);
+        return;
+      }
+      var blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'cyr_structures.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+    function exportStructure() {
+      var s = sel();
+      if (!s) { window.alert('无结构可导出'); return; }
+      var blob = new Blob([Core.serializeMapStructure(s)], { type: 'text/plain;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = s.name + '.cyrm';  // 关卡用:导出后保存为 map/demo.cyrm
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+    function structureFromMap(p) {
+      var name = (p.comments && p.comments[0]) ? p.comments[0] : 'structure';
+      return [{ name: name, grid: p.grid, players: Core.playersOf(p).slice(), enemies: p.enemies }];
+    }
+    function importLibrary() {
+      var file = els.fileImport.files && els.fileImport.files[0];
+      if (!file) return;
+      els.fileImport.value = '';
+      var reader = new FileReader();
+      reader.onload = function () {
+        var raw = String(reader.result).trim();
+        var imported;
+        try {
+          // 自动识别:JSON 结构库 或 地图格式(.cyrm / .txt)
+          imported = (raw.charAt(0) === '{')
+            ? Core.parseLibraryJSON(raw)
+            : structureFromMap(Core.parseMap(raw));
+        } catch (err) {
+          window.alert('导入失败：' + err.message);
+          return;
+        }
+        if (!imported || imported.length === 0) {
+          window.alert('文件里没有可用的结构');
+          return;
+        }
+        var firstId = null;
+        imported.forEach(function (st) {
+          var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid,
+                    players: Core.playersOf(st).slice(), enemies: st.enemies || [] };
+          state.library.push(s);
+          if (firstId === null) firstId = s.id;
+        });
+        state.selectedId = firstId;
+        syncSizeInputs();
+        fit();
+        render();
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+    function renderSpawnTools() {
+      var box = els.spawnTools;
+      box.innerHTML = '';
+      addSpawnToolButton(box, 'player', '玩家', '#54a0ff');
+      var reg = (typeof window !== 'undefined' && window.ENEMY_REGISTRY) || [];
+      reg.forEach(function (e) {
+        addSpawnToolButton(box, e.id, e.name, e.color);
+      });
+    }
+    function addSpawnToolButton(box, id, label, color) {
+      var b = document.createElement('button');
+      b.textContent = (id === 'player' ? '玩家' : label);
+      b.className = 'spawn-btn' + (state.spawnTool === id ? ' active' : '');
+      b.style.borderLeftColor = color;
+      b.addEventListener('click', function () {
+        state.spawnTool = (state.spawnTool === id) ? null : id;
+        renderSpawnTools();
+        renderCanvas();
+      });
+      box.appendChild(b);
+    }
+    function placeSpawn(gx, gy) {
+      var s = sel();
+      if (!s) return;
+      var g = s.grid, h = g.length, w = g[0].length;
+      if (gx < 0 || gy < 0 || gx >= w || gy >= h) return;
+      if (state.spawnTool === 'player') {
+        // 任意多个出生点:点空格追加一个(P1/P2/P3…自动编号);同格已有则不动(可右键删后再放)。
+        if (!Array.isArray(s.players)) s.players = Core.playersOf(s).slice();
+        var dup = false;
+        for (var i = 0; i < s.players.length; i++) {
+          if (s.players[i].x === gx && s.players[i].y === gy) { dup = true; break; }
+        }
+        if (!dup) s.players.push({ x: gx, y: gy });
+      } else {
+        // 结构可能没有 enemies 字段(默认 demo / 复制的结构)→ 先初始化,否则 push 进临时数组被静默丢弃
+        if (!Array.isArray(s.enemies)) s.enemies = [];
+        var list = s.enemies;
+        for (var i = list.length - 1; i >= 0; i--) {
+          if (list[i].x === gx && list[i].y === gy) list.splice(i, 1);
+        }
+        list.push({ type: state.spawnTool, x: gx, y: gy });
+      }
+      renderCanvas();
+    }
+
+    function render() {
+      renderLibrary();
+      renderSpawnTools();
+      renderShapePanel();
+      renderCanvas();
+      renderStatus();
+    }
+
+    function boot() {
+      els = {
+        libraryList: document.getElementById('library-list'),
+        sizeW: document.getElementById('size-w'),
+        sizeH: document.getElementById('size-h'),
+        palette: document.getElementById('palette'),
+        shapeMini: document.getElementById('shape-mini'),
+        canvas: document.getElementById('canvas'),
+        canvasWrap: document.getElementById('canvas-wrap'),
+        statusbar: document.getElementById('statusbar'),
+        gridToggle: document.getElementById('grid-toggle'),
+        brushSize: document.getElementById('brush-size'),
+        btnFit: document.getElementById('btn-fit'),
+        btnTorus: document.getElementById('btn-torus'),
+        btnStructureExport: document.getElementById('btn-structure-export'),
+        spawnTools: document.getElementById('spawn-tools'),
+        modalOverlay: document.getElementById('modal-overlay'),
+        modalTitle: document.getElementById('modal-title'),
+        modalInput: document.getElementById('modal-input'),
+        modalErr: document.getElementById('modal-err'),
+        modalOk: document.getElementById('modal-ok'),
+        modalCancel: document.getElementById('modal-cancel'),
+        modalSizeRow: document.getElementById('modal-size-row'),
+        modalSizeW: document.getElementById('modal-size-w'),
+        modalSizeH: document.getElementById('modal-size-h')
+      };
+      canvas = els.canvas;
+      ctx = canvas.getContext('2d');
+      wrap = els.canvasWrap;
+
+      state.library.push({
+        id: uid(),
+        name: 'demo',
+        players: [],
+        enemies: [],
+        grid: [
+          [0,0,0,0,0,0,0,0,0,0,0,0],
+          [0,31,31,31,31,31,31,31,31,31,31,0],
+          [0,31,0,0,0,0,0,0,0,0,31,0],
+          [0,31,0,31,31,0,0,31,31,0,31,0],
+          [0,31,0,31,31,0,0,31,31,0,31,0],
+          [0,31,0,0,0,0,0,0,0,0,31,0],
+          [0,31,31,31,31,31,31,31,31,31,31,0],
+          [0,0,0,0,0,0,0,0,0,0,0,0]
+        ]
+      });
+      state.selectedId = state.library[0].id;
+
+      buildPalette();
+
+      els.gridToggle.addEventListener('change', function () {
+        state.gridOn = els.gridToggle.checked;
+        renderCanvas();
+      });
+      els.brushSize.addEventListener('change', function () {
+        var n = parseInt(els.brushSize.value, 10);
+        if (isNaN(n)) n = 1;
+        state.brushSize = Math.min(15, Math.max(1, n));  // 限制在 1..15
+        els.brushSize.value = state.brushSize;
+        renderStatus();
+      });
+      els.btnFit.addEventListener('click', fit);
+      els.palette.addEventListener('click', function (e) {
+        var sw = e.target.closest('.swatch');
+        if (!sw) return;
+        state.palette = parseInt(sw.textContent, 10);
+        var all = els.palette.querySelectorAll('.swatch');
+        all.forEach(function (x) { x.classList.remove('selected'); });
+        sw.classList.add('selected');
+        renderStatus();
+      });
+      els.libraryList.addEventListener('click', function (e) {
+        var li = e.target.closest('li');
+        if (li && li.dataset.id) selectStructure(parseInt(li.dataset.id, 10));
+      });
+      canvas.addEventListener('wheel', onWheel, { passive: false });
+      canvas.addEventListener('pointerdown', onPointerDown);
+      canvas.addEventListener('pointermove', onPointerMove);
+      canvas.addEventListener('pointerup', onPointerUp);
+      canvas.addEventListener('pointercancel', onPointerCancel);
+      canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+      canvas.addEventListener('dblclick', function (e) {
+        var pr = playerRefRect();
+        if (e.offsetX >= pr.x && e.offsetX <= pr.x + pr.w &&
+            e.offsetY >= pr.y && e.offsetY <= pr.y + pr.h) {
+          view.playerRef = null;
+          savePlayerRef();
+          renderCanvas();
+        }
+      });
+
+      document.addEventListener('keydown', function (e) {
+        var tag = e.target && e.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+        if (e.code === 'Space') spaceDown = true;
+        // 选区:Del/Backspace 清空选区内砖块;Esc 取消选区
+        if ((e.code === 'Delete' || e.code === 'Backspace') && state.selection) {
+          e.preventDefault();
+          var s = sel();
+          if (s) {
+            var r = state.selection;
+            var any = false;
+            for (var yy = r.y; yy < r.y + r.h && !any; yy++)
+              for (var xx = r.x; xx < r.x + r.w; xx++)
+                if (s.grid[yy][xx] !== 0) { any = true; break; }
+            if (any) {
+              pushHistory(s);
+              s.grid = Core.rectFill(s.grid, r.x, r.y, r.x + r.w - 1, r.y + r.h - 1, 0);
+            }
+          }
+          render();
+        }
+        if (e.code === 'Escape' && state.selection) {
+          state.selection = null;
+          renderCanvas();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+          e.preventDefault();
+          if (e.shiftKey) redo(); else undo();
+        } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') {
+          e.preventDefault();
+          redo();
+        }
+      });
+      document.addEventListener('keyup', function (e) {
+        if (e.code === 'Space') spaceDown = false;
+      });
+      window.addEventListener('blur', function () { spaceDown = false; });
+
+      function onResize() { resizeCanvas(); renderCanvas(); }
+      window.addEventListener('resize', onResize);
+      if (window.ResizeObserver) new ResizeObserver(onResize).observe(wrap);
+
+      loadPlayerRef();
+      resizeCanvas();
+      fit();
+      render();
+
+      var toolBtns = document.querySelectorAll('.tool-btn');
+      toolBtns.forEach(function (b) {
+        b.addEventListener('click', function () {
+          state.tool = b.dataset.tool;
+          toolBtns.forEach(function (x) { x.classList.remove('active'); });
+          b.classList.add('active');
+          renderStatus();
+        });
+      });
+      document.getElementById('btn-undo').addEventListener('click', undo);
+      document.getElementById('btn-redo').addEventListener('click', redo);
+      document.getElementById('btn-add').addEventListener('click', addStructure);
+      document.getElementById('btn-dup').addEventListener('click', duplicateStructure);
+      document.getElementById('btn-rename').addEventListener('click', renameStructure);
+      document.getElementById('btn-del').addEventListener('click', deleteStructure);
+      document.getElementById('btn-resize').addEventListener('click', applySize);
+      els.fileImport = document.getElementById('file-import');
+      document.getElementById('btn-import').addEventListener('click', function () {
+        els.fileImport.click();
+      });
+      document.getElementById('btn-export').addEventListener('click', exportLibrary);
+      els.fileImport.addEventListener('change', importLibrary);
+      els.btnTorus.addEventListener('click', function () {
+        state.torusMode = !state.torusMode;
+        els.btnTorus.classList.toggle('active', state.torusMode);
+        renderCanvas();
+      });
+      els.btnStructureExport.addEventListener('click', exportStructure);
+    }
+
+    var canBoot = typeof document !== 'undefined' && document && typeof document.getElementById === 'function';
+    if (canBoot) boot();
+  })();
+  </script>
+</body>
+</html>

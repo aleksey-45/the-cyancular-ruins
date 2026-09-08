@@ -16,6 +16,12 @@ var _moved := false
 var _got_snapshot := false
 var _got_bullet_spawn := false
 var _got_round_state := false   # 回合制:收到 round_state(初始 COUNTDOWN 广播)
+# C2 rollback(阶段3):create 端发带 seq 的输入包,断言服务器 1/tick 消费、ack 随 tick 前进、
+# 快照带权威整态(c2)且其 pos 与散字段 pos 一致(证明全态快照在链路上可用)。
+var _sent_seq := 0
+var _max_ack := -1
+var _ack_sane := false     # create:ack 已推进到 ≥30
+var _full_state_ok := false  # create:快照 c2 整态携带且 pos 与散字段一致
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -68,6 +74,17 @@ func _on_snapshot(snap: Dictionary) -> void:
 		_last_pos = pos
 	elif pos.distance_to(_last_pos) > 1.0:
 		_moved = true
+	# C2 阶段3断言(仅发送输入的 create 端才见 ack 推进)
+	var ack: int = int(p.get("ack_seq", -1))
+	if ack > _max_ack:
+		_max_ack = ack
+		if _max_ack >= 30:
+			_ack_sane = true
+	var c2: Dictionary = p.get("c2", {})
+	if not c2.is_empty() and c2.has("pos"):
+		var c2pos: Vector2 = c2["pos"]
+		if c2pos.distance_to(pos) < 0.5:
+			_full_state_ok = true
 
 # 大厅配对完成:断大厅 → 转连对局 worker → claim 角色
 func _on_go_match(role_assign: int, port: int) -> void:
@@ -96,7 +113,9 @@ func _physics_process(_delta: float) -> void:
 		if _frames > 240:
 			held = NetworkInputSource.BIT_ATTACK
 			pressed = NetworkInputSource.BIT_ATTACK
+		_sent_seq += 1
 		var pkt := {
+			"seq": _sent_seq,   # C2:单调输入序号(服务器 ack 依据)
 			"ax": ax,
 			"held": held,
 			"pressed": pressed,
@@ -109,8 +128,8 @@ func _physics_process(_delta: float) -> void:
 	if role == "create":
 		# 多打一会儿(到 ~480 帧)再退:帧>240 只够开火但不够 bullet 广播到 join 端,
 		# 提前 quit 会触发"中途断线拆房"→ join 永远等不到 bullet_spawn。
-		if _got_snapshot and _got_round_state and _moved and _frames > 480:
-			print("SMOKE_MATCH OK create: snapshot+round_state+own pos moved")
+		if _got_snapshot and _got_round_state and _moved and _ack_sane and _full_state_ok and _frames > 480:
+			print("SMOKE_MATCH OK create: snapshot+round_state+moved+ack(seq)%d>=30+fullstate" % _max_ack)
 			get_tree().quit(0)
 	else:
 		if _got_snapshot and _got_round_state and _got_bullet_spawn and _frames > 240:

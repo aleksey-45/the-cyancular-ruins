@@ -19,7 +19,7 @@ func _initialize() -> void:
 	var player := FakePlayer.new()
 	root.add_child(player)
 
-	var scene: PackedScene = load("res://scenes/Enemies/EnemyJumpBird.tscn")
+	var scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
 	var e = scene.instantiate()
 	root.add_child(e)
 	await physics_frame
