@@ -313,6 +313,12 @@ func _adjudicate_bullets() -> void:
 		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉、不做半径补刀。
 		if bullet.shooter == null:
 			continue
+		# 爆炸弹(榴弹等):不走半径补刀。子弹碰撞掩码不含玩家层,永远碰不到玩家身体;
+		# 伤害来自落地/撞墙引信后的爆炸 AoE。若在这里按普通子弹命中结算(只吃 hit_damage)
+		# 并销毁,引信就被吞掉、爆炸永不触发 → 榴弹命中敌人却无爆炸伤害(PvP 只此一条玩家命中路)。
+		# 跳过 = 让它自己落地起爆,AoE(Explosion.apply_aoe)自会把爆心半径内的对手算进去。
+		if bullet.explodes:
+			continue
 		# 命中裁决:对非射手玩家算 toroidal 距离
 		for role in players:
 			var p: Node2D = players[role]
