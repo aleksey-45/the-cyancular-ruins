@@ -4,7 +4,7 @@
 
 **Goal:** 把结构编辑器扩展成地图生成器——整图模式 + 环面预览 + spawn 放置;地图文件记录玩家/敌人生成;游戏从地图读取出生点;敌人种类由共享 JSON 单一来源。
 
-**Architecture:** 地图格式用 `#` 注释元数据行记录 spawn,网格保持纯 0/1;`editor/enemies.json` 是敌人注册表单一来源,游戏 `EnemySpawner.TYPES` 从它加载,HTML 内嵌副本由 node 脚本重新生成;编辑器加"整图模式"勾选,开启后渲染整张地图、可开环面平铺预览、可放 spawn。
+**Architecture:** 地图格式用 `#` 注释元数据行记录 spawn,网格保持纯 0/1;`data/enemies.json` 是敌人注册表单一来源,游戏 `EnemySpawner.TYPES` 从它加载,HTML 内嵌副本由 node 脚本重新生成;编辑器加"整图模式"勾选,开启后渲染整张地图、可开环面平铺预览、可放 spawn。
 
 **Tech Stack:** Godot 4.7 GDScript、纯 HTML+JS 单文件编辑器、node 脚本(`sync-enemies.js` 生成器 + `smoke.js` 测试)、JSON。
 
@@ -12,7 +12,7 @@
 
 - 项目约定:冒烟测试(node `smoke.js` 与 Godot `enemy_logic_smoke.gd`)由用户跑,实现者不代跑。
 - 地图网格保持纯 `0/1`;spawn 用 `#` 注释元数据行。
-- 敌人注册表唯一来源是 `editor/enemies.json`;别处不硬编码敌人列表。
+- 敌人注册表唯一来源是 `data/enemies.json`;别处不硬编码敌人列表。
 - 无 spawn 元数据时,游戏必须回退现有随机出生逻辑(向后兼容)。
 - 编辑器结构库模式(默认)行为不变;整图模式是勾选启用。
 - 每 Task 结束独立 commit。
@@ -134,14 +134,14 @@ git commit -m "feat: MazeGenerator 解析地图 spawn 元数据(# player/# enemy
 ### Task 2: 共享敌人 JSON + node 同步脚本 + HTML 注册表内嵌
 
 **Files:**
-- Create: `editor/enemies.json`
+- Create: `data/enemies.json`
 - Create: `editor/sync-enemies.js`
 - Modify: `editor/structure-editor.html`(在首个 `<script>` 前插入注册表标记块)
 - Modify: `editor/smoke.js`(加注册表断言)
 
 **Interfaces:**
 - Consumes: 无
-- Produces: `window.ENEMY_REGISTRY`(HTML 内嵌,`[{id,name,scene,color}]`)、`editor/sync-enemies.js`(node 可执行)、`editor/enemies.json`
+- Produces: `window.ENEMY_REGISTRY`(HTML 内嵌,`[{id,name,scene,color}]`)、`editor/sync-enemies.js`(node 可执行)、`data/enemies.json`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -166,13 +166,13 @@ Expected: 新 3 条 FAIL(HTML 尚无 `ENEMY_REGISTRY`)。
 
 - [ ] **Step 3: 创建 enemies.json**
 
-新建 `editor/enemies.json`:
+新建 `data/enemies.json`:
 
 ```json
 {
   "enemies": [
-    { "id": "jump_bird", "name": "JumpBird", "scene": "res://scenes/Enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
-    { "id": "fly_bird", "name": "FlyBird", "scene": "res://scenes/Enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
+    { "id": "jump_bird", "name": "JumpBird", "scene": "res://scenes/enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
+    { "id": "fly_bird", "name": "FlyBird", "scene": "res://scenes/enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
   ]
 }
 ```
@@ -183,7 +183,7 @@ Expected: 新 3 条 FAIL(HTML 尚无 `ENEMY_REGISTRY`)。
 
 ```js
 'use strict';
-// 从 editor/enemies.json 重新生成 structure-editor.html 内嵌的敌人注册表
+// 从 data/enemies.json 重新生成 structure-editor.html 内嵌的敌人注册表
 // (/*__ENEMY_REGISTRY_BEGIN__*/ ... /*__ENEMY_REGISTRY_END__*/ 之间)。
 // 用法:node editor/sync-enemies.js
 const fs = require('fs');
@@ -241,7 +241,7 @@ Expected: 3 条新断言 PASS,全量 PASS。
 - [ ] **Step 8: Commit**
 
 ```bash
-git add editor/enemies.json editor/sync-enemies.js editor/structure-editor.html editor/smoke.js
+git add data/enemies.json editor/sync-enemies.js editor/structure-editor.html editor/smoke.js
 git commit -m "feat: 敌人注册表共享 enemies.json + sync-enemies.js 生成 HTML 内嵌副本"
 ```
 
@@ -255,7 +255,7 @@ git commit -m "feat: 敌人注册表共享 enemies.json + sync-enemies.js 生成
 - Test: `Tests/enemy_logic_smoke.gd`(加断言)
 
 **Interfaces:**
-- Consumes: `res://editor/enemies.json`、`JSON`
+- Consumes: `res://data/enemies.json`、`JSON`
 - Produces: `EnemySpawner.load_types()`(静态方法)、`EnemySpawner.TYPES`(static Dictionary, id→scene)
 
 - [ ] **Step 1: 写失败测试**
@@ -281,23 +281,23 @@ Expected: 新断言 FAIL(`load_types` 不存在)。实现者不代跑,由用户�
 ```gdscript
 # 类型注册表:加新敌人 = 一个 .tscn + 一行(string 路径,load() 时取)。
 const TYPES: Dictionary = {
-	"jump_bird": "res://scenes/Enemies/EnemyJumpBird.tscn",
-	"fly_bird": "res://scenes/Enemies/EnemyFlyBird.tscn",
+	"jump_bird": "res://scenes/enemies/EnemyJumpBird.tscn",
+	"fly_bird": "res://scenes/enemies/EnemyFlyBird.tscn",
 }
 ```
 
 改为:
 
 ```gdscript
-# 敌人注册表(id → scene)。唯一来源 editor/enemies.json(与 HTML 编辑器共享)。
+# 敌人注册表(id → scene)。唯一来源 data/enemies.json(与 HTML 编辑器共享)。
 static var TYPES: Dictionary = {}
 
-# 从 res://editor/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
+# 从 res://data/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
 static func load_types() -> void:
 	TYPES = {}
-	var json_text := FileAccess.get_file_as_string("res://editor/enemies.json")
+	var json_text := FileAccess.get_file_as_string("res://data/enemies.json")
 	if json_text.is_empty():
-		push_error("EnemySpawner: 读不到 res://editor/enemies.json")
+		push_error("EnemySpawner: 读不到 res://data/enemies.json")
 		return
 	var parsed: Variant = JSON.parse_string(json_text)
 	if typeof(parsed) != TYPE_DICTIONARY or not (parsed.get("enemies", []) is Array):
@@ -310,7 +310,7 @@ static func load_types() -> void:
 
 - [ ] **Step 4: 改 export_presets.cfg**
 
-`include_filter="map/*.txt"` 改为 `include_filter="map/*.txt,editor/enemies.json"`。
+`include_filter="map/*.txt"` 改为 `include_filter="map/*.txt,data/enemies.json"`。
 
 - [ ] **Step 5: 跑测试确认通过**
 
@@ -320,7 +320,7 @@ Run: 同 Step 2。Expected: 新断言 PASS,全量 PASS。
 
 ```bash
 git add Scenes/Enemies/enemy_spawner.gd export_presets.cfg Tests/enemy_logic_smoke.gd
-git commit -m "feat: EnemySpawner.TYPES 从 enemies.json 加载;导出含 editor/enemies.json"
+git commit -m "feat: EnemySpawner.TYPES 从 enemies.json 加载;导出含 data/enemies.json"
 ```
 
 ---

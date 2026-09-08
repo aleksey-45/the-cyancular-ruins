@@ -58,6 +58,7 @@ func _ready() -> void:
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
 	call_deferred("add_child", pp)
+	_build_esc_menu()
 
 
 func _create_wall_tileset() -> TileSet:
@@ -235,3 +236,14 @@ func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 			push_error("No empty cells to place player!")
 			return
 	player.position = Vector2(pos.x * ts + ts / 2.0, pos.y * ts + ts / 2.0)
+
+# 单机 ESC 菜单:呼出=暂停整份模拟,退出=解暂停后回主菜单。
+# (PvP 菜单由 pvp_client._ready 自建——PvP 下本方法不会被调,见 _ready 的 pvp_mode 早 return。)
+func _build_esc_menu() -> void:
+	var esc := (load("res://ui/esc_menu.tscn") as PackedScene).instantiate() as EscMenu
+	add_child(esc)
+	esc.exit_callback = func() -> void:
+		get_tree().paused = false   # 先复位暂停再切场景,别把暂停带进主菜单
+		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	esc.toggled.connect(func(open: bool) -> void:
+		get_tree().paused = open)

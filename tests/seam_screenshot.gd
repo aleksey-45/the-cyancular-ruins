@@ -33,7 +33,7 @@ func _initialize() -> void:
 		vp.add_child(line)
 
 	# 敌人: 物理上在左端副本(100),环面上紧挨玩家
-	var scene: PackedScene = load("res://scenes/Enemies/EnemyJumpBird.tscn")
+	var scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
 	var e = scene.instantiate()
 	vp.add_child(e)
 	e.global_position = Vector2(100, 200)

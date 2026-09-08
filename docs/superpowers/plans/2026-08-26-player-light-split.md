@@ -45,10 +45,10 @@ func _check(cond: bool, name: String) -> void:
 		printerr("  FAIL - " + name)
 
 func _initialize() -> void:
-	var src := FileAccess.get_file_as_string("res://scenes/Player/player.gd")
-	var lsrc := FileAccess.get_file_as_string("res://scenes/Player/climb_component.gd")
-	var csrc := FileAccess.get_file_as_string("res://scenes/Player/combat_component.gd")
-	var wsrc := FileAccess.get_file_as_string("res://scenes/Player/weapon_component.gd")
+	var src := FileAccess.get_file_as_string("res://scenes/player/player.gd")
+	var lsrc := FileAccess.get_file_as_string("res://scenes/player/climb_component.gd")
+	var csrc := FileAccess.get_file_as_string("res://scenes/player/combat_component.gd")
+	var wsrc := FileAccess.get_file_as_string("res://scenes/player/weapon_component.gd")
 	# 根公开方法(外部调用方依赖,签名必须保持)
 	for sig in [
 		"func take_hit(",
@@ -216,10 +216,10 @@ func _approach(current: float, target: float, rate: float, delta: float) -> floa
 
 - [ ] **Step 2: Player.tscn 加 Climb 节点**
 
-在 `[ext_resource ... "res://scenes/Player/Player.tscn"]` 现有 ext_resource 行后追加一行(uid 缺省,首次在编辑器打开时补):
+在 `[ext_resource ... "res://scenes/player/Player.tscn"]` 现有 ext_resource 行后追加一行(uid 缺省,首次在编辑器打开时补):
 
 ```
-[ext_resource type="Script" path="res://scenes/Player/climb_component.gd" id="3_climb"]
+[ext_resource type="Script" path="res://scenes/player/climb_component.gd" id="3_climb"]
 ```
 
 在 `[node name="WeaponSlot" ...]` 行后追加:
@@ -315,11 +315,11 @@ extends Node
 # apply_recoil 由 weapon_base 经根转发)。
 
 const WEAPONS: Dictionary = {
-	"1": "res://scenes/Weapons/pistol_test.tscn",
-	"2": "res://scenes/Weapons/rifle_test.tscn",
-	"3": "res://scenes/Weapons/m82a1.tscn",
-	"4": "res://scenes/Weapons/s686.tscn",
-	"5": "res://scenes/Weapons/grenade_launcher.tscn",
+	"1": "res://scenes/weapons/pistol_test.tscn",
+	"2": "res://scenes/weapons/rifle_test.tscn",
+	"3": "res://scenes/weapons/m82a1.tscn",
+	"4": "res://scenes/weapons/s686.tscn",
+	"5": "res://scenes/weapons/grenade_launcher.tscn",
 }
 
 var _weapon: WeaponBase = null
@@ -367,7 +367,7 @@ func cancel_aim() -> void:
 ext_resource 行后追加:
 
 ```
-[ext_resource type="Script" path="res://scenes/Player/weapon_component.gd" id="4_wpn"]
+[ext_resource type="Script" path="res://scenes/player/weapon_component.gd" id="4_wpn"]
 ```
 
 Climb 节点后追加:
@@ -539,7 +539,7 @@ func _downed() -> void:
 ext_resource 行后追加:
 
 ```
-[ext_resource type="Script" path="res://scenes/Player/combat_component.gd" id="5_cmb"]
+[ext_resource type="Script" path="res://scenes/player/combat_component.gd" id="5_cmb"]
 ```
 
 Weapons 节点后追加:

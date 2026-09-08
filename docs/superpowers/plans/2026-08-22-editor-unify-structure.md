@@ -12,7 +12,7 @@
 
 - **测试由用户跑**;本会话已授权自行测试(2026-08-22),可代跑 `node editor/smoke.js`。
 - 纯函数改动走 TDD(先红后绿);DOM/渲染改动无单测,以 smoke.js 保持绿 + 浏览器目测为准。
-- `editor/enemies.json` 共享注册表 + `sync-enemies.js` 不动;Godot 侧零改动。
+- `data/enemies.json` 共享注册表 + `sync-enemies.js` 不动;Godot 侧零改动。
 - 本计划只动 `editor/structure-editor.html`、`editor/smoke.js`。
 - 有并行会话在提交,改动及时提交、提交前 `git log` 留意外来提交(见记忆 cyr-concurrent-session)。
 

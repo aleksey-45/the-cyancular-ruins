@@ -1,0 +1,41 @@
+[gd_scene format=3 uid="uid://ctuidmnnf0vf5"]
+
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="PackedScene" uid="uid://cy1fv8ws23gnb" path="res://scenes/weapons/grenade_bullet.tscn" id="2_gb"]
+
+[ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
+
+[node name="GrenadeLauncher" type="Node2D" unique_id=1484159833]
+script = ExtResource("1_wb")
+bullet_scene = ExtResource("2_gb")
+tier = 2
+weapon_name = "Grenade Launcher"
+fire_cooldown = 1.4
+heavy_aim = true
+bullet_speed = 1100.0
+bullet_range = 2500.0
+bullet_size = 1.5
+damage = 5
+impact = 10.0
+recoil_push = 1100.0
+recoil_kick = 16.0
+cam_shake = 14.0
+cam_shake_time = 0.3
+move_penalty = 0.5
+jump_penalty = 0.8
+penalty_mode = 2
+laser_length = 2000.0
+pitch_clamp_deg = 60.0
+bullet_gravity = 0.45
+preview_arc = true
+preview_time = 3.0
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1705220904]
+texture_filter = 1
+position = Vector2(11, 8)
+texture = ExtResource("2_wpn")
+region_enabled = true
+region_rect = Rect2(3, 35, 51, 21)
+
+[node name="Muzzle" type="Marker2D" parent="." unique_id=1183012513]
+position = Vector2(31, 8)

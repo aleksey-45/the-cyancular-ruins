@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://cmgaolkanwult"]
+
+[ext_resource type="Script" uid="uid://2su18lwo0wta" path="res://scenes/weapons/laser_gun.gd" id="1_script"]
+[ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_tex"]
+
+[node name="LaserGun" type="Node2D" unique_id=182112528]
+script = ExtResource("1_script")
+max_bounces = 5
+beam_half_width = 2.0
+beam_lifetime = 0.25
+tier = 1
+weapon_name = "Laser Gun"
+full_auto = true
+fire_cooldown = 0.5
+bullet_speed = 3000.0
+bullet_range = 2000.0
+damage = 6
+impact = 350.0
+recoil_push = 400.0
+recoil_kick = 10.0
+cam_shake = 5.0
+move_penalty = 0.8
+jump_penalty = 0.8
+penalty_mode = 1
+laser_color = Color(0.1, 0.35, 1, 1)
+pitch_clamp_deg = 65.0
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1863412304]
+position = Vector2(12, 9)
+texture = ExtResource("2_tex")
+region_enabled = true
+region_rect = Rect2(65, 20.341309, 53, 17.658691)
+
+[node name="Muzzle" type="Marker2D" parent="." unique_id=331088937]
+position = Vector2(30, 5)

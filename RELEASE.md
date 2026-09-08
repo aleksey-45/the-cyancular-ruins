@@ -27,12 +27,19 @@
 
 **命令行**(推荐,一条命令):
 ```bash
-"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless \
-  --path E:\Workspace\godot\the-cyancular-ruins \
-  --export-release "Windows Desktop" "E:\Workspace\godot\the-cyancular-ruins\The Cyancular Ruins.exe"
+python tools/build_release.py                      # 客户端+服务端+服务端打回控制台+时间戳归档,一键全做
 ```
 
-> 一键打包(客户端 + 服务端并把服务端打回控制台):`python tools/build_release.py`。历史日期构建统一放 `builds/`,根目录只保留两个固定名 exe(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`)。
+> 只想手动重导出(不开一键脚本)时,按序做:**① 导客户端** → **② 导服务端** → **③ 服务端打回 CONSOLE** → **④ 归档**(见 §1.5):
+> ```bash
+> "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
+> "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Dedicated Server" "Cyancular Ruins Server.exe"
+> python tools/make_server_console.py "Cyancular Ruins Server.exe"   # ③ 必须做:否则双击服务端无控制台(看不见日志)
+> python tools/archive_build.py                                       # ④ 可选,按时间戳归档
+> ```
+> **⚠️ 服务端 exe 导出一出来就是 GUI 子系统(双击后台静默、无控制台)**——`make_server_console.py` 这步**不能漏**。漏了 = 双击服务端没窗口、以为没起来(2026-09-06 已踩坑)。`build_release.py` 自动做 ①②③④,不会漏。
+
+> **发布归档命名习惯**:每次导出的成品按时间戳归档到 `builds/`,文件名 = `<原名> <YYYYMMDDHHMM>.exe`(如 `The Cyancular Ruins 202609062126.exe`、`Cyancular Ruins Server 202609062126.exe`);**根目录只保留两个固定名 exe**(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`,固定名=当前最新版,给 start_server.bat / 立即测试用)。`builds/` 不入库(gitignore 已配)。`build_release.py` 每次导完自动归档一份时间戳副本;想用别的历史名可 `python tools/build_release.py --stamp 202609062126`。手动重导出(上方命令行)只更新固定名,归档请另跑 `tools/archive_build.py`(见 §1.5)或手动复制。
 
 > **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云/防火墙需放行 **7777 与 7800~7999 的 UDP**;局域网/本机不受限。
 
@@ -43,6 +50,15 @@
 
 ### 1.4 发布
 把 `The Cyancular Ruins.exe` 这一个文件发出去即可。
+
+### 1.5 时间戳归档(手动重导出后用)
+只跑了 §1.2 的手动命令行(仅更新固定名)时,补一份时间戳副本进 `builds/`:
+```bash
+python tools/archive_build.py                      # 归档根目录两个固定名 exe,时间戳取当前时间
+python tools/archive_build.py --stamp 202609062126 # 指定归档时间戳(追溯/对齐用)
+python tools/archive_build.py --file "Some.exe"    # 只归档指定文件
+```
+`build_release.py`(§1.2 一键打包)导出后已自动调用它,无需再手动归档。
 
 ---
 
@@ -76,7 +92,8 @@ git clone --depth 1 --branch 4.7.1-stable https://gitee.com/mirrors/godot.git E:
   > **别加一个类就重编一次**:改 classes/模块列表 = 近全量重编 10~15 分钟(见 §2.4),把缺的类一次集齐再烘焙。
 
 ### 2.4 编译模板
-构建脚本:**`E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat`**。等价命令:
+构建脚本:**仓库内 `tools/build_cyancular.bat`**(已入库,来源副本;使用时拷贝到引擎源码根
+`E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat` 后运行,或直接改脚本内路径)。等价命令:
 
 ```bat
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
@@ -118,7 +135,7 @@ cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64
 | 发布 exe 报 `Could not find type "Label"`(hud.gd 解析失败),项目目录里一切正常 | 加了项目之前没用过的 GUI 类(首个文本 UI 就是 `Label`)但 profile 仍裁着它 | 从 `disabled_classes` 移除该类,重编模板+重导出(见 2.4~2.6) |
 | exe 突然变回 ~109 MB | 模板目录被官方模板覆盖(编辑器更新/重装) | 重新拷贝编译产物,见 2.5 |
 | exe 一直是 Godot 默认图标,自定义 icon 不生效 | 导出预设 `application/modify_resources=false` | 在导出预设里把 `modify_resources` 勾上(=true),重导出 |
-| exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.cyrm`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `map/*.cyrm`,重导出 |
+| exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.cyrm`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `maps/*.cyrm`,重导出 |
 | 在项目目录里测 exe 一切正常,拷出去就缺东西 | 项目目录运行时 Godot 用本地文件补齐,掩盖了打包漏项 | 务必**拷到项目外**测试打包完整性 |
 | 用了 4.4.1 mono 编辑器导出 | 强行走 mono 模板 | 换 4.7.1 标准编辑器 |
 

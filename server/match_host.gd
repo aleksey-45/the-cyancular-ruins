@@ -18,6 +18,9 @@ const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
 var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
+# C2 rollback:每物理 tick 恰好消费一个输入包(FIFO),role -> 刚消费包的 seq(ack)。
+# 客户端据 ack 锚定"服务器已确认到哪一输入",重放 seq>ack 的本地输入——1:1 同序,无 tick 映射漂移。
+var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入包 seq
 
 # ── PvPvE 中立鸟:服务器权威模拟,位置 canonical,快照+spawn/died 事件同步 ──
 # 发布开关:true=对局生成中立鸟;false=暂时不上鸟(PvP 纯净 1v1)。鸟代码保留,需要时翻回 true。
@@ -58,7 +61,7 @@ func _init(map_path: String, role_peers: Dictionary) -> void:
 	# 生成两个玩家(Player.tscn 完整物理模拟,注入 NetworkInputSource)
 	peer_by_role = role_peers.duplicate()
 	for role in role_peers:
-		var p: Node2D = preload("res://scenes/Player/Player.tscn").instantiate()
+		var p: Node2D = preload("res://scenes/player/Player.tscn").instantiate()
 		var src := NetworkInputSource.new()
 		p.set_input_source(src)
 		add_child(p)
@@ -92,17 +95,29 @@ func _ready() -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-			# 缓冲本帧到达的包,下一物理帧开头统一应用:
-			#   held/axis 取最新(覆盖,服务器紧跟客户端不滞后);
-			#   just_pressed 边沿累积(|=),不丢抓梯/跳跃/开火边沿(这是服务器模拟与客户端脱节的根因)。
+			# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个(见 _physics_process):
+			# 1 包/ tick → 服务器权威模拟与客户端"重放未确认输入"1:1 同序(C2 rollback 需要,
+			# 见 docs/pvp-c2-retrospective.md P1)。held/axis 由被消费的那包决定,边沿不丢。
 			if not _pending_input.has(role):
 				_pending_input[role] = []
 			(_pending_input[role] as Array).append(pkt)
 			return
 
 func _physics_process(delta: float) -> void:
+	# 快照广播必须放在「消费本帧输入」之前——Player 是子节点,父先于子,本帧玩家要到
+	# MatchHost._physics_process 返回后才步进。若在消费后广播,状态还是"上一输入模拟完(S_{F-1})",
+	# 却已把 ack 指向刚消费的 C_F → ack 领先状态一拍 → 客户端拿自己的 ring[C_F](=S_C_F)
+	# 比 S_{F-1},移动中每次快照都误判分歧、画面被拉回(server-rendered 插值吸收故旧路径不暴露;
+	# C2 rollback 一比整态就现形)。放消费前:ack 仍指上 tick 消费的 C_{F-1},状态已是上一步进完的
+	# S_{F-1},配对一致(客户端期望 ack=C 配 S_C,见 pvp_reconcile_smoke 的建模)。
+	_snapshot_accum += delta
+	if _snapshot_accum >= SNAPSHOT_INTERVAL:
+		_snapshot_accum = 0.0
+		_broadcast_snapshot()
 	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
-	# 先清上一物理帧已读的边沿,再把本帧缓冲的包统一应用(held 最新、边沿累积)。
+	# 每 tick 每 role 恰好消费一个 FIFO 包(最早的)→ 权威模拟与客户端重放 1:1 同序;
+	# 队列空 = 缺包,沿用上一包 held/轴(NetworkInputSource.clear_edges 不清 held)。
+	# ack = 刚消费包的 seq(下一 tick 快照回带,客户端 rollback 锚点)。
 	for role in input_sources:
 		var src: NetworkInputSource = input_sources[role]
 		src.clear_edges()
@@ -112,20 +127,19 @@ func _physics_process(delta: float) -> void:
 			# 玩家站在出生点不动(权威冻结;客户端是服务器渲染,自然跟随)。
 			if _round_state == RoundState.COUNTDOWN:
 				q.clear()
+				src.reset_state()   # 连 held/axis 一起清,防上一包方向让服务器玩家在冻结期漂移(C2 分歧源)
 				continue
-			for pkt in q:
+			if not q.is_empty():
+				var pkt: Dictionary = q.pop_front()
 				src.apply_packet(pkt)
-			q.clear()
+				_ack_seq[role] = int(pkt.get("seq", _ack_seq.get(role, 0)))
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
 	_adjudicate_bullets()
+	# 即时光束武器(激光)权威开火上报:读各角色武器里待广播的光束,发给非射手端
+	_broadcast_pending_beams()
 	# 回合制:击杀倒地转换检测 + 状态机推进(倒计时/复活/回合结束/换边)
 	_match_round_tick(delta)
-	# 快照广播(玩家移动后)
-	_snapshot_accum += delta
-	if _snapshot_accum >= SNAPSHOT_INTERVAL:
-		_snapshot_accum = 0.0
-		_broadcast_snapshot()
 	# 分帧重建可破坏碰撞块(爆炸拆墙)
 	if not _dirty_chunks.is_empty():
 		var processed := 0
@@ -246,6 +260,11 @@ func _broadcast_snapshot() -> void:
 		var previewing := false
 		if p.weapons != null and p.weapons.current_weapon() != null:
 			previewing = p.weapons.current_weapon().is_previewing()
+		# C2 rollback:快照带 ack_seq(服务器已消费到哪一输入)+ 权威整态(capture_state,替代上面散字段;
+		# 旧字段保留给服务器渲染/副本/阶段切换兼容)。
+		var c2 := {}
+		if p.has_method("capture_state"):
+			c2 = p.capture_state()
 		snap["players"][str(role)] = {
 			"pos": p.global_position,
 			"vel": p.velocity,
@@ -257,6 +276,8 @@ func _broadcast_snapshot() -> void:
 			"downed": p.is_downed(),
 			"aim": p.get_current_aim_dir(),
 			"previewing": previewing,
+			"ack_seq": _ack_seq.get(role, 0),
+			"c2": c2,
 		}
 	# 中立鸟:canonical 位置 + 当前动画名 + 朝向(副本照播;死亡由 enemy_died 事件移除)
 	var birds_snap := {}
@@ -291,6 +312,12 @@ func _adjudicate_bullets() -> void:
 			_broadcast_bullet_spawn(bullet)
 		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉、不做半径补刀。
 		if bullet.shooter == null:
+			continue
+		# 爆炸弹(榴弹等):不走半径补刀。子弹碰撞掩码不含玩家层,永远碰不到玩家身体;
+		# 伤害来自落地/撞墙引信后的爆炸 AoE。若在这里按普通子弹命中结算(只吃 hit_damage)
+		# 并销毁,引信就被吞掉、爆炸永不触发 → 榴弹命中敌人却无爆炸伤害(PvP 只此一条玩家命中路)。
+		# 跳过 = 让它自己落地起爆,AoE(Explosion.apply_aoe)自会把爆心半径内的对手算进去。
+		if bullet.explodes:
 			continue
 		# 命中裁决:对非射手玩家算 toroidal 距离
 		for role in players:
@@ -337,6 +364,31 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	for role in peer_by_role:
 		if players.has(role) and players[role] != bullet.shooter:
 			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
+
+# 即时光束武器(激光)权威开火上报:每物理帧轮询各角色当前武器,把"本帧要广播的光束"发给非射手端。
+# 时序与子弹广播同款:MatchHost 父先于子 → 这里读到的是上一物理帧玩家步进里 fire 记下的上报,
+# 晚 1 tick 无感(光束 0.25s 存续)。COUNTDOWN 不喂输入 → 无 fire → 无上报,天然冻结。
+# 非光束武器没有 collect_pending_beam_report(has_method 守卫跳过)。换枪 free 旧武器时上报随节点消失。
+func _broadcast_pending_beams() -> void:
+	for role in players:
+		var p: Node2D = players[role]
+		if p == null or p.weapons == null:
+			continue
+		# w 显式 Variant:collect_pending_beam_report 只存在于 LaserWeaponBase 子类(不在 WeaponBase 上)
+		var w: Variant = p.weapons.current_weapon()
+		if w == null or not w.has_method("collect_pending_beam_report"):
+			continue
+		var rep: Dictionary = w.collect_pending_beam_report()
+		if rep.is_empty():
+			continue
+		_broadcast_beam_fired(int(role), rep)
+
+func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
+	rep["shooter_role"] = shooter_role
+	# 只发给非射手端:射手自己客户端已本地预测画自己的光束,再收会双光束。
+	for r in peer_by_role:
+		if int(r) != shooter_role and players.has(int(r)):
+			NetBus.rpc_id(peer_by_role[r], "beam_fired", rep)
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
 	if victim.has_method("take_hit"):

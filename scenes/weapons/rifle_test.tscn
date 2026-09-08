@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://dnurwen8tun30"]
+
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
+
+[node name="RifleTest" type="Node2D" unique_id=77899377]
+script = ExtResource("1_wb")
+tier = 1
+weapon_name = "Rifle"
+full_auto = true
+fire_cooldown = 0.1
+bullet_speed = 1600.0
+bullet_range = 1100.0
+damage = 4
+impact = 500.0
+recoil_push = 80.0
+recoil_kick = 6.0
+cam_shake = 3.0
+cam_shake_time = 0.12
+move_penalty = 0.7
+jump_penalty = 0.8
+penalty_mode = 1
+pitch_clamp_deg = 60.0
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=139203024]
+position = Vector2(12, 11)
+texture = ExtResource("2_wpn")
+region_enabled = true
+region_rect = Rect2(108, 2, 55, 20)
+
+[node name="Muzzle" type="Marker2D" parent="." unique_id=139278856]
+position = Vector2(31, 6)

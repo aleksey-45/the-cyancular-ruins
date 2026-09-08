@@ -49,30 +49,30 @@ static func load_spawns() -> Dictionary
 
 ## 2. 敌人清单共享 JSON(单一来源)
 
-新增 `editor/enemies.json`(游戏与编辑器共用的敌人注册表):
+新增 `data/enemies.json`(游戏与编辑器共用的敌人注册表):
 
 ```json
 {
   "enemies": [
     { "id": "jump_bird", "name": "JumpBird",
-      "scene": "res://scenes/Enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
+      "scene": "res://scenes/enemies/EnemyJumpBird.tscn", "color": "#6fae8f" },
     { "id": "fly_bird", "name": "FlyBird",
-      "scene": "res://scenes/Enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
+      "scene": "res://scenes/enemies/EnemyFlyBird.tscn", "color": "#c96fb0" }
   ]
 }
 ```
 
 字段:`id`(地图元数据引用、调色板 key)、`name`(显示名)、`scene`(游戏 spawn 场景路径)、`color`(编辑器标记色)。
 
-- **游戏**:`EnemySpawner.TYPES` 从 const 改为 static 变量,启动时从 `res://editor/enemies.json` 加载(`id → scene`)。缺文件/字段异常 → `push_error` 并保持空表(spawn 时自然失败或回退)。
+- **游戏**:`EnemySpawner.TYPES` 从 const 改为 static 变量,启动时从 `res://data/enemies.json` 加载(`id → scene`)。缺文件/字段异常 → `push_error` 并保持空表(spawn 时自然失败或回退)。
 - **HTML**:敌人调色板与标记色从**内嵌注册表**派生(见 §4)。内嵌副本由生成脚本从 `enemies.json` 重新生成。
 - **同步脚本**:新增 `editor/sync-enemies.js`(node):
-  1. 读 `editor/enemies.json`;
+  1. 读 `data/enemies.json`;
   2. 读 `editor/structure-editor.html`,把 `/*__ENEMY_REGISTRY_BEGIN__*/ ... /*__ENEMY_REGISTRY_END__*/` 之间替换为新的 `window.ENEMY_REGISTRY = [...]`;
   3. 写回 HTML;失败 exit 非零。
 - **加新敌人流程**:改 `enemies.json` → 跑 `node editor/sync-enemies.js` → 游戏与编辑器同步就绪。
 
-`export_presets.cfg` 的 `include_filter` 追加 `editor/enemies.json`(游戏运行时需要它生成 TYPES)。
+`export_presets.cfg` 的 `include_filter` 追加 `data/enemies.json`(游戏运行时需要它生成 TYPES)。
 
 ## 3. 游戏逻辑改动
 
@@ -140,5 +140,5 @@ _place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 | 整图模式 | 可选项(勾选才启用),结构库保留默认 |
 | 环面预览 | 环面平铺平移(跨接缝重复 + 无边界拖拽) |
 | spawn 记录格式 | `#` 注释元数据行(网格保持纯 0/1) |
-| 敌人同步 | 共享 `editor/enemies.json` 单一来源 + node 生成脚本 |
+| 敌人同步 | 共享 `data/enemies.json` 单一来源 + node 生成脚本 |
 | 无元数据时 | 地图唯一来源:无 # enemy → 0 只敌人;无 # player → 左上第一个空格(2026-08-22 改为,去掉随机回退) |

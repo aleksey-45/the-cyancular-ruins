@@ -16,7 +16,7 @@ func _initialize() -> void:
 	CollisionBuilder.build_destructible_chunks(CollisionBuilder.build_sub(grid, true), host)
 	CollisionBuilder.build_climb_ledges(grid, host)
 
-	var player_scene: PackedScene = load("res://scenes/Player/Player.tscn")
+	var player_scene: PackedScene = load("res://scenes/player/Player.tscn")
 	var p = player_scene.instantiate()
 	root.add_child(p)
 
