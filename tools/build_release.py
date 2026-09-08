@@ -20,8 +20,11 @@ SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
 
 def export(preset: str, out: str) -> None:
     print("== 导出 [%s] -> %s" % (preset, os.path.basename(out)))
+    # Godot 控制台输出是 UTF-8(含中文进度行);按 locale(gbk)解码会在 reader 线程炸
+    # UnicodeDecodeError → 显式 utf-8 + replace,坏字节以替换符兜底、不中断导出
     r = subprocess.run([EDITOR, "--headless", "--export-release", preset, out],
-                       cwd=PROJECT, capture_output=True, text=True)
+                       cwd=PROJECT, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     tail = "\n".join((r.stdout or "").splitlines()[-3:]).strip()
     if tail:
         print(tail)
@@ -42,11 +45,11 @@ def main() -> None:
     export("Dedicated Server", SERVER_OUT)     # 服务端:main_scene.dedicated_server 覆盖
     # 服务端打回 CONSOLE 子系统(裁剪模板无官方 console-wrapper,见 make_server_console.py)
     r = subprocess.run([sys.executable, os.path.join(TOOLS, "make_server_console.py"), SERVER_OUT],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     # 按时间戳归档到 builds/(发布留档,根目录只保留两个固定名 exe)
     r = subprocess.run([sys.executable, os.path.join(TOOLS, "archive_build.py"), *stamp_args],
-                       cwd=PROJECT, capture_output=True, text=True)
+                       cwd=PROJECT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
