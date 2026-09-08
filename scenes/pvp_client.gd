@@ -33,7 +33,8 @@ var _ping_acc := 0.0
 
 # ── 头上 ID(自己/对手昵称):世界空间文字,每帧贴到头顶 ──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,现往下压一点)
-const ROLE_COLOR := {1: Color(0.72, 0.93, 1.0), 2: Color(1.0, 0.82, 0.62)}
+# 头顶名字统一中性亮白(不再按角色区分颜色;P2 靠身体色相 shader 区分)。world_label 内部再叠 0.85 alpha。
+const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
 
@@ -356,8 +357,8 @@ func _on_peer_info(names: Dictionary) -> void:
 	var opp := 3 - me
 	var nm_self := str(names.get(me, PvpSession.player_name))
 	var nm_opp := str(names.get(opp, "对手"))
-	_id_self.set_label(nm_self, ROLE_COLOR.get(me, Color.WHITE))
-	_id_opp.set_label(nm_opp, ROLE_COLOR.get(opp, Color.WHITE))
+	_id_self.set_label(nm_self, NAME_COLOR)
+	_id_opp.set_label(nm_opp, NAME_COLOR)
 
 func _ensure_id_labels() -> void:
 	if _world == null:
