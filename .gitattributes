@@ -1,2 +1,5 @@
 # Normalize EOL for all files that Git considers text files.
 * text=auto eol=lf
+
+# cmd 批处理必须 CRLF(LF/UTF-8 会让中文多行块解析炸裂 → 双击闪退)
+打包exe.bat text eol=crlf
