@@ -13,6 +13,7 @@ bullet_scene = ExtResource("2_gb")
 tier = 2
 weapon_name = "Grenade Launcher"
 fire_cooldown = 1.4
+max_live_projectiles = 3   # 同屏在飞榴弹上限(防多人同炸把自建房卡崩/闪退)
 heavy_aim = true
 bullet_speed = 1100.0
 bullet_range = 2500.0

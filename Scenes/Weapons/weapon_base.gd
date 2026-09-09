@@ -45,6 +45,10 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 命中击退力度(>0 会覆盖敌人自身 knockback_strength)
 @export var impact: float = 60.0
 
+# 同屏同时在飞弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/拆砖/
+# 碰撞重建连锁会让自建房机器卡死/闪退。弹数满时开火不发射(冷却照走,等场上的爆完再打)。
+@export var max_live_projectiles: int = 0
+
 # ── 后坐/镜头 ──
 # 开火把玩家向后推的力度(蹲下时不推)
 @export var recoil_push: float = 0.0
@@ -243,6 +247,10 @@ func fire() -> void:
 			start_reload()
 			return
 	fire_cd_timer = fire_cooldown
+	# 同屏弹数上限:满员时这发不发(不耗弹、不烧冷却动作——冷却已计,等于"点空枪"),
+	# 等场上旧弹爆掉/消失再打。只对配置了 max_live_projectiles 的武器生效(默认 0=不限)。
+	if max_live_projectiles > 0 and _live_projectiles() >= max_live_projectiles:
+		return
 	# 开火瞬间同步朝向/枪口到鼠标:直接开火(_unhandled_input, input 阶段)先于 _process,
 	# 读到的是上一物理帧被走路覆盖的 get_facing(),clamp_pitch 会折到走路侧、子弹打偏。
 	# 统一先 _auto_aim:所有开火路径(直接/缓冲/连发/重武器)都取本帧最新瞄准方向。
@@ -284,6 +292,16 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)
 		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
+
+# 统计本武器当前还在场上的弹数(子弹 _ready 已入 bullet 组;source==self 判定归属)。
+func _live_projectiles() -> int:
+	if not is_inside_tree():
+		return 0
+	var n := 0
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if is_instance_valid(b) and b.source == self:
+			n += 1
+	return n
 
 # 命中回调:伤害/冲击由枪械管理(BulletBase 不含伤害)。
 func apply_hit(target: Node, dir: Vector2) -> void:
