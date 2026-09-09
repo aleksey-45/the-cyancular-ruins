@@ -14,6 +14,8 @@ const MATCH_TIME := 300.0        # 一局时长(秒)
 const HUD_SYNC_INTERVAL := 1.0   # 倒计时/比分周期广播
 const RESPAWN_CLEARANCE := 8     # 复活点与存活敌人的最小环面距离(格)
 const SPAWN_CLEARANCE := 15      # 开局散点两两最小距离(格)
+const OPEN_AREA_MIN: int = 20    # 出生可走连通区最小规模(格);密封死角小间远小于此
+const PREFER_MIN: int = 8        # 优选格不足此数才回退下一级宽松判据
 
 var _match_time := MATCH_TIME
 var _hud_sync := 0.0
@@ -22,6 +24,8 @@ var _spawned_once: Dictionary = {}    # role -> true(首次摆位走散点,之�
 var _left: Dictionary = {}            # role -> true(中途掉线,已移出对局)
 
 static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆不刷新,够用)
+static var _prefer_cache: Array = []       # 出生优选格缓存(开阔可走区;见 _spawn_candidates)
+static var _region_cache: Dictionary = {}  # 地板格 Vector2i -> 同层连通区规模
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -85,14 +89,108 @@ static func _floor_cells() -> Array:
 	return _floor_cell_cache
 
 
+# ── 出生/复活点优选(防"出生在走不出去的小房间")──
+# 玩家实测:旧判据只要求"脚下有地",密封死角/1 格高夹层的地板格也会入选 →
+# 出生在四面墙的小房间出不去。优选格需同时满足:
+#   (1) 头顶 ≥2 格净空(站得直、跳得出去);
+#   (2) 左右邻格空(出生处 ≥3 格宽,不被墙夹);
+#   (3) 所在同层可走连通区规模 ≥ OPEN_AREA_MIN(密封 1~2 格死角自动淘汰)。
+# 地板格不足时逐级回退:连通区大但不要求三宽 → 任意地板格(极小图兜底)。
+static func _region_sizes() -> Dictionary:
+	if not _region_cache.is_empty():
+		return _region_cache
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return {}
+	var rows := grid.size()
+	var cols := (grid[0] as Array).size()
+	var seen := {}
+	for y in range(rows):
+		for x in range(cols):
+			var start := Vector2i(x, y)
+			if seen.has(start) or not _floor_cells_has(start):
+				continue
+			var stack: Array = [start]
+			var members: Array = []
+			seen[start] = true
+			while not stack.is_empty():
+				var cur: Vector2i = stack.pop_back()
+				members.append(cur)
+				for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					var nb := Vector2i(posmod(cur.x + off.x, cols), posmod(cur.y + off.y, rows))
+					if seen.has(nb) or not _floor_cells_has(nb):
+						continue
+					seen[nb] = true
+					stack.append(nb)
+			var sz := members.size()
+			for m in members:
+				_region_cache[m] = sz
+	return _region_cache
+
+
+# 某格是否地板格(与 _floor_cells 同判据的 O(1) 版本:自身空 + 下方实心 + 上方留空)
+static func _floor_cells_has(c: Vector2i) -> bool:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return false
+	var rows := grid.size()
+	var cols := (grid[0] as Array).size()
+	if grid[c.y][c.x] != MazeGenerator.EMPTY:
+		return false
+	if not TileDefs.is_blocked(grid[posmod(c.y + 1, rows)][c.x]):
+		return false
+	if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY:
+		return false
+	return true
+
+
+static func _roomy_floor(c: Vector2i) -> bool:
+	if not _floor_cells_has(c):
+		return false
+	var grid := MazeGenerator.current_grid
+	var rows := grid.size()
+	var cols := (grid[0] as Array).size()
+	# 头顶两格净空
+	if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY \
+			or grid[posmod(c.y - 2, rows)][c.x] != MazeGenerator.EMPTY:
+		return false
+	# 左右邻格空:出生处 ≥3 格宽
+	if grid[c.y][posmod(c.x - 1, cols)] != MazeGenerator.EMPTY \
+			or grid[c.y][posmod(c.x + 1, cols)] != MazeGenerator.EMPTY:
+		return false
+	return true
+
+
+# 出生候选池(缓存):开阔可走地板格;不足则回退连通区大的地板格;再不足回退任意地板格。
+static func _spawn_candidates() -> Array:
+	if not _prefer_cache.is_empty():
+		return _prefer_cache
+	var floor: Array = _floor_cells()
+	var sizes := _region_sizes()
+	var big: Array = []
+	var roomy: Array = []
+	for c in floor:
+		if int(sizes.get(c, 0)) >= OPEN_AREA_MIN:
+			big.append(c)
+			if _roomy_floor(c):
+				roomy.append(c)
+	if roomy.size() >= PREFER_MIN:
+		_prefer_cache = roomy
+	elif big.size() >= PREFER_MIN:
+		_prefer_cache = big
+	else:
+		_prefer_cache = floor
+	return _prefer_cache
+
+
 # 开局散点:洗牌后贪心取两两环面距离 ≥ SPAWN_CLEARANCE 的 N 个格;不够就放宽(全量补齐)。
 # roles = 实际参战 role 列表:缺员降级开局时 role 不连续(如剩 {1,3}),
 # 必须按实际键返回,否则 spawns[role] 缺键抛错、对局卡死(自检 S2 严重 bug)。
 static func plan_spawns(roles: Array) -> Dictionary:
 	var n := roles.size()
-	var cells: Array = _floor_cells().duplicate()
-	cells.shuffle()
 	var picked: Array = []
+	var cells: Array = _spawn_candidates().duplicate()
+	cells.shuffle()
 	var clearance := SPAWN_CLEARANCE
 	while picked.size() < n and clearance >= 0:
 		for c in cells:
@@ -106,38 +204,49 @@ static func plan_spawns(roles: Array) -> Dictionary:
 			if ok and not picked.has(c):
 				picked.append(c)
 		clearance -= 5   # 地板格不足时放宽间距重收
+	# 候选不够散点(极小图):回退任意地板格补足,避免塞 (-1,-1) 出生到墙角
+	if picked.size() < n:
+		var rest: Array = _floor_cells().duplicate()
+		rest.shuffle()
+		for c in rest:
+			if picked.size() >= n:
+				break
+			if not picked.has(c):
+				picked.append(c)
 	var out := {}
 	for i in range(n):
 		out[int(roles[i])] = picked[i] if i < picked.size() else Vector2i(-1, -1)
 	return out
 
 
-# 出生点:首次 = 开局散点;复活 = 离所有存活敌人 ≥ RESPAWN_CLEARANCE 的随机地板格(退而求其次任取)
+# 出生点:首次 = 开局散点;复活 = 优选开阔格中离所有存活敌人 ≥ RESPAWN_CLEARANCE 的随机格
+# (优选池不够 → 回退任意地板格,同样先保证离敌人远)。
 func _spawn_cell(role: int) -> Vector2i:
 	if not _spawned_once.has(role):
 		_spawned_once[role] = true
 		return _round_spawns.get(role, Vector2i(-1, -1))
-	var cells: Array = _floor_cells()
-	cells.shuffle()
-	var far: Array = []
-	for c in cells:
-		var ok := true
-		for other in players:
-			if int(other) == role or _left.has(int(other)):
-				continue
-			var op: Node2D = players[other]
-			if op.is_downed():
-				continue
-			if _tdist(c,
-					Vector2i(int(op.global_position.x) / GameParameters.TILE_SIZE,
-							int(op.global_position.y) / GameParameters.TILE_SIZE)) < RESPAWN_CLEARANCE:
-				ok = false
-				break
-		if ok:
-			far.append(c)
-	if not far.is_empty():
-		return far[0]
-	return cells[0] if not cells.is_empty() else Vector2i(-1, -1)
+	for pool: Array in [_spawn_candidates(), _floor_cells()]:
+		var cells := pool.duplicate()
+		cells.shuffle()
+		var far: Array = []
+		for c in cells:
+			var ok := true
+			for other in players:
+				if int(other) == role or _left.has(int(other)):
+					continue
+				var op: Node2D = players[other]
+				if op.is_downed():
+					continue
+				if _tdist(c,
+						Vector2i(int(op.global_position.x) / GameParameters.TILE_SIZE,
+								int(op.global_position.y) / GameParameters.TILE_SIZE)) < RESPAWN_CLEARANCE:
+					ok = false
+					break
+			if ok:
+				far.append(c)
+		if not far.is_empty():
+			return far[0]
+	return Vector2i(-1, -1)
 
 
 func _ready() -> void:
