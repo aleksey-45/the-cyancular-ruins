@@ -31,4 +31,4 @@ DevTools/cards/.logs/
 *.exe
 test
 
-本机IP.txt
+local_ip.txt

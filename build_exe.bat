@@ -7,16 +7,15 @@ rem                 button looks for exactly this file next to the client)
 rem               + a versioned copy archived to the history folder
 rem - old exes in repo root are moved to the history folder first.
 rem ASCII-only + CRLF on purpose: cmd mis-parses UTF-8 batch content. The history
-rem folder name is Chinese, so it is built at runtime via PowerShell char codes.
+rem folder name is ASCII (exe_history) - no char-code trickery needed.
 cd /d %~dp0
 
 rem -- branch name / timestamp --
 for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD') do set BRANCH=%%b
 for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"') do set TS=%%t
 
-rem -- history folder name contains Chinese; it is built at runtime via char codes below --
-for /f %%h in ('powershell -NoProfile -Command "[string]::Join('',@([char]0x5386,[char]0x53F2))"') do set HIST=%%h
-set HISTDIR=..\%HIST%exe
+rem -- history folder (sibling of repo root; ASCII name for mac/win) --
+set HISTDIR=..xe_history
 
 set OUT=The Cyancular Ruins_%BRANCH%_%TS%.exe
 set SRV=Cyancular Ruins Server.exe

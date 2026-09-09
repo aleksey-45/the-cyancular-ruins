@@ -18,7 +18,7 @@ var _expected_players := 2
 var _ai_roles: Array = []    # AI 补位的 role 列表(实验性;这些 role 不等 claim,由服务端 AI 驱动)
 var _claim_wait := 0.0
 var _understaffed_wait := 0.0   # 开局前可用玩家 <2 的持续时长(超时退出释放端口)
-var _lan_ip_text := ""          # 局域网 IP 串(写 本机IP.txt 用;公网 IP 到手后一并补写)
+var _lan_ip_text := ""          # 局域网 IP 串(写 local_ip.txt 用;公网 IP 到手后一并补写)
 var _match_started := false
 
 func _ready() -> void:
@@ -92,14 +92,14 @@ func _priv_score(ip: String) -> int:
 				return 2
 	return 1
 
-## IP 写文件:Dedicated Server 导出是无控制台 GUI exe,print 看不见 → 落盘 exe 旁 本机IP.txt。
+## IP 写文件:Dedicated Server 导出是无控制台 GUI exe,print 看不见 → 落盘 exe 旁 local_ip.txt。
 func _write_ip_file(text: String) -> void:
 	var dir := OS.get_executable_path().get_base_dir()
 	if not OS.has_feature("template"):
 		dir = ProjectSettings.globalize_path("res://")   # 开发态别往引擎目录写
-	var f := FileAccess.open(dir + "/本机IP.txt", FileAccess.WRITE)
+	var f := FileAccess.open(dir + "/local_ip.txt", FileAccess.WRITE)
 	if f == null:
-		f = FileAccess.open("user://本机IP.txt", FileAccess.WRITE)
+		f = FileAccess.open("user://local_ip.txt", FileAccess.WRITE)
 	if f != null:
 		f.store_string(text)
 		f.close()

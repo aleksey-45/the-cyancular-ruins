@@ -2,6 +2,6 @@
 * text=auto eol=lf
 
 # cmd 批处理必须 CRLF(LF/UTF-8 会让中文多行块解析炸裂 → 双击闪退)
-打包exe.bat text eol=crlf
+build_exe.bat text eol=crlf
 
-启动卡编辑器.bat text eol=crlf
+launch_card_editor.bat text eol=crlf
