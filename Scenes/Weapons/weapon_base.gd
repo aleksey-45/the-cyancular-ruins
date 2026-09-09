@@ -341,7 +341,12 @@ func _auto_aim() -> void:
 	# 玩家精灵朝向:只在明确瞄向一侧时翻转(冲刺锁定/无玩家时回落 get_facing)。
 	if player != null and player.has_method("set_facing") and absf(dir.x) > 0.1:
 		player.set_facing(facing)
-		facing = get_facing()
+		# 冲刺时 player.set_facing 被锁(身体保持冲刺方向,位移需要);此时枪口**不跟随身体翻转**,
+		# 保持鼠标瞄准侧(_aim_facing/本帧 facing)。非冲刺:set_facing 成功、身体已翻到瞄准侧,
+		# get_facing() 读回一致,无差异。
+		var charging: bool = player.has_method("is_charging") and player.is_charging()
+		if not charging:
+			facing = get_facing()
 	_current_aim_facing = facing
 	# 朝向镜像(scale.x=-1)会翻转旋转方向。clamp_pitch 已按 facing 折叠 dir.x,
 	# 返回值乘 facing 取反:朝左时镜像后的枪口才指向正确的俯仰象限。

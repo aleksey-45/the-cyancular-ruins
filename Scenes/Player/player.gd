@@ -8,6 +8,7 @@ var jump_velocity: float = PlayerParams.jump_velocity
 var charge_down_velocity: float = PlayerParams.charge_down_velocity
 var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
 var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间（秒）
+var charge_air_gravity_mult: float = PlayerParams.charge_air_gravity_mult  # 冲刺滞空重力削减
 var move_speed: float = PlayerParams.move_speed
 var crouch_walk_speed: float = PlayerParams.crouch_walk_speed
 
@@ -230,7 +231,9 @@ func _physics_process(delta: float) -> void:
 		if is_on_floor():
 			coyote_timer = coyote_time
 		else:
-			velocity.y += gravity * delta
+			# 空中冲刺重力削减:冲刺那几帧重力×charge_air_gravity_mult(变平,可跨沟)。
+			var grav_mult := charge_air_gravity_mult if is_charge else 1.0
+			velocity.y += gravity * grav_mult * delta
 			coyote_timer = maxf(coyote_timer - delta, 0.0)
 
 		# 跳跃缓冲：落地前提前按跳，落地瞬间生效
@@ -241,6 +244,10 @@ func _physics_process(delta: float) -> void:
 
 		# 触发跳跃：有缓冲输入且在地面或土狼窗口内
 		if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
+			# 冲刺中按跳 = 打断冲刺转跳跃,保留当前水平速度作动量(下方 accel/air-brake 平滑接管)。
+			if is_charge:
+				is_charge = false
+				charge_timer = 0.0
 			velocity.y = jump_velocity * mult.y
 			jump_buffer_timer = 0.0
 			coyote_timer = 0.0
@@ -281,7 +288,7 @@ func _physics_process(delta: float) -> void:
 			charge_timer -= delta
 			if charge_timer <= 0:
 				is_charge = false
-				velocity.x -= charge_velocity * facing_direction * 0.5
+				# 收尾交回下方 accel/air-brake 平滑减速,不做 1500→750 突变半刹。
 		else:
 			# 蹲走:蹲态目标换成 crouch_walk_speed(可小幅左右移动);非蹲态走 move_speed。
 			var speed_target := crouch_walk_speed if is_squat else move_speed
@@ -352,6 +359,16 @@ func _physics_process(delta: float) -> void:
 	# ---------- 执行移动 ----------
 	move_and_slide()
 
+	# ---------- 冲刺撞水平墙 → 立即结束(不再顶着墙冲满) ----------
+	if is_charge:
+		for i in range(get_slide_collision_count()):
+			var col := get_slide_collision(i)
+			if col != null and absf(col.get_normal().x) > 0.5:
+				is_charge = false
+				charge_timer = 0.0
+				velocity.x = 0.0
+				break
+
 	# ---------- 弹性瓦片（如树叶）:弱反弹 ----------
 	# 空网格跳过(冒烟测试会清空 current_grid;真实游戏 Level0 总会赋值)
 	if not MazeGenerator.current_grid.is_empty():
@@ -382,6 +399,10 @@ func set_facing(v: int) -> void:
 	if is_charge:
 		return
 	facing_direction = 1 if v >= 0 else -1
+
+# 是否冲刺中(武器判断用):冲刺锁身体朝向(见 set_facing),但枪口应保持鼠标瞄准侧不跟随翻转。
+func is_charging() -> bool:
+	return is_charge
 
 func is_downed() -> bool:
 	return combat.is_downed()

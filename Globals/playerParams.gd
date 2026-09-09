@@ -21,8 +21,9 @@ const jump_cut_factor: float = 0.5  # 上升中松键时向上速度的衰减比
 
 # ── 冲刺 ──
 const charge_down_velocity: float = 2000.0
-const charge_velocity: float = 1500.0
-const charge_duration: float = 0.6
+const charge_velocity: float = 1900.0   # 冲刺速度(1500→1900,移植上游 7e0b5ee)
+const charge_duration: float = 0.4     # 0.6→0.4(配合可跳/墙打断,移植上游手感)
+const charge_air_gravity_mult: float = 0.35  # 冲刺滞空时重力削减系数(冲刺那几帧变平,可跨沟)
 const charge_dir_window: float = 0.3  # 冲刺方向沿用最近移动方向的窗口(秒)
 
 # ── 游泳 ──
