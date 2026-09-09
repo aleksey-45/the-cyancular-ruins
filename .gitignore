@@ -30,3 +30,5 @@ DevTools/cards/.logs/
 # 构建产物与杂项
 *.exe
 test
+
+本机IP.txt

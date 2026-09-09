@@ -47,14 +47,41 @@ static func restart() -> String:
 	for _i in range(45):
 		await _sleep(1.0)
 		if not _pids_on_port(LOBBY_PORT).is_empty():
-			return "本机服务器已(重)启动"
-	return "服务器进程已启动,但 %d 端口 45 秒未就绪(检查安全软件/防火墙,或稍后手动刷新列表)" % LOBBY_PORT
+			return "本机服务器已(重)启动;" + _ips_hint()
+	return "服务器进程已启动,但 %d 端口 45 秒未就绪(检查安全软件/防火墙,或稍后手动刷新列表);%s" % [LOBBY_PORT, _ips_hint()]
+
+
+# 本机 IP 提示:服务器与客户端同机,直接展示客户端自己的地址(私有网段优先),免手动 ipconfig。
+static func _ips_hint() -> String:
+	var ips: Array = []
+	for a in IP.get_local_addresses():
+		var s := str(a)
+		if ":" in s or s.begins_with("127.") or s.begins_with("169.254."):
+			continue
+		ips.append(s)
+	if ips.is_empty():
+		return "未检测到本机 IP(网络未连接?)"
+	ips.sort_custom(func(a: String, b: String) -> bool: return _priv_score(a) > _priv_score(b))
+	return "本机局域网 IP: " + str(ips[0]) + "(朋友在「服务器地址」里填它)"
+
+static func _priv_score(ip: String) -> int:
+	if ip.begins_with("192.168."):
+		return 3
+	if ip.begins_with("10."):
+		return 2
+	if ip.begins_with("172."):
+		var parts := ip.split(".")
+		if parts.size() > 1:
+			var o2 := int(parts[1])
+			if o2 >= 16 and o2 <= 31:
+				return 2
+	return 1
 
 
 static func _pids_on_port(port: int) -> Array[int]:
 	var out: Array = []
 	var pids: Array[int] = []
-	OS.execute(SYS32 + "/netstat.exe", PackedStringArray(["-ano"]), out, false, true)
+	OS.execute(SYS32 + "/netstat.exe", PackedStringArray(["-ano"]), out, false, false)
 	for chunk in out:
 		for line in str(chunk).split("\n"):
 			if not line.contains(":%d " % port):

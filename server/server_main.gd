@@ -18,6 +18,7 @@ var _expected_players := 2
 var _ai_roles: Array = []    # AI 补位的 role 列表(实验性;这些 role 不等 claim,由服务端 AI 驱动)
 var _claim_wait := 0.0
 var _understaffed_wait := 0.0   # 开局前可用玩家 <2 的持续时长(超时退出释放端口)
+var _lan_ip_text := ""          # 局域网 IP 串(写 本机IP.txt 用;公网 IP 到手后一并补写)
 var _match_started := false
 
 func _ready() -> void:
@@ -72,7 +73,11 @@ func _print_local_ips() -> void:
 		return
 	# 私有网段排前(局域网朋友填它)
 	ips.sort_custom(func(a: String, b: String) -> bool: return _priv_score(a) > _priv_score(b))
-	print("本机局域网 IP: " + ", ".join(ips) + "(把第一个填进「服务器地址」,端口 7777)")
+	_lan_ip_text = ", ".join(ips)
+	print("本机局域网 IP: " + _lan_ip_text + "(把第一个填进「服务器地址」,端口 7777)")
+	_write_ip_file("本机局域网 IP: %s
+(朋友在「多人对战→服务器地址」里填第一个;端口 7777)
+" % _lan_ip_text)
 
 func _priv_score(ip: String) -> int:
 	if ip.begins_with("192.168."):
@@ -87,6 +92,18 @@ func _priv_score(ip: String) -> int:
 				return 2
 	return 1
 
+## IP 写文件:Dedicated Server 导出是无控制台 GUI exe,print 看不见 → 落盘 exe 旁 本机IP.txt。
+func _write_ip_file(text: String) -> void:
+	var dir := OS.get_executable_path().get_base_dir()
+	if not OS.has_feature("template"):
+		dir = ProjectSettings.globalize_path("res://")   # 开发态别往引擎目录写
+	var f := FileAccess.open(dir + "/本机IP.txt", FileAccess.WRITE)
+	if f == null:
+		f = FileAccess.open("user://本机IP.txt", FileAccess.WRITE)
+	if f != null:
+		f.store_string(text)
+		f.close()
+
 # 公网出口 IP(尽力而为):自建房要给公网朋友连时,除这个 IP 外还须路由器转发 UDP 7777 与 7800~7910。
 func _fetch_public_ip() -> void:
 	var http := HTTPRequest.new()
@@ -97,6 +114,10 @@ func _fetch_public_ip() -> void:
 			var ip := body.get_string_from_utf8().strip_edges()
 			if ip.length() > 0 and ip.length() <= 45 and not ip.contains("<"):
 				print("本机公网 IP: " + ip + "(公网联机需路由器转发 UDP 7777、7800~7910)")
+				_write_ip_file("本机局域网 IP: %s
+本机公网 IP: %s
+(公网联机需路由器转发 UDP 7777、7800~7910)
+" % [_lan_ip_text, ip])
 		http.queue_free())
 	http.request("http://ip-api.com/line/?fields=query")
 
@@ -105,7 +126,7 @@ func _fetch_public_ip() -> void:
 func _kill_port_holder(port: int) -> void:
 	var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
 			" | % OwningProcess | sort -u; if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
-	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, true)
+	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, false)
 
 # ── worker:独占端口等客户端 claim_role;1v1 收齐 2 人开局,大乱斗收齐 N 人(或 20s 超时)开局 ──
 func _run_worker(port: int) -> void:
