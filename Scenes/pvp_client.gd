@@ -261,6 +261,8 @@ func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
 func _on_kill_event(killer: int, victim: int) -> void:
 	if killer == PvpSession.role and victim != PvpSession.role:
 		CombatFeedback.kill(str(_names.get(victim, "对手")))
+	elif victim == PvpSession.role:
+		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:

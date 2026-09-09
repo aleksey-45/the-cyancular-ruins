@@ -250,6 +250,8 @@ func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
 func _on_kill_event(killer: int, victim: int) -> void:
 	if killer == PvpSession.role and victim != PvpSession.role:
 		CombatFeedback.kill(str(_names.get(victim, "玩家%d" % victim)))
+	elif victim == PvpSession.role:
+		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	if _world == null:

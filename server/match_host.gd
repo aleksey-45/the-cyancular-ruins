@@ -415,6 +415,21 @@ func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
 		if int(r) != shooter_role and players.has(int(r)):
 			NetBusExt.rpc_id(peer_by_role[r], "beam_fired", rep)
 
+# 即时光束武器(激光)的直击命中:服务器结算后把 X 标记(hit_confirm)发给射手本人,
+# 与子弹 _on_bullet_hit 的 hit_confirm 同链路(爆炸 AoE 不发——伤害方不明确,激光方向明确可发)。
+func notify_direct_hit(shooter: Node, victim: Node) -> void:
+	var shooter_role := -1
+	var victim_role := -1
+	for role in players:
+		if players[role] == shooter:
+			shooter_role = int(role)
+		if players[role] == victim:
+			victim_role = int(role)
+	if shooter_role < 0 or victim_role < 0 or shooter_role == victim_role:
+		return
+	if peer_by_role.has(shooter_role):
+		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, victim_role)
+
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)

@@ -218,7 +218,11 @@ func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 		return
 	# 击退方向 = 从光束最近点指向目标(径向推离光束);强度走 impact。
 	var dir := (pos - near).normalized() if pos.distance_to(near) > 1.0 else Vector2.RIGHT
+	# 击杀归因 + 命中反馈(与子弹 _register_player_hit 同源;headless 服务器无反馈层时静默)
+	if player != null and is_instance_valid(player) and player != t:
+		t.set_meta("last_damager", player)
 	t.hurt(damage, dir, impact)
+	CombatFeedback.hit_marker()
 
 func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 	if not p.has_method("take_hit"):
@@ -226,6 +230,14 @@ func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 	# 与爆炸 apply_aoe 一致:take_hit(source_pos, damage, ignore_iframes, knockback)。
 	# source_pos 传光束最近点 → 击退沿"光束→目标"径向;ignore_iframes 用 false(激光可被无敌帧挡)。
 	p.take_hit(near, damage, false, impact)
+	# 击杀归因(大乱斗计分) + 命中反馈;PvP 下再经宿主把 X 标记(hit_confirm)发给射手本人。
+	if player != null and is_instance_valid(player) and player != p:
+		p.set_meta("last_damager", player)
+		p.set_meta("last_damager_time", Time.get_ticks_msec())
+	CombatFeedback.hit_marker()
+	var host := player.get_parent() if player != null else null
+	if host != null and host.has_method("notify_direct_hit"):
+		host.notify_direct_hit(player, p)
 
 # 对碰墙触点里的可破坏砖扣血(树叶/树干,"explosion" 语义不穿墙)。只磨不破:砖血扣到 0
 # 变空气由 damage_tile 回调 Level0 处理,下一发射击自然穿过。同一格单发只扣一次。
