@@ -356,6 +356,37 @@ func _build_wall_collision(grid: Array[Array]) -> void:
 	_destructible_sub = WorldBuilder.build_sim($WorldViewport, grid)
 
 
+# 单人「倒地按 R 重启」:原地复位,不重建世界。
+# 旧实现走场景重载(safe_change_scene → 第二份完整世界 + 退役拆旧世界),重启过程在
+# 引擎原生层偶发段错误(实测表象:重启后蓝屏/地图未加载)。改为在当前 Level0 内复位:
+# 可破坏砖/瓦片/碰撞回基线 + 清子弹/敌人再按难度重刷 + 玩家满血满氧回出生点,从机制上
+# 绕开「新建/拆毁大世界」。PvP 不走这里(服务器权威管复活)。由 player.gd 倒地 R 调用。
+func restart_single() -> void:
+	if _pristine_grid.is_empty() or _grid_ref.is_empty():
+		return
+	var player: CharacterBody2D = $WorldViewport/Player
+	# 瓦片/碰撞整层还原为建图基线;顺手清掉本帧的拆砖重建队列(基线已是最新)
+	_dirty_chunks.clear()
+	reset_destructibles()
+	# 清场上动态物:子弹 + 敌人(尸体/坠落物一起清,避免与重刷的敌人并排残留)
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if is_instance_valid(e):
+			(e as Node).queue_free()
+	# 玩家满血满氧回出生点,姿态/武器复位
+	var spawns := MazeGenerator.load_spawns()
+	var spawn_cell: Vector2i = spawns.get("player", Vector2i(-1, -1))
+	if spawn_cell.x < 0:
+		spawn_cell = Vector2i(_grid_ref[0].size() / 2, _grid_ref.size() / 2)
+	player.restart_at(spawn_cell)
+	# 敌人按难度重刷(与 _ready 同款;deferred 等旧敌 queue_free 先生效,避免同名冲突)
+	EnemySpawner.load_types()
+	spawns["enemies"] = _apply_difficulty(_grid_ref, spawns)
+	$EnemySpawner.spawn_all.call_deferred(spawns)
+
+
 func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 	var player: CharacterBody2D = $WorldViewport/Player
 	var ts: int = GameParameters.TILE_SIZE
