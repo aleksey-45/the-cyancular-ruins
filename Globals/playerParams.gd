@@ -7,6 +7,7 @@ extends RefCounted
 
 # ── 行走手感(方案 A)──
 const move_speed: float = 700.0
+const crouch_walk_speed: float = 245.0   # 蹲态慢走速度(蹲下可小幅左右移动)
 const accel_ground: float = 30.0    # 地面加速缓动系数(越大起步越跟手)
 const accel_air: float = 9.0        # 空中加速
 const brake_ground: float = 16.0    # 地面松键减速(带一点滑行)

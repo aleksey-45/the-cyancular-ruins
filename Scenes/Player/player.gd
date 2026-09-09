@@ -9,6 +9,7 @@ var charge_down_velocity: float = PlayerParams.charge_down_velocity
 var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
 var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间（秒）
 var move_speed: float = PlayerParams.move_speed
+var crouch_walk_speed: float = PlayerParams.crouch_walk_speed
 
 # 水平加速/刹车/转身的指数缓动系数（越大越跟手）
 var accel_ground: float = PlayerParams.accel_ground
@@ -251,19 +252,18 @@ func _physics_process(delta: float) -> void:
 			velocity.y *= jump_cut_factor
 			jump_cut_applied = true
 
-	# ---------- 下蹲 ----------
+	# ---------- 下蹲 / 空中下冲 ----------
 	if not latched and not in_water:
-		if is_on_floor():
-			if input_source.is_action_just_pressed("down"):
-				velocity.x = 0
-				is_charge = false
-				is_squat = true
-			if input_source.is_action_just_released("down"):
-				is_squat = false
-		else:
-			# 空中下冲:身在梯/链格上不能下冲(否则跳上去按↓可直接穿梯/链),只能抓住爬。
-			if input_source.is_action_just_pressed("down") and not climb.is_over_climb_tile():
-				velocity.y = charge_down_velocity
+		# 空中按 S 下冲(不在梯/链格上,否则跳上去按↓可直接穿梯/链,只能抓住爬)。
+		if not is_on_floor() and input_source.is_action_just_pressed("down") \
+				and not climb.is_over_climb_tile():
+			velocity.y = charge_down_velocity
+		# 下蹲 = 在地面 且 按住 S,逐帧推导——不用 just_pressed/just_released 边沿。
+		# 旧实现 release 分支套在 if is_on_floor() 内:空中松开 S 不执行 → 落地仍蹲(卡蹲)。
+		var want_squat := is_on_floor() and input_source.is_action_pressed("down")
+		if want_squat and not is_squat:
+			is_charge = false   # 冲刺中按 S → 取消冲刺进蹲
+		is_squat = want_squat
 
 	# ---------- 冲刺输入 ----------
 	if not latched and not is_charge and not is_squat and not in_water:
@@ -283,8 +283,10 @@ func _physics_process(delta: float) -> void:
 				is_charge = false
 				velocity.x -= charge_velocity * facing_direction * 0.5
 		else:
-			var target_velocity_x = horizontal_input * move_speed * mult.x
-			if horizontal_input != 0 and not is_squat:
+			# 蹲走:蹲态目标换成 crouch_walk_speed(可小幅左右移动);非蹲态走 move_speed。
+			var speed_target := crouch_walk_speed if is_squat else move_speed
+			var target_velocity_x = horizontal_input * speed_target * mult.x
+			if horizontal_input != 0:
 				if is_on_floor():
 					velocity.x = _approach(velocity.x, target_velocity_x, accel_ground, delta)
 				else:
