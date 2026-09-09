@@ -172,9 +172,15 @@ func _check_templates(fails: Array[String]) -> void:
 
 func _check_cli_bat(fails: Array[String]) -> void:
 	var bat := PromptBuilder.build_cli_bat("C:/repo", "C:/p.md", "C:/l.log", "--allowed-tools \"Read\"")
-	for needle in ["claude -p", "--permission-mode acceptEdits", PromptBuilder.HEAD_MARK, "< \"C:/p.md\"", "> \"C:/l.log\"", "setlocal enabledelayedexpansion", "cd /d \"C:/repo\""]:
+	# bat 必须零中文/零绝对仓库路径(cmd 按 ANSI 解析,UTF-8 中文路径会逐行"找不到路径");
+	# 仓库根从 %~dp0 推导,提示词/日志走 %PROMPT%/%LOGF%(见 prompt_builder.build_cli_bat 注释)
+	for needle in ["claude -p", "--permission-mode acceptEdits", PromptBuilder.HEAD_MARK,
+			"< \"%PROMPT%\"", ">> \"%LOGF%\"", "setlocal enabledelayedexpansion",
+			"cd /d \"%REPO%\"", "__AGENT_STARTED__"]:
 		if not bat.contains(needle):
 			fails.append("bat 启动器缺关键片段:%s" % needle)
+	if bat.contains("C:/repo") or bat.contains("C:\\repo"):
+		fails.append("bat 启动器不得包含绝对仓库路径(中文路径乱码根因)")
 	if not bat.contains("\r\n"):
 		fails.append("bat 启动器必须 CRLF 换行")
 	# 全自动档位:permission-mode 被替换而非追加

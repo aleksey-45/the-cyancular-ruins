@@ -293,16 +293,29 @@ static func _git_head() -> String:
 
 
 ## CLI 启动器(.bat 内容)单点拼接:agent_runner 落盘执行,dry-run 审计共用。
-## bat 字面量不经命令行转义;/V:ON 延迟展开拿 claude 真实退出码,落日志尾部标记。
+## bat 必须零中文:cmd 按 ANSI 代码页解析批处理,UTF-8 中文路径(如仓库名"别人的游戏demo")
+## 会全部乱码 → cd/重定向逐行"找不到路径",claude 静默不执行(UI 永远"工作中"的实测根因)。
+## 因此仓库根不用传入的绝对路径,而从 bat 自身位置 %~dp0(.logs 目录)向上三级推导,
+## 提示词/日志文件名只用 ASCII 的 <tag>;传入的 repo/prompt/log 仅用于取 tag 文件名。
 static func build_cli_bat(repo_abs: String, prompt_abs: String, log_abs: String, extra_flags: String, permission_mode: String = "acceptEdits") -> String:
 	var flags := "-p --permission-mode %s --output-format text --verbose" % permission_mode
 	if not extra_flags.strip_edges().is_empty():
 		flags += " " + extra_flags.strip_edges()
+	var tag_file := prompt_abs.get_file()            # "<tag>.md"(纯 ASCII)
+	var tag_base := tag_file.trim_suffix(".md")      # "<tag>"
 	var L: Array[String] = [
 		"@echo off",
 		"setlocal enabledelayedexpansion",
-		"cd /d \"%s\"" % repo_abs,
-		"claude %s < \"%s\" > \"%s\" 2>&1" % [flags, prompt_abs, log_abs],
-		"echo %s!ERRORLEVEL!__" % HEAD_MARK,
+		"rem repo root derived from this bat's own dir (<repo>/DevTools/cards/.logs): keeps this file ASCII-only",
+		"set \"REPO=%~dp0..\\..\\..\"",
+		"for %%i in (\"%REPO%\") do set \"REPO=%%~fi\"",
+		"cd /d \"%REPO%\"",
+		"set \"PROMPT=%%REPO%%\\DevTools\\cards\\.prompts\\%s\"" % tag_file,
+		"set \"LOGF=%%REPO%%\\DevTools\\cards\\.logs\\%s.log\"" % tag_base,
+		# 心跳:立刻把日志文件建出来,证明 bat 确实在执行(否则 UI 分不清"没拉起"和"在跑")
+		"> \"%LOGF%\" echo __AGENT_STARTED__",
+		"claude %s < \"%%PROMPT%%\" >> \"%%LOGF%%\" 2>&1" % flags,
+		# 退出标记必须落进日志文件(poll 只读文件;旧版 echo 到 stdout/管道,完成状态永远收不到)
+		">> \"%%LOGF%%\" echo %s!ERRORLEVEL!__" % HEAD_MARK,
 	]
 	return "\r\n".join(L) + "\r\n"

@@ -76,8 +76,14 @@ func run(card: Dictionary, prompt: String, extra_flags: String, permission_mode:
 	is_busy = true
 	_start_ms = Time.get_ticks_msec()
 	_timeout_warned = false
-	var pipe := OS.execute_with_pipe("cmd.exe", ["/c", ProjectSettings.globalize_path(bat_path)], false)
-	_pid = int(pipe.get("pid", 0)) if typeof(pipe) == TYPE_DICTIONARY else 0
+	# 拉起用 create_process(拿真实 pid,「停止」按钮 taskkill 靠它)。日志走文件轮询,
+	# 不需要管道;旧实现 execute_with_pipe 拿不到 pid(永远 0 → 停止按钮无效),且
+	# 拉起失败不报错,UI 永远"工作中"。
+	_pid = OS.create_process("cmd.exe", PackedStringArray(["/c", ProjectSettings.globalize_path(bat_path)]))
+	if _pid <= 0:
+		is_busy = false
+		log_line.emit("[失败] cmd 启动器没能创建进程(ExecuteProcess 返回空)——用「复制提示词」手动粘贴执行")
+		return ""
 	log_line.emit("[发起] tag=%s pid=%d" % [_tag, _pid])
 	log_line.emit("[提示词] %s(可直接查看/手动粘贴执行)" % ProjectSettings.globalize_path(prompt_path))
 	var timer := Timer.new()
@@ -93,10 +99,18 @@ func stop() -> void:
 		return
 	log_line.emit("[停止] taskkill /T /F /PID %d" % _pid)
 	OS.create_process("cmd.exe", ["/c", "taskkill /T /F /PID %d" % _pid])
+	is_busy = false
+	log_line.emit("[停止] 已复位状态(可重新发起)")
 
 
 func _poll() -> void:
 	if not is_busy:
+		return
+	# 兜底:启动器 10 秒还没把日志文件建出来 = cmd/bat 根本没执行(拉起环境异常)。
+	# 不做这个检查,UI 会永远"工作中"(实测症状:一小时零动静、无日志、无 claude 进程)。
+	if _log_sent_bytes == 0 and Time.get_ticks_msec() - _start_ms > 10000 \
+			and not FileAccess.file_exists(_log_path):
+		_finish(false, false, "启动器 10 秒未产生日志——cmd/bat 没有执行,请用「复制提示词」手动跑")
 		return
 	# 增量读日志推给面板
 	var text := FileAccess.get_file_as_string(_log_path)
