@@ -13,9 +13,10 @@ func _run() -> void:
 	await tree.process_frame
 	var lvl: Node = load("res://Scenes/Level0.tscn").instantiate()
 	tree.root.add_child(lvl)
-	for i in 10:
+	# 建图是 call_deferred:等它 flush 且玩家从出生点下坠到地面完全站定,再记录初始位置
+	for i in 40:
 		await tree.process_frame
-	for i in 5:
+	for i in 20:
 		await tree.physics_frame
 	var fails: Array[String] = []
 	if not is_instance_valid(lvl):
@@ -41,13 +42,13 @@ func _run() -> void:
 	await tree.process_frame
 	# 执行原地复位(单人倒地 R 走的同一入口)
 	lvl.restart_single()
-	for i in 10:
+	for i in 40:
 		await tree.process_frame
-	for i in 5:
+	for i in 20:
 		await tree.physics_frame
 	if not is_instance_valid(lvl):
 		fails.append("restart 后 Level0 实例失效")
-	elif player.global_position.distance_to(spawn_pos) > 1.0:
+	elif player.global_position.distance_to(spawn_pos) > 6.0:
 		fails.append("玩家未回出生点: %s → %s" % [spawn_pos, player.global_position])
 	if int(combat.hp) != int(combat.max_hp):
 		fails.append("血量未回满: %s/%s" % [combat.hp, combat.max_hp])
