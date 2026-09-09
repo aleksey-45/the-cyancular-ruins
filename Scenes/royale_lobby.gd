@@ -176,7 +176,29 @@ func _build_create_panel() -> void:
 		_weapon_checks.append(cb)
 		wgrid.add_child(cell)
 
-	vb.add_child(_label("(小地图/轨迹/血条/颜色等视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 20, Color(0.7, 0.75, 0.8)))
+	# 自己角色颜色(色相 0-360):本页即选即存;开局转连 worker 报到时随 player_options 上发,
+	# worker 开局广播 peer_hues → 全员按各自 hue 染色(与 1v1 匹配页同一设置项)。
+	vb.add_child(_label("自己角色颜色:", 24))
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("h_separation", 12)
+	vb.add_child(crow)
+	var hue_slider := HSlider.new()
+	hue_slider.min_value = 0.0
+	hue_slider.max_value = 360.0
+	hue_slider.step = 5.0
+	hue_slider.value = Settings.pvp_color_hue
+	hue_slider.custom_minimum_size = Vector2(300, 30)
+	crow.add_child(hue_slider)
+	var chip := ColorRect.new()
+	chip.custom_minimum_size = Vector2(46, 30)
+	chip.color = _hue_preview_color(Settings.pvp_color_hue)
+	crow.add_child(chip)
+	hue_slider.value_changed.connect(func(v: float) -> void:
+		Settings.pvp_color_hue = v
+		Settings.save()
+		chip.color = _hue_preview_color(v))
+
+	vb.add_child(_label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 20, Color(0.7, 0.75, 0.8)))
 
 	var create := Button.new()
 	create.text = "创 建 房 间"
@@ -193,6 +215,9 @@ func _label(text: String, size: int, color: Color = Color.WHITE) -> Label:
 	l.add_theme_color_override("font_color", color)
 	l.add_theme_font_size_override("font_size", size)
 	return l
+
+func _hue_preview_color(hue_deg: float) -> Color:
+	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
 
 func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
 	var le := LineEdit.new()

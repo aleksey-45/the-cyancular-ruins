@@ -55,6 +55,50 @@ func _ready() -> void:
 		return
 	add_child(RoomManager.new())
 	print("服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)")
+	_print_local_ips()
+	_fetch_public_ip()
+
+# ── 本机 IP 展示:服主开服即见,不用再手动 ipconfig ──
+# 局域网 IP 同步打印(朋友在「多人对战→服务器地址」里填它);公网 IP 异步拉一次(离线/超时静默)。
+func _print_local_ips() -> void:
+	var ips: Array = []
+	for a in IP.get_local_addresses():
+		var s := str(a)
+		if ":" in s or s.begins_with("127.") or s.begins_with("169.254."):
+			continue   # 跳过 IPv6/回环/链路本地
+		ips.append(s)
+	if ips.is_empty():
+		print("本机 IP: 未检测到(网络未连接?)")
+		return
+	# 私有网段排前(局域网朋友填它)
+	ips.sort_custom(func(a: String, b: String) -> bool: return _priv_score(a) > _priv_score(b))
+	print("本机局域网 IP: " + ", ".join(ips) + "(把第一个填进「服务器地址」,端口 7777)")
+
+func _priv_score(ip: String) -> int:
+	if ip.begins_with("192.168."):
+		return 3
+	if ip.begins_with("10."):
+		return 2
+	if ip.begins_with("172."):
+		var parts := ip.split(".")
+		if parts.size() > 1:
+			var o2 := int(parts[1])
+			if o2 >= 16 and o2 <= 31:
+				return 2
+	return 1
+
+# 公网出口 IP(尽力而为):自建房要给公网朋友连时,除这个 IP 外还须路由器转发 UDP 7777 与 7800~7910。
+func _fetch_public_ip() -> void:
+	var http := HTTPRequest.new()
+	http.timeout = 6.0
+	add_child(http)
+	http.request_completed.connect(func(_r: int, code: int, _h: PackedStringArray, body: PackedByteArray) -> void:
+		if code == 200:
+			var ip := body.get_string_from_utf8().strip_edges()
+			if ip.length() > 0 and ip.length() <= 45 and not ip.contains("<"):
+				print("本机公网 IP: " + ip + "(公网联机需路由器转发 UDP 7777、7800~7910)")
+		http.queue_free())
+	http.request("http://ip-api.com/line/?fields=query")
 
 # 杀掉还监听该 UDP 端口的旧进程(Windows:PowerShell 取 UDP 端点属主进程→Stop-Process)。
 # 供大厅启动前用,避免旧服务端没关导致新实例 bind 失败瞬间退出(双击 exe 闪退)。
@@ -77,6 +121,7 @@ func _run_worker(port: int) -> void:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d)" % [_expected_players, port])
 	else:
 		print("worker 就绪,等待两名玩家……(port %d)" % port)
+	_print_local_ips()
 
 func _process(delta: float) -> void:
 	# 大乱斗:有人报到但 20s 仍未收齐 → 按已到人数(≥2)直接开局(缺席角色不入局)
