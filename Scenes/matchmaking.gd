@@ -23,6 +23,7 @@ var _pending_action: Callable = Callable()   # 连上后要执行的建房/加�
 var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜底提示)
 var _go_start_ms := 0
 var _lobby_start_ms := 0   # 连大厅计时(UDP 被静默丢包时 connection_failed 要等很久,8s 给明确提示)
+var _ip_label: Label = null   # 常驻本机 IP 提示
 var _join_sent_ms := 0     # 刚发出 join_room 的时间戳:服务端无任何应答(幽灵房间)时兜底回大厅刷新
 var _claimed_ms := 0       # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
 
@@ -42,6 +43,12 @@ func _ready() -> void:
 	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
 	srv_btn.pressed.connect(_on_local_server_pressed)
 	add_child(srv_btn)
+	_ip_label = Label.new()
+	_ip_label.position = Vector2(432, 166)
+	_ip_label.add_theme_font_size_override("font_size", 20)
+	_ip_label.add_theme_color_override("font_color", Color(0.65, 0.9, 1.0))
+	_ip_label.text = LocalServer.lan_ip_hint()
+	add_child(_ip_label)
 
 	var name_le := _make_line_edit(Vector2(60, 60), "昵称(头上显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
@@ -311,8 +318,9 @@ func _on_refresh_pressed() -> void:
 # 一键启动/重启本机服务器(与大乱斗大厅同款):杀旧实例 → 拉起同目录服务端 exe →
 # 强制重连 127.0.0.1 刷新列表。协程,按钮回调内 await。
 func _on_local_server_pressed() -> void:
-	_status.text = "正在启动/重启本机服务器…"
+	_status.text = "正在启动/重启本机服务器…(%s)" % LocalServer.lan_ip_hint()
 	var msg: String = await LocalServer.restart()
+	_ip_label.text = LocalServer.lan_ip_hint()
 	_status.text = msg
 	if not msg.begins_with("本机服务器"):
 		return   # 找不到 exe 等失败:保留提示,不动现有连接
@@ -321,7 +329,7 @@ func _on_local_server_pressed() -> void:
 	_connected_addr = ""
 	_addr_edit.text = "127.0.0.1"
 	_auto_refreshed = false
-	_request_list("本机服务器已就绪,正在获取房间列表…")
+	_request_list("本机服务器已就绪(%s),正在获取房间列表…" % LocalServer.lan_ip_hint())
 
 func _request_list(msg: String) -> void:
 	_with_lobby(func() -> void:
@@ -370,6 +378,8 @@ func _on_room_list(rooms: Array) -> void:
 	_status.text = "共 %d 个房间(未满优先)" % order.size()
 
 func _on_server_message(t: String) -> void:
+	if LocalServer.restarting and (t == "服务器断开" or t == "连接失败"):
+		return   # 重启本机服期间,旧连接被杀的断连提示是预期噪音,不覆盖状态
 	if t == "房间已满" or t == "房间不存在":
 		# 点了失效/已满的房间 → 提示并自动刷新一次(列表常驻陈旧房间,点了必失败)
 		# 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,

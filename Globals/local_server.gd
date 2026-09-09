@@ -12,6 +12,8 @@ const SERVER_EXE := "Cyancular Ruins Server.exe"
 const LOBBY_PORT := 7777
 const SYS32 := "C:/Windows/System32"
 
+static var restarting := false   # 重启进行中:客户端吞掉期间「服务器断开」等预期噪音
+
 
 static func find_server_exe() -> String:
 	var p := OS.get_executable_path().get_base_dir().path_join(SERVER_EXE)
@@ -25,6 +27,12 @@ static func find_server_exe() -> String:
 
 # 启动/重启本机服务器;返回给 UI 状态栏的提示文本。
 static func restart() -> String:
+	restarting = true
+	var msg := await _restart_impl()
+	restarting = false
+	return msg
+
+static func _restart_impl() -> String:
 	var exe := find_server_exe()
 	if exe == "":
 		return "未找到 %s —— 请把它和客户端放在同一目录" % SERVER_EXE
@@ -47,12 +55,12 @@ static func restart() -> String:
 	for _i in range(45):
 		await _sleep(1.0)
 		if not _pids_on_port(LOBBY_PORT).is_empty():
-			return "本机服务器已(重)启动;" + _ips_hint()
-	return "服务器进程已启动,但 %d 端口 45 秒未就绪(检查安全软件/防火墙,或稍后手动刷新列表);%s" % [LOBBY_PORT, _ips_hint()]
+			return "本机服务器已(重)启动;" + lan_ip_hint()
+	return "服务器进程已启动,但 %d 端口 45 秒未就绪(检查安全软件/防火墙,或稍后手动刷新列表);%s" % [LOBBY_PORT, lan_ip_hint()]
 
 
 # 本机 IP 提示:服务器与客户端同机,直接展示客户端自己的地址(私有网段优先),免手动 ipconfig。
-static func _ips_hint() -> String:
+static func lan_ip_hint() -> String:
 	var ips: Array = []
 	for a in IP.get_local_addresses():
 		var s := str(a)

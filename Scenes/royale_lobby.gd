@@ -17,6 +17,7 @@ var _invite_edit: LineEdit      # 邀请码(私密房加入)
 var _status: Label
 var _list_box: VBoxContainer
 var _connected := false
+var _ip_label: Label = null   # 常驻本机 IP 提示(进页/重启后即显示,不靠易被刷掉的状态栏)
 var _connected_addr := ""
 var _pending_action: Callable = Callable()
 var _lobby_start_ms := 0
@@ -75,6 +76,10 @@ func _ready() -> void:
 	var refresh := _make_button(Vector2(330, 114), "刷新列表", _on_refresh_pressed)
 	var srv_btn := _make_button(Vector2(540, 114), "启动/重启本机服务器", _on_local_server_pressed)
 	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
+	_ip_label = _label("", 20, Color(0.65, 0.9, 1.0))
+	_ip_label.position = Vector2(540, 160)
+	add_child(_ip_label)
+	_ip_label.text = LocalServer.lan_ip_hint()   # 本机(=自建服同机)IP 常驻显示
 
 	var cap := _label("公开房间列表(点击直接加入)", 26, Color(0.55, 0.95, 1.0))
 	cap.position = Vector2(60, 186)
@@ -349,8 +354,9 @@ func _on_refresh_pressed() -> void:
 
 # 一键启动/重启本机服务器:杀旧实例 → 拉起同目录服务端 exe → 强制重连 127.0.0.1 刷新列表。
 func _on_local_server_pressed() -> void:
-	_status.text = "正在启动/重启本机服务器…"
+	_status.text = "正在启动/重启本机服务器…(%s)" % LocalServer.lan_ip_hint()
 	var msg: String = await LocalServer.restart()
+	_ip_label.text = LocalServer.lan_ip_hint()
 	_status.text = msg
 	if not msg.begins_with("本机服务器"):
 		return   # 找不到 exe 等失败:保留提示,不动现有连接
@@ -358,7 +364,7 @@ func _on_local_server_pressed() -> void:
 	_connected = false
 	_connected_addr = ""
 	_addr_edit.text = "127.0.0.1"
-	_request_list("本机服务器已就绪,正在获取房间列表…")
+	_request_list("本机服务器已就绪(%s),正在获取房间列表…" % LocalServer.lan_ip_hint())
 
 func _on_create_pressed() -> void:
 	var disabled: Array = []
@@ -425,6 +431,8 @@ func _on_royale_rooms(rooms: Array) -> void:
 	_status.text = "共 %d 个公开房间" % rooms.size()
 
 func _on_server_message(t: String) -> void:
+	if LocalServer.restarting:
+		return   # 重启本机服期间,旧连接被杀的「服务器断开」是预期噪音,不覆盖状态
 	_status.text = t
 
 # 房间实时状态 → 等待室面板
