@@ -2,6 +2,7 @@ extends Node2D
 # PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
 
 const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
+const LaserVisual := preload("res://Globals/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── 本地玩家渲染:完全由服务器快照驱动(放弃客户端预测) ──
 # 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
@@ -73,6 +74,7 @@ func _ready() -> void:
 	NetBusExt.local_match_options.connect(_on_match_options)
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
+	NetBusExt.local_beam_fired.connect(_on_beam_fired)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
@@ -213,6 +215,32 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
 	if Settings.pvp_show_trajectories:
 		BulletTrail.attach(b, data["color"])
+
+# 服务器权威开火(即时光束武器,激光):对手端据此画光束视觉副本(不开物理子弹,
+# 无 bullet_spawn 实体可跟)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)→
+# 逐点锚到射手副本当前渲染位置(_remote_replica.global_position 已由 player_replica 每帧
+# 归到本地玩家最近副本、滞后 ~1 tick 无碍)。光束整条路径 ≤ bullet_range 远小于半图 →
+# 逐点 anchor_to_nearest 会把整条折线搬到可见副本、跨接缝连续。
+# 只画对手那发:自己(射手)这发已由本地预测自画,再收服务器版会双光束。
+func _on_beam_fired(data: Dictionary) -> void:
+	if _world == null or _remote_replica == null:
+		return
+	if int(data.get("shooter_role", 0)) == PvpSession.role:
+		return
+	var raw: PackedVector2Array = data.get("pts", PackedVector2Array())
+	if raw.is_empty():
+		return
+	var anchor: Vector2 = (_remote_replica as Node2D).global_position
+	var w := GameParameters.MAP_WIDTH
+	var h := GameParameters.MAP_HEIGHT
+	var pts := PackedVector2Array()
+	for p in raw:
+		pts.append(MazeGenerator.anchor_to_nearest(p, anchor, w, h))
+	var color: Color = data.get("color", Color(0.1, 0.35, 1.0, 1.0))
+	var half_width := float(data.get("half_width", 2.0))
+	var lifetime := float(data.get("lifetime", 0.25))
+	LaserVisual.spawn_muzzle_orb(_world, pts[0], color, half_width, lifetime)
+	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
 
 # 服务器裁决命中:被打的是自己 → 即时反馈(白闪/击退),血量以快照权威为准;
 # 被打的是对手 → 副本受击闪烁,让射手看到自己打中了。

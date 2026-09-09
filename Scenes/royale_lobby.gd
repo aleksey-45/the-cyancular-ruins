@@ -162,7 +162,7 @@ func _build_create_panel() -> void:
 	wgrid.add_theme_constant_override("h_separation", 10)
 	wgrid.add_theme_constant_override("v_separation", 6)
 	vb.add_child(wgrid)
-	for slot: int in [1, 2, 3, 4, 5]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
+	for slot: int in [1, 2, 3, 4, 5, 6]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
 		var slot_i := slot
 		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
 				22, func(on: bool) -> void:

@@ -33,6 +33,15 @@ func peer_hues(hues: Dictionary) -> void:
 func hit_confirm(shooter_role: int, victim_role: int) -> void:
 	local_hit_confirm.emit(shooter_role, victim_role)
 
+# ── 即时光束武器(激光)──
+# 服务器权威开火 → 非射手客户端画视觉副本(物理子弹走 bullet_spawn;即时光束无移动实体,
+# 事件里带整条折线)。原版 NetBus 逐字节不动,新 RPC 进 NetBusExt(与 hit_confirm 同区)。
+signal local_beam_fired(data: Dictionary)
+
+@rpc("authority", "reliable")
+func beam_fired(data: Dictionary) -> void:
+	local_beam_fired.emit(data)
+
 # ── 大乱斗大厅(自建服务器,与 1v1 大厅协议并存;RPC 名不同互不干扰)──
 # 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。
 

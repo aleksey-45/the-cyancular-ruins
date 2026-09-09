@@ -302,7 +302,7 @@ func _build_sp_panel() -> PanelContainer:
 	vb.add_child(_pixel_label("禁用武器(勾选 = 本局不可用)", 26))
 
 	var checks: Array[CheckButton] = []
-	for slot in [1, 2, 3, 4, 5]:
+	for slot in [1, 2, 3, 4, 5, 6]:
 		var cb := CheckButton.new()
 		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
 		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
