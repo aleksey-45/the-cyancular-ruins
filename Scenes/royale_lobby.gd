@@ -77,7 +77,7 @@ func _ready() -> void:
 	var srv_btn := _make_button(Vector2(540, 114), "启动/重启本机服务器", _on_local_server_pressed)
 	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
 	_ip_label = _label("", 20, Color(0.65, 0.9, 1.0))
-	_ip_label.position = Vector2(540, 160)
+	_ip_label.position = Vector2(1250, 22)   # 页面顶部空带(左列 y160 有提示文字、右列 y60 起是建房面板)
 	add_child(_ip_label)
 	_ip_label.text = LocalServer.lan_ip_hint()   # 本机(=自建服同机)IP 常驻显示
 
