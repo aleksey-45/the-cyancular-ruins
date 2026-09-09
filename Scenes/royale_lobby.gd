@@ -1,4 +1,8 @@
 extends Control
+
+# 本机服务器一键启停(同目录 Cyancular Ruins Server.exe)。preload 而非全局类名,
+# 避免新脚本未进全局类缓存时整份场景解析失败(加载失败=整屏蓝屏的教训)。
+const LocalServer := preload("res://Globals/local_server.gd")
 # 大乱斗大厅(RoyaleServer 分支):建房(公开/私密+邀请码+人数上限)/公开房间列表点击加入/
 # 等待室实时成员列表 + 房主开局。自建服务器(RoyaleHost 死斗 worker)。
 # 协议走 NetBusExt(royale_* 系列);开局复用原版 go_match(role,port) 转连 worker。
@@ -64,11 +68,13 @@ func _ready() -> void:
 
 	# 大乱斗协议在 NetBusExt(自建服务端才有):原作者云服不支持 → 默认本机,不默认云地址
 	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址(大乱斗=自建服)", "127.0.0.1")
-	var addr_hint := _label("大乱斗需自建服务器:开服方双击 start_server.bat,其他人填其 IP;原作者云服(默认地址)不支持大乱斗", 18, Color(0.75, 0.8, 0.85))
+	var addr_hint := _label("大乱斗需自建服务器:点「启动/重启本机服务器」即可本机开服(同目录需有 Cyancular Ruins Server.exe);朋友加入填开服机 IP(异地用 VPN 组网);原作者云服不支持大乱斗", 18, Color(0.75, 0.8, 0.85))
 	addr_hint.position = Vector2(60, 160)
 	addr_hint.size = Vector2(900, 26)
 	add_child(addr_hint)
 	var refresh := _make_button(Vector2(330, 114), "刷新列表", _on_refresh_pressed)
+	var srv_btn := _make_button(Vector2(540, 114), "启动/重启本机服务器", _on_local_server_pressed)
+	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
 
 	var cap := _label("公开房间列表(点击直接加入)", 26, Color(0.55, 0.95, 1.0))
 	cap.position = Vector2(60, 186)
@@ -339,6 +345,20 @@ func _request_list(msg: String) -> void:
 
 func _on_refresh_pressed() -> void:
 	_request_list("刷新房间列表…")
+
+
+# 一键启动/重启本机服务器:杀旧实例 → 拉起同目录服务端 exe → 强制重连 127.0.0.1 刷新列表。
+func _on_local_server_pressed() -> void:
+	_status.text = "正在启动/重启本机服务器…"
+	var msg: String = await LocalServer.restart()
+	_status.text = msg
+	if not msg.begins_with("本机服务器"):
+		return   # 找不到 exe 等失败:保留提示,不动现有连接
+	NetBus.stop()
+	_connected = false
+	_connected_addr = ""
+	_addr_edit.text = "127.0.0.1"
+	_request_list("本机服务器已就绪,正在获取房间列表…")
 
 func _on_create_pressed() -> void:
 	var disabled: Array = []

@@ -1,35 +1,62 @@
 @echo off
-chcp 936 >nul
-rem NOTE: keep this file ANSI/GBK(CP936) + CRLF. Saving as UTF-8 or LF-only will make
-rem cmd mis-parse multi-line blocks (Chinese in echo/for) -> window flashes and exits.
+rem One-click pack: exports BOTH the game client and the dedicated server exe.
+rem - client exe  : "The Cyancular Ruins_<branch>_<timestamp>.exe"  (versioned name)
+rem - server exe  : "Cyancular Ruins Server.exe" in repo root (fixed name, always
+rem                 the newest; the client's in-game "start/restart local server"
+rem                 button looks for exactly this file next to the client)
+rem               + a versioned copy archived to the history folder
+rem - old exes in repo root are moved to the history folder first.
+rem ASCII-only + CRLF on purpose: cmd mis-parses UTF-8 batch content. The history
+rem folder name is Chinese, so it is built at runtime via PowerShell char codes.
 cd /d %~dp0
 
-rem -- 取当前分支名 --
+rem -- branch name / timestamp --
 for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD') do set BRANCH=%%b
-
-rem -- 取时间码(yyyyMMdd_HHmm) --
 for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"') do set TS=%%t
 
-set OUT=The Cyancular Ruins_%BRANCH%_%TS%.exe
-echo 正在打包: %OUT%
+rem -- history folder name contains Chinese; it is built at runtime via char codes below --
+for /f %%h in ('powershell -NoProfile -Command "[string]::Join('',@([char]0x5386,[char]0x53F2))"') do set HIST=%%h
+set HISTDIR=..\%HIST%exe
 
-rem -- 旧包归档:导出前把现有 exe 全部移入 上一级\历史exe(永远只保留最新) --
-if not exist "..\历史exe" mkdir "..\历史exe"
+set OUT=The Cyancular Ruins_%BRANCH%_%TS%.exe
+set SRV=Cyancular Ruins Server.exe
+set SRVARC=Cyancular Ruins Server_%BRANCH%_%TS%.exe
+
+echo Packing client: %OUT%
+echo Packing server: %SRV% (archived as %SRVARC%)
+
+rem -- archive old exes before exporting (root keeps only the newest pair) --
+if not exist "%HISTDIR%" mkdir "%HISTDIR%"
 for /f "delims=" %%f in ('dir /b /a-d "The Cyancular Ruins"*.exe 2^>nul') do (
-	move /y "%%f" "..\历史exe\" >nul
+	move /y "%%f" "%HISTDIR%\" >nul
+)
+for /f "delims=" %%f in ('dir /b /a-d "Cyancular Ruins Server"*.exe 2^>nul') do (
+	move /y "%%f" "%HISTDIR%\" >nul
 )
 
-rem -- 导出。用 console 版 Godot:批处理会等待它结束,errorlevel 才可靠
-rem    (win64.exe 是 GUI 子系统,cmd 不等待,脚本会瞬间跑完且无法判断成败) --
+rem -- export client. Console Godot so cmd waits and errorlevel is reliable. --
 "C:\Godot\Godot_v4.7.1-stable_win64_console.exe" --headless --path . --export-release "Windows Desktop" "%OUT%"
 if errorlevel 1 (
-	echo 打包失败!常见原因:游戏正在运行占用 exe / 导出预设名不对。
+	echo CLIENT pack failed! Common causes: the game is running / preset name mismatch.
 	pause
 	exit /b 1
 )
 
+rem -- export dedicated server (same branch, same content as the client) --
+"C:\Godot\Godot_v4.7.1-stable_win64_console.exe" --headless --path . --export-release "Dedicated Server" "%SRV%"
+if errorlevel 1 (
+	echo SERVER pack failed! Common causes: server exe is running / preset name mismatch.
+	pause
+	exit /b 1
+)
+
+rem -- keep a versioned copy of the server in the history folder --
+copy /y "%SRV%" "%HISTDIR%\%SRVARC%" >nul
+
 echo.
-echo 打包完成: %OUT%
-echo 旧版本已归档至: %~dp0..\历史exe
-echo 提示:进游戏后「版本信息」面板可核对分支名与提交序号。
+echo Done.
+echo   client: %OUT%
+echo   server: %SRV%   (archived copy: %SRVARC%)
+echo Old exes moved to: %HISTDIR%
+echo Tip: in game, the lobby pages have a "start/restart local server" button.
 pause

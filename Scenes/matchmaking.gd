@@ -1,4 +1,8 @@
 extends Control
+
+# 本机服务器一键启停(同目录 Cyancular Ruins Server.exe)。preload 而非全局类名,
+# 避免新脚本未进全局类缓存时整份场景解析失败(royale_lobby 蓝屏同款教训)。
+const LocalServer := preload("res://Globals/local_server.gd")
 # 匹配场景:建房 / 加入 / 房间列表(点击即加入)。
 # 连上大厅(默认 120.53.107.140:7777)后,「IP 右侧 刷新」列出全部房间(方块=房间号+人数,
 # 未满优先排前;点击方块直接加入)。点入后由大厅配对发 go_match → 转连该局 worker。
@@ -30,6 +34,14 @@ func _ready() -> void:
 	refresh.size = Vector2(90, 36)
 	refresh.pressed.connect(_on_refresh_pressed)
 	add_child(refresh)
+	# 一键本机开服:1v1 与大乱斗共用同目录的 Cyancular Ruins Server.exe
+	var srv_btn := Button.new()
+	srv_btn.text = "启动/重启本机服务器"
+	srv_btn.position = Vector2(432, 114)
+	srv_btn.size = Vector2(200, 48)
+	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
+	srv_btn.pressed.connect(_on_local_server_pressed)
+	add_child(srv_btn)
 
 	var name_le := _make_line_edit(Vector2(60, 60), "昵称(头上显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
@@ -294,6 +306,22 @@ func _join_code(code: String) -> void:
 func _on_refresh_pressed() -> void:
 	_auto_refreshed = false
 	_request_list("刷新房间列表…")
+
+
+# 一键启动/重启本机服务器(与大乱斗大厅同款):杀旧实例 → 拉起同目录服务端 exe →
+# 强制重连 127.0.0.1 刷新列表。协程,按钮回调内 await。
+func _on_local_server_pressed() -> void:
+	_status.text = "正在启动/重启本机服务器…"
+	var msg: String = await LocalServer.restart()
+	_status.text = msg
+	if not msg.begins_with("本机服务器"):
+		return   # 找不到 exe 等失败:保留提示,不动现有连接
+	NetBus.stop()
+	_connected = false
+	_connected_addr = ""
+	_addr_edit.text = "127.0.0.1"
+	_auto_refreshed = false
+	_request_list("本机服务器已就绪,正在获取房间列表…")
 
 func _request_list(msg: String) -> void:
 	_with_lobby(func() -> void:
