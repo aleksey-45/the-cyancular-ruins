@@ -162,7 +162,7 @@ func _build_create_panel() -> void:
 	wgrid.add_theme_constant_override("h_separation", 10)
 	wgrid.add_theme_constant_override("v_separation", 6)
 	vb.add_child(wgrid)
-	for slot in [1, 2, 3, 4, 5]:
+	for slot: int in [1, 2, 3, 4, 5]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
 		var slot_i := slot
 		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
 				22, func(on: bool) -> void:
@@ -496,4 +496,7 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
 	PvpSession.spawn = spawn
 	PvpSession.map_path = map_path
-	get_tree().change_scene_to_file("res://Scenes/royale_game.tscn")
+	# RPC 在 NetBus.poll 调用栈内到达(worker→客户端 match_start);直接在栈内切场景会
+	# 在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误(与 go_match 同款,曾实测)。
+	# 延迟到帧末再切;改版后大乱斗建房→加入→开局→进图全链路须重测。
+	get_tree().call_deferred("change_scene_to_file", "res://Scenes/royale_game.tscn")
