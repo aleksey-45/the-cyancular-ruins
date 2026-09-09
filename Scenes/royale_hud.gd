@@ -95,6 +95,12 @@ func _ready() -> void:
 	_ping_label.text = "延迟 -- ms"
 	add_child(_ping_label)
 
+	# ── 按键提示(左下角):自杀脱困 ──
+	var hint := _make_label(20, Color(0.7, 0.75, 0.8, 0.85))
+	hint.text = "K = 自杀脱困(卡住时)"
+	hint.position = Vector2(16, 1396)
+	add_child(hint)
+
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	_set_broadcast(true, "大乱斗", "等待开局…")
@@ -148,6 +154,7 @@ func _on_round_state(data: Dictionary) -> void:
 	var names: Dictionary = data.get("names", {})
 	var alive: Dictionary = data.get("alive", {})
 	var left: Array = data.get("left", [])
+	var deaths: Dictionary = data.get("deaths", {})
 	# ── 排行榜:按击杀降序 ──
 	for c in _board_vbox.get_children():
 		if c != _board_title and c != _timer_label:
@@ -155,7 +162,8 @@ func _on_round_state(data: Dictionary) -> void:
 	var rows: Array = []
 	for role_s in names:
 		rows.append({"role": int(role_s), "name": str(names[role_s]),
-				"kills": int(scores.get(int(role_s), 0))})
+				"kills": int(scores.get(int(role_s), 0)),
+				"deaths": int(deaths.get(int(role_s), 0))})
 	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		if a["kills"] != b["kills"]:
 			return a["kills"] > b["kills"]
@@ -172,7 +180,7 @@ func _on_round_state(data: Dictionary) -> void:
 			tag = "复活中"
 			col = COLOR_DEAD if not is_me else COLOR_ME
 		var row := _make_label(24, col)
-		row.text = "%d. %s   击杀 %d   %s" % [i + 1, e["name"], e["kills"], tag]
+		row.text = "%d. %s   击杀 %d  阵亡 %d  %s" % [i + 1, e["name"], e["kills"], e["deaths"], tag]
 		_board_vbox.add_child(row)
 	# 底板高度随行数自适应(标题 + 计时 + N 行 + 内边距)
 	_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + 14

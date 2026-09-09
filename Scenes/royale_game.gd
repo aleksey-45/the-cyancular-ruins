@@ -253,6 +253,14 @@ func _on_kill_event(killer: int, victim: int) -> void:
 	elif victim == PvpSession.role:
 		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 
+# K = 自杀脱困:卡进墙/夹缝时主动放弃生命,走服务器权威 2s 复活(不计入任何人击杀)。
+func _unhandled_input(event: InputEvent) -> void:
+	if _match_ended or _local == null:
+		return
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_K:
+		NetBusExt.rpc_id(1, "suicide_request")
+
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	if _world == null:
 		TileDefs.damage_tile(cell, 999999, "explosion")

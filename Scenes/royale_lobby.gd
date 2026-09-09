@@ -155,6 +155,25 @@ func _build_create_panel() -> void:
 	_max_label = _label("4 人", 24, Color(0.95, 0.95, 0.85))
 	mrow.add_child(_max_label)
 
+	# 一局限时(分钟):房主可调 1~15 分钟(默认 5);随房主报到 opts 带入 RoyaleHost
+	var trow := HBoxContainer.new()
+	trow.add_theme_constant_override("h_separation", 12)
+	vb.add_child(trow)
+	trow.add_child(_label("一局限时:", 24))
+	var tslider := HSlider.new()
+	tslider.min_value = 1.0
+	tslider.max_value = 15.0
+	tslider.step = 1.0
+	tslider.value = Settings.royale_match_min
+	tslider.custom_minimum_size = Vector2(300, 30)
+	trow.add_child(tslider)
+	var tlabel := _label("%d 分钟" % int(Settings.royale_match_min), 24, Color(0.95, 0.95, 0.85))
+	trow.add_child(tlabel)
+	tslider.value_changed.connect(func(v: float) -> void:
+		Settings.royale_match_min = v
+		Settings.save()
+		tlabel.text = "%d 分钟" % int(v))
+
 	vb.add_child(_label("禁用武器(房主生效,开局带进对局):", 24))
 	# 2 列网格 + 定尺寸剪影(横排会溢出屏幕)
 	var wgrid := GridContainer.new()
@@ -515,6 +534,7 @@ func _claim_role_worker(role: int) -> void:
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": false,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
+		"match_time": int(Settings.royale_match_min * 60.0),
 	})
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:

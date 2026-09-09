@@ -42,6 +42,13 @@ signal local_beam_fired(data: Dictionary)
 func beam_fired(data: Dictionary) -> void:
 	local_beam_fired.emit(data)
 
+# 客户端 → worker:自杀脱困(大乱斗卡死自救;服务器校验存活/对局中,转发给 RoyaleHost)
+signal suicide_requested(caller: int)
+
+@rpc("any_peer", "reliable")
+func suicide_request() -> void:
+	suicide_requested.emit(multiplayer.get_remote_sender_id())
+
 # ── 大乱斗大厅(自建服务器,与 1v1 大厅协议并存;RPC 名不同互不干扰)──
 # 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。
 

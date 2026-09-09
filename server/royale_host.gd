@@ -18,9 +18,11 @@ const OPEN_AREA_MIN: int = 20    # 出生可走连通区最小规模(格);密封
 const PREFER_MIN: int = 8        # 优选格不足此数才回退下一级宽松判据
 
 var _match_time := MATCH_TIME
+var _cfg_match_time := 0.0             # 房主自定义时长(秒;0=默认 MATCH_TIME)
 var _hud_sync := 0.0
 var _round_spawns: Dictionary = {}    # role -> Vector2i(开局散点,_init 摆位用)
 var _spawned_once: Dictionary = {}    # role -> true(首次摆位走散点,之后动态选复活点)
+var _deaths: Dictionary = {}          # role -> 阵亡数(排行榜展示)
 var _left: Dictionary = {}            # role -> true(中途掉线,已移出对局)
 
 static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆不刷新,够用)
@@ -37,6 +39,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		MazeGenerator.set_map_file(map_path)
 		WorldBuilder.load_grid()
 	_round_spawns = plan_spawns(role_peers.keys() + ai_roles)
+	_cfg_match_time = float(options.get("match_time", 0.0))
 	super._init(map_path, role_peers, options, ai_roles)
 
 
@@ -253,7 +256,7 @@ func _ready() -> void:
 	super._ready()
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
-	_match_time = MATCH_TIME
+	_match_time = _cfg_match_time if _cfg_match_time > 0.0 else MATCH_TIME
 	# 本局开局昵称表进 round_state(排行榜直接展示,客户端不必另配 peer_info)
 	_broadcast_round_state()
 
@@ -285,6 +288,7 @@ func _match_round_tick(delta: float) -> void:
 				if not p.is_downed() or _down_counted.get(role, false):
 					continue
 				_down_counted[role] = true
+				_deaths[int(role)] = int(_deaths.get(int(role), 0)) + 1   # 阵亡计数
 				var killer := _attributed_killer(p)
 				if killer != 0:
 					_scores[killer] = int(_scores.get(killer, 0)) + 1
@@ -365,12 +369,13 @@ func _broadcast_round_state() -> void:
 		"state": _round_state,
 		"round": 1,
 		"scores": _scores,
+		"deaths": _deaths,
 		"rounds_won": {},          # 大乱斗无局胜,占位空(客户端 HUD 兼容读取)
 		"timer": ceilf(_match_time) if _round_state == RoundState.PLAYING else _round_timer,
 		"names": names,
 		"alive": alive,
 		"left": _left.keys(),
-		"match_time": int(MATCH_TIME),
+		"match_time": int(_match_time),
 	}
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
@@ -428,3 +433,19 @@ func _respawn_player(role: int) -> void:
 	if p != null and is_instance_valid(p):
 		p.remove_meta("last_damager")
 		p.remove_meta("last_damager_time")
+
+# ── 自杀脱困(K 键:royale_game 客户端 → NetBusExt.suicide_request → server_main 转发)──
+# 异常卡死(嵌墙/夹缝)时主动放弃生命:走正常倒地边沿 → 2s 复活;先清 last_damager 归因,
+# 自杀不计入任何人击杀(哪怕刚被人打过),只累积自己的阵亡数。
+func request_suicide_role(role: int) -> void:
+	if _round_state != RoundState.PLAYING:
+		return
+	var p: Node2D = players.get(int(role))
+	if p == null or not is_instance_valid(p) or p.is_downed():
+		return
+	for m in ["last_damager", "last_damager_time"]:
+		if p.has_meta(m):
+			p.remove_meta(m)
+	var combat: Node = p.get_node_or_null("Combat")
+	if combat != null and combat.has_method("force_down"):
+		combat.force_down()

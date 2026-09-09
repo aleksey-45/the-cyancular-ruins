@@ -117,6 +117,7 @@ func _run_worker(port: int) -> void:
 	NetBus.role_claimed.connect(_on_role_claimed)
 	NetBusExt.player_options_received.connect(_on_player_options)
 	NetBus.peer_left.connect(_on_peer_left)
+	NetBusExt.suicide_requested.connect(_on_suicide_request)
 	if _royale:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d)" % [_expected_players, port])
 	else:
@@ -143,6 +144,16 @@ func _on_player_options(caller: int, opts: Dictionary) -> void:
 	for r in _claims:
 		if _claims[r] == caller:
 			_claim_opts[r] = opts
+			return
+
+# 自杀脱困(大乱斗):caller → role → RoyaleHost(存活/对局中校验在那边)
+func _on_suicide_request(caller: int) -> void:
+	if not _royale or _host == null:
+		return
+	for r in _claims:
+		if _claims[r] == caller:
+			if _host.has_method("request_suicide_role"):
+				_host.request_suicide_role(int(r))
 			return
 
 func _on_role_claimed(caller: int, role: int, player_name: String) -> void:

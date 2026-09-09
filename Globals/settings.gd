@@ -34,6 +34,7 @@ var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生�
 var pvp_show_enemy_hp: bool = true      # 显示敌方头顶血条
 var pvp_disabled_weapons: Array[int] = []  # 禁用武器(服务器生效项,房主值优先)
 var pvp_color_hue: float = 0.0          # 自己角色色相旋转(度;0=默认青色)
+var royale_match_min: float = 5.0       # 大乱斗一局限时(分钟,建房页可调,随房主报到生效)
 var pvp_show_minimap: bool = true       # 小地图
 var pvp_minimap_show_enemy: bool = true # 小地图显示敌方位置
 
@@ -120,6 +121,7 @@ func save() -> void:
 	cf.set_value("pvp", "show_enemy_hp", pvp_show_enemy_hp)
 	cf.set_value("pvp", "disabled_weapons", pvp_disabled_weapons)
 	cf.set_value("pvp", "color_hue", pvp_color_hue)
+	cf.set_value("royale", "match_min", royale_match_min)
 	cf.set_value("pvp", "show_minimap", pvp_show_minimap)
 	cf.set_value("pvp", "minimap_show_enemy", pvp_minimap_show_enemy)
 	for action in REMAPPABLE_ACTIONS:
@@ -150,6 +152,7 @@ func load_settings() -> void:
 	pvp_show_enemy_hp = bool(cf.get_value("pvp", "show_enemy_hp", true))
 	pvp_disabled_weapons.assign(cf.get_value("pvp", "disabled_weapons", []))
 	pvp_color_hue = float(cf.get_value("pvp", "color_hue", 0.0))
+	royale_match_min = clampf(float(cf.get_value("royale", "match_min", 5.0)), 1.0, 30.0)
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
