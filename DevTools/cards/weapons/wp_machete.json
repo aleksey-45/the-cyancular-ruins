@@ -1,18 +1,18 @@
 {
 	"appearance": "宽背厚刃的开山砍刀,刃面靠刀尖处有两道锯齿缺口,木柄缠黑色胶带,刀身冷灰带划痕,护手是黄铜色圆盘(像素画突出厚背+缺口轮廓)",
-	"attack_interval": 0.6,
+	"attack_interval": 0.5,
 	"bullet_gravity": 0.0,
 	"bullet_range": 600.0,
 	"bullet_size": 1.0,
 	"bullet_speed": 900.0,
 	"card_type": "weapon",
 	"created_at": "2026-09-06T13:26:32",
-	"damage": 25,
-	"description": "近战冷兵器:扇形横扫,可击碎树叶/树干,挥空有明显硬直。定位=巷战与省弹流;无弹夹无换弹。先出设计稿与剪影,槽位未定。",
+	"damage": 30,
+	"description": "近战冷兵器:扇形横扫,可击碎树叶/树干,挥空有明显硬直。定位=巷战与省弹流;无弹夹无换弹。先出设计稿与剪影,槽位未定。整体美术风格和配色应尽量贴合原作其他武器配色",
 	"full_auto": false,
 	"heavy_aim": false,
 	"id": "wp_machete",
-	"impact": 120,
+	"impact": 120.0,
 	"jump_penalty": 1.0,
 	"kind": "melee",
 	"kind_params": {
@@ -24,10 +24,10 @@
 	"name": "开山砍刀",
 	"pellet_count": 1,
 	"reload_time": 0.0,
-	"rev": 1,
-	"schema_version": 1,
+	"rev": 16,
+	"schema_version": 1.0,
 	"slot": 0,
 	"spread_deg": 0.0,
 	"tier": "medium",
-	"updated_at": "2026-09-06T13:26:32"
+	"updated_at": "2026-09-09T21:45:50"
 }
