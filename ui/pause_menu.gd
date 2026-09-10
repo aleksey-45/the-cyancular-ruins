@@ -43,12 +43,13 @@ func _ready() -> void:
 	vb.add_theme_constant_override("separation", 22)
 	_root.add_child(vb)
 
-	# 字号一律取 16 的倍数(本项目的像素字体只在 16 倍数下像素锐利,见 ui/hud.gd)
-	vb.add_child(_label("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64, Color(0.55, 0.95, 1.0)))
-	var resume := _button("继 续 游 戏", 32)
+	# 字号一律取 16 的倍数(本项目的像素字体只在 16 倍数下像素锐利,见 ui/ui_factory.gd 文件头)
+	# 控件工厂(字体/字号/点击音纪律)已抽到 UiFactory,与其余菜单共用同一份不变量
+	vb.add_child(UiFactory.label("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64, Color(0.55, 0.95, 1.0)))
+	var resume := UiFactory.button("继 续 游 戏", 32)
 	resume.pressed.connect(close)
 	vb.add_child(resume)
-	var menu := _button("回 到 主 菜 单", 32)
+	var menu := UiFactory.button("回 到 主 菜 单", 32)
 	menu.pressed.connect(go_menu)
 	vb.add_child(menu)
 
@@ -99,30 +100,5 @@ func go_menu() -> void:
 	# → 走退役挂起式切换,见 Level0.safe_change_scene
 	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
 
-
-# ── 控件工厂(像素风格)──
-func _style(c: Control, font_size: int) -> void:
-	c.add_theme_font_size_override("font_size", font_size)
-	var pf: FontFile = load("res://assets/fonts/less_perfect_dos_vga.ttf")
-	if pf != null:
-		c.add_theme_font_override("font", pf)
-
-
-func _label(text: String, size: int, color: Color = Color.WHITE) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.add_theme_color_override("font_color", color)
-	_style(l, size)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
-
-
-func _button(text: String, size: int) -> Button:
-	var b := Button.new()
-	b.text = text
-	_style(b, size)
-	b.custom_minimum_size = Vector2(420, 64)
-	# 点击音不在这里挂:两个按钮的 handler(close/go_menu)各自会响一声,而 ESC 走的也是同两条
-	# 路径 —— 这里再挂一次就是同帧同调两个播放器("ui" 不在 Sfx.PITCH_VARIATION 里,音高也一样),
-	# 是能听出来的双响。统一由 open/close/go_menu 三个状态转移出声(键盘与点击同源)。
-	return b
+# 控件工厂(_style/_label/_button)已搬到 ui/ui_factory.gd 的 UiFactory —— 字体/字号/点击音
+# 纪律现在只有一份实现,本文件不再自带副本。
