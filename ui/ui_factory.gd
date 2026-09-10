@@ -16,25 +16,16 @@ extends RefCounted
 #      (所以 button() 里的 custom_minimum_size 保持原值,别"顺手对齐"。)
 #
 # 纯静态、无实例状态、不引 autoload:可被任何场景/工具直接调用。
-# 注:core/pixel_font.gd(PixelFont.shared)是同一份字体配置的另一个共享口,给世界空间
-# 文本(world_label 等)用;本工厂是 UI 侧的入口,两者暂未合并(合并要动 core,超出本次范围)。
-
-const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
-
-# 加载一次、全 UI 共享(load 本身返回共享缓存实例,这里再缓存一次省掉每控件的 load 开销)
-static var _font: FontFile = null
+# 注:字体配置的唯一来源是 core/pixel_font.gd 的 PixelFont.shared()(世界空间文本也用同一份);
+# 本工厂只负责"怎么用字体建控件",不重复实现字体配置。
 
 
 # 像素字体:关抗锯齿 / 微调 / 子像素定位,整数倍字号下保持像素锐利。
 static func pixel_font() -> FontFile:
-	if _font == null:
-		var f := load(FONT_PATH) as FontFile
-		if f != null:
-			f.antialiasing = TextServer.FONT_ANTIALIASING_NONE
-			f.hinting = TextServer.HINTING_NONE
-			f.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
-		_font = f
-	return _font
+	# 字体配置的唯一来源是 core/pixel_font.gd 的 PixelFont.shared()
+	# (它负责关抗锯齿/微调/子像素;load 返回共享实例,故全局一致)。
+	# 本工厂只负责"怎么用字体建控件",不重复实现字体配置。
+	return PixelFont.shared()
 
 
 # 给任意 Control 套上像素字体 + 字号(size 必须是 16 的倍数,见文件头)
