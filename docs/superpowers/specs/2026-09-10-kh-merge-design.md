@@ -133,6 +133,9 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - 新增 `scenes/settings_menu.tscn/gd`（键位重映射 / 音量 / 滚轮切枪 / 换弹开关；**删 old_ui 与难度**）
 - `scenes/matchmaking.tscn/gd` 换 KH 版（含大乱斗入口、连接健壮性、一键起本服）
 - `scenes/player/player.gd`：「倒地 R」由 `reload_current_scene()` 改为 `Level0.restart_single()`（**仅单机**；PvP 倒地仍交给服务器权威复活，沿用 main 的 `not Level0.pvp_mode` 守卫）。**该项原列在 L3，因依赖本层新增的 `restart_single()` 而移到这里**
+- ⚠️ **carry-forward（本层新引入的残弹/滚轮交互，做 `restart_single()` / `restart_at()` 与滚轮开关时必须一并处理）**：
+  - **(a) `restart_at` / `restart_single` 必须清 `_mag_state`**（或至少不得与 `_restore_mag.call_deferred` 抢 `mag_ammo`）：`weapon_component.gd:167` 的 `_restore_mag.call_deferred` 在**帧末** flush，排在调用方**同帧同步**写的 `w.mag_ammo = w.mag_size` 之后 → 会用复活前的旧残弹把"复活满弹"覆盖掉（复活了仍只有 3 发，且无报错）。清 `weapon_component._mag_state` 是最省事的对齐方式。
+  - **(b) 打开滚轮开关（`Settings.wheel_switch`）的同时必须修 `weapon_component.gd:148` 一带残弹记账处的 `is_inside_tree()` 守卫**：同帧两次 `equip()`（一帧内收到两个滚轮事件即可）会把旧枪"还没 `_ready`（`mag_ammo` 为 0）"的残弹记进 `_mag_state`，再被 `_restore_mag` 覆盖回新枪 → **残弹被抹成 0**。今天不可达**仅因为**该开关默认 `false` 且滚轮 UI 到本层才做出来（L3 探针 `kh_l3_probe.gd` 已在注释里记下这个竞态，并刻意不制造该场景）。
 
 ### L5 大乱斗
 
@@ -148,7 +151,9 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 
 - `scenes/pvp_client.gd`：以 main 的 C2 版本为基底，**只做加法**接入 KH 的反馈/选项/血条/小地图/拖尾/暂停菜单/`safe_change_scene`；`hit_confirm` / `match_options` / `peer_hues` 经 `NetBusExt` 消费；**`beam_fired` 不在此列**——main 现役激光链路走 `NetBus`（发送端 `server/match_host.gd:391` 的 `NetBus.rpc_id(..., "beam_fired", ...)`，接收端 `scenes/pvp_client.gd:79` 的 `NetBus.local_beam_fired`），`core/net_bus_ext.gd` 里的同名 RPC 是 KH 遗留重复。**L6 必须沿用 main 现役 `NetBus`，不得启用 `NetBusExt.beam_fired`**；若确要启用，必须同步把 `match_host` 的发送端一起迁过去，否则收发落在不同节点 = 对手端激光视觉静默 no-op
 - 服务器渲染保底路径（`server_rendered`）保持可用
-- **禁用武器闸门的 PvP 侧唯一调用点**：按服务器下发的 `match_options` 调 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
+- **禁用武器闸门在 PvP 侧必须两端都接（不是「唯一调用点」）**：`server/match_host.gd`（按 role）与 `scenes/pvp_client.gd` **两处**各调一次 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`，且**必须是同一份** `match_options`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
+  - **只接客户端 = C2 永久分歧（必须按上面两端接）**：`pvp_client.gd:153` 把 `src.get_weapon_slot_pressed()` **无条件**打进输入包（不管本地闸门是否拒绝）；客户端 `weapon_component.gd:140-141` 对禁用槽 `Sfx.play("deny"); return`（本地留在旧槽）；服务器若没同步禁用表（`set_enabled_slots` 在 `server/` 侧无调用方），`equip("1")` 会**成功** → 服务器在槽 1、客户端在槽 3；随后每帧 `restore_state`（`player.gd:508`）又去 `equip("1")` → 再次被拒 → **每帧重试、永久错位**（冷却/散布/伤害全不对，且看不到任何报错）。
+  - **不要**改 `core/net_bus_ext.gd` 或任何逐字节照搬的文件来「顺手」接这个闸门。
 
 ### L7 工具、探针与收尾
 
