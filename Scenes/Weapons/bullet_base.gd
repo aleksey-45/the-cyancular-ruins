@@ -185,10 +185,19 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
+	# 联机时爆炸位置以服务器权威为准:射手本地预测弹道经多次弹开后与服务器模拟必然分叉,
+	# 本地起爆点不可信(实测"目标在视觉爆心却吃不满伤")。客户端不再本地起爆,视效一律由
+	# 服务器广播的 NetBusExt.local_explosion_event 驱动;伤害始终只在服务器结算,判定不变。
+	var peer := multiplayer.multiplayer_peer
+	var in_net: bool = peer != null and not (peer is OfflineMultiplayerPeer)
+	if in_net and not multiplayer.is_server():
+		return
 	Sfx.play("explosion")
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
+	if in_net:
+		NetBusExt.explosion_event.rpc(global_position, explosion_radius)
 	if apply_damage:
 		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)

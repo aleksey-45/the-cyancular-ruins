@@ -10,7 +10,15 @@ extends Node
 signal local_match_options(opts: Dictionary)      # worker → 客户端:生效对局选项(房主下发)
 signal local_peer_hues(hues: Dictionary)          # worker → 客户端:双方自选角色颜色 {role -> 色相}
 signal local_hit_confirm(shooter_role: int, victim_role: int)  # worker → 射手客户端:你的子弹命中了玩家
+signal local_explosion_event(pos: Vector2, radius: float)      # worker → 客户端:权威爆炸位置(视效广播)
 signal player_options_received(caller: int, opts: Dictionary)  # worker:某客户端上报的本端选项
+
+# worker → 所有客户端:爆炸在权威模拟中的真实位置/半径。榴弹多次弹开后,射手本地预测
+# 弹道与服务器模拟必然分叉 → "看到的爆心"≠"判伤爆心"(实测:目标在视觉爆心却吃不满伤)。
+# 客户端所有爆炸视效一律以本事件为准,本地不再自行起爆。伤害始终只在服务器结算,本事件不影响判定。
+@rpc("authority", "reliable")
+func explosion_event(pos: Vector2, radius: float) -> void:
+	local_explosion_event.emit(pos, radius)
 
 # 客户端 → worker:本端选项(角色颜色/规则偏好)。服务器权威项以房主(role1)为准。
 @rpc("any_peer", "reliable")

@@ -82,6 +82,7 @@ func _ready() -> void:
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBusExt.local_match_options.connect(_on_match_options)
+	NetBusExt.local_explosion_event.connect(_on_explosion_event)   # 权威爆炸视效(本地预测弹道不再自行起爆)
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBusExt.local_beam_fired.connect(_on_beam_fired)
@@ -443,3 +444,14 @@ func _process(_delta: float) -> void:
 	# 对手血条贴在 ID 上方(倒地转体不影响,世界空间独立节点)
 	if _hp_bar != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_hp_bar.global_position = (_remote_replica as Node2D).global_position + Vector2(0.0, -116.0)
+
+
+# 服务器权威爆炸视效:榴弹多次弹开后本地预测与服务器模拟分叉,爆炸位置一律以广播为准
+# (伤害本就只在服务器结算;见 bullet_base._explode 与 NetBusExt.explosion_event)。
+func _on_explosion_event(pos: Vector2, _radius: float) -> void:
+	if _world == null:
+		return
+	var fx: Node = preload("res://Scenes/Weapons/explosion.tscn").instantiate()
+	fx.global_position = pos
+	_world.add_child(fx)
+	Sfx.play("explosion")
