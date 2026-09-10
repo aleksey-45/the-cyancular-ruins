@@ -54,6 +54,7 @@ func _ready() -> void:
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
+	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 
 	var pp := PostProcess.new()

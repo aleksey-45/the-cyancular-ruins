@@ -593,8 +593,30 @@ func _set_waterproof(v: int) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切。
+	# PvP:滚轮不在输入包协议里,只本地切会被快照防脱同步切回旧槽位 → 走
+	# request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
+	if Settings.wheel_switch and not combat.is_downed() \
+			and event is InputEventMouseButton and event.pressed:
+		var dir := 0
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			dir = -1
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			dir = 1
+		if dir != 0:
+			if Level0.pvp_mode:
+				weapons.request_net_cycle(dir)
+			else:
+				weapons.cycle_slot(dir)
+			return
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。
 		if not Level0.pvp_mode and event.is_action_pressed("R"):
 			get_tree().reload_current_scene()
 		return
+	# R 换弹(实验性,仅单机):站立时给当前武器上弹(倒地时 R 仍是重载场景,见上)。
+	# PvP 不开换弹(reload_active() 恒 false),故只单机生效。
+	if event.is_action_pressed("R") and Settings.reload_enabled and not Level0.pvp_mode:
+		var w := weapons.current_weapon()
+		if w != null:
+			w.start_reload()
