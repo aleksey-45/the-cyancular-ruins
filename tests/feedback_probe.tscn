@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://feedbackprobe001"]
+
+[ext_resource type="Script" path="res://tests/feedback_probe.gd" id="1"]
+
+[node name="FeedbackProbe" type="Node"]
+script = ExtResource("1")
