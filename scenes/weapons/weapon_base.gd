@@ -86,9 +86,9 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 @export var preview_time: float = 0.5
 
 # ── 换弹(实验性玩法):Settings.reload_enabled 关闭 = 旧版无限弹 ──
-# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。判据是**输入源**而非
-# Level0.pvp_mode:权威服务器进程不实例化 Level0(pvp_mode 恒 false),看它会把服务器
-# 也判成"单机" → 服务器单方面进装填、拒绝出弹 = 静默 PvP 伤害失效(见 reload_active)。
+# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。判据是 pvp_mode **与**
+# 输入源两条:只用 pvp_mode 会漏掉权威服务器(它不实例化 Level0,pvp_mode 恒 false),
+# 只用输入源会漏掉 PvP 本地客户端(本地 InputSource)—— 两者都会造成单方面停火(见 reload_active)。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
@@ -104,10 +104,15 @@ const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
 func reload_active() -> bool:
 	if not Settings.reload_enabled:
 		return false
-	# 仅本地单机:PvP 权威服务器(Level0.pvp_mode 恒 false!)
-	# 与远端副本都由网络输入源驱动,它们不进换弹模拟。
-	# 判 input_is_network 而不是 pvp_mode —— 服务器进程根本不实例化 Level0,
-	# 看 pvp_mode 会把权威模拟也判成"单机",导致服务器单方面停火(静默 PvP 伤害失效)。
+	# 仅本地单机 —— 两个判据缺一不可:
+	# ① pvp_mode:挡 **PvP 本地客户端**(C2 下它用本地 InputSource 读真实鼠标,pvp_mode=true)。
+	#    漏了它则客户端本地预测"装填中不许开火"、服务器却无限弹 → 枪哑火但人照死,手感错乱。
+	# ② input_is_network:挡 **权威服务器与远端副本**。服务器进程根本不实例化 Level0
+	#    (server/ 目录零赋值)→ pvp_mode 恒 false,只看 ① 会把权威模拟判成"单机":
+	#    服务器单方面进装填、拒绝出弹 reload_time 秒 → 不广播 bullet_spawn =
+	#    静默 PvP 伤害失效(mag_ammo/_reloading 不入 capture_state,分歧永不自愈)。
+	if Level0.pvp_mode:
+		return false
 	if player != null and player.has_method("input_is_network") and player.input_is_network():
 		return false
 	return true

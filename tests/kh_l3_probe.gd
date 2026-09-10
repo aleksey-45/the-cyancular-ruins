@@ -297,8 +297,21 @@ func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
 		player.set_input_source(prev_src)
 		_check(not player.input_is_network(), "复原本地输入源后 input_is_network() 应为假")
 
-	w.equip(stub)   # 复原:交回给桩,后续无依赖
+	# (c) PvP **本地客户端**:pvp_mode=true 但输入源是本地的(C2 下引擎自步进读真实鼠标,
+	# pvp_client.gd:49 只置 pvp_mode,本地玩家不注入 NetworkInputSource)→ 同样不许换弹。
+	# 漏这一条 = 客户端本地预测"装填中不许开火"、服务器无限弹 → 枪哑火但人照死;
+	# 也违反 player.gd「PvP 不开换弹(reload_active() 恒 false)」的既有约定。
+	w.equip(stub)   # 先复原成本地输入源,再验 PvP 客户端这一格
 	net_stub.queue_free()
+	Level0.pvp_mode = true
+	_check(not w.reload_active(),
+			"PvP 客户端(pvp_mode=true + 本地输入源)reload_active() 仍为真(本地预测会单方面哑火)")
+	w.mag_ammo = 3
+	w.start_reload()
+	_check(not w.is_reloading(), "PvP 客户端 start_reload() 仍进入装填")
+	Level0.pvp_mode = false
+	_check(w.reload_active(), "复位 pvp_mode=false 后单机换弹应恢复(reload_active()=true)")
+
 	w.queue_free()
 	stub.queue_free()
 	await get_tree().process_frame
