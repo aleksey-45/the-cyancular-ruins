@@ -493,4 +493,7 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
 	PvpSession.spawn = spawn
 	PvpSession.map_path = map_path
-	get_tree().change_scene_to_file("res://Scenes/pvp_game.tscn")
+	# RPC 在 NetBus.poll 调用栈内到达(worker→客户端 match_start);直接在栈内切场景会
+	# 在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误(进图蓝屏/卡退)。
+	# 延迟到帧末再切,脱离 poll 栈(大乱斗侧同款;本分支整合时曾丢失,现补回)。
+	get_tree().call_deferred("change_scene_to_file", "res://Scenes/pvp_game.tscn")
