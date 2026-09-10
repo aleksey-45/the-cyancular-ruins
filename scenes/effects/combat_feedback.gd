@@ -131,8 +131,8 @@ func _ready() -> void:
 	_kill_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_kill_label.add_theme_font_override("normal_font", load(PIXEL_FONT))
 	_kill_label.add_theme_font_override("bold_font", load(PIXEL_FONT))
-	_kill_label.add_theme_font_size_override("normal_font_size", 68)
-	_kill_label.add_theme_font_size_override("bold_font_size", 68)
+	_kill_label.add_theme_font_size_override("normal_font_size", 64)   # 16 倍数(像素锐利)
+	_kill_label.add_theme_font_size_override("bold_font_size", 64)
 	_kill_label.add_theme_color_override("default_color", Color(0.55, 0.95, 1.0))   # 标题青
 	_kill_label.add_theme_constant_override("outline_size", 16)
 	_kill_label.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12, 0.95))
@@ -163,7 +163,7 @@ func _ready() -> void:
 	_streak_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_streak_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_streak_label.add_theme_font_override("font", load(PIXEL_FONT))
-	_streak_label.add_theme_font_size_override("font_size", 44)
+	_streak_label.add_theme_font_size_override("font_size", 48)   # 16 倍数(像素锐利)
 	_streak_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.43))
 	_streak_label.add_theme_constant_override("outline_size", 10)
 	_streak_label.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12, 0.95))
