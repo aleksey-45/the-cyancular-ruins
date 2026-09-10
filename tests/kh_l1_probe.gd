@@ -1,7 +1,10 @@
 extends Node
 
 # KH 合并 L1 探针(场景模式:autoload 需已实例化,不能用 -s 跑)。
-# 跑法: Godot_console --headless --path . res://tests/kh_l1_probe.tscn
+# 跑法: Godot_console --headless --path . --quit-after 300 res://tests/kh_l1_probe.tscn
+# (--quit-after 是安全网:本脚本引用 Settings/NetBusExt 等 autoload 标识符,若某个 autoload
+#  被从 project.godot 删掉,脚本会编译失败 → 场景加载成无脚本根节点 → 命令无输出挂死。
+#  有了它最坏只是超时退出。)
 
 const REQUIRED_AUTOLOADS := ["GameParameters", "NetBus", "NetBusExt", "Settings"]
 const NETBUS_EXT_RPCS := [
@@ -60,10 +63,13 @@ func _ready() -> void:
 		if "disabled_weapons" not in ro_src:
 			failures.append("core/run_options.gd 缺 disabled_weapons")
 	var st_src := _read_res("res://core/settings.gd")
-	if "old_ui" in st_src:
-		failures.append("core/settings.gd 仍含 old_ui")
-	if "sp_difficulty" in st_src:
-		failures.append("core/settings.gd 仍含 sp_difficulty")
+	if st_src == "":
+		failures.append("core/settings.gd 读不到")
+	else:
+		if "old_ui" in st_src:
+			failures.append("core/settings.gd 仍含 old_ui")
+		if "sp_difficulty" in st_src:
+			failures.append("core/settings.gd 仍含 sp_difficulty")
 
 	# 4) NetBusExt 扩展 RPC 与信号齐
 	for m in NETBUS_EXT_RPCS:
@@ -88,9 +94,15 @@ func _ready() -> void:
 	if Sfx._stream("kill") == null or Sfx._stream("hit") == null:
 		failures.append("Sfx 音效流生成失败")
 
-	# 7) LocalServer 类可解析
-	if LocalServer == null:
-		failures.append("LocalServer 未解析")
+	# 7) LocalServer 是 class_name(非 autoload):查全局类缓存,验它真的注册成功了
+	# (原先写 `if LocalServer == null` 是编译期恒假的死断言,永远不触发)
+	var found_local_server := false
+	for entry in ProjectSettings.get_global_class_list():
+		if str(entry.get("class", "")) == "LocalServer":
+			found_local_server = true
+			break
+	if not found_local_server:
+		failures.append("LocalServer 未注册进全局类缓存(应来自 res://core/local_server.gd)")
 
 	if failures.is_empty():
 		print("KH L1 PROBE: ALL-OK")
