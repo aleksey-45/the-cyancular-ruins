@@ -120,7 +120,8 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - `scenes/weapons/weapon_base.gd`：`mag_size` / `reload_time` / `mag_ammo` / `start_reload()` / `reload_active()` / `reload_progress()` / `_update_reload_pose()` + 开火闸（装填中不开火、空夹自动换弹）
 - 5 把枪 `.tscn` 补弹夹数值：手枪 12/1.0s、步枪 30/1.8s、重狙 5/2.6s、霰弹 2/2.2s、榴弹 4/2.8s；榴弹另加 `max_live_projectiles = 3`
 - `scenes/player/weapon_component.gd`：`DISPLAY_NAMES`、`silhouette(slot)`、`enabled_slots` 闸门、滚轮切枪、`_mag_state` 残弹记忆
-- `scenes/player/player.gd`：站立 R=换弹（仅单机 + `Settings.reload_enabled`）；倒地 R=`restart_single()`（**仅单机**；PvP 倒地仍交给服务器权威复活，沿用 main 的 `not Level0.pvp_mode` 守卫）
+- `scenes/player/player.gd`：站立 R=换弹（仅单机 + `Settings.reload_enabled`）+ 滚轮切枪；**倒地 R 保持 main 的 `reload_current_scene()` 不动**——`restart_single()` 是 L4 的产物，L3 引用即**编译错误**；「倒地 R = `restart_single()`」整体并入 L4（见下）
+- `scenes/level_0.gd`（**+1 行**）：建好玩家后应用禁用武器闸门 —— `$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)`。**不加这一行，本层做出的闸门就是没有调用方的死代码**（侦察发现：规格原先在 L3/L4/L5 里都没写这个调用点）
 - `ui/hud.gd` 换成 KH 版（`scenes/hud.gd` 移植过来，落 `ui/`）
 - ⚠️ **保留** `weapon_base.tick(delta)` 的物理 tick 驱动（C2 确定性）
 
@@ -131,6 +132,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - `scenes/main_menu.gd` 换 KH 版，但：删演示世界加载与 `_leave_menu` 保活；删 `_build_old_ui`；删难度行；单人进图改回普通 `change_scene_to_file`（菜单已是纯 UI）
 - 新增 `scenes/settings_menu.tscn/gd`（键位重映射 / 音量 / 滚轮切枪 / 换弹开关；**删 old_ui 与难度**）
 - `scenes/matchmaking.tscn/gd` 换 KH 版（含大乱斗入口、连接健壮性、一键起本服）
+- `scenes/player/player.gd`：「倒地 R」由 `reload_current_scene()` 改为 `Level0.restart_single()`（**仅单机**；PvP 倒地仍交给服务器权威复活，沿用 main 的 `not Level0.pvp_mode` 守卫）。**该项原列在 L3，因依赖本层新增的 `restart_single()` 而移到这里**
 
 ### L5 大乱斗
 
@@ -146,6 +148,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 
 - `scenes/pvp_client.gd`：以 main 的 C2 版本为基底，**只做加法**接入 KH 的反馈/选项/血条/小地图/拖尾/暂停菜单/`safe_change_scene`；`hit_confirm` / `match_options` / `peer_hues` 经 `NetBusExt` 消费；**`beam_fired` 不在此列**——main 现役激光链路走 `NetBus`（发送端 `server/match_host.gd:391` 的 `NetBus.rpc_id(..., "beam_fired", ...)`，接收端 `scenes/pvp_client.gd:79` 的 `NetBus.local_beam_fired`），`core/net_bus_ext.gd` 里的同名 RPC 是 KH 遗留重复。**L6 必须沿用 main 现役 `NetBus`，不得启用 `NetBusExt.beam_fired`**；若确要启用，必须同步把 `match_host` 的发送端一起迁过去，否则收发落在不同节点 = 对手端激光视觉静默 no-op
 - 服务器渲染保底路径（`server_rendered`）保持可用
+- **禁用武器闸门的 PvP 侧唯一调用点**：按服务器下发的 `match_options` 调 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
 
 ### L7 工具、探针与收尾
 
