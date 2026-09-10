@@ -4,6 +4,7 @@ extends Node2D
 # 与 pvp_client 的差别:对手是 1..N 个(按快照 roles 动态建副本),HUD 用 RoyaleHud。
 
 const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
+const LaserVisual := preload("res://Globals/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 var _last_snap_tick := 0
 var _local: Node2D = null
@@ -58,6 +59,7 @@ func _ready() -> void:
 	NetBusExt.local_match_options.connect(_on_match_options)
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
+	NetBusExt.local_beam_fired.connect(_on_beam_fired)   # 激光权威开火 → 非射手端画光束副本
 	NetBus.local_kill_event.connect(_on_kill_event)
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
@@ -231,6 +233,33 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	_world.add_child(b)
 	if Settings.pvp_show_trajectories:
 		BulletTrail.attach(b, data["color"])
+
+# 远端激光:服务器权威开火 → 非射手端画光束视觉副本(与 1v1 pvp_client 同款)。
+# 之前 royale 漏订阅 NetBusExt.local_beam_fired:别人开枪时本端收不到、画不出光束。
+func _on_beam_fired(data: Dictionary) -> void:
+	if _world == null:
+		return
+	var shooter := int(data.get("shooter_role", 0))
+	if shooter == PvpSession.role:
+		return
+	var anchor_node: Node2D = _replicas.get(shooter) as Node2D
+	if anchor_node == null or not is_instance_valid(anchor_node):
+		return
+	var raw: PackedVector2Array = data.get("pts", PackedVector2Array())
+	if raw.is_empty():
+		return
+	var anchor: Vector2 = anchor_node.global_position
+	var w := GameParameters.MAP_WIDTH
+	var h := GameParameters.MAP_HEIGHT
+	var pts := PackedVector2Array()
+	for p in raw:
+		pts.append(MazeGenerator.anchor_to_nearest(p, anchor, w, h))
+	var color: Color = data.get("color", Color(0.1, 0.35, 1.0, 1.0))
+	var half_width := float(data.get("half_width", 2.0))
+	var lifetime := float(data.get("lifetime", 0.25))
+	LaserVisual.spawn_muzzle_orb(_world, pts[0], color, half_width, lifetime)
+	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
+
 
 func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 	if _local == null:

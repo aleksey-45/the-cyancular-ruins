@@ -37,6 +37,17 @@ func clear_edges() -> void:
 	_released = 0
 	_weapon = 0
 
+# 全量复位(COUNTDOWN/局间冻结等权威停顿时用):连 held/axis 一起清,玩家彻底静止。
+# 单清边沿不够——上一包若带着方向,倒计时里玩家会照旧漂移(服务器渲染路径被快照掩盖,
+# C2 预测路径下=分歧源)。
+func reset_state() -> void:
+	_axis = 0.0
+	_held = 0
+	_aim = Vector2.ZERO
+	_weapon = 0
+	_pressed = 0
+	_released = 0
+
 func get_axis(neg: String, pos: String) -> float:
 	# 垂直轴由 held 位推导:输入包只传水平 ax,up/down 已并入 held 位掩码。
 	# 原实现一律返回水平 _axis → climb_component 的 get_axis("up","down") 在服务器上恒为 0,
@@ -78,6 +89,10 @@ func get_weapon_slot_pressed() -> int:
 
 func get_aim_dir_override() -> Vector2:
 	return _aim
+
+# 网络注入 → 服务器/远端模拟的玩家武器瞄准不读宿主机鼠标(注入 ZERO 用朝向兜底)。
+func is_network_driven() -> bool:
+	return true
 
 static func _bit(action: String) -> int:
 	match action:

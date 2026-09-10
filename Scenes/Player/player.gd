@@ -136,6 +136,9 @@ func set_server_rendered(enabled: bool) -> void:
 var _controls_locked := false
 func set_controls_locked(locked: bool) -> void:
 	_controls_locked = locked
+	# C2:本地预测必须与服务器冻结同款——服务器 COUNTDOWN/换局不喂输入,客户端若照常读真实
+	# Input 会自己走动 → PLAYING 起 ack 跳变 → 大回滚。冻结读口等效于"双端都不动"。
+	input_source.frozen = locked
 
 # PvP 客户端每帧喂服务器快照:存目标/姿态/朝向 + 权威采纳血量/防水/倒地。
 func apply_server_snapshot(data: Dictionary) -> void:
@@ -153,6 +156,94 @@ func apply_server_snapshot(data: Dictionary) -> void:
 	var downed := bool(data.get("downed", combat.is_downed()))
 	if hp != self.hp or wp != waterproof or downed != combat.is_downed():
 		apply_authoritative_state(hp, wp, downed)
+
+
+# ── C2(客户端预测 rollback)整态快照:只抓影响模拟判定的关键量 ──
+# 由 server/match_host 每 tick 采集随快照下发;客户端 PredictionRollback 比对/回滚重放用。
+# 不含:相机/后处理/音效/特效/HUD 等纯视觉量,避免纠偏时画面抖。
+func capture_state() -> Dictionary:
+	var st: Dictionary = {
+		"pos": global_position,
+		"vel": velocity,
+		"facing": facing_direction,
+		"state": state,
+		"slock": state_lock_timer,
+		"coyote": coyote_timer,
+		"jbuf": jump_buffer_timer,
+		"jcut": jump_cut_applied,
+		"squat": is_squat,
+		"charge": is_charge,
+		"ct": charge_timer,
+		"lmv_d": _last_move_dir,
+		"lmv_t": _last_move_timer,
+		"wp": waterproof,
+		"wp_t": _waterproof_timer,
+		"wp_s": _was_submerged,
+		"wp_d": _waterproof_drown_timer,
+		"clatch": climb._latched,
+		"swim": swim.in_water,
+		"hp": combat.hp,
+		"ifr": combat.iframes,
+		"down": combat.downed,
+		"knock": combat.knock_velocity,
+		"wslot": weapons._current_slot,
+	}
+	var w: WeaponBase = weapons._weapon
+	if w != null:
+		st["fire_cd"] = w.fire_cd_timer
+		st["aiming"] = w._aiming
+		st["fire_buf"] = w._fire_buffered
+		st["aim_f"] = w._aim_facing
+		st["aim_cf"] = w._current_aim_facing
+	return st
+
+func restore_state(st: Dictionary) -> void:
+	# 纯移动/姿态变量直接写回
+	global_position = st.get("pos", global_position)
+	velocity = st.get("vel", velocity)
+	facing_direction = int(st.get("facing", facing_direction))
+	state = clampi(int(st.get("state", state)), Pose.STAND, Pose.SQUAT)
+	state_lock_timer = float(st.get("slock", state_lock_timer))
+	coyote_timer = float(st.get("coyote", coyote_timer))
+	jump_buffer_timer = float(st.get("jbuf", jump_buffer_timer))
+	jump_cut_applied = bool(st.get("jcut", jump_cut_applied))
+	is_squat = bool(st.get("squat", is_squat))
+	is_charge = bool(st.get("charge", is_charge))
+	charge_timer = float(st.get("ct", charge_timer))
+	_last_move_dir = int(st.get("lmv_d", _last_move_dir))
+	_last_move_timer = float(st.get("lmv_t", _last_move_timer))
+	climb._latched = bool(st.get("clatch", climb._latched))
+	swim.in_water = bool(st.get("swim", swim.in_water))
+	# 血量/防水/倒地走权威采纳路径(处理倒地转体/复活副作用;数值无变化时不重复 emit)
+	apply_authoritative_state(int(st.get("hp", combat.hp)),
+			int(st.get("wp", waterproof)), bool(st.get("down", combat.is_downed())))
+	combat.iframes = float(st.get("ifr", combat.iframes))
+	combat.knock_velocity = st.get("knock", combat.knock_velocity)
+	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
+	_was_submerged = bool(st.get("wp_s", _was_submerged))
+	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
+	# 武器:槽位变了重建,否则直接覆盖内部决定态
+	var wslot := int(st.get("wslot", weapons._current_slot))
+	if wslot > 0 and wslot != weapons._current_slot:
+		weapons.equip(str(wslot))
+	var w: WeaponBase = weapons._weapon
+	if w != null:
+		w.fire_cd_timer = float(st.get("fire_cd", w.fire_cd_timer))
+		w._aiming = bool(st.get("aiming", w._aiming))
+		w._fire_buffered = bool(st.get("fire_buf", w._fire_buffered))
+		w._aim_facing = int(st.get("aim_f", w._aim_facing))
+		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
+	# 姿态碰撞箱按恢复的 state 启用 + 翻转同步(下帧 move_and_slide 用对的碰撞外形)
+	for pose in _coll_by_pose:
+		_coll_by_pose[pose].disabled = pose != state
+	animator.flip_h = facing_direction < 0
+	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值;
+	# 恢复位置后做一次微位移 move_and_slide(向下 0.001px,可忽略)让它在恢复位置重判接触,
+	# 供恢复后第一个物理 tick 的逻辑读到正确的地面状态。
+	var saved := velocity
+	velocity = Vector2(0.0, 0.001)
+	move_and_slide()
+	velocity = saved
 
 
 func _ready() -> void:

@@ -14,6 +14,7 @@ var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复�
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
+var _ack_seq: Dictionary = {}        # role(int) -> 已消费输入包 seq(C2 rollback 锚点,随快照回带)
 const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 模拟,本地玩家靠快照渲染,30Hz 太卡)
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
@@ -144,8 +145,20 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 			return
 
 func _physics_process(delta: float) -> void:
+	# 快照广播必须放在「消费本帧输入」之前——Player 是子节点,父先于子,本帧玩家要到
+	# MatchHost._physics_process 返回后才步进。若在消费后广播,状态还是"上一输入模拟完(S_{F-1})",
+	# 却已把 ack 指向刚消费的 C_F → ack 领先状态一拍 → 客户端拿自己的 ring[C_F](=S_C_F)
+	# 比 S_{F-1},移动中每次快照都误判分歧、画面被拉回(server-rendered 插值吸收故旧路径不暴露;
+	# C2 rollback 一比整态就现形)。放消费前:ack 仍指上 tick 消费的 C_{F-1},状态已是上一步进完的
+	# S_{F-1},配对一致(客户端期望 ack=C 配 S_C)。
+	_snapshot_accum += delta
+	if _snapshot_accum >= SNAPSHOT_INTERVAL:
+		_snapshot_accum = 0.0
+		_broadcast_snapshot()
 	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
-	# 先清上一物理帧已读的边沿,再把本帧缓冲的包统一应用(held 最新、边沿累积)。
+	# 每 tick 每 role 恰好消费一个 FIFO 包(最早的)→ 权威模拟与客户端重放 1:1 同序;
+	# 队列空 = 缺包,沿用上一包 held/轴(NetworkInputSource.clear_edges 不清 held)。
+	# ack = 刚消费包的 seq(下一 tick 快照回带,客户端 rollback 锚点)。
 	for role in input_sources:
 		var src: NetworkInputSource = input_sources[role]
 		src.clear_edges()
@@ -155,10 +168,12 @@ func _physics_process(delta: float) -> void:
 			# 玩家站在出生点不动(权威冻结;客户端是服务器渲染,自然跟随)。
 			if _round_state == RoundState.COUNTDOWN:
 				q.clear()
+				src.reset_state()   # 连 held/axis 一起清,防上一包方向让服务器玩家在冻结期漂移(C2 分歧源)
 				continue
-			for pkt in q:
+			if not q.is_empty():
+				var pkt: Dictionary = q.pop_front()
 				src.apply_packet(pkt)
-			q.clear()
+				_ack_seq[role] = int(pkt.get("seq", _ack_seq.get(role, 0)))
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
 	_adjudicate_bullets()
@@ -166,11 +181,6 @@ func _physics_process(delta: float) -> void:
 	_broadcast_pending_beams()
 	# 回合制:击杀倒地转换检测 + 状态机推进(倒计时/复活/回合结束/换边)
 	_match_round_tick(delta)
-	# 快照广播(玩家移动后)
-	_snapshot_accum += delta
-	if _snapshot_accum >= SNAPSHOT_INTERVAL:
-		_snapshot_accum = 0.0
-		_broadcast_snapshot()
 	# 分帧重建可破坏碰撞块(爆炸拆墙)
 	if not _dirty_chunks.is_empty():
 		var processed := 0
@@ -291,6 +301,11 @@ func _broadcast_snapshot() -> void:
 		var previewing := false
 		if p.weapons != null and p.weapons.current_weapon() != null:
 			previewing = p.weapons.current_weapon().is_previewing()
+		# C2 rollback:快照带 ack_seq(服务器已消费到哪一输入)+ 权威整态(capture_state,替代上面散字段;
+		# 旧字段保留给服务器渲染/副本/阶段切换兼容)。
+		var c2 := {}
+		if p.has_method("capture_state"):
+			c2 = p.capture_state()
 		snap["players"][str(role)] = {
 			"pos": p.global_position,
 			"vel": p.velocity,
@@ -302,6 +317,8 @@ func _broadcast_snapshot() -> void:
 			"downed": p.is_downed(),
 			"aim": p.get_current_aim_dir(),
 			"previewing": previewing,
+			"ack_seq": _ack_seq.get(role, 0),
+			"c2": c2,
 		}
 	# 中立鸟:canonical 位置 + 当前动画名 + 朝向(副本照播;死亡由 enemy_died 事件移除)
 	var birds_snap := {}
