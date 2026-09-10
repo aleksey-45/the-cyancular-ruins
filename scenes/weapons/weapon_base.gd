@@ -45,6 +45,10 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 命中击退力度(>0 会覆盖敌人自身 knockback_strength)
 @export var impact: float = 60.0
 
+# 同屏同时在飞弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/拆砖/
+# 碰撞重建连锁会让自建房机器卡死/闪退。弹数满时开火不发射(冷却照走,等场上的爆完再打)。
+@export var max_live_projectiles: int = 0
+
 # ── 后坐/镜头 ──
 # 开火把玩家向后推的力度(蹲下时不推)
 @export var recoil_push: float = 0.0
@@ -81,6 +85,51 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定,预瞄只是参考
 @export var preview_time: float = 0.5
 
+# ── 换弹(实验性玩法):Settings.reload_enabled 关闭 = 旧版无限弹 ──
+# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。
+@export var mag_size: int = 12        # 弹夹容量
+@export var reload_time: float = 1.2  # 换弹全程耗时(秒)
+var mag_ammo: int = 0                 # 弹夹内残弹
+var _reloading := false
+var _reload_t := 0.0
+var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
+
+# 换弹动画:进度 0→1 期间枪口下压再回位(sin 包络),中段带机械微抖。
+# 作用于精灵局部坐标(换弹下压),与根节点的瞄准旋转/镜像互不干扰。
+const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
+const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
+
+func reload_active() -> bool:
+	return Settings.reload_enabled and not Level0.pvp_mode
+
+func is_reloading() -> bool:
+	return _reloading
+
+# 换弹进度 0→1(未在换弹时返回 -1;HUD 进度条用)
+func reload_progress() -> float:
+	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
+
+func start_reload() -> void:
+	if not reload_active() or _reloading or mag_ammo >= mag_size:
+		return
+	_reloading = true
+	_reload_t = reload_time
+	Sfx.play("reload")
+
+# 换弹姿态:每帧在 _recoil_recover 之后调用(换弹压枪优先级高于后坐复位)。
+func _update_reload_pose() -> void:
+	if _reloading:
+		_reload_pose = true
+		var p := clampf(1.0 - _reload_t / maxf(reload_time, 0.01), 0.0, 1.0)
+		var k := sin(p * PI)          # 0→1→0:前段压下,末段回位
+		var jiggle := sin(p * 34.0) * 1.2 * k   # 中段机械微抖(频率固定,幅度随包络)
+		sprite.rotation = RELOAD_TILT * k
+		sprite.position = _base_sprite_pos + RELOAD_OFFSET * k + Vector2(jiggle, 0.0)
+	elif _reload_pose:
+		_reload_pose = false
+		sprite.rotation = 0.0
+		sprite.position = _base_sprite_pos
+
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
 
@@ -103,6 +152,7 @@ static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> f
 	return clampf(local.angle(), -limit, limit)
 
 func _ready() -> void:
+	mag_ammo = mag_size
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
@@ -151,6 +201,13 @@ func tick(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
+	# 换弹计时:完成后上满弹夹(上膛轻音提示)
+	if _reloading:
+		_reload_t -= delta
+		if _reload_t <= 0.0:
+			_reloading = false
+			mag_ammo = mag_size
+			Sfx.play("switch")
 	# 每帧同步朝向/枪口旋转(瞄准与预览弧线);fire() 内部还会再同步一次,
 	# 覆盖直接开火等不经本帧 tick 的路径,避免读到走路覆盖的旧朝向。
 	_auto_aim()
@@ -174,6 +231,7 @@ func tick(delta: float) -> void:
 		if _attack_just_pressed():
 			try_fire()
 	_recoil_recover(delta)
+	_update_reload_pose()   # 换弹压枪优先级高于后坐复位:必须排在 _recoil_recover 之后
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:
@@ -186,13 +244,29 @@ func try_fire() -> void:
 func fire() -> void:
 	if not _player_ok():
 		return
+	# 换弹(实验性):装填中不可开火;空弹夹自动换弹
+	if reload_active():
+		if _reloading:
+			return
+		if mag_ammo <= 0:
+			start_reload()
+			return
 	fire_cd_timer = fire_cooldown
+	# 同屏弹数上限:满员时这发不发(不耗弹、不烧冷却动作——冷却已计,等于"点空枪"),
+	# 等场上旧弹爆掉/消失再打。只对配置了 max_live_projectiles 的武器生效(默认 0=不限)。
+	if max_live_projectiles > 0 and _live_projectiles() >= max_live_projectiles:
+		return
 	# 开火瞬间同步朝向/枪口到鼠标:直接开火(_unhandled_input, input 阶段)先于 _process,
 	# 读到的是上一物理帧被走路覆盖的 get_facing(),clamp_pitch 会折到走路侧、子弹打偏。
 	# 统一先 _auto_aim:所有开火路径(直接/缓冲/连发/重武器)都取本帧最新瞄准方向。
 	_auto_aim()
 	var base_dir := _clamped_aim_dir()
 	_spawn_projectiles(base_dir)
+	# 换弹(实验性):每次开火消耗一发,打空自动换弹
+	if reload_active():
+		mag_ammo = maxi(mag_ammo - 1, 0)
+		if mag_ammo == 0:
+			start_reload()
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME
@@ -225,6 +299,16 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)
 		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
+
+# 统计本武器当前还在场上的弹数(子弹 _ready 已入 bullet 组;source==self 判定归属)。
+func _live_projectiles() -> int:
+	if not is_inside_tree():
+		return 0
+	var n := 0
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if is_instance_valid(b) and b.source == self:
+			n += 1
+	return n
 
 func cancel_aim() -> void:
 	_aiming = false
