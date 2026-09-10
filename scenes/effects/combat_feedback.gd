@@ -12,6 +12,7 @@ const KILL_FADE_IN := 0.08
 const KILL_HOLD := 0.9    # 击杀文字停留时长(秒)
 const KILL_FADE_OUT := 0.35
 const STREAK_RESET := 6.0 # 连杀窗口:隔此秒数没有新击杀则连杀清零(秒)
+const ATTRIB_WINDOW_MS := 3000 # 归因时效:距最后一次受击超过此毫秒数的死亡不再归因给该射手
 const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
 
 # 敌人显示名对照(键 = 场景名去掉 Enemy 前缀,即 enemies.json 的 name 字段)
@@ -55,6 +56,13 @@ static func notify_enemy_killed(victim: Node) -> void:
 		return
 	var killer: Node = victim.get_meta("last_damager")
 	if killer == null or not is_instance_valid(killer) or not killer.is_in_group("player"):
+		return
+	# 归因时效:太久以前打过的伤害不再算这回的击杀(否则"蹭过一下、后溺水"也会播报)
+	if not victim.has_meta("last_damager_time"):
+		return
+	# 边界取 >=:窗口边界本身即视为过期(同帧写入-读取的差值为 0,用 > 会让时效"永远不过期",
+	# 常量取 0 时也永不为真 → 不可反证)
+	if Time.get_ticks_msec() - int(victim.get_meta("last_damager_time")) >= ATTRIB_WINDOW_MS:
 		return
 	kill(enemy_display_name(victim))
 

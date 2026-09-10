@@ -22,12 +22,15 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		var dmg := _falloff(d, radius, max_damage) * cover * wmult
 		if dmg <= 0:
 			continue
+		# 击杀归因 + 命中标记(单机:玩家榴弹炸到敌人;服务器进程无 CombatFeedback 实例则空转)
+		# ★必须在 hurt 之前写:一击致死时 hurt 同帧判死 → _begin_death 当场读 last_damager 播报,
+		# 写在 hurt 之后则 meta 尚不存在 → 「击杀 XXX」静默丢失(Task 15)。
+		if shooter != null and is_instance_valid(shooter) and shooter != e:
+			e.set_meta("last_damager", shooter)
+			e.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效
 		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
 				_falloff(d, radius, max_knockback) * cover * wmult, true)
-		# 击杀归因 + 命中标记(单机:玩家榴弹炸到敌人;服务器进程无 CombatFeedback 实例则空转)
-		if shooter != null and is_instance_valid(shooter) and shooter != e:
-			e.set_meta("last_damager", shooter)
 		CombatFeedback.hit_marker()
 	# 遍历所有玩家(PvP 服务器两个玩家;单机组里只有一个 → 行为不变)
 	var first_player: Node2D = null
@@ -48,13 +51,14 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			var blocked := has_grid and not _has_los(center, pp, grid)
 			var mult := cover_multiplier(d, radius, blocked)
 			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
-			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
-			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
-					_falloff(d, radius, max_knockback) * mult)
 			# 击杀归因(大乱斗 RoyaleHost 读 last_damager 判击杀分);1v1 MatchHost 不读,无行为变化
+			# ★同敌人分支:必须在 take_hit 之前写,倒地同帧的归因读取者才看得到(Task 15)。
 			if shooter != null and shooter != pp:
 				pp.set_meta("last_damager", shooter)
 				pp.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效
+			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
+			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
+					_falloff(d, radius, max_knockback) * mult)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, grid)

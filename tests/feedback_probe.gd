@@ -53,6 +53,8 @@ func _ready() -> void:
 	if Sfx._stream("kill") == null:
 		failures.append("Sfx kill 音效流缺失")
 	# 归因:玩家击杀 → 播报(scene_file_path 为空回落空名,文本仍以「击杀」开头)
+	# 先清空文本:上面 CF.kill("测试鸟") 留下的旧文本会让本条断言假绿(只查前缀,不清便是永真)
+	fx._kill_label.text = ""
 	var victim := _victim_killed_by(_make_player())
 	CF.notify_enemy_killed(victim)
 	if not fx._kill_label.text.begins_with("击杀"):
@@ -93,6 +95,25 @@ func _ready() -> void:
 		if self_hit.has_meta("last_damager"):
 			failures.append("射手==目标时不应写 last_damager")
 		b.queue_free()
+	# ── 端到端归因(Task 15):致命一击必须能播报——走真实 BulletBase._direct_hit 路径 ──
+	var enemy_scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
+	if enemy_scene == null:
+		failures.append("EnemyJumpBird.tscn 载入失败,无法验证端到端归因")
+	else:
+		var shooter2 := _make_player()
+		var enemy: Node = enemy_scene.instantiate()
+		add_child(enemy)
+		enemy.set("hp", 1)                       # 保证一击致死
+		var b2: Node = bullet_scene.instantiate()
+		add_child(b2)
+		b2.set("shooter", shooter2)
+		b2.set("direct_hit_damage", 999)
+		fx._kill_label.text = ""                 # 清掉前面的播报,便于断言
+		b2.call("_direct_hit", enemy)            # ← 这就是真实命中路径(内部 hurt → 同步判死 → 播报)
+		if not fx._kill_label.text.begins_with("击杀"):
+			failures.append("致命一击未播报击杀(归因 meta 写晚了? 文本:「%s」)" % fx._kill_label.text)
+		enemy.queue_free()
+		b2.queue_free()
 	_finish(failures)
 
 func _make_player() -> Node2D:
@@ -106,6 +127,7 @@ func _victim_killed_by(killer: Node) -> Node2D:
 	add_child(v)
 	if killer != null:
 		v.set_meta("last_damager", killer)
+		v.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效戳(Task 15 起为必需)
 	return v
 
 func _finish(failures: Array[String]) -> void:
