@@ -17,6 +17,29 @@ static var _dirty_chunks: Dictionary = {}
 # PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
 static var pvp_mode: bool = false
 
+# ── 安全场景切换:游戏世界(全量碰撞)退役挂起,不再释放 ──
+# change_scene_to_file 会在切换时同步 memdelete 当前场景;单机/PvP 游戏世界含数万碰撞体,
+# 同步析构偶发原生段错误(实测死亡后回菜单/按 R 重载都会触发)。做法:新场景手动实例化
+# 并接管 current_scene,旧世界摘树挂起、永不释放(即「挂起不释放」保活策略;每次退役先
+# 释放上一具挂起世界,稳态最多挂一具)。
+# 注意:摘树必须回到帧末进行,故本函数先 await 一帧(见函数内注释)。
+static var _retired: Node = null   # 挂起的上一具游戏世界(最多一具,新的退役时释放旧的)
+
+static func safe_change_scene(tree: SceneTree, path: String) -> void:
+	# 先回到帧末再动树:调用方(按钮按下/R 重载的输入处理)可能正处于旧场景节点发出的
+	# 信号调用栈里,立刻摘树会触发 CanvasItem EXIT_TREE 状态错误(headless 实测)。
+	await tree.process_frame
+	var old: Node = tree.current_scene
+	var next: Node = load(path).instantiate()
+	tree.root.add_child(next)      # 新场景 _ready 先跑(旧世界仍在树上,静态引用完好)
+	tree.current_scene = next      # 接管 current_scene 指针,旧场景不再被 change 流程释放
+	if old != null and old != next:
+		tree.root.remove_child(old)
+		old.visible = false
+		if _retired != null and is_instance_valid(_retired):
+			_retired.free()        # 释放更早的那一具(此鱼已在树上挂了整局时间,最稳)
+		_retired = old
+
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
 # 在根级把未处理输入手动转发进 WorldViewport。
@@ -217,6 +240,36 @@ func reset_destructibles() -> void:
 func _build_wall_collision(grid: Array[Array]) -> void:
 	# 永久墙 + 可破坏分块 + 攀爬基座条,逻辑迁到 WorldBuilder.build_sim(服务器复用)
 	_destructible_sub = WorldBuilder.build_sim($WorldViewport, grid)
+
+
+# 单人「倒地按 R 重启」:原地复位,不重建世界。
+# 旧实现走场景重载(第二份完整世界 + 退役拆旧世界),重启过程在引擎原生层偶发段错误
+# (实测表象:重启后蓝屏/地图未加载)。改为在当前 Level0 内复位:可破坏砖/瓦片/碰撞回
+# 基线 + 清子弹/敌人后重刷 + 玩家满血满氧回出生点,从机制上绕开「新建/拆毁大世界」。
+# PvP 不走这里(服务器权威管复活)。由 player.gd 倒地 R 调用。
+func restart_single() -> void:
+	if _pristine_grid.is_empty() or _grid_ref.is_empty():
+		return
+	var player: CharacterBody2D = $WorldViewport/Player
+	# 瓦片/碰撞整层还原为建图基线;顺手清掉本帧的拆砖重建队列(基线已是最新)
+	_dirty_chunks.clear()
+	reset_destructibles()
+	# 清场上动态物:子弹 + 敌人(尸体/坠落物一起清,避免与重刷的敌人并排残留)
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if is_instance_valid(e):
+			(e as Node).queue_free()
+	# 玩家满血满氧回出生点,姿态/武器复位
+	var spawns := MazeGenerator.load_spawns()
+	var spawn_cell: Vector2i = spawns.get("player", Vector2i(-1, -1))
+	if spawn_cell.x < 0:
+		spawn_cell = Vector2i(_grid_ref[0].size() / 2, _grid_ref.size() / 2)
+	player.restart_at(spawn_cell)
+	# 敌人重刷(与 _ready 同款;deferred 等旧敌 queue_free 先生效,避免同名冲突)
+	EnemySpawner.load_types()
+	$EnemySpawner.spawn_all.call_deferred(spawns)
 
 
 func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:

@@ -179,6 +179,19 @@ func _restore_mag(w: WeaponBase, ammo: int) -> void:
 	if is_instance_valid(w):
 		w.mag_ammo = ammo
 
+# 复活/重启用:把当前武器的弹夹补满。
+# 必须 call_deferred —— equip() 排下的 _restore_mag.call_deferred 会在帧末 flush 并把
+# "切枪时记下的旧残弹"写回;同帧同步写 mag_ammo 会被它覆盖(复活了却只有 3 发,且无报错)。
+# 本调用排在 _restore_mag 之后入 defer 队列 → 帧末后写者胜 = 满弹。
+func refill_current_weapon() -> void:
+	var w := _weapon
+	if w != null:
+		_refill_mag.call_deferred(w)
+
+func _refill_mag(w: WeaponBase) -> void:
+	if is_instance_valid(w):
+		w.mag_ammo = w.mag_size
+
 func current_weapon() -> WeaponBase:
 	return _weapon
 

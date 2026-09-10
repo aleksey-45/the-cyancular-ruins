@@ -592,6 +592,38 @@ func _set_waterproof(v: int) -> void:
 	waterproof_changed.emit(waterproof, max_waterproof)
 
 
+# 单人「倒地按 R 重启」(Level0.restart_single 调):满血满氧回出生点,清倒地/冲刺/跳跃
+# 残留,武器切回首个启用槽并把当前弹夹补满(不看装填状态,重启即满弹)。
+func restart_at(spawn_cell: Vector2i) -> void:
+	var ts: int = GameParameters.TILE_SIZE
+	global_position = Vector2(spawn_cell.x * ts + ts * 0.5, spawn_cell.y * ts + ts * 0.5)
+	velocity = Vector2.ZERO
+	is_charge = false
+	charge_timer = 0.0
+	is_squat = false
+	cancel_jump_state()
+	combat.knock_velocity = Vector2.ZERO
+	combat.iframes = 0.0
+	if combat.is_downed():
+		combat.revive()   # 复位倒地 + PostProcess 变灰复位(PvP 回合复活同款)
+	else:
+		combat.hp = combat.max_hp
+	combat.hp_changed.emit(combat.hp, combat.max_hp)   # 兜底同步 HUD 血条(revive 本身不发射)
+	waterproof = max_waterproof
+	waterproof_changed.emit(waterproof, max_waterproof)
+	_was_submerged = false
+	_waterproof_timer = 0.0
+	_waterproof_drown_timer = 0.0
+	weapons.cancel_aim()
+	# 清残弹记忆:复活/重启是「重开一局」语义,不该继承死前残弹(其它槽位一并清)。
+	# 必须清在 equip() 之前 —— equip() 会把 old_slot 的残弹重新记回 _mag_state。
+	weapons._mag_state.clear()
+	weapons.equip(weapons.default_slot())
+	# 满弹必须 deferred:equip() 排下的 _restore_mag 会在帧末把旧残弹写回,同帧同步写会被覆盖。
+	weapons.refill_current_weapon()
+	set_controls_locked(false)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切。
 	# PvP:滚轮不在输入包协议里,只本地切会被快照防脱同步切回旧槽位 → 走
@@ -612,7 +644,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。
 		if not Level0.pvp_mode and event.is_action_pressed("R"):
-			get_tree().reload_current_scene()
+			# 单人重启:原地复位,不重建世界(重建会偶发原生段错误→重启后蓝屏/地图未加载)。
+			# 只在当前场景确为 Level0 时生效(主菜单/其它场景不误触发)。
+			var lvl := get_tree().current_scene
+			if lvl is Level0:
+				(lvl as Level0).restart_single()
 		return
 	# R 换弹(实验性,仅单机):站立时给当前武器上弹(倒地时 R 仍是重载场景,见上)。
 	# PvP 不开换弹(reload_active() 恒 false),故只单机生效。
