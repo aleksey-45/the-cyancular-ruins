@@ -9,7 +9,8 @@ extends Node
 # 的验收项大多是**"某样东西从此不存在"**或**"某样东西只剩一处"**——这类断言没有运行时
 # 入口,只能在源码层机械扫描。本探针就是那台扫描仪:
 #   1) ★ 零演示残留(生产目录 .gd/.tscn 不含 menu demo / revive demo / demo level0 /
-#      build_permanent_region / enter_game_staged / MenuDemoAi)
+#      demo spawn / build_permanent_region / enter_game_staged / leave_menu / MenuDemoAi /
+#      --demo-noai / DemoCollision —— 共 10 条针,见 _demo_needles)
 #   2) ★ 打击反馈层挂载点全仓生产路径恰好 1 处,且必须是 scenes/level_0.gd
 #   3) ★ 字号规范:全仓所有字号载体都是 16 的倍数(见下方四类载体)
 #   4) 退役的 ESC 菜单零引用(类不存在、文件不存在、无代码引用)
@@ -345,9 +346,13 @@ func _demo_needles() -> Array[String]:
 		"menu" + "_demo",
 		"revive" + "_demo",
 		"_demo" + "_level0",
+		"_demo" + "_spawn",      # 演示世界布点(与 _demo_level0 一起被删;曾单独存活)
 		"build_permanent" + "_region",
 		"enter_game" + "_staged",
+		"leave" + "_menu",       # 演示世界里的"离开菜单"入口(退役后不该再有任何实现)
 		"menudemo" + "ai",
+		"demo" + "-noai",        # 启动参数开关(头两条针扫不到命令行长串)
+		"demo" + "collision",    # 演示世界的独立碰撞层类名
 	]
 
 
