@@ -15,15 +15,20 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		var d := _dist(center, (e as Node2D).global_position)
 		if d > radius:
 			continue
-		# 遮挡(墙后)= 部分掩体:伤害/击退保留 BLOCKED_FRACTION;无遮挡全额
+		# 遮挡(墙后)= 部分掩体;内圈免疫遮挡(见 cover_multiplier 注释)
 		var blocked := has_grid and not _has_los(center, e as Node2D, grid)
+		var cover := cover_multiplier(d, radius, blocked)
 		var wmult := Water.water_mult((e as Node2D).global_position, grid)  # 目标在水里:×水格 decay
-		var dmg := _falloff(d, radius, max_damage) * (BLOCKED_FRACTION if blocked else 1.0) * wmult
+		var dmg := _falloff(d, radius, max_damage) * cover * wmult
 		if dmg <= 0:
 			continue
 		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
-				_falloff(d, radius, max_knockback) * (BLOCKED_FRACTION if blocked else 1.0) * wmult, true)
+				_falloff(d, radius, max_knockback) * cover * wmult, true)
+		# 击杀归因 + 命中标记(单机:玩家榴弹炸到敌人;服务器进程无 CombatFeedback 实例则空转)
+		if shooter != null and is_instance_valid(shooter) and shooter != e:
+			e.set_meta("last_damager", shooter)
+		CombatFeedback.hit_marker()
 	# 遍历所有玩家(PvP 服务器两个玩家;单机组里只有一个 → 行为不变)
 	var first_player: Node2D = null
 	for p in tree.get_nodes_in_group("player"):
@@ -39,13 +44,17 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			continue
 		var d := _dist(center, pp.global_position)
 		if d <= radius:
+			# 同敌人:内圈免疫遮挡衰减
 			var blocked := has_grid and not _has_los(center, pp, grid)
-			var mult := BLOCKED_FRACTION if blocked else 1.0
+			var mult := cover_multiplier(d, radius, blocked)
 			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
-			# PvP 击杀计分统一在 MatchHost(对方死亡都算),此处不需记射手 meta
+			# 击杀归因(大乱斗 RoyaleHost 读 last_damager 判击杀分);1v1 MatchHost 不读,无行为变化
+			if shooter != null and shooter != pp:
+				pp.set_meta("last_damager", shooter)
+				pp.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, grid)
@@ -131,3 +140,12 @@ static func _falloff(d: float, radius: float, max_val: float) -> float:
 		return 0.0
 	var t := (d - inner) / (radius - inner)
 	return max_val * (1.0 - t * t)
+
+
+# 掩护衰减系数:内圈(≤INNER_FRACTION 半径)免疫遮挡——贴脸目标被墙棱角判"无视线"
+# 扣 25% 会出现"爆心比开阔边缘伤害低"的倒挂(实测 bug);爆心贴脸时掩护不该生效。
+# 纯函数(-s 可测);apply_aoe 的敌人/玩家分支共用,保证"任意距离伤害随距离不增"。
+static func cover_multiplier(d: float, radius: float, blocked: bool) -> float:
+	if d <= radius * INNER_FRACTION:
+		return 1.0
+	return BLOCKED_FRACTION if blocked else 1.0
