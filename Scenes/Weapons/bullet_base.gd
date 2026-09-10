@@ -73,13 +73,16 @@ func _physics_process(delta: float) -> void:
 	if col:
 		var hit := col.get_collider()
 		if explodes:
-			# 命中敌人:直接伤立即结算;与撞墙一样反弹(带衰减),引信用短时长 hit_fuse_time(0.1s)
 			if hit != null and hit.is_in_group("enemies"):
+				# 直击敌人:钉在目标身上原地引爆(受害者=爆心,必吃内圈满伤)。
+				# 旧版带衰减弹开再爆:0.1s 引信内能飞出 100~300px,被直击的最近目标反而
+				# 落到爆心外圈、比远处贴爆心的目标伤害还低(实测"越近伤害越低"倒挂根因)。
 				_direct_hit(hit)
 				_start_fuse(hit_fuse_time)
-			else:
-				# 撞墙:反弹(带衰减),首次碰撞后开始引信(fuse_time);不直接清零速度
-				_start_fuse(fuse_time)
+				velocity_vec = Vector2.ZERO
+				return
+			# 撞墙:反弹(带衰减),首次碰撞后开始引信(fuse_time);不直接清零速度
+			_start_fuse(fuse_time)
 			var normal := col.get_normal()
 			var reflected := velocity_vec.bounce(normal)
 			velocity_vec = reflected * BOUNCE_DAMPING
