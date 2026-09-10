@@ -21,6 +21,8 @@ move_penalty = 0.7
 jump_penalty = 0.8
 penalty_mode = 1
 pitch_clamp_deg = 60.0
+mag_size = 30
+reload_time = 1.8
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=139203024]
 position = Vector2(12, 11)

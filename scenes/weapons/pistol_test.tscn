@@ -14,6 +14,8 @@ impact = 800.0
 recoil_push = 200.0
 recoil_kick = 8.0
 pitch_clamp_deg = 65.0
+mag_size = 12
+reload_time = 1.0
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1120748236]
 position = Vector2(24, 5.6)

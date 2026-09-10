@@ -24,7 +24,7 @@ var wheel_switch: bool = false    # 鼠标滚轮切枪
 var reload_enabled: bool = true   # 换弹装填(实验性;关闭=旧版无限弹;仅单机生效)
 
 # ── 单人开局选项存档(记住上次选择)──
-var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-5)
+var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
 
 # ── PvP 选项(本地偏好类直接生效;服务器权威类由房主下发,见 MatchHost)──
 var pvp_show_trajectories: bool = true  # 显示敌方武器(子弹)轨迹

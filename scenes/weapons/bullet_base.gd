@@ -176,10 +176,8 @@ func _register_player_hit(target: Node) -> void:
 	var who := shooter
 	if who == null and is_instance_valid(source):
 		who = source
-	if who != null and who != target:
-		target.set_meta("last_damager", who)
-		# 归因时效戳:与 last_damager 同写同源,CombatFeedback 据此丢弃「蹭过一下」的旧归因
-		target.set_meta("last_damager_time", Time.get_ticks_msec())
+	# 归因写端统一入口(含射手无效/自伤守卫 + 归因时效戳,CombatFeedback 据此丢弃「蹭过一下」的旧归因)
+	CombatFeedback.attribute(target, who)
 	CombatFeedback.hit_marker()
 
 # 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
