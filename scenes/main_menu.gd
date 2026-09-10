@@ -22,6 +22,23 @@ func _ready() -> void:
 
 	_build_new_ui()
 
+	# 菜单流转自动探针(规格 §6 的 L4 验收项):命令行 `-- --autotest-sp|mp|set|level` 时,
+	# 把探针挂到树根(而非本场景)——它要穿越 change_scene 存活。平时零开销。
+	# 缺文件守卫:发布版裁掉 tests/ 或缺文件时静默跳过,不让主菜单崩。
+	for arg in OS.get_cmdline_user_args():
+		if not arg.begins_with("--autotest-"):
+			continue
+		if not ResourceLoader.exists("res://tests/menu_autotest.gd"):
+			break
+		var probe_script := load("res://tests/menu_autotest.gd")
+		if probe_script == null:
+			break
+		var probe := Node.new()
+		probe.set_script(probe_script)
+		probe.set("mode", arg.trim_prefix("--autotest-"))
+		get_tree().root.add_child.call_deferred(probe)
+		break
+
 
 # 单机进关卡(Level0 = 全量物理世界)。菜单是纯 UI(无世界、无大物理),普通切场景即可:
 # change_scene 在这里只会销毁一棵 Control 树,不存在「销毁大世界 × 构建大世界」的同帧对撞。
