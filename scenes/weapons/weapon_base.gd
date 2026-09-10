@@ -86,7 +86,9 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 @export var preview_time: float = 0.5
 
 # ── 换弹(实验性玩法):Settings.reload_enabled 关闭 = 旧版无限弹 ──
-# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。
+# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。判据是**输入源**而非
+# Level0.pvp_mode:权威服务器进程不实例化 Level0(pvp_mode 恒 false),看它会把服务器
+# 也判成"单机" → 服务器单方面进装填、拒绝出弹 = 静默 PvP 伤害失效(见 reload_active)。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
@@ -100,7 +102,15 @@ const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
 const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
 
 func reload_active() -> bool:
-	return Settings.reload_enabled and not Level0.pvp_mode
+	if not Settings.reload_enabled:
+		return false
+	# 仅本地单机:PvP 权威服务器(Level0.pvp_mode 恒 false!)
+	# 与远端副本都由网络输入源驱动,它们不进换弹模拟。
+	# 判 input_is_network 而不是 pvp_mode —— 服务器进程根本不实例化 Level0,
+	# 看 pvp_mode 会把权威模拟也判成"单机",导致服务器单方面停火(静默 PvP 伤害失效)。
+	if player != null and player.has_method("input_is_network") and player.input_is_network():
+		return false
+	return true
 
 func is_reloading() -> bool:
 	return _reloading

@@ -11,6 +11,10 @@ extends Node
 #
 # --quit-after 是安全网:本脚本引用 Settings/Level0/Sfx 等 autoload 标识符;若某个 autoload
 # 被删掉,脚本编译失败 → 场景根节点无脚本 → 一行都不打印、命令挂死。有它最坏只是超时退出。
+#
+# ⚠️ CI 判据必须是 **grep 文本 `KH L3 PROBE: ALL-OK`**,不能只看退出码:
+#    探针中途脚本报错(解析失败/函数中断)时,--quit-after 仍会以 **exit 0** 退出,
+#    且**不会**打印 ALL-OK(也不打 FAIL)——只看退出码会把"没跑完"读成"通过"。
 
 const PLAYER_SCENE := "res://scenes/player/Player.tscn"
 const WEAPON_BASE_SRC := "res://scenes/weapons/weapon_base.gd"
@@ -41,6 +45,15 @@ class StubPlayer extends Node2D:
 	func apply_recoil(_push: float) -> void: pass
 
 
+# 网络输入源桩(必修 1 回归钉用):与 StubPlayer 同款,只多一个 input_is_network() -> true,
+# 模拟 PvP 权威服务器/远端副本上的玩家(它们由 NetworkInputSource 驱动)。
+class NetStubPlayer extends Node2D:
+	func is_downed() -> bool: return false
+	func get_facing() -> int: return 1
+	func apply_recoil(_push: float) -> void: pass
+	func input_is_network() -> bool: return true
+
+
 func _ready() -> void:
 	# 探针自持确定性:本机 user://settings.cfg 可能被用户关掉换弹/开着 pvp。
 	Settings.reload_enabled = true
@@ -68,7 +81,7 @@ func _ready() -> void:
 	await _check_gate(wep)
 	await _check_cycle(wep)
 	await _check_mag_memory(wep)
-	await _check_reload_state_machine()
+	await _check_reload_state_machine(player, wep)
 	_check_tick_guards(player, wep)
 
 	_finish()
@@ -82,11 +95,13 @@ func _check_weapon_numbers() -> void:
 		if scene == null:
 			_failures.append("%s: 场景载入失败 %s" % [tag, spec["path"]])
 			continue
-		var w: WeaponBase = scene.instantiate()
-		add_child(w)
-		await get_tree().process_frame
-		_check(w != null, "%s: 实例化失败" % tag)
+		# as WeaponBase 而非 `var w: WeaponBase = ...`:**根节点类型不对时**静态赋值会中断
+		# 本函数(后面的断言一条都不跑 = 静默假绿);`as` 转换失败只返回 null,能被断言抓到。
+		var w := scene.instantiate() as WeaponBase
+		_check(w != null, "%s: 场景根节点不是 WeaponBase(instantiate/as 转换失败,%s)" % [tag, spec["path"]])
 		if w != null:
+			add_child(w)
+			await get_tree().process_frame
 			_check(w.weapon_name == spec["name"],
 					"%s: weapon_name=%s(期望 %s)" % [tag, w.weapon_name, spec["name"]])
 			_check(w.mag_size == spec["mag"],
@@ -183,8 +198,9 @@ func _check_cycle(wep: WeaponComponent) -> void:
 	await _frames(3)
 
 
-# ── 4) 换弹状态机(真实武器实例 + 桩玩家;手动 tick 推进,帧率无关)────
-func _check_reload_state_machine() -> void:
+# ── 4) 换弹状态机(真实武器实例 + 桩玩家;手动 tick 推进,帧率无关)+ 网络输入源闸门 ──
+# player/wep 两个参数仅供「网络输入源 → 不换弹」这条真实链路断言用(必修 1 回归钉)。
+func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
 	var stub := StubPlayer.new()
 	add_child(stub)
 	var scene: PackedScene = load("res://scenes/weapons/pistol_test.tscn")
@@ -212,8 +228,9 @@ func _check_reload_state_machine() -> void:
 	w.mag_ammo = 3
 	w.start_reload()
 	_check(w.is_reloading(), "start_reload() 后 is_reloading() 仍为假")
+	# 起步进度必须 ≈0 —— 闭区间 [0,1] 判据抓不到「倒着走(起步 1.0)」与「恒值 0.5」两种坏实现
 	var p0 := w.reload_progress()
-	_check(p0 >= 0.0 and p0 <= 1.0, "reload_progress() 起步越界:%.3f" % p0)
+	_check(p0 < 1e-3, "reload_progress() 起步应≈0(实际 %.3f;≈1 即进度倒着走,≈0.5 即恒值)" % p0)
 
 	# 装填中开火:不出弹、不扣弹、不烧冷却
 	var n2 := _bullets()
@@ -223,10 +240,14 @@ func _check_reload_state_machine() -> void:
 	_check(_bullets() == n2, "装填中 fire() 出了弹(场上弹数 %d → %d)" % [n2, _bullets()])
 	_check(w.fire_cd_timer == 0.0, "装填中 fire() 烧了冷却(fire_cd_timer=%.3f)" % w.fire_cd_timer)
 
-	# 手动推进到中段:进度严格在 (0,1)
+	# 手动推进到中段:进度严格在 (0,1) 且**方向/速率正确**
+	_check(is_equal_approx(w.reload_time, 1.0),
+			"换弹进度断言依赖手枪 reload_time=1.0(实际 %.3f;改了弹夹表就要同步改本断言)" % w.reload_time)
 	w.tick(0.5)
 	var pm := w.reload_progress()
 	_check(pm > 0.0 and pm < 1.0, "tick(0.5) 后 reload_progress=%.3f 不在 (0,1) 开区间" % pm)
+	# 0.5s / reload_time 1.0 → 进度必须≈0.5(自指的「两边取同一个函数」抓不到恒值/倒走,这条抓得到)
+	_check(absf(pm - 0.5) < 0.02, "tick(0.5) 后 reload_progress=%.3f 偏离 0.5(应 0.5±0.02)" % pm)
 	_check(w.is_reloading(), "推进到中段后 is_reloading() 变假了")
 
 	# 推进到完成(手动 tick,不依赖真实时间)
@@ -247,6 +268,37 @@ func _check_reload_state_machine() -> void:
 	_check(not w.is_reloading(), "关闭换弹玩法后 start_reload() 仍进入装填")
 	Settings.reload_enabled = true
 
+	# ── 网络输入源闸门(必修 1 回归钉)──────────────────────────────────
+	# 权威服务器进程**不实例化 Level0**(server/ 目录零赋值)→ `Level0.pvp_mode` 恒 false。
+	# 只判 pvp_mode 的实现在服务器上会判成"单机":每打空弹夹就 start_reload() 并拒绝出弹
+	# reload_time 秒,而客户端预测不受限 → 服务器不广播 bullet_spawn → **PvP 打中不掉血、
+	# 无任何报错**;且 mag_ammo/_reloading 不入 capture_state → 分歧永不自愈。
+	# 判据只能是输入源(权威模拟与远端副本都由 NetworkInputSource 驱动)。
+	_check(Level0.pvp_mode == false, "前置:本钉要求 pvp_mode 为 false(实际 %s)" % str(Level0.pvp_mode))
+	# (a) 桩路径:覆盖 weapon_base 的 has_method 守卫 + input_is_network()==true
+	var net_stub := NetStubPlayer.new()
+	add_child(net_stub)
+	w.equip(net_stub)
+	_check(not w.reload_active(),
+			"网络输入源驱动时 reload_active() 为真(权威服务器会单方面停火 = PvP 伤害静默失效)")
+	w.mag_ammo = 3
+	w.start_reload()
+	_check(not w.is_reloading(), "网络输入源驱动时 start_reload() 仍进入装填(应被 reload_active() 拒绝)")
+	# (b) 真实链路:真 Player.tscn + NetworkInputSource → player.gd::input_is_network()
+	var real_w: WeaponBase = wep.current_weapon()
+	if real_w == null:
+		_failures.append("网络闸门:Player 当前没有武器实例,真实链路无法验证")
+	else:
+		var prev_src: InputSource = player.input_source
+		player.set_input_source(NetworkInputSource.new())
+		_check(player.input_is_network(), "注入 NetworkInputSource 后 player.input_is_network() 仍为假")
+		_check(not real_w.reload_active(),
+				"真实 Player 注入 NetworkInputSource 后 reload_active() 仍为真(必修 1 未生效)")
+		player.set_input_source(prev_src)
+		_check(not player.input_is_network(), "复原本地输入源后 input_is_network() 应为假")
+
+	w.equip(stub)   # 复原:交回给桩,后续无依赖
+	net_stub.queue_free()
 	w.queue_free()
 	stub.queue_free()
 	await get_tree().process_frame
@@ -283,11 +335,14 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 
 
 # ── 6) ★ 守卫点:帧逻辑必须走 tick(),不许回到 _process ──────────────
+# 源码读进来先剥纯注释行(_code_only):下面全是纯文本 contains(),不过滤的话
+# 「注释里写出来的字面量」既会误绿(`# weapons.tick(delta)` 被注释掉照样命中),
+# 也会误红(weapon_base.gd 的注释里出现过裸 `_process` 字样)。
 func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
-	var wb_src := _read_res(WEAPON_BASE_SRC)
-	var wc_src := _read_res(WEAPON_COMPONENT_SRC)
-	var pl_src := _read_res(PLAYER_SRC)
-	var lv_src := _read_res(LEVEL0_SRC)
+	var wb_src := _code_only(_read_res(WEAPON_BASE_SRC))
+	var wc_src := _code_only(_read_res(WEAPON_COMPONENT_SRC))
+	var pl_src := _code_only(_read_res(PLAYER_SRC))
+	var lv_src := _code_only(_read_res(LEVEL0_SRC))
 	_check(wb_src != "", "读不到 %s" % WEAPON_BASE_SRC)
 	_check(wc_src != "", "读不到 %s" % WEAPON_COMPONENT_SRC)
 	_check(pl_src != "", "读不到 %s" % PLAYER_SRC)
@@ -304,7 +359,8 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	if inst != null:
 		_check(inst.has_method("tick"), "WeaponBase 实例上没有 tick 方法")
 	_check(wep.has_method("tick"), "WeaponComponent 实例上没有 tick 方法")
-	_check(player.has_method("get_aim_dir_override"), "player.gd 的瞄准覆盖钩子丢了(守卫点 #?)")
+	_check(player.has_method("get_aim_dir_override"),
+			"player.gd 的注入输入钩子 get_aim_dir_override() 丢了(守卫点 = L3 头号不变量表 #4–10 的 player.gd 行;丢了服务器瞄准会去读宿主鼠标)")
 
 	# L3 接线:开局选项禁用的武器必须真的落到武器组件上(否则选项形同虚设)
 	_check(lv_src.contains("set_enabled_slots(RunOptions.disabled_weapons)"),
@@ -330,6 +386,18 @@ func _read_res(path: String) -> String:
 		return ""
 	var f := FileAccess.open(path, FileAccess.READ)
 	return f.get_as_text() if f != null else ""
+
+
+# 剥掉纯注释行(整行以 # 开头,允许缩进),供源码级 contains 断言用。
+# 只剥「整行注释」:行尾注释里写字面量的情况本层没有,不做正则以免误伤字符串里的 #。
+func _code_only(src: String) -> String:
+	var out: Array[String] = []
+	for line in src.split("\n"):
+		var s: String = (line as String).strip_edges()
+		if s.is_empty() or s.begins_with("#"):
+			continue
+		out.append(s)
+	return "\n".join(out)
 
 
 func _finish() -> void:
