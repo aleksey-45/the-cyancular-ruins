@@ -28,6 +28,7 @@ var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica(中立鸟�
 var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibles
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 var _hud: PvpHud = null
+var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)
 var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
 var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
 var _ping_acc := 0.0
@@ -89,9 +90,14 @@ func _ready() -> void:
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
-	# NetBus.stop() 断连,worker 检测对局任一方断线即拆局)。开关/退出全由 PauseMenu 自理
-	# (自带 ui_cancel 处理 + set_input_as_handled),这里不需要任何信号接线。
-	add_child(PauseMenu.new(true))
+	# NetBus.stop() 断连,worker 检测对局任一方断线即拆局)。开关/退出由 PauseMenu 自理
+	# (自带 ui_cancel 处理 + set_input_as_handled),但**本地输入锁必须宿主接线**:PvP 不暂停树,
+	# 不锁就是"菜单开着还能边跑边开枪"(旧 EscMenu 靠 toggled 接的正是这一条)。
+	_pause_menu = PauseMenu.new(true)
+	_pause_menu.toggled.connect(func(open: bool) -> void:
+		if _local != null and _local.has_method("set_controls_locked"):
+			_local.set_controls_locked(open))
+	add_child(_pause_menu)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -292,6 +298,11 @@ func _on_round_state(data: Dictionary) -> void:
 			_level0.reset_destructibles()
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
+		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可提前回主菜单,而下面
+		# 这条 5s 定时器仍会再触发一次 safe_change_scene(已在主菜单上再切一次 = 行为可疑)。
+		# 直接销毁菜单 —— 退出只走定时器这一条路。
+		if _pause_menu != null and is_instance_valid(_pause_menu):
+			_pause_menu.queue_free()
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
 			NetBus.stop()
 			get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))

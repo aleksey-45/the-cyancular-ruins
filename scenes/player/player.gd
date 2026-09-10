@@ -615,9 +615,11 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	_waterproof_timer = 0.0
 	_waterproof_drown_timer = 0.0
 	weapons.cancel_aim()
-	# 清残弹记忆:复活/重启是「重开一局」语义,不该继承死前残弹(其它槽位一并清)。
-	# 必须清在 equip() 之前 —— equip() 会把 old_slot 的残弹重新记回 _mag_state。
-	weapons._mag_state.clear()
+	# 清残弹记忆:复活/重启是「重开一局」语义,不该继承死前残弹。
+	# 必须清在 equip() 之前 —— equip() 会把 old_slot(死前手持槽)的残弹重新记回 _mag_state。
+	# 故实际效果是「死前手持槽之外的其余槽位一律清空」;手持槽若不是默认槽,其残弹会被
+	# equip() 记回并随之恢复到新枪上(只清 _mag_state 并不足以保证手持槽满弹,见下方 refill)。
+	weapons.reset_mag_state()
 	weapons.equip(weapons.default_slot())
 	# 满弹必须 deferred:equip() 排下的 _restore_mag 会在帧末把旧残弹写回,同帧同步写会被覆盖。
 	weapons.refill_current_weapon()
@@ -648,7 +650,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			# 只在当前场景确为 Level0 时生效(主菜单/其它场景不误触发)。
 			var lvl := get_tree().current_scene
 			if lvl is Level0:
-				(lvl as Level0).restart_single()
+				# 推迟一帧:restart_single 会同步重建碰撞层(销毁全量 WallCollision/可破坏分块),
+				# 而此刻仍在 _unhandled_input 的派发栈内 —— 与本项目 safe_change_scene 要 await
+				# 一帧是同一个理由(level_0.gd 的注释记着"立刻摘树会触发 CanvasItem EXIT_TREE")。
+				(lvl as Level0).restart_single.call_deferred()
 		return
 	# R 换弹(实验性,仅单机):站立时给当前武器上弹(倒地时 R 仍是重载场景,见上)。
 	# PvP 不开换弹(reload_active() 恒 false),故只单机生效。

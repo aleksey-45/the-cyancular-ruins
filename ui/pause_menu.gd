@@ -8,6 +8,10 @@ extends CanvasLayer
 # process_mode=ALWAYS:树暂停时本层仍响应输入。Esc 由本层独占处理(反转序先于场景根收到,
 # set_input_as_handled 后场景根的 push_input 不会再拿到),避免双重触发。
 
+# 开关信号(对 KH 原件的有意偏离:原件没有信号,单机宿主靠暂停树本身即可)。
+# 宿主(PvP)据此锁本地输入 —— PvP 下不暂停树,没有这道接线就是"菜单开着还能边跑边开枪"。
+signal toggled(open: bool)
+
 var is_pvp := false
 
 var _root: Control = null
@@ -68,16 +72,25 @@ func open() -> void:
 	# PvP 不暂停树:对局在服务器继续,暂停只会让自己挨打
 	if not is_pvp:
 		get_tree().paused = true
+	toggled.emit(true)
+	Sfx.play("ui")   # 开与关都有声:原先只有关闭侧响,ESC 打开是静音的(不一致)
 
 
 func close() -> void:
 	_open = false
 	_root.visible = false
+	# 与 open() 对称:PvP 下 open() 没暂停树,close() 就不能解暂停
+	# (单机自己也解,防"菜单外被暂停后仍卡住")
+	if not is_pvp:
+		get_tree().paused = false
+	toggled.emit(false)
 	Sfx.play("ui")
-	get_tree().paused = false
 
 
 func go_menu() -> void:
+	# 本行故意不按 is_pvp 分叉(与 close() 不同):这条是"整局退出"路径,切场景前无条件解暂停
+	# 是保底 —— 万一树处于暂停态,回主菜单后会整个冻住(按钮都点不动)。PvP 下本就无人暂停树,
+	# 故此处无实害。
 	get_tree().paused = false
 	Sfx.play("ui")
 	if is_pvp:
@@ -109,5 +122,7 @@ func _button(text: String, size: int) -> Button:
 	b.text = text
 	_style(b, size)
 	b.custom_minimum_size = Vector2(420, 64)
-	b.pressed.connect(func() -> void: Sfx.play("ui"))
+	# 点击音不在这里挂:两个按钮的 handler(close/go_menu)各自会响一声,而 ESC 走的也是同两条
+	# 路径 —— 这里再挂一次就是同帧同调两个播放器("ui" 不在 Sfx.PITCH_VARIATION 里,音高也一样),
+	# 是能听出来的双响。统一由 open/close/go_menu 三个状态转移出声(键盘与点击同源)。
 	return b
