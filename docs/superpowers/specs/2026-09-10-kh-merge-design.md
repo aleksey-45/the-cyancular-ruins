@@ -155,6 +155,11 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - **禁用武器闸门在 PvP 侧必须两端都接（不是「唯一调用点」）**：`server/match_host.gd`（按 role）与 `scenes/pvp_client.gd` **两处**各调一次 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`，且**必须是同一份** `match_options`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
   - **只接客户端 = C2 永久分歧（必须按上面两端接）**：`pvp_client.gd:153` 把 `src.get_weapon_slot_pressed()` **无条件**打进输入包（不管本地闸门是否拒绝）；客户端 `weapon_component.gd:140-142` 对禁用槽 `Sfx.play("deny"); return`（本地留在旧槽）；服务器若没同步禁用表（`set_enabled_slots` 在 `server/` 侧无调用方），`equip("1")` 会**成功** → 服务器在槽 1、客户端在槽 3；随后每帧 `restore_state`（`player.gd:508`）又去 `equip("1")` → 再次被拒 → **每帧重试、永久错位**（冷却/散布/伤害全不对，且看不到任何报错）。
   - **不要**改 `core/net_bus_ext.gd` 或任何逐字节照搬的文件来「顺手」接这个闸门。
+- **★ 换场机制收口（L4 终审登记，必须做）**：`scenes/pvp_client.gd` 有**三条离开对局世界的路径，只有一条受保护**——
+  - `:97-101`（ESC → 回到主菜单）经 `PauseMenu.go_menu` → `ui/pause_menu.gd` 的 `Level0.safe_change_scene` ✓ **已保护**
+  - **`:311`（MATCH_OVER 的 5s 定时器）与 `:328`（`_on_opponent_left` 的 2.5s 定时器）仍是裸 `get_tree().change_scene_to_file("res://scenes/main_menu.tscn")`** ← 正是 KH 实测会同步 `memdelete` 数万碰撞体、`safe_change_scene` 被造出来规避的那条路径。
+  **两处都要改成 `Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")`。**
+  次生风险：两条机制**无互斥**——`safe_change_scene` 首行 `await tree.process_frame`，若"点「回到主菜单」"与"对手离开定时器"在**同一帧**触发，后者先销毁当前场景，前者恢复时 `old = tree.current_scene` 会拿到**刚建出来的 main_menu**，于是再实例化第二份菜单、把旧的塞进 `_retired`（不崩，但建出两份菜单且污染 `_retired` 语义）。收成同一机制后该竞态自然消失。
 
 ### L7 工具、探针与收尾
 
