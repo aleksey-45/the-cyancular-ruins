@@ -3,7 +3,8 @@ extends Node
 # 打击反馈层探针(KH-hit-feedback,场景模式):headless 验证 CombatFeedback 的
 #   1) 击杀播报(文本设置 + 浮现动画)  2) 命中 X 标记显隐  3) 击杀归因
 #   (玩家 last_damager meta 才播报;环境死/无实例时安静空转,不崩不误报)
-# 跑法: Godot_console --headless --path . res://tests/feedback_probe.tscn
+# 跑法: Godot_console --headless --path . --quit-after 600 res://tests/feedback_probe.tscn
+#   (--quit-after 兜底:脚本若解析失败则场景无脚本、一行不打印就会挂死到超时;与兄弟探针一致)
 
 func _ready() -> void:
 	var failures: Array[String] = []
@@ -99,21 +100,97 @@ func _ready() -> void:
 	var enemy_scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
 	if enemy_scene == null:
 		failures.append("EnemyJumpBird.tscn 载入失败,无法验证端到端归因")
-	else:
-		var shooter2 := _make_player()
-		var enemy: Node = enemy_scene.instantiate()
-		add_child(enemy)
-		enemy.set("hp", 1)                       # 保证一击致死
-		var b2: Node = bullet_scene.instantiate()
-		add_child(b2)
-		b2.set("shooter", shooter2)
-		b2.set("direct_hit_damage", 999)
-		fx._kill_label.text = ""                 # 清掉前面的播报,便于断言
-		b2.call("_direct_hit", enemy)            # ← 这就是真实命中路径(内部 hurt → 同步判死 → 播报)
-		if not fx._kill_label.text.begins_with("击杀"):
-			failures.append("致命一击未播报击杀(归因 meta 写晚了? 文本:「%s」)" % fx._kill_label.text)
-		enemy.queue_free()
-		b2.queue_free()
+	# 空守卫(Task 16):下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() →
+	# 探针一行都不打印就挂到 --quit-after 超时(失败串永远看不到)。提前收尾,失败也走正常退出码。
+	if enemy_scene == null or bullet_scene == null:
+		_finish(failures)
+		return
+	var shooter2 := _make_player()
+	var enemy: Node = enemy_scene.instantiate()
+	add_child(enemy)
+	enemy.set("hp", 1)                       # 保证一击致死
+	var b2: Node = bullet_scene.instantiate()
+	add_child(b2)
+	b2.set("shooter", shooter2)
+	b2.set("direct_hit_damage", 999)
+	fx._kill_label.text = ""                 # 清掉前面的播报,便于断言
+	b2.call("_direct_hit", enemy)            # ← 这就是真实命中路径(内部 hurt → 同步判死 → 播报)
+	if not fx._kill_label.text.begins_with("击杀"):
+		failures.append("致命一击未播报击杀(归因 meta 写晚了? 文本:「%s」)" % fx._kill_label.text)
+	enemy.queue_free()
+	b2.queue_free()
+	# ── 端到端归因(爆炸 AoE,Task 16):真实 Explosion.apply_aoe 必须让致命一击能播报 ──
+	var enemy3: Node = load("res://scenes/enemies/EnemyJumpBird.tscn").instantiate()
+	add_child(enemy3)
+	enemy3.set("hp", 1)
+	enemy3.global_position = Vector2(400, 0)
+	fx._kill_label.text = ""
+	var shooter3 := _make_player()
+	shooter3.global_position = Vector2(400, 0)     # 与敌人重合,确保在半径内
+	Explosion.apply_aoe(enemy3.global_position, 128.0, 999, 0.0, shooter3)
+	if not fx._kill_label.text.begins_with("击杀"):
+		failures.append("爆炸致命一击未播报击杀(AoE 分支归因未生效? 文本:「%s」)" % fx._kill_label.text)
+	enemy3.queue_free()
+	shooter3.queue_free()
+	# ── 端到端归因(激光,Task 16):走真实 LaserWeaponBase 伤害入口 _apply_beam_damage ──
+	# 不 fire():fire 要读鼠标/相机/枪口并做 BeamTrace 几何,真机方向不可控;此处直接进缝2
+	# (_apply_beam_damage → _damage_path_targets → _apply_to_enemy),即激光唯一的敌人伤害点,
+	# 几何(缝1)不参与本断言 —— 要钉的是「伤害点写没写归因」。
+	var laser_scene: PackedScene = load("res://scenes/weapons/laser_gun.tscn")
+	if laser_scene == null:
+		failures.append("laser_gun.tscn 载入失败,无法验证激光归因")
+	if laser_scene == null or enemy_scene == null:
+		_finish(failures)
+		return
+	var shooter4 := _make_player()
+	shooter4.global_position = Vector2(0, 0)
+	var laser: Node = laser_scene.instantiate()
+	add_child(laser)                          # _ready 建好 muzzle/_laser 才能 equip
+	laser.call("equip", shooter4)             # 建立射手(player)→ _apply_to_enemy 的归因来源
+	var enemy4: Node = enemy_scene.instantiate()
+	add_child(enemy4)
+	enemy4.set("hp", 1)                       # 保证一击致死(laser_gun damage=6)
+	enemy4.global_position = Vector2(400, 0)
+	fx._kill_label.text = ""                  # 清掉前面的播报,便于断言
+	# 一条横穿敌人身体的折线(缝2 的 pts 语义:世界系折线点集)
+	var beam_pts := PackedVector2Array([Vector2(200, 0), Vector2(600, 0)])
+	laser.call("_apply_beam_damage", beam_pts, [], PackedVector2Array())
+	if not fx._kill_label.text.begins_with("击杀"):
+		failures.append("激光致命一击未播报击杀(激光伤害点未写归因 meta? 文本:「%s」)" % fx._kill_label.text)
+	laser.queue_free()
+	enemy4.queue_free()
+	shooter4.queue_free()
+	# ── 换场幂等(必修复归):换场时旧世界仍在树上,新宿主仍须拿到实例 ──
+	# 旧行为「存在任何 current 就 return」会让新世界拿不到实例 → 反馈层静默消失。
+	var host_b := Node.new()
+	add_child(host_b)
+	CF.spawn(host_b)                       # 此刻 current 仍是挂在 self 下的旧实例(正是换场那一刻)
+	await get_tree().process_frame
+	await get_tree().process_frame         # spawn 是 call_deferred
+	if CombatFeedback.current == null or not host_b.is_ancestor_of(CombatFeedback.current):
+		failures.append("换场幂等回归: 旧实例在树上时新宿主拿不到 CombatFeedback 实例")
+	# 旧实例(_exit_tree 触发)不得把新引用抹成 null
+	if is_instance_valid(fx):
+		fx.queue_free.call_deferred()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if CombatFeedback.current == null:
+		failures.append("换场幂等回归: 旧实例退出时把 current 抹成了 null")
+	# ── 归因写端统一入口(抽口后):三条语义 ──
+	var v1 := _victim_killed_by(null)                 # 干净目标(该 helper 不预置 meta)
+	CombatFeedback.attribute(v1, _make_player())
+	if not v1.has_meta("last_damager"):
+		failures.append("attribute 未写 last_damager")
+	if not v1.has_meta("last_damager_time"):
+		failures.append("attribute 未写 last_damager_time")
+	var v2 := _victim_killed_by(null)
+	CombatFeedback.attribute(v2, v2)                  # 自伤:不得归因给自己
+	if v2.has_meta("last_damager"):
+		failures.append("attribute 在 attacker == victim 时误写")
+	var v3 := _victim_killed_by(null)
+	CombatFeedback.attribute(v3, null)                # 无射手:不得写
+	if v3.has_meta("last_damager"):
+		failures.append("attribute 在 attacker 为 null 时误写")
 	_finish(failures)
 
 func _make_player() -> Node2D:

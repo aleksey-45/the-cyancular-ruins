@@ -20,6 +20,8 @@ cam_shake = 5.0
 move_penalty = 0.9
 penalty_mode = 1
 pitch_clamp_deg = 55.0
+mag_size = 2
+reload_time = 2.2
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1073007659]
 position = Vector2(24, 9)
