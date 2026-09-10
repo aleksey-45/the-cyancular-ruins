@@ -3,7 +3,8 @@ extends Node
 # 打击反馈层探针(KH-hit-feedback,场景模式):headless 验证 CombatFeedback 的
 #   1) 击杀播报(文本设置 + 浮现动画)  2) 命中 X 标记显隐  3) 击杀归因
 #   (玩家 last_damager meta 才播报;环境死/无实例时安静空转,不崩不误报)
-# 跑法: Godot_console --headless --path . res://tests/feedback_probe.tscn
+# 跑法: Godot_console --headless --path . --quit-after 600 res://tests/feedback_probe.tscn
+#   (--quit-after 兜底:脚本若解析失败则场景无脚本、一行不打印就会挂死到超时;与兄弟探针一致)
 
 func _ready() -> void:
 	var failures: Array[String] = []
@@ -159,6 +160,22 @@ func _ready() -> void:
 	laser.queue_free()
 	enemy4.queue_free()
 	shooter4.queue_free()
+	# ── 换场幂等(必修复归):换场时旧世界仍在树上,新宿主仍须拿到实例 ──
+	# 旧行为「存在任何 current 就 return」会让新世界拿不到实例 → 反馈层静默消失。
+	var host_b := Node.new()
+	add_child(host_b)
+	CF.spawn(host_b)                       # 此刻 current 仍是挂在 self 下的旧实例(正是换场那一刻)
+	await get_tree().process_frame
+	await get_tree().process_frame         # spawn 是 call_deferred
+	if CombatFeedback.current == null or not host_b.is_ancestor_of(CombatFeedback.current):
+		failures.append("换场幂等回归: 旧实例在树上时新宿主拿不到 CombatFeedback 实例")
+	# 旧实例(_exit_tree 触发)不得把新引用抹成 null
+	if is_instance_valid(fx):
+		fx.queue_free.call_deferred()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if CombatFeedback.current == null:
+		failures.append("换场幂等回归: 旧实例退出时把 current 抹成了 null")
 	_finish(failures)
 
 func _make_player() -> Node2D:

@@ -22,8 +22,11 @@ static var current: CombatFeedback = null   # 当前对局的反馈层;null = �
 
 
 ## 由对局场景挂载(重复调用安全;换局由 _exit_tree 自清)
+## 幂等判据不能只看 current 是否存在:换场时(safe_change_scene 先 add_child 新场景、后 remove_child 旧世界)
+## 旧实例仍在树上且仍是 current,只看存在性会让新世界提前 return → 反馈层静默消失。
+## 故须满足「current 有效 **且** 已是本 host 的后代」才幂等返回。
 static func spawn(host: Node) -> void:
-	if current != null:
+	if current != null and is_instance_valid(current) and host.is_ancestor_of(current):
 		return
 	var fx := CombatFeedback.new()
 	host.add_child.call_deferred(fx)
