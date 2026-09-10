@@ -262,6 +262,8 @@ func fire() -> void:
 	_auto_aim()
 	var base_dir := _clamped_aim_dir()
 	_spawn_projectiles(base_dir)
+	# 8bit 音效:重武器(预瞄)/霰弹/普通枪三种音色
+	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
 	# 换弹(实验性):每次开火消耗一发,打空自动换弹
 	if reload_active():
 		mag_ammo = maxi(mag_ammo - 1, 0)
