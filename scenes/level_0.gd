@@ -25,6 +25,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _ready() -> void:
 	RenderingServer.set_default_clear_color("b0e5f6")
+	CombatFeedback.spawn(self)
 
 	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
 	var grid := WorldBuilder.load_grid()

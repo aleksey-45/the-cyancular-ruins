@@ -46,6 +46,7 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	body.cancel_charge()
 	hp -= damage
 	took_hit.emit(source_pos, damage)
+	Sfx.play("hurt")
 	iframes = PlayerParams.iframes_time
 	# 击退方向用环面最短向量,不用绝对相减:
 	# PvP 服务器权威下,命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与该玩家 canonical
@@ -66,12 +67,21 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	else:
 		# 爆炸:设独立击退向量(叠加,不覆盖移动),随帧指数衰减
 		knock_velocity = away * knockback
+	# 受击反馈(每次命中):画面微红一瞬间 + 小幅屏幕震动。
+	# 大伤害(>25% 最大血)原有的强震保持不变(下面 hit_ratio 分支)。
+	var tree := body.get_tree()
+	if tree != null:
+		var pp := tree.get_first_node_in_group("post_process")
+		if pp != null and pp.has_method("flash_hit"):
+			pp.flash_hit(clampf(float(damage) / float(max_hp) * 2.0, 0.5, 1.0))
 	# 大伤害反馈:一次扣血 >25% 最大血 → 相机震动(幅度随伤害比例增强)
 	var hit_ratio := float(damage) / float(max_hp)
-	if hit_ratio > 0.25:
-		var cam: Camera2D = body.get_viewport().get_camera_2d()
-		if cam != null and cam.has_method("shake"):
+	var cam: Camera2D = body.get_viewport().get_camera_2d()
+	if cam != null and cam.has_method("shake"):
+		if hit_ratio > 0.25:
 			cam.shake(PlayerParams.hit_cam_shake * (hit_ratio / 0.25), PlayerParams.hit_cam_shake_time)
+		else:
+			cam.shake(6.0, 0.15)   # 小伤害也给一点震感
 	hp_changed.emit(hp, max_hp)
 	if hp <= 0:
 		_downed()
