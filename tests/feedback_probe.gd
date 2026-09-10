@@ -99,21 +99,66 @@ func _ready() -> void:
 	var enemy_scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
 	if enemy_scene == null:
 		failures.append("EnemyJumpBird.tscn 载入失败,无法验证端到端归因")
-	else:
-		var shooter2 := _make_player()
-		var enemy: Node = enemy_scene.instantiate()
-		add_child(enemy)
-		enemy.set("hp", 1)                       # 保证一击致死
-		var b2: Node = bullet_scene.instantiate()
-		add_child(b2)
-		b2.set("shooter", shooter2)
-		b2.set("direct_hit_damage", 999)
-		fx._kill_label.text = ""                 # 清掉前面的播报,便于断言
-		b2.call("_direct_hit", enemy)            # ← 这就是真实命中路径(内部 hurt → 同步判死 → 播报)
-		if not fx._kill_label.text.begins_with("击杀"):
-			failures.append("致命一击未播报击杀(归因 meta 写晚了? 文本:「%s」)" % fx._kill_label.text)
-		enemy.queue_free()
-		b2.queue_free()
+	# 空守卫(Task 16):下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() →
+	# 探针一行都不打印就挂到 --quit-after 超时(失败串永远看不到)。提前收尾,失败也走正常退出码。
+	if enemy_scene == null or bullet_scene == null:
+		_finish(failures)
+		return
+	var shooter2 := _make_player()
+	var enemy: Node = enemy_scene.instantiate()
+	add_child(enemy)
+	enemy.set("hp", 1)                       # 保证一击致死
+	var b2: Node = bullet_scene.instantiate()
+	add_child(b2)
+	b2.set("shooter", shooter2)
+	b2.set("direct_hit_damage", 999)
+	fx._kill_label.text = ""                 # 清掉前面的播报,便于断言
+	b2.call("_direct_hit", enemy)            # ← 这就是真实命中路径(内部 hurt → 同步判死 → 播报)
+	if not fx._kill_label.text.begins_with("击杀"):
+		failures.append("致命一击未播报击杀(归因 meta 写晚了? 文本:「%s」)" % fx._kill_label.text)
+	enemy.queue_free()
+	b2.queue_free()
+	# ── 端到端归因(爆炸 AoE,Task 16):真实 Explosion.apply_aoe 必须让致命一击能播报 ──
+	var enemy3: Node = load("res://scenes/enemies/EnemyJumpBird.tscn").instantiate()
+	add_child(enemy3)
+	enemy3.set("hp", 1)
+	enemy3.global_position = Vector2(400, 0)
+	fx._kill_label.text = ""
+	var shooter3 := _make_player()
+	shooter3.global_position = Vector2(400, 0)     # 与敌人重合,确保在半径内
+	Explosion.apply_aoe(enemy3.global_position, 128.0, 999, 0.0, shooter3)
+	if not fx._kill_label.text.begins_with("击杀"):
+		failures.append("爆炸致命一击未播报击杀(AoE 分支归因未生效? 文本:「%s」)" % fx._kill_label.text)
+	enemy3.queue_free()
+	shooter3.queue_free()
+	# ── 端到端归因(激光,Task 16):走真实 LaserWeaponBase 伤害入口 _apply_beam_damage ──
+	# 不 fire():fire 要读鼠标/相机/枪口并做 BeamTrace 几何,真机方向不可控;此处直接进缝2
+	# (_apply_beam_damage → _damage_path_targets → _apply_to_enemy),即激光唯一的敌人伤害点,
+	# 几何(缝1)不参与本断言 —— 要钉的是「伤害点写没写归因」。
+	var laser_scene: PackedScene = load("res://scenes/weapons/laser_gun.tscn")
+	if laser_scene == null:
+		failures.append("laser_gun.tscn 载入失败,无法验证激光归因")
+	if laser_scene == null or enemy_scene == null:
+		_finish(failures)
+		return
+	var shooter4 := _make_player()
+	shooter4.global_position = Vector2(0, 0)
+	var laser: Node = laser_scene.instantiate()
+	add_child(laser)                          # _ready 建好 muzzle/_laser 才能 equip
+	laser.call("equip", shooter4)             # 建立射手(player)→ _apply_to_enemy 的归因来源
+	var enemy4: Node = enemy_scene.instantiate()
+	add_child(enemy4)
+	enemy4.set("hp", 1)                       # 保证一击致死(laser_gun damage=6)
+	enemy4.global_position = Vector2(400, 0)
+	fx._kill_label.text = ""                  # 清掉前面的播报,便于断言
+	# 一条横穿敌人身体的折线(缝2 的 pts 语义:世界系折线点集)
+	var beam_pts := PackedVector2Array([Vector2(200, 0), Vector2(600, 0)])
+	laser.call("_apply_beam_damage", beam_pts, [], PackedVector2Array())
+	if not fx._kill_label.text.begins_with("击杀"):
+		failures.append("激光致命一击未播报击杀(激光伤害点未写归因 meta? 文本:「%s」)" % fx._kill_label.text)
+	laser.queue_free()
+	enemy4.queue_free()
+	shooter4.queue_free()
 	_finish(failures)
 
 func _make_player() -> Node2D:
