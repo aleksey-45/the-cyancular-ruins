@@ -17,6 +17,7 @@ bullet_range = 2500.0
 bullet_size = 1.5
 damage = 5
 impact = 10.0
+max_live_projectiles = 3
 recoil_push = 1100.0
 recoil_kick = 16.0
 cam_shake = 14.0
@@ -29,6 +30,8 @@ pitch_clamp_deg = 60.0
 bullet_gravity = 0.45
 preview_arc = true
 preview_time = 3.0
+mag_size = 4
+reload_time = 2.8
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1705220904]
 texture_filter = 1
