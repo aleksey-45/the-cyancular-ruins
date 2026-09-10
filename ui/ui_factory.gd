@@ -45,12 +45,14 @@ static func label(text: String, size: int, color: Color = Color.WHITE) -> Label:
 	return l
 
 
-static func button(text: String, size: int) -> Button:
+static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)) -> Button:
 	var b := Button.new()
 	b.text = text
 	style_control(b, size)
-	# 420×64:布局度量,故意不凑 16 的倍数(见文件头第 2 条)
-	b.custom_minimum_size = Vector2(420, 64)
+	# 默认 420×64 是主菜单按钮列的布局度量,故意不凑 16 的倍数(见文件头第 2 条)。
+	# 尺寸不合场景的调用方(设置菜单的键位格 200×40、返回键 280×48)直接传 min_size,
+	# 不必再事后覆写 custom_minimum_size。
+	b.custom_minimum_size = min_size
 	# 点击音不在这里挂:调用方的 handler(close/go_menu)各自会响一声,而 ESC 走的也是同两条
 	# 路径 —— 这里再挂一次就是同帧同调两个播放器("ui" 不在 Sfx.PITCH_VARIATION 里,音高也一样),
 	# 是能听出来的双响。统一由状态转移出声(键盘与点击同源)。

@@ -57,16 +57,14 @@ func _ready() -> void:
 		var name_l := UiFactory.label(ACTION_NAMES.get(action, action), 32)
 		name_l.custom_minimum_size = Vector2(200, 0)
 		grid.add_child(name_l)
-		# 键位按钮是网格单元(不是普通菜单按钮),保留原 200×40 尺寸
-		var bind_btn := UiFactory.button("", 32)
-		bind_btn.custom_minimum_size = Vector2(200, 40)
+		# 键位按钮是网格单元(不是主菜单按钮列),尺寸经 min_size 传工厂:200×40
+		var bind_btn := UiFactory.button("", 32, Vector2(200, 40))
 		bind_btn.pressed.connect(func() -> void: _begin_capture(action, bind_btn))
 		grid.add_child(bind_btn)
 		_bind_buttons[action] = bind_btn
 		_refresh_bind_label(action)
 
-	var reset := UiFactory.button("恢复默认键位", 32)
-	reset.custom_minimum_size = Vector2(280, 48)
+	var reset := UiFactory.button("恢复默认键位", 32, Vector2(280, 48))
 	reset.pressed.connect(func() -> void:
 		Sfx.play("ui")   # 点击音由各 handler 自己出(UiFactory.button 不代挂,防同帧双响)
 		Settings.reset_bindings()
@@ -75,8 +73,7 @@ func _ready() -> void:
 	vb.add_child(reset)
 
 	# ── 返回 ──
-	var back := UiFactory.button("返 回(Esc)", 32)
-	back.custom_minimum_size = Vector2(280, 48)
+	var back := UiFactory.button("返 回(Esc)", 32, Vector2(280, 48))
 	back.pressed.connect(_go_back)
 	vb.add_child(back)
 
