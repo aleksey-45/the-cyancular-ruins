@@ -134,7 +134,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - `scenes/matchmaking.tscn/gd` 换 KH 版（含大乱斗入口、连接健壮性、一键起本服）
 - `scenes/player/player.gd`：「倒地 R」由 `reload_current_scene()` 改为 `Level0.restart_single()`（**仅单机**；PvP 倒地仍交给服务器权威复活，沿用 main 的 `not Level0.pvp_mode` 守卫）。**该项原列在 L3，因依赖本层新增的 `restart_single()` 而移到这里**
 - ⚠️ **carry-forward（本层新引入的残弹/滚轮交互，做 `restart_single()` / `restart_at()` 与滚轮开关时必须一并处理）**：
-  - **(a) `restart_at` / `restart_single` 必须清 `_mag_state`**（或至少不得与 `_restore_mag.call_deferred` 抢 `mag_ammo`）：`weapon_component.gd:167` 的 `_restore_mag.call_deferred` 在**帧末** flush，排在调用方**同帧同步**写的 `w.mag_ammo = w.mag_size` 之后 → 会用复活前的旧残弹把"复活满弹"覆盖掉（复活了仍只有 3 发，且无报错）。清 `weapon_component._mag_state` 是最省事的对齐方式。
+  - **(a) `restart_at` / `restart_single` 必须清 `_mag_state`**（或至少不得与 `_restore_mag.call_deferred` 抢 `mag_ammo`）：`weapon_component.gd:174` 的 `_restore_mag.call_deferred` 在**帧末** flush，排在调用方**同帧同步**写的 `w.mag_ammo = w.mag_size` 之后 → 会用复活前的旧残弹把"复活满弹"覆盖掉（复活了仍只有 3 发，且无报错）。清 `weapon_component._mag_state` 是最省事的对齐方式。
   - **(b) ✅ 已修（2026-09-10，提前于本层落地）：`weapon_component.gd:156` 一带残弹记账处的 `is_inside_tree()` 守卫已就位**——`_mag_state[old_slot] = _weapon.mag_ammo` 只在旧枪**已入树**时执行（`if _weapon.reload_active() and _weapon.is_inside_tree()`）。原缺陷：同帧两次 `equip()`（一帧内收到两个滚轮事件即可）会把旧枪"还没 `_ready`（`mag_ammo` 为 0）"的残弹记进 `_mag_state`，再被 `_restore_mag` 覆盖回新枪 → **被略过的那个中间槽残弹被抹成 0**（不是回满；`fire()` 靠 `start_reload()` 自愈 = 交火中白交一次装填）。**回归钉在 `tests/kh_l3_probe.gd::_check_same_frame_cycle()`**（不插 `await`、同帧连调两次 `cycle_slot`，断言被略过槽的残弹未被抹成 0）。**注意：滚轮开关（`Settings.wheel_switch`）本身仍是本层的 UI 产物**（默认 `false`，今天无 UI 可打开）——该守卫修的是同一个开关打开后的可达路径，不必再回来改。
 
 ### L5 大乱斗
@@ -145,6 +145,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
   - `server/server_main.gd` = main 的 `_kill_port_holder` 修正 + KH 的 `--royale --players N [--ai-roles]` 分支与大乱斗报到超时
   - `server/match_host.gd` = main 的 C2（ack/c2、每 tick 1 包、快照在消费前）+ KH 给 `RoyaleHost` 的扩展点：`_match_round_tick` / `_spawn_cell` / `_attributed_killer` / `_finish_match` / `_match_winner` / `_broadcast_round_state` / `_on_bullet_hit` / `_respawn_player` / `request_suicide_role` / `set_display_names` / `mark_disconnected`，以及 `_init(..., options, ai_roles)` 与 `start_on(...)`
 - AI 补位代码就位（`core/ai_input_source.gd`、`server/ai_player.gd`、`--ai-roles`），**不接按钮**
+- ⚠️ **AI 补位与换弹闸的交互（L5 必读）**：`weapon_base.reload_active()` 现在的第二条判据是「输入源不是网络驱动」（`player.input_is_network()`），用来挡住权威服务器与远端副本。**L5 的 AI 补位若用非 network-driven 的 `AISource`，服务器侧的 AI 会被判成"本地单机"从而进入换弹** —— 打空弹夹后停火 `reload_time` 秒（霰弹 2.2s / 榴弹 2.8s）。落地时必须让 `AISource.is_network_driven()` 返回 **true**（或给 `reload_active()` 换一个更贴语义的判据），否则 AI 手感会莫名变差、且是静默的。（不会造成客户端分歧——AI 无预测端。）
 - 大乱斗客户端走 `server_rendered`；地图沿用 `maps/factory1v1.cyrm`（KH `room_manager.PVP_MAP` 即此图，与 main 同字节；落地时确认 `royale_start` 传的也是它，若 8 人散点不够再议）
 
 ### L6 PvP 客户端合流（最高风险）
@@ -152,7 +153,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - `scenes/pvp_client.gd`：以 main 的 C2 版本为基底，**只做加法**接入 KH 的反馈/选项/血条/小地图/拖尾/暂停菜单/`safe_change_scene`；`hit_confirm` / `match_options` / `peer_hues` 经 `NetBusExt` 消费；**`beam_fired` 不在此列**——main 现役激光链路走 `NetBus`（发送端 `server/match_host.gd:391` 的 `NetBus.rpc_id(..., "beam_fired", ...)`，接收端 `scenes/pvp_client.gd:79` 的 `NetBus.local_beam_fired`），`core/net_bus_ext.gd` 里的同名 RPC 是 KH 遗留重复。**L6 必须沿用 main 现役 `NetBus`，不得启用 `NetBusExt.beam_fired`**；若确要启用，必须同步把 `match_host` 的发送端一起迁过去，否则收发落在不同节点 = 对手端激光视觉静默 no-op
 - 服务器渲染保底路径（`server_rendered`）保持可用
 - **禁用武器闸门在 PvP 侧必须两端都接（不是「唯一调用点」）**：`server/match_host.gd`（按 role）与 `scenes/pvp_client.gd` **两处**各调一次 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`，且**必须是同一份** `match_options`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
-  - **只接客户端 = C2 永久分歧（必须按上面两端接）**：`pvp_client.gd:153` 把 `src.get_weapon_slot_pressed()` **无条件**打进输入包（不管本地闸门是否拒绝）；客户端 `weapon_component.gd:140-141` 对禁用槽 `Sfx.play("deny"); return`（本地留在旧槽）；服务器若没同步禁用表（`set_enabled_slots` 在 `server/` 侧无调用方），`equip("1")` 会**成功** → 服务器在槽 1、客户端在槽 3；随后每帧 `restore_state`（`player.gd:508`）又去 `equip("1")` → 再次被拒 → **每帧重试、永久错位**（冷却/散布/伤害全不对，且看不到任何报错）。
+  - **只接客户端 = C2 永久分歧（必须按上面两端接）**：`pvp_client.gd:153` 把 `src.get_weapon_slot_pressed()` **无条件**打进输入包（不管本地闸门是否拒绝）；客户端 `weapon_component.gd:140-142` 对禁用槽 `Sfx.play("deny"); return`（本地留在旧槽）；服务器若没同步禁用表（`set_enabled_slots` 在 `server/` 侧无调用方），`equip("1")` 会**成功** → 服务器在槽 1、客户端在槽 3；随后每帧 `restore_state`（`player.gd:508`）又去 `equip("1")` → 再次被拒 → **每帧重试、永久错位**（冷却/散布/伤害全不对，且看不到任何报错）。
   - **不要**改 `core/net_bus_ext.gd` 或任何逐字节照搬的文件来「顺手」接这个闸门。
 
 ### L7 工具、探针与收尾

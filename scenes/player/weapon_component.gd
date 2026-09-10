@@ -79,7 +79,7 @@ static func make_weapon_check(slot: int, checked: bool, font_size: int, on_toggl
 	cell.add_child(l)
 	return cell
 
-# 启用的武器槽位(1-5)。单机由 Level0 按 RunOptions 设置;PvP 由 pvp_client 按服务器
+# 启用的武器槽位(1-6)。单机由 Level0 按 RunOptions 设置;PvP 由 pvp_client 按服务器
 # 下发的 match_options 设置。数字键/滚轮切枪都会跳过禁用槽位。
 var enabled_slots: Array = [1, 2, 3, 4, 5, 6]
 
