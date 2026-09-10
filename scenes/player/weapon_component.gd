@@ -103,7 +103,12 @@ func default_slot() -> String:
 
 # 滚轮切枪:沿 dir 方向循环到下一个启用槽位(禁用的直接跳过)。
 func cycle_slot(dir: int) -> void:
-	equip(str(_peek_cycle(dir)))
+	var next := _peek_cycle(dir)
+	if next == _current_slot:
+		# 无槽可切(只启用一把枪 / 目标即当前槽):早退。与 request_net_cycle 同形;
+		# 否则会白重建一次武器实例 + 响一声 switch(equip 每次都 instantiate)。
+		return
+	equip(str(next))
 
 # 计算滚轮方向的目标槽位(不切换)
 func _peek_cycle(dir: int) -> int:
