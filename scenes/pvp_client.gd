@@ -96,7 +96,7 @@ func _ready() -> void:
 	_pause_menu = PauseMenu.new(true)
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		if _local != null and _local.has_method("set_controls_locked"):
-			_local.set_controls_locked(open))
+			_local.set_controls_locked(open or _round_locked))
 	add_child(_pause_menu)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
