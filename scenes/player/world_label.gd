@@ -3,7 +3,7 @@ extends Node2D
 # 位置不由自身维护——pvp_client 每帧把它 global_position 贴到对应玩家头顶(不随倒地转体旋转)。
 
 const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
-const FONT_SIZE := 24
+const FONT_SIZE := 32   # 16 的整数倍(像素字体锐利;全仓字号规范的最后一处违例)
 const WIDTH := 260.0
 const ALPHA := 0.85   # 文字透明度
 

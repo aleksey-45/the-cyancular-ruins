@@ -465,6 +465,9 @@ func _return_to_lobby(msg: String) -> void:
 	_join_sent_ms = 0
 	NetBus.stop()
 	_connected = false
+	# 重连也要起表:否则 _process 那条「8s 没连上大厅就给明确提示」的兜底对新连接不成立,
+	# UDP 静默丢包时状态栏会停在"已返回大厅并刷新"而实际没刷新(用户只能手点「刷新」自救)。
+	_lobby_start_ms = Time.get_ticks_msec()
 	_status.text = msg
 	NetBus.start_client(PvpSession.server_address)
 

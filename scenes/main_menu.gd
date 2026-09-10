@@ -7,6 +7,9 @@ extends Control
 static var _version_cache := ""
 static var _log_cache: Array = []
 
+# 自动探针节点名:挂在树根上跨场景存活,靠这个名字做「已挂过就别再挂」的幂等判据
+const PROBE_NODE_NAME := "MenuAutotestProbe"
+
 var _ui_layer: CanvasLayer = null
 var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
 var _ver_panel: PanelContainer = null   # 版本信息面板(弹出式)
@@ -24,16 +27,23 @@ func _ready() -> void:
 
 	# 菜单流转自动探针(规格 §6 的 L4 验收项):命令行 `-- --autotest-sp|mp|set|level` 时,
 	# 把探针挂到树根(而非本场景)——它要穿越 change_scene 存活。平时零开销。
-	# 缺文件守卫:发布版裁掉 tests/ 或缺文件时静默跳过,不让主菜单崩。
+	# 缺文件守卫:探针文件可能缺失(开发分支尚未落该文件、或有人手删)时静默跳过,不让主菜单崩。
+	# 注:「发布版会裁掉 tests/」**不是**这条守卫的理由——export_presets.cfg 是
+	# export_filter="all_resources",tests/ 会一起打进发布包,真实理由是文件可能不存在。
+	# 幂等:sp 流程经 Level0.safe_change_scene 会**重进本场景**,不判重就会挂上第二个探针
+	# (第二个探针又会点一次「单人模式」,把干净主菜单盖成单人面板)。
 	for arg in OS.get_cmdline_user_args():
 		if not arg.begins_with("--autotest-"):
 			continue
+		if get_tree().root.has_node(NodePath(PROBE_NODE_NAME)):
+			break
 		if not ResourceLoader.exists("res://tests/menu_autotest.gd"):
 			break
 		var probe_script := load("res://tests/menu_autotest.gd")
 		if probe_script == null:
 			break
 		var probe := Node.new()
+		probe.name = PROBE_NODE_NAME
 		probe.set_script(probe_script)
 		probe.set("mode", arg.trim_prefix("--autotest-"))
 		get_tree().root.add_child.call_deferred(probe)

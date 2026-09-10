@@ -33,7 +33,15 @@ func _run() -> void:
 	await tree.create_timer(1.5).timeout
 	var cur := tree.current_scene
 	print("AUTOTEST[%s]: 当前场景 = %s" % [mode, cur.scene_file_path if cur != null else "<null>"])
+	# ★ 硬断言(sp):点了「开始探索」必须**真的进了 Level0**。
+	# 少了这条,本探针会「假通过」:唯一的硬断言是末尾「回主菜单后 = main_menu.tscn」,
+	# 而"从没离开过主菜单"(菜单文案被改 → 找不到按钮 → 一次都没点到)正好满足它。
 	_dump_render_chain(tree, cur)
+	if mode == "sp" and (cur == null or not cur.scene_file_path.ends_with("Level0.tscn")):
+		print("AUTOTEST[sp]: 未进入 Level0(实际 %s)——菜单流转断在按钮文案上?" % [
+			cur.scene_file_path if cur != null else "<null>"])
+		tree.quit(1)
+		return
 	if mode == "sp":
 		await _verify_pause(tree)
 		await _verify_go_menu(tree)
@@ -94,17 +102,27 @@ func _press_esc() -> void:
 func _shot(tree: SceneTree, file: String) -> void:
 	await tree.process_frame
 	await tree.process_frame
-	_save_root_png(tree, "user://" + file)
-	print("AUTOTEST: 截图已存 user://" + file)
+	# 只有真的存下去了才报「已存」——headless 跳过时不该声称存了(原实现无条件打印)
+	if _save_root_png(tree, "user://" + file):
+		print("AUTOTEST: 截图已存 user://" + file)
 
 
-func _save_root_png(tree: SceneTree, path: String) -> void:
+# 存 root 视口 PNG;返回是否真的写了文件(调用方据此决定要不要报「已存」)。
+func _save_root_png(tree: SceneTree, path: String) -> bool:
+	# headless(dummy 渲染后端)的 root 视口纹理是空壳:get_image() 会在引擎侧打
+	#   ERROR: Parameter "t" is null
+	# 污染 CI 的 `grep -ci error` 判读(该判据本要用来抓"场景报错"),故先行跳过。
+	# 该分支只在 headless 成立 → 带窗口跑 GUI 的行为完全不受影响。
+	if DisplayServer.get_name() == "headless":
+		print("AUTOTEST: headless(dummy 后端)无视口纹理,跳过截图 ", path)
+		return false
 	var tex := tree.root.get_texture()
 	var img: Image = tex.get_image() if tex != null else null
 	if img == null:
-		print("AUTOTEST: 无视口纹理(headless),跳过截图 ", path)
-		return
+		print("AUTOTEST: 取不到视口纹理,跳过截图 ", path)
+		return false
 	img.save_png(path)
+	return true
 
 
 # 按文字前缀找按钮并触发(去空格匹配;浮现动画不阻塞 pressed)
