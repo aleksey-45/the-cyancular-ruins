@@ -88,9 +88,13 @@ func _physics_process(delta: float) -> void:
 		# 视觉副本(apply_damage=false)不裁决伤害,直接消失。
 		if apply_damage and hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
 			source.apply_hit(hit, velocity_vec)
+			_register_player_hit(hit)
+			Sfx.play("hit")
 			queue_free()
 		elif apply_damage and hit.is_in_group("enemies"):
 			hit.hurt(hit_damage, velocity_vec, hit_impact)
+			_register_player_hit(hit)
+			Sfx.play("hit")
 			queue_free()
 		else:
 			# 撞墙:可破坏(树叶/树干)→ 播受击碎片 + (权威侧)扣血;不可破坏墙 → 子弹消失。
@@ -161,6 +165,18 @@ func _direct_hit(hit: Node) -> void:
 	if hit.has_method("hurt"):
 		var dir := velocity_vec.normalized() if not velocity_vec.is_zero_approx() else Vector2.RIGHT
 		hit.hurt(direct_hit_damage, dir)
+		_register_player_hit(hit)
+
+
+# 玩家子弹命中实体的统一收尾:击杀归因 meta(敌死时 CombatFeedback 读它播「击杀 XXX」)
+# + 命中 X 标记。headless 服务器进程无 CombatFeedback 实例 → hit_marker 空操作,无副作用。
+func _register_player_hit(target: Node) -> void:
+	var who := shooter
+	if who == null and is_instance_valid(source):
+		who = source
+	if who != null and who != target:
+		target.set_meta("last_damager", who)
+	CombatFeedback.hit_marker()
 
 # 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
 # 后续反弹不重置时长(首次碰撞决定引信时长,不因再撞墙/再撞敌人刷新)。
@@ -170,6 +186,7 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
+	Sfx.play("explosion")
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position

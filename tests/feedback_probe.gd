@@ -70,6 +70,29 @@ func _ready() -> void:
 	# 显示名对照表
 	if CF.ENEMY_NAMES.get("FlyBird", "") != "飞鸟":
 		failures.append("敌人显示名对照表缺失")
+	# ── 写入方覆盖(Task 12 闭环):真实 BulletBase._register_player_hit 必须落 last_damager ──
+	var bullet_scene: PackedScene = load("res://scenes/weapons/bullet.tscn")
+	if bullet_scene == null:
+		failures.append("bullet.tscn 载入失败,无法验证写入方")
+	else:
+		var shooter := _make_player()
+		# 正例:射手 ≠ 目标 → 必须写 meta 且值就是射手
+		var b: Node = bullet_scene.instantiate()
+		add_child(b)
+		b.set("shooter", shooter)
+		var victim_ok := _victim_killed_by(null)     # 注意:这个 helper 不设 meta
+		b.call("_register_player_hit", victim_ok)
+		if not victim_ok.has_meta("last_damager"):
+			failures.append("_register_player_hit 未写入 last_damager(写端缺失/写错)")
+		elif victim_ok.get_meta("last_damager") != shooter:
+			failures.append("last_damager 写的不是射手")
+		# 反例:射手 == 目标 → 不得写 meta(自伤不应归因给自己)
+		var self_hit := _victim_killed_by(null)
+		b.set("shooter", self_hit)
+		b.call("_register_player_hit", self_hit)
+		if self_hit.has_meta("last_damager"):
+			failures.append("射手==目标时不应写 last_damager")
+		b.queue_free()
 	_finish(failures)
 
 func _make_player() -> Node2D:
