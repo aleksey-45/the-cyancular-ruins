@@ -120,14 +120,22 @@ func _test_aoe() -> void:
 	for y in range(25):
 		g[y][4] = MazeGenerator.SOLID
 	MazeGenerator.current_grid = g
-	# 爆心(5,12)→(1,12):环面最短走左弧 5→4(墙)→3→2→1,被 x=4 墙挡
+	# ⚠ 分格单位坑:遮挡判定按 TILE_SIZE=64 分格(Explosion._has_los → MazeGenerator.cell_of),
+	# 而本文件其它几何是按「16px 一格」写的。x=4 那根整列墙的世界范围其实是 [256,320)。
+	# 所以爆心放第 5 格(x=5*64+32=352)、目标放第 3 格(x=3*64=192):墙**真的**夹在两者之间,
+	# 环面最短路径 5→4(墙列)→3 被挡。d=160px 也在 radius×INNER_FRACTION=120px 内圈之外 ——
+	# 内圈按设计免疫遮挡,贴脸目标测不出掩护(旧几何 (5,12)→(1,12) 两格都在墙同侧且落在内圈,断言恒红)。
+	var blast := Vector2(5 * 64 + 32, 12 * 16)
 	var walled := StubEnemy.new()
-	walled.global_position = Vector2(1 * 16, 12 * 16)
+	walled.global_position = Vector2(3 * 64, 12 * 16)
 	root.add_child(walled)
 	await physics_frame
-	exp.apply_aoe(Vector2(5 * 16, 12 * 16), 300.0, 35, 900.0)
-	# (原「墙后敌人保留 75% 伤(26)」断言已删:该几何 d=64 落在内圈 120px 内、内圈按设计免疫掩护,
-	#  断言期望值与现行几何不符——这是本次改动之前就长期失败的红;要重测墙后衰减需把目标放到内圈之外)
+	exp.apply_aoe(blast, 300.0, 35, 900.0)
+	# 墙后掩护衰减:实际伤害应低于同距离无遮挡的理论值
+	# (用已加载的 exp 句柄取 _dist/_falloff,不用全局类名 Explosion —— -s 阶段解析全局类会拿不到 autoload)
+	var d_walled: float = exp._dist(blast, walled.global_position)
+	_check(walled.hp > 50 - int(exp._falloff(d_walled, 300.0, 35)),
+			"墙后敌人伤害应低于同距离无遮挡(d=%.0f, 实际 hp=%d)" % [d_walled, walled.hp])
 	walled.free()
 	# 爆心(5,12)→(8,12):右弧 5→6→7→8 无墙 → 满伤
 	var open := StubEnemy.new()
