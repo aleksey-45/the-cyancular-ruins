@@ -151,9 +151,7 @@ func _test_fuse() -> void:
 	await physics_frame
 	_check(bg.velocity_vec.y > 0.0, "基类重力生效(gravity_factor>0)")
 	bg.free()
-	# ── 直接命中敌人:10 直接伤立即 + 钉在目标身上(速度清零,不再弹开)+ hit_fuse_time 短引信 ──
-	# (旧契约是"反弹后引爆":0.1s 内弹开 100~300px,最近的受害者反而落到爆心外圈,
-	#  伤害比远处贴爆心的目标还低 —— "越近伤害越低"倒挂,已改为钉住原地引爆)
+	# ── 直接命中敌人:10 直接伤立即 + 反弹 + 引信 hit_fuse_time(0.1s)短延时爆炸 ──
 	var b = _make_bullet()
 	b.set("hit_fuse_time", 0.1)
 	root.add_child(b)
@@ -162,25 +160,25 @@ func _test_fuse() -> void:
 	root.add_child(enemy)
 	b.global_position = Vector2(200, 200)
 	b.setup(Vector2.RIGHT, 1000.0, 2000.0, 1.0, Color.WHITE, null)
-	# 命中瞬间:直接伤 10 立扣,子弹钉住(速度清零)未销毁
+	# 命中瞬间:直接伤 10 立扣,子弹反弹(速度方向反转)未销毁
 	var hit_seen := false
-	var stuck := false
+	var bounced := false
 	for i in range(60):
 		await physics_frame
 		if is_instance_valid(enemy) and enemy.hp == 50 - 10:
 			hit_seen = true
-			if is_instance_valid(b) and b.velocity_vec == Vector2.ZERO:
-				stuck = true
+			if is_instance_valid(b) and b.velocity_vec.x < 0.0:
+				bounced = true
 				break
-	_check(hit_seen and stuck, "命中敌人:10 直接伤立即,子弹钉在目标身上(速度清零)不销毁")
-	# 短引信:命中后约 0.1s(≈6 帧)在受害者位置爆炸,不是长 fuse_time(默认 0.5s)——15 帧内必须炸
+	_check(hit_seen and bounced, "命中敌人:10 直接伤立即,子弹反弹(方向反转)不销毁")
+	# 短引信:命中后约 0.1s(≈6 帧)爆炸,不是长 fuse_time(默认 0.5s)——15 帧内必须炸
 	var exploded2 := false
 	for i in range(15):
 		await physics_frame
 		if not is_instance_valid(b):
 			exploded2 = true
 			break
-	_check(exploded2, "命中敌人钉住后约 0.1s 短引信原地爆炸")
+	_check(exploded2, "命中敌人反弹后约 0.1s 短引信爆炸")
 	enemy.free()
 	# ── 撞墙 → 停驻 → 0.5s 后才爆(飞行中不炸)──
 	var wall := StaticBody2D.new()
