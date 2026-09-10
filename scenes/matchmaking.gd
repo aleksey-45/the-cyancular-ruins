@@ -365,7 +365,7 @@ func _on_room_list(rooms: Array) -> void:
 			occ = "   玩家: " + ", ".join(names)
 		var btn := Button.new()
 		btn.text = "房间 %s      %d/2%s" % [code, players, occ]
-		UiFactory.style_control(btn, 32)
+		UiFactory.style_control(btn, 16)
 		btn.custom_minimum_size = Vector2(600, 46)
 		# 点击方块直接加入(已满的由服务器拒绝并自动刷新列表)
 		btn.disabled = false
