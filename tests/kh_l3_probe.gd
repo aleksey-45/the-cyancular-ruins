@@ -81,6 +81,7 @@ func _ready() -> void:
 	await _check_gate(wep)
 	await _check_cycle(wep)
 	await _check_mag_memory(wep)
+	await _check_same_frame_cycle(wep)
 	await _check_reload_state_machine(player, wep)
 	_check_tick_guards(player, wep)
 
@@ -177,10 +178,8 @@ func _check_cycle(wep: WeaponComponent) -> void:
 			"反向滚轮从槽3 应跳过被禁的槽2 回到槽1(实际 %d)" % wep.current_slot_int())
 
 	# 只启用一把枪:滚轮不应改变槽位(且不崩)
-	# 注:两次 cycle_slot 之间必须 await 一帧。同帧连切两次会踩到 equip 的 deferred 竞态
-	# (旧武器还没 add_child/_ready 就被第二次 equip queue_free → 它的 mag_ammo 仍是 0,
-	#  被记进 _mag_state 后又 _restore_mag 写回 0 → 残弹归零)。真机上滚轮事件天然跨帧,
-	# 本探针不制造这个场景;该竞态已作为发现上报,不在此处当断言。
+	# 注:本段两次 cycle_slot 之间 await 一帧,测的是**跨帧的普通路径**(滚轮一跳一帧)。
+	# 同帧连切两次的 deferred 竞态另有一条真断言,见 _check_same_frame_cycle()。
 	wep.set_enabled_slots([1, 3, 4, 5, 6])   # 只留槽 2 启用
 	await _frames(3)
 	_check(wep.current_slot_int() == 2,
@@ -345,6 +344,57 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 		return
 	_check(back.mag_ammo == 5,
 			"切回槽1 残弹未恢复为切走时的值(实际 %d,期望 5;=12 即「切枪回满弹」漏洞)" % back.mag_ammo)
+
+
+# ── 5b) ★ 同帧两次 equip:未入树的枪不得被记账(残弹被抹成 0)────────────
+# 竞态(修前为真 bug):equip() 用 call_deferred("add_child", 新枪) 入树,**_ready 要到帧末才跑**,
+# 而 mag_ammo 满弹是在 _ready 里设的 → 新枪在入树前 mag_ammo 恒为 0。若同帧再 equip 一次,
+# 第二次的「旧武器」正是这把未入树的枪,照记 `_mag_state[old_slot] = _weapon.mag_ammo`
+# 就把**被略过的那个中间槽**记成 0;之后切回该槽 → 只拿到 0 残弹(不是回满),fire() 靠
+# start_reload() 自愈 = 交火中白交一次 1.0~2.8s 装填。它坏掉的正是 L3 要交付的「残弹记忆」。
+# 真机可达路径:滚轮走 player.gd 的 _unhandled_input(事件驱动,每个 InputEventMouseButton
+# 一次 cycle_slot),Godot 一帧内会把缓冲的 OS 事件一次性泵完 → 快拨/惯性滚轮/精密触控板
+# 能在一帧里发两次 cycle_slot。(「真机滚轮天然跨帧」的说法不成立,不要据此放宽。)
+# 本函数**刻意不插 await**:如实制造同帧场景,让 CI 真的看得见这个 bug。
+func _check_same_frame_cycle(wep: WeaponComponent) -> void:
+	wep.set_enabled_slots([])   # 全开
+	wep.equip("1")
+	await _frames(3)
+	if wep.current_slot_int() != 1:
+		_failures.append("同帧切枪前置:未到槽1(实际 %d)" % wep.current_slot_int())
+		return
+
+	# 前置:先把槽2 的残弹记成**非满值** 17 —— 否则被抹掉的是 0、断言恒真抓不到 bug
+	wep.equip("2")
+	await _frames(3)
+	var rifle: WeaponBase = wep.current_weapon()
+	if rifle == null or rifle.mag_size != 30:
+		_failures.append("同帧切枪前置:槽2 未拿到步枪(weapon=%s)" % str(rifle))
+		return
+	rifle.mag_ammo = 17
+	wep.equip("3")              # 切走 → _mag_state[2] = 17
+	await _frames(3)
+	wep.equip("1")              # 回槽1,准备同帧连切
+	await _frames(3)
+	_check(wep.current_slot_int() == 1, "同帧切枪前置:未回到槽1(实际 %d)" % wep.current_slot_int())
+
+	# ★ 同帧两次 cycle_slot(1):1 → 2 → 3,槽2 是被"略过"的中间槽。
+	# 两次调用之间**没有 await** → 第二次 equip 看到的旧武器(槽2 的步枪)还没入树。
+	wep.cycle_slot(1)
+	wep.cycle_slot(1)
+	await _frames(3)
+	_check(wep.current_slot_int() == 3,
+			"同帧两次滚轮应从槽1 经槽2 落到槽3(实际 %d)" % wep.current_slot_int())
+
+	# 切回槽2:残弹必须仍是切走时的 17 —— =0 即未入树的枪被记账抹掉了(=30 即残弹记忆整体失效)
+	wep.equip("2")
+	await _frames(3)
+	var back: WeaponBase = wep.current_weapon()
+	if back == null:
+		_failures.append("同帧切枪:切回槽2 未拿到武器")
+		return
+	_check(back.mag_ammo == 17,
+			"同帧两次滚轮把被略过的槽2 残弹抹掉了(实际 %d,期望 17;=0 即未入树的枪被记进 _mag_state,=30 即残弹记忆失效)" % back.mag_ammo)
 
 
 # ── 6) ★ 守卫点:帧逻辑必须走 tick(),不许回到 _process ──────────────

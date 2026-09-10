@@ -146,7 +146,14 @@ func equip(slot: String) -> void:
 	var old_slot := _current_slot
 	if _weapon != null and is_instance_valid(_weapon):
 		inherit_cd = _weapon.fire_cd_timer
-		if _weapon.reload_active():
+		# 残弹记账只认**已入树**的枪:同帧第二次 equip 时,上一把枪还是 call_deferred 未入树
+		# (其 _ready 未跑 → mag_ammo 仍是 0),照记会把被略过的那个槽的残弹永久抹成 0
+		# (随后切回该槽只拿到 0 残弹,fire() 靠 start_reload() 自愈 = 交火中白交一次装填)。
+		# 真机可达:滚轮走 player.gd 的 _unhandled_input(事件驱动),一帧内缓冲的 OS 事件
+		# 会一次性泵完,快拨/惯性滚轮/精密触控板能在一帧里连发两次 cycle_slot。
+		# 守卫只加在**写 _mag_state** 处,不外扩:fire_cd_timer 由 equip() 同步写入(未入树也有效),
+		# 而 queue_free 必须照跑,否则未入树的旧枪实例泄漏。
+		if _weapon.reload_active() and _weapon.is_inside_tree():
 			_mag_state[old_slot] = _weapon.mag_ammo
 		_weapon.queue_free()
 	_current_slot = int(slot)

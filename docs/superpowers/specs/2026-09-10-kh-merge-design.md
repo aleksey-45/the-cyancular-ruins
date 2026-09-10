@@ -135,7 +135,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - `scenes/player/player.gd`：「倒地 R」由 `reload_current_scene()` 改为 `Level0.restart_single()`（**仅单机**；PvP 倒地仍交给服务器权威复活，沿用 main 的 `not Level0.pvp_mode` 守卫）。**该项原列在 L3，因依赖本层新增的 `restart_single()` 而移到这里**
 - ⚠️ **carry-forward（本层新引入的残弹/滚轮交互，做 `restart_single()` / `restart_at()` 与滚轮开关时必须一并处理）**：
   - **(a) `restart_at` / `restart_single` 必须清 `_mag_state`**（或至少不得与 `_restore_mag.call_deferred` 抢 `mag_ammo`）：`weapon_component.gd:167` 的 `_restore_mag.call_deferred` 在**帧末** flush，排在调用方**同帧同步**写的 `w.mag_ammo = w.mag_size` 之后 → 会用复活前的旧残弹把"复活满弹"覆盖掉（复活了仍只有 3 发，且无报错）。清 `weapon_component._mag_state` 是最省事的对齐方式。
-  - **(b) 打开滚轮开关（`Settings.wheel_switch`）的同时必须修 `weapon_component.gd:148` 一带残弹记账处的 `is_inside_tree()` 守卫**：同帧两次 `equip()`（一帧内收到两个滚轮事件即可）会把旧枪"还没 `_ready`（`mag_ammo` 为 0）"的残弹记进 `_mag_state`，再被 `_restore_mag` 覆盖回新枪 → **残弹被抹成 0**。今天不可达**仅因为**该开关默认 `false` 且滚轮 UI 到本层才做出来（L3 探针 `kh_l3_probe.gd` 已在注释里记下这个竞态，并刻意不制造该场景）。
+  - **(b) ✅ 已修（2026-09-10，提前于本层落地）：`weapon_component.gd:156` 一带残弹记账处的 `is_inside_tree()` 守卫已就位**——`_mag_state[old_slot] = _weapon.mag_ammo` 只在旧枪**已入树**时执行（`if _weapon.reload_active() and _weapon.is_inside_tree()`）。原缺陷：同帧两次 `equip()`（一帧内收到两个滚轮事件即可）会把旧枪"还没 `_ready`（`mag_ammo` 为 0）"的残弹记进 `_mag_state`，再被 `_restore_mag` 覆盖回新枪 → **被略过的那个中间槽残弹被抹成 0**（不是回满；`fire()` 靠 `start_reload()` 自愈 = 交火中白交一次装填）。**回归钉在 `tests/kh_l3_probe.gd::_check_same_frame_cycle()`**（不插 `await`、同帧连调两次 `cycle_slot`，断言被略过槽的残弹未被抹成 0）。**注意：滚轮开关（`Settings.wheel_switch`）本身仍是本层的 UI 产物**（默认 `false`，今天无 UI 可打开）——该守卫修的是同一个开关打开后的可达路径，不必再回来改。
 
 ### L5 大乱斗
 
