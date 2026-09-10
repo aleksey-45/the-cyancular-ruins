@@ -176,6 +176,21 @@ func _ready() -> void:
 	await get_tree().process_frame
 	if CombatFeedback.current == null:
 		failures.append("换场幂等回归: 旧实例退出时把 current 抹成了 null")
+	# ── 归因写端统一入口(抽口后):三条语义 ──
+	var v1 := _victim_killed_by(null)                 # 干净目标(该 helper 不预置 meta)
+	CombatFeedback.attribute(v1, _make_player())
+	if not v1.has_meta("last_damager"):
+		failures.append("attribute 未写 last_damager")
+	if not v1.has_meta("last_damager_time"):
+		failures.append("attribute 未写 last_damager_time")
+	var v2 := _victim_killed_by(null)
+	CombatFeedback.attribute(v2, v2)                  # 自伤:不得归因给自己
+	if v2.has_meta("last_damager"):
+		failures.append("attribute 在 attacker == victim 时误写")
+	var v3 := _victim_killed_by(null)
+	CombatFeedback.attribute(v3, null)                # 无射手:不得写
+	if v3.has_meta("last_damager"):
+		failures.append("attribute 在 attacker 为 null 时误写")
 	_finish(failures)
 
 func _make_player() -> Node2D:

@@ -219,9 +219,7 @@ func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 	# 击杀归因:必须在 hurt 之前写 —— hurt 可能同帧判死,EnemyBase._begin_death 当场读
 	# last_damager 播报「击杀 XXX」;写在 hurt 之后则 meta 尚不存在 → 播报静默丢失。
 	# 射手 = 武器持有者(WeaponBase.player,equip() 写入;同 _make_beam_report/_damage_path_targets 的射手判定)。
-	if player != null and is_instance_valid(player) and player != t:
-		t.set_meta("last_damager", player)
-		t.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效(CombatFeedback 3s 窗口)
+	CombatFeedback.attribute(t, player)   # 归因写端统一入口(含归因时效戳,CombatFeedback 3s 窗口)
 	# 击退方向 = 从光束最近点指向目标(径向推离光束);强度走 impact。
 	var dir := (pos - near).normalized() if pos.distance_to(near) > 1.0 else Vector2.RIGHT
 	t.hurt(damage, dir, impact)
@@ -231,9 +229,7 @@ func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 		return
 	# 击杀归因(同爆炸 apply_aoe 的玩家分支):PvP 大乱斗读 last_damager 判击杀分;
 	# 必须写在 take_hit 之前 —— 本方受伤方倒地/死亡当帧的归因读取者才看得到。
-	if player != null and is_instance_valid(player) and player != p:
-		p.set_meta("last_damager", player)
-		p.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效
+	CombatFeedback.attribute(p, player)   # 归因写端统一入口
 	# 与爆炸 apply_aoe 一致:take_hit(source_pos, damage, ignore_iframes, knockback)。
 	# source_pos 传光束最近点 → 击退沿"光束→目标"径向;ignore_iframes 用 false(激光可被无敌帧挡)。
 	p.take_hit(near, damage, false, impact)

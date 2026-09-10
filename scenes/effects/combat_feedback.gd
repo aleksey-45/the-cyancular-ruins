@@ -52,6 +52,20 @@ static func reset_streak() -> void:
 		current._last_kill_ms = -1
 
 
+## 击杀归因(写端统一入口):记下"谁打的"与"何时打的",供 notify_enemy_killed 读。
+## 必须写在**伤害调用之前** —— EnemyBase.hurt() 同帧同步判死并立刻调 notify_enemy_killed,
+## 写在 hurt 之后则 meta 尚不存在,「击杀 XXX」会静默丢失(这是本合并修过的一个真 bug)。
+## 只做元数据写入,不做任何判定/播报;victim == attacker 时不写(自伤不归因给自己)。
+## 调用方负责传入正确的射手(玩家武器持有者 / 爆炸射手);是否算击杀由读端按 player 组 + 时效判定。
+static func attribute(victim: Node, attacker: Node) -> void:
+	if victim == null or not is_instance_valid(victim):
+		return
+	if attacker == null or not is_instance_valid(attacker) or attacker == victim:
+		return
+	victim.set_meta("last_damager", attacker)
+	victim.set_meta("last_damager_time", Time.get_ticks_msec())
+
+
 ## EnemyBase._begin_death 调用:仅「玩家造成的死亡」才播报——读受害者 last_damager meta,
 ## 溺水/环境死(无射手)安静销毁,不再全局播 kill 音效。
 static func notify_enemy_killed(victim: Node) -> void:
