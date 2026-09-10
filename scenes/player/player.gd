@@ -617,8 +617,9 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	weapons.cancel_aim()
 	# 清残弹记忆:复活/重启是「重开一局」语义,不该继承死前残弹。
 	# 必须清在 equip() 之前 —— equip() 会把 old_slot(死前手持槽)的残弹重新记回 _mag_state。
-	# 故实际效果是「死前手持槽之外的其余槽位一律清空」;手持槽若不是默认槽,其残弹会被
-	# equip() 记回并随之恢复到新枪上(只清 _mag_state 并不足以保证手持槽满弹,见下方 refill)。
+	# 若死前手持槽 == 默认槽,equip(default_slot()) 后 _current_slot 就是它,_restore_mag 会把
+	# 这份残弹恢复到新枪上(这才是「只清 _mag_state 不足以保证满弹」,也才是下面 refill 的理由);
+	# 手持槽 ≠ 默认槽时,残弹只是按记忆语义留在 _mag_state 里(切回该槽仍继承),不恢复到新枪。
 	weapons.reset_mag_state()
 	weapons.equip(weapons.default_slot())
 	# 满弹必须 deferred:equip() 排下的 _restore_mag 会在帧末把旧残弹写回,同帧同步写会被覆盖。
