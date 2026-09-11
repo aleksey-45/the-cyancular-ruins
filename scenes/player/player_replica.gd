@@ -102,10 +102,7 @@ func _sample_position(clock: float) -> Vector2:
 	var b: int = _tick_list[i + 1]
 	var pb: Vector2 = _pos_hist[b]
 	var alpha := clampf((clock - float(a)) / float(b - a), 0.0, 1.0)
-	var w := GameParameters.MAP_WIDTH
-	var h := GameParameters.MAP_HEIGHT
-	var d := MazeGenerator.toroidal_delta_px(pa, pb, w, h)
-	return MazeGenerator.wrap_to_range(pa + d * alpha, w, h)
+	return MazeGenerator.toroidal_lerp(pa, pb, alpha, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 # 服务器裁决命中:打的是对手 → 副本受击反馈(白闪/眨眼),让射手看到"打中了"。
 func play_hit(_source_pos: Vector2) -> void:

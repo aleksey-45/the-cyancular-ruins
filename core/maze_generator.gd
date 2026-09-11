@@ -114,6 +114,12 @@ static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vec
 	return Vector2(dx, dy)
 
 
+# 环面线性插值:沿 a→b 的最短向量按 alpha 取点,再取模回 [0,w)×[0,h)。
+# 供 PvP 副本位置插值用——相邻快照在环面上可能跨接缝,直接 lerp 会横穿整幅地图。
+static func toroidal_lerp(a: Vector2, b: Vector2, alpha: float, w: float, h: float) -> Vector2:
+	return wrap_to_range(a + toroidal_delta_px(a, b, w, h) * alpha, w, h)
+
+
 # 把 pos 锚定到 anchor 最近的环面副本:返回的位置与 anchor 各轴差 ≤ 半地图。
 # 用于让敌人/子弹「跟着主角一起取模」——墙体在 level_0 按 3x3 铺贴,
 # 相机在接缝处能看到另一侧副本,实体若仍取模到 [0,MAP) 会渲染到远副本而消失。
