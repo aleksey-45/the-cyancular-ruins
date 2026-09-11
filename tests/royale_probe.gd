@@ -5,6 +5,8 @@ extends Node
 #   c1 建私密房(邀请码 777,房号写中间文件) → c2 读房号 → 错码加入(应被拒)
 #   → 对码加入 → c1 见房内 2 人开局 → 双方收 go_match 转连 worker → claim
 #   → match_start → RoyaleHost 广播 round_state/match_options/snapshot → 写结果文件。
+# 断言(进 _finish 判定,不只打印):match_start 出生点有效 + round_state 到达 +
+# **round_state 载荷里的昵称表 names ≥2 项** + match_options 到达 + 快照数 ≥30。
 # 中间文件 user://royale_probe_room.txt = 房号;结果 user://royale_probe_c{1,2}.result。
 # 用法: Godot_console --headless --path . res://tests/royale_probe.tscn [-- --role=lobby|c1|c2]
 # (无参 = lobby/裁判。)
@@ -17,6 +19,7 @@ const WRONG_INVITE := "000"
 var _role := "lobby"
 var _snap_count := 0
 var _got_round_state := false
+var _got_display_names := false
 var _got_match_options := false
 var _got_match_start := false
 var _saw_invite_reject := false
@@ -167,7 +170,9 @@ func _go_and_verify(who: String) -> void:
 				print("PROBE[%s]: round_state state=%s names=%s" % [who,
 						str(data.get("state", -1)), str(data.get("names", {}))])
 			if int(data.get("state", -1)) == 0 and (data.get("names", {}) as Dictionary).size() >= 2:
-				print("PROBE[%s]: 昵称表已广播 ✓" % who))
+				if not _got_display_names:
+					_got_display_names = true
+					print("PROBE[%s]: 昵称表已广播 ✓" % who))
 		NetBus.local_snapshot.connect(func(_snap: Dictionary) -> void:
 			_snap_count += 1)
 		# 对局验证窗:再收 3 秒快照,汇总断言
@@ -175,12 +180,14 @@ func _go_and_verify(who: String) -> void:
 		var problems: Array = []
 		if not _got_round_state:
 			problems.append("未收到 round_state")
+		if not _got_display_names:
+			problems.append("昵称表未广播(round_state 载荷里 names 不足 2 项)")
 		if not _got_match_options:
 			problems.append("未收到 match_options")
 		if _snap_count < 30:
 			problems.append("快照过少 %d(<30,60Hz 应≈180)" % _snap_count)
 		if problems.is_empty():
-			_finish(true, who, "match_start+round_state+match_options+%d 快照 全部通过" % _snap_count)
+			_finish(true, who, "match_start+round_state+昵称表+match_options+%d 快照 全部通过" % _snap_count)
 		else:
 			_finish(false, who, "; ".join(problems)))
 

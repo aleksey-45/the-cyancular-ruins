@@ -84,6 +84,7 @@ func _ready() -> void:
 # 被动过,客户端 rollback 就失去锚点(见 docs/pvp-c2-retrospective.md P1/P2)。
 # 判据取**去注释视图**:注释里提到这些名字不算"在位"(T4 清扫探针实测撞见过)。
 func _check_c2_contract() -> void:
+	var fails_before := _failures.size()
 	var p := "res://server/match_host.gd"
 	var code := _code_only(_read(p))
 	_check(not code.is_empty(), "读不到 %s" % p)
@@ -128,13 +129,14 @@ func _check_c2_contract() -> void:
 		_check(i_cd < i_clear and i_cd < i_reset and i_clear < i_pop_phys and i_reset < i_pop_phys,
 				"COUNTDOWN 的清零/重置不在消费之前(不在 early-continue 分支里?): countdown=%d clear=%d reset=%d pop=%d"
 				% [i_cd, i_clear, i_reset, i_pop_phys])
-	print("[L5] C2 契约:四条在位(含快照先于消费、COUNTDOWN 早退清零、载荷带 ack_seq+c2)")
+	_summary(fails_before, "C2 契约:四条在位(含快照先于消费、COUNTDOWN 早退清零、载荷带 ack_seq+c2)")
 
 
 # ── 2) main 既有成果在位(server/room_manager.gd)────────────────────────
 # L5 把大乱斗大厅并进了同一份 room_manager。main 的「超龄房清扫」族(防 worker 进程 +
 # 端口永久泄漏)必须原样保留:少了 sweep 就泄漏,少了 _kill_worker 就杀不掉 worker。
 func _check_room_manager() -> void:
+	var fails_before := _failures.size()
 	var p := "res://server/room_manager.gd"
 	var code := _code_only(_read(p))
 	_check(not code.is_empty(), "读不到 %s" % p)
@@ -157,7 +159,7 @@ func _check_room_manager() -> void:
 		if _read(f).contains("215" + "59"):
 			leak.append(f)
 	_check(leak.is_empty(), "KH 私机路径残留 %d 处: %s" % [leak.size(), ", ".join(leak)])
-	print("[L5] room_manager:sweep 族 %d 针在位,私机路径残留 %d 处" % [needles.size(), leak.size()])
+	_summary(fails_before, "room_manager:sweep 族 %d 针在位,私机路径残留 %d 处" % [needles.size(), leak.size()])
 
 
 # ── 3) server_main 的 _kill_port_holder 是修正版 ────────────────────────
@@ -166,6 +168,7 @@ func _check_room_manager() -> void:
 # 判据取**去注释视图**:server_main 里那条解释这个坏写法的注释本身就含该串,算进去
 # 会让这条断言永远红(注释不是代码)。
 func _check_kill_port_holder() -> void:
+	var fails_before := _failures.size()
 	var p := "res://server/server_main.gd"
 	var code := _code_only(_read(p))
 	_check(not code.is_empty(), "读不到 %s" % p)
@@ -176,7 +179,7 @@ func _check_kill_port_holder() -> void:
 	_check(code.count(good) >= 1, "%s 缺 _kill_port_holder 的修正写法(%s)" % [p, good])
 	_check(code.count(evil) == 0,
 			"%s 的代码里出现取不到属性的 %s 写法 %d 处(注释不算)" % [p, evil, code.count(evil)])
-	print("[L5] kill_port_holder:修正写法 %d 处,坏写法 %d 处" % [code.count(good), code.count(evil)])
+	_summary(fails_before, "kill_port_holder:修正写法 %d 处,坏写法 %d 处" % [code.count(good), code.count(evil)])
 
 
 # ── 4) ★ 零演示残留(只扫生产目录)─────────────────────────────────────
@@ -184,6 +187,7 @@ func _check_kill_port_holder() -> void:
 # 要建全量碰撞、要在进出菜单时反复建/拆大世界(实测偶发原生段错误)。这条保证它不会被
 # "为了好看"再搬回来。
 func _check_no_demo_residue() -> void:
+	var fails_before := _failures.size()
 	var files := _collect(PROD_DIRS)
 	_check(files.size() >= MIN_PROD_FILES,
 			"演示残留扫描:只收到 %d 个生产源文件(扫描根坏了?期望 ≥%d)" % [files.size(), MIN_PROD_FILES])
@@ -194,18 +198,22 @@ func _check_no_demo_residue() -> void:
 			if low.contains(needle):
 				hits.append("%s ← %s" % [f, needle])
 	_check(hits.is_empty(), "演示世界残留 %d 处: %s" % [hits.size(), ", ".join(hits)])
-	print("[L5] 零演示残留:扫 %d 个生产源文件,命中 %d" % [files.size(), hits.size()])
+	_summary(fails_before, "零演示残留:扫 %d 个生产源文件,命中 %d" % [files.size(), hits.size()])
 
 
 # ── 5) ★ 打击反馈层唯一挂载点(生产路径恰好 1 处)───────────────────────
 # 多一处(比如菜单又建一个)→ 两份反馈层抢 current;少一处 → 击杀播报/命中标记全哑。
 # 必须由**对局世界**创建一次,且调用点留在 _ready 顶部、建图之前。
+# 判据取**去注释视图**:计数必须数的是真调用。数裸文本的话,删掉调用、留一句"提到"它的
+# 注释就能把计数维持成 1 → 反馈层根本没挂上而断言照样绿(正是本探针要防的"字面量出现过"式假绿);
+# 反过来,一句介绍挂载点的文档注释也会被当成第二处 → 假红。
 func _check_feedback_mount_point() -> void:
+	var fails_before := _failures.size()
 	var files := _collect(PROD_DIRS)
 	var needle := "Combat" + "Feedback.spawn("
 	var hits: Array[String] = []
 	for f in files:
-		var n := _read(f).count(needle)
+		var n := _code_only(_read(f)).count(needle)
 		for _i in range(n):
 			hits.append(f)
 	_check(hits.size() == 1,
@@ -213,13 +221,14 @@ func _check_feedback_mount_point() -> void:
 	if hits.size() == 1:
 		_check(hits[0] == "res://scenes/level_0.gd",
 				"唯一挂载点应是 res://scenes/level_0.gd(实际 %s)" % hits[0])
-	print("[L5] 打击反馈挂载点:命中 %d 处" % hits.size())
+	_summary(fails_before, "打击反馈挂载点:命中 %d 处" % hits.size())
 
 
 # ── 6) 大乱斗非射手端激光:走 NetBus,不走 NetBusExt ────────────────────
 # 发送端 server/match_host.gd 用的是 NetBus.rpc_id(..., "beam_fired")。收在 NetBusExt
 # 上会**静默 no-op**(同名 RPC 收不到,不报错)→ 大乱斗里对手的激光整条看不见。
 func _check_royale_laser_routing() -> void:
+	var fails_before := _failures.size()
 	var p := "res://scenes/royale_game.gd"
 	var code := _code_only(_read(p))
 	_check(not code.is_empty(), "读不到 %s" % p)
@@ -236,13 +245,14 @@ func _check_royale_laser_routing() -> void:
 	_check(mixed.is_empty(),
 			"%s 里有 %d 行同时出现 NetBusExt 与 %s(发送端走 NetBus,收错节点会静默 no-op): %s"
 			% [p, mixed.size(), beam, " | ".join(mixed)])
-	print("[L5] 大乱斗激光路由:NetBus 订阅在位,NetBusExt 混用 %d 处" % mixed.size())
+	_summary(fails_before, "大乱斗激光路由:NetBus 订阅在位,NetBusExt 混用 %d 处" % mixed.size())
 
 
 # ── 7) AI 手感闸:AIInputSource.is_network_driven() 返回 true ───────────
 # 不覆写(基类返回 false)→ 服务器侧 AI 被判成"本地单机" → 打空弹夹后进换弹、静默停火
 # reload_time 秒(霰弹 2.2s / 榴弹 2.8s),AI 手感莫名变差且无任何报错。
 func _check_ai_input_gate() -> void:
+	var fails_before := _failures.size()
 	var p := "res://core/ai_input_source.gd"
 	var code := _code_only(_read(p))
 	_check(not code.is_empty(), "读不到 %s" % p)
@@ -255,7 +265,7 @@ func _check_ai_input_gate() -> void:
 		var body := _func_body(code, "is_" + "network_driven")
 		_check(body.contains("return true"),
 				"%s 的 is_network_driven() 没返回 true(体=%s)" % [p, body.strip_edges()])
-	print("[L5] AI 输入闸:is_network_driven() 覆写回报 true")
+	_summary(fails_before, "AI 输入闸:is_network_driven() 覆写回报 true")
 
 
 # ── 8) ★ 字号规范:全仓所有字号载体都是 16 的倍数(含 helper 实参)──────
@@ -272,6 +282,7 @@ func _check_ai_input_gate() -> void:
 #   E) UiFactory.label/button 与 style_control 的字号实参 + make_weapon_check 的字号实参
 #      (大乱斗大厅的 _make_button/_make_line_edit 字号写在**体内**,正是这条 style_control)
 func _check_font_size_law() -> void:
+	var fails_before := _failures.size()
 	var files := _collect(ALL_DIRS)
 	_check(files.size() >= MIN_ALL_FILES,
 			"字号扫描:只收到 %d 个源文件(期望 ≥%d)" % [files.size(), MIN_ALL_FILES])
@@ -292,7 +303,7 @@ func _check_font_size_law() -> void:
 				parts.append("%s×%d" % [str(k), int(census[p][k])])
 			parts.sort()
 			print("[L5] 字号覆盖 %s: %s" % [p, ", ".join(parts)])
-	print("[L5] 字号规范:扫 %d 个源文件,违例 %d 处(含经 helper 实参传递的字号)" % [files.size(), bad.size()])
+	_summary(fails_before, "字号规范:扫 %d 个源文件,违例 %d 处(含经 helper 实参传递的字号)" % [files.size(), bad.size()])
 
 
 # 扫单个源里的全部字号载体(合成源也能喂,供自检用)
@@ -332,6 +343,12 @@ func _font_scan_file(path: String, src: String, bad: Array[String], census: Dict
 # 由函数体推导「形参即字号」的 helper:返回 [[helper 名, 字号实参下标], …]
 # 只认 `style_control(<控件>, <形参>)` 与 `add_theme_font_size_override(…, <形参>)` 两种体,
 # 形参名必须真是该函数的形参 —— 这样推导不会把普通函数误认成字号 helper(误认=假红)。
+# ⚠ 已知边界(评审记录,**看不见**的三类,别把它当全覆盖):
+#   · 函数签名/形参表**换行**(参数跨行)的 helper:hdr 逐行匹配,匹配不上 → 该 helper
+#     整个推导不出来,它的字号实参不进断言;
+#   · 推导只有**一层**:helper A 把形参转手给 helper B(A 体内只有 `B(size)`)时不追;
+#   · 实参不是整数字面量(走常量名/表达式)一律跳过(_scan_call_args 只查 is_valid_int),
+#     除非那个常量的名字含 FONT_SIZE —— 只有常量声明扫描(D 类)认这个名字。
 func _derive_font_helpers(code: String) -> Array:
 	var out: Array = []
 	var cur_name := ""
@@ -371,6 +388,7 @@ func _derive_font_helpers(code: String) -> Array:
 # 扫描器自检:喂合成源,证明「坏值必红 + 好值不红」。合成源全用碎片/str() 现拼,
 # 免得本探针自己的源码被第 8 条扫到(见文件头「自伤防护」)。
 func _self_test_font_scanners() -> void:
+	var fails_before := _failures.size()
 	var bad_size := str(4 * 5)     # 20:非 16 倍数
 	var ok_size := str(16 * 2)     # 32
 	var synthetic_path := "res://__l5_synthetic__.gd"
@@ -392,7 +410,7 @@ func _self_test_font_scanners() -> void:
 	bad = []
 	_font_scan_file(synthetic_path, synth.replace(bad_size, ok_size), bad, {})
 	_check(bad.is_empty(), "字号自检③失败:16 的倍数被误报 %s" % str(bad))
-	print("[L5] 字号扫描器自检:helper 实参类坏值必红、好值不红 ✓")
+	_summary(fails_before, "字号扫描器自检:helper 实参类坏值必红、好值不红")
 
 
 # 扫 needle 调用,取第 arg_index 个实参(0 基;arg_index < 0 = 全部实参)。
@@ -437,6 +455,7 @@ func _census(census: Dictionary, path: String, carrier: String) -> void:
 # 判据一律用 `func 名(`(定义本身)而不是裸名字:裸名字会被**调用点**或注释满足,
 # 函数被删而调用点残留时断言照样绿(那正是"未定义符号"要防的)。
 func _check_new_interfaces() -> void:
+	var fails_before := _failures.size()
 	var base := "res://server/match_host.gd"
 	var sub := "res://server/royale_host.gd"
 	var base_code := _code_only(_read(base))
@@ -460,7 +479,7 @@ func _check_new_interfaces() -> void:
 			"scenes/royale_hud.gd 缺 class_name RoyaleHud")
 	_check(_code_only(_read("res://server/room_manager.gd")).contains("func royale_create("),
 			"server/room_manager.gd 缺 func royale_create(")
-	print("[L5] 新接口:基类 2 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud/royale_create 在位")
+	_summary(fails_before, "新接口:基类 2 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud/royale_create 在位")
 
 
 # ── 10) ★ round_full_heal 真的把双方回满血(端到端 + 对照组)────────────
@@ -468,11 +487,12 @@ func _check_new_interfaces() -> void:
 # 把双方打残→把倒计时推完→断 hp == max_hp。**并跑一次 round_full_heal=false 的对照**
 # —— 否则"回满了"可能来自别的路径,断言照样绿(对照组把这种假通过堵死)。
 func _check_round_full_heal() -> void:
+	var fails_before := _failures.size()
 	var healed: Dictionary = await _run_heal_case(true)
 	var control: Dictionary = await _run_heal_case(false)
 	_check(healed.ok, "round_full_heal=true 没把双方回满血:%s" % healed.detail)
 	_check(control.ok, "对照组(round_full_heal=false)也被回满了 → 主断言是假通过:%s" % control.detail)
-	print("[L5] round_full_heal:开=%s 关=%s" % [healed.detail, control.detail])
+	_summary(fails_before, "round_full_heal:开=%s 关=%s" % [healed.detail, control.detail])
 
 
 # 起一局 MatchHost,打残双方,让倒计时走到 0 再断。返回 {ok, detail}
@@ -567,16 +587,40 @@ func _read(path: String) -> String:
 	return f.get_as_text() if f != null else ""
 
 
-# 剥掉整行注释(允许缩进;GDScript 用 #)。供"零引用/在位"类断言用:注释讲的是动机,
-# 不是代码 —— 与 kh_l4_probe._code_only 同一做法。
+# 剥注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本 —— 整行注释与**行尾注释**
+# 都删。供"在位/唯一挂载点/顺序"类断言用:注释讲的是动机,不是代码(与 kh_l4_probe._code_only 同源)。
+# ⚠ 只删**整行**注释是不够的(旧做法):把 `q.pop_front()` 改成 `q.pop_back()` 再在**同一行尾部**
+#    补一句提到原调用的注释,裸文本计数与位置排序会照样满足 → C2 契约假绿(T10 反证 A 实测)。
 func _code_only(src: String) -> String:
 	var out: Array[String] = []
 	for raw_line in src.split("\n"):
-		var s: String = (raw_line as String).strip_edges()
-		if s.is_empty() or s.begins_with("#"):
+		var s: String = _strip_line_comment(raw_line).strip_edges()
+		if s.is_empty():
 			continue
 		out.append(s)
 	return "\n".join(out)
+
+
+# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义的处理与 _match_paren 同法)。
+# 行尾注释不是代码,却能把被删掉的调用名重新"喂"给按源码文本判在位的断言。
+# 边界:`"""…"""` 多行字符串**不跨行带状态**(本函数逐行调用)—— 它第 2 行起若出现 `#`,会被当
+# 注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 `#`,故当前无影响。
+func _strip_line_comment(line: String) -> String:
+	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
+	var j := 0
+	while j < line.length():
+		var ch := line[j]
+		if quote != "":
+			if ch == "\\":
+				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
+			elif ch == quote:
+				quote = ""
+		elif ch == "\"" or ch == "'":
+			quote = ch
+		elif ch == "#":
+			return line.substr(0, j)
+		j += 1
+	return line
 
 
 # 与 open 处 '(' 配对的 ')' 下标(跳过字符串内的括号;找不到返回 -1)
@@ -641,6 +685,13 @@ func _split_args(s: String) -> Array[String]:
 func _check(ok: bool, msg: String) -> void:
 	if not ok:
 		_failures.append(msg)
+
+
+# 每条断言的汇总行:**本次断言全绿**才打 ✓,否则打 ✗。旧写法是裸 print,失败运行时
+# 汇总行照样打印(措辞还像报喜),读者容易把"打印了 N 行 [L5] ..."读成"N 条都过了"。
+# 参数 = 该条断言开始前的 _failures.size()(取差值判本组是否有新增失败)。
+func _summary(fails_before: int, msg: String) -> void:
+	print("[L5] " + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
 
 
 func _finish() -> void:
