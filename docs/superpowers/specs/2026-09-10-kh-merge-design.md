@@ -160,6 +160,12 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
   - **`:311`（MATCH_OVER 的 5s 定时器）与 `:328`（`_on_opponent_left` 的 2.5s 定时器）仍是裸 `get_tree().change_scene_to_file("res://scenes/main_menu.tscn")`** ← 正是 KH 实测会同步 `memdelete` 数万碰撞体、`safe_change_scene` 被造出来规避的那条路径。
   **两处都要改成 `Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")`。**
   次生风险：两条机制**无互斥**——`safe_change_scene` 首行 `await tree.process_frame`，若"点「回到主菜单」"与"对手离开定时器"在**同一帧**触发，后者先销毁当前场景，前者恢复时 `old = tree.current_scene` 会拿到**刚建出来的 main_menu**，于是再实例化第二份菜单、把旧的塞进 `_retired`（不崩，但建出两份菜单且污染 `_retired` 语义）。收成同一机制后该竞态自然消失。
+- **★ `player_options` 与 `claim_role` 的乱序竞态（L5 T5 评审登记，用户裁定「记为 L6 待办」——必须做）**：`scenes/matchmaking.gd` 先发 `claim_role` 再发 `player_options`（**同一 reliable 通道 → 每个 peer 内部 claim 先到**）；而 `server/server_main.gd` 的 `_on_role_claimed` 在**收齐法定人数的那一包上同步调 `_begin_match()`**，后者立刻读 `_claim_opts.get(1, {})` / `_claim_hues()` —— **此时 role 1 的 `player_options` 包还没被派发**。
+  → **每当 role 1 的 claim 最后到达**（连接顺序决定，约五成概率），**房主的规则选项被静默丢弃**：`round_full_heal` / `disabled_weapons` 不生效，且 `NetBusExt.rpc_id(..., "peer_hues", {})` 把**空色表**发给两端。`_on_player_options` 随后把迟到的包归档进 `_claim_opts`，但已无人读取。
+  **为什么必须在 L6 收口**：本层（L5）的 `_begin_match` 同时服务 1v1（`else` 分支走 `RoomManager.start_match_on`），而 L6 的「禁用武器闸门」正依赖这份 `match_options`（规格 §3 L6 上一段要求两端各调一次 `set_enabled_slots` 且**必须是同一份** options）→ **不修则 L6 的禁用武器本身就不生效**，且是静默的。L6 落消费端时一并收口，才能端到端验证。
+  **修法二选一（L6 定）**：① 把 `_begin_match` 延后到各 human claim 的 options 都到齐（带宽限超时兜底）；② 在 `_on_player_options` 里**按 caller 缓冲**先到的 opts，并把 claim→caller 的映射留在开局前可查。
+  **另注**：`_on_player_options` 目前**会丢弃先于 claim 到达的 opts**，与它自己 docstring 写的「可能先于/晚于 claim 到达，按 caller 归档」**自相矛盾**——修法 ② 正是把它兑现。
+- **`royale_rooms` 纳入超龄清扫（L5 T4 评审登记，用户裁定「现在补」）**：见 `server/room_manager.gd` 的 `_sweep_stale_rooms`。原 sweep 只遍历 `rooms`；大乱斗房若开局后客户端保持大厅连接却既不发言也不断开（ENet 不超时静默 peer），`worker_port` **永久不归还**（未开局的等待房不占端口，`worker_port` 只在开局时分配）。**阈值安全性**：单局上限 `RoyaleHost.MATCH_TIME`=300s ≪ `MAX_ROOM_AGE`=7200s → 创建满 2h 仍在 `in_match` 的房绝不可能是进行中的对局，故**全部 `royale_rooms` 同一阈值扫**，不为 in_match 单设例外。
 
 ### L7 工具、探针与收尾
 
