@@ -220,6 +220,10 @@ func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 	# last_damager 播报「击杀 XXX」;写在 hurt 之后则 meta 尚不存在 → 播报静默丢失。
 	# 射手 = 武器持有者(WeaponBase.player,equip() 写入;同 _make_beam_report/_damage_path_targets 的射手判定)。
 	CombatFeedback.attribute(t, player)   # 归因写端统一入口(含归因时效戳,CombatFeedback 3s 窗口)
+	# 命中 X 标记:与 bullet_base._register_player_hit 同款 —— 本函数只在权威侧被调
+	# (见 _authoritative),headless 服务器无 CombatFeedback 实例时为空操作。单机下此前
+	# 激光直击没有 X 标记(依赖 KH 那次补齐),是反馈层的一处缺口。
+	CombatFeedback.hit_marker()
 	# 击退方向 = 从光束最近点指向目标(径向推离光束);强度走 impact。
 	var dir := (pos - near).normalized() if pos.distance_to(near) > 1.0 else Vector2.RIGHT
 	t.hurt(damage, dir, impact)
@@ -230,9 +234,18 @@ func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 	# 击杀归因(同爆炸 apply_aoe 的玩家分支):PvP 大乱斗读 last_damager 判击杀分;
 	# 必须写在 take_hit 之前 —— 本方受伤方倒地/死亡当帧的归因读取者才看得到。
 	CombatFeedback.attribute(p, player)   # 归因写端统一入口
+	# 命中 X 标记(同 _apply_to_enemy):只在权威侧跑到,故 PvP 不会与服务器的 hit_confirm 双标。
+	CombatFeedback.hit_marker()
 	# 与爆炸 apply_aoe 一致:take_hit(source_pos, damage, ignore_iframes, knockback)。
 	# source_pos 传光束最近点 → 击退沿"光束→目标"径向;ignore_iframes 用 false(激光可被无敌帧挡)。
 	p.take_hit(near, damage, false, impact)
+	# 激光直击的命中确认:把"你打中了"告诉**射手本人**(PvP 的 X 标记回流;发送端
+	# MatchHost.notify_direct_hit 经 NetBusExt.hit_confirm 发给非射手端之外的射手)。
+	# 单机下 player 的父节点是 WorldViewport → has_method 为假 → 自动跳过,无副作用。
+	# 放在 take_hit 之后:被击者若同帧倒地,归因与伤害结算都已落定。
+	var host := player.get_parent() if player != null else null
+	if host != null and host.has_method("notify_direct_hit"):
+		host.notify_direct_hit(player, p)
 
 # 对碰墙触点里的可破坏砖扣血(树叶/树干,"explosion" 语义不穿墙)。只磨不破:砖血扣到 0
 # 变空气由 damage_tile 回调 Level0 处理,下一发射击自然穿过。同一格单发只扣一次。
