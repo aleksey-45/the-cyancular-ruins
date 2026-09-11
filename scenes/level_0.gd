@@ -37,7 +37,7 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 		tree.root.remove_child(old)
 		old.visible = false
 		if _retired != null and is_instance_valid(_retired):
-			_retired.free()        # 释放更早的那一具(此鱼已在树上挂了整局时间,最稳)
+			_retired.free()        # 释放更早的那一具(此具已在树上挂了整局时间,最稳)
 		_retired = old
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
@@ -83,7 +83,7 @@ func _ready() -> void:
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
 	call_deferred("add_child", pp)
-	_build_esc_menu()
+	_build_pause_menu()
 
 
 func _create_wall_tileset() -> TileSet:
@@ -296,5 +296,5 @@ func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 # PauseMenu 自己管暂停与切场景(open() 里 paused=true、go_menu() 首行先解暂停再走
 # Level0.safe_change_scene),故本处不需要任何信号接线。
 # (PvP 菜单由 pvp_client 自建——PvP 下本方法不会被调,见 _ready 的 pvp_mode 早 return。)
-func _build_esc_menu() -> void:
+func _build_pause_menu() -> void:
 	add_child(PauseMenu.new(false))   # 隐藏待命,自行处理 ui_cancel

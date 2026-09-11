@@ -103,7 +103,12 @@ func default_slot() -> String:
 
 # 滚轮切枪:沿 dir 方向循环到下一个启用槽位(禁用的直接跳过)。
 func cycle_slot(dir: int) -> void:
-	equip(str(_peek_cycle(dir)))
+	var next := _peek_cycle(dir)
+	if next == _current_slot:
+		# 无槽可切(只启用一把枪 / 目标即当前槽):早退。与 request_net_cycle 同形;
+		# 否则会白重建一次武器实例 + 响一声 switch(equip 每次都 instantiate)。
+		return
+	equip(str(next))
 
 # 计算滚轮方向的目标槽位(不切换)
 func _peek_cycle(dir: int) -> int:
@@ -179,10 +184,17 @@ func _restore_mag(w: WeaponBase, ammo: int) -> void:
 	if is_instance_valid(w):
 		w.mag_ammo = ammo
 
+# 清空残弹记忆(复活/重启用)。根不该直接摸组件私有的 _mag_state,经此一行包装保持边界。
+func reset_mag_state() -> void:
+	_mag_state.clear()
+
 # 复活/重启用:把当前武器的弹夹补满。
 # 必须 call_deferred —— equip() 排下的 _restore_mag.call_deferred 会在帧末 flush 并把
 # "切枪时记下的旧残弹"写回;同帧同步写 mag_ammo 会被它覆盖(复活了却只有 3 发,且无报错)。
 # 本调用排在 _restore_mag 之后入 defer 队列 → 帧末后写者胜 = 满弹。
+# 本方法不清"装填中"状态:目前唯一调用点(player.restart_at)必先 equip(),而 equip 每次都
+# instantiate 一把全新的枪 —— 旧枪的 _reloading/_reload_t(_reload_pose)随 queue_free 一起丢弃,
+# 新实例恒 false,故此处无装填态可清(真要清也得 WeaponBase 开公开 API,不该跨类写私有)。
 func refill_current_weapon() -> void:
 	var w := _weapon
 	if w != null:

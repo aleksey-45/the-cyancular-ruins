@@ -28,9 +28,10 @@ var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica(中立鸟�
 var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibles
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 var _hud: PvpHud = null
+var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)
 var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
-var _esc_menu: EscMenu = null   # ESC 菜单(对局结束/对手已走后关掉,见 _match_ended)
-var _round_locked := false      # COUNTDOWN 冻结态(菜单关时按它还原,别把倒计时里提前解锁)
+var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
+var _menu_open := false         # 暂停菜单是否开着(PvP 下菜单不暂停树,靠这个锁输入)
 var _ping_acc := 0.0
 
 # ── 头上 ID(自己/对手昵称):世界空间文字,每帧贴到头顶 ──
@@ -89,12 +90,15 @@ func _ready() -> void:
 	add_child(_hud)
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
-	# ESC 菜单(PvP 不暂停,对手实时):打开锁本地输入,退出断连回主菜单
-	var esc := (load("res://ui/esc_menu.tscn") as PackedScene).instantiate() as EscMenu
-	add_child(esc)
-	_esc_menu = esc
-	esc.exit_callback = _esc_exit
-	esc.toggled.connect(_on_esc_toggled)
+	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
+	# NetBus.stop() 断连,worker 检测对局任一方断线即拆局)。开关/退出由 PauseMenu 自理
+	# (自带 ui_cancel 处理 + set_input_as_handled),但**本地输入锁必须宿主接线**:PvP 不暂停树,
+	# 不锁就是"菜单开着还能边跑边开枪"(旧 EscMenu 靠 toggled 接的正是这一条)。
+	_pause_menu = PauseMenu.new(true)
+	_pause_menu.toggled.connect(func(open: bool) -> void:
+		_menu_open = open
+		_refresh_input_lock())
+	add_child(_pause_menu)
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 func _physics_process(_delta: float) -> void:
@@ -284,9 +288,8 @@ func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
 	# COUNTDOWN(开局/换局 3 秒):锁本地武器开火(移动由服务器权威冻结,本地玩家服务器渲染自然不动)。
-	if _local != null and _local.has_method("set_controls_locked"):
-		_round_locked = state == 0
-		_local.set_controls_locked(_round_locked)
+	_round_locked = state == 0
+	_refresh_input_lock()   # 单一收口:菜单开着时不解锁(见 _refresh_input_lock)
 	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
 		for b in get_tree().get_nodes_in_group("bullet"):
 			if is_instance_valid(b):
@@ -295,11 +298,23 @@ func _on_round_state(data: Dictionary) -> void:
 			_level0.reset_destructibles()
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
-		if _esc_menu != null:
-			_esc_menu.can_toggle = false
+		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可提前回主菜单,而下面
+		# 这条 5s 定时器仍会再触发一次 safe_change_scene(已在主菜单上再切一次 = 行为可疑)。
+		# 直接销毁菜单 —— 退出只走定时器这一条路。
+		if _pause_menu != null and is_instance_valid(_pause_menu):
+			_pause_menu.queue_free()
+		_menu_open = false
+		# 菜单没了 → 回到只由 _round_locked(state 3 → false)决定 = 解锁(与旧行为一致)
+		_refresh_input_lock()
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
 			NetBus.stop()
 			get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+
+# 本地输入锁的单一收口:冻结期(_round_locked)与菜单打开(_menu_open)任一成立就锁。
+# 不要在两个调用点各拼一次布尔 —— 那正是修复波 1 只关住一个方向的原因。
+func _refresh_input_lock() -> void:
+	if _local != null and _local.has_method("set_controls_locked"):
+		_local.set_controls_locked(_round_locked or _menu_open)
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
 func _on_opponent_left() -> void:
@@ -388,14 +403,3 @@ func _process(_delta: float) -> void:
 	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
 
-# ESC 菜单开关:打开期间连 COUNTDOWN 冻结一起锁本地输入;关闭按当前对局冻结态还原。
-func _on_esc_toggled(open: bool) -> void:
-	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(open or _round_locked)
-
-# ESC 菜单「退出」:断连对局回主菜单(与断线/MATCH_OVER 同路径;服务器拆局、对手看到离开)。
-func _esc_exit() -> void:
-	if _match_ended:
-		return   # 已排程自动回菜单(NetBus.stop 幂等但不必重复切场景)
-	NetBus.stop()
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")

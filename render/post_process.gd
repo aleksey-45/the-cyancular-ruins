@@ -18,6 +18,9 @@ static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 func _ready() -> void:
 	add_to_group("post_process")
 	layer = LAYER
+	# 暂停(pause_menu 暂停整棵树)时本层仍要跑:受击红闪在 _process 里逐帧衰减,
+	# 若跟着树一起暂停,红色会凝固在暂停那一刻直到恢复。
+	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	if world_viewport == null:
 		push_error("PostProcess: no world viewport assigned!")

@@ -11,10 +11,11 @@ const COLOR_LOW := Color(0.9, 0.4, 0.4)      # 血量 <25% 变红
 const LOW_RATIO := 0.25
 
 const KILL_COLOR := Color(0.0, 0.4, 0.5, 0.7)  # 击杀数:半透明(0.75)深青色
-const KILL_FONT_SIZE := 48
-# 像素字体:Less Perfect DOS VGA(8×16 经典 VGA 计数器,作者已收窄字距)。
-# 字号保持 16 的整数倍才像素锐利(48=3×16)。
-const KILL_FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
+const KILL_FONT_SIZE := 48      # 16 的整数倍才像素锐利(48 = 3×16)
+const WEAPON_FONT_SIZE := 32    # 武器名/残弹数;同上(32 = 2×16)
+# 像素字体(Less Perfect DOS VGA,8×16 经典 VGA 计数器)与「关抗锯齿/微调/子像素」三件套
+# 的唯一来源是 UiFactory.style_control(内部走 core/pixel_font.gd 的 PixelFont.shared())——
+# 本文件不再自己 load 字体、不自己设字号,字号规范才守得住(见 ui_factory.gd 文件头)。
 const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
 const KILL_LABEL_W := 300.0                      # 向左留出的生长宽度
 const BACK_COLOR := Color(1, 1, 1, 0.4)      # 竖条底下的半透明白色底板
@@ -128,24 +129,16 @@ func _build_weapon_display(p: Node) -> void:
 	bar_holder.add_child(_reload_bar)
 
 	_weapon_name = Label.new()
-	_weapon_name.add_theme_font_size_override("font_size", 24)
+	UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)   # 像素字体 + 字号(16 倍数)
 	_weapon_name.add_theme_color_override("font_color", Color(0.85, 0.93, 0.98))
-	var pf: FontFile = load(KILL_FONT_PATH) as FontFile
-	if pf != null:
-		pf.antialiasing = TextServer.FONT_ANTIALIASING_NONE
-		pf.hinting = TextServer.HINTING_NONE
-		pf.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
-		_weapon_name.add_theme_font_override("font", pf)
 	_weapon_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_weapon_name.size_flags_vertical = Control.SIZE_FILL
 	box.add_child(_weapon_name)
 
 	# 残弹数(实验性换弹):名称右侧,"12/30";换弹时"装填中…"
 	_ammo_label = Label.new()
-	_ammo_label.add_theme_font_size_override("font_size", 24)
+	UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)    # 像素字体 + 字号(16 倍数)
 	_ammo_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.55))
-	if pf != null:
-		_ammo_label.add_theme_font_override("font", pf)
 	_ammo_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_ammo_label.size_flags_vertical = Control.SIZE_FILL
 	_ammo_label.visible = false
@@ -252,14 +245,7 @@ func _build_kill_label() -> void:
 	_kill_label = Label.new()
 	_kill_label.text = "%03d" % _kills
 	_kill_label.add_theme_color_override("font_color", KILL_COLOR)
-	_kill_label.add_theme_font_size_override("font_size", KILL_FONT_SIZE)
-	var pf: FontFile = load(KILL_FONT_PATH) as FontFile
-	if pf != null:
-		# 像素字体:关抗锯齿/子像素/提示,整数倍字号下保持像素边缘锐利
-		pf.antialiasing = TextServer.FONT_ANTIALIASING_NONE
-		pf.hinting = TextServer.HINTING_NONE
-		pf.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
-		_kill_label.add_theme_font_override("font", pf)
+	UiFactory.style_control(_kill_label, KILL_FONT_SIZE)      # 像素字体 + 字号(16 倍数)
 	# 锚定右上角,右对齐,文本向左生长
 	_kill_label.anchor_left = 1.0
 	_kill_label.anchor_right = 1.0

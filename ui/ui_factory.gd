@@ -1,0 +1,66 @@
+class_name UiFactory
+extends RefCounted
+
+# UI 控件工厂(L4 起所有菜单/HUD 控件统一走这里)。
+#
+# 本来是 KH 菜单里散抄的「加载 ttf + 关抗锯齿 + add_theme_font_size_override」三件套,四份。
+# 但字号与像素字体处理这块已经被本项目改过,不再是 KH 的代码 —— 它是我们的不变量,
+# 散在四处就守不住(L4 还要写第 2/3/4 份),所以抽到共享静态类里。
+#
+# ⚠ 两条硬约定:
+#   1. **字号必须是 16 的倍数**(16/32/48/64…)。本项目的像素字体(less_perfect_dos_vga)
+#      只在 16 倍数下与渲染缩放整数对齐,像素边缘才锐利;非 16 倍数会糊。
+#   2. **不要把 separation / custom_minimum_size 这类「布局」度量也强求 16 的倍数**。
+#      需要 16 对齐的是字形光栅化,不是间距/尺寸 —— 把 420×64 的按钮改成 416×64、
+#      把 separation 22 改成 32 只会破坏版式节奏,不会让字更清晰。
+#      (所以 button() 里的 custom_minimum_size 保持原值,别"顺手对齐"。)
+#
+# 纯静态、无实例状态、不引 autoload:可被任何场景/工具直接调用。
+# 注:字体配置的唯一来源是 core/pixel_font.gd 的 PixelFont.shared()(世界空间文本也用同一份);
+# 本工厂只负责"怎么用字体建控件",不重复实现字体配置。
+
+
+# 像素字体:关抗锯齿 / 微调 / 子像素定位,整数倍字号下保持像素锐利。
+static func pixel_font() -> FontFile:
+	# 字体配置的唯一来源是 core/pixel_font.gd 的 PixelFont.shared()
+	# (它负责关抗锯齿/微调/子像素;load 返回共享实例,故全局一致)。
+	# 本工厂只负责"怎么用字体建控件",不重复实现字体配置。
+	return PixelFont.shared()
+
+
+# 给任意 Control 套上像素字体 + 字号(size 必须是 16 的倍数,见文件头;违反会在 debug 下 assert)。
+#
+# ⚠ caveat:本函数硬编码 "font" / "font_size" 两个 theme override 键 —— 这是 Label / Button /
+# CheckButton / LineEdit 这类「普通文本控件」读的键。**RichTextLabel 读的是
+# normal_font / normal_font_size(以及 bold_font / bold_font_size)**,把 RichTextLabel 传给本函数
+# 会静默失败(不报错,但字体与字号都不生效)。这正是 scenes/effects/combat_feedback.gd 至今仍
+# 自己 load 字体、直接覆写 normal_font/normal_font_size 的原因 —— 那种控件不要走本函数。
+static func style_control(c: Control, size: int) -> void:
+	assert(size % 16 == 0, "字号必须是 16 的倍数(本项目像素字体只在 16/32/48… 下像素锐利);收到 %d" % size)
+	c.add_theme_font_size_override("font_size", size)
+	var pf: FontFile = pixel_font()
+	if pf != null:
+		c.add_theme_font_override("font", pf)
+
+
+static func label(text: String, size: int, color: Color = Color.WHITE) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_color_override("font_color", color)
+	style_control(l, size)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)) -> Button:
+	var b := Button.new()
+	b.text = text
+	style_control(b, size)
+	# 默认 420×64 是主菜单按钮列的布局度量,故意不凑 16 的倍数(见文件头第 2 条)。
+	# 尺寸不合场景的调用方(设置菜单的键位格 200×40、返回键 280×48)直接传 min_size,
+	# 不必再事后覆写 custom_minimum_size。
+	b.custom_minimum_size = min_size
+	# 点击音不在这里挂:调用方的 handler(close/go_menu)各自会响一声,而 ESC 走的也是同两条
+	# 路径 —— 这里再挂一次就是同帧同调两个播放器("ui" 不在 Sfx.PITCH_VARIATION 里,音高也一样),
+	# 是能听出来的双响。统一由状态转移出声(键盘与点击同源)。
+	return b

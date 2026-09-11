@@ -94,7 +94,14 @@ static func _sweep_square(freq0: float, freq1: float, dur: float, duty: float,
 	return out
 
 
-# 白噪声爆发:lp 低通系数(0-1,越小越闷),amp_decay 指数衰减率。
+# 白噪声爆发:state = lerp(state, 白噪声, clampf(lp * (1 - t * 0.7), 0.05, 1.0));
+#   lp = 该插值的**原始**系数(不是「0-1 的低通系数」,不做过归一化):越大过渡越快、
+#   越接近白噪声。系数在爆发内由 lp 线性降到 0.3*lp,再被 clampf 截到 [0.05, 1.0]:
+#     lp > 1.0        → 开头 lp 已超上界被截到 1.0(开头即纯白噪声);
+#     lp >= 1/0.3≈3.34 → 全部采样点恒为 1.0(完全饱和,该参数彻底空转)。
+#   现存两处调用 1400.0(shotgun)/900.0(explosion)都远超 3.34 → 两段都是纯白噪声,
+#   两个不同实参实际等价(要它们真的不同 = 一次听感改动,须先试听再定)。
+#   amp_decay = 指数衰减率。
 static func _noise_burst(dur: float, lp: float, amp0: float, decay: float) -> PackedFloat32Array:
 	var n := int(dur * RATE)
 	var out := PackedFloat32Array()
