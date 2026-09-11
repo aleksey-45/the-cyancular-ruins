@@ -152,6 +152,17 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 
 ### L6 PvP 客户端合流（最高风险）
 
+> **✅ 已完成（2026-09-11）** —— 实施计划 `docs/superpowers/plans/2026-09-11-kh-merge-l6.md`，6 个任务（T1 探针 → T2/T3 加法 → T4 退出路径 → T5 激光 → T6 收尾）。
+> **本节原有的三处内容在开工前已过时，实施时按侦察与代码更正**：
+> 1. 下文引的行号**全部漂移**（L5 改过这些文件）。实施时以侦察件 `.superpowers/sdd/l6-recon.md` 的行为准。
+> 2. 「禁用武器闸门在 PvP 侧必须两端都接」—— **服务器那一端已在 L5 落地**（`match_host` 按 role 调 `set_enabled_slots`）；L6 只补了**客户端消费端**（`_on_match_options`）。
+> 3. 「`player_options`/`claim_role` 乱序竞态」—— **已在 L5 终审后修掉**（`_defer_begin_match`），本条见上方已勾掉的登记。
+> **L6 期间实测得到的结论（写在此处，免得后人再从推断出发）**：
+> - **`U2`（开局三载荷的到达性）**：实测**会到达**，但那份"确定性"是**相位相关**而非结构性保证 —— worker 从**同一调用栈**发出 `match_start`/`match_options`/`peer_info`/`peer_hues`，是否落在同一次客户端 `poll()` 取决于 ENet flush 分帧与客户端帧率。故补了**第二条投递路径**（`matchmaking` 缓存 → `PvpSession.pending_*` → `pvp_client._ready` 取用），与直接订阅并存；否则一次 poll 吞两段 flush 时三条载荷**静默丢失**（禁武器闸门不生效 → 两端槽位永久错位）。
+> - **`U3`（单机激光缺 `hit_marker`）**：**已补**，且不双标记 —— `LaserWeaponBase._apply_*` 只在 `_authoritative()` 侧被调（客户端不跑），而 PvP 的标记来自服务器 `hit_confirm`，与 `bullet_base._register_player_hit` 的既有形状一致。
+> - **加一条 L6 引入的不变量**：`Level0.safe_change_scene` 带**防重入**（`_switching`）—— 它首行 `await` 一帧，两次调用可同时在飞，无守卫时第二次会把刚建出的新场景当 old 摘掉并污染 `_retired`。守卫放在**收口点**而非各调用点。
+> - 回归钉：`tests/kh_l6_probe.tscn`（15 条：C2 四不变量 / 输入锁单一收口 / HUD 走声明式 tscn / 激光走 NetBus / 三条退出路径全走 `safe_change_scene` 且裸切恰为 0 / 头顶名中性白 / 不引用 `menu_demo` …），含反证。
+
 - `scenes/pvp_client.gd`：以 main 的 C2 版本为基底，**只做加法**接入 KH 的反馈/选项/血条/小地图/拖尾/暂停菜单/`safe_change_scene`；`hit_confirm` / `match_options` / `peer_hues` 经 `NetBusExt` 消费；**`beam_fired` 不在此列**——main 现役激光链路走 `NetBus`（发送端 `server/match_host.gd:391` 的 `NetBus.rpc_id(..., "beam_fired", ...)`，接收端 `scenes/pvp_client.gd:79` 的 `NetBus.local_beam_fired`），`core/net_bus_ext.gd` 里的同名 RPC 是 KH 遗留重复。**L6 必须沿用 main 现役 `NetBus`，不得启用 `NetBusExt.beam_fired`**；若确要启用，必须同步把 `match_host` 的发送端一起迁过去，否则收发落在不同节点 = 对手端激光视觉静默 no-op
 - 服务器渲染保底路径（`server_rendered`）保持可用
 - **禁用武器闸门在 PvP 侧必须两端都接（不是「唯一调用点」）**：`server/match_host.gd`（按 role）与 `scenes/pvp_client.gd` **两处**各调一次 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`，且**必须是同一份** `match_options`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
