@@ -271,6 +271,10 @@ func _check_c2_frame_block() -> void:
 # restore 之后必须按**已发出的输入序列**重放才能重对齐。没有 note_input 的回滚只剩
 # "把权威态贴上去"= 橡皮筋(KH 正是删掉了它)。
 # 判据:调用行必须同时带 `_input_seq` 与**真正发出去的那个字典变量**(不是随便一个字典)。
+# ★ 组包锚点与 #1 **同源**(同一个 _packet_var,锚在**承载 seq 绑定的那一行** = N_SEQ_KEY),
+#   **不取「note_input 上方最近的字典声明」**:那样锚点会被组包之后、调用之前插入的任何无关
+#   字典字面量抢走 → 重命名/重组组包这类**合法加法**会让本条假红(与 #3 的组包锚点同一条
+#   理由:判红只靠"实参不是那个字典"这条机械比对,不靠锚点碰巧落在谁头上)。
 func _check_note_input() -> void:
 	var before := _failures.size()
 	var phys := _func_body(_pc_code, "_physics_process")
@@ -279,16 +283,17 @@ func _check_note_input() -> void:
 		return
 	var lines := phys.split("\n")
 	var i_ni := _find_line(lines, N_NOTE_INPUT)
+	var i_key := _find_line(lines, N_SEQ_KEY)
+	var varname := _packet_var(lines, i_key if i_key >= 0 else lines.size() - 1)
 	_check(i_ni >= 0, "每物理帧没有 `%s`(回滚无输入可重放 → 退化成橡皮筋)" % N_NOTE_INPUT)
 	if i_ni >= 0:
 		_check(lines[i_ni].contains(N_SEQ),
 			"`%s` 没带输入序号 `%s`(重放时对不上权威锚点):「%s」" % [N_NOTE_INPUT, N_SEQ, lines[i_ni].strip_edges()])
-		var varname := _packet_var(lines, i_ni)
 		_check(not varname.is_empty(), "推导不出被记录的输入包字典")
 		if not varname.is_empty():
 			_check(lines[i_ni].contains(varname),
 				"`%s` 记录的不是发出去的那个字典(缺 %s):「%s」" % [N_NOTE_INPUT, varname, lines[i_ni].strip_edges()])
-	_summary(before, "note_input:第 %d 行,带 seq 与发包字典" % i_ni)
+	_summary(before, "note_input:第 %d 行,带 seq 与发包字典 %s" % [i_ni, varname if varname != "" else "?"])
 
 
 # ── 5) C2 开关常量 + _ready 两条分支必须都在(B1/B2)────────────────────
