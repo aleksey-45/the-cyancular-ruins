@@ -347,6 +347,11 @@ func ai_duel(caller: int) -> void:
 	if host_room == null:
 		NetBus.rpc_id(caller, "server_message", "只有建房(房主)才能开 AI 对战")
 		return
+	# L5 合并补丁(刻意偏离移植来源,非误改):royale_start(:314)/royale_start_ai(:372) 都有的
+	# 「已开局即拒绝」守卫,本 handler 从另一分支原样移植时缺失。没有它,同一房重复调用会再拉
+	# 一个 worker 并覆盖 worker_port,首个端口从此无人归还(与下方端口泄漏同一后果)。
+	if host_room.started:
+		return   # 已开局(重复请求防重入:不会双开 worker)
 	var port := _pick_worker_port()
 	if port < 0:
 		NetBus.rpc_id(caller, "server_message", "无法分配对局端口")
@@ -356,6 +361,11 @@ func ai_duel(caller: int) -> void:
 		_worker_ports.erase(port)
 		NetBus.rpc_id(caller, "server_message", "无法启动对局")
 		return
+	# L5 合并补丁(刻意偏离移植来源,非误改):下一行把房间从 rooms 摘除后,on_peer_left(:150)
+	# 与 _sweep_stale_rooms(:504) 都只遍历 rooms,再无任何路径能归还本端口 —— 不在此处释放就会
+	# 永久占用(500 次后 _pick_worker_port 返回 -1,大厅彻底拉不起 worker)。
+	# _release_port_later 是协程(内含 await),fire-and-forget 不 await(与 on_peer_left 同法)。
+	_release_port_later(port)
 	rooms.erase(host_room.code)   # 对局消费掉房间(AI 不占第二人位)
 	print("房间 %s → AI 对战开局(1 人 + AI)→ worker 端口 %d" % [host_room.code, port])
 	await get_tree().create_timer(0.3).timeout
