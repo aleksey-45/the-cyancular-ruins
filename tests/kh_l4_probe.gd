@@ -402,16 +402,40 @@ func _read(path: String) -> String:
 	return f.get_as_text() if f != null else ""
 
 
-# 剥掉整行注释(允许缩进;GDScript 用 #)。供"零引用"类断言用:历史注释讲的是动机,
-# 不是引用 —— 与 kh_l3_probe._code_only 同一做法。
+# 剥注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本 —— 整行注释与**行尾注释**
+# 都删。供"零引用/在位"类断言用:注释讲的是动机,不是代码(与 kh_l5_probe._code_only 同一做法)。
+# ⚠ 只删**整行**注释是不够的(旧做法,实测):行尾注释照样留在视图里 —— 一句提到退役名的行尾
+#    注释能让「零引用」断言假红(代码一行没改),反过来也能把被删的调用名"喂"给「在位」类断言。
 func _code_only(src: String) -> String:
 	var out: Array[String] = []
 	for line in src.split("\n"):
-		var s: String = (line as String).strip_edges()
-		if s.is_empty() or s.begins_with("#"):
+		var s: String = _strip_line_comment(line).strip_edges()
+		if s.is_empty():
 			continue
 		out.append(s)
 	return "\n".join(out)
+
+
+# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义的处理与 _match_paren 同法)。
+# 行尾注释不是代码,却能把被删掉的调用名重新"喂"给按源码文本判在位的断言。
+# ⚠ 已知边界:`"""…"""` 多行字符串**不跨行带状态**(本函数逐行调用)—— 它第 2 行起若出现 `#`,
+#    会被当成注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 `#`,暂无影响。
+func _strip_line_comment(line: String) -> String:
+	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
+	var j := 0
+	while j < line.length():
+		var ch := line[j]
+		if quote != "":
+			if ch == "\\":
+				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
+			elif ch == quote:
+				quote = ""
+		elif ch == "\"" or ch == "'":
+			quote = ch
+		elif ch == "#":
+			return line.substr(0, j)
+		j += 1
+	return line
 
 
 # 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
