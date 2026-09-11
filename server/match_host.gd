@@ -22,6 +22,12 @@ var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
 # 客户端据 ack 锚定"服务器已确认到哪一输入",重放 seq>ack 的本地输入——1:1 同序,无 tick 映射漂移。
 var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入包 seq
 
+# ── 对局选项(房主 role1 下发,经 claim_role 携带;进局时广播生效值)──
+var _options: Dictionary = {}
+var _round_full_heal := false        # 每回合开始双方回满血
+var _disabled_weapons: Array[int] = []   # 禁用的武器槽位(双方一致)
+var _ai_roles: Array = []            # AI 补位的 role 列表;这些 role 无网络 peer
+
 # ── PvPvE 中立鸟:服务器权威模拟,位置 canonical,快照+spawn/died 事件同步 ──
 # 发布开关:true=对局生成中立鸟;false=暂时不上鸟(PvP 纯净 1v1)。鸟代码保留,需要时翻回 true。
 const ENABLE_BIRDS := false
@@ -45,7 +51,14 @@ var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
 var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
 
-func _init(map_path: String, role_peers: Dictionary) -> void:
+func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
+		ai_roles: Array = []) -> void:
+	_options = options
+	_round_full_heal = bool(options.get("round_full_heal", false))
+	var raw_disabled: Array = options.get("disabled_weapons", [])
+	for v in raw_disabled:
+		_disabled_weapons.append(int(v))
+	_ai_roles = ai_roles
 	MazeGenerator.set_map_file(map_path)
 	# 建世界:碰撞 + 瓦片属性(不渲染)。服务器进程走场景模式,autoload/静态类已就绪。
 	grid = WorldBuilder.load_grid()
@@ -73,6 +86,27 @@ func _init(map_path: String, role_peers: Dictionary) -> void:
 		var ts := GameParameters.TILE_SIZE
 		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
 		print("MatchHost: 角色 %d 出生点 %s" % [role, spawn])
+	# AI 补位(实验性):同一 Player.tscn,输入源换 AIInputSource,由 AINavigator 驱动;
+	# 快照/命中裁决/计分/复活全部按 players 迭代 → 客户端副本零改动。
+	# ★ 不入 input_sources(不走网络包);入 players 即自动获得快照/裁决/计分/复活覆盖。
+	# D13:代码就位,不接界面(客户端按钮已删)。
+	for ai_role in _ai_roles:
+		var role := int(ai_role)
+		var p: Node2D = preload("res://scenes/player/Player.tscn").instantiate()
+		var src := AIInputSource.new()
+		p.set_input_source(src)
+		add_child(p)
+		p.collision_mask |= 2
+		players[role] = p
+		var nav := AINavigator.new()
+		nav.host = self
+		nav.role = role
+		nav.src = src
+		p.add_child(nav)
+		var spawn := _spawn_cell(role)
+		var ts := GameParameters.TILE_SIZE
+		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
+		print("MatchHost: AI 角色 %d 出生点 %s" % [role, spawn])
 
 func _enter_tree() -> void:
 	NetBus.input_received.connect(_on_input)
@@ -84,6 +118,9 @@ func _ready() -> void:
 	# 开局回合:玩家已在 _init 摆位,进 COUNTDOWN
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
+	# 禁用武器槽位:_init 时玩家 @onready 未就绪(不能碰 weapons),进树后应用
+	for role in players:
+		(players[role] as Node).weapons.set_enabled_slots(_disabled_weapons)
 	# 受击反馈:任意来源(子弹/鸟接触/鸟弹/爆炸)实际扣血 → combat.took_hit → 广播 hit_event
 	for role in players:
 		var combat = (players[role] as Node).get("combat")
@@ -91,6 +128,14 @@ func _ready() -> void:
 			combat.took_hit.connect(_on_player_hit.bind(role))
 	_spawn_round_birds()  # 内部按 ENABLE_BIRDS 守卫,关闭时开局/换局都不刷
 	_broadcast_round_state()
+	_broadcast_match_options()
+
+# 生效选项广播:客户端据此同步禁武器(本地切枪同样被挡)。服务器权威,进局发一次。
+# ★ 必须有:大乱斗的禁武器闸门靠它同步,且 tests/royale_probe 硬断言"未收到 match_options = FAIL"。
+func _broadcast_match_options() -> void:
+	var opts := {"disabled_weapons": _disabled_weapons, "round_full_heal": _round_full_heal}
+	for role in peer_by_role:
+		NetBusExt.rpc_id(peer_by_role[role], "match_options", opts)
 
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
@@ -390,10 +435,35 @@ func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
 		if int(r) != shooter_role and players.has(int(r)):
 			NetBus.rpc_id(peer_by_role[r], "beam_fired", rep)
 
+# 即时光束武器(激光)的直击命中:服务器结算后把 X 标记(hit_confirm)发给射手本人,
+# 与子弹 _on_bullet_hit 的 hit_confirm 同链路(爆炸 AoE 不发——伤害方不明确,激光方向明确可发)。
+func notify_direct_hit(shooter: Node, victim: Node) -> void:
+	var shooter_role := -1
+	var victim_role := -1
+	for role in players:
+		if players[role] == shooter:
+			shooter_role = int(role)
+		if players[role] == victim:
+			victim_role = int(role)
+	if shooter_role < 0 or victim_role < 0 or shooter_role == victim_role:
+		return
+	if peer_by_role.has(shooter_role):
+		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, victim_role)
+
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
+	# 命中确认(NetBusExt):告诉射手"你打中了"→ 客户端屏幕中心 X 标记。只发射手本人;
+	# RoyaleHost 覆写先写归因 meta 再 super 到这里,大乱斗同样生效。
+	var shooter_role := 0
+	for r in players:
+		if players[r] == bullet.shooter:
+			shooter_role = int(r)
+			break
+	if shooter_role != 0 and peer_by_role.has(shooter_role) \
+			and multiplayer.get_peers().has(peer_by_role[shooter_role]):
+		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, _victim_role)
 	bullet.queue_free()
 
 # 玩家受击反馈:实际扣血(子弹/鸟接触/鸟弹/爆炸) → 广播 hit_event 给两端客户端。
@@ -447,6 +517,12 @@ func _match_round_tick(delta: float) -> void:
 			_round_timer -= delta
 			if _round_timer <= 0.0:
 				_round_state = RoundState.PLAYING
+				# 选项:回合开始双方回满血(倒计时结束时生效,含换局后的第一拍)
+				if _round_full_heal:
+					for heal_role in players:
+						(players[heal_role] as Node).apply_authoritative_state(
+								(players[heal_role] as Node).max_hp,
+								(players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
 		RoundState.PLAYING:
 			_handle_respawns(delta)
@@ -479,7 +555,7 @@ func _respawn_player(role: int) -> void:
 	if p.has_method("cancel_jump_state"):
 		p.cancel_jump_state()
 	if p.weapons != null and p.weapons.has_method("equip"):
-		p.weapons.equip("1")
+		p.weapons.equip(p.weapons.default_slot())   # 禁用武器闸门下回槽 1 会踩禁用槽(原为 equip("1"))
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
 
