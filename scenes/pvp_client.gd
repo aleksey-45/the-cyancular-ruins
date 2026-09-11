@@ -107,11 +107,12 @@ func _ready() -> void:
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
 	_hud = preload("res://ui/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
-	# 打击反馈层(命中 X 标记/击杀播报)在 PvP 下**已经挂上了**:main 的 Level0._ready 在建图前
-	# 就挂过一次(见 level_0.gd,位于 pvp_mode 早退**之前**),而 PvP 也是 Level0 的宿主 ——
-	# 所以这里**有意不再挂一次**,不是漏写。真重复挂会建出第二份:CombatFeedback 的 spawn 早退
-	# 要求 current 已非空,而 current 要等 deferred 实例的 _ready 才写上,同帧的第二次调用看到的
-	# 还是 null(实测 2 份),且既有探针钉着「生产路径恰好 1 处挂载点」。
+	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 同样继承它 —— 见 level_0.gd 的
+	# _ready:那一挂在建图前、位于 pvp_mode 早退**之前**,而本文件也把该 Level0 挂进世界,
+	# 故进 PvP 世界时反馈层已在。**本行有意不写第二次挂载**(不是漏写):CombatFeedback 的早退
+	# 要求 current 已非空,而 current 只在 deferred 实例的 _ready 里赋值,同帧第二次调用看到的
+	# 还是 null → 真会建出第二份(实测 2 份),并打破「生产路径恰好 1 处挂载点」这条既有断言。
+	# 后来者不要照别的分支把这一行补回来。
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
