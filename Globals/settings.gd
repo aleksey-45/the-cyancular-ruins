@@ -30,6 +30,7 @@ var sp_difficulty: int = 1                  # 0=简单 1=普通 2=困难
 
 # ── PvP 选项(本地偏好类直接生效;服务器权威类由房主下发,见 MatchHost)──
 var pvp_show_trajectories: bool = true  # 显示敌方武器(子弹)轨迹
+var pvp_c2_prediction: bool = true      # C2 客户端预测(默认开:操作零延迟;关=纯服务器渲染,无回拉但有整轮延迟)
 var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生效项,房主值优先)
 var pvp_show_enemy_hp: bool = true      # 显示敌方头顶血条
 var pvp_disabled_weapons: Array[int] = []  # 禁用武器(服务器生效项,房主值优先)
@@ -119,6 +120,7 @@ func save() -> void:
 	cf.set_value("single", "disabled_weapons", sp_disabled_weapons)
 	cf.set_value("single", "difficulty", sp_difficulty)
 	cf.set_value("pvp", "show_trajectories", pvp_show_trajectories)
+	cf.set_value("pvp", "c2_prediction", pvp_c2_prediction)
 	cf.set_value("pvp", "round_full_heal", pvp_round_full_heal)
 	cf.set_value("pvp", "show_enemy_hp", pvp_show_enemy_hp)
 	cf.set_value("pvp", "disabled_weapons", pvp_disabled_weapons)
@@ -152,6 +154,7 @@ func load_settings() -> void:
 	sp_disabled_weapons.assign(cf.get_value("single", "disabled_weapons", []))
 	sp_difficulty = int(cf.get_value("single", "difficulty", 1))
 	pvp_show_trajectories = bool(cf.get_value("pvp", "show_trajectories", true))
+	pvp_c2_prediction = bool(cf.get_value("pvp", "c2_prediction", true))
 	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))
 	pvp_show_enemy_hp = bool(cf.get_value("pvp", "show_enemy_hp", true))
 	pvp_disabled_weapons.assign(cf.get_value("pvp", "disabled_weapons", []))

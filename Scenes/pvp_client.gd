@@ -5,11 +5,13 @@ const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://Globals/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── 本地玩家渲染方式(开关) ──
-# OFF(默认,现状):本地玩家完全由服务器快照驱动(server_rendered)——无回拉,但本地操作含整轮延迟。
-# ON:C2 客户端预测 + PredictionRollback 权威锚定重放(移植原作者 main 70e4c75):
+# ON(当前):C2 客户端预测 + PredictionRollback 权威锚定重放(移植原作者 main 70e4c75):
 #     本地跑全量物理(手感=单机),与服务器权威整态分歧时才 restore + 重放未确认输入纠偏。
-# 默认 OFF:先让协议/回滚链路可验证,1v1 真机 A/B 通过后再开。
-const LOCAL_PREDICTION_ENABLED := false
+# OFF:本地玩家完全由服务器快照驱动(server_rendered)——无回拉,但本地操作含整轮延迟。
+# 回退方式:把下面常量改回 false 即回到纯服务器渲染。回滚频次可读 _rollback.rollback_count() 观测。
+# C2 本地预测开关:读设置(Settings.pvp_c2_prediction,默认开;设置页可关)。
+# 对局开始时捕获(_ready),中途切换下一局生效。关闭 = 纯服务器渲染(无回拉,但操作含整轮延迟)。
+var _predict := true
 var _rollback = null            # PredictionRollback(开关 ON 时创建)
 var _input_seq := 0             # 本地每物理帧单调输入序号(服务器 1/tick 消费并回带 ack)
 var _have_prev_seq := false
@@ -51,10 +53,11 @@ func _ready() -> void:
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	_local = local
-	# 本地玩家渲染方式(见文件头开关):默认 server_rendered;C2 开启则本地预测 + 回滚控制器。
-	if not LOCAL_PREDICTION_ENABLED and _local.has_method("set_server_rendered"):
+	# 本地玩家渲染方式:默认 server_rendered;C2 开启则本地预测 + 回滚控制器。
+	_predict = Settings.pvp_c2_prediction
+	if not _predict and _local.has_method("set_server_rendered"):
 		_local.set_server_rendered(true)
-	elif LOCAL_PREDICTION_ENABLED:
+	elif _predict:
 		if _rollback == null:
 			_rollback = PredictionRollback.new()
 		_rollback.bind(_local)
@@ -119,7 +122,7 @@ func _physics_process(_delta: float) -> void:
 		NetBus.send_ping()
 	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
 	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
-	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+	if _predict and _rollback != null:
 		if _have_prev_seq:
 			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
 			_rollback.reconcile()
@@ -172,7 +175,7 @@ func _physics_process(_delta: float) -> void:
 	NetBus.rpc_id(1, "send_input", pkt)
 	_prev_sent_seq = _input_seq
 	_have_prev_seq = true
-	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+	if _predict and _rollback != null:
 		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 func _on_snapshot(snap: Dictionary) -> void:
@@ -188,7 +191,7 @@ func _on_snapshot(snap: Dictionary) -> void:
 		var role := int(role_str)
 		var data: Dictionary = players_snap[role_str]
 		if role == PvpSession.role:
-			if LOCAL_PREDICTION_ENABLED and _rollback != null:
+			if _predict and _rollback != null:
 				# C2:权威整态/ack 喂控制器(reconcile 在下一帧步进前处理;散字段位置不直接采纳)
 				var ack := int(data.get("ack_seq", 0))
 				var c2: Dictionary = data.get("c2", {})
