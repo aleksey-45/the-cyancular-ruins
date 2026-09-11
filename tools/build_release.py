@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 一键发布:导客户端 exe + 导服务端 exe + 把服务端打回 CONSOLE 子系统(双击即控制台窗口+服务器日志)。
-# 依赖 RELEASE.md 的自定义裁剪模板(4.7.1 标准编辑器)。改完游戏后跑一次即可。
+# 依赖 docs/RELEASE.md 的自定义裁剪模板(4.7.1 标准编辑器)。改完游戏后跑一次即可。
 # 用法: python build_release.py
 import os
 import subprocess

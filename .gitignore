@@ -31,4 +31,6 @@ DevTools/cards/.logs/
 *.exe
 test
 
+# 服务器启动时写出的本机 IP 提示文件(server_main.gd;根目录不入库)
 local_ip.txt
+本机IP.txt

@@ -451,7 +451,7 @@ func _process(_delta: float) -> void:
 func _on_explosion_event(pos: Vector2, _radius: float) -> void:
 	if _world == null:
 		return
-	var fx: Node = preload("res://Scenes/Weapons/explosion.tscn").instantiate()
+	var fx: Node = preload("res://Scenes/Effects/explosion.tscn").instantiate()
 	fx.global_position = pos
 	_world.add_child(fx)
 	Sfx.play("explosion")

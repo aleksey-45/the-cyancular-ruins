@@ -33,7 +33,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 - 客户端默认服务器 IP:`120.53.107.140`(可在匹配界面改)。
 
 ### 跑服务端
-- **本地/局域网**:双击 `start_server.bat`(自动杀旧进程、启动大厅)。
+- **本地/局域网**:双击 `tools/start_server.bat`(自动杀旧进程、启动大厅)。
 - **导出版**:双击 `Cyancular Ruins Server.exe`(大厅,带控制台;会自动拉起每局 worker)。
 - **云/公网**:需放行 **UDP 7777 与 7800~7999**(大厅 + 每局 worker 动态端口)。
 
@@ -55,13 +55,10 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 
 ## 构建 / 发布
 
-详见 `RELEASE.md`。一键打包(客户端 + 控制台服务端,并把服务端打回控制台):
+详见 `docs/RELEASE.md`(编译/裁剪模板手册)。
 
-```bash
-python tools/build_release.py
-```
-
-产物在仓库根(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`),历史日期构建在 `builds/`。
+- **一键打包(推荐)**:双击仓库根 `build_exe.bat` —— 导出客户端(分支+时间戳的版本化文件名)+ 专用服务端 `Cyancular Ruins Server.exe`。打包前会把根目录里的旧 exe 移到**上级目录** `historyexe/`,根目录只留最新一对。
+- **脚本打包**:`python tools/build_release.py` —— 导出固定名客户端 + 控制台服务端。
 
 ---
 
@@ -71,10 +68,10 @@ python tools/build_release.py
 
 ```bash
 # 敌人/武器/环面逻辑主冒烟
-Godot_console --headless --path . -s res://tests/enemy_logic_smoke.gd
+Godot_console --headless --path . -s res://Tests/enemy_logic_smoke.gd
 # PvP 链路(大厅→worker→建房→开局)
-bash tests/pvp_room_smoke.sh
-bash tests/pvp_match_smoke.sh
+bash Tests/pvp_room_smoke.sh
+bash Tests/pvp_match_smoke.sh
 ```
 
 > 用 4.7.1 **console** 版跑;开发/冒烟约定见 `CLAUDE.md`。
@@ -83,14 +80,28 @@ bash tests/pvp_match_smoke.sh
 
 ## 目录
 
+仓库根只保留 Godot 必需文件、入口文档、**现版本 exe** 和**打包脚本**;其余按类别归档:
+
 ```
-scenes/   场景(Godot 惯例 PascalCase 的 .tscn;脚本 snake_case)
-globals/  autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
-server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
-tests/    -s 冒烟/探针
-editor/   浏览器地图编辑器(structure-editor.html + smoke.js)
-map/      .cyrm 文本地图
-tools/    发布/控制台脚本(build_release.py、make_server_console.py)
+project.godot / export_presets.cfg / icon.svg    Godot 工程入口与导出配置
+AGENTS.md / README.md / CLAUDE.md                入口文档(代理指令 / 说明 / 转发)
+build_exe.bat / cyancular_build_profile.gdbuild  一键打包 + 裁剪模板 profile
+The Cyancular Ruins_<分支>_<时间>.exe             现版本客户端(旧版归档到上级 historyexe/)
+Cyancular Ruins Server.exe                       服务端(固定名,始终最新)
+Scenes/    场景与脚本(Level0 / 玩家 / 敌人 / 武器 / HUD / PvP / 大乱斗)
+Globals/   autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
+Shaders/   后处理等 .gdshader
+server/    服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
+map/       .cyrm 文本地图
+assets/    美术/字体素材
+editor/    浏览器地图编辑器(structure-editor.html + smoke.js)
+DevTools/  干员卡/武器卡编辑器(分支限定;启动器 launch_card_editor.bat 同目录)
+Tests/     -s 冒烟/诊断脚本
+tools/     构建与启动脚本(start_server.bat / build_release.py / 维护探针)
+docs/      全部文档(发布手册 / 联网设计 / 规划 / 历史 spec 与 plan)
+backup/    旧编辑器等备份
 ```
 
-技术细节(环面数学/敌人 AI/网络协议/发布)见 `CLAUDE.md` 与 `RELEASE.md`。
+> 打包:`build_exe.bat` 会把根目录旧 exe 移到上级 `historyexe/`,根目录始终只有最新一对 exe。
+
+技术细节(环面数学/敌人 AI/网络协议/发布)见 `CLAUDE.md` 与 `docs/RELEASE.md`。
