@@ -176,9 +176,8 @@ func _register_player_hit(target: Node) -> void:
 	var who := shooter
 	if who == null and is_instance_valid(source):
 		who = source
-	# 归因写端统一入口(含射手无效/自伤守卫 + 归因时效戳,CombatFeedback 据此丢弃「蹭过一下」的旧归因)
-	CombatFeedback.attribute(target, who)
-	CombatFeedback.hit_marker()
+	# 归因 + 命中标记的一体入口(含射手无效/自伤守卫 + 归因时效戳)
+	CombatFeedback.attribute_hit(target, who)
 
 # 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
 # 后续反弹不重置时长(首次碰撞决定引信时长,不因再撞墙/再撞敌人刷新)。
