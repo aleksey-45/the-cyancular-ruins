@@ -27,6 +27,9 @@ var _mode_btn_lan: CheckButton = null
 var _srv_btn: Button = null                 # 局域网开服按钮(公网模式隐藏)
 var _addr_hint: Label = null                # 地址行提示(随模式换文案)
 var _auto_timer: Timer = null               # 房间列表自动刷新
+var _caps_check_ms := 0                      # 握手等待截止(0=已处理)
+var _create_btn: Button = null               # 建房按钮(服务器不支持大乱斗时灰掉)
+var _join_btn: Button = null                 # 加入按钮(同上)
 var _connected_addr := ""
 var _pending_action: Callable = Callable()
 var _lobby_start_ms := 0
@@ -134,6 +137,7 @@ func _ready() -> void:
 	_code_edit = _make_line_edit(Vector2(60, 812), "房间号", "")
 	_invite_edit = _make_line_edit(Vector2(330, 812), "邀请码(私密房)", "")
 	var join_btn := _make_button(Vector2(600, 806), "加 入", _on_join_pressed)
+	_join_btn = join_btn
 	join_btn.custom_minimum_size = Vector2(140, 48)
 
 	_status = _label("", 24, Color(0.95, 0.95, 0.85))
@@ -148,6 +152,7 @@ func _ready() -> void:
 	_build_create_panel()
 
 	# ── 信号 ──
+	NetBusExt.server_caps_updated.connect(func(_b: String, _c: Dictionary) -> void: _apply_server_caps())
 	NetBusExt.local_royale_rooms.connect(_on_royale_rooms)
 	NetBusExt.local_royale_room_state.connect(_on_room_state)
 	NetBus.local_server_message.connect(_on_server_message)
@@ -275,6 +280,7 @@ func _build_create_panel() -> void:
 	vb.add_child(_label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 20, Color(0.7, 0.75, 0.8)))
 
 	var create := Button.new()
+	_create_btn = create
 	create.text = "创 建 房 间"
 	create.custom_minimum_size = Vector2(360, 54)
 	create.add_theme_font_size_override("font_size", 28)
@@ -301,6 +307,22 @@ func _pub_addr() -> String:
 
 
 # 应用当前模式:公网=固定地址 + 隐藏本机开服入口;局域网=保留原有本机开服流程
+# 能力协商结果落地:服务器不支持大乱斗(旧版本/原作者云服)→ 灰掉建房/加入 + 人话提示
+func _apply_server_caps() -> void:
+	if NetBusExt.server_caps.is_empty():
+		return   # 还没握手到(局域网自建服同版本也会回,等超时统一处理)
+	var ok := NetBusExt.server_has("royale")
+	if _create_btn != null:
+		_create_btn.disabled = not ok
+	if _join_btn != null:
+		_join_btn.disabled = not ok
+	if _start_btn != null:
+		_start_btn.disabled = not ok
+	if not ok:
+		_status.text = ("该服务器不支持大乱斗(版本过旧,或原作者云服):"
+				+ "请让开服方部署最新服务端,或切到「局域网(本机开服)」模式。")
+
+
 func _apply_mode(reconnect: bool) -> void:
 	_mode_pub = Settings.royale_public_mode
 	if _mode_btn_pub != null:
@@ -349,7 +371,7 @@ func _auto_refresh_tick() -> void:
 		return
 	if _pending_action.is_valid() or multiplayer.multiplayer_peer == null:
 		return
-	NetBusExt.rpc_id(1, "royale_list")
+	NetBusExt.c2s("royale_list")
 
 func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
 	var le := LineEdit.new()
@@ -414,6 +436,8 @@ func _on_lobby_connected() -> void:
 	_connected = true
 	_connected_addr = PvpSession.server_address
 	_push_lobby_name()
+	NetBusExt.client_hello()
+	_caps_check_ms = Time.get_ticks_msec()   # 2.5s 内没收到 welcome → 按"不支持大乱斗"降级
 	var act := _pending_action
 	if act.is_valid():
 		_pending_action = Callable()
@@ -430,6 +454,18 @@ func _on_lobby_connect_failed() -> void:
 	_status.text = "连接服务器失败,请检查地址"
 
 func _process(_delta: float) -> void:
+	# 握手超时(旧服务端方法表不同 → 收不到 welcome):按"不支持大乱斗"降级
+	if _caps_check_ms > 0 and Time.get_ticks_msec() - _caps_check_ms > 2500:
+		_caps_check_ms = 0
+		if NetBusExt.server_caps.is_empty():
+			if _create_btn != null:
+				_create_btn.disabled = true
+			if _join_btn != null:
+				_join_btn.disabled = true
+			_status.text = ("服务器未响应能力协商(版本过旧):大乱斗不可用。"
+					+ "请让开服方部署最新服务端,或切到「局域网(本机开服)」。")
+		else:
+			_apply_server_caps()
 	if _connecting_worker and Time.get_ticks_msec() - _go_start_ms > 12000:
 		_connecting_worker = false
 		_status.text = "连接对局服务器超时——请检查对局端口(7800~7999 UDP)是否放行"
@@ -448,7 +484,7 @@ func _process(_delta: float) -> void:
 func _request_list(msg: String) -> void:
 	_with_lobby(func() -> void:
 		_status.text = msg
-		NetBusExt.rpc_id(1, "royale_list"))
+		NetBusExt.c2s("royale_list"))
 
 func _on_refresh_pressed() -> void:
 	_request_list("刷新房间列表…")
@@ -477,7 +513,7 @@ func _on_create_pressed() -> void:
 		_status.text = "建房中…"
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "royale_create", {
+		NetBusExt.c2s("royale_create", {
 			"is_public": _public_check.button_pressed,
 			"invite_code": _create_invite_edit.text.strip_edges(),
 			"max_players": int(_max_slider.value),
@@ -496,7 +532,7 @@ func _join_room(code: String, invite: String) -> void:
 		_status.text = "加入房间 %s …" % code
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "royale_join", code, invite))
+		NetBusExt.c2s("royale_join", {"code": code, "invite": invite}))
 
 
 # ── 服务器回复 ──
@@ -596,7 +632,7 @@ func _build_wait_panel() -> void:
 	_start_btn.add_theme_font_size_override("font_size", 30)
 	_start_btn.pressed.connect(func() -> void:
 		_status.text = "开局中…"
-		NetBusExt.rpc_id(1, "royale_start"))
+		NetBusExt.c2s("royale_start"))
 	vb.add_child(_start_btn)
 	# AI 补位开局(实验性):真人不足时用电脑玩家补满上限(仅自建服务端支持)
 	_ai_fill_btn = Button.new()
@@ -605,7 +641,7 @@ func _build_wait_panel() -> void:
 	_ai_fill_btn.add_theme_font_size_override("font_size", 26)
 	_ai_fill_btn.pressed.connect(func() -> void:
 		_status.text = "AI 补位开局中…"
-		NetBusExt.rpc_id(1, "royale_start_ai"))
+		NetBusExt.c2s("royale_start_ai"))
 	vb.add_child(_ai_fill_btn)
 	var leave := Button.new()
 	leave.text = "退出房间"
@@ -620,7 +656,7 @@ func _build_wait_panel() -> void:
 	_wait_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 
 func _on_leave_room() -> void:
-	NetBusExt.rpc_id(1, "royale_leave")
+	NetBusExt.c2s("royale_leave")
 	_in_room = false
 	_my_room = {}
 	if _wait_panel != null:
@@ -660,7 +696,7 @@ func _do_go_match() -> void:
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
-	NetBusExt.rpc_id(1, "player_options", {
+	NetBusExt.c2s("player_options", {
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": false,
 		"disabled_weapons": Settings.pvp_disabled_weapons,

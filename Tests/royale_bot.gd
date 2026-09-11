@@ -51,14 +51,14 @@ func _ready() -> void:
 func _on_connected() -> void:
 	NetBus.rpc_id(1, "lobby_name", _name)
 	if _role == "create":
-		NetBusExt.rpc_id(1, "royale_create", {"is_public": true, "invite_code": "", "max_players": 8})
+		NetBusExt.c2s("royale_create", {"is_public": true, "invite_code": "", "max_players": 8})
 	else:
 		var code: String = await _read_room_code()
 		if code == "":
 			print("BOT[%d]: FAIL 房号文件未就绪" % _index)
 			get_tree().quit(1)
 			return
-		NetBusExt.rpc_id(1, "royale_join", code, "")
+		NetBusExt.c2s("royale_join", {"code": code, "invite": ""})
 
 func _on_royale_state(state: Dictionary) -> void:
 	if _role != "create":
@@ -75,11 +75,11 @@ func _on_royale_state(state: Dictionary) -> void:
 	var plist: Array = state.get("players", [])
 	if _ai_fill and not _started_sent:
 		_started_sent = true
-		NetBusExt.rpc_id(1, "royale_start_ai")
+		NetBusExt.c2s("royale_start_ai")
 		print("BOT[%d]: royale_start_ai 已发送(%d 真人)" % [_index, plist.size()])
 	elif plist.size() >= 5 and not _started_sent:
 		_started_sent = true
-		NetBusExt.rpc_id(1, "royale_start")
+		NetBusExt.c2s("royale_start")
 		print("BOT[%d]: royale_start 已发送(%d 人)" % [_index, plist.size()])
 
 func _read_room_code() -> String:

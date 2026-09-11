@@ -198,6 +198,6 @@ func _explode() -> void:
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
 	if in_net:
-		NetBusExt.explosion_event.rpc(global_position, explosion_radius)
+		NetBusExt.s2c_all("explosion_event", {"pos": global_position, "radius": explosion_radius})
 	if apply_damage:
 		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)

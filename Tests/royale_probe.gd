@@ -112,8 +112,8 @@ func _run_client_1() -> void:
 				rf.close()
 			if n >= 2 and not _got_match_start:
 				print("PROBE[c1]: 房内 %d 人,发起开局" % n)
-				NetBusExt.rpc_id(1, "royale_start"))
-		NetBusExt.rpc_id(1, "royale_create", {
+				NetBusExt.c2s("royale_start"))
+		NetBusExt.c2s("royale_create", {
 			"is_public": false, "invite_code": INVITE, "max_players": 4,
 			"round_full_heal": false, "disabled_weapons": [3],
 		}))
@@ -139,13 +139,13 @@ func _run_client_2() -> void:
 		NetBus.local_server_message.connect(func(t: String) -> void:
 			if t.contains("邀请码"):
 				_saw_invite_reject = true)
-		NetBusExt.rpc_id(1, "royale_join", code, WRONG_INVITE)
+		NetBusExt.c2s("royale_join", {"code": code, "invite": WRONG_INVITE})
 		await get_tree().create_timer(0.6).timeout
 		if not _saw_invite_reject:
 			_finish(false, "c2", "错误邀请码未被拒绝(消息=%s)" % _saw_invite_reject)
 			return
 		print("PROBE[c2]: 错码被拒 ✓,用对码加入 %s" % code)
-		NetBusExt.rpc_id(1, "royale_join", code, INVITE))
+		NetBusExt.c2s("royale_join", {"code": code, "invite": INVITE}))
 	_go_and_verify("c2")
 
 # ── 公共(客户端):等 go_match → 转连 worker → claim → 验证对局广播 ──
@@ -189,7 +189,7 @@ func _to_worker(who: String, role: int, port: int) -> void:
 	multiplayer.connected_to_server.connect(func() -> void:
 		print("PROBE[%s]: 已连 worker,claim role %d" % [who, role])
 		NetBus.rpc_id(1, "claim_role", role, who.to_upper())
-		NetBusExt.rpc_id(1, "player_options", {"hue": 0.0}), CONNECT_ONE_SHOT)
+		NetBusExt.c2s("player_options", {"hue": 0.0}), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
 		_finish(false, who, "连 worker 失败"), CONNECT_ONE_SHOT)
 	NetBus.stop()

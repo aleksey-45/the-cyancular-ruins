@@ -123,9 +123,11 @@ func _fetch_public_ip() -> void:
 
 # 杀掉还监听该 UDP 端口的旧进程(Windows:PowerShell 取 UDP 端点属主进程→Stop-Process)。
 # 供大厅启动前用,避免旧服务端没关导致新实例 bind 失败瞬间退出(双击 exe 闪退)。
+# Windows 侧 PS 陷阱:`% OwningProcess` 取不到属性(裸名字不展开 $_),实测拿空→杀不掉;
+# 必须 `Select -ExpandProperty OwningProcess`(原作者 6640129 实测修复)。
 func _kill_port_holder(port: int) -> void:
 	var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
-			" | % OwningProcess | sort -u; if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
+			" -ErrorAction SilentlyContinue | Select -ExpandProperty OwningProcess -Unique; if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
 	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, false)
 
 # ── worker:独占端口等客户端 claim_role;1v1 收齐 2 人开局,大乱斗收齐 N 人(或 20s 超时)开局 ──
@@ -220,7 +222,7 @@ func _begin_match() -> void:
 	# 昵称走原版 peer_info(兼容);颜色走扩展 peer_hues
 	for r in _claims:
 		NetBus.rpc_id(_claims[r], "peer_info", _claim_names)
-		NetBusExt.rpc_id(_claims[r], "peer_hues", _claim_hues())
+		NetBusExt.s2c(_claims[r], "peer_hues", _claim_hues())
 	if _royale and _host.has_method("set_display_names"):
 		_host.set_display_names(_claim_names)   # 排行榜昵称表
 	print("worker: 对局开始%s" % ("(大乱斗 %d 人,其中 AI %d)" % [_claims.size() + _ai_roles.size(), _ai_roles.size()] if _royale else ""))

@@ -289,7 +289,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_K:
-		NetBusExt.rpc_id(1, "suicide_request")
+		NetBusExt.c2s("suicide_request")
 
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	if _world == null:
@@ -417,7 +417,7 @@ func _process(_delta: float) -> void:
 func _on_explosion_event(pos: Vector2, _radius: float) -> void:
 	if _world == null:
 		return
-	var fx: Node = preload("res://Scenes/Weapons/explosion.tscn").instantiate()
+	var fx: Node = preload("res://Scenes/Effects/explosion.tscn").instantiate()
 	fx.global_position = pos
 	_world.add_child(fx)
 	Sfx.play("explosion")

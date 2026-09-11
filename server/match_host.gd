@@ -132,7 +132,7 @@ func _ready() -> void:
 func _broadcast_match_options() -> void:
 	var opts := {"disabled_weapons": _disabled_weapons, "round_full_heal": _round_full_heal}
 	for role in peer_by_role:
-		NetBusExt.rpc_id(peer_by_role[role], "match_options", opts)
+		NetBusExt.s2c(peer_by_role[role], "match_options", opts)
 
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
@@ -444,7 +444,7 @@ func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
 	# 扩展 RPC 走 NetBusExt(原版 NetBus 逐字节不动);对原版 worker 本节点不存在 → 静默丢弃。
 	for r in peer_by_role:
 		if int(r) != shooter_role and players.has(int(r)):
-			NetBusExt.rpc_id(peer_by_role[r], "beam_fired", rep)
+			NetBusExt.s2c(peer_by_role[r], "beam_fired", rep)
 
 # 即时光束武器(激光)的直击命中:服务器结算后把 X 标记(hit_confirm)发给射手本人,
 # 与子弹 _on_bullet_hit 的 hit_confirm 同链路(爆炸 AoE 不发——伤害方不明确,激光方向明确可发)。
@@ -459,7 +459,7 @@ func notify_direct_hit(shooter: Node, victim: Node) -> void:
 	if shooter_role < 0 or victim_role < 0 or shooter_role == victim_role:
 		return
 	if peer_by_role.has(shooter_role):
-		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, victim_role)
+		NetBusExt.s2c(peer_by_role[shooter_role], "hit_confirm", {"shooter_role": shooter_role, "victim_role": victim_role})
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	if victim.has_method("take_hit"):
@@ -474,7 +474,7 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -
 			break
 	if shooter_role != 0 and peer_by_role.has(shooter_role) \
 			and multiplayer.get_peers().has(peer_by_role[shooter_role]):
-		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, victim_role)
+		NetBusExt.s2c(peer_by_role[shooter_role], "hit_confirm", {"shooter_role": shooter_role, "victim_role": victim_role})
 	bullet.queue_free()
 
 # 玩家受击反馈:实际扣血(子弹/鸟接触/鸟弹/爆炸) → 广播 hit_event 给两端客户端。

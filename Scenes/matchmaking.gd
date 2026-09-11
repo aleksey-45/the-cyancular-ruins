@@ -68,7 +68,7 @@ func _ready() -> void:
 	_ai_duel_btn = _make_button(Vector2(460, 240), "AI 对战", func() -> void:
 		_status.text = "AI 补位开局中…"
 		_ai_duel_btn.visible = false
-		NetBusExt.rpc_id(1, "ai_duel"))
+		NetBusExt.c2s("ai_duel"))
 	_ai_duel_btn.visible = false
 	_make_button(Vector2(60, 400), "返回", func() -> void:
 		NetBus.stop()
@@ -240,6 +240,7 @@ func _on_lobby_connected() -> void:
 	_connected = true
 	_connected_addr = PvpSession.server_address
 	_push_lobby_name()
+	NetBusExt.client_hello()   # 能力协商:换回服务器 build/caps(旧服不响应 → 超时降级)
 	var act := _pending_action
 	if act.is_valid():
 		_pending_action = Callable()
@@ -449,7 +450,7 @@ func _claim_role_worker(role: int) -> void:
 	_claimed_ms = Time.get_ticks_msec()
 	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
-	NetBusExt.rpc_id(1, "player_options", {
+	NetBusExt.c2s("player_options", {
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": Settings.pvp_round_full_heal,
 		"disabled_weapons": Settings.pvp_disabled_weapons,

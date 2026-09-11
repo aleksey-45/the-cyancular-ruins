@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # B2 loopback 冒烟:起服务器 + 建房/加入客户端,断言输入→模拟→快照→子弹广播链路。
 set -e
-GODOT="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
+# Godot 可执行文件:优先环境变量 GODOT,其次常见安装位置(任意系统;可用 GODOT=/路径/Godot 覆盖)
+if [ -z "${GODOT:-}" ]; then
+	for c in "C:/Godot/Godot_v4.7.1-stable_win64_console.exe" 			"/Applications/Godot.app/Contents/MacOS/Godot" 			"$(command -v godot 2>/dev/null || true)"; do
+		if [ -n "$c" ] && [ -x "$c" ]; then GODOT="$c"; break; fi
+	done
+fi
+if [ -z "${GODOT:-}" ]; then
+	echo "[错误] 找不到 Godot 可执行文件;请先导出 GODOT=/你的路径/Godot"
+	exit 1
+fi
 cd "$(dirname "$0")/.."
 
 # Windows 下 bash `kill` 杀不死 headless Godot 进程(会留僵尸占 7777),改用 taskkill 强杀。
@@ -24,7 +33,7 @@ SERVER_PID=$!
 sleep 3
 
 echo "== 客户端 A 建房(后台,移动+开火) =="
-"$GODOT" --headless --path . res://tests/pvp_match_smoke.tscn -- --role create > /tmp/pvp2_a.log 2>&1 &
+"$GODOT" --headless --path . res://Tests/pvp_match_smoke.tscn -- --role create > /tmp/pvp2_a.log 2>&1 &
 A_PID=$!
 sleep 2
 
@@ -36,7 +45,7 @@ fi
 echo "房间号=$CODE"
 
 echo "== 客户端 B 加入 =="
-"$GODOT" --headless --path . res://tests/pvp_match_smoke.tscn -- --role join --code "$CODE" > /tmp/pvp2_b.log 2>&1 &
+"$GODOT" --headless --path . res://Tests/pvp_match_smoke.tscn -- --role join --code "$CODE" > /tmp/pvp2_b.log 2>&1 &
 B_PID=$!
 
 wait $A_PID 2>/dev/null || true

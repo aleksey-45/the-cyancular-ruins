@@ -119,6 +119,14 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **僵尸房清扫**:`RoomManager._process` 每 10 分钟扫一次,清掉空置房与超龄(>2h)未开局房并归还 worker 端口(等效原作者 main 的 room_sweep)——公网长期开服必需。
 - 已知噪音:开局转连瞬间向未完成转连的 peer 广播会刷 `Unable to send packet channel 0`(ENet 噪音,不影响对局)。
 
+### 扩展协议信封 + 能力协商(兼容性,KH_v1_1_3_PubServer)
+- **NetBusExt 只暴露两个 @rpc**:`ext_c2s(kind, payload)` / `ext_s2c(kind, payload)`;功能全部靠 `kind` 分派(原有 signal 名不变 → UI/消费端零改动)。发送一律用 `NetBusExt.c2s / s2c / s2c_all`。
+  - **为什么**:Godot 按「节点」做 RPC 方法表校验和——以前每加一个功能就加一个 @rpc 方法,新旧构建互连即触发 `rpc node checksum failed`,本节点**所有** RPC 一起失效(现象就是"游戏一更新,旧服务端就不能用")。信封化后**加功能不再改方法表**:旧服务端只是"不认识某个 kind",忽略即可。
+  - **注意**:这是一次性断点——本版本之前发布的旧服务端仍会 checksum 失败;从本版本起,后来的版本共用信封 → 旧服务端可长期使用(只缺新功能)。
+- **能力协商**:客户端连上大厅/worker 后调 `NetBusExt.client_hello()`;服务器在收到 `hello` 时回 `welcome{build, caps}`。结果存 `NetBusExt.server_build / server_caps`,`NetBusExt.server_has(cap)` 查询。大乱斗大厅据此降级:服务器 `royale` 能力缺失(如原作者云服)→ **灰掉建房/加入**并给人话提示;2.5s 未收到 welcome 视为版本过旧。
+- **移植原作者服务端优化**:① `server_main._kill_port_holder` 的 PowerShell 管道修正(`Select -ExpandProperty OwningProcess`;原 `% OwningProcess` 取不到属主进程 → 杀不掉,7777 被占新实例 bind 失败闪退);② 僵尸房清扫补齐"**杀 worker 进程 + 断开房内玩家 + 归还端口**"(`RoomManager._kill_port_process` / `_kick_room_players`,跨平台 lsof/pkill)。
+- **测试脚本**:`Tests/pvp_match_smoke.sh` / `Tests/pvp_room_smoke.sh` 不再写死 Godot 路径(支持 `GODOT=` 环境变量 + 常见路径自动探测),并把 `res://tests/` 正名为 `res://Tests/`(大小写敏感系统必需)。
+
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。**约定:冒烟测试由用户自己跑;代理只跑"诊断探针"**:`Tests/menu_autotest.gd`(GUI/HEADLESS 经 `-- --autotest-sp|mp|set|level` 自动流转主菜单,sp 含 Esc 暂停+回主菜单验证)、`Tests/lobby_ping_probe.gd`(大厅 UDP 可达性)、`Tests/lobby_create_probe.gd`(对大厅建房+列表全链路,场景模式跑)、`Tests/royale_probe.tscn`(大乱斗全链路,场景模式:本进程当大厅 + c1/c2 headless 子进程走私密建房→错邀请码应拒→对码加入→开局→转连 worker→断言 match_start/round_state/match_options/60Hz 快照 ≥30;子进程 stdout 不落父进程,排查看各自 `user://logs/` 轮转日志)。
 

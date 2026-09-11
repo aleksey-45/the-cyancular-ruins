@@ -201,7 +201,7 @@ func _broadcast_royale_state(rr: RoyaleRoom) -> void:
 	for peer_id in rr.players:
 		# 只发给仍在线的 peer:对已断开连接 rpc_id 会报 channel 错误(自检日志实测)
 		if live_peers.has(peer_id):
-			NetBusExt.rpc_id(peer_id, "royale_room_state", state)
+			NetBusExt.s2c(peer_id, "royale_room_state", state)
 
 func _royale_room_of(caller: int) -> RoyaleRoom:
 	for r in royale_rooms:
@@ -302,7 +302,7 @@ func royale_list(caller: int) -> void:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": code, "players": rr.players.size(),
 				"max_players": rr.max_players, "names": names})
-	NetBusExt.rpc_id(caller, "royale_rooms", arr)
+	NetBusExt.s2c(caller, "royale_rooms", {"rooms": arr})
 
 # 房主开局:满 2 人即可;拉起 N 人 worker → 全员 go_match 转连
 func royale_start(caller: int) -> void:
@@ -528,29 +528,55 @@ func _sweep_stale_rooms() -> void:
 	for code in rooms.keys():
 		var room: Room = rooms[code]
 		if room.players.is_empty():
-			_release_port_later(room.worker_port)
+			_kill_port_process(room.worker_port)
+			_release_port_later(room.worker_port, 2.0)
 			rooms.erase(code)
-			print("[sweep] 清理空置 1v1 房 %s(端口 %d 延后回收)" % [code, room.worker_port])
+			print("[sweep] 清理空置 1v1 房 %s(worker 已杀,端口 2s 后归还)" % code)
 		elif not room.started and now - room.created_ms > ROOM_MAX_AGE_MS:
 			_kick_room_players(room.players, "房间超时已自动关闭,请重新建房")
-			_release_port_later(room.worker_port)
+			_kill_port_process(room.worker_port)
+			_release_port_later(room.worker_port, 2.0)
 			rooms.erase(code)
-			print("[sweep] 清理超龄 1v1 房 %s" % code)
+			print("[sweep] 清理超龄 1v1 房 %s(worker 已杀)" % code)
 	for rcode in royale_rooms.keys():
 		var rr: RoyaleRoom = royale_rooms[rcode]
 		var age := now - rr.created_ms
 		if rr.players.is_empty() and age > IDLE_ROOM_MS:
+			_kill_port_process(rr.worker_port)
 			if rr.worker_port > 0:
-				_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
+				_release_port_later(rr.worker_port, 2.0)
 			royale_rooms.erase(rcode)
-			print("[sweep] 清理空置大乱斗房 %s(端口 %d 延后回收)" % [rcode, rr.worker_port])
+			print("[sweep] 清理空置大乱斗房 %s(worker 已杀)" % rcode)
 		elif not rr.in_match and age > ROOM_MAX_AGE_MS:
 			_kick_room_players(rr.players, "房间超时已自动关闭,请重新建房")
+			_kill_port_process(rr.worker_port)
 			if rr.worker_port > 0:
-				_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
+				_release_port_later(rr.worker_port, 2.0)
 			royale_rooms.erase(rcode)
-			print("[sweep] 清理超龄大乱斗房 %s" % rcode)
+			print("[sweep] 清理超龄大乱斗房 %s(worker 已杀)" % rcode)
+
+# 杀指定 UDP 端口的进程(worker):Windows 走修好的 PS 管道;macOS/Linux 走 lsof+kill。
+func _kill_port_process(port: int) -> void:
+	if port <= 0:
+		return
+	if OS.get_name() == "Windows":
+		var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
+				" -ErrorAction SilentlyContinue | Select -ExpandProperty OwningProcess -Unique; " + \
+				"if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
+		OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, false)
+	else:
+		OS.execute("/bin/sh", ["-c",
+				"lsof -nP -iUDP:%d -t 2>/dev/null | xargs kill -9 2>/dev/null; true" % port],
+				[], false, false)
+
 
 func _kick_room_players(peers: Array, msg: String) -> void:
 	for p in peers:
-		NetBus.rpc_id(int(p), "server_message", msg)
+		var pid := int(p)
+		if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(pid):
+			NetBus.rpc_id(pid, "server_message", msg)
+	# 断开(等 peer_left 收尾):否则它们会留在半满房间表里
+	for p in peers:
+		var pid2 := int(p)
+		if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(pid2):
+			multiplayer.disconnect_peer(pid2)
