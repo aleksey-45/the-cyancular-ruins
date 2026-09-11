@@ -9,7 +9,10 @@ const LocalServer := preload("res://Globals/local_server.gd")
 # 视觉项(小地图/轨迹/血条/颜色)沿用「多人对战」设置(Settings.pvp_*),此处不重复摆放。
 
 const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
-const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹"}
+# ── 公网服务器地址:★发版前把这里改成你们那台公网服务器 IP(队友即可零配置)──
+# 留空时:玩家可在界面地址框现场填写(按人生效并记忆)。
+const PUBLIC_SERVER_ADDR := ""
+const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹", 6: "激光枪"}
 
 var _addr_edit: LineEdit
 var _code_edit: LineEdit        # 房间号(加入)
@@ -18,6 +21,12 @@ var _status: Label
 var _list_box: VBoxContainer
 var _connected := false
 var _ip_label: Label = null   # 常驻本机 IP 提示(进页/重启后即显示,不靠易被刷掉的状态栏)
+var _mode_pub := true                        # true=公网服务器 / false=局域网本机开服
+var _mode_btn_pub: CheckButton = null
+var _mode_btn_lan: CheckButton = null
+var _srv_btn: Button = null                 # 局域网开服按钮(公网模式隐藏)
+var _addr_hint: Label = null                # 地址行提示(随模式换文案)
+var _auto_timer: Timer = null               # 房间列表自动刷新
 var _connected_addr := ""
 var _pending_action: Callable = Callable()
 var _lobby_start_ms := 0
@@ -67,19 +76,47 @@ func _ready() -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
-	# 大乱斗协议在 NetBusExt(自建服务端才有):原作者云服不支持 → 默认本机,不默认云地址
-	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址(大乱斗=自建服)", "127.0.0.1")
-	var addr_hint := _label("大乱斗需自建服务器:点「启动/重启本机服务器」即可本机开服(同目录需有 Cyancular Ruins Server.exe);朋友加入填开服机 IP(异地用 VPN 组网);原作者云服不支持大乱斗", 18, Color(0.75, 0.8, 0.85))
-	addr_hint.position = Vector2(60, 160)
-	addr_hint.size = Vector2(900, 26)
-	add_child(addr_hint)
+	# ── 模式选择(页面顶部空带):公网服务器(固定地址,零配置) / 局域网(本机开服)──
+	var mode_lbl := _label("大乱斗模式:", 18, Color(0.75, 0.8, 0.85))
+	mode_lbl.position = Vector2(596, 24)
+	add_child(mode_lbl)
+	var mode_group := ButtonGroup.new()
+	_mode_btn_pub = CheckButton.new()
+	_mode_btn_pub.text = "公网服务器"
+	_mode_btn_pub.position = Vector2(716, 18)
+	_mode_btn_pub.button_group = mode_group
+	_mode_btn_pub.add_theme_font_size_override("font_size", 18)
+	_mode_btn_pub.toggled.connect(func(on: bool) -> void:
+		if on:
+			_on_mode_toggled(true))
+	add_child(_mode_btn_pub)
+	_mode_btn_lan = CheckButton.new()
+	_mode_btn_lan.text = "局域网(本机开服)"
+	_mode_btn_lan.position = Vector2(846, 18)
+	_mode_btn_lan.button_group = mode_group
+	_mode_btn_lan.add_theme_font_size_override("font_size", 18)
+	_mode_btn_lan.toggled.connect(func(on: bool) -> void:
+		if on:
+			_on_mode_toggled(false))
+	add_child(_mode_btn_lan)
+
+	# 公网模式:地址框正常只读(地址由常量/记忆给出);常量留空时允许现场填并记忆
+	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址", "127.0.0.1")
+	_addr_edit.text_submitted.connect(func(_t: String) -> void:
+		if _mode_pub:
+			Settings.royale_pub_addr = _addr_edit.text.strip_edges()
+			Settings.save())
+	_addr_hint = _label("", 18, Color(0.75, 0.8, 0.85))
+	_addr_hint.position = Vector2(60, 160)
+	_addr_hint.size = Vector2(900, 26)
+	add_child(_addr_hint)
 	var refresh := _make_button(Vector2(330, 114), "刷新列表", _on_refresh_pressed)
-	var srv_btn := _make_button(Vector2(540, 114), "启动/重启本机服务器", _on_local_server_pressed)
-	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
+	_srv_btn = _make_button(Vector2(540, 114), "启动/重启本机服务器", _on_local_server_pressed)
+	_srv_btn.tooltip_text = "仅局域网模式使用:关闭旧的本机大厅,重新拉起同目录的服务端,并自动连 127.0.0.1 刷新列表"
 	_ip_label = _label("", 20, Color(0.65, 0.9, 1.0))
-	_ip_label.position = Vector2(1250, 22)   # 页面顶部空带(左列 y160 有提示文字、右列 y60 起是建房面板)
+	_ip_label.position = Vector2(1250, 22)
 	add_child(_ip_label)
-	_ip_label.text = LocalServer.lan_ip_hint()   # 本机(=自建服同机)IP 常驻显示
+	_ip_label.text = LocalServer.lan_ip_hint()
 
 	var cap := _label("公开房间列表(点击直接加入)", 26, Color(0.55, 0.95, 1.0))
 	cap.position = Vector2(60, 186)
@@ -120,6 +157,13 @@ func _ready() -> void:
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 
 	_apply_pixel_font(self)
+	# 房间列表自动刷新:公网模式下别人新建的房几秒内就能看到(静默刷新,不动状态栏)
+	_auto_timer = Timer.new()
+	_auto_timer.wait_time = 2.5
+	_auto_timer.autostart = true
+	_auto_timer.timeout.connect(_auto_refresh_tick)
+	add_child(_auto_timer)
+	_apply_mode(false)
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
 
 
@@ -249,6 +293,64 @@ func _label(text: String, size: int, color: Color = Color.WHITE) -> Label:
 func _hue_preview_color(hue_deg: float) -> Color:
 	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
 
+
+# 解析公网地址:玩家覆盖 > 内置常量
+func _pub_addr() -> String:
+	var a := Settings.royale_pub_addr.strip_edges()
+	return a if not a.is_empty() else PUBLIC_SERVER_ADDR
+
+
+# 应用当前模式:公网=固定地址 + 隐藏本机开服入口;局域网=保留原有本机开服流程
+func _apply_mode(reconnect: bool) -> void:
+	_mode_pub = Settings.royale_public_mode
+	if _mode_btn_pub != null:
+		_mode_btn_pub.set_pressed_no_signal(_mode_pub)
+	if _mode_btn_lan != null:
+		_mode_btn_lan.set_pressed_no_signal(not _mode_pub)
+	if _mode_pub:
+		var pa := _pub_addr()
+		_addr_edit.text = pa
+		_addr_edit.editable = pa.is_empty()   # 没配地址时允许现场填(回车记忆)
+		if _srv_btn != null:
+			_srv_btn.visible = false
+		if _ip_label != null:
+			_ip_label.visible = false
+		_addr_hint.text = ("公网服务器房间:开服方需已部署本仓库服务端(放行 UDP 7777 + 7800~7910);"
+				+ ("点「创建房间」后所有人可见,点列表即加入。" if not pa.is_empty()
+				else "⚠ 公网地址未配置:请在上方地址框填写服务器 IP(回车记忆)。"))
+	else:
+		_addr_edit.text = "127.0.0.1"
+		_addr_edit.editable = true
+		if _srv_btn != null:
+			_srv_btn.visible = true
+		if _ip_label != null:
+			_ip_label.visible = true
+			_ip_label.text = LocalServer.lan_ip_hint()
+		_addr_hint.text = "局域网模式:点「启动/重启本机服务器」本机开服;朋友填开服机 IP(异地用 VPN 组网)。"
+	if reconnect:
+		Settings.save()
+		NetBus.stop()
+		_connected = false
+		_connected_addr = ""
+		_pending_action = Callable()
+		_request_list("正在连接服务器获取房间列表…")
+
+
+func _on_mode_toggled(use_pub: bool) -> void:
+	if Settings.royale_public_mode == use_pub:
+		return
+	Settings.royale_public_mode = use_pub
+	_apply_mode(true)
+
+
+# 静默刷新:已连接/不在房内/不在转连时,向服务器要一次房间列表(公网多人时房间"秒见")
+func _auto_refresh_tick() -> void:
+	if not _connected or _in_room or _connecting_worker:
+		return
+	if _pending_action.is_valid() or multiplayer.multiplayer_peer == null:
+		return
+	NetBusExt.rpc_id(1, "royale_list")
+
 func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
 	var le := LineEdit.new()
 	le.position = pos
@@ -339,7 +441,7 @@ func _process(_delta: float) -> void:
 	# 建房/加入 8s 无应答:NetBusExt 协议在自建服务端才有,原作者云服会静默丢弃
 	if not _royale_ack and _royale_sent_ms > 0 and Time.get_ticks_msec() - _royale_sent_ms > 8000:
 		_royale_sent_ms = 0
-		_status.text = "8 秒无响应——该服务器不支持大乱斗(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
+		_status.text = "8 秒无响应——该服务器不支持大乱斗(需自建最新服务端:开服方双击 tools/start_server.bat),或地址不通"
 
 
 # ── 动作 ──

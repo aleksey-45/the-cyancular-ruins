@@ -21,6 +21,10 @@ const WORKER_PORT_REUSE_DELAY := 30.0
 # 大乱斗 worker 的端口归还延迟:一局最长 5 分钟(RoyaleHost.MATCH_TIME=300)+ 收尾,
 # 沿用 30s 会让对局中途端口被发给新 worker(串线/bind 冲突)——自检 M2。
 const ROYALE_PORT_REUSE_DELAY := 360.0
+# ── 僵尸房定时清扫(公网长开服防积累;等效原作者 main 的 room_sweep)──
+const SWEEP_INTERVAL := 600.0                  # 扫描周期(秒)
+const ROOM_MAX_AGE_MS := 2 * 60 * 60 * 1000    # 未开局房最长存活 2 小时
+const IDLE_ROOM_MS := 5 * 60 * 1000            # 空置(0 人)房 5 分钟即清
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 
@@ -31,6 +35,7 @@ class Room:
 	var started := false                 # 已拉起 worker/已配对:拒绝再次加入,一方掉线即整房作废
 	var match_host: Node = null           # 保留字段:worker 模式下大厅恒为 null
 	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
+	var created_ms: int = 0               # 建/加入时刻(清扫判龄用)
 
 var rooms: Dictionary = {}   # code -> Room
 var _peer_names: Dictionary = {}   # peer id -> 昵称(客户端连上大厅时上报,列表/建房展示)
@@ -51,6 +56,7 @@ class RoyaleRoom:
 	var options: Dictionary = {}          # 房主对局选项(禁武器/回合回血),开局随房主生效
 	var in_match := false                 # 已开局(拒绝加入;成员转连 worker 后房即散)
 	var worker_port: int = 0              # 本房拉起的大乱斗 worker 端口(关房时归还)
+	var created_ms: int = 0               # 建房时刻(清扫判龄用)
 
 var royale_rooms: Dictionary = {}   # code -> RoyaleRoom
 
@@ -110,6 +116,7 @@ func create_room(caller: int) -> void:
 	while rooms.has(code):
 		code = _generate_code()
 	var room := Room.new()
+	room.created_ms = Time.get_ticks_msec()
 	room.code = code
 	room.players.append(caller)
 	room.player_role[caller] = 1
@@ -220,6 +227,7 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 	while royale_rooms.has(code):
 		code = _generate_code()
 	var rr := RoyaleRoom.new()
+	rr.created_ms = Time.get_ticks_msec()
 	rr.code = code
 	rr.host_peer = caller
 	rr.players.append(caller)
@@ -502,3 +510,47 @@ static func start_match_on(role_peers: Dictionary, map_path: String = PVP_MAP,
 		NetBus.rpc_id(peer_id, "server_message", "对局开始")
 	var host := MatchHost.new(map_path, role_peers, options, ai_roles)
 	return host
+
+
+# ── 僵尸房清扫:每 SWEEP_INTERVAL 扫一次,清掉空置/超龄房并归还 worker 端口 ──
+# 公网服务器长期运行必需(原作者 main 的 room_sweep 等价物);开发态局域网开服同样受益。
+var _sweep_accum := 0.0
+
+func _process(delta: float) -> void:
+	_sweep_accum += delta
+	if _sweep_accum < SWEEP_INTERVAL:
+		return
+	_sweep_accum = 0.0
+	_sweep_stale_rooms()
+
+func _sweep_stale_rooms() -> void:
+	var now := Time.get_ticks_msec()
+	for code in rooms.keys():
+		var room: Room = rooms[code]
+		if room.players.is_empty():
+			_release_port_later(room.worker_port)
+			rooms.erase(code)
+			print("[sweep] 清理空置 1v1 房 %s(端口 %d 延后回收)" % [code, room.worker_port])
+		elif not room.started and now - room.created_ms > ROOM_MAX_AGE_MS:
+			_kick_room_players(room.players, "房间超时已自动关闭,请重新建房")
+			_release_port_later(room.worker_port)
+			rooms.erase(code)
+			print("[sweep] 清理超龄 1v1 房 %s" % code)
+	for rcode in royale_rooms.keys():
+		var rr: RoyaleRoom = royale_rooms[rcode]
+		var age := now - rr.created_ms
+		if rr.players.is_empty() and age > IDLE_ROOM_MS:
+			if rr.worker_port > 0:
+				_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
+			royale_rooms.erase(rcode)
+			print("[sweep] 清理空置大乱斗房 %s(端口 %d 延后回收)" % [rcode, rr.worker_port])
+		elif not rr.in_match and age > ROOM_MAX_AGE_MS:
+			_kick_room_players(rr.players, "房间超时已自动关闭,请重新建房")
+			if rr.worker_port > 0:
+				_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
+			royale_rooms.erase(rcode)
+			print("[sweep] 清理超龄大乱斗房 %s" % rcode)
+
+func _kick_room_players(peers: Array, msg: String) -> void:
+	for p in peers:
+		NetBus.rpc_id(int(p), "server_message", msg)

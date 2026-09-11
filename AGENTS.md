@@ -11,23 +11,23 @@ Godot 4.7(标准版,非 mono)做的 2D 横版(平台跳跃)射击 demo「The Cya
 
 ## 常用命令
 
-Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版本(详见 `RELEASE.md`;4.4.1 mono 已弃用,仅在需要兼容旧脚本时用其 console 版)。
+Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版本(详见 `docs/RELEASE.md`;4.4.1 mono 已弃用,仅在需要兼容旧脚本时用其 console 版)。
 
 ```bash
 # 冒烟测试(唯一的"测试",SceneTree 脚本;成功打印 SMOKE OK 退出 0)
-"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
+"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://Tests/enemy_logic_smoke.gd
 
 # headless 启动游戏 90 帧后退出(看脚本报错)
 "C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
 
-# PvP 服务端(headless,监听 7777;保持终端开着=运行中)。更省事:双击仓库根 start_server.bat。
+# PvP 服务端(headless,监听 7777;保持终端开着=运行中)。更省事:双击 tools/start_server.bat。
 "C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
 
 # 导出单 exe 发布版(导出前先关掉正在运行的游戏,否则 exe 写入失败)
 "C:/Godot/Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
 ```
 
-约定:**冒烟测试由用户自己跑,不要代跑**(诊断探针除外,见「测试」节)。发布/裁剪模板细节见 `RELEASE.md`(单 exe 靠自定义裁剪模板,勿用 UPX,保留 webp 模块)。模板重编只在**改裁剪 profile(增删类/模块)**时需要,单次≈10~15 分钟近全量(RELEASE.md §2.4);平时改 GDScript 只需重导出,别去重编模板。**改完代码必须重导出 exe 再让用户实测**——exe 内嵌 PCK(embed_pck=true),只跑旧 exe 会把已修复的 bug 当成"没修"(2026-09-05 多人建房事故即此因)。
+约定:**冒烟测试由用户自己跑,不要代跑**(诊断探针除外,见「测试」节)。发布/裁剪模板细节见 `docs/RELEASE.md`(单 exe 靠自定义裁剪模板,勿用 UPX,保留 webp 模块)。模板重编只在**改裁剪 profile(增删类/模块)**时需要,单次≈10~15 分钟近全量(docs/RELEASE.md §2.4);平时改 GDScript 只需重导出,别去重编模板。**改完代码必须重导出 exe 再让用户实测**——exe 内嵌 PCK(embed_pck=true),只跑旧 exe 会把已修复的 bug 当成"没修"(2026-09-05 多人建房事故即此因)。
 
 ## 架构
 
@@ -111,11 +111,19 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - 测试:`Tests/pvp_room_smoke.sh` 断言建房/加入/开局;`Tests/pvp_match_smoke.sh` 断言输入→模拟→快照→子弹广播链路 + **round_state 广播**(loopback)。脚本收尾用 `taskkill` 按 PID + `kill_port`(netstat 找 7777 持有者)强杀——**Windows 下 bash `kill` 杀不死 headless Godot,会留僵尸占 7777**。
 - **大乱斗模式(限时死斗,RoyaleServer 分支)**:主菜单「大乱斗」→ `Scenes/royale_lobby.tscn`(建房:公开/私密+邀请码/2~8 人上限/禁武器选项;房间列表点击加入;等待室显示房内成员,房主开局,房主掉线自动转移)。协议全走 NetBusExt(`royale_create/join/leave/list/start` → 广播 `royale_rooms`/`royale_room_state`),原版 NetBus 未动。开局:大厅 `RoomManager.royale_start`(≥2 人,`in_match` 防重入)拉起 `--headless --worker --royale --port P --players N` worker → `server_main` 收 claim(≥2 人且 20s 超时即开)→ `server/royale_host.gd`(`class_name RoyaleHost extends MatchHost`)N 人权威对局:**开局地板格散点**(两两环面距离 ≥15 格,不够放宽)、**死亡 2s 复活无限次**(复用 `MatchHost._handle_respawns`;复活点离存活敌人 ≥8 格)、**限时 5 分钟、击杀最多者胜**(平局无人胜)。**击杀归因**:命中瞬间把射手记到受害者 meta `last_damager`(RoyaleHost 覆写 `_on_bullet_hit` + `Explosion.apply_aoe` 玩家分支),倒地边沿读 meta 计分;无源死亡(溺水/环境)不计分。排行榜/比分/倒计时经 round_state 载荷扩展(`names/scores/alive/left/timer/match_winner`,签名不变)下发,客户端 `Scenes/royale_hud.gd` 左上角排行榜 + 中央倒计时/胜负广播。对局客户端 `Scenes/royale_game.tscn`(N 个 PlayerReplica 副本 + 头顶 ID/血条 + 小地图 `setup_multi` 多目标)。中途掉线 = 移出对局标「离开」,在线 <2 人提前终局。**RoyaleServer 分支不含 test-reload 的换弹内容**(两分支各自独立)。
 
+### 大乱斗双模式:公网服务器 / 局域网(KH_v1_1_3_PubServer)
+- **公网模式(默认)**:客户端连一个**固定公网服务器地址**(`Scenes/royale_lobby.gd` 顶部 `PUBLIC_SERVER_ADDR` 常量;玩家可用 `Settings.royale_pub_addr` 覆盖并记忆)。房间列表每 2.5s **静默自动刷新** → 有人「创建房间」后所有人几秒内可见、点列表即加入。
+  - **开服方要求**:在那台公网机部署**本仓库的 Dedicated Server 构建**,放行 UDP **7777**(大厅)+ **7800~7910**(对局 worker)。公网机同时当大厅与对局主机 = 玩家侧无需任何端口映射(即"内网穿透"的落地点)。
+  - 原作者云服(120.53.107.140)只有 1v1 协议,**不含**大乱斗:公网模式必须指向自建构建。
+- **局域网模式**:维持旧流程(地址 `127.0.0.1` + 「启动/重启本机服务器」按钮;朋友填开服机 IP)。模式持久化在 `Settings.royale_public_mode`,切换模式会自动重连大厅。
+- **僵尸房清扫**:`RoomManager._process` 每 10 分钟扫一次,清掉空置房与超龄(>2h)未开局房并归还 worker 端口(等效原作者 main 的 room_sweep)——公网长期开服必需。
+- 已知噪音:开局转连瞬间向未完成转连的 peer 广播会刷 `Unable to send packet channel 0`(ENet 噪音,不影响对局)。
+
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。**约定:冒烟测试由用户自己跑;代理只跑"诊断探针"**:`Tests/menu_autotest.gd`(GUI/HEADLESS 经 `-- --autotest-sp|mp|set|level` 自动流转主菜单,sp 含 Esc 暂停+回主菜单验证)、`Tests/lobby_ping_probe.gd`(大厅 UDP 可达性)、`Tests/lobby_create_probe.gd`(对大厅建房+列表全链路,场景模式跑)、`Tests/royale_probe.tscn`(大乱斗全链路,场景模式:本进程当大厅 + c1/c2 headless 子进程走私密建房→错邀请码应拒→对码加入→开局→转连 worker→断言 match_start/round_state/match_options/60Hz 快照 ≥30;子进程 stdout 不落父进程,排查看各自 `user://logs/` 轮转日志)。
 
 ### 干员卡/武器卡编辑器(DevTools,仅 KH-char-weap 分支)
-开发专用 GUI 工具:「填卡 → 生成施工提示词 → 自动调 Claude Code 施工」。**只在 KH-char-weap 分支存在**;`export_presets.cfg` 两处 `exclude_filter` 已含 `DevTools/*`,玩家包不可见。跑法:**双击项目根目录 `launch_card_editor.bat`**(内部即 `"C:/Godot/Godot_v4.7.1-stable_win64.exe" --path . res://DevTools/card_editor.tscn`,带分支守卫:场景缺失时提示切分支,不会误启游戏)。
+开发专用 GUI 工具:「填卡 → 生成施工提示词 → 自动调 Claude Code 施工」。**只在 KH-char-weap 分支存在**;`export_presets.cfg` 两处 `exclude_filter` 已含 `DevTools/*`,玩家包不可见。跑法:**双击 `DevTools/launch_card_editor.bat`**(启动器与工具同目录,内部自动切到仓库根再打开 `res://DevTools/card_editor.tscn`;带分支守卫:场景缺失时提示切分支,不会误启游戏)。
 
 - 文件职责:`card_editor.gd`(装配根/AgentBar/LogPanel)| `card_schema.gd`(字段/默认值/校验)| `card_store.gd`(磁盘读写,卡目录 `DevTools/cards/{operators,weapons}/<id>.json` + 同名 PNG 头像)| `card_list_panel/card_form_panel/portrait_view/ui_kit`(UI)| `prompt_builder.gd`(卡→提示词)| `agent_runner.gd`(CLI 进程/日志)| `card_probe.gd`(headless 诊断:`-s res://DevTools/card_probe.gd`)。
 - **卡数据**:示例卡 `op_vanguard`/`wp_machete` 可作字段参考;`cards/.state.json` 是游戏侧现状标记(`operator_skeleton_done`/`slot6_refactor_done`/`melee_branch_done`),决定提示词走 FIRST(搭骨架)还是 NEXT(增量)模板,agent 施工成功后由编辑器自动翻转。`cards/.prompts//.logs/` 已 gitignore。
