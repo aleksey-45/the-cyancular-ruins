@@ -112,6 +112,16 @@ func on_list_rooms(caller: int) -> void:
 func _generate_code() -> String:
 	return "%04d" % (randi() % 10000)
 
+# 该 peer 现在**真的**能收包吗?
+# ★ 必须配合**延后一帧**使用(见各调用点的 call_deferred)——原因:
+#   往处于「正在连接(尚未成为可用 peer)/ 刚刚断开(ENet 层已断、MultiplayerAPI 的 peer_map
+#   还没收敛)」窗口的 peer 发包,会打 `Unable to send packet on channel 0, max channels: 0`
+#   且**包会丢** —— 那两种状态下目标 peer 的 channel_count 都是 0。
+#   而 multiplayer.get_peers() **挡不住**:实测它把这类 peer 仍报为在线(它随 MultiplayerAPI 的
+#   连接/断开信号更新,比 ENet 的真实状态晚一拍)。所以判早了等于没判。
+func _peer_online(peer_id: int) -> bool:
+	return multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id)
+
 func create_room(caller: int) -> void:
 	# 1v1/大乱斗互斥(自检 L5):同一客户端同时挂两种房会收到双重 go_match 互相覆盖
 	if _royale_room_of(caller) != null:
@@ -179,7 +189,10 @@ func on_peer_left(peer_id: int) -> void:
 			# 开局后仍留在房内的一方(还没收到 go_match/还没转连):告知并放走,别让它干等
 			if not room.players.is_empty():
 				for survivor in room.players:
-					NetBus.rpc_id(survivor, "server_message", "配对已取消(对手离开),请刷新列表")
+					# 判在线:本函数的调用方就是"有人刚断开",留下的这一方可能也在同批断开
+					# (双方收到 go_match 后一起断)——同步发给它会报 channel 错误(见 _peer_online)
+					if _peer_online(survivor):
+						NetBus.rpc_id(survivor, "server_message", "配对已取消(对手离开),请刷新列表")
 			_release_port_later(room.worker_port)   # 延迟归还(见 WORKER_PORT_REUSE_DELAY 注释)
 			rooms.erase(code)
 			print("房间 %s 关闭(端口 %d 将于 %ds 后回收)" % [code, room.worker_port, int(WORKER_PORT_REUSE_DELAY)])
@@ -201,13 +214,29 @@ func on_peer_left(peer_id: int) -> void:
 			if rr.host_peer == peer_id:
 				rr.host_peer = rr.players[0]
 				print("大乱斗房 %s 房主转移 → peer %d" % [rcode, rr.host_peer])
-			_broadcast_royale_state(rr)
+			# ★ 已开局的房**不广播等待室状态**:开局后成员都在转连 worker(会陆续断开大厅),
+			#   广播已无意义(等待室界面已经没了),而这些成员正处在"ENet 已断、断开信号未处理"
+			#   的窗口里 —— 发给它们必然打 "max channels: 0" 且包丢(实测:连等一帧都躲不开,
+			#   get_peers() 对这类 peer 的滞后不止一帧)。等待中的房照常广播(那是等待室名单刷新)。
+			if not rr.in_match:
+				_broadcast_royale_state(rr)
 
 
 # ── 大乱斗房间:建房/加入(邀请码)/离开/列表/房主开局 ──
 
-# 房内全员广播实时状态(等待室 UI 刷新)
+# 房内全员广播实时状态(等待室 UI 刷新)。
+# 延到帧末再发:调用点常在「刚有人断开」的路径上(on_peer_left),此时其余成员的连接状态
+# 可能还没收敛 —— 同步发会踩 _peer_online 注释里那个窗口(报 channel 错误 + 丢包)。
 func _broadcast_royale_state(rr: RoyaleRoom) -> void:
+	_flush_royale_state.call_deferred(rr)   # 体内再等一帧,见该函数的注释
+
+
+func _flush_royale_state(rr: RoyaleRoom) -> void:
+	# ★ 等**下一帧**再发(而非本帧末):本函数的调用点几乎都在"刚有人断开"的路径上(on_peer_left),
+	#   而此时其余成员的断开信号可能还没被 MultiplayerAPI 处理 —— get_peers() 仍把已断的 peer
+	#   报为在线(实测滞后超过一帧),同步发/帧末发都会踩 "max channels: 0" 且**包会丢**。
+	#   多等一帧只是等待室名单刷新晚一帧,无副作用。
+	await get_tree().process_frame
 	var plist: Array = []
 	for peer_id in rr.players:
 		plist.append({"role": rr.player_role[peer_id], "name": _peer_names.get(peer_id, "玩家")})
@@ -216,10 +245,8 @@ func _broadcast_royale_state(rr: RoyaleRoom) -> void:
 		"max_players": rr.max_players, "host_role": rr.player_role.get(rr.host_peer, 0),
 		"players": plist, "in_match": rr.in_match,
 	}
-	var live_peers := multiplayer.get_peers()
 	for peer_id in rr.players:
-		# 只发给仍在线的 peer:对已断开连接 rpc_id 会报 channel 错误(自检日志实测)
-		if live_peers.has(peer_id):
+		if _peer_online(peer_id):
 			NetBusExt.rpc_id(peer_id, "royale_room_state", state)
 
 func _royale_room_of(caller: int) -> RoyaleRoom:
@@ -361,8 +388,16 @@ func royale_start(caller: int) -> void:
 			_royale_role_bound(rr), port])
 	# 稍等 worker 完成 bind,再全员转连
 	await get_tree().create_timer(0.3).timeout
+	_send_go_match.call_deferred(rr, port)
+
+
+# 全员转连(延到帧末再判在线:见 _peer_online 注释 —— 转连期成员会陆续断开大厅,
+# 同步发会踩"刚断开"窗口,报 channel 错误且 go_match 丢失)
+func _send_go_match(rr: RoyaleRoom, port: int) -> void:
+	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
 	for peer_id in rr.players:
-		NetBus.rpc_id(peer_id, "go_match", rr.player_role[peer_id], port)
+		if _peer_online(peer_id):
+			NetBus.rpc_id(peer_id, "go_match", rr.player_role[peer_id], port)
 
 # ── AI 补位对战(实验性):1v1 房主可请求与 AI 对战;大乱斗房主可 AI 补位开局 ──
 
@@ -436,8 +471,7 @@ func royale_start_ai(caller: int) -> void:
 		return
 	print("大乱斗房 %s AI 补位开局(%d 真人 + %d AI)→ worker 端口 %d" % [rr.code, rr.players.size(), ai_count, port])
 	await get_tree().create_timer(0.3).timeout
-	for peer_id in rr.players:
-		NetBus.rpc_id(peer_id, "go_match", rr.player_role[peer_id], port)
+	_send_go_match.call_deferred(rr, port)
 
 # 大乱斗 worker 的**角色号上界**(worker 拿它判 claim 合法性,见 server_main._on_role_claimed)。
 # 刻意与「成员数」分开:role 由 royale_join 的「最小空闲号」分配,有人退出后不重排,
@@ -523,9 +557,18 @@ func _start_match(room: Room) -> void:
 	await get_tree().create_timer(0.3).timeout
 	if not rooms.has(room.code):   # 0.3s 内已有玩家掉线触发关房 → 别再给幽灵房发 go_match
 		return
-	for peer_id in room.players:
-		NetBus.rpc_id(peer_id, "go_match", room.player_role[peer_id], port)
+	_send_go_match_1v1.call_deferred(room, port)
 	print("房间 %s 配对完成 → worker 端口 %d" % [room.code, port])
+
+
+# 1v1 全员转连(延到帧末再判在线:转连期双方会陆续断开大厅,见 _peer_online 注释)
+func _send_go_match_1v1(room: Room, port: int) -> void:
+	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
+	if not rooms.has(room.code):   # 帧末前已关房 → 别再给幽灵房发 go_match
+		return
+	for peer_id in room.players:
+		if _peer_online(peer_id):
+			NetBus.rpc_id(peer_id, "go_match", room.player_role[peer_id], port)
 
 # 延迟归还 worker 端口:给旧 worker 留足退出时间,防止端口被立刻复用导致串线。
 # delay:1v1=30s;大乱斗房传 ROYALE_PORT_REUSE_DELAY(一局可长达 5 分钟)。
