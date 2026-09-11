@@ -103,7 +103,3 @@ func _foot_at_ladder_top(foot_cell: Vector2i) -> bool:
 # 脚底到玩家中心的距离(攀爬姿态 FLY 碰撞箱底部,含 scale 2.5)。
 func _climb_foot_offset() -> float:
 	return 57.0
-
-# 指数缓动(根移动逻辑同款,仅用于攀爬时把横速归零)。
-func _approach(current: float, target: float, rate: float, delta: float) -> float:
-	return lerp(current, target, 1.0 - exp(-rate * delta))
