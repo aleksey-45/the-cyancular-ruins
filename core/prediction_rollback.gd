@@ -78,17 +78,6 @@ func reconcile() -> void:
 		var pk: Array = _pending.pop_front()
 		_handle_ack(int(pk[0]), pk[1])
 
-# 权威态作预测起点重设(对局开始/换边/复活后)。
-func reset_to(ack: int, state: Dictionary) -> void:
-	_acked = ack
-	_pending.clear()
-	_inputs.clear()
-	_captures.clear()
-	_seqs.clear()
-	_last_applied = ack
-	if _p != null and not state.is_empty():
-		_p.restore_state(state)
-
 # 用记录步进一次:临时把玩家输入源换成 scratch(喂入该记录),步进后换回。
 # 这样被预测玩家平时可读真实 Input(真机手感不变),重放才切换历史输入,保证孪生一致。
 func _step(record: Dictionary) -> void:
