@@ -40,6 +40,10 @@ const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,�
 const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
+var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
+var _minimap: Minimap = null      # 小地图(设置开启时创建)
+var _opp_hues: Dictionary = {}    # 双方角色颜色 {role -> 色相}(扩展 peer_hues 下发)
+var _names: Dictionary = {}       # role(int) -> 昵称(peer_info 下发;击杀播报取名字用)
 
 func _ready() -> void:
 	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
@@ -74,6 +78,10 @@ func _ready() -> void:
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
+	# 对手头顶血条(设置开启时;挂 WorldViewport 走世界坐标,每帧贴到头顶)
+	if Settings.pvp_show_enemy_hp:
+		_hp_bar = EnemyHpBar.new()
+		_world.add_child(_hp_bar)
 	# 快照/事件消费
 	NetBus.local_snapshot.connect(_on_snapshot)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
@@ -85,9 +93,33 @@ func _ready() -> void:
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
+	NetBus.local_kill_event.connect(_on_kill_event)
+	# 扩展节点(NetBusExt)三载荷:生效选项/角色色相/命中确认。与 beam_fired 不同节点是**有意的**
+	# (发送端 match_host 的 beam_fired 走 NetBus),别顺手把上面那行也统一到 NetBusExt。
+	NetBusExt.local_match_options.connect(_on_match_options)
+	NetBusExt.local_peer_hues.connect(_on_peer_hues)
+	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
+	# 这三条一次性载荷(生效选项/角色色相/昵称表)另有**第二条投递路径**:matchmaking 在换场前
+	# 就接住的那一份缓存,由本函数末尾的 _consume_pending_payloads() 取用(见该函数与 PvpSession)。
+	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
+	if Settings.pvp_show_minimap:
+		_minimap = Minimap.new()
+		_minimap.setup(
+			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
+			func() -> Vector2:
+				if _remote_replica != null and is_instance_valid(_remote_replica):
+					return (_remote_replica as Node2D).global_position
+				return Vector2.INF)
+		add_child(_minimap)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
 	_hud = preload("res://ui/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
+	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 同样继承它 —— 见 level_0.gd 的
+	# _ready:那一挂在建图前、位于 pvp_mode 早退**之前**,而本文件也把该 Level0 挂进世界,
+	# 故进 PvP 世界时反馈层已在。**本行有意不写第二次挂载**(不是漏写):CombatFeedback 的早退
+	# 要求 current 已非空,而 current 只在 deferred 实例的 _ready 里赋值,同帧第二次调用看到的
+	# 还是 null → 真会建出第二份(实测 2 份),并打破「生产路径恰好 1 处挂载点」这条既有断言。
+	# 后来者不要照别的分支把这一行补回来。
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
@@ -99,7 +131,25 @@ func _ready() -> void:
 		_menu_open = open
 		_refresh_input_lock())
 	add_child(_pause_menu)
+	# 三载荷的第二条投递路径:载荷早于本场景订阅(一次 poll 吞掉两段 flush)时,matchmaking
+	# 已经把它缓存进 PvpSession,这里取用;晚于订阅时走上面三条直接订阅。两条路径互不重叠 ——
+	# 一条载荷只被 emit 一次,取用即清空,不会对同一份载荷各应用一次。
+	# ⚠ 位置必须在 _apply_p2_tint() **之后**(与 royale_game 把它放在 _apply_tint 之后同理):
+	# 那道预染是"无载荷"的落地形态,缓存里的色相要能盖过它(否则对手身体退回 -65 的旧规则)。
+	_consume_pending_payloads()
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
+
+# 取用 matchmaking 缓存的开局三载荷(与 royale_game 的同名函数同款:取用后即清空)。
+# 必须在 `_local` / `_remote_replica` / 预染就绪之后调用;三个 handler 自身幂等(重建禁用表/
+# 覆盖染色/重设标签文字),故即便载荷两侧都到也只是一次等价重算。
+func _consume_pending_payloads() -> void:
+	if not PvpSession.pending_peer_info.is_empty():
+		_on_peer_info(PvpSession.pending_peer_info)
+	if not PvpSession.pending_peer_hues.is_empty():
+		_on_peer_hues(PvpSession.pending_peer_hues)
+	if not PvpSession.pending_match_options.is_empty():
+		_on_match_options(PvpSession.pending_match_options)
+	PvpSession.clear_pending_payloads()
 
 func _physics_process(_delta: float) -> void:
 	if _local == null:
@@ -157,6 +207,10 @@ func _physics_process(_delta: float) -> void:
 		"weapon": src.get_weapon_slot_pressed(),
 		"aim": aim,
 	}
+	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
+	var net_slot: int = _local.weapons.consume_net_slot()
+	if net_slot > 0:
+		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
 	_prev_sent_seq = _input_seq
 	_have_prev_seq = true
@@ -186,6 +240,10 @@ func _on_snapshot(snap: Dictionary) -> void:
 				_apply_local_state(data)
 		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
 			_remote_replica.apply_snapshot(data, _local.global_position, snap_tick)
+			# 对手血条:快照 hp → 比例(上限取 PlayerParams 玩家最大血)
+			if _hp_bar != null:
+				_hp_bar.ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
+						/ float(PlayerParams.player_max_hp)
 	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)
 	var enemies_snap: Dictionary = snap.get("enemies", {})
 	for id_str in enemies_snap:
@@ -227,6 +285,9 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
 	_world.add_child(b)
+	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
+	if Settings.pvp_show_trajectories:
+		BulletTrail.attach(b, data["color"])
 
 # 服务器权威开火(即时光束武器,激光):对手端据此画光束视觉副本(不开物理子弹,
 # 无 bullet_spawn 实体可跟)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)→
@@ -263,6 +324,19 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 		_local.take_hit(source_pos, damage, false, -1.0)
 	elif _remote_replica != null and _remote_replica.has_method("play_hit"):
 		_remote_replica.play_hit(source_pos)
+
+# 击杀播报:我击杀对手 → 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)
+func _on_kill_event(killer: int, victim: int) -> void:
+	if killer == PvpSession.role and victim != PvpSession.role:
+		CombatFeedback.kill(str(_names.get(victim, "对手")))
+	elif victim == PvpSession.role:
+		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
+
+# 命中确认(服务器裁决的弹直击,走 NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)。
+# 被射手不是自己(对手打中我)时不播 —— 那条反馈由 hit_event 的受击白闪/击退负责。
+func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
+	if shooter_role == PvpSession.role:
+		CombatFeedback.hit_marker()
 
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
@@ -306,9 +380,17 @@ func _on_round_state(data: Dictionary) -> void:
 		_menu_open = false
 		# 菜单没了 → 回到只由 _round_locked(state 3 → false)决定 = 解锁(与旧行为一致)
 		_refresh_input_lock()
+		# 起定时器**之前**捕获 tree/netbus:lambda 里现取 get_tree() 是到点才求值,而那时本节点
+		# 可能已被别的退出路径换场摘树 → 返回 null → 报错(兄弟场景 royale_game 的同一处修法)。
+		var tree := get_tree()
+		var netbus := NetBus
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
-			NetBus.stop()
-			get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+			netbus.stop()
+			if not is_inside_tree():
+				return   # 已从别的退出路径(ESC/暂停菜单)离开 → 不再叠加第二次换场
+			# 游戏世界含全量碰撞,裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误,
+			# 故走游戏世界的退役挂起式换场(与路径①同机制)。
+			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
 # 本地输入锁的单一收口:冻结期(_round_locked)与菜单打开(_menu_open)任一成立就锁。
 # 不要在两个调用点各拼一次布尔 —— 那正是修复波 1 只关住一个方向的原因。
@@ -323,9 +405,15 @@ func _on_opponent_left() -> void:
 	_match_ended = true
 	if _hud != null:
 		_hud.show_notice("对手已离开", "对局结束")
+	# 同 MATCH_OVER 那条:先在起定时器前捕获引用,并让到点的 lambda 在"已经离开"时不再叠加
+	# 第二次换场(玩家可以在这 2.5s 内按 ESC → 暂停菜单 → 回到主菜单)。
+	var tree := get_tree()
+	var netbus := NetBus
 	get_tree().create_timer(2.5).timeout.connect(func() -> void:
-		NetBus.stop()
-		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+		netbus.stop()
+		if not is_inside_tree():
+			return
+		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
 # ── 中立鸟(服务器权威):roster → 建视觉副本;每帧快照 apply_remote;died → 移除 ──
 func _on_enemy_spawn(roster: Array) -> void:
@@ -374,8 +462,48 @@ func _apply_p2_tint() -> void:
 	mat.set_shader_parameter("hue_shift", -65.0)   # P2 本体色相旋转 -65°
 	canvas.material = mat
 
+# 通用身体染色:只给角色本体 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/
+# 无敌半透明仍正常),武器/预瞄线不染。色相 0 = 不改色(不挂 shader),故本助手可重复调用。
+func _apply_tint(body: Node, hue_deg: float) -> void:
+	var canvas := body as CanvasItem
+	if canvas == null or is_zero_approx(hue_deg):
+		return
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
+	mat.set_shader_parameter("hue_shift", hue_deg)
+	canvas.material = mat
+
+# 对手身体颜色:走扩展 peer_hues(每个 role 上报自己选的色相)。载荷未到 / 缺本对手项时,
+# 缺省回落与 _apply_p2_tint 同一条旧规则(P2 本体 -65,其余不染)——故 _ready 里那次
+# _apply_p2_tint() 是无载荷时的落地形态,本函数是载荷到达后的覆盖。
+# 头顶名不在这里上色:名统一中性亮白,色相只区分身体(见 NAME_COLOR 处的说明)。
+func _on_peer_hues(hues: Dictionary) -> void:
+	_opp_hues = hues
+	_apply_opp_hue()
+
+func _apply_opp_hue() -> void:
+	if _remote_replica == null:
+		return
+	var opp := 3 - PvpSession.role
+	_apply_tint(_remote_replica.get_node_or_null("AnimatedSprite2D"),
+			float(_opp_hues.get(opp, -65.0 if opp == 2 else 0.0)))
+
+# 服务器下发的生效选项:同步禁用武器(本地数字键/滚轮同样被挡,出生枪自动改首个启用槽)。
+# ★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是**无条件**上行的 ——
+#   服务器若无同一张表就会 equip 成功,两端槽位错位,且权威槽位每帧把我们拉回去 ——
+#   每帧重试、永久错位(静默,不报错)。服务器端(MatchHost)已落地,这里补的是客户端这一端。
+# 信号可能早于/晚于本场景 _ready 到达,故 _local 判空。
+func _on_match_options(opts: Dictionary) -> void:
+	var disabled: Array[int] = []
+	for v in opts.get("disabled_weapons", []):
+		disabled.append(int(v))
+	PvpSession.disabled_weapons = disabled
+	if _local != null:
+		_local.weapons.set_enabled_slots(disabled)
+
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
 func _on_peer_info(names: Dictionary) -> void:
+	_names = names
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:
 		return
@@ -402,4 +530,7 @@ func _process(_delta: float) -> void:
 		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET
 	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
+	# 对手血条贴在 ID 上方(倒地转体不影响,世界空间独立节点)
+	if _hp_bar != null and _remote_replica != null and is_instance_valid(_remote_replica):
+		_hp_bar.global_position = (_remote_replica as Node2D).global_position + Vector2(0.0, -116.0)
 

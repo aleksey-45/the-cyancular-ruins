@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://royaleboundprobe1"]
+
+[ext_resource type="Script" path="res://tests/royale_bound_probe.gd" id="1"]
+
+[node name="RoyaleBoundProbe" type="Node"]
+script = ExtResource("1")

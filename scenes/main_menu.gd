@@ -165,6 +165,12 @@ func _build_new_ui() -> void:
 		Sfx.play("ui")
 		PvpSession.reset()
 		get_tree().change_scene_to_file("res://scenes/matchmaking.tscn"))
+	var royale_btn := UiFactory.button("大 乱 斗", 32)
+	royale_btn.pressed.connect(func() -> void:
+		Sfx.play("ui")
+		PvpSession.reset()
+		PvpSession.royale = true
+		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
 	var settings_btn := UiFactory.button("设      置", 32)
 	settings_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
@@ -175,7 +181,7 @@ func _build_new_ui() -> void:
 	quit_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().quit())
-	for b in [start_btn, multi_btn, settings_btn, ver_btn, quit_btn]:
+	for b in [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]:
 		box.add_child(b)
 
 	# 浮现动画:标题先出(淡入),按钮依次淡入
@@ -184,7 +190,7 @@ func _build_new_ui() -> void:
 	tw.tween_property(title, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	tw.parallel().tween_property(ver, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	var delay := 0.9
-	for b in [start_btn, multi_btn, settings_btn, ver_btn, quit_btn]:
+	for b in [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]:
 		_emerge(b, delay, 0.5)
 		delay += 0.16
 

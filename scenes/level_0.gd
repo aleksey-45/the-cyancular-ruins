@@ -25,7 +25,20 @@ static var pvp_mode: bool = false
 # 注意:摘树必须回到帧末进行,故本函数先 await 一帧(见函数内注释)。
 static var _retired: Node = null   # 挂起的上一具游戏世界(最多一具,新的退役时释放旧的)
 
+# 换场「在飞」标志:防同帧/近帧重入。
+# 本函数首行 await 一帧,故两次调用可以同时在飞。第二次resume 时 `old = tree.current_scene`
+# 拿到的已是**第一次刚建出来的新场景** → 于是再实例化一份、把第一份塞进 _retired,而 _retired
+# 槽里原本那具**游戏世界被 free 掉** → 建出两份场景 + _retired 语义被污染(不崩,但之后任何
+# 「退役世界」的假设都不再成立)。触发很现实:PvP 的「对手离开」2.5s 定时器与玩家点「回到主菜单」
+# 可以先后落在同一帧附近。
+# ★ 守卫放在**这个收口点**而非各调用点:调用点每新增一条退出路径就要记得补一次守卫,漏一条
+# 就复现 —— 与「拆除逻辑散在多处」同病。此处一处覆盖全部现有与将来的调用方。
+static var _switching: bool = false
+
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
+	if _switching:
+		return   # 已有一次换场在飞:忽略后到的请求(目标都是主菜单,先到者胜)
+	_switching = true
 	# 先回到帧末再动树:调用方(按钮按下/R 重载的输入处理)可能正处于旧场景节点发出的
 	# 信号调用栈里,立刻摘树会触发 CanvasItem EXIT_TREE 状态错误(headless 实测)。
 	await tree.process_frame
@@ -39,6 +52,7 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 		if _retired != null and is_instance_valid(_retired):
 			_retired.free()        # 释放更早的那一具(此具已在树上挂了整局时间,最稳)
 		_retired = old
+	_switching = false   # 换场完成:放行后续换场(回菜单→再进游戏→再回菜单是一串合法调用)
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。

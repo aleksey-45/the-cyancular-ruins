@@ -163,12 +163,6 @@ func load_settings() -> void:
 					elif item.has("m"):
 						InputMap.action_add_event(action, _make_mouse(int(item["m"])))
 
-func _apply_binding(action: String, ev: InputEvent) -> void:
-	if ev == null or not action in InputMap.get_actions():
-		return
-	InputMap.action_erase_events(action)
-	InputMap.action_add_event(action, ev)
-
 func _make_key(keycode: int) -> InputEventKey:
 	var ev := InputEventKey.new()
 	ev.physical_keycode = keycode as Key

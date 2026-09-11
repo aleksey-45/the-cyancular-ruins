@@ -306,7 +306,7 @@ func _match_round_tick(delta: float) -> void:
 
 
 # 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role。
-# 带时效:伤害超过 ATTRIB_WINDOW 秒前的射手不再归因(防止"被打一枪后溺水"误计)。
+# 带时效:伤害超过 ATTRIB_WINDOW 毫秒前的射手不再归因(防止"被打一枪后溺水"误计)。
 # 击杀归因时效窗口(ms)。★ 有意与 main 的单一来源对齐(用户 2026-09-11 裁定):
 # 原 KH 值 10000ms 已弃用 —— 现读 CombatFeedback.ATTRIB_WINDOW_MS(3000ms)。
 # 背景:两处读的是同一个 last_damager_time meta,但读端对象不重叠 ——

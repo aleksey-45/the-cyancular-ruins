@@ -181,10 +181,6 @@ func _is_far_sleeping() -> bool:
 	return toroidal_dist_to_player() > wake_radius
 
 
-func _approach(current: float, target: float, rate: float, delta: float) -> float:
-	return lerp(current, target, 1.0 - exp(-rate * delta))
-
-
 # 落水浮力:弹簧把身体中心拉回水面线(半没入);水平朝 _water_swim_dir 游;没顶累计溺水。
 func _apply_water(delta: float) -> void:
 	var feet := Vector2(global_position.x, global_position.y + Water.feet_offset(self))
@@ -195,9 +191,9 @@ func _apply_water(delta: float) -> void:
 		submerged = Water.submerged(global_position, surface_y)
 		var target_vy := clampf((surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
 			-EnemyParams.shared.bird_max_float, EnemyParams.shared.bird_max_sink)
-		velocity.y = _approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
+		velocity.y = MathUtil.approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
 		var dir := _water_swim_dir()
-		velocity.x = _approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
+		velocity.x = MathUtil.approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
 			EnemyParams.shared.bird_water_damp, delta)
 	# 防水值(氧气):没顶掉,暴露空气回;空后每秒扣血
 	if submerged:

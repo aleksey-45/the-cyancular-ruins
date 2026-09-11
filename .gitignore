@@ -30,3 +30,6 @@ test
 # 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/
 backup/
+
+# 服务端开服时落盘的本机 IP(ServerMain._write_ip_file;机器专属,不该入库)
+local_ip.txt
