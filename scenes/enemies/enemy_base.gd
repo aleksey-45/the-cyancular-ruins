@@ -225,6 +225,34 @@ func _begin_death() -> void:
 	# (子弹/爆炸命中时写入的 last_damager meta 归因;溺水等环境死安静销毁)
 	CombatFeedback.notify_enemy_killed(self)
 	_death_timer = EnemyParams.shared.death_flash_time
+	_on_death()
+
+
+# 死亡瞬间的附加动作虚钩(基类空实现)。子类在此追加专属处理:JumpBird 播 dead 动画、
+# FlyBird 清冲撞速度并开重力 —— 这样各子类不必再整份覆写 hurt(),四份 hurt 的分叉点
+# 只在「死亡那一刻做什么」,正该由虚钩承载。
+# 调用点在 _death_timer 赋值之后:白闪计时已成立,子类里改 velocity/use_gravity 不影响它。
+func _on_death() -> void:
+	pass
+
+
+# 冲锋冲击力:沿远离本体的方向猛推玩家(覆盖 take_hit 的普通击退,冲锋更狠)。
+# 原本 FlyBird / BlackBird 各抄一份(除常量外逐字相同),收为基类单一来源。
+# away 为 0(与玩家完全重合)时回退:朝玩家背向推,拿不到 get_facing 就用 LEFT。
+# ★名字刻意不叫 _apply_charge_impact:两个子类各自持有同名但**两参**的包装方法,而
+#   GDScript 不允许子类以不同签名覆写父类方法(会 Parse Error,且整个子类脚本加载失败
+#   → `-s` 冒烟里 _initialize 抛错、永不 quit = 挂死)。故基类另起名,子类包装转调这里。
+func _smash_player(p: Node, impact: float, impact_up: float) -> void:
+	var p2 := p as Node2D
+	if p2 == null:
+		return
+	var away := (p2.global_position - global_position).normalized()
+	if away == Vector2.ZERO:
+		away = Vector2.LEFT
+		if p2.has_method("get_facing"):
+			away.x = -float(p2.get_facing())
+	p2.velocity = away * impact
+	p2.velocity.y -= impact_up
 
 
 # 白闪渲染:受击/死亡任一激活即纯白,否则恢复。默认走 modulate;黑鸟因 silhouette

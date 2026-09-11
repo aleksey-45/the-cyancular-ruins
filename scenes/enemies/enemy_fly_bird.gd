@@ -190,26 +190,17 @@ func _ai(delta: float) -> void:
 				_follow_path(delta, _spawn_pos)
 
 
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
-	if is_dead:
-		# 尸体:只吃击退不吃伤(冲击波仍能推动尸体)
-		_apply_knock_only(knock_dir, knock_strength, set_velocity)
-		return
-	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
-	if hp <= 0:
-		_die_self()
-
-
-# 死亡:白闪后销毁(冲撞自毁与受击死亡同走本方法)。
+# 死亡:白闪后销毁(冲撞自毁与受击死亡同走本方法)。附加拿冲撞速度/开重力在 _on_death。
 func _die_self() -> void:
-	if is_dead:
-		return
-	_begin_death()  # 死亡白闪计时 + 到期销毁由基类统一
-	# 冲撞中死(含被打死/超时):清冲撞速度,尸体不再续冲。撞墙/撞玩家的死亡已由
-	# move_and_slide 抵消速度,归零无副作用;普通受击仍保留击退滑出感。
+	_begin_death()  # 内含 is_dead 守卫;死亡白闪计时 + 到期销毁由基类统一
+
+
+# 死亡瞬间:冲撞中死(含被打死/超时)清冲撞速度,尸体不再续冲。撞墙/撞玩家的死亡已由
+# move_and_slide 抵消速度,归零无副作用;普通受击仍保留击退滑出感。
+# 其余死亡保留击退速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
+func _on_death() -> void:
 	if state == State.CHARGE:
 		velocity = Vector2.ZERO
-	# 其余死亡保留击退速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
 	use_gravity = true
 
 
@@ -416,18 +407,9 @@ func _on_charge_hit_player() -> void:
 	_die_self()
 
 
-# 冲撞冲击力:沿远离鸟的方向猛推玩家(覆盖 take_hit 的普通击退,冲撞更狠)。
+# 冲撞冲击力:沿远离鸟的方向猛推玩家(实现收在 EnemyBase,同黑鸟)。
 func _apply_charge_impact(p: Node) -> void:
-	var p2 := p as Node2D
-	if p2 == null:
-		return
-	var away := (p2.global_position - global_position).normalized()
-	if away == Vector2.ZERO:
-		away = Vector2.LEFT
-		if p2.has_method("get_facing"):
-			away.x = -float(p2.get_facing())
-	p2.velocity = away * EnemyParams.FlyBird.charge_impact
-	p2.velocity.y -= EnemyParams.FlyBird.charge_impact_up
+	_smash_player(p, EnemyParams.FlyBird.charge_impact, EnemyParams.FlyBird.charge_impact_up)
 
 
 # ── 返程与入睡 ──
