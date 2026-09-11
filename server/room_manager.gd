@@ -353,7 +353,7 @@ func ai_duel(caller: int) -> void:
 	# 「已开局即拒绝」守卫,本 handler 从另一分支原样移植时缺失。
 	# (本文件内引用一律写函数名不写行号 —— 行号会随每次编辑腐烂,而这段注释存在的意义就是
 	#  让后来者看懂偏离;引错行号比不引更坏。)
-	# 真实可达路径(不是"同房重复调用"——本房在本函数 :369 就摘除了,重入会在上面的
+	# 真实可达路径(不是"同房重复调用"——本函数在派 go_match 之前就把本房从 rooms 摘除了,重入会在上面的
 	# `host_room == null` 就返回):一个**已配对开局的 1v1 房**(`_start_match` 置 `started = true`)
 	# 在 `go_match` 后、`on_peer_left` 把它从 rooms 摘除前的窗口里收到 AI 对战请求 →
 	# 会**再拉一个 worker 并覆盖 worker_port**,而本房紧接着被摘除 → 首个端口从此无人归还
@@ -521,7 +521,8 @@ func _process(delta: float) -> void:
 # 成员若一直连着不吭声(ENet 不会超时「连接仍在但对端沉默」的 peer),端口就被永久占用
 # (WORKER_PORT_SPAN=500 耗尽后 _pick_worker_port 恒 -1,大厅彻底拉不起 worker)。
 # 故两表共用同一 MAX_ROOM_AGE 一并清扫。不跳过 in_match 房:大乱斗单局上限
-# RoyaleHost.MATCH_TIME=300s 远短于 2h,仍在表内且超龄者必是 worker 早已结束的残留。
+# RoyaleHost.MATCH_TIME 远短于 2h,仍在表内且超龄者必是 worker 早已结束的残留;
+# 在局中的房另加一局时长的宽限,理由见下方 royale 分支。
 func _sweep_stale_rooms() -> void:
 	var now := Time.get_unix_time_from_system()
 	var stale: Array = []
@@ -532,7 +533,15 @@ func _sweep_stale_rooms() -> void:
 	var stale_royale: Array = []
 	for rcode in royale_rooms:
 		var rr: RoyaleRoom = royale_rooms[rcode]
-		if now - rr.created_at > MAX_ROOM_AGE:
+		# 刻意偏离移植来源(非误改):在局中的大乱斗房额外宽限一局时长(RoyaleHost.MATCH_TIME)。
+		# 房龄从**建房**起算,含此前在大厅等待的全部时间——一个等满 2h 才开局的房,在开局那一刻
+		# 就已"超龄";而从 royale_start/royale_start_ai 拉起 worker 到成员转连离厅有 0.3~1.5s
+		# 的窗口,扫描若落在这个窗口内,就会杀掉一个刚起 1 秒的 worker 并踢掉正在转连的成员
+		# (边界竞态)。故 in_match 者按 MAX_ROOM_AGE + 一局时长判定,泄漏仍被限住(至多多留一局)。
+		# 等待中(in_match=false)的房不占端口、杀不到任何东西,仍按裸 MAX_ROOM_AGE 清,无需宽限。
+		# 1v1 分支不给同样宽限:其 started 房一方掉线即整房作废(_start_match/on_peer_left),
+		# 不存在"开局后仍长期留在表里"的形态;该路径是既有行为,本次不改。
+		if now - rr.created_at > MAX_ROOM_AGE + (RoyaleHost.MATCH_TIME if rr.in_match else 0.0):
 			stale_royale.append(rr)
 	if stale.is_empty() and stale_royale.is_empty():
 		return
