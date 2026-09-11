@@ -117,6 +117,10 @@ func create_room(caller: int) -> void:
 	if _royale_room_of(caller) != null:
 		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间,请先退出再创建 1v1 房间")
 		return
+	if _in_1v1_room(caller):
+		# 同 join_room:已在 1v1 房里不许再建,否则旧房无人认领变幽灵房(且玩家会收到双重 room_created)。
+		NetBus.rpc_id(caller, "server_message", "你已经在房间里了")
+		return
 	var code := _generate_code()
 	while rooms.has(code):
 		code = _generate_code()
@@ -132,6 +136,15 @@ func create_room(caller: int) -> void:
 func join_room(caller: int, code: String) -> void:
 	if not rooms.has(code):
 		NetBus.rpc_id(caller, "server_message", "房间不存在")
+		return
+	if _in_1v1_room(caller):
+		# 已在某个 1v1 房里就拒绝加入(含「加入自己刚建的房」:房主本就在 room.players 里,
+		# 不拦会被 append 第二遍、并把 player_role[caller] 从 1 覆盖成 2 → 同一个 peer 同时占
+		# 两个 role 的退化对局,worker 侧 peer_by_role 两个 role 指同一 peer,输入只喂得到 role 1)。
+		# 也顺带堵住「在 A 房还去加 B 房」留下的幽灵房。
+		# 正常流程不受影响:大厅页的「返回」与所有超时兜底都走 NetBus.stop() 断连,
+		# 断开即触发 on_peer_left 清房,重连后已不在任何房里。
+		NetBus.rpc_id(caller, "server_message", "你已经在房间里了")
 		return
 	var room: Room = rooms[code]
 	if room.started:
