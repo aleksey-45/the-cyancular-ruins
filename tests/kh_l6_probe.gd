@@ -41,6 +41,8 @@ extends Node
 #  11  激光收端在 NetBus(不是 NetBusExt)—— B12:收错节点 = 对手激光静默 no-op
 #  12  退出路径:大写零命中 + 路径① 已保护 + 本文件"一旦开始收口就不许残留裸切"(过渡守卫)
 #                                —— 见该断言内的说明:②③ 的收口是 T4 的**交付物**,不是今天的既有性质
+#                                该守卫只拦**半途退回**;一次**整体**退回读作"没开始"→ 本探针发现不了
+#                                (已知边界逐条登记在 _check_exit_paths 的函数头)
 #  13  零 Level0.menu_demo 引用 —— B14:引用不存在的静态变量 → 报错
 #  14  激光归因仍走 CombatFeedback.attribute —— KH 的裸 set_meta 只能追加,不得替换
 #  15  头顶名统一 NAME_COLOR(U1 的决定)—— B13:回退按角色双色
@@ -108,6 +110,8 @@ const RE_CONST_NAME_COLOR := "^const\\s+" + "NAME" + "_COLOR\\b"
 const RE_PACKET_DICT := "^\\s*var\\s+([A-Za-z_]\\w*)\\s*(?::[^:=]+)?:?=\\s*\\{"
 const RE_FUNC_DEF := "^(?:static\\s+)?func\\s+([A-Za-z_]\\w*)\\s*\\("
 const RE_ONREADY_PATH := "@onready\\s+var\\s+[A-Za-z_]\\w*\\s*:[^=]+=\\s*\\$([A-Za-z0-9_/]+)"
+# 文件级常量 + 字符串字面量(用于把"菜单路径抽成常量"这种正确修法也认下来)
+const RE_CONST_STR := "^const\\s+([A-Za-z_]\\w*)[^=]*=\\s*\"([^\"]*)\""
 
 var _failures: Array[String] = []
 var _pc_code := ""                     # pvp_client.gd 的去注释视图(保留缩进)
@@ -203,12 +207,19 @@ func _check_snapshot_authoritative() -> void:
 			% [N_ON_AUTH, _unguarded_count(calls)])
 
 
-# ── 3) 每物理帧 note_post_step(capture_state()) + reconcile(),且在玩家步进前(B3)──
+# ── 3) 每物理帧 note_post_step(capture_state()) → reconcile() → 组包,按此序(B3)──
 # C2 的时序契约:引擎本帧步进本地玩家**之前**——先把上一 seq 的预测整态入 ring,再
 # reconcile 到期权威(分歧 → restore + 重放未确认输入)。删掉整块 = 预测态永不入 ring、
 # 权威永不收敛(静默退化)。
 # "玩家步进"在本文件里没有显式调用点(本地玩家由引擎自步进,见 _ready 的 C2 分支),
 # 故顺序锚取**本帧输入上报之前**(组包/发送)——那正是"本帧步进前"在本文件内可观测的那一半。
+# ★ 两处"判据取机械形式"的说明:
+#   · **组包锚点由 `var X := {` 推导**(与 #1/#4 同一个 _packet_decl),**不写死变量名 `pkt`**:
+#     重命名组包变量是后续任务的合法加法,写死字面量会让它**假红**(正是本探针要避免的失败类)。
+#     "发给服务器的不是带 seq 的那个字典"由 #1/#4 的实参比对判红,不靠这里写死。
+#   · **note_post_step 必须先于 reconcile**(本条注释里那句"先记预测态,reconcile 才比得上
+#     ring[C]"的**顺序**部分):只查"两个调用都在同一函数里"会让互换过的那对过关 —— 先
+#     reconcile 再记,比的是本帧刚入 ring 的态 = 比错对象。
 func _check_c2_frame_block() -> void:
 	var before := _failures.size()
 	var phys := _func_body(_pc_code, "_physics_process")
@@ -218,13 +229,25 @@ func _check_c2_frame_block() -> void:
 	var lines := phys.split("\n")
 	var i_post := _find_line(lines, N_NOTE_POST)
 	var i_rec := _find_line(lines, N_RECONCILE)
-	var i_pkt := _find_line(lines, "var pkt")
+	# 组包声明处(行号 + 变量名):由 `var X := {` 推导,不写死 pkt
+	var decl := _packet_decl(lines, lines.size() - 1)
+	var i_pkt := int(decl["index"])
+	var pkt_name := str(decl["name"])
+	if i_pkt < 0:
+		# 兜底:组包不是字典字面量(如 `var pkt := _build_pkt(...)`)时锚到**发送行** ——
+		# 它必然在组包之后,正对应注释里"本帧输入上报之前"这一半。
+		i_pkt = _find_line(lines, N_SEND)
+		pkt_name = "发送行 " + N_SEND
 	_check(i_post >= 0, "每物理帧没有 `%s`(预测整态永不入 ring → 无从比对)" % N_NOTE_POST)
 	_check(i_rec >= 0, "每物理帧没有 `%s`(权威永不收敛)" % N_RECONCILE)
 	if i_post >= 0:
 		_check(lines[i_post].contains(N_CAPTURE),
 			"`%s` 没喂 `%s`(入 ring 的不是预测整态):「%s」" % [N_NOTE_POST, N_CAPTURE, lines[i_post].strip_edges()])
-	_check(i_pkt >= 0, "取不到输入包构造(`var pkt`)——顺序断言无从定位")
+	if i_post >= 0 and i_rec >= 0:
+		_check(i_post < i_rec,
+			"`%s` 排在 `%s` 之后(%d > %d):反序 —— reconcile 比的是本帧刚入 ring 的预测态(契约是「先记预测态,reconcile 才比得上 ring[C]」)"
+			% [N_NOTE_POST, N_RECONCILE, i_post, i_rec])
+	_check(i_pkt >= 0, "取不到输入包构造(`var X := {` 与发送行 %s 都不在)——顺序断言无从定位" % N_SEND)
 	if i_post >= 0 and i_pkt >= 0:
 		_check(i_post < i_pkt, "`%s` 排在组包之后(%d > %d):预测态晚一帧入 ring,reconcile 比错对象"
 				% [N_NOTE_POST, i_post, i_pkt])
@@ -240,7 +263,8 @@ func _check_c2_frame_block() -> void:
 	elif rb != null:
 		for m in ["note_post_step", "reconcile", "on_authoritative", "note_input", "bind"]:
 			_check(_method_info(rb, m) != null, "%s 缺方法 %s(调用点还在,口没了)" % [RB_PATH, m])
-	_summary(before, "C2 帧块:note_post_step@%d < reconcile@%d < 组包@%d(控制器 5 个口在位)" % [i_post, i_rec, i_pkt])
+	_summary(before, "C2 帧块:note_post_step@%d < reconcile@%d < 组包(%s)@%d(控制器 5 个口在位)"
+			% [i_post, i_rec, pkt_name if pkt_name != "" else "?", i_pkt])
 
 
 # ── 4) note_input(seq, pkt) 供回滚重放(B5)───────────────────────────
@@ -273,6 +297,15 @@ func _check_note_input() -> void:
 # 就等于不存在(pvp-c2-retrospective 的 P1/P2 复盘前提)。
 # 判据:常量必须带**布尔字面量**;`_ready` 里 `if not <开关>` 与 `elif <开关>` 两条分支
 # 都要在,且**互斥**:预测分支里不得出现 set_server_rendered(两分支必须真的二选一)。
+#
+# ★★ 已知边界(必须如实登记:这是本探针**最重的洞**)★★
+#   本断言(与 #6)钉的是**常量的存在形式**,**钉不住它的值** —— `const LOCAL_PREDICTION_ENABLED
+#   := true` 改成一个字符的 `false`,15 条断言**全绿**,而 C2 在**活路径**上整体熄火
+#   (落到 server_rendered 保底分支;保底本身是合法的,所以看不出"坏",只有上手才觉出手感差)。
+#   那个值 = 另一分支(`$KH`)的整个状态,`false` 正是它的形状。
+#   **这个值不由本探针覆盖**:由 PvP 冒烟脚本(`tests/pvp_match_smoke.sh` 的输入→模拟→快照→
+#   ack 链路、`tests/pvp_reconcile_smoke.sh` 的 rollback 控制器)**与真人上手对局**覆盖。
+#   (把值也钉成 `true` 是不行的:那会把保底路径本身判成违规,而"翻一个常量即回落"正是 #5 要守的性质。)
 func _check_prediction_switch() -> void:
 	var before := _failures.size()
 	var i_const := _find_line_re(_pc_lines, RE_CONST_PRED)
@@ -295,7 +328,8 @@ func _check_prediction_switch() -> void:
 		_check(blk.contains(N_BIND), "预测分支里没有 `%s`(控制器没绑定本地玩家 → reconcile 无从 restore)" % N_BIND)
 		_check(not blk.contains(N_SSR_NAME),
 			"预测分支里也调了 `%s`(两条路径必须二选一,否则 C2 被服务器渲染覆盖)" % N_SSR_NAME)
-	_summary(before, "C2 开关:常量@%d,保底分支@%d,预测分支@%d(bind 在预测分支内)" % [i_const, i_fallback, i_predict])
+	_summary(before, "C2 开关:常量@%d,保底分支@%d,预测分支@%d(bind 在预测分支内;常量的**值**不在本探针覆盖内,见本条已知边界)"
+			% [i_const, i_fallback, i_predict])
 
 
 # ── 6) set_server_rendered(true) 必须受预测开关守卫(B2)────────────────
@@ -476,13 +510,33 @@ func _check_beam_routing() -> void:
 		_check(_pc_lines[sites[0]].contains(N_ROUTING),
 			"`%s` 那行不是 `%s`(收错节点 = 对手端激光静默 no-op):「%s」" % [N_LOCAL_BEAM, N_ROUTING, _pc_lines[sites[0]].strip_edges()])
 	_check(wrong.is_empty(), "%s 里出现 `%s`(第 %d 处):发送端在 NetBus,收在 NetBusExt 会静默 no-op" % [PC, N_EXT_ROUTING, wrong.size()])
-	# 配对:发送端必须仍在 NetBus 上(否则"两端同节点"这条不变量的另一半没人守)
+	# 配对:发送端必须仍在 NetBus 上(否则"两端同节点"这条不变量的另一半没人守)。
+	# ★ 判据是**同行**:`"beam_fired"` 出现的那一行自己必须含 `NetBus.rpc_id(`。
+	# 为什么不能整文件 co-occurrence:该文件里 `NetBus.rpc_id(` 到处都有、`"beam_fired"` 只一处,
+	# 于是 `NetBusExt.rpc_id(peer_by_role[r], "beam_fired", rep)` —— 正是本断言注释里点名的那处
+	# **有意的不对称** —— 会**全绿**通过,而收端 NetBus 订阅此时已是静默 no-op。
+	# 取"同行"而非固定实参文本:广播表达式怎么改(peer 怎么取、rep 怎么组)都不假红。
 	var mh := _code_view(_read(MH_PATH))
 	_check(not mh.is_empty(), "读不到 %s" % MH_PATH)
 	if not mh.is_empty():
-		_check(mh.contains("Net" + "Bus.rpc_id(") and mh.contains("\"" + N_BEAM + "\""),
-			"%s 没有经 NetBus.rpc_id 广播 \"%s\"(发送端被迁走了 → 上面的收端断言就成了单边钉)" % [MH_PATH, N_BEAM])
-	_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 %s 仍在 NetBus" % [N_LOCAL_BEAM, wrong.size(), N_BEAM])
+		var mh_lines := mh.split("\n")
+		var beam_sites := _find_lines(mh_lines, "\"" + N_BEAM + "\"")
+		var on_netbus := 0
+		var off_netbus: Array[String] = []
+		for k in beam_sites:
+			var ln := mh_lines[k].strip_edges()
+			if ln.contains("Net" + "Bus.rpc_id("):
+				on_netbus += 1
+			else:
+				off_netbus.append("%s ← %s" % [_enclosing_func(mh_lines, k), ln])
+		_check(not beam_sites.is_empty(), "%s 里找不到 \"%s\" 字面量(发送端被整条迁走了?)" % [MH_PATH, N_BEAM])
+		_check(on_netbus >= 1,
+			"%s 里 \"%s\" 不在任何 `NetBus.rpc_id(` 行上(%d 处不同行: %s)→ 发送端迁到 NetBusExt 后,收端 NetBus 订阅是**静默 no-op**"
+			% [MH_PATH, N_BEAM, off_netbus.size(), " | ".join(off_netbus)])
+		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 \"%s\" 同行 %s.rpc_id ×%d"
+				% [N_LOCAL_BEAM, wrong.size(), N_BEAM, "NetBus", on_netbus])
+	else:
+		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 %s 读不到" % [N_LOCAL_BEAM, wrong.size(), MH_PATH])
 
 
 # ── 12) 退出路径:大写零命中 + 路径① + 「开始收口后不许残留裸切」的过渡守卫 ──
@@ -495,9 +549,26 @@ func _check_beam_routing() -> void:
 # (计划表自己的 main 侧一栏也写着"仅 ESC 合规")。若在这里写成硬断言,T1 起就是红的 →
 # T2/T3 的验收门(`kh_l6_probe` 全绿)永远过不了 = 一道没人能通过的门。
 # 故 (c) 取**过渡守卫**形状:本文件一旦出现 safe_change_scene(收口开始),就不许再残留
-# 任何裸切。今天 antecedent 为假 → 绿;T4 落地后它变成精确约束(半修即红、改回裸切即红)。
-# ⚠ 已知边界(必须如实登记):**T4 之前的**它无法发现"T4 什么都没做"——那是今天已登记的
-#    **既有欠账**,不是回归;T4 自己的验证带着"把其中一条改回裸切 → 探针必须红"的反证。
+# 任何裸切。今天 antecedent 为假 → 绿;T4 落地后它变成精确约束(半修即红)。
+#
+# ★★ 已知边界(如实登记,别把这条守卫说大)★★
+#   · **(c) 的鉴别力是单向的**:"**一旦开始收口,就不许半途退回**"。
+#     · 半途退回(改好一条、又把**另一条**改回裸切)= safe ≥1 且 bare ≥1 → **红** ✅
+#     · **整体退回**(两条都改回裸切、safe 归零)= safe=0、bare=2,与"收口从未开始"
+#       **逐行不可分辨** → antecedent 为假 → **绿** ❌ 本探针**发现不了**
+#       ⇒ 流传的"改回裸切即红"只对**半修之后的退回**成立;一次**整体**退回读作"没开始"。
+#   · 堵这个缺口的正解是 T4 **自己**把 (c) 翻成无条件(`bare == 0` 恒真),那是 T4 的**交付物**;
+#     在那之前写成无条件会让本探针从 T1 红到 T4 —— 一道没人能过的门最终会被删掉(该备选已被否)。
+#   · **T4 之前的**它也无法发现"T4 什么都没做"(与原"改回裸切"缺口同源)——那是今天已登记的
+#     **既有欠账**,不是回归;T4 自己的验证带着"把其中一条改回裸切 → 探针必须红"的反证,
+#     覆盖的正是上面那条**半途**退回。
+#   · 大小写/路径拼法之外的东西(例如"定时器 lambda 里到点再求 `get_tree()` 会得 null"这一
+#     U4 隐患**本身**)不作机械断言:本断言只要求换场调用与**小写**路径在场,不仲裁实参来源。
+#
+# ★ 路径的可接受拼法(不假红后续任务的**正确**修法):内联小写字面量,或值逐字小写的
+#   **文件级常量**(见 _menu_path_needles);且**不锚 `get_tree()` 的实参位置**(见
+#   _safe_call_menu_path)——"先 `var tree := get_tree()` 再在定时器 lambda 里
+#   `safe_change_scene(tree, …)`"是兄弟场景 royale_game.gd 的推荐修法,必须绿。
 func _check_exit_paths() -> void:
 	var before := _failures.size()
 	# (a) 大写路径零命中:KH 两处写 res://Scenes/main_menu.tscn,load 大小写敏感,照抄即换场失败
@@ -507,25 +578,37 @@ func _check_exit_paths() -> void:
 		upper_detail.append("%s ← %s" % [_enclosing_func(_pc_lines, k), _pc_lines[k].strip_edges()])
 	_check(upper.is_empty(), "%s 出现大写路径 %s %d 处(KH 写法,load 大小写敏感 → 换场直接失败): %s"
 			% [PC, N_UPPER, upper.size(), " | ".join(upper_detail)])
-	# 路径①:ESC/暂停菜单的退场在 ui/pause_menu.gd,已保护(小写路径)
+	# 路径①:ESC/暂停菜单的退场在 ui/pause_menu.gd,已保护(小写路径)。
+	# 判据 = 存在一次 `safe_change_scene(...)` 且**这次调用的实参**含小写菜单路径;
+	# 不锚 `get_tree()` 的位置,也不锚路径的拼法(内联字面量 / 文件级小写常量都认)。
 	var pm := _code_view(_read(PM_PATH))
 	_check(not pm.is_empty(), "读不到 %s" % PM_PATH)
 	if not pm.is_empty():
-		_check(pm.contains(N_SAFE + "(get_tree(), \"" + N_MENU_PATH + "\")"),
-			"%s 的退场没走 `%s(get_tree(), \"%s\")`(旧 EscMenu 的重启式切换吗?)" % [PM_PATH, N_SAFE, N_MENU_PATH])
-		_check(_find_lines(pm.split("\n"), N_BARE).is_empty(),
+		var pm_lines := pm.split("\n")
+		var pm_needles := _menu_path_needles(pm_lines)
+		_check(_safe_call_menu_path(pm_lines, pm_needles) != "",
+			"%s 的退场没有一次「`%s(...)` 且实参是小写菜单路径」的调用(旧 EscMenu 的重启式切换吗?可接受的小写拼法: %s)"
+			% [PM_PATH, N_SAFE, ", ".join(pm_needles)])
+		_check(_find_lines(pm_lines, N_BARE).is_empty(),
 			"%s 里出现裸 %s(游戏世界含全量碰撞,同步析构会偶发原生段错误)" % [PM_PATH, N_BARE])
 	# 本文件的两条退场路径必须在场且用小写菜单路径(存在性 + 大小写)
+	var needles := _menu_path_needles(_pc_lines)
 	for spec in [["_on" + "_round_state", "② MATCH_OVER 定时器"], ["_on" + "_opponent_left", "③ 对手离开定时器"]]:
 		var fn := str(spec[0])
 		var body := _func_body(_pc_code, fn)
 		_check(not body.is_empty(), "取不到 %s 的函数体(%s 没了?)" % [fn, spec[1]])
 		if not body.is_empty():
-			_check(body.contains("\"" + N_MENU_PATH + "\""),
-				"%s(%s)里没有小写菜单路径 \"%s\"" % [fn, spec[1], N_MENU_PATH])
+			var b_lines := body.split("\n")
+			var hit := _safe_call_menu_path(b_lines, needles)
+			if hit == "":
+				# 尚未收口(裸切)形态:路径出现在函数体内即可 —— 半修/收口由 (c) 与上面那条管
+				hit = _has_needle(body, needles)
+			_check(hit != "", "%s(%s)里没有小写菜单路径(可接受的拼法: %s)" % [fn, spec[1], ", ".join(needles)])
 			_check(body.contains(N_BARE) or body.contains(N_SAFE),
 				"%s(%s)里没有换场调用(退场路径被删了?)" % [fn, spec[1]])
-	# (c) ★ 过渡守卫:已开始收口 → 裸切必须为零
+	# (c) ★ 过渡守卫:已开始收口 → 裸切必须为零。
+	# ⚠ 只拦**半途**退回;一次**整体**退回(safe 归零)与"收口未开始"逐行不可分辨 → 本断言绿,
+	#   这正是函数头登记的已知边界(下面的汇总行会把这一点写出来)。
 	var safe_sites := _find_lines(_pc_lines, N_SAFE)
 	var bare_sites := _find_lines(_pc_lines, N_BARE)
 	if not safe_sites.is_empty():
@@ -535,8 +618,9 @@ func _check_exit_paths() -> void:
 		_check(bare_sites.is_empty(),
 			"本文件已开始收口(%s ×%d),却仍残留 %d 处裸 %s(半修即红,应全部改走 %s;残留站点: %s)"
 			% [N_SAFE, safe_sites.size(), bare_sites.size(), N_BARE, N_SAFE, " | ".join(detail)])
+	var state := "中" if not safe_sites.is_empty() else ("未开始(或整体退回 —— 本条不可分辨)" if not bare_sites.is_empty() else "未开始")
 	_summary(before, "退出路径:大写 %d 处、safe 站点 %d、裸切站点 %d(收口%s)"
-			% [upper.size(), safe_sites.size(), bare_sites.size(), "中" if not safe_sites.is_empty() else "未开始"])
+			% [upper.size(), safe_sites.size(), bare_sites.size(), state])
 
 
 # ── 13) 零 Level0.menu_demo 引用(B14)────────────────────────────────
@@ -732,6 +816,57 @@ func _find_line_re(lines: PackedStringArray, pattern: String) -> int:
 	return -1
 
 
+# ── "小写菜单路径"的合法拼法(Minor 8:不假红后续任务的正确修法)─────────────
+# ① 内联小写字面量 `"res://scenes/main_menu.tscn"`;
+# ② **文件级常量**(`const X := "res://scenes/main_menu.tscn"`,值必须**逐字小写**)的**名字**。
+# 把路径抽成常量是等价正确修法(定时器 lambda 里到点再求 `get_tree()` 会得 null,兄弟场景
+# royale_game.gd 的推荐修法),不假红;但常量值写成大写 `res://Scenes/…` 依然红 —— 大小写
+# 要求对两种拼法**一视同仁**(另有 (a) 的全文件大写零命中兜底)。
+# ⚠ 已知边界:只认**本文件**的文件级常量;把路径挪到别的模块再 `Other.PATH` 引用不在覆盖内。
+func _menu_path_needles(lines: PackedStringArray) -> Array[String]:
+	var out: Array[String] = ["\"" + N_MENU_PATH + "\""]
+	var re := RegEx.new()
+	re.compile(RE_CONST_STR)
+	for k in range(lines.size()):
+		var m := re.search(lines[k])
+		if m != null and m.get_string(2) == N_MENU_PATH:
+			var name := m.get_string(1)
+			if not out.has(name):
+				out.append(name)
+	return out
+
+
+# text 命中 needles 里的哪一个(都没有返回空串)
+func _has_needle(text: String, needles: Array[String]) -> String:
+	for nd in needles:
+		if text.contains(nd):
+			return nd
+	return ""
+
+
+# 从第 i 行起、括号配平为止的调用文本(跨行实参一起看;最多 8 行,防病态文件)
+func _call_text(lines: PackedStringArray, i: int) -> String:
+	var depth := 0
+	var out: Array[String] = []
+	for k in range(i, mini(i + 8, lines.size())):
+		out.append(lines[k])
+		depth += lines[k].count("(") - lines[k].count(")")
+		if depth <= 0:
+			break
+	return "\n".join(out)
+
+
+# 在给定代码视图里找一次「safe_change_scene(...) 且实参含小写菜单路径」的调用,返回命中的拼法。
+# **不锚 `get_tree()` 的实参位置**:`safe_change_scene(get_tree(), …)` 与
+# `var tree := get_tree() … safe_change_scene(tree, …)` 都是正确修法,都必须绿。
+func _safe_call_menu_path(lines: PackedStringArray, needles: Array[String]) -> String:
+	for k in _find_lines(lines, N_SAFE + "("):
+		var hit := _has_needle(_call_text(lines, k), needles)
+		if hit != "":
+			return hit
+	return ""
+
+
 # 每个命中处连同"它所在块的首行"(供"是不是无条件"的判据用)
 func _guarded_calls(lines: PackedStringArray, needle: String) -> Array:
 	var out: Array = []
@@ -748,15 +883,22 @@ func _unguarded_count(calls: Array) -> int:
 	return n
 
 
-# 从 before 处往上找最近的组包字典 `var X := {`,返回变量名(找不到空串)
-func _packet_var(lines: PackedStringArray, before: int) -> String:
+# 组包字典声明处的 {行号, 变量名}(找不到返回 {-1, ""})。
+# 与 _packet_var 同一个正则、同一套推导,故全探针的"变量名"都以 `var X := {` 为准:
+# 重命名组包变量是合法加法(**不假红**),而"发出去的不是带 seq 的那个字典"由实参比对判红。
+func _packet_decl(lines: PackedStringArray, before: int) -> Dictionary:
 	var re := RegEx.new()
 	re.compile(RE_PACKET_DICT)
-	for k in range(min(before, lines.size() - 1), -1, -1):
+	for k in range(mini(before, lines.size() - 1), -1, -1):
 		var m := re.search(lines[k])
 		if m != null:
-			return m.get_string(1)
-	return ""
+			return {"index": k, "name": m.get_string(1)}
+	return {"index": -1, "name": ""}
+
+
+# 从 before 处往上找最近的组包字典 `var X := {`,返回变量名(找不到空串)
+func _packet_var(lines: PackedStringArray, before: int) -> String:
+	return str(_packet_decl(lines, before)["name"])
 
 
 # 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
