@@ -18,8 +18,12 @@ const WORKER_PORT_SPAN := 500
 # 立刻复用会把同端口发给新 worker → bind 冲突,或旧 worker 抢到新局的客户端(跨房间串线)。
 # 30s 足够旧 worker 走完收尾;极端情况(客户端僵死不断开)由 500 端口轮回兜底。
 const WORKER_PORT_REUSE_DELAY := 30.0
-# 大乱斗 worker 的端口归还延迟:一局最长 5 分钟(RoyaleHost.MATCH_TIME=300)+ 收尾,
+# 大乱斗 worker 的端口归还延迟:按**默认**一局时长(RoyaleHost.MATCH_TIME=300)+ 收尾估,
 # 沿用 30s 会让对局中途端口被发给新 worker(串线/bind 冲突)——自检 M2。
+# ★ 已知边界(照实登记,本次不放宽):房主可用建房页的「一局限时」把一局配到 30 分钟
+# (Settings.royale_match_min → player_options 的 match_time → RoyaleHost),此时本延迟短于
+# 一局,端口可能在**旧 worker 还在跑**时就被复用。与 sweep 在局宽限同一根因(都拿默认时长
+# 当上界),修法同样要让界读**本局实际时长**(只在 worker 里)——见 _sweep_stale_rooms 的注释。
 const ROYALE_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
@@ -176,7 +180,8 @@ func on_peer_left(peer_id: int) -> void:
 		if rr.players.is_empty():
 			royale_rooms.erase(rcode)
 			if rr.worker_port > 0:
-				# 大乱斗一局最长 5 分钟:端口回收延迟远长于 1v1(自检 M2)
+				# 大乱斗按默认一局时长给更长的回收延迟(远长于 1v1,自检 M2);已知边界见
+				# ROYALE_PORT_REUSE_DELAY 的常量注释
 				_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
 			print("大乱斗房 %s 关闭(端口 %d 将于 %ds 后回收)" % [rcode, rr.worker_port, int(ROYALE_PORT_REUSE_DELAY)])
 		else:
@@ -563,9 +568,8 @@ func _process(delta: float) -> void:
 # 大乱斗房的 worker_port 只在开局时分配,而唯一归还路径是 on_peer_left 的「空房」分支——
 # 成员若一直连着不吭声(ENet 不会超时「连接仍在但对端沉默」的 peer),端口就被永久占用
 # (WORKER_PORT_SPAN=500 耗尽后 _pick_worker_port 恒 -1,大厅彻底拉不起 worker)。
-# 故两表共用同一 MAX_ROOM_AGE 一并清扫。不跳过 in_match 房:大乱斗单局上限
-# RoyaleHost.MATCH_TIME 远短于 2h,仍在表内且超龄者必是 worker 早已结束的残留;
-# 在局中的房另加「一整个扫描周期 + 一局时长」的宽限,理由见下方 royale 分支。
+# 故两表共用同一 MAX_ROOM_AGE 一并清扫。不跳过 in_match 房:在局中的房另加
+# 「一整个扫描周期 + 一局时长」的宽限,推导与**已知边界**见下方 royale 分支。
 func _sweep_stale_rooms() -> void:
 	var now := Time.get_unix_time_from_system()
 	var stale: Array = []
@@ -577,15 +581,22 @@ func _sweep_stale_rooms() -> void:
 	for rcode in royale_rooms:
 		var rr: RoyaleRoom = royale_rooms[rcode]
 		# 刻意偏离移植来源(非误改):在局中的大乱斗房宽限 = SWEEP_INTERVAL + RoyaleHost.MATCH_TIME
-		# (即「一整个扫描周期」+「一局时长」),这个界是**可证安全**的,而非经验值。
-		# 房龄从**建房**起算,含此前在大厅等待的全部时间——一个等满 2h 才开局的房,在开局那一刻
-		# 就已"超龄";而清扫由 _process 的 SWEEP_INTERVAL 计时器驱动(不是每帧),房间可能已经比
-		# 阈值老上**整整一个扫描周期**才等到判它超龄的那次 tick,即最迟可在房龄 MAX_ROOM_AGE +
+		# (即「一整个扫描周期」+「一局时长,取该常量的默认值」),这条界的**推导**是可证的:
+		# 房龄从**建房**起算,含此前在大厅等待的全部时间——一个等满 MAX_ROOM_AGE 才开局的房,在开局
+		# 那一刻就已"超龄";而清扫由 _process 的 SWEEP_INTERVAL 计时器驱动(不是每帧),房间可能已经
+		# 比阈值老上**整整一个扫描周期**才等到判它超龄的那次 tick,即最迟可在房龄 MAX_ROOM_AGE +
 		# SWEEP_INTERVAL 时开局。从 royale_start/royale_start_ai 拉起 worker 到成员转连离厅还有
 		# 0.3~1.5s 的窗口,若宽限只有一局时长,紧随其后的那次 tick 仍会杀掉一个刚起几秒的 worker
 		# 并踢掉正在转连的成员(边界竞态只是被推窄,没被关闭)。宽限覆盖「阈值 + 整个扫描周期 +
-		# 一局」后,等待期攒下的那一整个周期与整局对局都落在界内,任何一次 tick 都不可能扫到在局房。
-		# 泄漏仍被限住:至多多留一个扫描周期 + 一局。
+		# 一局」后,等待期攒下的那一整个周期与默认时长的整局对局都落在界内。
+		# ★ **已知边界(照实登记,本次不修)**:上面的「一局」取 RoyaleHost.MATCH_TIME(300s),
+		#   而它是**默认值、不是上限**——房主可在建房页用「一局限时」滑块自定义,该值经
+		#   NetBusExt.player_options 的 match_time(**Settings.royale_match_min × 60**,设置里钳在
+		#   1~30 分钟)随 role1 报到进 RoyaleHost,一局最长 1800s。于是**一个等了近 2h 才开局、
+		#   又配了长时长的房**,其对局进行到 300s 之后的那次 tick 仍会判它超龄并连 worker 一起杀掉
+		#   (缺口最大约 1500s)。不在本次放宽的原因:触发它还得先满足「房龄近 2h」(正常房建房后
+		#   几分钟内就开局),而正确的修法是让宽限读**本局实际时长**——该值只存在于 worker 的
+		#   RoyaleHost 里,sweep 手里没有,要修得先把实际时长回传/登记到房上,属另行评估的范围。
 		# 等待中(in_match=false)的房不占端口、杀不到任何东西,仍按裸 MAX_ROOM_AGE 清,无需宽限。
 		# 1v1 分支不享受同样宽限:"started 房一方掉线即整房作废"(_start_match/on_peer_left)堵住的
 		# 是**泄漏**,不是**竞态**——同一个开局转连窗口在 1v1 同样成立:started 房在 _start_match 的
