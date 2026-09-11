@@ -71,9 +71,9 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **碰撞**:`core/collision_builder.gd`(`class_name CollisionBuilder`,静态可测)把形状掩码展开成 250×150 的 32px 子格(每 64px 格 → 2×2),贪心合并矩形(ts=32)后按 **9 环面副本偏移**实例化(每块矩形 ×9,共享同一 shape)。**永久墙(不可破坏)建一个整图节点、建一次不动;可破坏层按分块存节点**(块边长 12 格 ≈ √地图边长,块内一次贪心 + 9 副本),摧毁时只重建所在块 → 重建成本 O(块面积)。**只有 type=wall 产生碰撞**,通道(梯子/锁链)可走/可爬。
 - **世界构建**:`core/world_builder.gd`(`class_name WorldBuilder`,静态):`load_grid()`(地图→current_grid/TileDefs/地图像素尺寸)、`build_sim(parent, grid)`(碰撞:永久墙+可破坏分块+攀爬基座条)。单人 Level0 与 PvP 客户端/服务器共用。
 
-### 砖块属性与破坏(core/tile_defs.json)
-- **属性表** `core/tile_defs.json` 是单一来源:每块 name/type(墙/通道/液体/气体)/hp/explosion_decay/bullet_destroyable/explosion_destroyable/elastic/climb_speed/friction。编辑器副本 `level_editor/tile_defs.js` 由 `node level_editor/sync-tiles.js` 生成(file:// 下可靠)。
-- 纹理 1-10 墙(hp1,不可破坏);11 梯子、12-14 锁链上中下 = 通道(climb_speed 1.6× 最快);15-18 树叶(墙,hp20,子弹/爆炸可破,弹性弱弹玩家);19-20 树干竖/横(墙,hp80,爆炸可破);21 水、22 水面 = 液体(无碰撞,可游)。爆炸衰减统一 0.75(水 0.25)、摩擦 1.0(现状不变)。
+### 砖块属性与破坏(data/tile_defs.json)
+- **属性表** `data/tile_defs.json` 是单一来源:每块 name/type(墙/通道/液体/气体)/hp/explosion_decay/bullet_destroyable/explosion_destroyable/elastic/climb_speed/friction。编辑器副本 `level_editor/tile_defs.js` 由 `node level_editor/sync-tiles.js` 生成(file:// 下可靠)。
+- 纹理 1-10 墙(hp1,不可破坏);11 梯子、12-14 锁链上中下 = 通道(climb_speed 1.6× 最快);15-18 树叶(墙,hp8,子弹/爆炸可破,弹性弱弹玩家);19-20 树干竖/横(墙,hp30,爆炸可破);21 水、22 水面 = 液体(无碰撞,可游)。爆炸衰减统一 0.75(水 0.25)、摩擦 1.0(现状不变)。
 - 加载:`TileDefs.load_defs()`(level_0._ready);挡路 = `TileDefs.is_blocked`(非 0 且 type=wall),寻路/LOS/碰撞共用。
 - **破坏**:`TileDefs.damage_tile(cell, dmg, "bullet"/"explosion")` → hp≤0 变空气(改 `MazeGenerator.current_grid` + `Level0.on_tile_destroyed` 清 3×3 瓦片 + 持久可破坏子格 2×2,标记所在分块下帧重建)。子弹撞树叶扣血;爆炸对树叶/树干按距离衰减×0.75 扣血。
 - **攀爬**:玩家中心(或脚底)在通道格(梯子/锁链)「**刚按上**」主动攀附(不受重力):上爬 ×`tile.climb_speed`(梯 1.6/锁链 2.0),下降 ×`tile.climb_descent_speed`(梯 2.0);**锁链无下降倍率 → 按下自由落体**(解除攀附交给重力,不被空中抓回);松开挂住不坠落;**到顶 = 脚底进入梯子上方一格**(以脚底为参考格),再按上 = 跳离梯子;进入靠「刚按下上」而非按住 → 跳离后按着上也抓不回;攀附空闲可水平走离梯子;**仅锁链顶/底基座有薄碰撞条**(`CollisionBuilder.build_climb_ledges`,全宽 64×6px;梯顶不加,避免挡爬升)。上爬与梯子下行再整体 × `PlayerParams.climb_vertical_mult`(1.2;锁链下行=自由落体不受影响);**身在梯/链格上不能空中下冲**(`climb.is_over_climb_tile()`:中心或脚底在通道格即判,按↓只能下移/下落,不能 charge_down 快速下坠穿过梯/链)。
@@ -92,7 +92,7 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 层1=地形、层2=玩家、层3=敌人。玩家/玩家子弹 mask=5(1+3);敌人占层 3(值4)、mask 侦测玩家。
 
 ### 编辑器工具
-`editor/structure-editor.html` + `editor/smoke.js` 是独立浏览器地图编辑器(大图缩放/画笔),与 Godot 引擎无关。编辑 125×75 网格,**砖块纹理调色板(0-22)+ 2×2 砖形面板**(点四象限翻转或选预设 1/4/半/3/4/全砖);导入旧格式自动 2×2 转换,导出写 v3(`# cyrm-v3` + 每格 4 字符 [纹理 3 位 0xx][形状hex])。工具栏含 画笔/矩形/油漆桶/橡皮/选框/直线(直线跟随画笔大小);选框支持框选后整体移动、Del/Backspace 删除、油漆桶点在选区内=填整个选区(点外清选区+正常连通填充)、Esc 取消。`node editor/smoke.js` 跑 Core 测试。
+`level_editor/structure-editor.html` + `level_editor/smoke.js` 是独立浏览器地图编辑器(大图缩放/画笔),与 Godot 引擎无关。编辑 125×75 网格,**砖块纹理调色板(0-22)+ 2×2 砖形面板**(点四象限翻转或选预设 1/4/半/3/4/全砖);导入旧格式自动 2×2 转换,导出写 v3(`# cyrm-v3` + 每格 4 字符 [纹理 3 位 0xx][形状hex])。工具栏含 画笔/矩形/油漆桶/橡皮/选框/直线(直线跟随画笔大小);选框支持框选后整体移动、Del/Backspace 删除、油漆桶点在选区内=填整个选区(点外清选区+正常连通填充)、Esc 取消。`node level_editor/smoke.js` 跑 Core 测试。
 
 ### 网络与 PvP(阶段 1 + 2 + 4:匹配进图 + 对局互通 + 回合制)
 - 服务器:`server/server_main.tscn` 入口(headless)。**双模式**:无参=大厅(默认 7777),`--worker --port P`=对局 worker。**一服多局**:大厅 `server/room_manager.gd`(`RoomManager`)只做建房/配对(房间注册表,2 人就绪)→ 给每局拉起一个独立 worker 子进程(`OS.create_process`,同 exe `--headless --worker --port P`;开发=editor 带 `--path`+场景,导出 exe 靠 `main_scene.dedicated_server`)→ 发 `go_match(role,port)` 让两端转连。**worker 内跑 `server/server_main.gd`(worker 分支)**:独占 UDP 端口,等两客户端 `claim_role` 收齐 role1/2 → `RoomManager.start_match_on`(static:重算地图尺寸、给两端 `match_start`、建 `server/match_host.gd`)→ `MatchHost` 权威对局;任一方离开 → 拆局退出释放端口。各局=独立进程 → **内存隔离**,共享全局(current_grid/TileDefs)不跨局互踩。端口分配用「唯一递增 + 占用集合」(`_pick_worker_port`,基准 7800)——**不要**在本进程 bind 探测空闲(worker 是独立进程,大厅探测看不到别的进程已占端口,并发会把同端口发给两个 worker)。大厅在玩家转连后断开即关房归还端口。
