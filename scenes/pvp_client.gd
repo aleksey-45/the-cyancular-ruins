@@ -380,9 +380,17 @@ func _on_round_state(data: Dictionary) -> void:
 		_menu_open = false
 		# 菜单没了 → 回到只由 _round_locked(state 3 → false)决定 = 解锁(与旧行为一致)
 		_refresh_input_lock()
+		# 起定时器**之前**捕获 tree/netbus:lambda 里现取 get_tree() 是到点才求值,而那时本节点
+		# 可能已被别的退出路径换场摘树 → 返回 null → 报错(兄弟场景 royale_game 的同一处修法)。
+		var tree := get_tree()
+		var netbus := NetBus
 		get_tree().create_timer(5.0).timeout.connect(func() -> void:
-			NetBus.stop()
-			get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+			netbus.stop()
+			if not is_inside_tree():
+				return   # 已从别的退出路径(ESC/暂停菜单)离开 → 不再叠加第二次换场
+			# 游戏世界含全量碰撞,裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误,
+			# 故走游戏世界的退役挂起式换场(与路径①同机制)。
+			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
 # 本地输入锁的单一收口:冻结期(_round_locked)与菜单打开(_menu_open)任一成立就锁。
 # 不要在两个调用点各拼一次布尔 —— 那正是修复波 1 只关住一个方向的原因。
@@ -397,9 +405,15 @@ func _on_opponent_left() -> void:
 	_match_ended = true
 	if _hud != null:
 		_hud.show_notice("对手已离开", "对局结束")
+	# 同 MATCH_OVER 那条:先在起定时器前捕获引用,并让到点的 lambda 在"已经离开"时不再叠加
+	# 第二次换场(玩家可以在这 2.5s 内按 ESC → 暂停菜单 → 回到主菜单)。
+	var tree := get_tree()
+	var netbus := NetBus
 	get_tree().create_timer(2.5).timeout.connect(func() -> void:
-		NetBus.stop()
-		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+		netbus.stop()
+		if not is_inside_tree():
+			return
+		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
 # ── 中立鸟(服务器权威):roster → 建视觉副本;每帧快照 apply_remote;died → 移除 ──
 func _on_enemy_spawn(roster: Array) -> void:

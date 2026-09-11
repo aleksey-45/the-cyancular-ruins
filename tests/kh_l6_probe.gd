@@ -39,9 +39,10 @@ extends Node
 #   9  MATCH_OVER 块销毁暂停菜单 —— B8:5s 内 ESC 后定时器仍再触发 + lambda 里 get_tree() 为 null
 #  10  pvp_hud 走声明式 tscn(不是 PvpHud.new())—— B11:null 解引用必崩
 #  11  激光收端在 NetBus(不是 NetBusExt)—— B12:收错节点 = 对手激光静默 no-op
-#  12  退出路径:大写零命中 + 路径① 已保护 + 本文件"一旦开始收口就不许残留裸切"(过渡守卫)
-#                                —— 见该断言内的说明:②③ 的收口是 T4 的**交付物**,不是今天的既有性质
-#                                该守卫只拦**半途退回**;一次**整体**退回读作"没开始"→ 本探针发现不了
+#  12  退出路径:大写零命中 + 路径① 已保护 + **本文件裸切恰为 0**(T4 起为无条件判据,见该断言
+#                                内的说明;此前是"过渡守卫"形状——收口当时是 T4 的交付物,写成无条件
+#                                会让本探针从 T1 红到 T4,而没人能过的门会被删掉。过渡形状拦不住
+#                                **整体退回**;翻无条件后该边界关闭)
 #                                (已知边界逐条登记在 _check_exit_paths 的函数头)
 #  13  零 Level0.menu_demo 引用 —— B14:引用不存在的静态变量 → 报错
 #  14  激光归因仍走 CombatFeedback.attribute —— KH 的裸 set_meta 只能追加,不得替换
@@ -615,21 +616,21 @@ func _check_exit_paths() -> void:
 			_check(hit != "", "%s(%s)里没有小写菜单路径(可接受的拼法: %s)" % [fn, spec[1], ", ".join(needles)])
 			_check(body.contains(N_BARE) or body.contains(N_SAFE),
 				"%s(%s)里没有换场调用(退场路径被删了?)" % [fn, spec[1]])
-	# (c) ★ 过渡守卫:已开始收口 → 裸切必须为零。
-	# ⚠ 只拦**半途**退回;一次**整体**退回(safe 归零)与"收口未开始"逐行不可分辨 → 本断言绿,
-	#   这正是函数头登记的已知边界(下面的汇总行会把这一点写出来)。
+	# (c) ★ 收口判据 —— **T4 起已翻为无条件**:本文件的代码视图里裸切必须恰为 0。
+	# 原先是"过渡守卫"(出现 safe_change_scene 才要求裸切归零),因为收口当时是 T4 的**交付物**;
+	# 写成无条件会让本探针从 T1 一路红到 T4,而**没人能过的门最后会被删掉**。
+	# 过渡形状的已知边界是:一次**整体**退回会把状态退回「safe=0 且裸切>0」,与「收口未开始」逐行
+	# 不可分辨 → 守卫被跳过读成绿。T4 收口完成后本断言无条件,该边界随之关闭。
 	var safe_sites := _find_lines(_pc_lines, N_SAFE)
 	var bare_sites := _find_lines(_pc_lines, N_BARE)
-	if not safe_sites.is_empty():
-		var detail: Array[String] = []
-		for k in bare_sites:
-			detail.append("%s ← %s" % [_enclosing_func(_pc_lines, k), _pc_lines[k].strip_edges()])
-		_check(bare_sites.is_empty(),
-			"本文件已开始收口(%s ×%d),却仍残留 %d 处裸 %s(半修即红,应全部改走 %s;残留站点: %s)"
-			% [N_SAFE, safe_sites.size(), bare_sites.size(), N_BARE, N_SAFE, " | ".join(detail)])
-	var state := "中" if not safe_sites.is_empty() else ("未开始(或整体退回 —— 本条不可分辨)" if not bare_sites.is_empty() else "未开始")
-	_summary(before, "退出路径:大写 %d 处、safe 站点 %d、裸切站点 %d(收口%s)"
-			% [upper.size(), safe_sites.size(), bare_sites.size(), state])
+	var detail: Array[String] = []
+	for k in bare_sites:
+		detail.append("%s ← %s" % [_enclosing_func(_pc_lines, k), _pc_lines[k].strip_edges()])
+	_check(bare_sites.is_empty(),
+		"%s 里仍有 %d 处裸 %s(游戏世界含全量碰撞,裸切会同步析构 → 偶发原生段错误;应全部改走 %s;残留站点: %s)"
+		% [PC, bare_sites.size(), N_BARE, N_SAFE, " | ".join(detail)])
+	_summary(before, "退出路径:大写 %d 处、safe 站点 %d、裸切站点 %d"
+			% [upper.size(), safe_sites.size(), bare_sites.size()])
 
 
 # ── 13) 零 Level0.menu_demo 引用(B14)────────────────────────────────
