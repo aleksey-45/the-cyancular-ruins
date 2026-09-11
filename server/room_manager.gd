@@ -57,6 +57,7 @@ class RoyaleRoom:
 	var options: Dictionary = {}          # 房主对局选项(禁武器/回合回血),开局随房主生效
 	var in_match := false                 # 已开局(拒绝加入;成员转连 worker 后房即散)
 	var worker_port: int = 0              # 本房拉起的大乱斗 worker 端口(关房时归还)
+	var created_at: float = 0.0           # 创建时间戳(unix 秒;超龄清理用,与 Room.created_at 同形)
 
 var royale_rooms: Dictionary = {}   # code -> RoyaleRoom
 
@@ -231,6 +232,7 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 	rr.host_peer = caller
 	rr.players.append(caller)
 	rr.player_role[caller] = 1
+	rr.created_at = Time.get_unix_time_from_system()
 	rr.is_public = bool(opts.get("is_public", true))
 	rr.invite_code = str(opts.get("invite_code", "")).strip_edges()
 	if not rr.is_public and rr.invite_code.is_empty():
@@ -514,6 +516,12 @@ func _process(delta: float) -> void:
 		_sweep_stale_rooms()
 
 # 清理:房间从创建起超 MAX_ROOM_AGE 秒 → 杀其 worker(若有)→ 踢房内玩家 → 删房归还端口。
+# 刻意偏离移植来源(非误改):原清扫只遍历 rooms(1v1),royale_rooms 是合并后并存的第二张注册表。
+# 大乱斗房的 worker_port 只在开局时分配,而唯一归还路径是 on_peer_left 的「空房」分支——
+# 成员若一直连着不吭声(ENet 不会超时「连接仍在但对端沉默」的 peer),端口就被永久占用
+# (WORKER_PORT_SPAN=500 耗尽后 _pick_worker_port 恒 -1,大厅彻底拉不起 worker)。
+# 故两表共用同一 MAX_ROOM_AGE 一并清扫。不跳过 in_match 房:大乱斗单局上限
+# RoyaleHost.MATCH_TIME=300s 远短于 2h,仍在表内且超龄者必是 worker 早已结束的残留。
 func _sweep_stale_rooms() -> void:
 	var now := Time.get_unix_time_from_system()
 	var stale: Array = []
@@ -521,9 +529,15 @@ func _sweep_stale_rooms() -> void:
 		var room: Room = rooms[code]
 		if now - room.created_at > MAX_ROOM_AGE:
 			stale.append(room)
-	if stale.is_empty():
+	var stale_royale: Array = []
+	for rcode in royale_rooms:
+		var rr: RoyaleRoom = royale_rooms[rcode]
+		if now - rr.created_at > MAX_ROOM_AGE:
+			stale_royale.append(rr)
+	if stale.is_empty() and stale_royale.is_empty():
 		return
-	print("[lobby] 清理 %d 个超龄房间(>%.0f 秒)" % [stale.size(), MAX_ROOM_AGE])
+	print("[lobby] 清理 %d 个超龄房间(1v1 %d + 大乱斗 %d,>%.0f 秒)" % [
+			stale.size() + stale_royale.size(), stale.size(), stale_royale.size(), MAX_ROOM_AGE])
 	for room in stale:
 		if room.worker_port > 0:
 			_kill_worker(room.worker_port)
@@ -534,8 +548,19 @@ func _sweep_stale_rooms() -> void:
 				NetBus.rpc_id(peer_id, "server_message", "房间超时(>2h),已关闭")
 		rooms.erase(room.code)
 		print("房间 %s 超时清理(存活 %.0f 秒)" % [room.code, now - room.created_at])
+	# 大乱斗房收尾:字段与 Room 同形(worker_port/players/code);worker 已被杀,端口直接回收
+	# (与 1v1 分支同法,不经 ROYALE_PORT_REUSE_DELAY——那条延迟是给「没被杀、还在跑」的 worker 的)
+	for rr in stale_royale:
+		if rr.worker_port > 0:
+			_kill_worker(rr.worker_port)
+			_worker_ports.erase(rr.worker_port)
+		for peer_id in rr.players:
+			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
+				NetBus.rpc_id(peer_id, "server_message", "房间超时(>2h),已关闭")
+		royale_rooms.erase(rr.code)
+		print("大乱斗房 %s 超时清理(存活 %.0f 秒)" % [rr.code, now - rr.created_at])
 	# 立即断开被清理房间的玩家(等 peer_left 收尾;避免它们还留在半满房间表里)
-	for room in stale:
+	for room in stale + stale_royale:
 		for peer_id in room.players:
 			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
 				multiplayer.disconnect_peer(peer_id)
