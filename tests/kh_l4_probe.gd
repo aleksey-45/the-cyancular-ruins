@@ -345,6 +345,10 @@ func _check_royale_entry() -> void:
 	var needle := "res://scenes/" + "roy" + "ale" + "_lobby.tscn"
 	var n := src.count(needle)
 	_check(n == 1, "主菜单大乱斗入口应恰好 1 处指向 %s(实际 %d 处)" % [needle, n])
+	# 悬空引用守卫:L4 那条「零 royale 字样」的动机正是**不让菜单指向不存在的场景**(按钮
+	# 点了没反应 = 假入口)。只数字符串会把「场景被删/改名」读成绿 —— 必须让路径本身可解析
+	# (同 _check_old_escape_menu_retired 里 ResourceLoader.exists 的用法)。
+	_check(ResourceLoader.exists(needle), "大乱斗入口指向的场景 %s 不存在(悬空引用)" % needle)
 	print("[L4] 主菜单大乱斗入口:命中 %d 处(%s)" % [n, needle])
 
 
