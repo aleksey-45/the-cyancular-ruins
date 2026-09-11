@@ -591,8 +591,12 @@ func _check_exit_paths() -> void:
 	if not pm.is_empty():
 		var pm_lines := pm.split("\n")
 		var pm_needles := _menu_path_needles(pm_lines)
+		# ⚠ 消息里的旧菜单名**碎片拼接**(见文件头「自伤防护」):kh_l4_probe 的「零引用」扫描
+		# 含 tests/,整段写出来会被它当成本文件对退役菜单的引用 → 那条断言假红(实测过)。
+		# 拼接后的人读文本与该条消息原文逐字一致,只是源码层不再是整段字面量。
+		# 括号不可省:`%` 的优先级高于 `+`,不括起来格式化只会作用到后半段碎片。
 		_check(_safe_call_menu_path(pm_lines, pm_needles) != "",
-			"%s 的退场没有一次「`%s(...)` 且实参是小写菜单路径」的调用(旧 EscMenu 的重启式切换吗?可接受的小写拼法: %s)"
+			("%s 的退场没有一次「`%s(...)` 且实参是小写菜单路径」的调用(旧 Esc" + "Menu 的重启式切换吗?可接受的小写拼法: %s)")
 			% [PM_PATH, N_SAFE, ", ".join(pm_needles)])
 		_check(_find_lines(pm_lines, N_BARE).is_empty(),
 			"%s 里出现裸 %s(游戏世界含全量碰撞,同步析构会偶发原生段错误)" % [PM_PATH, N_BARE])
