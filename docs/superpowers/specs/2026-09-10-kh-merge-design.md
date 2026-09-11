@@ -162,6 +162,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
   - **`:311`（MATCH_OVER 的 5s 定时器）与 `:328`（`_on_opponent_left` 的 2.5s 定时器）仍是裸 `get_tree().change_scene_to_file("res://scenes/main_menu.tscn")`** ← 正是 KH 实测会同步 `memdelete` 数万碰撞体、`safe_change_scene` 被造出来规避的那条路径。
   **两处都要改成 `Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")`。**
   次生风险：两条机制**无互斥**——`safe_change_scene` 首行 `await tree.process_frame`，若"点「回到主菜单」"与"对手离开定时器"在**同一帧**触发，后者先销毁当前场景，前者恢复时 `old = tree.current_scene` 会拿到**刚建出来的 main_menu**，于是再实例化第二份菜单、把旧的塞进 `_retired`（不崩，但建出两份菜单且污染 `_retired` 语义）。收成同一机制后该竞态自然消失。
+- **✅ 已修（2026-09-11，L5 终审后一并落地 `8a1288b`）** —— 修法取的是「把开局延到帧末」（下文修法①的轻量版）：`_defer_begin_match()`。**L6 只需在第 2 条接线后回归一次确认**，不必再实现本条。以下为原始登记，保留以存档问题成因：
 - **★ `player_options` 与 `claim_role` 的乱序竞态（L5 T5 评审登记，用户裁定「记为 L6 待办」——必须做）**：`scenes/matchmaking.gd` 先发 `claim_role` 再发 `player_options`（**同一 reliable 通道 → 每个 peer 内部 claim 先到**）；而 `server/server_main.gd` 的 `_on_role_claimed` 在**收齐法定人数的那一包上同步调 `_begin_match()`**，后者立刻读 `_claim_opts.get(1, {})` / `_claim_hues()` —— **此时 role 1 的 `player_options` 包还没被派发**。
   → **每当 role 1 的 claim 最后到达**（连接顺序决定，约五成概率），**房主的规则选项被静默丢弃**：`round_full_heal` / `disabled_weapons` 不生效，且 `NetBusExt.rpc_id(..., "peer_hues", {})` 把**空色表**发给两端。`_on_player_options` 随后把迟到的包归档进 `_claim_opts`，但已无人读取。
   **为什么必须在 L6 收口**：本层（L5）的 `_begin_match` 同时服务 1v1（`else` 分支走 `RoomManager.start_match_on`），而 L6 的「禁用武器闸门」正依赖这份 `match_options`（规格 §3 L6 上一段要求两端各调一次 `set_enabled_slots` 且**必须是同一份** options）→ **不修则 L6 的禁用武器本身就不生效**，且是静默的。L6 落消费端时一并收口，才能端到端验证。
