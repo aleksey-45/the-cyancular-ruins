@@ -157,31 +157,12 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 			else:
 				_apply_to_player(t, c, near)
 
-# 目标在世界系的半身(px):扫它启用中的 CollisionPolygon2D / CollisionShape2D 得世界 AABB 半宽高。
-# 兼容姿态碰撞箱(玩家/飞鸟站/飞多碰撞体,只取非 disabled 的那个)。兜底 18px(近似半身)。
+# 目标在世界系的半身(px)。几何取自 CollisionAabb(只并启用中的碰撞体,兼容玩家/飞鸟的
+# 多姿态碰撞箱)。兜底 18px(近似半身)。
 func _body_half(n: Node2D) -> Vector2:
-	var minv := Vector2(INF, INF)
-	var maxv := Vector2(-INF, -INF)
-	var found := false
-	for child in n.get_children():
-		if child is CollisionPolygon2D and not (child as CollisionPolygon2D).disabled:
-			for v in (child as CollisionPolygon2D).polygon:
-				var wp := (child as CollisionPolygon2D).to_global(v)
-				minv = Vector2(minf(minv.x, wp.x), minf(minv.y, wp.y))
-				maxv = Vector2(maxf(maxv.x, wp.x), maxf(maxv.y, wp.y))
-				found = true
-		elif child is CollisionShape2D and not (child as CollisionShape2D).disabled:
-			var shape := (child as CollisionShape2D).shape
-			if shape is RectangleShape2D:
-				var hs := (shape as RectangleShape2D).size * 0.5
-				for corner in [Vector2(-hs.x, -hs.y), Vector2(hs.x, -hs.y), Vector2(hs.x, hs.y), Vector2(-hs.x, hs.y)]:
-					var wp := (child as CollisionShape2D).to_global(corner)
-					minv = Vector2(minf(minv.x, wp.x), minf(minv.y, wp.y))
-					maxv = Vector2(maxf(maxv.x, wp.x), maxf(maxv.y, wp.y))
-					found = true
-	if not found:
+	if not CollisionAabb.has_any(n):
 		return Vector2(18, 18)
-	return (maxv - minv) * 0.5
+	return CollisionAabb.world_rect(n).size * 0.5
 
 # 线段与矩形是否相交;命中返回线段上最近点(击退源),未命中返回 (INF,0)。
 # 实现:矩形外扩(其实调用方已外扩 corridor,此处即精确矩形)逐轴裁剪线段参数区间。

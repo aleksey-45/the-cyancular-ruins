@@ -93,24 +93,7 @@ static func _feet_signature(body: Node) -> int:
 
 
 static func _feet_offset_compute(body: Node) -> float:
-	var offset := 24.0
-	for child in body.get_children():
-		if not (child is CollisionShape2D):
-			continue
-		if (child as CollisionShape2D).disabled:
-			continue
-		if child is CollisionPolygon2D:
-			var cp := child as CollisionPolygon2D
-			var pts := cp.polygon
-			if pts.size() > 0:
-				var maxy := cp.to_global(pts[0]).y
-				for p in pts:
-					maxy = maxf(maxy, cp.to_global(p).y)
-				offset = maxf(offset, maxy - body.global_position.y)
-		else:
-			var shape := (child as CollisionShape2D).shape
-			if shape is RectangleShape2D:
-				var rs := shape as RectangleShape2D
-				var hh := rs.size.y * 0.5
-				offset = maxf(offset, (child as CollisionShape2D).to_global(Vector2(0, hh)).y - body.global_position.y)
-	return offset
+	var b := body as Node2D
+	if b == null or not CollisionAabb.has_any(b):
+		return 24.0
+	return maxf(24.0, CollisionAabb.world_rect(b).end.y - b.global_position.y)
