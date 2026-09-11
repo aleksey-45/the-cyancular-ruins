@@ -35,6 +35,10 @@ signal local_enemy_spawn(roster: Array)  # 服务器:本局鸟清单 [{id,scene,
 signal local_enemy_died(id: int)         # 服务器:某只鸟死亡(id),客户端移除副本
 
 const DEFAULT_PORT := 7777
+# ENet 通道数。create_server/create_client 的通道参数默认 0 → 发包报
+# "Unable to send packet on channel 0, max channels: 0"(引擎把 0 当"无通道可用")。
+# 显式分配若干条通道即可根治;两端数值保持一致(握手按较小者协商)。
+const ENet_CHANNELS := 4
 
 var is_server_mode: bool = false
 
@@ -54,7 +58,7 @@ func _on_peer_disconnected(id: int) -> void:
 
 func start_server(port: int = DEFAULT_PORT) -> Error:
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_server(port, 16)
+	var err := peer.create_server(port, 16, ENet_CHANNELS)
 	if err == OK:
 		multiplayer.multiplayer_peer = peer
 		is_server_mode = true
@@ -62,7 +66,7 @@ func start_server(port: int = DEFAULT_PORT) -> Error:
 
 func start_client(addr: String, port: int = DEFAULT_PORT) -> Error:
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_client(addr, port)
+	var err := peer.create_client(addr, port, ENet_CHANNELS)
 	if err == OK:
 		multiplayer.multiplayer_peer = peer
 		is_server_mode = false
