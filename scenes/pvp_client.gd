@@ -99,6 +99,8 @@ func _ready() -> void:
 	NetBusExt.local_match_options.connect(_on_match_options)
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
+	# 这三条一次性载荷(生效选项/角色色相/昵称表)另有**第二条投递路径**:matchmaking 在换场前
+	# 就接住的那一份缓存,由本函数末尾的 _consume_pending_payloads() 取用(见该函数与 PvpSession)。
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
@@ -129,7 +131,25 @@ func _ready() -> void:
 		_menu_open = open
 		_refresh_input_lock())
 	add_child(_pause_menu)
+	# 三载荷的第二条投递路径:载荷早于本场景订阅(一次 poll 吞掉两段 flush)时,matchmaking
+	# 已经把它缓存进 PvpSession,这里取用;晚于订阅时走上面三条直接订阅。两条路径互不重叠 ——
+	# 一条载荷只被 emit 一次,取用即清空,不会对同一份载荷各应用一次。
+	# ⚠ 位置必须在 _apply_p2_tint() **之后**(与 royale_game 把它放在 _apply_tint 之后同理):
+	# 那道预染是"无载荷"的落地形态,缓存里的色相要能盖过它(否则对手身体退回 -65 的旧规则)。
+	_consume_pending_payloads()
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
+
+# 取用 matchmaking 缓存的开局三载荷(与 royale_game 的同名函数同款:取用后即清空)。
+# 必须在 `_local` / `_remote_replica` / 预染就绪之后调用;三个 handler 自身幂等(重建禁用表/
+# 覆盖染色/重设标签文字),故即便载荷两侧都到也只是一次等价重算。
+func _consume_pending_payloads() -> void:
+	if not PvpSession.pending_peer_info.is_empty():
+		_on_peer_info(PvpSession.pending_peer_info)
+	if not PvpSession.pending_peer_hues.is_empty():
+		_on_peer_hues(PvpSession.pending_peer_hues)
+	if not PvpSession.pending_match_options.is_empty():
+		_on_match_options(PvpSession.pending_match_options)
+	PvpSession.clear_pending_payloads()
 
 func _physics_process(_delta: float) -> void:
 	if _local == null:
