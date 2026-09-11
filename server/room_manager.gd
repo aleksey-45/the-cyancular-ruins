@@ -522,7 +522,7 @@ func _process(delta: float) -> void:
 # (WORKER_PORT_SPAN=500 耗尽后 _pick_worker_port 恒 -1,大厅彻底拉不起 worker)。
 # 故两表共用同一 MAX_ROOM_AGE 一并清扫。不跳过 in_match 房:大乱斗单局上限
 # RoyaleHost.MATCH_TIME 远短于 2h,仍在表内且超龄者必是 worker 早已结束的残留;
-# 在局中的房另加一局时长的宽限,理由见下方 royale 分支。
+# 在局中的房另加「一整个扫描周期 + 一局时长」的宽限,理由见下方 royale 分支。
 func _sweep_stale_rooms() -> void:
 	var now := Time.get_unix_time_from_system()
 	var stale: Array = []
@@ -533,20 +533,32 @@ func _sweep_stale_rooms() -> void:
 	var stale_royale: Array = []
 	for rcode in royale_rooms:
 		var rr: RoyaleRoom = royale_rooms[rcode]
-		# 刻意偏离移植来源(非误改):在局中的大乱斗房额外宽限一局时长(RoyaleHost.MATCH_TIME)。
+		# 刻意偏离移植来源(非误改):在局中的大乱斗房宽限 = SWEEP_INTERVAL + RoyaleHost.MATCH_TIME
+		# (即「一整个扫描周期」+「一局时长」),这个界是**可证安全**的,而非经验值。
 		# 房龄从**建房**起算,含此前在大厅等待的全部时间——一个等满 2h 才开局的房,在开局那一刻
-		# 就已"超龄";而从 royale_start/royale_start_ai 拉起 worker 到成员转连离厅有 0.3~1.5s
-		# 的窗口,扫描若落在这个窗口内,就会杀掉一个刚起 1 秒的 worker 并踢掉正在转连的成员
-		# (边界竞态)。故 in_match 者按 MAX_ROOM_AGE + 一局时长判定,泄漏仍被限住(至多多留一局)。
+		# 就已"超龄";而清扫由 _process 的 SWEEP_INTERVAL 计时器驱动(不是每帧),房间可能已经比
+		# 阈值老上**整整一个扫描周期**才等到判它超龄的那次 tick,即最迟可在房龄 MAX_ROOM_AGE +
+		# SWEEP_INTERVAL 时开局。从 royale_start/royale_start_ai 拉起 worker 到成员转连离厅还有
+		# 0.3~1.5s 的窗口,若宽限只有一局时长,紧随其后的那次 tick 仍会杀掉一个刚起几秒的 worker
+		# 并踢掉正在转连的成员(边界竞态只是被推窄,没被关闭)。宽限覆盖「阈值 + 整个扫描周期 +
+		# 一局」后,等待期攒下的那一整个周期与整局对局都落在界内,任何一次 tick 都不可能扫到在局房。
+		# 泄漏仍被限住:至多多留一个扫描周期 + 一局。
 		# 等待中(in_match=false)的房不占端口、杀不到任何东西,仍按裸 MAX_ROOM_AGE 清,无需宽限。
-		# 1v1 分支不给同样宽限:其 started 房一方掉线即整房作废(_start_match/on_peer_left),
-		# 不存在"开局后仍长期留在表里"的形态;该路径是既有行为,本次不改。
-		if now - rr.created_at > MAX_ROOM_AGE + (RoyaleHost.MATCH_TIME if rr.in_match else 0.0):
+		# 1v1 分支不享受同样宽限:"started 房一方掉线即整房作废"(_start_match/on_peer_left)堵住的
+		# 是**泄漏**,不是**竞态**——同一个开局转连窗口在 1v1 同样成立:started 房在 _start_match 的
+		# await 与客户端转连期间仍持有端口,却按裸 MAX_ROOM_AGE 判超龄,同样可能被一次 tick 连 worker
+		# 一起杀掉。本次不动 1v1 是**刻意的范围裁剪**(照实登记,而非已修好);若要同样收紧需另行评估。
+		var in_match_grace := (SWEEP_INTERVAL + RoyaleHost.MATCH_TIME) if rr.in_match else 0.0
+		if now - rr.created_at > MAX_ROOM_AGE + in_match_grace:
 			stale_royale.append(rr)
 	if stale.is_empty() and stale_royale.is_empty():
 		return
-	print("[lobby] 清理 %d 个超龄房间(1v1 %d + 大乱斗 %d,>%.0f 秒)" % [
-			stale.size() + stale_royale.size(), stale.size(), stale_royale.size(), MAX_ROOM_AGE])
+	# 日志照实报两条不同的界:1v1 与等待中的大乱斗房都是裸 MAX_ROOM_AGE,在局大乱斗房另加
+	# SWEEP_INTERVAL + RoyaleHost.MATCH_TIME(见 _sweep_stale_rooms 内 royale 分支的注释)。
+	print("[lobby] 清理 %d 个超龄房间(1v1 %d 个 >%.0f 秒;大乱斗 %d 个:等待 >%.0f 秒 / 在局 >%.0f 秒)" % [
+			stale.size() + stale_royale.size(), stale.size(), MAX_ROOM_AGE,
+			stale_royale.size(), MAX_ROOM_AGE,
+			MAX_ROOM_AGE + SWEEP_INTERVAL + RoyaleHost.MATCH_TIME])
 	for room in stale:
 		if room.worker_port > 0:
 			_kill_worker(room.worker_port)
