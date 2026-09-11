@@ -40,6 +40,10 @@ const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,�
 const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
+var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
+var _minimap: Minimap = null      # 小地图(设置开启时创建)
+var _opp_hues: Dictionary = {}    # 双方角色颜色 {role -> 色相}(扩展 peer_hues 下发)
+var _names: Dictionary = {}       # role(int) -> 昵称(peer_info 下发;击杀播报取名字用)
 
 func _ready() -> void:
 	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
@@ -74,6 +78,10 @@ func _ready() -> void:
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
+	# 对手头顶血条(设置开启时;挂 WorldViewport 走世界坐标,每帧贴到头顶)
+	if Settings.pvp_show_enemy_hp:
+		_hp_bar = EnemyHpBar.new()
+		_world.add_child(_hp_bar)
 	# 快照/事件消费
 	NetBus.local_snapshot.connect(_on_snapshot)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
@@ -85,9 +93,25 @@ func _ready() -> void:
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
+	NetBus.local_kill_event.connect(_on_kill_event)
+	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
+	if Settings.pvp_show_minimap:
+		_minimap = Minimap.new()
+		_minimap.setup(
+			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
+			func() -> Vector2:
+				if _remote_replica != null and is_instance_valid(_remote_replica):
+					return (_remote_replica as Node2D).global_position
+				return Vector2.INF)
+		add_child(_minimap)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
 	_hud = preload("res://ui/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
+	# 打击反馈层(命中 X 标记/击杀播报)在 PvP 下**已经挂上了**:main 的 Level0._ready 在建图前
+	# 就挂过一次(见 level_0.gd,位于 pvp_mode 早退**之前**),而 PvP 也是 Level0 的宿主 ——
+	# 所以这里**有意不再挂一次**,不是漏写。真重复挂会建出第二份:CombatFeedback 的 spawn 早退
+	# 要求 current 已非空,而 current 要等 deferred 实例的 _ready 才写上,同帧的第二次调用看到的
+	# 还是 null(实测 2 份),且既有探针钉着「生产路径恰好 1 处挂载点」。
 	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
@@ -157,6 +181,10 @@ func _physics_process(_delta: float) -> void:
 		"weapon": src.get_weapon_slot_pressed(),
 		"aim": aim,
 	}
+	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
+	var net_slot: int = _local.weapons.consume_net_slot()
+	if net_slot > 0:
+		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
 	_prev_sent_seq = _input_seq
 	_have_prev_seq = true
@@ -186,6 +214,10 @@ func _on_snapshot(snap: Dictionary) -> void:
 				_apply_local_state(data)
 		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
 			_remote_replica.apply_snapshot(data, _local.global_position, snap_tick)
+			# 对手血条:快照 hp → 比例(上限取 PlayerParams 玩家最大血)
+			if _hp_bar != null:
+				_hp_bar.ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
+						/ float(PlayerParams.player_max_hp)
 	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)
 	var enemies_snap: Dictionary = snap.get("enemies", {})
 	for id_str in enemies_snap:
@@ -227,6 +259,9 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
 	_world.add_child(b)
+	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
+	if Settings.pvp_show_trajectories:
+		BulletTrail.attach(b, data["color"])
 
 # 服务器权威开火(即时光束武器,激光):对手端据此画光束视觉副本(不开物理子弹,
 # 无 bullet_spawn 实体可跟)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)→
@@ -263,6 +298,13 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 		_local.take_hit(source_pos, damage, false, -1.0)
 	elif _remote_replica != null and _remote_replica.has_method("play_hit"):
 		_remote_replica.play_hit(source_pos)
+
+# 击杀播报:我击杀对手 → 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)
+func _on_kill_event(killer: int, victim: int) -> void:
+	if killer == PvpSession.role and victim != PvpSession.role:
+		CombatFeedback.kill(str(_names.get(victim, "对手")))
+	elif victim == PvpSession.role:
+		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
@@ -376,6 +418,7 @@ func _apply_p2_tint() -> void:
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
 func _on_peer_info(names: Dictionary) -> void:
+	_names = names
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:
 		return
@@ -402,4 +445,7 @@ func _process(_delta: float) -> void:
 		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET
 	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
+	# 对手血条贴在 ID 上方(倒地转体不影响,世界空间独立节点)
+	if _hp_bar != null and _remote_replica != null and is_instance_valid(_remote_replica):
+		_hp_bar.global_position = (_remote_replica as Node2D).global_position + Vector2(0.0, -116.0)
 
