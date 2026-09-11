@@ -94,6 +94,11 @@ func _ready() -> void:
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBus.local_kill_event.connect(_on_kill_event)
+	# 扩展节点(NetBusExt)三载荷:生效选项/角色色相/命中确认。与 beam_fired 不同节点是**有意的**
+	# (发送端 match_host 的 beam_fired 走 NetBus),别顺手把上面那行也统一到 NetBusExt。
+	NetBusExt.local_match_options.connect(_on_match_options)
+	NetBusExt.local_peer_hues.connect(_on_peer_hues)
+	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
@@ -307,6 +312,12 @@ func _on_kill_event(killer: int, victim: int) -> void:
 	elif victim == PvpSession.role:
 		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 
+# 命中确认(服务器裁决的弹直击,走 NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)。
+# 被射手不是自己(对手打中我)时不播 —— 那条反馈由 hit_event 的受击白闪/击退负责。
+func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
+	if shooter_role == PvpSession.role:
+		CombatFeedback.hit_marker()
+
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	if _world == null:
@@ -416,6 +427,45 @@ func _apply_p2_tint() -> void:
 	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
 	mat.set_shader_parameter("hue_shift", -65.0)   # P2 本体色相旋转 -65°
 	canvas.material = mat
+
+# 通用身体染色:只给角色本体 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/
+# 无敌半透明仍正常),武器/预瞄线不染。色相 0 = 不改色(不挂 shader),故本助手可重复调用。
+func _apply_tint(body: Node, hue_deg: float) -> void:
+	var canvas := body as CanvasItem
+	if canvas == null or is_zero_approx(hue_deg):
+		return
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
+	mat.set_shader_parameter("hue_shift", hue_deg)
+	canvas.material = mat
+
+# 对手身体颜色:走扩展 peer_hues(每个 role 上报自己选的色相)。载荷未到 / 缺本对手项时,
+# 缺省回落与 _apply_p2_tint 同一条旧规则(P2 本体 -65,其余不染)——故 _ready 里那次
+# _apply_p2_tint() 是无载荷时的落地形态,本函数是载荷到达后的覆盖。
+# 头顶名不在这里上色:名统一中性亮白,色相只区分身体(见 NAME_COLOR 处的说明)。
+func _on_peer_hues(hues: Dictionary) -> void:
+	_opp_hues = hues
+	_apply_opp_hue()
+
+func _apply_opp_hue() -> void:
+	if _remote_replica == null:
+		return
+	var opp := 3 - PvpSession.role
+	_apply_tint(_remote_replica.get_node_or_null("AnimatedSprite2D"),
+			float(_opp_hues.get(opp, -65.0 if opp == 2 else 0.0)))
+
+# 服务器下发的生效选项:同步禁用武器(本地数字键/滚轮同样被挡,出生枪自动改首个启用槽)。
+# ★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是**无条件**上行的 ——
+#   服务器若无同一张表就会 equip 成功,两端槽位错位,且权威槽位每帧把我们拉回去 ——
+#   每帧重试、永久错位(静默,不报错)。服务器端(MatchHost)已落地,这里补的是客户端这一端。
+# 信号可能早于/晚于本场景 _ready 到达,故 _local 判空。
+func _on_match_options(opts: Dictionary) -> void:
+	var disabled: Array[int] = []
+	for v in opts.get("disabled_weapons", []):
+		disabled.append(int(v))
+	PvpSession.disabled_weapons = disabled
+	if _local != null:
+		_local.weapons.set_enabled_slots(disabled)
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
 func _on_peer_info(names: Dictionary) -> void:
