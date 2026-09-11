@@ -8,12 +8,14 @@ extends Node
 # 存在理由:L5(大乱斗 = royale)把 MatchHost 开成了 RoyaleHost 的基类,并在 main 上追加
 # 了一批新接口。这些交付里有一大半是**"某段既有代码必须一个字都没动"**或**"某样东西
 # 全仓只剩一处"**——没有运行时入口,只能在源码层机械扫描。本探针就是那台扫描仪:
-#   1) ★ C2 rollback 四条在位(server/match_host.gd)。L5 给 MatchHost 加了 RoyaleHost
-#      扩展点,硬约束是「**只追加**,不碰 C2 四条」;本探针是这条约束的长期守卫:
+#   1) ★ C2 rollback 四条在位 + 生产侧 _on_input 入队(server/match_host.gd)。L5 给 MatchHost
+#      加了 RoyaleHost 扩展点,硬约束是「**只追加**,不碰 C2 四条」;本探针是这条约束的长期守卫:
 #      · 每物理 tick 每 role 恰好消费 1 个 FIFO 输入包(q.pop_front + _ack_seq 更新)
 #      · 60Hz 快照**先于**输入消费(否则 ack 领先权威状态一拍 → 移动中每次快照误判分歧)
 #      · 快照载荷同时带 ack_seq 与权威整态 c2
 #      · COUNTDOWN 分支清队列 **且** src.reset_state()
+#      · _on_input 只把到达的包**入队**(不得就地 apply / 丢队列)——前四条只管消费侧,
+#        单独改坏生产侧能全绿(见该断言的注释)
 #   2) main 既有成果在位(server/room_manager.gd 的 sweep 族 + _kill_worker)
 #   3) server_main 的 _kill_port_holder 取属主进程用修正版(不是取不到属性的 % 写法)
 #   4) ★ 零演示残留(生产目录)
@@ -129,7 +131,28 @@ func _check_c2_contract() -> void:
 		_check(i_cd < i_clear and i_cd < i_reset and i_clear < i_pop_phys and i_reset < i_pop_phys,
 				"COUNTDOWN 的清零/重置不在消费之前(不在 early-continue 分支里?): countdown=%d clear=%d reset=%d pop=%d"
 				% [i_cd, i_clear, i_reset, i_pop_phys])
-	_summary(fails_before, "C2 契约:四条在位(含快照先于消费、COUNTDOWN 早退清零、载荷带 ack_seq+c2)")
+	# ★ 第 5 条(生产侧:`_on_input`):包到达时只**入队**,不得就地应用/丢弃。
+	# 上面四条(每 tick 消费一个 / ack / 快照顺序 / COUNTDOWN 清零)全都建立在「包先入队、
+	# 由 _physics_process 每 tick 取一个」之上。若有人把 `_on_input` 改成到达即
+	# `apply_packet`(或把队列丢掉改成直接赋值),上面四条照样全绿 —— 因为它们只读
+	# 消费侧 —— 而 C2 rollback 的「1 包/tick、1:1 同序」锚点已经没了:客户端按 ack 重放
+	# 未确认输入时,服务器实际模拟的输入序列与重放序列不再同序,分歧会变成常态。
+	# 故正向钉住「按 role 建 FIFO 队列 + 到达即 append」,反向钉住「体内不得就地应用、不得清队列」。
+	var on_in := _func_body(code, "_on" + "_input")
+	_check(not on_in.is_empty(), "取不到 %s 的函数体(函数改名/挪进别的文件了?)" % ("_on" + "_input"))
+	if not on_in.is_empty():
+		var queue_init := "_pending" + "_input[role] = []"
+		_check(on_in.contains(queue_init),
+				"%s 里没有按 role 建 FIFO 队列(%s)→ 到达的包进不了缓冲" % ["_on" + "_input", queue_init])
+		_check(on_in.contains(".append(pkt)"),
+				"%s 里没有把到达的包 append 进队列(每 tick 消费一个的前提没了)" % ("_on" + "_input"))
+		_check(not on_in.contains("apply_" + "packet"),
+				"%s 里出现就地 apply_packet:包不再由 _physics_process 每 tick 消费一个 → C2 1:1 同序锚点失效"
+				% ("_on" + "_input"))
+		_check(not on_in.contains(".clear()") and not on_in.contains("pop_" + "front"),
+				"%s 里出现清队列/pop:生产侧不得消费(消费的唯一位置是 _physics_process)"
+				% ("_on" + "_input"))
+	_summary(fails_before, "C2 契约:四条在位(含快照先于消费、COUNTDOWN 早退清零、载荷带 ack_seq+c2)+ 生产侧 _on_input 入队不落地")
 
 
 # ── 2) main 既有成果在位(server/room_manager.gd)────────────────────────
