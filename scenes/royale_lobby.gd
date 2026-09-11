@@ -45,6 +45,7 @@ var _host := false
 # ── 转连对局 worker(同 matchmaking)──
 var _connecting_worker := false
 var _go_start_ms := 0
+var _claimed_ms := 0          # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
 var _pending_go_role := -1
 var _pending_go_port := -1
 
@@ -122,6 +123,14 @@ func _ready() -> void:
 	NetBus.local_match_start.connect(_on_match_start)
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
+	# ── 开局三载荷的接住/转交(自检 B2)──
+	# 昵称表/角色色相/生效选项与 match_start 在同一次 poll 到达,而本页在 match_start 里
+	# **帧末**才切场景 → 那一刻还活着的只有本页。先缓存到 PvpSession,由 royale_game 进场景时取用
+	# (详见 PvpSession 里 pending_* 的注释)。进大厅即清一次:不跨局残留上一局的载荷。
+	PvpSession.clear_pending_payloads()
+	NetBus.local_peer_info.connect(_cache_peer_info)
+	NetBusExt.local_peer_hues.connect(_cache_peer_hues)
+	NetBusExt.local_match_options.connect(_cache_match_options)
 
 	_apply_pixel_font(self)
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
@@ -334,9 +343,16 @@ func _on_lobby_connect_failed() -> void:
 	_status.text = "连接服务器失败,请检查地址"
 
 func _process(_delta: float) -> void:
+	# 1) 转连 worker 12s 没连上(worker 死了/端口没放行):**回大厅重连 + 刷新列表**,
+	#    不再只留一句提示让玩家干等在等待室里(本页原来没有任何恢复路径)。
 	if _connecting_worker and Time.get_ticks_msec() - _go_start_ms > 12000:
-		_connecting_worker = false
-		_status.text = "连接对局服务器超时——请检查对局端口(7800~7999 UDP)是否放行"
+		_return_to_lobby("对局服务器无响应——请确认对局端口(%s UDP)已放行;已返回大厅并刷新"
+				% _worker_port_span())
+		return
+	# 2) claim 后 25s 仍没 match_start(worker 中途死掉/对局没起来):同样回大厅重连刷新
+	if _claimed_ms > 0 and Time.get_ticks_msec() - _claimed_ms > 25000:
+		_return_to_lobby("对局服务器无响应(对局可能已结束)——已返回大厅并刷新,请重试")
+		return
 	if not _connecting_worker and _lobby_start_ms > 0 and not _connected \
 			and Time.get_ticks_msec() - _lobby_start_ms > 8000:
 		_lobby_start_ms = 0
@@ -346,6 +362,33 @@ func _process(_delta: float) -> void:
 	if not _royale_ack and _royale_sent_ms > 0 and Time.get_ticks_msec() - _royale_sent_ms > 8000:
 		_royale_sent_ms = 0
 		_status.text = "8 秒无响应——该服务器不支持大乱斗(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
+
+
+# worker 端口段文案(提示串用;单一来源 = RoomManager 的常量,勿手写数字——
+# 曾写 "7800~7999" 与实际池(7800~8299)不符,照它放行防火墙会漏掉半个池子,自检 D2)
+func _worker_port_span() -> String:
+	return "%d~%d" % [RoomManager.WORKER_PORT_BASE,
+			RoomManager.WORKER_PORT_BASE + RoomManager.WORKER_PORT_SPAN - 1]
+
+
+# 转连 worker 失败/无应答的兜底:断开当前连接 → 清掉一切房间态与转连态 → 重连大厅并刷新列表。
+# 没有它,worker 死掉时玩家会永久停在等待室:大厅**不监听** server_disconnected(自检),既无
+# go_match 也无 match_start,只能自己找出路——本页原先就是这样(只剩一句状态提示)。
+# 清房间态是必须的:_with_lobby 在 _in_room 时拒绝一切操作,不清就再也刷不出列表/建不了房。
+func _return_to_lobby(msg: String) -> void:
+	_connecting_worker = false
+	_claimed_ms = 0
+	_lobby_start_ms = Time.get_ticks_msec()
+	_in_room = false
+	_my_room = {}
+	if _wait_panel != null:
+		_wait_panel.visible = false
+	if _create_panel != null:
+		_create_panel.visible = true
+	NetBus.stop()
+	_connected = false
+	_status.text = msg
+	NetBus.start_client(PvpSession.server_address)
 
 
 # ── 动作 ──
@@ -401,6 +444,18 @@ func _join_room(code: String, invite: String) -> void:
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
 		NetBusExt.rpc_id(1, "royale_join", code, invite))
+
+
+# ── 开局三载荷:本页只负责接住(那一刻新场景还不存在),交给 PvpSession → royale_game ──
+# 不在这里改任何 UI 状态:本页马上要被换掉,显示与生效一律归 royale_game。
+func _cache_peer_info(names: Dictionary) -> void:
+	PvpSession.pending_peer_info = names
+
+func _cache_peer_hues(hues: Dictionary) -> void:
+	PvpSession.pending_peer_hues = hues
+
+func _cache_match_options(opts: Dictionary) -> void:
+	PvpSession.pending_match_options = opts
 
 
 # ── 服务器回复 ──
@@ -515,6 +570,8 @@ func _on_leave_room() -> void:
 func _on_go_match(role: int, port: int) -> void:
 	_pending_go_role = role
 	_pending_go_port = port
+	# 新一局开始转连:先丢掉上一局的开局载荷(第二局若投递失败,新场景取到的必须是空)
+	PvpSession.clear_pending_payloads()
 	_status.text = "开局!连接对局服务器……"
 	_do_go_match.call_deferred()
 
@@ -540,6 +597,7 @@ func _do_go_match() -> void:
 
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
+	_claimed_ms = Time.get_ticks_msec()   # 起 25s 兜底:claim 后等不到 match_start 就回大厅(见 _process)
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 	NetBusExt.rpc_id(1, "player_options", {
 		"hue": Settings.pvp_color_hue,
