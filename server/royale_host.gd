@@ -41,6 +41,11 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	_round_spawns = plan_spawns(role_peers.keys() + ai_roles)
 	_cfg_match_time = float(options.get("match_time", 0.0))
 	super._init(map_path, role_peers, options, ai_roles)
+	# 公网带宽优化:大乱斗客户端不做本地预测(c2 整态无人消费,25+ 字段/人/tick 纯浪费)
+	# 且人数多、广播是 O(N²)——快照降 30Hz(客户端渲染有插值缓冲),不再携带 C2 整态。
+	# 1v1(MatchHost 默认)仍 60Hz + 携带 c2(本地预测 ON)。
+	snapshot_interval = 1.0 / 30.0
+	snapshot_c2 = false
 
 
 # ── 开局(在 worker 进程调用):算散点出生 → 逐角色 match_start → 建 RoyaleHost ──

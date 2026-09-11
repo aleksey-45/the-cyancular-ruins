@@ -15,7 +15,9 @@ var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
 var _ack_seq: Dictionary = {}        # role(int) -> 已消费输入包 seq(C2 rollback 锚点,随快照回带)
-const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 模拟,本地玩家靠快照渲染,30Hz 太卡)
+var snapshot_interval := 1.0 / 60.0   # 快照频率(1v1=60Hz;大乱斗 30Hz 省带宽,见 RoyaleHost)
+var snapshot_c2 := true               # 快照是否携带 C2 权威整态(capture_state,25+ 字段/人/tick):
+                                      # 只有 1v1 的本地预测回滚消费它;大乱斗置 false(纯浪费,公网带宽杀手)
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
 const BODY_RADIUS := 30.0  # 扫掠判定半径:玩家身体近似圆(线段扫掠防快速子弹跳过身体)
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
@@ -153,7 +155,7 @@ func _physics_process(delta: float) -> void:
 	# C2 rollback 一比整态就现形)。放消费前:ack 仍指上 tick 消费的 C_{F-1},状态已是上一步进完的
 	# S_{F-1},配对一致(客户端期望 ack=C 配 S_C)。
 	_snapshot_accum += delta
-	if _snapshot_accum >= SNAPSHOT_INTERVAL:
+	if _snapshot_accum >= snapshot_interval:
 		_snapshot_accum = 0.0
 		_broadcast_snapshot()
 	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
@@ -304,10 +306,11 @@ func _broadcast_snapshot() -> void:
 			previewing = p.weapons.current_weapon().is_previewing()
 		# C2 rollback:快照带 ack_seq(服务器已消费到哪一输入)+ 权威整态(capture_state,替代上面散字段;
 		# 旧字段保留给服务器渲染/副本/阶段切换兼容)。换弹 mag/rl 亦随 capture_state 下发(并入 34e67a5 时该处由 c2 取代)。
+		# 公网带宽优化:整态 25+ 字段/人/tick 只有 1v1 预测回滚消费 → snapshot_c2=false(大乱斗)时整段不下发。
 		var c2 := {}
-		if p.has_method("capture_state"):
+		if snapshot_c2 and p.has_method("capture_state"):
 			c2 = p.capture_state()
-		snap["players"][str(role)] = {
+		var entry := {
 			"pos": p.global_position,
 			"vel": p.velocity,
 			"facing": p.get_facing(),
@@ -318,9 +321,11 @@ func _broadcast_snapshot() -> void:
 			"downed": p.is_downed(),
 			"aim": p.get_current_aim_dir(),
 			"previewing": previewing,
-			"ack_seq": _ack_seq.get(role, 0),
-			"c2": c2,
 		}
+		if snapshot_c2:
+			entry["ack_seq"] = _ack_seq.get(role, 0)
+			entry["c2"] = c2
+		snap["players"][str(role)] = entry
 	# 中立鸟:canonical 位置 + 当前动画名 + 朝向(副本照播;死亡由 enemy_died 事件移除)
 	var birds_snap := {}
 	for id in birds:
