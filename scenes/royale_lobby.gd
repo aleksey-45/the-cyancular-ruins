@@ -152,6 +152,7 @@ func _build_create_panel() -> void:
 	_create_invite_edit.placeholder_text = "邀请码(留空自动生成)"
 	_create_invite_edit.visible = false
 	_create_invite_edit.custom_minimum_size = Vector2(0, 40)
+	UiFactory.style_control(_create_invite_edit, 16)   # 同 _make_line_edit:显式字号=引擎默认,不靠事后递归补字体
 	vb.add_child(_create_invite_edit)
 
 	var mrow := HBoxContainer.new()
@@ -198,8 +199,10 @@ func _build_create_panel() -> void:
 	vb.add_child(wgrid)
 	for slot: int in [1, 2, 3, 4, 5, 6]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
 		var slot_i := slot
+		# 字号 32 与 scenes/matchmaking.gd 的同款调用一致:同视口、同 2 列网格、同剪影尺寸,
+		# 本列其余元素(分区标题/_public_check/下方说明)也都是 32。勿"简化"回 16(那会只有这格半尺寸)。
 		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
-				16, func(on: bool) -> void:
+				32, func(on: bool) -> void:
 				if on and not Settings.pvp_disabled_weapons.has(slot_i):
 					Settings.pvp_disabled_weapons.append(slot_i)
 				elif not on:
