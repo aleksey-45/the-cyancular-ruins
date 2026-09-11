@@ -45,7 +45,8 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	# 且人数多、广播是 O(N²)——快照降 30Hz(客户端渲染有插值缓冲),不再携带 C2 整态。
 	# 1v1(MatchHost 默认)仍 60Hz + 携带 c2(本地预测 ON)。
 	snapshot_interval = 1.0 / 30.0
-	snapshot_c2 = false
+	snapshot_c2 = false            # base 不携带整态
+	snapshot_c2_self_only = true   # 只给每个客户端补它自己的 c2(大乱斗客户端预测用)
 
 
 # ── 开局(在 worker 进程调用):算散点出生 → 逐角色 match_start → 建 RoyaleHost ──

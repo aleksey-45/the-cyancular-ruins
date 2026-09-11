@@ -17,6 +17,8 @@ var _snapshot_accum := 0.0
 var _ack_seq: Dictionary = {}        # role(int) -> 已消费输入包 seq(C2 rollback 锚点,随快照回带)
 var snapshot_interval := 1.0 / 60.0   # 快照频率(1v1=60Hz;大乱斗 30Hz 省带宽,见 RoyaleHost)
 var snapshot_c2 := true               # 快照是否携带 C2 权威整态(capture_state,25+ 字段/人/tick):
+var snapshot_c2_self_only := false    # true(大乱斗)=base 不带 c2,只给每个收件人补"他自己"那一份:
+                                      # 预测只预测自己 → 带宽增量 O(N) 而非 O(N²)(见 RoyaleHost)
                                       # 只有 1v1 的本地预测回滚消费它;大乱斗置 false(纯浪费,公网带宽杀手)
 const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
 const BODY_RADIUS := 30.0  # 扫掠判定半径:玩家身体近似圆(线段扫掠防快速子弹跳过身体)
@@ -341,10 +343,27 @@ func _broadcast_snapshot() -> void:
 		birds_snap[str(id)] = {"pos": e.global_position, "flip": flip, "anim": anim_name}
 	snap["enemies"] = birds_snap
 	# 只发给仍在线的 peer(对方中途退出后 room teardown 前残留的帧不再刷错)
+	# 大乱斗(snapshot_c2_self_only):每个收件人拿到的是"自己那份带 c2/ack 的副本",其他人无 c2
+	# —— 客户端预测只预测自己,回滚只需要自己的权威整态。浅拷贝 players 再替换自己那条,
+	# 序列化增量 = 1 个玩家的整态(而非全员的),避免把带宽打回 O(N²)。
 	var live_peers := multiplayer.get_peers()
 	for role in peer_by_role:
-		if live_peers.has(peer_by_role[role]):
-			NetBus.rpc_id(peer_by_role[role], "snapshot", snap)
+		var peer_id: int = peer_by_role[role]
+		if not live_peers.has(peer_id):
+			continue
+		if snapshot_c2_self_only and players.has(role):
+			var payload := {"tick": _snap_tick, "players": (snap["players"] as Dictionary).duplicate()}
+			if snap.has("enemies"):
+				payload["enemies"] = snap["enemies"]
+			var own: Dictionary = (snap["players"][str(role)] as Dictionary).duplicate()
+			var p_own: Node2D = players[role]
+			if p_own.has_method("capture_state"):
+				own["c2"] = p_own.capture_state()
+			own["ack_seq"] = _ack_seq.get(role, 0)
+			(payload["players"] as Dictionary)[str(role)] = own
+			NetBus.rpc_id(peer_id, "snapshot", payload)
+		else:
+			NetBus.rpc_id(peer_id, "snapshot", snap)
 
 # 子弹裁决:遍历 bullet 组。新子弹广播给非射手客户端;命中判定 = 与对手玩家的 toroidal 距离 < HIT_RADIUS。
 func _adjudicate_bullets() -> void:

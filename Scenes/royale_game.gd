@@ -15,6 +15,13 @@ var _world: Node = null
 var _hud: RoyaleHud = null
 var _match_ended := false
 var _ping_acc := 0.0
+# C2 本地预测(读设置 Settings.pvp_c2_prediction,默认开):本地自己角色引擎自步进 + 回滚重放;
+# 关闭 = 纯服务器渲染(旧行为)。与 pvp_client 同款接线;权威整态来自快照里"自己那份"c2。
+var _predict := true
+var _rollback = null
+var _input_seq := 0
+var _prev_sent_seq := 0
+var _have_prev_seq := false
 
 # ── 头上 ID / 血条(按 role 管理)──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
@@ -41,7 +48,12 @@ func _ready() -> void:
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	_local = local
-	if _local.has_method("set_server_rendered"):
+	_predict = Settings.pvp_c2_prediction
+	if _predict:
+		if _rollback == null:
+			_rollback = PredictionRollback.new()
+		_rollback.bind(_local)
+	elif _local.has_method("set_server_rendered"):
 		_local.set_server_rendered(true)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
@@ -91,6 +103,12 @@ func _physics_process(_delta: float) -> void:
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
 		NetBus.send_ping()
+	# C2:引擎本帧步进前,先把上一 seq 的预测整态入 ring,再 reconcile 到期权威
+	# (顺序:先记预测态,reconcile 才比得上 ring[C];与 pvp_client 一致)
+	if _predict and _rollback != null:
+		if _have_prev_seq:
+			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
+			_rollback.reconcile()
 	var src: InputSource = _local.input_source
 	const UP := NetworkInputSource.BIT_UP
 	const DOWN := NetworkInputSource.BIT_DOWN
@@ -122,7 +140,9 @@ func _physics_process(_delta: float) -> void:
 	if src.is_action_just_released("attack"):
 		released |= ATTACK
 	var aim: Vector2 = _local.get_current_aim_dir()
+	_input_seq += 1
 	var pkt := {
+		"seq": _input_seq,
 		"ax": src.get_axis("left", "right"),
 		"held": held,
 		"pressed": pressed,
@@ -135,6 +155,10 @@ func _physics_process(_delta: float) -> void:
 	if net_slot > 0:
 		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
+	_prev_sent_seq = _input_seq
+	_have_prev_seq = true
+	if _predict and _rollback != null:
+		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 func _on_snapshot(snap: Dictionary) -> void:
 	if _local == null:
@@ -148,7 +172,14 @@ func _on_snapshot(snap: Dictionary) -> void:
 		var role := int(role_str)
 		var data: Dictionary = players_snap[role_str]
 		if role == PvpSession.role:
-			if _local.has_method("apply_server_snapshot"):
+			if _predict and _rollback != null:
+				# C2:权威整态/ack 喂控制器(reconcile 在下一帧步进前处理;散字段位置不直接采纳;
+				# hp/倒地等也在整态里,随 restore 一并采纳)
+				var ack := int(data.get("ack_seq", 0))
+				var c2: Dictionary = data.get("c2", {})
+				if ack > 0 and not c2.is_empty():
+					_rollback.on_authoritative(ack, c2)
+			elif _local.has_method("apply_server_snapshot"):
 				_local.apply_server_snapshot(data)
 		else:
 			_ensure_replica(role)
