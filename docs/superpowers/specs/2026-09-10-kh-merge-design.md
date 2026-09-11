@@ -141,12 +141,14 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 
 - 新文件照搬：`scenes/royale_lobby.tscn/gd`、`scenes/royale_game.tscn/gd`、`scenes/royale_hud.gd`、`server/royale_host.gd`
 - **手工合并**：
-  - `server/room_manager.gd` = main 的健壮性（端口 30s 延迟归还、僵尸房清理、`started` 标志、杀端口修正）+ KH 的 `RoyaleRoom` 注册表、`ai_duel`/`royale_start_ai`、1v1 与大乱斗互斥
-  - `server/server_main.gd` = main 的 `_kill_port_holder` 修正 + KH 的 `--royale --players N [--ai-roles]` 分支与大乱斗报到超时
-  - `server/match_host.gd` = main 的 C2（ack/c2、每 tick 1 包、快照在消费前）+ KH 给 `RoyaleHost` 的扩展点：`_match_round_tick` / `_spawn_cell` / `_attributed_killer` / `_finish_match` / `_match_winner` / `_broadcast_round_state` / `_on_bullet_hit` / `_respawn_player` / `request_suicide_role` / `set_display_names` / `mark_disconnected`，以及 `_init(..., options, ai_roles)` 与 `start_on(...)`
+  - `server/room_manager.gd` = main 的健壮性（**僵尸房清理 `_sweep_stale_rooms` 族**——`SWEEP_INTERVAL`/`MAX_ROOM_AGE`/`_sweep_acc`/`_process`/`_kill_worker`，**main 独有，KH 没有**；`Room.created_at`）+ KH 的其余（**端口 30s 延迟归还** `WORKER_PORT_REUSE_DELAY` 与 **`started` 标志**——**KH 的，main 没有**）、`RoyaleRoom` 注册表、`ai_duel`/`royale_start_ai`、1v1 与大乱斗互斥
+  - `server/server_main.gd` = main 的 `_kill_port_holder` 修正（`Select -ExpandProperty OwningProcess -Unique` + `OS.execute` 末参 `true`）+ KH 的 `--royale --players N [--ai-roles]` 分支与大乱斗报到超时
+  - `server/match_host.gd` = main 的 C2（ack/c2、每 tick 1 包、快照在消费前）**只追加** + KH 的 `RoyaleHost` 扩展点。**真正需要 `match_host` 这一侧补的只有 `_broadcast_match_options` 与 `notify_direct_hit` 两个方法**；`_init(..., options, ai_roles)` 是**签名改动**，`_ready` / `_on_bullet_hit` / `_round_full_heal`（`_match_round_tick` 的倒计时分支）/ `_respawn_player` 是**就地改动**（各一处）。`RoyaleHost` 覆写的那一组（`_init` / `_spawn_cell` / `_ready` / `_match_round_tick` / `_match_winner` / `_broadcast_round_state` / `_on_bullet_hit` / `_respawn_player`）签名在 main 上**已全部具备且一致**，无需基类预留；`RoyaleHost.start_on(...)` 是子类自有 static。`set_display_names` / `mark_disconnected` / `request_suicide_role` / `_finish_match` / `_attributed_killer` 是 **`RoyaleHost` 自有方法**（随 `royale_host.gd` 整体搬入即到位），**不是 `match_host` 扩展点**——`MatchHost` 两版都没有也不需要
 - AI 补位代码就位（`core/ai_input_source.gd`、`server/ai_player.gd`、`--ai-roles`），**不接按钮**
 - ⚠️ **AI 补位与换弹闸的交互（L5 必读）**：`weapon_base.reload_active()` 现在的第二条判据是「输入源不是网络驱动」（`player.input_is_network()`），用来挡住权威服务器与远端副本。**L5 的 AI 补位若用非 network-driven 的 `AISource`，服务器侧的 AI 会被判成"本地单机"从而进入换弹** —— 打空弹夹后停火 `reload_time` 秒（霰弹 2.2s / 榴弹 2.8s）。落地时必须让 `AISource.is_network_driven()` 返回 **true**（或给 `reload_active()` 换一个更贴语义的判据），否则 AI 手感会莫名变差、且是静默的。（不会造成客户端分歧——AI 无预测端。）
 - 大乱斗客户端走 `server_rendered`；地图沿用 `maps/factory1v1.cyrm`（KH `room_manager.PVP_MAP` 即此图，与 main 同字节；落地时确认 `royale_start` 传的也是它，若 8 人散点不够再议）
+
+> **【更正 2026-09-11，L5 落地后回填】** 上面「手工合并」三条是**照 L0 侦察的错误说法写的**（L5 任务 T2 按 KH 源码逐条更正过），本节已按实际重写。原误写为：①`match_host` 的扩展点清单里列了 `_attributed_killer` / `_finish_match`——它们是 `RoyaleHost` **自有**方法，`MatchHost` 两版都没有也不需要；②清单里未列、但侦察 §6-1 声称「main 必须开」的 `set_display_names` / `mark_disconnected`——它们**也在 `royale_host.gd` 里**，随 L5 整体搬入到位，**非 `match_host` 扩展点**（`request_suicide_role` 同理，本已在规格清单里，一并归入「属 `royale_host` 自有」）；③真正需要 `match_host` 补的只有 `_broadcast_match_options` 与 `notify_direct_hit`；④`room_manager` / `server_main` 的责任描述把两个分支的成果**写反了**：「端口 30s 延迟归还」与 `started` 标志**是 KH 的**（main 没有），「僵尸房清理 `_sweep_stale_rooms`」族**是 main 独有的**（KH 没有）。L5 另有两处对 KH 的有意修订（不属「保住 main」而是「修正 KH」），记录在此免得后续层照 KH 原样回退：`royale_rooms` 纳入超龄清扫（含 `SWEEP_INTERVAL + RoyaleHost.MATCH_TIME` 宽限）与 `ROYALE_PORT_REUSE_DELAY`=360s（KH 沿用 30s 会在对局中途归还端口）。
 
 ### L6 PvP 客户端合流（最高风险）
 
