@@ -392,93 +392,10 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
-# 环面 4 邻居 BFS:返回从 from_cell 到 to_cell 的格序列(不含起点,含终点)。
-# 只走 EMPTY 格;限量访问 max_visit,超限视为无路。同格/无路返回空数组。
-# passable_pred 可传入可走性判定(如飞行敌人按自身碰撞箱是否挤得过);为空时用
-# 默认「EMPTY 可走」。传 max_visit 时需一并给出,否则默认 4000。
-static func bfs_path(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
-		passable_pred: Callable = Callable()) -> Array[Vector2i]:
-	var grid := current_grid
-	if grid.is_empty():
-		return []
-	var rows := grid.size()
-	var cols := grid[0].size()
-	if from_cell == to_cell:
-		return []
-	var visited := {from_cell: true}
-	var prev := {}
-	var queue: Array[Vector2i] = [from_cell]
-	var head := 0
-	while head < queue.size():
-		var cur := queue[head]
-		head += 1
-		if visited.size() > max_visit:
-			return []
-		for n in _neighbors4(cur, cols, rows):
-			if visited.has(n):
-				continue
-			if passable_pred.is_valid():
-				if not passable_pred.call(n):
-					continue
-			elif TileDefs.is_blocked(grid[n.y][n.x]):
-				continue
-			visited[n] = true
-			prev[n] = cur
-			if n == to_cell:
-				return _rebuild_path(prev, from_cell, to_cell)
-			queue.append(n)
-	return []
-
-
-# 与 bfs_path 相同,但目标不可达(墙隔断/挤不进/预算超限)时返回「能到达的格中离
-# to_cell 最近一格」的路径,而不是空数组。给飞行敌人当降级目标:目标格是墙或太窄
-# 时仍能沿迷宫里最近的可达格靠近,而不是空路径后直线硬冲卡墙。可达时行为与 bfs_path 一致。
-static func bfs_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
-		passable_pred: Callable = Callable()) -> Array[Vector2i]:
-	var grid := current_grid
-	if grid.is_empty():
-		return []
-	var rows := grid.size()
-	var cols := grid[0].size()
-	if from_cell == to_cell:
-		return []
-	var visited := {from_cell: true}
-	var prev := {}
-	var queue: Array[Vector2i] = [from_cell]
-	var head := 0
-	var best := from_cell
-	var best_d := toroidal_dist(from_cell, to_cell, cols, rows)
-	while head < queue.size():
-		var cur := queue[head]
-		head += 1
-		if visited.size() > max_visit:
-			break
-		var cd := toroidal_dist(cur, to_cell, cols, rows)
-		if cd < best_d:
-			best_d = cd
-			best = cur
-		for n in _neighbors4(cur, cols, rows):
-			if visited.has(n):
-				continue
-			if passable_pred.is_valid():
-				if not passable_pred.call(n):
-					continue
-			elif TileDefs.is_blocked(grid[n.y][n.x]):
-				continue
-			visited[n] = true
-			prev[n] = cur
-			if n == to_cell:
-				return _rebuild_path(prev, from_cell, to_cell)
-			queue.append(n)
-	if best == from_cell:
-		return []
-	return _rebuild_path(prev, from_cell, best)
-
-
-# A* 版 bfs_path_nearest:启发式 = 环面曼哈顿距离(4 邻域,可采纳且一致)。预算 max_visit
-# 是弹出(展开)节点数上限,与 bfs 的 visited 上限语义对齐。目标不可达/预算超限时同样
-# 返回「最近可达格」的路径。空旷区 BFS 波前会铺满半径内所有格,预算很快耗尽;A* 靠
-# 启发式直奔目标,展开节点少一个量级——这正是玩家站在高平台时鸟"上不去"的根因。
+# 环面 A*(4 邻域):启发式 = 环面曼哈顿距离(可采纳且一致)。预算 max_visit 是弹出
+# (展开)节点数上限。目标不可达/预算超限时返回「最近可达格」的路径。
+# (取代的 BFS 版在空旷区波前会铺满半径内所有格、预算很快耗尽;A* 靠启发式直奔目标,
+#  展开节点少一个量级——这正是玩家站在高平台时鸟"上不去"的根因。)
 #
 # 性能:g/prev 从 Dictionary(Vector2i 键)换成扁平 PackedInt32Array(线性索引
 # y*cols+x),visited 用 g≥0 标记;堆从「Array 装嵌套 Array」换成两条并行
@@ -541,7 +458,7 @@ static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit
 	return _rebuild_path_flat(start_idx, best_idx, cols, rows)
 
 
-# 4 邻域偏移(右/左/下/上,与旧 _neighbors4 顺序一致,保摊平后的平局行为)。
+# 4 邻域偏移(右/左/下/上)。顺序会影响平局时的路径形态,勿随意调整。
 const _DIRS4: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
 
@@ -634,24 +551,6 @@ static func _rebuild_path_flat(start_idx: int, goal_idx: int, cols: int, rows: i
 	while idx != start_idx:
 		path.push_front(Vector2i(idx % cols, idx / cols))
 		idx = _prev[idx]
-	return path
-
-
-static func _neighbors4(c: Vector2i, cols: int, rows: int) -> Array[Vector2i]:
-	return [
-		Vector2i((c.x + 1) % cols, c.y),
-		Vector2i((c.x - 1 + cols) % cols, c.y),
-		Vector2i(c.x, (c.y + 1) % rows),
-		Vector2i(c.x, (c.y - 1 + rows) % rows),
-	]
-
-
-static func _rebuild_path(prev: Dictionary, start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
-	var path: Array[Vector2i] = []
-	var cur := goal
-	while cur != start:
-		path.push_front(cur)
-		cur = prev[cur]
 	return path
 
 
