@@ -337,10 +337,17 @@ func cancel_aim() -> void:
 func is_previewing() -> bool:
 	return _aiming
 
-# PvP:服务器权威方向驱动"副本武器外观"(远端对手枪):只画朝向 + 预瞄线/弧,不读鼠标、不开火。
+# PvP:服务器权威方向驱动"副本武器外观"(远端对手枪):只画朝向 + 枪口旋转,不读鼠标、不开火。
 # 副本武器不 equip(player==null),_process 早退,由 player_replica 每帧调用本方法替代:
-# 复刻 _auto_aim 的镜像/旋转(俯仰随枪 clamp),并同步 _laser/_explosion_marker 可见性。
-func drive_remote_visual(aim_dir: Vector2, facing: int, show_preview: bool) -> void:
+# 复刻 _auto_aim 的镜像/旋转(俯仰随枪 clamp)。
+#
+# ★ 预瞄线**不对副本画**(用户裁定 2026-09-11):预瞄红线只有使用者本人可见 ——
+#   对手看不到你在蓄力重狙/榴弹。故本方法不再收 show_preview 参数,并显式把 _aiming
+#   压回 false(而不是"因为没人置位所以恰好为假"),让"副本永不预瞄"成为写下来的意图:
+#   _aiming 为假 → 下面 _update_laser() 会隐藏 _laser 与爆点标记。
+#   服务端快照仍带 previewing 字段(见 match_host._broadcast_snapshot),此处刻意不消费它 ——
+#   若日后要改回"看得见"(或改成别的提示形式,如音效/轮廓),从这里接。
+func drive_remote_visual(aim_dir: Vector2, facing: int) -> void:
 	if _laser == null or muzzle == null:
 		return   # _ready 的 call_deferred 尚未建好(换枪当帧),下帧再驱动
 	if aim_dir == Vector2.ZERO:
@@ -349,7 +356,7 @@ func drive_remote_visual(aim_dir: Vector2, facing: int, show_preview: bool) -> v
 	_current_aim_facing = facing
 	rotation = clamp_pitch(aim_dir, facing, pitch_clamp_deg) * float(facing)
 	scale.x = float(facing)
-	_aiming = show_preview
+	_aiming = false
 	_update_laser()
 
 func get_movement_multiplier() -> Vector2:
