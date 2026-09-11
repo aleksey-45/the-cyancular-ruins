@@ -347,11 +347,17 @@ func ai_duel(caller: int) -> void:
 	if host_room == null:
 		NetBus.rpc_id(caller, "server_message", "只有建房(房主)才能开 AI 对战")
 		return
-	# L5 合并补丁(刻意偏离移植来源,非误改):royale_start(:314)/royale_start_ai(:372) 都有的
-	# 「已开局即拒绝」守卫,本 handler 从另一分支原样移植时缺失。没有它,同一房重复调用会再拉
-	# 一个 worker 并覆盖 worker_port,首个端口从此无人归还(与下方端口泄漏同一后果)。
+	# L5 合并补丁(刻意偏离移植来源,非误改):royale_start / royale_start_ai 都有的
+	# 「已开局即拒绝」守卫,本 handler 从另一分支原样移植时缺失。
+	# (本文件内引用一律写函数名不写行号 —— 行号会随每次编辑腐烂,而这段注释存在的意义就是
+	#  让后来者看懂偏离;引错行号比不引更坏。)
+	# 真实可达路径(不是"同房重复调用"——本房在本函数 :369 就摘除了,重入会在上面的
+	# `host_room == null` 就返回):一个**已配对开局的 1v1 房**(`_start_match` 置 `started = true`)
+	# 在 `go_match` 后、`on_peer_left` 把它从 rooms 摘除前的窗口里收到 AI 对战请求 →
+	# 会**再拉一个 worker 并覆盖 worker_port**,而本房紧接着被摘除 → 首个端口从此无人归还
+	# (与下方那条泄漏同一后果)。协议可达(RPC 是 any_peer),暂无界面调用点(D13)。
 	if host_room.started:
-		return   # 已开局(重复请求防重入:不会双开 worker)
+		return   # 已开局:拒绝(防双开 worker 覆盖 worker_port)
 	var port := _pick_worker_port()
 	if port < 0:
 		NetBus.rpc_id(caller, "server_message", "无法分配对局端口")
@@ -361,8 +367,8 @@ func ai_duel(caller: int) -> void:
 		_worker_ports.erase(port)
 		NetBus.rpc_id(caller, "server_message", "无法启动对局")
 		return
-	# L5 合并补丁(刻意偏离移植来源,非误改):下一行把房间从 rooms 摘除后,on_peer_left(:150)
-	# 与 _sweep_stale_rooms(:504) 都只遍历 rooms,再无任何路径能归还本端口 —— 不在此处释放就会
+	# L5 合并补丁(刻意偏离移植来源,非误改):下一行把房间从 rooms 摘除后,on_peer_left
+	# 与 _sweep_stale_rooms 都只遍历 rooms,再无任何路径能归还本端口 —— 不在此处释放就会
 	# 永久占用(500 次后 _pick_worker_port 返回 -1,大厅彻底拉不起 worker)。
 	# _release_port_later 是协程(内含 await),fire-and-forget 不 await(与 on_peer_left 同法)。
 	_release_port_later(port)
