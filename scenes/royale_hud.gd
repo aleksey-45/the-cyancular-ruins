@@ -2,7 +2,7 @@ class_name RoyaleHud
 extends CanvasLayer
 
 # 大乱斗 HUD(CanvasLayer layer=130):
-#  - 左上角击杀排行榜(实时):名次/昵称/击杀数/存活状态,自己高亮;下方显示剩余时间
+#  - 右上角击杀排行榜(实时):名次/昵称/击杀数/存活状态,自己高亮;下方显示剩余时间
 #  - 广播层:全屏遮罩 + 居中巨字(开局倒计时/终局胜败)
 #  - 延迟(右下角)
 # 数据全部来自 round_state 载荷:{state, scores(总击杀), timer, names, alive, left, match_winner}
