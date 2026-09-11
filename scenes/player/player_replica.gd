@@ -27,7 +27,9 @@ var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟
 var _have_data := false
 var _facing := 1
 var _aim := Vector2(1.0, 0.0)
-var _previewing := false   # 对手是否正在预瞄(heavy 蓄力):驱动副本武器的预瞄红线/弧
+var _previewing := false   # 对手是否正在预瞄(heavy 蓄力)。快照仍带该字段,但**不再驱动任何外观**
+                           # ——预瞄红线只有使用者本人可见(用户裁定 2026-09-11);保留是给日后
+                           # 想换成别的提示形式(音效/轮廓)时用,届时从 _drive_weapon_visual 接。
 var _downed := false
 var _hit_flash_t := 0.0
 
@@ -124,12 +126,12 @@ func _swap_weapon(slot: int) -> void:
 	_weapon = scene.instantiate()
 	_weapon_slot_node.add_child(_weapon)
 
-# 枪口朝向 + 预瞄线/弧:委托 WeaponBase.drive_remote_visual(副本武器不 equip,由其驱动外观,
-# 不读鼠标/不开火)。倒地时隐藏预瞄(与单机 combat.went_down→cancel_aim 一致)。
+# 枪口朝向/枪口仰角:委托 WeaponBase.drive_remote_visual(副本武器不 equip,由其驱动外观,
+# 不读鼠标/不开火)。★ 预瞄红线**不在此画**(用户裁定 2026-09-11:只有使用者本人可见)。
 func _drive_weapon_visual() -> void:
 	if _weapon == null or not _weapon.has_method("drive_remote_visual"):
 		return
-	_weapon.drive_remote_visual(_aim, _facing, _previewing and not _downed)
+	_weapon.drive_remote_visual(_aim, _facing)
 
 func _process(delta: float) -> void:
 	if _have_data:

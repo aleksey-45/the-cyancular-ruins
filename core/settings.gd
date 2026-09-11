@@ -65,6 +65,11 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 
 # ── 键位重映射 ──
 # 每动作支持**多个**键位(原作默认:up=W+空格、down=S+Shift),存取都保序完整往返。
+# 取该动作的**首个**事件,只给「单键位显示」用(如设置界面一栏一键)。
+# ⚠ 与 set_binding 的组合语义:set_binding 是 erase 后只写一个事件的**单键写入** → 用户
+#   主动重绑某动作 = 把该动作改成单键(多键动作如 up = W + Space 会被静默压成单键)。
+#   这是本项目键位重绑的设计语义,不是缺陷。要显示一个动作的**全部**键位请用
+#   get_binding_names()(逐个遍历);save()/load_settings() 同样遍历全部事件,往返不丢键。
 func get_binding(action: String) -> InputEvent:
 	var evs := InputMap.action_get_events(action)
 	return evs[0] if evs.size() > 0 else null

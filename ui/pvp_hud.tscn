@@ -30,7 +30,7 @@ alignment = 1
 
 [node name="BigLabel" type="Label" parent="Center/VBox"]
 theme_override_colors/font_color = Color(0.95, 0.95, 0.95, 0.9)
-theme_override_font_sizes/font_size = 150
+theme_override_font_sizes/font_size = 144
 theme_override_fonts/font = ExtResource("2")
 text = ""
 horizontal_alignment = 2
@@ -51,7 +51,7 @@ offset_right = 980.0
 offset_bottom = -18.0
 grow_vertical = 0
 theme_override_colors/font_color = Color(0.9, 0.95, 1.0, 1.0)
-theme_override_font_sizes/font_size = 34
+theme_override_font_sizes/font_size = 32
 theme_override_fonts/font = ExtResource("2")
 text = ""
 
@@ -69,6 +69,6 @@ grow_vertical = 0
 mouse_filter = 2
 horizontal_alignment = 2
 theme_override_colors/font_color = Color(0.75, 0.8, 0.9, 0.9)
-theme_override_font_sizes/font_size = 24
+theme_override_font_sizes/font_size = 32
 theme_override_fonts/font = ExtResource("2")
 text = "延迟 -- ms"
