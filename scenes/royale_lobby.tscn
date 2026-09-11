@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://royalelobby00001"]
+
+[ext_resource type="Script" path="res://scenes/royale_lobby.gd" id="1"]
+
+[node name="RoyaleLobby" type="Control"]
+script = ExtResource("1")

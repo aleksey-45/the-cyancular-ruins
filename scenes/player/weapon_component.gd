@@ -73,9 +73,9 @@ static func make_weapon_check(slot: int, checked: bool, font_size: int, on_toggl
 	icon.custom_minimum_size = Vector2(96, 30)
 	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	cell.add_child(icon)
-	var l := Label.new()
-	l.text = "%d %s" % [slot, DISPLAY_NAMES[slot]]
-	l.add_theme_font_size_override("font_size", font_size)
+	# 走 UiFactory:它同时写 font 与 font_size 两个 override。原先只写字号 → 本行文字
+	# 落回默认主题字体,与同页面其它 Label(像素字体)不一致。
+	var l := UiFactory.label("%d %s" % [slot, DISPLAY_NAMES[slot]], font_size)
 	cell.add_child(l)
 	return cell
 

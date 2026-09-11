@@ -16,7 +16,8 @@ extends Node
 #   4) 退役的 ESC 菜单零引用(类不存在、文件不存在、无代码引用)
 #   5) L4 新接口在位(Level0.safe_change_scene 必须 static / restart_single /
 #      Player.restart_at / WeaponComponent.refill_current_weapon+reset_mag_state)
-#   6) 主菜单不含大乱斗入口(源码级零 royale 字样)
+#   6) 主菜单的大乱斗入口恰 1 处且指向 royale_lobby.tscn(L4 约束 2 已到期反转:
+#      L4 那版是「零 royale 字样」,L5 连场景一起加后改为正向钉「必须恰有 1 个入口」)
 #
 # --quit-after 是安全网:本脚本引用 Level0 等 autoload 标识符;若某个 autoload 被删掉,
 # 脚本编译失败 → 场景根节点无脚本 → 一行都不打印、命令挂死。有它最坏只是超时退出。
@@ -50,7 +51,7 @@ func _ready() -> void:
 	_check_font_size_law()
 	_check_old_escape_menu_retired()
 	_check_new_api()
-	_check_no_royale_entry()
+	_check_royale_entry()
 	_finish()
 
 
@@ -329,14 +330,26 @@ func _check_new_api() -> void:
 	print("[L4] 新接口:Level0.safe_change_scene(static)/restart_single、Player.restart_at、WeaponComponent.refill_current_weapon+reset_mag_state 全部在位")
 
 
-# ── 6) 主菜单不含大乱斗入口 ──────────────────────────────────────────
-# 大乱斗是下一层(L5/L6)的内容,本层菜单不许出现半截入口(点了没反应的按钮 = 假入口)。
-func _check_no_royale_entry() -> void:
+# ── 6) 主菜单的大乱斗入口:L4 约束 2 的到期日已到(断言反转)───────────
+# L4 那版这条断言是「零 royale 字样」,理由写在 L4 硬约束 2 里:**那时 royale_lobby.tscn
+# 还不存在**,菜单先加按钮就是悬空引用(点了没反应的按钮 = 假入口),所以约定
+# 「L4 加了就是悬空引用,L5 连场景一起加」。L5 已把场景与按钮一起落地,断言随之反转:
+# 不再是「不许有」,而是**必须恰好有 1 处、且指向 royale_lobby.tscn**——入口漏加/被删
+# (0 处)或指向别处(路径写错、指回已退役场景)都算红。反向约束与正向约束一样是约束,
+# 删掉这条就等于把入口的存在性放空。
+# 判据取**场景路径**而不是 royale 字样:实现里还有 PvpSession.royale 这类标识符,
+# 数字样会连带命中、数不准;数「指向该场景的字符串」才等于数「入口个数」。
+func _check_royale_entry() -> void:
 	var src := _read("res://scenes/main_menu.gd")
 	_check(not src.is_empty(), "读不到 scenes/main_menu.gd")
-	_check(not src.to_lower().contains("roy" + "ale"),
-			"主菜单仍含大乱斗(royale)字样 —— 本层不该有该入口")
-	print("[L4] 主菜单大乱斗入口:零命中")
+	var needle := "res://scenes/" + "roy" + "ale" + "_lobby.tscn"
+	var n := src.count(needle)
+	_check(n == 1, "主菜单大乱斗入口应恰好 1 处指向 %s(实际 %d 处)" % [needle, n])
+	# 悬空引用守卫:L4 那条「零 royale 字样」的动机正是**不让菜单指向不存在的场景**(按钮
+	# 点了没反应 = 假入口)。只数字符串会把「场景被删/改名」读成绿 —— 必须让路径本身可解析
+	# (同 _check_old_escape_menu_retired 里 ResourceLoader.exists 的用法)。
+	_check(ResourceLoader.exists(needle), "大乱斗入口指向的场景 %s 不存在(悬空引用)" % needle)
+	print("[L4] 主菜单大乱斗入口:命中 %d 处(%s)" % [n, needle])
 
 
 # ── 工具 ────────────────────────────────────────────────────────────
@@ -389,16 +402,40 @@ func _read(path: String) -> String:
 	return f.get_as_text() if f != null else ""
 
 
-# 剥掉整行注释(允许缩进;GDScript 用 #)。供"零引用"类断言用:历史注释讲的是动机,
-# 不是引用 —— 与 kh_l3_probe._code_only 同一做法。
+# 剥注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本 —— 整行注释与**行尾注释**
+# 都删。供"零引用/在位"类断言用:注释讲的是动机,不是代码(与 kh_l5_probe._code_only 同一做法)。
+# ⚠ 只删**整行**注释是不够的(旧做法,实测):行尾注释照样留在视图里 —— 一句提到退役名的行尾
+#    注释能让「零引用」断言假红(代码一行没改),反过来也能把被删的调用名"喂"给「在位」类断言。
 func _code_only(src: String) -> String:
 	var out: Array[String] = []
 	for line in src.split("\n"):
-		var s: String = (line as String).strip_edges()
-		if s.is_empty() or s.begins_with("#"):
+		var s: String = _strip_line_comment(line).strip_edges()
+		if s.is_empty():
 			continue
 		out.append(s)
 	return "\n".join(out)
+
+
+# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义的处理与 _match_paren 同法)。
+# 行尾注释不是代码,却能把被删掉的调用名重新"喂"给按源码文本判在位的断言。
+# ⚠ 已知边界:`"""…"""` 多行字符串**不跨行带状态**(本函数逐行调用)—— 它第 2 行起若出现 `#`,
+#    会被当成注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 `#`,暂无影响。
+func _strip_line_comment(line: String) -> String:
+	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
+	var j := 0
+	while j < line.length():
+		var ch := line[j]
+		if quote != "":
+			if ch == "\\":
+				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
+			elif ch == quote:
+				quote = ""
+		elif ch == "\"" or ch == "'":
+			quote = ch
+		elif ch == "#":
+			return line.substr(0, j)
+		j += 1
+	return line
 
 
 # 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:

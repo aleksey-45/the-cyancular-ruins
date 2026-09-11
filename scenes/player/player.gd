@@ -179,12 +179,6 @@ func _ready() -> void:
 	call_deferred("add_child", WaterFx.new())
 
 
-# 指数缓动：朝目标值逼近。rate 越大越跟手；
-# 起步快后渐缓、松键带滑行、转身平滑穿过 0，避免线性 move_toward 的生硬。
-func _approach(current: float, target: float, rate: float, delta: float) -> float:
-	return lerp(current, target, 1.0 - exp(-rate * delta))
-
-
 func _physics_process(delta: float) -> void:
 	if server_rendered:
 		_update_server_rendered(delta)
@@ -196,9 +190,9 @@ func _physics_process(delta: float) -> void:
 		else:
 			velocity.y += gravity * delta
 		if is_on_floor():
-			velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+			velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
 		else:
-			velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
+			velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
 		if absf(velocity.x) < STOP_SNAP:
 			velocity.x = 0.0
 		combat.apply_knock(delta)
@@ -300,14 +294,14 @@ func _physics_process(delta: float) -> void:
 			var target_velocity_x = horizontal_input * speed_target * mult.x
 			if horizontal_input != 0:
 				if is_on_floor():
-					velocity.x = _approach(velocity.x, target_velocity_x, accel_ground, delta)
+					velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_ground, delta)
 				else:
-					velocity.x = _approach(velocity.x, target_velocity_x, accel_air, delta)
+					velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_air, delta)
 			else:
 				if is_on_floor():
-					velocity.x = _approach(velocity.x, 0.0, brake_ground, delta)
+					velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
 				else:
-					velocity.x = _approach(velocity.x, 0.0, brake_air, delta)
+					velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
 				# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
 				if absf(velocity.x) < STOP_SNAP:
 					velocity.x = 0.0

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://khl6probe000001"]
+
+[ext_resource type="Script" path="res://tests/kh_l6_probe.gd" id="1"]
+
+[node name="KhL6Probe" type="Node"]
+script = ExtResource("1")
