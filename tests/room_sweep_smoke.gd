@@ -16,7 +16,34 @@ func _initialize() -> void:
 		_finish()
 		return
 	_check(src)
+	_check_argv_contract()
 	_finish()
+
+
+# ── 批次 2 新增:role 协议必须是**显式 role 集合**(--roles)──
+# 旧协议传「人数 + role 上界」两个整数:两者量纲不同、且都得从人数**推导**;而 role 由
+# royale_join 的「最小空闲号」分配、有人退出后不重排 → 编号会留空洞(房里 {1,3} 而成员 2 人),
+# 推导必然出错 → 持 3 号的真客户端被当串线踢掉(历史 B1)。故做**反向**断言:旧标识符一个都不许复活。
+# 它防的是这套 argv 契约的**历史故障模式** —— 大厅与 worker 两边只改一边(CLAUDE.md 明文要求同步改)。
+func _check_argv_contract() -> void:
+	for f in ["res://server/server_main.gd", "res://server/room_manager.gd"]:
+		var txt := FileAccess.get_file_as_string(f)
+		if txt.is_empty():
+			_fail = "无法读取 %s" % f
+			return
+		for line in txt.split("\n"):
+			var t: String = line.strip_edges()
+			if t.is_empty() or t.begins_with("#"):
+				continue   # 注释里提旧协议名是**有意的**(留档为什么换掉),不算违规
+			for bad in ["--players", "--max-role", "_role_bound", "_expected_players"]:
+				if t.contains(bad):
+					_fail = "%s 的代码里仍有旧 argv 协议标识符 %s(应已换成 --roles 集合)" % [f, bad]
+					return
+	# 正向:集合协议必须在两边都在位(只改一边 = 拉起的 worker 收不到 role 集合,静默降级)
+	for f in ["res://server/server_main.gd", "res://server/room_manager.gd"]:
+		if not FileAccess.get_file_as_string(f).contains('"--roles"'):
+			_fail = "%s 未接 --roles(集合协议只接了一半?)" % f
+			return
 
 func _check(src: String) -> void:
 	if not src.contains("const SWEEP_INTERVAL := 600.0"):

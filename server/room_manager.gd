@@ -388,14 +388,14 @@ func royale_start(caller: int) -> void:
 		return
 	rr.worker_port = port
 	rr.in_match = true
-	if not _spawn_royale_worker(port, rr.players.size(), _royale_role_bound(rr)):
+	if not _spawn_royale_worker(port, rr.player_role.values()):
 		rr.in_match = false
 		_worker_ports.erase(port)
 		NetBus.rpc_id(caller, "server_message", "无法启动对局")
 		return
 	# 房主对局选项经 worker 侧 NetBusExt.player_options 以 role1 报到为准;这里随开局存档不打扰
-	print("大乱斗房 %s 开局(%d 人,role 上界 %d)→ worker 端口 %d" % [rr.code, rr.players.size(),
-			_royale_role_bound(rr), port])
+	print("大乱斗房 %s 开局(%d 人,roles %s)→ worker 端口 %d" % [rr.code, rr.players.size(),
+			str(rr.player_role.values()), port])
 	# 稍等 worker 完成 bind,再全员转连
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(rr, port)
@@ -474,7 +474,8 @@ func royale_start_ai(caller: int) -> void:
 	rr.in_match = true
 	# AI role 号 = 1..max_players 内**人类未占用**的空闲号(见 _royale_free_roles)
 	var ai_roles := _royale_free_roles(rr, ai_count)
-	if not _spawn_royale_worker(port, rr.max_players, _royale_role_bound(rr, ai_roles), ai_roles):
+	# 参战集合 = 房里真人的已分配号 + AI 补位号(真人号可能带空洞,故不能写成 1..max_players)
+	if not _spawn_royale_worker(port, rr.player_role.values() + ai_roles, ai_roles):
 		rr.in_match = false
 		_worker_ports.erase(port)
 		NetBus.rpc_id(caller, "server_message", "无法启动对局")
@@ -483,20 +484,9 @@ func royale_start_ai(caller: int) -> void:
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(rr, port)
 
-# 大乱斗 worker 的**角色号上界**(worker 拿它判 claim 合法性,见 server_main._on_role_claimed)。
-# 刻意与「成员数」分开:role 由 royale_join 的「最小空闲号」分配,有人退出后不重排,
-# 编号会留空洞(如 3 人房里中间那位退出 → 房里是 {1,3},成员数 2 < 最高 role 3)。
-# 此时若把成员数当上界,worker 会把**手持 3 号的真客户端**当串线踢掉 → 只剩 1 个 claim,
-# worker 的超时梯走完退出,两名客户端卡在「连接对局服务器超时」且无恢复路径(自检 B1)。
-# 上界取实际已分配的最高 role,既不漏放任何真客户端,又不比成员数宽松多少
-# (空洞多大就宽松多少),串线防线基本不变。
-func _royale_role_bound(rr: RoyaleRoom, ai_roles: Array = []) -> int:
-	var bound := 0
-	for r in rr.player_role.values():
-		bound = maxi(bound, int(r))
-	for r in ai_roles:
-		bound = maxi(bound, int(r))
-	return bound
+# (原 _royale_role_bound 已删 —— 它存在的唯一理由是协议里没有「本局有哪些 role」这个信息,
+#  只能从人数推导出"上界"来兜。改成 --roles 显式传集合后,worker 侧的判据就是「在集合内」,
+#  精确且不需要任何特例函数。见 server_main.gd 文件头。)
 
 # AI 补位用的 role 号:取 1..max_players 内**人类未占用**的最小空闲号。
 # 不能用「成员数 + 1 + i」——那是「编号恒连续」的假设;有人退出留空洞时(如真人 {1,3}),
@@ -515,29 +505,35 @@ func _royale_free_roles(rr: RoyaleRoom, count: int) -> Array:
 			used[r] = true
 	return out
 
-# 拉起 N 人大乱斗 worker(--royale --players N --max-role R;其余同 _spawn_worker)
-# players=**预期报到总人数**(含 AI:worker 拿它做收齐判据与 AI 数减法),
-# max_role=**role 号上界**(worker 拿它判 claim 合法性;两者语义不同,勿合并,见 _royale_role_bound)。
-func _spawn_royale_worker(port: int, players: int, max_role: int, ai_roles: Array = []) -> bool:
+# 拉起大乱斗 worker(--royale --roles 1,2,3 [--ai-roles r,r];其余同 _spawn_worker)
+# roles = **本局全部参战 role**(真人已分配号 + AI 补位号),由大厅显式传入。
+# ★ 不再传「人数 + role 上界」两个整数:role 由 royale_join 的「最小空闲号」分配、有人退出后
+#   不重排,编号会留空洞(房里 {1,3} 而成员 2 人)—— 从人数**推导** role 集合必然出错(历史 B1
+#   就是这么把持 3 号的真客户端当串线踢掉的)。集合直接传过去则精确,且不需要任何"上界该放宽
+#   多少"的特例函数。
+func _spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
+	var role_strs := []
+	for r in roles:
+		role_strs.append(str(int(r)))
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	# editor 与 template_debug(调试引擎)都要带 --path+场景;仅导出 exe 可省(dedicated_server 主场景)
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
 		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--royale",
-				"--port", str(port), "--players", str(players), "--max-role", str(max_role)])
+				"--port", str(port), "--roles", ",".join(role_strs)])
 	else:
 		args = PackedStringArray(["--headless", "--", "--worker", "--royale",
-				"--port", str(port), "--players", str(players), "--max-role", str(max_role)])
+				"--port", str(port), "--roles", ",".join(role_strs)])
 	if not ai_roles.is_empty():
-		var roles := []
+		var ai_strs := []
 		for r in ai_roles:
-			roles.append(str(int(r)))
+			ai_strs.append(str(int(r)))
 		args.append("--ai-roles")
-		args.append(",".join(roles))
+		args.append(",".join(ai_strs))
 	var pid := OS.create_process(exe, args)
-	print("[lobby] spawn royale worker pid=%d port=%d players=%d max_role=%d ai=%s" % [pid, port,
-			players, max_role, str(ai_roles)])
+	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s" % [pid, port,
+			str(roles), str(ai_roles)])
 	return pid > 0
 
 # ── 配对完成 → 拉起对局 worker 并让两端转连 ──

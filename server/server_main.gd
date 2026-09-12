@@ -3,11 +3,12 @@ extends Node2D
 #  - 无参数:大厅(默认,7777)——只做建房/配对;配对完成后为每局拉起一个 --worker 子进程。
 #  - `--worker --port P`:1v1 对局 worker——独占 UDP 端口 P,等两名客户端 claim_role 后
 #    RoomManager.start_match_on 建权威 MatchHost,任一方离开即拆局退出(释放端口)。
-#  - `--worker --royale --port P --players N --max-role R`:大乱斗 worker——限时死斗(RoyaleHost),
-#    收齐 (N - AI 数) 个人类角色(或 20s 超时按已到人数 ≥2)开局;单个掉线移出对局,全员走光才退出。
-#    N=预期报到总人数(收齐判据);R=**role 号上界**(claim 合法性判据)——两者刻意分开:
-#    role 由大厅的「最小空闲号」分配,有人退出后会留空洞(如房里 {1,3} 而只有 2 人),
-#    拿人数当上界会把手持 3 号的真客户端当串线踢掉(详见 RoomManager._royale_role_bound)。
+#  - `--worker --royale --port P [--roles 1,3] [--ai-roles r,r]`:大乱斗 worker——限时死斗(RoyaleHost),
+#    收齐全部人类 role(或 20s 超时按已到人数 ≥2)开局;单个掉线移出对局,全员走光才退出。
+#    `--roles` = **本局全部参战 role**(真人已分配号 + AI 补位号),由大厅显式传入。
+#    ★ 不再传「人数 + role 上界」两个整数:role 由大厅的「最小空闲号」分配,有人退出后会留空洞
+#    (如房里 {1,3} 而只有 2 人),**从人数推导必然出错** → 持 3 号的真客户端会被当串线踢掉
+#    (历史自检 B1)。集合传过来则精确,不需要任何"上界该放宽多少"的特例函数。
 
 var _host: Node = null
 var _claims: Dictionary = {}   # role(int) -> peer_id(worker 视角)
@@ -16,8 +17,9 @@ var _claim_opts: Dictionary = {}   # role(int) -> 本端选项(颜色/规则偏�
 var _wait_timer := 0.0
 # ── 大乱斗 worker(--royale --players N --max-role R):限时死斗 ──
 var _royale := false
-var _expected_players := 2      # 预期报到总人数(含 AI 补位):收齐判据 + 减法算人类数
-var _role_bound := 0            # 合法 role 上界(见 RoomManager._royale_role_bound;0=未给,--max-role 缺省回落到 _expected_players)
+# 本局的**全部参战 role**(含 AI 补位号),由大厅经 --roles 显式传入 —— 见文件头注释:
+# 从"人数"推导 role 集合必然出错(编号会留空洞),历史 B1 就是这么踢掉真客户端的。
+var _role_set: Array[int] = []
 var _ai_roles: Array = []    # AI 补位的 role 列表(实验性;这些 role 不等 claim,由服务端 AI 驱动)
 var _claim_wait := 0.0
 var _understaffed_wait := 0.0   # 开局前可用玩家 <2 的持续时长(超时退出释放端口)
@@ -40,12 +42,12 @@ func _ready() -> void:
 			"--port":
 				if i + 1 < args.size():
 					port = int(args[i + 1])
-			"--players":
+			"--roles":
 				if i + 1 < args.size():
-					_expected_players = clampi(int(args[i + 1]), 2, 8)
-			"--max-role":
-				if i + 1 < args.size():
-					_role_bound = clampi(int(args[i + 1]), 2, 8)
+					for tok in str(args[i + 1]).split(","):
+						var r := int(tok.strip_edges())
+						if r >= 1 and r <= 8:
+							_role_set.append(r)
 			"--ai-roles":
 				if i + 1 < args.size():
 					for tok in str(args[i + 1]).split(","):
@@ -53,10 +55,15 @@ func _ready() -> void:
 						if r >= 1 and r <= 8:
 							_ai_roles.append(r)
 	if is_worker:
-		# 未显式给 --max-role(手工/旧式命令行)时回落到「人数即上界」= 编号恒连续假设下的旧语义;
-		# 大厅拉起时**总会**带 --max-role,故这条回落只影响手工调用。
-		if _royale and _role_bound < 2:
-			_role_bound = _expected_players
+		if _royale:
+			if _role_set.is_empty():
+				# 大厅拉起时**总会**带 --roles;空集合只可能是手工命令行漏了。
+				# 不猜一个集合出来开局(猜错 = 静默踢真客户端,正是 B1),直接拒绝启动。
+				push_error("大乱斗 worker: 缺 --roles(本局参战 role 集合),拒绝启动")
+				get_tree().quit(1)
+				return
+		elif _role_set.is_empty():
+			_role_set = [1, 2]   # 1v1 形态(手工调用兜底;大厅路径不带 --roles)
 		_run_worker(port)
 		return
 	# ── 大厅 ──
@@ -164,17 +171,27 @@ func _run_worker(port: int) -> void:
 	NetBus.peer_left.connect(_on_peer_left)
 	NetBusExt.suicide_requested.connect(_on_suicide_request)
 	if _royale:
-		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d)" % [_expected_players, port])
+		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s)" % [
+				_human_role_count(), port, str(_role_set)])
 	else:
 		print("worker 就绪,等待两名玩家……(port %d)" % port)
 	_print_local_ips()
+
+# 需要真人 claim 的 role 数 = 参战集合 − AI 补位号。收齐判据与提示都用它。
+func _human_role_count() -> int:
+	var n := 0
+	for r in _role_set:
+		if not _ai_roles.has(int(r)):
+			n += 1
+	return n
+
 
 func _process(delta: float) -> void:
 	# 大乱斗:有人报到但 20s 仍未收齐 → 按已到人数(≥2)直接开局(缺席角色不入局)
 	if _royale and not _match_started and _host == null and _claims.size() >= 2:
 		_claim_wait += delta
 		if _claim_wait > 20.0:
-			print("worker: 报到超时(%d/%d),按已到人数开局" % [_claims.size(), _expected_players])
+			print("worker: 报到超时(%d/%d),按已到人数开局" % [_claims.size(), _human_role_count()])
 			_begin_match()
 	# 大乱斗:可用玩家不足 2 人(开局前全部掉线)→ 宽限后退出释放端口
 	# (原 M1:只重置计时继续等 → worker 僵死占端口,大厅 30s 回收后撞车新对局)
@@ -204,10 +221,10 @@ func _on_suicide_request(caller: int) -> void:
 func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 	# 防串线:对局已开始、role 越界、或该 role 已被其他 peer 占用 → 这个连接不属于本局,直接踢。
 	# (端口复用竞态下,迟到的客户端可能连到旧 worker;不能让它静默留在局里收快照/子弹。)
-	# 越界判据用 _role_bound(大厅给的最高 role),**不是** _expected_players(人数):
-	# 房内有人退出会留 role 空洞,人数会小于房内最高 role → 那样会踢掉真客户端(自检 B1)。
+	# 越界判据 = 「role 是否在本局参战集合内」(大厅经 --roles 显式传入),**不是**任何从人数
+	# 推导出来的界:房内有人退出会留 role 空洞({1,3} 而成员 2 人),拿人数当上界会踢掉真客户端(自检 B1)。
 	if _host != null or _match_started \
-			or (_royale and (role < 1 or role > _role_bound)) \
+			or (_royale and not _role_set.has(role)) \
 			or (_claims.has(role) and _claims[role] != caller):
 		print("worker: 拒绝串线连接 peer=%d(role=%d)" % [caller, role])
 		multiplayer.multiplayer_peer.disconnect_peer(caller)
@@ -218,9 +235,9 @@ func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 	_claim_names[role] = player_name
 	if _royale:
 		print("worker: 大乱斗角色 %d = peer %d (%d/%d 人,另有 %d 个 AI)" % [role, caller,
-				_claims.size(), _expected_players - _ai_roles.size(), _ai_roles.size()])
+				_claims.size(), _human_role_count(), _ai_roles.size()])
 		# 收齐全部人类(其余角色由 AI 补位)即开局
-		if _claims.size() >= _expected_players - _ai_roles.size():
+		if _claims.size() >= _human_role_count():
 			_defer_begin_match()
 	else:
 		print("worker: 角色 %d = peer %d (%d/2)" % [role, caller, _claims.size()])
@@ -304,7 +321,7 @@ func _on_peer_left(peer_id: int) -> void:
 			_claims.erase(role)
 			_claim_names.erase(role)
 			_claim_opts.erase(role)
-			print("worker: 报到角色 %d 掉线,继续等待(%d/%d)" % [role, _claims.size(), _expected_players])
+			print("worker: 报到角色 %d 掉线,继续等待(%d/%d)" % [role, _claims.size(), _human_role_count()])
 			if _claims.is_empty():
 				_claim_wait = 0.0
 		else:
