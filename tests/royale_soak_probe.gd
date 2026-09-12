@@ -164,11 +164,13 @@ func _run_client() -> void:
 		_mark("%.1fs 受击 %d 伤" % [_elapsed(), _d]))
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_go_match.connect(_on_go_match)
-	# 开局三载荷的第二条投递路径:worker 在同一帧发 peer_info/peer_hues/match_options 与 match_start,
-	# 那一刻 royale_game 还没建 → 由本节点接住缓存进 PvpSession(与 royale_lobby 同款)。
-	NetBus.local_peer_info.connect(func(n: Dictionary) -> void: PvpSession.pending_peer_info = n)
-	NetBusExt.local_peer_hues.connect(func(h: Dictionary) -> void: PvpSession.pending_peer_hues = h)
-	NetBusExt.local_match_options.connect(func(o: Dictionary) -> void: PvpSession.pending_match_options = o)
+	# ★ 2026-09-12(批次 5 顺手修):这里原先接住 worker 推来的三条开局载荷、缓存进
+	#   `PvpSession.pending_*`。批次 3 把那条**推**路径整体换成了**进场拉取**(对局场景 `_ready`
+	#   末尾自己 `match_sync`),`pending_*` 四个字段连 `clear_pending_payloads()` 一起删了 ——
+	#   而本探针是漏改的那一个(`royale_probe` / `royale_bound_probe` 都改了),于是它**从批次 3
+	#   起就解析不过、根本跑不起来**(批次 3 的设计里还写着"用 royale_soak_probe 实测对照",
+	#   那句话从来没成立过)。本探针不需要自己拉:真 `royale_game` 场景会自己发 `match_sync`。
+	#   守卫:`tests/match_sync_probe` 的反向断言(全仓不得再出现那些标识符)会拦住复活。
 	# 全流程兜底:连大厅→建房/加入→转连→claim→match_start 走不完就 FAIL 退出(否则挂死)
 	get_tree().create_timer(60.0).timeout.connect(func() -> void:
 		if is_inside_tree() and not _match_running:
@@ -225,7 +227,6 @@ func _wait_room_code() -> void:
 func _on_go_match(role: int, port: int) -> void:
 	PvpSession.role = role
 	PvpSession.royale = true
-	PvpSession.clear_pending_payloads()
 	_do_go_match.call_deferred(role, port)
 
 

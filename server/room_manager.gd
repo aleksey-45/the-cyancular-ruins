@@ -509,11 +509,13 @@ func _spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool
 	var args: PackedStringArray
 	# editor 与 template_debug(调试引擎)都要带 --path+场景;仅导出 exe 可省(dedicated_server 主场景)
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
-		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--royale",
 				"--port", str(port), "--roles", ",".join(role_strs)])
 	else:
-		args = PackedStringArray(["--headless", "--", "--worker", "--royale",
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--", "--worker", "--royale",
 				"--port", str(port), "--roles", ",".join(role_strs)])
 	if not ai_roles.is_empty():
 		var ai_strs := []
@@ -522,8 +524,8 @@ func _spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool
 		args.append("--ai-roles")
 		args.append(",".join(ai_strs))
 	var pid := OS.create_process(exe, args)
-	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s" % [pid, port,
-			str(roles), str(ai_roles)])
+	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
+			str(roles), str(ai_roles), _worker_log_path(port)])
 	return pid > 0
 
 # ── 配对完成 → 拉起对局 worker 并让两端转连 ──
@@ -637,10 +639,12 @@ func _spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
-		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--port", str(port)])
 	else:
-		args = PackedStringArray(["--headless", "--", "--worker", "--port", str(port)])
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--", "--worker", "--port", str(port)])
 	if not ai_roles.is_empty():
 		var roles := []
 		for r in ai_roles:
@@ -648,8 +652,22 @@ func _spawn_worker(port: int, ai_roles: Array = []) -> bool:
 		args.append("--ai-roles")
 		args.append(",".join(roles))
 	var pid := OS.create_process(exe, args)
-	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s" % [pid, port, str(OS.has_feature("editor")), str(ai_roles)])
+	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s 日志=%s" % [pid, port,
+			str(OS.has_feature("editor")), str(ai_roles), _worker_log_path(port)])
 	return pid > 0
+
+
+# ── worker 的引擎日志落盘(两个 spawn 共用)──
+# worker 是**独立进程**,它的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 服务端侧
+# 出问题时(worker 崩了/报错/提前退出)大厅这边**一个字都收不到**,只能从客户端的表象反推。
+# 2026-09-12 排查「大乱斗击杀后对手崩溃」时就卡在这个盲区上:大厅日志从头到尾是干净的,
+# 而真正跑对局的 worker 说了什么**没人知道**。故给每个 worker 一份引擎日志。
+# ⚠ `--log-file` 是**引擎选项**,必须排在 `--` 之前 —— 那之后是 server_main._ready 自己解析的
+#   用户参数(`--worker`/`--port`/`--roles`),顺序错了会被当用户参数吞掉。
+func _worker_log_path(port: int) -> String:
+	var dir := ProjectSettings.globalize_path("user://logs")
+	DirAccess.make_dir_recursive_absolute(dir)
+	return dir.path_join("worker_%d.log" % port)
 
 # ── 定时扫描:每 SWEEP_INTERVAL 清理存在超 MAX_ROOM_AGE 的僵尸房间(连 worker 一起杀)──
 func _process(delta: float) -> void:

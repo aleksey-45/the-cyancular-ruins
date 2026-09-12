@@ -138,3 +138,12 @@ R={
 [rendering]
 
 renderer/rendering_method="mobile"
+
+[debug]
+
+# 发布版的客户端/服务端也要落一份引擎日志到 user://logs/。
+# 为什么必须显式开:Godot 的 `enable_file_logging.pc`(release 模板)默认是 **false**,而本仓的
+# 客户端导出是 **GUI 子系统(无控制台)** —— 崩了/报错了在用户机器上**一个字都留不下来**,
+# 只能靠"窗口没了""回到主菜单"这种表象反推(2026-09-12 真机测出的击杀崩溃就是这种处境)。
+file_logging/enable_file_logging=true
+file_logging/enable_file_logging.pc=true
