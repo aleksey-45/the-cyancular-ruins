@@ -28,12 +28,52 @@ func _ready() -> void:
 	row.add_theme_constant_override("separation", 12)
 	add_child(row)
 	row.add_child(DevUIKit.button("刷新头像", 20, func() -> void: set_card(_card)))
+	row.add_child(DevUIKit.button("导入手绘素材…", 20, _on_import_pressed))
+	row.add_child(DevUIKit.button("删除素材", 20, _on_delete_pressed))
 	row.add_child(DevUIKit.button("重新生成占位", 20, func() -> void:
 		if _card.is_empty():
 			return
 		_rect.texture = make_placeholder(str(_card.get("card_type", "")), str(_card.get("id", "")))
 		_status.text = "占位图(以 id 为种子的程序化徽章)。发送 agent 施工后会生成真实像素画,再点「刷新头像」"))
 	set_card({})
+
+
+var _dialog: FileDialog = null
+
+func _on_delete_pressed() -> void:
+	if _card.is_empty():
+		return
+	var dir := DirAccess.open(CardStore.cards_dir(str(_card.get("card_type", ""))))
+	if dir != null:
+		for ext in ["png", "webp", "jpg", "jpeg"]:
+			var p := str(_card.get("id", "")) + "." + ext
+			if dir.file_exists(p):
+				dir.remove(p)
+	set_card(_card)
+
+func _on_import_pressed() -> void:
+	if _card.is_empty():
+		_status.text = "先选中一张卡再导入素材"
+		return
+	if _dialog == null:
+		_dialog = FileDialog.new()
+		_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_dialog.filters = ["*.png ; PNG 图片", "*.webp ; WebP 图片", "*.jpg ; JPEG 图片"]
+		_dialog.file_selected.connect(_on_import_selected)
+		add_child(_dialog)
+	_dialog.popup_centered(Vector2i(900, 600))
+
+
+func _on_import_selected(path: String) -> void:
+	if _card.is_empty():
+		return
+	var err := CardStore.import_portrait(str(_card.get("card_type", "")), str(_card.get("id", "")), path)
+	if err != "":
+		_status.text = "导入失败:" + err
+		return
+	_status.text = "已导入手绘素材:%s(对局内实体美术同样走这个入口;AI 生成素材仅作兜底)" % path.get_file()
+	set_card(_card)
 
 
 ## 切换展示的卡(空字典 = 未选中);每次都会重读磁盘上的 PNG(施工完成后点刷新即可见)

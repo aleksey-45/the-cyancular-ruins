@@ -161,7 +161,7 @@ func _build_options_panel() -> void:
 	wgrid.add_theme_constant_override("h_separation", 10)
 	wgrid.add_theme_constant_override("v_separation", 6)
 	vb.add_child(wgrid)
-	for slot in [1, 2, 3, 4, 5, 6]:
+	for slot in [1, 2, 3, 4, 5, 6, 7]:
 		var captured_slot: int = slot
 		var cell := WeaponComponent.make_weapon_check(captured_slot, Settings.pvp_disabled_weapons.has(captured_slot),
 				24, func(on: bool) -> void:

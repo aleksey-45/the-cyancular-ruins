@@ -12,7 +12,7 @@ const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
 # ── 公网服务器地址:★发版前把这里改成你们那台公网服务器 IP(队友即可零配置)──
 # 留空时:玩家可在界面地址框现场填写(按人生效并记忆)。
 const PUBLIC_SERVER_ADDR := ""
-const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹", 6: "激光枪"}
+const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹", 6: "激光枪", 7: "加特林"}
 
 var _addr_edit: LineEdit
 var _code_edit: LineEdit        # 房间号(加入)
@@ -241,7 +241,7 @@ func _build_create_panel() -> void:
 	wgrid.add_theme_constant_override("h_separation", 10)
 	wgrid.add_theme_constant_override("v_separation", 6)
 	vb.add_child(wgrid)
-	for slot: int in [1, 2, 3, 4, 5, 6]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
+	for slot: int in [1, 2, 3, 4, 5, 6, 7]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
 		var slot_i := slot
 		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
 				22, func(on: bool) -> void:

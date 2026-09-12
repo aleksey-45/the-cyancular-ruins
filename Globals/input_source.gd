@@ -55,11 +55,11 @@ func is_attack_just_released() -> bool:
 		return false
 	return Input.is_action_just_released("attack")
 
-# 本轮按下的武器槽位(0=无,1-6)。本地用 Input 事件,网络由注入包提供。
+# 本轮按下的武器槽位(0=无,1-7)。本地用 Input 事件,网络由注入包提供。
 func get_weapon_slot_pressed() -> int:
 	if frozen:
 		return 0
-	for i in range(1, 7):
+	for i in range(1, 8):
 		if Input.is_action_just_pressed(str(i)):
 			return i
 	return 0

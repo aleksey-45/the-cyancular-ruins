@@ -1,0 +1,37 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Scenes/Weapons/minigun.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/textures/weapons.png" id="2_tex"]
+
+[node name="Minigun" type="Node2D"]
+script = ExtResource("1_script")
+mag_size = 60
+reload_time = 2.6
+tier = 1
+weapon_name = "Minigun"
+full_auto = true
+fire_cooldown = 0.07
+bullet_speed = 1800.0
+bullet_range = 900.0
+bullet_size = 0.85
+damage = 3
+impact = 120.0
+recoil_push = 60.0
+recoil_kick = 5.0
+cam_shake = 2.0
+move_penalty = 0.65
+jump_penalty = 0.8
+penalty_mode = 1
+spread_deg = 4.0
+pitch_clamp_deg = 65.0
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+position = Vector2(14, 10)
+texture = ExtResource("2_tex")
+region_enabled = true
+region_rect = Rect2(108, 2, 55, 20)
+modulate = Color(1, 0.85, 0.6, 1)
+
+[node name="Muzzle" type="Marker2D" parent="."]
+position = Vector2(46, 6)

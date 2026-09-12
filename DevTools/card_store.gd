@@ -21,6 +21,35 @@ static func portrait_path(type: String, id: String) -> String:
 	return "%s/%s.png" % [cards_dir(type), id]
 
 
+## 导入手绘/外部素材:把本地图片文件复制成 <id>.png 一类卡内头像(编辑器"上传自己画的素材"入口)。
+## 返回错误串(空=成功)。支持 png/webp/jpg(Image.load_from_file 同源解码)。
+static func import_portrait(type: String, id: String, src_abs: String) -> String:
+	var ext := src_abs.get_extension().to_lower()
+	if not ext in ["png", "webp", "jpg", "jpeg"]:
+		return "不支持的格式 .%s(请用 png/webp/jpg)" % ext
+	var fb := FileAccess.open(src_abs, FileAccess.READ)
+	if fb == null:
+		return "读不到源文件:%s" % src_abs
+	var bytes := fb.get_buffer(fb.get_length())
+	fb.close()
+	# 简单魔数校验,防止把非图片当素材
+	var ok_magic := (
+		(bytes.size() > 8 and bytes[0] == 0x89 and bytes[1] == 0x50)
+		or (bytes.size() > 12 and bytes[0] == 0x52 and bytes[1] == 0x49)
+		or (bytes.size() > 3 and bytes[0] == 0xFF and bytes[1] == 0xD8)
+	)
+	if not ok_magic:
+		return "文件不像图片(png/webp/jpg 魔数不符)"
+	var dst := portrait_path(type, id) if ext == "png" else "%s.%s" % [portrait_path(type, id).trim_suffix(".png"), ext]
+	_ensure_dir(cards_dir(type))
+	var f := FileAccess.open(dst, FileAccess.WRITE)
+	if f == null:
+		return "写不进去:%s" % dst
+	f.store_buffer(bytes)
+	f.close()
+	return ""
+
+
 static func has_portrait(type: String, id: String) -> bool:
 	return FileAccess.file_exists(portrait_path(type, id))
 
