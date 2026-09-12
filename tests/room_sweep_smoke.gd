@@ -15,6 +15,18 @@ func _initialize() -> void:
 		_fail = "无法读取 room_manager.gd"
 		_finish()
 		return
+	# ★ 先**编译**一次目标脚本再做文本断言。本冒烟是纯文本扫描(`-s` 下 grep 源码),它**不会**
+	#   编译被扫的文件 —— 于是"文本全对但文件压根编译不过"这件事它能直接放过去。
+	#   实测踩过:把 `_teardown_room` 的参数从 `kill: bool` 改成 `mode: int` 时漏改了体内一处
+	#   `kill` 引用 → GDScript 编译失败,而本冒烟**照样报 OK**(另两条验证也没覆到:主菜单场景
+	#   不加载 room_manager,`--worker` 分支也不碰 RoomManager)。`load()` 会真正编译它。
+	#   注:`load()` 解析失败时**不返回 null**(给回的是那个坏掉的脚本对象),故判据用
+	#   `reload()` 的错误码 —— 它会真的重解析并如实返回 OK / ERR_PARSE_ERROR(实测过两种写法)。
+	var scr: GDScript = load("res://server/room_manager.gd")
+	if scr == null or scr.reload() != OK:
+		_fail = "room_manager.gd 编译失败(源码文本可能全对,但 GDScript 编不过)"
+		_finish()
+		return
 	_check(src)
 	_check_argv_contract()
 	_check_teardown_funnel()

@@ -597,8 +597,12 @@ func _teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 		royale_rooms.erase(room.code)
 	else:
 		rooms.erase(room.code)
-	print("%s %s 拆除(端口 %d %s)" % ["大乱斗房" if is_royale else "房间", room.code, port,
-			"已强杀并回收" if kill else "将于延迟后回收"])
+	var how := "将于延迟后回收"
+	if mode == TEARDOWN_KILL:
+		how = "已强杀并立即回收"
+	elif mode == TEARDOWN_ABORT:
+		how = "立即归还(worker 未起来)"
+	print("%s %s 拆除(端口 %d %s)" % ["大乱斗房" if is_royale else "房间", room.code, port, how])
 	if disconnect_peers:
 		for peer_id in peers:
 			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
