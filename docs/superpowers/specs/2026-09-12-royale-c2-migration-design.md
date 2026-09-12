@@ -149,7 +149,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 | **D. KH 遗留重复 RPC** | `NetBusExt.local_beam_fired` / `beam_fired`（全仓零消费者，只有 `kh_l1_probe` 提到） | `core/net_bus_ext.gd:39-43` |
 | **E. 房间拆除散在五处** ✅**已落地**(批次 2,`9834bef`) | 收口成单一 `_teardown_room(room, mode)`;三种形态 DELAYED/KILL/ABORT | `server/room_manager.gd:196-222, 338-349, 682-702, 393, 479, 559` |
 | **F. role 用人数兼上界** ✅**已落地**(批次 2,`e07ecb7`) | 改 `--roles 1,3` 显式集合;`_royale_role_bound`/`_role_bound`/`_expected_players` 全删 | `server/server_main.gd:43-54, 209-214`、`server/room_manager.gd:493-516, 521-541` |
-| **G. 出生点算两遍** | `start_on` 算一份下发、`_init` 又 `plan_spawns` 一份（shuffle 随机 → 两份不同），广播那份从不生效 | `server/royale_host.gd:41, 55-61` |
+| **G. 出生点算两遍** ✅**已落地**(`b2b8eea`) | `start_on` 算一份下发、`_init` 又 `plan_spawns` 一份（shuffle 随机 → 两份不同），广播那份从不生效 | 守卫 `tests/royale_spawn_plan_probe.tscn` |
 | **H. 只服务旧路径的断言与边界说明** | `kh_l6_probe` #1/#2/#5/#6（开关存在性）、`kh_l5_probe` check1（`_broadcast_snapshot` 内的 `"ack_seq"`/`"c2"`）、`royale_soak_probe.gd:21-23` 的「大乱斗输入包不带 seq」边界 | `tests/` |
 
 ---
@@ -243,7 +243,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 | **0** | 断言先行：C2 四不变量扩到大乱斗；`snapshot_size_probe`（带宽数字守卫）+ `brawl_rollback_probe`（缠斗斜率 + 两条对照） | 探针绿 | `q.pop_front()`→`pop_back()`、快照挪到消费之后 → 必须红 |
 | **1** | **§4.4b 容差 + 环面 `_close_enough`（+ 接线 + 源码守卫）** + **§4.4 倒地幽灵体旋转修复**。★ 不是在为大乱斗做：§2.1 证明这个缺陷**今天就在 1v1 的 C2 路径里**，先修它 = 让大乱斗接进来时继承一个已修好的核 | `brawl_rollback_probe` 容差档频率显著下降，且**两条对照必须保持**（对手不动 = 0、摘掉幽灵体仍爆炸）；`pvp_reconcile_smoke`/`pvp_twin_smoke`/`replica_ghost_probe` 全绿 | 把 `_close_enough` 改回裸 `distance_to` → 环面那条必须红；把 `map_px` 接线删掉 → 源码守卫必须红 |
 | **2** ✅ | §4.6 role 集合 + `_teardown_room` 收口 | 落地于 `e07ecb7` + `9834bef`；守卫见下 | 反证已实跑 |
-| **3** | §4.2 进场拉取，删 §3C，出生点合成一份 | `royale_bound_probe --payload` 改为「靠 sync 才能过」 | sync 回空 → 场景必须**降级可见**，不能静默 |
+| **3** | §4.2 进场拉取，删 §3C（新增 §3G 就地做了 `b2b8eea`） | 计划 `docs/superpowers/plans/2026-09-12-royale-match-sync.md` —— 守卫 `royale_bound_probe --payload` 需**重做**（原鉴别力来自被删的交接，改为探针自任服务器应答 sync） | sync 应答摘掉 → 必须红 |
 | **4** | §4.1 拆两条包（两端） | 三个 PvP 冒烟 + `royale_probe`/`royale_soak` 绿；带宽读数下降；`channel 0` 次数不更差 | 世界包仍逐 peer `rpc_id` → 带宽读数不降 |
 | **5** | §4.3 大乱斗接 C2 + §4.5 L4 + **删 §3A/§3B** | 大乱斗客户端的 `rollback_count()` 斜率与 1v1 同量级；真机手感（用户） | 删掉 `reconcile()` → 分歧不收敛，读数可见 |
 | **6** | 收尾：删 §3D、改 §3H 的断言、CLAUDE.md / `docs/pvp-c2-retrospective.md` / 方向文档回写 | — | — |
