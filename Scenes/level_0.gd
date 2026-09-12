@@ -80,6 +80,8 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color("b0e5f6")
 
 	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
+	if not RunOptions.map_file.is_empty():
+		MazeGenerator.set_map_file("res://map/" + RunOptions.map_file)   # 单机选图(空=随机)
 	var grid := WorldBuilder.load_grid()
 	if grid.is_empty():
 		push_error("Level0: 地图加载失败，跳过建图")

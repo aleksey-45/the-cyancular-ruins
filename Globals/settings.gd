@@ -35,6 +35,7 @@ var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生�
 var pvp_show_enemy_hp: bool = true      # 显示敌方头顶血条
 var pvp_disabled_weapons: Array[int] = []  # 禁用武器(服务器生效项,房主值优先)
 var pvp_color_hue: float = 0.0          # 自己角色色相旋转(度;0=默认青色)
+var last_map: String = ""                # 上局选择的地图文件名(空=随机);全模式共用
 var royale_match_min: float = 5.0       # 大乱斗一局限时(分钟,建房页可调,随房主报到生效)
 var royale_public_mode: bool = true      # 大乱斗默认模式:true=公网服务器(固定地址,零配置) / false=局域网本机开服
 var royale_pub_addr: String = ""        # 公网服务器地址覆盖(留空 = 用 royale_lobby.PUBLIC_SERVER_ADDR 内置常量)
@@ -126,6 +127,7 @@ func save() -> void:
 	cf.set_value("pvp", "disabled_weapons", pvp_disabled_weapons)
 	cf.set_value("pvp", "color_hue", pvp_color_hue)
 	cf.set_value("royale", "match_min", royale_match_min)
+	cf.set_value("map", "last", last_map)
 	cf.set_value("royale", "public_mode", royale_public_mode)
 	cf.set_value("royale", "pub_addr", royale_pub_addr)
 	cf.set_value("pvp", "show_minimap", pvp_show_minimap)
@@ -160,6 +162,7 @@ func load_settings() -> void:
 	pvp_disabled_weapons.assign(cf.get_value("pvp", "disabled_weapons", []))
 	pvp_color_hue = float(cf.get_value("pvp", "color_hue", 0.0))
 	royale_match_min = clampf(float(cf.get_value("royale", "match_min", 5.0)), 1.0, 30.0)
+	last_map = str(cf.get_value("map", "last", "")).strip_edges()
 	royale_public_mode = bool(cf.get_value("royale", "public_mode", true))
 	royale_pub_addr = str(cf.get_value("royale", "pub_addr", "")).strip_edges()
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))

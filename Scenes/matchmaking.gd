@@ -24,6 +24,7 @@ var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜
 var _go_start_ms := 0
 var _lobby_start_ms := 0   # 连大厅计时(UDP 被静默丢包时 connection_failed 要等很久,8s 给明确提示)
 var _ip_label: Label = null   # 常驻本机 IP 提示
+var _map_opt: OptionButton = null   # 房主选图(随机/文件名)
 var _join_sent_ms := 0     # 刚发出 join_room 的时间戳:服务端无任何应答(幽灵房间)时兜底回大厅刷新
 var _claimed_ms := 0       # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
 
@@ -188,6 +189,22 @@ func _build_options_panel() -> void:
 	chip.custom_minimum_size = Vector2(48, 24)
 	chip.color = _hue_preview_color(Settings.pvp_color_hue)
 	crow.add_child(chip)
+
+	# 地图选择(房主生效;服务端没带该图文件时回退默认图)
+	crow.add_child(_opt_label("地图:", 24))
+	_map_opt = OptionButton.new()
+	_map_opt.add_item("随机(默认)")
+	var maps1: Array[String] = RoomManager.list_maps()
+	for i in maps1.size():
+		_map_opt.add_item(maps1[i])
+		if maps1[i] == Settings.last_map:
+			_map_opt.selected = i + 1
+	_map_opt.custom_minimum_size = Vector2(240, 40)
+	_map_opt.add_theme_font_size_override("font_size", 20)
+	_map_opt.item_selected.connect(func(i: int) -> void:
+		Settings.last_map = "" if i == 0 else maps1[i - 1]
+		Settings.save())
+	crow.add_child(_map_opt)
 	hue_slider.value_changed.connect(func(v: float) -> void:
 		Settings.pvp_color_hue = v
 		Settings.save()
@@ -452,6 +469,7 @@ func _claim_role_worker(role: int) -> void:
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 	NetBusExt.c2s("player_options", {
 		"hue": Settings.pvp_color_hue,
+		"map": (Settings.last_map if _map_opt == null else ("" if _map_opt.selected == 0 else _map_opt.get_item_text(_map_opt.selected))),
 		"round_full_heal": Settings.pvp_round_full_heal,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 	})

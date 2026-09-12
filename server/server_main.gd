@@ -233,12 +233,13 @@ func _begin_match() -> void:
 	_match_started = true
 	if NetBus.role_claimed.is_connected(_on_role_claimed):
 		NetBus.role_claimed.disconnect(_on_role_claimed)
+	var map := RoomManager.resolve_map(str(_claim_opts.get(1, {}).get("map", "")))
 	if _royale:
 		# 房主(role1)规则项随 claim 上报生效; RoyaleHost.start_on 负责散点出生 + match_start
-		_host = RoyaleHost.start_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = RoyaleHost.start_on(_claims, map, _claim_opts.get(1, {}), _ai_roles)
 	else:
 		# 服务器权威规则项以房主(role1)选项为准(经 NetBusExt 上报;缺省=全默认)
-		_host = RoomManager.start_match_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = RoomManager.start_match_on(_claims, map, _claim_opts.get(1, {}), _ai_roles)
 	add_child(_host)
 	# AI 补位昵称:唯一名 + -computer 后缀(排行榜/头顶显示,地位与真人等同)
 	for ai_r in _ai_roles:

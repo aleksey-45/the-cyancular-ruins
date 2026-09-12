@@ -29,6 +29,7 @@ var _addr_hint: Label = null                # 地址行提示(随模式换文案
 var _auto_timer: Timer = null               # 房间列表自动刷新
 var _caps_check_ms := 0                      # 握手等待截止(0=已处理)
 var _create_btn: Button = null               # 建房按钮(服务器不支持大乱斗时灰掉)
+var _map_opt: OptionButton = null            # 房主选图(随机/文件名)
 var _join_btn: Button = null                 # 加入按钮(同上)
 var _connected_addr := ""
 var _pending_action: Callable = Callable()
@@ -233,6 +234,25 @@ func _build_create_panel() -> void:
 		Settings.royale_match_min = v
 		Settings.save()
 		tlabel.text = "%d 分钟" % int(v))
+
+	# 地图选择(房主生效;服务端没带该图文件时回退默认图)
+	var maprow := HBoxContainer.new()
+	maprow.add_theme_constant_override("h_separation", 12)
+	vb.add_child(maprow)
+	maprow.add_child(_label("地图:", 24))
+	_map_opt = OptionButton.new()
+	_map_opt.add_item("随机(默认)")
+	var maps2: Array[String] = RoomManager.list_maps()
+	for i in maps2.size():
+		_map_opt.add_item(maps2[i])
+		if maps2[i] == Settings.last_map:
+			_map_opt.selected = i + 1
+	_map_opt.custom_minimum_size = Vector2(300, 36)
+	_map_opt.add_theme_font_size_override("font_size", 20)
+	_map_opt.item_selected.connect(func(i: int) -> void:
+		Settings.last_map = "" if i == 0 else maps2[i - 1]
+		Settings.save())
+	maprow.add_child(_map_opt)
 
 	vb.add_child(_label("禁用武器(房主生效,开局带进对局):", 24))
 	# 2 列网格 + 定尺寸剪影(横排会溢出屏幕)
@@ -698,6 +718,7 @@ func _claim_role_worker(role: int) -> void:
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 	NetBusExt.c2s("player_options", {
 		"hue": Settings.pvp_color_hue,
+		"map": (Settings.last_map if _map_opt == null else ("" if _map_opt.selected == 0 else _map_opt.get_item_text(_map_opt.selected))),
 		"round_full_heal": false,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),

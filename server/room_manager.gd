@@ -8,6 +8,29 @@ extends Node
 
 # PvP 固定竞技场地图(1v1,含 # player / # player2 出生点)。
 const PVP_MAP := "res://map/factory1v1.cyrm"
+
+## 地图清单(res://map/*.cyrm 文件名升序;供全模式选图 UI)
+static func list_maps() -> Array[String]:
+	var out: Array[String] = []
+	var dir := DirAccess.open("res://map")
+	if dir == null:
+		return out
+	for f in dir.get_files():
+		if f.ends_with(".cyrm"):
+			out.append(f)
+	out.sort()
+	return out
+
+## 解析选图:空/不存在 → 默认图(服务端没带该地图文件时兜底)
+static func resolve_map(name: String) -> String:
+	var n := name.strip_edges()
+	if n.is_empty():
+		return PVP_MAP
+	var p := "res://map/" + n
+	if FileAccess.file_exists(p):
+		return p
+	print("[map] 请求地图不存在,回退默认:", n)
+	return PVP_MAP
 # 对局 worker 端口分配:每次 spawn 发**不重复**的端口。注意不能用本进程 bind 探测"空闲"
 # —— worker 是独立进程,大厅本进程绑定测试看不到其它进程已占的 socket(并发时会把同端口
 # 发给两个 worker,后者绑定失败退出)。唯一递增 + 占用集合即可保证并发零冲突。

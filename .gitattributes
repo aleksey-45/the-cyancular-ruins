@@ -5,3 +5,5 @@
 build_exe.bat text eol=crlf
 
 launch_card_editor.bat text eol=crlf
+
+launch_map_importer.bat text eol=crlf

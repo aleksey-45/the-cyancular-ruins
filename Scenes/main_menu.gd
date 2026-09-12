@@ -312,6 +312,22 @@ func _build_sp_panel() -> PanelContainer:
 		checks.append(cb)
 		vb.add_child(cb)
 
+	vb.add_child(_pixel_label("地图", 26))
+	var map_opt := OptionButton.new()
+	map_opt.add_item("随机(默认)")
+	var maps: Array[String] = RoomManager.list_maps()
+	var sel := 0
+	for i in maps.size():
+		map_opt.add_item(maps[i])
+		if maps[i] == Settings.last_map:
+			sel = i + 1
+	map_opt.selected = sel
+	map_opt.add_theme_font_size_override("font_size", 22)
+	map_opt.item_selected.connect(func(i: int) -> void:
+		Settings.last_map = "" if i == 0 else maps[i - 1]
+		Settings.save())
+	_style_control(map_opt, 22)
+	vb.add_child(map_opt)
 	vb.add_child(_pixel_label("难度(影响敌人密度)", 26))
 	var diff_row := HBoxContainer.new()
 	diff_row.add_theme_constant_override("separation", 12)
@@ -344,6 +360,7 @@ func _build_sp_panel() -> PanelContainer:
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		RunOptions.difficulty = Settings.sp_difficulty
+		RunOptions.map_file = Settings.last_map
 		_enter_level0())
 	var back := _pixel_button("返回", 34)
 	back.pressed.connect(func() -> void: panel.visible = false)
