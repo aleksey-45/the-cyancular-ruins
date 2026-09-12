@@ -244,7 +244,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 | **1** | **§4.4b 容差 + 环面 `_close_enough`（+ 接线 + 源码守卫）** + **§4.4 倒地幽灵体旋转修复**。★ 不是在为大乱斗做：§2.1 证明这个缺陷**今天就在 1v1 的 C2 路径里**，先修它 = 让大乱斗接进来时继承一个已修好的核 | `brawl_rollback_probe` 容差档频率显著下降，且**两条对照必须保持**（对手不动 = 0、摘掉幽灵体仍爆炸）；`pvp_reconcile_smoke`/`pvp_twin_smoke`/`replica_ghost_probe` 全绿 | 把 `_close_enough` 改回裸 `distance_to` → 环面那条必须红；把 `map_px` 接线删掉 → 源码守卫必须红 |
 | **2** ✅ | §4.6 role 集合 + `_teardown_room` 收口 | 落地于 `e07ecb7` + `9834bef`；守卫见下 | 反证已实跑 |
 | **3** ✅ | §4.2 进场拉取，删 §3C（新增 §3G 就地做了 `b2b8eea`） | 计划 `docs/superpowers/plans/2026-09-12-royale-match-sync.md` —— 守卫 `royale_bound_probe --payload` 需**重做**（原鉴别力来自被删的交接，改为探针自任服务器应答 sync） | sync 应答摘掉 → 必须红 |
-| **4** | §4.1 拆两条包（两端） | 三个 PvP 冒烟 + `royale_probe`/`royale_soak` 绿；带宽读数下降；`channel 0` 次数不更差 | 世界包仍逐 peer `rpc_id` → 带宽读数不降 |
+| **4** ✅ | §4.1 拆两条包（两端） | 三个 PvP 冒烟 + `royale_probe`/`royale_soak` 绿；带宽读数下降；`channel 0` 次数不更差 | 世界包仍逐 peer `rpc_id` → 带宽读数不降 |
 | **5** | §4.3 大乱斗接 C2 + §4.5 L4 + **删 §3A/§3B** | 大乱斗客户端的 `rollback_count()` 斜率与 1v1 同量级；真机手感（用户） | 删掉 `reconcile()` → 分歧不收敛，读数可见 |
 | **6** | 收尾：删 §3D、改 §3H 的断言、CLAUDE.md / `docs/pvp-c2-retrospective.md` / 方向文档回写 | — | — |
 
