@@ -4,20 +4,15 @@ extends Node2D
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://core/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
-# ── 本地玩家渲染:完全由服务器快照驱动(放弃客户端预测) ──
-# 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
-# 根治:本地玩家不再本地跑移动物理,位置/姿态/朝向由快照插值(与远端副本同款),
-#      只保留鼠标瞄准/开火/受击反馈等本地视觉。服务器是唯一真相,天然无回拉。
+# ── C2 客户端预测 ──
+# 本地玩家跑全量本地 sim 预测 + PredictionRollback 权威锚定重放(见 core/prediction_rollback.gd)。
+# 引擎照常自步进(读真实 Input,aim/手感=单机);本客户端每帧在玩家步进前 reconcile,
+# 并把每 tick 的预测整态/输入记录喂给控制器。复盘见 docs/pvp-c2-retrospective.md(P1-P7)。
 #
-# C2(客户端预测 rollback)开关:true=本地玩家跑本地预测 + PredictionRollback 权威锚定重放;
-# false=回落上面这条服务器渲染路径(保底)。复盘见 docs/pvp-c2-retrospective.md(P1-P7)。
-# 2026-09-06 使能:服务器 FIFO/ack 已落地、控制器 + reconcile/twin 冒烟全绿、COUNTDOWN 冻结已补。
-const LOCAL_PREDICTION_ENABLED := true
+# ★ 2026-09-12(批次 5):原来那个 LOCAL_PREDICTION_ENABLED 开关与它的 server_rendered 保底分支
+#   **已整体删除** —— 全项目只剩这一条联机链路,没有第二套代码路径可回退。大乱斗客户端走同一套。
 var _input_seq := 0   # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
 var _last_snap_tick := 0
-# C2(开关开):本地玩家跑全量本地 sim 预测 + PredictionRollback 权威锚定重放(见 core/prediction_rollback.gd)。
-# 变体 B:不 set_server_rendered、引擎照常自步进(读真实 Input,aim/手感=单机);
-# 本客户端每帧在玩家步进前 reconcile,并把每 tick 的预测整态/输入记录喂给控制器。
 var _rollback = null
 var _have_prev_seq := false
 var _prev_sent_seq := 0
@@ -65,19 +60,13 @@ func _ready() -> void:
 	# enemy_logic_smoke 的「player mask == 5」断言变红,且单机不需要这一位。
 	local.collision_mask |= 2
 	_local = local
-	# 本地玩家改由服务器快照驱动(不做客户端预测):根治梯子等机制"预测 vs 权威"打架回拉。
-	# C2(阶段4)开启后:本地玩家跑全量本地 sim 预测,由 pvp_client 接 rollback。
-	if not LOCAL_PREDICTION_ENABLED and _local.has_method("set_server_rendered"):
-		_local.set_server_rendered(true)
-	elif LOCAL_PREDICTION_ENABLED:
-		# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从快照 ack_seq/c2 喂入。
-		if _rollback == null:
-			_rollback = PredictionRollback.new()
-		_rollback.bind(_local)
-		# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
-		# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
-		# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
-		_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从本人包的 ack_seq/c2 喂入。
+	_rollback = PredictionRollback.new()
+	_rollback.bind(_local)
+	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
+	# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
+	# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
+	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
@@ -188,7 +177,7 @@ func _physics_process(_delta: float) -> void:
 		NetBus.send_ping()
 	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
 	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
-	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+	if _rollback != null:
 		if _have_prev_seq:
 			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
 			_rollback.reconcile()
@@ -241,7 +230,7 @@ func _physics_process(_delta: float) -> void:
 	NetBus.rpc_id(1, "send_input", pkt)
 	_prev_sent_seq = _input_seq
 	_have_prev_seq = true
-	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+	if _rollback != null:
 		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 # 世界包:全部玩家的渲染字段。本端(服务器渲染模式)与对手副本都从这里取;C2 下本端不用它。
@@ -254,11 +243,8 @@ func _on_snapshot_world(world: Dictionary) -> void:
 		return
 	_last_snap_tick = tier
 	var players_snap: Dictionary = world["players"]
-	var me: Dictionary = players_snap.get(str(PvpSession.role), {})
-	if LOCAL_PREDICTION_ENABLED or me.is_empty():
-		pass   # C2:本地玩家自步进(权威整态走**本人包**,见 _on_snapshot_own);空 = 本帧没有我的数据
-	else:
-		_apply_local_state(me)
+	# ★ 自己那一份**刻意不消费**:C2 下本地玩家自步进,权威整态走**本人包**(见 _on_snapshot_own)。
+	#   把世界包里自己那份写进玩家 = 每帧把权威位置强写进正在预测的玩家 = 橡皮筋。
 	var opp_role := 3 - PvpSession.role
 	if _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
 		var opp: Dictionary = players_snap.get(str(opp_role), {})
@@ -280,18 +266,11 @@ func _on_snapshot_world(world: Dictionary) -> void:
 # 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
 # 世界包丢只让副本插值冻结一帧。
 func _on_snapshot_own(own: Dictionary) -> void:
-	if LOCAL_PREDICTION_ENABLED and _rollback != null:
-		var c2: Dictionary = own.get("c2", {})
-		if not c2.is_empty():
-			_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
-
-
-# 本地玩家完全由服务器快照驱动:权威状态直接采纳,位置/姿态/朝向由 player 插值渲染。
-func _apply_local_state(data: Dictionary) -> void:
-	if _local == null:
+	if _rollback == null:
 		return
-	if _local.has_method("apply_server_snapshot"):
-		_local.apply_server_snapshot(data)
+	var c2: Dictionary = own.get("c2", {})
+	if not c2.is_empty():
+		_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
 
 # 服务器广播的对手子弹 → 本地生成确定性视觉副本(不裁决伤害,只出轨迹/特效)。
 func _on_bullet_spawn(data: Dictionary) -> void:

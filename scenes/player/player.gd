@@ -122,21 +122,7 @@ const STOP_SNAP := 1.0              # 水平速度低于此值直接归零，避
 # 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
 var _coll_by_pose: Dictionary = {}
 
-# ── PvP 服务器渲染模式:本地玩家不跑移动物理,位置/姿态/朝向由 30Hz 快照驱动 ──
-# 根因:C2(客户端预测)对梯子等"边沿+位置敏感"机制与服务器权威模拟打架 → 大量回拉。
-# 根治:本地玩家完全由快照驱动(与远端副本同款最短路径插值),只保留武器/瞄准/受击反馈。
-var server_rendered: bool = false
-var _server_target := Vector2.ZERO   # 服务器 canonical 位置(本地玩家恒在中间副本)
-var _server_have_target := false
-var _server_pose: int = 0            # Pose 枚举值,见 POSE_ANIM
-var _server_facing: int = 1
-const SERVER_INTERP_RATE := 30.0     # 紧跟踪服务器位置(60Hz 快照下滞后约 1 帧;接缝不爬行)
-
-func set_server_rendered(enabled: bool) -> void:
-	server_rendered = enabled
-
-# PvP COUNTDOWN/局间冻结:锁住本地玩家输入——武器开火查询 + (C2 预测下)移动。
-# 服务器渲染路径:本地玩家不跑物理,锁开火即可,移动本就由快照跟随;
+# PvP COUNTDOWN/局间冻结:锁住本地玩家输入——武器开火查询 + 移动。
 # C2 预测路径(engine 自步进读真实输入):只锁开火不够——必须把输入源一并冻结,
 # 否则本地预测在服务器权威冻结的倒计时里照常移动,PLAYING 起 ack 跳变 → 大 rollback。
 var _controls_locked := false
@@ -144,24 +130,6 @@ func set_controls_locked(locked: bool) -> void:
 	_controls_locked = locked
 	if input_source != null:
 		input_source.frozen = locked
-
-# PvP 客户端每帧喂服务器快照:存目标/姿态/朝向 + 权威采纳血量/防水/倒地。
-func apply_server_snapshot(data: Dictionary) -> void:
-	_server_target = data.get("pos", _server_target)
-	_server_have_target = true
-	_server_pose = int(data.get("pose", _server_pose))
-	_server_facing = int(data.get("facing", facing_direction))
-	velocity = data.get("vel", velocity)   # 供 water_fx 等读速度做视觉
-	# 武器槽位以服务器权威为准(本地切枪已在 _update_server_rendered 即时反馈,这里防脱同步)
-	var wslot := int(data.get("weapon", 0))
-	if wslot > 0 and wslot != weapons.current_slot_int():
-		weapons.equip(str(wslot))
-	var hp := int(data.get("hp", self.hp))
-	var wp := int(data.get("waterproof", waterproof))
-	var downed := bool(data.get("downed", combat.is_downed()))
-	if hp != self.hp or wp != waterproof or downed != combat.is_downed():
-		apply_authoritative_state(hp, wp, downed)
-
 
 func _ready() -> void:
 	add_to_group("player")
@@ -180,9 +148,6 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if server_rendered:
-		_update_server_rendered(delta)
-		return
 	if combat.is_downed():
 		# 死亡(倒地):不取消物理——重力/制动/击退照常,只是不吃输入、不结算战斗
 		if is_on_floor():
@@ -518,29 +483,6 @@ func restore_state(st: Dictionary) -> void:
 	velocity = Vector2(0.0, 0.001)
 	move_and_slide()
 	velocity = saved
-
-# PvP 服务器渲染:位置最短路径插值 + 姿态/朝向由快照驱动(不跑本地物理,服务器权威)。
-func _update_server_rendered(delta: float) -> void:
-	weapons.tick(delta)   # 服务器渲染模式仍需本地武器节奏(视觉开火/预瞄),同样走物理 tick
-	combat.update_iframe_blink(delta)   # 受击无敌闪烁仍本地播放
-	# 切枪:服务器渲染模式跳过移动路径里的切枪轮询,这里补(本地即时反馈;服务器从输入包同切)。
-	var wslot := input_source.get_weapon_slot_pressed()
-	if wslot > 0:
-		weapons.equip(str(wslot))
-	if not _server_have_target:
-		return
-	# 当前 canonical 位置 → 服务器 canonical 位置的最短向量,指数插值(跨接缝连续)
-	var d := MazeGenerator.toroidal_delta_px(global_position, _server_target,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	global_position += d * (1.0 - exp(-SERVER_INTERP_RATE * delta))
-	# 回中间副本:插值可能跨接缝进入邻副本,取模回 canonical(本地玩家恒在中间副本)
-	global_position = MazeGenerator.wrap_to_range(global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	# 朝向 + 姿态动画(倒地由 combat 停动画/转体,这里不覆盖)
-	facing_direction = 1 if _server_facing >= 0 else -1
-	animator.flip_h = facing_direction < 0
-	if not combat.is_downed():
-		animator.play(POSE_ANIM[clampi(_server_pose, Pose.STAND, Pose.SQUAT)])
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:

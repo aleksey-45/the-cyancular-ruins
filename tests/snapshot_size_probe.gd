@@ -106,7 +106,8 @@ func _entry_render_only() -> Dictionary:
 
 
 # 世界包瘦身版:①短键(协议两端同改,值不变)②去掉副本 apply_snapshot 根本不读的 vel/waterproof。
-# 唯一消费 vel 的是 player.apply_server_snapshot —— 那条路在 C2 迁移里删除,故世界包不必再带。
+# 唯一消费 vel 的是 player.apply_server_snapshot —— 那条路已在 C2 迁移(批次 5,2026-09-12)删除,
+# 故世界包不必再带 vel。
 # pose/facing/weapon/aim/hp/downed/previewing 全部保留(副本 + 头顶血条在用);previewing 仍按
 # "只发不用"保留(它是日后换成音效/轮廓提示的接点,见 player_replica 的注释)。
 func _entry_world_thin() -> Dictionary:
