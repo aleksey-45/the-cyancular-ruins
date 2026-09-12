@@ -252,7 +252,10 @@ func _append_log(text: String) -> void:
 	if _log_buffer.length() > LOG_CAP_CHARS:
 		_log_buffer = _log_buffer.substr(_log_buffer.length() - LOG_CAP_CHARS / 2)
 	_log_panel.text = _log_buffer
-	_log_panel.scroll_to_line(_log_panel.get_line_count() - 1)
+	# Godot 4.7 的 TextEdit 没有 scroll_to_line:直接把垂直滚动条顶到底部
+	var bar := _log_panel.get_v_scroll_bar()
+	if bar != null:
+		bar.value = bar.max_value
 
 
 # ── 页签切换:列表重载(选中第一张会经 card_selected 驱动表单/头像)──
