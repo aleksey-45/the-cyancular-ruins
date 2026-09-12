@@ -124,6 +124,13 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 		var pose: int = clampi(int(data["pose"]), 0, POSE_SHAPE.size() - 1)
 		animator.play(POSE_ANIM.get(pose, "idle"))
 		_set_ghost_pose(pose)
+	# ★ 幽灵体不随副本根节点的**视觉**转体而动。上面倒地分支给根节点设了 rotation = -90°,
+	#   而幽灵体是它的子节点 → 会被一起转,碰撞箱跟着转 90°;但服务器侧 player.gd 的倒地分支
+	#   **不旋转**(全文件零 rotation),尸体停在最后姿态的箱子上 → 两端"倒地的对手还挡不挡路"
+	#   不一致。这里把幽灵体的**世界**旋转压回 0(等于给子节点一个抵消父节点的局部旋转),
+	#   只让身体精灵转体。大乱斗 2s 一复活,倒地是常态,这是持续分歧源。
+	if _ghost != null:
+		_ghost.global_rotation = 0.0
 	# 位置交给插值缓冲(pose/facing 等即时套用,位置平滑落后一小段,分毫不可感)
 	_push_position(tick, data["pos"])
 

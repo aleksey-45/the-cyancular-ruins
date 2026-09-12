@@ -78,7 +78,11 @@ func _ready() -> void:
 	print("[ghost] 世界 %d×%d 格,出生 %s,障碍在 x+%.0f" % [COLS, ROWS, str(_spawn), REACH])
 
 	await _run_pass(true)    # 正向:幽灵体在位
+	_require_ran("pass_on")
 	await _run_pass(false)   # 负向对照:摘掉幽灵体
+	_require_ran("pass_off")
+	await _test_downed_ghost_rotation()
+	_require_ran("downed")
 	_check_source_guard()
 
 	if _results.is_empty():
@@ -164,6 +168,7 @@ func _run_pass(ghost_on: bool) -> void:
 	P.queue_free()
 	_replica.queue_free()
 	await get_tree().process_frame
+	_ran[("pass_on" if ghost_on else "pass_off")] = true   # ★ 完成戳:必须在最后一行
 
 
 func _physics_process(_delta: float) -> void:
@@ -254,6 +259,37 @@ func _check_source_guard() -> void:
 				found = true
 				break
 		_check(found, "③ %s 给本地玩家设了 collision_mask |= 2" % f)
+
+
+# ★ 假绿防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的
+#   `_ready()` 照常往下走 —— 测试函数中途报错 → 一条 _check 都没跑到 → _results 仍空
+#   → 照样打印 ALL-OK。故每个测试函数在**最后一行**盖完成戳,`_ready` 逐条核。
+var _ran: Dictionary = {}
+
+func _require_ran(name: String) -> void:
+	if not _ran.has(name):
+		_fail("%s 没跑到最后一行(中途报错或被跳过)→ 本趟读数不可信" % name)
+
+
+# 倒地时幽灵体**不得**跟着副本根节点转体:服务器侧 player.gd 的倒地分支不旋转(全文件零
+# rotation),尸体停在最后姿态的箱子上。副本根节点转 -90°(视觉转体)会把子节点一起转 →
+# 「倒地的对手还挡不挡路」两端不一致。大乱斗 2s 一复活,倒地是常态。
+func _test_downed_ghost_rotation() -> void:
+	var rep: Node2D = (preload("res://scenes/player/player_replica.tscn") as PackedScene).instantiate()
+	_host.add_child(rep)
+	await get_tree().process_frame
+	rep.apply_snapshot({"pos": _spawn, "facing": 1, "aim": Vector2.RIGHT, "weapon": 0,
+			"previewing": false, "hp": 0, "pose": 0, "downed": true}, _spawn, 1)
+	await get_tree().process_frame
+	var g := rep.get_node_or_null("GhostBody") as Node2D
+	if g == null:
+		_fail("副本没有 GhostBody 节点 —— player_replica._build_ghost_body 没跑或被改名")
+		return
+	var deg := rad_to_deg(absf(g.global_rotation))
+	_check(deg < 1.0, "倒地时幽灵体不旋转(实测 %.1f°;>1° = 碰撞箱跟着副本转了)" % deg)
+	rep.queue_free()
+	await get_tree().process_frame
+	_ran["downed"] = true   # ★ 完成戳必须在最后一行(见顶部说明)
 
 
 func _check(ok: bool, msg: String) -> void:
