@@ -4,7 +4,7 @@ extends CanvasLayer
 # PvP 对局 HUD(CanvasLayer layer=130,盖在 PostProcess/单机 HUD 之上)。
 # 布局(遮罩/居中文案/记分/延迟与像素字体、颜色)已迁进 pvp_hud.tscn,这里只留信号驱动逻辑:
 #  - 广播层:全屏 (0,0,0,0.3) 遮罩 + 屏幕正中央巨大白字——开场/倒计时/本局结果/胜利失败/断线通知统一走这里
-#  - 记分(左下角):P1/P2 击杀、局胜、局号
+#  - 记分(**顶部正中**):P1/P2 击杀、局胜、局号
 #  - 延迟(右下角):NetBus.ping_updated 平滑 RTT
 
 const ST_COUNTDOWN := 0

@@ -85,8 +85,18 @@ static func _git_text(args: Array) -> String:
 	return str(out[0]) if out.size() > 0 else ""
 
 
+# 版本号:**发布版读 core/build_info.gd**(由 tools/build_release.py 在导出前写入真实版本号与
+# 构建时间戳),开发版回落到 git(分支名 + 提交数)。
+# ★ 发布版必须走前者:发布机往往没有 git,读 git 只会得到 "dev" 且拿不到构建时间。
+# 传 --nover 时恒为 "dev"(菜单自动探针要确定性文本,见 tests/menu_autotest.gd)。
 static func version_string() -> String:
+	if "--nover" in OS.get_cmdline_user_args():
+		return "dev"
 	if _version_cache != "":
+		return _version_cache
+	var bi := preload("res://core/build_info.gd")
+	if str(bi.VERSION) != "" and str(bi.VERSION) != "dev":
+		_version_cache = bi.display()
 		return _version_cache
 	var branch := _git_text(["rev-parse", "--abbrev-ref", "HEAD"]).strip_edges()
 	var n := _git_text(["rev-list", "--count", "HEAD"]).strip_edges()
@@ -136,8 +146,8 @@ func _build_new_ui() -> void:
 	title.modulate.a = 0.0
 	_ui_layer.add_child(title)
 
-	var ver := UiFactory.label("dev" if "--nover" in OS.get_cmdline_user_args() else version_string(),
-			32, Color(0.75, 0.85, 0.9, 0.9))
+	# --nover 的处理收在 version_string() 里(单一收口),这里不再分叉
+	var ver := UiFactory.label(version_string(), 32, Color(0.75, 0.85, 0.9, 0.9))
 	ver.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	ver.anchor_left = 0.5
 	ver.anchor_right = 0.5
@@ -233,7 +243,7 @@ func _build_ver_panel() -> PanelContainer:
 	panel.add_child(vb)
 
 	vb.add_child(UiFactory.label("—— 版本信息 ——", 48, Color(0.6, 0.95, 1.0)))
-	vb.add_child(UiFactory.label("当前版本: %s(分支名 + 提交序号)" % version_string(), 32))
+	vb.add_child(UiFactory.label("当前版本: %s" % version_string(), 32))
 
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(1160, 620)

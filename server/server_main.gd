@@ -25,6 +25,9 @@ var _lan_ip_text := ""          # 局域网 IP 串(写 local_ip.txt 用;公网 I
 var _match_started := false
 
 func _ready() -> void:
+	# 开局先自报版本:服务端是控制台子系统,这条是运维/联调时"我这跑的是哪一版"的唯一依据
+	# (发布版的版本号+构建时间由 tools/build_release.py 烘焙进 core/build_info.gd)
+	print("[server] 版本 %s  pid=%d" % [preload("res://core/build_info.gd").display(), OS.get_process_id()])
 	var args := OS.get_cmdline_user_args()
 	var is_worker := false
 	var port := NetBus.DEFAULT_PORT
