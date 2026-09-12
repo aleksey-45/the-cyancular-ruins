@@ -31,14 +31,20 @@ static var _region_cache: Dictionary = {}  # 地板格 Vector2i -> 同层连通�
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
-		ai_roles: Array = []) -> void:
+		ai_roles: Array = [], spawns: Dictionary = {}) -> void:
 	# 散点必须在 super._init() 之前就绪:父类 _init 摆位会虚调 _spawn_cell(role),
 	# 若 _round_spawns 尚为空,首次摆位拿到 (-1,-1) 且被 _spawned_once 闩锁,
 	# 全体玩家挤到地图回卷角落、散点/复活设计失效(自检 S1 严重 bug)。
 	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
 		MazeGenerator.set_map_file(map_path)
 		WorldBuilder.load_grid()
-	_round_spawns = plan_spawns(role_peers.keys() + ai_roles)
+	# ★ 出生点**单一来源**:常规路径由 `start_on` 算好传进来(它同时把**同一份**经 match_start
+	#   广播给客户端)。这里**不得**再调一次 `plan_spawns` —— 那函数内部 `cells.shuffle()`,
+	#   重算出的是**另一份**随机散点;而实际摆位读的是这一份,事后覆盖 `_round_spawns` 也改不回
+	#   任何人的位置(`_spawned_once` 已闩)→ 广播给客户端的那份**从不生效**,两端开局位置不一致
+	#   且完全不报错。
+	#   传空 = 手工/测试路径,才走"自己算一份"的兜底。
+	_round_spawns = spawns if not spawns.is_empty() else plan_spawns(role_peers.keys() + ai_roles)
 	_cfg_match_time = float(options.get("match_time", 0.0))
 	super._init(map_path, role_peers, options, ai_roles)
 
@@ -56,8 +62,10 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 	for role in role_peers:
 		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
 		NetBus.rpc_id(role_peers[role], "server_message", "大乱斗开始")
-	var host := RoyaleHost.new(map_path, role_peers, options, ai_roles)
-	host._round_spawns = spawns
+	# 把**同一份**散点传进宿主:它据此摆位,而上面已把同一份经 match_start 广播给客户端。
+	# (原先靠事后 `host._round_spawns = spawns` 覆盖 —— 那时 `_spawned_once` 已闩上,
+	#  覆盖不到任何人的位置,于是广播那份形同虚设。)
+	var host := RoyaleHost.new(map_path, role_peers, options, ai_roles, spawns)
 	return host
 
 
