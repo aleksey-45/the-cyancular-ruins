@@ -237,6 +237,13 @@ func _flush_royale_state(rr: RoyaleRoom) -> void:
 	#   报为在线(实测滞后超过一帧),同步发/帧末发都会踩 "max channels: 0" 且**包会丢**。
 	#   多等一帧只是等待室名单刷新晚一帧,无副作用。
 	await get_tree().process_frame
+	# ★★ 真正发送前**再判一次开局**(调用点那层的 in_match 守卫只挡住"排队时已开局"的情况):
+	#    本函数是 call_deferred + 再等一帧,从"排队"到"发送"之间房间完全可能已经开局 ——
+	#    开局那一刻正是成员集体转连 worker、陆续断开大厅的窗口,发给他们必然打
+	#    "max channels: 0" 且包丢(实测:6 人局开局后瞬间 5 条)。等待室此刻也已不存在,
+	#    这份状态广播本来就没人要了。
+	if rr.in_match:
+		return
 	var plist: Array = []
 	for peer_id in rr.players:
 		plist.append({"role": rr.player_role[peer_id], "name": _peer_names.get(peer_id, "玩家")})
@@ -343,7 +350,10 @@ func royale_leave(caller: int) -> void:
 	else:
 		if rr.host_peer == caller:
 			rr.host_peer = rr.players[0]
-		_broadcast_royale_state(rr)
+		# 已开局的房不广播等待室状态(与 on_peer_left 同一理由:成员正在转连 worker,
+		# 发给它们只会踩 "max channels: 0" 并丢包,等待室界面也已不存在)
+		if not rr.in_match:
+			_broadcast_royale_state(rr)
 
 # 公开房间列表(只列未开局的;[{code, players, max_players, names}])
 func royale_list(caller: int) -> void:

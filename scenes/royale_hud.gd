@@ -26,6 +26,9 @@ const ST_MATCH_OVER := 3
 
 var _board_vbox: VBoxContainer
 var _board_title: Label
+# 排行榜行 Label(不含标题/计时):**复用**而不是每次重建 —— 见 _on_round_state 里的说明
+var _rows: Array[Label] = []
+var _last_row_count := -1
 var _board_bg: ColorRect
 var _timer_label: Label
 var _mask: ColorRect
@@ -154,9 +157,11 @@ func _on_round_state(data: Dictionary) -> void:
 	var left: Array = data.get("left", [])
 	var deaths: Dictionary = data.get("deaths", {})
 	# ── 排行榜:按击杀降序 ──
-	for c in _board_vbox.get_children():
-		if c != _board_title and c != _timer_label:
-			c.queue_free()
+	# ★ **复用行、只改文字**，不要每次 queue_free 后重建 N 个 Label。
+	#   本函数每秒被调一次(round_state 的 HUD 同步),每次阵亡再加一次;重建 N 个 Label 的
+	#   同步成本实测 2.6 / 3.8 / 4.7 ms(4 / 6 / 8 行),是纯粹的每秒浪费 ——
+	#   见 tests/royale_hud_cost_probe.tscn 与 docs/royale-soak-2026-09-12.md §3.1。
+	#   行数**只在人数变化时**才对不齐(进/退场),那时才增删。
 	var rows: Array = []
 	for role_s in names:
 		rows.append({"role": int(role_s), "name": str(names[role_s]),
@@ -166,6 +171,17 @@ func _on_round_state(data: Dictionary) -> void:
 		if a["kills"] != b["kills"]:
 			return a["kills"] > b["kills"]
 		return a["role"] < b["role"])
+	while _rows.size() > rows.size():
+		(_rows.pop_back() as Label).queue_free()
+	while _rows.size() < rows.size():
+		var nl := _make_label(32, COLOR_BOARD)
+		_board_vbox.add_child(nl)
+		_rows.append(nl)
+	if _rows.size() != _last_row_count:
+		_last_row_count = _rows.size()
+		# 底板高度随行数自适应(标题 + 计时 + N 行 + 内边距)。
+		# 只在行数变了才取 combined_minimum_size —— 它内部强制一次 layout,不该每秒付。
+		_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + 14
 	for i in range(rows.size()):
 		var e: Dictionary = rows[i]
 		var is_me: bool = e["name"] == _my_name
@@ -177,11 +193,9 @@ func _on_round_state(data: Dictionary) -> void:
 		elif not bool(alive.get(e["role"], true)) and state == ST_PLAYING:
 			tag = "复活中"
 			col = COLOR_DEAD if not is_me else COLOR_ME
-		var row := _make_label(32, col)
+		var row: Label = _rows[i]
+		row.add_theme_color_override("font_color", col)
 		row.text = "%d. %s   击杀 %d  阵亡 %d  %s" % [i + 1, e["name"], e["kills"], e["deaths"], tag]
-		_board_vbox.add_child(row)
-	# 底板高度随行数自适应(标题 + 计时 + N 行 + 内边距)
-	_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + 14
 
 	# ── 中央广播 ──
 	var me_alive := true

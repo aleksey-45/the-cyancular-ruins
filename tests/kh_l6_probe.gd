@@ -37,6 +37,7 @@ extends Node
 #   7  输入锁单一收口 _round_locked or _menu_open —— B7/B9:菜单开着仍能跑动开枪
 #   8  _pause_menu 是字段且接 toggled —— B10:不持句柄不接信号 → 锁失效
 #   9  MATCH_OVER 块销毁暂停菜单 —— B8:5s 内 ESC 后定时器仍再触发 + lambda 里 get_tree() 为 null
+#  9b  同一件事的**大乱斗**分支(scenes/royale_game.gd)—— 第三条退场路径,当年漏改,_check_royale_match_over_menu_kill
 #  10  pvp_hud 走声明式 tscn(不是 PvpHud.new())—— B11:null 解引用必崩
 #  11  激光收端在 NetBus(不是 NetBusExt)—— B12:收错节点 = 对手激光静默 no-op
 #  12  退出路径:大写零命中 + 路径① 已保护 + **本文件裸切恰为 0**(T4 起为无条件判据,见该断言
@@ -50,6 +51,8 @@ extends Node
 
 # ── 被扫文件 ────────────────────────────────────────────────────────
 const PC := "res://scenes/" + "pvp_client.gd"
+# 9b) 的扫描对象:大乱斗客户端。与 pvp_client 是同一类风险的第二处实例。
+const RG := "res://scenes/" + "royale" + "_game.gd"
 const PM_PATH := "res://ui/" + "pause_menu.gd"
 const HUD_TSCN := "res://ui/" + "pvp_hud.tscn"
 const HUD_SCRIPT := "res://ui/" + "pvp_hud.gd"
@@ -85,6 +88,7 @@ const N_PAUSE := "_pause" + "_menu"
 const N_TOGGLED := ".toggled" + ".connect("
 const N_QUEUE_FREE := "queue" + "_free()"
 const N_TIMER := "create" + "_timer("
+const N_INSIDE := "is_inside" + "_tree()"
 const N_PRELOAD_HUD := "preload(\"res://ui/" + "pvp_hud.tscn\")"
 const N_NEW_HUD := "Pvp" + "Hud.new("
 const N_HUD_CLS := "Pvp" + "Hud"
@@ -120,11 +124,15 @@ const RE_CONST_STR := "^const\\s+([A-Za-z_]\\w*)[^=]*=\\s*\"([^\"]*)\""
 var _failures: Array[String] = []
 var _pc_code := ""                     # pvp_client.gd 的去注释视图(保留缩进)
 var _pc_lines: PackedStringArray = PackedStringArray()
+var _rg_code := ""                     # royale_game.gd 的去注释视图(9b 用)
+var _rg_lines: PackedStringArray = PackedStringArray()
 
 
 func _ready() -> void:
 	_pc_code = _code_view(_read(PC))
 	_pc_lines = _pc_code.split("\n")
+	_rg_code = _code_view(_read(RG))
+	_rg_lines = _rg_code.split("\n")
 	if _pc_code.is_empty():
 		_failures.append("读不到 %s(本探针的全部断言都以它为据 → 下面一条都不成立)" % PC)
 		_finish()
@@ -138,6 +146,7 @@ func _ready() -> void:
 	_check_input_lock_funnel()
 	_check_pause_menu_field()
 	_check_match_over_menu_kill()
+	_check_royale_match_over_menu_kill()
 	_check_hud_declarative()
 	_check_beam_routing()
 	_check_exit_paths()
@@ -461,6 +470,34 @@ func _check_match_over_menu_kill() -> void:
 			"MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 这 5s 内按 ESC 会让定时器再触发一次" % [N_PAUSE, N_QUEUE_FREE])
 		_check(blk.contains(N_TIMER), "MATCH_OVER 块的退场定时器不在(`%s`)" % N_TIMER)
 	_summary(before, "MATCH_OVER 块:暂停菜单失效 + 退场定时器都在(分支@%d)" % i)
+
+
+# ── 9b) 大乱斗客户端 MATCH_OVER 块的同一件事(9) 的第二个对象)──────────────
+# 与 9) **同款缺陷、不同文件**:scenes/royale_game.gd 的 MATCH_OVER 也起了一条 6s 退场定时器,
+# 而它的暂停菜单**没有**当场失效、lambda 里也**没有** `is_inside_tree()` 早退 ——
+# 玩家在这 6s 内按 ESC 就能先回一次主菜单,定时器到点再切一次(把刚建出来的主菜单当 old 退役)。
+# pvp_client 早已修过;royale_game 是第三条路径,当年漏了。2026-09-12 补齐,本断言即其守卫。
+func _check_royale_match_over_menu_kill() -> void:
+	var before := _failures.size()
+	if _rg_code.is_empty():
+		_check(false, "读不到 %s(9b 的断言全部以它为据)" % RG)
+		return
+	var body := _func_body(_rg_code, "_on" + "_round_state")
+	_check(not body.is_empty(), "取不到 %s 的 _on_round_state 函数体" % RG)
+	if body.is_empty():
+		_summary(before, "royale MATCH_OVER 块:取不到 _on_round_state")
+		return
+	var lines := body.split("\n")
+	var i := _find_line(lines, "state == 3")
+	_check(i >= 0, "取不到 royale MATCH_OVER 分支(`state == 3`)")
+	if i >= 0:
+		var blk := _block_after(lines, i)
+		_check(blk.contains(N_PAUSE) and blk.contains(N_QUEUE_FREE),
+			"royale MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 这 6s 内按 ESC 会让定时器再触发一次" % [N_PAUSE, N_QUEUE_FREE])
+		_check(blk.contains(N_TIMER), "royale MATCH_OVER 块的退场定时器不在(`%s`)" % N_TIMER)
+		_check(blk.contains(N_INSIDE),
+			"royale MATCH_OVER 定时器的 lambda 里没有 `%s` 早退(已从别的退出路径离开时会叠加第二次换场)" % N_INSIDE)
+	_summary(before, "royale MATCH_OVER 块:暂停菜单失效 + 退场定时器 + 早退都在(分支@%d)" % i)
 
 
 # ── 10) pvp_hud 走声明式 tscn,不是 PvpHud.new()(B11)─────────────────
