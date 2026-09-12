@@ -74,6 +74,10 @@ func _ready() -> void:
 		if _rollback == null:
 			_rollback = PredictionRollback.new()
 		_rollback.bind(_local)
+		# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
+		# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
+		# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
+		_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")

@@ -44,6 +44,7 @@ func _require_ran(name: String) -> void:
 func _ready() -> void:
 	_test_torus_compare()
 	_require_ran("torus")
+	_check_source_guard()
 	if _failures.is_empty():
 		print(MARKER)
 		get_tree().quit(0)
@@ -92,3 +93,17 @@ func _test_torus_compare() -> void:
 
 	p.queue_free()
 	_ran["torus"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见顶部说明)
+
+
+# ── 源码守卫 ──
+# `map_px` 不接线的话,环面修复在**真机上是惰性的** —— 而且**静默**:不报错、探针全绿、
+# 生产行为与修复前逐帧一致(实测过)。所以把"接线了"这件事本身变成断言。
+# 若日后改法换了入口(例如搬进 player.gd),请把这里改成认新入口,**别删掉这条断言**。
+func _check_source_guard() -> void:
+	var txt := FileAccess.get_file_as_string("res://scenes/pvp_client.gd")
+	var found := false
+	for line in txt.split("\n"):
+		if line.contains("map_px") and not line.strip_edges().begins_with("#"):
+			found = true
+			break
+	_check(found, "pvp_client 给控制器设了 map_px(不设 = 环面修复惰性且静默)")

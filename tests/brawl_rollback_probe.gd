@@ -21,13 +21,17 @@ extends Node
 #   A 的 mask 含 AUTH 不含 GHOST → A 看不见幽灵体;P 的 mask 含 GHOST 不含 AUTH → P 看不见真身。
 # 两条链路各自的几何都在场,唯一变量是「P 的世界里那具身体在哪」。
 #
-# ═══ 四个变体(要回答的是「哪个杠杆值多少」)═══
-#   NONE         幽灵体摘掉(层置 0)—— 负向对照,回滚应当爆炸
-#   INTERP       幽灵体用副本**插值**位置 —— 现状(L1 之前的形态)
-#   LATEST       幽灵体用**最新已收快照**位置 —— L1
-#   LATEST_INSET 在 LATEST 基础上幽灵体多边形内缩 —— L1 + L3
-# ★ 注意 LATEST 用的是**最新已收快照**(= t-DELAY 那一帧),不是服务器此刻的位置 ——
-#   L1 消掉的是**插值**引入的 1 tick,不是网络延迟。别把这两笔账混了。
+# ═══ 四个变体 ═══
+#   STATIC  对手站着不动           —— 健全性对照:幽灵体零滞后 → 回滚应当恰好 0
+#   NONE    幽灵体摘掉(层置 0)    —— 负向对照:回滚应当爆炸
+#   PROD    幽灵体 = 最新已收快照的位置(= t-DELAY 那一帧)= **今天的行为**
+#   EXTRAP  PROD + 对手速度 × 延迟  —— 本探针要量的杠杆
+# ★ L1(幽灵体用最新位置)与 L3(幽灵体内缩)两个变体已被实测判定买不到目标,已删 ——
+#   见 docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md §2.1/§4.4/§8。
+#
+# ★★ 本探针的模拟必须**每帧一步**(在 _physics_process 里):刚体的位移只在**跨帧**时才对
+#   物理空间可见。把整段模拟塞进一帧的写法会让幽灵体一次都动不了(实测:
+#   rollback_fidelity_probe 的 B 组就是这个形状,PROD 与 EXTRAP 读数一字不差)。
 #
 # ⚠ 判据 grep 文本 "BRAWL ROLLBACK PROBE: ALL-OK"(不能只看退出码:探针中途报错时
 #   `--quit-after` 仍可能 exit 0 且不打印 ALL-OK)。
@@ -47,21 +51,20 @@ const REACH := 200.0      # A 面前留出的空场(让包能动起来,不是一
 
 const LAYER_AUTH := 32    # 层6:权威侧(真身之间互相碰撞)
 const LAYER_GHOST := 2    # 层2:玩家层 —— P 认这一层,幽灵体就在这层
-const INSET_SCALE := 0.90 # L3 的内缩比例(保守;与设计 §4.4 的 GHOST_INSET_SCALE 保持一致)
 
-enum Variant { NONE, INTERP, LATEST, LATEST_INSET, STATIC }
+enum Variant { NONE, STATIC, PROD, EXTRAP }
 
 # 诊断开关:置 true 时每 60 tick 打一行位置/分歧/rb。只在排查探针本身时打开
 # (正常跑要关,否则读数被刷屏;本仓判绿靠 grep 末行,不靠日志长度)。
-const TRACE := true
+const TRACE := false
 
-const VARIANT_NAME := ["幽灵体摘除(对照)", "幽灵体·插值(现状)", "幽灵体·最新(L1)",
-		"幽灵体·最新+内缩(L1+L3)", "对手站着不动(健全性对照)"]
+const VARIANT_NAME := ["幽灵体摘除(对照)", "对手站着不动(健全性对照)",
+		"幽灵体用旧位置(今天的行为)", "幽灵体外推(本组要量的)"]
 
 var _host: Node2D = null
 var _spawn := Vector2.ZERO
 var _failures: Array[String] = []
-var _rows: Array[String] = []
+var _rows: Array = []   # 每项 {n:int, variant:int, rb:int, text:String}(要按 N+变体取数)
 
 # ★ 假绿/挂死防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的
 #   `_ready()` 会照常往下走 —— 「_run_pass 中途报错 → 一条 _check 都没跑到 → _failures 仍空
@@ -79,7 +82,7 @@ func _pass_key(variant: int, n: int) -> String:
 	return "pass_%d_%d" % [variant, n]
 
 # 单趟状态
-var _variant: int = Variant.INTERP
+var _variant: int = Variant.PROD
 var _n := 2
 var _running := false
 var _tick := 0
@@ -103,9 +106,10 @@ signal _pass_finished
 
 func _ready() -> void:
 	# ★ 把 idle 帧率钉到 60:副本的插值时钟在 `_process`(idle)里按 delta 推进,而本探针的模拟
-	#   在 `_physics_process`(60Hz)里走。headless 默认 idle 不限速(可跑到几百 fps)→ 插值时钟
-	#   会比 tick 域**快十几倍**,`_render_tick` 一路冲到缓冲区最新端并冻住 → INTERP 变体每趟
-	#   落到哪全看运气(实测同一配置两次跑出 8 / 221 两个量级)。钉成 1:1 才有可比性。
+	#   在 `_physics_process`(60Hz)里走。headless 默认 idle 不限速 → 两者比速不可控。
+	#   本探针已关掉副本的 `_process`(位置全部显式写),这一句是防万一。
+	# ★★ 更重要的是:**模拟必须每帧一步**。刚体位移只在跨帧时对物理空间可见;把整段模拟塞进
+	#   一帧的写法会让幽灵体一次都动不了(rollback_fidelity_probe 的 B 组就是这么废掉的)。
 	Engine.max_fps = 60
 	GameParameters.MAP_WIDTH = COLS * TILE
 	GameParameters.MAP_HEIGHT = ROWS * TILE
@@ -131,7 +135,7 @@ func _ready() -> void:
 	#   而是「回放时对手身体**没有被倒回**」这个结构性事实 —— 见文件末的 _summarize。
 	for n in [2, 8]:
 		passes.append([Variant.STATIC, n])
-	for v in [Variant.INTERP, Variant.LATEST, Variant.LATEST_INSET]:
+	for v in [Variant.PROD, Variant.EXTRAP]:
 		for n in [2, 4, 8]:
 			passes.append([v, n])
 
@@ -207,15 +211,15 @@ func _run_pass(variant: int, n: int) -> void:
 			return
 		if variant == Variant.NONE:
 			g.collision_layer = 0
-		elif variant == Variant.LATEST_INSET:
-			_inset_shapes(g)
 		_replicas.append(r)
 		_ghosts.append(g)
 
 	# ★ LATEST 两个变体:关掉副本自己的 _process(它会把副本插值回落后位置),
 	#   改由本探针每 tick 把副本**整体**摆到「最新已收快照」的位置 → 幽灵体也在那里。
 	#   视觉是否插值与物理无关:回滚只取决于幽灵体在哪。
-	if variant == Variant.LATEST or variant == Variant.LATEST_INSET or variant == Variant.STATIC:
+	if variant != Variant.NONE:
+		# 一律显式写位置:副本的 _process 插值时钟在探针里不可控(实测同配置两次跑出 98/240),
+		# 而回滚只取决于幽灵体在哪,与副本视觉无关。
 		for r in _replicas:
 			(r as Node).set_process(false)
 
@@ -232,7 +236,7 @@ func _run_pass(variant: int, n: int) -> void:
 			n, VARIANT_NAME[variant], rb, float(rb) / secs,
 			_pct(_rb_devs, 0.50), _pct(_rb_devs, 0.95), _max_dev,
 			100.0 * float(_contact_ticks) / float(RUN)]
-	_rows.append(line)
+	_rows.append({"n": n, "variant": variant, "rb": rb, "med": _pct(_rb_devs, 0.50), "text": line})
 	print("[brawl] %s" % line)
 
 	# 负向对照必须爆炸,否则说明这探针量不到东西(空转断言)
@@ -291,18 +295,14 @@ func _physics_process(_delta: float) -> void:
 	if ack_t >= 0:
 		for i in range(_replicas.size()):
 			var st: Dictionary = (_opp_hist[i] as Array)[ack_t]
-			var r: Node2D = _replicas[i]
-			if _variant != Variant.INTERP and _variant != Variant.NONE:
-				# L1:副本(连同幽灵体)整体摆到**最新已收快照**的位置,不插值
-				r.global_position = MazeGenerator.anchor_to_nearest(
-						st["pos"], P.global_position, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-			else:
-				# INTERP:交给副本自己的双快照插值(_process),只把快照喂进去
-				r.apply_snapshot({
-					"pos": st["pos"], "facing": 1 if int(st["facing"]) >= 0 else -1,
-					"aim": Vector2.LEFT, "weapon": 0, "previewing": false,
-					"hp": 100, "pose": int(st["state"]), "downed": bool(st["down"]),
-				}, P.global_position, ack_t + 1)
+			var gp: Vector2 = st["pos"]
+			if _variant == Variant.EXTRAP:
+				# 外推:用**那一帧快照里带的对手速度**,把它推到"现在应该在"的位置。
+				# 速度是 DELAY tick 前的速度 —— 对手急停/变向时会过冲,这是本方案固有的代价。
+				gp = gp + (st["vel"] as Vector2) * (float(DELAY) * DT)
+			gp = MazeGenerator.anchor_to_nearest(
+					gp, P.global_position, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+			(_replicas[i] as Node2D).global_position = gp
 
 	# 4) 预测侧步进。★ 回滚**次数**不等于**看得见**:次数高但每次只修 2px 就无所谓,修 50px 就会瞬移。
 	#    故在 advance 前后夹一次:本 tick 发生了回滚就记下**当时的预测-权威分歧**(= 本次修正量)。
@@ -373,21 +373,6 @@ func _make_player(nm: String, pos: Vector2):
 	return p
 
 
-# 幽灵体多边形朝质心内缩(与生产侧 L3 同款做法:等比缩,不重算偏移)
-func _inset_shapes(ghost: StaticBody2D) -> void:
-	for child in ghost.get_children():
-		var poly := child as CollisionPolygon2D
-		if poly == null or poly.polygon.is_empty():
-			continue
-		var c := Vector2.ZERO
-		for pt in poly.polygon:
-			c += pt
-		c /= float(poly.polygon.size())
-		var pts := PackedVector2Array()
-		for pt in poly.polygon:
-			pts.append(c + (pt - c) * INSET_SCALE)
-		poly.polygon = pts
-
 
 func _build_grid() -> Array[Array]:
 	var wall := 31
@@ -400,14 +385,38 @@ func _build_grid() -> Array[Array]:
 	return grid
 
 
-# ── 收官:把读数整理成一张表,并把「L1 值多少 / L3 再值多少」写成可比的数字 ──
+func _find_median(variant: int, n: int) -> float:
+	for r in _rows:
+		if int(r["variant"]) == variant and int(r["n"]) == n:
+			return float(r["med"])
+	return -1.0
+
+
+func _find(variant: int, n: int) -> int:
+	for r in _rows:
+		if int(r["variant"]) == variant and int(r["n"]) == n:
+			return int(r["rb"])
+	return -1
+
+
+# ── 收官:把读数整理成一张表,并给出「外推值多少」的跨变体对照 ──
 func _summarize() -> void:
 	print("")
 	print("[brawl] ═══ 汇总(回滚 = PredictionRollback.rollback_count())═══")
 	for r in _rows:
-		print("[brawl] %s" % r)
-	print("[brawl] 说明:单位是「每接触秒」的归一值,跨 N 比较才成立(包越大接触占比越高)。")
-	print("[brawl]      L1 的收益 = INTERP → LATEST 的斜率降幅;L3 的增量 = LATEST → LATEST_INSET。")
+		print("[brawl] %s" % r["text"])
+	print("[brawl] 说明:修正量的中位/p95 才是「看不看得见」的读数(碰撞箱 80px、瓦片 64px)。")
+	# ★ EXTRAP 是**已实测证伪**的候选,不设通过判据 —— 留它在表里是为了让数字可复现,
+	#   并防后人再把它当"显然的改进"加回来(实测:频率不降,N=8 反而涨 35%;修正量 p95
+	#   13px → 65~77px,因为对手贴墙/急停时速度还在,外推把幽灵体推过头)。
+	# ★ 真正值得守的是**幽灵体带来的那个性质**:它把修正量压在个位数 px。
+	#   频率不随幽灵体准度变(摘除/准确/推歪 三档都是 ~220 次)—— 频度是"1px 容差 + 滞后对手"
+	#   的固有属性,不是幽灵体没做好。所以这里守 magnitude,不守 count。
+	for n in [2, 4, 8]:
+		var prod := _find(Variant.PROD, n)
+		if prod > 0:
+			var med := _find_median(Variant.PROD, n)
+			_check(med < 10.0, "N=%d 幽灵体把修正量中位压在 10px 内(实测 %.1f px)" % [n, med])
 
 
 # 分位数(空数组返回 0)。修正量才是「看不看得见」的读数:32px 宽的身体,修正个位数 px 不可感。
