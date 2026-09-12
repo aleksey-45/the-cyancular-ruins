@@ -627,7 +627,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 进入:手上切到第一个可用道具(隐藏槽位 8/9/10),PvP 经槽位同步通道让服务器跟随;
 	# 退出:回到进入前的武器槽。道具模式内:数字 1/2/3 直选道具,滚轮循环。
 	if event is InputEventKey and event.pressed and not event.echo \
-			and event.physical_keycode == KEY_T and not combat.is_downed():
+			and (event.physical_keycode == KEY_T or event.keycode == KEY_T) \
+			and not combat.is_downed():
 		if weapons.is_prop_mode():
 			weapons.exit_prop_mode()
 		else:

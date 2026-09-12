@@ -30,11 +30,34 @@ func _run() -> void:
 		_finish()
 		return
 
-	# ── ① 装备链 ──
-	weapons.equip("8")
+	# ── ① 真实路径:模拟按 T(player._unhandled_input)→ 是否进入道具模式 ──
+	var ev := InputEventKey.new()
+	ev.physical_keycode = KEY_T
+	ev.pressed = true
+	player._unhandled_input(ev)
 	await tree.process_frame
-	await tree.process_frame   # equip 的 add_child 是 deferred:等道具真正入树
+	await tree.process_frame
+	if not weapons.is_prop_mode():
+		fails.append("按 T 未进入道具模式(仍槽位 %d)" % weapons.current_slot_int())
 	var w: Node = weapons.current_weapon()
+	if w == null or not w.has_method("_spawn_projectiles"):
+		fails.append("T 后没有道具实例(槽位 %d)" % weapons.current_slot_int())
+		print("PROP E2E: FAIL " + "; ".join(fails))
+		_finish()
+		return
+	print("PROBE[T]: prop_mode=", weapons.is_prop_mode(), " slot=", weapons.current_slot_int(),
+			" blast_force=", w.get("blast_force"))
+
+	# ── ①b 真实开火:调 fire() 本体(与鼠标点击同路径),看弹是否生成 ──
+	var n0 := tree.get_nodes_in_group("bullet").size()
+	w.fire()
+	for i in 6:
+		await tree.physics_frame
+	var n1 := tree.get_nodes_in_group("bullet").size()
+	print("PROBE[fire]: bullet %d→%d (fire_cooldown=%s reload_active=%s mag=%s)" % [
+			n0, n1, str(w.get("fire_cd_timer")), str(w.reload_active()), str(w.get("mag_ammo"))])
+	if n1 <= n0:
+		fails.append("fire() 没有生成投掷物")
 	if w == null or not w.has_method("_spawn_projectiles"):
 		fails.append("equip(8) 后没有道具实例")
 		print("PROP E2E: FAIL " + "; ".join(fails))
