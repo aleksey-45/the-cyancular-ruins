@@ -73,13 +73,20 @@ func _run() -> void:
 	if muzzle_from != null:
 		dir = (Vector2.RIGHT * float(player.get("facing_direction"))).normalized()
 	var vp: Viewport = (lvl as Node).get_node("WorldViewport")
+	var near_player := 0
 	w._spawn_projectiles(dir)
 	var n_bullets := 0
 	for i in 8:
 		await tree.physics_frame
 		n_bullets = maxi(n_bullets, tree.get_nodes_in_group("bullet").size())
+		# 回归断言:出生位置必须在玩家附近(漏 muzzle 出生位 → 弹生成在世界原点)
+		for b in tree.get_nodes_in_group("bullet"):
+			if is_instance_valid(b) and 					((b as Node2D).global_position - (player as Node2D).global_position).length() < 400.0:
+				near_player += 1
 	if n_bullets < 1:
 		fails.append("投掷物没有生成(bullet 组为空)")
+	elif near_player < 1:
+		fails.append("投掷物出生位置不在玩家附近(疑似漏设 muzzle 出生位)")
 	# 直接把一颗道具弹放到玩家旁 120px 处,短引信,确定起效位置
 	var bullet: CharacterBody2D = load("res://Scenes/Weapons/prop_bullet.tscn").instantiate()
 	bullet.setup(Vector2.RIGHT, 1.0, 1100.0, 1.4, Color(1, 0.6, 0.25), w)   # 速度≈0:原地起爆,保证落在玩家作用半径内
@@ -102,7 +109,8 @@ func _run() -> void:
 	for i in 90:
 		await tree.physics_frame
 		max_knock = maxf(max_knock, (player.combat.knock_velocity as Vector2).length())
-	bullet.queue_free()
+	if is_instance_valid(bullet):
+		bullet.queue_free()
 	if max_knock < 100.0:
 		fails.append("击退炮冲击峰值 %d px/s(<100,无冲击)" % int(max_knock))
 
@@ -131,7 +139,8 @@ func _run() -> void:
 		b2._explode()   # 直接起爆
 		await tree.create_timer(0.4).timeout
 		var zones_after := tree.get_nodes_in_group("smoke_zone").size()
-		b2.queue_free()
+		if is_instance_valid(b2):
+			b2.queue_free()
 		if zones_after <= zones_before:
 			fails.append("烟雾区没有出现(smoke_zone 组 %d→%d)" % [zones_before, zones_after])
 

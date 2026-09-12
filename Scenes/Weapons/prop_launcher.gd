@@ -33,5 +33,18 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 		b.hit_fuse_time = 0.15
 		b.explosion_visual = explosion_visual
 		b.apply_damage = not Level0.pvp_mode
+		# 出生位置 = 枪口:漏了这行投掷物会出生在世界原点(0,0),远处凭空爆炸(实测事故)
+		b.global_position = muzzle.global_position
 		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
+	_throw_anim()
+
+
+## 掷出动画:罐体向瞄准方向一送再回位(区别于枪械后坐的向后缩)
+func _throw_anim() -> void:
+	if sprite == null:
+		return
+	sprite.position = _base_sprite_pos + Vector2(7.0, -3.0)
+	var tw := sprite.create_tween()
+	tw.tween_property(sprite, "position", _base_sprite_pos, 0.22) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
