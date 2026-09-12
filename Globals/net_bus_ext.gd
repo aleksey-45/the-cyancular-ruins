@@ -22,6 +22,7 @@ signal player_options_received(caller: int, opts: Dictionary)  # worker:某客�
 signal local_beam_fired(data: Dictionary)         # worker → 非射手端:激光光束几何(画视觉副本)
 signal suicide_requested(caller: int)             # worker:某客户端请求自杀脱困
 signal local_welcome(build: String, caps: Dictionary)          # 客户端:服务器握手回应
+signal hues_requested(caller: int)                # worker:客户端请求补发 peer_hues(进图后听力才接上)
 
 # 大乱斗大厅(自建服务端,与 1v1 大厅协议并存)
 signal royale_create_requested(caller: int, opts: Dictionary)
@@ -101,6 +102,8 @@ func _dispatch(kind: String, p: Dictionary, caller: int) -> void:
 			local_match_options.emit(p)
 		"peer_hues":
 			local_peer_hues.emit(p)
+		"request_hues":
+			hues_requested.emit(caller)   # worker 收到后补发一次 peer_hues
 		"hit_confirm":
 			local_hit_confirm.emit(int(p.get("shooter_role", 0)), int(p.get("victim_role", 0)))
 		"beam_fired":

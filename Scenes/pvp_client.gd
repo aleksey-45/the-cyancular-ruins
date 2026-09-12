@@ -87,6 +87,7 @@ func _ready() -> void:
 	NetBusExt.local_match_options.connect(_on_match_options)
 	NetBusExt.local_explosion_event.connect(_on_explosion_event)   # 权威爆炸视效(本地预测弹道不再自行起爆)
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
+	NetBusExt.c2s("request_hues")   # 同上:1v1 进图后补要颜色
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBusExt.local_beam_fired.connect(_on_beam_fired)
 	NetBus.local_kill_event.connect(_on_kill_event)

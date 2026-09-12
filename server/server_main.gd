@@ -11,6 +11,8 @@ var _host: Node = null
 var _claims: Dictionary = {}   # role(int) -> peer_id(worker 视角)
 var _claim_names: Dictionary = {}   # role(int) -> 昵称(开局 peer_info 回传两端)
 var _claim_opts: Dictionary = {}   # role(int) -> 本端选项(颜色/规则偏好)
+var _pending_opts: Dictionary = {} # caller(peer) -> 选项(player_options 可能先于 claim_role 到达;
+                                   # 两者分属 NetBusExt/NetBus 两个节点,跨节点无顺序保证)
 var _wait_timer := 0.0
 # ── 大乱斗 worker(--royale --players N):N 人限时死斗 ──
 var _royale := false
@@ -139,6 +141,7 @@ func _run_worker(port: int) -> void:
 		return
 	NetBus.role_claimed.connect(_on_role_claimed)
 	NetBusExt.player_options_received.connect(_on_player_options)
+	NetBusExt.hues_requested.connect(_on_hues_requested)
 	NetBus.peer_left.connect(_on_peer_left)
 	NetBusExt.suicide_requested.connect(_on_suicide_request)
 	if _royale:
@@ -167,7 +170,25 @@ func _on_player_options(caller: int, opts: Dictionary) -> void:
 	for r in _claims:
 		if _claims[r] == caller:
 			_claim_opts[r] = opts
+			_broadcast_hues()   # 对局已开:选项晚到也要立刻补一版完整表
 			return
+	_pending_opts[caller] = opts   # claim 还没到:先存档,报到时补挂
+
+
+# worker:客户端进图后补要颜色(peer_hues 开局只广播一次,游戏场景可能还没接上听力)
+func _on_hues_requested(caller: int) -> void:
+	if _claims.is_empty():
+		return
+	NetBusExt.s2c(caller, "peer_hues", _claim_hues())
+
+
+# 给所有已报到玩家重发一次颜色表(选项晚到/客户端晚听力时用)
+func _broadcast_hues() -> void:
+	if _claims.is_empty():
+		return
+	var h := _claim_hues()
+	for r in _claims:
+		NetBusExt.s2c(_claims[r], "peer_hues", h)
 
 # 自杀脱困(大乱斗):caller → role → RoyaleHost(存活/对局中校验在那边)
 func _on_suicide_request(caller: int) -> void:
@@ -192,6 +213,9 @@ func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 		return
 	_claims[role] = caller
 	_claim_names[role] = player_name
+	if _pending_opts.has(caller):
+		_claim_opts[role] = _pending_opts[caller]   # 乱序补挂
+		_pending_opts.erase(caller)
 	if _royale:
 		print("worker: 大乱斗角色 %d = peer %d (%d/%d 人,另有 %d 个 AI)" % [role, caller,
 				_claims.size(), _expected_players - _ai_roles.size(), _ai_roles.size()])

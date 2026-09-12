@@ -20,6 +20,8 @@ var _got_round_state := false
 var _got_match_options := false
 var _got_match_start := false
 var _saw_invite_reject := false
+var _expect_hues: Dictionary = {}   # role -> 本端上报的色相(颜色链路断言)
+var _got_hues: Dictionary = {}
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -161,6 +163,10 @@ func _go_and_verify(who: String) -> void:
 			return
 		NetBusExt.local_match_options.connect(func(_opts: Dictionary) -> void:
 			_got_match_options = true)
+		NetBusExt.local_peer_hues.connect(func(h: Dictionary) -> void:
+			_got_hues = h   # 取最新(开局半张表后,补发的完整表要能覆盖)
+			print("PROBE[%s]: peer_hues=%s" % [who, str(h)]))
+		NetBusExt.c2s("request_hues")   # 与真实客户端一致:进图后补要一次
 		NetBus.local_round_state.connect(func(data: Dictionary) -> void:
 			if not _got_round_state:
 				_got_round_state = true
@@ -179,6 +185,12 @@ func _go_and_verify(who: String) -> void:
 			problems.append("未收到 match_options")
 		if _snap_count < 30:
 			problems.append("快照过少 %d(<30,60Hz 应≈180)" % _snap_count)
+		if _got_hues.is_empty():
+			problems.append("未收到 peer_hues(颜色链路断)")
+		else:
+			for r in _expect_hues:
+				if absf(float(_got_hues.get(r, -1.0)) - float(_expect_hues[r])) > 1.0:
+					problems.append("role %s 色相不符(期望 %s 实收 %s;收到全表=%s)" % [r, _expect_hues[r], _got_hues.get(r, "缺"), str(_got_hues)])
 		if problems.is_empty():
 			_finish(true, who, "match_start+round_state+match_options+%d 快照 全部通过" % _snap_count)
 		else:
@@ -189,7 +201,9 @@ func _to_worker(who: String, role: int, port: int) -> void:
 	multiplayer.connected_to_server.connect(func() -> void:
 		print("PROBE[%s]: 已连 worker,claim role %d" % [who, role])
 		NetBus.rpc_id(1, "claim_role", role, who.to_upper())
-		NetBusExt.c2s("player_options", {"hue": 0.0}), CONNECT_ONE_SHOT)
+		var hue := 120.0 if role == 1 else 240.0
+		_expect_hues[role] = hue
+		NetBusExt.c2s("player_options", {"hue": hue}), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
 		_finish(false, who, "连 worker 失败"), CONNECT_ONE_SHOT)
 	NetBus.stop()
