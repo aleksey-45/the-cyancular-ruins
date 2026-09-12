@@ -59,10 +59,11 @@ enum Variant { NONE, STATIC, PROD, TOL2, TOL4, TOL8, EXTRAP }
 const TRACE := false
 
 const VARIANT_NAME := ["幽灵体摘除(对照)", "对手站着不动(健全性对照)",
-		"容差 1px(今天的行为)", "容差 2px", "容差 4px", "容差 8px", "幽灵体外推(已证伪)"]
+		"容差 1px(历史基线)", "容差 2px(已采纳)", "容差 4px", "容差 8px", "幽灵体外推(已证伪)"]
 
-# 各变体的位置容差(px);-1 = 沿用控制器默认
-const VARIANT_TOL := [-1.0, -1.0, 1.0, 2.0, 4.0, 8.0, -1.0]
+# 各变体的位置容差(px)。**全部显式写**:控制器的默认值已采纳 2.0(见其 DEFAULT_POS_TOL),
+# 不写死的话"历史基线"那一档会跟着默认值漂,表就不可比了。
+const VARIANT_TOL := [1.0, 1.0, 1.0, 2.0, 4.0, 8.0, 1.0]
 
 var _host: Node2D = null
 var _spawn := Vector2.ZERO
@@ -148,6 +149,12 @@ func _ready() -> void:
 	for p in passes:
 		_require_ran(_pass_key(int(p[0]), int(p[1])))
 
+	# ★ 采纳值守卫(只查一次):控制器**默认**容差必须是采纳后的档位。改回 1.0 会让真机频率
+	#   回到 ~37 次/秒,而那是**静默**的(不报错、探针也照绿)—— 故把"默认值"本身变成断言。
+	#   注:消息里避开裸 % 号,否则 % 格式化会因非法转换而整个失效(实测踩过)。
+	var tol: float = PredictionRollback.new().pos_tol
+	_check(tol >= 2.0, "控制器默认容差已采纳(要求 >= 2px,实际 %.1f px)" % tol)
+
 	_summarize()
 
 	if _failures.is_empty():
@@ -177,8 +184,7 @@ func _run_pass(variant: int, n: int) -> void:
 	_ghosts = []
 	ctrl = PredictionRollback.new()
 	# ★ 容差是回滚频率的闸门(见 core/prediction_rollback.gd 的 pos_tol 注释)
-	if VARIANT_TOL[variant] > 0.0:
-		ctrl.pos_tol = VARIANT_TOL[variant]
+	ctrl.pos_tol = VARIANT_TOL[variant]
 	srcA = NetworkInputSource.new()
 
 	var pack_x := _spawn.x + REACH
