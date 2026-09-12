@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://Scenes/Weapons/prop_smoke.gd" id="1_script"]
-[ext_resource type="Texture2D" path="res://assets/textures/weapons.png" id="2_tex"]
+[ext_resource type="Texture2D" path="res://assets/textures/prop_smoke.png" id="2_tex"]
 [ext_resource type="PackedScene" path="res://Scenes/Weapons/prop_bullet.tscn" id="3_bullet"]
 
 [node name="Prop" type="Node2D"]
@@ -16,7 +16,7 @@ fire_cooldown = 0.8
 bullet_scene = ExtResource("3_bullet")
 bullet_speed = 950.0
 bullet_range = 1100.0
-bullet_size = 1.4
+bullet_size = 2.2
 bullet_gravity = 0.45
 bullet_color = Color(0.75, 0.78, 0.8, 1)
 pitch_clamp_deg = 65.0
@@ -28,9 +28,6 @@ fuse_time = 0.4
 texture_filter = 1
 position = Vector2(10, 8)
 texture = ExtResource("2_tex")
-region_enabled = true
-region_rect = Rect2(3, 35, 51, 21)
-modulate = Color(0.75, 0.78, 0.8, 1)
 
 [node name="Muzzle" type="Marker2D" parent="."]
 position = Vector2(28, 4)

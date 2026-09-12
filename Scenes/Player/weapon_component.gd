@@ -47,13 +47,15 @@ static func silhouette(slot: int) -> Texture2D:
 		var sprites := inst.find_children("*", "Sprite2D", true, false)
 		if not sprites.is_empty():
 			var spr: Sprite2D = sprites[0]
-			if spr.region_enabled and spr.texture != null:
-				var atlas := spr.texture.get_image()
+			if spr.texture != null:
+				var atlas: Image = spr.texture.get_image()
 				if atlas != null:
 					if atlas.is_compressed():
 						atlas.decompress()
-					var r: Rect2 = spr.region_rect
-					var img := atlas.get_region(Rect2i(r.position, r.size))
+					var img: Image = atlas
+					if spr.region_enabled:
+						var r: Rect2 = spr.region_rect
+						img = atlas.get_region(Rect2i(r.position, r.size))
 					for y in img.get_height():
 						for x in img.get_width():
 							if img.get_pixel(x, y).a > 0.05:
