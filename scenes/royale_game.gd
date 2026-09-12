@@ -15,6 +15,7 @@ var _world: Node = null
 var _hud: RoyaleHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
 var _match_ended := false
+var _round_locked := false   # COUNTDOWN 冻结态(见 _on_round_state;出生点校正只在这期间做)
 var _ping_acc := 0.0
 
 # ── 头上 ID / 血条(按 role 管理)──
@@ -65,6 +66,7 @@ func _ready() -> void:
 	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
+	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
@@ -89,7 +91,40 @@ func _ready() -> void:
 	# 若它们**晚于**本场景建立才到(网络分帧),上面那几个订阅照常收 —— 两条路径进同一组 handler,
 	# 重复应用幂等(改名/染色/设禁用槽位都是幂等的)。
 	_consume_pending_payloads()
+	# ★ 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已建好并订阅齐了才开口要,
+	#   故不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
+	NetBus.rpc_id(1, "match_sync")
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
+
+
+# 进场拉取的应答。三个 handler 幂等(改名/染色/设禁用槽位),与旧推送重复到达也无害。
+func _on_match_sync(payload: Dictionary) -> void:
+	var names: Dictionary = payload.get("names", {})
+	if not names.is_empty():
+		_on_peer_info(names)
+	var hues: Dictionary = payload.get("hues", {})
+	if not hues.is_empty():
+		_on_peer_hues(hues)
+	var opts: Dictionary = payload.get("options", {})
+	if not opts.is_empty():
+		_on_match_options(opts)
+	var sp: Dictionary = payload.get("spawns", {})
+	if sp.has(PvpSession.role):
+		var want: Vector2i = sp[PvpSession.role]
+		if want != PvpSession.spawn:
+			push_warning("大乱斗 match_sync: 出生点与 match_start 不一致(%s vs %s),以 sync 为准" % [
+					str(PvpSession.spawn), str(want)])
+			PvpSession.spawn = want
+			_correct_local_spawn()
+
+
+# 见 pvp_client 的同名方法:只在开局倒计时里校正,已打起来就不硬拉。
+func _correct_local_spawn() -> void:
+	if _local == null or not _round_locked:
+		return
+	var ts := GameParameters.TILE_SIZE
+	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
+			PvpSession.spawn.y * ts + ts / 2.0)
 
 
 # 取用大厅缓存的开局载荷(清空后调用,见 PvpSession.pending_* 的注释)
@@ -326,8 +361,9 @@ func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
+	_round_locked = state == 0
 	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(state == 0)   # COUNTDOWN 锁开火(移动由服务器权威冻结)
+		_local.set_controls_locked(_round_locked)   # COUNTDOWN 锁开火(移动由服务器权威冻结)
 	if state == 3 and not _match_ended:   # MATCH_OVER → 展示结果 6s 后回主菜单
 		_match_ended = true
 		if _local != null and _local.has_method("set_controls_locked"):

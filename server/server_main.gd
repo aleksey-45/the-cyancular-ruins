@@ -170,6 +170,7 @@ func _run_worker(port: int) -> void:
 	NetBusExt.player_options_received.connect(_on_player_options)
 	NetBus.peer_left.connect(_on_peer_left)
 	NetBusExt.suicide_requested.connect(_on_suicide_request)
+	NetBus.match_sync_received.connect(_on_match_sync)
 	if _royale:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s)" % [
 				_human_role_count(), port, str(_role_set)])
@@ -207,6 +208,37 @@ func _on_player_options(caller: int, opts: Dictionary) -> void:
 		if _claims[r] == caller:
 			_claim_opts[r] = opts
 			return
+
+# 进场拉取:对局场景建好后主动要一次昵称/色相/生效选项/出生点/role 集合。
+# ★ 它**取代**原先"服务器推三载荷"那条路径 —— 那次推的根因问题是「推给一个正在切场景的客户端」:
+#   服务器在同一次 poll 里连推 4 条,而那一刻新场景的订阅方一个都不存在 → 静默丢失(自检 B2:
+#   对手颜色不生效 / 昵称表空到连自己头顶 ID 都建不出 / 禁武器闸门没上)。拉的时序不敏感。
+# 不在本局(role==0)→ 静默丢弃,与 NetBusExt 的旁路语义一致(迟到的旧客户端连到复用端口的
+# dispatch 不报错)。
+func _on_match_sync(caller: int) -> void:
+	var role := 0
+	for r in _claims:
+		if _claims[r] == caller:
+			role = int(r)
+			break
+	if role == 0:
+		return
+	var spawns := {}
+	if _host != null and _host.has_method("role_spawns"):
+		spawns = _host.role_spawns()
+	else:
+		# 理论上到不了:客户端要收到 match_start 才会进对局场景,而 match_start 是在 `_begin_match`
+		# 建宿主那次调用里发出的(同一帧内 `_host` 就赋好值了),报文往返只可能更晚。
+		# 真到了这里说明时序变了 —— 不静默,留一条痕(客户端会退回 match_start 带的那份出生点)。
+		push_warning("match_sync: role %d 报到时对局宿主还没建好,spawns 回空" % role)
+	NetBus.rpc_id(caller, "match_sync_data", {
+		"names": _claim_names,
+		"hues": _claim_hues(),
+		"options": _claim_opts.get(1, {}),
+		"roles": _role_set,
+		"spawns": spawns,
+	})
+
 
 # 自杀脱困(大乱斗):caller → role → RoyaleHost(存活/对局中校验在那边)
 func _on_suicide_request(caller: int) -> void:

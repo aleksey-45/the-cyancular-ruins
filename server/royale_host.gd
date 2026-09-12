@@ -232,6 +232,13 @@ static func plan_spawns(roles: Array) -> Dictionary:
 
 # 出生点:首次 = 开局散点;复活 = 优选开阔格中离所有存活敌人 ≥ RESPAWN_CLEARANCE 的随机格
 # (优选池不够 → 回退任意地板格,同样先保证离敌人远)。
+# 覆写(不可省):基类 `role_spawns()` 走 `_spawn_cell`,而本类的 `_spawn_cell` 第二次起返回
+# **动态复活点**且带 `_spawned_once` 副作用 —— 那会把复活点当开局出生点下发。
+# 本类的权威出生点就是 `_round_spawns`(由 start_on 算好传进来,与 match_start 广播的同一份)。
+func role_spawns() -> Dictionary:
+	return _round_spawns.duplicate()
+
+
 func _spawn_cell(role: int) -> Vector2i:
 	if not _spawned_once.has(role):
 		_spawned_once[role] = true

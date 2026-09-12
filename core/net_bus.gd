@@ -33,6 +33,9 @@ signal local_opponent_left          # 对局中途对手断线(服务器 → 存
 signal ping_updated(ms: int)        # 平滑后延迟 ms
 signal local_enemy_spawn(roster: Array)  # 服务器:本局鸟清单 [{id,scene,pos}],客户端建副本
 signal local_enemy_died(id: int)         # 服务器:某只鸟死亡(id),客户端移除副本
+# 进场拉取(取代"服务器推三载荷"):见下方 match_sync/match_sync_data 的注释
+signal match_sync_received(caller: int)          # worker 侧转交 → server_main
+signal local_match_sync(payload: Dictionary)     # 客户端侧:应答到达
 
 const DEFAULT_PORT := 7777
 # ENet 通道数。create_server/create_client 的通道参数默认 0 → 发包报
@@ -105,6 +108,15 @@ func send_input(pkt: Dictionary) -> void:
 func claim_role(role: int, player_name: String) -> void:
 	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name)
 
+# 客户端→worker:**进场拉取**。对局场景建好之后主动要一次(昵称/色相/生效选项/出生点/role 集合)。
+# ★ 它**取代**原来"服务器推三载荷"那条路径。推的根因问题是「推给一个正在切场景的客户端」:
+#   服务器在**同一次 poll** 里推 4 条,而那一刻新场景的订阅方一个都不存在 → 静默丢失(自检 B2,
+#   后果是对手颜色不生效、昵称表空、禁武器闸门没上)。拉的方向反过来:客户端建好之后才开口,
+#   晚到也无所谓 —— 应答按 role 回,不依赖任何时序。
+@rpc("any_peer", "reliable")
+func match_sync() -> void:
+	match_sync_received.emit(multiplayer.get_remote_sender_id())
+
 # ── 服务器 → 客户端(权威方=peer1 可调)──
 @rpc("authority", "unreliable")
 func snapshot(snap: Dictionary) -> void:
@@ -119,6 +131,13 @@ func bullet_spawn(data: Dictionary) -> void:
 @rpc("authority", "reliable")
 func beam_fired(data: Dictionary) -> void:
 	local_beam_fired.emit(data)
+
+# worker→客户端:match_sync 的应答(一次性完整快照)。
+# 载荷 = {names:{role->昵称}, hues:{role->色相}, options:生效选项, roles:[int], spawns:{role->Vector2i}}。
+# 可靠通道:一次性、必须到(不像快照那样可以丢一帧)。
+@rpc("authority", "reliable")
+func match_sync_data(payload: Dictionary) -> void:
+	local_match_sync.emit(payload)
 
 @rpc("authority", "reliable")
 func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:

@@ -529,6 +529,17 @@ func _spawn_cell(role: int) -> Vector2i:
 	var key := "player" if (role == 1) != _side_swap else "player2"
 	return spawns.get(key, Vector2i(-1, -1))
 
+# 本局各 role 的出生点(canonical 格),供**进场拉取**(match_sync)下发给客户端。
+# 1v1:由 `_spawn_cell` 得来(地图标定的 player/player2,换边只影响谁拿哪个)。
+# ★ 大乱斗**必须覆写**成开局散点:基类实现走 `_spawn_cell`,而 `RoyaleHost` 覆写过的那个
+#   第二次起会返回**动态复活点**,且带 `_spawned_once` 副作用 —— 拿它下发等于把复活点当出生点。
+# ★ 这里给的是**只读取法**:别让上层直接读 `_round_spawns` 之类的私有字段(值可能被就地改)。
+func role_spawns() -> Dictionary:
+	var out := {}
+	for role in players:
+		out[int(role)] = _spawn_cell(int(role))
+	return out
+
 # 每物理帧:倒地转换检测(击杀计分/安排复活) + 回合状态机推进。
 func _match_round_tick(delta: float) -> void:
 	for role in players:
