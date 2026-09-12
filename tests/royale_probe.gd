@@ -179,7 +179,7 @@ func _go_and_verify(who: String) -> void:
 				if not _got_display_names:
 					_got_display_names = true
 					print("PROBE[%s]: 昵称表已广播 ✓" % who))
-		NetBus.local_snapshot.connect(func(_snap: Dictionary) -> void:
+		NetBus.local_snapshot_world.connect(func(_snap: Dictionary) -> void:
 			_snap_count += 1)
 		# 对局验证窗:再收 3 秒快照,汇总断言
 		await get_tree().create_timer(3.0).timeout

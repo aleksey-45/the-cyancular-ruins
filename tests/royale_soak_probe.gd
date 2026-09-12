@@ -154,7 +154,7 @@ func _read_result(i: int) -> String:
 func _run_client() -> void:
 	Engine.max_fps = 60     # 与真客户端同节奏;不设就变成"跑多快算多快",帧间隔读数失去意义
 	_flow_us = Time.get_ticks_msec()
-	NetBus.local_snapshot.connect(_on_snapshot)
+	NetBus.local_snapshot_world.connect(_on_snapshot_world)   # 快照拆两条后:世界包(数条数够用)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_kill_event.connect(func(_k: int, _v: int) -> void:
 		_kills += 1
@@ -391,7 +391,7 @@ func _check_deadline() -> void:
 		_finish(true, "观测窗 %.0fs 到时(未等到 MATCH_OVER)" % _run_secs)
 
 
-func _on_snapshot(snap: Dictionary) -> void:
+func _on_snapshot_world(snap: Dictionary) -> void:
 	if _done:
 		return
 	var now := Time.get_ticks_usec()

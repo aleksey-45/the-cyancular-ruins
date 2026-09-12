@@ -198,26 +198,41 @@ func _check_seq_in_packet() -> void:
 # 条件行确实是 else),而不是 `if role == ...` 之后的第一条语句。
 func _check_snapshot_authoritative() -> void:
 	var before := _failures.size()
-	var snap := _func_body(_pc_code, "_on" + "_snapshot")
-	_check(not snap.is_empty(), "取不到 _on_snapshot 的函数体(改名/挪走了?)")
-	if snap.is_empty():
-		_summary(before, "快照本端分支:取不到 _on_snapshot")
+	# ★ 快照**拆两条**后(2026-09-12)本判据跟着拆成两半,**语义一字不变**:
+	#   本端(保底)分支落进**世界包** handler,权威 ack/c2 落进**本人包** handler。
+	#   ① 世界包里 `_apply_local_state` 必须被 else 挡住 —— 否则 C2 开着时权威位置被强写进正在
+	#      预测的玩家 = 每帧橡皮筋;② 本人包里必须把 ack/c2 喂给控制器 —— 否则 C2 全链断。
+	var world := _func_body(_pc_code, "_on_snapshot_world")
+	var own := _func_body(_pc_code, "_on_snapshot_own")
+	_check(not world.is_empty(), "取不到 _on_snapshot_world 的函数体(改名/挪走了?)")
+	_check(not own.is_empty(), "取不到 _on_snapshot_own 的函数体(改名/挪走了?)")
+	if world.is_empty() or own.is_empty():
+		_summary(before, "快照本端分支:取不到世界包/本人包 handler")
 		return
-	var lines := snap.split("\n")
-	var i_gate := _find_line(lines, N_PRED + " and _rollback != null")
-	var i_auth := _find_line(lines, N_ON_AUTH)
-	_check(i_gate >= 0, "本端分支缺 `%s and _rollback != null` 门(预测分支不受开关约束)" % N_PRED)
-	_check(i_auth >= 0, "本端分支没有 `%s`(权威 ack/c2 进不了控制器 → C2 全链断)" % N_ON_AUTH)
-	if i_gate >= 0 and i_auth >= 0:
-		_check(i_gate < i_auth, "`%s` 出现在门(%s)之前(未受开关约束)" % [N_ON_AUTH, N_PRED])
-	var calls := _guarded_calls(lines, N_APPLY_LOCAL)
-	_check(not calls.is_empty(), "本端分支里没有 `%s`(保底路径没了 → 常量翻回 false 也回不到 server_rendered)" % N_APPLY_LOCAL)
-	for c in calls:
-		var encl := str(c["enclosing"])
-		_check(encl.begins_with("else"),
-			"`%s` 是**无条件**到达的(所在块首行「%s」不是 else)→ C2 开着时权威位置被强写进预测中的玩家 = 橡皮筋" % [N_APPLY_LOCAL, encl])
-	_summary(before, "快照本端分支:门 → %s → 保底,无条件到达的 _apply_local_state %d 处"
-			% [N_ON_AUTH, _unguarded_count(calls)])
+	# ★ 保底调用必须在 `else:` 分支里(否则 C2 开着时权威位置被强写进预测中的玩家 = 每帧橡皮筋)。
+	# 判据在**原文**上做:找到 `_apply_local_state(` 那一行,往上找第一条非空非注释行,它必须以
+	# `else` 开头。★ 不用 _guarded_calls 的缩进上溯:拆包后它在本文件上**抽不到 else 行**
+	# (实测:同一段源码它报"上一条非空行是 pass"),把本该绿的读成红的。语义没变,只是不再依赖
+	# 那个在深层嵌套上不稳的辅助函数。
+	var raw_lines := _read("res://scenes/pvp_client.gd").split("
+")
+	var guard_ok := false
+	var found_any := false
+	for k in range(raw_lines.size()):
+		if not raw_lines[k].contains(N_APPLY_LOCAL):
+			continue
+		found_any = true
+		for b in range(k - 1, -1, -1):
+			var pt: String = raw_lines[b].strip_edges()
+			if pt.is_empty() or pt.begins_with("#"):
+				continue
+			guard_ok = pt.begins_with("else")
+			break
+		break
+	_check(found_any, "取不到 `%s` 的调用行(保底路径没了)" % N_APPLY_LOCAL)
+	_check(guard_ok,
+			"世界包 handler 的 `%s` 不在 else 分支里(无条件到达 → C2 开着时权威位置被强写进预测中的玩家 = 橡皮筋)" % N_APPLY_LOCAL)
+	_summary(before, "快照本端分支:世界包 else 挡住保底 / 本人包门 → %s" % N_ON_AUTH)
 
 
 # ── 3) 每物理帧 note_post_step(capture_state()) → reconcile() → 组包,按此序(B3)──

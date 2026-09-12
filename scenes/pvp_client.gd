@@ -92,7 +92,10 @@ func _ready() -> void:
 		_hp_bar = EnemyHpBar.new()
 		_world.add_child(_hp_bar)
 	# 快照/事件消费
-	NetBus.local_snapshot.connect(_on_snapshot)
+	# 快照**拆两条**(2026-09-12):①世界包=全部玩家的渲染字段(副本/血条/服务器渲染下的本端);
+	# ②本人包=自己的 ack_seq + c2(**只有本人需要**,C2 rollback 拿它锚定/重放)。
+	NetBus.local_snapshot_world.connect(_on_snapshot_world)
+	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
 	NetBus.local_beam_fired.connect(_on_beam_fired)
 	NetBus.local_hit_event.connect(_on_hit_event)
@@ -241,41 +244,47 @@ func _physics_process(_delta: float) -> void:
 	if LOCAL_PREDICTION_ENABLED and _rollback != null:
 		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
-func _on_snapshot(snap: Dictionary) -> void:
+# 世界包:全部玩家的渲染字段。本端(服务器渲染模式)与对手副本都从这里取;C2 下本端不用它。
+func _on_snapshot_world(world: Dictionary) -> void:
 	if _local == null:
 		return
 	# 丢弃乱序旧快照(unreliable 通道可能乱序;应用旧快照会把玩家拉回过去位置)
-	var snap_tick := int(snap.get("tick", 0))
-	if snap_tick < _last_snap_tick:
+	var tier := int(world.get("tick", 0))
+	if tier < _last_snap_tick:
 		return
-	_last_snap_tick = snap_tick
-	var players_snap: Dictionary = snap["players"]
-	for role_str in players_snap:
-		var role := int(role_str)
-		var data: Dictionary = players_snap[role_str]
-		if role == PvpSession.role:
-			if LOCAL_PREDICTION_ENABLED and _rollback != null:
-				# C2:权威整态/ack 喂控制器(reconcile 在下一帧步进前处理)
-				var ack := int(data.get("ack_seq", 0))
-				var c2: Dictionary = data.get("c2", {})
-				if not c2.is_empty():
-					_rollback.on_authoritative(ack, c2)
-			else:
-				_apply_local_state(data)
-		elif _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
-			_remote_replica.apply_snapshot(data, _local.global_position, snap_tick)
-			# 对手血条:快照 hp → 比例(上限取 PlayerParams 玩家最大血)
+	_last_snap_tick = tier
+	var players_snap: Dictionary = world["players"]
+	var me: Dictionary = players_snap.get(str(PvpSession.role), {})
+	if LOCAL_PREDICTION_ENABLED or me.is_empty():
+		pass   # C2:本地玩家自步进(权威整态走**本人包**,见 _on_snapshot_own);空 = 本帧没有我的数据
+	else:
+		_apply_local_state(me)
+	var opp_role := 3 - PvpSession.role
+	if _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
+		var opp: Dictionary = players_snap.get(str(opp_role), {})
+		if not opp.is_empty():
+			_remote_replica.apply_snapshot(opp, _local.global_position, tier)
 			if _hp_bar != null:
-				_hp_bar.ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
-						/ float(PlayerParams.player_max_hp)
+				_hp_bar.ratio = float(opp.get("hp", PlayerParams.player_max_hp)) 						/ float(PlayerParams.player_max_hp)
 	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)
-	var enemies_snap: Dictionary = snap.get("enemies", {})
+	var enemies_snap: Dictionary = world.get("enemies", {})
 	for id_str in enemies_snap:
 		var bid := int(id_str)
 		if _enemy_replicas.has(bid):
 			var r: Node = _enemy_replicas[bid]
 			if r != null and r.has_method("apply_remote"):
-				r.apply_remote(enemies_snap[id_str], _local.global_position, snap_tick)
+				r.apply_remote(enemies_snap[id_str], _local.global_position, tier)
+
+
+# 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
+# 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
+# 世界包丢只让副本插值冻结一帧。
+func _on_snapshot_own(own: Dictionary) -> void:
+	if LOCAL_PREDICTION_ENABLED and _rollback != null:
+		var c2: Dictionary = own.get("c2", {})
+		if not c2.is_empty():
+			_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
+
 
 # 本地玩家完全由服务器快照驱动:权威状态直接采纳,位置/姿态/朝向由 player 插值渲染。
 func _apply_local_state(data: Dictionary) -> void:

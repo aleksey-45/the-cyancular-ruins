@@ -14,6 +14,7 @@ var _frames := 0
 var _last_pos := Vector2(-999999, -999999)
 var _moved := false
 var _got_snapshot := false
+var _world_pos := Vector2.INF   # 世界包里的本端 pos(与本人包的 c2.pos 跨包比对)
 var _got_bullet_spawn := false
 var _got_round_state := false   # 回合制:收到 round_state(初始 COUNTDOWN 广播)
 # C2 rollback(阶段3):create 端发带 seq 的输入包,断言服务器 1/tick 消费、ack 随 tick 前进、
@@ -39,7 +40,8 @@ func _ready() -> void:
 		_frames = 0   # 计数从开局(worker 的 match_start)起算
 	)
 	NetBus.local_go_match.connect(_on_go_match)
-	NetBus.local_snapshot.connect(_on_snapshot)
+	NetBus.local_snapshot_world.connect(_on_snapshot_world)
+	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(func(_d: Dictionary) -> void: _got_bullet_spawn = true)
 	NetBus.local_round_state.connect(func(_d: Dictionary) -> void: _got_round_state = true)
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
@@ -61,32 +63,33 @@ func _on_connected() -> void:
 			printerr("SMOKE_MATCH FAIL: 非法 role %s" % role)
 			get_tree().quit(1)
 
-func _on_snapshot(snap: Dictionary) -> void:
+func _on_snapshot_world(world: Dictionary) -> void:
 	_got_snapshot = true
-	if my_role == 0:
-		return
-	var players: Dictionary = snap["players"]
-	if not players.has(str(my_role)):
-		return
-	var p: Dictionary = players[str(my_role)]
-	var pos: Vector2 = p["pos"]
-	if _last_pos.x < -99999.0:
-		_last_pos = pos
-	elif pos.distance_to(_last_pos) > 1.0:
-		_moved = true
-	# C2 阶段3断言(仅发送输入的 create 端才见 ack 推进)
-	var ack: int = int(p.get("ack_seq", -1))
+	var players_snap: Dictionary = world.get("players", {})
+	var me: Dictionary = players_snap.get(str(PvpSession.role), {})
+	if not me.is_empty():
+		var pos_now: Vector2 = me.get("pos", Vector2.ZERO)
+		# 位移跟踪:相邻世界包之间位置变了 = 服务器确实在模拟我们这一端
+		if _world_pos != Vector2.INF and pos_now.distance_to(_world_pos) > 1.0:
+			_moved = true
+		_world_pos = pos_now
+
+
+# 本人包:只有自己需要的 ack_seq + 权威整态 c2。
+# ★ 拆包后这条断言反而**更强**了:原先 c2 与散字段 pos 在同一个字典里,比的是"同一份数据的两个副本";
+#   现在 c2 走本人包、pos 走世界包 —— 比的是**两条独立报文是否一致**,那才是真正要保证的事。
+func _on_snapshot_own(own: Dictionary) -> void:
+	var ack: int = int(own.get("ack_seq", -1))
 	if ack > _max_ack:
 		_max_ack = ack
-		if _max_ack >= 30:
-			_ack_sane = true
-	var c2: Dictionary = p.get("c2", {})
-	if not c2.is_empty() and c2.has("pos"):
+	if ack >= 30:
+		_ack_sane = true
+	var c2: Dictionary = own.get("c2", {})
+	if not c2.is_empty() and c2.has("pos") and _world_pos != Vector2.INF:
 		var c2pos: Vector2 = c2["pos"]
-		if c2pos.distance_to(pos) < 0.5:
+		if c2pos.distance_to(_world_pos) < 0.5:
 			_full_state_ok = true
 
-# 大厅配对完成:断大厅 → 转连对局 worker → claim 角色
 func _on_go_match(role_assign: int, port: int) -> void:
 	multiplayer.connected_to_server.connect(_claim_worker.bind(role_assign), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:

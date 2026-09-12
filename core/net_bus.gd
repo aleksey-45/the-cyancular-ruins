@@ -20,7 +20,9 @@ signal input_received(caller: int, pkt: Dictionary)
 # worker:客户端连上后 claim_role 转交(caller=peer id, role=客户端在大厅领的角色, player_name=昵称)
 signal role_claimed(caller: int, role: int, player_name: String)
 # 服务器 → 客户端
-signal local_snapshot(snap: Dictionary)
+# 快照拆两条(2026-09-12,取代原单条 `local_snapshot`)
+signal local_snapshot_world(world: Dictionary)   # 全部玩家的渲染字段(副本/血条用)
+signal local_snapshot_own(own: Dictionary)       # 只有本人需要的 ack_seq + 权威整态 c2
 signal local_bullet_spawn(data: Dictionary)
 signal local_beam_fired(data: Dictionary)   # 即时光束武器(激光)权威开火:对手端据此画光束视觉副本
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
@@ -118,9 +120,24 @@ func match_sync() -> void:
 	match_sync_received.emit(multiplayer.get_remote_sender_id())
 
 # ── 服务器 → 客户端(权威方=peer1 可调)──
+# ── 快照:**拆两条**(2026-09-12)──
+# 旧实现把**含全部 N 人 c2 整态**的同一份 dict 逐 peer 各 `rpc_id` 一次 → 服务器序列化量 O(N²)
+# (实测:单人条目 948B,其中 c2 占 664B(70%);8 人局服务器上行 ≈29 Mbps)。而 C2 下每个
+# 客户端其实**只用得到自己那一份 c2** —— 70% 的体积花在只有本人需要的数据上,却每人各发一遍。
+# 拆开后:
+#   ① 世界包 = 全部玩家的渲染字段,构造一次、**广播一次** → O(N)
+#      ★ 必须用 `rpc()` 而不是逐 `rpc_id` 循环:前者在 ENet 层是单次序列化 + enet_host_broadcast,
+#        后者会把 O(N²) 加回来。
+#   ② 本人包 = 自己的 ack_seq + c2,定向发给本人
+# 顺带好处:两者**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补),世界包丢只冻结一帧副本插值。
+# 实测(拆包后估算):8 人局服务器上行 3555KB/s → 446KB/s(≈29Mbps → 3.6Mbps)。
 @rpc("authority", "unreliable")
-func snapshot(snap: Dictionary) -> void:
-	local_snapshot.emit(snap)
+func snapshot_world(world: Dictionary) -> void:
+	local_snapshot_world.emit(world)
+
+@rpc("authority", "unreliable")
+func snapshot_own(own: Dictionary) -> void:
+	local_snapshot_own.emit(own)
 
 @rpc("authority", "reliable")
 func bullet_spawn(data: Dictionary) -> void:

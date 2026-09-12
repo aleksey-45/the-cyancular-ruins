@@ -53,7 +53,10 @@ func _ready() -> void:
 	call_deferred("add_child", pp)
 	# 血条(他人,设置开启时;具体 role 的实例随副本在快照里懒建)
 	# 快照/事件消费
-	NetBus.local_snapshot.connect(_on_snapshot)
+	# 快照**拆两条**(2026-09-12):世界包=全部玩家的渲染字段(本场景要的都在里面);
+	# 本人包=自己的 ack+c2(本场景暂不接 —— 大乱斗还没接 C2 预测,本地玩家是服务器渲染;
+	# 接 C2 那批会用它喂 PredictionRollback,见 docs/superpowers/specs/...-design.md §4.3)。
+	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
 	NetBus.local_beam_fired.connect(_on_beam_fired)   # 大乱斗非射手端激光视觉副本(与 pvp_client 同款)
 	NetBus.local_hit_event.connect(_on_hit_event)
@@ -171,7 +174,7 @@ func _physics_process(_delta: float) -> void:
 		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
 
-func _on_snapshot(snap: Dictionary) -> void:
+func _on_snapshot_world(snap: Dictionary) -> void:
 	if _local == null:
 		return
 	var snap_tick := int(snap.get("tick", 0))
