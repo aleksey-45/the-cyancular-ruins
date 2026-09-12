@@ -18,6 +18,15 @@ var _match_ended := false
 var _round_locked := false   # COUNTDOWN 冻结态(见 _on_round_state;出生点校正只在这期间做)
 var _ping_acc := 0.0
 
+# ── C2 客户端预测(与 pvp_client 同一套;见 docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md)──
+# 本地玩家由引擎自步进(读真实 Input,aim/手感=单机);本场景每物理帧在它步进前
+# note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
+var _rollback = null            # PredictionRollback
+var _input_seq := 0             # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
+var _have_prev_seq := false
+var _prev_sent_seq := 0
+var _menu_open := false         # ESC 菜单是否开着(PvP 下菜单不暂停树,靠这个锁输入)
+
 # ── 头上 ID / 血条(按 role 管理)──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
 # 8 人角色色板(头顶 ID;本体染色仍走色相设置/peer_hues)
@@ -41,22 +50,30 @@ func _ready() -> void:
 	var local: Node2D = _world.get_node("Player")
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
-	# 与对手(层2)物理碰撞:服务器侧 match_host 已给每个玩家 mask |= 2。大乱斗客户端本地玩家
-	# 目前是服务器渲染(不走物理),这一位今天不产生行为;留着是为了①与 1v1 同款不留分叉,
-	# ②大乱斗接 C2 时(PvpSession.royale 那批)本地预测立刻就有对手身体信息,不用再补。
+	# 与对手(层2)物理碰撞:服务器侧 match_host 已给每个玩家 mask |= 2,客户端本地玩家也必须,
+	# 否则本地预测直接穿过对手副本、服务器却挡住 → 每帧分歧回滚(C2 的无限回滚循环)。
+	# 对手那一侧由 player_replica 的幽灵碰撞体提供(层2)。**不改 Player.tscn**:那会让
+	# enemy_logic_smoke 的「player mask == 5」断言变红,且单机不需要这一位。
 	local.collision_mask |= 2
 	_local = local
-	if _local.has_method("set_server_rendered"):
-		_local.set_server_rendered(true)
+	# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从本人包的 ack_seq/c2 喂入。
+	# ★ 这里**不再 set_server_rendered** —— 服务器渲染那条路径已整体删除(设计 §0「彻底删干净」),
+	#   全项目只剩一条联机链路。
+	_rollback = PredictionRollback.new()
+	_rollback.bind(_local)
+	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
+	# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
+	# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
+	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
 	# 血条(他人,设置开启时;具体 role 的实例随副本在快照里懒建)
 	# 快照/事件消费
-	# 快照**拆两条**(2026-09-12):世界包=全部玩家的渲染字段(本场景要的都在里面);
-	# 本人包=自己的 ack+c2(本场景暂不接 —— 大乱斗还没接 C2 预测,本地玩家是服务器渲染;
-	# 接 C2 那批会用它喂 PredictionRollback,见 docs/superpowers/specs/...-design.md §4.3)。
+	# 快照**拆两条**(2026-09-12):①世界包=全部玩家的渲染字段(副本/HUD 取它);
+	# ②本人包=自己的 ack_seq + c2(**只有本人需要**,C2 rollback 拿它锚定/重放)。
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
+	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
 	NetBus.local_beam_fired.connect(_on_beam_fired)   # 大乱斗非射手端激光视觉副本(与 pvp_client 同款)
 	NetBus.local_hit_event.connect(_on_hit_event)
@@ -83,6 +100,12 @@ func _ready() -> void:
 	_hud = RoyaleHud.new()
 	add_child(_hud)
 	_pause_menu = PauseMenu.new(true)
+	# 本地输入锁必须宿主接线:PvP 不暂停树,不锁就是"菜单开着还能边跑边开枪"。
+	# 这一条被 set_server_rendered 掩盖过一整个阶段 —— 服务器渲染下本地玩家本就不走输入物理,
+	# 接 C2 后不补就是真的能边跑边开枪。
+	_pause_menu.toggled.connect(func(open: bool) -> void:
+		_menu_open = open
+		_refresh_input_lock())
 	add_child(_pause_menu)
 	# 自己的染色(设置色相)
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
@@ -129,6 +152,12 @@ func _physics_process(_delta: float) -> void:
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
 		NetBus.send_ping()
+	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
+	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
+	if _rollback != null:
+		if _have_prev_seq:
+			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
+			_rollback.reconcile()
 	var src: InputSource = _local.input_source
 	const UP := NetworkInputSource.BIT_UP
 	const DOWN := NetworkInputSource.BIT_DOWN
@@ -160,7 +189,9 @@ func _physics_process(_delta: float) -> void:
 	if src.is_action_just_released("attack"):
 		released |= ATTACK
 	var aim: Vector2 = _local.get_current_aim_dir()
+	_input_seq += 1
 	var pkt := {
+		"seq": _input_seq,   # 单调输入序号(服务器按序消费并回带 ack,rollback 用)
 		"ax": src.get_axis("left", "right"),
 		"held": held,
 		"pressed": pressed,
@@ -173,6 +204,10 @@ func _physics_process(_delta: float) -> void:
 	if net_slot > 0:
 		pkt["weapon"] = net_slot
 	NetBus.rpc_id(1, "send_input", pkt)
+	_prev_sent_seq = _input_seq
+	_have_prev_seq = true
+	if _rollback != null:
+		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 func _on_snapshot_world(snap: Dictionary) -> void:
 	if _local == null:
@@ -185,10 +220,7 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 	for role_str in players_snap:
 		var role := int(role_str)
 		var data: Dictionary = players_snap[role_str]
-		if role == PvpSession.role:
-			if _local.has_method("apply_server_snapshot"):
-				_local.apply_server_snapshot(data)
-		else:
+		if role != PvpSession.role:
 			_ensure_replica(role)
 			var r: Node2D = _replicas[role]
 			if r != null and r.has_method("apply_snapshot"):
@@ -196,6 +228,11 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 				if _hp_bars.has(role):
 					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
 							/ float(PlayerParams.player_max_hp)
+		# ★ 自己那一份**刻意不消费**:C2 下本地玩家由引擎自步进,权威整态走**本人包**
+		#   (见 _on_snapshot_own)。把世界包里自己那份写进玩家 = "每帧把权威位置强写进正在预测的
+		#   玩家" = 橡皮筋 —— 那正是被删掉的那条旧路径的写法。别顺手补回来。
+		#   (顺带:"你死了/你活了"这件事服务器经 round_state 的 alive 广播过,但那**不是**给
+		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 tests/royale_c2_watcher.gd 的 A②。)
 	# 清理已离开玩家(掉线者从快照消失):副本/头顶ID/血条一并移除(自检 M3 幽灵残留)
 	for role_str in _replicas.keys():
 		if not players_snap.has(str(role_str)):
@@ -208,6 +245,17 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 			var e: Node = _enemy_replicas[bid]
 			if e != null and e.has_method("apply_remote"):
 				e.apply_remote(enemies_snap[id_str], _local.global_position, snap_tick)
+
+# 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
+# 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
+# 世界包丢只让副本插值冻结一帧。
+func _on_snapshot_own(own: Dictionary) -> void:
+	if _rollback == null:
+		return
+	var c2: Dictionary = own.get("c2", {})
+	if not c2.is_empty():
+		_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
+
 
 # 懒建远端副本(按快照里出现的 role)—— 大乱斗对手数量不定
 func _ensure_replica(role: int) -> void:
@@ -347,12 +395,10 @@ func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
 	_round_locked = state == 0
-	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(_round_locked)   # COUNTDOWN 锁开火(移动由服务器权威冻结)
 	if state == 3 and not _match_ended:   # MATCH_OVER → 展示结果 6s 后回主菜单
 		_match_ended = true
-		if _local != null and _local.has_method("set_controls_locked"):
-			_local.set_controls_locked(true)   # 结算画面锁输入(自检 L6:原还能跑动开枪)
+		# 结算画面的输入锁由下面的 _refresh_input_lock() 统一给(经 _match_ended 那一维)——
+		# 自检 L6:这片画面原还能跑动开枪。
 		# ★ ESC 菜单随即失效、退出只走定时器这一条路(与 pvp_client 同款):
 		#   不销毁菜单的话,玩家能在这 6s 里按 ESC → 回到主菜单(safe_change_scene 已经切过一次),
 		#   6s 到点本定时器会**再切一次场景** —— 把刚建出来的主菜单当 old 退役、并 free 掉
@@ -370,6 +416,16 @@ func _on_round_state(data: Dictionary) -> void:
 			if not is_inside_tree():
 				return   # 已从别的退出路径离开 → 不再叠加第二次换场
 			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
+	_refresh_input_lock()   # 单一收口:三个维度任一成立即锁(见函数定义)
+
+
+# 本地输入锁的单一收口:冻结期(_round_locked)/ 菜单打开(_menu_open)/ 结算(_match_ended)
+# 任一成立就锁。**不要在各调用点各拼一次布尔** —— 那正是"修复波 1 只关住一个方向"的成因。
+# ★ 与 pvp_client._refresh_input_lock 的差别:这里多一个 _match_ended —— 大乱斗在 MATCH_OVER
+#   要锁住结算画面(自检 L6:原还能跑动开枪),而 pvp_client 的 MATCH_OVER 不锁(它靠别的方式收场)。
+func _refresh_input_lock() -> void:
+	if _local != null and _local.has_method("set_controls_locked"):
+		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
 
 # ── 中立鸟兼容(大乱斗默认无鸟)──
 func _on_enemy_spawn(roster: Array) -> void:
