@@ -15,8 +15,11 @@ var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
 const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 模拟,本地玩家靠快照渲染,30Hz 太卡)
-const HIT_RADIUS := 40.0   # 子弹命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)
-var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次)
+# 子弹/爆炸弹对玩家的命中判定半径(px, 玩家缩放 2.5 的碰撞箱量级)。
+# ★ 单一来源在 BulletBase.PLAYER_HIT_RADIUS:客户端那份视觉榴弹也按同一半径判
+# 「碰到玩家 → 短引信」(bullet_base._check_player_contact),两处各写一个数就会漂。
+const HIT_RADIUS := BulletBase.PLAYER_HIT_RADIUS
+var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 _adjudicate_bullets)
 var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
 # C2 rollback:每物理 tick 恰好消费一个输入包(FIFO),role -> 刚消费包的 seq(ack)。
 # 客户端据 ack 锚定"服务器已确认到哪一输入",重放 seq>ack 的本地输入——1:1 同序,无 tick 映射漂移。
@@ -346,23 +349,27 @@ func _broadcast_snapshot() -> void:
 
 # 子弹裁决:遍历 bullet 组。新子弹广播给非射手客户端;命中判定 = 与对手玩家的 toroidal 距离 < HIT_RADIUS。
 func _adjudicate_bullets() -> void:
+	# 本帧在场子弹的 id 集合:帧末用它**替换** _seen_bullets —— 顺带剪掉已消失子弹的条目。
+	# 必须剪:大乱斗没有换局,_reset_world_and_clear_dynamics 永不调用,不剪就是整局只增不减
+	# (每颗子弹一条 int→bool;量不大,但那是"记住了一个再也不会读的 id")。
+	var live: Dictionary = {}
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if not is_instance_valid(b):
 			continue
 		var bullet := b as CharacterBody2D
 		# 新子弹:广播给非射手客户端(射手已本地生成视觉)
 		var bid: int = bullet.get_instance_id()
+		live[bid] = true
 		if not _seen_bullets.has(bid):
 			_seen_bullets[bid] = true
 			_broadcast_bullet_spawn(bullet)
 		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉、不做半径补刀。
 		if bullet.shooter == null:
 			continue
-		# 爆炸弹(榴弹等):不走半径补刀。子弹碰撞掩码不含玩家层,永远碰不到玩家身体;
-		# 伤害来自落地/撞墙引信后的爆炸 AoE。若在这里按普通子弹命中结算(只吃 hit_damage)
-		# 并销毁,引信就被吞掉、爆炸永不触发 → 榴弹命中敌人却无爆炸伤害(PvP 只此一条玩家命中路)。
-		# 跳过 = 让它自己落地起爆,AoE(Explosion.apply_aoe)自会把爆心半径内的对手算进去。
+		# 爆炸弹(榴弹等):不走半径补刀**销毁**(见 _adjudicate_grenade),但要做一次
+		# 「直接命中玩家」结算 —— 短引信已由 bullet_base._check_player_contact 起(两端同源)。
 		if bullet.explodes:
+			_adjudicate_grenade(bullet)
 			continue
 		# 命中裁决:对非射手玩家算 toroidal 距离
 		for role in players:
@@ -374,6 +381,40 @@ func _adjudicate_bullets() -> void:
 			if d < HIT_RADIUS:
 				_on_bullet_hit(bullet, p, role)
 				break
+	# 剪枝:替换成"本帧仍在场"的集合(等价于删掉已销毁子弹的条目)。
+	# 用替换而不是逐条 erase:两者都是 O(子弹数),替换少一次遍历。
+	_seen_bullets = live
+
+# 爆炸弹(榴弹等)对玩家的权威判定:只结算一次「直接命中」,**不销毁子弹**。
+# 为什么不销毁:子弹碰撞掩码不含玩家层、永远碰不到玩家身体,命中判定全靠这里的半径;
+# 而销毁会把引信一起吞掉、爆炸永不触发 → 榴弹命中玩家却无爆炸伤害。
+# 引信不在这里起 —— bullet_base._check_player_contact 用同一半径、同一候选集在两端各判一次
+# (客户端那份视觉副本靠它同刻起爆),这里只补它做不了的两件事:权威伤害 + 射手端反馈。
+func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
+	if bullet.shooter == null:
+		return   # 敌方爆炸弹(理论上只有敌方弹药):同普通弹的 shooter == null 分支,不补刀
+	if bullet.has_meta("grenade_direct_hit"):
+		return   # 40px 判定圈会被榴弹连续穿过好几帧,只结算第一次
+	for role in players:
+		var p: Node2D = players[role]
+		if p == bullet.shooter:
+			continue
+		var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+		if d < HIT_RADIUS:
+			_grenade_direct_hit(bullet, p)
+			break
+
+func _grenade_direct_hit(bullet: CharacterBody2D, victim: Node2D) -> void:
+	bullet.set_meta("grenade_direct_hit", true)
+	# ★归因先于伤害(与子弹 _on_bullet_hit / 爆炸同纪律):一击致死时倒地边沿同帧读
+	# last_damager,大乱斗靠它计击杀分。
+	CombatFeedback.attribute(victim, bullet.shooter)
+	if victim.has_method("take_hit"):
+		# 受击反馈统一走 combat.took_hit → MatchHost._on_player_hit 广播 hit_event(子弹/鸟/爆炸同源)
+		victim.take_hit(bullet.global_position, bullet.direct_hit_damage, false, bullet.hit_impact)
+	# 射手端 X 标记(复用激光那条):榴弹直击有明确射手,与子弹的 hit_confirm 同口径
+	notify_direct_hit(bullet.shooter, victim)
 
 func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	var scene_path := ""

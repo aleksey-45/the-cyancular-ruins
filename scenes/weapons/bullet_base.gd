@@ -4,6 +4,14 @@ extends CharacterBody2D
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 
+# 子弹/爆炸弹对玩家的命中判定半径(px,玩家缩放 2.5 的碰撞箱量级)。
+# ★ 单一来源:服务器权威侧(server/match_host.gd 的 HIT_RADIUS 直接引用本常量)与客户端
+#   视觉副本的「榴弹碰到玩家 → 短引信」判定共用它,两处各写一个数迟早会漂。
+const PLAYER_HIT_RADIUS: float = 40.0
+# 判定候选所在的组:player = 玩家实体(服务器上全部玩家;客户端上只有本地玩家);
+# player_replica = 客户端上的对手视觉副本(它**不入** player 组,理由见 player_replica.GROUP)。
+const CONTACT_GROUPS: Array[String] = ["player", "player_replica"]
+
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
 var speed: float = 0.0
@@ -58,6 +66,10 @@ func _physics_process(delta: float) -> void:
 		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 		if not velocity_vec.is_zero_approx():
 			rotation = velocity_vec.angle()
+	# 爆炸弹的「碰到玩家 → 短引信」:两端同源(权威结算在 MatchHost._adjudicate_grenade,
+	# 这里只管引信时机,让客户端那份视觉副本与服务器同刻起爆)。引信一旦启动就不再改时长。
+	if explodes and not _fuse_active:
+		_check_player_contact()
 	if explodes and _fuse_active:
 		_fuse_elapsed += delta
 		if _fuse_elapsed >= _fuse_duration:
@@ -178,6 +190,34 @@ func _register_player_hit(target: Node) -> void:
 		who = source
 	# 归因 + 命中标记的一体入口(含射手无效/自伤守卫 + 归因时效戳)
 	CombatFeedback.attribute_hit(target, who)
+
+# 爆炸弹「碰到玩家」判定(引信时机的单一来源):候选 = CONTACT_GROUPS 里的玩家实体与对手副本,
+# **排除 shooter**(否则自己的榴弹一出膛就在自己身上起短引信)。
+# 命中只起短引信、**不改轨迹**(不反弹):轨迹两端一致 → 视觉副本不会因"反弹法线取自各端
+# 不同位置"而发散(服务器取权威位置、客户端取预测/插值位置)。
+# 直接伤不在这里结算 —— 那是权威侧 MatchHost._adjudicate_grenade 的事(它按同一半径、同一
+# 候选集判一次,并用自己的 meta 闩住;两边结论不会不同)。
+func _check_player_contact() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	for group in CONTACT_GROUPS:
+		for n in tree.get_nodes_in_group(group):
+			if n == shooter or not (n is Node2D):
+				continue
+			var d := MazeGenerator.toroidal_delta_px(global_position, (n as Node2D).global_position,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+			if d < PLAYER_HIT_RADIUS:
+				start_player_fuse()
+				return
+
+# 起「命中玩家」的短引信(hit_fuse_time,grenade_bullet.tscn 现为 0.15s;撞墙走 fuse_time 0.4s)。
+# 权威侧由 MatchHost._adjudicate_grenade 调;客户端视觉副本由 _check_player_contact 自行调。
+# 纪律与 _start_fuse 一致:**首次碰撞决定时长,之后不刷新** —— 已撞墙起了长引信的榴弹再碰到人
+# 不会缩短(直接伤照常结算,那与引信是两个独立的闩)。
+func start_player_fuse() -> void:
+	if explodes:
+		_start_fuse(hit_fuse_time)
 
 # 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
 # 后续反弹不重置时长(首次碰撞决定引信时长,不因再撞墙/再撞敌人刷新)。

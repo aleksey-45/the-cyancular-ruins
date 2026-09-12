@@ -57,6 +57,7 @@ func _initialize() -> void:
 		gp.set("MAP_HEIGHT", 400)
 	await _test_aoe()
 	await _test_fuse()
+	await _test_player_contact()
 	await _test_non_explosive_default()
 	if _failures.is_empty():
 		print("GRENADE SMOKE OK")
@@ -222,6 +223,95 @@ func _test_fuse() -> void:
 	_check(exploded, "撞墙后约 0.5s 爆炸")
 	far.free()
 	wall.free()
+
+# ── 榴弹碰玩家:短引信(hit_fuse_time)+ 「首次碰撞决定引信时长、不刷新」的纪律 ──
+# 判定在 BulletBase._check_player_contact(两端同源:服务器/客户端视觉副本共用),
+# 权威的直接伤在 server/match_host.gd 的 _adjudicate_grenade(不在本 -s 冒烟覆盖范围,
+# 它要整局 MatchHost;这里钉的是引信侧)。
+func _test_player_contact() -> void:
+	MazeGenerator.current_grid = []
+	# 场景值兜底:本冒烟全程手写 0.4/0.15,若 grenade_bullet.tscn 被改成别的数,这里先报
+	var scene = (load("res://scenes/weapons/grenade_bullet.tscn") as PackedScene).instantiate()
+	_check(is_equal_approx(float(scene.fuse_time), 0.4) \
+			and is_equal_approx(float(scene.hit_fuse_time), 0.15),
+			"grenade_bullet.tscn 引信值仍是 撞墙0.4s / 命中玩家0.15s")
+	scene.free()
+
+	# ① 飞行中碰到玩家 → 起 hit_fuse_time 短引信(而不是撞墙的 fuse_time)
+	var p := StubPlayer.new()
+	p.global_position = Vector2(300, 200)
+	root.add_child(p)
+	var b = _make_bullet()
+	b.set("fuse_time", 0.4)
+	b.set("hit_fuse_time", 0.15)
+	root.add_child(b)
+	b.global_position = Vector2(200, 200)
+	b.setup(Vector2.RIGHT, 1000.0, 2000.0, 1.0, Color.WHITE, null)
+	var dur := 0.0
+	for _i in range(20):
+		await physics_frame
+		if bool(b.get("_fuse_active")):
+			dur = float(b.get("_fuse_duration"))
+			break
+	_check(is_equal_approx(dur, 0.15), "榴弹碰到玩家 → 起短引信 0.15s(实测 %.3f)" % dur)
+	var exploded := false
+	for _i in range(15):
+		await physics_frame
+		if not is_instance_valid(b):
+			exploded = true
+			break
+	_check(exploded, "短引信在 0.25s 内爆炸(明显早于撞墙的 0.4s)")
+	p.free()
+
+	# ② 视觉副本(apply_damage=false,对手端那份)按同款判定同样起短引信
+	var p2 := StubPlayer.new()
+	p2.global_position = Vector2(300, 200)
+	root.add_child(p2)
+	var bv = _make_bullet()
+	bv.set("apply_damage", false)
+	bv.set("fuse_time", 0.4)
+	bv.set("hit_fuse_time", 0.15)
+	root.add_child(bv)
+	bv.global_position = Vector2(200, 200)
+	bv.setup(Vector2.RIGHT, 1000.0, 2000.0, 1.0, Color.WHITE, null)
+	var vdur := 0.0
+	for _i in range(20):
+		await physics_frame
+		if bool(bv.get("_fuse_active")):
+			vdur = float(bv.get("_fuse_duration"))
+			break
+	_check(is_equal_approx(vdur, 0.15), "视觉副本(apply_damage=false)同样起短引信 0.15s(实测 %.3f)" % vdur)
+	bv.free()
+	p2.free()
+
+	# ③ 射手自己不算"碰到玩家"(否则自己的榴弹一出膛就在身上起短引信)
+	var selfp := StubPlayer.new()
+	selfp.global_position = Vector2(300, 200)
+	root.add_child(selfp)
+	var bs = _make_bullet()
+	bs.set("fuse_time", 0.4)
+	bs.set("hit_fuse_time", 0.15)
+	root.add_child(bs)
+	bs.shooter = selfp
+	bs.global_position = Vector2(200, 200)
+	bs.setup(Vector2.RIGHT, 1000.0, 2000.0, 1.0, Color.WHITE, null)
+	for _i in range(20):
+		await physics_frame
+	_check(not bool(bs.get("_fuse_active")), "射手自己不触发短引信(排除 shooter)")
+	bs.free()
+	selfp.free()
+
+	# ④ 纪律:首次碰撞决定引信时长,之后不刷新 —— 已因撞墙起 0.4s 长引信的榴弹碰到玩家
+	#    **不会**缩短(直接伤是另一个独立的闩,不受此限,由 MatchHost 结算)。
+	var b2 = _make_bullet()
+	root.add_child(b2)
+	b2.set("fuse_time", 0.4)
+	b2.set("hit_fuse_time", 0.15)
+	b2._start_fuse(0.4)        # 撞墙
+	b2.start_player_fuse()     # 再碰到玩家
+	_check(is_equal_approx(float(b2.get("_fuse_duration")), 0.4),
+			"已起 0.4s 长引信后再碰玩家不缩短(仍 %.3f)" % float(b2.get("_fuse_duration")))
+	b2.free()
 
 func _test_non_explosive_default() -> void:
 	MazeGenerator.current_grid = []

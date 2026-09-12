@@ -13,6 +13,7 @@ var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica
 var _level0: Node = null
 var _world: Node = null
 var _hud: RoyaleHud = null
+var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
 var _match_ended := false
 var _ping_acc := 0.0
 
@@ -39,6 +40,10 @@ func _ready() -> void:
 	var local: Node2D = _world.get_node("Player")
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
+	# 与对手(层2)物理碰撞:服务器侧 match_host 已给每个玩家 mask |= 2。大乱斗客户端本地玩家
+	# 目前是服务器渲染(不走物理),这一位今天不产生行为;留着是为了①与 1v1 同款不留分叉,
+	# ②大乱斗接 C2 时(PvpSession.royale 那批)本地预测立刻就有对手身体信息,不用再补。
+	local.collision_mask |= 2
 	_local = local
 	if _local.has_method("set_server_rendered"):
 		_local.set_server_rendered(true)
@@ -75,7 +80,8 @@ func _ready() -> void:
 	# HUD(左上角击杀排行榜)+ Esc 菜单
 	_hud = RoyaleHud.new()
 	add_child(_hud)
-	add_child(PauseMenu.new(true))
+	_pause_menu = PauseMenu.new(true)
+	add_child(_pause_menu)
 	# 自己的染色(设置色相)
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
 	# 开局三载荷取用(自检 B2):昵称表/角色色相/生效选项与 match_start 同一次 poll 到达,
@@ -326,12 +332,22 @@ func _on_round_state(data: Dictionary) -> void:
 		_match_ended = true
 		if _local != null and _local.has_method("set_controls_locked"):
 			_local.set_controls_locked(true)   # 结算画面锁输入(自检 L6:原还能跑动开枪)
-		# 捕获 tree/autoload 引用:玩家若在 6s 内经暂停菜单退出,本节点已释放,
-		# 到点时对已释放实例调 get_tree() 会报错(自检 L6)
+		# ★ ESC 菜单随即失效、退出只走定时器这一条路(与 pvp_client 同款):
+		#   不销毁菜单的话,玩家能在这 6s 里按 ESC → 回到主菜单(safe_change_scene 已经切过一次),
+		#   6s 到点本定时器会**再切一次场景** —— 把刚建出来的主菜单当 old 退役、并 free 掉
+		#   _retired 里原本那具游戏世界。后果不致命但结构上是错的,而 pvp_client 正是为此
+		#   专门加了这两行(见该文件 MATCH_OVER 分支的注释),大乱斗这条是第三条路径、当年漏了。
+		if _pause_menu != null and is_instance_valid(_pause_menu):
+			_pause_menu.queue_free()
+			_pause_menu = null
+		# 捕获 tree/autoload 引用:玩家若已从别的路径离开,本节点会被 safe_change_scene 摘出树,
+		# 到点时对不在树上的实例求值会出错(自检 L6)
 		var tree := get_tree()
 		var netbus := NetBus
 		get_tree().create_timer(6.0).timeout.connect(func() -> void:
 			netbus.stop()
+			if not is_inside_tree():
+				return   # 已从别的退出路径离开 → 不再叠加第二次换场
 			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
 # ── 中立鸟兼容(大乱斗默认无鸟)──
