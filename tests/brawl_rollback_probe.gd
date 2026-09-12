@@ -63,6 +63,21 @@ var _spawn := Vector2.ZERO
 var _failures: Array[String] = []
 var _rows: Array[String] = []
 
+# ★ 假绿/挂死防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的
+#   `_ready()` 会照常往下走 —— 「_run_pass 中途报错 → 一条 _check 都没跑到 → _failures 仍空
+#   → 照样打印 ALL-OK」。而 _run_pass 是 async:若错误发生在 await **之后**,
+#   `_pass_finished` 永不发射 → 本探针干脆挂死(所以跑它必须带 --quit-after 当安全网)。
+#   两道都堵:每个 pass 在**最后一行**盖完成戳,`_ready` 收官时逐条核。
+var _ran: Dictionary = {}
+
+func _require_ran(name: String) -> void:
+	if not _ran.has(name):
+		_fail("%s 没跑到最后一行(中途报错或被跳过)→ 本趟读数不可信" % name)
+
+
+func _pass_key(variant: int, n: int) -> String:
+	return "pass_%d_%d" % [variant, n]
+
 # 单趟状态
 var _variant: int = Variant.INTERP
 var _n := 2
@@ -107,17 +122,23 @@ func _ready() -> void:
 	print("[brawl] 读法:回滚斜率 = 次/秒;**每接触秒**把它按接触时长归一,便于跨 N 比较")
 	print("")
 
-	# 负向对照只跑 2 与 8(证明 NONE 会爆炸);三个正式变体跑 2/4/8
+	# 跑批清单**声明一次**,循环与"完成戳核对"共用它 —— 免得日后加了个变体却忘了加断言。
+	var passes: Array = []
 	for n in [2, 8]:
-		await _run_pass(Variant.NONE, n)
+		passes.append([Variant.NONE, n])        # 负向对照:证明摘掉幽灵体会爆炸
 	# ★ 健全性对照(决定性实验):对手**站着不动**,其余一切不变。
-	#   若它收敛到 ~0 回滚,而"会动的对手"那一族全部稳定在 170~250,那就说明本探针量到的不是
-	#   噪声,而是「回放时对手身体**没有被倒回**」这个结构性事实 —— 见文件末的 _summarize。
+	#   它收敛到 ~0 回滚,而"会动的对手"那一族稳定在 170~250,说明本探针量到的不是噪声,
+	#   而是「回放时对手身体**没有被倒回**」这个结构性事实 —— 见文件末的 _summarize。
 	for n in [2, 8]:
-		await _run_pass(Variant.STATIC, n)
+		passes.append([Variant.STATIC, n])
 	for v in [Variant.INTERP, Variant.LATEST, Variant.LATEST_INSET]:
 		for n in [2, 4, 8]:
-			await _run_pass(v, n)
+			passes.append([v, n])
+
+	for p in passes:
+		await _run_pass(int(p[0]), int(p[1]))
+	for p in passes:
+		_require_ran(_pass_key(int(p[0]), int(p[1])))
 
 	_summarize()
 
@@ -232,6 +253,8 @@ func _run_pass(variant: int, n: int) -> void:
 	for r in _replicas:
 		(r as Node).queue_free()
 	await get_tree().process_frame
+
+	_ran[_pass_key(variant, n)] = true   # ★ 完成戳必须在最后一行(见顶部说明)
 
 
 func _physics_process(_delta: float) -> void:

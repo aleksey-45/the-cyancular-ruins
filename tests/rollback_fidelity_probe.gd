@@ -15,6 +15,13 @@ const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
 
 var _failures: Array[String] = []
 
+# ★ 假绿防线(本仓被抓过四次的那一类,本探针初版就中过):
+#   Godot 的运行时错误只**中断当前函数**,调用它的 `_ready()` 会照常往下走 —— 于是
+#   「测试函数中途报错 → 一条 _check 都没跑到 → _failures 仍空 → 照样打印 ALL-OK 并 exit 0」。
+#   实测:改之前把 map_px 从 `_close_enough` 里删掉(必报错),红跑却印了 ALL-OK。
+#   故每个测试函数在**最后一行**给自己盖完成戳;缺戳 = 没跑完 = 红。
+var _ran: Dictionary = {}
+
 func _check(ok: bool, msg: String) -> void:
 	if ok:
 		print("[fid]   ✓ %s" % msg)
@@ -23,8 +30,20 @@ func _check(ok: bool, msg: String) -> void:
 		print("[fid]   ✗ %s" % msg)
 
 
+func _fail(msg: String) -> void:
+	_failures.append(msg)
+	print("[fid]   ✗ %s" % msg)
+
+
+# 每个测试函数跑完后必须留下完成戳;缺了就说明它中途被中断了 —— 那种情况下面的 ✓/✗ 都不可信。
+func _require_ran(name: String) -> void:
+	if not _ran.has(name):
+		_fail("%s 没跑到最后一行(中途报错或被跳过)→ 本趟读数不可信" % name)
+
+
 func _ready() -> void:
 	_test_torus_compare()
+	_require_ran("torus")
 	if _failures.is_empty():
 		print(MARKER)
 		get_tree().quit(0)
@@ -72,3 +91,4 @@ func _test_torus_compare() -> void:
 			"② 去掉环面处理后同一份载荷判为分歧(回滚 ×%d→×%d)" % [rb1, c.rollback_count()])
 
 	p.queue_free()
+	_ran["torus"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见顶部说明)
