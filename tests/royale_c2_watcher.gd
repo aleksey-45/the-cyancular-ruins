@@ -253,7 +253,11 @@ func _assert() -> void:
 	else:
 		var la: int = int(rb.last_applied())
 		if la < MIN_LAST_APPLIED:
-			problems.append("last_applied=%d < %d(seq 或 note_post_step 没接上 → 预测整态没进 ring)"
+			# ⚠ 它只管「note_post_step 没被调」这一件事。**管不到输入包缺 seq** ——
+			#   note_post_step 用的是客户端自己的 _prev_sent_seq,与包里带不带 seq 无关
+			#   (反证二实测:去掉 "seq" 后 last_applied 照样 364)。缺 seq 由下面的
+			#   rollback_count / 收敛两条抓(服务器 _ack_seq 恒 0 → 永不回滚 → 不收敛)。
+			problems.append("last_applied=%d < %d(note_post_step 没接上 → 预测整态没进 ring)"
 					% [la, MIN_LAST_APPLIED])
 		if who == "c1":
 			var rc: int = int(rb.rollback_count())
