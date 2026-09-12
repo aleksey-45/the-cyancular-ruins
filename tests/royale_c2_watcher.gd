@@ -35,6 +35,8 @@ const DEADLINE := 75.0
 const SETTLE := 1.5              # 复活后静置(等 reconcile 收敛;快照 60Hz,1.5s 绰绰有余)
 const MIN_LAST_APPLIED := 60     # 接线在推进的下限(换场到断言约 6s ≈ 360 tick,留 6 倍余量)
 const POS_TOL := 100.0           # 收敛判据(px):快照滞后一 tick ≈ 11.7px,100 留足余量
+# ★ 「两边必须一起退」的等待上限(见 _wait_peer_then_quit)。对端挂死时不能干等到底。
+const PEER_WAIT := 25.0
 
 # ── A 组:源码级(与运行时读数无关,但两支一起跑省一次进程)──
 # 判据一律取**去注释视图**(注释不是代码:一句"这里以前调过 set_server_rendered"的注释既不能
@@ -62,6 +64,9 @@ var _round_state := -1
 var _saw_downed := false
 var _respawned := false
 var _logged_once: Dictionary = {}
+var _snap_count := 0             # 收到世界包的计数(心跳用:区分"客户端没在跑"与"快照不来了")
+var _hb_t := 0.0
+var _quitting := false           # 已写结果、正在等对端也写完(见 _wait_peer_then_quit)
 
 
 func _ready() -> void:
@@ -69,6 +74,7 @@ func _ready() -> void:
 	# 世界包里**自己**那一份 = 服务器权威(canonical pos / downed / hp)。C2 下客户端不再消费它,
 	# 但作为**判据的地面真值**它正好:拿它和本地玩家的实际状态比,就知道收敛没收敛。
 	NetBus.local_snapshot_world.connect(func(snap: Dictionary) -> void:
+		_snap_count += 1
 		var players_snap: Dictionary = snap.get("players", {})
 		var mine: Dictionary = players_snap.get(str(PvpSession.role), {})
 		if not mine.is_empty():
@@ -99,6 +105,8 @@ func _log_once(msg: String) -> void:
 
 
 func _process(delta: float) -> void:
+	if _quitting:
+		return   # 已写结果:剩下的交给 _wait_peer_then_quit 的协程,别再走主流程
 	_t += delta
 	if _t > DEADLINE:
 		var cs := get_tree().current_scene
@@ -106,6 +114,17 @@ func _process(delta: float) -> void:
 				"(空)" if cs == null else str(cs.name)])
 		return
 	_stage_t += delta
+	# 心跳(诊断用):每 5s 一行。挂死时这三样一起看就能定位到底断在哪一段 ——
+	# 心不跳 = 客户端进程没了;心跳但快照数不涨 = 与 worker 失联;两者都正常却卡在等复活
+	# = 服务器侧没复活(那才是生产问题)。顺带把 rollback 读数记下来(设计 §5 批次 5 要的斜率)。
+	_hb_t += delta
+	if _hb_t >= 5.0:
+		_hb_t = 0.0
+		var rb = null if _game == null else _game.get("_rollback")
+		_log("♥ t=%.0f 阶段=%d 快照=%d 自己downed=%s rb=%s" % [_t, _stage, _snap_count,
+				str(_own_snap.get("downed", "?")),
+				"无" if rb == null else "last_applied=%d rollback=%d" % [
+						int(rb.last_applied()), int(rb.rollback_count())]])
 	match _stage:
 		0:
 			_stage_lobby()
@@ -381,4 +400,24 @@ func _finish(ok: bool, msg: String) -> void:
 	if f != null:
 		f.store_string(("OK " if ok else "FAIL ") + msg)
 		f.close()
+	await _wait_peer_then_quit(ok)
+
+
+# ★ 不能写完结果就退:**对局是两个人的**。任一方先退 → 服务器 `online < 2` → 立即终局
+#   (RoyaleHost.mark_disconnected → _finish_match → MATCH_OVER);而 MATCH_OVER 期间
+#   `_match_round_tick` 的 PLAYING 分支不再跑 → **另一方正在等的「2s 复活」永远不会发生**。
+#   本探针第一版实测就踩到了:spawned 模式下 c2 断言完(PLAYING+1.5s)先退 → c1 卡在"等复活"
+#   → 6s 后 MATCH_OVER 的退场定时器把场景一换,挂在 root 上的本观察者被摘出树 → `_process` 停
+#   → 结果文件没写、进程留着、大厅判它断开。
+#   故:两边都**先写好结果**再等对面也写好,然后一起退 —— 退出顺序不再由胜负时序决定。
+#   (这也是大乱斗的既有性质,不是 bug:剩余 <2 人即终局。)
+func _wait_peer_then_quit(ok: bool) -> void:
+	_quitting = true
+	var peer := "c2" if who == "c1" else "c1"
+	var p := "user://%s%s.result" % [RESULT_PREFIX, peer]
+	var waited := 0.0
+	while waited < PEER_WAIT and not FileAccess.file_exists(p):
+		await get_tree().create_timer(0.2).timeout
+		waited += 0.2
+	_log("对端结果%s(%s)→ 退出" % ["已到" if waited < PEER_WAIT else "等了 %.0fs 仍未到,超时" % PEER_WAIT, p])
 	get_tree().quit(0 if ok else 1)

@@ -60,18 +60,29 @@ func _run_orchestrator() -> void:
 		return
 	_room_mgr = RoomManager.new()
 	add_child(_room_mgr)
+	# 清掉上一趟的产物(结果 + 引擎日志)。★ 引擎日志只能在这里清:子进程启动时
+	# `--log-file` 就把文件打开了,客户端自己再去删会把正在写的文件删掉。
 	for f in ["c1", "c2"]:
-		var p := "user://%s%s.result" % [RESULT_PREFIX, f]
-		if FileAccess.file_exists(p):
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+		for suffix in ["result", "godotlog"]:
+			var p := "user://%s%s.%s" % [RESULT_PREFIX, f, suffix]
+			if FileAccess.file_exists(p):
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 	if FileAccess.file_exists(GO_FILE):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(GO_FILE))
 	NetBusExt.royale_create_requested.connect(_on_room_created)
 	var exe := OS.get_executable_path()
+	# 调试口(与 royale_bound_probe 同款):`-- --nospawn` 时只当大厅,客户端由人工在前台另起 ——
+	# 子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄),要读客户端的报错只能这样。
+	if OS.get_cmdline_user_args().has("--nospawn"):
+		print("PROBE: --nospawn:不拉子进程,请另起两个 `-- --role=c1` / `-- --role=c2`")
+		return
 	for role in ["c1", "c2"]:
+		# ★ `--log-file` 不能省:客户端子进程的 stdout/stderr 父进程**看不到**(Windows CreateProcess
+		#   不继承句柄),没有它就只能看到"进程没了、结果文件也没写"这种无法归因的现象。
+		#   实测踩过:客户端在 PLAYING 后 ~1s 没了,靠这份引擎日志才看得到真正的报错。
 		OS.create_process(exe, PackedStringArray(["--headless", "--path",
-				ProjectSettings.globalize_path("res://"), "res://tests/royale_c2_probe.tscn",
-				"--", "--role=" + role]))
+				ProjectSettings.globalize_path("res://"), "--log-file", _godot_log_path(role),
+				"res://tests/royale_c2_probe.tscn", "--", "--role=" + role]))
 	print("PROBE: 大厅就绪,c1/c2 已拉起")
 
 
@@ -113,18 +124,27 @@ func _process(delta: float) -> void:
 		2:
 			var r1: String = _read_result("c1")
 			var r2: String = _read_result("c2")
-			if r1.begins_with("FAIL") or r2.begins_with("FAIL"):
-				print("PROBE: FAIL\n  c1: %s\n  c2: %s\n%s" % [r1, r2, _client_logs()])
-				get_tree().quit(1)
-				return
-			if r1.begins_with("OK") and r2.begins_with("OK"):
-				print("PROBE: ALL-OK\n  c1: %s\n  c2: %s" % [r1, r2])
-				get_tree().quit(0)
+			# ★ 必须**两边都出结果**才收工 —— 绝不能一见到 FAIL 就 quit:
+			#   两个客户端是**并发**的,任何一个先退都会改变另一个的处境(大乱斗「剩余 <2 人即终局」,
+			#   另一方的复活会被当场掐掉)。一见到 FAIL 就走 = 让"先失败的那个"把"还没跑完的那个"
+			#   带下水,报告里只留一个 `(未完成)` 且看不出为什么。本探针第一版实测踩到的正是这个:
+			#   c2 断言完(必然带 A① 残留 → FAIL)先出结果,裁判当场退出,c1 死在"等复活"里。
+			if _has_result(r1) and _has_result(r2):
+				var ok := r1.begins_with("OK") and r2.begins_with("OK")
+				print(("PROBE: ALL-OK" if ok else "PROBE: FAIL") + "\n  c1: %s\n  c2: %s" % [r1, r2])
+				if not ok:
+					print(_client_logs())   # 失败时把两端的日志一起摊开(否则子进程里发生了什么是盲区)
+				get_tree().quit(0 if ok else 1)
 				return
 
 
 func _rm() -> Node:
 	return _room_mgr
+
+
+# 客户端子进程的引擎日志(print + 所有 ERROR/SCRIPT ERROR;`--log-file` 落这里)
+func _godot_log_path(role: String) -> String:
+	return ProjectSettings.globalize_path("user://%s%s.godotlog" % [RESULT_PREFIX, role])
 
 
 func _room_players() -> int:
@@ -140,17 +160,37 @@ func _read_result(who: String) -> String:
 	return f.get_as_text().strip_edges() if f != null else "(读取失败)"
 
 
-# 客户端子进程的 stdout 父进程看不到(Windows 不继承句柄)→ 读它们落盘的日志并打出来
+# 该端是否**已经出结果**(不论成败)。见 stage 2 的说明:必须两边都出才算跑完。
+func _has_result(r: String) -> bool:
+	return r.begins_with("OK") or r.begins_with("FAIL")
+
+
+# 客户端子进程的 stdout 父进程看不到(Windows 不继承句柄)→ 读两样落盘的东西并打出来:
+#   ① 观察者自己写的 .log(阶段轨迹 —— 能看出卡在哪一步);
+#   ② 引擎的 .godotlog(`--log-file` 落的:print + 所有 ERROR/SCRIPT ERROR,崩溃原因在这里)。
 func _client_logs() -> String:
 	var out := ""
 	for who in ["c1", "c2"]:
-		var p := "user://%s%s.log" % [RESULT_PREFIX, who]
-		if not FileAccess.file_exists(p):
-			out += "  [%s 无日志]\n" % who
-			continue
-		var f := FileAccess.open(p, FileAccess.READ)
-		out += "  [%s 日志]\n%s\n" % [who, f.get_as_text().strip_edges() if f != null else "(读取失败)"]
+		for suffix in ["log", "godotlog"]:
+			var p := "user://%s%s.%s" % [RESULT_PREFIX, who, suffix]
+			var head := "[%s 观察者日志]" % who if suffix == "log" else "[%s 引擎日志]" % who
+			if not FileAccess.file_exists(p):
+				out += "  %s (无)\n" % head
+				continue
+			var f := FileAccess.open(p, FileAccess.READ)
+			var body: String = f.get_as_text().strip_edges() if f != null else "(读取失败)"
+			if suffix == "godotlog":
+				body = _tail_lines(body, 25)   # 引擎日志会很长,只取尾部(崩溃现场在后面)
+			out += "  %s\n%s\n" % [head, body]
 	return out
+
+
+# 取文本的最后 n 行(超长时加一行省略提示,免得把真正的尾部挤掉)
+func _tail_lines(text: String, n: int) -> String:
+	var lines := text.split("\n")
+	if lines.size() <= n:
+		return text
+	return "…(前 %d 行省略)\n" % (lines.size() - n) + "\n".join(lines.slice(lines.size() - n))
 
 
 # ── 客户端子进程:挂观察者 + 挂**真大厅场景**,再把它驱动起来 ──
