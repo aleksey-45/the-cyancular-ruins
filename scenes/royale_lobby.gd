@@ -123,14 +123,6 @@ func _ready() -> void:
 	NetBus.local_match_start.connect(_on_match_start)
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
-	# ── 开局三载荷的接住/转交(自检 B2)──
-	# 昵称表/角色色相/生效选项与 match_start 在同一次 poll 到达,而本页在 match_start 里
-	# **帧末**才切场景 → 那一刻还活着的只有本页。先缓存到 PvpSession,由 royale_game 进场景时取用
-	# (详见 PvpSession 里 pending_* 的注释)。进大厅即清一次:不跨局残留上一局的载荷。
-	PvpSession.clear_pending_payloads()
-	NetBus.local_peer_info.connect(_cache_peer_info)
-	NetBusExt.local_peer_hues.connect(_cache_peer_hues)
-	NetBusExt.local_match_options.connect(_cache_match_options)
 
 	_apply_pixel_font(self)
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
@@ -446,17 +438,6 @@ func _join_room(code: String, invite: String) -> void:
 		NetBusExt.rpc_id(1, "royale_join", code, invite))
 
 
-# ── 开局三载荷:本页只负责接住(那一刻新场景还不存在),交给 PvpSession → royale_game ──
-# 不在这里改任何 UI 状态:本页马上要被换掉,显示与生效一律归 royale_game。
-func _cache_peer_info(names: Dictionary) -> void:
-	PvpSession.pending_peer_info = names
-
-func _cache_peer_hues(hues: Dictionary) -> void:
-	PvpSession.pending_peer_hues = hues
-
-func _cache_match_options(opts: Dictionary) -> void:
-	PvpSession.pending_match_options = opts
-
 
 # ── 服务器回复 ──
 func _on_royale_rooms(rooms: Array) -> void:
@@ -570,8 +551,6 @@ func _on_leave_room() -> void:
 func _on_go_match(role: int, port: int) -> void:
 	_pending_go_role = role
 	_pending_go_port = port
-	# 新一局开始转连:先丢掉上一局的开局载荷(第二局若投递失败,新场景取到的必须是空)
-	PvpSession.clear_pending_payloads()
 	_status.text = "开局!连接对局服务器……"
 	_do_go_match.call_deferred()
 

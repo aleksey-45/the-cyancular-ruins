@@ -4,7 +4,7 @@ extends Node
 # headless 客户端子进程,走完整流程:
 #   c1 建私密房(邀请码 777,房号写中间文件) → c2 读房号 → 错码加入(应被拒)
 #   → 对码加入 → c1 见房内 2 人开局 → 双方收 go_match 转连 worker → claim
-#   → match_start → RoyaleHost 广播 round_state/match_options/snapshot → 写结果文件。
+#   → match_start → RoyaleHost 广播 round_state/snapshot;客户端**拉** match_sync 取生效选项 → 写结果文件。
 # 断言(进 _finish 判定,不只打印):match_start 出生点有效 + round_state 到达 +
 # **round_state 载荷里的昵称表 names ≥2 项** + match_options 到达 + 快照数 ≥30。
 # 中间文件 user://royale_probe_room.txt = 房号;结果 user://royale_probe_c{1,2}.result。
@@ -162,8 +162,14 @@ func _go_and_verify(who: String) -> void:
 		if spawn.x < 0:
 			_finish(false, who, "match_start 出生点无效")
 			return
-		NetBusExt.local_match_options.connect(func(_opts: Dictionary) -> void:
-			_got_match_options = true)
+		# ★ 批次 3:生效选项改由**进场拉取**下发(服务器那次"推"已删 —— 它与 match_start 落在同一次
+		#   poll,而那一刻新场景订阅方还不存在,会静默丢,自检 B2)。
+		#   本探针是**轻量监听客户端**(不起真 royale_game),故这里自己发一次 match_sync 并消费应答;
+		#   真客户端由各自场景的 `_ready` 发出请求。
+		NetBus.local_match_sync.connect(func(payload: Dictionary) -> void:
+			if not (payload.get("options", {}) as Dictionary).is_empty():
+				_got_match_options = true)
+		NetBus.rpc_id(1, "match_sync")
 		NetBus.local_round_state.connect(func(data: Dictionary) -> void:
 			if not _got_round_state:
 				_got_round_state = true

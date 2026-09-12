@@ -98,19 +98,14 @@ func _ready() -> void:
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.local_peer_info.connect(_on_peer_info)
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	# 扩展节点(NetBusExt)三载荷:生效选项/角色色相/命中确认。与 beam_fired 不同节点是**有意的**
 	# (发送端 match_host 的 beam_fired 走 NetBus),别顺手把上面那行也统一到 NetBusExt。
-	NetBusExt.local_match_options.connect(_on_match_options)
-	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
-	# 这三条一次性载荷(生效选项/角色色相/昵称表)另有**第二条投递路径**:matchmaking 在换场前
-	# 就接住的那一份缓存,由本函数末尾的 _consume_pending_payloads() 取用(见该函数与 PvpSession)。
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
@@ -141,20 +136,15 @@ func _ready() -> void:
 		_menu_open = open
 		_refresh_input_lock())
 	add_child(_pause_menu)
-	# 三载荷的第二条投递路径:载荷早于本场景订阅(一次 poll 吞掉两段 flush)时,matchmaking
-	# 已经把它缓存进 PvpSession,这里取用;晚于订阅时走上面三条直接订阅。两条路径互不重叠 ——
-	# 一条载荷只被 emit 一次,取用即清空,不会对同一份载荷各应用一次。
-	# ⚠ 位置必须在 _apply_p2_tint() **之后**(与 royale_game 把它放在 _apply_tint 之后同理):
-	# 那道预染是"无载荷"的落地形态,缓存里的色相要能盖过它(否则对手身体退回 -65 的旧规则)。
-	_consume_pending_payloads()
 	# ★ 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已经建好、订阅齐了才开口要,
 	#   所以不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
 	NetBus.rpc_id(1, "match_sync")
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
-# 进场拉取的应答。三个 handler 本身幂等(重建禁用表/覆盖染色/重设标签),故与旧的推送路径
-# 重复到达也无害(那是迁移期的常态)。
+# 进场拉取的应答。三个 handler 本身幂等(重建禁用表/覆盖染色/重设标签),重复应用无害。
+# ⚠ 必须在 `_apply_p2_tint()` **之后**生效:那道预染是"无载荷"的落地形态,本载荷里的色相要能盖过它
+# (否则对手身体退回 -65 的旧规则)。请求发在 `_ready` 末尾,应答只会更晚到,时序天然满足。
 func _on_match_sync(payload: Dictionary) -> void:
 	var names: Dictionary = payload.get("names", {})
 	if not names.is_empty():
@@ -184,18 +174,6 @@ func _correct_local_spawn() -> void:
 	var ts := GameParameters.TILE_SIZE
 	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
 			PvpSession.spawn.y * ts + ts / 2.0)
-
-# 取用 matchmaking 缓存的开局三载荷(与 royale_game 的同名函数同款:取用后即清空)。
-# 必须在 `_local` / `_remote_replica` / 预染就绪之后调用;三个 handler 自身幂等(重建禁用表/
-# 覆盖染色/重设标签文字),故即便载荷两侧都到也只是一次等价重算。
-func _consume_pending_payloads() -> void:
-	if not PvpSession.pending_peer_info.is_empty():
-		_on_peer_info(PvpSession.pending_peer_info)
-	if not PvpSession.pending_peer_hues.is_empty():
-		_on_peer_hues(PvpSession.pending_peer_hues)
-	if not PvpSession.pending_match_options.is_empty():
-		_on_match_options(PvpSession.pending_match_options)
-	PvpSession.clear_pending_payloads()
 
 func _physics_process(_delta: float) -> void:
 	if _local == null:

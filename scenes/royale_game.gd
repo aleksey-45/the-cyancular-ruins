@@ -59,11 +59,8 @@ func _ready() -> void:
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.local_peer_info.connect(_on_peer_info)
 	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
 	NetBus.local_enemy_died.connect(_on_enemy_died)
-	NetBusExt.local_match_options.connect(_on_match_options)
-	NetBusExt.local_peer_hues.connect(_on_peer_hues)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
@@ -86,18 +83,13 @@ func _ready() -> void:
 	add_child(_pause_menu)
 	# 自己的染色(设置色相)
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
-	# 开局三载荷取用(自检 B2):昵称表/角色色相/生效选项与 match_start 同一次 poll 到达,
-	# 而本场景那时还没建 → 由大厅(那一刻还活着)缓存进 PvpSession,这里进场景即取用。
-	# 若它们**晚于**本场景建立才到(网络分帧),上面那几个订阅照常收 —— 两条路径进同一组 handler,
-	# 重复应用幂等(改名/染色/设禁用槽位都是幂等的)。
-	_consume_pending_payloads()
 	# ★ 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已建好并订阅齐了才开口要,
 	#   故不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
 	NetBus.rpc_id(1, "match_sync")
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
-# 进场拉取的应答。三个 handler 幂等(改名/染色/设禁用槽位),与旧推送重复到达也无害。
+# 进场拉取的应答。三个 handler 幂等(改名/染色/设禁用槽位),重复应用无害。
 func _on_match_sync(payload: Dictionary) -> void:
 	var names: Dictionary = payload.get("names", {})
 	if not names.is_empty():
@@ -126,16 +118,6 @@ func _correct_local_spawn() -> void:
 	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
 			PvpSession.spawn.y * ts + ts / 2.0)
 
-
-# 取用大厅缓存的开局载荷(清空后调用,见 PvpSession.pending_* 的注释)
-func _consume_pending_payloads() -> void:
-	if not PvpSession.pending_peer_info.is_empty():
-		_on_peer_info(PvpSession.pending_peer_info)
-	if not PvpSession.pending_peer_hues.is_empty():
-		_on_peer_hues(PvpSession.pending_peer_hues)
-	if not PvpSession.pending_match_options.is_empty():
-		_on_match_options(PvpSession.pending_match_options)
-	PvpSession.clear_pending_payloads()
 
 func _physics_process(_delta: float) -> void:
 	if _local == null:

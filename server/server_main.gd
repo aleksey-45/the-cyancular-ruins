@@ -302,10 +302,9 @@ func _begin_match() -> void:
 	# AI 补位昵称:唯一名 + -computer 后缀(排行榜/头顶显示,地位与真人等同)
 	for ai_r in _ai_roles:
 		_claim_names[int(ai_r)] = "电脑玩家%d-computer" % int(ai_r)
-	# 昵称走原版 peer_info(兼容);颜色走扩展 peer_hues
-	for r in _claims:
-		NetBus.rpc_id(_claims[r], "peer_info", _claim_names)
-		NetBusExt.rpc_id(_claims[r], "peer_hues", _claim_hues())
+	# ★ 原先这里**推** peer_info/peer_hues(还有 MatchHost 推的 match_options)—— 已删除:
+	#   三者与 match_start 落在同一次客户端 poll 里,而那一刻新场景的订阅方还不存在 → 静默丢失
+	#   (自检 B2)。现在由对局场景**进场拉取**(NetBus.match_sync → `_on_match_sync`),本函数只管建局。
 	if _royale and _host.has_method("set_display_names"):
 		_host.set_display_names(_claim_names)   # 排行榜昵称表
 	print("worker: 对局开始%s" % ("(大乱斗 %d 人,其中 AI %d)" % [_claims.size() + _ai_roles.size(), _ai_roles.size()] if _royale else ""))

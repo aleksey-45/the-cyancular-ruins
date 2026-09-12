@@ -82,14 +82,6 @@ func _ready() -> void:
 	# worker 在 match_start 的**同一批 flush** 里还发 peer_info(昵称表)/peer_hues(角色色相)/
 	# match_options(生效选项:禁武器等)。三者与 match_start 落在**同一次客户端 poll** 时
 	# (客户端压帧率/一次卡顿吸收了整段 flush,实测可复现),它们会在 pvp_game 的 _ready
-	# **之前** emit —— 那一刻新场景还没有任何订阅 → 静默丢失(禁武器闸门没上 = 两端槽位永久
-	# 错位;昵称表空到连自己头顶 ID 都建不出来)。故由那一刻还活着的本页先接住,缓存进
-	# PvpSession,由 pvp_client 进场景时取用(详见 PvpSession.pending_* 的注释)。
-	# 进页即清一次:不跨局残留上一局的载荷。
-	PvpSession.clear_pending_payloads()
-	NetBus.local_peer_info.connect(_cache_peer_info)
-	NetBusExt.local_peer_hues.connect(_cache_peer_hues)
-	NetBusExt.local_match_options.connect(_cache_match_options)
 
 	# 不透明深色底:全局清屏色被 Level0 设成浅蓝后,白字界面会看不清。
 	# 本场景根节点 Control 无满矩形锚(尺寸 0),满矩形子节点会跟着为 0 → 显式给固定窗口尺寸。
@@ -428,8 +420,6 @@ func _on_room_joined(role: int) -> void:
 func _on_go_match(role: int, port: int) -> void:
 	_pending_go_role = role
 	_pending_go_port = port
-	# 新一局开始转连:先丢掉上一局的开局载荷(第二局若投递失败,新场景取到的必须是空)
-	PvpSession.clear_pending_payloads()
 	_join_sent_ms = 0   # 配对成功:停 join 兜底,转由转连 worker/claim 兜底接管
 	_status.text = "配对成功,连接对局服务器……"
 	_do_go_match.call_deferred()
@@ -522,16 +512,3 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.map_path = map_path
 	get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
 
-
-# ── 开局三载荷:本页只负责接住(那一刻新场景还不存在),交给 PvpSession → pvp_client ──
-# 与 royale_lobby 的同名函数同款:不在这里改任何 UI 状态(本页马上要被换掉,显示与生效一律归对局场景)。
-func _cache_peer_info(names: Dictionary) -> void:
-	PvpSession.pending_peer_info = names
-
-
-func _cache_peer_hues(hues: Dictionary) -> void:
-	PvpSession.pending_peer_hues = hues
-
-
-func _cache_match_options(opts: Dictionary) -> void:
-	PvpSession.pending_match_options = opts

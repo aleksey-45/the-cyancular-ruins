@@ -131,15 +131,11 @@ func _ready() -> void:
 			combat.took_hit.connect(_on_player_hit.bind(role))
 	_spawn_round_birds()  # 内部按 ENABLE_BIRDS 守卫,关闭时开局/换局都不刷
 	_broadcast_round_state()
-	_broadcast_match_options()
 
-# 生效选项广播:客户端据此同步禁武器(本地切枪同样被挡)。服务器权威,进局发一次。
-# ★ 必须有:大乱斗的禁武器闸门靠它同步,且 tests/royale_probe 硬断言"未收到 match_options = FAIL"。
-func _broadcast_match_options() -> void:
-	var opts := {"disabled_weapons": _disabled_weapons, "round_full_heal": _round_full_heal}
-	for role in peer_by_role:
-		NetBusExt.rpc_id(peer_by_role[role], "match_options", opts)
-
+# (原 `_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**下发:
+#  那次"推"与 match_start 落在同一次客户端 poll,而那一刻新场景的订阅方还不存在 → 静默丢失
+#  (自检 B2:禁武器闸门没上)。现在 options 随 `NetBus.match_sync` 的应答一起给。
+#  消费者 `tests/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:

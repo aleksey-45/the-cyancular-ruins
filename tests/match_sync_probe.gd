@@ -51,6 +51,7 @@ func _ready() -> void:
 	_require_ran("duel")
 	_test_royale_spawns()
 	_require_ran("royale")
+	_check_no_pending_handoff()
 	if _failures.is_empty():
 		print("MATCH SYNC PROBE: ALL-OK")
 		get_tree().quit(0)
@@ -93,3 +94,44 @@ func _test_royale_spawns() -> void:
 			"大乱斗: 重复取用返回同一份(未走动态复活点路径)")
 	host.queue_free()
 	_ran["royale"] = true   # ★ 完成戳必须在最后一行
+
+
+# ── 反向守卫:交接机制必须彻底消失 ──
+# 名单里是「推 → 大厅缓存 → 新场景取用」那条路的全套标识符。留着任何一处都说明只删了一半 ——
+# 而那正是这套机制的历史故障模式(两条投递路径并存时只改一条 = 静默丢失,自检 B2)。
+# 跳注释行:注释里提这些名字是**有意的**(留档为什么换掉)。
+const FORBIDDEN := ["pending_peer_info", "pending_peer_hues", "pending_match_options",
+		"clear_pending_payloads", "_consume_pending_payloads"]
+
+
+func _check_no_pending_handoff() -> void:
+	for d in ["res://core", "res://scenes", "res://server"]:
+		for f in _gd_files(d):
+			var txt := FileAccess.get_file_as_string(f)
+			for line in txt.split("\n"):
+				var t: String = line.strip_edges()
+				if t.is_empty() or t.begins_with("#"):
+					continue
+				for bad in FORBIDDEN:
+					if t.contains(bad):
+						_fail("%s 里仍有交接机制标识符 %s(只删了一半?)" % [f, bad])
+						return
+
+
+func _gd_files(dir_path: String) -> Array:
+	var out: Array = []
+	var d := DirAccess.open(dir_path)
+	if d == null:
+		return out
+	d.list_dir_begin()
+	var n := d.get_next()
+	while n != "":
+		var full := dir_path + "/" + n
+		if d.current_is_dir():
+			if n != "." and n != "..":
+				out.append_array(_gd_files(full))
+		elif n.ends_with(".gd"):
+			out.append(full)
+		n = d.get_next()
+	d.list_dir_end()
+	return out
