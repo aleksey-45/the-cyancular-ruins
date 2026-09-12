@@ -4,6 +4,7 @@ extends Node
 # BotInputSource(随机走/跳/周期开火/旋转瞄准),周期记录状态,超时或终局退出。
 
 var _bot_index := 1
+var _nade := false   # 诊断:5 号枪 + 瞄准脚下(榴弹落点=自身,用于复现爆炸中心)
 var _elapsed := 0.0
 var _logged := 0
 var _snap0 := 0
@@ -24,6 +25,7 @@ class BotInputSource:
 	var axis := 0.0
 	var aim := Vector2.RIGHT
 	var fire := false
+	var nade := false   # 诊断:5 号枪 + 瞄准脚下(榴弹落点≈自身,复现爆炸中心)
 	var _jump_edge := false
 	var _t := 0.0
 	var _next_dir := 0.0
@@ -36,12 +38,15 @@ class BotInputSource:
 			axis = [-1.0, 1.0, 0.0][randi() % 3]
 			if randf() < 0.4:
 				_jump_edge = true
+		_prev_fire = fire
 		if _t >= _next_fire:
 			_next_fire = _t + randf_range(0.5, 1.1)
 			fire = true
 		else:
 			fire = false
 		aim = Vector2.from_angle(0.7 * _t)
+		if nade:
+			aim = Vector2(0, 1)   # 朝脚下(必须在旋转瞄准之后,否则被覆盖):榴弹落回自身附近
 
 	func get_axis(_neg: String, _pos: String) -> float:
 		return axis
@@ -65,11 +70,13 @@ class BotInputSource:
 	func is_attack_just_pressed() -> bool:
 		return fire
 
+	var _prev_fire := false
+
 	func is_attack_just_released() -> bool:
-		return false
+		return _prev_fire and not fire   # 释放边沿:重武器(榴弹)靠它发射
 
 	func get_weapon_slot_pressed() -> int:
-		return 0
+		return 5 if nade and _t < 0.6 else 0   # 开局切榴弹发射器(5 号槽)
 
 	func get_aim_dir_override() -> Vector2:
 		return aim
@@ -100,6 +107,7 @@ func _run() -> void:
 		_quit_fail()
 		return
 	_src = BotInputSource.new()
+	_src.nade = _nade
 	_player.set_input_source(_src)
 	print("BOT[%d]: Bot 输入源已挂载" % _bot_index)
 	NetBus.local_snapshot.connect(func(s: Dictionary) -> void:
@@ -119,7 +127,7 @@ func _process(delta: float) -> void:
 		if _player != null and is_instance_valid(_player):
 			pos = _player.global_position
 			downed = _player.is_downed()
-		print("BOT[%d]: t=%d snaps=%d pos=%s downed=%s 人数=%d" % [_bot_index, int(_elapsed), _snaps, pos, downed, _players_max])
+		print("BOT[%d]: t=%d snaps=%d pos=%s hp=%s downed=%s 人数=%d" % [_bot_index, int(_elapsed), _snaps, pos, (_player.hp if _player != null else -1), downed, _players_max])
 	# 位置变化检测(快照是否真的在驱动本地玩家)
 	if _player != null and is_instance_valid(_player):
 		var p := _player.global_position

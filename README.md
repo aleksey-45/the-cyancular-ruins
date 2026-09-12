@@ -16,7 +16,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 ### 控制(以 `project.godot` 输入映射为准)
 - 左右移动、上=跳跃/爬梯、下=下蹲/下落/下潜;水中上浮下潜
 - 鼠标瞄准,左键开火(按住=持续/蓄力重型武器)
-- `1`~`5` 切枪(手枪/步枪/重狙/霰弹/榴弹)
+- `1`~`6` 切枪(手枪/步枪/重狙/霰弹/榴弹/激光枪)
 - PvP 倒下后按游戏规则自动复活;单机 `R` 重载场景
 
 ---
@@ -95,7 +95,7 @@ server/    服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(Matc
 map/       .cyrm 文本地图
 assets/    美术/字体素材
 editor/    浏览器地图编辑器(structure-editor.html + smoke.js)
-DevTools/  干员卡/武器卡编辑器(分支限定;启动器 launch_card_editor.bat 同目录)
+DevTools/  干员卡/武器卡编辑器(开发专用;启动器 launch_card_editor.bat 同目录)
 Tests/     -s 冒烟/诊断脚本
 tools/     构建与启动脚本(start_server.bat / build_release.py / 维护探针)
 docs/      全部文档(发布手册 / 联网设计 / 规划 / 历史 spec 与 plan)
@@ -104,4 +104,4 @@ backup/    旧编辑器等备份
 
 > 打包:`build_exe.bat` 会把根目录旧 exe 移到上级 `historyexe/`,根目录始终只有最新一对 exe。
 
-技术细节(环面数学/敌人 AI/网络协议/发布)见 `CLAUDE.md` 与 `docs/RELEASE.md`。
+技术细节(环面数学/敌人 AI/网络协议/发布)见 `docs/ARCHITECTURE.md`(结构地图)、`AGENTS.md` 与 `docs/RELEASE.md`。

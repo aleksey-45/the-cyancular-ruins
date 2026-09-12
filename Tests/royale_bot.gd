@@ -26,6 +26,7 @@ var _room_written := false
 var _started_sent := false
 var _names_logged := false
 var _ai_fill := "--ai-fill" in OS.get_cmdline_user_args()
+var _nade := "--nade" in OS.get_cmdline_user_args()   # 诊断:切 5 号枪朝脚下丢(复现爆炸中心)
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -123,6 +124,7 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	var helper := Node.new()
 	helper.set_script(load("res://Tests/royale_bot_helper.gd"))
 	helper.set("_bot_index", _index)
+	helper.set("_nade", _nade)
 	tree.root.add_child.call_deferred(helper)
 	get_tree().change_scene_to_file.call_deferred("res://Scenes/royale_game.tscn")
 

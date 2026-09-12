@@ -42,7 +42,7 @@
        · 卡编辑器"agent 施工一小时没动静"三处修复:静默拉起失败 / 停止失效 / 完成标记丢失
        · 现役 6 武器做成对照卡(手枪/步枪/重狙/霰弹/榴弹/激光),数值 = 实装 tscn 导出
        · 项目内中文文件名改英文(build_exe.bat / launch_card_editor.bat / local_ip.txt),win/mac 通用
-       · 实验:移植 C2 客户端预测 rollback(开关 LOCAL_PREDICTION_ENABLED,默认 OFF)
+       · C2 客户端预测 rollback(1v1):移植完成并开启(开关 LOCAL_PREDICTION_ENABLED=true;改回 false 退回纯服务器渲染)
        · 试过"榴弹直击钉住原地引爆",手感不佳已回滚(保持反弹 + 引信)
   ◆ 备注
     · 换弹仍只限单机(PvP/大乱斗无弹夹系统,对局中按 R 不换弹)
