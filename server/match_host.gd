@@ -436,6 +436,8 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 		"radius": bullet.explosion_radius,
 		"expl_damage": bullet.explosion_damage,
 		"expl_knock": bullet.explosion_knockback,
+		"blast_force": bullet.blast_force,
+		"smoke_duration": bullet.smoke_duration,
 	}
 	if bullet.explosion_visual != null:
 		data["visual"] = bullet.explosion_visual.resource_path
@@ -590,7 +592,9 @@ func _respawn_player(role: int) -> void:
 	if p.has_method("cancel_jump_state"):
 		p.cancel_jump_state()
 	if p.weapons != null and p.weapons.has_method("equip"):
+		p.weapons.exit_prop_mode()
 		p.weapons.equip(p.weapons.default_slot())   # 首个启用槽位(禁武器时不再固定 1)
+		p.weapons.refill_all()   # 道具每命携带数回满
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
 

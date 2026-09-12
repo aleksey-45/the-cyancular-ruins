@@ -19,6 +19,8 @@ static func build(card: Dictionary, state: Dictionary) -> Dictionary:
 	var type := str(card.get("card_type", ""))
 	if type == CardSchema.TYPE_OPERATOR:
 		return _build_operator(card, state)
+	if type == CardSchema.TYPE_PROP:
+		return _build_prop(card, state)
 	return _build_weapon(card, state)
 
 
@@ -319,3 +321,32 @@ static func build_cli_bat(repo_abs: String, prompt_abs: String, log_abs: String,
 		">> \"%%LOGF%%\" echo %s!ERRORLEVEL!__" % HEAD_MARK,
 	]
 	return "\r\n".join(L) + "\r\n"
+
+
+## 道具卡模板(最小可用):道具系统已在 KH_V1_1_4_propSys 落地(槽位 8/9/10 + BulletBase
+## blast_force/smoke_duration + Globals/smoke.gd);agent 只需按卡参数在
+## Scenes/Weapons/prop_launcher.gd + 对应 tscn 上调参/建场景,并把注册表补一行。
+static func _build_prop(card: Dictionary, state: Dictionary) -> Dictionary:
+	var whitelist: Array[String] = [
+		"DevTools/cards/props/%s.json" % str(card.get("id", "")),
+		"DevTools/cards/props/%s.png" % str(card.get("id", "")),
+		"DevTools/gen_portrait.gd",
+		"Scenes/Weapons/prop_launcher.gd",
+		"Scenes/Weapons/prop_knockback.tscn",
+		"Scenes/Weapons/prop_attraction.tscn",
+		"Scenes/Weapons/prop_smoke.tscn",
+		"Scenes/Player/weapon_component.gd",
+		"Tests/prop_probe.gd",
+	]
+	var L := _header("道具实装:%s" % str(card.get("name", "")), card, whitelist)
+	_art_section(L, card)
+	L.append("## 3. 实装要求(道具系统已存在,不要重造)")
+	L.append("- 槽位映射:knockback→8 / attraction→9 / smoke→10;注册进 WeaponComponent.PROP_SLOTS 顺序表。")
+	L.append("- 场景:prop_launcher.gd 子类参数化(bullet_speed/bullet_range/bullet_gravity/mag_size=每命携带数)。")
+	L.append("- 效果参数从 kind_params 取:blast_radius/blast_force(负=吸引)/smoke_duration/fuse_time。")
+	L.append("- 美术:先 gen_portrait 生成贴近原作风格的像素画;亦可在编辑器「导入手绘素材」人工替换。")
+	L.append("- headless 验证:Godot --headless --path . -s res://Tests/prop_probe.gd 输出 PROP PROBE: OK。")
+	_verify_section(L, card)
+	_commit_section(L, "feat(prop): 实装道具 %s(%s)" % [str(card.get("id", "")), str(card.get("kind", ""))])
+	L.append("- 最后一行必须是:CARD-DONE %s/%s rev%d" % [CardSchema.TYPE_PROP, str(card.get("id", "")), int(card.get("rev", 1))])
+	return {"prompt": "\n".join(L), "template": "PROP", "set_flags": [] as Array[String]}

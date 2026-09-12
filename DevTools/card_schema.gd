@@ -8,7 +8,8 @@ extends RefCounted
 const SCHEMA_VERSION := 1
 const TYPE_OPERATOR := "operator"
 const TYPE_WEAPON := "weapon"
-const CARD_TYPES := [TYPE_OPERATOR, TYPE_WEAPON]
+const TYPE_PROP := "prop"
+const CARD_TYPES := [TYPE_OPERATOR, TYPE_WEAPON, TYPE_PROP]
 
 # id 即文件名:小写字母开头,小写字母/数字/下划线,2~32 字符
 const ID_REGEX := "^[a-z][a-z0-9_]{2,31}$"
@@ -16,6 +17,7 @@ const ID_REGEX := "^[a-z][a-z0-9_]{2,31}$"
 const SKILL_KEYS := ["skill_1", "skill_2", "skill_3"]   # 对应 project.godot 待注册动作(默认键 Z/X/C)
 const MAX_SKILLS := 3
 const WEAPON_KINDS := ["gun", "melee", "thrown", "special"]
+const PROP_KINDS := ["knockback", "attraction", "smoke"]   # 击退炮 / 吸力炮 / 烟雾弹
 const WEAPON_TIERS := ["light", "medium", "heavy"]
 const TEXTURE_MODES := ["tint", "sheet"]
 
@@ -62,6 +64,33 @@ static func make_default(type: String, id: String) -> Dictionary:
 		card["jump_penalty"] = 1.0
 		card["slot"] = 6             # 0=纯设计稿不注册;>5 需扩槽(提示词分派重构模板)
 		card["kind_params"] = {}
+	elif type == TYPE_PROP:
+		card["kind"] = "knockback"     # knockback 击退 | attraction 吸引 | smoke 烟雾
+		card["appearance"] = ""        # 道具外貌(agent 生成或手绘导入)
+		card["attack_interval"] = 0.8  # 投掷间隔
+		card["mag_size"] = 2           # 每次复活携带数(不可换弹)
+		card["reload_time"] = 0.0
+		card["description"] = ""
+		card["damage"] = 0             # 道具不造成直接伤害(占位字段,恒 0)
+		card["impact"] = 0.0
+		card["tier"] = "light"
+		card["full_auto"] = false
+		card["heavy_aim"] = false
+		card["bullet_speed"] = 900.0   # 投掷物初速
+		card["bullet_range"] = 1200.0
+		card["bullet_size"] = 1.0
+		card["pellet_count"] = 1
+		card["spread_deg"] = 0.0
+		card["bullet_gravity"] = 0.45  # 抛物线
+		card["move_penalty"] = 1.0
+		card["jump_penalty"] = 1.0
+		card["slot"] = 8               # 8=击退 9=吸引 10=烟雾;0=纯设计稿
+		card["kind_params"] = {
+			"fuse_time": 0.5,
+			"blast_radius": 260.0,
+			"blast_force": 2600.0,
+			"smoke_duration": 6.0,
+		}
 	return card
 
 
@@ -94,7 +123,7 @@ static func apply_defaults(card: Dictionary) -> Dictionary:
 static func validate(card: Dictionary) -> Array[String]:
 	var errs: Array[String] = []
 	var type := str(card.get("card_type", ""))
-	if type != TYPE_OPERATOR and type != TYPE_WEAPON:
+	if type != TYPE_OPERATOR and type != TYPE_WEAPON and type != TYPE_PROP:
 		errs.append("card_type 非法:%s" % type)
 		return errs
 	var id := str(card.get("id", ""))
@@ -107,6 +136,8 @@ static func validate(card: Dictionary) -> Array[String]:
 			_validate_operator(card, errs)
 		TYPE_WEAPON:
 			_validate_weapon(card, errs)
+		TYPE_PROP:
+			_validate_prop(card, errs)
 	return errs
 
 
@@ -154,3 +185,28 @@ static func _validate_weapon(card: Dictionary, errs: Array[String]) -> void:
 		errs.append("tier 非法(需 %s):%s" % ["|".join(WEAPON_TIERS), str(card.get("tier"))])
 	if int(card.get("pellet_count", 1)) < 1:
 		errs.append("弹丸数需 ≥ 1:%s" % str(card.get("pellet_count")))
+
+
+static func _validate_prop(card: Dictionary, errs: Array[String]) -> void:
+	if str(card.get("kind", "")) not in PROP_KINDS:
+		errs.append("道具性质非法(需 %s):%s" % ["|".join(PROP_KINDS), str(card.get("kind"))])
+	if float(card.get("attack_interval", 0.0)) <= 0.0:
+		errs.append("投掷间隔需 > 0:%s" % str(card.get("attack_interval")))
+	var mag := int(card.get("mag_size", 0))
+	if mag < 1 or mag > 9:
+		errs.append("每次复活携带数需在 1~9:%s" % str(mag))
+	var slot := int(card.get("slot", -1))
+	if slot != 0 and slot not in [8, 9, 10]:
+		errs.append("道具槽位需为 0(设计稿)或 8/9/10:%s" % str(slot))
+	if str(card.get("tier", "")) not in WEAPON_TIERS:
+		errs.append("tier 非法(需 %s):%s" % ["|".join(WEAPON_TIERS), str(card.get("tier"))])
+	var kp: Dictionary = card.get("kind_params", {})
+	var radius := float(kp.get("blast_radius", 0.0))
+	if radius < 50.0 or radius > 900.0:
+		errs.append("作用半径需在 50~900:%s" % str(radius))
+	var kind := str(card.get("kind", ""))
+	if kind == "smoke":
+		if float(kp.get("smoke_duration", 0.0)) <= 0.0:
+			errs.append("烟雾时长需 > 0")
+	elif float(kp.get("blast_force", 0.0)) == 0.0:
+		errs.append("推/吸强度不能为 0")

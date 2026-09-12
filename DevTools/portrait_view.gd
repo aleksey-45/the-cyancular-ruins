@@ -46,7 +46,7 @@ func _on_delete_pressed() -> void:
 	var dir := DirAccess.open(CardStore.cards_dir(str(_card.get("card_type", ""))))
 	if dir != null:
 		for ext in ["png", "webp", "jpg", "jpeg"]:
-			var p := str(_card.get("id", "")) + "." + ext
+			var p: String = str(_card.get("id", "")) + "." + str(ext)
 			if dir.file_exists(p):
 				dir.remove(p)
 	set_card(_card)

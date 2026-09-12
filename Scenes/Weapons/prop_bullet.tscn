@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://Scenes/Weapons/bullet_base.gd" id="1_bb"]
+[ext_resource type="Texture2D" path="res://assets/textures/bullets.png" id="2_tex"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_prop"]
+size = Vector2(12, 8)
+
+[node name="PropBullet" type="CharacterBody2D"]
+collision_layer = 0
+collision_mask = 5
+motion_mode = 1
+wall_min_slide_angle = 0.5235988
+script = ExtResource("1_bb")
+explodes = true
+direct_hit_damage = 0
+fuse_time = 0.5
+hit_fuse_time = 0.15
+explosion_radius = 260.0
+explosion_damage = 0
+explosion_knockback = 0
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+position = Vector2(0, 0)
+texture = ExtResource("2_tex")
+region_enabled = true
+region_rect = Rect2(2, 9, 12, 6)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_prop")

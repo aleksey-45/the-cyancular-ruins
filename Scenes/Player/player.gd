@@ -293,7 +293,7 @@ func _physics_process(delta: float) -> void:
 
 	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
 	var wslot := input_source.get_weapon_slot_pressed()
-	if wslot > 0:
+	if wslot > 0 and not weapons.is_prop_mode():
 		weapons.equip(str(wslot))
 	# R 换弹请求(网络玩家):输入包携带 rl 边沿,服务器权威玩家在此消费
 	if input_source.has_method("consume_reload_request") and input_source.consume_reload_request():
@@ -498,6 +498,15 @@ func is_charging() -> bool:
 func is_downed() -> bool:
 	return combat.is_downed()
 
+
+## 无伤冲击(击退炮/吸力炮):strength 带符号,>0 推离爆心 / <0 吸向爆心。
+## 走爆炸同款独立击退向量(combat.knock_velocity),不扣血不触发无敌帧。
+func apply_blast_force(center: Vector2, strength: float) -> void:
+	var dir := MazeGenerator.toroidal_delta_px(center, global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var away := dir.normalized() if not dir.is_zero_approx() else Vector2.RIGHT
+	combat.knock_velocity = away * strength
+
 func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
@@ -517,7 +526,7 @@ func _update_server_rendered(delta: float) -> void:
 	combat.update_iframe_blink(delta)   # 受击无敌闪烁仍本地播放
 	# 切枪:服务器渲染模式跳过移动路径里的切枪轮询,这里补(本地即时反馈;服务器从输入包同切)。
 	var wslot := input_source.get_weapon_slot_pressed()
-	if wslot > 0:
+	if wslot > 0 and not weapons.is_prop_mode():
 		weapons.equip(str(wslot))
 	if not _server_have_target:
 		return
@@ -601,7 +610,9 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	_waterproof_timer = 0.0
 	_waterproof_drown_timer = 0.0
 	weapons.cancel_aim()
+	weapons.exit_prop_mode()
 	weapons.equip(weapons.default_slot())
+	weapons.refill_all()   # 道具"每次复活只能携带 N 枚"由此回满
 	var w := weapons.current_weapon()
 	if w != null and w.reload_active() and not w.is_reloading():
 		w.mag_ammo = w.mag_size
@@ -612,6 +623,38 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切。
 	# PvP:滚轮事件不在输入包协议里,只本地切会被快照防脱同步切回 → 走
 	# request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
+	# ── T = 道具模式开关(单机/PvP 通用;倒地不可用)────────────────────────
+	# 进入:手上切到第一个可用道具(隐藏槽位 8/9/10),PvP 经槽位同步通道让服务器跟随;
+	# 退出:回到进入前的武器槽。道具模式内:数字 1/2/3 直选道具,滚轮循环。
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_T and not combat.is_downed():
+		if weapons.is_prop_mode():
+			weapons.exit_prop_mode()
+		else:
+			weapons.enter_prop_mode()
+		return
+	if weapons.is_prop_mode() and not combat.is_downed():
+		if event is InputEventKey and event.pressed and not event.echo:
+			var pi := -1
+			match event.physical_keycode:
+				KEY_1:
+					pi = 0
+				KEY_2:
+					pi = 1
+				KEY_3:
+					pi = 2
+			if pi >= 0:
+				weapons.select_prop_index(pi)
+				return
+		if event is InputEventMouseButton and event.pressed:
+			var pd := 0
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				pd = -1
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				pd = 1
+			if pd != 0:
+				weapons.cycle_prop(pd)
+				return
 	if Settings.wheel_switch and not combat.is_downed() \
 			and event is InputEventMouseButton and event.pressed:
 		var dir := 0

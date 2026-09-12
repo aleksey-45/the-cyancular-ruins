@@ -74,6 +74,7 @@ func _ready() -> void:
 	NetBusExt.c2s("request_hues")   # 开局广播可能早于本场景加载 → 主动补要一次
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBusExt.local_beam_fired.connect(_on_beam_fired)   # 激光权威开火 → 非射手端画光束副本
+	NetBusExt.local_smoke_event.connect(_on_smoke_event)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
@@ -260,6 +261,8 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 		b.explosion_radius = data["radius"]
 		b.explosion_damage = data["expl_damage"]
 		b.explosion_knockback = data["expl_knock"]
+		b.blast_force = data.get("blast_force", 0.0)
+		b.smoke_duration = data.get("smoke_duration", 0.0)
 		if data.has("visual"):
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
@@ -269,6 +272,13 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 
 # 远端激光:服务器权威开火 → 非射手端画光束视觉副本(与 1v1 pvp_client 同款)。
 # 之前 royale 漏订阅 NetBusExt.local_beam_fired:别人开枪时本端收不到、画不出光束。
+## 服务器权威烟雾区:本地同步建区(视觉 + 可见性规则用)
+func _on_smoke_event(data: Dictionary) -> void:
+	if _world == null:
+		return
+	Smoke.spawn_zone(_world, data.get("pos", Vector2.ZERO), float(data.get("radius", 220.0)),
+			float(data.get("duration", 6.0)))
+
 func _on_beam_fired(data: Dictionary) -> void:
 	if _world == null:
 		return
@@ -433,6 +443,7 @@ func _on_match_options(opts: Dictionary) -> void:
 		_local.weapons.set_enabled_slots(disabled)
 
 func _process(_delta: float) -> void:
+	_apply_smoke_visibility()   # 烟雾:烟雾内实体不可见/自己在烟雾内只见地图与自己
 	# 头顶 ID / 血条贴放(独立于倒地转体)
 	for role in _id_labels:
 		var target: Node2D = _local if role == PvpSession.role else _replicas.get(role)

@@ -94,7 +94,7 @@ func _on_item_selected(idx: int) -> void:
 
 
 func _on_new_card() -> void:
-	var prefix := "op_" if card_type == CardSchema.TYPE_OPERATOR else "wp_"
+	var prefix := "op_" if card_type == CardSchema.TYPE_OPERATOR else ("pr_" if card_type == CardSchema.TYPE_PROP else "wp_")
 	var n := 1
 	while CardStore.list_ids(card_type).has("%s%d" % [prefix, n]):
 		n += 1

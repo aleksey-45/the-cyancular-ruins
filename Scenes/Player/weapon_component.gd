@@ -13,10 +13,18 @@ const WEAPONS: Dictionary = {
 	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
 	"6": "res://Scenes/Weapons/laser_gun.tscn",
 	"7": "res://Scenes/Weapons/minigun.tscn",
+	"8": "res://Scenes/Weapons/prop_knockback.tscn",
+	"9": "res://Scenes/Weapons/prop_attraction.tscn",
+	"10": "res://Scenes/Weapons/prop_smoke.tscn",
 }
 
 # 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
-const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪", 7: "加特林"}
+const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪", 7: "加特林",
+	8: "击退炮", 9: "吸力炮", 10: "烟雾弹"}
+
+# 道具槽位(T 键道具模式专用;不在 enabled_slots 里,普通切枪/数字键不会误选):
+# 8=击退炮 9=吸力炮 10=烟雾弹。道具不受「禁武器」影响;每命携带数=各道具 mag_size。
+const PROP_SLOTS: Array = [8, 9, 10]
 
 signal weapon_changed(slot: int)   # equip 成功后发射(菜单图标/HUD 武器显示跟随)
 
@@ -92,7 +100,7 @@ func set_enabled_slots(disabled: Array[int]) -> void:
 	if enabled_slots.is_empty():
 		enabled_slots = [1]   # 不允许全禁:至少留手枪
 	# 当前拿着的枪被禁 → 切到第一个启用的
-	if not is_slot_enabled(_current_slot):
+	if not is_slot_enabled(_current_slot) and not is_prop_slot(_current_slot):
 		equip(default_slot())
 
 func is_slot_enabled(slot: int) -> bool:
@@ -138,7 +146,7 @@ func consume_net_slot() -> int:
 
 func equip(slot: String) -> void:
 	# 禁用槽位拒绝切换(提示音),防止数字键/网络包绕过
-	if not is_slot_enabled(int(slot)):
+	if not is_slot_enabled(int(slot)) and not is_prop_slot(int(slot)):
 		Sfx.play("deny")
 		return
 	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)
@@ -194,3 +202,64 @@ func apply_recoil(push: float, is_squat: bool, is_latched: bool) -> void:
 func cancel_aim() -> void:
 	if _weapon != null:
 		_weapon.cancel_aim()
+
+
+# ── 道具模式(T 键开关):道具借道隐藏槽位 8/9/10,与武器槽位共用输入包同步 ──
+# 进入 = 记住当前武器槽 → equip 道具槽(PvP 同时 push_net_slot,服务器权威跟随);
+# 退出 = 回到进入前的武器槽。prop_mode 以"当前槽位是否道具槽"推导,天然与快照 wslot 一致。
+
+var _pre_prop_slot := "1"
+
+func is_prop_slot(slot: int) -> bool:
+	return PROP_SLOTS.has(slot)
+
+func is_prop_mode() -> bool:
+	return is_prop_slot(_current_slot)
+
+func owned_prop_slots() -> Array:
+	return PROP_SLOTS.filter(func(s: int) -> bool: return WEAPONS.has(str(s)))
+
+func enter_prop_mode() -> void:
+	var owned := owned_prop_slots()
+	if owned.is_empty() or is_prop_mode():
+		return
+	_pre_prop_slot = str(_current_slot)
+	_equip_and_sync(int(owned[0]))
+
+func exit_prop_mode() -> void:
+	if not is_prop_mode():
+		return
+	var back := _pre_prop_slot
+	if back.is_empty() or (not is_slot_enabled(int(back)) and is_prop_slot(int(back))):
+		back = default_slot()
+	_equip_and_sync(int(back))
+
+## 道具模式内:滚轮循环切换道具
+func cycle_prop(dir: int) -> void:
+	var owned := owned_prop_slots()
+	if owned.is_empty():
+		return
+	var idx := owned.find(_current_slot)
+	if idx < 0:
+		idx = 0
+	else:
+		idx = (idx + dir + owned.size() * 2) % owned.size()
+	_equip_and_sync(int(owned[idx]))
+
+## 道具模式内:数字 1/2/3 直选第 i 个道具
+func select_prop_index(i: int) -> void:
+	var owned := owned_prop_slots()
+	if i < 0 or i >= owned.size():
+		return
+	_equip_and_sync(int(owned[i]))
+
+func _equip_and_sync(slot: int) -> void:
+	equip(str(slot))
+	if Level0.pvp_mode:
+		push_net_slot(slot)   # 服务器权威跟随(复用武器槽位同步通道)
+
+## 复活回满所有道具/武器弹夹(击退炮"每次复活只能携带两枚"由此保证)
+func refill_all() -> void:
+	for c in get_children():
+		if c is WeaponBase:
+			(c as WeaponBase).mag_ammo = (c as WeaponBase).mag_size

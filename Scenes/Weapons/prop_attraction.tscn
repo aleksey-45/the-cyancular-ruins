@@ -1,0 +1,37 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://Scenes/Weapons/prop_attraction.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/textures/weapons.png" id="2_tex"]
+[ext_resource type="PackedScene" path="res://Scenes/Weapons/prop_bullet.tscn" id="3_bullet"]
+[ext_resource type="PackedScene" path="res://Scenes/Effects/explosion.tscn" id="4_fx"]
+
+[node name="Prop" type="Node2D"]
+script = ExtResource("1_script")
+mag_size = 2
+reload_time = 0.0
+prop_no_reload = true
+tier = 1
+weapon_name = "Prop"
+full_auto = false
+fire_cooldown = 0.8
+bullet_scene = ExtResource("3_bullet")
+bullet_speed = 950.0
+bullet_range = 1100.0
+bullet_size = 1.4
+bullet_gravity = 0.45
+bullet_color = Color(0.35, 0.9, 1, 1)
+pitch_clamp_deg = 65.0
+blast_force = -2600.0
+blast_radius = 260.0
+fuse_time = 0.5
+explosion_visual = ExtResource("4_fx")
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+position = Vector2(10, 8)
+texture = ExtResource("2_tex")
+region_enabled = true
+region_rect = Rect2(3, 35, 51, 21)
+modulate = Color(0.35, 0.9, 1, 1)
+
+[node name="Muzzle" type="Marker2D" parent="."]
+position = Vector2(28, 4)

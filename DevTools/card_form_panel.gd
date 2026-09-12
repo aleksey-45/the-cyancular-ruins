@@ -10,6 +10,7 @@ signal save_failed(errs: Array[String])
 
 const KEY_LABELS := ["Z (skill_1)", "X (skill_2)", "C (skill_3)"]
 const KIND_LABELS := ["gun 枪械", "melee 冷兵器", "thrown 爆炸投掷", "special 其他"]
+const PROP_KIND_LABELS := ["knockback 击退炮", "attraction 吸力炮", "smoke 烟雾弹"]
 const TIER_LABELS := ["light 轻", "medium 中", "heavy 重"]
 const TEXMODE_LABELS := ["tint 色相染色", "sheet 五姿态图集"]
 const DEBOUNCE := 0.3
@@ -21,10 +22,13 @@ var _loading := false          # set_card 回填期间抑制改动信号
 var _save_seq := 0             # 防抖:只有最新一次改动的计时器会真正保存
 var _op_box: VBoxContainer = null
 var _wp_box: VBoxContainer = null
+var _prop_box: VBoxContainer = null
 var _f_op: Dictionary = {}     # 字段 key → 控件
 var _row_op: Dictionary = {}   # 字段 key → 所在行(隐藏整行用)
 var _f_wp: Dictionary = {}
 var _row_wp: Dictionary = {}
+var _f_prop: Dictionary = {}
+var _row_prop: Dictionary = {}
 var _skill_rows: Array = []    # [{root, name, key, cooldown, desc}]
 
 
@@ -42,6 +46,10 @@ func _ready() -> void:
 	_wp_box.add_theme_constant_override("separation", 10)
 	inner.add_child(_wp_box)
 	_build_weapon(_wp_box)
+	_prop_box = VBoxContainer.new()
+	_prop_box.add_theme_constant_override("separation", 10)
+	inner.add_child(_prop_box)
+	_build_prop(_prop_box)
 
 
 ## 装配根接线:列表选中变化 → 整卡回填
@@ -51,10 +59,14 @@ func set_card(card: Dictionary) -> void:
 	_card = CardSchema.apply_defaults(card)
 	card_type = str(_card.get("card_type", card_type))
 	var is_op := card_type == CardSchema.TYPE_OPERATOR
+	var is_prop := card_type == CardSchema.TYPE_PROP
 	_op_box.visible = is_op and not card.is_empty()
-	_wp_box.visible = not is_op and not card.is_empty()
+	_prop_box.visible = is_prop and not card.is_empty()
+	_wp_box.visible = not is_op and not is_prop and not card.is_empty()
 	if _op_box.visible:
 		_fill_operator()
+	elif _prop_box.visible:
+		_fill_prop()
 	elif _wp_box.visible:
 		_fill_weapon()
 	_loading = false
@@ -74,11 +86,19 @@ func _row(parent: Control, caption: String, w: Control, key := "") -> Control:
 
 
 func _row_of(parent: Control) -> Dictionary:
-	return _row_op if parent == _op_box else _row_wp
+	if parent == _op_box:
+		return _row_op
+	if parent == _prop_box:
+		return _row_prop
+	return _row_wp
 
 
 func _fields(parent: Control) -> Dictionary:
-	return _f_op if parent == _op_box else _f_wp
+	if parent == _op_box:
+		return _f_op
+	if parent == _prop_box:
+		return _f_prop
+	return _f_wp
 
 
 func _line(parent: Control, key: String, placeholder: String) -> LineEdit:
@@ -309,6 +329,8 @@ func _on_changed(_v = null) -> void:
 func _save_now() -> void:
 	if _op_box.visible:
 		_collect_operator()
+	elif _prop_box.visible:
+		_collect_prop()
 	else:
 		_collect_weapon()
 	var errs := CardStore.save_card(_card)
@@ -370,4 +392,91 @@ func _collect_weapon() -> void:
 			kp["fuse_time"] = (_f_wp["kp_fuse"] as SpinBox).value
 			kp["explosion_radius"] = (_f_wp["kp_radius"] as SpinBox).value
 			kp["explosion_damage"] = int((_f_wp["kp_edmg"] as SpinBox).value)
+	_card["kind_params"] = kp
+
+
+# ── 道具表单 ──
+func _build_prop(box: VBoxContainer) -> void:
+	box.add_child(DevUIKit.label("道具卡", 26, Color(0.55, 0.95, 1.0)))
+	_row(box, "名称", _line(box, "name", "道具名称"))
+	var kind := _opt(box, "kind", PROP_KIND_LABELS)
+	_row(box, "性质", kind)
+	kind.item_selected.connect(func(_i: int) -> void: _apply_prop_kind_visibility())
+	box.add_child(DevUIKit.label("外貌描述(投掷物/烟雾像素画按此生成,或用「导入手绘素材」)", 20, Color(0.75, 0.8, 0.85)))
+	box.add_child(_text(box, "appearance", "例:橙红色圆柱罐体,顶部按压引信,罐体白圈标识…", 96))
+	_row(box, "投掷间隔", _spin(box, "attack_interval", 0.1, 10.0, 0.1, "s"))
+	_row(box, "每次复活携带", _spin(box, "mag_size", 1, 9, 1, "枚(不可换弹)"))
+	_row(box, "注册槽位", _spin(box, "slot", 0, 10, 1, "(8=击退 9=吸引 10=烟雾;0=设计稿)"))
+	_row(box, "分级", _opt(box, "tier", TIER_LABELS))
+	box.add_child(DevUIKit.label("弹道(投掷抛物线)", 20, Color(0.75, 0.8, 0.85)))
+	_row(box, "投掷初速", _spin(box, "bullet_speed", 100, 3000, 50, "px/s"))
+	_row(box, "最大飞行", _spin(box, "bullet_range", 100, 3000, 50, "px"))
+	_row(box, "弹体重力×", _spin(box, "bullet_gravity", 0, 1, 0.05))
+	box.add_child(DevUIKit.label("效果参数", 20, Color(0.75, 0.8, 0.85)))
+	_row(box, "起效延迟", _spin(box, "kp_fuse", 0.0, 5, 0.1, "s(首次碰撞后)"))
+	_row(box, "作用半径", _spin(box, "kp_radius", 50, 900, 10, "px"))
+	_row(box, "推/吸强度", _spin(box, "kp_force", 0, 9000, 50, "(负=吸引)"))
+	_row(box, "烟雾时长", _spin(box, "kp_smoke", 0, 30, 0.5, "s"))
+	_row(box, "移速惩罚×", _spin(box, "move_penalty", 0.3, 1.0, 0.05))
+	_row(box, "跳跃惩罚×", _spin(box, "jump_penalty", 0.3, 1.0, 0.05))
+	box.add_child(DevUIKit.label("其他描述(效果预期/使用场景)", 20, Color(0.75, 0.8, 0.85)))
+	box.add_child(_text(box, "description", "例:击退范围内所有实体(含子弹/自己),不造成伤害…", 96))
+	_apply_prop_kind_visibility()
+
+
+func _apply_prop_kind_visibility() -> void:
+	var kind: String = CardSchema.PROP_KINDS[(_f_prop["kind"] as OptionButton).selected]
+	var smoke: bool = kind == "smoke"
+	(_row_prop["kp_force"] as Control).visible = not smoke
+	(_row_prop["kp_smoke"] as Control).visible = smoke
+
+
+func _fill_prop() -> void:
+	_f_prop["name"].text = str(_card.get("name", ""))
+	_f_prop["kind"].selected = maxi(0, CardSchema.PROP_KINDS.find(str(_card.get("kind", "knockback"))))
+	_f_prop["appearance"].text = str(_card.get("appearance", ""))
+	_f_prop["attack_interval"].value = float(_card.get("attack_interval", 0.8))
+	_f_prop["mag_size"].value = float(_card.get("mag_size", 2))
+	_f_prop["slot"].value = float(_card.get("slot", 8))
+	_f_prop["tier"].selected = maxi(0, CardSchema.WEAPON_TIERS.find(str(_card.get("tier", "light"))))
+	_f_prop["bullet_speed"].value = float(_card.get("bullet_speed", 900))
+	_f_prop["bullet_range"].value = float(_card.get("bullet_range", 1200))
+	_f_prop["bullet_gravity"].value = float(_card.get("bullet_gravity", 0.45))
+	_f_prop["move_penalty"].value = float(_card.get("move_penalty", 1.0))
+	_f_prop["jump_penalty"].value = float(_card.get("jump_penalty", 1.0))
+	_f_prop["description"].text = str(_card.get("description", ""))
+	var kp: Dictionary = _card.get("kind_params", {})
+	_f_prop["kp_fuse"].value = float(kp.get("fuse_time", 0.5))
+	_f_prop["kp_radius"].value = float(kp.get("blast_radius", 260.0))
+	_f_prop["kp_force"].value = float(kp.get("blast_force", 2600.0))
+	_f_prop["kp_smoke"].value = float(kp.get("smoke_duration", 6.0))
+	_apply_prop_kind_visibility()
+
+
+func _collect_prop() -> void:
+	_card["name"] = (_f_prop["name"] as LineEdit).text
+	_card["kind"] = CardSchema.PROP_KINDS[(_f_prop["kind"] as OptionButton).selected]
+	_card["appearance"] = (_f_prop["appearance"] as TextEdit).text
+	_card["attack_interval"] = (_f_prop["attack_interval"] as SpinBox).value
+	_card["mag_size"] = int((_f_prop["mag_size"] as SpinBox).value)
+	_card["slot"] = int((_f_prop["slot"] as SpinBox).value)
+	_card["tier"] = CardSchema.WEAPON_TIERS[(_f_prop["tier"] as OptionButton).selected]
+	_card["bullet_speed"] = (_f_prop["bullet_speed"] as SpinBox).value
+	_card["bullet_range"] = (_f_prop["bullet_range"] as SpinBox).value
+	_card["bullet_gravity"] = (_f_prop["bullet_gravity"] as SpinBox).value
+	_card["move_penalty"] = (_f_prop["move_penalty"] as SpinBox).value
+	_card["jump_penalty"] = (_f_prop["jump_penalty"] as SpinBox).value
+	_card["description"] = (_f_prop["description"] as TextEdit).text
+	var kp := {"fuse_time": 0.5, "blast_radius": 260.0, "blast_force": 0.0, "smoke_duration": 0.0}
+	kp["fuse_time"] = (_f_prop["kp_fuse"] as SpinBox).value
+	kp["blast_radius"] = (_f_prop["kp_radius"] as SpinBox).value
+	kp["blast_force"] = (_f_prop["kp_force"] as SpinBox).value
+	kp["smoke_duration"] = (_f_prop["kp_smoke"] as SpinBox).value
+	var kind := str(_card["kind"])
+	if kind == "smoke":
+		kp["blast_force"] = 0.0
+	elif kind == "attraction":
+		kp["blast_force"] = -absf(float(kp["blast_force"]))
+	else:
+		kp["blast_force"] = absf(float(kp["blast_force"]))
 	_card["kind_params"] = kp

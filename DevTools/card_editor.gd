@@ -20,6 +20,7 @@ var _save_status: Label = null
 var _body_hbox: HBoxContainer = null
 var _tab_op: Button = null
 var _tab_wp: Button = null
+var _tab_prop: Button = null
 var _list_panel: CardListPanel = null
 var _form_panel: CardFormPanel = null
 var _portrait: PortraitView = null
@@ -85,6 +86,9 @@ func _build_top_bar() -> Control:
 	_tab_wp = DevUIKit.toggle("武 器", 24, group)
 	_tab_wp.pressed.connect(func() -> void: _select_type(CardSchema.TYPE_WEAPON))
 	bar.add_child(_tab_wp)
+	_tab_prop = DevUIKit.toggle("道 具", 24, group)
+	_tab_prop.pressed.connect(func() -> void: _select_type(CardSchema.TYPE_PROP))
+	bar.add_child(_tab_prop)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.add_child(spacer)

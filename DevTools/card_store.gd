@@ -10,7 +10,11 @@ const STATE_PATH := ROOT + "/.state.json"   # 游戏侧现状标记(骨架是否
 
 
 static func cards_dir(type: String) -> String:
-	return ROOT + ("/operators" if type == CardSchema.TYPE_OPERATOR else "/weapons")
+	if type == CardSchema.TYPE_OPERATOR:
+		return ROOT + "/operators"
+	if type == CardSchema.TYPE_PROP:
+		return ROOT + "/props"
+	return ROOT + "/weapons"
 
 
 static func card_path(type: String, id: String) -> String:

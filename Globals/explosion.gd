@@ -149,3 +149,53 @@ static func cover_multiplier(d: float, radius: float, blocked: bool) -> float:
 	if d <= radius * INNER_FRACTION:
 		return 1.0
 	return BLOCKED_FRACTION if blocked else 1.0
+
+
+## 无伤冲击 AoE(击退炮/吸力炮):对范围内玩家/敌人/子弹施加随距离衰减的推力。
+## force > 0 = 推离爆心;force < 0 = 吸向爆心。不扣血、不触发无敌帧、不播受击白闪。
+## 子弹(含在飞榴弹)被推/吸会改变 velocity_vec(服务器权威弹改变轨迹;exclude 排除投掷物本体)。
+static func apply_force_aoe(center: Vector2, radius: float, force: float,
+		shooter: Node = null, exclude: Node = null) -> void:
+	var tree := _tree()
+	var sgn := signf(force)
+	var mag := absf(force)
+	# 玩家(含倒地者:倒地物理仍在,会被推动)
+	for p in tree.get_nodes_in_group("player"):
+		if not (p is Node2D) or p == exclude:
+			continue
+		var pp := p as Node2D
+		var d := _dist(center, pp.global_position)
+		if d > radius:
+			continue
+		var f := _falloff(d, radius, mag)
+		if f <= 0.0:
+			continue
+		if pp.has_method("apply_blast_force"):
+			pp.apply_blast_force(center, f * sgn)
+	# 敌人(尸体也推:它们的物理仍在)
+	for e in tree.get_nodes_in_group("enemies"):
+		if not (e is Node2D) or e == exclude:
+			continue
+		var en := e as Node2D
+		var d2 := _dist(center, en.global_position)
+		if d2 > radius:
+			continue
+		var f2 := _falloff(d2, radius, mag)
+		if f2 <= 0.0:
+			continue
+		if e.has_method("apply_blast_force"):
+			e.apply_blast_force(center, f2 * sgn)
+	# 子弹
+	for b in tree.get_nodes_in_group("bullet"):
+		if not (b is Node2D) or b == exclude:
+			continue
+		var bb := b as Node2D
+		var d3 := _dist(center, bb.global_position)
+		if d3 > radius:
+			continue
+		var f3 := _falloff(d3, radius, mag)
+		if f3 <= 0.0:
+			continue
+		var dir := _outward_dir(center, bb.global_position) * sgn
+		if bb.get("velocity_vec") != null:
+			bb.set("velocity_vec", (bb.get("velocity_vec") as Vector2) + dir * f3)

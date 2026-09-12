@@ -48,6 +48,8 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 同屏同时在飞弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/拆砖/
 # 碰撞重建连锁会让自建房机器卡死/闪退。弹数满时开火不发射(冷却照走,等场上的爆完再打)。
 @export var max_live_projectiles: int = 0
+# 道具专用:不可换弹(弹夹即"每次复活携带数",打完即无;复活由 refill_all 回满)
+@export var prop_no_reload: bool = false
 
 # ── 后坐/镜头 ──
 # 开火把玩家向后推的力度(蹲下时不推)
@@ -239,8 +241,8 @@ func try_fire() -> void:
 func fire() -> void:
 	if not _player_ok():
 		return
-	# 换弹(实验性):装填中不可开火;空弹夹自动换弹
-	if reload_active():
+	# 换弹(实验性):装填中不可开火;空弹夹自动换弹(道具例外:打完即无,等复活回满)
+	if reload_active() and not prop_no_reload:
 		if _reloading:
 			return
 		if mag_ammo <= 0:
@@ -260,11 +262,13 @@ func fire() -> void:
 	_spawn_projectiles(base_dir)
 	# 8bit 音效:重武器(预瞄)/霰弹/普通枪三种音色
 	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
-	# 换弹(实验性):每次开火消耗一发,打空自动换弹
-	if reload_active():
+	# 换弹(实验性):每次开火消耗一发,打空自动换弹(道具只消耗,不自动换弹)
+	if reload_active() and not prop_no_reload:
 		mag_ammo = maxi(mag_ammo - 1, 0)
 		if mag_ammo == 0:
 			start_reload()
+	elif prop_no_reload and mag_ammo > 0:
+		mag_ammo -= 1
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME

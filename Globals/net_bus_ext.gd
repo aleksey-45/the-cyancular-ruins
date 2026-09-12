@@ -19,7 +19,8 @@ signal local_peer_hues(hues: Dictionary)          # worker → 客户端:双方�
 signal local_hit_confirm(shooter_role: int, victim_role: int)  # worker → 射手客户端:你的子弹命中了玩家
 signal local_explosion_event(pos: Vector2, radius: float)      # worker → 客户端:权威爆炸位置(视效广播)
 signal player_options_received(caller: int, opts: Dictionary)  # worker:某客户端上报的本端选项
-signal local_beam_fired(data: Dictionary)         # worker → 非射手端:激光光束几何(画视觉副本)
+signal local_beam_fired(data: Dictionary)
+signal local_smoke_event(pos: Vector2, radius: float, duration: float)  # worker → 客户端:权威烟雾区         # worker → 非射手端:激光光束几何(画视觉副本)
 signal suicide_requested(caller: int)             # worker:某客户端请求自杀脱困
 signal local_welcome(build: String, caps: Dictionary)          # 客户端:服务器握手回应
 signal hues_requested(caller: int)                # worker:客户端请求补发 peer_hues(进图后听力才接上)
@@ -110,6 +111,9 @@ func _dispatch(kind: String, p: Dictionary, caller: int) -> void:
 			local_beam_fired.emit(p)
 		"explosion_event":
 			local_explosion_event.emit(p.get("pos", Vector2.ZERO), float(p.get("radius", 0.0)))
+		"smoke_event":
+			local_smoke_event.emit(p.get("pos", Vector2.ZERO), float(p.get("radius", 220.0)),
+					float(p.get("duration", 6.0)))
 		# ── 客户端 → 大厅 ──
 		"suicide_request":
 			suicide_requested.emit(caller)

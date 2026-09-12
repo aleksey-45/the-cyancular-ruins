@@ -16,6 +16,14 @@ var use_gravity: bool = true
 @export var knockback_strength: float = 150.0
 # 爆炸专属击退向量:独立于 AI 移动速度,每帧叠加后指数衰减(大冲击+迅速衰减)
 var knock_velocity: Vector2 = Vector2.ZERO
+
+
+## 无伤冲击(击退炮/吸力炮):strength 带符号,>0 推离爆心 / <0 吸向爆心(爆炸 knock_velocity 同源)。
+func apply_blast_force(center: Vector2, strength: float) -> void:
+	var dir := MazeGenerator.toroidal_delta_px(center, global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var away := dir.normalized() if not dir.is_zero_approx() else Vector2.RIGHT
+	knock_velocity = away * strength
 # 击退向量指数衰减率(越大停得越快;约 0.23s 衰减到 ~10%)
 @export var knock_decay_rate: float = 10.0
 

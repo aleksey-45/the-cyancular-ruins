@@ -90,6 +90,7 @@ func _ready() -> void:
 	NetBusExt.c2s("request_hues")   # 同上:1v1 进图后补要颜色
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBusExt.local_beam_fired.connect(_on_beam_fired)
+	NetBusExt.local_smoke_event.connect(_on_smoke_event)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
@@ -242,6 +243,8 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 		b.explosion_radius = data["radius"]
 		b.explosion_damage = data["expl_damage"]
 		b.explosion_knockback = data["expl_knock"]
+		b.blast_force = data.get("blast_force", 0.0)
+		b.smoke_duration = data.get("smoke_duration", 0.0)
 		if data.has("visual"):
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
@@ -256,6 +259,13 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 # 归到本地玩家最近副本、滞后 ~1 tick 无碍)。光束整条路径 ≤ bullet_range 远小于半图 →
 # 逐点 anchor_to_nearest 会把整条折线搬到可见副本、跨接缝连续。
 # 只画对手那发:自己(射手)这发已由本地预测自画,再收服务器版会双光束。
+## 服务器权威烟雾区:本地同步建区(视觉 + 可见性规则用)
+func _on_smoke_event(data: Dictionary) -> void:
+	if _world == null:
+		return
+	Smoke.spawn_zone(_world, data.get("pos", Vector2.ZERO), float(data.get("radius", 220.0)),
+			float(data.get("duration", 6.0)))
+
 func _on_beam_fired(data: Dictionary) -> void:
 	if _world == null or _remote_replica == null:
 		return
@@ -440,6 +450,7 @@ func _ensure_id_labels() -> void:
 		_world.add_child(_id_opp)
 
 func _process(_delta: float) -> void:
+	_apply_smoke_visibility()   # 烟雾:烟雾内实体不可见/自己在烟雾内只见地图与自己
 	# 贴到头顶:独立于玩家旋转(倒地转体不影响文字);本地玩家恒在中间副本。
 	if _id_self != null and _local != null:
 		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET

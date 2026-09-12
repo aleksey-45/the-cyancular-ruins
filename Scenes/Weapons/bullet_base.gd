@@ -29,6 +29,8 @@ var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨
 @export var explosion_damage: int = 35
 @export var explosion_knockback: float = 900.0
 @export var explosion_visual: PackedScene = null
+@export var blast_force: float = 0.0      # >0 击退 / <0 吸引:对范围内实体施加随距离衰减推力(无伤)
+@export var smoke_duration: float = 0.0   # >0:爆点生成烟雾区(掩护,持续秒)
 
 var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
 var _fuse_elapsed: float = 0.0
@@ -162,6 +164,8 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 func _direct_hit(hit: Node) -> void:
 	if not apply_damage:
 		return
+	if direct_hit_damage <= 0:
+		return   # 无伤投掷物(道具):直击不结算
 	if hit.has_method("hurt"):
 		var dir := velocity_vec.normalized() if not velocity_vec.is_zero_approx() else Vector2.RIGHT
 		hit.hurt(direct_hit_damage, dir)
@@ -199,5 +203,12 @@ func _explode() -> void:
 		get_viewport().add_child(fx)
 	if in_net:
 		NetBusExt.s2c_all("explosion_event", {"pos": global_position, "radius": explosion_radius})
+		if smoke_duration > 0.0:
+			NetBusExt.s2c_all("smoke_event", {"pos": global_position, "radius": explosion_radius, "duration": smoke_duration})
+	if smoke_duration > 0.0:
+		Smoke.spawn_zone(get_viewport(), global_position, explosion_radius, smoke_duration)
 	if apply_damage:
-		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)
+		if blast_force != 0.0:
+			Explosion.apply_force_aoe(global_position, explosion_radius, blast_force, shooter, self)
+		else:
+			Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)

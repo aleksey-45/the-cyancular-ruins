@@ -303,6 +303,11 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	# 单机烟雾可见性(PvP 由 pvp_client/royale_game 负责;演示世界无实体跳过)
+	if not pvp_mode and not menu_demo:
+		var pl := get_node_or_null("WorldViewport/Player") as Node2D
+		if pl != null and not pl.is_downed():
+			Smoke.apply_visibility(pl, get_tree().get_nodes_in_group("enemies"))
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
 		const MAX_REBUILD_PER_FRAME := 2
