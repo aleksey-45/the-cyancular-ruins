@@ -8,6 +8,33 @@
 
 **Tech Stack:** Godot 4.7.1 标准版（非 mono）、GDScript。测试是 `tests/*.tscn` 场景模式探针（无单测框架），判据一律 grep 末行标记文本。
 
+---
+
+## ★ 执行结果（2026-09-12 收尾时回写）
+
+| 任务 | 状态 |
+|---|---|
+| Task 1 环面 `_close_enough` | ✅ 落地（`adc3a67`） |
+| Task 2 **世界状态钩子 + 重放倒回** | ❌ **前提被实测证伪，改动已撤销、未提交** —— 见下 |
+| Task 3 客户端接线 + 探针改造 | ✅ 落地（`9b51555`），内容按实测重定：接 `map_px` + 源码守卫 + 用缠斗探针**否掉「外推」** |
+| Task 4 倒地幽灵体旋转 | ✅ 落地（`5357d39`） |
+
+**Task 2 为什么废掉**：`move_and_slide()` 在同一帧内看不到静态刚体的位移（物理空间要等下一个
+物理步），而整个回滚重放跑在**一个** `_physics_process` 里。
+判别实验：把 restore 目标整体 **+5000px** → 回滚数一字不变；把幽灵体**冻在固定位置**（跨帧生效）
+→ 179→225。**机制不可行，不是接线问题。**
+
+**本批真正的杠杆是 `pos_tol`（位置容差）**：1px → 2px 把频率砍 ~95% 而接触期偏差一行不变。
+读数与推导见 `docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md` §2.1 / §4.4b。
+
+**另外两条纪律，写在这里免得下一个人重踩**：
+1. **探针的模拟必须每帧一步**（在 `_physics_process` 里）。把整段模拟塞进一帧，幽灵体一次都动不了
+   —— `rollback_fidelity_probe` 的 B 组就是这么废掉的（PROD 与 EXTRAP 读数一字不差）。
+2. **探针的 `_ready` 必须有完成戳防线**。Godot 的运行时错误只中断当前函数，调用它的 `_ready()`
+   照常往下走 → 一条 `_check` 都没跑到却照样打印 ALL-OK（本批实测踩到，见 `91b9210`）。
+
+---
+
 ## Global Constraints
 
 - Godot 不在 PATH：`"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"`
@@ -200,7 +227,12 @@ git commit -m "fix(c2): 分歧判定走环面最短向量,跨接缝不再误判�
 
 ---
 
-### Task 2: 世界状态钩子 + 重放倒回
+### ~~Task 2: 世界状态钩子 + 重放倒回~~（❌ 已证伪，勿实现）
+
+> **本节作废。** 见文首「执行结果」。下面的步骤保留只为留档「当时假设的是什么」，
+> **不要再照它实现** —— 机制在 Godot 的帧结构下不成立（同帧移动刚体对 `move_and_slide` 不可见）。
+
+#### 原计划（作废）
 
 **Files:**
 - Modify: `core/prediction_rollback.gd`（`bind`、`advance`、`note_post_step`、`_handle_ack`、`_trim`）

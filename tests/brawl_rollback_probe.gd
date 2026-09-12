@@ -52,14 +52,17 @@ const REACH := 200.0      # A 面前留出的空场(让包能动起来,不是一
 const LAYER_AUTH := 32    # 层6:权威侧(真身之间互相碰撞)
 const LAYER_GHOST := 2    # 层2:玩家层 —— P 认这一层,幽灵体就在这层
 
-enum Variant { NONE, STATIC, PROD, EXTRAP }
+enum Variant { NONE, STATIC, PROD, TOL2, TOL4, TOL8, EXTRAP }
 
 # 诊断开关:置 true 时每 60 tick 打一行位置/分歧/rb。只在排查探针本身时打开
 # (正常跑要关,否则读数被刷屏;本仓判绿靠 grep 末行,不靠日志长度)。
 const TRACE := false
 
 const VARIANT_NAME := ["幽灵体摘除(对照)", "对手站着不动(健全性对照)",
-		"幽灵体用旧位置(今天的行为)", "幽灵体外推(本组要量的)"]
+		"容差 1px(今天的行为)", "容差 2px", "容差 4px", "容差 8px", "幽灵体外推(已证伪)"]
+
+# 各变体的位置容差(px);-1 = 沿用控制器默认
+const VARIANT_TOL := [-1.0, -1.0, 1.0, 2.0, 4.0, 8.0, -1.0]
 
 var _host: Node2D = null
 var _spawn := Vector2.ZERO
@@ -89,6 +92,7 @@ var _tick := 0
 var _contact_ticks := 0
 var _max_dev := 0.0
 var _rb_devs: Array[float] = []   # 每次回滚发生时的修正量(px)
+var _devs: Array[float] = []      # 接触期间的 |A-P|(px)= 容忍住的稳态偏差(软接触)
 
 var A = null                      # 权威孪生
 var _opps: Array = []             # 对手真身(权威侧)
@@ -135,7 +139,7 @@ func _ready() -> void:
 	#   而是「回放时对手身体**没有被倒回**」这个结构性事实 —— 见文件末的 _summarize。
 	for n in [2, 8]:
 		passes.append([Variant.STATIC, n])
-	for v in [Variant.PROD, Variant.EXTRAP]:
+	for v in [Variant.PROD, Variant.TOL2, Variant.TOL4, Variant.TOL8, Variant.EXTRAP]:
 		for n in [2, 4, 8]:
 			passes.append([v, n])
 
@@ -164,6 +168,7 @@ func _run_pass(variant: int, n: int) -> void:
 	_contact_ticks = 0
 	_max_dev = 0.0
 	_rb_devs = []
+	_devs = []
 	_a_hist = []
 	_opp_hist = []
 	_opps = []
@@ -171,6 +176,9 @@ func _run_pass(variant: int, n: int) -> void:
 	_replicas = []
 	_ghosts = []
 	ctrl = PredictionRollback.new()
+	# ★ 容差是回滚频率的闸门(见 core/prediction_rollback.gd 的 pos_tol 注释)
+	if VARIANT_TOL[variant] > 0.0:
+		ctrl.pos_tol = VARIANT_TOL[variant]
 	srcA = NetworkInputSource.new()
 
 	var pack_x := _spawn.x + REACH
@@ -232,10 +240,10 @@ func _run_pass(variant: int, n: int) -> void:
 	var secs := float(RUN) / 60.0
 	var contact_secs := maxf(float(_contact_ticks) / 60.0, 1.0 / 60.0)
 	var rb := ctrl.rollback_count()
-	var line := "N=%d %-22s 回滚×%-6d %6.2f 次/秒  修正量 中位%5.1f p95%6.1f 最大%6.1f px  接触占比 %.0f%%" % [
+	var line := "N=%d %-18s 回滚×%-6d %6.1f 次/秒 | 修正 中位%5.1f p95%6.1f | 接触期偏差 中位%5.1f p95%6.1f px" % [
 			n, VARIANT_NAME[variant], rb, float(rb) / secs,
-			_pct(_rb_devs, 0.50), _pct(_rb_devs, 0.95), _max_dev,
-			100.0 * float(_contact_ticks) / float(RUN)]
+			_pct(_rb_devs, 0.50), _pct(_rb_devs, 0.95),
+			_pct(_devs, 0.50), _pct(_devs, 0.95)]
 	_rows.append({"n": n, "variant": variant, "rb": rb, "med": _pct(_rb_devs, 0.50), "text": line})
 	print("[brawl] %s" % line)
 
@@ -329,6 +337,7 @@ func _physics_process(_delta: float) -> void:
 			break
 	if touching:
 		_contact_ticks += 1
+		_devs.append(dev)
 
 	if TRACE and t % 60 == 0:
 		var g0: Node2D = _ghosts[0] if not _ghosts.is_empty() else null

@@ -33,6 +33,14 @@ var _rollbacks := 0
 # 刻意不引 autoload(与 core/ 其它纯逻辑件同例):由接入方显式设,`-s` 下也能空跑。
 var map_px: Vector2 = Vector2.ZERO
 
+# 「预测被证实」的位置容差(px)。**这是回滚频率的闸门**:
+# 贴身缠斗时对手身体在客户端眼里恒有滞后(实测 8 tick ≈ 93px),只要这个误差超容差就每帧判
+# 分歧、每帧 restore+重放。实测(见 tests/brawl_rollback_probe):把幽灵体做得再准也不改频率
+# ——摘除(修正 75px)/准确(2px)/推歪(77px) 三档都是 ~220 次;改容差才改频率。
+# 代价:容差内的位置误差不再纠正,即"服务器上你被挡住的地方"与"屏幕上看到的"可差一个容差。
+# 默认 1.0 = 与历史行为逐帧一致。
+var pos_tol: float = 1.0
+
 func bind(p) -> void:
 	_p = p
 
@@ -130,7 +138,7 @@ func _close_enough(a: Dictionary, b: Dictionary) -> bool:
 		return false
 	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
 		return false
-	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > 1.0:
+	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > pos_tol:
 		return false
 	var va: Vector2 = a.get("vel", Vector2.ZERO)
 	var vb: Vector2 = b.get("vel", Vector2.ZERO)
