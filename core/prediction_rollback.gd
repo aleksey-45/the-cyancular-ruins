@@ -29,6 +29,10 @@ var _acked := 0
 var _pending: Array = []       # [[ack, state], ...] 待 reconcile
 var _rollbacks := 0
 
+# 环面地图尺寸(像素)。ZERO = 不做环面处理(退回裸距离比较)。
+# 刻意不引 autoload(与 core/ 其它纯逻辑件同例):由接入方显式设,`-s` 下也能空跑。
+var map_px: Vector2 = Vector2.ZERO
+
 func bind(p) -> void:
 	_p = p
 
@@ -126,10 +130,16 @@ func _close_enough(a: Dictionary, b: Dictionary) -> bool:
 		return false
 	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
 		return false
-	var pa: Vector2 = a.get("pos", Vector2.ZERO)
-	var pb: Vector2 = b.get("pos", Vector2.ZERO)
-	if pa.distance_to(pb) > 1.0:
+	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > 1.0:
 		return false
 	var va: Vector2 = a.get("vel", Vector2.ZERO)
 	var vb: Vector2 = b.get("vel", Vector2.ZERO)
 	return va.distance_to(vb) < 20.0
+
+
+# 两个位置在**环面**上是否几乎同位。裸 distance_to 在跨接缝那一帧会给出「一整幅地图宽」的
+# 假分歧(客户端已取模、服务器还没,或反之)—— 那其实同一个物理点,却会白跑一次回滚。
+func _pos_dist(a: Vector2, b: Vector2) -> float:
+	if map_px.x <= 0.0 or map_px.y <= 0.0:
+		return a.distance_to(b)
+	return MazeGenerator.toroidal_delta_px(a, b, map_px.x, map_px.y).length()
