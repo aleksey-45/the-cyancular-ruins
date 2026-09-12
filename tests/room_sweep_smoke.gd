@@ -17,7 +17,45 @@ func _initialize() -> void:
 		return
 	_check(src)
 	_check_argv_contract()
+	_check_teardown_funnel()
 	_finish()
+
+
+# ── 批次 2 新增:房间拆除收口 ──
+# 「端口泄漏」这**同一个**失败模式本层补过三次(on_peer_left 空房分支 / royale_leave 空房分支 /
+# ai_duel 摘房前的手动释放)。收口后「新加一条拆除路径」不可能漏 —— 因为没有第二条路可走。
+# 断言形态刻意选「**只能出现在这一处**」而不是「数调用点个数」:个数会随实现漂,而这是契约本身。
+func _check_teardown_funnel() -> void:
+	var src := FileAccess.get_file_as_string("res://server/room_manager.gd")
+	if src.is_empty():
+		_fail = "无法读取 room_manager.gd"
+		return
+	var funcs: Array = []   # [{name, body}] —— 按 "func " 切块(缩进的内部类方法也算块)
+	var cur_name := ""
+	var cur_body := ""
+	for line in src.split("\n"):
+		var st: String = line.strip_edges()
+		if st.begins_with("func "):
+			if not cur_name.is_empty():
+				funcs.append({"name": cur_name, "body": cur_body})
+			cur_name = st.substr(5, st.find("(") - 5)
+			cur_body = ""
+		else:
+			cur_body += line + "\n"
+	if not cur_name.is_empty():
+		funcs.append({"name": cur_name, "body": cur_body})
+	# 只有这两个函数体内允许出现端口/注册表的拆除动作(后者是它自己的定义与实现)
+	var allowed := ["_teardown_room", "_release_port_later"]
+	for f in funcs:
+		for line in (f["body"] as String).split("\n"):
+			var t: String = line.strip_edges()
+			if t.is_empty() or t.begins_with("#"):
+				continue
+			for pat in ["_release_port_later(", "royale_rooms.erase(", "rooms.erase("]:
+				if t.contains(pat):
+					if not allowed.has(f["name"]):
+						_fail = "room_manager.%s 里出现 %s —— 拆除必须走 _teardown_room 单一收口" % [f["name"], pat]
+						return
 
 
 # ── 批次 2 新增:role 协议必须是**显式 role 集合**(--roles)──
@@ -95,10 +133,15 @@ func _check(src: String) -> void:
 	# 反过来:1v1 的超龄判断必须保持裸 MAX_ROOM_AGE,宽限不得泄漏进 1v1 分支
 	if not code.contains("room.created_at > MAX_ROOM_AGE:"):
 		_fail = "1v1 超龄判断不再是裸 MAX_ROOM_AGE(宽限泄漏?)"; return
-	if not body.contains("_kill_worker"):
-		_fail = "_sweep_stale_rooms 未调 _kill_worker"; return
-	if not body.contains("rooms.erase"):
-		_fail = "_sweep_stale_rooms 未删房"; return
+	# 批次 2 改法:_sweep 不再**直接**杀 worker / 删房,改走拆除收口(带 KILL 形态)。
+	# 「杀 worker + 删房 + 回收端口」这件事本身仍被 _check_teardown_funnel 钉住(那些动作只允许
+	# 出现在 _teardown_room 体内);这里只认新入口。
+	# ★ 别改回「直接调 _kill_worker」:那样端口回收会绕过收口,正是本层补过三次的那个泄漏。
+	if not body.contains("_teardown_room(") or not body.contains("TEARDOWN_KILL"):
+		_fail = "_sweep_stale_rooms 未走拆除收口(应调 _teardown_room(..., TEARDOWN_KILL, ...))"; return
+	# 两张注册表都要被拆:rooms(1v1) 与 royale_rooms 并存,漏一张 = 那张的端口永久泄漏
+	if not body.contains("stale + stale_royale"):
+		_fail = "_sweep_stale_rooms 未把两张注册表的超龄房一并拆除"; return
 
 func _finish() -> void:
 	if not _fail.is_empty():
