@@ -40,13 +40,16 @@ func _ready() -> void:
 	title.position = Vector2(20, 12)
 	add_child(title)
 	var row := HBoxContainer.new()
-	row.position = Vector2(20, 52)
-	row.size = Vector2(1880, 1330)
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.offset_left = 20.0
+	row.offset_top = 52.0
+	row.offset_right = -20.0
+	row.offset_bottom = -20.0   # 锚点自适应窗口:任何窗口尺寸都不出屏(旧版写死 1880×1330)
 	row.add_theme_constant_override("separation", 14)
 	add_child(row)
 
 	# ── 左:类型 + 列表 ──
-	var left := _panel(row, 300)
+	var left := _panel(row, 280)
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 6)
 	left.add_child(tabs)
@@ -69,40 +72,57 @@ func _ready() -> void:
 	left.add_child(help)
 
 	# ── 中:表单 ──
-	var mid := _panel(row, 760)
+	var mid := _panel(row, 0, 1.0)
+	# 中栏整体可滚:表单+特殊要求+修改要求+历史都装进一个随窗口伸缩的滚动区
 	var mid_scroll := ScrollContainer.new()
-	mid_scroll.custom_minimum_size = Vector2(740, 900)
+	mid_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	mid.add_child(mid_scroll)
 	_form_box = VBoxContainer.new()
-	_form_box.custom_minimum_size = Vector2(720, 0)
+	_form_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_form_box.add_theme_constant_override("separation", 6)
 	mid_scroll.add_child(_form_box)
-	mid.add_child(_label("特殊要求(逐字进施工提示词,画师/策划约定写这里):", 18, GOLD))
+	var hint := _label("现役槽:基础数值保存即生效(下一局读取,无需 AI 施工);机制类改动走施工。", 16, Color(0.6, 1.0, 0.7))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_form_box.add_child(hint)
+	_form_box.add_child(_label("特殊要求(逐字进施工提示词,画师/策划约定写这里):", 18, GOLD))
 	_notes_edit = TextEdit.new()
-	_notes_edit.custom_minimum_size = Vector2(740, 110)
+	_notes_edit.custom_minimum_size = Vector2(0, 110)
+	_notes_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_notes_edit.text_changed.connect(func() -> void:
 		if not _card.is_empty():
 			_card["notes"] = _notes_edit.text
 			_save_silent())
-	mid.add_child(_notes_edit)
+	_form_box.add_child(_notes_edit)
 	# ── 修改要求 + 修改历史(增量施工)──
-	mid.add_child(_label("修改要求(本轮增量;发送时 rev+1 并记入修改历史,空=不发送修改):", 18, GOLD))
+	_form_box.add_child(_label("修改要求(本轮增量;发送时 rev+1 并记入修改历史,空=不发送修改):", 18, GOLD))
 	_mod_edit = TextEdit.new()
-	_mod_edit.custom_minimum_size = Vector2(740, 80)
-	mid.add_child(_mod_edit)
-	mid.add_child(_label("修改历史(历代版本改动;只读,随卡保存):", 18, CYAN))
+	_mod_edit.custom_minimum_size = Vector2(0, 80)
+	_mod_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_form_box.add_child(_mod_edit)
+	_form_box.add_child(_label("修改历史(历代版本改动;只读,随卡保存):", 18, CYAN))
 	_hist_view = RichTextLabel.new()
-	_hist_view.custom_minimum_size = Vector2(740, 140)
+	_hist_view.custom_minimum_size = Vector2(0, 140)
+	_hist_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_hist_view.scroll_following = true
-	mid.add_child(_hist_view)
+	_form_box.add_child(_hist_view)
 
 	# ── 右:美术槽 + 施工 ──
-	var right := _panel(row, 780)
-	right.add_child(_label("美术素材槽(点击行预览;[人工]=画师上传,[AI占位]=临时)", 20, CYAN))
+	var right := _panel(row, 0, 1.0)
+	# 右栏整体可滚(美术槽行较宽,窄窗口下不出屏)
+	var right_scroll := ScrollContainer.new()
+	right_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right.add_child(right_scroll)
+	var right_box := VBoxContainer.new()
+	right_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_box.add_theme_constant_override("separation", 6)
+	right_scroll.add_child(right_box)
+	right_box.add_child(_label("美术素材槽(点击行预览;[人工]=画师上传,[AI占位]=临时)", 20, CYAN))
 	_slot_rows = VBoxContainer.new()
 	_slot_rows.add_theme_constant_override("separation", 4)
-	right.add_child(_slot_rows)
+	right_box.add_child(_slot_rows)
 	_preview = TextureRect.new()
 	_preview.custom_minimum_size = Vector2(240, 240)
 	_preview.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -126,7 +146,7 @@ func _ready() -> void:
 	mrow.add_child(model_edit)
 	var arow := HBoxContainer.new()
 	arow.add_theme_constant_override("separation", 8)
-	right.add_child(arow)
+	right_box.add_child(arow)
 	arow.add_child(_btn("全新施工:生成+发送", 20, func() -> void: _send_agent(false)))
 	arow.add_child(_btn("复制全新提示词", 20, func() -> void: _copy_prompt(false)))
 	arow.add_child(_btn("增量修改:生成+发送", 20, func() -> void: _send_agent(true)))
@@ -136,12 +156,14 @@ func _ready() -> void:
 			_link.stop()))
 	_status = _label("", 18, GREY)
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_status.custom_minimum_size = Vector2(760, 0)
-	right.add_child(_status)
+	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_box.add_child(_status)
 	_log = RichTextLabel.new()
-	_log.custom_minimum_size = Vector2(760, 220)
+	_log.custom_minimum_size = Vector2(0, 180)
+	_log.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_log.scroll_following = true
-	right.add_child(_log)
+	right_box.add_child(_log)
 
 	_link = load("res://DevTools/editor/agent_link.gd").new()
 	_link.log_line.connect(func(t: String) -> void: _log.append_text(t.replace("[", "\\[") + "\n"))
@@ -252,7 +274,8 @@ func _rebuild_form() -> void:
 	# id(可改,改名=存新删旧)
 	grid.add_child(_label("id", 18, GREY))
 	var id_edit := LineEdit.new()
-	id_edit.custom_minimum_size = Vector2(300, 0)
+	id_edit.custom_minimum_size = Vector2(180, 0)
+	id_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	id_edit.text = str(_card.get("id", ""))
 	id_edit.text_submitted.connect(func(t: String) -> void: _rename_card(t.strip_edges()))
 	grid.add_child(id_edit)
@@ -297,7 +320,8 @@ func _rebuild_form() -> void:
 				_field_editors[key] = sp2
 			_:
 				var le := LineEdit.new()
-				le.custom_minimum_size = Vector2(560, 0)
+				le.custom_minimum_size = Vector2(0, 0)
+				le.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				le.text = str(_card.get(key, ""))
 				le.text_changed.connect(func(t: String) -> void: _set_field(key, t))
 				grid.add_child(le)
@@ -513,9 +537,14 @@ func _copy_prompt(modify: bool = false) -> void:
 	_status.text = "提示词(%s)已复制到剪贴板(可粘贴到任意 CLI/会话)" % ("增量修改" if modify else "全新施工")
 
 # ── UI 工厂 ──
-func _panel(row: HBoxContainer, w: int) -> VBoxContainer:
+func _panel(row: HBoxContainer, w: int, expand_ratio: float = 0.0) -> VBoxContainer:
+	# 尺寸标志必须设在 PanelContainer(HBox 的直接子节点)上;设在内部 VBox 上无效
+	# (实测:面板被压成 1px)。expand_ratio>0 = 在 HBox 里按比例伸展。
 	var p := PanelContainer.new()
 	p.custom_minimum_size = Vector2(w, 0)
+	if expand_ratio > 0.0:
+		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		p.size_flags_stretch_ratio = expand_ratio
 	row.add_child(p)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 6)
