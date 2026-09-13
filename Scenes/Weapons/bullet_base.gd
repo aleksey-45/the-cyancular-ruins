@@ -3,6 +3,7 @@ extends CharacterBody2D
 
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
 const TileHitFx := preload("res://Scenes/Effects/tile_hit_fx.gd")
+const BlastRingFx := preload("res://Scenes/Effects/blast_ring_fx.gd")
 
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
 var velocity_vec: Vector2 = Vector2.ZERO
@@ -30,6 +31,8 @@ var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨
 @export var explosion_knockback: float = 900.0
 @export var explosion_visual: PackedScene = null
 @export var blast_force: float = 0.0      # >0 击退 / <0 吸引:对范围内实体施加随距离衰减推力(无伤)
+@export var blast_linear_falloff: bool = false  # 冲击按距离线性衰减(pr_attraction 卡约定;缺省二次缓出,击退炮不变)
+@export var fuse_ring_visual: bool = false      # 引信白环:首撞后影响范围外缘不断生成向心收缩的像素白环(pr_attraction)
 @export var smoke_duration: float = 0.0   # >0:爆点生成烟雾区(掩护,持续秒)
 
 var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
@@ -196,7 +199,19 @@ func _register_player_hit(target: Node) -> void:
 func _start_fuse(duration: float) -> void:
 	if not _fuse_active:
 		_fuse_duration = duration
+		_spawn_fuse_ring(duration)
 	_fuse_active = true
+
+# 引信白环(pr_attraction):首撞瞬间起环,白环从影响范围最外端向爆心收缩,
+# 引信走完(=最后一环收束到中心)时 _explode 起爆。挂在子弹下,跟着投掷物移动。
+func _spawn_fuse_ring(duration: float) -> void:
+	if not fuse_ring_visual or duration <= 0.0 or explosion_radius <= 0.0:
+		return
+	var ring: Node2D = BlastRingFx.new()
+	ring.radius = explosion_radius
+	ring.duration = duration
+	ring.scale = Vector2.ONE / maxf(size, 0.01)   # 抵消 setup() 的整节点缩放,环按世界像素画
+	add_child(ring)
 
 func _explode() -> void:
 	# 联机时爆炸位置以服务器权威为准:射手本地预测弹道经多次弹开后与服务器模拟必然分叉,
@@ -219,6 +234,6 @@ func _explode() -> void:
 		Smoke.spawn_zone(get_viewport(), global_position, explosion_radius, smoke_duration)
 	if apply_damage:
 		if blast_force != 0.0:
-			Explosion.apply_force_aoe(global_position, explosion_radius, blast_force, shooter, self)
+			Explosion.apply_force_aoe(global_position, explosion_radius, blast_force, shooter, self, blast_linear_falloff)
 		else:
 			Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)

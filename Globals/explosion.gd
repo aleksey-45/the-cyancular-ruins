@@ -154,8 +154,9 @@ static func cover_multiplier(d: float, radius: float, blocked: bool) -> float:
 ## 无伤冲击 AoE(击退炮/吸力炮):对范围内玩家/敌人/子弹施加随距离衰减的推力。
 ## force > 0 = 推离爆心;force < 0 = 吸向爆心。不扣血、不触发无敌帧、不播受击白闪。
 ## 子弹(含在飞榴弹)被推/吸会改变 velocity_vec(服务器权威弹改变轨迹;exclude 排除投掷物本体)。
+## linear_falloff=true 按「距爆心距离线性衰减」(卡 pr_attraction 约定);缺省沿用二次缓出(击退炮不变)。
 static func apply_force_aoe(center: Vector2, radius: float, force: float,
-		shooter: Node = null, exclude: Node = null) -> void:
+		shooter: Node = null, exclude: Node = null, linear_falloff: bool = false) -> void:
 	var tree := _tree()
 	var sgn := signf(force)
 	var mag := absf(force)
@@ -167,7 +168,7 @@ static func apply_force_aoe(center: Vector2, radius: float, force: float,
 		var d := _dist(center, pp.global_position)
 		if d > radius:
 			continue
-		var f := _falloff(d, radius, mag)
+		var f := _force_falloff(d, radius, mag, linear_falloff)
 		if f <= 0.0:
 			continue
 		if pp.has_method("apply_blast_force"):
@@ -180,7 +181,7 @@ static func apply_force_aoe(center: Vector2, radius: float, force: float,
 		var d2 := _dist(center, en.global_position)
 		if d2 > radius:
 			continue
-		var f2 := _falloff(d2, radius, mag)
+		var f2 := _force_falloff(d2, radius, mag, linear_falloff)
 		if f2 <= 0.0:
 			continue
 		if e.has_method("apply_blast_force"):
@@ -193,9 +194,16 @@ static func apply_force_aoe(center: Vector2, radius: float, force: float,
 		var d3 := _dist(center, bb.global_position)
 		if d3 > radius:
 			continue
-		var f3 := _falloff(d3, radius, mag)
+		var f3 := _force_falloff(d3, radius, mag, linear_falloff)
 		if f3 <= 0.0:
 			continue
 		var dir := _outward_dir(center, bb.global_position) * sgn
 		if bb.get("velocity_vec") != null:
 			bb.set("velocity_vec", (bb.get("velocity_vec") as Vector2) + dir * f3)
+
+# 冲击强度随距离衰减:linear=按距离线性(1-d/r,吸力炮卡约定「按距离爆炸中心线性衰减」);
+# 否则沿用伤害同款二次缓出(击退炮行为不变)。纯函数(-s 可测)。
+static func _force_falloff(d: float, radius: float, mag: float, linear: bool) -> float:
+	if linear:
+		return mag * clampf(1.0 - d / maxf(radius, 0.001), 0.0, 1.0)
+	return _falloff(d, radius, mag)

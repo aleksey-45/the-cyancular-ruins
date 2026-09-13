@@ -245,6 +245,7 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 		b.explosion_knockback = data["expl_knock"]
 		b.blast_force = data.get("blast_force", 0.0)
 		b.smoke_duration = data.get("smoke_duration", 0.0)
+		b.fuse_ring_visual = data.get("ring", false)
 		if data.has("visual"):
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]

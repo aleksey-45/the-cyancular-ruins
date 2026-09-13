@@ -7,8 +7,10 @@ extends WeaponBase
 
 @export var blast_force := 2600.0     # >0 推 / <0 吸;0 = 无(烟雾弹)
 @export var blast_radius := 260.0     # 作用半径
+@export var blast_linear_falloff := false  # 冲击按距离线性衰减(吸力炮卡约定)
 @export var smoke_duration := 0.0     # >0 = 烟雾(持续秒)
 @export var fuse_time := 0.5          # 首次碰撞后延迟起效(秒)
+@export var fuse_ring_visual := false # 引信白环(吸力炮卡特殊要求)
 @export var explosion_visual: PackedScene = null   # 起效视效(击退/吸引用爆炸特效;烟雾用烟区)
 
 
@@ -25,6 +27,8 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 		b.explodes = true
 		b.direct_hit_damage = 0
 		b.blast_force = blast_force
+		b.blast_linear_falloff = blast_linear_falloff
+		b.fuse_ring_visual = fuse_ring_visual
 		b.smoke_duration = smoke_duration
 		b.explosion_radius = blast_radius
 		b.explosion_damage = 0

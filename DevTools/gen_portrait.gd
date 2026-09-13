@@ -14,6 +14,8 @@ func _initialize() -> void:
 			_machete()
 		"operator/op_vanguard":
 			_vanguard()
+		"prop/pr_attraction":
+			_pr_attraction()
 		_:
 			printerr("GEN FAIL | 未知卡: '%s'(期望 weapon/wp_machete 等)" % card)
 			quit(1)
@@ -154,3 +156,126 @@ func _vanguard() -> void:
 	_save("res://assets/operators/op_vanguard.png", bounds)
 	# 副本:DevTools 卡片目录(编辑器头像页读这份)
 	_save("res://DevTools/cards/operators/op_vanguard.png", bounds.duplicate())
+
+
+# ── 引力核心 道具(卡 pr_attraction):卡面 96×96 暗底展示 + 对局贴图设计稿 48×48 透明底 ──
+# appearance 约定:青蓝色圆柱罐体 + 罐体螺旋吸入纹样 + 顶部引信带小涡旋标(像素风)。
+func _pr_attraction() -> void:
+	var card := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	_canister(card, 48, 24, 34, 52)
+	# 顺序:环先画在透明像素上,再补底色——底色一填满就再无透明像素可落环
+	_rings_where_empty(card, Vector2(47.5, 51.5), Color8(36, 56, 70))   # 同心环底纹(吸引主题)
+	_fill_bg_where_empty(card, Color8(24, 30, 38))
+	_save("res://DevTools/cards/props/pr_attraction.png", card)
+
+	var world := Image.create(48, 48, false, Image.FORMAT_RGBA8)
+	_canister(world, 24, 10, 20, 30)
+	_outline_silhouette(world)   # 透明底 sprite:1px 深色外描边
+	_save("res://DevTools/cards/props/pr_attraction__world.png", world)
+
+	for p in ["res://DevTools/cards/props/pr_attraction.png",
+			"res://DevTools/cards/props/pr_attraction__world.png"]:
+		var f := FileAccess.open(p + ".meta", FileAccess.WRITE)
+		if f != null:
+			f.store_string("source=ai\nupdated=%s\n" % Time.get_datetime_string_from_system())
+			f.close()
+
+
+# 青蓝圆柱罐体(cx=中轴,top=顶沿,y 向下,w×h 含顶/底金属帽):
+# 引信竖条 + 顶帽(盖涡旋标)+ 罐身(左亮缘/右暗影 + 对角螺旋吸入纹)+ 底帽,四角去 1px 圆角。
+func _canister(img: Image, cx: int, top: int, w: int, h: int) -> void:
+	var cap := Color8(66, 74, 86)
+	var cap_lite := Color8(132, 142, 154)
+	var body := Color8(56, 142, 168)
+	var body_lite := Color8(110, 206, 232)
+	var body_hi := Color8(190, 238, 250)
+	var body_dk := Color8(32, 86, 106)
+	var x0 := cx - w / 2
+	var x1 := cx + (w - 1) / 2
+	var cap_h := maxi(5, h / 8)
+	var fuse_h := maxi(3, h / 14)
+	# 引信(顶帽上方 2px 竖条)+ 火花点
+	for y in range(top - fuse_h, top):
+		img.set_pixel(cx, y, cap_lite)
+		img.set_pixel(cx + 1, y, cap)
+	img.set_pixel(cx - 1, top - fuse_h, body_hi)
+	# 顶帽(顶沿提亮一圈)
+	for y in range(top, top + cap_h):
+		for x in range(x0 + 1, x1):
+			img.set_pixel(x, y, cap_lite if y == top else cap)
+	_vortex(img, cx, top + cap_h / 2, body_hi, body_dk)
+	# 罐身:亮左缘/暗右缘;对角螺旋带(周期 9:2px 暗槽 + 1px 亮棱,读作绕罐螺旋)
+	var by0 := top + cap_h
+	var by1 := top + h - cap_h
+	for y in range(by0, by1):
+		for x in range(x0, x1 + 1):
+			var col := body
+			if x < x0 + 2:
+				col = body_lite
+			elif x >= x1 - 1:
+				col = body_dk
+			else:
+				var ph := posmod((x - x0) + (y - by0), 9)
+				if ph < 2:
+					col = body_dk
+				elif ph < 3:
+					col = body_lite
+			img.set_pixel(x, y, col)
+	# 底帽(底沿提亮一圈)
+	for y in range(by1, top + h):
+		for x in range(x0 + 1, x1):
+			img.set_pixel(x, y, cap_lite if y == top + h - 1 else cap)
+	# 圆角:罐身与帽衔接的四角去 1px
+	for c in [Vector2i(x0, by0), Vector2i(x1, by0), Vector2i(x0, by1 - 1), Vector2i(x1, by1 - 1)]:
+		img.set_pixel(c.x, c.y, Color(0, 0, 0, 0))
+
+
+# 5×5 涡旋标:环(右中开口)+ 中点(暗)+ 钩尾(开口卷向中点),亮色描环
+func _vortex(img: Image, cx: int, cy: int, col: Color, inner: Color) -> void:
+	var rows := [".###.", "#...#", "#.##.", "#...#", ".###."]
+	for y in range(5):
+		for x in range(5):
+			if rows[y][x] == "#":
+				var dark := x == 2 and y == 2   # 中点用暗色:旋涡有进深
+				img.set_pixel(cx - 2 + x, cy - 2 + y, inner if dark else col)
+
+
+# 只填完全透明像素(卡面:罐体已画好后补底色,不伤罐体圆角)
+func _fill_bg_where_empty(img: Image, col: Color) -> void:
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			if img.get_pixel(x, y).a <= 0.0:
+				img.set_pixel(x, y, col)
+
+
+# 同心环底纹:只落在底色像素上(吸引主题的极淡圆环)
+func _rings_where_empty(img: Image, c: Vector2, col: Color) -> void:
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			if img.get_pixel(x, y).a > 0.0:
+				continue
+			var d := Vector2(x - c.x, y - c.y).length()
+			if absf(d - 43.0) < 1.0 or absf(d - 35.0) < 0.8 or absf(d - 27.0) < 0.6:
+				img.set_pixel(x, y, col)
+
+
+# 1px 深色外描边(透明底 sprite 用;同 _vanguard 的轮廓法,原地写回)
+func _outline_silhouette(img: Image) -> void:
+	var w := img.get_width()
+	var h := img.get_height()
+	var bounds := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var outline := Color8(12, 14, 18)
+	for y in range(h):
+		for x in range(w):
+			if img.get_pixel(x, y).a > 0.0:
+				for dy in range(-1, 2):
+					for dx in range(-1, 2):
+						var px := x + dx
+						var py := y + dy
+						if px >= 0 and px < w and py >= 0 and py < h:
+							bounds.set_pixel(px, py, outline)
+	for y in range(h):
+		for x in range(w):
+			if img.get_pixel(x, y).a > 0.0:
+				bounds.set_pixel(x, y, img.get_pixel(x, y))
+	img.blit_rect(bounds, Rect2i(0, 0, w, h), Vector2i.ZERO)

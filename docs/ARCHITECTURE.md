@@ -150,7 +150,7 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | `network_input_source.gd` | "网络手柄"：服务器用收到的输入包驱动远端玩家 |
 | `ai_input_source.gd` | "AI 手柄"：让电脑玩家冒充真人，走与真人完全相同的一条输入消费路径 |
 | `local_server.gd` | 局域网模式下"启动/重启本机服务器"按钮的实现（Windows：taskkill + netstat） |
-| `prediction_rollback.gd` | 客户端预测回滚控制器。**已开启**（仅 1v1），见 `pvp_client.gd` 顶部 `LOCAL_PREDICTION_ENABLED`；改回 false 即退回纯服务器渲染 |
+| `prediction_rollback.gd` | 客户端预测回滚控制器。**已开启（1v1 + 大乱斗）**，开关是 `Settings.pvp_c2_prediction`（默认开，设置页可关）；关掉即退回纯服务器渲染 |
 
 #### 其他
 
@@ -226,6 +226,10 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | `laser_weapon_base.gd` | **激光武器基类**：不开实体子弹，开火瞬间算一条光束并一次性结算。留了三个可覆写缝（几何/结算/视觉） |
 | `laser_gun.gd` / `laser_gun.tscn` | 激光枪（**槽 6**）：沿瞄准方向反射折线（默认 2 次反射） |
 | `laser_beam.gd` / `laser_beam.tscn` | 光束的视觉节点 |
+| `prop_launcher.gd` | **道具发射器基座**（T 键道具模式，槽 8/9/10 共用）：把卡参数灌进投掷物（explodes/blast_force/烟雾/引信），掷出动画；每命携带数 = `mag_size`，不可换弹 |
+| `prop_knockback.tscn` | 击退炮（槽 8）：blast_force 2600 推离，二次缓出 |
+| `prop_attraction.tscn` | 引力核心（槽 9，卡 `pr_attraction`）：无伤吸引，blast_force -50、半径 900、**按距离线性衰减**（`blast_linear_falloff`）、首撞 0.5s 引信带**白环收缩视效**（`fuse_ring_visual`） |
+| `prop_smoke.tscn` | 烟雾弹（槽 10）：无冲击，落点生成烟雾区 |
 
 > 加新武器 = 一个继承 `WeaponBase` 的 `.tscn` + `weapon_component.gd` 的 `WEAPONS` 注册表加一行。
 
@@ -234,6 +238,7 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | 文件 | 作用 |
 |---|---|
 | `explosion.tscn` / `explosion_fx.gd` | 爆炸动画（按半径缩放，播完自毁） |
+| `blast_ring_fx.gd` | 引信白环（引力核心）：挂在投掷物下（跟爆心、rotation 世界对齐），从爆炸半径外缘每 0.1s 出一圈像素白环向爆心收缩、由淡变实，引信走完全部收束到中心即起爆（起爆归 `BulletBase` 管） |
 | `combat_feedback.gd` | **打击反馈**：命中打叉标记 + "击杀 XXX" 像素播报 + 击杀音效。`current` 为 null 时全部静默空转 |
 | `bullet_trail.gd` | 子弹拖尾线（可选） |
 | `tile_hit_fx.gd` | 可破坏砖受击碎片粒子 |
@@ -343,17 +348,82 @@ RPC，功能靠 `kind` 分派。以后加功能不改方法表，旧服务器只
 | 玩家偏好（音量/键位/开关） | `Globals/settings.gd`（持久化到 `user://settings.cfg`） |
 | 单机开局选项（难度/禁用武器） | `Globals/run_options.gd` |
 | 联机会话（地图/出生点） | `Globals/pvp_session.gd` |
+| 游戏用哪张地图 | 单机：菜单选图 → `Settings.last_map` → `RunOptions.map_file`；多人：房主建房页选图（服务器只认 `res://map/`）——详见 §6 |
 
 ---
 
-## 6. 已知文档漂移（代码为准）
+## 6. 地图：格式、制作与导入
+
+### 6.1 游戏从哪里读地图
+
+`MazeGenerator.map_file_path()`（`Globals/maze_generator.gd:68`）按优先级解析，选中后**整个会话固定**：
+
+1. **exe 同目录**下的 `.cyrm`（有就随机取一份，且完全不再看 `res://map/`）
+2. 否则 `res://map/*.cyrm` 随机取一份
+
+三种玩法在此之上各有覆盖：
+
+| 玩法 | 定图方式 |
+|---|---|
+| 单机 | 主菜单「地图」下拉选了具体图 → 强制该图；选「随机(默认)」→ 走上面规则 |
+| 1v1 / 大乱斗 | **房主（role 1）**在建房页选的图随 `player_options.map` 上报 → 服务器 `RoomManager.resolve_map()`；只认 `res://map/`，找不到回退 `factory1v1.cyrm` |
+
+### 6.2 两种导入方式（区别：要不要重新打包）
+
+| 方式 | 做法 | 生效范围 | 要重导出 exe 吗 |
+|---|---|---|---|
+| **外置**（试图最快） | 把 `.cyrm` 放到 exe 同目录（仓库根） | 只影响单机「随机」 | 不用 |
+| **内置**（正式） | 把 `.cyrm` 放进 `map/` | 单机可选 + 多人可选 | 编辑器 F5 不用；导出 exe **必须重导出**（`map/*.cyrm` 打进 PCK，见 `export_presets.cfg` 的 `include_filter`） |
+
+⚠️ 外置方式：exe 目录只要存在 `.cyrm` 就**完全盖过** `res://map/`，且多份时随机取一份——试图时只放一份。
+
+### 6.3 文件格式
+
+- 首行 `# cyrm-v3` 标记；之后每格 **4 字符 = 3 位纹理编号 + 1 位形状 hex**
+- 纹理：`0` 空气 / `1-10` 墙 / `11` 梯子 / `12-14` 锁链 / `15-18` 树叶 / `19-20` 树干 / `21` 水 / `22` 水面
+- 形状 hex `0`-`F` = 2×2 子格填充掩码（`F` = 整砖，`0` = 空气）
+- **尺寸不固定**：`demo.cyrm` 125×75、`factory1v1.cyrm` 150×100 都能跑（世界像素尺寸由 `Level0` / `GameParameters.refresh_map_size()` 按实际网格算）
+- 每行长度必须一致（首个有效行定宽度）
+- **旧格式免手工转**：无 `# cyrm-v3` 标记的单字符（`0-9`/`A`）老图加载时自动 2×2 转换、spawn 坐标自动 ÷2；批量转换用 `Tests/convert_map.gd`
+
+### 6.4 必须的元数据（`#` 注释行）
+
+```
+# player 56 47            ← 出生点（格子坐标，不是像素）
+# player2 133 64          ← 第二出生点；PvP 图必须有
+# enemy jump_bird 42 25   ← 敌人布点
+```
+
+- 敌人 id 只有三个：`jump_bird` / `fly_bird` / `black_bird`（注册表 `editor/enemies.json`）
+- **PvP 图必须同时有 `# player` 和 `# player2`**，缺了会让一方出生在 `(-1,-1)`（地图外）
+- 单机图缺 `# player` 也能跑，回退到左上角第一个空格
+- 其它 `#` 行是普通注释，解析时忽略
+
+### 6.5 制作：浏览器地图编辑器
+
+双击 `editor/structure-editor.html`（纯 HTML + JS，与 Godot 引擎无关）：
+
+- 「新建」弹窗默认 125×75
+- 左侧：砖块纹理调色板（0-22）、砖形 2×2 面板（点四格翻转，默认全满）、出生点工具（选中后点格放 / 右键移除）、画布尺寸
+- 工具栏：画笔 / 矩形 / 油漆桶 / 橡皮 / 选框 / 直线、撤销重做、**环面预览**（跨接缝重复绘制，防接缝断崖）
+- 「导出结构」→ 下载 `<名字>.cyrm` → 放进 `map/`
+- 「导入」接受 `.cyrm` / `.txt` / `.json`（旧格式自动转换）
+
+### 6.6 验证导入成功
+
+- 最快：外置到 exe 旁 → 单机选「随机(默认)」开一局
+- 正式：放进 `map/` → 编辑器 F5 → 主菜单「地图」下拉里应能看到该文件名
+
+---
+
+## 7. 已知文档漂移（代码为准）
 
 以下内容历史上与文档不一致，本文档已按**当前代码**校准：
 
 | 项 | 旧描述 | 现状 |
 |---|---|---|
 | 武器数量 | 5 把（1~5） | **6 把**，槽 6 = 激光枪（`laser_gun.tscn`） |
-| C2 客户端预测 | "已放弃" | 代码完整（`prediction_rollback.gd`）；`pvp_client.gd` 里 `LOCAL_PREDICTION_ENABLED := true`，**1v1 已开启**（2026-09-11）。大乱斗无此链路，仍纯服务器渲染 |
+| C2 客户端预测 | "已放弃" | 已开启并**已扩到大乱斗**：`pvp_client.gd` / `royale_game.gd` 都读 `Settings.pvp_c2_prediction`（默认 true，设置页可关）；关掉即退回纯服务器渲染 |
 | `DevTools/` | "只在 KH-char-weap 分支存在" | 当前分支也存在（卡编辑器） |
 | AI 补位 | 只在分支章节提及 | `ai_input_source.gd` + `server/ai_player.gd` 完整存在 |
 | 小地图 / 子弹拖尾 / 对手血条 | 一笔带过 | 均为完整实现（`Scenes/Effects/`） |
@@ -364,9 +434,10 @@ RPC，功能靠 `kind` 分派。以后加功能不改方法表，旧服务器只
 
 ---
 
-## 7. 下一步该看什么
+## 8. 下一步该看什么
 
 1. 想改玩法数值 → §5 的表格直接定位。
-2. 想理解某条链路 → 先看 §1.2 的场景流程图，再进对应 `.tscn` 看节点树。
-3. 想动手前 → 读 `AGENTS.md` 的「重要决策与约定」和「场景切换纪律」，那是踩过坑总结的硬约束。
-4. 发布相关 → `docs/RELEASE.md`（单 exe 靠自定义裁剪模板，改代码后必须重导出 exe 再实测）。
+2. 想加/换地图 → §6（格式、元数据、两种导入方式）。
+3. 想理解某条链路 → 先看 §1.2 的场景流程图，再进对应 `.tscn` 看节点树。
+4. 想动手前 → 读 `AGENTS.md` 的「重要决策与约定」和「场景切换纪律」，那是踩过坑总结的硬约束。
+5. 发布相关 → `docs/RELEASE.md`（单 exe 靠自定义裁剪模板，改代码后必须重导出 exe 再实测）。

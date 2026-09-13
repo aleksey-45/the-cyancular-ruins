@@ -438,6 +438,7 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 		"expl_knock": bullet.explosion_knockback,
 		"blast_force": bullet.blast_force,
 		"smoke_duration": bullet.smoke_duration,
+		"ring": bullet.fuse_ring_visual,   # 引信白环(pr_attraction);旧客户端忽略未知键,可选扩展
 	}
 	if bullet.explosion_visual != null:
 		data["visual"] = bullet.explosion_visual.resource_path
