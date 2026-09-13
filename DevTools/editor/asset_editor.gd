@@ -17,6 +17,8 @@ var _field_editors: Dictionary = {}    # key -> Control
 var _skills_editors: Array = []        # [{name, cooldown, desc}]
 var _kind_params_edit: LineEdit = null
 var _notes_edit: TextEdit = null
+var _mod_edit: TextEdit = null        # 本轮修改要求(增量施工)
+var _hist_view: RichTextLabel = null  # 修改历史展示
 var _slot_rows: VBoxContainer = null
 var _preview: TextureRect = null
 var _list: ItemList = null
@@ -84,6 +86,16 @@ func _ready() -> void:
 			_card["notes"] = _notes_edit.text
 			_save_silent())
 	mid.add_child(_notes_edit)
+	# ── 修改要求 + 修改历史(增量施工)──
+	mid.add_child(_label("修改要求(本轮增量;发送时 rev+1 并记入修改历史,空=不发送修改):", 18, GOLD))
+	_mod_edit = TextEdit.new()
+	_mod_edit.custom_minimum_size = Vector2(740, 80)
+	mid.add_child(_mod_edit)
+	mid.add_child(_label("修改历史(历代版本改动;只读,随卡保存):", 18, CYAN))
+	_hist_view = RichTextLabel.new()
+	_hist_view.custom_minimum_size = Vector2(740, 140)
+	_hist_view.scroll_following = true
+	mid.add_child(_hist_view)
 
 	# ── 右:美术槽 + 施工 ──
 	var right := _panel(row, 780)
@@ -115,8 +127,10 @@ func _ready() -> void:
 	var arow := HBoxContainer.new()
 	arow.add_theme_constant_override("separation", 8)
 	right.add_child(arow)
-	arow.add_child(_btn("生成提示词+发送", 20, _send_agent))
-	arow.add_child(_btn("仅复制提示词", 20, _copy_prompt))
+	arow.add_child(_btn("全新施工:生成+发送", 20, func() -> void: _send_agent(false)))
+	arow.add_child(_btn("复制全新提示词", 20, func() -> void: _copy_prompt(false)))
+	arow.add_child(_btn("增量修改:生成+发送", 20, func() -> void: _send_agent(true)))
+	arow.add_child(_btn("复制修改提示词", 20, func() -> void: _copy_prompt(true)))
 	arow.add_child(_btn("停止", 20, func() -> void:
 		if _link != null:
 			_link.stop()))
@@ -162,6 +176,8 @@ func _open_card(id: String) -> void:
 		return
 	_rebuild_form()
 	_refresh_slots()
+	_refresh_history()
+	_mod_edit.text = ""
 	_status.text = "已打开 %s(%s)" % [id, _type]
 
 func _new_from_sample() -> void:
@@ -202,6 +218,8 @@ func _delete_card() -> void:
 	_refresh_list()
 	_rebuild_form()
 	_refresh_slots()
+	_refresh_history()
+	_mod_edit.text = ""
 	_status.text = "已删除(含美术槽文件)"
 
 func _auto_id() -> String:
@@ -442,21 +460,54 @@ func _on_file_picked(path: String) -> void:
 	_refresh_slots()
 
 # ── 施工 ──
-func _send_agent() -> void:
+func _send_agent(modify: bool) -> void:
 	if _card.is_empty():
 		_status.text = "先选卡"
 		return
 	_save_silent()
-	var prompt := EditorPrompt.build(_card, EditorPrompt.art_report_lines(_type, str(_card["id"])))
+	var mod_req := ""
+	if modify:
+		mod_req = _mod_edit.text.strip_edges()
+		if mod_req == "":
+			_status.text = "增量修改前先在「修改要求」里写本轮要改什么"
+			return
+		# rev+1 并追加修改历史(发送即记录;agent 完成后 CARD-DONE 对应该 rev)
+		_card["rev"] = int(_card.get("rev", 1)) + 1
+		var hist: Array = _card.get("mod_history", [])
+		hist.append({"rev": int(_card["rev"]), "time": Time.get_datetime_string_from_system(), "req": mod_req})
+		_card["mod_history"] = hist
+		_save_silent()
+	var prompt := EditorPrompt.build(_card, EditorPrompt.art_report_lines(_type, str(_card["id"])), mod_req)
 	_log.clear()
-	_log.append_text("[提示词已生成 %d 字符]\n" % prompt.length())
+	_log.append_text("[提示词已生成 %d 字符(%s)]\n" % [prompt.length(), "增量修改 rev%s" % _card["rev"] if modify else "全新施工"])
 	_link.run(str(_card["card_type"]), str(_card["id"]), prompt, null, Settings.agent_model)
+	if modify:
+		_mod_edit.clear()
+		_refresh_history()
 
-func _copy_prompt() -> void:
+
+func _refresh_history() -> void:
+	if _hist_view == null:
+		return
+	_hist_view.clear()
 	if _card.is_empty():
 		return
-	DisplayServer.clipboard_set(EditorPrompt.build(_card, EditorPrompt.art_report_lines(_type, str(_card["id"]))))
-	_status.text = "提示词已复制到剪贴板(可粘贴到任意 CLI/会话)"
+	var hist: Array = _card.get("mod_history", [])
+	if hist.is_empty():
+		_hist_view.append_text("[grey](暂无修改历史——每轮增量修改发送后这里记录改动)[/grey]")
+		return
+	for h in hist:
+		if typeof(h) != TYPE_DICTIONARY:
+			continue
+		_hist_view.append_text("[b]rev%s[/b] %s\n%s\n\n" % [
+			str(h.get("rev", "?")), str(h.get("time", "")), str(h.get("req", ""))])
+
+func _copy_prompt(modify: bool = false) -> void:
+	if _card.is_empty():
+		return
+	var mod_req := _mod_edit.text.strip_edges() if modify else ""
+	DisplayServer.clipboard_set(EditorPrompt.build(_card, EditorPrompt.art_report_lines(_type, str(_card["id"])), mod_req))
+	_status.text = "提示词(%s)已复制到剪贴板(可粘贴到任意 CLI/会话)" % ("增量修改" if modify else "全新施工")
 
 # ── UI 工厂 ──
 func _panel(row: HBoxContainer, w: int) -> VBoxContainer:

@@ -138,6 +138,7 @@ static func make_default(type: String, id: String) -> Dictionary:
 			"fuse_time": 0.5, "blast_radius": 260.0, "blast_force": 2600.0, "smoke_duration": 6.0,
 		}
 	card["notes"] = ""   # 特殊要求(备注):逐字进施工提示词,画师/策划的特殊约定写这里
+	card["mod_history"] = []   # 修改历史:[{rev,time,req}] 每轮增量修改发送时由编辑器追加
 	return card
 
 

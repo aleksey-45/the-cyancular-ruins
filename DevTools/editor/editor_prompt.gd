@@ -7,11 +7,15 @@ extends RefCounted
 const HEAD := "# 素材卡施工提示词(素材编辑器自动生成)\n"
 
 
-static func build(card: Dictionary, art_report: Array) -> String:
+static func build(card: Dictionary, art_report: Array, mod_req: String = "") -> String:
 	var type := str(card.get("card_type", ""))
 	var id := str(card.get("id", ""))
+	var modify := mod_req.strip_edges() != ""
 	var L: Array[String] = []
 	L.append(HEAD)
+	if modify:
+		L.append("## 0.5 本轮性质:**增量修改**(rev %s)。现有实现已存在——先读对应场景/注册表现状," % str(card.get("rev", 1)))
+		L.append("只做本轮要求的增量;**禁止推倒重来、禁止回退修改历史里已完成的改动**。")
 	L.append("你是本仓库(领《AGENTS.md》为工程纪律)的施工 agent。本卡由素材编辑器产出,")
 	L.append("按下面第 1~6 节施工。开工先 `git rev-parse HEAD` 对不齐即停;共享历史线纪律见 AGENTS.md。")
 	L.append("")
@@ -32,9 +36,23 @@ static func build(card: Dictionary, art_report: Array) -> String:
 	L.append("```")
 	var notes := str(card.get("notes", "")).strip_edges()
 	L.append("")
-	L.append("## 3. 特殊要求(编辑器备注,逐字执行,与卡数据冲突时以本节为准)")
-	L.append(notes if notes != "" else "(无)")
-	L.append("")
+	if modify:
+		L.append("## 3. 本轮修改要求(逐字执行,最高优先)")
+		L.append(mod_req.strip_edges())
+		L.append("")
+		L.append("### 长期约定(特殊要求,持续有效)")
+		L.append(notes if notes != "" else "(无)")
+		L.append("")
+		L.append("### 修改历史(此前各轮;只读参考,勿回退已完成的改动)")
+		for h in card.get("mod_history", []):
+			if typeof(h) != TYPE_DICTIONARY:
+				continue
+			L.append("- rev%s %s:%s" % [str(h.get("rev", "?")), str(h.get("time", "")), str(h.get("req", "")).replace("\n", " ")])
+		L.append("")
+	else:
+		L.append("## 3. 特殊要求(编辑器备注,逐字执行,与卡数据冲突时以本节为准)")
+		L.append(notes if notes != "" else "(无)")
+		L.append("")
 	L.append("## 4. 施工范围(路径白名单,禁越界)")
 	L.append("- 卡文件:DevTools/cards/%ss/%s.json(数值与第 2 节一致)" % [type, id])
 	match type:
