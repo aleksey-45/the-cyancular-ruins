@@ -44,8 +44,7 @@ func _ready() -> void:
 	add_child(row)
 
 	# ── 左:类型 + 列表 ──
-	var left := _panel(300)
-	row.add_child(left)
+	var left := _panel(row, 300)
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 6)
 	left.add_child(tabs)
@@ -68,8 +67,7 @@ func _ready() -> void:
 	left.add_child(help)
 
 	# ── 中:表单 ──
-	var mid := _panel(760)
-	row.add_child(mid)
+	var mid := _panel(row, 760)
 	var mid_scroll := ScrollContainer.new()
 	mid_scroll.custom_minimum_size = Vector2(740, 900)
 	mid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -88,8 +86,7 @@ func _ready() -> void:
 	mid.add_child(_notes_edit)
 
 	# ── 右:美术槽 + 施工 ──
-	var right := _panel(780)
-	row.add_child(right)
+	var right := _panel(row, 780)
 	right.add_child(_label("美术素材槽(点击行预览;[人工]=画师上传,[AI占位]=临时)", 20, CYAN))
 	_slot_rows = VBoxContainer.new()
 	_slot_rows.add_theme_constant_override("separation", 4)
@@ -449,9 +446,10 @@ func _copy_prompt() -> void:
 	_status.text = "提示词已复制到剪贴板(可粘贴到任意 CLI/会话)"
 
 # ── UI 工厂 ──
-func _panel(w: int) -> VBoxContainer:
+func _panel(row: HBoxContainer, w: int) -> VBoxContainer:
 	var p := PanelContainer.new()
 	p.custom_minimum_size = Vector2(w, 0)
+	row.add_child(p)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 6)
 	p.add_child(vb)
