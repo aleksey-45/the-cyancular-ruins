@@ -68,7 +68,18 @@ static func import_file(type: String, id: String, slot_key: String, src_abs: Str
 	if err != OK:
 		return "保存失败(err=%d)" % err
 	_write_meta(dst, "human")
+	_mirror_game(type, id, slot_key, img)
 	return ""
+
+
+## 有游戏消费方的槽位:同步镜像到游戏读取路径(assets/custom/...),上传即生效
+static func _mirror_game(type: String, id: String, slot_key: String, img: Image) -> void:
+	var gp := EditorSchema.game_mirror_path(type, id, slot_key)
+	if gp == "":
+		return
+	var abs := ProjectSettings.globalize_path(gp)
+	DirAccess.make_dir_recursive_absolute(abs.get_base_dir())
+	img.save_png(abs)
 
 
 ## 删除槽位文件(含 meta)
@@ -78,6 +89,11 @@ static func clear_slot(type: String, id: String, slot_key: String) -> void:
 		DirAccess.remove_absolute(p)
 	if p != "" and FileAccess.file_exists(meta_path(p)):
 		DirAccess.remove_absolute(meta_path(p))
+	var gp := EditorSchema.game_mirror_path(type, id, slot_key)
+	if gp != "":
+		var abs := ProjectSettings.globalize_path(gp)
+		if FileAccess.file_exists(abs):
+			DirAccess.remove_absolute(abs)   # 同步移除游戏侧镜像(回退 AI 占位/图集)
 
 
 ## 把槽位当前图导出(画师改图起点)。返回错误串。
@@ -120,6 +136,7 @@ static func make_ai_placeholder(type: String, id: String, slot_key: String) -> S
 	if err != OK:
 		return "占位保存失败(err=%d)" % err
 	_write_meta(dst, "ai")
+	_mirror_game(type, id, slot_key, img)   # AI 占位也镜像进游戏(临时测试可见;人工上传即覆盖)
 	return ""
 
 

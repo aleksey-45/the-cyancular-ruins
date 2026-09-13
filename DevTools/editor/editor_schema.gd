@@ -63,6 +63,23 @@ static func art_slots(type: String, id: String) -> Array:
 	return []
 
 
+## 游戏侧镜像路径:有消费方的槽位在上传/删除时同步镜像,保证"编辑器状态=游戏状态"。
+## (游戏钩子读 assets/custom/<kind>/<卡id>.png;无消费方的槽返回 "" 不镜像)
+static func game_mirror_path(type: String, id: String, slot_key: String) -> String:
+	match type:
+		TYPE_WEAPON:
+			match slot_key:
+				"silhouette":
+					return "res://assets/custom/silhouettes/%s.png" % id
+				"gun":
+					return "res://assets/custom/guns/%s.png" % id
+				"bullet":
+					return "res://assets/custom/bullets/%s.png" % id
+		_:
+			pass
+	return ""
+
+
 ## 槽位落盘绝对路径(res:// 域)
 static func art_path(type: String, id: String, slot_key: String) -> String:
 	for s in art_slots(type, id):
@@ -247,7 +264,7 @@ static func fields_for(type: String) -> Array:
 			return [
 				{"key": "name", "label": "名称", "kind": "text"},
 				{"key": "kind", "label": "性质", "kind": "choice", "choices": PROP_KINDS},
-				{"key": "slot", "label": "槽位(0=设计稿,8/9/10=击退/吸引/烟雾)", "kind": "int"},
+				{"key": "slot", "label": "槽位(0=设计稿,8/9/10/11=击退/吸引/烟雾/爆炸)", "kind": "int"},
 				{"key": "attack_interval", "label": "投掷间隔(秒)", "kind": "float"},
 				{"key": "mag_size", "label": "每次复活携带数", "kind": "int"},
 				{"key": "bullet_speed", "label": "投掷初速", "kind": "float"},
@@ -340,8 +357,8 @@ static func _validate_prop(card: Dictionary, errs: Array[String]) -> void:
 	if mag < 1 or mag > 9:
 		errs.append("每次复活携带数需在 1~9")
 	var slot := int(card.get("slot", -1))
-	if slot != 0 and slot not in [8, 9, 10]:
-		errs.append("道具槽位需为 0(设计稿)或 8/9/10")
+	if slot != 0 and slot not in [8, 9, 10, 11]:
+		errs.append("道具槽位需为 0(设计稿)或 8/9/10/11")
 	if str(card.get("tier", "")) not in WEAPON_TIERS:
 		errs.append("tier 非法")
 	var kp: Dictionary = card.get("kind_params", {})
