@@ -73,7 +73,7 @@ func _ready() -> void:
 
 	# ── 中:表单 ──
 	var mid := _panel(row, 0, 1.0)
-	# 中栏整体可滚:表单+特殊要求+修改要求+历史都装进一个随窗口伸缩的滚动区
+	# 上:表单区(可滚;_rebuild_form 每次选卡都会清空重建,只放动态字段)
 	var mid_scroll := ScrollContainer.new()
 	mid_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -82,31 +82,28 @@ func _ready() -> void:
 	_form_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_form_box.add_theme_constant_override("separation", 6)
 	mid_scroll.add_child(_form_box)
-	var hint := _label("现役槽:基础数值保存即生效(下一局读取,无需 AI 施工);机制类改动走施工。", 16, Color(0.6, 1.0, 0.7))
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_form_box.add_child(hint)
-	_form_box.add_child(_label("特殊要求(逐字进施工提示词,画师/策划约定写这里):", 18, GOLD))
+	# 下:特殊要求 / 修改要求 / 修改历史 —— 固定区,_rebuild_form 清的是 _form_box,
+	# 这三个栏绝不能放进 _form_box(否则选卡瞬间被清掉,实测教训)
+	mid.add_child(_label("特殊要求(逐字进施工提示词,画师/策划约定写这里):", 18, GOLD))
 	_notes_edit = TextEdit.new()
-	_notes_edit.custom_minimum_size = Vector2(0, 110)
+	_notes_edit.custom_minimum_size = Vector2(0, 96)
 	_notes_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_notes_edit.text_changed.connect(func() -> void:
 		if not _card.is_empty():
 			_card["notes"] = _notes_edit.text
 			_save_silent())
-	_form_box.add_child(_notes_edit)
-	# ── 修改要求 + 修改历史(增量施工)──
-	_form_box.add_child(_label("修改要求(本轮增量;发送时 rev+1 并记入修改历史,空=不发送修改):", 18, GOLD))
+	mid.add_child(_notes_edit)
+	mid.add_child(_label("修改要求(本轮增量;发送时 rev+1 并记入修改历史,空=不发送修改):", 18, GOLD))
 	_mod_edit = TextEdit.new()
-	_mod_edit.custom_minimum_size = Vector2(0, 80)
+	_mod_edit.custom_minimum_size = Vector2(0, 72)
 	_mod_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_form_box.add_child(_mod_edit)
-	_form_box.add_child(_label("修改历史(历代版本改动;只读,随卡保存):", 18, CYAN))
+	mid.add_child(_mod_edit)
+	mid.add_child(_label("修改历史(历代版本改动;只读,随卡保存):", 18, CYAN))
 	_hist_view = RichTextLabel.new()
-	_hist_view.custom_minimum_size = Vector2(0, 140)
+	_hist_view.custom_minimum_size = Vector2(0, 120)
 	_hist_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_hist_view.scroll_following = true
-	_form_box.add_child(_hist_view)
+	mid.add_child(_hist_view)
 
 	# ── 右:美术槽 + 施工 ──
 	var right := _panel(row, 0, 1.0)
