@@ -1,0 +1,147 @@
+class_name AgentLink
+extends RefCounted
+
+## Agent 施工传输层:把提示词交给施工方执行,拿回日志与完成状态。
+## 抽象目的:换 API 不动编辑器 —— 实现 Transport 接口(如 ClaudeCliTransport)即可替换,
+## 未来可加 HttpApiTransport(直接调 API,自行管理会话/工具权限)。
+
+signal log_line(text: String)
+signal finished(ok: bool, done_marker: bool, summary: String)
+
+const EXIT_MARK := "__AGENT_EXIT_"
+const POLL_SEC := 0.2
+const START_TIMEOUT_MS := 10000
+
+var is_busy := false
+var _timer: Timer = null
+var _tag := ""
+var _prompt_path := ""
+var _log_path := ""
+var _log_sent := 0
+var _start_ms := 0
+var _pid := 0
+var _transport = null   # Transport 实例
+
+
+## Transport 接口(任何实现都要满足):
+##   name() -> String
+##   start(prompt_abs: String, log_abs: String) -> int   # 返回 pid(0=失败),日志写 log_abs
+##   stop(pid: int) -> void
+class ClaudeCliTransport:
+	# 本机 Claude Code CLI(claude -p,非交互):读 stdin 提示词,输出落日志。
+	# bat 机制沿用已验证的做法:零中文/仓库根由 %~dp0 推导/心跳行/退出标记落日志。
+	const PROMPT_DIR := "res://DevTools/editor/.prompts"
+	const LOG_DIR := "res://DevTools/editor/.logs"
+
+	func name() -> String:
+		return "Claude Code CLI(本机)"
+
+	func start(prompt_abs: String, log_abs: String) -> int:
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(PROMPT_DIR))
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(LOG_DIR))
+		var tag := prompt_abs.get_file().trim_suffix(".md")
+		var bat_abs := ProjectSettings.globalize_path("%s/%s.bat" % [LOG_DIR, tag])
+		var f := FileAccess.open(bat_abs, FileAccess.WRITE)
+		if f == null:
+			return 0
+		# 纯 ASCII bat:仓库根从 bat 自身位置(<repo>/DevTools/editor/.logs)向上三级推导
+		var L: Array[String] = [
+			"@echo off",
+			"setlocal enabledelayedexpansion",
+			"rem repo root derived from this bat's own dir: keeps this file ASCII-only",
+			"set \"REPO=%~dp0..\\..\\..\"",
+			"for %%i in (\"%REPO%\") do set \"REPO=%%~fi\"",
+			"cd /d \"%REPO%\"",
+			"set \"PROMPT=%REPO%\\DevTools\\editor\\.prompts\\%s\"" % (tag + ".md"),
+			"set \"LOGF=%REPO%\\DevTools\\editor\\.logs\\%s.log\"" % tag,
+			"> \"%LOGF%\" echo __AGENT_STARTED__",
+			"claude -p --permission-mode acceptEdits --output-format text --verbose < \"%%PROMPT%%\" >> \"%%LOGF%%\" 2>&1",
+			">> \"%%LOGF%%\" echo %s!ERRORLEVEL!__" % EXIT_MARK,
+		]
+		f.store_string("\r\n".join(L) + "\r\n")
+		f.close()
+		return OS.create_process("cmd.exe", PackedStringArray(["/c", bat_abs]))
+
+	func stop(pid: int) -> void:
+		OS.create_process("cmd.exe", PackedStringArray(["/c", "taskkill /T /F /PID %d" % pid]))
+
+
+## 发起施工。返回 tag(空=未发起,原因走 log_line)。
+func run(card_type: String, card_id: String, prompt: String, transport = null) -> String:
+	if is_busy:
+		log_line.emit("[拒绝] 已有 agent 在跑")
+		return ""
+	_transport = transport if transport != null else ClaudeCliTransport.new()
+	_tag = "%s_%s_rev%d_%s" % [card_type, card_id, int(card_id.hash() % 1000), _stamp()]
+	_tag = "%s_%s_%s" % [card_type, card_id, _stamp()]
+	_prompt_path = "%s/%s.md" % [AgentLink.ClaudeCliTransport.PROMPT_DIR, _tag]
+	var pf := FileAccess.open(ProjectSettings.globalize_path(_prompt_path), FileAccess.WRITE)
+	if pf == null:
+		log_line.emit("[失败] 提示词写不进去:%s" % _prompt_path)
+		return ""
+	pf.store_string(prompt)
+	pf.close()
+	_log_path = "%s/%s.log" % [AgentLink.ClaudeCliTransport.LOG_DIR, _tag]
+	_log_sent = 0
+	_start_ms = Time.get_ticks_msec()
+	is_busy = true
+	log_line.emit("[传输] %s" % (_transport as Object).call("name"))
+	_pid = int((_transport as Object).call("start",
+			ProjectSettings.globalize_path(_prompt_path), ProjectSettings.globalize_path(_log_path)))
+	if _pid <= 0:
+		is_busy = false
+		log_line.emit("[失败] 传输层没能创建进程——用「复制提示词」手动执行")
+		return ""
+	log_line.emit("[发起] tag=%s pid=%d" % [_tag, _pid])
+	log_line.emit("[提示词] %s(可手动查看/粘贴)" % ProjectSettings.globalize_path(_prompt_path))
+	_timer = Timer.new()
+	_timer.wait_time = POLL_SEC
+	_timer.timeout.connect(_poll)
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree != null:
+		tree.root.add_child.call_deferred(_timer)
+		_timer.start()
+	return _tag
+
+
+func stop() -> void:
+	if not is_busy or _pid <= 0:
+		return
+	log_line.emit("[停止] pid=%d" % _pid)
+	(_transport as Object).call("stop", _pid)
+	is_busy = false
+	log_line.emit("[停止] 已复位")
+
+
+func _poll() -> void:
+	if not is_busy:
+		return
+	if _log_sent == 0 and Time.get_ticks_msec() - _start_ms > START_TIMEOUT_MS \
+			and not FileAccess.file_exists(ProjectSettings.globalize_path(_log_path)):
+		_finish(false, false, "传输层 10 秒未产生日志——进程没有执行,请用「复制提示词」手动跑")
+		return
+	var text := FileAccess.get_file_as_string(ProjectSettings.globalize_path(_log_path))
+	if text.length() > _log_sent:
+		var chunk := text.substr(_log_sent)
+		_log_sent = text.length()
+		for ln in chunk.split("\n"):
+			log_line.emit(ln)
+	var idx := text.rfind(EXIT_MARK)
+	if idx >= 0:
+		var rest := text.substr(idx + EXIT_MARK.length())
+		var end := rest.find("__")
+		var code := (rest.substr(0, end) if end >= 0 else rest).strip_edges()
+		_finish(code == "0", text.contains("CARD-DONE"), "退出码 %s" % code)
+
+
+func _finish(ok: bool, done: bool, summary: String) -> void:
+	is_busy = false
+	if _timer != null and is_instance_valid(_timer):
+		_timer.queue_free()
+		_timer = null
+	log_line.emit("[完成] ok=%s CARD-DONE=%s(%s)" % [ok, done, summary])
+	finished.emit(ok, done, summary)
+
+
+func _stamp() -> String:
+	return Time.get_time_string_from_system().replace(":", "")

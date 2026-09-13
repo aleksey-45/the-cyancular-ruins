@@ -47,7 +47,17 @@ func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: No
 	rotation = velocity_vec.angle()
 	scale = Vector2(size, size)  # 放大倍数作用于整颗子弹(贴图+碰撞体)
 
+var custom_art_id := ""   # 素材编辑器人工素材 id:画师上传的弹丸贴图优先
+
 func _ready() -> void:
+	# 人工素材优先:弹丸贴图(assets/custom/bullets/<id>.png;缺省回退图集)
+	if custom_art_id != "":
+		var p := "res://assets/custom/bullets/%s.png" % custom_art_id
+		if FileAccess.file_exists(p):
+			var img := Image.load_from_file(p)
+			var sp := get_node_or_null("Sprite2D") as Sprite2D
+			if img != null and sp != null:
+				sp.texture = ImageTexture.create_from_image(img)
 	# 子弹贴图与碰撞体由场景(bullet.tscn)配置:贴图是 Bullets.png 的 Sprite2D,
 	# 碰撞体已是 RectangleShape2D。这里不再动态生成方块,只把武器 bullet_color 作 tint。
 	var sp := get_node_or_null("Sprite2D") as Sprite2D

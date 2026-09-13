@@ -37,9 +37,31 @@ var body: CharacterBody2D
 # 全像素刷白保留 alpha,3× 最近邻放大(与瓦片/8bit 音效同风格,零美术素材)。
 static var _silhouette_cache: Dictionary = {}
 
+# 现役槽位 → 素材编辑器卡 id(人工素材对接;新增现役武器需同步 EditorSchema.SLOT_CARD_IDS)
+const SLOT_ART_IDS := {1: "wp_pistol", 2: "wp_rifle", 3: "wp_m82a1", 4: "wp_s686",
+	5: "wp_grenade_launcher", 6: "wp_laser_gun"}
+
+# 人工素材槽统一入口:assets/custom 下有画师上传版则优先(编辑器上传即落这里)
+static func custom_art_path(kind: String, slot: int = 0, art_id: String = "") -> String:
+	var id := art_id
+	if id == "" and slot > 0:
+		id = str(SLOT_ART_IDS.get(slot, ""))
+	if id == "":
+		return ""
+	return "res://assets/custom/%s/%s.png" % [kind, id]
+
+
 static func silhouette(slot: int) -> Texture2D:
 	if _silhouette_cache.has(slot):
 		return _silhouette_cache[slot]
+	# 画师上传的剪影优先(素材编辑器「HUD 白剪影」槽)
+	var custom := custom_art_path("silhouettes", slot)
+	if custom != "" and FileAccess.file_exists(custom):
+		var img := Image.load_from_file(custom)
+		if img != null:
+			var tex := ImageTexture.create_from_image(img)
+			_silhouette_cache[slot] = tex
+			return tex
 	var tex: Texture2D = null
 	var scene: PackedScene = load(WEAPONS.get(str(slot), "")) if WEAPONS.has(str(slot)) else null
 	if scene != null:
@@ -169,6 +191,7 @@ func equip(slot: String) -> void:
 		push_error("weapon_slot not assigned")
 		return
 	_weapon = scene.instantiate() as WeaponBase
+	_weapon.set("custom_art_id", str(SLOT_ART_IDS.get(int(slot), "")))
 	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
 	if _weapon.reload_active() and _mag_state.has(_current_slot):

@@ -153,8 +153,17 @@ static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> f
 	var limit := deg_to_rad(limit_deg)
 	return clampf(local.angle(), -limit, limit)
 
+var custom_art_id := ""   # 素材编辑器人工素材 id(wp_*):有画师上传的枪身/弹丸贴图则优先
+
 func _ready() -> void:
 	mag_ammo = mag_size
+	# 人工素材优先:枪身贴图(assets/custom/guns/<id>.png;缺省回退图集)
+	if custom_art_id != "":
+		var p := "res://assets/custom/guns/%s.png" % custom_art_id
+		if FileAccess.file_exists(p):
+			var img := Image.load_from_file(p)
+			if img != null and sprite != null:
+				sprite.texture = ImageTexture.create_from_image(img)
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
@@ -284,6 +293,7 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 	var spread := deg_to_rad(spread_deg)
 	for i in range(pellet_count):
 		var b: BulletBase = bullet_scene.instantiate()
+		b.custom_art_id = custom_art_id   # 人工弹丸贴图随武器下发(素材编辑器)
 		var ang := base_dir.angle() + randf_range(-spread, spread)
 		b.setup(Vector2.from_angle(ang), bullet_speed, bullet_range, bullet_size, bullet_color, self)
 		b.shooter = player

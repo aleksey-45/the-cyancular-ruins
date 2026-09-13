@@ -133,14 +133,14 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 ### 测试
 无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。**约定:冒烟测试由用户自己跑;代理只跑"诊断探针"**:`Tests/menu_autotest.gd`(GUI/HEADLESS 经 `-- --autotest-sp|mp|set|level` 自动流转主菜单,sp 含 Esc 暂停+回主菜单验证)、`Tests/lobby_ping_probe.gd`(大厅 UDP 可达性)、`Tests/lobby_create_probe.gd`(对大厅建房+列表全链路,场景模式跑)、`Tests/royale_probe.tscn`(大乱斗全链路,场景模式:本进程当大厅 + c1/c2 headless 子进程走私密建房→错邀请码应拒→对码加入→开局→转连 worker→断言 match_start/round_state/match_options/60Hz 快照 ≥30;子进程 stdout 不落父进程,排查看各自 `user://logs/` 轮转日志)。
 
-### 干员卡/武器卡编辑器(DevTools)
-开发专用 GUI 工具:「填卡 → 生成施工提示词 → 自动调 Claude Code 施工」。**当前分支(KH_v1_1_3_PubServer)与 KH-char-weap 分支均保留此工具**;`export_presets.cfg` 两处 `exclude_filter` 已含 `DevTools/*`,玩家包不可见。跑法:**双击 `DevTools/launch_card_editor.bat`**(启动器与工具同目录,内部自动切到仓库根再打开 `res://DevTools/card_editor.tscn`;带分支守卫:场景缺失时提示切分支,不会误启游戏)。
+### 素材编辑器(DevTools/editor,editor 分支,推翻旧卡编辑器后的重写版)
+开发专用 GUI 工具:「填卡(武器/角色/道具)→ 上传美术素材 → 生成施工提示词 → 发给本机 Claude Code 施工」。**美术画师产出制**:所有美术资产正式版由人工上传,AI 生成仅作占位(贴近原作像素风);游戏侧优先读人工素材、缺省回退占位/图集。`export_presets.cfg` 已含 `DevTools/*` 排除与 `assets/custom/*.png` 打包。跑法:**双击 `DevTools/launch_asset_editor.bat`**(ASCII+分支守卫;旧 `launch_card_editor.bat`/`启动卡编辑器.bat` 已删)。
 
-- 文件职责:`card_editor.gd`(装配根/AgentBar/LogPanel)| `card_schema.gd`(字段/默认值/校验)| `card_store.gd`(磁盘读写,卡目录 `DevTools/cards/{operators,weapons}/<id>.json` + 同名 PNG 头像)| `card_list_panel/card_form_panel/portrait_view/ui_kit`(UI)| `prompt_builder.gd`(卡→提示词)| `agent_runner.gd`(CLI 进程/日志)| `card_probe.gd`(headless 诊断:`-s res://DevTools/card_probe.gd`)。
-- **卡数据**:示例卡 `op_vanguard`/`wp_machete` 可作字段参考;`cards/.state.json` 是游戏侧现状标记(`operator_skeleton_done`/`slot6_refactor_done`/`melee_branch_done`),决定提示词走 FIRST(搭骨架)还是 NEXT(增量)模板,agent 施工成功后由编辑器自动翻转。`cards/.prompts//.logs/` 已 gitignore。
-- **提示词合同**(agent 收到后照做):四模板按卡与 state 分派(干员 FIRST/NEXT、武器 DESIGN[slot=0 纯设计稿]/FIRST[slot>5 首枪含扩槽重构]/NEXT);公共骨架 = 工程纪律 + **路径白名单(禁越界改文件)** + 卡 JSON + 程序化像素画合同(`gen_portrait.gd` 按 `--card=type/id` 分支产出 PNG,禁外部素材/禁 FastNoiseLite)+ headless 验证清单 + 提交规范(**开工先 `git rev-parse HEAD` 对不齐即停**;共享历史线纪律)+ 末行 `CARD-DONE <type>/<id> rev<N>` 回报。
-- **agent 施工流程**:编辑器里选卡→[生成提示词→剪贴板]→[发送给 Claude Code](内部写 `.prompts/<tag>.md` + `.logs/<tag>.bat` 启动 `claude -p`,日志实时进 LogPanel;CLI 不在时用复制兜底到任意会话手工跑)→ [停止] = `taskkill /T /F`;「全自动」勾选默认**关**(默认 acceptEdits + git/Godot 白名单)。
-- 纪律:游戏侧冒烟(enemy_logic_smoke 等)仍由用户自己跑,agent 只跑提示词里的 headless 验证;给本工具加功能时新字段先过 `card_schema.gd`(默认值+校验)再动表单,别在编辑器里散写字段。
+- 文件职责(`DevTools/editor/`):`asset_editor.gd/.tscn`(主 UI:类型页/卡列表/表单/美术槽/施工面板)| `editor_schema.gd`(类型/字段/校验/**美术槽定义**/示范模板/现役槽↔卡 id 映射)| `editor_store.gd`(cards/<type>s/<id>.json 读写删)| `editor_art.gd`(美术槽管线:上传/导出占位/AI 占位/来源标记 `<file>.meta` source=human|ai)| `editor_prompt.gd`(卡+特殊要求+美术政策→提示词)| `agent_link.gd`(**传输层抽象**:Transport 接口 + `ClaudeCliTransport` 本机 CLI;换 API=新增 Transport 实现)。
+- **美术槽**:每卡多槽(武器:卡面/HUD 白剪影/枪身/弹丸;角色:卡面/角色精灵设计稿;道具:卡面/对局贴图设计稿),文件在 `DevTools/cards/<type>s/<id>[_<slot>].png`;上传支持 png/webp/jpg(魔数校验)。
+- **游戏侧消费(人工优先)**:`WeaponComponent.custom_art_path()` + `silhouette()`(assets/custom/silhouettes/<卡id>.png 优先)、`weapon_base`(guns/<id>.png)、`bullet_base`(bullets/<id>.png);干员对局内精灵与道具实体贴图当前为设计稿槽(接入实体为后续施工项)。
+- **卡数据**:格式与旧版完全兼容(cards/ 三目录);`notes` 字段=「特殊要求」逐字进提示词。示范模板内置于 editor_schema(新建可选)。
+- **施工流程**:选卡→上传/导出美术→[生成提示词+发送](CLI 机制沿用已验证做法:零中文 bat、仓库根 %~dp0 推导、心跳行、退出标记落日志;10s 无日志判失败)→[停止];或[仅复制提示词]兜底。提示词含:美术资产政策(人工槽禁改/占位贴近原作)+ 槽位实测状态 + 卡 JSON + 特殊要求 + 路径白名单 + headless 验证 + `CARD-DONE <type>/<id> rev<N>` 回报。
 
 ## 进度与计划(2026-09-05 更新,KikuchiHeinr 实验分支)
 
