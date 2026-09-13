@@ -99,6 +99,19 @@ func _ready() -> void:
 	right.add_child(_preview)
 	right.add_child(_spacer(6))
 	right.add_child(_label("施工(经传输层发给本机 Claude Code;传输层可换 API 实现):", 20, CYAN))
+	var mrow := HBoxContainer.new()
+	mrow.add_theme_constant_override("separation", 8)
+	right.add_child(mrow)
+	mrow.add_child(_label("模型覆盖", 18, GREY))
+	var model_edit := LineEdit.new()
+	model_edit.custom_minimum_size = Vector2(260, 0)
+	model_edit.text = Settings.agent_model
+	model_edit.placeholder_text = "留空=跟随 ~/.claude;智谱端点填 glm-5.3-flash"
+	model_edit.tooltip_text = "显式 --model 钉住模型:主模型配置指向端点上不存在的模型时会 400 退出(exit 1),填可用模型即可"
+	model_edit.text_changed.connect(func(v: String) -> void:
+		Settings.agent_model = v.strip_edges()
+		Settings.save())
+	mrow.add_child(model_edit)
 	var arow := HBoxContainer.new()
 	arow.add_theme_constant_override("separation", 8)
 	right.add_child(arow)
@@ -437,7 +450,7 @@ func _send_agent() -> void:
 	var prompt := EditorPrompt.build(_card, EditorPrompt.art_report_lines(_type, str(_card["id"])))
 	_log.clear()
 	_log.append_text("[提示词已生成 %d 字符]\n" % prompt.length())
-	_link.run(str(_card["card_type"]), str(_card["id"]), prompt)
+	_link.run(str(_card["card_type"]), str(_card["id"]), prompt, null, Settings.agent_model)
 
 func _copy_prompt() -> void:
 	if _card.is_empty():

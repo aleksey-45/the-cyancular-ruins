@@ -41,6 +41,7 @@ var royale_public_mode: bool = true      # 大乱斗默认模式:true=公网服�
 var royale_pub_addr: String = ""        # 公网服务器地址覆盖(留空 = 用 royale_lobby.PUBLIC_SERVER_ADDR 内置常量)
 var pvp_show_minimap: bool = true       # 小地图
 var pvp_minimap_show_enemy: bool = true # 小地图显示敌方位置
+var agent_model: String = ""              # 素材编辑器施工模型覆盖(空=跟随 ~/.claude;智谱端点填 glm-5.3-flash)
 
 func _ready() -> void:
 	_ensure_buses()
@@ -122,6 +123,7 @@ func save() -> void:
 	cf.set_value("single", "difficulty", sp_difficulty)
 	cf.set_value("pvp", "show_trajectories", pvp_show_trajectories)
 	cf.set_value("pvp", "c2_prediction", pvp_c2_prediction)
+	cf.set_value("devtools", "agent_model", agent_model)
 	cf.set_value("pvp", "round_full_heal", pvp_round_full_heal)
 	cf.set_value("pvp", "show_enemy_hp", pvp_show_enemy_hp)
 	cf.set_value("pvp", "disabled_weapons", pvp_disabled_weapons)
@@ -157,6 +159,7 @@ func load_settings() -> void:
 	sp_difficulty = int(cf.get_value("single", "difficulty", 1))
 	pvp_show_trajectories = bool(cf.get_value("pvp", "show_trajectories", true))
 	pvp_c2_prediction = bool(cf.get_value("pvp", "c2_prediction", true))
+	agent_model = str(cf.get_value("devtools", "agent_model", "")).strip_edges()
 	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))
 	pvp_show_enemy_hp = bool(cf.get_value("pvp", "show_enemy_hp", true))
 	pvp_disabled_weapons.assign(cf.get_value("pvp", "disabled_weapons", []))

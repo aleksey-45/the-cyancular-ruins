@@ -30,8 +30,11 @@ var _transport = null   # Transport 实例
 class ClaudeCliTransport:
 	# 本机 Claude Code CLI(claude -p,非交互):读 stdin 提示词,输出落日志。
 	# bat 机制沿用已验证的做法:零中文/仓库根由 %~dp0 推导/心跳行/退出标记落日志。
+	# model 非空 → 追加 --model(本机 ~/.claude 的主模型配置可能指向端点上不存在的模型,
+	# 实测 400「模型不存在」→ 显式钉住可用模型是唯一可靠解,也是"可换 API"的一部分)。
 	const PROMPT_DIR := "res://DevTools/editor/.prompts"
 	const LOG_DIR := "res://DevTools/editor/.logs"
+	var model := ""
 
 	func name() -> String:
 		return "Claude Code CLI(本机)"
@@ -39,7 +42,7 @@ class ClaudeCliTransport:
 	## bat 内容纯函数(可测):tag = 提示词文件名主干(ASCII)。
 	## 纯拼接,不用 % 格式化:bat 里的 cmd 百分号与 GDScript 格式符互相踩(实际踩坑:
 	## %s 未替换进 bat → LOGF=%s.log 被 cmd 解析成 s.log,claude 读空文件秒退)。
-	static func build_cli_bat(tag: String) -> String:
+	static func build_cli_bat(tag: String, flags: String = "-p --permission-mode acceptEdits --output-format text --verbose") -> String:
 		var L: Array[String] = [
 			"@echo off",
 			"setlocal enabledelayedexpansion",
@@ -50,7 +53,7 @@ class ClaudeCliTransport:
 			"set \"PROMPT=%REPO%\\DevTools\\editor\\.prompts\\" + tag + ".md\"",
 			"set \"LOGF=%REPO%\\DevTools\\editor\\.logs\\" + tag + ".log\"",
 			"> \"%LOGF%\" echo __AGENT_STARTED__",
-			"claude -p --permission-mode acceptEdits --output-format text --verbose < \"%PROMPT%\" >> \"%LOGF%\" 2>&1",
+			"claude " + flags + " < \"%PROMPT%\" >> \"%LOGF%\" 2>&1",
 			">> \"%LOGF%\" echo " + EXIT_MARK + "!ERRORLEVEL!__",
 		]
 		return "\r\n".join(L) + "\r\n"
@@ -63,7 +66,10 @@ class ClaudeCliTransport:
 		var f := FileAccess.open(bat_abs, FileAccess.WRITE)
 		if f == null:
 			return 0
-		f.store_string(build_cli_bat(tag))   # 纯 ASCII bat:仓库根从 bat 自身位置向上三级推导
+		var flags := "-p --permission-mode acceptEdits --output-format text --verbose"
+		if model.strip_edges() != "":
+			flags += " --model " + model.strip_edges()
+		f.store_string(build_cli_bat(tag, flags))   # 纯 ASCII bat:仓库根从 bat 自身位置向上三级推导
 		f.close()
 		return OS.create_process("cmd.exe", PackedStringArray(["/c", bat_abs]))
 
@@ -71,12 +77,14 @@ class ClaudeCliTransport:
 		OS.create_process("cmd.exe", PackedStringArray(["/c", "taskkill /T /F /PID %d" % pid]))
 
 
-## 发起施工。返回 tag(空=未发起,原因走 log_line)。
-func run(card_type: String, card_id: String, prompt: String, transport = null) -> String:
+## 发起施工。返回 tag(空=未发起,原因走 log_line)。model:显式钉住模型(可空=跟随本机配置)。
+func run(card_type: String, card_id: String, prompt: String, transport = null, model: String = "") -> String:
 	if is_busy:
 		log_line.emit("[拒绝] 已有 agent 在跑")
 		return ""
 	_transport = transport if transport != null else ClaudeCliTransport.new()
+	if transport == null and model.strip_edges() != "":
+		(_transport as Object).set("model", model.strip_edges())
 	_tag = "%s_%s_rev%d_%s" % [card_type, card_id, int(card_id.hash() % 1000), _stamp()]
 	_tag = "%s_%s_%s" % [card_type, card_id, _stamp()]
 	_prompt_path = "%s/%s.md" % [AgentLink.ClaudeCliTransport.PROMPT_DIR, _tag]
