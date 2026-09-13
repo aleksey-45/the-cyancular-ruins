@@ -499,7 +499,7 @@ func is_downed() -> bool:
 	return combat.is_downed()
 
 
-## 无伤冲击(击退炮/吸力炮):strength 带符号,>0 推离爆心 / <0 吸向爆心。
+## 无伤冲击(排斥弹头/引力核心):strength 带符号,>0 推离爆心 / <0 吸向爆心。
 ## 走爆炸同款独立击退向量(combat.knock_velocity),不扣血不触发无敌帧。
 func apply_blast_force(center: Vector2, strength: float) -> void:
 	var dir := MazeGenerator.toroidal_delta_px(center, global_position,
@@ -624,8 +624,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	# PvP:滚轮事件不在输入包协议里,只本地切会被快照防脱同步切回 → 走
 	# request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
 	# ── T = 道具模式开关(单机/PvP 通用;倒地不可用)────────────────────────
-	# 进入:手上切到第一个可用道具(隐藏槽位 8/9/10),PvP 经槽位同步通道让服务器跟随;
-	# 退出:回到进入前的武器槽。道具模式内:数字 1/2/3 直选道具,滚轮循环。
+	# 进入:手上切到第一个可用道具(隐藏槽位 8/9/10/11),PvP 经槽位同步通道让服务器跟随;
+	# 退出:回到进入前的武器槽。道具模式内:数字 1/2/3/4 直选道具,滚轮循环。
 	if event is InputEventKey and event.pressed and not event.echo \
 			and (event.physical_keycode == KEY_T or event.keycode == KEY_T) \
 			and not combat.is_downed():
@@ -644,6 +644,8 @@ func _unhandled_input(event: InputEvent) -> void:
 					pi = 1
 				KEY_3:
 					pi = 2
+				KEY_4:
+					pi = 3
 			if pi >= 0:
 				weapons.select_prop_index(pi)
 				return

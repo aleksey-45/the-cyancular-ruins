@@ -72,7 +72,7 @@ static func build(card: Dictionary, art_report: Array, mod_req: String = "") -> 
 			L.append("- 干员组件:Scenes/Player/operator_component.gd + Scenes/Player/Skills/<id>_skill_<n>.gd(按卡 skills 实现技能)")
 			L.append("- 人工素材保护:DevTools/cards/operators/%s__body.png 若标记 [人工] 禁改。" % id)
 		"prop":
-			L.append("- 道具施工:道具系统(注册表/投掷物/效果)按 kind 与 kind_params 实现;槽位 %s。" % str(card.get("slot", 0)))
+			L.append("- 道具施工:道具系统按「使用方式 %s」+「效果 %s」+ kind_params 实现;槽位 %s。" % [str(card.get("kind", "")), str(card.get("effect", "")), str(card.get("slot", 0))])
 			L.append("- 人工素材保护:DevTools/cards/props/%s__world.png 若标记 [人工] 禁改。" % id)
 	L.append("")
 	L.append("## 5. headless 验证(全部通过才算完)")

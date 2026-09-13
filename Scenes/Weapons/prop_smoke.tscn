@@ -21,7 +21,7 @@ bullet_gravity = 0.45
 bullet_color = Color(0.75, 0.78, 0.8, 1)
 pitch_clamp_deg = 65.0
 blast_force = 0.0
-blast_radius = 230.0
+blast_radius = 340.0
 smoke_duration = 6.0
 fuse_time = 0.4
 [node name="Sprite2D" type="Sprite2D" parent="."]

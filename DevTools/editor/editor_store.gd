@@ -49,6 +49,14 @@ static func save_card(card: Dictionary) -> String:
 		return "写不进去:%s" % card_path(type, id)
 	f.store_string(JSON.stringify(card, "\t"))
 	f.close()
+	# 镜像到游戏读取路径(assets/custom/cards/<id>.json):现役武器装备时卡直读数值,
+	# 编辑器保存=改游戏配置,无需 AI 施工。导出 include_filter 已含 assets/custom/*.json。
+	var mirror := ProjectSettings.globalize_path("res://assets/custom/cards/%s.json" % id)
+	DirAccess.make_dir_recursive_absolute(mirror.get_base_dir())
+	var mf := FileAccess.open(mirror, FileAccess.WRITE)
+	if mf != null:
+		mf.store_string(JSON.stringify(card, "\t"))
+		mf.close()
 	return ""
 
 
@@ -63,3 +71,6 @@ static func delete_card(type: String, id: String) -> void:
 			DirAccess.remove_absolute(p)
 		if FileAccess.file_exists(p + ".meta"):
 			DirAccess.remove_absolute(p + ".meta")
+	var mirror := ProjectSettings.globalize_path("res://assets/custom/cards/%s.json" % id)
+	if FileAccess.file_exists(mirror):
+		DirAccess.remove_absolute(mirror)   # 同步清游戏读取镜像

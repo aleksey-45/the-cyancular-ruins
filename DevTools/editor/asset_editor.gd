@@ -270,8 +270,9 @@ func _rebuild_form() -> void:
 				_field_editors[key] = cb
 			"choice":
 				var ob := OptionButton.new()
-				for ch in f["choices"]:
-					ob.add_item(str(ch))
+				var labels: Array = f.get("labels", f["choices"])
+				for i in (f["choices"] as Array).size():
+					ob.add_item(str(labels[i]) + "  (" + str(f["choices"][i]) + ")")
 				ob.selected = maxf(0, (f["choices"] as Array).find(str(_card.get(key, ""))))
 				ob.item_selected.connect(func(idx: int) -> void: _set_field(key, f["choices"][idx]))
 				grid.add_child(ob)
@@ -301,6 +302,8 @@ func _rebuild_form() -> void:
 				le.text_changed.connect(func(t: String) -> void: _set_field(key, t))
 				grid.add_child(le)
 				_field_editors[key] = le
+	if _type == EditorSchema.TYPE_WEAPON and int(_card.get("slot", 0)) >= 1 			and int(_card.get("slot", 0)) <= 6:
+		_form_box.add_child(_label("现役槽:以上基础数值保存即生效(下一局读取,无需 AI 施工);", 16, Color(0.6, 1.0, 0.7)))
 	# 干员:技能 3 行
 	if _type == EditorSchema.TYPE_OPERATOR:
 		_form_box.add_child(_label("技能(≤3;键位 skill_1~3 = Z/X/C)", 20, CYAN))

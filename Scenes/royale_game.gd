@@ -262,6 +262,10 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 		b.explosion_damage = data["expl_damage"]
 		b.explosion_knockback = data["expl_knock"]
 		b.blast_force = data.get("blast_force", 0.0)
+		b.blast_falloff_mode = int(data.get("blast_falloff", 0))
+		var lit: float = float(data.get("lit_fuse", -1.0))
+		if lit >= 0.0:
+			b.light_fuse(lit)   # 计时弹(投掷爆炸团):视觉副本与服务器同一时刻起爆
 		b.smoke_duration = data.get("smoke_duration", 0.0)
 		b.fuse_ring_visual = data.get("ring", false)
 		if data.has("visual"):

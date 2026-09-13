@@ -17,7 +17,10 @@ const ID_REGEX := "^[a-z][a-z0-9_]{2,31}$"
 const SKILL_KEYS := ["skill_1", "skill_2", "skill_3"]
 const MAX_SKILLS := 3
 const WEAPON_KINDS := ["gun", "melee", "thrown", "special"]
-const PROP_KINDS := ["knockback", "attraction", "smoke"]
+const PROP_KINDS := ["potion", "thrown", "spell", "rune", "tool"]
+const PROP_KIND_LABELS := {"potion": "药剂", "thrown": "投掷", "spell": "术式", "rune": "铭文", "tool": "工具"}
+const PROP_EFFECTS := ["knockback", "attraction", "smoke"]
+const PROP_EFFECT_LABELS := {"knockback": "击退", "attraction": "吸引", "smoke": "烟雾"}
 const WEAPON_TIERS := ["light", "medium", "heavy"]
 const TEXTURE_MODES := ["tint", "sheet"]
 
@@ -131,7 +134,8 @@ static func make_default(type: String, id: String) -> Dictionary:
 		card["slot"] = 6
 		card["kind_params"] = {}
 	elif type == TYPE_PROP:
-		card["kind"] = "knockback"
+		card["kind"] = "thrown"      # 使用方式:药剂/投掷/术式/铭文/工具
+		card["effect"] = "knockback" # 效果:击退/吸引/烟雾(旧卡 kind 迁移到此)
 		card["appearance"] = ""
 		card["attack_interval"] = 0.8
 		card["mag_size"] = 2
@@ -170,6 +174,11 @@ static func apply_defaults(card: Dictionary) -> Dictionary:
 		for k in (full["stats"] as Dictionary):
 			if not stats.has(k):
 				stats[k] = full["stats"][k]
+	# 旧版道具卡迁移:kind 原为效果名 → 使用方式=thrown,效果字段承接
+	if type == TYPE_PROP and str(card.get("kind", "")) in ["knockback", "attraction", "smoke"]:
+		if not card.has("effect"):
+			card["effect"] = card["kind"]
+		card["kind"] = "thrown"
 	return card
 
 
@@ -350,7 +359,9 @@ static func _validate_weapon(card: Dictionary, errs: Array[String]) -> void:
 
 static func _validate_prop(card: Dictionary, errs: Array[String]) -> void:
 	if str(card.get("kind", "")) not in PROP_KINDS:
-		errs.append("道具性质非法:%s" % str(card.get("kind")))
+		errs.append("道具使用方式非法(potion/thrown/spell/rune/tool):%s" % str(card.get("kind")))
+	if str(card.get("effect", "")) not in PROP_EFFECTS:
+		errs.append("道具效果非法(knockback/attraction/smoke):%s" % str(card.get("effect")))
 	if float(card.get("attack_interval", 0.0)) <= 0.0:
 		errs.append("投掷间隔需 > 0")
 	var mag := int(card.get("mag_size", 0))
@@ -365,6 +376,11 @@ static func _validate_prop(card: Dictionary, errs: Array[String]) -> void:
 	var radius := float(kp.get("blast_radius", 0.0))
 	if radius < 50.0 or radius > 900.0:
 		errs.append("作用半径需在 50~900")
+	var kind := str(card.get("effect", ""))
+	if kind == "smoke" and float(kp.get("smoke_duration", 0.0)) <= 0.0:
+		errs.append("烟雾时长需 > 0")
+	elif kind in ["knockback", "attraction"] and float(kp.get("blast_force", 0.0)) == 0.0:
+		errs.append("推/吸强度不能为 0")
 	if str(card.get("kind")) == "smoke":
 		if float(kp.get("smoke_duration", 0.0)) <= 0.0:
 			errs.append("烟雾时长需 > 0")

@@ -16,15 +16,17 @@ const WEAPONS: Dictionary = {
 	"8": "res://Scenes/Weapons/prop_knockback.tscn",
 	"9": "res://Scenes/Weapons/prop_attraction.tscn",
 	"10": "res://Scenes/Weapons/prop_smoke.tscn",
+	"11": "res://Scenes/Weapons/prop_timed_bomb.tscn",
 }
 
 # 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
 const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪", 7: "加特林",
-	8: "击退炮", 9: "引力核心", 10: "烟雾弹"}
+	8: "排斥弹头", 9: "引力核心", 10: "烟雾弹", 11: "投掷爆炸团"}
 
 # 道具槽位(T 键道具模式专用;不在 enabled_slots 里,普通切枪/数字键不会误选):
-# 8=击退炮 9=引力核心(吸力炮) 10=烟雾弹。道具不受「禁武器」影响;每命携带数=各道具 mag_size。
-const PROP_SLOTS: Array = [8, 9, 10]
+# 8=排斥弹头(旧名击退炮) 9=引力核心(吸力炮) 10=烟雾弹 11=投掷爆炸团(计时自爆)。
+# 道具不受「禁武器」影响;每命携带数=各道具 mag_size。
+const PROP_SLOTS: Array = [8, 9, 10, 11]
 
 signal weapon_changed(slot: int)   # equip 成功后发射(菜单图标/HUD 武器显示跟随)
 
@@ -36,6 +38,41 @@ var body: CharacterBody2D
 # 纯白像素剪影缓存(slot → Texture2D):从武器场景的 Sprite2D 图集切片,
 # 全像素刷白保留 alpha,3× 最近邻放大(与瓦片/8bit 音效同风格,零美术素材)。
 static var _silhouette_cache: Dictionary = {}
+
+# ── 卡直读:现役武器的基础数值以卡 JSON 为准(编辑器保存=改配置,无需 AI 施工)──
+# 镜像文件:assets/custom/cards/<卡id>.json(编辑器保存卡时同步写);无镜像=完全沿用场景值。
+# 新增可直读字段时,同步在 CARD_STAT_KEYS 里加映射(卡字段名 → WeaponBase 属性名)。
+const CARD_STAT_KEYS := [
+	["attack_interval", "fire_cooldown"], ["damage", "damage"], ["impact", "impact"],
+	["bullet_speed", "bullet_speed"], ["bullet_range", "bullet_range"], ["bullet_size", "bullet_size"],
+	["bullet_gravity", "bullet_gravity"], ["pellet_count", "pellet_count"], ["spread_deg", "spread_deg"],
+	["mag_size", "mag_size"], ["reload_time", "reload_time"],
+	["move_penalty", "move_penalty"], ["jump_penalty", "jump_penalty"],
+	["full_auto", "full_auto"], ["heavy_aim", "heavy_aim"],
+]
+const TIER_IDS := {"light": 0, "medium": 1, "heavy": 2}
+static var _card_stat_cache: Dictionary = {}
+
+static func card_json_for_slot(slot: int) -> Dictionary:
+	var id := str(SLOT_ART_IDS.get(slot, ""))
+	if id == "":
+		return {}
+	if not _card_stat_cache.has(id):
+		var p := "res://assets/custom/cards/%s.json" % id
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(p)) 				if FileAccess.file_exists(p) else {}
+		_card_stat_cache[id] = parsed if typeof(parsed) == TYPE_DICTIONARY else {}
+	return _card_stat_cache[id]
+
+static func apply_card_stats(w: WeaponBase, slot: int) -> void:
+	var card: Dictionary = card_json_for_slot(slot)
+	if card.is_empty():
+		return
+	for pair in CARD_STAT_KEYS:
+		if card.has(pair[0]):
+			w.set(pair[1], card[pair[0]])
+	var tier := str(card.get("tier", ""))
+	if TIER_IDS.has(tier):
+		w.set("tier", TIER_IDS[tier])
 
 # 现役槽位 → 素材编辑器卡 id(人工素材对接;新增现役武器需同步 EditorSchema.SLOT_CARD_IDS)
 const SLOT_ART_IDS := {1: "wp_pistol", 2: "wp_rifle", 3: "wp_m82a1", 4: "wp_s686",
@@ -192,6 +229,7 @@ func equip(slot: String) -> void:
 		return
 	_weapon = scene.instantiate() as WeaponBase
 	_weapon.set("custom_art_id", str(SLOT_ART_IDS.get(int(slot), "")))
+	apply_card_stats(_weapon, int(slot))   # 卡直读:基础数值即时生效(无需施工)
 	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
 	if _weapon.reload_active() and _mag_state.has(_current_slot):
@@ -283,7 +321,7 @@ func _equip_and_sync(slot: int) -> void:
 	if Level0.pvp_mode:
 		push_net_slot(slot)   # 服务器权威跟随(复用武器槽位同步通道)
 
-## 复活回满所有道具/武器弹夹(击退炮"每次复活只能携带两枚"由此保证)
+## 复活回满所有道具/武器弹夹(排斥弹头"每次复活只能携带两枚"由此保证)
 func refill_all() -> void:
 	for c in get_children():
 		if c is WeaponBase:

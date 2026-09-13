@@ -226,10 +226,11 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | `laser_weapon_base.gd` | **激光武器基类**：不开实体子弹，开火瞬间算一条光束并一次性结算。留了三个可覆写缝（几何/结算/视觉） |
 | `laser_gun.gd` / `laser_gun.tscn` | 激光枪（**槽 6**）：沿瞄准方向反射折线（默认 2 次反射） |
 | `laser_beam.gd` / `laser_beam.tscn` | 光束的视觉节点 |
-| `prop_launcher.gd` | **道具发射器基座**（T 键道具模式，槽 8/9/10 共用）：把卡参数灌进投掷物（explodes/blast_force/烟雾/引信），掷出动画；每命携带数 = `mag_size`，不可换弹 |
-| `prop_knockback.tscn` | 击退炮（槽 8）：blast_force 2600 推离，二次缓出 |
-| `prop_attraction.tscn` | 引力核心（槽 9，卡 `pr_attraction`）：无伤吸引，blast_force -50、半径 900、**按距离线性衰减**（`blast_linear_falloff`）、首撞 0.5s 引信带**白环收缩视效**（`fuse_ring_visual`） |
-| `prop_smoke.tscn` | 烟雾弹（槽 10）：无冲击，落点生成烟雾区 |
+| `prop_launcher.gd` | **道具发射器基座**（T 键道具模式，槽 8/9/10/11 共用）：把卡参数灌进投掷物（explodes/blast_force/烟雾/引信/爆炸伤），掷出动画；每命携带数 = `mag_size`，不可换弹 |
+| `prop_knockback.tscn` | 排斥弹头（槽 8，卡 `pr_knockback`，旧名击退炮）：无伤击退，blast_force 9000（单次冲量，位移≈900px=甩上天）、半径 260、**全域等强斥力**（`blast_falloff_mode = FLAT`，不分距离一律吃满力度）、首撞 0.5s 引信带**白圈外扩视效**（撞实体同走满引信 `hit_fuse_time`，最后一圈到达最外沿时起爆） |
+| `prop_attraction.tscn` | 引力核心（槽 9，卡 `pr_attraction`）：无伤吸引，blast_force -9000（单次冲量，位移≈|force|/10 ⇒ 满力度吸程 900px）、半径 900、**全域等强吸力**（`blast_falloff_mode = FLAT`：只要在范围内不分距离一律吃满力度，可甩飞；作用对象=玩家/敌人/**子弹**）、首撞 0.5s 引信带**白环收缩视效**（`fuse_ring_visual`） |
+| `prop_smoke.tscn` | 烟雾弹（槽 10）：无冲击，落点生成半径 340 烟雾区、持续 6s（卡 rev2 扩大）；烟雾视觉 = 冷调像素烟团（`smoke_zone.gd` 程序化烘焙 3 帧 metaball，原作 effects.png 烟团同款：深描边+青蓝烟体+块状深浅斑，4px 粗颗粒最近邻），硬切轮播翻涌；显隐规则在 `Globals/smoke.gd` |
+| `prop_timed_bomb.gd` / `.tscn` | 投掷爆炸团（槽 11，卡 `pr_731505`）：**计时手雷**——第一按 = 拉销点燃（消耗 1 枚携带量，立即开始 6s 倒计时，屏幕中央像素数字 `timed_bomb_fuse.gd` 的 `CountdownHud`，最后 2s 转红），第二按 = 掷出（剩余引信经 `prop_launcher._lit_fuse` → `BulletBase.light_fuse` 随弹走，到点即爆与碰撞无关）；倒计时走完仍未掷出 → **在玩家原地自爆**（卡特殊要求）。爆炸：半径 260、满伤 = 满血（50）且与爆心**距离线性衰减**（`blast_falloff_mode = LINEAR`，`Explosion.apply_aoe` 新增档位）+ 轻度速度击退 2600。引信唯一时间源 = `TimedBombFuse`（挂世界不随切枪消失；掷出后只管倒计时显示；持弹者阵亡/离树 → 引信作废，不给 PvP 同节点复活补刀）。道具模式内数字 4 直选 |
 
 > 加新武器 = 一个继承 `WeaponBase` 的 `.tscn` + `weapon_component.gd` 的 `WEAPONS` 注册表加一行。
 
@@ -238,8 +239,10 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | 文件 | 作用 |
 |---|---|
 | `explosion.tscn` / `explosion_fx.gd` | 爆炸动画（按半径缩放，播完自毁） |
-| `blast_ring_fx.gd` | 引信白环（引力核心）：挂在投掷物下（跟爆心、rotation 世界对齐），从爆炸半径外缘每 0.1s 出一圈像素白环向爆心收缩、由淡变实，引信走完全部收束到中心即起爆（起爆归 `BulletBase` 管） |
+| `blast_ring_fx.gd` | 引信白环（引力核心/排斥弹头）：挂在投掷物下（跟爆心、rotation 世界对齐），每 0.1s 出一圈像素白环；方向由 `BulletBase` 按 `blast_force` 符号定（吸=从爆炸半径外缘向爆心收缩、由淡变实=引力核心；推=由爆心一圈圈外扩、到作用范围边缘消散=排斥弹头），引信走完全部环同时抵达端点即起爆（起爆归 `BulletBase` 管） |
+| `smoke_zone.gd` | 烟雾区视觉（烟雾弹）：冷调像素烟团——程序化烘焙 3 帧 metaball 烟团（4px 粗颗粒最近邻，原作 effects.png 烟团同款：深海军描边+青蓝烟体+块状深浅斑+近白高光），硬切轮播翻涌，落点蓬起、末段淡出自毁；显隐规则在 `Globals/smoke.gd` |
 | `combat_feedback.gd` | **打击反馈**：命中打叉标记 + "击杀 XXX" 像素播报 + 击杀音效。`current` 为 null 时全部静默空转 |
+| `timed_bomb_fuse.gd` | 计时爆炸团（槽 11）的引信节点 + 倒计时 HUD：`TimedBombFuse` 挂世界（不随切枪消失），到点未掷出在持弹者原地自爆（结算/视效与 `BulletBase._explode` 同款——PvP 客户端等 `explosion_event` 广播）；持弹者阵亡/离树 → 引信作废。内层类 `CountdownHud`（CanvasLayer 132）屏幕中央像素倒计时，扫 `timed_bomb_fuse` 组取最先到 0 的显示，组空自毁，headless 不建 |
 | `bullet_trail.gd` | 子弹拖尾线（可选） |
 | `tile_hit_fx.gd` | 可破坏砖受击碎片粒子 |
 | `water_fx.gd` | 水花 / 气泡粒子 |

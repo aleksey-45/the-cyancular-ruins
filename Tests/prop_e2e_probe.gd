@@ -2,8 +2,10 @@ extends Node
 
 # 道具端到端诊断(单机真实世界):加载 Level0 → 直接驱动道具发射器 → 验证
 #  ① 投掷物真的生成(bullet 组)且带 blast_force/smoke_duration;
-#  ② 起效后:击退炮把玩家推开(knock_velocity 变化)、烟雾区真的出现(smoke_zone 组);
-#  ③ T 模式装备链:equip("8"/"10") 成功且 current_weapon 是道具。
+#  ② 起效后:排斥弹头把玩家推开(knock_velocity 变化)、烟雾区真的出现(smoke_zone 组);
+#  ③ T 模式装备链:equip("8"/"10") 成功且 current_weapon 是道具;
+#  ④ 计时爆炸团(槽 11):拉销只点燃不生成投掷物(timed_bomb_fuse 组)→ 再按掷出
+#     (剩余引信随弹走)→ 拉销后不掷,倒计时走完原地自爆(玩家在爆心吃满血伤倒地)。
 # 打印 PROP E2E: OK/FAIL。
 
 func _ready() -> void:
@@ -63,10 +65,10 @@ func _run() -> void:
 		print("PROP E2E: FAIL " + "; ".join(fails))
 		_finish()
 		return
-	if float(w.get("blast_force")) != 2600.0:
-		fails.append("击退炮 blast_force=%s" % str(w.get("blast_force")))
+	if float(w.get("blast_force")) != 9000.0:
+		fails.append("排斥弹头 blast_force=%s" % str(w.get("blast_force")))
 
-	# ── ② 发射击退炮:在玩家旁边起效,验证推力 ──
+	# ── ② 发射排斥弹头:在玩家旁边起效,验证推力 ──
 	var v0: Vector2 = player.combat.knock_velocity
 	var muzzle_from: Node2D = w.get_node_or_null("Muzzle") as Node2D
 	var dir := Vector2.RIGHT
@@ -92,7 +94,8 @@ func _run() -> void:
 	bullet.setup(Vector2.RIGHT, 1.0, 1100.0, 1.4, Color(1, 0.6, 0.25), w)   # 速度≈0:原地起爆,保证落在玩家作用半径内
 	bullet.shooter = player
 	bullet.explodes = true
-	bullet.blast_force = 2600.0
+	bullet.blast_force = 9000.0
+	bullet.blast_falloff_mode = 2   # FLAT 全域等强(卡 rev2 同款)
 	bullet.explosion_radius = 260.0
 	bullet.fuse_time = 0.2
 	bullet.hit_fuse_time = 0.2
@@ -112,7 +115,7 @@ func _run() -> void:
 	if is_instance_valid(bullet):
 		bullet.queue_free()
 	if max_knock < 100.0:
-		fails.append("击退炮冲击峰值 %d px/s(<100,无冲击)" % int(max_knock))
+		fails.append("排斥弹头冲击峰值 %d px/s(<100,无冲击)" % int(max_knock))
 
 	# ── ③ 烟雾弹 ──
 	weapons.equip("10")
@@ -126,7 +129,7 @@ func _run() -> void:
 		b2.shooter = player
 		b2.explodes = true
 		b2.smoke_duration = 6.0
-		b2.explosion_radius = 230.0
+		b2.explosion_radius = 340.0
 		b2.explosion_damage = 0
 		b2.explosion_knockback = 0
 		b2.fuse_time = 0.2
@@ -144,8 +147,60 @@ func _run() -> void:
 		if zones_after <= zones_before:
 			fails.append("烟雾区没有出现(smoke_zone 组 %d→%d)" % [zones_before, zones_after])
 
+	# ── ④ 计时爆炸团(槽 11):点燃→掷出→超时原地自爆 ──
+	weapons.equip("11")
+	var wb: Node = weapons.current_weapon()
+	if wb == null:
+		fails.append("equip(11) 失败")
+	else:
+		# a) 第一按 = 拉销点燃:只挂引信(timed_bomb_fuse 组),不生成投掷物
+		var fuses0 := tree.get_nodes_in_group("timed_bomb_fuse").size()
+		var bullets0 := tree.get_nodes_in_group("bullet").size()
+		wb.countdown_time = 2.0   # 缩短倒计时:探针不干等 6 秒(仍留足掷出窗口)
+		wb.fire()
+		await tree.process_frame
+		await tree.process_frame
+		var fuses1 := tree.get_nodes_in_group("timed_bomb_fuse").size()
+		if fuses1 <= fuses0:
+			fails.append("fire() 未点燃引信(timed_bomb_fuse 组 %d→%d)" % [fuses0, fuses1])
+		if tree.get_nodes_in_group("bullet").size() > bullets0:
+			fails.append("拉销阶段不应生成投掷物")
+		# b) 第二按 = 掷出:剩余引信随弹走;燃烧时间减半后弹在远处爆,不回伤玩家
+		wb.fire()
+		var thrown := false
+		for i in 4:
+			await tree.physics_frame
+			if tree.get_nodes_in_group("bullet").size() > bullets0:
+				thrown = true
+		if not thrown:
+			fails.append("第二次 fire() 未掷出投掷物")
+		if int(wb.get("mag_ammo")) != 1:
+			fails.append("携带量异常:点燃+掷出应只耗 1 枚(mag_ammo=%s)" % str(wb.get("mag_ammo")))
+		# 掷出的弹挪到远处引爆,避免偶发弹回落回玩家身边干扰 c)(起爆点固定离玩家 1200px)
+		for b in tree.get_nodes_in_group("bullet"):
+			if is_instance_valid(b) and b.get("source") == wb:
+				(b as Node2D).global_position = (player as Node2D).global_position + Vector2(1200, 0)
+		await tree.create_timer(2.4).timeout   # 等掷出的弹在远处爆完,再回满状态做 c)
+		# c) 超时惩罚:拉销后不掷,倒计时走完 → 原地自爆,玩家在爆心吃满血伤倒地
+		weapons.equip("11")
+		var wb2: Node = weapons.current_weapon()
+		if wb2 == null:
+			fails.append("equip(11) 二次装备失败")
+		else:
+			wb2.countdown_time = 0.3
+			var hp0: int = player.combat.hp
+			wb2.fire()   # 只点燃,不再掷
+			var downed := false
+			for i in 120:
+				await tree.physics_frame
+				if player.has_method("is_downed") and player.is_downed():
+					downed = true
+					break
+			if not downed:
+				fails.append("倒计时走完未原地自爆(玩家未倒地;hp %d→%d)" % [hp0, int(player.combat.hp)])
+
 	if fails.is_empty():
-		print("PROP E2E: OK(投掷物生成/击退推力/烟雾区)")
+		print("PROP E2E: OK(投掷物生成/击退推力/烟雾区/计时爆炸团点燃-掷出-自爆)")
 	else:
 		for f in fails:
 			push_error("PROP E2E FAIL: " + f)

@@ -1,16 +1,22 @@
 extends Node2D
 
-# 引信白环(pr_attraction「引力核心」特殊要求):
-# 首撞引信期间,从爆炸影响范围的最外端不断生成像素白环向爆心收缩,期间由虚(淡)变实(亮);
-# 最后一环收束至最中心的一刻 = 引信走完(爆炸由 BulletBase 触发,本节点只负责画环)。
-# 所有环同刻收束到中心:环 i 在 i/n·duration 时于最外端出现,各自线性收缩,引信走完时全部归零。
+# 引信白环(引力核心 pr_attraction / 排斥弹头 pr_knockback 特殊要求):
+# 首撞引信期间循环出像素白环,标示作用范围;方向由 outward 决定(BulletBase 按 blast_force
+# 符号设置:吸<0=收缩 / 推>0=外扩),起爆仍归 BulletBase,本节点只负责画环。
+#  - 收缩(outward=false):从影响范围最外端不断出环向爆心收拢,由虚(淡)变实(亮);
+#    最后一环收束至最中心的一刻 = 引信走完。
+#  - 外扩(outward=true):由爆心一圈圈向外释放,到作用范围边缘消散;
+#    最后一环到达最外沿的一刻 = 引信走完。
+# 两方向同构:环 i 在 i/n·duration 时出现,各自在剩余引信时间内线性走完全程,
+# 引信走完的一刻全部环同时抵达端点(中心 / 外沿)。
 
 const TEX_SIZE: int = 256      # 环贴图边长(整幅映射到影响直径)
 const GRID: int = 64           # 烘焙栅格:64 格,每格 4px;最近邻放大保持像素颗粒
 const RING_PERIOD: float = 0.1 # 出环间隔(秒):约每 0.1s 一环
 
-var radius: float = 300.0   # 影响半径(=爆炸半径,白环由此收束到 0)
+var radius: float = 300.0   # 影响半径(=爆炸半径;环在 0 与 radius 之间走)
 var duration: float = 0.5   # 引信时长(与子弹引信同源,首撞起算)
+var outward: bool = false   # false=外缘向爆心收缩(引力核心)/ true=由爆心向外扩到边缘消散(排斥弹头)
 
 var _tex: Texture2D = null
 var _elapsed: float = 0.0
@@ -25,7 +31,7 @@ func _process(delta: float) -> void:
 	global_rotation = 0.0
 	_elapsed += delta
 	if _elapsed >= duration:
-		queue_free()   # 收束完成;起爆归 BulletBase 管
+		queue_free()   # 环走完(收缩归心/外扩到缘);起爆归 BulletBase 管
 		return
 	queue_redraw()
 
@@ -41,12 +47,13 @@ func _draw() -> void:
 		var p := (_elapsed - start) / span
 		if p <= 0.0 or p >= 1.0:
 			continue
-		var r := radius * (1.0 - p)
+		var r := radius * (p if outward else 1.0 - p)
 		if r < 2.0:
 			continue
-		# 虚→实:随收缩由淡到实
+		# 收缩=虚→实(引力核心)/ 外扩=实→虚、到作用范围边缘消散(排斥弹头)
+		var alpha := lerpf(1.0, 0.3, p) if outward else lerpf(0.25, 1.0, p)
 		draw_texture_rect(_tex, Rect2(-r, -r, r * 2.0, r * 2.0), false,
-				Color(1, 1, 1, lerpf(0.25, 1.0, p)))
+				Color(1, 1, 1, alpha))
 
 # 烘焙像素环:白环 1 格 + 内外各 1 格深色描边(暗底亮边同款风格),环贴着贴图外缘,
 # draw 时整幅映射到 [-r, r],缩放即环半径。

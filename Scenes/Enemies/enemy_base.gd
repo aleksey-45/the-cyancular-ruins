@@ -18,7 +18,7 @@ var use_gravity: bool = true
 var knock_velocity: Vector2 = Vector2.ZERO
 
 
-## 无伤冲击(击退炮/吸力炮):strength 带符号,>0 推离爆心 / <0 吸向爆心(爆炸 knock_velocity 同源)。
+## 无伤冲击(排斥弹头/引力核心):strength 带符号,>0 推离爆心 / <0 吸向爆心(爆炸 knock_velocity 同源)。
 func apply_blast_force(center: Vector2, strength: float) -> void:
 	var dir := MazeGenerator.toroidal_delta_px(center, global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)

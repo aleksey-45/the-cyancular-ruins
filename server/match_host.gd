@@ -437,7 +437,8 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 		"expl_damage": bullet.explosion_damage,
 		"expl_knock": bullet.explosion_knockback,
 		"blast_force": bullet.blast_force,
-		"smoke_duration": bullet.smoke_duration,
+		"blast_falloff": bullet.blast_falloff_mode,   # 起效-距离档(计时爆炸团=线性;视效副本不用裁决,仅记录)
+		"lit_fuse": bullet.fuse_remaining(),   # 计时弹剩余引信(-1=未燃引);旧客户端忽略未知键,可选扩展
 		"ring": bullet.fuse_ring_visual,   # 引信白环(pr_attraction);旧客户端忽略未知键,可选扩展
 	}
 	if bullet.explosion_visual != null:

@@ -16,6 +16,12 @@ func _initialize() -> void:
 			_vanguard()
 		"prop/pr_attraction":
 			_pr_attraction()
+		"prop/pr_knockback":
+			_pr_knockback()
+		"prop/pr_smoke":
+			_pr_smoke()
+		"prop/pr_731505":
+			_pr_731505()
 		_:
 			printerr("GEN FAIL | 未知卡: '%s'(期望 weapon/wp_machete 等)" % card)
 			quit(1)
@@ -181,15 +187,109 @@ func _pr_attraction() -> void:
 			f.close()
 
 
-# 青蓝圆柱罐体(cx=中轴,top=顶沿,y 向下,w×h 含顶/底金属帽):
-# 引信竖条 + 顶帽(盖涡旋标)+ 罐身(左亮缘/右暗影 + 对角螺旋吸入纹)+ 底帽,四角去 1px 圆角。
-func _canister(img: Image, cx: int, top: int, w: int, h: int) -> void:
-	var cap := Color8(66, 74, 86)
-	var cap_lite := Color8(132, 142, 154)
-	var body := Color8(56, 142, 168)
-	var body_lite := Color8(110, 206, 232)
-	var body_hi := Color8(190, 238, 250)
-	var body_dk := Color8(32, 86, 106)
+# ── 排斥弹头 道具(卡 pr_knockback):卡面 96×96 暗底展示 + 对局贴图设计稿 48×48 透明底 ──
+# appearance 约定:橙红色圆柱罐体 + 顶部按压引信 + 罐体白色冲击波标识(像素风:3px 描边+两阶明暗)。
+func _pr_knockback() -> void:
+	var pal := {
+		"body": Color8(198, 90, 40),
+		"body_lite": Color8(240, 152, 92),
+		"body_hi": Color8(255, 214, 168),
+		"body_dk": Color8(134, 50, 24),
+		"mark": Color8(250, 250, 246),   # 白色冲击波标识
+	}
+	var card := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	_canister(card, 48, 24, 34, 52, pal, "shock")
+	# 顺序:环先画在透明像素上,再补底色——底色一填满就再无透明像素可落环
+	_rings_where_empty(card, Vector2(47.5, 51.5), Color8(76, 44, 32))   # 同心环底纹(排斥主题,暖暗色)
+	_fill_bg_where_empty(card, Color8(24, 30, 38))
+	_save("res://DevTools/cards/props/pr_knockback.png", card)
+
+	var world := Image.create(48, 48, false, Image.FORMAT_RGBA8)
+	_canister(world, 24, 10, 20, 30, pal, "shock_small")
+	_outline_silhouette(world)   # 透明底 sprite:1px 深色外描边
+	_save("res://DevTools/cards/props/pr_knockback__world.png", world)
+
+	for p in ["res://DevTools/cards/props/pr_knockback.png",
+			"res://DevTools/cards/props/pr_knockback__world.png"]:
+		var f := FileAccess.open(p + ".meta", FileAccess.WRITE)
+		if f != null:
+			f.store_string("source=ai\nupdated=%s\n" % Time.get_datetime_string_from_system())
+			f.close()
+
+
+# ── 烟雾弹 道具(卡 pr_smoke):卡面 96×96 暗底展示 + 对局贴图设计稿 48×48 透明底 ──
+# appearance 约定:灰绿色圆罐,罐体三道横向散烟孔,顶部拉环引信(像素风)。
+func _pr_smoke() -> void:
+	var pal := {
+		"body": Color8(108, 122, 106),
+		"body_lite": Color8(154, 168, 148),
+		"body_hi": Color8(202, 214, 194),
+		"body_dk": Color8(72, 84, 68),
+	}
+	var card := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	_canister(card, 48, 24, 34, 52, pal, "vents", true)
+	# 顺序:环先画在透明像素上,再补底色——底色一填满就再无透明像素可落环
+	_rings_where_empty(card, Vector2(47.5, 51.5), Color8(40, 52, 44))   # 同心环底纹(烟雾主题,冷暗绿)
+	_fill_bg_where_empty(card, Color8(24, 30, 38))
+	_save("res://DevTools/cards/props/pr_smoke.png", card)
+
+	var world := Image.create(48, 48, false, Image.FORMAT_RGBA8)
+	_canister(world, 24, 10, 20, 30, pal, "vents", true)
+	_outline_silhouette(world)   # 透明底 sprite:1px 深色外描边
+	_save("res://DevTools/cards/props/pr_smoke__world.png", world)
+
+	for p in ["res://DevTools/cards/props/pr_smoke.png",
+			"res://DevTools/cards/props/pr_smoke__world.png"]:
+		var f := FileAccess.open(p + ".meta", FileAccess.WRITE)
+		if f != null:
+			f.store_string("source=ai\nupdated=%s\n" % Time.get_datetime_string_from_system())
+			f.close()
+
+
+# ── 投掷爆炸团 道具(卡 pr_731505,槽 11):卡面 96×96 暗底展示 + 对局贴图设计稿 48×48 透明底 ──
+# appearance 约定:冷色调像素手雷——青蓝罐体,顶部引信,白色爆芒标识(两阶明暗+深描边)。
+func _pr_731505() -> void:
+	var pal := {
+		"body": Color8(56, 110, 158),
+		"body_lite": Color8(112, 178, 224),
+		"body_hi": Color8(190, 232, 250),
+		"body_dk": Color8(32, 70, 108),
+		"mark": Color8(250, 250, 246),   # 白色爆芒标识
+	}
+	var card := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	_canister(card, 48, 24, 34, 52, pal, "shock")
+	# 顺序:环先画在透明像素上,再补底色——底色一填满就再无透明像素可落环
+	_rings_where_empty(card, Vector2(47.5, 51.5), Color8(30, 46, 66))   # 同心环底纹(倒计时主题,冷暗蓝)
+	_fill_bg_where_empty(card, Color8(24, 30, 38))
+	_save("res://DevTools/cards/props/pr_731505.png", card)
+
+	var world := Image.create(48, 48, false, Image.FORMAT_RGBA8)
+	_canister(world, 24, 10, 20, 30, pal, "shock_small")
+	_outline_silhouette(world)   # 透明底 sprite:1px 深色外描边
+	_save("res://DevTools/cards/props/pr_731505__world.png", world)
+
+	for p in ["res://DevTools/cards/props/pr_731505.png",
+			"res://DevTools/cards/props/pr_731505__world.png"]:
+		var f := FileAccess.open(p + ".meta", FileAccess.WRITE)
+		if f != null:
+			f.store_string("source=ai\nupdated=%s\n" % Time.get_datetime_string_from_system())
+			f.close()
+
+
+# 圆柱罐体(cx=中轴,top=顶沿,y 向下,w×h 含顶/底金属帽):
+# 引信竖条 + 顶帽(盖标识)+ 罐身(左亮缘/右暗影 + 对角螺旋纹)+ 底帽,四角去 1px 圆角。
+# pal 缺省 = 引力核心青蓝套;emblem:vortex=顶帽涡旋标(吸引)/ shock|shock_small=罐身中央
+# 白色冲击波标(排斥,大/小尺寸)/ vents=罐身三道横向散烟孔(烟雾弹)。
+# pull_ring=true 时引信旁加拉环(烟雾弹)。旧分支不传参,输出与历史一致。
+func _canister(img: Image, cx: int, top: int, w: int, h: int, pal: Dictionary = {},
+		emblem: String = "vortex", pull_ring: bool = false) -> void:
+	var cap: Color = pal.get("cap", Color8(66, 74, 86))
+	var cap_lite: Color = pal.get("cap_lite", Color8(132, 142, 154))
+	var body: Color = pal.get("body", Color8(56, 142, 168))
+	var body_lite: Color = pal.get("body_lite", Color8(110, 206, 232))
+	var body_hi: Color = pal.get("body_hi", Color8(190, 238, 250))
+	var body_dk: Color = pal.get("body_dk", Color8(32, 86, 106))
+	var mark: Color = pal.get("mark", body_hi)
 	var x0 := cx - w / 2
 	var x1 := cx + (w - 1) / 2
 	var cap_h := maxi(5, h / 8)
@@ -203,7 +303,6 @@ func _canister(img: Image, cx: int, top: int, w: int, h: int) -> void:
 	for y in range(top, top + cap_h):
 		for x in range(x0 + 1, x1):
 			img.set_pixel(x, y, cap_lite if y == top else cap)
-	_vortex(img, cx, top + cap_h / 2, body_hi, body_dk)
 	# 罐身:亮左缘/暗右缘;对角螺旋带(周期 9:2px 暗槽 + 1px 亮棱,读作绕罐螺旋)
 	var by0 := top + cap_h
 	var by1 := top + h - cap_h
@@ -221,6 +320,16 @@ func _canister(img: Image, cx: int, top: int, w: int, h: int) -> void:
 				elif ph < 3:
 					col = body_lite
 			img.set_pixel(x, y, col)
+	# 标识(压在罐体之上):涡旋=顶帽中央(吸引)/ 冲击波=罐身中央(排斥)/ 散烟孔=罐身(烟雾弹)
+	match emblem:
+		"vortex":
+			_vortex(img, cx, top + cap_h / 2, body_hi, body_dk)
+		"shock":
+			_shock_mark(img, cx, (by0 + by1) / 2, mark, 7)
+		"shock_small":
+			_shock_mark(img, cx, (by0 + by1) / 2, mark, 5)
+		"vents":
+			_vent_slits(img, cx, by0, by1, x0, x1, body_dk, body_lite)
 	# 底帽(底沿提亮一圈)
 	for y in range(by1, top + h):
 		for x in range(x0 + 1, x1):
@@ -228,6 +337,42 @@ func _canister(img: Image, cx: int, top: int, w: int, h: int) -> void:
 	# 圆角:罐身与帽衔接的四角去 1px
 	for c in [Vector2i(x0, by0), Vector2i(x1, by0), Vector2i(x0, by1 - 1), Vector2i(x1, by1 - 1)]:
 		img.set_pixel(c.x, c.y, Color(0, 0, 0, 0))
+	# 拉环引信(烟雾弹):D 形环挂在引信竖条左侧,中段 1px 连接位搭在竖条旁
+	if pull_ring:
+		var ry := top - fuse_h - 2
+		for x in range(cx - 5, cx - 1):
+			img.set_pixel(x, ry, cap_lite)
+			img.set_pixel(x, ry + 2, cap_lite)
+		for y in range(ry, ry + 3):
+			img.set_pixel(cx - 5, y, cap_lite)
+		img.set_pixel(cx - 1, ry + 1, cap_lite)
+
+
+# 白色冲击波标(排斥弹头罐身标识):中心实点 + 菱形环 + 四正位放射点,读作由中心向外炸开
+func _shock_mark(img: Image, cx: int, cy: int, col: Color, size: int) -> void:
+	var rows: Array[String]
+	if size < 7:
+		rows = ["..#..", ".#.#.", "#.#.#", ".#.#.", "..#.."]
+	else:
+		rows = ["...#...", ".#...#.", "..#.#..", "#..#..#", "..#.#..", ".#...#.", "...#..."]
+	var off := (size - 1) / 2
+	for y in range(size):
+		for x in range(size):
+			if rows[y][x] == "#":
+				img.set_pixel(cx - off + x, cy - off + y, col)
+
+
+# 三道横向散烟孔(烟雾弹罐身标识):2px 暗槽 + 下缘 1px 亮棱,均布罐身高度 25/50/75%
+func _vent_slits(img: Image, cx: int, by0: int, by1: int, x0: int, x1: int,
+		dark: Color, lite: Color) -> void:
+	var half := int(float(x1 - x0) * 0.30)   # 孔半宽
+	var body_h := by1 - by0
+	for i in range(3):
+		var cy := by0 + int(float(body_h) * (0.25 + 0.25 * float(i)))
+		for x in range(cx - half, cx + half + 1):
+			img.set_pixel(x, cy, dark)
+			img.set_pixel(x, cy + 1, dark)
+			img.set_pixel(x, cy + 2, lite)
 
 
 # 5×5 涡旋标:环(右中开口)+ 中点(暗)+ 钩尾(开口卷向中点),亮色描环

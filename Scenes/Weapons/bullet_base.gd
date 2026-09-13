@@ -30,9 +30,9 @@ var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨
 @export var explosion_damage: int = 35
 @export var explosion_knockback: float = 900.0
 @export var explosion_visual: PackedScene = null
-@export var blast_force: float = 0.0      # >0 击退 / <0 吸引:对范围内实体施加随距离衰减推力(无伤)
-@export var blast_linear_falloff: bool = false  # 冲击按距离线性衰减(pr_attraction 卡约定;缺省二次缓出,击退炮不变)
-@export var fuse_ring_visual: bool = false      # 引信白环:首撞后影响范围外缘不断生成向心收缩的像素白环(pr_attraction)
+@export var blast_force: float = 0.0      # >0 击退 / <0 吸引:对范围内实体施加推力(无伤)
+@export var blast_falloff_mode: int = Explosion.Falloff.QUADRATIC  # 起效-距离关系(Explosion.Falloff),冲击与爆炸伤共用:缺省二次缓出;pr_attraction rev20 / pr_knockback rev2=FLAT 全域等强;计时爆炸团(pr_731505)=LINEAR 线性衰减
+@export var fuse_ring_visual: bool = false      # 引信白环:首撞后引信期间循环出像素白环,方向按 blast_force 符号(推=由爆心外扩/吸=向爆心收缩;引力核心/排斥弹头)
 @export var smoke_duration: float = 0.0   # >0:爆点生成烟雾区(掩护,持续秒)
 
 var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
@@ -202,14 +202,35 @@ func _start_fuse(duration: float) -> void:
 		_spawn_fuse_ring(duration)
 	_fuse_active = true
 
-# 引信白环(pr_attraction):首撞瞬间起环,白环从影响范围最外端向爆心收缩,
-# 引信走完(=最后一环收束到中心)时 _explode 起爆。挂在子弹下,跟着投掷物移动。
+
+# 点燃引信(计时弹:出手即开始倒计时,不依赖首次碰撞;计时爆炸团 pr_731505——
+# 手持阶段已烧掉一段,出手时把「剩余时间」带进来,到点即爆、与是否撞墙无关)。
+# 已燃引时再调用不重置(与 _start_fuse 的首次碰撞规则一致);碰撞反弹只衰减速度,
+# 不会改引信时长(_start_fuse 的 not _fuse_active 守卫)。
+func light_fuse(duration: float) -> void:
+	if _fuse_active:
+		return
+	_fuse_duration = maxf(duration, 0.0)
+	_fuse_active = true
+
+
+## 剩余引信(秒;未燃引 = -1)。PvP 广播计时弹用:非射手客户端的视觉副本据此
+## 同步起爆时机(伤害本就只在服务器结算,这里只管视效对齐)。
+func fuse_remaining() -> float:
+	if not _fuse_active:
+		return -1.0
+	return maxf(_fuse_duration - _fuse_elapsed, 0.0)
+
+# 引信白环(引力核心/排斥弹头):首撞瞬间起环;方向按 blast_force 符号——
+# 吸(<0)=从影响范围最外端向爆心收缩,推(>0)=由爆心一圈圈外扩到作用范围边缘;
+# 引信走完(=最后一环抵达端点)时 _explode 起爆。挂在子弹下,跟着投掷物移动。
 func _spawn_fuse_ring(duration: float) -> void:
 	if not fuse_ring_visual or duration <= 0.0 or explosion_radius <= 0.0:
 		return
 	var ring: Node2D = BlastRingFx.new()
 	ring.radius = explosion_radius
 	ring.duration = duration
+	ring.outward = blast_force > 0.0
 	ring.scale = Vector2.ONE / maxf(size, 0.01)   # 抵消 setup() 的整节点缩放,环按世界像素画
 	add_child(ring)
 
@@ -234,6 +255,6 @@ func _explode() -> void:
 		Smoke.spawn_zone(get_viewport(), global_position, explosion_radius, smoke_duration)
 	if apply_damage:
 		if blast_force != 0.0:
-			Explosion.apply_force_aoe(global_position, explosion_radius, blast_force, shooter, self, blast_linear_falloff)
+			Explosion.apply_force_aoe(global_position, explosion_radius, blast_force, shooter, self, blast_falloff_mode)
 		else:
-			Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)
+			Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter, blast_falloff_mode)

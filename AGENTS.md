@@ -140,6 +140,9 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **美术槽**:每卡多槽(武器:卡面/HUD 白剪影/枪身/弹丸;角色:卡面/角色精灵设计稿;道具:卡面/对局贴图设计稿),文件在 `DevTools/cards/<type>s/<id>[_<slot>].png`;上传支持 png/webp/jpg(魔数校验)。
 - **游戏侧消费(人工优先)**:`WeaponComponent.custom_art_path()` + `silhouette()`(assets/custom/silhouettes/<卡id>.png 优先)、`weapon_base`(guns/<id>.png)、`bullet_base`(bullets/<id>.png);干员对局内精灵与道具实体贴图当前为设计稿槽(接入实体为后续施工项)。
 - **卡数据**:格式与旧版完全兼容(cards/ 三目录);`notes` 字段=「特殊要求」逐字进提示词。示范模板内置于 editor_schema(新建可选)。
+- **卡直读数值(免施工)**:保存卡时自动镜像 JSON 到 `assets/custom/cards/<id>.json`,现役武器(槽1~6)在 equip 时由 `WeaponComponent.apply_card_stats` 覆盖基础数值(伤害/间隔/弹夹/弹道/散布/tier 等,CARD_STAT_KEYS 映射)——改数值直接保存即生效,不必经 AI;机制类改动仍走施工。
+- **增量修改**:「修改要求」发送时 rev+1 并追加 `mod_history`(修改历史,随卡持久化、随提示词下发),提示词声明"只做增量/禁回退";施工按钮分「全新施工/增量修改」两组。
+- **道具两维分类**:`kind`=使用方式(药剂/投掷/术式/铭文/工具),`effect`=效果(击退/吸引/烟雾);旧卡( kind=效果名)读档自动迁移为 kind=thrown+effect 承接。
 - **施工流程**:选卡→上传/导出美术→[生成提示词+发送](CLI 机制沿用已验证做法:零中文 bat、仓库根 %~dp0 推导、心跳行、退出标记落日志;10s 无日志判失败)→[停止];或[仅复制提示词]兜底。提示词含:美术资产政策(人工槽禁改/占位贴近原作)+ 槽位实测状态 + 卡 JSON + 特殊要求 + 路径白名单 + headless 验证 + `CARD-DONE <type>/<id> rev<N>` 回报。
 
 ## 进度与计划(2026-09-05 更新,KikuchiHeinr 实验分支)

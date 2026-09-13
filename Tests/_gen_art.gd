@@ -1,6 +1,6 @@
 extends SceneTree
 
-# 生成 4 张专属像素画贴图(零外部素材,项目程序化范式)。
+# 生成 5 张专属像素画贴图(零外部素材,项目程序化范式)。
 # 风格约定(与 weapons.png 同调):1px 深描边 + 2 阶明暗 + 单强调色;最近邻,无抗锯齿。
 
 const OUTLINE := Color(0.08, 0.09, 0.12)
@@ -18,6 +18,8 @@ func _initialize() -> void:
 			Color(0.20, 0.66, 0.85), Color(0.13, 0.46, 0.60), "pull")
 	_canister("res://assets/textures/prop_smoke.png",
 			Color(0.48, 0.52, 0.47), Color(0.34, 0.38, 0.34), "smoke")
+	_canister("res://assets/textures/prop_timed_bomb.png",
+			Color(0.30, 0.55, 0.78), Color(0.19, 0.37, 0.55), "boom")
 	print("ART GEN: OK")
 	quit(0)
 
@@ -77,7 +79,7 @@ func _minigun(path: String) -> void:
 	img.save_png(path)
 
 
-## 道具罐体(18×24):圆柱罐 + 顶盖引信;mark = push/pull/smoke 三种标识
+## 道具罐体(18×24):圆柱罐 + 顶盖引信;mark = push/pull/smoke/boom 四种标识
 func _canister(path: String, body: Color, body_d: Color, mark: String) -> void:
 	var img := _img(18, 24)
 	# 罐体(x3..14,y5..21):左亮右暗圆柱感
@@ -112,4 +114,11 @@ func _canister(path: String, body: Color, body_d: Color, mark: String) -> void:
 			_rect(img, 6, 9, 12, 10, w)
 			_rect(img, 6, 13, 12, 14, w)
 			_rect(img, 6, 17, 12, 18, w)
+		"boom":
+			# 中央白点 + 四角短刺(迷你爆芒,计时爆炸团)
+			_rect(img, 8, 11, 10, 13, w)
+			_px(img, 7, 10, w)
+			_px(img, 11, 10, w)
+			_px(img, 7, 14, w)
+			_px(img, 11, 14, w)
 	img.save_png(path)
