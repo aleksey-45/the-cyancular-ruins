@@ -75,6 +75,8 @@ func run(card_type: String, card_id: String, prompt: String, transport = null) -
 	_tag = "%s_%s_rev%d_%s" % [card_type, card_id, int(card_id.hash() % 1000), _stamp()]
 	_tag = "%s_%s_%s" % [card_type, card_id, _stamp()]
 	_prompt_path = "%s/%s.md" % [AgentLink.ClaudeCliTransport.PROMPT_DIR, _tag]
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(
+			AgentLink.ClaudeCliTransport.PROMPT_DIR))   # 先建目录再写文件(否则 .prompts 不存在,写入必败)
 	var pf := FileAccess.open(ProjectSettings.globalize_path(_prompt_path), FileAccess.WRITE)
 	if pf == null:
 		log_line.emit("[失败] 提示词写不进去:%s" % _prompt_path)
