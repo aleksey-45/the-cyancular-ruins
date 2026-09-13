@@ -36,6 +36,25 @@ class ClaudeCliTransport:
 	func name() -> String:
 		return "Claude Code CLI(本机)"
 
+	## bat 内容纯函数(可测):tag = 提示词文件名主干(ASCII)。
+	## 纯拼接,不用 % 格式化:bat 里的 cmd 百分号与 GDScript 格式符互相踩(实际踩坑:
+	## %s 未替换进 bat → LOGF=%s.log 被 cmd 解析成 s.log,claude 读空文件秒退)。
+	static func build_cli_bat(tag: String) -> String:
+		var L: Array[String] = [
+			"@echo off",
+			"setlocal enabledelayedexpansion",
+			"rem repo root derived from this bat's own dir: keeps this file ASCII-only",
+			"set \"REPO=%~dp0..\\..\\..\"",
+			"for %%i in (\"%REPO%\") do set \"REPO=%%~fi\"",
+			"cd /d \"%REPO%\"",
+			"set \"PROMPT=%REPO%\\DevTools\\editor\\.prompts\\" + tag + ".md\"",
+			"set \"LOGF=%REPO%\\DevTools\\editor\\.logs\\" + tag + ".log\"",
+			"> \"%LOGF%\" echo __AGENT_STARTED__",
+			"claude -p --permission-mode acceptEdits --output-format text --verbose < \"%PROMPT%\" >> \"%LOGF%\" 2>&1",
+			">> \"%LOGF%\" echo " + EXIT_MARK + "!ERRORLEVEL!__",
+		]
+		return "\r\n".join(L) + "\r\n"
+
 	func start(prompt_abs: String, log_abs: String) -> int:
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(PROMPT_DIR))
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(LOG_DIR))
@@ -44,21 +63,7 @@ class ClaudeCliTransport:
 		var f := FileAccess.open(bat_abs, FileAccess.WRITE)
 		if f == null:
 			return 0
-		# 纯 ASCII bat:仓库根从 bat 自身位置(<repo>/DevTools/editor/.logs)向上三级推导
-		var L: Array[String] = [
-			"@echo off",
-			"setlocal enabledelayedexpansion",
-			"rem repo root derived from this bat's own dir: keeps this file ASCII-only",
-			"set \"REPO=%~dp0..\\..\\..\"",
-			"for %%i in (\"%REPO%\") do set \"REPO=%%~fi\"",
-			"cd /d \"%REPO%\"",
-			"set \"PROMPT=%REPO%\\DevTools\\editor\\.prompts\\%s\"" % (tag + ".md"),
-			"set \"LOGF=%REPO%\\DevTools\\editor\\.logs\\%s.log\"" % tag,
-			"> \"%LOGF%\" echo __AGENT_STARTED__",
-			"claude -p --permission-mode acceptEdits --output-format text --verbose < \"%%PROMPT%%\" >> \"%%LOGF%%\" 2>&1",
-			">> \"%%LOGF%%\" echo %s!ERRORLEVEL!__" % EXIT_MARK,
-		]
-		f.store_string("\r\n".join(L) + "\r\n")
+		f.store_string(build_cli_bat(tag))   # 纯 ASCII bat:仓库根从 bat 自身位置向上三级推导
 		f.close()
 		return OS.create_process("cmd.exe", PackedStringArray(["/c", bat_abs]))
 
@@ -101,8 +106,8 @@ func run(card_type: String, card_id: String, prompt: String, transport = null) -
 	_timer.timeout.connect(_poll)
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree != null:
+		_timer.autostart = true
 		tree.root.add_child.call_deferred(_timer)
-		_timer.start()
 	return _tag
 
 
