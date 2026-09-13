@@ -76,12 +76,12 @@ func _ready() -> void:
 	var refresh := _make_button(Vector2(330, 114), "刷新列表", _on_refresh_pressed)
 	var srv_btn := _make_button(Vector2(540, 114), "启动/重启本机服务器", _on_local_server_pressed)
 	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
-	_ip_label = UiFactory.label("", 16, Color(0.65, 0.9, 1.0))
+	_ip_label = UiFactory.label("", 16, UiFactory.C_ACCENT)
 	_ip_label.position = Vector2(1250, 22)   # 页面顶部空带(左列 y160 有提示文字、右列 y60 起是建房面板)
 	add_child(_ip_label)
 	_ip_label.text = LocalServer.lan_ip_hint()   # 本机(=自建服同机)IP 常驻显示
 
-	var cap := UiFactory.label("公开房间列表(点击直接加入)", 32, Color(0.55, 0.95, 1.0))
+	var cap := UiFactory.label("公开房间列表(点击直接加入)", 32, UiFactory.C_ACCENT)
 	cap.position = Vector2(60, 186)
 	add_child(cap)
 
@@ -104,7 +104,7 @@ func _ready() -> void:
 	join_btn.pressed.connect(_on_join_pressed)
 	add_child(join_btn)
 
-	_status = UiFactory.label("", 32, Color(0.95, 0.95, 0.85))
+	_status = UiFactory.label("", 32, UiFactory.C_TEXT)
 	_status.position = Vector2(60, 880)
 	_status.size = Vector2(900, 120)
 	add_child(_status)
@@ -133,18 +133,19 @@ func _build_create_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.position = Vector2(1000, 60)
 	panel.custom_minimum_size = Vector2(620, 0)
+	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
 	add_child(panel)
 	_create_panel = panel   # 成员引用:进等待室时隐藏、退房恢复
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 12)
 	panel.add_child(vb)
 
-	vb.add_child(UiFactory.label("—— 创建大乱斗房间 ——", 32, Color(0.55, 0.95, 1.0)))
+	vb.add_child(UiFactory.label("—— 创建大乱斗房间 ——", 32, UiFactory.C_ACCENT))
 
 	_public_check = CheckButton.new()
 	_public_check.text = "公开房间(不勾选 = 私密,凭邀请码进入)"
 	_public_check.button_pressed = true
-	UiFactory.style_control(_public_check, 32)
+	UiFactory.style_check(_public_check, 32)
 	_public_check.toggled.connect(func(on: bool) -> void:
 		_create_invite_edit.visible = not on)
 	vb.add_child(_public_check)
@@ -154,6 +155,7 @@ func _build_create_panel() -> void:
 	_create_invite_edit.visible = false
 	_create_invite_edit.custom_minimum_size = Vector2(0, 40)
 	UiFactory.style_control(_create_invite_edit, 16)   # 同 _make_line_edit:显式字号=引擎默认,不靠事后递归补字体
+	UiFactory.style_line_edit(_create_invite_edit)
 	vb.add_child(_create_invite_edit)
 
 	var mrow := HBoxContainer.new()
@@ -166,10 +168,11 @@ func _build_create_panel() -> void:
 	_max_slider.step = 1
 	_max_slider.value = 4
 	_max_slider.custom_minimum_size = Vector2(300, 30)
+	UiFactory.style_slider(_max_slider)
 	_max_slider.value_changed.connect(func(v: float) -> void:
 		_max_label.text = "%d 人" % int(v))
 	mrow.add_child(_max_slider)
-	_max_label = UiFactory.label("4 人", 32, Color(0.95, 0.95, 0.85))
+	_max_label = UiFactory.label("4 人", 32, UiFactory.C_TEXT)
 	mrow.add_child(_max_label)
 
 	# 一局限时(分钟):房主可调 1~15 分钟(默认 5);随房主报到 opts 带入 RoyaleHost
@@ -183,8 +186,9 @@ func _build_create_panel() -> void:
 	tslider.step = 1.0
 	tslider.value = Settings.royale_match_min
 	tslider.custom_minimum_size = Vector2(300, 30)
+	UiFactory.style_slider(tslider)
 	trow.add_child(tslider)
-	var tlabel := UiFactory.label("%d 分钟" % int(Settings.royale_match_min), 32, Color(0.95, 0.95, 0.85))
+	var tlabel := UiFactory.label("%d 分钟" % int(Settings.royale_match_min), 32, UiFactory.C_TEXT)
 	trow.add_child(tlabel)
 	tslider.value_changed.connect(func(v: float) -> void:
 		Settings.royale_match_min = v
@@ -226,6 +230,7 @@ func _build_create_panel() -> void:
 	hue_slider.step = 5.0
 	hue_slider.value = Settings.pvp_color_hue
 	hue_slider.custom_minimum_size = Vector2(300, 30)
+	UiFactory.style_slider(hue_slider)
 	crow.add_child(hue_slider)
 	var chip := ColorRect.new()
 	chip.custom_minimum_size = Vector2(46, 30)
@@ -236,7 +241,7 @@ func _build_create_panel() -> void:
 		Settings.save()
 		chip.color = _hue_preview_color(v))
 
-	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, Color(0.7, 0.75, 0.8)))
+	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, UiFactory.C_TEXT_DIM))
 
 	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
 	create.pressed.connect(_on_create_pressed)
@@ -254,6 +259,7 @@ func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> Line
 	le.placeholder_text = placeholder
 	le.text = initial
 	UiFactory.style_control(le, 16)   # 16 = 引擎默认主题字号,与 KH 原观感一致
+	UiFactory.style_line_edit(le)
 	add_child(le)
 	return le
 
@@ -263,6 +269,7 @@ func _make_button(pos: Vector2, text: String, fn: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
 	UiFactory.style_control(b, 16)
+	UiFactory.style_button(b)
 	b.position = pos
 	b.size = Vector2(200, 48)
 	b.pressed.connect(fn)
@@ -497,7 +504,7 @@ func _on_room_state(state: Dictionary) -> void:
 		var is_me := role == my_role
 		var is_host := int(state.get("host_role", 0)) == role
 		var row := UiFactory.label("%d. %s%s%s" % [role, nm, "(我)" if is_me else "", "(房主)" if is_host else ""],
-				32, Color(0.9, 0.95, 1.0) if not is_me else Color(0.55, 0.95, 1.0))
+				32, UiFactory.C_TEXT if not is_me else UiFactory.C_ACCENT)
 		_wait_players.add_child(row)
 	_wait_count.text = "%d / %d 人(至少 2 人可开局)" % [plist.size(), int(state.get("max_players", 4))]
 	_start_btn.visible = _host
@@ -515,7 +522,7 @@ func _build_wait_panel() -> void:
 	vb.add_theme_constant_override("separation", 14)
 	vb.custom_minimum_size = Vector2(640, 0)
 	_wait_panel.add_child(vb)
-	_wait_title = UiFactory.label("", 32, Color(0.55, 0.95, 1.0))
+	_wait_title = UiFactory.label("", 32, UiFactory.C_ACCENT)
 	vb.add_child(_wait_title)
 	_wait_players = VBoxContainer.new()
 	_wait_players.add_theme_constant_override("separation", 8)

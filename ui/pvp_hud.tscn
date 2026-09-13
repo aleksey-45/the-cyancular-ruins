@@ -1,7 +1,14 @@
-[gd_scene format=3 uid="uid://pvphud000000a1"]
+[gd_scene load_steps=4 format=3 uid="uid://pvphud000000a1"]
 
 [ext_resource type="Script" path="res://ui/pvp_hud.gd" id="1"]
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
+
+[sub_resource type="StyleBoxFlat" id="Plate"]
+bg_color = Color(0, 0, 0, 0.45)
+content_margin_left = 24.0
+content_margin_right = 24.0
+content_margin_top = 8.0
+content_margin_bottom = 8.0
 
 [node name="PvpHud" type="CanvasLayer"]
 layer = 130
@@ -42,32 +49,39 @@ theme_override_fonts/font = ExtResource("2")
 text = ""
 horizontal_alignment = 2
 
-[node name="ScoreLabel" type="Label" parent="."]
+; 记分条垫深底板:它对局中直接压在地图上,地图开阔区是浅灰蓝 —— 浅色文字压上去读不清。
+; 底板由 PanelContainer 按内容撑开(不是把 Label 拉成一条 1240 宽的横条),故包一层 wrapper。
+[node name="ScoreWrap" type="PanelContainer" parent="."]
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -620.0
 offset_top = 16.0
-offset_right = 620.0
-offset_bottom = 70.0
 grow_horizontal = 2
 grow_vertical = 1
-horizontal_alignment = 1
+mouse_filter = 2
+theme_override_styles/panel = SubResource("Plate")
+
+[node name="ScoreLabel" type="Label" parent="ScoreWrap"]
 theme_override_colors/font_color = Color(0.9, 0.95, 1.0, 1.0)
 theme_override_font_sizes/font_size = 32
 theme_override_fonts/font = ExtResource("2")
 text = ""
+horizontal_alignment = 1
 
-[node name="PingLabel" type="Label" parent="."]
+[node name="PingWrap" type="PanelContainer" parent="."]
 anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -260.0
-offset_top = -54.0
-offset_right = -20.0
-offset_bottom = -18.0
+offset_left = -24.0
+offset_top = -24.0
+offset_right = -24.0
+offset_bottom = -24.0
 grow_horizontal = 0
 grow_vertical = 0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("Plate")
+
+[node name="PingLabel" type="Label" parent="PingWrap"]
 mouse_filter = 2
 horizontal_alignment = 2
 theme_override_colors/font_color = Color(0.75, 0.8, 0.9, 0.9)

@@ -21,7 +21,6 @@ var sfx_volume: float = 1.0:
 
 # ── 通用 ──
 var wheel_switch: bool = false    # 鼠标滚轮切枪
-var reload_enabled: bool = true   # 换弹装填(实验性;关闭=旧版无限弹;仅单机生效)
 
 # ── 单人开局选项存档(记住上次选择)──
 var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
@@ -109,7 +108,6 @@ func save() -> void:
 	cf.set_value("audio", "master_volume", master_volume)
 	cf.set_value("audio", "sfx_volume", sfx_volume)
 	cf.set_value("controls", "wheel_switch", wheel_switch)
-	cf.set_value("gameplay", "reload_enabled", reload_enabled)
 	cf.set_value("single", "disabled_weapons", sp_disabled_weapons)
 	cf.set_value("pvp", "show_trajectories", pvp_show_trajectories)
 	cf.set_value("pvp", "round_full_heal", pvp_round_full_heal)
@@ -138,7 +136,6 @@ func load_settings() -> void:
 	master_volume = float(cf.get_value("audio", "master_volume", 0.8))
 	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
 	wheel_switch = bool(cf.get_value("controls", "wheel_switch", false))
-	reload_enabled = bool(cf.get_value("gameplay", "reload_enabled", true))
 	sp_disabled_weapons.assign(cf.get_value("single", "disabled_weapons", []))
 	pvp_show_trajectories = bool(cf.get_value("pvp", "show_trajectories", true))
 	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))

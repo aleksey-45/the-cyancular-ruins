@@ -31,7 +31,9 @@ func _ready() -> void:
 	await get_tree().process_frame   # 等一次布局,锚点才换算成实际矩形
 	await get_tree().process_frame
 
-	var label := hud.get_node_or_null("ScoreLabel") as Label
+	# 用 find_child 而不是固定路径:记分条现在包在 ScoreWrap(PanelContainer,给底板按内容撑开)
+	# 里 —— 它是一次版式重构,取节点的方式不该跟着路径一起脆。
+	var label := hud.find_child("ScoreLabel", true, false) as Label
 	if label == null:
 		print("[hud]   ✗ 取不到 ScoreLabel(改名了?布局探针的判据要跟着改)")
 		print("PVP HUD LAYOUT PROBE: FAIL")

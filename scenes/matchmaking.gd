@@ -36,7 +36,7 @@ func _ready() -> void:
 	var srv_btn := _menu_button("启动/重启本机服务器", Vector2(432, 114), Vector2(200, 48),
 			_on_local_server_pressed)
 	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
-	_ip_label = UiFactory.label(LocalServer.lan_ip_hint(), 16, Color(0.65, 0.9, 1.0))
+	_ip_label = UiFactory.label(LocalServer.lan_ip_hint(), 16, UiFactory.C_ACCENT)
 	_ip_label.position = Vector2(432, 166)
 	add_child(_ip_label)
 
@@ -54,9 +54,11 @@ func _ready() -> void:
 
 	_menu_button("建房", Vector2(60, 240), Vector2(180, 48), _on_create_pressed)
 	_menu_button("加入", Vector2(260, 240), Vector2(180, 48), _on_join_pressed)
-	_menu_button("返回", Vector2(60, 400), Vector2(180, 48), _on_back_pressed)
+	# 返回放在整列最下方:原先在 y=400 —— 上不着天下不着地地插在状态行与房间列表之间,
+	# 既不属于上面的表单、也不属于下面的列表(2026-09-13 视觉评析)。
+	_menu_button("返回", Vector2(60, 1090), Vector2(180, 48), _on_back_pressed)
 
-	var cap := UiFactory.label("房间列表(点击即加入;也可在上方填房间号)", 16)
+	var cap := UiFactory.label("房间列表(点击即加入;也可在上方填房间号)", 16, UiFactory.C_TEXT_DIM)
 	cap.position = Vector2(60, 460)
 	cap.size = Vector2(700, 30)
 	add_child(cap)
@@ -127,13 +129,14 @@ func _build_options_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.position = Vector2(980, 60)
 	panel.custom_minimum_size = Vector2(640, 0)
+	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
 	add_child(panel)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 10)
 	panel.add_child(vb)
 
-	vb.add_child(UiFactory.label("—— 对战选项 ——", 32, Color(0.55, 0.95, 1.0)))
-	vb.add_child(UiFactory.label("(规则项以房主设置为准)", 16, Color(0.7, 0.75, 0.8)))
+	vb.add_child(UiFactory.label("—— 对战选项 ——", 32, UiFactory.C_ACCENT))
+	vb.add_child(UiFactory.label("(规则项以房主设置为准)", 16, UiFactory.C_TEXT_DIM))
 
 	vb.add_child(_opt_check("显示敌方武器轨迹", Settings.pvp_show_trajectories, func(on: bool) -> void:
 		Settings.pvp_show_trajectories = on
@@ -152,10 +155,10 @@ func _build_options_panel() -> void:
 		Settings.save()))
 
 	# 禁用武器(房主生效):2 列网格 + 定尺寸剪影(横排会溢出屏幕)
-	vb.add_child(UiFactory.label("禁用武器(房主生效):", 32))
+	vb.add_child(UiFactory.label("禁用武器(房主生效):", 32, UiFactory.C_ACCENT))
 	var wgrid := GridContainer.new()
 	wgrid.columns = 2
-	wgrid.add_theme_constant_override("h_separation", 10)
+	wgrid.add_theme_constant_override("h_separation", 26)   # 剪影是长条形,列挨太近会与邻列挤在一起
 	wgrid.add_theme_constant_override("v_separation", 6)
 	vb.add_child(wgrid)
 	for slot in [1, 2, 3, 4, 5, 6]:
@@ -180,6 +183,7 @@ func _build_options_panel() -> void:
 	hue_slider.step = 5.0
 	hue_slider.value = Settings.pvp_color_hue
 	hue_slider.custom_minimum_size = Vector2(280, 24)
+	UiFactory.style_slider(hue_slider)
 	crow.add_child(hue_slider)
 	var chip := ColorRect.new()
 	chip.custom_minimum_size = Vector2(48, 24)
@@ -196,16 +200,27 @@ func _hue_preview_color(hue_deg: float) -> Color:
 	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
 
 
-# CheckButton 无 UiFactory 工厂方法 → 走 style_control 套字体与字号(与设置菜单同一做法)
-func _opt_check(text: String, initial: bool, on_toggle: Callable) -> CheckButton:
+# 开关行 = 定宽标签列 + 紧邻开关。原先返回裸 CheckButton,被 VBox 拉到面板全宽,
+# 标签在 x≈975、开关被推到 x≈1650(中间 650px 死区),两者读成不相干的两个元素
+# (2026-09-13 视觉评析)。定宽列同时让 5 个开关纵向对齐。
+const OPT_LABEL_W := 440.0
+
+func _opt_check(text: String, initial: bool, on_toggle: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	var lab := UiFactory.label(text, 32, UiFactory.C_TEXT)
+	lab.custom_minimum_size = Vector2(OPT_LABEL_W, 0)
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(lab)
 	var cb := CheckButton.new()
-	cb.text = text
 	cb.button_pressed = initial
-	UiFactory.style_control(cb, 32)
+	cb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	UiFactory.style_check(cb, 32)
 	cb.toggled.connect(func(on: bool) -> void:
 		Sfx.play("switch")
 		on_toggle.call(on))
-	return cb
+	row.add_child(cb)
+	return row
 
 
 func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
@@ -215,6 +230,7 @@ func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> Line
 	le.placeholder_text = placeholder
 	le.text = initial
 	UiFactory.style_control(le, 16)   # 16 = 引擎默认主题字号,与 KH 原观感一致
+	UiFactory.style_line_edit(le)
 	add_child(le)
 	return le
 
@@ -225,6 +241,7 @@ func _menu_button(text: String, pos: Vector2, size: Vector2, fn: Callable) -> Bu
 	var b := Button.new()
 	b.text = text
 	UiFactory.style_control(b, 16)
+	UiFactory.style_button(b)
 	b.position = pos
 	b.custom_minimum_size = size
 	b.size = size
@@ -368,9 +385,14 @@ func _on_room_list(rooms: Array) -> void:
 		if not names.is_empty():
 			occ = "   玩家: " + ", ".join(names)
 		var btn := Button.new()
-		btn.text = "房间 %s      %d/2%s" % [code, players, occ]
+		btn.text = "房间 %s    %d/2%s" % [code, players, occ]
 		UiFactory.style_control(btn, 16)
+		UiFactory.style_row_button(btn)
 		btn.custom_minimum_size = Vector2(600, 46)
+		# 左对齐:房间号是定宽段(「房间」+定长码),人数也是定宽段,故左对齐后
+		# 两行的房间号列 / 人数列天然对齐。原先居中排版,行的长短一变整串就跟着左右漂
+		# ——「1/2」在两行里位置都不同,读起来是一堆居中的字而不是一张表。
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		# 点击方块直接加入(已满的由服务器拒绝并自动刷新列表)
 		btn.disabled = false
 		btn.focus_mode = Control.FOCUS_ALL

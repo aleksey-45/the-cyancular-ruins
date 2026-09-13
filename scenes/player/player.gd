@@ -592,9 +592,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				# 一帧是同一个理由(level_0.gd 的注释记着"立刻摘树会触发 CanvasItem EXIT_TREE")。
 				(lvl as Level0).restart_single.call_deferred()
 		return
-	# R 换弹(实验性,仅单机):站立时给当前武器上弹(倒地时 R 仍是重载场景,见上)。
+	# R 换弹(仅单机):站立时给当前武器上弹(倒地时 R 仍是重载场景,见上)。
 	# PvP 不开换弹(reload_active() 恒 false),故只单机生效。
-	if event.is_action_pressed("R") and Settings.reload_enabled and not Level0.pvp_mode:
+	if event.is_action_pressed("R") and not Level0.pvp_mode:
 		var w := weapons.current_weapon()
 		if w != null:
 			w.start_reload()

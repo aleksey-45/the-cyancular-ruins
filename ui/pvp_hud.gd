@@ -12,12 +12,12 @@ const ST_PLAYING := 1
 const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
-@onready var _score_label: Label = $ScoreLabel
+@onready var _score_label: Label = $ScoreWrap/ScoreLabel
 @onready var _mask: ColorRect = $Mask
 @onready var _center: CenterContainer = $Center
 @onready var _big: Label = $Center/VBox/BigLabel
 @onready var _sub: Label = $Center/VBox/SubLabel
-@onready var _ping_label: Label = $PingLabel
+@onready var _ping_label: Label = $PingWrap/PingLabel
 
 var _countdown := 0.0
 var _in_countdown := false
@@ -72,7 +72,10 @@ func _on_round_state(data: Dictionary) -> void:
 	var s2: int = int(scores.get(2, 0))
 	var w1: int = int(rounds_won.get(1, 0))
 	var w2: int = int(rounds_won.get(2, 0))
-	_score_label.text = "P1 击杀 %d    P2 击杀 %d    -    局胜 %d - %d    第 %d 局" % [s1, s2, w1, w2, round]
+	# 段间只用留白分段。原先「击杀 5    -    局胜」里那个孤立的 "-" 与「局胜 1 - 0」的连字符
+	# 同形,一段话里出现两种含义的短横(2026-09-13 视觉评析)。
+	_score_label.text = "P1 击杀 %d        P2 击杀 %d        局胜 %d - %d        第 %d 局" % [
+			s1, s2, w1, w2, round]
 	var me: int = PvpSession.role
 	match state:
 		ST_COUNTDOWN:

@@ -133,9 +133,9 @@ func _build_new_ui() -> void:
 	_ui_layer.add_child(dim)
 
 	# 大标题:中央浮现(描边同色加粗);下面一行版本号
-	var title := UiFactory.label("The Cyancular Ruins", 96, Color(0.55, 0.95, 1.0))
+	var title := UiFactory.label("The Cyancular Ruins", 96, UiFactory.C_ACCENT)
 	title.add_theme_constant_override("outline_size", 12)
-	title.add_theme_color_override("font_outline_color", Color(0.55, 0.95, 1.0))
+	title.add_theme_color_override("font_outline_color", UiFactory.C_ACCENT)
 	title.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	title.anchor_left = 0.5
 	title.anchor_right = 0.5
@@ -146,27 +146,35 @@ func _build_new_ui() -> void:
 	title.modulate.a = 0.0
 	_ui_layer.add_child(title)
 
-	# --nover 的处理收在 version_string() 里(单一收口),这里不再分叉
-	var ver := UiFactory.label(version_string(), 32, Color(0.75, 0.85, 0.9, 0.9))
-	ver.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	ver.anchor_left = 0.5
-	ver.anchor_right = 0.5
-	ver.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	ver.offset_top = 352.0
-	ver.offset_bottom = 392.0
-	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# --nover 的处理收在 version_string() 里(单一收口),这里不再分叉。
+	# 版本号放左下角、小一号、压暗:原先居中挂在标题正下方 —— 位置与字号都让它读成
+	# 标题的「副标题」,和真正的模式按钮抢视线(2026-09-13 视觉评析)。
+	var ver := UiFactory.label(version_string(), 16, UiFactory.C_TEXT_DIM)
+	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	ver.offset_left = 24.0
+	ver.offset_right = 900.0
+	ver.offset_top = -40.0
+	ver.offset_bottom = -16.0
+	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	ver.modulate.a = 0.0
 	_ui_layer.add_child(ver)
 
-	# 模式按钮:标题之后从中央依次浮现
+	# 模式按钮:标题之后从中央依次浮现。
+	# 三组分开 ——「开始游戏」/「选项」/「退出」:原先 6 个按钮平铺、间距一律 18px,
+	# 退出与单人模式同等分量(2026-09-13 视觉评析:这是会被误点的版式)。
 	var box := VBoxContainer.new()
 	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
 	box.offset_top = 130.0
-	box.add_theme_constant_override("separation", 18)
+	box.add_theme_constant_override("separation", 34)   # 组与组之间的空档
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_ui_layer.add_child(box)
+
+	var play_group := _btn_group()
+	var opt_group := _btn_group()
+	box.add_child(play_group)
+	box.add_child(opt_group)
 
 	var start_btn := UiFactory.button("单 人 模 式", 32)
 	start_btn.pressed.connect(_on_single_pressed)
@@ -181,18 +189,25 @@ func _build_new_ui() -> void:
 		PvpSession.reset()
 		PvpSession.royale = true
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
-	var settings_btn := UiFactory.button("设      置", 32)
+	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
+	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽
+	# 也不成体系(2026-09-13 视觉评析)。按钮本身 420 宽居中,标签不必再自己凑宽度。
+	var settings_btn := UiFactory.button("设 置", 32)
 	settings_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/settings_menu.tscn"))
 	var ver_btn := UiFactory.button("版 本 信 息", 32)
 	ver_btn.pressed.connect(_on_version_pressed)
-	var quit_btn := UiFactory.button("退      出", 32)
+	# 退出用弱化变体:常态描边与文字都压暗一档,不与「单人模式」抢注意力。
+	var quit_btn := UiFactory.button("退 出", 32, Vector2(420, 64), "quiet")
 	quit_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().quit())
-	for b in [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]:
-		box.add_child(b)
+	for b in [start_btn, multi_btn, royale_btn]:
+		play_group.add_child(b)
+	for b in [settings_btn, ver_btn]:
+		opt_group.add_child(b)
+	box.add_child(quit_btn)
 
 	# 浮现动画:标题先出(淡入),按钮依次淡入
 	var tw := create_tween()
@@ -203,6 +218,13 @@ func _build_new_ui() -> void:
 	for b in [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]:
 		_emerge(b, delay, 0.5)
 		delay += 0.16
+
+
+# 一组按钮:组内紧凑(14),组与组之间靠外层 VBox 的 separation(34)拉开。
+func _btn_group() -> VBoxContainer:
+	var g := VBoxContainer.new()
+	g.add_theme_constant_override("separation", 14)
+	return g
 
 
 # 元素浮现:延迟后淡入。按钮由容器管理布局,只做透明度。
@@ -232,25 +254,32 @@ func _on_version_pressed() -> void:
 
 
 # ── 版本信息面板:当前版本 + 提交历史 ──
+# 提交行的固定宽度(见 _build_ver_panel 里「钉死行宽」那段)。
+const ROW_W := 1100.0
+
+
 func _build_ver_panel() -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	# 不透明底:原先走默认主题的半透明面板,主菜单的「退 出」按钮与标题下的版本号
+	# 会直接透上来压在提交行上,形成重影(2026-09-13 视觉评析)。
+	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 10)
 	vb.custom_minimum_size = Vector2(1180, 0)
 	panel.add_child(vb)
 
-	vb.add_child(UiFactory.label("—— 版本信息 ——", 48, Color(0.6, 0.95, 1.0)))
+	vb.add_child(UiFactory.label("—— 版本信息 ——", 48, UiFactory.C_ACCENT))
 	vb.add_child(UiFactory.label("当前版本: %s" % version_string(), 32))
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(1160, 620)
+	scroll.custom_minimum_size = Vector2(ROW_W, 620)
 	vb.add_child(scroll)
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 6)
-	list.custom_minimum_size = Vector2(1120, 0)
+	list.custom_minimum_size = Vector2(ROW_W, 0)
 	scroll.add_child(list)
 
 	var log := commit_log()
@@ -260,13 +289,24 @@ func _build_ver_panel() -> PanelContainer:
 		var e: Dictionary = log[i]
 		var row := UiFactory.label("%s  %s  %s" % [str(e["hash"]), str(e["time"]), str(e["subject"])],
 				16, Color(0.92, 0.95, 1.0))
+		# 提交标题长短不一,最长的那条会把 Label 的**最小宽度**顶到面板之外 —— ScrollContainer
+		# 不收缩子节点,于是每一行都在面板右沿被切成半个字(实测最长行约 1400px vs 面板 1180)。
+		# 钉死行宽 + 末尾省略号:行宽不再由文本决定,超长标题截断而不是溢出。
+		row.custom_minimum_size = Vector2(ROW_W, 0)
+		row.size_flags_horizontal = Control.SIZE_FILL
+		row.clip_text = true
+		row.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		list.add_child(row)
 
-	var back := UiFactory.button("返 回", 32)
+	# 返回键不拉满面板宽度:1180 宽的横条里居中两个字符,两侧全是死区。
+	var back_row := HBoxContainer.new()
+	back_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var back := UiFactory.button("返 回", 32, Vector2(280, 48))
 	back.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		panel.visible = false)
-	vb.add_child(back)
+	back_row.add_child(back)
+	vb.add_child(back_row)
 	return panel
 
 
@@ -281,7 +321,7 @@ func _build_sp_panel() -> PanelContainer:
 	vb.custom_minimum_size = Vector2(560, 0)
 	panel.add_child(vb)
 
-	vb.add_child(UiFactory.label("—— 单人开局 ——", 48, Color(0.6, 0.95, 1.0)))
+	vb.add_child(UiFactory.label("—— 单人开局 ——", 48, UiFactory.C_ACCENT))
 	vb.add_child(UiFactory.label("禁用武器(勾选 = 本局不可用)", 32))
 
 	var checks: Array[CheckButton] = []
@@ -290,7 +330,7 @@ func _build_sp_panel() -> PanelContainer:
 		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
 		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
 		cb.expand_icon = false
-		UiFactory.style_control(cb, 32)
+		UiFactory.style_check(cb, 32)
 		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)
 		checks.append(cb)
 		vb.add_child(cb)

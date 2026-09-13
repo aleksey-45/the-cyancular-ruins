@@ -38,7 +38,7 @@ func _ready() -> void:
 			failures.append("autoload 缺失: %s" % n)
 
 	# 2) Settings 保留项都在、已删项都不在(不断言默认值:本机 user://settings.cfg 会覆盖)
-	for prop in ["master_volume", "sfx_volume", "wheel_switch", "reload_enabled",
+	for prop in ["master_volume", "sfx_volume", "wheel_switch",
 			"sp_disabled_weapons", "pvp_show_trajectories", "pvp_round_full_heal",
 			"pvp_show_enemy_hp", "pvp_disabled_weapons", "pvp_color_hue",
 			"royale_match_min", "pvp_show_minimap", "pvp_minimap_show_enemy"]:
@@ -46,6 +46,9 @@ func _ready() -> void:
 			failures.append("Settings 缺属性: %s" % prop)
 	if _has_prop(Settings, "old_ui"):
 		failures.append("Settings.old_ui 未删除")
+	# 换弹恒开:不换弹开关已整个删除(反向断言,防被"顺手恢复成可选项")
+	if _has_prop(Settings, "reload_enabled"):
+		failures.append("Settings.reload_enabled 未删除(换弹不再有开关)")
 	if _has_prop(Settings, "sp_difficulty"):
 		failures.append("Settings.sp_difficulty 未删除")
 	if Settings.REMAPPABLE_ACTIONS.is_empty():

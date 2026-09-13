@@ -85,7 +85,7 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定,预瞄只是参考
 @export var preview_time: float = 0.5
 
-# ── 换弹(实验性玩法):Settings.reload_enabled 关闭 = 旧版无限弹 ──
+# ── 换弹(装填;固定玩法,无开关可关)──
 # 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。判据是 pvp_mode **与**
 # 输入源两条:只用 pvp_mode 会漏掉权威服务器(它不实例化 Level0,pvp_mode 恒 false),
 # 只用输入源会漏掉 PvP 本地客户端(本地 InputSource)—— 两者都会造成单方面停火(见 reload_active)。
@@ -102,8 +102,6 @@ const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
 const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
 
 func reload_active() -> bool:
-	if not Settings.reload_enabled:
-		return false
 	# 仅本地单机 —— 两个判据缺一不可:
 	# ① pvp_mode:挡 **PvP 本地客户端**(C2 下它用本地 InputSource 读真实鼠标,pvp_mode=true)。
 	#    漏了它则客户端本地预测"装填中不许开火"、服务器却无限弹 → 枪哑火但人照死,手感错乱。
