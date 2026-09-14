@@ -13,20 +13,21 @@ const WEAPONS: Dictionary = {
 	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
 	"6": "res://Scenes/Weapons/laser_gun.tscn",
 	"7": "res://Scenes/Weapons/minigun.tscn",
-	"8": "res://Scenes/Weapons/prop_knockback.tscn",
-	"9": "res://Scenes/Weapons/prop_attraction.tscn",
-	"10": "res://Scenes/Weapons/prop_smoke.tscn",
-	"11": "res://Scenes/Weapons/prop_timed_bomb.tscn",
+	"8": "res://Scenes/Weapons/machete.tscn",
+	"81": "res://Scenes/Weapons/prop_knockback.tscn",
+	"82": "res://Scenes/Weapons/prop_attraction.tscn",
+	"83": "res://Scenes/Weapons/prop_smoke.tscn",
+	"84": "res://Scenes/Weapons/prop_timed_bomb.tscn",
 }
 
 # 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
 const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪", 7: "加特林",
-	8: "排斥弹头", 9: "引力核心", 10: "烟雾弹", 11: "投掷爆炸团"}
+	8: "开山砍刀", 81: "排斥弹头", 82: "引力核心", 83: "烟雾弹", 84: "投掷爆炸团"}
 
 # 道具槽位(T 键道具模式专用;不在 enabled_slots 里,普通切枪/数字键不会误选):
 # 8=排斥弹头(旧名击退炮) 9=引力核心(吸力炮) 10=烟雾弹 11=投掷爆炸团(计时自爆)。
 # 道具不受「禁武器」影响;每命携带数=各道具 mag_size。
-const PROP_SLOTS: Array = [8, 9, 10, 11]
+const PROP_SLOTS: Array = [81, 82, 83, 84]
 
 signal weapon_changed(slot: int)   # equip 成功后发射(菜单图标/HUD 武器显示跟随)
 
@@ -151,13 +152,13 @@ static func make_weapon_check(slot: int, checked: bool, font_size: int, on_toggl
 
 # 启用的武器槽位(1-5)。单机由 Level0 按 RunOptions 设置;PvP 由 pvp_client 按服务器
 # 下发的 match_options 设置。数字键/滚轮切枪都会跳过禁用槽位。
-var enabled_slots: Array = [1, 2, 3, 4, 5, 6, 7]
+var enabled_slots: Array = [1, 2, 3, 4, 5, 6, 7, 8]
 
 func _ready() -> void:
 	body = get_parent() as CharacterBody2D
 
 func set_enabled_slots(disabled: Array[int]) -> void:
-	enabled_slots = [1, 2, 3, 4, 5, 6, 7].filter(func(s: int) -> bool: return not disabled.has(s))
+	enabled_slots = [1, 2, 3, 4, 5, 6, 7, 8].filter(func(s: int) -> bool: return not disabled.has(s))
 	if enabled_slots.is_empty():
 		enabled_slots = [1]   # 不允许全禁:至少留手枪
 	# 当前拿着的枪被禁 → 切到第一个启用的

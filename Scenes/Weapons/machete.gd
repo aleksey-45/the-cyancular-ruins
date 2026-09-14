@@ -128,6 +128,32 @@ func _sweep_targets(origin: Vector2, aim: Vector2) -> int:
 			n += 1
 	return n
 
+## 目标的碰撞盒半尺寸(半宽,半高):取第一个启用的碰撞形状的外接范围;
+## 多边形取顶点范围;什么都没有 → 兜底 24x30(玩家站立碰撞盒量级)。
+func _body_half(body: Node2D) -> Vector2:
+	for c in body.get_children():
+		if c is CollisionShape2D and not (c as CollisionShape2D).disabled:
+			var shape := (c as CollisionShape2D).shape
+			if shape is RectangleShape2D:
+				return (shape as RectangleShape2D).size * 0.5 * body.scale
+			if shape is CircleShape2D:
+				var s: float = body.scale.x   # 等比缩放:取 x 分量
+				var r := (shape as CircleShape2D).radius * s
+				return Vector2(r, r)
+			if shape is CapsuleShape2D:
+				var cap := (shape as CapsuleShape2D)
+				return Vector2(cap.radius, cap.height * 0.5) * body.scale
+		if c is CollisionPolygon2D and not (c as CollisionPolygon2D).disabled:
+			var pts := (c as CollisionPolygon2D).polygon
+			if pts.size() > 0:
+				var lo: Vector2 = pts[0]
+				var hi: Vector2 = pts[0]
+				for pt in pts:
+					lo = Vector2(minf(lo.x, pt.x), minf(lo.y, pt.y))
+					hi = Vector2(maxf(hi.x, pt.x), maxf(hi.y, pt.y))
+				return ((hi - lo) * 0.5) * body.scale
+	return Vector2(24.0, 30.0)
+
 # ── 砖块判定:扇形内的可子弹破坏砖(树叶/树干)按挥砍伤害扣血,命中即不算挥空 ──
 func _sweep_tiles(origin: Vector2, aim: Vector2) -> bool:
 	var grid := MazeGenerator.current_grid
