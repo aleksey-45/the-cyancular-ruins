@@ -526,9 +526,13 @@ func _check_new_interfaces() -> void:
 			"%s 含 RoyaleHost 的子类方法 %s(搬进基类即未定义符号)" % [base, ", ".join(leaked)])
 	_check(_code_only(_read("res://scenes/royale_hud.gd")).contains("class_name RoyaleHud"),
 			"scenes/royale_hud.gd 缺 class_name RoyaleHud")
-	_check(_code_only(_read("res://server/room_manager.gd")).contains("func royale_create("),
-			"server/room_manager.gd 缺 func royale_create(")
-	_summary(fails_before, "新接口:基类 1 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud/royale_create 在位")
+	# ★ 2026-09-14:大乱斗房间 handler 随账本搬进 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
+	#   判据跟着搬,但**两处都查**:老家若被人再抄一份同名 handler,那正是"两份真相"的开端。
+	var rl := _code_only(_read("res://server/lobby_rooms.gd"))
+	_check(rl.contains("func royale_create("), "server/lobby_rooms.gd 缺 func royale_create(")
+	_check(not _code_only(_read("res://server/room_manager.gd")).contains("func royale_create("),
+			"server/room_manager.gd 又出现 func royale_create(——房间 handler 应只在 lobby_rooms 一处)")
+	_summary(fails_before, "新接口:基类 1 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud 在位,royale_create 在 lobby_rooms")
 
 
 # ── 10) ★ round_full_heal 真的把双方回满血(端到端 + 对照组)────────────

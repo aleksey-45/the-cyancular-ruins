@@ -155,8 +155,8 @@ func _run_orchestrator() -> void:
 func _on_room_created(caller: int, _opts: Dictionary) -> void:
 	# 真大厅建完房:记下房主 peer 与房号,稍后(帧内不做事,避免在 poll 栈里改房态)
 	_c1_peer = caller
-	for code in _rm().royale_rooms:
-		var rr = _rm().royale_rooms[code]
+	for code in _rm().lobby.royale_rooms:
+		var rr = _rm().lobby.royale_rooms[code]
 		if rr.host_peer == caller:
 			_code = code
 			break
@@ -178,7 +178,7 @@ func _orchestrator_step(delta: float) -> void:
 			if _created_t < 0.0 or _t - _created_t < 0.3:
 				return
 			# 假 peer(role 2)插在 c1 与 c2 之间加入 → 它退出后就留下 role 空洞 {1,3}
-			_rm().royale_join(FAKE_PEER, _code, INVITE)
+			_rm().lobby.royale_join(FAKE_PEER, _code, INVITE)
 			print("PROBE: 假 peer %d 加入为 role 2(房 %s),c2 将拿到 role 3" % [FAKE_PEER, _code])
 			var f := FileAccess.open(GO_FILE, FileAccess.WRITE)
 			f.store_string(_code)
@@ -188,10 +188,10 @@ func _orchestrator_step(delta: float) -> void:
 			if _room_players() < 3:
 				return   # 等 c2 加入(c1 + 假 peer + c2)
 			# 中间那位(role 2)退出 → 房里是 {1,3},成员数 2 < 最高 role 3(B1 的复现条件)
-			_rm().royale_leave(FAKE_PEER)
+			_rm().lobby.royale_leave(FAKE_PEER)
 			print("PROBE: 假 peer 退出 → 房内 role = %s(成员数 %d,最高 role %d)" % [
 					str(_roles()), _room_players(), _max_role()])
-			if _rm().royale_rooms.get(_code) == null:
+			if _rm().lobby.royale_rooms.get(_code) == null:
 				print("PROBE: 房 %s 不存在(假 peer 退出时被误关?)" % _code)
 				get_tree().quit(1)
 				return
@@ -211,11 +211,11 @@ func _orchestrator_step(delta: float) -> void:
 
 
 func _room_players() -> int:
-	var rr = _rm().royale_rooms.get(_code)
+	var rr = _rm().lobby.royale_rooms.get(_code)
 	return rr.players.size() if rr != null else 0
 
 func _roles() -> Array:
-	var rr = _rm().royale_rooms.get(_code)
+	var rr = _rm().lobby.royale_rooms.get(_code)
 	return rr.player_role.values() if rr != null else []
 
 func _max_role() -> int:
