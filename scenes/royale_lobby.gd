@@ -363,11 +363,11 @@ func _process(_delta: float) -> void:
 		_status.text = "8 秒无响应——该服务器不支持大乱斗(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
 
 
-# worker 端口段文案(提示串用;单一来源 = RoomManager 的常量,勿手写数字——
+# worker 端口段文案(提示串用;单一来源 = WorkerLauncher 的常量,勿手写数字——
 # 曾写 "7800~7999" 与实际池(7800~8299)不符,照它放行防火墙会漏掉半个池子,自检 D2)
 func _worker_port_span() -> String:
-	return "%d~%d" % [RoomManager.WORKER_PORT_BASE,
-			RoomManager.WORKER_PORT_BASE + RoomManager.WORKER_PORT_SPAN - 1]
+	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
+			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
 
 
 # 转连 worker 失败/无应答的兜底:断开当前连接 → 清掉一切房间态与转连态 → 重连大厅并刷新列表。

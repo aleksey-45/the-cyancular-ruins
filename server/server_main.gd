@@ -125,11 +125,11 @@ func _write_ip_file(text: String) -> void:
 		f.close()
 
 # worker 端口段文案(供服主提示:要转发的就是这个区间)。
-# 单一来源 = RoomManager 的 WORKER_PORT_BASE / WORKER_PORT_SPAN,勿在提示串里另写死数字:
+# 单一来源 = WorkerLauncher 的 WORKER_PORT_BASE / WORKER_PORT_SPAN,勿在提示串里另写死数字:
 # 曾写 "7800~7910" 与实际池(7800~8299)不符,照它放行防火墙会漏掉半个池子(自检 D2)。
 static func _worker_port_span_text() -> String:
-	return "%d~%d" % [RoomManager.WORKER_PORT_BASE,
-			RoomManager.WORKER_PORT_BASE + RoomManager.WORKER_PORT_SPAN - 1]
+	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
+			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
 
 # 公网出口 IP(尽力而为):自建房要给公网朋友连时,除这个 IP 外还须路由器转发 UDP 7777 与 worker 端口段
 # (区间取自 _worker_port_span_text,勿手写数字)。
