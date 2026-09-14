@@ -15,9 +15,9 @@ static func load_types() -> void:
 # 敌人中文显示名(击杀播报用)。按**场景路径**查 —— 不再像旧实现那样"去掉 `Enemy` 前缀再查表",
 # 那种约定在场景文件改名时会**静默**回落英文名。
 # ★ 自带惰性加载,刻意**不依赖 load_types()**:后者只在单机 `Level0._ready` 里调,而 PvP 在它
-#   **之前**就 `return` 了。PvP 里敌人路径目前是关的(`MatchHost.ENABLE_BIRDS=false`,见 M8),
-#   所以这条今天不会真的被 PvP 走到 —— 但那正是"能用的那天才发现回落成了英文名"的形状;
-#   让本函数自给自足比依赖"调用前恰好有人 load 过"便宜得多。
+#   **之前**就 `return` 了(PvP 里没有本地敌人:PvPvE 中立鸟特性 2026-09-14 定案不开、已整体移除,
+#   故 PvP 侧今天不会走到这里 —— 但那正是"哪天加了 PvP 敌人,才发现回落成了英文名"的形状);
+#   让本函数自给自足,比依赖"调用前恰好有人 load 过"便宜得多。
 static func display_name_of(scene_path: String) -> String:
 	if DISPLAY_NAMES.is_empty():
 		_load_registry()

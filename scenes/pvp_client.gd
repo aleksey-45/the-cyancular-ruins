@@ -19,7 +19,6 @@ var _prev_sent_seq := 0
 
 var _local: Node2D = null
 var _remote_replica: Node2D = null
-var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica(中立鸟视觉副本)
 var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibles
 var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 var _hud: PvpHud = null
@@ -91,8 +90,6 @@ func _ready() -> void:
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_opponent_left.connect(_on_opponent_left)
-	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
-	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	# 扩展节点(NetBusExt)三载荷:生效选项/角色色相/命中确认。与 beam_fired 不同节点是**有意的**
 	# (发送端 match_host 的 beam_fired 走 NetBus),别顺手把上面那行也统一到 NetBusExt。
@@ -252,15 +249,6 @@ func _on_snapshot_world(world: Dictionary) -> void:
 			_remote_replica.apply_snapshot(opp, _local.global_position, tier)
 			if _hp_bar != null:
 				_hp_bar.ratio = float(opp.get("hp", PlayerParams.player_max_hp)) 						/ float(PlayerParams.player_max_hp)
-	# 中立鸟副本:按 id 更新(权威位置/动画/朝向;存在性由 enemy_spawn/enemy_died 管)
-	var enemies_snap: Dictionary = world.get("enemies", {})
-	for id_str in enemies_snap:
-		var bid := int(id_str)
-		if _enemy_replicas.has(bid):
-			var r: Node = _enemy_replicas[bid]
-			if r != null and r.has_method("apply_remote"):
-				r.apply_remote(enemies_snap[id_str], _local.global_position, tier)
-
 
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
 # 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
@@ -426,37 +414,6 @@ func _on_opponent_left() -> void:
 		if not is_inside_tree():
 			return
 		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
-
-# ── 中立鸟(服务器权威):roster → 建视觉副本;每帧快照 apply_remote;died → 移除 ──
-func _on_enemy_spawn(roster: Array) -> void:
-	_clear_enemy_replicas()
-	if _world == null or _local == null:
-		return
-	for entry in roster:
-		if typeof(entry) != TYPE_DICTIONARY:
-			continue
-		var scene_path := str(entry.get("scene", ""))
-		var bid := int(entry.get("id", 0))
-		if scene_path == "" or bid <= 0:
-			continue
-		var r: Node2D = preload("res://scenes/enemies/enemy_replica.gd").new()
-		_world.add_child(r)
-		r.setup(bid, scene_path, entry.get("pos", _local.global_position), _local.global_position)
-		_enemy_replicas[bid] = r
-
-func _clear_enemy_replicas() -> void:
-	for r in _enemy_replicas.values():
-		if is_instance_valid(r):
-			r.queue_free()
-	_enemy_replicas.clear()
-
-func _on_enemy_died(id: int) -> void:
-	if not _enemy_replicas.has(id):
-		return
-	var r: Node = _enemy_replicas[id]
-	if is_instance_valid(r):
-		r.queue_free()
-	_enemy_replicas.erase(id)
 
 # P2(role 2)玩家角色本体色相 -20:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
 # 只给角色 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/无敌半透明仍正常),武器不染。

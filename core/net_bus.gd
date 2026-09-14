@@ -33,8 +33,8 @@ signal local_round_state(data: Dictionary)
 signal local_kill_event(killer: int, victim: int)
 signal local_opponent_left          # 对局中途对手断线(服务器 → 存活方,播报后回菜单)
 signal ping_updated(ms: int)        # 平滑后延迟 ms
-signal local_enemy_spawn(roster: Array)  # 服务器:本局鸟清单 [{id,scene,pos}],客户端建副本
-signal local_enemy_died(id: int)         # 服务器:某只鸟死亡(id),客户端移除副本
+# (原 local_enemy_spawn / local_enemy_died 已删:它们只服务 PvPvE 中立鸟,该特性 2026-09-14 定案不开
+#  并整体移除 —— 客户端副本机制/服务端刷鸟/快照 enemies 键/本节点两条 @rpc 一并删干净。)
 # 进场拉取(取代"服务器推三载荷"):见下方 match_sync/match_sync_data 的注释
 signal match_sync_received(caller: int)          # worker 侧转交 → server_main
 signal local_match_sync(payload: Dictionary)     # 客户端侧:应答到达
@@ -172,13 +172,9 @@ func round_state(data: Dictionary) -> void:
 func kill_event(killer: int, victim: int) -> void:
 	local_kill_event.emit(killer, victim)
 
-@rpc("authority", "reliable")
-func enemy_spawn(roster: Array) -> void:
-	local_enemy_spawn.emit(roster)
-
-@rpc("authority", "reliable")
-func enemy_died(id: int) -> void:
-	local_enemy_died.emit(id)
+# (原 enemy_spawn / enemy_died 两条 @rpc 已删 —— 只服务 PvPvE 中立鸟,特性 2026-09-14 定案不开。
+#  ★ 它们**不是**原版服务端的协议面:由本项目提交 aa1d8f0「feat: PvPvE 中立鸟入竞技场」加入,
+#    故删除不影响「原 NetBus 逐字节一致」那条不变量。)
 
 @rpc("authority", "reliable")
 func room_created(code: String) -> void:

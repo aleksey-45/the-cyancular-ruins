@@ -31,8 +31,8 @@ var _last_tick := 0              # 已入缓冲的最大 tick(丢弃乱序/重�
 var _clock := -1.0               # 渲染时钟(tick 域,浮点);<0 = 缓冲未满、尚未起步
 
 
-# keep_ticks = 位置缓冲保留窗口(最新前 N tick;够插值 + 顶住小丢包)。调用方各取所需:
-# 玩家副本 8(对手要更长的抗抖动窗)、中立鸟副本 4。
+# keep_ticks = 位置缓冲保留窗口(最新前 N tick,含最新 → 实际 N+1 条;够插值 + 顶住小丢包)。
+# 调用方各取所需:玩家副本取 8(对手要更长的抗抖动窗);原中立鸟副本取 4,该副本随特性一并删除。
 # map_w/map_h = 地图像素尺寸:插值要取最短向量(跨接缝),需要它才能不引 autoload。
 func _init(keep_ticks: int, map_w: float, map_h: float) -> void:
 	_keep_ticks = keep_ticks

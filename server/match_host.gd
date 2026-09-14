@@ -31,12 +31,6 @@ var _round_full_heal := false        # 每回合开始双方回满血
 var _disabled_weapons: Array[int] = []   # 禁用的武器槽位(双方一致)
 var _ai_roles: Array = []            # AI 补位的 role 列表;这些 role 无网络 peer
 
-# ── PvPvE 中立鸟:服务器权威模拟,位置 canonical,快照+spawn/died 事件同步 ──
-# 发布开关:true=对局生成中立鸟;false=暂时不上鸟(PvP 纯净 1v1)。鸟代码保留,需要时翻回 true。
-const ENABLE_BIRDS := false
-var birds: Dictionary = {}   # bird_id(int) -> EnemyBase
-var _next_bird_id := 1
-
 # ── 回合制(阶段4):回合状态机 / 记分 / 复活 / 换边 ──
 enum RoundState { COUNTDOWN, PLAYING, ROUND_OVER, MATCH_OVER }
 const KILLS_TO_WIN := 5      # 每局先到 5 击杀赢
@@ -129,7 +123,6 @@ func _ready() -> void:
 		var combat = (players[role] as Node).get("combat")
 		if combat != null and combat.has_signal("took_hit"):
 			combat.took_hit.connect(_on_player_hit.bind(role))
-	_spawn_round_birds()  # 内部按 ENABLE_BIRDS 守卫,关闭时开局/换局都不刷
 	_broadcast_round_state()
 
 # (原 `_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**下发:
@@ -208,89 +201,6 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 	for role in peer_by_role:
 		NetBus.rpc_id(peer_by_role[role], "tile_destroyed", cell)
 
-# ── PvPvE 中立鸟:读地图 # enemy meta,每局固定一批,死不补,换局/开局重置 ──
-func _spawn_round_birds() -> void:
-	if not ENABLE_BIRDS:
-		return  # 发布开关关闭:任何时机(开局/换局)都不刷鸟
-	_clear_birds()
-	EnemySpawner.load_types()
-	var spawns := MazeGenerator.load_spawns()
-	var meta: Array = spawns.get("enemies", [])
-	var ts := GameParameters.TILE_SIZE
-	var roster: Array = []
-	for entry in meta:
-		if typeof(entry) != TYPE_DICTIONARY:
-			continue
-		var type_name: String = str(entry.get("type", ""))
-		var cell: Variant = entry.get("cell")
-		if type_name.is_empty() or typeof(cell) != TYPE_VECTOR2I or not EnemySpawner.TYPES.has(type_name):
-			continue
-		var scene: PackedScene = load(EnemySpawner.TYPES[type_name])
-		if scene == null:
-			continue
-		var spawn_cell := _nearest_floor_cell(cell)
-		var e: CharacterBody2D = scene.instantiate()
-		e.set("network_canonical", true)   # 服务器权威:位置存 canonical
-		add_child(e)
-		e.global_position = Vector2(spawn_cell.x * ts + ts * 0.5, spawn_cell.y * ts + ts * 0.5)
-		var id := _next_bird_id
-		_next_bird_id += 1
-		birds[id] = e
-		if e.has_signal("died"):
-			e.died.connect(_on_bird_died.bind(id))
-		roster.append({"id": id, "scene": EnemySpawner.TYPES[type_name], "pos": e.global_position})
-	# 本局鸟清单发给两端客户端(建副本用;之后每帧快照带位置/动画)
-	for role in peer_by_role:
-		NetBus.rpc_id(peer_by_role[role], "enemy_spawn", roster)
-	print("MatchHost: 刷鸟 %d 只" % roster.size())
-
-# 把地图 meta 给的鸟出生格吸附到最近合法地板格(EMPTY、正下方 SOLID、头上留空)。
-# 原因:PvP 的 # enemy 格未必是地板格(单机 EnemySpawner 只挑地板格,meta 常直接给半空/卡墙格),
-# 直接照格出生会让鸟开局带睡姿自由落体或卡在几何里重力越积越大(空中睡姿的另一个来源)。
-func _nearest_floor_cell(from: Vector2i) -> Vector2i:
-	if _is_floor_cell(from):
-		return from
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return from
-	var rows := grid.size()
-	var cols: int = (grid[0] as Array).size()
-	for radius in range(1, 32):
-		for dy in range(-radius, radius + 1):
-			for dx in range(-radius, radius + 1):
-				if maxi(absi(dx), absi(dy)) != radius:
-					continue
-				var c := Vector2i(posmod(from.x + dx, cols), posmod(from.y + dy, rows))
-				if _is_floor_cell(c):
-					return c
-	return from  # 找不到就保持原格(宁可原样,不丢鸟)
-
-func _is_floor_cell(c: Vector2i) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	var rows := grid.size()
-	var cols: int = (grid[0] as Array).size()
-	# ★ 保留这里的**显式边界检查**(返回 false):MazeGenerator.is_floor_cell_with_headroom 会把
-	#   超界格 posmod 回环面照常判定,而出生点/复活点要的是"越界即不可用" —— 语义不同,别删。
-	if c.y < 0 or c.x < 0 or c.y >= rows or c.x >= cols:
-		return false
-	# 基本判据(本格空 + 下方实心)+ 头上留一格空(避免贴着天花板/嵌进头顶实心)
-	return MazeGenerator.is_floor_cell_with_headroom(grid, c)
-
-func _clear_birds() -> void:
-	for id in birds:
-		var e: Node = birds[id]
-		if is_instance_valid(e):
-			e.queue_free()
-	birds.clear()
-	_next_bird_id = 1
-
-func _on_bird_died(id: int) -> void:
-	birds.erase(id)
-	for role in peer_by_role:
-		NetBus.rpc_id(peer_by_role[role], "enemy_died", id)
-
 # 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
 # 带递增序号 tick:客户端靠它丢弃乱序到达的旧快照(unreliable 通道可能乱序)。
 func _broadcast_snapshot() -> void:
@@ -317,20 +227,6 @@ func _broadcast_snapshot() -> void:
 			"aim": p.get_current_aim_dir(),
 			"previewing": previewing,
 		}
-	# 中立鸟:canonical 位置 + 当前动画名 + 朝向(副本照播;死亡由 enemy_died 事件移除)
-	var birds_snap := {}
-	for id in birds:
-		var e: Node2D = birds[id]
-		if not is_instance_valid(e):
-			continue
-		var anim = e.get("_anim")
-		var flip := false
-		var anim_name := ""
-		if anim != null:
-			flip = bool(anim.flip_h)
-			anim_name = str(anim.animation)
-		birds_snap[str(id)] = {"pos": e.global_position, "flip": flip, "anim": anim_name}
-	world["enemies"] = birds_snap
 	# ★ 一次 rpc():ENet 层单次序列化 + 广播。逐 rpc_id 循环会把 O(N²) 加回来(那正是拆包要治的)。
 	# 这条守卫只是为了"一个 peer 都没有时别发包"(原实现逐 peer 判 live_peers 的作用);
 	# 拆成广播后无法再逐 peer 判,代价是"刚断开"窗口里会多一条 channel 错误 —— 可接受,且丢失无后果。
@@ -668,7 +564,6 @@ func _start_next_round() -> void:
 	_down_counted = {}
 	for role in players:
 		_respawn_player(role)
-	_spawn_round_birds()   # 换局:清上一局鸟 + 按地图 meta 重刷
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
 	_broadcast_round_state()

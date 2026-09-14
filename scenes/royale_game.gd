@@ -9,7 +9,6 @@ const LaserVisual := preload("res://core/laser_visual.gd")
 var _last_snap_tick := 0
 var _local: Node2D = null
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
-var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica
 var _level0: Node = null
 var _world: Node = null
 var _hud: RoyaleHud = null
@@ -79,8 +78,6 @@ func _ready() -> void:
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
-	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
@@ -237,15 +234,6 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 	for role_str in _replicas.keys():
 		if not players_snap.has(str(role_str)):
 			_remove_replica(int(role_str))
-	# 中立鸟(大乱斗默认无鸟;协议保留兼容)
-	var enemies_snap: Dictionary = snap.get("enemies", {})
-	for id_str in enemies_snap:
-		var bid := int(id_str)
-		if _enemy_replicas.has(bid):
-			var e: Node = _enemy_replicas[bid]
-			if e != null and e.has_method("apply_remote"):
-				e.apply_remote(enemies_snap[id_str], _local.global_position, snap_tick)
-
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
 # 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
 # 世界包丢只让副本插值冻结一帧。
@@ -426,37 +414,6 @@ func _on_round_state(data: Dictionary) -> void:
 func _refresh_input_lock() -> void:
 	if _local != null and _local.has_method("set_controls_locked"):
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
-
-# ── 中立鸟兼容(大乱斗默认无鸟)──
-func _on_enemy_spawn(roster: Array) -> void:
-	_clear_enemy_replicas()
-	if _world == null or _local == null:
-		return
-	for entry in roster:
-		if typeof(entry) != TYPE_DICTIONARY:
-			continue
-		var scene_path := str(entry.get("scene", ""))
-		var bid := int(entry.get("id", 0))
-		if scene_path == "" or bid <= 0:
-			continue
-		var r: Node2D = preload("res://scenes/enemies/enemy_replica.gd").new()
-		_world.add_child(r)
-		r.setup(bid, scene_path, entry.get("pos", _local.global_position), _local.global_position)
-		_enemy_replicas[bid] = r
-
-func _clear_enemy_replicas() -> void:
-	for r in _enemy_replicas.values():
-		if is_instance_valid(r):
-			r.queue_free()
-	_enemy_replicas.clear()
-
-func _on_enemy_died(id: int) -> void:
-	if not _enemy_replicas.has(id):
-		return
-	var r: Node = _enemy_replicas[id]
-	if is_instance_valid(r):
-		r.queue_free()
-	_enemy_replicas.erase(id)
 
 # ── 名字 / 颜色 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
