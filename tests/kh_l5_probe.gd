@@ -326,7 +326,7 @@ func _check_ai_input_gate() -> void:
 #   C) 字面赋值 `…font_size = N`(.tscn 的 theme_override_font_sizes/font_size = N 走这条)
 #   D) const …FONT_SIZE… := N
 #   E) UiFactory.label/button 与 style_control 的字号实参 + make_weapon_check 的字号实参
-#      (大乱斗大厅的 _make_button/_make_line_edit 字号写在**体内**,正是这条 style_control)
+#      (大厅页基类 scenes/lobby_page.gd 的 _page_button 字号写在**体内**,正是这条 style_control)
 func _check_font_size_law() -> void:
 	var fails_before := _failures.size()
 	var files := _collect(ALL_DIRS)

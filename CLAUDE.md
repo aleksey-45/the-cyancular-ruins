@@ -88,6 +88,7 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **对局内 HUD(`ui/pvp_hud.tscn` + `scenes/royale_hud.gd`)同样一律垫深底板** —— 它们**直接压在地图上**,而地图开阔区是浅灰蓝,不垫底时浅色小字读不出来。记分条用 `ScoreWrap`(PanelContainer)按内容撑开,不是把 Label 拉成一条 1240 宽的横条。
 - **大乱斗排行榜一行五段必须定宽**:昵称走 `_fit_name(名字, 14)`,按**显示宽度**(汉字/全角算 2 个半角单位)**截断 + 补满**。不截,长昵称会把末段的「存活/复活中/离开」顶出面板(实测 9 字昵称那行 ≈690px vs 面板 480);不补,短昵称的行与行的列是错开的。单位宽度的前提是「拉丁 8×16 位图(半角 8px)+ 汉字 16px 网格 Unifont」——**换字体要重算** `BOARD_W` / `NAME_UNITS`。
 - **`royale_lobby` 也有截图探针了**:`-- --autotest-royale`(menu_autotest 的 mode 表 + `must_reach` 都加了 royale)。改那页版式后跑它读图。
+- **两个大厅页共用 `scenes/lobby_page.gd` 基类**(`class_name LobbyPage`,`matchmaking` / `royale_lobby` 都 extends 它):「连大厅 → 列房间 → 配对了转连 worker」的状态机、共用的 13 个字段、按钮工厂(`_page_button`)、禁用武器网格与色相行两个设置区块都在基类;子类只留差异(版式、房间列表渲染、`_on_server_message`、`_process` 的**超时梯顺序**)。★ 改法口径与 `scenes/pvp_match_client.gd` 同款:**剔注释后逐字相同**的才上提,只差 1~3 行的落成具名钩子(8 个必需项,基类 `push_error` 兜底 —— 漏覆写当场可见);要再上提先按同口径量一遍差异,别凭印象搬。★ **超时梯顺序不能合并**:1v1 是 `[worker→join→大厅→claim]`、大乱斗是 `[worker→claim→大厅→ack]`,合并会静默改行为。★ 两个设置区块**不**放 `ui/ui_factory.gd` —— 它们读 `Settings`,而那个工厂至今零 autoload 依赖。
 
 ### 砖块属性与破坏(data/tile_defs.json)
 - **属性表** `data/tile_defs.json` 是单一来源:每块 name/type(墙/通道/液体/气体)/hp/explosion_decay/bullet_destroyable/explosion_destroyable/elastic/climb_speed/friction。编辑器副本 `level_editor/tile_defs.js` 由 `node level_editor/sync-tiles.js` 生成(file:// 下可靠)。
