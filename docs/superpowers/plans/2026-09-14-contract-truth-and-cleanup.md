@@ -1524,19 +1524,33 @@ Expected: 两条各打印 `ALL-OK`。
 
 分五阶段。**阶段内的每一项都可独立提交**；阶段之间建议按序，因为后一阶段会碰到前一阶段动过的同一批文件。
 
-## 阶段 1：真会出错 + 会误导人（本批次**之后**立即做，成本合计 < 半天）
+## 阶段 1：真会出错 + 会误导人 —— ✅ **全部完成**（2026-09-14，分支 `cleanup/stage1-bugs-and-hygiene`）
 
-| 序 | 项 | 位置 | 成本 | 为什么这个顺序 |
-|---|---|---|---|---|
-| 1.1 | **H1** AI 锁定目标后方向反 180°（瞄反 + 追逃互换） | `server/ai_player.gd:73-75`（补取负，对齐 `:96`） | 10 分钟 | 唯一「真会打错」的一条；`--ai-roles` 本就在待验收，修完正好一起验 |
-| 1.2 | ~~**M1** worker 起不来时留陈旧 `worker_port` → 清扫按端口误杀别人的对局~~ **✅ 已于本批次内完成**（提交 `6a5abfd`）—— Task 7 的改名让 `room_sweep_smoke` 的收口门失明，修好门后它立刻咬出 M1，故提前到本批次修 | `server/room_manager.gd` 的 `royale_start` / `ai_duel` / `royale_start_ai` **三处**失败分支 | 15 分钟 | 已完成 |
-| 1.3 | **M2** 掉线终局判据数的是「真人」不是「玩家」 | `server/royale_host.gd:436-438` | 5 分钟 | 与 1.2 同属服务器生命周期，一起验 |
-| 1.4 | **M9** ★ `royale_c2_watcher` A② 合并后会**静默失效** | `tests/royale_c2_watcher.gd:329-338` | 30 分钟 | **必须在阶段 3 的客户端合并之前**：它只防了"读不到源文件"，没防"代码搬走了"；不先补，阶段 3 做完这道门就恒绿骗人 |
-| 1.5 | **M20** 死代码/死文件一批 | 见下方清单 | 1 小时 | 零风险；删掉能减少后续阶段读代码的干扰 |
-| 1.6 | ✅ **已完成**（提交见本批次） —— **`tools/check_naming.py`**（`docs/naming-cleanup-plan.md` 结尾提的「可选防复发」从未落地）。强制三条：A 目录全小写 / B `class_name` 转 snake == 文件名 / C 文档引用的路径存在；`.tscn` 命名**只报告不判失败**（大小写规则待 4.3 定，现在写死判据只会制造假红）。★ 阶段 4.3 定下规则后，把该规则从「报告」升为「强制」并同步这条 | 新建 | 已完成 | 基线只留 2 条已接受偏差（`level_0.gd`/`Level0`、`ai_player.gd`/`AINavigator`），各写明何时销；反证 A/B/C 三条都验过有鉴别力 |
-| 1.7 | 11 个脚本硬编码引擎绝对路径 → `GODOT` 环境变量 + `tests/env.sh` | `start_server.bat`、`tools/build_release.py`、8 个 `tests/*.sh` | 1 小时 | 与 1.6 无关但同属「工程卫生」；改完后续跑脚本更省事 |
+| 序 | 项 | 状态 |
+|---|---|---|
+| 1.1 | **H1** AI 锁定目标后方向反 180°（瞄反 + 追逃互换） | ✅ 提交 `a2c331d`。修 `_pick_target` 黏滞分支漏的取负；给 `ai_input_source_smoke` 加两条**真调该函数**的符号断言（此前只查 host/role/src 三个成员名，照不出符号错）。反证：还原坏写法 → 只有黏滞那条 FAIL、重选仍 ok（精确隔离） |
+| 1.2 | **M1** worker 起不来时留陈旧 `worker_port` | ✅ 提交 `6a5abfd`（提前于批次 1 内完成，见上） |
+| 1.3 | **M2** 掉线终局判据数的是「真人」不是「玩家」 | ✅ 提交 `37c562f`。判据改 `players.size()`；**新增** `tests/royale_disconnect_count_probe.tscn`（真建 `RoyaleHost` + role_peers 传空，手工摆成 2 真人 + 2 AI）：正向断言「掉 1 真人后不得终局」+ **反向**断言「只剩 1 个玩家时必须终局」（否则正向可靠「永不终局」作弊通过）。反证：还原成数 peer → 正是那两条正向 FAIL、反向仍 ok |
+| 1.4 | **M9** ★ `royale_c2_watcher` A② 合并后会**静默失效** | ✅ 提交 `64c1327`。A② 改成「持有本地玩家状态的客户端文件」**列表 + 必须在位**：每个候选文件须含 C2 接线标记才算在位；**一个在位的都没有 → 判红**并指名去改 `A2_OWNERS`（原来只防「读不到源文件」，没防「代码搬走了」）。★ 顺带立刻变强：`pvp_client.gd` 同样持有本地玩家状态、同样接了 `local_round_state`，此前**完全没有这道门**，现纳入。反证三条（含把在位标记换成不存在的串 → 走「一个都不在位」分支） |
+| 1.5 | **M20** 死代码/死文件一批 | ✅ 提交 `d32de5f`。清单见下 |
+| 1.6 | **`tools/check_naming.py`** | ✅ 提交 `cdd270d`。强制 A 目录全小写 / B `class_name` 转 snake == 文件名 / C 文档引用的路径存在；`.tscn` 命名**只报告不判失败**（大小写规则待 4.3 定）。★ 阶段 4.3 定下规则后，把该规则从「报告」升为「强制」并同步这条。基线只留 2 条已接受偏差（`level_0.gd`/`Level0`、`ai_player.gd`/`AINavigator`），各写明何时销 |
+| 1.7 | 引擎绝对路径收口到环境变量 | ✅ 提交 `f7594ce`。新增 `tests/env.sh`（`$GODOT` + cd 仓库根 + `kill_procs`/`kill_port`），8 个 `tests/*.sh` 改 `source` 它；`start_server.bat` 走 `%GODOT%`、`build_release.py` 走 `$GODOT_EDITOR`（★ 导出用**标准编辑器**版，与 headless 的 console 版是两个二进制）。10 处散落路径 → 每个入口一处可覆盖默认值。顺带收掉三份重复 kill 样板，并让 5 个原本只能从仓库根跑的冒烟变成从哪儿跑都行 |
 
-**1.5 的死代码清单**（每条都已 grep 验证零生产调用）：`scenes/weapons/explosion.tscn`（与 `scenes/effects/explosion.tscn` 同 uid 的重复副本，且 `ext_resource` 指向**不存在的** `res://scenes/weapons/explosion_fx.gd`）、`TileDefs.friction()`（`core/tile_defs.gd:99`）、`TileDefs.tile()`（`:133`）、`core/game_parameters.gd:23-24` 的 `enemy_count`/`enemy_spawn_min_dist`、`core/sfx.gd:65` 的 `"jump"` 与 `:72` 的 `"teleport"`、`server/ai_player.gd:28,139` 的 `_last_x`、`server/room_manager.gd:36` 的 `Room.match_host`、`EnemySpawner.sample_spawn_cells`（只剩 `tests/enemy_logic_smoke.gd:58` 调它 → 搬进 `tests/`）、`server/royale_host.gd:399` 的 `round_state["match_time"]`（每帧构造、无人读，且与配置键 `match_time` **同名反义**）、`maps/old_map.txt`、`scenes/weapons/pistol_test.tscn`/`rifle_test.tscn` 的 `_test` 后缀。
+**1.5 的死代码清单**（每条都重新 grep 验证过零引用）：`scenes/weapons/explosion.tscn`（与 `scenes/effects/explosion.tscn` 同 uid 的重复副本，且 `ext_resource` 指向**不存在的** `res://scenes/weapons/explosion_fx.gd`）、`TileDefs.friction()`/`tile()`、`core/game_parameters.gd` 的 `enemy_count`/`enemy_spawn_min_dist`、`core/sfx.gd` 的 `"jump"`/`"teleport"`、`server/ai_player.gd` 的 `_last_x`、`server/room_manager.gd` 的 `Room.match_host`、`EnemySpawner.sample_spawn_cells`（只剩测试调它 → **搬进** `tests/enemy_logic_smoke.gd`，连 5 条断言一起保住）、`server/royale_host.gd` 的 `round_state["match_time"]`（每帧构造、无人读，且与配置键 `match_time` **同名反义**）、`maps/old_map.txt`。
+★ **顺带发现**：跳跃与黑鸟瞬移目前**没有任何音效**（`jump`/`teleport` 是设计了从未接线的音色）——删的是未接分支，想加时各补 1 行 + 1 处 `Sfx.play` 调用即可。
+★ `pistol_test.tscn`/`rifle_test.tscn` 的 `_test` 后缀改名**留到阶段 4**（与其它命名整改一次做完，避免两次动 `.uid`）。
+
+### ⚠ 本阶段踩到并修掉的一个自伤（记下来，供后续同类操作参考）
+
+在 1.6 做「反证 B」（验证 lint 能抓 `class_name` 与文件名不符）时，我往 `core/math_util.gd` **追加**了一行 `class_name TotallyWrong`；随后的另一次反证把**已被污染的文件**当基线备份又还原了回去 —— 于是这行留在工作区（幸而 1.6 提交时是按文件名显式 `git add`，**没把它提交进去**）。
+
+**症状**：`room_sweep_smoke` 的 `reload()` 路径刷出 7 条 `Could not resolve class "MathUtil", because of a parser error`（而其他冒烟照过 —— 所以只看「绿不绿」是发现不了的）。
+
+**怎么查出来的（这套手法值得复用）**：拿 `git worktree add /tmp/wt-XXX <ref>` + `--import` 造两棵**全新工作树**做对照 —— 一棵放 `main`、一棵放当前分支。两棵都是 0 条 → 说明不是代码、是我这棵**工作树**的状态（`.godot` 累积 / 未提交污染）。再顺着「工作区与 main 的差异」一 `git diff main -- core/math_util.gd` 就现形了。
+
+**两条纪律**：① 反证要改文件时，备份/还原一律走 `git stash` 或 `git checkout -- <file>`（从**已提交的**状态取），别用 `cp` 到临时文件 —— 你抄的可能已经是被污染的版本；② 反证做完必须 `git status --short` 看一眼，确认没有残留。
+
+**教训**：本次是 `git diff main -- <file>` 空不空一句话就查清了；而「所有探针都绿」这件事在**被污染的树下**同样成立 —— 所以关键改动落地后，值得用**干净工作树**再跑一遍。
 
 ## 阶段 2：契约与说辞的剩余项（成本合计 ~1 天）
 
