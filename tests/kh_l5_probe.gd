@@ -155,25 +155,34 @@ func _check_c2_contract() -> void:
 	_summary(fails_before, "C2 契约:四条在位(含快照先于消费、COUNTDOWN 早退清零、载荷带 ack_seq+c2)+ 生产侧 _on_input 入队不落地")
 
 
-# ── 2) main 既有成果在位(server/room_manager.gd)────────────────────────
+# ── 2) main 既有成果在位(server/room_manager.gd + server/worker_launcher.gd)──
 # L5 把大乱斗大厅并进了同一份 room_manager。main 的「超龄房清扫」族(防 worker 进程 +
-# 端口永久泄漏)必须原样保留:少了 sweep 就泄漏,少了 _kill_worker 就杀不掉 worker。
+# 端口永久泄漏)必须原样保留:少了 sweep 就泄漏,少了 kill_worker 就杀不掉 worker。
+# ★ 2026-09-14:杀 worker 的实现与那段 PowerShell 随端口池搬进了 WorkerLauncher
+#   (server/worker_launcher.gd)。判据按**职责**拆到两个文件,不是删掉 ——
+#   「杀不掉 worker」这个失败模式与文件放哪无关,必须仍然有人守。
 func _check_room_manager() -> void:
 	var fails_before := _failures.size()
 	var p := "res://server/room_manager.gd"
+	var pw := "res://server/worker_launcher.gd"
 	var code := _code_only(_read(p))
+	var code_w := _code_only(_read(pw))
 	_check(not code.is_empty(), "读不到 %s" % p)
-	if code.is_empty():
+	_check(not code_w.is_empty(), "读不到 %s" % pw)
+	if code.is_empty() or code_w.is_empty():
 		return
 	var needles := [
-		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 与大乱斗两族都要被扫到)"],
-		["func _kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)"],
-		["created_at", "房间创建时间戳(超龄判据)"],
-		["Select -Expand" + "Property OwningProcess -Unique", "取 UDP 端口属主进程的修正写法"],
+		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 与大乱斗两族都要被扫到)", p, code],
+		["created_at", "房间创建时间戳(超龄判据)", p, code],
+		["func kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)",
+				pw, code_w],
+		["Select -Expand" + "Property OwningProcess -Unique", "取 UDP 端口属主进程的修正写法",
+				pw, code_w],
 	]
 	for spec in needles:
 		var s: String = spec[0]
-		_check(code.count(s) >= 1, "room_manager 缺失:%s(%s)" % [s, spec[1]])
+		_check((spec[3] as String).count(s) >= 1,
+				"%s 缺失:%s(%s)" % [(spec[2] as String).get_file(), s, spec[1]])
 	# ★ 私有调试残留:KH 的 _spawn_worker 曾硬编码 `--log-file` 指向**开发机本机绝对路径**
 	# (含其用户名数字段),异机运行时写不存在目录(与 main 无关的私机路径)。全仓必须零命中。
 	# ⚠ 连本文件的注释也不能出现那个数字:本扫描包含 tests/,写进注释就是自己命中自己。
