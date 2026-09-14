@@ -140,13 +140,13 @@ func _ready() -> void:
 func _on_match_sync(payload: Dictionary) -> void:
 	var names: Dictionary = payload.get("names", {})
 	if not names.is_empty():
-		_on_peer_info(names)
+		_apply_peer_names(names)
 	var hues: Dictionary = payload.get("hues", {})
 	if not hues.is_empty():
-		_on_peer_hues(hues)
+		_apply_peer_hues(hues)
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():
-		_on_match_options(opts)
+		_apply_match_options(opts)
 	var sp: Dictionary = payload.get("spawns", {})
 	if sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]
@@ -489,7 +489,10 @@ func _apply_tint(body: Node, hue_deg: float) -> void:
 # 缺省回落与 _apply_p2_tint 同一条旧规则(P2 本体 -65,其余不染)——故 _ready 里那次
 # _apply_p2_tint() 是无载荷时的落地形态,本函数是载荷到达后的覆盖。
 # 头顶名不在这里上色:名统一中性亮白,色相只区分身体(见 NAME_COLOR 处的说明)。
-func _on_peer_hues(hues: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBusExt.local_peer_hues —— 那条**推送**路径在本项目已不存在(worker 不再广播),
+#   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
+func _apply_peer_hues(hues: Dictionary) -> void:
 	_opp_hues = hues
 	_apply_opp_hue()
 
@@ -505,7 +508,9 @@ func _apply_opp_hue() -> void:
 #   服务器若无同一张表就会 equip 成功,两端槽位错位,且权威槽位每帧把我们拉回去 ——
 #   每帧重试、永久错位(静默,不报错)。服务器端(MatchHost)已落地,这里补的是客户端这一端。
 # 信号可能早于/晚于本场景 _ready 到达,故 _local 判空。
-func _on_match_options(opts: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_hues 的告警。
+func _apply_match_options(opts: Dictionary) -> void:
 	var disabled: Array[int] = []
 	for v in opts.get("disabled_weapons", []):
 		disabled.append(int(v))
@@ -514,7 +519,9 @@ func _on_match_options(opts: Dictionary) -> void:
 		_local.weapons.set_enabled_slots(disabled)
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
-func _on_peer_info(names: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBus.local_peer_info —— 同 _apply_peer_hues 的告警。
+func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:

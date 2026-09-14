@@ -119,13 +119,13 @@ func _ready() -> void:
 func _on_match_sync(payload: Dictionary) -> void:
 	var names: Dictionary = payload.get("names", {})
 	if not names.is_empty():
-		_on_peer_info(names)
+		_apply_peer_names(names)
 	var hues: Dictionary = payload.get("hues", {})
 	if not hues.is_empty():
-		_on_peer_hues(hues)
+		_apply_peer_hues(hues)
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():
-		_on_match_options(opts)
+		_apply_match_options(opts)
 	var sp: Dictionary = payload.get("spawns", {})
 	if sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]
@@ -459,14 +459,19 @@ func _on_enemy_died(id: int) -> void:
 	_enemy_replicas.erase(id)
 
 # ── 名字 / 颜色 ──
-func _on_peer_info(names: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBus.local_peer_info —— 那条**推送**路径在本项目已不存在(worker 不再广播),
+#   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
+func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
 	_ensure_id_label(PvpSession.role)
 	_refresh_names()
 
 var _names: Dictionary = {}   # role(int) -> 昵称(peer_info 下发)
 
-func _on_peer_hues(hues: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBusExt.local_peer_hues —— 同 _apply_peer_names 的告警。
+func _apply_peer_hues(hues: Dictionary) -> void:
 	_hues = hues
 	for role in _replicas:
 		if is_instance_valid(_replicas[role]):
@@ -498,7 +503,9 @@ func _apply_tint(body: Node, hue_deg: float) -> void:
 	canvas.material = mat
 
 # 服务器下发生效选项:同步禁用武器
-func _on_match_options(opts: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_names 的告警。
+func _apply_match_options(opts: Dictionary) -> void:
 	var disabled: Array[int] = []
 	for v in opts.get("disabled_weapons", []):
 		disabled.append(int(v))
