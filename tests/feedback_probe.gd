@@ -70,9 +70,14 @@ func _ready() -> void:
 	CF.notify_enemy_killed(_victim_killed_by(Node2D.new()))
 	if fx._kill_label.text != "":
 		failures.append("非玩家击杀误播报(文本:「%s」)" % fx._kill_label.text)
-	# 显示名对照表
-	if CF.ENEMY_NAMES.get("FlyBird", "") != "飞鸟":
-		failures.append("敌人显示名对照表缺失")
+	# 显示名:2026-09-14 起唯一来源是 data/enemies.json 的 display_name 字段(经
+	# EnemySpawner.display_name_of,按**场景路径**查)。原先这里断言的是 combat_feedback 里
+	# 那份手抄的 const ENEMY_NAMES —— 已删,按仓内惯例改判据认新入口。
+	if EnemySpawner.display_name_of("res://scenes/enemies/EnemyFlyBird.tscn") != "飞鸟":
+		failures.append("敌人显示名(enemies.json 的 display_name)取不到「飞鸟」")
+	# 查不到的回落:英文场景文件名(不是空串、也不是崩溃)
+	if EnemySpawner.display_name_of("res://scenes/enemies/EnemyNoSuchBird.tscn") != "EnemyNoSuchBird":
+		failures.append("未知敌人的显示名回落不对(应为英文场景文件名)")
 	# ── 写入方覆盖(Task 12 闭环):真实 BulletBase._register_player_hit 必须落 last_damager ──
 	var bullet_scene: PackedScene = load("res://scenes/weapons/bullet.tscn")
 	if bullet_scene == null:

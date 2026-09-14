@@ -14,6 +14,10 @@ const enemies = (json.enemies || []).map(function (e) {
   return {
     id: String(e.id),
     name: String(e.name),
+    // display_name:击杀播报用的中文名(EnemySpawner.display_name_of 读它)。
+    // ★ 本脚本是**字段级手抄**:enemies.json 加字段时必须同步加到这里,否则 HTML 内嵌的这份
+    //   会静默丢字段(编辑器当下不用它,丢了也没人报错 —— 正是那种安静的漂移)。
+    display_name: String(e.display_name || e.name),
     scene: String(e.scene),
     color: String(e.color || '#999999')
   };

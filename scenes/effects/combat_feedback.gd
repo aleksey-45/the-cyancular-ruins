@@ -15,9 +15,6 @@ const STREAK_RESET := 6.0 # 连杀窗口:隔此秒数没有新击杀则连杀清
 const ATTRIB_WINDOW_MS := 3000 # 归因时效:距最后一次受击超过此毫秒数的死亡不再归因给该射手
 const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
 
-# 敌人显示名对照(键 = 场景名去掉 Enemy 前缀,即 enemies.json 的 name 字段)
-const ENEMY_NAMES := {"FlyBird": "飞鸟", "JumpBird": "跳鸟", "BlackBird": "黑影"}
-
 static var current: CombatFeedback = null   # 当前对局的反馈层;null = 非对局/服务器,静态入口空转
 
 
@@ -93,10 +90,13 @@ static func notify_enemy_killed(victim: Node) -> void:
 	kill(enemy_display_name(victim))
 
 
-## 敌人显示名:场景文件名去 Enemy 前缀/.tscn 后查表,查不到回落原名
+## 敌人显示名(击杀播报用):唯一来源是 data/enemies.json 的 `display_name` 字段,经
+## `EnemySpawner.display_name_of`(按**场景路径**查,自带惰性加载 —— 不依赖"调用前恰好有人
+## 调过 load_types()")。查不到回落英文场景文件名。
+## ★ 2026-09-14 前这里是一份手抄的 `const ENEMY_NAMES`(键 = 场景名去 Enemy 前缀),
+##   与 enemies.json **两处维护**:加新敌人漏改这里就会静默显示英文名,且不报错。
 static func enemy_display_name(victim: Node) -> String:
-	var base := String(victim.scene_file_path).get_file().trim_suffix(".tscn").trim_prefix("Enemy")
-	return ENEMY_NAMES.get(base, base)
+	return EnemySpawner.display_name_of(String(victim.scene_file_path))
 
 
 var _marker: HitMarker = null

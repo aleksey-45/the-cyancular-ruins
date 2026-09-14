@@ -4,12 +4,29 @@ extends Node2D
 # 每生成一个敌人发射一次(HUD 等接上去监听 enemy.died 做击杀计数)
 signal enemy_spawned(enemy: Node)
 
-# 敌人注册表(id → scene)。唯一来源 data/enemies.json(与 HTML 编辑器共享)。
-static var TYPES: Dictionary = {}
+# 敌人注册表。唯一来源 data/enemies.json(与 HTML 编辑器共享)。
+static var TYPES: Dictionary = {}           # id → scene 路径
+static var DISPLAY_NAMES: Dictionary = {}   # scene 路径(res://…/EnemyFlyBird.tscn)→ 中文显示名
 
-# 从 res://data/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
+# 从 res://data/enemies.json 加载注册表(两张表一起填);缺文件/格式错 → push_error,表保持空。
 static func load_types() -> void:
+	_load_registry()
+
+# 敌人中文显示名(击杀播报用)。按**场景路径**查 —— 不再像旧实现那样"去掉 `Enemy` 前缀再查表",
+# 那种约定在场景文件改名时会**静默**回落英文名。
+# ★ 自带惰性加载,刻意**不依赖 load_types()**:后者只在单机 `Level0._ready` 里调,而 PvP 在它
+#   **之前**就 `return` 了。PvP 里敌人路径目前是关的(`MatchHost.ENABLE_BIRDS=false`,见 M8),
+#   所以这条今天不会真的被 PvP 走到 —— 但那正是"能用的那天才发现回落成了英文名"的形状;
+#   让本函数自给自足比依赖"调用前恰好有人 load 过"便宜得多。
+static func display_name_of(scene_path: String) -> String:
+	if DISPLAY_NAMES.is_empty():
+		_load_registry()
+	return str(DISPLAY_NAMES.get(scene_path, scene_path.get_file().trim_suffix(".tscn")))
+
+
+static func _load_registry() -> void:
 	TYPES = {}
+	DISPLAY_NAMES = {}
 	var json_text := FileAccess.get_file_as_string("res://data/enemies.json")
 	if json_text.is_empty():
 		push_error("EnemySpawner: 读不到 res://data/enemies.json")
@@ -19,8 +36,11 @@ static func load_types() -> void:
 		push_error("EnemySpawner: enemies.json 格式非法")
 		return
 	for e in parsed["enemies"]:
-		if typeof(e) == TYPE_DICTIONARY and e.has("id") and e.has("scene"):
-			TYPES[str(e["id"])] = str(e["scene"])
+		if typeof(e) != TYPE_DICTIONARY or not e.has("id") or not e.has("scene"):
+			continue
+		var scene_path := str(e["scene"])
+		TYPES[str(e["id"])] = scene_path
+		DISPLAY_NAMES[scene_path] = str(e.get("display_name", scene_path.get_file().trim_suffix(".tscn")))
 
 # Level0._ready 里调用。敌人加入 WorldViewport 子节点(与墙壁/玩家同空间)。
 # spawns 为 MazeGenerator.load_spawns() 的字典;地图是唯一来源(无 # enemy 即 0 只)。
