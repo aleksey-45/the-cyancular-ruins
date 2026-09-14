@@ -10,12 +10,10 @@ var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外
 var _level0: Node = null
 var _hud: RoyaleHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
-var _match_ended := false
 
 # ── C2 客户端预测(与 pvp_client 同一套;见 docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md)──
 # 本地玩家由引擎自步进(读真实 Input,aim/手感=单机);本场景每物理帧在它步进前
 # note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
-var _menu_open := false         # ESC 菜单是否开着(PvP 下菜单不暂停树,靠这个锁输入)
 
 # ── 头上 ID / 血条(按 role 管理)──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
@@ -198,32 +196,6 @@ func _remove_replica(role: int) -> void:
 		_hp_bars.erase(role)
 	_refresh_names()
 
-func _on_bullet_spawn(data: Dictionary) -> void:
-	if _world == null:
-		return
-	var scene: PackedScene = load(data["scene"])
-	if scene == null:
-		return
-	var b: BulletBase = scene.instantiate()
-	b.setup(data["vel"].normalized(), data["speed"], data["range"], data["size"], data["color"], null)
-	b.gravity_factor = data["gravity"]
-	b.hit_damage = data["hit_damage"]
-	b.hit_impact = data["hit_impact"]
-	b.apply_damage = false
-	if data["explodes"]:
-		b.explodes = true
-		b.direct_hit_damage = data["direct_damage"]
-		b.fuse_time = data["fuse"]
-		b.hit_fuse_time = data["hit_fuse"]
-		b.explosion_radius = data["radius"]
-		b.explosion_damage = data["expl_damage"]
-		b.explosion_knockback = data["expl_knock"]
-		if data.has("visual"):
-			b.explosion_visual = load(data["visual"])
-	b.global_position = data["pos"]
-	_world.add_child(b)
-	if Settings.pvp_show_trajectories:
-		BulletTrail.attach(b, data["color"])
 
 # 服务器权威开火(激光):逐点锚到**射手副本**当前渲染位置再整条画。
 # 与 pvp_client._on_beam_fired 的唯一差别:大乱斗有 N 个副本,锚点按 shooter_role 取。
@@ -311,9 +283,6 @@ func _on_round_state(data: Dictionary) -> void:
 # 任一成立就锁。**不要在各调用点各拼一次布尔** —— 那正是"修复波 1 只关住一个方向"的成因。
 # ★ 与 pvp_client._refresh_input_lock 的差别:这里多一个 _match_ended —— 大乱斗在 MATCH_OVER
 #   要锁住结算画面(自检 L6:原还能跑动开枪),而 pvp_client 的 MATCH_OVER 不锁(它靠别的方式收场)。
-func _refresh_input_lock() -> void:
-	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
 
 # ── 名字 / 颜色 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。

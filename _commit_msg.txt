@@ -1,38 +1,29 @@
-refactor(pvp): 两个对局客户端抽出共享基类 scenes/pvp_match_client.gd(3.4 第一步)
+refactor(pvp): 共享基类再吸收两函数,并修一处**因缺字段声明导致的基类编译失败**(3.4 第二步)
 
-抽什么(判据:剔掉注释后**代码逐字相同**,不是"看起来像"):7 个函数共 58 行 ——
-`_physics_process`(22) / `_on_remote_tile_destroyed`(12) / `_apply_tint`(7) /
-`_correct_local_spawn`(5) / `_apply_match_options`(5) / `_on_snapshot_own`(5) /
-`_on_hit_confirm`(2);另含 8 个共享字段与 `const TileHitFx`。
-其中 `_physics_process` 是 C2 循环的心脏 —— 3.1 把位打包收进 pack_record 之后两份就一模一样了。
+吸收(判据同前:剔掉注释**含行尾注释**后代码逐字相同):
+  · `_on_bullet_spawn`(25 行)—— 零新依赖(只用已上提的 `_world` 与 class_name);
+  · `_refresh_input_lock`(2 行)—— 两个子类仅差一个 `_match_ended` 维度,故连 `_match_ended` 一起上提。
+    ★ 这是本步的**唯一行为差异**:1v1 在 MATCH_OVER 之后那几秒输入现在也被锁(此前没有),
+      与大乱斗同款、且与 `_match_ended` 的语义一致(那段时间正在回菜单)—— 属有意统一,已在代码注释里写明。
 
-为什么要做:两个客户端本是一份代码按「对手 1 个 / N 个」叉开的,叉开时**复制**了整份实现 ——
-同一处修正要改两遍,漏一处**不报错**(表现是"1v1 里好了、大乱斗里没变",或反过来)。
+★ 途中踩到并修掉的一个真问题(值得记):把 `_refresh_input_lock` 追加进基类时**漏了它引用的
+  `_menu_open`** —— 基类自己编译不过 → 所有 `extends PvpMatchClient` 的脚本在**子进程**里报
+  `Could not resolve class "PvpMatchClient"`(而类缓存条目本身是对的:class→path 完全正确,
+  只是那个 path 指向的脚本编译失败)。两个大乱斗探针因此超时。
+  · 误判方向:`--import` **不编译**全部脚本(它只 import 资源),所以"import 无报错"不代表脚本能编译;
+  · 可靠的单文件检查是 `--check-only --script <path>` —— 但它**不实例化 autoload**,故 `NetBus`/
+    `GameParameters` 一律假报「Identifier not found」;它只对**脚本内未声明的标识符**(如 `_menu_open`)
+    是真信号。最可靠的仍是**真加载场景**(`--quit-after 30 <scene>`)。
 
-计划里写的「9 个函数逐字相同 ≈140 行」已过期:其中 3 个(`_on_enemy_spawn`/`_clear_enemy_replicas`/
-`_on_enemy_died`)被 3.5 删鸟时删掉了,`_physics_process` 也被 3.1 改过 —— 故按**当场重测**的口径
-(剔注释后逐行 diff)定这次的范围,不信计划里的旧数字。
+★ 探针连带:`kh_l6` 的「输入锁单一收口」检查原先只在 `pvp_client` 里找 `func _refresh_input_lock(`,
+  搬走后它红得对。改成**两处都查**(定义可在 pvp_client 或基类;函数体判据在定义所在的那个文件上做),
+  并把「散落 `set_controls_locked`」的扫描**跨两个文件**(只查一边的话,另一边散落一份就没人管)。
+  反证:往**基类**的锁函数体外塞一处 `set_controls_locked` → 咬红,且消息报出
+  `pvp_match_client.gd/_correct_local_spawn`(证明跨文件扫描真的生效);还原转绿。
 
-★ 子类刻意保留的差异(下一步才动,别凭印象搬):
-  · 对手副本 1 个固定(`_remote_replica`) vs N 个按 role 动态(`_replicas`)—— 它决定了
-    `_process`/`_on_snapshot_world`/`_on_round_state`/`_apply_peer_hues`/`_on_hit_event` 的形状;
-  · HUD 类(PvpHud vs RoyaleHud)、退场是否额外锁 `_match_ended`、`_unhandled_input` 的自杀键;
-  · `_ready`(差异最大)。
+行数:pvp_client 394→367、royale_game 368→341、基类 111→152。
 
-行数:pvp_client 555→394、royale_game 482→368,新增基类 111。
-
-★ 探针连带两处:
-  · kh_l6 原先按 `_pc_code` 单个文件取函数体,`_physics_process`/`_on_snapshot_own` 搬走后它红得对
-    ("取不到…函数体(改名/挪走了?)")。加 `_body_anywhere`(先 pvp_client 再基类),**都找不到仍返回
-    空串 → 各调用点原有的断言照红**,不会因"多找了一个文件"而静默放行。反证:把基类里的
-    `_physics_process` 临时改名 → 报红"取不到",还原转绿。
-  · royale_c2_watcher 的 A② 扫描清单把共享基类加进去(当初预留的 A2_OWNERS_FUTURE 正是为这一刻)。
-    基类当前**还不含** C2 接线,故按 A2_WIRING 判据被跳过、在位数仍是 2 —— 等后续把接线也搬进来,
-    这道门**自动**把它算成持有者(当年 A② 只盯一个文件名,搬走就恒绿)。
-
-★ 一处低级失误已修:删 `A2_OWNERS_FUTURE` 常量前没 grep 引用,它在失败消息里还被用着 →
-watcher 编译失败 → 探针表现为**超时**。改成具名常量 `A2_BASE` 供列表与消息共用。
-
-验证:启动/大厅 0 报错 + kh_l1/l3/l4/l5/l6 + match_sync + preview_visibility + rollback_fidelity +
-brawl_rollback + pvp_match/pvp_reconcile/pvp_twin/move_feel + royale_c2/royale_bound 端到端 +
-replica_ghost + 4 客户端真对局 soak + 命名 lint,全绿。
+验证:启动 0 报错 + 大厅 + **两个对局场景真加载**各 0 报错 + kh_l1/l3/l4/l5/l6 + match_sync +
+preview_visibility + rollback_fidelity + grenade_player_hit + room_sweep/pvp_room/pvp_match/
+pvp_reconcile/pvp_twin/move_feel 六个多进程 + royale_probe/royale_bound/royale_c2 三个端到端 +
+4 客户端真对局 soak + 命名 lint,全绿。

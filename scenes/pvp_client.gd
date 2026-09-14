@@ -16,8 +16,6 @@ var _remote_replica: Node2D = null
 var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibles
 var _hud: PvpHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)
-var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
-var _menu_open := false         # 暂停菜单是否开着(PvP 下菜单不暂停树,靠这个锁输入)
 
 # ── 头上 ID(自己/对手昵称):世界空间文字,每帧贴到头顶 ──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,现往下压一点)
@@ -175,33 +173,6 @@ func _on_snapshot_world(world: Dictionary) -> void:
 # 世界包丢只让副本插值冻结一帧。
 
 # 服务器广播的对手子弹 → 本地生成确定性视觉副本(不裁决伤害,只出轨迹/特效)。
-func _on_bullet_spawn(data: Dictionary) -> void:
-	if _world == null:
-		return
-	var scene: PackedScene = load(data["scene"])
-	if scene == null:
-		return
-	var b: BulletBase = scene.instantiate()
-	b.setup(data["vel"].normalized(), data["speed"], data["range"], data["size"], data["color"], null)
-	b.gravity_factor = data["gravity"]
-	b.hit_damage = data["hit_damage"]
-	b.hit_impact = data["hit_impact"]
-	b.apply_damage = false   # 视觉副本:不裁决伤害
-	if data["explodes"]:
-		b.explodes = true
-		b.direct_hit_damage = data["direct_damage"]
-		b.fuse_time = data["fuse"]
-		b.hit_fuse_time = data["hit_fuse"]
-		b.explosion_radius = data["radius"]
-		b.explosion_damage = data["expl_damage"]
-		b.explosion_knockback = data["expl_knock"]
-		if data.has("visual"):
-			b.explosion_visual = load(data["visual"])
-	b.global_position = data["pos"]
-	_world.add_child(b)
-	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
-	if Settings.pvp_show_trajectories:
-		BulletTrail.attach(b, data["color"])
 
 # 服务器权威开火(即时光束武器,激光):对手端据此画光束视觉副本(不开物理子弹,
 # 无 bullet_spawn 实体可跟)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)→
@@ -290,9 +261,6 @@ func _on_round_state(data: Dictionary) -> void:
 
 # 本地输入锁的单一收口:冻结期(_round_locked)与菜单打开(_menu_open)任一成立就锁。
 # 不要在两个调用点各拼一次布尔 —— 那正是修复波 1 只关住一个方向的原因。
-func _refresh_input_lock() -> void:
-	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(_round_locked or _menu_open)
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
 func _on_opponent_left() -> void:

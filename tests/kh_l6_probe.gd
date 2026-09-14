@@ -138,6 +138,7 @@ var _pc_code := ""                     # pvp_client.gd 的去注释视图(保留
 var _pc_lines: PackedStringArray = PackedStringArray()
 var _rg_code := ""                     # royale_game.gd 的去注释视图(9b 用)
 var _base_code := ""                   # pvp_match_client.gd(共享基类)—— 公共函数体的所在
+var _base_lines: PackedStringArray = PackedStringArray()
 var _rg_lines: PackedStringArray = PackedStringArray()
 
 
@@ -145,6 +146,8 @@ func _ready() -> void:
 	_pc_code = _code_view(_read(PC))
 	_pc_lines = _pc_code.split("\n")
 	_base_code = _code_view(_read(BASE))
+	_base_lines = _base_code.split("
+")
 	if _base_code.is_empty():
 		# 基类读不到 → 下面所有 _body_anywhere 都会退化,必须**明确报红**而不是让它悄悄找不到
 		_failures.append("读不到 %s(共享基类;公共函数体都在那里)" % BASE)
@@ -349,9 +352,16 @@ func _check_note_input() -> void:
 # 判据三件:方法在、体内读两个维度、其它地方一个 set_controls_locked 都不许有(且方法真被调用)。
 func _check_input_lock_funnel() -> void:
 	var before := _failures.size()
+	# ★ 2026-09-14:锁函数并入**共享基类**(两模式同款)。定义可能落在 pvp_client 或基类 ——
+	#   两处都查;函数体判据在**定义所在的那个文件**上做。下面"散落扫描"则**两个文件一起扫**
+	#   (只查一边的话,另一边散落一份 set_controls_locked 就没人管)。
 	var i_def := _find_line(_pc_lines, "func " + N_LOCK_FN + "(")
-	_check(i_def >= 0, "缺 `func %s(`(输入锁失去单一收口点)" % N_LOCK_FN)
-	var body := _block_after(_pc_lines, i_def) if i_def >= 0 else ""
+	var def_lines := _pc_lines
+	if i_def < 0:
+		i_def = _find_line(_base_lines, "func " + N_LOCK_FN + "(")
+		def_lines = _base_lines
+	_check(i_def >= 0, "缺 `func %s(`(输入锁失去单一收口点;pvp_client 与共享基类里都没有)" % N_LOCK_FN)
+	var body := _block_after(def_lines, i_def) if i_def >= 0 else ""
 	if i_def >= 0:
 		_check(body.contains("_round_locked"), "锁函数体不读 `_round_locked`(倒计时冻结会失效)")
 		_check(body.contains("_menu_open"), "锁函数体不读 `_menu_open`(菜单开着仍能跑动开枪)")
@@ -360,11 +370,15 @@ func _check_input_lock_funnel() -> void:
 	# 单一收口:锁函数体之外的 `set_controls_locked` 一律算散落。函数体**不存在**时
 	# span 取空区间 → 每一处调用都算散落(KH 形态正是"删掉方法 + 就地直接调"两件事一起做,
 	# 只报"方法没了"会漏掉"散落在哪"这条线索)。
-	var span := _block_span(_pc_lines, i_def) if i_def >= 0 else Vector2i(0, 0)
+	var span := _block_span(def_lines, i_def) if i_def >= 0 else Vector2i(0, 0)
 	var stray: Array[String] = []
-	for k in range(_pc_lines.size()):
-		if (k < span.x or k >= span.y) and _pc_lines[k].contains(N_SET_LOCKED):
-			stray.append("%s ← %s" % [_enclosing_func(_pc_lines, k), _pc_lines[k].strip_edges()])
+	for pair in [[PC, _pc_lines, Vector2i(0, 0) if def_lines == _base_lines else span],
+			[BASE, _base_lines, span if def_lines == _base_lines else Vector2i(0, 0)]]:
+		var fl: PackedStringArray = pair[1]
+		var sp: Vector2i = pair[2]
+		for k in range(fl.size()):
+			if (k < sp.x or k >= sp.y) and fl[k].contains(N_SET_LOCKED):
+				stray.append("%s/%s ← %s" % [str(pair[0]).get_file(), _enclosing_func(fl, k), fl[k].strip_edges()])
 	var why := "锁函数体不存在,故下面每一处都是散落" if i_def < 0 else "散落站点"
 	_check(stray.is_empty(),
 		"`%s` 在锁函数体外有 %d 处(收口被打破:两个调用点各拼一次布尔 = 修复波 1 的病;%s: %s)"

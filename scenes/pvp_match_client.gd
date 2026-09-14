@@ -30,6 +30,11 @@ var _rollback = null            # PredictionRollback
 var _input_seq := 0             # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
 var _have_prev_seq := false
 var _prev_sent_seq := 0
+# MATCH_OVER 之后回菜单途中:忽略对手断线播报;也让输入锁把它算作一维(见 _refresh_input_lock)。
+# 1v1 里它只在 MATCH_OVER 那一刻置 true;大乱斗同。
+var _match_ended := false
+# 暂停菜单是否开着(PvP 下菜单不暂停树,靠它锁本地输入;见 _refresh_input_lock)
+var _menu_open := false
 
 func _apply_tint(body: Node, hue_deg: float) -> void:
 	var canvas := body as CanvasItem
@@ -109,3 +114,41 @@ func _physics_process(_delta: float) -> void:
 	_have_prev_seq = true
 	if _rollback != null:
 		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
+
+
+func _on_bullet_spawn(data: Dictionary) -> void:
+	if _world == null:
+		return
+	var scene: PackedScene = load(data["scene"])
+	if scene == null:
+		return
+	var b: BulletBase = scene.instantiate()
+	b.setup(data["vel"].normalized(), data["speed"], data["range"], data["size"], data["color"], null)
+	b.gravity_factor = data["gravity"]
+	b.hit_damage = data["hit_damage"]
+	b.hit_impact = data["hit_impact"]
+	b.apply_damage = false   # 视觉副本:不裁决伤害
+	if data["explodes"]:
+		b.explodes = true
+		b.direct_hit_damage = data["direct_damage"]
+		b.fuse_time = data["fuse"]
+		b.hit_fuse_time = data["hit_fuse"]
+		b.explosion_radius = data["radius"]
+		b.explosion_damage = data["expl_damage"]
+		b.explosion_knockback = data["expl_knock"]
+		if data.has("visual"):
+			b.explosion_visual = load(data["visual"])
+	b.global_position = data["pos"]
+	_world.add_child(b)
+	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
+	if Settings.pvp_show_trajectories:
+		BulletTrail.attach(b, data["color"])
+
+
+# 本地输入锁的单一口(三个维度:冻结期 / 菜单打开 / 结算后回菜单途中)。
+# 2026-09-14 从两个子类合并:**大乱斗那版多一个 `_match_ended`** —— 合并后 1v1 也带上它。
+# ★ 这是本步唯一的行为差异:1v1 在 MATCH_OVER 之后的那几秒里输入现在也被锁(此前没有)。
+#   与 `_match_ended` 的语义一致(那段时间正在回菜单),且与大乱斗**同款** —— 属有意统一,不是顺手改。
+func _refresh_input_lock() -> void:
+	if _local != null and _local.has_method("set_controls_locked"):
+		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
