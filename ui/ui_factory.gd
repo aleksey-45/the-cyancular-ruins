@@ -270,3 +270,82 @@ static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)
 	# 路径 —— 这里再挂一次就是同帧同调两个播放器("ui" 不在 Sfx.PITCH_VARIATION 里,音高也一样),
 	# 是能听出来的双响。统一由状态转移出声(键盘与点击同源)。
 	return b
+
+# ── 行式控件与杂项(2026-09-14 补齐:原先三个页面各手抄一份,注释都抄了三遍)──
+# 两个"行"的口共用同一个形状:**定宽标签列 + 紧邻控件**。标签列宽由调用方给(label_w)——
+# 各页面的数值**本就不同**(设置页 320 / 多人页 440),是各自的版式调参,不为统一而统一。
+
+# 递归给子树套像素字体(跳过容器:容器的 font 不影响子控件)。
+static func apply_font_recursive(root: Node) -> void:
+	if root is Control and not (root is PanelContainer or root is VBoxContainer or root is HBoxContainer 			or root is GridContainer or root is ScrollContainer):
+		var pf: FontFile = pixel_font()
+		if pf != null:
+			(root as Control).add_theme_font_override("font", pf)
+	for n in root.get_children():
+		apply_font_recursive(n)
+
+
+# 色相(0-360°)→ 预览色。两个大厅页原先各一份(逐字相同):色相只作"角色色"提示用。
+static func hue_preview_color(hue_deg: float) -> Color:
+	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
+
+
+# 开关行 = **定宽标签列 + 紧邻开关**。为什么必须定宽:裸 CheckButton 被 VBox 拉到容器全宽,
+# 标签与开关隔开几百像素,两者读成不相干的元素(2026-09-13 视觉评析)。定宽列同时让同一列的
+# 多个开关纵向对齐。label_w 见上(各页面自己那组数值)。
+static func check_row(text: String, initial: bool, label_w: float,
+		on_toggle: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	var lab := label(text, 32, C_TEXT)
+	lab.custom_minimum_size = Vector2(label_w, 0)
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(lab)
+	var cb := CheckButton.new()
+	cb.button_pressed = initial
+	cb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	style_check(cb, 32)
+	cb.toggled.connect(func(on: bool) -> void:
+		Sfx.play("switch")
+		on_toggle.call(on))
+	row.add_child(cb)
+	return row
+
+
+# 滑条行 = **定宽标签列 + 铺满剩余宽度的滑条**(与 check_row 共用同一套版式节奏,
+# 故两者的 label_w 应取同一个值 → 滑条与开关在同一页里纵向对齐成一列)。
+static func slider_row(text: String, initial: float, label_w: float,
+		on_change: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	var l := label(text, 32, C_TEXT)
+	l.custom_minimum_size = Vector2(label_w, 0)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(l)
+	var sl := HSlider.new()
+	sl.min_value = 0.0
+	sl.max_value = 1.0
+	sl.step = 0.05
+	sl.value = initial
+	# 铺满剩余宽度(原先固定 360 宽,右侧空着、拖拽命中区也偏小)。
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.custom_minimum_size = Vector2(360, 28)
+	style_slider(sl)
+	sl.value_changed.connect(func(v: float) -> void: on_change.call(v))
+	row.add_child(sl)
+	return row
+
+
+# 绝对定位的输入框(挂在 parent 下)。size 由调用方给:各页面原值不同(240×36 / 250×40),
+# 属各自版式,不为统一而改。
+static func line_edit(parent: Node, pos: Vector2, size: Vector2, placeholder: String,
+		initial: String) -> LineEdit:
+	var le := LineEdit.new()
+	le.position = pos
+	le.size = size
+	le.placeholder_text = placeholder
+	le.text = initial
+	style_control(le, 16)   # 16 = 引擎默认主题字号,与 KH 原观感一致
+	style_line_edit(le)
+	parent.add_child(le)
+	return le

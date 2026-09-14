@@ -10,6 +10,9 @@ extends Control
 # 避免新脚本未进全局类缓存时整份场景解析失败(本项目踩过同类坑)。
 const LocalServer := preload("res://core/local_server.gd")
 
+# 开关行/滑条行的**标签列宽**(本页原值 440;版式调参,各页面本就不同 —— 见 UiFactory.check_row 的注释)。
+const OPT_LABEL_W := 440.0
+
 var _addr_edit: LineEdit
 var _code_edit: LineEdit
 var _status: Label
@@ -30,7 +33,7 @@ var _pending_go_port := -1
 
 
 func _ready() -> void:
-	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址", PvpSession.server_address)
+	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(240, 36), "服务器地址", PvpSession.server_address)
 	_menu_button("刷新", Vector2(330, 120), Vector2(90, 36), _on_refresh_pressed)
 	# 一键本机开服:客户端各模式共用同目录的 Cyancular Ruins Server.exe
 	var srv_btn := _menu_button("启动/重启本机服务器", Vector2(432, 114), Vector2(200, 48),
@@ -40,12 +43,12 @@ func _ready() -> void:
 	_ip_label.position = Vector2(432, 166)
 	add_child(_ip_label)
 
-	var name_le := _make_line_edit(Vector2(60, 60), "昵称(头上显示)", PvpSession.player_name)
+	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(240, 36), "昵称(头上显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
-	_code_edit = _make_line_edit(Vector2(60, 180), "房间号(加入时填)", "")
+	_code_edit = UiFactory.line_edit(self, Vector2(60, 180), Vector2(240, 36), "房间号(加入时填)", "")
 
 	_status = UiFactory.label("", 16)
 	_status.position = Vector2(60, 320)
@@ -95,24 +98,10 @@ func _ready() -> void:
 	move_child(bg, 0)   # 垫底,不挡后续控件
 
 	_build_options_panel()
-	_apply_pixel_font(self)
+	UiFactory.apply_font_recursive(self)
 
 	# 进页自动连大厅拉房间列表(列表区域不再是一片空白;手动刷新仍可用)
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
-
-
-# ── 像素字体:递归给已有控件挂像素字体 ──
-# 本页自己建的控件都经 UiFactory(字体+字号一次到位),这里只兜底**不是本页建的**控件 ——
-# 主要是 WeaponComponent.make_weapon_check 造的武器剪影格(CheckButton 与内部 Label)。
-# 只补字体、不动字号;字体配置本身仍来自 UiFactory.pixel_font() 这一单一来源。
-func _apply_pixel_font(root: Node) -> void:
-	if root is Control and not (root is PanelContainer or root is VBoxContainer or root is HBoxContainer \
-			or root is GridContainer or root is ScrollContainer):
-		var pf: FontFile = UiFactory.pixel_font()
-		if pf != null:
-			(root as Control).add_theme_font_override("font", pf)
-	for n in root.get_children():
-		_apply_pixel_font(n)
 
 
 # ── 对战选项面板(右侧)──
@@ -141,19 +130,19 @@ func _build_options_panel() -> void:
 	vb.add_child(UiFactory.label("—— 对战选项 ——", 32, UiFactory.C_ACCENT))
 	vb.add_child(UiFactory.label("(规则项以房主设置为准)", 16, UiFactory.C_TEXT_DIM))
 
-	vb.add_child(_opt_check("显示敌方武器轨迹", Settings.pvp_show_trajectories, func(on: bool) -> void:
+	vb.add_child(UiFactory.check_row("显示敌方武器轨迹", Settings.pvp_show_trajectories, OPT_LABEL_W, func(on: bool) -> void:
 		Settings.pvp_show_trajectories = on
 		Settings.save()))
-	vb.add_child(_opt_check("每回合开始回满血(房主生效)", Settings.pvp_round_full_heal, func(on: bool) -> void:
+	vb.add_child(UiFactory.check_row("每回合开始回满血(房主生效)", Settings.pvp_round_full_heal, OPT_LABEL_W, func(on: bool) -> void:
 		Settings.pvp_round_full_heal = on
 		Settings.save()))
-	vb.add_child(_opt_check("显示敌方血量条", Settings.pvp_show_enemy_hp, func(on: bool) -> void:
+	vb.add_child(UiFactory.check_row("显示敌方血量条", Settings.pvp_show_enemy_hp, OPT_LABEL_W, func(on: bool) -> void:
 		Settings.pvp_show_enemy_hp = on
 		Settings.save()))
-	vb.add_child(_opt_check("打开小地图", Settings.pvp_show_minimap, func(on: bool) -> void:
+	vb.add_child(UiFactory.check_row("打开小地图", Settings.pvp_show_minimap, OPT_LABEL_W, func(on: bool) -> void:
 		Settings.pvp_show_minimap = on
 		Settings.save()))
-	vb.add_child(_opt_check("小地图显示敌方位置", Settings.pvp_minimap_show_enemy, func(on: bool) -> void:
+	vb.add_child(UiFactory.check_row("小地图显示敌方位置", Settings.pvp_minimap_show_enemy, OPT_LABEL_W, func(on: bool) -> void:
 		Settings.pvp_minimap_show_enemy = on
 		Settings.save()))
 
@@ -190,52 +179,18 @@ func _build_options_panel() -> void:
 	crow.add_child(hue_slider)
 	var chip := ColorRect.new()
 	chip.custom_minimum_size = Vector2(48, 24)
-	chip.color = _hue_preview_color(Settings.pvp_color_hue)
+	chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
 	crow.add_child(chip)
 	hue_slider.value_changed.connect(func(v: float) -> void:
 		Settings.pvp_color_hue = v
 		Settings.save()
-		chip.color = _hue_preview_color(v))
+		chip.color = UiFactory.hue_preview_color(v))
 
 
 # 色相预览(玩家本体是青蓝系,按色相旋转取近似展示色)
-func _hue_preview_color(hue_deg: float) -> Color:
-	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
 
 
-# 开关行 = 定宽标签列 + 紧邻开关。原先返回裸 CheckButton,被 VBox 拉到面板全宽,
-# 标签在 x≈975、开关被推到 x≈1650(中间 650px 死区),两者读成不相干的两个元素
-# (2026-09-13 视觉评析)。定宽列同时让 5 个开关纵向对齐。
-const OPT_LABEL_W := 440.0
 
-func _opt_check(text: String, initial: bool, on_toggle: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var lab := UiFactory.label(text, 32, UiFactory.C_TEXT)
-	lab.custom_minimum_size = Vector2(OPT_LABEL_W, 0)
-	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(lab)
-	var cb := CheckButton.new()
-	cb.button_pressed = initial
-	cb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	UiFactory.style_check(cb, 32)
-	cb.toggled.connect(func(on: bool) -> void:
-		Sfx.play("switch")
-		on_toggle.call(on))
-	row.add_child(cb)
-	return row
-
-
-func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
-	var le := LineEdit.new()
-	le.position = pos
-	le.size = Vector2(240, 36)
-	le.placeholder_text = placeholder
-	le.text = initial
-	UiFactory.style_control(le, 16)   # 16 = 引擎默认主题字号,与 KH 原观感一致
-	UiFactory.style_line_edit(le)
-	add_child(le)
-	return le
 
 
 # 按钮工厂:字体/字号纪律走 UiFactory,尺寸与位置由本页版式给(KH 原布局值)。

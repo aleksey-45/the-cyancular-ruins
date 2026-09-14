@@ -62,13 +62,13 @@ func _ready() -> void:
 	move_child(bg, 0)
 
 	# ── 左列:昵称 / 服务器 / 房间列表 / 邀请码加入 ──
-	var name_le := _make_line_edit(Vector2(60, 60), "昵称(排行榜显示)", PvpSession.player_name)
+	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(250, 40), "昵称(排行榜显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
 	# 大乱斗协议在 NetBusExt(自建服务端才有):原作者云服不支持 → 默认本机,不默认云地址
-	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址(大乱斗=自建服)", "127.0.0.1")
+	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(250, 40), "服务器地址(大乱斗=自建服)", "127.0.0.1")
 	var addr_hint := UiFactory.label("大乱斗需自建服务器:点「启动/重启本机服务器」即可本机开服(同目录需有 Cyancular Ruins Server.exe);朋友加入填开服机 IP(异地用 VPN 组网);原作者云服不支持大乱斗", 16, Color(0.75, 0.8, 0.85))
 	addr_hint.position = Vector2(60, 160)
 	addr_hint.size = Vector2(900, 26)
@@ -94,8 +94,8 @@ func _ready() -> void:
 	scroll.add_child(vb)
 	_list_box = vb
 
-	_code_edit = _make_line_edit(Vector2(60, 812), "房间号", "")
-	_invite_edit = _make_line_edit(Vector2(330, 812), "邀请码(私密房)", "")
+	_code_edit = UiFactory.line_edit(self, Vector2(60, 812), Vector2(250, 40), "房间号", "")
+	_invite_edit = UiFactory.line_edit(self, Vector2(330, 812), Vector2(250, 40), "邀请码(私密房)", "")
 	# 「加 入」:所需尺寸走 UiFactory.button 的 min_size(KH 是事后覆写 custom_minimum_size);
 	# 显式 size 保留 KH 原尺寸,140×48 是可收缩下限。
 	var join_btn := UiFactory.button("加 入", 16, Vector2(140, 48))
@@ -124,7 +124,7 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 
-	_apply_pixel_font(self)
+	UiFactory.apply_font_recursive(self)
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
 
 
@@ -234,12 +234,12 @@ func _build_create_panel() -> void:
 	crow.add_child(hue_slider)
 	var chip := ColorRect.new()
 	chip.custom_minimum_size = Vector2(46, 30)
-	chip.color = _hue_preview_color(Settings.pvp_color_hue)
+	chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
 	crow.add_child(chip)
 	hue_slider.value_changed.connect(func(v: float) -> void:
 		Settings.pvp_color_hue = v
 		Settings.save()
-		chip.color = _hue_preview_color(v))
+		chip.color = UiFactory.hue_preview_color(v))
 
 	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, UiFactory.C_TEXT_DIM))
 
@@ -249,19 +249,7 @@ func _build_create_panel() -> void:
 
 
 # ── 通用小控件 ──
-func _hue_preview_color(hue_deg: float) -> Color:
-	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
 
-func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
-	var le := LineEdit.new()
-	le.position = pos
-	le.size = Vector2(250, 40)
-	le.placeholder_text = placeholder
-	le.text = initial
-	UiFactory.style_control(le, 16)   # 16 = 引擎默认主题字号,与 KH 原观感一致
-	UiFactory.style_line_edit(le)
-	add_child(le)
-	return le
 
 # 按钮工厂:字体/字号纪律走 UiFactory,位置与尺寸由本页版式给(KH 原布局值)。
 # 不用 UiFactory.button() 的默认 420×64:那是主菜单按钮列的约定,与本页绝对定位的小按钮不合。
@@ -281,14 +269,6 @@ func _make_button(pos: Vector2, text: String, fn: Callable) -> Button:
 # 主要是 WeaponComponent.make_weapon_check 造的武器剪影格(CheckButton 与内部 Label):
 # 内层 Label 只设了字号、没设字体,而 UiFactory.style_control 不递归穿透容器 → 只能递归补。
 # 只补字体、不动字号;字体配置本身仍来自 UiFactory.pixel_font() 这一单一来源。
-func _apply_pixel_font(root: Node) -> void:
-	if root is Control and not (root is PanelContainer or root is VBoxContainer or root is HBoxContainer \
-			or root is GridContainer or root is ScrollContainer):
-		var pf: FontFile = UiFactory.pixel_font()
-		if pf != null:
-			(root as Control).add_theme_font_override("font", pf)
-	for n in root.get_children():
-		_apply_pixel_font(n)
 
 
 # ── 大厅连接(同 matchmaking 的 _with_lobby 模式)──

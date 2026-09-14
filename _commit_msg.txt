@@ -1,29 +1,27 @@
-refactor(pvp): 加对手副本访问器,共享基类再吸收 3 函数 —— 3.4 收口
+refactor(ui): UiFactory 补齐 5 个口,收掉三个页面各手抄的控件包装(3.7)
 
-★ 引入 `_replica_for(role) -> Node2D`(基类默认返回 null,**子类必须覆写**):两个客户端
-  除了"对手 1 个固定 vs N 个按 role"之外别无异同,把这条差异**收在一个口上**,下面那些
-  消费快照/事件的函数就能一起上提,而不是各写两份。
+新增(全部逐字搬自页面里的手抄实现,只是把各自的**版式数值**提成参数):
+  · `apply_font_recursive(root)` ← `_apply_pixel_font`(matchmaking/royale_lobby 各一份,逐字相同);
+  · `hue_preview_color(hue_deg)` ← `_hue_preview_color`(同上,两份逐字相同);
+  · `check_row(text, initial, label_w, on_toggle)` ← `matchmaking._opt_check` 与 `settings_menu._check`
+    —— 两者**同形状**,只差标签列宽(440 vs 320),那本就是各页版式调参,故走参数;
+  · `slider_row(text, initial, label_w, on_change)` ← `settings_menu._slider_row`;
+  · `line_edit(parent, pos, size, placeholder, initial)` ← `_make_line_edit`(两份差 size:240×36 / 250×40,
+    同样走参数 —— 逐字搬会改观感)。
 
-吸收(判据同前:剔注释含行尾注释后逐字相同,或只差"取哪个副本"):
-  · `_on_hit_event`(对手被打 → 副本闪一下);
-  · `_on_beam_fired`(对手激光光束视觉副本,逐点锚到射手副本)—— 连 `const LaserVisual` 一起上提;
-  · `_on_match_sync`(进场拉取应答,17 行)—— 两个子类仅差一处 `push_warning` 前缀。
-    它要调 `_apply_peer_names`/`_apply_peer_hues`,而这两个的形状**本就**随对手数量而定,
-    故在基类声明为「必须覆写」的桩(body 是 push_error),子类各自实现。
+★ 形参顺序刻意把 `label_w` 放在 **callable 之前**:两个页面都用**块体 lambda** 作最后实参,
+  callable 之后再跟实参要跨过 lambda 体写逗号,极易写错(本轮第一版就写错、解析不过)。
 
-行数:pvp_client 555→318、royale_game 482→291、基类 0→239。**重复净减 189 行**。
+行数:matchmaking 538→493、royale_lobby 601→581、settings_menu 216→180、ui_factory 272→351
+(三个页面共减 101 行手抄,工厂增 79 行 —— 净减重复,且注释不再抄三遍)。
 
-★ 3.4 到此收口 —— 剩下**仍有差异**的函数是**刻意保留**的,它们差的不是重复而是**第二根结构轴**:
-  · `_process` / `_on_snapshot_world` / `_on_round_state`:差在 **per-role 的 ID 标签与血条记账**
-    (1v1 是固定的 `_id_self`/`_id_opp`/`_hp_bar`,大乱斗是 `_id_labels`/`_hp_bars` 字典),
-    以及 `_on_round_state` 的真语义差(退场定时器 5.0s vs 6.0s)。要合得先抽"标签/血条管理器",
-    那是**重新设计**而不是去重 —— 与本项"合并重复的事件消费层"不是一个动作,故不做。
-  · `_apply_peer_names` / `_apply_peer_hues`:上面那两个桩的实现,形状随对手数量而定(刻意)。
-  · `_on_kill_event`:仅差一行回退文案(`"对手"` vs `"玩家%d" % victim`)。**统一会改 1v1 的
-    用户可见文字**,不擅自改,留作待定。
-  · `_ready`:两个模式各建各的世界/副本/HUD,差异最大(56/75 行)。
-  · `_replica_for`:基类桩 + 两个子类实现(本就是设计的一环)。
+★ 途中踩到并修的两个坑(都是我自己的按行段删函数脚本):
+  ① 该脚本"走到下一段后接 `func` 的注释才停"的启发式,**遇到注释与 `func` 之间夹着 `const` 就失效**
+     → `_hue_preview_color` 的删除把 `const OPT_LABEL_W := 440.0` 一起吞了(缺常量 → 5 处解析错误)。
+     已补回;另一处 `const CHECK_LABEL_W` 因在 settings_menu 里同形,提前防护 + 删后核查,未被吞。
+  ② 删完必查"被删的行里有没有 `-const`/`-var`"(`git diff | grep '^-'`),这是唯一能发现 ① 的办法。
 
-验证:启动 0 报错 + 两个对局场景真加载 0 报错 + kh_l1/l5/l6 + match_sync + preview_visibility +
-room_sweep/pvp_room/pvp_match/pvp_reconcile/pvp_twin/move_feel 六个多进程 + royale_probe/
-royale_bound/royale_c2 三个端到端 + replica_ghost + 4 客户端真对局 soak + 命名 lint,全绿。
+验证:启动 0 报错 + **三个页面场景真加载各 0 报错**(matchmaking / royale_lobby / settings_menu)
++ kh_l1/l5/l6 + match_sync + pvp_room/pvp_match 两个多进程 + royale_bound/royale_c2 端到端,全绿。
+★ 视觉未实测:`menu_autotest` 是截图探针(必须真实渲染),留给用户跑;本次所有数值都按参数原样传,
+预期零观感变化。
