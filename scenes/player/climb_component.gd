@@ -8,7 +8,9 @@ var body: CharacterBody2D
 
 var _latched: bool = false   # 攀附状态:中心在通道格(梯/锁链)即攀附,不受重力
 
-const STOP_SNAP := 1.0       # 与根一致:水平速度低于此值归零
+# (此处原有 const STOP_SNAP := 1.0 —— **死副本**:全仓零使用,注释描述的是一个从未接线的意图。
+#  2026-09-14 删除;水平速度归零的阈值现由 PlayerParams.stop_snap 单一持有。本文件此前也有过
+#  一份零调用的 _approach 死副本(批次 1 已删),抄常量前先 grep 一下还有没有别的使用者。)
 
 func _ready() -> void:
 	body = get_parent() as CharacterBody2D

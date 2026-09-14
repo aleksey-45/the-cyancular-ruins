@@ -11,6 +11,10 @@ const accel_ground: float = 30.0    # 地面加速缓动系数(越大起步越�
 const accel_air: float = 9.0        # 空中加速
 const brake_ground: float = 16.0    # 地面松键减速(带一点滑行)
 const brake_air: float = 6.0        # 空中松键减速
+# 水平速度低于此值直接归零(避免贴地滑行 / 极慢速抖动)。
+# 原先是 scenes/player/player.gd 里的 const STOP_SNAP,climb_component 里还抄过一份死副本 ——
+# 归到这里,免得再被抄第二遍(移动手感数值的唯一去处就是本文件)。
+const stop_snap: float = 1.0
 
 # ── 跳跃手感(方案 A)──
 const jump_velocity: float = -1000.0

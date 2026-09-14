@@ -117,7 +117,8 @@ var state: Pose = Pose.STAND
 var state_lock_timer: float = 0.0
 const STATE_LOCK_TIME := 0.15   # 秒，切换后的最短停留时长
 
-const STOP_SNAP := 1.0              # 水平速度低于此值直接归零，避免贴地滑行
+# (原 const STOP_SNAP := 1.0 已提到 PlayerParams.stop_snap —— 移动手感数值的唯一去处,
+#  免得再被别处抄第二份。用点见下方两处 absf(velocity.x) 判定。)
 
 # 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
 var _coll_by_pose: Dictionary = {}
@@ -158,7 +159,7 @@ func _physics_process(delta: float) -> void:
 			velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
 		else:
 			velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
-		if absf(velocity.x) < STOP_SNAP:
+		if absf(velocity.x) < PlayerParams.stop_snap:
 			velocity.x = 0.0
 		combat.apply_knock(delta)
 		move_and_slide()
@@ -268,7 +269,7 @@ func _physics_process(delta: float) -> void:
 				else:
 					velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
 				# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
-				if absf(velocity.x) < STOP_SNAP:
+				if absf(velocity.x) < PlayerParams.stop_snap:
 					velocity.x = 0.0
 
 	# ---------- 面朝方向更新 ----------
