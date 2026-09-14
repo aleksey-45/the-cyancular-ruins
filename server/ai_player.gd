@@ -25,7 +25,6 @@ var _next_decide := 0.0
 var _strafe := 1.0
 var _target_role := 0     # 黏滞目标(0=未锁定)
 var _stuck_t := 0.0       # 卡墙累计时长
-var _last_x := INF
 
 
 func _ready() -> void:
@@ -145,4 +144,3 @@ func _move(p: Node2D, dist: float, dir_to: Vector2, delta: float) -> void:
 		_stuck_t = 0.0
 		src.press_jump()
 	src.axis = move
-	_last_x = p.global_position.x

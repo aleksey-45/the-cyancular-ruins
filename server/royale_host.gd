@@ -396,7 +396,6 @@ func _broadcast_round_state() -> void:
 		"names": names,
 		"alive": alive,
 		"left": _left.keys(),
-		"match_time": int(_match_time),
 	}
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()

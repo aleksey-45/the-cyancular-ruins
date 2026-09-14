@@ -96,10 +96,6 @@ static func load_defs() -> void:
 	_ensure_tables()
 
 
-static func friction() -> float:
-	return float(_defs.get("friction", 1.0))
-
-
 static func explosion_decay() -> float:
 	return float(_defs.get("explosion_decay", 0.75))
 
@@ -128,11 +124,6 @@ static func type_id_of(texture: int) -> int:
 
 static func is_liquid(texture: int) -> bool:
 	return type_id_of(texture) == TYPE_LIQUID
-
-
-static func tile(texture: int) -> Dictionary:
-	var tiles: Dictionary = _defs.get("tiles", {})
-	return tiles.get(str(texture), {})
 
 
 static func hp_of(texture: int) -> int:

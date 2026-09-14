@@ -19,10 +19,6 @@ const water_drain_interval: float = 1.0    # 完全浸水时防水值每 1s 掉 
 const water_recover_interval: float = 0.3  # 暴露空气时每 0.3s 回 1
 const water_drown_damage_interval: float = 1.5  # 防水值空后扣血间隔(秒)
 
-# ── 敌人生成 ──
-const enemy_count: int = 35
-const enemy_spawn_min_dist: float = 500.0
-
 var MAP_WIDTH: int
 var MAP_HEIGHT: int
 

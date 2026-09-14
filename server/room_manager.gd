@@ -16,7 +16,6 @@ class Room:
 	var players: Array[int] = []          # peer ids
 	var player_role: Dictionary = {}      # peer id -> 1/2
 	var started := false                 # 已拉起 worker/已配对:拒绝再次加入,一方掉线即整房作废
-	var match_host: Node = null           # 保留字段:worker 模式下大厅恒为 null
 	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超时清理用)
 

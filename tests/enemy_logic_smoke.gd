@@ -39,6 +39,36 @@ func _check(cond: bool, name: String) -> void:
 		_failures.append(name)
 		printerr("  FAIL - " + name)
 
+
+# ── 从 EnemySpawner 搬来的测试夹具(2026-09-14,死代码清理)──
+# 原先它是 `EnemySpawner.sample_spawn_cells`(生产侧):但**单机敌人早已改从地图元数据布点**
+# (`MazeGenerator.load_spawns()` → `spawner.spawn_all(spawns)`,地图里没有 `# enemy` 就是 0 只),
+# 它成了零调用者的死函数 —— 而它留在生产侧会让人误以为「敌人是运行时随机的」。
+# 它压的算法(地板格 + 环面最小距离采样)本身仍有效,且与 `RoyaleHost.plan_spawns` / `MatchHost`
+# 的散点逻辑同族,故**搬到测试侧做参考实现**继续被压,而不是连同下面 5 条断言一起删掉。
+# 地板格 = EMPTY 且正下方(y+1,环面取模)非 EMPTY:敌人站立/落地要有实心表面托底。
+func _sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
+		count: int, min_dist_cells: int) -> Array[Vector2i]:
+	var rows := grid.size()
+	var cols := grid[0].size()
+	var floor_cells: Array[Vector2i] = []
+	for y in range(rows):
+		for x in range(cols):
+			if grid[y][x] == MazeGenerator.EMPTY and TileDefs.is_blocked(grid[posmod(y + 1, rows)][x]):
+				floor_cells.append(Vector2i(x, y))
+	var chosen: Array[Vector2i] = []
+	var pool: Array[Vector2i] = floor_cells.duplicate()
+	var attempts := pool.size() * 4
+	while chosen.size() < count and attempts > 0 and not pool.is_empty():
+		attempts -= 1
+		var i := randi() % pool.size()
+		var cand := pool[i]
+		if MazeGenerator.toroidal_dist(cand, player_cell, cols, rows) >= min_dist_cells:
+			chosen.append(cand)
+			pool.remove_at(i)
+	return chosen
+
+
 func _initialize() -> void:
 	# ── Task 2: 纯函数 ──
 	_check(MazeGenerator.toroidal_delta_px(Vector2(10, 10), Vector2(10, 10), 2400.0, 2400.0) == Vector2.ZERO, "delta 零")
@@ -55,7 +85,7 @@ func _initialize() -> void:
 	# 环面取模后 y=8 与原点距离 ≥3 的候选仍有 9 个,距离断言不受影响。
 	for x in range(10):
 		grid[9][x] = MazeGenerator.SOLID
-	var cells := EnemySpawner.sample_spawn_cells(grid, Vector2i(0, 0), 5, 3)
+	var cells := _sample_spawn_cells(grid, Vector2i(0, 0), 5, 3)
 	_check(cells.size() == 5, "spawn 取 5 格")
 	var all_far := true
 	for c in cells:
