@@ -19,7 +19,8 @@ extends Node
 #   · c1:观察到「倒地 → 复活」这条链走完
 # ── A 组 · 源码级(生产目录零残留 + 一条禁区):
 #   · 不存在 server_rendered / apply_server_snapshot / LOCAL_PREDICTION_ENABLED(设计 §0「彻底删干净」)
-#   · royale_game 不得消费 round_state 的 `alive` —— 理由见 _check_no_alive_consume
+#   · 持有本地玩家状态的客户端文件(royale_game / pvp_client,**及合并后的共享基类**)
+#     一律不得消费 round_state 的 `alive` —— 理由与扫描对象清单见 _check_no_alive_consume
 #
 # ★ 关于「K 自杀是不是广播的」——A 组第 2 条就是为了回答它:
 #   · **请求**不广播:`NetBusExt.rpc_id(1, "suicide_request")` 定向发给 worker,无回执;
@@ -41,7 +42,6 @@ const PEER_WAIT := 25.0
 # ── A 组:源码级(与运行时读数无关,但两支一起跑省一次进程)──
 # 判据一律取**去注释视图**(注释不是代码:一句"这里以前调过 set_server_rendered"的注释既不能
 # 让"在位"类断言变绿,也不能让"零残留"类断言变红)。
-const RG := "res://scenes/" + "royale" + "_game.gd"
 const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "res://render"]
 const MIN_PROD_FILES := 40   # 扫到的源文件数下限:防"扫描坏了 → 零命中 = 假绿"
 # 碎片拼接(与 kh_l6_probe 同一条纪律):别让针的字面量在自扫时自伤。
@@ -326,16 +326,46 @@ func _check_residue(problems: Array) -> void:
 # "活着" → 那条"分歧不收敛"的反证就失去信号。
 # 判据取**全文零出现**这个键。若日后真要在 royale_game 里用 alive 做别的事(观战/结算),
 # 把判据改成"不得写进 _local"的形态并同步改本注释 —— 别直接删掉这条门。
+#
+# ★ 扫描对象 = **所有持有本地玩家状态的客户端文件**,且「必须在位」(2026-09-14 修):
+#   原先只扫 royale_game.gd 一个名字。一旦「客户端事件消费层合并」把这段搬进共享基类,
+#   该文件里自然就没有了 → 判据零命中 → **恒绿**。注意它不是变红 —— 所以没人会去看它,
+#   鉴别力就这么静默消失了。它原只防了"读不到源文件",没防"代码搬走了"。
+#   现在两条都防:①每个候选文件都必须含 C2 接线标记才算"在位"(不负责任的文件跳过);
+#   ②**一个在位的都没有**就判红(说明消费层搬了家,该来改这张表)。
+#   ★ 合并批次落地时:把新基类(预留名见 A2_OWNERS_FUTURE)加进 A2_OWNERS,别只改这句注释。
+const A2_OWNERS := [
+	"res://scenes/" + "royale" + "_game.gd",
+	"res://scenes/pvp_client.gd",
+]
+# 预留:客户端消费层合并后的共享基类。它一落地就该进 A2_OWNERS(它是新的本地玩家状态持有者)。
+const A2_OWNERS_FUTURE := "res://scenes/pvp_match_client.gd"
+# C2 接线标记:含它才算"这个文件持有本地玩家状态"、才负 A② 的责任。
+const A2_WIRING := "local_snapshot_own.connect("
+
+
 func _check_no_alive_consume(problems: Array) -> void:
-	var code := _code_view(_read(RG))
-	if code.is_empty():
-		# 读不到源文件时**不能**判绿:那正是"零命中 = 假绿"的形状
-		problems.append("读不到 %s → A② 无从判定(不判绿)" % RG)
+	var owners := 0
+	var hits: Array[String] = []
+	for path in A2_OWNERS:
+		var code := _code_view(_read(path))
+		if code.is_empty():
+			# 读不到源文件时**不能**判绿:那正是"零命中 = 假绿"的形状
+			problems.append("读不到 %s → A② 无从判定(不判绿)" % path)
+			continue
+		if not code.contains(A2_WIRING):
+			continue   # 不持有本地玩家状态的文件不负本条责任(例如已被合并拆空)
+		owners += 1
+		if code.contains(N_ALIVE_KEY):
+			hits.append(path.get_file())
+	if not hits.is_empty():
+		problems.append("%s 里出现了 round_state 的 %s 键(C2 下不许接它写本地玩家,理由见 tests/royale_c2_watcher.gd 的 _check_no_alive_consume)" % [", ".join(hits), N_ALIVE_KEY])
 		return
-	if code.contains(N_ALIVE_KEY):
-		problems.append("royale_game.gd 里出现了 round_state 的 %s 键(C2 下不许接它写本地玩家,理由见 tests/royale_c2_watcher.gd 的 _check_no_alive_consume)" % N_ALIVE_KEY)
-	else:
-		_log("A②:royale_game 未消费 round_state 的 alive ✓")
+	if owners == 0:
+		problems.append("A② 的判据目标**一个都不在位**(没有任何文件含 %s)—— 消费层大概搬到别处了;" % A2_WIRING \
+				+ "把新家(预留名 %s)加进 tests/royale_c2_watcher.gd 的 A2_OWNERS,别让这条门恒绿骗人" % A2_OWNERS_FUTURE)
+		return
+	_log("A②:%d 个持有本地玩家状态的文件都未消费 round_state 的 alive ✓" % owners)
 
 
 # ── 源码扫描的小工具(与 kh_l6_probe 同源,砍到够用为止)──
