@@ -333,13 +333,18 @@ func _check_residue(problems: Array) -> void:
 #   鉴别力就这么静默消失了。它原只防了"读不到源文件",没防"代码搬走了"。
 #   现在两条都防:①每个候选文件都必须含 C2 接线标记才算"在位"(不负责任的文件跳过);
 #   ②**一个在位的都没有**就判红(说明消费层搬了家,该来改这张表)。
-#   ★ 合并批次落地时:把新基类(预留名见 A2_OWNERS_FUTURE)加进 A2_OWNERS,别只改这句注释。
+#   ★ 2026-09-14:合并批次已落地(基类 = A2_BASE),它已在 A2_OWNERS 里。
+# 共享基类路径(单列常量:列表与失败消息共用一处,别写两遍字面量)
+const A2_BASE := "res://scenes/pvp_match_client.gd"
 const A2_OWNERS := [
 	"res://scenes/" + "royale" + "_game.gd",
 	"res://scenes/pvp_client.gd",
+	# ★ 2026-09-14:共享基类已落地(scenes/pvp_match_client.gd,7 个公共函数体搬了进去)。
+	#   它当前**还不含** C2 接线(接线仍在两个子类各自的 _ready 里),故按 A2_WIRING 判据会被
+	#   跳过、在位数仍是 2 —— 这正是要的:等后续把接线也搬进来,这道门**自动**把它算成持有者,
+	#   不必再回来改一次(当年 A② 只盯 royale_game.gd 一个文件名,搬走就恒绿)。
+	A2_BASE,
 ]
-# 预留:客户端消费层合并后的共享基类。它一落地就该进 A2_OWNERS(它是新的本地玩家状态持有者)。
-const A2_OWNERS_FUTURE := "res://scenes/pvp_match_client.gd"
 # C2 接线标记:含它才算"这个文件持有本地玩家状态"、才负 A② 的责任。
 const A2_WIRING := "local_snapshot_own.connect("
 
@@ -363,7 +368,7 @@ func _check_no_alive_consume(problems: Array) -> void:
 		return
 	if owners == 0:
 		problems.append("A② 的判据目标**一个都不在位**(没有任何文件含 %s)—— 消费层大概搬到别处了;" % A2_WIRING \
-				+ "把新家(预留名 %s)加进 tests/royale_c2_watcher.gd 的 A2_OWNERS,别让这条门恒绿骗人" % A2_OWNERS_FUTURE)
+				+ "把新家加进 tests/royale_c2_watcher.gd 的 A2_OWNERS(现含 %s),别让这条门恒绿骗人" % A2_BASE)
 		return
 	_log("A②:%d 个持有本地玩家状态的文件都未消费 round_state 的 alive ✓" % owners)
 

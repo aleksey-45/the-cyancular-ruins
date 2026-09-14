@@ -1,29 +1,20 @@
-extends Node2D
+extends PvpMatchClient
 # 大乱斗对局客户端(RoyaleServer 分支):Level0(pvp_mode) 世界 + 本地玩家(服务器渲染)
 # + N-1 个远端副本 + 后处理 + 输入上报 + 快照消费 + RoyaleHud(左上角击杀排行榜)。
 # 与 pvp_client 的差别:对手是 1..N 个(按快照 roles 动态建副本),HUD 用 RoyaleHud。
 
-const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://core/laser_visual.gd")
 
 var _last_snap_tick := 0
-var _local: Node2D = null
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
 var _level0: Node = null
-var _world: Node = null
 var _hud: RoyaleHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
 var _match_ended := false
-var _round_locked := false   # COUNTDOWN 冻结态(见 _on_round_state;出生点校正只在这期间做)
-var _ping_acc := 0.0
 
 # ── C2 客户端预测(与 pvp_client 同一套;见 docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md)──
 # 本地玩家由引擎自步进(读真实 Input,aim/手感=单机);本场景每物理帧在它步进前
 # note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
-var _rollback = null            # PredictionRollback
-var _input_seq := 0             # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
-var _have_prev_seq := false
-var _prev_sent_seq := 0
 var _menu_open := false         # ESC 菜单是否开着(PvP 下菜单不暂停树,靠这个锁输入)
 
 # ── 头上 ID / 血条(按 role 管理)──
@@ -134,41 +125,8 @@ func _on_match_sync(payload: Dictionary) -> void:
 
 
 # 见 pvp_client 的同名方法:只在开局倒计时里校正,已打起来就不硬拉。
-func _correct_local_spawn() -> void:
-	if _local == null or not _round_locked:
-		return
-	var ts := GameParameters.TILE_SIZE
-	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
-			PvpSession.spawn.y * ts + ts / 2.0)
 
 
-func _physics_process(_delta: float) -> void:
-	if _local == null:
-		return
-	_ping_acc += _delta
-	if _ping_acc >= 0.5:
-		_ping_acc = 0.0
-		NetBus.send_ping()
-	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
-	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
-	if _rollback != null:
-		if _have_prev_seq:
-			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
-			_rollback.reconcile()
-	var src: InputSource = _local.input_source
-	# 位打包收在 NetworkInputSource.pack_record(协议**编码端**唯一来源;解码端本来就只有一份)。
-	var aim: Vector2 = _local.get_current_aim_dir()
-	_input_seq += 1
-	var pkt := NetworkInputSource.pack_record(src, _input_seq, aim)
-	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
-	var net_slot: int = _local.weapons.consume_net_slot()
-	if net_slot > 0:
-		pkt["weapon"] = net_slot
-	NetBus.rpc_id(1, "send_input", pkt)
-	_prev_sent_seq = _input_seq
-	_have_prev_seq = true
-	if _rollback != null:
-		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 func _on_snapshot_world(snap: Dictionary) -> void:
 	if _local == null:
@@ -201,12 +159,6 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
 # 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
 # 世界包丢只让副本插值冻结一帧。
-func _on_snapshot_own(own: Dictionary) -> void:
-	if _rollback == null:
-		return
-	var c2: Dictionary = own.get("c2", {})
-	if not c2.is_empty():
-		_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
 
 
 # 懒建远端副本(按快照里出现的 role)—— 大乱斗对手数量不定
@@ -311,9 +263,6 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 		_replicas[victim_role].play_hit(source_pos)
 
 # 命中确认(服务器裁决的弹直击,NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)
-func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
-	if shooter_role == PvpSession.role:
-		CombatFeedback.hit_marker()
 
 # 击杀播报:我击杀对手 → 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)
 func _on_kill_event(killer: int, victim: int) -> void:
@@ -330,19 +279,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			and event.physical_keycode == KEY_K:
 		NetBusExt.rpc_id(1, "suicide_request")
 
-func _on_remote_tile_destroyed(cell: Vector2i) -> void:
-	if _world == null:
-		TileDefs.damage_tile(cell, 999999, "explosion")
-		return
-	var tex := 0
-	var grid := MazeGenerator.current_grid
-	if not grid.is_empty() and cell.y >= 0 and cell.y < grid.size():
-		var row: Array = grid[cell.y]
-		if cell.x >= 0 and cell.x < row.size():
-			tex = MazeGenerator.texture_of(int(row[cell.x]))
-	TileDefs.damage_tile(cell, 999999, "explosion")
-	var ts := GameParameters.TILE_SIZE
-	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
 
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
@@ -414,24 +350,10 @@ func _refresh_names() -> void:
 		var col: Color = ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]
 		(_id_labels[role] as Node2D).set_label(nm, col)
 
-func _apply_tint(body: Node, hue_deg: float) -> void:
-	var canvas := body as CanvasItem
-	if canvas == null or is_zero_approx(hue_deg):
-		return
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", hue_deg)
-	canvas.material = mat
 
 # 服务器下发生效选项:同步禁用武器
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
 # ★ 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_names 的告警。
-func _apply_match_options(opts: Dictionary) -> void:
-	var disabled: Array[int] = []
-	for v in opts.get("disabled_weapons", []):
-		disabled.append(int(v))
-	if _local != null:
-		_local.weapons.set_enabled_slots(disabled)
 
 func _process(_delta: float) -> void:
 	# 头顶 ID / 血条贴放(独立于倒地转体)

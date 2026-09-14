@@ -1,7 +1,6 @@
-extends Node2D
+extends PvpMatchClient
 # PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
 
-const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://core/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── C2 客户端预测 ──
@@ -11,22 +10,14 @@ const LaserVisual := preload("res://core/laser_visual.gd")   # 远端光束视�
 #
 # ★ 2026-09-12(批次 5):原来那个 LOCAL_PREDICTION_ENABLED 开关与它的 server_rendered 保底分支
 #   **已整体删除** —— 全项目只剩这一条联机链路,没有第二套代码路径可回退。大乱斗客户端走同一套。
-var _input_seq := 0   # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
 var _last_snap_tick := 0
-var _rollback = null
-var _have_prev_seq := false
-var _prev_sent_seq := 0
 
-var _local: Node2D = null
 var _remote_replica: Node2D = null
 var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibles
-var _world: Node = null   # WorldViewport(视觉子弹副本挂这里)
 var _hud: PvpHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)
 var _match_ended := false      # MATCH_OVER 后回菜单途中,忽略对手断线播报
-var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
 var _menu_open := false         # 暂停菜单是否开着(PvP 下菜单不暂停树,靠这个锁输入)
-var _ping_acc := 0.0
 
 # ── 头上 ID(自己/对手昵称):世界空间文字,每帧贴到头顶 ──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,现往下压一点)
@@ -157,41 +148,7 @@ func _on_match_sync(payload: Dictionary) -> void:
 
 # 把本地玩家摆到权威出生点。**只在开局倒计时里做** —— 已经打起来还硬拉,等于把玩家从对局里
 # 拽走。正常路径下两者本就相同(同一个源),走到这里说明服务器那边有问题(上面已留警告)。
-func _correct_local_spawn() -> void:
-	if _local == null or not _round_locked:
-		return
-	var ts := GameParameters.TILE_SIZE
-	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
-			PvpSession.spawn.y * ts + ts / 2.0)
 
-func _physics_process(_delta: float) -> void:
-	if _local == null:
-		return
-	# 周期测延迟(右下角 HUD)
-	_ping_acc += _delta
-	if _ping_acc >= 0.5:
-		_ping_acc = 0.0
-		NetBus.send_ping()
-	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
-	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
-	if _rollback != null:
-		if _have_prev_seq:
-			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
-			_rollback.reconcile()
-	var src: InputSource = _local.input_source
-	# 位打包收在 NetworkInputSource.pack_record(协议**编码端**唯一来源;解码端本来就只有一份)。
-	var aim: Vector2 = _local.get_current_aim_dir()
-	_input_seq += 1
-	var pkt := NetworkInputSource.pack_record(src, _input_seq, aim)
-	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
-	var net_slot: int = _local.weapons.consume_net_slot()
-	if net_slot > 0:
-		pkt["weapon"] = net_slot
-	NetBus.rpc_id(1, "send_input", pkt)
-	_prev_sent_seq = _input_seq
-	_have_prev_seq = true
-	if _rollback != null:
-		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 # 世界包:全部玩家的渲染字段。本端(服务器渲染模式)与对手副本都从这里取;C2 下本端不用它。
 func _on_snapshot_world(world: Dictionary) -> void:
@@ -216,12 +173,6 @@ func _on_snapshot_world(world: Dictionary) -> void:
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
 # 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
 # 世界包丢只让副本插值冻结一帧。
-func _on_snapshot_own(own: Dictionary) -> void:
-	if _rollback == null:
-		return
-	var c2: Dictionary = own.get("c2", {})
-	if not c2.is_empty():
-		_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
 
 # 服务器广播的对手子弹 → 本地生成确定性视觉副本(不裁决伤害,只出轨迹/特效)。
 func _on_bullet_spawn(data: Dictionary) -> void:
@@ -297,26 +248,8 @@ func _on_kill_event(killer: int, victim: int) -> void:
 
 # 命中确认(服务器裁决的弹直击,走 NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)。
 # 被射手不是自己(对手打中我)时不播 —— 那条反馈由 hit_event 的受击白闪/击退负责。
-func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
-	if shooter_role == PvpSession.role:
-		CombatFeedback.hit_marker()
 
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
-func _on_remote_tile_destroyed(cell: Vector2i) -> void:
-	if _world == null:
-		TileDefs.damage_tile(cell, 999999, "explosion")
-		return
-	# 取被拆砖原纹理(决定碎片颜色:树叶绿/树干棕),再清砖
-	var tex := 0
-	var grid := MazeGenerator.current_grid
-	if not grid.is_empty() and cell.y >= 0 and cell.y < grid.size():
-		var row: Array = grid[cell.y]
-		if cell.x >= 0 and cell.x < row.size():
-			tex = MazeGenerator.texture_of(int(row[cell.x]))
-	TileDefs.damage_tile(cell, 999999, "explosion")
-	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
-	var ts := GameParameters.TILE_SIZE
-	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
 
 # 回合状态:
 #  - COUNTDOWN 且 round>1(新一轮):服务器已把可破坏砖还原 + 清子弹,这里同刻清本地子弹并复位砖,
@@ -396,14 +329,6 @@ func _apply_p2_tint() -> void:
 
 # 通用身体染色:只给角色本体 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/
 # 无敌半透明仍正常),武器/预瞄线不染。色相 0 = 不改色(不挂 shader),故本助手可重复调用。
-func _apply_tint(body: Node, hue_deg: float) -> void:
-	var canvas := body as CanvasItem
-	if canvas == null or is_zero_approx(hue_deg):
-		return
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", hue_deg)
-	canvas.material = mat
 
 # 对手身体颜色:走扩展 peer_hues(每个 role 上报自己选的色相)。载荷未到 / 缺本对手项时,
 # 缺省回落与 _apply_p2_tint 同一条旧规则(P2 本体 -65,其余不染)——故 _ready 里那次
@@ -430,12 +355,6 @@ func _apply_opp_hue() -> void:
 # 信号可能早于/晚于本场景 _ready 到达,故 _local 判空。
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
 # ★ 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_hues 的告警。
-func _apply_match_options(opts: Dictionary) -> void:
-	var disabled: Array[int] = []
-	for v in opts.get("disabled_weapons", []):
-		disabled.append(int(v))
-	if _local != null:
-		_local.weapons.set_enabled_slots(disabled)
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。

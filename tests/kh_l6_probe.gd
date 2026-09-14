@@ -57,6 +57,10 @@ extends Node
 const PC := "res://scenes/" + "pvp_client.gd"
 # 9b) 的扫描对象:大乱斗客户端。与 pvp_client 是同一类风险的第二处实例。
 const RG := "res://scenes/" + "royale" + "_game.gd"
+# ★ 2026-09-14:两个客户端的**公共实现**抽进了共享基类(`_physics_process` / `_on_snapshot_own` /
+#   `_apply_tint` / `_apply_match_options` / `_on_remote_tile_destroyed` / `_on_hit_confirm` /
+#   `_correct_local_spawn` —— 剔注释后代码逐字相同的那 7 个)。故函数体查找要跨这两个文件。
+const BASE := "res://scenes/" + "pvp_match_client.gd"
 const PM_PATH := "res://ui/" + "pause_menu.gd"
 const HUD_TSCN := "res://ui/" + "pvp_hud.tscn"
 const HUD_SCRIPT := "res://ui/" + "pvp_hud.gd"
@@ -133,12 +137,17 @@ var _failures: Array[String] = []
 var _pc_code := ""                     # pvp_client.gd 的去注释视图(保留缩进)
 var _pc_lines: PackedStringArray = PackedStringArray()
 var _rg_code := ""                     # royale_game.gd 的去注释视图(9b 用)
+var _base_code := ""                   # pvp_match_client.gd(共享基类)—— 公共函数体的所在
 var _rg_lines: PackedStringArray = PackedStringArray()
 
 
 func _ready() -> void:
 	_pc_code = _code_view(_read(PC))
 	_pc_lines = _pc_code.split("\n")
+	_base_code = _code_view(_read(BASE))
+	if _base_code.is_empty():
+		# 基类读不到 → 下面所有 _body_anywhere 都会退化,必须**明确报红**而不是让它悄悄找不到
+		_failures.append("读不到 %s(共享基类;公共函数体都在那里)" % BASE)
 	_rg_code = _code_view(_read(RG))
 	_rg_lines = _rg_code.split("\n")
 	if _pc_code.is_empty():
@@ -171,7 +180,7 @@ func _ready() -> void:
 #   · 带 seq 的那个字典**就是**发给服务器的那个(send_input 的实参)
 func _check_seq_in_packet() -> void:
 	var before := _failures.size()
-	var phys := _func_body(_pc_code, "_physics_process")
+	var phys := _body_anywhere("_physics_process")
 	_check(not phys.is_empty(), "取不到 _physics_process 的函数体(改名/挪走了?)")
 	if phys.is_empty():
 		_summary(before, "输入包 seq:取不到 _physics_process")
@@ -210,8 +219,8 @@ func _check_seq_in_packet() -> void:
 #   (那个辅助函数在深层嵌套上不稳,拆包时实测误报过一次,`_guarded_calls` 已随第 6 条删除)。
 func _check_snapshot_authoritative() -> void:
 	var before := _failures.size()
-	var world := _func_body(_pc_code, "_on_snapshot_world")
-	var own := _func_body(_pc_code, "_on_snapshot_own")
+	var world := _body_anywhere("_on_snapshot_world")
+	var own := _body_anywhere("_on_snapshot_own")
 	_check(not world.is_empty(), "取不到 _on_snapshot_world 的函数体(改名/挪走了?)")
 	_check(not own.is_empty(), "取不到 _on_snapshot_own 的函数体(改名/挪走了?)")
 	if world.is_empty() or own.is_empty():
@@ -257,7 +266,7 @@ func _self_test_snapshot_judge() -> void:
 #     reconcile 再记,比的是本帧刚入 ring 的态 = 比错对象。
 func _check_c2_frame_block() -> void:
 	var before := _failures.size()
-	var phys := _func_body(_pc_code, "_physics_process")
+	var phys := _body_anywhere("_physics_process")
 	if phys.is_empty():
 		_summary(before, "C2 帧块:取不到 _physics_process")
 		return
@@ -313,7 +322,7 @@ func _check_c2_frame_block() -> void:
 #   不靠锚点碰巧落在谁头上)。
 func _check_note_input() -> void:
 	var before := _failures.size()
-	var phys := _func_body(_pc_code, "_physics_process")
+	var phys := _body_anywhere("_physics_process")
 	if phys.is_empty():
 		_summary(before, "note_input:取不到 _physics_process")
 		return
@@ -748,6 +757,14 @@ func _strip_line_comment(line: String) -> String:
 
 # 取某函数的函数体(从 `func 名(` 到下一个顶层 `func` 之前;找不到返回空串)。
 # 判据必须落在**体内**:同名调用点在别的函数里、或函数被删只剩调用点,都不能算"在位"。
+# 取函数体:`pvp_client.gd` 找不到就到**共享基类**里找(见 BASE 的注释)。
+# ★ 都找不到时返回空串 —— 各调用点都有「取不到 … 函数体(改名/挪走了?)」的断言,
+#   所以"又搬到第三个文件"会被照成**红**,不会静默放行(这条比"找一个够宽的地方"重要)。
+func _body_anywhere(name: String) -> String:
+	var b := _func_body(_pc_code, name)
+	return b if not b.is_empty() else _func_body(_base_code, name)
+
+
 func _func_body(code: String, name: String) -> String:
 	var i := code.find("func " + name + "(")
 	if i < 0:
