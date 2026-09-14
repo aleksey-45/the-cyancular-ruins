@@ -2,7 +2,7 @@ extends Node2D
 # 服务器入口(headless 运行)。角色由命令行 user args(位于 `--` 之后)区分:
 #  - 无参数:大厅(默认,7777)——只做建房/配对;配对完成后为每局拉起一个 --worker 子进程。
 #  - `--worker --port P`:1v1 对局 worker——独占 UDP 端口 P,等两名客户端 claim_role 后
-#    RoomManager.start_match_on 建权威 MatchHost,任一方离开即拆局退出(释放端口)。
+#    MatchBootstrap.start_on 建权威 MatchHost,任一方离开即拆局退出(释放端口)。
 #  - `--worker --royale --port P [--roles 1,3] [--ai-roles r,r]`:大乱斗 worker——限时死斗(RoyaleHost),
 #    收齐全部人类 role(或 20s 超时按已到人数 ≥2)开局;单个掉线移出对局,全员走光才退出。
 #    `--roles` = **本局全部参战 role**(真人已分配号 + AI 补位号),由大厅显式传入。
@@ -294,10 +294,10 @@ func _begin_match() -> void:
 		NetBus.role_claimed.disconnect(_on_role_claimed)
 	if _royale:
 		# 房主(role1)规则项随 claim 上报生效; RoyaleHost.start_on 负责散点出生 + match_start
-		_host = RoyaleHost.start_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = RoyaleHost.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	else:
 		# 服务器权威规则项以房主(role1)选项为准(经 NetBusExt 上报;缺省=全默认)
-		_host = RoomManager.start_match_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = MatchBootstrap.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	add_child(_host)
 	# AI 补位昵称:唯一名 + -computer 后缀(排行榜/头顶显示,地位与真人等同)
 	for ai_r in _ai_roles:

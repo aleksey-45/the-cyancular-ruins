@@ -120,7 +120,7 @@ func _apply_pixel_font(root: Node) -> void:
 #  ① 服务器权威规则项:每回合回满血、禁用武器。
 #     勾选写进 Settings → _claim_role_worker 随 player_options 上发 →
 #     server_main._on_player_options 归档(server_main.gd:206) →
-#     start_match_on 取 **role1(房主)** 那份(server_main.gd:300) →
+#     MatchBootstrap.start_on 取 **role1(房主)** 那份(server_main.gd:300) →
 #     MatchHost 读 round_full_heal / disabled_weapons(match_host.gd:60-61)。
 #     ★ 权威以**房主(role1)**的选项为准;非房主勾了不生效 —— 这是设计,不是缺陷。
 #  ② 角色颜色(色相 0-360):**必须经服务器中转**。随 player_options 上发 → 服务器按 role
