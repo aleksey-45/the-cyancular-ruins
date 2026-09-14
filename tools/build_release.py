@@ -15,7 +15,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))   # tools/
 PROJECT = os.path.dirname(TOOLS)                       # 仓库根
-EDITOR = r"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe"
+# 引擎可执行文件。★ 这里是 **标准编辑器**(非 console;导出走编辑器 exe,与 tests/ 那些
+# 跑 headless 用的 console 版是**两个不同的二进制**)。换机器/换版本可用环境变量覆盖,
+# 不必改本文件 —— 同类散落的本机绝对路径一并收进 tests/env.sh 的 $GODOT(那里是 console 版)。
+EDITOR = os.environ.get("GODOT_EDITOR") or \
+    r"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe"
 CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins.exe")
 SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
 BUILD_INFO = os.path.join(PROJECT, "core", "build_info.gd")

@@ -13,6 +13,8 @@ Godot 4.7(标准版,非 mono)做的 2D 横版(平台跳跃)射击 demo「The Cya
 
 Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版本(详见 `RELEASE.md`;4.4.1 mono 已弃用,仅在需要兼容旧脚本时用其 console 版)。
 
+**引擎路径可覆盖**(换机器/换版本不必改脚本):`tests/*.sh` 与 `start_server.bat` 读环境变量 **`GODOT`**(console 版),`tools/build_release.py` 读 **`GODOT_EDITOR`**(标准编辑器版——导出与 headless 跑测试是**两个不同的二进制**);未设时回落本机默认路径,且**每个入口只留一处默认值**(`tests/env.sh` / `start_server.bat` / `build_release.py`)。`tests/*.sh` 一律 `source "$(dirname "$0")/env.sh"` 取 `$GODOT` 与 kill 助手,别再把绝对路径抄进脚本。下面是**默认路径**下的命令:
+
 ```bash
 # 冒烟测试(唯一的"测试",SceneTree 脚本;成功打印 SMOKE OK 退出 0)
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
