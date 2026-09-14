@@ -80,7 +80,7 @@ static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: in
 		var solid := false
 		var v: int = grid[cell.y][cell.x]
 		if v != 0 and TileDefs.is_blocked(v):
-			var shape := v % 16
+			var shape := MazeGenerator.shape_of(v)
 			if shape & (1 << (gy % 2 * 2 + gx % 2)):
 				solid = true
 		if not solid:

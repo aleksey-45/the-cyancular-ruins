@@ -18,7 +18,7 @@ static func is_in_water(pos: Vector2) -> bool:
 		return false
 	var c := MazeGenerator.cell_of(pos, TILE_TS, grid[0].size(), grid.size())
 	var v: int = grid[c.y][c.x]
-	return v != 0 and is_liquid(v / 16)
+	return v != 0 and is_liquid(MazeGenerator.texture_of(v))
 
 
 # 所在列向上扫到最顶 liquid 格,返回其顶边 y(px);点不在水里时返回 pos.y(不硬拉)。
@@ -36,7 +36,7 @@ static func surface_y_at(pos: Vector2) -> float:
 	while true:
 		var above := posmod(y - 1, rows)
 		var v: int = grid[above][c.x]
-		if v != 0 and is_liquid(v / 16):
+		if v != 0 and is_liquid(MazeGenerator.texture_of(v)):
 			top = above
 			y = above
 		else:
@@ -57,7 +57,7 @@ static func water_mult(pos: Vector2, grid: Array[Array]) -> float:
 	var v: int = grid[c.y][c.x]
 	if v == 0:
 		return 1.0
-	var tex: int = v / 16
+	var tex: int = MazeGenerator.texture_of(v)
 	if is_liquid(tex):
 		return TileDefs.explosion_decay_of(tex)
 	return 1.0

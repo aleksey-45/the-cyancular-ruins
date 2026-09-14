@@ -173,7 +173,7 @@ static func climb_descent_speed(texture: int) -> float:
 static func is_blocked(v: int) -> bool:
 	if v == 0:
 		return false
-	return type_id_of(v / 16) == TYPE_WALL
+	return type_id_of(MazeGenerator.texture_of(v)) == TYPE_WALL
 
 
 # ── 运行时破坏(与 MazeGenerator.current_grid 同尺寸的当前 HP 表)──
@@ -187,7 +187,7 @@ static func init_hp(grid: Array) -> void:
 	for row in grid:
 		var r: Array[int] = []
 		for v in row:
-			r.append(hp_of(v / 16))
+			r.append(hp_of(MazeGenerator.texture_of(v)))
 		hp_grid.append(r)
 
 
@@ -202,7 +202,7 @@ static func damage_tile(cell: Vector2i, amount: int, source: String) -> bool:
 	var v: int = grid[cell.y][cell.x]
 	if v == 0:
 		return false
-	var tex: int = v / 16
+	var tex: int = MazeGenerator.texture_of(v)
 	if source == "bullet":
 		if not bullet_destroyable(tex):
 			return false

@@ -29,7 +29,7 @@ func is_over_climb_tile() -> bool:
 	var center_cell := MazeGenerator.cell_of(body.global_position, GameParameters.TILE_SIZE, cols, rows)
 	var fv: int = grid[foot_cell.y][foot_cell.x]
 	var cv: int = grid[center_cell.y][center_cell.x]
-	return TileDefs.climb_speed(fv / 16) > 0.0 or TileDefs.climb_speed(cv / 16) > 0.0
+	return TileDefs.climb_speed(MazeGenerator.texture_of(fv)) > 0.0 or TileDefs.climb_speed(MazeGenerator.texture_of(cv)) > 0.0
 
 # 攀爬判定与攀附状态机:中心(或脚底)在通道格按上主动攀附(不受重力)。
 # **到顶 = 脚底进入梯子上方一格才停**(以脚底为参考格);再按上 = 跳离梯子。
@@ -53,9 +53,9 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 	var fv: int = grid[foot_cell.y][foot_cell.x]
 	var cv: int = grid[center_cell.y][center_cell.x]
 	# 爬速取脚底/中心所在梯子的倍率较大者:基地时脚踩地中心在梯里、到顶时中心出梯脚还在梯里
-	var cs: float = maxf(TileDefs.climb_speed(fv / 16), TileDefs.climb_speed(cv / 16))
-	var foot_in_channel := fv != 0 and TileDefs.climb_speed(fv / 16) > 0.0
-	var center_in_channel := cv != 0 and TileDefs.climb_speed(cv / 16) > 0.0
+	var cs: float = maxf(TileDefs.climb_speed(MazeGenerator.texture_of(fv)), TileDefs.climb_speed(MazeGenerator.texture_of(cv)))
+	var foot_in_channel := fv != 0 and TileDefs.climb_speed(MazeGenerator.texture_of(fv)) > 0.0
+	var center_in_channel := cv != 0 and TileDefs.climb_speed(MazeGenerator.texture_of(cv)) > 0.0
 	var climb_input := src.get_axis("up", "down")
 	# 进入攀附:中心或脚底在通道格且「刚按下上」(主动抓;不是按住——跳离梯子后按着上也抓不回)
 	# 退出:中心与脚底都不在通道格,且脚底不在梯顶(到顶 = 挂住不算退出)
@@ -81,7 +81,7 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 		body.velocity.y = 0.0  # 到顶挂住(松开/再按上可跳)
 		return true
 	elif climb_input > 0.0:
-		var dcs := TileDefs.climb_descent_speed(fv / 16)
+		var dcs := TileDefs.climb_descent_speed(MazeGenerator.texture_of(fv))
 		if dcs <= 0.0:
 			# 锁链(无下降倍率)= 自由落体:解除攀附交给重力,落下不再抓回
 			_latched = false
@@ -98,7 +98,7 @@ func _foot_at_ladder_top(foot_cell: Vector2i) -> bool:
 		return false
 	var rows := grid.size()
 	var below: int = grid[posmod(foot_cell.y + 1, rows)][foot_cell.x]
-	return below != 0 and TileDefs.climb_speed(below / 16) > 0.0
+	return below != 0 and TileDefs.climb_speed(MazeGenerator.texture_of(below)) > 0.0
 
 # 脚底到玩家中心的距离(攀爬姿态 FLY 碰撞箱底部,含 scale 2.5)。
 func _climb_foot_offset() -> float:

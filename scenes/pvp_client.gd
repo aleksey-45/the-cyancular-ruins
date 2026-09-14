@@ -361,7 +361,7 @@ func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	if not grid.is_empty() and cell.y >= 0 and cell.y < grid.size():
 		var row: Array = grid[cell.y]
 		if cell.x >= 0 and cell.x < row.size():
-			tex = int(row[cell.x]) / 16
+			tex = MazeGenerator.texture_of(int(row[cell.x]))
 	TileDefs.damage_tile(cell, 999999, "explosion")
 	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
 	var ts := GameParameters.TILE_SIZE

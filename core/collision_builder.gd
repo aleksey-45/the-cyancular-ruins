@@ -166,7 +166,7 @@ static func build_climb_ledges(grid: Array[Array], parent: Node) -> int:
 			var v: int = grid[y][x]
 			if v == 0:
 				continue
-			var tex: int = v / 16
+			var tex: int = MazeGenerator.texture_of(v)
 			var top := Vector2(x * TILE_TS + TILE_TS * 0.5, y * TILE_TS + LEDGE_THICKNESS * 0.5)
 			var bottom := Vector2(x * TILE_TS + TILE_TS * 0.5, y * TILE_TS + TILE_TS - LEDGE_THICKNESS * 0.5)
 			if tex == 12:

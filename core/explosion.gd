@@ -72,7 +72,7 @@ static func _damage_tiles(center: Vector2, radius: float, max_damage: int, grid:
 			var v: int = grid[cy][cx]
 			if v == 0:
 				continue
-			var tex: int = v / 16
+			var tex: int = MazeGenerator.texture_of(v)
 			if not TileDefs.explosion_destroyable(tex):
 				continue
 			var d := _dist(center, Vector2(cx * ts + ts * 0.5, cy * ts + ts * 0.5))

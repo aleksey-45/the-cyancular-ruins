@@ -239,7 +239,7 @@ func _damage_tiles(contacts: Array, hit_points: PackedVector2Array) -> void:
 		done[cell] = true
 		if cell.y < 0 or cell.y >= grid.size() or cell.x < 0 or cell.x >= grid[cell.y].size():
 			continue
-		var tex: int = grid[cell.y][cell.x] / 16
+		var tex: int = MazeGenerator.texture_of(grid[cell.y][cell.x])
 		if not TileDefs.explosion_destroyable(tex):
 			continue
 		# 播粒子(所有端都可播视觉;PvP 拆格由服务器 tile_destroyed 驱动,本方法只在权威侧调用)
