@@ -127,10 +127,8 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	return pid > 0
 
 
-# 杀指定 UDP 端口的进程(worker)。Windows:PowerShell 取该端口属主进程 → Stop-Process。
-# 与 server_main._kill_port_holder 同法;不能只靠 OS.create_process 返回的 pid(跨进程需查端口)。
+# 杀指定 UDP 端口的进程(worker)。
+# 不能只靠 OS.create_process 返回的 pid(跨进程需查端口);`Select -ExpandProperty OwningProcess`
+# 那条写法的坑与守卫见 core/proc_util.gd —— 实现收在那里(与 server_main 那份原先逐字重复)。
 func kill_worker(port: int) -> void:
-	var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
-			" -ErrorAction SilentlyContinue | Select -ExpandProperty OwningProcess -Unique; " + \
-			"if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
-	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, true)
+	ProcUtil.kill_udp_port(port)

@@ -198,8 +198,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 	# 广播拆墙给双方客户端:客户端子弹是视觉副本(apply_damage=false)不判伤害,
 	# 服务器拆的墙必须由事件驱动客户端清瓦片渲染,否则建筑"看着没被炸坏"。
-	for role in peer_by_role:
-		NetBus.rpc_id(peer_by_role[role], "tile_destroyed", cell)
+	_rpc_all("tile_destroyed", [cell])
 
 # 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
 # 带递增序号 tick:客户端靠它丢弃乱序到达的旧快照(unreliable 通道可能乱序)。
@@ -346,10 +345,8 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	}
 	if bullet.explosion_visual != null:
 		data["visual"] = bullet.explosion_visual.resource_path
-	# 发给非射手客户端
-	for role in peer_by_role:
-		if players.has(role) and players[role] != bullet.shooter:
-			NetBus.rpc_id(peer_by_role[role], "bullet_spawn", data)
+	# 发给非射手客户端(bullet.shooter 是 Node,反查成 role 才能交给 _rpc_all)
+	_rpc_all("bullet_spawn", [data], _role_of(bullet.shooter))
 
 # 即时光束武器(激光)权威开火上报:每物理帧轮询各角色当前武器,把"本帧要广播的光束"发给非射手端。
 # 时序与子弹广播同款:MatchHost 父先于子 → 这里读到的是上一物理帧玩家步进里 fire 记下的上报,
@@ -372,9 +369,7 @@ func _broadcast_pending_beams() -> void:
 func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
 	rep["shooter_role"] = shooter_role
 	# 只发给非射手端:射手自己客户端已本地预测画自己的光束,再收会双光束。
-	for r in peer_by_role:
-		if int(r) != shooter_role and players.has(int(r)):
-			NetBus.rpc_id(peer_by_role[r], "beam_fired", rep)
+	_rpc_all("beam_fired", [rep], shooter_role)
 
 # 即时光束武器(激光)的直击命中:服务器结算后把 X 标记(hit_confirm)发给射手本人,
 # 与子弹 _on_bullet_hit 的 hit_confirm 同链路(爆炸 AoE 不发——伤害方不明确,激光方向明确可发)。
@@ -581,8 +576,7 @@ func _broadcast_round_state() -> void:
 		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
-	for role in peer_by_role:
-		NetBus.rpc_id(peer_by_role[role], "round_state", data)
+	_rpc_all("round_state", [data])
 
 func _match_winner() -> int:
 	var best_role := 0
@@ -594,6 +588,39 @@ func _match_winner() -> int:
 			best_role = int(role)
 	return best_role
 
-func _broadcast_kill(killer: int, victim: int) -> void:
+# ── 广播样板 ──
+# 「遍历有 peer 的 role 逐个 rpc_id」这两行原先在**5 处**各写一遍(拆墙/子弹/光束/回合状态/击杀),
+# 各处只差过滤条件。新增一种事件就要改 5 处、且漏一处**不报错**(事件静默不发)。收在此处,
+# 差异用参数表达;`RoyaleHost` 覆写的 `_broadcast_round_state` 也复用它。
+#
+# 过滤参数:
+#   · except_role:排除该 role(子弹/光束广播要排除射手 —— 射手客户端已本地预测画过,再收会重复);
+#   · live_only :只发给在线 peer(默认 **否**,与多数站点的既有语义一致:只有 round_state 那两处
+#                 判在线)。判在线的理由见 `_peer_online` 那段注释:往"正在断开"的 peer 发包会打
+#                 channel 错误且包会丢。
+# 另恒跳过「有 peer 但不在 `players` 里」的 role(原实现里两处显式这么判,另三处没写 ——
+# 正常路径下二者同键集,故这里统一加上既是等价、又消掉那处不一致)。
+func _rpc_all(method: String, args: Array = [], except_role: int = -1,
+		live_only: bool = false) -> void:
+	var live_peers := multiplayer.get_peers() if live_only else PackedInt32Array()
 	for role in peer_by_role:
-		NetBus.rpc_id(peer_by_role[role], "kill_event", killer, victim)
+		if role == except_role or not players.has(role):
+			continue
+		var peer: int = peer_by_role[role]
+		if live_only and not live_peers.has(peer):
+			continue
+		# callv 展开实参:rpc_id 是变参口,而本函数要按调用方给的 args 转发。
+		NetBus.callv("rpc_id", [peer, method] + args)
+
+
+# 反查角色号。广播要"排除射手"时,调用点手上往往只有 Node(bullet.shooter)而不是 role。
+# 找不到返回 -1(与 `_rpc_all` 的 except_role 默认值一致 = 不排除任何人)。
+func _role_of(node: Node) -> int:
+	for role in players:
+		if players[role] == node:
+			return int(role)
+	return -1
+
+
+func _broadcast_kill(killer: int, victim: int) -> void:
+	_rpc_all("kill_event", [killer, victim])

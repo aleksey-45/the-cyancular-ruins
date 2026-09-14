@@ -165,19 +165,25 @@ func _check_room_manager() -> void:
 	var fails_before := _failures.size()
 	var p := "res://server/room_manager.gd"
 	var pw := "res://server/worker_launcher.gd"
+	var pp := "res://core/proc_util.gd"
 	var code := _code_only(_read(p))
 	var code_w := _code_only(_read(pw))
+	var code_p := _code_only(_read(pp))
 	_check(not code.is_empty(), "读不到 %s" % p)
 	_check(not code_w.is_empty(), "读不到 %s" % pw)
-	if code.is_empty() or code_w.is_empty():
+	_check(not code_p.is_empty(), "读不到 %s" % pp)
+	if code.is_empty() or code_w.is_empty() or code_p.is_empty():
 		return
 	var needles := [
 		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 与大乱斗两族都要被扫到)", p, code],
 		["created_at", "房间创建时间戳(超龄判据)", p, code],
 		["func kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)",
 				pw, code_w],
+		# ★ 2026-09-14:那段 PowerShell 与 server_main 的一份**逐字相同**,已收进 core/proc_util.gd
+		#   (ProcUtil.kill_udp_port)。判据按职责跟着搬 —— 「取不到属主进程就一个都杀不掉」这个
+		#   失败模式与它住哪个文件无关,必须仍然有人守。
 		["Select -Expand" + "Property OwningProcess -Unique", "取 UDP 端口属主进程的修正写法",
-				pw, code_w],
+				pp, code_p],
 	]
 	for spec in needles:
 		var s: String = spec[0]
@@ -201,17 +207,25 @@ func _check_room_manager() -> void:
 # 会让这条断言永远红(注释不是代码)。
 func _check_kill_port_holder() -> void:
 	var fails_before := _failures.size()
-	var p := "res://server/server_main.gd"
-	var code := _code_only(_read(p))
-	_check(not code.is_empty(), "读不到 %s" % p)
-	if code.is_empty():
+	# ★ 2026-09-14:实现从 server_main 搬进 core/proc_util.gd(ProcUtil.kill_udp_port)——
+	#   原先它与 worker_launcher 那份**逐字相同**。判据跟着搬,但**坏写法的禁令两个文件都查**:
+	#   只查新家的话,谁要是在 server_main 里再手抄一份坏写法就没人管了。
+	var pp := "res://core/proc_util.gd"
+	var ps := "res://server/server_main.gd"
+	var cp := _code_only(_read(pp))
+	var cs := _code_only(_read(ps))
+	_check(not cp.is_empty() and not cs.is_empty(), "读不到 %s / %s" % [pp, ps])
+	if cp.is_empty() or cs.is_empty():
 		return
 	var good := "Select -Expand" + "Property OwningProcess -Unique"
 	var evil := "%" + " OwningProcess"
-	_check(code.count(good) >= 1, "%s 缺 _kill_port_holder 的修正写法(%s)" % [p, good])
-	_check(code.count(evil) == 0,
-			"%s 的代码里出现取不到属性的 %s 写法 %d 处(注释不算)" % [p, evil, code.count(evil)])
-	_summary(fails_before, "kill_port_holder:修正写法 %d 处,坏写法 %d 处" % [code.count(good), code.count(evil)])
+	_check(cp.count(good) >= 1, "%s 缺修正写法(%s)" % [pp, good])
+	var evil_hits := cp.count(evil) + cs.count(evil)
+	_check(evil_hits == 0,
+			"代码里出现取不到属性的 %s 写法 %d 处(注释不算;查了 proc_util 与 server_main)"
+			% [evil, evil_hits])
+	_summary(fails_before, "kill_udp_port:修正写法 %d 处(proc_util),坏写法 %d 处(proc_util+server_main)"
+			% [cp.count(good), evil_hits])
 
 
 # ── 4) ★ 零演示残留(只扫生产目录)─────────────────────────────────────

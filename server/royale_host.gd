@@ -384,10 +384,9 @@ func _broadcast_round_state() -> void:
 	}
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
-	var live_peers := multiplayer.get_peers()
-	for role in peer_by_role:
-		if live_peers.has(peer_by_role[role]):
-			NetBus.rpc_id(peer_by_role[role], "round_state", data)
+	# 基类的广播样板,只多一个"只发在线 peer"(大乱斗里掉线者仍在 peer_by_role 里待清理,
+	# 而往正在断开的 peer 发包会打 channel 错误)。样板本身收在 MatchHost._rpc_all。
+	_rpc_all("round_state", [data], -1, true)
 
 
 # 房主昵称表(worker 开局后由 server_main 注入;排行榜展示用)

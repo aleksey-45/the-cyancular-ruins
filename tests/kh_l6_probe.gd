@@ -95,6 +95,8 @@ const N_PRELOAD_HUD := "preload(\"res://ui/" + "pvp_hud.tscn\")"
 const N_NEW_HUD := "Pvp" + "Hud.new("
 const N_HUD_CLS := "Pvp" + "Hud"
 const N_BEAM := "beam" + "_fired"
+# 广播样板助手(MatchHost._rpc_all):五处广播收进它之后,光束那行不再含 NetBus.rpc_id 字面量。
+const N_RPC_ALL := "_rpc" + "_all("
 const N_LOCAL_BEAM := "local_" + N_BEAM
 const N_ROUTING := "Net" + "Bus.local_" + N_BEAM + ".connect("
 const N_EXT_ROUTING := "Net" + "BusExt.local_" + N_BEAM
@@ -506,17 +508,30 @@ func _check_beam_routing() -> void:
 		var mh_lines := mh.split("\n")
 		var beam_sites := _find_lines(mh_lines, "\"" + N_BEAM + "\"")
 		var on_netbus := 0
+		var via_helper := 0
 		var off_netbus: Array[String] = []
 		for k in beam_sites:
 			var ln := mh_lines[k].strip_edges()
 			if ln.contains("Net" + "Bus.rpc_id("):
 				on_netbus += 1
+			elif ln.contains(N_RPC_ALL):
+				# ★ 2026-09-14:五处广播样板收进 MatchHost._rpc_all 后,光束那行不再有字面量
+				#   `NetBus.rpc_id(`。走助手是允许的 —— 但**助手体内必须仍用 NetBus**
+				#   (见下方 nbus_in_helper),否则这条守卫等于被绕开。
+				via_helper += 1
 			else:
 				off_netbus.append("%s ← %s" % [_enclosing_func(mh_lines, k), ln])
 		_check(not beam_sites.is_empty(), "%s 里找不到 \"%s\" 字面量(发送端被整条迁走了?)" % [MH_PATH, N_BEAM])
-		_check(on_netbus >= 1,
-			"%s 里 \"%s\" 不在任何 `NetBus.rpc_id(` 行上(%d 处不同行: %s)→ 发送端迁到 NetBusExt 后,收端 NetBus 订阅是**静默 no-op**"
-			% [MH_PATH, N_BEAM, off_netbus.size(), " | ".join(off_netbus)])
+		if via_helper > 0:
+			var helper_body := _func_body(_code_view(_read(MH_PATH)), N_RPC_ALL.trim_suffix("("))
+			_check(not helper_body.is_empty(), "找不到 %s 的函数体(判据无从落地)" % N_RPC_ALL)
+			var nbus_in_helper := helper_body.contains("Net" + "Bus.")
+			var next_in_helper := helper_body.contains("Net" + "BusExt")
+			_check(nbus_in_helper and not next_in_helper,
+				"%s 的体内没有走 NetBus(或混进了 NetBusExt)→ 光束实际从别的节点发出,收端 NetBus 订阅是**静默 no-op**" % N_RPC_ALL)
+		_check(on_netbus >= 1 or via_helper >= 1,
+			"%s 里 \"%s\" 既不在 `NetBus.rpc_id(` 行上、也不经 %s(%d 处不同行: %s)→ 发送端迁到 NetBusExt 后,收端 NetBus 订阅是**静默 no-op**"
+			% [MH_PATH, N_BEAM, N_RPC_ALL, off_netbus.size(), " | ".join(off_netbus)])
 		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 \"%s\" 同行 %s.rpc_id ×%d"
 				% [N_LOCAL_BEAM, wrong.size(), N_BEAM, "NetBus", on_netbus])
 	else:
