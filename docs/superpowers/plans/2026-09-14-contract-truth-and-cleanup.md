@@ -1570,11 +1570,16 @@ Expected: 两条各打印 `ALL-OK`。
 
 ## 阶段 3：**必须在 M9 之后**才能开工（客户端合并，成本合计 ~3 天）
 
-| 序 | 项 | 位置 | 成本 |
-|---|---|---|---|
-| 3.1 | **H3** 输入包**编码端两份手抄、解码端一份** —— 加一个 held 位要改 3 处，漏一处**静默** | `pvp_client.gd:186-214` ↔ `royale_game.gd:162-190` | 半天（含改 `kh_l6_probe:248-278` 的组包锚点）。在 `core/network_input_source.gd` 加 `static func pack_record(src, seq, aim) -> Dictionary` |
-| 3.2 | **M5** 服务器侧广播样板 7 处 + 两个 spawn + PowerShell 杀端口串两份 | `match_host.gd:208/243/293/520/691/705`、`royale_host.gd:404`；`room_manager.gd` 两个 spawn；`room_manager.gd:738-742` vs `server_main.gd:156-160` | 半天。提 `MatchHost._rpc_all(method, args, except_role := -1)`；杀端口提 `core/proc_util.gd` |
-| 3.3 | **M4c** 房间注册表拆分（见「本计划明确不做的事」第 1 条——**先做设计决策**） | `server/room_manager.gd` | 1 天 |
+> **3.1 / 3.2 / 3.3 / 3.5 已完成**（2026-09-14）。三项各有一条**探针连带**（本阶段的固定成本：
+> 源码级探针当年直接摸内部，东西一搬就断）——都已按惯例**教探针认新入口**并做反证，
+> 详见各条状态列。剩下的 3.4 / 3.6 / 3.7 未开工。
+
+| 序 | 项 | 状态 |
+|---|---|---|
+| 3.1 | **H3** 输入包**编码端两份手抄、解码端一份** | ✅ 抽 `NetworkInputSource.pack_record(src, seq, aim)`（与解码端同处一类），两个客户端各 42/41 行 → 5 行。★ 顺带修一处不对称：两份的 `released` 段都**漏了 CHARGE**（`held`/`pressed` 都有，且全仓无消费者 → 行为等价）。★ 探针：kh_l6 的 #1/#4 原先锚 `"seq": _input_seq` 字面量 → 改成 `_packet_anchor`/`_packet_varname`（**两种形态都认**，判据换成「该调用必须收到 `_input_seq`」）。★ 反证两条 + **穷举对撞**（用 Task 4 的 `_*_raw` 钩子做桩输入源，4096 组组合逐键比对，0 不一致） |
+| 3.2 | **M5** 服务器广播样板 + PowerShell 杀端口串 | ✅ 提 `MatchHost._rpc_all(method, args, except_role, live_only)`（5 处 + RoyaleHost 覆写全改走它；新增 `_role_of` 反查射手 role）+ 杀端口收进 `core/proc_util.gd`。★ 实参转发用 `NetBus.callv("rpc_id", …)`——`pvp_match_smoke`（判据含「子弹广播链路」）是它真发包的证据。★ 探针两处：kh_l5 的修正写法判据搬到 proc_util（**坏写法禁令两处都查**）；kh_l6 的光束路由守卫改成二选一，**且走助手时助手体内必须仍用 NetBus**。★ 反证三条 |
+| 3.3 | **M4c** 房间注册表拆分（用户裁定**方案 a：做成 Node**，边界见下方「已落地的设计」） | ✅ `server/lobby_rooms.gd`（`LobbyRooms extends Node`）= 房间账本 + 房间侧 handler + 拆除收口；`room_manager.gd` 643→**259** 行 = 进程编排 + 清扫。**单向依赖**，1v1 凑齐两人由新信号 `pairing_ready` 上到 RoomManager（消除唯一反向需求）。★ 探针三处（room_sweep_smoke / kh_l5 / royale_bound_probe 共 8+ 处访问）；★ 反证：收口门外塞一行 `launcher.release_now` → 咬红 |
+| 3.5 | **M8** 中立鸟死机制 | ✅ 用户裁定**不开鸟** → 两侧整套删除（服务端刷鸟链 + 两个客户端的副本机制 + NetBus 两条 @rpc/两条信号 + `enemy_replica.gd`）。★ 删前核实：那两条 RPC **不是**原版协议面（本项目 `aa1d8f0` 加的），无探针钉其中任何一处 |
 | 3.4 | 客户端事件消费层合并（9 个函数逐字相同 ≈140 行 + 4 个近逐字；具体函数与行号对已列在评估报告里） | `pvp_client.gd` ↔ `royale_game.gd` | 1~2 天。抽 `scenes/pvp_match_client.gd` 基类。**做之前先确认 1.4 已完成** |
 | 3.5 | **M8** `ENABLE_BIRDS := false` ⇒ 客户端鸟副本 ~90 行死代码 | `pvp_client.gd:22,94-95,256-262,431-459`；`royale_game.gd:12,82-83,241-247,431-459` | **先决策**：不打鸟就删 90 行；要打就抽一份进 3.4 的基类 |
 | 3.6 | 两个大厅页的连接状态机重复（58 个重复块 —— 全仓第二大重复对）+ 禁用武器网格/色相行两处手抄 + `_apply_pixel_font` 8 行 100% 相同 | `matchmaking.gd` ↔ `royale_lobby.gd` | 1~2 天 |
