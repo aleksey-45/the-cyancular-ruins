@@ -90,13 +90,8 @@ static func _floor_cells() -> Array:
 	for y in range(rows):
 		for x in range(cols):
 			var c := Vector2i(x, y)
-			if grid[c.y][c.x] != MazeGenerator.EMPTY:
-				continue
-			if not TileDefs.is_blocked(grid[posmod(c.y + 1, rows)][c.x]):
-				continue
-			if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY:
-				continue
-			_floor_cell_cache.append(c)
+			if MazeGenerator.is_floor_cell_with_headroom(grid, c):
+				_floor_cell_cache.append(c)
 	return _floor_cell_cache
 
 
@@ -141,18 +136,8 @@ static func _region_sizes() -> Dictionary:
 
 # 某格是否地板格(与 _floor_cells 同判据的 O(1) 版本:自身空 + 下方实心 + 上方留空)
 static func _floor_cells_has(c: Vector2i) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	var rows := grid.size()
-	var cols := (grid[0] as Array).size()
-	if grid[c.y][c.x] != MazeGenerator.EMPTY:
-		return false
-	if not TileDefs.is_blocked(grid[posmod(c.y + 1, rows)][c.x]):
-		return false
-	if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY:
-		return false
-	return true
+	# 判据收在 MazeGenerator(全仓曾有 5 份);本函数与 _floor_cells 的采集循环同判据。
+	return MazeGenerator.is_floor_cell_with_headroom(MazeGenerator.current_grid, c)
 
 
 static func _roomy_floor(c: Vector2i) -> bool:

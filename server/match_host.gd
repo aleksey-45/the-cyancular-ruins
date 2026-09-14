@@ -271,14 +271,12 @@ func _is_floor_cell(c: Vector2i) -> bool:
 		return false
 	var rows := grid.size()
 	var cols: int = (grid[0] as Array).size()
+	# ★ 保留这里的**显式边界检查**(返回 false):MazeGenerator.is_floor_cell_with_headroom 会把
+	#   超界格 posmod 回环面照常判定,而出生点/复活点要的是"越界即不可用" —— 语义不同,别删。
 	if c.y < 0 or c.x < 0 or c.y >= rows or c.x >= cols:
 		return false
-	if grid[c.y][c.x] != MazeGenerator.EMPTY:
-		return false
-	if not TileDefs.is_blocked(grid[posmod(c.y + 1, rows)][posmod(c.x, cols)]):
-		return false
-	# 头上留一格空,避免贴着天花板/嵌进头顶实心
-	return grid[posmod(c.y - 1, rows)][posmod(c.x, cols)] == MazeGenerator.EMPTY
+	# 基本判据(本格空 + 下方实心)+ 头上留一格空(避免贴着天花板/嵌进头顶实心)
+	return MazeGenerator.is_floor_cell_with_headroom(grid, c)
 
 func _clear_birds() -> void:
 	for id in birds:

@@ -254,7 +254,7 @@ func _find_flank_cell() -> bool:
 				continue
 			if not use_x and signf(rel.y) != -sy:
 				continue
-			if not _is_floor_cell(c):
+			if not MazeGenerator.is_floor_cell(MazeGenerator.current_grid, c):
 				continue
 			# 瞬移落点上方必须有空间:碰撞箱在「下落起点」处不压到任何实心格,
 			# 否则会穿进天花板/檐下/矮洞(落点格是地板但头顶有墙)。
@@ -270,11 +270,8 @@ func _find_flank_cell() -> bool:
 	return true
 
 
-func _is_floor_cell(c: Vector2i) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	return grid[c.y][c.x] == MazeGenerator.EMPTY and TileDefs.is_blocked(grid[posmod(c.y + 1, grid.size())][c.x])
+# (原私有 _is_floor_cell 已收进 MazeGenerator.is_floor_cell —— 本判据全仓曾有 5 份。
+#  黑鸟用的是**基本版**(只要求脚下实心,不要头上净空),故走那个而不是 with_headroom。)
 
 
 # 黑鸟碰撞箱(按 scale 换算)在 pos 处覆盖的格子是否全是 EMPTY。

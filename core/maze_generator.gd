@@ -392,6 +392,34 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
+# ── 地板格(可站立表面)──
+# 基本判据:本格 EMPTY 且**正下方**(y+1,环面)是实心 —— 敌人/玩家要有实心表面托底,否则
+# 落地时没有 is_on_floor() 的地面,会坠穿空洞(FlyBird 回家入睡 bug 的根因)。
+# ★ 格坐标由本函数统一 posmod 回环面,**调用方不必预先规整**(但仍可自备边界检查)。
+# ★ 只做基本判据;额外条件(如"头上要留净空")见下面那个以及调用方自己的包装。
+# 2026-09-14 收敛:原先 `enemy_black_bird` 有同名私有版,`royale_host` 里同一谓词抄了三份
+# (采集循环 / O(1) 版 / 宽松版),`match_host` 又一份 —— 共 5 处。
+static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
+	if grid.is_empty():
+		return false
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	var x := posmod(cell.x, cols)
+	if grid[posmod(cell.y, rows)][x] != EMPTY:
+		return false
+	return TileDefs.is_blocked(grid[posmod(cell.y + 1, rows)][x])
+
+
+# 地板格 **+ 头上留一格净空**:避免贴着天花板/嵌进头顶实心(出生点、瞬移落点用)。
+# 构建在上面那条之上,不重复基本判据。
+static func is_floor_cell_with_headroom(grid: Array, cell: Vector2i) -> bool:
+	if not is_floor_cell(grid, cell):
+		return false
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	return grid[posmod(cell.y - 1, rows)][posmod(cell.x, cols)] == EMPTY
+
+
 # 环面 A*(4 邻域):启发式 = 环面曼哈顿距离(可采纳且一致)。预算 max_visit 是弹出
 # (展开)节点数上限。目标不可达/预算超限时返回「最近可达格」的路径。
 # (取代的 BFS 版在空旷区波前会铺满半径内所有格、预算很快耗尽;A* 靠启发式直奔目标,
