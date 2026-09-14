@@ -187,7 +187,6 @@ func _build_new_ui() -> void:
 	royale_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		PvpSession.reset()
-		PvpSession.royale = true
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽

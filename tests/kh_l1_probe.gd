@@ -82,16 +82,16 @@ func _ready() -> void:
 		if not NetBusExt.has_signal(s):
 			failures.append("NetBusExt 缺信号: %s" % s)
 
-	# 5) pvp_session 两个新字段 + reset 清得掉
-	if PvpSession.royale:
-		failures.append("PvpSession.royale 重置后应为 false")
-	if PvpSession.disabled_weapons.size() != 0:
-		failures.append("PvpSession.disabled_weapons 重置后应为空")
-	PvpSession.royale = true
-	PvpSession.disabled_weapons.append(3)
+	# 5) pvp_session 的 reset 清得掉(2026-09-14:原断言的两个字段 royale/disabled_weapons
+	#    已作为"只写不读"删除;改钉仍在的 map_path/spawn —— 换局时它们必须回到初值,
+	#    否则上一局的地图/出生点会漏进下一局)
+	PvpSession.map_path = "res://maps/factory1v1.cyrm"
+	PvpSession.spawn = Vector2i(9, 9)
 	PvpSession.reset()
-	if PvpSession.royale or PvpSession.disabled_weapons.size() != 0:
-		failures.append("PvpSession.reset() 未清 royale/disabled_weapons")
+	if PvpSession.map_path != "":
+		failures.append("PvpSession.reset() 未清 map_path(换局会漏上一局的地图)")
+	if PvpSession.spawn != Vector2i(-1, -1):
+		failures.append("PvpSession.reset() 未清 spawn(换局会漏上一局的出生点)")
 
 	# 6) Sfx 程序合成流可生成(不依赖音频设备)
 	if Sfx._stream("kill") == null or Sfx._stream("hit") == null:

@@ -328,7 +328,6 @@ func _join_code(code: String) -> void:
 	if code.is_empty():
 		_status.text = "请填房间号"
 		return
-	PvpSession.room_code = code
 	_with_lobby(func() -> void:
 		_status.text = "加入房间 %s,等待配对…" % code
 		_join_sent_ms = Time.get_ticks_msec()

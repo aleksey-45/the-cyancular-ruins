@@ -569,7 +569,6 @@ func _do_go_match() -> void:
 	_pending_go_role = -1
 	_pending_go_port = -1
 	PvpSession.role = role
-	PvpSession.royale = true
 	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
 		_status.text = "连接对局服务器失败,请返回重试", CONNECT_ONE_SHOT)

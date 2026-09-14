@@ -509,7 +509,6 @@ func _apply_match_options(opts: Dictionary) -> void:
 	var disabled: Array[int] = []
 	for v in opts.get("disabled_weapons", []):
 		disabled.append(int(v))
-	PvpSession.disabled_weapons = disabled
 	if _local != null:
 		_local.weapons.set_enabled_slots(disabled)
 

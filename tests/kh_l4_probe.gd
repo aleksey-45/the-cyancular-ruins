@@ -337,8 +337,8 @@ func _check_new_api() -> void:
 # 不再是「不许有」,而是**必须恰好有 1 处、且指向 royale_lobby.tscn**——入口漏加/被删
 # (0 处)或指向别处(路径写错、指回已退役场景)都算红。反向约束与正向约束一样是约束,
 # 删掉这条就等于把入口的存在性放空。
-# 判据取**场景路径**而不是 royale 字样:实现里还有 PvpSession.royale 这类标识符,
-# 数字样会连带命中、数不准;数「指向该场景的字符串」才等于数「入口个数」。
+# 判据取**场景路径**而不是 royale 字样:main_menu.gd 里还有 `royale_btn` 等含 royale 的
+# 标识符,数字样会连带命中、数不准;数「指向该场景的字符串」才等于数「入口个数」。
 func _check_royale_entry() -> void:
 	var src := _read("res://scenes/main_menu.gd")
 	_check(not src.is_empty(), "读不到 scenes/main_menu.gd")
