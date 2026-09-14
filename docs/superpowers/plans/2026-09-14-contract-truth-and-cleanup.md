@@ -1552,18 +1552,21 @@ Expected: 两条各打印 `ALL-OK`。
 
 **教训**：本次是 `git diff main -- <file>` 空不空一句话就查清了；而「所有探针都绿」这件事在**被污染的树下**同样成立 —— 所以关键改动落地后，值得用**干净工作树**再跑一遍。
 
-## 阶段 2：契约与说辞的剩余项（成本合计 ~1 天）
+## 阶段 2：契约与说辞的剩余项 —— ✅ **全部完成**（2026-09-14）
 
-| 序 | 项 | 位置 | 成本 |
-|---|---|---|---|
-| 2.1 | **M13** 快照插值在两个副本类里 18 行逐字相同（`_push_position`/`_sample_position`）| `player_replica.gd:140-167` ↔ `enemy_replica.gd:59-84` | 2 小时。**属复议「批次 1」的刻意决定**（当时的理由是「`KEEP_TICKS` 与时钟变量名不同」，偏弱——成构造参数即可），抽 `core/snapshot_buffer.gd` |
-| 2.2 | **M14** `ENEMY_NAMES` 是 `enemies.json` 的手抄第二份，漏加**静默回落英文原名** | `scenes/effects/combat_feedback.gd:19,97-99` | 1 小时。把 `display_name` 加进 `data/enemies.json`，删 const |
-| 2.3 | **M11** 打包格式的 `16` 手写 15 处，绕过唯一访问器 | `collision_builder.gd:169`、`explosion.gd:75`、`water.gd:21,39,60`、`enemy_fly_base.gd:141`、`climb_component.gd:32,56-58,84,101`、`bullet_base.gd:169`、`laser_weapon_base.gd:242`、`beam_trace.gd:83` | 1 小时。全改 `MazeGenerator.texture_of/shape_of`；`TileDefs` 内部三处一并收口 |
-| 2.4 | **M12** 「世界矩形是否压到实心格」三份同构 | `enemy_black_bird.gd:282-297`、`enemy_fly_base.gd:124-152`、`weapon_base.gd:454-476` | 2 小时。抽 `core/tile_query.gd::rect_overlaps_solid(rect)` |
-| 2.5 | 「地板格」谓词 4 处重复 | `enemy_spawner.gd:35`、`enemy_black_bird.gd:277`、`climb_component.gd:100`；同式另见 `match_host.gd:278`、`royale_host.gd:95,151` | 1 小时。加 `MazeGenerator.is_floor_cell(grid, cell)` |
-| 2.6 | `STOP_SNAP := 1.0` 两份，后者注释写着「与根一致」 | `player.gd:120`、`climb_component.gd:11` | 15 分钟。提到 `PlayerParams` |
+> **未按原计划合成一个提交**:2.3~2.6 各自独立成 commit(2.3 / 2.4+2.6 / 2.5),理由是这样出问题时能二分;
+> 每条都单独验过。另外**每条抽取都补了「新旧实现对撞」**——把旧实现内联进临时脚本,在真实地图上大规模
+> 比对(2.4: 11760 次采样 / 2.5: 18750 次逐格,均 0 不一致)。这套手法对「行为保持的几何/谓词抽取」
+> 比单元测试更有说服力,已在本阶段连用两次。
 
-阶段 2 的 2.3~2.6 都是「同一个常量/同一段骨架散落多处」，**建议合成一个 `refactor(core): 收敛散落的编码常量与几何谓词` 提交**，一次改完一次验。
+| 序 | 项 | 状态 |
+|---|---|---|
+| 2.1 | **M13** 副本类双快照插值 18 行逐字相同 | ✅ **复议通过**(用户裁定)后抽 `core/snapshot_interp.gd`(不是原计划写的 `snapshot_buffer.gd` —— 它的职责不止缓冲,还含时钟推进与采样)。顺带**补了这段一直没被测过的热算法的行为冒烟** `tests/snapshot_interp_smoke.gd`(8 组断言,最值钱的是跨接缝必须走最短向量)。★ 写测试时被自己的断言拦下一次:keep_ticks 是「最新前 N tick **含最新**」共 N+1 条,我按 N 条写了 |
+| 2.2 | **M14** `ENEMY_NAMES` 手抄第二份 | ✅ `display_name` 进 `data/enemies.json`,经新的 `EnemySpawner.display_name_of`(按**场景路径**查 + 惰性加载)取用;顺带干掉「去掉 `Enemy` 前缀再查表」那条改名即静默回落的约定。`sync-enemies.js` 是字段级手抄,已同步并重跑生成 HTML 内嵌注册表。探针按惯例改判据 |
+| 2.3 | **M11** 打包格式 `16` 手写处 | ✅ 实为 **21 处**(计划列 15,漏了 `pvp_client.gd` 与 `royale_game.gd` 的拆砖视觉块 —— 那两块本身也是近乎逐字相同的拷贝)。根因是 `TileDefs` API 不一致(`is_blocked` 吃打包值、`hp_of/climb_speed` 吃纹理号),故每个调用点都得自己 `/16`。`TileDefs` 内部三处一并收口 |
+| 2.4 | **M12** 「世界矩形是否压到实心格」三份同构 | ✅ 抽 `core/tile_query.gd`(两个谓词入口:实心 / 实心或液体)。**三处的空网格语义各不相同**(黑鸟「视为全清」/ 飞鸟「不可走」/ 预瞄「无墙」),故兜底留在调用方 —— 飞鸟必须保留自己的 `is_empty` 早退(方向相反)。新增 `tests/tile_query_smoke.gd` 专钉跨接缝与水 |
+| 2.5 | 「地板格」谓词重复 | ✅ 实为 **5 处**(`royale_host` 里同一谓词自己就抄了三份:采集循环 / O(1) 版 / 宽松版叠层)。抽成 `is_floor_cell`(基本)+ `is_floor_cell_with_headroom`(带头上净空)。**两处语义差异刻意保留**:`match_host` 的越界即 false(helper 会把超界格 posmod 回环面,语义不同);`climb_component` 的**梯子版**谓词只有 1 处使用且语义不同,不抽 |
+| 2.6 | `STOP_SNAP` 两份 | ✅ 第二份是**死副本**(`climb_component` 里全仓零使用,注释却写着"与根一致" —— 该文件此前也有一份零调用的 `_approach` 死副本,批次 1 已删)。删死副本 + 归到 `PlayerParams.stop_snap` |
 
 ## 阶段 3：**必须在 M9 之后**才能开工（客户端合并，成本合计 ~3 天）
 
