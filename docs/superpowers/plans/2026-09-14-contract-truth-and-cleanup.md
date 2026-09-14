@@ -1,5 +1,17 @@
 # 契约对齐与清理批次实施计划（H2 / H4 / M4a / M4b / M6 / M7 / M21）
 
+> ## ✅ 已执行完毕（2026-09-14，分支 `cleanup/contract-truth-2026-09-14`，12 笔提交）
+>
+> 7 个 Task 全部落地。执行期间有 4 处**偏离计划**，照实登记（下文的 Expected / 行号是撰写时的快照，未回改）：
+> 1. **计划 Task 1 写错了一条事实**：计划里把「角色色相」归入「本机显示项、不上发」——实际它**经服务器中转**（随 `player_options` 上发 → `server_main.gd:313 _claim_hues()` 按 role 汇总 → `match_sync` 的 `hues` 回下发）。已按核实结果改写注释，未照抄计划。
+> 2. **计划 Task 2 的 Step 4 是占位**（「按 Step 2 的同一段代码」）——违反「不给占位符」，执行时已把三段代码逐字回填进文档。
+> 3. **计划 Task 4 Step 2 的 Expected 写错**：预测 `FAIL(8 条)`，实测 `FAIL(4 条)`。原因是 `AIInputSource` 把 `is_action_pressed` / `is_action_just_released` / `is_attack_just_released` / `get_weapon_slot_pressed` 实现成**常量**，那 4 条断言不具鉴别力；具鉴别力的恰好是另外 4 条。红→绿闭环仍成立。
+> 4. **计划漏了三处外部消费者**（`server_main.gd:131-132` 的 `_worker_port_span_text`、`royale_lobby.gd:369-370` 的同款文案、`CLAUDE.md:134`），且**计划明确排在本批次之外的 M1 被提前修掉**——因为 Task 7 的改名让 `room_sweep_smoke` 的收口门失明，修好门后它立刻咬出 M1（详见 `6a5abfd` 的提交信息）。
+>
+> **本批次额外产出**：worker 端口范围文档漂移（`7800~7999` → `7800~8299`，4 处）+ `start_server.bat` 的 `findstr` 杀僵尸模式只覆盖 78xx/79xx（已在注释里登记为待修缺口）。
+>
+> **验收状态**：7 个 `-s` 冒烟 + 13 个场景探针（含 `royale_bound`（B1）/ `royale_c2`）+ 5 个多进程 `.sh` 全绿；两处探针修正均做了反证（注入违规→咬红，还原→转绿）。**未跑**（留待用户）：需真实渲染的 `menu_autotest` / `kh_l3|4_visual_probe` / `combat_hud_visual_probe`，以及 `royale_probe` / `royale_soak_probe` / `brawl_rollback_probe` / `snapshot_size_probe` / `perf_probe`。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把「文档/注释/契约承诺了某件事、实现没做到（或反过来）」这一类可维护性负担清干净，并把 `server/room_manager.gd` 的两块**无 Node 依赖**的职责抽成独立文件。全程**不改变任何运行时行为**（Task 4 除外——它修的是一个真实失效的契约，行为面在 Task 4 内单独说明）。
@@ -1515,7 +1527,7 @@ Expected: 两条各打印 `ALL-OK`。
 | 序 | 项 | 位置 | 成本 | 为什么这个顺序 |
 |---|---|---|---|---|
 | 1.1 | **H1** AI 锁定目标后方向反 180°（瞄反 + 追逃互换） | `server/ai_player.gd:73-75`（补取负，对齐 `:96`） | 10 分钟 | 唯一「真会打错」的一条；`--ai-roles` 本就在待验收，修完正好一起验 |
-| 1.2 | **M1** worker 起不来时留陈旧 `worker_port` → 清扫按端口误杀别人的对局 | `server/room_manager.gd` 的 `royale_start`/`ai_duel` 两个失败分支 | 15 分钟 | 与 Task 7 同文件，**紧接着做**最省上下文；改法与 `_start_match` 同形 |
+| 1.2 | ~~**M1** worker 起不来时留陈旧 `worker_port` → 清扫按端口误杀别人的对局~~ **✅ 已于本批次内完成**（提交 `6a5abfd`）—— Task 7 的改名让 `room_sweep_smoke` 的收口门失明，修好门后它立刻咬出 M1，故提前到本批次修 | `server/room_manager.gd` 的 `royale_start` / `ai_duel` / `royale_start_ai` **三处**失败分支 | 15 分钟 | 已完成 |
 | 1.3 | **M2** 掉线终局判据数的是「真人」不是「玩家」 | `server/royale_host.gd:436-438` | 5 分钟 | 与 1.2 同属服务器生命周期，一起验 |
 | 1.4 | **M9** ★ `royale_c2_watcher` A② 合并后会**静默失效** | `tests/royale_c2_watcher.gd:329-338` | 30 分钟 | **必须在阶段 3 的客户端合并之前**：它只防了"读不到源文件"，没防"代码搬走了"；不先补，阶段 3 做完这道门就恒绿骗人 |
 | 1.5 | **M20** 死代码/死文件一批 | 见下方清单 | 1 小时 | 零风险；删掉能减少后续阶段读代码的干扰 |
