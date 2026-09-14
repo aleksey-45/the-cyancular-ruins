@@ -6,14 +6,12 @@ extends Node2D
 #   幽灵体让预测所依据的世界与权威世界一致。★ 它只**减小**分歧不消除(副本位置是插值、落后约
 #   一 tick),验收按「回滚次数下降多少」量,别按「归零」验收。
 # pose/facing/aim/previewing/downed/weapon 按「最新快照」即时套用(反应不落后,位置才有插值)。
-# 位置走「双快照 + 时间轴 alpha 插值」:缓冲最近若干 canonical 位置,渲染时钟落后最新约 1 tick,
-# 期间按真实时间在相邻两帧快照间线性插值——比原指数追赶更快跟手、且无「速度相关滞后」。
-# 时钟只在 tick 域走(服务器恒定 60Hz),不依赖两端时钟同步;丢包/卡顿 → 冻结在最新已收到位置,
-# 下一个快照到达把时钟重置到「最新 - 1」窗口继续,不会倒退。相邻快照在环面上可能跨接缝,
-# 取 toroidal 最短向量插值后取模回 canonical,最后锚到本地玩家(相机)最近副本渲染(见 _process)。
+# 位置走「双快照 + tick 域 alpha 插值」:算法本身已收进 `core/snapshot_interp.gd`(SnapshotInterp,
+# 2026-09-14 —— 此前本类与 enemy_replica 各有一份逐字同款;那段是环面插值的热点,CLAUDE.md 专门
+# 记过教训,且有独立行为冒烟 tests/snapshot_interp_smoke.gd)。本类只负责:把勾子喂给它、
+# 每帧推进时钟、以及把插值结果**锚到本地玩家(相机)最近副本**(保证渲染在可见副本,见 _process)。
 
-const SNAPSHOT_HZ := 60.0   # 服务器快照频率(恒定):渲染时钟的时间轴刻度,与 tick 一一对应
-const KEEP_TICKS := 8       # 位置缓冲保留窗口(最新前 N tick;够插值 + 顶住小丢包)
+const KEEP_TICKS := 8       # 位置缓冲保留窗口(最新前 8 tick;对手要更长的抗抖动窗,鸟只要 4)
 
 const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
@@ -53,11 +51,8 @@ var _hit_flash_t := 0.0
 var _ghost: StaticBody2D = null
 var _ghost_shapes: Dictionary = {}   # pose(int) -> CollisionPolygon2D
 
-# ── 位置插值缓冲 ──
-var _pos_hist: Dictionary = {}     # 服务器 tick(int) → canonical 位置(只留最近 KEEP_TICKS)
-var _tick_list: Array = []         # _pos_hist 的键升序缓存(小数组,推入后重建)
-var _last_tick := 0                # 已入缓冲的最大 tick(丢弃乱序/重复)
-var _render_tick := -1.0           # 渲染时钟(服务器 tick 域,浮点);-1 = 缓冲未满、尚未起步
+# ── 位置插值(算法在 core/snapshot_interp.gd;惰性构造见 _ensure_interp)──
+var _interp: SnapshotInterp = null
 
 func _ready() -> void:
 	add_to_group(GROUP)
@@ -132,39 +127,15 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	if _ghost != null:
 		_ghost.global_rotation = 0.0
 	# 位置交给插值缓冲(pose/facing 等即时套用,位置平滑落后一小段,分毫不可感)
-	_push_position(tick, data["pos"])
+	_ensure_interp()
+	_interp.push(tick, data["pos"])
 
-# 入缓冲:只收递增 tick。每收一个新快照就把渲染时钟重置到「最新 - 1」起点——之后各帧按真实时间
-# 累进扫完这个最新区间(tick 越密集/渲染帧越多,alpha 越细分越平滑)。时钟过快越过最新 → 冻结,
-# 快照续上重置即恢复,不累积漂移、不回退。
-func _push_position(tick: int, pos: Vector2) -> void:
-	if tick <= _last_tick:
-		return
-	_last_tick = tick
-	_pos_hist[tick] = pos
-	var drop_below := tick - KEEP_TICKS
-	for k in _pos_hist.keys():
-		if k < drop_below:
-			_pos_hist.erase(k)
-	_tick_list = _pos_hist.keys()
-	_tick_list.sort()
-	if _tick_list.size() >= 2:
-		_render_tick = float(_tick_list[-1]) - 1.0
-
-# 在 tick 域取插值位置:clock 落在哪两个相邻快照之间就线性插哪个;跨接缝取最短向量后取模回 canonical。
-# clock 越过已收到的最新(丢包/卡顿间隙)→ 冻结在最新;缓冲最前之前 → 冻结最早。
-func _sample_position(clock: float) -> Vector2:
-	var i := _tick_list.size() - 1
-	while i > 0 and float(_tick_list[i]) > clock:
-		i -= 1
-	var a: int = _tick_list[i]
-	var pa: Vector2 = _pos_hist[a]
-	if i + 1 >= _tick_list.size():
-		return pa
-	var b: int = _tick_list[i + 1]
-	var pb: Vector2 = _pos_hist[b]
-	var alpha := clampf((clock - float(a)) / float(b - a), 0.0, 1.0)
-	return MazeGenerator.toroidal_lerp(pa, pb, alpha, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+# 惰性构造插值器:它要读地图尺寸,而尺寸由场景在 `GameParameters.refresh_map_size()` 之后才定下来。
+# 放在 _ready 里会在「副本早于 refresh_map_size 创建」时**静默**拿到错的边界(环面回绕按错尺寸 →
+# 出现空气墙),故推迟到**首次收到快照**才建 —— 那一定在场景 _ready 走完之后。
+func _ensure_interp() -> void:
+	if _interp == null:
+		_interp = SnapshotInterp.new(KEEP_TICKS, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 # 服务器裁决命中:打的是对手 → 副本受击反馈(白闪/眨眼),让射手看到"打中了"。
 func play_hit(_source_pos: Vector2) -> void:
@@ -195,9 +166,9 @@ func _drive_weapon_visual() -> void:
 func _process(delta: float) -> void:
 	if _have_data:
 		_drive_weapon_visual()
-		if _render_tick >= 0.0 and _tick_list.size() >= 2:
-			_render_tick += delta * SNAPSHOT_HZ
-			var canonical := _sample_position(_render_tick)
+		if _interp != null and _interp.ready():
+			_interp.advance(delta)
+			var canonical := _interp.sample()
 			# 插值出的 canonical 锚到本地玩家(相机)最近副本渲染:保证在可见副本。
 			# 不做自身差分追赶——旧实现那句「最短向量=0 会卡在远副本」由这里直接锚定消解。
 			global_position = MazeGenerator.anchor_to_nearest(canonical, _local_anchor,
