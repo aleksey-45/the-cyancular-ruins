@@ -116,15 +116,18 @@ func _apply_pixel_font(root: Node) -> void:
 
 
 # ── 对战选项面板(右侧)──
-# ⚠ 本面板的选项**暂时不生效**,不是 bug,是分层顺序:面板里每一项都只是把选择写进 Settings
-#    并存档,真正的消费方在 L5/L6 ——
-#      · 显示敌方武器轨迹(L6 的子弹/光束视觉副本读 Settings)
-#      · 显示敌方血量条、打开小地图、小地图显示敌方位置(L6 建图后接线)
-#      · 自己角色颜色(走 socket 下发的 peer_hues,L6)
-#      · 每回合开始回满血(服务器权威项,L5/L6)
-#      · 禁用武器(服务器 MatchHost 按 role 生效,L5/L6 的 match_options)
-#    `_claim_role_worker` 里照发的 `player_options` 目前被服务器**静默丢弃**
-#    (main 的 server/ 对该 RPC 零消费者)。即:现在勾选不会改变对局行为。
+# 本面板的选项分三类,**全部已生效**(2026-09-14 逐条核实;勿再照旧注释改成"待接线")——
+#  ① 服务器权威规则项:每回合回满血、禁用武器。
+#     勾选写进 Settings → _claim_role_worker 随 player_options 上发 →
+#     server_main._on_player_options 归档(server_main.gd:206) →
+#     start_match_on 取 **role1(房主)** 那份(server_main.gd:300) →
+#     MatchHost 读 round_full_heal / disabled_weapons(match_host.gd:60-61)。
+#     ★ 权威以**房主(role1)**的选项为准;非房主勾了不生效 —— 这是设计,不是缺陷。
+#  ② 角色颜色(色相 0-360):**必须经服务器中转**。随 player_options 上发 → 服务器按 role
+#     汇总(server_main.gd:313 _claim_hues)→ match_sync 的 hues 回下发 → 客户端染对手身体。
+#     它管的正是"别人身上的颜色",所以不能只读本机 Settings。
+#  ③ 本机显示项:显示敌方武器轨迹 / 显示敌方血量条 / 打开小地图(含小地图显示敌方位置)。
+#     只写 Settings,由 pvp_client / royale_game 在 _ready 里直接读,不上发。
 func _build_options_panel() -> void:
 	var panel := PanelContainer.new()
 	panel.position = Vector2(980, 60)
@@ -475,8 +478,8 @@ func _claim_role_worker(role: int) -> void:
 	_claimed_ms = Time.get_ticks_msec()
 	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
-	# ⚠ 本包目前被服务器静默丢弃(server/ 对 player_options 零消费者)→ 选项不生效,
-	#   消费方在 L5/L6;见 _build_options_panel 顶部注释。
+	# 本包承载两项:①服务器权威规则项(回合回血 / 禁武器,以 role1 那份为准)②本端角色色相。
+	# 两者都**已生效**;完整链路见 _build_options_panel 顶部注释。
 	NetBusExt.rpc_id(1, "player_options", {
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": Settings.pvp_round_full_heal,
