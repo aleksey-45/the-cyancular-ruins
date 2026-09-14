@@ -431,11 +431,12 @@ func mark_disconnected(role: int) -> void:
 		input_sources.erase(role)
 	peer_by_role.erase(role)
 	_broadcast_round_state()
-	# 剩余人头 <2 → 直接终局(独行者判胜)
-	var online := 0
-	for r in peer_by_role:
-		online += 1
-	if online < 2 and _round_state != RoundState.MATCH_OVER:
+	# 剩余**玩家** <2 → 直接终局(独行者判胜)。
+	# ★ 判据必须是 `players`(真人 + AI 补位)而不是 `peer_by_role`:AI 补位 role 由服务端驱动、
+	#   没有 peer,压根不在 `peer_by_role` 里 —— 按 peer 数会在「2 真人 + 2 AI 掉 1 真人」时
+	#   把剩下 1 真人 + 2 AI 当场判终局(实测于 2026-09-14 审计)。最后一个真人离开时
+	#   server_main._on_peer_left 的 `_claims.is_empty() → quit(0)` 已兜住,不会僵持。
+	if players.size() < 2 and _round_state != RoundState.MATCH_OVER:
 		_finish_match()
 
 
