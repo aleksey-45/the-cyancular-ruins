@@ -110,17 +110,11 @@ func _ai(delta: float) -> void:
 				_set_state(State.CHASE)
 				_hop_timer = 0.15
 
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
-	if is_dead:
-		# 尸体:只吃击退不吃伤(冲击波仍能推动尸体)
-		_apply_knock_only(knock_dir, knock_strength, set_velocity)
-		return
-	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
-	if hp <= 0:
-		_begin_death()  # 死亡白闪计时 + 到期销毁由基类统一
-		_anim.play("dead")  # 死亡动画(一次性)
-		# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
-		# is_dead 后 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
+# 死亡:基类 _begin_death → 本虚钩;播一次性死亡动画。
+# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
+# is_dead 后基类 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
+func _on_death() -> void:
+	_anim.play("dead")
 
 # 落水:朝玩家水平游(不朝岸边,保持追击感)。
 func _water_swim_dir() -> Vector2:

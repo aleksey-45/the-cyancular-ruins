@@ -334,18 +334,9 @@ func _on_charge_hit_player() -> void:
 	_start_back_hop()
 
 
-# 冲锋冲击力:沿远离黑鸟的方向猛推玩家(覆盖 take_hit 的普通击退,冲锋更狠,同飞鸟)。
+# 冲锋冲击力:沿远离黑鸟的方向猛推玩家(实现收在 EnemyBase,同飞鸟)。
 func _apply_charge_impact(p: Node) -> void:
-	var p2 := p as Node2D
-	if p2 == null:
-		return
-	var away := (p2.global_position - global_position).normalized()
-	if away == Vector2.ZERO:
-		away = Vector2.LEFT
-		if p2.has_method("get_facing"):
-			away.x = -float(p2.get_facing())
-	p2.velocity = away * EnemyParams.BlackBird.charge_impact
-	p2.velocity.y -= EnemyParams.BlackBird.charge_impact_up
+	_smash_player(p, EnemyParams.BlackBird.charge_impact, EnemyParams.BlackBird.charge_impact_up)
 
 
 func _start_back_hop() -> void:
@@ -355,15 +346,6 @@ func _start_back_hop() -> void:
 	velocity = Vector2(-away.x * EnemyParams.BlackBird.back_hop_away, EnemyParams.BlackBird.back_hop_up)
 	_back_hop_cd = 0.35
 	_teleport_cooldown = EnemyParams.BlackBird.teleport_cooldown
-
-
-func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
-	if is_dead:
-		_apply_knock_only(knock_dir, knock_strength, set_velocity)
-		return
-	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
-	if hp <= 0:
-		_begin_death()
 
 
 func _physics_process(delta: float) -> void:

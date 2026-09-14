@@ -20,7 +20,9 @@ signal input_received(caller: int, pkt: Dictionary)
 # worker:客户端连上后 claim_role 转交(caller=peer id, role=客户端在大厅领的角色, player_name=昵称)
 signal role_claimed(caller: int, role: int, player_name: String)
 # 服务器 → 客户端
-signal local_snapshot(snap: Dictionary)
+# 快照拆两条(2026-09-12,取代原单条 `local_snapshot`)
+signal local_snapshot_world(world: Dictionary)   # 全部玩家的渲染字段(副本/血条用)
+signal local_snapshot_own(own: Dictionary)       # 只有本人需要的 ack_seq + 权威整态 c2
 signal local_bullet_spawn(data: Dictionary)
 signal local_beam_fired(data: Dictionary)   # 即时光束武器(激光)权威开火:对手端据此画光束视觉副本
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
@@ -33,8 +35,15 @@ signal local_opponent_left          # 对局中途对手断线(服务器 → 存
 signal ping_updated(ms: int)        # 平滑后延迟 ms
 signal local_enemy_spawn(roster: Array)  # 服务器:本局鸟清单 [{id,scene,pos}],客户端建副本
 signal local_enemy_died(id: int)         # 服务器:某只鸟死亡(id),客户端移除副本
+# 进场拉取(取代"服务器推三载荷"):见下方 match_sync/match_sync_data 的注释
+signal match_sync_received(caller: int)          # worker 侧转交 → server_main
+signal local_match_sync(payload: Dictionary)     # 客户端侧:应答到达
 
 const DEFAULT_PORT := 7777
+# ENet 通道数。create_server/create_client 的通道参数默认 0 → 发包报
+# "Unable to send packet on channel 0, max channels: 0"(引擎把 0 当"无通道可用")。
+# 显式分配若干条通道即可根治;两端数值保持一致(握手按较小者协商)。
+const ENet_CHANNELS := 4
 
 var is_server_mode: bool = false
 
@@ -54,7 +63,7 @@ func _on_peer_disconnected(id: int) -> void:
 
 func start_server(port: int = DEFAULT_PORT) -> Error:
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_server(port, 16)
+	var err := peer.create_server(port, 16, ENet_CHANNELS)
 	if err == OK:
 		multiplayer.multiplayer_peer = peer
 		is_server_mode = true
@@ -62,7 +71,7 @@ func start_server(port: int = DEFAULT_PORT) -> Error:
 
 func start_client(addr: String, port: int = DEFAULT_PORT) -> Error:
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_client(addr, port)
+	var err := peer.create_client(addr, port, ENet_CHANNELS)
 	if err == OK:
 		multiplayer.multiplayer_peer = peer
 		is_server_mode = false
@@ -101,10 +110,34 @@ func send_input(pkt: Dictionary) -> void:
 func claim_role(role: int, player_name: String) -> void:
 	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name)
 
+# 客户端→worker:**进场拉取**。对局场景建好之后主动要一次(昵称/色相/生效选项/出生点/role 集合)。
+# ★ 它**取代**原来"服务器推三载荷"那条路径。推的根因问题是「推给一个正在切场景的客户端」:
+#   服务器在**同一次 poll** 里推 4 条,而那一刻新场景的订阅方一个都不存在 → 静默丢失(自检 B2,
+#   后果是对手颜色不生效、昵称表空、禁武器闸门没上)。拉的方向反过来:客户端建好之后才开口,
+#   晚到也无所谓 —— 应答按 role 回,不依赖任何时序。
+@rpc("any_peer", "reliable")
+func match_sync() -> void:
+	match_sync_received.emit(multiplayer.get_remote_sender_id())
+
 # ── 服务器 → 客户端(权威方=peer1 可调)──
+# ── 快照:**拆两条**(2026-09-12)──
+# 旧实现把**含全部 N 人 c2 整态**的同一份 dict 逐 peer 各 `rpc_id` 一次 → 服务器序列化量 O(N²)
+# (实测:单人条目 948B,其中 c2 占 664B(70%);8 人局服务器上行 ≈29 Mbps)。而 C2 下每个
+# 客户端其实**只用得到自己那一份 c2** —— 70% 的体积花在只有本人需要的数据上,却每人各发一遍。
+# 拆开后:
+#   ① 世界包 = 全部玩家的渲染字段,构造一次、**广播一次** → O(N)
+#      ★ 必须用 `rpc()` 而不是逐 `rpc_id` 循环:前者在 ENet 层是单次序列化 + enet_host_broadcast,
+#        后者会把 O(N²) 加回来。
+#   ② 本人包 = 自己的 ack_seq + c2,定向发给本人
+# 顺带好处:两者**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补),世界包丢只冻结一帧副本插值。
+# 实测(拆包后估算):8 人局服务器上行 3555KB/s → 446KB/s(≈29Mbps → 3.6Mbps)。
 @rpc("authority", "unreliable")
-func snapshot(snap: Dictionary) -> void:
-	local_snapshot.emit(snap)
+func snapshot_world(world: Dictionary) -> void:
+	local_snapshot_world.emit(world)
+
+@rpc("authority", "unreliable")
+func snapshot_own(own: Dictionary) -> void:
+	local_snapshot_own.emit(own)
 
 @rpc("authority", "reliable")
 func bullet_spawn(data: Dictionary) -> void:
@@ -115,6 +148,13 @@ func bullet_spawn(data: Dictionary) -> void:
 @rpc("authority", "reliable")
 func beam_fired(data: Dictionary) -> void:
 	local_beam_fired.emit(data)
+
+# worker→客户端:match_sync 的应答(一次性完整快照)。
+# 载荷 = {names:{role->昵称}, hues:{role->色相}, options:生效选项, roles:[int], spawns:{role->Vector2i}}。
+# 可靠通道:一次性、必须到(不像快照那样可以丢一帧)。
+@rpc("authority", "reliable")
+func match_sync_data(payload: Dictionary) -> void:
+	local_match_sync.emit(payload)
 
 @rpc("authority", "reliable")
 func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:

@@ -66,6 +66,15 @@ static func attribute(victim: Node, attacker: Node) -> void:
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
 
 
+## 归因 + 命中标记的一体入口:武器命中实体时的统一收尾(子弹/爆炸/激光共用)。
+## ★两件事都必须在**伤害调用之前**完成 —— EnemyBase.hurt() / take_hit 可能同帧判死,
+## 死亡播报当场读 last_damager 的 meta(见 attribute 的注释)。散写成两行时极易漏掉先后顺序。
+## headless 服务器进程无 CombatFeedback 实例 → hit_marker 空操作,无副作用。
+static func attribute_hit(victim: Node, attacker: Node) -> void:
+	attribute(victim, attacker)
+	hit_marker()
+
+
 ## EnemyBase._begin_death 调用:仅「玩家造成的死亡」才播报——读受害者 last_damager meta,
 ## 溺水/环境死(无射手)安静销毁,不再全局播 kill 音效。
 static func notify_enemy_killed(victim: Node) -> void:

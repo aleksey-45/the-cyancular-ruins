@@ -33,3 +33,6 @@ backup/
 
 # 服务端开服时落盘的本机 IP(ServerMain._write_ip_file;机器专属,不该入库)
 local_ip.txt
+
+# Python 字节码缓存(tools/ 下的脚本被 import 时会生成)
+__pycache__/

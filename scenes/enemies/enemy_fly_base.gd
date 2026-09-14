@@ -169,50 +169,15 @@ func _collect_obstacles() -> void:
 			_obstacle_boxes.append(_collision_rect_of(e))
 
 
-# 求一个节点的世界碰撞 AABB(遍历 CollisionShape2D/CollisionPolygon2D 子节点)。
-# 只并**激活**的碰撞体:disabled 跳过——飞行鸟的站立箱、玩家未用姿态的多边形运行时
-# 都被禁用,合并它们会把障碍箱撑得比实际碰撞体大一圈(旧实现全并,详见问题三)。
+# 求一个节点的世界碰撞 AABB。几何取自 CollisionAabb(只并**激活**的碰撞体:disabled 跳过 ——
+# 飞行鸟的站立箱、玩家未用姿态的多边形运行时都被禁用,合并它们会把障碍箱撑得比实际碰撞体大一圈;
+# 旧实现全并,详见问题三)。
 # 返回前把矩形中心锚到本鸟坐标的环面副本,与 BFS 候选格同帧(见 _bird_can_pass)。
 func _collision_rect_of(n: Node2D) -> Rect2:
-	var rect := Rect2(n.global_position, Vector2.ZERO)
-	var has := false
-	for child in n.get_children():
-		# CollisionPolygon2D 继承自 CollisionShape2D,先判多边形,否则走 shape 分支被跳过。
-		if not (child is CollisionShape2D):
-			continue
-		if (child as CollisionShape2D).disabled:
-			continue
-		if child is CollisionPolygon2D:
-			var cp := child as CollisionPolygon2D
-			var pts := cp.polygon
-			if pts.size() == 0:
-				continue
-			var mn := cp.to_global(pts[0])
-			var mx := mn
-			for pt in pts:
-				var w := cp.to_global(pt)
-				mn = mn.min(w)
-				mx = mx.max(w)
-			var r := Rect2(mn, mx - mn)
-			rect = r if not has else rect.merge(r)
-			has = true
-		else:
-			var cs := child as CollisionShape2D
-			var shape := cs.shape
-			if shape == null:
-				continue
-			var r: Rect2
-			if shape is RectangleShape2D:
-				var size := (shape as RectangleShape2D).size * cs.global_scale
-				r = Rect2(cs.global_position - size * 0.5, size)
-			elif shape is CircleShape2D:
-				var rad := (shape as CircleShape2D).radius * maxf(cs.global_scale.x, cs.global_scale.y)
-				r = Rect2(cs.global_position - Vector2(rad, rad), Vector2(rad, rad) * 2.0)
-			else:
-				continue
-			rect = r if not has else rect.merge(r)
-			has = true
-	if not has:
+	var rect: Rect2
+	if CollisionAabb.has_any(n):
+		rect = CollisionAabb.world_rect(n)
+	else:
 		rect = Rect2(n.global_position - Vector2(20, 20), Vector2(40, 40))
 	var center := rect.get_center()
 	var anchored := MazeGenerator.anchor_to_nearest(center, global_position,

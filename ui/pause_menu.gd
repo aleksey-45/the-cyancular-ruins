@@ -45,7 +45,7 @@ func _ready() -> void:
 
 	# 字号一律取 16 的倍数(本项目的像素字体只在 16 倍数下像素锐利,见 ui/ui_factory.gd 文件头)
 	# 控件工厂(字体/字号/点击音纪律)已抽到 UiFactory,与其余菜单共用同一份不变量
-	vb.add_child(UiFactory.label("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64, Color(0.55, 0.95, 1.0)))
+	vb.add_child(UiFactory.label("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64, UiFactory.C_ACCENT))
 	var resume := UiFactory.button("继 续 游 戏", 32)
 	resume.pressed.connect(close)
 	vb.add_child(resume)

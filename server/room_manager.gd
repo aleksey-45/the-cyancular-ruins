@@ -193,9 +193,7 @@ func on_peer_left(peer_id: int) -> void:
 					# (双方收到 go_match 后一起断)——同步发给它会报 channel 错误(见 _peer_online)
 					if _peer_online(survivor):
 						NetBus.rpc_id(survivor, "server_message", "配对已取消(对手离开),请刷新列表")
-			_release_port_later(room.worker_port)   # 延迟归还(见 WORKER_PORT_REUSE_DELAY 注释)
-			rooms.erase(code)
-			print("房间 %s 关闭(端口 %d 将于 %ds 后回收)" % [code, room.worker_port, int(WORKER_PORT_REUSE_DELAY)])
+			_teardown_room(room)   # 延迟归还端口(worker 会自己退;见 WORKER_PORT_REUSE_DELAY)
 	# 大乱斗房:掉线即离房(空房关闭;房主掉线转移;开局后成员转连 worker 断开大厅属正常流转)
 	for rcode in royale_rooms.keys():
 		var rr: RoyaleRoom = royale_rooms[rcode]
@@ -204,12 +202,9 @@ func on_peer_left(peer_id: int) -> void:
 		rr.players.erase(peer_id)
 		rr.player_role.erase(peer_id)
 		if rr.players.is_empty():
-			royale_rooms.erase(rcode)
-			if rr.worker_port > 0:
-				# 大乱斗按默认一局时长给更长的回收延迟(远长于 1v1,自检 M2);已知边界见
-				# ROYALE_PORT_REUSE_DELAY 的常量注释
-				_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
-			print("大乱斗房 %s 关闭(端口 %d 将于 %ds 后回收)" % [rcode, rr.worker_port, int(ROYALE_PORT_REUSE_DELAY)])
+			# 大乱斗按默认一局时长给更长的回收延迟(远长于 1v1,自检 M2);已知边界见
+			# ROYALE_PORT_REUSE_DELAY 的常量注释
+			_teardown_room(rr)
 		else:
 			if rr.host_peer == peer_id:
 				rr.host_peer = rr.players[0]
@@ -237,6 +232,13 @@ func _flush_royale_state(rr: RoyaleRoom) -> void:
 	#   报为在线(实测滞后超过一帧),同步发/帧末发都会踩 "max channels: 0" 且**包会丢**。
 	#   多等一帧只是等待室名单刷新晚一帧,无副作用。
 	await get_tree().process_frame
+	# ★★ 真正发送前**再判一次开局**(调用点那层的 in_match 守卫只挡住"排队时已开局"的情况):
+	#    本函数是 call_deferred + 再等一帧,从"排队"到"发送"之间房间完全可能已经开局 ——
+	#    开局那一刻正是成员集体转连 worker、陆续断开大厅的窗口,发给他们必然打
+	#    "max channels: 0" 且包丢(实测:6 人局开局后瞬间 5 条)。等待室此刻也已不存在,
+	#    这份状态广播本来就没人要了。
+	if rr.in_match:
+		return
 	var plist: Array = []
 	for peer_id in rr.players:
 		plist.append({"role": rr.player_role[peer_id], "name": _peer_names.get(peer_id, "玩家")})
@@ -335,15 +337,14 @@ func royale_leave(caller: int) -> void:
 		# (500 个耗尽后 _pick_worker_port 恒 -1,大厅彻底拉不起 worker)。
 		# 故与其他大乱斗拆除路径同法归还,并同样走大乱斗那条更长的复用延迟
 		# (一局进行中,旧 worker 还在跑,见 ROYALE_PORT_REUSE_DELAY)。
-		if rr.worker_port > 0:
-			_release_port_later(rr.worker_port, ROYALE_PORT_REUSE_DELAY)
-		royale_rooms.erase(rr.code)
-		print("大乱斗房 %s 关闭(房主离开;端口 %d 将于 %ds 后回收)" % [rr.code, rr.worker_port,
-				int(ROYALE_PORT_REUSE_DELAY)])
+		_teardown_room(rr)
 	else:
 		if rr.host_peer == caller:
 			rr.host_peer = rr.players[0]
-		_broadcast_royale_state(rr)
+		# 已开局的房不广播等待室状态(与 on_peer_left 同一理由:成员正在转连 worker,
+		# 发给它们只会踩 "max channels: 0" 并丢包,等待室界面也已不存在)
+		if not rr.in_match:
+			_broadcast_royale_state(rr)
 
 # 公开房间列表(只列未开局的;[{code, players, max_players, names}])
 func royale_list(caller: int) -> void:
@@ -378,14 +379,14 @@ func royale_start(caller: int) -> void:
 		return
 	rr.worker_port = port
 	rr.in_match = true
-	if not _spawn_royale_worker(port, rr.players.size(), _royale_role_bound(rr)):
+	if not _spawn_royale_worker(port, rr.player_role.values()):
 		rr.in_match = false
 		_worker_ports.erase(port)
 		NetBus.rpc_id(caller, "server_message", "无法启动对局")
 		return
 	# 房主对局选项经 worker 侧 NetBusExt.player_options 以 role1 报到为准;这里随开局存档不打扰
-	print("大乱斗房 %s 开局(%d 人,role 上界 %d)→ worker 端口 %d" % [rr.code, rr.players.size(),
-			_royale_role_bound(rr), port])
+	print("大乱斗房 %s 开局(%d 人,roles %s)→ worker 端口 %d" % [rr.code, rr.players.size(),
+			str(rr.player_role.values()), port])
 	# 稍等 worker 完成 bind,再全员转连
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(rr, port)
@@ -436,8 +437,7 @@ func ai_duel(caller: int) -> void:
 	# 与 _sweep_stale_rooms 都只遍历 rooms,再无任何路径能归还本端口 —— 不在此处释放就会
 	# 永久占用(500 次后 _pick_worker_port 返回 -1,大厅彻底拉不起 worker)。
 	# _release_port_later 是协程(内含 await),fire-and-forget 不 await(与 on_peer_left 同法)。
-	_release_port_later(port)
-	rooms.erase(host_room.code)   # 对局消费掉房间(AI 不占第二人位)
+	_teardown_room(host_room)   # 对局消费掉房间(AI 不占第二人位);端口延迟归还
 	print("房间 %s → AI 对战开局(1 人 + AI)→ worker 端口 %d" % [host_room.code, port])
 	await get_tree().create_timer(0.3).timeout
 	NetBus.rpc_id(caller, "go_match", 1, port)
@@ -464,7 +464,8 @@ func royale_start_ai(caller: int) -> void:
 	rr.in_match = true
 	# AI role 号 = 1..max_players 内**人类未占用**的空闲号(见 _royale_free_roles)
 	var ai_roles := _royale_free_roles(rr, ai_count)
-	if not _spawn_royale_worker(port, rr.max_players, _royale_role_bound(rr, ai_roles), ai_roles):
+	# 参战集合 = 房里真人的已分配号 + AI 补位号(真人号可能带空洞,故不能写成 1..max_players)
+	if not _spawn_royale_worker(port, rr.player_role.values() + ai_roles, ai_roles):
 		rr.in_match = false
 		_worker_ports.erase(port)
 		NetBus.rpc_id(caller, "server_message", "无法启动对局")
@@ -473,20 +474,9 @@ func royale_start_ai(caller: int) -> void:
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(rr, port)
 
-# 大乱斗 worker 的**角色号上界**(worker 拿它判 claim 合法性,见 server_main._on_role_claimed)。
-# 刻意与「成员数」分开:role 由 royale_join 的「最小空闲号」分配,有人退出后不重排,
-# 编号会留空洞(如 3 人房里中间那位退出 → 房里是 {1,3},成员数 2 < 最高 role 3)。
-# 此时若把成员数当上界,worker 会把**手持 3 号的真客户端**当串线踢掉 → 只剩 1 个 claim,
-# worker 的超时梯走完退出,两名客户端卡在「连接对局服务器超时」且无恢复路径(自检 B1)。
-# 上界取实际已分配的最高 role,既不漏放任何真客户端,又不比成员数宽松多少
-# (空洞多大就宽松多少),串线防线基本不变。
-func _royale_role_bound(rr: RoyaleRoom, ai_roles: Array = []) -> int:
-	var bound := 0
-	for r in rr.player_role.values():
-		bound = maxi(bound, int(r))
-	for r in ai_roles:
-		bound = maxi(bound, int(r))
-	return bound
+# (原 _royale_role_bound 已删 —— 它存在的唯一理由是协议里没有「本局有哪些 role」这个信息,
+#  只能从人数推导出"上界"来兜。改成 --roles 显式传集合后,worker 侧的判据就是「在集合内」,
+#  精确且不需要任何特例函数。见 server_main.gd 文件头。)
 
 # AI 补位用的 role 号:取 1..max_players 内**人类未占用**的最小空闲号。
 # 不能用「成员数 + 1 + i」——那是「编号恒连续」的假设;有人退出留空洞时(如真人 {1,3}),
@@ -505,29 +495,37 @@ func _royale_free_roles(rr: RoyaleRoom, count: int) -> Array:
 			used[r] = true
 	return out
 
-# 拉起 N 人大乱斗 worker(--royale --players N --max-role R;其余同 _spawn_worker)
-# players=**预期报到总人数**(含 AI:worker 拿它做收齐判据与 AI 数减法),
-# max_role=**role 号上界**(worker 拿它判 claim 合法性;两者语义不同,勿合并,见 _royale_role_bound)。
-func _spawn_royale_worker(port: int, players: int, max_role: int, ai_roles: Array = []) -> bool:
+# 拉起大乱斗 worker(--royale --roles 1,2,3 [--ai-roles r,r];其余同 _spawn_worker)
+# roles = **本局全部参战 role**(真人已分配号 + AI 补位号),由大厅显式传入。
+# ★ 不再传「人数 + role 上界」两个整数:role 由 royale_join 的「最小空闲号」分配、有人退出后
+#   不重排,编号会留空洞(房里 {1,3} 而成员 2 人)—— 从人数**推导** role 集合必然出错(历史 B1
+#   就是这么把持 3 号的真客户端当串线踢掉的)。集合直接传过去则精确,且不需要任何"上界该放宽
+#   多少"的特例函数。
+func _spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
+	var role_strs := []
+	for r in roles:
+		role_strs.append(str(int(r)))
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	# editor 与 template_debug(调试引擎)都要带 --path+场景;仅导出 exe 可省(dedicated_server 主场景)
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
-		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--royale",
-				"--port", str(port), "--players", str(players), "--max-role", str(max_role)])
+				"--port", str(port), "--roles", ",".join(role_strs)])
 	else:
-		args = PackedStringArray(["--headless", "--", "--worker", "--royale",
-				"--port", str(port), "--players", str(players), "--max-role", str(max_role)])
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--", "--worker", "--royale",
+				"--port", str(port), "--roles", ",".join(role_strs)])
 	if not ai_roles.is_empty():
-		var roles := []
+		var ai_strs := []
 		for r in ai_roles:
-			roles.append(str(int(r)))
+			ai_strs.append(str(int(r)))
 		args.append("--ai-roles")
-		args.append(",".join(roles))
+		args.append(",".join(ai_strs))
 	var pid := OS.create_process(exe, args)
-	print("[lobby] spawn royale worker pid=%d port=%d players=%d max_role=%d ai=%s" % [pid, port,
-			players, max_role, str(ai_roles)])
+	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
+			str(roles), str(ai_roles), _worker_log_path(port)])
 	return pid > 0
 
 # ── 配对完成 → 拉起对局 worker 并让两端转连 ──
@@ -538,20 +536,14 @@ func _start_match(room: Room) -> void:
 	var port := _pick_worker_port()
 	if port < 0:
 		# 起不来局:房间作废,通知双方(不再滞留)
-		NetBus.rpc_id(room.players[0], "server_message", "无法分配对局端口")
-		for peer_id in room.players:
-			NetBus.rpc_id(peer_id, "server_message", "配对失败,房间已关闭——请重新建房/加入")
 		room.worker_port = 0
-		rooms.erase(room.code)
+		NetBus.rpc_id(room.players[0], "server_message", "无法分配对局端口")
+		_teardown_room(room, TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
 	room.worker_port = port
 	if not _spawn_worker(port):
-		_worker_ports.erase(port)
 		NetBus.rpc_id(room.players[0], "server_message", "无法启动对局")
-		for peer_id in room.players:
-			NetBus.rpc_id(peer_id, "server_message", "配对失败,房间已关闭——请重新建房/加入")
-		room.worker_port = 0
-		rooms.erase(room.code)
+		_teardown_room(room, TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
 	# 稍等 worker 完成 bind,再通知两端转连(worker 很快,300ms 足够)
 	await get_tree().create_timer(0.3).timeout
@@ -569,6 +561,55 @@ func _send_go_match_1v1(room: Room, port: int) -> void:
 	for peer_id in room.players:
 		if _peer_online(peer_id):
 			NetBus.rpc_id(peer_id, "go_match", room.player_role[peer_id], port)
+
+# ── 房间拆除的**单一收口** ──
+# 三种形态:
+const TEARDOWN_DELAYED := 0   # 正常关房:worker 会自己退 → **延迟**归还端口(防立刻复用撞车)
+const TEARDOWN_KILL := 1      # 僵尸清扫:worker 还活着占着端口 → 强杀 + **立即**回收
+const TEARDOWN_ABORT := 2     # 拉起失败:worker 根本没起来 → **立即**归还(不必延迟,也无从杀)
+
+# 全部拆除路径都必须走它。理由不是"整洁":本层为「端口泄漏」这**同一个**失败模式补过三次
+# (on_peer_left 空房分支 / royale_leave 空房分支 / ai_duel 摘房前的手动释放),散着写就还会漏
+# 第四次。收口后"新加一条拆除路径"这件事本身不可能漏 —— 没有第二条路可走。
+# `tests/room_sweep_smoke` 有断言钉住:端口归还与注册表删除只能出现在本函数体内。
+#
+# mode               三种形态,见下方 TEARDOWN_* 常量(默认 DELAYED)
+# msg                发给房内玩家的 server_message(空串=不发)
+# disconnect_peers   true=立刻断开房内玩家(清扫路径要;正常关房由 peer_left 自然收尾)
+# 端口延迟分两档:1v1=WORKER_PORT_REUSE_DELAY(30s);大乱斗=ROYALE_PORT_REUSE_DELAY(360s,一局更长)。
+func _teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
+		disconnect_peers: bool = false) -> void:
+	var is_royale: bool = room is RoyaleRoom
+	var port: int = room.worker_port
+	var peers: Array = room.players.duplicate()   # 先拷:下面要删注册表/可能改动它
+	if port > 0:
+		match mode:
+			TEARDOWN_KILL:
+				_kill_worker(port)      # worker 还活着占着端口 → 先杀,杀完端口可直接回收
+				_worker_ports.erase(port)
+			TEARDOWN_ABORT:
+				_worker_ports.erase(port)   # worker 根本没起来 → 立刻归还(不必延迟,也不必杀)
+			_:
+				_release_port_later(port, ROYALE_PORT_REUSE_DELAY if is_royale else WORKER_PORT_REUSE_DELAY)
+	if not msg.is_empty():
+		for peer_id in peers:
+			if _peer_online(peer_id):
+				NetBus.rpc_id(peer_id, "server_message", msg)
+	if is_royale:
+		royale_rooms.erase(room.code)
+	else:
+		rooms.erase(room.code)
+	var how := "将于延迟后回收"
+	if mode == TEARDOWN_KILL:
+		how = "已强杀并立即回收"
+	elif mode == TEARDOWN_ABORT:
+		how = "立即归还(worker 未起来)"
+	print("%s %s 拆除(端口 %d %s)" % ["大乱斗房" if is_royale else "房间", room.code, port, how])
+	if disconnect_peers:
+		for peer_id in peers:
+			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
+				multiplayer.disconnect_peer(peer_id)
+
 
 # 延迟归还 worker 端口:给旧 worker 留足退出时间,防止端口被立刻复用导致串线。
 # delay:1v1=30s;大乱斗房传 ROYALE_PORT_REUSE_DELAY(一局可长达 5 分钟)。
@@ -598,10 +639,12 @@ func _spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
-		args = PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--port", str(port)])
 	else:
-		args = PackedStringArray(["--headless", "--", "--worker", "--port", str(port)])
+		args = PackedStringArray(["--headless", "--log-file", _worker_log_path(port),
+				"--", "--worker", "--port", str(port)])
 	if not ai_roles.is_empty():
 		var roles := []
 		for r in ai_roles:
@@ -609,8 +652,22 @@ func _spawn_worker(port: int, ai_roles: Array = []) -> bool:
 		args.append("--ai-roles")
 		args.append(",".join(roles))
 	var pid := OS.create_process(exe, args)
-	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s" % [pid, port, str(OS.has_feature("editor")), str(ai_roles)])
+	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s 日志=%s" % [pid, port,
+			str(OS.has_feature("editor")), str(ai_roles), _worker_log_path(port)])
 	return pid > 0
+
+
+# ── worker 的引擎日志落盘(两个 spawn 共用)──
+# worker 是**独立进程**,它的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 服务端侧
+# 出问题时(worker 崩了/报错/提前退出)大厅这边**一个字都收不到**,只能从客户端的表象反推。
+# 2026-09-12 排查「大乱斗击杀后对手崩溃」时就卡在这个盲区上:大厅日志从头到尾是干净的,
+# 而真正跑对局的 worker 说了什么**没人知道**。故给每个 worker 一份引擎日志。
+# ⚠ `--log-file` 是**引擎选项**,必须排在 `--` 之前 —— 那之后是 server_main._ready 自己解析的
+#   用户参数(`--worker`/`--port`/`--roles`),顺序错了会被当用户参数吞掉。
+func _worker_log_path(port: int) -> String:
+	var dir := ProjectSettings.globalize_path("user://logs")
+	DirAccess.make_dir_recursive_absolute(dir)
+	return dir.path_join("worker_%d.log" % port)
 
 # ── 定时扫描:每 SWEEP_INTERVAL 清理存在超 MAX_ROOM_AGE 的僵尸房间(连 worker 一起杀)──
 func _process(delta: float) -> void:
@@ -669,32 +726,12 @@ func _sweep_stale_rooms() -> void:
 			stale.size() + stale_royale.size(), stale.size(), MAX_ROOM_AGE,
 			stale_royale.size(), MAX_ROOM_AGE,
 			MAX_ROOM_AGE + SWEEP_INTERVAL + RoyaleHost.MATCH_TIME])
-	for room in stale:
-		if room.worker_port > 0:
-			_kill_worker(room.worker_port)
-			_worker_ports.erase(room.worker_port)
-		# 通知并断开仍连着的房内玩家(触发 peer_left → on_peer_left 会再清一次,无害)
-		for peer_id in room.players:
-			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
-				NetBus.rpc_id(peer_id, "server_message", "房间超时(>2h),已关闭")
-		rooms.erase(room.code)
-		print("房间 %s 超时清理(存活 %.0f 秒)" % [room.code, now - room.created_at])
-	# 大乱斗房收尾:字段与 Room 同形(worker_port/players/code);worker 已被杀,端口直接回收
-	# (与 1v1 分支同法,不经 ROYALE_PORT_REUSE_DELAY——那条延迟是给「没被杀、还在跑」的 worker 的)
-	for rr in stale_royale:
-		if rr.worker_port > 0:
-			_kill_worker(rr.worker_port)
-			_worker_ports.erase(rr.worker_port)
-		for peer_id in rr.players:
-			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
-				NetBus.rpc_id(peer_id, "server_message", "房间超时(>2h),已关闭")
-		royale_rooms.erase(rr.code)
-		print("大乱斗房 %s 超时清理(存活 %.0f 秒)" % [rr.code, now - rr.created_at])
-	# 立即断开被清理房间的玩家(等 peer_left 收尾;避免它们还留在半满房间表里)
+	# 两张注册表共用同一条拆除(worker 已被杀 → 端口直接回收,**不经** ROYALE_PORT_REUSE_DELAY:
+	# 那条延迟是给「没被杀、还在跑」的 worker 的)。通知 + 立刻断开房内玩家都交给收口函数。
 	for room in stale + stale_royale:
-		for peer_id in room.players:
-			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
-				multiplayer.disconnect_peer(peer_id)
+		_teardown_room(room, TEARDOWN_KILL, "房间超时(>2h),已关闭", true)
+		print("%s %s 超时清理(存活 %.0f 秒)" % [
+				"大乱斗房" if room is RoyaleRoom else "房间", room.code, now - room.created_at])
 
 # 杀指定 UDP 端口的进程(worker)。Windows:PowerShell 取该端口属主进程 → Stop-Process。
 # 与 server_main._kill_port_holder 同法;不能只靠 OS.create_process 返回的 pid(跨进程需查端口)。
