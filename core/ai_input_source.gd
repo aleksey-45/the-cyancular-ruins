@@ -13,32 +13,34 @@ var _jump_edge := false       # 一次性跳跃边沿
 func press_jump() -> void:
 	_jump_edge = true
 
-func get_axis(neg: String, _pos: String) -> float:
+# ── 覆写钩子(公开读口由基类持有并对 frozen 短路;本类不再各自处理冻结)──
+
+func _axis_raw(neg: String, _pos: String) -> float:
 	return axis if neg == "left" else 0.0   # 垂直轴走跳跃边沿,不爬梯
 
-func is_action_pressed(_action: String) -> bool:
+func _action_pressed_raw(_action: String) -> bool:
 	return false   # 无持续按住(下蹲/冲刺/攀爬都不用)
 
-func is_action_just_pressed(action: String) -> bool:
+func _action_just_pressed_raw(action: String) -> bool:
 	if action == "up":
 		var v := _jump_edge
 		_jump_edge = false
 		return v
 	return false
 
-func is_action_just_released(_action: String) -> bool:
+func _action_just_released_raw(_action: String) -> bool:
 	return false
 
-func is_attack_pressed() -> bool:
+func _attack_pressed_raw() -> bool:
 	return fire
 
-func is_attack_just_pressed() -> bool:
+func _attack_just_pressed_raw() -> bool:
 	return fire
 
-func is_attack_just_released() -> bool:
+func _attack_just_released_raw() -> bool:
 	return false
 
-func get_weapon_slot_pressed() -> int:
+func _weapon_slot_raw() -> int:
 	return 0   # 不切枪
 
 func get_aim_dir_override() -> Vector2:

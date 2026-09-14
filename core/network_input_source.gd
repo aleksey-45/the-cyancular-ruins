@@ -48,7 +48,9 @@ func reset_state() -> void:
 	_pressed = 0
 	_released = 0
 
-func get_axis(neg: String, pos: String) -> float:
+# ── 覆写钩子(公开读口由基类持有并对 frozen 短路;本类不再各自处理冻结)──
+
+func _axis_raw(neg: String, pos: String) -> float:
 	# 垂直轴由 held 位推导:输入包只传水平 ax,up/down 已并入 held 位掩码。
 	# 原实现一律返回水平 _axis → climb_component 的 get_axis("up","down") 在服务器上恒为 0,
 	# 服务器玩家攀附后挂梯不动、客户端正常上爬 → 大分歧 → 快照回拉(梯子回拉根因)。
@@ -66,25 +68,25 @@ func get_axis(neg: String, pos: String) -> float:
 		return 0.0
 	return _axis
 
-func is_action_pressed(action: String) -> bool:
+func _action_pressed_raw(action: String) -> bool:
 	return _held & _bit(action) != 0
 
-func is_action_just_pressed(action: String) -> bool:
+func _action_just_pressed_raw(action: String) -> bool:
 	return _pressed & _bit(action) != 0
 
-func is_action_just_released(action: String) -> bool:
+func _action_just_released_raw(action: String) -> bool:
 	return _released & _bit(action) != 0
 
-func is_attack_pressed() -> bool:
+func _attack_pressed_raw() -> bool:
 	return _held & BIT_ATTACK != 0
 
-func is_attack_just_pressed() -> bool:
+func _attack_just_pressed_raw() -> bool:
 	return _pressed & BIT_ATTACK != 0
 
-func is_attack_just_released() -> bool:
+func _attack_just_released_raw() -> bool:
 	return _released & BIT_ATTACK != 0
 
-func get_weapon_slot_pressed() -> int:
+func _weapon_slot_raw() -> int:
 	return _weapon
 
 func get_aim_dir_override() -> Vector2:

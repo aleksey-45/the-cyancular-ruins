@@ -41,6 +41,32 @@ func _initialize() -> void:
 	src.press_jump()
 	_check(src.is_action_just_pressed("up"), "press_jump() 后 just_pressed('up') 为真")
 	_check(not src.is_action_just_pressed("up"), "跳跃是**边沿**不是电平(第二次读为假)")
+
+	# ★ frozen 契约回归(2026-09-14):基类承诺「置 true 后一切输入读口返回中性值」,
+	#   而本类此前覆写了**全部**公开读口 → 基类的 if frozen 整个被绕过,
+	#   player.set_controls_locked(true) 对 AI/网络输入源是**静默空操作**。
+	#   此断言必须打在**子类实例**上:基类自己的实现无法证明子类听话。
+	#   口径来自 core/input_source.gd 的类头注释与 player.set_controls_locked 的调用点。
+	#   注:本类把 is_action_pressed / is_action_just_released / is_attack_just_released /
+	#   get_weapon_slot_pressed 实现成**常量**(与 frozen 无关),故那 4 条不具鉴别力 —— 但
+	#   它们仍要断言(修完必须全绿),具鉴别力的是 get_axis / just_pressed / attack_pressed /
+	#   attack_just_pressed 这 4 条(它们会回放写入的值,能照出"未短路")。
+	src.aim = Vector2.UP
+	src.axis = -1.0
+	src.fire = true
+	src.press_jump()
+	src.frozen = true
+	_check(is_zero_approx(src.get_axis("left", "right")), "frozen:get_axis 为 0")
+	_check(not src.is_action_pressed("up"), "frozen:is_action_pressed 为 false")
+	_check(not src.is_action_just_pressed("up"), "frozen:is_action_just_pressed 为 false")
+	_check(not src.is_action_just_released("up"), "frozen:is_action_just_released 为 false")
+	_check(not src.is_attack_pressed(), "frozen:is_attack_pressed 为 false")
+	_check(not src.is_attack_just_pressed(), "frozen:is_attack_just_pressed 为 false")
+	_check(not src.is_attack_just_released(), "frozen:is_attack_just_released 为 false")
+	_check(src.get_weapon_slot_pressed() == 0, "frozen:get_weapon_slot_pressed 为 0")
+	# 瞄准是**刻意**不冻的:冻结期武器仍要按注入方向摆枪
+	_check(src.get_aim_dir_override() == Vector2.UP, "frozen:瞄准刻意不冻(武器仍按注入方向摆枪)")
+	src.frozen = false
 	# 不逐条断言那些"在基类与覆写里都是同一个常量"的读口(is_action_pressed 恒 false、
 	# is_action_just_released 恒 false、is_attack_just_released 恒 false、
 	# get_weapon_slot_pressed 恒 0)—— 那种断言无论覆写与否都通过,是空转。
