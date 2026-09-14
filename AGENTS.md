@@ -145,6 +145,9 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **道具两维分类**:`kind`=使用方式(药剂/投掷/术式/铭文/工具),`effect`=效果(击退/吸引/烟雾);旧卡( kind=效果名)读档自动迁移为 kind=thrown+effect 承接。
 - **施工流程**:选卡→上传/导出美术→[生成提示词+发送](CLI 机制沿用已验证做法:零中文 bat、仓库根 %~dp0 推导、心跳行、退出标记落日志;10s 无日志判失败)→[停止];或[仅复制提示词]兜底。提示词含:美术资产政策(人工槽禁改/占位贴近原作)+ 槽位实测状态 + 卡 JSON + 特殊要求 + 路径白名单 + headless 验证 + `CARD-DONE <type>/<id> rev<N>` 回报。
 
+### 多机开发路径规范(2026-09-15 起)
+代码与脚本**禁止写死机器专属绝对路径**(C:\Godot、C:\Users 之类)。Godot 可执行文件解析顺序:环境变量 `GODOT_EXE` → 常见安装路径探测 → PATH(`where`);worker 引擎日志写 `user://` 应用数据目录(`OS.get_user_data_dir()/worker_logs/`)。新机器只需设置 `GODOT_EXE` 环境变量(或把 Godot 放在 C:\Godot 等常见位置)。
+
 ### 日志记录器与监看器(tools/gamelog + DevTools/gamelog,editor_log 分支;已合并后台看守)
 两个互补来源,监看器(DevTools/launch_log_viewer.bat)统一浏览:
 1) 启动器会话(最全):双击 start_game_logged.bat / start_server_logged.bat(或拖 exe 上去),
