@@ -10,6 +10,8 @@
 >
 > **本批次额外产出**：worker 端口范围文档漂移（`7800~7999` → `7800~8299`，4 处）+ `start_server.bat` 的 `findstr` 杀僵尸模式只覆盖 78xx/79xx（已在注释里登记为待修缺口）。
 >
+> ⚠ **数字口径**：本计划正文章节里引用的「N 行」是**函数跨度**（含注释与空行），在本仓这种高注释密度下虚高 30~40%。阶段 5 已于 2026-09-14 按**净代码行**重排并逐条给出更正后的数字（见该节顶部）。
+>
 > **验收状态**：7 个 `-s` 冒烟 + 13 个场景探针（含 `royale_bound`（B1）/ `royale_c2`）+ 5 个多进程 `.sh` 全绿；两处探针修正均做了反证（注入违规→咬红，还原→转绿）。**未跑**（留待用户）：需真实渲染的 `menu_autotest` / `kh_l3|4_visual_probe` / `combat_hud_visual_probe`，以及 `royale_probe` / `royale_soak_probe` / `brawl_rollback_probe` / `snapshot_size_probe` / `perf_probe`。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -1574,17 +1576,30 @@ Expected: 两条各打印 `ALL-OK`。
 | 4.5 | 文件名与 `class_name` 不符 / 缩略语三套写法 | `server/ai_player.gd` 的 `class_name AINavigator`；缩略语现状 `HUD`（`ui/hud.gd`）/`PvpHud`/`AIInputSource` 三种 → 定一条规则（建议驼峰 `Hud`/`Ai`） |
 | 4.6 | **`core/` 分目录** | 27 个条目混 4 类关注点（几何模拟/网络/配置/表现）→ `core/{sim,net,config,present}/`。**最后做**：autoload 路径在 `project.godot`，动它要同步 4 处 |
 
-## 阶段 5：巨型函数（**等没有并发分支时做**，成本合计 ~5 天）
+## 阶段 5：巨型函数（**等没有并发分支时做**，成本合计 ~6 天）
+
+> **本节已于 2026-09-14 重排（用户裁定）**，依据一次按「净代码行（剔注释与空行）+ 单函数占文件比例」的重测。
+> **数字口径更正**：本节此前引用的行数是**函数跨度**（含注释与空行），在本仓这种高注释密度下虚高 30~40%。实测净代码：
+> `player.gd::_physics_process` 205→**143**；`enemy_black_bird::_ai` 146→**133**；`enemy_fly_bird::_ai` 124→**108**；
+> `royale_lobby::_build_create_panel` 120→**102**；`main_menu::_build_new_ui` 100→**77**；`enemy_logic_smoke::_initialize` 851→**737**。
+> 同理 `match_host.gd` 的「706 行」净代码只有 535、最长函数 48 行、35 个函数 —— 它是**职责宽**不是**函数深**（见 5.6）。
 
 | 序 | 项 | 位置 | 成本 |
 |---|---|---|---|
-| 5.1 | **H5** `player.gd::_physics_process` **205 行**，且倒地物理与正常物理**逐句复制** | `scenes/player/player.gd:150-352` | 1 天。拆 `_tick_downed`/`_tick_water_and_climb`/`_tick_vertical`/`_tick_horizontal`/`_tick_pose_and_collision`/`_tick_slide_reactions` + 公用段 `_apply_grounded_physics(delta, brake_rate)`。**改前先看 `tests/player_contract_smoke.gd` 断言了什么**（它是源码级契约守卫） |
-| 5.2 | **M10** 三个敌人 `_ai` 巨型 `match` 单函数（146/124/78 行，最深 6~7 层） | `enemy_black_bird.gd:72-213`、`enemy_fly_bird.gd:70-190`、`enemy_jump_bird.gd:38-111` | 各半天。每个状态一个 `_tick_<state>(delta, dist)`，`_ai` 只留 `match` 派发（约 20 行）。**与「批次 7 睡眠/唤醒上提」不重叠**——本条只按 state 切函数 |
-| 5.3 | `tests/enemy_logic_smoke.gd::_initialize` **851 行**（全仓最长的函数，比第二名长 4 倍） | `tests/enemy_logic_smoke.gd` | 1~2 天。按章节切分 |
-| 5.4 | 旧编号批次 4：`core/maze_generator.gd` 委托式拆 `grid_pathfinder.gd` + `map_format.gd`；`weapon_base.gd` 拆 `weapon_preview.gd` + `weapon_reload.gd`；`match_host.gd` 的 `ENABLE_BIRDS=false` 鸟链（84 行）搬到 `server/bird_roster.gd` | — | 1~2 天 |
-| 5.5 | 旧编号批次 7：睡眠/唤醒状态机上提 | `enemy_fly_bird.gd:75-91` 等三处同构 | 半天。**必须先显式化** `enemy_base.gd:175` 的隐式契约——`_is_far_sleeping()` 硬编码 `state != 0`，隐含「所有子类 `State.SLEEP == 0`」 |
-| 5.6 | 三个 UI 构建巨型函数（`royale_lobby._build_create_panel` 120 行、`main_menu._build_new_ui` 100 行、两个 `_ready` 各 ~79 行） | — | 1~2 天。**排在 3.7（UiFactory 补齐）之后**，否则会重复造包装 |
-| 5.7 | `core/` 输入源三件套的语义错位：基类同时是接口与本地实现；`PredictionRollback` 在客户端 `new()` 了 `NetworkInputSource` 当 scratch（一次网络都不碰）；`is_network_driven()` 是类型标签不是 `is` 判断 | `core/input_source.gd`、`core/prediction_rollback.gd:22,107-115` | 半天。基类改 `PlayerInput` 纯接口（`source_kind() -> int` 枚举），本地实现独立成 `local_input_source.gd`；`NetworkInputSource` → `PacketInputSource`。**排在 Task 4 之后**（同文件，且 Task 4 刚把 `_*_raw` 钩子立起来） |
+| **5.1** | ★ **`tests/enemy_logic_smoke.gd::_initialize` 净 737 行，占该文件 95%** —— 全仓最长函数，且该文件 53 次提交是**全仓改动最频繁的文件**。杠杆最高的一条，故从原 5.3 提到首位：最热文件 + 最极端巨型函数 + 纯测试无行为风险 | `tests/enemy_logic_smoke.gd` | 1~2 天。按已有的章节注释切分（AI/LOS/环面/武器/碰撞各成 `_phase_*()`），`_initialize` 只留顺序调用 |
+| 5.2 | **H5** `player.gd::_physics_process` 净 **143 行**（占文件 33%），且倒地物理与正常物理**逐句复制** | `scenes/player/player.gd:150-352` | 1 天。拆 `_tick_downed`/`_tick_water_and_climb`/`_tick_vertical`/`_tick_horizontal`/`_tick_pose_and_collision`/`_tick_slide_reactions` + 公用段 `_apply_grounded_physics(delta, brake_rate)`。**改前先看 `tests/player_contract_smoke.gd` 断言了什么**（源码级契约守卫） |
+| 5.3 | **M10** 三个敌人 `_ai` 巨型 `match` 单函数（净 **133** / **108** / 67 行，占各自文件 44% / 33% / 68%） | `enemy_black_bird.gd`、`enemy_fly_bird.gd`、`enemy_jump_bird.gd` | 各半天。每个状态一个 `_tick_<state>(delta, dist)`，`_ai` 只留 `match` 派发（约 20 行）。**与「睡眠/唤醒上提」(5.8) 不重叠**——本条只按 state 切函数 |
+| **5.4** | ★ **探针里的巨型函数**（本次重测新增，此前完全没登记）：`tests/feedback_probe.gd::_ready` 净 **159 行占该文件 88%**；`tests/perf_probe.gd::_initialize` 净 **177 行占 65%**；`tests/kh_l3_visual_probe.gd::_ready` 84；`tests/kh_l3_probe.gd::_check_reload_state_machine` 78 | `tests/` | 共 1 天。探针无行为风险，适合作为「先练手」的一批 |
+| 5.5 | 三个 UI 构建巨型函数（`royale_lobby._build_create_panel` 净 102、`main_menu._build_new_ui` 净 77、`royale_hud._ready` 67 + `_on_round_state` 74、`matchmaking._build_options_panel` 62） | — | 1~2 天。**排在 3.7（UiFactory 补齐）之后**，否则会重复造包装 |
+| **5.6** | ★ **`server/match_host.gd` 按职责分文件**（**改法变更**：不是拆函数 —— 它净 535 行 / 35 个函数 / 最长仅 48 行，形状是「宽」不是「深」）。按域切：快照广播 · 子弹与爆炸裁决 · 回合状态机 · 玩家建/复活 | `server/match_host.gd` | 1 天 |
+| 5.7 | `core/maze_generator.gd` 委托式拆 `grid_pathfinder.gd` + `map_format.gd`（净 478 / 33 函数 / 最长 48 —— 同样偏「宽」）；`match_host.gd` 的 `ENABLE_BIRDS=false` 鸟链搬到 `server/bird_roster.gd` | — | 1 天 |
+| **—** | ~~`weapon_base.gd` 拆 `weapon_preview.gd` + `weapon_reload.gd`~~ **★ 已撤销（2026-09-14）** | — | **不做**。实测净 361 行 / 32 个函数 / 最长仅 **30 行**，是全仓形状最好的大文件之一（那 543 原始行里 132 行是注释 + 一批 `@export`）。拆完只会多两个薄文件、少一层 `@export` 就近可读性 —— 收益为负 |
+| 5.8 | 旧编号批次 7：睡眠/唤醒状态机上提 | `enemy_fly_bird.gd:75-91` 等三处同构 | 半天。**必须先显式化** `enemy_base.gd:175` 的隐式契约——`_is_far_sleeping()` 硬编码 `state != 0`，隐含「所有子类 `State.SLEEP == 0`」 |
+| 5.9 | `core/` 输入源三件套的语义错位 | `core/input_source.gd`、`core/prediction_rollback.gd:22,107-115` | 半天。基类改 `PlayerInput` 纯接口（`source_kind() -> int` 枚举），本地实现独立成 `local_input_source.gd`；`NetworkInputSource` → `PacketInputSource`。**排在 Task 4 之后**（同文件，且 Task 4 刚把 `_*_raw` 钩子立起来） |
+
+**「宽 vs 深」的判据**（本节重排的依据，供后续评估复用）：文件大而最长函数 ≤50 行 → 是**职责宽**，应按域**分文件**，拆函数的收益低；最长函数占文件 ≥30% → 是**函数深**，应**先拆函数**。前者如 `match_host.gd`(48)/`maze_generator.gd`(48)/`weapon_base.gd`(30)，后者如 `player.gd`(33%)/`enemy_black_bird.gd`(44%)/`enemy_jump_bird.gd`(68%)。
+
+**已撤销的处置**：`weapon_base.gd` 的拆分（见上）。**未采用**：把 `tests/` 整体瘦身（11702 行 vs 生产 14693 行，测试几乎和生产一样多）—— 测试的「大」危害小（读者少、改者少），只处理其中真正极端的 5.4。
 
 ## 阶段 6：测试脚手架（可随时插入，与上面都不冲突）
 
