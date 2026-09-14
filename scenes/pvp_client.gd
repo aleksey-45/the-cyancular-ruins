@@ -1,7 +1,6 @@
 extends PvpMatchClient
 # PvP 客户端对局场景:Level0(pvp_mode) 世界 + 本地玩家(C2 本地模拟) + 后处理 + 输入上报 + 快照消费。
 
-const LaserVisual := preload("res://core/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── C2 客户端预测 ──
 # 本地玩家跑全量本地 sim 预测 + PredictionRollback 权威锚定重放(见 core/prediction_rollback.gd)。
@@ -123,25 +122,6 @@ func _ready() -> void:
 # 进场拉取的应答。三个 handler 本身幂等(重建禁用表/覆盖染色/重设标签),重复应用无害。
 # ⚠ 必须在 `_apply_p2_tint()` **之后**生效:那道预染是"无载荷"的落地形态,本载荷里的色相要能盖过它
 # (否则对手身体退回 -65 的旧规则)。请求发在 `_ready` 末尾,应答只会更晚到,时序天然满足。
-func _on_match_sync(payload: Dictionary) -> void:
-	var names: Dictionary = payload.get("names", {})
-	if not names.is_empty():
-		_apply_peer_names(names)
-	var hues: Dictionary = payload.get("hues", {})
-	if not hues.is_empty():
-		_apply_peer_hues(hues)
-	var opts: Dictionary = payload.get("options", {})
-	if not opts.is_empty():
-		_apply_match_options(opts)
-	var sp: Dictionary = payload.get("spawns", {})
-	if sp.has(PvpSession.role):
-		var want: Vector2i = sp[PvpSession.role]
-		if want != PvpSession.spawn:
-			# 不一致就是 bug(两者同源),别静默 —— 留痕后以 sync 为准
-			push_warning("match_sync: 出生点与 match_start 不一致(%s vs %s),以 sync 为准" % [
-					str(PvpSession.spawn), str(want)])
-			PvpSession.spawn = want
-			_correct_local_spawn()
 
 
 # 把本地玩家摆到权威出生点。**只在开局倒计时里做** —— 已经打起来还硬拉,等于把玩家从对局里
@@ -180,35 +160,9 @@ func _on_snapshot_world(world: Dictionary) -> void:
 # 归到本地玩家最近副本、滞后 ~1 tick 无碍)。光束整条路径 ≤ bullet_range 远小于半图 →
 # 逐点 anchor_to_nearest 会把整条折线搬到可见副本、跨接缝连续。
 # 只画对手那发:自己(射手)这发已由本地预测自画,再收服务器版会双光束。
-func _on_beam_fired(data: Dictionary) -> void:
-	if _world == null or _remote_replica == null:
-		return
-	if int(data.get("shooter_role", 0)) == PvpSession.role:
-		return
-	var raw: PackedVector2Array = data.get("pts", PackedVector2Array())
-	if raw.is_empty():
-		return
-	var anchor: Vector2 = (_remote_replica as Node2D).global_position
-	var w := GameParameters.MAP_WIDTH
-	var h := GameParameters.MAP_HEIGHT
-	var pts := PackedVector2Array()
-	for p in raw:
-		pts.append(MazeGenerator.anchor_to_nearest(p, anchor, w, h))
-	var color: Color = data.get("color", Color(0.1, 0.35, 1.0, 1.0))
-	var half_width := float(data.get("half_width", 2.0))
-	var lifetime := float(data.get("lifetime", 0.25))
-	LaserVisual.spawn_muzzle_orb(_world, pts[0], color, half_width, lifetime)
-	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
 
 # 服务器裁决命中:被打的是自己 → 即时反馈(白闪/击退),血量以快照权威为准;
 # 被打的是对手 → 副本受击闪烁,让射手看到自己打中了。
-func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
-	if _local == null:
-		return
-	if victim_role == PvpSession.role:
-		_local.take_hit(source_pos, damage, false, -1.0)
-	elif _remote_replica != null and _remote_replica.has_method("play_hit"):
-		_remote_replica.play_hit(source_pos)
 
 # 击杀播报:我击杀对手 → 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)
 func _on_kill_event(killer: int, victim: int) -> void:
@@ -359,3 +313,6 @@ func _process(_delta: float) -> void:
 	if _hp_bar != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_hp_bar.global_position = (_remote_replica as Node2D).global_position + Vector2(0.0, -116.0)
 
+# 对手副本访问器(1v1:只有固定那一个)
+func _replica_for(role: int) -> Node2D:
+	return _remote_replica if int(role) != int(PvpSession.role) else null

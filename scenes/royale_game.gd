@@ -3,7 +3,6 @@ extends PvpMatchClient
 # + N-1 个远端副本 + 后处理 + 输入上报 + 快照消费 + RoyaleHud(左上角击杀排行榜)。
 # 与 pvp_client 的差别:对手是 1..N 个(按快照 roles 动态建副本),HUD 用 RoyaleHud。
 
-const LaserVisual := preload("res://core/laser_visual.gd")
 
 var _last_snap_tick := 0
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
@@ -102,24 +101,6 @@ func _ready() -> void:
 
 
 # 进场拉取的应答。三个 handler 幂等(改名/染色/设禁用槽位),重复应用无害。
-func _on_match_sync(payload: Dictionary) -> void:
-	var names: Dictionary = payload.get("names", {})
-	if not names.is_empty():
-		_apply_peer_names(names)
-	var hues: Dictionary = payload.get("hues", {})
-	if not hues.is_empty():
-		_apply_peer_hues(hues)
-	var opts: Dictionary = payload.get("options", {})
-	if not opts.is_empty():
-		_apply_match_options(opts)
-	var sp: Dictionary = payload.get("spawns", {})
-	if sp.has(PvpSession.role):
-		var want: Vector2i = sp[PvpSession.role]
-		if want != PvpSession.spawn:
-			push_warning("大乱斗 match_sync: 出生点与 match_start 不一致(%s vs %s),以 sync 为准" % [
-					str(PvpSession.spawn), str(want)])
-			PvpSession.spawn = want
-			_correct_local_spawn()
 
 
 # 见 pvp_client 的同名方法:只在开局倒计时里校正,已打起来就不硬拉。
@@ -201,38 +182,7 @@ func _remove_replica(role: int) -> void:
 # 与 pvp_client._on_beam_fired 的唯一差别:大乱斗有 N 个副本,锚点按 shooter_role 取。
 # ★ 必须走 NetBus(不是 NetBusExt):发送端 server/match_host.gd 用的是 NetBus.rpc_id(...);
 #   收在 NetBusExt 上会静默 no-op(main 的 core/net_bus_ext.gd 那个同名 RPC 是 KH 遗留重复)。
-func _on_beam_fired(data: Dictionary) -> void:
-	if _world == null:
-		return
-	var shooter := int(data.get("shooter_role", 0))
-	if shooter == PvpSession.role:
-		return                                   # 自己那发已本地预测画过,再收会双光束
-	var replica: Node2D = _replicas.get(shooter)
-	if replica == null or not is_instance_valid(replica):
-		return                                   # 射手副本还没建(快照未到)→ 丢本发
-	var raw: PackedVector2Array = data.get("pts", PackedVector2Array())
-	if raw.is_empty():
-		return
-	var anchor: Vector2 = replica.global_position
-	var w := GameParameters.MAP_WIDTH
-	var h := GameParameters.MAP_HEIGHT
-	var pts := PackedVector2Array()
-	for p in raw:
-		pts.append(MazeGenerator.anchor_to_nearest(p, anchor, w, h))
-	var color: Color = data.get("color", Color(0.1, 0.35, 1.0, 1.0))
-	var half_width := float(data.get("half_width", 2.0))
-	var lifetime := float(data.get("lifetime", 0.25))
-	LaserVisual.spawn_muzzle_orb(_world, pts[0], color, half_width, lifetime)
-	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
 
-func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
-	if _local == null:
-		return
-	if victim_role == PvpSession.role:
-		_local.take_hit(source_pos, damage, false, -1.0)
-	elif _replicas.has(victim_role) and is_instance_valid(_replicas[victim_role]) \
-			and _replicas[victim_role].has_method("play_hit"):
-		_replicas[victim_role].play_hit(source_pos)
 
 # 命中确认(服务器裁决的弹直击,NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)
 
@@ -334,3 +284,8 @@ func _process(_delta: float) -> void:
 		var r: Node2D = _replicas.get(role)
 		if r != null and is_instance_valid(r):
 			(_hp_bars[role] as Node2D).global_position = r.global_position + Vector2(0.0, -116.0)
+
+# 对手副本访问器(大乱斗:按 role 动态)
+func _replica_for(role: int) -> Node2D:
+	var r = _replicas.get(int(role))
+	return r if r is Node2D else null

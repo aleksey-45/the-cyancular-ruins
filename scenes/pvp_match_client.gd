@@ -19,6 +19,7 @@ extends Node2D
 #   要再上提一批,先按同样的口径量一遍差异(剔注释后逐行 diff),别凭印象搬。
 
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
+const LaserVisual := preload("res://core/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
 var _local: Node2D = null
@@ -152,3 +153,87 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 func _refresh_input_lock() -> void:
 	if _local != null and _local.has_method("set_controls_locked"):
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
+
+
+# ── 对手副本访问器:两个模式**唯一的结构性差异**就收在这一个口上 ──
+# 1v1 只有固定那一个副本(`_remote_replica`),大乱斗按 role 动态建(`_replicas`)。下面那些
+# 消费快照/事件的函数原先因此各写两份,现在都改问这个口 —— ★ 子类**必须覆写**。
+# 语义:`role` 是**对手**的 role(不是自己的);没有对应副本(未建/已移除)时返回 null,
+# 调用方一律判空(不返回 null 会被下游 `.global_position` 打成崩溃)。
+func _replica_for(_role: int) -> Node2D:
+	return null   # 基类无副本;两个子类各自实现
+
+
+func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
+	if _local == null:
+		return
+	if victim_role == PvpSession.role:
+		_local.take_hit(source_pos, damage, false, -1.0)
+		return
+	# 对手被打:让它的副本闪一下,射手看得见"打中了"
+	var r := _replica_for(victim_role)
+	if r != null and r.has_method("play_hit"):
+		r.play_hit(source_pos)
+
+
+# 服务器权威开火(即时光束武器,激光):对手端据此画光束视觉副本(不开物理子弹,
+# 无 bullet_spawn 实体可跟)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)→
+# 逐点锚到射手副本当前渲染位置(副本位置已由 player_replica 每帧归到本地玩家最近副本、
+# 滞后 ~1 tick 无碍)。光束整条路径 ≤ bullet_range 远小于半图 → 逐点 anchor_to_nearest 会把
+# 整条折线搬到可见副本、跨接缝连续。
+# 只画对手那发:自己(射手)这发已由本地预测自画,再收服务器版会双光束。
+func _on_beam_fired(data: Dictionary) -> void:
+	if _world == null:
+		return
+	var shooter := int(data.get("shooter_role", 0))
+	if shooter == PvpSession.role:
+		return
+	var replica := _replica_for(shooter)
+	if replica == null or not is_instance_valid(replica):
+		return   # 射手副本还没建(快照未到)→ 丢本发
+	var raw: PackedVector2Array = data.get("pts", PackedVector2Array())
+	if raw.is_empty():
+		return
+	var anchor: Vector2 = replica.global_position
+	var w := GameParameters.MAP_WIDTH
+	var h := GameParameters.MAP_HEIGHT
+	var pts := PackedVector2Array()
+	for p in raw:
+		pts.append(MazeGenerator.anchor_to_nearest(p, anchor, w, h))
+	var color: Color = data.get("color", Color(0.1, 0.35, 1.0, 1.0))
+	var half_width := float(data.get("half_width", 2.0))
+	var lifetime := float(data.get("lifetime", 0.25))
+	LaserVisual.spawn_muzzle_orb(_world, pts[0], color, half_width, lifetime)
+	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
+
+
+# ── 子类**必须覆写**的两口:昵称表 / 角色色相 ──
+# 判据同 `_replica_for` —— 形状随"对手 1 个 vs N 个"而定,故实现留在子类;
+# `_on_match_sync` 要用它们,故在这里声明(否则基类调用未声明的函数 = 编译不过)。
+func _apply_peer_names(_names: Dictionary) -> void:
+	push_error("PvpMatchClient: 子类必须覆写 _apply_peer_names")
+
+
+func _apply_peer_hues(_hues: Dictionary) -> void:
+	push_error("PvpMatchClient: 子类必须覆写 _apply_peer_hues")
+
+
+func _on_match_sync(payload: Dictionary) -> void:
+	var names: Dictionary = payload.get("names", {})
+	if not names.is_empty():
+		_apply_peer_names(names)
+	var hues: Dictionary = payload.get("hues", {})
+	if not hues.is_empty():
+		_apply_peer_hues(hues)
+	var opts: Dictionary = payload.get("options", {})
+	if not opts.is_empty():
+		_apply_match_options(opts)
+	var sp: Dictionary = payload.get("spawns", {})
+	if sp.has(PvpSession.role):
+		var want: Vector2i = sp[PvpSession.role]
+		if want != PvpSession.spawn:
+			# 不一致就是 bug(两者同源),别静默 —— 留痕后以 sync 为准
+			push_warning("match_sync: 出生点与 match_start 不一致(%s vs %s),以 sync 为准" % [
+					str(PvpSession.spawn), str(want)])
+			PvpSession.spawn = want
+			_correct_local_spawn()
