@@ -3,7 +3,7 @@ extends SceneTree
 #  1) 存在 SWEEP_INTERVAL(10min)/MAX_ROOM_AGE(2h)常量;
 #  2) create_room 里给 room.created_at 赋了时间戳;
 #  3) _process 每 SWEEP_INTERVAL 调 _sweep_stale_rooms;
-#  4) _sweep_stale_rooms 对超龄房间调 _kill_worker + erase;
+#  4) _sweep_stale_rooms 对超龄房间走拆除收口(内部经 WorkerLauncher.kill_worker 杀 + 归还端口);
 #  5) 大乱斗在局宽限谓词同时引用 RoyaleHost.MATCH_TIME 与 rr.in_match,且 1v1 仍是裸 MAX_ROOM_AGE。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
@@ -63,7 +63,11 @@ func _check_teardown_funnel() -> void:
 			var t: String = line.strip_edges()
 			if t.is_empty() or t.begins_with("#"):
 				continue
-			for pat in ["_release_port_later(", "royale_rooms.erase(", "rooms.erase("]:
+			# ★ 模式列表必须包含**当前**的端口归还入口。2026-09-14 端口池搬进 WorkerLauncher 后,
+			#   `_worker_ports.erase(port)` 改名成 `_launcher.release_now(port)` —— 若不把新名字
+			#   加进来,这条门就对端口回收**彻底失明**(它只认旧字符串,而旧字符串已全仓不存在),
+			#   表现是恒绿:新加一条绕过收口的拆除路径也照过。改名/搬家时同款改这里。
+			for pat in ["_release_port_later(", "_launcher.release_now(", "royale_rooms.erase(", "rooms.erase("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):
 						_fail = "room_manager.%s 里出现 %s —— 拆除必须走 _teardown_room 单一收口" % [f["name"], pat]
@@ -76,7 +80,11 @@ func _check_teardown_funnel() -> void:
 # 推导必然出错 → 持 3 号的真客户端被当串线踢掉(历史 B1)。故做**反向**断言:旧标识符一个都不许复活。
 # 它防的是这套 argv 契约的**历史故障模式** —— 大厅与 worker 两边只改一边(CLAUDE.md 明文要求同步改)。
 func _check_argv_contract() -> void:
-	for f in ["res://server/server_main.gd", "res://server/room_manager.gd"]:
+	# 两边的文件清单:**生成端 + 解析端**。2026-09-14 生成端从 room_manager.gd 搬到
+	# worker_launcher.gd(spawn 族随迁)——故两处清单都要含 worker_launcher.gd。
+	# ★ 别只改正向那条:反向(旧标识符禁令)若还扫着 room_manager.gd,新生成端就没人管了,
+	#   旧协议名可以在那儿悄悄复活 —— 那正是「只改一半」的另一种形态。
+	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
 		var txt := FileAccess.get_file_as_string(f)
 		if txt.is_empty():
 			_fail = "无法读取 %s" % f
@@ -90,7 +98,7 @@ func _check_argv_contract() -> void:
 					_fail = "%s 的代码里仍有旧 argv 协议标识符 %s(应已换成 --roles 集合)" % [f, bad]
 					return
 	# 正向:集合协议必须在两边都在位(只改一边 = 拉起的 worker 收不到 role 集合,静默降级)
-	for f in ["res://server/server_main.gd", "res://server/room_manager.gd"]:
+	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
 		if not FileAccess.get_file_as_string(f).contains('"--roles"'):
 			_fail = "%s 未接 --roles(集合协议只接了一半?)" % f
 			return
@@ -106,8 +114,13 @@ func _check(src: String) -> void:
 		_fail = "缺定时 _process"; return
 	if not src.contains("func _sweep_stale_rooms"):
 		_fail = "缺 _sweep_stale_rooms"; return
-	if not src.contains("func _kill_worker"):
-		_fail = "缺 _kill_worker"; return
+	# 杀 worker 的实现已随端口池搬进 WorkerLauncher(2026-09-14),这里改认新入口 ——
+	# 但**两条都要**:实现存在 + room_manager 里有人调它。只查实现会放任"实现在、收口不再杀"
+	# (清扫路径不杀 → 僵尸 worker 继续占着端口,正是本层补过三次的那个泄漏)。
+	if not FileAccess.get_file_as_string("res://server/worker_launcher.gd").contains("func kill_worker"):
+		_fail = "缺 WorkerLauncher.kill_worker(杀 worker 的实现)"; return
+	if not src.contains("_launcher.kill_worker("):
+		_fail = "room_manager 未调 _launcher.kill_worker(收口不再杀 worker → 僵尸占端口)"; return
 	# _sweep_stale_rooms 体内必须出现:超龄判断、杀 worker、erase 房间
 	var fn := src.find("func _sweep_stale_rooms")
 	var body_end := src.find("\nfunc ", fn + 10)

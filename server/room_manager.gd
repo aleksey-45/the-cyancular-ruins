@@ -364,8 +364,10 @@ func royale_start(caller: int) -> void:
 	rr.in_match = true
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values()):
 		rr.in_match = false
-		_launcher.release_now(port)
-		NetBus.rpc_id(caller, "server_message", "无法启动对局")
+		# ★ 必须走拆除单一收口(2026-09-14,修 M1):收口会归还端口 + 摘掉注册表 + 通知房内玩家。
+		#   原先直接 release_now 会把房间留在注册表里、且带着**已归还**的 worker_port →
+		#   后续清扫按这个陈旧端口号去杀进程,可能误杀另一个正在跑的对局 worker。
+		_teardown_room(rr, TEARDOWN_ABORT, "无法启动对局")
 		return
 	# 房主对局选项经 worker 侧 NetBusExt.player_options 以 role1 报到为准;这里随开局存档不打扰
 	print("大乱斗房 %s 开局(%d 人,roles %s)→ worker 端口 %d" % [rr.code, rr.players.size(),
@@ -413,8 +415,8 @@ func ai_duel(caller: int) -> void:
 		return
 	host_room.worker_port = port
 	if not _launcher.spawn_worker(port, [2]):
-		_launcher.release_now(port)
-		NetBus.rpc_id(caller, "server_message", "无法启动对局")
+		# ★ 走拆除单一收口(2026-09-14,修 M1;同 royale_start 的理由)
+		_teardown_room(host_room, TEARDOWN_ABORT, "无法启动对局")
 		return
 	# L5 合并补丁(刻意偏离移植来源,非误改):下一行把房间从 rooms 摘除后,on_peer_left
 	# 与 _sweep_stale_rooms 都只遍历 rooms,再无任何路径能归还本端口 —— 不在此处释放就会
@@ -450,8 +452,8 @@ func royale_start_ai(caller: int) -> void:
 	# 参战集合 = 房里真人的已分配号 + AI 补位号(真人号可能带空洞,故不能写成 1..max_players)
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values() + ai_roles, ai_roles):
 		rr.in_match = false
-		_launcher.release_now(port)
-		NetBus.rpc_id(caller, "server_message", "无法启动对局")
+		# ★ 走拆除单一收口(2026-09-14,修 M1;同 royale_start 的理由)
+		_teardown_room(rr, TEARDOWN_ABORT, "无法启动对局")
 		return
 	print("大乱斗房 %s AI 补位开局(%d 真人 + %d AI)→ worker 端口 %d" % [rr.code, rr.players.size(), ai_count, port])
 	await get_tree().create_timer(0.3).timeout
