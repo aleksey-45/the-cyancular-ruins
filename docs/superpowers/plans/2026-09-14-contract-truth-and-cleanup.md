@@ -1584,7 +1584,7 @@ Expected: 两条各打印 `ALL-OK`。
 | 3.4 | 客户端事件消费层合并（9 个函数逐字相同 ≈140 行 + 4 个近逐字；具体函数与行号对已列在评估报告里） | `pvp_client.gd` ↔ `royale_game.gd` | 1~2 天。抽 `scenes/pvp_match_client.gd` 基类。**做之前先确认 1.4 已完成** |
 | 3.5 | **M8** `ENABLE_BIRDS := false` ⇒ 客户端鸟副本 ~90 行死代码 | `pvp_client.gd:22,94-95,256-262,431-459`；`royale_game.gd:12,82-83,241-247,431-459` | **先决策**：不打鸟就删 90 行；要打就抽一份进 3.4 的基类 |
 | 3.6 | 两个大厅页的连接状态机重复（58 个重复块 —— 全仓第二大重复对）+ 禁用武器网格/色相行两处手抄 + `_apply_pixel_font` 8 行 100% 相同 | `matchmaking.gd` ↔ `royale_lobby.gd` | 1~2 天 |
-| 3.7 | **批次 6（旧编号）**`UiFactory` 补齐 `check`/`line_edit`/`slider_row`/`apply_font_recursive` | `ui/ui_factory.gd` | 半天。**排在 3.6 之后**——那两个文件正是 3.6 要重构的，先改会撞车 |
+| 3.7 | **批次 6（旧编号）**`UiFactory` 补齐 | ✅ **完成**。补了 5 个口：`apply_font_recursive` / `hue_preview_color` / `check_row` / `slider_row` / `line_edit`（全部逐字搬自页面里的手抄实现，各页**版式数值**提成参数：标签列宽 440 vs 320、输入框 240×36 vs 250×40 —— 逐字搬会改观感）。★ 形参顺序刻意把 `label_w` 放 **callable 之前**（两个页面都用块体 lambda 作最后实参，callable 之后再跟实参极易写错）。行数：matchmaking 538→493、royale_lobby 601→**581**、settings_menu 216→**180**、ui_factory 272→351（三页共减 101 行手抄）。★ 视觉未实测（`menu_autotest` 要真实渲染）—— 数值全按参数原样传，预期零观感变化 |
 
 ## 阶段 4：目录与命名整改（**一次做完，别零敲碎打**，成本合计 ~2 天）
 
