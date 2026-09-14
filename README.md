@@ -95,7 +95,7 @@ maps/     .cyrm 文本地图
 data/     tile_defs.json / enemies.json(与编辑器共享的属性表与敌人注册表)
 assets/   字体(含中文像素字体 unifont)与纹理
 shaders/  post_process.gdshader
-tools/    发布/控制台脚本(build_release.py、make_server_console.py)
+tools/    发布/控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)
 ```
 
 技术细节(环面数学/敌人 AI/网络协议/发布)见 `CLAUDE.md` 与 `RELEASE.md`。

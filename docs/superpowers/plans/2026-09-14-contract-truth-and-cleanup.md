@@ -1533,7 +1533,7 @@ Expected: 两条各打印 `ALL-OK`。
 | 1.3 | **M2** 掉线终局判据数的是「真人」不是「玩家」 | `server/royale_host.gd:436-438` | 5 分钟 | 与 1.2 同属服务器生命周期，一起验 |
 | 1.4 | **M9** ★ `royale_c2_watcher` A② 合并后会**静默失效** | `tests/royale_c2_watcher.gd:329-338` | 30 分钟 | **必须在阶段 3 的客户端合并之前**：它只防了"读不到源文件"，没防"代码搬走了"；不先补，阶段 3 做完这道门就恒绿骗人 |
 | 1.5 | **M20** 死代码/死文件一批 | 见下方清单 | 1 小时 | 零风险；删掉能减少后续阶段读代码的干扰 |
-| 1.6 | **`tools/check_naming.py`**（`docs/naming-cleanup-plan.md` 结尾提的「可选防复发」从未落地） | 新建 | 1 小时 | **必须在阶段 4 之前**：否则阶段 4 整改完还会漂回去 |
+| 1.6 | ✅ **已完成**（提交见本批次） —— **`tools/check_naming.py`**（`docs/naming-cleanup-plan.md` 结尾提的「可选防复发」从未落地）。强制三条：A 目录全小写 / B `class_name` 转 snake == 文件名 / C 文档引用的路径存在；`.tscn` 命名**只报告不判失败**（大小写规则待 4.3 定，现在写死判据只会制造假红）。★ 阶段 4.3 定下规则后，把该规则从「报告」升为「强制」并同步这条 | 新建 | 已完成 | 基线只留 2 条已接受偏差（`level_0.gd`/`Level0`、`ai_player.gd`/`AINavigator`），各写明何时销；反证 A/B/C 三条都验过有鉴别力 |
 | 1.7 | 11 个脚本硬编码引擎绝对路径 → `GODOT` 环境变量 + `tests/env.sh` | `start_server.bat`、`tools/build_release.py`、8 个 `tests/*.sh` | 1 小时 | 与 1.6 无关但同属「工程卫生」；改完后续跑脚本更省事 |
 
 **1.5 的死代码清单**（每条都已 grep 验证零生产调用）：`scenes/weapons/explosion.tscn`（与 `scenes/effects/explosion.tscn` 同 uid 的重复副本，且 `ext_resource` 指向**不存在的** `res://scenes/weapons/explosion_fx.gd`）、`TileDefs.friction()`（`core/tile_defs.gd:99`）、`TileDefs.tile()`（`:133`）、`core/game_parameters.gd:23-24` 的 `enemy_count`/`enemy_spawn_min_dist`、`core/sfx.gd:65` 的 `"jump"` 与 `:72` 的 `"teleport"`、`server/ai_player.gd:28,139` 的 `_last_x`、`server/room_manager.gd:36` 的 `Room.match_host`、`EnemySpawner.sample_spawn_cells`（只剩 `tests/enemy_logic_smoke.gd:58` 调它 → 搬进 `tests/`）、`server/royale_host.gd:399` 的 `round_state["match_time"]`（每帧构造、无人读，且与配置键 `match_time` **同名反义**）、`maps/old_map.txt`、`scenes/weapons/pistol_test.tscn`/`rifle_test.tscn` 的 `_test` 后缀。
