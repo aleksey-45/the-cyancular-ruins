@@ -68,36 +68,50 @@ func _ready() -> void:
 func _refresh() -> void:
 	_list.clear()
 	_sessions.clear()
+	# 两个来源:启动器会话(gamelogs/<stamp>_<game|server>/)+ 后台看守归档(gamelogs/archive/<stamp>_<exe>/)
+	# 监看器统一浏览:有 report.txt 读结论;只有 run.json(看守)则从 JSON 判定并现场合成中文报告
 	var root := ProjectSettings.globalize_path("res://gamelogs")
-	var dir := DirAccess.open(root)
-	if dir == null:
-		var tip2 := _list.add_item("gamelogs/ 目录不存在——先用「记录启动」bat 跑一次游戏")
-		return
-	var names: Array = []
-	for d in dir.get_directories():
-		names.append(d)
-	names.sort()
-	names.reverse()   # 新→旧
-	for name in names:
-		var rpath: String = root + "/" + name + "/report.txt"
-		var verdict := "未知"
-		var color := Color(0.7, 0.7, 0.7)
-		if FileAccess.file_exists(rpath):
-			var txt := FileAccess.get_file_as_string(rpath)
-			var idx := txt.find("【退出结论】")
-			if idx >= 0:
-				var seg := txt.substr(idx, 220)
-				if seg.contains("[OK]"):
-					verdict = "正常"; color = GREEN
-				elif seg.contains("[X]"):
-					verdict = "崩溃"; color = RED
-				elif seg.contains("[!]"):
-					verdict = "异常"; color = YELLOW
-		var display: String = name + "  [" + verdict + "]"
-		var idx2 := _list.add_item(display)
-		_list.set_item_metadata(idx2, root + "/" + name)
-		_list.set_item_custom_fg_color(idx2, color)
-		_sessions.append({"dir": root + "/" + name, "name": name, "verdict": verdict, "color": color})
+	var roots := [root, root + "/archive"]
+	for r in roots:
+		var dir := DirAccess.open(r)
+		if dir == null:
+			continue
+		var names: Array = []
+		for d in dir.get_directories():
+			names.append(d)
+		names.sort()
+		names.reverse()   # 新→旧
+		for name in names:
+			var session_dir: String = r + "/" + name
+			var rpath: String = session_dir + "/report.txt"
+			var jpath: String = session_dir + "/run.json"
+			var verdict := "未知"
+			var color := Color(0.7, 0.7, 0.7)
+			var src := "launcher"
+			if FileAccess.file_exists(rpath):
+				var txt := FileAccess.get_file_as_string(rpath)
+				var idx := txt.find("【退出结论】")
+				if idx >= 0:
+					var seg := txt.substr(idx, 220)
+					if seg.contains("[OK]"):
+						verdict = "正常"; color = GREEN
+					elif seg.contains("[X]"):
+						verdict = "崩溃"; color = RED
+					elif seg.contains("[!]"):
+						verdict = "异常"; color = YELLOW
+			elif FileAccess.file_exists(jpath):
+				src = "watcher"
+				var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(jpath))
+				if typeof(parsed) == TYPE_DICTIONARY:
+					var crash: bool = bool(parsed.get("crash", {}).get("detected", false)) 							or parsed.get("crash") != null and typeof(parsed.get("crash")) == TYPE_DICTIONARY 							and bool((parsed["crash"] as Dictionary).get("detected", false))
+					verdict = "崩溃" if crash else "正常"
+					color = RED if crash else GREEN
+			var display: String = name + "  [" + verdict + "]" + ("  (后台)" if src == "watcher" else "")
+			var idx2 := _list.add_item(display)
+			_list.set_item_metadata(idx2, session_dir)
+			_list.set_item_custom_fg_color(idx2, color)
+			_sessions.append({"dir": session_dir, "name": name, "verdict": verdict,
+					"color": color, "src": src})
 
 func _show(idx: int) -> void:
 	if idx < 0 or idx >= _sessions.size():
@@ -105,8 +119,37 @@ func _show(idx: int) -> void:
 	var rpath: String = _sessions[idx]["dir"] + "/report.txt"
 	if FileAccess.file_exists(rpath):
 		_view.text = FileAccess.get_file_as_string(rpath)
+		return
+	# 后台看守会话:无 report.txt 时从 run.json 合成中文报告
+	var jpath: String = _sessions[idx]["dir"] + "/run.json"
+	if not FileAccess.file_exists(jpath):
+		_view.text = "该会话没有 report.txt / run.json(捕获中断)"
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(jpath))
+	if typeof(parsed) != TYPE_DICTIONARY:
+		_view.text = "run.json 解析失败"
+		return
+	var j: Dictionary = parsed
+	var txt := "【会话报告】(后台看守捕获;直接双击 exe 启动的运行由它记录)
+"
+	txt += "运行程序: " + ", ".join(j.get("exes", [])) + "
+"
+	txt += "启动时间: " + str(j.get("started_at", "?")) + "
+"
+	txt += "结束时间: " + str(j.get("ended_at", "?")) + "
+"
+	txt += "运行时长: " + str(j.get("duration_s", "?")) + " 秒
+"
+	var crash: Dictionary = j.get("crash", {}) if typeof(j.get("crash")) == TYPE_DICTIONARY else {}
+	if bool(crash.get("detected", false)):
+		txt += "退出结论: [X] 崩溃 —— 异常代码 " + str(crash.get("exception_code", "?")) 				+ ",故障模块 " + str(crash.get("faulting_module", "?")) 				+ "(偏移 " + str(crash.get("faulting_offset", "?")) + ")
+"
 	else:
-		_view.text = "该会话没有 report.txt(可能捕获中断)"
+		txt += "退出结论: [OK] 正常结束(未发现崩溃记录)
+"
+	txt += "捕获日志: " + str((j.get("logs", []) as Array).size()) + " 份
+"
+	_view.text = txt
 
 func _label(text: String, size: int, color: Color) -> Label:
 	var l := Label.new()

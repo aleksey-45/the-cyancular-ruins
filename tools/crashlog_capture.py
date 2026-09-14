@@ -22,7 +22,7 @@
 import argparse, ctypes, datetime, hashlib, json, os, platform, shutil, subprocess, sys, tempfile, time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ARCHIVE = os.path.join(REPO, "crashlogs")
+ARCHIVE = os.path.join(REPO, "gamelogs", "archive")   # 与启动器会话同树:监看器统一浏览 gamelogs/
 STATE = os.path.join(ARCHIVE, ".capture_state.json")
 CAPLOG = os.path.join(ARCHIVE, "capture.log")
 PIDFILE = os.path.join(ARCHIVE, ".watcher.pid")
@@ -334,6 +334,32 @@ def archive_run(run, crash_events):
            "logs": copied, "crash": crash}
     with open(os.path.join(folder, "run.json"), "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False, indent=2)
+    # 中文 report.txt:与启动器会话(capture_session.ps1)同格式,监看器统一展示
+    dur_s = int(run["duration"])
+    dur_txt = "%d小时%d分%d秒" % (dur_s // 3600, (dur_s // 60) % 60, dur_s % 60)
+    r2 = "==================================================\r\n"
+    r2 += " \r\n"
+    r2 += "==================================================\r\n\r\n"
+    r2 += "【怎么读这份报告】\r\n"
+    r2 += " 1. 先看「退出结论」: [OK]=正常; [!]=有异常; [X]=崩溃(闪退);\r\n"
+    r2 += " 2. 本报告由后台看守捕获:游戏可能是直接双击 exe 启动的(未经记录启动器),\r\n"
+    r2 += "    因此只有 Godot 自身日志与 Windows 崩溃事件,没有 stdout/stderr 重定向原文。\r\n"
+    r2 += " 3. 向开发者反馈问题时: 把本文件夹整个压缩发过去。\r\n\r\n"
+    r2 += "【本次运行信息】\r\n"
+    r2 += " 运行程序: " + ", ".join(run["exes"]) + "\r\n"
+    r2 += " 启动时间: " + rec["started_at"] + "\r\n"
+    r2 += " 结束时间: " + rec["ended_at"] + "\r\n"
+    r2 += " 运行时长: " + dur_txt + "(" + str(dur_s) + " 秒)\r\n"
+    r2 += " 捕获日志: " + (", ".join(l["name"] for l in copied) if copied else "(无)") + "\r\n\r\n"
+    r2 += "【退出结论】\r\n"
+    if crash:
+        r2 += " [X] 崩溃:Windows 事件日志记录到异常代码 " + str(crash.get("exception_code")) + ",故障模块 " + str(crash.get("faulting_module")) + "(偏移 " + str(crash.get("faulting_offset")) + ")。\r\n"
+    else:
+        r2 += " [OK] 正常结束:Windows 事件日志中未发现本次运行的崩溃记录。\r\n"
+    r2 += "【问题清单】\r\n"
+    r2 += " (后台看守无 stdout/stderr 重定向;如需原文级捕获,请用 start_game_logged.bat 启动)\r\n"
+    with open(os.path.join(folder, "report.txt"), "w", encoding="utf-8-sig", newline="") as f:
+        f.write(r2)
 
     tag = "崩溃" if crash else "正常"
     log("%s | %s | %.1fs | 日志 %d 份%s" % (tag, ", ".join(run["exes"]), run["duration"],
