@@ -5,7 +5,9 @@ rem This bat is pure ASCII + CRLF so Windows cmd parses it in any locale.
 rem It cd's to its own directory so --path . always resolves to the project,
 rem regardless of how this window was opened.
 rem Keep this window open = lobby running. Close it = stop everything (workers随对局结束退出)。
-rem 启动前先杀掉旧残留:占 7777 的旧大厅,以及占 7800~7999 的僵尸 worker。
+rem 启动前先杀掉旧残留:占 7777 的旧大厅,以及占 7800~8299 的僵尸 worker(端口池 = 7800 起 500 个)。
+rem ⚠ 已知缺口:下面那条 findstr 只覆盖 :78xx 与 :79xx,杀不到 8000~8299 的 worker(需该大厅
+rem   累计 spawn 过 200 次以上才会用到那段)。待修:把模式扩到 :8[0-2][0-9][0-9]。
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ============================================

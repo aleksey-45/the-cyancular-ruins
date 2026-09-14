@@ -35,7 +35,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 ### 跑服务端
 - **本地/局域网**:双击 `start_server.bat`(自动杀旧进程、启动大厅)。
 - **导出版**:双击 `Cyancular Ruins Server.exe`(大厅,带控制台;会自动拉起每局 worker)。
-- **云/公网**:需放行 **UDP 7777 与 7800~7999**(大厅 + 每局 worker 动态端口)。
+- **云/公网**:需放行 **UDP 7777 与 7800~8299**(大厅 + 每局 worker 动态端口;worker 端口池 = `WORKER_PORT_BASE`7800 起、`WORKER_PORT_SPAN`500 个)。
 
 ### 连接
 1. 主菜单 →「多人」
