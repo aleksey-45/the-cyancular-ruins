@@ -145,6 +145,9 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **道具两维分类**:`kind`=使用方式(药剂/投掷/术式/铭文/工具),`effect`=效果(击退/吸引/烟雾);旧卡( kind=效果名)读档自动迁移为 kind=thrown+effect 承接。
 - **施工流程**:选卡→上传/导出美术→[生成提示词+发送](CLI 机制沿用已验证做法:零中文 bat、仓库根 %~dp0 推导、心跳行、退出标记落日志;10s 无日志判失败)→[停止];或[仅复制提示词]兜底。提示词含:美术资产政策(人工槽禁改/占位贴近原作)+ 槽位实测状态 + 卡 JSON + 特殊要求 + 路径白名单 + headless 验证 + `CARD-DONE <type>/<id> rev<N>` 回报。
 
+### 日志记录器与监看器(tools/gamelog + DevTools/gamelog,editor_log 分支)
+零游戏代码改动的独立工具:**记录器** = `tools/gamelog/capture_session.ps1` + 入口 `start_game_logged.bat` / `start_server_logged.bat`(双击/拖 exe 启动,自动建 `gamelogs/<时间>_<game|server>/` 会话目录,捕获 stdout/stderr,进程结束生成中文 `report.txt`:启动/结束/时长精确到秒、退出结论三态 OK/异常/崩溃(Windows 异常码翻译成人话,崩溃时查事件日志)、问题清单按类别给中文解释);**监看器** = `DevTools/gamelog/log_viewer.tscn`(双击 `DevTools/launch_log_viewer.bat`):按时间倒序列出全部会话(绿/黄/红标结论),点开看中文报告。`gamelogs/` 已 gitignore。PS 注意:Start-Process 后必须先取 `$p.Handle` 再 WaitForExit(否则 ExitCode 为 null);ps1 需 UTF-8 BOM 存中文。
+
 ## 进度与计划(2026-09-05 更新,KikuchiHeinr 实验分支)
 
 ### 大乱斗模式落地(2026-09-06,RoyaleServer 分支)
