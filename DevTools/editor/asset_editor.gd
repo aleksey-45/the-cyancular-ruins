@@ -25,7 +25,9 @@ var _list: ItemList = null
 var _form_box: VBoxContainer = null
 var _status: Label = null
 var _log: RichTextLabel = null
-var _link = null                       # AgentLink
+var _link = null
+var _dirty := false                # 有未保存修改(显式保存模式)
+var _save_btn: Button = null                       # AgentLink
 var _file_dialog: FileDialog = null
 var _file_mode := ""                   # import / export
 var _file_slot := ""
@@ -91,7 +93,7 @@ func _ready() -> void:
 	_notes_edit.text_changed.connect(func() -> void:
 		if not _card.is_empty():
 			_card["notes"] = _notes_edit.text
-			_save_silent())
+			_mark_dirty())
 	mid.add_child(_notes_edit)
 	mid.add_child(_label("修改要求(本轮增量;发送时 rev+1 并记入修改历史,空=不发送修改):", 18, GOLD))
 	_mod_edit = TextEdit.new()
@@ -127,6 +129,9 @@ func _ready() -> void:
 	_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	right.add_child(_preview)
 	right.add_child(_spacer(6))
+	_save_btn = _btn("保存修改", 24, _save_now)
+	_save_btn.tooltip_text = "把表单改动写入卡与游戏配置(基础数值下一局生效;美术即时)。改动后按钮变黄,记得保存"
+	right.add_child(_save_btn)
 	right.add_child(_label("施工(经传输层发给本机 Claude Code;传输层可换 API 实现):", 20, CYAN))
 	var mrow := HBoxContainer.new()
 	mrow.add_theme_constant_override("separation", 8)
@@ -197,6 +202,10 @@ func _open_card(id: String) -> void:
 	_refresh_slots()
 	_refresh_history()
 	_mod_edit.text = ""
+	_dirty = false
+	if _save_btn != null:
+		_save_btn.text = "保存修改"
+	_save_btn.modulate = Color.WHITE
 	_status.text = "已打开 %s(%s)" % [id, _type]
 
 func _new_from_sample() -> void:
@@ -244,6 +253,28 @@ func _delete_card() -> void:
 func _auto_id() -> String:
 	var prefix: String = {"weapon": "wp", "operator": "op", "prop": "pr"}[_type]
 	return "%s_%s" % [prefix, str(Time.get_ticks_msec() % 1000000)]
+
+func _mark_dirty() -> void:
+	_dirty = true
+	if _save_btn != null:
+		_save_btn.text = "保存修改 ●"
+		_save_btn.modulate = Color(1.0, 0.9, 0.6)
+
+## 显式保存:表单改动按此键落盘并同步游戏镜像(数值直读,无需 AI)
+func _save_now() -> void:
+	if _card.is_empty():
+		return
+	var err := EditorStore.save_card(_card)
+	_dirty = false
+	if _save_btn != null:
+		_save_btn.text = "保存修改"
+		_save_btn.modulate = Color.WHITE
+	if err != "":
+		_status.text = err
+		return
+	_refresh_list()
+	_refresh_slots()
+	_status.text = "已保存 %s(基础数值下一局生效;美术即时)" % Time.get_time_string_from_system()
 
 func _save_silent() -> void:
 	if _card.is_empty():
@@ -365,7 +396,7 @@ func _rebuild_form() -> void:
 			var parsed: Variant = JSON.parse_string(t)
 			if typeof(parsed) == TYPE_DICTIONARY:
 				_card["kind_params"] = parsed
-				_save_silent())
+				_mark_dirty())
 		_form_box.add_child(_kind_params_edit)
 	_notes_edit.text = str(_card.get("notes", ""))
 
@@ -375,7 +406,7 @@ func _set_field(key: String, value) -> void:
 	_card[key] = value
 	if key == "id":
 		return
-	_save_silent()
+	_mark_dirty()
 
 func _set_skill(idx: int, name: String, cooldown: float, desc: String) -> void:
 	if _card.is_empty() or str(name).strip_edges() == "" and str(desc).strip_edges() == "":
@@ -390,7 +421,7 @@ func _set_skill(idx: int, name: String, cooldown: float, desc: String) -> void:
 	s["desc"] = desc
 	skills[idx] = s
 	_card["skills"] = skills
-	_save_silent()
+	_mark_dirty()
 
 func _rename_card(new_id: String) -> void:
 	if _card.is_empty() or new_id == str(_card["id"]) or new_id == "":
@@ -488,6 +519,8 @@ func _send_agent(modify: bool) -> void:
 	if _card.is_empty():
 		_status.text = "先选卡"
 		return
+	if _dirty:
+		_save_now()   # 发送前先落盘未保存的表单改动(提示词携带的卡 JSON 才是最新的)
 	_save_silent()
 	var mod_req := ""
 	if modify:

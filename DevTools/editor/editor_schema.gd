@@ -27,7 +27,7 @@ const TEXTURE_MODES := ["tint", "sheet"]
 # 现役槽位 ↔ 卡 id(美术槽与游戏资源对接的桥;新增现役武器在此登记)
 const SLOT_CARD_IDS := {
 	1: "wp_pistol", 2: "wp_rifle", 3: "wp_m82a1", 4: "wp_s686",
-	5: "wp_grenade_launcher", 6: "wp_laser_gun",
+	5: "wp_grenade_launcher", 6: "wp_laser_gun", 8: "wp_machete",
 }
 
 
@@ -368,8 +368,8 @@ static func _validate_prop(card: Dictionary, errs: Array[String]) -> void:
 	if mag < 0 or mag > 999:
 		errs.append("初始携带数需在 0~999(0=开局不带,靠购买/拾取;经济系统下不是持有上限)")
 	var slot := int(card.get("slot", -1))
-	if slot != 0 and slot not in [8, 9, 10, 11]:
-		errs.append("道具槽位需为 0(设计稿)或 8/9/10/11")
+	if slot != 0 and slot not in [81, 82, 83, 84]:
+		errs.append("道具槽位需为 0(设计稿)或 81/82/83/84(排斥/吸引/烟雾/爆炸)")
 	if str(card.get("tier", "")) not in WEAPON_TIERS:
 		errs.append("tier 非法")
 	var kp: Dictionary = card.get("kind_params", {})

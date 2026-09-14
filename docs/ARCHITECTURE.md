@@ -226,6 +226,8 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | `laser_weapon_base.gd` | **激光武器基类**：不开实体子弹，开火瞬间算一条光束并一次性结算。留了三个可覆写缝（几何/结算/视觉） |
 | `laser_gun.gd` / `laser_gun.tscn` | 激光枪（**槽 6**）：沿瞄准方向反射折线（默认 2 次反射） |
 | `laser_beam.gd` / `laser_beam.tscn` | 光束的视觉节点 |
+| `machete.gd` / `machete.tscn` | **开山砍刀（卡 `wp_machete` 评审稿，槽位未定，不进 WEAPONS 注册表）**：近战扇形横扫——覆写 `_spawn_projectiles` 即时结算（不开物理弹，架构同激光），以玩家为弧心按卡 `kind_params`（arc 130°/range 90px）判定：弧内敌人吃伤+击退（环面最短向量 + LOS 判墙，树叶挡刀先砍叶）、可子弹破坏砖（树叶/树干）按伤害扣血；**挥空硬直** = 敌+砖都没碰到时冷却延长（fire_cooldown+`whiff_extra_time` 0.35s）且窗口内移/跳惩罚；无弹夹无换弹（`reload_active()` 恒 false）。贴图走 `custom_art_id` 人工素材优先（`assets/custom/guns/wp_machete.png`），缺省程序化兜底刀身 |
+| `machete_slash_fx.gd` | 砍刀挥砍弧光：一次性扇形弧带（draw_arc 两圈），淡出自毁，世界系角度在生成时给定 |
 | `prop_launcher.gd` | **道具发射器基座**（T 键道具模式，槽 8/9/10/11 共用）：把卡参数灌进投掷物（explodes/blast_force/烟雾/引信/爆炸伤），掷出动画；每命携带数 = `mag_size`，不可换弹 |
 | `prop_knockback.tscn` | 排斥弹头（槽 8，卡 `pr_knockback`，旧名击退炮）：无伤击退，blast_force 9000（单次冲量，位移≈900px=甩上天）、半径 260、**全域等强斥力**（`blast_falloff_mode = FLAT`，不分距离一律吃满力度）、首撞 0.5s 引信带**白圈外扩视效**（撞实体同走满引信 `hit_fuse_time`，最后一圈到达最外沿时起爆） |
 | `prop_attraction.tscn` | 引力核心（槽 9，卡 `pr_attraction`）：无伤吸引，blast_force -9000（单次冲量，位移≈|force|/10 ⇒ 满力度吸程 900px）、半径 900、**全域等强吸力**（`blast_falloff_mode = FLAT`：只要在范围内不分距离一律吃满力度，可甩飞；作用对象=玩家/敌人/**子弹**）、首撞 0.5s 引信带**白环收缩视效**（`fuse_ring_visual`） |
@@ -285,7 +287,7 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | 联机链路探针 | `lobby_ping_probe.gd`、`lobby_create_probe.gd`、`pvp_match_smoke.gd` + `.sh`、`pvp_room_smoke.sh`、`pvp_smoke_client.gd`、`royale_probe.gd`、`royale_bot.gd` |
 | 客户端预测（C2） | `c2_reconcile_probe.gd`、`c2_twin_probe.gd` |
 | 环面接缝诊断 | `seam_analyze.gd`、`seam_screenshot.gd`、`wrap_probe.gd` |
-| 战斗/武器探针 | `aim_probe.gd`、`aim_direction_probe.gd`、`muzzle_probe.gd`、`preview_probe.gd`、`grenade_smoke.gd`、`laser_probe.gd`、`explosion_falloff_probe.gd`、`feedback_probe.gd` |
+| 战斗/武器探针 | `aim_probe.gd`、`aim_direction_probe.gd`、`muzzle_probe.gd`、`preview_probe.gd`、`grenade_smoke.gd`、`laser_probe.gd`、`explosion_falloff_probe.gd`、`feedback_probe.gd`、`machete_probe.gd`（砍刀评审稿：横扫命中/挥空硬直/拆树叶） |
 | 世界/瓦片/水 | `tile_destroy_probe.gd`、`water_probe.gd`、`climb_probe.gd`、`perf_probe.gd` |
 | 其他 | `network_input_smoke.gd`、`order_probe.gd`、`restart_probe.gd`、`convert_map.gd`（地图格式转换工具） |
 

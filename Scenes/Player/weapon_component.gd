@@ -76,7 +76,7 @@ static func apply_card_stats(w: WeaponBase, slot: int) -> void:
 
 # 现役槽位 → 素材编辑器卡 id(人工素材对接;新增现役武器需同步 EditorSchema.SLOT_CARD_IDS)
 const SLOT_ART_IDS := {1: "wp_pistol", 2: "wp_rifle", 3: "wp_m82a1", 4: "wp_s686",
-	5: "wp_grenade_launcher", 6: "wp_laser_gun"}
+	5: "wp_grenade_launcher", 6: "wp_laser_gun", 8: "wp_machete"}
 
 # 人工素材槽统一入口:assets/custom 下有画师上传版则优先(编辑器上传即落这里)
 static func custom_art_path(kind: String, slot: int = 0, art_id: String = "") -> String:

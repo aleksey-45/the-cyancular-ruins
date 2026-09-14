@@ -1,0 +1,25 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Scenes/Weapons/machete.gd" id="1_script"]
+
+[node name="Machete" type="Node2D"]
+script = ExtResource("1_script")
+weapon_name = "开山砍刀"
+tier = 1
+fire_cooldown = 0.5
+damage = 30
+impact = 120.0
+recoil_push = 0.0
+recoil_kick = 0.0
+cam_shake = 2.0
+cam_shake_time = 0.08
+pitch_clamp_deg = 55.0
+arc_deg = 130.0
+melee_range = 90.0
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+position = Vector2(24, 9)
+
+[node name="Muzzle" type="Marker2D" parent="."]
+position = Vector2(46, 6)

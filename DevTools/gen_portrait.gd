@@ -92,6 +92,81 @@ func _machete() -> void:
 	_save("res://assets/weapons/wp_machete.png", img)
 	# 副本:DevTools 卡片目录(编辑器剪影页读这份)
 	_save("res://DevTools/cards/weapons/wp_machete.png", img.duplicate())
+	# 枪身贴图(对局内武器精灵 48×16,握把在左、刃朝右;槽位文件 + 游戏镜像)
+	var gun := Image.create(48, 16, false, Image.FORMAT_RGBA8)
+	_machete_gun(gun)
+	_save_ai_slot("res://DevTools/cards/weapons/wp_machete__gun.png", gun,
+			"res://assets/custom/guns/wp_machete.png")
+	# HUD 白剪影(96×48:卡面像素全白保 alpha,单色剪影;槽位文件 + 游戏镜像)
+	var sil := img.duplicate()
+	for y in range(sil.get_height()):
+		for x in range(sil.get_width()):
+			if sil.get_pixel(x, y).a > 0.05:
+				sil.set_pixel(x, y, Color.WHITE)
+	_save_ai_slot("res://DevTools/cards/weapons/wp_machete__silhouette.png", sil,
+			"res://assets/custom/silhouettes/wp_machete.png")
+
+
+# 槽位文件 + 游戏镜像各存一份,均写 source=ai meta(布局与 editor_art 上传镜像一致:
+# 编辑器槽位状态读 DevTools 卡片目录的 meta,游戏侧读 assets/custom 镜像;画师上传
+# 会覆盖同名文件并把 meta 改回 human,AI 占位只做兜底)。
+func _save_ai_slot(slot_path: String, img: Image, mirror_path: String) -> void:
+	_save(slot_path, img)
+	if mirror_path == "":
+		return
+	DirAccess.make_dir_recursive_absolute(mirror_path.get_base_dir())
+	img.duplicate().save_png(mirror_path)
+	print("  镜像: " + mirror_path)
+	for p in [slot_path + ".meta", mirror_path + ".meta"]:
+		var f := FileAccess.open(p, FileAccess.WRITE)
+		if f != null:
+			f.store_string("source=ai\nupdated=%s\n" % Time.get_datetime_string_from_system())
+			f.close()
+
+
+# 枪身像素画(48×16):木柄缠黑胶带 → 黄铜圆护手 → 宽背厚刃(3px 深灰刀背)带划痕,
+# 靠刀尖两道锯齿缺口 + 斜收刀尖;1px 深描边。配色与卡面同源(appearance 描述的像素化)。
+func _machete_gun(img: Image) -> void:
+	var blade_gray := Color8(138, 146, 156)
+	var blade_dark := Color8(90, 96, 104)
+	var scratch := Color8(178, 184, 190)
+	var bright := Color8(200, 206, 212)
+	var brass := Color8(176, 141, 63)
+	var brass_dk := Color8(120, 94, 40)
+	var wood := Color8(122, 82, 48)
+	var tape := Color8(34, 34, 34)
+	# 木柄 x0..11(左半略下沉 1px)+ 黑胶带缠带
+	for x in range(0, 12):
+		var drop := 1 if x < 6 else 0
+		for y in range(6 + drop, 11 + drop):
+			img.set_pixel(x, y, tape if (x % 4) < 1 else wood)
+	# 黄铜圆护手 x12..14(竖盘,上下凸出刀身,缘圈压暗)
+	for x in range(12, 15):
+		for y in range(2, 14):
+			img.set_pixel(x, y, brass_dk if (y < 4 or y > 11) else brass)
+	# 刀身 x15..46:刀背 3px 厚(突出厚背),刃体冷灰,下缘开刃亮线
+	for x in range(15, 47):
+		for y in range(3, 6):
+			img.set_pixel(x, y, blade_dark)
+		for y in range(6, 12):
+			img.set_pixel(x, y, blade_gray)
+		img.set_pixel(x, 12, bright)
+	# 刀尖斜收(刀背向刃线收,尖端落在开刃线上)
+	for x in range(40, 47):
+		for y in range(3, 4 + int(float(x - 40) * 9.0 / 7.0)):
+			img.set_pixel(x, y, Color(0, 0, 0, 0))
+	# 靠刀尖两道锯齿缺口(下缘向内咬 2px,缺口上沿压深灰读作咬口)
+	for nx in [33, 38]:
+		for x in range(nx, nx + 2):
+			for y in range(11, 13):
+				img.set_pixel(x, y, Color(0, 0, 0, 0))
+			img.set_pixel(x, 10, blade_dark)
+	# 划痕(短横点)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260914
+	for i in range(8):
+		img.set_pixel(rng.randi_range(17, 36), rng.randi_range(6, 11), scratch)
+	_outline_silhouette(img)
 
 
 # ── 先锋 干员头像(96×96):蓝灰作战服短发突击手,橙色护目镜推在额头,冷蓝主调 ──
