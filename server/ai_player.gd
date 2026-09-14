@@ -60,6 +60,15 @@ func _physics_process(delta: float) -> void:
 
 
 # 黏滞目标:保持当前目标,除非它失效,或新目标明显更近(TARGET_STICKY 倍以内)
+#
+# ★ 返回的 "dir" 恒为 **我 → 对手**(不含 dist 的方向向量,未归一化)。两个消费者都按这个口径用:
+#   `_aim_and_fire` 的 `src.aim = dir_to.normalized()` 就是开火方向;
+#   `_move` 的 `dist > APPROACH_DIST → signf(dir_to.x)` 是追人、`dist < BACKOFF_DIST → -signf(...)`
+#   是后拉。而 `MazeGenerator.toroidal_delta_px(a, b)` 返回的是 **a → b** ——
+#   传 `(对手, 我)` 得到的是「对手→我」,**必须取负**才是本函数约定的方向。
+#   2026-09-14 修:黏滞分支漏了取负 → 锁定之后每一帧都瞄反、远则逃近则贴(只有换目标那一帧是对的)。
+#   回归守卫:`tests/ai_input_source_smoke.gd` 的「AI 目标方向」两条断言 —— 它们**真调本函数**、
+#   断言 `dir.x` 的符号(光断言成员存在照不出符号错,这条 bug 就是这么漏掉的)。
 func _pick_target(p: Node2D) -> Dictionary:
 	var cur: Node2D = null
 	var cur_dist := INF
@@ -72,7 +81,7 @@ func _pick_target(p: Node2D) -> Dictionary:
 	if cur != null:
 		var d := MazeGenerator.toroidal_delta_px(cur.global_position, p.global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		return {"node": cur, "dist": cur_dist, "dir": d}
+		return {"node": cur, "dist": cur_dist, "dir": -d}   # -d:对手→我 取负 = 我→对手
 	# 当前目标失效 → 找最近的
 	var best_role := 0
 	var best_node: Node2D = null

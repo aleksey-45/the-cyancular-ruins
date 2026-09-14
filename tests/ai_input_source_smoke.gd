@@ -9,6 +9,20 @@ extends SceneTree
 var _fail := 0
 
 
+# ── AINavigator._pick_target 的桩(只为断言方向符号,不模拟任何真实玩法)──
+# 为什么必须真调 `_pick_target`:它返回的 `"dir"` 有两个分支(黏滞锁定 / 重选最近),
+# 两处都要是「我→对手」。只断言成员存在或方法可调**照不出符号错** —— 2026-09-14 那个
+# 「锁死后瞄反」的 bug 正是这么漏过去的(冒烟只查了 host/role/src 三个成员名)。
+# 注:`-s` 脚本自身不能引用 autoload(编译期 Identifier not found),但**运行期 load** 进来的
+# 脚本可以 —— `_pick_target` 里的 `GameParameters.MAP_WIDTH` 在下面这条路径上是可用的(实测)。
+class StubHost extends Node:
+	var players: Dictionary = {}
+
+class StubBody extends Node2D:
+	var _downed := false
+	func is_downed() -> bool: return _downed
+
+
 func _initialize() -> void:
 	# -s 阶段 autoload 未实例化 → 这里只 load 不静态引用任何 autoload 标识符
 	var ai_script: GDScript = load("res://core/ai_input_source.gd")
@@ -83,6 +97,29 @@ func _initialize() -> void:
 		for m in ["host", "role", "src"]:
 			_check(props.has(m), "AINavigator 有成员 %s" % m)
 		_check(nav.has_method("_physics_process"), "AINavigator 有 _physics_process")
+
+		# ── ★ AI 目标方向(2026-09-14 修 H1)──
+		# `_pick_target` 的 "dir" 约定是 **我→对手**(消费者:`_aim_and_fire` 拿它当开火方向、
+		# `_move` 的 `signf(dir.x)` 追人/后拉)。而 `toroidal_delta_px(a,b)` 返回 a→b,传
+		# `(对手, 我)` 得到的是「对手→我」**必须取负**。黏滞分支曾漏掉取负 → 锁定后整局
+		# 瞄反 + 远则逃近则贴。两条分支都要断言:它们的取负是各写一遍的。
+		var h := StubHost.new()
+		nav.host = h
+		nav.role = 1
+		var me := StubBody.new()
+		me.position = Vector2.ZERO
+		var foe := StubBody.new()
+		foe.position = Vector2(400, 0)     # 对手在我**右**侧 → 正确的 dir.x 必须 > 0
+		h.players = {1: me, 2: foe}
+		nav.set("_target_role", 0)         # ① 重选「最近的对手」分支
+		var r1: Dictionary = nav.call("_pick_target", me)
+		_check((r1["dir"] as Vector2).x > 0.0,
+				"AI 重选目标:对手在右 → dir.x > 0(我→对手;<=0 说明取负漏了或写反了)")
+		nav.set("_target_role", 2)         # ② 黏滞锁定分支(漏取负就死在这一条)
+		var r2: Dictionary = nav.call("_pick_target", me)
+		_check((r2["dir"] as Vector2).x > 0.0,
+				"AI 黏滞锁定:对手在右 → dir.x > 0(★ 2026-09-14 修的正是这条)")
+
 		nav.free()
 
 	if _fail == 0:
