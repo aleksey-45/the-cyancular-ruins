@@ -39,3 +39,6 @@ local_ip.txt
 
 # gamelog session captures (logger tool output)
 gamelogs/
+
+# zcode session artifacts
+.zcode/
