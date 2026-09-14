@@ -279,22 +279,13 @@ func _is_floor_cell(c: Vector2i) -> bool:
 
 # 黑鸟碰撞箱(按 scale 换算)在 pos 处覆盖的格子是否全是 EMPTY。
 # 用于瞬移落点清空判定:落点/下落路径不能穿墙。
+# 逐格环面判定收在 core/tile_query.gd(与飞鸟避障/预瞄判墙同源)。
+# 空网格视为"全清":TileQuery 在空网格返回 false(= 没压到东西),`not` 之后正是 true ——
+# 与旧实现的显式 is_empty 早退同义(探针会清空 current_grid,真实地图不会)。
 func _body_clear_at(pos: Vector2) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return true
-	var rows := grid.size()
-	var cols := grid[0].size()
 	var ts := GameParameters.TILE_SIZE
-	var x0 := floori((pos.x + _body_min.x) / ts)
-	var x1 := floori((pos.x + _body_max.x) / ts)
-	var y0 := floori((pos.y + _body_min.y) / ts)
-	var y1 := floori((pos.y + _body_max.y) / ts)
-	for gy in range(y0, y1 + 1):
-		for gx in range(x0, x1 + 1):
-			if TileDefs.is_blocked(grid[posmod(gy, rows)][posmod(gx, cols)]):
-				return false
-	return true
+	var rect := Rect2(pos + _body_min, _body_max - _body_min)
+	return not TileQuery.rect_overlaps_solid(rect, ts)
 
 
 func _teleport_to_flank() -> void:

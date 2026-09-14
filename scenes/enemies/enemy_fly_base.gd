@@ -124,22 +124,17 @@ func _find_escape_column() -> Vector2:
 func _bird_can_pass(cell: Vector2i) -> bool:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
-		return false
-	var rows := grid.size()
-	var cols := grid[0].size()
+		return false   # ★ 空网格 = 不可走(**保守**方向)。注意方向与 TileQuery 的兜底相反,
+	                   #   故这条早退不能删(TileQuery 在空网格返回 false = "没压到东西")。
 	var ts := GameParameters.TILE_SIZE
 	# 鸟原心 = 格中心 − hover_altitude(悬停上移);箱体世界范围 = 原心 + AABB。
 	var ox := cell.x * ts + ts * 0.5
 	var oy := cell.y * ts + ts * 0.5 - EnemyParams.FlyBird.hover_altitude
-	var x0 := floori((ox + _fly_box_min.x) / ts)
-	var x1 := floori((ox + _fly_box_max.x) / ts)
-	var y0 := floori((oy + _fly_box_min.y) / ts)
-	var y1 := floori((oy + _fly_box_max.y) / ts)
-	for gy in range(y0, y1 + 1):
-		for gx in range(x0, x1 + 1):
-			var v: int = grid[posmod(gy, rows)][posmod(gx, cols)]
-			if TileDefs.is_blocked(v) or Water.is_liquid(MazeGenerator.texture_of(v)):
-				return false
+	# 逐格环面判定收在 core/tile_query.gd(实心**或水**都不可走:鸟不能游)。
+	# 这里刻意用**未锚定**的原心算矩形:跨接缝由逐格 posmod 兜住,与旧实现一致。
+	if TileQuery.rect_overlaps_solid_or_liquid(
+			Rect2(Vector2(ox, oy) + _fly_box_min, _fly_box_max - _fly_box_min), ts):
+		return false
 	if _obstacle_boxes.size() > 0:
 		# 箱体锚到本鸟坐标的环面副本(与 _collect_obstacles 同帧),否则地图接缝处
 		# wrapped 格坐标与鸟/障碍的 anchored 坐标差一个整图,Rect2 永不相交。

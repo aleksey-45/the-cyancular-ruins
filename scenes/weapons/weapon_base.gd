@@ -451,29 +451,12 @@ func _sample_arc_points() -> PackedVector2Array:
 
 # 预瞄判墙:以 center 为圆心、半径 r(=6px)的小球是否压到任一墙(非 EMPTY)格(环面)。
 # 小球按格子 AABB 粗查:球很小,最多跨 2 格,不会漏;比精确圆简单且略保守(宁多判墙不少判)。
+# 逐格环面判定收在 core/tile_query.gd(与黑鸟落点/飞鸟避障同源);空网格 → false(= 无墙),
+# 与旧实现的显式 is_empty 早退同义。
 func _disk_overlaps_solid(center: Vector2) -> bool:
-	var r := PREVIEW_COLLISION_RADIUS*bullet_size
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	var cols := grid[0].size()
-	var rows := grid.size()
-	var ts := GameParameters.TILE_SIZE
-	var min_c := MazeGenerator.cell_of(center - Vector2(r, r), ts, cols, rows)
-	var max_c := MazeGenerator.cell_of(center + Vector2(r, r), ts, cols, rows)
-	var span_x := max_c.x - min_c.x
-	if span_x < 0:
-		span_x += cols
-	var span_y := max_c.y - min_c.y
-	if span_y < 0:
-		span_y += rows
-	for dy in range(span_y + 1):
-		var y := posmod(min_c.y + dy, rows)
-		for dx in range(span_x + 1):
-			var x := posmod(min_c.x + dx, cols)
-			if TileDefs.is_blocked(grid[y][x]):
-				return true
-	return false
+	var r := PREVIEW_COLLISION_RADIUS * bullet_size
+	return TileQuery.rect_overlaps_solid(
+			Rect2(center - Vector2(r, r), Vector2(r * 2.0, r * 2.0)), GameParameters.TILE_SIZE)
 
 func _update_explosion_marker(show: bool) -> void:
 	if _explosion_marker == null:
