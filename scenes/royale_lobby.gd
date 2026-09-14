@@ -170,50 +170,17 @@ func _build_create_panel() -> void:
 		tlabel.text = "%d 分钟" % int(v))
 
 	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
-	# 2 列网格 + 定尺寸剪影(横排会溢出屏幕)
-	var wgrid := GridContainer.new()
-	wgrid.columns = 2
-	wgrid.add_theme_constant_override("h_separation", 10)
-	wgrid.add_theme_constant_override("v_separation", 6)
-	vb.add_child(wgrid)
-	for slot: int in [1, 2, 3, 4, 5, 6]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
-		var slot_i := slot
-		# 字号 32 与 scenes/matchmaking.gd 的同款调用一致:同视口、同 2 列网格、同剪影尺寸,
-		# 本列其余元素(分区标题/_public_check/下方说明)也都是 32。勿"简化"回 16(那会只有这格半尺寸)。
-		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
-				32, func(on: bool) -> void:
-				if on and not Settings.pvp_disabled_weapons.has(slot_i):
-					Settings.pvp_disabled_weapons.append(slot_i)
-				elif not on:
-					Settings.pvp_disabled_weapons.erase(slot_i)
-				Settings.save())
+	_add_weapon_grid(vb, 10, func(cell: Node, slot: int) -> void:
+		# 本页要多记一笔:建房时读 _weapon_checks 的勾选态(1v1 页不留引用,直接读 Settings)
 		var cb: CheckButton = cell.get_meta("cb")
-		cb.set_meta("slot", slot_i)
-		_weapon_checks.append(cb)
-		wgrid.add_child(cell)
+		cb.set_meta("slot", slot)
+		_weapon_checks.append(cb))
 
 	# 自己角色颜色(色相 0-360):本页即选即存;开局转连 worker 报到时随 player_options 上发,
 	# worker 开局广播 peer_hues → 全员按各自 hue 染色(与 1v1 匹配页同一设置项)。
+	# 标签另起一行是本页版式(1v1 页把标签放在行内),故传空 label_text 自己在外面加。
 	vb.add_child(UiFactory.label("自己角色颜色:", 32))
-	var crow := HBoxContainer.new()
-	crow.add_theme_constant_override("h_separation", 12)
-	vb.add_child(crow)
-	var hue_slider := HSlider.new()
-	hue_slider.min_value = 0.0
-	hue_slider.max_value = 360.0
-	hue_slider.step = 5.0
-	hue_slider.value = Settings.pvp_color_hue
-	hue_slider.custom_minimum_size = Vector2(300, 30)
-	UiFactory.style_slider(hue_slider)
-	crow.add_child(hue_slider)
-	var chip := ColorRect.new()
-	chip.custom_minimum_size = Vector2(46, 30)
-	chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
-	crow.add_child(chip)
-	hue_slider.value_changed.connect(func(v: float) -> void:
-		Settings.pvp_color_hue = v
-		Settings.save()
-		chip.color = UiFactory.hue_preview_color(v))
+	_add_hue_row(vb, "", Vector2(300, 30), Vector2(46, 30))
 
 	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, UiFactory.C_TEXT_DIM))
 

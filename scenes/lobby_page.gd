@@ -86,6 +86,69 @@ func _page_button(text: String, pos: Vector2, size: Vector2, fn: Callable) -> Bu
 	return b
 
 
+# ── 两个设置区块(两页各手抄一份)──
+# 都读写 Settings,故留在本类而不是 `ui/ui_factory.gd` —— 那个工厂至今零 autoload 依赖。
+
+# 禁用武器网格(2 列 + 定尺寸剪影,横排会溢出屏幕)。勾选直写 Settings.pvp_disabled_weapons
+# + save():两页语义相同(房主开关,禁用项随 player_options 上发)。
+# h_sep 是各页的**版式值**(1v1 页 26 / 大乱斗页 10 —— 剪影是长条形,列距本就不同)。
+# on_cell 给需要额外记账的页面(大乱斗要把勾选框收进 _weapon_checks,建房时读勾选态)。
+# ★ 字号 32 写成**字面量**而非形参:kh_l5 的字号规范只认整数字面量实参,改成变量会让
+#   这一处**静默脱保**(两页的值本来就都是 32,没有参数化的理由)。
+func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) -> void:
+	var wgrid := GridContainer.new()
+	wgrid.columns = 2
+	wgrid.add_theme_constant_override("h_separation", h_sep)
+	wgrid.add_theme_constant_override("v_separation", 6)
+	parent.add_child(wgrid)
+	# 显式 int:循环变量来自字面量数组,`var slot_i := slot` 推断不出类型会整文件解析失败
+	for slot: int in [1, 2, 3, 4, 5, 6]:
+		var slot_i := slot
+		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
+				32, func(on: bool) -> void:
+				if on and not Settings.pvp_disabled_weapons.has(slot_i):
+					Settings.pvp_disabled_weapons.append(slot_i)
+				elif not on:
+					Settings.pvp_disabled_weapons.erase(slot_i)
+				Settings.save())
+		if on_cell.is_valid():
+			on_cell.call(cell, slot_i)
+		wgrid.add_child(cell)
+
+
+# 角色色相行(滑条 + 预览色块,即选即存 Settings.pvp_color_hue)。
+# label_text 非空时在**行内**先放标签;大乱斗页的标签另起一行(该页版式),故传 "" 并在外面自己加。
+# slider/chip 尺寸也是各页版式(280×24 / 48×24 与 300×30 / 46×30),故走参数。
+# ★ 键必须是 "separation":**HBoxContainer 只认 separation,h_separation 是 GridContainer 的键**
+#   (h_separation 写在 HBox 上会被存下来但**永不读取** = 静默无效覆盖)。两页原文正好一正一误:
+#   1v1 页写 separation(=12,生效),大乱斗页写 h_separation(死覆盖,实际是默认 4)。
+#   收口后统一走正确键 → 大乱斗页这一行的间距由 4 变 12,是本次**唯一**的有意观感变化。
+func _add_hue_row(parent: Node, label_text: String, slider_size: Vector2,
+		chip_size: Vector2) -> HBoxContainer:
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("separation", 12)
+	parent.add_child(crow)
+	if not label_text.is_empty():
+		crow.add_child(UiFactory.label(label_text, 32))
+	var hue_slider := HSlider.new()
+	hue_slider.min_value = 0.0
+	hue_slider.max_value = 360.0
+	hue_slider.step = 5.0
+	hue_slider.value = Settings.pvp_color_hue
+	hue_slider.custom_minimum_size = slider_size
+	UiFactory.style_slider(hue_slider)
+	crow.add_child(hue_slider)
+	var chip := ColorRect.new()
+	chip.custom_minimum_size = chip_size
+	chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
+	crow.add_child(chip)
+	hue_slider.value_changed.connect(func(v: float) -> void:
+		Settings.pvp_color_hue = v
+		Settings.save()
+		chip.color = UiFactory.hue_preview_color(v))
+	return crow
+
+
 # ── 大厅连接(两个模式共用;差异全落在下方"子类钩子")──
 
 # 把当前昵称上报给大厅(房间列表展示在房玩家)

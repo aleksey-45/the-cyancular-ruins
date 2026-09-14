@@ -113,43 +113,10 @@ func _build_options_panel() -> void:
 
 	# 禁用武器(房主生效):2 列网格 + 定尺寸剪影(横排会溢出屏幕)
 	vb.add_child(UiFactory.label("禁用武器(房主生效):", 32, UiFactory.C_ACCENT))
-	var wgrid := GridContainer.new()
-	wgrid.columns = 2
-	wgrid.add_theme_constant_override("h_separation", 26)   # 剪影是长条形,列挨太近会与邻列挤在一起
-	wgrid.add_theme_constant_override("v_separation", 6)
-	vb.add_child(wgrid)
-	for slot in [1, 2, 3, 4, 5, 6]:
-		var captured_slot: int = slot
-		var cell := WeaponComponent.make_weapon_check(captured_slot, Settings.pvp_disabled_weapons.has(captured_slot),
-				32, func(on: bool) -> void:
-				if on and not Settings.pvp_disabled_weapons.has(captured_slot):
-					Settings.pvp_disabled_weapons.append(slot)
-				elif not on:
-					Settings.pvp_disabled_weapons.erase(slot)
-				Settings.save())
-		wgrid.add_child(cell)
+	_add_weapon_grid(vb, 26)   # 26:剪影是长条形,列挨太近会与邻列挤在一起(本页版式值)
 
 	# 角色颜色(色相 0-360,即选即用,双方各自染自己)
-	var crow := HBoxContainer.new()
-	crow.add_theme_constant_override("separation", 12)
-	vb.add_child(crow)
-	crow.add_child(UiFactory.label("自己角色颜色:", 32))
-	var hue_slider := HSlider.new()
-	hue_slider.min_value = 0.0
-	hue_slider.max_value = 360.0
-	hue_slider.step = 5.0
-	hue_slider.value = Settings.pvp_color_hue
-	hue_slider.custom_minimum_size = Vector2(280, 24)
-	UiFactory.style_slider(hue_slider)
-	crow.add_child(hue_slider)
-	var chip := ColorRect.new()
-	chip.custom_minimum_size = Vector2(48, 24)
-	chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
-	crow.add_child(chip)
-	hue_slider.value_changed.connect(func(v: float) -> void:
-		Settings.pvp_color_hue = v
-		Settings.save()
-		chip.color = UiFactory.hue_preview_color(v))
+	_add_hue_row(vb, "自己角色颜色:", Vector2(280, 24), Vector2(48, 24))
 
 
 # 本页刷新要先放开「只自动刷新一次」的闸门(手动刷新=用户明确要重来)
