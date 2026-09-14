@@ -63,6 +63,9 @@ static func make_weapon_check(slot: int, checked: bool, font_size: int, on_toggl
 	cell.add_theme_constant_override("separation", 6)
 	var cb := CheckButton.new()
 	cb.button_pressed = checked
+	# 走 UiFactory.style_check:默认主题的 CheckButton 在「关」态没有可见轨道,只剩一个
+	# 小灰点 —— 本函数同时给主菜单单人面板与匹配页对战选项用,两处一起修。
+	UiFactory.style_check(cb, font_size)
 	cb.toggled.connect(func(on: bool) -> void: on_toggle.call(on))
 	cell.set_meta("cb", cb)   # 挂 cell 上(调用方统一 cell.get_meta("cb") 取勾选框)
 	cell.add_child(cb)

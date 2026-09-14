@@ -96,12 +96,17 @@ func _payload_step(delta: float) -> void:
 			or not _lobby.is_inside_tree():
 		return
 	_payload_done = true
-	# 三条载荷:数值与两端在自然模式里上报的一致(色相/禁武器按 role 分别可见)
-	NetBus.local_peer_info.emit({1: "P1", 3: "P3"})
-	NetBusExt.local_peer_hues.emit({1: HUE_C1, 3: HUE_C2})
-	NetBusExt.local_match_options.emit({"disabled_weapons": [DISABLED_SLOT], "round_full_heal": false})
-	# 紧接着(同一次 poll 内)走真大厅的开局处理:它帧末切到真 royale_game
+	# ★ 批次 3 改法(按"教探针认新入口、别回退重构"的纪律):本条变体原先靠"**推**在切场景的
+	#   同一次 poll 里到达 → 只能靠 PvpSession 交接活到新场景"来取得鉴别力。交接已删,那个
+	#   时序前提也就不存在了 —— 现在测的是**拉**这一侧:先切场景(新场景 _ready 里会发请求),
+	#   **再**把应答投给它。这正是拉与推的根本差别:推是"趁你在切场景时推过去"(订阅方还不存在),
+	#   拉是"你建好了才要"(应答只会更晚到,时序不敏感)。
+	#   ⚠ 覆盖边界(照实登记):这一条只验「新场景能把收到的 match_sync 应答应用上」;
+	#     **请求那一半**(客户端确实发得出去、服务器确实应答)由 `royale_probe` 的真大厅+真 worker
+	#     全链路覆盖 —— 那条**没有**轻量化,别把本变体当成它的替代。
 	_lobby.call("_on_match_start", 1, Vector2i(70, 66), "res://maps/factory1v1.cyrm")
+	# ★ 应答不在这里发:本节点**就是 current scene**,换场会把它 free 掉,协程随之而死(实测踩过:
+	#   应答一条都没发出去)。改由 watcher 发 —— 它挂在 root 上,换场带不走它(那正是它存在的理由)。
 
 
 # ── 客户端子进程:挂观察者 + 挂**真大厅场景**,再把它驱动起来 ──

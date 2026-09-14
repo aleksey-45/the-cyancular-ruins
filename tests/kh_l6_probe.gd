@@ -28,15 +28,20 @@ extends Node
 #
 # ── 15 条不变量(逐条对应本文件的 _check_*)────────────────────────────
 #   1  输入包带单调 seq          —— B4:包内无 seq → 服务器 _ack_seq 永停 0,回滚锚点全失
-#   2  快照本端分支喂 on_authoritative,且 _apply_local_state 不是无条件到达
+#   2  快照两条包的分工:世界包**不得**写本端玩家,本人包必须喂 on_authoritative
 #                                —— B6:C2 全断 + 权威位置强写进正在预测的玩家 = 橡皮筋
+#                                (2026-09-12 批次 5 重写:保底路径删除后,判据从"被 else 挡住"
+#                                 变成"**根本不存在**" —— 更强的形式;负向证据改走判据自检)
 #   3  note_post_step + reconcile 在玩家步进前 —— B3:整块删除
 #   4  note_input(seq, pkt) —— B5:删除 → restore 后无法重放重对齐
-#   5  LOCAL_PREDICTION_ENABLED 常量 + _ready 两条分支 —— B1/B2:保底不再是"翻一个常量"
-#   6  set_server_rendered(true) 必须受预测开关守卫 —— B2:无条件即 C2 死
+#   5  ~~LOCAL_PREDICTION_ENABLED 常量 + _ready 两条分支~~ **已随批次 5 删除**
+#   6  ~~set_server_rendered(true) 必须受预测开关守卫~~ **已随批次 5 删除**
+#      (两条钉的是"保底路径的存在形式",而那条路径本身已删除 —— 留着就是一台要么永远红、
+#       要么永远绿的门。接替它们的是 tests/royale_c2_probe 的 A①「生产目录零残留」,**无条件**)
 #   7  输入锁单一收口 _round_locked or _menu_open —— B7/B9:菜单开着仍能跑动开枪
 #   8  _pause_menu 是字段且接 toggled —— B10:不持句柄不接信号 → 锁失效
 #   9  MATCH_OVER 块销毁暂停菜单 —— B8:5s 内 ESC 后定时器仍再触发 + lambda 里 get_tree() 为 null
+#  9b  同一件事的**大乱斗**分支(scenes/royale_game.gd)—— 第三条退场路径,当年漏改,_check_royale_match_over_menu_kill
 #  10  pvp_hud 走声明式 tscn(不是 PvpHud.new())—— B11:null 解引用必崩
 #  11  激光收端在 NetBus(不是 NetBusExt)—— B12:收错节点 = 对手激光静默 no-op
 #  12  退出路径:大写零命中 + 路径① 已保护 + **本文件裸切恰为 0**(T4 起为无条件判据,见该断言
@@ -50,6 +55,8 @@ extends Node
 
 # ── 被扫文件 ────────────────────────────────────────────────────────
 const PC := "res://scenes/" + "pvp_client.gd"
+# 9b) 的扫描对象:大乱斗客户端。与 pvp_client 是同一类风险的第二处实例。
+const RG := "res://scenes/" + "royale" + "_game.gd"
 const PM_PATH := "res://ui/" + "pause_menu.gd"
 const HUD_TSCN := "res://ui/" + "pvp_hud.tscn"
 const HUD_SCRIPT := "res://ui/" + "pvp_hud.gd"
@@ -64,7 +71,6 @@ const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "r
 const MIN_PROD_FILES := 40
 
 # ── 扫描针(碎片拼接:见文件头「自伤防护」)──────────────────────────
-const N_PRED := "LOCAL_PREDICTION" + "_ENABLED"
 const N_SEQ := "_input" + "_seq"
 const N_SEQ_INC := N_SEQ + " += 1"
 const N_SEQ_KEY := "\"" + "seq\": " + N_SEQ
@@ -72,19 +78,19 @@ const N_SEND := "\"send" + "_input\""
 const N_ROLLBACK := "_roll" + "back."
 const N_ON_AUTH := N_ROLLBACK + "on_" + "authoritative("
 const N_APPLY_LOCAL := "_apply" + "_local_state("
+const N_APPLY_SNAP := "apply_server" + "_snapshot("
 const N_NOTE_POST := N_ROLLBACK + "note_" + "post_step("
 const N_CAPTURE := "capture" + "_state()"
 const N_RECONCILE := N_ROLLBACK + "reconcile()"
 const N_NOTE_INPUT := N_ROLLBACK + "note_" + "input("
 const N_BIND := N_ROLLBACK + "bind("
-const N_SSR := "set_server" + "_rendered(true)"
-const N_SSR_NAME := "set_server" + "_rendered"
 const N_LOCK_FN := "_refresh" + "_input_lock"
 const N_SET_LOCKED := "set_controls" + "_locked"
 const N_PAUSE := "_pause" + "_menu"
 const N_TOGGLED := ".toggled" + ".connect("
 const N_QUEUE_FREE := "queue" + "_free()"
 const N_TIMER := "create" + "_timer("
+const N_INSIDE := "is_inside" + "_tree()"
 const N_PRELOAD_HUD := "preload(\"res://ui/" + "pvp_hud.tscn\")"
 const N_NEW_HUD := "Pvp" + "Hud.new("
 const N_HUD_CLS := "Pvp" + "Hud"
@@ -99,13 +105,15 @@ const N_MENU_PATH := "res://scenes/" + "main_menu.tscn"
 const N_NAME_COLOR := "NAME" + "_COLOR"
 const N_ROLE_COLOR := "ROLE" + "_COLOR"
 const N_ATTR := "Combat" + "Feedback." + "attribute("
+# 归因的一体入口(attribute + hit_marker):激光两处结算路径已改走它。判据接受两者之一
+# —— 用意仍是「拦住裸 set_meta」,而不是钉死某一种写法(见不变量 14 的注释)。
+const N_ATTR_HIT := "Combat" + "Feedback." + "attribute_hit("
 const N_MENU_DEMO := "menu" + "_demo"
 # 扫描器自检用的"必然存在"标识符:同一次扫描里它必须被找到,否则"零命中"不可信
 const N_CANARY := "pvp" + "_mode"
 const MIN_CANARY_HITS := 5
 
 # 正则(同样碎片拼接)
-const RE_CONST_PRED := "const\\s+" + "LOCAL_PREDICTION" + "_ENABLED\\s*:=\\s*(true|false)"
 const RE_FIELD_PAUSE := "^var\\s+" + "_pause" + "_menu\\b"
 const RE_CONST_NAME_COLOR := "^const\\s+" + "NAME" + "_COLOR\\b"
 const RE_PACKET_DICT := "^\\s*var\\s+([A-Za-z_]\\w*)\\s*(?::[^:=]+)?:?=\\s*\\{"
@@ -117,11 +125,15 @@ const RE_CONST_STR := "^const\\s+([A-Za-z_]\\w*)[^=]*=\\s*\"([^\"]*)\""
 var _failures: Array[String] = []
 var _pc_code := ""                     # pvp_client.gd 的去注释视图(保留缩进)
 var _pc_lines: PackedStringArray = PackedStringArray()
+var _rg_code := ""                     # royale_game.gd 的去注释视图(9b 用)
+var _rg_lines: PackedStringArray = PackedStringArray()
 
 
 func _ready() -> void:
 	_pc_code = _code_view(_read(PC))
 	_pc_lines = _pc_code.split("\n")
+	_rg_code = _code_view(_read(RG))
+	_rg_lines = _rg_code.split("\n")
 	if _pc_code.is_empty():
 		_failures.append("读不到 %s(本探针的全部断言都以它为据 → 下面一条都不成立)" % PC)
 		_finish()
@@ -130,11 +142,10 @@ func _ready() -> void:
 	_check_snapshot_authoritative()
 	_check_c2_frame_block()
 	_check_note_input()
-	_check_prediction_switch()
-	_check_server_rendered_guarded()
 	_check_input_lock_funnel()
 	_check_pause_menu_field()
 	_check_match_over_menu_kill()
+	_check_royale_match_over_menu_kill()
 	_check_hud_declarative()
 	_check_beam_routing()
 	_check_exit_paths()
@@ -177,35 +188,46 @@ func _check_seq_in_packet() -> void:
 	_summary(before, "输入包 seq:自增在 %d,绑定在 %d,发送字典 = %s" % [i_inc, i_key, varname if varname != "" else "?"])
 
 
-# ── 2) 快照本端分支喂 on_authoritative,且 _apply_local_state 不是无条件(B6)──
-# 本端快照只有两条合法去向:C2 开着 → `on_authoritative(ack, c2)`(只喂锚点,由控制器
-# 在下一帧 reconcile 时**按分歧**收敛);否则 → 保底 `_apply_local_state`(服务器渲染)。
-# KH 把整段换成**无条件** `_apply_local_state(data)` → ① C2 全链断;② C2 开着时把权威
-# 位置**强写**进正在预测的玩家 = 每帧橡皮筋。
-# 所以判据取**结构**:`_apply_local_state` 必须落在一个 `else:` 分支里(且它的 enclosing
-# 条件行确实是 else),而不是 `if role == ...` 之后的第一条语句。
+# ── 2) 快照两条包的分工:世界包不得碰本端,本人包必须喂控制器(B6)──
+# 本端快照只有一条合法去向:**本人包** → `on_authoritative(ack, c2)`(只喂锚点,由控制器
+# 在下一帧 reconcile 时**按分歧**收敛)。世界包里自己那一份**不得**被写进玩家 —— 那是"服务器
+# 渲染"的写法,C2 下等于每帧把权威位置强写进正在预测的玩家 = 每帧橡皮筋。
+# ★ 2026-09-12(批次 5):`server_rendered` 保底路径已整体删除,故旧判据里的
+#   「`_apply_local_state` 必须落在 else 分支里」整体作废(那个方法与那条分支都没了)。
+#   语义没变,只是判据从"被 else 挡住"变成"**根本不存在**" —— 后者更强,且不再依赖缩进上溯
+#   (那个辅助函数在深层嵌套上不稳,拆包时实测误报过一次,`_guarded_calls` 已随第 6 条删除)。
 func _check_snapshot_authoritative() -> void:
 	var before := _failures.size()
-	var snap := _func_body(_pc_code, "_on" + "_snapshot")
-	_check(not snap.is_empty(), "取不到 _on_snapshot 的函数体(改名/挪走了?)")
-	if snap.is_empty():
-		_summary(before, "快照本端分支:取不到 _on_snapshot")
+	var world := _func_body(_pc_code, "_on_snapshot_world")
+	var own := _func_body(_pc_code, "_on_snapshot_own")
+	_check(not world.is_empty(), "取不到 _on_snapshot_world 的函数体(改名/挪走了?)")
+	_check(not own.is_empty(), "取不到 _on_snapshot_own 的函数体(改名/挪走了?)")
+	if world.is_empty() or own.is_empty():
+		_summary(before, "快照两条包:取不到 handler")
 		return
-	var lines := snap.split("\n")
-	var i_gate := _find_line(lines, N_PRED + " and _rollback != null")
-	var i_auth := _find_line(lines, N_ON_AUTH)
-	_check(i_gate >= 0, "本端分支缺 `%s and _rollback != null` 门(预测分支不受开关约束)" % N_PRED)
-	_check(i_auth >= 0, "本端分支没有 `%s`(权威 ack/c2 进不了控制器 → C2 全链断)" % N_ON_AUTH)
-	if i_gate >= 0 and i_auth >= 0:
-		_check(i_gate < i_auth, "`%s` 出现在门(%s)之前(未受开关约束)" % [N_ON_AUTH, N_PRED])
-	var calls := _guarded_calls(lines, N_APPLY_LOCAL)
-	_check(not calls.is_empty(), "本端分支里没有 `%s`(保底路径没了 → 常量翻回 false 也回不到 server_rendered)" % N_APPLY_LOCAL)
-	for c in calls:
-		var encl := str(c["enclosing"])
-		_check(encl.begins_with("else"),
-			"`%s` 是**无条件**到达的(所在块首行「%s」不是 else)→ C2 开着时权威位置被强写进预测中的玩家 = 橡皮筋" % [N_APPLY_LOCAL, encl])
-	_summary(before, "快照本端分支:门 → %s → 保底,无条件到达的 _apply_local_state %d 处"
-			% [N_ON_AUTH, _unguarded_count(calls)])
+	_check(not world.contains(N_APPLY_SNAP),
+			"世界包里出现了 `%s`(把自己那份写进玩家 = C2 下每帧橡皮筋;那条保底路径已删除)" % N_APPLY_SNAP)
+	_check(not world.contains(N_APPLY_LOCAL),
+			"世界包里出现了 `%s`(同上的旧形态;该方法已随批次 5 删除)" % N_APPLY_LOCAL)
+	_check(own.contains(N_ON_AUTH),
+			"本人包 handler 里没有 `%s`(C2 拿不到权威锚点 → reconcile 永不收敛)" % N_ON_AUTH)
+	_self_test_snapshot_judge()
+	_summary(before, "快照两条包:世界包不碰本端 / 本人包 → %s" % N_ON_AUTH)
+
+
+# 判据自检(本仓纪律:每条新断言都要能回答「什么错误改动仍会通过」)。
+# ★ 这一条的负向证据只能靠自检:旧写法(`apply_server_snapshot` / `_apply_local_state`)已随
+#   批次 5 删除,**没法**"把旧代码加回去跑一遍"(加了直接编译不过)。故合成一段带该调用的源
+#   喂给同一个判据函数 —— 它必须认出来,否则这台门就是恒绿的。
+func _self_test_snapshot_judge() -> void:
+	var before := _failures.size()
+	var bad := "func _on_snapshot_world(w: Dictionary) -> void:\n\t" + N_APPLY_SNAP + "\n"
+	_check(_func_body(bad, "_on_snapshot_world").contains(N_APPLY_SNAP),
+			"判据自检失败:合成源里的 `%s` 认不出来(判据恒绿,不能用)" % N_APPLY_SNAP)
+	var bad2 := "func _on_snapshot_own(o: Dictionary) -> void:\n\tpass\n"
+	_check(not _func_body(bad2, "_on_snapshot_own").contains(N_ON_AUTH),
+			"判据自检失败:空本人包 handler 被判成有 `%s`" % N_ON_AUTH)
+	_summary(before, "判据自检:世界包写本端 / 本人包空 两种合成源都能判出来")
 
 
 # ── 3) 每物理帧 note_post_step(capture_state()) → reconcile() → 组包,按此序(B3)──
@@ -297,89 +319,6 @@ func _check_note_input() -> void:
 	_summary(before, "note_input:第 %d 行,带 seq 与发包字典 %s" % [i_ni, varname if varname != "" else "?"])
 
 
-# ── 5) C2 开关常量 + _ready 两条分支必须都在(B1/B2)────────────────────
-# `LOCAL_PREDICTION_ENABLED` 是**保底路径的存在形式**:false 就该整体回落 server_rendered,
-# 不需要改别的代码。常量被删、或二选一分支被拍平 → 保底不再是"翻一个常量",那条路径
-# 就等于不存在(pvp-c2-retrospective 的 P1/P2 复盘前提)。
-# 判据:常量必须带**布尔字面量**;`_ready` 里 `if not <开关>` 与 `elif <开关>` 两条分支
-# 都要在,且**互斥**:预测分支里不得出现 set_server_rendered(两分支必须真的二选一)。
-#
-# ★★ 已知边界(必须如实登记:这是本探针**最重的洞**)★★
-#   本断言(与 #6)钉的是**常量的存在形式**,**钉不住它的值** —— `const LOCAL_PREDICTION_ENABLED
-#   := true` 改成一个字符的 `false`,15 条断言**全绿**,而 C2 在**活路径**上整体熄火
-#   (落到 server_rendered 保底分支;保底本身是合法的,所以看不出"坏",只有上手才觉出手感差)。
-#   那个值 = 另一分支(`$KH`)的整个状态,`false` 正是它的形状。
-#   **这个值不由本探针覆盖**:由 PvP 冒烟脚本(`tests/pvp_match_smoke.sh` 的输入→模拟→快照→
-#   ack 链路、`tests/pvp_reconcile_smoke.sh` 的 rollback 控制器)**与真人上手对局**覆盖。
-#   (把值也钉成 `true` 是不行的:那会把保底路径本身判成违规,而"翻一个常量即回落"正是 #5 要守的性质。)
-func _check_prediction_switch() -> void:
-	var before := _failures.size()
-	var i_const := _find_line_re(_pc_lines, RE_CONST_PRED)
-	_check(i_const >= 0, "缺 `const %s := true|false` 声明(保底不再是「翻一个常量」)" % N_PRED)
-	var ready := _func_body(_pc_code, "_ready")
-	_check(not ready.is_empty(), "取不到 _ready 的函数体")
-	if ready.is_empty():
-		_summary(before, "C2 开关:常量@%d,_ready 取不到" % i_const)
-		return
-	var lines := ready.split("\n")
-	var i_fallback := _find_line(lines, "if not " + N_PRED)
-	var i_predict := _find_line(lines, "elif " + N_PRED)
-	_check(i_fallback >= 0, "_ready 缺保底分支 `if not %s`(server_rendered 路径没了)" % N_PRED)
-	_check(i_predict >= 0, "_ready 缺预测分支 `elif %s`(C2 不 bind 控制器 → 全部 C2 调用 no-op)" % N_PRED)
-	if i_fallback >= 0:
-		_check(_block_after(lines, i_fallback).contains(N_SSR),
-			"保底分支里没有 `%s`(翻回 false 也不回落)" % N_SSR)
-	if i_predict >= 0:
-		var blk := _block_after(lines, i_predict)
-		_check(blk.contains(N_BIND), "预测分支里没有 `%s`(控制器没绑定本地玩家 → reconcile 无从 restore)" % N_BIND)
-		_check(not blk.contains(N_SSR_NAME),
-			"预测分支里也调了 `%s`(两条路径必须二选一,否则 C2 被服务器渲染覆盖)" % N_SSR_NAME)
-	_summary(before, "C2 开关:常量@%d,保底分支@%d,预测分支@%d(bind 在预测分支内;常量的**值**不在本探针覆盖内,见本条已知边界)"
-			% [i_const, i_fallback, i_predict])
-
-
-# ── 6) set_server_rendered(true) 必须受预测开关守卫(B2)────────────────
-# 这是 B2 的**精确形状**:KH 写的是 `if _local.has_method("set_server_rendered"):` —— 那是
-# 空安全守卫,**不是**模式选择:一旦因此认为"它在 if 里就算受守卫",就会把无条件切服务器
-# 渲染读成绿。故本断言的判据是**enclosing 行的内容**,不是"有没有 if":
-# 它必须真是 `if not LOCAL_PREDICTION_ENABLED ...` 那条。
-# 附自检:喂合成源,证明这套判据对"无条件调用"确实会红(否则又是一台永不失败的验收门)。
-func _check_server_rendered_guarded() -> void:
-	var before := _failures.size()
-	var calls := _guarded_calls(_pc_lines, N_SSR)
-	_check(not calls.is_empty(), "全文没有 `%s`(保底路径被删了?)" % N_SSR)
-	for c in calls:
-		var encl := str(c["enclosing"])
-		_check(encl.begins_with("if not " + N_PRED),
-			"`%s`(第 %d 行)不在 `if not %s` 分支里(所在块首行「%s」)→ 无条件把本地玩家切成服务器渲染 = C2 直接死"
-			% [N_SSR, int(c["index"]), N_PRED, encl])
-	# 反向:预测分支(elif)里不得出现 —— 与第 5 条同一约束的调用侧钉法
-	var ready := _func_body(_pc_code, "_ready")
-	var i_predict := _find_line(ready.split("\n"), "elif " + N_PRED)
-	if i_predict >= 0:
-		_check(not _block_after(ready.split("\n"), i_predict).contains(N_SSR_NAME),
-			"预测分支里也调了 `%s`(二选一被打破)" % N_SSR_NAME)
-	_self_test_guard_helper()
-	_summary(before, "set_server_rendered 守卫:%d 处调用,全部落在 `if not %s` 分支内" % [calls.size(), N_PRED])
-
-
-# 判据自检:同一个调用,**无条件**那份必须被判为"未受守卫",条件分支里那份必须判为受守卫。
-# 合成源全用碎片拼(见文件头「自伤防护」)。
-func _self_test_guard_helper() -> void:
-	var before := _failures.size()
-	var unguarded := "func _ready() -> void:\n\tvar x := 1\n\t" + N_SSR + "\n"
-	var u := _guarded_calls(unguarded.split("\n"), N_SSR)
-	_check(u.size() == 1, "守卫判据自检①失败:合成源里 %s 匹配到 %d 处(应 1)" % [N_SSR, u.size()])
-	if u.size() == 1:
-		_check(not str(u[0]["enclosing"]).begins_with("if not "),
-			"守卫判据自检②失败:无条件调用被判成了受守卫(判据形同虚设)= %s" % str(u[0]["enclosing"]))
-	var guarded := "func _ready() -> void:\n\tif not " + N_PRED + " and _local.has_method(\"" + N_SSR_NAME + "\"):\n\t\t" + N_SSR + "\n"
-	var g := _guarded_calls(guarded.split("\n"), N_SSR)
-	_check(g.size() == 1 and str(g[0]["enclosing"]).begins_with("if not " + N_PRED),
-			"守卫判据自检③失败:受守卫的调用没被判成受守卫(判据恒红,一样不能用)")
-	_summary(before, "守卫判据自检:无条件必判未受守卫、条件分支必判受守卫")
-
-
 # ── 7) 输入锁单一收口 _refresh_input_lock()(B7/B9)────────────────────
 # PvP 下菜单不暂停树 → "菜单开着还能边跑边开枪"必须由**显式锁**挡住,而锁必须是
 # `_round_locked or _menu_open` 的**合取**、且只有一个收口点:KH 换成的
@@ -458,6 +397,34 @@ func _check_match_over_menu_kill() -> void:
 			"MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 这 5s 内按 ESC 会让定时器再触发一次" % [N_PAUSE, N_QUEUE_FREE])
 		_check(blk.contains(N_TIMER), "MATCH_OVER 块的退场定时器不在(`%s`)" % N_TIMER)
 	_summary(before, "MATCH_OVER 块:暂停菜单失效 + 退场定时器都在(分支@%d)" % i)
+
+
+# ── 9b) 大乱斗客户端 MATCH_OVER 块的同一件事(9) 的第二个对象)──────────────
+# 与 9) **同款缺陷、不同文件**:scenes/royale_game.gd 的 MATCH_OVER 也起了一条 6s 退场定时器,
+# 而它的暂停菜单**没有**当场失效、lambda 里也**没有** `is_inside_tree()` 早退 ——
+# 玩家在这 6s 内按 ESC 就能先回一次主菜单,定时器到点再切一次(把刚建出来的主菜单当 old 退役)。
+# pvp_client 早已修过;royale_game 是第三条路径,当年漏了。2026-09-12 补齐,本断言即其守卫。
+func _check_royale_match_over_menu_kill() -> void:
+	var before := _failures.size()
+	if _rg_code.is_empty():
+		_check(false, "读不到 %s(9b 的断言全部以它为据)" % RG)
+		return
+	var body := _func_body(_rg_code, "_on" + "_round_state")
+	_check(not body.is_empty(), "取不到 %s 的 _on_round_state 函数体" % RG)
+	if body.is_empty():
+		_summary(before, "royale MATCH_OVER 块:取不到 _on_round_state")
+		return
+	var lines := body.split("\n")
+	var i := _find_line(lines, "state == 3")
+	_check(i >= 0, "取不到 royale MATCH_OVER 分支(`state == 3`)")
+	if i >= 0:
+		var blk := _block_after(lines, i)
+		_check(blk.contains(N_PAUSE) and blk.contains(N_QUEUE_FREE),
+			"royale MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 这 6s 内按 ESC 会让定时器再触发一次" % [N_PAUSE, N_QUEUE_FREE])
+		_check(blk.contains(N_TIMER), "royale MATCH_OVER 块的退场定时器不在(`%s`)" % N_TIMER)
+		_check(blk.contains(N_INSIDE),
+			"royale MATCH_OVER 定时器的 lambda 里没有 `%s` 早退(已从别的退出路径离开时会叠加第二次换场)" % N_INSIDE)
+	_summary(before, "royale MATCH_OVER 块:暂停菜单失效 + 退场定时器 + 早退都在(分支@%d)" % i)
 
 
 # ── 10) pvp_hud 走声明式 tscn,不是 PvpHud.new()(B11)─────────────────
@@ -662,12 +629,16 @@ func _check_no_menu_demo() -> void:
 # 裸 `set_meta`(main 用统一归因入口)。整段照抄 KH = 归因写端丢失(击杀/连杀归因的 3s 时效
 # 窗口没了)→ 只能追加,不得替换。
 # 判据:被调**双方**都要在 —— 调用点在 `_apply_to_player` 体内**且** __apply_to_enemy 体内,
-# 并且 `CombatFeedback` 这个类**真有** attribute 方法(否则删掉实现,调用点照样绿)。
+# 并且 `CombatFeedback` 这个类**真有**对应的方法(否则删掉实现,调用点照样绿)。
+# 接受两种写法:`attribute(`(原样)与 `attribute_hit(`(归因+命中标记一体入口,内部转调
+# attribute)。两者都满足「归因写端不丢」的用意;后者调用者更难写错顺序(两件事都必须在
+# 伤害调用之前),故不把新写法判红。
 func _check_laser_attribution() -> void:
 	var before := _failures.size()
 	var code := _code_view(_read(LASER))
 	_check(not code.is_empty(), "读不到 %s" % LASER)
 	var n := 0
+	var n_hit := 0
 	if not code.is_empty():
 		for fn in ["_apply" + "_to_player", "_apply" + "_to_enemy"]:
 			var body := _func_body(code, fn)
@@ -675,14 +646,23 @@ func _check_laser_attribution() -> void:
 				continue
 			if body.contains(N_ATTR):
 				n += 1
+			elif body.contains(N_ATTR_HIT):
+				n += 1
+				n_hit += 1
 			else:
-				_check(false, "%s 的 %s() 里没有 `%s`(被 KH 的裸 set_meta 换掉了 → 归因写端丢失)" % [LASER, fn, N_ATTR])
-		_check(n == 2, "`%s` 只命中 %d/2 个结算路径(追加而非替换:两条都必须在)" % [N_ATTR, n])
+				_check(false, "%s 的 %s() 里既没有 `%s` 也没有 `%s`(被 KH 的裸 set_meta 换掉了 → 归因写端丢失)"
+						% [LASER, fn, N_ATTR, N_ATTR_HIT])
+		_check(n == 2, "`%s`/`%s` 只命中 %d/2 个结算路径(追加而非替换:两条都必须在)" % [N_ATTR, N_ATTR_HIT, n])
 	var cf := load(CF_PATH) as GDScript
 	_check(cf != null, "载入 %s 失败" % CF_PATH)
 	if cf != null:
 		_check(_method_info(cf, "attribute") != null, "%s 缺 attribute(...)(调用点还在,口没了)" % CF_PATH)
-	_summary(before, "激光归因:%s 在 %d/2 条结算路径,in %s 的 attribute 口在位" % [N_ATTR, n, CF_PATH])
+		# 走 attribute_hit 的路径:那个口也必须在(否则调用点照样绿,实现却被删了)
+		if n_hit > 0:
+			_check(_method_info(cf, "attribute_hit") != null,
+					"%s 缺 attribute_hit(...)(调用点还在,口没了)" % CF_PATH)
+	_summary(before, "激光归因:%s 在 %d/2 条结算路径(其中 attribute_hit %d 处),in %s 的归因口在位"
+			% [N_ATTR, n, n_hit, CF_PATH])
 
 
 # ── 15) 头顶名统一 NAME_COLOR(U1 的决定 / B13)─────────────────────────
@@ -778,16 +758,6 @@ func _block_after(lines: PackedStringArray, i: int) -> String:
 	return "\n".join(out)
 
 
-# 第 i 行**所在块的首行**(往上找第一条缩进更小的行)。用于判"这个调用是不是无条件到达的":
-# 无条件的调用,其块首行是 `func ...` / `var ...`;受守卫的调用,块首行是 `if .../elif .../else:`。
-func _enclosing_cond(lines: PackedStringArray, i: int) -> String:
-	var base := _indent(lines[i])
-	for k in range(i - 1, -1, -1):
-		if _indent(lines[k]) < base:
-			return lines[k].strip_edges()
-	return ""
-
-
 # 第 i 行所属的顶层函数名(往上找第一条 `func 名(...)`;lambda 的 `func(` 无名字,不会命中)
 func _enclosing_func(lines: PackedStringArray, i: int) -> String:
 	var re := RegEx.new()
@@ -876,21 +846,6 @@ func _safe_call_menu_path(lines: PackedStringArray, needles: Array[String]) -> S
 			return hit
 	return ""
 
-
-# 每个命中处连同"它所在块的首行"(供"是不是无条件"的判据用)
-func _guarded_calls(lines: PackedStringArray, needle: String) -> Array:
-	var out: Array = []
-	for k in _find_lines(lines, needle):
-		out.append({"index": k, "line": lines[k].strip_edges(), "enclosing": _enclosing_cond(lines, k)})
-	return out
-
-
-func _unguarded_count(calls: Array) -> int:
-	var n := 0
-	for c in calls:
-		if not str(c["enclosing"]).begins_with("else"):
-			n += 1
-	return n
 
 
 # 组包字典声明处的 {行号, 变量名}(找不到返回 {-1, ""})。

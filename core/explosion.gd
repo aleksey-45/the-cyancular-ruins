@@ -22,14 +22,12 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		var dmg := _falloff(d, radius, max_damage) * cover * wmult
 		if dmg <= 0:
 			continue
-		# 击杀归因 + 命中标记(单机:玩家榴弹炸到敌人;服务器进程无 CombatFeedback 实例则空转)
-		# ★必须在 hurt 之前写:一击致死时 hurt 同帧判死 → _begin_death 当场读 last_damager 播报,
-		# 写在 hurt 之后则 meta 尚不存在 → 「击杀 XXX」静默丢失(Task 15)。
-		CombatFeedback.attribute(e, shooter)   # 归因写端统一入口(内含 shooter 空/无效/自伤守卫)
+		# 归因 + 命中标记的一体入口:★必须在 hurt 之前 —— 一击致死时 hurt 同帧判死,
+		# _begin_death 当场读 last_damager 播报,写在之后则 meta 尚不存在 →「击杀 XXX」静默丢失。
+		CombatFeedback.attribute_hit(e, shooter)
 		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
 				_falloff(d, radius, max_knockback) * cover * wmult, true)
-		CombatFeedback.hit_marker()
 	# 遍历所有玩家(PvP 服务器两个玩家;单机组里只有一个 → 行为不变)
 	var first_player: Node2D = null
 	for p in tree.get_nodes_in_group("player"):

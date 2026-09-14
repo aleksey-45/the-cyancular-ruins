@@ -55,8 +55,7 @@ class NetStubPlayer extends Node2D:
 
 
 func _ready() -> void:
-	# 探针自持确定性:本机 user://settings.cfg 可能被用户关掉换弹/开着 pvp。
-	Settings.reload_enabled = true
+	# 探针自持确定性:本机 user://settings.cfg 可能被用户开着 pvp。
 	Level0.pvp_mode = false
 
 	await _check_weapon_numbers()
@@ -211,8 +210,7 @@ func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
 	await get_tree().process_frame
 	w.equip(stub)
 
-	_check(w.reload_active(), "换弹玩法未生效(reload_active()=false;reload_enabled=%s pvp=%s)" % [
-			str(Settings.reload_enabled), str(Level0.pvp_mode)])
+	_check(w.reload_active(), "换弹玩法未生效(reload_active()=false;pvp=%s)" % str(Level0.pvp_mode))
 
 	# 对照(反恒真):非装填态 fire() 必须真的出弹 + 扣弹 —— 证明下面的"装填中不出弹"有意义
 	var n0 := _bullets()
@@ -258,14 +256,6 @@ func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
 	_check(w.mag_ammo == w.mag_size, "装填完成未补满弹夹(mag_ammo=%d / %d)" % [w.mag_ammo, w.mag_size])
 	_check(w.reload_progress() < 0.0,
 			"装填完成后 reload_progress() 应返回 -1(实际 %.3f)" % w.reload_progress())
-
-	# 关闭换弹玩法 → reload_active() 为假,start_reload() 不得进入装填
-	Settings.reload_enabled = false
-	_check(not w.reload_active(), "Settings.reload_enabled=false 时 reload_active() 仍为真")
-	w.mag_ammo = 3
-	w.start_reload()
-	_check(not w.is_reloading(), "关闭换弹玩法后 start_reload() 仍进入装填")
-	Settings.reload_enabled = true
 
 	# ── 网络输入源闸门(必修 1 回归钉)──────────────────────────────────
 	# 权威服务器进程**不实例化 Level0**(server/ 目录零赋值)→ `Level0.pvp_mode` 恒 false。

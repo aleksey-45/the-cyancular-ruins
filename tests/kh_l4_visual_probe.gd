@@ -32,8 +32,9 @@ const OUT_DIR := "res://.superpowers/sdd"
 const MAIN_MENU_SCENE := "res://scenes/main_menu.tscn"
 const MATCHMAKING_SCENE := "res://scenes/matchmaking.tscn"
 
-# 主菜单:期望 5 个模式按钮(单人/多人/设置/版本/退出)—— 多一个少一个都是"菜单换了脸"
-const EXPECTED_MENU_BUTTONS := 5
+# 主菜单:期望 6 个模式按钮(单人/多人/大乱斗/设置/版本/退出)—— 多一个少一个都是"菜单换了脸"。
+# (原为 5:大乱斗按钮加进来之后漏改,本探针一直红着。)
+const EXPECTED_MENU_BUTTONS := 6
 # 与纯背景基线的差异下限(step=4 采样,见 _diff_vs)
 const DIFF_MIN := 400
 # 标题/按钮矩形内的"亮像素"下限(字被画出来才有)
@@ -49,7 +50,6 @@ var _match: Node = null
 
 func _ready() -> void:
 	# 探针自持确定性:本机 user://settings.cfg 可能被用户改过
-	Settings.reload_enabled = true
 	Level0.pvp_mode = false
 
 	var win := get_viewport().get_visible_rect().size

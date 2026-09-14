@@ -122,6 +122,18 @@ func _stage_wait_game(delta: float) -> void:
 	if _stage_t == 0.0:
 		_log("已换场到 royale_game(帧 %d;match_start 帧 %d)" % [Engine.get_process_frames(),
 				_match_start_frame])
+		if mode == "wait":
+			# ★ 批次 3:本模式由"载荷在切场景的**同一次 poll** 里被推过去"改成"**拉**"。
+			#   应答必须由**换场后仍活着**的节点发 —— 探针节点自己是 current scene,换场会 free 它
+			#   (实测:那条协程一条应答都没发出去)。本观察者挂在 root 上,正是为此。
+			NetBus.local_match_sync.emit({
+				"names": {1: "P1", 3: "P3"},
+				"hues": HUE_BY_ROLE.duplicate(),
+				"options": {"disabled_weapons": [DISABLED_SLOT], "round_full_heal": false},
+				"roles": [1, 3],
+				"spawns": {1: PvpSession.spawn, 3: PvpSession.spawn},
+			})
+			_log("已投 match_sync 应答(新场景应按 role 应用到 _names/_hues/disabled_weapons)")
 	_stage_t += delta
 	if _stage_t < SETTLE:
 		return

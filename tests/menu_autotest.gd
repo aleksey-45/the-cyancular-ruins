@@ -6,6 +6,7 @@ extends Node
 # 由 main_menu._ready 在命令行含 --autotest-* 时挂载,平时零开销:
 #   -- --autotest-sp     主菜单→单机面板→开始探索→(Esc 暂停/恢复验证)→回主菜单→截图
 #   -- --autotest-mp     主菜单→多人匹配页→截图
+#   -- --autotest-royale 主菜单→大乱斗大厅→截图
 #   -- --autotest-set    主菜单→设置页→截图
 #   -- --autotest-level  直接切 Level0(只验世界加载,不经过菜单流转)
 #   -- --autotest-ver    主菜单→版本信息面板(弹层,**不切场景**,故无场景硬断言,见 _run)→截图
@@ -27,6 +28,8 @@ func _run() -> void:
 		_press_by_text(tree.current_scene, "开 始 探 索")
 	elif mode == "mp":
 		_press_by_text(tree.current_scene, "多 人 对 战")
+	elif mode == "royale":
+		_press_by_text(tree.current_scene, "大 乱 斗")
 	elif mode == "set":
 		_press_by_text(tree.current_scene, "设 置")
 	elif mode == "ver":
@@ -46,6 +49,7 @@ func _run() -> void:
 		"sp": "Level0.tscn",
 		"mp": "matchmaking.tscn",
 		"set": "settings_menu.tscn",
+		"royale": "royale_lobby.tscn",
 	}
 	if must_reach.has(mode) and not _require_scene(tree, str(must_reach[mode])):
 		return

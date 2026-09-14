@@ -27,8 +27,7 @@ var _w: WeaponBase = null
 
 
 func _ready() -> void:
-	# 探针自持确定性:本机 user://settings.cfg 可能被用户关掉换弹玩法。
-	Settings.reload_enabled = true
+	# 探针自持确定性:本机 user://settings.cfg 可能被用户开着 pvp(换弹恒定开启,无开关)。
 	Level0.pvp_mode = false
 
 	# 窗口尺寸实取(不写死:stretch/mode=viewport 下与工程设置解耦,改分辨率探针不失效)。
@@ -74,11 +73,13 @@ func _ready() -> void:
 	_check(_hud._weapon_icon.texture != null, "态1:武器剪影贴图为空")
 	_check(_hud._weapon_name.text == "手枪", "态1:武器名应为「手枪」(实际「%s」)" % _hud._weapon_name.text)
 	_check(not _hud._reload_bar.visible, "态1:非换弹态进度条不应可见")
-	var gold_ammo1 := _gold_in(img1, _hud._ammo_label)
-	var gold_bar1 := _gold_in(img1, _hud._reload_bar)
-	_check(gold_ammo1 > 0, "态1:残弹文本区域没有画出金色像素(剪影/文本没渲染出来?)")
-	_check(gold_bar1 == 0, "态1:进度条区域出现金色像素(%d),非换弹态不该画进度条" % gold_bar1)
-	print("[L3-VISUAL] 态1 金色像素:残弹区=%d 进度条区=%d" % [gold_ammo1, gold_bar1])
+	var bright1 := _bright_in(img1, _hud._ammo_label)
+	var gold1 := _gold_in(img1, _hud._ammo_label)
+	var accent1 := _accent_in(img1, _hud._reload_bar)
+	_check(bright1 > 0, "态1:残弹文本区域没有画出中性亮文本(文本没渲染出来?)")
+	_check(gold1 == 0, "态1:满弹不该是金色(金色只表「弹夹见底」;实测金色像素 %d)" % gold1)
+	_check(accent1 == 0, "态1:非换弹态进度条区不该有强调青像素(%d)" % accent1)
+	print("[L3-VISUAL] 态1 像素:残弹区亮文本=%d 金色=%d 进度条区青=%d" % [bright1, gold1, accent1])
 
 	# ── 态2:装填中(进度中段 0.5)────────────────────────────────────
 	_w.mag_ammo = 3
@@ -95,12 +96,14 @@ func _ready() -> void:
 	_check(absf(_hud._reload_bar.size.x - HUD.WEAPON_ICON_W * prog) < 2.0,
 			"态2:进度条长度 %.1f 与进度 %.2f 不符(期望 %.1f)" % [
 				_hud._reload_bar.size.x, prog, HUD.WEAPON_ICON_W * prog])
-	var gold_ammo2 := _gold_in(img2, _hud._ammo_label)
+	var gold2 := _gold_in(img2, _hud._ammo_label)
 	var gold_bar2 := _gold_in(img2, _hud._reload_bar)
-	_check(gold_ammo2 > 0, "态2:残弹文本区域没有画出金色像素")
-	_check(gold_bar2 > 0, "态2:进度条区域没有画出金色像素(进度条没渲染出来?)")
-	print("[L3-VISUAL] 态2 金色像素:残弹区=%d 进度条区=%d 进度=%.2f 条长=%.1f" % [
-			gold_ammo2, gold_bar2, prog, _hud._reload_bar.size.x])
+	var accent2 := _accent_in(img2, _hud._reload_bar)
+	_check(gold2 > 0, "态2:残弹已见底(3/12)却没转金 —— 「低弹量」警告没画出来")
+	_check(accent2 > 0, "态2:进度条区域没有画出强调青像素(进度条没渲染出来?)")
+	_check(gold_bar2 == 0, "态2:进度条不该是金色(金色只留给残弹见底;实测 %d)" % gold_bar2)
+	print("[L3-VISUAL] 态2 像素:残弹区金色=%d 进度条区青=%d 金=%d 进度=%.2f 条长=%.1f" % [
+			gold2, accent2, gold_bar2, prog, _hud._reload_bar.size.x])
 
 	# ── 态3:残弹低位 1/12 ───────────────────────────────────────────
 	_w.tick(2.0)                   # 推进到底:补满并退出装填
@@ -112,11 +115,11 @@ func _ready() -> void:
 	_check(_hud._ammo_label.text == "1/12", "态3:文本应为「1/12」(实际「%s」)" % _hud._ammo_label.text)
 	_check(_hud._ammo_label.visible, "态3:残弹标签不可见")
 	_check(not _hud._reload_bar.visible, "态3:非换弹态进度条不应可见")
-	var gold_ammo3 := _gold_in(img3, _hud._ammo_label)
-	var gold_bar3 := _gold_in(img3, _hud._reload_bar)
-	_check(gold_ammo3 > 0, "态3:残弹文本区域没有画出金色像素")
-	_check(gold_bar3 == 0, "态3:进度条区域出现金色像素(%d)" % gold_bar3)
-	print("[L3-VISUAL] 态3 金色像素:残弹区=%d 进度条区=%d" % [gold_ammo3, gold_bar3])
+	var gold3 := _gold_in(img3, _hud._ammo_label)
+	var accent3 := _accent_in(img3, _hud._reload_bar)
+	_check(gold3 > 0, "态3:残弹见底(1/12)却没转金 —— 「低弹量」警告没画出来")
+	_check(accent3 == 0, "态3:非换弹态进度条区不该有强调青像素(%d)" % accent3)
+	print("[L3-VISUAL] 态3 像素:残弹区金色=%d 进度条区青=%d" % [gold3, accent3])
 
 	# ── 三态必须真的画得不一样(否则"改了状态但画面没变")──────────────
 	var d12 := _diff_in_hud_region(img1, img2)
@@ -159,16 +162,35 @@ func _px_rect(img: Image, ctrl: Control) -> Rect2i:
 	return Rect2i(x0, y0, maxi(x1 - x0, 0), maxi(y1 - y0, 0))
 
 
-# 矩形内"金色像素"(HUD 残弹/进度条配色 0.95,0.85,0.55)计数。背景深灰,不误判。
+# 矩形内"金色像素"(UiFactory.C_WARN = 0.95,0.85,0.55)计数。背景深灰,不误判。
+# ★ 2026-09-13 语义收窄:金色**只**表示「弹夹见底」,不再兼任满弹常态色与装填进度色
+#   (原先三者同色 = 没有警告)。故本探针同时断言「该金的要金」与「不该金的一个都不能有」。
 func _gold_in(img: Image, ctrl: Control) -> int:
+	return _color_in(img, ctrl, func(c: Color) -> bool:
+		return c.r > 0.6 and c.g > 0.5 and c.r > c.b + 0.15)
+
+
+# 矩形内"强调青像素"(UiFactory.C_ACCENT = 0.349,0.851,0.902)计数:换弹进度条用色。
+func _accent_in(img: Image, ctrl: Control) -> int:
+	return _color_in(img, ctrl, func(c: Color) -> bool:
+		return c.g > 0.6 and c.b > 0.6 and c.b > c.r + 0.15)
+
+
+# 矩形内"中性亮文本像素"(UiFactory.C_TEXT = 0.878,0.914,0.949)计数:满弹常态色。
+# 判据排除金色(r-b≈0.4)与强调青(b-r≈0.55),故三种语义互不误计。
+func _bright_in(img: Image, ctrl: Control) -> int:
+	return _color_in(img, ctrl, func(c: Color) -> bool:
+		return c.r > 0.6 and c.g > 0.6 and c.b > 0.6 and absf(c.r - c.b) < 0.12)
+
+
+func _color_in(img: Image, ctrl: Control, pred: Callable) -> int:
 	if img == null or img.get_width() == 0 or ctrl == null:
 		return 0
 	var rc := _px_rect(img, ctrl)
 	var n := 0
 	for y in range(rc.position.y, rc.position.y + rc.size.y):
 		for x in range(rc.position.x, rc.position.x + rc.size.x):
-			var c := img.get_pixel(x, y)
-			if c.r > 0.6 and c.g > 0.5 and c.r > c.b + 0.15:
+			if pred.call(img.get_pixel(x, y)):
 				n += 1
 	return n
 

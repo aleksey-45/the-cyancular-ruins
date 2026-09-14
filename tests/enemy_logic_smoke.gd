@@ -339,7 +339,7 @@ func _initialize() -> void:
 	_check(combat.hit_log.is_empty(), "玩家未被自己子弹命中")
 	combat.free()
 
-	# ── Task 2: MazeGenerator BFS + LOS ──
+	# ── Task 2: MazeGenerator A* + LOS ──
 	var g: Array[Array] = []
 	for _y in range(20):
 		var row: Array[int] = []
@@ -347,28 +347,16 @@ func _initialize() -> void:
 		row.fill(MazeGenerator.EMPTY)
 		g.append(row)
 	MazeGenerator.current_grid = g
-	var pth := MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(5, 6))
-	_check(not pth.is_empty() and pth[-1] == Vector2i(5, 6), "BFS 全通网格有路")
-	_check(pth[0] != Vector2i(2, 2), "BFS 路径不含起点")
-	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 2)).is_empty(), "BFS 同格返回空")
+	# 全通网格上的基本契约:不含起点、含终点(原 BFS 版断言,随 BFS 删除移植到 A*)
+	var pth := MazeGenerator.astar_path_nearest(Vector2i(2, 2), Vector2i(5, 6))
+	_check(not pth.is_empty() and pth[-1] == Vector2i(5, 6), "A* 全通网格有路")
+	_check(pth[0] != Vector2i(2, 2), "A* 路径不含起点")
 	# 两条整行墙(第 4/14 行)把环面切成隔离带;跨带必经墙行,才算"隔断"。
 	# 3 格短墙在环面上有绕行路,不能证明隔断。
 	for x in range(20):
 		g[4][x] = MazeGenerator.SOLID
 		g[14][x] = MazeGenerator.SOLID
-	_check(MazeGenerator.bfs_path(Vector2i(2, 2), Vector2i(2, 8)).is_empty(), "BFS 墙带隔断无路")
-	_check(MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 2)).is_empty(), "BFS 反向也无路")
-	# 目标被隔断(BFS 无路)→ bfs_path_nearest 仍返回"最近可达格"的路径,而非空
-	var pn := MazeGenerator.bfs_path_nearest(Vector2i(2, 2), Vector2i(2, 8))
-	_check(not pn.is_empty(), "bfs_path_nearest 目标不可达仍有降级路径")
-	_check(pn[-1] != Vector2i(2, 8), "bfs_path_nearest 终点不是被隔断的目标")
-	_check(MazeGenerator.bfs_path_nearest(Vector2i(2, 2), Vector2i(2, 2)).is_empty(), "bfs_path_nearest 同格返回空")
-	_check(MazeGenerator.bfs_path_nearest(Vector2i(2, 8), Vector2i(2, 12))[-1] == Vector2i(2, 12), "bfs_path_nearest 可达时直达终点")
-	_check(not MazeGenerator.bfs_path(Vector2i(2, 8), Vector2i(2, 12)).is_empty(), "BFS 同带仍有路")
-	# 限量预算: 同带可达、曼哈顿距离 14 > 预算 8 → 视为无路
-	_check(not MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12)).is_empty(), "BFS 预算内可达")
-	_check(MazeGenerator.bfs_path(Vector2i(0, 8), Vector2i(10, 12), 8).is_empty(), "BFS 超预算无路")
-	# A* 版: 行为与 bfs_path_nearest 一致(可达直达 / 墙带隔断降级 / 同格空)
+	# 可达直达 / 墙带隔断降级 / 同格空
 	var an := MazeGenerator.astar_path_nearest(Vector2i(2, 2), Vector2i(2, 8))
 	_check(not an.is_empty(), "astar_path_nearest 目标不可达仍有降级路径")
 	_check(an[-1] != Vector2i(2, 8), "astar_path_nearest 终点不是被隔断的目标")

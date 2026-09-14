@@ -21,7 +21,6 @@ var sfx_volume: float = 1.0:
 
 # ── 通用 ──
 var wheel_switch: bool = false    # 鼠标滚轮切枪
-var reload_enabled: bool = true   # 换弹装填(实验性;关闭=旧版无限弹;仅单机生效)
 
 # ── 单人开局选项存档(记住上次选择)──
 var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
@@ -65,14 +64,10 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 
 # ── 键位重映射 ──
 # 每动作支持**多个**键位(原作默认:up=W+空格、down=S+Shift),存取都保序完整往返。
-# 取该动作的**首个**事件,只给「单键位显示」用(如设置界面一栏一键)。
 # ⚠ 与 set_binding 的组合语义:set_binding 是 erase 后只写一个事件的**单键写入** → 用户
 #   主动重绑某动作 = 把该动作改成单键(多键动作如 up = W + Space 会被静默压成单键)。
 #   这是本项目键位重绑的设计语义,不是缺陷。要显示一个动作的**全部**键位请用
 #   get_binding_names()(逐个遍历);save()/load_settings() 同样遍历全部事件,往返不丢键。
-func get_binding(action: String) -> InputEvent:
-	var evs := InputMap.action_get_events(action)
-	return evs[0] if evs.size() > 0 else null
 
 # 显示用:一个动作的全部键位名,如 "W / Space"
 func get_binding_names(action: String) -> String:
@@ -113,7 +108,6 @@ func save() -> void:
 	cf.set_value("audio", "master_volume", master_volume)
 	cf.set_value("audio", "sfx_volume", sfx_volume)
 	cf.set_value("controls", "wheel_switch", wheel_switch)
-	cf.set_value("gameplay", "reload_enabled", reload_enabled)
 	cf.set_value("single", "disabled_weapons", sp_disabled_weapons)
 	cf.set_value("pvp", "show_trajectories", pvp_show_trajectories)
 	cf.set_value("pvp", "round_full_heal", pvp_round_full_heal)
@@ -142,7 +136,6 @@ func load_settings() -> void:
 	master_volume = float(cf.get_value("audio", "master_volume", 0.8))
 	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
 	wheel_switch = bool(cf.get_value("controls", "wheel_switch", false))
-	reload_enabled = bool(cf.get_value("gameplay", "reload_enabled", true))
 	sp_disabled_weapons.assign(cf.get_value("single", "disabled_weapons", []))
 	pvp_show_trajectories = bool(cf.get_value("pvp", "show_trajectories", true))
 	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))

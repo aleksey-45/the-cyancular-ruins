@@ -72,7 +72,7 @@ main_menu.tscn（默认场景）
 
 ## 3. 传输层：NetBus（autoload）
 
-服务器与客户端共用同一节点路径 `/root/NetBus`（autoload 常驻，RPC 才能跨场景路由）。用 `ENetMultiplayerPeer` + Godot 高层 MultiplayerAPI。端口默认 `7777`，服务器 `create_server(port, 16)` 上限 16 连接。
+服务器与客户端共用同一节点路径 `/root/NetBus`（autoload 常驻，RPC 才能跨场景路由）。用 `ENetMultiplayerPeer` + Godot 高层 MultiplayerAPI。端口默认 `7777`，服务器 `create_server(port, 16, ENet_CHANNELS)` 上限 16 连接、显式分配 4 条 ENet 通道（默认 0 通道会报 "Unable to send packet on channel 0, max channels: 0"）。
 
 **方法按调用方区分两端**，服务端侧自己不实现业务逻辑，而是 `emit` 信号转交（RoomManager / MatchHost 连接信号），不硬依赖类型、可独立编译。
 

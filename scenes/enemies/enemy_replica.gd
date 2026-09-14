@@ -81,10 +81,7 @@ func _sample_position(clock: float) -> Vector2:
 	var b: int = _tick_list[i + 1]
 	var pb: Vector2 = _pos_hist[b]
 	var alpha := clampf((clock - float(a)) / float(b - a), 0.0, 1.0)
-	var w := GameParameters.MAP_WIDTH
-	var h := GameParameters.MAP_HEIGHT
-	var d := MazeGenerator.toroidal_delta_px(pa, pb, w, h)
-	return MazeGenerator.wrap_to_range(pa + d * alpha, w, h)
+	return MazeGenerator.toroidal_lerp(pa, pb, alpha, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 func _process(delta: float) -> void:
 	if not _have or _e == null:

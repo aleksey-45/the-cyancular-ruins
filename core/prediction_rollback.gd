@@ -29,6 +29,30 @@ var _acked := 0
 var _pending: Array = []       # [[ack, state], ...] 待 reconcile
 var _rollbacks := 0
 
+# 环面地图尺寸(像素)。ZERO = 不做环面处理(退回裸距离比较)。
+# 刻意不引 autoload(与 core/ 其它纯逻辑件同例):由接入方显式设,`-s` 下也能空跑。
+var map_px: Vector2 = Vector2.ZERO
+
+# 「预测被证实」的位置容差(px)。**这是回滚频率的闸门**:
+# 贴身缠斗时对手身体在客户端眼里恒有滞后(实测 8 tick ≈ 93px),只要这个误差超容差就每帧判
+# 分歧、每帧 restore+重放。实测(见 tests/brawl_rollback_probe):把幽灵体做得再准也不改频率
+# ——摘除(修正 75px)/准确(2px)/推歪(77px) 三档都是 ~220 次;改容差才改频率。
+# 代价:容差内的位置误差不再纠正,即"服务器上你被挡住的地方"与"屏幕上看到的"可差一个容差。
+# `down`/`hp` 仍是精确比较(命中/倒地不受影响);被击退通常 ≫ 容差,照旧纠正。
+#
+# 取值 2.0(2026-09-12 用户裁定),依据是同一场景的容差扫描:
+#   容差 1px  N=2 221 / N=4 195 / N=8 159 次   接触期偏差 中位 1.6 p95 25~29px
+#   容差 2px  N=2   9 / N=4  85 / N=8  13 次   接触期偏差 中位 1.6 p95 25~30px
+# ⇒ 砍掉 ~95% 频率,而接触期偏差**一行没动** —— 反过来说明 1px 容差下那每帧一次的回滚
+#   本来就没买到精度(它从 8 tick 前的权威态重放,落点与不重放几乎一致)。
+# 4px 在 N=4 更彻底(→0.5 次/秒),但换来的那点频率要用"约 4px 的软接触"去换,边际不划算。
+#
+# ★ 放**默认值**而不是让客户端各自接线:两端(1v1 / 大乱斗)各设一次就有漏接风险,而漏接是
+#   静默的(不报错、只是频率照旧)—— 那正是 map_px 踩过的坑。集中在这里则一处调、两端都得。
+#   探针要量别的档位时显式覆盖(见 brawl_rollback_probe 的 VARIANT_TOL)。
+const DEFAULT_POS_TOL := 2.0
+var pos_tol: float = DEFAULT_POS_TOL
+
 func bind(p) -> void:
 	_p = p
 
@@ -78,17 +102,6 @@ func reconcile() -> void:
 		var pk: Array = _pending.pop_front()
 		_handle_ack(int(pk[0]), pk[1])
 
-# 权威态作预测起点重设(对局开始/换边/复活后)。
-func reset_to(ack: int, state: Dictionary) -> void:
-	_acked = ack
-	_pending.clear()
-	_inputs.clear()
-	_captures.clear()
-	_seqs.clear()
-	_last_applied = ack
-	if _p != null and not state.is_empty():
-		_p.restore_state(state)
-
 # 用记录步进一次:临时把玩家输入源换成 scratch(喂入该记录),步进后换回。
 # 这样被预测玩家平时可读真实 Input(真机手感不变),重放才切换历史输入,保证孪生一致。
 func _step(record: Dictionary) -> void:
@@ -137,10 +150,16 @@ func _close_enough(a: Dictionary, b: Dictionary) -> bool:
 		return false
 	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
 		return false
-	var pa: Vector2 = a.get("pos", Vector2.ZERO)
-	var pb: Vector2 = b.get("pos", Vector2.ZERO)
-	if pa.distance_to(pb) > 1.0:
+	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > pos_tol:
 		return false
 	var va: Vector2 = a.get("vel", Vector2.ZERO)
 	var vb: Vector2 = b.get("vel", Vector2.ZERO)
 	return va.distance_to(vb) < 20.0
+
+
+# 两个位置在**环面**上是否几乎同位。裸 distance_to 在跨接缝那一帧会给出「一整幅地图宽」的
+# 假分歧(客户端已取模、服务器还没,或反之)—— 那其实同一个物理点,却会白跑一次回滚。
+func _pos_dist(a: Vector2, b: Vector2) -> float:
+	if map_px.x <= 0.0 or map_px.y <= 0.0:
+		return a.distance_to(b)
+	return MazeGenerator.toroidal_delta_px(a, b, map_px.x, map_px.y).length()

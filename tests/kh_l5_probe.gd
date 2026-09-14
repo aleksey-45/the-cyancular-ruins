@@ -486,7 +486,10 @@ func _check_new_interfaces() -> void:
 	_check(not base_code.is_empty() and not sub_code.is_empty(), "读不到 %s / %s" % [base, sub])
 	if base_code.is_empty() or sub_code.is_empty():
 		return
-	for m in ["_broadcast" + "_match_options", "notify" + "_direct_hit"]:
+	# ★ 批次 3 改法:`_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**
+	#   (NetBus.match_sync)下发,那次"服务器推"是同一次 poll 里推给正在切场景的客户端,会静默丢
+	#   (自检 B2)。按"改探针认新入口、别回退重构"的纪律改这里:**别把它加回来**。
+	for m in ["notify" + "_direct_hit"]:
 		_check(base_code.contains("func " + m + "("), "%s 缺基类方法 %s" % [base, m])
 	for m in ["start_on", "set_display_names", "mark_disconnected", "request_suicide_role"]:
 		_check(sub_code.contains("func " + m + "("), "%s 缺子类方法 %s" % [sub, m])
@@ -502,7 +505,7 @@ func _check_new_interfaces() -> void:
 			"scenes/royale_hud.gd 缺 class_name RoyaleHud")
 	_check(_code_only(_read("res://server/room_manager.gd")).contains("func royale_create("),
 			"server/room_manager.gd 缺 func royale_create(")
-	_summary(fails_before, "新接口:基类 2 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud/royale_create 在位")
+	_summary(fails_before, "新接口:基类 1 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud/royale_create 在位")
 
 
 # ── 10) ★ round_full_heal 真的把双方回满血(端到端 + 对照组)────────────
