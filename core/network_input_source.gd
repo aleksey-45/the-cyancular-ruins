@@ -13,6 +13,53 @@ const BIT_DOWN := 2
 const BIT_CHARGE := 4
 const BIT_ATTACK := 8
 
+
+# ── 编码端:组一个输入包(协议**发送侧**的唯一来源)──
+# ★ 为什么必须收在这里:这段 30 行的位打包原先在 `pvp_client` 与 `royale_game` 里**各手抄一份**,
+#   而**解码端**(本类的 apply_packet / _bit / get_axis)只有一份。编码端分叉不会有任何报错:
+#   加一个 held 位只改一个客户端 → 该键在一个模式里永远没反应;把 CHARGE 抄成 ATTACK 也拦不住。
+#   (`--` 两份此前确实只差一句注释,但在它们真分叉之前收口。)
+# ★ seq / aim 由调用方给:它们来自场景(`_input_seq` 单调自增、`player.get_current_aim_dir()`),
+#   不属于"协议编码"这件事。
+# ★ 读 src 走公开读口 → 自动遵守 `frozen`(COUNTDOWN 冻结期组出来的是全中性包,与旧行为一致)。
+static func pack_record(src: InputSource, seq: int, aim: Vector2) -> Dictionary:
+	var held := 0
+	var pressed := 0
+	var released := 0
+	if src.is_action_pressed("up"):
+		held |= BIT_UP
+	if src.is_action_pressed("down"):
+		held |= BIT_DOWN
+	if src.is_action_pressed("charge"):
+		held |= BIT_CHARGE
+	if src.is_action_pressed("attack"):
+		held |= BIT_ATTACK
+	if src.is_action_just_pressed("up"):
+		pressed |= BIT_UP
+	if src.is_action_just_pressed("down"):
+		pressed |= BIT_DOWN
+	if src.is_action_just_pressed("charge"):
+		pressed |= BIT_CHARGE
+	if src.is_action_just_pressed("attack"):
+		pressed |= BIT_ATTACK
+	if src.is_action_just_released("up"):
+		released |= BIT_UP
+	if src.is_action_just_released("down"):
+		released |= BIT_DOWN
+	if src.is_action_just_released("charge"):
+		released |= BIT_CHARGE
+	if src.is_action_just_released("attack"):
+		released |= BIT_ATTACK
+	return {
+		"seq": seq,          # 单调输入序号(服务器按序消费并回带 ack,rollback 用)
+		"ax": src.get_axis("left", "right"),
+		"held": held,
+		"pressed": pressed,
+		"released": released,
+		"weapon": src.get_weapon_slot_pressed(),
+		"aim": aim,
+	}
+
 var _axis := 0.0
 var _held := 0
 var _aim := Vector2.ZERO   # 注入的瞄准方向(世界坐标系)

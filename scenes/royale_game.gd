@@ -156,46 +156,10 @@ func _physics_process(_delta: float) -> void:
 			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
 			_rollback.reconcile()
 	var src: InputSource = _local.input_source
-	const UP := NetworkInputSource.BIT_UP
-	const DOWN := NetworkInputSource.BIT_DOWN
-	const CHARGE := NetworkInputSource.BIT_CHARGE
-	const ATTACK := NetworkInputSource.BIT_ATTACK
-	var held := 0
-	var pressed := 0
-	var released := 0
-	if src.is_action_pressed("up"):
-		held |= UP
-	if src.is_action_pressed("down"):
-		held |= DOWN
-	if src.is_action_pressed("charge"):
-		held |= CHARGE
-	if src.is_action_pressed("attack"):
-		held |= ATTACK
-	if src.is_action_just_pressed("up"):
-		pressed |= UP
-	if src.is_action_just_pressed("down"):
-		pressed |= DOWN
-	if src.is_action_just_pressed("charge"):
-		pressed |= CHARGE
-	if src.is_action_just_pressed("attack"):
-		pressed |= ATTACK
-	if src.is_action_just_released("up"):
-		released |= UP
-	if src.is_action_just_released("down"):
-		released |= DOWN
-	if src.is_action_just_released("attack"):
-		released |= ATTACK
+	# 位打包收在 NetworkInputSource.pack_record(协议**编码端**唯一来源;解码端本来就只有一份)。
 	var aim: Vector2 = _local.get_current_aim_dir()
 	_input_seq += 1
-	var pkt := {
-		"seq": _input_seq,   # 单调输入序号(服务器按序消费并回带 ack,rollback 用)
-		"ax": src.get_axis("left", "right"),
-		"held": held,
-		"pressed": pressed,
-		"released": released,
-		"weapon": src.get_weapon_slot_pressed(),
-		"aim": aim,
-	}
+	var pkt := NetworkInputSource.pack_record(src, _input_seq, aim)
 	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
 	var net_slot: int = _local.weapons.consume_net_slot()
 	if net_slot > 0:

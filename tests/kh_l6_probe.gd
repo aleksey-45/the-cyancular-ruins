@@ -117,6 +117,11 @@ const MIN_CANARY_HITS := 5
 const RE_FIELD_PAUSE := "^var\\s+" + "_pause" + "_menu\\b"
 const RE_CONST_NAME_COLOR := "^const\\s+" + "NAME" + "_COLOR\\b"
 const RE_PACKET_DICT := "^\\s*var\\s+([A-Za-z_]\\w*)\\s*(?::[^:=]+)?:?=\\s*\\{"
+# 组包**新形态**(2026-09-14):位打包收进 NetworkInputSource.pack_record(协议编码端唯一来源,
+# 与解码端同处一类)。原先两个客户端各手抄一份字典字面量,qa 锚点因此认的是 `"seq": _input_seq`。
+# ★ 判据改成"**送出去的包必须带 _input_seq**"这条用意 —— 两种写法都能满足,故两种都认:
+#   新形态锚 `pack_record(` 一行(该调用必须收到 N_SEQ);旧形态仍走字典推导。别只留一种。
+const N_PACK := "Network" + "InputSource.pack_" + "record("
 const RE_FUNC_DEF := "^(?:static\\s+)?func\\s+([A-Za-z_]\\w*)\\s*\\("
 const RE_ONREADY_PATH := "@onready\\s+var\\s+[A-Za-z_]\\w*\\s*:[^=]+=\\s*\\$([A-Za-z0-9_/]+)"
 # 文件级常量 + 字符串字面量(用于把"菜单路径抽成常量"这种正确修法也认下来)
@@ -171,21 +176,26 @@ func _check_seq_in_packet() -> void:
 		return
 	var lines := phys.split("\n")
 	var i_inc := _find_line(lines, N_SEQ_INC)
-	var i_key := _find_line(lines, N_SEQ_KEY)
+	var i_key := _packet_anchor(lines)
 	_check(i_inc >= 0, "组包前没有 `%s`(输入序号不单调 → 服务器 ack 锚点无从推进)" % N_SEQ_INC)
-	_check(i_key >= 0, "输入包字典里没有 `%s`(服务器 _ack_seq 永停 0 → 回滚锚点全失)" % N_SEQ_KEY)
+	_check(i_key >= 0, "找不到组包处(`%s` 与 `%s` 都不在 → 服务器 _ack_seq 永停 0、回滚锚点全失)" % [N_PACK, N_SEQ_KEY])
 	if i_inc >= 0 and i_key >= 0:
-		_check(i_inc < i_key, "`%s` 出现在 `%s` 之后(送出去的 seq 不是本帧新序号)" % [N_SEQ_INC, N_SEQ_KEY])
-	var varname := _packet_var(lines, i_key if i_key >= 0 else lines.size() - 1)
-	_check(not varname.is_empty(), "找不到承载 seq 的组包字典(`var X := {` 推导失败)")
+		_check(i_inc < i_key, "`%s` 出现在组包之后(送出去的 seq 不是本帧新序号)" % N_SEQ_INC)
+	# ★ 用意:送出去的包必须**带本帧新序号**。新形态下这体现为「组包调用收到了 _input_seq」,
+	#   旧形态下体现为字典里绑定 `"seq": _input_seq` —— 后者本身含 N_SEQ,故这一条同时覆盖两种。
+	if i_key >= 0:
+		_check(lines[i_key].contains(N_SEQ),
+			"组包处没带输入序号 `%s`(seq 没进包):「%s」" % [N_SEQ, lines[i_key].strip_edges()])
+	var varname := _packet_varname(lines, i_key)
+	_check(not varname.is_empty(), "找不到承载 seq 的组包变量(`var X := ` 推导失败)")
 	var i_send := _find_line(lines, N_SEND)
 	_check(i_send >= 0, "找不到输入包发送调用(%s)" % N_SEND)
 	if i_send >= 0:
 		_check(lines[i_send].contains("rpc_" + "id("), "输入包不经 NetBus.rpc_id 发送(服务器收不到):「%s」" % lines[i_send].strip_edges())
 		if not varname.is_empty():
 			_check(lines[i_send].contains(varname),
-				"发送的不是带 seq 的那个字典(发送行「%s」里没有 %s)" % [lines[i_send].strip_edges(), varname])
-	_summary(before, "输入包 seq:自增在 %d,绑定在 %d,发送字典 = %s" % [i_inc, i_key, varname if varname != "" else "?"])
+				"发送的不是带 seq 的那个变量(发送行「%s」里没有 %s)" % [lines[i_send].strip_edges(), varname])
+	_summary(before, "输入包 seq:自增在 %d,组包在 %d,发送变量 = %s" % [i_inc, i_key, varname if varname != "" else "?"])
 
 
 # ── 2) 快照两条包的分工:世界包不得碰本端,本人包必须喂控制器(B6)──
@@ -294,10 +304,11 @@ func _check_c2_frame_block() -> void:
 # restore 之后必须按**已发出的输入序列**重放才能重对齐。没有 note_input 的回滚只剩
 # "把权威态贴上去"= 橡皮筋(KH 正是删掉了它)。
 # 判据:调用行必须同时带 `_input_seq` 与**真正发出去的那个字典变量**(不是随便一个字典)。
-# ★ 组包锚点与 #1 **同源**(同一个 _packet_var,锚在**承载 seq 绑定的那一行** = N_SEQ_KEY),
-#   **不取「note_input 上方最近的字典声明」**:那样锚点会被组包之后、调用之前插入的任何无关
-#   字典字面量抢走 → 重命名/重组组包这类**合法加法**会让本条假红(与 #3 的组包锚点同一条
-#   理由:判红只靠"实参不是那个字典"这条机械比对,不靠锚点碰巧落在谁头上)。
+# ★ 组包锚点与 #1 **同源**(同一个 _packet_anchor:_packet_varname,优先 pack_record 调用行、
+#   回退承载 `"seq": _input_seq` 的旧字典行),**不取「note_input 上方最近的字典声明」**:
+#   那样锚点会被组包之后、调用之前插入的任何无关字典字面量抢走 → 重命名/重组组包这类**合法加法**
+#   会让本条假红(与 #3 的组包锚点同一条理由:判红只靠"实参不是那个包变量"这条机械比对,
+#   不靠锚点碰巧落在谁头上)。
 func _check_note_input() -> void:
 	var before := _failures.size()
 	var phys := _func_body(_pc_code, "_physics_process")
@@ -306,8 +317,8 @@ func _check_note_input() -> void:
 		return
 	var lines := phys.split("\n")
 	var i_ni := _find_line(lines, N_NOTE_INPUT)
-	var i_key := _find_line(lines, N_SEQ_KEY)
-	var varname := _packet_var(lines, i_key if i_key >= 0 else lines.size() - 1)
+	var i_key := _packet_anchor(lines)
+	var varname := _packet_varname(lines, i_key)
 	_check(i_ni >= 0, "每物理帧没有 `%s`(回滚无输入可重放 → 退化成橡皮筋)" % N_NOTE_INPUT)
 	if i_ni >= 0:
 		_check(lines[i_ni].contains(N_SEQ),
@@ -787,6 +798,24 @@ func _find_line(lines: PackedStringArray, needle: String) -> int:
 
 
 # 第一条**匹配** pattern 的行号(找不到 -1)
+# 组包锚点:优先新形态(pack_record 调用行),回退旧形态(承载 `"seq": _input_seq` 的那一行)。
+# 两者都指"组出要发出去的那个包"这件事发生的位置。
+func _packet_anchor(lines: PackedStringArray) -> int:
+	var i := _find_line(lines, N_PACK)
+	return i if i >= 0 else _find_line(lines, N_SEQ_KEY)
+
+# 承载 seq 的那个**变量名**:先从锚点那一行取 `var X :=`(新形态:`var pkt := ...pack_record(...)`);
+# 取不到再回退到旧的"往前找最近的字典字面量"。
+func _packet_varname(lines: PackedStringArray, anchor: int) -> String:
+	if anchor >= 0:
+		var re := RegEx.new()
+		re.compile("^\\s*var\\s+([A-Za-z_]\\w*)\\s*(?::[^:=]+)?:?=")
+		var m := re.search(lines[anchor])
+		if m != null:
+			return m.get_string(1)
+	return _packet_var(lines, anchor if anchor >= 0 else lines.size() - 1)
+
+
 func _find_line_re(lines: PackedStringArray, pattern: String) -> int:
 	var re := RegEx.new()
 	re.compile(pattern)
