@@ -19,7 +19,22 @@ param(
 $ErrorActionPreference = "Continue"
 # repo root = two levels up from this script (tools/gamelog)
 $repo = (Get-Item (Join-Path $PSScriptRoot "..\..")).FullName
-$godot = "C:\Godot\Godot_v4.7.1-stable_win64_console.exe"
+# ---- resolve Godot (portable): env GODOT_EXE -> common paths -> PATH ----
+$godot = $env:GODOT_EXE
+if (-not $godot -or -not (Test-Path $godot)) {
+    $godot = @(
+        "C:\Godot\Godot_v4.7.1-stable_win64_console.exe",
+        "C:\Godot\Godot_v4.7.1-stable_win64.exe",
+        "$env:LOCALAPPDATA\Programs\Godot\Godot_v4.7.1-stable_win64_console.exe"
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if (-not $godot) {
+        $cmd = Get-Command godot -ErrorAction SilentlyContinue
+        if ($cmd) { $godot = $cmd.Source }
+    }
+}
+if (-not $godot) {
+    Write-Host "[ERROR] Godot not found. Set environment variable GODOT_EXE to your Godot exe."
+}
 
 # ---- resolve exe + args -----------------------------------------------------
 $exe = ""

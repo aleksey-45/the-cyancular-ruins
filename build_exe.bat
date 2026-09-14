@@ -10,6 +10,17 @@ rem ASCII-only + CRLF on purpose: cmd mis-parses UTF-8 batch content. The histor
 rem folder name is ASCII (historyexe) - no char-code trickery needed.
 cd /d %~dp0
 
+set "GODOT="
+if defined GODOT_EXE if exist "%GODOT_EXE%" set "GODOT=%GODOT_EXE%"
+if not defined GODOT for %%P in ("C:\Godot\Godot_v4.7.1-stable_win64_console.exe" "D:\Godot\Godot_v4.7.1-stable_win64_console.exe" "C:\Program Files\Godot\Godot_v4.7.1-stable_win64_console.exe" "C:\Godot\Godot_v4.7.1-stable_win64.exe") do if not defined GODOT if exist %%P set "GODOT=%%~P"
+if not defined GODOT for /f "delims=" %%P in ('where Godot_v4.7.1-stable_win64_console.exe 2^>nul') do if not defined GODOT set "GODOT=%%P"
+if not defined GODOT (
+  echo [ERROR] Godot console exe not found. Set GODOT_EXE.
+  pause
+  exit /b 1
+)
+
+
 rem -- branch name / timestamp --
 for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD') do set BRANCH=%%b
 for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"') do set TS=%%t
@@ -34,7 +45,7 @@ for /f "delims=" %%f in ('dir /b /a-d "Cyancular Ruins Server"*.exe 2^>nul') do 
 )
 
 rem -- export client. Console Godot so cmd waits and errorlevel is reliable. --
-"C:\Godot\Godot_v4.7.1-stable_win64_console.exe" --headless --path . --export-release "Windows Desktop" "%OUT%"
+"%GODOT%" --headless --path . --export-release "Windows Desktop" "%OUT%"
 if errorlevel 1 (
 	echo CLIENT pack failed! Common causes: the game is running / preset name mismatch.
 	pause
@@ -42,7 +53,7 @@ if errorlevel 1 (
 )
 
 rem -- export dedicated server (same branch, same content as the client) --
-"C:\Godot\Godot_v4.7.1-stable_win64_console.exe" --headless --path . --export-release "Dedicated Server" "%SRV%"
+"%GODOT%" --headless --path . --export-release "Dedicated Server" "%SRV%"
 if errorlevel 1 (
 	echo SERVER pack failed! Common causes: server exe is running / preset name mismatch.
 	pause

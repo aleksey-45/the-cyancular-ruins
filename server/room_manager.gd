@@ -500,7 +500,10 @@ func _spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
-		args = PackedStringArray(["--headless", "--log-file", "C:/Users/21559/worker_debug.log",
+		var log_dir := OS.get_user_data_dir().path_join("worker_logs")
+		DirAccess.make_dir_recursive_absolute(log_dir)
+		var worker_log := "%s/worker_%d.log" % [log_dir, port]
+		args = PackedStringArray(["--headless", "--log-file", worker_log,
 				"--path", ProjectSettings.globalize_path("res://"),
 				"res://server/server_main.tscn", "--", "--worker", "--port", str(port)])
 	else:

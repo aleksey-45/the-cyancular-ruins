@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 rem PvP lobby launcher (headless, listens on 7777). 大厅只做配对;每局配对完成会自动
 rem 拉起一个对局 worker 子进程(独占 UDP 7800 起的端口)。不同对局 = 不同进程 = 隔离。
 rem This bat is pure ASCII + CRLF so Windows cmd parses it in any locale.
@@ -19,7 +19,16 @@ echo   Starting PvP lobby on port 7777 (workers auto-spawn)...
 echo   Wait for "server ready" output below, then keep this window open.
 echo   Close this window = stop the lobby.
 echo ============================================
-"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
+set "GODOT="
+if defined GODOT_EXE if exist "%GODOT_EXE%" set "GODOT=%GODOT_EXE%"
+if not defined GODOT for %%P in ("C:\Godot\Godot_v4.7.1-stable_win64_console.exe" "D:\Godot\Godot_v4.7.1-stable_win64_console.exe" "C:\Program Files\Godot\Godot_v4.7.1-stable_win64_console.exe") do if not defined GODOT if exist %%P set "GODOT=%%~P"
+if not defined GODOT for /f "delims=" %%P in ('where Godot_v4.7.1-stable_win64_console.exe 2^>nul') do if not defined GODOT set "GODOT=%%P"
+if not defined GODOT (
+  echo [ERROR] Godot console exe not found. Set GODOT_EXE.
+  pause
+  exit /b 1
+)
+"%GODOT%" --headless --path . res://server/server_main.tscn
 echo.
 echo Server exited. If "listen failed" appeared above, port 7777 is in use.
 pause
