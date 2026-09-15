@@ -353,14 +353,17 @@ func _phase_weapon_registry() -> void:
 	var wb: GDScript = load("res://scenes/weapons/weapon_base.gd")
 
 	# ① 三个注册表键集相同
-	var keys_w: Array = (wc.WEAPONS as Dictionary).keys()
-	var keys_n: Array = (wc.DISPLAY_NAMES as Dictionary).keys()
-	var keys_t: Array = (wc.TIERS as Dictionary).keys()
+	# ★ 必须**归一化成 int** 再比:WEAPONS 的键是字符串("1".."6",因为装备路径是
+	#   equip(str(slot)) → load(WEAPONS[slot])),而 DISPLAY_NAMES / TIERS 的键是整数。
+	#   直接比数组永远不等 —— 而"永远不等"看起来像真发现了漏填,其实是类型没归一。
+	var keys_w: Array = (wc.WEAPONS as Dictionary).keys().map(func(k): return int(k))
+	var keys_n: Array = (wc.DISPLAY_NAMES as Dictionary).keys().map(func(k): return int(k))
+	var keys_t: Array = (wc.TIERS as Dictionary).keys().map(func(k): return int(k))
 	keys_w.sort()
 	keys_n.sort()
 	keys_t.sort()
-	_check(keys_w == keys_n, "WEAPONS 与 DISPLAY_NAMES 键集不同:%s vs %s" % [str(keys_w), str(keys_n)])
-	_check(keys_w == keys_t, "WEAPONS 与 TIERS 键集不同:%s vs %s" % [str(keys_w), str(keys_t)])
+	_check(keys_w == keys_n, "WEAPONS 与 DISPLAY_NAMES 键集相同(归一化后)")
+	_check(keys_w == keys_t, "WEAPONS 与 TIERS 键集相同(归一化后)")
 
 	# ② TIERS 与各 .tscn 的 tier = export 逐条一致(两份数据是刻意重复的:
 	#    不实例化武器场景就问得到"这枪多重",代价是要有这条断言兜住漂移)

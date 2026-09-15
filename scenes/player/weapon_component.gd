@@ -17,6 +17,21 @@ const WEAPONS: Dictionary = {
 # 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
 const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪"}
 
+# 武器重量档(轻/中/重),决定占几格容量(见 WeaponInventory.SLOT_COST:轻2/中3/重4)。
+# ★ 与各 .tscn 的 `tier =` export **刻意重复** —— 这份表让"这枪多重"不必实例化武器场景
+#   就能问(实例化会连带 preload bullet.tscn)。漂移由 enemy_logic_smoke 的
+#   `_phase_weapon_registry` 逐条钉住(键集 / tscn export / 枚举数值三样都比)。
+# ★ 加新武器时**这里也要加一行** —— 漏了的表现是**容量算错**(轻武器被当成重武器,
+#   8 格只能带两把),而且完全不报错,是三条注册表里最难发现的一条。
+const TIERS: Dictionary = {
+	1: WeaponBase.Tier.LIGHT,    # 手枪
+	2: WeaponBase.Tier.MEDIUM,   # 步枪
+	3: WeaponBase.Tier.HEAVY,    # 重狙 M82A1
+	4: WeaponBase.Tier.LIGHT,    # 霰弹 S686
+	5: WeaponBase.Tier.HEAVY,    # 榴弹发射器
+	6: WeaponBase.Tier.MEDIUM,   # 激光枪
+}
+
 signal weapon_changed(slot: int)   # equip 成功后发射(菜单图标/HUD 武器显示跟随)
 
 var _weapon: WeaponBase = null

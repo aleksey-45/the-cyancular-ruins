@@ -124,6 +124,7 @@ func _initialize() -> void:
 	_phase_spawn_metadata_parse()
 	_phase_enemy_types_json()
 	await _phase_collision_aabb()   # ★ 追加在**末尾**:既有 27 节的顺序是回归基线,不插队
+	_phase_weapon_registry()        # ★ 同上,只追加在末尾
 
 	if _failures.is_empty():
 		print("SMOKE OK")
@@ -1072,3 +1073,60 @@ func _phase_collision_aabb() -> void:
 			"跳鸟身体 AABB 中心偏离原点 %.1f px(以原点为中心的写法会丢掉这个偏移)"
 					% absf(er.get_center().y - e.global_position.y))
 	e.free()
+
+
+# ── 武器注册表三条对齐(2026-09-15,武器槽位计划 Task 2)──
+# 加新武器时漏填注册表的表现各不相同:
+#   WEAPONS 漏 → 切枪时 load("") 报错(响);DISPLAY_NAMES 漏 → HUD 显示 "?"(看得见);
+#   TIERS 漏 → **容量算错**(轻武器被当成重武器,8 格只能带两把),完全不报错。
+# 第三条最容易漏,所以三条一起钉。
+#
+# ★ 用 get_script_constant_map() 而不是脚本上直接取属性:常量不存在时属性访问会抛运行时错,
+#   而 -s 脚本里抛错走不到 quit() → **进程永久挂起**(本仓踩过)。这里先查表再取值。
+func _phase_weapon_registry() -> void:
+	var wc: GDScript = load("res://scenes/player/weapon_component.gd")
+	var wi: GDScript = load("res://core/sim/weapon_inventory.gd")
+	var wb: GDScript = load("res://scenes/weapons/weapon_base.gd")
+	_check(wc != null and wi != null and wb != null, "武器注册表三件套可加载")
+	if wc == null or wi == null or wb == null:
+		return
+	var consts: Dictionary = wc.get_script_constant_map()
+	_check(consts.has("TIERS"), "WeaponComponent 有 TIERS 注册表")
+	if not consts.has("TIERS"):
+		return
+
+	# ① 三个注册表键集相同
+	# ★ 必须**归一化成 int** 再比:WEAPONS 的键是字符串("1".."6",因为装备路径是
+	#   equip(str(slot)) → load(WEAPONS[slot])),而 DISPLAY_NAMES / TIERS 的键是整数。
+	#   直接比数组会永远不等 —— 而"永远不等"看起来像真发现了漏填,其实是类型没归一。
+	var keys_w: Array = (wc.WEAPONS as Dictionary).keys().map(func(k): return int(k))
+	var keys_n: Array = (wc.DISPLAY_NAMES as Dictionary).keys().map(func(k): return int(k))
+	var keys_t: Array = (consts["TIERS"] as Dictionary).keys().map(func(k): return int(k))
+	keys_w.sort()
+	keys_n.sort()
+	keys_t.sort()
+	_check(not keys_w.is_empty(), "WEAPONS 注册表非空")
+	_check(keys_w == keys_n, "WEAPONS 与 DISPLAY_NAMES 键集相同(归一化后)")
+	_check(keys_w == keys_t, "WEAPONS 与 TIERS 键集相同(归一化后)")
+
+	# ② TIERS 与各 .tscn 的 tier = export 逐条一致
+	#    两份数据是**刻意重复**的:不实例化武器场景就问得到"这枪多重"(实例化会连带 preload
+	#    bullet.tscn)。代价就是要靠这条断言兜住漂移。
+	for k in keys_w:
+		var slot := int(k)
+		var scene: PackedScene = load(wc.WEAPONS[str(slot)])
+		_check(scene != null, "槽 %d 的武器场景可加载" % slot)
+		if scene == null:
+			continue
+		var inst: Node = scene.instantiate()
+		_check(int(inst.tier) == int((consts["TIERS"] as Dictionary)[slot]),
+				"槽 %d 的 tscn tier 与 WEAPONS/TIERS 注册表一致" % slot)
+		inst.free()
+
+	# ③ WeaponInventory 的 tier 常量与 WeaponBase.Tier 数值对齐
+	#    (wi 刻意不 import weapon_base,所以这条对齐是**约定**而不是编译器保证的)
+	_check(int(wi.TIER_LIGHT) == int(wb.Tier.LIGHT), "TIER_LIGHT 与 WeaponBase.Tier.LIGHT 对齐")
+	_check(int(wi.TIER_MEDIUM) == int(wb.Tier.MEDIUM), "TIER_MEDIUM 与 WeaponBase.Tier.MEDIUM 对齐")
+	_check(int(wi.TIER_HEAVY) == int(wb.Tier.HEAVY), "TIER_HEAVY 与 WeaponBase.Tier.HEAVY 对齐")
+	_check(int(wi.MAX_WEAPONS) == 4, "WeaponInventory.MAX_WEAPONS == 4")
+	_check(int(wi.CAPACITY) == 8, "WeaponInventory.CAPACITY == 8")
