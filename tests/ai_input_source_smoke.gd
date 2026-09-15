@@ -1,6 +1,6 @@
 extends SceneTree
 
-# AIInputSource 契约冒烟:①是 InputSource 子类 ②is_network_driven() 必须为 true
+# AiInputSource 契约冒烟:①是 InputSource 子类 ②is_network_driven() 必须为 true
 # ③基类所有读口都真被覆写(不会被基类默认实现悄悄接管)
 # 为什么钉死第 ② 条:main 的 WeaponBase.reload_active() 第二判据是 player.input_is_network()
 # → 若 AI 被判成"本地单机",AI 打空弹夹后会进换弹、静默停火 reload_time 秒(霰弹 2.2s/榴弹 2.8s)。
@@ -9,7 +9,7 @@ extends SceneTree
 var _fail := 0
 
 
-# ── AINavigator._pick_target 的桩(只为断言方向符号,不模拟任何真实玩法)──
+# ── AiNavigator._pick_target 的桩(只为断言方向符号,不模拟任何真实玩法)──
 # 为什么必须真调 `_pick_target`:它返回的 `"dir"` 有两个分支(黏滞锁定 / 重选最近),
 # 两处都要是「我→对手」。只断言成员存在或方法可调**照不出符号错** —— 2026-09-14 那个
 # 「锁死后瞄反」的 bug 正是这么漏过去的(冒烟只查了 host/role/src 三个成员名)。
@@ -34,7 +34,7 @@ func _initialize() -> void:
 		return
 	var src: InputSource = ai_script.new()
 
-	_check(src is InputSource, "AIInputSource 是 InputSource 的子类")
+	_check(src is InputSource, "AiInputSource 是 InputSource 的子类")
 	_check(src.is_network_driven(), "★ is_network_driven() 必须为 true(否则 AI 会静默进换弹)")
 
 	# 覆写的行为断言(逐条对基类可区分):基类会把读口委托给真实 Input,headless 下恒为
@@ -85,9 +85,9 @@ func _initialize() -> void:
 	# is_action_just_released 恒 false、is_attack_just_released 恒 false、
 	# get_weapon_slot_pressed 恒 0)—— 那种断言无论覆写与否都通过,是空转。
 
-	# AINavigator:只建实例断言成员与接口(不入树 → _physics_process/_ready 都不会跑,
+	# AiNavigator:只建实例断言成员与接口(不入树 → _physics_process/_ready 都不会跑,
 	# 故读 host 的那行不会被触发;T2 的 AI 生成块按这几个成员名赋值,名错即静默失效)
-	var nav_script: GDScript = load("res://server/ai_player.gd")
+	var nav_script: GDScript = load("res://server/ai_navigator.gd")
 	_check(nav_script != null, "server/ai_player.gd 可加载")
 	if nav_script != null:
 		var nav: Node = nav_script.new()
@@ -95,8 +95,8 @@ func _initialize() -> void:
 		for p in nav.get_property_list():
 			props.append(p["name"])
 		for m in ["host", "role", "src"]:
-			_check(props.has(m), "AINavigator 有成员 %s" % m)
-		_check(nav.has_method("_physics_process"), "AINavigator 有 _physics_process")
+			_check(props.has(m), "AiNavigator 有成员 %s" % m)
+		_check(nav.has_method("_physics_process"), "AiNavigator 有 _physics_process")
 
 		# ── ★ AI 目标方向(2026-09-14 修 H1)──
 		# `_pick_target` 的 "dir" 约定是 **我→对手**(消费者:`_aim_and_fire` 拿它当开火方向、

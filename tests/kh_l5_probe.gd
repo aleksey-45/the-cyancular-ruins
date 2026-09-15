@@ -294,7 +294,7 @@ func _check_royale_laser_routing() -> void:
 	_summary(fails_before, "大乱斗激光路由:NetBus 订阅在位,NetBusExt 混用 %d 处" % mixed.size())
 
 
-# ── 7) AI 手感闸:AIInputSource.is_network_driven() 返回 true ───────────
+# ── 7) AI 手感闸:AiInputSource.is_network_driven() 返回 true ───────────
 # 不覆写(基类返回 false)→ 服务器侧 AI 被判成"本地单机" → 打空弹夹后进换弹、静默停火
 # reload_time 秒(霰弹 2.2s / 榴弹 2.8s),AI 手感莫名变差且无任何报错。
 func _check_ai_input_gate() -> void:

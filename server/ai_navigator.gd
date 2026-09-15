@@ -1,8 +1,8 @@
-class_name AINavigator
+class_name AiNavigator
 extends Node
 
 # AI 玩家控制器(实验性 AI 补位):服务端权威视角,知道全场位置。
-# 每物理帧写 AIInputSource 字段驱动对应 player(与真人输入包同一条消费路径)。
+# 每物理帧写 AiInputSource 字段驱动对应 player(与真人输入包同一条消费路径)。
 # 行为:黏滞锁定目标(不逐帧换目标);瞄准加抖动;有视线且距离合适就节奏点射;
 #       状态机移动(远追/近拉/中距横移,带决策间隔防抖);卡墙累计 0.4s 才跳一下。
 # 随机相位:每个 AI 的内部时钟/开火节奏在 ready 时错开,避免多个 AI 同频抽搐。
@@ -16,7 +16,7 @@ const STUCK_JUMP_TIME := 0.4     # 卡墙持续此时长才跳(防原地连跳�
 
 var host: Node            # MatchHost / RoyaleHost(读 players/_round_state)
 var role := 0
-var src: AIInputSource
+var src: AiInputSource
 
 var _t := 0.0
 var _next_fire := 0.0

@@ -22,7 +22,7 @@ const PLAYER_SCENE := "res://scenes/player/player.tscn"
 const RELOAD_SAMPLE_DT := 0.5          # 手动推进的换弹时长(秒):手枪 reload_time=1.0 → 进度 50%
 
 var _failures: Array[String] = []
-var _hud: HUD = null
+var _hud: Hud = null
 var _w: WeaponBase = null
 
 
@@ -54,7 +54,7 @@ func _ready() -> void:
 	p.global_position = Vector2(win.x * 0.5, win.y * 0.62)   # 远离左下角 HUD 区,不干扰像素统计
 	await _frames(3)   # 武器是 call_deferred 入树的,等它 _ready(mag_ammo = mag_size)
 
-	_hud = HUD.new()
+	_hud = Hud.new()
 	add_child(_hud)    # HUD._ready 从 "player" 组找玩家并接管剪影/名称/残弹显示
 	await _frames(3)
 
@@ -93,9 +93,9 @@ func _ready() -> void:
 	_check(_hud._ammo_label.text == "装填中…", "态2:文本应为「装填中…」(实际「%s」)" % _hud._ammo_label.text)
 	_check(_hud._reload_bar.visible, "态2:换弹进度条不可见")
 	_check(_hud._bar_back.visible, "态2:换弹进度条底板不可见")
-	_check(absf(_hud._reload_bar.size.x - HUD.WEAPON_ICON_W * prog) < 2.0,
+	_check(absf(_hud._reload_bar.size.x - Hud.WEAPON_ICON_W * prog) < 2.0,
 			"态2:进度条长度 %.1f 与进度 %.2f 不符(期望 %.1f)" % [
-				_hud._reload_bar.size.x, prog, HUD.WEAPON_ICON_W * prog])
+				_hud._reload_bar.size.x, prog, Hud.WEAPON_ICON_W * prog])
 	var gold2 := _gold_in(img2, _hud._ammo_label)
 	var gold_bar2 := _gold_in(img2, _hud._reload_bar)
 	var accent2 := _accent_in(img2, _hud._reload_bar)

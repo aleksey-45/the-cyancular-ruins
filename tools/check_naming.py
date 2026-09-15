@@ -39,8 +39,6 @@ DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
 # ── 已接受的偏差:每条都必须写明**为什么**与**何时销**。
 #    这张表只许变短。新增条目 = 承认又欠了一笔技术债,不是"让检查变绿"的手段。
 ACCEPTED_CLASS_FILES = {
-    "server/ai_player.gd":
-        "类名 AINavigator ≠ 文件名 ai_player(阶段 4.5:改名 ai_navigator.gd 或类名改 AiPlayer)",
     "scenes/level_0.gd":
         "类名 Level0 转 snake 是 level0,文件名是 level_0(.tscn 侧已按 4.3 统一为 level_0.tscn;"
         "类名不改 —— 全仓引用 Level0 的点很多,收益不抵改动面)",

@@ -1,4 +1,4 @@
-class_name HUD
+class_name Hud
 extends CanvasLayer
 
 const LAYER := 129  # 在 post-process(128)之上,不受桶形/CRT/变灰影响

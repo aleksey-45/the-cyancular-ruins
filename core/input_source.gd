@@ -2,7 +2,7 @@ class_name InputSource
 extends RefCounted
 
 # 玩家输入抽象:基类默认行为 = 委托真实 Input(即本地玩家现状)。
-# AIInputSource / NetworkInputSource / tests/soak_bot_input.gd 覆写 **_*_raw() 钩子**。
+# AiInputSource / NetworkInputSource / tests/soak_bot_input.gd 覆写 **_*_raw() 钩子**。
 #
 # ★ frozen 的归属(2026-09-14 修):
 #   本类此前把 frozen 短路写在**公开读口**里,而三个子类各自覆写了全部公开读口 →

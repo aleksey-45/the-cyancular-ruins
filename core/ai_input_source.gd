@@ -1,7 +1,7 @@
-class_name AIInputSource
+class_name AiInputSource
 extends InputSource
 
-# AI 玩家的"手柄"(实验性 AI 补位,test-ai 分支):字段由服务端 AINavigator 每帧写,
+# AI 玩家的"手柄"(实验性 AI 补位,test-ai 分支):字段由服务端 AiNavigator 每帧写,
 # player/weapon 经基类接口读取——与 NetworkInputSource/DemoInputSource 同一套注入机制。
 # 仅 worker 侧存在;客户端对 AI 玩家的显示走快照副本,无需感知。
 
@@ -55,6 +55,6 @@ func get_aim_dir_override() -> Vector2:
 #   只是 AI 手感莫名变差且无任何报错。
 # 附带正向影响:weapon_base._aim_world_dir() 在 override == ZERO 时对
 #   input_is_network()==true 的玩家永不读宿主 OS 鼠标、改用朝向兜底;
-#   AI 的 aim 恒非零(AINavigator 每帧写 src.aim),两分支都安全但语义更正确。
+#   AI 的 aim 恒非零(AiNavigator 每帧写 src.aim),两分支都安全但语义更正确。
 func is_network_driven() -> bool:
 	return true

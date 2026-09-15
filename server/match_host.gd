@@ -83,19 +83,19 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		var ts := GameParameters.TILE_SIZE
 		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
 		print("MatchHost: 角色 %d 出生点 %s" % [role, spawn])
-	# AI 补位(实验性):同一 player.tscn,输入源换 AIInputSource,由 AINavigator 驱动;
+	# AI 补位(实验性):同一 player.tscn,输入源换 AiInputSource,由 AiNavigator 驱动;
 	# 快照/命中裁决/计分/复活全部按 players 迭代 → 客户端副本零改动。
 	# ★ 不入 input_sources(不走网络包);入 players 即自动获得快照/裁决/计分/复活覆盖。
 	# D13:代码就位,不接界面(客户端按钮已删)。
 	for ai_role in _ai_roles:
 		var role := int(ai_role)
 		var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
-		var src := AIInputSource.new()
+		var src := AiInputSource.new()
 		p.set_input_source(src)
 		add_child(p)
 		p.collision_mask |= 2
 		players[role] = p
-		var nav := AINavigator.new()
+		var nav := AiNavigator.new()
 		nav.host = self
 		nav.role = role
 		nav.src = src

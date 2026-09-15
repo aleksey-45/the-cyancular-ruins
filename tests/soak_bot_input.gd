@@ -1,5 +1,5 @@
 extends InputSource
-# 大乱斗压力探针的脚本"手柄"(extends InputSource,与 AIInputSource 同一套注入机制)。
+# 大乱斗压力探针的脚本"手柄"(extends InputSource,与 AiInputSource 同一套注入机制)。
 # 目的:让 headless 客户端在真 `royale_game` 场景里把**局内行为真的踩一遍** ——
 # 走动 / 跳 / 冲刺 / 下蹲 / 上下爬 / 各武器开火 / 切枪 / 静默,而不是只连上收快照。
 # 探针每物理帧调 step();探针直接把本对象塞进本地玩家的 input_source。
@@ -115,6 +115,6 @@ func get_aim_dir_override() -> Vector2:
 	return aim
 
 # 必须 true:否则 WeaponBase 的瞄准会回落到读宿主 OS 鼠标(headless 下是 0,0 之类的垃圾值),
-# 开火方向会乱。与 AIInputSource 覆写它的理由同款(那条注释里还记着 reload_active 的第二个判据)。
+# 开火方向会乱。与 AiInputSource 覆写它的理由同款(那条注释里还记着 reload_active 的第二个判据)。
 func is_network_driven() -> bool:
 	return true
