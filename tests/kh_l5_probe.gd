@@ -64,6 +64,26 @@ const N_FONT_SZ_ASSIGN := "font" + "_size\\s*=\\s*([0-9]+)"
 const N_FONT_SZ_CONST := "FONT" + "_SIZE"
 const N_CONST_DECL := "^const\\s+\\w*FONT" + "_SIZE\\w*\\s*:?=\\s*([0-9]+)"
 
+# ── MatchHost 的源码**并集** ──
+# ★ 2026-09-15(阶段 5.6):权威按域拆成一条继承链 ——
+#   RoyaleHost → MatchHost(核心) → MatchRound(回合) → MatchCombat(裁决)
+#   → MatchSnapshot(快照) → MatchState(共享状态+RPC 助手) → Node
+# 本探针的判据是**按职责**写的,所以取源也要跟着改成并集:只读 match_host.gd 的话,
+# 那些 needle 在新家找不到 → **门恒绿、静默失明**(仓内已登记过的失败模式)。
+# 这不是放水 —— 被守的东西一个字没变,只是它现在住在链上的哪一层而已;
+# 反向断言(基类不得含 RoyaleHost 的子类方法)反而更严了:五份都查。
+const HOST_SRC := ["res://server/match_host.gd", "res://server/match_round.gd",
+		"res://server/match_combat.gd", "res://server/match_snapshot.gd",
+		"res://server/match_state.gd"]
+
+
+func _host_code() -> String:
+	var parts: Array[String] = []
+	for f in HOST_SRC:
+		parts.append(_code_only(_read(f)))
+	return "
+".join(parts)
+
 var _failures: Array[String] = []
 
 
@@ -87,8 +107,8 @@ func _ready() -> void:
 # 判据取**去注释视图**:注释里提到这些名字不算"在位"(T4 清扫探针实测撞见过)。
 func _check_c2_contract() -> void:
 	var fails_before := _failures.size()
-	var p := "res://server/match_host.gd"
-	var code := _code_only(_read(p))
+	var p := "MatchHost 继承链(见 HOST_SRC)"
+	var code := _host_code()
 	_check(not code.is_empty(), "读不到 %s" % p)
 	if code.is_empty():
 		return
@@ -502,9 +522,9 @@ func _census(census: Dictionary, path: String, carrier: String) -> void:
 # 函数被删而调用点残留时断言照样绿(那正是"未定义符号"要防的)。
 func _check_new_interfaces() -> void:
 	var fails_before := _failures.size()
-	var base := "res://server/match_host.gd"
+	var base := "MatchHost 继承链(见 HOST_SRC)"
 	var sub := "res://server/royale_host.gd"
-	var base_code := _code_only(_read(base))
+	var base_code := _host_code()
 	var sub_code := _code_only(_read(sub))
 	_check(not base_code.is_empty() and not sub_code.is_empty(), "读不到 %s / %s" % [base, sub])
 	if base_code.is_empty() or sub_code.is_empty():
