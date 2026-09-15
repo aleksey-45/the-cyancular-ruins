@@ -72,3 +72,19 @@ const hit_cam_shake_time: float = 0.25  # 大伤害相机震动时长(秒)
 # ── 爆炸镜头震动 ──
 const explosion_cam_shake: float = 30.0      # 爆炸相机震动基准幅度(爆炸贴近玩家时,px)
 const explosion_cam_shake_time: float = 0.5  # 爆炸相机震动时长(秒)
+
+# ── 武器拾取 / 丢弃(2026-09-15,武器槽位计划)──
+const weapon_pickup_radius: float = 64.0      # 可拾取半径(1 格)
+const weapon_drop_hold_time: float = 2.0      # 长按 Q 多久算丢弃(用户指定 2s)
+const weapon_drop_speed: float = 400.0        # 丢弃初速(水平,朝朝向)
+const weapon_drop_up: float = 220.0           # 丢弃初速(向上)
+const weapon_drop_offset := Vector2(24.0, -8.0)   # 掉落物生成点相对玩家的偏移
+# 落地摩擦(指数衰减率)。"较大"= 很快停住。★ 与 weapon_stop_eps 一起构成
+# 「落点与何时开始模拟无关」这条不变量(联机端客户端晚一个 RTT 才开始模拟,落点必须一致):
+# 靠**速度衰减 + 阈值置零**,而不是"滑固定时长"。
+const weapon_ground_friction: float = 12.0
+const weapon_air_drag: float = 0.4            # 空中阻力(小)
+const weapon_fall_gravity: float = 1600.0     # 落体重力
+const weapon_stop_eps: float = 6.0            # 水平速度低于此值即置零(并标记 settled)
+# 自己刚丢下的枪在这么久内不参与自己的拾取判定(防"丢-捡"抖动)
+const weapon_pickup_self_delay: float = 0.5

@@ -1,0 +1,155 @@
+extends Node
+
+# 地面武器(WeaponPickup)探针。场景模式 —— 判据是 **grep 文本 `WEAPON PICKUP: ALL-OK`**,
+# 不能只看退出码(中途报错时 --quit-after 仍 exit 0 且不打印 ALL-OK)。
+#
+# 跑法:
+#   "$GODOT" --headless --path . --quit-after 900 res://tests/weapon_pickup_probe.tscn
+#
+# ═══ 钉三件日常看不出来的事 ═══
+#   ① 碰撞层归属:玩家与子弹都**不该**碰地上的枪。改错了的表现是"走过去被枪挡住"
+#      或"子弹打在地上消失",而两者都不会报错。
+#   ② 像素碰撞箱真的生成了(而不是走了空壳、碰撞箱缺席 —— 那会让拾取判定飘)。
+#   ③ **落点与"何时开始模拟"无关** —— 这是联机端"客户端晚一个 RTT 才收到事件、
+#      却必须落在同一位置"的前提。把摩擦从"速度阈值置零"改成"滑固定时长"就会破,
+#      而破了之后单机完全正常,只在联机端表现为"看着够不着"。
+
+var _failures: Array[String] = []
+
+const PICKUP_SCENE := "res://scenes/weapons/weapon_pickup.tscn"
+const PLAYER_SCENE := "res://scenes/player/player.tscn"
+
+
+func _check(cond: bool, name: String) -> void:
+	if cond:
+		print("  ok  - " + name)
+	else:
+		_failures.append(name)
+		printerr("  FAIL - " + name)
+
+
+func _ready() -> void:
+	await _phase_layers()
+	await _phase_collision_shape()
+	await _phase_landing_determinism()
+	if _failures.is_empty():
+		print("WEAPON PICKUP: ALL-OK")
+		get_tree().quit(0)
+	else:
+		printerr("WEAPON PICKUP FAILURES: " + str(_failures))
+		get_tree().quit(1)
+
+
+# ── ① 碰撞层归属 ──
+func _phase_layers() -> void:
+	var scene: PackedScene = load(PICKUP_SCENE)
+	_check(scene != null, "weapon_pickup.tscn 可加载")
+	if scene == null:
+		return
+	var pk: WeaponPickup = scene.instantiate()
+	add_child(pk)
+	await get_tree().physics_frame
+	_check(pk.collision_layer == 8, "地面武器在层 4(值 8)")
+	_check(pk.collision_mask == 9, "地面武器掩码 = 地形|掉落物 = 9")
+	_check(pk.collision_mask & 2 == 0, "地面武器不得与玩家(层 2)碰撞")
+	_check(pk.collision_mask & 4 == 0, "地面武器不得与敌人(层 3)碰撞")
+	_check(pk.is_in_group(WeaponPickup.GROUP), "地面武器入了 weapon_pickup 组(拾取查询靠它)")
+
+	# 反向:玩家掩码里也不该出现掉落物层(加了就是"玩家被地上的枪挡住")
+	var ps: PackedScene = load(PLAYER_SCENE)
+	var pl: Node = ps.instantiate()
+	add_child(pl)
+	await get_tree().physics_frame
+	_check(pl.collision_mask & 8 == 0, "玩家掩码不含掉落物层")
+	# 与 enemy_logic_smoke 的同类断言同源:单机下玩家掩码仍是 5
+	_check(pl.collision_mask == 5, "玩家掩码仍应是 5(实际 %d)" % pl.collision_mask)
+	pl.queue_free()
+	pk.queue_free()
+	await get_tree().physics_frame
+
+
+# ── ② 像素碰撞箱真的建出来了 ──
+func _phase_collision_shape() -> void:
+	var pk: WeaponPickup = load(PICKUP_SCENE).instantiate()
+	pk.configure(1, 1, 12, Vector2.ZERO)
+	add_child(pk)
+	await get_tree().physics_frame
+	var cs: CollisionShape2D = pk.get_node_or_null("Shape")
+	_check(cs != null, "应按 sprite 像素生成 CollisionShape2D")
+	if cs != null and cs.shape is RectangleShape2D:
+		var sz: Vector2 = (cs.shape as RectangleShape2D).size
+		_check(sz.x > 4.0 and sz.y > 2.0, "碰撞箱尺寸应来自真实像素(实际 %s)" % str(sz))
+	else:
+		_failures.append("碰撞箱不是矩形(或不存在)")
+	pk.queue_free()
+	await get_tree().physics_frame
+
+
+# ── ③ 落点与"何时开始模拟"无关 ──
+func _phase_landing_determinism() -> void:
+	var floor_body := StaticBody2D.new()
+	floor_body.collision_layer = 1
+	floor_body.collision_mask = 0
+	var fshape := CollisionShape2D.new()
+	var frect := RectangleShape2D.new()
+	frect.size = Vector2(12000, 64)   # 够宽:两把掉落物各滑 ~220px 且相距 1000px,都得落在地板上
+	fshape.shape = frect
+	floor_body.add_child(fshape)
+	floor_body.position = Vector2(0, 300)
+	add_child(floor_body)
+	await get_tree().physics_frame
+
+	var a: WeaponPickup = load(PICKUP_SCENE).instantiate()
+	a.configure(1, 1, 12, Vector2(400.0, 0.0))
+	add_child(a)
+	a.global_position = Vector2(0, 0)
+
+	# ★ 第二把同初速,但**延迟 20 个物理帧**才开始 —— 如实模拟"客户端晚一个 RTT 才收到事件"。
+	#   两者最终横坐标必须一致:停止位置只取决于初速与摩擦,**与开始时刻无关**。
+	for i in 20:
+		await get_tree().physics_frame
+	# ★ 两把必须**同型号**(这里都是 type_id=1)。用不同型号会得到一个假红:不同武器的
+	#   精灵碰撞箱高度不同 → 下落距离不同 → **空中时长不同** → 空气阻力的衰减量不同 →
+	#   落点天然不同。那不是"相位依赖",是"拿两种东西比"。
+	# ★ 两把还必须**拉开距离**:掉落物掩码含层 8(= 与其它掉落物碰),同 x 起滑会互相顶,
+	#   测出来的是"两把枪挤在一起",不是"相位依赖"。1000px 远超各自的滑行距离(~220px),
+	#   且落在地板范围内(地板 12000 宽,居中于 0)。
+	var b: WeaponPickup = load(PICKUP_SCENE).instantiate()
+	b.configure(1, 2, 12, Vector2(400.0, 0.0))
+	add_child(b)
+	b.global_position = Vector2(1000, 0)
+
+	var a_land := -1
+	var b_land := -1
+	var a_set := -1
+	var b_set := -1
+	for i in 400:
+		await get_tree().physics_frame
+		if a_land < 0 and a.is_on_floor():
+			a_land = i
+		if b_land < 0 and b.is_on_floor():
+			b_land = i
+		if a_set < 0 and a._settled:
+			a_set = i
+		if b_set < 0 and b._settled:
+			b_set = i
+		if a._settled and b._settled:
+			break
+	# 诊断读数:两者应当"落地帧差 ≈ 延迟帧数、滑动帧数相同"。
+	# 差得多就说明摩擦之外还有别的相位依赖(而不是我预期的那条)。
+	print("[pickup-probe] a 落地@%d 停稳@%d x=%.2f | b 落地@%d 停稳@%d x=%.2f"
+			% [a_land, a_set, a.global_position.x, b_land, b_set, b.global_position.x])
+	_check(a._settled, "第一把应停稳(settled)")
+	_check(b._settled, "第二把应停稳(settled)")
+	# b 起点比 a 右移 1000(见上:避免两把互相顶),比的是"各自滑了多远"
+	var dx := absf(a.global_position.x - (b.global_position.x - 1000.0))
+	_check(dx < 1.0,
+			"落点与「何时开始模拟」无关(差 %.2f px;大了说明摩擦被改成按时间停)" % dx)
+	# 测试自身的有效性:没滑出去的话上面那条恒真
+	_check(a.global_position.x > 5.0,
+			"掉落物应真的滑出去了一段(实际 x=%.2f;太小说明这条断言是空转)" % a.global_position.x)
+
+	a.queue_free()
+	b.queue_free()
+	floor_body.queue_free()
+	await get_tree().physics_frame
