@@ -53,7 +53,19 @@ func _ready() -> void:
 	layer = LAYER
 	_my_name = PvpSession.player_name
 
-	# ── 排行榜(右上角、击杀计数下方;血条在左上角,不重叠)──
+	# 四个区块各建各的(阶段 5.5:_ready 原先 90 净行,是"一屏控件清单")。
+	_build_board()
+	_build_broadcast()
+	_build_ping()
+	_build_hint()
+
+	NetBus.local_round_state.connect(_on_round_state)
+	NetBus.ping_updated.connect(_on_ping)
+	_set_broadcast(true, "大乱斗", "等待开局…")
+
+
+# ── 排行榜(右上角、击杀计数下方;血条在左上角,不重叠)──
+func _build_board() -> void:
 	_board_bg = ColorRect.new()
 	_board_bg.color = Color(0.0, 0.0, 0.0, 0.45)   # 深底板:排行榜直接压在地图上,浅色开阔区会吃掉文字
 	_board_bg.position = Vector2(1920 - BOARD_W - 16, 96)
@@ -72,7 +84,8 @@ func _ready() -> void:
 	_timer_label = _make_label(32, COLOR_BOARD)
 	_board_vbox.add_child(_timer_label)
 
-	# ── 广播层 ──
+
+func _build_broadcast() -> void:
 	_mask = ColorRect.new()
 	_mask.color = Color(0.0, 0.0, 0.0, 0.3)
 	_mask.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -93,7 +106,9 @@ func _ready() -> void:
 	_center.add_child(vbox)
 	add_child(_center)
 
-	# ── 延迟:右下角 ──
+
+# 延迟:右下角
+func _build_ping() -> void:
 	var ping_wrap := PanelContainer.new()
 	ping_wrap.add_theme_stylebox_override("panel", _plate_box(14.0, 6.0))
 	ping_wrap.anchor_left = 1.0
@@ -112,7 +127,9 @@ func _ready() -> void:
 	_ping_label.text = "延迟 -- ms"
 	ping_wrap.add_child(_ping_label)
 
-	# ── 按键提示(左下角):自杀脱困 ──
+
+# 按键提示(左下角):自杀脱困
+func _build_hint() -> void:
 	var hint_wrap := PanelContainer.new()
 	hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
 	hint_wrap.position = Vector2(16, 1386)
@@ -121,10 +138,6 @@ func _ready() -> void:
 	var hint := _make_label(16, UiFactory.C_TEXT_DIM)
 	hint.text = "K = 自杀脱困(卡住时)"
 	hint_wrap.add_child(hint)
-
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.ping_updated.connect(_on_ping)
-	_set_broadcast(true, "大乱斗", "等待开局…")
 
 # HUD 元素底板(与单机 HUD 同一套做法,见 ui/hud.gd 的 PLATE_COLOR):
 # 对局 HUD 直接压在地图上,地图开阔区是浅灰蓝 —— 不垫底时浅色小字读不出来。
@@ -201,17 +214,24 @@ func _on_ping(ms: int) -> void:
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", ST_PLAYING))
 	_state = state
-	var scores: Dictionary = data.get("scores", {})
 	var names: Dictionary = data.get("names", {})
 	var alive: Dictionary = data.get("alive", {})
 	var left: Array = data.get("left", [])
 	var deaths: Dictionary = data.get("deaths", {})
-	# ── 排行榜:按击杀降序 ──
-	# ★ **复用行、只改文字**，不要每次 queue_free 后重建 N 个 Label。
-	#   本函数每秒被调一次(round_state 的 HUD 同步),每次阵亡再加一次;重建 N 个 Label 的
-	#   同步成本实测 2.6 / 3.8 / 4.7 ms(4 / 6 / 8 行),是纯粹的每秒浪费 ——
-	#   见 tests/royale_hud_cost_probe.tscn 与 docs/royale-soak-2026-09-12.md §3.1。
-	#   行数**只在人数变化时**才对不齐(进/退场),那时才增删。
+	var scores: Dictionary = data.get("scores", {})
+	var rows := _refresh_board(names, scores, deaths, alive, left, state)
+	_refresh_broadcast(state, data, names, rows, alive)
+
+
+# ── 排行榜:按击杀降序 ──
+# ★ **复用行、只改文字**，不要每次 queue_free 后重建 N 个 Label。
+#   本函数每秒被调一次(round_state 的 HUD 同步),每次阵亡再加一次;重建 N 个 Label 的
+#   同步成本实测 2.6 / 3.8 / 4.7 ms(4 / 6 / 8 行),是纯粹的每秒浪费 ——
+#   见 tests/royale_hud_cost_probe.tscn 与 docs/royale-soak-2026-09-12.md §3.1。
+#   行数**只在人数变化时**才对不齐(进/退场),那时才增删。
+# 返回排好序的行数据 —— 中央广播还要用它判"我是否还在场"。
+func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
+		alive: Dictionary, left: Array, state: int) -> Array:
 	var rows: Array = []
 	for role_s in names:
 		rows.append({"role": int(role_s), "name": str(names[role_s]),
@@ -251,12 +271,12 @@ func _on_round_state(data: Dictionary) -> void:
 		row.add_theme_color_override("font_color", col)
 		row.text = "%d. %s  击杀 %d  阵亡 %d  %s" % [
 				i + 1, _fit_name(str(e["name"]), NAME_UNITS), e["kills"], e["deaths"], tag]
+	return rows
 
-	# ── 中央广播 ──
-	var me_alive := true
-	for e in rows:
-		if e["name"] == _my_name:
-			me_alive = bool(alive.get(e["role"], true))
+
+# ── 中央广播 ──
+func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: Array,
+		alive: Dictionary) -> void:
 	match state:
 		ST_COUNTDOWN:
 			_countdown = float(data.get("timer", 3.0))

@@ -115,61 +115,9 @@ func _build_create_panel() -> void:
 	panel.add_child(vb)
 
 	vb.add_child(UiFactory.label("—— 创建大乱斗房间 ——", 32, UiFactory.C_ACCENT))
-
-	_public_check = CheckButton.new()
-	_public_check.text = "公开房间(不勾选 = 私密,凭邀请码进入)"
-	_public_check.button_pressed = true
-	UiFactory.style_check(_public_check, 32)
-	_public_check.toggled.connect(func(on: bool) -> void:
-		_create_invite_edit.visible = not on)
-	vb.add_child(_public_check)
-
-	_create_invite_edit = LineEdit.new()
-	_create_invite_edit.placeholder_text = "邀请码(留空自动生成)"
-	_create_invite_edit.visible = false
-	_create_invite_edit.custom_minimum_size = Vector2(0, 40)
-	UiFactory.style_control(_create_invite_edit, 16)   # 同 UiFactory.line_edit:显式字号=引擎默认,不靠事后递归补字体
-	UiFactory.style_line_edit(_create_invite_edit)
-	vb.add_child(_create_invite_edit)
-
-	var mrow := HBoxContainer.new()
-	mrow.add_theme_constant_override("separation", 14)
-	vb.add_child(mrow)
-	mrow.add_child(UiFactory.label("人数上限:", 32))
-	_max_slider = HSlider.new()
-	_max_slider.min_value = 2
-	_max_slider.max_value = 8
-	_max_slider.step = 1
-	_max_slider.value = 4
-	_max_slider.custom_minimum_size = Vector2(300, 30)
-	UiFactory.style_slider(_max_slider)
-	_max_slider.value_changed.connect(func(v: float) -> void:
-		_max_label.text = "%d 人" % int(v))
-	mrow.add_child(_max_slider)
-	_max_label = UiFactory.label("4 人", 32, UiFactory.C_TEXT)
-	mrow.add_child(_max_label)
-
-	# 一局限时(分钟):房主可调 1~15 分钟(默认 5);随房主报到 opts 带入 RoyaleHost
-	var trow := HBoxContainer.new()
-	# 键是 "separation":HBox 只认它,h_separation 是 GridContainer 的键(写在这里会被存下但
-	# 永不读取 = 死覆盖)。别照抄下面 wgrid 那两行 —— 那是 GridContainer,键不一样。
-	trow.add_theme_constant_override("separation", 12)
-	vb.add_child(trow)
-	trow.add_child(UiFactory.label("一局限时:", 32))
-	var tslider := HSlider.new()
-	tslider.min_value = 1.0
-	tslider.max_value = 15.0
-	tslider.step = 1.0
-	tslider.value = Settings.royale_match_min
-	tslider.custom_minimum_size = Vector2(300, 30)
-	UiFactory.style_slider(tslider)
-	trow.add_child(tslider)
-	var tlabel := UiFactory.label("%d 分钟" % int(Settings.royale_match_min), 32, UiFactory.C_TEXT)
-	trow.add_child(tlabel)
-	tslider.value_changed.connect(func(v: float) -> void:
-		Settings.royale_match_min = v
-		Settings.save()
-		tlabel.text = "%d 分钟" % int(v))
+	_build_public_room_row(vb)
+	_build_max_players_row(vb)
+	_build_match_time_row(vb)
 
 	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
 	_add_weapon_grid(vb, 10, func(cell: Node, slot: int) -> void:
@@ -189,6 +137,70 @@ func _build_create_panel() -> void:
 	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
 	create.pressed.connect(_on_create_pressed)
 	vb.add_child(create)
+
+
+# ── 建房面版的三个设置行(阶段 5.5:原先 _build_create_panel 是 69 净行的"一屏控件清单")──
+
+# 公开/私密开关 + 邀请码输入框(私密时才显示 —— 勾选框直接控制输入框的 visible)。
+func _build_public_room_row(vb: VBoxContainer) -> void:
+	_public_check = CheckButton.new()
+	_public_check.text = "公开房间(不勾选 = 私密,凭邀请码进入)"
+	_public_check.button_pressed = true
+	UiFactory.style_check(_public_check, 32)
+	_public_check.toggled.connect(func(on: bool) -> void:
+		_create_invite_edit.visible = not on)
+	vb.add_child(_public_check)
+
+	_create_invite_edit = LineEdit.new()
+	_create_invite_edit.placeholder_text = "邀请码(留空自动生成)"
+	_create_invite_edit.visible = false
+	_create_invite_edit.custom_minimum_size = Vector2(0, 40)
+	UiFactory.style_control(_create_invite_edit, 16)   # 同 UiFactory.line_edit:显式字号=引擎默认,不靠事后递归补字体
+	UiFactory.style_line_edit(_create_invite_edit)
+	vb.add_child(_create_invite_edit)
+
+
+func _build_max_players_row(vb: VBoxContainer) -> void:
+	var mrow := HBoxContainer.new()
+	mrow.add_theme_constant_override("separation", 14)
+	vb.add_child(mrow)
+	mrow.add_child(UiFactory.label("人数上限:", 32))
+	_max_slider = HSlider.new()
+	_max_slider.min_value = 2
+	_max_slider.max_value = 8
+	_max_slider.step = 1
+	_max_slider.value = 4
+	_max_slider.custom_minimum_size = Vector2(300, 30)
+	UiFactory.style_slider(_max_slider)
+	_max_slider.value_changed.connect(func(v: float) -> void:
+		_max_label.text = "%d 人" % int(v))
+	mrow.add_child(_max_slider)
+	_max_label = UiFactory.label("4 人", 32, UiFactory.C_TEXT)
+	mrow.add_child(_max_label)
+
+
+# 一局限时(分钟):房主可调 1~15 分钟(默认 5);随房主报到 opts 带入 RoyaleHost
+func _build_match_time_row(vb: VBoxContainer) -> void:
+	var trow := HBoxContainer.new()
+	# 键是 "separation":HBox 只认它,h_separation 是 GridContainer 的键(写在这里会被存下但
+	# 永不读取 = 死覆盖)。别照抄禁用武器网格那两行 —— 那个是 GridContainer,键不一样。
+	trow.add_theme_constant_override("separation", 12)
+	vb.add_child(trow)
+	trow.add_child(UiFactory.label("一局限时:", 32))
+	var tslider := HSlider.new()
+	tslider.min_value = 1.0
+	tslider.max_value = 15.0
+	tslider.step = 1.0
+	tslider.value = Settings.royale_match_min
+	tslider.custom_minimum_size = Vector2(300, 30)
+	UiFactory.style_slider(tslider)
+	trow.add_child(tslider)
+	var tlabel := UiFactory.label("%d 分钟" % int(Settings.royale_match_min), 32, UiFactory.C_TEXT)
+	trow.add_child(tlabel)
+	tslider.value_changed.connect(func(v: float) -> void:
+		Settings.royale_match_min = v
+		Settings.save()
+		tlabel.text = "%d 分钟" % int(v))
 
 
 # worker 端口段文案(提示串用;单一来源 = WorkerLauncher 的常量,勿手写数字——
