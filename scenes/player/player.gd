@@ -144,7 +144,10 @@ func _ready() -> void:
 	for pose in Pose.values():
 		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
 
-	weapons.equip("1")
+	# ★ 临时初始背包(3 把 = 2+3+3 = 8 格,刚好占满,顺带压容量边界)。
+	#   这是**计划内的中间态**:地面拾取落地后这里会换成空表,单机改为
+	#   "开局空手 + 12 把散落在地图上"。别为了让中间态好看而放宽容量闸门。
+	weapons.set_initial_inventory([1, 2, 6])
 	call_deferred("add_child", WaterFx.new())
 
 

@@ -125,7 +125,15 @@ func _check_weapon_numbers() -> void:
 
 
 # ── 2) 槽位闸门(真实 Player 上的 WeaponComponent)────────────────────
+# ★ 2026-09-15 起是背包模型:闸门(set_enabled_slots)仍按**类型 id**,但"当前枪被禁后
+#   切到哪"改由"背包里有、且没被禁的第一把"决定,不再是"最小的启用槽号"。
+#   所以本节必须先用 set_initial_inventory 摆一个**已知背包**,否则断言的是随机内容。
 func _check_gate(wep: WeaponComponent) -> void:
+	wep.set_enabled_slots([])
+	wep.set_initial_inventory([1, 3, 4])   # 手枪2 + 重狙4 + 霰弹2 = 8 格 / 3 把
+	await _frames(3)
+	_check(wep.current_slot_int() == 1, "闸门前置:初始背包应拿第一把(实际 %d)" % wep.current_slot_int())
+
 	# 入参是「被禁用」的槽位表(set_enabled_slots(disabled))
 	wep.set_enabled_slots([1, 2])
 	await _frames(3)
@@ -136,10 +144,10 @@ func _check_gate(wep: WeaponComponent) -> void:
 
 	var d := wep.default_slot()
 	_check(d != "1" and d != "2", "默认槽位落在被禁槽位:%s" % d)
-	# 当前拿着的枪(槽1)被禁 → set_enabled_slots 内应自动切到默认槽
+	# 当前拿着的手枪(类型1)被禁 → 应自动切到背包里第一把没被禁的(=类型3 重狙)
 	var slot_after_gate := wep.current_slot_int()
 	_check(slot_after_gate == 3,
-			"当前枪被禁后未自动切到默认槽(实际槽位 %d,期望 3)" % slot_after_gate)
+			"当前枪被禁后未自动切到背包里第一把启用的(实际槽位 %d,期望 3)" % slot_after_gate)
 
 	# equip 被闸门拒绝:槽位不变
 	wep.equip("1")
@@ -162,41 +170,44 @@ func _check_gate(wep: WeaponComponent) -> void:
 	await _frames(3)
 
 
-# ── 3) 滚轮切枪跳过禁用槽 ────────────────────────────────────────────
+# ── 3) 滚轮切枪:在**背包位置**之间循环,跳过被禁的类型 ──────────────
+# ★ 2026-09-15:循环范围从"启用槽位表(1-6)"改成"背包里没被禁的位置序列"。
+#   背包最多 4 把,所以两个端点(位置 0 与最后一个位置)的环绕也要走到。
 func _check_cycle(wep: WeaponComponent) -> void:
 	wep.set_enabled_slots([])
-	wep.equip("1")
+	wep.set_initial_inventory([1, 3, 4])   # 位置0=手枪, 位置1=重狙, 位置2=霰弹
 	await _frames(3)
 	_check(wep.current_slot_int() == 1, "滚轮前置:未切到槽1(实际 %d)" % wep.current_slot_int())
 
-	# 只禁槽2 → 启用表 [1,3,4,5,6];正向滚轮从 1 出发必须**跳过 2** 落到 3
-	wep.set_enabled_slots([2])
+	# 只禁重狙(类型3) → 可切序列 = [位置0(手枪), 位置2(霰弹)]
+	# 正向滚轮从位置0 出发必须**跳过位置1**落到位置2
+	wep.set_enabled_slots([3])
 	await _frames(3)
-	_check(wep.current_slot_int() == 1, "只禁槽2 时不应改变当前槽(实际 %d)" % wep.current_slot_int())
+	_check(wep.current_slot_int() == 1, "只禁重狙时不应改变当前槽(实际 %d)" % wep.current_slot_int())
 	wep.cycle_slot(1)
 	await _frames(3)
-	_check(wep.current_slot_int() == 3,
-			"正向滚轮从槽1 应跳过被禁的槽2 落到槽3(实际 %d;=2 说明没跳过禁用槽)" % wep.current_slot_int())
-	# 反向:从 3 往回也必须跳过被禁的 2
+	_check(wep.current_slot_int() == 4,
+			"正向滚轮应跳过被禁的重狙落到霰弹(实际 %d;=3 说明没跳过禁用槽)" % wep.current_slot_int())
+	# 反向:从霰弹往回也必须跳过被禁的重狙
 	wep.cycle_slot(-1)
 	await _frames(3)
 	_check(wep.current_slot_int() == 1,
-			"反向滚轮从槽3 应跳过被禁的槽2 回到槽1(实际 %d)" % wep.current_slot_int())
+			"反向滚轮应跳过被禁的重狙回到手枪(实际 %d)" % wep.current_slot_int())
 
 	# 只启用一把枪:滚轮不应改变槽位(且不崩)
 	# 注:本段两次 cycle_slot 之间 await 一帧,测的是**跨帧的普通路径**(滚轮一跳一帧)。
 	# 同帧连切两次的 deferred 竞态另有一条真断言,见 _check_same_frame_cycle()。
-	wep.set_enabled_slots([1, 3, 4, 5, 6])   # 只留槽 2 启用
+	wep.set_enabled_slots([1, 4])   # 只留重狙(类型3)启用 → 应自动落到它
 	await _frames(3)
-	_check(wep.current_slot_int() == 2,
-			"只启用槽2 时当前槽位应自动落到 2(实际 %d)" % wep.current_slot_int())
+	_check(wep.current_slot_int() == 3,
+			"只启用重狙时当前槽位应自动落到 3(实际 %d)" % wep.current_slot_int())
 	wep.cycle_slot(1)
 	await _frames(3)
-	_check(wep.current_slot_int() == 2,
+	_check(wep.current_slot_int() == 3,
 			"只有一把启用枪时正向滚轮不应改变槽位(实际 %d)" % wep.current_slot_int())
 	wep.cycle_slot(-1)
 	await _frames(3)
-	_check(wep.current_slot_int() == 2,
+	_check(wep.current_slot_int() == 3,
 			"只有一把启用枪时反向滚轮不应改变槽位(实际 %d)" % wep.current_slot_int())
 
 	wep.set_enabled_slots([])
@@ -219,34 +230,60 @@ func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
 	if _aborted:
 		return
 
-# ── 5) 残弹记忆语义(切走记住、切回恢复,**不回满**)──────────────────
+# ── 5) 残弹语义(切走记住、切回恢复,**不回满**;且按**具体那把**记)──
+# ★ 2026-09-15:残弹从"按槽位号记的 _mag_state"改成"存在背包条目里"(每条一个 inst)。
+#   第 5b 段那条断言(两把**同类型**各有各的残弹)正是这次改动的唯一鉴别点:
+#   按类型记账时它必然失败,按 inst 记账时才过。
 func _check_mag_memory(wep: WeaponComponent) -> void:
 	wep.set_enabled_slots([])
-	wep.equip("1")
+	wep.set_initial_inventory([1, 2])   # 位置0=手枪(12), 位置1=步枪(30)
 	await _frames(3)
 	var w: WeaponBase = wep.current_weapon()
 	if w == null or w.mag_size != 12:
-		_failures.append("残弹记忆前置:槽1 未拿到手枪(weapon=%s)" % str(w))
+		_failures.append("残弹记忆前置:位置0 未拿到手枪(weapon=%s)" % str(w))
 		return
 	_check(w.mag_ammo == 12, "残弹记忆前置:满弹应为 12(实际 %d)" % w.mag_ammo)
 
 	w.mag_ammo = 5              # 模拟打了 7 发
-	wep.equip("2")              # 切走 → 应记住槽1 的 5
+	wep.equip_index(1)          # 切走 → 应记住那把手枪的 5
 	await _frames(3)
-	_check(wep.current_slot_int() == 2, "残弹记忆:未切到槽2(实际 %d)" % wep.current_slot_int())
+	_check(wep.current_slot_int() == 2, "残弹记忆:未切到步枪(实际 %d)" % wep.current_slot_int())
 	var rifle: WeaponBase = wep.current_weapon()
-	_check(rifle != null and rifle.mag_size == 30, "残弹记忆:槽2 未拿到步枪")
+	_check(rifle != null and rifle.mag_size == 30, "残弹记忆:位置1 未拿到步枪")
 	_check(rifle != null and rifle.mag_ammo == 30, "残弹记忆:步枪入树应为满弹 30(实际 %s)" % str(rifle.mag_ammo))
 
-	wep.equip("1")              # 切回 → 必须是 5,不是 12
+	wep.equip_index(0)          # 切回 → 必须是 5,不是 12
 	await _frames(3)
-	_check(wep.current_slot_int() == 1, "残弹记忆:未切回槽1(实际 %d)" % wep.current_slot_int())
+	_check(wep.current_slot_int() == 1, "残弹记忆:未切回手枪(实际 %d)" % wep.current_slot_int())
 	var back: WeaponBase = wep.current_weapon()
 	if back == null:
-		_failures.append("残弹记忆:切回槽1 未拿到武器")
+		_failures.append("残弹记忆:切回位置0 未拿到武器")
 		return
 	_check(back.mag_ammo == 5,
-			"切回槽1 残弹未恢复为切走时的值(实际 %d,期望 5;=12 即「切枪回满弹」漏洞)" % back.mag_ammo)
+			"切回后残弹未恢复为切走时的值(实际 %d,期望 5;=12 即「切枪回满弹」漏洞)" % back.mag_ammo)
+
+	# ★ per-inst 鉴别点:两把**同类型**武器必须各有各的残弹
+	#   (背包允许重复武器;按类型记账会让第二把继承第一把的残弹 = 免费换弹)
+	wep.set_initial_inventory([1, 1, 4])   # 手枪 + 手枪 + 霰弹 = 2+2+2 = 6 格
+	await _frames(3)
+	var first: WeaponBase = wep.current_weapon()
+	if first == null or first.mag_size != 12:
+		_failures.append("同类型两把前置:位置0 未拿到手枪(weapon=%s)" % str(first))
+		return
+	first.mag_ammo = 3
+	wep.equip_index(1)          # 第二把同类型:入树应是**满弹**,不该继承第一把的 3
+	await _frames(3)
+	var second: WeaponBase = wep.current_weapon()
+	if second == null:
+		_failures.append("同类型两把:位置1 未拿到武器")
+		return
+	_check(second.mag_ammo == 12,
+			"同类型第二把不应继承第一把的残弹(实际 %d,期望 12;=3 即按类型记账而非按 inst)" % second.mag_ammo)
+	wep.equip_index(0)
+	await _frames(3)
+	var first_back: WeaponBase = wep.current_weapon()
+	_check(first_back != null and first_back.mag_ammo == 3,
+			"第一把的残弹应原样保留 3(实际 %s)" % str(first_back.mag_ammo if first_back != null else "<无>"))
 
 
 # ── 5b) ★ 同帧两次 equip:未入树的枪不得被记账(残弹被抹成 0)────────────
@@ -261,43 +298,44 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 # 本函数**刻意不插 await**:如实制造同帧场景,让 CI 真的看得见这个 bug。
 func _check_same_frame_cycle(wep: WeaponComponent) -> void:
 	wep.set_enabled_slots([])   # 全开
-	wep.equip("1")
+	wep.set_initial_inventory([1, 2, 4])   # 位置0=手枪, 1=步枪, 2=霰弹
 	await _frames(3)
 	if wep.current_slot_int() != 1:
 		_failures.append("同帧切枪前置:未到槽1(实际 %d)" % wep.current_slot_int())
 		return
 
-	# 前置:先把槽2 的残弹记成**非满值** 17 —— 否则被抹掉的是 0、断言恒真抓不到 bug
-	wep.equip("2")
+	# 前置:把步枪那条的残弹记成**非满值** 17 —— 否则被抹掉的是 0、断言恒真抓不到 bug
+	wep.equip_index(1)
 	await _frames(3)
 	var rifle: WeaponBase = wep.current_weapon()
 	if rifle == null or rifle.mag_size != 30:
-		_failures.append("同帧切枪前置:槽2 未拿到步枪(weapon=%s)" % str(rifle))
+		_failures.append("同帧切枪前置:位置1 未拿到步枪(weapon=%s)" % str(rifle))
 		return
 	rifle.mag_ammo = 17
-	wep.equip("3")              # 切走 → _mag_state[2] = 17
+	wep.equip_index(2)          # 切走 → 步枪那条记 17
 	await _frames(3)
-	wep.equip("1")              # 回槽1,准备同帧连切
+	wep.equip_index(0)          # 回位置0,准备同帧连切
 	await _frames(3)
 	_check(wep.current_slot_int() == 1, "同帧切枪前置:未回到槽1(实际 %d)" % wep.current_slot_int())
 
-	# ★ 同帧两次 cycle_slot(1):1 → 2 → 3,槽2 是被"略过"的中间槽。
-	# 两次调用之间**没有 await** → 第二次 equip 看到的旧武器(槽2 的步枪)还没入树。
+	# ★ 同帧两次 cycle_slot(1):位置 0 → 1 → 2,位置1(步枪)是被"略过"的中间那把。
+	# 两次调用之间**没有 await** → 第二次 equip 看到的旧武器(那把新步枪)还没入树。
 	wep.cycle_slot(1)
 	wep.cycle_slot(1)
 	await _frames(3)
-	_check(wep.current_slot_int() == 3,
-			"同帧两次滚轮应从槽1 经槽2 落到槽3(实际 %d)" % wep.current_slot_int())
+	_check(wep.current_slot_int() == 4,
+			"同帧两次滚轮应从手枪经步枪落到霰弹(实际 %d)" % wep.current_slot_int())
 
-	# 切回槽2:残弹必须仍是切走时的 17 —— =0 即未入树的枪被记账抹掉了(=30 即残弹记忆整体失效)
-	wep.equip("2")
+	# 切回步枪:残弹必须仍是切走时的 17
+	# (=0 即未入树的枪被记账抹掉了,=30 即残弹记忆整体失效)
+	wep.equip_index(1)
 	await _frames(3)
 	var back: WeaponBase = wep.current_weapon()
 	if back == null:
-		_failures.append("同帧切枪:切回槽2 未拿到武器")
+		_failures.append("同帧切枪:切回步枪未拿到武器")
 		return
 	_check(back.mag_ammo == 17,
-			"同帧两次滚轮把被略过的槽2 残弹抹掉了(实际 %d,期望 17;=0 即未入树的枪被记进 _mag_state,=30 即残弹记忆失效)" % back.mag_ammo)
+			"同帧两次滚轮把被略过的步枪残弹抹掉了(实际 %d,期望 17;=0 即未入树的枪被记进背包条目,=30 即残弹记忆失效)" % back.mag_ammo)
 
 
 # ── 6) ★ 守卫点:帧逻辑必须走 tick(),不许回到 _process ──────────────
@@ -317,6 +355,17 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	_check(wc_src.contains("func tick("), "weapon_component.gd 的 tick() 被删了")
 	_check(not wb_src.contains("func _process"), "weapon_base.gd 又长出 _process(帧逻辑必须走 tick,rollback 需要确定性)")
 	_check(not wc_src.contains("func _process"), "weapon_component.gd 又长出 _process")
+
+	# ★ 反向断言:_mag_state 一族不许复活(2026-09-15 背包化时删掉)。
+	#   残弹现在按**背包条目**(每条一个 inst)记 —— 复活旧的"按槽位号记账"表 = 两套残弹
+	#   记账并存 = 同类型两把必然串弹,而且完全不报错。
+	#   ★ 不能直接 contains("_mag_state") —— **保留**的 `func reset_mag_state()` 里就含这个
+	#     子串,裸 contains 会恒红。改成钉三种**使用形式**:声明、下标读写、方法调用。
+	#     (`_restore_mag` / `reset_mag_state` 是刻意保留的:前者是入树后恢复残弹的延迟回调,
+	#      后者已改成"把当前残弹同步进背包条目",不再有独立的表。)
+	_check(not wc_src.contains("var _mag_state"), "weapon_component.gd 又声明了 _mag_state 残弹表")
+	_check(not wc_src.contains("_mag_state["), "weapon_component.gd 又在下标读写 _mag_state")
+	_check(not wc_src.contains("_mag_state."), "weapon_component.gd 又在调 _mag_state 的方法")
 	_check(pl_src.contains("weapons.tick(delta)"), "player.gd 不再每物理帧驱动 weapons.tick(delta)")
 
 	# 运行时口:实例上真的能调到 tick
