@@ -12,6 +12,13 @@ const BIT_UP := 1
 const BIT_DOWN := 2
 const BIT_CHARGE := 4
 const BIT_ATTACK := 8
+# ★ 2026-09-15 新增:换弹位(R)。此前 PvP 两端**一致地**不换弹(`WeaponBase.reload_active()`
+#   在 pvp_mode / 网络输入源下恒 false),所以输入包不需要它 —— 而 `_bit("R")` 原先恒返回 0,
+#   意味着**服务器没有任何别的通路**能知道客户端按了 R(换弹不走 is_attack_* 那族抽象)。
+#   现在换弹对全模式开放,按下的边沿必须上行,由服务器在权威模拟里同样触发一次装填。
+# ⚠ 加位 = **改协议**:与旧 build 的输入包互不认(位掩码里多一位,旧端读到的 held/pressed
+#   少一位、不影响其余四位)。两端必须同版本。
+const BIT_RELOAD := 16
 
 
 # ── 编码端:组一个输入包(协议**发送侧**的唯一来源)──
@@ -34,6 +41,8 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		held |= BIT_CHARGE
 	if src.is_action_pressed("attack"):
 		held |= BIT_ATTACK
+	if src.is_action_pressed("R"):
+		held |= BIT_RELOAD
 	if src.is_action_just_pressed("up"):
 		pressed |= BIT_UP
 	if src.is_action_just_pressed("down"):
@@ -42,6 +51,8 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		pressed |= BIT_CHARGE
 	if src.is_action_just_pressed("attack"):
 		pressed |= BIT_ATTACK
+	if src.is_action_just_pressed("R"):
+		pressed |= BIT_RELOAD
 	if src.is_action_just_released("up"):
 		released |= BIT_UP
 	if src.is_action_just_released("down"):
@@ -50,6 +61,8 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		released |= BIT_CHARGE
 	if src.is_action_just_released("attack"):
 		released |= BIT_ATTACK
+	if src.is_action_just_released("R"):
+		released |= BIT_RELOAD
 	return {
 		"seq": seq,          # 单调输入序号(服务器按序消费并回带 ack,rollback 用)
 		"ax": src.get_axis("left", "right"),
@@ -154,4 +167,5 @@ static func _bit(action: String) -> int:
 		"down": return BIT_DOWN
 		"charge": return BIT_CHARGE
 		"attack": return BIT_ATTACK
+		"R": return BIT_RELOAD
 	return 0

@@ -39,7 +39,11 @@ func _ready() -> void:
 	await _setup_scene()
 	if _aborted:
 		return
-	_capture_full_ammo()
+	# ★ 必须 await:本段内部有 await _shot(),漏了 await 它会挂起后**立刻**往下走进态2
+	#   (那里 mag_ammo=3 + start_reload),本段恢复时 HUD 已在"装填中" —— 表现为
+	#   态1 全部断言红 + 态1/态2 截图像素完全相同(2026-09-15 实测;是 _ready 拆段重构
+	#   漏加的那一个 await,另两段(_capture_reloading / _capture_low_ammo)都在 await)。
+	await _capture_full_ammo()
 	if _aborted:
 		return
 	await _capture_reloading()
@@ -140,6 +144,9 @@ func _diff_in_hud_region(a: Image, b: Image) -> int:
 func _frames(n: int) -> void:
 	for _i in range(n):
 		await get_tree().process_frame
+
+
+
 
 
 func _check(ok: bool, msg: String) -> void:

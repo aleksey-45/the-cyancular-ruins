@@ -160,6 +160,16 @@ func _physics_process(delta: float) -> void:
 	if wslot > 0:
 		weapons.equip(str(wslot))
 
+	# R 换弹:同样走 input_source 轮询(2026-09-15 起 PvP 也换弹,见 weapon_base 换弹段注释)。
+	# ★ 必须是轮询,不能像原先那样在 _unhandled_input 里读原始 InputEvent —— **权威服务器
+	#   永远收不到**(它没有输入事件,只有注入包);输入包现在带 BIT_RELOAD 的按下边沿。
+	# 排在切枪之后:同帧切枪+换弹时,换的是新枪的弹。
+	# 倒地时不进来(上面的早退挡住)——与旧行为一致:倒地 R 是重载/复活,不是换弹。
+	if input_source.is_action_just_pressed("R"):
+		var reload_w := weapons.current_weapon()
+		if reload_w != null:
+			reload_w.start_reload()
+
 	var mult := weapons.movement_multiplier()
 
 	var horizontal_input = input_source.get_axis("left", "right")
@@ -454,6 +464,14 @@ func capture_state() -> Dictionary:
 		st["fire_buf"] = w._fire_buffered
 		st["aim_f"] = w._aim_facing
 		st["aim_cf"] = w._current_aim_facing
+		# 换弹全模式开放(2026-09-15)后弹药/装填必须进整态,否则 rollback 重放**不确定**:
+		# 同一串输入在"记得残弹"与"忘了残弹"两种初态下会走出不同结果,重放就不是复现而是**新历史**。
+		# ★ 与 fire_cd 同口径:**只进 capture/restore,不进 `_close_enough` 的比对**。
+		#   `_reload_t` 是连续量,客户端预测与服务器权威天然差一个 tick —— 拿它比分歧会
+		#   每帧判"分歧"、每帧回滚(brawl_rollback_probe 量的正是这种频率灾难)。
+		st["mag"] = w.mag_ammo
+		st["rld"] = w._reloading
+		st["rld_t"] = w._reload_t
 	return st
 
 func restore_state(st: Dictionary) -> void:
@@ -503,6 +521,10 @@ func restore_state(st: Dictionary) -> void:
 		w._fire_buffered = bool(st.get("fire_buf", w._fire_buffered))
 		w._aim_facing = int(st.get("aim_f", w._aim_facing))
 		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
+		# 弹药/装填随权威整态回灌(见 capture_state 里那段"为什么进整态、为什么不进比对")
+		w.mag_ammo = int(st.get("mag", w.mag_ammo))
+		w._reloading = bool(st.get("rld", w._reloading))
+		w._reload_t = float(st.get("rld_t", w._reload_t))
 	# 姿态碰撞箱按恢复的 state 启用 + 翻转同步(下帧 move_and_slide 用对的碰撞外形)
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
@@ -623,9 +645,5 @@ func _unhandled_input(event: InputEvent) -> void:
 				# 一帧是同一个理由(level_0.gd 的注释记着"立刻摘树会触发 CanvasItem EXIT_TREE")。
 				(lvl as Level0).restart_single.call_deferred()
 		return
-	# R 换弹(仅单机):站立时给当前武器上弹(倒地时 R 仍是重载场景,见上)。
-	# PvP 不开换弹(reload_active() 恒 false),故只单机生效。
-	if event.is_action_pressed("R") and not Level0.pvp_mode:
-		var w := weapons.current_weapon()
-		if w != null:
-			w.start_reload()
+	# (R 换弹**已从这里迁走** —— 2026-09-15 起走 _physics_process 的 input_source 轮询,
+	#  见那里的注释:读原始 InputEvent 的话权威服务器永远收不到。倒地时 R 仍是重载/复活,见上。)

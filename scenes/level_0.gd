@@ -17,19 +17,18 @@ static var _dirty_chunks: Dictionary = {}
 # PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
 static var pvp_mode: bool = false
 
-# ── 安全场景切换:游戏世界(全量碰撞)退役挂起,不再释放 ──
-# change_scene_to_file 会在切换时同步 memdelete 当前场景;单机/PvP 游戏世界含数万碰撞体,
-# 同步析构偶发原生段错误(实测死亡后回菜单/按 R 重载都会触发)。做法:新场景手动实例化
-# 并接管 current_scene,旧世界摘树挂起、永不释放(即「挂起不释放」保活策略;每次退役先
-# 释放上一具挂起世界,稳态最多挂一具)。
+# ── 安全场景切换:游戏世界(全量碰撞)摘树后**分帧拆除** ──
+# change_scene_to_file 会在切换时同步 memdelete 当前场景;单机/PvP 游戏世界含几千节点 +
+# 庞大的 SubViewport,一次性同步析构偶发原生段错误(实测死亡后回菜单/按 R 重载都会触发)。
+# 做法:新场景手动实例化并接管 current_scene,旧世界摘树,再交给**分帧拆除器**(见 start_reap)
+# 在后续几秒里一小批一小批拆掉 —— 既躲开"一帧里同步 memdelete 整具世界",又不像以前那样
+# **永不释放**(那会让退出时渲染器析构段错误,见 safe_change_scene 里那段注释)。
 # 注意:摘树必须回到帧末进行,故本函数先 await 一帧(见函数内注释)。
-static var _retired: Node = null   # 挂起的上一具游戏世界(最多一具,新的退役时释放旧的)
 
 # 换场「在飞」标志:防同帧/近帧重入。
-# 本函数首行 await 一帧,故两次调用可以同时在飞。第二次resume 时 `old = tree.current_scene`
-# 拿到的已是**第一次刚建出来的新场景** → 于是再实例化一份、把第一份塞进 _retired,而 _retired
-# 槽里原本那具**游戏世界被 free 掉** → 建出两份场景 + _retired 语义被污染(不崩,但之后任何
-# 「退役世界」的假设都不再成立)。触发很现实:PvP 的「对手离开」2.5s 定时器与玩家点「回到主菜单」
+# 本函数首行 await 一帧,故两次调用可以同时在飞。第二次 resume 时 `old = tree.current_scene`
+# 拿到的已是**第一次刚建出来的新场景** → 于是再实例化一份、把第一份也挂进拆除队列
+# (建出两份场景、菜单叠菜单)。触发很现实:PvP 的「对手离开」2.5s 定时器与玩家点「回到主菜单」
 # 可以先后落在同一帧附近。
 # ★ 守卫放在**这个收口点**而非各调用点:调用点每新增一条退出路径就要记得补一次守卫,漏一条
 # 就复现 —— 与「拆除逻辑散在多处」同病。此处一处覆盖全部现有与将来的调用方。
@@ -42,17 +41,165 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	# 先回到帧末再动树:调用方(按钮按下/R 重载的输入处理)可能正处于旧场景节点发出的
 	# 信号调用栈里,立刻摘树会触发 CanvasItem EXIT_TREE 状态错误(headless 实测)。
 	await tree.process_frame
+	var t0 := Time.get_ticks_usec()
+	var t := t0
 	var old: Node = tree.current_scene
 	var next: Node = load(path).instantiate()
+	t = _perf_log("load+instantiate", t)
 	tree.root.add_child(next)      # 新场景 _ready 先跑(旧世界仍在树上,静态引用完好)
+	t = _perf_log("add_child(next)", t)
 	tree.current_scene = next      # 接管 current_scene 指针,旧场景不再被 change 流程释放
 	if old != null and old != next:
+		if OS.get_cmdline_user_args().has("--perf-teardown-detail"):
+			# 诊断模式:不退役,改成逐子树拆开计时。★ 破坏性 —— 整具世界就此拆光,故走完
+			# 这条路就**没有旧世界可退役**了(只给单跑一次的诊断用)。
+			_teardown_detail(tree, old)
+			_perf_log("总计", t0)
+			_switching = false
+			return
 		tree.root.remove_child(old)
+		t = _perf_log("remove_child(old)", t)
 		old.visible = false
-		if _retired != null and is_instance_valid(_retired):
-			_retired.free()        # 释放更早的那一具(此具已在树上挂了整局时间,最稳)
-		_retired = old
+		# ★★ 2026-09-15(导出 exe 实测):**不再把旧世界挂起**。
+		#   原先摘树后存进 `_retired`、挂到"下一次换场"才释放,于是:
+		#     · **退出时那具挂起的世界从不释放** → SubViewport 的 RID 全泄漏(实测 6264 个
+		#       CanvasItem + 3 个 shader 未释放)→ 渲染器析构**段错误**(exit 139),
+		#       进程要拖 ~1.5s 才死。用户报的"玩好一局后点退出/叉号要等 1s"就是这条。
+		#     · 第 2 次及以后换场还要同步 free 一整具世界(实测 79.5ms,见下)。
+		#   现在:摘树后**立刻**交给分帧拆除器,几秒内拆干净 —— 用户真去点退出时它早没了。
+		#   对照实测(导出 exe):不进游戏的流程退出码 0、零泄漏;进过游戏的是 139。
+		#
+		# `-- --perf-reap-sync` 保留旧行为(同步 free),只给 A/B 对照用:本机负载漂移能让
+		# 同一段代码的 remove_child 在 20~100ms 之间跳,跨轮比较不可信,只有同进程交替才量得准。
+		if OS.get_cmdline_user_args().has("--perf-reap-sync"):
+			old.free()
+			t = _perf_log("free() 同步(对照)", t)
+		else:
+			start_reap(tree, old)
+			t = _perf_log("start_reap(旧世界)", t)
+	_perf_log("总计", t0)
 	_switching = false   # 换场完成:放行后续换场(回菜单→再进游戏→再回菜单是一串合法调用)
+
+# ── 退役世界的分帧拆除器 ──
+# 背景(实测,`-- --autotest-switch` 两趟单机往返):
+#   第 1 次退出: load 2.21 / add_child 13.06 / remove_child 31.86 / 总计  53.90 ms
+#   第 2 次退出: load 3.21 / add_child 14.68 / remove_child 21.72 / free 79.54 / 总计 133.28 ms
+# 第 2 次是第 1 次的 2.5 倍 —— 「有些时候才卡」就是这一笔(第 1 次 _retired 还是空)。
+# 做法:那笔同步 free 改为**摊到后续帧**。菜单已上屏、旧世界已摘树,分帧拆它谁也看不见。
+#
+# 拆除顺序 = **逆前序**:一次性收集整棵子树的前序列表,然后**从尾往前** free。
+# 前序保证「祖先先于后代被访问」⇒ 逆序即「后代先于祖先被释放」⇒ 每个父节点轮到时子节点
+# 早已拆光。这很重要:大容器本来是一锤子买卖(4000 个 CollisionShape2D 挂在同一个
+# StaticBody2D 下),逆前序把它变成一个个拆,单帧峰值才压得下来。
+# 预算按**时间**而非个数:节点大小差三个数量级,按个数会一会儿空转一会儿爆帧。
+const REAP_BUDGET_US := 3000      # 每帧拆除预算(≈0.18 帧 @60fps)
+static var _reap_queue: Array[Node] = []
+static var _reaper_driver: Node = null
+# 诊断计数(只在 --perf-switch 下打印):拆了多少节点、摊了多少帧。
+static var _reap_nodes := 0
+static var _reap_frames := 0
+static var _reap_us := 0
+
+# 驱动者:挂在 root 上的小节点,随场景切换存活;队列拆空即自毁。
+# ★ 不写 _exit_tree 兜底:半途被拆(退出游戏)时宁可漏掉残余,也不要在树清理期间回头 free
+#   一批已摘树的节点 —— 那正是本函数要躲开的那类同步销毁。
+class _Reaper extends Node:
+	func _ready() -> void:
+		# 换场可能发生在暂停中(暂停菜单点「回到主菜单」),拆除不该被暂停卡住
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		# ★ 显式开 _process:别指望"脚本定义了 _process 就自动启用" —— 本节点是**内部类**
+		#   实例,自动启用走的是脚本方法探测那条路,不显式开就可能一帧都不进
+		#   (实测:不开时拆除器全程零调用,残余只能靠下次换场的 finish_reap 同步兜底)。
+		set_process(true)
+
+	func _process(_delta: float) -> void:
+		if Level0.reap_step():
+			queue_free()
+
+	func _exit_tree() -> void:
+		if Level0._reaper_driver == self:
+			Level0._reaper_driver = null
+
+# 把一具退役世界交给分帧拆除器。上一具若还没拆完,先就地拆掉(通常已近空壳,代价很小)。
+static func start_reap(tree: SceneTree, world: Node) -> void:
+	if world == null or not is_instance_valid(world):
+		return
+	# ★ 追加而不是"清空重来":上一具可能还没拆完(用户在菜单里只待了一小会儿就又进游戏)。
+	#   两棵树混在一个队列里也拆不错 —— 队列按逆前序消费,每个节点只属于一棵树。
+	var t0 := Time.get_ticks_usec()
+	_collect_preorder(world, _reap_queue)
+	_reap_nodes = _reap_queue.size()
+	_reap_frames = 0
+	_reap_us = Time.get_ticks_usec() - t0
+	# 驱动者还活着就复用(它与拆除队列都是全局的,不需要第二个);已排队待删的另起一个 ——
+	# 不能只判 != null:它可能刚判空、正等帧末销毁,复用会让新队列没人拆。
+	if _reaper_driver == null or not is_instance_valid(_reaper_driver) \
+			or _reaper_driver.is_queued_for_deletion():
+		_reaper_driver = _Reaper.new()
+		_reaper_driver.name = "WorldReaper"
+		tree.root.add_child(_reaper_driver)
+
+# 推进一步。返回 true = 队列已空(驱动者据此自毁)。
+static func reap_step() -> bool:
+	var deadline := Time.get_ticks_usec() + REAP_BUDGET_US
+	while not _reap_queue.is_empty() and Time.get_ticks_usec() < deadline:
+		var n: Node = _reap_queue.pop_back()
+		if is_instance_valid(n):
+			n.free()
+	_reap_frames += 1
+	if _reap_queue.is_empty():
+		if OS.get_cmdline_user_args().has("--perf-switch"):
+			print("[perf-switch] reap 完成              %d 节点 / %d 帧 / 收集 %.2f ms" % [
+					_reap_nodes, _reap_frames, float(_reap_us) / 1000.0])
+		return true
+	return false
+
+# 就地拆完剩余(下一次换场接手时兜底)。
+static func finish_reap() -> void:
+	for n in _reap_queue:
+		if is_instance_valid(n):
+			n.free()
+	_reap_queue.clear()
+
+# 诊断(只给 `-- --perf-teardown-detail` 用):把旧世界**逐个子树**拆下来计时,
+# 回答"remove_child 那几十毫秒到底花在谁身上"。★ 这个模式是**破坏性**的 —— 子树当场 free、
+# 世界不再退役,故只能单次诊断用,别在日常流程里开。
+static func _teardown_detail(tree: SceneTree, old: Node) -> void:
+	var total := Time.get_ticks_usec()
+	var kids := old.get_children()
+	print("[perf-switch] 旧世界 %d 个顶层子节点(逐个 free 计时):" % kids.size())
+	for c in kids:
+		# ★ 名字/类名必须在 free **之前**取:c.free() 之后 c 已失效,再读 c.name 是
+		#   use-after-free(实测:整行 print 直接不出现,只留下表头)。
+		var nm := str(c.name)
+		var cls := c.get_class()
+		var s := Time.get_ticks_usec()
+		c.free()
+		var e := Time.get_ticks_usec()
+		print("[perf-switch]   %-22s %-14s %8.2f ms" % [nm, cls, float(e - s) / 1000.0])
+	var s2 := Time.get_ticks_usec()
+	if old.is_inside_tree():
+		tree.root.remove_child(old)
+	old.free()
+	var husk := float(Time.get_ticks_usec() - s2) / 1000.0
+	print("[perf-switch]   空壳 remove+free               %8.2f ms;整具合计 %.2f ms" % [
+			husk, float(Time.get_ticks_usec() - total) / 1000.0])
+
+
+static func _collect_preorder(n: Node, out: Array[Node]) -> void:
+	out.append(n)
+	for c in n.get_children():
+		_collect_preorder(c, out)
+
+# ── 换场耗时打点(**诊断用,默认静默**)──
+# 打开方式:`-- --perf-switch`(与 `--worker` 同规,开关必须落在 `--` 之后,
+# 见 OS.get_cmdline_user_args())。打一次换场就在 stdout 打四行。
+# 配套 `tests/menu_autotest.gd` 的 `-- --autotest-switch`(两趟往返,把第 2 次退出也走到)。
+static func _perf_log(label: String, t0: int) -> int:
+	var now := Time.get_ticks_usec()
+	if OS.get_cmdline_user_args().has("--perf-switch"):
+		print("[perf-switch] %-20s %8.2f ms" % [label, float(now - t0) / 1000.0])
+	return now
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。

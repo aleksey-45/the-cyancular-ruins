@@ -20,23 +20,32 @@ const WEAPON_FONT_SIZE := 32    # 武器名/残弹数;同上(32 = 2×16)
 # 的唯一来源是 UiFactory.style_control(内部走 core/pixel_font.gd 的 PixelFont.shared())——
 # 本文件不再自己 load 字体、不自己设字号,字号规范才守得住(见 ui_factory.gd 文件头)。
 const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
-# HUD 底板(2026-09-13 视觉评析)。**现在只剩左下角的武器区在用** —— 血条/氧条与右上角
-# 击杀数的底板已按用户要求于 2026-09-15 去掉("把血条和右上计数器的黑框去除")。
-# ★ 下面这组对比度数字是**当年垫底板那次的实测**,对已去掉底板的元素**不再适用**:
-#   青色血条直接压在地图浅色开阔区上 ≈1.9:1、金色残弹 ≈2.3:1,且横跨深浅地形时清晰度
-#   还会变 —— 去掉底板就是把这几个元素放回那个状态,是用户看过的有意选择,不是回归。
-#   底板把底层压到 L≈0.08 时所有元素一律 ≥4.5:1;0.45 是算出来的下限(0.25 只有 3.07:1)。
-const PLATE_COLOR := Color(0, 0, 0, 0.45)
+# HUD 底板:武器区 / 血条 / 氧条 / 右上角击杀数,**四处共用这一个值**
+# (用户 2026-09-15 定为 0.15、同日又下调到 0.1;当天这几个元素先被去掉底板、又垫回来)。
+# ★ 这个值**对局内 HUD 也生效** —— 大乱斗 ping/提示条(royale_hud 的 `_plate_box`)、
+#   1v1 记分条与延迟条(pvp_hud.tscn 的 `Plate` StyleBox)都是同一个 0.1。
+#   ★ **例外:大乱斗排行榜 `royale_hud._board_bg` 单独是 0.25** —— 用户点名把那张玩家栏
+#     排除在这轮下调之外(玩家名次表要更实的底);别看到"统一"就把那处也一起改了。
+#   (`pvp_hud` 的 `Mask` 与 royale 的 `_mask` 是**全屏压暗罩**,不是底板,别顺手一起改。)
+# ⚠ 0.1 是**薄薄压一层**,不是当年那套底板。按 WCAG 相对亮度算(底色取地图开阔区 #78969F):
+#     alpha 0(不垫)→ 底色 L=0.283,青血条 1.87:1、金残弹 2.26:1、白字 2.57:1
+#     alpha 0.10   → 底色 L=0.225,青血条 2.27:1、金残弹 2.74:1、白字 3.11:1   ← 现在
+#     alpha 0.15   → 底色 L=0.199,青血条 2.50:1、金残弹 3.03:1、白字 3.44:1   ← 上一版
+#     alpha 0.45   → 底色 L=0.080,青血条 4.81:1、金残弹 5.81:1、白字 6.60:1   ← 当年那套(≥4.5:1)
+#   即现在只是把这几样从「勉强」提到「稍好」,血条仍低于大字下限 3:1。这是用户看过实图后的
+#   选择,别拿对比度理由把它调回去;真要提对比度得动元素自身的颜色(血条青/金色残弹),另一件事。
+const PLATE_COLOR := Color(0, 0, 0, 0.1)
+# 血条/氧条底板比条本身每边外扩多少(右上角计数器的留白走 PanelContainer 的 content margin)
+const BAR_PLATE_PAD := Vector2(6, 5)
 const WATERPROOF_H := 10            # 防水值条高(细长)
 const WATERPROOF_GAP := 18         # 防水值条与血条间距(下移)
 const WATERPROOF_W := 18            # 每点防水值宽度(px)
 # 亮蓝:当年为「深色底板」选的颜色 —— 底板换成深色后,原来的深蓝
 # (Color(0.161,0.26,0.8,0.702))会在深底上糊成一片(≈1.0:1),提亮到浅蓝后 ≈3.8:1。
-# ⚠ 2026-09-15 底板去掉后,**这两个值都失去了它们赖以成立的前提**:浅蓝压在地图的浅灰蓝
-#   开阔区上不再是 3.8:1,`_wp_back` 那条白 0.16 的空槽则基本看不见。本次只按用户要求
-#   去掉黑框、**未动这两个颜色**(改色是另一件事)。若氧条在浅色地形上读不出来,从这里改起。
+# (2026-09-15 底板去掉过半天,这两个值当时失去了前提;同日氧条底板垫回来后,浅蓝 3.8:1
+#  与「白 0.16 空槽压在深底上」的前提重新成立。)
 const WATERPROOF_COLOR := Color(0.45, 0.72, 1.0)
-const WATERPROOF_BACK := Color(1, 1, 1, 0.16)     # 空槽(原为「底板上的浅色浅槽」)
+const WATERPROOF_BACK := Color(1, 1, 1, 0.16)     # 空槽(底板上的浅色浅槽)
 
 var _segments: Array[ColorRect] = []
 var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
@@ -45,6 +54,7 @@ var _kill_label: Label
 var _kills := 0
 var _wp_bar: ColorRect = null
 var _wp_back: ColorRect = null
+var _wp_plate: ColorRect = null      # 氧条底板:与条/空槽一同淡入淡出(用户 2026-09-15)
 var _wp_w := 0.0
 var _wp_tween: Tween = null
 var _weapon_icon: TextureRect = null
@@ -87,7 +97,9 @@ func _process(_delta: float) -> void:
 	var w: WeaponBase = null
 	if _player != null and is_instance_valid(_player) and "weapons" in _player:
 		w = _player.weapons.current_weapon()
-	var show := w != null and w.reload_active()
+	# 换弹全模式开放后弹量条恒显示 —— 原先那句 `and w.reload_active()` 正是 PvP 里
+	# 弹量条整条消失的原因(闸门已删,见 weapon_base.gd 的换弹段注释)。
+	var show := w != null
 	_ammo_label.visible = show
 	# 换弹进度条:剪影下方细条,随进度填充;非换弹状态隐藏
 	var prog := -1.0
@@ -184,10 +196,17 @@ func _on_weapon_changed(slot: int) -> void:
 		_weapon_icon.texture = WeaponIcons.silhouette(slot)
 		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "?")
 
-# 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;无边框。
-# 2026-09-15 起血条/氧条下面**没有底板**了(用户要求去掉黑框):竖条之间的 1px 缝
-# 现在透出的是地图本身,整排仍读成一条「带刻度的条」,但镂空处不再是深色。
+# 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;条本身无边框。
+# 底板(PLATE_COLOR)铺在整排下面 —— 竖条之间那 1px 缝于是透出底板而不是地图,
+# 整排读成一条「压在薄板上的条」(0.1 很淡,缝里与缝外的差别是刻意做小的)。
 func _build_segments(count: int) -> void:
+	# ★ 底板**先**入队:入树顺序即绘制顺序,后加的条才画在它上面
+	var bar_w := count * (SEG_W + SEG_GAP) - SEG_GAP
+	var plate := ColorRect.new()
+	plate.color = PLATE_COLOR
+	plate.position = Vector2(MARGIN.x - BAR_PLATE_PAD.x, MARGIN.y - BAR_PLATE_PAD.y)
+	plate.size = Vector2(bar_w + BAR_PLATE_PAD.x * 2.0, SEG_H + BAR_PLATE_PAD.y * 2.0)
+	call_deferred("add_child", plate)
 	for i in range(count):
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
@@ -216,18 +235,27 @@ func _on_hp(cur: int, max_hp: int) -> void:
 	_last_cur = cur
 
 # 防水值(氧气)条:血条下方深蓝细长条,长度按防水值/上限。
+# 底板 + 空槽 + 实条三件套,初始 alpha 全是 0 —— 满氧时整组不该出现(见 _on_waterproof)。
 func _build_waterproof(wp_max: int) -> void:
 	_wp_w = WATERPROOF_W * wp_max
 	var y := MARGIN.y + SEG_H + WATERPROOF_GAP
+	_wp_plate = ColorRect.new()
+	_wp_plate.position = Vector2(MARGIN.x - BAR_PLATE_PAD.x, y - BAR_PLATE_PAD.y)
+	_wp_plate.size = Vector2(_wp_w + BAR_PLATE_PAD.x * 2.0, WATERPROOF_H + BAR_PLATE_PAD.y * 2.0)
+	_wp_plate.color = PLATE_COLOR
+	_wp_plate.modulate.a = 0.0
+	call_deferred("add_child", _wp_plate)
 	_wp_back = ColorRect.new()
 	_wp_back.position = Vector2(MARGIN.x, y)
 	_wp_back.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_back.color = WATERPROOF_BACK
+	_wp_back.modulate.a = 0.0
 	call_deferred("add_child", _wp_back)
 	_wp_bar = ColorRect.new()
 	_wp_bar.position = Vector2(MARGIN.x, y)
 	_wp_bar.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_bar.color = WATERPROOF_COLOR
+	_wp_bar.modulate.a = 0.0
 	call_deferred("add_child", _wp_bar)
 
 func _on_waterproof(cur: int, max: int) -> void:
@@ -242,8 +270,11 @@ func _fade_waterproof(a: float) -> void:
 	if _wp_tween != null and _wp_tween.is_valid():
 		_wp_tween.kill()
 	_wp_tween = create_tween()
-	_wp_tween.tween_property(_wp_bar, "modulate:a", a, 0.4)
-	_wp_tween.parallel().tween_property(_wp_back, "modulate:a", a, 0.4)
+	# 底板与条/空槽**同一 tween、同一时长** —— 氧条消失时底板必须跟着走,
+	# 否则浅色地形上会留下一块没人认领的暗矩形(用户明确要求「一同出现消失」)。
+	_wp_tween.set_parallel(true)
+	for c in [_wp_bar, _wp_back, _wp_plate]:
+		_wp_tween.tween_property(c, "modulate:a", a, 0.4)
 
 func _start_ghost(i: int) -> void:
 	var seg := _segments[i]
@@ -270,14 +301,14 @@ func _kill_ghost(i: int) -> void:
 
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
-	# ★ 2026-09-15:按用户要求去掉这里的深底板(「右上计数器的黑框」)。**保留 StyleBoxFlat**
-	#   ——它现在只剩 content margin 的作用(数字与右上角的间距)。
-	# ⚠ **必须显式 `draw_center = false`,不能只是不写 `bg_color`**:StyleBoxFlat 的默认底色是
-	#   **不透明灰 (0.6,0.6,0.6,1.0)**、`draw_center` 默认 true —— 删掉赋值那一行等于把黑板
-	#   换成一块**实心灰板**(实测第一版就这么发的,用户当场看出「右上角怎么还有框」)。
+	# 底板 2026-09-15 按用户要求去掉过、同日又按用户要求垫回(见 PLATE_COLOR)。
+	# ⚠ **底色必须显式给**:StyleBoxFlat 的默认底色是**不透明灰 (0.6,0.6,0.6,1.0)**、
+	#   `draw_center` 默认 true —— 想"去掉底色"却只删掉 `bg_color` 赋值那一行,等于把半透明
+	#   黑板换成一块**实心灰板**(比原来还显眼;实测发过一版,用户当场看出「右上角怎么还有框」)。
+	#   当时是靠 `draw_center = false` 救的,现在底色回来了就不要那行。
 	var wrap := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.draw_center = false
+	sb.bg_color = PLATE_COLOR
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 16.0
 	sb.content_margin_right = 16.0

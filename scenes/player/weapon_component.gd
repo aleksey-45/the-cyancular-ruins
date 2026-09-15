@@ -107,7 +107,7 @@ func equip(slot: String) -> void:
 		# 会一次性泵完,快拨/惯性滚轮/精密触控板能在一帧里连发两次 cycle_slot。
 		# 守卫只加在**写 _mag_state** 处,不外扩:fire_cd_timer 由 equip() 同步写入(未入树也有效),
 		# 而 queue_free 必须照跑,否则未入树的旧枪实例泄漏。
-		if _weapon.reload_active() and _weapon.is_inside_tree():
+		if _weapon.is_inside_tree():
 			_mag_state[old_slot] = _weapon.mag_ammo
 		_weapon.queue_free()
 	_current_slot = int(slot)
@@ -121,7 +121,7 @@ func equip(slot: String) -> void:
 	_weapon = scene.instantiate() as WeaponBase
 	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
-	if _weapon.reload_active() and _mag_state.has(_current_slot):
+	if _mag_state.has(_current_slot):
 		# 武器 _ready(入树时)会把 mag_ammo 重置为满:恢复必须排在 deferred add 之后
 		var restored_slot := _current_slot
 		var restored_ammo := int(clampi(_mag_state[restored_slot], 0, _weapon.mag_size))

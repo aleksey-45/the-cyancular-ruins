@@ -33,9 +33,12 @@ const LaserVisual := preload("res://core/present/laser_visual.gd")
 # 对可破坏砖单次扣血量(树叶/树干用 "explosion" 语义,不穿墙只磨)。
 @export var tile_chip: int = 8
 
-# 命中判据(每段):折线线段与目标**实际身体 AABB**(由启用中的碰撞多边形算出,含 2.5x 缩放)
-# 外扩 beam_half_width×HIT_MULT 后相交即中——激光线穿过身体任一部分都算,不再要求中心点贴线。
+# 命中判据(每段):折线线段与目标**实际身体 AABB**(由启用中的碰撞多边形算出,含 2.5x 缩放,
+# 见 _body_rect)外扩 beam_half_width×HIT_MULT 后相交即中 —— 激光线穿过身体任一部分都算,
+# 不再要求中心点贴线。
 # (早前用"中心点到线距离 ≤ 半径+半身",身体大而激光细 → 线扫过身体上半但中心离得远就整只漏判。)
+# ★ 2026-09-15:上面这条判据**此前从未真正生效** —— CollisionAabb 认不出多边形,身体框一直
+#   是"原点周围 36×36"的兜底值。修好后判定才第一次落在身体上。
 const HIT_MULT: float = 1.75
 
 enum BeamStyle { FLASH = 0 }   # 预留视觉风格;目前只有"单发瞬光"
@@ -56,6 +59,9 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 	# 视觉(所有端都播;服务器 headless 播也无害,与子弹视觉先例一致)
 	_spawn_beam_visual(pts)
 	if not _authoritative():
+		# PvP 客户端不裁决伤害(拆墙由服务器 tile_destroyed 驱动),但**砖块受击粒子是纯反馈**:
+		# 与子弹同口径照播,否则同一局里「子弹打砖有碎片、激光打砖零反馈」。
+		_spawn_tile_fx(contacts, hit_points)
 		return
 
 	# 缝2:权威侧结算(伤害/磨砖)
@@ -146,10 +152,10 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 			var t: Node = tg[0]
 			var is_enemy: bool = tg[1]
 			var n := t as Node2D
-			# 身体 AABB 中心锚到本段起点副本(段足够短,量距一致;跨接缝量近副本)
-			var c := MazeGenerator.anchor_to_nearest(n.global_position, a, w, h)
-			var half := _body_half(n) + Vector2(corridor, corridor)
-			var near := _segment_rect_hit(a, b, Rect2(c - half, half * 2.0))
+			# 身体框锚到本段起点最近的副本(段足够短,量距一致;跨接缝量近副本),再外扩 corridor
+			var body := _body_rect(n, a, w, h)
+			var c := body.get_center()
+			var near := _segment_rect_hit(a, b, body.grow(corridor))
 			if near.x == INF:  # 未穿过身体框
 				continue
 			if is_enemy:
@@ -157,12 +163,18 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 			else:
 				_apply_to_player(t, c, near)
 
-# 目标在世界系的半身(px)。几何取自 CollisionAabb(只并启用中的碰撞体,兼容玩家/飞鸟的
-# 多姿态碰撞箱)。兜底 18px(近似半身)。
-func _body_half(n: Node2D) -> Vector2:
-	if not CollisionAabb.has_any(n):
-		return Vector2(18, 18)
-	return CollisionAabb.world_rect(n).size * 0.5
+# 目标身体在世界系的**方框**(px),中心已锚到 near_to 最近的环面副本。几何取自
+# CollisionAabb(只并启用中的碰撞体,兼容玩家/飞鸟的多姿态碰撞箱);无碰撞体时兜底
+# 18px 半身、以节点原点为中心。
+# ★ 必须用带 position 的整框 —— 身体框中心**不在节点原点**(跳鸟偏低 ≈8px、黑影偏低 ≈5px),
+#   只取 size 再以原点为中心会让判定框整体错位(2026-09-15 前的实现就是这个错法,
+#   叠加当时 CollisionAabb 读不到多边形,判定框实际是原点周围 36×36)。
+func _body_rect(n: Node2D, near_to: Vector2, w: float, h: float) -> Rect2:
+	var r := Rect2(n.global_position - Vector2(18, 18), Vector2(36, 36))
+	if CollisionAabb.has_any(n):
+		r = CollisionAabb.world_rect(n)
+	var c := MazeGenerator.anchor_to_nearest(r.get_center(), near_to, w, h)
+	return Rect2(c - r.size * 0.5, r.size)
 
 # 线段与矩形是否相交;命中返回线段上最近点(击退源),未命中返回 (INF,0)。
 # 实现:矩形外扩(其实调用方已外扩 corridor,此处即精确矩形)逐轴裁剪线段参数区间。
@@ -224,13 +236,13 @@ func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 	if host != null and host.has_method("notify_direct_hit"):
 		host.notify_direct_hit(player, p)
 
-# 对碰墙触点里的可破坏砖扣血(树叶/树干,"explosion" 语义不穿墙)。只磨不破:砖血扣到 0
-# 变空气由 damage_tile 回调 Level0 处理,下一发射击自然穿过。同一格单发只扣一次。
-# 真正扣到血(explosion_destroyable)的砖 → 在触点播 TileHitFx 碎片粒子。
-func _damage_tiles(contacts: Array, hit_points: PackedVector2Array) -> void:
+# 碰墙触点里「值得处理」的可破坏砖:去重 + 越界过滤 + 可破坏判定。**纯查询,不改任何状态**。
+# 扣血(权威侧)与播粒子(**所有端**)共用同一份扫描 —— 两端表现因此同源。
+func _tile_contacts(contacts: Array, hit_points: PackedVector2Array) -> Array:
+	var out: Array = []
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
-		return
+		return out
 	var done := {}
 	for idx in range(contacts.size()):
 		var cell: Vector2i = contacts[idx]
@@ -242,7 +254,23 @@ func _damage_tiles(contacts: Array, hit_points: PackedVector2Array) -> void:
 		var tex: int = MazeGenerator.texture_of(grid[cell.y][cell.x])
 		if not TileDefs.explosion_destroyable(tex):
 			continue
-		# 播粒子(所有端都可播视觉;PvP 拆格由服务器 tile_destroyed 驱动,本方法只在权威侧调用)
-		if idx < hit_points.size():
-			TileHitFx.spawn(get_viewport(), hit_points[idx], tex)
-		TileDefs.damage_tile(cell, tile_chip, "explosion")
+		out.append({"cell": cell, "tex": tex,
+				"pos": hit_points[idx] if idx < hit_points.size() else Vector2.ZERO})
+	return out
+
+# 触点的受击碎片。**所有端都播** —— 与子弹同口径(bullet_base 的 TileHitFx 在 apply_damage 之前)。
+# ★ PvP 客户端本地激光不裁决伤害(见 _spawn_projectiles 的权威门),但粒子是纯反馈,照播:
+#   此前那段 `if not _authoritative(): return` 把它一起吞掉了,于是同一局里
+#   「子弹打砖有碎片、激光打砖零反馈」(2026-09-15 用户报)。
+func _spawn_tile_fx(contacts: Array, hit_points: PackedVector2Array) -> void:
+	for t in _tile_contacts(contacts, hit_points):
+		var pos: Vector2 = t["pos"]
+		TileHitFx.spawn(get_viewport(), pos, int(t["tex"]))
+
+# 对碰墙触点里的可破坏砖扣血(树叶/树干,"explosion" 语义不穿墙)。只磨不破:砖血扣到 0
+# 变空气由 damage_tile 回调 Level0 处理,下一发射击自然穿过。同一格单发只扣一次。
+# (扫描跑两遍:一遍播粒子一遍扣血。触点只有几个,单发一次,代价可忽略 —— 换来两条路径零重复。)
+func _damage_tiles(contacts: Array, hit_points: PackedVector2Array) -> void:
+	_spawn_tile_fx(contacts, hit_points)
+	for t in _tile_contacts(contacts, hit_points):
+		TileDefs.damage_tile(t["cell"], tile_chip, "explosion")

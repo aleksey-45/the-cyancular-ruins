@@ -232,5 +232,12 @@ func _explode() -> void:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
+	# 被炸到的可破坏砖 → 逐格播受击碎片。**所有端都播**,与 _damage_tile_at 同口径
+	# (2026-09-15 用户要求补上;此前这条路径在 2026-09-06 的 tile-hit-fx 设计里被明文排除,
+	#  后果是炸掉一排树叶时炸点除了那张 explosion 动画什么都没有)。
+	# ★ 扫的是与权威结算**同一个** Explosion.destructible_cells —— 两端粒子落在同一批格上。
+	for e in Explosion.destructible_cells(global_position, explosion_radius):
+		var tile_pos: Vector2 = e["pos"]
+		TileHitFx.spawn(get_viewport(), tile_pos, int(e["tex"]))
 	if apply_damage:
 		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)

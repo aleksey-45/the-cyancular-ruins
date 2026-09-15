@@ -85,10 +85,18 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定,预瞄只是参考
 @export var preview_time: float = 0.5
 
-# ── 换弹(装填;固定玩法,无开关可关)──
-# 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。判据是 pvp_mode **与**
-# 输入源两条:只用 pvp_mode 会漏掉权威服务器(它不实例化 Level0,pvp_mode 恒 false),
-# 只用输入源会漏掉 PvP 本地客户端(本地 PlayerInput)—— 两者都会造成单方面停火(见 reload_active)。
+# ── 换弹(装填;固定玩法,无开关可关;**全模式开放**)──
+# ★ 2026-09-15:PvP(1v1/大乱斗)一并开放。此前这里有一道 `reload_active()` 闸门,在
+#   `Level0.pvp_mode` 与网络输入源下恒 false —— 于是 PvP 两端**一致地**不换弹(无限弹)。
+#   开放后两端跑同一套:按下的边沿经输入包上行(`PacketInputSource.BIT_RELOAD`),弹药与
+#   装填进度进 `Player.capture_state()`。闸门整个删掉而不是改成恒 true —— 项目约定是
+#   「换弹恒开」(Settings 里的 reload_enabled 开关当年就是为此删的),留个恒真的函数
+#   只会让人以为还有开关。
+#
+# ⚠ 曾经的风险与现在的边界(别再照旧说法解释):
+#   旧注释说"服务器单方面停火"——那是闸门**只判 pvp_mode** 时的后果(服务器不实例化
+#   Level0,pvp_mode 恒 false,会被判成单机)。闸门删掉后不存在"一端换弹一端不换":
+#   服务器按输入包里的 R 边沿进装填,客户端本地预测同样进,分歧由 capture_state 收敛。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
@@ -101,20 +109,6 @@ var _reload_pose := false             # 换弹姿态生效中(结束/切枪后�
 const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
 const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
 
-func reload_active() -> bool:
-	# 仅本地单机 —— 两个判据缺一不可:
-	# ① pvp_mode:挡 **PvP 本地客户端**(C2 下它用本地 PlayerInput 读真实鼠标,pvp_mode=true)。
-	#    漏了它则客户端本地预测"装填中不许开火"、服务器却无限弹 → 枪哑火但人照死,手感错乱。
-	# ② input_is_network:挡 **权威服务器与远端副本**。服务器进程根本不实例化 Level0
-	#    (server/ 目录零赋值)→ pvp_mode 恒 false,只看 ① 会把权威模拟判成"单机":
-	#    服务器单方面进装填、拒绝出弹 reload_time 秒 → 不广播 bullet_spawn =
-	#    静默 PvP 伤害失效(mag_ammo/_reloading 不入 capture_state,分歧永不自愈)。
-	if Level0.pvp_mode:
-		return false
-	if player != null and player.has_method("input_is_network") and player.input_is_network():
-		return false
-	return true
-
 func is_reloading() -> bool:
 	return _reloading
 
@@ -123,7 +117,7 @@ func reload_progress() -> float:
 	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
 
 func start_reload() -> void:
-	if not reload_active() or _reloading or mag_ammo >= mag_size:
+	if _reloading or mag_ammo >= mag_size:
 		return
 	_reloading = true
 	_reload_t = reload_time
@@ -257,13 +251,12 @@ func try_fire() -> void:
 func fire() -> void:
 	if not _player_ok():
 		return
-	# 换弹(实验性):装填中不可开火;空弹夹自动换弹
-	if reload_active():
-		if _reloading:
-			return
-		if mag_ammo <= 0:
-			start_reload()
-			return
+	# 装填中不可开火;空弹夹自动换弹
+	if _reloading:
+		return
+	if mag_ammo <= 0:
+		start_reload()
+		return
 	fire_cd_timer = fire_cooldown
 	# 同屏弹数上限:满员时这发不发(不耗弹、不烧冷却动作——冷却已计,等于"点空枪"),
 	# 等场上旧弹爆掉/消失再打。只对配置了 max_live_projectiles 的武器生效(默认 0=不限)。
@@ -277,11 +270,10 @@ func fire() -> void:
 	_spawn_projectiles(base_dir)
 	# 8bit 音效:重武器(预瞄)/霰弹/普通枪三种音色
 	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
-	# 换弹(实验性):每次开火消耗一发,打空自动换弹
-	if reload_active():
-		mag_ammo = maxi(mag_ammo - 1, 0)
-		if mag_ammo == 0:
-			start_reload()
+	# 每次开火消耗一发,打空自动换弹
+	mag_ammo = maxi(mag_ammo - 1, 0)
+	if mag_ammo == 0:
+		start_reload()
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME

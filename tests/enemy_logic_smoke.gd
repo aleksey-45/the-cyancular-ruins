@@ -123,6 +123,7 @@ func _initialize() -> void:
 	await _phase_flybird_deadzone()
 	_phase_spawn_metadata_parse()
 	_phase_enemy_types_json()
+	await _phase_collision_aabb()   # ★ 追加在**末尾**:既有 27 节的顺序是回归基线,不插队
 
 	if _failures.is_empty():
 		print("SMOKE OK")
@@ -1029,3 +1030,45 @@ func _phase_enemy_types_json() -> void:
 	_check(EnemySpawner.TYPES.has("jump_bird") and EnemySpawner.TYPES.has("fly_bird")
 			and EnemySpawner.TYPES.has("black_bird") and EnemySpawner.TYPES.size() == 3,
 			"EnemySpawner.TYPES 从 enemies.json 加载(含 black_bird)")
+
+
+# ── CollisionAabb:必须认出 CollisionPolygon2D(本作**所有**身体都用它)──
+# 2026-09-15:原先 `has_any`/`world_rect` 只认 `child is CollisionShape2D`,而 Godot 4 里
+# CollisionPolygon2D 与它是**并列类**(都直接继承 Node2D,不是子类关系;该文件里那句
+# "CollisionPolygon2D 继承自 CollisionShape2D" 的注释是错的,已一并改正)。
+# 后果不是"少算一点":敌人/玩家的身体几何**一律读不到**,三个调用方静默走兜底 ——
+# 激光的判定框恒为「原点周围 36×36」(和身体大小/位置无关,实测扫偏移量 ±16 命中、
+# ±24 不中),water 的脚底偏移恒 24px,飞鸟避障恒 40×40。这一节把该语义钉死。
+func _phase_collision_aabb() -> void:
+	var host := Node2D.new()
+	root.add_child(host)
+	var poly := CollisionPolygon2D.new()
+	# 故意不对称:上边 -10、下边 +30 —— 中心不在原点,与敌人场景同款
+	poly.polygon = PackedVector2Array([
+			Vector2(-20, -10), Vector2(20, -10), Vector2(20, 30), Vector2(-20, 30)])
+	host.add_child(poly)
+	host.global_position = Vector2(500, 500)
+	_check(CollisionAabb.has_any(host), "CollisionAabb 认出启用的 CollisionPolygon2D")
+	var wr: Rect2 = CollisionAabb.world_rect(host)
+	_check(wr.size == Vector2(40, 40), "多边形世界 AABB 尺寸(实际 %s)" % str(wr.size))
+	_check(is_equal_approx(wr.position.y, 490.0),
+			"多边形世界 AABB 保留原点偏移(实际 y=%.1f,错法是恒等于原点 y)" % wr.position.y)
+	host.scale = Vector2(2.5, 2.5)     # 敌人 tscn 就是 2.5x
+	_check(CollisionAabb.world_rect(host).size == Vector2(100, 100),
+			"多边形 AABB 跟随节点缩放(实际 %s)" % str(CollisionAabb.world_rect(host).size))
+	host.scale = Vector2.ONE
+	poly.disabled = true                # 姿态箱切换语义:禁用中的不算
+	_check(not CollisionAabb.has_any(host), "禁用中的多边形不算碰撞体")
+	host.free()
+
+	# 真实敌人:身体 AABB 必须远大于激光的兜底 36×36,且中心不在原点
+	var e: Node2D = load("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
+	root.add_child(e)
+	await physics_frame
+	var er: Rect2 = CollisionAabb.world_rect(e)
+	_check(er.size.y > 60.0,
+			"跳鸟身体 AABB 高度 %.1f —— 不该是激光兜底的 36" % er.size.y)
+	_check(absf(er.get_center().y - e.global_position.y) > 4.0,
+			"跳鸟身体 AABB 中心偏离原点 %.1f px(以原点为中心的写法会丢掉这个偏移)"
+					% absf(er.get_center().y - e.global_position.y))
+	e.free()

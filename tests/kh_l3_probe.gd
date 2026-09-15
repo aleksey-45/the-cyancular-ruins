@@ -43,13 +43,17 @@ class StubPlayer extends Node2D:
 	func apply_recoil(_push: float) -> void: pass
 
 
-# 网络输入源桩(必修 1 回归钉用):与 StubPlayer 同款,只多一个 input_is_network() -> true,
-# 模拟 PvP 权威服务器/远端副本上的玩家(它们由 PacketInputSource 驱动)。
-class NetStubPlayer extends Node2D:
-	func is_downed() -> bool: return false
-	func get_facing() -> int: return 1
-	func apply_recoil(_push: float) -> void: pass
-	func input_is_network() -> bool: return true
+# 只回「按住 R」的输入源桩(4b 换弹链路用):验**编码端**把换弹位真的写进输入包。
+# 用桩而不是模拟真实按键:探针不该依赖 Input 全局状态(headless 下也一样),而且要确定性。
+# 其余读口**必须**逐个覆写 —— pack_record 会把轴/四个动作/切枪挨个问一遍,漏一个就会撞上
+# 基类的 push_error 兜底,刷一屏假报错把真断言淹掉。
+class ReloadSrc extends PlayerInput:
+	func source_kind() -> int: return Kind.LOCAL
+	func _axis_raw(_neg: String, _pos: String) -> float: return 0.0
+	func _action_pressed_raw(action: String) -> bool: return action == "R"
+	func _action_just_pressed_raw(action: String) -> bool: return action == "R"
+	func _action_just_released_raw(_action: String) -> bool: return false
+	func _weapon_slot_raw() -> int: return 0
 
 
 # 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
@@ -351,7 +355,10 @@ func _check_reload_core(player: Node, wep: WeaponComponent) -> void:
 	await get_tree().process_frame
 	w.equip(stub)
 
-	_check(w.reload_active(), "换弹玩法未生效(reload_active()=false;pvp=%s)" % str(Level0.pvp_mode))
+	# (原先这里断言 `w.reload_active()` —— 那道闸门 2026-09-15 已删,换弹恒开。改成断言
+	#  "开局是满弹":它才是下面"装填中不出弹/不扣弹"那条对照的前提。)
+	_check(w.mag_ammo == w.mag_size,
+			"换弹玩法前置:入树后应是满弹(mag_ammo=%d / %d)" % [w.mag_ammo, w.mag_size])
 
 	# 对照(反恒真):非装填态 fire() 必须真的出弹 + 扣弹 —— 证明下面的"装填中不出弹"有意义
 	var n0 := _bullets()
@@ -400,49 +407,71 @@ func _check_reload_core(player: Node, wep: WeaponComponent) -> void:
 
 func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 
-	# ── 网络输入源闸门(必修 1 回归钉)──────────────────────────────────
-	# 权威服务器进程**不实例化 Level0**(server/ 目录零赋值)→ `Level0.pvp_mode` 恒 false。
-	# 只判 pvp_mode 的实现在服务器上会判成"单机":每打空弹夹就 start_reload() 并拒绝出弹
-	# reload_time 秒,而客户端预测不受限 → 服务器不广播 bullet_spawn → **PvP 打中不掉血、
-	# 无任何报错**;且 mag_ammo/_reloading 不入 capture_state → 分歧永不自愈。
-	# 判据只能是输入源(权威模拟与远端副本都由 PacketInputSource 驱动)。
+	# ── 4b) PvP 换弹链路(2026-09-15 契约反转)────────────────────────────
+	# ★ 本函数原先钉的是**相反**的契约:「PvP/网络输入源一律不许换弹」(reload_active() 恒 false)。
+	#   那道闸门 2026-09-15 已整个删除,换弹对全模式开放 —— 于是这里的断言必须整段重写,
+	#   改钉**新链路的每一环**。为什么每一环都要钉:"哪一环忘了接"的表现全是静默的
+	#   (R 没反应 / 服务器不换弹 / 回滚重放飘),没有断言就只能等玩家报"PvP 换弹坏了"。
+	# 链路:① 编码端写位 → ② 解码端读位 → ③ 权威玩家真的进装填 → ④ 弹药进整态
+	#       → ⑤ 反向:闸门不得复活。
 	_check(Level0.pvp_mode == false, "前置:本钉要求 pvp_mode 为 false(实际 %s)" % str(Level0.pvp_mode))
-	# (a) 桩路径:覆盖 weapon_base 的 has_method 守卫 + input_is_network()==true
-	var net_stub := NetStubPlayer.new()
-	add_child(net_stub)
-	w.equip(net_stub)
-	_check(not w.reload_active(),
-			"网络输入源驱动时 reload_active() 为真(权威服务器会单方面停火 = PvP 伤害静默失效)")
-	w.mag_ammo = 3
-	w.start_reload()
-	_check(not w.is_reloading(), "网络输入源驱动时 start_reload() 仍进入装填(应被 reload_active() 拒绝)")
-	# (b) 真实链路:真 player.tscn + PacketInputSource → player.gd::input_is_network()
+
+	# ① 编码端:按住 R 必须写进 held/pressed 两个掩码(服务器只认边沿,但 held 供日后长按语义)
+	var packed := PacketInputSource.pack_record(ReloadSrc.new(), 1, Vector2.RIGHT)
+	_check(int(packed.get("held", 0)) & PacketInputSource.BIT_RELOAD != 0,
+			"输入包编码端漏了换弹位:held 里没有 BIT_RELOAD(服务器收不到 R)")
+	_check(int(packed.get("pressed", 0)) & PacketInputSource.BIT_RELOAD != 0,
+			"输入包编码端漏了换弹边沿:pressed 里没有 BIT_RELOAD(装填只在边沿触发,等于没换弹)")
+
+	# ② 解码端:_bit("R") 必须映射到 BIT_RELOAD(原先它恒返回 0 —— 这正是"服务器没有通路"的那一环)
+	var decoded := PacketInputSource.new()
+	decoded.apply_packet({"ax": 0.0, "held": 0, "pressed": PacketInputSource.BIT_RELOAD,
+			"released": 0, "weapon": 0, "aim": Vector2.RIGHT})
+	_check(decoded.is_action_just_pressed("R"),
+			"输入包解码端漏了换弹:_bit(\"R\") 未映射到 BIT_RELOAD,pressed 位读不出来")
+
+	# ③ 真链路:真 player.tscn 注入 PacketInputSource + 带 R 边沿的包 → 权威物理帧必须进装填。
+	#    这是"权威服务器会换弹"的唯一实证 —— 服务器没有输入事件,全靠这条路径。
 	var real_w: WeaponBase = wep.current_weapon()
 	if real_w == null:
-		_failures.append("网络闸门:Player 当前没有武器实例,真实链路无法验证")
+		_failures.append("PvP 换弹:Player 当前没有武器实例,真实链路无法验证")
 	else:
 		var prev_src: PlayerInput = player.input_source
-		player.set_input_source(PacketInputSource.new())
+		var net_src := PacketInputSource.new()
+		net_src.apply_packet({"ax": 0.0, "held": 0, "pressed": PacketInputSource.BIT_RELOAD,
+				"released": 0, "weapon": 0, "aim": Vector2.RIGHT})
+		player.set_input_source(net_src)
 		_check(player.input_is_network(), "注入 PacketInputSource 后 player.input_is_network() 仍为假")
-		_check(not real_w.reload_active(),
-				"真实 Player 注入 PacketInputSource 后 reload_active() 仍为真(必修 1 未生效)")
+		real_w.mag_ammo = 3        # 不满弹,start_reload() 才有活干
+		real_w._reloading = false
+		real_w._reload_t = 0.0
+		player._physics_process(1.0 / 60.0)
+		_check(real_w.is_reloading(),
+				"权威链路断了:带 R 边沿的输入包 + 一个物理帧没能让武器进装填(服务器永不换弹)")
+		# ④ 整态:弹药/装填必须在 capture_state 里,否则 rollback 重放不是复现而是新历史
+		var cap: Dictionary = player.capture_state()
+		_check(cap.has("mag") and cap.has("rld") and cap.has("rld_t"),
+				"整态漏了换弹字段:capture_state 里没有 mag/rld/rld_t(rollback 重放不确定)")
+		# ⑤ (负向对照)非边沿不触发:没有 R 边沿的包不得让武器进装填。
+		# ★ 必须先 clear_edges():PacketInputSource 的边沿是**累积**的(|=),靠 MatchHost
+		#   每 tick 末 clear_edges() 清空 —— 生产里"上一包的边沿"活不过一个 tick,探针
+		#   不照做就会拿上一包的 R 去打自己的负向对照(本探针第一版就是这么假红的)。
+		real_w._reloading = false
+		real_w.mag_ammo = 3
+		net_src.clear_edges()
+		net_src.apply_packet({"ax": 0.0, "held": 0, "pressed": 0,
+				"released": 0, "weapon": 0, "aim": Vector2.RIGHT})
+		player._physics_process(1.0 / 60.0)
+		_check(not real_w.is_reloading(), "负向对照失败:没有 R 边沿的包也让武器进了装填")
 		player.set_input_source(prev_src)
 		_check(not player.input_is_network(), "复原本地输入源后 input_is_network() 应为假")
+		real_w._reloading = false   # 别把装填态留给后面的段
 
-	# (c) PvP **本地客户端**:pvp_mode=true 但输入源是本地的(C2 下引擎自步进读真实鼠标,
-	# pvp_game.gd:49 只置 pvp_mode,本地玩家不注入 PacketInputSource)→ 同样不许换弹。
-	# 漏这一条 = 客户端本地预测"装填中不许开火"、服务器无限弹 → 枪哑火但人照死;
-	# 也违反 player.gd「PvP 不开换弹(reload_active() 恒 false)」的既有约定。
-	w.equip(stub)   # 先复原成本地输入源,再验 PvP 客户端这一格
-	net_stub.queue_free()
-	Level0.pvp_mode = true
-	_check(not w.reload_active(),
-			"PvP 客户端(pvp_mode=true + 本地输入源)reload_active() 仍为真(本地预测会单方面哑火)")
-	w.mag_ammo = 3
-	w.start_reload()
-	_check(not w.is_reloading(), "PvP 客户端 start_reload() 仍进入装填")
-	Level0.pvp_mode = false
-	_check(w.reload_active(), "复位 pvp_mode=false 后单机换弹应恢复(reload_active()=true)")
+	# ⑤ 反向:闸门若复活(源码里又出现 reload_active),上面整条链路的语义就不再是本意 ——
+	#    红在这一条比红在任何一条行为断言都更早、更指向原因。(注释行已被 _code_only 剥掉。)
+	var wb_src := _code_only(_read(WEAPON_BASE_SRC))
+	_check(not wb_src.contains("reload_active"),
+			"换弹闸门复活了:weapon_base.gd 里又出现 reload_active()(全模式开放后它不该存在)")
 
 	w.queue_free()
 	stub.queue_free()

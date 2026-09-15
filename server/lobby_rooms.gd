@@ -232,7 +232,13 @@ func _flush_royale_state(rr: RoyaleRoom) -> void:
 	}
 	for peer_id in rr.players:
 		if is_peer_online(peer_id):
-			NetBusExt.rpc_id(peer_id, "royale_room_state", state)
+			# ★ 每个 peer 送**他自己那一份**:多带一个 `your_role`。等待室 UI 靠它判
+			#   「(我)/(房主)」—— 原先让客户端按**昵称**反查,两人同名(默认都叫 Anon)时
+			#   必然匹配到先出现的那个 → 高亮错行、房主看不到开局按钮。
+			#   role 本来就是服务器权威分配的,不必让客户端去猜。
+			var mine := state.duplicate()
+			mine["your_role"] = rr.player_role[peer_id]
+			NetBusExt.rpc_id(peer_id, "royale_room_state", mine)
 
 func royale_room_of(caller: int) -> RoyaleRoom:
 	for r in royale_rooms:

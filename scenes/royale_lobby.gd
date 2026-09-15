@@ -287,6 +287,7 @@ func _on_room_state(state: Dictionary) -> void:
 	for c in _wait_players.get_children():
 		c.queue_free()
 	var plist: Array = state.get("players", [])
+	var shown := 0   # 行序(1..N)——见下面那条注释:不能直接印 role
 	for p in plist:
 		if typeof(p) != TYPE_DICTIONARY:
 			continue
@@ -294,18 +295,22 @@ func _on_room_state(state: Dictionary) -> void:
 		var nm := str(p.get("name", "玩家"))
 		var is_me := role == my_role
 		var is_host := int(state.get("host_role", 0)) == role
-		var row := UiFactory.label("%d. %s%s%s" % [role, nm, "(我)" if is_me else "", "(房主)" if is_host else ""],
+		shown += 1
+		# ★ 编号印**行序**,不印 role:role 是「最小空闲号」分配、且**有人退出后不重排**
+		#   (这是 --roles 协议的前提,权威 role 稳定才认得出串线),直接印会跳号 ——
+		#   3 人房中间那位退出 → 等待室显示 1、3(2026-09-15 用户报)。
+		#   编号只是界面序号,与权威 role 脱钩;行序 = rr.players 的加入顺序。
+		var row := UiFactory.label("%d. %s%s%s" % [shown, nm, "(我)" if is_me else "", "(房主)" if is_host else ""],
 				32, UiFactory.C_TEXT if not is_me else UiFactory.C_ACCENT)
 		_wait_players.add_child(row)
 	_wait_count.text = "%d / %d 人(至少 2 人可开局)" % [plist.size(), int(state.get("max_players", 4))]
 	_start_btn.visible = _host
 
+# 我在这个房间里是几号。★ 服务器按 peer **单独**下发的 `your_role`(见 lobby_rooms 的
+# _flush_royale_state)—— 原先按**昵称**在名单里反查,两人同名(默认都叫 Anon)时会命中
+# 先出现的那个 → (我)/(房主) 高亮错行、`_host` 判错 → 真房主看不到开局按钮。
 func _my_role_in(state: Dictionary) -> int:
-	var plist: Array = state.get("players", [])
-	for p in plist:
-		if typeof(p) == TYPE_DICTIONARY and str(p.get("name", "")) == PvpSession.player_name:
-			return int(p.get("role", 0))
-	return 0
+	return int(state.get("your_role", 0))
 
 func _build_wait_panel() -> void:
 	_wait_panel = PanelContainer.new()

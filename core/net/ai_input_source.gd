@@ -51,15 +51,17 @@ func _weapon_slot_raw() -> int:
 func get_aim_dir_override() -> Vector2:
 	return aim
 
-# ★ L5 必加(规格 §3 L5 明文) —— 不加以致静默手感退化:
-# main 的 WeaponBase.reload_active()(scenes/weapons/weapon_base.gd)第二判据是
-#   player.input_is_network() → input_source.is_network_driven()
-# 基类 PlayerInput.is_network_driven() 返回 false,而本类不覆写 →
-#   服务器侧 AI 会被判成"本地单机" → 打空弹夹后进换弹、静默停火 reload_time 秒
-#   (霰弹 2.2s / 榴弹 2.8s)。AI 没有预测端,不会造成客户端分歧 ——
-#   只是 AI 手感莫名变差且无任何报错。
-# 附带正向影响:weapon_base._aim_world_dir() 在 override == ZERO 时对
-#   input_is_network()==true 的玩家永不读宿主 OS 鼠标、改用朝向兜底;
-#   AI 的 aim 恒非零(AiNavigator 每帧写 src.aim),两分支都安全但语义更正确。
+# 本类**必须**为 true,理由是**瞄准**而不是换弹:
+# weapon_base._aim_world_dir() 对 input_is_network()==true 的玩家**永不读宿主 OS 鼠标**,
+# 注入方向为 ZERO 时改用朝向兜底。AI 没有鼠标(服务器 headless),不覆写就会让它去读
+# 宿主机的真实鼠标位置 —— 瞄准变成随服务器桌面而变的随机值。
+# (AI 的 aim 恒非零,两个分支其实都安全,但语义上必须是"网络驱动的玩家"。)
+#
+# ★ 2026-09-15 起**不再是**为了绕开换弹:原先 WeaponBase.reload_active() 的第二判据正是
+#   input_is_network(),本类靠返回 true 让 AI 不换弹(免得打空后静默停火 reload_time 秒)。
+#   换弹对全模式开放后那道闸门已整个删除,AI 现在**照常换弹** —— 与真人同规则
+#   (打空 → 装填 → 继续打),这是有意为之,不是 AI 手感退化。
+#   AiInputSource 不产 R 边沿(_action_just_pressed_raw 只认 "up"),故 AI 只会走
+#   "打空自动装填"这一条,不会手动换弹。
 func is_network_driven() -> bool:
 	return true
