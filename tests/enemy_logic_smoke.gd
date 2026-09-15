@@ -125,6 +125,7 @@ func _initialize() -> void:
 	_phase_enemy_types_json()
 	await _phase_collision_aabb()   # ★ 追加在**末尾**:既有 27 节的顺序是回归基线,不插队
 	_phase_weapon_registry()        # ★ 同上,只追加在末尾
+	_phase_spread_cells()           # ★ 同上,只追加在末尾
 
 	if _failures.is_empty():
 		print("SMOKE OK")
@@ -1130,3 +1131,33 @@ func _phase_weapon_registry() -> void:
 	_check(int(wi.TIER_HEAVY) == int(wb.Tier.HEAVY), "TIER_HEAVY 与 WeaponBase.Tier.HEAVY 对齐")
 	_check(int(wi.MAX_WEAPONS) == 4, "WeaponInventory.MAX_WEAPONS == 4")
 	_check(int(wi.CAPACITY) == 8, "WeaponInventory.CAPACITY == 8")
+
+
+# ── 布点工具 spread_cells(2026-09-15 从 RoyaleHost.plan_spawns 抽出)──
+# 三条:取满 / 两两距离达标 / 池子不够时放宽而不返回空。
+func _phase_spread_cells() -> void:
+	var cells: Array = []
+	for y in 10:
+		for x in 10:
+			cells.append(Vector2i(x, y))
+
+	var picked: Array = GridPathfinder.spread_cells(cells.duplicate(), 5, 3, 10, 10)
+	_check(picked.size() == 5, "spread_cells 应取满 5 个点(实际 %d)" % picked.size())
+	# 两两环面距离 ≥ clearance(10x10 的池子放 5 个点不需要放宽)
+	for i in picked.size():
+		for j in range(i + 1, picked.size()):
+			var d := GridPathfinder.toroidal_dist(picked[i], picked[j], 10, 10)
+			_check(d >= 3, "点 %d 与 %d 的距离 %d < clearance 3" % [i, j, d])
+
+	# 池子小:clearance 逐级放宽,最终必须**凑满**而不是返回空(调用方按 count 布点)
+	var few: Array = [Vector2i(0, 0), Vector2i(1, 1), Vector2i(2, 2)]
+	_check(GridPathfinder.spread_cells(few.duplicate(), 3, 9, 10, 10).size() == 3,
+			"池子小时应放宽 clearance 凑满 3")
+
+	# count 超过池子大小:返回全部,不越界、不补 (-1,-1)
+	var over: Array = GridPathfinder.spread_cells(few.duplicate(), 10, 3, 10, 10)
+	_check(over.size() == 3, "count 超过池子应返回全部(实际 %d)" % over.size())
+
+	# 边界:空池 / count<=0 都返回空表,不崩
+	_check(GridPathfinder.spread_cells([], 3, 3, 10, 10).is_empty(), "空池应返回空表")
+	_check(GridPathfinder.spread_cells(few.duplicate(), 0, 3, 10, 10).is_empty(), "count=0 应返回空表")
