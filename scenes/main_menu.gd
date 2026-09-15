@@ -327,7 +327,7 @@ func _build_sp_panel() -> PanelContainer:
 	for slot in [1, 2, 3, 4, 5, 6]:
 		var cb := CheckButton.new()
 		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
-		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
+		cb.icon = WeaponIcons.silhouette(slot)   # 纯白像素剪影,便于辨认
 		cb.expand_icon = false
 		UiFactory.style_check(cb, 32)
 		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)

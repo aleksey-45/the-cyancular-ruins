@@ -104,7 +104,7 @@ func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) 
 	# 显式 int:循环变量来自字面量数组,`var slot_i := slot` 推断不出类型会整文件解析失败
 	for slot: int in [1, 2, 3, 4, 5, 6]:
 		var slot_i := slot
-		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
+		var cell := WeaponIcons.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
 				32, func(on: bool) -> void:
 				if on and not Settings.pvp_disabled_weapons.has(slot_i):
 					Settings.pvp_disabled_weapons.append(slot_i)

@@ -196,7 +196,7 @@ func _build_weapon_display(p: Node) -> void:
 
 func _on_weapon_changed(slot: int) -> void:
 	if _weapon_icon != null:
-		_weapon_icon.texture = WeaponComponent.silhouette(slot)
+		_weapon_icon.texture = WeaponIcons.silhouette(slot)
 		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "?")
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;无边框。
