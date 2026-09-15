@@ -56,7 +56,7 @@ func _ready() -> void:
 func _enter_level0() -> void:
 	Level0.pvp_mode = false            # 复位 PvP 标志,避免上次 PvP 残留
 	CombatComponent.pvp_arena = false  # 回单机恢复命中无敌帧
-	get_tree().change_scene_to_file("res://scenes/Level0.tscn")
+	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
 
 
 # ── 版本号 / 提交历史(git,结果缓存)──
@@ -94,7 +94,7 @@ static func version_string() -> String:
 		return "dev"
 	if _version_cache != "":
 		return _version_cache
-	var bi := preload("res://core/build_info.gd")
+	var bi := preload("res://core/config/build_info.gd")
 	if str(bi.VERSION) != "" and str(bi.VERSION) != "dev":
 		_version_cache = bi.display()
 		return _version_cache
@@ -122,6 +122,14 @@ static func commit_log() -> Array:
 
 # ── 菜单 UI ──
 func _build_new_ui() -> void:
+	_build_ui_layer()
+	var title := _build_title()
+	var ver := _build_version_label()
+	var buttons := _build_menu_buttons()
+	_play_emerge(title, ver, buttons)
+
+
+func _build_ui_layer() -> void:
 	_ui_layer = CanvasLayer.new()
 	_ui_layer.layer = 140   # 盖过 PostProcess(128)/HUD(129)
 	add_child(_ui_layer)
@@ -132,7 +140,9 @@ func _build_new_ui() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_layer.add_child(dim)
 
-	# 大标题:中央浮现(描边同色加粗);下面一行版本号
+
+# 大标题:中央浮现(描边同色加粗)
+func _build_title() -> Label:
 	var title := UiFactory.label("The Cyancular Ruins", 96, UiFactory.C_ACCENT)
 	title.add_theme_constant_override("outline_size", 12)
 	title.add_theme_color_override("font_outline_color", UiFactory.C_ACCENT)
@@ -145,10 +155,13 @@ func _build_new_ui() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.modulate.a = 0.0
 	_ui_layer.add_child(title)
+	return title
 
-	# --nover 的处理收在 version_string() 里(单一收口),这里不再分叉。
-	# 版本号放左下角、小一号、压暗:原先居中挂在标题正下方 —— 位置与字号都让它读成
-	# 标题的「副标题」,和真正的模式按钮抢视线(2026-09-13 视觉评析)。
+
+# --nover 的处理收在 version_string() 里(单一收口),这里不再分叉。
+# 版本号放左下角、小一号、压暗:原先居中挂在标题正下方 —— 位置与字号都让它读成
+# 标题的「副标题」,和真正的模式按钮抢视线(2026-09-13 视觉评析)。
+func _build_version_label() -> Label:
 	var ver := UiFactory.label(version_string(), 16, UiFactory.C_TEXT_DIM)
 	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	ver.offset_left = 24.0
@@ -158,10 +171,13 @@ func _build_new_ui() -> void:
 	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	ver.modulate.a = 0.0
 	_ui_layer.add_child(ver)
+	return ver
 
-	# 模式按钮:标题之后从中央依次浮现。
-	# 三组分开 ——「开始游戏」/「选项」/「退出」:原先 6 个按钮平铺、间距一律 18px,
-	# 退出与单人模式同等分量(2026-09-13 视觉评析:这是会被误点的版式)。
+
+# 模式按钮:标题之后从中央依次浮现。返回按钮数组(浮现动画按这个次序排)。
+# 三组分开 ——「开始游戏」/「选项」/「退出」:原先 6 个按钮平铺、间距一律 18px,
+# 退出与单人模式同等分量(2026-09-13 视觉评析:这是会被误点的版式)。
+func _build_menu_buttons() -> Array:
 	var box := VBoxContainer.new()
 	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -187,7 +203,6 @@ func _build_new_ui() -> void:
 	royale_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		PvpSession.reset()
-		PvpSession.royale = true
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽
@@ -208,14 +223,17 @@ func _build_new_ui() -> void:
 	for b in [settings_btn, ver_btn]:
 		opt_group.add_child(b)
 	box.add_child(quit_btn)
+	return [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]
 
-	# 浮现动画:标题先出(淡入),按钮依次淡入
+
+# 浮现动画:标题先出(淡入),按钮依次淡入
+func _play_emerge(title: Label, ver: Label, buttons: Array) -> void:
 	var tw := create_tween()
 	tw.tween_interval(0.1)
 	tw.tween_property(title, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	tw.parallel().tween_property(ver, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	var delay := 0.9
-	for b in [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]:
+	for b in buttons:
 		_emerge(b, delay, 0.5)
 		delay += 0.16
 
@@ -328,7 +346,7 @@ func _build_sp_panel() -> PanelContainer:
 	for slot in [1, 2, 3, 4, 5, 6]:
 		var cb := CheckButton.new()
 		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
-		cb.icon = WeaponComponent.silhouette(slot)   # 纯白像素剪影,便于辨认
+		cb.icon = WeaponIcons.silhouette(slot)   # 纯白像素剪影,便于辨认
 		cb.expand_icon = false
 		UiFactory.style_check(cb, 32)
 		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)

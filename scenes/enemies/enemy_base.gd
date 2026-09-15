@@ -168,12 +168,24 @@ func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: 
 		velocity += knock_dir.normalized() * ks
 
 
+# 当前是否处于 SLEEP 态。
+#
+# ★ **子类必须覆写**(2026-09-15 阶段 5.8 显式化的契约):本方法原先在 `_is_far_sleeping()`
+#   里被硬编码成 `state != 0`,这**隐含**了「所有子类的 `State.SLEEP` 都是枚举第一个」。
+#   那是一条没人写下来、也没人守的约定 —— 新敌人只要把 SLEEP 排在第二位,它的"远处睡眠优化"
+#   就会**静默失效**(该睡的敌人一直在跑 AI,没有任何报错)。
+#   现在每个子类自己写 `state == State.SLEEP`,加新敌人时照抄一行即可;默认实现保留
+#   `state == 0` 只是兜底,别依赖它。
+func _is_asleep() -> bool:
+	return state == 0
+
+
 # 远处睡眠判定:距玩家超唤醒半径、落地静止、非受击/死亡/非SLEEP → true。
 func _is_far_sleeping() -> bool:
 	if is_dead or _hit_flash_time > 0.0 or _death_timer > 0.0:
 		return false
-	if state != 0:
-		return false  # 非 SLEEP(所有子类 State.SLEEP=0)
+	if not _is_asleep():
+		return false
 	if not is_on_floor():
 		return false
 	if absf(velocity.x) > 5.0 or absf(velocity.y) > 5.0:

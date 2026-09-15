@@ -165,10 +165,10 @@ func _assert_on_game(game: Node) -> void:
 		if not hues.has(r) or not is_equal_approx(float(hues[r]), want):
 			problems.append("role %d 色相 %s ≠ %s → peer_hues 没进新场景" % [r, str(hues.get(r)),
 					str(want)])
-	# 3) 禁武器闸门(match_options):PvpSession 与真玩家武器槽位都要被闸住
-	if PvpSession.disabled_weapons != [DISABLED_SLOT]:
-		problems.append("PvpSession.disabled_weapons=%s ≠ [%d] → match_options 没进新场景" % [
-				str(PvpSession.disabled_weapons), DISABLED_SLOT])
+	# 3) 禁武器闸门(match_options):判据是**真玩家的武器槽位**(下面那段 local.weapons.enabled_slots)。
+	#    2026-09-14:PvpSession.disabled_weapons 已作为"只写不读"删除;原先对它的那条断言是
+	#    冗余见证(同一条链路上已经有下面那条权威断言),按仓内惯例改探针认新入口,
+	#    不为探针保留死字段。
 	var local: Node = game.get("_local")
 	if local == null or not is_instance_valid(local):
 		problems.append("拿不到本地玩家(场景没建好?)")

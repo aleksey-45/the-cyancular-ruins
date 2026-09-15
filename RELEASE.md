@@ -32,14 +32,17 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 
 > **版本号从哪来**:唯一来源是 `project.godot` 的 `application/config/version`。**只能写数字+点**(`1.1.4`),
 > 写 `v.1.1.4` 会让导出预设的 `get_version` 报警告、并让导出失败 —— `v.` 前缀由脚本在**展示与文件名**上加。
-> 导出前脚本会把 `v.1.1.4` + 构建时间戳(`YYYYMMDDHHMM`)写进 `core/build_info.gd`,导出后**自动还原**成
+> 导出前脚本会把 `v.1.1.4` + 构建时间戳(`YYYYMMDDHHMM`)写进 `core/config/build_info.gd`,导出后**自动还原**成
 > dev 占位(所以 `git status` 不会因为这个文件而脏)。游戏内主菜单那行版本号读的就是它 ——
 > 发布版在没有 git 的机器上也能显示准确版本与构建时间(原先那行是从 git 现读的,那种机器上只剩 `dev`)。
 > 服务端启动时会自报一行 `[server] 版本 v.1.1.4 (202609121250)  pid=…`,运维/联调看日志即可确认跑的是哪一版。
 >
-> **导出后自动冒烟**:脚本会各跑一次两个产物(客户端直接起;服务端走 `--worker --port 7999` —— 那条**不碰 7777**,
+> **导出后自动冒烟**:脚本会各跑一次两个产物(客户端直接起;服务端走 `-- --worker --port 7999` —— 那条**不碰 7777**,
 > 不会把服主正在跑的大厅杀掉),只要出现 `SCRIPT ERROR` / `Parse Error` / `Failed to load script` 就中止发布。
 > 这条专门拦「**只在发布版才现形**」的脚本错误(编辑器里跑的是工作区源码,看不见打包后的问题)。
+> ★ 服务端还会**断言自己走的是 worker 分支**(输出里必须出现「worker 就绪」)。**`--worker` 这类开关必须写在
+> `--` 之后**:`server_main.gd` 读的是 `OS.get_cmdline_user_args()`,写在 `--` 之前会被 Godot 当自己的参数丢掉 →
+> **零脚本错误地起成大厅、还在 7777 上 bind**(2026-09-15 实测踩到:冒烟一直"通过",其实从没跑过 worker 分支)。
 
 > 只想手动重导出(不开一键脚本)时,按序做:**① 导客户端** → **② 导服务端** → **③ 服务端打回 CONSOLE** → **④ 归档**(见 §1.5):
 > ```bash
@@ -59,7 +62,7 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 > `--version 1.2.0`(默认读 `project.godot`)。手动重导出(上方命令行)只更新固定名,
 > 归档请另跑 `tools/archive_build.py`(见 §1.5)或手动复制。
 
-> **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云/防火墙需放行 **7777 与 7800~7999 的 UDP**;局域网/本机不受限。
+> **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云/防火墙需放行 **7777 与 7800~8299 的 UDP**(端口池 = 7800 起 500 个);局域网/本机不受限。
 
 ### 1.3 验证
 - **把 exe 拷到项目目录外的干净文件夹再运行**(比如桌面/临时目录)。在项目目录里跑时,Godot 可能从本地文件系统补齐缺失文件,会**掩盖打包漏项**——这是最容易误判的地方。
@@ -154,8 +157,10 @@ cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64
 | exe 突然变回 ~109 MB | 模板目录被官方模板覆盖(编辑器更新/重装) | 重新拷贝编译产物,见 2.5 |
 | exe 一直是 Godot 默认图标,自定义 icon 不生效 | 导出预设 `application/modify_resources=false` | 在导出预设里把 `modify_resources` 勾上(=true),重导出 |
 | exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.cyrm`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `maps/*.cyrm`,重导出 |
-| 发布 exe 报 `Static function "X()" not found in base "res://..."` / `Identifier not found`,**编辑器里一切正常** | 导出前某步把某个脚本**整份重写**了(典型:`core/build_info.gd` 的版本信息生成器),把该文件里别的内容一并抹掉 —— 编辑器跑的是工作区那份,所以看不出来 | 生成器只按行替换目标行,**别整份覆写**;`build_release.py` 的产物冒烟(§1.2)现在会拦住这一类 |
+| 发布 exe 报 `Static function "X()" not found in base "res://..."` / `Identifier not found`,**编辑器里一切正常** | 导出前某步把某个脚本**整份重写**了(典型:`core/config/build_info.gd` 的版本信息生成器),把该文件里别的内容一并抹掉 —— 编辑器跑的是工作区那份,所以看不出来 | 生成器只按行替换目标行,**别整份覆写**;`build_release.py` 的产物冒烟(§1.2)现在会拦住这一类 |
 | 在项目目录里测 exe 一切正常,拷出去就缺东西 | 项目目录运行时 Godot 用本地文件补齐,掩盖了打包漏项 | 务必**拷到项目外**测试打包完整性 |
+| 服务端起了但打的是「服务器就绪…(**大厅 7777**)」而不是「worker 就绪…(port 7999)」 | `--worker` / `--port` 写在了 `--` **之前** → Godot 把它们当自己的参数丢掉,`OS.get_cmdline_user_args()` 是空的 → 起的是大厅(还在 7777 上 bind) | 开关一律放 `--` 之后:`<exe> --headless --quit-after 120 -- --worker --port 7999`。`build_release.py` 的冒烟已按此写,并会断言输出里有「worker 就绪」 |
+| 发布脚本报「找不到 …\core\build_info.gd」 | `core/` 分了子目录(阶段 4.6)后,`build_release.py` 里的硬编码路径仍是旧的 `core/build_info.gd` | 改成 `core/config/build_info.gd`(2026-09-15 修)。**教训**:`check_naming.py` 的 C 检查只扫**文档**里的路径,`tools/*.py` 里的硬编码路径没人守 → 目录整改后要顺手 grep 一遍 `tools/` |
 | 用了 4.4.1 mono 编辑器导出 | 强行走 mono 模板 | 换 4.7.1 标准编辑器 |
 
 ### 查看闪退错误的方法

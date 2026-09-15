@@ -1,31 +1,18 @@
-extends Node2D
+extends PvpMatchClient
 # 大乱斗对局客户端(RoyaleServer 分支):Level0(pvp_mode) 世界 + 本地玩家(服务器渲染)
 # + N-1 个远端副本 + 后处理 + 输入上报 + 快照消费 + RoyaleHud(左上角击杀排行榜)。
 # 与 pvp_client 的差别:对手是 1..N 个(按快照 roles 动态建副本),HUD 用 RoyaleHud。
 
-const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
-const LaserVisual := preload("res://core/laser_visual.gd")
 
 var _last_snap_tick := 0
-var _local: Node2D = null
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
-var _enemy_replicas: Dictionary = {}   # bird_id(int) -> EnemyReplica
 var _level0: Node = null
-var _world: Node = null
 var _hud: RoyaleHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
-var _match_ended := false
-var _round_locked := false   # COUNTDOWN 冻结态(见 _on_round_state;出生点校正只在这期间做)
-var _ping_acc := 0.0
 
 # ── C2 客户端预测(与 pvp_client 同一套;见 docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md)──
 # 本地玩家由引擎自步进(读真实 Input,aim/手感=单机);本场景每物理帧在它步进前
 # note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
-var _rollback = null            # PredictionRollback
-var _input_seq := 0             # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
-var _have_prev_seq := false
-var _prev_sent_seq := 0
-var _menu_open := false         # ESC 菜单是否开着(PvP 下菜单不暂停树,靠这个锁输入)
 
 # ── 头上 ID / 血条(按 role 管理)──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
@@ -43,7 +30,7 @@ func _ready() -> void:
 	MazeGenerator.set_map_file(PvpSession.map_path)
 	GameParameters.refresh_map_size()
 	Level0.pvp_mode = true
-	var level0: Node = load("res://scenes/Level0.tscn").instantiate()
+	var level0: Node = load("res://scenes/level_0.tscn").instantiate()
 	add_child(level0)
 	_level0 = level0
 	_world = level0.get_node("WorldViewport")
@@ -52,7 +39,7 @@ func _ready() -> void:
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	# 与对手(层2)物理碰撞:服务器侧 match_host 已给每个玩家 mask |= 2,客户端本地玩家也必须,
 	# 否则本地预测直接穿过对手副本、服务器却挡住 → 每帧分歧回滚(C2 的无限回滚循环)。
-	# 对手那一侧由 player_replica 的幽灵碰撞体提供(层2)。**不改 Player.tscn**:那会让
+	# 对手那一侧由 player_replica 的幽灵碰撞体提供(层2)。**不改 player.tscn**:那会让
 	# enemy_logic_smoke 的「player mask == 5」断言变红,且单机不需要这一位。
 	local.collision_mask |= 2
 	_local = local
@@ -79,8 +66,6 @@ func _ready() -> void:
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.local_enemy_spawn.connect(_on_enemy_spawn)
-	NetBus.local_enemy_died.connect(_on_enemy_died)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
@@ -116,98 +101,11 @@ func _ready() -> void:
 
 
 # 进场拉取的应答。三个 handler 幂等(改名/染色/设禁用槽位),重复应用无害。
-func _on_match_sync(payload: Dictionary) -> void:
-	var names: Dictionary = payload.get("names", {})
-	if not names.is_empty():
-		_on_peer_info(names)
-	var hues: Dictionary = payload.get("hues", {})
-	if not hues.is_empty():
-		_on_peer_hues(hues)
-	var opts: Dictionary = payload.get("options", {})
-	if not opts.is_empty():
-		_on_match_options(opts)
-	var sp: Dictionary = payload.get("spawns", {})
-	if sp.has(PvpSession.role):
-		var want: Vector2i = sp[PvpSession.role]
-		if want != PvpSession.spawn:
-			push_warning("大乱斗 match_sync: 出生点与 match_start 不一致(%s vs %s),以 sync 为准" % [
-					str(PvpSession.spawn), str(want)])
-			PvpSession.spawn = want
-			_correct_local_spawn()
 
 
 # 见 pvp_client 的同名方法:只在开局倒计时里校正,已打起来就不硬拉。
-func _correct_local_spawn() -> void:
-	if _local == null or not _round_locked:
-		return
-	var ts := GameParameters.TILE_SIZE
-	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
-			PvpSession.spawn.y * ts + ts / 2.0)
 
 
-func _physics_process(_delta: float) -> void:
-	if _local == null:
-		return
-	_ping_acc += _delta
-	if _ping_acc >= 0.5:
-		_ping_acc = 0.0
-		NetBus.send_ping()
-	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
-	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
-	if _rollback != null:
-		if _have_prev_seq:
-			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
-			_rollback.reconcile()
-	var src: InputSource = _local.input_source
-	const UP := NetworkInputSource.BIT_UP
-	const DOWN := NetworkInputSource.BIT_DOWN
-	const CHARGE := NetworkInputSource.BIT_CHARGE
-	const ATTACK := NetworkInputSource.BIT_ATTACK
-	var held := 0
-	var pressed := 0
-	var released := 0
-	if src.is_action_pressed("up"):
-		held |= UP
-	if src.is_action_pressed("down"):
-		held |= DOWN
-	if src.is_action_pressed("charge"):
-		held |= CHARGE
-	if src.is_action_pressed("attack"):
-		held |= ATTACK
-	if src.is_action_just_pressed("up"):
-		pressed |= UP
-	if src.is_action_just_pressed("down"):
-		pressed |= DOWN
-	if src.is_action_just_pressed("charge"):
-		pressed |= CHARGE
-	if src.is_action_just_pressed("attack"):
-		pressed |= ATTACK
-	if src.is_action_just_released("up"):
-		released |= UP
-	if src.is_action_just_released("down"):
-		released |= DOWN
-	if src.is_action_just_released("attack"):
-		released |= ATTACK
-	var aim: Vector2 = _local.get_current_aim_dir()
-	_input_seq += 1
-	var pkt := {
-		"seq": _input_seq,   # 单调输入序号(服务器按序消费并回带 ack,rollback 用)
-		"ax": src.get_axis("left", "right"),
-		"held": held,
-		"pressed": pressed,
-		"released": released,
-		"weapon": src.get_weapon_slot_pressed(),
-		"aim": aim,
-	}
-	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
-	var net_slot: int = _local.weapons.consume_net_slot()
-	if net_slot > 0:
-		pkt["weapon"] = net_slot
-	NetBus.rpc_id(1, "send_input", pkt)
-	_prev_sent_seq = _input_seq
-	_have_prev_seq = true
-	if _rollback != null:
-		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
 
 func _on_snapshot_world(snap: Dictionary) -> void:
 	if _local == null:
@@ -237,24 +135,9 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 	for role_str in _replicas.keys():
 		if not players_snap.has(str(role_str)):
 			_remove_replica(int(role_str))
-	# 中立鸟(大乱斗默认无鸟;协议保留兼容)
-	var enemies_snap: Dictionary = snap.get("enemies", {})
-	for id_str in enemies_snap:
-		var bid := int(id_str)
-		if _enemy_replicas.has(bid):
-			var e: Node = _enemy_replicas[bid]
-			if e != null and e.has_method("apply_remote"):
-				e.apply_remote(enemies_snap[id_str], _local.global_position, snap_tick)
-
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
 # 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
 # 世界包丢只让副本插值冻结一帧。
-func _on_snapshot_own(own: Dictionary) -> void:
-	if _rollback == null:
-		return
-	var c2: Dictionary = own.get("c2", {})
-	if not c2.is_empty():
-		_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
 
 
 # 懒建远端副本(按快照里出现的 role)—— 大乱斗对手数量不定
@@ -294,74 +177,14 @@ func _remove_replica(role: int) -> void:
 		_hp_bars.erase(role)
 	_refresh_names()
 
-func _on_bullet_spawn(data: Dictionary) -> void:
-	if _world == null:
-		return
-	var scene: PackedScene = load(data["scene"])
-	if scene == null:
-		return
-	var b: BulletBase = scene.instantiate()
-	b.setup(data["vel"].normalized(), data["speed"], data["range"], data["size"], data["color"], null)
-	b.gravity_factor = data["gravity"]
-	b.hit_damage = data["hit_damage"]
-	b.hit_impact = data["hit_impact"]
-	b.apply_damage = false
-	if data["explodes"]:
-		b.explodes = true
-		b.direct_hit_damage = data["direct_damage"]
-		b.fuse_time = data["fuse"]
-		b.hit_fuse_time = data["hit_fuse"]
-		b.explosion_radius = data["radius"]
-		b.explosion_damage = data["expl_damage"]
-		b.explosion_knockback = data["expl_knock"]
-		if data.has("visual"):
-			b.explosion_visual = load(data["visual"])
-	b.global_position = data["pos"]
-	_world.add_child(b)
-	if Settings.pvp_show_trajectories:
-		BulletTrail.attach(b, data["color"])
 
 # 服务器权威开火(激光):逐点锚到**射手副本**当前渲染位置再整条画。
 # 与 pvp_client._on_beam_fired 的唯一差别:大乱斗有 N 个副本,锚点按 shooter_role 取。
 # ★ 必须走 NetBus(不是 NetBusExt):发送端 server/match_host.gd 用的是 NetBus.rpc_id(...);
 #   收在 NetBusExt 上会静默 no-op(main 的 core/net_bus_ext.gd 那个同名 RPC 是 KH 遗留重复)。
-func _on_beam_fired(data: Dictionary) -> void:
-	if _world == null:
-		return
-	var shooter := int(data.get("shooter_role", 0))
-	if shooter == PvpSession.role:
-		return                                   # 自己那发已本地预测画过,再收会双光束
-	var replica: Node2D = _replicas.get(shooter)
-	if replica == null or not is_instance_valid(replica):
-		return                                   # 射手副本还没建(快照未到)→ 丢本发
-	var raw: PackedVector2Array = data.get("pts", PackedVector2Array())
-	if raw.is_empty():
-		return
-	var anchor: Vector2 = replica.global_position
-	var w := GameParameters.MAP_WIDTH
-	var h := GameParameters.MAP_HEIGHT
-	var pts := PackedVector2Array()
-	for p in raw:
-		pts.append(MazeGenerator.anchor_to_nearest(p, anchor, w, h))
-	var color: Color = data.get("color", Color(0.1, 0.35, 1.0, 1.0))
-	var half_width := float(data.get("half_width", 2.0))
-	var lifetime := float(data.get("lifetime", 0.25))
-	LaserVisual.spawn_muzzle_orb(_world, pts[0], color, half_width, lifetime)
-	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
 
-func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
-	if _local == null:
-		return
-	if victim_role == PvpSession.role:
-		_local.take_hit(source_pos, damage, false, -1.0)
-	elif _replicas.has(victim_role) and is_instance_valid(_replicas[victim_role]) \
-			and _replicas[victim_role].has_method("play_hit"):
-		_replicas[victim_role].play_hit(source_pos)
 
 # 命中确认(服务器裁决的弹直击,NetBusExt):我是射手 → 屏幕中心 X 标记(FPS 式命中反馈)
-func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
-	if shooter_role == PvpSession.role:
-		CombatFeedback.hit_marker()
 
 # 击杀播报:我击杀对手 → 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)
 func _on_kill_event(killer: int, victim: int) -> void:
@@ -378,19 +201,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			and event.physical_keycode == KEY_K:
 		NetBusExt.rpc_id(1, "suicide_request")
 
-func _on_remote_tile_destroyed(cell: Vector2i) -> void:
-	if _world == null:
-		TileDefs.damage_tile(cell, 999999, "explosion")
-		return
-	var tex := 0
-	var grid := MazeGenerator.current_grid
-	if not grid.is_empty() and cell.y >= 0 and cell.y < grid.size():
-		var row: Array = grid[cell.y]
-		if cell.x >= 0 and cell.x < row.size():
-			tex = int(row[cell.x]) / 16
-	TileDefs.damage_tile(cell, 999999, "explosion")
-	var ts := GameParameters.TILE_SIZE
-	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
 
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
@@ -423,50 +233,21 @@ func _on_round_state(data: Dictionary) -> void:
 # 任一成立就锁。**不要在各调用点各拼一次布尔** —— 那正是"修复波 1 只关住一个方向"的成因。
 # ★ 与 pvp_client._refresh_input_lock 的差别:这里多一个 _match_ended —— 大乱斗在 MATCH_OVER
 #   要锁住结算画面(自检 L6:原还能跑动开枪),而 pvp_client 的 MATCH_OVER 不锁(它靠别的方式收场)。
-func _refresh_input_lock() -> void:
-	if _local != null and _local.has_method("set_controls_locked"):
-		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
-
-# ── 中立鸟兼容(大乱斗默认无鸟)──
-func _on_enemy_spawn(roster: Array) -> void:
-	_clear_enemy_replicas()
-	if _world == null or _local == null:
-		return
-	for entry in roster:
-		if typeof(entry) != TYPE_DICTIONARY:
-			continue
-		var scene_path := str(entry.get("scene", ""))
-		var bid := int(entry.get("id", 0))
-		if scene_path == "" or bid <= 0:
-			continue
-		var r: Node2D = preload("res://scenes/enemies/enemy_replica.gd").new()
-		_world.add_child(r)
-		r.setup(bid, scene_path, entry.get("pos", _local.global_position), _local.global_position)
-		_enemy_replicas[bid] = r
-
-func _clear_enemy_replicas() -> void:
-	for r in _enemy_replicas.values():
-		if is_instance_valid(r):
-			r.queue_free()
-	_enemy_replicas.clear()
-
-func _on_enemy_died(id: int) -> void:
-	if not _enemy_replicas.has(id):
-		return
-	var r: Node = _enemy_replicas[id]
-	if is_instance_valid(r):
-		r.queue_free()
-	_enemy_replicas.erase(id)
 
 # ── 名字 / 颜色 ──
-func _on_peer_info(names: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBus.local_peer_info —— 那条**推送**路径在本项目已不存在(worker 不再广播),
+#   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
+func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
 	_ensure_id_label(PvpSession.role)
 	_refresh_names()
 
 var _names: Dictionary = {}   # role(int) -> 昵称(peer_info 下发)
 
-func _on_peer_hues(hues: Dictionary) -> void:
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBusExt.local_peer_hues —— 同 _apply_peer_names 的告警。
+func _apply_peer_hues(hues: Dictionary) -> void:
 	_hues = hues
 	for role in _replicas:
 		if is_instance_valid(_replicas[role]):
@@ -476,7 +257,7 @@ func _on_peer_hues(hues: Dictionary) -> void:
 func _ensure_id_label(role: int) -> void:
 	if _world == null or _id_labels.has(role):
 		return
-	var lbl: Node2D = load("res://scenes/player/world_label.gd").new()
+	var lbl: Node2D = load("res://ui/world_label.gd").new()
 	_world.add_child(lbl)
 	_id_labels[role] = lbl
 
@@ -488,23 +269,10 @@ func _refresh_names() -> void:
 		var col: Color = ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]
 		(_id_labels[role] as Node2D).set_label(nm, col)
 
-func _apply_tint(body: Node, hue_deg: float) -> void:
-	var canvas := body as CanvasItem
-	if canvas == null or is_zero_approx(hue_deg):
-		return
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", hue_deg)
-	canvas.material = mat
 
 # 服务器下发生效选项:同步禁用武器
-func _on_match_options(opts: Dictionary) -> void:
-	var disabled: Array[int] = []
-	for v in opts.get("disabled_weapons", []):
-		disabled.append(int(v))
-	PvpSession.disabled_weapons = disabled
-	if _local != null:
-		_local.weapons.set_enabled_slots(disabled)
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ★ 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_names 的告警。
 
 func _process(_delta: float) -> void:
 	# 头顶 ID / 血条贴放(独立于倒地转体)
@@ -516,3 +284,8 @@ func _process(_delta: float) -> void:
 		var r: Node2D = _replicas.get(role)
 		if r != null and is_instance_valid(r):
 			(_hp_bars[role] as Node2D).global_position = r.global_position + Vector2(0.0, -116.0)
+
+# 对手副本访问器(大乱斗:按 role 动态)
+func _replica_for(role: int) -> Node2D:
+	var r = _replicas.get(int(role))
+	return r if r is Node2D else null

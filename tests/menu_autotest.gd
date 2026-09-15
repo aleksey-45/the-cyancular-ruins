@@ -21,7 +21,7 @@ func _run() -> void:
 	var tree := get_tree()
 	await tree.create_timer(1.2).timeout   # 等浮现动画
 	if mode == "level":
-		tree.change_scene_to_file("res://scenes/Level0.tscn")
+		tree.change_scene_to_file("res://scenes/level_0.tscn")
 	elif mode == "sp":
 		_press_by_text(tree.current_scene, "单 人 模 式")
 		await tree.create_timer(0.4).timeout
@@ -46,7 +46,7 @@ func _run() -> void:
 	# ver **不列在此**:版本信息是弹层,全程不切场景 —— 对它断言 scene 路径是同义反复
 	# (「停在 main_menu」正是它该有的样子,连"一次都没点到按钮"也照样满足),不是硬断言。
 	var must_reach := {
-		"sp": "Level0.tscn",
+		"sp": "level_0.tscn",
 		"mp": "matchmaking.tscn",
 		"set": "settings_menu.tscn",
 		"royale": "royale_lobby.tscn",

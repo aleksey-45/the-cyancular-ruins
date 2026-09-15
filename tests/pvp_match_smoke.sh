@@ -1,22 +1,9 @@
 #!/usr/bin/env bash
 # B2 loopback 冒烟:起服务器 + 建房/加入客户端,断言输入→模拟→快照→子弹广播链路。
 set -e
-GODOT="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-cd "$(dirname "$0")/.."
-
-# Windows 下 bash `kill` 杀不死 headless Godot 进程(会留僵尸占 7777),改用 taskkill 强杀。
-kill_procs() {
-	for p in "$@"; do
-		taskkill //F //PID "$p" >/dev/null 2>&1 || true
-	done
-}
-# 按端口强杀服务器:Git Bash 的 $! 不一定等于 Windows 进程 PID(实测 taskkill 按 $! 杀不掉),
-# 用 netstat 找持有 7777 的 PID 才是权威。
-kill_port() {
-	for pid in $(netstat -ano 2>/dev/null | grep -i ":7777" | awk '{print $NF}' | sort -u); do
-		taskkill //F //PID "$pid" >/dev/null 2>&1 || true
-	done
-}
+# 引擎路径($GODOT,可用环境变量覆盖)+ cd 到仓库根 + kill_procs/kill_port
+# shellcheck source=tests/env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 echo "== 启动服务器 =="
 "$GODOT" --headless --path . res://server/server_main.tscn > /tmp/pvp2_server.log 2>&1 &

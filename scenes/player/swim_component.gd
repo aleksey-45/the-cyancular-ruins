@@ -9,10 +9,10 @@ var in_water: bool = false
 
 
 func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.ONE,
-		src: InputSource = null) -> bool:
+		src: PlayerInput = null) -> bool:
 	# src=null(冒烟等直接调用)回落真实 Input;本地玩家传入自己的 input_source,服务器传入注入源。
 	if src == null:
-		src = InputSource.new()
+		src = LocalInputSource.new()
 	var grid := MazeGenerator.current_grid
 	var feet := Vector2(parent.global_position.x, parent.global_position.y + Water.feet_offset(parent))
 	in_water = not grid.is_empty() and Water.is_in_water(feet)

@@ -226,7 +226,6 @@ func _wait_room_code() -> void:
 # go_match 在大厅 peer 的 poll 调用栈内到达 → 转连必须推到帧末(与 royale_lobby 同款)
 func _on_go_match(role: int, port: int) -> void:
 	PvpSession.role = role
-	PvpSession.royale = true
 	_do_go_match.call_deferred(role, port)
 
 

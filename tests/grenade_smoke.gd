@@ -69,7 +69,7 @@ func _initialize() -> void:
 func _test_aoe() -> void:
 	MazeGenerator.current_grid = []  # 空网格:跳过 LOS
 	# Explosion 经 load 运行时解析:其内部引用 autoload,-s 静态引用会连带编译失败
-	var exp = load("res://core/explosion.gd")
+	var exp = load("res://core/sim/explosion.gd")
 	# 中心满伤
 	var e1 := StubEnemy.new()
 	e1.global_position = Vector2(200, 200)

@@ -22,9 +22,9 @@ func _init() -> void:
 	TileDefs.load_defs()
 
 	# v3 格式:纹理 3 位 0xx + 形状 hex(水 21/22)
-	var wrow := MazeGenerator.serialize_v3_grid([[MazeGenerator.pack(21, 15), MazeGenerator.pack(22, 15), 0]])
+	var wrow := MapFormat.serialize_v3_grid([[MazeGenerator.pack(21, 15), MazeGenerator.pack(22, 15), 0]])
 	_check_eq(wrow[0], "021F022F0000", "v3 序列化水:021F/022F/空气")
-	_check_eq(MazeGenerator._parse_v3_grid(["021F"])[0][0], MazeGenerator.pack(21, 15), "v3 解析水:021F->pack(21,15)")
+	_check_eq(MapFormat.parse_v3_grid(["021F"])[0][0], MazeGenerator.pack(21, 15), "v3 解析水:021F->pack(21,15)")
 	_check_eq(TileDefs.type_of(21), "liquid", "tex21 type liquid")
 	_check_approx(TileDefs.explosion_decay_of(21), 0.25, 1e-6, "tex21 decay 0.25")
 	_check_approx(TileDefs.explosion_decay_of(15), TileDefs.explosion_decay(), 1e-6, "落叶回落全局 0.75")

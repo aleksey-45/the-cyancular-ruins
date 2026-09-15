@@ -38,7 +38,7 @@ const REACH := 200.0    # 障碍/副本距出生点的 x 距离(玩家 700px/s,�
 # 备用层(层5 = 位值 16):只让权威 A 撞到。预测 P 的 mask 不含它。
 # 为什么要备用层而不是直接复用"另一具玩家身体":真机上挡 A 的确实是另一具真 Player(层2),
 # 但那样 P 也会被同一具挡住 → 摘掉幽灵体后 P 依然被挡 → 对照组失去鉴别力。
-# 故给 A 一具**等几何的替身**(与幽灵体同抄 Player.tscn 的 stand 多边形、同坐标),
+# 故给 A 一具**等几何的替身**(与幽灵体同抄 player.tscn 的 stand 多边形、同坐标),
 # 让两条链路的几何逐点一致,唯一变量就是「P 的世界里有没有这具身体」。
 const LAYER_A_OBSTACLE := 16
 const LAYER_PLAYER := 2        # 层2:玩家真实层,幽灵体也在这层
@@ -57,7 +57,7 @@ var _ghost_on_max_px := 0.0   # 正向那趟的读数,负向对照组直接拿�
 var A = null                                    # 权威(服务器侧模拟,手动步进)
 var P = null                                    # 被预测(客户端侧模拟,控制器驱动)
 var ctrl := PredictionRollback.new()
-var srcA: NetworkInputSource = NetworkInputSource.new()
+var srcA: PacketInputSource = PacketInputSource.new()
 var _a_hist: Array[Dictionary] = []             # tick -> A 步进后整态(投递用)
 var _replica: Node2D = null
 var _ghost: StaticBody2D = null
@@ -101,7 +101,7 @@ func _run_pass(ghost_on: bool) -> void:
 	_max_px = -INF
 	_a_hist = []
 	ctrl = PredictionRollback.new()
-	srcA = NetworkInputSource.new()
+	srcA = PacketInputSource.new()
 	var obstacle_x := _spawn.x + REACH
 
 	# 权威 A:被备用层上的等几何替身挡住
@@ -206,20 +206,20 @@ func _record(t: int) -> Dictionary:
 
 # ── 造物 ──
 func _make_player(nm: String, pos: Vector2):
-	var p = preload("res://scenes/player/Player.tscn").instantiate()
+	var p = preload("res://scenes/player/player.tscn").instantiate()
 	p.name = nm
 	_host.add_child(p)
 	p.global_position = pos
 	return p
 
 
-# 等几何替身:多边形从 Player.tscn 的 stand 姿态现抄 —— 与 PlayerReplica 幽灵体的来源同一份,
+# 等几何替身:多边形从 player.tscn 的 stand 姿态现抄 —— 与 PlayerReplica 幽灵体的来源同一份,
 # 故两侧碰撞箱逐点一致。
-# ★ scale 也必须一起抄(Player.tscn 根节点是 2.5):节点缩放会作用到碰撞多边形上,
+# ★ scale 也必须一起抄(player.tscn 根节点是 2.5):节点缩放会作用到碰撞多边形上,
 #   漏掉它替身就只有幽灵体的 1/2.5 大 —— A 会被挡在更靠右的位置,P 与 A 停不到同一点,
 #   ② 那条"轨迹一致"就永远红(实测踩过:Δx=27px,A 比 P 多走了一段)。
 func _make_stand_in(layer: int, pos: Vector2) -> StaticBody2D:
-	var tmp := preload("res://scenes/player/Player.tscn").instantiate()
+	var tmp := preload("res://scenes/player/player.tscn").instantiate()
 	var src := tmp.get_node_or_null("CollisionShape2D_stand") as CollisionPolygon2D
 	var b := StaticBody2D.new()
 	b.collision_layer = layer
@@ -251,7 +251,7 @@ func _build_grid() -> Array[Array]:
 # 这条不是实现细节:幽灵体做好了但本地玩家 mask 不含层2,等于没做 —— 而且静默无报错。
 # 若改法换了入口(例如搬进 player.gd 按 pvp_mode 设),请把这里的匹配改成新入口,**别删掉这条断言**。
 func _check_source_guard() -> void:
-	for f in ["res://scenes/pvp_client.gd", "res://scenes/royale_game.gd"]:
+	for f in ["res://scenes/pvp_game.gd", "res://scenes/royale_game.gd"]:
 		var txt := FileAccess.get_file_as_string(f)
 		var found := false
 		for line in txt.split("\n"):

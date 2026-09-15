@@ -32,7 +32,7 @@ func _ready() -> void:
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	call_deferred("add_child", rect)
 
-	var shader := load("res://shaders/post_process.gdshader") as Shader
+	var shader := load("res://render/post_process.gdshader") as Shader
 	if shader == null:
 		push_error("PostProcess: failed to load shader!")
 		return
