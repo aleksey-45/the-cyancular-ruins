@@ -489,3 +489,9 @@ func _update_facing() -> void:
 		var vx := velocity.x
 		if absf(vx) > 5.0:
 			_set_facing(vx < 0.0)
+
+
+# 睡眠态判定(基类 _is_far_sleeping 用)。★ 显式写出来而不是靠"SLEEP 恰好是枚举第一个":
+# 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
+func _is_asleep() -> bool:
+	return state == State.SLEEP

@@ -146,3 +146,9 @@ func _on_death() -> void:
 # 落水:朝玩家水平游(不朝岸边,保持追击感)。
 func _water_swim_dir() -> Vector2:
 	return toroidal_dir_to_player()
+
+
+# 睡眠态判定(基类 _is_far_sleeping 用)。★ 显式写出来而不是靠"SLEEP 恰好是枚举第一个":
+# 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
+func _is_asleep() -> bool:
+	return state == State.SLEEP
