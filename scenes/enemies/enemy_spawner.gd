@@ -65,3 +65,21 @@ func spawn_all(spawns: Dictionary = {}) -> void:
 		e.global_position = Vector2(cell.x * ts + ts / 2.0, cell.y * ts + ts / 2.0)
 		enemy_spawned.emit(e)
 	print("[EnemySpawner] spawned %d enemies from map" % enemies_meta.size())
+
+
+# 全图"头顶 2 格净空"的开阔地板格,供地面武器布点用(2026-09-15)。
+# ★ 判据本体在 `MazeGenerator.is_floor_cell_with_headroom` —— 本函数**只做扫描**,
+#   别再抄一份判定条件(抄一份 = 改一处漏一处,而且两处都不报错)。
+# ★ 联机侧 `RoyaleHost._floor_cells` 是同款扫描(那边还要连通区规模,故没合并)。
+func open_floor_cells(grid: Array) -> Array:
+	var out: Array = []
+	if grid.is_empty():
+		return out
+	var rows := grid.size()
+	var cols := (grid[0] as Array).size()
+	for y in rows:
+		for x in cols:
+			var c := Vector2i(x, y)
+			if MazeGenerator.is_floor_cell_with_headroom(grid, c):
+				out.append(c)
+	return out

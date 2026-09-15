@@ -117,6 +117,14 @@ func _weapon_slot_raw() -> int:
 	_slot = 0        # 读一次即清,与真实 Input 的"本轮刚按下"语义一致
 	return s
 
+# 压力机器人不捡也不丢枪(与 AiInputSource 同口径)。基类对这两个钩子有 push_error 兜底,
+# 不覆写的话脚本机器人的每个 tick 都会刷一屏假报错,把真断言淹掉。
+func _pickup_pressed_raw() -> bool:
+	return false
+
+func _drop_pressed_raw() -> bool:
+	return false
+
 func get_aim_dir_override() -> Vector2:
 	return aim
 

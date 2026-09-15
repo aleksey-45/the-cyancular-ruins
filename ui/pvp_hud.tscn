@@ -4,7 +4,7 @@
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
 
 [sub_resource type="StyleBoxFlat" id="Plate"]
-bg_color = Color(0, 0, 0, 0.45)
+bg_color = Color(0, 0, 0, 0.1)
 content_margin_left = 24.0
 content_margin_right = 24.0
 content_margin_top = 8.0
@@ -51,6 +51,10 @@ horizontal_alignment = 2
 
 ; 记分条垫深底板:它对局中直接压在地图上,地图开阔区是浅灰蓝 —— 浅色文字压上去读不清。
 ; 底板由 PanelContainer 按内容撑开(不是把 Label 拉成一条 1240 宽的横条),故包一层 wrapper。
+; ★ 上面那份 Plate 的 0.1 与单机 HUD 的 PLATE_COLOR(ui/hud.gd)、royale 的 _plate_box **同源**
+;   (用户 2026-09-15 统一下调)。场景里是字面量,**只能人工对齐**,改一处就得改齐三处。
+;   本 Plate 由 ScoreWrap(记分条)与下面的 PingWrap(延迟条)**共用**。
+;   ★ 大乱斗排行榜(royale_hud 的 _board_bg)是例外,单独是 0.25。
 [node name="ScoreWrap" type="PanelContainer" parent="."]
 anchor_left = 0.5
 anchor_right = 0.5

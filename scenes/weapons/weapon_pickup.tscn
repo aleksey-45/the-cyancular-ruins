@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://cqwpn0pickup7"]
+
+[ext_resource type="Script" path="res://scenes/weapons/weapon_pickup.gd" id="1_pickup"]
+
+[node name="WeaponPickup" type="CharacterBody2D"]
+collision_layer = 8
+collision_mask = 9
+script = ExtResource("1_pickup")

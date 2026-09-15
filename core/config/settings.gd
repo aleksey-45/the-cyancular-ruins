@@ -7,7 +7,7 @@ extends Node
 const SAVE_PATH := "user://settings.cfg"
 
 # 可重映射的动作(1-5 切枪槽固定,不开放重绑)。
-const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R"]
+const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q"]
 
 # ── 音量(0-1 线性)──
 var master_volume: float = 0.8:
@@ -20,7 +20,9 @@ var sfx_volume: float = 1.0:
 		_apply_bus_volume("SFX", sfx_volume)
 
 # ── 通用 ──
-var wheel_switch: bool = false    # 鼠标滚轮切枪
+# 鼠标滚轮切枪。★ 2026-09-15 改默认 true:滚轮切枪本就已实现,但默认关着 = 该功能形同虚设
+# (用户要求"添加滚轮切武器"时它其实早就在,只是没人开)。已有存档里显式存过 false 的仍读 false。
+var wheel_switch: bool = true
 
 # ── 单人开局选项存档(记住上次选择)──
 var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
@@ -135,7 +137,7 @@ func load_settings() -> void:
 		return
 	master_volume = float(cf.get_value("audio", "master_volume", 0.8))
 	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
-	wheel_switch = bool(cf.get_value("controls", "wheel_switch", false))
+	wheel_switch = bool(cf.get_value("controls", "wheel_switch", true))
 	sp_disabled_weapons.assign(cf.get_value("single", "disabled_weapons", []))
 	pvp_show_trajectories = bool(cf.get_value("pvp", "show_trajectories", true))
 	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))
@@ -146,7 +148,12 @@ func load_settings() -> void:
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
-		var arr = cf.get_value("bindings", action, null)
+		# ★ 默认值必须是**真的值**而不是 null:Godot 的 ConfigFile.get_value 把 null 当作
+		#   "调用方没给默认值",键不存在时直接报错(Couldn't find ... and no default was given)。
+		#   对老存档(在某个动作被加进 REMAPPABLE_ACTIONS 之前写的)来说那个键必然不存在 ——
+		#   于是**每加一个新可重绑动作,老玩家启动就刷一屏报错**。空数组语义完全相同
+		#   (下面的 is_empty() 分支会跳过),但不会报错。
+		var arr = cf.get_value("bindings", action, [])
 		if arr is Array and not (arr as Array).is_empty():
 			InputMap.action_erase_events(action)
 			for item in arr:

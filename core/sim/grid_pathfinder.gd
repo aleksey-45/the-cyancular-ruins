@@ -315,3 +315,44 @@ static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Ve
 	elif dy < -rows / 2:
 		dy += rows
 	return Vector2i(dx, dy)
+
+
+# 从候选格里挑 count 个**互相尽量远离**的格(环面距离贪心)。
+#
+# 洗牌后逐个取,要求与已选点两两环面距离 ≥ clearance;不足则 clearance 逐级 -5 放宽;
+# 放宽到头仍不够就直接补任意剩余的格(宁可挤,不可少 —— 调用方按 count 布点,少了会缺)。
+#
+# ★ 抽自 `RoyaleHost.plan_spawns`(原先那套长在 RoyaleHost 实例上,单机用不了)。
+# ★ **内部有 shuffle()**:同一组输入两次调用结果不同。RoyaleHost 原有纪律 ——
+#   **不得在广播之后再调一次**(每局的开局散点只能算一次)。
+# ★ 宽高传 cols/rows 两个 int 而不是 Vector2:与 toroidal_dist 同款,且不引 GameParameters
+#   (autoload),保持本文件可 -s 测。
+static func spread_cells(cells: Array, count: int, clearance: int, cols: int, rows: int) -> Array:
+	var picked: Array = []
+	if count <= 0 or cells.is_empty():
+		return picked
+	var pool := cells.duplicate()
+	pool.shuffle()
+	var cl := clearance
+	while picked.size() < count and cl >= 0:
+		for c in pool:
+			if picked.size() >= count:
+				break
+			if picked.has(c):
+				continue
+			var ok := true
+			for p in picked:
+				if toroidal_dist(c, p, cols, rows) < cl:
+					ok = false
+					break
+			if ok:
+				picked.append(c)
+		cl -= 5
+	# 兜底:放宽到头仍不够,补任意剩余的格
+	if picked.size() < count:
+		for c in pool:
+			if picked.size() >= count:
+				break
+			if not picked.has(c):
+				picked.append(c)
+	return picked

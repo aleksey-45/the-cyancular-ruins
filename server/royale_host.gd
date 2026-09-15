@@ -184,31 +184,24 @@ static func _spawn_candidates() -> Array:
 # 必须按实际键返回,否则 spawns[role] 缺键抛错、对局卡死(自检 S2 严重 bug)。
 static func plan_spawns(roles: Array) -> Dictionary:
 	var n := roles.size()
-	var picked: Array = []
-	var cells: Array = _spawn_candidates().duplicate()
-	cells.shuffle()
-	var clearance := SPAWN_CLEARANCE
-	while picked.size() < n and clearance >= 0:
-		for c in cells:
-			if picked.size() >= n:
-				break
-			var ok := true
-			for p in picked:
-				if _tdist(p, c) < clearance:
-					ok = false
-					break
-			if ok and not picked.has(c):
-				picked.append(c)
-		clearance -= 5   # 地板格不足时放宽间距重收
-	# 候选不够散点(极小图):回退任意地板格补足,避免塞 (-1,-1) 出生到墙角
+	var d := _grid_dims()
+	# ★ 散点几何已抽到 `GridPathfinder.spread_cells`(2026-09-15):单机铺地面武器也用它,
+	#   两处"尽量均匀地撒点"从此是同一份实现,改一处即改两处。
+	#   ★ 它内部有 shuffle() —— 本函数的既有纪律不变:**不得在广播之后再调一次**。
+	var picked: Array = GridPathfinder.spread_cells(
+		_spawn_candidates().duplicate(), n, SPAWN_CLEARANCE, d.x, d.y)
+	# 候选不够散点(极小图 / 密封图):回退任意地板格补足,避免塞 (-1,-1) 出生到墙角。
+	# ★ 这层回退与候选层的**优先级**必须留在本函数里:spread_cells 的兜底只在"传给它的池子"
+	#   里补,把两层并成一个池子就等于取消优先级(会优先选到死角格)。
 	if picked.size() < n:
 		var rest: Array = _floor_cells().duplicate()
+		for c in picked:
+			rest.erase(c)
 		rest.shuffle()
 		for c in rest:
 			if picked.size() >= n:
 				break
-			if not picked.has(c):
-				picked.append(c)
+			picked.append(c)
 	var out := {}
 	for i in range(n):
 		out[int(roles[i])] = picked[i] if i < picked.size() else Vector2i(-1, -1)
