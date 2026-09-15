@@ -151,7 +151,9 @@ func _build_create_panel() -> void:
 
 	# 一局限时(分钟):房主可调 1~15 分钟(默认 5);随房主报到 opts 带入 RoyaleHost
 	var trow := HBoxContainer.new()
-	trow.add_theme_constant_override("h_separation", 12)
+	# 键是 "separation":HBox 只认它,h_separation 是 GridContainer 的键(写在这里会被存下但
+	# 永不读取 = 死覆盖)。别照抄下面 wgrid 那两行 —— 那是 GridContainer,键不一样。
+	trow.add_theme_constant_override("separation", 12)
 	vb.add_child(trow)
 	trow.add_child(UiFactory.label("一局限时:", 32))
 	var tslider := HSlider.new()
