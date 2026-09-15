@@ -16,6 +16,14 @@
 - **字号必须是 16 的倍数**（`kh_l4`/`kh_l5` 有源码级扫描，`res://tests` 也在扫描范围内）。新控件里不得出现非 16 倍数的字号载体字面量。
 - **颜色只在 `ui/ui_factory.gd` 定义**，别处不许出现 `Color(...)` 字面量。
 - **`-s` 脚本（`extends SceneTree`）阶段 autoload 尚未实例化**：新冒烟里不要静态引用会连带 preload autoload 的脚本，要 `load()` 的放在 `_initialize()` 内。
+- ★ **`-s` 冒烟必须有空载守卫**：`_initialize()` 里一旦抛错就走不到 `quit()`，进程会**永久挂起**（不是干净失败，是超时）。每个新冒烟在 `load()` 之后立刻写：
+  ```gdscript
+	if XXX == null:
+		print("<探针名> FAILED: 找不到 <路径>")
+		quit(1)
+		return
+  ```
+  跑新冒烟时**一律套 `timeout`**（`timeout 60 "<godot>" …`），否则红了会把会话卡死。
 - **测试由用户自己跑**，实施者只负责写测试与跑"红→绿"那两步所需的命令。
 - `docs/` 之外的源码改动一律**不得**改动 `Player.tscn` 的碰撞层常量（`enemy_logic_smoke` 有 `player mask == 5` 断言）。
 - **中间态说明**：Task 3 落地后到 Task 11 之前，单机的初始背包是临时的 3 把（`[1,2,6]` = 8 格刚好占满），重狙/霰弹/榴弹在单机里暂时拿不到。**这是计划内的中间态**，Task 10/11 落地后恢复完整（12 把散落在地图上）。不要为了让中间态"好看"而临时放宽容量闸门。
@@ -103,14 +111,33 @@ func _initialize() -> void:
 	inv.add(3, 5)           # 中,3 格 → 共 7 格 / 3 把
 	_check(inv.used_slots() == 7, "2轻+1中 = 7 格(实际 %d)" % inv.used_slots())
 	_check(not inv.can_hold(5), "7 格放不下 4 格的重武器(容量闸门)")
-	_check(inv.can_hold(1), "7 格放得下 2 格的轻武器")
-	inv.add(1, 5)           # 第 4 把,2 格 → 8 格 / 4 把
-	_check(inv.used_slots() == 8, "满容量 = 8 格(实际 %d)" % inv.used_slots())
-	_check(inv.held.size() == 4, "持有 4 把")
-	_check(not inv.can_hold(1), "满 4 把后即使 0 格占用也放不下(把数闸门)")
+	# 7 格只剩 1 格,而最便宜的档是 2 格 → 此时什么都放不下。
+	# (实施时我在这里写过 `can_hold(1) 应为 true` —— 那是把 7+2=9 看成了 8。
+	#  实现拒绝加才是对的。留着这条正好钉住"闸门按剩余**格数**算,不是按把数算"。)
+	_check(not inv.can_hold(1), "7 格只剩 1 格,放不下 2 格的轻武器")
+	var freed: Dictionary = inv.remove_at(2)
+	_check(int(freed["type"]) == 3, "腾出的是中武器")
+	_check(inv.used_slots() == 4 and inv.held.size() == 2, "腾出后 4 格 / 2 把")
+	_check(inv.can_hold(5), "腾出后放得下 4 格的重武器(4+4=8)")
 
-	# ★ 把数闸门的**独立**性:造一个 0 占用的场景验不出来(最小 cost 是 2),
-	#   所以反过来钉:4 把轻武器 = 8 格,两条闸门同时到顶;再建一个只到把数顶的用例。
+	# 恰好占满 8 格:任何一档都放不下了
+	var inv_b = WI.new(tiers)
+	inv_b.add(1, 5)
+	inv_b.add(5, 5)
+	inv_b.add(2, 5)         # 2+4+2 = 8 格 / 3 把
+	_check(inv_b.used_slots() == 8 and inv_b.held.size() == 3, "恰好 8 格 / 3 把")
+	_check(not inv_b.can_hold(1), "满容量后最便宜的档也放不下")
+
+	# ★ 关于"把数闸门独立于容量闸门"的实话:**按今天的 cost 表它其实被容量蕴含** ——
+	#   最便宜的轻武器 2 格,4 把 × 2 = 8 = CAPACITY,所以 used_slots() ≤ 8 已蕴含 size ≤ 4。
+	#   造不出"容量还有余、但已满 4 把"的局面(要造就得有 cost=1 的档)。
+	#   但它**不是死代码**:用户把它定为硬规则(「就算容量给 100 也最多四把」),
+	#   一旦有人把轻武器改成 1 格、或把 CAPACITY 调大,这个承诺就只剩这一条在守。
+	#   退而钉住常量本身 + 那条临界等式,别假装验了闸门的独立性。
+	_check(int(WI.MAX_WEAPONS) == 4, "MAX_WEAPONS 必须恰好是 4")
+	_check(int(WI.CAPACITY) == 8, "CAPACITY 必须恰好是 8")
+	_check(int(WI.SLOT_COST[int(WI.TIER_LIGHT)]) * int(WI.MAX_WEAPONS) == int(WI.CAPACITY),
+		"轻武器 cost × 4 应恰好等于容量(这条不成立时,上面那段注释就该重写)")
 	var inv2 = WI.new(tiers)
 	for i in 4:
 		inv2.add(1, 5)      # 4 把轻武器 = 8 格,把数与容量同时到顶
@@ -782,7 +809,7 @@ Expected: 输出里**没有** `ALL-OK`（`_enabled_slots` / 残弹记忆两节�
 	# 复活旧的"按槽位号记账"表 = 两套残弹记账并存 = 同类型两把必然串弹。
 	# ★ 只断言 _mag_state 这一个标识符:_restore_mag / reset_mag_state 在本次改动里是
 	#   **保留**的(前者是入树后恢复残弹的延迟回调,后者已改成写回条目),别一起断言掉。
-	var src_text: String = ScanUtil.read_text("res://scenes/player/weapon_component.gd")
+	var src_text: String = ScanUtil.read("res://scenes/player/weapon_component.gd")
 	_check(not src_text.contains("_mag_state"),
 		"weapon_component.gd 里不应再有 _mag_state(残弹已改按背包条目记)")
 ```
