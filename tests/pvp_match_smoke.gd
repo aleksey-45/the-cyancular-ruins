@@ -112,17 +112,29 @@ func _physics_process(_delta: float) -> void:
 	if role == "create":
 		var held := 0
 		var pressed := 0
+		var released := 0
 		var ax := 1.0
 		if _frames > 240:
-			held = PacketInputSource.BIT_ATTACK
-			pressed = PacketInputSource.BIT_ATTACK
+			# ★ 开火必须能覆盖**任何**武器。服务器发给这个角色的是**随机**一把,而
+			#   `m82a1` 与榴弹发射器是 **heavy_aim**(按住预瞄、**松开**才发射)——
+			#   只发 held/pressed、从不发 released 的话,拿到这两把就**一枪都不开**,
+			#   join 端永远等不到 bullet_spawn。实测:强制发 m82a1 → 必红,发手枪 → 必绿。
+			#   按下 20 帧 / 松开 10 帧的循环同时对三种武器都成立:
+			#   full_auto 连发、半自动吃 pressed 边沿、heavy_aim 吃 released 边沿。
+			var cyc := (_frames - 240) % 30
+			if cyc < 20:
+				held = PacketInputSource.BIT_ATTACK
+				if cyc == 0:
+					pressed = PacketInputSource.BIT_ATTACK
+			elif cyc == 20:
+				released = PacketInputSource.BIT_ATTACK
 		_sent_seq += 1
 		var pkt := {
 			"seq": _sent_seq,   # C2:单调输入序号(服务器 ack 依据)
 			"ax": ax,
 			"held": held,
 			"pressed": pressed,
-			"released": 0,
+			"released": released,
 			"weapon": 0,
 			"aim": Vector2(1, 0),
 		}
