@@ -22,7 +22,7 @@ EDITOR = os.environ.get("GODOT_EDITOR") or \
     r"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe"
 CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins.exe")
 SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
-BUILD_INFO = os.path.join(PROJECT, "core", "build_info.gd")
+BUILD_INFO = os.path.join(PROJECT, "core", "config", "build_info.gd")
 
 sys.path.insert(0, TOOLS)
 from archive_build import read_project_version, version_tag   # 版本号单一来源:project.godot
@@ -60,17 +60,28 @@ def stamp_build_info(version: str, stamp: str) -> str:
 # 为什么必须做:脚本错误只在**发布版**才现形的那一类(比如 build_info.gd 被覆盖掉一段)
 # 在编辑器里完全看不出来,而"导完就发"的流程没有任何别的环节会发现它。
 # 判据只认脚本级致命错 —— WARNING/普通 ERROR 不拦(发布版有很多无害噪音)。
-def smoke_check(exe: str, extra: list) -> None:
+def smoke_check(exe: str, extra: list, expect: str = "") -> None:
     print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
-    r = subprocess.run([exe, "--headless", *extra, "--quit-after", "120"],
-                       cwd=PROJECT, capture_output=True, text=True,
+    # ★ extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
+    #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
+    #   **起的是大厅、还在 7777 上 bind**,既没跑到 worker 分支、又和服主正在跑的大厅抢端口
+    #   (2026-09-15 实测:日志打的是「服务器就绪…(大厅 7777)」而不是「worker 就绪…(port P)」)。
+    cmd = [exe, "--headless", "--quit-after", "120"]
+    if extra:
+        cmd += ["--", *extra]
+    r = subprocess.run(cmd, cwd=PROJECT, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
     out = ((r.stdout or "") + (r.stderr or ""))
     bad = [ln for ln in out.splitlines()
            if "SCRIPT ERROR" in ln or "Parse Error" in ln or "Failed to load script" in ln]
     if bad:
         sys.exit("冒烟失败:%s 起不来(脚本级错误)\n  %s" % (os.path.basename(exe), "\n  ".join(bad[:6])))
-    print("    OK(无脚本级错误)")
+    # ★ 光"没报错"是不够的:上面那个 `--` 坑正是**零脚本错误地跑错分支**,门照样绿。
+    #   故调用方传 expect 时,那段文本必须真的出现(如服务端必须打「worker 就绪」)。
+    if expect and expect not in out:
+        sys.exit("冒烟失败:%s 起来了但**没走预期的分支**(输出里找不到「%s」)—— "
+                 "命令行参数大概又被当成引擎参数丢掉了" % (os.path.basename(exe), expect))
+    print("    OK(无脚本级错误%s)" % (",且在预期分支「%s」" % expect if expect else ""))
 
 
 def export(preset: str, out: str) -> None:
@@ -118,7 +129,7 @@ def main() -> None:
         # 导完立刻各跑一次产物(客户端直接起;服务端走 --worker 分支 —— 那条**不碰 7777**,
         # 不会把服主正在跑的大厅杀掉,见 server_main.gd 的 is_worker 早退)
         smoke_check(CLIENT_OUT, [])
-        smoke_check(SERVER_OUT, ["--worker", "--port", "7999"])
+        smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
