@@ -76,141 +76,170 @@ func _ai(delta: float) -> void:
 		_update_facing()
 	match state:
 		State.SLEEP:
-			if _wake_timer > 0.0:
-				_wake_timer -= delta
-				if _wake_timer <= 0.0:
-					_set_state(State.WAKE)
-			elif _sleep_anim_timer > 0.0:
-				_sleep_anim_timer -= delta
-				if _sleep_anim_timer <= 0.0:
-					_anim.play("sleep")
-			else:
-				_anim.play("sleep")
-				if dist <= EnemyParams.BlackBird.wake_radius:
-					_anim.play("wake_up")
-					_wake_timer = _anim_duration("wake_up")
+			_tick_sleep(delta, dist)
 		State.WAKE:
-			if _wake_timer > 0.0:
-				_wake_timer -= delta
-			if _wake_timer <= 0.0:
-				_set_state(State.WANDER)
-				_wander_timer = 0.2
-				_wander_idle_timer = 0.0
-				_flank_check_timer = 0.5  # 先游走一会再判定瞬移,避免一醒就闪
+			_tick_wake(delta)
 		State.WANDER:
-			if dist > EnemyParams.BlackBird.sleep_radius:
-				_set_state(State.SLEEP)
-				_anim.play("fall_asleep")
-				_sleep_anim_timer = _anim_duration("fall_asleep")
-				velocity.x = 0.0
-				return
-			# 行走一段后随机停顿 0~wander_idle_max(站着不动),减少频繁游荡感
-			if _wander_idle_timer > 0.0:
-				_wander_idle_timer -= delta
-				velocity.x = 0.0
-				_anim.stop()  # 冻在站立帧(idle 开始那帧已切到 frame 0)
-			else:
-				_anim.play("run")
-				_wander_timer -= delta
-				if _wander_timer <= 0.0:
-					_wander_timer = randf_range(EnemyParams.BlackBird.wander_min_t, EnemyParams.BlackBird.wander_max_t)
-					_wander_dir = 1.0 if randf() < 0.5 else -1.0
-					_wander_idle_timer = randf_range(0.0, EnemyParams.BlackBird.wander_idle_max)
-				if _wander_idle_timer > 0.0:
-					# 刚决定停顿:本帧就停(切站立帧),不再移动
-					velocity.x = 0.0
-					_anim.play("run")
-					_anim.frame = 0
-					_anim.stop()
-				else:
-					velocity.x = _wander_dir * EnemyParams.BlackBird.wander_speed
-					# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳同款判定)
-					if is_on_wall():
-						velocity.y = EnemyParams.BlackBird.wander_jump_velocity
-			_teleport_cooldown = maxf(_teleport_cooldown - delta, 0.0)
-			_flank_check_timer -= delta
-			if _flank_check_timer <= 0.0 and _teleport_cooldown <= 0.0:
-				_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
-				if _find_flank_cell():
-					velocity = Vector2(0.0, EnemyParams.BlackBird.take_off_jump_velocity)
-					_wait_land = true
-					_left_ground = false
-					_prep_timer = 0.0
-					_set_state(State.TAKE_OFF)
-					_anim.play("take_off")
+			_tick_wander(delta, dist)
 		State.TAKE_OFF:
-			# 起飞竖直上跳 → 落地 → 播 disappear → 白闪 → 传送
-			if _wait_land:
-				_anim.play("take_off")
-				# 进状态那帧 is_on_floor 是旧的(上帧在地面),要求先离地再落地才算数
-				if is_on_floor():
-					if _left_ground:
-						_wait_land = false
-						# 落地瞬间:播 disappear(消散),停顿等它播完再闪
-						_prep_timer = maxf(EnemyParams.BlackBird.teleport_prep_time, _anim_duration("disappear"))
-					else:
-						_left_ground = true
-			elif _prep_timer > 0.0:
-				_prep_timer -= delta
-				velocity.x = 0.0  # 停顿期间停止左右移动
-				_anim.play("disappear")
-			else:
-				if _flank_cell == Vector2i(-1, -1):
-					_set_state(State.WANDER)  # 兜底:无落点不该进 TAKE_OFF
-					return
-				_teleport_to_flank()  # 白闪在 _teleport_to_flank 内触发(传送瞬间)
-				_set_state(State.CHARGE)
-				_charge_timer = EnemyParams.BlackBird.charge_timeout
-				_landing_timer = EnemyParams.BlackBird.landing_timeout
-				_wait_land = true
-				_left_ground = true  # 传送后必在落点上方空中,之后任何落地都是真落地
-				# appear 总时长 = 白闪 + 动画本身,期间在空中滞留(不落地)
-				_appear_timer = EnemyParams.BlackBird.teleport_flash_time + _anim_duration("appear")
+			_tick_take_off(delta)
 		State.CHARGE:
-			if _appear_timer > 0.0:
-				# 传送后:白闪滞留 → appear 播完(在空中)→ 才落地
-				_appear_timer -= delta
-				velocity = Vector2.ZERO  # 空中滞留,不受重力下落
-				if _teleport_flash_timer <= 0.0:
-					_anim.play("appear")  # 白闪结束才开始播 appear
-				return
-			_anim.play("run")
-			# appear 落地 → 停顿 charge_prep_time → 才冲锋
-			if _wait_land:
-				if is_on_floor():
-					if _left_ground:
-						_wait_land = false
-						_prep_timer = EnemyParams.BlackBird.charge_prep_time
-					else:
-						_left_ground = true
-				_landing_timer -= delta
-				if _landing_timer <= 0.0:
-					_wait_land = false
-					_prep_timer = EnemyParams.BlackBird.charge_prep_time  # 兜底:超时也进停顿
-				velocity.x = 0.0
-				return
-			elif _prep_timer > 0.0:
-				_prep_timer -= delta
-				velocity.x = 0.0
-				return
-			if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
-				_on_charge_hit_player()
-				return
-			_charge_timer -= delta
-			if _charge_timer <= 0.0:
-				_start_back_hop()
-				return
-			var dir := toroidal_dir_to_player()
-			velocity.x = dir.x * EnemyParams.BlackBird.charge_speed
-			if is_on_wall():
-				velocity.x = 0.0  # 越障跳纯上跳,不叠加水平分量
-				velocity.y = EnemyParams.BlackBird.charge_jump_velocity
+			_tick_charge(delta)
 		State.BACK_HOP:
-			if is_on_floor() and _back_hop_cd <= 0.0:
-				_set_state(State.WANDER)
-				_wander_timer = 0.2
-				_wander_idle_timer = 0.0
-				_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
+			_tick_back_hop()
+
+
+# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 146 行的单 match)。
+# 绕背瞬移那条链(TAKE_OFF → CHARGE 的 appear 滞留 → 落地 → 停顿 → 冲锋)原本横跨两个
+# match 分支、靠 _wait_land/_left_ground/_prep_timer 一串标志位串起来,现在各自归位。
+# ★ 各段里的 `return` 语义不变:match 是 `_ai` 的最后一条语句。
+
+func _tick_sleep(delta: float, dist: float) -> void:
+	if _wake_timer > 0.0:
+		_wake_timer -= delta
+		if _wake_timer <= 0.0:
+			_set_state(State.WAKE)
+	elif _sleep_anim_timer > 0.0:
+		_sleep_anim_timer -= delta
+		if _sleep_anim_timer <= 0.0:
+			_anim.play("sleep")
+	else:
+		_anim.play("sleep")
+		if dist <= EnemyParams.BlackBird.wake_radius:
+			_anim.play("wake_up")
+			_wake_timer = _anim_duration("wake_up")
+
+
+func _tick_wake(delta: float) -> void:
+	if _wake_timer > 0.0:
+		_wake_timer -= delta
+	if _wake_timer <= 0.0:
+		_set_state(State.WANDER)
+		_wander_timer = 0.2
+		_wander_idle_timer = 0.0
+		_flank_check_timer = 0.5  # 先游走一会再判定瞬移,避免一醒就闪
+
+
+func _tick_wander(delta: float, dist: float) -> void:
+	if dist > EnemyParams.BlackBird.sleep_radius:
+		_set_state(State.SLEEP)
+		_anim.play("fall_asleep")
+		_sleep_anim_timer = _anim_duration("fall_asleep")
+		velocity.x = 0.0
+		return
+	# 行走一段后随机停顿 0~wander_idle_max(站着不动),减少频繁游荡感
+	if _wander_idle_timer > 0.0:
+		_wander_idle_timer -= delta
+		velocity.x = 0.0
+		_anim.stop()  # 冻在站立帧(idle 开始那帧已切到 frame 0)
+	else:
+		_anim.play("run")
+		_wander_timer -= delta
+		if _wander_timer <= 0.0:
+			_wander_timer = randf_range(EnemyParams.BlackBird.wander_min_t, EnemyParams.BlackBird.wander_max_t)
+			_wander_dir = 1.0 if randf() < 0.5 else -1.0
+			_wander_idle_timer = randf_range(0.0, EnemyParams.BlackBird.wander_idle_max)
+		if _wander_idle_timer > 0.0:
+			# 刚决定停顿:本帧就停(切站立帧),不再移动
+			velocity.x = 0.0
+			_anim.play("run")
+			_anim.frame = 0
+			_anim.stop()
+		else:
+			velocity.x = _wander_dir * EnemyParams.BlackBird.wander_speed
+			# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳同款判定)
+			if is_on_wall():
+				velocity.y = EnemyParams.BlackBird.wander_jump_velocity
+	_teleport_cooldown = maxf(_teleport_cooldown - delta, 0.0)
+	_flank_check_timer -= delta
+	if _flank_check_timer <= 0.0 and _teleport_cooldown <= 0.0:
+		_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
+		if _find_flank_cell():
+			velocity = Vector2(0.0, EnemyParams.BlackBird.take_off_jump_velocity)
+			_wait_land = true
+			_left_ground = false
+			_prep_timer = 0.0
+			_set_state(State.TAKE_OFF)
+			_anim.play("take_off")
+
+
+# 起飞竖直上跳 → 落地 → 播 disappear → 白闪 → 传送
+func _tick_take_off(delta: float) -> void:
+	if _wait_land:
+		_anim.play("take_off")
+		# 进状态那帧 is_on_floor 是旧的(上帧在地面),要求先离地再落地才算数
+		if is_on_floor():
+			if _left_ground:
+				_wait_land = false
+				# 落地瞬间:播 disappear(消散),停顿等它播完再闪
+				_prep_timer = maxf(EnemyParams.BlackBird.teleport_prep_time, _anim_duration("disappear"))
+			else:
+				_left_ground = true
+	elif _prep_timer > 0.0:
+		_prep_timer -= delta
+		velocity.x = 0.0  # 停顿期间停止左右移动
+		_anim.play("disappear")
+	else:
+		if _flank_cell == Vector2i(-1, -1):
+			_set_state(State.WANDER)  # 兜底:无落点不该进 TAKE_OFF
+			return
+		_teleport_to_flank()  # 白闪在 _teleport_to_flank 内触发(传送瞬间)
+		_set_state(State.CHARGE)
+		_charge_timer = EnemyParams.BlackBird.charge_timeout
+		_landing_timer = EnemyParams.BlackBird.landing_timeout
+		_wait_land = true
+		_left_ground = true  # 传送后必在落点上方空中,之后任何落地都是真落地
+		# appear 总时长 = 白闪 + 动画本身,期间在空中滞留(不落地)
+		_appear_timer = EnemyParams.BlackBird.teleport_flash_time + _anim_duration("appear")
+
+
+func _tick_charge(delta: float) -> void:
+	if _appear_timer > 0.0:
+		# 传送后:白闪滞留 → appear 播完(在空中)→ 才落地
+		_appear_timer -= delta
+		velocity = Vector2.ZERO  # 空中滞留,不受重力下落
+		if _teleport_flash_timer <= 0.0:
+			_anim.play("appear")  # 白闪结束才开始播 appear
+		return
+	_anim.play("run")
+	# appear 落地 → 停顿 charge_prep_time → 才冲锋
+	if _wait_land:
+		if is_on_floor():
+			if _left_ground:
+				_wait_land = false
+				_prep_timer = EnemyParams.BlackBird.charge_prep_time
+			else:
+				_left_ground = true
+		_landing_timer -= delta
+		if _landing_timer <= 0.0:
+			_wait_land = false
+			_prep_timer = EnemyParams.BlackBird.charge_prep_time  # 兜底:超时也进停顿
+		velocity.x = 0.0
+		return
+	elif _prep_timer > 0.0:
+		_prep_timer -= delta
+		velocity.x = 0.0
+		return
+	if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
+		_on_charge_hit_player()
+		return
+	_charge_timer -= delta
+	if _charge_timer <= 0.0:
+		_start_back_hop()
+		return
+	var dir := toroidal_dir_to_player()
+	velocity.x = dir.x * EnemyParams.BlackBird.charge_speed
+	if is_on_wall():
+		velocity.x = 0.0  # 越障跳纯上跳,不叠加水平分量
+		velocity.y = EnemyParams.BlackBird.charge_jump_velocity
+
+
+func _tick_back_hop() -> void:
+	if is_on_floor() and _back_hop_cd <= 0.0:
+		_set_state(State.WANDER)
+		_wander_timer = 0.2
+		_wander_idle_timer = 0.0
+		_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
 
 
 # 游走中瞬移判定:在「距玩家 3~8 格(随机)、且位于玩家相对鸟的另一侧」的环形带

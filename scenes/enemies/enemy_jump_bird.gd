@@ -45,70 +45,97 @@ func _ai(delta: float) -> void:
 
 	match state:
 		State.SLEEP:
-			# 入睡动画(一次性)优先:播完定格 sleeping
-			if _sleep_anim_timer > 0.0:
-				_sleep_anim_timer -= delta
-				if _sleep_anim_timer <= 0.0:
-					_anim.play("sleeping")
-			else:
-				_anim.play("sleeping")
-			if dist <= EnemyParams.JumpBird.wake_radius:
-				_set_state(State.WAKE)
-				_anim.play("wake_up")  # 醒来(一次性)
-				_state_timer = _anim_duration("wake_up")
+			_tick_sleep(delta, dist)
 		State.WAKE:
-			_state_timer -= delta
-			if _state_timer <= 0.0:
-				_set_state(State.CHASE)
-				_hop_timer = 0.2
+			_tick_wake(delta)
 		State.CHASE:
-			_anim.play("jump")
-			if dist > EnemyParams.JumpBird.give_up_radius:
-				_set_state(State.SLEEP)
-				_anim.play("fall_asleep")  # 放弃追逐→入睡(一次性)
-				_sleep_anim_timer = _anim_duration("fall_asleep")
-			elif dist <= EnemyParams.JumpBird.lunge_range:
-				_set_state(State.LUNGE_WINDUP)
-				_lunge_dir = toroidal_dir_to_player()
-				_state_timer = EnemyParams.JumpBird.lunge_windup
-			elif is_on_floor():
-				# 鸟非冲刺状态下只能跳跃移动,不能滑行
-				_hop_timer -= delta
-				if _hop_timer <= 0.0:
-					_hop_timer = EnemyParams.JumpBird.hop_interval
-					var dir := toroidal_dir_to_player()
-					velocity = Vector2(dir.x * EnemyParams.JumpBird.hop_horizontal_speed,
-							EnemyParams.JumpBird.hop_jump_velocity)
+			_tick_chase(delta, dist)
 		State.LUNGE_WINDUP:
-			_state_timer -= delta
-			if _state_timer <= 0.0:
-				_set_state(State.LUNGE_DASH)
-				use_gravity = false
-				_lunge_traveled = 0.0
-				# 冲刺启动动作(一次性),播完切 dashing 常态
-				_anim.play("turn_dash")
-				_turn_timer = _anim_duration("turn_dash")
-				_dash_timer = EnemyParams.JumpBird.lunge_max_dist / EnemyParams.JumpBird.lunge_speed + 0.2
-				velocity = _lunge_dir * EnemyParams.JumpBird.lunge_speed
+			_tick_lunge_windup(delta)
 		State.LUNGE_DASH:
-			# 启动动画倒计时;播完切 dashing 常态
-			if _turn_timer > 0.0:
-				_turn_timer -= delta
-				if _turn_timer <= 0.0:
-					_anim.play("dashing")
-			_dash_timer -= delta
-			_lunge_traveled += (velocity * delta).length()
-			# 冲刺超时保险:即使方向异常(0/NaN)也不至于永久卡在冲刺
-			if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or is_on_wall():
-				_set_state(State.BACK_HOP)
-				use_gravity = true
-				velocity = Vector2(-_lunge_dir.x * EnemyParams.JumpBird.back_hop_away,
-						EnemyParams.JumpBird.back_hop_up)
-				_back_hop_cd = 0.4
+			_tick_lunge_dash(delta)
 		State.BACK_HOP:
-			if is_on_floor() and _back_hop_cd <= 0.0:
-				_set_state(State.CHASE)
-				_hop_timer = 0.15
+			_tick_back_hop()
+
+
+# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 78 行的单 match)。
+# 状态机各段的注释随各自函数走,改动某个状态时不必再在整段 match 里找它。
+
+func _tick_sleep(delta: float, dist: float) -> void:
+	# 入睡动画(一次性)优先:播完定格 sleeping
+	if _sleep_anim_timer > 0.0:
+		_sleep_anim_timer -= delta
+		if _sleep_anim_timer <= 0.0:
+			_anim.play("sleeping")
+	else:
+		_anim.play("sleeping")
+	if dist <= EnemyParams.JumpBird.wake_radius:
+		_set_state(State.WAKE)
+		_anim.play("wake_up")  # 醒来(一次性)
+		_state_timer = _anim_duration("wake_up")
+
+
+func _tick_wake(delta: float) -> void:
+	_state_timer -= delta
+	if _state_timer <= 0.0:
+		_set_state(State.CHASE)
+		_hop_timer = 0.2
+
+
+func _tick_chase(delta: float, dist: float) -> void:
+	_anim.play("jump")
+	if dist > EnemyParams.JumpBird.give_up_radius:
+		_set_state(State.SLEEP)
+		_anim.play("fall_asleep")  # 放弃追逐→入睡(一次性)
+		_sleep_anim_timer = _anim_duration("fall_asleep")
+	elif dist <= EnemyParams.JumpBird.lunge_range:
+		_set_state(State.LUNGE_WINDUP)
+		_lunge_dir = toroidal_dir_to_player()
+		_state_timer = EnemyParams.JumpBird.lunge_windup
+	elif is_on_floor():
+		# 鸟非冲刺状态下只能跳跃移动,不能滑行
+		_hop_timer -= delta
+		if _hop_timer <= 0.0:
+			_hop_timer = EnemyParams.JumpBird.hop_interval
+			var dir := toroidal_dir_to_player()
+			velocity = Vector2(dir.x * EnemyParams.JumpBird.hop_horizontal_speed,
+					EnemyParams.JumpBird.hop_jump_velocity)
+
+
+func _tick_lunge_windup(delta: float) -> void:
+	_state_timer -= delta
+	if _state_timer <= 0.0:
+		_set_state(State.LUNGE_DASH)
+		use_gravity = false
+		_lunge_traveled = 0.0
+		# 冲刺启动动作(一次性),播完切 dashing 常态
+		_anim.play("turn_dash")
+		_turn_timer = _anim_duration("turn_dash")
+		_dash_timer = EnemyParams.JumpBird.lunge_max_dist / EnemyParams.JumpBird.lunge_speed + 0.2
+		velocity = _lunge_dir * EnemyParams.JumpBird.lunge_speed
+
+
+func _tick_lunge_dash(delta: float) -> void:
+	# 启动动画倒计时;播完切 dashing 常态
+	if _turn_timer > 0.0:
+		_turn_timer -= delta
+		if _turn_timer <= 0.0:
+			_anim.play("dashing")
+	_dash_timer -= delta
+	_lunge_traveled += (velocity * delta).length()
+	# 冲刺超时保险:即使方向异常(0/NaN)也不至于永久卡在冲刺
+	if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or is_on_wall():
+		_set_state(State.BACK_HOP)
+		use_gravity = true
+		velocity = Vector2(-_lunge_dir.x * EnemyParams.JumpBird.back_hop_away,
+				EnemyParams.JumpBird.back_hop_up)
+		_back_hop_cd = 0.4
+
+
+func _tick_back_hop() -> void:
+	if is_on_floor() and _back_hop_cd <= 0.0:
+		_set_state(State.CHASE)
+		_hop_timer = 0.15
 
 # 死亡:基类 _begin_death → 本虚钩;播一次性死亡动画。
 # 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);

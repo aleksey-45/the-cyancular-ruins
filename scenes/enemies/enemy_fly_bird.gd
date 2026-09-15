@@ -73,121 +73,149 @@ func _ai(delta: float) -> void:
 		_update_facing()
 	match state:
 		State.SLEEP:
-			if _wake_timer > 0.0:
-				_wake_timer -= delta
-				if _wake_timer <= 0.0:
-					_set_state(State.TAKE_OFF)
-					_anim.play("take_off")
-					_apply_flight_collision(true)
-					_takeoff_velocity()
-			elif _sleep_anim_timer > 0.0:
-				_sleep_anim_timer -= delta
-				if _sleep_anim_timer <= 0.0:
-					_anim.play("sleeping")
-			else:
-				_anim.play("sleeping")
-				if dist <= EnemyParams.FlyBird.wake_radius:
-					_anim.play("wake_up")
-					_wake_timer = _anim_duration("wake_up")
+			_tick_sleep(delta, dist)
 		State.TAKE_OFF:
-			_state_timer += delta
-			if _state_timer >= EnemyParams.FlyBird.take_off_time:
-				_set_state(State.FLY)
-				use_gravity = false
-				_anim.play("flying")
-				_schedule_repath()
+			_tick_take_off(delta)
 		State.FLY:
-			_anim.play("flying")
-			if _player_home_dist() > EnemyParams.FlyBird.home_range:
-				_start_return()
-				return
-			if dist > EnemyParams.FlyBird.max_chase_distance:
-				_start_return()
-				return
-			_update_charge_intent_if_needed()
-			if intent == Intent.CHARGE:
-				if _try_charge():
-					return
-			elif dist <= EnemyParams.FlyBird.shoot_range and _shot_clear() and _near_shoot_pos():
-				_start_shoot()
-				return
-			_repath_timer -= delta
-			if _repath_timer <= 0.0:
-				_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
-				# 目标是斜上射击位(玩家上方),让下方的鸟绕道爬升到能打的位置。
-				_repath_to(_shoot_cell())
-			# 空路径(BFS 无路/预算超限)时直线飞向射击位,不再原地返程发呆。
-			# 三元惰性求值:只在路径为空时才现算 _shoot_pos()(内含 Bresenham LOS),
-			# 路径还在时传 INF——否则每帧给每只追玩家的鸟白付 1~2 次全图视线扫描。
-			_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
+			_tick_fly(delta, dist)
 		State.SHOOT:
-			_anim.play("flying")
-			if _player_home_dist() > EnemyParams.FlyBird.home_range:
-				_start_return()
-				return
-			_update_charge_intent_if_needed()
-			if intent == Intent.CHARGE:
-				if _try_charge():
-					return
-				# LOS 被堵:不再原地抛弹,退回 FLY 拉距离找 LOS(对齐 spec §1.4)
-				_set_state(State.FLY)
-				_schedule_repath()
-				return
-			elif dist > EnemyParams.FlyBird.shoot_range + EnemyParams.FlyBird.shoot_reacquire_margin:
-				_set_state(State.FLY)
-				_schedule_repath()
-				return
-			_update_hover_anchor()
-			_shoot_timer -= delta
-			if _strafe_target != Vector2.INF:
-				# 开火后的短距随机移动:滑向随机目标,到点或超时结束。
-				_strafe_timer -= delta
-				_glide_to(_strafe_target, delta)
-				if _strafe_timer <= 0.0 or (_strafe_target - global_position).length() <= EnemyParams.FlyBird.fly_speed * delta:
-					_strafe_target = Vector2.INF
-			else:
-				_hover_to_anchor(delta)
-			if _shoot_timer <= 0.0:
-				# 弹道被墙挡:不空射,退 FLY 继续接近玩家找射击位。
-				if not _shot_clear():
-					_set_state(State.FLY)
-					_schedule_repath()
-					return
-				# 平抛只能下落:鸟在玩家下方时弹道够不到玩家,不空射,继续爬向斜上锚点。
-				if global_position.y <= _player_pos().y:
-					_fire_parabolic()
-				_shoot_timer = EnemyParams.FlyBird.shoot_cooldown
-				_start_strafe()
+			_tick_shoot(delta, dist)
 		State.CHARGE:
-			_state_timer += delta
-			# 接触区/贴脸距离命中玩家直接结算(弥补 slide 碰撞偶尔穿过的情形)。
-			if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
-				_on_charge_hit_player()
-			elif _state_timer >= EnemyParams.FlyBird.charge_timeout:
-				_die_self()
+			_tick_charge(delta)
 		State.RETURN:
-			_anim.play("flying")
-			if _landing:
-				# 落地阶段:开重力直接下坠,计时到点即入睡,不再等地板接触。
-				# (FLOATING 模式下 is_on_floor 恒 false,靠碰撞法线判地面在个别
-				#  出生位/接缝处永远等不到,鸟会卡在 RETURN 不睡)
-				_state_timer += delta
-				if _state_timer >= EnemyParams.FlyBird.landing_time:
-					_anim.play("fall_asleep")
-					_sleep_anim_timer = _anim_duration("fall_asleep")
-					_set_state(State.SLEEP)
-					_apply_flight_collision(false)
-					_landing = false
-			elif _home_reached():
-				_start_landing()
-			else:
-				_repath_timer -= delta
-				if _repath_timer <= 0.0:
-					_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
-					# 玩家太远时不启动任何搜索;空路径时直线飞回家(不再漂移)。
-					if dist <= EnemyParams.FlyBird.max_chase_distance:
-						_repath_to(_home_cell)
-				_follow_path(delta, _spawn_pos)
+			_tick_return(delta, dist)
+
+
+# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 124 行的单 match)。
+# ★ 各段里的 `return` **语义不变**:match 是 `_ai` 的最后一条语句,所以在 _tick_* 里 return
+#   等于原来在 _ai 里 return(都是"本帧到此为止")。
+
+func _tick_sleep(delta: float, dist: float) -> void:
+	if _wake_timer > 0.0:
+		_wake_timer -= delta
+		if _wake_timer <= 0.0:
+			_set_state(State.TAKE_OFF)
+			_anim.play("take_off")
+			_apply_flight_collision(true)
+			_takeoff_velocity()
+	elif _sleep_anim_timer > 0.0:
+		_sleep_anim_timer -= delta
+		if _sleep_anim_timer <= 0.0:
+			_anim.play("sleeping")
+	else:
+		_anim.play("sleeping")
+		if dist <= EnemyParams.FlyBird.wake_radius:
+			_anim.play("wake_up")
+			_wake_timer = _anim_duration("wake_up")
+
+
+func _tick_take_off(delta: float) -> void:
+	_state_timer += delta
+	if _state_timer >= EnemyParams.FlyBird.take_off_time:
+		_set_state(State.FLY)
+		use_gravity = false
+		_anim.play("flying")
+		_schedule_repath()
+
+
+func _tick_fly(delta: float, dist: float) -> void:
+	_anim.play("flying")
+	if _player_home_dist() > EnemyParams.FlyBird.home_range:
+		_start_return()
+		return
+	if dist > EnemyParams.FlyBird.max_chase_distance:
+		_start_return()
+		return
+	_update_charge_intent_if_needed()
+	if intent == Intent.CHARGE:
+		if _try_charge():
+			return
+	elif dist <= EnemyParams.FlyBird.shoot_range and _shot_clear() and _near_shoot_pos():
+		_start_shoot()
+		return
+	_repath_timer -= delta
+	if _repath_timer <= 0.0:
+		_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
+		# 目标是斜上射击位(玩家上方),让下方的鸟绕道爬升到能打的位置。
+		_repath_to(_shoot_cell())
+	# 空路径(BFS 无路/预算超限)时直线飞向射击位,不再原地返程发呆。
+	# 三元惰性求值:只在路径为空时才现算 _shoot_pos()(内含 Bresenham LOS),
+	# 路径还在时传 INF——否则每帧给每只追玩家的鸟白付 1~2 次全图视线扫描。
+	_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
+
+
+func _tick_shoot(delta: float, dist: float) -> void:
+	_anim.play("flying")
+	if _player_home_dist() > EnemyParams.FlyBird.home_range:
+		_start_return()
+		return
+	_update_charge_intent_if_needed()
+	if intent == Intent.CHARGE:
+		if _try_charge():
+			return
+		# LOS 被堵:不再原地抛弹,退回 FLY 拉距离找 LOS(对齐 spec §1.4)
+		_set_state(State.FLY)
+		_schedule_repath()
+		return
+	elif dist > EnemyParams.FlyBird.shoot_range + EnemyParams.FlyBird.shoot_reacquire_margin:
+		_set_state(State.FLY)
+		_schedule_repath()
+		return
+	_update_hover_anchor()
+	_shoot_timer -= delta
+	if _strafe_target != Vector2.INF:
+		# 开火后的短距随机移动:滑向随机目标,到点或超时结束。
+		_strafe_timer -= delta
+		_glide_to(_strafe_target, delta)
+		if _strafe_timer <= 0.0 or (_strafe_target - global_position).length() <= EnemyParams.FlyBird.fly_speed * delta:
+			_strafe_target = Vector2.INF
+	else:
+		_hover_to_anchor(delta)
+	if _shoot_timer <= 0.0:
+		# 弹道被墙挡:不空射,退 FLY 继续接近玩家找射击位。
+		if not _shot_clear():
+			_set_state(State.FLY)
+			_schedule_repath()
+			return
+		# 平抛只能下落:鸟在玩家下方时弹道够不到玩家,不空射,继续爬向斜上锚点。
+		if global_position.y <= _player_pos().y:
+			_fire_parabolic()
+		_shoot_timer = EnemyParams.FlyBird.shoot_cooldown
+		_start_strafe()
+
+
+func _tick_charge(delta: float) -> void:
+	_state_timer += delta
+	# 接触区/贴脸距离命中玩家直接结算(弥补 slide 碰撞偶尔穿过的情形)。
+	if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
+		_on_charge_hit_player()
+	elif _state_timer >= EnemyParams.FlyBird.charge_timeout:
+		_die_self()
+
+
+func _tick_return(delta: float, dist: float) -> void:
+	_anim.play("flying")
+	if _landing:
+		# 落地阶段:开重力直接下坠,计时到点即入睡,不再等地板接触。
+		# (FLOATING 模式下 is_on_floor 恒 false,靠碰撞法线判地面在个别
+		#  出生位/接缝处永远等不到,鸟会卡在 RETURN 不睡)
+		_state_timer += delta
+		if _state_timer >= EnemyParams.FlyBird.landing_time:
+			_anim.play("fall_asleep")
+			_sleep_anim_timer = _anim_duration("fall_asleep")
+			_set_state(State.SLEEP)
+			_apply_flight_collision(false)
+			_landing = false
+	elif _home_reached():
+		_start_landing()
+	else:
+		_repath_timer -= delta
+		if _repath_timer <= 0.0:
+			_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
+			# 玩家太远时不启动任何搜索;空路径时直线飞回家(不再漂移)。
+			if dist <= EnemyParams.FlyBird.max_chase_distance:
+				_repath_to(_home_cell)
+		_follow_path(delta, _spawn_pos)
 
 
 # 死亡:白闪后销毁(冲撞自毁与受击死亡同走本方法)。附加拿冲撞速度/开重力在 _on_death。
