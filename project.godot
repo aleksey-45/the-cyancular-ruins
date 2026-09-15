@@ -24,10 +24,10 @@ run/main_scene.dedicated_server="res://server/server_main.tscn"
 
 [autoload]
 
-GameParameters="*res://core/game_parameters.gd"
-NetBus="*res://core/net_bus.gd"
-NetBusExt="*res://core/net_bus_ext.gd"
-Settings="*res://core/settings.gd"
+GameParameters="*res://core/config/game_parameters.gd"
+NetBus="*res://core/net/net_bus.gd"
+NetBusExt="*res://core/net/net_bus_ext.gd"
+Settings="*res://core/config/settings.gd"
 
 [display]
 

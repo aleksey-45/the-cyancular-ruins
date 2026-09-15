@@ -89,8 +89,8 @@ func _run_orchestrator() -> void:
 func _on_room_created(caller: int, _opts: Dictionary) -> void:
 	# 真大厅建完房:记下房主 peer 与房号,稍后(帧内不做事,避免在 poll 栈里改房态)
 	_c1_peer = caller
-	for code in _rm().royale_rooms:
-		var rr = _rm().royale_rooms[code]
+	for code in _rm().lobby.royale_rooms:
+		var rr = _rm().lobby.royale_rooms[code]
 		if rr.host_peer == caller:
 			_code = code
 			break
@@ -148,7 +148,7 @@ func _godot_log_path(role: String) -> String:
 
 
 func _room_players() -> int:
-	var rr = _rm().royale_rooms.get(_code)
+	var rr = _rm().lobby.royale_rooms.get(_code)
 	return rr.players.size() if rr != null else 0
 
 

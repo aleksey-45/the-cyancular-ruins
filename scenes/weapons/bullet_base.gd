@@ -166,7 +166,7 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 		var cell := MazeGenerator.cell_of(pos + off, ts, cols, rows)
 		var v: int = grid[cell.y][cell.x]
 		if v != 0:
-			var tex: int = v / 16
+			var tex: int = MazeGenerator.texture_of(v)
 			if TileDefs.bullet_destroyable(tex):
 				TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
 				if apply_damage:

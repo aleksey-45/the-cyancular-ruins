@@ -1,10 +1,10 @@
 extends SceneTree
-# 僵尸房间清理——源码级结构检查(仿 player_contract_smoke):锁住 room_manager.gd 关键结构——
-#  1) 存在 SWEEP_INTERVAL(10min)/MAX_ROOM_AGE(2h)常量;
-#  2) create_room 里给 room.created_at 赋了时间戳;
-#  3) _process 每 SWEEP_INTERVAL 调 _sweep_stale_rooms;
-#  4) _sweep_stale_rooms 对超龄房间调 _kill_worker + erase;
-#  5) 大乱斗在局宽限谓词同时引用 RoyaleHost.MATCH_TIME 与 rr.in_match,且 1v1 仍是裸 MAX_ROOM_AGE。
+# 僵尸房间清理——源码级结构检查(仿 player_contract_smoke)。锁的结构横跨两个文件(2026-09-14 拆账本后):
+#  **room_manager.gd**:1) SWEEP_INTERVAL(10min)/MAX_ROOM_AGE(2h)常量;3) _process 每周期调
+#   _sweep_stale_rooms;4) _sweep_stale_rooms 对超龄房走拆除收口;5) 大乱斗在局宽限谓词同时引用
+#   RoyaleHost.MATCH_TIME 与 rr.in_match,且 1v1 仍是裸 MAX_ROOM_AGE。
+#  **lobby_rooms.gd**(账本/收口搬来这里):2) 建房时给 created_at 赋时间戳;收口体外不得出现
+#   端口归还/注册表删除(见 _check_teardown_funnel);杀 worker 的实现另在 worker_launcher.gd。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -38,9 +38,11 @@ func _initialize() -> void:
 # ai_duel 摘房前的手动释放)。收口后「新加一条拆除路径」不可能漏 —— 因为没有第二条路可走。
 # 断言形态刻意选「**只能出现在这一处**」而不是「数调用点个数」:个数会随实现漂,而这是契约本身。
 func _check_teardown_funnel() -> void:
-	var src := FileAccess.get_file_as_string("res://server/room_manager.gd")
+	# ★ 2026-09-14:账本与拆除收口搬进了 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
+	#   收口的判据跟着搬 —— 「端口归还与注册表删除只能出现在收口体内」这条纪律与它住哪个文件无关。
+	var src := FileAccess.get_file_as_string("res://server/lobby_rooms.gd")
 	if src.is_empty():
-		_fail = "无法读取 room_manager.gd"
+		_fail = "无法读取 lobby_rooms.gd"
 		return
 	var funcs: Array = []   # [{name, body}] —— 按 "func " 切块(缩进的内部类方法也算块)
 	var cur_name := ""
@@ -57,16 +59,20 @@ func _check_teardown_funnel() -> void:
 	if not cur_name.is_empty():
 		funcs.append({"name": cur_name, "body": cur_body})
 	# 只有这两个函数体内允许出现端口/注册表的拆除动作(后者是它自己的定义与实现)
-	var allowed := ["_teardown_room", "_release_port_later"]
+	var allowed := ["teardown_room", "_release_port_later"]
 	for f in funcs:
 		for line in (f["body"] as String).split("\n"):
 			var t: String = line.strip_edges()
 			if t.is_empty() or t.begins_with("#"):
 				continue
-			for pat in ["_release_port_later(", "royale_rooms.erase(", "rooms.erase("]:
+			# ★ 模式列表必须包含**当前**的端口归还入口。2026-09-14 端口池搬进 WorkerLauncher 后,
+			#   `_worker_ports.erase(port)` 改名成 `_launcher.release_now(port)` —— 若不把新名字
+			#   加进来,这条门就对端口回收**彻底失明**(它只认旧字符串,而旧字符串已全仓不存在),
+			#   表现是恒绿:新加一条绕过收口的拆除路径也照过。改名/搬家时同款改这里。
+			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "rooms.erase("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):
-						_fail = "room_manager.%s 里出现 %s —— 拆除必须走 _teardown_room 单一收口" % [f["name"], pat]
+						_fail = "lobby_rooms.%s 里出现 %s —— 拆除必须走 teardown_room 单一收口" % [f["name"], pat]
 						return
 
 
@@ -76,7 +82,11 @@ func _check_teardown_funnel() -> void:
 # 推导必然出错 → 持 3 号的真客户端被当串线踢掉(历史 B1)。故做**反向**断言:旧标识符一个都不许复活。
 # 它防的是这套 argv 契约的**历史故障模式** —— 大厅与 worker 两边只改一边(CLAUDE.md 明文要求同步改)。
 func _check_argv_contract() -> void:
-	for f in ["res://server/server_main.gd", "res://server/room_manager.gd"]:
+	# 两边的文件清单:**生成端 + 解析端**。2026-09-14 生成端从 room_manager.gd 搬到
+	# worker_launcher.gd(spawn 族随迁)——故两处清单都要含 worker_launcher.gd。
+	# ★ 别只改正向那条:反向(旧标识符禁令)若还扫着 room_manager.gd,新生成端就没人管了,
+	#   旧协议名可以在那儿悄悄复活 —— 那正是「只改一半」的另一种形态。
+	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
 		var txt := FileAccess.get_file_as_string(f)
 		if txt.is_empty():
 			_fail = "无法读取 %s" % f
@@ -90,7 +100,7 @@ func _check_argv_contract() -> void:
 					_fail = "%s 的代码里仍有旧 argv 协议标识符 %s(应已换成 --roles 集合)" % [f, bad]
 					return
 	# 正向:集合协议必须在两边都在位(只改一边 = 拉起的 worker 收不到 role 集合,静默降级)
-	for f in ["res://server/server_main.gd", "res://server/room_manager.gd"]:
+	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
 		if not FileAccess.get_file_as_string(f).contains('"--roles"'):
 			_fail = "%s 未接 --roles(集合协议只接了一半?)" % f
 			return
@@ -100,14 +110,21 @@ func _check(src: String) -> void:
 		_fail = "缺 SWEEP_INTERVAL=600(10min)常量"; return
 	if not src.contains("const MAX_ROOM_AGE := 7200.0"):
 		_fail = "缺 MAX_ROOM_AGE=7200(2h)常量"; return
-	if not src.contains("room.created_at = Time.get_unix_time_from_system()"):
-		_fail = "create_room 未记录 created_at"; return
+	# created_at 的赋值点随 create_room/royale_create 搬进了 lobby_rooms.gd
+	if not FileAccess.get_file_as_string("res://server/lobby_rooms.gd").contains(
+			"created_at = Time.get_unix_time_from_system()"):
+		_fail = "create_room/royale_create 未记录 created_at(超龄判据的输入)"; return
 	if not src.contains("func _process"):
 		_fail = "缺定时 _process"; return
 	if not src.contains("func _sweep_stale_rooms"):
 		_fail = "缺 _sweep_stale_rooms"; return
-	if not src.contains("func _kill_worker"):
-		_fail = "缺 _kill_worker"; return
+	# 杀 worker 的实现已随端口池搬进 WorkerLauncher(2026-09-14),这里改认新入口 ——
+	# 但**两条都要**:实现存在 + room_manager 里有人调它。只查实现会放任"实现在、收口不再杀"
+	# (清扫路径不杀 → 僵尸 worker 继续占着端口,正是本层补过三次的那个泄漏)。
+	if not FileAccess.get_file_as_string("res://server/worker_launcher.gd").contains("func kill_worker"):
+		_fail = "缺 WorkerLauncher.kill_worker(杀 worker 的实现)"; return
+	if not FileAccess.get_file_as_string("res://server/lobby_rooms.gd").contains("launcher.kill_worker("):
+		_fail = "lobby_rooms 未调 launcher.kill_worker(收口不再杀 worker → 僵尸占端口)"; return
 	# _sweep_stale_rooms 体内必须出现:超龄判断、杀 worker、erase 房间
 	var fn := src.find("func _sweep_stale_rooms")
 	var body_end := src.find("\nfunc ", fn + 10)
@@ -149,8 +166,8 @@ func _check(src: String) -> void:
 	# 「杀 worker + 删房 + 回收端口」这件事本身仍被 _check_teardown_funnel 钉住(那些动作只允许
 	# 出现在 _teardown_room 体内);这里只认新入口。
 	# ★ 别改回「直接调 _kill_worker」:那样端口回收会绕过收口,正是本层补过三次的那个泄漏。
-	if not body.contains("_teardown_room(") or not body.contains("TEARDOWN_KILL"):
-		_fail = "_sweep_stale_rooms 未走拆除收口(应调 _teardown_room(..., TEARDOWN_KILL, ...))"; return
+	if not body.contains("teardown_room(") or not body.contains("TEARDOWN_KILL"):
+		_fail = "_sweep_stale_rooms 未走拆除收口(应调 _lobby.teardown_room(..., LobbyRooms.TEARDOWN_KILL, ...))"; return
 	# 两张注册表都要被拆:rooms(1v1) 与 royale_rooms 并存,漏一张 = 那张的端口永久泄漏
 	if not body.contains("stale + stale_royale"):
 		_fail = "_sweep_stale_rooms 未把两张注册表的超龄房一并拆除"; return

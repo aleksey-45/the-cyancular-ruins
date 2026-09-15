@@ -13,20 +13,11 @@ CLIENTS="${1:-4}"
 MATCH="${2:-60}"
 RUN="${3:-120}"
 
-GODOT="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
+# 引擎路径($GODOT,可用环境变量覆盖)+ cd 到仓库根 + kill_procs/kill_port
+# shellcheck source=tests/env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 LOG="tests/royale_soak_probe.log"
-PYDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-kill_port() {
-  local port="$1"
-  local pids
-  pids=$(netstat -ano 2>/dev/null | grep -E "[:.]${port}[[:space:]]" | awk '{print $NF}' | sort -u)
-  for p in $pids; do
-    [ "$p" = "0" ] && continue
-    echo "  kill 端口 $port 属主 PID=$p"
-    taskkill //F //PID "$p" >/dev/null 2>&1 || true
-  done
-}
+PYDIR="$ENV_DIR"   # 仓库根(env.sh 已算好并 cd 过去;保留别名以免动下面所有引用)
 
 echo "[soak] 检查 7777 是否空闲…"
 if netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]].*LISTENING"; then

@@ -1,4 +1,4 @@
-extends Node
+extends ProbeBase
 
 # KH 合并 L5 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
@@ -49,7 +49,7 @@ const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
 
 # L5 新增的、带字号的 UI 文件:第 8 条要把它们的字号覆盖情况打出来(人眼可核覆盖面)
-const L5_FONT_FILES := ["res://scenes/royale_hud.gd", "res://scenes/royale_lobby.gd"]
+const L5_FONT_FILES := ["res://ui/royale_hud.gd", "res://scenes/royale_lobby.gd"]
 
 # ── 扫描针(碎片拼接:见文件头「自伤防护」)──
 # 常量名**不得**含连写的 FONT_SIZE:第 8 条的 D 类扫描会把 "以 const 开头且含 FONT_SIZE"
@@ -64,7 +64,29 @@ const N_FONT_SZ_ASSIGN := "font" + "_size\\s*=\\s*([0-9]+)"
 const N_FONT_SZ_CONST := "FONT" + "_SIZE"
 const N_CONST_DECL := "^const\\s+\\w*FONT" + "_SIZE\\w*\\s*:?=\\s*([0-9]+)"
 
-var _failures: Array[String] = []
+# ── MatchHost 的源码**并集** ──
+# ★ 2026-09-15(阶段 5.6):权威按域拆成一条继承链 ——
+#   RoyaleHost → MatchHost(核心) → MatchRound(回合) → MatchCombat(裁决)
+#   → MatchSnapshot(快照) → MatchState(共享状态+RPC 助手) → Node
+# 本探针的判据是**按职责**写的,所以取源也要跟着改成并集:只读 match_host.gd 的话,
+# 那些 needle 在新家找不到 → **门恒绿、静默失明**(仓内已登记过的失败模式)。
+# 这不是放水 —— 被守的东西一个字没变,只是它现在住在链上的哪一层而已;
+# 反向断言(基类不得含 RoyaleHost 的子类方法)反而更严了:五份都查。
+const HOST_SRC := ["res://server/match_host.gd", "res://server/match_round.gd",
+		"res://server/match_combat.gd", "res://server/match_snapshot.gd",
+		"res://server/match_state.gd"]
+
+
+func _host_code() -> String:
+	var parts: Array[String] = []
+	for f in HOST_SRC:
+		parts.append(_code_only(_read(f)))
+	return "\n".join(parts)
+
+
+# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+func probe_id() -> String:
+	return "L5"
 
 
 func _ready() -> void:
@@ -87,8 +109,8 @@ func _ready() -> void:
 # 判据取**去注释视图**:注释里提到这些名字不算"在位"(T4 清扫探针实测撞见过)。
 func _check_c2_contract() -> void:
 	var fails_before := _failures.size()
-	var p := "res://server/match_host.gd"
-	var code := _code_only(_read(p))
+	var p := "MatchHost 继承链(见 HOST_SRC)"
+	var code := _host_code()
 	_check(not code.is_empty(), "读不到 %s" % p)
 	if code.is_empty():
 		return
@@ -155,25 +177,40 @@ func _check_c2_contract() -> void:
 	_summary(fails_before, "C2 契约:四条在位(含快照先于消费、COUNTDOWN 早退清零、载荷带 ack_seq+c2)+ 生产侧 _on_input 入队不落地")
 
 
-# ── 2) main 既有成果在位(server/room_manager.gd)────────────────────────
+# ── 2) main 既有成果在位(server/room_manager.gd + server/worker_launcher.gd)──
 # L5 把大乱斗大厅并进了同一份 room_manager。main 的「超龄房清扫」族(防 worker 进程 +
-# 端口永久泄漏)必须原样保留:少了 sweep 就泄漏,少了 _kill_worker 就杀不掉 worker。
+# 端口永久泄漏)必须原样保留:少了 sweep 就泄漏,少了 kill_worker 就杀不掉 worker。
+# ★ 2026-09-14:杀 worker 的实现与那段 PowerShell 随端口池搬进了 WorkerLauncher
+#   (server/worker_launcher.gd)。判据按**职责**拆到两个文件,不是删掉 ——
+#   「杀不掉 worker」这个失败模式与文件放哪无关,必须仍然有人守。
 func _check_room_manager() -> void:
 	var fails_before := _failures.size()
 	var p := "res://server/room_manager.gd"
+	var pw := "res://server/worker_launcher.gd"
+	var pp := "res://core/net/proc_util.gd"
 	var code := _code_only(_read(p))
+	var code_w := _code_only(_read(pw))
+	var code_p := _code_only(_read(pp))
 	_check(not code.is_empty(), "读不到 %s" % p)
-	if code.is_empty():
+	_check(not code_w.is_empty(), "读不到 %s" % pw)
+	_check(not code_p.is_empty(), "读不到 %s" % pp)
+	if code.is_empty() or code_w.is_empty() or code_p.is_empty():
 		return
 	var needles := [
-		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 与大乱斗两族都要被扫到)"],
-		["func _kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)"],
-		["created_at", "房间创建时间戳(超龄判据)"],
-		["Select -Expand" + "Property OwningProcess -Unique", "取 UDP 端口属主进程的修正写法"],
+		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 与大乱斗两族都要被扫到)", p, code],
+		["created_at", "房间创建时间戳(超龄判据)", p, code],
+		["func kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)",
+				pw, code_w],
+		# ★ 2026-09-14:那段 PowerShell 与 server_main 的一份**逐字相同**,已收进 core/proc_util.gd
+		#   (ProcUtil.kill_udp_port)。判据按职责跟着搬 —— 「取不到属主进程就一个都杀不掉」这个
+		#   失败模式与它住哪个文件无关,必须仍然有人守。
+		["Select -Expand" + "Property OwningProcess -Unique", "取 UDP 端口属主进程的修正写法",
+				pp, code_p],
 	]
 	for spec in needles:
 		var s: String = spec[0]
-		_check(code.count(s) >= 1, "room_manager 缺失:%s(%s)" % [s, spec[1]])
+		_check((spec[3] as String).count(s) >= 1,
+				"%s 缺失:%s(%s)" % [(spec[2] as String).get_file(), s, spec[1]])
 	# ★ 私有调试残留:KH 的 _spawn_worker 曾硬编码 `--log-file` 指向**开发机本机绝对路径**
 	# (含其用户名数字段),异机运行时写不存在目录(与 main 无关的私机路径)。全仓必须零命中。
 	# ⚠ 连本文件的注释也不能出现那个数字:本扫描包含 tests/,写进注释就是自己命中自己。
@@ -192,17 +229,25 @@ func _check_room_manager() -> void:
 # 会让这条断言永远红(注释不是代码)。
 func _check_kill_port_holder() -> void:
 	var fails_before := _failures.size()
-	var p := "res://server/server_main.gd"
-	var code := _code_only(_read(p))
-	_check(not code.is_empty(), "读不到 %s" % p)
-	if code.is_empty():
+	# ★ 2026-09-14:实现从 server_main 搬进 core/proc_util.gd(ProcUtil.kill_udp_port)——
+	#   原先它与 worker_launcher 那份**逐字相同**。判据跟着搬,但**坏写法的禁令两个文件都查**:
+	#   只查新家的话,谁要是在 server_main 里再手抄一份坏写法就没人管了。
+	var pp := "res://core/net/proc_util.gd"
+	var ps := "res://server/server_main.gd"
+	var cp := _code_only(_read(pp))
+	var cs := _code_only(_read(ps))
+	_check(not cp.is_empty() and not cs.is_empty(), "读不到 %s / %s" % [pp, ps])
+	if cp.is_empty() or cs.is_empty():
 		return
 	var good := "Select -Expand" + "Property OwningProcess -Unique"
 	var evil := "%" + " OwningProcess"
-	_check(code.count(good) >= 1, "%s 缺 _kill_port_holder 的修正写法(%s)" % [p, good])
-	_check(code.count(evil) == 0,
-			"%s 的代码里出现取不到属性的 %s 写法 %d 处(注释不算)" % [p, evil, code.count(evil)])
-	_summary(fails_before, "kill_port_holder:修正写法 %d 处,坏写法 %d 处" % [code.count(good), code.count(evil)])
+	_check(cp.count(good) >= 1, "%s 缺修正写法(%s)" % [pp, good])
+	var evil_hits := cp.count(evil) + cs.count(evil)
+	_check(evil_hits == 0,
+			"代码里出现取不到属性的 %s 写法 %d 处(注释不算;查了 proc_util 与 server_main)"
+			% [evil, evil_hits])
+	_summary(fails_before, "kill_udp_port:修正写法 %d 处(proc_util),坏写法 %d 处(proc_util+server_main)"
+			% [cp.count(good), evil_hits])
 
 
 # ── 4) ★ 零演示残留(只扫生产目录)─────────────────────────────────────
@@ -271,12 +316,12 @@ func _check_royale_laser_routing() -> void:
 	_summary(fails_before, "大乱斗激光路由:NetBus 订阅在位,NetBusExt 混用 %d 处" % mixed.size())
 
 
-# ── 7) AI 手感闸:AIInputSource.is_network_driven() 返回 true ───────────
+# ── 7) AI 手感闸:AiInputSource.is_network_driven() 返回 true ───────────
 # 不覆写(基类返回 false)→ 服务器侧 AI 被判成"本地单机" → 打空弹夹后进换弹、静默停火
 # reload_time 秒(霰弹 2.2s / 榴弹 2.8s),AI 手感莫名变差且无任何报错。
 func _check_ai_input_gate() -> void:
 	var fails_before := _failures.size()
-	var p := "res://core/ai_input_source.gd"
+	var p := "res://core/net/ai_input_source.gd"
 	var code := _code_only(_read(p))
 	_check(not code.is_empty(), "读不到 %s" % p)
 	if code.is_empty():
@@ -303,7 +348,7 @@ func _check_ai_input_gate() -> void:
 #   C) 字面赋值 `…font_size = N`(.tscn 的 theme_override_font_sizes/font_size = N 走这条)
 #   D) const …FONT_SIZE… := N
 #   E) UiFactory.label/button 与 style_control 的字号实参 + make_weapon_check 的字号实参
-#      (大乱斗大厅的 _make_button/_make_line_edit 字号写在**体内**,正是这条 style_control)
+#      (大厅页基类 scenes/lobby_page.gd 的 _page_button 字号写在**体内**,正是这条 style_control)
 func _check_font_size_law() -> void:
 	var fails_before := _failures.size()
 	var files := _collect(ALL_DIRS)
@@ -479,9 +524,9 @@ func _census(census: Dictionary, path: String, carrier: String) -> void:
 # 函数被删而调用点残留时断言照样绿(那正是"未定义符号"要防的)。
 func _check_new_interfaces() -> void:
 	var fails_before := _failures.size()
-	var base := "res://server/match_host.gd"
+	var base := "MatchHost 继承链(见 HOST_SRC)"
 	var sub := "res://server/royale_host.gd"
-	var base_code := _code_only(_read(base))
+	var base_code := _host_code()
 	var sub_code := _code_only(_read(sub))
 	_check(not base_code.is_empty() and not sub_code.is_empty(), "读不到 %s / %s" % [base, sub])
 	if base_code.is_empty() or sub_code.is_empty():
@@ -501,11 +546,15 @@ func _check_new_interfaces() -> void:
 			leaked.append(m)
 	_check(leaked.is_empty(),
 			"%s 含 RoyaleHost 的子类方法 %s(搬进基类即未定义符号)" % [base, ", ".join(leaked)])
-	_check(_code_only(_read("res://scenes/royale_hud.gd")).contains("class_name RoyaleHud"),
-			"scenes/royale_hud.gd 缺 class_name RoyaleHud")
-	_check(_code_only(_read("res://server/room_manager.gd")).contains("func royale_create("),
-			"server/room_manager.gd 缺 func royale_create(")
-	_summary(fails_before, "新接口:基类 1 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud/royale_create 在位")
+	_check(_code_only(_read("res://ui/royale_hud.gd")).contains("class_name RoyaleHud"),
+			"ui/royale_hud.gd 缺 class_name RoyaleHud")
+	# ★ 2026-09-14:大乱斗房间 handler 随账本搬进 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
+	#   判据跟着搬,但**两处都查**:老家若被人再抄一份同名 handler,那正是"两份真相"的开端。
+	var rl := _code_only(_read("res://server/lobby_rooms.gd"))
+	_check(rl.contains("func royale_create("), "server/lobby_rooms.gd 缺 func royale_create(")
+	_check(not _code_only(_read("res://server/room_manager.gd")).contains("func royale_create("),
+			"server/room_manager.gd 又出现 func royale_create(——房间 handler 应只在 lobby_rooms 一处)")
+	_summary(fails_before, "新接口:基类 1 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud 在位,royale_create 在 lobby_rooms")
 
 
 # ── 10) ★ round_full_heal 真的把双方回满血(端到端 + 对照组)────────────
@@ -569,161 +618,3 @@ func _demo_needles() -> Array[String]:
 		"build_permanent" + "_region",
 	]
 
-
-# 取某函数的函数体(从头到下一个 func 之前;找不到返回空串)。判据必须落在**体内**,
-# 否则一条同名的调用/注释就能满足断言。
-func _func_body(code: String, name: String) -> String:
-	var i := code.find("func " + name + "(")
-	if i < 0:
-		return ""
-	var j := code.find("\nfunc ", i + 1)
-	return code.substr(i, (j - i) if j > 0 else code.length() - i)
-
-
-# 递归收集 roots 下所有 .gd / .tscn(跳过点目录;.git/.godot/.superpowers 都在其中)
-func _collect(roots: Array) -> Array[String]:
-	var out: Array[String] = []
-	for r in roots:
-		_walk(r, out)
-	out.sort()
-	return out
-
-
-func _walk(dir_path: String, out: Array[String]) -> void:
-	var d := DirAccess.open(dir_path)
-	if d == null:
-		return
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if not name.begins_with("."):
-			var p := dir_path.path_join(name)
-			if d.current_is_dir():
-				_walk(p, out)
-			elif name.ends_with(".gd") or name.ends_with(".tscn"):
-				out.append(p)
-		name = d.get_next()
-	d.list_dir_end()
-
-
-func _read(path: String) -> String:
-	if not ResourceLoader.exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
-
-
-# 剥注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本 —— 整行注释与**行尾注释**
-# 都删。供"在位/唯一挂载点/顺序"类断言用:注释讲的是动机,不是代码(与 kh_l4_probe._code_only 同源)。
-# ⚠ 只删**整行**注释是不够的(旧做法):把 `q.pop_front()` 改成 `q.pop_back()` 再在**同一行尾部**
-#    补一句提到原调用的注释,裸文本计数与位置排序会照样满足 → C2 契约假绿(T10 反证 A 实测)。
-func _code_only(src: String) -> String:
-	var out: Array[String] = []
-	for raw_line in src.split("\n"):
-		var s: String = _strip_line_comment(raw_line).strip_edges()
-		if s.is_empty():
-			continue
-		out.append(s)
-	return "\n".join(out)
-
-
-# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义的处理与 _match_paren 同法)。
-# 行尾注释不是代码,却能把被删掉的调用名重新"喂"给按源码文本判在位的断言。
-# 边界:`"""…"""` 多行字符串**不跨行带状态**(本函数逐行调用)—— 它第 2 行起若出现 `#`,会被当
-# 注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 `#`,故当前无影响。
-func _strip_line_comment(line: String) -> String:
-	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
-	var j := 0
-	while j < line.length():
-		var ch := line[j]
-		if quote != "":
-			if ch == "\\":
-				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
-			elif ch == quote:
-				quote = ""
-		elif ch == "\"" or ch == "'":
-			quote = ch
-		elif ch == "#":
-			return line.substr(0, j)
-		j += 1
-	return line
-
-
-# 与 open 处 '(' 配对的 ')' 下标(跳过字符串内的括号;找不到返回 -1)
-func _match_paren(src: String, open: int) -> int:
-	var depth := 0
-	var in_str := false
-	for j in range(open, src.length()):
-		var ch := src[j]
-		if in_str:
-			if ch == "\\":
-				continue
-			if ch == "\"":
-				in_str = false
-			continue
-		if ch == "\"":
-			in_str = true
-		elif ch == "(":
-			depth += 1
-		elif ch == ")":
-			depth -= 1
-			if depth == 0:
-				return j
-	return -1
-
-
-# 顶层逗号切分实参(括号/方括号/花括号内、字符串内的逗号不算分隔符)
-func _split_args(s: String) -> Array[String]:
-	var out: Array[String] = []
-	var depth := 0
-	var in_str := false
-	var cur := ""
-	for j in range(s.length()):
-		var ch := s[j]
-		if in_str:
-			cur += ch
-			if ch == "\"" and (j == 0 or s[j - 1] != "\\"):
-				in_str = false
-			continue
-		match ch:
-			"\"":
-				in_str = true
-				cur += ch
-			"(", "[", "{":
-				depth += 1
-				cur += ch
-			")", "]", "}":
-				depth -= 1
-				cur += ch
-			",":
-				if depth == 0:
-					out.append(cur)
-					cur = ""
-				else:
-					cur += ch
-			_:
-				cur += ch
-	if not cur.strip_edges().is_empty():
-		out.append(cur)
-	return out
-
-
-func _check(ok: bool, msg: String) -> void:
-	if not ok:
-		_failures.append(msg)
-
-
-# 每条断言的汇总行:**本次断言全绿**才打 ✓,否则打 ✗。旧写法是裸 print,失败运行时
-# 汇总行照样打印(措辞还像报喜),读者容易把"打印了 N 行 [L5] ..."读成"N 条都过了"。
-# 参数 = 该条断言开始前的 _failures.size()(取差值判本组是否有新增失败)。
-func _summary(fails_before: int, msg: String) -> void:
-	print("[L5] " + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
-
-
-func _finish() -> void:
-	if _failures.is_empty():
-		print("KH L5 PROBE: ALL-OK")
-		get_tree().quit(0)
-	else:
-		print("KH L5 PROBE: FAIL | " + "; ".join(_failures))
-		get_tree().quit(1)

@@ -6,7 +6,7 @@ extends SceneTree
 # MazeGenerator/TileDefs(均不引 autoload),可安全在 -s 阶段空跑。
 # 网格取 20 列宽:保证撞墙反弹后剩余射程不因环面回绕再撞同一面墙(测试收尾干净)。
 
-const BeamTrace := preload("res://core/beam_trace.gd")
+const BeamTrace := preload("res://core/sim/beam_trace.gd")
 
 var _failures: Array[String] = []
 

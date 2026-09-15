@@ -57,7 +57,7 @@ main_menu.tscn（默认场景）
 | `server/server_main.gd` | 服务器入口 | `NetBus.start_server()` + 挂 RoomManager |
 | `server/room_manager.gd` | 房间注册表 | 建房/加入/断线清理/2 人就绪开局 |
 | `server/match_host.gd` | **服务器权威对局** | 建世界 + 双玩家权威模拟 + 快照/事件广播 + 命中裁决 |
-| `Scenes/pvp_game.tscn` + `Scenes/pvp_client.gd` | 客户端对局场景 | C2 本地玩家 + 输入上报 + 快照消费 + 自校正 + 视觉子弹 |
+| `scenes/pvp_game.tscn` + `scenes/pvp_game.gd` | 客户端对局场景 | C2 本地玩家 + 输入上报 + 快照消费 + 自校正 + 视觉子弹 |
 | `Scenes/Player/player_replica.gd` | 远端副本 | 纯视觉，最短路径插值，不做物理 |
 | `Scenes/matchmaking.gd` | 匹配 UI | 建房/输房间号/状态提示 |
 | `Scenes/main_menu.gd` | 主菜单 | 单人/多人入口 |

@@ -16,7 +16,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 ### 控制(以 `project.godot` 输入映射为准)
 - 左右移动、上=跳跃/爬梯、下=下蹲/下落/下潜;水中上浮下潜
 - 鼠标瞄准,左键开火(按住=持续/蓄力重型武器)
-- `1`~`5` 切枪(手枪/步枪/重狙/霰弹/榴弹)
+- `1`~`6` 切枪(手枪/步枪/重狙 M82A1/霰弹 S686/榴弹发射器/激光枪)
 - PvP 倒下后按游戏规则自动复活;单机 `R` 重载场景
 
 ---
@@ -35,7 +35,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 ### 跑服务端
 - **本地/局域网**:双击 `start_server.bat`(自动杀旧进程、启动大厅)。
 - **导出版**:双击 `Cyancular Ruins Server.exe`(大厅,带控制台;会自动拉起每局 worker)。
-- **云/公网**:需放行 **UDP 7777 与 7800~7999**(大厅 + 每局 worker 动态端口)。
+- **云/公网**:需放行 **UDP 7777 与 7800~8299**(大厅 + 每局 worker 动态端口;worker 端口池 = `WORKER_PORT_BASE`7800 起、`WORKER_PORT_SPAN`500 个)。
 
 ### 连接
 1. 主菜单 →「多人」
@@ -84,13 +84,17 @@ bash tests/pvp_match_smoke.sh
 ## 目录
 
 ```
-scenes/   场景(Godot 惯例 PascalCase 的 .tscn;脚本 snake_case)
-core/  autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
+scenes/   场景(页面与对局场景;.tscn 与脚本一律 snake_case)
+core/     autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
 server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
-tests/    -s 冒烟/探针
-editor/   浏览器地图编辑器(structure-editor.html + smoke.js)
-maps/      .cyrm 文本地图
-tools/    发布/控制台脚本(build_release.py、make_server_console.py)
+ui/       跨场景 UI:UiFactory(唯一调色板/工厂)、单机 HUD、对局 HUD、暂停菜单
+render/   渲染:后处理(post_process.gd + post_process.gdshader)、相机(camera_2d.gd)
+tests/    -s 冒烟/探针(分层见 tests/README.md)
+level_editor/  浏览器地图编辑器(structure-editor.html + smoke.js + sync-*.js)
+maps/     .cyrm 文本地图
+data/     tile_defs.json / enemies.json(与编辑器共享的属性表与敌人注册表)
+assets/   字体(含中文像素字体 unifont)与纹理
+tools/    发布/控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)
 ```
 
 技术细节(环面数学/敌人 AI/网络协议/发布)见 `CLAUDE.md` 与 `RELEASE.md`。

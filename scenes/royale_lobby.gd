@@ -1,26 +1,18 @@
-extends Control
+extends LobbyPage
 
 # 大乱斗大厅(RoyaleServer 分支):建房(公开/私密+邀请码+人数上限)/公开房间列表点击加入/
 # 等待室实时成员列表 + 房主开局。自建服务器(RoyaleHost 死斗 worker)。
 # 协议走 NetBusExt(royale_* 系列);开局复用原版 go_match(role,port) 转连 worker。
 # 视觉项(小地图/轨迹/血条/颜色)沿用「多人对战」设置(Settings.pvp_*),此处不重复摆放。
 # 控件一律走 UiFactory(像素字体与字号规范的单一来源),字号必须是 16 的倍数。
+#
+# 连接状态机 / 转连 worker / 按钮工厂都在基类 `LobbyPage` 里(与 1v1 匹配页共用)——
+# 本文件只留大乱斗的差异:版式、建房与等待室两个面板、房间态渲染、超时梯顺序。
 
-# 本机服务器一键启停(同目录 Cyancular Ruins Server.exe)。preload 而非全局类名,
-# 避免新脚本未进全局类缓存时整份场景解析失败(加载失败=整屏蓝屏的教训)。
-const LocalServer := preload("res://core/local_server.gd")
 const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹"}
 
-var _addr_edit: LineEdit
 var _code_edit: LineEdit        # 房间号(加入)
 var _invite_edit: LineEdit      # 邀请码(私密房加入)
-var _status: Label
-var _list_box: VBoxContainer
-var _connected := false
-var _ip_label: Label = null   # 常驻本机 IP 提示(进页/重启后即显示,不靠易被刷掉的状态栏)
-var _connected_addr := ""
-var _pending_action: Callable = Callable()
-var _lobby_start_ms := 0
 var _royale_ack := true       # 建房/加入后是否已收到服务器 royale_room_state
 var _royale_sent_ms := 0
 
@@ -42,39 +34,27 @@ var _in_room := false
 var _my_room := {}     # 最近一次 royale_room_state
 var _host := false
 
-# ── 转连对局 worker(同 matchmaking)──
-var _connecting_worker := false
-var _go_start_ms := 0
-var _claimed_ms := 0          # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
-var _pending_go_role := -1
-var _pending_go_port := -1
-
 
 func _ready() -> void:
 	# 根 Control 默认尺寸 0×0:居中面板(PRESET_CENTER)按零尺寸父级计算会飞到屏幕外
 	# (自检实测等待室在 (-320,-149));设满矩形锚点让根铺满 1920×1440 视口
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.09, 0.13)
-	bg.size = get_viewport_rect().size
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bg)
-	move_child(bg, 0)
+	_add_lobby_background()
 
 	# ── 左列:昵称 / 服务器 / 房间列表 / 邀请码加入 ──
-	var name_le := _make_line_edit(Vector2(60, 60), "昵称(排行榜显示)", PvpSession.player_name)
+	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(250, 40), "昵称(排行榜显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
 	# 大乱斗协议在 NetBusExt(自建服务端才有):原作者云服不支持 → 默认本机,不默认云地址
-	_addr_edit = _make_line_edit(Vector2(60, 120), "服务器地址(大乱斗=自建服)", "127.0.0.1")
+	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(250, 40), "服务器地址(大乱斗=自建服)", "127.0.0.1")
 	var addr_hint := UiFactory.label("大乱斗需自建服务器:点「启动/重启本机服务器」即可本机开服(同目录需有 Cyancular Ruins Server.exe);朋友加入填开服机 IP(异地用 VPN 组网);原作者云服不支持大乱斗", 16, Color(0.75, 0.8, 0.85))
 	addr_hint.position = Vector2(60, 160)
 	addr_hint.size = Vector2(900, 26)
 	add_child(addr_hint)
-	var refresh := _make_button(Vector2(330, 114), "刷新列表", _on_refresh_pressed)
-	var srv_btn := _make_button(Vector2(540, 114), "启动/重启本机服务器", _on_local_server_pressed)
+	var refresh := _page_button("刷新列表", Vector2(330, 114), Vector2(200, 48), _on_refresh_pressed)
+	var srv_btn := _page_button("启动/重启本机服务器", Vector2(540, 114), Vector2(200, 48), _on_local_server_pressed)
 	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
 	_ip_label = UiFactory.label("", 16, UiFactory.C_ACCENT)
 	_ip_label.position = Vector2(1250, 22)   # 页面顶部空带(左列 y160 有提示文字、右列 y60 起是建房面板)
@@ -94,8 +74,8 @@ func _ready() -> void:
 	scroll.add_child(vb)
 	_list_box = vb
 
-	_code_edit = _make_line_edit(Vector2(60, 812), "房间号", "")
-	_invite_edit = _make_line_edit(Vector2(330, 812), "邀请码(私密房)", "")
+	_code_edit = UiFactory.line_edit(self, Vector2(60, 812), Vector2(250, 40), "房间号", "")
+	_invite_edit = UiFactory.line_edit(self, Vector2(330, 812), Vector2(250, 40), "邀请码(私密房)", "")
 	# 「加 入」:所需尺寸走 UiFactory.button 的 min_size(KH 是事后覆写 custom_minimum_size);
 	# 显式 size 保留 KH 原尺寸,140×48 是可收缩下限。
 	var join_btn := UiFactory.button("加 入", 16, Vector2(140, 48))
@@ -109,23 +89,17 @@ func _ready() -> void:
 	_status.size = Vector2(900, 120)
 	add_child(_status)
 
-	var back := _make_button(Vector2(60, 1000), "返回主菜单", func() -> void:
+	var back := _page_button("返回主菜单", Vector2(60, 1000), Vector2(200, 48), func() -> void:
 		NetBus.stop()
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 
 	_build_create_panel()
 
-	# ── 信号 ──
+	# ── 本页专属信号(其余共用信号在 _finish_lobby_ready 里接)──
 	NetBusExt.local_royale_rooms.connect(_on_royale_rooms)
 	NetBusExt.local_royale_room_state.connect(_on_room_state)
-	NetBus.local_server_message.connect(_on_server_message)
-	NetBus.local_go_match.connect(_on_go_match)
-	NetBus.local_match_start.connect(_on_match_start)
-	multiplayer.connected_to_server.connect(_on_lobby_connected)
-	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 
-	_apply_pixel_font(self)
-	_request_list.call_deferred("正在连接服务器获取房间列表…")
+	_finish_lobby_ready()
 
 
 # ── 建房面板(右列)──
@@ -141,7 +115,34 @@ func _build_create_panel() -> void:
 	panel.add_child(vb)
 
 	vb.add_child(UiFactory.label("—— 创建大乱斗房间 ——", 32, UiFactory.C_ACCENT))
+	_build_public_room_row(vb)
+	_build_max_players_row(vb)
+	_build_match_time_row(vb)
 
+	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
+	_add_weapon_grid(vb, 10, func(cell: Node, slot: int) -> void:
+		# 本页要多记一笔:建房时读 _weapon_checks 的勾选态(1v1 页不留引用,直接读 Settings)
+		var cb: CheckButton = cell.get_meta("cb")
+		cb.set_meta("slot", slot)
+		_weapon_checks.append(cb))
+
+	# 自己角色颜色(色相 0-360):本页即选即存;开局转连 worker 报到时随 player_options 上发,
+	# worker 开局广播 peer_hues → 全员按各自 hue 染色(与 1v1 匹配页同一设置项)。
+	# 标签另起一行是本页版式(1v1 页把标签放在行内),故传空 label_text 自己在外面加。
+	vb.add_child(UiFactory.label("自己角色颜色:", 32))
+	_add_hue_row(vb, "", Vector2(300, 30), Vector2(46, 30))
+
+	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, UiFactory.C_TEXT_DIM))
+
+	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
+	create.pressed.connect(_on_create_pressed)
+	vb.add_child(create)
+
+
+# ── 建房面版的三个设置行(阶段 5.5:原先 _build_create_panel 是 69 净行的"一屏控件清单")──
+
+# 公开/私密开关 + 邀请码输入框(私密时才显示 —— 勾选框直接控制输入框的 visible)。
+func _build_public_room_row(vb: VBoxContainer) -> void:
 	_public_check = CheckButton.new()
 	_public_check.text = "公开房间(不勾选 = 私密,凭邀请码进入)"
 	_public_check.button_pressed = true
@@ -154,10 +155,12 @@ func _build_create_panel() -> void:
 	_create_invite_edit.placeholder_text = "邀请码(留空自动生成)"
 	_create_invite_edit.visible = false
 	_create_invite_edit.custom_minimum_size = Vector2(0, 40)
-	UiFactory.style_control(_create_invite_edit, 16)   # 同 _make_line_edit:显式字号=引擎默认,不靠事后递归补字体
+	UiFactory.style_control(_create_invite_edit, 16)   # 同 UiFactory.line_edit:显式字号=引擎默认,不靠事后递归补字体
 	UiFactory.style_line_edit(_create_invite_edit)
 	vb.add_child(_create_invite_edit)
 
+
+func _build_max_players_row(vb: VBoxContainer) -> void:
 	var mrow := HBoxContainer.new()
 	mrow.add_theme_constant_override("separation", 14)
 	vb.add_child(mrow)
@@ -175,9 +178,13 @@ func _build_create_panel() -> void:
 	_max_label = UiFactory.label("4 人", 32, UiFactory.C_TEXT)
 	mrow.add_child(_max_label)
 
-	# 一局限时(分钟):房主可调 1~15 分钟(默认 5);随房主报到 opts 带入 RoyaleHost
+
+# 一局限时(分钟):房主可调 1~15 分钟(默认 5);随房主报到 opts 带入 RoyaleHost
+func _build_match_time_row(vb: VBoxContainer) -> void:
 	var trow := HBoxContainer.new()
-	trow.add_theme_constant_override("h_separation", 12)
+	# 键是 "separation":HBox 只认它,h_separation 是 GridContainer 的键(写在这里会被存下但
+	# 永不读取 = 死覆盖)。别照抄禁用武器网格那两行 —— 那个是 GridContainer,键不一样。
+	trow.add_theme_constant_override("separation", 12)
 	vb.add_child(trow)
 	trow.add_child(UiFactory.label("一局限时:", 32))
 	var tslider := HSlider.new()
@@ -195,225 +202,15 @@ func _build_create_panel() -> void:
 		Settings.save()
 		tlabel.text = "%d 分钟" % int(v))
 
-	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
-	# 2 列网格 + 定尺寸剪影(横排会溢出屏幕)
-	var wgrid := GridContainer.new()
-	wgrid.columns = 2
-	wgrid.add_theme_constant_override("h_separation", 10)
-	wgrid.add_theme_constant_override("v_separation", 6)
-	vb.add_child(wgrid)
-	for slot: int in [1, 2, 3, 4, 5, 6]:   # 显式 int:循环变量来自字面量数组,var slot_i := slot 推断不出类型会整文件解析失败 → 大乱斗大厅蓝屏
-		var slot_i := slot
-		# 字号 32 与 scenes/matchmaking.gd 的同款调用一致:同视口、同 2 列网格、同剪影尺寸,
-		# 本列其余元素(分区标题/_public_check/下方说明)也都是 32。勿"简化"回 16(那会只有这格半尺寸)。
-		var cell := WeaponComponent.make_weapon_check(slot_i, Settings.pvp_disabled_weapons.has(slot_i),
-				32, func(on: bool) -> void:
-				if on and not Settings.pvp_disabled_weapons.has(slot_i):
-					Settings.pvp_disabled_weapons.append(slot_i)
-				elif not on:
-					Settings.pvp_disabled_weapons.erase(slot_i)
-				Settings.save())
-		var cb: CheckButton = cell.get_meta("cb")
-		cb.set_meta("slot", slot_i)
-		_weapon_checks.append(cb)
-		wgrid.add_child(cell)
 
-	# 自己角色颜色(色相 0-360):本页即选即存;开局转连 worker 报到时随 player_options 上发,
-	# worker 开局广播 peer_hues → 全员按各自 hue 染色(与 1v1 匹配页同一设置项)。
-	vb.add_child(UiFactory.label("自己角色颜色:", 32))
-	var crow := HBoxContainer.new()
-	crow.add_theme_constant_override("h_separation", 12)
-	vb.add_child(crow)
-	var hue_slider := HSlider.new()
-	hue_slider.min_value = 0.0
-	hue_slider.max_value = 360.0
-	hue_slider.step = 5.0
-	hue_slider.value = Settings.pvp_color_hue
-	hue_slider.custom_minimum_size = Vector2(300, 30)
-	UiFactory.style_slider(hue_slider)
-	crow.add_child(hue_slider)
-	var chip := ColorRect.new()
-	chip.custom_minimum_size = Vector2(46, 30)
-	chip.color = _hue_preview_color(Settings.pvp_color_hue)
-	crow.add_child(chip)
-	hue_slider.value_changed.connect(func(v: float) -> void:
-		Settings.pvp_color_hue = v
-		Settings.save()
-		chip.color = _hue_preview_color(v))
-
-	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「多人对战」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, UiFactory.C_TEXT_DIM))
-
-	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
-	create.pressed.connect(_on_create_pressed)
-	vb.add_child(create)
-
-
-# ── 通用小控件 ──
-func _hue_preview_color(hue_deg: float) -> Color:
-	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
-
-func _make_line_edit(pos: Vector2, placeholder: String, initial: String) -> LineEdit:
-	var le := LineEdit.new()
-	le.position = pos
-	le.size = Vector2(250, 40)
-	le.placeholder_text = placeholder
-	le.text = initial
-	UiFactory.style_control(le, 16)   # 16 = 引擎默认主题字号,与 KH 原观感一致
-	UiFactory.style_line_edit(le)
-	add_child(le)
-	return le
-
-# 按钮工厂:字体/字号纪律走 UiFactory,位置与尺寸由本页版式给(KH 原布局值)。
-# 不用 UiFactory.button() 的默认 420×64:那是主菜单按钮列的约定,与本页绝对定位的小按钮不合。
-func _make_button(pos: Vector2, text: String, fn: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	UiFactory.style_control(b, 16)
-	UiFactory.style_button(b)
-	b.position = pos
-	b.size = Vector2(200, 48)
-	b.pressed.connect(fn)
-	add_child(b)
-	return b
-
-# ── 像素字体:递归给已有控件挂像素字体 ──
-# 本页自己建的控件都经 UiFactory(字体+字号一次到位),这里只兜底**不是本页建的**控件 ——
-# 主要是 WeaponComponent.make_weapon_check 造的武器剪影格(CheckButton 与内部 Label):
-# 内层 Label 只设了字号、没设字体,而 UiFactory.style_control 不递归穿透容器 → 只能递归补。
-# 只补字体、不动字号;字体配置本身仍来自 UiFactory.pixel_font() 这一单一来源。
-func _apply_pixel_font(root: Node) -> void:
-	if root is Control and not (root is PanelContainer or root is VBoxContainer or root is HBoxContainer \
-			or root is GridContainer or root is ScrollContainer):
-		var pf: FontFile = UiFactory.pixel_font()
-		if pf != null:
-			(root as Control).add_theme_font_override("font", pf)
-	for n in root.get_children():
-		_apply_pixel_font(n)
-
-
-# ── 大厅连接(同 matchmaking 的 _with_lobby 模式)──
-func _push_lobby_name() -> void:
-	if _connected:
-		NetBus.rpc_id(1, "lobby_name", PvpSession.player_name)
-
-func _with_lobby(action: Callable) -> void:
-	if _in_room:
-		_status.text = "已在大乱斗房间中(先退出房间再操作)"
-		return
-	var addr := _addr_edit.text.strip_edges()
-	if addr == "":
-		addr = "127.0.0.1"   # 大乱斗需自建服:空地址回退本机,不回退云地址
-		_addr_edit.text = addr
-	PvpSession.server_address = addr
-	if _connected and _connected_addr == addr:
-		action.call()
-		return
-	_status.text = "正在连接服务器…"
-	_connected = false
-	_pending_action = action
-	NetBus.stop()
-	var err := NetBus.start_client(addr)
-	if err != OK:
-		_status.text = "启动连接失败(%d)" % err
-		_pending_action = Callable()
-	else:
-		_lobby_start_ms = Time.get_ticks_msec()
-
-func _on_lobby_connected() -> void:
-	if _connecting_worker:
-		return
-	_lobby_start_ms = 0
-	_connected = true
-	_connected_addr = PvpSession.server_address
-	_push_lobby_name()
-	var act := _pending_action
-	if act.is_valid():
-		_pending_action = Callable()
-		act.call()
-	else:
-		_request_list("已连接,正在获取房间列表…")
-
-func _on_lobby_connect_failed() -> void:
-	if _connecting_worker:
-		return
-	_lobby_start_ms = 0
-	_connected = false
-	_pending_action = Callable()
-	_status.text = "连接服务器失败,请检查地址"
-
-func _process(_delta: float) -> void:
-	# 1) 转连 worker 12s 没连上(worker 死了/端口没放行):**回大厅重连 + 刷新列表**,
-	#    不再只留一句提示让玩家干等在等待室里(本页原来没有任何恢复路径)。
-	if _connecting_worker and Time.get_ticks_msec() - _go_start_ms > 12000:
-		_return_to_lobby("对局服务器无响应——请确认对局端口(%s UDP)已放行;已返回大厅并刷新"
-				% _worker_port_span())
-		return
-	# 2) claim 后 25s 仍没 match_start(worker 中途死掉/对局没起来):同样回大厅重连刷新
-	if _claimed_ms > 0 and Time.get_ticks_msec() - _claimed_ms > 25000:
-		_return_to_lobby("对局服务器无响应(对局可能已结束)——已返回大厅并刷新,请重试")
-		return
-	if not _connecting_worker and _lobby_start_ms > 0 and not _connected \
-			and Time.get_ticks_msec() - _lobby_start_ms > 8000:
-		_lobby_start_ms = 0
-		_pending_action = Callable()
-		_status.text = "连接大厅超时——请检查地址/网络(UDP 7777)"
-	# 建房/加入 8s 无应答:NetBusExt 协议在自建服务端才有,原作者云服会静默丢弃
-	if not _royale_ack and _royale_sent_ms > 0 and Time.get_ticks_msec() - _royale_sent_ms > 8000:
-		_royale_sent_ms = 0
-		_status.text = "8 秒无响应——该服务器不支持大乱斗(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
-
-
-# worker 端口段文案(提示串用;单一来源 = RoomManager 的常量,勿手写数字——
+# worker 端口段文案(提示串用;单一来源 = WorkerLauncher 的常量,勿手写数字——
 # 曾写 "7800~7999" 与实际池(7800~8299)不符,照它放行防火墙会漏掉半个池子,自检 D2)
 func _worker_port_span() -> String:
-	return "%d~%d" % [RoomManager.WORKER_PORT_BASE,
-			RoomManager.WORKER_PORT_BASE + RoomManager.WORKER_PORT_SPAN - 1]
-
-
-# 转连 worker 失败/无应答的兜底:断开当前连接 → 清掉一切房间态与转连态 → 重连大厅并刷新列表。
-# 没有它,worker 死掉时玩家会永久停在等待室:大厅**不监听** server_disconnected(自检),既无
-# go_match 也无 match_start,只能自己找出路——本页原先就是这样(只剩一句状态提示)。
-# 清房间态是必须的:_with_lobby 在 _in_room 时拒绝一切操作,不清就再也刷不出列表/建不了房。
-func _return_to_lobby(msg: String) -> void:
-	_connecting_worker = false
-	_claimed_ms = 0
-	_lobby_start_ms = Time.get_ticks_msec()
-	_in_room = false
-	_my_room = {}
-	if _wait_panel != null:
-		_wait_panel.visible = false
-	if _create_panel != null:
-		_create_panel.visible = true
-	NetBus.stop()
-	_connected = false
-	_status.text = msg
-	NetBus.start_client(PvpSession.server_address)
+	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
+			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
 
 
 # ── 动作 ──
-func _request_list(msg: String) -> void:
-	_with_lobby(func() -> void:
-		_status.text = msg
-		NetBusExt.rpc_id(1, "royale_list"))
-
-func _on_refresh_pressed() -> void:
-	_request_list("刷新房间列表…")
-
-
-# 一键启动/重启本机服务器:杀旧实例 → 拉起同目录服务端 exe → 强制重连 127.0.0.1 刷新列表。
-func _on_local_server_pressed() -> void:
-	_status.text = "正在启动/重启本机服务器…(%s)" % LocalServer.lan_ip_hint()
-	var msg: String = await LocalServer.restart()
-	_ip_label.text = LocalServer.lan_ip_hint()
-	_status.text = msg
-	if not msg.begins_with("本机服务器"):
-		return   # 找不到 exe 等失败:保留提示,不动现有连接
-	NetBus.stop()
-	_connected = false
-	_connected_addr = ""
-	_addr_edit.text = "127.0.0.1"
-	_request_list("本机服务器已就绪(%s),正在获取房间列表…" % LocalServer.lan_ip_hint())
-
 func _on_create_pressed() -> void:
 	var disabled: Array = []
 	for cb in _weapon_checks:
@@ -445,7 +242,6 @@ func _join_room(code: String, invite: String) -> void:
 		NetBusExt.rpc_id(1, "royale_join", code, invite))
 
 
-
 # ── 服务器回复 ──
 func _on_royale_rooms(rooms: Array) -> void:
 	for c in _list_box.get_children():
@@ -472,11 +268,6 @@ func _on_royale_rooms(rooms: Array) -> void:
 			_join_room(code, ""))
 		_list_box.add_child(btn)
 	_status.text = "共 %d 个公开房间" % rooms.size()
-
-func _on_server_message(t: String) -> void:
-	if LocalServer.restarting:
-		return   # 重启本机服期间,旧连接被杀的「服务器断开」是预期噪音,不覆盖状态
-	_status.text = t
 
 # 房间实时状态 → 等待室面板
 func _on_room_state(state: Dictionary) -> void:
@@ -554,49 +345,82 @@ func _on_leave_room() -> void:
 	_request_list.call_deferred("已退出房间")
 
 
-# ── 开局转连 worker(同 matchmaking:go_match 延迟到帧末处理,防 poll 栈内断连段错误)──
-func _on_go_match(role: int, port: int) -> void:
-	_pending_go_role = role
-	_pending_go_port = port
-	_status.text = "开局!连接对局服务器……"
-	_do_go_match.call_deferred()
-
-func _do_go_match() -> void:
-	if _pending_go_role < 0:
+# 转连 worker 12s 没连上(worker 死了/端口没放行)→ 回大厅重连 + 刷新列表;
+# claim 后 25s 仍没 match_start(worker 中途死掉/对局没起来)同样回大厅。
+# ★ 本页的梯顺序是 [worker → claim → 大厅 → ack],与基类注释里登记的一致;**别重排**。
+func _process(_delta: float) -> void:
+	# 1) 转连 worker 12s 没连上(worker 死了/端口没放行):**回大厅重连 + 刷新列表**,
+	#    不再只留一句提示让玩家干等在等待室里(本页原来没有任何恢复路径)。
+	if _tick_worker_connect_timeout():
 		return
-	var role := _pending_go_role
-	var port := _pending_go_port
-	_pending_go_role = -1
-	_pending_go_port = -1
-	PvpSession.role = role
-	PvpSession.royale = true
-	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
-		_status.text = "连接对局服务器失败,请返回重试", CONNECT_ONE_SHOT)
-	NetBus.stop()
-	_connecting_worker = true
-	_go_start_ms = Time.get_ticks_msec()
-	var err := NetBus.start_client(PvpSession.server_address, port)
-	if err != OK:
-		_connecting_worker = false
-		_status.text = "连接对局服务器失败(%d)" % err
+	# 2) claim 后 25s 仍没 match_start(worker 中途死掉/对局没起来):同样回大厅重连刷新
+	if _tick_claim_timeout():
+		return
+	_tick_lobby_connect_timeout()
+	# 建房/加入 8s 无应答:NetBusExt 协议在自建服务端才有,原作者云服会静默丢弃
+	if not _royale_ack and _royale_sent_ms > 0 and Time.get_ticks_msec() - _royale_sent_ms > 8000:
+		_royale_sent_ms = 0
+		_status.text = "8 秒无响应——该服务器不支持大乱斗(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
 
-func _claim_role_worker(role: int) -> void:
-	_connecting_worker = false
-	_claimed_ms = Time.get_ticks_msec()   # 起 25s 兜底:claim 后等不到 match_start 就回大厅(见 _process)
-	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
-	NetBusExt.rpc_id(1, "player_options", {
+
+# ── 基类钩子(本页实现)────────────────────────────────────────────
+
+# 大乱斗需自建服:空地址回退本机,不回退云地址
+func _lobby_fallback_addr() -> String:
+	return "127.0.0.1"
+
+
+# 已在大乱斗房间中(先退出房间再操作):_with_lobby 在 _in_room 时拒绝一切操作,
+# 不清房间态就再也刷不出列表/建不了房。
+func _lobby_action_allowed() -> bool:
+	if _in_room:
+		_status.text = "已在大乱斗房间中(先退出房间再操作)"
+		return false
+	return true
+
+
+func _send_list_request() -> void:
+	NetBusExt.rpc_id(1, "royale_list")
+
+
+# 大乱斗多一项 match_time(一局限时),回合回血恒 false(大乱斗规则里没有回合)
+func _player_options() -> Dictionary:
+	return {
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": false,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
-	})
+	}
 
-func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
-	PvpSession.role = role
-	PvpSession.spawn = spawn
-	PvpSession.map_path = map_path
-	# RPC 在 NetBus.poll 调用栈内到达(worker→客户端 match_start);直接在栈内切场景会
-	# 在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误(与 go_match 同款,曾实测)。
-	# 延迟到帧末再切;改版后大乱斗建房→加入→开局→进图全链路须重测。
+
+func _go_match_status() -> String:
+	return "开局!连接对局服务器……"
+
+
+func _on_worker_connect_failed() -> void:
+	_status.text = "连接对局服务器失败,请返回重试"
+
+
+func _worker_timeout_msg() -> String:
+	return "对局服务器无响应——请确认对局端口(%s UDP)已放行;已返回大厅并刷新" % _worker_port_span()
+
+
+func _claim_timeout_msg() -> String:
+	return "对局服务器无响应(对局可能已结束)——已返回大厅并刷新,请重试"
+
+
+# 清房间态是必须的:_with_lobby 在 _in_room 时拒绝一切操作,不清就再也刷不出列表/建不了房。
+func _on_return_to_lobby() -> void:
+	_in_room = false
+	_my_room = {}
+	if _wait_panel != null:
+		_wait_panel.visible = false
+	if _create_panel != null:
+		_create_panel.visible = true
+
+
+# RPC 在 NetBus.poll 调用栈内到达(worker→客户端 match_start);直接在栈内切场景会
+# 在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误(与 go_match 同款,曾实测)。
+# 延迟到帧末再切;改版后大乱斗建房→加入→开局→进图全链路须重测。
+func _enter_match_scene() -> void:
 	get_tree().call_deferred("change_scene_to_file", "res://scenes/royale_game.tscn")

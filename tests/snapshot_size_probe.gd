@@ -9,7 +9,7 @@ extends Node
 # 但那是**整包**读数 —— 设计「本人包 / 世界包」拆分时需要知道这 0.96 KB 里
 # 多少是 c2 权威整态、多少是渲染散字段。本探针就量这个拆分,并给出 N=2..8 的折算表。
 #
-# 做法:真实例化一具 Player.tscn(autoload 在场景模式下就绪),取它的 capture_state() 当 c2;
+# 做法:真实例化一具 player.tscn(autoload 在场景模式下就绪),取它的 capture_state() 当 c2;
 # 按 `server/match_host.gd:_broadcast_snapshot` 的**逐字**字段表拼两种 dict,
 # 再用 var_to_bytes() 量序列化体积(与 RPC 实际打包同一套变体编码)。
 #
@@ -33,7 +33,7 @@ func _check(ok: bool, msg: String) -> void:
 
 
 func _ready() -> void:
-	var ts: PackedScene = load("res://scenes/player/Player.tscn")
+	var ts: PackedScene = load("res://scenes/player/player.tscn")
 	_player = ts.instantiate()
 	add_child(_player)          # _ready 跑完(weapons.equip("1") 等)再取 capture_state
 	await get_tree().physics_frame

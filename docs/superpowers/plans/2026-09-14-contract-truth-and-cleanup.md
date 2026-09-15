@@ -1,5 +1,19 @@
 # 契约对齐与清理批次实施计划（H2 / H4 / M4a / M4b / M6 / M7 / M21）
 
+> ## ✅ 已执行完毕（2026-09-14，分支 `cleanup/contract-truth-2026-09-14`，12 笔提交）
+>
+> 7 个 Task 全部落地。执行期间有 4 处**偏离计划**，照实登记（下文的 Expected / 行号是撰写时的快照，未回改）：
+> 1. **计划 Task 1 写错了一条事实**：计划里把「角色色相」归入「本机显示项、不上发」——实际它**经服务器中转**（随 `player_options` 上发 → `server_main.gd:313 _claim_hues()` 按 role 汇总 → `match_sync` 的 `hues` 回下发）。已按核实结果改写注释，未照抄计划。
+> 2. **计划 Task 2 的 Step 4 是占位**（「按 Step 2 的同一段代码」）——违反「不给占位符」，执行时已把三段代码逐字回填进文档。
+> 3. **计划 Task 4 Step 2 的 Expected 写错**：预测 `FAIL(8 条)`，实测 `FAIL(4 条)`。原因是 `AIInputSource` 把 `is_action_pressed` / `is_action_just_released` / `is_attack_just_released` / `get_weapon_slot_pressed` 实现成**常量**，那 4 条断言不具鉴别力；具鉴别力的恰好是另外 4 条。红→绿闭环仍成立。
+> 4. **计划漏了三处外部消费者**（`server_main.gd:131-132` 的 `_worker_port_span_text`、`royale_lobby.gd:369-370` 的同款文案、`CLAUDE.md:134`），且**计划明确排在本批次之外的 M1 被提前修掉**——因为 Task 7 的改名让 `room_sweep_smoke` 的收口门失明，修好门后它立刻咬出 M1（详见 `6a5abfd` 的提交信息）。
+>
+> **本批次额外产出**：worker 端口范围文档漂移（`7800~7999` → `7800~8299`，4 处）+ `start_server.bat` 的 `findstr` 杀僵尸模式只覆盖 78xx/79xx（已在注释里登记为待修缺口）。
+>
+> ⚠ **数字口径**：本计划正文章节里引用的「N 行」是**函数跨度**（含注释与空行），在本仓这种高注释密度下虚高 30~40%。阶段 5 已于 2026-09-14 按**净代码行**重排并逐条给出更正后的数字（见该节顶部）。
+>
+> **验收状态**：7 个 `-s` 冒烟 + 13 个场景探针（含 `royale_bound`（B1）/ `royale_c2`）+ 5 个多进程 `.sh` 全绿；两处探针修正均做了反证（注入违规→咬红，还原→转绿）。**未跑**（留待用户）：需真实渲染的 `menu_autotest` / `kh_l3|4_visual_probe` / `combat_hud_visual_probe`，以及 `royale_probe` / `royale_soak_probe` / `brawl_rollback_probe` / `snapshot_size_probe` / `perf_probe`。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把「文档/注释/契约承诺了某件事、实现没做到（或反过来）」这一类可维护性负担清干净，并把 `server/room_manager.gd` 的两块**无 Node 依赖**的职责抽成独立文件。全程**不改变任何运行时行为**（Task 4 除外——它修的是一个真实失效的契约，行为面在 Task 4 内单独说明）。
@@ -348,7 +362,7 @@ git commit -m "refactor(pvp): 开局三载荷 handler 改名 _apply_* 并标注�
 原文：
 
 ```
-scenes/   场景(Godot 惯例 PascalCase 的 .tscn;脚本 snake_case)
+scenes/   场景(.tscn 与脚本都 snake_case —— 2026-09-15 起,旧写法 PascalCase 已反转)
 core/  autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
 server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
 tests/    -s 冒烟/探针
@@ -1444,7 +1458,7 @@ grep -rn "暂时不生效\|静默丢弃" scenes/
 grep -rn "_on_peer_info\|_on_peer_hues\|_on_match_options" scenes/
 grep -rn "PvpSession\.\(port\|room_code\|royale\|disabled_weapons\)" --include=*.gd .
 grep -rn "start_match_on" --include=*.gd .
-grep -rn "func get_axis\|func is_action_pressed\|func is_attack_pressed" core/network_input_source.gd core/ai_input_source.gd tests/soak_bot_input.gd
+grep -rn "func get_axis\|func is_action_pressed\|func is_attack_pressed" core/net/packet_input_source.gd core/net/ai_input_source.gd tests/soak_bot_input.gd
 ```
 
 Expected: 五条**全部无输出**。
@@ -1510,76 +1524,115 @@ Expected: 两条各打印 `ALL-OK`。
 
 分五阶段。**阶段内的每一项都可独立提交**；阶段之间建议按序，因为后一阶段会碰到前一阶段动过的同一批文件。
 
-## 阶段 1：真会出错 + 会误导人（本批次**之后**立即做，成本合计 < 半天）
+## 阶段 1：真会出错 + 会误导人 —— ✅ **全部完成**（2026-09-14，分支 `cleanup/stage1-bugs-and-hygiene`）
 
-| 序 | 项 | 位置 | 成本 | 为什么这个顺序 |
-|---|---|---|---|---|
-| 1.1 | **H1** AI 锁定目标后方向反 180°（瞄反 + 追逃互换） | `server/ai_player.gd:73-75`（补取负，对齐 `:96`） | 10 分钟 | 唯一「真会打错」的一条；`--ai-roles` 本就在待验收，修完正好一起验 |
-| 1.2 | **M1** worker 起不来时留陈旧 `worker_port` → 清扫按端口误杀别人的对局 | `server/room_manager.gd` 的 `royale_start`/`ai_duel` 两个失败分支 | 15 分钟 | 与 Task 7 同文件，**紧接着做**最省上下文；改法与 `_start_match` 同形 |
-| 1.3 | **M2** 掉线终局判据数的是「真人」不是「玩家」 | `server/royale_host.gd:436-438` | 5 分钟 | 与 1.2 同属服务器生命周期，一起验 |
-| 1.4 | **M9** ★ `royale_c2_watcher` A② 合并后会**静默失效** | `tests/royale_c2_watcher.gd:329-338` | 30 分钟 | **必须在阶段 3 的客户端合并之前**：它只防了"读不到源文件"，没防"代码搬走了"；不先补，阶段 3 做完这道门就恒绿骗人 |
-| 1.5 | **M20** 死代码/死文件一批 | 见下方清单 | 1 小时 | 零风险；删掉能减少后续阶段读代码的干扰 |
-| 1.6 | **`tools/check_naming.py`**（`docs/naming-cleanup-plan.md` 结尾提的「可选防复发」从未落地） | 新建 | 1 小时 | **必须在阶段 4 之前**：否则阶段 4 整改完还会漂回去 |
-| 1.7 | 11 个脚本硬编码引擎绝对路径 → `GODOT` 环境变量 + `tests/env.sh` | `start_server.bat`、`tools/build_release.py`、8 个 `tests/*.sh` | 1 小时 | 与 1.6 无关但同属「工程卫生」；改完后续跑脚本更省事 |
+| 序 | 项 | 状态 |
+|---|---|---|
+| 1.1 | **H1** AI 锁定目标后方向反 180°（瞄反 + 追逃互换） | ✅ 提交 `a2c331d`。修 `_pick_target` 黏滞分支漏的取负；给 `ai_input_source_smoke` 加两条**真调该函数**的符号断言（此前只查 host/role/src 三个成员名，照不出符号错）。反证：还原坏写法 → 只有黏滞那条 FAIL、重选仍 ok（精确隔离） |
+| 1.2 | **M1** worker 起不来时留陈旧 `worker_port` | ✅ 提交 `6a5abfd`（提前于批次 1 内完成，见上） |
+| 1.3 | **M2** 掉线终局判据数的是「真人」不是「玩家」 | ✅ 提交 `37c562f`。判据改 `players.size()`；**新增** `tests/royale_disconnect_count_probe.tscn`（真建 `RoyaleHost` + role_peers 传空，手工摆成 2 真人 + 2 AI）：正向断言「掉 1 真人后不得终局」+ **反向**断言「只剩 1 个玩家时必须终局」（否则正向可靠「永不终局」作弊通过）。反证：还原成数 peer → 正是那两条正向 FAIL、反向仍 ok |
+| 1.4 | **M9** ★ `royale_c2_watcher` A② 合并后会**静默失效** | ✅ 提交 `64c1327`。A② 改成「持有本地玩家状态的客户端文件」**列表 + 必须在位**：每个候选文件须含 C2 接线标记才算在位；**一个在位的都没有 → 判红**并指名去改 `A2_OWNERS`（原来只防「读不到源文件」，没防「代码搬走了」）。★ 顺带立刻变强：`pvp_client.gd` 同样持有本地玩家状态、同样接了 `local_round_state`，此前**完全没有这道门**，现纳入。反证三条（含把在位标记换成不存在的串 → 走「一个都不在位」分支） |
+| 1.5 | **M20** 死代码/死文件一批 | ✅ 提交 `d32de5f`。清单见下 |
+| 1.6 | **`tools/check_naming.py`** | ✅ 提交 `cdd270d`。强制 A 目录全小写 / B `class_name` 转 snake == 文件名 / C 文档引用的路径存在；`.tscn` 命名**只报告不判失败**（大小写规则待 4.3 定）。★ 阶段 4.3 定下规则后，把该规则从「报告」升为「强制」并同步这条。基线只留 2 条已接受偏差（`level_0.gd`/`Level0`、`ai_player.gd`/`AINavigator`），各写明何时销 |
+| 1.7 | 引擎绝对路径收口到环境变量 | ✅ 提交 `f7594ce`。新增 `tests/env.sh`（`$GODOT` + cd 仓库根 + `kill_procs`/`kill_port`），8 个 `tests/*.sh` 改 `source` 它；`start_server.bat` 走 `%GODOT%`、`build_release.py` 走 `$GODOT_EDITOR`（★ 导出用**标准编辑器**版，与 headless 的 console 版是两个二进制）。10 处散落路径 → 每个入口一处可覆盖默认值。顺带收掉三份重复 kill 样板，并让 5 个原本只能从仓库根跑的冒烟变成从哪儿跑都行 |
 
-**1.5 的死代码清单**（每条都已 grep 验证零生产调用）：`scenes/weapons/explosion.tscn`（与 `scenes/effects/explosion.tscn` 同 uid 的重复副本，且 `ext_resource` 指向**不存在的** `res://scenes/weapons/explosion_fx.gd`）、`TileDefs.friction()`（`core/tile_defs.gd:99`）、`TileDefs.tile()`（`:133`）、`core/game_parameters.gd:23-24` 的 `enemy_count`/`enemy_spawn_min_dist`、`core/sfx.gd:65` 的 `"jump"` 与 `:72` 的 `"teleport"`、`server/ai_player.gd:28,139` 的 `_last_x`、`server/room_manager.gd:36` 的 `Room.match_host`、`EnemySpawner.sample_spawn_cells`（只剩 `tests/enemy_logic_smoke.gd:58` 调它 → 搬进 `tests/`）、`server/royale_host.gd:399` 的 `round_state["match_time"]`（每帧构造、无人读，且与配置键 `match_time` **同名反义**）、`maps/old_map.txt`、`scenes/weapons/pistol_test.tscn`/`rifle_test.tscn` 的 `_test` 后缀。
+**1.5 的死代码清单**（每条都重新 grep 验证过零引用）：`scenes/weapons/explosion.tscn`（与 `scenes/effects/explosion.tscn` 同 uid 的重复副本，且 `ext_resource` 指向**不存在的** `res://scenes/weapons/explosion_fx.gd`）、`TileDefs.friction()`/`tile()`、`core/game_parameters.gd` 的 `enemy_count`/`enemy_spawn_min_dist`、`core/sfx.gd` 的 `"jump"`/`"teleport"`、`server/ai_player.gd` 的 `_last_x`、`server/room_manager.gd` 的 `Room.match_host`、`EnemySpawner.sample_spawn_cells`（只剩测试调它 → **搬进** `tests/enemy_logic_smoke.gd`，连 5 条断言一起保住）、`server/royale_host.gd` 的 `round_state["match_time"]`（每帧构造、无人读，且与配置键 `match_time` **同名反义**）、`maps/old_map.txt`。
+★ **顺带发现**：跳跃与黑鸟瞬移目前**没有任何音效**（`jump`/`teleport` 是设计了从未接线的音色）——删的是未接分支，想加时各补 1 行 + 1 处 `Sfx.play` 调用即可。
+★ `pistol_test.tscn`/`rifle_test.tscn` 的 `_test` 后缀改名**留到阶段 4**（与其它命名整改一次做完，避免两次动 `.uid`）。
 
-## 阶段 2：契约与说辞的剩余项（成本合计 ~1 天）
+### ⚠ 本阶段踩到并修掉的一个自伤（记下来，供后续同类操作参考）
 
-| 序 | 项 | 位置 | 成本 |
-|---|---|---|---|
-| 2.1 | **M13** 快照插值在两个副本类里 18 行逐字相同（`_push_position`/`_sample_position`）| `player_replica.gd:140-167` ↔ `enemy_replica.gd:59-84` | 2 小时。**属复议「批次 1」的刻意决定**（当时的理由是「`KEEP_TICKS` 与时钟变量名不同」，偏弱——成构造参数即可），抽 `core/snapshot_buffer.gd` |
-| 2.2 | **M14** `ENEMY_NAMES` 是 `enemies.json` 的手抄第二份，漏加**静默回落英文原名** | `scenes/effects/combat_feedback.gd:19,97-99` | 1 小时。把 `display_name` 加进 `data/enemies.json`，删 const |
-| 2.3 | **M11** 打包格式的 `16` 手写 15 处，绕过唯一访问器 | `collision_builder.gd:169`、`explosion.gd:75`、`water.gd:21,39,60`、`enemy_fly_base.gd:141`、`climb_component.gd:32,56-58,84,101`、`bullet_base.gd:169`、`laser_weapon_base.gd:242`、`beam_trace.gd:83` | 1 小时。全改 `MazeGenerator.texture_of/shape_of`；`TileDefs` 内部三处一并收口 |
-| 2.4 | **M12** 「世界矩形是否压到实心格」三份同构 | `enemy_black_bird.gd:282-297`、`enemy_fly_base.gd:124-152`、`weapon_base.gd:454-476` | 2 小时。抽 `core/tile_query.gd::rect_overlaps_solid(rect)` |
-| 2.5 | 「地板格」谓词 4 处重复 | `enemy_spawner.gd:35`、`enemy_black_bird.gd:277`、`climb_component.gd:100`；同式另见 `match_host.gd:278`、`royale_host.gd:95,151` | 1 小时。加 `MazeGenerator.is_floor_cell(grid, cell)` |
-| 2.6 | `STOP_SNAP := 1.0` 两份，后者注释写着「与根一致」 | `player.gd:120`、`climb_component.gd:11` | 15 分钟。提到 `PlayerParams` |
+在 1.6 做「反证 B」（验证 lint 能抓 `class_name` 与文件名不符）时，我往 `core/math_util.gd` **追加**了一行 `class_name TotallyWrong`；随后的另一次反证把**已被污染的文件**当基线备份又还原了回去 —— 于是这行留在工作区（幸而 1.6 提交时是按文件名显式 `git add`，**没把它提交进去**）。
 
-阶段 2 的 2.3~2.6 都是「同一个常量/同一段骨架散落多处」，**建议合成一个 `refactor(core): 收敛散落的编码常量与几何谓词` 提交**，一次改完一次验。
+**症状**：`room_sweep_smoke` 的 `reload()` 路径刷出 7 条 `Could not resolve class "MathUtil", because of a parser error`（而其他冒烟照过 —— 所以只看「绿不绿」是发现不了的）。
+
+**怎么查出来的（这套手法值得复用）**：拿 `git worktree add /tmp/wt-XXX <ref>` + `--import` 造两棵**全新工作树**做对照 —— 一棵放 `main`、一棵放当前分支。两棵都是 0 条 → 说明不是代码、是我这棵**工作树**的状态（`.godot` 累积 / 未提交污染）。再顺着「工作区与 main 的差异」一 `git diff main -- core/math_util.gd` 就现形了。
+
+**两条纪律**：① 反证要改文件时，备份/还原一律走 `git stash` 或 `git checkout -- <file>`（从**已提交的**状态取），别用 `cp` 到临时文件 —— 你抄的可能已经是被污染的版本；② 反证做完必须 `git status --short` 看一眼，确认没有残留。
+
+**教训**：本次是 `git diff main -- <file>` 空不空一句话就查清了；而「所有探针都绿」这件事在**被污染的树下**同样成立 —— 所以关键改动落地后，值得用**干净工作树**再跑一遍。
+
+## 阶段 2：契约与说辞的剩余项 —— ✅ **全部完成**（2026-09-14）
+
+> **未按原计划合成一个提交**:2.3~2.6 各自独立成 commit(2.3 / 2.4+2.6 / 2.5),理由是这样出问题时能二分;
+> 每条都单独验过。另外**每条抽取都补了「新旧实现对撞」**——把旧实现内联进临时脚本,在真实地图上大规模
+> 比对(2.4: 11760 次采样 / 2.5: 18750 次逐格,均 0 不一致)。这套手法对「行为保持的几何/谓词抽取」
+> 比单元测试更有说服力,已在本阶段连用两次。
+
+| 序 | 项 | 状态 |
+|---|---|---|
+| 2.1 | **M13** 副本类双快照插值 18 行逐字相同 | ✅ **复议通过**(用户裁定)后抽 `core/snapshot_interp.gd`(不是原计划写的 `snapshot_buffer.gd` —— 它的职责不止缓冲,还含时钟推进与采样)。顺带**补了这段一直没被测过的热算法的行为冒烟** `tests/snapshot_interp_smoke.gd`(8 组断言,最值钱的是跨接缝必须走最短向量)。★ 写测试时被自己的断言拦下一次:keep_ticks 是「最新前 N tick **含最新**」共 N+1 条,我按 N 条写了 |
+| 2.2 | **M14** `ENEMY_NAMES` 手抄第二份 | ✅ `display_name` 进 `data/enemies.json`,经新的 `EnemySpawner.display_name_of`(按**场景路径**查 + 惰性加载)取用;顺带干掉「去掉 `Enemy` 前缀再查表」那条改名即静默回落的约定。`sync-enemies.js` 是字段级手抄,已同步并重跑生成 HTML 内嵌注册表。探针按惯例改判据 |
+| 2.3 | **M11** 打包格式 `16` 手写处 | ✅ 实为 **21 处**(计划列 15,漏了 `pvp_client.gd` 与 `royale_game.gd` 的拆砖视觉块 —— 那两块本身也是近乎逐字相同的拷贝)。根因是 `TileDefs` API 不一致(`is_blocked` 吃打包值、`hp_of/climb_speed` 吃纹理号),故每个调用点都得自己 `/16`。`TileDefs` 内部三处一并收口 |
+| 2.4 | **M12** 「世界矩形是否压到实心格」三份同构 | ✅ 抽 `core/tile_query.gd`(两个谓词入口:实心 / 实心或液体)。**三处的空网格语义各不相同**(黑鸟「视为全清」/ 飞鸟「不可走」/ 预瞄「无墙」),故兜底留在调用方 —— 飞鸟必须保留自己的 `is_empty` 早退(方向相反)。新增 `tests/tile_query_smoke.gd` 专钉跨接缝与水 |
+| 2.5 | 「地板格」谓词重复 | ✅ 实为 **5 处**(`royale_host` 里同一谓词自己就抄了三份:采集循环 / O(1) 版 / 宽松版叠层)。抽成 `is_floor_cell`(基本)+ `is_floor_cell_with_headroom`(带头上净空)。**两处语义差异刻意保留**:`match_host` 的越界即 false(helper 会把超界格 posmod 回环面,语义不同);`climb_component` 的**梯子版**谓词只有 1 处使用且语义不同,不抽 |
+| 2.6 | `STOP_SNAP` 两份 | ✅ 第二份是**死副本**(`climb_component` 里全仓零使用,注释却写着"与根一致" —— 该文件此前也有一份零调用的 `_approach` 死副本,批次 1 已删)。删死副本 + 归到 `PlayerParams.stop_snap` |
 
 ## 阶段 3：**必须在 M9 之后**才能开工（客户端合并，成本合计 ~3 天）
 
-| 序 | 项 | 位置 | 成本 |
-|---|---|---|---|
-| 3.1 | **H3** 输入包**编码端两份手抄、解码端一份** —— 加一个 held 位要改 3 处，漏一处**静默** | `pvp_client.gd:186-214` ↔ `royale_game.gd:162-190` | 半天（含改 `kh_l6_probe:248-278` 的组包锚点）。在 `core/network_input_source.gd` 加 `static func pack_record(src, seq, aim) -> Dictionary` |
-| 3.2 | **M5** 服务器侧广播样板 7 处 + 两个 spawn + PowerShell 杀端口串两份 | `match_host.gd:208/243/293/520/691/705`、`royale_host.gd:404`；`room_manager.gd` 两个 spawn；`room_manager.gd:738-742` vs `server_main.gd:156-160` | 半天。提 `MatchHost._rpc_all(method, args, except_role := -1)`；杀端口提 `core/proc_util.gd` |
-| 3.3 | **M4c** 房间注册表拆分（见「本计划明确不做的事」第 1 条——**先做设计决策**） | `server/room_manager.gd` | 1 天 |
-| 3.4 | 客户端事件消费层合并（9 个函数逐字相同 ≈140 行 + 4 个近逐字；具体函数与行号对已列在评估报告里） | `pvp_client.gd` ↔ `royale_game.gd` | 1~2 天。抽 `scenes/pvp_match_client.gd` 基类。**做之前先确认 1.4 已完成** |
-| 3.5 | **M8** `ENABLE_BIRDS := false` ⇒ 客户端鸟副本 ~90 行死代码 | `pvp_client.gd:22,94-95,256-262,431-459`；`royale_game.gd:12,82-83,241-247,431-459` | **先决策**：不打鸟就删 90 行；要打就抽一份进 3.4 的基类 |
-| 3.6 | 两个大厅页的连接状态机重复（58 个重复块 —— 全仓第二大重复对）+ 禁用武器网格/色相行两处手抄 + `_apply_pixel_font` 8 行 100% 相同 | `matchmaking.gd` ↔ `royale_lobby.gd` | 1~2 天 |
-| 3.7 | **批次 6（旧编号）**`UiFactory` 补齐 `check`/`line_edit`/`slider_row`/`apply_font_recursive` | `ui/ui_factory.gd` | 半天。**排在 3.6 之后**——那两个文件正是 3.6 要重构的，先改会撞车 |
+> **3.1~3.7 全部完成**（3.1/3.2/3.3/3.5 于 2026-09-14，3.4/3.6/3.7 于 2026-09-14~15）。
+> 本阶段的固定成本是**探针连带**（源码级探针当年直接摸内部，东西一搬就断）——各条都已按惯例
+> **教探针认新入口**并做反证，详见各条状态列。
 
-## 阶段 4：目录与命名整改（**一次做完，别零敲碎打**，成本合计 ~2 天）
+| 序 | 项 | 状态 |
+|---|---|---|
+| 3.1 | **H3** 输入包**编码端两份手抄、解码端一份** | ✅ 抽 `NetworkInputSource.pack_record(src, seq, aim)`（与解码端同处一类），两个客户端各 42/41 行 → 5 行。★ 顺带修一处不对称：两份的 `released` 段都**漏了 CHARGE**（`held`/`pressed` 都有，且全仓无消费者 → 行为等价）。★ 探针：kh_l6 的 #1/#4 原先锚 `"seq": _input_seq` 字面量 → 改成 `_packet_anchor`/`_packet_varname`（**两种形态都认**，判据换成「该调用必须收到 `_input_seq`」）。★ 反证两条 + **穷举对撞**（用 Task 4 的 `_*_raw` 钩子做桩输入源，4096 组组合逐键比对，0 不一致） |
+| 3.2 | **M5** 服务器广播样板 + PowerShell 杀端口串 | ✅ 提 `MatchHost._rpc_all(method, args, except_role, live_only)`（5 处 + RoyaleHost 覆写全改走它；新增 `_role_of` 反查射手 role）+ 杀端口收进 `core/proc_util.gd`。★ 实参转发用 `NetBus.callv("rpc_id", …)`——`pvp_match_smoke`（判据含「子弹广播链路」）是它真发包的证据。★ 探针两处：kh_l5 的修正写法判据搬到 proc_util（**坏写法禁令两处都查**）；kh_l6 的光束路由守卫改成二选一，**且走助手时助手体内必须仍用 NetBus**。★ 反证三条 |
+| 3.3 | **M4c** 房间注册表拆分（用户裁定**方案 a：做成 Node**，边界见下方「已落地的设计」） | ✅ `server/lobby_rooms.gd`（`LobbyRooms extends Node`）= 房间账本 + 房间侧 handler + 拆除收口；`room_manager.gd` 643→**259** 行 = 进程编排 + 清扫。**单向依赖**，1v1 凑齐两人由新信号 `pairing_ready` 上到 RoomManager（消除唯一反向需求）。★ 探针三处（room_sweep_smoke / kh_l5 / royale_bound_probe 共 8+ 处访问）；★ 反证：收口门外塞一行 `launcher.release_now` → 咬红 |
+| 3.4 | 客户端事件消费层合并(抽 `scenes/pvp_match_client.gd` 基类) | ✅ **完成**(分三步提交)。判据改成**当场重测**:计划写的「9 个函数逐字相同 ≈140 行」已过期(3 个被删鸟时删掉、`_physics_process` 被 3.1 改过);且实测发现"剔注释"必须**连行尾注释一起剔**(否则会把只差行尾注释的函数误判成有差异)。共上提 **11 个函数**(含 C2 心脏 `_physics_process`)+ 10 个字段 + 2 个 const,并引入 `_replica_for(role)` 把「对手 1 个 vs N 个」这条**唯一的结构性差异收在一个口上**。行列:pvp_client 555→**318**、royale_game 482→**291**、基类 **239**;**两文件共有的 4 行块 162 → 17**(降约 89%)。★ **刻意保留**的差异(差的不是重复而是第二根结构轴):`_process`/`_on_snapshot_world`/`_on_round_state`(per-role 的 ID 标签与血条记账;含退场定时器 5s vs 6s 的真语义差)、`_apply_peer_names`/`_apply_peer_hues`(访问器同款的"必须覆写"桩)、`_on_kill_event`(仅差一行回退文案,统一会改 1v1 的**用户可见文字**→待定)、`_ready`。★ 探针连带:kh_l6 的 `_body_anywhere`(函数体跨 pvp_client/基类查找,都找不到仍返回空串→原断言照红)+ 输入锁收口检查改**两文件都查**;royale_c2_watcher 的 A2_OWNERS 提前把基类列入 |
+| 3.5 | **M8** 中立鸟死机制 | ✅ 用户裁定**不开鸟** → 两侧整套删除（服务端刷鸟链 + 两个客户端的副本机制 + NetBus 两条 @rpc/两条信号 + `enemy_replica.gd`）。★ 删前核实：那两条 RPC **不是**原版协议面（本项目 `aa1d8f0` 加的），无探针钉其中任何一处 |
+| 3.6 | 两个大厅页的连接状态机重复(抽 `scenes/lobby_page.gd` 基类) | ✅ **完成**(分两步提交)。**当场重测**:计划那三条里两条成立、`_apply_pixel_font` 那条**已被 3.7 做掉**(两页都改调 `UiFactory.apply_font_recursive`,只剩悬空注释)。判据仍是"剔注释后逐字相同"(行尾注释也要剔):上提 12 个函数 —— 3 个逐字相同、9 个只差 1~3 行,差异**全部**落成 13 个具名钩子(8 个必需项,基类给 `push_error` 兜底)。★ **刻意不收**:`_ready` 与三个面板、`_on_room_list` vs `_on_royale_rooms`(2 人房 vs N 人房,行样式与文案都不同)、`_on_server_message`(1v1 多两段自动刷新,整段覆写)。★ **超时梯顺序逐页保留**:1v1 是 `[worker→join→大厅→claim]`、大乱斗是 `[worker→claim→大厅→ack]` —— 合并派发会静默改行为(那一 tick 里「大厅-8s 先清 `_pending_action`、claim-25s 再 `_return_to_lobby`」会塌成只跑后者),故基类只给三条梯的**函数体**,`_process` 留在各子类。★ 两文件共有的 4 行代码块 **57 → 1**(剩的是「请填房间号」守卫,两条加入路径本就不同)。行数:matchmaking 493→**314**、royale_lobby 581→**412**、新增 lobby_page **416**。★ 探针:三条实例化真 `royale_lobby.tscn` 的 watcher/probe **全程零改动**(继承来的成员与函数在 Godot 里都是真属性/真方法);kh_l5 的字号扫描覆盖到新文件 —— **反证**:往 `lobby_page.gd` 注入非 16 倍数字号 → 咬红并**点名该文件**,还原转绿。★ 顺带查实一个**静默 bug**:色相行的列距键两页一正一误(1v1 写 `separation` = HBox 认的键;大乱斗写 `h_separation` = **GridContainer 的键**,写在 HBox 上永不读取 → 死覆盖,实际用默认 4)。收口只能留一个键 → 取正确的,大乱斗页该行间距 4→12(本次**唯一**观感差异)。同一类死键**全仓只剩这一处**,已另起一笔一并修掉(间距 4→12)。★ 顺带做过全仓普查:`h_separation`/`v_separation` 的其余各处(`lobby_page` 的 `wgrid`、`settings_menu` 的 `grid`)都写在 `GridContainer` 上,是对的 —— **容器类型不同、键就不同,别跨类型"统一"** |
+| 3.7 | **批次 6（旧编号）**`UiFactory` 补齐 | ✅ **完成**。补了 5 个口：`apply_font_recursive` / `hue_preview_color` / `check_row` / `slider_row` / `line_edit`（全部逐字搬自页面里的手抄实现，各页**版式数值**提成参数：标签列宽 440 vs 320、输入框 240×36 vs 250×40 —— 逐字搬会改观感）。★ 形参顺序刻意把 `label_w` 放 **callable 之前**（两个页面都用块体 lambda 作最后实参，callable 之后再跟实参极易写错）。行数：matchmaking 538→493、royale_lobby 601→**581**、settings_menu 216→**180**、ui_factory 272→351（三页共减 101 行手抄）。★ 视觉未实测（`menu_autotest` 要真实渲染）—— 数值全按参数原样传，预期零观感变化 |
+
+## 阶段 4：目录与命名整改 —— ✅ **全部完成**（2026-09-15，用户裁定 4.1~4.6 一次到位）
+
+> 用户裁定三处:**4.3 取「改约定为 snake」**、**4.5 取驼峰 `Hud`/`Ai`**、**范围取 4.1~4.6 全做**。
+> 实际落成 7 笔提交(4.1 因含一个拆分,分两笔)。**两处数字被当场重测推翻**,见各条。
 
 零敲碎打会反复动 `.uid` 与 `.godot` 缓存（照 `docs/naming-cleanup-plan.md` 那次的流程走）。**开工前先确认 1.6 的 `tools/check_naming.py` 已在位。**
 
 | 序 | 项 | 内容 |
 |---|---|---|
-| 4.1 | **文件错位一批** | `scenes/player/enemy_hp_bar.gd`（内容是 PvP 对手血条）→ `ui/`；`scenes/effects/minimap.gd` → `ui/`；`scenes/player/world_label.gd` → `ui/`（**注意三处调用都是 `load("res://scenes/player/world_label.gd")` 硬编码字符串路径**）；`scenes/player/camera_2d.gd` → `render/`；`scenes/player/weapon_component.gd:31-83` 的 UI 部分 → 新 `ui/weapon_icons.gd` |
-| 4.2 | **`ui/` 内聚 + `render/` 名副其实** | `scenes/royale_hud.gd\|tscn` → `ui/`；`shaders/post_process.gdshader` → `render/`（并删空的 `shaders/`）；`scenes/effects/combat_feedback.gd` → `ui/`（或新建 `scenes/hud/`） |
-| 4.3 | **`.tscn` 命名约定反转为 snake 同名** | 现状 20 个里只有 5 个 Pascal（`Level0`/`Player`/三个 `Enemy*Bird`），README 与 naming 计划却都写着「保持 PascalCase」。**建议改约定而不是改 19 个文件**：`.tscn` 一律 snake、与其 `.gd` 同名 |
-| 4.4 | 同一概念两套命名 | `scenes/pvp_game.tscn` 的脚本是 `pvp_client.gd`（**不成对**），而 `royale_game.tscn` ↔ `royale_game.gd` 成对 → 二选一统一 |
-| 4.5 | 文件名与 `class_name` 不符 / 缩略语三套写法 | `server/ai_player.gd` 的 `class_name AINavigator`；缩略语现状 `HUD`（`ui/hud.gd`）/`PvpHud`/`AIInputSource` 三种 → 定一条规则（建议驼峰 `Hud`/`Ai`） |
-| 4.6 | **`core/` 分目录** | 27 个条目混 4 类关注点（几何模拟/网络/配置/表现）→ `core/{sim,net,config,present}/`。**最后做**：autoload 路径在 `project.godot`，动它要同步 4 处 |
+| 4.1 | **文件错位一批** | ✅ **完成**(分两笔:四个文件归位 + weapon_component 拆分)。`scenes/player/enemy_hp_bar.gd`（内容是 PvP 对手血条）→ `ui/`；`scenes/effects/minimap.gd` → `ui/`；`scenes/player/world_label.gd` → `ui/`（**注意三处调用都是 `load("res://scenes/player/world_label.gd")` 硬编码字符串路径**）；`scenes/player/camera_2d.gd` → `render/`；`scenes/player/weapon_component.gd:31-83` 的 UI 部分 → 新 `ui/weapon_icons.gd` |
+| 4.2 | **`ui/` 内聚 + `render/` 名副其实** | ✅ **完成**。`scenes/royale_hud.gd\|tscn` → `ui/`；`shaders/post_process.gdshader` → `render/`（并删空的 `shaders/`）；`scenes/effects/combat_feedback.gd` → `ui/`（或新建 `scenes/hud/`） |
+| 4.3 | **`.tscn` 命名约定反转为 snake 同名** | ✅ **完成**(用户裁定)。**当场重测**:计划写的分母错了 —— 不是「20 个里 5 个 Pascal」而是 **56 个里 5 个 Pascal / 51 个 snake**(9% 符合旧约定,那条规则早就名存实亡)。按现实反转:①改名的只有那 5 个(`Level0`→`level_0`、`Player`→`player`、三个 `Enemy*Bird`→snake);②文档 4 处(规范正本 `docs/naming-cleanup-plan.md` §3 改写法 + 两份 KH 计划加**反转注明**而非改写历史 + 本计划与 README 的目录说明);③★ **旧约定之所以失效是因为没人守** → 把 `tools/check_naming.py` 的 D 检查**从「只报告」改成真判失败**(它此前明确写着「大小写规则待阶段 4.3 定」),顺带修掉它一个 NTFS 假阴性:判「有没有同名 .gd 兄弟」原用 `os.path.exists`,在大小写不敏感的文件系统上会把 `Player.tscn` ↔ `player.gd` 误判成有兄弟 —— 改用目录实读列表比对。**反证**:把 `level_0.tscn` 挪回 `Level0.tscn` → 咬红并点名(「应为 level0.tscn」),还原转绿。★ 引用面比预想大(27 个文件):`data/enemies.json` 的 `scene` 字段也指场景路径,故跑了一次 `node level_editor/sync-enemies.js` 重生成 `structure-editor.html` 的内嵌注册表 |
+| 4.4 | 同一概念两套命名 — `pvp_game.tscn` 的脚本是 `pvp_client.gd`(**不成对**),而 `royale_game.tscn` ↔ `royale_game.gd` 成对 | ✅ **完成**。二选一里取**改脚本**(`pvp_client.gd` → **`pvp_game.gd`**,与 4.3 的「.tscn 与脚本同名」同一条规则):改 1 个文件就能配上;另一条路要把 `pvp_game.tscn` 与 `royale_game.tscn` **两个都**改成 `*_client`(而 `royale_game.tscn` 本来就成对,纯属为了对称去动它)。代价照实登记:共享基类仍叫 `pvp_match_client.gd`,所以「client」这个词留在族名里 —— 但它是**基类**不是对局场景,与「场景↔脚本同名」这条规则不冲突。★ **踩到一个静默失明的坑并当场堵上**:`tests/kh_l6_probe.gd:57` 的路径常量是**拆开拼接**写的(`"res://scenes/" + "pvp_client.gd"`,探针惯例:躲开自己的源码扫描器),故按整串 `pvp_client.gd` 做的批量替换**扫不到它** → 不手改就是「探针恒绿」那类静默失效(仓内已登记过的失败模式)。已手改并跑 kh_l6 确认 **ALL-OK** |
+| 4.5 | 文件名与 `class_name` 不符 / 缩略语三套写法 | ✅ **完成**(用户裁定取驼峰)。规则定为:**类名里的缩略语按普通词走驼峰**(`Hud` / `Ai` / `Pvp` / `Ui` / `Fx`),不写全大写。实际要改的只有 3 个类 —— 其余(`PvpHud` / `RoyaleHud` / `PvpSession` / `PvpMatchClient` / `UiFactory` / `WaterFx` / `CollisionAabb` / `Sfx`)本来就合规,这正是「三种写法」查下来只有一种偏差的证据:`class_name HUD` → **`Hud`**(`ui/hud.gd`)、`class_name AIInputSource` → **`AiInputSource`**、`class_name AINavigator` → **`AiNavigator`** 且**文件同时改名** `server/ai_player.gd` → **`ai_navigator.gd`**(名实相符)。★ 连带:`tools/check_naming.py` 的 `ACCEPTED_CLASS_FILES` **销掉 `ai_player.gd` 那条**(该表只许变短 —— 4.5 把这条债还清了,现只剩 `level_0.gd` 一条)。★ 反向核过 `HUD` 的改名面:全仓剩下的裸 `HUD` 都在**探针的判据字符串**里(`COMBAT HUD VISUAL PROBE: ALL-OK` 之类),那些是 grep 判据、**一个都不能动** |
+| 4.6 | **`core/` 分目录** | ✅ **完成**。实为 **29 个 .gd**(计划写 27)+ README。分桶:`sim/` 10 · `net/` 10 · `config/` 6 · `present/` 3。**分类按「因为什么而改变」划**,两处判断照实记:输入源三件套(`input_source` + 两子类)归 **net/**(三种来源可换与联机同轴,不是通用工具)、`proc_util`/`local_server` 归 **net/**(服务大厅与 worker 的进程/端口编排)。★ 引用面比想象小,只有 **22 处 / 14 个文件**(4 条 autoload + 5 个 preload + 2 处 build_info + 8 个探针常量)。★ **又撞到同一个静默失明坑**:`kh_l6_probe.gd:69` 的 `"res://core/" + "prediction_rollback.gd"` 也是拆开拼接的(探针躲自身扫描器),按整串替换一定漏 —— 与 4.4 是同一形状,已在提交信息里记为经验。★ `core/README.md` 重写(四桶依据 + 修一处**过期事实**:它写「项目唯一两个 autoload」,实际 4 个 —— `NetBusExt`/`Settings` 漏登记);README/CLAUDE/RELEASE 的 10 条旧路径由 check_naming 的 C 检查**当场咬出**再逐条改;3 份历史计划文档**明确还原不改**(4.3 口径:标注而非追改) |
 
-## 阶段 5：巨型函数（**等没有并发分支时做**，成本合计 ~5 天）
+## 阶段 5：巨型函数（**等没有并发分支时做**，成本合计 ~6 天）
+
+> **本节已于 2026-09-14 重排（用户裁定）**，依据一次按「净代码行（剔注释与空行）+ 单函数占文件比例」的重测。
+> **数字口径更正**：本节此前引用的行数是**函数跨度**（含注释与空行），在本仓这种高注释密度下虚高 30~40%。实测净代码：
+> `player.gd::_physics_process` 205→**143**；`enemy_black_bird::_ai` 146→**133**；`enemy_fly_bird::_ai` 124→**108**；
+> `royale_lobby::_build_create_panel` 120→**102**；`main_menu::_build_new_ui` 100→**77**；`enemy_logic_smoke::_initialize` 851→**737**。
+> 同理 `match_host.gd` 的「706 行」净代码只有 535、最长函数 48 行、35 个函数 —— 它是**职责宽**不是**函数深**（见 5.6）。
 
 | 序 | 项 | 位置 | 成本 |
 |---|---|---|---|
-| 5.1 | **H5** `player.gd::_physics_process` **205 行**，且倒地物理与正常物理**逐句复制** | `scenes/player/player.gd:150-352` | 1 天。拆 `_tick_downed`/`_tick_water_and_climb`/`_tick_vertical`/`_tick_horizontal`/`_tick_pose_and_collision`/`_tick_slide_reactions` + 公用段 `_apply_grounded_physics(delta, brake_rate)`。**改前先看 `tests/player_contract_smoke.gd` 断言了什么**（它是源码级契约守卫） |
-| 5.2 | **M10** 三个敌人 `_ai` 巨型 `match` 单函数（146/124/78 行，最深 6~7 层） | `enemy_black_bird.gd:72-213`、`enemy_fly_bird.gd:70-190`、`enemy_jump_bird.gd:38-111` | 各半天。每个状态一个 `_tick_<state>(delta, dist)`，`_ai` 只留 `match` 派发（约 20 行）。**与「批次 7 睡眠/唤醒上提」不重叠**——本条只按 state 切函数 |
-| 5.3 | `tests/enemy_logic_smoke.gd::_initialize` **851 行**（全仓最长的函数，比第二名长 4 倍） | `tests/enemy_logic_smoke.gd` | 1~2 天。按章节切分 |
-| 5.4 | 旧编号批次 4：`core/maze_generator.gd` 委托式拆 `grid_pathfinder.gd` + `map_format.gd`；`weapon_base.gd` 拆 `weapon_preview.gd` + `weapon_reload.gd`；`match_host.gd` 的 `ENABLE_BIRDS=false` 鸟链（84 行）搬到 `server/bird_roster.gd` | — | 1~2 天 |
-| 5.5 | 旧编号批次 7：睡眠/唤醒状态机上提 | `enemy_fly_bird.gd:75-91` 等三处同构 | 半天。**必须先显式化** `enemy_base.gd:175` 的隐式契约——`_is_far_sleeping()` 硬编码 `state != 0`，隐含「所有子类 `State.SLEEP == 0`」 |
-| 5.6 | 三个 UI 构建巨型函数（`royale_lobby._build_create_panel` 120 行、`main_menu._build_new_ui` 100 行、两个 `_ready` 各 ~79 行） | — | 1~2 天。**排在 3.7（UiFactory 补齐）之后**，否则会重复造包装 |
-| 5.7 | `core/` 输入源三件套的语义错位：基类同时是接口与本地实现；`PredictionRollback` 在客户端 `new()` 了 `NetworkInputSource` 当 scratch（一次网络都不碰）；`is_network_driven()` 是类型标签不是 `is` 判断 | `core/input_source.gd`、`core/prediction_rollback.gd:22,107-115` | 半天。基类改 `PlayerInput` 纯接口（`source_kind() -> int` 枚举），本地实现独立成 `local_input_source.gd`；`NetworkInputSource` → `PacketInputSource`。**排在 Task 4 之后**（同文件，且 Task 4 刚把 `_*_raw` 钩子立起来） |
+| **5.1** | ✅ **完成**（2026-09-15）。★ **`tests/enemy_logic_smoke.gd::_initialize` 净 737 行，占该文件 95%** —— 全仓最长函数，且该文件 53 次提交是全仓改动最频繁的文件。**杠杆最高的一条，故从原 5.3 提到首位** | `tests/enemy_logic_smoke.gd` | ✅ 按原有章节注释切成 **27 个 `_phase_*()`**，`_initialize()` 只留 27 行调用表。★ 等价性用的是**本文件自带的 oracle**：它每条断言都打印 `ok - <名字>`，故**改前/改后逐行 diff 输出序列** —— `147 条断言 + SMOKE OK` **完全一致**（不是「看着没报错」）。★ **两个坑都是这个 oracle 抓出来的**，记下来：① **漏 `await` 会改语义**：某些节里有 `await physics_frame`，原先 `_initialize` 整体挂起、顺序天然保留；拆成子函数后若调用处不 `await`，**该节从 await 之后的断言会与后面的节交错执行**（实测：6 条断言消失、输出从 148 行掉到 88 行）。已改成**按节体自动判定**是否加 `await`，免得日后手改漏。② **别对节内局部做全局改名**：有 8 个局部跨节复用，一度把它们改名成 `_xxx` 再提升，结果 `combat` 同时是 `player.gd` 上的**子节点名**（`pk.combat.knock_velocity`）→ 盲替换把它也改了 → 运行时报「Invalid access to property '_combat'」。**只挪声明、不动引用**才对。★ 跨节复用的局部**实为 8 个**（静态分析只算出 3 个；靠编译器逐轮报「Identifier X not declared」补齐）—— 结论：**这类分析交给编译器，别手算**。 |
+| 5.2 | ✅ **完成**（2026-09-15）。**H5** `player.gd::_physics_process` 净 **143 行**（占文件 33%），且倒地物理与正常物理**逐句复制** | `scenes/player/player.gd` | ✅ 拆成 7 个名字说明一切的块：`_tick_downed` / `_tick_vertical` / `_tick_crouch_and_dash` / `_tick_horizontal` / `_tick_facing` / `_tick_pose_and_collision` / `_tick_slide_reactions`，外加三个共用段 `_brake_horizontal` / `_wrap_position` / `_update_waterproof`；`_physics_process` 只剩 ~35 行编排。★ 计划点名的那段重复**确实存在但比反想的窄**：真正逐句相同的是「无输入制动 + 吸附」(倒地分支与正常分支的 no-input 路径)，已收进 `_brake_horizontal`。而**重力那段两边并不相同** —— 倒地的版本不乘 `charge_air_gravity_mult`、也不递减土狼时间，故**刻意没合并**（今天不可观测，但"不可观测"是要论证的，不如原样留着并在注释里写明）。★ **顺带查出一处死变量**：`var climbing := false` 只被赋值、**从未被读**(`climb.update()` 有副作用所以调用要留)—— 与阶段 2 查出的 `STOP_SNAP` 死副本同型。已删变量、保留调用。★ 行为等价性由 `tests/move_feel_smoke`(卡蹲/蹲走/跳打断/撞墙停/空中重力 五场景)**真跑**背书，另加 `player_contract_smoke`(源码级接口契约)。★ **覆盖边界照实登记**：这五条覆盖不到跳跃缓冲、可变高度、土狼时间、弹性瓦片、水与倒地物理 —— 那些只有"块未改动、顺序未变"这一层保证，**最终仍以真机手感为准** |
+| 5.3 | ✅ **完成**（2026-09-15）。**M10** 三个敌人 `_ai` 巨型 `match` 单函数（净 **133** / **108** / 67 行，占各自文件 44% / 33% / 68%） | `enemy_black_bird.gd`、`enemy_fly_bird.gd`、`enemy_jump_bird.gd` | ✅ 各状态一个 `_tick_<state>(delta[, dist])`，`_ai` 只留 `match` 派发（146→**19** / 124→**18** / 78→**8** 行）。**与「睡眠/唤醒上提」(5.8) 不重叠**——本条只按 state 切函数。★ 一条容易踩的等价性要点：这些 arm 里有大量 `return`（提前结束本帧）。因为 **`match` 是 `_ai` 的最后一条语句**，`return` 在 `_tick_*` 里与原来在 `_ai` 里**语义相同**（都是"本帧到此为止"），故不必改写成返回值。已把这条写进两个文件的注释。★ 验证：`enemy_logic_smoke` 的 **148 行输出与改前逐行一致**（FlyBird 19 条 / JumpBird 5 条断言）。★ ★ **覆盖边界（重要，照实登记）**：该冒烟里 **BlackBird 只有 1 条断言，且是"注册表加载"那条** —— **黑鸟的 AI 状态机全仓没有任何测试覆盖**（`grep -l black_bird tests/*.gd` 只命中冒烟与 tile_query_smoke，后者是拿它当 TileQuery 的调用点举例）。所以黑鸟这次拆分**只有结构保证、没有行为保证**；纯块搬运 + `match` 在末尾这两条使等价性成立，但**没有 oracle 能证伪**。这是一处**既有的覆盖缺口**（不是本次引入），单独立项补 |
+| **5.4** | ✅ **完成**（2026-09-15）。★ **探针里的巨型函数**（本次重测新增，此前完全没登记）：`feedback_probe._ready` 净 **159**；`perf_probe._initialize` 净 **177**；`kh_l3_visual_probe._ready` 84；`kh_l3_probe._check_reload_state_machine` 78 | `tests/` | ✅ 四个都按各自的分节切成子函数（`_ready`/`_initialize`/`_check_*` 只留调用表）。探针无行为风险，作为「先练手」的一批。★ 本步写了一个**通用拆分脚本**（按行段切 + 提升局部为字段 + 自动判 `await`），5.1/5.2 的三条经验都固化进去了：只挪声明不做全局改名、含 `await` 的段调用处必须 `await`、段内 `return` 原本退出整个函数故需 `_aborted` 拦一道。★ **验证**：`feedback_probe` / `kh_l3_probe` 各自 **ALL-OK**；`perf_probe` **DONE** 且定性判定行（覆盖率通过 / 攀爬基座一致 / 薄条位置通过 / 失败 0 次）与改前逐字一致。★ **两处判据强度照实登记**：① `perf_probe` 的地图是**每进程随机选**的（`load_map_file()` 随机读一份 .cyrm），所以 N shapes 这类数字**跨进程不可比** —— 只能比定性判定行，不是完整对撞；② `kh_l3_visual_probe` **必须真实渲染**，headless 下判据跑不出来，本次只保证**解析通过 + 结构不变**，真正的判据得由用户带渲染跑 |
+| 5.5 | ✅ **完成**（2026-09-15）。三个 UI 构建巨型函数（`royale_lobby._build_create_panel` 净 102、`main_menu._build_new_ui` 净 77、`royale_hud._ready` 67 + `_on_round_state` 74、`matchmaking._build_options_panel` 62） | — | ✅ **当场重测**:四个拆掉,第五个**已经不用拆了** —— 3.6/3.7 先把 `_build_options_panel` 里的禁用武器网格与色相行收进 `LobbyPage`/`UiFactory` 之后,它只剩 **净 28 行**,不再是巨型函数。其余四个的现状与拆法:`royale_hud._ready` 90→四个 `_build_*(board/broadcast/ping/hint)`、`_on_round_state` 73→`_refresh_board` + `_refresh_broadcast`、`main_menu._build_new_ui` 76→`_build_ui_layer/_build_title/_build_version_label/_build_menu_buttons/_play_emerge`、`royale_lobby._build_create_panel` 69→`_build_public_room_row/_build_max_players_row/_build_match_time_row`。★ **顺带又查出一处死变量**:`royale_hud._on_round_state` 里的 `me_alive` 只算不用（`var me_alive := true` + 循环赋值,三个 broadcast 分支谁都没读它）—— 与前两处（`climbing` / `STOP_SNAP` 死副本）同型。已删。★ **验证**：`royale_hud_cost_probe` 6 条 ✓ 全过（它真跑 `_on_round_state`,且断言"行被复用而非重建"—— 正是这次改动最该守的东西）；`kh_l4_probe` / `kh_l5_probe` ALL-OK；启动与两个大厅场景 0 脚本错误。★ **覆盖边界**：这四处都是**版式**,真正的判据是 `menu_autotest` / `kh_l3_visual_probe` 的截图（需真实渲染）,本次只保证结构不变 + 无脚本错误 |
+| **5.6** | ✅ **完成**（2026-09-15）。★ **`server/match_host.gd` 按职责分文件**（**改法变更**：不是拆函数 —— 它净 535 行 / 35 个函数 / 最长仅 48 行，形状是「宽」不是「深」）。按域切：快照广播 · 子弹与爆炸裁决 · 回合状态机 · 玩家建/复活 | `server/match_host.gd` | ✅ 拆成一条**继承链**:`RoyaleHost` → **`match_host.gd`**(核心:生命周期/输入 FIFO/每物理帧编排) → `match_round.gd`(回合状态机+复活) → `match_combat.gd`(子弹/爆炸/光束裁决) → `match_snapshot.gd`(60Hz 快照广播) → `match_state.gd`(共享状态 + `_rpc_all`/`_role_of`) → `Node`。626 → 173(**−72%**),其余四份 86/50/201/181。★ **为什么是继承而不是组合**:GDScript 里跨文件共享 `self` 状态的省事办法只有继承;组合要把 host 一路当参数传,调用点全得改。★ **两条实测踩到的硬约束**(都写进了文件注释,供后来者):① **共享字段只能住最底层** —— 父类方法在**编译期**解析不了子类声明的符号,所以 `players`/`grid` 这些谁都要读的只能在 `MatchState`;② **共享方法同理** —— `_spawn_cell` 一度留在 MatchHost(子类),而 `MatchRound._respawn_player` 要调它,直接报 `Function "_spawn_cell()" not found in base self`;已连 `role_spawns` 一并下沉(RoyaleHost 仍可覆写,虚分派与住哪层无关)。★ **中间层不得定义 `_init`/`_ready`/`_enter_tree`/`_physics_process`** —— 那会插进 RoyaleHost 那条「先 plan_spawns 再 `super._init`」的契约(仓内明写:顺序不可整理)。本次只搬普通方法,故安全。★ **探针连带(按惯例改判据、不回退)**:kh_l5 的 C2 四条与新接口断言原先只读 `match_host.gd`,搬家后会**恒绿失明** —— 已改成读**五份并集**(`HOST_SRC` + `_host_code()`)。这不是放水:被守的东西一个字没变,反向断言反而更严(五份都查)。**反证**:改判据之前它先报了 3 条具体 FAIL(缺 ack_seq / 缺 c2 / 缺 notify_direct_hit),证明门仍然咬得动 |
+| **5.7** | ✅ **前半条完成；后半条已无对象**（2026-09-15）。★ 后半条（`match_host.gd` 的 `ENABLE_BIRDS=false` 鸟链 → `server/bird_roster.gd`）**不是"没做"，是"没有可搬的东西"**：阶段 **3.5**（用户裁定"不开鸟"）已在 `6b4de61` 把整套 PvPvE 中立鸟删净（服务端刷鸟链 + 两个客户端的副本机制 + NetBus 两条 `@rpc`/两条信号 + `enemy_replica.gd`）。全仓 `ENABLE_BIRDS` 今天只剩**文档里的历史提及**，生产代码零命中 —— 本行照实登记为**已消解**，不是跳过 | `core/sim/maze_generator.gd` | ✅ **委托式拆**（按计划）：`maze_generator.gd` **629 → 113**，新增 `map_format.gd` 277 + `grid_pathfinder.gd` 317（三份合计 707，比原先多 78 行 —— 全是三份文件头/分隔注释）。**切法**：`MazeGenerator` 只留**会话状态**（选中的地图文件 `_picked_map`/`set_map_file`/`map_file_path` + `current_grid`）+ **一行转发**；`MapFormat` = `.cyrm` 格式；`GridPathfinder` = 环面几何与寻路。★ **两个新类都做成"无会话状态"**：`MapFormat` 的路径由参数传入（`load_map_file(path)`/`map_size(path)`），`GridPathfinder` 的网格由参数传入（`astar_path_nearest(grid,…)`/`has_line_of_sight(grid,…)`）—— 这正是"因为什么而改变"那条分类的落地：磁盘格式与环面数学都不该知道"这一局用的是哪张图"。★ **转发什么、不转发什么是有规则的**：**生产代码在用的 24 个成员**（`EMPTY`/`SOLID`/`pack`/`texture_of`/`shape_of`/`toroidal_*`/`anchor_to_nearest`/`wrap_to_range`/`copy_grid`/`cell_of`/`is_floor_cell(_with_headroom)`/`astar_path_nearest`/`has_line_of_sight`/`map_size`/`load_map_file`/`parse_spawn_metadata`/`load_spawns`）走转发，保住全仓上百处调用面；**只有探针在伸手的 7 个格式内部口**（`V3_MARKER`/`has_v3_marker`/`parse_v3_grid`/`parse_old_grid`/`convert_old_grid`/`serialize_v3_grid`/`shape_char_to_value`）**直接改指 `MapFormat`** —— 转发**私有**函数是错的，那些口本来就是探针在越界（`tests/convert_map.gd` 6 处、`enemy_logic_smoke` 5 处、`water_probe` 2 处）。同理 `astar_calls` 归 `GridPathfinder`（`enemy_logic_smoke` 5 处改判据）、两个探针的 `MazeGenerator._picked_map = …` 改成公开的 `set_map_file(…)`（语义逐字等价）。★ **验证**：`enemy_logic_smoke`（本仓主 oracle）**输出与改前逐行一致**（含 `SMOKE OK`）；13 个 `-s` 冒烟输出逐行一致；24 个场景探针 ALL-OK/DONE；headless 起游戏 90 帧 0 报错；`check_naming.py` OK。★ **三处"看着像回归"的假阳性，两条当场证伪、一条是单次采样的假基线**（登记证据，因为这类都被误读过）：① `order_probe` 逐帧打印回调交错，`physics@0` 行数**每次不同**（4/5/6）→ 本征不确定；② `climb_probe` 不钉图 → **每进程随机选一份 `.cyrm`**（`shapes: 4032`=demo 与 `4734`=factory1v1 交替出现），**同一张地图下与改前逐行一致**（连跑 8 次逮到 3 次 demo，全等）；③ `muzzle_probe` 的 `2 ObjectDB instances were leaked at exit` 最像新引入 —— 实为**改前就有**：`git checkout --` 还原到 HEAD 后连跑 3 次**全部复现**。★ 教训与 [[probe-conflict]] 同款：**首次采基线只跑了一遍**，恰好那次没打印 → 得到一条假基线；**采基线要重复跑**。★ 顺带修两处**陈旧引用**（都不是本次引入）：`core/README.md` 的 `net/` 清单还是 5.9 改名前的 `input_source`/`network_input_source`（已按实际 11 份文件改写，并把 `sim/` 从 10 改成 12）；`tests/tile_query_smoke.gd:80` 指向 `core/maze_generator.gd:154` 的**行号注释**随搬家失效，改成引用 `GridPathfinder.copy_grid`（行号引用在搬家面前必然过期，写函数名） |
+| **—** | ~~`weapon_base.gd` 拆 `weapon_preview.gd` + `weapon_reload.gd`~~ **★ 已撤销（2026-09-14）** | — | **不做**。实测净 361 行 / 32 个函数 / 最长仅 **30 行**，是全仓形状最好的大文件之一（那 543 原始行里 132 行是注释 + 一批 `@export`）。拆完只会多两个薄文件、少一层 `@export` 就近可读性 —— 收益为负 |
+| 5.8 | ⚠️ **只做了前提那一半**(2026-09-15)。旧编号批次 7:睡眠/唤醒状态机上提 | `enemy_fly_bird.gd`, `enemy_black_bird.gd`, `enemy_jump_bird.gd` | ✅ **前提已做**:`EnemyBase._is_far_sleeping()` 硬编码的 `state != 0` 换成虚钩 `_is_asleep()` —— 它隐含「所有子类的 `State.SLEEP` 都是枚举第一个」,而那是条没人写、没人守的约定:新敌人只要把 SLEEP 排第二位,远处睡眠优化就**静默失效**(该睡的敌人一直在跑 AI)。三个子类现已各自显式写 `state == State.SLEEP`。★ **后半句(三处同构→上提)经逐行比对**不成立**,故不做**:JumpBird 的睡眠段根本没有 `_wake_timer`(用 `_state_timer` + 直接播 wake_up);FlyBird 唤醒要切飞行碰撞箱并给起飞速度,BlackBird 只 `_set_state`;三者睡眠动画名还各不相同(`sleeping`/`sleep`)。共同骨架被这三处差异各切一刀,硬抽成带 3~4 个钩子的基类方法会比现在三个各 12 行的 `_tick_sleep` 更难跟。★ 这是本阶段**第二次**「计划说三处同构、实测不成立」(第一次是 5.2 的倒地物理) |
+| 5.9 | ✅ **完成**（2026-09-15）。`core/` 输入源三件套的语义错位 | `core/net/input_source.gd`、`core/net/prediction_rollback.gd` | ✅ 按计划落地:`InputSource` → **`PlayerInput`(纯接口)**,本地那份实现独立成 **`LocalInputSource`**(`local_input_source.gd`),`NetworkInputSource` → **`PacketInputSource`**;并给接口加 `source_kind()` 枚举(`LOCAL`/`PACKET`/`AI`),三个实现各自自报家门。`is_network_driven()` 保留为**语义**问句(`source_kind() == Kind.PACKET`)—— 三处调用点问的都是"要按网络玩家对待吗",种类问句留给新调用方。★ 语义错位的实质:此前 `InputSource` **同时**是"接口"和"本地实现"(它 `_*_raw()` 的默认实现直接读真实 Input),于是"用本地输入"只能 `InputSource.new()` 拿一个名字像接口的类;现在接口不再自带任何实现,漏覆写会 `push_error`。★ **踩到一个探针的老陷阱并修掉**:`kh_l6_probe` 的 `_base_lines = _base_code.split("<字面量里带真实换行>")` —— 那种写法**对行尾敏感**(字面量成了 `
+` 而文件文本是 LF → 切不出任何一行 → `_base_lines` 只剩 1 条),于是所有基于它的断言全错位。上一行 `_pc_lines` 用的就是正常的 `split("
+")`,已统一。⚠ **过程照实登记**:我在批量套用 `InputSource→PlayerInput` 时,**先误伤了这个探针的两处碎片常量**(`N_PACK` 的 `"Network"+"InputSource..."` 被改成 `NetworkPlayerInput`),并一度**绕过探针直接怀疑生产代码**;最终靠"干净工作树跑 HEAD 对照"确认了哪一半是我造成的。教训与仓内那条 [[probe-conflict]] 同款:**先对照基线再改** |
+
+**「宽 vs 深」的判据**（本节重排的依据，供后续评估复用）：文件大而最长函数 ≤50 行 → 是**职责宽**，应按域**分文件**，拆函数的收益低；最长函数占文件 ≥30% → 是**函数深**，应**先拆函数**。前者如 `match_host.gd`(48)/`maze_generator.gd`(48)/`weapon_base.gd`(30)，后者如 `player.gd`(33%)/`enemy_black_bird.gd`(44%)/`enemy_jump_bird.gd`(68%)。
+
+**已撤销的处置**：`weapon_base.gd` 的拆分（见上）。**未采用**：把 `tests/` 整体瘦身（11702 行 vs 生产 14693 行，测试几乎和生产一样多）—— 测试的「大」危害小（读者少、改者少），只处理其中真正极端的 5.4。
 
 ## 阶段 6：测试脚手架（可随时插入，与上面都不冲突）
 
 | 序 | 项 | 成本 |
 |---|---|---|
-| 6.1 | `tests/lib/scan_util.gd` + `probe_base.gd` —— `kh_l*_probe` 的扫描工具函数已复制 5 遍。**注意** `kh_l5_probe.gd:44` 的 `ALL_DIRS` **含 `res://tests`**，新增的 lib 源码不得含被扫的字面量（如非 16 倍数字号） | 半天 |
-| 6.2 | `level_editor/sync-tiles.js` 加 `--check` 模式（改了 `data/tile_defs.json` 忘跑脚本会静默漂移）；`sync-enemies.js` 同 | 1 小时 |
+| 6.1 | `tests/lib/scan_util.gd` + `probe_base.gd` —— `kh_l*_probe` 的扫描工具函数已复制 5 遍。**注意** `kh_l5_probe.gd:44` 的 `ALL_DIRS` **含 `res://tests`**，新增的 lib 源码不得含被扫的字面量（如非 16 倍数字号） | ✅ **完成**（2026-09-15）。`tests/lib/scan_util.gd`（`class_name ScanUtil`，**纯静态、无 Node 依赖**：`read`/`collect`/`walk`/`strip_line_comment`/`code_only`/`code_view`/`func_body`/`match_paren`/`split_args`/`method_info`）+ `tests/lib/probe_base.gd`（`class_name ProbeBase extends Node`：`_failures` + `_check`/`_summary`/`_finish` + **一层转发到 ScanUtil 的扫描词汇**，保住探针正文里上百处 `_read(...)` 调用点写法不变）。★ **上提口径照 3.4/3.6 那条「剔注释后逐字相同」逐条量过**（脚本比对 5 个文件里同名函数的函数体哈希）：9 个函数**逐字相同**（`_check`/`_collect`/`_walk`/`_read`/`_strip_line_comment`/`_match_paren`/`_split_args`/`_func_body`/`_method_info`）；`_read_res`(l1/l3) 与 `_read` 是**同体的两个名字**（阶段 4.4 那类"同一概念两套命名"），一并统一成 `_read`；`_finish`/`_summary` 只差**文件标签**（`KH L3 PROBE:` / `[L5] `）→ 落成**一个**具名钩子 `probe_id()`（漏覆写 `push_error` + 拼出 `KH  PROBE: ALL-OK`，grep 不到 → 变红，不会静默通过）。★ **l1 是特例**：它不用断言账本，自己维护一个局部 `failures` 数组 + 内联收尾，这次一并改成 `_check`/`_failures.append`/`_finish`，五份终于同构（`failures.append` 的**条件式**改成 `_check(cond, msg)`；无条件那条保留 `_failures.append`，与 kh_l3 既有写法一致）。★ **一个刻意的判断**：`_code_only` 有三个版本 —— l4/l5 是"剥整行+行尾注释"（只差一个循环变量名），**l3 是"只剥整行"**。两者**不是单调关系**（剥行尾注释让「在位」类断言更严、让「零引用」类断言更松），所以"哪个更好"是假的；实测 l3 仅有的 2 条「零引用」断言都盯代码串（`func _process`），两种视图在它那儿**等价**，故统一到共享版并把这条权衡写进 `ScanUtil.code_only` 的注释（供后来者别再重走一遍）。★ **★ 计划少数了一处**：扫描函数其实有**第 6 份副本**在 `tests/royale_c2_watcher.gd`（`_read`/`_code_view`/`_strip_line_comment`，前两个与 ScanUtil **逐字相同**，`_read` 只少一条 `ResourceLoader.exists` 前置守卫）。已把这三个纯函数改指 `ScanUtil`；**没**把该文件改成 `extends ProbeBase` —— 它的 `_finish(ok, msg, …)` 签名与基类**不同**（观察者是被 probe 拉起的子进程，判成败靠消息回传），硬并会改协议。★ **验证**：5 个 kh 探针输出与改前**逐行一致**（唯一差异是 `扫 204 → 206 个源文件`——新增的 2 个 lib 文件落在 `ALL_DIRS` 里，正是计划提醒的那条；另有 Godot 自身运行时报错栈里的**行号**位移，与断言无关）；**反证 4 条全部咬红**：① 往 `ui/minimap.gd` 注入 `add_theme_font_size_override("font_size", 13)` → kh_l4 与 kh_l5 **各自点名该文件与实参**（这条一次性走通 `_read`/`_collect`/`_walk`/`_match_paren`/`_split_args`）；② 往 `scenes/level_0.gd` 注入裸 `Level0.menu_demo` → kh_l6 红并点名（走 `_code_view`）；③ 往 `weapon_base.gd` 注入 `func _process` → kh_l3 红（走 `_code_only`）；④ 往 `settings.gd` 注入 `old_ui` → kh_l1 红（走 `_check`/`_finish`/`probe_id`）。★ 另跑 21 个场景探针全绿 + `royale_c2_probe`（真大厅+worker+2 客户端）**ALL-OK** —— 那是 watcher 迁移的唯一实质验收。★ **踩到自己刚登记的那个坑**：第一次采的 `kh_l3` 输出被当成基线，其中 `4 ObjectDB instances leaked` 实为噪声（实测 4/6/7/9 每次不同）。★ **过程照实登记两处失误**：① 用"删到下一个顶层声明为止"的行段删除器切函数时，它**越过函数尾把下一个函数的文档注释一起吃了**（仓内已知的"行段搬运吞东西"那条，这次吞的是注释）—— 靠逐条比对被删注释行发现，丢了 3 条（`_body_anywhere` 的两条理由、kh_l6 那条 `has_method 对脚本资源看不见` 的教训），已分别还原到 kh_l6 与 `ScanUtil.method_info`；② 给 watcher 删函数时**先只删了 `func 名(` 那一行**，留下一堆失去函数头的孤立函数体 —— 该文件当时是干净的，`git checkout --` 整体还原后重做才对。 |
+| 6.2 | `level_editor/sync-tiles.js` 加 `--check` 模式（改了 `data/tile_defs.json` 忘跑脚本会静默漂移）；`sync-enemies.js` 同 | ✅ **完成**（2026-09-15）。两个脚本各加 `--check`：只校验不写盘，一致退出 0、漂移退出 1 并点名**首个差异行**（两行对照）。★ **行尾归一**是必须的：`structure-editor.html` 主体是 **CRLF** 而内嵌注册表块是 **LF**（混排），不比归一会把编辑器改行尾读成"内容漂移"→ 门变成噪声源。`sync-enemies` 只比**注册表块本身**（正则抠出），不比整个 HTML。★ **顺手补上计划没写的一个洞**：只比"生成物 vs 重新生成"**抓不到"字段级手抄漏抄"** —— 两边用同一份映射，漏掉的字段在两边一样地缺，`--check` 照样绿（正是 `display_name` 当年漏掉的形状）。故加了一条**键覆盖守卫**：`data/enemies.json` 里出现的每个键都必须被映射到（或有理由地登记进 `NOT_IN_EDITOR`），**写模式也拒绝**。★ **反证 4 条全部咬红**：A 改 `tile_defs.json` 一个 `hp`（未跑脚本）→ 第 127 行对照；B 改 `enemies.json` 一个 `display_name` → 注册表块第 20 行对照；C json 不动、只手改生成物 → 同样咬红；D 往 json 加字段而手抄没跟上 → 点名 `wake_radius` 且**写模式也 exit 1**。另验**幂等**（不带参跑，两产物 md5 不变）。★ 门怎么被跑到：目前同 `check_naming.py` 一样是**手动**跑（本仓无 CI，且 `check_naming.py` 是**零外部依赖**的纯 Python，不宜引入 node 依赖）—— 已写进 CLAUDE.md 两处（加新敌人 / 砖块属性表），供改 json 时顺手跑 |
 
 ---
 

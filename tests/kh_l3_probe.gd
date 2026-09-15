@@ -1,4 +1,4 @@
-extends Node
+extends ProbeBase
 
 # KH 合并 L3 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
@@ -16,7 +16,7 @@ extends Node
 #    探针中途脚本报错(解析失败/函数中断)时,--quit-after 仍会以 **exit 0** 退出,
 #    且**不会**打印 ALL-OK(也不打 FAIL)——只看退出码会把"没跑完"读成"通过"。
 
-const PLAYER_SCENE := "res://scenes/player/Player.tscn"
+const PLAYER_SCENE := "res://scenes/player/player.tscn"
 const WEAPON_BASE_SRC := "res://scenes/weapons/weapon_base.gd"
 const WEAPON_COMPONENT_SRC := "res://scenes/player/weapon_component.gd"
 const PLAYER_SRC := "res://scenes/player/player.gd"
@@ -33,8 +33,6 @@ const EXPECTED := [
 	{"slot": 6, "path": "res://scenes/weapons/laser_gun.tscn", "name": "Laser Gun", "mag": 12, "reload": 1.2, "live": 0},
 ]
 
-var _failures: Array[String] = []
-
 
 # 换弹测试用的**桩玩家**:只需要 weapon_base 关心的三个口(倒地/朝向/后坐)。
 # 用桩而不用真实 Player 的原因:真实 Player 每物理帧会 weapons.tick() → 自动推进 _reload_t,
@@ -46,12 +44,17 @@ class StubPlayer extends Node2D:
 
 
 # 网络输入源桩(必修 1 回归钉用):与 StubPlayer 同款,只多一个 input_is_network() -> true,
-# 模拟 PvP 权威服务器/远端副本上的玩家(它们由 NetworkInputSource 驱动)。
+# 模拟 PvP 权威服务器/远端副本上的玩家(它们由 PacketInputSource 驱动)。
 class NetStubPlayer extends Node2D:
 	func is_downed() -> bool: return false
 	func get_facing() -> int: return 1
 	func apply_recoil(_push: float) -> void: pass
 	func input_is_network() -> bool: return true
+
+
+# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+func probe_id() -> String:
+	return "L3"
 
 
 func _ready() -> void:
@@ -60,10 +63,10 @@ func _ready() -> void:
 
 	await _check_weapon_numbers()
 
-	# 真实 Player.tscn(闸门/滚轮/残弹记忆都用它)
+	# 真实 player.tscn(闸门/滚轮/残弹记忆都用它)
 	var player_scene: PackedScene = load(PLAYER_SCENE)
 	if player_scene == null:
-		_failures.append("Player.tscn 载入失败,闸门/滚轮/残弹记忆无法验证")
+		_failures.append("player.tscn 载入失败,闸门/滚轮/残弹记忆无法验证")
 		_finish()
 		return
 	var player: Node = player_scene.instantiate()
@@ -73,7 +76,7 @@ func _ready() -> void:
 	await _frames(3)
 	var wep: WeaponComponent = player.weapons
 	if wep == null:
-		_failures.append("Player.tscn 上没有 Weapons 组件")
+		_failures.append("player.tscn 上没有 Weapons 组件")
 		_finish()
 		return
 
@@ -198,113 +201,19 @@ func _check_cycle(wep: WeaponComponent) -> void:
 
 # ── 4) 换弹状态机(真实武器实例 + 桩玩家;手动 tick 推进,帧率无关)+ 网络输入源闸门 ──
 # player/wep 两个参数仅供「网络输入源 → 不换弹」这条真实链路断言用(必修 1 回归钉)。
+
+# hoisted from locals when __check_reload_state_machine was split (first assignment kept in place).
+var w: WeaponBase = null
+var stub: Node = null
+var _aborted: bool = false
 func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
-	var stub := StubPlayer.new()
-	add_child(stub)
-	var scene: PackedScene = load("res://scenes/weapons/pistol_test.tscn")
-	if scene == null:
-		_failures.append("换弹测试:手枪场景载入失败")
+	# 每段后查 _aborted:段内原来的 `return` 退出的是**整个函数**,拆完只退出该段。
+	await _check_reload_core(player, wep)
+	if _aborted:
 		return
-	var w: WeaponBase = scene.instantiate()
-	add_child(w)
-	await get_tree().process_frame
-	w.equip(stub)
-
-	_check(w.reload_active(), "换弹玩法未生效(reload_active()=false;pvp=%s)" % str(Level0.pvp_mode))
-
-	# 对照(反恒真):非装填态 fire() 必须真的出弹 + 扣弹 —— 证明下面的"装填中不出弹"有意义
-	var n0 := _bullets()
-	w.fire()
-	var n1 := _bullets()
-	_check(n1 == n0 + 1, "对照:非装填态 fire() 未出弹(场上弹数 %d → %d)" % [n0, n1])
-	_check(w.mag_ammo == w.mag_size - 1,
-			"对照:非装填态 fire() 未扣弹(mag_ammo=%d,应 %d)" % [w.mag_ammo, w.mag_size - 1])
-
-	# 进入装填
-	w.fire_cd_timer = 0.0
-	w.mag_ammo = 3
-	w.start_reload()
-	_check(w.is_reloading(), "start_reload() 后 is_reloading() 仍为假")
-	# 起步进度必须 ≈0 —— 闭区间 [0,1] 判据抓不到「倒着走(起步 1.0)」与「恒值 0.5」两种坏实现
-	var p0 := w.reload_progress()
-	_check(p0 < 1e-3, "reload_progress() 起步应≈0(实际 %.3f;≈1 即进度倒着走,≈0.5 即恒值)" % p0)
-
-	# 装填中开火:不出弹、不扣弹、不烧冷却
-	var n2 := _bullets()
-	w.fire_cd_timer = 0.0
-	w.fire()
-	_check(w.mag_ammo == 3, "装填中 fire() 消耗了弹药(mag_ammo=%d,应仍为 3)" % w.mag_ammo)
-	_check(_bullets() == n2, "装填中 fire() 出了弹(场上弹数 %d → %d)" % [n2, _bullets()])
-	_check(w.fire_cd_timer == 0.0, "装填中 fire() 烧了冷却(fire_cd_timer=%.3f)" % w.fire_cd_timer)
-
-	# 手动推进到中段:进度严格在 (0,1) 且**方向/速率正确**
-	_check(is_equal_approx(w.reload_time, 1.0),
-			"换弹进度断言依赖手枪 reload_time=1.0(实际 %.3f;改了弹夹表就要同步改本断言)" % w.reload_time)
-	w.tick(0.5)
-	var pm := w.reload_progress()
-	_check(pm > 0.0 and pm < 1.0, "tick(0.5) 后 reload_progress=%.3f 不在 (0,1) 开区间" % pm)
-	# 0.5s / reload_time 1.0 → 进度必须≈0.5(自指的「两边取同一个函数」抓不到恒值/倒走,这条抓得到)
-	_check(absf(pm - 0.5) < 0.02, "tick(0.5) 后 reload_progress=%.3f 偏离 0.5(应 0.5±0.02)" % pm)
-	_check(w.is_reloading(), "推进到中段后 is_reloading() 变假了")
-
-	# 推进到完成(手动 tick,不依赖真实时间)
-	var guard := 0
-	while w.is_reloading() and guard < 200:
-		w.tick(0.05)
-		guard += 1
-	_check(not w.is_reloading(), "tick 推进 %d 次后仍在装填" % guard)
-	_check(w.mag_ammo == w.mag_size, "装填完成未补满弹夹(mag_ammo=%d / %d)" % [w.mag_ammo, w.mag_size])
-	_check(w.reload_progress() < 0.0,
-			"装填完成后 reload_progress() 应返回 -1(实际 %.3f)" % w.reload_progress())
-
-	# ── 网络输入源闸门(必修 1 回归钉)──────────────────────────────────
-	# 权威服务器进程**不实例化 Level0**(server/ 目录零赋值)→ `Level0.pvp_mode` 恒 false。
-	# 只判 pvp_mode 的实现在服务器上会判成"单机":每打空弹夹就 start_reload() 并拒绝出弹
-	# reload_time 秒,而客户端预测不受限 → 服务器不广播 bullet_spawn → **PvP 打中不掉血、
-	# 无任何报错**;且 mag_ammo/_reloading 不入 capture_state → 分歧永不自愈。
-	# 判据只能是输入源(权威模拟与远端副本都由 NetworkInputSource 驱动)。
-	_check(Level0.pvp_mode == false, "前置:本钉要求 pvp_mode 为 false(实际 %s)" % str(Level0.pvp_mode))
-	# (a) 桩路径:覆盖 weapon_base 的 has_method 守卫 + input_is_network()==true
-	var net_stub := NetStubPlayer.new()
-	add_child(net_stub)
-	w.equip(net_stub)
-	_check(not w.reload_active(),
-			"网络输入源驱动时 reload_active() 为真(权威服务器会单方面停火 = PvP 伤害静默失效)")
-	w.mag_ammo = 3
-	w.start_reload()
-	_check(not w.is_reloading(), "网络输入源驱动时 start_reload() 仍进入装填(应被 reload_active() 拒绝)")
-	# (b) 真实链路:真 Player.tscn + NetworkInputSource → player.gd::input_is_network()
-	var real_w: WeaponBase = wep.current_weapon()
-	if real_w == null:
-		_failures.append("网络闸门:Player 当前没有武器实例,真实链路无法验证")
-	else:
-		var prev_src: InputSource = player.input_source
-		player.set_input_source(NetworkInputSource.new())
-		_check(player.input_is_network(), "注入 NetworkInputSource 后 player.input_is_network() 仍为假")
-		_check(not real_w.reload_active(),
-				"真实 Player 注入 NetworkInputSource 后 reload_active() 仍为真(必修 1 未生效)")
-		player.set_input_source(prev_src)
-		_check(not player.input_is_network(), "复原本地输入源后 input_is_network() 应为假")
-
-	# (c) PvP **本地客户端**:pvp_mode=true 但输入源是本地的(C2 下引擎自步进读真实鼠标,
-	# pvp_client.gd:49 只置 pvp_mode,本地玩家不注入 NetworkInputSource)→ 同样不许换弹。
-	# 漏这一条 = 客户端本地预测"装填中不许开火"、服务器无限弹 → 枪哑火但人照死;
-	# 也违反 player.gd「PvP 不开换弹(reload_active() 恒 false)」的既有约定。
-	w.equip(stub)   # 先复原成本地输入源,再验 PvP 客户端这一格
-	net_stub.queue_free()
-	Level0.pvp_mode = true
-	_check(not w.reload_active(),
-			"PvP 客户端(pvp_mode=true + 本地输入源)reload_active() 仍为真(本地预测会单方面哑火)")
-	w.mag_ammo = 3
-	w.start_reload()
-	_check(not w.is_reloading(), "PvP 客户端 start_reload() 仍进入装填")
-	Level0.pvp_mode = false
-	_check(w.reload_active(), "复位 pvp_mode=false 后单机换弹应恢复(reload_active()=true)")
-
-	w.queue_free()
-	stub.queue_free()
-	await get_tree().process_frame
-
+	await _check_network_gate(player, wep)
+	if _aborted:
+		return
 
 # ── 5) 残弹记忆语义(切走记住、切回恢复,**不回满**)──────────────────
 func _check_mag_memory(wep: WeaponComponent) -> void:
@@ -392,10 +301,10 @@ func _check_same_frame_cycle(wep: WeaponComponent) -> void:
 # 「注释里写出来的字面量」既会误绿(`# weapons.tick(delta)` 被注释掉照样命中),
 # 也会误红(weapon_base.gd 的注释里出现过裸 `_process` 字样)。
 func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
-	var wb_src := _code_only(_read_res(WEAPON_BASE_SRC))
-	var wc_src := _code_only(_read_res(WEAPON_COMPONENT_SRC))
-	var pl_src := _code_only(_read_res(PLAYER_SRC))
-	var lv_src := _code_only(_read_res(LEVEL0_SRC))
+	var wb_src := _code_only(_read(WEAPON_BASE_SRC))
+	var wc_src := _code_only(_read(WEAPON_COMPONENT_SRC))
+	var pl_src := _code_only(_read(PLAYER_SRC))
+	var lv_src := _code_only(_read(LEVEL0_SRC))
 	_check(wb_src != "", "读不到 %s" % WEAPON_BASE_SRC)
 	_check(wc_src != "", "读不到 %s" % WEAPON_COMPONENT_SRC)
 	_check(pl_src != "", "读不到 %s" % PLAYER_SRC)
@@ -429,34 +338,112 @@ func _frames(n: int) -> void:
 		await get_tree().process_frame
 
 
-func _check(ok: bool, msg: String) -> void:
-	if not ok:
-		_failures.append(msg)
+func _check_reload_core(player: Node, wep: WeaponComponent) -> void:
+	stub = StubPlayer.new()
+	add_child(stub)
+	var scene: PackedScene = load("res://scenes/weapons/pistol_test.tscn")
+	if scene == null:
+		_failures.append("换弹测试:手枪场景载入失败")
+		_aborted = true
+		return
+	w = scene.instantiate()
+	add_child(w)
+	await get_tree().process_frame
+	w.equip(stub)
 
+	_check(w.reload_active(), "换弹玩法未生效(reload_active()=false;pvp=%s)" % str(Level0.pvp_mode))
 
-func _read_res(path: String) -> String:
-	if not ResourceLoader.exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
+	# 对照(反恒真):非装填态 fire() 必须真的出弹 + 扣弹 —— 证明下面的"装填中不出弹"有意义
+	var n0 := _bullets()
+	w.fire()
+	var n1 := _bullets()
+	_check(n1 == n0 + 1, "对照:非装填态 fire() 未出弹(场上弹数 %d → %d)" % [n0, n1])
+	_check(w.mag_ammo == w.mag_size - 1,
+			"对照:非装填态 fire() 未扣弹(mag_ammo=%d,应 %d)" % [w.mag_ammo, w.mag_size - 1])
 
+	# 进入装填
+	w.fire_cd_timer = 0.0
+	w.mag_ammo = 3
+	w.start_reload()
+	_check(w.is_reloading(), "start_reload() 后 is_reloading() 仍为假")
+	# 起步进度必须 ≈0 —— 闭区间 [0,1] 判据抓不到「倒着走(起步 1.0)」与「恒值 0.5」两种坏实现
+	var p0 := w.reload_progress()
+	_check(p0 < 1e-3, "reload_progress() 起步应≈0(实际 %.3f;≈1 即进度倒着走,≈0.5 即恒值)" % p0)
 
-# 剥掉纯注释行(整行以 # 开头,允许缩进),供源码级 contains 断言用。
-# 只剥「整行注释」:行尾注释里写字面量的情况本层没有,不做正则以免误伤字符串里的 #。
-func _code_only(src: String) -> String:
-	var out: Array[String] = []
-	for line in src.split("\n"):
-		var s: String = (line as String).strip_edges()
-		if s.is_empty() or s.begins_with("#"):
-			continue
-		out.append(s)
-	return "\n".join(out)
+	# 装填中开火:不出弹、不扣弹、不烧冷却
+	var n2 := _bullets()
+	w.fire_cd_timer = 0.0
+	w.fire()
+	_check(w.mag_ammo == 3, "装填中 fire() 消耗了弹药(mag_ammo=%d,应仍为 3)" % w.mag_ammo)
+	_check(_bullets() == n2, "装填中 fire() 出了弹(场上弹数 %d → %d)" % [n2, _bullets()])
+	_check(w.fire_cd_timer == 0.0, "装填中 fire() 烧了冷却(fire_cd_timer=%.3f)" % w.fire_cd_timer)
 
+	# 手动推进到中段:进度严格在 (0,1) 且**方向/速率正确**
+	_check(is_equal_approx(w.reload_time, 1.0),
+			"换弹进度断言依赖手枪 reload_time=1.0(实际 %.3f;改了弹夹表就要同步改本断言)" % w.reload_time)
+	w.tick(0.5)
+	var pm := w.reload_progress()
+	_check(pm > 0.0 and pm < 1.0, "tick(0.5) 后 reload_progress=%.3f 不在 (0,1) 开区间" % pm)
+	# 0.5s / reload_time 1.0 → 进度必须≈0.5(自指的「两边取同一个函数」抓不到恒值/倒走,这条抓得到)
+	_check(absf(pm - 0.5) < 0.02, "tick(0.5) 后 reload_progress=%.3f 偏离 0.5(应 0.5±0.02)" % pm)
+	_check(w.is_reloading(), "推进到中段后 is_reloading() 变假了")
 
-func _finish() -> void:
-	if _failures.is_empty():
-		print("KH L3 PROBE: ALL-OK")
-		get_tree().quit(0)
+	# 推进到完成(手动 tick,不依赖真实时间)
+	var guard := 0
+	while w.is_reloading() and guard < 200:
+		w.tick(0.05)
+		guard += 1
+	_check(not w.is_reloading(), "tick 推进 %d 次后仍在装填" % guard)
+	_check(w.mag_ammo == w.mag_size, "装填完成未补满弹夹(mag_ammo=%d / %d)" % [w.mag_ammo, w.mag_size])
+	_check(w.reload_progress() < 0.0,
+			"装填完成后 reload_progress() 应返回 -1(实际 %.3f)" % w.reload_progress())
+
+func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
+
+	# ── 网络输入源闸门(必修 1 回归钉)──────────────────────────────────
+	# 权威服务器进程**不实例化 Level0**(server/ 目录零赋值)→ `Level0.pvp_mode` 恒 false。
+	# 只判 pvp_mode 的实现在服务器上会判成"单机":每打空弹夹就 start_reload() 并拒绝出弹
+	# reload_time 秒,而客户端预测不受限 → 服务器不广播 bullet_spawn → **PvP 打中不掉血、
+	# 无任何报错**;且 mag_ammo/_reloading 不入 capture_state → 分歧永不自愈。
+	# 判据只能是输入源(权威模拟与远端副本都由 PacketInputSource 驱动)。
+	_check(Level0.pvp_mode == false, "前置:本钉要求 pvp_mode 为 false(实际 %s)" % str(Level0.pvp_mode))
+	# (a) 桩路径:覆盖 weapon_base 的 has_method 守卫 + input_is_network()==true
+	var net_stub := NetStubPlayer.new()
+	add_child(net_stub)
+	w.equip(net_stub)
+	_check(not w.reload_active(),
+			"网络输入源驱动时 reload_active() 为真(权威服务器会单方面停火 = PvP 伤害静默失效)")
+	w.mag_ammo = 3
+	w.start_reload()
+	_check(not w.is_reloading(), "网络输入源驱动时 start_reload() 仍进入装填(应被 reload_active() 拒绝)")
+	# (b) 真实链路:真 player.tscn + PacketInputSource → player.gd::input_is_network()
+	var real_w: WeaponBase = wep.current_weapon()
+	if real_w == null:
+		_failures.append("网络闸门:Player 当前没有武器实例,真实链路无法验证")
 	else:
-		print("KH L3 PROBE: FAIL | " + "; ".join(_failures))
-		get_tree().quit(1)
+		var prev_src: PlayerInput = player.input_source
+		player.set_input_source(PacketInputSource.new())
+		_check(player.input_is_network(), "注入 PacketInputSource 后 player.input_is_network() 仍为假")
+		_check(not real_w.reload_active(),
+				"真实 Player 注入 PacketInputSource 后 reload_active() 仍为真(必修 1 未生效)")
+		player.set_input_source(prev_src)
+		_check(not player.input_is_network(), "复原本地输入源后 input_is_network() 应为假")
+
+	# (c) PvP **本地客户端**:pvp_mode=true 但输入源是本地的(C2 下引擎自步进读真实鼠标,
+	# pvp_game.gd:49 只置 pvp_mode,本地玩家不注入 PacketInputSource)→ 同样不许换弹。
+	# 漏这一条 = 客户端本地预测"装填中不许开火"、服务器无限弹 → 枪哑火但人照死;
+	# 也违反 player.gd「PvP 不开换弹(reload_active() 恒 false)」的既有约定。
+	w.equip(stub)   # 先复原成本地输入源,再验 PvP 客户端这一格
+	net_stub.queue_free()
+	Level0.pvp_mode = true
+	_check(not w.reload_active(),
+			"PvP 客户端(pvp_mode=true + 本地输入源)reload_active() 仍为真(本地预测会单方面哑火)")
+	w.mag_ammo = 3
+	w.start_reload()
+	_check(not w.is_reloading(), "PvP 客户端 start_reload() 仍进入装填")
+	Level0.pvp_mode = false
+	_check(w.reload_active(), "复位 pvp_mode=false 后单机换弹应恢复(reload_active()=true)")
+
+	w.queue_free()
+	stub.queue_free()
+	await get_tree().process_frame

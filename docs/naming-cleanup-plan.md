@@ -5,7 +5,9 @@
 ## 采用的规范(单一来源,已写进 CLAUDE.md / README)
 1. 目录一律小写(顶层与 `scenes/` 子目录)。
 2. 脚本文件名一律 snake_case;`class_name` 保持 Pascal(名字 = 类名转 snake)。
-3. 场景 `.tscn` 保持 PascalCase,与其 snake 脚本成对(`EnemyFlyBird.tscn` ↔ `enemy_fly_bird.gd`)——这是约定,不算不一致。
+3. 场景 `.tscn` 文件名**一律 snake**,与其脚本同名(`enemy_fly_bird.tscn` ↔ `enemy_fly_bird.gd`)。
+   ★ **2026-09-15 反转**:旧约定写的是 PascalCase,但现实里 56 个 `.tscn` 有 51 个已是 snake ——
+   一条没人守、也没人报错的规则等于没有,故按现实反转。现由 `tools/check_naming.py` 的 D 检查守住。
 4. autoload 标识 Pascal、文件 snake。
 5. 术语:类/文件用 `pvp_`/`Pvp`;`map`→`maps`、目录取复数。
 6. 数据文件进 `data/`,不塞在代码目录。

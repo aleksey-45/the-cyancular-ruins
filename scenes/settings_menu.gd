@@ -31,15 +31,15 @@ func _ready() -> void:
 
 	# ── 音量 ──
 	vb.add_child(_section("音量"))
-	vb.add_child(_slider_row("主音量", Settings.master_volume, func(v: float) -> void:
+	vb.add_child(UiFactory.slider_row("主音量", Settings.master_volume, CHECK_LABEL_W, func(v: float) -> void:
 		Settings.master_volume = v
 		Settings.save()))
-	vb.add_child(_slider_row("音效", Settings.sfx_volume, func(v: float) -> void:
+	vb.add_child(UiFactory.slider_row("音效", Settings.sfx_volume, CHECK_LABEL_W, func(v: float) -> void:
 		Settings.sfx_volume = v
 		Settings.save()))
 
 	# ── 通用开关 ──
-	vb.add_child(_check("鼠标滚轮切枪", Settings.wheel_switch, func(on: bool) -> void:
+	vb.add_child(UiFactory.check_row("鼠标滚轮切枪", Settings.wheel_switch, CHECK_LABEL_W, func(on: bool) -> void:
 		Settings.wheel_switch = on
 		Settings.save()))
 
@@ -176,41 +176,5 @@ func _refresh_bind_label_for(btn: Button) -> void:
 # 互不相干的两个元素(2026-09-13 视觉评析)。定宽标签列同时让多行的开关纵向对齐。
 const CHECK_LABEL_W := 320.0
 
-func _check(text: String, initial: bool, on_toggle: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var lab := UiFactory.label(text, 32, UiFactory.C_TEXT)
-	lab.custom_minimum_size = Vector2(CHECK_LABEL_W, 0)
-	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(lab)
-	var cb := CheckButton.new()
-	cb.button_pressed = initial
-	cb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	UiFactory.style_check(cb, 32)
-	cb.toggled.connect(func(on: bool) -> void:
-		Sfx.play("switch")
-		on_toggle.call(on))
-	row.add_child(cb)
-	return row
 
 
-func _slider_row(text: String, initial: float, on_change: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	# 标签列宽与开关行共用 CHECK_LABEL_W → 滑条与开关纵向对齐成一列。
-	var l := UiFactory.label(text, 32, UiFactory.C_TEXT)
-	l.custom_minimum_size = Vector2(CHECK_LABEL_W, 0)
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(l)
-	var s := HSlider.new()
-	s.min_value = 0.0
-	s.max_value = 1.0
-	s.step = 0.05
-	s.value = initial
-	# 铺满剩余宽度:原先固定 360 宽,右侧 450px 空着,拖拽命中区也偏小。
-	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	s.custom_minimum_size = Vector2(360, 28)
-	UiFactory.style_slider(s)
-	s.value_changed.connect(func(v: float) -> void: on_change.call(v))
-	row.add_child(s)
-	return row

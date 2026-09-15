@@ -1,11 +1,11 @@
-extends Node
+extends ProbeBase
 
 # KH 合并 L6 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 600 res://tests/kh_l6_probe.tscn
 # 期望:每条 [L6] ... 打 ✓,末行 "KH L6 PROBE: ALL-OK",退出码 0。
 #
-# 存在理由:L6 把 KH 的 PvP 客户端加成接进 main 的 scenes/pvp_client.gd。侦察已定论:
+# 存在理由:L6 把 KH 的 PvP 客户端加成接进 main 的 scenes/pvp_game.gd。侦察已定论:
 # **KH 那版不是 main 的加法版,而是把 main 的 C2(客户端预测 rollback)整条链路删掉后的
 # server_rendered 版**(14 处危险差异 B1–B14)。本层的全部风险就是"做加法时把 C2 弄坏",
 # 而 C2 弄坏是**静默的**——不报错,表现为橡皮筋/手感错乱,只有人上手才看得出来。
@@ -54,16 +54,34 @@ extends Node
 #  15  头顶名统一 NAME_COLOR(U1 的决定)—— B13:回退按角色双色
 
 # ── 被扫文件 ────────────────────────────────────────────────────────
-const PC := "res://scenes/" + "pvp_client.gd"
+const PC := "res://scenes/" + "pvp_game.gd"
 # 9b) 的扫描对象:大乱斗客户端。与 pvp_client 是同一类风险的第二处实例。
 const RG := "res://scenes/" + "royale" + "_game.gd"
+# ★ 2026-09-14:两个客户端的**公共实现**抽进了共享基类(`_physics_process` / `_on_snapshot_own` /
+#   `_apply_tint` / `_apply_match_options` / `_on_remote_tile_destroyed` / `_on_hit_confirm` /
+#   `_correct_local_spawn` —— 剔注释后代码逐字相同的那 7 个)。故函数体查找要跨这两个文件。
+const BASE := "res://scenes/" + "pvp_match_client.gd"
 const PM_PATH := "res://ui/" + "pause_menu.gd"
 const HUD_TSCN := "res://ui/" + "pvp_hud.tscn"
 const HUD_SCRIPT := "res://ui/" + "pvp_hud.gd"
 const LASER := "res://scenes/weapons/" + "laser_weapon_base.gd"
-const CF_PATH := "res://scenes/effects/" + "combat_feedback.gd"
-const RB_PATH := "res://core/" + "prediction_rollback.gd"
-const MH_PATH := "res://server/" + "match_host.gd"
+const CF_PATH := "res://ui/" + "combat_feedback.gd"
+const RB_PATH := "res://core/net/" + "prediction_rollback.gd"
+# ★ 2026-09-15(阶段 5.6):MatchHost 按域拆成一条继承链,权威源码现在是**五份的并集**
+# (核心/回合/裁决/快照/状态)。别只读 match_host.gd —— "beam_fired" 已搬进 match_combat.gd,
+# 只读老家会让本门报"发送端被整条迁走了",或更糟:**静默失绿**。
+const MH_PATHS := ["res://server/" + "match_host.gd", "res://server/" + "match_round.gd",
+		"res://server/" + "match_combat.gd", "res://server/" + "match_snapshot.gd",
+		"res://server/" + "match_state.gd"]
+
+# MatchHost 五份源码的并集(见 MH_PATHS 的注释)。用 += 拼接,不引入任何转义序列。
+
+func _read_host_union() -> String:
+	var s := ""
+	for f in MH_PATHS:
+		s += _read(f)
+	return s
+
 
 # 生产目录(第 13 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
 const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "res://render"]
@@ -95,6 +113,8 @@ const N_PRELOAD_HUD := "preload(\"res://ui/" + "pvp_hud.tscn\")"
 const N_NEW_HUD := "Pvp" + "Hud.new("
 const N_HUD_CLS := "Pvp" + "Hud"
 const N_BEAM := "beam" + "_fired"
+# 广播样板助手(MatchHost._rpc_all):五处广播收进它之后,光束那行不再含 NetBus.rpc_id 字面量。
+const N_RPC_ALL := "_rpc" + "_all("
 const N_LOCAL_BEAM := "local_" + N_BEAM
 const N_ROUTING := "Net" + "Bus.local_" + N_BEAM + ".connect("
 const N_EXT_ROUTING := "Net" + "BusExt.local_" + N_BEAM
@@ -117,21 +137,37 @@ const MIN_CANARY_HITS := 5
 const RE_FIELD_PAUSE := "^var\\s+" + "_pause" + "_menu\\b"
 const RE_CONST_NAME_COLOR := "^const\\s+" + "NAME" + "_COLOR\\b"
 const RE_PACKET_DICT := "^\\s*var\\s+([A-Za-z_]\\w*)\\s*(?::[^:=]+)?:?=\\s*\\{"
+# 组包**新形态**(2026-09-14):位打包收进 NetworkInputSource.pack_record(协议编码端唯一来源,
+# 与解码端同处一类)。原先两个客户端各手抄一份字典字面量,qa 锚点因此认的是 `"seq": _input_seq`。
+# ★ 判据改成"**送出去的包必须带 _input_seq**"这条用意 —— 两种写法都能满足,故两种都认:
+#   新形态锚 `pack_record(` 一行(该调用必须收到 N_SEQ);旧形态仍走字典推导。别只留一种。
+const N_PACK := "Packet" + "InputSource.pack_" + "record("
 const RE_FUNC_DEF := "^(?:static\\s+)?func\\s+([A-Za-z_]\\w*)\\s*\\("
 const RE_ONREADY_PATH := "@onready\\s+var\\s+[A-Za-z_]\\w*\\s*:[^=]+=\\s*\\$([A-Za-z0-9_/]+)"
 # 文件级常量 + 字符串字面量(用于把"菜单路径抽成常量"这种正确修法也认下来)
 const RE_CONST_STR := "^const\\s+([A-Za-z_]\\w*)[^=]*=\\s*\"([^\"]*)\""
 
-var _failures: Array[String] = []
-var _pc_code := ""                     # pvp_client.gd 的去注释视图(保留缩进)
+var _pc_code := ""                     # pvp_game.gd 的去注释视图(保留缩进)
 var _pc_lines: PackedStringArray = PackedStringArray()
 var _rg_code := ""                     # royale_game.gd 的去注释视图(9b 用)
+var _base_code := ""                   # pvp_match_client.gd(共享基类)—— 公共函数体的所在
+var _base_lines: PackedStringArray = PackedStringArray()
 var _rg_lines: PackedStringArray = PackedStringArray()
+
+
+# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+func probe_id() -> String:
+	return "L6"
 
 
 func _ready() -> void:
 	_pc_code = _code_view(_read(PC))
 	_pc_lines = _pc_code.split("\n")
+	_base_code = _code_view(_read(BASE))
+	_base_lines = _base_code.split("\n")   # ★ 别写成"字面量里带真实换行":那种写法对**行尾**敏感,
+	if _base_code.is_empty():
+		# 基类读不到 → 下面所有 _body_anywhere 都会退化,必须**明确报红**而不是让它悄悄找不到
+		_failures.append("读不到 %s(共享基类;公共函数体都在那里)" % BASE)
 	_rg_code = _code_view(_read(RG))
 	_rg_lines = _rg_code.split("\n")
 	if _pc_code.is_empty():
@@ -164,28 +200,33 @@ func _ready() -> void:
 #   · 带 seq 的那个字典**就是**发给服务器的那个(send_input 的实参)
 func _check_seq_in_packet() -> void:
 	var before := _failures.size()
-	var phys := _func_body(_pc_code, "_physics_process")
+	var phys := _body_anywhere("_physics_process")
 	_check(not phys.is_empty(), "取不到 _physics_process 的函数体(改名/挪走了?)")
 	if phys.is_empty():
 		_summary(before, "输入包 seq:取不到 _physics_process")
 		return
 	var lines := phys.split("\n")
 	var i_inc := _find_line(lines, N_SEQ_INC)
-	var i_key := _find_line(lines, N_SEQ_KEY)
+	var i_key := _packet_anchor(lines)
 	_check(i_inc >= 0, "组包前没有 `%s`(输入序号不单调 → 服务器 ack 锚点无从推进)" % N_SEQ_INC)
-	_check(i_key >= 0, "输入包字典里没有 `%s`(服务器 _ack_seq 永停 0 → 回滚锚点全失)" % N_SEQ_KEY)
+	_check(i_key >= 0, "找不到组包处(`%s` 与 `%s` 都不在 → 服务器 _ack_seq 永停 0、回滚锚点全失)" % [N_PACK, N_SEQ_KEY])
 	if i_inc >= 0 and i_key >= 0:
-		_check(i_inc < i_key, "`%s` 出现在 `%s` 之后(送出去的 seq 不是本帧新序号)" % [N_SEQ_INC, N_SEQ_KEY])
-	var varname := _packet_var(lines, i_key if i_key >= 0 else lines.size() - 1)
-	_check(not varname.is_empty(), "找不到承载 seq 的组包字典(`var X := {` 推导失败)")
+		_check(i_inc < i_key, "`%s` 出现在组包之后(送出去的 seq 不是本帧新序号)" % N_SEQ_INC)
+	# ★ 用意:送出去的包必须**带本帧新序号**。新形态下这体现为「组包调用收到了 _input_seq」,
+	#   旧形态下体现为字典里绑定 `"seq": _input_seq` —— 后者本身含 N_SEQ,故这一条同时覆盖两种。
+	if i_key >= 0:
+		_check(lines[i_key].contains(N_SEQ),
+			"组包处没带输入序号 `%s`(seq 没进包):「%s」" % [N_SEQ, lines[i_key].strip_edges()])
+	var varname := _packet_varname(lines, i_key)
+	_check(not varname.is_empty(), "找不到承载 seq 的组包变量(`var X := ` 推导失败)")
 	var i_send := _find_line(lines, N_SEND)
 	_check(i_send >= 0, "找不到输入包发送调用(%s)" % N_SEND)
 	if i_send >= 0:
 		_check(lines[i_send].contains("rpc_" + "id("), "输入包不经 NetBus.rpc_id 发送(服务器收不到):「%s」" % lines[i_send].strip_edges())
 		if not varname.is_empty():
 			_check(lines[i_send].contains(varname),
-				"发送的不是带 seq 的那个字典(发送行「%s」里没有 %s)" % [lines[i_send].strip_edges(), varname])
-	_summary(before, "输入包 seq:自增在 %d,绑定在 %d,发送字典 = %s" % [i_inc, i_key, varname if varname != "" else "?"])
+				"发送的不是带 seq 的那个变量(发送行「%s」里没有 %s)" % [lines[i_send].strip_edges(), varname])
+	_summary(before, "输入包 seq:自增在 %d,组包在 %d,发送变量 = %s" % [i_inc, i_key, varname if varname != "" else "?"])
 
 
 # ── 2) 快照两条包的分工:世界包不得碰本端,本人包必须喂控制器(B6)──
@@ -198,8 +239,8 @@ func _check_seq_in_packet() -> void:
 #   (那个辅助函数在深层嵌套上不稳,拆包时实测误报过一次,`_guarded_calls` 已随第 6 条删除)。
 func _check_snapshot_authoritative() -> void:
 	var before := _failures.size()
-	var world := _func_body(_pc_code, "_on_snapshot_world")
-	var own := _func_body(_pc_code, "_on_snapshot_own")
+	var world := _body_anywhere("_on_snapshot_world")
+	var own := _body_anywhere("_on_snapshot_own")
 	_check(not world.is_empty(), "取不到 _on_snapshot_world 的函数体(改名/挪走了?)")
 	_check(not own.is_empty(), "取不到 _on_snapshot_own 的函数体(改名/挪走了?)")
 	if world.is_empty() or own.is_empty():
@@ -245,7 +286,7 @@ func _self_test_snapshot_judge() -> void:
 #     reconcile 再记,比的是本帧刚入 ring 的态 = 比错对象。
 func _check_c2_frame_block() -> void:
 	var before := _failures.size()
-	var phys := _func_body(_pc_code, "_physics_process")
+	var phys := _body_anywhere("_physics_process")
 	if phys.is_empty():
 		_summary(before, "C2 帧块:取不到 _physics_process")
 		return
@@ -294,20 +335,21 @@ func _check_c2_frame_block() -> void:
 # restore 之后必须按**已发出的输入序列**重放才能重对齐。没有 note_input 的回滚只剩
 # "把权威态贴上去"= 橡皮筋(KH 正是删掉了它)。
 # 判据:调用行必须同时带 `_input_seq` 与**真正发出去的那个字典变量**(不是随便一个字典)。
-# ★ 组包锚点与 #1 **同源**(同一个 _packet_var,锚在**承载 seq 绑定的那一行** = N_SEQ_KEY),
-#   **不取「note_input 上方最近的字典声明」**:那样锚点会被组包之后、调用之前插入的任何无关
-#   字典字面量抢走 → 重命名/重组组包这类**合法加法**会让本条假红(与 #3 的组包锚点同一条
-#   理由:判红只靠"实参不是那个字典"这条机械比对,不靠锚点碰巧落在谁头上)。
+# ★ 组包锚点与 #1 **同源**(同一个 _packet_anchor:_packet_varname,优先 pack_record 调用行、
+#   回退承载 `"seq": _input_seq` 的旧字典行),**不取「note_input 上方最近的字典声明」**:
+#   那样锚点会被组包之后、调用之前插入的任何无关字典字面量抢走 → 重命名/重组组包这类**合法加法**
+#   会让本条假红(与 #3 的组包锚点同一条理由:判红只靠"实参不是那个包变量"这条机械比对,
+#   不靠锚点碰巧落在谁头上)。
 func _check_note_input() -> void:
 	var before := _failures.size()
-	var phys := _func_body(_pc_code, "_physics_process")
+	var phys := _body_anywhere("_physics_process")
 	if phys.is_empty():
 		_summary(before, "note_input:取不到 _physics_process")
 		return
 	var lines := phys.split("\n")
 	var i_ni := _find_line(lines, N_NOTE_INPUT)
-	var i_key := _find_line(lines, N_SEQ_KEY)
-	var varname := _packet_var(lines, i_key if i_key >= 0 else lines.size() - 1)
+	var i_key := _packet_anchor(lines)
+	var varname := _packet_varname(lines, i_key)
 	_check(i_ni >= 0, "每物理帧没有 `%s`(回滚无输入可重放 → 退化成橡皮筋)" % N_NOTE_INPUT)
 	if i_ni >= 0:
 		_check(lines[i_ni].contains(N_SEQ),
@@ -327,9 +369,16 @@ func _check_note_input() -> void:
 # 判据三件:方法在、体内读两个维度、其它地方一个 set_controls_locked 都不许有(且方法真被调用)。
 func _check_input_lock_funnel() -> void:
 	var before := _failures.size()
+	# ★ 2026-09-14:锁函数并入**共享基类**(两模式同款)。定义可能落在 pvp_client 或基类 ——
+	#   两处都查;函数体判据在**定义所在的那个文件**上做。下面"散落扫描"则**两个文件一起扫**
+	#   (只查一边的话,另一边散落一份 set_controls_locked 就没人管)。
 	var i_def := _find_line(_pc_lines, "func " + N_LOCK_FN + "(")
-	_check(i_def >= 0, "缺 `func %s(`(输入锁失去单一收口点)" % N_LOCK_FN)
-	var body := _block_after(_pc_lines, i_def) if i_def >= 0 else ""
+	var def_lines := _pc_lines
+	if i_def < 0:
+		i_def = _find_line(_base_lines, "func " + N_LOCK_FN + "(")
+		def_lines = _base_lines
+	_check(i_def >= 0, "缺 `func %s(`(输入锁失去单一收口点;pvp_client 与共享基类里都没有)" % N_LOCK_FN)
+	var body := _block_after(def_lines, i_def) if i_def >= 0 else ""
 	if i_def >= 0:
 		_check(body.contains("_round_locked"), "锁函数体不读 `_round_locked`(倒计时冻结会失效)")
 		_check(body.contains("_menu_open"), "锁函数体不读 `_menu_open`(菜单开着仍能跑动开枪)")
@@ -338,11 +387,15 @@ func _check_input_lock_funnel() -> void:
 	# 单一收口:锁函数体之外的 `set_controls_locked` 一律算散落。函数体**不存在**时
 	# span 取空区间 → 每一处调用都算散落(KH 形态正是"删掉方法 + 就地直接调"两件事一起做,
 	# 只报"方法没了"会漏掉"散落在哪"这条线索)。
-	var span := _block_span(_pc_lines, i_def) if i_def >= 0 else Vector2i(0, 0)
+	var span := _block_span(def_lines, i_def) if i_def >= 0 else Vector2i(0, 0)
 	var stray: Array[String] = []
-	for k in range(_pc_lines.size()):
-		if (k < span.x or k >= span.y) and _pc_lines[k].contains(N_SET_LOCKED):
-			stray.append("%s ← %s" % [_enclosing_func(_pc_lines, k), _pc_lines[k].strip_edges()])
+	for pair in [[PC, _pc_lines, Vector2i(0, 0) if def_lines == _base_lines else span],
+			[BASE, _base_lines, span if def_lines == _base_lines else Vector2i(0, 0)]]:
+		var fl: PackedStringArray = pair[1]
+		var sp: Vector2i = pair[2]
+		for k in range(fl.size()):
+			if (k < sp.x or k >= sp.y) and fl[k].contains(N_SET_LOCKED):
+				stray.append("%s/%s ← %s" % [str(pair[0]).get_file(), _enclosing_func(fl, k), fl[k].strip_edges()])
 	var why := "锁函数体不存在,故下面每一处都是散落" if i_def < 0 else "散落站点"
 	_check(stray.is_empty(),
 		"`%s` 在锁函数体外有 %d 处(收口被打破:两个调用点各拼一次布尔 = 修复波 1 的病;%s: %s)"
@@ -489,27 +542,40 @@ func _check_beam_routing() -> void:
 	# 于是 `NetBusExt.rpc_id(peer_by_role[r], "beam_fired", rep)` —— 正是本断言注释里点名的那处
 	# **有意的不对称** —— 会**全绿**通过,而收端 NetBus 订阅此时已是静默 no-op。
 	# 取"同行"而非固定实参文本:广播表达式怎么改(peer 怎么取、rep 怎么组)都不假红。
-	var mh := _code_view(_read(MH_PATH))
-	_check(not mh.is_empty(), "读不到 %s" % MH_PATH)
+	var mh := _code_view(_read_host_union())
+	_check(not mh.is_empty(), "读不到 %s" % MH_PATHS)
 	if not mh.is_empty():
 		var mh_lines := mh.split("\n")
 		var beam_sites := _find_lines(mh_lines, "\"" + N_BEAM + "\"")
 		var on_netbus := 0
+		var via_helper := 0
 		var off_netbus: Array[String] = []
 		for k in beam_sites:
 			var ln := mh_lines[k].strip_edges()
 			if ln.contains("Net" + "Bus.rpc_id("):
 				on_netbus += 1
+			elif ln.contains(N_RPC_ALL):
+				# ★ 2026-09-14:五处广播样板收进 MatchHost._rpc_all 后,光束那行不再有字面量
+				#   `NetBus.rpc_id(`。走助手是允许的 —— 但**助手体内必须仍用 NetBus**
+				#   (见下方 nbus_in_helper),否则这条守卫等于被绕开。
+				via_helper += 1
 			else:
 				off_netbus.append("%s ← %s" % [_enclosing_func(mh_lines, k), ln])
-		_check(not beam_sites.is_empty(), "%s 里找不到 \"%s\" 字面量(发送端被整条迁走了?)" % [MH_PATH, N_BEAM])
-		_check(on_netbus >= 1,
-			"%s 里 \"%s\" 不在任何 `NetBus.rpc_id(` 行上(%d 处不同行: %s)→ 发送端迁到 NetBusExt 后,收端 NetBus 订阅是**静默 no-op**"
-			% [MH_PATH, N_BEAM, off_netbus.size(), " | ".join(off_netbus)])
+		_check(not beam_sites.is_empty(), "%s 里找不到 \"%s\" 字面量(发送端被整条迁走了?)" % [MH_PATHS, N_BEAM])
+		if via_helper > 0:
+			var helper_body := _func_body(_code_view(_read_host_union()), N_RPC_ALL.trim_suffix("("))
+			_check(not helper_body.is_empty(), "找不到 %s 的函数体(判据无从落地)" % N_RPC_ALL)
+			var nbus_in_helper := helper_body.contains("Net" + "Bus.")
+			var next_in_helper := helper_body.contains("Net" + "BusExt")
+			_check(nbus_in_helper and not next_in_helper,
+				"%s 的体内没有走 NetBus(或混进了 NetBusExt)→ 光束实际从别的节点发出,收端 NetBus 订阅是**静默 no-op**" % N_RPC_ALL)
+		_check(on_netbus >= 1 or via_helper >= 1,
+			"%s 里 \"%s\" 既不在 `NetBus.rpc_id(` 行上、也不经 %s(%d 处不同行: %s)→ 发送端迁到 NetBusExt 后,收端 NetBus 订阅是**静默 no-op**"
+			% [MH_PATHS, N_BEAM, N_RPC_ALL, off_netbus.size(), " | ".join(off_netbus)])
 		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 \"%s\" 同行 %s.rpc_id ×%d"
 				% [N_LOCAL_BEAM, wrong.size(), N_BEAM, "NetBus", on_netbus])
 	else:
-		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 %s 读不到" % [N_LOCAL_BEAM, wrong.size(), MH_PATH])
+		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 %s 读不到" % [N_LOCAL_BEAM, wrong.size(), MH_PATHS])
 
 
 # ── 12) 退出路径:大写零命中 + 路径① + 「开始收口后不许残留裸切」的过渡守卫 ──
@@ -686,48 +752,12 @@ func _check_name_color() -> void:
 
 # ── 工具 ────────────────────────────────────────────────────────────
 
-# 去注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本(整行注释与行尾注释都删),
-# 丢掉只剩空白的行,**保留缩进**(结构类判据靠缩进定块)。
-# 为什么不能只看裸文本:一句提到被删调用的**注释**能把"在位"类断言喂绿,反过来也能把
-# "零引用"类断言弄红 —— 注释不是代码(与 kh_l4_probe / kh_l5_probe 同源)。
-# ⚠ 已知边界:`"""…"""` 多行字符串不跨行带状态(逐行调用);本探针的目标文件里没有多行字符串。
-func _code_view(src: String) -> String:
-	var out: Array[String] = []
-	for raw in src.split("\n"):
-		var s := _strip_line_comment(raw)
-		if s.strip_edges().is_empty():
-			continue
-		out.append(s.rstrip(" \t"))
-	return "\n".join(out)
-
-
-# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义与 _match_paren 同法)。
-func _strip_line_comment(line: String) -> String:
-	var quote := ""
-	var j := 0
-	while j < line.length():
-		var ch := line[j]
-		if quote != "":
-			if ch == "\\":
-				j += 1
-			elif ch == quote:
-				quote = ""
-		elif ch == "\"" or ch == "'":
-			quote = ch
-		elif ch == "#":
-			return line.substr(0, j)
-		j += 1
-	return line
-
-
-# 取某函数的函数体(从 `func 名(` 到下一个顶层 `func` 之前;找不到返回空串)。
-# 判据必须落在**体内**:同名调用点在别的函数里、或函数被删只剩调用点,都不能算"在位"。
-func _func_body(code: String, name: String) -> String:
-	var i := code.find("func " + name + "(")
-	if i < 0:
-		return ""
-	var j := code.find("\nfunc ", i + 1)
-	return code.substr(i, (j - i) if j > 0 else code.length() - i)
+# 取函数体:`pvp_game.gd` 找不到就到**共享基类**里找(见 BASE 的注释)。
+# ★ 都找不到时返回空串 —— 各调用点都有「取不到 … 函数体(改名/挪走了?)」的断言,
+#   所以"又搬到第三个文件"会被照成**红**,不会静默放行(这条比"找一个够宽的地方"重要)。
+func _body_anywhere(name: String) -> String:
+	var b := _func_body(_pc_code, name)
+	return b if not b.is_empty() else _func_body(_base_code, name)
 
 
 # 某行的缩进宽度(制表符/空格都算一列)
@@ -787,6 +817,24 @@ func _find_line(lines: PackedStringArray, needle: String) -> int:
 
 
 # 第一条**匹配** pattern 的行号(找不到 -1)
+# 组包锚点:优先新形态(pack_record 调用行),回退旧形态(承载 `"seq": _input_seq` 的那一行)。
+# 两者都指"组出要发出去的那个包"这件事发生的位置。
+func _packet_anchor(lines: PackedStringArray) -> int:
+	var i := _find_line(lines, N_PACK)
+	return i if i >= 0 else _find_line(lines, N_SEQ_KEY)
+
+# 承载 seq 的那个**变量名**:先从锚点那一行取 `var X :=`(新形态:`var pkt := ...pack_record(...)`);
+# 取不到再回退到旧的"往前找最近的字典字面量"。
+func _packet_varname(lines: PackedStringArray, anchor: int) -> String:
+	if anchor >= 0:
+		var re := RegEx.new()
+		re.compile("^\\s*var\\s+([A-Za-z_]\\w*)\\s*(?::[^:=]+)?:?=")
+		var m := re.search(lines[anchor])
+		if m != null:
+			return m.get_string(1)
+	return _packet_var(lines, anchor if anchor >= 0 else lines.size() - 1)
+
+
 func _find_line_re(lines: PackedStringArray, pattern: String) -> int:
 	var re := RegEx.new()
 	re.compile(pattern)
@@ -847,7 +895,6 @@ func _safe_call_menu_path(lines: PackedStringArray, needles: Array[String]) -> S
 	return ""
 
 
-
 # 组包字典声明处的 {行号, 变量名}(找不到返回 {-1, ""})。
 # 与 _packet_var 同一个正则、同一套推导,故全探针的"变量名"都以 `var X := {` 为准:
 # 重命名组包变量是合法加法(**不假红**),而"发出去的不是带 seq 的那个字典"由实参比对判红。
@@ -865,66 +912,3 @@ func _packet_decl(lines: PackedStringArray, before: int) -> Dictionary:
 func _packet_var(lines: PackedStringArray, before: int) -> String:
 	return str(_packet_decl(lines, before)["name"])
 
-
-# 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
-# 函数名出现在注释/字符串里时文本法会假绿;而 has_method 对**脚本资源**看不见它自己的
-# 实例方法(L4 撞过这个坑),故一律走 get_script_method_list。
-func _method_info(gs: GDScript, name: String) -> Variant:
-	for m in gs.get_script_method_list():
-		if str(m.get("name", "")) == name:
-			return m
-	return null
-
-
-# 递归收集 roots 下所有 .gd / .tscn(跳过点目录;.git/.godot/.superpowers 都在其中)
-func _collect(roots: Array) -> Array[String]:
-	var out: Array[String] = []
-	for r in roots:
-		_walk(r, out)
-	out.sort()
-	return out
-
-
-func _walk(dir_path: String, out: Array[String]) -> void:
-	var d := DirAccess.open(dir_path)
-	if d == null:
-		return
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if not name.begins_with("."):
-			var p := dir_path.path_join(name)
-			if d.current_is_dir():
-				_walk(p, out)
-			elif name.ends_with(".gd") or name.ends_with(".tscn"):
-				out.append(p)
-		name = d.get_next()
-	d.list_dir_end()
-
-
-func _read(path: String) -> String:
-	if not ResourceLoader.exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
-
-
-func _check(ok: bool, msg: String) -> void:
-	if not ok:
-		_failures.append(msg)
-
-
-# 每条断言的汇总行:本次断言全绿才打 ✓,否则 ✗。裸 print 会让失败组也打印一行"像报喜"
-# 的汇总(读者容易把"打印了 15 行 [L6]"读成"15 条都过了")。
-# 参数 = 该条断言开始前的 _failures.size()(取差值判本组有无新增失败)。
-func _summary(fails_before: int, msg: String) -> void:
-	print("[L6] " + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
-
-
-func _finish() -> void:
-	if _failures.is_empty():
-		print("KH L6 PROBE: ALL-OK")
-		get_tree().quit(0)
-	else:
-		print("KH L6 PROBE: FAIL | " + "; ".join(_failures))
-		get_tree().quit(1)

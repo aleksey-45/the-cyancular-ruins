@@ -90,13 +90,8 @@ static func _floor_cells() -> Array:
 	for y in range(rows):
 		for x in range(cols):
 			var c := Vector2i(x, y)
-			if grid[c.y][c.x] != MazeGenerator.EMPTY:
-				continue
-			if not TileDefs.is_blocked(grid[posmod(c.y + 1, rows)][c.x]):
-				continue
-			if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY:
-				continue
-			_floor_cell_cache.append(c)
+			if MazeGenerator.is_floor_cell_with_headroom(grid, c):
+				_floor_cell_cache.append(c)
 	return _floor_cell_cache
 
 
@@ -141,18 +136,8 @@ static func _region_sizes() -> Dictionary:
 
 # 某格是否地板格(与 _floor_cells 同判据的 O(1) 版本:自身空 + 下方实心 + 上方留空)
 static func _floor_cells_has(c: Vector2i) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	var rows := grid.size()
-	var cols := (grid[0] as Array).size()
-	if grid[c.y][c.x] != MazeGenerator.EMPTY:
-		return false
-	if not TileDefs.is_blocked(grid[posmod(c.y + 1, rows)][c.x]):
-		return false
-	if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY:
-		return false
-	return true
+	# 判据收在 MazeGenerator(全仓曾有 5 份);本函数与 _floor_cells 的采集循环同判据。
+	return MazeGenerator.is_floor_cell_with_headroom(MazeGenerator.current_grid, c)
 
 
 static func _roomy_floor(c: Vector2i) -> bool:
@@ -396,14 +381,12 @@ func _broadcast_round_state() -> void:
 		"names": names,
 		"alive": alive,
 		"left": _left.keys(),
-		"match_time": int(_match_time),
 	}
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
-	var live_peers := multiplayer.get_peers()
-	for role in peer_by_role:
-		if live_peers.has(peer_by_role[role]):
-			NetBus.rpc_id(peer_by_role[role], "round_state", data)
+	# 基类的广播样板,只多一个"只发在线 peer"(大乱斗里掉线者仍在 peer_by_role 里待清理,
+	# 而往正在断开的 peer 发包会打 channel 错误)。样板本身收在 MatchHost._rpc_all。
+	_rpc_all("round_state", [data], -1, true)
 
 
 # 房主昵称表(worker 开局后由 server_main 注入;排行榜展示用)
@@ -431,11 +414,12 @@ func mark_disconnected(role: int) -> void:
 		input_sources.erase(role)
 	peer_by_role.erase(role)
 	_broadcast_round_state()
-	# 剩余人头 <2 → 直接终局(独行者判胜)
-	var online := 0
-	for r in peer_by_role:
-		online += 1
-	if online < 2 and _round_state != RoundState.MATCH_OVER:
+	# 剩余**玩家** <2 → 直接终局(独行者判胜)。
+	# ★ 判据必须是 `players`(真人 + AI 补位)而不是 `peer_by_role`:AI 补位 role 由服务端驱动、
+	#   没有 peer,压根不在 `peer_by_role` 里 —— 按 peer 数会在「2 真人 + 2 AI 掉 1 真人」时
+	#   把剩下 1 真人 + 2 AI 当场判终局(实测于 2026-09-14 审计)。最后一个真人离开时
+	#   server_main._on_peer_left 的 `_claims.is_empty() → quit(0)` 已兜住,不会僵持。
+	if players.size() < 2 and _round_state != RoundState.MATCH_OVER:
 		_finish_match()
 
 

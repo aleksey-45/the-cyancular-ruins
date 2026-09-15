@@ -2,7 +2,7 @@ extends Node2D
 # 服务器入口(headless 运行)。角色由命令行 user args(位于 `--` 之后)区分:
 #  - 无参数:大厅(默认,7777)——只做建房/配对;配对完成后为每局拉起一个 --worker 子进程。
 #  - `--worker --port P`:1v1 对局 worker——独占 UDP 端口 P,等两名客户端 claim_role 后
-#    RoomManager.start_match_on 建权威 MatchHost,任一方离开即拆局退出(释放端口)。
+#    MatchBootstrap.start_on 建权威 MatchHost,任一方离开即拆局退出(释放端口)。
 #  - `--worker --royale --port P [--roles 1,3] [--ai-roles r,r]`:大乱斗 worker——限时死斗(RoyaleHost),
 #    收齐全部人类 role(或 20s 超时按已到人数 ≥2)开局;单个掉线移出对局,全员走光才退出。
 #    `--roles` = **本局全部参战 role**(真人已分配号 + AI 补位号),由大厅显式传入。
@@ -29,7 +29,7 @@ var _match_started := false
 func _ready() -> void:
 	# 开局先自报版本:服务端是控制台子系统,这条是运维/联调时"我这跑的是哪一版"的唯一依据
 	# (发布版的版本号+构建时间由 tools/build_release.py 烘焙进 core/build_info.gd)
-	print("[server] 版本 %s  pid=%d" % [preload("res://core/build_info.gd").display(), OS.get_process_id()])
+	print("[server] 版本 %s  pid=%d" % [preload("res://core/config/build_info.gd").display(), OS.get_process_id()])
 	var args := OS.get_cmdline_user_args()
 	var is_worker := false
 	var port := NetBus.DEFAULT_PORT
@@ -68,7 +68,7 @@ func _ready() -> void:
 		return
 	# ── 大厅 ──
 	# 先杀掉还占着 7777 的旧服务端(上次没关干净会 bind 失败→闪退),再监听
-	_kill_port_holder(NetBus.DEFAULT_PORT)
+	ProcUtil.kill_udp_port(NetBus.DEFAULT_PORT)
 	var err := NetBus.start_server()
 	if err != OK:
 		push_error("服务器: 监听失败 %d" % err)
@@ -125,11 +125,11 @@ func _write_ip_file(text: String) -> void:
 		f.close()
 
 # worker 端口段文案(供服主提示:要转发的就是这个区间)。
-# 单一来源 = RoomManager 的 WORKER_PORT_BASE / WORKER_PORT_SPAN,勿在提示串里另写死数字:
+# 单一来源 = WorkerLauncher 的 WORKER_PORT_BASE / WORKER_PORT_SPAN,勿在提示串里另写死数字:
 # 曾写 "7800~7910" 与实际池(7800~8299)不符,照它放行防火墙会漏掉半个池子(自检 D2)。
 static func _worker_port_span_text() -> String:
-	return "%d~%d" % [RoomManager.WORKER_PORT_BASE,
-			RoomManager.WORKER_PORT_BASE + RoomManager.WORKER_PORT_SPAN - 1]
+	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
+			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
 
 # 公网出口 IP(尽力而为):自建房要给公网朋友连时,除这个 IP 外还须路由器转发 UDP 7777 与 worker 端口段
 # (区间取自 _worker_port_span_text,勿手写数字)。
@@ -149,15 +149,10 @@ func _fetch_public_ip() -> void:
 		http.queue_free())
 	http.request("http://ip-api.com/line/?fields=query")
 
-# 杀掉还监听该 UDP 端口的旧进程(Windows:PowerShell 取 UDP 端点属主进程→Stop-Process)。
-# 供大厅启动前用,避免旧服务端没关导致新实例 bind 失败瞬间退出(双击 exe 闪退)。
-# 注意:`% OwningProcess` 这种写法取不到属性(ForEach-Object 后接裸名字不展开 $_),实测拿空→杀不掉,
-# 7777 被旧进程占着新实例照旧 bind 失败。必须 `Select -Expand OwningProcess`(2026-09-06 修)。
-func _kill_port_holder(port: int) -> void:
-	var ps := "$p=Get-NetUDPEndpoint -LocalPort " + str(port) + \
-			" -ErrorAction SilentlyContinue | Select -ExpandProperty OwningProcess -Unique; " + \
-			"if($p){$p|%{Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue}}"
-	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, true)
+# (原 _kill_port_holder 已搬进 core/proc_util.gd → ProcUtil.kill_udp_port:那段 PowerShell
+#  与 server/worker_launcher.gd 的 kill_worker **逐字相同**,而那条 `Select -ExpandProperty
+#  OwningProcess` 的写法是踩坑才修对的(2026-09-06)—— 收成一处,别再给第二次抄的机会。
+#  守卫:kh_l5_probe 第 3 条。)
 
 # ── worker:独占端口等客户端 claim_role;1v1 收齐 2 人开局,大乱斗收齐 N 人(或 20s 超时)开局 ──
 func _run_worker(port: int) -> void:
@@ -294,10 +289,10 @@ func _begin_match() -> void:
 		NetBus.role_claimed.disconnect(_on_role_claimed)
 	if _royale:
 		# 房主(role1)规则项随 claim 上报生效; RoyaleHost.start_on 负责散点出生 + match_start
-		_host = RoyaleHost.start_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = RoyaleHost.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	else:
 		# 服务器权威规则项以房主(role1)选项为准(经 NetBusExt 上报;缺省=全默认)
-		_host = RoomManager.start_match_on(_claims, RoomManager.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = MatchBootstrap.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	add_child(_host)
 	# AI 补位昵称:唯一名 + -computer 后缀(排行榜/头顶显示,地位与真人等同)
 	for ai_r in _ai_roles:

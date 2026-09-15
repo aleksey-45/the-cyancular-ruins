@@ -43,17 +43,17 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 @onready var combat: CombatComponent = $Combat
 @onready var swim: SwimComponent = $Swim
 
-# 输入来源(行为不变重构):默认委托真实 Input;服务器注入 NetworkInputSource 驱动远端玩家。
-var input_source: InputSource = InputSource.new()
+# 输入来源(行为不变重构):默认委托真实 Input;服务器注入 PacketInputSource 驱动远端玩家。
+var input_source: PlayerInput = LocalInputSource.new()
 
-func set_input_source(src: InputSource) -> void:
+func set_input_source(src: PlayerInput) -> void:
 	input_source = src
 
 # 瞄准覆盖:本地返回 ZERO → 武器用鼠标;服务器注入的网络输入返回瞄准方向。
 func get_aim_dir_override() -> Vector2:
 	return input_source.get_aim_dir_override()
 
-# 输入源是否网络注入(NetworkInputSource)。武器瞄准据此决定不读宿主机 OS 鼠标(见 weapon_base)。
+# 输入源是否网络注入(PacketInputSource)。武器瞄准据此决定不读宿主机 OS 鼠标(见 weapon_base)。
 func input_is_network() -> bool:
 	return input_source != null and input_source.is_network_driven()
 
@@ -117,7 +117,8 @@ var state: Pose = Pose.STAND
 var state_lock_timer: float = 0.0
 const STATE_LOCK_TIME := 0.15   # 秒，切换后的最短停留时长
 
-const STOP_SNAP := 1.0              # 水平速度低于此值直接归零，避免贴地滑行
+# (原 const STOP_SNAP := 1.0 已提到 PlayerParams.stop_snap —— 移动手感数值的唯一去处,
+#  免得再被别处抄第二份。用点见下方两处 absf(velocity.x) 判定。)
 
 # 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
 var _coll_by_pose: Dictionary = {}
@@ -149,21 +150,7 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	if combat.is_downed():
-		# 死亡(倒地):不取消物理——重力/制动/击退照常,只是不吃输入、不结算战斗
-		if is_on_floor():
-			coyote_timer = coyote_time
-		else:
-			velocity.y += gravity * delta
-		if is_on_floor():
-			velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
-		else:
-			velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
-		if absf(velocity.x) < STOP_SNAP:
-			velocity.x = 0.0
-		combat.apply_knock(delta)
-		move_and_slide()
-		global_position = MazeGenerator.wrap_to_range(global_position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		_tick_downed(delta)
 		return
 	weapons.tick(delta)   # 武器帧逻辑走物理 tick(与 body 同一定时器;rollback 重放确定性)
 	combat.update_iframe_blink(delta)
@@ -177,102 +164,123 @@ func _physics_process(delta: float) -> void:
 
 	var horizontal_input = input_source.get_axis("left", "right")
 
-	# ---------- 水中(浮水/游泳):速度由 swim 设置,跳过攀爬/重力/跳跃/下蹲/冲刺 ----------
+	# ---------- 水中(浮水/游泳)与攀爬 ----------
+	# 这两块是**数据源**:in_water / latched 决定后面每一块跑不跑,故留在编排函数里,
+	# 只把消费它们的逻辑分出去(见下方各 _tick_*)。
 	var in_water := swim.update(self, delta, mult, input_source)
 	_update_waterproof(delta)
-	var climbing := false
 	var latched := false
 	if not in_water:
 		# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
-		climbing = climb.update(mult, delta, is_squat, input_source)
+		climb.update(mult, delta, is_squat, input_source)
 		latched = climb.is_latched()
 	else:
 		# 水中:清掉冲刺/下蹲残留,避免姿态锁死
 		is_charge = false
 		is_squat = false
 
-	# ---------- 垂直逻辑（土狼时间 / 跳跃缓冲 / 可变高度） ----------
-	if not latched and not in_water:
-		if is_on_floor():
-			coyote_timer = coyote_time
-		else:
-			# 空中冲刺重力削减:冲刺那几帧重力×charge_air_gravity_mult(变平,可跨沟)。
-			var grav_mult := charge_air_gravity_mult if is_charge else 1.0
-			velocity.y += gravity * grav_mult * delta
-			coyote_timer = maxf(coyote_timer - delta, 0.0)
+	_tick_vertical(delta, latched, in_water, mult)
+	_tick_crouch_and_dash(delta, latched, in_water)
+	_tick_horizontal(delta, in_water, horizontal_input, mult)
+	_tick_facing(delta, horizontal_input)
+	_tick_pose_and_collision(delta, in_water)
 
-		# 跳跃缓冲：落地前提前按跳，落地瞬间生效
-		if input_source.is_action_just_pressed("up"):
-			jump_buffer_timer = jump_buffer_time
-		else:
-			jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
+	# ---------- 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity ----------
+	# (地面把向下击退吃掉后再减回去会把玩家弹起,改用独立位移结算)
+	combat.apply_knock(delta)
 
-		# 触发跳跃：有缓冲输入且在地面或土狼窗口内
-		if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
-			# 冲刺中按跳 = 打断冲刺转跳跃,保留当前水平速度作动量(下方 accel/air-brake 平滑接管)。
-			if is_charge:
-				is_charge = false
-				charge_timer = 0.0
-			velocity.y = jump_velocity * mult.y
-			jump_buffer_timer = 0.0
-			coyote_timer = 0.0
-			jump_cut_applied = false
+	# ---------- 执行移动 ----------
+	move_and_slide()
 
-		# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
-		if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
-			velocity.y *= jump_cut_factor
-			jump_cut_applied = true
+	_tick_slide_reactions()
+	_wrap_position()
 
-	# ---------- 下蹲 / 空中下冲 ----------
-	if not latched and not in_water:
-		# 空中按 S 下冲(不在梯/链格上)。
-		if not is_on_floor() and input_source.is_action_just_pressed("down") \
-				and not climb.is_over_climb_tile():
-			velocity.y = charge_down_velocity
-		# 下蹲 = 在地面 且 按住 S,逐帧推导——不用 just_pressed/just_released 边沿。
-		# 旧实现 release 分支套在 if is_on_floor() 内:空中松开 S 不执行 → 落地仍蹲(卡蹲)。
-		var want_squat := is_on_floor() and input_source.is_action_pressed("down")
-		if want_squat and not is_squat:
-			is_charge = false   # 冲刺中按 S → 取消冲刺进蹲
-		is_squat = want_squat
 
-	# ---------- 冲刺输入 ----------
-	if not latched and not is_charge and not is_squat and not in_water:
-		if input_source.is_action_just_pressed("charge"):
-			is_charge = true
-			charge_timer = charge_duration
-			# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
-			if _last_move_timer > 0.0:
-				facing_direction = _last_move_dir
+# ---------- 垂直逻辑（土狼时间 / 跳跃缓冲 / 可变高度） ----------
+func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
+	if latched or in_water:
+		return
+	if is_on_floor():
+		coyote_timer = coyote_time
+	else:
+		# 空中冲刺重力削减:冲刺那几帧重力×charge_air_gravity_mult(变平,可跨沟)。
+		var grav_mult := charge_air_gravity_mult if is_charge else 1.0
+		velocity.y += gravity * grav_mult * delta
+		coyote_timer = maxf(coyote_timer - delta, 0.0)
 
-	# ---------- 水平速度计算(攀爬中不锁横移:爬/挂/空闲都可左右走,由 climb 只管垂直) ----------
-	if not in_water:
+	# 跳跃缓冲：落地前提前按跳，落地瞬间生效
+	if input_source.is_action_just_pressed("up"):
+		jump_buffer_timer = jump_buffer_time
+	else:
+		jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
+
+	# 触发跳跃：有缓冲输入且在地面或土狼窗口内
+	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
+		# 冲刺中按跳 = 打断冲刺转跳跃,保留当前水平速度作动量(下方 accel/air-brake 平滑接管)。
 		if is_charge:
-			velocity.x = charge_velocity * facing_direction
-			charge_timer -= delta
-			if charge_timer <= 0:
-				is_charge = false
-				# 收尾交回下方 accel/air-brake 平滑减速,不做 1500→750 突变半刹。
-		else:
-			# 蹲走:蹲态目标换成 crouch_walk_speed(可小步左右移动);非蹲态走 move_speed。
-			var speed_target := crouch_walk_speed if is_squat else move_speed
-			var target_velocity_x = horizontal_input * speed_target * mult.x
-			if horizontal_input != 0:
-				if is_on_floor():
-					velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_ground, delta)
-				else:
-					velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_air, delta)
-			else:
-				if is_on_floor():
-					velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
-				else:
-					velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
-				# 指数缓动逼近不到 0，接近 0 时直接吸附，避免贴地滑行
-				if absf(velocity.x) < STOP_SNAP:
-					velocity.x = 0.0
+			is_charge = false
+			charge_timer = 0.0
+		velocity.y = jump_velocity * mult.y
+		jump_buffer_timer = 0.0
+		coyote_timer = 0.0
+		jump_cut_applied = false
 
-	# ---------- 面朝方向更新 ----------
-	# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向
+	# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
+	if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
+		velocity.y *= jump_cut_factor
+		jump_cut_applied = true
+
+
+# ---------- 下蹲 / 空中下冲 / 冲刺输入 ----------
+func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:
+	if latched or in_water:
+		return
+	# 空中按 S 下冲(不在梯/链格上)。
+	if not is_on_floor() and input_source.is_action_just_pressed("down") \
+			and not climb.is_over_climb_tile():
+		velocity.y = charge_down_velocity
+	# 下蹲 = 在地面 且 按住 S,逐帧推导——不用 just_pressed/just_released 边沿。
+	# 旧实现 release 分支套在 if is_on_floor() 内:空中松开 S 不执行 → 落地仍蹲(卡蹲)。
+	var want_squat := is_on_floor() and input_source.is_action_pressed("down")
+	if want_squat and not is_squat:
+		is_charge = false   # 冲刺中按 S → 取消冲刺进蹲
+	is_squat = want_squat
+
+	# 冲刺输入
+	if not is_charge and not is_squat and input_source.is_action_just_pressed("charge"):
+		is_charge = true
+		charge_timer = charge_duration
+		# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
+		if _last_move_timer > 0.0:
+			facing_direction = _last_move_dir
+
+
+# ---------- 水平速度计算(攀爬中不锁横移:爬/挂/空闲都可左右走,由 climb 只管垂直) ----------
+func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mult: Vector2) -> void:
+	if in_water:
+		return
+	if is_charge:
+		velocity.x = charge_velocity * facing_direction
+		charge_timer -= delta
+		if charge_timer <= 0:
+			is_charge = false
+			# 收尾交回下方 accel/air-brake 平滑减速,不做 1500→750 突变半刹。
+	else:
+		# 蹲走:蹲态目标换成 crouch_walk_speed(可小步左右移动);非蹲态走 move_speed。
+		var speed_target := crouch_walk_speed if is_squat else move_speed
+		var target_velocity_x = horizontal_input * speed_target * mult.x
+		if horizontal_input != 0:
+			if is_on_floor():
+				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_ground, delta)
+			else:
+				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_air, delta)
+		else:
+			_brake_horizontal(delta)
+
+
+# ---------- 面朝方向 ----------
+# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向
+func _tick_facing(delta: float, horizontal_input: float) -> void:
 	if not is_charge and horizontal_input != 0:
 		facing_direction = 1 if horizontal_input > 0 else -1
 		_last_move_dir = facing_direction
@@ -280,15 +288,16 @@ func _physics_process(delta: float) -> void:
 	else:
 		_last_move_timer = maxf(_last_move_timer - delta, 0.0)
 
-	# ---------- 动画翻转 ----------
-	if facing_direction < 0:
-		animator.flip_h = true
-	else:
-		animator.flip_h = false
 
-	# ---------- 姿态切换（带切换锁，禁止频繁切换） ----------
-	# 期望姿态由输入/接触状态决定；进入某姿态后锁定一小段时间，
-	# 避免 is_on_floor()/velocity 抖动导致 move↔fly 高频切换（走路抽搐）。
+# ---------- 姿态切换 + 碰撞箱切换 ----------
+# 期望姿态由输入/接触状态决定;进入某姿态后锁定一小段时间,
+# 避免 is_on_floor()/velocity 抖动导致 move↔fly 高频切换(走路抽搐)。
+# 碰撞箱:每个姿态对应一个 CollisionPolygon2D(多边形可在编辑器里分别调整),
+# 运行时只启用当前姿态对应的碰撞箱。
+func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
+	# 动画翻转
+	animator.flip_h = facing_direction < 0
+
 	var desired: Pose = Pose.STAND
 	if in_water:
 		desired = Pose.MOVE if absf(velocity.x) > 1.0 else Pose.STAND
@@ -307,23 +316,16 @@ func _physics_process(delta: float) -> void:
 		state = desired
 		state_lock_timer = STATE_LOCK_TIME
 
-	# ---------- 动画状态（跟随锁定后的姿态） ----------
+	# 动画状态(跟随锁定后的姿态)
 	animator.play(POSE_ANIM[state])
 
-	# ---------- 碰撞箱切换 ----------
-	# 每个姿态对应一个 CollisionPolygon2D（多边形可在编辑器里分别调整），
-	# 运行时只启用当前姿态对应的碰撞箱。
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 
-	# ---------- 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity ----------
-	# (地面把向下击退吃掉后再减回去会把玩家弹起,改用独立位移结算)
-	combat.apply_knock(delta)
 
-	# ---------- 执行移动 ----------
-	move_and_slide()
-
-	# ---------- 冲刺撞水平墙 → 立即结束(不再顶着墙冲满) ----------
+# ---------- move_and_slide 之后的反应:冲刺撞墙 / 弹性瓦片 ----------
+func _tick_slide_reactions() -> void:
+	# 冲刺撞水平墙 → 立即结束(不再顶着墙冲满)
 	if is_charge:
 		for i in range(get_slide_collision_count()):
 			var col := get_slide_collision(i)
@@ -333,7 +335,7 @@ func _physics_process(delta: float) -> void:
 				velocity.x = 0.0
 				break
 
-	# ---------- 弹性瓦片（如树叶）:弱反弹 ----------
+	# 弹性瓦片(如树叶):弱反弹
 	# 空网格跳过(冒烟测试会清空 current_grid;真实游戏 Level0 总会赋值)
 	if not MazeGenerator.current_grid.is_empty():
 		for i in range(get_slide_collision_count()):
@@ -347,7 +349,36 @@ func _physics_process(delta: float) -> void:
 				velocity += sc.get_normal() * PlayerParams.elastic_bounce
 				break
 
-	# 环面回卷：玩家只能在中间副本，离开时取模送回
+
+# 倒地(死亡态):**不取消物理** —— 重力/制动/击退照常,只是不吃输入、不结算战斗。
+# 与正常路径的差别只有三处:不读输入、不跑武器/攀爬/跳跃/冲刺/姿态切换、"无输入制动"那段
+# 是共用的(见 _brake_horizontal)。重力那段**刻意不与正常路径合并**:倒地的这份不乘
+# charge_air_gravity_mult、也不递减土狼时间 —— 今天都不可观测(倒地不能跳),
+# 但"不可观测"是要论证的,不如原样留着。
+func _tick_downed(delta: float) -> void:
+	if is_on_floor():
+		coyote_timer = coyote_time
+	else:
+		velocity.y += gravity * delta
+	_brake_horizontal(delta)
+	combat.apply_knock(delta)
+	move_and_slide()
+	_wrap_position()
+
+
+# 无水平输入时的制动 + 吸附。倒地路径与正常路径**逐句相同**,故收在这里(阶段 5.2)。
+# 指数缓动逼近不到 0,接近 0 时直接吸附,避免贴地滑行。
+func _brake_horizontal(delta: float) -> void:
+	if is_on_floor():
+		velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
+	else:
+		velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
+	if absf(velocity.x) < PlayerParams.stop_snap:
+		velocity.x = 0.0
+
+
+# 环面回卷:玩家只能在中间副本,离开时取模送回
+func _wrap_position() -> void:
 	global_position = MazeGenerator.wrap_to_range(global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
