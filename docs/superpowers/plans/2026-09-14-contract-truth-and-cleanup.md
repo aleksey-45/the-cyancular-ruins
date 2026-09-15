@@ -1458,7 +1458,7 @@ grep -rn "暂时不生效\|静默丢弃" scenes/
 grep -rn "_on_peer_info\|_on_peer_hues\|_on_match_options" scenes/
 grep -rn "PvpSession\.\(port\|room_code\|royale\|disabled_weapons\)" --include=*.gd .
 grep -rn "start_match_on" --include=*.gd .
-grep -rn "func get_axis\|func is_action_pressed\|func is_attack_pressed" core/network_input_source.gd core/ai_input_source.gd tests/soak_bot_input.gd
+grep -rn "func get_axis\|func is_action_pressed\|func is_attack_pressed" core/net/packet_input_source.gd core/net/ai_input_source.gd tests/soak_bot_input.gd
 ```
 
 Expected: 五条**全部无输出**。
@@ -1581,8 +1581,6 @@ Expected: 两条各打印 `ALL-OK`。
 | 3.3 | **M4c** 房间注册表拆分（用户裁定**方案 a：做成 Node**，边界见下方「已落地的设计」） | ✅ `server/lobby_rooms.gd`（`LobbyRooms extends Node`）= 房间账本 + 房间侧 handler + 拆除收口；`room_manager.gd` 643→**259** 行 = 进程编排 + 清扫。**单向依赖**，1v1 凑齐两人由新信号 `pairing_ready` 上到 RoomManager（消除唯一反向需求）。★ 探针三处（room_sweep_smoke / kh_l5 / royale_bound_probe 共 8+ 处访问）；★ 反证：收口门外塞一行 `launcher.release_now` → 咬红 |
 | 3.4 | 客户端事件消费层合并(抽 `scenes/pvp_match_client.gd` 基类) | ✅ **完成**(分三步提交)。判据改成**当场重测**:计划写的「9 个函数逐字相同 ≈140 行」已过期(3 个被删鸟时删掉、`_physics_process` 被 3.1 改过);且实测发现"剔注释"必须**连行尾注释一起剔**(否则会把只差行尾注释的函数误判成有差异)。共上提 **11 个函数**(含 C2 心脏 `_physics_process`)+ 10 个字段 + 2 个 const,并引入 `_replica_for(role)` 把「对手 1 个 vs N 个」这条**唯一的结构性差异收在一个口上**。行列:pvp_client 555→**318**、royale_game 482→**291**、基类 **239**;**两文件共有的 4 行块 162 → 17**(降约 89%)。★ **刻意保留**的差异(差的不是重复而是第二根结构轴):`_process`/`_on_snapshot_world`/`_on_round_state`(per-role 的 ID 标签与血条记账;含退场定时器 5s vs 6s 的真语义差)、`_apply_peer_names`/`_apply_peer_hues`(访问器同款的"必须覆写"桩)、`_on_kill_event`(仅差一行回退文案,统一会改 1v1 的**用户可见文字**→待定)、`_ready`。★ 探针连带:kh_l6 的 `_body_anywhere`(函数体跨 pvp_client/基类查找,都找不到仍返回空串→原断言照红)+ 输入锁收口检查改**两文件都查**;royale_c2_watcher 的 A2_OWNERS 提前把基类列入 |
 | 3.5 | **M8** 中立鸟死机制 | ✅ 用户裁定**不开鸟** → 两侧整套删除（服务端刷鸟链 + 两个客户端的副本机制 + NetBus 两条 @rpc/两条信号 + `enemy_replica.gd`）。★ 删前核实：那两条 RPC **不是**原版协议面（本项目 `aa1d8f0` 加的），无探针钉其中任何一处 |
-| 3.4 | 客户端事件消费层合并（9 个函数逐字相同 ≈140 行 + 4 个近逐字；具体函数与行号对已列在评估报告里） | `pvp_client.gd` ↔ `royale_game.gd` | 1~2 天。抽 `scenes/pvp_match_client.gd` 基类。**做之前先确认 1.4 已完成** |
-| 3.5 | **M8** `ENABLE_BIRDS := false` ⇒ 客户端鸟副本 ~90 行死代码 | `pvp_client.gd:22,94-95,256-262,431-459`；`royale_game.gd:12,82-83,241-247,431-459` | **先决策**：不打鸟就删 90 行；要打就抽一份进 3.4 的基类 |
 | 3.6 | 两个大厅页的连接状态机重复(抽 `scenes/lobby_page.gd` 基类) | ✅ **完成**(分两步提交)。**当场重测**:计划那三条里两条成立、`_apply_pixel_font` 那条**已被 3.7 做掉**(两页都改调 `UiFactory.apply_font_recursive`,只剩悬空注释)。判据仍是"剔注释后逐字相同"(行尾注释也要剔):上提 12 个函数 —— 3 个逐字相同、9 个只差 1~3 行,差异**全部**落成 13 个具名钩子(8 个必需项,基类给 `push_error` 兜底)。★ **刻意不收**:`_ready` 与三个面板、`_on_room_list` vs `_on_royale_rooms`(2 人房 vs N 人房,行样式与文案都不同)、`_on_server_message`(1v1 多两段自动刷新,整段覆写)。★ **超时梯顺序逐页保留**:1v1 是 `[worker→join→大厅→claim]`、大乱斗是 `[worker→claim→大厅→ack]` —— 合并派发会静默改行为(那一 tick 里「大厅-8s 先清 `_pending_action`、claim-25s 再 `_return_to_lobby`」会塌成只跑后者),故基类只给三条梯的**函数体**,`_process` 留在各子类。★ 两文件共有的 4 行代码块 **57 → 1**(剩的是「请填房间号」守卫,两条加入路径本就不同)。行数:matchmaking 493→**314**、royale_lobby 581→**412**、新增 lobby_page **416**。★ 探针:三条实例化真 `royale_lobby.tscn` 的 watcher/probe **全程零改动**(继承来的成员与函数在 Godot 里都是真属性/真方法);kh_l5 的字号扫描覆盖到新文件 —— **反证**:往 `lobby_page.gd` 注入非 16 倍数字号 → 咬红并**点名该文件**,还原转绿。★ 顺带查实一个**静默 bug**:色相行的列距键两页一正一误(1v1 写 `separation` = HBox 认的键;大乱斗写 `h_separation` = **GridContainer 的键**,写在 HBox 上永不读取 → 死覆盖,实际用默认 4)。收口只能留一个键 → 取正确的,大乱斗页该行间距 4→12(本次**唯一**观感差异)。同一类死键**全仓只剩这一处**,已另起一笔一并修掉(间距 4→12)。★ 顺带做过全仓普查:`h_separation`/`v_separation` 的其余各处(`lobby_page` 的 `wgrid`、`settings_menu` 的 `grid`)都写在 `GridContainer` 上,是对的 —— **容器类型不同、键就不同,别跨类型"统一"** |
 | 3.7 | **批次 6（旧编号）**`UiFactory` 补齐 | ✅ **完成**。补了 5 个口：`apply_font_recursive` / `hue_preview_color` / `check_row` / `slider_row` / `line_edit`（全部逐字搬自页面里的手抄实现，各页**版式数值**提成参数：标签列宽 440 vs 320、输入框 240×36 vs 250×40 —— 逐字搬会改观感）。★ 形参顺序刻意把 `label_w` 放 **callable 之前**（两个页面都用块体 lambda 作最后实参，callable 之后再跟实参极易写错）。行数：matchmaking 538→493、royale_lobby 601→**581**、settings_menu 216→**180**、ui_factory 272→351（三页共减 101 行手抄）。★ 视觉未实测（`menu_autotest` 要真实渲染）—— 数值全按参数原样传，预期零观感变化 |
 
@@ -1634,7 +1632,7 @@ Expected: 两条各打印 `ALL-OK`。
 | 序 | 项 | 成本 |
 |---|---|---|
 | 6.1 | `tests/lib/scan_util.gd` + `probe_base.gd` —— `kh_l*_probe` 的扫描工具函数已复制 5 遍。**注意** `kh_l5_probe.gd:44` 的 `ALL_DIRS` **含 `res://tests`**，新增的 lib 源码不得含被扫的字面量（如非 16 倍数字号） | 半天 |
-| 6.2 | `level_editor/sync-tiles.js` 加 `--check` 模式（改了 `data/tile_defs.json` 忘跑脚本会静默漂移）；`sync-enemies.js` 同 | 1 小时 |
+| 6.2 | `level_editor/sync-tiles.js` 加 `--check` 模式（改了 `data/tile_defs.json` 忘跑脚本会静默漂移）；`sync-enemies.js` 同 | ✅ **完成**（2026-09-15）。两个脚本各加 `--check`：只校验不写盘，一致退出 0、漂移退出 1 并点名**首个差异行**（两行对照）。★ **行尾归一**是必须的：`structure-editor.html` 主体是 **CRLF** 而内嵌注册表块是 **LF**（混排），不比归一会把编辑器改行尾读成"内容漂移"→ 门变成噪声源。`sync-enemies` 只比**注册表块本身**（正则抠出），不比整个 HTML。★ **顺手补上计划没写的一个洞**：只比"生成物 vs 重新生成"**抓不到"字段级手抄漏抄"** —— 两边用同一份映射，漏掉的字段在两边一样地缺，`--check` 照样绿（正是 `display_name` 当年漏掉的形状）。故加了一条**键覆盖守卫**：`data/enemies.json` 里出现的每个键都必须被映射到（或有理由地登记进 `NOT_IN_EDITOR`），**写模式也拒绝**。★ **反证 4 条全部咬红**：A 改 `tile_defs.json` 一个 `hp`（未跑脚本）→ 第 127 行对照；B 改 `enemies.json` 一个 `display_name` → 注册表块第 20 行对照；C json 不动、只手改生成物 → 同样咬红；D 往 json 加字段而手抄没跟上 → 点名 `wake_radius` 且**写模式也 exit 1**。另验**幂等**（不带参跑，两产物 md5 不变）。★ 门怎么被跑到：目前同 `check_naming.py` 一样是**手动**跑（本仓无 CI，且 `check_naming.py` 是**零外部依赖**的纯 Python，不宜引入 node 依赖）—— 已写进 CLAUDE.md 两处（加新敌人 / 砖块属性表），供改 json 时顺手跑 |
 
 ---
 
