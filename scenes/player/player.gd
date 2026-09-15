@@ -462,6 +462,12 @@ func capture_state() -> Dictionary:
 		"knock": combat.knock_velocity,
 		"wslot": weapons._current_slot,
 	}
+	# 背包整表(每条 {type, inst, mag})。★ 即便不做客户端预测也必须进整态:
+	#   restore_state 会 equip(wslot),若不先重建背包,重放时可能切到客户端背包里
+	#   **没有的类型** → 走到 equip() 的"没有就加"分支 → 凭空造出一把服务器没有的枪。
+	# ★ 与 mag/rld 同口径:只进 capture/restore,**不进** `_close_enough` 的比对
+	#   (后者是显式白名单,只比 down/hp/pos/vel —— 只要不主动加进去就自动满足)。
+	st["inv"] = weapons.snapshot_inventory()
 	var w: WeaponBase = weapons._weapon
 	if w != null:
 		st["fire_cd"] = w.fire_cd_timer
@@ -515,8 +521,12 @@ func restore_state(st: Dictionary) -> void:
 	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
 	_was_submerged = bool(st.get("wp_s", _was_submerged))
 	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
-	# 武器:槽位变了重建,否则直接覆盖内部决定态
+	# 武器:先重建**背包**,再按 wslot 切枪。
+	# ★ 顺序不可反:先读 wslot(此时 _current_slot 还有值,可作默认),再 restore_inventory
+	#   (它会把 _current_slot 清 0),最后 equip。反过来的话——先 restore,wslot 的默认值
+	#   就丢了;先 equip 再 restore,则 equip 是在**旧背包**上工作(凭空造枪/丢枪)。
 	var wslot := int(st.get("wslot", weapons._current_slot))
+	weapons.restore_inventory(st.get("inv", []))
 	if wslot > 0 and wslot != weapons._current_slot:
 		weapons.equip(str(wslot))
 	var w: WeaponBase = weapons._weapon
