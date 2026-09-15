@@ -49,7 +49,7 @@ const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
 
 # L5 新增的、带字号的 UI 文件:第 8 条要把它们的字号覆盖情况打出来(人眼可核覆盖面)
-const L5_FONT_FILES := ["res://scenes/royale_hud.gd", "res://scenes/royale_lobby.gd"]
+const L5_FONT_FILES := ["res://ui/royale_hud.gd", "res://scenes/royale_lobby.gd"]
 
 # ── 扫描针(碎片拼接:见文件头「自伤防护」)──
 # 常量名**不得**含连写的 FONT_SIZE:第 8 条的 D 类扫描会把 "以 const 开头且含 FONT_SIZE"
@@ -524,8 +524,8 @@ func _check_new_interfaces() -> void:
 			leaked.append(m)
 	_check(leaked.is_empty(),
 			"%s 含 RoyaleHost 的子类方法 %s(搬进基类即未定义符号)" % [base, ", ".join(leaked)])
-	_check(_code_only(_read("res://scenes/royale_hud.gd")).contains("class_name RoyaleHud"),
-			"scenes/royale_hud.gd 缺 class_name RoyaleHud")
+	_check(_code_only(_read("res://ui/royale_hud.gd")).contains("class_name RoyaleHud"),
+			"ui/royale_hud.gd 缺 class_name RoyaleHud")
 	# ★ 2026-09-14:大乱斗房间 handler 随账本搬进 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
 	#   判据跟着搬,但**两处都查**:老家若被人再抄一份同名 handler,那正是"两份真相"的开端。
 	var rl := _code_only(_read("res://server/lobby_rooms.gd"))

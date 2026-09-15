@@ -33,7 +33,7 @@ static func pixel_font() -> FontFile:
 # ⚠ caveat:本函数硬编码 "font" / "font_size" 两个 theme override 键 —— 这是 Label / Button /
 # CheckButton / LineEdit 这类「普通文本控件」读的键。**RichTextLabel 读的是
 # normal_font / normal_font_size(以及 bold_font / bold_font_size)**,把 RichTextLabel 传给本函数
-# 会静默失败(不报错,但字体与字号都不生效)。这正是 scenes/effects/combat_feedback.gd 至今仍
+# 会静默失败(不报错,但字体与字号都不生效)。这正是 ui/combat_feedback.gd 至今仍
 # 自己 load 字体、直接覆写 normal_font/normal_font_size 的原因 —— 那种控件不要走本函数。
 static func style_control(c: Control, size: int) -> void:
 	assert(size % 16 == 0, "字号必须是 16 的倍数(本项目像素字体只在 16/32/48… 下像素锐利);收到 %d" % size)

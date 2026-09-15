@@ -88,13 +88,12 @@ scenes/   场景(页面与对局场景;脚本一律 snake_case)
 core/     autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
 server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
 ui/       跨场景 UI:UiFactory(唯一调色板/工厂)、单机 HUD、对局 HUD、暂停菜单
-render/   后处理(post_process.gd)
+render/   渲染:后处理(post_process.gd + post_process.gdshader)、相机(camera_2d.gd)
 tests/    -s 冒烟/探针(分层见 tests/README.md)
 level_editor/  浏览器地图编辑器(structure-editor.html + smoke.js + sync-*.js)
 maps/     .cyrm 文本地图
 data/     tile_defs.json / enemies.json(与编辑器共享的属性表与敌人注册表)
 assets/   字体(含中文像素字体 unifont)与纹理
-shaders/  post_process.gdshader
 tools/    发布/控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)
 ```
 

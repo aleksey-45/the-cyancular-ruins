@@ -8,7 +8,7 @@ extends Node
 
 func _ready() -> void:
 	var failures: Array[String] = []
-	var CF: GDScript = load("res://scenes/effects/combat_feedback.gd")
+	var CF: GDScript = load("res://ui/combat_feedback.gd")
 	# 无实例(主菜单/服务器进程):静态入口必须全部空转
 	CF.kill("无人")
 	CF.hit_marker()

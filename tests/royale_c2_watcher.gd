@@ -25,7 +25,7 @@ extends Node
 # ★ 关于「K 自杀是不是广播的」——A 组第 2 条就是为了回答它:
 #   · **请求**不广播:`NetBusExt.rpc_id(1, "suicide_request")` 定向发给 worker,无回执;
 #   · **"谁死了/谁活着"确实广播**:倒地边沿 → `_broadcast_round_state()`,载荷带 `alive`({role: bool})
-#     与 `deaths` —— 客户端读得到,今天唯一消费者是排行榜(scenes/royale_hud.gd)。
+#     与 `deaths` —— 客户端读得到,今天唯一消费者是排行榜(ui/royale_hud.gd)。
 #   · 但 C2 下**不许**把它接去写本地玩家(第二条权威入口 + 并不更快),见断言的理由。
 #   本探针的鉴别力正依赖这一点:若消费了 alive,删掉 reconcile 后本地玩家仍会被 alive 拉成"活着",
 #   那条"分歧不收敛"的反证就失去信号。
@@ -316,7 +316,7 @@ func _check_residue(problems: Array) -> void:
 
 # ── A②:不得消费 round_state 的 `alive`(一条**禁区**,理由见下)──
 # 服务器在倒地边沿会广播 round_state,载荷里带 `alive`({role: bool})—— 也就是说"你死了/
-# 你活了"这件事**是广播的**,客户端读得到(今天唯一消费者是排行榜 scenes/royale_hud.gd)。
+# 你活了"这件事**是广播的**,客户端读得到(今天唯一消费者是排行榜 ui/royale_hud.gd)。
 # ★ C2 下**不许**把它接去写本地玩家,两条理由:
 #   ① 那是**第二条权威入口**:C2 的纪律是权威状态只经 on_authoritative → restore_state + 重放
 #      进来。绕过它的"顺手补上"正是被删掉的那条旧路径的写法,会重新引入橡皮筋;
