@@ -183,6 +183,26 @@ func _phase_inventory_roundtrip() -> void:
 	_check(wep.current_slot_int() == 1, "捡起后手上是它(实际 %d)" % wep.current_slot_int())
 	_check(wep.inventory.used_slots() == 2, "占用 2 格(实际 %d)" % wep.inventory.used_slots())
 
+	# ★ 视觉缩放:武器挂在 Player 下时继承根的 scale=2.5(player.tscn),
+	#   地面态得自己补上 —— 漏了就是"地上的枪小 2.5 倍",**而且不报错**。
+	#   直接比两者的 global_scale(比 y 轴:facing 翻转只改 x)。
+	await get_tree().physics_frame
+	var pv: WeaponPickup = load(PICKUP_SCENE).instantiate()
+	pv.configure(1, 7, 12, Vector2.ZERO)
+	add_child(pv)
+	await get_tree().physics_frame
+	var ground_vis: Node2D = pv.get_node_or_null("Visual")
+	var held_vis: Node2D = wep.current_weapon()
+	_check(ground_vis != null, "地面武器应有 Visual 子节点")
+	if ground_vis != null and held_vis != null:
+		var gy := ground_vis.global_scale.y
+		var hy := held_vis.global_scale.y
+		# 手持那把刚 equip、未受击退/换弹影响,scale 就是继承来的根缩放
+		_check(is_equal_approx(gy, hy),
+				"地面武器视觉缩放应与手持一致(地面 %.3f vs 手持 %.3f;差 2.5 倍即漏补 WORLD_SCALE)" % [gy, hy])
+	pv.queue_free()
+	await get_tree().physics_frame
+
 	# 捡重狙(4格) → 2+4=6,仍放得下
 	_check(wep.pick_up(3, 5) == 0, "重狙应放得下")
 	await get_tree().physics_frame
