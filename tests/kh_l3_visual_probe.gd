@@ -30,6 +30,7 @@ var _w: WeaponBase = null
 # hoisted from locals when __ready was split (first assignment kept in place).
 var win: Vector2 = Vector2.ZERO
 var p: Node = null
+var _bg: ColorRect = null   # 探针底色(见 _setup_scene);槽位那一段会临时改成地图色再取一张
 var img1: Image = null
 var img2: Image = null
 var img3: Image = null
@@ -177,6 +178,20 @@ func _check_slot_colors() -> void:
 	_check(_count_near(img, _slot_cell_rect(slots, 6), UiFactory.C_SLOT_EMPTY) > full / 2,
 		"第 7 格应是空的(1只手枪2格 + 1把重狙4格 = 6 格,后两格空)")
 
+	# ── 再取一张**浅底**的图 ──
+	# ★ 实机 HUD 垫的是 `黑 0.1` 压在地图开阔区(≈#78969F,浅灰蓝)上 —— 底板是**浅**的。
+	#   本探针默认的深色底会把"浅底上读不出来"这类问题**遮掉**(正是 CLAUDE.md 里
+	#   combat_hud_visual_probe 记过的坑:单机 HUD 的 1.9:1 血条就是这么漏掉的)。
+	#   这一张不参与断言(两种底上"谁更醒目"的答案是相反的,拿它判会把对的配色判错),
+	#   只落盘供**人眼**验收 —— 配色是审美值,以实图为准。
+	if _bg != null:
+		_bg.color = Color(0.471, 0.588, 0.624)   # = 地图开阔区 #78969F
+		await _frames(2)
+		await _shot("l3_slots_on_map")
+		_bg.color = Color(0.09, 0.10, 0.13)
+		await _frames(2)
+		print("[L3-VISUAL] 已另存浅底版 l3_slots_on_map(仅供人眼配色验收)")
+
 
 func _color_in(img: Image, ctrl: Control, pred: Callable) -> int:
 	if img == null or img.get_width() == 0 or ctrl == null:
@@ -247,6 +262,7 @@ func _setup_scene() -> void:
 	bg.position = Vector2.ZERO
 	bg.size = win
 	add_child(bg)
+	_bg = bg
 
 	var ps: PackedScene = load(PLAYER_SCENE)
 	if ps == null:
