@@ -60,6 +60,7 @@ var _wp_tween: Tween = null
 var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
 var _ammo_label: Label = null
+var _slots: WeaponSlots = null
 var _player: Node = null
 var _reload_bar: ColorRect = null
 var _bar_back: ColorRect = null
@@ -85,6 +86,7 @@ func _ready() -> void:
 		if "weapons" in p:
 			_player = p
 			_build_weapon_display(p)
+			_build_weapon_slots(p)
 			p.weapons.weapon_changed.connect(_on_weapon_changed)
 			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
 
@@ -191,10 +193,17 @@ func _build_weapon_display(p: Node) -> void:
 	box.add_child(_ammo_label)
 
 
+# 4×2 武器槽位格子:挂在**既有武器区底板的正上方**(它是 HUD 自己的子节点,不是 wrap 的
+# —— PanelContainer 的子节点受容器布局摆布,自由 offset_* 会被覆盖)。
+# 位置常量在 WeaponSlots.attach_to 里,三处 HUD 共用同一组值。
+func _build_weapon_slots(p: Node) -> void:
+	_slots = WeaponSlots.attach_to(self, p.weapons)
+
+
 func _on_weapon_changed(slot: int) -> void:
 	if _weapon_icon != null:
 		_weapon_icon.texture = WeaponIcons.silhouette(slot)
-		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "?")
+		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "空手") if slot > 0 else "空手"
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;条本身无边框。
 # 底板(PLATE_COLOR)铺在整排下面 —— 竖条之间那 1px 缝于是透出底板而不是地图,

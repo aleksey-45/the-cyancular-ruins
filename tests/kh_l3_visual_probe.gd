@@ -55,6 +55,9 @@ func _ready() -> void:
 	_assert_states_differ()
 	if _aborted:
 		return
+	await _check_slot_colors()
+	if _aborted:
+		return
 
 	_finish()
 
@@ -109,6 +112,70 @@ func _accent_in(img: Image, ctrl: Control) -> int:
 func _bright_in(img: Image, ctrl: Control) -> int:
 	return _color_in(img, ctrl, func(c: Color) -> bool:
 		return c.r > 0.6 and c.g > 0.6 and c.b > 0.6 and absf(c.r - c.b) < 0.12)
+
+
+# 某个槽位格子在屏幕上的像素矩形(由控件全局矩形 + 格子常量算出 —— 格子是 _draw 自绘的,
+# 没有逐个 Control 可取)
+func _slot_cell_rect(slots: WeaponSlots, cell: int) -> Rect2i:
+	var r := slots.get_global_rect()
+	var col := cell % WeaponSlots.COLS
+	var row := cell / WeaponSlots.COLS
+	var p := r.position + Vector2(
+		WeaponSlots.PAD + col * (WeaponSlots.CELL + WeaponSlots.GAP),
+		WeaponSlots.PAD + row * (WeaponSlots.CELL + WeaponSlots.GAP))
+	return Rect2i(int(p.x), int(p.y), int(WeaponSlots.CELL), int(WeaponSlots.CELL))
+
+
+# 矩形内"接近某色"的像素计数(格子是纯色填充,容许截图的极小色差)
+func _count_near(img: Image, rc: Rect2i, want: Color, tol: float = 0.06) -> int:
+	if img == null or img.get_width() == 0:
+		return 0
+	var n := 0
+	for y in range(maxi(0, rc.position.y), mini(img.get_height(), rc.position.y + rc.size.y)):
+		for x in range(maxi(0, rc.position.x), mini(img.get_width(), rc.position.x + rc.size.x)):
+			var c := img.get_pixel(x, y)
+			if absf(c.r - want.r) < tol and absf(c.g - want.g) < tol and absf(c.b - want.b) < tol:
+				n += 1
+	return n
+
+
+# ── 槽位格子三态 ─────────────────────────────────────────────────────
+# ★ 这里**只断言"每格是不是它该有的颜色"+"三态两两可区分"**,**不**断言"哪个更醒目":
+#   本探针的底是**深色**(见 _setup_scene 的 bg),而实机 HUD 的底板是压在地图浅灰蓝上的
+#   `黑 0.1`(≈#6C8790,**浅底**)—— 同一个色在这两种底上的醒目程度是**相反**的,
+#   在深底上比"谁更醒目"会把实机上正确的配色判成错的。
+#   明度阶梯那条不变量写在 ui_factory.gd 的常量注释里,由人眼看实图确认。
+func _check_slot_colors() -> void:
+	var slots: WeaponSlots = _hud._slots
+	var img := await _shot("l3_slots")
+	var full := int(WeaponSlots.CELL * WeaponSlots.CELL)   # 每格总像素数
+
+	var active_n := _count_near(img, _slot_cell_rect(slots, 0), UiFactory.C_SLOT_ACTIVE)
+	var filled_n := _count_near(img, _slot_cell_rect(slots, 3), UiFactory.C_SLOT_FILLED)
+	var empty_n := _count_near(img, _slot_cell_rect(slots, 7), UiFactory.C_SLOT_EMPTY)
+	_check(active_n > full / 2, "手持那把占的格应为深青(命中 %d/%d)" % [active_n, full])
+	_check(filled_n > full / 2, "已占据的格应为淡青(命中 %d/%d)" % [filled_n, full])
+	_check(empty_n > full / 2, "未占据的格应为淡灰(命中 %d/%d)" % [empty_n, full])
+
+	# ★ 双向:不该是**别的态**的颜色。只判"有青色像素"会把"三态画成同一个色"放过去。
+	_check(_count_near(img, _slot_cell_rect(slots, 0), UiFactory.C_SLOT_FILLED) < full / 10,
+		"手持格不得等于已占格颜色(两者必须区分得开)")
+	_check(_count_near(img, _slot_cell_rect(slots, 3), UiFactory.C_SLOT_ACTIVE) < full / 10,
+		"已占格不得是手持色")
+	_check(_count_near(img, _slot_cell_rect(slots, 7), UiFactory.C_SLOT_FILLED) < full / 10,
+		"空格不得是已占色")
+	_check(UiFactory.C_SLOT_EMPTY != UiFactory.C_SLOT_FILLED
+			and UiFactory.C_SLOT_FILLED != UiFactory.C_SLOT_ACTIVE
+			and UiFactory.C_SLOT_EMPTY != UiFactory.C_SLOT_ACTIVE,
+		"槽位三态颜色必须两两不同(配色改重复了肉眼很难发现)")
+
+	# 紧凑排布的**位置**也要钉:5 格武器占 0..4,手持的是它——整段同色,不是只染第一格
+	_check(_count_near(img, _slot_cell_rect(slots, 1), UiFactory.C_SLOT_ACTIVE) > full / 2,
+		"手持武器的第二格也该是深青(紧凑排布 = 整段同色)")
+	_check(_count_near(img, _slot_cell_rect(slots, 5), UiFactory.C_SLOT_FILLED) > full / 2,
+		"重狙的最后一格(第 6 格)也该是淡青")
+	_check(_count_near(img, _slot_cell_rect(slots, 6), UiFactory.C_SLOT_EMPTY) > full / 2,
+		"第 7 格应是空的(1只手枪2格 + 1把重狙4格 = 6 格,后两格空)")
 
 
 func _color_in(img: Image, ctrl: Control, pred: Callable) -> int:
@@ -175,7 +242,8 @@ func _setup_scene() -> void:
 
 	# 深色底:金色残弹/进度条在暗底上才读得出(也便于统计"金色像素数")
 	var bg := ColorRect.new()
-	bg.color = Color(0.09, 0.10, 0.13)
+	bg.color = Color(0.09, 0.10, 0.13)   # ★ 注意:这是**深**底,与实机 HUD 的浅灰蓝底不同,
+	#   所以槽位格子的"哪个更醒目"不能在这个背景下断言(实机上判据是反的)。见 _check_slot_colors。
 	bg.position = Vector2.ZERO
 	bg.size = win
 	add_child(bg)
@@ -202,6 +270,18 @@ func _setup_scene() -> void:
 		_finish()
 		return
 	print("[L3-VISUAL] HUD 残弹标签全局矩形 = %s" % str(_hud._ammo_label.get_global_rect()))
+
+	# ── 槽位格子的已知背包 ──
+	# 用手枪(2格)+ 重狙(4格)= 6 格 / 2 把,手持的是手枪:
+	#   格 0-1 = 手持(深青) · 格 2-5 = 已占(淡青) · 格 6-7 = 空(淡灰)
+	# 三段**各占多个格且不重叠**,取色时不会互相串。
+	p.weapons.set_initial_inventory([1, 3])
+	await _frames(4)   # 换枪是 call_deferred 入树的,且要等格子重绘
+	if _hud._slots == null:
+		_failures.append("前置失败:HUD 未建起武器槽位格子")
+		_finish()
+		return
+	_w = p.weapons.current_weapon()
 
 func _capture_full_ammo() -> void:
 	# ── 态1:满弹 12/12 ──────────────────────────────────────────────
