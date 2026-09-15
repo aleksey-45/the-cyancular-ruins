@@ -19,6 +19,14 @@ const BIT_ATTACK := 8
 # ⚠ 加位 = **改协议**:与旧 build 的输入包互不认(位掩码里多一位,旧端读到的 held/pressed
 #   少一位、不影响其余四位)。两端必须同版本。
 const BIT_RELOAD := 16
+# ★ 2026-09-15 新增:拾取(F)与丢弃(Q)。两个都是**边沿**语义 ——
+#   · F:按下的那一帧一次
+#   · Q:客户端自己累计按住时长,满 2s 的那一刻发一次边沿(见 PlayerParams.weapon_drop_hold_time)。
+#     上行的是"完成信号"而不是"按住",所以 **held 段不加这两位**(加了反而会让服务器以为
+#     只要按着就该丢,而服务器没有本地计时器)。
+# ⚠ 加位 = **改协议**:两端必须同版本(同 BIT_RELOAD 的注释)。
+const BIT_PICKUP := 32
+const BIT_DROP := 64
 
 
 # ── 编码端:组一个输入包(协议**发送侧**的唯一来源)──
@@ -63,6 +71,11 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		released |= BIT_ATTACK
 	if src.is_action_just_released("R"):
 		released |= BIT_RELOAD
+	# 拾取/丢弃:只进 pressed(边沿),不进 held(见 BIT_PICKUP 的注释)
+	if src.is_pickup_pressed():
+		pressed |= BIT_PICKUP
+	if src.is_drop_pressed():
+		pressed |= BIT_DROP
 	return {
 		"seq": seq,          # 单调输入序号(服务器按序消费并回带 ack,rollback 用)
 		"ax": src.get_axis("left", "right"),
@@ -153,6 +166,12 @@ func _attack_just_released_raw() -> bool:
 
 func _weapon_slot_raw() -> int:
 	return _weapon
+
+func _pickup_pressed_raw() -> bool:
+	return _pressed & BIT_PICKUP != 0
+
+func _drop_pressed_raw() -> bool:
+	return _pressed & BIT_DROP != 0
 
 func get_aim_dir_override() -> Vector2:
 	return _aim

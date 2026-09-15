@@ -28,7 +28,11 @@ class StubBody extends Node2D:
 func _initialize() -> void:
 	# -s 阶段 autoload 未实例化 → 这里只 load 不静态引用任何 autoload 标识符
 	var ai_script: GDScript = load("res://core/net/ai_input_source.gd")
-	var base_script: GDScript = load("res://core/net/input_source.gd")
+	# ★ 路径 2026-09-15 修正:接口在阶段 5.9 已从 `input_source.gd` 改名为 `player_input.gd`。
+	#   旧路径在这里 load 到 null 但**从没被断言过** —— 于是它默默地每跑一次刷一条
+	#   "Failed loading resource",而所有人以为那只是噪音。顺带把它接进断言。
+	var base_script: GDScript = load("res://core/net/player_input.gd")
+	_check(base_script != null, "player_input.gd(接口)可加载")
 	_check(ai_script != null, "ai_input_source.gd 可加载")
 	if ai_script == null:
 		print("AI INPUT SMOKE: FAIL")
@@ -80,6 +84,8 @@ func _initialize() -> void:
 	_check(not src.is_attack_just_pressed(), "frozen:is_attack_just_pressed 为 false")
 	_check(not src.is_attack_just_released(), "frozen:is_attack_just_released 为 false")
 	_check(src.get_weapon_slot_pressed() == 0, "frozen:get_weapon_slot_pressed 为 0")
+	_check(not src.is_pickup_pressed(), "frozen:is_pickup_pressed 为 false")
+	_check(not src.is_drop_pressed(), "frozen:is_drop_pressed 为 false")
 	# 瞄准是**刻意**不冻的:冻结期武器仍要按注入方向摆枪
 	_check(src.get_aim_dir_override() == Vector2.UP, "frozen:瞄准刻意不冻(武器仍按注入方向摆枪)")
 	src.frozen = false

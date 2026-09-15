@@ -48,6 +48,15 @@ func _attack_just_released_raw() -> bool:
 func _weapon_slot_raw() -> int:
 	return 0   # 不切枪
 
+# ★ AI **不捡也不丢枪**:大乱斗补位 AI 只用开局随机发的那把,死后也只留随机一把
+#   (复活规则见 MatchHost/_respawn_player)。要让它会捡枪就得先有"想捡哪把"的决策,
+#   那是另一件事,别在这里偷偷返回 true(会变成 AI 沿路把所有枪都吸走)。
+func _pickup_pressed_raw() -> bool:
+	return false
+
+func _drop_pressed_raw() -> bool:
+	return false
+
 func get_aim_dir_override() -> Vector2:
 	return aim
 

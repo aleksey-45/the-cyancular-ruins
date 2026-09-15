@@ -72,6 +72,14 @@ func get_weapon_slot_pressed() -> int:
 		return 0
 	return _weapon_slot_raw()
 
+# 拾取(F 按下边沿) / 丢弃(Q 长按满阈值后的那一次边沿)。
+# ★ 与其它读口同款:冻结一律在此短路,子类**不得覆写这两个**(覆写即绕开冻结)。
+func is_pickup_pressed() -> bool:
+	return not frozen and _pickup_pressed_raw()
+
+func is_drop_pressed() -> bool:
+	return not frozen and _drop_pressed_raw()
+
 
 # ── 覆写钩子:子类只改这里;本基类给会报错的兜底(纯接口,不再自带"本地"实现)──
 
@@ -106,6 +114,14 @@ func _attack_just_released_raw() -> bool:
 func _weapon_slot_raw() -> int:
 	push_error("PlayerInput: 子类必须覆写 _weapon_slot_raw()")
 	return 0
+
+func _pickup_pressed_raw() -> bool:
+	push_error("PlayerInput: 子类必须覆写 _pickup_pressed_raw()")
+	return false
+
+func _drop_pressed_raw() -> bool:
+	push_error("PlayerInput: 子类必须覆写 _drop_pressed_raw()")
+	return false
 
 
 # 瞄准覆盖:本地返回 ZERO → 武器落回鼠标计算;网络驱动的玩家返回注入的瞄准方向。

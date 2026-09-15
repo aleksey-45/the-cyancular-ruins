@@ -54,6 +54,8 @@ class ReloadSrc extends PlayerInput:
 	func _action_just_pressed_raw(action: String) -> bool: return action == "R"
 	func _action_just_released_raw(_action: String) -> bool: return false
 	func _weapon_slot_raw() -> int: return 0
+	func _pickup_pressed_raw() -> bool: return false
+	func _drop_pressed_raw() -> bool: return false
 
 
 # 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
@@ -90,8 +92,25 @@ func _ready() -> void:
 	await _check_same_frame_cycle(wep)
 	await _check_reload_state_machine(player, wep)
 	_check_tick_guards(player, wep)
+	_check_input_map()
 
 	_finish()
+
+
+# ── 7) 输入映射在位 ──────────────────────────────────────────────────
+# ★ 为什么需要:拾取/丢弃的 `F` / `Q` 是**手写进 project.godot 的 [input] 段**的,
+#   而那一大串 `Object(InputEventKey,...)` 是引擎序列化格式 —— 格式写错时 Godot
+#   **静默丢弃该动作**(不报错、不警告),表现是"按 F 没反应",排查起来毫无线索。
+#   这里直接问 InputMap,把"动作真的在"变成断言。
+func _check_input_map() -> void:
+	for a in ["F", "Q", "R"]:
+		_check(InputMap.has_action(a), "InputMap 里没有动作 %s(project.godot 的 [input] 段写坏了?)" % a)
+		if not InputMap.has_action(a):
+			continue
+		_check(InputMap.action_get_events(a).size() > 0, "动作 %s 没有任何按键绑定" % a)
+	# 5/6 的动作**必须保留**(见 WeaponComponent 的键位注释:退休的是读取,不是注册)
+	for a in ["5", "6"]:
+		_check(InputMap.has_action(a), "数字键动作 %s 被删了(它该保留,只是不再被读)" % a)
 
 
 # ── 1) 弹夹数值落位(逐把真实 tscn 实例)──────────────────────────────
