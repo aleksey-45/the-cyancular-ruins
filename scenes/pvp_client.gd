@@ -297,10 +297,10 @@ func _ensure_id_labels() -> void:
 	if _world == null:
 		return
 	if _id_self == null:
-		_id_self = load("res://scenes/player/world_label.gd").new()
+		_id_self = load("res://ui/world_label.gd").new()
 		_world.add_child(_id_self)
 	if _id_opp == null:
-		_id_opp = load("res://scenes/player/world_label.gd").new()
+		_id_opp = load("res://ui/world_label.gd").new()
 		_world.add_child(_id_opp)
 
 func _process(_delta: float) -> void:

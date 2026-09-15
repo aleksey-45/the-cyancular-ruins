@@ -257,7 +257,7 @@ func _apply_peer_hues(hues: Dictionary) -> void:
 func _ensure_id_label(role: int) -> void:
 	if _world == null or _id_labels.has(role):
 		return
-	var lbl: Node2D = load("res://scenes/player/world_label.gd").new()
+	var lbl: Node2D = load("res://ui/world_label.gd").new()
 	_world.add_child(lbl)
 	_id_labels[role] = lbl
 
