@@ -100,9 +100,11 @@ func _bake_frame(rng: RandomNumberGenerator) -> ImageTexture:
 	for i in range(nc * nc):
 		noise[i] = rng.randf()
 
-	var img := Image.create(g, g, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 0))
+	# PackedByteArray 直写 + create_from_data:替代逐像素 set_pixel(811K 次调用阻塞主线程,单机使用道具时的卡顿根因)
+	var data := PackedByteArray()
+	data.resize(g * g * 4)   # RGBA8
 	for y in range(g):
+		var row_off := y * g * 4
 		for x in range(g):
 			var f := field[y * g + x]
 			if f < 1.0:
@@ -123,5 +125,10 @@ func _bake_frame(rng: RandomNumberGenerator) -> ImageTexture:
 					or field[y * g + x - 1] < 1.0 or field[y * g + x + 1] < 1.0 \
 					or field[(y - 1) * g + x] < 1.0 or field[(y + 1) * g + x] < 1.0:
 				col = C_OUTLINE
-			img.set_pixel(x, y, col)
+			var off := row_off + x * 4
+			data[off]     = int(col.r * 255.0)
+			data[off + 1] = int(col.g * 255.0)
+			data[off + 2] = int(col.b * 255.0)
+			data[off + 3] = 255
+	var img := Image.create_from_data(g, g, false, Image.FORMAT_RGBA8, data)
 	return ImageTexture.create_from_image(img)

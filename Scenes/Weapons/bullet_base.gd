@@ -127,7 +127,12 @@ func _physics_process(delta: float) -> void:
 		return
 	if traveled >= max_range:
 		if explodes:
-			_explode()
+			# 远投到射程尽头:走引信流程(含白环视觉),不再直接起爆跳过白环。
+			# 停在射程尽头等引信走完 → 起爆,与撞墙路径的行为一致。
+			if not _fuse_active:
+				_start_fuse(fuse_time)
+				velocity_vec = Vector2.ZERO
+			return
 		queue_free()
 		return
 	_wrap()
