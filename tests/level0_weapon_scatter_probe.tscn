@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://clv0scatterpb1"]
+
+[ext_resource type="Script" path="res://tests/level0_weapon_scatter_probe.gd" id="1_p"]
+
+[node name="Level0ScatterProbe" type="Node"]
+script = ExtResource("1_p")

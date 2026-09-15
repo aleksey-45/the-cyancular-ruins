@@ -56,10 +56,17 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 					_falloff(d, radius, max_knockback) * mult)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:
-		_damage_tiles(center, radius, max_damage, grid)
+		_damage_tiles(center, radius, max_damage)
 
-# 爆炸对可破坏瓦片(树叶/树干)扣血:按距离衰减 × tile_defs 爆炸衰减(0.75),破坏后变空气。
-static func _damage_tiles(center: Vector2, radius: float, max_damage: int, grid: Array[Array]) -> void:
+# 爆区内的可破坏瓦片(树叶/树干)扫描 —— **纯几何查询,不改任何状态**。
+# 返回 [{cell: Vector2i, pos: Vector2(格中心), tex: int, d: float(到爆心的环面距离)}]。
+# ★ 两个用途共用同一份扫描,两端表现因此同源:
+#   ① 权威侧扣血(_damage_tiles);② 表现层播受击碎片(所有端 —— 见 bullet_base._explode)。
+static func destructible_cells(center: Vector2, radius: float) -> Array:
+	var out: Array = []
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return out
 	var ts: int = GameParameters.TILE_SIZE
 	var rows := grid.size()
 	var cols := grid[0].size()
@@ -75,13 +82,23 @@ static func _damage_tiles(center: Vector2, radius: float, max_damage: int, grid:
 			var tex: int = MazeGenerator.texture_of(v)
 			if not TileDefs.explosion_destroyable(tex):
 				continue
-			var d := _dist(center, Vector2(cx * ts + ts * 0.5, cy * ts + ts * 0.5))
+			var pos := Vector2(cx * ts + ts * 0.5, cy * ts + ts * 0.5)
+			var d := _dist(center, pos)
 			if d > radius:
 				continue
-			var dmg := int(_falloff(d, radius, max_damage) * TileDefs.explosion_decay())
-			if dmg <= 0:
-				continue
-			TileDefs.damage_tile(Vector2i(cx, cy), dmg, "explosion")
+			out.append({"cell": Vector2i(cx, cy), "pos": pos, "tex": tex, "d": d})
+	return out
+
+# 爆炸对可破坏瓦片(树叶/树干)扣血:按距离衰减 × tile_defs 爆炸衰减(0.75),破坏后变空气。
+# ★ 粒子**不在这里** —— core/sim 不碰 Node/表现层,播碎片是调用方的事(bullet_base._explode
+#   用同一个 destructible_cells 扫一遍,在**所有端**播,含 PvP 客户端视觉副本)。
+static func _damage_tiles(center: Vector2, radius: float, max_damage: int) -> void:
+	for e in destructible_cells(center, radius):
+		var dmg := int(_falloff(float(e["d"]), radius, max_damage) * TileDefs.explosion_decay())
+		if dmg <= 0:
+			continue
+		var cell: Vector2i = e["cell"]
+		TileDefs.damage_tile(cell, dmg, "explosion")
 
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。

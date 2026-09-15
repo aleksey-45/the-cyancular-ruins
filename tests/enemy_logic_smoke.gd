@@ -123,6 +123,9 @@ func _initialize() -> void:
 	await _phase_flybird_deadzone()
 	_phase_spawn_metadata_parse()
 	_phase_enemy_types_json()
+	await _phase_collision_aabb()   # ★ 追加在**末尾**:既有 27 节的顺序是回归基线,不插队
+	_phase_weapon_registry()        # ★ 同上,只追加在末尾
+	_phase_spread_cells()           # ★ 同上,只追加在末尾
 
 	if _failures.is_empty():
 		print("SMOKE OK")
@@ -419,7 +422,12 @@ func _phase_equip_switch() -> void:
 	var p = player_scene.instantiate()
 	root.add_child(p)
 	await physics_frame
-	_check(p.weapons._weapon != null, "默认装备手枪")
+	# ★ 2026-09-15(背包化):单机现在**开局空手**(武器散落在地图上,由 Level0 铺)。
+	#   本节测的是"切枪/冷却继承"这件事,与开局带不带枪无关 —— 显式摆一个已知背包。
+	_check(p.weapons._weapon == null, "开局空手(单机初始背包为空)")
+	p.weapons.set_initial_inventory([1, 2])
+	await physics_frame
+	_check(p.weapons._weapon != null, "set_initial_inventory 后装备第一把")
 	if p.weapons._weapon != null:
 		_check(p.weapons._weapon.weapon_name == "Pistol", "默认武器是手枪")
 		p.weapons.equip("2")   # 步枪(WEAPONS 注册表槽 2;组件化后按槽键,不再传场景路径)
@@ -1029,3 +1037,132 @@ func _phase_enemy_types_json() -> void:
 	_check(EnemySpawner.TYPES.has("jump_bird") and EnemySpawner.TYPES.has("fly_bird")
 			and EnemySpawner.TYPES.has("black_bird") and EnemySpawner.TYPES.size() == 3,
 			"EnemySpawner.TYPES 从 enemies.json 加载(含 black_bird)")
+
+
+# ── CollisionAabb:必须认出 CollisionPolygon2D(本作**所有**身体都用它)──
+# 2026-09-15:原先 `has_any`/`world_rect` 只认 `child is CollisionShape2D`,而 Godot 4 里
+# CollisionPolygon2D 与它是**并列类**(都直接继承 Node2D,不是子类关系;该文件里那句
+# "CollisionPolygon2D 继承自 CollisionShape2D" 的注释是错的,已一并改正)。
+# 后果不是"少算一点":敌人/玩家的身体几何**一律读不到**,三个调用方静默走兜底 ——
+# 激光的判定框恒为「原点周围 36×36」(和身体大小/位置无关,实测扫偏移量 ±16 命中、
+# ±24 不中),water 的脚底偏移恒 24px,飞鸟避障恒 40×40。这一节把该语义钉死。
+func _phase_collision_aabb() -> void:
+	var host := Node2D.new()
+	root.add_child(host)
+	var poly := CollisionPolygon2D.new()
+	# 故意不对称:上边 -10、下边 +30 —— 中心不在原点,与敌人场景同款
+	poly.polygon = PackedVector2Array([
+			Vector2(-20, -10), Vector2(20, -10), Vector2(20, 30), Vector2(-20, 30)])
+	host.add_child(poly)
+	host.global_position = Vector2(500, 500)
+	_check(CollisionAabb.has_any(host), "CollisionAabb 认出启用的 CollisionPolygon2D")
+	var wr: Rect2 = CollisionAabb.world_rect(host)
+	_check(wr.size == Vector2(40, 40), "多边形世界 AABB 尺寸(实际 %s)" % str(wr.size))
+	_check(is_equal_approx(wr.position.y, 490.0),
+			"多边形世界 AABB 保留原点偏移(实际 y=%.1f,错法是恒等于原点 y)" % wr.position.y)
+	host.scale = Vector2(2.5, 2.5)     # 敌人 tscn 就是 2.5x
+	_check(CollisionAabb.world_rect(host).size == Vector2(100, 100),
+			"多边形 AABB 跟随节点缩放(实际 %s)" % str(CollisionAabb.world_rect(host).size))
+	host.scale = Vector2.ONE
+	poly.disabled = true                # 姿态箱切换语义:禁用中的不算
+	_check(not CollisionAabb.has_any(host), "禁用中的多边形不算碰撞体")
+	host.free()
+
+	# 真实敌人:身体 AABB 必须远大于激光的兜底 36×36,且中心不在原点
+	var e: Node2D = load("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
+	root.add_child(e)
+	await physics_frame
+	var er: Rect2 = CollisionAabb.world_rect(e)
+	_check(er.size.y > 60.0,
+			"跳鸟身体 AABB 高度 %.1f —— 不该是激光兜底的 36" % er.size.y)
+	_check(absf(er.get_center().y - e.global_position.y) > 4.0,
+			"跳鸟身体 AABB 中心偏离原点 %.1f px(以原点为中心的写法会丢掉这个偏移)"
+					% absf(er.get_center().y - e.global_position.y))
+	e.free()
+
+
+# ── 武器注册表三条对齐(2026-09-15,武器槽位计划 Task 2)──
+# 加新武器时漏填注册表的表现各不相同:
+#   WEAPONS 漏 → 切枪时 load("") 报错(响);DISPLAY_NAMES 漏 → HUD 显示 "?"(看得见);
+#   TIERS 漏 → **容量算错**(轻武器被当成重武器,8 格只能带两把),完全不报错。
+# 第三条最容易漏,所以三条一起钉。
+#
+# ★ 用 get_script_constant_map() 而不是脚本上直接取属性:常量不存在时属性访问会抛运行时错,
+#   而 -s 脚本里抛错走不到 quit() → **进程永久挂起**(本仓踩过)。这里先查表再取值。
+func _phase_weapon_registry() -> void:
+	var wc: GDScript = load("res://scenes/player/weapon_component.gd")
+	var wi: GDScript = load("res://core/sim/weapon_inventory.gd")
+	var wb: GDScript = load("res://scenes/weapons/weapon_base.gd")
+	_check(wc != null and wi != null and wb != null, "武器注册表三件套可加载")
+	if wc == null or wi == null or wb == null:
+		return
+	var consts: Dictionary = wc.get_script_constant_map()
+	_check(consts.has("TIERS"), "WeaponComponent 有 TIERS 注册表")
+	if not consts.has("TIERS"):
+		return
+
+	# ① 三个注册表键集相同
+	# ★ 必须**归一化成 int** 再比:WEAPONS 的键是字符串("1".."6",因为装备路径是
+	#   equip(str(slot)) → load(WEAPONS[slot])),而 DISPLAY_NAMES / TIERS 的键是整数。
+	#   直接比数组会永远不等 —— 而"永远不等"看起来像真发现了漏填,其实是类型没归一。
+	var keys_w: Array = (wc.WEAPONS as Dictionary).keys().map(func(k): return int(k))
+	var keys_n: Array = (wc.DISPLAY_NAMES as Dictionary).keys().map(func(k): return int(k))
+	var keys_t: Array = (consts["TIERS"] as Dictionary).keys().map(func(k): return int(k))
+	keys_w.sort()
+	keys_n.sort()
+	keys_t.sort()
+	_check(not keys_w.is_empty(), "WEAPONS 注册表非空")
+	_check(keys_w == keys_n, "WEAPONS 与 DISPLAY_NAMES 键集相同(归一化后)")
+	_check(keys_w == keys_t, "WEAPONS 与 TIERS 键集相同(归一化后)")
+
+	# ② TIERS 与各 .tscn 的 tier = export 逐条一致
+	#    两份数据是**刻意重复**的:不实例化武器场景就问得到"这枪多重"(实例化会连带 preload
+	#    bullet.tscn)。代价就是要靠这条断言兜住漂移。
+	for k in keys_w:
+		var slot := int(k)
+		var scene: PackedScene = load(wc.WEAPONS[str(slot)])
+		_check(scene != null, "槽 %d 的武器场景可加载" % slot)
+		if scene == null:
+			continue
+		var inst: Node = scene.instantiate()
+		_check(int(inst.tier) == int((consts["TIERS"] as Dictionary)[slot]),
+				"槽 %d 的 tscn tier 与 WEAPONS/TIERS 注册表一致" % slot)
+		inst.free()
+
+	# ③ WeaponInventory 的 tier 常量与 WeaponBase.Tier 数值对齐
+	#    (wi 刻意不 import weapon_base,所以这条对齐是**约定**而不是编译器保证的)
+	_check(int(wi.TIER_LIGHT) == int(wb.Tier.LIGHT), "TIER_LIGHT 与 WeaponBase.Tier.LIGHT 对齐")
+	_check(int(wi.TIER_MEDIUM) == int(wb.Tier.MEDIUM), "TIER_MEDIUM 与 WeaponBase.Tier.MEDIUM 对齐")
+	_check(int(wi.TIER_HEAVY) == int(wb.Tier.HEAVY), "TIER_HEAVY 与 WeaponBase.Tier.HEAVY 对齐")
+	_check(int(wi.MAX_WEAPONS) == 4, "WeaponInventory.MAX_WEAPONS == 4")
+	_check(int(wi.CAPACITY) == 8, "WeaponInventory.CAPACITY == 8")
+
+
+# ── 布点工具 spread_cells(2026-09-15 从 RoyaleHost.plan_spawns 抽出)──
+# 三条:取满 / 两两距离达标 / 池子不够时放宽而不返回空。
+func _phase_spread_cells() -> void:
+	var cells: Array = []
+	for y in 10:
+		for x in 10:
+			cells.append(Vector2i(x, y))
+
+	var picked: Array = GridPathfinder.spread_cells(cells.duplicate(), 5, 3, 10, 10)
+	_check(picked.size() == 5, "spread_cells 应取满 5 个点(实际 %d)" % picked.size())
+	# 两两环面距离 ≥ clearance(10x10 的池子放 5 个点不需要放宽)
+	for i in picked.size():
+		for j in range(i + 1, picked.size()):
+			var d := GridPathfinder.toroidal_dist(picked[i], picked[j], 10, 10)
+			_check(d >= 3, "点 %d 与 %d 的距离 %d < clearance 3" % [i, j, d])
+
+	# 池子小:clearance 逐级放宽,最终必须**凑满**而不是返回空(调用方按 count 布点)
+	var few: Array = [Vector2i(0, 0), Vector2i(1, 1), Vector2i(2, 2)]
+	_check(GridPathfinder.spread_cells(few.duplicate(), 3, 9, 10, 10).size() == 3,
+			"池子小时应放宽 clearance 凑满 3")
+
+	# count 超过池子大小:返回全部,不越界、不补 (-1,-1)
+	var over: Array = GridPathfinder.spread_cells(few.duplicate(), 10, 3, 10, 10)
+	_check(over.size() == 3, "count 超过池子应返回全部(实际 %d)" % over.size())
+
+	# 边界:空池 / count<=0 都返回空表,不崩
+	_check(GridPathfinder.spread_cells([], 3, 3, 10, 10).is_empty(), "空池应返回空表")
+	_check(GridPathfinder.spread_cells(few.duplicate(), 0, 3, 10, 10).is_empty(), "count=0 应返回空表")

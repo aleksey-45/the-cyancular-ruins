@@ -67,7 +67,10 @@ func _ready() -> void:
 # ── 排行榜(右上角、击杀计数下方;血条在左上角,不重叠)──
 func _build_board() -> void:
 	_board_bg = ColorRect.new()
-	_board_bg.color = Color(0.0, 0.0, 0.0, 0.45)   # 深底板:排行榜直接压在地图上,浅色开阔区会吃掉文字
+	# 底板:排行榜直接压在地图上,浅色开阔区会吃掉文字。
+	# ★ 本张底板**单独定成 0.25**,不跟其余几处(0.1):用户 2026-09-15 点名把「pvp 玩家栏」
+	#   (这张玩家名次表)排除在那轮下调之外,随后又指定要 0.25 —— 比别处都更实。
+	_board_bg.color = Color(0.0, 0.0, 0.0, 0.25)
 	_board_bg.position = Vector2(1920 - BOARD_W - 16, 96)
 	_board_bg.size = Vector2(BOARD_W, 64)
 	_board_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -141,9 +144,12 @@ func _build_hint() -> void:
 
 # HUD 元素底板(与单机 HUD 同一套做法,见 ui/hud.gd 的 PLATE_COLOR):
 # 对局 HUD 直接压在地图上,地图开阔区是浅灰蓝 —— 不垫底时浅色小字读不出来。
+# ⚠ 这里与单机 HUD 的 `PLATE_COLOR`、`pvp_hud.tscn` 的 `Plate` 是**同一个数值**(0.1,
+#   用户 2026-09-15 统一下调);改一处就得改齐三处(场景那份是 .tscn 里的字面量,无法共享常量)。
+#   ★ 本文件的 `_board_bg`(排行榜)**不在其中** —— 那张玩家栏被用户点名排除,单独是 0.25。
 static func _plate_box(pad_x: float, pad_y: float) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0, 0, 0, 0.45)
+	sb.bg_color = Color(0, 0, 0, 0.1)
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = pad_x
 	sb.content_margin_right = pad_x
@@ -254,8 +260,10 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 	if _rows.size() != _last_row_count:
 		_last_row_count = _rows.size()
 		# 底板高度随行数自适应(标题 + 计时 + N 行 + 内边距)。
+		# ★ 末尾那个 34 = 原来的 14 + 用户 2026-09-15 要求的"底部再多留 20px"(底板向下多伸一截,
+		#   末行文字与板底之间不再贴着)。改行数自适应时**别把它顺手改回 14**。
 		# 只在行数变了才取 combined_minimum_size —— 它内部强制一次 layout,不该每秒付。
-		_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + 14
+		_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + 34
 	for i in range(rows.size()):
 		var e: Dictionary = rows[i]
 		var is_me: bool = e["name"] == _my_name

@@ -2,9 +2,11 @@ extends SceneTree
 
 # AiInputSource 契约冒烟:①是 PlayerInput 子类 ②is_network_driven() 必须为 true
 # ③基类所有读口都真被覆写(不会被基类默认实现悄悄接管)
-# 为什么钉死第 ② 条:main 的 WeaponBase.reload_active() 第二判据是 player.input_is_network()
-# → 若 AI 被判成"本地单机",AI 打空弹夹后会进换弹、静默停火 reload_time 秒(霰弹 2.2s/榴弹 2.8s)。
-# 无报错、无客户端分歧,只是 AI 手感莫名变差 —— 只有断言能拦住这种静默退化。
+# 为什么钉死第 ② 条(**理由是瞄准,2026-09-15 起不再是换弹**):weapon_base._aim_world_dir()
+# 对 input_is_network()==true 的玩家永不读宿主 OS 鼠标、改用朝向兜底 —— AI 跑在 headless
+# 服务器上,不覆写就会去读宿主机的真实鼠标,瞄准变成随桌面而变的随机值。
+# (旧版本这条是为了让 AI 绕开换弹:当年 WeaponBase.reload_active() 的第二判据正是
+#  input_is_network()。闸门已删,AI 现在照常换弹 —— 与真人同规则。)
 
 var _fail := 0
 
@@ -26,7 +28,11 @@ class StubBody extends Node2D:
 func _initialize() -> void:
 	# -s 阶段 autoload 未实例化 → 这里只 load 不静态引用任何 autoload 标识符
 	var ai_script: GDScript = load("res://core/net/ai_input_source.gd")
-	var base_script: GDScript = load("res://core/net/input_source.gd")
+	# ★ 路径 2026-09-15 修正:接口在阶段 5.9 已从 `input_source.gd` 改名为 `player_input.gd`。
+	#   旧路径在这里 load 到 null 但**从没被断言过** —— 于是它默默地每跑一次刷一条
+	#   "Failed loading resource",而所有人以为那只是噪音。顺带把它接进断言。
+	var base_script: GDScript = load("res://core/net/player_input.gd")
+	_check(base_script != null, "player_input.gd(接口)可加载")
 	_check(ai_script != null, "ai_input_source.gd 可加载")
 	if ai_script == null:
 		print("AI INPUT SMOKE: FAIL")
@@ -78,6 +84,8 @@ func _initialize() -> void:
 	_check(not src.is_attack_just_pressed(), "frozen:is_attack_just_pressed 为 false")
 	_check(not src.is_attack_just_released(), "frozen:is_attack_just_released 为 false")
 	_check(src.get_weapon_slot_pressed() == 0, "frozen:get_weapon_slot_pressed 为 0")
+	_check(not src.is_pickup_pressed(), "frozen:is_pickup_pressed 为 false")
+	_check(not src.is_drop_pressed(), "frozen:is_drop_pressed 为 false")
 	# 瞄准是**刻意**不冻的:冻结期武器仍要按注入方向摆枪
 	_check(src.get_aim_dir_override() == Vector2.UP, "frozen:瞄准刻意不冻(武器仍按注入方向摆枪)")
 	src.frozen = false

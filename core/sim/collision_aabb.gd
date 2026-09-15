@@ -11,11 +11,22 @@ extends RefCounted
 # 兜底值(水 24px / 激光 18px / 鸟 40×40)是各自的调参结果,**由调用方自备**,不在这里统一。
 
 
+# ★ `CollisionPolygon2D` 与 `CollisionShape2D` 是**并列类**(都直接继承 Node2D),不是父子 ——
+#   两个分支缺一不可。原先只判 `child is CollisionShape2D` 且注释写成"多边形继承自形状",
+#   于是**本作所有身体**(三个敌人 + 玩家 5 个姿态箱,全是多边形)一个都读不到:
+#   has_any 恒 false、world_rect 恒零矩形,**每个调用方静默走自己的兜底** ——
+#   激光判定框恒为原点周围 36×36(实测扫垂直偏移 ±16 命中 / ±24 不中,与身体无关)、
+#   water 脚底偏移恒 24px、飞鸟避障恒 40×40。2026-09-15 修。
+#   (Godot 编译器会直接拒绝 `多边形 is CollisionShape2D`:静态可判为假。)
 # 该节点是否有任何启用中的碰撞体。
 static func has_any(n: Node2D) -> bool:
 	for child in n.get_children():
-		if child is CollisionShape2D and not (child as CollisionShape2D).disabled:
-			return true
+		if child is CollisionPolygon2D:
+			if not (child as CollisionPolygon2D).disabled:
+				return true
+		elif child is CollisionShape2D:
+			if not (child as CollisionShape2D).disabled:
+				return true
 	return false
 
 
@@ -25,14 +36,12 @@ static func world_rect(n: Node2D) -> Rect2:
 	var rect := Rect2(n.global_position, Vector2.ZERO)
 	var has := false
 	for child in n.get_children():
-		# CollisionPolygon2D 继承自 CollisionShape2D,先判多边形,否则走 shape 分支会被跳过。
-		if not (child is CollisionShape2D):
-			continue
-		if (child as CollisionShape2D).disabled:
-			continue
+		# ★ 多边形与形状**分开判**(并列类,见 has_any 的注释)。
 		var r: Rect2
 		if child is CollisionPolygon2D:
 			var cp := child as CollisionPolygon2D
+			if cp.disabled:
+				continue
 			var pts := cp.polygon
 			if pts.size() == 0:
 				continue
@@ -43,8 +52,10 @@ static func world_rect(n: Node2D) -> Rect2:
 				mn = mn.min(wp)
 				mx = mx.max(wp)
 			r = Rect2(mn, mx - mn)
-		else:
+		elif child is CollisionShape2D:
 			var cs := child as CollisionShape2D
+			if cs.disabled:
+				continue
 			var shape := cs.shape
 			if shape == null:
 				continue
@@ -56,6 +67,8 @@ static func world_rect(n: Node2D) -> Rect2:
 				r = Rect2(cs.global_position - Vector2(rad, rad), Vector2(rad, rad) * 2.0)
 			else:
 				continue
+		else:
+			continue
 		rect = r if not has else rect.merge(r)
 		has = true
 	return rect

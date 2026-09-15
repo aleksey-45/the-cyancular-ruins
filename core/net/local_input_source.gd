@@ -38,7 +38,19 @@ func _attack_just_released_raw() -> bool:
 	return Input.is_action_just_released("attack")
 
 func _weapon_slot_raw() -> int:
-	for i in range(1, 7):
+	# ★ 只认 1-4:持有位上限是 4(WeaponInventory.MAX_WEAPONS)。
+	#   5/6 的 InputMap 动作**保留不删**(以后想开第 5 个位时不必再动 project.godot),
+	#   但这里不读它们 —— 读了就会切到一个不存在的背包位置。
+	for i in range(1, 5):
 		if Input.is_action_just_pressed(str(i)):
 			return i
 	return 0
+
+func _pickup_pressed_raw() -> bool:
+	return Input.is_action_just_pressed("F")
+
+func _drop_pressed_raw() -> bool:
+	# ★ 这里报的是"Q 键现在是否按着",**不是**"长按满了" —— 长按计时在 player.gd 的
+	#   物理帧里做(那才有确定的 delta),满了才把它当成一次边沿用。
+	#   非本地实现(PacketInputSource)拿到的直接是"满了"的边沿。
+	return Input.is_action_pressed("Q")
