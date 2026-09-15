@@ -271,9 +271,13 @@ func _kill_ghost(i: int) -> void:
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
 	# ★ 2026-09-15:按用户要求去掉这里的深底板(「右上计数器的黑框」)。**保留 StyleBoxFlat**
-	#   ——它现在只剩 content margin 的作用(数字与右上角的间距),底色留空 = 透明。
+	#   ——它现在只剩 content margin 的作用(数字与右上角的间距)。
+	# ⚠ **必须显式 `draw_center = false`,不能只是不写 `bg_color`**:StyleBoxFlat 的默认底色是
+	#   **不透明灰 (0.6,0.6,0.6,1.0)**、`draw_center` 默认 true —— 删掉赋值那一行等于把黑板
+	#   换成一块**实心灰板**(实测第一版就这么发的,用户当场看出「右上角怎么还有框」)。
 	var wrap := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
+	sb.draw_center = false
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 16.0
 	sb.content_margin_right = 16.0
