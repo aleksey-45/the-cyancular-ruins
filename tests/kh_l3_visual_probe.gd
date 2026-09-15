@@ -26,107 +26,31 @@ var _hud: Hud = null
 var _w: WeaponBase = null
 
 
+
+# hoisted from locals when __ready was split (first assignment kept in place).
+var win: Vector2 = Vector2.ZERO
+var p: Node = null
+var img1: Image = null
+var img2: Image = null
+var img3: Image = null
+var _aborted: bool = false
 func _ready() -> void:
-	# 探针自持确定性:本机 user://settings.cfg 可能被用户开着 pvp(换弹恒定开启,无开关)。
-	Level0.pvp_mode = false
-
-	# 窗口尺寸实取(不写死:stretch/mode=viewport 下与工程设置解耦,改分辨率探针不失效)。
-	# 注意不要给根 Control 赋 size —— 它的锚点是全屏,赋值会被引擎在 _ready 后覆盖并告警。
-	var win := get_viewport().get_visible_rect().size
-	print("[L3-VISUAL] 窗口可见区 = %s" % str(win))
-
-	# 深色底:金色残弹/进度条在暗底上才读得出(也便于统计"金色像素数")
-	var bg := ColorRect.new()
-	bg.color = Color(0.09, 0.10, 0.13)
-	bg.position = Vector2.ZERO
-	bg.size = win
-	add_child(bg)
-
-	var ps: PackedScene = load(PLAYER_SCENE)
-	if ps == null:
-		_failures.append("player.tscn 载入失败")
-		_finish()
+	# 每段后查 _aborted:段内原来的 `return` 退出的是**整个函数**,拆完只退出该段。
+	await _setup_scene()
+	if _aborted:
 		return
-	var p: Node = ps.instantiate()
-	add_child(p)
-	# 冻结玩家物理:换弹进度不受真实物理 tick 推进,只由本探针显式 tick(帧率无关、可复现)
-	p.set_physics_process(false)
-	p.global_position = Vector2(win.x * 0.5, win.y * 0.62)   # 远离左下角 HUD 区,不干扰像素统计
-	await _frames(3)   # 武器是 call_deferred 入树的,等它 _ready(mag_ammo = mag_size)
-
-	_hud = Hud.new()
-	add_child(_hud)    # HUD._ready 从 "player" 组找玩家并接管剪影/名称/残弹显示
-	await _frames(3)
-
-	_w = p.weapons.current_weapon()
-	if _w == null or _hud == null or _hud._ammo_label == null:
-		_failures.append("前置失败:HUD 未建起残弹标签(weapon=%s)" % str(_w))
-		_finish()
+	_capture_full_ammo()
+	if _aborted:
 		return
-	print("[L3-VISUAL] HUD 残弹标签全局矩形 = %s" % str(_hud._ammo_label.get_global_rect()))
-
-	# ── 态1:满弹 12/12 ──────────────────────────────────────────────
-	_check(_w.mag_ammo == 12, "态1:开局残弹应 12(实际 %d)" % _w.mag_ammo)
-	var img1 := await _shot("_l3_1_ammo.png")
-	_check(_hud._ammo_label.visible, "态1:残弹标签不可见")
-	_check(_hud._ammo_label.text == "12/12", "态1:文本应为「12/12」(实际「%s」)" % _hud._ammo_label.text)
-	_check(_hud._weapon_icon.texture != null, "态1:武器剪影贴图为空")
-	_check(_hud._weapon_name.text == "手枪", "态1:武器名应为「手枪」(实际「%s」)" % _hud._weapon_name.text)
-	_check(not _hud._reload_bar.visible, "态1:非换弹态进度条不应可见")
-	var bright1 := _bright_in(img1, _hud._ammo_label)
-	var gold1 := _gold_in(img1, _hud._ammo_label)
-	var accent1 := _accent_in(img1, _hud._reload_bar)
-	_check(bright1 > 0, "态1:残弹文本区域没有画出中性亮文本(文本没渲染出来?)")
-	_check(gold1 == 0, "态1:满弹不该是金色(金色只表「弹夹见底」;实测金色像素 %d)" % gold1)
-	_check(accent1 == 0, "态1:非换弹态进度条区不该有强调青像素(%d)" % accent1)
-	print("[L3-VISUAL] 态1 像素:残弹区亮文本=%d 金色=%d 进度条区青=%d" % [bright1, gold1, accent1])
-
-	# ── 态2:装填中(进度中段 0.5)────────────────────────────────────
-	_w.mag_ammo = 3
-	_w.start_reload()
-	_w.tick(RELOAD_SAMPLE_DT)      # 手动推进:tick 是武器帧逻辑唯一入口,不依赖真实时间
-	await _frames(2)
-	_check(_w.is_reloading(), "态2:start_reload()+tick(0.5) 后未处于装填中")
-	var prog := _w.reload_progress()
-	_check(prog > 0.0 and prog < 1.0, "态2:换弹进度 %.3f 不在 (0,1) 中段" % prog)
-	var img2 := await _shot("_l3_2_reloading.png")
-	_check(_hud._ammo_label.text == "装填中…", "态2:文本应为「装填中…」(实际「%s」)" % _hud._ammo_label.text)
-	_check(_hud._reload_bar.visible, "态2:换弹进度条不可见")
-	_check(_hud._bar_back.visible, "态2:换弹进度条底板不可见")
-	_check(absf(_hud._reload_bar.size.x - Hud.WEAPON_ICON_W * prog) < 2.0,
-			"态2:进度条长度 %.1f 与进度 %.2f 不符(期望 %.1f)" % [
-				_hud._reload_bar.size.x, prog, Hud.WEAPON_ICON_W * prog])
-	var gold2 := _gold_in(img2, _hud._ammo_label)
-	var gold_bar2 := _gold_in(img2, _hud._reload_bar)
-	var accent2 := _accent_in(img2, _hud._reload_bar)
-	_check(gold2 > 0, "态2:残弹已见底(3/12)却没转金 —— 「低弹量」警告没画出来")
-	_check(accent2 > 0, "态2:进度条区域没有画出强调青像素(进度条没渲染出来?)")
-	_check(gold_bar2 == 0, "态2:进度条不该是金色(金色只留给残弹见底;实测 %d)" % gold_bar2)
-	print("[L3-VISUAL] 态2 像素:残弹区金色=%d 进度条区青=%d 金=%d 进度=%.2f 条长=%.1f" % [
-			gold2, accent2, gold_bar2, prog, _hud._reload_bar.size.x])
-
-	# ── 态3:残弹低位 1/12 ───────────────────────────────────────────
-	_w.tick(2.0)                   # 推进到底:补满并退出装填
-	_check(not _w.is_reloading(), "态3:tick(2.0) 后仍在装填(装填收尾坏了?)")
-	_check(_w.mag_ammo == 12, "态3:装填收尾未补满(实际 %d)" % _w.mag_ammo)
-	_w.mag_ammo = 1                # 残留 1 发
-	await _frames(2)
-	var img3 := await _shot("_l3_3_low.png")
-	_check(_hud._ammo_label.text == "1/12", "态3:文本应为「1/12」(实际「%s」)" % _hud._ammo_label.text)
-	_check(_hud._ammo_label.visible, "态3:残弹标签不可见")
-	_check(not _hud._reload_bar.visible, "态3:非换弹态进度条不应可见")
-	var gold3 := _gold_in(img3, _hud._ammo_label)
-	var accent3 := _accent_in(img3, _hud._reload_bar)
-	_check(gold3 > 0, "态3:残弹见底(1/12)却没转金 —— 「低弹量」警告没画出来")
-	_check(accent3 == 0, "态3:非换弹态进度条区不该有强调青像素(%d)" % accent3)
-	print("[L3-VISUAL] 态3 像素:残弹区金色=%d 进度条区青=%d" % [gold3, accent3])
-
-	# ── 三态必须真的画得不一样(否则"改了状态但画面没变")──────────────
-	var d12 := _diff_in_hud_region(img1, img2)
-	var d13 := _diff_in_hud_region(img1, img3)
-	_check(d12 > 50, "态1→态2 HUD 区像素几乎没变(差异 %d):换弹进度条/文本没画出来?" % d12)
-	_check(d13 > 50, "态1→态3 HUD 区像素几乎没变(差异 %d):残弹数字变化没画出来?" % d13)
-	print("[L3-VISUAL] HUD 区像素差异:态1→态2 = %d,态1→态3 = %d" % [d12, d13])
+	await _capture_reloading()
+	if _aborted:
+		return
+	await _capture_low_ammo()
+	if _aborted:
+		return
+	_assert_states_differ()
+	if _aborted:
+		return
 
 	_finish()
 
@@ -224,9 +148,117 @@ func _check(ok: bool, msg: String) -> void:
 
 
 func _finish() -> void:
+	_aborted = true   # 见 _ready 顶部:置位后各段之间就不再往下跑
 	if _failures.is_empty():
 		print("KH L3 VISUAL: ALL-OK")
 		get_tree().quit(0)
 	else:
 		print("KH L3 VISUAL: FAIL | " + "; ".join(_failures))
 		get_tree().quit(1)
+
+
+func _setup_scene() -> void:
+	# 探针自持确定性:本机 user://settings.cfg 可能被用户开着 pvp(换弹恒定开启,无开关)。
+	Level0.pvp_mode = false
+
+	# 窗口尺寸实取(不写死:stretch/mode=viewport 下与工程设置解耦,改分辨率探针不失效)。
+	# 注意不要给根 Control 赋 size —— 它的锚点是全屏,赋值会被引擎在 _ready 后覆盖并告警。
+	win = get_viewport().get_visible_rect().size
+	print("[L3-VISUAL] 窗口可见区 = %s" % str(win))
+
+	# 深色底:金色残弹/进度条在暗底上才读得出(也便于统计"金色像素数")
+	var bg := ColorRect.new()
+	bg.color = Color(0.09, 0.10, 0.13)
+	bg.position = Vector2.ZERO
+	bg.size = win
+	add_child(bg)
+
+	var ps: PackedScene = load(PLAYER_SCENE)
+	if ps == null:
+		_failures.append("player.tscn 载入失败")
+		_finish()
+		return
+	p = ps.instantiate()
+	add_child(p)
+	# 冻结玩家物理:换弹进度不受真实物理 tick 推进,只由本探针显式 tick(帧率无关、可复现)
+	p.set_physics_process(false)
+	p.global_position = Vector2(win.x * 0.5, win.y * 0.62)   # 远离左下角 HUD 区,不干扰像素统计
+	await _frames(3)   # 武器是 call_deferred 入树的,等它 _ready(mag_ammo = mag_size)
+
+	_hud = Hud.new()
+	add_child(_hud)    # HUD._ready 从 "player" 组找玩家并接管剪影/名称/残弹显示
+	await _frames(3)
+
+	_w = p.weapons.current_weapon()
+	if _w == null or _hud == null or _hud._ammo_label == null:
+		_failures.append("前置失败:HUD 未建起残弹标签(weapon=%s)" % str(_w))
+		_finish()
+		return
+	print("[L3-VISUAL] HUD 残弹标签全局矩形 = %s" % str(_hud._ammo_label.get_global_rect()))
+
+func _capture_full_ammo() -> void:
+	# ── 态1:满弹 12/12 ──────────────────────────────────────────────
+	_check(_w.mag_ammo == 12, "态1:开局残弹应 12(实际 %d)" % _w.mag_ammo)
+	img1 = await _shot("_l3_1_ammo.png")
+	_check(_hud._ammo_label.visible, "态1:残弹标签不可见")
+	_check(_hud._ammo_label.text == "12/12", "态1:文本应为「12/12」(实际「%s」)" % _hud._ammo_label.text)
+	_check(_hud._weapon_icon.texture != null, "态1:武器剪影贴图为空")
+	_check(_hud._weapon_name.text == "手枪", "态1:武器名应为「手枪」(实际「%s」)" % _hud._weapon_name.text)
+	_check(not _hud._reload_bar.visible, "态1:非换弹态进度条不应可见")
+	var bright1 := _bright_in(img1, _hud._ammo_label)
+	var gold1 := _gold_in(img1, _hud._ammo_label)
+	var accent1 := _accent_in(img1, _hud._reload_bar)
+	_check(bright1 > 0, "态1:残弹文本区域没有画出中性亮文本(文本没渲染出来?)")
+	_check(gold1 == 0, "态1:满弹不该是金色(金色只表「弹夹见底」;实测金色像素 %d)" % gold1)
+	_check(accent1 == 0, "态1:非换弹态进度条区不该有强调青像素(%d)" % accent1)
+	print("[L3-VISUAL] 态1 像素:残弹区亮文本=%d 金色=%d 进度条区青=%d" % [bright1, gold1, accent1])
+
+func _capture_reloading() -> void:
+	# ── 态2:装填中(进度中段 0.5)────────────────────────────────────
+	_w.mag_ammo = 3
+	_w.start_reload()
+	_w.tick(RELOAD_SAMPLE_DT)      # 手动推进:tick 是武器帧逻辑唯一入口,不依赖真实时间
+	await _frames(2)
+	_check(_w.is_reloading(), "态2:start_reload()+tick(0.5) 后未处于装填中")
+	var prog := _w.reload_progress()
+	_check(prog > 0.0 and prog < 1.0, "态2:换弹进度 %.3f 不在 (0,1) 中段" % prog)
+	img2 = await _shot("_l3_2_reloading.png")
+	_check(_hud._ammo_label.text == "装填中…", "态2:文本应为「装填中…」(实际「%s」)" % _hud._ammo_label.text)
+	_check(_hud._reload_bar.visible, "态2:换弹进度条不可见")
+	_check(_hud._bar_back.visible, "态2:换弹进度条底板不可见")
+	_check(absf(_hud._reload_bar.size.x - Hud.WEAPON_ICON_W * prog) < 2.0,
+			"态2:进度条长度 %.1f 与进度 %.2f 不符(期望 %.1f)" % [
+				_hud._reload_bar.size.x, prog, Hud.WEAPON_ICON_W * prog])
+	var gold2 := _gold_in(img2, _hud._ammo_label)
+	var gold_bar2 := _gold_in(img2, _hud._reload_bar)
+	var accent2 := _accent_in(img2, _hud._reload_bar)
+	_check(gold2 > 0, "态2:残弹已见底(3/12)却没转金 —— 「低弹量」警告没画出来")
+	_check(accent2 > 0, "态2:进度条区域没有画出强调青像素(进度条没渲染出来?)")
+	_check(gold_bar2 == 0, "态2:进度条不该是金色(金色只留给残弹见底;实测 %d)" % gold_bar2)
+	print("[L3-VISUAL] 态2 像素:残弹区金色=%d 进度条区青=%d 金=%d 进度=%.2f 条长=%.1f" % [
+			gold2, accent2, gold_bar2, prog, _hud._reload_bar.size.x])
+
+func _capture_low_ammo() -> void:
+	# ── 态3:残弹低位 1/12 ───────────────────────────────────────────
+	_w.tick(2.0)                   # 推进到底:补满并退出装填
+	_check(not _w.is_reloading(), "态3:tick(2.0) 后仍在装填(装填收尾坏了?)")
+	_check(_w.mag_ammo == 12, "态3:装填收尾未补满(实际 %d)" % _w.mag_ammo)
+	_w.mag_ammo = 1                # 残留 1 发
+	await _frames(2)
+	img3 = await _shot("_l3_3_low.png")
+	_check(_hud._ammo_label.text == "1/12", "态3:文本应为「1/12」(实际「%s」)" % _hud._ammo_label.text)
+	_check(_hud._ammo_label.visible, "态3:残弹标签不可见")
+	_check(not _hud._reload_bar.visible, "态3:非换弹态进度条不应可见")
+	var gold3 := _gold_in(img3, _hud._ammo_label)
+	var accent3 := _accent_in(img3, _hud._reload_bar)
+	_check(gold3 > 0, "态3:残弹见底(1/12)却没转金 —— 「低弹量」警告没画出来")
+	_check(accent3 == 0, "态3:非换弹态进度条区不该有强调青像素(%d)" % accent3)
+	print("[L3-VISUAL] 态3 像素:残弹区金色=%d 进度条区青=%d" % [gold3, accent3])
+
+func _assert_states_differ() -> void:
+	# ── 三态必须真的画得不一样(否则"改了状态但画面没变")──────────────
+	var d12 := _diff_in_hud_region(img1, img2)
+	var d13 := _diff_in_hud_region(img1, img3)
+	_check(d12 > 50, "态1→态2 HUD 区像素几乎没变(差异 %d):换弹进度条/文本没画出来?" % d12)
+	_check(d13 > 50, "态1→态3 HUD 区像素几乎没变(差异 %d):残弹数字变化没画出来?" % d13)
+	print("[L3-VISUAL] HUD 区像素差异:态1→态2 = %d,态1→态3 = %d" % [d12, d13])
