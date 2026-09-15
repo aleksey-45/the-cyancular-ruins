@@ -2,7 +2,7 @@ class_name PredictionRollback
 extends RefCounted
 # C2 rollback 控制器(与引擎解耦,纯逻辑)。被预测 Player 的驱动方式由接入方决定,两种皆可:
 #   A) 手动步进(冒烟/无引擎环境):每帧调 advance(record) —— 内部把玩家 input_source 换成
-#      scratch NetworkInputSource,喂入该记录后步进一次,再换回 → 确定性复现该输入。
+#      scratch PacketInputSource,喂入该记录后步进一次,再换回 → 确定性复现该输入。
 #   B) 引擎自步进(真机本地预测,读真实 Input):每帧由接入方在玩家被引擎步进后调
 #      note_post_step(seq, capture),把要发的记录 note_input(seq, record);reconcile() 在
 #      下一帧步进前处理到期权威。回滚重放内部走 A 的 swap+scratch 步进。
@@ -19,7 +19,7 @@ const KEEP := 256           # ring 保留窗口
 const PHYS_DT := 1.0 / 60.0 # 回滚重放一律按固定物理步(确定性)
 
 var _p = null               # 被预测 Player(动态)
-var _scratch: NetworkInputSource = NetworkInputSource.new()   # 步进/重放喂入源
+var _scratch: PacketInputSource = PacketInputSource.new()   # 步进/重放喂入源
 
 var _inputs: Dictionary = {}   # seq(int) -> 输入包记录(重放用)
 var _captures: Dictionary = {} # seq(int) -> 步进后 capture_state()(比对/锚点)

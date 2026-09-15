@@ -1,5 +1,5 @@
 extends Node
-# 下蹲/冲刺手感冒烟(scene 模式 headless):手动喂 NetworkInputSource 逐帧驱动单个 Player,
+# 下蹲/冲刺手感冒烟(scene 模式 headless):手动喂 PacketInputSource 逐帧驱动单个 Player,
 # 断言:
 #  1) 卡蹲修复:地面按住 S 蹲 → 被抬到空中(仍按 S)is_squat 随离地清除 → 空中松开 S 落地不再蹲。
 #  2) 蹲走:蹲态喂水平轴,速度收敛到 crouch_walk_speed 附近且远小于 move_speed。
@@ -9,9 +9,9 @@ extends Node
 #     明显小于不冲刺时的 gravity*dt。
 # 跑法:用户自跑(见 move_feel_smoke.sh / CLAUDE.md)。通过 = SMOKE_MOVE_FEEL OK。
 
-const BIT_UP := NetworkInputSource.BIT_UP
-const BIT_DOWN := NetworkInputSource.BIT_DOWN
-const BIT_CHARGE := NetworkInputSource.BIT_CHARGE
+const BIT_UP := PacketInputSource.BIT_UP
+const BIT_DOWN := PacketInputSource.BIT_DOWN
+const BIT_CHARGE := PacketInputSource.BIT_CHARGE
 
 const COLS := 40
 const ROWS := 14
@@ -20,7 +20,7 @@ const WALL_X := 8            # 竖直墙列(x=8,px 512..576):测试冲刺撞墙�
 const DT := 1.0 / 60.0
 
 var p = null                 # Player(手动步进)
-var src: NetworkInputSource = NetworkInputSource.new()
+var src: PacketInputSource = PacketInputSource.new()
 var _fail := ""
 var _spawn := Vector2(2 * TILE + TILE * 0.5, 3 * TILE + TILE * 0.5)
 

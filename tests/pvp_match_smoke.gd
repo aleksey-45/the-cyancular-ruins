@@ -114,8 +114,8 @@ func _physics_process(_delta: float) -> void:
 		var pressed := 0
 		var ax := 1.0
 		if _frames > 240:
-			held = NetworkInputSource.BIT_ATTACK
-			pressed = NetworkInputSource.BIT_ATTACK
+			held = PacketInputSource.BIT_ATTACK
+			pressed = PacketInputSource.BIT_ATTACK
 		_sent_seq += 1
 		var pkt := {
 			"seq": _sent_seq,   # C2:单调输入序号(服务器 ack 依据)

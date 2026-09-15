@@ -6,9 +6,9 @@ extends Node
 #   断言:常态(无事件)下 P==A 无橡皮筋;事件后 ack 到期 → P 一次性 rollback 重对齐 A,随后再收敛。
 # 跑法:用户自跑(见 Tests/pvp_reconcile_smoke.sh);通过 = SMOKE_RECONCILE OK。
 
-const BIT_UP := NetworkInputSource.BIT_UP
-const BIT_DOWN := NetworkInputSource.BIT_DOWN
-const BIT_CHARGE := NetworkInputSource.BIT_CHARGE
+const BIT_UP := PacketInputSource.BIT_UP
+const BIT_DOWN := PacketInputSource.BIT_DOWN
+const BIT_CHARGE := PacketInputSource.BIT_CHARGE
 
 const COLS := 60
 const ROWS := 14
@@ -26,7 +26,7 @@ const TOTAL := WARMUP + RUN
 var A = null   # 权威(服务器模拟,手动步进,不接控制器)
 var P = null   # 被预测(控制器驱动;advance 内部换 scratch 喂入)
 var ctrl := PredictionRollback.new()
-var srcA: NetworkInputSource = NetworkInputSource.new()
+var srcA: PacketInputSource = PacketInputSource.new()
 var _plan: Array[Dictionary] = []
 var _a_hist: Array[Dictionary] = []   # tick -> A 该 tick 步进后整态(投递用)
 var _tick := 0

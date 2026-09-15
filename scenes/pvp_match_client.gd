@@ -101,11 +101,11 @@ func _physics_process(_delta: float) -> void:
 		if _have_prev_seq:
 			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
 			_rollback.reconcile()
-	var src: InputSource = _local.input_source
-	# 位打包收在 NetworkInputSource.pack_record(协议**编码端**唯一来源;解码端本来就只有一份)。
+	var src: PlayerInput = _local.input_source
+	# 位打包收在 PacketInputSource.pack_record(协议**编码端**唯一来源;解码端本来就只有一份)。
 	var aim: Vector2 = _local.get_current_aim_dir()
 	_input_seq += 1
-	var pkt := NetworkInputSource.pack_record(src, _input_seq, aim)
+	var pkt := PacketInputSource.pack_record(src, _input_seq, aim)
 	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
 	var net_slot: int = _local.weapons.consume_net_slot()
 	if net_slot > 0:

@@ -46,7 +46,7 @@ class StubPlayer extends Node2D:
 
 
 # 网络输入源桩(必修 1 回归钉用):与 StubPlayer 同款,只多一个 input_is_network() -> true,
-# 模拟 PvP 权威服务器/远端副本上的玩家(它们由 NetworkInputSource 驱动)。
+# 模拟 PvP 权威服务器/远端副本上的玩家(它们由 PacketInputSource 驱动)。
 class NetStubPlayer extends Node2D:
 	func is_downed() -> bool: return false
 	func get_facing() -> int: return 1
@@ -435,7 +435,7 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 	# 只判 pvp_mode 的实现在服务器上会判成"单机":每打空弹夹就 start_reload() 并拒绝出弹
 	# reload_time 秒,而客户端预测不受限 → 服务器不广播 bullet_spawn → **PvP 打中不掉血、
 	# 无任何报错**;且 mag_ammo/_reloading 不入 capture_state → 分歧永不自愈。
-	# 判据只能是输入源(权威模拟与远端副本都由 NetworkInputSource 驱动)。
+	# 判据只能是输入源(权威模拟与远端副本都由 PacketInputSource 驱动)。
 	_check(Level0.pvp_mode == false, "前置:本钉要求 pvp_mode 为 false(实际 %s)" % str(Level0.pvp_mode))
 	# (a) 桩路径:覆盖 weapon_base 的 has_method 守卫 + input_is_network()==true
 	var net_stub := NetStubPlayer.new()
@@ -446,21 +446,21 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 	w.mag_ammo = 3
 	w.start_reload()
 	_check(not w.is_reloading(), "网络输入源驱动时 start_reload() 仍进入装填(应被 reload_active() 拒绝)")
-	# (b) 真实链路:真 player.tscn + NetworkInputSource → player.gd::input_is_network()
+	# (b) 真实链路:真 player.tscn + PacketInputSource → player.gd::input_is_network()
 	var real_w: WeaponBase = wep.current_weapon()
 	if real_w == null:
 		_failures.append("网络闸门:Player 当前没有武器实例,真实链路无法验证")
 	else:
-		var prev_src: InputSource = player.input_source
-		player.set_input_source(NetworkInputSource.new())
-		_check(player.input_is_network(), "注入 NetworkInputSource 后 player.input_is_network() 仍为假")
+		var prev_src: PlayerInput = player.input_source
+		player.set_input_source(PacketInputSource.new())
+		_check(player.input_is_network(), "注入 PacketInputSource 后 player.input_is_network() 仍为假")
 		_check(not real_w.reload_active(),
-				"真实 Player 注入 NetworkInputSource 后 reload_active() 仍为真(必修 1 未生效)")
+				"真实 Player 注入 PacketInputSource 后 reload_active() 仍为真(必修 1 未生效)")
 		player.set_input_source(prev_src)
 		_check(not player.input_is_network(), "复原本地输入源后 input_is_network() 应为假")
 
 	# (c) PvP **本地客户端**:pvp_mode=true 但输入源是本地的(C2 下引擎自步进读真实鼠标,
-	# pvp_game.gd:49 只置 pvp_mode,本地玩家不注入 NetworkInputSource)→ 同样不许换弹。
+	# pvp_game.gd:49 只置 pvp_mode,本地玩家不注入 PacketInputSource)→ 同样不许换弹。
 	# 漏这一条 = 客户端本地预测"装填中不许开火"、服务器无限弹 → 枪哑火但人照死;
 	# 也违反 player.gd「PvP 不开换弹(reload_active() 恒 false)」的既有约定。
 	w.equip(stub)   # 先复原成本地输入源,再验 PvP 客户端这一格

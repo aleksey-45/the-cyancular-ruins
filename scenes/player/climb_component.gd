@@ -39,10 +39,10 @@ func is_over_climb_tile() -> bool:
 # 锁链无下降倍率(0)→ 解除攀附交给重力自由落体;松开挂住。返回「正在垂直攀爬」。
 # 上爬与梯子下行再整体 × PlayerParams.climb_vertical_mult(1.2;锁链下行=自由落体不受影响)。
 func update(mult: Vector2, delta: float, is_squat: bool,
-		src: InputSource = null) -> bool:
+		src: PlayerInput = null) -> bool:
 	# src=null(冒烟等直接调用)回落真实 Input;本地玩家传入自己的 input_source,服务器传入注入源。
 	if src == null:
-		src = InputSource.new()
+		src = LocalInputSource.new()
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty() or is_squat:
 		_latched = false

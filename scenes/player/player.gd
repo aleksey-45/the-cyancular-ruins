@@ -43,17 +43,17 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 @onready var combat: CombatComponent = $Combat
 @onready var swim: SwimComponent = $Swim
 
-# 输入来源(行为不变重构):默认委托真实 Input;服务器注入 NetworkInputSource 驱动远端玩家。
-var input_source: InputSource = InputSource.new()
+# 输入来源(行为不变重构):默认委托真实 Input;服务器注入 PacketInputSource 驱动远端玩家。
+var input_source: PlayerInput = LocalInputSource.new()
 
-func set_input_source(src: InputSource) -> void:
+func set_input_source(src: PlayerInput) -> void:
 	input_source = src
 
 # 瞄准覆盖:本地返回 ZERO → 武器用鼠标;服务器注入的网络输入返回瞄准方向。
 func get_aim_dir_override() -> Vector2:
 	return input_source.get_aim_dir_override()
 
-# 输入源是否网络注入(NetworkInputSource)。武器瞄准据此决定不读宿主机 OS 鼠标(见 weapon_base)。
+# 输入源是否网络注入(PacketInputSource)。武器瞄准据此决定不读宿主机 OS 鼠标(见 weapon_base)。
 func input_is_network() -> bool:
 	return input_source != null and input_source.is_network_driven()
 

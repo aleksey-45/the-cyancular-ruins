@@ -100,7 +100,7 @@ var _opps: Array = []             # 对手真身(权威侧)
 var _opp_srcs: Array = []         # 对手输入源
 var P = null                      # 被预测玩家
 var ctrl := PredictionRollback.new()
-var srcA: NetworkInputSource = NetworkInputSource.new()
+var srcA: PacketInputSource = PacketInputSource.new()
 var _a_hist: Array[Dictionary] = []
 var _opp_hist: Array = []         # 每个对手的 capture_state 历史(tick -> state)
 var _replicas: Array = []         # PlayerReplica
@@ -185,7 +185,7 @@ func _run_pass(variant: int, n: int) -> void:
 	ctrl = PredictionRollback.new()
 	# ★ 容差是回滚频率的闸门(见 core/prediction_rollback.gd 的 pos_tol 注释)
 	ctrl.pos_tol = VARIANT_TOL[variant]
-	srcA = NetworkInputSource.new()
+	srcA = PacketInputSource.new()
 
 	var pack_x := _spawn.x + REACH
 
@@ -201,7 +201,7 @@ func _run_pass(variant: int, n: int) -> void:
 		var o = _make_player("Opp%d" % i, Vector2(pack_x + SPACING * float(i), _spawn.y))
 		o.collision_layer = LAYER_AUTH
 		o.collision_mask = 1 | LAYER_AUTH
-		var s := NetworkInputSource.new()
+		var s := PacketInputSource.new()
 		o.set_input_source(s)
 		o.set_physics_process(false)
 		_opps.append(o)
@@ -293,7 +293,7 @@ func _physics_process(_delta: float) -> void:
 
 	for i in range(_opps.size()):
 		var rec := _packet(t, _input_opp(t, i), t + 1)
-		var s: NetworkInputSource = _opp_srcs[i]
+		var s: PacketInputSource = _opp_srcs[i]
 		s.clear_edges()
 		s.apply_packet(rec)
 		var o = _opps[i]

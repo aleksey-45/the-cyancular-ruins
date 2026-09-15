@@ -27,11 +27,11 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	destructible_sub = WorldBuilder.build_sim(self, grid)
 	# PvP 权威对局:取消命中无敌帧(每发结算一次);双方玩家(层2)互相物理碰撞
 	CombatComponent.pvp_arena = true
-	# 生成两个玩家(player.tscn 完整物理模拟,注入 NetworkInputSource)
+	# 生成两个玩家(player.tscn 完整物理模拟,注入 PacketInputSource)
 	peer_by_role = role_peers.duplicate()
 	for role in role_peers:
 		var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
-		var src := NetworkInputSource.new()
+		var src := PacketInputSource.new()
 		p.set_input_source(src)
 		add_child(p)
 		p.collision_mask |= 2   # 与对方玩家(层2)物理碰撞;自身节点互不作用由 Godot 排除
@@ -116,10 +116,10 @@ func _physics_process(delta: float) -> void:
 		_broadcast_snapshot()
 	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
 	# 每 tick 每 role 恰好消费一个 FIFO 包(最早的)→ 权威模拟与客户端重放 1:1 同序;
-	# 队列空 = 缺包,沿用上一包 held/轴(NetworkInputSource.clear_edges 不清 held)。
+	# 队列空 = 缺包,沿用上一包 held/轴(PacketInputSource.clear_edges 不清 held)。
 	# ack = 刚消费包的 seq(下一 tick 快照回带,客户端 rollback 锚点)。
 	for role in input_sources:
-		var src: NetworkInputSource = input_sources[role]
+		var src: PacketInputSource = input_sources[role]
 		src.clear_edges()
 		if _pending_input.has(role):
 			var q: Array = _pending_input[role]

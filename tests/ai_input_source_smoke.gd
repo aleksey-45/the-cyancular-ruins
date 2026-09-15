@@ -1,6 +1,6 @@
 extends SceneTree
 
-# AiInputSource 契约冒烟:①是 InputSource 子类 ②is_network_driven() 必须为 true
+# AiInputSource 契约冒烟:①是 PlayerInput 子类 ②is_network_driven() 必须为 true
 # ③基类所有读口都真被覆写(不会被基类默认实现悄悄接管)
 # 为什么钉死第 ② 条:main 的 WeaponBase.reload_active() 第二判据是 player.input_is_network()
 # → 若 AI 被判成"本地单机",AI 打空弹夹后会进换弹、静默停火 reload_time 秒(霰弹 2.2s/榴弹 2.8s)。
@@ -32,9 +32,9 @@ func _initialize() -> void:
 		print("AI INPUT SMOKE: FAIL")
 		quit(1)
 		return
-	var src: InputSource = ai_script.new()
+	var src: PlayerInput = ai_script.new()
 
-	_check(src is InputSource, "AiInputSource 是 InputSource 的子类")
+	_check(src is PlayerInput, "AiInputSource 是 PlayerInput 的子类")
 	_check(src.is_network_driven(), "★ is_network_driven() 必须为 true(否则 AI 会静默进换弹)")
 
 	# 覆写的行为断言(逐条对基类可区分):基类会把读口委托给真实 Input,headless 下恒为

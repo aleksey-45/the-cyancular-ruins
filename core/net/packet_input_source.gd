@@ -1,5 +1,5 @@
-class_name NetworkInputSource
-extends InputSource
+class_name PacketInputSource
+extends PlayerInput
 
 # 网络注入输入(服务器权威模拟的唯一消费方):从输入包取轴/按键/边沿/切枪/瞄准。
 # 设计(修正版):
@@ -22,7 +22,7 @@ const BIT_ATTACK := 8
 # ★ seq / aim 由调用方给:它们来自场景(`_input_seq` 单调自增、`player.get_current_aim_dir()`),
 #   不属于"协议编码"这件事。
 # ★ 读 src 走公开读口 → 自动遵守 `frozen`(COUNTDOWN 冻结期组出来的是全中性包,与旧行为一致)。
-static func pack_record(src: InputSource, seq: int, aim: Vector2) -> Dictionary:
+static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 	var held := 0
 	var pressed := 0
 	var released := 0
@@ -68,6 +68,11 @@ var _pressed := 0          # 累积的 just_pressed 边沿(玩家读取,MatchHos
 var _released := 0         # 累积的 just_released 边沿
 
 # 新包到达(服务器 RPC 回调里调用):held/axis/aim/weapon 取最新,边沿累积。
+# 输入源种类(基类 PlayerInput.Kind;阶段 5.9 起接口要求实现)。
+func source_kind() -> int:
+	return Kind.PACKET
+
+
 func apply_packet(pkt: Dictionary) -> void:
 	_axis = pkt.get("ax", 0.0)
 	_held = pkt.get("held", 0)

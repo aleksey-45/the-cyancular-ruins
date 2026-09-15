@@ -14,12 +14,12 @@ extends Node
 # ★ 中间层**不得**定义 _init/_ready/_enter_tree/_exit_tree/_physics_process:
 #   RoyaleHost 的 _init 契约是"先 plan_spawns 再 super._init"(顺序不可整理),
 #   插入新的生命周期钩子会把它打断。
-# 服务器权威对局模拟(每房间一个):建世界(只碰撞不渲染)+ 两个 Player(NetworkInputSource 注入)。
+# 服务器权威对局模拟(每房间一个):建世界(只碰撞不渲染)+ 两个 Player(PacketInputSource 注入)。
 # 每物理帧消费双方输入包注入,玩家 _physics_process 自动跑(Player 是 CharacterBody2D,父先于子)。
 # 协议只传 canonical 坐标;渲染归各端副本(客户端侧),服务器只存真值。
 
 var players: Dictionary = {}        # role(int) -> Player
-var input_sources: Dictionary = {}  # role -> NetworkInputSource
+var input_sources: Dictionary = {}  # role -> PacketInputSource
 var peer_by_role: Dictionary = {}   # role -> peer_id
 var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消费不丢 just_pressed 边沿
 var grid: Array = []

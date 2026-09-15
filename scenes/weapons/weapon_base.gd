@@ -88,7 +88,7 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # ── 换弹(装填;固定玩法,无开关可关)──
 # 仅单机生效(PvP 服务器权威模拟,输入包不含换弹事件,不做同步)。判据是 pvp_mode **与**
 # 输入源两条:只用 pvp_mode 会漏掉权威服务器(它不实例化 Level0,pvp_mode 恒 false),
-# 只用输入源会漏掉 PvP 本地客户端(本地 InputSource)—— 两者都会造成单方面停火(见 reload_active)。
+# 只用输入源会漏掉 PvP 本地客户端(本地 PlayerInput)—— 两者都会造成单方面停火(见 reload_active)。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
@@ -103,7 +103,7 @@ const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
 
 func reload_active() -> bool:
 	# 仅本地单机 —— 两个判据缺一不可:
-	# ① pvp_mode:挡 **PvP 本地客户端**(C2 下它用本地 InputSource 读真实鼠标,pvp_mode=true)。
+	# ① pvp_mode:挡 **PvP 本地客户端**(C2 下它用本地 PlayerInput 读真实鼠标,pvp_mode=true)。
 	#    漏了它则客户端本地预测"装填中不许开火"、服务器却无限弹 → 枪哑火但人照死,手感错乱。
 	# ② input_is_network:挡 **权威服务器与远端副本**。服务器进程根本不实例化 Level0
 	#    (server/ 目录零赋值)→ pvp_mode 恒 false,只看 ① 会把权威模拟判成"单机":
@@ -181,7 +181,7 @@ func _ready() -> void:
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
 
-# 攻击输入查询:优先走 player 的注入输入(NetworkInputSource);本地/冒烟无该方法时回退真实 Input。
+# 攻击输入查询:优先走 player 的注入输入(PacketInputSource);本地/冒烟无该方法时回退真实 Input。
 func _attack_pressed() -> bool:
 	if player != null and player.has_method("is_attack_pressed"):
 		return player.is_attack_pressed()
@@ -486,7 +486,7 @@ func _aim_world_dir() -> Vector2:
 			return override
 		# override 存在但为 ZERO(网络玩家还没收到瞄准/瞄准为零):
 		# 网络驱动 → 永不读宿主机 OS 鼠标(服务器 headless 上没有鼠标,读了是垃圾方向),用朝向兜底。
-		# 本地 InputSource 的 override 恒为 ZERO → is_network_driven()==false → 走下面鼠标路径。
+		# 本地 PlayerInput 的 override 恒为 ZERO → is_network_driven()==false → 走下面鼠标路径。
 		if player.has_method("input_is_network") and player.input_is_network():
 			return Vector2(float(get_facing()), 0.0)
 	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),

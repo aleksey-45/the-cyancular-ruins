@@ -1,5 +1,5 @@
-extends InputSource
-# 大乱斗压力探针的脚本"手柄"(extends InputSource,与 AiInputSource 同一套注入机制)。
+extends PlayerInput
+# 大乱斗压力探针的脚本"手柄"(extends PlayerInput,与 AiInputSource 同一套注入机制)。
 # 目的:让 headless 客户端在真 `royale_game` 场景里把**局内行为真的踩一遍** ——
 # 走动 / 跳 / 冲刺 / 下蹲 / 上下爬 / 各武器开火 / 切枪 / 静默,而不是只连上收快照。
 # 探针每物理帧调 step();探针直接把本对象塞进本地玩家的 input_source。
@@ -30,6 +30,12 @@ var _phase := 0
 
 
 # 探针每物理帧调一次:推进脚本、算边沿。
+# 输入源种类:压力探针的脚本手柄,归到 AI 一档(与 AiInputSource 同一套注入机制,
+# 同样由脚本每帧写字段、不是真实 Input,也不是网络包)。
+func source_kind() -> int:
+	return Kind.AI
+
+
 func step() -> void:
 	if frozen:
 		axis = 0.0

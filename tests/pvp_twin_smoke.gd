@@ -8,9 +8,9 @@ extends Node
 # 根因背景(docs/pvp-c2-retrospective.md):v1 回拉的根因之一是两端模拟不孪生 + 校正拉拢。
 # 新 C2 把「整态 PlayerState」作为权威格式:本冒烟先钉死 capture_state 无漏,才谈网络协议。
 
-const BIT_UP := NetworkInputSource.BIT_UP
-const BIT_DOWN := NetworkInputSource.BIT_DOWN
-const BIT_CHARGE := NetworkInputSource.BIT_CHARGE
+const BIT_UP := PacketInputSource.BIT_UP
+const BIT_DOWN := PacketInputSource.BIT_DOWN
+const BIT_CHARGE := PacketInputSource.BIT_CHARGE
 
 # ── 合成网格(确定性,已知布局):平地底行 + 一条梯 + 一片水池 ──
 const COLS := 60
@@ -41,7 +41,7 @@ func _ready() -> void:
 	add_child(host)
 	WorldBuilder.build_sim(host, MazeGenerator.current_grid)
 	_build_plan()
-	# 两个玩家,同出生点、mask 不含对方层(不互撞),各注入独立 NetworkInputSource
+	# 两个玩家,同出生点、mask 不含对方层(不互撞),各注入独立 PacketInputSource
 	var ts := GameParameters.TILE_SIZE
 	var spawn := Vector2(2 * ts + ts * 0.5, 3 * ts + ts * 0.5)
 	A = _make_player(host, "TwinA", spawn)
@@ -52,7 +52,7 @@ func _ready() -> void:
 func _make_player(host: Node2D, nm: String, pos: Vector2):
 	var p = preload("res://scenes/player/player.tscn").instantiate()
 	p.name = nm
-	var src := NetworkInputSource.new()
+	var src := PacketInputSource.new()
 	p.set_input_source(src)
 	host.add_child(p)
 	p.global_position = pos
@@ -121,7 +121,7 @@ func _build_plan() -> void:
 		prev = {"up": up, "down": down, "charge": charge}
 		_plan.append({"h": h, "p": p, "r": r, "ax": ax})
 
-func _apply_input(src: NetworkInputSource, i: int) -> void:
+func _apply_input(src: PacketInputSource, i: int) -> void:
 	src.clear_edges()
 	if i >= _plan.size():
 		return
@@ -145,8 +145,8 @@ func _physics_process(_delta: float) -> void:
 	if i >= TOTAL:
 		_finish()
 		return
-	var srcA := A.input_source as NetworkInputSource
-	var srcB := B.input_source as NetworkInputSource
+	var srcA := A.input_source as PacketInputSource
+	var srcB := B.input_source as PacketInputSource
 	if srcA == null or srcB == null:
 		_fail()   # 注入失败
 		return

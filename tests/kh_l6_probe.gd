@@ -67,7 +67,20 @@ const HUD_SCRIPT := "res://ui/" + "pvp_hud.gd"
 const LASER := "res://scenes/weapons/" + "laser_weapon_base.gd"
 const CF_PATH := "res://ui/" + "combat_feedback.gd"
 const RB_PATH := "res://core/net/" + "prediction_rollback.gd"
-const MH_PATH := "res://server/" + "match_host.gd"
+# ★ 2026-09-15(阶段 5.6):MatchHost 按域拆成一条继承链,权威源码现在是**五份的并集**
+# (核心/回合/裁决/快照/状态)。别只读 match_host.gd —— "beam_fired" 已搬进 match_combat.gd,
+# 只读老家会让本门报"发送端被整条迁走了",或更糟:**静默失绿**。
+const MH_PATHS := ["res://server/" + "match_host.gd", "res://server/" + "match_round.gd",
+		"res://server/" + "match_combat.gd", "res://server/" + "match_snapshot.gd",
+		"res://server/" + "match_state.gd"]
+
+# MatchHost 五份源码的并集(见 MH_PATHS 的注释)。用 += 拼接,不引入任何转义序列。
+func _read_host_union() -> String:
+	var s := ""
+	for f in MH_PATHS:
+		s += _read(f)
+	return s
+
 
 # 生产目录(第 13 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
 const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "res://render"]
@@ -127,7 +140,7 @@ const RE_PACKET_DICT := "^\\s*var\\s+([A-Za-z_]\\w*)\\s*(?::[^:=]+)?:?=\\s*\\{"
 # 与解码端同处一类)。原先两个客户端各手抄一份字典字面量,qa 锚点因此认的是 `"seq": _input_seq`。
 # ★ 判据改成"**送出去的包必须带 _input_seq**"这条用意 —— 两种写法都能满足,故两种都认:
 #   新形态锚 `pack_record(` 一行(该调用必须收到 N_SEQ);旧形态仍走字典推导。别只留一种。
-const N_PACK := "Network" + "InputSource.pack_" + "record("
+const N_PACK := "Packet" + "InputSource.pack_" + "record("
 const RE_FUNC_DEF := "^(?:static\\s+)?func\\s+([A-Za-z_]\\w*)\\s*\\("
 const RE_ONREADY_PATH := "@onready\\s+var\\s+[A-Za-z_]\\w*\\s*:[^=]+=\\s*\\$([A-Za-z0-9_/]+)"
 # 文件级常量 + 字符串字面量(用于把"菜单路径抽成常量"这种正确修法也认下来)
@@ -146,8 +159,7 @@ func _ready() -> void:
 	_pc_code = _code_view(_read(PC))
 	_pc_lines = _pc_code.split("\n")
 	_base_code = _code_view(_read(BASE))
-	_base_lines = _base_code.split("
-")
+	_base_lines = _base_code.split("\n")   # ★ 别写成"字面量里带真实换行":那种写法对**行尾**敏感,
 	if _base_code.is_empty():
 		# 基类读不到 → 下面所有 _body_anywhere 都会退化,必须**明确报红**而不是让它悄悄找不到
 		_failures.append("读不到 %s(共享基类;公共函数体都在那里)" % BASE)
@@ -525,8 +537,8 @@ func _check_beam_routing() -> void:
 	# 于是 `NetBusExt.rpc_id(peer_by_role[r], "beam_fired", rep)` —— 正是本断言注释里点名的那处
 	# **有意的不对称** —— 会**全绿**通过,而收端 NetBus 订阅此时已是静默 no-op。
 	# 取"同行"而非固定实参文本:广播表达式怎么改(peer 怎么取、rep 怎么组)都不假红。
-	var mh := _code_view(_read(MH_PATH))
-	_check(not mh.is_empty(), "读不到 %s" % MH_PATH)
+	var mh := _code_view(_read_host_union())
+	_check(not mh.is_empty(), "读不到 %s" % MH_PATHS)
 	if not mh.is_empty():
 		var mh_lines := mh.split("\n")
 		var beam_sites := _find_lines(mh_lines, "\"" + N_BEAM + "\"")
@@ -544,9 +556,9 @@ func _check_beam_routing() -> void:
 				via_helper += 1
 			else:
 				off_netbus.append("%s ← %s" % [_enclosing_func(mh_lines, k), ln])
-		_check(not beam_sites.is_empty(), "%s 里找不到 \"%s\" 字面量(发送端被整条迁走了?)" % [MH_PATH, N_BEAM])
+		_check(not beam_sites.is_empty(), "%s 里找不到 \"%s\" 字面量(发送端被整条迁走了?)" % [MH_PATHS, N_BEAM])
 		if via_helper > 0:
-			var helper_body := _func_body(_code_view(_read(MH_PATH)), N_RPC_ALL.trim_suffix("("))
+			var helper_body := _func_body(_code_view(_read_host_union()), N_RPC_ALL.trim_suffix("("))
 			_check(not helper_body.is_empty(), "找不到 %s 的函数体(判据无从落地)" % N_RPC_ALL)
 			var nbus_in_helper := helper_body.contains("Net" + "Bus.")
 			var next_in_helper := helper_body.contains("Net" + "BusExt")
@@ -554,11 +566,11 @@ func _check_beam_routing() -> void:
 				"%s 的体内没有走 NetBus(或混进了 NetBusExt)→ 光束实际从别的节点发出,收端 NetBus 订阅是**静默 no-op**" % N_RPC_ALL)
 		_check(on_netbus >= 1 or via_helper >= 1,
 			"%s 里 \"%s\" 既不在 `NetBus.rpc_id(` 行上、也不经 %s(%d 处不同行: %s)→ 发送端迁到 NetBusExt 后,收端 NetBus 订阅是**静默 no-op**"
-			% [MH_PATH, N_BEAM, N_RPC_ALL, off_netbus.size(), " | ".join(off_netbus)])
+			% [MH_PATHS, N_BEAM, N_RPC_ALL, off_netbus.size(), " | ".join(off_netbus)])
 		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 \"%s\" 同行 %s.rpc_id ×%d"
 				% [N_LOCAL_BEAM, wrong.size(), N_BEAM, "NetBus", on_netbus])
 	else:
-		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 %s 读不到" % [N_LOCAL_BEAM, wrong.size(), MH_PATH])
+		_summary(before, "激光路由:收端 %s ×1、NetBusExt 混用 %d 处、发送端 %s 读不到" % [N_LOCAL_BEAM, wrong.size(), MH_PATHS])
 
 
 # ── 12) 退出路径:大写零命中 + 路径① + 「开始收口后不许残留裸切」的过渡守卫 ──

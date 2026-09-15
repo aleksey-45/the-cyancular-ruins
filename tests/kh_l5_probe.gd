@@ -81,8 +81,7 @@ func _host_code() -> String:
 	var parts: Array[String] = []
 	for f in HOST_SRC:
 		parts.append(_code_only(_read(f)))
-	return "
-".join(parts)
+	return "\n".join(parts)
 
 var _failures: Array[String] = []
 

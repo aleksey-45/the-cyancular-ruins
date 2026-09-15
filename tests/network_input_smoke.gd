@@ -1,20 +1,20 @@
 extends SceneTree
-# 网络输入源单元冒烟:验证 NetworkInputSource.get_axis 的轴语义。
+# 网络输入源单元冒烟:验证 PacketInputSource.get_axis 的轴语义。
 # 回归覆盖:get_axis("up","down") 曾一律返回水平 ax → 服务器攀爬方向恒 0 → 梯子大量回拉。
 # 用法: godot --headless --path . -s res://tests/network_input_smoke.gd
-# (NetworkInputSource 是纯 RefCounted,不依赖 autoload,-s 阶段可安全引用)
+# (PacketInputSource 是纯 RefCounted,不依赖 autoload,-s 阶段可安全引用)
 
 func _initialize() -> void:
-	var src := NetworkInputSource.new()
+	var src := PacketInputSource.new()
 	var fail := 0
 
 	# 上爬:held=UP、水平 ax=0 → 垂直轴应 -1,水平轴应 0
-	src.apply_packet({"ax": 0.0, "held": NetworkInputSource.BIT_UP, "pressed": 0, "released": 0, "weapon": 0})
+	src.apply_packet({"ax": 0.0, "held": PacketInputSource.BIT_UP, "pressed": 0, "released": 0, "weapon": 0})
 	fail += _check("UP held → 垂直 -1", is_equal_approx(src.get_axis("up", "down"), -1.0))
 	fail += _check("UP held → 水平 0", is_equal_approx(src.get_axis("left", "right"), 0.0))
 
 	# 下爬:held=DOWN → 垂直 +1
-	src.apply_packet({"ax": 0.0, "held": NetworkInputSource.BIT_DOWN, "pressed": 0, "released": 0, "weapon": 0})
+	src.apply_packet({"ax": 0.0, "held": PacketInputSource.BIT_DOWN, "pressed": 0, "released": 0, "weapon": 0})
 	fail += _check("DOWN held → 垂直 +1", is_equal_approx(src.get_axis("up", "down"), 1.0))
 
 	# 未按上下 → 垂直 0(挂住)

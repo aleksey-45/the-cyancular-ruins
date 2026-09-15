@@ -57,7 +57,7 @@ var _ghost_on_max_px := 0.0   # 正向那趟的读数,负向对照组直接拿�
 var A = null                                    # 权威(服务器侧模拟,手动步进)
 var P = null                                    # 被预测(客户端侧模拟,控制器驱动)
 var ctrl := PredictionRollback.new()
-var srcA: NetworkInputSource = NetworkInputSource.new()
+var srcA: PacketInputSource = PacketInputSource.new()
 var _a_hist: Array[Dictionary] = []             # tick -> A 步进后整态(投递用)
 var _replica: Node2D = null
 var _ghost: StaticBody2D = null
@@ -101,7 +101,7 @@ func _run_pass(ghost_on: bool) -> void:
 	_max_px = -INF
 	_a_hist = []
 	ctrl = PredictionRollback.new()
-	srcA = NetworkInputSource.new()
+	srcA = PacketInputSource.new()
 	var obstacle_x := _spawn.x + REACH
 
 	# 权威 A:被备用层上的等几何替身挡住
