@@ -33,10 +33,12 @@ func _ready() -> void:
 	var player: Node = lvl.get_node_or_null("WorldViewport/Player")
 	_check(player != null, "Level0 有玩家")
 
-	# 开局空手(武器全在地上)
+	# 开局**携带手枪**(2026-09-15 用户要求;此前是空手)
 	if player != null:
-		_check(player.weapons.current_slot_int() == 0,
-				"单机开局空手(实际槽 %d)" % player.weapons.current_slot_int())
+		_check(player.weapons.current_slot_int() == 1,
+				"单机开局应携带手枪(实际槽 %d)" % player.weapons.current_slot_int())
+		_check(player.weapons.inventory.held.size() == 1,
+				"开局背包里应只有那一把(实际 %d)" % player.weapons.inventory.held.size())
 
 	var all_pickups := get_tree().get_nodes_in_group("weapon_pickup")
 	# 每种 2 把 × 6 种 = 12(没有禁用武器时)

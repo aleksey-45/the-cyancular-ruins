@@ -25,6 +25,7 @@ mag_size = 30
 reload_time = 1.8
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=139203024]
+texture_filter = 1
 position = Vector2(12, 11)
 texture = ExtResource("2_wpn")
 region_enabled = true

@@ -239,6 +239,7 @@ func _ready() -> void:
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
+	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
 	# ★ deferred:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
@@ -439,7 +440,7 @@ func restart_single() -> void:
 	#   装备也是本局的进度,重开就该从头攒。
 	#   (联机不走这条路:服务器权威另有复活规则,武器只保留随机一把。)
 	clear_pickups()
-	player.weapons.set_initial_inventory([])
+	_give_starting_weapon(player)
 	scatter_weapons.call_deferred(_default_weapon_types())
 
 
@@ -479,6 +480,20 @@ var _pickup_nodes: Dictionary = {}      # inst -> WeaponPickup
 var _self_drop_until: Dictionary = {}   # inst -> 解禁时刻(ms),防"丢完立刻捡回"的抖动
 
 const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
+
+
+# 单机开局武器:玩家**手里带一把**(用户 2026-09-15 要求「单机模式初始携带手枪」),
+# 其余散落在地图上。
+#
+# ★ 必须排在 `set_enabled_slots` **之后** —— 如果先给再禁,手上一旦是被禁的那把,
+#   `set_enabled_slots` 会判成"没有可用的"→ 空手;过滤顺序反了就直接白给。
+# ★ 用 `default_slot()`(最小**启用**槽位)而不是写死 "1":玩家禁用手枪时应当发下一把,
+#   而不是发一把本局根本不让用的枪。发出来的仍是手枪,除非手枪被禁。
+# ★ 本函数只服务单机;PvP/大乱斗的初始武器由服务器 MatchHost 自己决定(见联机计划)。
+func _give_starting_weapon(p: Node) -> void:
+	if p == null or p.weapons == null:
+		return
+	p.weapons.set_initial_inventory([int(p.weapons.default_slot())])
 
 
 # 单机初始武器清单:每种 2 把,跳过本局被禁的槽位。
