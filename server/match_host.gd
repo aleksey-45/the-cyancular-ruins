@@ -79,6 +79,12 @@ func _ready() -> void:
 	# 禁用武器槽位:_init 时玩家 @onready 未就绪(不能碰 weapons),进树后应用
 	for role in players:
 		(players[role] as Node).weapons.set_enabled_slots(_disabled_weapons)
+	# 地面武器:铺 12 把 + 每个玩家随机拿 1 把。
+	# ★ 必须排在 set_enabled_slots **之后** —— 与单机 `_give_starting_weapon` 同款理由:
+	#   先给再禁的话,手上一旦是禁用武器会被判成空手。
+	# ★ 这同时是**服务器玩家有枪的唯一来源**:player.tscn 自身的 _ready 给的是空背包,
+	#   不发的话服务器上的玩家开不了火(PvP 直接哑火,且不会有任何报错)。
+	_setup_ground_weapons()
 	# 受击反馈:任意来源(子弹/鸟接触/鸟弹/爆炸)实际扣血 → combat.took_hit → 广播 hit_event
 	for role in players:
 		var combat = (players[role] as Node).get("combat")
@@ -110,6 +116,8 @@ func _physics_process(delta: float) -> void:
 	# 比 S_{F-1},移动中每次快照都误判分歧、画面被拉回(server-rendered 插值吸收故旧路径不暴露;
 	# C2 rollback 一比整态就现形)。放消费前:ack 仍指上 tick 消费的 C_{F-1},状态已是上一步进完的
 	# S_{F-1},配对一致(客户端期望 ack=C 配 S_C,见 pvp_reconcile_smoke 的建模)。
+	# 地面武器:先把落体的实际位置同步回表,后面的拾取判定(nearest_within)才用得上最新落点
+	_sync_ground_positions()
 	_snapshot_accum += delta
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0
@@ -133,6 +141,9 @@ func _physics_process(delta: float) -> void:
 				var pkt: Dictionary = q.pop_front()
 				src.apply_packet(pkt)
 				_ack_seq[role] = int(pkt.get("seq", _ack_seq.get(role, 0)))
+				# 地面武器:拾取/丢弃的**边沿**。★ 必须紧跟 apply_packet —— 本轮开头
+				# 已经 clear_edges(),边沿就是这一包刚写进去的;晚一拍就被下一轮清掉了。
+				_handle_ground_actions(role, src)
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
 	_adjudicate_bullets()

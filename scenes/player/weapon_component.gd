@@ -340,7 +340,22 @@ func snapshot_inventory() -> Array:
 # 用权威整态重建背包。**必须先于 equip(wslot)** —— 否则重放时可能切到客户端
 # 背包里没有的类型,走到 equip() 的"没有就加"分支,凭空造出一把服务器没有的枪。
 func restore_inventory(entries: Array) -> void:
+	# ★ **类型还在就保持手持那把不重建**:`restore_state` 每次 reconcile 都会调到这里,
+	#   而无脑重建 = 每帧 queue_free 旧枪 + 新建一把 + deferred 入树 —— 入树前那一帧
+	#   `tick()`/`fire()` 全是空转(该帧的开火边沿直接丢掉),而且白烧一次 instantiate。
+	#   只在"权威说的东西变了"时才动武器实例。
+	var keep_type := _current_slot
 	inventory.restore(entries)
+	var idx := inventory.first_index_of_type(keep_type) if keep_type > 0 else -1
+	if idx >= 0:
+		_current_index = idx
+		_current_slot = keep_type
+		var mag := int(inventory.held[idx]["mag"])
+		if mag != WeaponInventory.MAG_FULL and _weapon != null and is_instance_valid(_weapon):
+			_restore_mag.call_deferred(_weapon, clampi(mag, 0, _weapon.mag_size))
+		inventory_changed.emit()
+		return
+	# 权威说手上那把没了(或本来空手)→ 清空手持,让调用方按 wslot 重新 equip
 	_current_index = -1
 	_current_slot = 0
 	inventory_changed.emit()

@@ -219,6 +219,12 @@ func _on_match_sync(caller: int) -> void:
 	if role == 0:
 		return
 	var spawns := {}
+	# 地面武器:开局那批**必须随这条拉取一并给**,不走 weapon_spawned 推送 ——
+	# 推送会撞上"客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失"那类事故
+	# (当年三载荷就是这么丢的;反向断言在 match_sync_probe)。
+	var ground: Array = []
+	if _host != null and _host.has_method("ground_weapons_payload"):
+		ground = _host.ground_weapons_payload()
 	if _host != null and _host.has_method("role_spawns"):
 		spawns = _host.role_spawns()
 	else:
@@ -232,6 +238,7 @@ func _on_match_sync(caller: int) -> void:
 		"options": _claim_opts.get(1, {}),
 		"roles": _role_set,
 		"spawns": spawns,
+		"ground_weapons": ground,
 	})
 
 

@@ -31,6 +31,8 @@ signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
 signal local_tile_destroyed(cell: Vector2i)
 signal local_round_state(data: Dictionary)
 signal local_kill_event(killer: int, victim: int)
+signal local_weapon_spawned(data: Dictionary)   # 场上多了一件地面武器({inst,type_id,mag,pos,vel})
+signal local_weapon_removed(data: Dictionary)   # 少了一件({inst,by_role})
 signal local_opponent_left          # 对局中途对手断线(服务器 → 存活方,播报后回菜单)
 signal ping_updated(ms: int)        # 平滑后延迟 ms
 # (原 local_enemy_spawn / local_enemy_died 已删:它们只服务 PvPvE 中立鸟,该特性 2026-09-14 定案不开
@@ -167,6 +169,19 @@ func tile_destroyed(cell: Vector2i) -> void:
 @rpc("authority", "reliable")
 func round_state(data: Dictionary) -> void:
 	local_round_state.emit(data)
+
+# ── 地面武器事件(2026-09-15)──
+# 服务器权威的"场上多了一件/少了一件"广播。**低频**(掉落/捡起,一局几十次),
+# 所以走事件而不是塞进 60Hz 快照(大乱斗的快照体积随人数线性增长,再加 12 把会雪上加霜)。
+# ★ 只进 NetBus,**不要**在 NetBusExt 里也加一份:那两者已有 beam_fired 重名
+#   (net_bus.gd / net_bus_ext.gd),接收端挂错节点会**静默 no-op**(对手的枪凭空消失且不报错)。
+@rpc("authority", "reliable")
+func weapon_spawned(data: Dictionary) -> void:
+	local_weapon_spawned.emit(data)
+
+@rpc("authority", "reliable")
+func weapon_removed(data: Dictionary) -> void:
+	local_weapon_removed.emit(data)
 
 @rpc("authority", "reliable")
 func kill_event(killer: int, victim: int) -> void:

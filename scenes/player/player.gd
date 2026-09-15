@@ -639,6 +639,13 @@ var _drop_latched := false  # 本次长按是否已触发过(防按住不放连�
 #   没有输入事件、只有注入包,读原始事件的话联机端永远收不到(与 R 换弹 2026-09-15
 #   从 _unhandled_input 迁走是同一个理由)。
 func _poll_pickup_drop(delta: float) -> void:
+	# ★ 只归**单机**走:联机的拾取/丢弃是**服务器权威**(读输入包里的 BIT_PICKUP/BIT_DROP),
+	#   客户端不做预测(spec §6.4)。不挡的话客户端本地会自己捡一把、而服务器那边没有 ——
+	#   `_try_*` 里那句 `current_scene is Level0` 只是**碰巧**在 PvP 里为假,别依赖巧合。
+	# ★ 服务器 worker 进程里这个 static 是 false(那个进程不实例化 Level0),所以服务器侧
+	#   仍靠 `_try_*` 的 current_scene 早退兜底 —— 两处都留着,理由不同。
+	if Level0.pvp_mode:
+		return
 	# Q 长按计时**在客户端本地做**(只有这里有确定的物理 delta)。满了才当成一次边沿发出去;
 	# 上行的是"完成信号"而不是"按住"(见 PacketInputSource.BIT_DROP 的注释)。
 	if input_source.is_action_pressed("Q"):

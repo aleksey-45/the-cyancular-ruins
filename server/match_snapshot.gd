@@ -1,5 +1,5 @@
 class_name MatchSnapshot
-extends MatchState
+extends MatchGround
 
 # 60Hz 快照广播域(阶段 5.6 拆自 server/match_host.gd)。
 
