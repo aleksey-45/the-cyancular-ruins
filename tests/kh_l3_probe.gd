@@ -1,4 +1,4 @@
-extends Node
+extends ProbeBase
 
 # KH 合并 L3 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
@@ -33,8 +33,6 @@ const EXPECTED := [
 	{"slot": 6, "path": "res://scenes/weapons/laser_gun.tscn", "name": "Laser Gun", "mag": 12, "reload": 1.2, "live": 0},
 ]
 
-var _failures: Array[String] = []
-
 
 # 换弹测试用的**桩玩家**:只需要 weapon_base 关心的三个口(倒地/朝向/后坐)。
 # 用桩而不用真实 Player 的原因:真实 Player 每物理帧会 weapons.tick() → 自动推进 _reload_t,
@@ -52,6 +50,11 @@ class NetStubPlayer extends Node2D:
 	func get_facing() -> int: return 1
 	func apply_recoil(_push: float) -> void: pass
 	func input_is_network() -> bool: return true
+
+
+# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+func probe_id() -> String:
+	return "L3"
 
 
 func _ready() -> void:
@@ -298,10 +301,10 @@ func _check_same_frame_cycle(wep: WeaponComponent) -> void:
 # 「注释里写出来的字面量」既会误绿(`# weapons.tick(delta)` 被注释掉照样命中),
 # 也会误红(weapon_base.gd 的注释里出现过裸 `_process` 字样)。
 func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
-	var wb_src := _code_only(_read_res(WEAPON_BASE_SRC))
-	var wc_src := _code_only(_read_res(WEAPON_COMPONENT_SRC))
-	var pl_src := _code_only(_read_res(PLAYER_SRC))
-	var lv_src := _code_only(_read_res(LEVEL0_SRC))
+	var wb_src := _code_only(_read(WEAPON_BASE_SRC))
+	var wc_src := _code_only(_read(WEAPON_COMPONENT_SRC))
+	var pl_src := _code_only(_read(PLAYER_SRC))
+	var lv_src := _code_only(_read(LEVEL0_SRC))
 	_check(wb_src != "", "读不到 %s" % WEAPON_BASE_SRC)
 	_check(wc_src != "", "读不到 %s" % WEAPON_COMPONENT_SRC)
 	_check(pl_src != "", "读不到 %s" % PLAYER_SRC)
@@ -333,39 +336,6 @@ func _bullets() -> int:
 func _frames(n: int) -> void:
 	for _i in range(n):
 		await get_tree().process_frame
-
-
-func _check(ok: bool, msg: String) -> void:
-	if not ok:
-		_failures.append(msg)
-
-
-func _read_res(path: String) -> String:
-	if not ResourceLoader.exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
-
-
-# 剥掉纯注释行(整行以 # 开头,允许缩进),供源码级 contains 断言用。
-# 只剥「整行注释」:行尾注释里写字面量的情况本层没有,不做正则以免误伤字符串里的 #。
-func _code_only(src: String) -> String:
-	var out: Array[String] = []
-	for line in src.split("\n"):
-		var s: String = (line as String).strip_edges()
-		if s.is_empty() or s.begins_with("#"):
-			continue
-		out.append(s)
-	return "\n".join(out)
-
-
-func _finish() -> void:
-	if _failures.is_empty():
-		print("KH L3 PROBE: ALL-OK")
-		get_tree().quit(0)
-	else:
-		print("KH L3 PROBE: FAIL | " + "; ".join(_failures))
-		get_tree().quit(1)
 
 
 func _check_reload_core(player: Node, wep: WeaponComponent) -> void:

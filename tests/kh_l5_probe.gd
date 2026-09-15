@@ -1,4 +1,4 @@
-extends Node
+extends ProbeBase
 
 # KH 合并 L5 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
@@ -83,7 +83,10 @@ func _host_code() -> String:
 		parts.append(_code_only(_read(f)))
 	return "\n".join(parts)
 
-var _failures: Array[String] = []
+
+# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+func probe_id() -> String:
+	return "L5"
 
 
 func _ready() -> void:
@@ -615,161 +618,3 @@ func _demo_needles() -> Array[String]:
 		"build_permanent" + "_region",
 	]
 
-
-# 取某函数的函数体(从头到下一个 func 之前;找不到返回空串)。判据必须落在**体内**,
-# 否则一条同名的调用/注释就能满足断言。
-func _func_body(code: String, name: String) -> String:
-	var i := code.find("func " + name + "(")
-	if i < 0:
-		return ""
-	var j := code.find("\nfunc ", i + 1)
-	return code.substr(i, (j - i) if j > 0 else code.length() - i)
-
-
-# 递归收集 roots 下所有 .gd / .tscn(跳过点目录;.git/.godot/.superpowers 都在其中)
-func _collect(roots: Array) -> Array[String]:
-	var out: Array[String] = []
-	for r in roots:
-		_walk(r, out)
-	out.sort()
-	return out
-
-
-func _walk(dir_path: String, out: Array[String]) -> void:
-	var d := DirAccess.open(dir_path)
-	if d == null:
-		return
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if not name.begins_with("."):
-			var p := dir_path.path_join(name)
-			if d.current_is_dir():
-				_walk(p, out)
-			elif name.ends_with(".gd") or name.ends_with(".tscn"):
-				out.append(p)
-		name = d.get_next()
-	d.list_dir_end()
-
-
-func _read(path: String) -> String:
-	if not ResourceLoader.exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
-
-
-# 剥注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本 —— 整行注释与**行尾注释**
-# 都删。供"在位/唯一挂载点/顺序"类断言用:注释讲的是动机,不是代码(与 kh_l4_probe._code_only 同源)。
-# ⚠ 只删**整行**注释是不够的(旧做法):把 `q.pop_front()` 改成 `q.pop_back()` 再在**同一行尾部**
-#    补一句提到原调用的注释,裸文本计数与位置排序会照样满足 → C2 契约假绿(T10 反证 A 实测)。
-func _code_only(src: String) -> String:
-	var out: Array[String] = []
-	for raw_line in src.split("\n"):
-		var s: String = _strip_line_comment(raw_line).strip_edges()
-		if s.is_empty():
-			continue
-		out.append(s)
-	return "\n".join(out)
-
-
-# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义的处理与 _match_paren 同法)。
-# 行尾注释不是代码,却能把被删掉的调用名重新"喂"给按源码文本判在位的断言。
-# 边界:`"""…"""` 多行字符串**不跨行带状态**(本函数逐行调用)—— 它第 2 行起若出现 `#`,会被当
-# 注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 `#`,故当前无影响。
-func _strip_line_comment(line: String) -> String:
-	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
-	var j := 0
-	while j < line.length():
-		var ch := line[j]
-		if quote != "":
-			if ch == "\\":
-				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
-			elif ch == quote:
-				quote = ""
-		elif ch == "\"" or ch == "'":
-			quote = ch
-		elif ch == "#":
-			return line.substr(0, j)
-		j += 1
-	return line
-
-
-# 与 open 处 '(' 配对的 ')' 下标(跳过字符串内的括号;找不到返回 -1)
-func _match_paren(src: String, open: int) -> int:
-	var depth := 0
-	var in_str := false
-	for j in range(open, src.length()):
-		var ch := src[j]
-		if in_str:
-			if ch == "\\":
-				continue
-			if ch == "\"":
-				in_str = false
-			continue
-		if ch == "\"":
-			in_str = true
-		elif ch == "(":
-			depth += 1
-		elif ch == ")":
-			depth -= 1
-			if depth == 0:
-				return j
-	return -1
-
-
-# 顶层逗号切分实参(括号/方括号/花括号内、字符串内的逗号不算分隔符)
-func _split_args(s: String) -> Array[String]:
-	var out: Array[String] = []
-	var depth := 0
-	var in_str := false
-	var cur := ""
-	for j in range(s.length()):
-		var ch := s[j]
-		if in_str:
-			cur += ch
-			if ch == "\"" and (j == 0 or s[j - 1] != "\\"):
-				in_str = false
-			continue
-		match ch:
-			"\"":
-				in_str = true
-				cur += ch
-			"(", "[", "{":
-				depth += 1
-				cur += ch
-			")", "]", "}":
-				depth -= 1
-				cur += ch
-			",":
-				if depth == 0:
-					out.append(cur)
-					cur = ""
-				else:
-					cur += ch
-			_:
-				cur += ch
-	if not cur.strip_edges().is_empty():
-		out.append(cur)
-	return out
-
-
-func _check(ok: bool, msg: String) -> void:
-	if not ok:
-		_failures.append(msg)
-
-
-# 每条断言的汇总行:**本次断言全绿**才打 ✓,否则打 ✗。旧写法是裸 print,失败运行时
-# 汇总行照样打印(措辞还像报喜),读者容易把"打印了 N 行 [L5] ..."读成"N 条都过了"。
-# 参数 = 该条断言开始前的 _failures.size()(取差值判本组是否有新增失败)。
-func _summary(fails_before: int, msg: String) -> void:
-	print("[L5] " + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
-
-
-func _finish() -> void:
-	if _failures.is_empty():
-		print("KH L5 PROBE: ALL-OK")
-		get_tree().quit(0)
-	else:
-		print("KH L5 PROBE: FAIL | " + "; ".join(_failures))
-		get_tree().quit(1)

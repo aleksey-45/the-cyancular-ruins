@@ -353,7 +353,7 @@ func _check_no_alive_consume(problems: Array) -> void:
 	var owners := 0
 	var hits: Array[String] = []
 	for path in A2_OWNERS:
-		var code := _code_view(_read(path))
+		var code := ScanUtil.code_view(ScanUtil.read(path))
 		if code.is_empty():
 			# 读不到源文件时**不能**判绿:那正是"零命中 = 假绿"的形状
 			problems.append("读不到 %s → A② 无从判定(不判绿)" % path)
@@ -373,43 +373,16 @@ func _check_no_alive_consume(problems: Array) -> void:
 	_log("A②:%d 个持有本地玩家状态的文件都未消费 round_state 的 alive ✓" % owners)
 
 
-# ── 源码扫描的小工具(与 kh_l6_probe 同源,砍到够用为止)──
-func _read(path: String) -> String:
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
+# ── 源码扫描的小工具 ──
+# 2026-09-15(阶段 6.1):本文件原先自带 `_read` / `_code_view` / `_strip_line_comment` 三份
+# **第 6 处副本**(计划只数了 5 处 —— 全在 `kh_l*_probe` 族里)。三份的**函数体**与
+# `tests/lib/scan_util.gd` 逐字相同(只有 `_read` 少一条 `ResourceLoader.exists` 前置守卫,
+# 对 .gd/.tscn 等价),故直接改指 ScanUtil,不再保留本地副本 —— 同一算法的两个来源正是
+# "改了这处忘了那处"的漂移温床。
+# ★ 只搬这三个**纯函数**:本文件的 `_finish(ok, msg, …)` 与 ProbeBase 的 `_finish()` **签名不同**
+# (观察者是被 probe 拉起的子进程,判成功败要靠消息回传),所以**没有**改成 extends ProbeBase。
 
 
-# 去注释视图:丢掉纯注释行,**保留缩进**(结构类判据靠缩进定块)
-func _code_view(src: String) -> String:
-	var out: Array[String] = []
-	for raw in src.split("\n"):
-		var s := _strip_line_comment(raw)
-		if s.strip_edges().is_empty():
-			continue
-		out.append(s.rstrip(" \t"))
-	return "\n".join(out)
-
-
-# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释
-func _strip_line_comment(line: String) -> String:
-	var quote := ""
-	var j := 0
-	while j < line.length():
-		var ch := line[j]
-		if quote != "":
-			if ch == "\\":
-				j += 1
-			elif ch == quote:
-				quote = ""
-		elif ch == "\"" or ch == "'":
-			quote = ch
-		elif ch == "#":
-			return line.substr(0, j)
-		j += 1
-	return line
-
-
-# 生产目录下全部 .gd 的**去注释**源码 {path: code}
 func _scan_prod() -> Dictionary:
 	var out := {}
 	var stack: Array[String] = []
@@ -427,7 +400,7 @@ func _scan_prod() -> Dictionary:
 				if not n.begins_with("."):
 					stack.append(dir_path + "/" + n)
 			elif n.ends_with(".gd"):
-				out[dir_path + "/" + n] = _code_view(_read(dir_path + "/" + n))
+				out[dir_path + "/" + n] = ScanUtil.code_view(ScanUtil.read(dir_path + "/" + n))
 			n = da.get_next()
 		da.list_dir_end()
 	return out

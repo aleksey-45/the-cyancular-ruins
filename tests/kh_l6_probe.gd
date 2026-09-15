@@ -1,4 +1,4 @@
-extends Node
+extends ProbeBase
 
 # KH 合并 L6 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
@@ -75,6 +75,7 @@ const MH_PATHS := ["res://server/" + "match_host.gd", "res://server/" + "match_r
 		"res://server/" + "match_state.gd"]
 
 # MatchHost 五份源码的并集(见 MH_PATHS 的注释)。用 += 拼接,不引入任何转义序列。
+
 func _read_host_union() -> String:
 	var s := ""
 	for f in MH_PATHS:
@@ -146,13 +147,17 @@ const RE_ONREADY_PATH := "@onready\\s+var\\s+[A-Za-z_]\\w*\\s*:[^=]+=\\s*\\$([A-
 # 文件级常量 + 字符串字面量(用于把"菜单路径抽成常量"这种正确修法也认下来)
 const RE_CONST_STR := "^const\\s+([A-Za-z_]\\w*)[^=]*=\\s*\"([^\"]*)\""
 
-var _failures: Array[String] = []
 var _pc_code := ""                     # pvp_game.gd 的去注释视图(保留缩进)
 var _pc_lines: PackedStringArray = PackedStringArray()
 var _rg_code := ""                     # royale_game.gd 的去注释视图(9b 用)
 var _base_code := ""                   # pvp_match_client.gd(共享基类)—— 公共函数体的所在
 var _base_lines: PackedStringArray = PackedStringArray()
 var _rg_lines: PackedStringArray = PackedStringArray()
+
+
+# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+func probe_id() -> String:
+	return "L6"
 
 
 func _ready() -> void:
@@ -747,56 +752,12 @@ func _check_name_color() -> void:
 
 # ── 工具 ────────────────────────────────────────────────────────────
 
-# 去注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本(整行注释与行尾注释都删),
-# 丢掉只剩空白的行,**保留缩进**(结构类判据靠缩进定块)。
-# 为什么不能只看裸文本:一句提到被删调用的**注释**能把"在位"类断言喂绿,反过来也能把
-# "零引用"类断言弄红 —— 注释不是代码(与 kh_l4_probe / kh_l5_probe 同源)。
-# ⚠ 已知边界:`"""…"""` 多行字符串不跨行带状态(逐行调用);本探针的目标文件里没有多行字符串。
-func _code_view(src: String) -> String:
-	var out: Array[String] = []
-	for raw in src.split("\n"):
-		var s := _strip_line_comment(raw)
-		if s.strip_edges().is_empty():
-			continue
-		out.append(s.rstrip(" \t"))
-	return "\n".join(out)
-
-
-# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义与 _match_paren 同法)。
-func _strip_line_comment(line: String) -> String:
-	var quote := ""
-	var j := 0
-	while j < line.length():
-		var ch := line[j]
-		if quote != "":
-			if ch == "\\":
-				j += 1
-			elif ch == quote:
-				quote = ""
-		elif ch == "\"" or ch == "'":
-			quote = ch
-		elif ch == "#":
-			return line.substr(0, j)
-		j += 1
-	return line
-
-
-# 取某函数的函数体(从 `func 名(` 到下一个顶层 `func` 之前;找不到返回空串)。
-# 判据必须落在**体内**:同名调用点在别的函数里、或函数被删只剩调用点,都不能算"在位"。
 # 取函数体:`pvp_game.gd` 找不到就到**共享基类**里找(见 BASE 的注释)。
 # ★ 都找不到时返回空串 —— 各调用点都有「取不到 … 函数体(改名/挪走了?)」的断言,
 #   所以"又搬到第三个文件"会被照成**红**,不会静默放行(这条比"找一个够宽的地方"重要)。
 func _body_anywhere(name: String) -> String:
 	var b := _func_body(_pc_code, name)
 	return b if not b.is_empty() else _func_body(_base_code, name)
-
-
-func _func_body(code: String, name: String) -> String:
-	var i := code.find("func " + name + "(")
-	if i < 0:
-		return ""
-	var j := code.find("\nfunc ", i + 1)
-	return code.substr(i, (j - i) if j > 0 else code.length() - i)
 
 
 # 某行的缩进宽度(制表符/空格都算一列)
@@ -934,7 +895,6 @@ func _safe_call_menu_path(lines: PackedStringArray, needles: Array[String]) -> S
 	return ""
 
 
-
 # 组包字典声明处的 {行号, 变量名}(找不到返回 {-1, ""})。
 # 与 _packet_var 同一个正则、同一套推导,故全探针的"变量名"都以 `var X := {` 为准:
 # 重命名组包变量是合法加法(**不假红**),而"发出去的不是带 seq 的那个字典"由实参比对判红。
@@ -952,66 +912,3 @@ func _packet_decl(lines: PackedStringArray, before: int) -> Dictionary:
 func _packet_var(lines: PackedStringArray, before: int) -> String:
 	return str(_packet_decl(lines, before)["name"])
 
-
-# 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
-# 函数名出现在注释/字符串里时文本法会假绿;而 has_method 对**脚本资源**看不见它自己的
-# 实例方法(L4 撞过这个坑),故一律走 get_script_method_list。
-func _method_info(gs: GDScript, name: String) -> Variant:
-	for m in gs.get_script_method_list():
-		if str(m.get("name", "")) == name:
-			return m
-	return null
-
-
-# 递归收集 roots 下所有 .gd / .tscn(跳过点目录;.git/.godot/.superpowers 都在其中)
-func _collect(roots: Array) -> Array[String]:
-	var out: Array[String] = []
-	for r in roots:
-		_walk(r, out)
-	out.sort()
-	return out
-
-
-func _walk(dir_path: String, out: Array[String]) -> void:
-	var d := DirAccess.open(dir_path)
-	if d == null:
-		return
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if not name.begins_with("."):
-			var p := dir_path.path_join(name)
-			if d.current_is_dir():
-				_walk(p, out)
-			elif name.ends_with(".gd") or name.ends_with(".tscn"):
-				out.append(p)
-		name = d.get_next()
-	d.list_dir_end()
-
-
-func _read(path: String) -> String:
-	if not ResourceLoader.exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
-
-
-func _check(ok: bool, msg: String) -> void:
-	if not ok:
-		_failures.append(msg)
-
-
-# 每条断言的汇总行:本次断言全绿才打 ✓,否则 ✗。裸 print 会让失败组也打印一行"像报喜"
-# 的汇总(读者容易把"打印了 15 行 [L6]"读成"15 条都过了")。
-# 参数 = 该条断言开始前的 _failures.size()(取差值判本组有无新增失败)。
-func _summary(fails_before: int, msg: String) -> void:
-	print("[L6] " + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
-
-
-func _finish() -> void:
-	if _failures.is_empty():
-		print("KH L6 PROBE: ALL-OK")
-		get_tree().quit(0)
-	else:
-		print("KH L6 PROBE: FAIL | " + "; ".join(_failures))
-		get_tree().quit(1)

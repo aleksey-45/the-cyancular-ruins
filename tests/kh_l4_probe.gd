@@ -1,4 +1,4 @@
-extends Node
+extends ProbeBase
 
 # KH 合并 L4 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
@@ -42,7 +42,10 @@ const ALL_DIRS := ["res://core", "res://scenes", "res://server", "res://ui",
 const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
 
-var _failures: Array[String] = []
+
+# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+func probe_id() -> String:
+	return "L4"
 
 
 func _ready() -> void:
@@ -200,69 +203,6 @@ func _scan_call_arg(files: Array[String], needle: String, arg_index: int,
 					bad.append("%s: %s 第 %d 个实参 = %d(「%s」)" % [f, label, int(k), v, needle])
 
 
-# 与 open 处 '(' 配对的 ')' 下标(跳过字符串内的括号;找不到返回 -1)
-func _match_paren(src: String, open: int) -> int:
-	var depth := 0
-	var in_str := false
-	for j in range(open, src.length()):
-		var ch := src[j]
-		if in_str:
-			if ch == "\\":
-				continue
-			if ch == "\"":
-				in_str = false
-			continue
-		if ch == "\"":
-			in_str = true
-		elif ch == "(":
-			depth += 1
-		elif ch == ")":
-			depth -= 1
-			if depth == 0:
-				return j
-	return -1
-
-
-# 顶层逗号切分实参(括号/方括号/花括号内、字符串内的逗号不算分隔符)
-func _split_args(s: String) -> Array[String]:
-	var out: Array[String] = []
-	var depth := 0
-	var in_str := false
-	var cur := ""
-	for j in range(s.length()):
-		var ch := s[j]
-		if in_str:
-			cur += ch
-			if ch == "\"" and (j == 0 or s[j - 1] != "\\"):
-				in_str = false
-			continue
-		match ch:
-			"\"":
-				in_str = true
-				cur += ch
-			"(", "[", "{":
-				depth += 1
-				cur += ch
-			")", "]", "}":
-				depth -= 1
-				cur += ch
-			",":
-				if depth == 0:
-					out.append(cur)
-					cur = ""
-				else:
-					cur += ch
-			_:
-				cur += ch
-	if not cur.strip_edges().is_empty():
-		out.append(cur)
-	return out
-
-
-# ── 4) 退役的 ESC 菜单零引用 ─────────────────────────────────────────
-# L4 用 ui/pause_menu.gd(PauseMenu,单机暂停树 / PvP 只弹层+断连)替掉了原来的 esc_menu。
-# 判据取**代码视图**(剥掉整行注释):pvp_game.gd 里有两行"旧 EscMenu 靠 X 挡"的**历史
-# 注释**,那是解释设计动机的,不是引用;把它们算成引用会让这条断言永远红。
 func _check_old_escape_menu_retired() -> void:
 	var cls := "Esc" + "Menu"
 	var low := "esc_" + "menu"
@@ -368,94 +308,3 @@ func _demo_needles() -> Array[String]:
 		"demo" + "collision",    # 演示世界的独立碰撞层类名
 	]
 
-
-# 递归收集 roots 下所有 .gd / .tscn(跳过点目录;.git/.godot/.superpowers 都在其中)
-func _collect(roots: Array) -> Array[String]:
-	var out: Array[String] = []
-	for r in roots:
-		_walk(r, out)
-	out.sort()
-	return out
-
-
-func _walk(dir_path: String, out: Array[String]) -> void:
-	var d := DirAccess.open(dir_path)
-	if d == null:
-		return
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if not name.begins_with("."):
-			var p := dir_path.path_join(name)
-			if d.current_is_dir():
-				_walk(p, out)
-			elif name.ends_with(".gd") or name.ends_with(".tscn"):
-				out.append(p)
-		name = d.get_next()
-	d.list_dir_end()
-
-
-func _read(path: String) -> String:
-	if not ResourceLoader.exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	return f.get_as_text() if f != null else ""
-
-
-# 剥注释视图:删掉**字符串字面量之外**的 `#` 起、到行尾的全部文本 —— 整行注释与**行尾注释**
-# 都删。供"零引用/在位"类断言用:注释讲的是动机,不是代码(与 kh_l5_probe._code_only 同一做法)。
-# ⚠ 只删**整行**注释是不够的(旧做法,实测):行尾注释照样留在视图里 —— 一句提到退役名的行尾
-#    注释能让「零引用」断言假红(代码一行没改),反过来也能把被删的调用名"喂"给「在位」类断言。
-func _code_only(src: String) -> String:
-	var out: Array[String] = []
-	for line in src.split("\n"):
-		var s: String = _strip_line_comment(line).strip_edges()
-		if s.is_empty():
-			continue
-		out.append(s)
-	return "\n".join(out)
-
-
-# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义的处理与 _match_paren 同法)。
-# 行尾注释不是代码,却能把被删掉的调用名重新"喂"给按源码文本判在位的断言。
-# ⚠ 已知边界:`"""…"""` 多行字符串**不跨行带状态**(本函数逐行调用)—— 它第 2 行起若出现 `#`,
-#    会被当成注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 `#`,暂无影响。
-func _strip_line_comment(line: String) -> String:
-	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
-	var j := 0
-	while j < line.length():
-		var ch := line[j]
-		if quote != "":
-			if ch == "\\":
-				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
-			elif ch == quote:
-				quote = ""
-		elif ch == "\"" or ch == "'":
-			quote = ch
-		elif ch == "#":
-			return line.substr(0, j)
-		j += 1
-	return line
-
-
-# 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
-# 函数名出现在注释/字符串里时文本法会假绿。
-func _method_info(gs: GDScript, name: String) -> Variant:
-	for m in gs.get_script_method_list():
-		if str(m.get("name", "")) == name:
-			return m
-	return null
-
-
-func _check(ok: bool, msg: String) -> void:
-	if not ok:
-		_failures.append(msg)
-
-
-func _finish() -> void:
-	if _failures.is_empty():
-		print("KH L4 PROBE: ALL-OK")
-		get_tree().quit(0)
-	else:
-		print("KH L4 PROBE: FAIL | " + "; ".join(_failures))
-		get_tree().quit(1)
