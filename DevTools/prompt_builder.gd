@@ -341,7 +341,7 @@ static func _build_prop(card: Dictionary, state: Dictionary) -> Dictionary:
 	var L := _header("道具实装:%s" % str(card.get("name", "")), card, whitelist)
 	_art_section(L, card)
 	L.append("## 3. 实装要求(道具系统已存在,不要重造)")
-	L.append("- 槽位映射:knockback→8 / attraction→9 / smoke→10;注册进 WeaponComponent.PROP_SLOTS 顺序表。")
+	L.append("- 槽位映射:knockback→11 / attraction→12 / smoke→13;注册进 WeaponComponent.PROP_SLOTS 顺序表。")
 	L.append("- 场景:prop_launcher.gd 子类参数化(bullet_speed/bullet_range/bullet_gravity/mag_size=每命携带数)。")
 	L.append("- 效果参数从 kind_params 取:blast_radius/blast_force(负=吸引)/smoke_duration/fuse_time。")
 	L.append("- 美术:先 gen_portrait 生成贴近原作风格的像素画;亦可在编辑器「导入手绘素材」人工替换。")

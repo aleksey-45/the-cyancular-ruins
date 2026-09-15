@@ -13,18 +13,18 @@ const WEAPONS: Dictionary = {
 	"5": "res://Scenes/Weapons/grenade_launcher.tscn",
 	"6": "res://Scenes/Weapons/laser_gun.tscn",
 	"7": "res://Scenes/Weapons/minigun.tscn",
-	"8": "res://Scenes/Weapons/prop_knockback.tscn",
-	"9": "res://Scenes/Weapons/prop_attraction.tscn",
-	"10": "res://Scenes/Weapons/prop_smoke.tscn",
+	"11": "res://Scenes/Weapons/prop_knockback.tscn",
+	"12": "res://Scenes/Weapons/prop_attraction.tscn",
+	"13": "res://Scenes/Weapons/prop_smoke.tscn",
 }
 
 # 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
 const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪", 7: "加特林",
-	8: "击退炮", 9: "吸力炮", 10: "烟雾弹"}
+	11: "击退炮", 12: "吸力炮", 13: "烟雾弹"}
 
 # 道具槽位(T 键道具模式专用;不在 enabled_slots 里,普通切枪/数字键不会误选):
-# 8=击退炮 9=吸力炮 10=烟雾弹。道具不受「禁武器」影响;每命携带数=各道具 mag_size。
-const PROP_SLOTS: Array = [8, 9, 10]
+# 11=击退炮 12=吸力炮 13=烟雾弹(8 已让位给开山砍刀)。道具不受「禁武器」影响;每命携带数=各道具 mag_size。
+const PROP_SLOTS: Array = [11, 12, 13]
 
 signal weapon_changed(slot: int)   # equip 成功后发射(菜单图标/HUD 武器显示跟随)
 

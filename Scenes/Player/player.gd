@@ -624,7 +624,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	# PvP:滚轮事件不在输入包协议里,只本地切会被快照防脱同步切回 → 走
 	# request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
 	# ── T = 道具模式开关(单机/PvP 通用;倒地不可用)────────────────────────
-	# 进入:手上切到第一个可用道具(隐藏槽位 8/9/10),PvP 经槽位同步通道让服务器跟随;
+	# 进入:手上切到第一个可用道具(隐藏槽位 11/12/13),PvP 经槽位同步通道让服务器跟随;
 	# 退出:回到进入前的武器槽。道具模式内:数字 1/2/3 直选道具,滚轮循环。
 	if event is InputEventKey and event.pressed and not event.echo \
 			and (event.physical_keycode == KEY_T or event.keycode == KEY_T) \

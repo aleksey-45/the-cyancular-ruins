@@ -84,7 +84,7 @@ static func make_default(type: String, id: String) -> Dictionary:
 		card["bullet_gravity"] = 0.45  # 抛物线
 		card["move_penalty"] = 1.0
 		card["jump_penalty"] = 1.0
-		card["slot"] = 8               # 8=击退 9=吸引 10=烟雾;0=纯设计稿
+		card["slot"] = 11              # 11=击退 12=吸引 13=烟雾;0=纯设计稿
 		card["kind_params"] = {
 			"fuse_time": 0.5,
 			"blast_radius": 260.0,
@@ -196,8 +196,8 @@ static func _validate_prop(card: Dictionary, errs: Array[String]) -> void:
 	if mag < 1 or mag > 9:
 		errs.append("每次复活携带数需在 1~9:%s" % str(mag))
 	var slot := int(card.get("slot", -1))
-	if slot != 0 and slot not in [8, 9, 10]:
-		errs.append("道具槽位需为 0(设计稿)或 8/9/10:%s" % str(slot))
+	if slot != 0 and slot not in [11, 12, 13]:
+		errs.append("道具槽位需为 0(设计稿)或 11/12/13:%s" % str(slot))
 	if str(card.get("tier", "")) not in WEAPON_TIERS:
 		errs.append("tier 非法(需 %s):%s" % ["|".join(WEAPON_TIERS), str(card.get("tier"))])
 	var kp: Dictionary = card.get("kind_params", {})

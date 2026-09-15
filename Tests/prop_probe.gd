@@ -14,12 +14,12 @@ func _run() -> void:
 	create_timer(20.0).timeout.connect(func() -> void: quit(2))
 	var fails: Array[String] = []
 	var wc: GDScript = load("res://Scenes/Player/weapon_component.gd")
-	for s in [8, 9, 10]:
+	for s in [11, 12, 13]:
 		if not wc.WEAPONS.has(str(s)):
 			fails.append("槽位 %d 未注册" % s)
 		elif not wc.DISPLAY_NAMES.has(s):
 			fails.append("槽位 %d 缺显示名" % s)
-	for pair in [["8", 2600.0], ["9", -2600.0], ["10", 0.0]]:
+	for pair in [["11", 2600.0], ["12", -2600.0], ["13", 0.0]]:
 		var scn: PackedScene = load(wc.WEAPONS[pair[0]])
 		if scn == null:
 			fails.append("%s 场景加载失败" % pair[0])
