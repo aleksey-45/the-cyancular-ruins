@@ -33,6 +33,7 @@ func _ready() -> void:
 	await _phase_collision_shape()
 	await _phase_landing_determinism()
 	await _phase_inventory_roundtrip()
+	await _phase_visual_built()
 	if _failures.is_empty():
 		print("WEAPON PICKUP: ALL-OK")
 		get_tree().quit(0)
@@ -243,3 +244,66 @@ func _phase_inventory_roundtrip() -> void:
 	_check(wep.current_slot_int() == 0 and wep.inventory.held.is_empty(), "清空背包后回到空手")
 	pl.queue_free()
 	await get_tree().physics_frame
+
+
+# ── ⑤ 视觉真的建出来了(两条配置路径都要) ──
+# ★ 这条 bug 是**真的漏过一次**:`Level0.spawn_pickup` 原先先 `add_child` 再 `configure`,
+#   而 `_ready` 一入树就用 @export 默认值(type_id=1 手枪)建过一次视觉;`configure` 再建时
+#   旧的 "Visual" 还占着名字(queue_free 要到帧末),新节点被**自动改名**,
+#   于是 `get_node_or_null("Visual")` 抓到旧的那份 → **地面武器没有视觉、碰撞箱按错的枪算**。
+#   探针当时只走"configure 在 add_child 之前"那条路,所以全绿 —— 补上另一条。
+func _phase_visual_built() -> void:
+	# 路径 A:configure 在 add_child **之前**(生产路径,Level0.spawn_pickup)
+	var a: WeaponPickup = load(PICKUP_SCENE).instantiate()
+	a.configure(5, 50, 4, Vector2.ZERO)   # 槽 5 = 榴弹发射器(与默认的手枪明显不同)
+	add_child(a)
+	await get_tree().physics_frame
+	_check_pickup_visual(a, "A(configure 先于 add_child)")
+
+	# 路径 B:configure 在 add_child **之后**(热改;挪位置/换型号时走这条)
+	var b: WeaponPickup = load(PICKUP_SCENE).instantiate()
+	add_child(b)
+	await get_tree().physics_frame
+	b.configure(5, 51, 4, Vector2.ZERO)
+	await get_tree().physics_frame
+	_check_pickup_visual(b, "B(add_child 先于 configure)")
+	# 两条路径都不能留下**两个** Visual(名字被顶掉的那份会变成孤儿,白画一份或多一份碰撞箱)
+	var vis_count := 0
+	for c in b.get_children():
+		if str(c.name).begins_with("Visual") or str(c.name).begins_with("@"):
+			vis_count += 1
+	_check(vis_count == 1, "重建后应恰好剩一个视觉节点(实际 %d;>1 说明旧的没当场摘掉)" % vis_count)
+
+	a.queue_free()
+	b.queue_free()
+	await get_tree().physics_frame
+
+
+func _check_pickup_visual(pk: WeaponPickup, tag: String) -> void:
+	var vis: Node2D = pk.get_node_or_null("Visual")
+	_check(vis != null, "%s:地面武器应有名为 Visual 的子节点" % tag)
+	if vis == null:
+		return
+	var spr: Sprite2D = vis.get_node_or_null("Sprite2D")
+	_check(spr != null, "%s:视觉里应有 Sprite2D" % tag)
+	if spr == null:
+		return
+	_check(spr.texture != null, "%s:Sprite2D 应有贴图" % tag)
+	# 视觉必须是**请求的那个型号**:槽 5 是榴弹发射器,而 tscn 的 @export 默认是手枪
+	var want: PackedScene = load(WeaponComponent.WEAPONS[str(pk.type_id)])
+	_check(want != null, "%s:注册表里应有槽 %d 的场景" % [tag, pk.type_id])
+	if want == null:
+		return
+	var want_spr: Sprite2D = want.instantiate().get_node_or_null("Sprite2D")
+	if want_spr != null:
+		_check(spr.region_rect == want_spr.region_rect,
+				"%s:视觉应与请求的型号一致(实际 region %s,期望 %s —— 不等说明建的是默认型号)"
+				% [tag, spr.region_rect, want_spr.region_rect])
+		# 碰撞箱也必须按**这个型号**的像素算(它取自同一份视觉)
+		var cs: CollisionShape2D = pk.get_node_or_null("Shape")
+		_check(cs != null, "%s:应有像素碰撞箱" % tag)
+		if cs != null and cs.shape is RectangleShape2D:
+			var got: Vector2 = (cs.shape as RectangleShape2D).size
+			var want_rect: Rect2 = SpriteBounds.from_sprite(want_spr)
+			_check(is_equal_approx(got.x, want_rect.size.x) and is_equal_approx(got.y, want_rect.size.y),
+					"%s:碰撞箱应来自请求型号的像素(实际 %s,期望 %s)" % [tag, got, want_rect.size])

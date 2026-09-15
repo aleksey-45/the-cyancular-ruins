@@ -45,7 +45,9 @@ func _ready() -> void:
 	velocity = drop_velocity
 
 
-# 由生成方调用。入树前后都能调(入树后调会重建视觉与碰撞箱)。
+# 由生成方调用。★ **必须在 add_child 之前调** —— `_ready` 会按当时的 type_id 建视觉与碰撞箱,
+# 先入树再 configure 的话 `_ready` 已经用 @export 默认值(手枪)建过一次了。
+# 入树后仍可调(热改),但那时走的是重建路径,见下面的 remove_child。
 func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
 	type_id = p_type_id
 	inst = p_inst
@@ -55,7 +57,12 @@ func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
 	_settled = false
 	if not is_inside_tree():
 		return
+	# ★ 必须先 `remove_child` 再 `queue_free`:`queue_free` 只是**标记**,节点要到帧末才真的没了,
+	#   于是新 Visual 加进来时旧的那个还占着 "Visual" 这个名字 → Godot 给新节点**自动改名**,
+	#   随后 `_build_collision()` 的 `get_node_or_null("Visual")` 抓到的是**旧的那份**
+	#   (按 @export 默认 type_id 建的)→ 碰撞箱来自另一把枪。remove_child 让名字当场释放。
 	for c in get_children():
+		remove_child(c)
 		c.queue_free()
 	_build_visual()
 	_build_collision()

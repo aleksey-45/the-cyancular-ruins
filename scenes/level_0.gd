@@ -502,8 +502,14 @@ func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 	else:
 		_next_pickup_inst = maxi(_next_pickup_inst, inst + 1)
 	var node: WeaponPickup = PICKUP_SCENE.instantiate()
-	add_child(node)
+	# ★ 顺序不能反:configure **必须在 add_child 之前** —— _ready 一入树就按当时的 type_id
+	#   建视觉与碰撞箱,先入树的话它已经用 @export 默认值(手枪)建过一次了。
 	node.configure(type_id, inst, mag, vel)
+	# ★★ 必须挂进 **WorldViewport**(SubViewport),不能 add_child(self):
+	#   世界(瓦片/玩家/敌人)全渲染在那个 SubViewport 里,由相机 + PostProcess 呈现。
+	#   挂到 Level0 自己身上 = 在渲染树之外 —— 节点存在、有视觉、有碰撞,**但屏幕上什么都看不到**。
+	#   (EnemySpawner.spawn_all 走的是同一件事:get_parent().get_node("WorldViewport"))。
+	$WorldViewport.add_child(node)
 	node.global_position = pos
 	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
 	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": mag, "pos": pos, "vel": vel})
