@@ -25,8 +25,8 @@ class StubBody extends Node2D:
 
 func _initialize() -> void:
 	# -s 阶段 autoload 未实例化 → 这里只 load 不静态引用任何 autoload 标识符
-	var ai_script: GDScript = load("res://core/ai_input_source.gd")
-	var base_script: GDScript = load("res://core/input_source.gd")
+	var ai_script: GDScript = load("res://core/net/ai_input_source.gd")
+	var base_script: GDScript = load("res://core/net/input_source.gd")
 	_check(ai_script != null, "ai_input_source.gd 可加载")
 	if ai_script == null:
 		print("AI INPUT SMOKE: FAIL")

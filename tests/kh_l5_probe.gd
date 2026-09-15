@@ -165,7 +165,7 @@ func _check_room_manager() -> void:
 	var fails_before := _failures.size()
 	var p := "res://server/room_manager.gd"
 	var pw := "res://server/worker_launcher.gd"
-	var pp := "res://core/proc_util.gd"
+	var pp := "res://core/net/proc_util.gd"
 	var code := _code_only(_read(p))
 	var code_w := _code_only(_read(pw))
 	var code_p := _code_only(_read(pp))
@@ -210,7 +210,7 @@ func _check_kill_port_holder() -> void:
 	# ★ 2026-09-14:实现从 server_main 搬进 core/proc_util.gd(ProcUtil.kill_udp_port)——
 	#   原先它与 worker_launcher 那份**逐字相同**。判据跟着搬,但**坏写法的禁令两个文件都查**:
 	#   只查新家的话,谁要是在 server_main 里再手抄一份坏写法就没人管了。
-	var pp := "res://core/proc_util.gd"
+	var pp := "res://core/net/proc_util.gd"
 	var ps := "res://server/server_main.gd"
 	var cp := _code_only(_read(pp))
 	var cs := _code_only(_read(ps))
@@ -299,7 +299,7 @@ func _check_royale_laser_routing() -> void:
 # reload_time 秒(霰弹 2.2s / 榴弹 2.8s),AI 手感莫名变差且无任何报错。
 func _check_ai_input_gate() -> void:
 	var fails_before := _failures.size()
-	var p := "res://core/ai_input_source.gd"
+	var p := "res://core/net/ai_input_source.gd"
 	var code := _code_only(_read(p))
 	_check(not code.is_empty(), "读不到 %s" % p)
 	if code.is_empty():

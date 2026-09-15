@@ -66,7 +66,7 @@ const HUD_TSCN := "res://ui/" + "pvp_hud.tscn"
 const HUD_SCRIPT := "res://ui/" + "pvp_hud.gd"
 const LASER := "res://scenes/weapons/" + "laser_weapon_base.gd"
 const CF_PATH := "res://ui/" + "combat_feedback.gd"
-const RB_PATH := "res://core/" + "prediction_rollback.gd"
+const RB_PATH := "res://core/net/" + "prediction_rollback.gd"
 const MH_PATH := "res://server/" + "match_host.gd"
 
 # 生产目录(第 13 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)

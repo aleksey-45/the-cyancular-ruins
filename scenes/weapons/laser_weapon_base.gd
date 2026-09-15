@@ -19,9 +19,9 @@ extends WeaponBase
 # 非射手客户端(对手本端据此画视觉副本;射手自己客户端已本地预测画自己的光束)。单机无 host 读上报,
 # 只留字段无害。上报 dict 可被视觉风格子类覆写 _make_beam_report 加专属字段。
 
-const BeamTrace := preload("res://core/beam_trace.gd")
+const BeamTrace := preload("res://core/sim/beam_trace.gd")
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
-const LaserVisual := preload("res://core/laser_visual.gd")
+const LaserVisual := preload("res://core/present/laser_visual.gd")
 
 # 反射/穿透等几何差异的公共参数(见 _emit_beam 注释);反射次数等子类几何专属参数留在子类。
 

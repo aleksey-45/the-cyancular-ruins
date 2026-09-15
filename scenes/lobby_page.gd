@@ -24,7 +24,7 @@ extends Control
 # 本机服务器一键启停(同目录 Cyancular Ruins Server.exe)。preload 而非全局类名,
 # 避免新脚本未进全局类缓存时整份场景解析失败(本项目踩过同类坑)。
 # 常量可继承:两页 `_ready` 里的 LocalServer.lan_ip_hint() 直接读本常量,无需各自再声明。
-const LocalServer := preload("res://core/local_server.gd")
+const LocalServer := preload("res://core/net/local_server.gd")
 
 
 # ── 共用状态(两页同名同义;子类不要再声明一次)──

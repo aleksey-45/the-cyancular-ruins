@@ -41,7 +41,7 @@ def stamp_build_info(version: str, stamp: str) -> str:
     # ★ 只替换那两行 const,**绝不整份重写**:
     #   整份重写等于把 build_info.gd 里除这两个常量之外的内容(如 display())从**发布版**里抹掉,
     #   而编辑器里跑的是入库那份 → 开发时一切正常、导出后 `Static function "display()" not
-    #   found in base "res://core/build_info.gd"` 直接解析失败(2026-09-12 实测踩到,客户端/
+    #   found in base "res://core/config/build_info.gd"` 直接解析失败(2026-09-12 实测踩到,客户端/
     #   服务端两个 exe 同时中招)。按行替换则对将来往该文件里加任何东西都免疫。
     import re as _re
     stamped = original

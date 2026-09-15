@@ -94,7 +94,7 @@ static func version_string() -> String:
 		return "dev"
 	if _version_cache != "":
 		return _version_cache
-	var bi := preload("res://core/build_info.gd")
+	var bi := preload("res://core/config/build_info.gd")
 	if str(bi.VERSION) != "" and str(bi.VERSION) != "dev":
 		_version_cache = bi.display()
 		return _version_cache

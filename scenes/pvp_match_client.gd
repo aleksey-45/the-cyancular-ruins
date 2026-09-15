@@ -19,7 +19,7 @@ extends Node2D
 #   要再上提一批,先按同样的口径量一遍差异(剔注释后逐行 diff),别凭印象搬。
 
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
-const LaserVisual := preload("res://core/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
+const LaserVisual := preload("res://core/present/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
 var _local: Node2D = null

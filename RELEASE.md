@@ -32,7 +32,7 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 
 > **版本号从哪来**:唯一来源是 `project.godot` 的 `application/config/version`。**只能写数字+点**(`1.1.4`),
 > 写 `v.1.1.4` 会让导出预设的 `get_version` 报警告、并让导出失败 —— `v.` 前缀由脚本在**展示与文件名**上加。
-> 导出前脚本会把 `v.1.1.4` + 构建时间戳(`YYYYMMDDHHMM`)写进 `core/build_info.gd`,导出后**自动还原**成
+> 导出前脚本会把 `v.1.1.4` + 构建时间戳(`YYYYMMDDHHMM`)写进 `core/config/build_info.gd`,导出后**自动还原**成
 > dev 占位(所以 `git status` 不会因为这个文件而脏)。游戏内主菜单那行版本号读的就是它 ——
 > 发布版在没有 git 的机器上也能显示准确版本与构建时间(原先那行是从 git 现读的,那种机器上只剩 `dev`)。
 > 服务端启动时会自报一行 `[server] 版本 v.1.1.4 (202609121250)  pid=…`,运维/联调看日志即可确认跑的是哪一版。
@@ -154,7 +154,7 @@ cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64
 | exe 突然变回 ~109 MB | 模板目录被官方模板覆盖(编辑器更新/重装) | 重新拷贝编译产物,见 2.5 |
 | exe 一直是 Godot 默认图标,自定义 icon 不生效 | 导出预设 `application/modify_resources=false` | 在导出预设里把 `modify_resources` 勾上(=true),重导出 |
 | exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.cyrm`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `maps/*.cyrm`,重导出 |
-| 发布 exe 报 `Static function "X()" not found in base "res://..."` / `Identifier not found`,**编辑器里一切正常** | 导出前某步把某个脚本**整份重写**了(典型:`core/build_info.gd` 的版本信息生成器),把该文件里别的内容一并抹掉 —— 编辑器跑的是工作区那份,所以看不出来 | 生成器只按行替换目标行,**别整份覆写**;`build_release.py` 的产物冒烟(§1.2)现在会拦住这一类 |
+| 发布 exe 报 `Static function "X()" not found in base "res://..."` / `Identifier not found`,**编辑器里一切正常** | 导出前某步把某个脚本**整份重写**了(典型:`core/config/build_info.gd` 的版本信息生成器),把该文件里别的内容一并抹掉 —— 编辑器跑的是工作区那份,所以看不出来 | 生成器只按行替换目标行,**别整份覆写**;`build_release.py` 的产物冒烟(§1.2)现在会拦住这一类 |
 | 在项目目录里测 exe 一切正常,拷出去就缺东西 | 项目目录运行时 Godot 用本地文件补齐,掩盖了打包漏项 | 务必**拷到项目外**测试打包完整性 |
 | 用了 4.4.1 mono 编辑器导出 | 强行走 mono 模板 | 换 4.7.1 标准编辑器 |
 

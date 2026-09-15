@@ -16,7 +16,7 @@ const MAX_DMG := 35
 
 
 func _initialize() -> void:
-	var Exp: GDScript = load("res://core/explosion.gd")
+	var Exp: GDScript = load("res://core/sim/explosion.gd")
 	# cover_multiplier 未实现(修复前)时先短路:否则运行期报错会中断 _initialize()、
 	# 永不 quit → 进程挂死;短路后 RED = SMOKE FAILED + 退出码 1。
 	if not Exp.has_method("cover_multiplier"):

@@ -57,7 +57,7 @@ func _ready() -> void:
 	Settings.load_settings()    # 读回不崩
 
 	# 3) 源码级:难度/老版 UI 不得残留
-	var ro_src := _read_res("res://core/run_options.gd")
+	var ro_src := _read_res("res://core/config/run_options.gd")
 	if ro_src == "":
 		failures.append("core/run_options.gd 读不到")
 	else:
@@ -65,7 +65,7 @@ func _ready() -> void:
 			failures.append("core/run_options.gd 仍含 difficulty")
 		if "disabled_weapons" not in ro_src:
 			failures.append("core/run_options.gd 缺 disabled_weapons")
-	var st_src := _read_res("res://core/settings.gd")
+	var st_src := _read_res("res://core/config/settings.gd")
 	if st_src == "":
 		failures.append("core/settings.gd 读不到")
 	else:
@@ -105,7 +105,7 @@ func _ready() -> void:
 			found_local_server = true
 			break
 	if not found_local_server:
-		failures.append("LocalServer 未注册进全局类缓存(应来自 res://core/local_server.gd)")
+		failures.append("LocalServer 未注册进全局类缓存(应来自 res://core/net/local_server.gd)")
 
 	if failures.is_empty():
 		print("KH L1 PROBE: ALL-OK")
