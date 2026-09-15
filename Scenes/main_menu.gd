@@ -1,6 +1,7 @@
 extends Control
 # 主菜单(实验分支):像素粗体大标题 + 模式按钮浮现动画,
-# 背景 = 实机演示(MenuDemoAi 驱动真实玩家追打演示鸟,镜头正常跟随)。
+# 背景:背景演示动画已关闭(与上游 main 对齐,9/13)——菜单底色为静态深色。
+# 演示世界的构建/保活/摘树代码保留在 _build_new_ui 尾部注释里,要恢复参考注释与 git 历史。
 # 标题下方显示版本号(分支名 + git 提交序号);「版本信息」列出本分支提交历史。
 # Settings.old_ui=true 时保留旧版简洁布局。
 
@@ -54,7 +55,7 @@ func _enter_level0() -> void:
 func _ready() -> void:
 	# 复位对局相关全局(进过 PvP/开过 demo 回来不残留)
 	Level0.pvp_mode = false
-	Level0.menu_demo = true
+	Level0.menu_demo = false   # 背景演示已关闭
 	CombatComponent.pvp_arena = false
 	# 上次单人开局选择(存档在 Settings)
 	RunOptions.reset()
@@ -129,23 +130,18 @@ static func commit_log() -> Array:
 
 # ── 新版 UI ──
 func _build_new_ui() -> void:
-	# 背景:实机演示。优先复用保活的演示世界(避免反复构建/释放物理世界 → 原生段错误)
-	if Level0.menu_demo_instance != null and is_instance_valid(Level0.menu_demo_instance):
-		var reused: Node = Level0.menu_demo_instance
-		add_child(reused)
-		reused.revive_demo()
-		_demo_level0 = reused
-	else:
-		Level0.menu_demo = true
-		var level0: Node = load("res://Scenes/Level0.tscn").instantiate()
-		add_child(level0)
-		Level0.menu_demo = false   # 只影响本次实例化
-		_demo_level0 = level0
-	# 后处理(与游戏内一致的画面),再叠一层暗化让 UI 突出
-	if _demo_level0 != null:
-		var pp := PostProcess.new()
-		pp.world_viewport = _demo_level0.get_node("WorldViewport")
-		add_child(pp)
+	# 背景:静态深色(演示动画已关闭;色调取自原演示画面上暗化层的同款深蓝)
+	var bg := ColorRect.new()
+	bg.color = Color(0.06, 0.10, 0.14)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
+	# [演示恢复参考] 以下为原"实机演示世界"构建代码,关闭见文件头:
+	# if Level0.menu_demo_instance != null and is_instance_valid(...):
+	# 	...复用保活实例 revive_demo()...
+	# else: 实例化 Level0(menu_demo 置 true)
+	# 另需 PostProcess.world_viewport 指向演示世界 + 半透明暗化层
+	_demo_level0 = null
 
 	_ui_layer = CanvasLayer.new()
 	_ui_layer.layer = 140   # 盖过 PostProcess(128)/HUD(129)
