@@ -32,6 +32,30 @@ var drop_velocity: Vector2 = Vector2.ZERO
 var _settled: bool = false
 var _age: float = 0.0
 
+# ── 权威位置 vs 渲染位置(2026-09-15)──
+# ★ 世界是环面的,协议只传 canonical 坐标。玩家在接缝附近时,一件"在地图另一头"的武器
+#   **其实就在身边** —— 但节点画在 canonical 位置就是屏幕外(与敌人/子弹/副本同一个问题)。
+#   所以两者分开:canonical_pos 永远在 [0,MAP)(权威,服务器与拾取判定读它),
+#   global_position 是**渲染位置**,每帧由 set_anchor() 给的锚点锚到最近副本。
+var canonical_pos: Vector2 = Vector2.ZERO
+var _anchor: Vector2 = Vector2.ZERO
+var _has_anchor: bool = false
+
+
+func set_anchor(p: Vector2) -> void:
+	_anchor = p
+	_has_anchor = true
+
+
+# 由 canonical_pos 推出渲染位置。没设过锚点时就是 canonical 本身。
+func sync_render_from_canonical() -> void:
+	if not _has_anchor:
+		global_position = canonical_pos
+		return
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	global_position = GridPathfinder.anchor_to_nearest(canonical_pos, _anchor, w, h) if (w > 0.0 and h > 0.0) else canonical_pos
+
 
 func _ready() -> void:
 	add_to_group(GROUP)
@@ -39,6 +63,8 @@ func _ready() -> void:
 	collision_mask = MASK_GROUND
 	scale = Vector2(WORLD_SCALE, WORLD_SCALE)
 	rotation = 0.0            # 不旋转:矩形碰撞箱 + 横版简化
+	if canonical_pos == Vector2.ZERO:
+		canonical_pos = global_position   # 没经 configure 就入树的(探针手摆)以自身位置为准
 	if get_child_count() == 0:
 		_build_visual()
 		_build_collision()
@@ -105,6 +131,9 @@ func _build_collision() -> void:
 func _physics_process(delta: float) -> void:
 	_age += delta
 	if _settled:
+		# 停稳后**位置**不变,但**锚点**在变(玩家在动、可能绕过接缝)——
+		# 不在这儿补一次的话,跨接缝时停稳的枪会留在旧副本上"消失"。
+		sync_render_from_canonical()
 		return
 	velocity.y += PlayerParams.weapon_fall_gravity * delta
 	if is_on_floor():
@@ -112,11 +141,15 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.x *= exp(-PlayerParams.weapon_air_drag * delta)
 	move_and_slide()
-	# 环面:取模回 canonical(渲染侧再锚到玩家最近副本)
+	# 环面:物理走出来的是世界坐标,取模回 canonical 存进 canonical_pos;
+	# 渲染位置再由它锚到玩家最近副本(两者分工见字段注释)。
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
 	if w > 0.0 and h > 0.0:
-		global_position = Vector2(fposmod(global_position.x, w), fposmod(global_position.y, h))
+		canonical_pos = Vector2(fposmod(global_position.x, w), fposmod(global_position.y, h))
+	else:
+		canonical_pos = global_position
+	sync_render_from_canonical()
 	# ★ 停止必须是"速度阈值置零"而不是"滑固定时长":前者让**落点与何时开始模拟无关** ——
 	#   这是联机端"客户端晚一个 RTT 才收到事件、却要落在同一位置"的前提。
 	#   改成按时间停 → 两端落点发散 → 出现"看着够不着/看着够得着"。

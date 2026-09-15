@@ -68,6 +68,8 @@ func _ready() -> void:
 			bad += 1
 	_check(bad == 0, "每种武器应恰好 2 把(有 %d 种数量不对:%s)" % [bad, str(types)])
 
+	await _phase_pickup_prompt(player, lvl)
+
 	# ── 有真实渲染时顺手取一张图,供**人眼**确认地上的枪真的画出来了 ──
 	# (headless 下 get_image() 返回 null,跳过;断言部分两条腿都能跑。)
 	# ★ 把玩家瞬移到最近的一件武器旁并冻住物理,否则他原地开始掉、枪早出画面了。
@@ -79,8 +81,10 @@ func _ready() -> void:
 			if d < best_d:
 				best_d = d
 				best = p
+		# ★ 偏移必须**落在拾取半径内**(PlayerParams.weapon_pickup_radius = 64):
+		#   站在范围外时提示本来就不该出现。(-50,-12) 的环面距离 ≈ 51px。
 		if best != null:
-			(player as Node2D).global_position = best.global_position + Vector2(-90.0, -40.0)
+			(player as Node2D).global_position = best.global_position + Vector2(-50.0, -12.0)
 		player.set_physics_process(false)
 		for i in 90:
 			await get_tree().process_frame
@@ -95,3 +99,34 @@ func _ready() -> void:
 	else:
 		printerr("LEVEL0 SCATTER FAILURES: " + str(_failures))
 		get_tree().quit(1)
+
+
+# ── 拾取提示("靠近武器时在武器上方浮现的加粗 F",用户 2026-09-15)──
+# 双向钉:范围内**必须**出现、范围外**必须**消失。只判"能出现"会把
+# "永远显示"这种坏实现放过去(那就成了屏幕上一个常驻的 F)。
+func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
+	var prompt = lvl.get("_pickup_prompt")
+	_check(prompt != null, "Level0 建起了拾取提示节点")
+	if prompt == null or player == null:
+		return
+	var pickups := get_tree().get_nodes_in_group("weapon_pickup")
+	if pickups.is_empty():
+		_failures.append("没有地面武器,无法验提示")
+		return
+	var target: Node2D = pickups[0]
+	# ① 贴到范围内 → 应显示,且**贴在那把武器上方**
+	(player as Node2D).global_position = target.global_position + Vector2(-40.0, 0.0)
+	for i in 5:
+		await get_tree().process_frame
+	_check(bool(prompt.visible), "站在拾取半径内时提示应出现")
+	var dy: float = target.global_position.y - (prompt as Node2D).global_position.y
+	_check(dy > 20.0, "提示应浮在武器**上方**(实测高出 %.1f px)" % dy)
+	var dx: float = absf(target.global_position.x - (prompt as Node2D).global_position.x)
+	_check(dx < 4.0, "提示应对准武器(横向偏 %.1f px)" % dx)
+	_check((prompt as Node2D).z_index > 0, "提示应压在武器之上(z_index > 0)")
+
+	# ② 走远 → 必须消失
+	(player as Node2D).global_position = target.global_position + Vector2(600.0, 0.0)
+	for i in 5:
+		await get_tree().process_frame
+	_check(not bool(prompt.visible), "走出拾取半径后提示应消失(否则屏幕上会常驻一个 F)")

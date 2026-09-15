@@ -244,6 +244,7 @@ func _ready() -> void:
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
 	# ★ deferred:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
 	scatter_weapons.call_deferred(_default_weapon_types())
+	_ensure_pickup_prompt.call_deferred()   # 靠近武器时浮现的"F"提示(纯视觉)
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
@@ -354,6 +355,7 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	_update_pickup_prompt()
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
 		const MAX_REBUILD_PER_FRAME := 2
@@ -526,6 +528,7 @@ func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 	#   (EnemySpawner.spawn_all 走的是同一件事:get_parent().get_node("WorldViewport"))。
 	$WorldViewport.add_child(node)
 	node.global_position = pos
+	node.canonical_pos = pos   # 权威位置(渲染位置由锚点推出,见 WeaponPickup)
 	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
 	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": mag, "pos": pos, "vel": vel})
 	_pickup_nodes[inst] = node
@@ -605,3 +608,37 @@ func _live_self_drops() -> Array:
 		else:
 			_self_drop_until.erase(inst)
 	return out
+
+
+# ── 拾取提示(靠近武器时在武器上方浮现的"F")──
+var _pickup_prompt: PickupPrompt = null
+
+func _ensure_pickup_prompt() -> void:
+	if _pickup_prompt != null and is_instance_valid(_pickup_prompt):
+		return
+	_pickup_prompt = PickupPrompt.new()
+	$WorldViewport.add_child(_pickup_prompt)
+
+
+# 每帧:把提示贴到"按 F 会捡到的那一把"上面,没有就隐藏。
+func _update_pickup_prompt() -> void:
+	if _pickup_prompt == null or not is_instance_valid(_pickup_prompt):
+		return
+	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
+	if pl == null:
+		_pickup_prompt.visible = false
+		return
+	# ★ 必须与 try_pickup_for 用**同一个选法**(最近的、且排除自己刚丢的):
+	#   否则会出现"提示的是 A、按 F 却捡到 B"。
+	var e: Dictionary = ground_weapons.nearest_within(
+			pl.global_position, PlayerParams.weapon_pickup_radius, _live_self_drops())
+	if e.is_empty():
+		_pickup_prompt.visible = false
+		return
+	var node = _pickup_nodes.get(int(e["inst"]), null)
+	if node == null or not is_instance_valid(node):
+		_pickup_prompt.visible = false
+		return
+	_pickup_prompt.visible = true
+	# 用**武器节点自己的**渲染位置(它已锚到玩家最近副本),不再自己算一遍环面
+	_pickup_prompt.global_position = (node as Node2D).global_position + Vector2(0.0, -PickupPrompt.GAP_ABOVE)
