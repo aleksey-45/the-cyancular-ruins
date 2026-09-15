@@ -37,11 +37,11 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 
 ### 环面世界与地图
 - 地图:ASCII 文本 **`.cyrm`**(如 `maps/demo.cyrm`)。**v3 格式**(带 `# cyrm-v3` 标记):125×75 格 × 64px 瓦片 = 8000×4800 世界像素;每格 **4 字符 = [纹理 3 位 0xx][形状hex]**(纹理 `000`=空气/`001`-`022`=1-22,structure.png 两行各 10 块 + 第3行两块水;形状 hex `0`-`F` = 2×2 子格掩码,15=全砖,0=空气占位)。纹理用 3 位数字、不用字母。**旧格式**(250×150 单字符,无标记)加载时自动 2×2 转换(packed 值 + spawn 坐标 ÷2)。`#` 开头的行是注释(含出生点 `# player <col> <row>`;`# player2 <col> <row>` 为双人第二出生点,PvP 用)。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `maps/*.cyrm`(**同目录多份随机读一份**,会话内固定);`maps/*.cyrm` 已在导出 include_filter 里。编辑器输出 `.cyrm`、可导入 `.cyrm`/`.txt`。
-- `MazeGenerator`(core/sim/maze_generator.gd,`RefCounted`,非 autoload)是地图与环面核心:
-  - 格值 = packed `texture*16 + shape`(0-335,`pack/texture_of/shape_of`);`EMPTY=0`、`SOLID=31`(纹理1 全砖);挡路判定走 `TileDefs.is_blocked`(非 0 且 type=wall);
-  - 读图:`load_map_file()` / `map_size()`(v3 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过);`convert_old_grid()` / `serialize_v3_grid()` 是单一转换源(旧 v2 字母版地图用 `tests/convert_map.gd` 转 v3);
-  - 环面数学:`toroidal_dist`(格级)、`toroidal_delta_px`(像素最短向量)、`anchor_to_nearest`(实体锚到玩家最近副本)、`wrap_to_range`(取模回中间副本);
-  - 寻路:`astar_path_nearest` / `has_line_of_sight`(Bresenham)。`current_grid` 静态变量由 Level0 赋值,空网格一律无路。
+- **地图与环面核心 = `MazeGenerator` + 两个实现类**(阶段 5.7;**三个都 `RefCounted` + `class_name`,非 autoload**):
+  - **`MazeGenerator`(core/sim/maze_generator.gd)只留会话状态 + 转发** —— 会话状态就两件:选中的地图文件(`_picked_map`/`set_map_file`/`map_file_path`,会话内固定随机读一份)与 `current_grid`(静态,由 Level0 赋值,空网格一律无路)。其余全是**一行转发**,保住全仓上百处 `MazeGenerator.xxx` 调用面。**别在这里加实现**:新格式逻辑进 `MapFormat`、新几何/寻路进 `GridPathfinder`;新代码若只碰其中一头,直接引那个类。
+  - **`MapFormat`(core/sim/map_format.gd)= `.cyrm` 格式**,**无会话状态**(路径/行由参数传入):格值 packed 编解码(`pack/texture_of/shape_of`、`EMPTY=0`、`SOLID=31` 纹理1 全砖)、`load_map_file(path)` / `map_size(path)` / `load_spawns(path)` / `parse_spawn_metadata(lines)`、`convert_old_grid` / `serialize_v3_grid`(单一转换源;旧 v2 字母版地图用 `tests/convert_map.gd` 转 v3)。v3 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过。
+  - **`GridPathfinder`(core/sim/grid_pathfinder.gd)= 环面几何与寻路**,同样**无会话状态**(网格由 `grid` 参数传入):`toroidal_dist`(格级)、`toroidal_delta_px`(像素最短向量)、`anchor_to_nearest`(实体锚到玩家最近副本)、`wrap_to_range`(取模回中间副本)、`cell_of`、`is_floor_cell(_with_headroom)`、`astar_path_nearest` / `has_line_of_sight`(Bresenham);A* 的静态暂存缓冲与 `astar_calls` 计数住这里。
+  - 挡路判定走 `TileDefs.is_blocked`(非 0 且 type=wall)。探针取图类脚本(`climb_probe` / `perf_probe` 等)不钉图 → **每进程随机选一份 `.cyrm`,跨进程输出不可比**。
 - **关键区分**:玩家每帧 `wrap_to_range`(只留中间副本);敌人/子弹用 `anchor_to_nearest`(锚定到玩家附近的副本)。墙体按 3×3 铺贴,相机跨接缝才能看到另一侧——实体若取模回 `[0,MAP)` 会在接缝处"消失"。
 
 ### 参数体系(重要约定)

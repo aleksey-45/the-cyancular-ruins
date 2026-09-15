@@ -12,12 +12,16 @@ present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听
 
 **分类是按"这个东西因为什么而改变"划的**,不是按名字像什么:
 
-- `sim/`(10)`beam_trace` `collision_aabb` `collision_builder` `explosion` `math_util`
-  `maze_generator` `tile_defs` `tile_query` `water` `world_builder`
-  —— 改地图格式/碰撞语义/环面数学时动这里。
-- `net/`(10)`ai_input_source` `input_source` `network_input_source` `net_bus` `net_bus_ext`
-  `prediction_rollback` `snapshot_interp` `pvp_session` `proc_util` `local_server`
-  —— 改协议/联机手感/进程编排时动这里。★ **输入源三件套放这里**(`input_source` 及其两个子类):
+- `sim/`(12)`beam_trace` `collision_aabb` `collision_builder` `explosion` `grid_pathfinder`
+  `map_format` `math_util` `maze_generator` `tile_defs` `tile_query` `water` `world_builder`
+  —— 改地图格式/碰撞语义/环面数学时动这里。★ `maze_generator` 只留**会话状态**
+  (选中的地图文件 + `current_grid`)并转发;`.cyrm` 格式进 `map_format`、环面几何与寻路进
+  `grid_pathfinder`(阶段 5.7)。
+- `net/`(11)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
+  `net_bus` `net_bus_ext` `prediction_rollback` `snapshot_interp` `pvp_session` `proc_util`
+  `local_server`
+  —— 改协议/联机手感/进程编排时动这里。★ **输入源放这里**(`player_input` 纯接口 +
+  `local_input_source` / `packet_input_source` / `ai_input_source` 三个实现):
   它们的价值就体现在"本地输入 / 网络包 / AI 脚本"三种来源可换,与联机是同一条轴。
 - `config/`(6)`build_info` `enemy_params` `game_parameters` `player_params` `run_options`
   `settings` —— 改数值/选项时动这里(都是"读出来就是个数"的东西)。

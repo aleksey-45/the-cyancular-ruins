@@ -9,7 +9,7 @@ const DT: float = 1.0 / 60.0
 const RANGE: float = 2500.0
 
 func _initialize() -> void:
-	MazeGenerator._picked_map = "res://maps/demo.cyrm"
+	MazeGenerator.set_map_file("res://maps/demo.cyrm")
 	var grid: Array[Array] = MazeGenerator.load_map_file()
 	if grid.is_empty():
 		printerr("地图加载失败")

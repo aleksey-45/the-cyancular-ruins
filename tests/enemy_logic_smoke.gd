@@ -260,21 +260,21 @@ func _phase_map_size() -> void:
 
 # ── v3 解析 round-trip(纹理 3 位 0xx + 形状 hex)──
 func _phase_v3_roundtrip() -> void:
-	var v3_rows := MazeGenerator.serialize_v3_grid([[0, 31, 49], [31, 0, 0]])
+	var v3_rows := MapFormat.serialize_v3_grid([[0, 31, 49], [31, 0, 0]])
 	_check(v3_rows[0] == "0000001F0031", "serialize_v3_grid: 空气/全砖/纹理3左上1/4")
 	_check(v3_rows[1] == "001F00000000", "serialize_v3_grid: 第2行")
-	_check(MazeGenerator._parse_v3_grid(v3_rows) == [[0, 31, 49], [31, 0, 0]], "v3 网格 round-trip")
+	_check(MapFormat.parse_v3_grid(v3_rows) == [[0, 31, 49], [31, 0, 0]], "v3 网格 round-trip")
 
 
 # ── 旧格式自动转换(2×2→1,掩码+纹理)──
 func _phase_old_format_convert() -> void:
 	var old2 := [[0, 1], [1, 0]]
-	var conv := MazeGenerator.convert_old_grid(old2)
+	var conv := MapFormat.convert_old_grid(old2)
 	_check(conv == [[1 * 16 + 6]], "旧 2×2(右上+左下)→ 形状6 纹理1")   # 1<<1|1<<2 = 6
 	var old4 := [[1, 1], [1, 1]]
-	_check(MazeGenerator.convert_old_grid(old4) == [[31]], "旧 2×2 全实心 → 全砖 31")
+	_check(MapFormat.convert_old_grid(old4) == [[31]], "旧 2×2 全实心 → 全砖 31")
 	var old_mixed := [[3, 0], [7, 0]]
-	_check(MazeGenerator.convert_old_grid(old_mixed) == [[3 * 16 + 5]], "旧混合纹理取首个实体(左上 3 → 纹理3; 左上+左下 → 形状5)")
+	_check(MapFormat.convert_old_grid(old_mixed) == [[3 * 16 + 5]], "旧混合纹理取首个实体(左上 3 → 纹理3; 左上+左下 → 形状5)")
 
 
 # ── Task: 武器场景参数 + 开火命中 ──
@@ -843,16 +843,16 @@ func _phase_astar_flat_cache() -> void:
 	root.add_child(fb_cache)
 	await physics_frame
 	# 无玩家在组:鸟保持睡眠(不自己 repath),且 _collect_obstacles 只对 ≤600px 的实体收障碍
-	var calls0: int = MazeGenerator.astar_calls
+	var calls0: int = GridPathfinder.astar_calls
 	fb_cache._repath_to(Vector2i(40, 20))
-	var calls1: int = MazeGenerator.astar_calls
+	var calls1: int = GridPathfinder.astar_calls
 	_check(calls1 - calls0 == 1, "首次 repath 跑一次 A*")
 	fb_cache._repath_to(Vector2i(40, 20))
-	_check(MazeGenerator.astar_calls - calls1 == 0, "同目标且路径未空 → 缓存命中跳过 A*")
+	_check(GridPathfinder.astar_calls - calls1 == 0, "同目标且路径未空 → 缓存命中跳过 A*")
 	fb_cache._repath_to(Vector2i(41, 20))
-	_check(MazeGenerator.astar_calls - calls1 == 1, "目标变化 → 重跑 A*")
+	_check(GridPathfinder.astar_calls - calls1 == 1, "目标变化 → 重跑 A*")
 	fb_cache._repath_to(Vector2i(41, 20))
-	_check(MazeGenerator.astar_calls - calls1 == 1, "同目标再跳一次")
+	_check(GridPathfinder.astar_calls - calls1 == 1, "同目标再跳一次")
 	fb_cache.free()
 	MazeGenerator.current_grid = []
 

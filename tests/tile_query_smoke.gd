@@ -77,7 +77,7 @@ func _initialize() -> void:
 # ★ 返回类型必须写 `Array[Array]`:`MazeGenerator.current_grid` 是**强类型** static var,
 #   赋普通 `Array` 会运行时报错("Invalid assignment … base object of type 'GDScript'"),
 #   且因为发生在 _initialize 里 → 走不到 quit() → `-s` 表现为**挂死**而不是报错退出。
-#   同一个坑仓库在 core/maze_generator.gd:154 的注释里记过。
+#   同一个坑仓库在 GridPathfinder.copy_grid 的注释里记过。
 func _blank(cols: int, rows: int) -> Array[Array]:
 	var g: Array[Array] = []
 	for _y in range(rows):

@@ -25,7 +25,7 @@ func _initialize() -> void:
 	while not f.eof_reached():
 		lines.append(f.get_line())
 	f.close()
-	if MazeGenerator._has_v3_marker(lines):
+	if MapFormat.has_v3_marker(lines):
 		print("convert_map: %s 已是 v3,跳过" % path)
 		quit(0)
 		return
@@ -35,10 +35,10 @@ func _initialize() -> void:
 	if is_old_v2:
 		grid = _parse_old_v2_grid(lines)
 	else:
-		grid = MazeGenerator.convert_old_grid(MazeGenerator._parse_old_grid(lines))
+		grid = MapFormat.convert_old_grid(MapFormat.parse_old_grid(lines))
 		half = 2
 	var out: Array[String] = []
-	out.append(MazeGenerator.V3_MARKER)
+	out.append(MapFormat.V3_MARKER)
 	for l in lines:
 		var s := String(l).strip_edges()
 		if s.is_empty() or not s.begins_with("#"):
@@ -55,7 +55,7 @@ func _initialize() -> void:
 				pass  # 旧版本标记行不保留
 			_:
 				out.append(s)  # 普通 # 注释保留
-	for r in MazeGenerator.serialize_v3_grid(grid):
+	for r in MapFormat.serialize_v3_grid(grid):
 		out.append(r)
 	var w := FileAccess.open(path, FileAccess.WRITE)
 	if w == null:
@@ -90,7 +90,7 @@ func _parse_old_v2_grid(lines: Array) -> Array[Array]:
 			if tv < 0:
 				push_warning("convert_map: 旧 v2 非法纹理字符 \"%s\"，按空气处理" % line[i])
 				tv = 0
-			cells.append(MazeGenerator.pack(tv, MazeGenerator._shape_char_to_value(line[i + 1])))
+			cells.append(MapFormat.pack(tv, MapFormat.shape_char_to_value(line[i + 1])))
 			i += 2
 		if row_len < 0:
 			row_len = cells.size()
