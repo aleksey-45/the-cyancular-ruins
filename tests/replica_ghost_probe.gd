@@ -251,7 +251,7 @@ func _build_grid() -> Array[Array]:
 # 这条不是实现细节:幽灵体做好了但本地玩家 mask 不含层2,等于没做 —— 而且静默无报错。
 # 若改法换了入口(例如搬进 player.gd 按 pvp_mode 设),请把这里的匹配改成新入口,**别删掉这条断言**。
 func _check_source_guard() -> void:
-	for f in ["res://scenes/pvp_client.gd", "res://scenes/royale_game.gd"]:
+	for f in ["res://scenes/pvp_game.gd", "res://scenes/royale_game.gd"]:
 		var txt := FileAccess.get_file_as_string(f)
 		var found := false
 		for line in txt.split("\n"):

@@ -338,7 +338,7 @@ func _check_residue(problems: Array) -> void:
 const A2_BASE := "res://scenes/pvp_match_client.gd"
 const A2_OWNERS := [
 	"res://scenes/" + "royale" + "_game.gd",
-	"res://scenes/pvp_client.gd",
+	"res://scenes/pvp_game.gd",
 	# ★ 2026-09-14:共享基类已落地(scenes/pvp_match_client.gd,7 个公共函数体搬了进去)。
 	#   它当前**还不含** C2 接线(接线仍在两个子类各自的 _ready 里),故按 A2_WIRING 判据会被
 	#   跳过、在位数仍是 2 —— 这正是要的:等后续把接线也搬进来,这道门**自动**把它算成持有者,

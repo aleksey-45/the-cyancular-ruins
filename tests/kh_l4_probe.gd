@@ -261,7 +261,7 @@ func _split_args(s: String) -> Array[String]:
 
 # ── 4) 退役的 ESC 菜单零引用 ─────────────────────────────────────────
 # L4 用 ui/pause_menu.gd(PauseMenu,单机暂停树 / PvP 只弹层+断连)替掉了原来的 esc_menu。
-# 判据取**代码视图**(剥掉整行注释):pvp_client.gd 里有两行"旧 EscMenu 靠 X 挡"的**历史
+# 判据取**代码视图**(剥掉整行注释):pvp_game.gd 里有两行"旧 EscMenu 靠 X 挡"的**历史
 # 注释**,那是解释设计动机的,不是引用;把它们算成引用会让这条断言永远红。
 func _check_old_escape_menu_retired() -> void:
 	var cls := "Esc" + "Menu"

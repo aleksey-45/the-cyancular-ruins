@@ -5,7 +5,7 @@ extends Node
 #   "$GODOT" --headless --path . --quit-after 600 res://tests/kh_l6_probe.tscn
 # 期望:每条 [L6] ... 打 ✓,末行 "KH L6 PROBE: ALL-OK",退出码 0。
 #
-# 存在理由:L6 把 KH 的 PvP 客户端加成接进 main 的 scenes/pvp_client.gd。侦察已定论:
+# 存在理由:L6 把 KH 的 PvP 客户端加成接进 main 的 scenes/pvp_game.gd。侦察已定论:
 # **KH 那版不是 main 的加法版,而是把 main 的 C2(客户端预测 rollback)整条链路删掉后的
 # server_rendered 版**(14 处危险差异 B1–B14)。本层的全部风险就是"做加法时把 C2 弄坏",
 # 而 C2 弄坏是**静默的**——不报错,表现为橡皮筋/手感错乱,只有人上手才看得出来。
@@ -54,7 +54,7 @@ extends Node
 #  15  头顶名统一 NAME_COLOR(U1 的决定)—— B13:回退按角色双色
 
 # ── 被扫文件 ────────────────────────────────────────────────────────
-const PC := "res://scenes/" + "pvp_client.gd"
+const PC := "res://scenes/" + "pvp_game.gd"
 # 9b) 的扫描对象:大乱斗客户端。与 pvp_client 是同一类风险的第二处实例。
 const RG := "res://scenes/" + "royale" + "_game.gd"
 # ★ 2026-09-14:两个客户端的**公共实现**抽进了共享基类(`_physics_process` / `_on_snapshot_own` /
@@ -134,7 +134,7 @@ const RE_ONREADY_PATH := "@onready\\s+var\\s+[A-Za-z_]\\w*\\s*:[^=]+=\\s*\\$([A-
 const RE_CONST_STR := "^const\\s+([A-Za-z_]\\w*)[^=]*=\\s*\"([^\"]*)\""
 
 var _failures: Array[String] = []
-var _pc_code := ""                     # pvp_client.gd 的去注释视图(保留缩进)
+var _pc_code := ""                     # pvp_game.gd 的去注释视图(保留缩进)
 var _pc_lines: PackedStringArray = PackedStringArray()
 var _rg_code := ""                     # royale_game.gd 的去注释视图(9b 用)
 var _base_code := ""                   # pvp_match_client.gd(共享基类)—— 公共函数体的所在
@@ -771,7 +771,7 @@ func _strip_line_comment(line: String) -> String:
 
 # 取某函数的函数体(从 `func 名(` 到下一个顶层 `func` 之前;找不到返回空串)。
 # 判据必须落在**体内**:同名调用点在别的函数里、或函数被删只剩调用点,都不能算"在位"。
-# 取函数体:`pvp_client.gd` 找不到就到**共享基类**里找(见 BASE 的注释)。
+# 取函数体:`pvp_game.gd` 找不到就到**共享基类**里找(见 BASE 的注释)。
 # ★ 都找不到时返回空串 —— 各调用点都有「取不到 … 函数体(改名/挪走了?)」的断言,
 #   所以"又搬到第三个文件"会被照成**红**,不会静默放行(这条比"找一个够宽的地方"重要)。
 func _body_anywhere(name: String) -> String:
