@@ -18,7 +18,7 @@ extends Control
 # 数值腿与视觉腿缺一不可:断言判「文本/尺寸/显隐对不对」,PNG 判「肉眼看着对不对」。
 
 const OUT_DIR := "res://.superpowers/sdd"
-const PLAYER_SCENE := "res://scenes/player/Player.tscn"
+const PLAYER_SCENE := "res://scenes/player/player.tscn"
 const RELOAD_SAMPLE_DT := 0.5          # 手动推进的换弹时长(秒):手枪 reload_time=1.0 → 进度 50%
 
 var _failures: Array[String] = []
@@ -44,7 +44,7 @@ func _ready() -> void:
 
 	var ps: PackedScene = load(PLAYER_SCENE)
 	if ps == null:
-		_failures.append("Player.tscn 载入失败")
+		_failures.append("player.tscn 载入失败")
 		_finish()
 		return
 	var p: Node = ps.instantiate()

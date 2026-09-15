@@ -2,7 +2,7 @@
 # 命名与目录规范检查(防复发)。规范见 docs/naming-cleanup-plan.md §"采用的规范"。
 #
 # 为什么需要它:命名整改最典型的失败模式是「整完就漂回去」—— `.tscn` 的 PascalCase 约定
-# 就是这么失效的(约定写着 Pascal,现实 20 个里 19 个 snake,而没有任何东西会报错)。
+# 就是这么失效的(约定写着 Pascal,现实 51/56 是 snake,而没有任何东西会报错)。
 # 2026-09-14 补上 `docs/naming-cleanup-plan.md` 结尾提过、但一直没落地的这一条。
 #
 # 用法:
@@ -14,8 +14,8 @@
 #   A 目录名一律小写
 #   B `class_name` 转 snake 必须等于文件名(规范原文:「名字 = 类名转 snake」)
 #   C 文档里引用的文件/目录路径必须存在
-#   D `.tscn` 命名分布 + 「有没有同名 .gd 兄弟」(**只报告,不判失败** —— 大小写规则待定,
-#     见阶段 4.3:现状 snake 是多数(19:5),倾向把约定反过来改成 snake 同名)
+#   D `.tscn` 文件名一律 snake_case(阶段 4.3 反转的约定:旧写法 PascalCase 在 51/56 已是
+#     snake 的现实下从未生效过)。「有没有同名 .gd 兄弟」仍只作 -v 备注。
 import os
 import re
 import sys
@@ -42,7 +42,8 @@ ACCEPTED_CLASS_FILES = {
     "server/ai_player.gd":
         "类名 AINavigator ≠ 文件名 ai_player(阶段 4.5:改名 ai_navigator.gd 或类名改 AiPlayer)",
     "scenes/level_0.gd":
-        "类名 Level0 转 snake 是 level0,文件名是 level_0(阶段 4.3:与 .tscn 命名规则一并定)",
+        "类名 Level0 转 snake 是 level0,文件名是 level_0(.tscn 侧已按 4.3 统一为 level_0.tscn;"
+        "类名不改 —— 全仓引用 Level0 的点很多,收益不抵改动面)",
 }
 
 _fail: list[str] = []
@@ -127,25 +128,34 @@ def check_doc_paths() -> None:
             _fail.append("C %s 引用了不存在的路径: %s" % ("/".join(DOC_FILES), tok))
 
 
-def report_tscn() -> None:
-    """只报告不判失败:大小写规则待阶段 4.3 定,现在写死判据只会制造假红。"""
-    pascal, snake, unpaired = [], [], []
+def check_tscn() -> None:
+    """`.tscn` 文件名一律 snake_case(阶段 4.3 反转的约定)。
+
+    旧约定写的是 PascalCase,而现实里 51/56 是 snake —— 一条**没人守、也没人报错**的规则,
+    于是在文件数翻倍的过程中悄悄失效。现在按现实反转成 snake,并由本检查守住。
+    「有没有同名 .gd 兄弟」仍只作备注:武器那 6 个场景是 `weapon_base.gd` 的调参实例,
+    本来就不该同名。
+    """
+    bad, snake, unpaired = [], [], []
     for root, dirs, files in os.walk(PROJECT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        for f in files:
-            if not f.endswith(".tscn"):
+        listing = set(files)          # 用**目录实读列表**判同名,不用 os.path.exists ——
+        for f in files:               # 后者在 NTFS 上大小写不敏感,会把 Player.tscn ↔
+            if not f.endswith(".tscn"):   # player.gd 误判成"有兄弟"(实测踩过)。
                 continue
             rel = os.path.relpath(os.path.join(root, f), PROJECT).replace("\\", "/")
             stem = f[:-5]
-            (pascal if stem[:1].isupper() else snake).append(rel)
-            if not os.path.exists(os.path.join(root, stem + ".gd")):
+            if to_snake(stem) != stem:
+                bad.append("%s: .tscn 文件名 %s 不是 snake_case(应为 %s.tscn)"
+                           % (rel, stem, to_snake(stem)))
+            else:
+                snake.append(rel)
+            if stem + ".gd" not in listing:
                 unpaired.append(rel)
-    _notes.append("D .tscn 命名分布: Pascal %d 个 / snake %d 个(规范现在写的是 Pascal,"
-                  "现状以 snake 为多数 —— 阶段 4.3 定夺)" % (len(pascal), len(snake)))
-    for rel in sorted(pascal):
-        _notes.append("D   Pascal: %s" % rel)
+    _fail.extend(bad)
+    _notes.append("D .tscn 命名: snake %d 个%s" % (len(snake), "" if not bad else " / **违规 %d 个**" % len(bad)))
     for rel in sorted(unpaired):
-        _notes.append("D   无同名 .gd 兄弟: %s" % rel)
+        _notes.append("D   无同名 .gd 兄弟(仅备注): %s" % rel)
 
 
 def main() -> int:
@@ -154,7 +164,7 @@ def main() -> int:
     check_dirs()
     check_class_names()
     check_doc_paths()
-    report_tscn()
+    check_tscn()
     if _notes and verbose:
         print("— 备注(不判失败,仅 -v 显示) —")
         for n in _notes:
@@ -166,7 +176,7 @@ def main() -> int:
         print("\n命名检查 FAIL(规范见 docs/naming-cleanup-plan.md;"
               "确属有意偏离要加进 ACCEPTED_CLASS_FILES 并写明何时销)")
         return 0 if report_only else 1
-    print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径;.tscn 命名仅报告)")
+    print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / .tscn snake_case)")
     return 0
 
 

@@ -73,7 +73,7 @@ func _ready() -> void:
 	# 显示名:2026-09-14 起唯一来源是 data/enemies.json 的 display_name 字段(经
 	# EnemySpawner.display_name_of,按**场景路径**查)。原先这里断言的是 combat_feedback 里
 	# 那份手抄的 const ENEMY_NAMES —— 已删,按仓内惯例改判据认新入口。
-	if EnemySpawner.display_name_of("res://scenes/enemies/EnemyFlyBird.tscn") != "飞鸟":
+	if EnemySpawner.display_name_of("res://scenes/enemies/enemy_fly_bird.tscn") != "飞鸟":
 		failures.append("敌人显示名(enemies.json 的 display_name)取不到「飞鸟」")
 	# 查不到的回落:英文场景文件名(不是空串、也不是崩溃)
 	if EnemySpawner.display_name_of("res://scenes/enemies/EnemyNoSuchBird.tscn") != "EnemyNoSuchBird":
@@ -102,9 +102,9 @@ func _ready() -> void:
 			failures.append("射手==目标时不应写 last_damager")
 		b.queue_free()
 	# ── 端到端归因(Task 15):致命一击必须能播报——走真实 BulletBase._direct_hit 路径 ──
-	var enemy_scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
+	var enemy_scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	if enemy_scene == null:
-		failures.append("EnemyJumpBird.tscn 载入失败,无法验证端到端归因")
+		failures.append("enemy_jump_bird.tscn 载入失败,无法验证端到端归因")
 	# 空守卫(Task 16):下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() →
 	# 探针一行都不打印就挂到 --quit-after 超时(失败串永远看不到)。提前收尾,失败也走正常退出码。
 	if enemy_scene == null or bullet_scene == null:
@@ -125,7 +125,7 @@ func _ready() -> void:
 	enemy.queue_free()
 	b2.queue_free()
 	# ── 端到端归因(爆炸 AoE,Task 16):真实 Explosion.apply_aoe 必须让致命一击能播报 ──
-	var enemy3: Node = load("res://scenes/enemies/EnemyJumpBird.tscn").instantiate()
+	var enemy3: Node = load("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
 	add_child(enemy3)
 	enemy3.set("hp", 1)
 	enemy3.global_position = Vector2(400, 0)

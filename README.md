@@ -84,7 +84,7 @@ bash tests/pvp_match_smoke.sh
 ## 目录
 
 ```
-scenes/   场景(页面与对局场景;脚本一律 snake_case)
+scenes/   场景(页面与对局场景;.tscn 与脚本一律 snake_case)
 core/     autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
 server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
 ui/       跨场景 UI:UiFactory(唯一调色板/工厂)、单机 HUD、对局 HUD、暂停菜单

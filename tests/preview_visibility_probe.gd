@@ -34,7 +34,7 @@ func _ready() -> void:
 
 # ① 本人:按住 attack → _aiming=true 且 _laser.visible=true;松开 → 收回。
 func _check_owner_sees_own_line() -> void:
-	var lv: Node = (load("res://scenes/Level0.tscn") as PackedScene).instantiate()
+	var lv: Node = (load("res://scenes/level_0.tscn") as PackedScene).instantiate()
 	add_child(lv)
 	await _frames(8)
 

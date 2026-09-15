@@ -6,7 +6,7 @@ signal enemy_spawned(enemy: Node)
 
 # 敌人注册表。唯一来源 data/enemies.json(与 HTML 编辑器共享)。
 static var TYPES: Dictionary = {}           # id → scene 路径
-static var DISPLAY_NAMES: Dictionary = {}   # scene 路径(res://…/EnemyFlyBird.tscn)→ 中文显示名
+static var DISPLAY_NAMES: Dictionary = {}   # scene 路径(res://…/enemy_fly_bird.tscn)→ 中文显示名
 
 # 从 res://data/enemies.json 加载注册表(两张表一起填);缺文件/格式错 → push_error,表保持空。
 static func load_types() -> void:

@@ -59,7 +59,7 @@ func _ready() -> void:
 func _test_torus_compare() -> void:
 	var w := GameParameters.MAP_WIDTH
 	var h := GameParameters.MAP_HEIGHT
-	var p: Node2D = preload("res://scenes/player/Player.tscn").instantiate()
+	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
 	add_child(p)
 	p.global_position = Vector2(w * 0.5, h * 0.5)
 

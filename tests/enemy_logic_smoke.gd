@@ -108,7 +108,7 @@ func _initialize() -> void:
 	_check(load("res://scenes/enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
 
 	# ── Task 4: 敌人实例化 ──
-	var scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
+	var scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	_check(scene != null, "JumpBird 场景加载")
 	var e = scene.instantiate()
 	root.add_child(e)
@@ -207,7 +207,7 @@ func _initialize() -> void:
 	# load()+脚本比较代替 is WeaponBase。
 	_check(w.get_script() == load("res://scenes/weapons/weapon_base.gd"), "武器继承 WeaponBase")
 	_check(w.weapon_name == "Pistol", "手枪参数")
-	var e_scene: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
+	var e_scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	# 复用上面 Task 4 已声明的 e(已 free 过,不能重复 var 声明)
 	e = e_scene.instantiate()
 	root.add_child(e)
@@ -321,7 +321,7 @@ func _initialize() -> void:
 	MazeGenerator.current_grid = []
 
 	# ── Task: 玩家装备/切枪 ──
-	var player_scene: PackedScene = load("res://scenes/player/Player.tscn")
+	var player_scene: PackedScene = load("res://scenes/player/player.tscn")
 	_check(player_scene != null, "Player 场景加载")
 	var p = player_scene.instantiate()
 	root.add_child(p)
@@ -340,7 +340,7 @@ func _initialize() -> void:
 	p.free()
 
 	# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
-	var jump2: PackedScene = load("res://scenes/enemies/EnemyJumpBird.tscn")
+	var jump2: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	var e2 := jump2.instantiate()
 	root.add_child(e2)
 	_check(e2.collision_layer == 4, "敌人占用层3")
@@ -476,7 +476,7 @@ func _initialize() -> void:
 		row3.fill(MazeGenerator.EMPTY)
 		fb_grid.append(row3)
 	MazeGenerator.current_grid = fb_grid
-	var fb_scene: PackedScene = load("res://scenes/enemies/EnemyFlyBird.tscn")
+	var fb_scene: PackedScene = load("res://scenes/enemies/enemy_fly_bird.tscn")
 	_check(fb_scene != null, "FlyBird 场景加载")
 	var fb := fb_scene.instantiate()
 	fb.global_position = Vector2(488, 1208)

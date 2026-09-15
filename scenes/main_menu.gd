@@ -56,7 +56,7 @@ func _ready() -> void:
 func _enter_level0() -> void:
 	Level0.pvp_mode = false            # 复位 PvP 标志,避免上次 PvP 残留
 	CombatComponent.pvp_arena = false  # 回单机恢复命中无敌帧
-	get_tree().change_scene_to_file("res://scenes/Level0.tscn")
+	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
 
 
 # ── 版本号 / 提交历史(git,结果缓存)──

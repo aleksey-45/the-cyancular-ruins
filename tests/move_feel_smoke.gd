@@ -32,7 +32,7 @@ func _ready() -> void:
 	var host := Node2D.new()
 	add_child(host)
 	WorldBuilder.build_sim(host, MazeGenerator.current_grid)
-	p = preload("res://scenes/player/Player.tscn").instantiate()
+	p = preload("res://scenes/player/player.tscn").instantiate()
 	p.name = "MoveFeel"
 	p.set_input_source(src)
 	host.add_child(p)

@@ -30,7 +30,7 @@ func _ready() -> void:
 	MazeGenerator.set_map_file(PvpSession.map_path)
 	GameParameters.refresh_map_size()
 	Level0.pvp_mode = true
-	var level0: Node = load("res://scenes/Level0.tscn").instantiate()
+	var level0: Node = load("res://scenes/level_0.tscn").instantiate()
 	add_child(level0)
 	_level0 = level0
 	_world = level0.get_node("WorldViewport")
@@ -39,7 +39,7 @@ func _ready() -> void:
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	# 与对手(层2)物理碰撞:服务器侧 match_host 已给每个玩家 mask |= 2,客户端本地玩家也必须,
 	# 否则本地预测直接穿过对手副本、服务器却挡住 → 每帧分歧回滚(C2 的无限回滚循环)。
-	# 对手那一侧由 player_replica 的幽灵碰撞体提供(层2)。**不改 Player.tscn**:那会让
+	# 对手那一侧由 player_replica 的幽灵碰撞体提供(层2)。**不改 player.tscn**:那会让
 	# enemy_logic_smoke 的「player mask == 5」断言变红,且单机不需要这一位。
 	local.collision_mask |= 2
 	_local = local

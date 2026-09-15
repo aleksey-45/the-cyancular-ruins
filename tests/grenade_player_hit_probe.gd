@@ -103,7 +103,7 @@ func _test_out_of_range() -> void:
 
 # 一具真 Player(真 take_hit / 真 combat),但关掉它自己的物理:本探针只验判定与结算。
 func _make_player(role: int, cell: Vector2i) -> Node2D:
-	var p: Node2D = (preload("res://scenes/player/Player.tscn") as PackedScene).instantiate()
+	var p: Node2D = (preload("res://scenes/player/player.tscn") as PackedScene).instantiate()
 	_host.add_child(p)
 	var ts: int = GameParameters.TILE_SIZE
 	p.global_position = Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5)

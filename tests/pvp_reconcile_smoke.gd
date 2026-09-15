@@ -55,7 +55,7 @@ func _ready() -> void:
 	print("[reconcile] D=%d E=%d 计划 %d tick" % [DELAY, EVENT_TICK, TOTAL])
 
 func _make_player(host: Node2D, nm: String, pos: Vector2):
-	var p = preload("res://scenes/player/Player.tscn").instantiate()
+	var p = preload("res://scenes/player/player.tscn").instantiate()
 	p.name = nm
 	host.add_child(p)
 	p.global_position = pos

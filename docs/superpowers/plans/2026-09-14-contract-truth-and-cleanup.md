@@ -362,7 +362,7 @@ git commit -m "refactor(pvp): 开局三载荷 handler 改名 _apply_* 并标注�
 原文：
 
 ```
-scenes/   场景(Godot 惯例 PascalCase 的 .tscn;脚本 snake_case)
+scenes/   场景(.tscn 与脚本都 snake_case —— 2026-09-15 起,旧写法 PascalCase 已反转)
 core/  autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
 server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
 tests/    -s 冒烟/探针
@@ -1594,7 +1594,7 @@ Expected: 两条各打印 `ALL-OK`。
 |---|---|---|
 | 4.1 | **文件错位一批** | `scenes/player/enemy_hp_bar.gd`（内容是 PvP 对手血条）→ `ui/`；`scenes/effects/minimap.gd` → `ui/`；`scenes/player/world_label.gd` → `ui/`（**注意三处调用都是 `load("res://scenes/player/world_label.gd")` 硬编码字符串路径**）；`scenes/player/camera_2d.gd` → `render/`；`scenes/player/weapon_component.gd:31-83` 的 UI 部分 → 新 `ui/weapon_icons.gd` |
 | 4.2 | **`ui/` 内聚 + `render/` 名副其实** | `scenes/royale_hud.gd\|tscn` → `ui/`；`shaders/post_process.gdshader` → `render/`（并删空的 `shaders/`）；`scenes/effects/combat_feedback.gd` → `ui/`（或新建 `scenes/hud/`） |
-| 4.3 | **`.tscn` 命名约定反转为 snake 同名** | 现状 20 个里只有 5 个 Pascal（`Level0`/`Player`/三个 `Enemy*Bird`），README 与 naming 计划却都写着「保持 PascalCase」。**建议改约定而不是改 19 个文件**：`.tscn` 一律 snake、与其 `.gd` 同名 |
+| 4.3 | **`.tscn` 命名约定反转为 snake 同名** | ✅ **完成**(用户裁定)。**当场重测**:计划写的分母错了 —— 不是「20 个里 5 个 Pascal」而是 **56 个里 5 个 Pascal / 51 个 snake**(9% 符合旧约定,那条规则早就名存实亡)。按现实反转:①改名的只有那 5 个(`Level0`→`level_0`、`Player`→`player`、三个 `Enemy*Bird`→snake);②文档 4 处(规范正本 `docs/naming-cleanup-plan.md` §3 改写法 + 两份 KH 计划加**反转注明**而非改写历史 + 本计划与 README 的目录说明);③★ **旧约定之所以失效是因为没人守** → 把 `tools/check_naming.py` 的 D 检查**从「只报告」改成真判失败**(它此前明确写着「大小写规则待阶段 4.3 定」),顺带修掉它一个 NTFS 假阴性:判「有没有同名 .gd 兄弟」原用 `os.path.exists`,在大小写不敏感的文件系统上会把 `Player.tscn` ↔ `player.gd` 误判成有兄弟 —— 改用目录实读列表比对。**反证**:把 `level_0.tscn` 挪回 `Level0.tscn` → 咬红并点名(「应为 level0.tscn」),还原转绿。★ 引用面比预想大(27 个文件):`data/enemies.json` 的 `scene` 字段也指场景路径,故跑了一次 `node level_editor/sync-enemies.js` 重生成 `structure-editor.html` 的内嵌注册表 |
 | 4.4 | 同一概念两套命名 | `scenes/pvp_game.tscn` 的脚本是 `pvp_client.gd`（**不成对**），而 `royale_game.tscn` ↔ `royale_game.gd` 成对 → 二选一统一 |
 | 4.5 | 文件名与 `class_name` 不符 / 缩略语三套写法 | `server/ai_player.gd` 的 `class_name AINavigator`；缩略语现状 `HUD`（`ui/hud.gd`）/`PvpHud`/`AIInputSource` 三种 → 定一条规则（建议驼峰 `Hud`/`Ai`） |
 | 4.6 | **`core/` 分目录** | 27 个条目混 4 类关注点（几何模拟/网络/配置/表现）→ `core/{sim,net,config,present}/`。**最后做**：autoload 路径在 `project.godot`，动它要同步 4 处 |

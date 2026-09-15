@@ -16,7 +16,7 @@ extends Node
 #    探针中途脚本报错(解析失败/函数中断)时,--quit-after 仍会以 **exit 0** 退出,
 #    且**不会**打印 ALL-OK(也不打 FAIL)——只看退出码会把"没跑完"读成"通过"。
 
-const PLAYER_SCENE := "res://scenes/player/Player.tscn"
+const PLAYER_SCENE := "res://scenes/player/player.tscn"
 const WEAPON_BASE_SRC := "res://scenes/weapons/weapon_base.gd"
 const WEAPON_COMPONENT_SRC := "res://scenes/player/weapon_component.gd"
 const PLAYER_SRC := "res://scenes/player/player.gd"
@@ -60,10 +60,10 @@ func _ready() -> void:
 
 	await _check_weapon_numbers()
 
-	# 真实 Player.tscn(闸门/滚轮/残弹记忆都用它)
+	# 真实 player.tscn(闸门/滚轮/残弹记忆都用它)
 	var player_scene: PackedScene = load(PLAYER_SCENE)
 	if player_scene == null:
-		_failures.append("Player.tscn 载入失败,闸门/滚轮/残弹记忆无法验证")
+		_failures.append("player.tscn 载入失败,闸门/滚轮/残弹记忆无法验证")
 		_finish()
 		return
 	var player: Node = player_scene.instantiate()
@@ -73,7 +73,7 @@ func _ready() -> void:
 	await _frames(3)
 	var wep: WeaponComponent = player.weapons
 	if wep == null:
-		_failures.append("Player.tscn 上没有 Weapons 组件")
+		_failures.append("player.tscn 上没有 Weapons 组件")
 		_finish()
 		return
 
@@ -273,7 +273,7 @@ func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
 	w.mag_ammo = 3
 	w.start_reload()
 	_check(not w.is_reloading(), "网络输入源驱动时 start_reload() 仍进入装填(应被 reload_active() 拒绝)")
-	# (b) 真实链路:真 Player.tscn + NetworkInputSource → player.gd::input_is_network()
+	# (b) 真实链路:真 player.tscn + NetworkInputSource → player.gd::input_is_network()
 	var real_w: WeaponBase = wep.current_weapon()
 	if real_w == null:
 		_failures.append("网络闸门:Player 当前没有武器实例,真实链路无法验证")

@@ -381,7 +381,7 @@ func _packet(t: int, ax: float, seq: int) -> Dictionary:
 
 # ── 造物 ──
 func _make_player(nm: String, pos: Vector2):
-	var p = preload("res://scenes/player/Player.tscn").instantiate()
+	var p = preload("res://scenes/player/player.tscn").instantiate()
 	p.name = nm
 	_host.add_child(p)
 	p.global_position = pos

@@ -17,7 +17,7 @@ const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
 }  # 与 player.gd Pose 枚举值一致
 
-# 幽灵体的姿态碰撞箱节点名:与 Player.tscn / player.gd 的 POSE_NODE 逐字对应(同源,别改名)
+# 幽灵体的姿态碰撞箱节点名:与 player.tscn / player.gd 的 POSE_NODE 逐字对应(同源,别改名)
 const POSE_SHAPE: Dictionary = {
 	0: "CollisionShape2D_stand", 1: "CollisionShape2D_move", 2: "CollisionShape2D_fly",
 	3: "CollisionShape2D_charge", 4: "CollisionShape2D_squat",
@@ -56,9 +56,9 @@ var _interp: SnapshotInterp = null
 
 func _ready() -> void:
 	add_to_group(GROUP)
-	# 复用 Player.tscn 的内联 SpriteFrames —— 同一次实例化顺带把 5 份姿态碰撞多边形抄给幽灵体
-	# (单一来源:日后改 Player.tscn 的碰撞箱,副本自动跟上,不会漂)
-	var tmp := preload("res://scenes/player/Player.tscn").instantiate()
+	# 复用 player.tscn 的内联 SpriteFrames —— 同一次实例化顺带把 5 份姿态碰撞多边形抄给幽灵体
+	# (单一来源:日后改 player.tscn 的碰撞箱,副本自动跟上,不会漂)
+	var tmp := preload("res://scenes/player/player.tscn").instantiate()
 	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
 	_build_ghost_body(tmp)
 	tmp.free()
@@ -66,8 +66,8 @@ func _ready() -> void:
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
 
-# 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 Player.tscn 一致;mask 0 = 它不需要感知任何东西,
-# 只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 Player.tscn 现抄。
+# 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,
+# 只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 现抄。
 # 用 StaticBody2D 而不是 CharacterBody2D:副本自身不由物理驱动(位置由 _process 的插值决定),
 # CharacterBody2D 会引入它自己的物理步进与 move_and_slide 竞争。作为副本子节点 → 位置/朝向/
 # 环面回绕全自动跟随,无需任何额外代码。
@@ -80,7 +80,7 @@ func _build_ghost_body(src: Node) -> void:
 	for pose in POSE_SHAPE:
 		var from := src.get_node_or_null(POSE_SHAPE[pose]) as CollisionPolygon2D
 		if from == null:
-			continue   # Player.tscn 改名了 → 少一份形状,不是致命(但 POSE_SHAPE 必须同步改)
+			continue   # player.tscn 改名了 → 少一份形状,不是致命(但 POSE_SHAPE 必须同步改)
 		var poly := CollisionPolygon2D.new()
 		poly.name = POSE_SHAPE[pose]
 		poly.polygon = from.polygon
