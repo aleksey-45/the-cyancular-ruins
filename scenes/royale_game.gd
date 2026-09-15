@@ -69,6 +69,7 @@ func _ready() -> void:
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
+	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()

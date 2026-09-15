@@ -60,7 +60,7 @@ func _handle_respawns(delta: float) -> void:
 		if _respawn_pending[role] <= 0.0:
 			_respawn_player(role)
 
-# 重生:摆到本局出生点,血量/防水/倒地复位,武器回 1。
+# 重生:摆到本局出生点,血量/防水/倒地复位,背包**只随机保留一把**(其余掉在死亡点)。
 
 func _respawn_player(role: int) -> void:
 	var p: Node2D = players[role]
@@ -71,8 +71,10 @@ func _respawn_player(role: int) -> void:
 	p.apply_authoritative_state(p.max_hp, p.max_waterproof, false)
 	if p.has_method("cancel_jump_state"):
 		p.cancel_jump_state()
-	if p.weapons != null and p.weapons.has_method("equip"):
-		p.weapons.equip(p.weapons.default_slot())   # 禁用武器闸门下回槽 1 会踩禁用槽(原为 equip("1"))
+	# 复活:除**背包里随机一把**外,其余全丢在死亡点(用户 2026-09-15 裁定)。
+	# ★ 换掉了原来的 equip(default_slot()) —— 那条会把手上的枪换回默认槽,而背包
+	#   现在是玩家资产,复活只该"随机留一把";不补满弹(与"残弹跟着枪走"一致)。
+	_drop_all_but_one(p, role)
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
 
@@ -108,6 +110,9 @@ func _reset_world_and_clear_dynamics() -> void:
 		if is_instance_valid(b):
 			(b as Node).queue_free()
 	_seen_bullets.clear()
+	# 地面武器:清零 + 重新分布 + 各人背包重置为随机一把。
+	# 与"还原可破坏砖 + 清子弹"同一纪律 —— 两端每局从同一基线出发,装备也是本局的进度。
+	_reset_ground_weapons()
 	if _base_grid.is_empty():
 		return
 	var g := MazeGenerator.copy_grid(_base_grid)

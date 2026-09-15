@@ -114,7 +114,9 @@ func _physics_process(_delta: float) -> void:
 	_prev_sent_seq = _input_seq
 	_have_prev_seq = true
 	if _rollback != null:
-		_rollback.note_input(_input_seq, pkt)   # 供回滚重放使用
+		_rollback.note_input(_input_seq, pkt)
+	# 地面武器:锚点 + 落点同步 + F 提示(纯本地表现,不参与预测)
+	_tick_ground_weapons()   # 供回滚重放使用
 
 
 func _on_bullet_spawn(data: Dictionary) -> void:
@@ -237,3 +239,102 @@ func _on_match_sync(payload: Dictionary) -> void:
 					str(PvpSession.spawn), str(want)])
 			PvpSession.spawn = want
 			_correct_local_spawn()
+	# 地面武器**开局那批随本条拉取一并到达**(不走 weapon_spawned 推送 —— 推送会撞上
+	# "客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失"那类事故,见 CoreNet 的注释)。
+	var gw: Array = payload.get("ground_weapons", [])
+	for e in gw:
+		if e is Dictionary:
+			_spawn_pickup_node(e)
+
+
+# ── 地面武器(2026-09-15):服务器权威,本端只渲染 + 等事件(不做客户端预测)──
+var ground_weapons := GroundWeaponField.new()
+var _pickup_nodes: Dictionary = {}    # inst -> WeaponPickup
+var _pickup_prompt: PickupPrompt = null
+
+const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
+
+
+# 订阅服务器的两条地面武器事件。
+# ★ **必须走 NetBus**,不是 NetBusExt —— 后者里有同名遗留的 beam_fired,挂错节点的
+#   表现是**静默 no-op**(对手的枪凭空消失/永不再现,且不报错)。两个子类各自 _ready 里调一次。
+func _subscribe_ground_weapons() -> void:
+	NetBus.local_weapon_spawned.connect(_on_weapon_spawned)
+	NetBus.local_weapon_removed.connect(_on_weapon_removed)
+
+
+func _on_weapon_spawned(data: Dictionary) -> void:
+	_spawn_pickup_node(data)
+
+
+func _on_weapon_removed(data: Dictionary) -> void:
+	_remove_pickup_node(int(data.get("inst", 0)))
+
+
+func _spawn_pickup_node(data: Dictionary) -> void:
+	if _world == null:
+		return
+	var inst := int(data.get("inst", 0))
+	if inst <= 0 or _pickup_nodes.has(inst):
+		return
+	var type_id := int(data.get("type_id", 1))
+	var node: WeaponPickup = PICKUP_SCENE.instantiate()
+	node.configure(type_id, inst, int(data.get("mag", 0)), data.get("vel", Vector2.ZERO))
+	_world.add_child(node)
+	# 权威位置与渲染位置分开(见 WeaponPickup 的字段注释):事件里的 pos 是 canonical。
+	node.canonical_pos = data.get("pos", Vector2.ZERO)
+	node.set_anchor((_local as Node2D).global_position if _local != null else Vector2.ZERO)
+	node.sync_render_from_canonical()
+	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
+	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": int(data.get("mag", 0)),
+			"pos": node.canonical_pos, "vel": data.get("vel", Vector2.ZERO)})
+	_pickup_nodes[inst] = node
+
+
+func _remove_pickup_node(inst: int) -> void:
+	ground_weapons.remove(inst)
+	var n = _pickup_nodes.get(inst, null)
+	if n != null and is_instance_valid(n):
+		n.queue_free()
+	_pickup_nodes.erase(inst)
+
+
+# 每帧:① 把锚点推给所有地面武器(接缝另一侧的枪要画在身边那一份上);
+#        ② 把落体的实际位置同步回本地表(提示的"最近一把"要跟着落点走);
+#        ③ 更新 F 提示。
+func _tick_ground_weapons() -> void:
+	if _local == null:
+		return
+	var lp: Vector2 = (_local as Node2D).global_position
+	for inst in _pickup_nodes:
+		var n = _pickup_nodes[inst]
+		if n == null or not is_instance_valid(n):
+			continue
+		var pk := n as WeaponPickup
+		pk.set_anchor(lp)
+		pk.sync_render_from_canonical()
+		var e: Dictionary = ground_weapons.get_entry(int(inst))
+		if not e.is_empty():
+			e["pos"] = pk.canonical_pos
+	_update_pickup_prompt(lp)
+
+
+# F 提示:贴到"**按 F 会捡到的那一把**"上方。★ 与服务器 `_try_server_pickup` 用同一个
+# `nearest_within` + 同一个半径,否则会出现"提示了 A、服务器却捡了 B"。
+# (客户端不预测,所以提示的语义是"服务器会同意的那一把"。)
+func _update_pickup_prompt(lp: Vector2) -> void:
+	if _world == null:
+		return
+	if _pickup_prompt == null or not is_instance_valid(_pickup_prompt):
+		_pickup_prompt = PickupPrompt.new()
+		_world.add_child(_pickup_prompt)
+	var e: Dictionary = ground_weapons.nearest_within(lp, PlayerParams.weapon_pickup_radius)
+	if e.is_empty():
+		_pickup_prompt.visible = false
+		return
+	var n = _pickup_nodes.get(int(e["inst"]), null)
+	if n == null or not is_instance_valid(n):
+		_pickup_prompt.visible = false
+		return
+	_pickup_prompt.visible = true
+	_pickup_prompt.global_position = (n as Node2D).global_position + Vector2(0.0, -PickupPrompt.GAP_ABOVE)
