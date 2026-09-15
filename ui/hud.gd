@@ -20,20 +20,23 @@ const WEAPON_FONT_SIZE := 32    # 武器名/残弹数;同上(32 = 2×16)
 # 的唯一来源是 UiFactory.style_control(内部走 core/pixel_font.gd 的 PixelFont.shared())——
 # 本文件不再自己 load 字体、不自己设字号,字号规范才守得住(见 ui_factory.gd 文件头)。
 const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
-# HUD 底板(2026-09-13 视觉评析):血条/氧条/武器区/击杀数一律垫一块半透明深色底板。
-# 此前这些元素**直接叠在地图上**,而地图开阔区是浅灰蓝 —— 青色血条压上去实测 ≈1.9:1,
-# 金色残弹 ≈2.3:1,而且同一个元素横跨深色砖墙与浅色开阔区时清晰度还在变。
-# 深底板把底层压到 L≈0.08,所有元素一律 ≥4.5:1,且不再随地图明暗漂移。
-# 0.45 是实测算出来的下限:更浅(如 0.25)在浅色开阔区只能到 3.07:1,不达标。
+# HUD 底板(2026-09-13 视觉评析)。**现在只剩左下角的武器区在用** —— 血条/氧条与右上角
+# 击杀数的底板已按用户要求于 2026-09-15 去掉("把血条和右上计数器的黑框去除")。
+# ★ 下面这组对比度数字是**当年垫底板那次的实测**,对已去掉底板的元素**不再适用**:
+#   青色血条直接压在地图浅色开阔区上 ≈1.9:1、金色残弹 ≈2.3:1,且横跨深浅地形时清晰度
+#   还会变 —— 去掉底板就是把这几个元素放回那个状态,是用户看过的有意选择,不是回归。
+#   底板把底层压到 L≈0.08 时所有元素一律 ≥4.5:1;0.45 是算出来的下限(0.25 只有 3.07:1)。
 const PLATE_COLOR := Color(0, 0, 0, 0.45)
-const PLATE_PAD := 8                           # 底板相对内容的外扩 padding
 const WATERPROOF_H := 10            # 防水值条高(细长)
 const WATERPROOF_GAP := 18         # 防水值条与血条间距(下移)
 const WATERPROOF_W := 18            # 每点防水值宽度(px)
-# 亮蓝:底板换成深色后,原来的深蓝(Color(0.161,0.26,0.8,0.702) 叠在浅色底板上)会在
-# 深底上糊成一片(实测对比度 ≈1.0:1)。提亮到浅蓝后 ≈3.8:1,过非文本控件的 3:1 线。
+# 亮蓝:当年为「深色底板」选的颜色 —— 底板换成深色后,原来的深蓝
+# (Color(0.161,0.26,0.8,0.702))会在深底上糊成一片(≈1.0:1),提亮到浅蓝后 ≈3.8:1。
+# ⚠ 2026-09-15 底板去掉后,**这两个值都失去了它们赖以成立的前提**:浅蓝压在地图的浅灰蓝
+#   开阔区上不再是 3.8:1,`_wp_back` 那条白 0.16 的空槽则基本看不见。本次只按用户要求
+#   去掉黑框、**未动这两个颜色**(改色是另一件事)。若氧条在浅色地形上读不出来,从这里改起。
 const WATERPROOF_COLOR := Color(0.45, 0.72, 1.0)
-const WATERPROOF_BACK := Color(1, 1, 1, 0.16)     # 空槽:底板上的浅色浅槽
+const WATERPROOF_BACK := Color(1, 1, 1, 0.16)     # 空槽(原为「底板上的浅色浅槽」)
 
 var _segments: Array[ColorRect] = []
 var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
@@ -43,7 +46,6 @@ var _kills := 0
 var _wp_bar: ColorRect = null
 var _wp_back: ColorRect = null
 var _wp_w := 0.0
-var _hp_w := 0.0
 var _wp_tween: Tween = null
 var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
@@ -75,24 +77,7 @@ func _ready() -> void:
 			_build_weapon_display(p)
 			p.weapons.weapon_changed.connect(_on_weapon_changed)
 			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
-	# 底板最后加:竖条/氧条都走 call_deferred,这里直接 add_child 必画在它们底下。
-	_add_bars_plate()
 
-
-# 血条 + 氧条共用的一块深色底板。两块条尺寸由各自 build 时记下(_hp_w / _wp_w),
-# 氧条没建(玩家无防水值)时底板只包血条。
-func _add_bars_plate() -> void:
-	if _hp_w <= 0.0 and _wp_w <= 0.0:
-		return
-	var w := maxf(_hp_w, _wp_w)
-	var h := SEG_H
-	if _wp_w > 0.0:
-		h += WATERPROOF_GAP + WATERPROOF_H
-	var plate := ColorRect.new()
-	plate.position = Vector2(MARGIN.x - PLATE_PAD, MARGIN.y - PLATE_PAD)
-	plate.size = Vector2(w + PLATE_PAD * 2.0, h + PLATE_PAD * 2.0)
-	plate.color = PLATE_COLOR
-	add_child(plate)
 
 
 func _process(_delta: float) -> void:
@@ -200,11 +185,9 @@ func _on_weapon_changed(slot: int) -> void:
 		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "?")
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;无边框。
-# 竖条底下不再垫自己的白板 —— 血条/氧条共用一块深色底板(见 _add_bars_plate),
-# 竖条之间的 1px 缝透出底板,整排仍读成一条「带刻度的条」。
+# 2026-09-15 起血条/氧条下面**没有底板**了(用户要求去掉黑框):竖条之间的 1px 缝
+# 现在透出的是地图本身,整排仍读成一条「带刻度的条」,但镂空处不再是深色。
 func _build_segments(count: int) -> void:
-	var bar_w := count * (SEG_W + SEG_GAP) - SEG_GAP
-	_hp_w = bar_w
 	for i in range(count):
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
@@ -287,10 +270,10 @@ func _kill_ghost(i: int) -> void:
 
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
-	# 击杀数垫深底板:它是全 HUD 对比度最差的一个(深青叠在浅色地图上 1.93:1)。
+	# ★ 2026-09-15:按用户要求去掉这里的深底板(「右上计数器的黑框」)。**保留 StyleBoxFlat**
+	#   ——它现在只剩 content margin 的作用(数字与右上角的间距),底色留空 = 透明。
 	var wrap := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = PLATE_COLOR
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 16.0
 	sb.content_margin_right = 16.0
