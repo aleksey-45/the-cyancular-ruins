@@ -1,5 +1,18 @@
 extends SceneTree
 
+# 主冒烟:敌人 AI / 环面数学 / 武器参数与命中 / 碰撞层 / 寻路与 LOS / 多弹丸……
+# 跑法:`"$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd`,成功打印 SMOKE OK。
+#
+# ★ 结构(2026-09-15 阶段 5.1 拆分):本文件原先是一个 **737 净行**的 `_initialize()`
+#   —— 全仓最长函数,而本文件又是全仓改动最频繁的文件。现按原有的章节注释切成 27 个
+#   `_phase_*()`,`_initialize()` 只留**顺序**。
+#
+# ★ **顺序是契约,不是排版**:`_initialize` 里的调用次序 = 断言输出次序,也就是本文件的
+#   回归基线(`ok - <名字>` 147 条 + `SMOKE OK`)。改顺序会让读者以为断言没跑,
+#   而 `await` 的有无同样属于顺序契约 —— 漏一个 `await`,该节从 await 之后的断言就会
+#   与后面的节**交错执行**(拆分时实测踩到过一次,靠输出序列当场发现)。
+#   ★ 跨节的夹具/中间量提升为了脚本级字段(见下方声明),首次赋值位置原样没动。
+
 class StubPlayer:
 	extends Node2D
 	var facing: int = 1
@@ -31,6 +44,17 @@ class StubCombatPlayer:
 		return false
 
 var _failures: Array[String] = []
+
+# 跨节复用的夹具/中间量:拆 _initialize 时由局部提升为字段(阶段 5.1)。
+# 每个的**首次赋值位置原样不动** —— 顺序不变,故断言顺序也不变。
+var bscene: PackedScene = null
+var player_scene: PackedScene = null
+var jump2: PackedScene = null
+var fb_scene: PackedScene = null
+var e = null
+var bullet_script = null
+var combat = null
+var sg_scene: PackedScene = null
 
 func _check(cond: bool, name: String) -> void:
 	if cond:
@@ -70,7 +94,47 @@ func _sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 
 
 func _initialize() -> void:
-	# ── Task 2: 纯函数 ──
+	# 本函数只留**顺序**:每节一个 _phase_*,按原有先后调用 —— 顺序本身是契约
+	# (断言顺序 = 输出顺序 = 基线 oracle)。
+	_phase_pure_helpers()
+	_phase_spawn_metadata_player2()
+	_phase_enemy_base_load()
+	await _phase_enemy_instantiate()
+	await _phase_bullet_free()
+	_phase_clamp_pitch()
+	_phase_toroidal_anchor()
+	_phase_pin_map()
+	_phase_map_size()
+	_phase_v3_roundtrip()
+	_phase_old_format_convert()
+	await _phase_weapon_stats_and_hit()
+	_phase_buffered_fire()
+	_phase_preview_arc_probe()
+	await _phase_equip_switch()
+	await _phase_collision_layers()
+	_phase_astar_los()
+	await _phase_enemy_bullet_arc()
+	await _phase_contact_damage_guard()
+	await _phase_flybird_basics()
+	await _phase_flybird_charge_return()
+	await _phase_astar_flat_cache()
+	await _phase_explosion_knockback()
+	await _phase_player_knockback()
+	await _phase_flybird_deadzone()
+	_phase_spawn_metadata_parse()
+	_phase_enemy_types_json()
+
+	if _failures.is_empty():
+		print("SMOKE OK")
+		quit(0)
+	else:
+		printerr("FAILURES: " + str(_failures))
+		quit(1)
+
+
+
+# ── Task 2: 纯函数 ──
+func _phase_pure_helpers() -> void:
 	_check(MazeGenerator.toroidal_delta_px(Vector2(10, 10), Vector2(10, 10), 2400.0, 2400.0) == Vector2.ZERO, "delta 零")
 	_check(MazeGenerator.toroidal_delta_px(Vector2(2380, 10), Vector2(20, 10), 2400.0, 2400.0) == Vector2(40, 0), "delta 环面 +x")
 	_check(MazeGenerator.toroidal_delta_px(Vector2(20, 10), Vector2(2380, 10), 2400.0, 2400.0) == Vector2(-40, 0), "delta 环面 -x")
@@ -98,19 +162,25 @@ func _initialize() -> void:
 			all_on_floor = false
 	_check(all_on_floor, "spawn 全部位于地板上面")
 
-	# ── Task 4: 双出生点解析(# player2)──
+
+# ── Task 4: 双出生点解析(# player2)──
+func _phase_spawn_metadata_player2() -> void:
 	var meta := MazeGenerator.parse_spawn_metadata(["# player2 3 4"])
 	_check(meta.get("player2") == Vector2i(3, 4), "player2 spawn 解析")
 	var meta2 := MazeGenerator.parse_spawn_metadata(["# player 1 2", "# player2 5 6"])
 	_check(meta2.get("player") == Vector2i(1, 2) and meta2.get("player2") == Vector2i(5, 6), "player+player2 并存")
 
-	# ── Task 3: EnemyBase 加载 ──
+
+# ── Task 3: EnemyBase 加载 ──
+func _phase_enemy_base_load() -> void:
 	_check(load("res://scenes/enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
 
-	# ── Task 4: 敌人实例化 ──
+
+# ── Task 4: 敌人实例化 ──
+func _phase_enemy_instantiate() -> void:
 	var scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	_check(scene != null, "JumpBird 场景加载")
-	var e = scene.instantiate()
+	e = scene.instantiate()
 	root.add_child(e)
 	await physics_frame
 	_check(e.get_script() == load("res://scenes/enemies/enemy_jump_bird.gd"), "JumpBird 实例类型")
@@ -119,10 +189,12 @@ func _initialize() -> void:
 	_check(e.is_in_group("enemies"), "加入 enemies 组")
 	_check(e.get_node_or_null("ContactArea") != null, "ContactArea 创建")
 
-	# ── Task 6: 子弹 ──
+
+# ── Task 6: 子弹 ──
+func _phase_bullet_free() -> void:
 	# 清掉 Task 4 遗留的敌人(在原点,碰撞层3);否则子弹出生即命中并立即消失
 	e.free()
-	var bscene: PackedScene = load("res://scenes/weapons/bullet.tscn")
+	bscene = load("res://scenes/weapons/bullet.tscn")
 	_check(bscene != null, "子弹场景加载")
 	var b = bscene.instantiate()   # untyped, 不标 BulletBase 避免依赖
 	root.add_child(b)
@@ -137,7 +209,9 @@ func _initialize() -> void:
 			break
 	_check(freed, "子弹超射程消失")
 
-	# ── Task 7: clamp_pitch(迁到 WeaponBase)──
+
+# ── Task 7: clamp_pitch(迁到 WeaponBase)──
+func _phase_clamp_pitch() -> void:
 	# 用 load()+资源调用,避免 -s 编译期解析 WeaponBase 时连带预加载 bullet_base.gd
 	# (autoload 实例变量在 -s 主脚本编译期不可解析,见 bullet_base.gd 的 GameParameters.MAP_WIDTH)。
 	var wb := load("res://scenes/weapons/weapon_base.gd")
@@ -148,7 +222,9 @@ func _initialize() -> void:
 	_check(is_equal_approx(wb.clamp_pitch(Vector2(-1, 0), 1), deg_to_rad(45.0)), "pitch 身后钳制")
 	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, 1), -1), deg_to_rad(45.0)), "pitch 左朝向")
 
-	# ── Task 8: 环面锚定(敌人/子弹跟随主角取模) ──
+
+# ── Task 8: 环面锚定(敌人/子弹跟随主角取模) ──
+func _phase_toroidal_anchor() -> void:
 	const W := 8640.0
 	const H := 5184.0
 	# 玩家在右端,实体在左端 → 搬到右端副本(探针场景2的期望行为)
@@ -170,19 +246,28 @@ func _initialize() -> void:
 	_check(MazeGenerator.anchor_to_nearest(Vector2(500, 500), Vector2(500, 500), W, H) == Vector2(500, 500),
 			"锚定:自身不变")
 
-	# ── Task 2: 钉住地图 ──
+
+# ── Task 2: 钉住地图 ──
+func _phase_pin_map() -> void:
 	MazeGenerator.set_map_file("res://maps/demo.cyrm")
 	_check(MazeGenerator.map_file_path() == "res://maps/demo.cyrm", "set_map_file 钉住地图")
 
-	# ── Task 9: 地图尺寸读取(map_size) ──
+
+# ── Task 9: 地图尺寸读取(map_size) ──
+func _phase_map_size() -> void:
 	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
 
-	# ── v3 解析 round-trip(纹理 3 位 0xx + 形状 hex)──
+
+# ── v3 解析 round-trip(纹理 3 位 0xx + 形状 hex)──
+func _phase_v3_roundtrip() -> void:
 	var v3_rows := MazeGenerator.serialize_v3_grid([[0, 31, 49], [31, 0, 0]])
 	_check(v3_rows[0] == "0000001F0031", "serialize_v3_grid: 空气/全砖/纹理3左上1/4")
 	_check(v3_rows[1] == "001F00000000", "serialize_v3_grid: 第2行")
 	_check(MazeGenerator._parse_v3_grid(v3_rows) == [[0, 31, 49], [31, 0, 0]], "v3 网格 round-trip")
-	# ── 旧格式自动转换(2×2→1,掩码+纹理)──
+
+
+# ── 旧格式自动转换(2×2→1,掩码+纹理)──
+func _phase_old_format_convert() -> void:
 	var old2 := [[0, 1], [1, 0]]
 	var conv := MazeGenerator.convert_old_grid(old2)
 	_check(conv == [[1 * 16 + 6]], "旧 2×2(右上+左下)→ 形状6 纹理1")   # 1<<1|1<<2 = 6
@@ -191,7 +276,9 @@ func _initialize() -> void:
 	var old_mixed := [[3, 0], [7, 0]]
 	_check(MazeGenerator.convert_old_grid(old_mixed) == [[3 * 16 + 5]], "旧混合纹理取首个实体(左上 3 → 纹理3; 左上+左下 → 形状5)")
 
-	# ── Task: 武器场景参数 + 开火命中 ──
+
+# ── Task: 武器场景参数 + 开火命中 ──
+func _phase_weapon_stats_and_hit() -> void:
 	var stub := StubPlayer.new()
 	root.add_child(stub)
 	stub.global_position = Vector2(400, 400)
@@ -224,7 +311,7 @@ func _initialize() -> void:
 	# 多弹丸(霰弹):fire() 按 pellet_count 生成多颗子弹
 	w.pellet_count = 3
 	w.spread_deg = 8.0
-	var bullet_script := load("res://scenes/weapons/bullet_base.gd")
+	bullet_script = load("res://scenes/weapons/bullet_base.gd")
 	var b_before := 0
 	for child in root.get_children():
 		if child.get_script() == bullet_script:
@@ -239,7 +326,7 @@ func _initialize() -> void:
 	stub.free()
 
 	# 霰弹枪场景加载 + 参数
-	var sg_scene: PackedScene = load("res://scenes/weapons/s686.tscn")
+	sg_scene = load("res://scenes/weapons/s686.tscn")
 	_check(sg_scene != null, "霰弹枪场景加载")
 	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
 	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 5.0), "霰弹枪 8 丸 ±5°")
@@ -247,7 +334,9 @@ func _initialize() -> void:
 	_check(sg.tier == 0, "霰弹枪轻武器")
 	sg.queue_free()
 
-	# ── Task: 缓冲开火(冷却>0.5 武器,最后 20% 按开火→冷却结束自动打)──
+
+# ── Task: 缓冲开火(冷却>0.5 武器,最后 20% 按开火→冷却结束自动打)──
+func _phase_buffered_fire() -> void:
 	# 先清掉前面测试遗留的弹丸,避免污染弹丸计数
 	var bf_leftovers: Array = []
 	for child in root.get_children():
@@ -291,7 +380,9 @@ func _initialize() -> void:
 	buf_w.queue_free()
 	buf_stub.free()
 
-	# ── Task: 预瞄算子弹碰撞体积(小球判墙,中心点不穿但体积擦墙即截断)──
+
+# ── Task: 预瞄算子弹碰撞体积(小球判墙,中心点不穿但体积擦墙即截断)──
+func _phase_preview_arc_probe() -> void:
 	var gl_scene: PackedScene = load("res://scenes/weapons/grenade_launcher.tscn")
 	_check(gl_scene != null, "榴弹场景加载")
 	var grid_arc: Array[Array] = []
@@ -320,8 +411,10 @@ func _initialize() -> void:
 	arc_stub.free()
 	MazeGenerator.current_grid = []
 
-	# ── Task: 玩家装备/切枪 ──
-	var player_scene: PackedScene = load("res://scenes/player/player.tscn")
+
+# ── Task: 玩家装备/切枪 ──
+func _phase_equip_switch() -> void:
+	player_scene = load("res://scenes/player/player.tscn")
 	_check(player_scene != null, "Player 场景加载")
 	var p = player_scene.instantiate()
 	root.add_child(p)
@@ -339,8 +432,10 @@ func _initialize() -> void:
 		_check(is_equal_approx(p.weapons._weapon.fire_cd_timer, 0.7), "切枪继承剩余冷却")
 	p.free()
 
-	# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
-	var jump2: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
+
+# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
+func _phase_collision_layers() -> void:
+	jump2 = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	var e2 := jump2.instantiate()
 	root.add_child(e2)
 	_check(e2.collision_layer == 4, "敌人占用层3")
@@ -354,7 +449,7 @@ func _initialize() -> void:
 	_check(pc2.collision_mask == 5, "玩家 mask=5(地形+敌人)")
 	pc2.free()
 	# 玩家子弹穿过玩家身体(不再打自己)
-	var combat := StubCombatPlayer.new()
+	combat = StubCombatPlayer.new()
 	combat.global_position = Vector2(600, 400)
 	root.add_child(combat)
 	var pb := bscene.instantiate()
@@ -369,7 +464,9 @@ func _initialize() -> void:
 	_check(combat.hit_log.is_empty(), "玩家未被自己子弹命中")
 	combat.free()
 
-	# ── Task 2: MazeGenerator A* + LOS ──
+
+# ── Task 2: MazeGenerator A* + LOS ──
+func _phase_astar_los() -> void:
 	var g: Array[Array] = []
 	for _y in range(20):
 		var row: Array[int] = []
@@ -421,7 +518,9 @@ func _initialize() -> void:
 	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线墙阻挡")
 	MazeGenerator.current_grid = []
 
-	# ── Task 3: 敌方抛物线子弹 ──
+
+# ── Task 3: 敌方抛物线子弹 ──
+func _phase_enemy_bullet_arc() -> void:
 	var bscene_e: PackedScene = load("res://scenes/enemies/enemy_bullet.tscn")
 	_check(bscene_e != null, "敌方子弹场景加载")
 	var eb := bscene_e.instantiate()
@@ -450,7 +549,9 @@ func _initialize() -> void:
 	_check(combat2.hit_log.has(2), "敌方子弹命中造成伤害 2")
 	combat2.free()
 
-	# ── Task 4: 接触伤害守卫(contact_damage<=0 不触发)──
+
+# ── Task 4: 接触伤害守卫(contact_damage<=0 不触发)──
+func _phase_contact_damage_guard() -> void:
 	var combat3 := StubCombatPlayer.new()
 	combat3.global_position = Vector2(400, 400)
 	root.add_child(combat3)
@@ -468,7 +569,9 @@ func _initialize() -> void:
 	ej.free()
 	combat3.free()
 
-	# ── Task 5: FlyBird 基础(睡眠/唤醒/起飞/射击/死亡)──
+
+# ── Task 5: FlyBird 基础(睡眠/唤醒/起飞/射击/死亡)──
+func _phase_flybird_basics() -> void:
 	var fb_grid: Array[Array] = []
 	for _y in range(150):
 		var row3: Array[int] = []
@@ -476,7 +579,7 @@ func _initialize() -> void:
 		row3.fill(MazeGenerator.EMPTY)
 		fb_grid.append(row3)
 	MazeGenerator.current_grid = fb_grid
-	var fb_scene: PackedScene = load("res://scenes/enemies/enemy_fly_bird.tscn")
+	fb_scene = load("res://scenes/enemies/enemy_fly_bird.tscn")
 	_check(fb_scene != null, "FlyBird 场景加载")
 	var fb := fb_scene.instantiate()
 	fb.global_position = Vector2(488, 1208)
@@ -580,7 +683,9 @@ func _initialize() -> void:
 	near_player.free()
 	MazeGenerator.current_grid = []
 
-	# ── Task 6: FlyBird 冲撞 + 返程 ──
+
+# ── Task 6: FlyBird 冲撞 + 返程 ──
+func _phase_flybird_charge_return() -> void:
 	var fb2_grid: Array[Array] = []
 	for _y in range(150):
 		var row4: Array[int] = []
@@ -703,7 +808,9 @@ func _initialize() -> void:
 	ret_player.free()
 	MazeGenerator.current_grid = []
 
-	# ── Task 7: A* 扁平数组 + 路径缓存 ──
+
+# ── Task 7: A* 扁平数组 + 路径缓存 ──
+func _phase_astar_flat_cache() -> void:
 	# 大网格(demo 全尺寸)上跑 A*:不崩、路径逐格相邻且在界内(扁平数组索引正确)。
 	var big_grid := MazeGenerator.load_map_file()
 	MazeGenerator.current_grid = big_grid
@@ -749,7 +856,9 @@ func _initialize() -> void:
 	fb_cache.free()
 	MazeGenerator.current_grid = []
 
-	# ── 爆炸独立击退向量(大冲击+迅速衰减)vs 枪击叠加 ──
+
+# ── 爆炸独立击退向量(大冲击+迅速衰减)vs 枪击叠加 ──
+func _phase_explosion_knockback() -> void:
 	var ov_grid: Array[Array] = []
 	for _y in range(60):
 		var row_o: Array[int] = []
@@ -779,7 +888,9 @@ func _initialize() -> void:
 	ov.free()
 	MazeGenerator.current_grid = []
 
-	# ── 玩家爆炸击退独立向量:take_hit 传击退 → 向量生效并衰减 ──
+
+# ── 玩家爆炸击退独立向量:take_hit 传击退 → 向量生效并衰减 ──
+func _phase_player_knockback() -> void:
 	var pk := player_scene.instantiate()
 	pk.global_position = Vector2(1000, 400)
 	root.add_child(pk)
@@ -839,7 +950,9 @@ func _initialize() -> void:
 	_check(jdc.collision_mask == 7, "JumpBird 死亡保留碰撞掩码")
 	jdc.free()
 
-	# ── Task 7: FlyBird 死区先下飞(逐行下探)──
+
+# ── Task 7: FlyBird 死区先下飞(逐行下探)──
+func _phase_flybird_deadzone() -> void:
 	# 宽天花板:行 10..12 全实心横跨 300 列。鸟被压到行 13,该行按飞行高度判全撞墙
 	# (A* 空路径)。旧逃逸只在当前行左右扫,找不到列就原地悬停;新逻辑逐行下探到
 	# 行 17(箱体 y∈[218,272],全在天花板 208 之下)取可走格,鸟真正下潜。
@@ -889,7 +1002,9 @@ func _initialize() -> void:
 	esc2.free()
 	MazeGenerator.current_grid = []
 
-	# ── Task: 地图 spawn 元数据解析 ──
+
+# ── Task: 地图 spawn 元数据解析 ──
+func _phase_spawn_metadata_parse() -> void:
 	_check(MazeGenerator.parse_spawn_metadata([
 			"# demo_2", "# player 12 34",
 			"# enemy jump_bird 100 50", "# enemy fly_bird 200 60",
@@ -907,15 +1022,10 @@ func _initialize() -> void:
 			["# player 12 34", "# player 56 78"]).get("player") == Vector2i(56, 78),
 			"parse_spawn_metadata: player 最后一行生效")
 
-	# ── Task: EnemySpawner.TYPES 从 enemies.json 加载 ──
+
+# ── Task: EnemySpawner.TYPES 从 enemies.json 加载 ──
+func _phase_enemy_types_json() -> void:
 	EnemySpawner.load_types()
 	_check(EnemySpawner.TYPES.has("jump_bird") and EnemySpawner.TYPES.has("fly_bird")
 			and EnemySpawner.TYPES.has("black_bird") and EnemySpawner.TYPES.size() == 3,
 			"EnemySpawner.TYPES 从 enemies.json 加载(含 black_bird)")
-
-	if _failures.is_empty():
-		print("SMOKE OK")
-		quit(0)
-	else:
-		printerr("FAILURES: " + str(_failures))
-		quit(1)
