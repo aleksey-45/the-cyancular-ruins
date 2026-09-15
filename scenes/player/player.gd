@@ -144,10 +144,9 @@ func _ready() -> void:
 	for pose in Pose.values():
 		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
 
-	# ★ 临时初始背包(3 把 = 2+3+3 = 8 格,刚好占满,顺带压容量边界)。
-	#   这是**计划内的中间态**:地面拾取落地后这里会换成空表,单机改为
-	#   "开局空手 + 12 把散落在地图上"。别为了让中间态好看而放宽容量闸门。
-	weapons.set_initial_inventory([1, 2, 6])
+	# 单机开局**空手**:武器全部散落在地图上,由 `Level0._ready` 铺(见 scatter_weapons)。
+	# 联机由 MatchHost 调 set_initial_inventory 发随机一把(见联机计划)。
+	weapons.set_initial_inventory([])
 	call_deferred("add_child", WaterFx.new())
 
 
@@ -172,6 +171,9 @@ func _physics_process(delta: float) -> void:
 		var reload_w := weapons.current_weapon()
 		if reload_w != null:
 			reload_w.start_reload()
+
+	# F 捡起 / Q 长按丢弃。同样走 input_source 轮询(见 _poll_pickup_drop 的注释)。
+	_poll_pickup_drop(delta)
 
 	var mult := weapons.movement_multiplier()
 
@@ -607,16 +609,69 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	_waterproof_timer = 0.0
 	_waterproof_drown_timer = 0.0
 	weapons.cancel_aim()
-	# 清残弹记忆:复活/重启是「重开一局」语义,不该继承死前残弹。
-	# 必须清在 equip() 之前 —— equip() 会把 old_slot(死前手持槽)的残弹重新记回 _mag_state。
-	# 若死前手持槽 == 默认槽,equip(default_slot()) 后 _current_slot 就是它,_restore_mag 会把
-	# 这份残弹恢复到新枪上(这才是「只清 _mag_state 不足以保证满弹」,也才是下面 refill 的理由);
-	# 手持槽 ≠ 默认槽时,残弹只是按记忆语义留在 _mag_state 里(切回该槽仍继承),不恢复到新枪。
-	weapons.reset_mag_state()
-	weapons.equip(weapons.default_slot())
-	# 满弹必须 deferred:equip() 排下的 _restore_mag 会在帧末把旧残弹写回,同帧同步写会被覆盖。
-	weapons.refill_current_weapon()
+	# ★ 2026-09-15(背包化):这里**不再**动背包。
+	#   原先那三行(reset_mag_state → equip(default_slot()) → refill_current_weapon)是
+	#   "复活即回默认枪 + 满弹"的旧语义,而背包现在是**玩家资产**:单机的重开由
+	#   `Level0.restart_single` 统一重置(清空 + 重新散落),联机的复活另有规则
+	#   (除随机一把外全丢,见联机计划)。放进本函数会让两条路径互相打架 ——
+	#   本函数被单机与联机共用,而两种模式的武器规则不同。
+	weapons.reset_mag_state()   # 只把当前武器的残弹同步进背包条目(不再清任何表)
 	set_controls_locked(false)
+
+
+# ── 拾取 / 丢弃(2026-09-15,武器槽位计划)──
+var _drop_hold_t := 0.0     # Q 已按住多久
+var _drop_latched := false  # 本次长按是否已触发过(防按住不放连续丢)
+
+
+# F 捡起 / Q 长按丢弃。
+# ★ 两者都走 input_source 读口,不在 _unhandled_input 里读原始 InputEvent —— 权威服务器
+#   没有输入事件、只有注入包,读原始事件的话联机端永远收不到(与 R 换弹 2026-09-15
+#   从 _unhandled_input 迁走是同一个理由)。
+func _poll_pickup_drop(delta: float) -> void:
+	# Q 长按计时**在客户端本地做**(只有这里有确定的物理 delta)。满了才当成一次边沿发出去;
+	# 上行的是"完成信号"而不是"按住"(见 PacketInputSource.BIT_DROP 的注释)。
+	if input_source.is_action_pressed("Q"):
+		if not _drop_latched:
+			_drop_hold_t += delta
+			if _drop_hold_t >= PlayerParams.weapon_drop_hold_time:
+				_drop_latched = true
+				_try_drop()
+	else:
+		_drop_hold_t = 0.0
+		_drop_latched = false
+
+	if input_source.is_pickup_pressed():
+		_try_pickup()
+
+
+# 长按 Q 的进度 0..1(只读;HUD 的丢弃进度条用)。
+# ★ 没有反馈的两秒长按是不可用的 —— 玩家会以为按键没生效。
+func drop_hold_progress() -> float:
+	if _drop_latched:
+		return 1.0
+	return clampf(_drop_hold_t / PlayerParams.weapon_drop_hold_time, 0.0, 1.0)
+
+
+func _try_pickup() -> void:
+	var lvl := get_tree().current_scene
+	if not (lvl is Level0):
+		return
+	(lvl as Level0).try_pickup_for(self)
+
+
+func _try_drop() -> void:
+	if weapons.current_slot_int() == 0:
+		return   # 空手没什么可丢
+	var e: Dictionary = weapons.drop_current()
+	if e.is_empty():
+		return
+	var lvl := get_tree().current_scene
+	if lvl is Level0:
+		(lvl as Level0).spawn_pickup(int(e["type"]), int(e["mag"]),
+			global_position + PlayerParams.weapon_drop_offset * Vector2(float(facing_direction), 1.0),
+			Vector2(PlayerParams.weapon_drop_speed * facing_direction, -PlayerParams.weapon_drop_up),
+			0, true)   # self_drop=true:冷却期内不参与自己的拾取(防丢完原地按 F 捡回)
 
 
 func _unhandled_input(event: InputEvent) -> void:

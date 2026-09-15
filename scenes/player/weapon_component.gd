@@ -245,13 +245,18 @@ func _restore_mag(w: WeaponBase, ammo: int) -> void:
 var _last_dropped: Dictionary = {}
 
 
-# 拾取一把类型为 type_id、残弹为 mag 的枪。返回被**替换掉**的类型 id(0 = 没有替换)。
+# 拾取一把类型为 type_id、残弹为 mag 的枪。
+# 返回值:被**替换掉**的类型 id(>0 = 有替换);0 = 捡成功且没有替换;**-1 = 被拒绝,没捡成**。
+# ★ -1 必须与 0 分开:调用方(Level0.try_pickup_for)在捡成功后会把地面那件删掉 ——
+#   若"被闸门拒绝"也返回 0,地面那把会被**直接抹掉而玩家什么都没拿到**(静默丢枪)。
 # ★ 替换规则(用户 2026-09-15 裁定):放不下(容量或 4 把上限)时替换**手上当前那把**,
 #   被换下的那把的 {type, mag} 由调用方经 take_last_dropped() 取走,用来生成掉落物。
+const PICKUP_DENIED := -1
+
 func pick_up(type_id: int, mag: int) -> int:
 	if not is_slot_enabled(type_id):
 		Sfx.play("deny")
-		return 0
+		return PICKUP_DENIED
 	if inventory.can_hold(type_id):
 		inventory.add(type_id, mag)
 		inventory_changed.emit()
@@ -262,7 +267,7 @@ func pick_up(type_id: int, mag: int) -> int:
 	# 所以这条分支只在"背包非空但全被禁用 → _current_index < 0"时才可能走到,直接拒绝。
 	if _current_index < 0:
 		Sfx.play("deny")
-		return 0
+		return PICKUP_DENIED
 	var entry: Dictionary = inventory.held[_current_index]
 	var dropped := int(entry["type"])
 	var dropped_mag := int(entry["mag"])

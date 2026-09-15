@@ -240,6 +240,9 @@ func _ready() -> void:
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
 	$EnemySpawner.spawn_all.call_deferred(spawns)
+	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
+	# ★ deferred:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
+	scatter_weapons.call_deferred(_default_weapon_types())
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
@@ -431,6 +434,13 @@ func restart_single() -> void:
 	# 敌人重刷(与 _ready 同款;deferred 等旧敌 queue_free 先生效,避免同名冲突)
 	EnemySpawner.load_types()
 	$EnemySpawner.spawn_all.call_deferred(spawns)
+	# ★ 单机按 R = **完全重开**:背包清空、地面武器重新散落。
+	#   与"还原可破坏砖 + 清子弹/敌人重刷 + 玩家满血回出生点"是同一语义 ——
+	#   装备也是本局的进度,重开就该从头攒。
+	#   (联机不走这条路:服务器权威另有复活规则,武器只保留随机一把。)
+	clear_pickups()
+	player.weapons.set_initial_inventory([])
+	scatter_weapons.call_deferred(_default_weapon_types())
 
 
 func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
@@ -459,3 +469,118 @@ func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 # (PvP 菜单由 pvp_client 自建——PvP 下本方法不会被调,见 _ready 的 pvp_mode 早 return。)
 func _build_pause_menu() -> void:
 	add_child(PauseMenu.new(false))   # 隐藏待命,自行处理 ui_cancel
+
+
+# ── 地面武器(2026-09-15,武器槽位计划)──
+# 单机的权威就是本场景;联机的权威在 MatchHost(见联机计划),那边另存一份。
+var ground_weapons := GroundWeaponField.new()
+var _next_pickup_inst: int = 1
+var _pickup_nodes: Dictionary = {}      # inst -> WeaponPickup
+var _self_drop_until: Dictionary = {}   # inst -> 解禁时刻(ms),防"丢完立刻捡回"的抖动
+
+const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
+
+
+# 单机初始武器清单:每种 2 把,跳过本局被禁的槽位。
+# (禁用武器不该出现在地图上 —— 与 set_enabled_slots 同源:RunOptions.disabled_weapons)
+func _default_weapon_types() -> Array:
+	var out: Array = []
+	for slot in [1, 2, 3, 4, 5, 6]:
+		if not RunOptions.disabled_weapons.has(slot):
+			out.append(slot)
+			out.append(slot)
+	return out
+
+
+# 生成一件地面武器。self_drop=true 表示"这是玩家刚自己丢下的",
+# 会在 weapon_pickup_self_delay 内不参与**该玩家**的拾取判定。
+func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
+		inst: int = 0, self_drop: bool = false) -> WeaponPickup:
+	if inst <= 0:
+		inst = _next_pickup_inst
+		_next_pickup_inst += 1
+	else:
+		_next_pickup_inst = maxi(_next_pickup_inst, inst + 1)
+	var node: WeaponPickup = PICKUP_SCENE.instantiate()
+	add_child(node)
+	node.configure(type_id, inst, mag, vel)
+	node.global_position = pos
+	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
+	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": mag, "pos": pos, "vel": vel})
+	_pickup_nodes[inst] = node
+	if self_drop:
+		_self_drop_until[inst] = Time.get_ticks_msec() + int(PlayerParams.weapon_pickup_self_delay * 1000.0)
+	return node
+
+
+func remove_pickup(inst: int) -> void:
+	ground_weapons.remove(inst)
+	_self_drop_until.erase(inst)
+	var n = _pickup_nodes.get(inst, null)
+	if n != null and is_instance_valid(n):
+		n.queue_free()
+	_pickup_nodes.erase(inst)
+
+
+func clear_pickups() -> void:
+	for n in _pickup_nodes.values():
+		if is_instance_valid(n):
+			n.queue_free()
+	_pickup_nodes.clear()
+	_self_drop_until.clear()
+	ground_weapons.clear()
+
+
+# 把 types 里每种武器铺到全图开阔地板格上(尽量互相远离)。
+func scatter_weapons(types: Array) -> void:
+	clear_pickups()
+	if MazeGenerator.current_grid.is_empty():
+		return
+	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
+	var cols := int(ground_weapons.map_size.x / float(GameParameters.TILE_SIZE))
+	var rows := int(ground_weapons.map_size.y / float(GameParameters.TILE_SIZE))
+	var cells: Array = $EnemySpawner.open_floor_cells(MazeGenerator.current_grid)
+	var want := types.size()
+	var picked: Array = GridPathfinder.spread_cells(cells, want, 10, cols, rows)
+	# 与 EnemySpawner 的 "spawned N enemies from map" 同款:布点数量要能一眼核对
+	# (不足时也走这行 —— 小图/密封图有多少铺多少,不报错也不能卡住开局)。
+	print("[Level0] 地面武器 %d/%d 件(开阔地板格 %d)" % [picked.size(), want, cells.size()])
+	var half := float(GameParameters.TILE_SIZE) * 0.5
+	for i in picked.size():
+		var pos := Vector2(picked[i]) * float(GameParameters.TILE_SIZE) + Vector2(half, half)
+		spawn_pickup(int(types[i]), WeaponInventory.MAG_FULL, pos, Vector2.ZERO)
+
+
+# 玩家按 F 的落点:一次只捡**最近的一把**(不是"范围里能捡的全捡")——
+# 这是"多把武器叠在一起捡不起来某些枪"的解法:连着按 F 就能逐把捡走。
+# 见 GroundWeaponField 的类头注释。
+func try_pickup_for(p: Node2D) -> void:
+	if p == null or p.weapons == null:
+		return
+	var e: Dictionary = ground_weapons.nearest_within(
+		p.global_position, PlayerParams.weapon_pickup_radius, _live_self_drops())
+	if e.is_empty():
+		return
+	var inst := int(e["inst"])
+	var dropped_type: int = p.weapons.pick_up(int(e["type_id"]), int(e["mag"]))
+	if dropped_type < 0:
+		return   # 被闸门拒绝(禁用武器),地面那件留着
+	remove_pickup(inst)
+	if dropped_type > 0:
+		# 放不下 → 被换下的那把掉在玩家脚下(残弹跟着枪走)
+		var d: Dictionary = p.weapons.take_last_dropped()
+		spawn_pickup(dropped_type, int(d.get("mag", WeaponInventory.MAG_FULL)),
+			p.global_position + PlayerParams.weapon_drop_offset * Vector2(float(p.facing_direction), 1.0),
+			Vector2(PlayerParams.weapon_drop_speed * p.facing_direction, -PlayerParams.weapon_drop_up))
+
+
+# 自己刚丢下的枪在冷却期内不参与自己的拾取判定(否则丢完原地按 F 就捡回来)
+func _live_self_drops() -> Array:
+	var now := Time.get_ticks_msec()
+	var out: Array = []
+	for inst in _self_drop_until.keys():
+		if int(_self_drop_until[inst]) > now:
+			out.append(inst)
+		else:
+			_self_drop_until.erase(inst)
+	return out

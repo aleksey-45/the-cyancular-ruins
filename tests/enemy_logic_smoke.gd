@@ -422,7 +422,12 @@ func _phase_equip_switch() -> void:
 	var p = player_scene.instantiate()
 	root.add_child(p)
 	await physics_frame
-	_check(p.weapons._weapon != null, "默认装备手枪")
+	# ★ 2026-09-15(背包化):单机现在**开局空手**(武器散落在地图上,由 Level0 铺)。
+	#   本节测的是"切枪/冷却继承"这件事,与开局带不带枪无关 —— 显式摆一个已知背包。
+	_check(p.weapons._weapon == null, "开局空手(单机初始背包为空)")
+	p.weapons.set_initial_inventory([1, 2])
+	await physics_frame
+	_check(p.weapons._weapon != null, "set_initial_inventory 后装备第一把")
 	if p.weapons._weapon != null:
 		_check(p.weapons._weapon.weapon_name == "Pistol", "默认武器是手枪")
 		p.weapons.equip("2")   # 步枪(WEAPONS 注册表槽 2;组件化后按槽键,不再传场景路径)

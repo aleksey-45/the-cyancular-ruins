@@ -61,6 +61,7 @@ var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
 var _ammo_label: Label = null
 var _slots: WeaponSlots = null
+var _drop_bar: ColorRect = null   # 长按 Q 的丢弃进度条(与换弹条共用槽位、互斥显示)
 var _player: Node = null
 var _reload_bar: ColorRect = null
 var _bar_back: ColorRect = null
@@ -112,6 +113,19 @@ func _process(_delta: float) -> void:
 		_bar_back.visible = prog >= 0.0
 		if prog >= 0.0:
 			_reload_bar.size.x = WEAPON_ICON_W * clampf(prog, 0.0, 1.0)
+
+	# 丢弃进度:长按 Q 时占用同一条槽位(换弹优先级更高 —— 换弹中不可能是丢弃)。
+	# ★ 没有反馈的两秒长按是不可用的:玩家会以为按键没生效,于是一直按着或放弃。
+	if _drop_bar != null:
+		var dp := 0.0
+		if prog < 0.0 and show and _player != null and _player.has_method("drop_hold_progress"):
+			dp = _player.drop_hold_progress()
+		var dropping := dp > 0.0
+		_drop_bar.visible = dropping
+		if dropping:
+			_bar_back.visible = true
+			_drop_bar.size.x = WEAPON_ICON_W * clampf(dp, 0.0, 1.0)
+
 	if not show:
 		return
 	# 金色只表「弹夹见底」这一个语义。原先满弹与残弹低位同一个金色,等于没有警告 ——
@@ -175,6 +189,14 @@ func _build_weapon_display(p: Node) -> void:
 	_reload_bar.size = Vector2(0, 4)
 	_reload_bar.visible = false
 	bar_holder.add_child(_reload_bar)
+
+	# 丢弃进度条:同一条槽位,换弹进度条**之后**加(压在上面;
+	# 两者互斥显示 —— 换弹中不可能在丢弃,见 _process 的判据)
+	_drop_bar = ColorRect.new()
+	_drop_bar.color = UiFactory.C_DANGER   # 丢弃是破坏性操作;金已被「弹夹见底」独占
+	_drop_bar.size = Vector2(0, 4)
+	_drop_bar.visible = false
+	bar_holder.add_child(_drop_bar)
 
 	_weapon_name = Label.new()
 	UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)   # 像素字体 + 字号(16 倍数)
