@@ -149,7 +149,7 @@ func _build_weapon_display(p: Node) -> void:
 	wrap.anchor_top = 1.0
 	wrap.anchor_bottom = 1.0
 	wrap.offset_left = MARGIN.x
-	wrap.offset_right = MARGIN.x + 300
+	wrap.offset_right = MARGIN.x + 344
 	wrap.offset_bottom = -MARGIN.y
 	# ★ 高度**收缩到内容**:offset_top 与底边齐平(零高),再由控件的"最小尺寸"
 	#   把它撑到正好装下那几个方框,配合 GROW_DIRECTION_BEGIN 向上长。
@@ -197,14 +197,16 @@ func _refresh_weapon_boxes() -> void:
 		var sel := t == cur
 		var box := PanelContainer.new()
 		var bs := StyleBoxFlat.new()
-		bs.bg_color = Color(1, 1, 1, 0.06) if sel else Color(0, 0, 0, 0)
+		bs.bg_color = Color(0, 0, 0, 0.28) if sel else Color(0, 0, 0, 0)   # 选中的底更深(用户 2026-09-16)
 		bs.set_corner_radius_all(0)
 		bs.content_margin_left = 8.0
 		bs.content_margin_right = 8.0
 		bs.content_margin_top = 4.0
 		bs.content_margin_bottom = 4.0
 		box.add_theme_stylebox_override("panel", bs)
+		# 用户 2026-09-16「把框更长一些」:给定宽,别随内容缩(短名字的框会明显更短)
 		box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		box.custom_minimum_size = Vector2(320, 0)
 		_weapon_box.add_child(box)
 
 		var row := HBoxContainer.new()
@@ -249,6 +251,7 @@ func _refresh_weapon_boxes() -> void:
 			UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)
 			_ammo_label.add_theme_color_override("font_color", UiFactory.C_TEXT)
 			info.add_child(_ammo_label)
+		held_index += 1
 	# 丢弃条排到最下面
 	_weapon_box.move_child(_drop_bar, _weapon_box.get_child_count() - 1)
 
