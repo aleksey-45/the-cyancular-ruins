@@ -161,3 +161,20 @@ func _physics_process(delta: float) -> void:
 # 刚落地多久(秒)。拾取侧用它做"自己刚丢下的枪不立刻捡回"的冷却。
 func age() -> float:
 	return _age
+
+
+# ── 拾取提示(用户 2026-09-16:「只要能捡起就会显示 F」→ **每把可捡的各自一个**)──
+var _prompt: PickupPrompt = null
+
+
+# 由持有方每帧按"这把现在能不能捡"开关。懒建:没人靠近过就不建节点。
+func set_prompt_visible(v: bool) -> void:
+	if v and _prompt == null:
+		_prompt = PickupPrompt.new()
+		# ★ 反向缩放:本节点 scale = WORLD_SCALE(2.5),而提示要按**世界单位**画
+		#   (与 EnemyHpBar 那种挂在世界里的节点同尺寸),所以子节点乘 1/2.5 抵消掉。
+		_prompt.scale = Vector2.ONE / WORLD_SCALE
+		_prompt.position = Vector2(0.0, -PickupPrompt.GAP_ABOVE / WORLD_SCALE)
+		add_child(_prompt)
+	if _prompt != null and is_instance_valid(_prompt):
+		_prompt.visible = v

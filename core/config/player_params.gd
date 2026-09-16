@@ -75,7 +75,7 @@ const explosion_cam_shake_time: float = 0.5  # 爆炸相机震动时长(秒)
 
 # ── 武器拾取 / 丢弃(2026-09-15,武器槽位计划)──
 const weapon_pickup_radius: float = 64.0      # 可拾取半径(1 格)
-const weapon_drop_hold_time: float = 2.0      # 长按 Q 多久算丢弃(用户指定 2s)
+const weapon_drop_hold_time: float = 1.0      # 长按 Q 多久算丢弃(用户 2026-09-16 定 1s;原 2s)
 const weapon_drop_speed: float = 400.0        # 丢弃初速(水平,朝朝向)
 const weapon_drop_up: float = 220.0           # 丢弃初速(向上)
 const weapon_drop_offset := Vector2(24.0, -8.0)   # 掉落物生成点相对玩家的偏移

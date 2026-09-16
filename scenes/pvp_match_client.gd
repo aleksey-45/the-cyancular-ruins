@@ -116,7 +116,7 @@ func _physics_process(_delta: float) -> void:
 	if _rollback != null:
 		_rollback.note_input(_input_seq, pkt)
 	# 地面武器:锚点 + 落点同步 + F 提示(纯本地表现,不参与预测)
-	_tick_ground_weapons()   # 供回滚重放使用
+	_tick_ground_weapons()
 
 
 func _on_bullet_spawn(data: Dictionary) -> void:
@@ -250,7 +250,6 @@ func _on_match_sync(payload: Dictionary) -> void:
 # ── 地面武器(2026-09-15):服务器权威,本端只渲染 + 等事件(不做客户端预测)──
 var ground_weapons := GroundWeaponField.new()
 var _pickup_nodes: Dictionary = {}    # inst -> WeaponPickup
-var _pickup_prompt: PickupPrompt = null
 
 const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 
@@ -322,19 +321,20 @@ func _tick_ground_weapons() -> void:
 # F 提示:贴到"**按 F 会捡到的那一把**"上方。★ 与服务器 `_try_server_pickup` 用同一个
 # `nearest_within` + 同一个半径,否则会出现"提示了 A、服务器却捡了 B"。
 # (客户端不预测,所以提示的语义是"服务器会同意的那一把"。)
+# F 提示:**每把能捡的**各自一个(用户 2026-09-16「只要能捡起就会显示 F」)。
+# 判据 = 在拾取半径内 + 该类型没被禁用。★ 客户端不知道服务器侧的"自己刚丢下"冷却
+# (那条只有权威知道),所以刚丢下的那把会短暂显示提示但捡不起来 —— 已知的小缺口,
+# 要消掉得让 `weapon_spawned` 带上 by_role。
 func _update_pickup_prompt(lp: Vector2) -> void:
-	if _world == null:
-		return
-	if _pickup_prompt == null or not is_instance_valid(_pickup_prompt):
-		_pickup_prompt = PickupPrompt.new()
-		_world.add_child(_pickup_prompt)
-	var e: Dictionary = ground_weapons.nearest_within(lp, PlayerParams.weapon_pickup_radius)
-	if e.is_empty():
-		_pickup_prompt.visible = false
-		return
-	var n = _pickup_nodes.get(int(e["inst"]), null)
-	if n == null or not is_instance_valid(n):
-		_pickup_prompt.visible = false
-		return
-	_pickup_prompt.visible = true
-	_pickup_prompt.global_position = (n as Node2D).global_position + Vector2(0.0, -PickupPrompt.GAP_ABOVE)
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	for inst in _pickup_nodes:
+		var n = _pickup_nodes.get(inst, null)
+		if n == null or not is_instance_valid(n):
+			continue
+		var pk := n as WeaponPickup
+		var can := false
+		if _local != null and _local.weapons.is_slot_enabled(int(pk.type_id)):
+			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
+			can = d <= PlayerParams.weapon_pickup_radius
+		pk.set_prompt_visible(can)

@@ -61,6 +61,7 @@ var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
 var _ammo_label: Label = null
 var _slots: WeaponSlots = null
+var _held_row: HBoxContainer = null   # 持有武器剪影行(当前那把白、其余灰)
 var _drop_bar: ColorRect = null   # 长按 Q 的丢弃进度条(与换弹条共用槽位、互斥显示)
 var _player: Node = null
 var _reload_bar: ColorRect = null
@@ -213,6 +214,36 @@ func _build_weapon_display(p: Node) -> void:
 	_ammo_label.size_flags_vertical = Control.SIZE_FILL
 	_ammo_label.visible = false
 	box.add_child(_ammo_label)
+
+	# 持有武器剪影行(用户 2026-09-16):按**背包顺序**列出所有持有武器,
+	# 当前手持的那把白、其余灰。数据与顺序都来自 `inventory.held`(单一来源)。
+	_held_row = HBoxContainer.new()
+	_held_row.add_theme_constant_override("separation", 6)
+	box.add_child(_held_row)
+	p.weapons.inventory_changed.connect(_refresh_held_row)
+	p.weapons.weapon_changed.connect(func(_s: int) -> void: _refresh_held_row())
+	_refresh_held_row()
+
+
+# 重建剪影行。★ 订阅了 inventory_changed 与 weapon_changed 两个信号 —— 前者管"有哪几把",
+# 后者管"哪把是当前"(切枪不改背包内容时只有一个信号会发)。
+func _refresh_held_row() -> void:
+	if _held_row == null or _player == null or _player.weapons == null:
+		return
+	for c in _held_row.get_children():
+		_held_row.remove_child(c)
+		c.queue_free()
+	var cur: int = _player.weapons.current_slot_int()
+	for e in _player.weapons.inventory.held:
+		var t := int(e["type"])
+		var tr := TextureRect.new()
+		tr.texture = WeaponIcons.silhouette(t)
+		tr.custom_minimum_size = Vector2(56, 36)
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		tr.modulate = Color(1.0, 1.0, 1.0, 1.0) if t == cur else Color(0.45, 0.45, 0.50, 1.0)
+		_held_row.add_child(tr)
 
 
 # 4×2 武器槽位格子:挂在**既有武器区底板的正上方**(它是 HUD 自己的子节点,不是 wrap 的

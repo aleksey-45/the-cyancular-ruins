@@ -10,11 +10,11 @@ extends Node2D
 # ★ 它是**纯视觉**:判定仍由持有方用 `GroundWeaponField.nearest_within` 做,
 #   两边必须用同一个 `exclude`(自己刚丢的那把不提示),否则会出现"提示了却捡不到"。
 
-const BOX := Vector2(34.0, 34.0)   # 外框尺寸(世界单位)
-const INNER_INSET := 5.0           # 内框相对外框的内缩 → 形成"两层方框"
-const BORDER := 2.0
-const FONT_SIZE := 16              # 16 的倍数(项目硬约定)
-const GAP_ABOVE := 46.0            # 浮在武器上方多高(世界单位)
+const BOX := Vector2(50.0, 50.0)   # 外框尺寸(世界单位)(用户 2026-09-16「放大一点」:34→50)
+const INNER_INSET := 7.0           # 内框相对外框的内缩 → 形成"两层方框"
+const BORDER := 3.0
+const FONT_SIZE := 32              # 16 的倍数(项目硬约定)(放大一档:16→32)
+const GAP_ABOVE := 64.0            # 浮在武器上方多高(世界单位)
 
 const C_BG := Color(0.055, 0.231, 0.247, 0.90)   # 深青底
 const C_OUTER := Color(0.35, 0.85, 0.90, 1.0)    # 亮青外框

@@ -71,6 +71,19 @@ func _ready() -> void:
 	_check(_func_body(pl, "_poll_pickup_drop").contains("_drop_latched"),
 			"player._poll_pickup_drop 里没有长按闩锁(计时没跑?)")
 
+	# ③c 拾取提示必须是**逐把**判定(用户 2026-09-16「只要能捡起就会显示 F」),
+	#     而不是"只管最近那把"。判据:两个调用点都不许用 nearest_within 选目标。
+	var l0 := _code_only(_read("res://scenes/level_0.gd"))
+	var l0body := _func_body(l0, "_update_pickup_prompt")
+	var clbody := _func_body(pmc, "_update_pickup_prompt")
+	for b in [l0body, clbody]:
+		_check(not b.is_empty(), "_update_pickup_prompt 找得到")
+		_check(not b.contains("nearest_within"),
+				"拾取提示又回到「只提示最近那把」了 —— 用户要的是**每把能捡的**都提示")
+		_check(b.contains("set_prompt_visible"), "拾取提示没有逐把开关")
+	_check(_read("res://ui/pickup_prompt.gd").contains("const BOX"),
+			"PickupPrompt 常量不见了(文件被换?)")
+
 	# ④ 背包进整态:capture 里有 inv,而 `_close_enough` 里**没有**
 	_check(pl.contains("\"inv\""), "player.capture_state 里没有 inv")
 	_check(pl.contains("restore_inventory"), "player.restore_state 里没有重建背包")

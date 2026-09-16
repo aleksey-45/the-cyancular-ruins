@@ -87,6 +87,12 @@ func _ready() -> void:
 		if best != null:
 			(player as Node2D).global_position = best.global_position + Vector2(-50.0, -12.0)
 		player.set_physics_process(false)
+		# 取图前摆一个已知背包,好让左下角的"持有武器剪影行"出现在图里
+		# (丢弃那段结束时把背包清空了)。手持第一把 → 它应当是白的、其余灰的。
+		player.weapons.set_initial_inventory([1, 3, 4])
+		# ★ 冻掉物理后 `_poll_pickup_drop` 不再跑,丢弃闩锁会一直挂着 → 进度条常红(探针残留)。
+		#   补一拍空 delta 让它复位(真机松手自然就复位)。
+		player._poll_pickup_drop(0.0)
 		for i in 90:
 			await get_tree().process_frame
 		var img := get_viewport().get_texture().get_image()
@@ -102,44 +108,33 @@ func _ready() -> void:
 		get_tree().quit(1)
 
 
-# ── 拾取提示("靠近武器时在武器上方浮现的加粗 F",用户 2026-09-15)──
-# 双向钉:范围内**必须**出现、范围外**必须**消失。只判"能出现"会把
-# "永远显示"这种坏实现放过去(那就成了屏幕上一个常驻的 F)。
+# ── 拾取提示("每把**能捡的**武器各自一个加粗 F")──
+# 双向钉:能捡的**必须**出现、走远的**必须**消失。只判"能出现"会把"常驻一个 F"放过去。
 func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
-	var prompt = lvl.get("_pickup_prompt")
-	_check(prompt != null, "Level0 建起了拾取提示节点")
-	if prompt == null or player == null:
-		return
 	var pickups := get_tree().get_nodes_in_group("weapon_pickup")
 	if pickups.is_empty():
 		_failures.append("没有地面武器,无法验提示")
 		return
 	var target: Node2D = pickups[0]
-	# ① 贴到范围内 → 应显示,且**贴在那把武器上方**
-	# ★ 放到**同一格**上:距离 0 必然最近,消掉"哪把最近"与"玩家被 wrap_to_range 挪走"
-	#   两处随机性(此前用 -40 偏移,散布一换就假红:横向偏 9440px)。
+	# ① 站到它身上(距离 0 必然在半径内)
 	(player as Node2D).global_position = target.global_position
 	for i in 5:
 		await get_tree().process_frame
+	var prompt = target.get("_prompt")
+	_check(prompt != null, "能捡的那把武器应长出提示节点(懒建)")
+	if prompt == null:
+		return
 	_check(bool(prompt.visible), "站在拾取半径内时提示应出现")
-	# ★ 别猜"哪把最近" —— 直接问**产品自己的**那个函数。散布是随机的,而玩家会被
-	#   wrap_to_range / 重力挪动,拿 pickups[0] 当基准必然时红时绿(实测偏过 9440/1824px)。
-	var want: Dictionary = lvl.ground_weapons.nearest_within(
-			(player as Node2D).global_position, PlayerParams.weapon_pickup_radius, lvl._live_self_drops())
-	var want_node = lvl._pickup_nodes.get(int(want.get("inst", 0)), null)
-	_check(want_node != null and is_instance_valid(want_node), "应能定位到提示所指的那把武器")
-	if want_node != null and is_instance_valid(want_node):
-		var dy: float = (want_node as Node2D).global_position.y - (prompt as Node2D).global_position.y
-		_check(dy > 20.0, "提示应浮在武器**上方**(实测高出 %.1f px)" % dy)
-		var dx: float = absf((want_node as Node2D).global_position.x - (prompt as Node2D).global_position.x)
-		_check(dx < 4.0, "提示应对准武器(横向偏 %.1f px)" % dx)
-	_check((prompt as Node2D).z_index > 0, "提示应压在武器之上(z_index > 0)")
+	_check((prompt as Node2D).z_index > 0, "提示应压在武器之上")
+	# 提示挂在武器下、反向缩放抵消 WORLD_SCALE → 用 position 换算回世界单位比
+	var gap: float = absf((prompt as Node2D).position.y) * WeaponPickup.WORLD_SCALE
+	_check(gap > 20.0, "提示应浮在武器**上方**(实测 %.1f 世界单位)" % gap)
 
 	# ② 走远 → 必须消失
-	(player as Node2D).global_position = target.global_position + Vector2(600.0, 0.0)
+	(player as Node2D).global_position = target.global_position + Vector2(900.0, 0.0)
 	for i in 5:
 		await get_tree().process_frame
-	_check(not bool(prompt.visible), "走出拾取半径后提示应消失(否则屏幕上会常驻一个 F)")
+	_check(not bool(prompt.visible), "走出拾取半径后提示应消失(否则屏幕上会常驻 F)")
 
 
 # ── 丢弃(长按 Q 满 2s)──
@@ -147,12 +142,6 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 #   那正是联机侧真实出现过的 bug(LocalInputSource 的 drop 读口报的是"Q 按着"而不是
 #   "满了的边沿",于是碰一下就丢、按住不放每 tick 丢一把)。
 func _phase_drop_hold(player: Node, lvl: Node) -> void:
-	# ★ 探针里 Level0 是**子节点**,而 `_try_drop()` 找的是 `get_tree().current_scene` ——
-	#   真机单机下那正是 Level0。不指过去的话 `_try_drop` 会走早退,测出来的是
-	#   "探针结构"而不是产品行为(第一次跑就是这么假红的)。
-	var prev_scene := get_tree().current_scene
-	get_tree().current_scene = lvl
-
 	var wep = player.weapons
 	wep.set_initial_inventory([1, 2])
 	for i in 3:
@@ -160,7 +149,6 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 	var before: int = wep.inventory.held.size()
 	if before < 2:
 		_failures.append("丢弃前置:背包里应有 2 把(实际 %d)" % before)
-		get_tree().current_scene = prev_scene
 		return
 	var ground_before: int = get_tree().get_nodes_in_group("weapon_pickup").size()
 	print("[drop] current_scene=%s is_Level0=%s pvp_mode=%s" % [str(get_tree().current_scene), str(get_tree().current_scene is Level0), str(Level0.pvp_mode)])
@@ -198,4 +186,3 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 		player._poll_pickup_drop(0.1)
 	Input.action_release("Q")
 	_check(true, "空手长按 Q 不崩")
-	get_tree().current_scene = prev_scene
