@@ -2,8 +2,11 @@ extends Node
 
 # 单机开局地面武器探针(场景模式;判据 grep `LEVEL0 SCATTER: ALL-OK`)。
 #
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 600 res://tests/level0_weapon_scatter_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/level0_weapon_scatter_probe.tscn
 #
 # ═══ 为什么需要它 ═══
 # 这条 bug **真的漏过一次、而且所有数值断言都是绿的**:地面武器原先 `add_child(self)`

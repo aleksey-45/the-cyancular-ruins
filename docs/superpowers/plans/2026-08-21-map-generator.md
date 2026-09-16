@@ -428,7 +428,7 @@ func spawn_all(grid: Array[Array], player_pos: Vector2, spawns: Dictionary = {})
 
 - [ ] **Step 3: 验证(用户跑)**
 
-Run: 冒烟测试 `res://tests/enemy_logic_smoke.gd` 全 PASS;再实际启动游戏(用户可 `--quit-after 90` 或直接玩),确认:地图无 spawn 元数据时行为不变(玩家随机、敌人随机)。
+Run: 冒烟测试 `res://tests/enemy_logic_smoke.gd` 全 PASS;再实际启动游戏(用户可 `--quit-after 3600` 或直接玩),确认:地图无 spawn 元数据时行为不变(玩家随机、敌人随机)。
 
 - [ ] **Step 4: Commit**
 

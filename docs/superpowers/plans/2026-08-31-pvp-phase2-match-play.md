@@ -66,7 +66,7 @@ git commit -m "chore: 收尾纹理 UID 修正 + 新 .uid + factory map 补 playe
 - [ ] **Step 4: 验证——headless 启动 5 帧无报错**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 5 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 Expected: 无 `SCRIPT ERROR`。
@@ -370,7 +370,7 @@ func get_current_aim_dir() -> Vector2:
 - [ ] **Step 3: 验证——headless 起 pvp_game 60 帧无报错**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 3600 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 > 无服务器时 `rpc_id` 会告警但不崩溃；仅验证脚本无 Parse Error。
@@ -508,7 +508,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import 2>&1 | grep -E "MatchHost" ; \
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn --quit-after 120 2>&1 | grep -E "服务器就绪|SCRIPT ERROR|ERROR" | head -8
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn --quit-after 3600 2>&1 | grep -E "服务器就绪|SCRIPT ERROR|ERROR" | head -8
 ```
 
 Expected: 打印 `服务器就绪`,无 `SCRIPT ERROR`。
@@ -755,7 +755,7 @@ func revive() -> void:
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import 2>&1 | grep -E "PlayerReplica" ; \
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 3600 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 - [ ] **Step 8: 提交**
@@ -993,7 +993,7 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 - [ ] **Step 6: 验证——headless 起 pvp_game 60 帧无报错**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 3600 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 - [ ] **Step 7: 提交**

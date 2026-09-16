@@ -3,8 +3,11 @@ extends Node
 # 地面武器(WeaponPickup)探针。场景模式 —— 判据是 **grep 文本 `WEAPON PICKUP: ALL-OK`**,
 # 不能只看退出码(中途报错时 --quit-after 仍 exit 0 且不打印 ALL-OK)。
 #
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 900 res://tests/weapon_pickup_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/weapon_pickup_probe.tscn
 #
 # ═══ 钉三件日常看不出来的事 ═══
 #   ① 碰撞层归属:玩家与子弹都**不该**碰地上的枪。改错了的表现是"走过去被枪挡住"

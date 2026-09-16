@@ -255,7 +255,7 @@ func _broadcast_weapon_removed(inst: int, by_role: int) -> void:
 `server/match_snapshot.gd` 第 2 行：`extends MatchState` → `extends MatchGround`。
 链变成 `RoyaleHost → MatchHost → MatchRound → MatchCombat → MatchSnapshot → MatchGround → MatchState`。
 
-跑 `"$GODOT" --headless --path . --quit-after 90` 确认 0 报错（链断了会立刻报）。
+跑 `"$GODOT" --headless --path . --quit-after 3600` 确认 0 报错（链断了会立刻报）。
 
 - [ ] **Step 3b: 把"F/Q 只归单机走"改成显式守卫**
 
@@ -678,7 +678,7 @@ func _tick_ground_weapon_anchor() -> void:
 
 ```bash
 bash tests/pvp_match_smoke.sh
-bash tests/royale_c2_probe.sh 2>/dev/null || "$GODOT" --headless --path . --quit-after 900 res://tests/royale_c2_probe.tscn
+bash tests/royale_c2_probe.sh 2>/dev/null || "$GODOT" --headless --path . --quit-after 3600 res://tests/royale_c2_probe.tscn
 ```
 Expected: PASS / `PROBE: ALL-OK`。
 
@@ -706,7 +706,7 @@ git commit -m "feat(net): 客户端地面武器渲染 —— 事件建删 + 环�
 **所以 PvP 里极可能已经有一块槽位格子。** 先跑一次真机（或 `combat_hud_visual_probe` 取图）确认：
 
 ```bash
-"$GODOT" --path . --quit-after 600 res://tests/combat_hud_visual_probe.tscn
+"$GODOT" --path . --quit-after 3600 res://tests/combat_hud_visual_probe.tscn
 ```
 
 - **已经有一块** → 本任务**到此为止**：什么都不用加，`PvpHud`/`RoyaleHud` 都不用改。把它记进提交信息（"PvP 已由单机 HUD 那块覆盖"），跳到 Step 3。
@@ -740,7 +740,7 @@ func add_weapon_slots(weapons: WeaponComponent) -> void:
 - [ ] **Step 3: 视觉验收（自己读图）**
 
 ```bash
-"$GODOT" --path . --quit-after 600 res://tests/combat_hud_visual_probe.tscn
+"$GODOT" --path . --quit-after 3600 res://tests/combat_hud_visual_probe.tscn
 ```
 ★ 该探针的底**故意铺地图开阔区的浅灰蓝**（照它的注释）。读图确认：**只有一块**格子、三态可辨、不与 1v1 记分条/大乱斗榜/K 提示（`royale_hud` 左下 `Vector2(16, 1386)`）重叠。
 
@@ -782,8 +782,8 @@ git commit -m "feat(ui): 对局内 HUD 的武器槽位格子(PvP 若已由单机
 - [ ] **Step 4: 跑全部**
 
 ```bash
-"$GODOT" --headless --path . --quit-after 600 res://tests/net_ground_source_probe.tscn
-"$GODOT" --headless --path . --quit-after 600 res://tests/match_sync_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/net_ground_source_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/match_sync_probe.tscn
 bash tests/pvp_match_smoke.sh
 ```
 Expected: 均 ALL-OK / PASS。

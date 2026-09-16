@@ -790,7 +790,7 @@ func cancel_aim() -> void:
 
 Run:
 ```bash
-"$GODOT" --headless --path . --quit-after 300 res://tests/kh_l3_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l3_probe.tscn
 ```
 Expected: 输出里**没有** `ALL-OK`（`_enabled_slots` / 残弹记忆两节的断言按旧语义写的，现在会红）。这一步确认探针真的在跑、真的能变红。
 
@@ -985,7 +985,7 @@ func _drop_pressed_raw() -> bool:
 Run:
 ```bash
 "$GODOT" --headless --path . -s res://tests/ai_input_source_smoke.gd
-"$GODOT" --headless --path . --quit-after 90
+"$GODOT" --headless --path . --quit-after 3600
 ```
 Expected: 冒烟全绿；启动 0 报错（若报 "Unknown action" 说明 `project.godot` 的两个动作没加对）。
 
@@ -1517,7 +1517,7 @@ script = ExtResource("1_pickup")
 #   ② 视觉有碰撞箱(像素包围盒真的生成了)
 #   ③ 落点与"何时开始模拟"无关(联机不预测落体的前提)
 # 跑法:
-#   "…console.exe" --headless --path . --quit-after 600 res://tests/weapon_pickup_probe.tscn
+#   "…console.exe" --headless --path . --quit-after 3600 res://tests/weapon_pickup_probe.tscn
 # 判据:grep 输出里的 ALL-OK
 ```
 
@@ -1547,7 +1547,7 @@ script = ExtResource("1_pickup")
 
 Run:
 ```bash
-"$GODOT" --headless --path . --quit-after 600 res://tests/weapon_pickup_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/weapon_pickup_probe.tscn
 ```
 Expected: 输出 `ALL-OK`，退出码 0。
 
@@ -1826,7 +1826,7 @@ static func spread_cells(cells: Array, count: int, clearance: int, map_size: Vec
 
 Run:
 ```bash
-"$GODOT" --headless --path . --quit-after 90
+"$GODOT" --headless --path . --quit-after 3600
 ```
 Expected: 0 报错。
 
@@ -2064,7 +2064,7 @@ func drop_hold_progress() -> float:
 
 Run:
 ```bash
-"$GODOT" --headless --path . --quit-after 90
+"$GODOT" --headless --path . --quit-after 3600
 ```
 Expected: 0 报错。
 
@@ -2140,7 +2140,7 @@ git commit -m "feat(weapons): 单机地面武器 —— 12 把散落 + F 捡最�
 
 Run:
 ```bash
-"$GODOT" --headless --path . --quit-after 90
+"$GODOT" --headless --path . --quit-after 3600
 ```
 Expected: 0 报错。
 

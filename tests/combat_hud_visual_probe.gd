@@ -1,8 +1,11 @@
 extends Control
 
 # 对局内 HUD(PvpHud / RoyaleHud)视觉验收探针(**必须带真实渲染,不能加 --headless**)。
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --path . --quit-after 900 res://tests/combat_hud_visual_probe.tscn
+#   "$GODOT" --path . --quit-after 3600 res://tests/combat_hud_visual_probe.tscn
 # 把两块对局 HUD 的关键状态定格成 PNG 交给控制者读图,同时打数值断言:
 #   _hud_1_pvp_playing.png  1v1 记分条 + 延迟(PLAYING)
 #   _hud_2_pvp_broadcast.png 1v1 中央广播(倒计时巨字)

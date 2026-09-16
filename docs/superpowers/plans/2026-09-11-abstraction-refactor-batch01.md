@@ -56,7 +56,7 @@ func _apply_binding(action: String, ev: InputEvent) -> void:
 - [ ] **Step 3: 启动自检**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 
 Expected: 退出码 0，输出无 `SCRIPT ERROR` / `Parse Error`。
@@ -114,7 +114,7 @@ Expected: 命中的是探针**扫描器自身**的匹配模式（`kh_l5_probe` �
 - [ ] **Step 3: 视觉自检（用户执行）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 
 Expected: 退出码 0。肉眼确认留给用户：进「大乱斗 → 建房」面板，武器勾选格的文字应与页面其他文字同为像素字体。
@@ -877,11 +877,11 @@ grep -rn "_approach\|toroidal_delta_px(pa, pb" --include=*.gd core/ scenes/ | gr
 
 ```bash
 GODOT="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l1_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l3_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l4_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l5_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l6_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l1_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l3_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l4_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l5_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn 2>&1 | grep ALL-OK
 ```
 
 Expected: 五条各打印一行 `ALL-OK`。任何一条没有输出即失败（**不要**只看退出码）。

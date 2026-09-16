@@ -573,7 +573,7 @@ git commit -m "test: BlackBird 冒烟测试(游走/瞬移/冲锋/后跳/入睡/�
 - [ ] **Step 2: 最终验证**
 
 Run 冒烟:`... --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | tail -3` → `SMOKE OK`
-Run 启动:`... --headless --path . --quit-after 90 2>&1 | grep -iE "error|SCRIPT ERROR"` → 无输出。
+Run 启动:`... --headless --path . --quit-after 3600 2>&1 | grep -iE "error|SCRIPT ERROR"` → 无输出。
 
 - [ ] **Step 3: 提交**
 

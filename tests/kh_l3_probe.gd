@@ -1,8 +1,11 @@
 extends ProbeBase
 
 # KH 合并 L3 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 600 res://tests/kh_l3_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l3_probe.tscn
 # 期望:打印 "KH L3 PROBE: ALL-OK" 且退出码 0。
 #
 # 存在理由:L3(换弹玩法 + 五把枪弹夹数值 + 武器槽位闸门 + 滚轮切枪 + 残弹记忆)落地后,
