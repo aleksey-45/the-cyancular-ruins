@@ -76,6 +76,13 @@ var _demo_spawn := Vector2i(-1, -1)   # 演示世界出生格(revive_demo 复位
 func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
+var _timeworld: TimeWorld = null   # 时空地图时间线(v4 '# tl:' 事件;无则 null)
+var _clock_label: Label = null
+var _clock_warn: Label = null
+var _clock_flash := 0.0
+var _clock_msg := ""
+
+
 func _ready() -> void:
 	RenderingServer.set_default_clear_color("b0e5f6")
 
@@ -100,6 +107,11 @@ func _ready() -> void:
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = tile_set
 	_paint_water(grid)
+
+	# ── 时空地图:.cyrm '# tl:' 时间线(第三维度;无事件行 = 普通图)──
+	_timeworld = TimeWorld.parse_for(MazeGenerator.map_file_path())
+	if _timeworld.has_events():
+		_build_clock_hud()
 
 	# 主菜单背景:实机演示——真实玩家由注入式 AI 驱动追打演示鸟,镜头正常跟随。
 	# 有碰撞/敌人(死光自动补),HUD 隐藏。(menu_demo 残留防护:主菜单进 PvP 不重置也不生效)
@@ -304,7 +316,9 @@ func _paint_water(grid: Array[Array]) -> void:
 		surf.call_deferred("add_child", batch)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if _timeworld != null and not menu_demo:
+		_tick_world(delta)
 	# 单机烟雾可见性(PvP 由 pvp_client/royale_game 负责;演示世界无实体跳过)
 	if not pvp_mode and not menu_demo:
 		var pl := get_node_or_null("WorldViewport/Player") as Node2D
@@ -325,6 +339,88 @@ func _process(_delta: float) -> void:
 
 
 # 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。
+## 世界钟推进 + 执行到点事件 + 表盘 HUD 刷新
+func _tick_world(delta: float) -> void:
+	for ev in _timeworld.tick(delta):
+		var rect: Rect2i = ev["rect"]
+		_apply_region(rect, ev["action"] == "collapse")
+		_clock_flash = 2.5
+		_clock_msg = str(ev.get("label", ev["action"]))
+		Sfx.play("explosion")
+	if _clock_label != null:
+		_clock_label.text = "T-%02d" % int(maxf(_timeworld.w, 0.0))
+	if _clock_warn != null:
+		var nxt := _timeworld.next_trigger()
+		if _clock_flash > 0.0:
+			_clock_warn.text = _clock_msg
+			_clock_warn.add_theme_color_override("font_color", Color(0.95, 0.55, 0.35))
+		elif nxt >= 0.0 and _timeworld.w - nxt <= 5.0:
+			_clock_warn.text = "⚠ 事件临近 T-%02d" % int(nxt)
+			_clock_warn.add_theme_color_override("font_color", Color(0.95, 0.75, 0.4))
+		else:
+			_clock_warn.text = ""
+	if _clock_flash > 0.0:
+		_clock_flash -= delta
+
+
+## 区域瓦片状态改写(事件执行核心):网格/渲染(9 环面副本)/持久子格/分块重建一次完成。
+## collapse=变实心(封路);open=变空气(炸开)。复用 _dirty_chunks 分帧重建管线。
+func _apply_region(rect: Rect2i, make_solid: bool) -> void:
+	if _grid_ref.is_empty() or wall_layer == null or _destructible_sub.is_empty():
+		return
+	var cols: int = _grid_ref[0].size()
+	var rows: int = _grid_ref.size()
+	var value: int = MazeGenerator.SOLID if make_solid else MazeGenerator.EMPTY
+	for y in range(rect.position.y, rect.end.y):
+		if y < 0 or y >= rows:
+			continue
+		for x in range(rect.position.x, rect.end.x):
+			if x < 0 or x >= cols:
+				continue
+			_grid_ref[y][x] = value
+			for ty in range(-1, 2):
+				for tx in range(-1, 2):
+					if make_solid:
+						wall_layer.set_cell(Vector2i(x + tx * cols, y + ty * rows), 0,
+								Vector2i(MazeGenerator.shape_of(value), MazeGenerator.texture_of(value) - 1))
+					else:
+						wall_layer.set_cell(Vector2i(x + tx * cols, y + ty * rows), -1)
+			for qy in range(2):
+				for qx in range(2):
+					_destructible_sub[y * 2 + qy][x * 2 + qx] = value
+			_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(x, y))] = true
+
+
+func _build_clock_hud() -> void:
+	var hud := CanvasLayer.new()
+	hud.layer = 140
+	add_child(hud)
+	var pf: FontFile = load("res://assets/fonts/less_perfect_dos_vga.ttf")
+	_clock_label = Label.new()
+	_clock_label.text = ""
+	_clock_label.add_theme_font_size_override("font_size", 72)
+	_clock_label.add_theme_color_override("font_color", Color(0.95, 0.8, 0.3))
+	_clock_label.add_theme_constant_override("outline_size", 10)
+	_clock_label.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12))
+	if pf != null:
+		_clock_label.add_theme_font_override("font", pf)
+	_clock_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_clock_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_clock_label.offset_top = 26
+	hud.add_child(_clock_label)
+	_clock_warn = Label.new()
+	_clock_warn.text = ""
+	_clock_warn.add_theme_font_size_override("font_size", 30)
+	_clock_warn.add_theme_constant_override("outline_size", 8)
+	_clock_warn.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12))
+	if pf != null:
+		_clock_warn.add_theme_font_override("font", pf)
+	_clock_warn.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_clock_warn.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_clock_warn.offset_top = 118
+	hud.add_child(_clock_warn)
+
+
 func _on_tile_destroyed(cell: Vector2i) -> void:
 	if wall_layer != null and not _grid_ref.is_empty():
 		var cols: int = _grid_ref[0].size()
