@@ -5,7 +5,7 @@ extends Control
 #   "$GODOT" --path . --quit-after 600 res://tests/kh_l3_visual_probe.tscn
 # 把 HUD 换弹玩法的三态定格成 PNG 交给控制者读图,同时打数值断言(可当 CI 用):
 #   _l3_1_ammo.png     满弹「12/12」+ 武器剪影 + 名称
-#   _l3_2_reloading.png「装填中…」+ 换弹进度条(进度在中段)
+#   _l3_2_reloading.png 换弹中(进度条已取消 → 角色旁圆环 + 环心一位小数倒计时)
 #   _l3_3_low.png      残弹低位「1/12」
 # PNG 落 res://.superpowers/sdd/(该目录 .gitignore 为 *,不入库)。
 #
@@ -326,13 +326,15 @@ func _capture_full_ammo() -> void:
 	_check(_hud._ammo_label.text == "12/12", "态1:文本应为「12/12」(实际「%s」)" % _hud._ammo_label.text)
 	_check(_hud._weapon_icon.texture != null, "态1:武器剪影贴图为空")
 	_check(_hud._weapon_name.text == "手枪", "态1:武器名应为「手枪」(实际「%s」)" % _hud._weapon_name.text)
-	_check(not _hud._reload_bar.visible, "态1:非换弹态进度条不应可见")
+	# ★ 换弹进度条与"装填中…"文案已取消(用户 2026-09-16:改用角色旁的圆环倒计时)。
+	#   这两条改成钉"它们真的不在了",免得日后有人又加回一条 HUD 换弹条。
+	_check(_hud.get("_reload_bar") == null, "态1:HUD 上不该再有换弹进度条节点(已改角色旁圆环)")
 	var bright1 := _bright_in(img1, _hud._ammo_label)
 	var gold1 := _gold_in(img1, _hud._ammo_label)
-	var accent1 := _accent_in(img1, _hud._reload_bar)
+	var accent1 := 0   # 进度条已删,这里没有它的矩形可量
 	_check(bright1 > 0, "态1:残弹文本区域没有画出中性亮文本(文本没渲染出来?)")
 	_check(gold1 == 0, "态1:满弹不该是金色(金色只表「弹夹见底」;实测金色像素 %d)" % gold1)
-	_check(accent1 == 0, "态1:非换弹态进度条区不该有强调青像素(%d)" % accent1)
+
 	print("[L3-VISUAL] 态1 像素:残弹区亮文本=%d 金色=%d 进度条区青=%d" % [bright1, gold1, accent1])
 
 func _capture_reloading() -> void:
@@ -344,21 +346,24 @@ func _capture_reloading() -> void:
 	_check(_w.is_reloading(), "态2:start_reload()+tick(0.5) 后未处于装填中")
 	var prog := _w.reload_progress()
 	_check(prog > 0.0 and prog < 1.0, "态2:换弹进度 %.3f 不在 (0,1) 中段" % prog)
+	# ★ 探针冻了玩家物理 → `_update_reload_ring` 不跑,得自己推一拍;
+	#   **必须在取图之前**(第一版加在断言里,结果断言绿了、PNG 里却没环)。
+	p._update_reload_ring()
 	img2 = await _shot("_l3_2_reloading.png")
-	_check(_hud._ammo_label.text == "装填中…", "态2:文本应为「装填中…」(实际「%s」)" % _hud._ammo_label.text)
-	_check(_hud._reload_bar.visible, "态2:换弹进度条不可见")
-	_check(_hud._bar_back.visible, "态2:换弹进度条底板不可见")
-	_check(absf(_hud._reload_bar.size.x - Hud.WEAPON_ICON_W * prog) < 2.0,
-			"态2:进度条长度 %.1f 与进度 %.2f 不符(期望 %.1f)" % [
-				_hud._reload_bar.size.x, prog, Hud.WEAPON_ICON_W * prog])
+	# ★ 换弹中**不再**改文案(用户 2026-09-16 取消"装填中…"),恒显示残弹/满弹。
+	_check(_hud._ammo_label.text == "%d/%d" % [_w.mag_ammo, _w.mag_size],
+			"态2:换弹中文本应仍是残弹/满弹(实际「%s」)" % _hud._ammo_label.text)
+	# 进度改由**角色旁的圆环**表达(ui/reload_ring.gd,挂玩家身上)——这里验它在、且亮着
+	var ring = p.get("_reload_ring")
+	_check(ring != null and is_instance_valid(ring), "态2:玩家身上应有换弹圆环节点")
+	p._update_reload_ring()   # ★ 探针冻了玩家物理,_update_reload_ring 不跑,得自己推一拍
+	_check(ring != null and bool(ring.visible), "态2:换弹中圆环应可见")
 	var gold2 := _gold_in(img2, _hud._ammo_label)
-	var gold_bar2 := _gold_in(img2, _hud._reload_bar)
-	var accent2 := _accent_in(img2, _hud._reload_bar)
+	# ★ 进度条已删(改角色旁圆环),原先那两条"进度条区不许有金/青像素"的断言随之作废 ——
+	#   留下的只有"残弹见底要转金"这一条 HUD 语义。
 	_check(gold2 > 0, "态2:残弹已见底(3/12)却没转金 —— 「低弹量」警告没画出来")
-	_check(accent2 > 0, "态2:进度条区域没有画出强调青像素(进度条没渲染出来?)")
-	_check(gold_bar2 == 0, "态2:进度条不该是金色(金色只留给残弹见底;实测 %d)" % gold_bar2)
-	print("[L3-VISUAL] 态2 像素:残弹区金色=%d 进度条区青=%d 金=%d 进度=%.2f 条长=%.1f" % [
-			gold2, accent2, gold_bar2, prog, _hud._reload_bar.size.x])
+	print("[L3-VISUAL] 态2 像素:残弹区金色=%d 进度=%.2f(圆环) 圆环可见=%s" % [
+			gold2, prog, str(ring != null and bool(ring.visible))])
 
 func _capture_low_ammo() -> void:
 	# ── 态3:残弹低位 1/12 ───────────────────────────────────────────
