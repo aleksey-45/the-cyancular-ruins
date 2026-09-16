@@ -119,6 +119,16 @@ func _pickup_pressed_raw() -> bool:
 	push_error("PlayerInput: 子类必须覆写 _pickup_pressed_raw()")
 	return false
 
+# ── 可选钩子(与上面那族"必须覆写"的不同:默认是空操作)──
+# 「长按 Q 满阈值」这一次边沿由**本地实现**提供:计时在 player.gd 的物理帧里做
+# (只有那里有确定的 delta),做完了由 player 调 mark_drop_edge() 打标,
+# pack_record 下一次组包时取走。网络源直接读包里的位、AI 源不丢枪,故默认空操作即可。
+var _drop_edge := false
+
+func mark_drop_edge() -> void:
+	_drop_edge = true
+
+
 func _drop_pressed_raw() -> bool:
 	push_error("PlayerInput: 子类必须覆写 _drop_pressed_raw()")
 	return false

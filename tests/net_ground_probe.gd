@@ -56,6 +56,21 @@ func _ready() -> void:
 	_check(not pmc.contains("NetBusExt.local_weapon_"),
 			"客户端把地面武器事件挂到了 NetBusExt(会静默 no-op)")
 
+	# ③b ★ 丢弃的"长按满"必须是**边沿**而不是"Q 按着"。
+	#    真实出现过的 bug:LocalInputSource 的 drop 读口返回 `Input.is_action_pressed("Q")`,
+	#    于是联机端**碰一下 Q 就丢枪**(长按 2s 规则形同虚设),而且按住不放每 tick 丢一把。
+	var lis := _code_only(_read("res://core/net/local_input_source.gd"))
+	var body := _func_body(lis, "_drop_pressed_raw")
+	_check(not body.contains("Input.is_action_pressed"),
+			"LocalInputSource._drop_pressed_raw 读的是「Q 按着」而不是「长按满的边沿」")
+	_check(body.contains("_drop_edge"), "LocalInputSource._drop_pressed_raw 应读一次性边沿标志")
+	# 反向锚:计时确实在 player 里做,且联机分支会打这个标
+	_check(pl.contains("mark_drop_edge"), "player 没在长按满时打边沿标")
+	# 反向锚:计时确实在 player 里跑(联机分支会打这个标),而不是整个早退掉
+	_check(pl.contains("mark_drop_edge"), "player 没在长按满时打边沿标")
+	_check(_func_body(pl, "_poll_pickup_drop").contains("_drop_latched"),
+			"player._poll_pickup_drop 里没有长按闩锁(计时没跑?)")
+
 	# ④ 背包进整态:capture 里有 inv,而 `_close_enough` 里**没有**
 	_check(pl.contains("\"inv\""), "player.capture_state 里没有 inv")
 	_check(pl.contains("restore_inventory"), "player.restore_state 里没有重建背包")

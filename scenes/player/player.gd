@@ -639,26 +639,30 @@ var _drop_latched := false  # 本次长按是否已触发过(防按住不放连�
 #   没有输入事件、只有注入包,读原始事件的话联机端永远收不到(与 R 换弹 2026-09-15
 #   从 _unhandled_input 迁走是同一个理由)。
 func _poll_pickup_drop(delta: float) -> void:
-	# ★ 只归**单机**走:联机的拾取/丢弃是**服务器权威**(读输入包里的 BIT_PICKUP/BIT_DROP),
-	#   客户端不做预测(spec §6.4)。不挡的话客户端本地会自己捡一把、而服务器那边没有 ——
-	#   `_try_*` 里那句 `current_scene is Level0` 只是**碰巧**在 PvP 里为假,别依赖巧合。
-	# ★ 服务器 worker 进程里这个 static 是 false(那个进程不实例化 Level0),所以服务器侧
-	#   仍靠 `_try_*` 的 current_scene 早退兜底 —— 两处都留着,理由不同。
-	if Level0.pvp_mode:
-		return
-	# Q 长按计时**在客户端本地做**(只有这里有确定的物理 delta)。满了才当成一次边沿发出去;
-	# 上行的是"完成信号"而不是"按住"(见 PacketInputSource.BIT_DROP 的注释)。
+	# ★ Q 长按计时**两种模式都要跑**。联机时它也是"2 秒"这条规则的**唯一**执行点:
+	#   服务器只收得到一次"满了"的边沿,它自己没有计时器。早先这里写成 `if pvp_mode: return`,
+	#   结果是联机端**长按 2s 形同虚设**(而 LocalInputSource 的 drop 读口当时报的是"Q 按着",
+	#   于是碰一下 Q 就丢枪、按住不放会每 tick 丢一把)。
+	#
+	# 分支只差在"满了之后干什么":
+	#   单机 → 就地丢;联机 → 打一个一次性边沿,由 pack_record 上行给服务器裁决(不做客户端预测)。
 	if input_source.is_action_pressed("Q"):
 		if not _drop_latched:
 			_drop_hold_t += delta
 			if _drop_hold_t >= PlayerParams.weapon_drop_hold_time:
 				_drop_latched = true
-				_try_drop()
+				if Level0.pvp_mode:
+					input_source.mark_drop_edge()
+				else:
+					_try_drop()
 	else:
 		_drop_hold_t = 0.0
 		_drop_latched = false
 
-	if input_source.is_pickup_pressed():
+	# 拾取:F 本来就是按下边沿,联机只需上行(服务器裁决),单机就地执行。
+	# ★ 服务器侧(权威模拟)不在此裁决 —— 它走 `MatchGround._handle_ground_actions`;
+	#   本函数在服务器上靠 `_try_*` 的 `current_scene is Level0` 早退兜底。
+	if input_source.is_pickup_pressed() and not Level0.pvp_mode:
 		_try_pickup()
 
 
@@ -670,11 +674,23 @@ func drop_hold_progress() -> float:
 	return clampf(_drop_hold_t / PlayerParams.weapon_drop_hold_time, 0.0, 1.0)
 
 
+# 本玩家所属的 Level0(从自己往上走)。★ 不用 `get_tree().current_scene`:
+# 那是"当前场景根"这一**全局**状态,与"我在哪个世界"并不等价 —— PvP 里 current_scene 是
+# PvpGame/大乱斗场景(Level0 只是它子节点),服务器 worker 里干脆没有 Level0。
+# 往上走是本地的、精确的,也让探针能把世界挂成子节点来测(实测:current_scene 赋值不生效)。
+func host_level() -> Level0:
+	var n: Node = self
+	while n != null:
+		if n is Level0:
+			return n
+		n = n.get_parent()
+	return null
+
+
 func _try_pickup() -> void:
-	var lvl := get_tree().current_scene
-	if not (lvl is Level0):
-		return
-	(lvl as Level0).try_pickup_for(self)
+	var lvl := host_level()
+	if lvl != null:
+		lvl.try_pickup_for(self)
 
 
 func _try_drop() -> void:
@@ -683,9 +699,9 @@ func _try_drop() -> void:
 	var e: Dictionary = weapons.drop_current()
 	if e.is_empty():
 		return
-	var lvl := get_tree().current_scene
-	if lvl is Level0:
-		(lvl as Level0).spawn_pickup(int(e["type"]), int(e["mag"]),
+	var lvl := host_level()
+	if lvl != null:
+		lvl.spawn_pickup(int(e["type"]), int(e["mag"]),
 			global_position + PlayerParams.weapon_drop_offset * Vector2(float(facing_direction), 1.0),
 			Vector2(PlayerParams.weapon_drop_speed * facing_direction, -PlayerParams.weapon_drop_up),
 			0, true)   # self_drop=true:冷却期内不参与自己的拾取(防丢完原地按 F 捡回)

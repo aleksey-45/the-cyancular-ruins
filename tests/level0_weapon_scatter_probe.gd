@@ -69,6 +69,7 @@ func _ready() -> void:
 	_check(bad == 0, "每种武器应恰好 2 把(有 %d 种数量不对:%s)" % [bad, str(types)])
 
 	await _phase_pickup_prompt(player, lvl)
+	await _phase_drop_hold(player, lvl)
 
 	# ── 有真实渲染时顺手取一张图,供**人眼**确认地上的枪真的画出来了 ──
 	# (headless 下 get_image() 返回 null,跳过;断言部分两条腿都能跑。)
@@ -115,14 +116,23 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 		return
 	var target: Node2D = pickups[0]
 	# ① 贴到范围内 → 应显示,且**贴在那把武器上方**
-	(player as Node2D).global_position = target.global_position + Vector2(-40.0, 0.0)
+	# ★ 放到**同一格**上:距离 0 必然最近,消掉"哪把最近"与"玩家被 wrap_to_range 挪走"
+	#   两处随机性(此前用 -40 偏移,散布一换就假红:横向偏 9440px)。
+	(player as Node2D).global_position = target.global_position
 	for i in 5:
 		await get_tree().process_frame
 	_check(bool(prompt.visible), "站在拾取半径内时提示应出现")
-	var dy: float = target.global_position.y - (prompt as Node2D).global_position.y
-	_check(dy > 20.0, "提示应浮在武器**上方**(实测高出 %.1f px)" % dy)
-	var dx: float = absf(target.global_position.x - (prompt as Node2D).global_position.x)
-	_check(dx < 4.0, "提示应对准武器(横向偏 %.1f px)" % dx)
+	# ★ 别猜"哪把最近" —— 直接问**产品自己的**那个函数。散布是随机的,而玩家会被
+	#   wrap_to_range / 重力挪动,拿 pickups[0] 当基准必然时红时绿(实测偏过 9440/1824px)。
+	var want: Dictionary = lvl.ground_weapons.nearest_within(
+			(player as Node2D).global_position, PlayerParams.weapon_pickup_radius, lvl._live_self_drops())
+	var want_node = lvl._pickup_nodes.get(int(want.get("inst", 0)), null)
+	_check(want_node != null and is_instance_valid(want_node), "应能定位到提示所指的那把武器")
+	if want_node != null and is_instance_valid(want_node):
+		var dy: float = (want_node as Node2D).global_position.y - (prompt as Node2D).global_position.y
+		_check(dy > 20.0, "提示应浮在武器**上方**(实测高出 %.1f px)" % dy)
+		var dx: float = absf((want_node as Node2D).global_position.x - (prompt as Node2D).global_position.x)
+		_check(dx < 4.0, "提示应对准武器(横向偏 %.1f px)" % dx)
 	_check((prompt as Node2D).z_index > 0, "提示应压在武器之上(z_index > 0)")
 
 	# ② 走远 → 必须消失
@@ -130,3 +140,62 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 	for i in 5:
 		await get_tree().process_frame
 	_check(not bool(prompt.visible), "走出拾取半径后提示应消失(否则屏幕上会常驻一个 F)")
+
+
+# ── 丢弃(长按 Q 满 2s)──
+# ★ 双向钉:短按**不该**丢、长按满**必须**丢。只判"能丢"会把"碰一下 Q 就丢"放过去 ——
+#   那正是联机侧真实出现过的 bug(LocalInputSource 的 drop 读口报的是"Q 按着"而不是
+#   "满了的边沿",于是碰一下就丢、按住不放每 tick 丢一把)。
+func _phase_drop_hold(player: Node, lvl: Node) -> void:
+	# ★ 探针里 Level0 是**子节点**,而 `_try_drop()` 找的是 `get_tree().current_scene` ——
+	#   真机单机下那正是 Level0。不指过去的话 `_try_drop` 会走早退,测出来的是
+	#   "探针结构"而不是产品行为(第一次跑就是这么假红的)。
+	var prev_scene := get_tree().current_scene
+	get_tree().current_scene = lvl
+
+	var wep = player.weapons
+	wep.set_initial_inventory([1, 2])
+	for i in 3:
+		await get_tree().process_frame
+	var before: int = wep.inventory.held.size()
+	if before < 2:
+		_failures.append("丢弃前置:背包里应有 2 把(实际 %d)" % before)
+		get_tree().current_scene = prev_scene
+		return
+	var ground_before: int = get_tree().get_nodes_in_group("weapon_pickup").size()
+	print("[drop] current_scene=%s is_Level0=%s pvp_mode=%s" % [str(get_tree().current_scene), str(get_tree().current_scene is Level0), str(Level0.pvp_mode)])
+
+	# ① 短按 1.0s(< 2.0s 阈值)→ 不该丢
+	Input.action_press("Q")
+	for i in 10:
+		player._poll_pickup_drop(0.1)
+	Input.action_release("Q")
+	player._poll_pickup_drop(0.0)   # 松开一拍:复位长按计时/闩锁
+	_check(wep.inventory.held.size() == before,
+			"按住不足 2s 不该丢(实际 %d → %d)" % [before, wep.inventory.held.size()])
+
+	# ② 一次长按累计 4s(**中途不松手**)→ 只该丢**一把**,地上多一件。
+	#    ★ "中途不松手"是关键:松手再按是新的一次长按,再丢一把是**正确行为**
+	#      (第一版这里松了手,断言写成"只应丢一把",是测试自己错)。
+	Input.action_press("Q")
+	for i in 40:
+		player._poll_pickup_drop(0.1)
+	Input.action_release("Q")
+	await get_tree().process_frame
+	var after: int = wep.inventory.held.size()
+	var ground_after: int = get_tree().get_nodes_in_group("weapon_pickup").size()
+	_check(after == before - 1,
+			"长按满 2s 应丢一把、且**只丢一把**(实际 %d → %d;4s 里丢了两把 = 闩锁失效)" % [before, after])
+	_check(ground_after == ground_before + 1,
+			"丢下的那把应真的落到地上(实际 %d,期望 %d)" % [ground_after, ground_before + 1])
+
+	# ③ 空手后再长按:没东西可丢,不该崩也不该凭空多出东西
+	wep.set_initial_inventory([])
+	for i in 3:
+		await get_tree().process_frame
+	Input.action_press("Q")
+	for i in 40:
+		player._poll_pickup_drop(0.1)
+	Input.action_release("Q")
+	_check(true, "空手长按 Q 不崩")
+	get_tree().current_scene = prev_scene
