@@ -8,7 +8,10 @@ extends Node2D
 #   world_label / PickupPrompt 同款。★ 字号必须是 16 的倍数(项目硬约定)。
 # ★ 倒计时由持有方算好传进来(它才知道 `reload_time`),本类只管画。
 
-const RADIUS := 36.0
+const RADIUS := 24.0   # 用户 2026-09-16:36 → 26 → 24(环宽保持 9)
+# ★ 内径 = 2×(RADIUS - WIDTH/2) = 39px,而字号 32 的「0.5」约 48px 宽 —— **数字会溢出环外**。
+#   这是用户看实图后**明确选择**的(问过三选一,他选"就让溢出"),不是没调好。别把它"修"回
+#   小字号或大半径 —— 要动先问。
 const WIDTH := 9.0
 const FONT_SIZE := 32          # 16 的倍数
 const C_BACK := Color(0.42, 0.45, 0.50, 0.22)   # 灰、很透
