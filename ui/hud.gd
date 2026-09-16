@@ -257,16 +257,18 @@ func _refresh_weapon_boxes() -> void:
 
 
 func _build_weapon_slots(p: Node) -> void:
-	# 容量格子:**右下角**(用户 2026-09-16 从左上角挪来)。
+	# 容量格子:**左下角、武器框的正上方**(用户 2026-09-16:先挪到右下角,又要求挪回)。
+	#   底边贴着武器面板的顶边往上排。
 	_slots = WeaponSlots.attach_to(self, p.weapons)
-	_slots.anchor_left = 1.0
-	_slots.anchor_right = 1.0
+	var wrap_top: float = -260.0   # 武器面板顶边的 y(见 _build_weapon_display;面板自身会收缩)
+	_slots.anchor_left = 0.0
+	_slots.anchor_right = 0.0
 	_slots.anchor_top = 1.0
 	_slots.anchor_bottom = 1.0
-	_slots.offset_right = -MARGIN.x
-	_slots.offset_left = -MARGIN.x - WeaponSlots.PANEL_W
-	_slots.offset_bottom = -MARGIN.y
-	_slots.offset_top = -MARGIN.y - WeaponSlots.PANEL_H
+	_slots.offset_left = MARGIN.x
+	_slots.offset_right = MARGIN.x + WeaponSlots.PANEL_W
+	_slots.offset_bottom = wrap_top - 8.0
+	_slots.offset_top = _slots.offset_bottom - WeaponSlots.PANEL_H
 
 
 func _on_weapon_changed(_slot: int) -> void:
