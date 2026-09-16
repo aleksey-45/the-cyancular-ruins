@@ -129,6 +129,13 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 	_check(prompt != null, "能捡的那把武器应长出提示节点(懒建)")
 	if prompt == null:
 		return
+	if not bool(prompt.visible):
+		var pw: Vector2 = (player as Node2D).global_position
+		var pk := target as WeaponPickup
+		print("[prompt] 玩家=%s | 目标节点=%s canonical=%s vc=%s | 距vc=%.1f 距节点=%.1f (半径 %.0f)"
+				% [str(pw), str(pk.global_position), str(pk.canonical_pos), str(pk.visual_center()),
+				pw.distance_to(pk.visual_center()), pw.distance_to(pk.global_position),
+				PlayerParams.weapon_pickup_radius])
 	_check(bool(prompt.visible), "站在拾取半径内时提示应出现")
 	_check((prompt as Node2D).z_index > 0, "提示应压在武器之上")
 	# 提示挂在武器下、反向缩放抵消 WORLD_SCALE → 用 position 换算回世界单位比

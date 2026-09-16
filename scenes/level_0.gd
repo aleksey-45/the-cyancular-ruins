@@ -617,12 +617,20 @@ func _live_self_drops() -> Array:
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
 	# ★ 先把表里的 pos 刷成**视觉中心**(可见的枪在哪),判定与提示才与玩家看到的一致。
+	# ★★ 并且必须**先设锚点**:WeaponPickup 的 canonical_pos(权威,恒在 [0,MAP))与渲染位置
+	#   是两回事,渲染位置每帧由锚点锚到玩家的最近副本 —— 不设锚点的话跨接缝的枪会画在
+	#   地图另一头(屏幕外),表现就是"接缝附近的枪看不见/取模不对"。
+	#   (联机侧由 PvpMatchClient._tick_ground_weapons 做同一件事;这里原先漏了。)
+	var anchor: Vector2 = pl.global_position if pl != null else Vector2.ZERO
 	for inst in _pickup_nodes:
 		var n0 = _pickup_nodes.get(inst, null)
 		if n0 != null and is_instance_valid(n0):
+			var pk0 := n0 as WeaponPickup
+			pk0.set_anchor(anchor)
+			pk0.sync_render_from_canonical()
 			var e0: Dictionary = ground_weapons.get_entry(int(inst))
 			if not e0.is_empty():
-				e0["pos"] = (n0 as WeaponPickup).visual_center()
+				e0["pos"] = pk0.visual_center()
 	var self_drops := _live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
