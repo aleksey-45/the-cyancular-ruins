@@ -228,7 +228,7 @@ func _refresh_weapon_boxes() -> void:
 
 		var icon := TextureRect.new()
 		icon.texture = WeaponIcons.silhouette(t)
-		icon.custom_minimum_size = Vector2(96 if sel else 64, 60 if sel else 40)
+		icon.custom_minimum_size = Vector2(72 if sel else 58, 46 if sel else 36)   # 用户 2026-09-16「手枪被放太大了」→ 整体收一档
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
