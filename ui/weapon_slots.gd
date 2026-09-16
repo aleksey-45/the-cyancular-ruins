@@ -8,16 +8,17 @@ extends Control
 #   PvpHud 与 RoyaleHud 是**并列的两个 `extends CanvasLayer`**(没有继承关系),
 #   不存在"大乱斗复用 PvP 那块"这条路 —— 所以定位常量放在本文件里,三处引用同一组值。
 #
-# ★ 格子尺寸与字号都是 16 的倍数:kh_l4/kh_l5 的字号规范扫描覆盖 res://ui 与 res://tests。
+# ★ **字号**必须是 16 的倍数(kh_l4/kh_l5 的字号规范扫描覆盖 res://ui 与 res://tests,
+#   本文件不画字,故只受"别引入非 16 倍数字号载体"这一条约束)。格子**像素尺寸**不受该约定限制。
 
 const COLS := 4
 const ROWS := 2
-const CELL := 32.0        # 格子边长
-const GAP := 4.0          # 格间距
-const PAD := 8.0          # 底板内边距
+const CELL := 22.0        # 格子边长(用户 2026-09-16「缩小一点」:32 → 22)
+const GAP := 3.0          # 格间距
+const PAD := 6.0          # 底板内边距
 
-const PANEL_W := COLS * CELL + (COLS - 1) * GAP + PAD * 2.0   # 164.0
-const PANEL_H := ROWS * CELL + (ROWS - 1) * GAP + PAD * 2.0   # 84.0
+const PANEL_W := COLS * CELL + (COLS - 1) * GAP + PAD * 2.0   # 109.0
+const PANEL_H := ROWS * CELL + (ROWS - 1) * GAP + PAD * 2.0   # 59.0
 
 # 与全局 HUD 底板同值(黑 0.1,见 CLAUDE.md 的「HUD 元素一律垫半透明深底板」)。
 # 单机 HUD 的那块挂在既有 PanelContainer 底板上,这个值只被联机两处用到。

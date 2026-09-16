@@ -227,7 +227,8 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
-	Sfx.play("explosion")
+	# (原 `Sfx.play("explosion")` 已删 —— 用户 2026-09-16 要求去掉榴弹的爆炸音效。
+	#  本函数只服务爆炸弹(榴弹),所以这一行就是"榴弹爆炸音"的全部。)
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position

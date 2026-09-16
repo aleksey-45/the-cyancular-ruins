@@ -149,9 +149,12 @@ func _build_weapon_display(p: Node) -> void:
 	wrap.anchor_top = 1.0
 	wrap.anchor_bottom = 1.0
 	wrap.offset_left = MARGIN.x
-	wrap.offset_top = -260
 	wrap.offset_right = MARGIN.x + 300
 	wrap.offset_bottom = -MARGIN.y
+	# ★ 高度**收缩到内容**:offset_top 与底边齐平(零高),再由控件的"最小尺寸"
+	#   把它撑到正好装下那几个方框,配合 GROW_DIRECTION_BEGIN 向上长。
+	#   原先写死 -260 → 只有一把枪时也顶着一个巨大的空框(用户 2026-09-16 指出)。
+	wrap.offset_top = wrap.offset_bottom
 	wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	add_child(wrap)
 
@@ -188,6 +191,7 @@ func _refresh_weapon_boxes() -> void:
 	_weapon_icon = null
 	_weapon_name = null
 	var cur: int = _player.weapons.current_slot_int()
+	var held_index := 0
 	for e in _player.weapons.inventory.held:
 		var t := int(e["type"])
 		var sel := t == cur
@@ -200,11 +204,23 @@ func _refresh_weapon_boxes() -> void:
 		bs.content_margin_top = 4.0
 		bs.content_margin_bottom = 4.0
 		box.add_theme_stylebox_override("panel", bs)
+		box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		_weapon_box.add_child(box)
 
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 10)
 		box.add_child(row)
+
+		# 键位数字(最左):与数字键 1-4 一一对应,顺序 = 背包顺序
+		var key_lbl := Label.new()
+		UiFactory.style_control(key_lbl, WEAPON_FONT_SIZE if sel else 16)
+		key_lbl.add_theme_color_override("font_color",
+				UiFactory.C_TEXT if sel else UiFactory.C_TEXT_DIM)
+		key_lbl.custom_minimum_size = Vector2(24, 0)
+		key_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		key_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		key_lbl.text = str(held_index + 1)
+		row.add_child(key_lbl)
 
 		var icon := TextureRect.new()
 		icon.texture = WeaponIcons.silhouette(t)
