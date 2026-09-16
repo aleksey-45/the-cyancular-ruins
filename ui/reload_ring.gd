@@ -8,12 +8,12 @@ extends Node2D
 #   world_label / PickupPrompt 同款。★ 字号必须是 16 的倍数(项目硬约定)。
 # ★ 倒计时由持有方算好传进来(它才知道 `reload_time`),本类只管画。
 
-const RADIUS := 26.0
-const WIDTH := 6.0
-const FONT_SIZE := 16          # 16 的倍数
-const C_BACK := Color(0.0, 0.0, 0.0, 0.45)
-const C_ARC := Color(0.349, 0.851, 0.902, 1.0)   # 强调青(= 换弹语义的既有色)
-const C_TEXT := Color(0.93, 0.97, 1.0, 1.0)
+const RADIUS := 36.0
+const WIDTH := 9.0
+const FONT_SIZE := 32          # 16 的倍数
+const C_BACK := Color(0.42, 0.45, 0.50, 0.22)   # 灰、很透
+const C_ARC := Color(0.80, 0.84, 0.88, 0.78)    # 浅灰、半透明(用户 2026-09-16:改灰一点、透明一点)
+const C_TEXT := Color(0.93, 0.95, 0.97, 0.92)
 
 var _progress := 0.0
 var _remain := 0.0

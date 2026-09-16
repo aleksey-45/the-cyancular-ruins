@@ -766,4 +766,4 @@ func _update_reload_ring() -> void:
 	_reload_ring.set_progress(prog, w.reload_time * (1.0 - prog))
 
 
-const RELOAD_RING_OFFSET := Vector2(56.0, -26.0)   # 世界单位:x 朝"后侧"、y 朝上
+const RELOAD_RING_OFFSET := Vector2(58.0, -44.0)   # 世界单位:x 朝"后侧"、y 朝上(2026-09-16 上移)
