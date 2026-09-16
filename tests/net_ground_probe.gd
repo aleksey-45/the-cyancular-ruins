@@ -84,6 +84,16 @@ func _ready() -> void:
 	_check(_read("res://ui/pickup_prompt.gd").contains("const BOX"),
 			"PickupPrompt 常量不见了(文件被换?)")
 
+	# ③d 提示的"自己刚丢下的"排除:服务器要把 by_role 告诉客户端(那条 0.5s 冷却
+	#     只有权威知道),客户端要按它排除 —— 否则刚丢下的枪会显示 F 却捡不起来。
+	_check(_read("res://server/match_ground.gd").contains("\"by_role\":"),
+			"weapon_spawned 载荷里没有 by_role")
+	_check(_read("res://server/match_ground.gd").contains("_broadcast_weapon_spawned(ni, role)")
+			or _read("res://server/match_ground.gd").contains("_broadcast_weapon_spawned(inst, role)"),
+			"丢枪/换枪那条广播没带上角色")
+	_check(pmc.contains("_self_drop_until"), "客户端没记自己刚丢下的那把")
+	_check(clbody.contains("_live_self_drops"), "客户端的提示判定没排除自己刚丢下的")
+
 	# ④ 背包进整态:capture 里有 inv,而 `_close_enough` 里**没有**
 	_check(pl.contains("\"inv\""), "player.capture_state 里没有 inv")
 	_check(pl.contains("restore_inventory"), "player.restore_state 里没有重建背包")

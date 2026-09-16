@@ -250,6 +250,9 @@ func _on_match_sync(payload: Dictionary) -> void:
 # ── 地面武器(2026-09-15):服务器权威,本端只渲染 + 等事件(不做客户端预测)──
 var ground_weapons := GroundWeaponField.new()
 var _pickup_nodes: Dictionary = {}    # inst -> WeaponPickup
+var _self_drop_until: Dictionary = {} # inst -> 解禁时刻(ms):**自己刚丢下**的那把,
+                                      # 冷却期内不提示(与服务器 _live_self_drops 同口径;
+                                      # 不排的话刚丢下的枪会显示 F 却捡不起来)
 
 const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 
@@ -288,6 +291,9 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": int(data.get("mag", 0)),
 			"pos": node.canonical_pos, "vel": data.get("vel", Vector2.ZERO)})
 	_pickup_nodes[inst] = node
+	# 服务器告诉我们"这把是谁刚丢下的":若是**自己**,冷却期内不给提示(与它自己的判定一致)。
+	if int(data.get("by_role", -1)) == int(PvpSession.role):
+		_self_drop_until[inst] = Time.get_ticks_msec() 				+ int(PlayerParams.weapon_pickup_self_delay * 1000.0)
 
 
 func _remove_pickup_node(inst: int) -> void:
@@ -296,6 +302,7 @@ func _remove_pickup_node(inst: int) -> void:
 	if n != null and is_instance_valid(n):
 		n.queue_free()
 	_pickup_nodes.erase(inst)
+	_self_drop_until.erase(inst)
 
 
 # 每帧:① 把锚点推给所有地面武器(接缝另一侧的枪要画在身边那一份上);
@@ -326,6 +333,7 @@ func _tick_ground_weapons() -> void:
 # (那条只有权威知道),所以刚丢下的那把会短暂显示提示但捡不起来 —— 已知的小缺口,
 # 要消掉得让 `weapon_spawned` 带上 by_role。
 func _update_pickup_prompt(lp: Vector2) -> void:
+	var self_drops := _live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
 	for inst in _pickup_nodes:
@@ -334,7 +342,21 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 			continue
 		var pk := n as WeaponPickup
 		var can := false
-		if _local != null and _local.weapons.is_slot_enabled(int(pk.type_id)):
+		if _local != null and not _live_self_drops().has(int(inst)) 				and _local.weapons.is_slot_enabled(int(pk.type_id)):
 			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
+
+
+# 仍在冷却期内的"自己刚丢下的" inst(与服务器 MatchGround._live_self_drops 同口径)。
+func _live_self_drops() -> Array:
+	var out: Array = []
+	if _self_drop_until.is_empty():
+		return out
+	var now := Time.get_ticks_msec()
+	for inst in _self_drop_until.keys():
+		if int(_self_drop_until[inst]) > now:
+			out.append(inst)
+		else:
+			_self_drop_until.erase(inst)
+	return out

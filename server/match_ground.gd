@@ -85,12 +85,15 @@ func ground_weapons_payload() -> Array:
 	return ground_weapons.entries.duplicate(true)
 
 
-func _broadcast_weapon_spawned(inst: int) -> void:
+# by_role = 这把是**谁刚丢下的**(-1 = 开局铺的/无主)。客户端靠它排除"自己刚丢的那把"
+# —— 那条 0.5s 拾取冷却只有服务器知道,不告诉客户端的话,刚丢下的枪会**短暂显示 F
+# 却捡不起来**(提示与判定不一致)。
+func _broadcast_weapon_spawned(inst: int, by_role: int = -1) -> void:
 	var e: Dictionary = ground_weapons.get_entry(inst)
 	if e.is_empty():
 		return
 	_rpc_all("weapon_spawned", [{"inst": inst, "type_id": int(e["type_id"]),
-			"mag": int(e["mag"]), "pos": e["pos"], "vel": e["vel"]}])
+			"mag": int(e["mag"]), "pos": e["pos"], "vel": e["vel"], "by_role": by_role}])
 
 
 func _broadcast_weapon_removed(inst: int, by_role: int) -> void:
@@ -145,7 +148,7 @@ func _try_server_pickup(p: Node2D, role: int) -> void:
 				p.global_position + PlayerParams.weapon_drop_offset * Vector2(float(p.facing_direction), 1.0),
 				Vector2(PlayerParams.weapon_drop_speed * p.facing_direction, -PlayerParams.weapon_drop_up),
 				0, role)
-		_broadcast_weapon_spawned(ni)
+		_broadcast_weapon_spawned(ni, role)
 
 
 func _try_server_drop(p: Node2D, role: int) -> void:
@@ -158,7 +161,7 @@ func _try_server_drop(p: Node2D, role: int) -> void:
 			p.global_position + PlayerParams.weapon_drop_offset * Vector2(float(p.facing_direction), 1.0),
 			Vector2(PlayerParams.weapon_drop_speed * p.facing_direction, -PlayerParams.weapon_drop_up),
 			0, role)
-	_broadcast_weapon_spawned(ni)
+	_broadcast_weapon_spawned(ni, role)
 
 
 # 复活:从背包**随机**保留一条,其余在死亡点散开掉出(用户 2026-09-15 裁定)。
@@ -178,7 +181,7 @@ func _drop_all_but_one(p: Node2D, role: int) -> void:
 		var vel := Vector2(cos(ang), -absf(sin(ang))) * 380.0
 		var inst := _spawn_ground_weapon(int(e["type"]), int(e.get("mag", WeaponInventory.MAG_FULL)),
 				pos + Vector2(0.0, -12.0), vel, 0, role)
-		_broadcast_weapon_spawned(inst)
+		_broadcast_weapon_spawned(inst, role)
 
 
 # ── 初始分布 / 换局重置 ──
