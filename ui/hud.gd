@@ -208,16 +208,18 @@ func _refresh_weapon_boxes() -> void:
 		_weapon_box.add_child(box)
 
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
+		row.add_theme_constant_override("separation", 14)
 		box.add_child(row)
 
 		# 键位数字(最左):与数字键 1-4 一一对应,顺序 = 背包顺序
 		var key_lbl := Label.new()
-		UiFactory.style_control(key_lbl, WEAPON_FONT_SIZE if sel else 16)
+		# 用户 2026-09-16:数字太小、左右留白也太小 → 两态同字号(32,16 的倍数),
+		# 宽度给到 48 并居中(左右各留 ~16px),不再贴边。
+		UiFactory.style_control(key_lbl, WEAPON_FONT_SIZE)
 		key_lbl.add_theme_color_override("font_color",
 				UiFactory.C_TEXT if sel else UiFactory.C_TEXT_DIM)
-		key_lbl.custom_minimum_size = Vector2(24, 0)
-		key_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		key_lbl.custom_minimum_size = Vector2(48, 0)
+		key_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		key_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		key_lbl.text = str(held_index + 1)
 		row.add_child(key_lbl)

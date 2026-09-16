@@ -166,7 +166,11 @@ func _physics_process(delta: float) -> void:
 	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
 	var wslot := input_source.get_weapon_slot_pressed()
 	if wslot > 0:
-		weapons.equip(str(wslot))
+		# ★ 数字键选的是**背包第 N 把**(1-4),不是"武器类型 id"。
+		#   旧代码走 equip(str(wslot)) —— 那是按**类型**切的:按 2 会切到"步枪"这个类型,
+		#   而不管背包第 2 格是什么;更糟的是**背包里没有该类型时 equip 会凭空加一把**
+		#   (见它的"没有就加"分支)→ 按 3 白得一把重狙。这是背包化时漏改的消费点。
+		weapons.equip_index(wslot - 1)
 
 	# R 换弹:同样走 input_source 轮询(2026-09-15 起 PvP 也换弹,见 weapon_base 换弹段注释)。
 	# ★ 必须是轮询,不能像原先那样在 _unhandled_input 里读原始 InputEvent —— **权威服务器

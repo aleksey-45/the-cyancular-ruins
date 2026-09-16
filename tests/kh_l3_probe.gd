@@ -111,9 +111,11 @@ func _check_input_map() -> void:
 		if not InputMap.has_action(a):
 			continue
 		_check(InputMap.action_get_events(a).size() > 0, "动作 %s 没有任何按键绑定" % a)
-	# 5/6 的动作**必须保留**(见 WeaponComponent 的键位注释:退休的是读取,不是注册)
-	for a in ["5", "6"]:
-		_check(InputMap.has_action(a), "数字键动作 %s 被删了(它该保留,只是不再被读)" % a)
+	# ★ 5~0 的动作**已整体删除**(用户 2026-09-16:删掉一切原先的切换武器数字键设定,
+	#   现在数字键**只**表示"背包第 N 把")。反向钉住:它们不该再出现。
+	for a in ["5", "6", "7", "8", "9", "0"]:
+		_check(not InputMap.has_action(a),
+				"数字键动作 %s 又出现了 —— 现在只保留 1-4(背包第 N 把)" % a)
 
 
 # ── 1) 弹夹数值落位(逐把真实 tscn 实例)──────────────────────────────

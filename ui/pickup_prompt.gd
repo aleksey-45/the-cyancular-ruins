@@ -16,7 +16,7 @@ const BORDER := 3.0
 const FONT_SIZE := 32              # 16 的倍数(项目硬约定)(放大一档:16→32)
 const GAP_ABOVE := 64.0            # 浮在武器上方多高(世界单位)
 
-const C_BG := Color(0.055, 0.231, 0.247, 0.90)   # 深青底
+const C_BG := Color(0.24, 0.42, 0.46, 0.72)      # 底(用户 2026-09-16「太黑了」→ 提亮压透)
 const C_OUTER := Color(0.35, 0.85, 0.90, 1.0)    # 亮青外框
 const C_INNER := Color(0.20, 0.55, 0.62, 1.0)    # 稍暗的内框
 const C_TEXT := Color(0.92, 0.97, 1.0, 1.0)
