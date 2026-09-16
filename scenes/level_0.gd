@@ -616,6 +616,13 @@ func _live_self_drops() -> Array:
 #   每一把都会提示(踩到其中任何一把都能捡起来)。
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
+	# ★ 先把表里的 pos 刷成**视觉中心**(可见的枪在哪),判定与提示才与玩家看到的一致。
+	for inst in _pickup_nodes:
+		var n0 = _pickup_nodes.get(inst, null)
+		if n0 != null and is_instance_valid(n0):
+			var e0: Dictionary = ground_weapons.get_entry(int(inst))
+			if not e0.is_empty():
+				e0["pos"] = (n0 as WeaponPickup).visual_center()
 	var self_drops := _live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
@@ -628,6 +635,6 @@ func _update_pickup_prompt() -> void:
 		if pl != null and not self_drops.has(int(inst)):
 			if pl.weapons.is_slot_enabled(int(pk.type_id)):
 				var d := GridPathfinder.toroidal_delta_px(
-						pk.canonical_pos, pl.global_position, w, h).length()
+						pk.visual_center(), pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)

@@ -147,6 +147,12 @@ func _ready() -> void:
 	# 单机开局**空手**:武器全部散落在地图上,由 `Level0._ready` 铺(见 scatter_weapons)。
 	# 联机由 MatchHost 调 set_initial_inventory 发随机一把(见联机计划)。
 	weapons.set_initial_inventory([])
+	# 换弹圆环:挂在**自己**身上(一个接入点覆盖单机/PvP/大乱斗)。
+	# ★ 反向缩放抵消玩家根的 scale(2.5),让环按世界单位画;位置每帧按朝向贴到"后侧"。
+	_reload_ring = ReloadRing.new()
+	_reload_ring.scale = Vector2.ONE / scale.x
+	_reload_ring.visible = false
+	add_child(_reload_ring)
 	call_deferred("add_child", WaterFx.new())
 
 
@@ -174,6 +180,7 @@ func _physics_process(delta: float) -> void:
 
 	# F 捡起 / Q 长按丢弃。同样走 input_source 轮询(见 _poll_pickup_drop 的注释)。
 	_poll_pickup_drop(delta)
+	_update_reload_ring()
 
 	var mult := weapons.movement_multiplier()
 
@@ -630,6 +637,7 @@ func restart_at(spawn_cell: Vector2i) -> void:
 
 
 # ── 拾取 / 丢弃(2026-09-15,武器槽位计划)──
+var _reload_ring: ReloadRing = null   # 换弹圆环(角色后侧)
 var _drop_hold_t := 0.0     # Q 已按住多久
 var _drop_latched := false  # 本次长按是否已触发过(防按住不放连续丢)
 
@@ -738,3 +746,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	# (R 换弹**已从这里迁走** —— 2026-09-15 起走 _physics_process 的 input_source 轮询,
 	#  见那里的注释:读原始 InputEvent 的话权威服务器永远收不到。倒地时 R 仍是重载/复活,见上。)
+
+
+# 换弹圆环:角色**后侧**(背对朝向那一侧)显示,环心是带一位小数的倒计时。
+# ★ 挂在玩家本体上而不是 HUD:圆环要跟人走、且要压在角色附近的世界层里,
+#   一个接入点就覆盖所有模式(单机/PvP/大乱斗)。
+func _update_reload_ring() -> void:
+	if _reload_ring == null or not is_instance_valid(_reload_ring):
+		return
+	var w := weapons.current_weapon()
+	var prog := w.reload_progress() if w != null else -1.0
+	_reload_ring.visible = prog >= 0.0
+	if prog < 0.0:
+		return
+	var sc := maxf(absf(scale.x), 0.001)
+	# 世界单位偏移 ÷ 根缩放 = 本节点的局部偏移(环自己又反向缩放过,故视觉仍是世界单位)
+	_reload_ring.position = Vector2(-RELOAD_RING_OFFSET.x * float(facing_direction),
+			RELOAD_RING_OFFSET.y) / sc
+	_reload_ring.set_progress(prog, w.reload_time * (1.0 - prog))
+
+
+const RELOAD_RING_OFFSET := Vector2(56.0, -26.0)   # 世界单位:x 朝"后侧"、y 朝上

@@ -64,7 +64,6 @@ var _slots: WeaponSlots = null
 var _held_row: HBoxContainer = null   # 持有武器剪影行(当前那把白、其余灰)
 var _drop_bar: ColorRect = null   # 长按 Q 的丢弃进度条(与换弹条共用槽位、互斥显示)
 var _player: Node = null
-var _reload_bar: ColorRect = null
 var _bar_back: ColorRect = null
 var _ammo_low := false              # 残弹是否已进入「低弹量」金态(只在跨阈值时改色)
 
@@ -105,15 +104,9 @@ func _process(_delta: float) -> void:
 	# 弹量条整条消失的原因(闸门已删,见 weapon_base.gd 的换弹段注释)。
 	var show := w != null
 	_ammo_label.visible = show
-	# 换弹进度条:剪影下方细条,随进度填充;非换弹状态隐藏
-	var prog := -1.0
-	if show and w != null:
-		prog = w.reload_progress()
-	if _reload_bar != null:
-		_reload_bar.visible = prog >= 0.0
-		_bar_back.visible = prog >= 0.0
-		if prog >= 0.0:
-			_reload_bar.size.x = WEAPON_ICON_W * clampf(prog, 0.0, 1.0)
+	# ★ 换弹进度条**已取消**(用户 2026-09-16:改由角色旁的圆环倒计时提示,见 ui/reload_ring.gd)。
+	#   那条细条与"装填中…"文案一并去掉;丢弃进度条仍用这条槽位。
+	var prog := w.reload_progress() if (show and w != null) else -1.0
 
 	# 丢弃进度:长按 Q 时占用同一条槽位(换弹优先级更高 —— 换弹中不可能是丢弃)。
 	# ★ 没有反馈的两秒长按是不可用的:玩家会以为按键没生效,于是一直按着或放弃。
@@ -136,7 +129,9 @@ func _process(_delta: float) -> void:
 		_ammo_low = low
 		_ammo_label.add_theme_color_override("font_color",
 				UiFactory.C_WARN if low else UiFactory.C_TEXT)
-	_ammo_label.text = "装填中…" if w.is_reloading() else "%d/%d" % [w.mag_ammo, w.mag_size]
+	# ★ 换弹中**不再**改成"装填中…"(用户 2026-09-16:改用角色旁的圆环倒计时提示),
+	#   这里恒显示残弹/满弹。
+	_ammo_label.text = "%d/%d" % [w.mag_ammo, w.mag_size]
 
 
 # 左下角:当前武器纯白像素剪影 + 名称(HUD 游玩界面辨识)。
@@ -185,11 +180,7 @@ func _build_weapon_display(p: Node) -> void:
 	_bar_back.size = Vector2(WEAPON_ICON_W, 4)
 	_bar_back.visible = false
 	bar_holder.add_child(_bar_back)
-	_reload_bar = ColorRect.new()
-	_reload_bar.color = UiFactory.C_ACCENT   # 装填进度=强调青(金只留给「弹夹见底」)
-	_reload_bar.size = Vector2(0, 4)
-	_reload_bar.visible = false
-	bar_holder.add_child(_reload_bar)
+	# (原换弹进度条已删:改用角色旁的圆环倒计时,见 ui/reload_ring.gd)
 
 	# 丢弃进度条:同一条槽位,换弹进度条**之后**加(压在上面;
 	# 两者互斥显示 —— 换弹中不可能在丢弃,见 _process 的判据)

@@ -77,7 +77,7 @@ func _sync_ground_positions() -> void:
 		if n != null and is_instance_valid(n):
 			var e: Dictionary = ground_weapons.get_entry(int(inst))
 			if not e.is_empty():
-				e["pos"] = (n as Node2D).canonical_pos
+				e["pos"] = (n as WeaponPickup).visual_center()
 
 
 # 给 match_sync_data 的载荷(客户端进场拉取时一并拿到开局那批)。

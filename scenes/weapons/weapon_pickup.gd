@@ -38,6 +38,10 @@ var _age: float = 0.0
 #   所以两者分开:canonical_pos 永远在 [0,MAP)(权威,服务器与拾取判定读它),
 #   global_position 是**渲染位置**,每帧由 set_anchor() 给的锚点锚到最近副本。
 var canonical_pos: Vector2 = Vector2.ZERO
+# 视觉中心相对节点原点的偏移(**世界单位**)。★ 武器精灵在 tscn 里自带局部偏移
+# (手枪 (24,5.6)、步枪 (12,11)…× WORLD_SCALE),也就是**可见的枪并不画在节点原点**上。
+# 拾取判定与 F 提示都要以**看得见的那把枪**为准,否则会"看着够得着却捡不到/提示偏后"。
+var visual_offset: Vector2 = Vector2.ZERO
 var _anchor: Vector2 = Vector2.ZERO
 var _has_anchor: bool = false
 
@@ -125,7 +129,13 @@ func _build_collision() -> void:
 	cs.shape = rect
 	# RectangleShape2D 以**中心**定位,而 from_sprite 给的是左上角 → 补半个尺寸
 	cs.position = r.position + r.size * 0.5 + spr.position
+	visual_offset = cs.position * WORLD_SCALE
 	add_child(cs)
+
+
+# 这把枪**看起来**在世界的哪儿(节点原点 + 精灵偏移)。判定/提示都用它。
+func visual_center() -> Vector2:
+	return canonical_pos + visual_offset
 
 
 func _physics_process(delta: float) -> void:

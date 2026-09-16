@@ -120,7 +120,9 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 		return
 	var target: Node2D = pickups[0]
 	# ① 站到它身上(距离 0 必然在半径内)
-	(player as Node2D).global_position = target.global_position
+	# ★ 站到**视觉中心**(可见的枪在哪),不是节点原点 —— 两者差一个精灵偏移
+	#   (手枪约 60 世界像素),站原点会刚好擦出拾取半径外。
+	(player as Node2D).global_position = target.global_position + target.visual_offset
 	for i in 5:
 		await get_tree().process_frame
 	var prompt = target.get("_prompt")
@@ -146,6 +148,18 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 #   "满了的边沿",于是碰一下就丢、按住不放每 tick 丢一把)。
 func _phase_drop_hold(player: Node, lvl: Node) -> void:
 	var wep = player.weapons
+	# ★ 先把玩家摆到**一件已落地的武器**旁边并冻住物理:地面武器都是落到地板上的,
+	#   所以那个位置就是地面。不这么做的话玩家在半空、丢弃那段里会自己掉一千多像素,
+	#   而枪落在上面 —— 测出来是"玩家离所有枪都很远",看着像"捡不回来"(实测踩到)。
+	var picks0 := get_tree().get_nodes_in_group("weapon_pickup")
+	if picks0.is_empty():
+		_failures.append("丢弃前置:场上没有地面武器")
+		return
+	var anchor_pk: Node2D = picks0[0]
+	(player as Node2D).global_position = anchor_pk.global_position + anchor_pk.visual_offset
+	player.set_physics_process(false)
+	for i in 5:
+		await get_tree().process_frame
 	wep.set_initial_inventory([1, 2])
 	for i in 3:
 		await get_tree().process_frame
@@ -156,20 +170,24 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 	var ground_before: int = get_tree().get_nodes_in_group("weapon_pickup").size()
 	print("[drop] current_scene=%s is_Level0=%s pvp_mode=%s" % [str(get_tree().current_scene), str(get_tree().current_scene is Level0), str(Level0.pvp_mode)])
 
-	# ① 短按 1.0s(< 2.0s 阈值)→ 不该丢
+	# ★ 阈值按**参数**算,别写死秒数 —— 它改过两次(2.0 → 1.0 → 0.6),
+	#   写死会让断言在改参数后静默变成"测别的东西"(实测:改成 0.6 后"短按 1.0s"
+	#   反而**会**丢,三条断言一起红)。
+	var hold: float = PlayerParams.weapon_drop_hold_time
+	# ① 短按(阈值的一半)→ 不该丢
 	Input.action_press("Q")
-	for i in 10:
+	for i in int(hold * 10.0 * 0.5):
 		player._poll_pickup_drop(0.1)
 	Input.action_release("Q")
 	player._poll_pickup_drop(0.0)   # 松开一拍:复位长按计时/闩锁
 	_check(wep.inventory.held.size() == before,
 			"按住不足 2s 不该丢(实际 %d → %d)" % [before, wep.inventory.held.size()])
 
-	# ② 一次长按累计 4s(**中途不松手**)→ 只该丢**一把**,地上多一件。
+	# ② 一次长按累计 2×阈值(**中途不松手**)→ 只该丢**一把**,地上多一件。
 	#    ★ "中途不松手"是关键:松手再按是新的一次长按,再丢一把是**正确行为**
 	#      (第一版这里松了手,断言写成"只应丢一把",是测试自己错)。
 	Input.action_press("Q")
-	for i in 40:
+	for i in int(hold * 10.0 * 2.0) + 2:
 		player._poll_pickup_drop(0.1)
 	Input.action_release("Q")
 	await get_tree().process_frame
@@ -185,7 +203,49 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 	for i in 3:
 		await get_tree().process_frame
 	Input.action_press("Q")
-	for i in 40:
+	for i in int(hold * 10.0 * 2.0) + 2:
 		player._poll_pickup_drop(0.1)
 	Input.action_release("Q")
+	# ★ 松手后必须补一拍:闩锁(_drop_latched)只在"没按 Q"的那一拍复位 ——
+	#   漏了它,下一段的长按会被上一段的闩锁整个吞掉(实测:表现为"按了 Q 却丢不出去")。
+	player._poll_pickup_drop(0.0)
 	_check(true, "空手长按 Q 不崩")
+
+	# ④ ★ 丢下的那把**必须能再捡回来**(用户 2026-09-16 报"丢弃的武器无法再次装备")。
+	#    冷却期(weapon_pickup_self_delay)过后重新按 F —— 走向 try_pickup_for 的真实链路。
+	wep.set_initial_inventory([1])
+	for i in 3:
+		await get_tree().process_frame
+	Input.action_press("Q")
+	for i in int(hold * 10.0 * 2.0) + 2:
+		player._poll_pickup_drop(0.1)
+	Input.action_release("Q")
+	player._poll_pickup_drop(0.0)
+	await get_tree().process_frame
+	_check(wep.inventory.held.size() == 0, "应已把唯一那把丢出去(实际 %d)" % wep.inventory.held.size())
+	# 冷却 0.5s:等它过期(按帧等,别用真实时间 —— headless 帧率不定)
+	for i in 90:
+		await get_tree().process_frame
+		player._poll_pickup_drop(0.0)   # 让 _live_self_drops 有机会过期清表
+	var back_ok := false
+	for attempt in 12:
+		Input.action_press("F")
+		player._poll_pickup_drop(0.0)
+		player._try_pickup()
+		Input.action_release("F")
+		for i in 3:
+			await get_tree().process_frame
+		if not wep.inventory.held.is_empty():
+			back_ok = true
+			break
+	if not back_ok:
+		var lv = player.host_level()
+		var near: Dictionary = lv.ground_weapons.nearest_within(
+				(player as Node2D).global_position, PlayerParams.weapon_pickup_radius, [])
+		print("[repick] 场上 %d 件 | exclude=%s | 不排 excl 的最近一件=%s | 玩家 pos=%s"
+				% [lv.ground_weapons.size(), str(lv._live_self_drops()), str(near.get("pos", "-")),
+				str((player as Node2D).global_position)])
+		if not near.is_empty():
+			var nd = (near["pos"] as Vector2) - (player as Node2D).global_position
+			print("[repick] 最近那件距玩家 %.1f px(半径 %.0f)" % [nd.length(), PlayerParams.weapon_pickup_radius])
+	_check(back_ok, "丢下的那把应能再次捡起(背包仍空 = 冷却永不解除,或判定中心偏了)")
