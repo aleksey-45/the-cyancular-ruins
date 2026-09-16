@@ -77,10 +77,17 @@ func _ready() -> void:
 	# ── 有真实渲染时顺手取一张图,供**人眼**确认地上的枪真的画出来了 ──
 	# (headless 下 get_image() 返回 null,跳过;断言部分两条腿都能跑。)
 	# ★ 把玩家瞬移到最近的一件武器旁并冻住物理,否则他原地开始掉、枪早出画面了。
-	if DisplayServer.get_name() != "headless" and player != null and not all_pickups.is_empty():
+	# ★ **现查组**,别用 _ready 开头抓的 `all_pickups` —— 中间的丢弃/再捡阶段会
+	#   queue_free 掉其中一些,拿旧数组去 `as Node2D` 就是 "Trying to cast a freed object"
+	#   (只在带渲染这条路径上炸:headless 不走这段,所以那边一直是绿的)。
+	var live_pickups: Array = []
+	for q in get_tree().get_nodes_in_group("weapon_pickup"):
+		if is_instance_valid(q):
+			live_pickups.append(q)
+	if DisplayServer.get_name() != "headless" and player != null and not live_pickups.is_empty():
 		var best: Node2D = null
 		var best_d := 1e18
-		for p in all_pickups:
+		for p in live_pickups:
 			var d: float = (p as Node2D).global_position.distance_to((player as Node2D).global_position)
 			if d < best_d:
 				best_d = d

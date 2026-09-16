@@ -61,10 +61,9 @@ var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
 var _ammo_label: Label = null
 var _slots: WeaponSlots = null
-var _held_row: HBoxContainer = null   # 持有武器剪影行(当前那把白、其余灰)
+var _weapon_box: VBoxContainer = null  # 左下角:每把持有武器一个方框(上下并列)
 var _drop_bar: ColorRect = null   # 长按 Q 的丢弃进度条(与换弹条共用槽位、互斥显示)
 var _player: Node = null
-var _bar_back: ColorRect = null
 var _ammo_low := false              # 残弹是否已进入「低弹量」金态(只在跨阈值时改色)
 
 const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
@@ -87,9 +86,7 @@ func _ready() -> void:
 		if "weapons" in p:
 			_player = p
 			_build_weapon_display(p)
-			_build_weapon_slots(p)
-			p.weapons.weapon_changed.connect(_on_weapon_changed)
-			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
+			_build_weapon_slots(p)   # (信号连接与初始同步都在 _build_weapon_display 里做完)
 
 
 
@@ -117,7 +114,6 @@ func _process(_delta: float) -> void:
 		var dropping := dp > 0.0
 		_drop_bar.visible = dropping
 		if dropping:
-			_bar_back.visible = true
 			_drop_bar.size.x = WEAPON_ICON_W * clampf(dp, 0.0, 1.0)
 
 	if not show:
@@ -136,8 +132,9 @@ func _process(_delta: float) -> void:
 
 # 左下角:当前武器纯白像素剪影 + 名称(HUD 游玩界面辨识)。
 func _build_weapon_display(p: Node) -> void:
-	# 武器区也垫深底板:纯白剪影 + 浅蓝武器名和血条是同一个问题 —— 直接压在地图的
-	# 浅色开阔区上会被吃掉。
+	# 左下角:每把持有武器一个方框、**上下并列**(用户 2026-09-16)。
+	#   未选中 → 只有剪影(灰);选中 → 剪影(白) + 名称 + 残弹。
+	# 容量(4×2 槽位格子)另放**右下角**,见 _build_weapon_slots。
 	var wrap := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR
@@ -152,102 +149,112 @@ func _build_weapon_display(p: Node) -> void:
 	wrap.anchor_top = 1.0
 	wrap.anchor_bottom = 1.0
 	wrap.offset_left = MARGIN.x
-	wrap.offset_top = -112
+	wrap.offset_top = -260
 	wrap.offset_right = MARGIN.x + 300
 	wrap.offset_bottom = -MARGIN.y
 	wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	add_child(wrap)
 
-	var box := HBoxContainer.new()
-	box.add_theme_constant_override("separation", 12)
-	wrap.add_child(box)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 6)
+	wrap.add_child(col)
 
-	_weapon_icon = TextureRect.new()
-	_weapon_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_weapon_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_weapon_icon.custom_minimum_size = Vector2(WEAPON_ICON_W, 60)
-	_weapon_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	# 剪影与换弹进度条纵向排布
-	var icon_box := VBoxContainer.new()
-	icon_box.add_theme_constant_override("separation", 3)
-	box.add_child(icon_box)
-	icon_box.add_child(_weapon_icon)
-	var bar_holder := Control.new()
-	bar_holder.custom_minimum_size = Vector2(WEAPON_ICON_W, 5)
-	icon_box.add_child(bar_holder)
-	_bar_back = ColorRect.new()
-	_bar_back.color = Color(1, 1, 1, 0.22)
-	_bar_back.size = Vector2(WEAPON_ICON_W, 4)
-	_bar_back.visible = false
-	bar_holder.add_child(_bar_back)
-	# (原换弹进度条已删:改用角色旁的圆环倒计时,见 ui/reload_ring.gd)
-
-	# 丢弃进度条:同一条槽位,换弹进度条**之后**加(压在上面;
-	# 两者互斥显示 —— 换弹中不可能在丢弃,见 _process 的判据)
+	_weapon_box = col
+	# 丢弃进度条:挂在整列下方(与"哪把被选中"无关)
 	_drop_bar = ColorRect.new()
-	_drop_bar.color = UiFactory.C_DANGER   # 丢弃是破坏性操作;金已被「弹夹见底」独占
+	_drop_bar.color = UiFactory.C_DANGER
+	_drop_bar.custom_minimum_size = Vector2(WEAPON_ICON_W, 4)
 	_drop_bar.size = Vector2(0, 4)
 	_drop_bar.visible = false
-	bar_holder.add_child(_drop_bar)
+	col.add_child(_drop_bar)
 
-	_weapon_name = Label.new()
-	UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)   # 像素字体 + 字号(16 倍数)
-	_weapon_name.add_theme_color_override("font_color", UiFactory.C_TEXT)
-	_weapon_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_weapon_name.size_flags_vertical = Control.SIZE_FILL
-	box.add_child(_weapon_name)
-
-	# 残弹数(实验性换弹):名称右侧,"12/30";换弹时"装填中…"
-	_ammo_label = Label.new()
-	UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)    # 像素字体 + 字号(16 倍数)
-	_ammo_label.add_theme_color_override("font_color", UiFactory.C_TEXT)
-	_ammo_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_ammo_label.size_flags_vertical = Control.SIZE_FILL
-	_ammo_label.visible = false
-	box.add_child(_ammo_label)
-
-	# 持有武器剪影行(用户 2026-09-16):按**背包顺序**列出所有持有武器,
-	# 当前手持的那把白、其余灰。数据与顺序都来自 `inventory.held`(单一来源)。
-	_held_row = HBoxContainer.new()
-	_held_row.add_theme_constant_override("separation", 6)
-	box.add_child(_held_row)
-	p.weapons.inventory_changed.connect(_refresh_held_row)
-	p.weapons.weapon_changed.connect(func(_s: int) -> void: _refresh_held_row())
-	_refresh_held_row()
+	p.weapons.weapon_changed.connect(_on_weapon_changed)
+	p.weapons.inventory_changed.connect(_refresh_weapon_boxes)
+	_refresh_weapon_boxes()
 
 
-# 重建剪影行。★ 订阅了 inventory_changed 与 weapon_changed 两个信号 —— 前者管"有哪几把",
-# 后者管"哪把是当前"(切枪不改背包内容时只有一个信号会发)。
-func _refresh_held_row() -> void:
-	if _held_row == null or _player == null or _player.weapons == null:
+# 重建左下角那一列:每把持有武器一个方框,顺序 = 背包顺序。
+# ★ 每次都整体重建(数量少,最多 4 个)——比逐项 diff 简单,也不会漏同步。
+#   选中那个的残弹 Label 存进 `_ammo_label`,供 _process 每帧刷新。
+func _refresh_weapon_boxes() -> void:
+	if _weapon_box == null or _player == null or _player.weapons == null:
 		return
-	for c in _held_row.get_children():
-		_held_row.remove_child(c)
+	for c in _weapon_box.get_children():
+		if c == _drop_bar:
+			continue
+		_weapon_box.remove_child(c)
 		c.queue_free()
+	_ammo_label = null
+	_weapon_icon = null
+	_weapon_name = null
 	var cur: int = _player.weapons.current_slot_int()
 	for e in _player.weapons.inventory.held:
 		var t := int(e["type"])
-		var tr := TextureRect.new()
-		tr.texture = WeaponIcons.silhouette(t)
-		tr.custom_minimum_size = Vector2(56, 36)
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		tr.modulate = Color(1.0, 1.0, 1.0, 1.0) if t == cur else Color(0.45, 0.45, 0.50, 1.0)
-		_held_row.add_child(tr)
+		var sel := t == cur
+		var box := PanelContainer.new()
+		var bs := StyleBoxFlat.new()
+		bs.bg_color = Color(1, 1, 1, 0.06) if sel else Color(0, 0, 0, 0)
+		bs.set_corner_radius_all(0)
+		bs.content_margin_left = 8.0
+		bs.content_margin_right = 8.0
+		bs.content_margin_top = 4.0
+		bs.content_margin_bottom = 4.0
+		box.add_theme_stylebox_override("panel", bs)
+		_weapon_box.add_child(box)
+
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		box.add_child(row)
+
+		var icon := TextureRect.new()
+		icon.texture = WeaponIcons.silhouette(t)
+		icon.custom_minimum_size = Vector2(96 if sel else 64, 60 if sel else 40)
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		icon.modulate = Color(1, 1, 1, 1) if sel else Color(0.45, 0.45, 0.50, 1.0)
+		row.add_child(icon)
+
+		if sel:
+			# 选中的才有全部信息:名称 + 残弹
+			_weapon_icon = icon
+			var info := VBoxContainer.new()
+			info.add_theme_constant_override("separation", 2)
+			info.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			row.add_child(info)
+			_weapon_name = Label.new()
+			UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)
+			_weapon_name.add_theme_color_override("font_color", UiFactory.C_TEXT)
+			_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(t, "空手")
+			info.add_child(_weapon_name)
+			_ammo_label = Label.new()
+			UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)
+			_ammo_label.add_theme_color_override("font_color", UiFactory.C_TEXT)
+			info.add_child(_ammo_label)
+	# 丢弃条排到最下面
+	_weapon_box.move_child(_drop_bar, _weapon_box.get_child_count() - 1)
 
 
-# 4×2 武器槽位格子:挂在**既有武器区底板的正上方**(它是 HUD 自己的子节点,不是 wrap 的
-# —— PanelContainer 的子节点受容器布局摆布,自由 offset_* 会被覆盖)。
-# 位置常量在 WeaponSlots.attach_to 里,三处 HUD 共用同一组值。
 func _build_weapon_slots(p: Node) -> void:
+	# 容量格子:**右下角**(用户 2026-09-16 从左上角挪来)。
 	_slots = WeaponSlots.attach_to(self, p.weapons)
+	_slots.anchor_left = 1.0
+	_slots.anchor_right = 1.0
+	_slots.anchor_top = 1.0
+	_slots.anchor_bottom = 1.0
+	_slots.offset_right = -MARGIN.x
+	_slots.offset_left = -MARGIN.x - WeaponSlots.PANEL_W
+	_slots.offset_bottom = -MARGIN.y
+	_slots.offset_top = -MARGIN.y - WeaponSlots.PANEL_H
 
 
-func _on_weapon_changed(slot: int) -> void:
-	if _weapon_icon != null:
-		_weapon_icon.texture = WeaponIcons.silhouette(slot)
-		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "空手") if slot > 0 else "空手"
+func _on_weapon_changed(_slot: int) -> void:
+	# ★ 直接重建整个列表,别去改"某个缓存下来的 Label/Icon" —— 那两样在每次重建时都会被
+	#   queue_free,而**释放后的对象不是 null**,`!= null` 挡不住它,表现为
+	#   "Trying to cast a freed object"(实测踩到:weapon_changed 先于 inventory_changed 发射,
+	#   回调先摸到了上一轮的旧节点)。
+	_refresh_weapon_boxes()
+
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;条本身无边框。
 # 底板(PLATE_COLOR)铺在整排下面 —— 竖条之间那 1px 缝于是透出底板而不是地图,
