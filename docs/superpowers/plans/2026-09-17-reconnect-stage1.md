@@ -874,7 +874,7 @@ git commit -m 'fix(net): 1v1 端口归还延迟 30→120s(原值短于断线宽�
 
 **做法**（照 `tests/royale_c2_probe.tscn` 的先例：自当大厅/裁判 + 拉真 worker + 真客户端；**跑前确认 7777 空闲**）：
 
-- [ ] **Step 1: 四个相**
+- [ ] **Step 1: 六个相**
 
 ```
 ① 正向:客户端 A 主动 NetBus.stop() 模拟闪断 → 3s 后自动重连成功
@@ -885,7 +885,18 @@ git commit -m 'fix(net): 1v1 端口归还延迟 30→120s(原值短于断线宽�
 ③ 身体冻结:掉线后 3s 内,该 role 的玩家 global_position 不变
    ★ 这条钉的是 `_enter_grace` 里的 `reset_state()` —— 不调的话身体会保持掉线前的输入一直跑
 ④ 超时移出:让一个客户端掉线后**不回来**,断言 GraceWindow.DEFAULT_SECONDS 之后
-   worker 打了 mark_disconnected(大乱斗)/ 退了进程(1v1)
+   worker 打了 mark_disconnected / 对局收场
+⑤ ★ **大乱斗相(Task 5 审查指出的覆盖缺口)**:以上 ①②③ 必须在 `--royale` worker 上**再跑一遍**。
+   理由:阶段 1 没有任何任务在 RoyaleHost 形态下跑过 `_on_reclaim` —— 读码上两个覆写都合用
+   (`role_spawns()` 返回 `_round_spawns.duplicate()`、**无 `_spawned_once` 副作用**;
+   `_broadcast_round_state` 存在且只发在线 peer),但属**未实测**。
+⑥ ★ **启动等待态不得退出(Task 4 的 Critical 回归钉)**:启一个 `--royale` worker、**一个玩家都不连**,
+   断言在 1~3s 窗口内**没有**打印 `全员离开,大乱斗结束`、进程**未**退出。
+   ★ 为什么单列:Task 4 的 Critical 正是"开机约 1s 自杀",而实现者当时那个临时探针
+   **直接调 `_on_peer_left`/`_expire_graces` 断言其返回状态、没让 `_process` 真跑过开机态** ——
+   18 条断言全绿仍漏掉它。**这一相必须让真帧跑起来。**
+   ⚠️ 注意:空载 worker 会在 ~10s 后被既有的 M1 守卫(`可用玩家 <2 人 → 退出释放端口`)正当地退掉 ——
+   所以判据是"**1~3s 窗口内**不得以'全员离开,大乱斗结束'退出",**不是**"永不退出"。
 ```
 
 - [ ] **Step 2: 判据**
