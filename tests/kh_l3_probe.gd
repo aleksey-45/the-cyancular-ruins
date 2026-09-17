@@ -1,8 +1,11 @@
 extends ProbeBase
 
 # KH 合并 L3 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 600 res://tests/kh_l3_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l3_probe.tscn
 # 期望:打印 "KH L3 PROBE: ALL-OK" 且退出码 0。
 #
 # 存在理由:L3(换弹玩法 + 五把枪弹夹数值 + 武器槽位闸门 + 滚轮切枪 + 残弹记忆)落地后,
@@ -29,7 +32,7 @@ const EXPECTED := [
 	{"slot": 2, "path": "res://scenes/weapons/rifle_test.tscn", "name": "Rifle", "mag": 30, "reload": 1.8, "live": 0},
 	{"slot": 3, "path": "res://scenes/weapons/m82a1.tscn", "name": "M82A1", "mag": 5, "reload": 2.6, "live": 0},
 	{"slot": 4, "path": "res://scenes/weapons/s686.tscn", "name": "S686", "mag": 2, "reload": 2.2, "live": 0},
-	{"slot": 5, "path": "res://scenes/weapons/grenade_launcher.tscn", "name": "Grenade Launcher", "mag": 4, "reload": 2.8, "live": 3},
+	{"slot": 5, "path": "res://scenes/weapons/grenade_launcher.tscn", "name": "Grenade Launcher", "mag": 6, "reload": 2.8, "live": 3},
 	{"slot": 6, "path": "res://scenes/weapons/laser_gun.tscn", "name": "Laser Gun", "mag": 12, "reload": 1.2, "live": 0},
 ]
 
@@ -108,9 +111,11 @@ func _check_input_map() -> void:
 		if not InputMap.has_action(a):
 			continue
 		_check(InputMap.action_get_events(a).size() > 0, "动作 %s 没有任何按键绑定" % a)
-	# 5/6 的动作**必须保留**(见 WeaponComponent 的键位注释:退休的是读取,不是注册)
-	for a in ["5", "6"]:
-		_check(InputMap.has_action(a), "数字键动作 %s 被删了(它该保留,只是不再被读)" % a)
+	# ★ 5~0 的动作**已整体删除**(用户 2026-09-16:删掉一切原先的切换武器数字键设定,
+	#   现在数字键**只**表示"背包第 N 把")。反向钉住:它们不该再出现。
+	for a in ["5", "6", "7", "8", "9", "0"]:
+		_check(not InputMap.has_action(a),
+				"数字键动作 %s 又出现了 —— 现在只保留 1-4(背包第 N 把)" % a)
 
 
 # ── 1) 弹夹数值落位(逐把真实 tscn 实例)──────────────────────────────

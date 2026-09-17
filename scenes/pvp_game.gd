@@ -83,6 +83,7 @@ func _ready() -> void:
 	# (发送端 match_host 的 beam_fired 走 NetBus),别顺手把上面那行也统一到 NetBusExt。
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
+	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	# 小地图(设置开启时;位置提供器给本地玩家/对手副本)
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
@@ -191,6 +192,13 @@ func _on_round_state(data: Dictionary) -> void:
 				(b as Node).queue_free()
 		if _level0 != null and _level0.has_method("reset_destructibles"):
 			_level0.reset_destructibles()
+		# ★ 地面武器**不要在这里清**(曾经写过一版,又把刚到手的新一轮那批一起抹掉了):
+		#   服务器换局是「先 `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再**
+		#   `_broadcast_round_state`」,两条走同一条可靠通道、保序到达 —— 于是本条 round_state
+		#   到达时,新一轮那批**早已在本地建好了**,再清一次 = 第 2 局起客户端地面恒为空
+		#   (服务器有 10 把、客户端一把都看不见,只能捡后来的丢弃物 —— 正是要修的那个症状)。
+		#   清旧的这件事由服务器那两条**有序**事件负责;真漏收了,对局中途掉线重进会重新拉
+		#   match_sync 兜住。守卫见 tests/net_ground_probe.gd 的反向断言。
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
 		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可提前回主菜单,而下面

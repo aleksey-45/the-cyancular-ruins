@@ -89,29 +89,28 @@ func on_list_rooms(caller: int) -> void:
 		for peer_id in room.players:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": code, "players": room.players.size(), "names": names})
-	NetBus.rpc_id(caller, "room_list", arr)
+	NetBus.reply(caller, "room_list", arr)
 
 func _generate_code() -> String:
 	return "%04d" % (randi() % 10000)
 
 # 该 peer 现在**真的**能收包吗?
-# ★ 必须配合**延后一帧**使用(见各调用点的 call_deferred)——原因:
-#   往处于「正在连接(尚未成为可用 peer)/ 刚刚断开(ENet 层已断、MultiplayerAPI 的 peer_map
-#   还没收敛)」窗口的 peer 发包,会打 `Unable to send packet on channel 0, max channels: 0`
-#   且**包会丢** —— 那两种状态下目标 peer 的 channel_count 都是 0。
-#   而 multiplayer.get_peers() **挡不住**:实测它把这类 peer 仍报为在线(它随 MultiplayerAPI 的
-#   连接/断开信号更新,比 ENet 的真实状态晚一拍)。所以判早了等于没判。
+# ★ 2026-09-17 换了判据:以前读 `multiplayer.get_peers()`,实测它把"ENet 层已断、peer_map 还没
+#   收敛"的 peer 仍报为在线(随连接/断开信号更新,比 ENet 的真实状态晚一拍)→ 判早了等于没判,
+#   于是只能靠"延后一帧/再等一帧"躲窗口(那些 call_deferred/await 仍保留:它们同时还兜住
+#   「刚连上、还没 CONNECT」那一档)。现在改读 **ENet peer 自己的 state**(`NetBus.is_peer_live`),
+#   拆 peer 时它当场就变,不滞后 —— 这才是那条 `Unable to send packet on channel 0` 的正解。
 func is_peer_online(peer_id: int) -> bool:
-	return multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id)
+	return multiplayer.has_multiplayer_peer() and NetBus.is_peer_live(peer_id)
 
 func create_room(caller: int) -> void:
 	# 1v1/大乱斗互斥(自检 L5):同一客户端同时挂两种房会收到双重 go_match 互相覆盖
 	if royale_room_of(caller) != null:
-		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间,请先退出再创建 1v1 房间")
+		NetBus.reply(caller, "server_message", "你已在大乱斗房间,请先退出再创建 1v1 房间")
 		return
 	if _in_1v1_room(caller):
 		# 同 join_room:已在 1v1 房里不许再建,否则旧房无人认领变幽灵房(且玩家会收到双重 room_created)。
-		NetBus.rpc_id(caller, "server_message", "你已经在房间里了")
+		NetBus.reply(caller, "server_message", "你已经在房间里了")
 		return
 	var code := _generate_code()
 	while rooms.has(code):
@@ -123,11 +122,11 @@ func create_room(caller: int) -> void:
 	room.created_at = Time.get_unix_time_from_system()
 	rooms[code] = room
 	print("房间 %s 创建(房主 peer=%d)" % [code, caller])
-	NetBus.rpc_id(caller, "room_created", code)
+	NetBus.reply(caller, "room_created", code)
 
 func join_room(caller: int, code: String) -> void:
 	if not rooms.has(code):
-		NetBus.rpc_id(caller, "server_message", "房间不存在")
+		NetBus.reply(caller, "server_message", "房间不存在")
 		return
 	if _in_1v1_room(caller):
 		# 已在某个 1v1 房里就拒绝加入(含「加入自己刚建的房」:房主本就在 room.players 里,
@@ -136,23 +135,23 @@ func join_room(caller: int, code: String) -> void:
 		# 也顺带堵住「在 A 房还去加 B 房」留下的幽灵房。
 		# 正常流程不受影响:大厅页的「返回」与所有超时兜底都走 NetBus.stop() 断连,
 		# 断开即触发 on_peer_left 清房,重连后已不在任何房里。
-		NetBus.rpc_id(caller, "server_message", "你已经在房间里了")
+		NetBus.reply(caller, "server_message", "你已经在房间里了")
 		return
 	var room: Room = rooms[code]
 	if room.started:
 		# 已开局(worker 已拉起):双方已转连对局,列表残留期间拒绝第三人误入
-		NetBus.rpc_id(caller, "server_message", "房间已满")
+		NetBus.reply(caller, "server_message", "房间已满")
 		return
 	if room.players.size() >= 2:
-		NetBus.rpc_id(caller, "server_message", "房间已满")
+		NetBus.reply(caller, "server_message", "房间已满")
 		return
 	if royale_room_of(caller) != null:
-		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间,请先退出再加入 1v1 房间")
+		NetBus.reply(caller, "server_message", "你已在大乱斗房间,请先退出再加入 1v1 房间")
 		return
 	room.players.append(caller)
 	room.player_role[caller] = 2
 	print("房间 %s 加入(peer=%d)" % [code, caller])
-	NetBus.rpc_id(caller, "room_joined", 2)
+	NetBus.reply(caller, "room_joined", 2)
 	# 配对完成:交给 RoomManager 拉 worker + 发 go_match(它持有 launcher)。用信号而非直调 ——
 	# 那是本类与 RoomManager 之间唯一的「反向」需求,信号把它变成单向。
 	pairing_ready.emit(room)
@@ -176,7 +175,7 @@ func on_peer_left(peer_id: int) -> void:
 					# 判在线:本函数的调用方就是"有人刚断开",留下的这一方可能也在同批断开
 					# (双方收到 go_match 后一起断)——同步发给它会报 channel 错误(见 is_peer_online)
 					if is_peer_online(survivor):
-						NetBus.rpc_id(survivor, "server_message", "配对已取消(对手离开),请刷新列表")
+						NetBus.reply(survivor, "server_message", "配对已取消(对手离开),请刷新列表")
 			teardown_room(room)   # 延迟归还端口(worker 会自己退;见 WORKER_PORT_REUSE_DELAY)
 	# 大乱斗房:掉线即离房(空房关闭;房主掉线转移;开局后成员转连 worker 断开大厅属正常流转)
 	for rcode in royale_rooms.keys():
@@ -255,10 +254,10 @@ func _in_1v1_room(caller: int) -> bool:
 
 func royale_create(caller: int, opts: Dictionary) -> void:
 	if royale_room_of(caller) != null:
-		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间中")
+		NetBus.reply(caller, "server_message", "你已在大乱斗房间中")
 		return
 	if _in_1v1_room(caller):
-		NetBus.rpc_id(caller, "server_message", "你已在 1v1 房间,请先退出再创建大乱斗房间")
+		NetBus.reply(caller, "server_message", "你已在 1v1 房间,请先退出再创建大乱斗房间")
 		return
 	var code := _generate_code()
 	while royale_rooms.has(code):
@@ -286,23 +285,23 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 
 func royale_join(caller: int, code: String, invite: String) -> void:
 	if not royale_rooms.has(code):
-		NetBus.rpc_id(caller, "server_message", "房间不存在")
+		NetBus.reply(caller, "server_message", "房间不存在")
 		return
 	if royale_room_of(caller) != null:
-		NetBus.rpc_id(caller, "server_message", "你已在大乱斗房间中")
+		NetBus.reply(caller, "server_message", "你已在大乱斗房间中")
 		return
 	if _in_1v1_room(caller):
-		NetBus.rpc_id(caller, "server_message", "你已在 1v1 房间,请先退出再加入大乱斗房间")
+		NetBus.reply(caller, "server_message", "你已在 1v1 房间,请先退出再加入大乱斗房间")
 		return
 	var rr: RoyaleRoom = royale_rooms[code]
 	if rr.in_match:
-		NetBus.rpc_id(caller, "server_message", "对局已开始")
+		NetBus.reply(caller, "server_message", "对局已开始")
 		return
 	if rr.players.size() >= rr.max_players:
-		NetBus.rpc_id(caller, "server_message", "房间已满")
+		NetBus.reply(caller, "server_message", "房间已满")
 		return
 	if not rr.is_public and invite.strip_edges() != rr.invite_code:
-		NetBus.rpc_id(caller, "server_message", "邀请码错误")
+		NetBus.reply(caller, "server_message", "邀请码错误")
 		return
 	var role := 1
 	while rr.player_role.values().has(role):
@@ -347,7 +346,11 @@ func royale_list(caller: int) -> void:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": code, "players": rr.players.size(),
 				"max_players": rr.max_players, "names": names})
-	NetBusExt.rpc_id(caller, "royale_rooms", arr)
+	# 判活同 NetBus.reply:请求与断开可能挤在同一次 poll 里(见 NetBus.reply 的注释)。
+	# 本节点(NetBusExt)没有自己的 reply 助手 —— 判据是**跨节点的单一来源**(NetBus.is_peer_live),
+	# 所以这里显式判一次;大厅里其余 NetBusExt 站定走的是 `is_peer_online` 包一层。
+	if NetBus.is_peer_live(caller):
+		NetBusExt.rpc_id(caller, "royale_rooms", arr)
 
 #  精确且不需要任何特例函数。见 server_main.gd 文件头。)
 
@@ -401,7 +404,7 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 	if not msg.is_empty():
 		for peer_id in peers:
 			if is_peer_online(peer_id):
-				NetBus.rpc_id(peer_id, "server_message", msg)
+				NetBus.reply(peer_id, "server_message", msg)
 	if is_royale:
 		royale_rooms.erase(room.code)
 	else:

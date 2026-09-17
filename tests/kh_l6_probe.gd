@@ -128,6 +128,10 @@ const N_ATTR := "Combat" + "Feedback." + "attribute("
 # 归因的一体入口(attribute + hit_marker):激光两处结算路径已改走它。判据接受两者之一
 # —— 用意仍是「拦住裸 set_meta」,而不是钉死某一种写法(见不变量 14 的注释)。
 const N_ATTR_HIT := "Combat" + "Feedback." + "attribute_hit("
+# 命中标记:2026-09-17 起**敌人**路径的唯一反馈口(播报删除后敌人不再写归因 meta)。
+const N_HIT_MARKER := "Combat" + "Feedback." + "hit_marker("
+# KH 版替换统一归因入口的形态:裸写 meta(绕过 attribute 的时效戳)。拆开写是防自匹配。
+const N_RAW_META := "set_" + "meta(\"last_" + "damager\""
 const N_MENU_DEMO := "menu" + "_demo"
 # 扫描器自检用的"必然存在"标识符:同一次扫描里它必须被找到,否则"零命中"不可信
 const N_CANARY := "pvp" + "_mode"
@@ -543,7 +547,10 @@ func _check_beam_routing() -> void:
 	# **有意的不对称** —— 会**全绿**通过,而收端 NetBus 订阅此时已是静默 no-op。
 	# 取"同行"而非固定实参文本:广播表达式怎么改(peer 怎么取、rep 怎么组)都不假红。
 	var mh := _code_view(_read_host_union())
-	_check(not mh.is_empty(), "读不到 %s" % MH_PATHS)
+	# ★ 必须写成 `% [MH_PATHS]`:MH_PATHS 是**数组**,直接用 `% MH_PATHS` 会被当成
+	# "实参表"展开 —— 5 个元素对 1 个 %s → `String formatting error: not all arguments
+	# converted`(该 ERROR 会混进探针输出,把真失败淹掉)。同文件 :564 的写法是对的。
+	_check(not mh.is_empty(), "读不到 %s" % [MH_PATHS])
 	if not mh.is_empty():
 		var mh_lines := mh.split("\n")
 		var beam_sites := _find_lines(mh_lines, "\"" + N_BEAM + "\"")
@@ -690,45 +697,47 @@ func _check_no_menu_demo() -> void:
 	_summary(before, "零 menu_demo:扫 %d 个生产源文件,命中 %d(自检 canary %s ×%d)" % [files.size(), hits.size(), N_CANARY, canary])
 
 
-# ── 14) 激光归因仍走 CombatFeedback.attribute(不变量 14)──────────────
+# ── 14) 激光两条结算路径的反馈口在位(不变量 14)──────────────────────
 # T5 要在 `_apply_to_player` 尾部**追加** `notify_direct_hit`,而 KH 那版在同一处用的是
-# 裸 `set_meta`(main 用统一归因入口)。整段照抄 KH = 归因写端丢失(击杀/连杀归因的 3s 时效
-# 窗口没了)→ 只能追加,不得替换。
-# 判据:被调**双方**都要在 —— 调用点在 `_apply_to_player` 体内**且** __apply_to_enemy 体内,
-# 并且 `CombatFeedback` 这个类**真有**对应的方法(否则删掉实现,调用点照样绿)。
-# 接受两种写法:`attribute(`(原样)与 `attribute_hit(`(归因+命中标记一体入口,内部转调
-# attribute)。两者都满足「归因写端不丢」的用意;后者调用者更难写错顺序(两件事都必须在
-# 伤害调用之前),故不把新写法判红。
+# 裸 `set_meta`(main 用统一归因入口)。整段照抄 KH = 归因写端丢失(3s 时效窗口没了)→ 只能追加。
+#
+# ★ **2026-09-17 起敌人路径的契约变了**:单机击杀播报删除后,敌人身上的 `last_damager` 再无
+#   读者,故 `_apply_to_enemy` 改为只调 `hit_marker()`。不变量随之从"两边都写归因"拆成:
+#     · `_apply_to_player` —— 必须仍走归因口(大乱斗计分是它**唯一**的读者,丢了 = 击杀不计分)
+#     · `_apply_to_enemy`  —— 必须有反馈口 `hit_marker(`
+#     · 两条路径都**不得**出现裸 `set_meta`(那正是 KH 版替换统一入口的形态)
+#   并把"必须有对应方法"这条一起留着(否则删掉实现、调用点照样绿)。
+# 玩家侧接受两种写法:`attribute(`(原样)与 `attribute_hit(`(归因+命中标记一体入口)。
 func _check_laser_attribution() -> void:
 	var before := _failures.size()
 	var code := _code_view(_read(LASER))
 	_check(not code.is_empty(), "读不到 %s" % LASER)
-	var n := 0
-	var n_hit := 0
 	if not code.is_empty():
-		for fn in ["_apply" + "_to_player", "_apply" + "_to_enemy"]:
-			var body := _func_body(code, fn)
-			if body.is_empty():
-				continue
-			if body.contains(N_ATTR):
-				n += 1
-			elif body.contains(N_ATTR_HIT):
-				n += 1
-				n_hit += 1
-			else:
-				_check(false, "%s 的 %s() 里既没有 `%s` 也没有 `%s`(被 KH 的裸 set_meta 换掉了 → 归因写端丢失)"
-						% [LASER, fn, N_ATTR, N_ATTR_HIT])
-		_check(n == 2, "`%s`/`%s` 只命中 %d/2 个结算路径(追加而非替换:两条都必须在)" % [N_ATTR, N_ATTR_HIT, n])
+		var fn_p := "_apply" + "_to_player"
+		var fn_e := "_apply" + "_to_enemy"
+		var pb := _func_body(code, fn_p)
+		var eb := _func_body(code, fn_e)
+		_check(not pb.is_empty(), "%s 里找不到 %s()" % [LASER, fn_p])
+		_check(not eb.is_empty(), "%s 里找不到 %s()" % [LASER, fn_e])
+		_check(pb.contains(N_ATTR) or pb.contains(N_ATTR_HIT),
+				"%s 的 %s() 里既没有 `%s` 也没有 `%s`(玩家侧归因写端丢失 → 大乱斗击杀不计分)"
+						% [LASER, fn_p, N_ATTR, N_ATTR_HIT])
+		_check(eb.contains(N_HIT_MARKER),
+				"%s 的 %s() 里没有 `%s`(敌人命中反馈丢失)" % [LASER, fn_e, N_HIT_MARKER])
+		for fn in [fn_p, fn_e]:
+			_check(not _func_body(code, fn).contains(N_RAW_META),
+					"%s 的 %s() 里出现裸 `%s`(KH 那版替换统一归因入口的形态 → 时效窗口丢失)"
+							% [LASER, fn, N_RAW_META])
 	var cf := load(CF_PATH) as GDScript
 	_check(cf != null, "载入 %s 失败" % CF_PATH)
 	if cf != null:
 		_check(_method_info(cf, "attribute") != null, "%s 缺 attribute(...)(调用点还在,口没了)" % CF_PATH)
-		# 走 attribute_hit 的路径:那个口也必须在(否则调用点照样绿,实现却被删了)
-		if n_hit > 0:
+		_check(_method_info(cf, "hit_marker") != null, "%s 缺 hit_marker(...)(调用点还在,口没了)" % CF_PATH)
+		# 玩家路径若走一体入口,那个口也必须在(否则调用点照样绿,实现却被删了)
+		if not code.is_empty() and _func_body(code, "_apply" + "_to_player").contains(N_ATTR_HIT):
 			_check(_method_info(cf, "attribute_hit") != null,
 					"%s 缺 attribute_hit(...)(调用点还在,口没了)" % CF_PATH)
-	_summary(before, "激光归因:%s 在 %d/2 条结算路径(其中 attribute_hit %d 处),in %s 的归因口在位"
-			% [N_ATTR, n, n_hit, CF_PATH])
+	_summary(before, "激光结算:玩家路径归因口在位、敌人路径 %s 在位、无裸 set_meta" % N_HIT_MARKER)
 
 
 # ── 15) 头顶名统一 NAME_COLOR(U1 的决定 / B13)─────────────────────────

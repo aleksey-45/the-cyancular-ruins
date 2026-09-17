@@ -60,6 +60,10 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 		WorldBuilder.load_grid()
 	var spawns := plan_spawns(role_peers.keys() + ai_roles)
 	for role in role_peers:
+		# 判活:与 MatchBootstrap.start_on 同款 —— 报到与开局之间客户端可能已经断开,
+		# 而定向可靠包发往正在断开的 peer 就是那条 channel 0 错误(判据见 NetBus.is_peer_live)。
+		if not NetBus.is_peer_live(role_peers[role]):
+			continue
 		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
 		NetBus.rpc_id(role_peers[role], "server_message", "大乱斗开始")
 	# 把**同一份**散点传进宿主:它据此摆位,而上面已把同一份经 match_start 广播给客户端。
@@ -335,7 +339,17 @@ func _match_winner() -> int:
 	var best_role := 0
 	var best_n := -1
 	var tie := false
+	# ★ 候选 = **还在场的 ∪ 计过分的**(含已离开者)—— 2026-09-17 按用户要求改成"按分判胜"。
+	#   原实现只遍历 `players`,而 `mark_disconnected` 会先把退出者 `erase` 掉 → 剩 1 人时
+	#   **独行者必胜、与比分无关**(B 击杀再多,一退出就是 A 胜;`_scores[B]` 还在却没人读)。
+	#   现在把已离开但计过分的 role 一起纳入比较:分高者胜,分平(含全场 0 杀)则平局。
+	#   `_scores` **不在** `mark_disconnected` 的清理范围内,所以离开者的分数天然还在。
+	var candidates := {}
 	for role in players:
+		candidates[int(role)] = true
+	for role in _scores:
+		candidates[int(role)] = true
+	for role in candidates:
 		var n: int = int(_scores.get(role, 0))
 		if n > best_n:
 			best_n = n
@@ -420,7 +434,7 @@ func mark_disconnected(role: int) -> void:
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	# 归因写入统一走 main 的单一入口(它同时写 last_damager + last_damager_time)。
 	# 本覆写不可省:服务器子弹撞玩家时掩码不含玩家层,只经 _adjudicate_bullets 到这里,
-	# bullet_base._register_player_hit 不会跑 → 必须由本处写 meta,否则击杀归因丢失。
+	# 子弹自己的反馈路径不会跑 → 必须由本处写 meta,否则击杀归因丢失。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
 

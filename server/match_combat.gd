@@ -160,7 +160,9 @@ func notify_direct_hit(shooter: Node, victim: Node) -> void:
 			victim_role = int(role)
 	if shooter_role < 0 or victim_role < 0 or shooter_role == victim_role:
 		return
-	if peer_by_role.has(shooter_role):
+	# 判活走 `NetBus.is_peer_live`(读 ENet peer 自己的 state),不是 `get_peers()`:后者滞后,
+	# 挡不住"往已拆掉的 peer 发**定向**包"→ 那条 `Unable to send packet on channel 0`。
+	if peer_by_role.has(shooter_role) and NetBus.is_peer_live(peer_by_role[shooter_role]):
 		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, victim_role)
 
 
@@ -176,7 +178,7 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 			shooter_role = int(r)
 			break
 	if shooter_role != 0 and peer_by_role.has(shooter_role) \
-			and multiplayer.get_peers().has(peer_by_role[shooter_role]):
+			and NetBus.is_peer_live(peer_by_role[shooter_role]):
 		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, _victim_role)
 	bullet.queue_free()
 
@@ -186,7 +188,10 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 
 func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	for r in peer_by_role:
-		NetBus.rpc_id(peer_by_role[r], "hit_event", role, damage, source_pos)
+		# 判活:这是**每次伤害**都发的定向包(交火时最密的一处),原先完全不判 ——
+		# 往"正在断开"的 peer 发就是那条 channel 0 错误(判据为何不能用 get_peers 见 NetBus)。
+		if NetBus.is_peer_live(peer_by_role[r]):
+			NetBus.rpc_id(peer_by_role[r], "hit_event", role, damage, source_pos)
 
 # ── 回合制 ──
 

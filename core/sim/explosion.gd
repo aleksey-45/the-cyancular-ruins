@@ -22,9 +22,10 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		var dmg := _falloff(d, radius, max_damage) * cover * wmult
 		if dmg <= 0:
 			continue
-		# 归因 + 命中标记的一体入口:★必须在 hurt 之前 —— 一击致死时 hurt 同帧判死,
-		# _begin_death 当场读 last_damager 播报,写在之后则 meta 尚不存在 →「击杀 XXX」静默丢失。
-		CombatFeedback.attribute_hit(e, shooter)
+		# 命中标记(屏幕中心 X)。★ 敌人侧**不写** last_damager 归因 —— 那个 meta 原先的
+		# 唯一读者是单机击杀播报(notify_enemy_killed),播报 2026-09-17 删除后写入即死数据。
+		# 玩家分支的 attribute() 保留:大乱斗 RoyaleHost 靠它判击杀分。
+		CombatFeedback.hit_marker()
 		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
 				_falloff(d, radius, max_knockback) * cover * wmult, true)

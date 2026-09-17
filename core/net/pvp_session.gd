@@ -15,6 +15,13 @@ static var player_name: String = "Anon"   # 匹配界面输入的昵称(默认 A
 static var map_path: String = ""       # 服务器定图:worker 在 match_start 里下发,对局场景加载同名文件
 static var spawn: Vector2i = Vector2i(-1, -1)   # 本端出生点(match_sync 下发,与服务器同源)
 
+# ── 断线重连(2026-09-17)──
+# ★ 与本文件的其他字段一样:**加之前先 grep 确认有读者**。
+#   token      : 大厅生成、随 session_token 下发;claim 时报给 worker;重连时用来 reclaim
+#   worker_port: 客户端重连要直连**同一个端口**,不重新走大厅(局内自动重连那条路径)
+static var token: String = ""
+static var worker_port: int = 0
+
 # ── 「本局禁了哪些枪」的权威在哪(2026-09-14 加,别再四处找)──
 #   · 联机对局:**服务器 MatchHost**。客户端侧的真生效点是
 #     `player.weapons.set_enabled_slots(disabled)` —— 在 `pvp_client._apply_match_options` /
@@ -43,3 +50,5 @@ static func reset() -> void:
 	role = 1
 	map_path = ""
 	spawn = Vector2i(-1, -1)
+	token = ""
+	worker_port = 0

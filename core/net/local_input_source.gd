@@ -50,7 +50,10 @@ func _pickup_pressed_raw() -> bool:
 	return Input.is_action_just_pressed("F")
 
 func _drop_pressed_raw() -> bool:
-	# ★ 这里报的是"Q 键现在是否按着",**不是**"长按满了" —— 长按计时在 player.gd 的
-	#   物理帧里做(那才有确定的 delta),满了才把它当成一次边沿用。
-	#   非本地实现(PacketInputSource)拿到的直接是"满了"的边沿。
-	return Input.is_action_pressed("Q")
+	# ★ 报的是"长按满了一次"的**边沿**,不是"Q 现在按着" ——
+	#   后者会让联机端**一碰 Q 就丢枪**(长按 2s 的规则形同虚设),而且按住不放会每 tick
+	#   都发一次,把背包一把把丢光。计时在 player.gd 里(那里有确定的物理 delta),
+	#   满了由 player 调 mark_drop_edge() 打标;这里读一次即清。
+	var v := _drop_edge
+	_drop_edge = false
+	return v

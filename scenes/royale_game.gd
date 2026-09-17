@@ -69,6 +69,7 @@ func _ready() -> void:
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
+	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
@@ -82,7 +83,9 @@ func _ready() -> void:
 				return arr)
 		add_child(minimap)
 	# HUD(左上角击杀排行榜)+ Esc 菜单
-	_hud = RoyaleHud.new()
+	# ★ 声明式场景实例化,不能 RoyaleHud.new() —— 那个建出来的 CanvasLayer 没有子节点,
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,见 tests/hud_declarative_probe)。
+	_hud = preload("res://ui/royale_hud.tscn").instantiate() as RoyaleHud
 	add_child(_hud)
 	_pause_menu = PauseMenu.new(true)
 	# 本地输入锁必须宿主接线:PvP 不暂停树,不锁就是"菜单开着还能边跑边开枪"。

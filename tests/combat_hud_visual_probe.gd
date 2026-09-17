@@ -1,8 +1,11 @@
 extends Control
 
 # 对局内 HUD(PvpHud / RoyaleHud)视觉验收探针(**必须带真实渲染,不能加 --headless**)。
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --path . --quit-after 900 res://tests/combat_hud_visual_probe.tscn
+#   "$GODOT" --path . --quit-after 3600 res://tests/combat_hud_visual_probe.tscn
 # 把两块对局 HUD 的关键状态定格成 PNG 交给控制者读图,同时打数值断言:
 #   _hud_1_pvp_playing.png  1v1 记分条 + 延迟(PLAYING)
 #   _hud_2_pvp_broadcast.png 1v1 中央广播(倒计时巨字)
@@ -17,6 +20,7 @@ const MAP_OPEN_COLOR := Color(0.47, 0.588, 0.624)   # ≈#78969F,实测取的地
 
 const OUT_DIR := "res://.superpowers/sdd"
 const PVP_HUD_SCENE := "res://ui/pvp_hud.tscn"
+const ROYALE_HUD_SCENE := "res://ui/royale_hud.tscn"
 
 var _failures: Array[String] = []
 
@@ -39,7 +43,9 @@ func _run_round() -> void:
 	# 否则 PvP 的中央倒计时广播会串进大乱斗那张,读图时无法判断哪条属于哪套。
 	var pvp: CanvasLayer = (load(PVP_HUD_SCENE) as PackedScene).instantiate()
 	add_child(pvp)
-	var royale: RoyaleHud = RoyaleHud.new()
+	# ★ 声明式场景实例化,不能 RoyaleHud.new():.new() 建出来的节点没有子节点,
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11)。
+	var royale: RoyaleHud = (load(ROYALE_HUD_SCENE) as PackedScene).instantiate() as RoyaleHud
 	add_child(royale)
 	royale.visible = false
 	await _frames(3)

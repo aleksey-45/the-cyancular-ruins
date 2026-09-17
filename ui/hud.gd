@@ -19,7 +19,8 @@ const WEAPON_FONT_SIZE := 32    # 武器名/残弹数;同上(32 = 2×16)
 # 像素字体(Less Perfect DOS VGA,8×16 经典 VGA 计数器)与「关抗锯齿/微调/子像素」三件套
 # 的唯一来源是 UiFactory.style_control(内部走 core/pixel_font.gd 的 PixelFont.shared())——
 # 本文件不再自己 load 字体、不自己设字号,字号规范才守得住(见 ui_factory.gd 文件头)。
-const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
+# (原先还有 `const KILL_MARGIN := Vector2(32, 16)` —— 右上角内边距。它已随计数器的锚点
+#  迁进 ui/kill_counter.tscn 的 offset_left/offset_top,本文件不再引用,故删除不留死声明。)
 # HUD 底板:武器区 / 血条 / 氧条 / 右上角击杀数,**四处共用这一个值**
 # (用户 2026-09-15 定为 0.15、同日又下调到 0.1;当天这几个元素先被去掉底板、又垫回来)。
 # ★ 这个值**对局内 HUD 也生效** —— 大乱斗 ping/提示条(royale_hud 的 `_plate_box`)、
@@ -61,13 +62,18 @@ var _weapon_icon: TextureRect = null
 var _weapon_name: Label = null
 var _ammo_label: Label = null
 var _slots: WeaponSlots = null
+var _weapon_box: VBoxContainer = null  # 左下角:每把持有武器一个方框(上下并列)
 var _drop_bar: ColorRect = null   # 长按 Q 的丢弃进度条(与换弹条共用槽位、互斥显示)
 var _player: Node = null
-var _reload_bar: ColorRect = null
-var _bar_back: ColorRect = null
 var _ammo_low := false              # 残弹是否已进入「低弹量」金态(只在跨阈值时改色)
 
 const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
+
+# 右上角击杀计数器的**骨架**在场景里(右上锚点/生长方向看得见);字体与底色仍由本文件给 ——
+# 写进 .tscn 就绕开 UiFactory 的字号纪律(16 的倍数那条闸门扫的是 .gd 与 .tscn,但
+# style_control 才是带 PixelFont.shared() 锐化+CJK 回退的那条路),且 PLATE_COLOR 会在
+# 场景里变成又一份调色板字面量。**本场景无脚本**,故 hud.gd preload 它不构成循环引用。
+const KILL_COUNTER_SCENE := preload("res://ui/kill_counter.tscn")
 
 func _ready() -> void:
 	layer = LAYER
@@ -87,9 +93,7 @@ func _ready() -> void:
 		if "weapons" in p:
 			_player = p
 			_build_weapon_display(p)
-			_build_weapon_slots(p)
-			p.weapons.weapon_changed.connect(_on_weapon_changed)
-			_on_weapon_changed(p.weapons._current_slot)   # 初始同步(首把枪可能未经 equip)
+			_build_weapon_slots(p)   # (信号连接与初始同步都在 _build_weapon_display 里做完)
 
 
 
@@ -104,15 +108,9 @@ func _process(_delta: float) -> void:
 	# 弹量条整条消失的原因(闸门已删,见 weapon_base.gd 的换弹段注释)。
 	var show := w != null
 	_ammo_label.visible = show
-	# 换弹进度条:剪影下方细条,随进度填充;非换弹状态隐藏
-	var prog := -1.0
-	if show and w != null:
-		prog = w.reload_progress()
-	if _reload_bar != null:
-		_reload_bar.visible = prog >= 0.0
-		_bar_back.visible = prog >= 0.0
-		if prog >= 0.0:
-			_reload_bar.size.x = WEAPON_ICON_W * clampf(prog, 0.0, 1.0)
+	# ★ 换弹进度条**已取消**(用户 2026-09-16:改由角色旁的圆环倒计时提示,见 ui/reload_ring.gd)。
+	#   那条细条与"装填中…"文案一并去掉;丢弃进度条仍用这条槽位。
+	var prog := w.reload_progress() if (show and w != null) else -1.0
 
 	# 丢弃进度:长按 Q 时占用同一条槽位(换弹优先级更高 —— 换弹中不可能是丢弃)。
 	# ★ 没有反馈的两秒长按是不可用的:玩家会以为按键没生效,于是一直按着或放弃。
@@ -123,7 +121,6 @@ func _process(_delta: float) -> void:
 		var dropping := dp > 0.0
 		_drop_bar.visible = dropping
 		if dropping:
-			_bar_back.visible = true
 			_drop_bar.size.x = WEAPON_ICON_W * clampf(dp, 0.0, 1.0)
 
 	if not show:
@@ -135,13 +132,16 @@ func _process(_delta: float) -> void:
 		_ammo_low = low
 		_ammo_label.add_theme_color_override("font_color",
 				UiFactory.C_WARN if low else UiFactory.C_TEXT)
-	_ammo_label.text = "装填中…" if w.is_reloading() else "%d/%d" % [w.mag_ammo, w.mag_size]
+	# ★ 换弹中**不再**改成"装填中…"(用户 2026-09-16:改用角色旁的圆环倒计时提示),
+	#   这里恒显示残弹/满弹。
+	_ammo_label.text = "%d/%d" % [w.mag_ammo, w.mag_size]
 
 
 # 左下角:当前武器纯白像素剪影 + 名称(HUD 游玩界面辨识)。
 func _build_weapon_display(p: Node) -> void:
-	# 武器区也垫深底板:纯白剪影 + 浅蓝武器名和血条是同一个问题 —— 直接压在地图的
-	# 浅色开阔区上会被吃掉。
+	# 左下角:每把持有武器一个方框、**上下并列**(用户 2026-09-16)。
+	#   未选中 → 只有剪影(灰);选中 → 剪影(白) + 名称 + 残弹。
+	# 容量(4×2 槽位格子)另放**右下角**,见 _build_weapon_slots。
 	var wrap := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR
@@ -156,76 +156,154 @@ func _build_weapon_display(p: Node) -> void:
 	wrap.anchor_top = 1.0
 	wrap.anchor_bottom = 1.0
 	wrap.offset_left = MARGIN.x
-	wrap.offset_top = -112
-	wrap.offset_right = MARGIN.x + 300
+	wrap.offset_right = MARGIN.x + 344
 	wrap.offset_bottom = -MARGIN.y
+	# ★ 高度**收缩到内容**:offset_top 与底边齐平(零高),再由控件的"最小尺寸"
+	#   把它撑到正好装下那几个方框,配合 GROW_DIRECTION_BEGIN 向上长。
+	#   原先写死 -260 → 只有一把枪时也顶着一个巨大的空框(用户 2026-09-16 指出)。
+	wrap.offset_top = wrap.offset_bottom
 	wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	add_child(wrap)
+	_weapon_wrap = wrap
+	# 容量格子贴的是**面板的实际顶边**,而面板高度随内容收缩(上面那段) → 布局一变就要重新贴。
+	# 面板只在"持有的把数变了"时才改高,故 resized 的触发频率 = 捡/丢枪的次数,可忽略。
+	wrap.resized.connect(_place_weapon_slots)
 
-	var box := HBoxContainer.new()
-	box.add_theme_constant_override("separation", 12)
-	wrap.add_child(box)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 6)
+	wrap.add_child(col)
 
-	_weapon_icon = TextureRect.new()
-	_weapon_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_weapon_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_weapon_icon.custom_minimum_size = Vector2(WEAPON_ICON_W, 60)
-	_weapon_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	# 剪影与换弹进度条纵向排布
-	var icon_box := VBoxContainer.new()
-	icon_box.add_theme_constant_override("separation", 3)
-	box.add_child(icon_box)
-	icon_box.add_child(_weapon_icon)
-	var bar_holder := Control.new()
-	bar_holder.custom_minimum_size = Vector2(WEAPON_ICON_W, 5)
-	icon_box.add_child(bar_holder)
-	_bar_back = ColorRect.new()
-	_bar_back.color = Color(1, 1, 1, 0.22)
-	_bar_back.size = Vector2(WEAPON_ICON_W, 4)
-	_bar_back.visible = false
-	bar_holder.add_child(_bar_back)
-	_reload_bar = ColorRect.new()
-	_reload_bar.color = UiFactory.C_ACCENT   # 装填进度=强调青(金只留给「弹夹见底」)
-	_reload_bar.size = Vector2(0, 4)
-	_reload_bar.visible = false
-	bar_holder.add_child(_reload_bar)
-
-	# 丢弃进度条:同一条槽位,换弹进度条**之后**加(压在上面;
-	# 两者互斥显示 —— 换弹中不可能在丢弃,见 _process 的判据)
+	_weapon_box = col
+	# 丢弃进度条:挂在整列下方(与"哪把被选中"无关)
 	_drop_bar = ColorRect.new()
-	_drop_bar.color = UiFactory.C_DANGER   # 丢弃是破坏性操作;金已被「弹夹见底」独占
+	_drop_bar.color = UiFactory.C_DANGER
+	_drop_bar.custom_minimum_size = Vector2(WEAPON_ICON_W, 4)
 	_drop_bar.size = Vector2(0, 4)
 	_drop_bar.visible = false
-	bar_holder.add_child(_drop_bar)
+	col.add_child(_drop_bar)
 
-	_weapon_name = Label.new()
-	UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)   # 像素字体 + 字号(16 倍数)
-	_weapon_name.add_theme_color_override("font_color", UiFactory.C_TEXT)
-	_weapon_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_weapon_name.size_flags_vertical = Control.SIZE_FILL
-	box.add_child(_weapon_name)
-
-	# 残弹数(实验性换弹):名称右侧,"12/30";换弹时"装填中…"
-	_ammo_label = Label.new()
-	UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)    # 像素字体 + 字号(16 倍数)
-	_ammo_label.add_theme_color_override("font_color", UiFactory.C_TEXT)
-	_ammo_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_ammo_label.size_flags_vertical = Control.SIZE_FILL
-	_ammo_label.visible = false
-	box.add_child(_ammo_label)
+	p.weapons.weapon_changed.connect(_on_weapon_changed)
+	p.weapons.inventory_changed.connect(_refresh_weapon_boxes)
+	_refresh_weapon_boxes()
 
 
-# 4×2 武器槽位格子:挂在**既有武器区底板的正上方**(它是 HUD 自己的子节点,不是 wrap 的
-# —— PanelContainer 的子节点受容器布局摆布,自由 offset_* 会被覆盖)。
-# 位置常量在 WeaponSlots.attach_to 里,三处 HUD 共用同一组值。
+# 重建左下角那一列:每把持有武器一个方框,顺序 = 背包顺序。
+# ★ 每次都整体重建(数量少,最多 4 个)——比逐项 diff 简单,也不会漏同步。
+#   选中那个的残弹 Label 存进 `_ammo_label`,供 _process 每帧刷新。
+func _refresh_weapon_boxes() -> void:
+	if _weapon_box == null or _player == null or _player.weapons == null:
+		return
+	for c in _weapon_box.get_children():
+		if c == _drop_bar:
+			continue
+		_weapon_box.remove_child(c)
+		c.queue_free()
+	_ammo_label = null
+	_weapon_icon = null
+	_weapon_name = null
+	var cur: int = _player.weapons.current_slot_int()
+	var held_index := 0
+	for e in _player.weapons.inventory.held:
+		var t := int(e["type"])
+		var sel := t == cur
+		var box := PanelContainer.new()
+		var bs := StyleBoxFlat.new()
+		bs.bg_color = Color(0, 0, 0, 0.28) if sel else Color(0, 0, 0, 0)   # 选中的底更深(用户 2026-09-16)
+		bs.set_corner_radius_all(0)
+		bs.content_margin_left = 8.0
+		bs.content_margin_right = 8.0
+		bs.content_margin_top = 4.0
+		bs.content_margin_bottom = 4.0
+		box.add_theme_stylebox_override("panel", bs)
+		# 用户 2026-09-16「把框更长一些」:给定宽,别随内容缩(短名字的框会明显更短)
+		box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		box.custom_minimum_size = Vector2(320, 0)
+		_weapon_box.add_child(box)
+
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 14)
+		box.add_child(row)
+
+		# 键位数字(最左):与数字键 1-4 一一对应,顺序 = 背包顺序
+		var key_lbl := Label.new()
+		# 用户 2026-09-16:数字太小、左右留白也太小 → 两态同字号(32,16 的倍数),
+		# 宽度给到 48 并居中(左右各留 ~16px),不再贴边。
+		UiFactory.style_control(key_lbl, WEAPON_FONT_SIZE)
+		key_lbl.add_theme_color_override("font_color",
+				UiFactory.C_TEXT if sel else UiFactory.C_TEXT_DIM)
+		key_lbl.custom_minimum_size = Vector2(48, 0)
+		key_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		key_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		key_lbl.text = str(held_index + 1)
+		row.add_child(key_lbl)
+
+		var icon := TextureRect.new()
+		icon.texture = WeaponIcons.silhouette(t)
+		icon.custom_minimum_size = Vector2(72 if sel else 58, 46 if sel else 36)   # 用户 2026-09-16「手枪被放太大了」→ 整体收一档
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		icon.modulate = Color(1, 1, 1, 1) if sel else Color(0.45, 0.45, 0.50, 1.0)
+		row.add_child(icon)
+
+		if sel:
+			# 选中的才有全部信息:名称 + 残弹
+			_weapon_icon = icon
+			var info := VBoxContainer.new()
+			info.add_theme_constant_override("separation", 2)
+			info.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			row.add_child(info)
+			_weapon_name = Label.new()
+			UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)
+			_weapon_name.add_theme_color_override("font_color", UiFactory.C_TEXT)
+			_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(t, "空手")
+			info.add_child(_weapon_name)
+			_ammo_label = Label.new()
+			UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)
+			_ammo_label.add_theme_color_override("font_color", UiFactory.C_TEXT)
+			info.add_child(_ammo_label)
+		held_index += 1
+	# 丢弃条排到最下面
+	_weapon_box.move_child(_drop_bar, _weapon_box.get_child_count() - 1)
+
+
+var _weapon_wrap: PanelContainer = null   # 左下角武器面板(容量格子的定位基准)
+const WEAPON_SLOTS_GAP := 8.0             # 容量格子底边与武器面板顶边之间的空隙
+
+
 func _build_weapon_slots(p: Node) -> void:
+	# 容量格子:**左下角、武器框的正上方**(用户 2026-09-16:先挪到右下角,又要求挪回)。
 	_slots = WeaponSlots.attach_to(self, p.weapons)
+	_place_weapon_slots()
+	_place_weapon_slots.call_deferred()   # 首帧布局未跑完时 position.y 还是旧值,帧末再贴一次
 
 
-func _on_weapon_changed(slot: int) -> void:
-	if _weapon_icon != null:
-		_weapon_icon.texture = WeaponIcons.silhouette(slot)
-		_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(slot, "空手") if slot > 0 else "空手"
+# 把容量格子贴到武器面板的**实际顶边**上(底边 = 面板顶边 - 空隙)。
+# ★ 为什么不能写死一个 y:面板高度是**随内容收缩**的(见 _build_weapon_display)——
+#   写死的话"只带一把枪"时格子会飘在半空、"带满 4 把"时又会压到面板上。
+# ★ 坐标系:锚点用 **0/0(相对父级顶边)**而不是 1/1 —— 面板是底锚的,但它的
+#   `position.y` 是**从顶边量**的;用底锚就得再换算一次视口高度,反而容易写错。
+#   两者同为 HUD(CanvasLayer)的直接子节点,参考系一致。
+func _place_weapon_slots() -> void:
+	if _slots == null or _weapon_wrap == null or not is_instance_valid(_weapon_wrap):
+		return
+	_slots.anchor_left = 0.0
+	_slots.anchor_right = 0.0
+	_slots.anchor_top = 0.0
+	_slots.anchor_bottom = 0.0
+	_slots.offset_left = MARGIN.x
+	_slots.offset_right = MARGIN.x + WeaponSlots.PANEL_W
+	_slots.offset_bottom = _weapon_wrap.position.y - WEAPON_SLOTS_GAP
+	_slots.offset_top = _slots.offset_bottom - WeaponSlots.PANEL_H
+
+
+func _on_weapon_changed(_slot: int) -> void:
+	# ★ 直接重建整个列表,别去改"某个缓存下来的 Label/Icon" —— 那两样在每次重建时都会被
+	#   queue_free,而**释放后的对象不是 null**,`!= null` 挡不住它,表现为
+	#   "Trying to cast a freed object"(实测踩到:weapon_changed 先于 inventory_changed 发射,
+	#   回调先摸到了上一轮的旧节点)。
+	_refresh_weapon_boxes()
+
 
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;条本身无边框。
 # 底板(PLATE_COLOR)铺在整排下面 —— 竖条之间那 1px 缝于是透出底板而不是地图,
@@ -332,38 +410,35 @@ func _kill_ghost(i: int) -> void:
 
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
-	# 底板 2026-09-15 按用户要求去掉过、同日又按用户要求垫回(见 PLATE_COLOR)。
-	# ⚠ **底色必须显式给**:StyleBoxFlat 的默认底色是**不透明灰 (0.6,0.6,0.6,1.0)**、
-	#   `draw_center` 默认 true —— 想"去掉底色"却只删掉 `bg_color` 赋值那一行,等于把半透明
-	#   黑板换成一块**实心灰板**(比原来还显眼;实测发过一版,用户当场看出「右上角怎么还有框」)。
-	#   当时是靠 `draw_center = false` 救的,现在底色回来了就不要那行。
-	var wrap := PanelContainer.new()
+	# 底板:**2026-09-17 按用户要求去掉**(「删除所有模式的右上角计数器底下的灰色框」)。
+	#   这是第 3 次动它了(09-15 去掉 → 同日垫回 → 09-17 再去掉),所以把踩过的坑写死在这:
+	# ⚠ **去掉底色只能靠 `draw_center = false`,不能只删 `bg_color` 那一行**:
+	#   StyleBoxFlat 的默认底色是**不透明灰 (0.6,0.6,0.6,1.0)**、`draw_center` 默认 true ——
+	#   只删 bg_color 等于把半透明黑板换成一块**实心灰板**(比原来还显眼;09-15 实测发过一版,
+	#   用户当场看出「右上角怎么还有框」)。`draw_center = false` 保留 content_margin,
+	#   所以文字位置不受影响。
+	#   本条**三个模式一起生效**(PvP / 大乱斗都实例化 level_0.tscn,共用这个 Hud)。
+	# 锚点/生长方向已迁进 ui/kill_counter.tscn(右上角、宽高留 0 由文本撑开、向左下生长)。
+	# ★ 刻意做成**无脚本的独立场景**而不是塞进 level_0.tscn:tests/kh_l3_visual_probe.gd
+	#   用 Hud.new() 建单机 HUD 做取色断言,把节点声明进 level_0.tscn 会让 Hud.new()
+	#   建出的 HUD 没有它 → 那条探针立刻红。独立场景由本文件 load,创建方式无关。
+	var wrap := KILL_COUNTER_SCENE.instantiate() as PanelContainer
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR
+	sb.draw_center = false      # ★ 不画底色(见上面那段的坑:只删 bg_color 会变成实心灰板)
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 16.0
 	sb.content_margin_right = 16.0
 	sb.content_margin_top = 6.0
 	sb.content_margin_bottom = 6.0
 	wrap.add_theme_stylebox_override("panel", sb)
-	# 锚定右上角:宽高都留 0,由文本撑开、向左下生长 —— 板子只包住数字,不做成长条。
-	wrap.anchor_left = 1.0
-	wrap.anchor_right = 1.0
-	wrap.anchor_top = 0.0
-	wrap.anchor_bottom = 0.0
-	wrap.offset_left = -KILL_MARGIN.x
-	wrap.offset_right = -KILL_MARGIN.x
-	wrap.offset_top = KILL_MARGIN.y
-	wrap.offset_bottom = KILL_MARGIN.y
-	wrap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	wrap.grow_vertical = Control.GROW_DIRECTION_END
-	call_deferred("add_child", wrap)
 
-	_kill_label = Label.new()
+	# instantiate() 返回时子节点已存在,get_node 不要求在树内 —— 这里在 add_child 之前取是安全的。
+	_kill_label = wrap.get_node("KillLabel") as Label
 	_kill_label.text = "%03d" % _kills
 	_kill_label.add_theme_color_override("font_color", KILL_COLOR)
 	UiFactory.style_control(_kill_label, KILL_FONT_SIZE)      # 像素字体 + 字号(16 倍数)
-	wrap.add_child(_kill_label)
+	call_deferred("add_child", wrap)
 
 func _on_enemy_spawned(enemy: Node) -> void:
 	if enemy.has_signal("died"):

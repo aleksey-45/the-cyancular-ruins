@@ -64,13 +64,15 @@ var _last_round_winner := 0            # 最近一局的胜者 role(客户端播
 
 
 func _rpc_all(method: String, args: Array = [], except_role: int = -1,
-		live_only: bool = false) -> void:
-	var live_peers := multiplayer.get_peers() if live_only else PackedInt32Array()
+		live_only: bool = true) -> void:
 	for role in peer_by_role:
 		if role == except_role or not players.has(role):
 			continue
 		var peer: int = peer_by_role[role]
-		if live_only and not live_peers.has(peer):
+		# ★ 判活走 `NetBus.is_peer_live`(读 ENet peer 自己的 state),**不是** `get_peers()`:
+		#   后者比 ENet 的真实状态晚(见 NetBus 里那段注释),用它挡不住"往已拆掉的 peer 发定向包"
+		#   → 就是那句 `Unable to send packet on channel 0, max channels: 0`。
+		if live_only and not NetBus.is_peer_live(peer):
 			continue
 		# callv 展开实参:rpc_id 是变参口,而本函数要按调用方给的 args 转发。
 		NetBus.callv("rpc_id", [peer, method] + args)

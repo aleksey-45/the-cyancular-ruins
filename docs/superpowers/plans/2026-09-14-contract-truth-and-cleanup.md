@@ -149,7 +149,7 @@ Expected: 无输出。
 - [ ] **Step 5: 启动自检**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 
 Expected: 退出码 0，输出无 `SCRIPT ERROR` / `Parse Error`。
@@ -330,7 +330,7 @@ Expected: 无输出（只有 `tests/` 里那两处 connect 是探针自用的）
 - [ ] **Step 7: 启动自检**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 
 Expected: 退出码 0，输出无 `SCRIPT ERROR` / `Parse Error`。
@@ -1000,19 +1000,19 @@ Expected: 无输出。
 - [ ] **Step 10: 启动自检 + 探针（用户执行）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 
 Expected: 退出码 0，无 `SCRIPT ERROR` / `Parse Error`。
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 600 res://tests/kh_l1_probe.tscn 2>&1 | grep ALL-OK
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/kh_l1_probe.tscn 2>&1 | grep ALL-OK
 ```
 
 Expected: 一行 `ALL-OK`。
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 600 res://tests/kh_l4_probe.tscn 2>&1 | grep ALL-OK
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/kh_l4_probe.tscn 2>&1 | grep ALL-OK
 ```
 
 Expected: 一行 `ALL-OK`。**该探针 `:340` 的注释里提到了 `PvpSession.royale` 这个标识符**，跑它是为了确认注释与判据没被本次删除影响。
@@ -1139,7 +1139,7 @@ Expected: `server/match_bootstrap.gd`（定义）+ `server/server_main.gd`（两
 - [ ] **Step 7: 两模式冒烟（用户执行）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 
 Expected: 退出码 0，无 `SCRIPT ERROR` / `Parse Error`。
@@ -1429,7 +1429,7 @@ Expected: `room_manager.gd` 从 761 降到 **≈620-640**；`worker_launcher.gd`
 - [ ] **Step 7: 启动自检 + 大厅自检（用户执行）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 
 Expected: 退出码 0，无 `SCRIPT ERROR` / `Parse Error`。
@@ -1467,11 +1467,11 @@ Expected: 五条**全部无输出**。
 
 ```bash
 GODOT="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l1_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l3_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l4_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l5_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 600 res://tests/kh_l6_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l1_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l3_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l4_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l5_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn 2>&1 | grep ALL-OK
 ```
 
 Expected: 五条各打印一行 `ALL-OK`。**任何一条没有输出即失败**（不要只看退出码）。
@@ -1490,8 +1490,8 @@ Expected: 三条均通过。`room_sweep_smoke` 覆盖 `_sweep_stale_rooms` → `
 
 ```bash
 GODOT="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-"$GODOT" --headless --path . --quit-after 600 res://tests/match_sync_probe.tscn 2>&1 | grep ALL-OK
-"$GODOT" --headless --path . --quit-after 900 res://tests/royale_bound_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/match_sync_probe.tscn 2>&1 | grep ALL-OK
+"$GODOT" --headless --path . --quit-after 3600 res://tests/royale_bound_probe.tscn 2>&1 | grep ALL-OK
 ```
 
 Expected: 两条各打印 `ALL-OK`。

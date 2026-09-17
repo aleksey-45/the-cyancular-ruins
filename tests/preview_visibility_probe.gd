@@ -13,7 +13,10 @@ extends Node
 #      (这条是本改动的主目标;改动前它是红的)
 # 另附一条负向对照:副本在 previewing=false 时同样不可见(防止断言恒真)。
 #
-# 跑法: "$GODOT" --headless --path . --quit-after 900 res://tests/preview_visibility_probe.tscn
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
+# 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/preview_visibility_probe.tscn
 
 const HEAVY_SLOT := "3"   # weapon_component.WEAPONS 的 "3" = m82a1(heavy_aim=true)
 

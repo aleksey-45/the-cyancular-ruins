@@ -1,6 +1,8 @@
 extends Node
 
 # 大乱斗「掉线 → 终局」计数回归:剩余**玩家数** < 2 才终局,不是 peer 数。
+# 另含第三相:**按分判胜的候选集合**(2026-09-17)—— 已离开但计过分的 role 也要参与比较,
+# 否则 `mark_disconnected` 先把退出者 erase 掉,会导致"独行者必胜、与比分无关"。
 #
 # ═══ 为什么需要它 ═══
 # AI 补位 role 由服务端驱动、**没有 peer**,只存在于 `players` 里(`peer_by_role` 只有真人)。
@@ -71,6 +73,23 @@ func _run() -> void:
 	_host.mark_disconnected(3)
 	_check(_host._round_state == _host.RoundState.MATCH_OVER,
 			"★ 只剩 1 个玩家时必须终局(否则上面那条就成了「永不终局」的假绿)")
+
+	# ── ③ 按分判胜:已离开者仍在候选里(2026-09-17 用户裁定)──
+	# 为什么单开这一相:原实现 `_match_winner()` 只遍历 `players`,而 `mark_disconnected` 会
+	# **先**把退出者 `erase` 掉 → 剩 1 人时**独行者必胜、与比分无关**(B 击杀再多,一退出就是
+	# A 胜;`_scores[B]` 还在表里却没人读)。现在候选 = 还在场 ∪ 计过分的。
+	# 此刻场上只剩 role 4,而已离开的 role 2 分数更高 → 必须判 2 胜。
+	_host._scores = {2: 9, 4: 3}
+	var w1: int = _host._match_winner()
+	_check(w1 == 2, "★ 已离开但分更高者应判胜(实际 winner=%d,期望 2)" % w1)
+	# 反向一:分平 → 平局 0(别把"分高者胜"实现成"已离开者恒胜")
+	_host._scores = {2: 5, 4: 5}
+	var w2: int = _host._match_winner()
+	_check(w2 == 0, "分数打平应判平局 0(实际 %d)" % w2)
+	# 反向二:在场者分高 → 在场者胜
+	_host._scores = {2: 1, 4: 7}
+	var w3: int = _host._match_winner()
+	_check(w3 == 4, "在场者分高应判在场者胜(实际 %d,期望 4)" % w3)
 
 
 func _check(ok: bool, what: String) -> void:

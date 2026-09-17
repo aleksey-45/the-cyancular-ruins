@@ -239,6 +239,7 @@ func _ready() -> void:
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
+	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
 	# ★ deferred:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
@@ -353,6 +354,7 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	_update_pickup_prompt()
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
 		const MAX_REBUILD_PER_FRAME := 2
@@ -439,7 +441,7 @@ func restart_single() -> void:
 	#   装备也是本局的进度,重开就该从头攒。
 	#   (联机不走这条路:服务器权威另有复活规则,武器只保留随机一把。)
 	clear_pickups()
-	player.weapons.set_initial_inventory([])
+	_give_starting_weapon(player)
 	scatter_weapons.call_deferred(_default_weapon_types())
 
 
@@ -481,6 +483,20 @@ var _self_drop_until: Dictionary = {}   # inst -> 解禁时刻(ms),防"丢完立
 const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 
 
+# 单机开局武器:玩家**手里带一把**(用户 2026-09-15 要求「单机模式初始携带手枪」),
+# 其余散落在地图上。
+#
+# ★ 必须排在 `set_enabled_slots` **之后** —— 如果先给再禁,手上一旦是被禁的那把,
+#   `set_enabled_slots` 会判成"没有可用的"→ 空手;过滤顺序反了就直接白给。
+# ★ 用 `default_slot()`(最小**启用**槽位)而不是写死 "1":玩家禁用手枪时应当发下一把,
+#   而不是发一把本局根本不让用的枪。发出来的仍是手枪,除非手枪被禁。
+# ★ 本函数只服务单机;PvP/大乱斗的初始武器由服务器 MatchHost 自己决定(见联机计划)。
+func _give_starting_weapon(p: Node) -> void:
+	if p == null or p.weapons == null:
+		return
+	p.weapons.set_initial_inventory([int(p.weapons.default_slot())])
+
+
 # 单机初始武器清单:每种 2 把,跳过本局被禁的槽位。
 # (禁用武器不该出现在地图上 —— 与 set_enabled_slots 同源:RunOptions.disabled_weapons)
 func _default_weapon_types() -> Array:
@@ -511,6 +527,7 @@ func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 	#   (EnemySpawner.spawn_all 走的是同一件事:get_parent().get_node("WorldViewport"))。
 	$WorldViewport.add_child(node)
 	node.global_position = pos
+	node.canonical_pos = pos   # 权威位置(渲染位置由锚点推出,见 WeaponPickup)
 	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
 	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": mag, "pos": pos, "vel": vel})
 	_pickup_nodes[inst] = node
@@ -590,3 +607,42 @@ func _live_self_drops() -> Array:
 		else:
 			_self_drop_until.erase(inst)
 	return out
+
+
+# ── 拾取提示(每把**能捡的**武器各自一个"F")──
+# 用户 2026-09-16:「只要能捡起就会显示 F」。所以判据 = **能不能捡**,不是"是不是最近那把":
+#   在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
+# ★ 与 `try_pickup_for` 的选法**仍然是同一套** —— 按 F 捡的仍是最近那把,只是"能捡"的
+#   每一把都会提示(踩到其中任何一把都能捡起来)。
+func _update_pickup_prompt() -> void:
+	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
+	# ★ 先把表里的 pos 刷成**视觉中心**(可见的枪在哪),判定与提示才与玩家看到的一致。
+	# ★★ 并且必须**先设锚点**:WeaponPickup 的 canonical_pos(权威,恒在 [0,MAP))与渲染位置
+	#   是两回事,渲染位置每帧由锚点锚到玩家的最近副本 —— 不设锚点的话跨接缝的枪会画在
+	#   地图另一头(屏幕外),表现就是"接缝附近的枪看不见/取模不对"。
+	#   (联机侧由 PvpMatchClient._tick_ground_weapons 做同一件事;这里原先漏了。)
+	var anchor: Vector2 = pl.global_position if pl != null else Vector2.ZERO
+	for inst in _pickup_nodes:
+		var n0 = _pickup_nodes.get(inst, null)
+		if n0 != null and is_instance_valid(n0):
+			var pk0 := n0 as WeaponPickup
+			pk0.set_anchor(anchor)
+			pk0.sync_render_from_canonical()
+			var e0: Dictionary = ground_weapons.get_entry(int(inst))
+			if not e0.is_empty():
+				e0["pos"] = pk0.canonical_pos
+	var self_drops := _live_self_drops()
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	for inst in _pickup_nodes:
+		var n = _pickup_nodes.get(inst, null)
+		if n == null or not is_instance_valid(n):
+			continue
+		var pk := n as WeaponPickup
+		var can := false
+		if pl != null and not self_drops.has(int(inst)):
+			if pl.weapons.is_slot_enabled(int(pk.type_id)):
+				var d := GridPathfinder.toroidal_delta_px(
+						pk.canonical_pos, pl.global_position, w, h).length()
+				can = d <= PlayerParams.weapon_pickup_radius
+		pk.set_prompt_visible(can)

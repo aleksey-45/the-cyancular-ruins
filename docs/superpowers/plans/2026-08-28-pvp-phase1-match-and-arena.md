@@ -124,7 +124,7 @@ NetBus="*res://core/net_bus.gd"
 - [ ] **Step 3: 验证——headless 启动 5 帧无报错**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 5 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 Expected: 无 `SCRIPT ERROR`（NetBus 是 autoload，_ready 会跑，不应报错）。
@@ -277,7 +277,7 @@ run/main_scene="res://scenes/main_menu.tscn"
 - [ ] **Step 4: 验证——headless 启动 5 帧（应进主菜单,无脚本错误）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 5 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 Expected: 无 `SCRIPT ERROR`。
@@ -409,7 +409,7 @@ script = ExtResource("1")
 
 ```bash
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import 2>&1 | grep -E "RoomManager" ; \
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn --quit-after 60 2>&1 | grep -E "服务器|SCRIPT ERROR|ERROR" | head -5
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn --quit-after 3600 2>&1 | grep -E "服务器|SCRIPT ERROR|ERROR" | head -5
 ```
 
 Expected: 打印 `服务器就绪,等待玩家……`,无 `SCRIPT ERROR`。
@@ -523,7 +523,7 @@ script = ExtResource("1")
 - [ ] **Step 3: 验证——headless 启动 5 帧（进匹配场景无报错）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/matchmaking.tscn --quit-after 5 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/matchmaking.tscn --quit-after 3600 2>&1 | grep -E "SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 Expected: 无 `SCRIPT ERROR`。
@@ -579,7 +579,7 @@ script = ExtResource("1")
 - [ ] **Step 3: 验证——headless 启动 60 帧（应进 pvp 世界,本地玩家能跑物理,无脚本错误）**
 
 ```bash
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 60 2>&1 | grep -E "进入竞技场|SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://scenes/pvp_game.tscn --quit-after 3600 2>&1 | grep -E "进入竞技场|SCRIPT ERROR|Parse Error" ; echo "BOOT_DONE"
 ```
 
 > 直接跑 pvp_game 时 `PvpSession.map_path` 为空 → `set_map_file("")` 会把缓存置空 → `load_map_file` 重新随机选图（可接受,仅验证用）。实际流程里 map_path 由服务器下发。

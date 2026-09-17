@@ -147,6 +147,12 @@ func _ready() -> void:
 	# 单机开局**空手**:武器全部散落在地图上,由 `Level0._ready` 铺(见 scatter_weapons)。
 	# 联机由 MatchHost 调 set_initial_inventory 发随机一把(见联机计划)。
 	weapons.set_initial_inventory([])
+	# 换弹圆环:挂在**自己**身上(一个接入点覆盖单机/PvP/大乱斗)。
+	# ★ 反向缩放抵消玩家根的 scale(2.5),让环按世界单位画;位置每帧按朝向贴到"后侧"。
+	_reload_ring = ReloadRing.new()
+	_reload_ring.scale = Vector2.ONE / scale.x
+	_reload_ring.visible = false
+	add_child(_reload_ring)
 	call_deferred("add_child", WaterFx.new())
 
 
@@ -160,7 +166,11 @@ func _physics_process(delta: float) -> void:
 	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
 	var wslot := input_source.get_weapon_slot_pressed()
 	if wslot > 0:
-		weapons.equip(str(wslot))
+		# ★ 数字键选的是**背包第 N 把**(1-4),不是"武器类型 id"。
+		#   旧代码走 equip(str(wslot)) —— 那是按**类型**切的:按 2 会切到"步枪"这个类型,
+		#   而不管背包第 2 格是什么;更糟的是**背包里没有该类型时 equip 会凭空加一把**
+		#   (见它的"没有就加"分支)→ 按 3 白得一把重狙。这是背包化时漏改的消费点。
+		weapons.equip_index(wslot - 1)
 
 	# R 换弹:同样走 input_source 轮询(2026-09-15 起 PvP 也换弹,见 weapon_base 换弹段注释)。
 	# ★ 必须是轮询,不能像原先那样在 _unhandled_input 里读原始 InputEvent —— **权威服务器
@@ -174,6 +184,7 @@ func _physics_process(delta: float) -> void:
 
 	# F 捡起 / Q 长按丢弃。同样走 input_source 轮询(见 _poll_pickup_drop 的注释)。
 	_poll_pickup_drop(delta)
+	_update_reload_ring()
 
 	var mult := weapons.movement_multiplier()
 
@@ -462,6 +473,12 @@ func capture_state() -> Dictionary:
 		"knock": combat.knock_velocity,
 		"wslot": weapons._current_slot,
 	}
+	# 背包整表(每条 {type, inst, mag})。★ 即便不做客户端预测也必须进整态:
+	#   restore_state 会 equip(wslot),若不先重建背包,重放时可能切到客户端背包里
+	#   **没有的类型** → 走到 equip() 的"没有就加"分支 → 凭空造出一把服务器没有的枪。
+	# ★ 与 mag/rld 同口径:只进 capture/restore,**不进** `_close_enough` 的比对
+	#   (后者是显式白名单,只比 down/hp/pos/vel —— 只要不主动加进去就自动满足)。
+	st["inv"] = weapons.snapshot_inventory()
 	var w: WeaponBase = weapons._weapon
 	if w != null:
 		st["fire_cd"] = w.fire_cd_timer
@@ -515,8 +532,56 @@ func restore_state(st: Dictionary) -> void:
 	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
 	_was_submerged = bool(st.get("wp_s", _was_submerged))
 	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
-	# 武器:槽位变了重建,否则直接覆盖内部决定态
+	# 武器(背包/手持/弹药):与软同步共用同一段,见 _apply_weapon_state 的顺序说明
+	_apply_weapon_state(st)
+	# 姿态碰撞箱按恢复的 state 启用 + 翻转同步(下帧 move_and_slide 用对的碰撞外形)
+	for pose in _coll_by_pose:
+		_coll_by_pose[pose].disabled = pose != state
+	animator.flip_h = facing_direction < 0
+	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值;
+	# 恢复位置后做一次微位移 move_and_slide(向下 0.001px,可忽略)让它在恢复位置重判接触,
+	# 供恢复后第一个物理 tick 的逻辑读到正确的地面状态。
+	var saved := velocity
+	velocity = Vector2(0.0, 0.001)
+	move_and_slide()
+	velocity = saved
+
+
+# ── 非预测字段的"软同步"(拾取/丢弃/复活/换局改的就是这些)──
+# ★ 与 restore_state 的分工:那个是"整态覆盖 + 让调用方重放未确认输入",用在**真分歧**上;
+#   这个**只补字段、不重放** —— 位置/速度是预测出来的,拿权威覆盖它们才是橡皮筋,
+#   而背包/残弹**不是预测出来的**,它们只由服务器裁决(客户端从不预测拾取/丢弃)。
+# ★ 由 PredictionRollback 在"预测被证实"那一支调用(每个 ack 一次,~60Hz),
+#   所以**先比指纹再动手**:restore_inventory 会 emit inventory_changed →
+#   ui/hud.gd 整体重建武器框,无脑调 = 每帧新建/销毁一堆 Control。
+func sync_soft_state(st: Dictionary) -> void:
+	if int(st.get("wslot", weapons._current_slot)) == weapons._current_slot \
+			and _inv_structure_equal(st.get("inv", [])):
+		return
+	_apply_weapon_state(st)
+
+
+# 只比**结构**(type/inst 的有序对):mag 是连续量、本地每帧都在变,比它等于每帧都"不一致",
+# 守卫当场失效 —— 与"不该拿连续量判分歧"是同一条纪律(见 _close_enough 的字段白名单)。
+func _inv_structure_equal(want: Array) -> bool:
+	var held: Array = weapons.inventory.held
+	if held.size() != want.size():
+		return false
+	for i in held.size():
+		if int(held[i]["type"]) != int(want[i].get("type", 0)):
+			return false
+		if int(held[i]["inst"]) != int(want[i].get("inst", 0)):
+			return false
+	return true
+
+
+# 武器/弹药的权威字段回灌(restore_state 与 sync_soft_state 共用)。
+# ★ 顺序不可反:先读 wslot(此时 _current_slot 还有值,可作默认),再 restore_inventory
+#   (它会把 _current_slot 清 0),最后 equip。反过来的话——先 restore,wslot 的默认值
+#   就丢了;先 equip 再 restore,则 equip 是在**旧背包**上工作(凭空造枪/丢枪)。
+func _apply_weapon_state(st: Dictionary) -> void:
 	var wslot := int(st.get("wslot", weapons._current_slot))
+	weapons.restore_inventory(st.get("inv", []))
 	if wslot > 0 and wslot != weapons._current_slot:
 		weapons.equip(str(wslot))
 	var w: WeaponBase = weapons._weapon
@@ -530,17 +595,6 @@ func restore_state(st: Dictionary) -> void:
 		w.mag_ammo = int(st.get("mag", w.mag_ammo))
 		w._reloading = bool(st.get("rld", w._reloading))
 		w._reload_t = float(st.get("rld_t", w._reload_t))
-	# 姿态碰撞箱按恢复的 state 启用 + 翻转同步(下帧 move_and_slide 用对的碰撞外形)
-	for pose in _coll_by_pose:
-		_coll_by_pose[pose].disabled = pose != state
-	animator.flip_h = facing_direction < 0
-	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值;
-	# 恢复位置后做一次微位移 move_and_slide(向下 0.001px,可忽略)让它在恢复位置重判接触,
-	# 供恢复后第一个物理 tick 的逻辑读到正确的地面状态。
-	var saved := velocity
-	velocity = Vector2(0.0, 0.001)
-	move_and_slide()
-	velocity = saved
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:
@@ -620,6 +674,7 @@ func restart_at(spawn_cell: Vector2i) -> void:
 
 
 # ── 拾取 / 丢弃(2026-09-15,武器槽位计划)──
+var _reload_ring: ReloadRing = null   # 换弹圆环(角色后侧)
 var _drop_hold_t := 0.0     # Q 已按住多久
 var _drop_latched := false  # 本次长按是否已触发过(防按住不放连续丢)
 
@@ -629,19 +684,30 @@ var _drop_latched := false  # 本次长按是否已触发过(防按住不放连�
 #   没有输入事件、只有注入包,读原始事件的话联机端永远收不到(与 R 换弹 2026-09-15
 #   从 _unhandled_input 迁走是同一个理由)。
 func _poll_pickup_drop(delta: float) -> void:
-	# Q 长按计时**在客户端本地做**(只有这里有确定的物理 delta)。满了才当成一次边沿发出去;
-	# 上行的是"完成信号"而不是"按住"(见 PacketInputSource.BIT_DROP 的注释)。
+	# ★ Q 长按计时**两种模式都要跑**。联机时它也是"2 秒"这条规则的**唯一**执行点:
+	#   服务器只收得到一次"满了"的边沿,它自己没有计时器。早先这里写成 `if pvp_mode: return`,
+	#   结果是联机端**长按 2s 形同虚设**(而 LocalInputSource 的 drop 读口当时报的是"Q 按着",
+	#   于是碰一下 Q 就丢枪、按住不放会每 tick 丢一把)。
+	#
+	# 分支只差在"满了之后干什么":
+	#   单机 → 就地丢;联机 → 打一个一次性边沿,由 pack_record 上行给服务器裁决(不做客户端预测)。
 	if input_source.is_action_pressed("Q"):
 		if not _drop_latched:
 			_drop_hold_t += delta
 			if _drop_hold_t >= PlayerParams.weapon_drop_hold_time:
 				_drop_latched = true
-				_try_drop()
+				if Level0.pvp_mode:
+					input_source.mark_drop_edge()
+				else:
+					_try_drop()
 	else:
 		_drop_hold_t = 0.0
 		_drop_latched = false
 
-	if input_source.is_pickup_pressed():
+	# 拾取:F 本来就是按下边沿,联机只需上行(服务器裁决),单机就地执行。
+	# ★ 服务器侧(权威模拟)不在此裁决 —— 它走 `MatchGround._handle_ground_actions`;
+	#   本函数在服务器上靠 `_try_*` 的 `current_scene is Level0` 早退兜底。
+	if input_source.is_pickup_pressed() and not Level0.pvp_mode:
 		_try_pickup()
 
 
@@ -653,11 +719,23 @@ func drop_hold_progress() -> float:
 	return clampf(_drop_hold_t / PlayerParams.weapon_drop_hold_time, 0.0, 1.0)
 
 
+# 本玩家所属的 Level0(从自己往上走)。★ 不用 `get_tree().current_scene`:
+# 那是"当前场景根"这一**全局**状态,与"我在哪个世界"并不等价 —— PvP 里 current_scene 是
+# PvpGame/大乱斗场景(Level0 只是它子节点),服务器 worker 里干脆没有 Level0。
+# 往上走是本地的、精确的,也让探针能把世界挂成子节点来测(实测:current_scene 赋值不生效)。
+func host_level() -> Level0:
+	var n: Node = self
+	while n != null:
+		if n is Level0:
+			return n
+		n = n.get_parent()
+	return null
+
+
 func _try_pickup() -> void:
-	var lvl := get_tree().current_scene
-	if not (lvl is Level0):
-		return
-	(lvl as Level0).try_pickup_for(self)
+	var lvl := host_level()
+	if lvl != null:
+		lvl.try_pickup_for(self)
 
 
 func _try_drop() -> void:
@@ -666,9 +744,9 @@ func _try_drop() -> void:
 	var e: Dictionary = weapons.drop_current()
 	if e.is_empty():
 		return
-	var lvl := get_tree().current_scene
-	if lvl is Level0:
-		(lvl as Level0).spawn_pickup(int(e["type"]), int(e["mag"]),
+	var lvl := host_level()
+	if lvl != null:
+		lvl.spawn_pickup(int(e["type"]), int(e["mag"]),
 			global_position + PlayerParams.weapon_drop_offset * Vector2(float(facing_direction), 1.0),
 			Vector2(PlayerParams.weapon_drop_speed * facing_direction, -PlayerParams.weapon_drop_up),
 			0, true)   # self_drop=true:冷却期内不参与自己的拾取(防丢完原地按 F 捡回)
@@ -705,3 +783,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	# (R 换弹**已从这里迁走** —— 2026-09-15 起走 _physics_process 的 input_source 轮询,
 	#  见那里的注释:读原始 InputEvent 的话权威服务器永远收不到。倒地时 R 仍是重载/复活,见上。)
+
+
+# 换弹圆环:角色**后侧**(背对朝向那一侧)显示,环心是带一位小数的倒计时。
+# ★ 挂在玩家本体上而不是 HUD:圆环要跟人走、且要压在角色附近的世界层里,
+#   一个接入点就覆盖所有模式(单机/PvP/大乱斗)。
+func _update_reload_ring() -> void:
+	if _reload_ring == null or not is_instance_valid(_reload_ring):
+		return
+	var w := weapons.current_weapon()
+	var prog := w.reload_progress() if w != null else -1.0
+	_reload_ring.visible = prog >= 0.0
+	if prog < 0.0:
+		return
+	var sc := maxf(absf(scale.x), 0.001)
+	# 世界单位偏移 ÷ 根缩放 = 本节点的局部偏移(环自己又反向缩放过,故视觉仍是世界单位)
+	_reload_ring.position = Vector2(-RELOAD_RING_OFFSET.x * float(facing_direction),
+			RELOAD_RING_OFFSET.y) / sc
+	_reload_ring.set_progress(prog, w.reload_time * (1.0 - prog))
+
+
+const RELOAD_RING_OFFSET := Vector2(58.0, -44.0)   # 世界单位:x 朝"后侧"、y 朝上(2026-09-16 上移)

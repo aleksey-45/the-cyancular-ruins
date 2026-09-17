@@ -92,7 +92,7 @@ Expected: 根公开接口 7 项 ok;组件 3 项 FAIL(climb/combat/weapon_compone
 
 - [ ] **Step 3: 跑一次 headless 基线启动,确认重构前游戏正常**
 
-Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90`
+Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600`
 Expected: 无 `SCRIPT ERROR` 行;末尾打印 `[EnemySpawner] spawned N enemies from map`。
 
 - [ ] **Step 4: Commit**
@@ -281,7 +281,7 @@ func cancel_jump_state() -> void:
 Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根接口 7 项 ok;`climb_component.gd` 检查 ok、根驱动 `climb.update` ok;combat/weapon 组件 + 武器注册表 + 根驱动 combat/weapon 2 项仍 FAIL。退出码 1(预期,其余组件未抽)。
 
-Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90`
+Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600`
 Expected: 无 `SCRIPT ERROR`。
 
 - [ ] **Step 5: Commit**
@@ -426,7 +426,7 @@ func apply_recoil(push: float) -> void:
 Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根接口 ok、climb ok、weapon 组件 + 注册表 5 槽 ok、`weapons.movement_multiplier()` 驱动 ok;仅 combat 组件 + `combat.apply_knock` 驱动 2 项仍 FAIL。退出码 1。
 
-Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90`
+Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600`
 Expected: 无 `SCRIPT ERROR`。
 
 - [ ] **Step 5: Commit**
@@ -661,7 +661,7 @@ func cancel_charge() -> void:
 Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 全部 ok,末尾打印 `CONTRACT OK`,退出码 0。
 
-Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90`
+Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600`
 Expected: 无 `SCRIPT ERROR`;末尾 `[EnemySpawner] spawned N enemies from map`。
 
 - [ ] **Step 5: Commit**

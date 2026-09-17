@@ -26,6 +26,7 @@ laser_color = Color(0.1, 0.35, 1, 1)
 pitch_clamp_deg = 65.0
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1863412304]
+texture_filter = 1
 position = Vector2(12, 9)
 texture = ExtResource("2_tex")
 region_enabled = true

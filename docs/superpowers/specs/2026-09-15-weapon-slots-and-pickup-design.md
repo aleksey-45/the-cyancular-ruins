@@ -386,9 +386,10 @@ static func spread_cells(cells: Array, count: int, clearance: int) -> Array
 
 ### 7.2 单机
 
-- **开局空手**：`player.gd:147` 的硬编码 `equip("1")` 删掉；改为 `WeaponComponent` 暴露一个 `set_initial_inventory(entries)`，由调用方决定：
-  - `level_0.gd`（单机）→ 传**空表**
-  - `match_host.gd`（联机）→ 传**一条随机武器**
+- ~~**开局空手**~~ → **★ 已改（2026-09-15 用户实机后裁定：单机开局携带手枪）**：`player.gd` 的硬编码 `equip("1")` 删掉；改为 `WeaponComponent` 暴露 `set_initial_inventory(types)`，由调用方决定：
+  - `level_0.gd`（单机）→ `_give_starting_weapon()` 发 `[default_slot()]`（★ 排在 `set_enabled_slots` **之后**，且用 `default_slot()` 而非写死 `"1"`：先给再禁会把手上那把判成空手，写死则在禁用手枪时发一把本局不让用的枪）
+  - `match_host.gd`（联机）→ 传**一条随机武器**（§7.3）
+  - `player.tscn` 自身的 `_ready` 仍是**空背包**（无模式默认）；发什么枪由各模式自己决定，两条路不打架。
 - 12 把（每种 2 把）散落全图。**禁用武器（`RunOptions.disabled_weapons`）不出现在分布里**。
 - 开局空手时 HUD 武器区显示"空手"，无法开火（`weapon_component.tick` 在 `_weapon == null` 时本就不跑，`weapon_component.gd:170`）。
 - **按 R 重启（`restart_single`）**：语义定为"完全重开"——清空背包、清空并重新散落 12 把。与现有行为（还原可破坏砖、清子弹/敌人重刷、玩家回出生点满血）一致。

@@ -1,8 +1,11 @@
 extends Node
 
 # 打击反馈层探针(KH-hit-feedback,场景模式):headless 验证 CombatFeedback 的
-#   1) 击杀播报(文本设置 + 浮现动画)  2) 命中 X 标记显隐  3) 击杀归因
-#   (玩家 last_damager meta 才播报;环境死/无实例时安静空转,不崩不误报)
+#   1) 击杀播报(PvP 侧入口 kill():文本设置 + 浮现动画)  2) 命中 X 标记显隐
+#   3) 归因写端(attribute/attribute_hit:只服务大乱斗计分)
+#   ★ 2026-09-17 起单机的「敌人死 → 播报」那条链已删(notify_enemy_killed/enemy_display_name
+#     与 EnemySpawner.display_name_of 一起),故本探针改为断言"敌人命中只出 X 标记、身上不留
+#     归因 meta"。
 # 跑法: Godot_console --headless --path . --quit-after 600 res://tests/feedback_probe.tscn
 #   (--quit-after 兜底:脚本若解析失败则场景无脚本、一行不打印就会挂死到超时;与兄弟探针一致)
 
@@ -22,12 +25,6 @@ func _ready() -> void:
 	if _aborted:
 		return
 	await _check_marker_and_banner()
-	if _aborted:
-		return
-	_check_attribution_basic()
-	if _aborted:
-		return
-	_check_writer_register_player_hit()
 	if _aborted:
 		return
 	_check_e2e_direct_hit()
@@ -77,7 +74,6 @@ func _mount_feedback() -> void:
 	# 无实例(主菜单/服务器进程):静态入口必须全部空转
 	_CF.kill("无人")
 	_CF.hit_marker()
-	_CF.notify_enemy_killed(_victim_killed_by(null))
 	await get_tree().process_frame
 	if CombatFeedback.current != null:
 		_failures.append("未挂载实例时 current 应为 null")
@@ -121,64 +117,18 @@ func _check_marker_and_banner() -> void:
 	if Sfx._stream("kill") == null:
 		_failures.append("Sfx kill 音效流缺失")
 
-func _check_attribution_basic() -> void:
-	# 归因:玩家击杀 → 播报(scene_file_path 为空回落空名,文本仍以「击杀」开头)
-	# 先清空文本:上面 _CF.kill("测试鸟") 留下的旧文本会让本条断言假绿(只查前缀,不清便是永真)
-	_fx._kill_label.text = ""
-	var victim := _victim_killed_by(_make_player())
-	_CF.notify_enemy_killed(victim)
-	if not _fx._kill_label.text.begins_with("击杀"):
-		_failures.append("玩家击杀未播报(文本:「%s」)" % _fx._kill_label.text)
-	# 归因:环境死(无 last_damager meta)→ 文本不变(安静销毁)
-	_fx._kill_label.text = ""
-	_CF.notify_enemy_killed(Node2D.new())
-	if _fx._kill_label.text != "":
-		_failures.append("环境死误播报(文本:「%s」)" % _fx._kill_label.text)
-	# 归因:射手不是玩家组 → 不播报
-	_fx._kill_label.text = ""
-	_CF.notify_enemy_killed(_victim_killed_by(Node2D.new()))
-	if _fx._kill_label.text != "":
-		_failures.append("非玩家击杀误播报(文本:「%s」)" % _fx._kill_label.text)
-	# 显示名:2026-09-14 起唯一来源是 data/enemies.json 的 display_name 字段(经
-	# EnemySpawner.display_name_of,按**场景路径**查)。原先这里断言的是 combat_feedback 里
-	# 那份手抄的 const ENEMY_NAMES —— 已删,按仓内惯例改判据认新入口。
-	if EnemySpawner.display_name_of("res://scenes/enemies/enemy_fly_bird.tscn") != "飞鸟":
-		_failures.append("敌人显示名(enemies.json 的 display_name)取不到「飞鸟」")
-	# 查不到的回落:英文场景文件名(不是空串、也不是崩溃)
-	if EnemySpawner.display_name_of("res://scenes/enemies/EnemyNoSuchBird.tscn") != "EnemyNoSuchBird":
-		_failures.append("未知敌人的显示名回落不对(应为英文场景文件名)")
-
-func _check_writer_register_player_hit() -> void:
-	# ── 写入方覆盖(Task 12 闭环):真实 BulletBase._register_player_hit 必须落 last_damager ──
-	bullet_scene = load("res://scenes/weapons/bullet.tscn")
-	if bullet_scene == null:
-		_failures.append("bullet.tscn 载入失败,无法验证写入方")
-	else:
-		var shooter := _make_player()
-		# 正例:射手 ≠ 目标 → 必须写 meta 且值就是射手
-		var b: Node = bullet_scene.instantiate()
-		add_child(b)
-		b.set("shooter", shooter)
-		var victim_ok := _victim_killed_by(null)     # 注意:这个 helper 不设 meta
-		b.call("_register_player_hit", victim_ok)
-		if not victim_ok.has_meta("last_damager"):
-			_failures.append("_register_player_hit 未写入 last_damager(写端缺失/写错)")
-		elif victim_ok.get_meta("last_damager") != shooter:
-			_failures.append("last_damager 写的不是射手")
-		# 反例:射手 == 目标 → 不得写 meta(自伤不应归因给自己)
-		var self_hit := _victim_killed_by(null)
-		b.set("shooter", self_hit)
-		b.call("_register_player_hit", self_hit)
-		if self_hit.has_meta("last_damager"):
-			_failures.append("射手==目标时不应写 last_damager")
-		b.queue_free()
-
 func _check_e2e_direct_hit() -> void:
-	# ── 端到端归因(Task 15):致命一击必须能播报——走真实 BulletBase._direct_hit 路径 ──
+	# ── 端到端:致命一击走真实 BulletBase._direct_hit 路径 ──
+	# ★ 2026-09-17 起单机击杀播报已删,判据从"播报了击杀"改成"出了命中标记 + 敌人身上
+	#   **没有**归因 meta"(last_damager 是播报的产物,随播报一起消失)。
 	enemy_scene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	if enemy_scene == null:
-		_failures.append("enemy_jump_bird.tscn 载入失败,无法验证端到端归因")
-	# 空守卫(Task 16):下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() →
+		_failures.append("enemy_jump_bird.tscn 载入失败,无法验证端到端命中")
+	# ★ bullet_scene 原先由 _check_writer_register_player_hit 载入(该函数已删),搬到这里。
+	bullet_scene = load("res://scenes/weapons/bullet.tscn")
+	if bullet_scene == null:
+		_failures.append("bullet.tscn 载入失败,无法验证端到端命中")
+	# 空守卫:下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() →
 	# 探针一行都不打印就挂到 --quit-after 超时(失败串永远看不到)。提前收尾,失败也走正常退出码。
 	if enemy_scene == null or bullet_scene == null:
 		_finish(_failures)
@@ -191,25 +141,29 @@ func _check_e2e_direct_hit() -> void:
 	add_child(b2)
 	b2.set("shooter", shooter2)
 	b2.set("direct_hit_damage", 999)
-	_fx._kill_label.text = ""                 # 清掉前面的播报,便于断言
-	b2.call("_direct_hit", enemy)            # ← 这就是真实命中路径(内部 hurt → 同步判死 → 播报)
-	if not _fx._kill_label.text.begins_with("击杀"):
-		_failures.append("致命一击未播报击杀(归因 meta 写晚了? 文本:「%s」)" % _fx._kill_label.text)
+	_fx._hit_age = -1.0                       # 清掉上一次的 X 标记,便于断言
+	b2.call("_direct_hit", enemy)            # ← 真实命中路径(内部 hit_marker → hurt 同步判死)
+	if _fx._hit_age < 0.0:
+		_failures.append("致命一击未出命中标记(_direct_hit 的反馈路径断了)")
+	if enemy.has_meta("last_damager"):
+		_failures.append("敌人身上不该再有 last_damager meta(单机播报的产物,已随播报删除)")
 	enemy.queue_free()
 	b2.queue_free()
 
 func _check_e2e_explosion_aoe() -> void:
-	# ── 端到端归因(爆炸 AoE,Task 16):真实 Explosion.apply_aoe 必须让致命一击能播报 ──
+	# ── 端到端:真实 Explosion.apply_aoe 命中敌人时出命中标记(判据见 _check_e2e_direct_hit)──
 	var enemy3: Node = load("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
 	add_child(enemy3)
 	enemy3.set("hp", 1)
 	enemy3.global_position = Vector2(400, 0)
-	_fx._kill_label.text = ""
+	_fx._hit_age = -1.0
 	var shooter3 := _make_player()
 	shooter3.global_position = Vector2(400, 0)     # 与敌人重合,确保在半径内
 	Explosion.apply_aoe(enemy3.global_position, 128.0, 999, 0.0, shooter3)
-	if not _fx._kill_label.text.begins_with("击杀"):
-		_failures.append("爆炸致命一击未播报击杀(AoE 分支归因未生效? 文本:「%s」)" % _fx._kill_label.text)
+	if _fx._hit_age < 0.0:
+		_failures.append("爆炸命中敌人未出命中标记(AoE 敌人分支的反馈路径断了)")
+	if enemy3.has_meta("last_damager"):
+		_failures.append("敌人身上不该再有 last_damager meta(单机播报的产物,已随播报删除)")
 	enemy3.queue_free()
 	shooter3.queue_free()
 
@@ -233,12 +187,14 @@ func _check_e2e_laser() -> void:
 	add_child(enemy4)
 	enemy4.set("hp", 1)                       # 保证一击致死(laser_gun damage=6)
 	enemy4.global_position = Vector2(400, 0)
-	_fx._kill_label.text = ""                  # 清掉前面的播报,便于断言
+	_fx._hit_age = -1.0                        # 清掉上一次的 X 标记,便于断言
 	# 一条横穿敌人身体的折线(缝2 的 pts 语义:世界系折线点集)
 	var beam_pts := PackedVector2Array([Vector2(200, 0), Vector2(600, 0)])
 	laser.call("_apply_beam_damage", beam_pts, [], PackedVector2Array())
-	if not _fx._kill_label.text.begins_with("击杀"):
-		_failures.append("激光致命一击未播报击杀(激光伤害点未写归因 meta? 文本:「%s」)" % _fx._kill_label.text)
+	if _fx._hit_age < 0.0:
+		_failures.append("激光命中敌人未出命中标记(_apply_to_enemy 的反馈路径断了)")
+	if enemy4.has_meta("last_damager"):
+		_failures.append("敌人身上不该再有 last_damager meta(单机播报的产物,已随播报删除)")
 	laser.queue_free()
 	enemy4.queue_free()
 	shooter4.queue_free()
