@@ -25,6 +25,13 @@ var _claim_wait := 0.0
 var _understaffed_wait := 0.0   # 开局前可用玩家 <2 的持续时长(超时退出释放端口)
 var _lan_ip_text := ""          # 局域网 IP 串(写 local_ip.txt 用;公网 IP 到手后一并补写)
 var _match_started := false
+# ── 断线宽限期(2026-09-17,断线重连)──
+# 掉线的 role 先进 `_grace`,不立刻移出(大乱斗)/不立刻退进程(1v1);宽限内可被 reclaim_role
+# 认领回来。到点仍未回来 → 走既有的"移出对局 / 收场退出"语义。
+# ★ 时长唯一入口是 `GraceWindow.DEFAULT_SECONDS`。
+var _grace := GraceWindow.new()
+var _grace_check_timer := 0.0
+var _tokens: Dictionary = {}   # role(int) -> token(String),客户端经 report_token 报来
 
 func _ready() -> void:
 	# 开局先自报版本:服务端是控制台子系统,这条是运维/联调时"我这跑的是哪一版"的唯一依据
@@ -169,6 +176,7 @@ func _run_worker(port: int) -> void:
 	NetBus.peer_left.connect(_on_peer_left)
 	NetBusExt.suicide_requested.connect(_on_suicide_request)
 	NetBus.match_sync_received.connect(_on_match_sync)
+	NetBusExt.token_reported.connect(_on_token_reported)
 	if _royale:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s)" % [
 				_human_role_count(), port, str(_role_set)])
@@ -185,7 +193,48 @@ func _human_role_count() -> int:
 	return n
 
 
+# 把一个 role 放进宽限期。★ 必须**置空它的输入源**:
+# `PacketInputSource` 在队列空时沿用上一包(held,见 match_host 的每 tick 消费注释),
+# 不置空的话掉线者的身体会保持他断开前最后一帧的输入 —— 一直朝那个方向跑、或一直开枪。
+func _enter_grace(role: int) -> void:
+	_grace.enter(role, Time.get_ticks_msec())
+	if _host != null:
+		var src = _host.input_sources.get(role, null)
+		if src != null and src.has_method("reset_state"):
+			src.reset_state()
+		_host.peer_by_role.erase(role)
+		if _host.has_method("_broadcast_round_state"):
+			_host._broadcast_round_state()   # 让 HUD 显示"某人掉线中"
+
+
+# 到期仍未回来的 role → 走既有语义。每秒轮询一次即可(精度无关,宽限期以秒计)。
+func _expire_graces(now_ms: int) -> void:
+	for role in _grace.expired(now_ms):
+		_grace.leave(role)
+		if _royale:
+			if _host != null and _host.has_method("mark_disconnected"):
+				_host.mark_disconnected(role)
+		else:
+			# 1v1:宽限内没回来 → 收场退进程(原行为,只是晚了几十秒)
+			if is_instance_valid(_host):
+				_host.queue_free()
+			print("worker: 1v1 宽限期到,对手未归,对局结束")
+			get_tree().quit(0)
+	# 大乱斗:全员走光且宽限期已空(一个都没回来)→ 收场退出。
+	# ★ 这就是原 `_on_peer_left` 里那条「全员离开,大乱斗结束」,只是**移到宽限期到点才判** ——
+	#   刚 `_enter_grace` 完表里必然非空,原位置那条 `_grace.size() == 0` 恒假(死分支),
+	#   而它是大乱斗 worker 唯一的正常退出口(royale_host.gd:428),丢了会让每局都留下僵尸进程。
+	if _royale and _claims.is_empty() and _grace.size() == 0:
+		print("worker: 全员离开,大乱斗结束")
+		get_tree().quit(0)
+
+
 func _process(delta: float) -> void:
+	# 宽限期到期轮询(每秒一次足够;不与下面两条大乱斗的报到梯纠缠)
+	_grace_check_timer += delta
+	if _grace_check_timer >= 1.0:
+		_grace_check_timer = 0.0
+		_expire_graces(Time.get_ticks_msec())
 	# 大乱斗:有人报到但 20s 仍未收齐 → 按已到人数(≥2)直接开局(缺席角色不入局)
 	if _royale and not _match_started and _host == null and _claims.size() >= 2:
 		_claim_wait += delta
@@ -205,6 +254,14 @@ func _on_player_options(caller: int, opts: Dictionary) -> void:
 	for r in _claims:
 		if _claims[r] == caller:
 			_claim_opts[r] = opts
+			return
+
+# 客户端 claim 之后立刻报来的一次性令牌(claim 与它同一次 poll 到达)。按 caller 反查 role 归档。
+# ★ 只归档,不在这里校验 —— 校验发生在宽限期里的 reclaim_role(那时才有"该不该放行"的问题)。
+func _on_token_reported(caller: int, token: String) -> void:
+	for r in _claims:
+		if _claims[r] == caller:
+			_tokens[int(r)] = token
 			return
 
 # 进场拉取:对局场景建好后主动要一次昵称/色相/生效选项/出生点/role 集合。
@@ -333,25 +390,42 @@ func _on_peer_left(peer_id: int) -> void:
 		if not is_participant:
 			return   # 被踢的串线连接断开不影响对局
 		if _royale:
-			# 大乱斗:单个参与者掉线 = 移出对局继续;全员走光才拆局
+			# 大乱斗:单个参与者掉线 = **先进宽限期**(不立刻移出,身体留在场上),
+			# 宽限内可被 reclaim_role 认领回来;到点仍未回来才走 mark_disconnected。
+			# ★ 身体不销毁是本设计最省的一处:分数/阵亡/血量/背包/位置/世界破坏/地面武器
+			#   全在活着的节点与进程内存里,一条都不用恢复(见 spec §4)。
 			var role := 0
 			for r in _claims:
 				if _claims[r] == peer_id:
 					role = int(r)
 					break
+			if role == 0:
+				return
 			_claims.erase(role)
-			if _host.has_method("mark_disconnected") and role != 0:
-				_host.mark_disconnected(role)
+			_enter_grace(role)
 			if _claims.is_empty():
-				print("worker: 全员离开,大乱斗结束")
-				get_tree().quit(0)
+				# 最后一个真人也走了:仍**先给宽限**(最后一人掉线同样该有机会回来),
+				# 到点没人回来才收场退出 —— 收口在 `_expire_graces` 的末尾,
+				# 那条判据是**大乱斗 worker 唯一的正常退出口**(royale_host.gd:428 明说靠它兜底:
+				# 丢了它,每局结束都留一个僵尸 worker 永驻并占着已归还的端口)。
+				print("worker: 全员离开,进宽限等待重连")
 			else:
-				print("worker: 玩家离开(剩 %d 人继续)" % _claims.size())
+				print("worker: 玩家掉线进宽限(剩 %d 人在线)" % _claims.size())
 			return
-		if is_instance_valid(_host):
-			_host.queue_free()
-		print("worker: 玩家离开,对局结束")
-		get_tree().quit(0)
+		# 1v1:一方掉线**不再拆局退进程** —— 进宽限期等它回来(spec §3.2)。
+		# ★ 这是 1v1 能做重连的**前提**:原实现 `_host.queue_free()` + `quit(0)` 会让进程
+		#   直接消失,对局状态随之蒸发,重连无从谈起。
+		var role1 := 0
+		for r in _claims:
+			if _claims[r] == peer_id:
+				role1 = int(r)
+				break
+		if role1 == 0:
+			return
+		_claims.erase(role1)
+		_enter_grace(role1)
+		print("worker: 玩家掉线进宽限(1v1)")
+		return
 	elif is_participant:
 		if _royale:
 			# 尚未开局的缺席:从收人表摘除,继续等(超时兜底按已到人数开局)
