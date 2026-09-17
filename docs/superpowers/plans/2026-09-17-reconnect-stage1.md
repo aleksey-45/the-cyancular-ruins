@@ -915,9 +915,12 @@ func _finish() -> void:
 
 - [ ] **Step 3: 跑**
 
-Run（**让用户跑**，跑前确认 7777 空闲）：
-`"$GODOT" --headless --path . --quit-after 3600 res://tests/reconnect_probe.tscn`
+Run（**让用户跑**）：
+`timeout 900 "$GODOT" --headless --path . --quit-after 14400 res://tests/reconnect_probe.tscn`
 Expected: `RECONNECT PROBE: ALL-OK`。
+★ **本探针的 `--quit-after` 用 14400 而不是全局的 3600**：它要跑满一个 30s 宽限期，整跑收场约 **42s 墙钟**（实测），而 3600 帧 = 60s 只剩 18s 余量 —— 机器负载重时会**先耗尽安全网**，表现成"一行 ALL-OK 都没有"、看着像功能坏了（2026-09-16 实际踩过这一类）。安全网放宽**不花任何代价**。
+★ **跑前确认没有真大厅在跑**（`netstat -ano | findstr 7777`）：探针会占用并**按端口杀** worker 进程，
+早先版本的端口落在大厅 worker 池 `7800~8299` 内，**可能杀掉真对局的 worker**（已修：现用池外的 29001/29002/29090）。
 
 - [ ] **Step 4: 提交**
 
