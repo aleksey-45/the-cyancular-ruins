@@ -273,7 +273,19 @@ func _build_collision() -> void:
 - **`_settled = true` 之后整个函数早退**（`weapon_pickup.gd:143-147`），`move_and_slide` 再也不跑 —— 之后即使可破坏砖被重铺盖在它身上，枪会**永久钉在墙里**，连 recovery 都不会再触发。
 - 最现实的触发路径是**玩家贴墙丢弃**（`weapon_drop_offset = (24,-8)`、初速 `(±400, -220)`）。
 
-### 4.2 新增纯逻辑 `core/sim/unstick.gd`
+### 4.2 拆成两层：`TileQuery.topmost_solid_row` + 新文件 `core/sim/unstick.gd`
+
+**为什么拆两层**：`tile_query.gd` 的文件头写明"按 AABB 求格范围 → posmod → 双层 for → 逐格判定"这套骨架**全项目只能有一份**（当年在三个调用方各写一遍，漏改一处就是一个系统独有的 bug）。"向上挤出"需要知道压在哪一行才能算出**刚好**清空的位移，所以那半个骨架仍然落在 `TileQuery` 里：
+
+```gdscript
+# core/sim/tile_query.gd 新增(与 _overlaps 同一套格范围骨架,改一处要一起改)
+# 矩形覆盖的格中**最靠上**的那一行实心格的行号(格坐标,**未取模**;无 → -1)。
+static func topmost_solid_row(rect: Rect2, ts: int) -> int
+```
+
+`_overlaps` 与三个既有调用方**一律不动**（`rect_overlaps_solid` 的使用者不受影响）。
+
+**"往上挤多少"是策略，另立门户** —— 新文件 `core/sim/unstick.gd`：
 
 ```gdscript
 class_name Unstick
@@ -281,19 +293,19 @@ extends RefCounted
 
 # 「把一个压进实心格的矩形向上挤出去」的单一来源。纯静态、不引 autoload(格尺寸由参数传入,
 # 同 core/tile_query.gd / collision_aabb.gd 的约定),故 `-s` 可 load。
+# 目前只有地面武器(WeaponPickup)在用;飞鸟的解卡日后可接同一套。
 ```
 
 **核心**：`static func push_up_dy(rect: Rect2, ts: int, max_cells: int = 8) -> float`，返回把 `rect` 向上推出实心格所需的**最小位移**（0 = 没卡住）。
 
 算法（每步都是"刚好清空"的最小量，不是整格跳）：
 
-1. 先把矩形**四边各内缩 `PROBE_INSET = 0.5` 像素**再判重叠。
-   ★ **这一步不能省**：`TileQuery._overlaps` 的格范围是 `floori(rect.end / ts)` 且**含端点**（`tile_query.gd:39-42`），一个正踩在地板上的矩形 `end.y` 恰好等于地板格的上边 → `floori` 落在地板那一行 → **被报成"压到实心格"**。不内缩的话，每一个正常停稳的枪每帧都会"解卡"往上弹。
-2. 求当前覆盖范围内**最靠上**的实心行 `r_top`；没有则返回累计值。
+1. 矩形**四边各内缩 `PROBE_INSET = 0.5` 像素**再查。★ 内缩不是为了"贴地"，而是因为 `TileQuery._overlaps`/`topmost_solid_row` 的格范围是 `floori(rect.end / ts)` 且**含端点**（`tile_query.gd:39-42`）：一个**正好 64 宽、正好对齐格线**的矩形会多算进右边那一列。内缩还顺带保证下面第 3 步的 `need` **恒 ≥ 0.5**（即"只是贴着上边"永不进入推挤分支）。
+2. 求内缩后覆盖范围内**最靠上**的实心行 `r_top`（`TileQuery.topmost_solid_row`）；没有则返回累计值。
 3. `need = rect.end.y - r_top * ts`（把框底推到那一行的上边）。取最靠上的行 → `r_top*ts` 最小 → `need` 最大 → **一步就清掉当前所有被压的行**。
 4. 累计位移、重判；最多迭代 `max_cells` 次（被推上去后可能又贴到更上面的墙，这是收敛而非死循环）。
 
-环面注意：行号用 `posmod` 取回（沿用 `TileQuery`），且 `max_cells * ts` 远小于地图高度，不会绕圈。
+环面注意：`posmod` 取格由 `TileQuery` 负责；行号**未取模**地返回（位移按当前坐标算），`max_cells * ts` 远小于地图高度所以不会绕圈。
 
 ### 4.3 `WeaponPickup` 两处调用
 
