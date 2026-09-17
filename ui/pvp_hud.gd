@@ -53,17 +53,8 @@ func _on_ping(ms: int) -> void:
 	# ★ 不带「延迟」二字,直接 "24ms"(2026-09-17 用户要求)。字数少一半 → 右下角占位更小,
 	#   小地图能更贴近下边(见 ui/minimap.gd 的 EDGE_BOTTOM)。
 	_ping_label.text = "%dms" % ms
-	_ping_label.add_theme_color_override("font_color", _ping_color(ms))
-
-# 延迟按阈值着色:绿(<60)/黄(<100)/橙(<150)/红(≥150)
-func _ping_color(ms: int) -> Color:
-	if ms < 60:
-		return Color(0.45, 0.9, 0.45)
-	if ms < 100:
-		return Color(1.0, 0.85, 0.25)
-	if ms < 150:
-		return Color(1.0, 0.6, 0.15)
-	return Color(1.0, 0.3, 0.3)
+	# 阈值配色已抽到 UiFactory(单一来源,大乱斗那条也走它 —— 见 UiFactory.ping_color)
+	_ping_label.add_theme_color_override("font_color", UiFactory.ping_color(ms))
 
 func _on_round_state(data: Dictionary) -> void:
 	var state: int = data.get("state", ST_PLAYING)
