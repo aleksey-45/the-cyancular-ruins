@@ -24,6 +24,28 @@ var peer_by_role: Dictionary = {}   # role -> peer_id
 var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消费不丢 just_pressed 边沿
 var grid: Array = []
 var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
+
+
+# 与建局基线(`_base_grid`)**不同**的格。给"重连后补破坏态"与"回大厅后回局"用:
+# 客户端重进/重连时只拿 `match_path` 重建初始地图,而服务器上是破坏后的 `grid`
+# → 不补这一份,客户端会留着服务器已摧毁的墙(**幻影墙** → 玩家撞上去 → 本地预测与服务端
+# 分歧 → 可能回滚循环),或是凭空少墙。
+# ★ 判据是"与基线不同",**不是**"当前为空":后者在将来出现"加砖"类改动时会静默漏报。
+# ★ 顺序确定性(y 升序、同 y 升序 x):载荷要能在两端逐字比对。
+# ★ 规模上限:125×75 = 9375 格,全被拆也只有 9k 条 Vector2i —— 调用方**只在非空时才带**该字段。
+func destroyed_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var rows := mini(grid.size(), _base_grid.size())
+	for y in range(rows):
+		var cur: Array = grid[y]
+		var base: Array = _base_grid[y]
+		var cols := mini(cur.size(), base.size())
+		for x in range(cols):
+			if int(cur[x]) != int(base[x]):
+				out.append(Vector2i(x, y))
+	return out
+
+
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
