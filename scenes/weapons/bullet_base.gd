@@ -99,14 +99,14 @@ func _physics_process(delta: float) -> void:
 		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时,用子弹自带 damage/impact 兜底直接结算。
 		# 视觉副本(apply_damage=false)不裁决伤害,直接消失。
 		if apply_damage and hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
-			# ★归因 meta 必须在 apply_hit 之前落盘:一击致死时伤害同帧判死,
-			# _begin_death 当场读 last_damager 播报「击杀 XXX」(Task 15)。
-			_register_player_hit(hit)
+			# 命中标记(屏幕中心 X)。敌人侧不写归因 —— 那个 meta 的唯一读者是单机击杀播报,
+			# 已随播报删除(2026-09-17);玩家侧的归因在 MatchHost/RoyaleHost 那条路上。
+			CombatFeedback.hit_marker()
 			source.apply_hit(hit, velocity_vec)
 			Sfx.play("hit")
 			queue_free()
 		elif apply_damage and hit.is_in_group("enemies"):
-			_register_player_hit(hit)   # ★同上:先写归因再结算伤害
+			CombatFeedback.hit_marker()
 			hit.hurt(hit_damage, velocity_vec, hit_impact)
 			Sfx.play("hit")
 			queue_free()
@@ -178,18 +178,16 @@ func _direct_hit(hit: Node) -> void:
 		return
 	if hit.has_method("hurt"):
 		var dir := velocity_vec.normalized() if not velocity_vec.is_zero_approx() else Vector2.RIGHT
-		_register_player_hit(hit)   # ★先写归因(Task 15):hurt 可能同帧判死并当场播报
+		CombatFeedback.hit_marker()
 		hit.hurt(direct_hit_damage, dir)
 
 
-# 玩家子弹命中实体的统一收尾:击杀归因 meta(敌死时 CombatFeedback 读它播「击杀 XXX」)
-# + 命中 X 标记。headless 服务器进程无 CombatFeedback 实例 → hit_marker 空操作,无副作用。
-func _register_player_hit(target: Node) -> void:
-	var who := shooter
-	if who == null and is_instance_valid(source):
-		who = source
-	# 归因 + 命中标记的一体入口(含射手无效/自伤守卫 + 归因时效戳)
-	CombatFeedback.attribute_hit(target, who)
+# ★ 2026-09-17 删除了 `_register_player_hit()`:它是"击杀归因 meta + 命中标记"的一体入口,
+#   而其中**归因那一半**的唯一读者是单机击杀播报(EnemyBase._begin_death → notify_enemy_killed)。
+#   播报删除后敌人身上写 last_damager 即死数据,故三处调用点(:104/:109/:181,目标全是
+#   `enemies` 分组)一律降级为纯 `CombatFeedback.hit_marker()`。
+#   玩家侧的归因不在这里 —— PvP 走 MatchHost/RoyaleHost 的权威裁决。
+#   headless 服务器进程无 CombatFeedback 实例 → hit_marker 空操作,无副作用。
 
 # 爆炸弹「碰到玩家」判定(引信时机的单一来源):候选 = CONTACT_GROUPS 里的玩家实体与对手副本,
 # **排除 shooter**(否则自己的榴弹一出膛就在自己身上起短引信)。

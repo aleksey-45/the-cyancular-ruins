@@ -40,25 +40,28 @@ static func hit_marker() -> void:
 		current._show_hit()
 
 
-## 击杀播报:屏幕中心「击杀 XXX」+ 音效(who = 被击杀者显示名);内部维护连杀计数
-## (STREAK_RESET 秒内有新击杀则 +1,否则清零重计),同时闪现像素骷髅头 + 连杀数。
+## 击杀播报:屏幕中心「击杀 XXX」+ 音效(who = 被击杀者显示名,由 PvP 的 kill_event
+## 载荷给出);内部维护连杀计数(STREAK_RESET 秒内有新击杀则 +1,否则清零重计),
+## 同时闪现像素骷髅头 + 连杀数。**PvP 专用**(单机播报已于 2026-09-17 删除)。
 static func kill(who: String) -> void:
 	if current != null:
 		current._show_kill(who)
 
 
-## 自己被击杀时连杀清零(PvP 客户端在 kill_event victim==自己 时调用;单机仅按时间窗清零)
+## 自己被击杀时连杀清零(PvP 客户端在 kill_event victim==自己 时调用)
 static func reset_streak() -> void:
 	if current != null:
 		current._streak = 0
 		current._last_kill_ms = -1
 
 
-## 击杀归因(写端统一入口):记下"谁打的"与"何时打的",供 notify_enemy_killed 读。
-## 必须写在**伤害调用之前** —— EnemyBase.hurt() 同帧同步判死并立刻调 notify_enemy_killed,
-## 写在 hurt 之后则 meta 尚不存在,「击杀 XXX」会静默丢失(这是本合并修过的一个真 bug)。
-## 只做元数据写入,不做任何判定/播报;victim == attacker 时不写(自伤不归因给自己)。
-## 调用方负责传入正确的射手(玩家武器持有者 / 爆炸射手);是否算击杀由读端按 player 组 + 时效判定。
+## 击杀归因(写端统一入口):记下"谁打的"与"何时打的",供 `RoyaleHost._attributed_killer`
+## 读(大乱斗计分)。
+## 必须写在**伤害调用之前** —— 被击者同帧倒地,大乱斗的倒地边沿当场读 meta 判分,
+## 写在 take_hit 之后则 meta 尚不存在,那一分静默丢失。
+## 只做元数据写入,不做任何判定;victim == attacker 时不写(自伤不归因给自己)。
+## 调用方负责传入正确的射手(玩家武器持有者 / 爆炸射手);是否算击杀由读端按 + 时效判定。
+## ★ 敌人一侧**不再写**:那个 meta 原先的唯一读者是单机击杀播报,已随播报删除。
 static func attribute(victim: Node, attacker: Node) -> void:
 	if victim == null or not is_instance_valid(victim):
 		return
@@ -68,40 +71,25 @@ static func attribute(victim: Node, attacker: Node) -> void:
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
 
 
-## 归因 + 命中标记的一体入口:武器命中实体时的统一收尾(子弹/爆炸/激光共用)。
-## ★两件事都必须在**伤害调用之前**完成 —— EnemyBase.hurt() / take_hit 可能同帧判死,
-## 死亡播报当场读 last_damager 的 meta(见 attribute 的注释)。散写成两行时极易漏掉先后顺序。
+## 归因 + 命中标记的一体入口:武器命中**玩家**时的统一收尾(PvP 的爆炸/激光玩家分支共用)。
+## ★归因必须在**伤害调用之前**完成 —— take_hit 可能同帧判死,大乱斗的倒地边沿当场读
+## last_damager 的 meta(见 attribute 的注释)。散写成两行时极易漏掉先后顺序。
+## ★ 命中**敌人**不再走这里(2026-09-17):单机播报删除后敌人的 last_damager 无读者,
+##   敌人分支直接调 `hit_marker()` 即可。
 ## headless 服务器进程无 CombatFeedback 实例 → hit_marker 空操作,无副作用。
 static func attribute_hit(victim: Node, attacker: Node) -> void:
 	attribute(victim, attacker)
 	hit_marker()
 
 
-## EnemyBase._begin_death 调用:仅「玩家造成的死亡」才播报——读受害者 last_damager meta,
-## 溺水/环境死(无射手)安静销毁,不再全局播 kill 音效。
-static func notify_enemy_killed(victim: Node) -> void:
-	if current == null or not victim.has_meta("last_damager"):
-		return
-	var killer: Node = victim.get_meta("last_damager")
-	if killer == null or not is_instance_valid(killer) or not killer.is_in_group("player"):
-		return
-	# 归因时效:太久以前打过的伤害不再算这回的击杀(否则"蹭过一下、后溺水"也会播报)
-	if not victim.has_meta("last_damager_time"):
-		return
-	# 边界取 >=:窗口边界本身即视为过期(同帧写入-读取的差值为 0,用 > 会让时效"永远不过期",
-	# 常量取 0 时也永不为真 → 不可反证)
-	if Time.get_ticks_msec() - int(victim.get_meta("last_damager_time")) >= ATTRIB_WINDOW_MS:
-		return
-	kill(enemy_display_name(victim))
-
-
-## 敌人显示名(击杀播报用):唯一来源是 data/enemies.json 的 `display_name` 字段,经
-## `EnemySpawner.display_name_of`(按**场景路径**查,自带惰性加载 —— 不依赖"调用前恰好有人
-## 调过 load_types()")。查不到回落英文场景文件名。
-## ★ 2026-09-14 前这里是一份手抄的 `const ENEMY_NAMES`(键 = 场景名去 Enemy 前缀),
-##   与 enemies.json **两处维护**:加新敌人漏改这里就会静默显示英文名,且不报错。
-static func enemy_display_name(victim: Node) -> String:
-	return EnemySpawner.display_name_of(String(victim.scene_file_path))
+# ★ 2026-09-17 删除了 `notify_enemy_killed()` 与 `enemy_display_name()`:
+#   前者是**单机**击杀播报的唯一触发点(EnemyBase._begin_death 直接静态调用),用户裁定
+#   单机不要击杀播报;后者只服务它,随之成为死代码。PvP 的播报走另一条路
+#   (`NetBus.kill_event` → pvp_game/royale_game → `kill()`),**不受影响**。
+#   连带删掉的还有 `EnemySpawner.display_name_of` / `DISPLAY_NAMES` 与
+#   `data/enemies.json` 的 `display_name` 字段 —— 显示名整条链已不存在。
+#   敌人侧的归因写入(`explosion`/`laser`/`bullet_base` 的敌人分支)也一并降级为
+#   纯 `hit_marker()`:那些 `last_damager` meta 原先**只有**上面那个函数会读。
 
 
 # 两个**自绘**控件由代码建(见 _ready),故是普通成员;两个文本节点从场景取,

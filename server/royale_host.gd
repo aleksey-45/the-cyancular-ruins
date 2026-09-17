@@ -424,7 +424,7 @@ func mark_disconnected(role: int) -> void:
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	# 归因写入统一走 main 的单一入口(它同时写 last_damager + last_damager_time)。
 	# 本覆写不可省:服务器子弹撞玩家时掩码不含玩家层,只经 _adjudicate_bullets 到这里,
-	# bullet_base._register_player_hit 不会跑 → 必须由本处写 meta,否则击杀归因丢失。
+	# 子弹自己的反馈路径不会跑 → 必须由本处写 meta,否则击杀归因丢失。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
 

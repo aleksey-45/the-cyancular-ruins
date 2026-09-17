@@ -1,7 +1,7 @@
 {
   "enemies": [
-    { "id": "jump_bird", "name": "JumpBird", "display_name": "跳鸟", "scene": "res://scenes/enemies/enemy_jump_bird.tscn", "color": "#6fae8f" },
-    { "id": "fly_bird", "name": "FlyBird", "display_name": "飞鸟", "scene": "res://scenes/enemies/enemy_fly_bird.tscn", "color": "#c96fb0" },
-    { "id": "black_bird", "name": "BlackBird", "display_name": "黑影", "scene": "res://scenes/enemies/enemy_black_bird.tscn", "color": "#8a8f98" }
+    { "id": "jump_bird", "name": "JumpBird", "scene": "res://scenes/enemies/enemy_jump_bird.tscn", "color": "#6fae8f" },
+    { "id": "fly_bird", "name": "FlyBird", "scene": "res://scenes/enemies/enemy_fly_bird.tscn", "color": "#c96fb0" },
+    { "id": "black_bird", "name": "BlackBird", "scene": "res://scenes/enemies/enemy_black_bird.tscn", "color": "#8a8f98" }
   ]
 }
