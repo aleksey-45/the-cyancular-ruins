@@ -97,12 +97,15 @@ func _check(ok: bool, msg: String) -> void:
 
 
 # rows×cols 的网格:默认全空,再把 solid_rows 里的行填成实心砖。
-func _grid(rows: int, cols: int, solid_rows: Array) -> Array:
-	var g: Array = []
+# ★ 必须用**带类型**的 Array[Array] / Array[int]:MazeGenerator.current_grid 是
+#   `static var current_grid: Array[Array]`,把无类型的 Array 赋给它会在运行期报类型错。
+#   同款写法见 tests/beam_trace_smoke.gd 的 _make_grid。
+func _grid(rows: int, cols: int, solid_rows: Array) -> Array[Array]:
+	var g: Array[Array] = []
 	for y in range(rows):
-		var row: Array = []
-		for x in range(cols):
-			row.append(MazeGenerator.SOLID if solid_rows.has(y) else MazeGenerator.EMPTY)
+		var row: Array[int] = []
+		row.resize(cols)
+		row.fill(MazeGenerator.SOLID if solid_rows.has(y) else MazeGenerator.EMPTY)
 		g.append(row)
 	return g
 
@@ -153,7 +156,8 @@ func _initialize() -> void:
 	_check(dy_all > 0.0, "全实心时也应有位移(实际 %f)" % dy_all)
 
 	# ── ⑥ 空网格 → 0(TileQuery 的空网格语义:一律"没压到东西")──
-	MazeGenerator.current_grid = []
+	var empty: Array[Array] = []
+	MazeGenerator.current_grid = empty
 	_check(U.push_up_dy(sunk, TS) == 0.0, "空网格应返回 0")
 
 	if _fail == 0:
@@ -678,13 +682,17 @@ var _enemy := Vector2.INF
 func _ready() -> void:
 	Settings.pvp_minimap_show_enemy = true
 
-	# 合成地图:25×25 全实心(整张都是墙色),够 Minimap 建底图即可
-	var grid: Array = []
-	for y in range(25):
-		var row: Array = []
-		for x in range(25):
-			row.append(MazeGenerator.SOLID)
+	# 合成地图:125×75 全实心(整张都是墙色)。★ 尺寸必须与 GameParameters 的
+	# MAP_WIDTH/HEIGHT 一致 —— 小地图的着色器把"格数"当贴图尺寸、把"世界像素"当坐标,
+	# 两者不一致时圆里画的是错位的图(而断言可能照样绿)。
+	var grid: Array[Array] = []
+	for y in range(75):
+		var row: Array[int] = []
+		row.resize(125)
+		row.fill(MazeGenerator.SOLID)
 		grid.append(row)
+	GameParameters.MAP_WIDTH = 125.0 * float(GameParameters.TILE_SIZE)
+	GameParameters.MAP_HEIGHT = 75.0 * float(GameParameters.TILE_SIZE)
 	MazeGenerator.current_grid = grid
 
 	var bg := ColorRect.new()
