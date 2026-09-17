@@ -398,7 +398,7 @@ const TEARDOWN_ABORT := 2     # 拉起失败:worker 根本没起来 → **立即
 # mode               三种形态,见下方 TEARDOWN_* 常量(默认 DELAYED)
 # msg                发给房内玩家的 server_message(空串=不发)
 # disconnect_peers   true=立刻断开房内玩家(清扫路径要;正常关房由 peer_left 自然收尾)
-# 端口延迟分两档:1v1=WORKER_PORT_REUSE_DELAY(30s);大乱斗=ROYALE_PORT_REUSE_DELAY(360s,一局更长)。
+# 端口延迟分两档:1v1=WORKER_PORT_REUSE_DELAY(120s,≥ 断线宽限期);大乱斗=ROYALE_PORT_REUSE_DELAY(360s,一局更长)。
 func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 		disconnect_peers: bool = false) -> void:
 	var is_royale: bool = room is RoyaleRoom
@@ -434,7 +434,7 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 				multiplayer.disconnect_peer(peer_id)
 
 # 延迟归还 worker 端口:给旧 worker 留足退出时间,防止端口被立刻复用导致串线。
-# delay:1v1=30s;大乱斗房传 ROYALE_PORT_REUSE_DELAY(一局可长达 5 分钟)。
+# delay:1v1=120s;大乱斗房传 ROYALE_PORT_REUSE_DELAY(一局可长达 5 分钟)。
 # ★ 本方法留在 RoomManager 是因为它要 `await get_tree()` —— RefCounted 没有树(见 WorkerLauncher
 #   类头);端口池本身在 launcher 里,这里只做"等够了再还"。
 func _release_port_later(port: int, delay: float = WorkerLauncher.WORKER_PORT_REUSE_DELAY) -> void:

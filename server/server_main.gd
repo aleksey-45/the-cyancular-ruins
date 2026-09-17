@@ -318,9 +318,12 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 	_grace.leave(role)
 	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源,不另造一份)。
 	# ★ 走 `NetBus.reply` 而不是 `NetBus.rpc_id`:它是本仓"答复 caller"的收口,内部**先判活**
-	#   (CLAUDE.md 硬纪律「定向发送前一律先判活」)。这个窗口**可达** —— Task 6 的客户端重连
-	#   循环里有 `NetBus.stop()`:客户端请求完就断开,会与这次请求挤在**同一次 poll**,
-	#   ENet 处理 DISCONNECT 时当场把通道数清零 → 不判活的话这一发必打
+	#   (CLAUDE.md 硬纪律「定向发送前一律先判活」)。这个窗口**可达**,但成因**不是**
+	#   (2026-09-17 订正)原先写的"客户端请求完就断开" —— 客户端发完 `reclaim_role` 之后是**等**
+	#   这条应答(`pvp_match_client._on_reconnect_retry_tick` 的 `_reclaim_sent and
+	#   NetBus.can_send_to_server()` 分支),只有在连接已不可用(`can_send_to_server()` 转 false,
+	#   被踢/链路断)时下一拍才 `_retry_connect()` → `NetBus.stop()`。那个 stop 与本次应答可能挤在
+	#   **同一次 poll**,ENet 处理 DISCONNECT 时当场把通道数清零 → 不判活的话这一发必打
 	#   `Unable to send packet on channel 0, max channels: 0`。三个实参都非 null
 	#   (`Vector2i(-1,-1)` 也不等于 null),不会被 `reply` 的 null 截断规则吃掉。
 	var sp: Vector2i = _host.role_spawns().get(role, Vector2i(-1, -1)) \
