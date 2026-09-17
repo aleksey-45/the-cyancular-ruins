@@ -17,17 +17,26 @@ extends Node
 #   `user://reconnect_probe_<who>.log`(阶段轨迹),失败时父进程把它摊开。
 #
 # ═══ 时间轴(相对**本端**看到 PLAYING 的那一刻 `_tp`)═══
-#   两个客户端各自从自己的 PLAYING 起算,而 PLAYING 是服务器**同一条广播**给的(60Hz),
-#   两端的 `_tp` 相差 ≤1 帧 → 见证者的观测窗口对齐到 ±0.02s,而窗口有 2.7s 长。
-#   actor:0.0 按住右(必须先跑起来)· 0.6 闪断(错 token)· 3.5 恢复真 token · 6.0 断言相①②
-#   witness:1.5~4.2 观测窗口(相③,前置速度取闪断前最后一个样本)· 4.6 (c2)永久掉线 · 5.2 收工
-#   ★ 按住右**必须在闪断之前就跑够时间**:第一版把它写在闪断那一刻的同一帧,那一帧紧接着
-#     `NetBus.stop()`,held=right 的包一个都没发出去 → 相③量到的"位移 0"是**空转的绿**
-#     (身体自始至终没动过,冻结与不冻结都测不出来)。相③的前置断言就是为这一档设的。
-#   ★ 为什么 3.5 恢复真 token 而窗口到 4.2:**节拍**是 2s(`RECONNECT_RETRY_MS`),闪断后
-#     第一次尝试在 0.6、第二次 2.6、第三次 4.6 —— 恢复得比 4.6 早即可,而 4.6 必然晚于窗口
-#     结束(SceneTreeTimer 只会晚不会早),故相③的观测窗口里**不会有**"重连成功、身体重新
-#     跑起来"污染。
+#   actor:0.0 按住 S(必须先跑起来)· 1.5 塞确定性装置的包 · 1.6 闪断(错 token)
+#          · 6.5 恢复真 token · 9.5 断言相①②⑤(为什么不是更早见 `T_ACTOR_END` 上方)
+#   witness:2.5~5.2 观测窗口(相③)· 5.6 (c2/r2)永久掉线 · 6.2 收工
+#   ★★ **两端的 `_tp` 并不对齐**(旧注释写的是"相差 ≤1 帧、窗口对齐到 ±0.02s"—— **实测证伪**,
+#      2026-09-17):两端各自从"自己第一次处理到 `st==1` 那条 round_state"起算,而客户端进对局要
+#      建场景(大乱斗那份带 N 个副本 + HUD,最重),主线程一停就是零点几秒 —— Godot 会丢这段
+#      `_process` delta,于是**时钟与快照流一起后移**。实测到的一档(wroy 的 r2):`_tp` 之后
+#      0.7s 才落第一条快照样本,而 actor 在同一段里照常 0.6s 就闪断了 —— 于是「闪断前最后一条
+#      样本必须蹲着」那条前置断言**取不到样本**(pose=-1)而变红。两端实测漂移量级 ~0.7s。
+#      故本文件所有"跨端"的余量都按 **±1.5s 漂移**留(见下两条),别按"对齐"读:
+#   ★ 为什么闪断在 1.6(而不是 0.6):**前置断言要拿到"窗口开始之前的蹲姿样本"**,而见证者的
+#     样本流可能比 actor 的闪断晚 ~0.7s 才开始 → 闪断越晚,这段观测才越不会被漂移吃掉。
+#     1.6s 给了 ~1.5s 的容差(旧值 0.6 只有 0.6s,正是 2026-09-17 实跑到的那一档)。
+#   ★ 为什么 6.5 恢复真 token 而窗口到 5.2:**节拍**是 2s(`RECONNECT_RETRY_MS`),闪断(1.6)
+#     之后的尝试在 1.6 / 3.6 / 5.6 / 7.6 —— 恢复得比 7.6 早即可,于是接受的**最早**可能落在
+#     `_tp`+7.6,而窗口在 5.2 就关了 → 相③的观测窗口里**不会有**"重连成功、身体重新跑起来"
+#     污染,余量 2.4s(旧时间轴只有 0.4s,同样在漂移之下)。
+#   ★ 按住 S**必须在闪断之前就跑够时间**:第一版把它写在闪断那一刻的同一帧,那一帧紧接着
+#     `NetBus.stop()`,held 的包一个都没发出去 → 相③量到的"位移 0"是**空转的绿**(身体自始至终
+#     没动过,冻结与不冻结都测不出来)。相③的前置断言就是为这一档设的。
 #
 # ═══ actor 收工后**不退出** ═══
 #   相④ 要的是"某个 role 永久掉线、宽限期到点收场"。若 actor 在写完成绩后退出,它的 role 也会
@@ -35,7 +44,7 @@ extends Node
 #   立刻失去意义。故 actor 写完结果后**保持连接**待命,由裁判杀端口收尾。
 
 const BAD_TOKEN := "00000000deadbeef"   # 长度同真 token(16 hex),但值必然不匹配
-const T_DROP := 0.6        # 闪断时刻(相对本端看到 PLAYING)
+const T_DROP := 1.6        # 闪断时刻(相对本端看到 PLAYING);为什么不是 0.6 见文件头「时间轴」
 # ── 闪断前的一小串输入包(**确定性装置**,只服务相③)──
 # 为什么要有它:掉线那一刻服务器 `_pending_input[role]` 里**可能**还有没消费完的包(客户端 60Hz
 # 上行、服务器每 tick 只消费一个 → 队列长度在 0~2 之间抖动),而 `_enter_grace` 的 `reset_state()`
@@ -45,14 +54,23 @@ const T_DROP := 0.6        # 闪断时刻(相对本端看到 PLAYING)
 # 卡住的是 1v1 还是大乱斗会互换),探针会飘;塞了就必然命中 —— 这才是它能当回归防卫的原因。
 # ★ 反证(证明"承重的是包里的 held,不是包本身"):把它整段换成恒中性(held=0)重跑,相③转绿。
 const BURST_N := 10
-const BURST_AT := 0.50     # 比闪断早 0.1s:够 RPC 落地(下一帧 flush),又不至于被服务器排空
+const BURST_AT := 1.50     # 比闪断早 0.1s:够 RPC 落地(下一帧 flush),又不至于被服务器排空
 var _burst_done := false
-const T_RESTORE := 3.5
-const T_ACTOR_END := 6.0
-const W_START := 1.5
-const W_END := 4.2
-const T_W_DROP := 4.6
-const T_W_END := 5.2
+const T_RESTORE := 6.5     # 恢复真 token → 落在 7.6 那一拍(见文件头「时间轴」)
+# ★ 为什么是 9.5 而不是"收工越早越好":`_actor_assert` 里有一条 **"重连后快照续上"**
+#   (`_snap_count > _snap_at_drop + 20`),它量的是**接受之后到断言之间**收到多少条快照 ——
+#   而接受最早落在 `_tp`+7.6(见上),故断言时刻直接决定了这条断言的余量:8.0 = 只留 0.4s
+#   ≈ 24 条,踩在边界上(2026-09-17 实测到恰好 +20 → 红);9.5 = 1.9s ≈ 114 条,余量充足。
+const T_ACTOR_END := 9.5
+# 相⑤(重连后那条 match_start 的 spawn 断言,见 `_actor_assert`)要等**重发的那条 match_start
+# 到手**才判得了。正常时它在 el≈7.7 就到了(闪断 1.6 被拒 → 3.6 被拒 → 5.6 被拒 → 7.6 被接受),
+# 比 9.5 早;但节拍是 2s 一跳,真被抖掉一次就会落到 11.6 —— 那时断言早已跑完、结果文件
+# 已经写出去了,补记的失败**进不了结果文件**。故把断言时刻推迟到"它到了"或到这个上限。
+const T_ACTOR_END_MAX := 13.0
+const W_START := 2.5
+const W_END := 5.2
+const T_W_DROP := 5.6
+const T_W_END := 6.2
 # 身体冻结判据(px)。参考量级:move_speed=700、accel_ground=30(时间常数 33ms)→
 # 不调 `_enter_grace` 里的 `reset_state()` 时,身体在整个窗口内保持 ~700px/s → 漂移 ≈ 1900px;
 # 调了则 ~0.1s 内停住,窗口从掉线后 0.9s 才开始,尾部完全静止。
@@ -95,6 +113,10 @@ var _last_rs: Dictionary = {}       # 最近一条 round_state(相①"对局状�
 var _rs_before: Dictionary = {}     # 闪断前最后一条
 var _before_local_id := 0
 var _before_game_id := 0
+# ── 相⑤:两次 `match_start` 的出生点必须相同 ──
+var _first_spawn := Vector2i(-1, -1)     # 首次 match_start 带的那份
+var _resumed_spawn := Vector2i(-1, -1)   # 重连后 worker 重发的那份
+var _resumed_spawn_seen := false
 var _saw_reconnecting := false
 var _drop_done := false
 var _restored := false
@@ -109,7 +131,11 @@ var _done := false
 func _ready() -> void:
 	var lp := "user://reconnect_probe_%s.log" % who
 	if FileAccess.file_exists(lp):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
+		# 删不掉(多半是上一跑的同名客户端还活着、还攥着这个文件)→ 后面 `seek_end()` 会把新
+		# 内容**接在陈旧内容后面**,读日志的人会照旧行归因。故失败要出声音,别静默。
+		var rm := DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
+		if rm != OK:
+			push_warning("PROBE[%s]: 删不掉上一跑的 %s(错误 %d)—— 本文件里会有陈旧行" % [who, lp, rm])
 	PvpSession.role = slot
 	PvpSession.token = token
 	PvpSession.worker_port = port
@@ -140,9 +166,16 @@ func _on_connected() -> void:
 # `pvp_game._on_match_start_event` 处理(它只在 `_reconnecting` 为真时收尾)。
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	if _entered:
-		_log("收到重连后的 match_start(role=%d spawn=%s)—— 本观察者不换场" % [role, str(spawn)])
+		# 相⑤ 的取数点(断言在 `_actor_assert` 里 —— 这里只记,不判):
+		# `_finish` 一到就把结果文件写出去了,而重发这条可能比断言时刻还晚一两个节拍,
+		# 故"判"必须发生在结果文件落盘之前(见 `_actor_tick` 的等待门 / `T_ACTOR_END_MAX`)。
+		_resumed_spawn_seen = true
+		_resumed_spawn = spawn
+		_log("收到重连后的 match_start(role=%d spawn=%s,首次 spawn=%s)—— 本观察者不换场"
+				% [role, str(spawn), str(_first_spawn)])
 		return
 	_entered = true
+	_first_spawn = spawn
 	PvpSession.role = role
 	PvpSession.spawn = spawn
 	PvpSession.map_path = map_path
@@ -242,7 +275,9 @@ func _actor_tick(el: float) -> void:
 		_log("恢复真 token(相②已验完),等下一次节拍 reclaim")
 	if _drop_done and _game.get("_reconnecting") == true:
 		_saw_reconnecting = true
-	if el >= T_ACTOR_END:
+	# 相⑤的 spawn 断言要等重发的那条 match_start(见 T_ACTOR_END_MAX);等不到也照样断言,
+	# 那一相会红并打明"没等到"(否则会以"没取到数"的形式静默变绿)。
+	if el >= T_ACTOR_END and (_resumed_spawn_seen or el >= T_ACTOR_END_MAX):
 		_actor_assert()
 
 
@@ -260,6 +295,20 @@ func _actor_assert() -> void:
 	# 快照真的续上了(unreliable,断线期间没有;接回来必须重新开始涨)
 	_check(_snap_count > _snap_at_drop + 20,
 			"相①:重连后快照续上(+%d 条)" % (_snap_count - _snap_at_drop))
+	# ★★ 相⑤的核心断言(1v1 与大乱斗都判,理由在大乱斗侧):**reclaim 不应重新摆位**。
+	#   重连后 worker 重发的那条 `match_start` 必须带**与首次同一个** spawn。
+	#   它钉的是一条**没有任何其他断言拦得住**的回归:`RoyaleHost` 覆写的 `role_spawns()` 若被
+	#   删掉(退回基类实现 —— 基类走 `_spawn_cell`,而大乱斗那个第二次起返回**动态复活点**、
+	#   并带 `_spawned_once` 闩锁副作用),或者 `_round_spawns` 被就地改掉,reclaim 这条路径
+	#   就会把**复活点**当出生点下发,客户端据此把玩家瞬移过去 —— 而相① 的其余判据
+	#   (instance_id 不变 / 快照续上 / 大乱斗的 scores 与时钟)在那条回归下**全绿**。
+	#   ★ 只把 spawn 打进日志、人眼对(旧版就是这样)等于没有防卫:这类"值悄悄变了"只有
+	#     断言拦得住,故它现在是真断言。
+	_check(_resumed_spawn_seen,
+			"相⑤:重连后收到 worker 重发的 match_start(判其 spawn 未变的前提)")
+	_check(_resumed_spawn == _first_spawn,
+			("相⑤:第二次 match_start 的 spawn 不得与首次不同(reclaim 不应重新摆位);"
+			+ "首次 %s,重发 %s") % [str(_first_spawn), str(_resumed_spawn)])
 	# 大乱斗:对局状态一并没有被重置(比分相同 + 时钟继续走而不是回到 300)
 	if is_royale and not _last_rs.is_empty() and not _rs_before.is_empty():
 		_check(_last_rs.get("scores", {}) == _rs_before.get("scores", {}),
@@ -291,17 +340,25 @@ func _witness_tick(el: float) -> void:
 
 
 func _witness_assert() -> void:
-	# 前置:闪断**前最后一个样本**里 role1 蹲着(pose=SQUAT)—— 蹲姿逐帧由"输入源此刻按着 S"
+	# 前置:**观测窗口开始之前**,快照里出现过蹲姿(pose=SQUAT)—— 蹲姿逐帧由"输入源此刻按着 S"
 	# 推导,故它同时证明了两件事:① 输入真的被服务器吃到了;② 身体此刻在地面上(不是坠落中)。
+	# ★ 判据是"**出现过**"、不是"闪断前**最后一条**样本是蹲姿"(旧写法):后者把"两端 `_tp` 对齐"
+	#   当成了前提,而那个前提 2026-09-17 实测被证伪(见证者的样本流比 actor 的闪断晚 ~0.7s
+	#   才开始,旧写法当场取不到样本、报 pose=-1)—— 见文件头「时间轴」那一节。
+	#   语义没有松动:它要的仍然是"见证者**确实看到过** role1 被输入驱动到蹲姿",而不是"某个
+	#   具体时刻的那一条样本"。取最后一条样本只作读数。
 	var pre_speed := -1.0
 	var pre_pose := -1
+	var pre_at := -1.0
 	for s in _track:
-		if float(s[0]) <= T_DROP:
+		if float(s[0]) < W_START and int(s[3]) == POSE_SQUAT:
+			pre_at = float(s[0])
 			pre_speed = float(s[2])
 			pre_pose = int(s[3])
 	_check(pre_pose == POSE_SQUAT,
-			"相③前置:闪断前 role1 处于蹲姿(pose=%d,期望 SQUAT=%d;速度 %.0f px/s)"
-			% [pre_pose, POSE_SQUAT, pre_speed])
+			("相③前置:观测窗口(%.1fs)之前 role1 出现过蹲姿(pose=%d,期望 SQUAT=%d;"
+			+ "该样本在 el=%.2fs,速度 %.0f px/s)")
+			% [W_START, pre_pose, POSE_SQUAT, pre_at, pre_speed])
 	# 窗口内的位移(环面最短向量:地图左右回绕,别拿裸距离比)
 	var first: Variant = null
 	var last: Variant = null

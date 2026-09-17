@@ -12,13 +12,22 @@ extends Node
 #   ② 反向:错 token 的 reclaim 被拒(worker 打「拒绝 reclaim …令牌不匹配」+ 踢连接)
 #   ③ 身体冻结:掉线后该 role 的玩家 global_position 不变(钉 `_enter_grace` 里的 reset_state)
 #   ④ 超时移出:掉线不回来 → GraceWindow.DEFAULT_SECONDS 之后 worker 收场退出
-#   ⑤ 大乱斗相:①②③ 在 `--royale` worker 上再跑一遍
+#   ⑤ 大乱斗相:①②③ 在 `--royale` worker 上再跑一遍,**并核验"reclaim 不重新摆位"** ——
+#      重连后重发的那条 `match_start` 必须带与首次**同一个** spawn(钉 `RoyaleHost.role_spawns()`
+#      覆写没有 `_spawned_once` 副作用;取数点与理由见 `reconnect_watcher._actor_assert`)
 #   ⑥ 启动等待态:空载 `--royale` worker 不得在 1~3s 窗口内退出
 #
 # ═══ 拓扑(自当裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══
-#   w1v1  7901  真 `server_main.gd --worker --port 7901`                → c1(role1) + c2(role2)
-#   wroy  7902  真 `server_main.gd --worker --royale --port 7902 --roles 1,2` → r1 + r2
-#   widle 7990  真 `--worker --royale`(一个玩家都不连)                 → 相⑥
+#   w1v1  29001  真 `server_main.gd --worker --port 29001`              → c1(role1) + c2(role2)
+#   wroy  29002  真 `--worker --royale --port 29002 --roles 1,2`        → r1 + r2
+#   widle 29090  真 `--worker --royale`(一个玩家都不连)               → 相⑥
+#   ★ 这三个端口**必须落在真大厅的 worker 端口池之外**,理由见下方常量区的长注释。
+#
+# ═══ 跑之前的前提 ═══
+#   **请确认没有真大厅在跑**(本机若有 `Cyancular Ruins Server.exe` 占着 7777,先看它是不是
+#   你要留着的那一个 —— **不要杀它**)。本探针**不占 7777**(它不自当大厅,worker 由本进程
+#   直接拉起),但它的收尾会**按 UDP 端口杀进程**(`ProcUtil.kill_udp_port`,见 `_kill_children`),
+#   所以"探针用的端口与别人重不重合"是真问题 —— 那正是端口挪到池外要解决的事(常量区那段注释)。
 #   ★ **为什么 worker 由本进程直接拉起,而不是走大厅**(royale_c2_probe 走 RoomManager):
 #     本探针的判据有一半落在 **worker 自己的日志**上(「拒绝 reclaim」/「进宽限」/「宽限期到」),
 #     而 Windows 下 `OS.create_process` 的子进程 stdout **不被父进程继承**(仓内既有结论,
@@ -71,9 +80,19 @@ extends Node
 #   故三组 worker/客户端**全部并行**跑,且每个子进程自带 `--quit-after`(150s)兜底。
 
 const PREFIX := "reconnect_probe_"
-const W1V1 := 7901        # 1v1 worker 端口
-const WROY := 7902        # 大乱斗 worker 端口
-const WIDLE := 7990       # 空载大乱斗 worker 端口(刻意取池尾:大厅端口池是 7800~8299,避开前段)
+# ═══ ★★ 三个 worker 端口必须落在**大厅的 worker 端口池之外** ═══
+# 池的定义在 `server/worker_launcher.gd`:`WORKER_PORT_BASE = 7800`、`WORKER_PORT_SPAN = 500`
+# → 池 = **7800~8299**。本探针原先写的是 7901/7902/7990,**三个数都在池里**,而本机上常驻
+# 一个真大厅(`Cyancular Ruins Server.exe`,占 7777)—— 只要那一刻有人建房,大厅就会把**同一个
+# 端口**发给那局的真 worker,后果有两层,都不是"红一条断言"这个量级:
+#   ① 真 worker bind 失败当场退出 —— 别人的对局被本探针搅掉;
+#   ② 本探针收尾的 `ProcUtil.kill_udp_port(W1V1/WROY/WIDLE)` 是"按 UDP 端口找属主并强杀",
+#      **不看那是谁的进程** → 会把那个真 worker 一起杀掉。
+# 故一律取池外(29xxx,同时远离常见服务端口)。★ 改这三个数之前先读这段;改完顺手核对
+# `worker_launcher.gd` 的池上界没被调大。
+const W1V1 := 29001       # 1v1 worker 端口(池外)
+const WROY := 29002       # 大乱斗 worker 端口(池外)
+const WIDLE := 29090      # 空载大乱斗 worker 端口(池外)
 const CHILD_QUIT_AFTER := "9000"   # 子进程兜底(150s):正常由探针自己收尾/杀端口
 const BOOT_TIMEOUT := 30.0         # 等 worker/客户端就绪的上限
 const FINAL_TIMEOUT := 58.0        # 本进程的收工上限(必须留在 --quit-after 3600 的 60s 之内)
@@ -95,6 +114,9 @@ var _notes: Array[String] = []
 var _w1v1_pid := 0
 var _wroy_pid := 0
 var _widle_pid := 0
+# 本进程拉起过的**全部**子进程的 PID(worker + 4 个客户端)。收尾按它杀 —— 只按端口杀会漏掉
+# 客户端(它们是从**临时端口**连出去的),见 `_kill_children`。
+var _child_pids: Array[int] = []
 var _idle_ready_t := -1.0
 var _idle_alive_ok := false
 var _idle_bonus_ok := false
@@ -333,7 +355,7 @@ func _spawn_worker(worker_args: Array, tag: String) -> int:
 	for a in worker_args:
 		argv.append(str(a))
 	print("PROBE: spawn worker %s argv=%s" % [tag, str(argv)])
-	return OS.create_process(_exe, argv)
+	return _record_pid(OS.create_process(_exe, argv))
 
 
 func _spawn_client(who: String, port: int, token: String, slot: int, scene: String) -> int:
@@ -342,10 +364,33 @@ func _spawn_client(who: String, port: int, token: String, slot: int, scene: Stri
 			"--who=" + who, "--port=" + str(port), "--token=" + token, "--slot=" + str(slot),
 			"--scene=" + scene])
 	print("PROBE: spawn 客户端 %s(port=%d slot=%d scene=%s)" % [who, port, slot, scene])
-	return OS.create_process(_exe, argv)
+	return _record_pid(OS.create_process(_exe, argv))
 
 
+func _record_pid(pid: int) -> int:
+	if pid > 0:
+		_child_pids.append(pid)
+	return pid
+
+
+# 收尾:两条路一起走,缺一不可。
+#   ① **按 PID 杀全部子进程**(本仓既有先例:`tests/*.sh` 用 `taskkill /PID`;GDScript 侧是
+#      `OS.kill`)。为什么非有这一条:四个**客户端**是从临时端口连出去的,不占 W1V1/WROY/WIDLE
+#      任何一个,**只按端口杀根本杀不到它们** —— 于是上一跑的 c1/r1 会留下来,后果实测过两条:
+#        · 持续敲下一次运行的 W1V1/WROY(上一次审查观察到 3 条「该 role 不在宽限期」);
+#        · 一直攥着自己的 `user://reconnect_probe_<who>.log` → 下一跑 `_clean()` 的删除**失败**
+#          (旧代码忽略返回值,静默),新进程随即截断该文件、残留进程按旧偏移续写 → 文件里出现
+#          空洞与陈旧行(所以 `_clean()` 现在会报出来)。
+#   ② **仍保留按 UDP 端口杀 worker**:它兜住"PID 记录漏了"这一档(worker 是真 ENet 绑定端口的
+#      那一侧),成本是两条 PowerShell,且与本仓 `tests/*.sh` 的 `taskkill + kill_port` 双保险同款。
 func _kill_children() -> void:
+	var killed := 0
+	for pid in _child_pids:
+		if pid > 0 and OS.is_process_running(pid):
+			OS.kill(pid)
+			killed += 1
+	print("PROBE: 按 PID 收尾 %d/%d 个子进程" % [killed, _child_pids.size()])
+	_child_pids.clear()
 	for p in [W1V1, WROY, WIDLE]:
 		ProcUtil.kill_udp_port(p)
 
@@ -382,12 +427,19 @@ func _tail(path: String) -> String:
 	return "…(前 %d 行省略)\n" % (lines.size() - 20) + "\n".join(lines.slice(lines.size() - 20))
 
 
+# 开工前清掉上一跑的产物。★ 删除**必须看返回值**:上一跑的客户端若还活着(它攥着自己的
+# `.log`),删除会失败,而失败被忽略的后果不是"少删一个文件" —— 本跑的新进程会截断同一个文件、
+# 残留进程按它自己的旧偏移继续写 → 日志里出现空洞与陈旧行,人会照着这些行做出错误归因。
 func _clean() -> void:
 	for tag in ["c1", "c2", "r1", "r2", "w1v1", "wroy", "widle"]:
 		for suffix in ["result", "godotlog"]:
 			var p := "user://%s%s.%s" % [PREFIX, tag, suffix]
-			if FileAccess.file_exists(p):
-				DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+			if not FileAccess.file_exists(p):
+				continue
+			var err := DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+			if err != OK:
+				push_warning("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
+						% [p, err] + "本跑该文件的日志会与残留内容混在一起,别照它归因")
 
 
 # 超时/失败时把子进程的日志摊开(否则子进程里发生了什么完全看不见)
