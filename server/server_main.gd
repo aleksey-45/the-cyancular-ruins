@@ -48,6 +48,9 @@ func _ready() -> void:
 						var r := int(tok.strip_edges())
 						if r >= 1 and r <= 8:
 							_role_set.append(r)
+			"--test-ground-teleport":
+				# 仅测试用:见 MatchGround.test_ground_teleport。默认关,生产路径不带这个开关。
+				MatchGround.test_ground_teleport = true
 			"--ai-roles":
 				if i + 1 < args.size():
 					for tok in str(args[i + 1]).split(","):

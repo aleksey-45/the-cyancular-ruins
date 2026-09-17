@@ -118,6 +118,8 @@ func _physics_process(delta: float) -> void:
 	# S_{F-1},配对一致(客户端期望 ack=C 配 S_C,见 pvp_reconcile_smoke 的建模)。
 	# 地面武器:先把落体的实际位置同步回表,后面的拾取判定(nearest_within)才用得上最新落点
 	_sync_ground_positions()
+	# 仅测试用(`--test-ground-teleport`,见 MatchGround.test_ground_teleport):默认关。
+	_debug_keep_weapon_within_reach()
 	_snapshot_accum += delta
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0

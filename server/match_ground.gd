@@ -12,6 +12,15 @@ extends MatchState
 #   (这也是单机侧那条"落点与何时开始模拟无关"的不变量在联机端成立的前提)。
 #   代价是 headless 服务器上多 12 个(带哑视觉的)节点 —— 可忽略,真要省再说。
 
+# ── 仅测试用:把地面武器"喂"到玩家脚下 ──
+# 为什么需要它:探针要让**真客户端**在真对局里反复捡/丢,而拾取判定是服务器侧、
+# 按 64px 半径走的。让机器人自己走过去需要寻路(实测两轮都栽在这上面:地图是每进程
+# 随机选的一份 `.cyrm`,只会"水平走 + 卡住跳"的机器人在窄台上会永久卡死)。
+# 打开后服务器每帧保证**每个站着的玩家脚下 64px 内至少有一把枪** —— 探针就完全不用走位。
+# ★ 默认关,且只由 worker 的 `--test-ground-teleport` 打开(见 server_main.gd 的 argv 解析
+#   与 worker_launcher 的转发):生产路径上这个开关**不可达**,不进任何真实对局。
+static var test_ground_teleport := false
+
 var ground_weapons := GroundWeaponField.new()
 var _next_ground_inst := 1
 var _ground_nodes: Dictionary = {}     # inst -> WeaponPickup(服务器侧;headless 不渲染)
@@ -78,6 +87,40 @@ func _sync_ground_positions() -> void:
 			var e: Dictionary = ground_weapons.get_entry(int(inst))
 			if not e.is_empty():
 				e["pos"] = (n as WeaponPickup).visual_center()
+
+
+# 仅测试用(见 `test_ground_teleport`):给每个站着、且脚下 64px 内没有可捡武器的玩家,
+# 把场上最近的一把挪到他脚下。★ 每次挪的判据是 `weapon_pickup_radius` 本身 ——
+# 与 `_try_server_pickup` 同一个数,所以"服务器认为够得着"和"实际捡得到"不会漂。
+func _debug_keep_weapon_within_reach() -> void:
+	if not test_ground_teleport or ground_weapons.entries.is_empty():
+		return
+	for role in players:
+		var p: Node2D = players[role]
+		if p == null or p.is_downed():
+			continue
+		# ★ 排除**他自己刚丢下的那些**:那些在冷却期内本来就不参与他的拾取判定
+		#   (`_live_self_drops`)。不排除的话,喂到脚下的可能正好是被排除的那把 ——
+		#   探针看着"枪就在脚边却捡不起来",而服务器其实完全正确。
+		var blocked: Array = _live_self_drops(role)
+		if not ground_weapons.nearest_within(
+				p.global_position, PlayerParams.weapon_pickup_radius, blocked).is_empty():
+			continue   # 已经有够得着、且捡得动的,不动它
+		var near: Dictionary = ground_weapons.nearest_within(p.global_position, 1e9, blocked)
+		if near.is_empty():
+			continue
+		var n = _ground_nodes.get(int(near["inst"]), null)
+		if n == null or not is_instance_valid(n):
+			continue
+		var pk := n as WeaponPickup
+		# ★ 反着减 `visual_offset`:拾取判定(与 F 提示)比的是 **视觉中心** 对玩家位置的距离,
+		#   直接把 canonical 设成玩家位置的话,可见的那把枪会偏出去 visual_offset(手枪 ≈60px),
+		#   正好卡在 64px 半径的边缘上 —— 时灵时不灵,且不报错。
+		pk.canonical_pos = p.global_position - pk.visual_offset
+		pk.global_position = pk.canonical_pos
+		pk.velocity = Vector2.ZERO
+		pk._settled = true          # 停稳:落体逻辑不再动它,位置由本次赋值说了算
+		near["pos"] = pk.visual_center()
 
 
 # 给 match_sync_data 的载荷(客户端进场拉取时一并拿到开局那批)。

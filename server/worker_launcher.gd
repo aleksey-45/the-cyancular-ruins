@@ -121,6 +121,10 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 			ai_strs.append(str(int(r)))
 		args.append("--ai-roles")
 		args.append(",".join(ai_strs))
+	# 仅测试用开关**转发**:大厅自己带了这个开关才往下传(生产路径的大厅不带)。
+	# ★ 与 server_main.gd 的 argv 解析逐字对应 —— 两边改一处必须同步改另一处(同本函数头注释)。
+	if OS.get_cmdline_user_args().has("--test-ground-teleport"):
+		args.append("--test-ground-teleport")
 	var pid := OS.create_process(exe, args)
 	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
 			str(roles), str(ai_roles), log_path(port)])
