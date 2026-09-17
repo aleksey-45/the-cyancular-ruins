@@ -204,7 +204,13 @@ func _enter_grace(role: int) -> void:
 			src.reset_state()
 		_host.peer_by_role.erase(role)
 		if _host.has_method("_broadcast_round_state"):
-			_host._broadcast_round_state()   # 让 HUD 显示"某人掉线中"
+			# ★ 这次广播**目前不表达掉线态**:宽限期内该载荷逐字段不变(`names` 由
+			#   `peer_by_role`+`players` 兜底、`alive` 只读 `players`、`left` 只读 `_left`,
+			#   三者在宽限期内一个都没动),发出去和上一帧是同一份。
+			#   保留它只为跟住 `_broadcast_round_state` 的既有节流节奏(掉线是状态转折点,
+			#   顺带把那一刻的载荷推齐);"某人掉线中"这类**可见提示要等阶段 3** ——
+			#   届时才往 `round_state` 里加 `grace` 字段,**现在别加**。
+			_host._broadcast_round_state()
 
 
 # 到期仍未回来的 role → 走既有语义。每秒轮询一次即可(精度无关,宽限期以秒计)。
@@ -224,7 +230,13 @@ func _expire_graces(now_ms: int) -> void:
 	# ★ 这就是原 `_on_peer_left` 里那条「全员离开,大乱斗结束」,只是**移到宽限期到点才判** ——
 	#   刚 `_enter_grace` 完表里必然非空,原位置那条 `_grace.size() == 0` 恒假(死分支),
 	#   而它是大乱斗 worker 唯一的正常退出口(royale_host.gd:428),丢了会让每局都留下僵尸进程。
-	if _royale and _claims.is_empty() and _grace.size() == 0:
+	# ★★ `_match_started` 这个前置**不能省**:本函数现在由 `_process` 每秒无条件调用,
+	#   而"开机等玩家"这个状态同样满足 `_claims` 空 + 宽限期空 —— 少了它,worker 一开机
+	#   就判"全员离开"自杀(实测 ~2s 退 0,一个玩家都没连过)。
+	#   它同时是**语义上正确**的那个界:这条判据要表达的是"本局开过、且人全走光了",
+	#   而不是"此刻表里没人"。`_begin_match` 是唯一写入点且置真后**从不复位**
+	#   (`mark_disconnected` 只释放玩家、不释放 host),故开局后的收场行为与原位置逐字一致。
+	if _royale and _match_started and _claims.is_empty() and _grace.size() == 0:
 		print("worker: 全员离开,大乱斗结束")
 		get_tree().quit(0)
 
