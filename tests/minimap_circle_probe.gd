@@ -29,11 +29,16 @@ func _ready() -> void:
 	#   就构造不出范围外样本 —— 断言会从"该红"变成"真绿"或反过来。
 	const COLS := 250
 	const ROWS := 150
+	# ★ 底图**故意做成有结构的图案**(空底 + 每 8 列/6 行一道墙),不是"整张全实心":
+	#   全实心取出来是一块均匀灰盘,人眼验收读不出"地形在 2.8px/格 下清不清楚" ——
+	#   而那正是调过 RANGE_CELLS 之后**唯一需要人眼回答**的问题。
 	var grid: Array[Array] = []
 	for y in range(ROWS):
 		var row: Array[int] = []
-		row.resize(COLS)
-		row.fill(MazeGenerator.SOLID)
+		row.resize(COLS)          # resize 填 0 == MazeGenerator.EMPTY
+		for x in range(COLS):
+			if x % 8 == 0 or y % 6 == 0:
+				row[x] = MazeGenerator.SOLID
 		grid.append(row)
 	# ★ MAP_WIDTH/HEIGHT 是 **int**(core/config/game_parameters.gd:22),别用浮点赋值
 	GameParameters.MAP_WIDTH = COLS * GameParameters.TILE_SIZE
@@ -82,12 +87,14 @@ func _ready() -> void:
 		var g := _circle_geom(img)
 		# 圆的**外接方框**左上角往内 4px —— 在方框内、但在圆外(距圆心 ≈192px > 140)
 		var outside := Vector2i(int(g["left"]) + 4, int(g["top"]) + 4)
-		var inside := Vector2i(int(g["cx"]), int(g["cy"]))
 		_check(_near(img.get_pixelv(outside), BG, 0.08),
 				"圆外像素应仍是背景色(实际 %s)" % str(img.get_pixelv(outside)))
-		# 墙色 alpha 0.95 压在品红上 → 实际像素是两者的合成,故给 0.12 容差
-		_check(_near(img.get_pixelv(inside), WALL, 0.12),
-				"圆内应画出地形(实际 %s)" % str(img.get_pixelv(inside)))
+		# 圆内:地形真的画出来了。★ 判"墙色像素够多"而不是"某一点是墙色" ——
+		#   底图现在有结构,某一点恰好落在空气上是正常的(而且玩家自己的点也画在圆心,
+		#   采圆心会取到 SELF_COLOR,实测踩过)。
+		#   墙色 alpha 0.95 压在品红上 → 实际像素是两者的合成,故给 0.12 容差。
+		var wall_px := _count_near(img, g, WALL, 0.12)
+		_check(wall_px > 500, "圆内应画出地形(墙色像素 %d,期望 > 500)" % wall_px)
 
 	_finish()
 
@@ -103,6 +110,23 @@ func _circle_geom(img: Image) -> Dictionary:
 
 func _near(a: Color, b: Color, tol: float) -> bool:
 	return absf(a.r - b.r) < tol and absf(a.g - b.g) < tol and absf(a.b - b.b) < tol
+
+
+# 圆**内部**(按 _circle_geom 给的圆心/半径)里接近给定颜色的像素数。
+func _count_near(img: Image, g: Dictionary, want: Color, tol: float) -> int:
+	var r: float = Minimap.RADIUS_PX
+	var cx: float = g["cx"]
+	var cy: float = g["cy"]
+	var n := 0
+	for y in range(int(cy - r), int(cy + r)):
+		for x in range(int(cx - r), int(cx + r)):
+			if x < 0 or y < 0 or x >= img.get_width() or y >= img.get_height():
+				continue
+			if Vector2(float(x), float(y)).distance_to(Vector2(cx, cy)) > r:
+				continue
+			if _near(img.get_pixel(x, y), want, tol):
+				n += 1
+	return n
 
 
 func _shot(png_name: String) -> Image:
