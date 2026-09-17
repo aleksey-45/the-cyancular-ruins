@@ -194,7 +194,7 @@ func _human_role_count() -> int:
 	return n
 
 
-# 把一个 role 放进宽限期。★ 必须**置空它的输入源**:
+# 把一个 role 放进宽限期。★ 必须**置空它的输入源 + 清掉它的待消费输入队列**(两件缺一不可):
 # `PacketInputSource` 在队列空时沿用上一包(held,见 match_host 的每 tick 消费注释),
 # 不置空的话掉线者的身体会保持他断开前最后一帧的输入 —— 一直朝那个方向跑、或一直开枪。
 func _enter_grace(role: int) -> void:
@@ -203,6 +203,13 @@ func _enter_grace(role: int) -> void:
 		var src = _host.input_sources.get(role, null)
 		if src != null and src.has_method("reset_state"):
 			src.reset_state()
+		# ★★ 清输入源**不够,必须连队列一起清**(与 `_on_reclaim` 接受路径那一行同一件事):
+		#   掉线瞬间队列里可能还压着一条**已经到达**的包,而 `MatchHost` 每物理 tick 消费一包、
+		#   `PacketInputSource.apply_packet()` 是**整体覆盖** `_held`/`_axis` —— 那条包会在
+		#   `reset_state()` **之后**被执行,把 `_held` 原样写回去;之后队列空了,而
+		#   `clear_edges()` **不含 `_held`** → 掉线前按着的键被重新武装、并保持整个宽限期
+		#   (身体继续走/蹲/开火)。这一行是"掉线者的身体留在场上不动"的全部内容,别删。
+		_host._pending_input[role] = []
 		_host.peer_by_role.erase(role)
 		if _host.has_method("_broadcast_round_state"):
 			# ★ 这次广播**目前不表达掉线态**:宽限期内该载荷逐字段不变(`names` 由
