@@ -130,6 +130,31 @@ func can_send_to_server() -> bool:
 		return false
 	return is_peer_live(1)
 
+
+# 定向回一条 RPC(答复某个 caller)。**对端已经不活着就静默跳过**(返回 false),不报错、不发。
+#
+# ★ 为什么必须收口到一个口:请求与"对端断开"经常挤在**同一次 poll** 里 —— ENet 按到达顺序处理
+#   收到的命令,**处理 DISCONNECT 命令时当场就把那个 peer 的通道数清零**,而同批里排在它前面的
+#   RECEIVE 事件要等到 dispatch 阶段才派发 → 于是"客户端发完请求就 `stop()`"这一拍,
+#   服务端是在**通道已清零**的状态下处理那个请求、并发它的应答 → 应答必然打
+#   `Unable to send packet on channel 0, max channels: 0`(实测:1v1 配对完成 → 客户端转连
+#   worker 那一拍必现一条;大厅/worker 里所有"答复 caller"的站定都是这一类)。
+#   判据同 `is_peer_live`(它读 ENet 自己的 state + 通道数,不滞后)。
+#
+# 实参形状与 `rpc_id` 一致(最多 4 个),故所有调用点只需把方法名换成 `reply` ——
+# ★ 因此**实参不得传 null**(null 表示"到此为止");要传更多实参请直接用 `callv("rpc_id", …)`。
+# 审计:`grep -rn "NetBus\.reply(" server/` 就是"所有答复 caller 的定向发送"的完整清单。
+func reply(id: int, method: String, a = null, b = null, c = null, d = null) -> bool:
+	if not is_peer_live(id):
+		return false
+	var args: Array = [id, method]
+	for v in [a, b, c, d]:
+		if v == null:
+			break
+		args.append(v)
+	callv("rpc_id", args)
+	return true
+
 # ── 客户端 → 服务器 ──
 @rpc("any_peer", "reliable")
 func create_room() -> void:

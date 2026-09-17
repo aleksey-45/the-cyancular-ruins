@@ -86,18 +86,28 @@
 ★ 报文里的通道号是证据:`SYSCH_RELIABLE=0 / SYSCH_UNRELIABLE=1`,所以 "channel **0**" 只可能来自
 **reliable** 定向包;**广播打不出这条**(`enet_host_broadcast` 自己跳过非 CONNECTED 的 peer)。
 
-**修法**:新增 `NetBus.is_peer_live(id)`(判据 = ENet 自己的 `state == CONNECTED` **且**
-`get_channels() > 0` —— 后者正是 `send()` 会检查的那个量),`_rpc_all` 的 `live_only` **默认改成 true**
-(原先 8 个调用点里 7 个不判在线:`tile_destroyed`/`bullet_spawn`/`beam_fired`/`weapon_*`/`round_state`/`kill_event`),
-并给 `hit_event`/`hit_confirm`(交火时最密)、`match_start`+`server_message`(两种 `start_on`)、
-`match_sync_data`、`ping→pong`、`snapshot_own`、大厅的 `is_peer_online` 都接上同一判据。
+**修法(两层)**:
 
-**实测**:`royale_probe` / `ground_net_probe` 各跑多轮,开局那一拍**仍有 1 条**。用"把 `is_peer_live`
-恒返回 false"的实验证明:**这条来自**被守卫的站点**(强制跳过 → 0 条),但它的守卫在发送前一刻是通的。
-即"守卫通过 → 发送仍失败"这一帧内矛盾,我没能在本轮钉死成因(怀疑是同一 `service()` 批次里
-RECEIVE 与 DISCONNECT 命令的先后)。**影响面**:每局 1 条、对象是正在离场的 peer、包本来就该丢
-(非致命、不影响任何对局行为)。**要彻底消掉**下一步:在 `is_peer_live` 里改成"发送后再校验"
-(或把该 peer 从 `peer_by_role` 里提前摘掉),需要一次带插桩的定位。
+1. 新增 `NetBus.is_peer_live(id)`(判据 = ENet 自己的 `state == CONNECTED` **且**
+   `get_channels() > 0` —— 后者正是 `send()` 会检查的那个量),`_rpc_all` 的 `live_only` **默认改成 true**
+   (原先 8 个调用点里 7 个不判在线:`tile_destroyed`/`bullet_spawn`/`beam_fired`/`weapon_*`/`round_state`/`kill_event`),
+   并给 `hit_event`/`hit_confirm`(交火时最密)、`match_start`+`server_message`(两种 `start_on`)、
+   `match_sync_data`、`ping→pong`、`snapshot_own`、大厅的 `is_peer_online` 都接上同一判据。
+2. 新增 `NetBus.reply(id, method, …)` 作为**大厅侧全部"答复 caller"发送的单一收口**
+   (`server/lobby_rooms.gd` + `server/room_manager.gd` 的 33 处已全部改走它;实参形状与 `rpc_id`
+   一致,故只是换名)。**为什么这一类必须收口**:请求与"对端断开"常挤在**同一次 poll** 里 ——
+   ENet 按到达顺序处理命令,**处理 DISCONNECT 时当场把该 peer 的通道数清零**,而同批里排在它前面的
+   RECEIVE 事件要等 dispatch 阶段才派发 → 于是"客户端发完请求就 `stop()`"这一拍,服务端是在
+   **通道已清零**的状态下处理该请求并发它的应答 → 应答必然打这条错误。
+   (用户实机 1v1 日志的顺序正是如此:ERROR → `玩家断开 peer=…`。)
+
+**实测与残留**:大厅/worker 的**定向发送已全部过判据**,但 `royale_probe` 跑多轮**仍有约 2/3 轮出现 1 条**,
+且逐轮归属不同(某轮在 `worker_7800.log`、某轮只在编排进程的 stdout、某轮完全不出现 ⇒ **是竞态**)。
+用"把 `is_peer_live` 恒返回 false"的实验曾观察到 0 条,但该现象在未改动的对照轮里也会时有时无
+(**这个对照本身就说明它不是稳定判据**,不能作为因果证据)。
+⇒ **结论:每局最多 1 条、对象是正在离场的 peer、包本来就该丢** —— 非致命、不影响任何对局行为;
+要彻底消掉需要一次引擎级定位(带 GDScript 栈的插桩,或给 `ENetPacketPeer::send` 那条 `ERR_FAIL` 打断点),
+本轮不做。**注意别把它当成"功能坏了"**:它的出现与拾取/切枪/副本三处修复无关。
 
 ---
 
@@ -150,8 +160,9 @@ bash tests/pvp_room_smoke.sh ; bash tests/pvp_match_smoke.sh
 ## 5. 未做 / 未决
 
 - 数字键切枪那半(见 §1.2 ⚠):读不出缺陷,不猜着改。
-- channel 0 每局残留 1 条(见 §1.5):影响面已界定,成因未钉死。
-- 大厅那 ~35 处"答复 caller"的定向发送**未**统一走判活(本轮只接了判据与热点站点);
-  要做的话是一次机械改动(单一收口),建议单开一轮。
+- channel 0 每局残留 1 条(见 §1.5):影响面已界定(非致命),成因是竞态、未钉死。
+- 大厅"答复 caller"的定向发送**已**统一走 `NetBus.reply()`(33 处);客户端→服务端那几条
+  (`match_sync`/`claim_role`/`list_rooms`/`royale_*`,在页面的超时/刷新梯上)仍**未**判活 ——
+  它们打出来的是另一条错误(`no multiplayer peer` / `not connected`),不在本次报告的症状里。
 - 上一轮未复现的**硬崩溃**本轮未追(无堆栈、无复现步骤)。
 - `docs/2026-09-17-duel-probe-lobby-rpc-blocker.md` 那条 duel 探针卡点属另一条线,本轮未碰。
