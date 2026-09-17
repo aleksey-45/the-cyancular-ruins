@@ -301,6 +301,8 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 	# ★ 换输入源**不是** `PacketInputSource.new(role, caller)` —— 它不收参数(`match_host.gd:34`
 	#   的装配方式是 `var src := PacketInputSource.new()` 然后 `p.set_input_source(src)`)。
 	#   所以要把新源**挂回那个还活着的玩家节点**,只换表里的引用是不够的(玩家手里仍攥着旧源)。
+	# ★ 直取 `players[role]` 依赖 `_expire_graces` 里的次序:只有它会调 `mark_disconnected`(那里才
+	#   `players.erase(role)`),且它**先** `_grace.leave` 再 mark → 判据②恰好挡住"节点已被 erase"那一档。
 	var src := PacketInputSource.new()
 	(_host.players[role] as Node2D).set_input_source(src)
 	_host.input_sources[role] = src
@@ -308,9 +310,15 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 	_host._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
 	_grace.leave(role)
 	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源,不另造一份)。
+	# ★ 走 `NetBus.reply` 而不是 `NetBus.rpc_id`:它是本仓"答复 caller"的收口,内部**先判活**
+	#   (CLAUDE.md 硬纪律「定向发送前一律先判活」)。这个窗口**可达** —— Task 6 的客户端重连
+	#   循环里有 `NetBus.stop()`:客户端请求完就断开,会与这次请求挤在**同一次 poll**,
+	#   ENet 处理 DISCONNECT 时当场把通道数清零 → 不判活的话这一发必打
+	#   `Unable to send packet on channel 0, max channels: 0`。三个实参都非 null
+	#   (`Vector2i(-1,-1)` 也不等于 null),不会被 `reply` 的 null 截断规则吃掉。
 	var sp: Vector2i = _host.role_spawns().get(role, Vector2i(-1, -1)) \
 			if _host.has_method("role_spawns") else Vector2i(-1, -1)
-	NetBus.rpc_id(caller, "match_start", role, sp, MazeGenerator.map_file_path())
+	NetBus.reply(caller, "match_start", role, sp, MazeGenerator.map_file_path())
 	if _host.has_method("_broadcast_round_state"):
 		_host._broadcast_round_state()
 	print("worker: role %d 重连成功(peer=%d)" % [role, caller])
