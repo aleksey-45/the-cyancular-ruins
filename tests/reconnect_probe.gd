@@ -3,14 +3,19 @@ extends Node
 # 断线重连(rc1 Task 8)的**真链路端到端探针**。场景模式(autoload 必须已实例化)。
 #
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 3600 res://tests/reconnect_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 14400 res://tests/reconnect_probe.tscn
+#   ★ 用 **14400**(=240s 安全网)而不是别处的 3600:本探针要跑满一个 30s 宽限期,整跑 ~42s 墙钟,
+#     3600(=60s)只剩 ~18s 余量,机器一忙就会先耗尽安全网(表现是"一行 ALL-OK 都没有",看着像坏了)。
 # 判据:文本 `RECONNECT PROBE: ALL-OK`(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0
 #       且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
 #
 # ═══ 六相(每相的存在理由见 .superpowers/sdd/rc1-task-8-brief.md)═══
-#   ① 正向:客户端 A 闪断 → 自动重连被接受,且**身体没被销毁**(instance_id 不变)
+#   ① 正向:客户端 A 闪断 → 自动重连被接受,且**身体没被销毁**(instance_id 不变);同相另判两条
+#      **C2 断言**:**重连后 ack 锚点必须重新咬合**(`_acked ≤ 本端 _input_seq`)与**回滚次数不持续增长**
+#      (后者是 spec §3.4 的明文要求) —— 取数点与理由见 `reconnect_watcher._actor_assert`
 #   ② 反向:错 token 的 reclaim 被拒(worker 打「拒绝 reclaim …令牌不匹配」+ 踢连接)
-#   ③ 身体冻结:掉线后该 role 的玩家 global_position 不变(钉 `_enter_grace` 里的 reset_state)
+#   ③ 身体冻结:掉线后该 role 的**快照 `pose` 离开 SQUAT**(★ 判据是**姿态**,不是位移 ——
+#      撞墙/卡坑时位移天然为 0、能空转骗过;位移仍打出来,只作读数。钉 `_enter_grace` 里那两件事)
 #   ④ 超时移出:掉线不回来 → GraceWindow.DEFAULT_SECONDS 之后 worker 收场退出
 #   ⑤ 大乱斗相:①②③ 在 `--royale` worker 上再跑一遍,**并核验"reclaim 不重新摆位"** ——
 #      重连后重发的那条 `match_start` 必须带与首次**同一个** spawn(钉 `RoyaleHost.role_spawns()`
@@ -26,8 +31,9 @@ extends Node
 # ═══ 跑之前的前提 ═══
 #   **请确认没有真大厅在跑**(本机若有 `Cyancular Ruins Server.exe` 占着 7777,先看它是不是
 #   你要留着的那一个 —— **不要杀它**)。本探针**不占 7777**(它不自当大厅,worker 由本进程
-#   直接拉起),但它的收尾会**按 UDP 端口杀进程**(`ProcUtil.kill_udp_port`,见 `_kill_children`),
-#   所以"探针用的端口与别人重不重合"是真问题 —— 那正是端口挪到池外要解决的事(常量区那段注释)。
+#   直接拉起),但它的收尾**按 PID 杀子进程 + 仍保留按 UDP 端口杀 worker 兜底**
+#   (`ProcUtil.kill_udp_port`,见 `_kill_children`),所以"探针用的端口与别人重不重合"是真问题
+#   —— 那正是端口挪到池外要解决的事(常量区那段注释)。
 #   ★ **为什么 worker 由本进程直接拉起,而不是走大厅**(royale_c2_probe 走 RoomManager):
 #     本探针的判据有一半落在 **worker 自己的日志**上(「拒绝 reclaim」/「进宽限」/「宽限期到」),
 #     而 Windows 下 `OS.create_process` 的子进程 stdout **不被父进程继承**(仓内既有结论,
@@ -52,18 +58,17 @@ extends Node
 #   `peer_left` 与真闪断完全一致。另一半用的是**真** `server_disconnected`:
 #   错 token 被 worker `disconnect_peer` 踢掉那一次,客户端是真收到 `服务器断开` 的。
 #
-# ═══ ★★ 已知红:相③ 在**当前生产代码**上恒红(本探针存在的意义就是这个)═══
-# 症状:掉线后该 role 的身体**保持掉线前按着的键**整个宽限期(实测:掉线前蹲着 → 窗口内
-#       162/162 个快照样本的 `pose` 仍是 SQUAT;掉线前蹲走着 → 掉线后还能再走 230px)。
+# ═══ 相③ 的历史:它**当年恒红**(本探针抓出的第一个 bug,修复在 `7c95d68`)═══
+# 症状(修复**前**):掉线后该 role 的身体**保持掉线前按着的键**整个宽限期(当年实测:掉线前蹲着 →
+#       窗口内 162/162 个快照样本的 `pose` 仍是 SQUAT;掉线前蹲走着 → 掉线后还能再走 230px)。
 # 根因(读码 + 逐项排除 + 反证,**不是**地形/倒地/水中/攀附):
-#   `server_main._enter_grace()` 调 `src.reset_state()` 把 `_held` 清零,但**不清
-#   `_host._pending_input[role]`**;而 `MatchHost._physics_process` 每 tick 从队列里取一包
+#   `server_main._enter_grace()` 只调了 `src.reset_state()` 把 `_held` 清零,当时**没有**清
+#   `_host._pending_input[role]`;而 `MatchHost._physics_process` 每 tick 从队列里取一包
 #   `apply_packet()`,它是**整体覆盖** `_held`(`packet_input_source.gd:102-110`)→ 那条在
 #   掉线瞬间**已经排在队列里**的包,会在复位**之后**把 `_held` 整个写回。之后队列空了、
 #   `clear_edges()` 又**不清 `_held`**(`:113-116`)→ 于是"掉线前按着的那几个键"被**重新武装
 #   并保持到宽限期结束**(乃至宽限期到点、`mark_disconnected` 之前)。
-#   · 对比:`_on_reclaim()` 的接受路径**有**清队列(`server_main.gd:309` `_pending_input[role] = []`)
-#     —— 只差这一处,`_enter_grace` 漏了同一句。
+#   · 对比:`_on_reclaim()` 的接受路径**一直有**清队列(`server_main.gd:316`)—— 当年只差那一处。
 # 排除法(都用快照字段,见 reconnect_watcher 的相③诊断行):
 #   `downed=false`(倒地时 `_physics_process` 走 `_tick_downed` 早退、姿态不更新)、`hp=50`(满血)、
 #   `waterproof=10`(满氧,不在水里)、身体所在格的**中心与脚底**都不是通道格(梯/锁链,读地图确认)
@@ -71,12 +76,12 @@ extends Node
 # 反证(证明它是**竞态**而不是"某条链路坏了"):去掉确定性装置连跑两趟,卡住的是 1v1 还是大乱斗
 #   **会互换** —— 取决于掉线那一刻服务器的输入队列是不是恰好空(客户端 60Hz 上行 vs 服务器
 #   每 tick 只消费一包 → 队列长度在 0~2 抖动)。
-# 建议改法(**未改**:硬约束"不要为了让探针过而改任何生产代码"):在 `_enter_grace` 里把队列也清掉
-#   (与 `_on_reclaim` 同款),例如 `src.reset_state()` 之前加
-#   `if _host._pending_input.has(role): _host._pending_input[role] = []`。
-#   改完之后相③应当转绿 —— 那也正是这条断言存在的价值。
+# ★ 修复 = 在 `_enter_grace` 里补上清队列(与 `_on_reclaim` 同款),`7c95d68` 落地,相③ 当场转绿。
+#   **本探针就是抓出它的那一件工具**;那个确定性装置留着不删 —— 它保证"谁删掉
+#   `_pending_input[role] = []` 那一行谁红"(没有装置时这个竞态只有 ~50% 命中,见 watcher 的注释)。
 # ═══ 时间预算(为什么必须并行)═══
-#   `--quit-after 3600` 在 `max_fps=60` 下 = **60s 墙钟**,而相④要等满一个 30s 宽限期 ——
+#   整跑约 **42s 墙钟**(相④要等满一个 30s 宽限期),安全网是 `--quit-after 14400`(240s)——
+#   早先用 3600(=60s)时余量只有 ~18s,已按 289cd86 提到 14400(见文件头跑法那两条) ——
 #   故三组 worker/客户端**全部并行**跑,且每个子进程自带 `--quit-after`(150s)兜底。
 
 const PREFIX := "reconnect_probe_"
@@ -95,7 +100,7 @@ const WROY := 29002       # 大乱斗 worker 端口(池外)
 const WIDLE := 29090      # 空载大乱斗 worker 端口(池外)
 const CHILD_QUIT_AFTER := "9000"   # 子进程兜底(150s):正常由探针自己收尾/杀端口
 const BOOT_TIMEOUT := 30.0         # 等 worker/客户端就绪的上限
-const FINAL_TIMEOUT := 58.0        # 本进程的收工上限(必须留在 --quit-after 3600 的 60s 之内)
+const FINAL_TIMEOUT := 58.0        # 本进程的收工上限(整跑 ~42s;--quit-after 14400 = 240s 安全网)
 # 相⑥的窗口:worker 打完「就绪」后的 [1,3] 秒内不得退出、不得打「全员离开,大乱斗结束」
 const IDLE_LOW := 1.0
 const IDLE_HIGH := 3.0

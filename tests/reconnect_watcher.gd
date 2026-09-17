@@ -8,9 +8,11 @@ extends Node
 #   ① 加入段(镜像 `lobby_page._claim_role_worker` 的三条 RPC):connect → claim_role /
 #      player_options / report_token → 等 `match_start` → 进真对局场景;
 #   ② 演出段(两种角色):
-#      · **actor**(c1/r1):按住右 → 闪断(调真 `_begin_reconnect()`,先塞一个**错 token**)
+#      · **actor**(c1/r1):按住 S(蹲;★ 不是"按右" —— 第一版按了右,身体蹲走着掉进坑里,
+#        姿态与位移两条读数同时被地形污染,见 `_actor_tick` 的注释)→ 闪断(调真 `_begin_reconnect()`,先塞一个**错 token**)
 #        → 相②(错 token 被拒 + 被踢)→ 相①(恢复真 token 后被接受、身体没被销毁);
-#      · **witness**(c2/r2):从快照里盯 role1 的身体 → 相③(掉线后 global_position 不变);
+#      · **witness**(c2/r2):从快照里盯 role1 的身体 → 相③(掉线后**快照 `pose` 离开 SQUAT**;
+#        位移只作读数,判据是姿态 —— 见 `POSE_SQUAT` 上方的注释);
 #   ③ 收工:写 `user://reconnect_probe_<who>.result`(父进程只认这个 + 引擎日志)。
 #
 # ★ 客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 自己再落一份
@@ -46,12 +48,14 @@ extends Node
 const BAD_TOKEN := "00000000deadbeef"   # 长度同真 token(16 hex),但值必然不匹配
 const T_DROP := 1.6        # 闪断时刻(相对本端看到 PLAYING);为什么不是 0.6 见文件头「时间轴」
 # ── 闪断前的一小串输入包(**确定性装置**,只服务相③)──
-# 为什么要有它:掉线那一刻服务器 `_pending_input[role]` 里**可能**还有没消费完的包(客户端 60Hz
-# 上行、服务器每 tick 只消费一个 → 队列长度在 0~2 之间抖动),而 `_enter_grace` 的 `reset_state()`
-# **不清队列**:那条迟到的包会在复位**之后**被 `apply_packet` 施加一次,把 `_held` 整个写回去 ——
-# 而 `clear_edges()` 不清 `_held`、队列空了也不再 `apply_packet`,于是"掉线前按着的那几个键"
-# 被**重新武装并保持整个宽限期**。不塞这一串时这个竞态约 50% 命中(实测:同一份代码连跑两趟,
-# 卡住的是 1v1 还是大乱斗会互换),探针会飘;塞了就必然命中 —— 这才是它能当回归防卫的原因。
+# 为什么要有它(历史上):`_enter_grace` 当年**漏了清 `_host._pending_input[role]`** 那一行
+# (修复 `7c95d68`;症状与根因见 reconnect_probe.gd 文件头的「相③ 的历史」)。那是个**竞态**:
+# 掉线那一刻服务器队列里**可能**还压着没消费完的包(客户端 60Hz 上行、服务器每 tick 只消费一个
+# → 队列长度在 0~2 之间抖动),有那条包就会在 `reset_state()` **之后**被 `apply_packet` 施加一次、
+# 把 `_held` 整个写回去("掉线前按着的那几个键"被重新武装整个宽限期)。不塞这一串时它约 **50%
+# 命中**(实测:同一份代码连跑两趟,卡住的是 1v1 还是大乱斗会互换),探针会飘;**塞了就必然命中**
+# —— 这才是它今天仍然留在这里的理由:谁把 `_pending_input[role] = []` 那一行删掉,相③ 必红,
+# 而不是"有时红、复现不了"。
 # ★ 反证(证明"承重的是包里的 held,不是包本身"):把它整段换成恒中性(held=0)重跑,相③转绿。
 const BURST_N := 10
 const BURST_AT := 1.50     # 比闪断早 0.1s:够 RPC 落地(下一帧 flush),又不至于被服务器排空
@@ -67,6 +71,23 @@ const T_ACTOR_END := 9.5
 # 比 9.5 早;但节拍是 2s 一跳,真被抖掉一次就会落到 11.6 —— 那时断言早已跑完、结果文件
 # 已经写出去了,补记的失败**进不了结果文件**。故把断言时刻推迟到"它到了"或到这个上限。
 const T_ACTOR_END_MAX := 13.0
+# ── 相① 的 C2 断言(2026-09-17 整支审查的 C 项)──
+# ★ 为什么要量它:重连时服务器把 `_ack_seq[role]` 归 0 重协商锚点,而客户端在 `_on_resumed` 之前
+#   仍用**断线前那个 seq 空间**发包(`_input_seq` 从 N 继续涨)→ 服务器下一 tick 消费到的就是那个
+#   大 seq、`_ack_seq` 当场被写回 N+1;那条快照(unreliable)又恰好落在**刚重建**的 rollback 上 →
+#   `_acked` 被抬到新纪元追不上的高度,`on_authoritative` 的 `ack <= _acked` 把之后所有真实 ack
+#   全丢,直到客户端自己的 seq 爬过它(**断线前活了多久就哑多久**;一局中段可上万帧)。
+#   症状就是 `prediction_rollback.gd` 记过的那个静默退化:不报错、**回滚恒为 0**、背包(soft state)
+#   不再同步。判据取那条"**合法 ack 永不超过本端已发 seq**"(服务器只可能 ack 它消费过的包):
+#   每个采样点都必须 `_acked <= _input_seq` —— 被毒死时 `_acked` 是个大数而 `_input_seq` 刚从 0 起爬。
+#   ★ `_acked` 没有公开读口(`PredictionRollback` 只暴露 `rollback_count()`/`last_applied()`,而被
+#     毒死时前者恒 0、后者照常单调 —— 两个都分不出这件事),故这里直读私有字段。
+const C2_ANCHOR_WINDOW := 3.0   # 重连后连续采锚点的窗口(秒)
+# spec §3.4 字面要求的那条(**回滚次数不持续增长**):重连完成后再采一次回滚次数,增量必须是个小常数。
+# 它守的是**另一档**故障:`_on_resumed` 若不重置 `_input_seq`/rollback,环里断线前那些记录会被当成
+# "未确认输入"逐帧重放 → 每帧一次回滚、计数线性涨(1.5s 里 ~90 次)。正常档位实测 0~1。
+const RB_GROWTH_WINDOW := 1.5
+const RB_GROWTH_TOL := 12
 const W_START := 2.5
 const W_END := 5.2
 const T_W_DROP := 5.6
@@ -123,6 +144,12 @@ var _restored := false
 var _pressed := false
 var _own_vel := Vector2.ZERO
 var _track: Array = []              # 相③:role1 的快照样本 [t, pos, speed]
+# ── 相①:C2 锚点观测量(判据在 `_actor_assert`)──
+var _resume_el := -1.0              # 观测到 `_on_resumed` 落地(`_reconnecting` 转假)的时刻
+var _rb_at_resume := -1             # 那一刻的 rollback_count
+var _rb_after := -1                 # RB_GROWTH_WINDOW 之后的 rollback_count
+var _anchor_samples: Array = []     # [el, acked, input_seq]
+var _snap_ack_max := 0              # 收到过的最大快照 ack_seq(诊断:毒源那个数就是它)
 var _samples_open := true
 var _perm_dropped := false
 var _done := false
@@ -144,6 +171,7 @@ func _ready() -> void:
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_server_message.connect(_on_server_message)
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
+	NetBus.local_snapshot_own.connect(_on_snapshot_own)   # 相①的 ack 读数(见 `_actor_assert`)
 	NetBus.local_round_state.connect(_on_round_state)
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void: _log("连 worker 失败"), CONNECT_ONE_SHOT)
@@ -216,6 +244,12 @@ func _on_snapshot_world(world: Dictionary) -> void:
 				float(pl.get("waterproof", -1.0))])
 
 
+# 本人那条快照(unreliable,带 `ack_seq` + 权威整态 `c2`)。这里只存一个诊断读数 ——
+# 判据在 `_actor_assert`,它要的是"客户端**处理**到了哪个 ack",不是"收到过哪个"。
+func _on_snapshot_own(own: Dictionary) -> void:
+	_snap_ack_max = maxi(_snap_ack_max, int(own.get("ack_seq", 0)))
+
+
 func _process(delta: float) -> void:
 	if _done:
 		return
@@ -275,10 +309,44 @@ func _actor_tick(el: float) -> void:
 		_log("恢复真 token(相②已验完),等下一次节拍 reclaim")
 	if _drop_done and _game.get("_reconnecting") == true:
 		_saw_reconnecting = true
+	# ── 相① 的 C2 观测(判据见 `_actor_assert`)──
+	# ① `_reconnecting` 转假 = `_on_resumed` 落地:那一刻采一次回滚次数(新 rollback 刚建出来)
+	if _saw_reconnecting and _resume_el < 0.0 and _game.get("_reconnecting") == false:
+		_resume_el = el
+		_rb_at_resume = _rollback_count()
+	# ② 重连后按窗口连续采锚点(`_acked` vs 本端 `_input_seq`)
+	if _resume_el >= 0.0 and el - _resume_el <= C2_ANCHOR_WINDOW:
+		var rb: Object = _game.get("_rollback")
+		if rb != null:
+			_anchor_samples.append([el, int(rb.get("_acked")), int(_game.get("_input_seq"))])
+	# ③ 窗口到点再采一次回滚次数(spec §3.4 那条的增量)
+	if _resume_el >= 0.0 and _rb_after < 0 and el - _resume_el >= RB_GROWTH_WINDOW:
+		_rb_after = _rollback_count()
+		_log("相① C2 读数:重连后 %.1fs 回滚 %d → %d,锚点样本 %d 个(acked 最大 %d,本端 seq 末次 %d,收到最大快照 ack %d)"
+				% [el - _resume_el, _rb_at_resume, _rb_after, _anchor_samples.size(),
+				_anchor_max_acked(), _last_input_seq(), _snap_ack_max])
 	# 相⑤的 spawn 断言要等重发的那条 match_start(见 T_ACTOR_END_MAX);等不到也照样断言,
 	# 那一相会红并打明"没等到"(否则会以"没取到数"的形式静默变绿)。
-	if el >= T_ACTOR_END and (_resumed_spawn_seen or el >= T_ACTOR_END_MAX):
+	# ★ 另等 RB_GROWTH_WINDOW:回滚增量要观测够窗口才判得了(否则会以"没取到数"的形式误红)。
+	if el >= T_ACTOR_END and (_resumed_spawn_seen or el >= T_ACTOR_END_MAX) \
+			and (_resume_el < 0.0 or el - _resume_el >= RB_GROWTH_WINDOW):
 		_actor_assert()
+
+
+func _rollback_count() -> int:
+	var rb: Object = _game.get("_rollback")
+	return int(rb.call("rollback_count")) if rb != null else -1
+
+
+func _anchor_max_acked() -> int:
+	var m := 0
+	for s in _anchor_samples:
+		m = maxi(m, int(s[1]))
+	return m
+
+
+func _last_input_seq() -> int:
+	return int(_anchor_samples[-1][2]) if not _anchor_samples.is_empty() else -1
 
 
 func _actor_assert() -> void:
@@ -295,6 +363,29 @@ func _actor_assert() -> void:
 	# 快照真的续上了(unreliable,断线期间没有;接回来必须重新开始涨)
 	_check(_snap_count > _snap_at_drop + 20,
 			"相①:重连后快照续上(+%d 条)" % (_snap_count - _snap_at_drop))
+	# ★★ 相① 的 C2 锚点断言(2026-09-17 整支审查的 C 项;机制与判据见 C2_ANCHOR_WINDOW 的注释)。
+	#   判据:每个采样点都必须 `_acked <= _input_seq`(合法 ack 永不超过本端已发 seq)。
+	var anchor_bad := 0
+	var anchor_first := ""
+	for s in _anchor_samples:
+		if int(s[1]) > int(s[2]):
+			anchor_bad += 1
+			if anchor_first == "":
+				anchor_first = "el=%.2f acked=%d input_seq=%d" % [float(s[0]), int(s[1]), int(s[2])]
+	_check(not _anchor_samples.is_empty(),
+			"相①:重连后采到 C2 锚点样本(观测到 `_on_resumed` 落地)")
+	_check(anchor_bad == 0,
+			("相①:重连后 C2 锚点重新咬合(`_acked ≤ 本端 _input_seq`;%d/%d 个样本越界,首个 %s)"
+			+ ";收到过的最大快照 ack=%d") % [anchor_bad, _anchor_samples.size(), anchor_first,
+			_snap_ack_max])
+	# ★ spec §3.4 字面要求的那条:**重连后回滚次数不持续增长**(守的是"没重置 C2 → 逐帧重放旧记录"那档)。
+	_check(_rb_at_resume >= 0 and _rb_after >= 0,
+			"相①:重连后两次采到回滚次数(重连时 %d,%.1fs 后 %d)"
+			% [_rb_at_resume, RB_GROWTH_WINDOW, _rb_after])
+	if _rb_at_resume >= 0 and _rb_after >= 0:
+		_check(_rb_after - _rb_at_resume <= RB_GROWTH_TOL,
+				"相①:重连后回滚次数不持续增长(%.1fs 内增量 %d ≤ %d)"
+				% [RB_GROWTH_WINDOW, _rb_after - _rb_at_resume, RB_GROWTH_TOL])
 	# ★★ 相⑤的核心断言(1v1 与大乱斗都判,理由在大乱斗侧):**reclaim 不应重新摆位**。
 	#   重连后 worker 重发的那条 `match_start` 必须带**与首次同一个** spawn。
 	#   它钉的是一条**没有任何其他断言拦得住**的回归:`RoyaleHost` 覆写的 `role_spawns()` 若被
@@ -319,7 +410,9 @@ func _actor_assert() -> void:
 				"相①(大乱斗):对局时钟继续走(%.0f → %.0f),未被重置" % [tb, ta])
 		_notes.append("%s(大乱斗): tick 前 %.0f → 后 %.0f, scores=%s" % [who, tb, ta,
 				str(_last_rs.get("scores", {}))])
-	_log("相①/② 断言完成 kick=%d snap=+%d" % [_kick_count, _snap_count - _snap_at_drop])
+	_log("相①/② 断言完成 kick=%d snap=+%d;锚点样本 %d 个(acked 最大 %d,越界 %d),回滚 %d → %d"
+			% [_kick_count, _snap_count - _snap_at_drop, _anchor_samples.size(), _anchor_max_acked(),
+			anchor_bad, _rb_at_resume, _rb_after])
 	_finish("", true)   # actor **不退出**(见文件头);裁判杀端口收尾
 
 
@@ -380,10 +473,12 @@ func _witness_assert() -> void:
 		_check(false, "相③:观测窗口内一条快照样本都没有(role1 从快照里消失了?)")
 		return
 	# ★ 相③的判据主体(与地形无关):掉线后输入真的被清空 → 姿态离开蹲姿
-	# ⚠ 这一条在**当前生产代码上恒红**,原因与建议改法见 reconnect_probe.gd 文件头的「已知红」节。
+	# ⚠ 这一条**当年恒红**(`_enter_grace` 漏清 `_pending_input`,修复 `7c95d68`),本探针正是
+	#   抓出它的那条;现在与"删掉那一行就必红"的确定性装置(story 见 reconnect_probe.gd 文件头的
+	#   「相③ 的历史」与上面的 BURST_N 注释)一起当回归防卫。
 	_check(squat_in_window == 0,
 			("相③:掉线后该 role 的输入**没有**被清空(窗口内蹲姿样本 %d 个,期望 0)—— "
-			+ "`_enter_grace` 的 `reset_state()` 被一条已排队的输入包撤销,见探针文件头「已知红」")
+			+ "`_enter_grace` 的 `reset_state()` 被一条已排队的输入包撤销,见探针文件头「相③ 的历史」")
 			% squat_in_window)
 	var drift: float = GridPathfinder.toroidal_delta_px(first[1], last[1],
 			float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT)).length()

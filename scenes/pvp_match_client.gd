@@ -67,9 +67,26 @@ func _apply_match_options(opts: Dictionary) -> void:
 func _on_snapshot_own(own: Dictionary) -> void:
 	if _rollback == null:
 		return
+	# ★★ 跨纪元的旧 ack **必须丢掉**(2026-09-17 整支审查的 C 项:重连后 `_acked` 被上一纪元的 ack 毒死)。
+	#   机制:重连时服务器在 `_on_reclaim` 里把 `_ack_seq[role]` 归 0 重协商锚点,而客户端要到
+	#   `_on_resumed` 才把 `_input_seq` 归零 —— 这中间(握手落地 → match_start 到达)它仍在用
+	#   **断线前那个 seq 空间**发包 → 服务器下一 tick 消费到的就是那个大 seq、`_ack_seq` 当场被写回
+	#   N+1 并立刻广播一条带它的快照;而那条快照(unreliable)落在 `_on_resumed` **刚重建**的
+	#   rollback 上(`_acked` 从 0 起)→ `_acked` 被抬到一个新纪元追不上的高度,
+	#   `PredictionRollback.on_authoritative` 的 `ack <= _acked` 把之后所有真实 ack(1,2,3…)全丢,
+	#   直到客户端自己的 seq 爬过它 —— **断线前活了多久就哑多久**(探针实测 ~560 帧 ≈ 9s;一局中段
+	#   可上万帧)。症状正是 `prediction_rollback.gd` 记过的那个静默退化:不报错、**回滚恒为 0**、
+	#   `sync_soft_state` 不再被调用 → 背包/拾取不同步("地上的枪没了、手上也没多、还开不了火")。
+	#   判据:**合法 ack 永不超过本端已发的 seq**(服务器只可能 ack 它消费过的包)→ 超过的一定是
+	#   上一个 seq 空间的残留,丢掉即正确(那几条本来就该被 `_on_resumed` 的重置作废)。
+	#   ★ 两侧的复位互为理由(服务端归 0 是为了客户端的 `_acked`,客户端重置是为了服务端的 0),
+	#     只改一侧会得到镜像的同一个洞;守卫:`tests/reconnect_probe.tscn` 相①(去掉本行即红)。
+	var ack := int(own.get("ack_seq", 0))
+	if ack > _input_seq:
+		return
 	var c2: Dictionary = own.get("c2", {})
 	if not c2.is_empty():
-		_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
+		_rollback.on_authoritative(ack, c2)
 
 func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 	if _world == null:
