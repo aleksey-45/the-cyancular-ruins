@@ -356,6 +356,12 @@ func restore_inventory(entries: Array) -> void:
 		inventory_changed.emit()
 		return
 	# 权威说手上那把没了(或本来空手)→ 清空手持,让调用方按 wslot 重新 equip
+	# ★ 武器实例也要放掉:只清索引的话 `_weapon` 还活着,而 `tick()`/`fire()` 只判
+	#   `_player_ok()`(player 非空且没倒地)、**不看索引** → 手上留着一把索引 -1 却照常
+	#   开火的**幽灵枪**。早先这条路径要等一次回滚才走得到,软回灌之后是常路。
+	if _weapon != null and is_instance_valid(_weapon):
+		_weapon.queue_free()
+	_weapon = null
 	_current_index = -1
 	_current_slot = 0
 	inventory_changed.emit()

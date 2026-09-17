@@ -532,10 +532,54 @@ func restore_state(st: Dictionary) -> void:
 	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
 	_was_submerged = bool(st.get("wp_s", _was_submerged))
 	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
-	# 武器:先重建**背包**,再按 wslot 切枪。
-	# ★ 顺序不可反:先读 wslot(此时 _current_slot 还有值,可作默认),再 restore_inventory
-	#   (它会把 _current_slot 清 0),最后 equip。反过来的话——先 restore,wslot 的默认值
-	#   就丢了;先 equip 再 restore,则 equip 是在**旧背包**上工作(凭空造枪/丢枪)。
+	# 武器(背包/手持/弹药):与软同步共用同一段,见 _apply_weapon_state 的顺序说明
+	_apply_weapon_state(st)
+	# 姿态碰撞箱按恢复的 state 启用 + 翻转同步(下帧 move_and_slide 用对的碰撞外形)
+	for pose in _coll_by_pose:
+		_coll_by_pose[pose].disabled = pose != state
+	animator.flip_h = facing_direction < 0
+	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值;
+	# 恢复位置后做一次微位移 move_and_slide(向下 0.001px,可忽略)让它在恢复位置重判接触,
+	# 供恢复后第一个物理 tick 的逻辑读到正确的地面状态。
+	var saved := velocity
+	velocity = Vector2(0.0, 0.001)
+	move_and_slide()
+	velocity = saved
+
+
+# ── 非预测字段的"软同步"(拾取/丢弃/复活/换局改的就是这些)──
+# ★ 与 restore_state 的分工:那个是"整态覆盖 + 让调用方重放未确认输入",用在**真分歧**上;
+#   这个**只补字段、不重放** —— 位置/速度是预测出来的,拿权威覆盖它们才是橡皮筋,
+#   而背包/残弹**不是预测出来的**,它们只由服务器裁决(客户端从不预测拾取/丢弃)。
+# ★ 由 PredictionRollback 在"预测被证实"那一支调用(每个 ack 一次,~60Hz),
+#   所以**先比指纹再动手**:restore_inventory 会 emit inventory_changed →
+#   ui/hud.gd 整体重建武器框,无脑调 = 每帧新建/销毁一堆 Control。
+func sync_soft_state(st: Dictionary) -> void:
+	if int(st.get("wslot", weapons._current_slot)) == weapons._current_slot \
+			and _inv_structure_equal(st.get("inv", [])):
+		return
+	_apply_weapon_state(st)
+
+
+# 只比**结构**(type/inst 的有序对):mag 是连续量、本地每帧都在变,比它等于每帧都"不一致",
+# 守卫当场失效 —— 与"不该拿连续量判分歧"是同一条纪律(见 _close_enough 的字段白名单)。
+func _inv_structure_equal(want: Array) -> bool:
+	var held: Array = weapons.inventory.held
+	if held.size() != want.size():
+		return false
+	for i in held.size():
+		if int(held[i]["type"]) != int(want[i].get("type", 0)):
+			return false
+		if int(held[i]["inst"]) != int(want[i].get("inst", 0)):
+			return false
+	return true
+
+
+# 武器/弹药的权威字段回灌(restore_state 与 sync_soft_state 共用)。
+# ★ 顺序不可反:先读 wslot(此时 _current_slot 还有值,可作默认),再 restore_inventory
+#   (它会把 _current_slot 清 0),最后 equip。反过来的话——先 restore,wslot 的默认值
+#   就丢了;先 equip 再 restore,则 equip 是在**旧背包**上工作(凭空造枪/丢枪)。
+func _apply_weapon_state(st: Dictionary) -> void:
 	var wslot := int(st.get("wslot", weapons._current_slot))
 	weapons.restore_inventory(st.get("inv", []))
 	if wslot > 0 and wslot != weapons._current_slot:
@@ -551,17 +595,6 @@ func restore_state(st: Dictionary) -> void:
 		w.mag_ammo = int(st.get("mag", w.mag_ammo))
 		w._reloading = bool(st.get("rld", w._reloading))
 		w._reload_t = float(st.get("rld_t", w._reload_t))
-	# 姿态碰撞箱按恢复的 state 启用 + 翻转同步(下帧 move_and_slide 用对的碰撞外形)
-	for pose in _coll_by_pose:
-		_coll_by_pose[pose].disabled = pose != state
-	animator.flip_h = facing_direction < 0
-	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值;
-	# 恢复位置后做一次微位移 move_and_slide(向下 0.001px,可忽略)让它在恢复位置重判接触,
-	# 供恢复后第一个物理 tick 的逻辑读到正确的地面状态。
-	var saved := velocity
-	velocity = Vector2(0.0, 0.001)
-	move_and_slide()
-	velocity = saved
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:

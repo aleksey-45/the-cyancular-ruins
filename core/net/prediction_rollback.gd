@@ -123,6 +123,14 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 		return
 	var predicted: Dictionary = _captures[ack]
 	if _close_enough(predicted, S):
+		# ★ "预测被证实"只说明 down/hp/pos/vel 对得上。背包(inv/wslot)与残弹是**非预测字段**
+		#   —— 拾取/丢弃/复活/换局全由服务器裁决,客户端从不预测它们,两者之间没有蕴含关系。
+		#   不在这里补一次,客户端就只会在**碰巧发生回滚**时(被打/复活/瞬移)才看见自己捡了枪
+		#   —— 表现为"地上的枪没了、手上也没多、还开不了火",而且一条报错都没有。
+		#   实测:整局 90s `rollback_count()==0`、客户端背包恒空,而服务器那边丢弃/拾取全成功。
+		# ★ has_method 守卫:本类是纯逻辑件,冒烟里配的是桩对象。
+		if _p.has_method("sync_soft_state"):
+			_p.sync_soft_state(S)
 		_trim(ack)          # 预测被证实:确认丢弃 ≤ ack
 		return
 	# 真性分歧 → 权威锚定 + 重放未确认输入(错在哪补哪,非拉拢)
