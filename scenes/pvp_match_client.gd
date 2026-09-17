@@ -88,7 +88,9 @@ func _on_snapshot_own(own: Dictionary) -> void:
 	if not c2.is_empty():
 		_rollback.on_authoritative(ack, c2)
 
-func _on_remote_tile_destroyed(cell: Vector2i) -> void:
+# silent=true 用于"重连后补破坏态":那些砖是**掉线期间**被拆的,不是刚被拆的 ——
+# 逐格播碎片会变成一屏不该有的粒子(而且几十格同时炸)。
+func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
 	if _world == null:
 		TileDefs.damage_tile(cell, 999999, "explosion")
 		return
@@ -100,6 +102,8 @@ func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 		if cell.x >= 0 and cell.x < row.size():
 			tex = MazeGenerator.texture_of(int(row[cell.x]))
 	TileDefs.damage_tile(cell, 999999, "explosion")
+	if silent:
+		return
 	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
 	var ts := GameParameters.TILE_SIZE
 	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
@@ -268,6 +272,12 @@ func _on_match_sync(payload: Dictionary) -> void:
 	for e in gw:
 		if e is Dictionary:
 			_spawn_pickup_node(e)
+	# 掉线窗口内被拆的墙:重连后补回(进场那次该字段为空 —— 刚建的世界与基线一致)。
+	# ★ 复用 `_on_remote_tile_destroyed` 的静默形态,不另写一套清瓦片/清碰撞的逻辑。
+	var destroyed: Array = payload.get("destroyed", [])
+	for c in destroyed:
+		if c is Vector2i:
+			_on_remote_tile_destroyed(c, true)
 
 
 # ── 地面武器(2026-09-15):服务器权威,本端只渲染 + 等事件(不做客户端预测)──
