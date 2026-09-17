@@ -81,7 +81,8 @@ func _run() -> void:
 # 开局那批在客户端被画在 canonical + **2×offset**、落体也从错的地方开始,而服务器按
 # canonical + offset 判距离 —— 差整整一个 offset(手枪 ≈60px,拾取半径只有 64px),于是
 # "站在看得见的枪上,按 F 却捡不起来"。掉落那批走事件、刚好是对的,所以症状只在开局那批上。
-# 判据 = **两边圆心对齐**:载荷 pos + 该节点的 visual_offset == 服务器判定表里的 pos。
+# ★ 2026-09-17 起 `visual_offset` 已删除(视觉中心被挪到节点原点),于是"载荷 pos"与
+#   "服务器判定圆心"**本来就是同一个值** —— 判据随之收成一句相等。
 func _phase_payload_position_contract() -> void:
 	print("[ga] ── ⓪ 下发位置契约(canonical,不是判定圆心)──")
 	var payload: Array = _host.ground_weapons_payload()
@@ -102,13 +103,13 @@ func _phase_payload_position_contract() -> void:
 		var pk := n as WeaponPickup
 		if (e["pos"] as Vector2).distance_to(pk.canonical_pos) > 0.5:
 			bad_canonical += 1
-		if ((e["pos"] as Vector2) + pk.visual_offset).distance_to(entry["pos"] as Vector2) > 0.5:
+		if (e["pos"] as Vector2).distance_to(entry["pos"] as Vector2) > 0.5:
 			bad_center += 1
 	_check(checked > 0, "载荷里至少有一件能对上节点(实际 %d)" % checked)
 	_check(bad_canonical == 0,
 			"载荷 pos == 节点 canonical_pos(%d/%d 不符)" % [bad_canonical, checked])
 	_check(bad_center == 0,
-			"载荷 pos + visual_offset == 服务器判定圆心(%d/%d 不符)—— 不符 = 客户端画的枪与服务器判的位置差一个 offset,会「看着够得着却捡不起来」" % [bad_center, checked])
+			"载荷 pos == 服务器判定圆心(%d/%d 不符)—— 视觉中心已是节点原点,两者必须同一个值;不符 = 客户端画的枪与服务器判的位置错开,会「看着够得着却捡不起来」" % [bad_center, checked])
 
 
 # ── 阶段 ①:背包有空位 → 捡起后地面少一件、背包多一件、无替换 ──

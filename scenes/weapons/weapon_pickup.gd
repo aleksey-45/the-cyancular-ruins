@@ -37,11 +37,10 @@ var _age: float = 0.0
 #   **其实就在身边** —— 但节点画在 canonical 位置就是屏幕外(与敌人/子弹/副本同一个问题)。
 #   所以两者分开:canonical_pos 永远在 [0,MAP)(权威,服务器与拾取判定读它),
 #   global_position 是**渲染位置**,每帧由 set_anchor() 给的锚点锚到最近副本。
+# ★ 本值**就是**这把枪看起来所在的位置:视觉中心已在 _build_collision 里被挪到节点原点
+#   (2026-09-17 之前有一个 visual_offset 把两者分开,靠各处补偿来对齐,已整体删除),
+#   渲染、碰撞箱、拾取判定圆心三者重合,不存在"第二个中心"。
 var canonical_pos: Vector2 = Vector2.ZERO
-# 视觉中心相对节点原点的偏移(**世界单位**)。★ 武器精灵在 tscn 里自带局部偏移
-# (手枪 (24,5.6)、步枪 (12,11)…× WORLD_SCALE),也就是**可见的枪并不画在节点原点**上。
-# 拾取判定与 F 提示都要以**看得见的那把枪**为准,否则会"看着够得着却捡不到/提示偏后"。
-var visual_offset: Vector2 = Vector2.ZERO
 var _anchor: Vector2 = Vector2.ZERO
 var _has_anchor: bool = false
 
@@ -113,7 +112,9 @@ func _build_visual() -> void:
 
 
 func _build_collision() -> void:
-	var vis := get_node_or_null("Visual")
+	# ★ 标成 Node2D 而不是 Node:下面要读写 vis.position,按 Node 推断的话它没有 position
+	#   (`var x := vis.position + …` 会因"值没有确定类型"直接**解析失败**)。
+	var vis := get_node_or_null("Visual") as Node2D
 	if vis == null:
 		return
 	var spr: Sprite2D = vis.get_node_or_null("Sprite2D")
@@ -122,20 +123,20 @@ func _build_collision() -> void:
 	var r: Rect2 = SpriteBounds.from_sprite(spr)
 	if r.size == Vector2.ZERO:
 		return
+	# ★ 把"画出来的枪中心"挪到 body 原点:渲染位置 / 碰撞箱 / 拾取判定圆心从此**天然重合**,
+	#   不需要任何补偿(原先靠 visual_offset 把判定圆心搬回视觉中心)。
+	#   gun_center 必须带上**武器根节点自己**的 position —— 漏它正是 m82a1 判定圆心
+	#   偏 (6,3)×WORLD_SCALE 世界像素的成因(拾取半径才 64px)。
+	#   本函数在 _build_visual 之后跑,故 vis.position 此刻还是 tscn 里那份(重建也成立)。
+	var gun_center := vis.position + spr.position + r.position + r.size * 0.5
+	vis.position -= gun_center
 	var cs := CollisionShape2D.new()
 	cs.name = "Shape"
 	var rect := RectangleShape2D.new()
 	rect.size = r.size
 	cs.shape = rect
-	# RectangleShape2D 以**中心**定位,而 from_sprite 给的是左上角 → 补半个尺寸
-	cs.position = r.position + r.size * 0.5 + spr.position
-	visual_offset = cs.position * WORLD_SCALE
+	cs.position = Vector2.ZERO      # 视觉中心已在原点
 	add_child(cs)
-
-
-# 这把枪**看起来**在世界的哪儿(节点原点 + 精灵偏移)。判定/提示都用它。
-func visual_center() -> Vector2:
-	return canonical_pos + visual_offset
 
 
 func _physics_process(delta: float) -> void:
@@ -143,6 +144,10 @@ func _physics_process(delta: float) -> void:
 	if _settled:
 		# 停稳后**位置**不变,但**锚点**在变(玩家在动、可能绕过接缝)——
 		# 不在这儿补一次的话,跨接缝时停稳的枪会留在旧副本上"消失"。
+		# ★ 解卡也必须在早退**之前**:停稳后 move_and_slide 再也不跑,可破坏砖被重铺
+		#   盖在它身上时会**永久钉死**在墙里(连 Godot 内建的 penetration recovery
+		#   都不会触发),所以这条路径是解卡唯一能救回它的地方。
+		_unstick_up()
 		sync_render_from_canonical()
 		return
 	velocity.y += PlayerParams.weapon_fall_gravity * delta
@@ -151,14 +156,8 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.x *= exp(-PlayerParams.weapon_air_drag * delta)
 	move_and_slide()
-	# 环面:物理走出来的是世界坐标,取模回 canonical 存进 canonical_pos;
-	# 渲染位置再由它锚到玩家最近副本(两者分工见字段注释)。
-	var w := float(GameParameters.MAP_WIDTH)
-	var h := float(GameParameters.MAP_HEIGHT)
-	if w > 0.0 and h > 0.0:
-		canonical_pos = Vector2(fposmod(global_position.x, w), fposmod(global_position.y, h))
-	else:
-		canonical_pos = global_position
+	_recompute_canonical()
+	_unstick_up()
 	sync_render_from_canonical()
 	# ★ 停止必须是"速度阈值置零"而不是"滑固定时长":前者让**落点与何时开始模拟无关** ——
 	#   这是联机端"客户端晚一个 RTT 才收到事件、却要落在同一位置"的前提。
@@ -166,6 +165,34 @@ func _physics_process(delta: float) -> void:
 	if is_on_floor() and absf(velocity.x) < PlayerParams.weapon_stop_eps:
 		velocity = Vector2.ZERO
 		_settled = true
+
+
+# 环面:物理走出来的是世界坐标,取模回 canonical 存进 canonical_pos;
+# 渲染位置再由它锚到玩家最近副本(两者分工见字段注释)。
+# 渲染位置可能是**接缝外的副本**(canonical + k×地图尺寸),fposmod 正好把它折回 canonical。
+func _recompute_canonical() -> void:
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	if w > 0.0 and h > 0.0:
+		canonical_pos = Vector2(fposmod(global_position.x, w), fposmod(global_position.y, h))
+	else:
+		canonical_pos = global_position
+
+
+# 嵌进实心格(贴墙丢弃、或停稳后可破坏砖被重铺盖在它身上)→ 向上挤出去。
+# 几何来源统一走 CollisionAabb(已含 body 的 scale=2.5),不自己再拼一遍矩形。
+# 返回是否真的动过。
+func _unstick_up() -> bool:
+	if not CollisionAabb.has_any(self):
+		return false        # 没有碰撞体就没东西可挤(精灵全透明等)
+	var dy := Unstick.push_up_dy(CollisionAabb.world_rect(self), GameParameters.TILE_SIZE)
+	if dy <= 0.0:
+		return false
+	global_position.y -= dy
+	velocity.y = 0.0
+	_settled = false        # 解掉停稳,让重力重新接管(可能被推进了空中,该重新落一次)
+	_recompute_canonical()
+	return true
 
 
 # 刚落地多久(秒)。拾取侧用它做"自己刚丢下的枪不立刻捡回"的冷却。

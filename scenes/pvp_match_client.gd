@@ -327,7 +327,7 @@ func _tick_ground_weapons() -> void:
 		pk.sync_render_from_canonical()
 		var e: Dictionary = ground_weapons.get_entry(int(inst))
 		if not e.is_empty():
-			e["pos"] = pk.visual_center()
+			e["pos"] = pk.canonical_pos
 	_update_pickup_prompt(lp)
 
 
@@ -349,7 +349,7 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 		var pk := n as WeaponPickup
 		var can := false
 		if _local != null and not _live_self_drops().has(int(inst)) 				and _local.weapons.is_slot_enabled(int(pk.type_id)):
-			var d := GridPathfinder.toroidal_delta_px(pk.visual_center(), lp, w, h).length()
+			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
 

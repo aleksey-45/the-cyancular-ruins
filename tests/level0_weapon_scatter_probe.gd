@@ -169,9 +169,9 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 		return
 	var target: Node2D = pickups[0]
 	# ① 站到它身上(距离 0 必然在半径内)
-	# ★ 站到**视觉中心**(可见的枪在哪),不是节点原点 —— 两者差一个精灵偏移
-	#   (手枪约 60 世界像素),站原点会刚好擦出拾取半径外。
-	(player as Node2D).global_position = target.global_position + target.visual_offset
+	# ★ 2026-09-17 起节点原点**就是**视觉中心(视觉中心已被挪到原点,visual_offset 已删),
+	#   所以直接站节点位置即可。
+	(player as Node2D).global_position = target.global_position
 	for i in 5:
 		await get_tree().process_frame
 	var prompt = target.get("_prompt")
@@ -181,9 +181,9 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 	if not bool(prompt.visible):
 		var pw: Vector2 = (player as Node2D).global_position
 		var pk := target as WeaponPickup
-		print("[prompt] 玩家=%s | 目标节点=%s canonical=%s vc=%s | 距vc=%.1f 距节点=%.1f (半径 %.0f)"
-				% [str(pw), str(pk.global_position), str(pk.canonical_pos), str(pk.visual_center()),
-				pw.distance_to(pk.visual_center()), pw.distance_to(pk.global_position),
+		print("[prompt] 玩家=%s | 目标节点=%s canonical=%s | 距节点=%.1f 距canonical=%.1f (半径 %.0f)"
+				% [str(pw), str(pk.global_position), str(pk.canonical_pos),
+				pw.distance_to(pk.global_position), pw.distance_to(pk.canonical_pos),
 				PlayerParams.weapon_pickup_radius])
 	_check(bool(prompt.visible), "站在拾取半径内时提示应出现")
 	_check((prompt as Node2D).z_index > 0, "提示应压在武器之上")
@@ -212,7 +212,7 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 		_failures.append("丢弃前置:场上没有地面武器")
 		return
 	var anchor_pk: Node2D = picks0[0]
-	(player as Node2D).global_position = anchor_pk.global_position + anchor_pk.visual_offset
+	(player as Node2D).global_position = anchor_pk.global_position
 	player.set_physics_process(false)
 	for i in 5:
 		await get_tree().process_frame

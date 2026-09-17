@@ -86,7 +86,7 @@ func _sync_ground_positions() -> void:
 		if n != null and is_instance_valid(n):
 			var e: Dictionary = ground_weapons.get_entry(int(inst))
 			if not e.is_empty():
-				e["pos"] = (n as WeaponPickup).visual_center()
+				e["pos"] = (n as WeaponPickup).canonical_pos
 
 
 # 仅测试用(见 `test_ground_teleport`):给每个站着、且脚下 64px 内没有可捡武器的玩家,
@@ -113,39 +113,38 @@ func _debug_keep_weapon_within_reach() -> void:
 		if n == null or not is_instance_valid(n):
 			continue
 		var pk := n as WeaponPickup
-		# ★ 反着减 `visual_offset`:拾取判定(与 F 提示)比的是 **视觉中心** 对玩家位置的距离,
-		#   直接把 canonical 设成玩家位置的话,可见的那把枪会偏出去 visual_offset(手枪 ≈60px),
-		#   正好卡在 64px 半径的边缘上 —— 时灵时不灵,且不报错。
-		pk.canonical_pos = p.global_position - pk.visual_offset
+		# 直接把节点挪到玩家身上即可:拾取判定(与 F 提示)比的就是 canonical_pos,
+		# 而它**就是**视觉中心(2026-09-17 起两者合并,不再需要反着减 visual_offset)。
+		pk.canonical_pos = p.global_position
 		pk.global_position = pk.canonical_pos
 		pk.velocity = Vector2.ZERO
 		pk._settled = true          # 停稳:落体逻辑不再动它,位置由本次赋值说了算
-		near["pos"] = pk.visual_center()
+		near["pos"] = pk.canonical_pos
 
 
 # 一件地面武器的**权威节点位置**(canonical,恒在 [0,MAP))。凡是下发给客户端的 `pos` 一律用它。
-# ★ 为什么不能发 `entries[].pos`:那一条是**拾取判定**的圆心(每帧被 `_sync_ground_positions`
-#   刷成 `visual_center()` = canonical + visual_offset),而客户端把载荷里的 `pos` 直接当
-#   `WeaponPickup.canonical_pos`(见 pvp_match_client._spawn_pickup_node 的注释:契约就是 canonical)。
-#   发判定圆心会让客户端把枪画在 canonical + **2×offset**、落体也从错的地方开始模拟,而服务器
-#   按 canonical + offset 判距离 —— 两者差整整一个 offset(手枪 ≈60px,拾取半径只有 64px),
-#   于是"站在看得见的那把枪上"也超出半径 → **看着有 F 提示却捡不起来**。
+# ★ 关于 `entries[].pos`:它每帧被 `_sync_ground_positions` 刷成同一个 canonical_pos,
+#   客户端把载荷里的 `pos` 直接当 `WeaponPickup.canonical_pos`(见 pvp_match_client
+#   ._spawn_pickup_node 的注释:契约就是 canonical)。**本函数保留"读活节点"而不是读表**,
+#   理由只剩一条:拿到的是节点自己的权威值,并对陈旧条目留痕。
+#   (2026-09-17 之前这里有一个真实的坑:`entries[].pos` 是"判定圆心" = canonical + visual_offset,
+#    与节点位置差整整一个 offset(手枪 ≈60px,拾取半径只有 64px)。视觉中心现已合并到节点原点,
+#    两者的区别不复存在。)
 func _canonical_of(inst: int) -> Vector2:
 	var n = _ground_nodes.get(inst, null)
 	if n != null and is_instance_valid(n):
 		return (n as WeaponPickup).canonical_pos
 	# 节点与条目是一起增删的(`_spawn_ground_weapon`/`_remove_ground_weapon`),走不到这里才是常态;
-	# 真走到了说明有陈旧条目 —— **别静默**:兜底只能回"判定圆心",与上面声明的位置**不是同一个东西**
-	# (正是本次要修的那个坑),所以留一条痕,别让它在某天被当成"位置也是 0 偏移"。
+	# 真走到了说明有陈旧条目 —— **别静默**:兜底只能回表里那份,可能与实际落点不符,所以留一条痕。
 	var e: Dictionary = ground_weapons.get_entry(inst)
-	push_warning("MatchGround._canonical_of: inst %d 没有活节点,退回判定圆心(位置会偏一个 visual_offset)" % inst)
+	push_warning("MatchGround._canonical_of: inst %d 没有活节点,退回表里的 pos(可能与实际落点不符)" % inst)
 	return e.get("pos", Vector2.ZERO)
 
 
 # 给 match_sync_data 的载荷(客户端进场拉取时一并拿到开局那批)。
 # ★ `pos` 必须是 **canonical**(与 `_broadcast_weapon_spawned` 同一条契约)。开局这批是唯一
-#   "读表"而不是"读刚生成的节点"的投递路径,而表里那条早被逐帧刷成了判定圆心 —— 曾经因此
-#   比掉落那批多出一个 visual_offset,**只有开局那批捡不起来**(掉落那批走事件,刚好是对的)。
+#   "读表"而不是"读刚生成的节点"的投递路径,故显式走 `_canonical_of` 而不是直接 `e["pos"]` ——
+#   今天两者等价(视觉中心已合并到节点原点),但契约要写死在这里,别依赖"表恰好是对的"。
 func ground_weapons_payload() -> Array:
 	var out: Array = []
 	for e in ground_weapons.entries:
@@ -162,9 +161,8 @@ func _broadcast_weapon_spawned(inst: int, by_role: int = -1) -> void:
 	var e: Dictionary = ground_weapons.get_entry(inst)
 	if e.is_empty():
 		return
-	# ★ `pos` 显式取 canonical,不读 `e["pos"]`:今天它碰巧还是原始生成点(本帧的
-	#   `_sync_ground_positions` 早已跑过、而这个节点是它之后才建的),但那是**时序巧合** ——
-	#   调用点一旦挪到帧首就会静默变成判定圆心,与上面 `ground_weapons_payload` 刚修掉的是同一个坑。
+	# ★ `pos` 显式取 canonical,不读 `e["pos"]`:今天两者等价,但"读刚生成的节点"是
+	#   与 `ground_weapons_payload` 同一条契约,别改回读表(那曾是个真实的静默坑 —— 见 `_canonical_of`)。
 	# ★ `vel` 同理且**必须保持是"生成时那一份"**:表里的 `vel` 从不被 `_sync_ground_positions`
 	#   刷新,客户端拿它 + canonical 重放落体才有"落点与何时开始模拟无关"这条不变量。
 	#   哪天有人顺手把 vel 也做成逐帧刷新,两端落点会立刻发散(而且不报错)。

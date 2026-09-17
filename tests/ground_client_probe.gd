@@ -109,7 +109,7 @@ func _phase_prompt_near_weapon() -> void:
 	# ★ 每帧重新贴一次:玩家有重力,只设一次会被自己掉走 —— 那样这条断言会**间歇性**
 	#   变红(实测:同一份代码连跑三遍,红绿绿),看着像功能坏了,其实是探针没站稳。
 	for i in 10:
-		_local.global_position = pk.visual_center()
+		_local.global_position = pk.canonical_pos
 		_local.velocity = Vector2.ZERO
 		await get_tree().physics_frame
 		_client._tick_ground_weapons()

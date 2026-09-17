@@ -630,7 +630,7 @@ func _update_pickup_prompt() -> void:
 			pk0.sync_render_from_canonical()
 			var e0: Dictionary = ground_weapons.get_entry(int(inst))
 			if not e0.is_empty():
-				e0["pos"] = pk0.visual_center()
+				e0["pos"] = pk0.canonical_pos
 	var self_drops := _live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
@@ -643,6 +643,6 @@ func _update_pickup_prompt() -> void:
 		if pl != null and not self_drops.has(int(inst)):
 			if pl.weapons.is_slot_enabled(int(pk.type_id)):
 				var d := GridPathfinder.toroidal_delta_px(
-						pk.visual_center(), pl.global_position, w, h).length()
+						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
