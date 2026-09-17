@@ -73,6 +73,7 @@ func _ready() -> void:
 
 	await _phase_pickup_prompt(player, lvl)
 	await _phase_drop_hold(player, lvl)
+	await _phase_slot_placement(player, lvl)
 
 	# ── 有真实渲染时顺手取一张图,供**人眼**确认地上的枪真的画出来了 ──
 	# (headless 下 get_image() 返回 null,跳过;断言部分两条腿都能跑。)
@@ -116,6 +117,47 @@ func _ready() -> void:
 	else:
 		printerr("LEVEL0 SCATTER FAILURES: " + str(_failures))
 		get_tree().quit(1)
+
+
+# ── 容量格子贴武器面板的**实际**顶边(用户 2026-09-16:「应该根据武器的框的高度自适应 bottom」)──
+# ★ 为什么值得钉:武器面板是**随内容收缩**的(有几把枪就多高),而格子原先贴在一个写死的
+#   y 上 —— 那种"顺手改一个数"不会报任何错,只会在实机上表现为"只带一把枪时格子飘在半空"。
+#   判据取**两边的实际边**而不是"offset 等于某个数"(后者与实现同源,等于同义反复)。
+func _phase_slot_placement(player: Node, lvl: Node) -> void:
+	var hud: Node = lvl.get_node_or_null("HUD")
+	if hud == null:
+		_check(false, "Level0 里有 HUD 节点")
+		return
+	# ★ 取常量走 `get_script_constant_map()`,不要 `hud.get("WEAPON_SLOTS_GAP")` ——
+	#   后者在这个引擎版本上**碰巧**能取到,但本仓踩过"直接取不存在的属性抛错 → 探针挂起"
+	#   的坑,查常量一律用这个口(与 kh_l3/kh_l5 同款)。
+	var consts: Dictionary = (hud.get_script() as Script).get_script_constant_map()
+	if not consts.has("WEAPON_SLOTS_GAP"):
+		_check(false, "hud.gd 里没有 WEAPON_SLOTS_GAP 常量")
+		return
+	var gap_expect := float(consts["WEAPON_SLOTS_GAP"])
+	# 面板高度随把数变 → 逐个把数都比一遍(1 / 3 / 4 把走的是同一条重排路径)
+	for plan in [[1], [1, 3, 4], [2, 4], [1, 2, 3, 5]]:
+		player.weapons.set_initial_inventory(plan)
+		for i in 6:
+			await get_tree().process_frame
+		var slots: Control = hud.get("_slots")
+		var wrap: Control = hud.get("_weapon_wrap")
+		if slots == null or wrap == null:
+			_check(false, "HUD 拿不到 _slots / _weapon_wrap(容量格子还贴不贴武器面板?)")
+			return
+		var slots_bottom: float = slots.position.y + slots.size.y
+		var wrap_top: float = wrap.position.y
+		var gap: float = wrap_top - slots_bottom
+		_check(gap > 0.0, "%d 把枪时容量格子不得压到武器面板上(实测 %+.1fpx)" % [plan.size(), gap])
+		_check(absf(gap - gap_expect) < 1.5,
+				"%d 把枪时间隙恒为 %.0fpx(实测 %.1f)" % [plan.size(), gap_expect, gap])
+		_check(slots_bottom > 0.0 and slots.position.y > 0.0,
+				"%d 把枪时容量格子留在画面内(y=%.0f)" % [plan.size(), slots.position.y])
+	# 收尾:还原一张"图里好看"的背包(下面取图那步会再摆一次,这里只是别留 4 把的乱状态)
+	player.weapons.set_initial_inventory([1])
+	for i in 6:
+		await get_tree().process_frame
 
 
 # ── 拾取提示("每把**能捡的**武器各自一个加粗 F")──

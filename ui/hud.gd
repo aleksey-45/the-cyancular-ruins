@@ -157,6 +157,10 @@ func _build_weapon_display(p: Node) -> void:
 	wrap.offset_top = wrap.offset_bottom
 	wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	add_child(wrap)
+	_weapon_wrap = wrap
+	# 容量格子贴的是**面板的实际顶边**,而面板高度随内容收缩(上面那段) → 布局一变就要重新贴。
+	# 面板只在"持有的把数变了"时才改高,故 resized 的触发频率 = 捡/丢枪的次数,可忽略。
+	wrap.resized.connect(_place_weapon_slots)
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 6)
@@ -256,18 +260,33 @@ func _refresh_weapon_boxes() -> void:
 	_weapon_box.move_child(_drop_bar, _weapon_box.get_child_count() - 1)
 
 
+var _weapon_wrap: PanelContainer = null   # 左下角武器面板(容量格子的定位基准)
+const WEAPON_SLOTS_GAP := 8.0             # 容量格子底边与武器面板顶边之间的空隙
+
+
 func _build_weapon_slots(p: Node) -> void:
 	# 容量格子:**左下角、武器框的正上方**(用户 2026-09-16:先挪到右下角,又要求挪回)。
-	#   底边贴着武器面板的顶边往上排。
 	_slots = WeaponSlots.attach_to(self, p.weapons)
-	var wrap_top: float = -260.0   # 武器面板顶边的 y(见 _build_weapon_display;面板自身会收缩)
+	_place_weapon_slots()
+	_place_weapon_slots.call_deferred()   # 首帧布局未跑完时 position.y 还是旧值,帧末再贴一次
+
+
+# 把容量格子贴到武器面板的**实际顶边**上(底边 = 面板顶边 - 空隙)。
+# ★ 为什么不能写死一个 y:面板高度是**随内容收缩**的(见 _build_weapon_display)——
+#   写死的话"只带一把枪"时格子会飘在半空、"带满 4 把"时又会压到面板上。
+# ★ 坐标系:锚点用 **0/0(相对父级顶边)**而不是 1/1 —— 面板是底锚的,但它的
+#   `position.y` 是**从顶边量**的;用底锚就得再换算一次视口高度,反而容易写错。
+#   两者同为 HUD(CanvasLayer)的直接子节点,参考系一致。
+func _place_weapon_slots() -> void:
+	if _slots == null or _weapon_wrap == null or not is_instance_valid(_weapon_wrap):
+		return
 	_slots.anchor_left = 0.0
 	_slots.anchor_right = 0.0
-	_slots.anchor_top = 1.0
-	_slots.anchor_bottom = 1.0
+	_slots.anchor_top = 0.0
+	_slots.anchor_bottom = 0.0
 	_slots.offset_left = MARGIN.x
 	_slots.offset_right = MARGIN.x + WeaponSlots.PANEL_W
-	_slots.offset_bottom = wrap_top - 8.0
+	_slots.offset_bottom = _weapon_wrap.position.y - WEAPON_SLOTS_GAP
 	_slots.offset_top = _slots.offset_bottom - WeaponSlots.PANEL_H
 
 
