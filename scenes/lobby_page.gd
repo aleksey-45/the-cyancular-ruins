@@ -64,6 +64,7 @@ func _finish_lobby_ready() -> void:
 	NetBus.local_go_match.connect(_on_go_match)
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_server_message.connect(_on_server_message)
+	NetBusExt.local_session_token.connect(_on_session_token)
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 	UiFactory.apply_font_recursive(self)
@@ -245,6 +246,17 @@ func _on_server_message(t: String) -> void:
 
 # ── 转连对局 worker ──
 
+# 大厅在 go_match **之前**下发的一次性会话令牌(断线重连用)。
+# ★ 先存进 `_pending_token` 而不是直接写 PvpSession:go_match 也是本帧到达的,两者由
+#   `_do_go_match.call_deferred` 在帧末一起落到 PvpSession,顺序就不会被 RPC 到达次序左右。
+#   (时序硬约束:token 必须先于 go_match 发出 —— 客户端收到 go_match 当场 NetBus.stop()
+#    断大厅,晚发的载荷静默丢失。大厅侧的发送点见 room_manager 三处 spawn 前。)
+var _pending_token := ""
+
+func _on_session_token(token: String) -> void:
+	_pending_token = token
+
+
 # go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),
 # 正在 poll 的 peer 引用被清零、在自己的调用栈内被 free → 偶发原生段错误
 # (实测「对手连入配对完成的一瞬间」闪退)。故把整个切换推迟到帧末(deferred
@@ -265,6 +277,9 @@ func _do_go_match() -> void:
 	_pending_go_role = -1
 	_pending_go_port = -1
 	PvpSession.role = role
+	PvpSession.token = _pending_token
+	PvpSession.worker_port = port      # 局内自动重连要直连同一个端口
+	_pending_token = ""
 	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void: _on_worker_connect_failed(), CONNECT_ONE_SHOT)
 	NetBus.stop()
@@ -282,6 +297,10 @@ func _claim_role_worker(role: int) -> void:
 	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 	NetBusExt.rpc_id(1, "player_options", _player_options())
+	# token 走扩展节点(原 NetBus 的 claim_role 签名一律不动)。原版 worker 无本节点 →
+	# 静默丢弃 → 那局就是"不能重连",不影响对局本身。
+	if PvpSession.token != "":
+		NetBusExt.rpc_id(1, "report_token", PvpSession.token)
 
 
 # 转连 worker 失败/无应答的兜底:断开当前连接回大厅,连上后 _on_lobby_connected 自动刷新列表。

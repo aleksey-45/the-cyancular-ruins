@@ -32,6 +32,7 @@ class Room:
 	var started := false                 # 已拉起 worker/已配对:拒绝再次加入,一方掉线即整房作废
 	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超时清理用)
+	var tokens: Dictionary = {}          # peer_id -> 一次性会话令牌(断线重连用;开局时按 role 下发)
 
 var rooms: Dictionary = {}   # code -> Room
 var _peer_names: Dictionary = {}   # peer id -> 昵称(客户端连上大厅时上报,列表/建房展示)
@@ -49,6 +50,7 @@ class RoyaleRoom:
 	var in_match := false                 # 已开局(拒绝加入;成员转连 worker 后房即散)
 	var worker_port: int = 0              # 本房拉起的大乱斗 worker 端口(关房时归还)
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超龄清理用,与 Room.created_at 同形)
+	var tokens: Dictionary = {}          # peer_id -> 一次性会话令牌(断线重连用;开局时按 role 下发)
 
 var royale_rooms: Dictionary = {}   # code -> RoyaleRoom
 
@@ -93,6 +95,17 @@ func on_list_rooms(caller: int) -> void:
 
 func _generate_code() -> String:
 	return "%04d" % (randi() % 10000)
+
+# 一次性会话令牌(16 位 hex)。★ 旧 Godot 的 `randi()` 是 32 位,拼两次取 16 hex 得 64 位熵 ——
+# 够防"误顶替"(同网段知道房号的人猜不中),**不防**恶意爆破(本设计不承担反作弊,见 spec §2)。
+# ★ 必须是**两段 `%08x`**,不能写成 `"%016x" % ((randi() << 32) | randi())`:后者拼出的 64 位数
+#   会**越过 int64 正半区**,而 Godot 的 `%x` 对负数是带符号打印(首个 digit 前多一个 `-`、只印
+#   15 位 hex)。实测 12 次抽样里 8 次落在负半区(其中 7 次长度 17,另 1 次长度 16 但带 `-`)——
+#   既不符"16 位 hex"的契约,又多出一个非 hex 字符(熵也少 1 位)。`randi()` 的返回值恒在
+#   [0, 2^32) 内,两段 `%08x` 各自补零到 8 位,拼起来恒为 16 位 hex
+#   (2 万次抽样:长度全 16、字符全在 [0-9a-f]、无重复)。
+static func new_token() -> String:
+	return "%08x%08x" % [randi(), randi()]
 
 # 该 peer 现在**真的**能收包吗?
 # ★ 2026-09-17 换了判据:以前读 `multiplayer.get_peers()`,实测它把"ENet 层已断、peer_map 还没

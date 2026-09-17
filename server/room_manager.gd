@@ -60,6 +60,13 @@ func royale_start(caller: int) -> void:
 		return
 	rr.worker_port = port
 	rr.in_match = true
+	# ★ token 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
+	#   之后再发就静默丢失(Task 2 的 session_token 注释)。spawn 之前发则一定更早。
+	for pid in rr.players:
+		var tk := LobbyRooms.new_token()
+		rr.tokens[pid] = tk
+		if lobby.is_peer_online(pid):
+			NetBusExt.rpc_id(pid, "session_token", tk)
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values()):
 		rr.in_match = false
 		# ★ 必须走拆除单一收口(2026-09-14,修 M1):收口会归还端口 + 摘掉注册表 + 通知房内玩家。
@@ -77,6 +84,9 @@ func royale_start(caller: int) -> void:
 
 # 全员转连(延到帧末再判在线:见 _peer_online 注释 —— 转连期成员会陆续断开大厅,
 # 同步发会踩"刚断开"窗口,报 channel 错误且 go_match 丢失)
+# ★ token 由调用方在 **spawn 之前**已经发出(见 royale_start / royale_start_ai 里那段注释)。本函数
+#   只发 go_match —— 客户端收到它就 NetBus.stop() 断大厅,所以任何"跟着 go_match 一起发"的
+#   载荷都必须更早。别把 token 挪到这里。
 func _send_go_match(rr: LobbyRooms.RoyaleRoom, port: int) -> void:
 	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
 	for peer_id in rr.players:
@@ -147,6 +157,14 @@ func royale_start_ai(caller: int) -> void:
 	rr.in_match = true
 	# AI role 号 = 1..max_players 内**人类未占用**的空闲号(见 _royale_free_roles)
 	var ai_roles := lobby.royale_free_roles(rr, ai_count)
+	# ★ token 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
+	#   之后再发就静默丢失(Task 2 的 session_token 注释)。spawn 之前发则一定更早。
+	#   AI 补位号没有 peer,故只给 `rr.players`(真人)发。
+	for pid in rr.players:
+		var tk := LobbyRooms.new_token()
+		rr.tokens[pid] = tk
+		if lobby.is_peer_online(pid):
+			NetBusExt.rpc_id(pid, "session_token", tk)
 	# 参战集合 = 房里真人的已分配号 + AI 补位号(真人号可能带空洞,故不能写成 1..max_players)
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values() + ai_roles, ai_roles):
 		rr.in_match = false
@@ -170,6 +188,13 @@ func _start_match(room: LobbyRooms.Room) -> void:
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
 	room.worker_port = port
+	# ★ token 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
+	#   之后再发就静默丢失(Task 2 的 session_token 注释)。spawn 之前发则一定更早。
+	for pid in room.players:
+		var tk := LobbyRooms.new_token()
+		room.tokens[pid] = tk
+		if lobby.is_peer_online(pid):
+			NetBusExt.rpc_id(pid, "session_token", tk)
 	if not _launcher.spawn_worker(port):
 		NetBus.reply(room.players[0], "server_message", "无法启动对局")
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
@@ -183,6 +208,9 @@ func _start_match(room: LobbyRooms.Room) -> void:
 
 
 # 1v1 全员转连(延到帧末再判在线:转连期双方会陆续断开大厅,见 _peer_online 注释)
+# ★ token 由调用方在 **spawn 之前**已经发出(见 `_start_match` 里那段注释)。本函数只发
+#   go_match —— 客户端收到它就 NetBus.stop() 断大厅,所以任何"跟着 go_match 一起发"的
+#   载荷都必须更早。别把 token 挪到这里。
 func _send_go_match_1v1(room: LobbyRooms.Room, port: int) -> void:
 	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
 	if not lobby.rooms.has(room.code):   # 帧末前已关房 → 别再给幽灵房发 go_match
