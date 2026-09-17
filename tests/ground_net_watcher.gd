@@ -39,8 +39,29 @@ const SETTLE := 1.5
 const STUCK_TIME := 0.5          # 卡住多久算卡住(触发跳跃)
 const STUCK_EPS := 6.0           # 半秒内水平位移小于它 = 卡住
 
+# ── 两种对局模式的差异(只有 4 处;其余全共用:两个大厅页同 extends LobbyPage,
+#    两个对局场景同 extends PvpMatchClient)──
+# ★ 这张表是**唯一**的模式差异来源:ground_net_probe 建房时也来这儿取大厅场景路径,
+#   别在那边再抄一份。
+const MODES := {
+	"royale": {
+		"lobby_scene": "res://scenes/royale_lobby.tscn",
+		"game_script": "royale_game.gd",
+		"needs_start": true,       # 房主得自按「开始游戏」
+		"has_suicide_key": true,   # K → NetBusExt.suicide_request → RoyaleHost.request_suicide_role
+	},
+	"duel": {
+		"lobby_scene": "res://scenes/matchmaking.tscn",
+		"game_script": "pvp_game.gd",
+		"needs_start": false,      # 配对即开局(go_match),没有开始按钮
+		"has_suicide_key": false,  # ★ pvp_game 连 _unhandled_input 都没有 —— K 在这边**没有接收端**
+	},
+}
+
 var who := "c1"
-var lobby: Node = null           # 真 royale_lobby.tscn 实例(本进程里被驱动的那份)
+var mode := "royale"             # "royale" / "duel"(见 MODES)
+var scene := "L1"                # 剧本名(见 tests/ground_scenarios.gd 的分派表)
+var lobby: Node = null           # 真大厅场景实例(本进程里被驱动的那份;由 ground_net_probe 建)
 
 var _t := 0.0
 var _stage := 0
@@ -140,9 +161,16 @@ func _process(delta: float) -> void:
 
 # ── 阶段 0:等真大厅连上 → c1 建房 / c2 等 GO 文件后加入 ──
 func _stage_lobby() -> void:
+	# 大厅是**游戏自己切进来的 current_scene**(见 ground_net_probe._run_client)——
+	# 观察者挂在 root 上,所以换场不会把它带走;这里每帧认一次,直到认出来为止。
 	if lobby == null or not is_instance_valid(lobby):
-		_log_once("等真大厅实例挂上(add_child 被推迟到帧末)")
-		return
+		var cs := get_tree().current_scene
+		if cs != null and _is_lobby_scene(cs):
+			lobby = cs
+			_log("认出大厅场景 %s" % str(cs.name))
+		else:
+			_log_once("等大厅场景切进来(当前=%s)" % ("(空)" if cs == null else str(cs.name)))
+			return
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
 		return
@@ -168,9 +196,24 @@ func _stage_lobby() -> void:
 	if code.is_empty():
 		return
 	_log("用房间号 %s 加入" % code)
-	lobby.call("_join_room", code, "")
+	_join_room_code(code)
 	_stage = 1
 	_stage_t = 0.0
+
+
+# 用房间号加入 —— 两页的入口不同,走各自**游戏自己的**那条路(不直接发 RPC,与"用 K 键验自杀"同款纪律)。
+#   大乱斗:royale_lobby._join_room(code, invite)
+#   1v1  :matchmaking 的入口是「加入」按钮,读的是 `_code_edit` 里的文本 → 填进去再按
+func _join_room_code(code: String) -> void:
+	if mode == "duel":
+		var edit: LineEdit = lobby.get("_code_edit")
+		if edit == null or not is_instance_valid(edit):
+			_log("拿不到 matchmaking._code_edit,无法加入")
+			return
+		edit.text = code
+		lobby.call("_on_join_pressed")
+		return
+	lobby.call("_join_room", code, "")
 
 
 # 从大厅渲染出来的房间按钮里取第一个房号并加入。
@@ -196,18 +239,20 @@ func _join_first_public_room() -> bool:
 			var s: String = p.strip_edges()
 			if s.length() >= 3 and s.is_valid_int():
 				_log("用大厅房间列表加入 %s" % s)
-				lobby.call("_join_room", s, "")
+				_join_room_code(s)
 				return true
 	return false
 
 
 func _stage_wait_game() -> void:
 	var cs := get_tree().current_scene
-	if cs == null or not _is_royale_game(cs):
-		# ★ 导出形态下**没有裁判进程**替我们按「开始游戏」——房主(c1)自己按。
-		#   走游戏自己的路径(emit 那个按钮的 pressed),不直接发 RPC:与用 K 键验自杀同款纪律。
-		#   开局后本函数就不再走到这里,所以重复按不会发生。
-		if who == "c1" and lobby != null and is_instance_valid(lobby):
+	if cs == null or not _is_game_scene(cs):
+		# ★ 只有大乱斗需要有人按「开始游戏」(1v1 是配对即开局,没有那个按钮 ——
+		#   去 `lobby.get("_start_btn")` 只会拿到 null,按不动)。
+		#   导出形态下**没有裁判进程**替我们按 → 房主(c1)自己按,且走游戏自己的路径
+		#   (emit 那个按钮的 pressed),不直接发 RPC:与用 K 键验自杀同款纪律。
+		if bool(MODES[mode]["needs_start"]) and who == "c1" \
+				and lobby != null and is_instance_valid(lobby):
 			var btn: Button = lobby.get("_start_btn")
 			var now := Time.get_ticks_msec()
 			if btn != null and is_instance_valid(btn) and now - _start_ms >= 2000:
@@ -217,7 +262,7 @@ func _stage_wait_game() -> void:
 		_log_once("等换场(当前场景=%s)" % ("(空)" if cs == null else str(cs.name)))
 		return
 	_game = cs
-	_log("已换场到 royale_game(帧 %d)" % Engine.get_process_frames())
+	_log("已换场到 %s(帧 %d)" % [MODES[mode]["game_script"], Engine.get_process_frames()])
 	_stage = 2
 	_stage_t = 0.0
 
@@ -304,7 +349,14 @@ func _debug_step(delta: float) -> void:
 
 
 # 走**游戏自己的** K 键路径(顺带把 `_unhandled_input` 的 K 分支还在也验了)。
+# ★ 1v1 **没有这条路**:K 的接收端(`royale_game._unhandled_input` → `NetBusExt.suicide_request`
+#   → `RoyaleHost.request_suicide_role`)整条只存在于大乱斗侧,pvp_game 连 `_unhandled_input`
+#   都没有。硬 `call` 它只会得到 "Invalid call" 且**静默什么都不做** —— 所以这里显式分流,
+#   1v1 靠服务器侧的 `--test-down-role` 制造同一件事(见 server/match_debug.gd)。
 func _suicide() -> void:
+	if not bool(MODES[mode]["has_suicide_key"]):
+		_log("本模式没有 K 自杀键(1v1);改由服务器 --test-down-role 制造倒地")
+		return
 	var ev := InputEventKey.new()
 	ev.pressed = true
 	ev.physical_keycode = KEY_K
@@ -475,9 +527,19 @@ func _pick_drop_dir() -> int:
 	return 1
 
 
-func _is_royale_game(n: Node) -> bool:
+func _is_game_scene(n: Node) -> bool:
 	var s = n.get_script()
-	return s != null and str(s.resource_path).ends_with("royale_game.gd")
+	return s != null and str(s.resource_path).ends_with(str(MODES[mode]["game_script"]))
+
+
+# 本模式的大厅场景是不是这一个?按脚本路径认(两个大厅页都 extends LobbyPage,
+# 用脚本名区分 royale_lobby / matchmaking)。
+func _is_lobby_scene(n: Node) -> bool:
+	var s = n.get_script()
+	if s == null:
+		return false
+	var p := str(s.resource_path)
+	return p.ends_with("royale_lobby.gd") or p.ends_with("matchmaking.gd")
 
 
 # ── 断言:判据一律是"这条路真的被走到了",不是"没报错" ──

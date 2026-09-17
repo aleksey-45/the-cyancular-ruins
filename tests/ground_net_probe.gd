@@ -36,6 +36,8 @@ const GO_FILE := "user://ground_net_probe_go.txt"
 const ORCH_DEADLINE := 120.0
 
 var _role := "lobby"
+var _mode := "royale"            # "royale" / "duel"(见 ground_net_watcher.MODES)
+var _scene := "L1"               # 剧本名(见 tests/ground_scenarios.gd)
 var _c1_peer := 0
 var _code := ""
 var _stage := 0
@@ -45,9 +47,15 @@ var _room_mgr: Node = null
 
 
 func _ready() -> void:
+	# ★ 本探针自己的开关写成 `=` 形式(与既有的 `--role=` 一致);**服务器 worker 的开关**
+	#   (`--port P` / `--roles a,b` / `--test-*`)是空格分词 —— 两处风格不同是现状,别"统一"。
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--role="):
 			_role = a.trim_prefix("--role=")
+		elif a.begins_with("--mode="):
+			_mode = a.trim_prefix("--mode=")
+		elif a.begins_with("--scene="):
+			_scene = a.trim_prefix("--scene=")
 	if _role == "lobby":
 		_run_orchestrator()
 	else:
@@ -70,7 +78,8 @@ func _run_orchestrator() -> void:
 				DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 	if FileAccess.file_exists(GO_FILE):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(GO_FILE))
-	NetBusExt.royale_create_requested.connect(_on_room_created)
+	if _mode == "royale":
+		NetBusExt.royale_create_requested.connect(_on_room_created)
 	var exe := OS.get_executable_path()
 	if OS.get_cmdline_user_args().has("--nospawn"):
 		print("PROBE: --nospawn:不拉子进程,请另起两个 `-- --role=c1` / `-- --role=c2`")
@@ -87,9 +96,14 @@ func _run_orchestrator() -> void:
 			args.append("--headless")
 		args.append_array(["--path", ProjectSettings.globalize_path("res://"),
 				"--log-file", _godot_log_path(role),
-				"res://tests/ground_net_probe.tscn", "--", "--role=" + role])
+				"res://tests/ground_net_probe.tscn", "--", "--role=" + role,
+				"--mode=" + _mode, "--scene=" + _scene])
 		OS.create_process(exe, args)
-	print("PROBE: 大厅就绪,c1/c2 已拉起")
+	print("PROBE: 大厅就绪(%s / %s),c1/c2 已拉起" % [_mode, _scene])
+	# ★ 1v1 是**配对即开局**:没有「开始游戏」按钮、没有 `royale_create_requested`,
+	#   也不需要 GO 文件(c2 自己从大厅房间列表里找)。所以阶段 0/1 整段跳过。
+	if _mode == "duel":
+		_stage = 2
 
 
 func _on_room_created(caller: int, _opts: Dictionary) -> void:
@@ -196,9 +210,19 @@ func _run_client() -> void:
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
 	if FileAccess.file_exists(lp):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
-	var watcher: Node = load("res://tests/ground_net_watcher.gd").new()
+	var watcher_script = load("res://tests/ground_net_watcher.gd")
+	var watcher: Node = watcher_script.new()
 	watcher.who = _role
-	watcher.lobby = load("res://scenes/royale_lobby.tscn").instantiate()
+	watcher.mode = _mode
+	watcher.scene = _scene
 	get_tree().root.add_child.call_deferred(watcher)
-	add_child.call_deferred(watcher.lobby)
-	print("PROBE[%s]: 真大厅场景已挂载,等待连接 127.0.0.1" % _role)
+	# ★ 大厅走**游戏自己的换场景栈**(`change_scene_to_file`),不是 `add_child` 到探针场景下。
+	#   两条理由:
+	#   ① 与生产/导出形态同一条路 —— 那条通道(`-- --autotest-*`)本来就没有裁判进程,
+	#      客户端只能自己切场景;让探针/导出两种形态共用一套驱动,才谈得上"同一把尺子"。
+	#   ② 实测:`add_child` 那条路在 1v1 下会让 `NetBus` 的大厅 RPC 全部栽在
+	#      "rpc node checksum failed"(房间建不出来),而大乱斗侧不受影响 —— 原因未定,
+	#      但换回游戏自己的栈之后这条差异整个消失。
+	#   ★ 观察者仍挂在 `root` 上(跨换场存活),它靠 `get_tree().current_scene` 认这份大厅。
+	get_tree().call_deferred("change_scene_to_file", str(watcher_script.MODES[_mode]["lobby_scene"]))
+	print("PROBE[%s]: 切到大厅场景(%s),等待连接 127.0.0.1" % [_role, _mode])

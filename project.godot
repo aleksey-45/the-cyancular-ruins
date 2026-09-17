@@ -127,3 +127,9 @@ renderer/rendering_method="mobile"
 # 只能靠"窗口没了""回到主菜单"这种表象反推(2026-09-12 真机测出的击杀崩溃就是这种处境)。
 file_logging/enable_file_logging=true
 file_logging/enable_file_logging.pc=true
+# ★ 留存份数:Godot 默认只留 **5** 份 `godot<时间戳>.log`,超了就轮转删最老的。
+# 2026-09-17 实测代价:用户那份唯一的崩溃现场(`godot2026-09-16T22.18.41.log`)在
+# 后面几轮探针跑过之后**被挤掉了** —— 追一个"有些时候才崩"的问题时,
+# 每多跑一轮探针就少一份现场,而现场恰恰是最缺的东西。
+# 提到 64:单份是 KB 量级,占不了多少盘;换来的是"崩了之后还能回头翻"。
+file_logging/max_log_files=64
