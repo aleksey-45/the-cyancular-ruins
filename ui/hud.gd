@@ -410,11 +410,14 @@ func _kill_ghost(i: int) -> void:
 
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
-	# 底板 2026-09-15 按用户要求去掉过、同日又按用户要求垫回(见 PLATE_COLOR)。
-	# ⚠ **底色必须显式给**:StyleBoxFlat 的默认底色是**不透明灰 (0.6,0.6,0.6,1.0)**、
-	#   `draw_center` 默认 true —— 想"去掉底色"却只删掉 `bg_color` 赋值那一行,等于把半透明
-	#   黑板换成一块**实心灰板**(比原来还显眼;实测发过一版,用户当场看出「右上角怎么还有框」)。
-	#   当时是靠 `draw_center = false` 救的,现在底色回来了就不要那行。
+	# 底板:**2026-09-17 按用户要求去掉**(「删除所有模式的右上角计数器底下的灰色框」)。
+	#   这是第 3 次动它了(09-15 去掉 → 同日垫回 → 09-17 再去掉),所以把踩过的坑写死在这:
+	# ⚠ **去掉底色只能靠 `draw_center = false`,不能只删 `bg_color` 那一行**:
+	#   StyleBoxFlat 的默认底色是**不透明灰 (0.6,0.6,0.6,1.0)**、`draw_center` 默认 true ——
+	#   只删 bg_color 等于把半透明黑板换成一块**实心灰板**(比原来还显眼;09-15 实测发过一版,
+	#   用户当场看出「右上角怎么还有框」)。`draw_center = false` 保留 content_margin,
+	#   所以文字位置不受影响。
+	#   本条**三个模式一起生效**(PvP / 大乱斗都实例化 level_0.tscn,共用这个 Hud)。
 	# 锚点/生长方向已迁进 ui/kill_counter.tscn(右上角、宽高留 0 由文本撑开、向左下生长)。
 	# ★ 刻意做成**无脚本的独立场景**而不是塞进 level_0.tscn:tests/kh_l3_visual_probe.gd
 	#   用 Hud.new() 建单机 HUD 做取色断言,把节点声明进 level_0.tscn 会让 Hud.new()
@@ -422,6 +425,7 @@ func _build_kill_label() -> void:
 	var wrap := KILL_COUNTER_SCENE.instantiate() as PanelContainer
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR
+	sb.draw_center = false      # ★ 不画底色(见上面那段的坑:只删 bg_color 会变成实心灰板)
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 16.0
 	sb.content_margin_right = 16.0

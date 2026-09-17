@@ -50,7 +50,9 @@ func _process(delta: float) -> void:
 		_in_countdown = false
 
 func _on_ping(ms: int) -> void:
-	_ping_label.text = "延迟 %d ms" % ms
+	# ★ 不带「延迟」二字,直接 "24ms"(2026-09-17 用户要求)。字数少一半 → 右下角占位更小,
+	#   小地图能更贴近下边(见 ui/minimap.gd 的 EDGE_BOTTOM)。
+	_ping_label.text = "%dms" % ms
 	_ping_label.add_theme_color_override("font_color", _ping_color(ms))
 
 # 延迟按阈值着色:绿(<60)/黄(<100)/橙(<150)/红(≥150)

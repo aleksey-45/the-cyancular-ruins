@@ -16,8 +16,14 @@ const RADIUS_PX := 140.0    # 圆在屏幕上的半径(像素)
 # 1v1 两出生点环面最短距离 34 格。50 → 半径 3200 世界像素 ≈ 2.2 个屏宽,是"雷达"而非"缩略图"。
 const RANGE_CELLS := 50.0
 const PX_PER_CELL := RADIUS_PX / RANGE_CELLS
-const EDGE := 24.0          # 圆的外接方框距屏幕右/下边缘
-const RING_PX := 2.0        # 圆内缘描边宽度
+const EDGE := 24.0          # 圆的外接方框距屏幕**右**边缘
+# 距屏幕**下**边缘的留白。★ 必须比 EDGE 大得多 —— 右下角是**延迟条**
+# (PvpHud / RoyaleHud 的 PingWrap,锚在离下边 24px 处、向上生长),而小地图 layer 131
+# 画在 PvpHud(130) **之上**。旧的整图缩略只有 200px 高、碰不到它;换成 280×280 的圆之后
+# 会**盖住延迟数字**(2026-09-17 用户报"不要挡住下方的延迟")。
+# 80 = 24(延迟条自身距下边) + ~40(延迟条高度) + ~16 间隙,留得比"刚好不压"宽一点。
+const EDGE_BOTTOM := 80.0
+const RING_PX := 4.0        # 圆内缘描边宽度(2026-09-17:2 → 4,用户要求"加粗")
 
 const SHADER_PATH := "res://ui/minimap_circle.gdshader"
 const SELF_COLOR := Color(0.6, 0.95, 1.0)
@@ -66,7 +72,7 @@ func _ready() -> void:
 			else:
 				img.set_pixel(x, y, Color(0.62, 0.68, 0.75, 0.95))
 
-	_rect_pos = Vector2(1920.0 - EDGE - RADIUS_PX * 2.0, 1440.0 - EDGE - RADIUS_PX * 2.0)
+	_rect_pos = Vector2(1920.0 - EDGE - RADIUS_PX * 2.0, 1440.0 - EDGE_BOTTOM - RADIUS_PX * 2.0)
 
 	_mat = ShaderMaterial.new()
 	_mat.shader = load(SHADER_PATH)

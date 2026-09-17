@@ -153,7 +153,8 @@ func _process(delta: float) -> void:
 		_timer_label.text = "剩余时间  %d:%02d" % [int(maxf(remain, 0.0)) / 60, int(maxf(remain, 0.0)) % 60]
 
 func _on_ping(ms: int) -> void:
-	_ping_label.text = "延迟 %d ms" % ms
+	# ★ 不带「延迟」二字,直接 "24ms"(2026-09-17 用户要求);与 PvpHud 同款。
+	_ping_label.text = "%dms" % ms
 
 func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", ST_PLAYING))

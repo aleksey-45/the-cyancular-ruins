@@ -10,6 +10,7 @@ extends Control
 # ★ 背景故意铺品红:与地图三色(空气深/水蓝/墙灰)都不会撞,圆外只要不是品红就说明没裁干净。
 
 const OUT_DIR := "res://.superpowers/sdd"
+const PVP_HUD_SCENE := "res://ui/pvp_hud.tscn"
 const BG := Color(1.0, 0.0, 1.0)          # 品红背景
 const WALL := Color(0.62, 0.68, 0.75)     # ui/minimap.gd 里墙的颜色(半透明 alpha 0.95)
 
@@ -79,6 +80,31 @@ func _ready() -> void:
 	await _frames(3)
 	_check(mm._dot_enemy.visible, "跨接缝 2 格的敌人点应显示(走环面最短向量)")
 
+	# ── ⑤ 小地图的圆不得压到右下角的延迟条 ──
+	# ★ 为什么单开这一条:小地图 layer 131 画在 PvpHud(130) **之上**,而两者都在右下角 ——
+	#   2026-09-17 就是从"整图缩略 200px 高"换成"圆 280×280"时**盖住了延迟数字**
+	#   (用户报「不要挡住下方的延迟」)。这条只有把两块 HUD 真摆在一起才测得出来。
+	#   也在取图之前挂,好让 PNG 里能一眼看出圆和延迟条的间距。
+	var pvp: CanvasLayer = (load(PVP_HUD_SCENE) as PackedScene).instantiate()
+	add_child(pvp)
+	# ★ 必须收掉它的全屏压暗罩:Mask 是一整块黑 0.3,会把下面④要验的"圆外=纯背景色"
+	#   压成 (0.702,0,0.702) 而假红(实测踩到)。实机里小地图 layer 131 画在 Mask(130) 之上、
+	#   不受它影响,所以收掉它并不改变本探针要验的东西。
+	pvp._mask.visible = false
+	pvp._on_ping(24)
+	await _frames(3)
+	var ping_label := pvp.get_node("PingWrap/PingLabel") as Label
+	_check(ping_label.text == "24ms", "延迟条文案应为「24ms」而不是「延迟 24 ms」(实际「%s」)" % ping_label.text)
+	var ping_rect: Rect2 = (pvp.get_node("PingWrap") as Control).get_global_rect()
+	var c := _circle_center_on_screen()
+	var r := Minimap.RADIUS_PX
+	# 矩形上离圆心最近的点:若它落在圆内 → 圆压住了延迟条
+	var q := Vector2(clampf(c.x, ping_rect.position.x, ping_rect.end.x),
+			clampf(c.y, ping_rect.position.y, ping_rect.end.y))
+	_check(c.distance_to(q) > r,
+			"小地图的圆不得压到延迟条(圆心 %s / 半径 %.0f / 最近点 %s / 距离 %.1f)"
+					% [str(c), r, str(q), c.distance_to(q)])
+
 	# ── ④ 取图:圆外必须还是背景色,圆内必须出现地形 ──
 	_enemy = Vector2.INF
 	await _frames(2)
@@ -99,12 +125,20 @@ func _ready() -> void:
 	_finish()
 
 
-# 圆在屏幕上的几何:与 ui/minimap.gd 的常量保持一致
+# 圆心在**屏幕**坐标(未按取图缩放)。与 ui/minimap.gd 的常量保持一致:
+# 右留白 EDGE、下留白 EDGE_BOTTOM(★ 两者不同 —— 下边要给延迟条让位)。
+func _circle_center_on_screen() -> Vector2:
+	var r: float = Minimap.RADIUS_PX
+	return Vector2(1920.0 - Minimap.EDGE - r, 1440.0 - Minimap.EDGE_BOTTOM - r)
+
+
+# 圆在取到的图上的几何
 func _circle_geom(img: Image) -> Dictionary:
 	var s := Vector2(img.get_width(), img.get_height()) / get_viewport().get_visible_rect().size
 	var r: float = Minimap.RADIUS_PX
-	var cx := (1920.0 - Minimap.EDGE - r * 2.0 + r) * s.x
-	var cy := (1440.0 - Minimap.EDGE - r * 2.0 + r) * s.y
+	var c := _circle_center_on_screen()
+	var cx := c.x * s.x
+	var cy := c.y * s.y
 	return {"cx": cx, "cy": cy, "top": cy - r * s.y, "left": cx - r * s.x}
 
 
