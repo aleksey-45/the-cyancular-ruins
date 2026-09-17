@@ -21,18 +21,23 @@ var _enemy := Vector2.INF
 func _ready() -> void:
 	Settings.pvp_minimap_show_enemy = true
 
-	# 合成地图:125×75 全实心(整张都是墙色)。★ 尺寸必须与 GameParameters 的
+	# 合成地图:250×150 全实心(整张都是墙色)。★ 尺寸必须与 GameParameters 的
 	# MAP_WIDTH/HEIGHT 一致 —— 小地图把"格数"当贴图尺寸、把"世界像素"当坐标,
 	# 两者不一致时圆里画的是错位的图(而断言可能照样绿)。
+	# ★ 故意比真图(125×75 / 150×100)大一倍:下面要构造"环面最短距离在范围外"的样本,
+	#   而那个距离受"地图半宽"封顶(超半宽就绕回来了)。图太小的话,RANGE_CELLS 调大一点
+	#   就构造不出范围外样本 —— 断言会从"该红"变成"真绿"或反过来。
+	const COLS := 250
+	const ROWS := 150
 	var grid: Array[Array] = []
-	for y in range(75):
+	for y in range(ROWS):
 		var row: Array[int] = []
-		row.resize(125)
+		row.resize(COLS)
 		row.fill(MazeGenerator.SOLID)
 		grid.append(row)
 	# ★ MAP_WIDTH/HEIGHT 是 **int**(core/config/game_parameters.gd:22),别用浮点赋值
-	GameParameters.MAP_WIDTH = 125 * GameParameters.TILE_SIZE
-	GameParameters.MAP_HEIGHT = 75 * GameParameters.TILE_SIZE
+	GameParameters.MAP_WIDTH = COLS * GameParameters.TILE_SIZE
+	GameParameters.MAP_HEIGHT = ROWS * GameParameters.TILE_SIZE
 	MazeGenerator.current_grid = grid
 
 	var bg := ColorRect.new()
@@ -45,19 +50,27 @@ func _ready() -> void:
 	mm.setup(func() -> Vector2: return _local, func() -> Vector2: return _enemy)
 	add_child(mm)
 
+	# ★ 两个样本距离都从 Minimap.RANGE_CELLS **推导**,不写死格数 ——
+	#   写死的话调一次范围常量,这两条断言就可能悄悄翻面(本该红的变绿,或反之)。
+	var ts := float(GameParameters.TILE_SIZE)
+	var in_cells: float = minf(3.0, float(Minimap.RANGE_CELLS) * 0.5)
+	var out_cells: float = float(Minimap.RANGE_CELLS) + 10.0
+	_check(out_cells * ts < float(GameParameters.MAP_WIDTH) * 0.5,
+			"合成地图够大,能构造出范围外样本(需要 < 半宽,实际 %.0f 格)" % out_cells)
+
 	# ── ① 范围内的敌人点必须显示 ──
-	_enemy = _local + Vector2(64.0 * 3.0, 0.0)
+	_enemy = _local + Vector2(ts * in_cells, 0.0)
 	await _frames(3)
-	_check(mm._dot_enemy.visible, "范围内(3 格)的敌人点应显示")
+	_check(mm._dot_enemy.visible, "范围内(%.0f 格)的敌人点应显示" % in_cells)
 
 	# ── ② 范围外的敌人点必须不显示 ──
-	_enemy = _local + Vector2(64.0 * 60.0, 0.0)
+	_enemy = _local + Vector2(ts * out_cells, 0.0)
 	await _frames(3)
-	_check(not mm._dot_enemy.visible, "范围外(60 格)的敌人点不得显示")
+	_check(not mm._dot_enemy.visible, "范围外(%.0f 格)的敌人点不得显示" % out_cells)
 
 	# ── ③ 跨接缝:地图另一头、但环面距离在范围内的敌人**必须**显示 ──
 	# 放到玩家左边整整一张图宽再回退 2 格 —— 直线距离 123 格,环面距离只有 2 格。
-	_enemy = Vector2(_local.x - float(GameParameters.MAP_WIDTH) + 64.0 * 2.0, _local.y)
+	_enemy = Vector2(_local.x - float(GameParameters.MAP_WIDTH) + ts * 2.0, _local.y)
 	await _frames(3)
 	_check(mm._dot_enemy.visible, "跨接缝 2 格的敌人点应显示(走环面最短向量)")
 

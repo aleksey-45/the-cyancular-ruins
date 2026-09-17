@@ -10,7 +10,11 @@ extends CanvasLayer
 #   把它判成"很远"而误藏。
 
 const RADIUS_PX := 140.0    # 圆在屏幕上的半径(像素)
-const RANGE_CELLS := 20.0   # 圆覆盖的世界半径(格)★ 调"圆形范围"只改这一行
+# 圆覆盖的世界半径(格)。★ 调"圆形范围"只改这一行,它**不改变圆在屏幕上的大小**,
+# 只改圆里的缩放(每格像素 = RADIUS_PX / RANGE_CELLS,当前 140/50 = 2.8px/格)。
+# 标定参照:屏幕能看到 46×36 格(世界视口 2208×1728 ÷ cam_zoom 0.75 ÷ TILE_SIZE 64),
+# 1v1 两出生点环面最短距离 34 格。50 → 半径 3200 世界像素 ≈ 2.2 个屏宽,是"雷达"而非"缩略图"。
+const RANGE_CELLS := 50.0
 const PX_PER_CELL := RADIUS_PX / RANGE_CELLS
 const EDGE := 24.0          # 圆的外接方框距屏幕右/下边缘
 const RING_PX := 2.0        # 圆内缘描边宽度
