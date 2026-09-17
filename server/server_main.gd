@@ -361,20 +361,29 @@ func _on_match_sync(caller: int) -> void:
 		# 建宿主那次调用里发出的(同一帧内 `_host` 就赋好值了),报文往返只可能更晚。
 		# 真到了这里说明时序变了 —— 不静默,留一条痕(客户端会退回 match_start 带的那份出生点)。
 		push_warning("match_sync: role %d 报到时对局宿主还没建好,spawns 回空" % role)
+	# 掉线窗口内被拆的墙:与基线不同才带(**空数组不带该键**,避免每局固定多几 KB)。
+	# ★ 为什么放在 match_sync 而不是新开一条 RPC:这条本来就是"客户端主动拉取的全量进场载荷",
+	#   复用它可以不碰 NetBus 的方法表(硬纪律),也让"重连后补态"与"进场建态"走同一条路。
+	var destroyed: Array = []
+	if _host != null and _host.has_method("destroyed_cells"):
+		destroyed = _host.destroyed_cells()
 	# ★ 判活再回:这是开局窗口里**最容易被踩的一条** —— 客户端一进对局场景就发 match_sync,
 	#   而"进场景 → 请求 →(脚本/玩家)退出"可能挤在同一两帧里;回复是定向可靠包,
 	#   往 ENet 已拆掉的 peer 发就是 `Unable to send packet on channel 0, max channels: 0`。
 	#   判据见 NetBus.is_peer_live(以及 docs/2026-09-17-pvp-weapon-net-fixes.md §1.5)。
 	if not NetBus.is_peer_live(caller):
 		return
-	NetBus.rpc_id(caller, "match_sync_data", {
+	var data := {
 		"names": _claim_names,
 		"hues": _claim_hues(),
 		"options": _claim_opts.get(1, {}),
 		"roles": _role_set,
 		"spawns": spawns,
 		"ground_weapons": ground,
-	})
+	}
+	if not destroyed.is_empty():
+		data["destroyed"] = destroyed
+	NetBus.rpc_id(caller, "match_sync_data", data)
 
 
 # 自杀脱困(大乱斗):caller → role → RoyaleHost(存活/对局中校验在那边)
