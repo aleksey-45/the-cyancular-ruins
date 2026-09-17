@@ -376,11 +376,22 @@ func _live_self_drops() -> Array:
 #   驱动)。对局场景此前**没人订阅**它 —— 那条信号的消费者只有 `lobby_page`,所以服务器一断客户端
 #   毫无反应:快照停更、输入自停(`_physics_process` 的 `can_send_to_server()` 转 false),玩家卡在
 #   一个静止的世界里只能按 ESC 自救。这正是 spec §1.3 记的既有缺陷。
-const RECONNECT_RETRY_MS := 2000   # 重试间隔
+# ★★ 两条时间尺度,**别合并**:
+#   · `RECONNECT_RETRY_MS`(2s)= **定时器节拍** —— 多久看一眼(等应答 / 两次尝试之间);
+#   · `RECONNECT_ATTEMPT_TIMEOUT_MS`(5s)= **一次连接尝试自己的寿命** —— 一次握手最多活多久。
+#   合并成"每 2 秒 `NetBus.stop()` + 重连一次"会在**高 RTT 链路**上反复掐掉正在握手的尝试
+#   (比不掐更糟);而**只**看节拍、不掐尝试,就是 2026-09-17 修掉的那个缺陷(见 `_retry_connect`)。
+const RECONNECT_RETRY_MS := 2000
+# 一次尝试的寿命。取值依据:一次成功握手约 2~3×RTT,5s 覆盖到 ~1.6s 的 RTT(再差的链路本就没法打);
+# 而 ENet 自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 ——
+# 不主动掐就只会有一次尝试、且期间一次 tick 都没有。
+const RECONNECT_ATTEMPT_TIMEOUT_MS := 5000
 var _reconnecting := false
-var _reconnect_started_ms := 0
+var _reconnect_started_ms := 0   # ★ **真实断开**时刻(不是"关菜单"时刻,见 _begin_reconnect)
 var _reclaim_sent := false   # ★ **本条连接上**是否已发过 reclaim(判据见 _on_reconnect_retry_tick)
 var _pending_disconnect := false   # 断线时菜单开着 → 记账,关菜单再来(见 _recheck_disconnect)
+var _attempt_started_ms := 0   # 当前这次连接尝试的起飞时刻;**0 = 没有尝试在飞**
+var _retry_timer: SceneTreeTimer = null   # 单一定时器(判据见 _schedule_reconnect_retry)
 
 
 # 两个子类各自 `_ready` 里调一次(与 `_subscribe_ground_weapons()` 并列)。
@@ -407,6 +418,8 @@ func _on_server_message(msg: String) -> void:
 # 菜单关掉时补一次:真掉线正好落在"菜单开着"那段窗口里时,上面那次 `_begin_reconnect` 会被挡下
 # (见它的守卫),账记在 `_pending_disconnect` 上,关菜单这一刻补上。不补的话玩家会留在一个
 # 快照停更的静止世界里 —— 正是本功能要消掉的那个状态。
+# ★ 它**不是**"按 ESC 回主菜单"那一路(原注释这么写,已被实测推翻,见 `_begin_reconnect` 的守卫)。
+#   它服务的是"菜单开着时真掉线"这一档。
 func _recheck_disconnect() -> void:
 	if _pending_disconnect:
 		_pending_disconnect = false
@@ -420,10 +433,24 @@ func _begin_reconnect() -> void:
 	# ★ MATCH_OVER / 对手离开那两条延时回菜单的路子会先 `NetBus.stop()`,而它断开的是我们自己。
 	if _match_ended:
 		return
-	# ★ 菜单开着**先不动,但不是放弃**(放弃会把真掉线也一起漏掉):按 ESC →「回到主菜单」也走
-	#   `NetBus.stop()`,此刻若接着重连,会在回主菜单的路上把连接接回 worker —— 本机/UDP 握手
-	#   快于一帧,reclaim 会**成功**,于是人已经在大厅、worker 却认为这个 role 有人管(对手那边
-	#   就此卡死,且全程无报错)。真"该重连"的那种断开由 `_recheck_disconnect` 在关菜单时补。
+	# ★ 30 秒预算的**起算点 = 真实断开这一刻**,故记在这里、且在那道菜单守卫**之前** ——
+	#   菜单开着的闪断若等"关菜单"才起算,等于凭空多拿一段预算(spec 的宽限期按**服务器**的
+	#   掉线检测起算,客户端这边晚算的那几秒会让最后几次 reclaim 打在"已被移出"上)。
+	#   ★ 只在**没人记过**时才记:关菜单时 `_recheck_disconnect()` 再来一次,预算要接着走,不重置。
+	if _reconnect_started_ms == 0:
+		_reconnect_started_ms = Time.get_ticks_msec()
+	# ★ 菜单开着**先不动,但不是放弃**(放弃会把真掉线也一起漏掉)。★★ 2026-09-17 订正本守卫的
+	#   理由:原先写的是"按 ESC →「回到主菜单」也走 `NetBus.stop()`,此刻接着重连会在回主菜单的
+	#   路上把连接接回 worker" —— **那个前提不成立**:`NetBus.stop()` 把 `multiplayer_peer` 置空,
+	#   引擎在 `set_multiplayer_peer` 里先 `clear()`、`last_connection_status` 当场复位成
+	#   DISCONNECTED,CONNECTED→DISCONNECTED 那一跃**从未被观测到** → `server_disconnected`
+	#   (本文件 `_on_server_message` 的唯一上游)**根本不会发**;而且 `PauseMenu.go_menu()` 走的是
+	#   直接 `NetBus.stop()`,连 `toggled`(→ `_recheck_disconnect`)都不经过。故"ESC 会引发重连"
+	#   这条路径不存在。
+	#   ★ 守卫**仍然保留**,理由换成成立的这一条:**菜单开着时真掉线是可能的**(服务器踢人 /
+	#   网络断),而那一刻的重连要**推迟到关菜单**再发 —— 玩家下一秒可能就点「回到主菜单」,
+	#   先把连接接回 worker 再走人,就会留下"人已走、role 仍被占"的幽灵(对手那边卡死、无报错)。
+	#   推迟的账记在 `_pending_disconnect` 上,由 `_recheck_disconnect()` 在关菜单时补。
 	#   (另一侧:`_exit_tree` 兜"重连已经在飞、玩家又按 ESC 走了"。)
 	if _menu_open:
 		return
@@ -432,7 +459,6 @@ func _begin_reconnect() -> void:
 		_abort_reconnect("重连失败(无会话令牌)")   # 原版 worker / 老大厅 → 优雅降级
 		return
 	_reconnecting = true
-	_reconnect_started_ms = Time.get_ticks_msec()
 	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.worker_port])
 	_retry_connect.call_deferred()
 
@@ -444,21 +470,49 @@ func _retry_connect() -> void:
 		return
 	NetBus.stop()
 	_reclaim_sent = false   # 新连接 = 新的一次 reclaim 额度(旧连接上那次的成败已无意义)
+	_attempt_started_ms = 0   # 上一轮(若有)就此作废
+	# ★ 上一轮那两条**一次性结局回调若还没触发,仍挂在 MultiplayerAPI 上**(信号回调挂在对象上,
+	#   不随 `multiplayer_peer` 换掉,也不随 `NetBus.stop()` 清),不清的话新连接握手成功那一次
+	#   emit 会把它们**一起**叫起来 —— `_try_reclaim` 会被叫两次(见它的守卫)、
+	#   `_on_reconnect_failed` 的旧回调还可能把**新一轮**的尝试记账清零。故每次重连先摘干净。
+	if multiplayer.connected_to_server.is_connected(_try_reclaim):
+		multiplayer.connected_to_server.disconnect(_try_reclaim)
+	if multiplayer.connection_failed.is_connected(_on_reconnect_failed):
+		multiplayer.connection_failed.disconnect(_on_reconnect_failed)
 	var err := NetBus.start_client(PvpSession.server_address, PvpSession.worker_port)
 	if err != OK:
 		_schedule_reconnect_retry()
 		return
+	# 尝试已起飞:记下起飞时刻(掐它的唯一判据),并挂上两条一次性结局信号。
+	_attempt_started_ms = Time.get_ticks_msec()
 	multiplayer.connected_to_server.connect(_try_reclaim, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(_on_reconnect_failed, CONNECT_ONE_SHOT)
+	# ★★ 成功这条**也要挂定时器**(2026-09-17 修:原先只有 `err != OK` 那条挂)。不挂的话,
+	#   "一次连接尝试正在飞"的整段期间**一次 tick 都没有** —— 宽限期判据从不被求值,而 ENet
+	#   自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 → 最坏情形是
+	#   **卡在冻结世界约 33 秒**才回主菜单,而不是设计的 30 秒(本机实测:尝试@0.15s →
+	#   `connection_failed`@31.81s → 由失败那一刻才挂上的 tick 在 ~33.8s 判超时)。
+	#   挂上之后这一路 tick 只多做一件事:到 `RECONNECT_ATTEMPT_TIMEOUT_MS` 就掐掉重开一次
+	#   (见 `_on_reconnect_retry_tick`)。
+	_schedule_reconnect_retry()
 
 
 func _on_reconnect_failed() -> void:
+	_attempt_started_ms = 0   # 这次尝试已有结局(失败)→ 下一拍重开,不必再等尝试超时
 	_schedule_reconnect_retry()
 
 
 func _try_reclaim() -> void:
 	if not _reconnecting:
 		return   # 期间已收场(超时/已离开) → 不发
+	# ★★ **本条连接上只发一次**(本功能最要害的不变量):worker 接受第一次时就 `_grace.leave(role)`
+	#   了,同一条连接上再发一次,进 `_on_reclaim` 的判据②必不成立 → 它**踢连接**。
+	#   这一行是**兜底**:正常路径由 `_retry_connect` 每次重连把旧的一次性回调摘干净来保证
+	#   (见那里的注释),但"只发一次"这件事值得在发的地方再写死一次。
+	if _reclaim_sent:
+		return
+	# 握手落地 = 这次尝试**有结局了** → 不再受"尝试超时"管辖,只剩"等应答"这一档。
+	_attempt_started_ms = 0
 	_reclaim_sent = true
 	NetBusExt.rpc_id(1, "reclaim_role", PvpSession.role, PvpSession.token)
 	# ★ 等 worker 回的 match_start(它带 spawn/map_path)。等到了才算成功,见 _on_resumed。
@@ -466,17 +520,24 @@ func _try_reclaim() -> void:
 
 
 # 重试节拍(单一定时器;每一拍自己判"再连一轮"还是"只等应答")。
+# ★ **一个时刻只能有一个定时器在飞**:OK 路径那条"尝试超时"会与 reclaim 后那条"等应答"重叠
+#   (`connected_to_server` 一到,`_try_reclaim` 又挂一个),不拦的话每一拍会跑两遍。
+#   已有的没到点就直接返回 —— 链条不会断:`_on_reconnect_retry_tick` 除收场那两条外**每条分支
+#   都会再挂一次**,所以任何时候都至少有一个在飞。
 func _schedule_reconnect_retry() -> void:
 	if not _reconnecting:
 		return
-	get_tree().create_timer(RECONNECT_RETRY_MS / 1000.0).timeout.connect(_on_reconnect_retry_tick)
+	if _retry_timer != null and _retry_timer.time_left > 0.0:
+		return
+	_retry_timer = get_tree().create_timer(RECONNECT_RETRY_MS / 1000.0)
+	_retry_timer.timeout.connect(_on_reconnect_retry_tick)
 
 
 func _on_reconnect_retry_tick() -> void:
 	if not _reconnecting:
 		return
-	# ★ 宽限期到了就别再试 —— 服务器那边的 `_expire_graces` 会把你移出,再连上去
-	#   也会被 reclaim 拒(不该在宽限外偷偷续上)。
+	# ★★ 宽限期判据是**第一条**,且与"这次尝试走到哪一步"**无关** —— 两条路径(`err != OK` 与 OK)
+	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),30 秒也一定到点。
 	if Time.get_ticks_msec() - _reconnect_started_ms > int(GraceWindow.DEFAULT_SECONDS * 1000.0):
 		_abort_reconnect("重连超时,对局已结束")
 		return
@@ -488,6 +549,15 @@ func _on_reconnect_retry_tick() -> void:
 	#   (可靠的定向应答,连着就一定到),而不是重连一轮再发一次。
 	#   真发不出去(连接没了 / 被服务器踢了)`can_send_to_server()` 即为 false,自然走到下面重连。
 	if _reclaim_sent and NetBus.can_send_to_server():
+		_schedule_reconnect_retry()
+		return
+	# ★ 一次握手最多活 `RECONNECT_ATTEMPT_TIMEOUT_MS`(还没起飞的不受此限:0 = 无尝试在飞)。
+	#   ★ **这里绝不能用 `RECONNECT_RETRY_MS`** —— 每 2 秒 `NetBus.stop()` + 重连会在高 RTT 链路上
+	#     反复掐掉正在握手的尝试,比不掐更糟;那个值只管"多久看一眼"。
+	#   到点仍未落地 = 这次多半不会落地了(ENet 自己的超时 ~31.8s,远长于本宽限期)→ 掐掉重开,
+	#   让 30s 预算里能有若干次尝试,而不是只有一次。
+	var attempt_age := Time.get_ticks_msec() - _attempt_started_ms
+	if _attempt_started_ms > 0 and attempt_age < RECONNECT_ATTEMPT_TIMEOUT_MS:
 		_schedule_reconnect_retry()
 		return
 	_retry_connect()
@@ -509,6 +579,7 @@ func _on_resumed() -> void:
 	_reconnecting = false
 	_reconnect_started_ms = 0
 	_reclaim_sent = false
+	_attempt_started_ms = 0
 	# ★ 必须重置:worker 在 reclaim 时把 `_ack_seq[role]` 归 0 重协商锚点,而客户端这边的 `_acked`
 	#   还停在断线前那个数 —— 不重置的话新快照的 ack 一律 `<= _acked`,`on_authoritative` 全数丢弃
 	#   (C2 静默失效,要等 seq 重新爬过断线前那个数才恢复),同时环里那些断线前的记录会被当成
