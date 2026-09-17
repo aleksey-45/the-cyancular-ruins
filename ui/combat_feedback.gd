@@ -13,7 +13,8 @@ const KILL_HOLD := 0.9    # 击杀文字停留时长(秒)
 const KILL_FADE_OUT := 0.35
 const STREAK_RESET := 6.0 # 连杀窗口:隔此秒数没有新击杀则连杀清零(秒)
 const ATTRIB_WINDOW_MS := 3000 # 归因时效:距最后一次受击超过此毫秒数的死亡不再归因给该射手
-const PIXEL_FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
+# ★ 字体路径常量已删 —— 两个 Label 随布局迁进 ui/combat_feedback.tscn,字体在那里用
+#   ext_resource 显式给(走 normal_font / normal_font_size,见 ui_factory.gd:33 的 caveat)。
 
 static var current: CombatFeedback = null   # 当前对局的反馈层;null = 非对局/服务器,静态入口空转
 
@@ -22,10 +23,14 @@ static var current: CombatFeedback = null   # 当前对局的反馈层;null = �
 ## 幂等判据不能只看 current 是否存在:换场时(safe_change_scene 先 add_child 新场景、后 remove_child 旧世界)
 ## 旧实例仍在树上且仍是 current,只看存在性会让新世界提前 return → 反馈层静默消失。
 ## 故须满足「current 有效 **且** 已是本 host 的后代」才幂等返回。
+##
+## ★ 用 load 而非 preload:本场景的 ext_resource 指回本脚本,preload 会构成
+##   「脚本 → 场景 → 脚本」的循环引用,Godot 解析期直接报错。运行期 load 不参与解析,
+##   且资源只载一次(引擎缓存)。同款的 B11 见 tests/hud_declarative_probe。
 static func spawn(host: Node) -> void:
 	if current != null and is_instance_valid(current) and host.is_ancestor_of(current):
 		return
-	var fx := CombatFeedback.new()
+	var fx: CombatFeedback = load("res://ui/combat_feedback.tscn").instantiate() as CombatFeedback
 	host.add_child.call_deferred(fx)
 
 
@@ -99,86 +104,46 @@ static func enemy_display_name(victim: Node) -> String:
 	return EnemySpawner.display_name_of(String(victim.scene_file_path))
 
 
+# 两个**自绘**控件由代码建(见 _ready),故是普通成员;两个文本节点从场景取,
+# 声明在下面 _ready 上方(@onready)。
 var _marker: HitMarker = null
-var _kill_label: RichTextLabel = null
 var _skull: KillSkull = null       # 击杀像素骷髅(与击杀播报同窗闪现)
-var _streak_label: Label = null    # 连杀数("x3",骷髅右侧)
 var _streak := 0                   # 当前连杀数
 var _last_kill_ms := -1            # 上次击杀时刻(连杀窗口判定;-1=无)
 var _hit_age := -1.0    # <0 = 隐藏
 var _kill_age := -1.0
 
 
+# 布局段(root / 击杀播报 RichTextLabel / 连杀数 Label 的锚点与全部 theme override)
+# 已迁进 ui/combat_feedback.tscn。上面 @onready 取回两个文本节点;两个**自绘**控件
+# (HitMarker / KillSkull)保持内部类、由代码建,挂进场景预留的槽位。
+# ★ 槽位的声明顺序 = z 序,必须与搬迁前的 add_child 顺序一致:
+#   HitMarkerSlot(X 标记,最下) → KillLabel → SkullSlot → StreakLabel。
+#   往槽位里 add_child 不走 move_child,顺序天然对齐。
+@onready var _kill_label: RichTextLabel = $Root/KillLabel
+@onready var _streak_label: Label = $Root/StreakLabel
+
+
 func _ready() -> void:
 	layer = LAYER
 	current = self
 	process_mode = Node.PROCESS_MODE_ALWAYS   # 暂停时动画也能收尾
-	var root := Control.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(root)
+	# ★ 一次:共享字体关抗锯齿/微调/子像素并挂 CJK 回退链。场景里两个 Label 引用的就是
+	#   同一个共享 FontFile 实例 —— 不调这句,它们带抗锯齿、且汉字没有回退字形
+	#   (本层必画中文:「击杀 测试鸟」)。同 pvp_hud.gd:26。
+	PixelFont.shared()
 	# 命中 X:铺满全屏的自绘控件,画在正中心
 	_marker = HitMarker.new()
 	_marker.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_marker.visible = false
-	root.add_child(_marker)
-	# 击杀播报:全屏富文本居中,大标题同款像素风——青色「击杀」+ 金色被击杀者名,
-	# 粗黑描边;固定条带位于屏幕中心上方,避开正中心的 X 标记
-	_kill_label = RichTextLabel.new()
-	_kill_label.bbcode_enabled = true
-	_kill_label.scroll_active = false
-	_kill_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_kill_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_kill_label.grow_vertical = Control.GROW_DIRECTION_BOTH
-	_kill_label.offset_left = -600
-	_kill_label.offset_right = 600
-	_kill_label.offset_top = -166
-	_kill_label.offset_bottom = -66
-	_kill_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_kill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_kill_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_kill_label.add_theme_font_override("normal_font", load(PIXEL_FONT))
-	_kill_label.add_theme_font_override("bold_font", load(PIXEL_FONT))
-	_kill_label.add_theme_font_size_override("normal_font_size", 64)   # 16 倍数(像素锐利)
-	_kill_label.add_theme_font_size_override("bold_font_size", 64)
-	_kill_label.add_theme_color_override("default_color", Color(0.55, 0.95, 1.0))   # 标题青
-	_kill_label.add_theme_constant_override("outline_size", 16)
-	_kill_label.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12, 0.95))
-	_kill_label.modulate.a = 0.0
-	root.add_child(_kill_label)
+	$Root/HitMarkerSlot.add_child(_marker)
 	# 击杀骷髅:屏幕正中央的像素骷髅头(8×8 像素画 ×8 放大),随击杀播报同窗闪现
 	_skull = KillSkull.new()
 	_skull.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_skull.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_skull.grow_vertical = Control.GROW_DIRECTION_BOTH
-	_skull.offset_left = -40
-	_skull.offset_right = 40
-	_skull.offset_top = -40
-	_skull.offset_bottom = 40
 	_skull.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_skull.visible = false
-	root.add_child(_skull)
-	# 连杀数:骷髅右侧的金色像素数字
-	_streak_label = Label.new()
-	_streak_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_streak_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_streak_label.grow_vertical = Control.GROW_DIRECTION_BOTH
-	_streak_label.offset_left = 44
-	_streak_label.offset_right = 300
-	_streak_label.offset_top = -24
-	_streak_label.offset_bottom = 24
-	_streak_label.text = ""
-	_streak_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_streak_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_streak_label.add_theme_font_override("font", load(PIXEL_FONT))
-	_streak_label.add_theme_font_size_override("font_size", 48)   # 16 倍数(像素锐利)
-	_streak_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.43))
-	_streak_label.add_theme_constant_override("outline_size", 10)
-	_streak_label.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.12, 0.95))
-	_streak_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_streak_label.modulate.a = 0.0
-	root.add_child(_streak_label)
+	$Root/SkullSlot.add_child(_skull)
 
 
 func _exit_tree() -> void:

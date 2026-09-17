@@ -21,10 +21,11 @@ extends ProbeBase
 # [脚本, 配套 tscn, 类名] —— 每搬一套加一行
 const PAIRS := [
 	["res://ui/royale_hud.gd", "res://ui/royale_hud.tscn", "RoyaleHud"],
+	["res://ui/combat_feedback.gd", "res://ui/combat_feedback.tscn", "CombatFeedback"],
 ]
 
 # 参数下限:防止 PAIRS 被误删成空表 → 零循环 → 恒绿
-const MIN_PAIRS := 1
+const MIN_PAIRS := 2
 
 # @onready var <名>[: 类型] = $<路径>   → 捕获组 2 = 路径
 const RE_ONREADY := "@onready\\s+var\\s+(\\w+)\\s*(?::\\s*[\\w\\[\\]]+\\s*)?=\\s*\\$([\\w/]+)"
