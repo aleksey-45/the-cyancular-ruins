@@ -45,6 +45,11 @@ const DEFAULT_PORT := 7777
 # ENet 通道数。create_server/create_client 的通道参数默认 0 → 发包报
 # "Unable to send packet on channel 0, max channels: 0"(引擎把 0 当"无通道可用")。
 # 显式分配若干条通道即可根治;两端数值保持一致(握手按较小者协商)。
+# ★ 2026-09-17 订正:**这条常量治不了那个报错的全部**。引擎源码里能打出这条消息的只有
+#   `enet_packet_peer.cpp` 的 `p_channel >= peer->channelCount`,即**目标 peer 的通道数为 0** ——
+#   而 ENet 只在 `enet_peer_reset_queues()`(**断开/超时/被 reset**)里把它置 0。
+#   所以通道数配好之后,剩下的来源是「**往一个 ENet 已拆掉、但 MultiplayerAPI 还没忘掉的
+#   peer 发包**」—— 判活请用下面的 `is_peer_live()`(它读 ENet 自己的 state,不滞后)。
 const ENet_CHANNELS := 4
 
 var is_server_mode: bool = false
@@ -82,6 +87,48 @@ func start_client(addr: String, port: int = DEFAULT_PORT) -> Error:
 func stop() -> void:
 	multiplayer.multiplayer_peer = null
 	is_server_mode = false
+
+
+# ── 发包前的存活判据(2026-09-17)──
+# 为什么不能用 `multiplayer.get_peers()`:它随 MultiplayerAPI 的连接/断开**信号**更新,比 ENet
+# 的真实状态**晚**(本仓 lobby_rooms.gd 的注释里已实测记过"滞后超过一帧")。
+#
+# 真身(2026-09-17 读引擎源码确认):`enet_peer_disconnect()` 在**发起断开的当场**就调
+# `enet_peer_reset_queues()` → `peer->channelCount = 0`(thirdparty/enet/peer.c:349),而
+# DISCONNECT 事件要等对方 ACK 或 5s 超时才产生 —— 于是**整个断开握手期间**(可达秒级)
+# 这个 peer 的 ENet 状态已不是 CONNECTED、`channelCount` 已是 0,而 `get_peers()` 仍报在线。
+# 这期间任何**定向**发送 → `ENetPacketPeer::send` 的 `p_channel >= peer->channelCount` →
+# `Unable to send packet on channel 0, max channels: 0`(报文里的通道号就是证据:
+# `SYSCH_RELIABLE=0 / SYSCH_UNRELIABLE=1`,所以 "channel **0**" 只可能来自 **reliable** 的定向包;
+#  广播那次是例外 —— `enet_host_broadcast` 自己会跳过非 CONNECTED 的 peer)。
+# 这里改读 **ENet peer 自己的 state**:ENet 拆 peer 时它当场就变,严格早于 get_peers()。
+func is_peer_live(id: int) -> bool:
+	if multiplayer.multiplayer_peer == null:
+		return false
+	# 非 ENet 后端(理论上没有,探针里可能有桩)退回原判据,别在这里报错。
+	if not (multiplayer.multiplayer_peer is ENetMultiplayerPeer):
+		return multiplayer.get_peers().has(id)
+	# ★ 先问 get_peers():它虽然**滞后**(可能把已拆的 peer 仍报在线),但"它说没有"这句是**可信**的
+	#   —— 而且 `get_peer()` 对不在表里的 id 会打一条 `ERR_FAIL_COND`(等于换一条噪音)。
+	if not multiplayer.get_peers().has(id):
+		return false
+	var p := (multiplayer.multiplayer_peer as ENetMultiplayerPeer).get_peer(id)
+	if p == null:
+		return false
+	# 判据 = 「这条定向发送会成功吗」的全部前置条件:ENet 状态是 CONNECTED,**且通道数 > 0**
+	# (后者正是引擎 `ENetPacketPeer::send` 会检查的那个量 —— 它同时兜住"ENet 已把这次连接
+	#  的通道拆掉、但状态位还没翻过去"这种更窄的窗口)。
+	return p.get_state() == ENetPacketPeer.STATE_CONNECTED and p.get_channels() > 0
+
+
+# 本端此刻能不能把包发给服务器(客户端用)。除了"peer 还在",还要求它已经 **CONNECTED** ——
+# 处于 CONNECTING 的 peer 发出去只会被 ENet 丢掉,而 `put_packet` 会先打一条错误。
+func can_send_to_server() -> bool:
+	if multiplayer.multiplayer_peer == null:
+		return false
+	if multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return false
+	return is_peer_live(1)
 
 # ── 客户端 → 服务器 ──
 @rpc("any_peer", "reliable")
@@ -229,7 +276,14 @@ func send_ping() -> void:
 
 @rpc("any_peer", "reliable")
 func ping() -> void:
-	rpc_id(multiplayer.get_remote_sender_id(), "pong")
+	var from := multiplayer.get_remote_sender_id()
+	# ★ 判活再回:发 ping 的客户端可能**在同一帧里断开**(它最后那次 ping 与它自己的 `stop()`
+	#   挤在一起),而回复是定向可靠包 → 往 ENet 已拆掉的 peer 发就是那条 channel 0 错误。
+	#   (同类站点已一并接上判据;本轮定位到"来源确实在被守卫的站点上"但没能钉死具体哪一处
+	#    —— 见 docs/2026-09-17-pvp-weapon-net-fixes.md §1.5。)
+	if not is_peer_live(from):
+		return
+	rpc_id(from, "pong")
 
 @rpc("authority", "reliable")
 func pong() -> void:

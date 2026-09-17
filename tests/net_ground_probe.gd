@@ -104,6 +104,46 @@ func _ready() -> void:
 			"_close_enough 里出现了 inv —— 它必须只进 capture/restore,进去就会每帧判分歧、无限回滚")
 	_check(not pr.contains("inv"), "_prediction_rollback 里出现了 inv 字样(见上一条)")
 
+	# ④b 换局重铺:**清的与铺的都必须广播**,且 inst 编号不得回退。
+	#     换局是客户端唯一"既不重进场景、也不再拉 match_sync"的时刻 —— 不广播 = 它留着一整批
+	#     上一局的幽灵枪(按 F 无效),而新一轮那批在它那儿一件都不存在(表现正是"地上的枪
+	#     捡不起来,只能捡后来丢弃的")。`_next_ground_inst = 1` 会让新一轮与客户端残留节点
+	#     **撞号**,而 `_spawn_pickup_node` 对已有 inst 是静默 return。
+	var rb := _func_body(mg, "_reset_ground_weapons")
+	_check(not rb.is_empty(), "_reset_ground_weapons 找得到")
+	_check(rb.contains("_broadcast_weapon_removed"),
+			"换局清空没广播 weapon_removed —— 客户端会留下一整批上一局的幽灵枪")
+	_check(rb.contains("_broadcast_weapon_spawned"),
+			"换局重铺没广播 weapon_spawned —— 新一轮那批在客户端一件都建不出来")
+	_check(not rb.contains("_next_ground_inst = 1"),
+			"换局把 _next_ground_inst 重置回 1 —— 新一轮会与客户端残留节点撞号(客户端静默拒绝建档)")
+	# ★ **反向断言**:客户端那一侧**不得**在换局时自己清空地面武器。
+	#   真写过一版(以为"漏收一条事件会留幽灵枪,清一次自愈"),结果是**反向**的破坏:
+	#   服务器的顺序是「先 `_reset_ground_weapons` 广播 removed×旧 + spawned×新,**再**
+	#   `_broadcast_round_state`」,两条走同一条可靠通道、保序 → 客户端收到新一轮 COUNTDOWN 时
+	#   那批新枪**早已建好**,再清一次 = 第 2 局起客户端地面恒为空(服务器有 10 把,客户端
+	#   一把都看不见、只能捡后来的丢弃物 —— 正是要修的那个症状)。清旧的只由服务器那两条
+	#   有序事件负责;真漏收了,掉线重进会重新拉 match_sync 兜住。
+	var pg := _code_only(_read("res://scenes/pvp_game.gd"))
+	_check(not pg.contains("clear_ground_weapons"),
+			"pvp_game 又在换局时清空地面武器了 —— 那会把服务器刚广播来的新一轮那批一起抹掉(见这条注释)")
+	_check(not pmc.contains("func clear_ground_weapons"),
+			"pvp_match_client 里又出现了 clear_ground_weapons —— 换局的清理只走服务器事件,别在客户端加第二条路")
+
+	# ④c 切枪包字段**两端同量纲 = 背包位置(1-based)**。
+	#     滚轮曾经上行"武器类型 id",而消费端按位置读(`equip_index(字段 - 1)`):背包
+	#     `[步枪2, 手枪1]` 从步枪滚一下发 1 → 服务器切回步枪(等于没切);`[手枪1, 重狙3]` 发 3
+	#     → 越界早退(压根没切)→ 权威 wslot 把客户端拉回 →「滚轮切不动」。
+	var wc := _code_only(_read("res://scenes/player/weapon_component.gd"))
+	var rnc := _func_body(wc, "request_net_cycle")
+	_check(not rnc.is_empty(), "request_net_cycle 找得到")
+	_check(not rnc.contains("push_net_slot(int(inventory.held"),
+			"滚轮切枪又在发武器**类型 id** 了(消费端按背包位置读 → 切错/越界早退)")
+	_check(rnc.contains("push_net_slot(next + 1)"),
+			"滚轮切枪应上行背包位置(next + 1)")
+	_check(_func_body(pl, "_physics_process").contains("equip_index(wslot - 1)"),
+			"消费端不再是按背包位置切(equip_index(wslot - 1))—— 两条路径的量纲必须一致")
+
 	# ⑤ 链规矩:MatchGround 是中间层,**不得**定义生命周期钩子
 	for hook in ["func _init(", "func _ready(", "func _enter_tree(",
 			"func _exit_tree(", "func _physics_process("]:

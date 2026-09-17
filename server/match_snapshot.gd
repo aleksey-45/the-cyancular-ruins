@@ -33,10 +33,13 @@ func _broadcast_snapshot() -> void:
 	if not multiplayer.get_peers().is_empty():
 		NetBus.rpc("snapshot_world", world)
 	# ② **本人包**:各自的 ack + 权威整态 c2 —— 只有本人需要(客户端 rollback 拿它锚定/重放)。
-	# 逐 peer 定向(体积小,不构成 O(N²))。仍判 live peer:避免给正在断开的客户端发。
-	var live_peers := multiplayer.get_peers()
+	# 逐 peer 定向(体积小,不构成 O(N²))。仍判 live peer:避免给正在断开的客户端发 ——
+	# ★ 这是全项目**最频繁**的一处定向发送(60Hz × 每个 role),所以判据必须不滞后:用
+	#   `NetBus.is_peer_live`(读 ENet peer 自己的 state),不是 `get_peers()`。
+	#   (本条走 unreliable → 通道 1,报出来会是 "channel **1**" 那一版;用户看到的那条
+	#    "channel 0" 只可能来自 **reliable** 的定向包,见 NetBus.is_peer_live 的注释。)
 	for role in peer_by_role:
-		if not live_peers.has(peer_by_role[role]):
+		if not NetBus.is_peer_live(peer_by_role[role]):
 			continue
 		var p: Node2D = players.get(role)
 		if p == null:

@@ -95,14 +95,13 @@ func _generate_code() -> String:
 	return "%04d" % (randi() % 10000)
 
 # 该 peer 现在**真的**能收包吗?
-# ★ 必须配合**延后一帧**使用(见各调用点的 call_deferred)——原因:
-#   往处于「正在连接(尚未成为可用 peer)/ 刚刚断开(ENet 层已断、MultiplayerAPI 的 peer_map
-#   还没收敛)」窗口的 peer 发包,会打 `Unable to send packet on channel 0, max channels: 0`
-#   且**包会丢** —— 那两种状态下目标 peer 的 channel_count 都是 0。
-#   而 multiplayer.get_peers() **挡不住**:实测它把这类 peer 仍报为在线(它随 MultiplayerAPI 的
-#   连接/断开信号更新,比 ENet 的真实状态晚一拍)。所以判早了等于没判。
+# ★ 2026-09-17 换了判据:以前读 `multiplayer.get_peers()`,实测它把"ENet 层已断、peer_map 还没
+#   收敛"的 peer 仍报为在线(随连接/断开信号更新,比 ENet 的真实状态晚一拍)→ 判早了等于没判,
+#   于是只能靠"延后一帧/再等一帧"躲窗口(那些 call_deferred/await 仍保留:它们同时还兜住
+#   「刚连上、还没 CONNECT」那一档)。现在改读 **ENet peer 自己的 state**(`NetBus.is_peer_live`),
+#   拆 peer 时它当场就变,不滞后 —— 这才是那条 `Unable to send packet on channel 0` 的正解。
 func is_peer_online(peer_id: int) -> bool:
-	return multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id)
+	return multiplayer.has_multiplayer_peer() and NetBus.is_peer_live(peer_id)
 
 func create_room(caller: int) -> void:
 	# 1v1/大乱斗互斥(自检 L5):同一客户端同时挂两种房会收到双重 go_match 互相覆盖

@@ -94,7 +94,8 @@ func _physics_process(_delta: float) -> void:
 	_ping_acc += _delta
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
-		NetBus.send_ping()
+		if NetBus.can_send_to_server():
+			NetBus.send_ping()
 	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前——先把上一 seq 的预测整态入 ring,
 	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
 	if _rollback != null:
@@ -110,7 +111,12 @@ func _physics_process(_delta: float) -> void:
 	var net_slot: int = _local.weapons.consume_net_slot()
 	if net_slot > 0:
 		pkt["weapon"] = net_slot
-	NetBus.rpc_id(1, "send_input", pkt)
+	# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 `NetBus.stop()`,
+	#   而本场景到帧末才被换掉 —— 中间这一两帧 `rpc_id` 会打引擎错误
+	#   (`Trying to call an RPC while no multiplayer peer is active`),包本来也发不出去。
+	#   预测与记账照常走完(seq 照增),只是不上行 —— 不影响 seq 的单调性。
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "send_input", pkt)
 	_prev_sent_seq = _input_seq
 	_have_prev_seq = true
 	if _rollback != null:

@@ -60,6 +60,8 @@ func _run() -> void:
 	await _phase_pickup_removal()
 	await _phase_authoritative_inventory_change()
 	await _phase_cycle_stress()
+	await _phase_switch_field_contract()
+	await _phase_replica_empty_hands()
 
 	if _failures.is_empty():
 		print("GROUND CLIENT PROBE: ALL-OK")
@@ -196,6 +198,77 @@ func _phase_cycle_stress() -> void:
 	_check(_client.ground_weapons.size() == field0,
 			"60 轮净零:地面表条目数不变(%d → %d)" % [field0, _client.ground_weapons.size()])
 	_check(is_instance_valid(_local), "60 轮后本地玩家仍有效")
+
+
+# ── ⑥ 切枪包的字段契约:两条路径产出的都必须是**背包位置**(1-based)──
+# 为什么:滚轮那条曾经上行**武器类型 id**,而消费端(`player.gd`)读的是 `equip_index(字段 - 1)`
+# —— 按**背包位置**。背包 `[步枪2, 手枪1]` 从步枪滚一下 → 发 1 → 服务器 `equip_index(0)` 切回
+# **步枪**(等于没切);`[手枪1, 重狙3]` → 发 3 → `equip_index(2)` **越界早退**,压根没切。
+# 随后权威 `wslot` 经 `sync_soft_state` 把客户端拉回原枪 = 「滚轮切不动」。
+# 选 `[3, 1]`(重狙 / 手枪)是因为**类型 id 与背包位置不同**,能把两者区分开;`[1, 2]` 那种
+# 恰好相等,测了也白测(红绿一样)。
+func _phase_switch_field_contract() -> void:
+	print("[gc] ── ⑥ 切枪包字段 = 背包位置 ──")
+	var w: WeaponComponent = _local.weapons
+	w.set_initial_inventory([3, 1])   # 位置 0 = 重狙(类型 3)、位置 1 = 手枪(类型 1)
+	_check(w.inventory.held.size() == 2 and w.current_slot_int() == 3,
+			"先摆成两把(实际 %d 把,手上槽 %d)" % [w.inventory.held.size(), w.current_slot_int()])
+	# 从位置 0 往正方向滚一次 → 目标位置 1
+	w.request_net_cycle(1)
+	var sent: int = w.consume_net_slot()
+	_check(sent == 2, "滚轮上行的是**背包位置** 2(实际 %d)" % sent)
+	_check(sent != 1, "上行值不得是目标那把的**类型 id**(1)—— 消费端按位置读,发类型 id 会切错/越界")
+	_check(w._current_index == 1 and w.current_slot_int() == 1,
+			"本地同刻切到位置 1(实际 index=%d slot=%d)" % [w._current_index, w.current_slot_int()])
+	# 再走一遍**消费端口径**(服务器 `player.gd` 的那句):同一个字段必须还原出同一个位置
+	w.equip_index(0)
+	_check(w._current_index == 0, "先切回位置 0(实际 %d)" % w._current_index)
+	w.equip_index(sent - 1)
+	_check(w._current_index == 1 and w.current_slot_int() == 1,
+			"按消费端口径 equip_index(字段 - 1) 落回同一把(实际 index=%d slot=%d)" % [
+					w._current_index, w.current_slot_int()])
+	_check(is_instance_valid(_local), "切枪后本地玩家仍有效")
+
+
+# ── ⑦ 对手副本:权威说"空手"(丢光最后一把)→ 手上不能还举着 ──
+# 快照的 `weapon` 变 0 只有一种成因:服务器侧玩家把**最后一把**丢出去。原实现写作
+# `if slot > 0 and slot != ...` → 空手这一档被整个忽略,副本**一直举着那把已经不存在的枪**。
+func _phase_replica_empty_hands() -> void:
+	print("[gc] ── ⑦ 副本:权威空手 → 手上必须空 ──")
+	var rep: Node2D = preload("res://scenes/player/player_replica.tscn").instantiate()
+	_world.add_child(rep)
+	for i in 3:
+		await get_tree().physics_frame
+	var anchor: Vector2 = _local.global_position
+	var snap := {
+		"pos": anchor + Vector2(200.0, 0.0), "vel": Vector2.ZERO, "facing": 1, "pose": 0,
+		"hp": 100, "downed": false, "aim": Vector2.RIGHT, "weapon": 2,
+	}
+	rep.apply_snapshot(snap, anchor, 1)
+	for i in 3:
+		await get_tree().physics_frame
+	_check(rep._weapon != null, "先握上一把(实际 %s)" % str(rep._weapon))
+	_check(rep._weapon_slot_int == 2, "槽位记成 2(实际 %d)" % rep._weapon_slot_int)
+	# 服务器说:他把最后一把丢出去了 → 空手
+	snap["weapon"] = 0
+	rep.apply_snapshot(snap, anchor, 2)
+	for i in 3:
+		await get_tree().physics_frame
+	_check(rep._weapon == null,
+			"权威空手后副本不得还举着枪(实际 %s)" % str(rep._weapon))
+	_check(rep._weapon_slot_int == 0, "槽位回到 0(实际 %d)" % rep._weapon_slot_int)
+	# 再握一把:同槽位之外的类型要能重建(证明 0 那一档没有把状态写坏)
+	snap["weapon"] = 4
+	rep.apply_snapshot(snap, anchor, 3)
+	for i in 3:
+		await get_tree().physics_frame
+	_check(rep._weapon != null and rep._weapon_slot_int == 4,
+			"空手之后仍能重建武器(实际 %s / 槽 %d)" % [str(rep._weapon), rep._weapon_slot_int])
+	# ★ 收尾要**等它真的没**:`queue_free` 只是标记,探针末尾同帧就 `quit()` 的话,副本连同
+	#   它手上那把武器都还活着 → 退出时报 "N ObjectDB instances / 1 RID leaked"(上一版实测)。
+	rep.queue_free()
+	for i in 2:
+		await get_tree().physics_frame
 
 
 func _take_inst() -> int:

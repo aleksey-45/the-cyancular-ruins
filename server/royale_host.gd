@@ -60,6 +60,10 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 		WorldBuilder.load_grid()
 	var spawns := plan_spawns(role_peers.keys() + ai_roles)
 	for role in role_peers:
+		# 判活:与 MatchBootstrap.start_on 同款 —— 报到与开局之间客户端可能已经断开,
+		# 而定向可靠包发往正在断开的 peer 就是那条 channel 0 错误(判据见 NetBus.is_peer_live)。
+		if not NetBus.is_peer_live(role_peers[role]):
+			continue
 		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
 		NetBus.rpc_id(role_peers[role], "server_message", "大乱斗开始")
 	# 把**同一份**散点传进宿主:它据此摆位,而上面已把同一份经 match_start 广播给客户端。

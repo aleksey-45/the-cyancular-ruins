@@ -235,6 +235,12 @@ func _on_match_sync(caller: int) -> void:
 		# 建宿主那次调用里发出的(同一帧内 `_host` 就赋好值了),报文往返只可能更晚。
 		# 真到了这里说明时序变了 —— 不静默,留一条痕(客户端会退回 match_start 带的那份出生点)。
 		push_warning("match_sync: role %d 报到时对局宿主还没建好,spawns 回空" % role)
+	# ★ 判活再回:这是开局窗口里**最容易被踩的一条** —— 客户端一进对局场景就发 match_sync,
+	#   而"进场景 → 请求 →(脚本/玩家)退出"可能挤在同一两帧里;回复是定向可靠包,
+	#   往 ENet 已拆掉的 peer 发就是 `Unable to send packet on channel 0, max channels: 0`。
+	#   判据见 NetBus.is_peer_live(以及 docs/2026-09-17-pvp-weapon-net-fixes.md §1.5)。
+	if not NetBus.is_peer_live(caller):
+		return
 	NetBus.rpc_id(caller, "match_sync_data", {
 		"names": _claim_names,
 		"hues": _claim_hues(),

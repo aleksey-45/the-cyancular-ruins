@@ -57,12 +57,14 @@ func _ready() -> void:
 
 func _run() -> void:
 	await _settle()
+	await _phase_payload_position_contract()
 	await _phase_pickup_into_free_slot()
 	await _phase_pickup_replaces_when_full()
 	await _phase_drop()
 	await _phase_self_drop_cooldown()
 	await _phase_stress()
 	await _phase_drop_all_but_one()
+	await _phase_round_reset()
 
 	if _failures.is_empty():
 		print("GROUND ACTION PROBE: ALL-OK")
@@ -70,6 +72,43 @@ func _run() -> void:
 	else:
 		print("GROUND ACTION PROBE: FAIL %s" % str(_failures))
 		get_tree().quit(1)
+
+
+# ── ⓪(最先跑,趁地面还是开局那批)下发位置契约:`pos` 必须是 canonical ──
+# 为什么单开这一相:`ground_weapons_payload()` 曾经读"已被逐帧刷新的 entries"、发出
+# visual_center(= canonical + visual_offset),而客户端把载荷的 `pos` 直接当
+# `WeaponPickup.canonical_pos`(见 pvp_match_client 的注释:契约就是 canonical)。后果是
+# 开局那批在客户端被画在 canonical + **2×offset**、落体也从错的地方开始,而服务器按
+# canonical + offset 判距离 —— 差整整一个 offset(手枪 ≈60px,拾取半径只有 64px),于是
+# "站在看得见的枪上,按 F 却捡不起来"。掉落那批走事件、刚好是对的,所以症状只在开局那批上。
+# 判据 = **两边圆心对齐**:载荷 pos + 该节点的 visual_offset == 服务器判定表里的 pos。
+func _phase_payload_position_contract() -> void:
+	print("[ga] ── ⓪ 下发位置契约(canonical,不是判定圆心)──")
+	var payload: Array = _host.ground_weapons_payload()
+	_check(payload.size() == _host.ground_weapons.size(),
+			"载荷条数与地面表一致(%d vs %d)" % [payload.size(), _host.ground_weapons.size()])
+	var checked := 0
+	var bad_canonical := 0
+	var bad_center := 0
+	for e in payload:
+		var inst := int(e["inst"])
+		var n = _host._ground_nodes.get(inst, null)
+		if n == null or not is_instance_valid(n):
+			continue
+		var entry: Dictionary = _host.ground_weapons.get_entry(inst)
+		if entry.is_empty():
+			continue
+		checked += 1
+		var pk := n as WeaponPickup
+		if (e["pos"] as Vector2).distance_to(pk.canonical_pos) > 0.5:
+			bad_canonical += 1
+		if ((e["pos"] as Vector2) + pk.visual_offset).distance_to(entry["pos"] as Vector2) > 0.5:
+			bad_center += 1
+	_check(checked > 0, "载荷里至少有一件能对上节点(实际 %d)" % checked)
+	_check(bad_canonical == 0,
+			"载荷 pos == 节点 canonical_pos(%d/%d 不符)" % [bad_canonical, checked])
+	_check(bad_center == 0,
+			"载荷 pos + visual_offset == 服务器判定圆心(%d/%d 不符)—— 不符 = 客户端画的枪与服务器判的位置差一个 offset,会「看着够得着却捡不起来」" % [bad_center, checked])
 
 
 # ── 阶段 ①:背包有空位 → 捡起后地面少一件、背包多一件、无替换 ──
@@ -196,7 +235,52 @@ func _phase_drop_all_but_one() -> void:
 	_check(is_instance_valid(p), "复活后玩家仍有效")
 
 
+# ── ⑦ 换局重铺:inst 必须单调,且重铺出来那批仍要捡得动、位置契约仍成立 ──
+# 为什么:`_reset_ground_weapons` 曾把 `_next_ground_inst` 重置回 1 —— 新一轮那批的 inst 于是与
+# 客户端**残留的上一局节点撞号**,而客户端的 `_spawn_pickup_node` 对已有 inst 是**静默 return**
+# → 新一轮那批在客户端一件都建不出来(它画的还是上一局的幽灵枪,按 F 也无效)。
+# 这条钉住"inst 单调"这个前提;换局的**广播**那一半在 net_ground_probe(源码级)里钉。
+func _phase_round_reset() -> void:
+	print("[ga] ── ⑦ 换局重铺:inst 单调 + 重铺后仍捡得动 ──")
+	var before_max := _max_inst()
+	var before_ground: int = _host.ground_weapons.size()
+	_host._reset_ground_weapons()
+	await _settle()
+	_check(_max_inst() > before_max,
+			"重铺后 inst 继续变大(旧最大 %d → 新最大 %d)" % [before_max, _max_inst()])
+	_check(_host.ground_weapons.size() > 0,
+			"重铺后有货(实际 %d 件;旧 %d 件)" % [_host.ground_weapons.size(), before_ground])
+	# 重铺那批的位置契约(与 ⓪ 同一判据)
+	var bad := 0
+	for e in _host.ground_weapons_payload():
+		var n = _host._ground_nodes.get(int(e["inst"]), null)
+		if n == null or not is_instance_valid(n):
+			continue
+		if (e["pos"] as Vector2).distance_to((n as WeaponPickup).canonical_pos) > 0.5:
+			bad += 1
+	_check(bad == 0, "重铺后载荷 pos 仍是 canonical(%d 件不符)" % bad)
+	# 而且**捡得动**(站到服务器判定圆心上按 F:这条与客户端画在哪无关,只证表与判定没坏)
+	var p: Node2D = _players[1]
+	p.weapons.set_initial_inventory([1])
+	var e2: Dictionary = _nearest_entry(p.global_position)
+	if e2.is_empty():
+		_check(false, "重铺后场上有可捡的武器")
+		return
+	var n_before: int = _host.ground_weapons.size()
+	_stand_on(p, e2["pos"])
+	await _press(1, PacketInputSource.BIT_PICKUP)
+	_check(_host.ground_weapons.size() == n_before - 1,
+			"重铺那批捡得起来(%d → %d)" % [n_before, _host.ground_weapons.size()])
+
+
 # ── 工具 ──
+
+# 场上最大 inst(用来证明"换局重铺没有回退编号")
+func _max_inst() -> int:
+	var m := 0
+	for e in _host.ground_weapons.entries:
+		m = maxi(m, int(e["inst"]))
+	return m
 
 func _make_player(role: int) -> void:
 	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()

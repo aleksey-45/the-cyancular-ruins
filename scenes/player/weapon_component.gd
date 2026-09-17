@@ -139,18 +139,26 @@ func _peek_cycle(dir: int) -> int:
 	return order[(idx + dir + order.size() * 2) % order.size()]
 
 
-# ── PvP 滚轮切枪:本地立即切(即时反馈),目标槽位打包进输入包由服务器权威同步 ──
+# ── PvP 滚轮切枪:本地立即切(即时反馈),目标**背包位置**打包进输入包由服务器权威同步 ──
 # (滚轮事件不在输入包协议里,只本地切会被快照的防脱同步切回旧槽位 →「只有音效」)
-var _net_slot := 0   # 待发切枪槽位(>0 = 待发;打包后清零)
+# ★ 上行的是**背包位置(1-based)**,与数字键同一个量纲 —— 消费端
+#   `player.gd` 读的是 `weapons.equip_index(wslot - 1)`(按位置)。这里曾经发
+#   `inventory.held[next]["type"]`(类型 id 1-6):背包 `[步枪2, 手枪1]` 从步枪滚一下 → 发 1
+#   → 服务器 `equip_index(0)` 切回**步枪**(等于没切);`[手枪1, 重狙3]` → 发 3 →
+#   `equip_index(2)` **越界早退**,服务器压根没切。随后权威 `wslot` 经 `sync_soft_state`
+#   把客户端拉回原枪 → 「滚轮切不动」。★ 它只在背包 ≥2 把时才现形(数字键那条两边同量纲、
+#   一直是对的)—— 也就是"捡起武器之后"才看得出来。
+var _net_slot := 0   # 待发切枪的**背包位置**(1-based;>0 = 待发,打包后清零)
 
 func request_net_cycle(dir: int) -> void:
 	var next := _peek_cycle(dir)
 	if next < 0 or next == _current_index:
 		return
-	push_net_slot(int(inventory.held[next]["type"]))
+	push_net_slot(next + 1)
 	_equip_index(next)
 
 
+# 入参 = 背包位置(1-based);由 `pvp_match_client` 的组包处取走塞进输入包的 weapon 字段。
 func push_net_slot(slot: int) -> void:
 	_net_slot = slot
 

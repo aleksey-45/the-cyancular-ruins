@@ -24,6 +24,10 @@ static func start_on(role_peers: Dictionary, map_path: String = PVP_MAP,
 	var s2: Vector2i = spawns.get("player2", Vector2i(-1, -1))
 	for role in role_peers:
 		var peer_id: int = role_peers[role]
+		# 判活:有客户端可能已经在「报到 → 收到 match_start」之间的窗口里断开(它自己 stop() 了),
+		# 而这两条是**定向**可靠包 → 往正在断开的 peer 发就是那条 channel 0 错误(判据见 NetBus)。
+		if not NetBus.is_peer_live(peer_id):
+			continue
 		var spawn := s1 if role == 1 else s2
 		NetBus.rpc_id(peer_id, "match_start", role, spawn, map_path)
 		NetBus.rpc_id(peer_id, "server_message", "对局开始")

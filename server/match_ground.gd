@@ -123,9 +123,36 @@ func _debug_keep_weapon_within_reach() -> void:
 		near["pos"] = pk.visual_center()
 
 
+# 一件地面武器的**权威节点位置**(canonical,恒在 [0,MAP))。凡是下发给客户端的 `pos` 一律用它。
+# ★ 为什么不能发 `entries[].pos`:那一条是**拾取判定**的圆心(每帧被 `_sync_ground_positions`
+#   刷成 `visual_center()` = canonical + visual_offset),而客户端把载荷里的 `pos` 直接当
+#   `WeaponPickup.canonical_pos`(见 pvp_match_client._spawn_pickup_node 的注释:契约就是 canonical)。
+#   发判定圆心会让客户端把枪画在 canonical + **2×offset**、落体也从错的地方开始模拟,而服务器
+#   按 canonical + offset 判距离 —— 两者差整整一个 offset(手枪 ≈60px,拾取半径只有 64px),
+#   于是"站在看得见的那把枪上"也超出半径 → **看着有 F 提示却捡不起来**。
+func _canonical_of(inst: int) -> Vector2:
+	var n = _ground_nodes.get(inst, null)
+	if n != null and is_instance_valid(n):
+		return (n as WeaponPickup).canonical_pos
+	# 节点与条目是一起增删的(`_spawn_ground_weapon`/`_remove_ground_weapon`),走不到这里才是常态;
+	# 真走到了说明有陈旧条目 —— **别静默**:兜底只能回"判定圆心",与上面声明的位置**不是同一个东西**
+	# (正是本次要修的那个坑),所以留一条痕,别让它在某天被当成"位置也是 0 偏移"。
+	var e: Dictionary = ground_weapons.get_entry(inst)
+	push_warning("MatchGround._canonical_of: inst %d 没有活节点,退回判定圆心(位置会偏一个 visual_offset)" % inst)
+	return e.get("pos", Vector2.ZERO)
+
+
 # 给 match_sync_data 的载荷(客户端进场拉取时一并拿到开局那批)。
+# ★ `pos` 必须是 **canonical**(与 `_broadcast_weapon_spawned` 同一条契约)。开局这批是唯一
+#   "读表"而不是"读刚生成的节点"的投递路径,而表里那条早被逐帧刷成了判定圆心 —— 曾经因此
+#   比掉落那批多出一个 visual_offset,**只有开局那批捡不起来**(掉落那批走事件,刚好是对的)。
 func ground_weapons_payload() -> Array:
-	return ground_weapons.entries.duplicate(true)
+	var out: Array = []
+	for e in ground_weapons.entries:
+		var d: Dictionary = e.duplicate(true)
+		d["pos"] = _canonical_of(int(e["inst"]))
+		out.append(d)
+	return out
 
 
 # by_role = 这把是**谁刚丢下的**(-1 = 开局铺的/无主)。客户端靠它排除"自己刚丢的那把"
@@ -135,8 +162,14 @@ func _broadcast_weapon_spawned(inst: int, by_role: int = -1) -> void:
 	var e: Dictionary = ground_weapons.get_entry(inst)
 	if e.is_empty():
 		return
+	# ★ `pos` 显式取 canonical,不读 `e["pos"]`:今天它碰巧还是原始生成点(本帧的
+	#   `_sync_ground_positions` 早已跑过、而这个节点是它之后才建的),但那是**时序巧合** ——
+	#   调用点一旦挪到帧首就会静默变成判定圆心,与上面 `ground_weapons_payload` 刚修掉的是同一个坑。
+	# ★ `vel` 同理且**必须保持是"生成时那一份"**:表里的 `vel` 从不被 `_sync_ground_positions`
+	#   刷新,客户端拿它 + canonical 重放落体才有"落点与何时开始模拟无关"这条不变量。
+	#   哪天有人顺手把 vel 也做成逐帧刷新,两端落点会立刻发散(而且不报错)。
 	_rpc_all("weapon_spawned", [{"inst": inst, "type_id": int(e["type_id"]),
-			"mag": int(e["mag"]), "pos": e["pos"], "vel": e["vel"], "by_role": by_role}])
+			"mag": int(e["mag"]), "pos": _canonical_of(inst), "vel": e["vel"], "by_role": by_role}])
 
 
 func _broadcast_weapon_removed(inst: int, by_role: int) -> void:
@@ -282,13 +315,26 @@ func _setup_ground_weapons() -> void:
 
 # 换局:清空重铺 + 每人背包重置为随机一把。
 # 与"还原可破坏砖 + 清子弹"同一纪律 —— 两端每局从同一基线出发,装备也是本局的进度。
+#
+# ★ 清的与铺的**都必须广播**:换局是客户端唯一"既不会重进场景、也不会再拉一次 match_sync"的
+#   时刻(它只是收到新一轮 COUNTDOWN)。不广播的话客户端留着一整批**上一局的幽灵枪**(位置早已
+#   不对,按 F 也捡不起来 —— 服务器那边早没了),而新一轮那批在它那儿一件都不存在 →
+#   表现就是"地上的枪捡不起来,只能捡后来丢弃的"(丢弃走事件,是新 inst,档建得出来)。
+# ★ `_next_ground_inst` **不重置**:inst 必须全生命周期单调 —— 客户端的 `_spawn_pickup_node`
+#   对"已有 inst"是**静默 return**,撞号 = 新一轮那批在客户端一件都建不出来(而且不会报错)。
 func _reset_ground_weapons() -> void:
-	for inst in _ground_nodes.keys():
+	var cleared: Array = _ground_nodes.keys().duplicate()
+	for inst in cleared:
 		var n = _ground_nodes[inst]
 		if n != null and is_instance_valid(n):
 			n.queue_free()
 	_ground_nodes.clear()
 	_self_drop_until.clear()
 	ground_weapons.clear()
-	_next_ground_inst = 1
 	_setup_ground_weapons()
+	# 先清后铺(可靠通道保序)。★ 铺完只广播**留在场上**的那些 —— `_setup_ground_weapons`
+	# 给每个玩家随机发的那把已经从表里摘走了,广播出去客户端会凭空多出一件(件数与服务器不符)。
+	for inst in cleared:
+		_broadcast_weapon_removed(int(inst), -1)
+	for e in ground_weapons.entries:
+		_broadcast_weapon_spawned(int(e["inst"]), -1)
