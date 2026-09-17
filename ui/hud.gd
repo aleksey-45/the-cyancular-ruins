@@ -19,7 +19,8 @@ const WEAPON_FONT_SIZE := 32    # 武器名/残弹数;同上(32 = 2×16)
 # 像素字体(Less Perfect DOS VGA,8×16 经典 VGA 计数器)与「关抗锯齿/微调/子像素」三件套
 # 的唯一来源是 UiFactory.style_control(内部走 core/pixel_font.gd 的 PixelFont.shared())——
 # 本文件不再自己 load 字体、不自己设字号,字号规范才守得住(见 ui_factory.gd 文件头)。
-const KILL_MARGIN := Vector2(32, 16)            # 右上角内边距
+# (原先还有 `const KILL_MARGIN := Vector2(32, 16)` —— 右上角内边距。它已随计数器的锚点
+#  迁进 ui/kill_counter.tscn 的 offset_left/offset_top,本文件不再引用,故删除不留死声明。)
 # HUD 底板:武器区 / 血条 / 氧条 / 右上角击杀数,**四处共用这一个值**
 # (用户 2026-09-15 定为 0.15、同日又下调到 0.1;当天这几个元素先被去掉底板、又垫回来)。
 # ★ 这个值**对局内 HUD 也生效** —— 大乱斗 ping/提示条(royale_hud 的 `_plate_box`)、
@@ -67,6 +68,12 @@ var _player: Node = null
 var _ammo_low := false              # 残弹是否已进入「低弹量」金态(只在跨阈值时改色)
 
 const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
+
+# 右上角击杀计数器的**骨架**在场景里(右上锚点/生长方向看得见);字体与底色仍由本文件给 ——
+# 写进 .tscn 就绕开 UiFactory 的字号纪律(16 的倍数那条闸门扫的是 .gd 与 .tscn,但
+# style_control 才是带 PixelFont.shared() 锐化+CJK 回退的那条路),且 PLATE_COLOR 会在
+# 场景里变成又一份调色板字面量。**本场景无脚本**,故 hud.gd preload 它不构成循环引用。
+const KILL_COUNTER_SCENE := preload("res://ui/kill_counter.tscn")
 
 func _ready() -> void:
 	layer = LAYER
@@ -408,7 +415,11 @@ func _build_kill_label() -> void:
 	#   `draw_center` 默认 true —— 想"去掉底色"却只删掉 `bg_color` 赋值那一行,等于把半透明
 	#   黑板换成一块**实心灰板**(比原来还显眼;实测发过一版,用户当场看出「右上角怎么还有框」)。
 	#   当时是靠 `draw_center = false` 救的,现在底色回来了就不要那行。
-	var wrap := PanelContainer.new()
+	# 锚点/生长方向已迁进 ui/kill_counter.tscn(右上角、宽高留 0 由文本撑开、向左下生长)。
+	# ★ 刻意做成**无脚本的独立场景**而不是塞进 level_0.tscn:tests/kh_l3_visual_probe.gd
+	#   用 Hud.new() 建单机 HUD 做取色断言,把节点声明进 level_0.tscn 会让 Hud.new()
+	#   建出的 HUD 没有它 → 那条探针立刻红。独立场景由本文件 load,创建方式无关。
+	var wrap := KILL_COUNTER_SCENE.instantiate() as PanelContainer
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR
 	sb.set_corner_radius_all(0)
@@ -417,24 +428,13 @@ func _build_kill_label() -> void:
 	sb.content_margin_top = 6.0
 	sb.content_margin_bottom = 6.0
 	wrap.add_theme_stylebox_override("panel", sb)
-	# 锚定右上角:宽高都留 0,由文本撑开、向左下生长 —— 板子只包住数字,不做成长条。
-	wrap.anchor_left = 1.0
-	wrap.anchor_right = 1.0
-	wrap.anchor_top = 0.0
-	wrap.anchor_bottom = 0.0
-	wrap.offset_left = -KILL_MARGIN.x
-	wrap.offset_right = -KILL_MARGIN.x
-	wrap.offset_top = KILL_MARGIN.y
-	wrap.offset_bottom = KILL_MARGIN.y
-	wrap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	wrap.grow_vertical = Control.GROW_DIRECTION_END
-	call_deferred("add_child", wrap)
 
-	_kill_label = Label.new()
+	# instantiate() 返回时子节点已存在,get_node 不要求在树内 —— 这里在 add_child 之前取是安全的。
+	_kill_label = wrap.get_node("KillLabel") as Label
 	_kill_label.text = "%03d" % _kills
 	_kill_label.add_theme_color_override("font_color", KILL_COLOR)
 	UiFactory.style_control(_kill_label, KILL_FONT_SIZE)      # 像素字体 + 字号(16 倍数)
-	wrap.add_child(_kill_label)
+	call_deferred("add_child", wrap)
 
 func _on_enemy_spawned(enemy: Node) -> void:
 	if enemy.has_signal("died"):
