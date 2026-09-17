@@ -339,7 +339,17 @@ func _match_winner() -> int:
 	var best_role := 0
 	var best_n := -1
 	var tie := false
+	# ★ 候选 = **还在场的 ∪ 计过分的**(含已离开者)—— 2026-09-17 按用户要求改成"按分判胜"。
+	#   原实现只遍历 `players`,而 `mark_disconnected` 会先把退出者 `erase` 掉 → 剩 1 人时
+	#   **独行者必胜、与比分无关**(B 击杀再多,一退出就是 A 胜;`_scores[B]` 还在却没人读)。
+	#   现在把已离开但计过分的 role 一起纳入比较:分高者胜,分平(含全场 0 杀)则平局。
+	#   `_scores` **不在** `mark_disconnected` 的清理范围内,所以离开者的分数天然还在。
+	var candidates := {}
 	for role in players:
+		candidates[int(role)] = true
+	for role in _scores:
+		candidates[int(role)] = true
+	for role in candidates:
 		var n: int = int(_scores.get(role, 0))
 		if n > best_n:
 			best_n = n
