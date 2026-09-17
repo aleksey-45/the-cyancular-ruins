@@ -177,6 +177,7 @@ func _run_worker(port: int) -> void:
 	NetBusExt.suicide_requested.connect(_on_suicide_request)
 	NetBus.match_sync_received.connect(_on_match_sync)
 	NetBusExt.token_reported.connect(_on_token_reported)
+	NetBusExt.reclaim_requested.connect(_on_reclaim)
 	if _royale:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s)" % [
 				_human_role_count(), port, str(_role_set)])
@@ -275,6 +276,44 @@ func _on_token_reported(caller: int, token: String) -> void:
 		if _claims[r] == caller:
 			_tokens[int(r)] = token
 			return
+
+# 宽限期内重新认领 role(断线重连)。**三条拒绝条件一条都不能少**:
+#   ① 没开局 —— 那时走正常 claim_role,不走这里
+#   ② 该 role 不在宽限期里 —— 没掉线,或已超时移出(不允许"提前占坑"或"死后回归")
+#   ③ token 不匹配 —— 防同网段的人顶替
+# 任何一条不满足都**踢连接**(与 `_on_role_claimed` 的防串线同款):不能让它静默留在局里收快照。
+func _on_reclaim(caller: int, role: int, token: String) -> void:
+	var why := ""
+	if not _match_started or _host == null:
+		why = "尚未开局"
+	elif not _grace.has(role):
+		why = "该 role 不在宽限期"
+	elif str(_tokens.get(role, "")) != token or token == "":
+		why = "令牌不匹配"
+	if why != "":
+		print("worker: 拒绝 reclaim(role=%d,peer=%d):%s" % [role, caller, why])
+		multiplayer.multiplayer_peer.disconnect_peer(caller)
+		return
+	# ── 接受:重绑 peer 与输入源 ──
+	# ★ **玩家节点不重建**:身体从未销毁(spec §3.2),所以服务端的对局状态一条都不用恢复。
+	_claims[role] = caller
+	_host.peer_by_role[role] = caller
+	# ★ 换输入源**不是** `PacketInputSource.new(role, caller)` —— 它不收参数(`match_host.gd:34`
+	#   的装配方式是 `var src := PacketInputSource.new()` 然后 `p.set_input_source(src)`)。
+	#   所以要把新源**挂回那个还活着的玩家节点**,只换表里的引用是不够的(玩家手里仍攥着旧源)。
+	var src := PacketInputSource.new()
+	(_host.players[role] as Node2D).set_input_source(src)
+	_host.input_sources[role] = src
+	_host._pending_input[role] = []
+	_host._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
+	_grace.leave(role)
+	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源,不另造一份)。
+	var sp: Vector2i = _host.role_spawns().get(role, Vector2i(-1, -1)) \
+			if _host.has_method("role_spawns") else Vector2i(-1, -1)
+	NetBus.rpc_id(caller, "match_start", role, sp, MazeGenerator.map_file_path())
+	if _host.has_method("_broadcast_round_state"):
+		_host._broadcast_round_state()
+	print("worker: role %d 重连成功(peer=%d)" % [role, caller])
 
 # 进场拉取:对局场景建好后主动要一次昵称/色相/生效选项/出生点/role 集合。
 # ★ 它**取代**原先"服务器推三载荷"那条路径 —— 那次推的根因问题是「推给一个正在切场景的客户端」:
