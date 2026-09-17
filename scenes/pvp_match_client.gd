@@ -268,7 +268,9 @@ func _on_match_sync(payload: Dictionary) -> void:
 			_correct_local_spawn()
 	# 地面武器**开局那批随本条拉取一并到达**(不走 weapon_spawned 推送 —— 推送会撞上
 	# "客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失"那类事故,见 CoreNet 的注释)。
+	# ★ **先清后灌**:载荷是全量,本地可能还留着掉线前的条目 → 不清会产生幽灵枪(见 _clear_ground_weapons)。
 	var gw: Array = payload.get("ground_weapons", [])
+	_clear_ground_weapons()
 	for e in gw:
 		if e is Dictionary:
 			_spawn_pickup_node(e)
@@ -327,6 +329,21 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	# 服务器告诉我们"这把是谁刚丢下的":若是**自己**,冷却期内不给提示(与它自己的判定一致)。
 	if int(data.get("by_role", -1)) == int(PvpSession.role):
 		_self_drop_until[inst] = Time.get_ticks_msec() 				+ int(PlayerParams.weapon_pickup_self_delay * 1000.0)
+
+
+# 清空本端的地面武器表与全部拾取物节点。给 `_on_match_sync` 的"先清后灌"用。
+# ★ 为什么必须先清:`match_sync` 的 `ground_weapons` 是**全量**,而重连时本地表里还留着
+#   掉线前的条目 —— 不清就直接 add,掉线期间**已被服务器移除**的那些会变成**永久幽灵枪**
+#   (看着在、按 F 无效)。这正是阶段 2-A 要闭合的两类缺口之一。
+#   进场那次本地本来是空的,清一遍是 no-op(所以统一走这条路,不为两种情况分叉)。
+func _clear_ground_weapons() -> void:
+	for inst in _pickup_nodes:
+		var n = _pickup_nodes[inst]
+		if n != null and is_instance_valid(n):
+			n.queue_free()
+	_pickup_nodes.clear()
+	ground_weapons.clear()
+	_self_drop_until.clear()
 
 
 func _remove_pickup_node(inst: int) -> void:
@@ -620,6 +637,15 @@ func _on_resumed() -> void:
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# ★ 路径甲(局内自动重连)**原来不需要 `match_sync`** —— 场景没重建、本地世界还在。
+	#   现在需要了:**世界在掉线那 30 秒里变过**。这一拉把两类丢掉的可靠事件一次补回:
+	#     · destroyed   —— 被拆的墙(不补 → 幻影墙 → 预测分歧)
+	#     · ground_weapons —— 掉落/被捡走的枪(不补 → 幽灵枪 / 看不见的枪)
+	#   ★ 顺序要紧:上面已经把 C2 重置完了(新 rollback / _input_seq=0),**再**拉。
+	#     反过来的话,应答里的出生点校正(_correct_local_spawn)会与重置打架。
+	#   ★ 别把这一行删掉:它不在"进场建态"那条老路上,漏了**不报错**,只是世界悄悄不一致。
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "match_sync")
 	print("[pvp] 重连成功")
 
 
