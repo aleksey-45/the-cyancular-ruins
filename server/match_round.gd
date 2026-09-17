@@ -60,7 +60,7 @@ func _handle_respawns(delta: float) -> void:
 		if _respawn_pending[role] <= 0.0:
 			_respawn_player(role)
 
-# 重生:摆到本局出生点,血量/防水/倒地复位,武器回 1。
+# 重生:摆到本局出生点,血量/防水/倒地复位,背包**只随机保留一把**(其余掉在死亡点)。
 
 func _respawn_player(role: int) -> void:
 	var p: Node2D = players[role]
@@ -71,8 +71,10 @@ func _respawn_player(role: int) -> void:
 	p.apply_authoritative_state(p.max_hp, p.max_waterproof, false)
 	if p.has_method("cancel_jump_state"):
 		p.cancel_jump_state()
-	if p.weapons != null and p.weapons.has_method("equip"):
-		p.weapons.equip(p.weapons.default_slot())   # 禁用武器闸门下回槽 1 会踩禁用槽(原为 equip("1"))
+	# 复活:除**背包里随机一把**外,其余全丢在死亡点(用户 2026-09-15 裁定)。
+	# ★ 换掉了原来的 equip(default_slot()) —— 那条会把手上的枪换回默认槽,而背包
+	#   现在是玩家资产,复活只该"随机留一把";不补满弹(与"残弹跟着枪走"一致)。
+	_drop_all_but_one(p, role)
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
 
@@ -108,6 +110,9 @@ func _reset_world_and_clear_dynamics() -> void:
 		if is_instance_valid(b):
 			(b as Node).queue_free()
 	_seen_bullets.clear()
+	# 地面武器:清零 + 重新分布 + 各人背包重置为随机一把。
+	# 与"还原可破坏砖 + 清子弹"同一纪律 —— 两端每局从同一基线出发,装备也是本局的进度。
+	_reset_ground_weapons()
 	if _base_grid.is_empty():
 		return
 	var g := MazeGenerator.copy_grid(_base_grid)
@@ -171,9 +176,12 @@ func _match_winner() -> int:
 #
 # 过滤参数:
 #   · except_role:排除该 role(子弹/光束广播要排除射手 —— 射手客户端已本地预测画过,再收会重复);
-#   · live_only :只发给在线 peer(默认 **否**,与多数站点的既有语义一致:只有 round_state 那两处
-#                 判在线)。判在线的理由见 `_peer_online` 那段注释:往"正在断开"的 peer 发包会打
-#                 channel 错误且包会丢。
+#   · live_only :只发给在线 peer。★ 2026-09-17 起**默认改为 是**(原是"只有 round_state 那两处
+#                 判在线",而八个调用点里只有大乱斗那处传 true —— 其余七处不判,正是那条
+#                 `Unable to send packet on channel 0` 的主要来源)。判据是 `NetBus.is_peer_live`
+#                 (读 ENet peer 自己的 state):往"正在断开"的 peer 发**定向**包必然报错且包会丢
+#                 (广播那条由 ENet 自己跳过,不受影响)。发不出去的包本来也没有意义,故默认判活。
+#                 传 false 只在"明知对方即将离开、但这条必须试一次"这类场景才有意义 —— 目前没有。
 # 另恒跳过「有 peer 但不在 `players` 里」的 role(原实现里两处显式这么判,另三处没写 ——
 # 正常路径下二者同键集,故这里统一加上既是等价、又消掉那处不一致)。
 

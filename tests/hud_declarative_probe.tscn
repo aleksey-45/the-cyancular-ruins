@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://huddeclprobe0001"]
+
+[ext_resource type="Script" path="res://tests/hud_declarative_probe.gd" id="1"]
+
+[node name="HudDeclarativeProbe" type="Node"]
+script = ExtResource("1")

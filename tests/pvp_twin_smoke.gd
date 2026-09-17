@@ -46,6 +46,16 @@ func _ready() -> void:
 	var spawn := Vector2(2 * ts + ts * 0.5, 3 * ts + ts * 0.5)
 	A = _make_player(host, "TwinA", spawn)
 	B = _make_player(host, "TwinB", spawn)
+	# ★ 给两人一个**非空且残弹非满**的背包:否则 capture/restore 里的 `inv` 一节
+	#   在两个空背包之间比,恒等,等于没测。下方 _compare 的 `inv` 指纹才真正有鉴别力
+	#   (sabotage 会把 B 的背包清空,restore 必须把它从快照里重建回来)。
+	for p in [A, B]:
+		p.weapons.set_initial_inventory([1, 2, 4])
+	await get_tree().physics_frame
+	for p in [A, B]:
+		var w = p.weapons.current_weapon()
+		if w != null:
+			w.mag_ammo = 4     # 残弹非满:被"切枪回满弹"或"漏字段"破坏时指纹会变
 	print("[pvp_twin] 世界 %dx%d 格;玩家出生 %s;计划 %d tick(restore every %d)" % [
 		COLS, ROWS, spawn, TOTAL, RESTORE_EVERY])
 
@@ -157,6 +167,9 @@ func _physics_process(_delta: float) -> void:
 		var snap: Dictionary = A.capture_state()
 		B.global_position = Vector2(-9999, -9999)   # 主动造成严重分歧
 		B.velocity = Vector2.ZERO
+		# ★ 连**背包一起搞乱**:若 `inv` 没进 capture/restore,restore 后 B 会是空手,
+		#   下面 _compare 的 `inv` 指纹立刻发散。这条是本轮新增字段的**唯一鉴别点**。
+		B.weapons.set_initial_inventory([])
 		B.restore_state(snap)
 		_compare(A, B, snap, true)   # 恢复后立即字段级比对(不含 pos 的 settle 微差)
 	_tick += 1
@@ -192,12 +205,27 @@ func _compare(a, b, _snap: Dictionary, restored: bool) -> void:
 		"swim": a.swim.in_water == b.swim.in_water,
 		"downed": a.combat.downed == b.combat.downed,
 		"hp": a.combat.hp == b.combat.hp,
+		# 武器:当前手持类型 + 背包指纹(类型序列 + 各把残弹)。
+		# ★ 比的是**背包条目里的** mag,不是 `_weapon.mag_ammo` —— 后者由
+		#   `_restore_mag.call_deferred` 在帧末回填,同帧比会当成发散(假红)。
+		"wslot": a.weapons.current_slot_int() == b.weapons.current_slot_int(),
+		"inv": _inv_key(a) == _inv_key(b),
 	}
 	for k in checks:
 		if not checks[k]:
 			_violation = "字段 %s 发散 tick=%d" % [k, _tick]
 			_fail()
 			return
+
+
+# 背包指纹:类型序列 + 各条残弹。顺序错、少一条、残弹串位都会让它不等。
+func _inv_key(p) -> String:
+	var out := ""
+	if p.weapons == null or p.weapons.inventory == null:
+		return "<?>"
+	for e in p.weapons.inventory.held:
+		out += "%d:%d;" % [int(e["type"]), int(e["mag"])]
+	return out
 
 func _fail() -> void:
 	print("SMOKE_TWIN FAIL: %s" % _violation)

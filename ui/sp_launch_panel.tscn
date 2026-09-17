@@ -1,0 +1,33 @@
+[gd_scene load_steps=2 format=3 uid="uid://splaunchpanel001"]
+
+[ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="1"]
+
+[node name="SpLaunchPanel" type="PanelContainer"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="."]
+custom_minimum_size = Vector2(560, 0)
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="VBox"]
+theme_override_colors/font_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_fonts/font = ExtResource("1")
+theme_override_font_sizes/font_size = 48
+text = "—— 单人开局 ——"
+
+[node name="Subtitle" type="Label" parent="VBox"]
+theme_override_fonts/font = ExtResource("1")
+theme_override_font_sizes/font_size = 32
+text = "禁用武器(勾选 = 本局不可用)"
+
+[node name="CheckList" type="VBoxContainer" parent="VBox"]
+theme_override_constants/separation = 14
+
+[node name="ButtonRow" type="HBoxContainer" parent="VBox"]
+alignment = 1
+theme_override_constants/separation = 24

@@ -47,16 +47,16 @@ func royale_start(caller: int) -> void:
 	if rr == null:
 		return
 	if rr.host_peer != caller:
-		NetBus.rpc_id(caller, "server_message", "只有房主能开始游戏")
+		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
 		return
 	if rr.in_match:
 		return   # 已开局(重复请求防重入:不会双开 worker)
 	if rr.players.size() < LobbyRooms.ROYALE_MIN_PLAYERS:
-		NetBus.rpc_id(caller, "server_message", "至少 %d 人才能开始" % LobbyRooms.ROYALE_MIN_PLAYERS)
+		NetBus.reply(caller, "server_message", "至少 %d 人才能开始" % LobbyRooms.ROYALE_MIN_PLAYERS)
 		return
 	var port := _launcher.pick_port()
 	if port < 0:
-		NetBus.rpc_id(caller, "server_message", "无法分配对局端口")
+		NetBus.reply(caller, "server_message", "无法分配对局端口")
 		return
 	rr.worker_port = port
 	rr.in_match = true
@@ -81,7 +81,7 @@ func _send_go_match(rr: LobbyRooms.RoyaleRoom, port: int) -> void:
 	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
 	for peer_id in rr.players:
 		if lobby.is_peer_online(peer_id):
-			NetBus.rpc_id(peer_id, "go_match", rr.player_role[peer_id], port)
+			NetBus.reply(peer_id, "go_match", rr.player_role[peer_id], port)
 
 # ── AI 补位对战(实验性):1v1 房主可请求与 AI 对战;大乱斗房主可 AI 补位开局 ──
 
@@ -94,7 +94,7 @@ func ai_duel(caller: int) -> void:
 			host_room = room
 			break
 	if host_room == null:
-		NetBus.rpc_id(caller, "server_message", "只有建房(房主)才能开 AI 对战")
+		NetBus.reply(caller, "server_message", "只有建房(房主)才能开 AI 对战")
 		return
 	# L5 合并补丁(刻意偏离移植来源,非误改):royale_start / royale_start_ai 都有的
 	# 「已开局即拒绝」守卫,本 handler 从另一分支原样移植时缺失。
@@ -109,7 +109,7 @@ func ai_duel(caller: int) -> void:
 		return   # 已开局:拒绝(防双开 worker 覆盖 worker_port)
 	var port := _launcher.pick_port()
 	if port < 0:
-		NetBus.rpc_id(caller, "server_message", "无法分配对局端口")
+		NetBus.reply(caller, "server_message", "无法分配对局端口")
 		return
 	host_room.worker_port = port
 	if not _launcher.spawn_worker(port, [2]):
@@ -123,7 +123,7 @@ func ai_duel(caller: int) -> void:
 	lobby.teardown_room(host_room)   # 对局消费掉房间(AI 不占第二人位);端口延迟归还
 	print("房间 %s → AI 对战开局(1 人 + AI)→ worker 端口 %d" % [host_room.code, port])
 	await get_tree().create_timer(0.3).timeout
-	NetBus.rpc_id(caller, "go_match", 1, port)
+	NetBus.reply(caller, "go_match", 1, port)
 
 # 大乱斗:房主 AI 补位开局 → 现有真人 + AI 补到 max_players
 func royale_start_ai(caller: int) -> void:
@@ -131,17 +131,17 @@ func royale_start_ai(caller: int) -> void:
 	if rr == null:
 		return
 	if rr.host_peer != caller:
-		NetBus.rpc_id(caller, "server_message", "只有房主能开始游戏")
+		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
 		return
 	if rr.in_match:
 		return
 	var ai_count := rr.max_players - rr.players.size()
 	if ai_count <= 0:
-		NetBus.rpc_id(caller, "server_message", "房间已满,无需 AI 补位")
+		NetBus.reply(caller, "server_message", "房间已满,无需 AI 补位")
 		return
 	var port := _launcher.pick_port()
 	if port < 0:
-		NetBus.rpc_id(caller, "server_message", "无法分配对局端口")
+		NetBus.reply(caller, "server_message", "无法分配对局端口")
 		return
 	rr.worker_port = port
 	rr.in_match = true
@@ -166,12 +166,12 @@ func _start_match(room: LobbyRooms.Room) -> void:
 	if port < 0:
 		# 起不来局:房间作废,通知双方(不再滞留)
 		room.worker_port = 0
-		NetBus.rpc_id(room.players[0], "server_message", "无法分配对局端口")
+		NetBus.reply(room.players[0], "server_message", "无法分配对局端口")
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
 	room.worker_port = port
 	if not _launcher.spawn_worker(port):
-		NetBus.rpc_id(room.players[0], "server_message", "无法启动对局")
+		NetBus.reply(room.players[0], "server_message", "无法启动对局")
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
 	# 稍等 worker 完成 bind,再通知两端转连(worker 很快,300ms 足够)
@@ -189,7 +189,7 @@ func _send_go_match_1v1(room: LobbyRooms.Room, port: int) -> void:
 		return
 	for peer_id in room.players:
 		if lobby.is_peer_online(peer_id):
-			NetBus.rpc_id(peer_id, "go_match", room.player_role[peer_id], port)
+			NetBus.reply(peer_id, "go_match", room.player_role[peer_id], port)
 
 # ── 定时扫描:每 SWEEP_INTERVAL 清理存在超 MAX_ROOM_AGE 的僵尸房间(连 worker 一起杀)──
 func _process(delta: float) -> void:

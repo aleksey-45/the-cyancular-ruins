@@ -1,8 +1,11 @@
 extends Node
 
 # 1v1 对局 HUD 布局探针(场景模式):钉「记分条在**正上方、居中**」这条用户明确要求过的摆放。
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 120 res://tests/pvp_hud_layout_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/pvp_hud_layout_probe.tscn
 # 期望:每条 [hud] … 通过,末行 "PVP HUD LAYOUT PROBE: ALL-OK"。
 #
 # 为什么值得单开一条:记分条原先在**左下角**(anchor_top/bottom = 1.0)。它挪到顶部正中是一次

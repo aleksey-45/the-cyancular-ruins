@@ -30,6 +30,20 @@ func _run() -> void:
 	if mode == "play":
 		await _run_play_session(tree)
 		return
+	# 直接切到某个**场景探针**(不进菜单流转):模块名 = 去掉 ground/ 前缀的探针名。
+	# 存在的理由:导出 exe 被编译成 `disable_path_overrides=yes`,`<exe> res://x.tscn` 会被
+	# 引擎当场拒绝(实测 "compiled without support for path overrides")—— 想在**发布产物**
+	# 上跑探针,只能借主菜单这条既有的 `-- --autotest-*` 通道(它读 OS.get_cmdline_user_args,
+	# 不受 path override 限制,且 tests/ 已在 export_filter=all_resources 里)。
+	if mode.begins_with("ground/") or mode.begins_with("sceneprobe/"):
+		var scene_path := "res://tests/%s.tscn" % mode.split("/", true, 1)[1]
+		if not ResourceLoader.exists(scene_path):
+			push_error("AUTOTEST: 场景探针不存在 " + scene_path)
+			tree.quit(1)
+			return
+		print("AUTOTEST[%s]: 切到 %s" % [mode, scene_path])
+		tree.change_scene_to_file(scene_path)
+		return
 	if mode == "level":
 		tree.change_scene_to_file("res://scenes/level_0.tscn")
 	elif mode == "sp":

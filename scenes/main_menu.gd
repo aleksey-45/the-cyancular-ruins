@@ -14,6 +14,12 @@ var _ui_layer: CanvasLayer = null
 var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
 var _ver_panel: PanelContainer = null   # 版本信息面板(弹出式)
 
+# 两个弹出面板的**骨架**在场景里(容器/滚动区/标签/锚点看得见);按钮与勾选框仍由
+# UiFactory 建、数据由 _fill_* 填 —— 控件进场景就得在使用处补 style_control +
+# style_button,等于把「控件工厂唯一来源」这条纪律散回各处。
+const VERSION_PANEL_SCENE := preload("res://ui/version_panel.tscn")
+const SP_PANEL_SCENE := preload("res://ui/sp_launch_panel.tscn")
+
 
 func _ready() -> void:
 	# 复位对局相关全局(进过 PvP 回来不残留)
@@ -258,7 +264,7 @@ func _on_single_pressed() -> void:
 	if _sp_panel != null:
 		_sp_panel.visible = not _sp_panel.visible
 		return
-	_sp_panel = _build_sp_panel()
+	_sp_panel = _fill_sp_panel(SP_PANEL_SCENE.instantiate() as PanelContainer)
 	_ui_layer.add_child(_sp_panel)
 
 
@@ -267,7 +273,7 @@ func _on_version_pressed() -> void:
 	if _ver_panel != null:
 		_ver_panel.visible = not _ver_panel.visible
 		return
-	_ver_panel = _build_ver_panel()
+	_ver_panel = _fill_version_panel(VERSION_PANEL_SCENE.instantiate() as PanelContainer)
 	_ui_layer.add_child(_ver_panel)
 
 
@@ -276,30 +282,15 @@ func _on_version_pressed() -> void:
 const ROW_W := 1100.0
 
 
-func _build_ver_panel() -> PanelContainer:
-	var panel := PanelContainer.new()
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+# 版本信息面板:场景(ui/version_panel.tscn)给骨架,这里只填数据与样式。
+# ★ StyleBox **留在代码**:调色板唯一来源是 UiFactory,抄进 .tscn 就是第二处真值。
+func _fill_version_panel(panel: PanelContainer) -> PanelContainer:
 	# 不透明底:原先走默认主题的半透明面板,主菜单的「退 出」按钮与标题下的版本号
 	# 会直接透上来压在提交行上,形成重影(2026-09-13 视觉评析)。
 	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
-	vb.custom_minimum_size = Vector2(1180, 0)
-	panel.add_child(vb)
+	(panel.get_node("VBox/VersionLabel") as Label).text = "当前版本: %s" % version_string()
 
-	vb.add_child(UiFactory.label("—— 版本信息 ——", 48, UiFactory.C_ACCENT))
-	vb.add_child(UiFactory.label("当前版本: %s" % version_string(), 32))
-
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(ROW_W, 620)
-	vb.add_child(scroll)
-	var list := VBoxContainer.new()
-	list.add_theme_constant_override("separation", 6)
-	list.custom_minimum_size = Vector2(ROW_W, 0)
-	scroll.add_child(list)
-
+	var list: VBoxContainer = panel.get_node("VBox/Scroll/List")
 	var log := commit_log()
 	if log.is_empty():
 		list.add_child(UiFactory.label("(读不到 git 历史:仓库不可用或未安装 git)", 32, Color(0.9, 0.6, 0.5)))
@@ -317,32 +308,22 @@ func _build_ver_panel() -> PanelContainer:
 		list.add_child(row)
 
 	# 返回键不拉满面板宽度:1180 宽的横条里居中两个字符,两侧全是死区。
-	var back_row := HBoxContainer.new()
-	back_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var back_row: HBoxContainer = panel.get_node("VBox/BackRow")
 	var back := UiFactory.button("返 回", 32, Vector2(280, 48))
 	back.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		panel.visible = false)
 	back_row.add_child(back)
-	vb.add_child(back_row)
 	return panel
 
 
 # ── 单人开局面板:禁用武器(勾选 = 本局不可用)──
-func _build_sp_panel() -> PanelContainer:
-	var panel := PanelContainer.new()
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 14)
-	vb.custom_minimum_size = Vector2(560, 0)
-	panel.add_child(vb)
-
-	vb.add_child(UiFactory.label("—— 单人开局 ——", 48, UiFactory.C_ACCENT))
-	vb.add_child(UiFactory.label("禁用武器(勾选 = 本局不可用)", 32))
-
+# 单人开局面板:场景(ui/sp_launch_panel.tscn)给骨架(标题/副标题/勾选列/按钮行),
+# 武器勾选与按钮仍走工厂。★ CheckList 容器只为给勾选一个**插在 ButtonRow 之前**的位置
+# —— 直接 vb.add_child(cb) 会把勾选追加到按钮行后面。
+func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	var checks: Array[CheckButton] = []
+	var check_list: VBoxContainer = panel.get_node("VBox/CheckList")
 	for slot in [1, 2, 3, 4, 5, 6]:
 		var cb := CheckButton.new()
 		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
@@ -351,12 +332,9 @@ func _build_sp_panel() -> PanelContainer:
 		UiFactory.style_check(cb, 32)
 		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)
 		checks.append(cb)
-		vb.add_child(cb)
+		check_list.add_child(cb)
 
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 24)
-	vb.add_child(row)
+	var row: HBoxContainer = panel.get_node("VBox/ButtonRow")
 	var go := UiFactory.button("开 始 探 索", 32)
 	go.pressed.connect(func() -> void:
 		Sfx.play("ui")

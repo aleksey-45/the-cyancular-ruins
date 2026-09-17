@@ -209,11 +209,10 @@ static func _segment_rect_hit(a: Vector2, b: Vector2, rect: Rect2) -> Vector2:
 func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 	if not t.has_method("hurt"):
 		return
-	# 归因 + 命中标记的一体入口:★必须在 hurt 之前 —— hurt 可能同帧判死,
-	# EnemyBase._begin_death 当场读 last_damager 播报「击杀 XXX」。
-	# 射手 = 武器持有者(WeaponBase.player,equip() 写入;同 _make_beam_report/_damage_path_targets 的射手判定)。
+	# 命中标记(X)。★ 敌人侧**不写**归因 —— 见 core/sim/explosion.gd 的同款说明
+	# (那个 meta 的唯一读者是单机击杀播报,已随播报删除)。
 	# 本函数只在权威侧被调(见 _authoritative),headless 服务器无 CombatFeedback 实例时为空操作。
-	CombatFeedback.attribute_hit(t, player)
+	CombatFeedback.hit_marker()
 	# 击退方向 = 从光束最近点指向目标(径向推离光束);强度走 impact。
 	var dir := (pos - near).normalized() if pos.distance_to(near) > 1.0 else Vector2.RIGHT
 	t.hurt(damage, dir, impact)

@@ -16,10 +16,9 @@ const enemies = (json.enemies || []).map(function (e) {
   return {
     id: String(e.id),
     name: String(e.name),
-    // display_name:击杀播报用的中文名(EnemySpawner.display_name_of 读它)。
     // ★ 本脚本是**字段级手抄**:enemies.json 加字段时必须同步加到这里,否则 HTML 内嵌的这份
     //   会静默丢字段(编辑器当下不用它,丢了也没人报错 —— 正是那种安静的漂移)。
-    display_name: String(e.display_name || e.name),
+    //   (原先这里还有 display_name:击杀播报用的中文名。2026-09-17 随单机击杀播报一起删除。)
     scene: String(e.scene),
     color: String(e.color || '#999999')
   };
@@ -31,7 +30,7 @@ const block = '/*__ENEMY_REGISTRY_BEGIN__*/\nwindow.ENEMY_REGISTRY = ' +
 //   只比对"生成物 vs 重新生成"是**抓不到**这个的 —— 两边用的是同一份映射,漏抄的字段
 //   在两边一样地缺,`--check` 照样绿。故单独查一遍键覆盖。
 //   有字段**故意**不进编辑器时,加进下面这个名单并写明理由,别默默漏掉。
-const NOT_IN_EDITOR = [];   // 当前为空:enemies.json 的 5 个字段全部进注册表
+const NOT_IN_EDITOR = [];   // 当前为空:enemies.json 的 4 个字段(id/name/scene/color)全部进注册表
 const generatedKeys = {};
 enemies.forEach(function (e) { Object.keys(e).forEach(function (k) { generatedKeys[k] = true; }); });
 const dropped = {};

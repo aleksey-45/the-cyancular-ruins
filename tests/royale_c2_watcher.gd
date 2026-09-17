@@ -281,6 +281,13 @@ func _assert() -> void:
 					% [str(snap_downed), str(local.is_downed())])
 		if who == "c1" and not _respawned:
 			problems.append("没观察到「倒地 → 复活」这条链走完(_saw_downed=%s)" % str(_saw_downed))
+	# ★ 地面武器:客户端必须**真的收到开局那批**。
+	#   开局那批走 `match_sync` 进场拉取(不走 weapon_spawned 推送 —— 推送会撞上
+	#   "客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失")。这条断言盖的正是那条链:
+	#   服务器铺了 → 载荷带了 → 客户端建出节点了。只验"没报错"是漏的 —— 丢光了也不报错。
+	var pk = _game.get("_pickup_nodes") if _game != null else null
+	if pk == null or not (pk is Dictionary) or (pk as Dictionary).is_empty():
+		problems.append("客户端一件地面武器都没收到(match_sync 的 ground_weapons 没到/没建出节点)")
 	var rb_txt := "无" if rb == null else "last_applied=%d rollback=%d" % [
 			int(rb.last_applied()), int(rb.rollback_count())]
 	var pos_txt := "n/a"

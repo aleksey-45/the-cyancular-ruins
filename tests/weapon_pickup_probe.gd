@@ -3,8 +3,11 @@ extends Node
 # 地面武器(WeaponPickup)探针。场景模式 —— 判据是 **grep 文本 `WEAPON PICKUP: ALL-OK`**,
 # 不能只看退出码(中途报错时 --quit-after 仍 exit 0 且不打印 ALL-OK)。
 #
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 900 res://tests/weapon_pickup_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/weapon_pickup_probe.tscn
 #
 # ═══ 钉三件日常看不出来的事 ═══
 #   ① 碰撞层归属:玩家与子弹都**不该**碰地上的枪。改错了的表现是"走过去被枪挡住"
@@ -31,6 +34,7 @@ func _check(cond: bool, name: String) -> void:
 func _ready() -> void:
 	await _phase_layers()
 	await _phase_collision_shape()
+	await _phase_all_weapons_centered()
 	await _phase_landing_determinism()
 	await _phase_inventory_roundtrip()
 	await _phase_visual_built()
@@ -81,10 +85,35 @@ func _phase_collision_shape() -> void:
 	if cs != null and cs.shape is RectangleShape2D:
 		var sz: Vector2 = (cs.shape as RectangleShape2D).size
 		_check(sz.x > 4.0 and sz.y > 2.0, "碰撞箱尺寸应来自真实像素(实际 %s)" % str(sz))
+		# ★ A4(2026-09-17):视觉中心已被挪到 body 原点 → 碰撞箱必须在 Vector2.ZERO。
+		_check(cs.position == Vector2.ZERO, "碰撞箱须在节点原点(实际 %s)" % str(cs.position))
 	else:
 		_failures.append("碰撞箱不是矩形(或不存在)")
 	pk.queue_free()
 	await get_tree().physics_frame
+
+
+# ── ①b 六把枪逐个:视觉中心都在节点原点(钉 A4 与 m82a1 那个历史 bug)──
+# ★ 为什么单开一相:2026-09-17 之前 `_build_collision` 只把 `spr.position` 算进判定圆心、
+#   **漏了武器根节点自己的 position**,于是 m82a1 的判定圆心比画出来的枪偏
+#   (6,3)×WORLD_SCALE = (15, 7.5) 世界像素 —— 而拾取半径只有 64px,且**不报错**。
+#   只测手枪(上面那一相)是抓不到的:手枪的根节点本来就是零变换。
+func _phase_all_weapons_centered() -> void:
+	for t in WeaponComponent.WEAPONS.keys():
+		var type_id := int(t)
+		var pk: WeaponPickup = load(PICKUP_SCENE).instantiate()
+		pk.configure(type_id, type_id, 12, Vector2.ZERO)
+		add_child(pk)
+		await get_tree().physics_frame
+		var cs: CollisionShape2D = pk.get_node_or_null("Shape")
+		var vis: Node2D = pk.get_node_or_null("Visual")
+		_check(cs != null and cs.position == Vector2.ZERO,
+				"槽 %d:碰撞箱须在节点原点(实际 %s)" % [type_id, str(cs.position if cs else Vector2.INF)])
+		# 视觉被反向平移过 = 枪画在原点(根节点原本零变换的枪不要求平移量为 0,
+		# 只要求"平移后画出来的中心在原点",故判据是 cs 在原点 + Visual 存在)
+		_check(vis != null, "槽 %d:应有 Visual 子节点" % type_id)
+		pk.queue_free()
+		await get_tree().physics_frame
 
 
 # ── ③ 落点与"何时开始模拟"无关 ──

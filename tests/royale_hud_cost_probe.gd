@@ -24,6 +24,7 @@ extends Node
 #      本探针是"归因工具",不是"逼这行代码变快"的指标。
 
 const ROWS := [4, 6, 8]
+const ROYALE_HUD_SCENE := "res://ui/royale_hud.tscn"
 const SAMPLES := 40
 
 var _fail := false
@@ -42,7 +43,9 @@ func _ready() -> void:
 
 
 func _measure(n: int) -> void:
-	var hud := RoyaleHud.new()
+	# ★ 声明式场景实例化,不能 RoyaleHud.new():.new() 建出来的节点没有子节点,
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,同 royale_game.gd 的宿主)。
+	var hud := (load(ROYALE_HUD_SCENE) as PackedScene).instantiate() as RoyaleHud
 	add_child(hud)
 	await get_tree().process_frame
 	var payload := _payload(n)

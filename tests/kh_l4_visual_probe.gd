@@ -1,8 +1,11 @@
 extends Control
 
 # L4 视觉验收探针(**必须带真实渲染,不能加 --headless** —— headless 下 get_image() 返回 null)。
+#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
+#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
-#   "$GODOT" --path . --quit-after 900 res://tests/kh_l4_visual_probe.tscn
+#   "$GODOT" --path . --quit-after 3600 res://tests/kh_l4_visual_probe.tscn
 # 把 L4 换装过的三张界面定格成 PNG 交给控制者读图,同时打数值断言(可当 CI 用):
 #   _l4_1_mainmenu.png    主菜单(标题 + 5 个按钮 + 版本号,浮现动画跑完的稳定态)
 #   _l4_2_pause.png       暂停菜单(继续 / 回到主菜单;底下一块纯色假装游戏画面)

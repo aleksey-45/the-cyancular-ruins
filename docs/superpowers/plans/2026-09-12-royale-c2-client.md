@@ -156,7 +156,7 @@ extends Node
 # 大乱斗 C2(客户端预测 + 权威锚定重放)的**运行时验收探针**。场景模式(autoload 必须已实例化)。
 #
 # 跑法:
-#   "$GODOT" --headless --path . --quit-after 7200 res://tests/royale_c2_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/royale_c2_probe.tscn
 #   (无参 = 大厅/裁判进程;它自己拉起两个客户端子进程。**跑前先确认 7777 空闲**。)
 # 判据:裁判进程末行 `PROBE: ALL-OK` + 两个结果文件都是 OK(不能只看退出码)。
 #
@@ -700,7 +700,7 @@ func _finish(ok: bool, msg: String) -> void:
 
 Run（**先确认 7777 空闲**）：
 ```
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 7200 res://tests/royale_c2_probe.tscn
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/royale_c2_probe.tscn
 ```
 Expected: `PROBE: FAIL`，两个客户端结果文件都是
 `FAIL royale_game 没有 _rollback 字段(C2 没接线) | 生产目录残留旧路径构件 set_server_rendered:res://scenes/player/player.gd | … apply_server_snapshot:… | … LOCAL_PREDICTION_ENABLED:res://scenes/pvp_client.gd`。
@@ -1002,7 +1002,7 @@ func _refresh_input_lock() -> void:
 
 Run（**先确认 7777 空闲**）：
 ```
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 7200 res://tests/royale_c2_probe.tscn
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/royale_c2_probe.tscn
 ```
 Expected: `PROBE: FAIL`，但两个客户端的失败原因**只剩** A①（生产目录零残留，Task 3 的活）。
 **其余全部要绿**，尤其结果串里 `last_applied` 要 ≥ 60、c1 的 `rollback ≥ 1`、且没有"未收敛"字样。
@@ -1313,7 +1313,7 @@ Expected: 只剩**注释里**提到这些名字的几行（说明"这里删过�
 
 Run:
 ```
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600
 ```
 Expected: 无 `SCRIPT ERROR` / `Invalid access` / `Parse Error`。
 
@@ -1321,7 +1321,7 @@ Expected: 无 `SCRIPT ERROR` / `Invalid access` / `Parse Error`。
 
 Run（**先确认 7777 空闲**）：
 ```
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 7200 res://tests/royale_c2_probe.tscn
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/royale_c2_probe.tscn
 ```
 Expected: `PROBE: ALL-OK`，两个结果文件都是 `OK ...`。
 
@@ -1445,7 +1445,7 @@ const N_APPLY_SNAP := "apply_server" + "_snapshot("
 
 Run:
 ```
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 600 res://tests/kh_l6_probe.tscn
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn
 ```
 Expected: 末行 `KH L6 PROBE: ALL-OK`。
 
@@ -1492,7 +1492,7 @@ git commit -m "test(L6): 快照两条包的判据按删除后的形状重写;删
 
 把 `scenes/royale_game.gd` 的 `_physics_process` 里 `_rollback.reconcile()` 一行临时注释掉，重跑：
 ```
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 7200 res://tests/royale_c2_probe.tscn
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/royale_c2_probe.tscn
 ```
 Expected: `PROBE: FAIL`，c1 的失败串里出现 `rollback_count=0` **且** `未收敛` / `倒地态与权威不一致`。
 **改回来。**
@@ -1541,9 +1541,9 @@ bash tests/pvp_match_smoke.sh
 ```
 以及（按需、跑前确认 7777 空闲）：
 ```
-"D:/.../Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 7200 res://tests/royale_c2_probe.tscn
-"D:/.../Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 600 res://tests/kh_l6_probe.tscn
-"D:/.../Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 600 res://tests/kh_l5_probe.tscn
+"D:/.../Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/royale_c2_probe.tscn
+"D:/.../Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn
+"D:/.../Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600 res://tests/kh_l5_probe.tscn
 "D:/.../Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 Expected: 全部打印各自的 OK 标记。

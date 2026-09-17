@@ -48,6 +48,9 @@ func _ready() -> void:
 						var r := int(tok.strip_edges())
 						if r >= 1 and r <= 8:
 							_role_set.append(r)
+			"--test-ground-teleport":
+				# 仅测试用:见 MatchGround.test_ground_teleport。默认关,生产路径不带这个开关。
+				MatchGround.test_ground_teleport = true
 			"--ai-roles":
 				if i + 1 < args.size():
 					for tok in str(args[i + 1]).split(","):
@@ -219,6 +222,12 @@ func _on_match_sync(caller: int) -> void:
 	if role == 0:
 		return
 	var spawns := {}
+	# 地面武器:开局那批**必须随这条拉取一并给**,不走 weapon_spawned 推送 ——
+	# 推送会撞上"客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失"那类事故
+	# (当年三载荷就是这么丢的;反向断言在 match_sync_probe)。
+	var ground: Array = []
+	if _host != null and _host.has_method("ground_weapons_payload"):
+		ground = _host.ground_weapons_payload()
 	if _host != null and _host.has_method("role_spawns"):
 		spawns = _host.role_spawns()
 	else:
@@ -226,12 +235,19 @@ func _on_match_sync(caller: int) -> void:
 		# 建宿主那次调用里发出的(同一帧内 `_host` 就赋好值了),报文往返只可能更晚。
 		# 真到了这里说明时序变了 —— 不静默,留一条痕(客户端会退回 match_start 带的那份出生点)。
 		push_warning("match_sync: role %d 报到时对局宿主还没建好,spawns 回空" % role)
+	# ★ 判活再回:这是开局窗口里**最容易被踩的一条** —— 客户端一进对局场景就发 match_sync,
+	#   而"进场景 → 请求 →(脚本/玩家)退出"可能挤在同一两帧里;回复是定向可靠包,
+	#   往 ENet 已拆掉的 peer 发就是 `Unable to send packet on channel 0, max channels: 0`。
+	#   判据见 NetBus.is_peer_live(以及 docs/2026-09-17-pvp-weapon-net-fixes.md §1.5)。
+	if not NetBus.is_peer_live(caller):
+		return
 	NetBus.rpc_id(caller, "match_sync_data", {
 		"names": _claim_names,
 		"hues": _claim_hues(),
 		"options": _claim_opts.get(1, {}),
 		"roles": _role_set,
 		"spawns": spawns,
+		"ground_weapons": ground,
 	})
 
 

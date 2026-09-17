@@ -233,9 +233,8 @@ func _begin_death() -> void:
 		return
 	is_dead = true
 	died.emit()
-	# 击杀播报(CombatFeedback):只有玩家造成的死亡才出「击杀 XXX」文字+音效
-	# (子弹/爆炸命中时写入的 last_damager meta 归因;溺水等环境死安静销毁)
-	CombatFeedback.notify_enemy_killed(self)
+	# (单机击杀播报已于 2026-09-17 删除 —— 这里原先调 CombatFeedback.notify_enemy_killed,
+	#  那是它唯一的触发点。PvP 的播报走 NetBus.kill_event,不经过本函数。)
 	_death_timer = EnemyParams.shared.death_flash_time
 	_on_death()
 
