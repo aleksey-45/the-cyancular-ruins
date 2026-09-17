@@ -108,3 +108,30 @@ func royale_rooms(rooms: Array) -> void:
 @rpc("authority", "reliable")
 func royale_room_state(state: Dictionary) -> void:
 	local_royale_room_state.emit(state)
+
+# ── 断线重连(2026-09-17)──
+# ★ 全部进本节点,理由见文件头:原 NetBus 的方法表一律不动(改了会让与原版服务端的 RPC
+#   全部失联)。对原版 worker 本节点不存在 → 这三条静默丢弃,优雅降级成"不能重连"。
+#
+# 一次性会话令牌:大厅生成(它必须知道 token,否则"回大厅后回局"无法把客户端对回那一局),
+# 在客户端**转连 worker 之前**下发(必须早于 go_match —— go_match 一到客户端就 NetBus.stop()
+# 断大厅,之后再发就丢了)。两者都是 reliable 同通道,保序到达。
+signal local_session_token(token: String)
+
+@rpc("authority", "reliable")
+func session_token(token: String) -> void:
+	local_session_token.emit(token)
+
+# 客户端 → worker:把 token 报到本局(claim 之后立刻发)。worker 存 role→token 供日后核验。
+signal token_reported(caller: int, token: String)
+
+@rpc("any_peer", "reliable")
+func report_token(token: String) -> void:
+	token_reported.emit(multiplayer.get_remote_sender_id(), token)
+
+# 客户端 → worker:宽限期内重新认领自己那个 role。token 不对一律拒(并踢连接)。
+signal reclaim_requested(caller: int, role: int, token: String)
+
+@rpc("any_peer", "reliable")
+func reclaim_role(role: int, token: String) -> void:
+	reclaim_requested.emit(multiplayer.get_remote_sender_id(), role, token)
