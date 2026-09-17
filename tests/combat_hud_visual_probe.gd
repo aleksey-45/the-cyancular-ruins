@@ -20,6 +20,7 @@ const MAP_OPEN_COLOR := Color(0.47, 0.588, 0.624)   # ≈#78969F,实测取的地
 
 const OUT_DIR := "res://.superpowers/sdd"
 const PVP_HUD_SCENE := "res://ui/pvp_hud.tscn"
+const ROYALE_HUD_SCENE := "res://ui/royale_hud.tscn"
 
 var _failures: Array[String] = []
 
@@ -42,7 +43,9 @@ func _run_round() -> void:
 	# 否则 PvP 的中央倒计时广播会串进大乱斗那张,读图时无法判断哪条属于哪套。
 	var pvp: CanvasLayer = (load(PVP_HUD_SCENE) as PackedScene).instantiate()
 	add_child(pvp)
-	var royale: RoyaleHud = RoyaleHud.new()
+	# ★ 声明式场景实例化,不能 RoyaleHud.new():.new() 建出来的节点没有子节点,
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11)。
+	var royale: RoyaleHud = (load(ROYALE_HUD_SCENE) as PackedScene).instantiate() as RoyaleHud
 	add_child(royale)
 	royale.visible = false
 	await _frames(3)

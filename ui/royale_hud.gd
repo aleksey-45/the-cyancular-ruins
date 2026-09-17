@@ -17,8 +17,8 @@ const COLOR_BOARD := UiFactory.C_TEXT
 const COLOR_ME := UiFactory.C_ACCENT
 const COLOR_DEAD := UiFactory.C_TEXT_DIM
 const COLOR_LEFT := UiFactory.C_DANGER
-const BIG_COLOR := UiFactory.C_TEXT
-const SUB_COLOR := UiFactory.C_TEXT_DIM
+# (原先还有 BIG_COLOR / SUB_COLOR —— 中央广播的大字/副文案颜色。两者已随广播层迁进
+#  royale_hud.tscn,这里不再有引用,故连同常量一并删除,不留死声明。)
 
 # 排行榜面板宽(原 480):一行要塞「名次 + 昵称 + 击杀 + 阵亡 + 状态」五段,
 # 480 时只要昵称稍长,末段的「存活/复活中/离开」就被顶出面板(2026-09-13 实测:
@@ -32,18 +32,24 @@ const ST_PLAYING := 1
 const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
-var _board_vbox: VBoxContainer
-var _board_title: Label
+# 节点句柄一律从 royale_hud.tscn 取(声明式契约:见 tests/hud_declarative_probe.tscn)。
+# ★ 排行榜的**行**不在这里 —— 行数随人数变,由 _refresh_board 建/复用,见那里的说明。
+# ★ 宿主必须用 preload("res://ui/royale_hud.tscn").instantiate() 建,不能 RoyaleHud.new()
+#   —— .new() 建出来的 CanvasLayer 没有子节点,下面这些 @onready 全是 null,_ready 解引用必崩。
+@onready var _board_bg: ColorRect = $BoardBg
+@onready var _board_vbox: VBoxContainer = $BoardBox
+@onready var _timer_label: Label = $BoardBox/TimerLabel
+@onready var _mask: ColorRect = $Mask
+@onready var _center: CenterContainer = $Center
+@onready var _big: Label = $Center/VBox/BigLabel
+@onready var _sub: Label = $Center/VBox/SubLabel
+@onready var _ping_wrap: PanelContainer = $PingWrap
+@onready var _ping_label: Label = $PingWrap/PingLabel
+@onready var _hint_wrap: PanelContainer = $HintWrap
+
 # 排行榜行 Label(不含标题/计时):**复用**而不是每次重建 —— 见 _on_round_state 里的说明
 var _rows: Array[Label] = []
 var _last_row_count := -1
-var _board_bg: ColorRect
-var _timer_label: Label
-var _mask: ColorRect
-var _center: CenterContainer
-var _big: Label
-var _sub: Label
-var _ping_label: Label
 var _countdown := 0.0
 var _in_countdown := false
 var _state := ST_COUNTDOWN
@@ -51,96 +57,28 @@ var _my_name := "Anon"
 
 func _ready() -> void:
 	layer = LAYER
+	# ★ 一次:共享字体关抗锯齿/微调/子像素并挂 CJK 回退链。场景里那些 Label 引用的就是
+	#   同一个共享 FontFile 实例 —— 不调这句,它们会带抗锯齿、且**汉字没有回退字形**
+	#   (本 HUD 的字几乎全是中文:排行榜标题/存活/复活中/离开)。同 pvp_hud.gd:26。
+	PixelFont.shared()
 	_my_name = PvpSession.player_name
-
-	# 四个区块各建各的(阶段 5.5:_ready 原先 90 净行,是"一屏控件清单")。
-	_build_board()
-	_build_broadcast()
-	_build_ping()
-	_build_hint()
-
+	# 两块底板样式**仍由代码给**:颜色 token(C_*)的唯一来源是 UiFactory,
+	# 抄进 .tscn 就是第二处真值(见 ui_factory.gd 文件头第 1 条纪律)。
+	_ping_wrap.add_theme_stylebox_override("panel", _plate_box(14.0, 6.0))
+	_hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	_set_broadcast(true, "大乱斗", "等待开局…")
 
 
-# ── 排行榜(右上角、击杀计数下方;血条在左上角,不重叠)──
-func _build_board() -> void:
-	_board_bg = ColorRect.new()
-	# 底板:排行榜直接压在地图上,浅色开阔区会吃掉文字。
-	# ★ 本张底板**单独定成 0.25**,不跟其余几处(0.1):用户 2026-09-15 点名把「pvp 玩家栏」
-	#   (这张玩家名次表)排除在那轮下调之外,随后又指定要 0.25 —— 比别处都更实。
-	_board_bg.color = Color(0.0, 0.0, 0.0, 0.25)
-	_board_bg.position = Vector2(1920 - BOARD_W - 16, 96)
-	_board_bg.size = Vector2(BOARD_W, 64)
-	_board_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_board_bg)
-	_board_vbox = VBoxContainer.new()
-	_board_vbox.position = Vector2(1920 - BOARD_W - 4, 102)
-	_board_vbox.custom_minimum_size = Vector2(BOARD_W - 8.0, 0)
-	_board_vbox.add_theme_constant_override("separation", 4)
-	_board_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_board_vbox)
-	_board_title = _make_label(32, COLOR_ME)
-	_board_title.text = "—— 击杀排行榜 ——"
-	_board_vbox.add_child(_board_title)
-	_timer_label = _make_label(32, COLOR_BOARD)
-	_board_vbox.add_child(_timer_label)
-
-
-func _build_broadcast() -> void:
-	_mask = ColorRect.new()
-	_mask.color = Color(0.0, 0.0, 0.0, 0.3)
-	_mask.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_mask.visible = false
-	add_child(_mask)
-	_center = CenterContainer.new()
-	_center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_center.visible = false
-	var vbox := VBoxContainer.new()
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	_big = _make_label(144, BIG_COLOR)
-	_sub = _make_label(64, SUB_COLOR)
-	vbox.add_child(_big)
-	vbox.add_child(_sub)
-	_center.add_child(vbox)
-	add_child(_center)
-
-
-# 延迟:右下角
-func _build_ping() -> void:
-	var ping_wrap := PanelContainer.new()
-	ping_wrap.add_theme_stylebox_override("panel", _plate_box(14.0, 6.0))
-	ping_wrap.anchor_left = 1.0
-	ping_wrap.anchor_right = 1.0
-	ping_wrap.anchor_top = 1.0
-	ping_wrap.anchor_bottom = 1.0
-	ping_wrap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	ping_wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	ping_wrap.offset_left = -24.0
-	ping_wrap.offset_right = -24.0
-	ping_wrap.offset_top = -24.0
-	ping_wrap.offset_bottom = -24.0
-	ping_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(ping_wrap)
-	_ping_label = _make_label(32, UiFactory.C_TEXT_DIM)
-	_ping_label.text = "延迟 -- ms"
-	ping_wrap.add_child(_ping_label)
-
-
-# 按键提示(左下角):自杀脱困
-func _build_hint() -> void:
-	var hint_wrap := PanelContainer.new()
-	hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
-	hint_wrap.position = Vector2(16, 1386)
-	hint_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(hint_wrap)
-	var hint := _make_label(16, UiFactory.C_TEXT_DIM)
-	hint.text = "K = 自杀脱困(卡住时)"
-	hint_wrap.add_child(hint)
+# ── 布局说明(节点树已迁进 ui/royale_hud.tscn)────────────────────────────
+# 四个静态区块原先由 _build_board/_build_broadcast/_build_ping/_build_hint 现建
+# (阶段 5.5 前 _ready 有 90 净行)。现在场景里声明、上面 @onready 取回:
+#   BoardBg + BoardBox(排行榜底与内容,右锚) / Mask + Center(广播层)
+#   / PingWrap(右下角延迟) / HintWrap(左下角按键提示,下锚)
+# ★ 子节点顺序 = 绘制顺序,必须与当年的 add_child 顺序一致:BoardBg → BoardBox →
+#   Mask → Center → PingWrap → HintWrap。**Mask 盖在排行榜之上是现状**,别顺手改进。
+# ★ 硬编码的 1920 屏幕坐标已换成右锚/下锚(1920×1440 视口下位置逐一等价)。
 
 # HUD 元素底板(与单机 HUD 同一套做法,见 ui/hud.gd 的 PLATE_COLOR):
 # 对局 HUD 直接压在地图上,地图开阔区是浅灰蓝 —— 不垫底时浅色小字读不出来。

@@ -1,0 +1,109 @@
+[gd_scene load_steps=3 format=3 uid="uid://royalehud000001"]
+
+[ext_resource type="Script" path="res://ui/royale_hud.gd" id="1"]
+[ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
+
+[node name="RoyaleHud" type="CanvasLayer"]
+layer = 130
+script = ExtResource("1")
+
+[node name="BoardBg" type="ColorRect" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -736.0
+offset_top = 96.0
+offset_right = -16.0
+offset_bottom = 160.0
+grow_horizontal = 0
+mouse_filter = 2
+color = Color(0, 0, 0, 0.25)
+
+[node name="BoardBox" type="VBoxContainer" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -716.0
+offset_top = 102.0
+offset_right = -4.0
+offset_bottom = 102.0
+grow_horizontal = 0
+grow_vertical = 1
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="BoardTitle" type="Label" parent="BoardBox"]
+theme_override_colors/font_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 32
+text = "—— 击杀排行榜 ——"
+
+[node name="TimerLabel" type="Label" parent="BoardBox"]
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 32
+
+[node name="Mask" type="ColorRect" parent="."]
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.3)
+
+[node name="Center" type="CenterContainer" parent="."]
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="VBox" type="VBoxContainer" parent="Center"]
+mouse_filter = 2
+alignment = 1
+
+[node name="BigLabel" type="Label" parent="Center/VBox"]
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 144
+
+[node name="SubLabel" type="Label" parent="Center/VBox"]
+theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 64
+
+[node name="PingWrap" type="PanelContainer" parent="."]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -24.0
+offset_top = -24.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="PingLabel" type="Label" parent="PingWrap"]
+theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 32
+text = "延迟 -- ms"
+
+[node name="HintWrap" type="PanelContainer" parent="."]
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -54.0
+offset_right = 16.0
+offset_bottom = -30.0
+grow_horizontal = 1
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="HintLabel" type="Label" parent="HintWrap"]
+theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 16
+text = "K = 自杀脱困(卡住时)"
