@@ -132,12 +132,19 @@ static func spawn_candidates() -> Array:
 # 基座附近的候选格(环面距离 ≤ radius 格)。给 3v3 的"队内散开"用:
 # 先选两个相距 ≥ SPAWN_CLEARANCE 的基座,再在各自附近取 3 个点 —— 这样"队内聚、队间远"。
 # ★ 池子为空时返回全量候选(= 放弃"队内聚",但绝不返回空导致调用方少点)。
+# ★★ **返回的池可能即共享缓存**(`spawn_candidates()` 返回的就是 `_prefer_cache` 本身):
+#   两条回退分支原先直接把它交出去,于是同一个函数**两种别名语义** —— 调用方在返回值上原地
+#   `.shuffle()` / `.erase()`,打乱的是**全局优选池**,此后所有读它的地方(`RoyaleHost.plan_spawns`
+#   等)拿到的顺序都变了:静默、不报错。现统一成"返回新数组",但**纪律仍适用于本函数的调用方**:
+#   要在返回值上原地改,先自己 `duplicate()`。
+#   (注:`GridPathfinder.spread_cells` 内部第一件事就是 `pool = cells.duplicate()`,故
+#    `cells_within(...)` 的返回值直接喂给它**是安全的**。)
 static func cells_within(center: Vector2i, radius: int) -> Array:
 	var out: Array = []
 	if center.x < 0 or center.y < 0:
-		return spawn_candidates()
+		return spawn_candidates().duplicate()
 	var d := grid_dims()
 	for c in spawn_candidates():
 		if GridPathfinder.toroidal_dist(c, center, d.x, d.y) <= radius:
 			out.append(c)
-	return out if not out.is_empty() else spawn_candidates()
+	return out if not out.is_empty() else spawn_candidates().duplicate()
