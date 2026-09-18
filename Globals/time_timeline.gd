@@ -10,15 +10,30 @@ extends RefCounted
 #   · scheduled 事件回拨后自动**重新武装**(再次跨越可再触发),player 事件不重发;
 #   · **逆操作完备性 = 铁律**:每个入史 kind 必须带正确逆操作并过探针,否则产生幽灵状态。
 #
-# ── .cyrm v4 时间层语法(空间层沿用 v3,原样保留)──
-#   # cyrm-v4                                   ← 格式标记(v3 图无此标记照旧可用)
-#   # tl-w0: <起始秒>                            ← 世界针起始(缺省 TimeParams.W0_DEFAULT)
-#   # tl: <t> <action> <x> <y> <w> <h> [标签...]  ← 定时事件;t 支持小数秒(14.300)
-#   例:# tl: 15 collapse 22 20 17 11 桥梁坍塌
-#       # tl: 5 open 46 20 1 10 密室炸开
-# 坐标为空间层格坐标。action 原型见 §4.2(首批 8 个);当前已实现 collapse/open,
-# 其余原型(怪潮/强化/时间风暴/补给窗/地貌变化/剧情播报)只登记、不执行(逆向记 noop),
-# 由后续里程碑逐个补齐——补齐时必须同时给出逆向操作。
+# ── 时间层语法(.cyrt 时空地图为正式载体;v4 注释行继续兼容)──
+#   # cyrt-v1                                    ← .cyrt 首行标记(空间层=v3 网格,原样)
+#   # tl-w0: <起始秒>                             ← 世界针起始(缺省 TimeParams.W0_DEFAULT)
+#   # tl: <t> <kind> <位置参数…> [k=v 标志…] [标签…]
+#   例:# tl: 15 collapse 22 20 17 11 rev=1 桥梁坍塌
+#       # tl: 12 explode 30 18 4 dmg=45 燃气爆炸
+#       # tl: 11 wipe 40 10 3 rev=0 强制塌方
+#       # tl: 10 gen 40 30 6 3 tex=19 增生岩壁
+#       # tl: 8 spawn_enemy 50 20 type=fly_bird count=2 空降鸟群
+# kind 与位置参数(坐标=空间层格坐标;t 支持小数秒):
+#   collapse/open x y w h            区域变实心/变空气(经典两件套)
+#   gen x y w h [tex=N]              生成实体砖块(默认纹理 1)
+#   explode cx cy radius [dmg=] [kb=] 战斗规则爆炸:可破坏瓦片按衰减扣血/永久墙免疫,
+#                                    实体伤害走 Explosion(LOS 掩护/内圈满伤/击退)
+#   wipe cx cy radius [dmg=]         强制清除:范围内一切砖无条件变空气(含永久墙),
+#                                    实体吃固定伤害(不衰减/无 LOS)
+#   spawn_enemy cx cy [type=] [count=] 实体生成(注册表 editor/enemies.json)
+# 标志(所有 kind 通用):
+#   rev=0/1  可逆性(默认 1):0=回拨不撤销本事件(逆操作 noop);1=回拨按逆操作撤销
+#   re=0/1   重播(默认 1):仅对 rev=0 有意义——回拨后再次扫过阈值是否重播;
+#            re=0 的事件首次触发即"已消耗",永不重播。rev=1 的事件回拨后天然重新武装。
+# 逆操作来源:collapse/open 静态互换;gen/explode/wipe 解析时预置 restore_pristine,
+# **执行时由 Level0 捕获实际变化回填 restore_cells**(精确逆;探针可断言升级路径);
+# spawn_enemy 逆 = despawn_spawn(spawn_id)——只 despawn 仍存活者,已死者不复活(不撤战果)。
 #
 # 本类只做**纯数据与调度**(不碰 Level0/MazeGenerator),因此 -s 探针可直接断言。
 
@@ -56,22 +71,14 @@ static func parse_lines(lines) -> TimeTimeline:
 		if line.begins_with("# tl-w0:"):
 			tl.w0 = maxf(float(line.trim_prefix("# tl-w0:").strip_edges()), 0.0)
 		elif line.begins_with("# tl:"):
-			var parts := line.trim_prefix("# tl:").strip_edges().split(" ", false)
-			if parts.size() < 6:
+			var entry: Variant = parse_tl_line(line.trim_prefix("# tl:").strip_edges())
+			if entry == null:
 				continue
-			var label := ""
-			if parts.size() > 6:
-				label = " ".join(PackedStringArray(parts.slice(6)))
-			var rect := Rect2i(int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5]))
-			var action := str(parts[1])
-			tl.entries.append({
-				"id": tl._next_id,
-				"t": maxf(float(parts[0]), 0.0),
-				"fwd": make_region_op(action, rect),
-				"inv": inverse_region_op(action, rect),
-				"origin": ORIGIN_SCHEDULED,
-				"label": label,
-			})
+			entry["id"] = tl._next_id
+			# spawn_enemy 的逆操作需要条目 id(despawn_spawn 按id找活体)→ 分配后回填
+			if str((entry["inv"] as Dictionary).get("op", "")) == "despawn_spawn":
+				(entry["inv"] as Dictionary)["spawn_id"] = tl._next_id
+			tl.entries.append(entry)
 			tl._next_id += 1
 	tl._sort()
 	# 地图作者易错点:阈值必须**严格小于**起始钟值才会被跨越触发(见 crossings 的边界语义)。
@@ -81,6 +88,90 @@ static func parse_lines(lines) -> TimeTimeline:
 			push_warning("TimeTimeline: 事件阈值 t=%s 不小于起始钟 w0=%s,永远不会触发(标签:%s)"
 					% [str(e["t"]), str(tl.w0), str(e["label"])])
 	return tl
+
+
+# 各 kind 的位置参数个数(解析与编辑器共用校验);未登记的 kind 整行忽略。
+const KIND_ARITY: Dictionary = {
+	"collapse": 4, "open": 4, "gen": 4,
+	"explode": 3, "wipe": 3, "spawn_enemy": 2,
+}
+
+
+## 解析单条 `# tl:` 内容(纯函数,探针/编辑器共用):
+## `<t> <kind> <位置参数…> [k=v 标志…] [标签…]`;格式不合 → null(调用方跳过该行)。
+static func parse_tl_line(body: String) -> Variant:
+	var toks := body.split(" ", false)
+	if toks.size() < 2:
+		return null
+	var kind := str(toks[1])
+	if not KIND_ARITY.has(kind):
+		return null
+	var arity: int = KIND_ARITY[kind]
+	if toks.size() < 2 + arity:
+		return null
+	var nums: Array[int] = []
+	for i in arity:
+		nums.append(int(toks[2 + i]))
+	var flags := {}
+	var label_toks: PackedStringArray = []
+	for tok in toks.slice(2 + arity):
+		var s := str(tok)
+		if s.length() > 1 and s.contains("=") and not s.begins_with("="):
+			var kv := s.split("=", true, 1)
+			flags[kv[0].to_lower()] = kv[1]
+		else:
+			label_toks.append(s)
+	var rev := not _flag_off(flags, "rev")
+	var re_play := not _flag_off(flags, "re")
+	return make_entry(maxf(float(toks[0]), 0.0), kind, nums, flags, rev, re_play,
+			" ".join(label_toks))
+
+
+static func _flag_off(flags: Dictionary, key: String) -> bool:
+	var v := str(flags.get(key, "1")).to_lower()
+	return v == "0" or v == "false" or v == "no" or v == "off"
+
+
+## 按构造条目(kind → fwd/inv)。inv 规则见文件头注释;rev=0 一律 noop。
+static func make_entry(t: float, kind: String, nums: Array[int], flags: Dictionary,
+		rev: bool, re_play: bool, label: String) -> Dictionary:
+	var fwd := {}
+	var inv := {}
+	match kind:
+		"collapse", "open":
+			var rect := Rect2i(nums[0], nums[1], nums[2], nums[3])
+			fwd = {"op": kind, "rect": rect}
+			inv = {"op": str(AUTO_INVERSE[kind]), "rect": rect}
+		"gen":
+			var rect := Rect2i(nums[0], nums[1], nums[2], nums[3])
+			var tex := clampi(int(str(flags.get("tex", "1"))), 1, 22)
+			fwd = {"op": "gen", "rect": rect, "tex": tex}
+			inv = {"op": "restore_pristine", "rect": rect}
+		"explode", "wipe":
+			var c := Vector2i(nums[0], nums[1])
+			var r := maxi(nums[2], 0)
+			var rect := Rect2i(c.x - r, c.y - r, r * 2 + 1, r * 2 + 1)
+			if kind == "explode":
+				fwd = {"op": "explode", "center": c, "radius": r, "rect": rect,
+						"dmg": int(str(flags.get("dmg", str(int(TimeParams.EVT_EXPLODE_DMG))))) ,
+						"kb": float(str(flags.get("kb", str(TimeParams.EVT_EXPLODE_KB))))}
+			else:
+				fwd = {"op": "wipe", "center": c, "radius": r, "rect": rect,
+						"dmg": int(str(flags.get("dmg", str(int(TimeParams.EVT_WIPE_DMG)))))}
+			inv = {"op": "restore_pristine", "rect": rect}
+		"spawn_enemy":
+			var c := Vector2i(nums[0], nums[1])
+			fwd = {"op": "spawn_enemy", "center": c,
+					"etype": str(flags.get("type", "fly_bird")),
+					"count": clampi(int(str(flags.get("count", "1"))), 1, 12)}
+			inv = {"op": "despawn_spawn", "spawn_id": -1}   # id 在 parse_lines 分配后回填
+	if not rev:
+		inv = {"op": "noop", "why": "rev=0 不可逆(作者标注)"}
+	return {
+		"t": t, "fwd": fwd, "inv": inv,
+		"origin": ORIGIN_SCHEDULED, "label": label,
+		"rev": rev, "re": re_play, "consumed": false,
+	}
 
 
 # ── 操作构造(正/逆,供解析与玩家入史共用)────────────────────────
@@ -105,10 +196,30 @@ func record_player_op(t: float, fwd: Dictionary, inv: Dictionary, label: String 
 		"inv": inv,
 		"origin": ORIGIN_PLAYER,
 		"label": label,
+		"rev": true, "re": false, "consumed": false,
 	})
 	_next_id += 1
 	_sort()
 	return _next_id - 1
+
+
+## 执行层回填精确逆操作:Level0 执行 explode/wipe/gen 后,把**实际捕获的格变化**
+## (restore_cells)写回条目,替代解析期预置的 restore_pristine(后者会把区域里
+## 别的历史变化一并还原,只作未执行时的兜底)。
+func set_inverse(id: int, inv: Dictionary) -> void:
+	for e in entries:
+		if int(e["id"]) == id:
+			e["inv"] = inv
+			return
+
+
+## 标记事件"已消耗"(re=0 的一次性语义):触发后不再重播(跨过也不再生效)。
+## 由 TimeWorld.tick 在发出到点事件时对 re=0 者调用;crossings/next_pending_t 跳过已消耗。
+func mark_consumed(id: int) -> void:
+	for e in entries:
+		if int(e["id"]) == id:
+			e["consumed"] = true
+			return
 
 
 # ── 查询 ────────────────────────────────────────────────────
@@ -130,7 +241,7 @@ func is_applied(entry: Dictionary, w_now: float) -> bool:
 func next_pending_t(w_now: float) -> float:
 	var best := -1.0
 	for e in entries:
-		if str(e["origin"]) != ORIGIN_SCHEDULED:
+		if str(e["origin"]) != ORIGIN_SCHEDULED or bool(e.get("consumed", false)):
 			continue
 		var t := float(e["t"])
 		if t < w_now and t > best:
@@ -145,7 +256,7 @@ func crossings(w_old: float, w_new: float) -> Array:
 	if w_new >= w_old:
 		return out
 	for e in entries:
-		if str(e["origin"]) != ORIGIN_SCHEDULED:
+		if str(e["origin"]) != ORIGIN_SCHEDULED or bool(e.get("consumed", false)):
 			continue
 		var t := float(e["t"])
 		if w_new <= t and t < w_old:
@@ -200,9 +311,12 @@ func legacy_events() -> Array:
 
 
 ## 逆向操作覆盖自检(逆操作完备性铁律):返回缺逆向的原型列表。空 = 全部完备。
+## rev=0 的 noop 是**作者标注的不可逆**,不算缺口;玩家入史条目缺逆才算。
 func incomplete_inverses() -> Array:
 	var out: Array = []
 	for e in entries:
+		if not bool(e.get("rev", true)):
+			continue
 		var inv: Dictionary = e["inv"]
 		if str(inv.get("op", "")) == "noop":
 			out.append({

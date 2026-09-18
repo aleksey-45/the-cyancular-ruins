@@ -303,7 +303,7 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | 环面接缝诊断 | `seam_analyze.gd`、`seam_screenshot.gd`、`wrap_probe.gd` |
 | 战斗/武器探针 | `aim_probe.gd`、`aim_direction_probe.gd`、`muzzle_probe.gd`、`preview_probe.gd`、`grenade_smoke.gd`、`laser_probe.gd`、`explosion_falloff_probe.gd`、`feedback_probe.gd`、`machete_probe.gd`（砍刀评审稿：横扫命中/挥空硬直/拆树叶） |
 | 世界/瓦片/水 | `tile_destroy_probe.gd`、`water_probe.gd`、`climb_probe.gd`、`perf_probe.gd` |
-| 时间维度 | `time_ledger_probe.gd`（M1 账本/10ms 粒度/时停/事件溯源/LIFO 回拨/逆操作完备性，`-s` 可跑）、`time_map_probe.gd`（v0.1 切片：坍塌/炸开真改世界） |
+| 时间维度 | `time_ledger_probe.gd`（M1 账本/10ms 粒度/时停/事件溯源/LIFO 回拨/逆操作完备性，`-s` 可跑）、`time_map_probe.gd`（v0.1 切片：坍塌/炸开真改世界）、`time_events_probe.gd`（`.cyrt` 事件层：六 kind 解析/rev-re 语义/v4 兼容/玩家混合回拨/逆操作回填；示例图 `map/timetest2.cyrt`） |
 | 其他 | `network_input_smoke.gd`、`order_probe.gd`、`restart_probe.gd`、`convert_map.gd`（地图格式转换工具） |
 
 ---

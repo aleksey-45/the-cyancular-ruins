@@ -51,8 +51,10 @@ func next_trigger() -> float:
 	return timeline.next_pending_t(clock.w if clock != null else w)
 
 
-## 推进 delta 秒 → 返回本轮到点(正向跨越阈值)的事件(兼容 v0.1 载荷:
-## {index, w, action, rect, label})。顺序 = 世界针扫过的顺序(t 降序)。
+## 推进 delta 秒 → 返回本轮到点(正向跨越阈值)的事件。顺序 = 世界针扫过的顺序(t 降序)。
+## 载荷:{index, w, action, rect, fwd, rev, label}——action/rect 兼容 v0.1 消费方
+## (圆形事件的 rect 为外接矩形,执行细节看 fwd.center/fwd.radius);re=0 的事件
+## 发出即标记"已消耗"(一次性语义,回拨后也不重播)。
 func tick(delta: float) -> Array:
 	if timeline == null or clock == null:
 		return []
@@ -61,12 +63,16 @@ func tick(delta: float) -> Array:
 	w = clock.w
 	var due: Array = []
 	for e in timeline.crossings(before, clock.w):
+		if not bool(e.get("re", true)):
+			timeline.mark_consumed(int(e["id"]))
 		var fwd: Dictionary = e["fwd"]
 		due.append({
 			"index": int(e["id"]),
 			"w": float(e["t"]),
 			"action": str(fwd.get("op", "")),
 			"rect": fwd.get("rect", Rect2i()),
+			"fwd": fwd,
+			"rev": bool(e.get("rev", true)),
 			"label": str(e["label"]),
 		})
 	return due
@@ -89,6 +95,12 @@ func record_player_op(fwd: Dictionary, inv: Dictionary, label: String = "") -> i
 	if timeline == null or clock == null:
 		return -1
 	return timeline.record_player_op(clock.w, fwd, inv, label)
+
+
+## 执行层回填精确逆操作(explode/wipe/gen 执行后把捕获的实际格变化写回条目)。
+func set_inverse(id: int, inv: Dictionary) -> void:
+	if timeline != null:
+		timeline.set_inverse(id, inv)
 
 
 func phase() -> int:

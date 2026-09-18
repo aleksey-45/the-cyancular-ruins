@@ -156,7 +156,9 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
     <div class="topbar-actions">
       <button id="btn-import">导入</button>
       <button id="btn-export" class="primary">导出库</button>
-      <input type="file" id="file-import" accept=".cyrm,.txt,.json,text/plain,application/json" hidden>
+      <button id="btn-time-mode">时空模式:关</button>
+      <button id="btn-time-export" class="primary" hidden>导出时空图(.cyrt)</button>
+      <input type="file" id="file-import" accept=".cyrm,.cyrt,.txt,.json,text/plain,application/json" hidden>
     </div>
   </header>
 
@@ -196,6 +198,38 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <h2>出生点</h2>
         <div id="spawn-tools" class="spawn-tools"></div>
         <p class="hint">选中工具后点格放置,右键移除。</p>
+      </section>
+      <section class="panel" id="time-panel" hidden>
+        <h2>时间线(时空地图)</h2>
+        <div class="row" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+          <label style="font-size:12px">起始钟 w0 <input type="number" id="tl-w0" min="1" step="any" style="width:76px" placeholder="3600"></label>
+        </div>
+        <div id="tl-events" style="margin-bottom:8px"></div>
+        <div style="border-top:1px solid var(--border);padding-top:8px">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+            <label style="font-size:12px">种类
+              <select id="tl-kind" style="width:110px">
+                <option value="collapse">collapse 坍塌</option>
+                <option value="open">open 炸开</option>
+                <option value="explode">explode 爆炸(战斗)</option>
+                <option value="wipe">wipe 强制清除</option>
+                <option value="gen">gen 生成砖块</option>
+                <option value="spawn_enemy">spawn_enemy 实体生成</option>
+              </select>
+            </label>
+            <label style="font-size:12px">T-秒 <input type="number" id="tl-t" min="0" step="any" style="width:76px"></label>
+          </div>
+          <div id="tl-args" style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap"></div>
+          <div id="tl-flags" style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap"></div>
+          <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-bottom:6px">标签
+            <input type="text" id="tl-label" style="flex:1" placeholder="事件名(播报用)">
+          </label>
+          <div style="display:flex;gap:6px">
+            <button id="tl-from-sel">从选区填坐标</button>
+            <button id="tl-add" class="primary" style="flex:1">添加事件</button>
+          </div>
+        </div>
+        <p class="hint">阈值须严格小于 w0 才会触发。<br>rev=可逆(回拨撤销) · re=重播(仅对 rev=0 生效:回拨后再扫过是否重演)</p>
       </section>
     </aside>
 
@@ -437,13 +471,75 @@ window.ENEMY_REGISTRY = [
       return [];
     }
 
+    // ── 时间线(.cyrt 时空地图)───────────────────────────────────────
+    // 与运行侧 Globals/time_timeline.gd 的 KIND_ARITY / parse_tl_line 保持一致;
+    // 事件 = {t, kind, args:[位置参数], flags:{k:v}, label}。
+    var TL_KIND_ARITY = { collapse: 4, open: 4, gen: 4, explode: 3, wipe: 3, spawn_enemy: 2 };
+    function parseTlLine(body) {
+      var toks = String(body).trim().split(/\s+/);
+      if (toks.length < 2) return null;
+      var arity = TL_KIND_ARITY[toks[1]];
+      if (!arity || toks.length < 2 + arity) return null;
+      var t = parseFloat(toks[0]);
+      if (isNaN(t) || t < 0) return null;
+      var args = [], flags = {}, label = [];
+      for (var i = 0; i < arity; i++) {
+        var n = parseInt(toks[2 + i], 10);
+        if (isNaN(n)) return null;
+        args.push(n);
+      }
+      toks.slice(2 + arity).forEach(function (tk) {
+        if (tk.indexOf('=') > 0) { var kv = tk.split('='); flags[kv[0].toLowerCase()] = kv.slice(1).join('='); }
+        else label.push(tk);
+      });
+      return { t: t, kind: toks[1], args: args, flags: flags, label: label.join(' ') };
+    }
+    function serializeTlLine(ev) {
+      var parts = [String(ev.t), ev.kind].concat(ev.args.map(String));
+      ['tex', 'dmg', 'kb', 'type', 'count'].forEach(function (k) {
+        if (ev.flags[k] !== undefined && ev.flags[k] !== '') parts.push(k + '=' + ev.flags[k]);
+      });
+      if (String(ev.flags.rev) === '0' || ev.flags.rev === false) parts.push('rev=0');
+      if (String(ev.flags.re) === '0' || ev.flags.re === false) parts.push('re=0');
+      if (ev.label) parts.push(ev.label);
+      return '# tl: ' + parts.join(' ');
+    }
+    // .cyrt v1 时空地图:# cyrt-v1 标记 + 出生点/事件行 + 与 v3 完全一致的空间网格。
+    function serializeTimeMap(map, timeline) {
+      var lines = ['# cyrt-v1'];
+      (map.comments || []).forEach(function (c) { lines.push('# ' + c); });
+      var ps = playersOf(map);
+      ps.forEach(function (p, i) {
+        var kw = i === 0 ? 'player' : (i === 1 ? 'player2' : 'player' + (i + 1));
+        lines.push('# ' + kw + ' ' + p.x + ' ' + p.y);
+      });
+      (map.enemies || []).forEach(function (e) { lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y); });
+      var tl = timeline || {};
+      var w0 = parseFloat(tl.w0);
+      if (!isNaN(w0) && w0 > 0) lines.push('# tl-w0: ' + w0);
+      (tl.events || []).slice().sort(function (a, b) { return b.t - a.t; }).forEach(function (ev) {
+        lines.push(serializeTlLine(ev));
+      });
+      map.grid.forEach(function (row) {
+        lines.push(row.map(function (v) {
+          return String(textureOf(v)).padStart(3, '0') + hexOf(shapeOf(v));
+        }).join(''));
+      });
+      return lines.join('\n') + '\n';
+    }
+
     // 整图地图格式:v3 = `# cyrm-v3` 标记 + 每格 4 字符[纹理 3 位 0xx][形状hex];旧格式 = 单字符
     // 0-9/A(无标记)→ 自动 2×2 转换(packed)并 ÷2 spawn 坐标。
-    // 返回 { grid, players, enemies, comments }。
+    // v4 注释 / .cyrt 时空图:标记行兼认,`# tl:` / `# tl-w0:` 抽到 timeline 返回。
+    // 返回 { grid, players, enemies, comments, timeline }。
     function parseMap(text) {
       var lines = String(text).split(/\r?\n/);
-      var isV3 = lines.some(function (l) { return l.trim().indexOf(V3_MARKER) === 0; });
+      var isV3 = lines.some(function (l) {
+        var t = l.trim();
+        return t.indexOf(V3_MARKER) === 0 || t.indexOf('# cyrm-v4') === 0 || t.indexOf('# cyrt-v1') === 0;
+      });
       var grid = [], players = [], enemies = [], comments = [], width = -1;
+      var timeline = { w0: null, events: [] };
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim();
         if (line === '') continue;
@@ -454,7 +550,12 @@ window.ENEMY_REGISTRY = [
             players.push({ x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) });
           } else if (parts[0] === 'enemy' && parts.length >= 4) {
             enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
-          } else if (parts[0] === 'cyrm-v3') {
+          } else if (parts[0] === 'tl-w0:' && parts.length >= 2) {
+            timeline.w0 = parseFloat(parts[1]);
+          } else if (parts[0] === 'tl:') {
+            var ev = parseTlLine(line.replace(/^#\s*tl:\s*/, ''));
+            if (ev) timeline.events.push(ev);
+          } else if (parts[0] === 'cyrm-v3' || parts[0] === 'cyrm-v4' || parts[0] === 'cyrt-v1') {
             // 版本标记行不当作注释
           } else {
             comments.push(line.slice(1).trim());
@@ -487,7 +588,7 @@ window.ENEMY_REGISTRY = [
         players.forEach(function (p) { p.x = Math.floor(p.x / 2); p.y = Math.floor(p.y / 2); });
         enemies.forEach(function (e) { e.x = Math.floor(e.x / 2); e.y = Math.floor(e.y / 2); });
       }
-      return { grid: grid, players: players, enemies: enemies, comments: comments };
+      return { grid: grid, players: players, enemies: enemies, comments: comments, timeline: timeline };
     }
 
     function serializeMap(map) {
@@ -579,6 +680,10 @@ window.ENEMY_REGISTRY = [
       moveRegion: moveRegion,
       parseMap: parseMap,
       serializeMap: serializeMap,
+      parseTlLine: parseTlLine,
+      serializeTlLine: serializeTlLine,
+      serializeTimeMap: serializeTimeMap,
+      TL_KIND_ARITY: TL_KIND_ARITY,
       brushOffsets: brushOffsets,
       serializeLibraryJSON: serializeLibraryJSON,
       parseLibraryJSON: parseLibraryJSON,
@@ -610,7 +715,7 @@ window.ENEMY_REGISTRY = [
     };
 
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, shape: 15, gridOn: true,
-                  brushSize: 1, torusMode: false, spawnTool: null, selection: null };
+                  brushSize: 1, torusMode: false, spawnTool: null, selection: null, timeMode: false };
     var view = { zoom: 28, panX: 40, panY: 40, playerRef: null };
     var PLAYER_TILES = 1.875;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 64px
     var tileCache = {};        // packed → 64×64 canvas(纹理×形状掩码)
@@ -924,6 +1029,7 @@ window.ENEMY_REGISTRY = [
       syncSizeInputs();
       fit();
       render();
+      if (state.timeMode) renderTimeline();   // 时空模式:切结构同步时间线面板
     }
     function syncSizeInputs() {
       var s = sel();
@@ -1482,9 +1588,168 @@ window.ENEMY_REGISTRY = [
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
+    // ── 时空模式(.cyrt 时间线编辑)──────────────────────────────
+    function ensureTimeline() {
+      var s = sel();
+      if (!s) return null;
+      if (!s.timeline) s.timeline = { w0: null, events: [] };
+      if (!s.timeline.events) s.timeline.events = [];
+      return s.timeline;
+    }
+    function tlKindIsRect(kind) { return kind === 'collapse' || kind === 'open' || kind === 'gen'; }
+    function tlArgFields(kind) {   // [id, 名称, 默认值]
+      if (tlKindIsRect(kind)) return [['x', 'x', 0], ['y', 'y', 0], ['w', '宽', 4], ['h', '高', 4]];
+      if (kind === 'spawn_enemy') return [['cx', 'cx', 0], ['cy', 'cy', 0]];
+      return [['cx', 'cx', 0], ['cy', 'cy', 0], ['r', '半径', 3]];   // explode / wipe
+    }
+    function tlFlagFields(kind) {
+      var fs = [];
+      if (kind === 'gen') fs.push(['tex', '纹理', '1']);
+      if (kind === 'explode') { fs.push(['dmg', '伤害', '45']); fs.push(['kb', '击退', '260']); }
+      if (kind === 'wipe') fs.push(['dmg', '伤害', '60']);
+      if (kind === 'spawn_enemy') {
+        fs.push(['type', '类型', 'fly_bird']);
+        fs.push(['count', '数量', '1']);
+      }
+      return fs;
+    }
+    function renderTlForm() {
+      var kind = document.getElementById('tl-kind').value;
+      var args = document.getElementById('tl-args');
+      args.innerHTML = '';
+      tlArgFields(kind).forEach(function (f) {
+        var l = document.createElement('label');
+        l.style.fontSize = '12px';
+        l.textContent = f[1] + ' ';
+        var inp = document.createElement('input');
+        inp.type = 'number'; inp.id = 'tl-arg-' + f[0]; inp.value = f[2]; inp.style.width = '58px';
+        l.appendChild(inp);
+        args.appendChild(l);
+      });
+      var flags = document.getElementById('tl-flags');
+      flags.innerHTML = '';
+      tlFlagFields(kind).forEach(function (f) {
+        var l = document.createElement('label');
+        l.style.fontSize = '12px';
+        l.textContent = f[1] + ' ';
+        var inp = document.createElement('input');
+        inp.type = 'text'; inp.id = 'tl-flag-' + f[0]; inp.value = f[2];
+        inp.style.width = f[0] === 'type' ? '96px' : '58px';
+        l.appendChild(inp);
+        flags.appendChild(l);
+      });
+      var mk = function (id, txt, on) {
+        var l = document.createElement('label');
+        l.style.fontSize = '12px';
+        var c = document.createElement('input');
+        c.type = 'checkbox'; c.id = id; c.checked = on;
+        l.appendChild(c);
+        l.appendChild(document.createTextNode(' ' + txt));
+        flags.appendChild(l);
+      };
+      mk('tl-flag-rev', 'rev 可逆', true);
+      mk('tl-flag-re', 're 重播', true);
+    }
+    function tlSummary(ev) {
+      var a = tlKindIsRect(ev.kind)
+        ? (ev.args[0] + ',' + ev.args[1] + ' ' + ev.args[2] + '×' + ev.args[3])
+        : ('@' + ev.args[0] + ',' + ev.args[1] + (ev.args.length > 2 ? ' r' + ev.args[2] : ''));
+      var rev = (String(ev.flags.rev) === '0' || ev.flags.rev === false) ? '不可逆' : '可逆';
+      return 'T-' + ev.t + ' ' + ev.kind + ' ' + a + ' [' + rev + '] ' + (ev.label || '');
+    }
+    function renderTimeline() {
+      var box = document.getElementById('tl-events');
+      var s = sel();
+      if (!s) { box.innerHTML = '<p class="hint">先选中(或导入)一个结构</p>'; return; }
+      var tl = ensureTimeline();
+      var w0i = document.getElementById('tl-w0');
+      if (document.activeElement !== w0i) w0i.value = (tl.w0 == null || isNaN(tl.w0)) ? '' : tl.w0;
+      box.innerHTML = '';
+      if (!tl.events.length) { box.innerHTML = '<p class="hint">尚无事件</p>'; return; }
+      tl.events.slice().sort(function (a, b) { return b.t - a.t; }).forEach(function (ev) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0';
+        var span = document.createElement('span');
+        span.style.flex = '1';
+        span.textContent = tlSummary(ev);
+        var del = document.createElement('button');
+        del.textContent = '删';
+        del.addEventListener('click', function () {
+          var i = tl.events.indexOf(ev);
+          if (i >= 0) tl.events.splice(i, 1);
+          renderTimeline();
+        });
+        row.appendChild(span);
+        row.appendChild(del);
+        box.appendChild(row);
+      });
+    }
+    function tlReadForm() {
+      var kind = document.getElementById('tl-kind').value;
+      var t = parseFloat(document.getElementById('tl-t').value);
+      if (isNaN(t) || t < 0) { window.alert('T-秒 需为非负数字'); return null; }
+      var args = [];
+      var fields = tlArgFields(kind);
+      for (var i = 0; i < fields.length; i++) {
+        var v = parseInt(document.getElementById('tl-arg-' + fields[i][0]).value, 10);
+        if (isNaN(v) || v < 0) { window.alert(fields[i][1] + ' 需为非负整数'); return null; }
+        args.push(v);
+      }
+      var flags = {};
+      var ffs = tlFlagFields(kind);
+      for (var j = 0; j < ffs.length; j++) {
+        var el = document.getElementById('tl-flag-' + ffs[j][0]);
+        if (el && String(el.value).trim() !== '') flags[ffs[j][0]] = String(el.value).trim();
+      }
+      if (!document.getElementById('tl-flag-rev').checked) flags.rev = '0';
+      if (!document.getElementById('tl-flag-re').checked) flags.re = '0';
+      return { t: t, kind: kind, args: args, flags: flags,
+               label: document.getElementById('tl-label').value.trim() };
+    }
+    function tlFromSelection() {
+      if (!state.selection) { window.alert('先在画布上用「选框」工具框一片区域'); return; }
+      var rn = state.selection;   // 选区存的就是规格化 {x,y,w,h}
+      var kind = document.getElementById('tl-kind').value;
+      var setv = function (id, v) { var e = document.getElementById(id); if (e) e.value = v; };
+      if (tlKindIsRect(kind)) {
+        setv('tl-arg-x', rn.x); setv('tl-arg-y', rn.y);
+        setv('tl-arg-w', rn.w); setv('tl-arg-h', rn.h);
+      } else {
+        setv('tl-arg-cx', rn.x + Math.floor(rn.w / 2));
+        setv('tl-arg-cy', rn.y + Math.floor(rn.h / 2));
+        if (kind !== 'spawn_enemy') setv('tl-arg-r', Math.max(1, Math.round(Math.min(rn.w, rn.h) / 2)));
+      }
+    }
+    function exportTimeMap() {
+      var s = sel();
+      if (!s) { window.alert('无结构可导出'); return; }
+      var text;
+      try { text = Core.serializeTimeMap(s, ensureTimeline()); }
+      catch (err) { window.alert('导出失败：' + err.message); return; }
+      var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = s.name + '.cyrt';   // 放进 map/ 目录游戏即可读
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+    function setTimeMode(on) {
+      state.timeMode = on;
+      var b = document.getElementById('btn-time-mode');
+      b.textContent = '时空模式:' + (on ? '开' : '关');
+      b.classList.toggle('active', on);
+      document.getElementById('time-panel').hidden = !on;
+      document.getElementById('btn-time-export').hidden = !on;
+      if (on) { renderTlForm(); renderTimeline(); }
+    }
     function structureFromMap(p) {
       var name = (p.comments && p.comments[0]) ? p.comments[0] : 'structure';
-      return [{ name: name, grid: p.grid, players: Core.playersOf(p).slice(), enemies: p.enemies }];
+      var tl = (p.timeline && p.timeline.events && p.timeline.events.length)
+        ? { w0: p.timeline.w0, events: p.timeline.events.slice() } : null;
+      return [{ name: name, grid: p.grid, players: Core.playersOf(p).slice(), enemies: p.enemies, timeline: tl }];
     }
     function importLibrary() {
       var file = els.fileImport.files && els.fileImport.files[0];
@@ -1510,7 +1775,8 @@ window.ENEMY_REGISTRY = [
         var firstId = null;
         imported.forEach(function (st) {
           var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid,
-                    players: Core.playersOf(st).slice(), enemies: st.enemies || [] };
+                    players: Core.playersOf(st).slice(), enemies: st.enemies || [],
+                    timeline: st.timeline ? { w0: st.timeline.w0, events: (st.timeline.events || []).slice() } : null };
           state.library.push(s);
           if (firstId === null) firstId = s.id;
         });
@@ -1741,6 +2007,32 @@ window.ENEMY_REGISTRY = [
         renderCanvas();
       });
       els.btnStructureExport.addEventListener('click', exportStructure);
+      // 时空模式(.cyrt):模式开关 / 事件表单 / w0 / 选区反填 / 导出
+      document.getElementById('btn-time-mode').addEventListener('click', function () {
+        setTimeMode(!state.timeMode);
+      });
+      document.getElementById('btn-time-export').addEventListener('click', exportTimeMap);
+      document.getElementById('tl-kind').addEventListener('change', renderTlForm);
+      document.getElementById('tl-w0').addEventListener('change', function () {
+        var tl = ensureTimeline();
+        if (!tl) return;
+        var v = parseFloat(this.value);
+        tl.w0 = isNaN(v) ? null : v;
+      });
+      document.getElementById('tl-from-sel').addEventListener('click', tlFromSelection);
+      document.getElementById('tl-add').addEventListener('click', function () {
+        var tl = ensureTimeline();
+        if (!tl) { window.alert('先选中(或新建)一个结构'); return; }
+        var ev = tlReadForm();
+        if (!ev) return;
+        var w0 = (tl.w0 == null || isNaN(tl.w0)) ? 3600 : tl.w0;
+        if (ev.t >= w0) {
+          window.alert('注意:阈值 T-' + ev.t + ' 不小于起始钟 w0=' + w0 + ',运行时永远不会触发');
+        }
+        tl.events.push(ev);
+        renderTimeline();
+      });
+      renderTlForm();
     }
 
     var canBoot = typeof document !== 'undefined' && document && typeof document.getElementById === 'function';

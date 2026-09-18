@@ -76,7 +76,9 @@ var _demo_spawn := Vector2i(-1, -1)   # 演示世界出生格(revive_demo 复位
 func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
-var _timeworld: TimeWorld = null   # 时空地图时间线(v4 '# tl:' 事件;无则 null)
+var _timeworld: TimeWorld = null   # 时空地图时间线(v4 注释 / .cyrt 时空图;无则 null)
+var _tl_executing := false         # 正在执行时间线事件 → _on_tile_destroyed 不记玩家账
+var _tl_pending: Array = []        # 本帧玩家拆掉的格(改前值),帧末合并成一条玩家入史
 var _clock_label: Label = null
 var _clock_warn: Label = null
 var _clock_flash := 0.0
@@ -324,6 +326,14 @@ func _process(delta: float) -> void:
 		var pl := get_node_or_null("WorldViewport/Player") as Node2D
 		if pl != null and not pl.is_downed():
 			Smoke.apply_visibility(pl, get_tree().get_nodes_in_group("enemies"))
+	# 玩家拆砖入史(§12 决议 4):本帧拆掉的格合并成一条 player 事件(改前值在
+	# _on_tile_destroyed 里从瓦片层读回)。原地图文件永远只读——账本只在内存里。
+	if not _tl_pending.is_empty() and _timeworld != null and _timeworld.has_events():
+		var cells := _tl_pending
+		_tl_pending = []
+		_timeworld.record_player_op(
+			{"op": "destroy_cells", "cells": cells},
+			{"op": "restore_cells", "cells": cells}, "玩家破坏")
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
 		const MAX_REBUILD_PER_FRAME := 2
@@ -342,8 +352,7 @@ func _process(delta: float) -> void:
 ## 世界钟推进 + 执行到点事件 + 表盘 HUD 刷新
 func _tick_world(delta: float) -> void:
 	for ev in _timeworld.tick(delta):
-		var rect: Rect2i = ev["rect"]
-		_apply_region(rect, ev["action"] == "collapse")
+		_tl_execute(ev)
 		_clock_flash = 2.5
 		_clock_msg = str(ev.get("label", ev["action"]))
 		Sfx.play("explosion")
@@ -364,31 +373,205 @@ func _tick_world(delta: float) -> void:
 
 
 ## 区域瓦片状态改写(事件执行核心):网格/渲染(9 环面副本)/持久子格/分块重建一次完成。
-## collapse=变实心(封路);open=变空气(炸开)。复用 _dirty_chunks 分帧重建管线。
-func _apply_region(rect: Rect2i, make_solid: bool) -> void:
+## collapse=变实心(封路,默认纹理 1);open=变空气(炸开);gen 传 tex 指定纹理。
+## 返回实际变化的格表 [{cell, v(改前值)}]——供 gen/explode/wipe 回填精确逆操作。
+## 复用 _dirty_chunks 分帧重建管线。
+func _apply_region(rect: Rect2i, make_solid: bool, texture := 1) -> Array:
+	var changes: Array = []
 	if _grid_ref.is_empty() or wall_layer == null or _destructible_sub.is_empty():
-		return
+		return changes
 	var cols: int = _grid_ref[0].size()
 	var rows: int = _grid_ref.size()
-	var value: int = MazeGenerator.SOLID if make_solid else MazeGenerator.EMPTY
+	var value: int = MazeGenerator.pack(texture, 15) if make_solid else MazeGenerator.EMPTY
 	for y in range(rect.position.y, rect.end.y):
 		if y < 0 or y >= rows:
 			continue
 		for x in range(rect.position.x, rect.end.x):
 			if x < 0 or x >= cols:
 				continue
-			_grid_ref[y][x] = value
-			for ty in range(-1, 2):
-				for tx in range(-1, 2):
-					if make_solid:
-						wall_layer.set_cell(Vector2i(x + tx * cols, y + ty * rows), 0,
-								Vector2i(MazeGenerator.shape_of(value), MazeGenerator.texture_of(value) - 1))
-					else:
-						wall_layer.set_cell(Vector2i(x + tx * cols, y + ty * rows), -1)
-			for qy in range(2):
-				for qx in range(2):
-					_destructible_sub[y * 2 + qy][x * 2 + qx] = value
-			_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(x, y))] = true
+			if _grid_ref[y][x] != value:
+				changes.append({"cell": Vector2i(x, y), "v": _grid_ref[y][x]})
+			_write_cell(x, y, value)
+	return changes
+
+
+## 单格四层写穿:逻辑网格 / wall_layer 9 环面副本 / 持久子格 2×2 / 标记分块重建。
+## _apply_region 与时间线事件/逆操作执行共用的最小写单元。
+func _write_cell(x: int, y: int, value: int) -> void:
+	var cols: int = _grid_ref[0].size()
+	var rows: int = _grid_ref.size()
+	_grid_ref[y][x] = value
+	for ty in range(-1, 2):
+		for tx in range(-1, 2):
+			if value != MazeGenerator.EMPTY:
+				wall_layer.set_cell(Vector2i(x + tx * cols, y + ty * rows), 0,
+						Vector2i(MazeGenerator.shape_of(value), MazeGenerator.texture_of(value) - 1))
+			else:
+				wall_layer.set_cell(Vector2i(x + tx * cols, y + ty * rows), -1)
+	for qy in range(2):
+		for qx in range(2):
+			_destructible_sub[y * 2 + qy][x * 2 + qx] = value
+	_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(x, y))] = true
+
+
+# ── 时间线事件执行(.cyrt / v4 注释的到点事件)─────────────────────
+## 按 kind 分发;炸/生成类执行完把**捕获的实际格变化**回填成精确逆操作(set_inverse)。
+func _tl_execute(ev: Dictionary) -> void:
+	var fwd: Dictionary = ev.get("fwd", {})
+	match str(ev.get("action", "")):
+		"collapse", "open":
+			_apply_region(ev["rect"], ev["action"] == "collapse")
+		"gen":
+			var changes := _apply_region(ev["rect"], true, int(fwd.get("tex", 1)))
+			if bool(ev.get("rev", true)) and not changes.is_empty():
+				_timeworld.set_inverse(int(ev["index"]), {"op": "restore_cells", "cells": changes})
+		"explode":
+			_tl_explode(fwd, false, int(ev["index"]), bool(ev.get("rev", true)))
+		"wipe":
+			_tl_explode(fwd, true, int(ev["index"]), bool(ev.get("rev", true)))
+		"spawn_enemy":
+			_tl_spawn(fwd, int(ev["index"]))
+
+
+## 双爆炸:combat=false=战斗规则(Explosion.apply_aoe:LOS 掩护/距离衰减/瓦片按
+## tile_defs 衰减扣血/永久墙免疫);combat=true=强制清除(范围内一切砖无条件变空气,
+## 含永久墙;实体吃固定伤害+径向击退,无 LOS)。执行后 diff 出实际变化回填逆操作。
+func _tl_explode(fwd: Dictionary, wipe_mode: bool, id: int, rev: bool) -> void:
+	if _grid_ref.is_empty():
+		return
+	var ts: float = GameParameters.TILE_SIZE
+	var center: Vector2i = fwd["center"]
+	var radius: int = int(fwd["radius"])
+	var center_px := Vector2((center.x + 0.5) * ts, (center.y + 0.5) * ts)
+	var radius_px := float(radius) * ts
+	_tl_visual(center_px, radius_px)
+	# 改前快照(外接矩形内;事件通常编排远离接缝,不处理环面回绕)
+	var before := {}
+	var cols: int = _grid_ref[0].size()
+	var rows: int = _grid_ref.size()
+	for y in range(maxi(center.y - radius, 0), mini(center.y + radius + 1, rows)):
+		for x in range(maxi(center.x - radius, 0), mini(center.x + radius + 1, cols)):
+			before[Vector2i(x, y)] = _grid_ref[y][x]
+	_tl_executing = true
+	if wipe_mode:
+		for cell in before:
+			if _grid_ref[cell.y][cell.x] != MazeGenerator.EMPTY:
+				_write_cell(cell.x, cell.y, MazeGenerator.EMPTY)
+		var dmg := int(fwd.get("dmg", TimeParams.EVT_WIPE_DMG))
+		var kb := float(fwd.get("kb", TimeParams.EVT_WIPE_KB))
+		_blast_entities(center_px, radius_px, dmg, kb)
+	else:
+		Explosion.apply_aoe(center_px, radius_px,
+				int(fwd.get("dmg", TimeParams.EVT_EXPLODE_DMG)),
+				float(fwd.get("kb", TimeParams.EVT_EXPLODE_KB)))
+	_tl_executing = false
+	if rev:
+		var cells := []
+		for cell in before:
+			if _grid_ref[cell.y][cell.x] != before[cell]:
+				cells.append({"cell": cell, "v": before[cell]})
+		if not cells.is_empty():
+			_timeworld.set_inverse(id, {"op": "restore_cells", "cells": cells})
+
+
+## 强制清除的实体结算:固定伤害+径向击退,无 LOS/无衰减(wipe 专用)。
+func _blast_entities(center_px: Vector2, radius_px: float, dmg: int, kb: float) -> void:
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if not (e is Node2D) or not e.has_method("hurt"):
+			continue
+		var d := center_px.distance_to((e as Node2D).global_position)
+		if d <= radius_px:
+			var dir := ((e as Node2D).global_position - center_px).normalized()
+			if dir.is_zero_approx():
+				dir = Vector2.UP
+			e.hurt(dmg, dir, kb, true)
+	for p in get_tree().get_nodes_in_group("player"):
+		if not (p is Node2D) or not p.has_method("take_hit"):
+			continue
+		var pp := p as Node2D
+		if pp.has_method("is_downed") and pp.is_downed():
+			continue
+		if center_px.distance_to(pp.global_position) <= radius_px:
+			pp.take_hit(center_px, dmg, true, kb)
+
+
+## 实体生成:注册表 editor/enemies.json;以 center 为中心在附近 EMPTY 格落点
+## (简单螺旋外扩找空位,不校验地板——飞行怪无碍,跳跃怪 spawn 后自会落地)。
+## 每个实例挂 meta tl_spawn=事件id → 逆操作 despawn_spawn 只清这批。
+func _tl_spawn(fwd: Dictionary, id: int) -> void:
+	EnemySpawner.load_types()
+	var etype := str(fwd.get("etype", "fly_bird"))
+	if not EnemySpawner.TYPES.has(etype):
+		push_warning("TimeLine spawn_enemy: 注册表无 '%s',跳过" % etype)
+		return
+	var scene: PackedScene = load(str(EnemySpawner.TYPES[etype]))
+	if scene == null:
+		return
+	var center: Vector2i = fwd["center"]
+	var count := int(fwd.get("count", 1))
+	var ts: float = GameParameters.TILE_SIZE
+	var placed := 0
+	var ring := 0
+	while placed < count and ring <= 4:
+		for dy in range(-ring, ring + 1):
+			for dx in range(-ring, ring + 1):
+				if placed >= count or (dy != ring and dx != ring and dy != -ring and dx != -ring):
+					continue   # 只走环边,避免同环重复
+				var x: int = center.x + dx
+				var y: int = center.y + dy
+				if y < 0 or y >= _grid_ref.size() or x < 0 or x >= _grid_ref[0].size():
+					continue
+				if _grid_ref[y][x] != MazeGenerator.EMPTY:
+					continue
+				var e := scene.instantiate()
+				$WorldViewport.add_child(e)
+				(e as Node2D).global_position = Vector2((x + 0.5) * ts, (y + 0.5) * ts)
+				e.set_meta("tl_spawn", id)
+				placed += 1
+		ring += 1
+
+
+## 爆炸特效:按半径放大(占位圆;正式美术接手后换事件专用特效)。
+func _tl_visual(center_px: Vector2, radius_px: float) -> void:
+	var fx := (load("res://Scenes/Effects/explosion.tscn") as PackedScene).instantiate()
+	$WorldViewport.add_child(fx)
+	fx.global_position = center_px
+	fx.scale = Vector2.ONE * clampf(radius_px / 96.0, 1.0, 5.0)
+
+
+## 逆操作执行器(回拨/探针共用):按 TimeWorld.rewind_to 给出的 op 逐条改世界。
+func apply_tl_ops(ops: Array) -> void:
+	for op in ops:
+		_apply_tl_op(op)
+
+
+func _apply_tl_op(op: Dictionary) -> void:
+	if _grid_ref.is_empty():
+		return
+	match str(op.get("op", "")):
+		"open":
+			_apply_region(op["rect"], false)
+		"collapse":
+			_apply_region(op["rect"], true)
+		"restore_cells":
+			for c in op.get("cells", []):
+				var cell: Vector2i = c["cell"]
+				if cell.y >= 0 and cell.y < _grid_ref.size() and cell.x >= 0 and cell.x < _grid_ref[0].size():
+					_write_cell(cell.x, cell.y, int(c["v"]))
+		"restore_pristine":
+			if _pristine_grid.is_empty():
+				return
+			var rect: Rect2i = op["rect"]
+			for y in range(maxi(rect.position.y, 0), mini(rect.end.y, _pristine_grid.size())):
+				for x in range(maxi(rect.position.x, 0), mini(rect.end.x, _pristine_grid[0].size())):
+					_write_cell(x, y, _pristine_grid[y][x])
+		"despawn_spawn":
+			var sid := int(op.get("spawn_id", -1))
+			for e in get_tree().get_nodes_in_group("enemies"):
+				if is_instance_valid(e) and e.has_meta("tl_spawn") and int(e.get_meta("tl_spawn")) == sid:
+					e.queue_free()   # 只清仍存活者;已死不复活也不清尸(不撤战果)
+		"noop":
+			pass
 
 
 func _build_clock_hud() -> void:
@@ -422,6 +605,14 @@ func _build_clock_hud() -> void:
 
 
 func _on_tile_destroyed(cell: Vector2i) -> void:
+	# 时间线事件执行期间的破坏属于 scheduled 事件本体(逆操作由事件层管),
+	# 不入玩家账;玩家自己的枪/榴弹炸的砖才入史。改前值从瓦片层中心副本读回
+	# (回调入口时贴图尚未被清,atlas.y=纹理-1、atlas.x=形状 → 还原 packed 值)。
+	if _timeworld != null and _timeworld.has_events() and not _tl_executing \
+			and wall_layer != null and not _grid_ref.is_empty():
+		var atlas: Vector2i = wall_layer.get_cell(cell)
+		if atlas.x >= 0:
+			_tl_pending.append({"cell": cell, "v": (atlas.y + 1) * 16 + atlas.x})
 	if wall_layer != null and not _grid_ref.is_empty():
 		var cols: int = _grid_ref[0].size()
 		var rows: int = _grid_ref.size()

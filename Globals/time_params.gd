@@ -52,6 +52,12 @@ const KILL_VALUES_MIN: Dictionary = {
 const KILL_REPEAT_DECAY: float = 0.85
 const KILL_REPEAT_WINDOW: float = 20.0
 
+# ── 时间线事件默认值(.cyrt 事件行可用 k=v 标志逐条覆盖)────────────
+const EVT_EXPLODE_DMG: int = 45       # explode(战斗规则爆炸):满伤(随距离二次衰减)
+const EVT_EXPLODE_KB: float = 260.0   # explode:击退力
+const EVT_WIPE_DMG: int = 60          # wipe(强制清除):实体固定伤害(不衰减/无 LOS)
+const EVT_WIPE_KB: float = 320.0      # wipe:固定击退
+
 # ── 消费与惩罚(§4.1)────────────────────────────────────────
 const DEATH_PENALTY_MIN: float = 5.0                      # 死亡:W 向毁灭推进 5 min
 const SEAL_DENOMINATIONS_MIN: Array[float] = [5.0, 10.0, 25.0]   # 封存块面额(道具卡)

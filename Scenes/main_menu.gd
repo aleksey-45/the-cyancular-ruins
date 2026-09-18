@@ -311,7 +311,7 @@ func _build_sp_panel() -> PanelContainer:
 	vb.add_child(_pixel_label("地图", 26))
 	var map_opt := OptionButton.new()
 	map_opt.add_item("随机(默认)")
-	var maps: Array[String] = RoomManager.list_maps()
+	var maps: Array[String] = RoomManager.list_maps(true)   # 单人下拉含时空图 .cyrt(多人建房仍只列 .cyrm)
 	var sel := 0
 	for i in maps.size():
 		map_opt.add_item(maps[i])

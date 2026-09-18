@@ -10,13 +10,15 @@ extends Node
 const PVP_MAP := "res://map/factory1v1.cyrm"
 
 ## 地图清单(res://map/*.cyrm 文件名升序;供全模式选图 UI)
-static func list_maps() -> Array[String]:
+## 地图清单:默认只列 .cyrm(多人建房沿用);include_time=true 追加时空图 .cyrt
+## (单人开局下拉用——普通局随机选图不会抽到时空图,须显式选择才会加载时间层)。
+static func list_maps(include_time := false) -> Array[String]:
 	var out: Array[String] = []
 	var dir := DirAccess.open("res://map")
 	if dir == null:
 		return out
 	for f in dir.get_files():
-		if f.ends_with(".cyrm"):
+		if f.ends_with(".cyrm") or (include_time and f.ends_with(".cyrt")):
 			out.append(f)
 	out.sort()
 	return out
