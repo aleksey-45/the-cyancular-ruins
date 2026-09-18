@@ -304,6 +304,14 @@ func _on_match_sync(payload: Dictionary) -> void:
 	#     代价是客户端一次墙层重绘 —— 与每个回合边界本来就要做的那次活一模一样。
 	if resync and _level0 != null and _level0.has_method("reset_destructibles"):
 		_level0.reset_destructibles()
+	elif resync:
+		# ★ 该还原而没还原 —— 留一条告警。`_level0` 是**由子类赋值**的共享状态字段(两个子类各自
+		#   `_ready` 里写),漏赋值 / 赋错类型时上面那道闸**静默不成立**,还原就这么不发生,症状
+		#   (幻影空洞拖到下一个回合边界)与"根本没写这段"逐字相同 —— 而"静默"正是这整批在消灭的形态。
+		#   ★ 只告警,不改行为(告警不碰任何状态);闸门本身不动。
+		var why := ("_level0 为 null(子类 _ready 漏赋值?)" if _level0 == null
+				else "_level0 没有 reset_destructibles()(类型不对?)")
+		push_warning("match_sync(补态): 世界未还原 —— %s;幻影空洞不会填回" % why)
 	# 掉线窗口内被拆的墙(以及"换局还原"之后本局重新拆的那些):重连后补回。
 	# (进场那次该字段为空 —— 刚建的世界与基线一致。)
 	# ★ 复用 `_on_remote_tile_destroyed` 的静默形态,不另写一套清瓦片/清碰撞的逻辑。
