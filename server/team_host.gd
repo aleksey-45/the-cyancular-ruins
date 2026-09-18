@@ -212,3 +212,130 @@ func _enemy_team_of(role: int) -> int:
 	if t == 0:
 		return 0
 	return 2 if t == 1 else 1
+
+
+# ── 回合机(团队版:计分键 = **队号**,不是 role)──
+# ★ 为什么整段覆写而不是改基类:`MatchRound._match_round_tick` 的计分键、胜负判据、复位对象
+#   三方都绑在 role 上,逐处插分支会让 1v1 那条路长出团队语义(1v1 的探针照样绿,但已经变了)。
+func _match_round_tick(delta: float) -> void:
+	for role in players:
+		var p: Node2D = players[role]
+		if not p.is_downed():
+			continue
+		# 复活调度独立于计分闩锁(与基类同款:旧实现把它塞在闩锁内,曾导致复活永不安排)
+		if _round_state == RoundState.PLAYING and not _respawn_pending.has(role):
+			_respawn_pending[role] = RESPAWN_DELAY
+		if _down_counted.get(role, false):
+			continue
+		_down_counted[role] = true
+		# 击杀定义(继承 1v1 的"不分死因"):任一玩家倒地 → **对方队** +1。
+		# 队友误炸也照此(用户裁定):乱扔雷 = 给对面送分,惩罚是自带的,不必另立规则。
+		var scorer := _enemy_team_of(int(role))
+		if scorer != 0:
+			_scores[scorer] = int(_scores.get(scorer, 0)) + 1
+			# kill_event 的载荷仍是 **role 粒度**(射手 = 归因得到,0 = 无归因),
+			# 客户端用 match_sync 的队伍表映射到队 —— 协议不为团队改字段(设计 §6)。
+			# ★ 归因不到(killer = 0)时**照样广播**:计分归属与"有没有击杀者"是两件事,
+			#   给 0 加守卫会让"队友误炸/溺水导致的倒地"在客户端完全无声。
+			_broadcast_kill(_attributed_killer(p), int(role))
+			_broadcast_round_state()
+			_reset_killer_only(p, int(role))
+	match _round_state:
+		RoundState.COUNTDOWN:
+			_round_timer -= delta
+			if _round_timer <= 0.0:
+				_round_state = RoundState.PLAYING
+				if _round_full_heal:
+					for heal_role in players:
+						(players[heal_role] as Node).apply_authoritative_state(
+								(players[heal_role] as Node).max_hp,
+								(players[heal_role] as Node).max_waterproof, false)
+				_broadcast_round_state()
+		RoundState.PLAYING:
+			_handle_respawns(delta)
+			for t in [1, 2]:
+				if int(_scores.get(t, 0)) >= TEAM_KILLS_TO_WIN:
+					_round_over(t)
+					break
+		RoundState.ROUND_OVER:
+			_round_timer -= delta
+			if _round_timer <= 0.0:
+				_start_next_round()
+		RoundState.MATCH_OVER:
+			pass
+
+
+func _round_over(winner_team: int) -> void:
+	_last_round_winner = winner_team
+	_rounds_won[winner_team] = int(_rounds_won.get(winner_team, 0)) + 1
+	_round_state = RoundState.ROUND_OVER
+	_round_timer = ROUND_OVER_TIME
+	_broadcast_round_state()
+
+
+# 平局不可能(三局两胜,每局必有胜者),但仍按"局胜高者"取,返回**队号**。
+func _match_winner() -> int:
+	return 1 if int(_rounds_won.get(1, 0)) >= int(_rounds_won.get(2, 0)) else 2
+
+
+# round_state:`scores` / `rounds_won` 的**键是队号**;`winner` / `match_winner` 也是队号。
+# ★ 队伍表**不在这里**下发:只走 `match_sync`(进场/重连各拉一次)。两条投递路径是自检 B2 那类
+#   事故的形状,别为了"顺手"加第二条。
+func _broadcast_round_state() -> void:
+	var data := {
+		"state": _round_state,
+		"round": _round_num,
+		"scores": _scores,
+		"rounds_won": _rounds_won,
+		"timer": _round_timer,
+	}
+	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
+		data["winner"] = _last_round_winner
+	if _round_state == RoundState.MATCH_OVER:
+		data["match_winner"] = _match_winner()
+	_rpc_all("round_state", [data])
+
+
+# ── 击杀归因(自带一份,不从基类上提)──
+# `kill_event` 要带"是谁杀的"(归因不到就带 0),Task 6 的"只复位击杀者"也读它,故在这里落。
+# ★ 为什么自带而不是把 `RoyaleHost._attributed_killer` 上提到基类:基类的归属由
+#   `tests/kh_l5_probe.gd` 的"新接口归属(基类不得含子类方法)"反向断言守着,为省 12 行去动
+#   那条探针不划算;两份都不足 15 行,读的还是同一个 meta(单一来源仍是 CombatFeedback)。
+func _attributed_killer(victim: Node2D) -> int:
+	if not victim.has_meta("last_damager"):
+		return 0
+	var shooter: Node = victim.get_meta("last_damager")
+	if shooter == null or not is_instance_valid(shooter) or shooter == victim:
+		return 0
+	if victim.has_meta("last_damager_time"):
+		if Time.get_ticks_msec() - int(victim.get_meta("last_damager_time")) > ATTRIB_WINDOW:
+			return 0
+	for role in players:
+		if players[role] == shooter:
+			return int(role)
+	return 0
+
+
+# 击杀后复位:**只把击杀者本人**送回本方出生点(保留血量,不治疗),队友不动。
+# (1v1 是"另一方即活方回出生点";三人队里"活方"没有唯一解 —— 用户裁定只动击杀者。)
+# ★ 三个"不复位"的档,一个都不能省:
+#   · 无归因(溺水/自伤/K 自杀)→ killer 0;
+#   · 队友互炸(归因指向同队的人)→ 得分照样给对方队,但**不把队友送回出生点**;
+#   · 击杀者自己也倒了(同归于尽)→ 他去走自己的复活流程。
+# ★ 提前落地说明:本函数按 Task 6 的语义**整段落在这里**(Task 5 的 `_match_round_tick`
+#   要调它,留桩会在运行期报未定义函数);Task 6 剩下的只是它那三条专属断言的探针。
+func _reset_killer_only(victim: Node2D, victim_role: int) -> void:
+	var killer_role := _attributed_killer(victim)
+	if killer_role == 0:
+		return
+	if same_team(killer_role, victim_role):
+		return
+	var killer: Node2D = players.get(killer_role)
+	if killer == null or not is_instance_valid(killer) or killer.is_downed():
+		return
+	var spawn: Vector2i = _round_spawns.get(killer_role, Vector2i(-1, -1))
+	var ts := GameParameters.TILE_SIZE
+	killer.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
+	killer.velocity = Vector2.ZERO
+	if killer.has_method("cancel_jump_state"):
+		killer.cancel_jump_state()
