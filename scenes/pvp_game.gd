@@ -12,7 +12,8 @@ extends PvpMatchClient
 var _last_snap_tick := 0
 
 var _remote_replica: Node2D = null
-var _level0: Node = null   # 世界(Level0):换局复位砖用 reset_destructibles
+# ★ `_level0`(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明):换局复位砖
+#   (`_on_round_state` 的 COUNTDOWN 分支)与重连补态复位砖(基类 `_on_match_sync`)共用同一个字段。
 var _hud: PvpHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)
 

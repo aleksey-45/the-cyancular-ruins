@@ -6,7 +6,8 @@ extends PvpMatchClient
 
 var _last_snap_tick := 0
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
-var _level0: Node = null
+# ★ `_level0`(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明;重连补态那一路
+#   要在基类 `_on_match_sync` 里用它还原可破坏砖)。
 var _hud: RoyaleHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
 

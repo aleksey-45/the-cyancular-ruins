@@ -24,6 +24,7 @@ const LaserVisual := preload("res://core/present/laser_visual.gd")   # 远端光
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
 var _local: Node2D = null
 var _world: Node = null   # WorldViewport(视觉子弹/TileHitFx 副本挂这里)
+var _level0: Node = null  # 世界(Level0):补态那一路要还原可破坏砖(见 _on_match_sync)
 var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md
@@ -284,7 +285,27 @@ func _on_match_sync(payload: Dictionary) -> void:
 	for e in gw:
 		if e is Dictionary:
 			_spawn_pickup_node(e)
-	# 掉线窗口内被拆的墙:重连后补回(进场那次该字段为空 —— 刚建的世界与基线一致)。
+	# ★★ 补态那一路:**先把本地世界还原成建局基线,再应用 `destroyed`**。顺序不可换。
+	#   为什么必须还原:`destroyed` 表达的是「与建局基线**不同**的格」。客户端在宽限期内
+	#   **错过一次换局**时,服务器那次 `_reset_world_and_clear_dynamics()` 已经把可破坏砖全都
+	#   还原成了基线 —— 那些格于是**等于基线**、永不进载荷,而客户端本地还留着上一局拆出来的
+	#   破洞(**幻影空洞**:服务器上那里是实心墙,客户端却少一堵/多一个能钻的缝)。
+	#   客户端唯一的还原路径是新回合 COUNTDOWN 里的 `Level0.reset_destructibles()`
+	#   (见 `pvp_game._on_round_state`),而重连回来时那一局可能**已经打到 PLAYING** →
+	#   那条分支不触发 → 空洞要拖到下一个回合边界才自愈。
+	#   ★ 为什么「先还原 + 再应用」就够了:两者合起来**恰好等于服务器的 grid** ——
+	#     还原给出基线、`destroyed` 给出与基线的那份差异,而服务器那次换局正是"回基线 +
+	#     本局重新拆"(换局后新拆的格仍在 `destroyed` 里)。**不上线任何新字节**。
+	#   ★ 顺序反过来(先应用、后还原)会把刚补好的洞**又填回去**,症状与"根本没还原"逐字相同。
+	#   ★ 只在补态这一路做(闸门就是上面那个读一次即清的 `resync`):进场那次世界刚从 pristine
+	#     地图建出来,还原是多余动作(同款"进场那次本就是 no-op"的纪律见 `_clear_ground_weapons`)。
+	#   ★ 非 COUNTDOWN 时刻调用安全:`reset_destructibles()` 只重铺瓦片层 + 整层重建碰撞,
+	#     不碰玩家/子弹/地面武器(`WorldBuilder.build_sim` 只 free 自己那三个具名节点),
+	#     代价是客户端一次墙层重绘 —— 与每个回合边界本来就要做的那次活一模一样。
+	if resync and _level0 != null and _level0.has_method("reset_destructibles"):
+		_level0.reset_destructibles()
+	# 掉线窗口内被拆的墙(以及"换局还原"之后本局重新拆的那些):重连后补回。
+	# (进场那次该字段为空 —— 刚建的世界与基线一致。)
 	# ★ 复用 `_on_remote_tile_destroyed` 的静默形态,不另写一套清瓦片/清碰撞的逻辑。
 	var destroyed: Array = payload.get("destroyed", [])
 	for c in destroyed:
