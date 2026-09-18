@@ -14,6 +14,13 @@ extends Node
 # 修法 = 补态那一路**先** `reset_destructibles()` **再**应用 `destroyed`(因为 destroyed 相对基线,
 # 两者合起来恰好等于服务器的 grid,不上线任何新字节)。
 #
+# ★ 判据覆盖**三维**,缺一维就有一种退化实现能全绿:
+#   · `MazeGenerator.current_grid`(逻辑)
+#   · 墙体瓦片层(用户**看得见**的那一维)
+#   · `Level0._destructible_sub` 子格(物理摸得着的那一维)
+#   只断 grid → `reset_destructibles()` 哪天退化成"只改 grid、不重铺瓦片也不重建碰撞"照样全绿,
+#   而画面上仍是个洞、物理上仍能穿过去(客户端以为修好了、用户看见的没修)。
+#
 # ═══ 为什么不是真链路断言,也不是源码级断言 ═══
 # · 真链路要造出「换局正好落在宽限期内」:1v1 一局得先到 5 杀才结束,现成探针里没有便宜手段,
 #   而"不许为测试新造产品开关"是硬约束 → 真链路不可得(见报告)。
@@ -84,6 +91,11 @@ func _run() -> void:
 			if v == 0:
 				continue
 			if TileDefs.explosion_destroyable(MazeGenerator.texture_of(v)):
+				# ★ 额外要求该格在**基线**里就有碰撞子格(形状非 0 的实体砖):③ 里要断言
+				#   "还原之后子格回来了",而形状 0 的格在基线里本来就是 0 → 那条断言会**恒假**
+				#   (与"还原没生效"长得一样)。要的是"能被清掉、也该被还原"的格。
+				if _sub_at(Vector2i(x, y)) == 0:
+					continue
 				picked.append(Vector2i(x, y))
 				if picked.size() >= 2:
 					break
@@ -108,6 +120,11 @@ func _run() -> void:
 	_client._on_remote_tile_destroyed(_b, true)
 	_check(_grid_at(_a) == 0 and _grid_at(_b) == 0,
 			"前置:本地这两格都已拆掉(A=%d,B=%d)" % [_grid_at(_a), _grid_at(_b)])
+	# ★ 非空转前置(瓦片层/碰撞维度):A 的**瓦片**与**碰撞子格**也真的被清掉了 —— 否则 ③ 里
+	#   那条"还原之后确实重铺回来了"与"这一格从来没被动过"长得一模一样,退化实现照样能绿。
+	_check(_tile_source_at(_a) == -1 and _sub_at(_a) == 0,
+			"前置:A 的瓦片(cell_source_id=%d)与碰撞子格(%d)都已清掉" %
+			[_tile_source_at(_a), _sub_at(_a)])
 
 	# ── ③ 补态那一路:先还原基线、再应用载荷(A **不在**载荷里 = 上一局拆的、服务器已还原)──
 	_client._resync_pull_pending = true
@@ -118,6 +135,15 @@ func _run() -> void:
 	_check(_grid_at(_b) == 0,
 			"★ 载荷里的 B (%s) 仍是被拆的(实得 %d)—— 顺序写反(先应用、后还原)会把它一并填回去" %
 			[str(_b), _grid_at(_b)])
+	# ★★ 同一条"还原真的发生了"的判据,**换到用户看得见/物理摸得着的那两维**上再过一遍:
+	#   上面两条只读 `MazeGenerator.current_grid` —— 若 `reset_destructibles()` 哪天退化成
+	#   "只改 grid、不重铺瓦片也不重建碰撞",grid 那两条**照样全绿**,而客户端画面上仍是个洞
+	#   (瓦片层)、物理上仍能穿过去(碰撞层)。也就是"客户端以为修好了、用户看见的没修"。
+	#   这里同时钉两维:`_on_tile_destroyed` 清的是 9 份环面副本的瓦片 + 该格 2×2 子格,
+	#   而 `reset_destructibles()` 重铺瓦片(`_paint_maze`)+ 整层重建碰撞(`build_sim`)。
+	_check(_tile_source_at(_a) != -1 and _sub_at(_a) != 0,
+			"★ A 的瓦片(cell_source_id=%d)与碰撞子格(%d)真的重铺回来了(前置已证还原前这两样是空的)" %
+			[_tile_source_at(_a), _sub_at(_a)])
 
 	# ── ④ 进场那一路**不许**还原(闸门必须是那个读一次即清的 `resync`)──
 	# 反过来:若有人把还原写成无条件的,这里红。
@@ -138,6 +164,30 @@ func _grid_at(cell: Vector2i) -> int:
 	if cell.x < 0 or cell.x >= row.size():
 		return -1
 	return int(row[cell.x])
+
+
+# 墙体瓦片层里该格的纹理源 id(-1 = 该格没有瓦片)。铺的是 9 份环面副本,中心那份就是原坐标。
+# ★ 读的是**渲染**那一维:`grid` 说"这格是墙"不等于**画出来了** —— `_paint_maze` 才是。
+func _tile_source_at(cell: Vector2i) -> int:
+	var wl: TileMapLayer = Level0.wall_layer
+	if wl == null:
+		return -1
+	return wl.get_cell_source_id(cell)
+
+
+# 持久可破坏层(32px 子格,每 64px 格 → 2×2)里该格左上子格的值(0 = 该子格没有碰撞)。
+# ★ 读的是**物理**那一维:`_on_tile_destroyed` 把这 4 格清零,`reset_destructibles` 靠
+#   `WorldBuilder.build_sim` 整层重建 —— 只改 grid 的退化实现不会让这里恢复。
+func _sub_at(cell: Vector2i) -> int:
+	var sub: Array[Array] = Level0._destructible_sub
+	var sy := cell.y * 2
+	var sx := cell.x * 2
+	if sy < 0 or sy >= sub.size():
+		return -1
+	var row: Array = sub[sy]
+	if sx < 0 or sx >= row.size():
+		return -1
+	return int(row[sx])
 
 
 func _finish() -> void:
