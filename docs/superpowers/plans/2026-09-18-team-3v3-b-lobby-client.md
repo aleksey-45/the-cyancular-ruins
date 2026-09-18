@@ -263,6 +263,7 @@ static func team_ready(by_team: Dictionary, size: int = TEAM_SIZE) -> bool:
 # 该队还能不能再进人
 static func team_can_join(by_team: Dictionary, team: int, size: int = TEAM_SIZE) -> bool:
 	return (by_team.get(team, []) as Array).size() < size
+```
 
 - [ ] **Step 4: 加 handler 与状态广播（照 `royale_*` 那一套逐条写）**
 
