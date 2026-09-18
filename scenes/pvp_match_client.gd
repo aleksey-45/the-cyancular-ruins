@@ -248,6 +248,9 @@ func _apply_peer_hues(_hues: Dictionary) -> void:
 
 
 func _on_match_sync(payload: Dictionary) -> void:
+	# 本应答是**进场建态**还是**重连补态**?(见 `_resync_pull_pending`;读一次即清)
+	var resync := _resync_pull_pending
+	_resync_pull_pending = false
 	var names: Dictionary = payload.get("names", {})
 	if not names.is_empty():
 		_apply_peer_names(names)
@@ -257,11 +260,18 @@ func _on_match_sync(payload: Dictionary) -> void:
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():
 		_apply_match_options(opts)
+	# 出生点校正**只对进场那次做**:那时 `spawns[role]` 与 `PvpSession.spawn` 确实同源(都由
+	# 服务器同一次摆位产生),不一致就是 bug —— 留痕 + 以 sync 为准。
+	# ★ 重连补态那次**必然**不一致,而那不是 bug:1v1 每局换边(`match_round._start_next_round`
+	#   翻 `_side_swap` → `role_spawns()` 在 player/player2 之间对调),而 `PvpSession.spawn` 只在
+	#   进场写一次(`lobby_page` 配对时),此后无人刷新。按它硬拉 = 把玩家瞬移走,而服务器那具
+	#   身体从掉线起就没动过 → C2 下一帧又把人拉回来,顺带刷一条假告警(告警的前提在这里不成立)
+	#   淹掉探针日志。位置本来就归 C2 权威(服务器瞬移正是它要收敛的外部事件),故这条路
+	#   **既不校正、也不告警、也不回写 `PvpSession.spawn`**(回写只会让下一次校正更歪)。
 	var sp: Dictionary = payload.get("spawns", {})
-	if sp.has(PvpSession.role):
+	if not resync and sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]
 		if want != PvpSession.spawn:
-			# 不一致就是 bug(两者同源),别静默 —— 留痕后以 sync 为准
 			push_warning("match_sync: 出生点与 match_start 不一致(%s vs %s),以 sync 为准" % [
 					str(PvpSession.spawn), str(want)])
 			PvpSession.spawn = want
@@ -436,6 +446,11 @@ var _reclaim_sent := false   # ★ **本条连接上**是否已发过 reclaim(�
 var _pending_disconnect := false   # 断线时菜单开着 → 记账,关菜单再来(见 _recheck_disconnect)
 var _attempt_started_ms := 0   # 当前这次连接尝试的起飞时刻;**0 = 没有尝试在飞**
 var _retry_timer: SceneTreeTimer = null   # 单一定时器(判据见 _schedule_reconnect_retry)
+# ★ 下一条 `match_sync` 应答属于**重连补态**(而非进场建态)。两口共用同一条信号(重连不重建
+#   场景 → `pvp_game`/`royale_game._ready` 里那个订阅还在),而 `_on_match_sync` 里的出生点校正
+#   对两种口径的答案**相反**(见那一支的注释),故必须让应答自己知道是哪一次拉的。
+#   取用点:`_on_match_sync` 首行(读一次、当场清掉);置位点:`_on_resumed` 发送前那一行。
+var _resync_pull_pending := false
 
 
 # 两个子类各自 `_ready` 里调一次(与 `_subscribe_ground_weapons()` 并列)。
@@ -470,9 +485,11 @@ func _recheck_disconnect() -> void:
 		_begin_reconnect()
 
 
-# 局内自动重连:不切场景、不重建世界 —— 本地世界原样保留,只把连接接回去。
-# ★ 这条路径下破坏态/地面武器/副本位置全都还在原地,所以**不需要** match_sync 的
-#   `destroyed` 那一套(那是路径乙"回大厅后回局"才需要的,见 spec §3.5)。
+# 局内自动重连:不切场景、不重建世界 —— 场景与节点原样保留,只把连接接回去。
+# ★★ "不重建场景"**不等于**"世界没变":掉线那 30 秒里服务器照跑 —— 对面把墙拆了、地上的枪
+#   被捡走/丢弃/换局重铺。所以这条路径**同样要**拉一次 `match_sync` 把破坏态与地面武器补回来
+#   (见 `_on_resumed` 末尾那一拉;`destroyed` 不是路径乙专属)。★ 别把"世界还在原地"读成
+#   "没什么要补的" —— 那正是删掉那两行、让幻影墙/幽灵枪悄悄回来的那个想法(漏了不报错)。
 func _begin_reconnect() -> void:
 	# ★ MATCH_OVER / 对手离开那两条延时回菜单的路子会先 `NetBus.stop()`,而它断开的是我们自己。
 	if _match_ended:
@@ -641,10 +658,14 @@ func _on_resumed() -> void:
 	#   现在需要了:**世界在掉线那 30 秒里变过**。这一拉把两类丢掉的可靠事件一次补回:
 	#     · destroyed   —— 被拆的墙(不补 → 幻影墙 → 预测分歧)
 	#     · ground_weapons —— 掉落/被捡走的枪(不补 → 幽灵枪 / 看不见的枪)
-	#   ★ 顺序要紧:上面已经把 C2 重置完了(新 rollback / _input_seq=0),**再**拉。
-	#     反过来的话,应答里的出生点校正(_correct_local_spawn)会与重置打架。
+	#   ★ 顺序:上面已经把 C2 重置完了(新 rollback / _input_seq=0),**再**拉。
+	#     (原写"反过来的话应答里的出生点校正会与重置打架" —— 那条校正在补态这一路上**已不再
+	#      执行**(见 `_resync_pull_pending`),故它不再是硬约束;保持"最后拉"的形状不变。)
 	#   ★ 别把这一行删掉:它不在"进场建态"那条老路上,漏了**不报错**,只是世界悄悄不一致。
 	if NetBus.can_send_to_server():
+		# ★ 先置位再发:这条应答是**补态**口径,`_on_match_sync` 据此跳过出生点校正
+		#   (它按 `spawns` 校正/告警的前提在这里不成立,见那一支的注释)。
+		_resync_pull_pending = true
 		NetBus.rpc_id(1, "match_sync")
 	print("[pvp] 重连成功")
 
