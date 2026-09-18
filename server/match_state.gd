@@ -100,7 +100,7 @@ const RESPAWN_DELAY := 2.0   # 局内死亡后复活延迟
 var _round_state := RoundState.COUNTDOWN
 var _round_num := 1
 var _scores: Dictionary = {}     # role -> 本局击杀
-var _rounds_won: Dictionary = {} # role -> 局胜数
+var _rounds_won: Dictionary = {} # 局胜数(键:1v1 = role;TeamHost = **队号**)—— 下一个人别按 role 查
 var _round_timer := 0.0
 var _side_swap := false          # true 时 P1 用 player2 出生点(每局换边)
 var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒

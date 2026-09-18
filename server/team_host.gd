@@ -24,6 +24,7 @@ const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS   # 击杀归因时效(3s
 var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 match_start 广播的同一份)
 var _swap_spawns: Dictionary = {}    # role -> Vector2i(换边后的点;两队点集整体对调)
 var _spawned_once: Dictionary = {}   # role -> true(首次摆位走出生点,之后走动态复活点)
+var _left: Dictionary = {}           # role -> true(已移出对局;排行榜/比分判据用)
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -398,3 +399,42 @@ func _reset_killer_only(victim: Node2D, victim_role: int) -> void:
 	killer.velocity = Vector2.ZERO
 	if killer.has_method("cancel_jump_state"):
 		killer.cancel_jump_state()
+
+
+# ── 中途掉线(宽限期到点后由 server_main 调)—— 移出对局,但**整队走光才终局** ──
+# ★ 判据是"某个队一个人都不剩",**不是** royale 那条"players.size() < 2":
+#   6 人局里掉 1 个就终局 = 剩下的人白打(用户裁定:该队少人继续打)。
+# ★ 也不能数 `peer_by_role`(那是"有网络连接的人"):3v3 没有 AI 补位,两者当前同键集,
+#   但判据写成"每队还剩几个**在场上**的人"才表达得出这条规则的本意。
+func mark_disconnected(role: int) -> void:
+	role = int(role)
+	if _left.has(role):
+		return
+	_left[role] = true
+	_respawn_pending.erase(role)
+	_down_counted[role] = true
+	if players.has(role):
+		var p: Node = players[role]
+		if is_instance_valid(p):
+			p.queue_free()
+		players.erase(role)
+	if input_sources.has(role):
+		input_sources.erase(role)
+	peer_by_role.erase(role)
+	_broadcast_round_state()
+	if _round_state == RoundState.MATCH_OVER:
+		return
+	# 还有人的队:统计(队伍表里没出现的队号不算)
+	var alive_teams := {}
+	for r in players:
+		var t := team_of(int(r))
+		if t != 0:
+			alive_teams[t] = true
+	if alive_teams.size() < 2:
+		_finish_match()
+
+
+func _finish_match() -> void:
+	_round_state = RoundState.MATCH_OVER
+	_broadcast_round_state()
+	print("TeamHost: 对局结束(整队走光),胜者队 %d" % _match_winner())
