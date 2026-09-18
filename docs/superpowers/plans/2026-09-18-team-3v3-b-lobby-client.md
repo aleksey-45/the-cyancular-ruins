@@ -1044,8 +1044,10 @@ func _on_round_state(data: Dictionary) -> void:
 - [ ] **Step 3: `tests/hud_declarative_probe.gd` 的 `PAIRS` 加一行**
 
 ```gdscript
-	["res://ui/team_hud.gd", "res://ui/team_hud.tscn"],
+	["res://ui/team_hud.gd", "res://ui/team_hud.tscn", "TeamHud"],
 ```
+
+★ **每条是三个元素**（脚本、场景、**类名**）—— 照 `tests/hud_declarative_probe.gd` 现有的两条抄，别只写两个（会索引越界或断言失败）。
 
 - [ ] **Step 4: 小地图加可选颜色提供器**
 
