@@ -1,7 +1,8 @@
 extends SceneTree
 
 # 重连协议的**源码级**契约冒烟:
-#   ① 三条新 RPC 必须住在 NetBusExt,**且 NetBus 里一个都不许有**(放错节点 = 静默 no-op)
+#   ① 三条新 RPC + 3v3 的七条 `team_*` 必须住在 NetBusExt,**且 NetBus 里一个都不许有**
+#      (放错节点 = 静默 no-op;3v3 那七条见文件末「3v3 团队协议」一节)
 #   ② 三者的 **@rpc 注解**必须逐字正确(注解错了 = RPC 静默不通,与放错节点同款静默)
 #   ③ PvpSession 的两个新字段在位(重连要靠它们)
 #   ④ `reset()` 必须把这两个字段一起清掉(否则换模式带着上一局的 token)
@@ -31,6 +32,27 @@ const N_EXT_RPC_ANN := {
 	"report_token": "@rpc(\"any_peer\", \"reliable\")",
 	"reclaim_role": "@rpc(\"any_peer\", \"reliable\")",
 }
+
+# ── 3v3 团队协议(2026-09-19,B 册 Task 2)──
+# 七条 `team_*`:五条上行(any_peer)+ 两条下发(authority)。与重连那三条**同款纪律**:
+# 必须在 NetBusExt、**不得**在 NetBus(挂错节点 = 静默 no-op)。
+const N_TEAM_RPCS := ["team_create", "team_join", "team_pick", "team_leave", "team_start",
+		"team_rooms", "team_room_state"]
+
+# 注解同样逐字钉住 —— ★ 方向写反是**静默**的:`team_rooms` 若写成 any_peer = 任何客户端都能
+# 伪造房间列表;`team_start` 若写成 authority = 客户端的上行被直接拒("房主点了开始没反应")。
+const N_TEAM_RPC_ANN := {
+	"team_create": "@rpc(\"any_peer\", \"reliable\")",
+	"team_join": "@rpc(\"any_peer\", \"reliable\")",
+	"team_pick": "@rpc(\"any_peer\", \"reliable\")",
+	"team_leave": "@rpc(\"any_peer\", \"reliable\")",
+	"team_start": "@rpc(\"any_peer\", \"reliable\")",
+	"team_rooms": "@rpc(\"authority\", \"reliable\")",
+	"team_room_state": "@rpc(\"authority\", \"reliable\")",
+}
+
+const N_TEAM_SIGNALS := ["team_create_requested", "team_join_requested", "team_pick_requested",
+		"team_leave_requested", "team_start_requested", "local_team_rooms", "local_team_room_state"]
 
 var _fail := 0
 
@@ -120,6 +142,25 @@ func _initialize() -> void:
 			"★ PvpSession.reset() 未清 token(换模式会带着上一局的 token 去连)")
 	_check(reset_body.contains("worker_port = 0"),
 			"★ PvpSession.reset() 未清 worker_port(重连会拿着上一局的端口直连)")
+
+	# ── 3v3 团队协议的七条 `team_*`(B 册 Task 2)──
+	# ★ **双向**:只断言"在 NetBusExt 里有"会让"两边各抄一份"照样绿,而那正是静默 no-op 的成因
+	#   (先例 `beam_fired`:NetBus / NetBusExt 各一份,接收端挂错节点 = 包到了没人接)。
+	for n in N_TEAM_RPCS:
+		_check(_defines(ext, n), "★ `%s` 必须定义在 NetBusExt(放别处 = 静默 no-op)" % n)
+		_check(not _defines(bus, n),
+				"★ `%s` **不得**出现在 NetBus(改它的方法表会让与原版服务端的 RPC 全部失联)" % n)
+
+	# 七个信号也要在(大厅/客户端都靠信号解耦)
+	for s in N_TEAM_SIGNALS:
+		_check(ext.contains("signal " + s), "NetBusExt 缺信号 %s" % s)
+
+	# 注解:上行 5 条 any_peer / 下发 2 条 authority(**逐字**)
+	for n in N_TEAM_RPC_ANN:
+		var tann := _rpc_ann(ext, n)
+		_check(tann == N_TEAM_RPC_ANN[n],
+				"★ `%s` 的 @rpc 注解必须逐字是 `%s`,实为 `%s`(注解错了 = RPC 静默不通)" %
+				[n, N_TEAM_RPC_ANN[n], tann])
 
 	if _fail == 0:
 		print("RECONNECT SMOKE OK")
