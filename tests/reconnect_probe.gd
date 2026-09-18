@@ -21,6 +21,11 @@ extends Node
 #      重连后重发的那条 `match_start` 必须带与首次**同一个** spawn(钉 `RoyaleHost.role_spawns()`
 #      覆写没有 `_spawned_once` 副作用;取数点与理由见 `reconnect_watcher._actor_assert`)
 #   ⑥ 启动等待态:空载 `--royale` worker 不得在 1~3s 窗口内退出
+#   ⑦ 世界补态(仅 1v1):actor 掉线的窗口里**服务器侧**世界变过两处 —— 拆掉一格可破坏的墙
+#      (`--test-destroy-tile`,见下方 P7_DESTROY_AFTER)与 witness 捡走一把地面武器
+#      (`--test-ground-teleport` + witness 按 F)—— 重连后 `match_sync` 补态必须把两处都补上:
+#      不补就是**幻影墙**(撞上去 → 本地预测与服务端分歧 → 可能回滚循环)与**幽灵枪**。
+#      断言在 `reconnect_watcher._p7_assert`(actor 侧)+ 本文件 `_worker_evidence`(worker 日志)。
 #
 # ═══ 拓扑(自当裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══
 #   w1v1  29001  真 `server_main.gd --worker --port 29001`              → c1(role1) + c2(role2)
@@ -107,6 +112,15 @@ const IDLE_HIGH := 3.0
 const IDLE_BONUS := 14.0           # 之后按既有 M1 守卫正当退出(10s);这一相**必须有它**
 const GRACE_MIN := 29.0            # 相④的时间判据(宽限期 30s ± 上面两种粒度)
 const GRACE_MAX := 36.0
+# ── 相⑦:w1v1 worker 的两个测试开关(生产路径都不带;argv 解析见 server/server_main.gd)──
+# 拆格延迟(秒)的**计时起点是建局**(`MatchHost._ready`,即 COUNTDOWN 开始),而 watcher 的时钟
+# 以 **PLAYING** 为 0,两者差一个 `COUNTDOWN_TIME`(3s)。换算后要同时满足:
+#   · 晚于 actor 的闪断(PLAYING+1.6 ≈ 建局+4.6):早了 actor 还在线,会自己收到 tile_destroyed,
+#     相⑦ ① 就变成"服务器什么都没补"的假绿(它由 ①前置 报红,但那是诊断、不是结论);
+#   · 早于 actor 的重连补态(PLAYING+7.6 ≈ 建局+10.6):晚了补态载荷里没有这一格,① 必红。
+# 7.5 ≈ PLAYING+4.5,两侧各余 ~3s。★ 这个换算**跑一次就能核** —— witness 会把收到
+# `tile_destroyed` 的 el 记进自己的日志(引擎日志两边都不带时间戳,只能这样对时)。
+const P7_DESTROY_AFTER := "7.5"
 
 var _role := "lobby"
 # ── 裁判态 ──
@@ -155,7 +169,8 @@ func _run_orchestrator() -> void:
 	_clean()
 	print("PROBE: 裁判就绪(exe=%s);拉起 1v1 worker(%d)与空载大乱斗 worker(%d)" % [
 			_exe.get_file(), W1V1, WIDLE])
-	_w1v1_pid = _spawn_worker(["--worker", "--port", str(W1V1)], "w1v1")
+	_w1v1_pid = _spawn_worker(["--worker", "--port", str(W1V1), "--test-ground-teleport",
+			"--test-destroy-tile", "136,64," + P7_DESTROY_AFTER], "w1v1")
 	_widle_pid = _spawn_worker(["--worker", "--royale", "--port", str(WIDLE),
 			"--roles", "1,2", "--ai-roles", "2"], "widle")
 
@@ -280,6 +295,14 @@ func _worker_evidence() -> void:
 		_check(txt.contains("玩家掉线进宽限"),
 				"相③(%s):worker 走了宽限期(身体留在场上,不是当场移出)" % tag)
 		_check(txt.count("对局开始") == 1, "相①(%s):对局只开了一次(重连没有重开一局)" % tag)
+	# 相⑦ ③:**防空转**。相⑦ 的其余判据都在"客户端世界 = 服务器世界"这个等式上,而那个等式
+	# 在"服务器其实什么都没拆"时**照样成立**(actor 那格本来就是空气 → grid==EMPTY 恒真)。
+	# 这一条证明"服务器真的动了手":它由 `MatchHost._debug_destroy_tile` 打出,那一行同时也是
+	# 探针能读到 worker 内部动作的**唯一**通道(worker 是独立进程,见文件头「拓扑」)。
+	# ★ worker 日志是本进程写、本进程读的,故这里直接取 `_log_path("w1v1")` 而不进上面的循环。
+	_check(_has(_log_path("w1v1"), "[test] 拆格"),
+			"相⑦ ③:w1v1 worker 日志里有「[test] 拆格」(--test-destroy-tile 真的触发了)"
+			+ "—— 没有它,相⑦ ① 可能是「服务器什么都没做」的假绿")
 
 
 # 相④:1v1 worker 的宽限期到点收场。

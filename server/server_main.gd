@@ -58,6 +58,18 @@ func _ready() -> void:
 			"--test-ground-teleport":
 				# 仅测试用:见 MatchGround.test_ground_teleport。默认关,生产路径不带这个开关。
 				MatchGround.test_ground_teleport = true
+			"--test-destroy-tile":
+				# 仅测试用:见 MatchState.test_destroy_cell。默认关,生产路径不带这个开关。
+				# 值形如 "136,64,3.0";delay 可省 → 3.0(★ 必须给个非零默认:省掉时若留 0.0,
+				# 钩子会在**第一帧**就拆,"对局开始 N 秒后"的语义就没了)
+				if i + 1 < args.size():
+					var parts := str(args[i + 1]).split(",")
+					if parts.size() >= 2:
+						MatchState.test_destroy_cell = Vector2i(
+								int(parts[0].strip_edges()), int(parts[1].strip_edges()))
+					MatchState.test_destroy_after = 3.0
+					if parts.size() >= 3:
+						MatchState.test_destroy_after = float(parts[2].strip_edges())
 			"--ai-roles":
 				if i + 1 < args.size():
 					for tok in str(args[i + 1]).split(","):

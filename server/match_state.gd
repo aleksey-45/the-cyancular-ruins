@@ -84,6 +84,15 @@ var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
 var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
 
+# ── 仅测试用:定时拆一格(相⑦ 用)──
+# 由 `--test-destroy-tile <col>,<row>[,<delay>]` 写入;到点拆一次,之后置回 (-1,-1) 只拆一次。
+# ★ 默认 (-1,-1) = 关:生产路径不带这个开关,行为与今天逐字一致。
+# ★ 为什么需要它:重连探针的 worker 是**独立进程**,探针拿不到 `_host`,只能靠命令行开关
+#   让 worker 自己在指定时刻制造"世界变了"这件事(既有的 `--test-ground-teleport` 同款手法)。
+# ★ 与 `test_ground_teleport` 一样住在**基类**(`MatchGround` 那条是本域的开关):钩子要读它,
+#   而钩子由 `MatchHost._physics_process` 每帧调,兄弟域之间互相看不见。
+static var test_destroy_cell := Vector2i(-1, -1)
+static var test_destroy_after := 0.0     # 秒;从对局开始(_ready)起算
 
 
 func _rpc_all(method: String, args: Array = [], except_role: int = -1,

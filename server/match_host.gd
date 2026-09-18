@@ -120,6 +120,8 @@ func _physics_process(delta: float) -> void:
 	_sync_ground_positions()
 	# 仅测试用(`--test-ground-teleport`,见 MatchGround.test_ground_teleport):默认关。
 	_debug_keep_weapon_within_reach()
+	# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):默认关。
+	_debug_destroy_tile(delta)
 	_snapshot_accum += delta
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0
@@ -164,3 +166,24 @@ func _physics_process(delta: float) -> void:
 				continue
 			CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
 			processed += 1
+
+
+# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):对局开始 delay 秒后拆掉
+# 指定格,**只拆一次**。默认关(`test_destroy_cell == (-1,-1)` → 首行就 return),生产路径
+# 不带这个开关,行为与今天逐字一致。
+#
+# ★ 为什么走 `TileDefs.damage_tile` 而不是直接改 grid:那样才会经 `TileDefs.on_destroyed`
+#   → `MatchCombat._on_tile_destroyed` → `_rpc_all("tile_destroyed", …)`,也就是
+#   **与真爆炸完全同一条广播链**(重连探针的相⑦ 要验的正是这条链 + 客户端的补态)。
+# ★ 那条 print 是探针的"非空转"证据:worker 是**独立 OS 进程**(探针拿不到它的 `_host`),
+#   日志是唯一能读到它内部动作的通道;没有它,"客户端那格是空气"可以靠"那格本来就是空气"骗过。
+func _debug_destroy_tile(delta: float) -> void:
+	if MatchState.test_destroy_cell.x < 0:
+		return
+	MatchState.test_destroy_after -= delta
+	if MatchState.test_destroy_after > 0.0:
+		return
+	var cell := MatchState.test_destroy_cell
+	MatchState.test_destroy_cell = Vector2i(-1, -1)   # 只拆一次
+	print("worker: [test] 拆格 %s(相⑦ 用)" % str(cell))
+	TileDefs.damage_tile(cell, 999999, "explosion")

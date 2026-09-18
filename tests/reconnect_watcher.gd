@@ -18,10 +18,22 @@ extends Node
 # ★ 客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 自己再落一份
 #   `user://reconnect_probe_<who>.log`(阶段轨迹),失败时父进程把它摊开。
 #
+# ═══ 相⑦(仅 1v1):掉线窗口里**服务器侧**世界变过 ═══
+#   动机(阶段 2-A 的主缺口):actor 掉线的那 30 秒里服务器侧拆了墙、地面上的枪被捡走;
+#   重连后靠 `pvp_match_client._on_resumed` 那一拉(match_sync)补回 —— 不补的话客户端留着
+#   **幻影墙**(撞上去 → 本地预测与服务端分歧 → 可能回滚循环)与**幽灵枪**(看着在、按 F 无效)。
+#   两处变化都必须由**服务器侧**制造(探针进程拿不到 worker 的 `_host`:它是独立 OS 进程,
+#   见 reconnect_probe.gd 的「拓扑」),所以走两个测试开关 + witness 的动作:
+#     · 拆墙:worker 命令行 `--test-destroy-tile 136,64,<delay>`(见 reconnect_probe.gd)
+#     · 捡枪:worker 带 `--test-ground-teleport` 把枪喂到脚下,**本文件(c2)按 F**
+#   判据在 `_actor_assert` 尾部的 `_p7_assert`(actor 侧)+ 裁判读 worker 日志(③,防空转)。
+#   ★ 这一相唯一的失败模式是"看起来绿、其实什么都没验" —— 变化若落在闪断**之前**,actor
+#     自己就收到了事件、主判据照样绿。故每条主判据都配一条**前置**断言盯这件事。
+#
 # ═══ 时间轴(相对**本端**看到 PLAYING 的那一刻 `_tp`)═══
 #   actor:0.0 按住 S(必须先跑起来)· 1.5 塞确定性装置的包 · 1.6 闪断(错 token)
-#          · 6.5 恢复真 token · 9.5 断言相①②⑤(为什么不是更早见 `T_ACTOR_END` 上方)
-#   witness:2.5~5.2 观测窗口(相③)· 5.6 (c2/r2)永久掉线 · 6.2 收工
+#          · 6.5 恢复真 token · 9.5 断言相①②⑤⑦(为什么不是更早见 `T_ACTOR_END` 上方)
+#   witness:2.5~5.2 观测窗口(相③)· 3.5~5.0 (c2)按 F 捡枪(相⑦)· 5.6 (c2/r2)永久掉线 · 6.2 收工
 #   ★★ **两端的 `_tp` 并不对齐**(旧注释写的是"相差 ≤1 帧、窗口对齐到 ±0.02s"—— **实测证伪**,
 #      2026-09-17):两端各自从"自己第一次处理到 `st==1` 那条 round_state"起算,而客户端进对局要
 #      建场景(大乱斗那份带 N 个副本 + HUD,最重),主线程一停就是零点几秒 —— Godot 会丢这段
@@ -109,6 +121,23 @@ const DRIFT_TOL := 80.0
 #   这条判据与地形无关(撞墙、卡坑都照样成立),这才是"身体冻结"真正该钉的东西。
 const POSE_SQUAT := 4       # = player.gd 的 Pose.SQUAT(枚举末位;改枚举要同步这里)
 
+# ── 相⑦(仅 1v1;设计见文件头)──
+# 与 reconnect_probe.gd 拉起 w1v1 时那串 `--test-destroy-tile 136,64,<delay>` **同源**:
+# 改一处要改两处。★ 改错了**不会**假绿 —— 该格若不在服务器拆的名单里,① 会红;若那格本来
+# 就是空气,「①前置」会红(闪断时本端那格就已经是 EMPTY)。
+const P7_CELL := Vector2i(136, 64)
+# witness 开始/结束按 F 的时刻。★ 起点必须**晚于** actor 的闪断(T_DROP=1.6)+ 两端 `_tp` 漂移
+# (实测 ~0.7s,见文件头「时间轴」):早了的话 actor 还在线、会直接收到 weapon_removed,
+# 相⑦ ② 就退化成"空转的绿"(本文件的前置断言会红,但那时是诊断、不是结论)。
+# 终点必须早于 witness 自己的永久掉线(T_W_DROP=5.6)—— 掉线后再按就没人收边沿了。
+const T_W_PICKUP := 3.5
+const T_W_PICKUP_END := 5.0
+const PICKUP_RETRY := 0.35  # 按 F 的重试间隔(服务器 `nearest_within` 每帧都喂枪,一次就够;
+                            # 重试只是兜住"这一帧恰好没喂到"的抖动)
+
+# 脚本手柄(见 `_p7_witness_tick`:F 的读口是**边沿**,必须走本仓既有的办法上报)。
+const BotInput := preload("res://tests/ground_bot_input.gd")
+
 var who := "c1"
 var port := 0
 var token := ""
@@ -153,6 +182,19 @@ var _snap_ack_max := 0              # 收到过的最大快照 ack_seq(诊断:�
 var _samples_open := true
 var _perm_dropped := false
 var _done := false
+# ── 相⑦ 观测量(actor 侧;见 `_p7_assert`)──
+var _p7_grid_before := -1               # 闪断那一刻本端 grid[P7_CELL.y][P7_CELL.x]
+var _p7_gw_before: Array = []           # 闪断那一刻本端地面武器的 inst 集合
+var _p7_payloads := 0                   # 收到过几条 match_sync 载荷(进场那条 + 重连补态那条)
+var _p7_payloads_at_drop := 0
+var _p7_sync_insts: Array = []          # 最近一条载荷里的地面武器 inst 集合(服务器权威)
+var _p7_sync_destroyed: Array = []      # 最近一条载荷里的 destroyed(与基线不同的格)
+var _p7_tile_ev := 0                    # 收到过几条该格的 tile_destroyed 广播
+var _p7_tile_ev_at_drop := 0
+# ── 相⑦ 观测量(witness 侧)──
+var _bot = null                         # 脚本手柄(`ground_bot_input.gd`;F 的边沿读口)
+var _pickup_t := -1.0                   # 下次按 F 的时刻
+var _p7_my_removed: Array = []          # 服务器广播的「我捡走了」inst(by_role == 本端 role)
 
 
 func _ready() -> void:
@@ -173,6 +215,13 @@ func _ready() -> void:
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)   # 相①的 ack 读数(见 `_actor_assert`)
 	NetBus.local_round_state.connect(_on_round_state)
+	# 相⑦:补态载荷(服务器对 match_sync 的应答)与那一格砖的广播。
+	# ★ 两处都**不消费**信号,只是旁听 —— 生产路径的消费者(`pvp_game._on_match_sync` /
+	#   `_on_remote_tile_destroyed`)照常跑,本观察者只是把同一份数据留个底。
+	NetBus.local_match_sync.connect(_on_match_sync_payload)
+	NetBus.local_tile_destroyed.connect(_on_tile_destroyed)
+	if not is_actor:
+		NetBus.local_weapon_removed.connect(_p7_on_removed)   # 相⑦:witness 侧的交叉证据
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void: _log("连 worker 失败"), CONNECT_ONE_SHOT)
 	var err := NetBus.start_client("127.0.0.1", port)
@@ -250,6 +299,39 @@ func _on_snapshot_own(own: Dictionary) -> void:
 	_snap_ack_max = maxi(_snap_ack_max, int(own.get("ack_seq", 0)))
 
 
+# 相⑦:match_sync 的应答(进场那条 + 重连补态那条,同一口)。只留底,不判 ——
+# 判在 `_p7_assert`:它要的是"补态那一刻服务器手里是什么",而这正是这条载荷。
+# ★ 本观察者挂 root、比当前场景早一步订阅,故本函数**先于** `pvp_game._on_match_sync` 跑
+#   (信号按连接顺序派发)—— 于是这里读到的地面武器表还是**补态之前**的旧值。判据不依赖
+#   这个顺序:`_p7_assert` 取的是断言时刻的表(那时场景那条早跑完了)。
+func _on_match_sync_payload(payload: Dictionary) -> void:
+	_p7_payloads += 1
+	var insts: Array = []
+	for e in payload.get("ground_weapons", []):
+		if e is Dictionary:
+			insts.append(int(e.get("inst", 0)))
+	_p7_sync_insts = insts
+	var d: Array = []
+	for c in payload.get("destroyed", []):
+		if c is Vector2i:
+			d.append(c)
+	_p7_sync_destroyed = d
+	_log("相⑦:收到 match_sync 载荷(第 %d 条;地面武器 %d 件,destroyed %s)"
+			% [_p7_payloads, insts.size(), str(d)])
+
+
+# 相⑦:那一格砖的广播(服务器拆墙时发)。两个用处:
+#   · actor:证明"闪断之后没再收到它" —— ①(补态生效)才不是被事件救的;
+#   · witness:把**收到它的时刻**(el)记进日志。拆格延迟是从建局起算的,换算到 PLAYING 口径
+#     只能靠这个读数(两边的引擎日志都不带时间戳)。
+func _on_tile_destroyed(cell: Vector2i) -> void:
+	if cell != P7_CELL:
+		return
+	_p7_tile_ev += 1
+	_log("相⑦:收到 tile_destroyed %s(el=%s,第 %d 次)"
+			% [str(cell), "%.2f" % (_t - _tp) if _tp >= 0.0 else "未到 PLAYING", _p7_tile_ev])
+
+
 func _process(delta: float) -> void:
 	if _done:
 		return
@@ -294,6 +376,7 @@ func _actor_tick(el: float) -> void:
 	if not _drop_done and el >= T_DROP:
 		_drop_done = true
 		_snap_at_drop = _snap_count
+		_p7_sample_at_drop()
 		_before_local_id = (_game.get("_local") as Object).get_instance_id()
 		_before_game_id = _game.get_instance_id()
 		# 相②:先塞错 token —— worker 读它发生在 `_try_reclaim` **发的那一刻**
@@ -400,6 +483,8 @@ func _actor_assert() -> void:
 	_check(_resumed_spawn == _first_spawn,
 			("相⑤:第二次 match_start 的 spawn 不得与首次不同(reclaim 不应重新摆位);"
 			+ "首次 %s,重发 %s") % [str(_first_spawn), str(_resumed_spawn)])
+	# ★★ 相⑦:补态(仅 1v1;设计见文件头)
+	_p7_assert()
 	# 大乱斗:对局状态一并没有被重置(比分相同 + 时钟继续走而不是回到 300)
 	if is_royale and not _last_rs.is_empty() and not _rs_before.is_empty():
 		_check(_last_rs.get("scores", {}) == _rs_before.get("scores", {}),
@@ -416,11 +501,117 @@ func _actor_assert() -> void:
 	_finish("", true)   # actor **不退出**(见文件头);裁判杀端口收尾
 
 
+# ── 相⑦(actor 侧):掉线窗口里服务器侧世界变过的两处,重连补态必须都补上 ──
+#   三条主判据(①拆墙 / ②幽灵枪 / ③在裁判那侧读 worker 日志)逐条见下。
+#   ★ 每条主判据都配一条**前置**:这一相唯一的失败模式是"看起来绿、其实什么都没验"
+#     (变化若落在闪断之前,actor 自己就收到了事件,主判据照样绿)。
+
+# 闪断那一刻取样。三个读数合起来才判得了"补态生效",而不是"变化根本不在窗口里"。
+func _p7_sample_at_drop() -> void:
+	if is_royale:
+		return   # 大乱斗那套 worker 不带这两个测试开关(见 reconnect_probe.gd),采了也没人判
+	_p7_grid_before = _p7_grid()
+	_p7_gw_before = _gw_insts()
+	_p7_payloads_at_drop = _p7_payloads
+	_p7_tile_ev_at_drop = _p7_tile_ev
+	_log("相⑦ 取样:grid%s=%d(EMPTY=%d),地面武器 %d 件 %s;已收载荷 %d 条、该格广播 %d 条"
+			% [str(P7_CELL), _p7_grid_before, MazeGenerator.EMPTY, _p7_gw_before.size(),
+			str(_p7_gw_before), _p7_payloads, _p7_tile_ev_at_drop])
+
+
+func _p7_assert() -> void:
+	if is_royale:
+		return
+	# ── ① 拆墙(主判据:本端那格变空气)──
+	# 前置 A:闪断那一刻本端那格还是**实心**的。
+	#   ★ 它同时是"拆格延迟调错"的报警器:拆格若落在闪断**之前**,actor 还在线、会自己收到
+	#     tile_destroyed → 本端早就 EMPTY 了,① 会以"服务器什么都没补"的假绿通过。
+	_check(_p7_grid_before != MazeGenerator.EMPTY,
+			("相⑦ ①前置:闪断时本端 grid%s 仍是实心(实得 %d)—— 红在这里 = 拆格落在闪断**之前**,"
+			+ "把 reconnect_probe 的 P7_DESTROY_AFTER 往后挪") % [str(P7_CELL), _p7_grid_before])
+	# 前置 B:闪断之后没有再收到那一格的广播(收到 = 那格是被事件修的,不是被补态修的)。
+	_check(_p7_tile_ev == _p7_tile_ev_at_drop,
+			("相⑦ ①前置:闪断之后没再收到该格的 tile_destroyed(实得 %d 条;>0 = 那格是被广播修的,"
+			+ "补态那一路等于没验)") % (_p7_tile_ev - _p7_tile_ev_at_drop))
+	var g_now := _p7_grid()
+	_check(g_now == MazeGenerator.EMPTY,
+			"相⑦ ①:重连补态后本端 grid%s == EMPTY(实得 %d)" % [str(P7_CELL), g_now])
+	# ① 的"非空转"另一半:服务器在补态里**点名**了那一格(③ 证明它动了手,这条证明那件事
+	# 进了补态载荷 —— 两者缺一,① 都可能是"本来就没这回事")。
+	_check(_p7_sync_destroyed.has(P7_CELL),
+			"相⑦ ①:补态载荷的 destroyed 里点名了该格(实得 %s)" % str(_p7_sync_destroyed))
+	# ── ② 地面武器(主判据:witness 捡走的那把不得在本端表里留下)──
+	# "witness 捡走的那把"= 闪断时本端表里有、而补态载荷(服务器权威)里没有的那个 inst。
+	# ★ 不写死 inst:它是服务器每帧喂到 witness 脚下的那把(见 MatchGround._debug_keep_weapon_within_reach),
+	#   由 `nearest_within` 决定,开局散点是随机的 → 写死必然漂。
+	_check(_p7_payloads > _p7_payloads_at_drop,
+			"相⑦ ②前置:重连补态载荷已到达(进场 %d 条 → 现 %d 条;没到 = ② 判的是旧数据)"
+			% [_p7_payloads_at_drop, _p7_payloads])
+	var picked: Array = []
+	for inst in _p7_gw_before:
+		if not _p7_sync_insts.has(inst):
+			picked.append(inst)
+	_check(not picked.is_empty(),
+			("相⑦ ②前置:witness 真的捡走了一把(闪断时本端表 %d 件,其中 %d 件不在补态载荷里;"
+			+ "0 件 = witness 那半没跑起来,② 会空转)") % [_p7_gw_before.size(), picked.size()])
+	var after := _gw_insts()
+	var left: Array = []
+	for inst in picked:
+		if after.has(inst):
+			left.append(inst)
+	# 主判据(按 inst 查):被捡走的那把必须**已经从本端表里清掉**。
+	# ★ 这一条是"只 add 不 clear"那种实现的反向断言 —— 那正是**幽灵枪**的成因(枪画在地上、
+	#   按 F 却无效,因为服务器手里早没了)。
+	_check(left.is_empty(),
+			"相⑦ ②:本端地面武器表里没有被捡走的那把(按 inst 查;被捡走 %s,仍残留 %s)"
+			% [str(picked), str(left)])
+	# 加强版:表里不得有**任何**补态载荷之外的条目(把 ② 从"这一把"扩到"全部")。
+	var ghost: Array = []
+	for inst in after:
+		if not _p7_sync_insts.has(inst):
+			ghost.append(inst)
+	_check(ghost.is_empty(),
+			"相⑦ ②:本端地面武器表 ⊆ 补态载荷(幽灵枪一条都不许有;多出来的是 %s)" % str(ghost))
+	# 一行读得出的汇总(进客户端日志;断言逐条的读数在上面各条 OK 行里)
+	_log("相⑦ 汇总:%s 闪断时 %d → 补态后 %d;地面武器 闪断 %d 件 → 载荷 %d 件 → 现 %d 件(被捡走 %s)"
+			% [str(P7_CELL), _p7_grid_before, g_now, _p7_gw_before.size(), _p7_sync_insts.size(),
+			after.size(), str(picked)])
+
+
+# 本端 grid 上那一格的值(-1 = 越界/网格还没建好;EMPTY=0 见 MazeGenerator)。
+func _p7_grid() -> int:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty() or P7_CELL.y < 0 or P7_CELL.y >= grid.size():
+		return -1
+	var row: Array = grid[P7_CELL.y]
+	if P7_CELL.x < 0 or P7_CELL.x >= row.size():
+		return -1
+	return int(row[P7_CELL.x])
+
+
+# 本端地面武器表里的 inst 集合(补态前后各取一次,见 `_p7_assert`)。
+func _gw_insts() -> Array:
+	var out: Array = []
+	var f = _game.get("ground_weapons") if _game != null else null
+	if f == null:
+		return out
+	for e in (f as GroundWeaponField).entries:
+		out.append(int(e["inst"]))
+	return out
+
+
+func _gw_size() -> int:
+	var f = _game.get("ground_weapons") if _game != null else null
+	return (f as GroundWeaponField).size() if f != null else -1
+
+
 # ── witness(c2/r2):相③(盯 role1 的身体)──
 func _witness_tick(el: float) -> void:
 	if el >= W_END and _samples_open:
 		_samples_open = false
 		_witness_assert()
+	if not is_royale:
+		_p7_witness_tick(el)   # 相⑦ 的"制造变化"那半(仅 1v1)
 	if drop_permanently and not _perm_dropped and el >= T_W_DROP:
 		_perm_dropped = true
 		# 相④:永久掉线(**不 reclaim**)—— 真 ENet 断开,worker 侧进宽限、到点收场。
@@ -430,6 +621,56 @@ func _witness_tick(el: float) -> void:
 		NetBus.stop()
 	if el >= T_W_END:
 		_finish("")
+
+
+# ── 相⑦(witness 侧):在 actor 的掉线窗口里捡走一把枪(= 制造"世界变了") ──
+# ★ 为什么必须借**脚本手柄**而不是 `Input.action_press("F")`:F 的读口是
+#   `is_action_just_pressed`(`local_input_source.gd`),而 `Input.action_press` 的"刚按下"
+#   只在**按下那一帧**成立 —— 观察者的 `_process` 与对局场景的 `_physics_process` 不同帧,
+#   从 `_process` 里按会整个错过(恒不生效、且一条报错都不给)。本仓既有的做法就是这份手柄
+#   (`tests/ground_bot_input.gd`,`ground_net_probe` 用它在真对局里按 F / 长按 Q)。
+#   ★ 顺序也承重:观察者挂在 root 上、比当前场景先一步,所以这里 `press_f()` 打的边沿会被
+#     本帧 `pvp_match_client._physics_process` 的 `pack_record` 读走并上行(与 ground_net_watcher 同)。
+func _p7_witness_tick(el: float) -> void:
+	if _game == null:
+		return
+	if _bot == null:
+		if el < W_START:
+			return
+		var lc = _game.get("_local")
+		if not (lc is Node):
+			return
+		var bot = BotInput.new()
+		(lc as Node).set_input_source(bot)
+		_bot = bot
+		_pickup_t = el + 0.1
+		_log("相⑦:已接管本地输入源为脚本手柄(地面 %d 件),将在 %.1f~%.1fs 窗口里按 F"
+				% [_gw_size(), T_W_PICKUP, T_W_PICKUP_END])
+		return
+	if el < T_W_PICKUP or el > T_W_PICKUP_END:
+		return
+	# ★ 只捡**一把**就收手:相⑦ 要的是"世界变了一次"。`--test-ground-teleport` 每帧都会把
+	#   新的一把喂到脚下,不喊停的话每 0.35s 再捡一把,到第 5 把还会撞上背包的 4 把上限、
+	#   走"替换 → 把换下的丢回地上"那条岔路(凭空多一条 weapon_spawned),于是"被捡走的那把"
+	#   从一把变成一串 —— 判据不会错,但报告里说不清是哪一把。
+	if not _p7_my_removed.is_empty():
+		return
+	if el >= _pickup_t:
+		_pickup_t = el + PICKUP_RETRY
+		_bot.press_f()
+		_log("相⑦:按 F(el=%.2f;地面 %d 件,服务器已广播「我捡走了」%d 次 %s)"
+				% [el, _gw_size(), _p7_my_removed.size(), str(_p7_my_removed)])
+
+
+# 相⑦ 的交叉证据:服务器广播「这把是谁捡走的」时带 `by_role` —— 与本端 role 一致的那些
+# 就是**我**捡走的。actor 那边没有这条事件(它掉线中收不到),它靠"闪断时表里有、补态载荷里
+# 没有"反推出同一个 inst;两条路对上的那把才是"变化确实发生在窗口内"的证据。
+func _p7_on_removed(data: Dictionary) -> void:
+	if int(data.get("by_role", -1)) != int(PvpSession.role):
+		return
+	var inst := int(data.get("inst", 0))
+	_p7_my_removed.append(inst)
+	_log("相⑦:服务器广播「我捡走了」inst=%d(地面剩 %d 件)" % [inst, _gw_size()])
 
 
 func _witness_assert() -> void:
