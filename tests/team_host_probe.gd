@@ -12,9 +12,10 @@ extends Node
 #
 # ═══ 覆盖范围(随 A 册任务递增)═══
 # ①②③ 由 Task 4 落(出生散点 / 换边点集 / 宿主接线);
-# ④ 按队计分、⑥ 9 杀收局由 Task 5 落(④ 在本任务被**换掉** —— Task 4 那版数值上巧合重合、
+# ④ 按队计分、⑥ 收局由 Task 5 落(④ 在那时被**换掉** —— Task 4 那版数值上巧合重合、
 #   区分不了团队语义,见 ④ 里的说明);
-# ⑤ 复位、⑦ 换边、⑧ 掉线随 Task 6/7/8 追加到本探针末尾。
+# ⑤ 只复位击杀者由 Task 6 落(brief 正文里这段写作 ⑦/⑩,同一个东西);
+# ⑦ 换边/终局、⑧ 掉线随 Task 7/8 追加到本探针末尾。
 
 const MAP := "res://maps/factory1v1.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
@@ -48,6 +49,30 @@ func _place(host, role: int, at: Vector2i) -> Node2D:
 	var ts := GameParameters.TILE_SIZE
 	p.global_position = Vector2(at.x * ts + ts * 0.5, at.y * ts + ts * 0.5)
 	return p
+
+
+# ── ⑤(只复位击杀者)的两个小工具 ──
+# 把这些人全挪到同一个"远点"。★ 不这么做的话,"没被复位"与"被送回自己的出生点"可能落在
+# 同一数值上,断言就成了恒真的摆设(远点按构造 ≠ 任何出生点,故两者必然可区分)。
+# 已倒地的人也能挪 —— 这里只动 `global_position`,不碰战斗状态。
+func _park(host, roles: Array, at: Vector2) -> void:
+	for r in roles:
+		var p: Node2D = host.players.get(r)
+		if p == null or not is_instance_valid(p):
+			continue
+		p.global_position = at
+
+
+# 这些人里还有几个**不在**远点上(> 0 = 有人被复位了)。
+func _moved_from(host, roles: Array, at: Vector2) -> int:
+	var n := 0
+	for r in roles:
+		var p: Node2D = host.players.get(r)
+		if p == null or not is_instance_valid(p):
+			continue
+		if p.global_position.distance_to(at) > 2.0:
+			n += 1
+	return n
 
 
 func _run() -> void:
@@ -154,29 +179,134 @@ func _run() -> void:
 	#   (Task 4 的 ④ 用的是 role4:`_opponent_of(4)` 也返回 1,而团队语义给 1 队 —— **数值巧合
 	#    重合**,坏掉队伍表也照样绿,已被 M1 反证。故换成 role2。)
 	_host._round_state = MatchHost.RoundState.PLAYING
-	# [仪器] 前置自检:上面那条缝的前提是"第一个非己 role 与受害者同队"。插入顺序若变
-	# (比如有人重排了 ③ 里的 `_place` 循环),这条缝就没了 → 自检当场红,而不是悄悄失效。
+	# ★ 受害者 role **只写这一处**:下面的[仪器]自检与本段的真断言必须指向同一个 role。
+	#   先前自检写死 2、受害者也写死 `players[2]`,两个 `2` 各自硬编码 —— 谁把受害者换成别的
+	#   role(比如重犯 Task 4 那次换 p4 的错),自检**照样绿**而本条的区分度当场消失,
+	#   输出仍是 ALL-OK(实测:改成 4 时两条真断言**全部照绿** —— 基类实现 `_opponent_of(4)`
+	#   也是 1 —— 只有下面这条自检红,它确实是唯一守着这条缝的东西)。
+	var victim_role := 2
+	# [仪器] 前置自检:上面那条缝的前提是"第一个非己 role 与受害者同队",且它**不是**受害者本人
+	# (`_opponent_of` 找不到时返回 0,而 `team_of(0)` = 0 → `same_team(0, x)` 恒 false)。
+	# 插入顺序若变(比如有人重排了 ③ 里的 `_place` 循环),这条缝就没了 → 自检当场红,
+	# 而不是悄悄失效。
 	_check(_host.players.keys() == [1, 2, 3, 4, 5, 6],
 			"[仪器] players 按 role 升序插入(实际 %s)" % str(_host.players.keys()))
-	_check(_host._opponent_of(2) == 1 and _host.same_team(1, 2),
-			"[仪器] 基类语义 `_opponent_of(2)` = 1,而 1 与 2 **同队** —— ④ 的区分度就靠这条")
-	var p2: Node2D = _host.players[2]
+	_check(_host._opponent_of(victim_role) != victim_role
+			and _host.same_team(_host._opponent_of(victim_role), victim_role),
+			"[仪器] 受害 role %d 的「第一个非己 role」(=%d)与它同队 —— ④ 的区分度就靠这条"
+			% [victim_role, _host._opponent_of(victim_role)])
+	var p2: Node2D = _host.players[victim_role]
 	(p2.get_node("Combat") as Node).force_down()
 	_host._match_round_tick(0.016)
-	_check(int(_host._scores.get(2, 0)) == 1,
-			"★ role2(1 队)倒地 → **2 队** +1(键是队号;基类实现会给键 1。实际 %s)" % str(_host._scores))
-	_check(int(_host._scores.get(1, 0)) == 0,
-			"★ 1 队**不涨分**(基类实现会在这里给 1。实际 %s)" % str(_host._scores))
+	# ★ 两个队号也从 victim_role 推(不再各写一个字面量):键、断言、消息三处同源。
+	var victim_team: int = _host.team_of(victim_role)
+	var enemy_team: int = _host._enemy_team_of(victim_role)
+	_check(int(_host._scores.get(enemy_team, 0)) == 1,
+			"★ role%d(%d 队)倒地 → **%d 队** +1(键是队号;基类实现会给键 %d。实际 %s)"
+			% [victim_role, victim_team, enemy_team, _host._opponent_of(victim_role), str(_host._scores)])
+	_check(int(_host._scores.get(victim_team, 0)) == 0,
+			"★ 受害者本队(%d 队)**不涨分**(基类实现会在这里给 %d。实际 %s)"
+			% [victim_team, _host._opponent_of(victim_role), str(_host._scores)])
 
-	# ── ⑥ 9 杀收局:把 1 队刷到 9 → ROUND_OVER,局胜记在**队**上 ──
-	_host._scores = {1: 8, 2: 0}
+	# ── ⑥ 收局:把 1 队刷到 TEAM_KILLS_TO_WIN → ROUND_OVER,局胜记在**队**上 ──
+	# ★ 阈值写成 `TEAM_KILLS_TO_WIN - 1` 而**不是**字面量 8:写死 8 时把常量改成任何 ≤ 9 的值
+	#   (含基类的 5)下面三条**全绿** —— 收局判据那行就没人守着了(改档位时断言自动跟随)。
+	_host._scores = {1: TeamHost.TEAM_KILLS_TO_WIN - 1, 2: 0}
 	var p5: Node2D = _host.players[5]
-	# 5 号在 2 队 → 倒地给 1 队 +1 = 9 → 收局
+	# 5 号在 2 队 → 倒地给 1 队 +1 = TEAM_KILLS_TO_WIN → 收局
 	(p5.get_node("Combat") as Node).force_down()
 	_host._match_round_tick(0.016)
-	_check(int(_host._scores.get(1, 0)) == 9, "1 队到 9 杀")
-	_check(int(_host._round_state) == int(MatchHost.RoundState.ROUND_OVER), "★ 到 9 杀收局")
+	_check(int(_host._scores.get(1, 0)) == TeamHost.TEAM_KILLS_TO_WIN,
+			"1 队到 %d 杀(实际 %s)" % [TeamHost.TEAM_KILLS_TO_WIN, str(_host._scores)])
+	_check(int(_host._round_state) == int(MatchHost.RoundState.ROUND_OVER),
+			"★ 到 %d 杀收局" % TeamHost.TEAM_KILLS_TO_WIN)
 	_check(int(_host._rounds_won.get(1, 0)) == 1, "局胜记在**队**上(1 队 = 1)")
+
+	# ── ⑤ 只复位击杀者本人(Task 6;brief 正文里这段写作 ⑦/⑩,同一个东西)──
+	# 语义:击杀后**只**把击杀者送回本方出生点(保留血量,不治疗),队友不动。
+	# ★ 三个"不复位"的档一个都不能省:无归因 / 队友误炸 / 同归于尽。
+	# ★★ 每条先把在场的人全挪到一个**统一的"远点"**(按构造 ≠ 任何出生点):
+	#   否则"没被复位"与"被送回自己的出生点"可能落在同一数值上 —— 那种断言恒绿、没有区分度
+	#   (brief 里 (a) 那版 `位置不变 or 已倒地` 就是这种:受害者必然已倒地 → 恒真)。
+	_host._round_state = MatchHost.RoundState.PLAYING
+	_host._scores = {}
+	var ts := GameParameters.TILE_SIZE
+	var all_roles: Array = [1, 2, 3, 4, 5, 6]
+	# 远点:从 (0,0) 起取第一个**不是任何出生点**的格(避开"远点恰好等于某人出生点"的巧合)
+	var spawn_taken := {}
+	for r in _host._round_spawns:
+		spawn_taken[_host._round_spawns[r]] = true
+	var away_cell := Vector2i(0, 0)
+	while spawn_taken.has(away_cell):
+		away_cell.x += 1
+	var away := Vector2(away_cell.x * ts + ts * 0.5, away_cell.y * ts + ts * 0.5)
+	_check(not spawn_taken.has(away_cell), "[仪器] 远点 %s 确实不是任何人的出生点" % str(away_cell))
+	# 六个人**全部**挪过去(含已在 ④⑥ 倒地的 2/5 号):这样"有人离开远点"与"有人被复位"
+	# 就是同一件事,断言可以覆盖全体。
+	_park(_host, all_roles, away)
+	var alive_roles: Array = []
+	for r in _host.players:
+		if not (_host.players[r] as Node2D).is_downed():
+			alive_roles.append(int(r))
+	_check(alive_roles == [1, 3, 4, 6],
+			"[仪器] ⑤ 开跑前在场的是 1/3/4/6 号(2/5 已在 ④⑥ 倒地;实际 %s)" % str(alive_roles))
+
+	# (a) 无归因(溺水 / 自伤 / K 自杀 → killer 0):2 队的 6 号倒地 → 1 队 +1,但**无人被复位**
+	# ★ 用**过期归因**构造这条早退:6 号身上留着"被 1 号(1 队)打过"的 meta,但时间戳超出
+	#   `ATTRIB_WINDOW`。为什么不用"压根没有 meta":那条路上 `players.get(0)` 是 null,
+	#   **任何**实现都会 return —— 断言恒绿、没有区分度(正是上面那条自检要防的失败模式)。
+	#   带 meta 但过期才是真能走到 `killer_role == 0` 早退的构造:少了时效判定 → 1 号被
+	#   从远点送回出生点 → 红。
+	var p6: Node2D = _host.players[6]
+	CombatFeedback.attribute(p6, _host.players[1])
+	p6.set_meta("last_damager_time", Time.get_ticks_msec() - TeamHost.ATTRIB_WINDOW - 1000)
+	(p6.get_node("Combat") as Node).force_down()
+	_host._match_round_tick(0.016)
+	_check(int(_host._scores.get(1, 0)) == 1 and int(_host._scores.get(2, 0)) == 0,
+			"★ 无归因 · 2 队的 6 号倒地 → 1 队 +1(实际 %s)" % str(_host._scores))
+	var escaped_a := _moved_from(_host, all_roles, away)
+	_check(escaped_a == 0, "★ 无归因 · 无人被复位(实际有 %d 人离开了远点)" % escaped_a)
+
+	# (b) 异队击杀:1 号(1 队)打 4 号(2 队)→ 4 号倒地,**1 号被送回本方出生点**,
+	#     而同队的 3 号(1 队)一步不动 —— "只复位击杀者本人"的另一半就在这条。
+	_host._scores = {}
+	var p1: Node2D = _host.players[1]
+	CombatFeedback.attribute(_host.players[4], p1)
+	(_host.players[4].get_node("Combat") as Node).force_down()
+	_host._match_round_tick(0.016)
+	var home1: Vector2i = _host._round_spawns[1]
+	var want1 := Vector2(home1.x * ts + ts * 0.5, home1.y * ts + ts * 0.5)
+	_check(p1.global_position.distance_to(want1) < 2.0,
+			"★ 异队击杀 · 击杀者(1 号)被送回本方出生点(距目标 %.1fpx)"
+			% p1.global_position.distance_to(want1))
+	_check(p1.global_position.distance_to(away) > 2.0,
+			"★ 异队击杀 · 击杀者确实**离开**了远点(否则上一条可能是「没动」蒙对的)")
+	_check(p1.velocity.is_zero_approx(), "★ 异队击杀 · 击杀者速度清零")
+	_check((_host.players[3] as Node2D).global_position.distance_to(away) < 2.0,
+			"★ 异队击杀 · **同队队友(3 号)一步不动**")
+
+	# (c) 队友误炸:3 号(1 队)炸倒 1 号(1 队)→ 分照样给**对方队**(2 队),但 3 号**不被复位**
+	#     3 号此刻在远点:漏了 `same_team` 判定的话它会被送回自己的出生点 → 红。
+	_host._scores = {}
+	CombatFeedback.attribute(_host.players[1], _host.players[3])
+	(_host.players[1].get_node("Combat") as Node).force_down()
+	_host._match_round_tick(0.016)
+	_check(int(_host._scores.get(2, 0)) == 1,
+			"★ 队友误炸 · 分照样给**对方队**(2 队 +1;实际 %s)" % str(_host._scores))
+	_check(int(_host._scores.get(1, 0)) == 0, "★ 队友误炸 · 1 队不涨分(实际 %s)" % str(_host._scores))
+	_check((_host.players[3] as Node2D).global_position.distance_to(away) < 2.0,
+			"★ 队友误炸 · 击杀者(3 号,与受害者同队)不被复位")
+
+	# (d) 同归于尽:6 号(2 队,已在 (a) 倒地)是击杀者,3 号(1 队)是受害者 → 6 号**不倒第二次**
+	#     漏了 `killer.is_downed()` 判定的话,6 号会被从远点送回它的出生点 → 红。
+	_host._scores = {}
+	CombatFeedback.attribute(_host.players[3], _host.players[6])
+	(_host.players[3].get_node("Combat") as Node).force_down()
+	_host._match_round_tick(0.016)
+	_check(int(_host._scores.get(2, 0)) == 1,
+			"★ 同归于尽 · 分照样给对方队(2 队 +1;实际 %s)" % str(_host._scores))
+	_check((_host.players[6] as Node2D).global_position.distance_to(away) < 2.0,
+			"★ 同归于尽 · 已倒地的击杀者不被复位(它去走自己的复活流程)")
 	_ran_to_end = true
 
 

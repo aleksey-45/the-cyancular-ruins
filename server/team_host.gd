@@ -273,8 +273,17 @@ func _round_over(winner_team: int) -> void:
 	_broadcast_round_state()
 
 
-# 平局不可能(三局两胜,每局必有胜者),但仍按"局胜高者"取,返回**队号**。
+# 对局胜者(**队号**):先到 `TEAM_ROUNDS_TO_WIN` 局胜的那一队;都还没到(只有"整队走光"
+# 提前收场那一支能走到,见 Task 8 的 `_finish_match`)则退回"局胜高者"。
+# ★ 本函数是 `TEAM_ROUNDS_TO_WIN` 的读者之一(Task 7 的 `_start_next_round` 是另一处)。
+#   没有这个阈值分支时,改常量**一点行为都不变** —— 那正是本仓要防的"静默无效"。
+# ★★ 下面那两个 `2` **不是**阈值,是**队号**,别把它们换成 `TEAM_ROUNDS_TO_WIN`:
+#   今天两者都等于 2,换错了不报错,而 Task 7 一旦把档位改成 3,返回给客户端的就会是
+#   "3 队"这种不存在的队号(且照旧不报错)。
 func _match_winner() -> int:
+	for t in [1, 2]:
+		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
+			return t
 	return 1 if int(_rounds_won.get(1, 0)) >= int(_rounds_won.get(2, 0)) else 2
 
 
@@ -334,6 +343,12 @@ func _reset_killer_only(victim: Node2D, victim_role: int) -> void:
 	if killer == null or not is_instance_valid(killer) or killer.is_downed():
 		return
 	var spawn: Vector2i = _round_spawns.get(killer_role, Vector2i(-1, -1))
+	# ★ 兜底值 `(-1,-1)` 必须**在这里拦掉**:不拦的话下面会算出 `(-32,-32)` 并把击杀者
+	#   送到地图外 —— 不报错、人凭空消失(与 `_respawn_cell_for` 的 `(-1,-1)` 契约同款)。
+	#   正常路径恒有值(`plan_team_spawns` / `start_on` 保证),这条只在表坏掉时生效。
+	if spawn.x < 0:
+		push_error("TeamHost: role %d 不在 _round_spawns 里,击杀者复位跳过" % killer_role)
+		return
 	var ts := GameParameters.TILE_SIZE
 	killer.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
 	killer.velocity = Vector2.ZERO
