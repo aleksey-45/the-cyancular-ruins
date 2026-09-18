@@ -9,13 +9,13 @@ extends MatchHost
 #    倒地边沿读 meta 计分;无源死亡(溺水/环境)不计分。
 #  - 排行榜数据经 round_state 载荷下发:{scores(总击杀), names, timer(剩余秒), match_winner}。
 #  - 中途掉线 = 移出对局(节点释放,排行榜标"离开"),剩余 <2 人时终局。
+#  - 出生点静态几何(地板格/连通区规模/开阔优选格,含常量 OPEN_AREA_MIN / PREFER_MIN)
+#    已于 2026-09-18 搬到 `core/sim/spawn_picker.gd`(SpawnPicker),这里只留同名转发。
 
 const MATCH_TIME := 300.0        # 一局时长(秒)
 const HUD_SYNC_INTERVAL := 1.0   # 倒计时/比分周期广播
 const RESPAWN_CLEARANCE := 8     # 复活点与存活敌人的最小环面距离(格)
 const SPAWN_CLEARANCE := 15      # 开局散点两两最小距离(格)
-const OPEN_AREA_MIN: int = 20    # 出生可走连通区最小规模(格);密封死角小间远小于此
-const PREFER_MIN: int = 8        # 优选格不足此数才回退下一级宽松判据
 
 var _match_time := MATCH_TIME
 var _cfg_match_time := 0.0             # 房主自定义时长(秒;0=默认 MATCH_TIME)
@@ -24,10 +24,6 @@ var _round_spawns: Dictionary = {}    # role -> Vector2i(开局散点,_init 摆�
 var _spawned_once: Dictionary = {}    # role -> true(首次摆位走散点,之后动态选复活点)
 var _deaths: Dictionary = {}          # role -> 阵亡数(排行榜展示)
 var _left: Dictionary = {}            # role -> true(中途掉线,已移出对局)
-
-static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆不刷新,够用)
-static var _prefer_cache: Array = []       # 出生优选格缓存(开阔可走区;见 _spawn_candidates)
-static var _region_cache: Dictionary = {}  # 地板格 Vector2i -> 同层连通区规模
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -73,114 +69,37 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 	return host
 
 
-# 采集地板格(EMPTY + 正下方 SOLID + 头上留空;同 MatchHost._is_floor_cell 判据,静态版)
+# ── 出生点几何:已搬到 `core/sim/spawn_picker.gd`(SpawnPicker)──
+# 2026-09-18 逐字搬迁(3v3 要共用同一套"别出生在密封小间"的判据),这里只留转发,
+# 保证本文件所有调用点(`plan_spawns` / `_spawn_cell` / `_spawn_candidates`)名字不变。
 static func _grid_dims() -> Vector2i:
-	var grid := MazeGenerator.current_grid
-	return Vector2i((grid[0] as Array).size(), grid.size())   # (cols, rows)
+	return SpawnPicker.grid_dims()
 
 # 环面格距(current_grid 尺寸版,MazeGenerator.toroidal_dist 的便捷封装)
+# ★ 未随上一条搬走:`_tdist` 只服务本文件的 `_spawn_cell`(复活点选格),3v3 那一侧用
+#   `SpawnPicker.cells_within`(内部走 `GridPathfinder.toroidal_dist`)—— 没有第二个调用方。
 static func _tdist(a: Vector2i, b: Vector2i) -> int:
 	var d := _grid_dims()
 	return MazeGenerator.toroidal_dist(a, b, d.x, d.y)
 
 static func _floor_cells() -> Array:
-	if not _floor_cell_cache.is_empty():
-		return _floor_cell_cache
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return []
-	var rows := grid.size()
-	var cols: int = (grid[0] as Array).size()
-	for y in range(rows):
-		for x in range(cols):
-			var c := Vector2i(x, y)
-			if MazeGenerator.is_floor_cell_with_headroom(grid, c):
-				_floor_cell_cache.append(c)
-	return _floor_cell_cache
+	return SpawnPicker.floor_cells()
 
 
-# ── 出生/复活点优选(防"出生在走不出去的小房间")──
-# 玩家实测:旧判据只要求"脚下有地",密封死角/1 格高夹层的地板格也会入选 →
-# 出生在四面墙的小房间出不去。优选格需同时满足:
-#   (1) 头顶 ≥2 格净空(站得直、跳得出去);
-#   (2) 左右邻格空(出生处 ≥3 格宽,不被墙夹);
-#   (3) 所在同层可走连通区规模 ≥ OPEN_AREA_MIN(密封 1~2 格死角自动淘汰)。
-# 地板格不足时逐级回退:连通区大但不要求三宽 → 任意地板格(极小图兜底)。
-static func _region_sizes() -> Dictionary:
-	if not _region_cache.is_empty():
-		return _region_cache
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return {}
-	var rows := grid.size()
-	var cols := (grid[0] as Array).size()
-	var seen := {}
-	for y in range(rows):
-		for x in range(cols):
-			var start := Vector2i(x, y)
-			if seen.has(start) or not _floor_cells_has(start):
-				continue
-			var stack: Array = [start]
-			var members: Array = []
-			seen[start] = true
-			while not stack.is_empty():
-				var cur: Vector2i = stack.pop_back()
-				members.append(cur)
-				for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-					var nb := Vector2i(posmod(cur.x + off.x, cols), posmod(cur.y + off.y, rows))
-					if seen.has(nb) or not _floor_cells_has(nb):
-						continue
-					seen[nb] = true
-					stack.append(nb)
-			var sz := members.size()
-			for m in members:
-				_region_cache[m] = sz
-	return _region_cache
-
-
-# 某格是否地板格(与 _floor_cells 同判据的 O(1) 版本:自身空 + 下方实心 + 上方留空)
 static func _floor_cells_has(c: Vector2i) -> bool:
-	# 判据收在 MazeGenerator(全仓曾有 5 份);本函数与 _floor_cells 的采集循环同判据。
-	return MazeGenerator.is_floor_cell_with_headroom(MazeGenerator.current_grid, c)
+	return SpawnPicker.floor_cells_has(c)
+
+
+static func _region_sizes() -> Dictionary:
+	return SpawnPicker.region_sizes()
 
 
 static func _roomy_floor(c: Vector2i) -> bool:
-	if not _floor_cells_has(c):
-		return false
-	var grid := MazeGenerator.current_grid
-	var rows := grid.size()
-	var cols := (grid[0] as Array).size()
-	# 头顶两格净空
-	if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY \
-			or grid[posmod(c.y - 2, rows)][c.x] != MazeGenerator.EMPTY:
-		return false
-	# 左右邻格空:出生处 ≥3 格宽
-	if grid[c.y][posmod(c.x - 1, cols)] != MazeGenerator.EMPTY \
-			or grid[c.y][posmod(c.x + 1, cols)] != MazeGenerator.EMPTY:
-		return false
-	return true
+	return SpawnPicker.roomy_floor(c)
 
 
-# 出生候选池(缓存):开阔可走地板格;不足则回退连通区大的地板格;再不足回退任意地板格。
 static func _spawn_candidates() -> Array:
-	if not _prefer_cache.is_empty():
-		return _prefer_cache
-	var floor: Array = _floor_cells()
-	var sizes := _region_sizes()
-	var big: Array = []
-	var roomy: Array = []
-	for c in floor:
-		if int(sizes.get(c, 0)) >= OPEN_AREA_MIN:
-			big.append(c)
-			if _roomy_floor(c):
-				roomy.append(c)
-	if roomy.size() >= PREFER_MIN:
-		_prefer_cache = roomy
-	elif big.size() >= PREFER_MIN:
-		_prefer_cache = big
-	else:
-		_prefer_cache = floor
-	return _prefer_cache
+	return SpawnPicker.spawn_candidates()
 
 
 # 开局散点:洗牌后贪心取两两环面距离 ≥ SPAWN_CLEARANCE 的 N 个格;不够就放宽(全量补齐)。
