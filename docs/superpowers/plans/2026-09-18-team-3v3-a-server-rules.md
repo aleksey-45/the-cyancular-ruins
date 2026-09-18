@@ -1483,6 +1483,7 @@ git commit -m 'feat(team): match_sync 下发队伍表 + CLAUDE.md 记录 A 册�
 2. §1 的"`RoyaleHost` 一行不改"改为"**行为**一行不改" —— Task 3 把它的静态出生几何逐字搬到 `SpawnPicker` 并留转发（理由：3v3 必须共用同一套"别出生在密封小间"的判据，抄第二份就是本仓明令禁止的那种重复）。
 
 **现场确认项（不是占位符，是"必须看真实签名"）**：
-1. Task 2 的探针里 `bullet.tscn` 的 `shooter` / `hit_damage` 字段名（按 `scenes/weapons/bullet_base.gd` 的真实导出名核对）。
+
+1. ~~Task 2 探针的子弹字段名~~ → **已核实（2026-09-18）**：`scenes/weapons/bullet_base.gd:26` `var shooter: Node = null`、`:27` `var hit_damage: int = 0`；组 `bullet` 是在 **`bullet_base.gd:62` 的 `_ready()` 里 `add_to_group("bullet")`** 加的（`bullet.tscn` 自己**没有** `groups=` 声明）→ 探针**必须先 `add_child` 再调 `_adjudicate_bullets`**，否则 `get_nodes_in_group("bullet")` 找不到它、两半断言都空转。`Player` 的 `Combat` 节点名已核实：`player.tscn:168` 就是 `[node name="Combat"]` → `p.get_node("Combat").force_down()` 可用。
 2. Task 4 的 `_place()` 建的玩家是否需要 `host.input_sources[role] = src`（`_physics_process` 会遍历 `input_sources`；手工摆的玩家不入表则不被喂输入 —— 探针手工驱动，二者皆可，但**要一致**）。
 3. Task 9 Step 3 的 `_on_peer_left` / `_expire_graces` 分支合并点，按当时的真实行号落。
