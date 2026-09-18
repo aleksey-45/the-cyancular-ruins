@@ -32,7 +32,8 @@ var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复�
 # 分歧 → 可能回滚循环),或是凭空少墙。
 # ★ 判据是"与基线不同",**不是**"当前为空":后者在将来出现"加砖"类改动时会静默漏报。
 # ★ 顺序确定性(y 升序、同 y 升序 x):载荷要能在两端逐字比对。
-# ★ 规模上限:125×75 = 9375 格,全被拆也只有 9k 条 Vector2i —— 调用方**只在非空时才带**该字段。
+# ★ 规模上限 = 本局地图的格数(本类只服务 PvP 局,定图 factory1v1.cyrm 是 150×100 = 15000 格,
+#   不是单机 demo.cyrm 的 125×75),全被拆也只有 15k 条 Vector2i —— 调用方**只在非空时才带**该字段。
 func destroyed_cells() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	var rows := mini(grid.size(), _base_grid.size())
