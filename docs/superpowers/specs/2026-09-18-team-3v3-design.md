@@ -120,6 +120,10 @@
 
 ### 4.5 三态化清单（现在处处是二分）
 
+★ 本清单**原稿只列了四条**，A 册实现期间补齐了**第五处**（见末行）—— 漏掉的代价是**静默**的
+（`suicide_request` 在 3v3 worker 上被丢掉、一个字都不打印），故这里逐条列全、别再靠"grep
+`_royale`"去事后发现：凡是"1v1/大乱斗二选一"的判据，都要问一句"3v3 走哪一支"。
+
 | 位置 | 现状 | 3v3 |
 |---|---|---|
 | `LobbyRooms.teardown_room`（`lobby_rooms.gd:404/415/421-430`） | `is_royale` 二选一 | 三态，端口延迟各一档 |
@@ -127,6 +131,11 @@
 | `room_manager._sweep_stale_rooms` | royale 宽限分支 | 加 team 分支（一局时长更长 ⇒ 宽限要单独算） |
 | `server_main.gd:259-270` 两条超时梯 | 20s 降级开局 / 10s 退出 | **不降级**（满 6 人才开）⇒ 收不齐就走"退出释放端口"那一支 |
 | 房间账本 `LobbyRooms` | `rooms` + `royale_rooms` 两张表 | 新增 `team_rooms`；三条路径**互相拒斥**（按房间号解析时必须知道是哪种房） |
+| **`server_main._on_suicide_request`（第五处，A 册补）** | `if not _royale or _host == null: return` | 闸改 `not (_royale or _team_mode)`；`TeamHost.request_suicide_role` 与 royale 逐字同构，走「无归因」档（倒地 → 对方队 +1、**无人被复位**）。漏了 = **K 键卡死自救在 3v3 里静默失效**（规则 7 是"不分死因"、§10 也把"自杀"列进 3v3 的死亡成因）。 |
+
+★ 同类的还有 `server_main._expire_graces` 的**两处**（宽限到点的分派 + "全员走光才退出"）——
+它们已经收进 `GraceWindow.expire_action(_royale, _team_mode)` 与 `(_royale or _team_mode)`，
+**两处只改一处都是"能用但漏一半"**；守卫见 `tests/grace_window_smoke.gd` 与 `room_sweep_smoke`。
 
 ### 4.7 队友不互挡（分队碰撞层）
 
@@ -172,11 +181,22 @@
 | 通道 | 改动 |
 |---|---|
 | `match_sync` 应答 | 加 `teams: {role: 1\|2}`。★ **必须显式下发**（role 号有空洞，推导会错） |
-| `round_state` | `scores` / `deaths` / `rounds_won` 的键 = **队号** |
+| `round_state` | `scores` / `rounds_won` 的键 = **队号**（★ 原稿这里还写了 `deaths`，**已删** —— 见下方更正） |
 | `kill_event(killer, victim)` | **载荷不动**（仍 role 粒度），客户端用 `teams` 映射 |
 | 快照 `world` / `c2` | **不动**（每玩家字段与队伍无关） |
 | 新 RPC（`NetBusExt`） | `team_create` / `team_join` / `team_pick(team)` / `team_start` / `team_leave` + 房间状态与两队名单的广播 |
 | `NetBus` 方法表 | **一个字不动** |
+
+★★ **`deaths` 更正（A 册实现期）**：本节与 §11 第 2 条原先把 `deaths` 与 `scores` / `rounds_won`
+并列写成 `round_state` 的契约键 —— **那是一条写错了的承诺**，A 册按"去掉承诺"处理，理由：
+① 它是从大乱斗那一节抄来的（`RoyaleHost._broadcast_round_state` 确有 `deaths`），而 **1v1 与 3v3
+的 `round_state` 载荷同形**（`state` / `round` / `scores` / `rounds_won` / `timer` + 两个按状态的
+`winner` / `match_winner`），`TeamHost` 里压根**没有** `_deaths` 这个计数器，补它 = 新增一个
+**没有任何读者**的协议字段；② 3v3 的 HUD 口径（§5 的"记分条显示队 A 击杀 N — 队 B 击杀 M /
+局胜 / 第 N 局"、§11 第 4 条的"队伍分 / 队员列表 / 谁在复活中"）**一处都不读阵亡数**；
+③ 协议字段是**加得上去**的（`round_state` 各模式本来就带各自的状态键），B 册真需要时再随
+**消费者**一起加，而不是先在 A 册留一个无人读的键。守 `CLAUDE.md` 那条"只留一条投递路径 /
+最小协议"的纪律。**本段落地后的契约以这里为准，§11 第 2 条已同步删掉 `deaths`。**
 
 ## 7. 常量初值（试玩后再调，全部住在一处）
 
@@ -225,7 +245,8 @@
 第二份规划可以直接依赖这些（本份落地后它们就是**不变的接口**）：
 
 1. `match_sync.teams`：`{role: 1|2}` —— 队色、队友标记、队伍分组的唯一数据来源。
-2. `round_state` 的 `scores` / `deaths` / `rounds_won` **键 = 队号**（HUD 按队渲染，不再逐 role 聚合）。
+2. `round_state` 的 `scores` / `rounds_won` **键 = 队号**（HUD 按队渲染，不再逐 role 聚合）。
+   ★ 原稿此处还列了 `deaths`，**已删** —— 3v3 的 `round_state` 里没有这个键，理由见 §6 末尾的更正段。
 3. **队色覆盖个人色相**（3v3 下 `peer_hues` 不生效）—— 这是规则，不是版式。
 4. 需要分组显示的三类信息：**队伍分 / 队员列表 / 谁在复活中**。
 5. 选边等待室需要的数据：**两队名单 + 每队人数上限 3 + 房主身份**。

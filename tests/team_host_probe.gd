@@ -19,6 +19,11 @@ extends Node
 #    —— 后者才验得到"虚分派落在覆写上",见 ⑨ 的说明);
 # ⑪ match_sync 应答带 teams(源码级:路由在 server_main 的私有方法里,探针跑不到那条路)由
 #   Task 10 落 —— brief 正文里这段写作 ⑨,但 ⑨/⑩ 已被 Task 7/11 占用,故顺延为 ⑪。
+#   ★ 同段另有两条:**只在非空时带该键**(源码级)与 **`teams` 不进 `round_state`**(反向:
+#   取 `_broadcast_round_state` 的函数体断言不含它)—— 全支最终审查的"合并前必修"两条。
+# ⑫ 自杀脱困(K 键)由全支最终审查的修复批落:真起一个 `server_main` 实例(不进树)调
+#   `_on_suicide_request`,验闸放行 + 无归因档(对方队 +1 / 无人被复位);⑫b 是
+#   `_respawn_player` 清归因 meta 的对等性。编号顺延(⑩/⑪ 已被占用)。
 # 掉线终局(整队走光才终局 + 走光判胜)归 **Task 8 的独立探针** `tests/team_disconnect_probe.tscn`,
 # **不**追加到本文件 —— 别在这里再抄一份(两份真相:改了判据只有一份会红)。
 
@@ -142,6 +147,13 @@ func _run() -> void:
 	MazeGenerator.set_map_file(MAP)
 	GameParameters.refresh_map_size()
 	WorldBuilder.load_grid()
+	# ★★ 固定随机源(在**调散点之前**):`plan_team_spawns` 内部走 `GridPathfinder.spread_cells`,
+	#   而它 `shuffle()` 读的是**全局 RNG** —— 不播种的话 ① 那条不变式是**随机红**的:
+	#   实现侧的 `SPAWN_MAX_TRIES` 重试把单次违反率从 61.5% 压到 ~0.3%/次,而 0.3% 不是 0 ——
+	#   验收探针不该有随机失败模式(红一次就得整轮重跑、还分不清是真坏了还是运气)。
+	#   播种同时让**整跑可复现**:任何一条断言红,照这个种子能原地再跑出同一份散点。
+	#   ★ 种子值的选取没有含义,只是一个固定的任意数;改它就是换一份散点(scene 的语义不变)。
+	seed(20260918)
 	var teams := TeamHost.plan_team_spawns(TEAMS)
 	_check(teams.size() == 6, "6 个 role 都有出生点")
 	# ★ 只数 size 分不出"6 个有效点"与"6 个 (-1,-1)"(Task 4 首次红日志就是证据:空网格下
@@ -606,6 +618,132 @@ func _run() -> void:
 	var sm := ScanUtil.code_only(ScanUtil.read("res://server/server_main.gd"))
 	_check(sm.contains('data["teams"] = teams'), "★ ⑪ match_sync 应答带 teams")
 	_check(sm.contains('has_method("team_map")'), "★ ⑪ teams 来自宿主的只读取法(不是就地推导)")
+	# ★ 「**只在非空时带该键**」也是契约的一条(与 `destroyed` 同款:不带队时旧客户端忽略
+	#   未知键、新客户端拿到空),但只验"键在"照不到它 —— 无条件 `data["teams"] = teams`
+	#   同样满足上面那条,却会给 1v1/大乱斗的每一份 match_sync 白搭一个空字典。
+	#   ★ 判据串 `if not teams.is_empty():` 在 server_main.gd 里**唯一**(其余 `is_empty()`
+	#   读的是 `_role_set` / `_claims` / `ips` / `destroyed`),故它不会靠别的分支蒙对。
+	_check(sm.contains("if not teams.is_empty():"),
+			"★ ⑪ teams **只在非空时**带该键(无条件赋值照样满足上面那条)")
+	# ★★ 反向断言:`teams` 不进 `round_state`。上面三条只验"该来的来了",这条验"不该来的
+	#   没来" —— 两条投递路径(自检 B2 那类事故的形状)正是"顺手把队伍表塞进每帧广播"的产物。
+	#   ★ 判据取 `_broadcast_round_state` 的**函数体**(不是整个文件):`teams` 这个词在本文件
+	#   别处满地都是(`plan_team_spawns(teams)` / `team_map()`),拿整文件判会恒红。
+	var rbody := ScanUtil.func_body(
+			ScanUtil.code_only(ScanUtil.read("res://server/team_host.gd")), "_broadcast_round_state")
+	_check(not rbody.is_empty(),
+			"⑪ 读得到 `TeamHost._broadcast_round_state` 的函数体(读不到 = 下面那条恒真)")
+	_check(not rbody.contains("teams"),
+			"★ ⑪ `teams` **不进** `round_state`(队伍表只走 match_sync 一条投递路径)")
+
+	# ── ⑫ 自杀脱困(K 键):3v3 也接这条闸,落「无归因」档 ──
+	#
+	# 为什么钉它:3v3 的 K 键自救此前**被静默丢掉** —— `server_main._on_suicide_request` 首行
+	# 是 `if not _royale or _host == null: return`(闸只认大乱斗),于是卡死的玩家在三局两胜里
+	# 只能干等对局被别人打完,而且**一个字的日志都没有**。设计 §4.5 的"三态化清单"列了四处、
+	# 漏了这第五处;而规则 7 是"不分死因"、§10 也把"自杀"列进 3v3 的死亡成因。
+	#
+	# ★ 手法:让 `server_main.gd` 的那个函数**真跑一遍** —— 起一个它的实例,手工填
+	#   `_team_mode` / `_royale` / `_host` / `_claims` 四个字段后直接调 `_on_suicide_request`。
+	#   ★ 实例**不进树**:`_ready` 会去 `NetBus.start_server(7777)` 并拉起大厅(那是真端口,
+	#     探针绝不能碰)。本函数体不依赖树,故"不进树"不影响这条判据的有效性。
+	#   ★ 这是本探针唯一能照到那条**闸**的角度(`role_peers` 传空建宿主的技术在这里用不上 ——
+	#     闸在 `server_main`,不在宿主上);`TeamHost.request_suicide_role` 本身另被
+	#     kh_l5_probe 的"禁入基类名单"钉着归属。
+	#
+	# ★ 四条断言各管一件事,缺一条都留一个洞:
+	#   ① 闸放行(改回 `not _royale` → 红)② 真倒地 ③ 对方队 +1、本队不涨 ④ 无人被复位。
+	# ★ 变异反证:把 `server_main.gd` 那条闸改回 `if not _royale or _host == null:` → ① 红。
+	#   把 `request_suicide_role` 里那段清 meta 的循环删掉 → ④ 红(见下面 meta 的构造说明)。
+	_host._round_state = MatchHost.RoundState.PLAYING
+	_host._scores = {}
+	_host._down_counted = {}
+	_host._respawn_pending = {}
+	_park(_host, all_roles, away)
+	var suicide_role := 3                       # 1 队
+	var suicide_team: int = _host.team_of(suicide_role)
+	var suicide_enemy: int = _host._enemy_team_of(suicide_role)
+	var suicide_peer := 424242                  # 哨兵:不与任何真 peer 撞号
+	# ★★ meta 的构造是这条判据的**全部区分度**所在:归因刻意指向一名**敌人**(role 4,2 队)
+	#   且时间戳新鲜。少了"自杀先清 meta"的实现会把它读成"4 号杀了 3 号" → 4 号被送回出生点
+	#   → ④ 红。指向**队友**或干脆不写 meta 都照不到(前者被 `same_team` 挡、后者恒早退 ——
+	#   两种实现都能过,正是本仓反复在删的"恒绿断言")。
+	CombatFeedback.attribute(_host.players[suicide_role], _host.players[4])
+	_check(not (_host.players[suicide_role] as Node2D).is_downed(),
+			"[仪器] ⑫ 自杀前 %d 号是活的(否则「倒地」那条验的是它本来就有的状态)" % suicide_role)
+	# ★ 用**无类型**变量接实例:`var srv: Node = …` 会让 `srv._team_mode` 在编译期就报
+	#   "Node 上没有该属性"(同 team_table_probe 里 `var _host = null` 的理由)。
+	var srv = load("res://server/server_main.gd").new()
+	srv._team_mode = true
+	srv._royale = false
+	srv._host = _host
+	srv._claims = {suicide_role: suicide_peer}
+	srv._on_suicide_request(suicide_peer)
+	_check((_host.players[suicide_role] as Node2D).is_downed(),
+			"★ ⑫ 3v3 的 suicide_request **接上了**(闸放行 → force_down();闸只认 _royale 时这条红)")
+	_host._match_round_tick(0.016)
+	_check(int(_host._scores.get(suicide_enemy, 0)) == 1
+			and int(_host._scores.get(suicide_team, 0)) == 0,
+			"★ ⑫ 自杀落「无归因」档:%d 队 +1、%d 队不涨(规则 7 不分死因;实际 %s)"
+			% [suicide_enemy, suicide_team, str(_host._scores)])
+	var escaped_suicide := _moved_from(_host, all_roles, away)
+	_check(escaped_suicide == 0,
+			"★ ⑫ 自杀 · **无人被复位**(实际有 %d 人离开了远点)" % escaped_suicide)
+
+	# ── ⑫b 复活清归因 meta(与 `RoyaleHost._respawn_player` 对等)──
+	# `TeamHost._respawn_player` 的 6 行覆写:复活后的环境死亡(溺水等)不再记到复活前最后
+	# 射手头上。★ 判据用 `has_meta`,**不**用"复活后再来一次自杀看分给谁" —— 后者会被
+	# `_reset_killer_only` 的 `is_downed()` 早退掩掉,红不出来(换了个形状的恒绿断言)。
+	CombatFeedback.attribute(_host.players[1], _host.players[4])
+	_check((_host.players[1] as Node2D).has_meta("last_damager"),
+			"[仪器] ⑫b 复活前 meta 确实在(否则下面那条恒绿)")
+	_host._respawn_player(1)
+	_check(not (_host.players[1] as Node2D).has_meta("last_damager")
+			and not (_host.players[1] as Node2D).has_meta("last_damager_time"),
+			"★ ⑫b 复活时清掉 last_damager / last_damager_time(对齐 RoyaleHost._respawn_player)")
+
+	# ── ⑫c 未知队号不得被静默划进 2 队(`_apply_team_layers` 的穷举分支)──
+	# ★ 原先写的是 `if team_of(role) == 1 … else …` —— 于是**队号 0 / 表外 role** 会落进
+	#   `else`,被配成 **2 队的身体层**:它与 1 队互挡、与 2 队互穿 = **非对称碰撞**,而且
+	#   不报错。今天 `players` 的键都被 `--teams` 覆盖着,走不到那条路;但"走不到"是靠
+	#   **上游一个校验**维持的,不是本函数的性质 —— `_apply_team_layers` 是公有的
+	#   (手工摆位路径会显式调它,见 `_place` 上方注释),把不变量写进函数本身才对。
+	# ★ 预期会打一行 `ERROR: TeamHost: role 99 的队号是 0…`(那是**判据本身**,不是故障)。
+	print("  [info] 下面那行 ERROR 是**预期**的(⑫c 故意喂一个表外 role 给 _apply_team_layers)")
+	# ★ 必须是 `CollisionObject2D` 的子类(裸 `Node2D` 没有 `collision_layer` ——
+	#   实测会当场 "Invalid assignment of property 'collision_layer'")。`_apply_team_layers`
+	#   只读这两个属性,`StaticBody2D` 足够,不必为一个假身起一整个 Player。
+	var stray := StaticBody2D.new()
+	stray.collision_layer = LAYER_PLAYER
+	stray.collision_mask = 7          # `super._init` 给玩家的默认(1|2|4)
+	_host.add_child(stray)
+	_host.players[99] = stray
+	_host._apply_team_layers()
+	_check(stray.collision_layer == LAYER_PLAYER and (stray.collision_mask & LAYER_PLAYER) != 0,
+			"★ ⑫c 表外 role(队号 0)保持 super 的默认配层,不被划进 2 队"
+			+ "(划进去 = 与 1 队互挡、与 2 队互穿;**实际 layer %d / mask %d**)"
+			% [stray.collision_layer, stray.collision_mask])
+	_host.players.erase(99)
+	stray.free()
+
+	# ── ⑫d `_begin_match` 帧末复核满员(3v3 满员才开、不降级)──
+	# ★ 收齐判据由**最后一个** claim 满足 → 开局延到帧末,而那一帧里 claim 集可能缩小
+	#   (有人刚 claim 完就掉线)。不复核的话 **5 个人也能开** —— 一边 3 打 2,整局胜负从
+	#   第一秒就是假的,且不报错。
+	# ★ 只断言 `_match_started` ——**别**让它跑到 `TeamHost.start_on`(那会重载全局网格)。
+	#   故先把 `srv._host` 置空(否则第一条守卫 `_host != null` 会提前返回,这条就恒绿了 ——
+	#   实测:不置空时正确实现与**删掉复核**的实现都会从这里返回,断言没有区分度)。
+	# ★ 变异反证:把 `_begin_match` 里那三行复核删掉 → 下面这条红。
+	srv._host = null
+	srv._claims = {1: 11, 2: 12, 3: 13, 4: 14, 5: 15}   # 5/6:过得了"≥2"那道闸,过不了满员
+	srv._team_of_role = TEAMS
+	srv._begin_match()
+	_check(not srv._match_started,
+			"★ ⑫d 3v3 帧末复核未满员(5/6)→ **不开局**(`_match_started` 必须仍为 false;"
+			+ "让 30s 超时梯去收尾)" + ("—— ★ 它已经开了,变异复现成功" if srv._match_started else ""))
+	if srv._host != null:
+		(srv._host as Node).free()   # 只可能出现在"复核被删掉"的那次变异跑里
+	srv.free()                       # 实例不进树(见 ⑫ 上方:`_ready` 会去 bind 7777)
 
 	_ran_to_end = true
 

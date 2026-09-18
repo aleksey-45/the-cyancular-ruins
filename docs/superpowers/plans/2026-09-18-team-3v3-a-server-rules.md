@@ -1563,7 +1563,7 @@ git commit -m 'feat(team): 队友不互挡(分队碰撞层:1 队 layer2 / 2 队 
 
 ## 自检记录
 
-**spec 覆盖**：§4.1 权威链（Task 9 的命令行 + Task 4 的 `start_on`）→ ✓；§4.2 覆写表（Task 4/5/6/7/8）→ ✓；§4.3 友伤（Task 2；**§4.3 里"给 `apply_aoe` 加参数"一说是错的** —— 队友吃爆炸满效是现状默认行为，已改为"不动"）→ ✓；§4.4 出生/复活（Task 3 的 `SpawnPicker` + Task 4）→ ✓；§4.5 三态化（**一半**：worker 侧在 Task 9；大厅侧 `teardown_room` 的三态、端口延迟的接线上归 B 册）→ 部分；§4.6 掉线重连（Task 8；**宽限期机制本身不动**，`reclaim_role` 已按 role 工作、与队伍无关）→ ✓；§6 协议（Task 10 的 `teams`；`kill_event` 载荷保持 role 粒度 → Task 5 的注释）→ ✓；§7 常量（Task 4/5 的 `TEAM_*`）→ ✓；§10 守卫（各任务的探针；**6 人真链路压测归 B 册**）→ 部分。
+**spec 覆盖**：§4.1 权威链（Task 9 的命令行 + Task 4 的 `start_on`）→ ✓；§4.2 覆写表（Task 4/5/6/7/8）→ ✓；§4.3 友伤（Task 2；**§4.3 里"给 `apply_aoe` 加参数"一说是错的** —— 队友吃爆炸满效是现状默认行为，已改为"不动"）→ ✓；§4.4 出生/复活（Task 3 的 `SpawnPicker` + Task 4）→ ✓；§4.5 三态化（**一半**：worker 侧在 Task 9；大厅侧 `teardown_room` 的三态、端口延迟的接线上归 B 册。★ **收尾批（全支最终审查）补上了清单漏掉的第五处** —— `server_main._on_suicide_request` 的闸改 `not (_royale or _team_mode)` + `TeamHost.request_suicide_role`；`TEAM_PORT_REUSE_DELAY` 零读者一条已写进 B 册计划与 `b-task-3-brief.md`）→ 部分；§4.6 掉线重连（Task 8；**宽限期机制本身不动**，`reclaim_role` 已按 role 工作、与队伍无关）→ ✓；§6 协议（Task 10 的 `teams`；`kill_event` 载荷保持 role 粒度 → Task 5 的注释）→ ✓；§7 常量（Task 4/5 的 `TEAM_*`）→ ✓；§10 守卫（各任务的探针；**6 人真链路压测归 B 册**）→ 部分。
 
 **本册不做（明写）**：大厅选边房间与 NetBusExt RPC、`teardown_room` 三态与端口延迟接线、客户端 `team_game` 与 `TeamHud`、主菜单入口、6 人真链路压测、`match_sync.teams` 的**消费** —— 全部归 B 册。
 

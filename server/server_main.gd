@@ -8,6 +8,8 @@ extends Node2D
 #    `--roles` = **本局全部参战 role**(真人已分配号 + AI 补位号),由大厅显式传入。
 #  - `--worker --team --port P --roles r,... --teams t,...`:3v3 worker——团队对抗(TeamHost),
 #    **满员才开**(不降级),收不齐就超时退出释放端口;单个掉线进宽限期,到点移出对局(整队走光才终局)。
+#    ★ K 键自杀(`NetBusExt.suicide_request`)与 --royale **同语义**(闸见 `_on_suicide_request`:
+#      `not (_royale or _team_mode) or _host == null` 早退,宿主侧 `TeamHost.request_suicide_role`)。
 #    `--roles` 与 `--teams` **同序等长**:第 i 个 role 的队号就是 teams[i](队号不从 role 号推 —— 同 --roles 的理由)。
 #    ★ 与 --royale 的方向**相反**:那边是自由混战(N 人可打),故能按已到人数降级开局;这边两队人数必须相等才成立。
 #    ★ 不再传「人数 + role 上界」两个整数:role 由大厅的「最小空闲号」分配,有人退出后会留空洞
@@ -485,9 +487,16 @@ func _on_match_sync(caller: int) -> void:
 	NetBus.rpc_id(caller, "match_sync_data", data)
 
 
-# 自杀脱困(大乱斗):caller → role → RoyaleHost(存活/对局中校验在那边)
+# 自杀脱困(大乱斗 / 3v3):caller → role → 宿主(存活/对局中校验在那边)
+# ★★ 闸里**必须有 `_team_mode`**(这是本册最容易漏的**第五处二分** —— 设计 §4.5 的
+#   "三态化清单"原先只列了四处):只认 `_royale` 时 3v3 worker 把 `suicide_request`
+#   **静默丢掉** —— K 键毫无反应、一个字的日志都没有,而卡死的玩家在三局两胜里只能干等
+#   对局被别人打完。规则 7 是"不分死因"、§10 也把"自杀"列进 3v3 的死亡成因,故接上。
+#   ★ 两个模式共用同一个分支不是"顺手统一":两条路的语义**完全一致**(都是
+#     `request_suicide_role` → 无归因档),差异只在宿主那一层覆写里。
+#   守卫:`tests/team_host_probe` 的 ⑫(变异反证:把本行改回 `not _royale` → ⑫ 红)。
 func _on_suicide_request(caller: int) -> void:
-	if not _royale or _host == null:
+	if not (_royale or _team_mode) or _host == null:
 		return
 	for r in _claims:
 		if _claims[r] == caller:
@@ -550,6 +559,18 @@ func _defer_begin_match() -> void:
 
 func _begin_match() -> void:
 	if _match_started or _host != null or _claims.size() + _ai_roles.size() < 2:
+		return
+	# ★ 3v3:帧末再核一次满员。收齐判据由**最后一个** claim 满足 → 开局延到帧末,而这一帧里
+	#   claim 集可能**缩小**(有人刚 claim 完就掉线 → `_on_peer_left` 把它从 `_claims` 摘掉,
+	#   或 claim 与断开在同一次 poll 到达)。不核的话 5 个人也能开,而本模式的纪律是
+	#   **满员才开、不降级** —— 3v3 少一个人 = 一边 3 打 2,整局的胜负从第一秒就是假的。
+	# ★ 位置**必须在 `_match_started = true` 之前**:早退的函数因此不写 `_match_started`,
+	#   `_process` 的 3v3 超时梯(`_team_mode and not _match_started and _host == null`)照旧
+	#   从 worker 启动起算,到 30s 打印"报到超时"并退出释放端口 —— 这就是"让 30s 梯去兜"。
+	#   写在 `_match_started = true` 之后会**卡死 worker**:梯子进不去,而它已置真、从不复位。
+	if _team_mode and _claims.size() < _team_of_role.size():
+		print("worker: 3v3 帧末复核未满员(%d/%d),不开局 —— 交 30s 超时梯"
+				% [_claims.size(), _team_of_role.size()])
 		return
 	_match_started = true
 	if NetBus.role_claimed.is_connected(_on_role_claimed):

@@ -76,6 +76,15 @@ func _run() -> void:
 	var a := _place(_host, 4, Vector2i(20, 20))
 	var mate := _place(_host, 5, Vector2i(21, 20))
 	var foe := _place(_host, 1, Vector2i(22, 20))
+	# ★★ [仪器] 钉住 `players` 的**插入顺序** —— ③/④ 的 `continue` vs `break` 区分度**全靠它**。
+	#   裁决循环是 `for role in players`(即字典插入序),而射手是 role4:顺序 [4,5,1] 下,
+	#   "打敌人"那次必然先遍历到**队友** role5(= 同队)→ 用 `break` 的实现会在那里**停下**,
+	#   永远走不到 role1 → `hit_foe` 红。若有人重排了上面三行的摆放顺序(比如把敌人先摆进来),
+	#   区分度**当场消失**而两条真断言**照样全绿** —— 正是本仓反复在删的那种形状。
+	#   ★ 所以这条不是"重申实现细节":它守的是"③ 那两条为什么能红"。
+	_check(_host.players.keys() == [4, 5, 1],
+			"[仪器] players 按摆放顺序插入(4 → 5 → 1)—— **队友先于敌人被遍历**,"
+			+ "③ 的 continue/break 区分度就靠它(实际 %s)" % str(_host.players.keys()))
 	await get_tree().physics_frame   # 玩家 _ready(@onready combat/weapons)要跑过一帧
 	# 子弹:由 4 号发射,位置压在 5 号身上(队友)→ 不该结算;再压到 1 号身上 → 该结算。
 	var hit_mate := _fire_probe_bullet(_host, a, mate.global_position, 5)

@@ -83,11 +83,26 @@ func _apply_team_layers() -> void:
 		var p: Node2D = players[role]
 		if p == null or not is_instance_valid(p):
 			continue
-		if team_of(int(role)) == 1:
-			p.collision_layer = 2
-			p.collision_mask = (p.collision_mask & ~2) | TEAM_ENEMY_LAYER
-		else:
-			p.collision_layer = TEAM_ENEMY_LAYER
+		# ★ 队号必须**穷举** 1/2,不能写成 `if t == 1 … else …`:表外 role 的队号是 **0**
+		#   ("查不到队伍"),`else` 会把它静默划进 **2 队**的身体层 —— 后果是**非对称碰撞**
+		#   (它与 1 队互挡、与 2 队互穿),而且**不报错**,玩到才发现。故未知队号出声。
+		# ★ `continue` 必须写在**下面的 `match` 之外**(先拦再分),不能在 `_` 臂里写:
+		#   **GDScript 里 `match` 体内的 `continue` 是"落到下一个 pattern",不是外层循环的
+		#   continue** —— 实测 `match i: 1: print("arm1"); continue` 会**继续执行 `2:` 那段**
+		#   (arm1 与 arm2 都打印)。写在 `_` 臂里当"跳过本轮"用是**静默无效**的:今天恰好无害
+		#   (match 是循环体最后一句),将来在 match 之后加一行就会对未知队号生效。
+		# ★ 未知队号**什么都不配** = 保持 `super._init` 给的默认(层 2 / 掩码 7,即"全员互挡"),
+		#   而不是把它当成某一队 —— 未知归属下"多挡一层"是可解释的,"少挡一层"不是。
+		var t := team_of(int(role))
+		if t != 1 and t != 2:
+			push_error("TeamHost: role %d 的队号是 %d(不在 {1,2} 里),不配分队碰撞层" % [int(role), t])
+			continue
+		match t:
+			1:
+				p.collision_layer = 2
+				p.collision_mask = (p.collision_mask & ~2) | TEAM_ENEMY_LAYER
+			2:
+				p.collision_layer = TEAM_ENEMY_LAYER
 
 
 # ── 开局(在 worker 进程调用):算散点 → 逐角色 match_start → 建 TeamHost ──
@@ -248,6 +263,25 @@ func _respawn_cell_for(role: int) -> Vector2i:
 			if ok:
 				return c
 	return Vector2i(-1, -1)
+
+
+# 复活时清空归因 meta:复活后的环境死亡(溺水等)不再记到复活前最后射手头上。
+# ★★ 照 `RoyaleHost._respawn_player` 那 6 行**逐字同构**,不是"顺手加上去的" —— 选**补齐对等**
+#   而不是写一句"3v3 不需要":
+#   · 归因窗口是 `ATTRIB_WINDOW`(3s),而 meta 在**受击瞬间**写下、**跨倒地**保留 ——
+#     "复活后 3s 内的环境死亡(溺水/坠落)算给复活前那名射手"这条路径在 3v3 与 royale 里
+#     是**同一个形状**,没有哪条 3v3 特有的规则把它排除掉;
+#   · 计分口径是"不分死因"(规则 7),恰恰**更**看得见这条 —— 一次错归因在 3v3 直接变成
+#     "对方队 +1 且击杀者被复位",比 royale 的排行榜好看一点要严重;
+#   · 今天大概率不可达(需要复活后 3s 内死于环境),但"不可达"是**当前数值**的属性,
+#     `ATTRIB_WINDOW`/`RESPAWN_DELAY`/`drown_delay` 任何一个被调都会让它可达 ——
+#     而对等性欠债一旦留下,调参的人不会知道这里少了一行。守卫:探针 ⑫b(复活后 meta 必须不在)。
+func _respawn_player(role: int) -> void:
+	super._respawn_player(role)
+	var p: Node2D = players.get(role)
+	if p != null and is_instance_valid(p):
+		p.remove_meta("last_damager")
+		p.remove_meta("last_damager_time")
 
 
 # 某 role 的**对方队号**(计分归属用)。无队伍 → 0。
@@ -527,3 +561,28 @@ func _finish_match() -> void:
 	_round_state = RoundState.MATCH_OVER
 	_broadcast_round_state()
 	print("TeamHost: 对局结束(整队走光),胜者队 %d" % _match_winner())
+
+
+# ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)──
+# 异常卡死(嵌墙/夹缝)时主动放弃生命:走正常倒地边沿 → 2s 复活;先清 `last_damager` 归因,
+# 自杀不计入任何人击杀。
+# ★ 与 `RoyaleHost.request_suicide_role` **逐字同构**(那边 12 行,规则 7"不分死因"对两个模式
+#   同样成立)。在 3v3 下它落进**无归因**档:倒地 → **对方队 +1**;而 `_reset_killer_only`
+#   因 killer 0 早退 ⇒ **无人被复位**(spec §10 第 ⑩ 行的"无归因(溺水/自杀)→ 无人被复位")。
+# ★★ 本函数**必须留在子类**:`tests/kh_l5_probe.gd` 的"新接口归属"反向断言把
+#    `request_suicide_role` 列进**禁入基类**名单(搬进基类 = 未定义符号)。
+# ★ 为什么值得为它单独接一条闸:三局两胜里卡死的玩家比大乱斗难受得多(不能退、只能等对局
+#   被别人打完),而 royale 那份现成 —— `server_main._on_suicide_request` 原先只认 `_royale`,
+#   3v3 worker 上 `suicide_request` 被**静默丢掉**(K 键毫无反应,且不报错)。
+func request_suicide_role(role: int) -> void:
+	if _round_state != RoundState.PLAYING:
+		return
+	var p: Node2D = players.get(int(role))
+	if p == null or not is_instance_valid(p) or p.is_downed():
+		return
+	for m in ["last_damager", "last_damager_time"]:
+		if p.has_meta(m):
+			p.remove_meta(m)
+	var combat: Node = p.get_node_or_null("Combat")
+	if combat != null and combat.has_method("force_down"):
+		combat.force_down()

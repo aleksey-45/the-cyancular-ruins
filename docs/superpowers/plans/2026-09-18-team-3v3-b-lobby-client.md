@@ -488,6 +488,14 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 
 ★ **同时要改的两处**:① `_enter_tree` / `_exit_tree` 里 connect/disconnect 五条 `team_*` 信号;② **反向互斥** —— `create_room`（1v1）与 `royale_create` 的守卫里各加一条 `_in_team_room(caller)`。
 
+★★ **必须读 `TEAM_PORT_REUSE_DELAY`，不能顺手复用 `WORKER_PORT_REUSE_DELAY`**（A 册遗留的显式清单项）。
+
+A 册 Task 9 已把 `WorkerLauncher.TEAM_PORT_REUSE_DELAY = 360`（`server/worker_launcher.gd`）备好，**目前零读者** —— team 房的拆除路径（就是你这一步）是它**唯一**的归属，A 册不接线（A 册没有大厅侧的 team 入口）。
+
+★ 别图省事复用 `WORKER_PORT_REUSE_DELAY`（120s）：那条线正是 1v1 当年 30s → 120s 修过的老坑 —— **端口归还延迟短于或等于断线宽限期**（`GraceWindow.DEFAULT_SECONDS` = 30s）时，宽限期一到端口就被 `pick_port` 发给新 worker，而重连的客户端手里攥着**旧端口** → **连到别的局**。3v3 一局比 1v1 长得多（三局两胜 × 9 杀），照 royale 那档 **360** 走。★ 已知边界照旧（与 `WORKER_PORT_REUSE_DELAY` 同款）：计时从**房间拆除（≈开局）**起算，不是从局内断线起算 ⇒ 一局中后段掉线时端口仍可能已被复用；3v3 一局更长，这条缺口更大（spec §9 第 4 条）。
+
+守卫：`tests/team_room_smoke.gd`（本 Task 的冒烟）+ `room_sweep_smoke` 的双向断言 —— 但两者都只扫**字符串**，真正"拼出来的 argv 被解析端认下"由 `tests/team_spawn_smoke.gd`（A 册收尾批提升进仓的 `-s` 探针）证明。
+
 - [ ] **Step 6: 让用户跑冒烟**
 
 Run（**让用户跑**）：`timeout 60 "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd`
