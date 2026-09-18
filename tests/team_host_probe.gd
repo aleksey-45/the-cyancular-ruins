@@ -15,7 +15,9 @@ extends Node
 # ④ 按队计分、⑥ 收局由 Task 5 落(④ 在那时被**换掉** —— Task 4 那版数值上巧合重合、
 #   区分不了团队语义,见 ④ 里的说明);
 # ⑤ 只复位击杀者由 Task 6 落(brief 正文里这段写作 ⑦/⑩,同一个东西);
-# ⑦ 换边/终局、⑧ 掉线随 Task 7/8 追加到本探针末尾。
+# ⑧ 换边/终局由 Task 7 落(⑧ = 直接调 `_start_next_round`,⑨ = 把状态机**推过** ROUND_OVER
+#    —— 后者才验得到"虚分派落在覆写上",见 ⑨ 的说明);
+# 掉线终局随 Task 8 追加到本探针末尾。
 
 const MAP := "res://maps/factory1v1.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
@@ -150,6 +152,26 @@ func _run() -> void:
 	for role in TEAMS:
 		_place(_host, role, teams[role])
 	await get_tree().physics_frame
+	# ★★ [仪器] 把 `_spawned_once` 补成**生产状态** —— 没有这一步,⑧/⑨ 会退化成弱断言。
+	#   生产的 `TeamHost._init` 是先 `plan_team_spawns` 再 `super._init(role_peers 非空)`,
+	#   父类会为每个 role 建玩家并**调一次 `_spawn_cell`** → 进第一局时 `_spawned_once` 已是
+	#   满表。而本探针 `role_peers` 传空(玩家靠 `_place` 手工摆位)→ 那张表**是空的**,
+	#   于是 `_start_next_round` 里那句 `_spawned_once.clear()` 成了**空操作**:
+	#   ★ 实测(M1 变异反证):删掉 `clear()` 后 ⑧ 的两条**全部照绿**(第一次换边根本走不到
+	#     "动态复活点"分支),红的只有 ⑨ —— 也就是说"⑧ 会抓到它"这个预期**只在第二次换边起**
+	#     才成立。补上这一步,⑧ 才真的守住 `clear()`。
+	for role in TEAMS:
+		_host._spawned_once[role] = true
+	# [仪器] 前提验证:填满之后 `_spawn_cell` **真的**改走动态复活点分支。
+	#   不验这条的话上面那步可能是个空动作(比如 `_spawn_cell` 哪天不再看 `_spawned_once`),
+	#   而 ⑧/⑨ 的"位置落回出生点"断言就恒绿 —— 正是本仓反复在删的那种形状。
+	var diverted := 0
+	for role in TEAMS:
+		if _host._spawn_cell(int(role)) != _host._round_spawns[role]:
+			diverted += 1
+	_check(diverted >= 5,
+			"[仪器] 填满 `_spawned_once` 后 `_spawn_cell` 走动态复活点分支(6 个里 %d 个偏离出生点)"
+			% diverted)
 	_check(_host.team_of(3) == 1 and _host.team_of(6) == 2, "宿主的队伍表已就位")
 	# ★ 队伍表**逐值**断言(只断言"非空/查得到"抓不到下面这一档):
 	#   `_init` 给 `super._init` 传**满五个**实参时,第 5 位是 `teams` 而**不是** `spawns`
@@ -232,6 +254,14 @@ func _run() -> void:
 	_host._scores = {}
 	var ts := GameParameters.TILE_SIZE
 	var all_roles: Array = [1, 2, 3, 4, 5, 6]
+	# ★ 钉住"让 `_reset_killer_only` 里那条 `spawn.x < 0` 早退**不可达**"的前提。
+	#   为什么钉这个而不去覆盖那个分支本身:它是 `push_error` + return(不是纯 return),
+	#   覆盖它每次都会刷一行 ERROR —— 与本仓"杂散 ERROR 会淹掉真失败"的纪律冲突。
+	#   而"每个在场 role 都有出生点"才是真会先坏的东西,且它**响**(不是静默)。
+	for r in _host.players:
+		var sp: Vector2i = _host._round_spawns.get(r, Vector2i(-1, -1))
+		_check(sp.x >= 0 and sp.y >= 0,
+				"每个在场 role 都有出生点(早退分支的前提;role %d → %s)" % [r, str(sp)])
 	# 远点:从 (0,0) 起取第一个**不是任何出生点**的格(避开"远点恰好等于某人出生点"的巧合)
 	var spawn_taken := {}
 	for r in _host._round_spawns:
@@ -240,7 +270,11 @@ func _run() -> void:
 	while spawn_taken.has(away_cell):
 		away_cell.x += 1
 	var away := Vector2(away_cell.x * ts + ts * 0.5, away_cell.y * ts + ts * 0.5)
-	_check(not spawn_taken.has(away_cell), "[仪器] 远点 %s 确实不是任何人的出生点" % str(away_cell))
+	# ★ 这里原先是一条 `_check`:`_check(not spawn_taken.has(away_cell), …)` —— 而 `away_cell`
+	#   正是上面 `while spawn_taken.has(away_cell)` 退出时的那一格,退出条件**就是**这条断言,
+	#   它**永远不可能红**(连 `_round_spawns` 为空都不会红)。那种形状只会把断言计数撑大、
+	#   让后来的读者以为这里被覆盖了。它真正的价值是把那个点写进日志 —— 故降级成 print。
+	print("  [info] 远点 %s(按构造不是任何人的出生点)" % str(away_cell))
 	# 六个人**全部**挪过去(含已在 ④⑥ 倒地的 2/5 号):这样"有人离开远点"与"有人被复位"
 	# 就是同一件事,断言可以覆盖全体。
 	_park(_host, all_roles, away)
@@ -271,9 +305,24 @@ func _run() -> void:
 	#     而同队的 3 号(1 队)一步不动 —— "只复位击杀者本人"的另一半就在这条。
 	_host._scores = {}
 	var p1: Node2D = _host.players[1]
+	# ★ 规则 6 的另一半是"**保留血量、不治疗**(与 `_reset_survivor` 同款)"—— 位置断言
+	#   **抓不到**它:把实现改写成 `_respawn_player(killer_role)` 会满血 + 掉武器(位置照样对),
+	#   而"手工搬位 + 补血"的变体更是全绿。故把血量与背包都设成**非满/非默认**再断言没被改。
+	var low_hp := 30                      # PlayerParams.player_max_hp = 50,30 是非满值
+	p1.apply_authoritative_state(low_hp, p1.max_waterproof, false)
+	p1.weapons.set_initial_inventory([1, 2])
+	p1.weapons.current_weapon().mag_ammo = 3
 	CombatFeedback.attribute(_host.players[4], p1)
 	(_host.players[4].get_node("Combat") as Node).force_down()
 	_host._match_round_tick(0.016)
+	_check(p1.hp == low_hp,
+			"★ 异队击杀 · 击杀者复位**保留血量**(实际 %d,期望 %d)" % [p1.hp, low_hp])
+	_check(p1.weapons.current_weapon() != null and p1.weapons.current_weapon().mag_ammo == 3,
+			"★ 异队击杀 · 击杀者复位**不补弹**(实际 %s)"
+			% str(p1.weapons.current_weapon().mag_ammo if p1.weapons.current_weapon() != null else "空手"))
+	_check(p1.weapons.inventory.held.size() == 2,
+			"★ 异队击杀 · 击杀者复位**不掉武器**(背包仍 2 把,实际 %d)"
+			% p1.weapons.inventory.held.size())
 	var home1: Vector2i = _host._round_spawns[1]
 	var want1 := Vector2(home1.x * ts + ts * 0.5, home1.y * ts + ts * 0.5)
 	_check(p1.global_position.distance_to(want1) < 2.0,
@@ -307,6 +356,96 @@ func _run() -> void:
 			"★ 同归于尽 · 分照样给对方队(2 队 +1;实际 %s)" % str(_host._scores))
 	_check((_host.players[6] as Node2D).global_position.distance_to(away) < 2.0,
 			"★ 同归于尽 · 已倒地的击杀者不被复位(它去走自己的复活流程)")
+
+	# ── ⑧ 换边:第 2 局开局后,role1 站在原 role4 的出生点上 ──
+	var before1: Vector2i = _host._round_spawns[1]
+	var before4: Vector2i = _host._round_spawns[4]
+	_host._rounds_won = {}     # 清成 0:0,保证这一局是"下一局"而不是终局
+	_host._start_next_round()
+	_check(_host._round_spawns[1] == before4 and _host._round_spawns[4] == before1,
+			"★ 换边:两队出生点整体对调")
+	var ts2 := GameParameters.TILE_SIZE
+	var swap_want1 := Vector2(before4.x * ts2 + ts2 * 0.5, before4.y * ts2 + ts2 * 0.5)
+	_check((_host.players[1] as Node2D).global_position.distance_to(swap_want1) < 2.0,
+			"★ 换边后玩家真的站在新的一侧(不是只在表里对调)")
+
+	# ── ⑨ 过渡态已消失:ROUND_OVER → 下一局走的是**本类覆写**,不是基类 ──
+	#
+	# 背景(Task 5/6 期间登记在案):`_match_round_tick` 的 ROUND_OVER 分支此前虚分派到
+	# **基类** `MatchRound._start_next_round` —— 它按 **role** 查 `_rounds_won`,而本模式的
+	# `_rounds_won` 键早已是**队号**。队号 {1,2} 与 role 1/2 **字面撞号** ⇒ "1 队赢 2 局"被读成
+	# "role 1 赢 2 局"进 MATCH_OVER:**结果碰巧对,但语义不对齐**(且基类那条**不换边**)。
+	# 在那之前 3v3 **不要真跑** —— 本段就是"这条撞号已经消失"的守卫。
+	#
+	# ★ 为什么不直接调 `_start_next_round`(⑧ 那种):那样在**两种实现下都跑得动**
+	#   (⑧ 断言的红靠的是"表没对调",但基类那条仍会被算成"函数存在")。要验的是
+	#   "**虚分派落在覆写上**",唯一可靠的入口就是**把状态机推过 ROUND_OVER**。
+	#
+	# 三条证据合起来才是完整的:
+	#   ① 源码级 —— 本类自己声明了 `_start_next_round`(声明在基类上就一切照旧);
+	#   ② `_side_swap` **一路未被翻** —— 基类那条每局必翻它,这是"走的是本类那条"的直接证据;
+	#   ③ 出生点**已对调** + 玩家**已在新一侧** —— 基类那条两样都做不到。
+	var tbody := ScanUtil.func_body(
+			ScanUtil.code_only(ScanUtil.read("res://server/team_host.gd")), "_start_next_round")
+	var bbody := ScanUtil.func_body(
+			ScanUtil.code_only(ScanUtil.read("res://server/match_round.gd")), "_start_next_round")
+	_check(not tbody.is_empty() and not bbody.is_empty(),
+			"⑨ 两条 `_start_next_round` 都读得到(本类 %d 字符 / 基类 %d 字符;读不到 = 下面的断言恒真)"
+			% [tbody.length(), bbody.length()])
+	# 判据落在**换点集**这件语义事上(而不是某一行实现):基类那条只翻 `_side_swap` 布尔,
+	# 本类那条**整体互换 `_round_spawns`** —— 两者在这句话上必然分叉。
+	_check(tbody.contains("_round_spawns") and not bbody.contains("_round_spawns"),
+			"★ ⑨ `_match_round_tick` 的 ROUND_OVER 分支虚分派到的是**本类**那条"
+			+ "(本类体里换 `_round_spawns`;基类体里不换,只翻 `_side_swap`)")
+	var swap_a: Vector2i = _host._round_spawns[1]
+	var swap_b: Vector2i = _host._round_spawns[4]
+	var side_swap_before: bool = _host._side_swap
+	var round_before: int = _host._round_num
+	_host._rounds_won = {}
+	_host._round_state = MatchHost.RoundState.ROUND_OVER
+	_host._round_timer = 0.0
+	_host._match_round_tick(0.016)     # ROUND_OVER 到期 → `_start_next_round()`
+	_check(int(_host._round_state) == int(MatchHost.RoundState.COUNTDOWN),
+			"⑨ ROUND_OVER 到期 → 下一局 COUNTDOWN(实际 state=%d)" % int(_host._round_state))
+	_check(_host._round_num == round_before + 1, "⑨ 局号 +1(实际 %d)" % _host._round_num)
+	_check(_host._round_spawns[1] == swap_b and _host._round_spawns[4] == swap_a,
+			"★ ⑨ 状态机推过 ROUND_OVER 后两队出生点**已对调**(基类那条不换边 → 这里必红)")
+	_check(_host._side_swap == side_swap_before,
+			"★ ⑨ `_side_swap` 一路**未被翻**(基类那条每局都翻它 —— 这条是「走的是本类那条」的直接证据)")
+	var ts3 := GameParameters.TILE_SIZE
+	var swap_want2 := Vector2(swap_b.x * ts3 + ts3 * 0.5, swap_b.y * ts3 + ts3 * 0.5)
+	_check((_host.players[1] as Node2D).global_position.distance_to(swap_want2) < 2.0,
+			"★ ⑨ 推过状态机后玩家**真的站在新一侧**(距目标 %.1fpx)"
+			% (_host.players[1] as Node2D).global_position.distance_to(swap_want2))
+
+	# ⑨b 终局路径:`_rounds_won` 由**真实产者** `_round_over(team)` 写下 → MATCH_OVER + 队号
+	# ★ 为什么**不**手工塞 `_rounds_won = {2: 2}`:那样"键集 ⊆ {1,2}"就是"我塞的键 ⊆ 我塞的键",
+	#   恒真、没有区分度(正是上面刚从 ⑤ 删掉的那种形状)。走真实产者,这条才验得到东西。
+	# ★ 也**不**用"基类会被骗"来构造区分度 —— 那恰恰是"碰巧对"那一档(`{2: 2}` 在基类下按
+	#   role 2 查也是 2,两边都进 MATCH_OVER)。所以本段钉的是**契约**:
+	#   键是队号 / `match_winner()` 返回队号 / MATCH_OVER 不推进局号。
+	var round_at_match_over: int = _host._round_num
+	_host._rounds_won = {}
+	_host._round_over(2)
+	_host._round_over(2)
+	_check(_host._rounds_won.size() == 1 and int(_host._rounds_won.get(2, 0)) == TeamHost.TEAM_ROUNDS_TO_WIN,
+			"★ ⑨b `_round_over` 写下的键是**队号**(2 队 ×%d;实际 %s)"
+			% [TeamHost.TEAM_ROUNDS_TO_WIN, str(_host._rounds_won)])
+	_host._round_state = MatchHost.RoundState.ROUND_OVER
+	_host._round_timer = 0.0
+	_host._match_round_tick(0.016)
+	_check(int(_host._round_state) == int(MatchHost.RoundState.MATCH_OVER),
+			"★ ⑨b 队号键先到 %d 局胜 → MATCH_OVER" % TeamHost.TEAM_ROUNDS_TO_WIN)
+	_check(_host._match_winner() == 2, "★ ⑨b `match_winner` 是**队号** 2(不是 role、不是阈值)")
+	var keys_ok := true
+	for k in _host._rounds_won:
+		if int(k) != 1 and int(k) != 2:
+			keys_ok = false
+	_check(keys_ok and _host._rounds_won.size() > 0,
+			"★ ⑨b `_rounds_won` 的键集 ⊆ {1,2}(队号,不是 role;实际 %s)" % str(_host._rounds_won.keys()))
+	_check(_host._round_num == round_at_match_over,
+			"★ ⑨b MATCH_OVER **不推进局号**(实际 %d,期望 %d)" % [_host._round_num, round_at_match_over])
+
 	_ran_to_end = true
 
 

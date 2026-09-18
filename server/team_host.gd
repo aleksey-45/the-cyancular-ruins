@@ -273,6 +273,50 @@ func _round_over(winner_team: int) -> void:
 	_broadcast_round_state()
 
 
+# 换局:局胜到 TEAM_ROUNDS_TO_WIN → MATCH_OVER;否则**整队换边** + 下一局。
+# ★ 与基类的三处实质差异:
+#   ① 局胜的键是**队号**(基类按 role 查,团队下永远是 0 → 永远打不完);
+#   ② 换边 = `_round_spawns` 与 `_swap_spawns` **整体互换**(基类只翻一个 `_side_swap` 布尔);
+#   ③ 换边后要**清 `_spawned_once`** —— 否则 `_spawn_cell` 走"动态复活点"分支,
+#      开局六个人会被撒到"离敌人远"的随机格,而不是本方出生点。
+#
+# ★★ 本覆写存在的**首要理由**是消灭一个过渡态(Task 5/6 期间登记在案):
+#   在此之前 `_match_round_tick` 的 ROUND_OVER 分支虚分派到的是**基类** `MatchRound._start_next_round`,
+#   而 `_rounds_won` 的键早已是**队号** —— 队号 {1,2} 与 role 1/2 **字面撞号**,
+#   "1 队赢 2 局"被基类读成"role 1 赢 2 局":结果碰巧对,但不是语义对齐(且基类**不换边**)。
+#   守卫:`tests/team_host_probe` ⑨(源码级:本函数确实声明在这里;行为级:把状态机推过
+#   ROUND_OVER 后出生点已对调、`_side_swap` 一路未被翻 —— 基类那条两样都做不到)。
+#
+# ★ 与 `_match_winner()` 的关系(**不是重复,是互补**):本函数判的是"**要不要**进 MATCH_OVER"
+#   (答案只能是"进/不进"),`_match_winner()` 判的是"进去之后**报哪一队**"。两处都要读
+#   `TEAM_ROUNDS_TO_WIN`,但**不能互换** —— `_match_winner()` 恒返回 1 或 2(无胜者时退回
+#   "局胜高者"),拿它跟阈值比就是本仓反复踩过的"把队号当阈值"。
+func _start_next_round() -> void:
+	for t in [1, 2]:
+		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
+			_round_state = RoundState.MATCH_OVER
+			_broadcast_round_state()
+			return
+	_reset_world_and_clear_dynamics()
+	# ★ 两队人数不等时 `_swap_spawns` 是空表 → **不换边**(宁可这局不换,也不要把人送到错的一侧)
+	if not _swap_spawns.is_empty():
+		var tmp := _round_spawns
+		_round_spawns = _swap_spawns
+		_swap_spawns = tmp
+	# ★ 这一行不能省:不清的话下面 `_respawn_player` → `_spawn_cell` 走"动态复活点"分支,
+	#   六个人被撒到地图各处,而**不是**本方(换边后的)出生点。探针 ⑧/⑨ 的位置断言专抓它。
+	_spawned_once.clear()
+	_round_num += 1
+	_scores = {}
+	_respawn_pending = {}
+	_down_counted = {}
+	for role in players:
+		_respawn_player(role)
+	_round_state = RoundState.COUNTDOWN
+	_round_timer = COUNTDOWN_TIME
+	_broadcast_round_state()
+
+
 # 对局胜者(**队号**):先到 `TEAM_ROUNDS_TO_WIN` 局胜的那一队;都还没到(只有"整队走光"
 # 提前收场那一支能走到,见 Task 8 的 `_finish_match`)则退回"局胜高者"。
 # ★ 本函数是 `TEAM_ROUNDS_TO_WIN` 的读者之一(Task 7 的 `_start_next_round` 是另一处)。
