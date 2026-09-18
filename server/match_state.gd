@@ -25,6 +25,25 @@ var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消�
 var grid: Array = []
 var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
 
+# 队伍表:role(int) -> 队号(1/2)。**唯一权威** —— 由大厅在 worker 命令行 `--teams` 显式传入。
+# ★ 为什么不从 role 号推导:role 由大厅的「最小空闲号」分配、有人退出后不重排,编号会留空洞
+#   ({1,3,5} 而只有 3 人),奇偶/区间推导必然出错。
+# ★ 空表 = 无队伍(1v1 / 大乱斗 / 单机):`team_of` 恒 0、`same_team` 恒 false,行为与今天一致。
+var _team_of: Dictionary = {}
+
+
+# 某 role 的队号;无队伍/不在表里 → 0(调用方按 0 处理为"不豁免、不分组",别让它变成 1)。
+func team_of(role: int) -> int:
+	return int(_team_of.get(int(role), 0))
+
+
+# 两个 role 是否同队 —— **单一来源**:子弹穿透队友、出生/复活分组、复位归属都问它。
+# ★ 任一方为 0(无队伍)一律 false:0 == 0 若算同队,1v1 里两个玩家会被判成队友、子弹全穿。
+func same_team(a_role: int, b_role: int) -> bool:
+	var a := team_of(a_role)
+	var b := team_of(b_role)
+	return a > 0 and a == b
+
 
 # 与建局基线(`_base_grid`)**不同**的格。给"重连后补破坏态"与"回大厅后回局"用:
 # 客户端重进/重连时只拿 `match_path` 重建初始地图,而服务器上是破坏后的 `grid`

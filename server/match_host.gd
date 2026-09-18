@@ -8,8 +8,9 @@ extends MatchRound
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
-		ai_roles: Array = []) -> void:
+		ai_roles: Array = [], teams: Dictionary = {}) -> void:
 	_options = options
+	_team_of = teams.duplicate()
 	_round_full_heal = bool(options.get("round_full_heal", false))
 	var raw_disabled: Array = options.get("disabled_weapons", [])
 	for v in raw_disabled:
