@@ -12,6 +12,9 @@ extends Node
 # ★★ 第二批(④⑤⑥):**走光即弃权** —— 胜者 = 存活的对方队(不是 `_match_winner` 那条
 #   "局胜高者、并列偏 1 队"的兜底),两队都走光 = 平局 0;而**正常收局**(三局两胜)那条路
 #   一字不受影响(⑥,含"冠军队赛后离场不得被改判")。
+# ★ ⑥ 的三相**各用一具独立宿主**(⑥a/⑥c 共用 h2,⑥b 单建 h3):同一具宿主上先后两次
+#   `mark_disconnected` 同一个 role 会被 `_left` 档掉(第二次是 no-op)—— 共用会让后一相
+#   变成前一相的复读、再也无法独立变红(Task 11 评审发现的空转断言)。
 
 const MAP := "res://maps/factory1v1.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
@@ -124,16 +127,40 @@ func _run() -> void:
 			"⑥a 局胜先到阈值 → MATCH_OVER(实际 state=%d)" % int(h2._round_state))
 	_check(h2._match_winner() == 1,
 			"★ ⑥a 正常收局走**按局胜**:胜者 = 1 队(实际 %d)" % h2._match_winner())
-	# ⑥b 冠军队**赛后离场**:结果**不得**被改判成对方胜(否则"赢了的队走人 = 改判负")。
+	# ── ⑥b 冠军队**赛后离场**:结果**不得**被改判成对方胜(否则"赢了的队走人 = 改判负")──
 	# ★ 这条钉的是 `_decided_by_rounds()` 那道闸:少了它,三个 role 走完 → `alive_teams` 只剩
 	#   {2} → 弃权判据把胜者写成 2,而这一局是**按局胜打完的**。
 	# ★★ 但它**不区分**"闸(读 `_rounds_won`)"与"在 `_start_next_round` 里记闩"——那时已 MATCH_OVER,
 	#   两种实现的闩/闸都成立。真正的区分点在上面那一相 **⑥c**。
-	h2.mark_disconnected(1)
-	h2.mark_disconnected(2)
-	h2.mark_disconnected(3)
-	_check(h2._match_winner() == 1,
-			"★ ⑥b 已按局胜收场后冠军队离场:胜者**不得**改判(实际 %d)" % h2._match_winner())
+	# ★★ 单独建**第三具宿主**(Task 11 评审):此前 ⑥b 与 ⑥c 共用 h2,而 ⑥c 已经
+	#   `mark_disconnected(1/2/3)` 过 —— 那会把三个 role 写进 `_left`,而 `team_host.gd` 的
+	#   `mark_disconnected` **首行**就是 `if _left.has(role): return` ⇒ ⑥b 的三次调用**全部
+	#   早退、什么都没发生**,它与 ⑥a 成了同一份状态的复读,**再也无法独立变红** ——
+	#   也就是说 ⑥b 声称验证的场景("MATCH_OVER 之后冠军队离场")一次都没被走到。
+	#   从零建一具:推进到 MATCH_OVER(**不做** ⑥c 的离场)→ 再让冠军队离场。
+	var h3 = TeamHost.new(MAP, {}, {}, [], {}, TEAMS)
+	add_child(h3)
+	h3.set_physics_process(false)
+	for role in TEAMS:
+		_place(h3, role)
+	await get_tree().physics_frame
+	h3._round_over(1)
+	h3._round_over(1)
+	h3._round_state = MatchHost.RoundState.ROUND_OVER
+	h3._round_timer = 0.0
+	h3._match_round_tick(0.016)     # ROUND_OVER 到期 → 局胜先到阈值 → MATCH_OVER
+	_check(int(h3._round_state) == int(MatchHost.RoundState.MATCH_OVER),
+			"⑥b 前置:局胜先到阈值 → MATCH_OVER(实际 state=%d)" % int(h3._round_state))
+	_check(h3._match_winner() == 1, "⑥b 前置:此刻胜者 = 1 队(实际 %d)" % h3._match_winner())
+	h3.mark_disconnected(1)
+	h3.mark_disconnected(2)
+	h3.mark_disconnected(3)
+	# ★ 这条是"上面三次调用**真的生效了**"的证据:少了它,一个把重复 role 档掉的早期 return
+	#   就能让下面那条断言退回复读 —— 正是本相此前空转的形状(探针自己也得防这个)。
+	_check(h3.players.size() == 3,
+			"★ ⑥b 前置:冠军队三人**真的**被移出了对局(实际剩 %d 人)" % h3.players.size())
+	_check(h3._match_winner() == 1,
+			"★ ⑥b 已按局胜收场后冠军队离场:胜者**不得**改判(实际 %d)" % h3._match_winner())
 	_ran_to_end = true
 
 

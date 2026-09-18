@@ -33,7 +33,39 @@ func _initialize() -> void:
 	_check_argv_contract()
 	_check_teardown_funnel()
 	_check_team_startup_contract()
+	_check_team_spawn_guard()
 	_finish()
+
+
+# 取「**等于** line_text 的那一行 + 紧随其后、缩进更深的一块」(到下一个缩进 ≤ 它的非空行为止)。
+# ★ 必须用**保留缩进**的视图(`ScanUtil.code_view`,它同样剥掉注释):`code_only` 会 strip_edges,
+#   拿它切不出块 —— 而这里两条断言的价值恰恰在于"那个 if 后面**真的有**它声称做的事"。
+# ★ 只返回**第一处**命中:本用途下每个 needle 都是唯一的(命中处不是唯一时,断言会红在
+#   "块里没有 X"上,不会静默取错)。
+func _block_of(code_view: String, line_text: String) -> String:
+	var lines: PackedStringArray = code_view.split("\n")
+	for i in range(lines.size()):
+		# ★ 匹配用**整行相等**(strip 后),不用 `contains`:本仓的 `elif _team_mode:` 里就含
+		#   `if _team_mode:` 这个子串 —— contains 会把 `_run_worker` 那句提示串当成 3v3 收齐分支。
+		if lines[i].strip_edges() != line_text:
+			continue
+		var base := _indent_of(lines[i])
+		var out: String = lines[i]
+		var j := i + 1
+		while j < lines.size():
+			if not lines[j].strip_edges().is_empty() and _indent_of(lines[j]) <= base:
+				break
+			out += "\n" + lines[j]
+			j += 1
+		return out
+	return ""
+
+
+func _indent_of(line: String) -> int:
+	var n := 0
+	while n < line.length() and (line[n] == "\t" or line[n] == " "):
+		n += 1
+	return n
 
 
 # ── 批次 2 新增:房间拆除收口 ──
@@ -140,8 +172,16 @@ func _check_team_startup_contract() -> void:
 	if expire.is_empty():
 		_fail = "找不到 _expire_graces 的函数体"
 		return
-	if not expire.contains("GraceWindow.expire_action("):
-		_fail = "_expire_graces 未走 GraceWindow.expire_action(分派退回不可测的 if/else?)"
+	# ★★ 判据必须落到"**比较了**"上,不能只查函数名出现(Task 9 评审 M1):
+	#   旧写法是 `contains("GraceWindow.expire_action(")` —— 而把分派退回不可测写法、同时把那行
+	#   当**死代码**留下的变异(`var _a := GraceWindow.expire_action(...)` + 原样的 `if _royale: … else: quit`)
+	#   两条都满足 ⇒ 全绿,而 3v3 已经坏了(宽限到期的那个人会带着整局退进程)。
+	#   故要求整条比较式在位;另加一条反向:分派里不许再出现手写的 `if _royale:` 优先级分支。
+	if not expire.contains("GraceWindow.expire_action(_royale, _team_mode) == GraceWindow.ACTION_REMOVE"):
+		_fail = "_expire_graces 未把 GraceWindow.expire_action 的返回值**比较**给 ACTION_REMOVE(分派退回不可测的 if/else?)"
+		return
+	if expire.contains("if _royale:"):
+		_fail = "_expire_graces 里出现了手写的 `if _royale:` 分派(三个模式的答案必须来自 GraceWindow.expire_action)"
 		return
 	if not expire.contains("mark_disconnected(role)"):
 		_fail = "_expire_graces 的移出分支未调 mark_disconnected(3v3 少人应继续打)"
@@ -187,14 +227,57 @@ func _check_team_startup_contract() -> void:
 	if ladder.contains("_begin_match("):
 		_fail = "★ 3v3 超时梯调了 _begin_match(降级开局)—— 与用户裁定「满 6 人才开」相反"
 		return
-	# ⑤ 收齐判据 = 满员(集合里的全部 role),不是"人数 ≥ 2"那一档。
-	if not code.contains("if _claims.size() >= _role_set.size():"):
-		_fail = "3v3 收齐判据不是「满员才开」(_claims.size() >= _role_set.size())"
+	# ⑤ 收齐判据 = 满员,且**分母是驱动摆位的那个集合**(Task 9 评审 M5)。
+	# ★ 判据落在 3v3 那一支的**整块**上(用保留缩进的视图切块),而不是"文件里某处出现过某串":
+	#   后者既能被别处的同形代码喂饱,也照不出"分母用错集合"这一档。
+	# ★ 为什么分母必须是 `_team_of_role.size()`:`_team_of_role` 按 role **去重**,`_role_set` 是
+	#   `--roles` 的逐 token 列表 —— `--roles 1,1,2,2,3,3 --teams 1,1,1,2,2,2` 长度校验能过,
+	#   而队伍表只有 3 键 ⇒ 拿 6 当满员界**永远到不了** ⇒ 干等 30s 超时退出(静默,零报错)。
+	var fill := _block_of(ScanUtil.code_view(src), "if _team_mode:")
+	if fill.is_empty():
+		_fail = "找不到 3v3 的收齐分支(_on_role_claimed 里的 `if _team_mode:`)"
+		return
+	if not fill.contains("if _claims.size() >= _team_of_role.size():"):
+		_fail = "3v3 收齐判据不是「满员才开」(_claims.size() >= _team_of_role.size())"
+		return
+	if fill.contains("_role_set.size()"):
+		_fail = "3v3 收齐判据用的是 _role_set.size()(role 会重复/留空洞 —— 分母必须取去重后的队伍表)"
 		return
 	# ⑥ role 越界守卫必须同时管 3v3:`_team_of_role` 只覆盖 --roles 里的 role,集合外的 role
 	#    混进来会让 `_claims.size()` 提前够数开局,而 TeamHost 那侧 `spawns[role]` 缺键。
 	if not code.contains("((_royale or _team_mode) and not _role_set.has(role))"):
 		_fail = "_on_role_claimed 的越界守卫只认 _royale(集合外的 role 能混进 3v3 局里开局)"
+		return
+	# ⑦ 模式开关**互斥**(Task 9 评审 M4):`--royale` 与 `--team` 同时为真时必须当场拒绝启动。
+	#    此前三处判据的优先级并不一致(`_ready` 里 royale 先、`_on_role_claimed`/`_begin_match`
+	#    里 team 先):手敲两个开关时 `_team_of_role` 永不填充,而 `_begin_match` 却按 team 分支
+	#    去建 TeamHost → 空 teams → `spawns[role]` 全员缺键。生产不可达(生成端是两个独立函数),
+	#    但它与"绝不静默"的纪律不一致。★ 判据取那只守卫的**整块**(到下一个同缩进行为止):
+	#    只查 `if _royale and _team_mode:` 这行文本的话,一个被 `pass` 掉的空块照样全绿 ——
+	#    那正是 M1 那类"看着像守卫、其实守不住"的形状。
+	var excl := _block_of(ScanUtil.code_view(src), "if _royale and _team_mode:")
+	if excl.is_empty():
+		_fail = "server_main 未拒绝 --royale 与 --team 同时为真(模式开关互斥的守卫被删?)"
+		return
+	if not excl.contains("quit(1)"):
+		_fail = "--royale/--team 互斥守卫里没有 quit(1)(空块 = 守卫守不住,静默开成错的那一半)"
+		return
+
+
+# ── 批次 3(3v3)新增:生成端的 fail-fast(队号**取值**)──
+# ★ 为什么这条必须**真调一次**、而不是再写一条源码文本断言:文本只能证明"那几行字在"。
+#   而这里的失败后果是**静默**的:解析端对越界队号静默丢弃 → 子进程因长度不等开机即 quit(1),
+#   而生成端返回 `pid > 0` ⇒ 大厅判定"拉起成功"、**对局永不开始、大厅侧零报错**
+#   (Task 9 评审 M2;B 册大厅要从房间数据拼 teams,最容易踩的就是这一脚)。
+# ★ 只喂**非法**输入:合法输入会真的拉起一个子进程(本冒烟不该做那件事)。
+#   控制组的判别点 = **长度相等**而队号越界 —— 只校验长度的旧实现在这一档会放行。
+func _check_team_spawn_guard() -> void:
+	print("[info] 下面那条 ERROR 是**预期**的:正在验证生成端拒绝越界队号(不真调一次,这条守卫就只是空话)")
+	# 端口取 7770:在 WorkerLauncher 的端口池(7800~8299)之外,故意不碰大厅/worker 的号段。
+	# (正确的实现**不会**拉起任何进程 —— 校验在 `OS.create_process` 之前。)
+	var bad_val := WorkerLauncher.new().spawn_team_worker(7770, [1, 2, 3], [1, 1, 3])
+	if bad_val:
+		_fail = "spawn_team_worker 放行了越界队号(长度相等、队号 3 越界 → 子进程开机即 quit、大厅判定成功、零报错)"
 		return
 
 

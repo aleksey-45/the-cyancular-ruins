@@ -150,6 +150,18 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	if roles.size() != teams.size():
 		push_error("spawn_team_worker: roles 与 teams 长度不等(%d vs %d),拒绝拉起" % [roles.size(), teams.size()])
 		return false
+	# ★ 队号**取值**也必须在这里挡住(Task 9 评审 M2):解析端只收 1..2、越界**静默丢弃** ——
+	#   于是只校验长度的实现在 `teams = [1,1,3,2,2,2]` 上会放行(6 与 6 等长),而 worker 收到
+	#   5 个队号配 6 个 role ⇒ 解析端长度校验不过 ⇒ 子进程**开机即 quit(1)**,而本函数返回
+	#   `pid > 0`、大厅据此判定"拉起成功" ⇒ **对局永不开始,大厅侧一行报错都没有**
+	#   (实测复现:子进程的 ERROR 只写在它自己的 `worker_<port>.log` 里,而那份日志没人读;
+	#    它死在 bind 之前,所以端口没被占 —— 坏的是"大厅以为成功"这件事本身)。
+	#   B 册大厅要从房间数据拼 teams,最容易踩的就是这一脚。
+	#   校验集合与解析端接受的 {1, 2} 对齐 —— 两边改一处必须同步改另一处。
+	for t in teams:
+		if int(t) != 1 and int(t) != 2:
+			push_error("spawn_team_worker: 队号 %s 越界(只接受 1/2),拒绝拉起" % str(t))
+			return false
 	var role_strs := []
 	for r in roles:
 		role_strs.append(str(int(r)))

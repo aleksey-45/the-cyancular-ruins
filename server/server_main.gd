@@ -97,6 +97,16 @@ func _ready() -> void:
 						if r >= 1 and r <= 8:
 							_ai_roles.append(r)
 	if is_worker:
+		# ★ 模式开关**互斥**(Task 9 评审 M4):三处判据的优先级此前并不一致 —— 本函数里
+		#   `--royale` 先判、而 `_on_role_claimed` / `_begin_match` 里 `_team_mode` 先判。
+		#   手敲 `--royale --team` 时后果是:走 royale 那支开局,`_team_of_role` **永不填充**,
+		#   而 `_begin_match` 却按 `_team_mode` 去建 TeamHost → 空 teams → `spawns[role]` 全员缺键。
+		#   生产不可达(生成端是两个各自独立的函数),但它与本册"绝不静默"的纪律不一致:
+		#   解析到两个都真就当场拒绝启动,别让它落进"哪一支先判"的隐式优先级里。
+		if _royale and _team_mode:
+			push_error("worker: --royale 与 --team 不能同时为真(模式开关互斥),拒绝启动")
+			get_tree().quit(1)
+			return
 		if _royale:
 			if _role_set.is_empty():
 				# 大厅拉起时**总会**带 --roles;空集合只可能是手工命令行漏了。
@@ -322,7 +332,8 @@ func _process(delta: float) -> void:
 	if _team_mode and not _match_started and _host == null:
 		_understaffed_wait += delta
 		if _understaffed_wait > 30.0:
-			print("worker: 3v3 报到超时(%d/%d),退出释放端口" % [_claims.size(), _role_set.size()])
+			# 分母与上面那条满员判据**同源**(`_team_of_role.size()`):两处不一致时这句读数会说谎
+			print("worker: 3v3 报到超时(%d/%d),退出释放端口" % [_claims.size(), _team_of_role.size()])
 			get_tree().quit(0)
 	# 大乱斗:有人报到但 20s 仍未收齐 → 按已到人数(≥2)直接开局(缺席角色不入局)
 	elif _royale and not _match_started and _host == null and _claims.size() >= 2:
@@ -425,6 +436,14 @@ func _on_match_sync(caller: int) -> void:
 		ground = _host.ground_weapons_payload()
 	if _host != null and _host.has_method("role_spawns"):
 		spawns = _host.role_spawns()
+		# ★ 换边之后这份表会**过期**,而这里**不补发**(控制者裁定,别当 bug 修):3v3 每局整队
+		#   对调 `_round_spawns`,而客户端只在进场/重连时拉一次 —— 但出生点表只用于"进场那一刻
+		#   的初始摆放",之后一律由权威快照 + C2 `reconcile()` 驱动。往 `round_state` 里塞第二份
+		#   是给同一份数据开第二条投递路径(自检 B2 那类事故的形状,本册硬纪律)。
+		#   新鲜度由 **B 册客户端在「新一轮 COUNTDOWN」时重拉一次 match_sync** 解决(那一拍它本来
+		#   就在清子弹 + `reset_destructibles()`,拉取与它同位置);换局时 `ground_weapons`(服务器
+		#   重铺)与 `destroyed`(已还原成基线)也一并因此对齐。
+		#   ★ 与 1v1 同源:`957ac69` 已**刻意抑制**了补态那一路的出生点校正(那条既有行为别动)。
 	else:
 		# 理论上到不了:客户端要收到 match_start 才会进对局场景,而 match_start 是在 `_begin_match`
 		# 建宿主那次调用里发出的(同一帧内 `_host` 就赋好值了),报文往返只可能更晚。
@@ -436,6 +455,13 @@ func _on_match_sync(caller: int) -> void:
 	var destroyed: Array = []
 	if _host != null and _host.has_method("destroyed_cells"):
 		destroyed = _host.destroyed_cells()
+	# 队伍表:进场/重连各拉一次,客户端据此上色/分组。
+	# ★ 必须**显式下发**:role 号由大厅「最小空闲号」分配、有人退出后会留空洞,客户端
+	#   从 roles 推导必然出错(这正是 --roles 那条协议当年的教训)。
+	# ★ 不进 round_state:开局载荷只留**一条**投递路径(自检 B2 那类事故的形状)。
+	var teams: Dictionary = {}
+	if _host != null and _host.has_method("team_map"):
+		teams = _host.team_map()
 	# ★ 判活再回:这是开局窗口里**最容易被踩的一条** —— 客户端一进对局场景就发 match_sync,
 	#   而"进场景 → 请求 →(脚本/玩家)退出"可能挤在同一两帧里;回复是定向可靠包,
 	#   往 ENet 已拆掉的 peer 发就是 `Unable to send packet on channel 0, max channels: 0`。
@@ -452,6 +478,10 @@ func _on_match_sync(caller: int) -> void:
 	}
 	if not destroyed.is_empty():
 		data["destroyed"] = destroyed
+	# ★ 与 `destroyed` 同款纪律:**非空才带**。不带队时(1v1/大乱斗)旧客户端忽略未知键、
+	#   新客户端拿到空 → 双向兼容,不需要协商。
+	if not teams.is_empty():
+		data["teams"] = teams
 	NetBus.rpc_id(caller, "match_sync_data", data)
 
 
@@ -484,11 +514,18 @@ func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 	_claims[role] = caller
 	_claim_names[role] = player_name
 	if _team_mode:
+		# 分母与下一条满员判据**同源**(去重后的队伍表)—— 两处不一致时这句读数会说谎
 		print("worker: 3v3 角色 %d = peer %d (%d/%d 人)" % [role, caller,
-				_claims.size(), _role_set.size()])
+				_claims.size(), _team_of_role.size()])
 		# ★ 满员才开:用户裁定「满 6 人才开」,没有降级开局这一档(与 --royale 不同 ——
 		#   那边少人可以打,这边两队人数必须相等)。
-		if _claims.size() >= _role_set.size():
+		# ★ 判据取 `_team_of_role.size()` 而**不是** `_role_set.size()`(Task 9 评审 M5):
+		#   `_team_of_role` 按 role **去重**,而 `_role_set` 是 `--roles` 的逐 token 列表 ——
+		#   `--roles 1,1,2,2,3,3 --teams 1,1,1,2,2,2` 这种输入长度校验能过,但队伍表只有 3 键
+		#   ⇒ 拿 `_role_set.size()`(6)当满员界**永远到不了** ⇒ 干等 30s 超时退出释放端口。
+		#   取"驱动摆位的那个集合"才是对的:`TeamHost` 的出生点表正是按 `teams.keys()` 出键
+		#   (`_init` 里 `_team_of` 就是它),判据的分母与它同源。正常路径下两值相等,零风险。
+		if _claims.size() >= _team_of_role.size():
 			_defer_begin_match()
 	elif _royale:
 		print("worker: 大乱斗角色 %d = peer %d (%d/%d 人,另有 %d 个 AI)" % [role, caller,

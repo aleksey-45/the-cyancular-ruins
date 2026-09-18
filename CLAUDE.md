@@ -183,6 +183,16 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
   - ★ **相⑦ 的唯一失败模式是"假绿"**,两处专门的守卫:① 服务端侧的拆格走新加的测试开关 **`--test-destroy-tile <col>,<row>[,<delay>]`**(照 `--test-ground-teleport` 的先例:仅测试用、默认关、探针直接 spawn worker 故不必经 `worker_launcher` 转发),它经 `TileDefs.damage_tile` → 与真爆炸**同一条广播链**;② 断言里必须含 **worker 日志的 `[test] 拆格` 那一行**(日志是探针唯一能读到那个独立进程的通道)—— 少了它,若那格本来就是空气,主断言会假绿。
   - ★ **延迟取 7.5s 不是 3.0**:建局到 PLAYING 差一个 `COUNTDOWN_TIME`(3s),`3.0` 恰好落在 actor **还在线**的那一刻 —— 它会自己收到 `tile_destroyed`,相⑦ 就以"全绿"通过而**什么都没验**(实现者加了四条前置断言才把 brief 里这个错值抓出来)。`7.5` ≈ PLAYING+4.5,落在离线窗正中。改 `COUNTDOWN_TIME`/`T_DROP`/`T_RESTORE` 任一个都要重算这个值(两个方向都会报红,不会静默)。**跑前先确认无真大厅**(收尾**按 PID 杀**本进程拉起过的全部子进程 —— 客户端是从临时端口连出去的,只按端口杀根本杀不到,会留下残留进程敲下一跑与读旧日志;**按 UDP 端口杀 worker 只剩兜底**那一层)。
 
+#### 3v3 团队模式(A 册:服务端与规则)
+
+A 册 = **服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game`/`TeamHud`)。启动契约见 `server_main.gd` 文件头:`--worker --team --port P --roles r,… --teams t,…` —— `roles` 与 `teams` **同序等长**(第 i 个 role 的队号 = `teams[i]`),**满员才开、不降级**(与 `--royale` 方向相反:那边人少可打,这边两队人数必须相等);解析到 `--royale --team` 同时为真直接拒启动。队伍表经 **`match_sync` 的 `teams`**(`TeamHost.team_map()` 的只读副本)下发,**只在非空时带该键**、**不进 `round_state`**(开局载荷只留一条投递路径;消费在 B 册)。
+
+- **队伍表来自 `--teams`,不得从 role 号推导**:`MatchState._team_of` 就是那张表。role 由大厅「最小空闲号」分配、有人退出后会留空洞,奇偶/区间推导必然出错 —— 与当年 `--roles` 那条协议同一个教训。同理,3v3 的「满员」判据取 `_team_of_role.size()`(去重后的队伍表,与 `TeamHost` 出生点表出键的那个集合同源),**不是** `_role_set.size()`(`--roles` 的逐 token 列表可以带重复项,拿它当分母会永远到不了满员 → 干等超时退出)。
+- **`same_team()` 的 0 语义:任一方 0 → false**。0 = 「查不到队伍」(表外 role / 1v1 / 大乱斗),`same_team(0, 0)` 同样必须是 false —— 否则 1v1 的两人会被判成队友、**子弹全部穿过对手**。
+- **子弹穿透队友、爆炸对队友满效** —— 后者是**现状行为**,`Explosion.apply_aoe` 一行未改(玩家分支不看任何队伍关系)。子弹那半在两处各有一份队伍判断:`MatchHost._adjudicate_bullets` 与 `MatchHost._adjudicate_grenade`(榴弹直击)—— **改一处忘一处时普通弹那条照样绿**,守卫是 `tests/team_table_probe.tscn` 的 ③/④。动爆炸那条路径前先读 `scenes/weapons/bullet_base.gd` 里 `_check_player_contact` 与 `same_team` 的用法。
+- **掉线判据是「整队走光才终局」**(不是 royale 那条 `players.size() < 2`):`TeamHost.mark_disconnected` 覆写判「每队还剩几个**在场上**的人」,且**走光即弃权**(胜者 = 存活的对方队,两队都走光 = 平局 0 —— 那条优先于 `_match_winner` 的"局胜高者、并列偏 1 队"兜底,否则走光那队会被报成胜者)。★ `server_main._expire_graces` 有**两处**判据都必须把 `_team_mode` 收进去:①宽限到点的分派走纯函数 `GraceWindow.expire_action(_royale, _team_mode)`(**必须有 `== ACTION_REMOVE` 的比较**,退回手写 `if _royale:` 优先级会让 3v3 第一个宽限到期的人带着整局退进程);②末尾「全员走光才退出」的 `(_royale or _team_mode) and _match_started and …`(漏了 = 3v3 全员走光后 worker 永驻占端口)。两处只改一处都是"能用但漏一半"。
+- **队友不互挡(规则 12)走分队碰撞层**:1 队 `layer=2` / `mask=1|4|16`,2 队 `layer=16` / `mask=1|2|4`(`TeamHost._apply_team_layers`)。两队掩码都必须**保留**地形(1)与敌人(4)—— 用整体覆盖式实现抹掉玩家位时会连它们一起丢,该队**穿墙**(静默,玩到才发现)。客户端那一半归 B 册。
+
 ### 大乱斗(Royale,L5 层搬入)
 
 - **入口与场景**:主菜单「大乱斗」按钮(`main_menu.gd`)→ `scenes/royale_lobby.tscn`(`royale_lobby.gd`:公开/私密房、邀请码、人数与限时、禁用武器与角色色、房间列表自动拉取、「一键起本服」)。分支靠**从哪个场景进来**判定(`royale_lobby` → `royale_game`),没有静态标记——原先的 `PvpSession.royale` 已删(两处赋 true、全仓无读)。UI 一律走 `UiFactory`,字号 16 倍数。

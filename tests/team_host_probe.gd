@@ -17,6 +17,8 @@ extends Node
 # ⑤ 只复位击杀者由 Task 6 落(brief 正文里这段写作 ⑦/⑩,同一个东西);
 # ⑧ 换边/终局由 Task 7 落(⑧ = 直接调 `_start_next_round`,⑨ = 把状态机**推过** ROUND_OVER
 #    —— 后者才验得到"虚分派落在覆写上",见 ⑨ 的说明);
+# ⑪ match_sync 应答带 teams(源码级:路由在 server_main 的私有方法里,探针跑不到那条路)由
+#   Task 10 落 —— brief 正文里这段写作 ⑨,但 ⑨/⑩ 已被 Task 7/11 占用,故顺延为 ⑪。
 # 掉线终局(整队走光才终局 + 走光判胜)归 **Task 8 的独立探针** `tests/team_disconnect_probe.tscn`,
 # **不**追加到本文件 —— 别在这里再抄一份(两份真相:改了判据只有一份会红)。
 
@@ -592,6 +594,18 @@ func _run() -> void:
 	await get_tree().physics_frame
 	_check(pa.test_move(pa.global_transform, Vector2(ts4, 0.0)),
 			"★ ⑩ 行为:朝**敌人**走一格 —— 被挡")
+
+	# ── ⑪ 源码级:match_sync 的应答里必须带 teams,且来自 team_map() ──
+	# ★ 为什么只能源码级:`_on_match_sync` 是 server_main(Node2D)的私有方法,要让它真跑一遍得
+	#   有真 cmdline + 真 claim + 真 peer(且 `_host` 是 TeamHost)—— 探针照不到那条路。
+	# ★ 判据走**去注释视图**(`code_only`):注释里提到这两个串不算数(本仓反复踩过的"注释喂饱断言")。
+	# ★ 两条缺一不可:第一条保证键在,第二条保证**来源是宿主的只读取法** —— 就地推导(比如按
+	#   role 奇偶分队)同样能满足第一条,而那正是"第二份真相"(客户端与宿主各算一份)。
+	# ★ 与 `destroyed`/`ground_weapons` 同款纪律:**只在非空时带该键**(不带队时旧客户端忽略
+	#   未知键、新客户端拿到空)。
+	var sm := ScanUtil.code_only(ScanUtil.read("res://server/server_main.gd"))
+	_check(sm.contains('data["teams"] = teams'), "★ ⑪ match_sync 应答带 teams")
+	_check(sm.contains('has_method("team_map")'), "★ ⑪ teams 来自宿主的只读取法(不是就地推导)")
 
 	_ran_to_end = true
 
