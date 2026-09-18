@@ -166,7 +166,7 @@ Expected: 该探针的 `ALL-OK`。
 
 ```bash
 git add core/net/net_bus_ext.gd tests/reconnect_smoke.gd
-git commit -m 'feat(team): NetBusExt 加 team_* 协议(五上行两下发;节点归属双向断言)'
+git commit -m 'feat(team): NetBusExt 加 team_* 协议(六上行两下发;节点归属双向断言)'
 ```
 
 ---
