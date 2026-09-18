@@ -166,12 +166,17 @@ func _check_team_startup_contract() -> void:
 		_fail = "_begin_match 未按 _team_mode 建 TeamHost(3v3 会静默开成 1v1)"
 		return
 	# ④ 超时梯:**不降级**(方向与 --royale 相反)。
-	#   判据只取那个 if 之后的几行 —— 看整段 `_process` 会被别处的 quit 喂饱。
+	#   判据只取那一支的块(到下一个 `elif` 为止)—— 看整段 `_process` 会被别处的 quit
+	#   **和大乱斗那条自己的 `_begin_match()`** 喂饱(两种写法都实测过:放宽到固定行数会把
+	#   正确实现判红,收紧到写死 5 行则漏掉块尾的 quit)。
 	var ladder := ""
 	var lines: PackedStringArray = code.split("\n")
 	for i in range(lines.size()):
 		if lines[i].contains("_team_mode and not _match_started"):
-			ladder = "\n".join(lines.slice(i, i + 5))
+			var j := i + 1
+			while j < lines.size() and not lines[j].begins_with("elif "):
+				j += 1
+			ladder = "\n".join(lines.slice(i, j))
 			break
 	if ladder.is_empty():
 		_fail = "找不到 3v3 的报到超时梯(未满员时 worker 会一直占着端口)"
