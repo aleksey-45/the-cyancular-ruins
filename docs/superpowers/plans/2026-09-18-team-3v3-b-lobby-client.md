@@ -874,11 +874,40 @@ func _on_match_sync(payload: Dictionary) -> void:
 
 ★ **实施注意**：基类 `_on_match_sync` 已经把"名字/色相/选项/出生点/地面武器/destroyed"六件事写在一起了。3v3 要的差异只有"色相那一段不要、多一段 teams"。**推荐做法**：在基类加一个可覆写的钩子 `_apply_peer_hues_or_team(hues)`（默认调 `_apply_peer_hues`，3v3 覆写成 `_apply_teams`），而不是把整段抄一遍 —— 抄一遍就等于把"先清后灌""静默补态"那两条纪律复制成两份，将来只改一处。**这条改动要连 1v1/大乱斗两个客户端一起验**（它们的探针全绿）。
 
+⑤ **队友不互挡的客户端一半**（★ 服务端那一半在 A 册 Task 11；设计 §4.7）：
+
+```gdscript
+# 队伍表到达时:本地玩家与所有副本的碰撞层按队重设。
+# ★ 漏了这一步的后果与"幽灵碰撞体缺失"同款:本地预测穿过去、服务器挡住(或反过来)→ 每帧回滚。
+# ★ teams 到达**之前**保持今天的"全员互挡"(`|= 2`)—— 过渡期只有开局倒计时那几秒(玩家不动)。
+func _apply_team_collision() -> void:
+	if _local == null:
+		return
+	var my_team := _team_of_role(PvpSession.role)
+	if my_team == 0:
+		return   # 队伍表还没到 → 保持 `|= 2` 的临时态
+	if my_team == 1:
+		_local.collision_layer = 2
+		_local.collision_mask = (_local.collision_mask & ~2) | TeamHost.TEAM_ENEMY_LAYER
+	else:
+		_local.collision_layer = TeamHost.TEAM_ENEMY_LAYER
+		_local.collision_mask |= 2
+	for role in _replicas:
+		var r = _replicas[role]
+		if r != null and is_instance_valid(r) and r.has_method("set_ghost_layer"):
+			# ★ 副本的幽灵体按**它代表的那名玩家**的队设:队友副本不挡我、敌人副本挡我
+			r.set_ghost_layer(2 if _team_of_role(int(role)) == 1 else TeamHost.TEAM_ENEMY_LAYER)
+```
+
+配套改两处：
+- `scenes/player/player_replica.gd`：加 `set_ghost_layer(n)`（现在 `:77` 是硬编码 `_ghost.collision_layer = 2`）—— **默认值不变**（1v1/大乱斗不调它）。
+- `team_game._ready` 里**不要**照抄大乱斗那句 `local.collision_mask |= 2` 就完事 —— 要保留它（作为 teams 到达前的临时态），并在 `_apply_teams()` 末尾调 `_apply_team_collision()`。
+
 - [ ] **Step 4: 提交**
 
 ```bash
-git add scenes/team_game.tscn scenes/team_game.gd ui/ui_factory.gd scenes/pvp_match_client.gd
-git commit -m 'feat(team): 客户端对局场景 team_game(5 副本 + 队色覆盖个人色相)'
+git add scenes/team_game.tscn scenes/team_game.gd scenes/player/player_replica.gd ui/ui_factory.gd scenes/pvp_match_client.gd
+git commit -m 'feat(team): 客户端对局场景 team_game(5 副本 + 队色覆盖个人色相 + 队友不互挡)'
 ```
 
 ---

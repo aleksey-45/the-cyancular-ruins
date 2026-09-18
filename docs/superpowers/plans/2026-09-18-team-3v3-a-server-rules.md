@@ -28,7 +28,7 @@
 
 | 文件 | 新建/修改 | 责任 |
 |---|---|---|
-| `tests/team_rules_smoke.gd` | **新建** | `-s`：队伍关系判定（纯整数）+ `TeamHost` 的纯几何函数（换边对调） |
+| ~~`tests/team_rules_smoke.gd`~~ | **已删除** | ★ 计划最初列了这个 `-s` 冒烟，**开工后撤销**：`TeamHost` 在 `-s` 阶段**加载不起来**（它的继承链会连带 preload 引用 autoload 的脚本，正是本仓"`-s` 冒烟别静态引用重链"那条教训），而 `compute_swap_spawns` 的覆盖已由 Task 4/7 的**场景探针**断言承担（同一个函数的真断言，不必再来一份纯逻辑的） |
 | `server/match_state.gd` | 修改 | `_team_of` 字段 + `team_of()` / `same_team()` 只读口（**必须住这里**，见文件头约束） |
 | `server/match_host.gd` | 修改 | `_init` 第 5 个参数 `teams` |
 | `server/match_combat.gd` | 修改 | 子弹与榴弹直击**跳过队友**（不结算、也不 break） |
@@ -1469,6 +1469,95 @@ Expected: `TEAM HOST: ALL-OK`
 git add server/server_main.gd tests/team_host_probe.gd CLAUDE.md
 git commit -m 'feat(team): match_sync 下发队伍表 + CLAUDE.md 记录 A 册四条纪律'
 ```
+
+---
+
+## Task 11: 队友不互挡（分队碰撞层，服务端侧）
+
+> ★ **本条是开工后补的**：设计初稿**漏了**"队友是否物理互挡"这条规则（探索阶段明确列过它是 3v3 必须决策的点，写 spec 时没带进去）。用户裁定：**完全穿透**。设计 §3 规则 12 与 §4.7 记了机制与代价。
+
+**Files:**
+- Modify: `server/team_host.gd`（`_init` 里 `super._init` **之后**）
+- Modify: `tests/team_host_probe.gd`（补断言）
+
+**Interfaces:**
+- Consumes: `MatchHost._init` 已给每个玩家 `collision_mask |= 2`；`team_of(role)`
+- Produces: `TeamHost.TEAM_ENEMY_LAYER := 16`（层位 5，队 B 的身体层）
+
+- [ ] **Step 1: 在 `TeamHost._init` 的 `super._init(...)` 之后加分队层**
+
+```gdscript
+	# ── 队友不互挡(用户裁定"完全穿透")──
+	# ★ 为什么必须"分队位"而不是改掩码:Godot 的碰撞**按节点**配,没有"按对"的开关。
+	#   全部玩家同在第 2 层时,掩码含 2 就是"与所有玩家碰撞",无法只豁免队友。
+	#   把队 B 挪到新层位 16,让两队掩码**互指对方的位**,即可 A↔B 挡、A↔A 与 B↔B 穿。
+	# ★ 必须在 super._init **之后**:super 的建玩家循环里已经给每个人 `mask |= 2`。
+	#   队 A 要把那一位**抹掉**再补上 16;队 B 则保留 super 给的 7(1|4|2)—— 正是它要的。
+	# ★ 单机 / 1v1 / 大乱斗一行不受影响:它们不走本类。
+	for role in players:
+		var p: Node2D = players[role]
+		if p == null or not is_instance_valid(p):
+			continue
+		if team_of(int(role)) == 1:
+			p.collision_layer = 2
+			p.collision_mask = (p.collision_mask & ~2) | TEAM_ENEMY_LAYER
+		else:
+			p.collision_layer = TEAM_ENEMY_LAYER
+```
+
+并在常量区加：
+
+```gdscript
+const TEAM_ENEMY_LAYER := 16   # 队 B 的身体层(层位 5,当前空闲:1 地形/2 玩家/3 敌人/4 掉落物)
+```
+
+- [ ] **Step 2: 探针补断言（含一条**真行为**断言，别只比掩码位）**
+
+```gdscript
+	# ── ⑨ 队友不互挡:层/掩码按队分开 ──
+	var a: Node2D = _host.players[1]    # 1 队
+	var b: Node2D = _host.players[4]    # 2 队
+	_check(a.collision_layer == 2 and b.collision_layer == TeamHost.TEAM_ENEMY_LAYER,
+			"两队的身体层分开(1 队=2 / 2 队=16)")
+	_check((a.collision_mask & 2) == 0, "★ 1 队掩码**不含**玩家层(否则队友会互挡)")
+	_check((a.collision_mask & TeamHost.TEAM_ENEMY_LAYER) != 0, "1 队掩码含敌队层")
+	_check((b.collision_mask & 2) != 0, "2 队掩码含玩家层")
+	_check((b.collision_mask & TeamHost.TEAM_ENEMY_LAYER) == 0, "★ 2 队掩码**不含**敌队层(同上)")
+	# ★ 位对了不等于物理对:再用 test_move 验一次**真行为**(它读的是物理空间,不是掩码值)。
+	#   把 b 挪到 a 正右一格,让 a 朝它走:应当被挡;再把队友(role3,1 队)挪到同处,应当穿过去。
+	var ts := GameParameters.TILE_SIZE
+	a.global_position = Vector2(20 * ts, 20 * ts)
+	var mate: Node2D = _host.players[3]
+	mate.global_position = Vector2(21 * ts, 20 * ts)
+	b.global_position = Vector2(21 * ts, 24 * ts)
+	await get_tree().physics_frame
+	_check(not a.test_move(a.global_transform, Vector2(ts, 0)), "★ 行为:朝队友走**不被挡**(穿透)")
+	b.global_position = Vector2(21 * ts, 20 * ts)
+	mate.global_position = Vector2(21 * ts, 24 * ts)
+	await get_tree().physics_frame
+	_check(a.test_move(a.global_transform, Vector2(ts, 0)), "★ 行为:朝敌人走**被挡**")
+```
+
+★ 上面的坐标只是示意 —— 落的时候要**自己挑两个地面开阔、且中间没有墙的格**（用 `MazeGenerator.is_floor_cell_with_headroom` 找），否则 `test_move` 会因为墙而不是因为人返回 true（那就变成"测的是地形"）。并在报告里写明你选的是哪两格、怎么确认中间无墙。
+
+- [ ] **Step 3: `--import` + 自跑 + 回归**
+
+Run: `"$GODOT" --headless --path . --import`
+Run（可自跑，不占端口）：`timeout 300 "$GODOT" --headless --path . --quit-after 3600 res://tests/team_host_probe.tscn` → `TEAM HOST: ALL-OK`
+Run（**让用户跑**，回归线）：`timeout 600 "$GODOT" --headless --path . --quit-after 3600 res://tests/match_host_hygiene_probe.tscn` 与 `royale_disconnect_count_probe.tscn` → 各自 `ALL-OK`（"空参数 = 原行为"）
+
+- [ ] **Step 4: 变异反证（本仓纪律）**
+
+把 `TEAM_ENEMY_LAYER` 临时改回 `2`（= 两队同层，退化成"全员互挡"）→ 期望 Step 2 的两条 ★ 断言**变红** → 逐字还原并 `git diff` 确认。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/team_host.gd tests/team_host_probe.gd
+git commit -m 'feat(team): 队友不互挡(分队碰撞层:1 队 layer2 / 2 队 layer16)+ 行为断言'
+```
+
+★ **客户端那一半（本地玩家掩码按自己的队、副本幽灵体按它代表的队）归 B 册 Task 6** —— 只做服务端这一半时，3v3 还跑不起来（B 册未落地），但两侧的**契约**（层位 16 与"掩码互指"）在本任务里定死。
 
 ---
 
