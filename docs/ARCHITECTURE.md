@@ -5,7 +5,7 @@
 > 与 `AGENTS.md` 的分工：`AGENTS.md` 是给 AI 编码代理的**纪律与约定**（必须遵守的约束）；
 > 本文是**地图**（结构是什么）。两者有冲突时**以代码为准**，并请顺手订正文档。
 >
-> 最后校准：2026-09-11，分支 `KH_v1_1_3_PubServer`。
+> 最后校准：2026-09-18，分支 `proto-time-map`（时间维度 = 下一大版本基线）。
 
 ---
 
@@ -21,8 +21,8 @@
 
 | 规模 | 数量 |
 |---|---|
-| GDScript 脚本 | 113 个 |
-| 场景文件 `.tscn` | 36 个 |
+| GDScript 脚本 | 132 个 |
+| 场景文件 `.tscn` | 48 个 |
 | 视口 / 帧率 | 1920×1440，60 FPS，`rendering/mobile` |
 
 ### 四层结构
@@ -119,6 +119,20 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | `world_builder.gd` | 从地图搭出可玩世界：永久墙碰撞 + 可破坏分块 + 攀爬基座。单机与联机客户端/服务器共用 |
 | `collision_builder.gd` | 把砖形掩码展开成 32px 子格、贪心合并矩形、按 9 份环面副本实例化。负责"性能"和"可破坏砖只重建所在分块" |
 | `water.gd` | 水判定：`is_in_water` / `surface_y_at` / `submerged` / `water_mult`（爆炸衰减）/ `bullet_drag_factor` |
+
+#### 时间维度（时空地图的"第三维度"，下一大版本主线）
+
+设计源 = `docs/design/time-dimension-gdd.md`（v0.3 单钟定稿）；施工图 = `docs/superpowers/plans/2026-09-18-time-dimension-v1_2-build-plan.md`。
+
+| 文件 | 作用 |
+|---|---|
+| `time_params.gd` | **时间维度参数总表**：轴长/开局针/10ms 粒度/**击杀回收表**/流速场/时停档/封存面额/死亡惩罚；单位换算与派生纯函数（`kill_seconds` / `phase_of` / `decay_multiplier_of` / `format_clock`） |
+| `time_clock.gd` | **单钟账本**：`elapse`（10ms 量化 × `scale` × `flow` × 阶段衰减）/ `recover`（击杀回拨）/ `spend`（消费推进）/ `recover_kill` / `destruction` / `phase` / 结算统计 + 4 个信号（`w_changed`/`phase_changed`/`final_reached`/`pre_ruin_reached`） |
+| `time_timeline.gd` | **事件溯源日志**：解析 `.cyrm v4` 的 `# tl-w0:`/`# tl:`（小数秒）、正逆操作配对（collapse↔open）、`crossings`（只正向跨越、t 降序）、`rewind_ops`（回拨逆操作，顺序 = 世界钟上升方向即 t 升序）、`record_player_op`（玩家操作入史）、`incomplete_inverses`（逆操作完备性自检） |
+| `time_world.gd` | **门面**：`TimeClock` + `TimeTimeline` 的编排与兼容层。保持 v0.1 API（`parse_for`/`has_events`/`next_trigger`/`tick`/`w0`/`w`/`events`），新增 `rewind_to`/`record_player_op`/`set_scale`/`set_flow`/`phase`/`destruction` |
+
+> 世界侧执行仍在 `Level0`：`_tick_world`（倒计时 + 到点事件播报）→ `_apply_region`（改网格 + 铺 9 副本瓦片 + 持久子格 + 标脏块）→ `_process` 里的分帧块重建。
+> `level_0` 只在**单机**路径推进世界钟（`pvp_mode`/`menu_demo` 早退，服务器侧不引 `TimeWorld`）。
 
 #### 参数（分层见 §5）
 
@@ -228,11 +242,11 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | `laser_beam.gd` / `laser_beam.tscn` | 光束的视觉节点 |
 | `machete.gd` / `machete.tscn` | **开山砍刀（卡 `wp_machete` 评审稿，槽位未定，不进 WEAPONS 注册表）**：近战扇形横扫——覆写 `_spawn_projectiles` 即时结算（不开物理弹，架构同激光），以玩家为弧心按卡 `kind_params`（arc 130°/range 90px）判定：弧内敌人吃伤+击退（环面最短向量 + LOS 判墙，树叶挡刀先砍叶）、可子弹破坏砖（树叶/树干）按伤害扣血；**挥空硬直** = 敌+砖都没碰到时冷却延长（fire_cooldown+`whiff_extra_time` 0.35s）且窗口内移/跳惩罚；无弹夹无换弹（`reload_active()` 恒 false）。贴图走 `custom_art_id` 人工素材优先（`assets/custom/guns/wp_machete.png`），缺省程序化兜底刀身 |
 | `machete_slash_fx.gd` | 砍刀挥砍弧光：一次性扇形弧带（draw_arc 两圈），淡出自毁，世界系角度在生成时给定 |
-| `prop_launcher.gd` | **道具发射器基座**（T 键道具模式，槽 8/9/10/11 共用）：把卡参数灌进投掷物（explodes/blast_force/烟雾/引信/爆炸伤），掷出动画；每命携带数 = `mag_size`，不可换弹 |
-| `prop_knockback.tscn` | 排斥弹头（槽 8，卡 `pr_knockback`，旧名击退炮）：无伤击退，blast_force 9000（单次冲量，位移≈900px=甩上天）、半径 260、**全域等强斥力**（`blast_falloff_mode = FLAT`，不分距离一律吃满力度）、首撞 0.5s 引信带**白圈外扩视效**（撞实体同走满引信 `hit_fuse_time`，最后一圈到达最外沿时起爆） |
-| `prop_attraction.tscn` | 引力核心（槽 9，卡 `pr_attraction`）：无伤吸引，blast_force -9000（单次冲量，位移≈|force|/10 ⇒ 满力度吸程 900px）、半径 900、**全域等强吸力**（`blast_falloff_mode = FLAT`：只要在范围内不分距离一律吃满力度，可甩飞；作用对象=玩家/敌人/**子弹**）、首撞 0.5s 引信带**白环收缩视效**（`fuse_ring_visual`） |
-| `prop_smoke.tscn` | 烟雾弹（槽 10）：无冲击，落点生成半径 340 烟雾区、持续 6s（卡 rev2 扩大）；烟雾视觉 = 冷调像素烟团（`smoke_zone.gd` 程序化烘焙 3 帧 metaball，原作 effects.png 烟团同款：深描边+青蓝烟体+块状深浅斑，4px 粗颗粒最近邻），硬切轮播翻涌；显隐规则在 `Globals/smoke.gd` |
-| `prop_timed_bomb.gd` / `.tscn` | 投掷爆炸团（槽 11，卡 `pr_731505`）：**计时手雷**——第一按 = 拉销点燃（消耗 1 枚携带量，立即开始 6s 倒计时，屏幕中央像素数字 `timed_bomb_fuse.gd` 的 `CountdownHud`，最后 2s 转红），第二按 = 掷出（剩余引信经 `prop_launcher._lit_fuse` → `BulletBase.light_fuse` 随弹走，到点即爆与碰撞无关）；倒计时走完仍未掷出 → **在玩家原地自爆**（卡特殊要求）。爆炸：半径 260、满伤 = 满血（50）且与爆心**距离线性衰减**（`blast_falloff_mode = LINEAR`，`Explosion.apply_aoe` 新增档位）+ 轻度速度击退 2600。引信唯一时间源 = `TimedBombFuse`（挂世界不随切枪消失；掷出后只管倒计时显示；持弹者阵亡/离树 → 引信作废，不给 PvP 同节点复活补刀）。道具模式内数字 4 直选 |
+| `prop_launcher.gd` | **道具发射器基座**（T 键道具模式，槽 81~84 共用）：把卡参数灌进投掷物（explodes/blast_force/烟雾/引信/爆炸伤），掷出动画；每命携带数 = `mag_size`，不可换弹 |
+| `prop_knockback.tscn` | 排斥弹头（槽 81，卡 `pr_knockback`，旧名击退炮）：无伤击退，blast_force 9000（单次冲量，位移≈900px=甩上天）、半径 260、**全域等强斥力**（`blast_falloff_mode = FLAT`，不分距离一律吃满力度）、首撞 0.5s 引信带**白圈外扩视效**（撞实体同走满引信 `hit_fuse_time`，最后一圈到达最外沿时起爆） |
+| `prop_attraction.tscn` | 引力核心（槽 82，卡 `pr_attraction`）：无伤吸引，blast_force -9000（单次冲量，位移≈|force|/10 ⇒ 满力度吸程 900px）、半径 900、**全域等强吸力**（`blast_falloff_mode = FLAT`：只要在范围内不分距离一律吃满力度，可甩飞；作用对象=玩家/敌人/**子弹**）、首撞 0.5s 引信带**白环收缩视效**（`fuse_ring_visual`） |
+| `prop_smoke.tscn` | 烟雾弹（槽 83）：无冲击，落点生成半径 340 烟雾区、持续 6s（卡 rev2 扩大）；烟雾视觉 = 冷调像素烟团（`smoke_zone.gd` 程序化烘焙 3 帧 metaball，原作 effects.png 烟团同款：深描边+青蓝烟体+块状深浅斑，4px 粗颗粒最近邻），硬切轮播翻涌；显隐规则在 `Globals/smoke.gd` |
+| `prop_timed_bomb.gd` / `.tscn` | 投掷爆炸团（槽 84，卡 `pr_731505`）：**计时手雷**——第一按 = 拉销点燃（消耗 1 枚携带量，立即开始 6s 倒计时，屏幕中央像素数字 `timed_bomb_fuse.gd` 的 `CountdownHud`，最后 2s 转红），第二按 = 掷出（剩余引信经 `prop_launcher._lit_fuse` → `BulletBase.light_fuse` 随弹走，到点即爆与碰撞无关）；倒计时走完仍未掷出 → **在玩家原地自爆**（卡特殊要求）。爆炸：半径 260、满伤 = 满血（50）且与爆心**距离线性衰减**（`blast_falloff_mode = LINEAR`，`Explosion.apply_aoe` 新增档位）+ 轻度速度击退 2600。引信唯一时间源 = `TimedBombFuse`（挂世界不随切枪消失；掷出后只管倒计时显示；持弹者阵亡/离树 → 引信作废，不给 PvP 同节点复活补刀）。道具模式内数字 4 直选 |
 
 > 加新武器 = 一个继承 `WeaponBase` 的 `.tscn` + `weapon_component.gd` 的 `WEAPONS` 注册表加一行。
 
@@ -244,7 +258,7 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | `blast_ring_fx.gd` | 引信白环（引力核心/排斥弹头）：挂在投掷物下（跟爆心、rotation 世界对齐），每 0.1s 出一圈像素白环；方向由 `BulletBase` 按 `blast_force` 符号定（吸=从爆炸半径外缘向爆心收缩、由淡变实=引力核心；推=由爆心一圈圈外扩、到作用范围边缘消散=排斥弹头），引信走完全部环同时抵达端点即起爆（起爆归 `BulletBase` 管） |
 | `smoke_zone.gd` | 烟雾区视觉（烟雾弹）：冷调像素烟团——程序化烘焙 3 帧 metaball 烟团（4px 粗颗粒最近邻，原作 effects.png 烟团同款：深海军描边+青蓝烟体+块状深浅斑+近白高光），硬切轮播翻涌，落点蓬起、末段淡出自毁；显隐规则在 `Globals/smoke.gd` |
 | `combat_feedback.gd` | **打击反馈**：命中打叉标记 + "击杀 XXX" 像素播报 + 击杀音效。`current` 为 null 时全部静默空转 |
-| `timed_bomb_fuse.gd` | 计时爆炸团（槽 11）的引信节点 + 倒计时 HUD：`TimedBombFuse` 挂世界（不随切枪消失），到点未掷出在持弹者原地自爆（结算/视效与 `BulletBase._explode` 同款——PvP 客户端等 `explosion_event` 广播）；持弹者阵亡/离树 → 引信作废。内层类 `CountdownHud`（CanvasLayer 132）屏幕中央像素倒计时，扫 `timed_bomb_fuse` 组取最先到 0 的显示，组空自毁，headless 不建 |
+| `timed_bomb_fuse.gd` | 计时爆炸团（槽 84）的引信节点 + 倒计时 HUD：`TimedBombFuse` 挂世界（不随切枪消失），到点未掷出在持弹者原地自爆（结算/视效与 `BulletBase._explode` 同款——PvP 客户端等 `explosion_event` 广播）；持弹者阵亡/离树 → 引信作废。内层类 `CountdownHud`（CanvasLayer 132）屏幕中央像素倒计时，扫 `timed_bomb_fuse` 组取最先到 0 的显示，组空自毁，headless 不建 |
 | `bullet_trail.gd` | 子弹拖尾线（可选） |
 | `tile_hit_fx.gd` | 可破坏砖受击碎片粒子 |
 | `water_fx.gd` | 水花 / 气泡粒子 |
@@ -266,7 +280,7 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | 目录 | 内容 |
 |---|---|
 | `Shaders/` | `post_process.gdshader`（红闪 `hit_red`、像素缩放） |
-| `Tests/` | 33 个冒烟/诊断脚本，多为 `extends SceneTree` 用 `-s` 跑。详见 §3.9 |
+| `Tests/` | 41 个冒烟/诊断脚本，多为 `extends SceneTree` 用 `-s` 跑。详见 §3.9 |
 | `tools/` | `start_server.bat`（双击开服）、`build_release.py`（打包）、`docs_sync.py`、`make_server_console.py`、若干 PowerShell 排障脚本 |
 | `editor/` | **独立浏览器地图编辑器**（HTML + JS，与 Godot 无关）：画 `.cyrm` 地图、砖块调色板、导入旧格式 |
 | `DevTools/` | 干员卡/武器卡编辑器（填表 → 生成提示词 → 自动调 Claude Code）。玩家包通过 `exclude_filter` 排除 |
@@ -289,6 +303,7 @@ main_menu.tscn ─────────┼─ 1v1 联机 ────→ Scen
 | 环面接缝诊断 | `seam_analyze.gd`、`seam_screenshot.gd`、`wrap_probe.gd` |
 | 战斗/武器探针 | `aim_probe.gd`、`aim_direction_probe.gd`、`muzzle_probe.gd`、`preview_probe.gd`、`grenade_smoke.gd`、`laser_probe.gd`、`explosion_falloff_probe.gd`、`feedback_probe.gd`、`machete_probe.gd`（砍刀评审稿：横扫命中/挥空硬直/拆树叶） |
 | 世界/瓦片/水 | `tile_destroy_probe.gd`、`water_probe.gd`、`climb_probe.gd`、`perf_probe.gd` |
+| 时间维度 | `time_ledger_probe.gd`（M1 账本/10ms 粒度/时停/事件溯源/LIFO 回拨/逆操作完备性，`-s` 可跑）、`time_map_probe.gd`（v0.1 切片：坍塌/炸开真改世界） |
 | 其他 | `network_input_smoke.gd`、`order_probe.gd`、`restart_probe.gd`、`convert_map.gd`（地图格式转换工具） |
 
 ---
@@ -350,6 +365,7 @@ RPC，功能靠 `kind` 分派。以后加功能不改方法表，旧服务器只
 | 敌人数值 | `Globals/enemyParams.gd` 的嵌套类 |
 | 武器数值 | 对应 `.tscn` 的 `@export`（`weapon_base.gd` 定义字段） |
 | 砖块属性（血/弹性/摩擦/是否可破坏） | `Globals/tile_defs.json` |
+| 时间维度（轴长/阶段加成/回收表/流速/时停/封存面额） | `Globals/time_params.gd` |
 | 玩家偏好（音量/键位/开关） | `Globals/settings.gd`（持久化到 `user://settings.cfg`） |
 | 单机开局选项（难度/禁用武器） | `Globals/run_options.gd` |
 | 联机会话（地图/出生点） | `Globals/pvp_session.gd` |
@@ -390,6 +406,10 @@ RPC，功能靠 `kind` 分派。以后加功能不改方法表，旧服务器只
 - **尺寸不固定**：`demo.cyrm` 125×75、`factory1v1.cyrm` 150×100 都能跑（世界像素尺寸由 `Level0` / `GameParameters.refresh_map_size()` 按实际网格算）
 - 每行长度必须一致（首个有效行定宽度）
 - **旧格式免手工转**：无 `# cyrm-v3` 标记的单字符（`0-9`/`A`）老图加载时自动 2×2 转换、spawn 坐标自动 ÷2；批量转换用 `Tests/convert_map.gd`
+- **v4 = v3 空间层 + 时间层**：首行标 `# cyrm-v4`，空间层解析与 v3 完全一致；另加时间层注释行
+  `# tl-w0: <起始秒>`（缺省 3600 = 60 min）与 `# tl: <t> <action> <x> <y> <w> <h> [标签...]`（`t` 支持小数秒，10ms 粒度）。
+  **无 `# tl:` 行 = 普通图**（时间系统整体旁路，表盘不出现）。解析在 `Globals/time_timeline.gd`，世界改写由 `Level0` 执行；
+  阈值必须**严格小于** `# tl-w0:` 才会被跨越触发（写在起始针上的事件永不触发，解析器会告警）
 
 ### 6.4 必须的元数据（`#` 注释行）
 
@@ -436,6 +456,8 @@ RPC，功能靠 `kind` 分派。以后加功能不改方法表，旧服务器只
 | 黑鸟瞬移距离 | 3~8 格 | 实际 **2~6 格** |
 | 加敌人注册表 | `TYPES` 加一行 | 实际在 `editor/enemies.json` |
 | 防水注释 | 0.5s | 实际 `water_drain_interval = 1.0s` |
+| 道具槽位 | 8/9/10/11 | 代码为 **81~84**（槽 8 = 开山砍刀；T 模式走 `WeaponComponent.PROP_SLOTS`） |
+| 时间系统 | 只提"时间维度策划案 v0.1" | ① 设计已到 **GDD v0.3（单钟定稿）**，文档在本线 `docs/design/time-dimension-gdd.md`；② 代码已有 M1 单钟账本层（`Globals/time_*.gd`）+ v0.1 正向切片 |
 
 ---
 

@@ -34,7 +34,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 ## 架构
 
 ### 环面世界与地图
-- 地图:ASCII 文本 **`.cyrm`**(如 `map/demo.cyrm`)。**v3 格式**(带 `# cyrm-v3` 标记):125×75 格 × 64px 瓦片 = 8000×4800 世界像素;每格 **4 字符 = [纹理 3 位 0xx][形状hex]**(纹理 `000`=空气/`001`-`022`=1-22,structure.png 两行各 10 块 + 第3行两块水;形状 hex `0`-`F` = 2×2 子格掩码,15=全砖,0=空气占位)。纹理用 3 位数字、不用字母。**旧格式**(250×150 单字符,无标记)加载时自动 2×2 转换(packed 值 + spawn 坐标 ÷2)。`#` 开头的行是注释(含出生点 `# player <col> <row>`;`# player2 <col> <row>` 为双人第二出生点,PvP 用)。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `map/*.cyrm`(**同目录多份随机读一份**,会话内固定);`map/*.cyrm` 已在导出 include_filter 里。编辑器输出 `.cyrm`、可导入 `.cyrm`/`.txt`。
+- 地图:ASCII 文本 **`.cyrm`**(如 `map/demo.cyrm`)。**v3 格式**(带 `# cyrm-v3` 标记):125×75 格 × 64px 瓦片 = 8000×4800 世界像素;每格 **4 字符 = [纹理 3 位 0xx][形状hex]**(纹理 `000`=空气/`001`-`022`=1-22,structure.png 两行各 10 块 + 第3行两块水;形状 hex `0`-`F` = 2×2 子格掩码,15=全砖,0=空气占位)。纹理用 3 位数字、不用字母。**旧格式**(250×150 单字符,无标记)加载时自动 2×2 转换(packed 值 + spawn 坐标 ÷2)。`#` 开头的行是注释(含出生点 `# player <col> <row>`;`# player2 <col> <row>` 为双人第二出生点,PvP 用)。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `map/*.cyrm`(**同目录多份随机读一份**,会话内固定);`map/*.cyrm` 已在导出 include_filter 里。编辑器输出 `.cyrm`、可导入 `.cyrm`/`.txt`。**v4 = v3 空间层 + 时间层**(下一大版本):首行标 `# cyrm-v4`,另加时间层注释行 `# tl-w0: <起始秒>`(缺省 3600=60min)与 `# tl: <t> <action> <x> <y> <w> <h> [标签...]`(`t` 支持小数秒;阈值须**严格小于**起始针才会被跨越触发);**无 `# tl:` 行 = 普通图**,时间系统整体旁路。`# tl:` 由 `Globals/time_timeline.gd` 解析(事件溯源 + LIFO 回拨),世界改写由 `Level0._apply_region` 执行。
 - `MazeGenerator`(Globals/maze_generator.gd,`RefCounted`,非 autoload)是地图与环面核心:
   - 格值 = packed `texture*16 + shape`(0-335,`pack/texture_of/shape_of`);`EMPTY=0`、`SOLID=31`(纹理1 全砖);挡路判定走 `TileDefs.is_blocked`(非 0 且 type=wall);
   - 读图:`load_map_file()` / `map_size()`(v3 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过);`convert_old_grid()` / `serialize_v3_grid()` 是单一转换源(旧 v2 字母版地图用 `Tests/convert_map.gd` 转 v3);
@@ -131,7 +131,7 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **测试脚本**:`Tests/pvp_match_smoke.sh` / `Tests/pvp_room_smoke.sh` 不再写死 Godot 路径(支持 `GODOT=` 环境变量 + 常见路径自动探测),并把 `res://tests/` 正名为 `res://Tests/`(大小写敏感系统必需)。
 
 ### 测试
-无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。**约定:冒烟测试由用户自己跑;代理只跑"诊断探针"**:`Tests/menu_autotest.gd`(GUI/HEADLESS 经 `-- --autotest-sp|mp|set|level` 自动流转主菜单,sp 含 Esc 暂停+回主菜单验证)、`Tests/lobby_ping_probe.gd`(大厅 UDP 可达性)、`Tests/lobby_create_probe.gd`(对大厅建房+列表全链路,场景模式跑)、`Tests/royale_probe.tscn`(大乱斗全链路,场景模式:本进程当大厅 + c1/c2 headless 子进程走私密建房→错邀请码应拒→对码加入→开局→转连 worker→断言 match_start/round_state/match_options/60Hz 快照 ≥30;子进程 stdout 不落父进程,排查看各自 `user://logs/` 轮转日志)、`Tests/frame_perf_probe.tscn`(帧耗时采样,场景模式:切 Level0 单机世界→基线 600 帧→生成烟区再采样,输出 avg/p50/p95/max;**探针自己不能当 current_scene 直接切场景**——change_scene 会把 current_scene 摘树,必须像 menu_autotest 一样把 worker 挂 root;地图/难度用 `RunOptions.map_file/difficulty` 钉死,否则随机选图+持久化难度导致两次运行不可比)。性能归因结论(2026-09-15 实测):headless 下 HEAD 与 KH_V1_1_4_propSys 帧耗时完全一致(p95≈17ms)、用户 exe `--print-fps --autotest-sp` 实机 60fps 垂直同步封顶——单机"常态卡顿"不在游戏代码,别再沿代码方向排查;已知真实卡点=烟团烘焙一次性 hitch(spawn 同步 ~110ms)、`Settings.sp_difficulty` 会把调试时的困难难度持久化(1.5× 敌鸟)。
+无单测框架。`Tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释)。**新 worktree/干净克隆里第一次跑 `-s` 探针前,先跑一次 `--headless --import`(几秒)**:`.godot/` 不入库,全局脚本类缓存(`global_script_class_cache.cfg`)随之缺失,直接跑探针会**解析不到新增的 `class_name`**(报未定义标识符/脚本加载失败),看着像代码坏了其实是缓存没建;命令 `"C:/Godot/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --import`(之后探针正常;新增/改名 `class_name` 后同理;受限沙箱再叠加下面的 `--log-file`)。**约定:冒烟测试由用户自己跑;代理只跑"诊断探针"**:`Tests/menu_autotest.gd`(GUI/HEADLESS 经 `-- --autotest-sp|mp|set|level` 自动流转主菜单,sp 含 Esc 暂停+回主菜单验证)、`Tests/lobby_ping_probe.gd`(大厅 UDP 可达性)、`Tests/lobby_create_probe.gd`(对大厅建房+列表全链路,场景模式跑)、`Tests/royale_probe.tscn`(大乱斗全链路,场景模式:本进程当大厅 + c1/c2 headless 子进程走私密建房→错邀请码应拒→对码加入→开局→转连 worker→断言 match_start/round_state/match_options/60Hz 快照 ≥30;子进程 stdout 不落父进程,排查看各自 `user://logs/` 轮转日志)、`Tests/frame_perf_probe.tscn`(帧耗时采样,场景模式:切 Level0 单机世界→基线 600 帧→生成烟区再采样,输出 avg/p50/p95/max;**探针自己不能当 current_scene 直接切场景**——change_scene 会把 current_scene 摘树,必须像 menu_autotest 一样把 worker 挂 root;地图/难度用 `RunOptions.map_file/difficulty` 钉死,否则随机选图+持久化难度导致两次运行不可比)。性能归因结论(2026-09-15 实测):headless 下 HEAD 与 KH_V1_1_4_propSys 帧耗时完全一致(p95≈17ms)、用户 exe `--print-fps --autotest-sp` 实机 60fps 垂直同步封顶——单机"常态卡顿"不在游戏代码,别再沿代码方向排查;已知真实卡点=烟团烘焙一次性 hitch(spawn 同步 ~110ms)、`Settings.sp_difficulty` 会把调试时的困难难度持久化(1.5× 敌鸟)。**受限沙箱里跑 Godot 必须加 `--log-file <工作区内路径>`**:默认日志写 `user://logs/` 并做轮转,写入被拒时引擎会在**启动阶段**直接段错误(signal 11,连纯 `-s` 探针都崩,且崩前无任何脚本输出)——这是环境问题不是游戏 bug,排查真段错误前先排除这一路。
 
 ### 素材编辑器(DevTools/editor,editor 分支,推翻旧卡编辑器后的重写版)
 开发专用 GUI 工具:「填卡(武器/角色/道具)→ 上传美术素材 → 生成施工提示词 → 发给本机 Claude Code 施工」。**美术画师产出制**:所有美术资产正式版由人工上传,AI 生成仅作占位(贴近原作像素风);游戏侧优先读人工素材、缺省回退占位/图集。`export_presets.cfg` 已含 `DevTools/*` 排除与 `assets/custom/*.png` 打包。跑法:**双击 `DevTools/launch_asset_editor.bat`**(ASCII+分支守卫;旧 `launch_card_editor.bat`/`启动卡编辑器.bat` 已删)。
@@ -159,6 +159,13 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 零游戏代码改动的独立工具:**记录器** = `tools/gamelog/capture_session.ps1` + 入口 `start_game_logged.bat` / `start_server_logged.bat`(双击/拖 exe 启动,自动建 `gamelogs/<时间>_<game|server>/` 会话目录,捕获 stdout/stderr,进程结束生成中文 `report.txt`:启动/结束/时长精确到秒、退出结论三态 OK/异常/崩溃(Windows 异常码翻译成人话,崩溃时查事件日志)、问题清单按类别给中文解释);**监看器** = `DevTools/gamelog/log_viewer.tscn`(双击 `DevTools/launch_log_viewer.bat`):按时间倒序列出全部会话(绿/黄/红标结论),点开看中文报告。`gamelogs/` 已 gitignore。PS 注意:Start-Process 后必须先取 `$p.Handle` 再 WaitForExit(否则 ExitCode 为 null);ps1 需 UTF-8 BOM 存中文。
 
 ## 进度与计划(2026-09-05 更新,KikuchiHeinr 实验分支)
+
+### 下一大版本:时间维度「钟即世界」(2026-09-18,proto-time-map 分支)
+- **方向已定**:单钟模型(一根世界针 W = 地图状态坐标 + 全部时间资源);击杀 → W 回拨、消费(交易/铸造封存)→ W 向毁灭推进;10ms 粒度;子弹时间决策时停;事件溯源时间线(正逆操作 + 玩家操作入史 + LIFO 回拨 + 重新武装)。首版**仅单机**,联机走「共享世界针」二期预留。
+- **文档**:设计源 `docs/design/time-dimension-gdd.md`(**v0.3 单钟定稿**,已从 editor_log 并入本线);施工图 `docs/superpowers/plans/2026-09-18-time-dimension-v1_2-build-plan.md`(范围/里程碑落点/验收/风险/版本线收敛策略)。
+- **本轮已落地(M1 纯逻辑层)**:`Globals/time_params.gd`(参数总表)/`Globals/time_clock.gd`(单钟账本:衰减·回拨·消费·10ms 量化·时停·阶段信号)/`Globals/time_timeline.gd`(事件溯源:解析/正向跨越/LIFO 回拨/逆操作完备性自检);`Globals/time_world.gd` 改为门面(**v0.1 API 保持不变**,`level_0` 与旧探针零改动);`MazeGenerator` 认 `# cyrm-v4`。
+- **验收探针**:`Tests/time_ledger_probe.gd`(`-s` 跑,实测 OK);v0.1 正向切片探针 `Tests/time_map_probe.gd` 保留。
+- **已知拦路**:①进图方向原生段错误(见「段错误排查重大进展」,时间维度会放大它)②三条版本线收敛(`editor_log` 只多文档提交;`KH_V1_1_4_propSys` 在 `8879054` 分叉、道具槽位另行重排)③事件逆操作完备性纪律(每个入史 kind 必须带正确逆操作)。
 
 ### 大乱斗模式落地(2026-09-06,RoyaleServer 分支)
 - 主菜单新入口「大乱斗」→ 大厅建房/公开房列表/等待室(公开或私密+邀请码、2~8 人上限、禁武器选项沿用 1v1 那套)→ 房主开局 → `--royale --players N` worker → `RoyaleHost` **限时 5 分钟死斗**:死无限复活、击杀最多者胜、左上角排行榜。协议全走 NetBusExt,原版 NetBus 逐字节未动;详见「网络与 PvP」末节。
@@ -215,7 +222,7 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **分支纪律(2026-09-09 用户明确要求)**:带版本名的分支(`KH_vX_Y_Z`,如 KH_v1_1_1/KH_v1_1_2)是**发布锚点,永久保留,任何分支清理都不得删除**;清理无用分支只删非版本名的实验分支。最新版本分支 = 当前主开发线(现为 KH_v1_1_2,已推 origin)。
 - **环面纪律**:实体间方向/距离/插值一律 `MazeGenerator.toroidal_*`,禁止裸坐标相减。
 - **单机/PvP 双路径分叉点**:`Level0.pvp_mode`、`CombatComponent.pvp_arena`、`BulletBase.apply_damage`、`player.server_rendered`,新增实验开关走 `Settings`/`RunOptions`/`PvpSession`,别再加全局散变量。
-- **参数分层**:共享=`GameParameters`;玩家=`PlayerParams`;敌人=`EnemyParams` 嵌套类;武器=tscn @export;瓦片=`tile_defs.json`;持久偏好=`Settings`。
+- **参数分层**:共享=`GameParameters`;玩家=`PlayerParams`;敌人=`EnemyParams` 嵌套类;武器=tscn @export;瓦片=`tile_defs.json`;持久偏好=`Settings`;**时间维度=`TimeParams`**(`Globals/time_params.gd`,静态访问;单位约定:内部一律**秒**,策划案的分钟数只经 `min_to_sec()` 换算)。
 - **MatchHost._init 里不能碰玩家 @onready**(combat/weapons 未就绪),进树后(_ready)才能调。
 - **PvPvE 中立鸟已实现但关闭**(`match_host.gd` `ENABLE_BIRDS=false`)。
 - `GameParameters.enemy_count/enemy_spawn_min_dist`:前者已无引用;后者被单机难度补采复用。

@@ -160,12 +160,15 @@ static func copy_grid(grid: Array) -> Array[Array]:
 # v3:首行带 `# cyrm-v3` 标记,每格 4 字符 [纹理 3 位 0xx][形状hex](纹理 000=空气,001/002/...;形状 0-F)。
 # v1(旧):单字符 0-9/A(250×150),无标记 → 加载时自动 2×2 转换并 ÷2 spawn 坐标。
 const V3_MARKER: String = "# cyrm-v3"
+const V4_MARKER: String = "# cyrm-v4"   # v4 = v3 空间层 + 时间层('# tl-w0:' / '# tl:' 注释行)
 
-# 任一非空行以标记开头 → v3 格式;否则按旧格式(自动转换)。
+# 任一非空行以 v3/v4 标记开头 → v3 网格格式(每格 4 字符);否则按旧格式(自动转换)。
+# v4 只多出时间层注释行:空间层解析与 v3 完全一致(# 行一律当注释跳过),
+# 时间层由 Globals/time_timeline.gd 单独解析 → 旧图零成本兼容时间玩法。
 static func _has_v3_marker(lines: Array) -> bool:
 	for l in lines:
 		var s := String(l).strip_edges()
-		if s.begins_with(V3_MARKER):
+		if s.begins_with(V3_MARKER) or s.begins_with(V4_MARKER):
 			return true
 	return false
 
