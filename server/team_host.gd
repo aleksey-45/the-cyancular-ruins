@@ -6,6 +6,8 @@ extends MatchHost
 #    局内死亡 2s 复活;击杀后**只把击杀者本人**送回本方出生点(队友不动)。
 #  - 计分**不分死因**:任一玩家倒地 → 对方队 +1(枪杀/爆炸/溺水/自伤/队友误炸一律如此)。
 #  - 子弹穿透队友(在 MatchCombat 裁决层,按 role 判);**爆炸对队友满效**(现状行为,未改)。
+#  - 掉线:宽限期内身体留场;宽限期到点走 `mark_disconnected` —— **整队走光才终局**(掉 1 人
+#    该队少人继续打),且**走光即弃权**:胜者 = 存活的对方队,两队都走光 = 平局(见 `_match_winner`)。
 #  - 队伍归属来自 `MatchState._team_of`(由大厅经 `--teams` 显式传入)。
 #
 # ★ 继承链与中间层纪律同 RoyaleHost:本类是末端子类,生命周期钩子只能出现在这里。
@@ -14,6 +16,9 @@ extends MatchHost
 
 const TEAM_KILLS_TO_WIN := 9     # ★ 不能叫 KILLS_TO_WIN:基类 MatchState 已有该常量,同名遮蔽会报错
 const TEAM_ROUNDS_TO_WIN := 2    # ★ 同上,基类是 ROUNDS_TO_WIN
+# `_endgame_winner` 的"未定"哨兵。★ 三态,不能拿 0 当"未定":0 是**合法结果**
+# (两队都走光 = 平局),它正是这个字段要表达的东西之一。
+const ENDGAME_NONE := -1
 const SPAWN_CLEARANCE := 15      # 两个基座的最小环面距离(格)
 const TEAMMATE_CLEARANCE := 3    # 队内三人最小间距(格):够散开,又不至于走出"队形"
 const SPAWN_BASE_RADIUS := 30    # 基座附近取点半径(格);池子不够会退回全量候选
@@ -25,6 +30,10 @@ var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 matc
 var _swap_spawns: Dictionary = {}    # role -> Vector2i(换边后的点;两队点集整体对调)
 var _spawned_once: Dictionary = {}   # role -> true(首次摆位走出生点,之后走动态复活点)
 var _left: Dictionary = {}           # role -> true(已移出对局;排行榜/比分判据用)
+# 走光(弃权)终局的胜者队:1/2 = 判胜,0 = 平局(两队都走光),ENDGAME_NONE = 未定(正常路径)。
+# ★ 它**只**由 `mark_disconnected` 写、**只**由 `_match_winner` 首行读 —— 让 `match_winner`
+#   仍然只有一个来源(`_broadcast_round_state` 照旧不碰它)。
+var _endgame_winner := ENDGAME_NONE
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -318,14 +327,22 @@ func _start_next_round() -> void:
 	_broadcast_round_state()
 
 
-# 对局胜者(**队号**):先到 `TEAM_ROUNDS_TO_WIN` 局胜的那一队;都还没到(只有"整队走光"
-# 提前收场那一支能走到,见 Task 8 的 `_finish_match`)则退回"局胜高者"。
+# 对局胜者(**队号**):① 走光(弃权)收场的看 `_endgame_winner`(见首行);
+# ② 正常收局 = 先到 `TEAM_ROUNDS_TO_WIN` 局胜的那一队;③ 都还没到则退回"局胜高者"。
+# ★ ③ 只在 `TEAM_ROUNDS_TO_WIN` 被调大(今天 = 2,而一局都没打完就收场的路只有走光,
+#   已被 ① 接走)或将来出现"没打满就收场"的新路径时才会被走到。
 # ★ 本函数是 `TEAM_ROUNDS_TO_WIN` 的读者之一(Task 7 的 `_start_next_round` 是另一处)。
 #   没有这个阈值分支时,改常量**一点行为都不变** —— 那正是本仓要防的"静默无效"。
 # ★★ 下面那两个 `2` **不是**阈值,是**队号**,别把它们换成 `TEAM_ROUNDS_TO_WIN`:
 #   今天两者都等于 2,换错了不报错,而 Task 7 一旦把档位改成 3,返回给客户端的就会是
 #   "3 队"这种不存在的队号(且照旧不报错)。
 func _match_winner() -> int:
+	# ★ 走光(弃权)终局**优先于**下面那条按局胜比较的兜底:它只在 `mark_disconnected` 里被写,
+	#   正常收局路径恒为 ENDGAME_NONE ⇒ 下面那段"按局胜比、并列偏 1 队"的语义一字未动。
+	#   为什么必须优先:走光这条**必然**走兜底(谁也没赢满 `TEAM_ROUNDS_TO_WIN` 局),而兜底在
+	#   0:0 / 1:1 并列时偏 **1 队** ⇒ 不拦的话"整队走光的那一队"会被报成胜者。
+	if _endgame_winner != ENDGAME_NONE:
+		return _endgame_winner
 	for t in [1, 2]:
 		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
 			return t
@@ -421,17 +438,40 @@ func mark_disconnected(role: int) -> void:
 	if input_sources.has(role):
 		input_sources.erase(role)
 	peer_by_role.erase(role)
-	_broadcast_round_state()
-	if _round_state == RoundState.MATCH_OVER:
-		return
 	# 还有人的队:统计(队伍表里没出现的队号不算)
 	var alive_teams := {}
 	for r in players:
 		var t := team_of(int(r))
 		if t != 0:
 			alive_teams[t] = true
-	if alive_teams.size() < 2:
-		_finish_match()
+	if alive_teams.size() < 2 and not _decided_by_rounds():
+		# 走光即弃权:存活的那支队胜;一队不剩(两队都走光)= 平局 0(见 `_match_winner` 首行)。
+		# ★★ 本判据**在走光收场之后仍然继续生效**(先走光那队把结果判给对手之后,对手也可能
+		#    接着走光)—— 那一刻场上一个队都不剩,没有胜者可报,结果该收缩成平局。
+		#    `_expire_graces` 是**一次循环里逐个调**本函数的,少了这条,"六个人在同一批宽限期
+		#    里走光"的胜者就取决于**谁先被遍历到**(掉线到达顺序),即无意义的抖动。
+		# ★ 收缩是**单调**的:存活队只会 2 → 1 → 0,不会把已判出的胜者改成另一队。
+		# ★★ `_decided_by_rounds()` 那道闸**不能省**:三局两胜打完的局,胜者已定 ——
+		#    冠军队赛后离场会把"存活队"改判成对方(赢家走人 = 改判负)。探针 ⑥b 专钉它。
+		var survivors: Array = alive_teams.keys()
+		_endgame_winner = int(survivors[0]) if survivors.size() == 1 else 0
+		if _round_state != RoundState.MATCH_OVER:
+			_finish_match()
+			return      # `_finish_match` 内部自会广播(载荷里的 match_winner 已读新值)
+	# 常规:把"场上少了人"这件事推给还在场的人(含上面那条"胜者收缩/改判"的新结果)
+	_broadcast_round_state()
+
+
+# 对局是否已由**局胜**(三局两胜)决出 —— 与走光(弃权)并列的另一条收局路径。
+# ★ `mark_disconnected` 唯一需要知道它的地方:弃权判据**不得改判一场已经打完的局**。
+#   判据与 `_start_next_round` / `_match_winner` 同源(`_rounds_won` 对 `TEAM_ROUNDS_TO_WIN`)。
+# ★ 刻意不用"在 `_start_next_round` 里记一个闩"的写法:那样 ROUND_OVER 期间(局胜已达标、
+#   状态尚未推进到 MATCH_OVER 的那几帧)会漏判 —— 而掉线恰好可能落在这个窗口里。
+func _decided_by_rounds() -> bool:
+	for t in [1, 2]:
+		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
+			return true
+	return false
 
 
 func _finish_match() -> void:

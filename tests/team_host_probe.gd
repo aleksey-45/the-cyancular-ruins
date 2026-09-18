@@ -17,7 +17,8 @@ extends Node
 # ⑤ 只复位击杀者由 Task 6 落(brief 正文里这段写作 ⑦/⑩,同一个东西);
 # ⑧ 换边/终局由 Task 7 落(⑧ = 直接调 `_start_next_round`,⑨ = 把状态机**推过** ROUND_OVER
 #    —— 后者才验得到"虚分派落在覆写上",见 ⑨ 的说明);
-# 掉线终局随 Task 8 追加到本探针末尾。
+# 掉线终局(整队走光才终局 + 走光判胜)归 **Task 8 的独立探针** `tests/team_disconnect_probe.tscn`,
+# **不**追加到本文件 —— 别在这里再抄一份(两份真相:改了判据只有一份会红)。
 
 const MAP := "res://maps/factory1v1.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}

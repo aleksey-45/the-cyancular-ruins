@@ -9,6 +9,9 @@ extends Node
 #   (整队走光**必须**终局),两条一起才说明判据是"按队"而不是"恒 false"。
 # ★ 这条判据错了的表现同样是静默的:要么"掉一个就结束"(玩家白打),要么"永远不结束"
 #   (worker 僵持占端口)。
+# ★★ 第二批(④⑤⑥):**走光即弃权** —— 胜者 = 存活的对方队(不是 `_match_winner` 那条
+#   "局胜高者、并列偏 1 队"的兜底),两队都走光 = 平局 0;而**正常收局**(三局两胜)那条路
+#   一字不受影响(⑥,含"冠军队赛后离场不得被改判")。
 
 const MAP := "res://maps/factory1v1.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
@@ -68,6 +71,52 @@ func _run() -> void:
 	_check(host.players.size() == 3, "场上还剩 2 队的 3 个人")
 	_check(int(host._round_state) == int(MatchHost.RoundState.MATCH_OVER),
 			"★ 整队走光 → 必须终局(反向断言:royale 那条判据在这里给 false)")
+
+	# ── ④ 走光即弃权:胜者 = **存活的对方队** ──
+	# ★ 这条是"弃权判据"的手臂:此刻两队都是 0 局胜,`_match_winner` 的兜底("局胜高者",
+	#   并列偏 1 队)会返回 **1** —— 也就是**刚刚走光的那一队**。不修的话下面这条红。
+	_check(host._match_winner() == 2,
+			"★ 1 队走光 → 胜者 = 2 队(弃权。旧兜底的并列偏 1 队会返回 1 = 走光那队;实际 %d)"
+			% host._match_winner())
+
+	# ── ⑤ 两队都走光 → **平局 0**(场上一个队都不剩,没有胜者可报)──
+	host.mark_disconnected(4)
+	host.mark_disconnected(5)
+	_check(host._match_winner() == 2,
+			"★ 还剩 1 队时胜者仍是 2 队(判据单调收缩,不是'最后一个走的输';实际 %d)"
+			% host._match_winner())
+	host.mark_disconnected(6)
+	_check(host.players.size() == 0, "六个 role 全部走光")
+	_check(host._match_winner() == 0,
+			"★ 两队都走光 → 平局 0(实际 %d)" % host._match_winner())
+
+	# ── ⑥ 反向:正常收局(三局两胜)仍走"按局胜"那条路,弃权判据**不污染**它 ──
+	# ⑥a 正常打完:1 队先到 `TEAM_ROUNDS_TO_WIN` 局胜 → MATCH_OVER,胜者 = 1 队
+	var h2 = TeamHost.new(MAP, {}, {}, [], {}, TEAMS)
+	add_child(h2)
+	h2.set_physics_process(false)
+	for role in TEAMS:
+		_place(h2, role)
+	await get_tree().physics_frame
+	_check(h2._endgame_winner == TeamHost.ENDGAME_NONE,
+			"正常路径从不写弃权字段(实际 %d)" % h2._endgame_winner)
+	h2._round_over(1)
+	h2._round_over(1)
+	h2._round_state = MatchHost.RoundState.ROUND_OVER
+	h2._round_timer = 0.0
+	h2._match_round_tick(0.016)     # ROUND_OVER 到期 → `_start_next_round` → 局胜先到阈值
+	_check(int(h2._round_state) == int(MatchHost.RoundState.MATCH_OVER),
+			"⑥a 局胜先到阈值 → MATCH_OVER(实际 state=%d)" % int(h2._round_state))
+	_check(h2._match_winner() == 1,
+			"★ ⑥a 正常收局走**按局胜**:胜者 = 1 队(实际 %d)" % h2._match_winner())
+	# ⑥b 冠军队**赛后离场**:结果**不得**被改判成对方胜(否则"赢了的队走人 = 改判负")。
+	# ★ 这条钉的是 `_decided_by_rounds()` 那道闸:少了它,三个 role 走完 → `alive_teams` 只剩
+	#   {2} → 弃权判据把胜者写成 2,而这一局是**按局胜打完的**。
+	h2.mark_disconnected(1)
+	h2.mark_disconnected(2)
+	h2.mark_disconnected(3)
+	_check(h2._match_winner() == 1,
+			"★ ⑥b 已按局胜收场后冠军队离场:胜者**不得**改判(实际 %d)" % h2._match_winner())
 	_ran_to_end = true
 
 
