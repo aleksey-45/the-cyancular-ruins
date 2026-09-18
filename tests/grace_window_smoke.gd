@@ -1,6 +1,6 @@
 extends SceneTree
 
-# 宽限期表冒烟:进入/到期/续期/离开/确定性排序。
+# 宽限期表冒烟:进入/到期/续期/离开/确定性排序 + 到点后的**分派**(三个模式的答案,⑦)。
 # 跑法: timeout 60 "$GODOT" --headless --path . -s res://tests/grace_window_smoke.gd
 # 通过 = `GRACE_WINDOW OK` 退出 0。
 #
@@ -68,6 +68,20 @@ func _initialize() -> void:
 	_check(w2.has(7), "用默认时长 enter 后也应在表里")
 	_check(w2.expired(int(G.DEFAULT_SECONDS * 1000.0)) == [7], "默认时长到期应可算")
 	_check(w2.expired(int(G.DEFAULT_SECONDS * 1000.0) - 1) == [], "默认时长到期前 1ms 不应 expired")
+
+	# ── ⑦ 到点后的**分派**(三个模式的答案;2026-09-18 加,3v3 启动契约 Task 9)──
+	# ★ 为什么这条在这里钉:`server_main._expire_graces` 原先只有"大乱斗 / 其余"两支,
+	#   那个 `else` 把 1v1 **和 3v3** 一起吞成"收场退进程" —— 3v3 里第一个宽限到期的人会
+	#   带着整局退进程,与用户裁定"该队少人继续打"**相反**。分派收成纯函数后,三个模式的
+	#   答案在这里逐个钉死;production 那边只准做一次比较(room_sweep_smoke 另断言它真走这条)。
+	# ★ 真链路(6 人局里真掉线 → 宽限到期 → 其余人继续打)归 **B 册的真链路探针**,不在本冒烟。
+	_check(G.expire_action(false, false) == G.ACTION_TEARDOWN,
+			"1v1(非大乱斗非 3v3)到点应**收场退出**")
+	_check(G.expire_action(true, false) == G.ACTION_REMOVE, "大乱斗到点应**移出对局**(其余人继续打)")
+	_check(G.expire_action(false, true) == G.ACTION_REMOVE, "★ 3v3 到点应**移出对局**(不是收场退进程)")
+	_check(G.expire_action(true, true) == G.ACTION_REMOVE, "两个开关同时为真(不该发生)也按移出对局处理")
+	# 反向:两个枚举常量必须可区分(写成同一个值 = 上面四条里至少两条恒真,分派等于没有)
+	_check(G.ACTION_REMOVE != G.ACTION_TEARDOWN, "两个动作枚举必须可区分")
 
 	if _fail == 0:
 		print("GRACE_WINDOW OK")

@@ -36,6 +36,10 @@ const WORKER_PORT_REUSE_DELAY := 120.0
 # 一局,端口可能在**旧 worker 还在跑**时就被复用。与 sweep 在局宽限同一根因(都拿默认时长
 # 当上界),修法同样要让界读**本局实际时长**(只在 worker 里)——见 _sweep_stale_rooms 的注释。
 const ROYALE_PORT_REUSE_DELAY := 360.0
+# 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀(比 1v1 长得多),与 royale 同档。
+# ★ 已知边界照旧(与 WORKER_PORT_REUSE_DELAY 的同款问题):计时从**房间拆除(≈开局)**起算,
+#   不是从局内断线起算 —— 一局中后段掉线时端口可能已被复用。
+const TEAM_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 
@@ -133,6 +137,41 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	var pid := OS.create_process(exe, args)
 	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
 			str(roles), str(ai_roles), log_path(port)])
+	return pid > 0
+
+
+# 拉起 3v3 worker(--team --roles r,r,... --teams t,t,...;其余同 spawn_royale_worker)。
+# roles 与 teams **同序**、**等长**:第 i 个 role 的队号就是 teams[i]。
+# ★ 为什么队号要显式传、不从 role 号推:role 由大厅「最小空闲号」分配,有人退出会留空洞
+#   ({1,3,5} 而 3 人),奇偶/区间推导必然出错(与 --roles 同一条纪律)。
+# ★ 本函数与 server_main.gd 的 argv 解析**逐字对应**,两边改一处必须同步改另一处
+#   (守卫见 tests/room_sweep_smoke.gd 的双向断言)。
+func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
+	if roles.size() != teams.size():
+		push_error("spawn_team_worker: roles 与 teams 长度不等(%d vs %d),拒绝拉起" % [roles.size(), teams.size()])
+		return false
+	var role_strs := []
+	for r in roles:
+		role_strs.append(str(int(r)))
+	var team_strs := []
+	for t in teams:
+		team_strs.append(str(int(t)))
+	var exe := OS.get_executable_path()
+	var args: PackedStringArray
+	if OS.has_feature("editor") or OS.has_feature("template_debug"):
+		args = PackedStringArray(["--headless", "--log-file", log_path(port),
+				"--path", ProjectSettings.globalize_path("res://"),
+				"res://server/server_main.tscn", "--", "--worker", "--team",
+				"--port", str(port), "--roles", ",".join(role_strs),
+				"--teams", ",".join(team_strs)])
+	else:
+		args = PackedStringArray(["--headless", "--log-file", log_path(port),
+				"--", "--worker", "--team",
+				"--port", str(port), "--roles", ",".join(role_strs),
+				"--teams", ",".join(team_strs)])
+	var pid := OS.create_process(exe, args)
+	print("[lobby] spawn team worker pid=%d port=%d roles=%s teams=%s 日志=%s" % [pid, port,
+			str(roles), str(teams), log_path(port)])
 	return pid > 0
 
 

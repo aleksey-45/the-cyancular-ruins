@@ -5,6 +5,8 @@ extends SceneTree
 #   RoyaleHost.MATCH_TIME 与 rr.in_match,且 1v1 仍是裸 MAX_ROOM_AGE。
 #  **lobby_rooms.gd**(账本/收口搬来这里):2) 建房时给 created_at 赋时间戳;收口体外不得出现
 #   端口归还/注册表删除(见 _check_teardown_funnel);杀 worker 的实现另在 worker_launcher.gd。
+#  **批次 3(3v3,2026-09-18)**:argv 契约扩到 --team/--teams(见 _check_argv_contract 的正/反向),
+#   另在 _check_team_startup_contract 钉宽限分派/走光退出/不降级/满员才开(真链路归 B 册)。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -30,6 +32,7 @@ func _initialize() -> void:
 	_check(src)
 	_check_argv_contract()
 	_check_teardown_funnel()
+	_check_team_startup_contract()
 	_finish()
 
 
@@ -95,15 +98,100 @@ func _check_argv_contract() -> void:
 			var t: String = line.strip_edges()
 			if t.is_empty() or t.begins_with("#"):
 				continue   # 注释里提旧协议名是**有意的**(留档为什么换掉),不算违规
-			for bad in ["--players", "--max-role", "_role_bound", "_expected_players"]:
+			# ★ 批次 3(3v3)新增 `--team-size` / `_team_bound`:同一类故障模式(把"队数/人数"
+			#   当参数量纲,再从 role 号推队号)。队号与 role 集合**同序等长**传过去才是精确的那条。
+			for bad in ["--players", "--max-role", "_role_bound", "_expected_players",
+					"--team-size", "_team_bound"]:
 				if t.contains(bad):
 					_fail = "%s 的代码里仍有旧 argv 协议标识符 %s(应已换成 --roles 集合)" % [f, bad]
 					return
 	# 正向:集合协议必须在两边都在位(只改一边 = 拉起的 worker 收不到 role 集合,静默降级)
+	# ★ 批次 3(3v3):`--team` / `--teams` 同样**两边都要在** —— 生成端(worker_launcher)拼了
+	#   而解析端(server_main)没接 = worker 收到一个它不认识的开关,静默按 1v1 形态跑;
+	#   反过来只改解析端 = 大厅拉起的 worker 永远不带队号。**文件清单只有这两个**,别漏。
 	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
-		if not FileAccess.get_file_as_string(f).contains('"--roles"'):
+		var txt2 := FileAccess.get_file_as_string(f)
+		if not txt2.contains('"--roles"'):
 			_fail = "%s 未接 --roles(集合协议只接了一半?)" % f
 			return
+		for tok in ['"--team"', '"--teams"']:
+			if not txt2.contains(tok):
+				_fail = "%s 未接 %s(3v3 启动协议只接了一半?)" % [f, tok]
+				return
+
+# ── 批次 3(3v3)新增:启动契约里"本册能做到的那一半" ──
+# ★ 边界照实写明:**真链路**(6 个真客户端连上 `--team` worker → 满员开局 → 有人掉线 →
+#   宽限到期 → **其余人继续打**)归 **B 册的真链路探针** —— 它需要大厅侧的 team 房间入口,
+#   而那个入口本册不做。本函数钉的是**分派本身**:
+#   ① `--team` / `--teams` 两边逐字对应(在 `_check_argv_contract` 里);
+#   ② 宽限到点走那条**已被 grace_window_smoke ⑦ 逐个模式钉住答案**的纯函数,而不是又抄一遍
+#      if/else —— 原先那个 `else` 把 1v1 与 3v3 一起吞成"收场退进程",3v3 第一个宽限到期的人
+#      会带着整局退进程(与用户裁定"该队少人继续打"相反;当时不可达,只因大厅还没有入口);
+#   ③ `_expire_graces` 末尾那条"全员走光才退出"也含 3v3(漏了 = 走光后 worker 永驻占端口);
+#   ④ 3v3 的超时梯不降级(与 --royale 方向相反)、收齐判据是"满员才开"。
+func _check_team_startup_contract() -> void:
+	var src := ScanUtil.read("res://server/server_main.gd")
+	if src.is_empty():
+		_fail = "无法读取 server_main.gd"
+		return
+	var code := ScanUtil.code_only(src)
+	# ① 到点的分派必须走纯函数(答案在 grace_window_smoke ⑦ 里按模式逐个钉死)。
+	var expire := ScanUtil.func_body(code, "_expire_graces")
+	if expire.is_empty():
+		_fail = "找不到 _expire_graces 的函数体"
+		return
+	if not expire.contains("GraceWindow.expire_action("):
+		_fail = "_expire_graces 未走 GraceWindow.expire_action(分派退回不可测的 if/else?)"
+		return
+	if not expire.contains("mark_disconnected(role)"):
+		_fail = "_expire_graces 的移出分支未调 mark_disconnected(3v3 少人应继续打)"
+		return
+	# ② 末尾那条"全员走光才退出"必须把 _team_mode 一并收进去。
+	# ★ 与上面那条分派是**两条**判据(一条管"某个人到点怎么办"、一条管"人全走光了 worker 退不退"),
+	#   只改一条就是"3v3 少人继续打"能成立、但一局打完 6 个人走光后 worker 永驻占端口。
+	var gone := ""
+	for line in expire.split("\n"):
+		if line.contains("_match_started and _claims.is_empty() and _grace.size() == 0"):
+			gone = line
+			break
+	if gone.is_empty():
+		_fail = "找不到 _expire_graces 末尾的「全员走光才退出」判据(被删了?)"
+		return
+	if not gone.contains("_team_mode"):
+		_fail = "「全员走光才退出」判据没含 _team_mode(3v3 全员走光后 worker 永驻占端口)"
+		return
+	# ③ `_begin_match` 必须真的建 TeamHost(而不是落进 1v1 分支静默开成 2 人局)。
+	var begin := ScanUtil.func_body(code, "_begin_match")
+	if not begin.contains("TeamHost.start_on("):
+		_fail = "_begin_match 未按 _team_mode 建 TeamHost(3v3 会静默开成 1v1)"
+		return
+	# ④ 超时梯:**不降级**(方向与 --royale 相反)。
+	#   判据只取那个 if 之后的几行 —— 看整段 `_process` 会被别处的 quit 喂饱。
+	var ladder := ""
+	var lines: PackedStringArray = code.split("\n")
+	for i in range(lines.size()):
+		if lines[i].contains("_team_mode and not _match_started"):
+			ladder = "\n".join(lines.slice(i, i + 5))
+			break
+	if ladder.is_empty():
+		_fail = "找不到 3v3 的报到超时梯(未满员时 worker 会一直占着端口)"
+		return
+	if not ladder.contains("quit(0)"):
+		_fail = "3v3 报到超时梯没有 quit(0)(收不齐就该退出释放端口)"
+		return
+	if ladder.contains("_begin_match("):
+		_fail = "★ 3v3 超时梯调了 _begin_match(降级开局)—— 与用户裁定「满 6 人才开」相反"
+		return
+	# ⑤ 收齐判据 = 满员(集合里的全部 role),不是"人数 ≥ 2"那一档。
+	if not code.contains("if _claims.size() >= _role_set.size():"):
+		_fail = "3v3 收齐判据不是「满员才开」(_claims.size() >= _role_set.size())"
+		return
+	# ⑥ role 越界守卫必须同时管 3v3:`_team_of_role` 只覆盖 --roles 里的 role,集合外的 role
+	#    混进来会让 `_claims.size()` 提前够数开局,而 TeamHost 那侧 `spawns[role]` 缺键。
+	if not code.contains("((_royale or _team_mode) and not _role_set.has(role))"):
+		_fail = "_on_role_claimed 的越界守卫只认 _royale(集合外的 role 能混进 3v3 局里开局)"
+		return
+
 
 func _check(src: String) -> void:
 	if not src.contains("const SWEEP_INTERVAL := 600.0"):

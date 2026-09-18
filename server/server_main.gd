@@ -6,6 +6,10 @@ extends Node2D
 #  - `--worker --royale --port P [--roles 1,3] [--ai-roles r,r]`:大乱斗 worker——限时死斗(RoyaleHost),
 #    收齐全部人类 role(或 20s 超时按已到人数 ≥2)开局;单个掉线移出对局,全员走光才退出。
 #    `--roles` = **本局全部参战 role**(真人已分配号 + AI 补位号),由大厅显式传入。
+#  - `--worker --team --port P --roles r,... --teams t,...`:3v3 worker——团队对抗(TeamHost),
+#    **满员才开**(不降级),收不齐就超时退出释放端口;单个掉线进宽限期,到点移出对局(整队走光才终局)。
+#    `--roles` 与 `--teams` **同序等长**:第 i 个 role 的队号就是 teams[i](队号不从 role 号推 —— 同 --roles 的理由)。
+#    ★ 与 --royale 的方向**相反**:那边是自由混战(N 人可打),故能按已到人数降级开局;这边两队人数必须相等才成立。
 #    ★ 不再传「人数 + role 上界」两个整数:role 由大厅的「最小空闲号」分配,有人退出后会留空洞
 #    (如房里 {1,3} 而只有 2 人),**从人数推导必然出错** → 持 3 号的真客户端会被当串线踢掉
 #    (历史自检 B1)。集合传过来则精确,不需要任何"上界该放宽多少"的特例函数。
@@ -22,7 +26,12 @@ var _royale := false
 var _role_set: Array[int] = []
 var _ai_roles: Array = []    # AI 补位的 role 列表(实验性;这些 role 不等 claim,由服务端 AI 驱动)
 var _claim_wait := 0.0
-var _understaffed_wait := 0.0   # 开局前可用玩家 <2 的持续时长(超时退出释放端口)
+var _understaffed_wait := 0.0   # 开局前可用玩家 <2(大乱斗)/未满员(3v3)的持续时长(超时退出释放端口)
+# ── 3v3 worker(--team --roles r,r --teams t,t):团队对抗 ──
+var _team_mode := false
+var _team_of_role: Dictionary = {}   # role(int) -> 队号(1/2);由 --teams 与 --roles **同序**解析
+# --teams 的原始 token(与 `_role_set` 同序的下标配对在 `_ready` 里做;这里只收 1..2 的合法值)
+var _team_teams_raw: Array[int] = []
 var _lan_ip_text := ""          # 局域网 IP 串(写 local_ip.txt 用;公网 IP 到手后一并补写)
 var _match_started := false
 # ── 断线宽限期(2026-09-17,断线重连)──
@@ -46,6 +55,17 @@ func _ready() -> void:
 				is_worker = true
 			"--royale":
 				_royale = true
+			"--team":
+				_team_mode = true
+			"--teams":
+				# 队号集合(与 --roles **同序**)。越界值**静默丢弃**是**有意**的:长度不等会在下面
+				# 的校验里当场拒绝启动(fail fast)—— 猜一个默认队号会把整局分成错的队,而且**不报错**
+				# (两队人数还可能是 3:3,从人数上看不出来)。
+				if i + 1 < args.size():
+					for tok in str(args[i + 1]).split(","):
+						var t := int(tok.strip_edges())
+						if t >= 1 and t <= 2:
+							_team_teams_raw.append(t)
 			"--port":
 				if i + 1 < args.size():
 					port = int(args[i + 1])
@@ -84,6 +104,19 @@ func _ready() -> void:
 				push_error("大乱斗 worker: 缺 --roles(本局参战 role 集合),拒绝启动")
 				get_tree().quit(1)
 				return
+		elif _team_mode:
+			# --roles 与 --teams 必须等长且非空(队号按**同序**配对)。不等 = 拒绝启动:
+			# 猜一个默认队号会把整局分成错的队,而且**不报错**(两队人数还可能是 3:3,看不出来)。
+			# ★ 这也保证了 `teams` 的键覆盖本局全部参战 role:TeamHost 的摆位表按 `teams.keys()`
+			#   出键,而 `_init` 摆位摆的是 role_peers —— 某个 role 在 --roles 里却不在 --teams 里
+			#   时它会静默生在 (-1,-1)(地图外),`start_on` 那侧则是 `spawns[role]` 缺键。
+			if _role_set.is_empty() or _role_set.size() != _team_teams_raw.size():
+				push_error("3v3 worker: --roles 与 --teams 必须等长且非空(%d vs %d),拒绝启动" % [
+						_role_set.size(), _team_teams_raw.size()])
+				get_tree().quit(1)
+				return
+			for idx in range(_role_set.size()):
+				_team_of_role[_role_set[idx]] = _team_teams_raw[idx]
 		elif _role_set.is_empty():
 			_role_set = [1, 2]   # 1v1 形态(手工调用兜底;大厅路径不带 --roles)
 		_run_worker(port)
@@ -193,6 +226,11 @@ func _run_worker(port: int) -> void:
 	if _royale:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s)" % [
 				_human_role_count(), port, str(_role_set)])
+	elif _team_mode:
+		# ★ 提示串里同时打 role 集合与队伍表:这两者**同序配对**是 3v3 最容易被改坏的一处,
+		#   联调时一眼能看出"谁是哪一队"(探针也按 role/队号核对摆位)。
+		print("3v3 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s,队伍 %s)" % [
+				_human_role_count(), port, str(_role_set), str(_team_of_role)])
 	else:
 		print("worker 就绪,等待两名玩家……(port %d)" % port)
 	_print_local_ips()
@@ -237,7 +275,14 @@ func _enter_grace(role: int) -> void:
 func _expire_graces(now_ms: int) -> void:
 	for role in _grace.expired(now_ms):
 		_grace.leave(role)
-		if _royale:
+		# ★ 到点做什么 = **纯分派**(`GraceWindow.expire_action`),三个模式的答案由
+		#   tests/grace_window_smoke 逐个钉住 —— 别在这里再写一遍 if/else:
+		#   原先的 `else` 把"1v1 **以及** team"一起吞了,3v3 第一个宽限到期的人会**带着整局退进程**
+		#   (用户裁定是"该队少人继续打"),而那段代码今天不可达只因大厅还没有起 team worker 的入口。
+		#   ★ 真链路验证(6 人局里真掉线 → 宽限到期 → 其余人继续打)归 **B 册的真链路探针**;
+		#     本处只保证"分派本身"可测(纯函数 + room_sweep_smoke 的双向断言)。
+		if GraceWindow.expire_action(_royale, _team_mode) == GraceWindow.ACTION_REMOVE:
+			# 大乱斗 / 3v3:移出对局(身体销毁),其余人继续打;整队走光才终局(3v3 在 TeamHost 里判)
 			if _host != null and _host.has_method("mark_disconnected"):
 				_host.mark_disconnected(role)
 		else:
@@ -246,7 +291,7 @@ func _expire_graces(now_ms: int) -> void:
 				_host.queue_free()
 			print("worker: 1v1 宽限期到,对手未归,对局结束")
 			get_tree().quit(0)
-	# 大乱斗:全员走光且宽限期已空(一个都没回来)→ 收场退出。
+	# 大乱斗/3v3:全员走光且宽限期已空(一个都没回来)→ 收场退出。
 	# ★ 这就是原 `_on_peer_left` 里那条「全员离开,大乱斗结束」,只是**移到宽限期到点才判** ——
 	#   刚 `_enter_grace` 完表里必然非空,原位置那条 `_grace.size() == 0` 恒假(死分支),
 	#   而它是大乱斗 worker 唯一的正常退出口(royale_host.gd:428),丢了会让每局都留下僵尸进程。
@@ -256,8 +301,11 @@ func _expire_graces(now_ms: int) -> void:
 	#   它同时是**语义上正确**的那个界:这条判据要表达的是"本局开过、且人全走光了",
 	#   而不是"此刻表里没人"。`_begin_match` 是唯一写入点且置真后**从不复位**
 	#   (`mark_disconnected` 只释放玩家、不释放 host),故开局后的收场行为与原位置逐字一致。
-	if _royale and _match_started and _claims.is_empty() and _grace.size() == 0:
-		print("worker: 全员离开,大乱斗结束")
+	# ★★ `_team_mode` 必须一起收进来(与上面那条 `else` 分支是**两条**判据,别只改一条):
+	#   3v3 局里所有人走光后,worker 也得退 —— 漏了 = 永驻占着 UDP 端口到超时清扫。
+	#   ★ royale 的文案一字未动(`reconnect_probe` 相⑥按整串核对它),3v3 另起一句。
+	if (_royale or _team_mode) and _match_started and _claims.is_empty() and _grace.size() == 0:
+		print("worker: 全员离开,%s结束" % ("大乱斗" if _royale else "3v3"))
 		get_tree().quit(0)
 
 
@@ -267,8 +315,17 @@ func _process(delta: float) -> void:
 	if _grace_check_timer >= 1.0:
 		_grace_check_timer = 0.0
 		_expire_graces(Time.get_ticks_msec())
+	# 3v3:人没到齐就干等没有意义(满 6 人才开)→ 超时**退出释放端口**,绝不降级开局。
+	# ★ 与 --royale 那条"20s 按已到人数开局"是**相反**的决定:那边是自由混战(N 人可打),
+	#   这边两队人数必须相等才成立。别顺手把两条统一。
+	# ★ 计时从 worker 启动起算、不因有人报到/离开而复位(掉光也一样) —— 这就是"干等到 30s 就退"。
+	if _team_mode and not _match_started and _host == null:
+		_understaffed_wait += delta
+		if _understaffed_wait > 30.0:
+			print("worker: 3v3 报到超时(%d/%d),退出释放端口" % [_claims.size(), _role_set.size()])
+			get_tree().quit(0)
 	# 大乱斗:有人报到但 20s 仍未收齐 → 按已到人数(≥2)直接开局(缺席角色不入局)
-	if _royale and not _match_started and _host == null and _claims.size() >= 2:
+	elif _royale and not _match_started and _host == null and _claims.size() >= 2:
 		_claim_wait += delta
 		if _claim_wait > 20.0:
 			print("worker: 报到超时(%d/%d),按已到人数开局" % [_claims.size(), _human_role_count()])
@@ -413,8 +470,11 @@ func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 	# (端口复用竞态下,迟到的客户端可能连到旧 worker;不能让它静默留在局里收快照/子弹。)
 	# 越界判据 = 「role 是否在本局参战集合内」(大厅经 --roles 显式传入),**不是**任何从人数
 	# 推导出来的界:房内有人退出会留 role 空洞({1,3} 而成员 2 人),拿人数当上界会踢掉真客户端(自检 B1)。
+	# ★ 3v3 也走这条越界判据(不只是大乱斗):`_team_of_role` 只覆盖 --roles 里的 role,
+	#   放进来一个集合外的 role 会让 `_claims.size()` 提前够数开局,而 `TeamHost.start_on` 那侧
+	#   `spawns[role]` 缺键(整局摆位掀掉一半)—— 这条判据正是"teams 的键覆盖全部参战 role"的守卫。
 	if _host != null or _match_started \
-			or (_royale and not _role_set.has(role)) \
+			or ((_royale or _team_mode) and not _role_set.has(role)) \
 			or (_claims.has(role) and _claims[role] != caller):
 		print("worker: 拒绝串线连接 peer=%d(role=%d)" % [caller, role])
 		multiplayer.multiplayer_peer.disconnect_peer(caller)
@@ -423,7 +483,14 @@ func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 		return
 	_claims[role] = caller
 	_claim_names[role] = player_name
-	if _royale:
+	if _team_mode:
+		print("worker: 3v3 角色 %d = peer %d (%d/%d 人)" % [role, caller,
+				_claims.size(), _role_set.size()])
+		# ★ 满员才开:用户裁定「满 6 人才开」,没有降级开局这一档(与 --royale 不同 ——
+		#   那边少人可以打,这边两队人数必须相等)。
+		if _claims.size() >= _role_set.size():
+			_defer_begin_match()
+	elif _royale:
 		print("worker: 大乱斗角色 %d = peer %d (%d/%d 人,另有 %d 个 AI)" % [role, caller,
 				_claims.size(), _human_role_count(), _ai_roles.size()])
 		# 收齐全部人类(其余角色由 AI 补位)即开局
@@ -450,7 +517,11 @@ func _begin_match() -> void:
 	_match_started = true
 	if NetBus.role_claimed.is_connected(_on_role_claimed):
 		NetBus.role_claimed.disconnect(_on_role_claimed)
-	if _royale:
+	if _team_mode:
+		# 房主(role1)规则项随 claim 上报生效; TeamHost.start_on 负责按队散点出生 + 逐角色 match_start。
+		# ★ 第 4 个实参是 `teams`(role→队号),不是 spawns —— 见 TeamHost._init 上方那条注释。
+		_host = TeamHost.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _team_of_role)
+	elif _royale:
 		# 房主(role1)规则项随 claim 上报生效; RoyaleHost.start_on 负责散点出生 + match_start
 		_host = RoyaleHost.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
 	else:
@@ -465,7 +536,12 @@ func _begin_match() -> void:
 	#   (自检 B2)。现在由对局场景**进场拉取**(NetBus.match_sync → `_on_match_sync`),本函数只管建局。
 	if _royale and _host.has_method("set_display_names"):
 		_host.set_display_names(_claim_names)   # 排行榜昵称表
-	print("worker: 对局开始%s" % ("(大乱斗 %d 人,其中 AI %d)" % [_claims.size() + _ai_roles.size(), _ai_roles.size()] if _royale else ""))
+	var mode_note := ""
+	if _royale:
+		mode_note = "(大乱斗 %d 人,其中 AI %d)" % [_claims.size() + _ai_roles.size(), _ai_roles.size()]
+	elif _team_mode:
+		mode_note = "(3v3 %d 人,队伍 %s)" % [_claims.size(), str(_team_of_role)]
+	print("worker: 对局开始%s" % mode_note)
 
 # 各 role 自选的角色颜色(色相旋转度数;缺省 0)
 func _claim_hues() -> Dictionary:
@@ -479,9 +555,10 @@ func _on_peer_left(peer_id: int) -> void:
 	if _host != null:
 		if not is_participant:
 			return   # 被踢的串线连接断开不影响对局
-		if _royale:
-			# 大乱斗:单个参与者掉线 = **先进宽限期**(不立刻移出,身体留在场上),
-			# 宽限内可被 reclaim_role 认领回来;到点仍未回来才走 mark_disconnected。
+		if _royale or _team_mode:
+			# 大乱斗/3v3:单个参与者掉线 = **先进宽限期**(不立刻移出,身体留在场上),
+			# 宽限内可被 reclaim_role 认领回来;到点仍未回来才走 mark_disconnected
+			# (3v3 那边由 TeamHost 判"整队走光才终局" —— 该队少人继续打)。
 			# ★ 身体不销毁是本设计最省的一处:分数/阵亡/血量/背包/位置/世界破坏/地面武器
 			#   全在活着的节点与进程内存里,一条都不用恢复(见 spec §4)。
 			var role := 0
@@ -496,7 +573,7 @@ func _on_peer_left(peer_id: int) -> void:
 			if _claims.is_empty():
 				# 最后一个真人也走了:仍**先给宽限**(最后一人掉线同样该有机会回来),
 				# 到点没人回来才收场退出 —— 收口在 `_expire_graces` 的末尾,
-				# 那条判据是**大乱斗 worker 唯一的正常退出口**(royale_host.gd:428 明说靠它兜底:
+				# 那条判据是**大乱斗/3v3 worker 唯一的正常退出口**(royale_host.gd:428 明说靠它兜底:
 				# 丢了它,每局结束都留一个僵尸 worker 永驻并占着已归还的端口)。
 				print("worker: 全员离开,进宽限等待重连")
 			else:
@@ -517,8 +594,9 @@ func _on_peer_left(peer_id: int) -> void:
 		print("worker: 玩家掉线进宽限(1v1)")
 		return
 	elif is_participant:
-		if _royale:
-			# 尚未开局的缺席:从收人表摘除,继续等(超时兜底按已到人数开局)
+		if _royale or _team_mode:
+			# 尚未开局的缺席:从收人表摘除,继续等
+			# (大乱斗:超时兜底按已到人数开局;3v3:人掉光了也没法开,交给 _process 的超时梯退出)
 			var role := 0
 			for r in _claims:
 				if _claims[r] == peer_id:
