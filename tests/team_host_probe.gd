@@ -23,6 +23,10 @@ extends Node
 const MAP := "res://maps/factory1v1.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 
+# 玩家层(层位 2)。生产侧写在 `player.tscn`(碰撞层)与 `MatchHost._init`(`mask |= 2`)里,
+# 这里不为它另立常量源,只是给 ⑩ 的断言一个可读名字。
+const LAYER_PLAYER := 2
+
 var _fails: Array[String] = []
 var _host = null
 var _ran_to_end := false
@@ -76,6 +80,56 @@ func _moved_from(host, roles: Array, at: Vector2) -> int:
 		if p.global_position.distance_to(at) > 2.0:
 			n += 1
 	return n
+
+
+# rect 覆盖到的格子里有几个是**实心**(判据走 `TileDefs.is_blocked` —— 全仓"挡路"的单一来源)。
+# ★ 右/下两端各内缩 0.001px:格是半开区间,`floori(end / ts)` 会把**正好贴边**的那一列/行
+#   也算进来(与 `Unstick.PROBE_INSET` 同一条理由,见 core/sim/unstick.gd)。
+func _solid_cells_in(rect: Rect2) -> int:
+	var grid: Array = MazeGenerator.current_grid
+	var ts := GameParameters.TILE_SIZE
+	var n := 0
+	for cy in range(floori(rect.position.y / ts), floori((rect.end.y - 0.001) / ts) + 1):
+		for cx in range(floori(rect.position.x / ts), floori((rect.end.x - 0.001) / ts) + 1):
+			if cy < 0 or cx < 0 or cy >= grid.size() or cx >= (grid[0] as Array).size():
+				continue
+			if TileDefs.is_blocked(grid[cy][cx]):
+				n += 1
+	return n
+
+
+# ⑩ 的净空带:全图扫一条 **5 列 × 3 行全空气** 的格子,且**当前没有任何玩家原点**落在它
+# 外扩 2 格的范围内(外扩 2 格 = 128px,足够把 80×107 的身体箱隔在带外)。
+# 返回带的左上角格;找不到返回 (-1,-1)(调用方据此 FAIL,绝不静默跳过 —— 静默跳过会让
+# "⑩ 通过"变成一句空话)。
+func _find_clear_strip() -> Vector2i:
+	var grid: Array = MazeGenerator.current_grid
+	var d := SpawnPicker.grid_dims()
+	var ts := GameParameters.TILE_SIZE
+	for y0 in range(1, d.y - 3):
+		for x0 in range(1, d.x - 5):
+			var ok := true
+			for j in range(3):
+				for i in range(5):
+					if grid[y0 + j][x0 + i] != MapFormat.EMPTY:
+						ok = false
+						break
+				if not ok:
+					break
+			if not ok:
+				continue
+			var near := Rect2i(x0 - 2, y0 - 2, 9, 7)
+			var intrude := 0
+			for r in _host.players:
+				var p: Node2D = _host.players[r]
+				if p == null or not is_instance_valid(p):
+					continue
+				var c := Vector2i(floori(p.global_position.x / ts), floori(p.global_position.y / ts))
+				if near.has_point(c):
+					intrude += 1
+			if intrude == 0:
+				return Vector2i(x0, y0)
+	return Vector2i(-1, -1)
 
 
 func _run() -> void:
@@ -152,6 +206,11 @@ func _run() -> void:
 	_check(_host.role_spawns() == teams, "role_spawns() 返回的就是广播的那一份")
 	for role in TEAMS:
 		_place(_host, role, teams[role])
+	# ★ 手工摆位路径必须**显式**补调生产那一份配层逻辑(⑩ 的断言验的就是它):
+	#   生产上这一步由 `TeamHost._init` 在 `super._init` 之后调,那时 `players` 已满;
+	#   本探针 `role_peers` 传空 → `_init` 那一刻 `players` 还是空的 → 不补调的话
+	#   `_place` 里那句 `mask |= 2` 就是**唯一**的配层来源,⑩ 验的也就成了探针自己抄的那份。
+	_host._apply_team_layers()
 	await get_tree().physics_frame
 	# ★★ [仪器] 把 `_spawned_once` 补成**生产状态** —— 没有这一步,⑧/⑨ 会退化成弱断言。
 	#   生产的 `TeamHost._init` 是先 `plan_team_spawns` 再 `super._init(role_peers 非空)`,
@@ -391,13 +450,15 @@ func _run() -> void:
 	var bbody := ScanUtil.func_body(
 			ScanUtil.code_only(ScanUtil.read("res://server/match_round.gd")), "_start_next_round")
 	_check(not tbody.is_empty() and not bbody.is_empty(),
-			"⑨ 两条 `_start_next_round` 都读得到(本类 %d 字符 / 基类 %d 字符;读不到 = 下面的断言恒真)"
+			"⑨ **本类自己声明了** `_start_next_round`(覆写),且基类那份也读得到"
+			+ "(本类 %d 字符 / 基类 %d 字符;读不到 = 下面的行为断言恒真)"
 			% [tbody.length(), bbody.length()])
-	# 判据落在**换点集**这件语义事上(而不是某一行实现):基类那条只翻 `_side_swap` 布尔,
-	# 本类那条**整体互换 `_round_spawns`** —— 两者在这句话上必然分叉。
-	_check(tbody.contains("_round_spawns") and not bbody.contains("_round_spawns"),
-			"★ ⑨ `_match_round_tick` 的 ROUND_OVER 分支虚分派到的是**本类**那条"
-			+ "(本类体里换 `_round_spawns`;基类体里不换,只翻 `_side_swap`)")
+	# ★ 判据**刻意不再**落在"本类体里出现 `_round_spawns`、基类体里不出现"这种**实现形状**上
+	#   (Task 7 评审留的 Minor):那把"把换点集抽成具名 helper"这类**正当重构**变成红灯,
+	#   而真正证明"虚分派落在覆写上"的是下面那三条**行为**证据 —— `_side_swap` 一路未被翻、
+	#   出生点已对调、玩家真站在新一侧。形状只留一行读数(不进断言账本)。
+	print("  [info] ⑨ 函数体读数:本类 %d 字符 / 基类 %d 字符;本类体含 `_round_spawns` = %s"
+			% [tbody.length(), bbody.length(), str(tbody.contains("_round_spawns"))])
 	var swap_a: Vector2i = _host._round_spawns[1]
 	var swap_b: Vector2i = _host._round_spawns[4]
 	var side_swap_before: bool = _host._side_swap
@@ -425,6 +486,9 @@ func _run() -> void:
 	# ★ 也**不**用"基类会被骗"来构造区分度 —— 那恰恰是"碰巧对"那一档(`{2: 2}` 在基类下按
 	#   role 2 查也是 2,两边都进 MATCH_OVER)。所以本段钉的是**契约**:
 	#   键是队号 / `match_winner()` 返回队号 / MATCH_OVER 不推进局号。
+	# ★★ 本段的 ★ 已按 Task 7 评审摘掉(Task 11 顺手):`_round_over(2)` 在**两种实现下都写键 2**,
+	#   MATCH_OVER 两条路也都到得了 —— 它们是**契约**断言(队号与 role 今天字面撞号、区分不了),
+	#   不是像 ⑨ 那三条一样的**区分性**证据。留着 ★ 会让后来的读者把它们当成后者。
 	var round_at_match_over: int = _host._round_num
 	_host._rounds_won = {}
 	_host._round_over(2)
@@ -436,16 +500,98 @@ func _run() -> void:
 	_host._round_timer = 0.0
 	_host._match_round_tick(0.016)
 	_check(int(_host._round_state) == int(MatchHost.RoundState.MATCH_OVER),
-			"★ ⑨b 队号键先到 %d 局胜 → MATCH_OVER" % TeamHost.TEAM_ROUNDS_TO_WIN)
-	_check(_host._match_winner() == 2, "★ ⑨b `match_winner` 是**队号** 2(不是 role、不是阈值)")
+			"⑨b 队号键先到 %d 局胜 → MATCH_OVER(契约,不区分队号 vs role)"
+			% TeamHost.TEAM_ROUNDS_TO_WIN)
+	_check(_host._match_winner() == 2,
+			"⑨b `match_winner` 是**队号** 2(契约,不区分队号 vs role)")
 	var keys_ok := true
 	for k in _host._rounds_won:
 		if int(k) != 1 and int(k) != 2:
 			keys_ok = false
 	_check(keys_ok and _host._rounds_won.size() > 0,
-			"★ ⑨b `_rounds_won` 的键集 ⊆ {1,2}(队号,不是 role;实际 %s)" % str(_host._rounds_won.keys()))
+			"⑨b `_rounds_won` 的键集 ⊆ {1,2}(契约,不区分队号 vs role;实际 %s)"
+			% str(_host._rounds_won.keys()))
 	_check(_host._round_num == round_at_match_over,
 			"★ ⑨b MATCH_OVER **不推进局号**(实际 %d,期望 %d)" % [_host._round_num, round_at_match_over])
+
+	# ── ⑩ 队友不互挡:层/掩码**按队**分开(Task 11)──
+	# 用户裁定"完全穿透":队友之间既不挡路、也不推挤。
+	# ★ 机制**必须**是"分队位"而不是"改掩码":Godot 的碰撞按**节点**配,没有"按对"的开关 ——
+	#   全员同在第 2 层时,掩码含 2 就是"与所有玩家碰撞",无法只豁免队友。把 2 队挪到层位 5
+	#   (值 16)后,两队掩码**互指对方的位** ⇒ A↔B 挡、A↔A 与 B↔B 穿。
+	# ★ 契约(B 册 Task 6 的客户端一半照此实现):
+	#   1 队 layer=2 / mask=1|4|16(=21);2 队 layer=16 / mask=1|2|4(=7)。
+	var pa: Node2D = _host.players[1]     # 1 队
+	var pb: Node2D = _host.players[4]     # 2 队
+	_check(pa.collision_layer == LAYER_PLAYER and pb.collision_layer == TeamHost.TEAM_ENEMY_LAYER,
+			"⑩ 两队的身体层分开(1 队=%d / 2 队=%d;实际 %d / %d)"
+			% [LAYER_PLAYER, TeamHost.TEAM_ENEMY_LAYER, pa.collision_layer, pb.collision_layer])
+	_check((pa.collision_mask & LAYER_PLAYER) == 0, "★ ⑩ 1 队掩码**不含**玩家层(否则队友会互挡)")
+	_check((pa.collision_mask & TeamHost.TEAM_ENEMY_LAYER) != 0, "⑩ 1 队掩码含敌队层")
+	_check((pb.collision_mask & LAYER_PLAYER) != 0, "⑩ 2 队掩码含玩家层")
+	_check((pb.collision_mask & TeamHost.TEAM_ENEMY_LAYER) == 0, "★ ⑩ 2 队掩码**不含**敌队层(同上)")
+	# ★ 上面五条**替代不了**这一条:`mask = TEAM_ENEMY_LAYER` 这种"整体覆盖"式实现五条全绿,
+	#   而它会让该队**穿墙**(丢掉地形位)、也不再被敌人挡 —— 静默,且要玩到才发现。
+	_check((pa.collision_mask & 1) != 0 and (pa.collision_mask & 4) != 0
+			and (pb.collision_mask & 1) != 0 and (pb.collision_mask & 4) != 0,
+			"★ ⑩ 两队掩码都**保留**地形(1)与敌人(4)(抹玩家位时把它们一起丢 = 该队穿墙;"
+			+ "实际 1 队 %d / 2 队 %d)" % [pa.collision_mask, pb.collision_mask])
+
+	# ★★ 位对了不等于物理对:再用 `test_move` 验一次**真行为**(它读的是物理空间,不是掩码值)。
+	# 三条前提,一条都不能省:
+	#   ① 净空带里**没有墙** —— 否则 test_move 因为**地形**返回 true,那就成了"测的是墙不是人"
+	#      (故用 [仪器] 断言把这条前提钉住,而不是靠"我挑的格子应该没问题");
+	#   ② 六个玩家的物理帧**全关掉** —— 否则 `await physics_frame` 那一帧里他们会下坠/被推挤,
+	#      几何就不再由本探针决定(⑩ 是纯几何断言,不需要任何物理仿真);玩家箱 80×107 世界像素
+	#      比一格还高,站着时脚底会嵌进地板 25px,那点位移足够让两条断言的边界条件漂移;
+	#   ③ `test_move` 的第二参是**相对位移向量**(不是目标位置):`Vector2(ts, 0)` = 试着向右走一格。
+	for r in _host.players:
+		var fp: Node2D = _host.players[r]
+		if fp != null and is_instance_valid(fp):
+			fp.set_physics_process(false)
+	var ts4 := GameParameters.TILE_SIZE
+	var strip_cell := _find_clear_strip()
+	_check(strip_cell.x >= 0,
+			"⑩ 找到一条 5 列 × 3 行全空气、且远离其他玩家的净空带(实际左上角 %s)" % str(strip_cell))
+	if strip_cell.x < 0:
+		_ran_to_end = true
+		return
+	print("  [info] ⑩ 净空带左上角 %s(a 站第 2 列中行,对手/队友站它右边 2 格)" % str(strip_cell))
+	var o := Vector2(strip_cell.x * ts4 + ts4 * 1.5, strip_cell.y * ts4 + ts4 * 1.5)
+	# 被试者(role1)与陪练(role3,同队)与对手(role4,敌队)。★ role4 原来的位置由
+	# `_find_clear_strip` 保证在带外 ≥2 格 —— 下面把队友/对手**在这两个位置间对调**,
+	# 于是"两位里没上场的那位"永远在带外,不需要额外找地方停。
+	var p3: Node2D = _host.players[3]
+	var pb_home: Vector2 = pb.global_position
+	# 相 A:朝**队友**(role3,1 队)走一格 → 应当穿过去
+	pa.global_position = o
+	p3.global_position = o + Vector2(2.0 * ts4, 0.0)
+	# ★ 这一帧不只是"让物理空间看到新位置":它同时让上面关掉的物理帧之后的几何**定住** ——
+	#   删掉它 test_move 读到的是挪位之前的旧状态,断言就成了随机的(brief 的控制者补充)。
+	await get_tree().physics_frame
+	# [仪器] 前提:净空带里没有实心格、也没有第三者在场(判据全走 `CollisionAabb.world_rect`
+	#   —— 与激光命中/水脚底偏移同一份几何来源,不是"我以为的箱子大小")。
+	#   ★ 必须在 `pa` 落到 `o` **之后**算:它先前站在出生点的地板上,那时的箱子当然压着地板。
+	var strip := CollisionAabb.world_rect(pa).grow_individual(0.0, 0.0, 2.0 * ts4, 0.0)
+	var solids := _solid_cells_in(strip)
+	_check(solids == 0,
+			"[仪器] ⑩ 净空带里没有实心格(有的话下面两条测的是**地形**;实际 %d 格)" % solids)
+	var intruders := 0
+	for r in _host.players:
+		if int(r) == 1 or int(r) == 3 or int(r) == 4:
+			continue
+		var other: Node2D = _host.players[r]
+		if other != null and is_instance_valid(other) and CollisionAabb.world_rect(other).intersects(strip):
+			intruders += 1
+	_check(intruders == 0, "[仪器] ⑩ 净空带里没有别的玩家身体(实际 %d 个)" % intruders)
+	_check(not pa.test_move(pa.global_transform, Vector2(ts4, 0.0)),
+			"★ ⑩ 行为:朝**队友**走一格 —— 不被挡(完全穿透)")
+	# 相 B:同一位换成**敌人**(role4,2 队)→ 应当被挡(证明上一条不是"什么都挡不住")
+	pb.global_position = o + Vector2(2.0 * ts4, 0.0)
+	p3.global_position = pb_home
+	await get_tree().physics_frame
+	_check(pa.test_move(pa.global_transform, Vector2(ts4, 0.0)),
+			"★ ⑩ 行为:朝**敌人**走一格 —— 被挡")
 
 	_ran_to_end = true
 

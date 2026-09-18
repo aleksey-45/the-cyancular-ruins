@@ -25,6 +25,10 @@ const SPAWN_BASE_RADIUS := 30    # 基座附近取点半径(格);池子不够会
 const SPAWN_MAX_TRIES := 12      # 散点重试次数(见 plan_team_spawns 的说明;每份只要 ~几十微秒)
 const RESPAWN_CLEARANCE := 8     # 复活点离**存活敌人**的最小环面距离(格)
 const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS   # 击杀归因时效(3s),与 RoyaleHost 同源
+# ★ 队 B 的身体层(层位 5,值 16)。全仓层位占用:1 地形 / 2 玩家 / 4 敌人 / 8 掉落物(WeaponPickup)
+#   —— 第 5 位在本批之前**无人占用**(唯一另一处用值 16 的是 `tests/replica_ghost_probe.gd` 的
+#   备用障碍层,那是探针自己世界里的东西,与生产无关)。契约由 `_init` 末段与探针 ⑩ 共同钉住。
+const TEAM_ENEMY_LAYER := 16
 
 var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 match_start 广播的同一份)
 var _swap_spawns: Dictionary = {}    # role -> Vector2i(换边后的点;两队点集整体对调)
@@ -54,6 +58,36 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	#   → 子弹不穿队友、`team_map()` 下发空表。守卫:`tests/team_host_probe` 的 ③ 直读
 	#   `_team_of` 逐值断言 `typeof(...) == TYPE_INT`(只断言"非空"抓不到这一档)。
 	super._init(map_path, role_peers, options, ai_roles, teams)
+
+	# ── 队友不互挡(用户裁定"完全穿透")──
+	# ★ 为什么必须"分队位"而不是改掩码:Godot 的碰撞**按节点**配,没有"按对"的开关。
+	#   全部玩家同在第 2 层时,掩码含 2 就是"与所有玩家碰撞",无法只豁免队友。
+	#   把队 B 挪到新层位 16,让两队掩码**互指对方的位**,即可 A↔B 挡、A↔A 与 B↔B 穿。
+	# ★ 必须在 super._init **之后**:super 的建玩家循环里已经给每个人 `mask |= 2`。
+	#   队 A 要把那一位**抹掉**再补上 16;队 B 则保留 super 给的 7(1|4|2)—— 正是它要的。
+	# ★ 单机 / 1v1 / 大乱斗一行不受影响:它们不走本类。
+	# ★ 契约(客户端那一半归 B 册 Task 6,按同一张表实现):
+	#   1 队 layer=2 / mask=1|4|16(=21),2 队 layer=16 / mask=1|2|4(=7)。
+	#   两队掩码都**保留**地形(1)与敌人(4)—— 抹掉 2 时把它们一起丢掉的话,该队会**穿墙**。
+	_apply_team_layers()
+
+
+# 按队给**在场的每个玩家**配碰撞层/掩码(机制说明见 `_init` 里那一段)。
+# ★ 为什么单独成一个函数、而不是把这几行写在 `_init` 里:探针用「`role_peers` 传空 + 手工摆位」
+#   建宿主,那条路径下 `players` 在 `_init` 那一刻**还是空的** —— 逻辑只写在 `_init` 里的话,
+#   探针就只能**自己再抄一份**配层规则,于是它验的是抄件、不是生产代码(本仓明令禁止的
+#   "第二份真相";`tests/team_host_probe.gd` 的 `_place` 正是为这个显式补调本函数)。
+# ★ 幂等:重复调用没副作用(直接赋值,不叠加),故手工摆位路径可以放心再调一次。
+func _apply_team_layers() -> void:
+	for role in players:
+		var p: Node2D = players[role]
+		if p == null or not is_instance_valid(p):
+			continue
+		if team_of(int(role)) == 1:
+			p.collision_layer = 2
+			p.collision_mask = (p.collision_mask & ~2) | TEAM_ENEMY_LAYER
+		else:
+			p.collision_layer = TEAM_ENEMY_LAYER
 
 
 # ── 开局(在 worker 进程调用):算散点 → 逐角色 match_start → 建 TeamHost ──
@@ -299,14 +333,14 @@ func _round_over(winner_team: int) -> void:
 #
 # ★ 与 `_match_winner()` 的关系(**不是重复,是互补**):本函数判的是"**要不要**进 MATCH_OVER"
 #   (答案只能是"进/不进"),`_match_winner()` 判的是"进去之后**报哪一队**"。两处都要读
-#   `TEAM_ROUNDS_TO_WIN`,但**不能互换** —— `_match_winner()` 恒返回 1 或 2(无胜者时退回
-#   "局胜高者"),拿它跟阈值比就是本仓反复踩过的"把队号当阈值"。
+#   `TEAM_ROUNDS_TO_WIN`,但**不能互换** —— `_match_winner()` 返回 1/2/0(0 = 平局,见它的首行
+#   弃权分支;正常路径退回"局胜高者"时恒为 1 或 2)。它的返回值**是队号**,拿它跟阈值比
+#   就是本仓反复踩过的"把队号当阈值"。
 func _start_next_round() -> void:
-	for t in [1, 2]:
-		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
-			_round_state = RoundState.MATCH_OVER
-			_broadcast_round_state()
-			return
+	if _threshold_team() != 0:
+		_round_state = RoundState.MATCH_OVER
+		_broadcast_round_state()
+		return
 	_reset_world_and_clear_dynamics()
 	# ★ 两队人数不等时 `_swap_spawns` 是空表 → **不换边**(宁可这局不换,也不要把人送到错的一侧)
 	if not _swap_spawns.is_empty():
@@ -343,10 +377,25 @@ func _match_winner() -> int:
 	#   0:0 / 1:1 并列时偏 **1 队** ⇒ 不拦的话"整队走光的那一队"会被报成胜者。
 	if _endgame_winner != ENDGAME_NONE:
 		return _endgame_winner
+	var decided := _threshold_team()
+	if decided != 0:
+		return decided
+	return 1 if int(_rounds_won.get(1, 0)) >= int(_rounds_won.get(2, 0)) else 2
+
+
+# 「局胜阈值」这个谓词的**单一来源**:先到 `TEAM_ROUNDS_TO_WIN` 局的那一队;都还没到 → 0。
+# ★ 它有**三个读者**,问的是同一个谓词的三种问法(此前三处各抄了一份逐字同构的循环):
+#   `_start_next_round()` 问"**要不要**进 MATCH_OVER"、`_match_winner()` 问"进去之后**报哪一队**"、
+#   `_decided_by_rounds()` 问"是否已由局胜决出"。三处的分支都是"有就拦/就返回",故共用它
+#   不会改变任何一处的语义。
+# ★ 返回值语义:队号 1/2 = 已达标;0 = **未达标**。★ 这个 0 **不是队号**(本模式没有 0 队),
+#   正是那个"未定"哨兵 —— 与本文件 `ENDGAME_NONE` 的 0/队号关系照同一条纪律读:
+#   **谁都不可能拿 0 去当队伍用**。三个读者的用法:`!= 0` 当闸 / 当布尔 / 直接返回。
+func _threshold_team() -> int:
 	for t in [1, 2]:
 		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
 			return t
-	return 1 if int(_rounds_won.get(1, 0)) >= int(_rounds_won.get(2, 0)) else 2
+	return 0
 
 
 # round_state:`scores` / `rounds_won` 的**键是队号**;`winner` / `match_winner` 也是队号。
@@ -468,10 +517,7 @@ func mark_disconnected(role: int) -> void:
 # ★ 刻意不用"在 `_start_next_round` 里记一个闩"的写法:那样 ROUND_OVER 期间(局胜已达标、
 #   状态尚未推进到 MATCH_OVER 的那几帧)会漏判 —— 而掉线恰好可能落在这个窗口里。
 func _decided_by_rounds() -> bool:
-	for t in [1, 2]:
-		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
-			return true
-	return false
+	return _threshold_team() != 0
 
 
 func _finish_match() -> void:

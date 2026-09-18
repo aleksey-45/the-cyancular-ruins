@@ -104,6 +104,21 @@ func _run() -> void:
 	h2._round_over(1)
 	h2._round_state = MatchHost.RoundState.ROUND_OVER
 	h2._round_timer = 0.0
+	# ⑥c ★ **ROUND_OVER 窗口内**（局胜已达标、状态尚未推进）冠军队离场：胜者**不得**改判、
+	#   状态**不得**被推走。
+	#   ★ 它钉的是 `_decided_by_rounds()` 读的 `_rounds_won`（**闸**），而不是"在 `_start_next_round`
+	#     里记一个闩"：闩式实现此刻**还没置上** ⇒ `alive_teams` 只剩 {2} ⇒ 胜者被写成 2、
+	#     状态当场被推成 MATCH_OVER —— 两条断言同时红。
+	#   ★ 与 ⑥b 的分工：⑥b 的离场发生在 MATCH_OVER **之后**，那时两种实现的闩都已置上
+	#     ⇒ **闩式实现照样全绿** —— 也就是说只有这一相真的守着"闸 vs 闩"的区别（Task 8 评审）。
+	h2.mark_disconnected(1)
+	h2.mark_disconnected(2)
+	h2.mark_disconnected(3)
+	_check(h2._match_winner() == 1,
+			"★ ⑥c ROUND_OVER 窗口内冠军队离场:胜者**不得**改判(实际 %d)" % h2._match_winner())
+	_check(int(h2._round_state) == int(MatchHost.RoundState.ROUND_OVER),
+			"★ ⑥c …且状态**仍是** ROUND_OVER(闩式实现会在这里就推成 MATCH_OVER;实际 %d)"
+			% int(h2._round_state))
 	h2._match_round_tick(0.016)     # ROUND_OVER 到期 → `_start_next_round` → 局胜先到阈值
 	_check(int(h2._round_state) == int(MatchHost.RoundState.MATCH_OVER),
 			"⑥a 局胜先到阈值 → MATCH_OVER(实际 state=%d)" % int(h2._round_state))
@@ -112,6 +127,8 @@ func _run() -> void:
 	# ⑥b 冠军队**赛后离场**:结果**不得**被改判成对方胜(否则"赢了的队走人 = 改判负")。
 	# ★ 这条钉的是 `_decided_by_rounds()` 那道闸:少了它,三个 role 走完 → `alive_teams` 只剩
 	#   {2} → 弃权判据把胜者写成 2,而这一局是**按局胜打完的**。
+	# ★★ 但它**不区分**"闸(读 `_rounds_won`)"与"在 `_start_next_round` 里记闩"——那时已 MATCH_OVER,
+	#   两种实现的闩/闸都成立。真正的区分点在上面那一相 **⑥c**。
 	h2.mark_disconnected(1)
 	h2.mark_disconnected(2)
 	h2.mark_disconnected(3)
