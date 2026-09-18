@@ -21,6 +21,11 @@ const ROYALE_MIN_PLAYERS := 2
 const ROYALE_MAX_PLAYERS := 8
 const ROYALE_DEFAULT_MAX := 4
 
+# 3v3:**无 AI 补位、无降级** —— 满 6 人才开(用户裁定)。两条闸门都是硬上界:
+# `TEAM_ROLES` = 房间容量(第 7 个 join 直接拒),`TEAM_SIZE` = 每队人数(选边闸门)。
+const TEAM_SIZE := 3     # 每队人数
+const TEAM_ROLES := 6    # 两队合计(满员才开局,无 AI 补位、无降级)
+
 # worker 端口池/子进程(由 RoomManager 装配时注入;本类只用 release_now / kill_worker)
 var launcher: WorkerLauncher = null
 
@@ -55,6 +60,47 @@ class RoyaleRoom:
 var royale_rooms: Dictionary = {}   # code -> RoyaleRoom
 
 
+# 3v3 房。与 `Room`/`RoyaleRoom` **并列的第三种房**,三张表并存且**互相拒斥**(见 team_create 的守卫)。
+# 多出来的是 `team_of`(role → 队号):队伍**不由服务器推导** —— role 号因"退出留空洞、最小空闲号
+# 复用"而不连续,玩家自己点选边;未选边的 role **不在表里**(不在任何一队,也不能开局)。
+class TeamRoom:
+	var code: String = ""
+	var host_peer: int = 0
+	var players: Array[int] = []          # peer ids
+	var player_role: Dictionary = {}      # peer id -> role(1..6,最小空闲号)
+	var team_of: Dictionary = {}          # role(int) -> 1/2(**选边前不在表里**)
+	var is_public := true
+	var invite_code := ""
+	var in_match := false
+	var worker_port: int = 0
+	var created_at := 0.0
+	var tokens: Dictionary = {}           # peer_id -> 会话令牌(断线重连用)
+
+var team_rooms: Dictionary = {}   # code -> TeamRoom
+
+
+# ── 3v3 的**纯判据**(静态:`-s` 可测;RPC handler 与 RoomManager 都调它们,判据只有这一份)──
+# 入参形状统一是 `{1: [role, …], 2: [role, …]}`(`_by_team()` 造),别在别处另算一遍。
+
+# 两队是否都满员(满 6 人才允许开局)。★ 4v2 也算 6 人,但那不是 3v3。
+static func team_ready(by_team: Dictionary, size: int = TEAM_SIZE) -> bool:
+	return (by_team.get(1, []) as Array).size() == size \
+			and (by_team.get(2, []) as Array).size() == size
+
+# 该队还能不能再进人
+static func team_can_join(by_team: Dictionary, team: int, size: int = TEAM_SIZE) -> bool:
+	return (by_team.get(team, []) as Array).size() < size
+
+# 最小空闲 role 号(有人退房留下的空洞会被**复用**,与 royale 的分配同款)。
+# ★ 不能写成"人数 + 1":那是"编号恒连续"的假设,房里有 {1,3} 时按人数推会算出 3 —— 撞上仍在房里
+#   的高号玩家,同一个 role 双份占用(自检 B1 就是这一脚)。判据收在这里,`team_join` 只调它。
+static func team_next_role(used_roles: Array) -> int:
+	var role := 1
+	while used_roles.has(role):
+		role += 1
+	return role
+
+
 func _enter_tree() -> void:
 	NetBus.room_create_requested.connect(create_room)
 	NetBus.room_join_requested.connect(join_room)
@@ -65,6 +111,14 @@ func _enter_tree() -> void:
 	NetBusExt.royale_join_requested.connect(royale_join)
 	NetBusExt.royale_leave_requested.connect(royale_leave)
 	NetBusExt.royale_list_requested.connect(royale_list)
+	# ★ 3v3 **只接五条**:`team_create/join/pick/leave/list` 是房间账本的事;
+	#   `team_start_requested`(**第六条**)归 RoomManager(它要拉 worker)—— 与大乱斗逐字同款的分工
+	#   (royale_list 在本类、royale_start 在 RoomManager)。接进来 = 同一件事有两处实现。
+	NetBusExt.team_create_requested.connect(team_create)
+	NetBusExt.team_join_requested.connect(team_join)
+	NetBusExt.team_pick_requested.connect(team_pick)
+	NetBusExt.team_leave_requested.connect(team_leave)
+	NetBusExt.team_list_requested.connect(team_list)
 
 func _exit_tree() -> void:
 	NetBus.room_create_requested.disconnect(create_room)
@@ -76,6 +130,11 @@ func _exit_tree() -> void:
 	NetBusExt.royale_join_requested.disconnect(royale_join)
 	NetBusExt.royale_leave_requested.disconnect(royale_leave)
 	NetBusExt.royale_list_requested.disconnect(royale_list)
+	NetBusExt.team_create_requested.disconnect(team_create)
+	NetBusExt.team_join_requested.disconnect(team_join)
+	NetBusExt.team_pick_requested.disconnect(team_pick)
+	NetBusExt.team_leave_requested.disconnect(team_leave)
+	NetBusExt.team_list_requested.disconnect(team_list)
 
 func on_lobby_name(caller: int, name: String) -> void:
 	_peer_names[caller] = name if not name.is_empty() else "Anon"
@@ -117,7 +176,14 @@ func is_peer_online(peer_id: int) -> bool:
 	return multiplayer.has_multiplayer_peer() and NetBus.is_peer_live(peer_id)
 
 func create_room(caller: int) -> void:
-	# 1v1/大乱斗互斥(自检 L5):同一客户端同时挂两种房会收到双重 go_match 互相覆盖
+	# 三路互斥(自检 L5;3v3 于 2026-09-18 成为第三种房):同一个客户端同时挂两种房会收到
+	# **双重 go_match** 互相覆盖,而旧房无人认领 → 幽灵房(**端口永不归还**)。
+	# ★ 互斥必须**双向**:本函数(1v1 入口)判 team;`team_create`/`team_join` 反判 1v1 —— 只加
+	#   一头就是"从 1v1 房直接开 3v3 房"。四个建/加入入口(1v1 create/join、royale create/join、
+	#   team create/join)每一个都要判另外两种,**漏掉 join 那半边等于把洞留在了 join 上**。
+	if _in_team_room(caller):
+		NetBus.reply(caller, "server_message", "你已在 3v3 房间,请先退出再创建 1v1 房间")
+		return
 	if royale_room_of(caller) != null:
 		NetBus.reply(caller, "server_message", "你已在大乱斗房间,请先退出再创建 1v1 房间")
 		return
@@ -160,6 +226,10 @@ func join_room(caller: int, code: String) -> void:
 		return
 	if royale_room_of(caller) != null:
 		NetBus.reply(caller, "server_message", "你已在大乱斗房间,请先退出再加入 1v1 房间")
+		return
+	if _in_team_room(caller):
+		# 与 create_room 同一理由,只是发生在**加入**这一半:在 3v3 房里的人去加 1v1 房会同时挂两张表
+		NetBus.reply(caller, "server_message", "你已在 3v3 房间,请先退出再加入 1v1 房间")
 		return
 	room.players.append(caller)
 	room.player_role[caller] = 2
@@ -211,6 +281,33 @@ func on_peer_left(peer_id: int) -> void:
 			#   get_peers() 对这类 peer 的滞后不止一帧)。等待中的房照常广播(那是等待室名单刷新)。
 			if not rr.in_match:
 				_broadcast_royale_state(rr)
+	# 3v3 房:与大乱斗逐字同款(掉线即离房;空房关闭;房主掉线转移;开局后成员转连 worker 断开大厅
+	# 属正常流转)。★ **这一段不在 brief 的代码块里,但没有它 3v3 房会漏两处**:
+	#   ① 等待期有人关掉客户端(或踢网线)→ 该 peer 永久留在 `players` 里,房间列表显示幽灵人数、
+	#      `host_peer` 可能指向死人 → **这个房再也不可能凑齐 6 人开局**,也没人认领;
+	#   ② 开局后 6 人转连 worker 会**全部**触发本函数 → 若这里不摘房,`worker_port` 直到
+	#      _sweep_stale_rooms 的 2h 超龄才归还(1v1/大乱斗都是当场归还)。
+	#      本层为「端口泄漏」这同一个失败模式已补过三次,不能靠 sweep 兜底当第一道防线。
+	for tcode in team_rooms.keys():
+		var tr: TeamRoom = team_rooms[tcode]
+		if not tr.players.has(peer_id):
+			continue
+		tr.players.erase(peer_id)
+		tr.player_role.erase(peer_id)
+		# 该 role 从队伍表里摘掉(与 team_leave 同款:role 号会被下一个加入者复用)
+		for r in tr.team_of.keys():
+			if not tr.player_role.values().has(int(r)):
+				tr.team_of.erase(r)
+		if tr.players.is_empty():
+			teardown_room(tr)
+		else:
+			if tr.host_peer == peer_id:
+				tr.host_peer = tr.players[0]
+				print("3v3 房 %s 房主转移 → peer %d" % [tcode, tr.host_peer])
+			# 已开局的房不广播等待室状态(与 royale 同一理由:成员正在转连 worker,发给它们
+			# 只会踩 "max channels: 0" 并丢包,等待室界面也已不存在)
+			if not tr.in_match:
+				_broadcast_team_state(tr)
 
 # ── 大乱斗房间:建房/加入(邀请码)/离开/列表/房主开局 ──
 
@@ -266,6 +363,9 @@ func _in_1v1_room(caller: int) -> bool:
 	return false
 
 func royale_create(caller: int, opts: Dictionary) -> void:
+	if _in_team_room(caller):
+		NetBus.reply(caller, "server_message", "你已在 3v3 房间,请先退出再创建大乱斗房间")
+		return
 	if royale_room_of(caller) != null:
 		NetBus.reply(caller, "server_message", "你已在大乱斗房间中")
 		return
@@ -305,6 +405,9 @@ func royale_join(caller: int, code: String, invite: String) -> void:
 		return
 	if _in_1v1_room(caller):
 		NetBus.reply(caller, "server_message", "你已在 1v1 房间,请先退出再加入大乱斗房间")
+		return
+	if _in_team_room(caller):
+		NetBus.reply(caller, "server_message", "你已在 3v3 房间,请先退出再加入大乱斗房间")
 		return
 	var rr: RoyaleRoom = royale_rooms[code]
 	if rr.in_match:
@@ -384,6 +487,183 @@ func royale_free_roles(rr: RoyaleRoom, count: int) -> Array:
 			used[r] = true
 	return out
 
+# ── 3v3 房间:建房/加入/选边/离开/列表(与 1v1、大乱斗**三路互斥**)──
+
+# 某 role 的队号;未选边 → 0
+func _team_of(tr: TeamRoom, role: int) -> int:
+	return int(tr.team_of.get(role, 0))
+
+# {队号: [role, …]} —— 判据的入参形状(单一来源,别在 handler 里另算一遍)
+func _by_team(tr: TeamRoom) -> Dictionary:
+	var out := {1: [], 2: []}
+	for role in tr.team_of:
+		var t := int(tr.team_of[role])
+		if out.has(t):
+			(out[t] as Array).append(int(role))
+	return out
+
+
+# 这个房能不能开局(RoomManager.team_start 调;**对外的公开口** —— 别让它去读 `_by_team`)。
+func team_room_ready(tr: TeamRoom) -> bool:
+	return team_ready(_by_team(tr))
+
+
+func team_room_of(caller: int) -> TeamRoom:
+	for c in team_rooms:
+		if (team_rooms[c] as TeamRoom).players.has(caller):
+			return team_rooms[c]
+	return null
+
+
+# 该 caller 是否已在 3v3 房间里。★ 三条路径互斥要**双向**判:本函数给 1v1/大乱斗的建/加入入口用,
+# `_in_1v1_room` / `royale_room_of` 给本节的入口用 —— 只加一头会出现"从 1v1 房直接开 3v3 房"。
+func _in_team_room(caller: int) -> bool:
+	return team_room_of(caller) != null
+
+
+func team_create(caller: int, opts: Dictionary) -> void:
+	if _in_team_room(caller):
+		NetBus.reply(caller, "server_message", "你已在 3v3 房间中")
+		return
+	if _in_1v1_room(caller) or royale_room_of(caller) != null:
+		NetBus.reply(caller, "server_message", "你已在其他房间,请先退出")
+		return
+	var code := _generate_code()
+	while team_rooms.has(code):
+		code = _generate_code()
+	var tr := TeamRoom.new()
+	tr.code = code
+	tr.host_peer = caller
+	tr.players.append(caller)
+	tr.player_role[caller] = 1
+	tr.created_at = Time.get_unix_time_from_system()
+	tr.is_public = bool(opts.get("is_public", true))
+	tr.invite_code = str(opts.get("invite_code", "")).strip_edges()
+	if not tr.is_public and tr.invite_code.is_empty():
+		tr.invite_code = _generate_code()
+	team_rooms[code] = tr
+	print("3v3 房 %s 创建(房主 peer=%d,%s)" % [code, caller, "公开" if tr.is_public else "私密"])
+	_broadcast_team_state(tr)
+
+
+func team_join(caller: int, code: String, invite: String) -> void:
+	if not team_rooms.has(code):
+		NetBus.reply(caller, "server_message", "房间不存在")
+		return
+	if _in_team_room(caller):
+		NetBus.reply(caller, "server_message", "你已在 3v3 房间中")
+		return
+	if _in_1v1_room(caller) or royale_room_of(caller) != null:
+		NetBus.reply(caller, "server_message", "你已在其他房间,请先退出")
+		return
+	var tr: TeamRoom = team_rooms[code]
+	if tr.in_match:
+		NetBus.reply(caller, "server_message", "对局已开始")
+		return
+	if tr.players.size() >= TEAM_ROLES:
+		NetBus.reply(caller, "server_message", "房间已满(6 人)")
+		return
+	if not tr.is_public and invite.strip_edges() != tr.invite_code:
+		NetBus.reply(caller, "server_message", "邀请码错误")
+		return
+	# role = 最小空闲号(与 royale 同款:**不重排**,有人退会留空洞 → 队伍表必须显式下发)。
+	# 判据在 `team_next_role`(静态,`-s` 可测;按人数推的写法在"有人退过"的房里必错)。
+	var role := team_next_role(tr.player_role.values())
+	tr.players.append(caller)
+	tr.player_role[caller] = role
+	# ★ 进房**不自动分队**:3v3 的规则是玩家自己选边(用户裁定)。未选边 = team_of 里没有该 role,
+	#   等待室会把他列在"未选边"那一档。
+	print("3v3 房 %s 加入(peer=%d,role=%d,%d/%d)" % [code, caller, role, tr.players.size(), TEAM_ROLES])
+	_broadcast_team_state(tr)
+
+
+# 选边。该队满 3 人 → 拒绝(回 server_message);已在别的队 → 改投(留空出的位置)。
+func team_pick(caller: int, team: int) -> void:
+	var tr := team_room_of(caller)
+	if tr == null or tr.in_match:
+		return
+	if team != 1 and team != 2:
+		return
+	var role := int(tr.player_role.get(caller, 0))
+	if role == 0:
+		return
+	var by_team := _by_team(tr)
+	if not team_can_join(by_team, team):
+		NetBus.reply(caller, "server_message", "该队已满 3 人")
+		return
+	tr.team_of[role] = team
+	_broadcast_team_state(tr)
+
+
+func team_leave(caller: int) -> void:
+	var tr := team_room_of(caller)
+	if tr == null:
+		return
+	tr.players.erase(caller)
+	tr.player_role.erase(caller)
+	# 把该 peer 的 role 从队伍表里摘掉(role 号会被下一个加入者复用)
+	for r in tr.team_of.keys():
+		if not tr.player_role.values().has(int(r)):
+			tr.team_of.erase(r)
+	if tr.players.is_empty():
+		# ★ 「退出房间」按钮**不断开大厅 peer** → on_peer_left 不会为它触发;房间随即摘除,
+		#   而 sweep / on_peer_left 只遍历注册表 → 之后再无路径归还端口(与 royale_leave 同款坑)。
+		teardown_room(tr)
+	else:
+		if tr.host_peer == caller:
+			tr.host_peer = tr.players[0]
+		if not tr.in_match:
+			_broadcast_team_state(tr)
+
+
+func team_list(caller: int) -> void:
+	var arr: Array = []
+	for c in team_rooms:
+		var tr: TeamRoom = team_rooms[c]
+		if tr.in_match or not tr.is_public or tr.players.is_empty():
+			continue
+		var names: Array = []
+		for peer_id in tr.players:
+			names.append(_peer_names.get(peer_id, "玩家"))
+		arr.append({"code": c, "players": tr.players.size(),
+				"max_players": TEAM_ROLES, "names": names})
+	# 判活同 royale_list:请求与断开可能挤在同一次 poll 里(见 NetBus.reply 的注释)。
+	if NetBus.is_peer_live(caller):
+		NetBusExt.rpc_id(caller, "team_rooms", arr)
+
+
+# 房间状态广播(等待室/选边)。与 royale 那两条同款:call_deferred + 帧末再等一帧 + 开局后不再发。
+func _broadcast_team_state(tr: TeamRoom) -> void:
+	_flush_team_state.call_deferred(tr)
+
+
+func _flush_team_state(tr: TeamRoom) -> void:
+	# ★ 等**下一帧**再发(理由与 _flush_royale_state 逐字相同):调用点几乎都在"刚有人断开"的路径上,
+	#   此刻其余成员的 ENet 状态可能还没收敛 —— 同步发/帧末发都会踩 "max channels: 0" 且包会丢。
+	# ★ 真正发送前再判一次 `in_match`:从"排队"到"发送"之间房间完全可能已经开局,而开局那一刻
+	#   正是成员集体转连 worker、陆续断开大厅的窗口(等待室此刻也已不存在)。
+	await get_tree().process_frame
+	if tr.in_match:
+		return
+	var plist: Array = []
+	for peer_id in tr.players:
+		var role := int(tr.player_role[peer_id])
+		plist.append({"role": role, "name": _peer_names.get(peer_id, "玩家"),
+				"team": _team_of(tr, role)})
+	var state := {
+		"code": tr.code, "is_public": tr.is_public, "invite_code": tr.invite_code,
+		"host_role": tr.player_role.get(tr.host_peer, 0), "team_size": TEAM_SIZE,
+		"players": plist, "in_match": tr.in_match,
+	}
+	for peer_id in tr.players:
+		if is_peer_online(peer_id):
+			# 每个 peer 送**他自己那一份**(多带 `your_role`):等待室靠它标"(我)",按昵称反查在
+			# 同名玩家(默认都叫 Anon)上必然高亮错行 —— 与 royale 同款。
+			var mine := state.duplicate()
+			mine["your_role"] = tr.player_role[peer_id]
+			NetBusExt.rpc_id(peer_id, "team_room_state", mine)
+
+
 # ── 房间拆除的**单一收口** ──
 # 三种形态:
 const TEARDOWN_DELAYED := 0   # 正常关房:worker 会自己退 → **延迟**归还端口(防立刻复用撞车)
@@ -398,10 +678,18 @@ const TEARDOWN_ABORT := 2     # 拉起失败:worker 根本没起来 → **立即
 # mode               三种形态,见下方 TEARDOWN_* 常量(默认 DELAYED)
 # msg                发给房内玩家的 server_message(空串=不发)
 # disconnect_peers   true=立刻断开房内玩家(清扫路径要;正常关房由 peer_left 自然收尾)
-# 端口延迟分两档:1v1=WORKER_PORT_REUSE_DELAY(120s,≥ 断线宽限期);大乱斗=ROYALE_PORT_REUSE_DELAY(360s,一局更长)。
+# 端口延迟分**三档**(2026-09-18 3v3 落地,由二分改三态):
+#   1v1=WORKER_PORT_REUSE_DELAY(120s,≥ 断线宽限期);大乱斗=ROYALE_PORT_REUSE_DELAY(360s);
+#   3v3=TEAM_PORT_REUSE_DELAY(360s,一局比 1v1 长得多 —— 三局两胜 × 9 杀,与大乱斗同档)。
+# ★ 别把 3v3 并回 120s:那条线是"**短于或等于**断线宽限期会让重连的客户端连到**别的局**"的老坑
+#   (1v1 从 30 → 120 的教训,见 WorkerLauncher 顶部的常量注释)。
 func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 		disconnect_peers: bool = false) -> void:
+	# ★ 三态(2026-09-18):原先是 `is_royale` 二分,3v3 是第三个模式 → 端口延迟与注册表各多一档。
+	#   ★ 判据用 `is` 而不是 `room.code` 撞库:三张表的房号空间**重叠**(都是 `_generate_code()`
+	#   的 4 位号),按号码反查是"同一个号在三张表里各有一份"的静默错拆。
 	var is_royale: bool = room is RoyaleRoom
+	var is_team: bool = room is TeamRoom
 	var port: int = room.worker_port
 	var peers: Array = room.players.duplicate()   # 先拷:下面要删注册表/可能改动它
 	if port > 0:
@@ -412,14 +700,20 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 			TEARDOWN_ABORT:
 				launcher.release_now(port)   # worker 根本没起来 → 立刻归还(不必延迟,也不必杀)
 			_:
-				_release_port_later(port, WorkerLauncher.ROYALE_PORT_REUSE_DELAY if is_royale \
-						else WorkerLauncher.WORKER_PORT_REUSE_DELAY)
+				var delay := WorkerLauncher.WORKER_PORT_REUSE_DELAY
+				if is_royale:
+					delay = WorkerLauncher.ROYALE_PORT_REUSE_DELAY
+				elif is_team:
+					delay = WorkerLauncher.TEAM_PORT_REUSE_DELAY
+				_release_port_later(port, delay)
 	if not msg.is_empty():
 		for peer_id in peers:
 			if is_peer_online(peer_id):
 				NetBus.reply(peer_id, "server_message", msg)
 	if is_royale:
 		royale_rooms.erase(room.code)
+	elif is_team:
+		team_rooms.erase(room.code)
 	else:
 		rooms.erase(room.code)
 	var how := "将于延迟后回收"
@@ -427,7 +721,8 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 		how = "已强杀并立即回收"
 	elif mode == TEARDOWN_ABORT:
 		how = "立即归还(worker 未起来)"
-	print("%s %s 拆除(端口 %d %s)" % ["大乱斗房" if is_royale else "房间", room.code, port, how])
+	var kind := "大乱斗房" if is_royale else ("3v3 房" if is_team else "房间")
+	print("%s %s 拆除(端口 %d %s)" % [kind, room.code, port, how])
 	if disconnect_peers:
 		for peer_id in peers:
 			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
