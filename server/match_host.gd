@@ -167,7 +167,6 @@ func _physics_process(delta: float) -> void:
 			CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
 			processed += 1
 
-
 # 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):对局开始 delay 秒后拆掉
 # 指定格,**只拆一次**。默认关(`test_destroy_cell == (-1,-1)` → 首行就 return),生产路径
 # 不带这个开关,行为与今天逐字一致。

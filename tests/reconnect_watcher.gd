@@ -218,10 +218,14 @@ func _ready() -> void:
 	# 相⑦:补态载荷(服务器对 match_sync 的应答)与那一格砖的广播。
 	# ★ 两处都**不消费**信号,只是旁听 —— 生产路径的消费者(`pvp_game._on_match_sync` /
 	#   `_on_remote_tile_destroyed`)照常跑,本观察者只是把同一份数据留个底。
-	NetBus.local_match_sync.connect(_on_match_sync_payload)
-	NetBus.local_tile_destroyed.connect(_on_tile_destroyed)
-	if not is_actor:
-		NetBus.local_weapon_removed.connect(_p7_on_removed)   # 相⑦:witness 侧的交叉证据
+	# ★ 订阅**按模式门控**:相⑦ 只跑 1v1(`_p7_assert` / `_p7_witness_tick` 都是 `is_royale` 门控的),
+	#   而这几个订阅原先对四个客户端一视同仁 —— 后果不是"多跑一点",而是大乱斗客户端的日志里
+	#   混进一串「相⑦:…」字样(它们谁也不判、只打印),读日志的人会照着一相不存在的断言归因。
+	if not is_royale:
+		NetBus.local_match_sync.connect(_on_match_sync_payload)
+		NetBus.local_tile_destroyed.connect(_on_tile_destroyed)
+		if not is_actor:
+			NetBus.local_weapon_removed.connect(_p7_on_removed)   # 相⑦:witness 侧的交叉证据
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void: _log("连 worker 失败"), CONNECT_ONE_SHOT)
 	var err := NetBus.start_client("127.0.0.1", port)
@@ -572,6 +576,16 @@ func _p7_assert() -> void:
 			ghost.append(inst)
 	_check(ghost.is_empty(),
 			"相⑦ ②:本端地面武器表 ⊆ 补态载荷(幽灵枪一条都不许有;多出来的是 %s)" % str(ghost))
+	# ★ 主判据的另一半(必须有):上面两条都是**对 `after` 的过滤**,于是"清得对、但一把都没灌回来"
+	#   (`after == []`)时两条**同时空过** —— 而那个回归是用户可见的:重连之后客户端**一把地面武器
+	#   都没有**(服务器手里那 10 把一把也看不见、也捡不起来),本相却照样打印 ALL-OK。
+	#   判据就是两边的**规模**相等(配合上一条"⊆"即集合相等)。
+	#   ★ 为什么不会被"补态之后又新生成了一把"打红:窗口内服务器只被喂枪
+	#     (`--test-ground-teleport` 只挪不造),witness 早在本相前半段就收手(`_p7_my_removed` 非空即 return)
+	#     → 从补态到断言之间不会多出条目。
+	_check(after.size() == _p7_sync_insts.size(),
+			("相⑦ ②:本端表与补态载荷同规模(先清后灌的**灌**那一半必须落地;本端 %d 件 vs 载荷 %d 件 —— "
+			+ "清了却一件都没加回来时,上面两条断言会同时空过)") % [after.size(), _p7_sync_insts.size()])
 	# 一行读得出的汇总(进客户端日志;断言逐条的读数在上面各条 OK 行里)
 	_log("相⑦ 汇总:%s 闪断时 %d → 补态后 %d;地面武器 闪断 %d 件 → 载荷 %d 件 → 现 %d 件(被捡走 %s)"
 			% [str(P7_CELL), _p7_grid_before, g_now, _p7_gw_before.size(), _p7_sync_insts.size(),
@@ -740,6 +754,14 @@ func _witness_assert() -> void:
 			str(bool(first[4])), float(first[5]), float(first[6]),
 			float(last[0]), str((last[1] as Vector2).round()), float(last[2]), int(last[3]),
 			str(bool(last[4])), float(last[5]), float(last[6]), _downed_in_window])
+	# ── 相⑦(witness 侧):"我确实捡走了一把"的**交叉证据** ──
+	# `_p7_my_removed` 原先只进日志、没有断言消费 —— 于是"按 F 那一半根本没生效"(服务器一次也没
+	# 广播过 by_role == 本端 role 的 removal)时,actor 那边只会看到"② 前置:witness 没捡走任何
+	# 一把"而报红,读的人分不清是"witness 没按"还是"按了但服务器没认"。这一行把它变成结论。
+	# ★ 门控 `not is_royale`:相⑦ 只跑 1v1(订阅与 `_p7_witness_tick` 同样门控,见 `_ready`)。
+	if not is_royale:
+		_check(not _p7_my_removed.is_empty(),
+				"相⑦(witness):服务器广播了「我捡走了」(by_role == 本端 role 的 weapon_removed 一次都没有 = 按 F 那半没生效)")
 
 
 func _check(ok: bool, msg: String) -> void:
