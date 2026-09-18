@@ -119,6 +119,7 @@ signal team_join_requested(caller: int, code: String, invite: String)
 signal team_pick_requested(caller: int, team: int)
 signal team_leave_requested(caller: int)
 signal team_start_requested(caller: int)
+signal team_list_requested(caller: int)           # 客户端请求公开 3v3 房间列表(照 royale_list 那一对)
 signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:公开 3v3 房间列表
 signal local_team_room_state(state: Dictionary)   # 大厅 → 客户端:房间实时状态(等待室/选边)
 
@@ -146,6 +147,11 @@ func team_leave() -> void:
 @rpc("any_peer", "reliable")
 func team_start() -> void:
 	team_start_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端 → 大厅:请求公开 3v3 房间列表(大厅回 team_rooms)
+@rpc("any_peer", "reliable")
+func team_list() -> void:
+	team_list_requested.emit(multiplayer.get_remote_sender_id())
 
 # 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")

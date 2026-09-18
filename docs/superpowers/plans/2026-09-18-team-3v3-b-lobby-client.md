@@ -24,7 +24,7 @@
 
 | 文件 | 新建/修改 | 责任 |
 |---|---|---|
-| `core/net/net_bus_ext.gd` | 修改 | `team_*` 五条上行 RPC + 两条下发 + 七个信号 |
+| `core/net/net_bus_ext.gd` | 修改 | `team_*` 六条上行 RPC + 两条下发 + 八个信号 |
 | `server/lobby_rooms.gd` | 修改 | `TeamRoom` 注册表 + 建房/加入/选边/离开/列表/状态广播 + **三条路径互斥** + `teardown_room` 三态化 |
 | `server/room_manager.gd` | 修改 | `team_start`（房主开局）+ `_sweep_stale_rooms` 的 team 分支 |
 | `scenes/team_lobby.tscn/.gd` | **新建** | 3v3 大厅页（extends `LobbyPage`）：建房 / 房间列表 / 等待室**选边** |
@@ -71,9 +71,14 @@ Expected: `Switched to a new branch 'feat/team-3v3-b'`
 **Interfaces:**
 - Consumes: 无
 - Produces（全部在 `NetBusExt`，autoload 名 `NetBusExt`）：
-  - 信号：`team_create_requested(caller, opts)` / `team_join_requested(caller, code, invite)` / `team_pick_requested(caller, team)` / `team_leave_requested(caller)` / `team_start_requested(caller)` / `local_team_rooms(rooms: Array)` / `local_team_room_state(state: Dictionary)`
-  - RPC（`any_peer reliable`）：`team_create(opts)` / `team_join(code, invite)` / `team_pick(team)` / `team_leave()` / `team_start()`
+  - 信号：`team_create_requested(caller, opts)` / `team_join_requested(caller, code, invite)` / `team_pick_requested(caller, team)` / `team_leave_requested(caller)` / `team_start_requested(caller)` / `team_list_requested(caller)` / `local_team_rooms(rooms: Array)` / `local_team_room_state(state: Dictionary)`
+  - RPC（`any_peer reliable`）：`team_create(opts)` / `team_join(code, invite)` / `team_pick(team)` / `team_leave()` / `team_start()` / `team_list()`
   - RPC（`authority reliable`）：`team_rooms(rooms)` / `team_room_state(state)`
+
+★ **`team_list` 是 2026-09-19 补的**（原稿漏写）：计划正文与两份 brief 都在用它
+（`LobbyRooms.team_list(caller)` handler + `team_lobby._send_list_request()` 的
+`NetBusExt.rpc_id(1, "team_list")`），但原 Interfaces 清单里没有它 —— 照原稿做完 Task 2 会让
+Task 5 调到一个**不存在的方法**（运行时 `Invalid call`，不是静默）。补上后上行共**六条**、信号共**八个**。
 
 - [ ] **Step 1: 追加协议**
 
@@ -88,6 +93,7 @@ signal team_join_requested(caller: int, code: String, invite: String)
 signal team_pick_requested(caller: int, team: int)
 signal team_leave_requested(caller: int)
 signal team_start_requested(caller: int)
+signal team_list_requested(caller: int)           # 客户端请求公开 3v3 房间列表(照 royale_list 那一对)
 signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:公开 3v3 房间列表
 signal local_team_room_state(state: Dictionary)   # 大厅 → 客户端:房间实时状态(等待室/选边)
 
@@ -116,6 +122,11 @@ func team_leave() -> void:
 func team_start() -> void:
 	team_start_requested.emit(multiplayer.get_remote_sender_id())
 
+# 客户端 → 大厅:请求公开 3v3 房间列表(大厅回 team_rooms)
+@rpc("any_peer", "reliable")
+func team_list() -> void:
+	team_list_requested.emit(multiplayer.get_remote_sender_id())
+
 # 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")
 func team_rooms(rooms: Array) -> void:
@@ -133,9 +144,9 @@ func team_room_state(state: Dictionary) -> void:
 该文件现有"三条 RPC 的节点归属双向断言"。加一段同样的形状（**双向**：RPC 名必须在 `NetBusExt` 里出现、且**不得**在 `net_bus.gd` 里出现）：
 
 ```gdscript
-	# 3v3 的七条 team_* 同样必须**只**在 NetBusExt(挂错节点 = 静默 no-op)
+	# 3v3 的八条 team_* 同样必须**只**在 NetBusExt(挂错节点 = 静默 no-op)
 	for m in ["team_create", "team_join", "team_pick", "team_leave", "team_start",
-			"team_rooms", "team_room_state"]:
+			"team_list", "team_rooms", "team_room_state"]:
 		if not ext_src.contains("func %s(" % m):
 			_fail = "NetBusExt 缺 %s" % m
 		if bus_src.contains("func %s(" % m):
@@ -486,7 +497,9 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 				multiplayer.disconnect_peer(peer_id)
 ```
 
-★ **同时要改的两处**:① `_enter_tree` / `_exit_tree` 里 connect/disconnect 五条 `team_*` 信号;② **反向互斥** —— `create_room`（1v1）与 `royale_create` 的守卫里各加一条 `_in_team_room(caller)`。
+★ **同时要改的两处**:① `_enter_tree` / `_exit_tree` 里 connect/disconnect 五条 `team_*` 信号
+（`create` / `join` / `pick` / `leave` / `list` —— ★ **不是**六条:第六个上行 `team_start` 由
+`RoomManager` 接，见 Task 4）;② **反向互斥** —— `create_room`（1v1）与 `royale_create` 的守卫里各加一条 `_in_team_room(caller)`。
 
 ★★ **必须读 `TEAM_PORT_REUSE_DELAY`，不能顺手复用 `WORKER_PORT_REUSE_DELAY`**（A 册遗留的显式清单项）。
 

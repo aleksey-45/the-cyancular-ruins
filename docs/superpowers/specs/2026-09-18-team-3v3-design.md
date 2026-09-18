@@ -184,7 +184,7 @@
 | `round_state` | `scores` / `rounds_won` 的键 = **队号**（★ 原稿这里还写了 `deaths`，**已删** —— 见下方更正） |
 | `kill_event(killer, victim)` | **载荷不动**（仍 role 粒度），客户端用 `teams` 映射 |
 | 快照 `world` / `c2` | **不动**（每玩家字段与队伍无关） |
-| 新 RPC（`NetBusExt`） | `team_create` / `team_join` / `team_pick(team)` / `team_start` / `team_leave` + 房间状态与两队名单的广播 |
+| 新 RPC（`NetBusExt`） | `team_create` / `team_join` / `team_pick(team)` / `team_start` / `team_leave` / `team_list` + 房间状态与两队名单的广播 |
 | `NetBus` 方法表 | **一个字不动** |
 
 ★★ **`deaths` 更正（A 册实现期）**：本节与 §11 第 2 条原先把 `deaths` 与 `scores` / `rounds_won`
