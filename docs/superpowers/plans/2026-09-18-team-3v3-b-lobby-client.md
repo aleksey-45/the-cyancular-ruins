@@ -1023,12 +1023,15 @@ func _on_round_state(data: Dictionary) -> void:
 		ST_MATCH_OVER:
 			_in_countdown = false
 			var mwinner: int = int(data.get("match_winner", 0))
+			# ★★ `mwinner == 0` 在 3v3 里是**新可达值**（两队都走光 → 平局），而
+			#   `ui/pvp_hud.gd` 对 0 用的是 **1v1 口径的兜底**：`"P%d 获胜!" % (1 if w1 > w2 else 2)`
+			#   ⇒ 照抄那一段会把平局念成「P2 获胜」。正确样板是 `ui/royale_hud.gd` 的 `mw == 0 → "平 局"`。
 			if mwinner == _my_team and _my_team != 0:
 				_set_broadcast(true, "胜利!", "你们赢下了整场对战")
 			elif mwinner != 0:
 				_set_broadcast(true, "失败", "再接再厉…")
 			else:
-				_set_broadcast(true, "对局结束", "返回菜单…")
+				_set_broadcast(true, "平 局", "双方都离开了对局…")
 ```
 
 ★ `_sub` 那行里 `other` 变量没用到就删掉（避免未使用变量告警）。

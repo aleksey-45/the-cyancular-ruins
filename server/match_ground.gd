@@ -293,8 +293,8 @@ func _drop_all_but_one(p: Node2D, role: int) -> void:
 
 # ── 初始分布 / 换局重置 ──
 
-# 开阔地板格(1v1 的判据)。★ RoyaleHost 覆写成自己的 `_spawn_candidates()`
-# (那边还要求同层连通区 ≥ OPEN_AREA_MIN,淘汰密封死角)。判据本体仍是
+# 开阔地板格(1v1 的判据)。★ 联机侧用的是 `SpawnPicker.spawn_candidates()`
+# (2026-09-18 从 RoyaleHost 抽出,那边还要求同层连通区 ≥ OPEN_AREA_MIN,淘汰密封死角)。判据本体仍是
 # `MazeGenerator.is_floor_cell_with_headroom`,别在这儿抄第二份。
 func _ground_spawn_cells() -> Array:
 	var out: Array = []
