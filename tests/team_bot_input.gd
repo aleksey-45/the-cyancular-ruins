@@ -18,19 +18,28 @@ extends PlayerInput
 var axis := 0.0              # 水平轴(-1 左 / +1 右)
 var aim := Vector2.RIGHT     # 瞄准方向(世界向量;观察者按环面最短向量算)
 var attack := false          # 持续开火(按住左键同理)
-var jump := false            # "上"的**按下边沿**(读一次即清)
+# ★★ 边沿一律**按帧打标**,不做"读一次即清":同一个物理帧里**有两处**会读它们 ——
+#    ① 客户端组上行包(`PacketInputSource.pack_record`,它问的是**带参**钩子)
+#    ② 玩家自己的本地判定(问的是**无参**钩子:`is_attack_pressed()` 等)
+#    读一次即清 ⇒ 总有一处拿到 false ⇒ **本地与服务器分叉**(一个跳/开火、另一个不跳/不开火)——
+#    而 C2 会每帧把客户端拉回权威态,表现成"机器人走不动、打不出子弹",**且不报错**。
+var jump := false            # "上"的按下边沿(观察者在起跳那帧置位,见 _set_edge)
+var _edges: Dictionary = {}  # 边沿名 -> 该边沿所属的物理帧号(整帧内有效)
+
+func _set_edge(name: String) -> void:
+	_edges[name] = Engine.get_physics_frames()
+
+
+func _edge_now(name: String) -> bool:
+	return int(_edges.get(name, -1)) == Engine.get_physics_frames()
+
 # ★ 垂直轴要**按住**态(不是边沿):`ClimbComponent` 的上爬速度读的是 `get_axis("up","down")`,
 #   而"抓梯"读的是同一动作的**按下边沿**(`is_action_just_pressed("up")`,由 `jump` 提供)。
 #   两半都得有 —— 只给边沿 = 抓上了却不动;只给按住 = 永远抓不上。
 var hold_up := false
 var hold_down := false
 
-var _slot := 0               # 背包位置(1-based)的按下边沿;0 = 无
-var _f_edge := false         # F(捡起)的按下边沿
-var _atk_edge := false       # 开火按下边沿(整帧有效,见 _attack_just_pressed_raw)
-var _atk_edge_frame := -1
-var _atk_rel_edge := false   # 开火**松开**边沿(heavy_aim 枪只在这一支开火)
-var _atk_rel_edge_frame := -1
+var _slot := 0               # 背包位置(1-based)的按下边沿;'0 = 无'(整帧有效,见 _weapon_slot_raw)
 
 
 func source_kind() -> int:
@@ -41,14 +50,16 @@ func source_kind() -> int:
 
 func press_jump() -> void:
 	jump = true
+	_set_edge("jump")
 
 
 func press_slot(i: int) -> void:
 	_slot = i
+	_set_edge("slot")
 
 
 func press_f() -> void:
-	_f_edge = true
+	_set_edge("pickup")
 
 
 # ── 覆写钩子(公开读口由基类持有并对 frozen 短路)──
@@ -61,19 +72,38 @@ func _axis_raw(neg: String, _pos: String) -> float:
 	return (1.0 if hold_down else 0.0) - (1.0 if hold_up else 0.0)
 
 
-func _action_pressed_raw(_action: String) -> bool:
+# ★★★ **带参钩子必须真实现** —— 这是本手柄最要命的一处(复审抓出来的):
+#    上行包问的是**带参**的 `is_action_pressed("attack"/"up"/…)`(`packet_input_source.gd:40-80`),
+#    而本类原先三个带参钩子全是**恒 false 的桩** ⇒ `BIT_ATTACK`/`BIT_UP` 的 held/pressed/released
+#    **从未进过输入包** ⇒ **服务器侧的那名玩家从来不跳、不开火**(本地照样动,因为本地走无参钩子)。
+#    后果是双向的:① 相③ 的 `near` 结构性恒 0(服务器根本不生成子弹);
+#    ② 每一次跳跃都是"客户端跳了、服务器没跳"的**分歧** ⇒ C2 每帧回滚把客户端拉回去
+#      ⇒ 观感就是"机器人走不动"(与枪种无关)。
+#    ★ 对照样板:`tests/soak_bot_input.gd` 老实实现了这三个带参钩子,所以大乱斗 soak 的机器人
+#      在服务器侧是真能开火的;**本手柄是该族里唯一没接上的**。
+func _action_pressed_raw(action: String) -> bool:
+	match action:
+		"attack":
+			return attack
+		"up":
+			return hold_up
+		"down":
+			return hold_down
 	return false
 
 
 func _action_just_pressed_raw(action: String) -> bool:
-	if action != "up":
-		return false
-	var v := jump
-	jump = false
-	return v
+	match action:
+		"attack":
+			return _edge_now("atk")
+		"up":
+			return _edge_now("jump")
+	return false
 
 
-func _action_just_released_raw(_action: String) -> bool:
+func _action_just_released_raw(action: String) -> bool:
+	if action == "attack":
+		return _edge_now("atk_rel")
 	return false
 
 
@@ -91,34 +121,30 @@ func _attack_pressed_raw() -> bool:
 #    而同一帧里**有两处**会读它 —— 客户端组输入包(`PacketInputSource.pack_record`)与玩家自己
 #    的开火判定。读一次即清会让其中一处拿到 false(包里有边沿但本地不开火,或反过来)。
 func _attack_just_pressed_raw() -> bool:
-	return _atk_edge and Engine.get_physics_frames() == _atk_edge_frame
+	return _edge_now("atk")
 
 
 func _attack_just_released_raw() -> bool:
-	return _atk_rel_edge and Engine.get_physics_frames() == _atk_rel_edge_frame
+	return _edge_now("atk_rel")
 
 
 # 观察者在脉冲**上升沿 / 下降沿**各调一次(见 watcher 的 `_pulse_attack`)
 func press_attack_edge() -> void:
-	_atk_edge = true
-	_atk_edge_frame = Engine.get_physics_frames()
+	_set_edge("atk")
 
 
 func release_attack_edge() -> void:
-	_atk_rel_edge = true
-	_atk_rel_edge_frame = Engine.get_physics_frames()
+	_set_edge("atk_rel")
 
 
 func _weapon_slot_raw() -> int:
-	var v := _slot
-	_slot = 0        # 读一次即清,与真实 Input 的"本轮刚按下"语义一致
-	return v
+	# ★ 同样整帧有效(理由见文件头那一段):`get_weapon_slot_pressed()` 一帧里被**本地装备**
+	#   与**上行包**各读一次 —— 读一次即清会让其中一处丢边沿(表现:切枪在服务器侧不生效)。
+	return _slot if _edge_now("slot") else 0
 
 
 func _pickup_pressed_raw() -> bool:
-	var v := _f_edge
-	_f_edge = false
-	return v
+	return _edge_now("pickup")
 
 
 # Q 长按满阈值那一次边沿由 **player.gd** 判(它有确定的物理 delta),判满了它调

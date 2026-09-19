@@ -120,7 +120,13 @@ func _run_orchestrator() -> void:
 	#   本探针收尾按 UDP 端口杀 worker(兜底层)时不看属主,撞上池内端口就有误杀别人对局的
 	#   危险。拨到池外即从根上避开(pick_port 会立刻回卷 `_next_port`,故这只影响**第一发**)。
 	_rm.get("_launcher").set("_next_port", WORKER_PORT_OUT)
-	_clean()
+	# ★ `_clean()` 失败(上一跑的进程还活着)时**必须整段收工**:只 push 一条然后继续拉起客户端
+	#   的话,6 个新客户端与那批残留进程会互相覆盖 `.result`,而且本进程退出后 `_kill_children()`
+	#   再也不跑 ⇒ 留下一堆**孤儿进程**攥着文件,把下一跑也逼进这一支(实测复现过)。
+	if not _clean():
+		print("PROBE: 清理失败(多半是上一跑的进程还活着)—— 不拉起客户端,直接退出")
+		get_tree().quit(1)
+		return
 	print("PROBE: 大厅就绪(port %d,池外);worker 起投端口 %d" % [LOBBY_PORT, WORKER_PORT_OUT])
 	if OS.get_cmdline_user_args().has("--nospawn"):
 		print("PROBE: --nospawn:不拉客户端子进程,请人工另起 6 个 `-- --role=cN`")
@@ -286,6 +292,7 @@ func _assert_stage3() -> void:
 	var near_counts := {}
 	var kill_attr := {}
 	var kill_unattr := {}
+	var teamfmt := {}
 	var k2_ok := 0
 	var k2_seen := 0
 	var msync_seen := 0
@@ -351,6 +358,9 @@ func _assert_stage3() -> void:
 			_check(false, "%s 没收到过 team_room_state(等待室渲染路径没跑到)" % tag)
 		if int(_tok(inf, "wait_rows", "0")) <= 0:
 			_check(false, "%s 的等待室名单一行都没画出来" % tag)
+		var tfl := _rec_line(text, "TEAMFMT")
+		if tfl != "":
+			teamfmt[role] = tfl
 		if _tok(inf, "match_over", "0") == "1":
 			_check(false, "%s 观察到 MATCH_OVER(相⑤ 要求服务器不终局)" % tag)
 		if shots < 0:
@@ -366,6 +376,27 @@ func _assert_stage3() -> void:
 	for r in lobby_teams:
 		tcount[int(lobby_teams[r])] = int(tcount.get(int(lobby_teams[r]), 0)) + 1
 	_check(tcount[1] == 3 and tcount[2] == 3, "相① 大厅队伍表是 3+3(实得 %s)" % str(tcount))
+
+	# ── 相① 队色 + 分队碰撞层(客户端 TEAMFMT 读数;成功也打一行,便于回溯)──
+	if teamfmt.size() == CLIENT_COUNT:
+		var bad_l := 0
+		var bad_m := 0
+		var bad_g := 0
+		var bad_t := 0
+		var bad_n := 0
+		for r in teamfmt:
+			var tl2: String = teamfmt[r]
+			bad_l += 0 if _tok(tl2, "ok_layer", "0") == "1" else 1
+			bad_m += 0 if _tok(tl2, "ok_mask", "0") == "1" else 1
+			bad_g += int(_tok(tl2, "ghosts_bad", "0"))
+			bad_t += int(_tok(tl2, "tints_bad", "0"))
+			bad_n += 0 if int(_tok(tl2, "reps", "0")) == CLIENT_COUNT - 1 else 1
+		_check(bad_l == 0 and bad_m == 0 and bad_g == 0 and bad_t == 0 and bad_n == 0,
+				"相① ★ 队色 + 分队碰撞层六端逐值对齐(层错 %d / 掩码错 %d / 幽灵层错 %d / 队色错 %d / 副本数不对 %d)"
+				% [bad_l, bad_m, bad_g, bad_t, bad_n])
+	else:
+		_check(false, "相① 只有 %d/%d 端写出了 TEAMFMT 读数(队色/分层没验到)"
+				% [teamfmt.size(), CLIENT_COUNT])
 
 	# ── 相① 收敛(C2)──
 	for r in conv_ok:
@@ -414,11 +445,15 @@ func _assert_stage3() -> void:
 		var wtype := int(_tok(bl, "wtype", "0"))
 		var near := int(near_counts.get(victim_role, 0))
 		var why := _tok(bl, "reason", "")
-		if why == "no_bullet_weapon" or why == "bullet_switch_timeout":
+		if why == "no_bullet_weapon":
 			# 背包里没有出弹类武器(抽到榴弹/激光,且没有第二把)—— 断言在这里**无法成立**,
 			# 照实标未覆盖(既不假红、也不留空的绿)
 			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是 %d 号(非出弹类)且无第二把武器" % wtype)
 			_check(true, "相③ 子弹那一半未覆盖(枪种 —— 抽签结果,不是缺陷)")
+		elif why == "bullet_switch_timeout":
+			# ★ **这一档必须保持红**(与榴弹那半边的口径对齐):背包里**有**出弹枪却 2s 没切过去
+			#   = 产品/协议异常(本仓有"滚轮切枪被权威 wslot 拉回"的前科),不是抽签。
+			_check(false, "相③ 背包里有出弹类武器却切不过去(bullet_switch_timeout)—— 不是抽签,是缺陷")
 		elif why == "rendezvous_timeout" or _tok(bl, "timeout", "0") == "1":
 			# ★ **走位没到位** ⇒ 这一相**没验到**,而不是"枪坏了"。判词必须写成"未覆盖",
 			#   否则读日志的人(评审也踩过)会把它当成产品缺陷。
@@ -531,6 +566,7 @@ func _assert_stage3() -> void:
 	if esc_tag != "":
 		_check(esc_role != 0, "相⑤ 离场者的 role 已知(%d)" % esc_role)
 		var obs := 0
+		var obs_gaps: Array = []
 		for i in range(1, CLIENT_COUNT + 1):
 			var tag := "c%d" % i
 			if tag == esc_tag:
@@ -541,9 +577,30 @@ func _assert_stage3() -> void:
 				continue
 			if _tok(ll, "gone", "").contains(str(esc_role)):
 				obs += 1
+			# ★ 观察窗内的快照间隔:六端一起看。**服务端停发**必然同时命中**所有**在线客户端;
+			#   只有**一个**客户端超时,那是**那个进程自己**卡了一下(本机同时跑 8 个 Godot),
+			#   而"服务器还在发"这一命题恰好由**其余端的读数**证明(它们的窗口与它同一段墙钟)。
+			#   故:≥2 端超 1s ⇒ 红(服务器停了);恰好 1 端 ⇒ 记读数并说明;全 ≤1s ⇒ 绿。
+			obs_gaps.append([tag, float(_tok(ll, "obsmax", "0").replace("ms", ""))])
 		_check(obs == CLIENT_COUNT - 1,
 				"相⑤ ★ 其余 %d 端都观察到 role %d 已被移出对局(仍持续收快照、服务器不终局)"
 				% [CLIENT_COUNT - 1, esc_role])
+		var slow := 0
+		var slow_txt := ""
+		for pair in obs_gaps:
+			if float(pair[1]) > 1000.0:
+				slow += 1
+				slow_txt += "%s=%.0fms " % [pair[0], float(pair[1])]
+		var gap_txt := ""
+		for pair in obs_gaps:
+			gap_txt += "%s=%.0fms " % [pair[0], float(pair[1])]
+		var note := "全部 ≤1s"
+		if slow > 0:
+			note = "%d 端超 1s —— 服务端停发会同时命中所有端" % slow
+		_check(slow <= 1, "相⑤ ★ 观察窗内快照连续(六端最大间隔: %s;注:%s)" % [gap_txt, note])
+		if slow == 1:
+			_notes.append("相⑤ 有 1 端在观察窗内卡了 %s(同一段墙钟里其余端 ≤100ms ⇒ 判定为"
+					% slow_txt + "**该客户端进程自身**的停顿,不是服务器停发)")
 
 
 # ════════════════════ 子进程 / 文件 ════════════════════
@@ -603,7 +660,7 @@ func _tail(path: String, n: int) -> String:
 
 # 开工前清掉上一跑的产物。★ 删除**必须看返回值**:上一跑的客户端若还活着(它攥着自己的
 # `.result`/`.log`),删除会失败,新进程会与之混写 → 人会照着混了旧内容的文件做错误归因。
-func _clean() -> void:
+func _clean() -> bool:
 	for i in range(1, CLIENT_COUNT + 1):
 		for tag in ["c%d" % i]:
 			for suffix in ["result", "log", "godotlog"]:
@@ -617,8 +674,8 @@ func _clean() -> void:
 					#   删不掉几乎只有一个原因:上一跑的客户端进程还活着(它攥着文件)。
 					print("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
 							% [p, err] + "残留文件会被当成本跑的读数下判决,故直接退出")
-					get_tree().quit(1)
-					return
+					return false
+	return true
 
 
 func _dump() -> String:
