@@ -283,12 +283,49 @@ globalThis.Core = (function () {
     var stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
     return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
   }
-  function inflateBytes(bytes) {
+  // 流式解压,累计输出超过 maxBytes 就中止并拒绝。
+  // maxBytes 缺省 = 不设限(向后兼容;本仓唯一调用方是 decodeMap,它会传 MAX_BODY_SIZE)。
+  // ★ 为什么不能只靠文件头里的 body_size:那个字段**本身也是攻击者可控的** —— 把它谎报成
+  //   一个通过闸门的小值(比如 4096)、而 deflate 流里塞真炸弹,则「判在解压之前」那道闸
+  //   完全挡不住:new Response(stream).arrayBuffer() 会**先把整份解压结果分配出来**,
+  //   判在后面的长度比对处等于拒是拒了、内存已经花掉了。DEFLATE 单流最大压缩比 ≈ 1032:1
+  //   ⇒ 64KB 的 .cyrm 能解出 ≈64MB、1MB 的能解出 ≈1GB(arrayBuffer 的峰值还约等于输出的
+  //   2 倍)—— **结果无界、输入有界**。所以上界必须作用在**实际输出**上。
+  function inflateBytes(bytes, maxBytes) {
     if (typeof DecompressionStream === 'undefined' || typeof Blob === 'undefined') {
       return Promise.reject(new Error('inflateBytes: 本环境没有 DecompressionStream/Blob'));
     }
     var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
-    return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+    // ★ 不传 maxBytes = 不设限:走原来那条一条龙实现,返回语义与旧版逐字一致 ——
+    //   「不设限」不另造一条分块路径,免得给"向后兼容"这句承诺多留一条会漂的分支。
+    if (maxBytes === undefined) {
+      return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+    }
+    var reader = stream.getReader();
+    var chunks = [];
+    var total = 0;
+    function pump() {
+      return reader.read().then(function (res) {
+        if (res.done) {
+          var out = new Uint8Array(total);
+          var off = 0;
+          for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], off); off += chunks[i].length; }
+          return out;
+        }
+        var chunk = res.value || new Uint8Array(0);
+        total += chunk.length;
+        // ★ 判在 push **之前**:超限的那一块根本不留下 —— "先收后判"等于已经把超限数据存住了。
+        //   错误信息带上上限值与已累计字节数,便于诊断是"文件坏了"还是"真炸弹"。
+        if (total > maxBytes) {
+          var err = new Error('inflateBytes: 解压输出超过 ' + maxBytes + ' 字节上限(已累计 ' +
+                              total + ' 字节),中止');
+          return reader.cancel().then(function () { throw err; }, function () { throw err; });
+        }
+        chunks.push(chunk);
+        return pump();
+      });
+    }
+    return pump();
   }
 
   // ── 整文件容器(规格 §3.1 / §3.2)──
@@ -312,6 +349,10 @@ globalThis.Core = (function () {
   //     meta          2 + 65535(u16 长度字段的上限)                    ≈ 0.07MB
   //   合计 20,051,970 字节 ≈ 19.1MiB。取 64MB(67,108,864)= 它的 ≈3.3 倍:
   //   对**任何**合法文件都不可能误拒,对炸弹则是一道明确的硬闸。
+  // ★ 这个常量今天用在**两道**闸上,两道都不可省(只留一道就会漏掉半个炸弹面):
+  //     ① decodeMap 里「头部声明的 body_size」—— 挡"声明侧"的炸弹(头部就写着 2GB);
+  //     ② inflateBytes 的 maxBytes —— 挡"谎报声明 + 真炸弹"(声明很小、解出来极大),
+  //        它是作用在**实际输出**上的那一道。详见 inflateBytes 上方注释。
   const MAX_BODY_SIZE = 64 * 1024 * 1024;
 
   function layerFlags(map) {
@@ -424,6 +465,8 @@ globalThis.Core = (function () {
         // ★ 指令 D:先判「头部声明的解压后大小」,再碰 payload —— 解压是把攻击者给的
         //   字节变成内存的**那一步**,判在它后面就等于没判(内存已经分配出去了)。
         //   放在这里而不是放进更下面那段 body 长度比对里,正是因为这个顺序要求。
+        //   ★ 这条顺序本身有断言钉住:smoke.js 的「源码顺序」那组读本文件比位置
+        //     (闸门必须早于 inflateBytes(payload…) 的调用点)—— 挪到解压之后即变红。
         if (bodySize > MAX_BODY_SIZE) {
           throw new Error('decodeMap: 头部声明的 body_size ' + bodySize +
                           ' 字节超过 64MB 上限(' + MAX_BODY_SIZE + ' 字节),拒绝解压');
@@ -437,7 +480,12 @@ globalThis.Core = (function () {
         var payload = r.bytes(b.length - HEADER_SIZE);
         var next;
         if (compression === 0) next = Promise.resolve(payload);
-        else if (compression === 1) next = inflateBytes(payload);
+        else if (compression === 1) {
+          // ★ 上界一并交给 inflateBytes:头里的 body_size 是**未经验证**的声明,只有
+          //   这一道作用在**实际输出**上。合法文件的解压结果恒等于 body_size,所以这里
+          //   用同一个常量是**精确**的,不是近似(不会误拒任何合法文件)。
+          next = inflateBytes(payload, MAX_BODY_SIZE);
+        }
         else throw new Error('decodeMap: 未知 compression=' + compression);
         return next.then(function (body) {
           if (body.length !== bodySize) {

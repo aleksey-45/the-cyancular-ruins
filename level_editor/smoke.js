@@ -944,7 +944,10 @@ eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回�
     for (var dx = 0; dx < 4; dx++) sc[dy * inWall.subCols + dx] = Core.neutralDesc(1);
   }
   inWall.players = [{ x: 0, y: 0 }];
-  ok(Core.validateMap(inWall).warnings.some(function (s) { return s.indexOf('出生点') >= 0; }),
+  // ★ 判据是 '实心' 而不是 '出生点':后者**任何**出生点相关的 warning 都满足
+  //   (「一个出生点都没有」/「坐标越界」),这条断言今天只能匹配到实心那一支,
+  //   纯粹因为 (0,0) 恰好没越界。钉住'实心'才真正钉在它要覆盖的那一支上。
+  ok(Core.validateMap(inWall).warnings.some(function (s) { return s.indexOf('实心') >= 0; }),
      'validateMap: 出生点在实心格里给 warning');
 
   // 一个出生点都没有
@@ -1035,12 +1038,60 @@ await (async function () {
   await rejects(function () { return Core.decodeMap(bomb); },
     'decodeMap: body_size 被声明成 0x7FFFFFFF 时在解压前拒绝', '64MB');
 
+  // ★★ 声明侧之外的另一半:头里的 body_size **本身也是攻击者可控的** —— 把它谎报成
+  //   一个能过闸门的小值(4096)、而 deflate 流里塞真炸弹,则上面那道闸**完全挡不住**:
+  //   真正的分配发生在解压那一步(`new Response(stream).arrayBuffer()` 会先把整份解压
+  //   结果分配出来),判在后面的长度比对处等于拒是拒了、内存已经花掉了。
+  //   判据必须落在**实际输出**上(core.js inflateBytes 的 maxBytes),这条断言钉的就是它。
+  //   造法:合法文件头(尺寸/flags 都对)+ 把 body_size 改成 4096 + payload 换成
+  //   65MB 零字节的 deflate 流(压完 ≈66KB;DEFLATE 单流最大压缩比 ≈1032:1)。
+  var zlib = require('zlib');
+  var bombPayload = zlib.deflateSync(Buffer.alloc(65 * 1024 * 1024));   // 65MB > 64MB 上限
+  var head = enc.slice(0, Core.HEADER_SIZE);
+  head[6] = 0x00; head[7] = 0x10; head[8] = 0x00; head[9] = 0x00;       // body_size = 4096
+  var lie = new Uint8Array(head.length + bombPayload.length);
+  lie.set(head, 0);
+  lie.set(bombPayload, head.length);
+  ok(4096 <= Core.MAX_BODY_SIZE,
+     '谎报的 body_size 4096 确实能通过「声明侧」那道闸(否则本相验的不是这条)');
+  await rejects(function () { return Core.decodeMap(lie); },
+    'decodeMap: body_size 谎报成 4096 + 真炸弹,在 inflateBytes 的实际输出上界处被拒',
+    'inflateBytes');
+
+  // 兼容:不传 maxBytes = 不设限,旧调用语义一字不改
+  var tiny = zlib.deflateSync(Buffer.from('cyrm', 'utf8'));
+  sameBytes(await Core.inflateBytes(tiny), [0x63, 0x79, 0x72, 0x6D],
+    'inflateBytes: 不传 maxBytes 时仍解出全部内容(向后兼容)');
+
   // 反向:这道闸不许误伤合法文件。上限尺寸(400×300)的合法 body 最坏约 20MB
   // (推导见 core.js 该常量上方的注释),64MB 是它的 ≈3.3 倍。
   // 把这层余量本身变成断言 —— 有人把常量调小到会误拒合法大图时,「上限尺寸」那块
   // 的往返断言也会红,但这条给出的是**直接错因**(而不是"图读不回来了")。
   ok(Core.MAX_BODY_SIZE > 20 * 1024 * 1024,
      'MAX_BODY_SIZE: 大于上限尺寸合法文件的最坏 body(≈20MB),不会误拒');
+})();
+
+// ---- 源码顺序:body_size 闸门必须**早于**解压(指令 D 的证据机制)----
+// ★ 为什么需要这条:上面那条反向断言用 expectSub 匹配 '64MB' —— 而**把闸门挪到
+//   inflateBytes 之后、长度比对之前**的实现**同样会**匹配到 '64MB'(拒的还是同一份文件),
+//   于是"它确实在解压之前生效"这件事只靠读源码、没有断言钉住。本仓有源码级探针的习惯
+//   (tests/*_probe.gd 直接读生产源码做断言),这里照办:读 core.js 的源码文本比位置。
+// ★ 锚 'inflateBytes(payload' 而不锚 'inflateBytes(' —— 后者会先在**函数定义**
+//   (function inflateBytes(bytes, maxBytes))处命中,那个位置在闸门之前,
+//   断言会与实现无关地恒红。
+(function () {
+  var dmAt = coreSrc.indexOf('function decodeMap');
+  ok(dmAt >= 0, '源码顺序: core.js 里找得到 function decodeMap');
+  if (dmAt < 0) return;
+  // 剥掉行注释再找 —— 否则注释里提一句 'inflateBytes(' 就能让断言在代码没动时"通过"。
+  var body = coreSrc.slice(dmAt).split('\n')
+    .map(function (l) { return l.replace(/\/\/.*$/, ''); }).join('\n');
+  var gateAt = body.indexOf('bodySize > MAX_BODY_SIZE');
+  var callAt = body.indexOf('inflateBytes(payload');
+  ok(gateAt >= 0, '源码顺序: decodeMap 里有 body_size 闸门');
+  ok(callAt >= 0, '源码顺序: decodeMap 里有 inflateBytes(payload…) 调用点');
+  ok(gateAt >= 0 && callAt >= 0 && gateAt < callAt,
+     '源码顺序: body_size 闸门(偏移 ' + gateAt + ')早于解压调用(偏移 ' + callAt + ')');
 })();
 
 // ==== 断言区结束 ====
