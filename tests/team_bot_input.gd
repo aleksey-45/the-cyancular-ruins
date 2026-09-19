@@ -23,7 +23,11 @@ var attack := false          # 持续开火(按住左键同理)
 #    ② 玩家自己的本地判定(问的是**无参**钩子:`is_attack_pressed()` 等)
 #    读一次即清 ⇒ 总有一处拿到 false ⇒ **本地与服务器分叉**(一个跳/开火、另一个不跳/不开火)——
 #    而 C2 会每帧把客户端拉回权威态,表现成"机器人走不动、打不出子弹",**且不报错**。
-var jump := false            # "上"的按下边沿(观察者在起跳那帧置位,见 _set_edge)
+# ★★ **整条输入链依赖一条序前提**:观察者(以及它驱动的本手柄)**必须先于游戏场景
+#    被 `_physics_process` 处理** —— 观察者是用 `root.add_child` 在换场**之前**挂上的
+#    (树序在前),所以它每帧先写字段、同帧晚些时候玩家/组包再读。
+#    改挂载时机(例如改到游戏场景 _ready 之后再 add_child)⇒ 所有边沿**再次静默消失**
+#    (表现又回到"服务器侧不开火/不跳"),而不会有任何报错。观察者侧有对应断言。
 var _edges: Dictionary = {}  # 边沿名 -> 该边沿所属的物理帧号(整帧内有效)
 
 func _set_edge(name: String) -> void:
@@ -49,7 +53,6 @@ func source_kind() -> int:
 # ── 观察者写口 ──
 
 func press_jump() -> void:
-	jump = true
 	_set_edge("jump")
 
 
@@ -58,6 +61,10 @@ func press_slot(i: int) -> void:
 	_set_edge("slot")
 
 
+# ★ 本探针**从不调用它**(机器人不捡枪)。留着是因为"拾取"是输入面的一部分,删了会让
+#   这一族手柄看起来只支持一半动作;但**别误以为它是必需的** —— PvP 客户端里本地拾取读口
+#   被 `not Level0.pvp_mode` 关掉了(`player.gd` 的 `_poll_pickup_drop`),`pack_record` 是**唯一**读者,
+#   所以这里"两处读者"的理由**不成立**,它只是照 `soak_bot_input` 的形状补齐。
 func press_f() -> void:
 	_set_edge("pickup")
 

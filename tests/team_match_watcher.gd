@@ -486,6 +486,14 @@ func _try_enter_game() -> void:
 	_game = cs
 	_local = local
 	_role = PvpSession.role
+	# ★★ **序前提的运行时断言**:本观察者必须排在游戏场景**之前**(树序),否则它写的输入
+	#    会在玩家已处理完那一帧才落到手柄上 ⇒ 边沿全部丢失、服务器侧又不跳不开火,而**不报错**。
+	#    前提的来源:本节点由探针用 `root.add_child` 在换场**之前**挂上(树序在前)。
+	if cs.get_index() < get_index():
+		_fail("观察者在树序里排在游戏场景**之后**(index %d vs %d)—— 输入边沿会整帧丢失"
+				% [get_index(), cs.get_index()])
+	else:
+		_log("树序就位:观察者 index=%d 在游戏场景 index=%d 之前" % [get_index(), cs.get_index()])
 	_bot = BotHandle.new()
 	_local.set_input_source(_bot)
 	_entered = true
@@ -714,7 +722,8 @@ func _tick_meet_shooter(delta: float) -> void:
 			_bot.axis = 0.0
 			_bot.aim = _delta(_local.global_position, vp).normalized()
 			_pulse_attack(delta)
-			# 取**峰值**:子弹会飞出去消失,瞬时值可能正好落在两发之间(=0)
+			# 取**峰值并发数**(不是"这一轮生成了多少发"):子弹会飞出去消失,瞬时值可能正好
+			# 落在两发之间(=0);而霰弹枪一发就是 8 丸 ⇒ `shots=8` 只等价于"**至少响过一枪**"。
 			_shots = maxi(_shots, _local_bullet_count())
 			if _sub_t >= VOLLEY:
 				_bot.attack = false
@@ -1037,14 +1046,20 @@ func _tick_observe() -> void:
 			_rec("LEFT gone=%s obsmax=%.0fms sessionmax=%.0fms(sessionmax_phase=%d) playing=%d replica_gone=1"
 					% [str(gone), _obs_max_gap, _snap_max_gap, _snap_max_phase,
 					1 if not _obs_playing_bad else 0])
-			_log("相⑤ 已观察到 role %s 被移出对局(副本已拆);观察窗 %.1fs 内快照最大间隔 %.0fms"
-					% [str(gone), _phase_t, _snap_max_gap])
+			# ★ 这里打的是**两个不同的数**,别混:抽样窗口(观察窗)内的是 `_obs_max_gap`,
+			#   全会话的是 `_snap_max_gap`(它含"进对局建世界"那一大段)。判据只用前者。
+			_log("相⑤ 已观察到 role %s 被移出对局(副本已拆);观察窗 %.1fs(窗内最大间隔 %.0fms;"
+					% [str(gone), _phase_t, _obs_max_gap]
+					+ "全会话最大 %.0fms,发生于相位 %d)" % [_snap_max_gap, _snap_max_phase])
 			if _obs_playing_bad:
 				_fail("相⑤ 观察窗内 round_state 离开过 PLAYING(服务器不该因少人改状态)")
 			# ★ 判据只用**观察窗内**的最大间隔(理由见 `_on_snap_world`:全会话最大值包含
-			#   "进对局建世界"那一大段,拿它当判据会让每一跑都红 —— 那是伪影,不是服务器停了)
+			#   "进对局建世界"那一大段,拿它当判据会让每一跑都红 —— 那是伪影,不是服务器停了)。
+			# ★★ **单端超 1s 也判红**(不做"多端才红"的容忍):可能是本进程自己卡了一下,
+			#   也可能是**服务器对这一个 peer 的定向投递**异常(`snapshot_own` 逐 peer 定向发,
+			#   只卡一端正是那条路的可疑症状),两者本探针**分不清** ⇒ 保守判红。
 			if _obs_max_gap > 1000.0:
-				_fail("相⑤ 观察窗内快照间隔 %.0fms > 1s(其余端应持续收到快照)"
+				_fail("相⑤ 观察窗内快照间隔 %.0fms > 1s(可能是本进程停顿,也可能是服务器对本 peer 的定向投递异常 —— 无法区分,保守判红)"
 						% _obs_max_gap)
 			_finish()
 			return

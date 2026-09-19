@@ -466,7 +466,8 @@ func _assert_stage3() -> void:
 			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是激光枪(光束武器不产生子弹)")
 			_check(true, "相③ 子弹那一半未覆盖(射手是光束武器 —— 抽签结果,不是缺陷)")
 		else:
-			_check(shots > 0, "相③ 甲(role %d)真的开了火(本地子弹生成数 %d > 0)" % [shooter_role, shots])
+			_check(shots > 0,
+					"相③ 甲(role %d)真的开了火(本地**峰值并发**子弹数 %d > 0 ⇒ 至少响过一枪)" % [shooter_role, shots])
 			_check(los == "1", "相③ 开火那一刻甲与乙视线通畅(否则没打中可能只是被墙挡住)")
 			_check(hit == "0" and before == after,
 					"相③ ★ 子弹穿透队友:乙(role %d)hp 不变(%d → %d)" % [victim_role, before, after])
@@ -528,12 +529,15 @@ func _assert_stage3() -> void:
 		# ★ 这一条**记读数、不当红**(理由见 watcher 的 `_tick_backoff`):脚本机器人能不能
 		#   在平台跳跃图上接近对手,是**探针的质量**,不是产品缺陷 —— 判成红只会让"用户跑一次
 		#   红一次"而重启一次可能就绿(没有信息量)。真交火为 0 时报告里**照实写明**它未覆盖。
+		# ★★ 这一栏**只作读数,不作绿断言**(与榴弹那半边同口径):`ka>=1` 会让"9 杀主要靠
+		#   回退模式推"这种局面照样全绿(run20 实测:`ka=1` 而 `killU=10`、`REC BACKOFF n=1..7`)。
+		#   故:读数照打,并**不分 ka 大小**都写明"回合仍靠 REC BACKOFF 推动"。
 		if ka >= 1:
-			_check(true, "相④ 真实交火击杀 %d 次(非全靠自杀脱困)" % ka)
-		else:
-			_notes.append("相④ **真实交火击杀 0 次** —— 这一半未覆盖(机器人未能在图上接近对手);"
-					+ "回合由回退模式(按 K)推动,REC BACKOFF 是它的痕迹")
-		_notes.append("相④ 击杀来源:有归因 %d 次 / 无归因(自杀等)%d 次" % [ka, ku])
+			_check(true, "相④ 真实交火击杀 %d 次(读数;非全靠自杀脱困 —— 见下一行的口径)" % ka)
+		_notes.append("相④ 击杀来源:有归因(真实交火)%d 次 / 无归因(自杀等)%d 次"
+				% [ka, ku] + " —— **回退模式(REC BACKOFF)仍在推动回合**,这一半只作读数、不作绿断言")
+		if ka == 0:
+			_notes.append("相④ **真实交火击杀 0 次** —— 这一半未覆盖")
 		_notes.append("相④ 第 1 局:%s" % round1[round1.keys()[0]])
 
 	# ── 相④ 换边:期望值用**生产函数**算,不是探针自己推 ──
@@ -585,22 +589,18 @@ func _assert_stage3() -> void:
 		_check(obs == CLIENT_COUNT - 1,
 				"相⑤ ★ 其余 %d 端都观察到 role %d 已被移出对局(仍持续收快照、服务器不终局)"
 				% [CLIENT_COUNT - 1, esc_role])
-		var slow := 0
-		var slow_txt := ""
-		for pair in obs_gaps:
-			if float(pair[1]) > 1000.0:
-				slow += 1
-				slow_txt += "%s=%.0fms " % [pair[0], float(pair[1])]
 		var gap_txt := ""
 		for pair in obs_gaps:
 			gap_txt += "%s=%.0fms " % [pair[0], float(pair[1])]
-		var note := "全部 ≤1s"
-		if slow > 0:
-			note = "%d 端超 1s —— 服务端停发会同时命中所有端" % slow
-		_check(slow <= 1, "相⑤ ★ 观察窗内快照连续(六端最大间隔: %s;注:%s)" % [gap_txt, note])
-		if slow == 1:
-			_notes.append("相⑤ 有 1 端在观察窗内卡了 %s(同一段墙钟里其余端 ≤100ms ⇒ 判定为"
-					% slow_txt + "**该客户端进程自身**的停顿,不是服务器停发)")
+		# ★★ 判据是**每一端各自零容忍**(与观察者侧同一条:`_obs_max_gap > 1000` 即红)。
+		#   **不做"≥2 端才红"的容忍**:单端超 1s 有两种可能 ——
+		#     (甲) 该客户端进程自己卡了一下(本机同时跑 8 个 Godot);
+		#     (乙) **服务器对那一个 peer 的定向投递异常**(`snapshot_own` 是逐 peer 定向发的,
+		#          只卡一端恰恰是那条路的可疑症状)。
+		#   探针**分不清**这两者,故**保守判红**;要放宽得先有能区分它们的证据。
+		_check(obs_gaps.is_empty() or gap_max(obs_gaps) <= 1000.0,
+				"相⑤ ★ 观察窗内快照连续(被观察的 %d 端最大间隔: %s;单端超 1s 也判红 —— 可能是该客户端自身停顿,也可能是服务器对**该 peer** 的定向投递异常,探针无法区分)"
+				% [obs_gaps.size(), gap_txt])
 
 
 # ════════════════════ 子进程 / 文件 ════════════════════
@@ -756,6 +756,13 @@ func _grid_dims() -> Vector2i:
 		push_error("PROBE: 读不到地图尺寸 %s —— 相②/相④ 的环面判据不可信" % MatchBootstrap.PVP_MAP)
 		return Vector2i(150, 100)
 	return d
+
+
+func gap_max(a: Array) -> float:
+	var m := 0.0
+	for pair in a:
+		m = maxf(m, float(pair[1]))
+	return m
 
 
 func _check(ok: bool, msg: String) -> void:
