@@ -8,8 +8,21 @@ extends RefCounted
 #   的 RefCounted)→ 本文件可被 `-s` 测试加载。
 # ★ 缓存是**每进程**的(与搬出前同款行为):worker 进程一局一进程,故没有跨局失效问题。
 
-const OPEN_AREA_MIN: int = 20    # 出生可走连通区最小规模(格);密封死角小间远小于此
+const OPEN_AREA_MIN: int = 20    # 出生可走连通区最小规模(格);密封死角小间远小于此。**绝对**阈值(见自适应)
 const PREFER_MIN: int = 8        # 优选格不足此数才回退下一级宽松判据
+
+# ── 小图自适应门槛(2026-09-19)──
+# `OPEN_AREA_MIN` 是按"正常大小"的图定的**绝对**阈值,小图上它可以**无人达到**:
+# 典型 = PvP 固定图 `factory1v1`(150×100)—— 按 4 邻接算的**最大**地板连通区只有 **13 格**。
+# 那时前两档恒空,池子**静默退化成全部地板格**(该图 843 个地板格里 155 个是**孤立单格区**),
+# 于是 6 人 3v3 / 8 人大乱斗里会有人一开局就被关在走不出去的小间里 —— 不报错,只在实机看得见。
+# 自适应:本图最大连通区 < `OPEN_AREA_MIN` 时,把"开阔"门槛按**本图比例**缩到
+# 「最大连通区 × ADAPTIVE_RATIO」—— 保持"优先开阔区"的意图,绝不退成全部地板格。
+# ★ 单调性:自适应只会让池子**变窄**(相对"全部地板格"),任何图都不会因此变宽。
+# ★ 正常图(最大连通区 ≥ OPEN_AREA_MIN)一行不生效:门槛仍是 OPEN_AREA_MIN,**行为逐字不变**。
+# ★ 为什么是"比例"而不是"只取最大那个区":实测该图最大的两个区各 13 格 —— 只取它们
+#   会得到 26 格的池子(8 人大乱斗挤进两间小屋);取"≥ 最大值一半"得 130 格 / 14 个区。
+const ADAPTIVE_RATIO: float = 0.5
 
 static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆不刷新,够用)
 static var _prefer_cache: Array = []       # 出生优选格缓存(开阔可走区;见 spawn_candidates)
@@ -50,8 +63,14 @@ static func floor_cells() -> Array:
 # 出生在四面墙的小房间出不去。优选格需同时满足:
 #   (1) 头顶 ≥2 格净空(站得直、跳得出去);
 #   (2) 左右邻格空(出生处 ≥3 格宽,不被墙夹);
-#   (3) 所在同层可走连通区规模 ≥ OPEN_AREA_MIN(密封 1~2 格死角自动淘汰)。
+#   (3) 所在同层可走连通区规模 ≥ **area_threshold()**(密封 1~2 格死角自动淘汰;
+#       该门槛正常图 = OPEN_AREA_MIN,小图按本图比例自适应 —— 见 ADAPTIVE_RATIO)。
 # 地板格不足时逐级回退:连通区大但不要求三宽 → 任意地板格(极小图兜底)。
+#
+# ⚠ 已知边界(本次**未**修):连通区判据是**纯 4 邻接**,不含跳跃/梯子 —— 一级台阶就把两个区
+#   断开,故"同区"只是"纯步行可达"的下界近似(实测 factory1v1 上连"三宽"格都有 30/515
+#   落在单格区里)。要更准得把跳跃纳入可达性判据,那会同时改掉大乱斗与 3v3 的选格口径,
+#   不在本次范围(取舍与代价见报告 §3)。
 static func region_sizes() -> Dictionary:
 	if not _region_cache.is_empty():
 		return _region_cache
@@ -107,16 +126,38 @@ static func roomy_floor(c: Vector2i) -> bool:
 	return true
 
 
+# 本图**最大**地板连通区的规模(格)。空网格 / 未加载 = 0。
+static func max_region_size() -> int:
+	var mx := 0
+	for sz in region_sizes().values():
+		mx = maxi(mx, int(sz))
+	return mx
+
+
+# 出生判据的"开阔"门槛(格)—— **阈值本体**,三档里凡涉及连通区规模的一律读它:
+#   本图最大连通区 ≥ OPEN_AREA_MIN → OPEN_AREA_MIN(绝对阈值;正常图行为逐字不变)
+#   否则                          → 最大连通区 × ADAPTIVE_RATIO(小图按本图比例缩放)
+# ★ 下界 1:max_region_size() 为 0(空网格)时不给 0 —— 那会让 `>= thr` 恒真、池子变全量。
+static func area_threshold() -> int:
+	var mx := max_region_size()
+	if mx >= OPEN_AREA_MIN:
+		return OPEN_AREA_MIN
+	return maxi(ceili(float(mx) * ADAPTIVE_RATIO), 1)
+
+
 # 出生候选池(缓存):开阔可走地板格;不足则回退连通区大的地板格;再不足回退任意地板格。
+# ★ 头两档的连通区判据走 `area_threshold()`(正常图 = OPEN_AREA_MIN;小图自适应 ——
+#   否则小图上两档恒空、池子静默退化成**全部地板格**,见 ADAPTIVE_RATIO 上方那一段)。
 static func spawn_candidates() -> Array:
 	if not _prefer_cache.is_empty():
 		return _prefer_cache
 	var floor: Array = floor_cells()
 	var sizes := region_sizes()
+	var thr := area_threshold()
 	var big: Array = []
 	var roomy: Array = []
 	for c in floor:
-		if int(sizes.get(c, 0)) >= OPEN_AREA_MIN:
+		if int(sizes.get(c, 0)) >= thr:
 			big.append(c)
 			if roomy_floor(c):
 				roomy.append(c)
