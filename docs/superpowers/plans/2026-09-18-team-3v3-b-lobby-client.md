@@ -789,6 +789,12 @@ git commit -m 'feat(team): 3v3 大厅页(建房/列表/选边等待室)+ 主菜�
 
 ## Task 6: 客户端对局场景 `team_game`
 
+> ★★ **执行顺序：本任务必须排在 Task 7 之后**（计划原稿把 6/7 的编号顺序当成了执行顺序，是错的）。
+> 理由（两条硬依赖，都在 Task 7 里才落地）：
+> 1. 本任务要 `preload("res://ui/team_hud.tscn")` 并 `as TeamHud` —— 那个场景与脚本是 **Task 7** 建的；
+> 2. 本任务要调 `minimap.setup_multi(local, others, colors)` 的**三参**签名 —— 第三参（颜色提供器）是 **Task 7** 才加进 `ui/minimap.gd` 的。
+> 照原编号先做 6 会直接跑不起来（缺场景 / 实参个数不符）。**先 7 后 6。**
+
 **Files:**
 - Create: `scenes/team_game.tscn` + `scenes/team_game.gd`
 - Modify: `ui/ui_factory.gd`（两个队色 token）
@@ -935,6 +941,9 @@ git commit -m 'feat(team): 客户端对局场景 team_game(5 副本 + 队色覆�
 ---
 
 ## Task 7: `TeamHud` + 小地图分队上色
+
+> ★★ **执行顺序：本任务排在 Task 6 之前做**（编号 ≠ 执行顺序，理由见 Task 6 段首那条）。
+> 它**不依赖** Task 6：只新增 `ui/team_hud.tscn/.gd` + 给 `ui/minimap.gd` 的 `setup_multi` 加**可选**第三参（默认 `Callable()` ⇒ 1v1/大乱斗行为逐字不变）+ 给 `hud_declarative_probe` 的 `PAIRS` 加一行（★ 每条是**三个**元素：脚本 / 场景 / **类名**）。
 
 **Files:**
 - Create: `ui/team_hud.tscn`（照 `ui/pvp_hud.tscn` 复制，只改脚本引用与初始文案）+ `ui/team_hud.gd`
