@@ -214,6 +214,33 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   throws(function () { Core.decodeTexLayer(new Core.ByteReader(new Uint8Array([9])), 1, 1); }, 'decodeTexLayer: 错 kind 报错');
 })();
 
+// ---- 背景层块编解码 ----
+(function () {
+  var subCols = 4, subRows = 2, n = subCols * subRows;
+  var rgba = new Uint32Array(n);
+  for (var i = 0; i < n; i++) rgba[i] = (0x11223344 + i * 0x01010101) >>> 0;
+  var enc = Core.encodeColorLayer(rgba, subCols, subRows);
+  eq(enc[0], Core.KIND_COLOR, 'encodeColorLayer: 首字节是 kind');
+  eq(enc.length, 1 + n * 4, 'encodeColorLayer: 长度 = 1 + n×4');
+  var r = new Core.ByteReader(enc);
+  var dec = Core.decodeColorLayer(r, subCols, subRows);
+  eq(r.remaining(), 0, 'decodeColorLayer: 字节全部消费');
+  eq(dec.kind, 'color', 'decodeColorLayer: kind');
+  eq(Array.prototype.slice.call(dec.rgba), Array.prototype.slice.call(rgba), '背景层: 往返一致');
+
+  // 全透明黑(0)是合法且最常见的空背景
+  var blank = new Uint32Array(4);
+  var r2 = new Core.ByteReader(Core.encodeColorLayer(blank, 2, 2));
+  eq(Array.prototype.slice.call(Core.decodeColorLayer(r2, 2, 2).rgba), [0, 0, 0, 0], '背景层: 全 0 往返');
+  eq(Core.decodeColorLayer(new Core.ByteReader(Core.encodeColorLayer(blank, 2, 2)), 2, 2).rgba instanceof Uint32Array,
+     true, '背景层: 回读是 Uint32Array');
+
+  throws(function () { Core.encodeColorLayer(new Uint32Array(3), 2, 2); }, 'encodeColorLayer: 长度不符报错');
+  throws(function () {
+    Core.decodeColorLayer(new Core.ByteReader(new Uint8Array([Core.KIND_TEX])), 1, 1);
+  }, 'decodeColorLayer: 错 kind 报错');
+})();
+
 // ==== 断言区结束 ====
 
 console.log('');

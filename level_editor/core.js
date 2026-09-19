@@ -195,6 +195,28 @@ globalThis.Core = (function () {
     return { kind: 'tex', desc: desc };
   }
 
+  // 背景层块:kind(2) + 逐格 RGBA8888(规格 §3.4)。
+  // 不做调色板 —— 背景是真彩,而平滑渐变恰好是 deflate 最擅长的一类数据。
+  function encodeColorLayer(rgba, subCols, subRows) {
+    var n = subCols * subRows;
+    if (rgba.length !== n) {
+      throw new Error('encodeColorLayer: rgba 长度 ' + rgba.length + ' ≠ subCols×subRows ' + n);
+    }
+    var w = new ByteWriter(5 + n * 4);
+    w.u8(KIND_COLOR);
+    for (var i = 0; i < n; i++) w.u32(rgba[i]);
+    return w.finish();
+  }
+
+  function decodeColorLayer(r, subCols, subRows) {
+    var kind = r.u8();
+    if (kind !== KIND_COLOR) throw new Error('decodeColorLayer: kind=' + kind + ',期望 ' + KIND_COLOR);
+    var n = subCols * subRows;
+    var rgba = new Uint32Array(n);
+    for (var i = 0; i < n; i++) rgba[i] = r.u32();
+    return { kind: 'color', rgba: rgba };
+  }
+
   // ── 与格式无关的纯工具(自旧编辑器沿用)──
   function sanitizeName(name) {
     var n = String(name == null ? '' : name).trim();
@@ -284,6 +306,7 @@ globalThis.Core = (function () {
     ByteWriter: ByteWriter, ByteReader: ByteReader, crc32: crc32,
     KIND_TEX: KIND_TEX, KIND_COLOR: KIND_COLOR,
     encodeTexLayer: encodeTexLayer, decodeTexLayer: decodeTexLayer,
+    encodeColorLayer: encodeColorLayer, decodeColorLayer: decodeColorLayer,
     HUE_NEUTRAL: HUE_NEUTRAL, BRI_NEUTRAL: BRI_NEUTRAL,
     SAT_NEUTRAL: SAT_NEUTRAL, ALPHA_NEUTRAL: ALPHA_NEUTRAL,
     packDesc: packDesc,
