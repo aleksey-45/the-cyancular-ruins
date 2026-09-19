@@ -1,6 +1,6 @@
 extends SceneTree
 
-# 出生池守卫(共享组件 `SpawnPicker.spawn_candidates()`):**池子里不准有"落在小连通区"的格**。
+# 出生池守卫(共享组件 `SpawnPicker`):**出生池与复活池序列里都不准有"落在小连通区"的格**。
 # 跑法: timeout 120 "$GODOT" --headless --path . -s res://tests/spawn_pool_smoke.gd
 # 通过 = `SPAWN POOL SMOKE: ALL-OK` 退出 0。
 #
@@ -20,8 +20,19 @@ extends SceneTree
 #    —— 判据不来自被测实现自己(`region_sizes()` 只用来**交叉核对**,[仪器] B)。
 # ② **反向/变异**:断言池子是全部地板格的**真子集**(排除数 > 0)。把自适应那档改回
 #    `_prefer_cache = floor`(或把 `area_threshold()` 改回恒 `OPEN_AREA_MIN`)→ 这条红。
-# ③ **正常图不许变样**:`demo.cyrm` 上 `area_threshold()` 必须**恰好**是 `OPEN_AREA_MIN`,
-#    且池子与"三宽 ∩ 连通区≥20"逐格相等 —— 自适应对小图之外**一行不生效**。
+# ③ **正常图的出生池不许变样**:`demo.cyrm` 上 `area_threshold()` 必须**恰好**是 `OPEN_AREA_MIN`,
+#    且出生池与"三宽 ∩ 连通区≥20"逐格相等 —— 自适应对小图之外**一行不生效**。
+#    (★ 复活池序列**不在此列**:2026-09-19 用户裁定它**对所有图生效** —— "兜底档仍是全部地板格"
+#     是"明知在船上的 bug",不是"为不改行为而放过的边界"。)
+# ④ **复活池序列**(`respawn_pools()`,三档):每一档都不含孤立单格;逐档放宽;前两档还不含
+#    "连通区 < 门槛"的格。★ 三档是**用户裁定的形状**:第 ③ 档只排除孤立单格 —— 因为把兜底档
+#    一路收到"连通区 ≥ 门槛"会**新增** `(-1,-1)`(⇒ 摆到地图回卷角落,比"在小间里复活"更糟;
+#    实测 4036 布局 ×2 图:只收一档新增 1 个 / 5 个,加第 ③ 档后**新增为 0**)。
+# ⑤ **各条路各走一遍**:正例(首档够用)、中间档、负例(真搜一个"首档筛空"的布局,**端到端**
+#    跑完整个序列)。★ 负例的搜索是**数据**,不是装饰:本图能筛空首档的布局是**稠密网格**
+#    (随机撒点到不了 —— 首档那 122 格散在十来个区里,8 个敌人盖不满)。
+# ⑥ **宿主接线(源码级)**:两个宿主的选格**函数体**必须走 `respawn_pools()` 且不再自己拼
+#    `floor_cells()` —— 只测 `SpawnPicker` 的话,宿主里那句原样留着**照样全绿**(那正是本病的成因)。
 #
 # ═══ 三个坑(本仓踩过的)═══
 # ★ `-s` 阶段 autoload 不存在 ⇒ **不能用 `WorldBuilder.load_grid()`**(它写
@@ -205,97 +216,101 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 			"池子不小于 PREFER_MIN(否则说明档位回退到了更宽的一档:池 %d,期望集合 %d)"
 			% [pool.size(), expected.size()])
 
-	# ── ④ 复活/复位的**兜底档**:同一条病(第二档原先 = 全部地板格),同样不许含孤立格 ──
+	# ── ④ 复活/复位:池序列**每一档**都不许含孤立单格(同一条病,后两档原先就是全部地板格)──
 	# 调用方(`RoyaleHost._spawn_cell` / `TeamHost._respawn_cell_for`)现在读**同一份**池序列
-	# `SpawnPicker.respawn_pools()`;这里就把那份序列整个检查一遍 —— 这就是"两条路都不含孤立格"。
+	# `SpawnPicker.respawn_pools()`;这里就把那份序列整个检查一遍 —— 这就是"每条路都不含孤立格"。
+	# ★ 2026-09-19 起**对所有图生效**(用户裁定:"明知在船上的 bug"不许按动作范围放过),
+	#   故本段不再按 `want_adaptive` 分叉:两图跑同一套断言。
 	var pools: Array = SpawnPicker.respawn_pools()
-	_check(pools.size() == 2, "复活池序列是两档(优选 → 兜底;实际 %d 档)" % pools.size())
-	if pools.size() == 2:
-		_check(_same_set(pools[0], pool),
-				"首档就是 `spawn_candidates()` 那一份(不是另抄一遍)")
-		if want_adaptive:
-			_check(_same_set(pools[1], expected.keys()),
-					"★ 兜底档逐格 == 期望集合(连通区 ≥ %d;%d 格)"
-					% [thr, (pools[1] as Array).size()])
-			_check(_is_subset(pools[0], pools[1]),
-					"★ 兜底档 ⊇ 首档(兜底不该比优选还窄;首档 %d / 兜底 %d)"
-					% [(pools[0] as Array).size(), (pools[1] as Array).size()])
-		else:
-			# ★ 动作范围:本次**不**动正常图的兜底档(它的主池本来就是干净的),逐格锁住。
-			_check(_same_set(pools[1], floor),
-					"★ 兜底档在本图**维持原样**(== 全部地板格 %d 格;本次只收窄自适应生效的图)"
-					% floor.size())
-			# [读数] 本图兜底档**没有被收窄**的代价,当场量出来(不是"大概没事"):
-			# 稠密布局能把首档筛空、而兜底档还剩货 ⇒ 正常图上"复活落进小间"这条路**是可达的**,
-			# 我们只是**按动作范围约束**没动它。若哪天要连正常图一起收窄,把 `respawn_fallback`
-			# 里那两行 `if` 删掉,这条读数会跟着变 —— 那时改它,别删它。
-			var dense: Array = []
-			for gy in range(0, rows, RESPAWN_CLEARANCE):
-				for gx in range(0, cols, RESPAWN_CLEARANCE):
-					dense.append(Vector2i(gx, gy))
-			var u1 := _count_usable(pools[0], dense, cols, rows, RESPAWN_CLEARANCE)
-			var u2 := _count_usable(pools[1], dense, cols, rows, RESPAWN_CLEARANCE)
-			var n_single_fb := 0
-			for c in pools[1]:
-				if int(own[c]) == 1:
-					n_single_fb += 1
-			print("  [info] 本图(正常图)兜底档**未收窄**:%d 格里仍有 %d 个孤立单格;"
-					% [(pools[1] as Array).size(), n_single_fb])
-			print("  [info] 稠密布局(%d 个敌人,间距 %d 格):首档可用 %d / 兜底档可用 %d"
-					% [dense.size(), RESPAWN_CLEARANCE, u1, u2])
-			_check(u1 == 0 and u2 > 0,
-					("★ [读数] 正常图上「首档筛空 → 落到兜底档」这条路**是可达的**(稠密布局下首档可用 0、"
-					+ "兜底档可用 %d),而我们按**动作范围**约束没收窄它(那 %d 格里含孤立单格)—— "
-					+ "这是有意选择,不是遗漏;收窄与否见 respawn_fallback 的 ★★") % [u2, n_single_fb])
-		if want_adaptive:
-			var bad: Array = []
-			for i in range(pools.size()):
-				var pl: Array = pools[i]
-				var n_below := 0
-				var n_single := 0
-				for c in pl:
-					if int(own[c]) < thr:
-						n_below += 1
-					if int(own[c]) == 1:
-						n_single += 1
-				if pl.is_empty() or n_below > 0 or n_single > 0:
-					bad.append("第 %d 档(空=%s / 连通区<门槛 %d 个 / 孤立单格 %d 个)"
-							% [i + 1, str(pl.is_empty()), n_below, n_single])
-			_check(bad.is_empty(),
-					"★ 复活池序列的**每一档**都非空、都不含孤立单格(问题:%s)" % str(bad))
+	_check(pools.size() == 3, "复活池序列是三档(优选 → 兜底 → 末档;实际 %d 档)" % pools.size())
+	if pools.size() == 3:
+		# 末档 = 全部地板格去掉孤立单格(它的存在理由:兜底档比原样窄一个量级,筛空即 (-1,-1)
+		# ⇒ 摆到地图回卷角落,比"在小间里复活"更糟 —— 见 respawn_fallback 的 ★★)
+		var want_last: Array = []
+		for c in floor:
+			if int(own[c]) >= 2:
+				want_last.append(c)
+		_check(_same_set(pools[0], pool), "首档就是 `spawn_candidates()` 那一份(不是另抄一遍)")
+		_check(_same_set(pools[1], expected.keys()),
+				"★ 第 ② 档逐格 == 「连通区 ≥ 门槛 %d」(%d 格)" % [thr, (pools[1] as Array).size()])
+		_check(_same_set(pools[2], want_last),
+				"★ 第 ③ 档逐格 == 「全部地板格去掉孤立单格」(%d 格)" % (pools[2] as Array).size())
+		# 序列按池子大小单调不减("兜底"的语义:放宽,不是换一个更窄的集合)
+		var mono: Array = []
+		for i in range(pools.size() - 1):
+			if not _is_subset(pools[i], pools[i + 1]):
+				mono.append("第 %d 档(%d)⊄ 第 %d 档(%d)"
+						% [i + 1, (pools[i] as Array).size(), i + 2, (pools[i + 1] as Array).size()])
+		_check(mono.is_empty(), "★ 池序列逐档**放宽**(每一档 ⊇ 前一档;问题:%s)" % str(mono))
 
-			# ── ⑤ 两条路各走一遍(正/负)—— 只重放调用方那段**平凡的距离筛选** ──
-			# ★ 池子序列取自**生产**(`respawn_pools()`);这段筛选是两个宿主共有的形状
-			#   (royale 判所有存活玩家、3v3 判存活敌人),这里为看清"这一局走哪一档"而重放一遍。
-			var one_far: Array = [Vector2i(0, 0)]
-			var pick1 := _pick(pools[0], one_far, cols, rows, RESPAWN_CLEARANCE)
-			_check(pick1.x >= 0 and int(own[pick1]) >= thr and int(own[pick1]) != 1,
-					"★ 正例 · 首档够用时走首档,且选出来的格**不是孤立单格**(选到 %s,连通区 %d)"
-					% [str(pick1), int(own.get(pick1, 0))])
-			# 负例:首档被筛空 → 落到第二档。
-			# ★★ **实测这个场景在本图构造不出来** —— 8 个"只在兜底档里"的格与首档的格交织在
-			#   同一批连通区里,能筛空首档的布局必然把兜底档一起筛空。故这里**直接从第二档起跑**
-			#   (= 调用方在第一档筛空后落到第二档时执行的**同一段代码**),断言它带出来的也干净;
-			#   并且当场搜一遍"首档空 ∧ 兜底档有货"的布局,把"构造不出来"本身变成一条读数。
-			var pick2 := _pick(pools[1], one_far, cols, rows, RESPAWN_CLEARANCE)
-			_check(pick2.x >= 0 and int(own[pick2]) >= thr and int(own[pick2]) != 1,
-					"★ 负例 · 落到兜底档时选出来的格**也不是孤立单格**(选到 %s,连通区 %d)"
-					% [str(pick2), int(own.get(pick2, 0))])
-			# 搜索:随机撒 8 个敌人(生产最多 8 人),找"首档空 ∧ 兜底档有货"。找到了 = 负例可端到端驱动,
-			# 那时 ⑤ 的负例就该改成真布局(本断言会红,提醒你换)。
-			var found := 0
-			for t in range(NEG_SEARCH_TRIALS):
-				seed(90210 + t)
-				var enemies: Array = []
-				for i in range(8):
-					enemies.append(Vector2i(randi() % cols, randi() % rows))
-				if not _has_usable(pools[0], enemies, cols, rows, RESPAWN_CLEARANCE) \
-						and _has_usable(pools[1], enemies, cols, rows, RESPAWN_CLEARANCE):
-					found += 1
-			_check(found == 0,
-					("★ 负例**不可构造**(本图几何):%d 次随机布局(每次 8 个敌人)里「首档空 ∧ 兜底档有货」"
-					+ "出现 %d 次 ⇒ 兜底档在本图**够不到**,这才是它必须被结构性地断言、而不是靠布局驱动的原因"
-					+ "(真出现了这条红 = 该把 ⑤ 的负例改成真布局)") % [NEG_SEARCH_TRIALS, found])
+		var bad: Array = []
+		for i in range(pools.size()):
+			var pl: Array = pools[i]
+			var n_single := 0
+			for c in pl:
+				if int(own[c]) == 1:
+					n_single += 1
+			if pl.is_empty() or n_single > 0:
+				bad.append("第 %d 档(空=%s / 孤立单格 %d 个)"
+						% [i + 1, str(pl.is_empty()), n_single])
+		_check(bad.is_empty(),
+				"★ 复活池序列的**每一档**都非空、都**不含孤立单格**(问题:%s)" % str(bad))
+		# 前两档还要更强:不含任何"连通区 < 门槛"的格(第 ③ 档只保证 ≥2,那是有意的下限)
+		var weak: Array = []
+		for i in [0, 1]:
+			var n := 0
+			for c in pools[i]:
+				if int(own[c]) < thr:
+					n += 1
+			if n > 0:
+				weak.append("第 %d 档有 %d 个" % [i + 1, n])
+		_check(weak.is_empty(),
+				"★ 前两档都不含「连通区 < 门槛 %d」的格(问题:%s)" % [thr, str(weak)])
+
+		# ── ⑤ 各条路各走一遍(正/负)—— 端到端跑调用方那段循环 ──
+		# ★ 池子序列取自**生产**(`respawn_pools()`);`_walk` 重放的是两个宿主共有的那段
+		#   **平凡的距离筛选 + 逐档放宽**(royale 判所有存活玩家、3v3 判存活敌人)。
+		var one_far: Array = [Vector2i(0, 0)]
+		var pick1 := _pick(pools[0], one_far, cols, rows, RESPAWN_CLEARANCE)
+		_check(pick1.x >= 0 and int(own[pick1]) >= thr and int(own[pick1]) != 1,
+				"★ 正例 · 首档够用时走首档,且选出来的格**不是孤立单格**(选到 %s,连通区 %d)"
+				% [str(pick1), int(own.get(pick1, 0))])
+		# 中间档单独走一遍(= 调用方在首档筛空、第 ② 档有货时执行的同一段代码)
+		var pick2 := _pick(pools[1], one_far, cols, rows, RESPAWN_CLEARANCE)
+		_check(pick2.x >= 0 and int(own[pick2]) >= thr and int(own[pick2]) != 1,
+				"★ 中间档 · 落到第 ② 档时选出来的格**也不是孤立单格**(选到 %s,连通区 %d)"
+				% [str(pick2), int(own.get(pick2, 0))])
+		# 负例:找一个"首档被筛空"的**真布局**,然后端到端跑完整个 `respawn_pools()` 循环 ——
+		# 断言它确实落到了更后面的档、且那一档带出来的格不含孤立单格。
+		# (搜索:先扫规则网格(实测能筛空首档的是稠密的网格布局,随机撒点到不了),再随机兜底。)
+		var search := _find_blanking_layout(pools, cols, rows)
+		var searched: int = int(search["count"])
+		var blanking: Array = search["layout"]
+		_check(searched > 0, "[仪器] 负例搜索真的跑了(%d 个布局;0 = 下面的结论没有覆盖)" % searched)
+		print("  [info] 负例搜索:%d 个布局里「首档筛空」的有 %d 个%s"
+				% [searched, int(search["found"]),
+					" ⇒ 用真布局端到端驱动" if not blanking.is_empty() else " ⇒ 本图构造不出来,改从第 ② 档起跑"])
+		if blanking.is_empty():
+			# 搜不到(本图几何不允许:能筛空首档的布局必然把后面几档一起筛空)→ 从第 ② 档起跑,
+			# 那正是调用方在首档筛空后执行到的**下一段代码**。★ 这条**不是**恒绿装饰:
+			# 它带的是"第 ② 档自己也不含孤立单格"这个实质断言;而"搜不到"是个**读数**(上面那行)。
+			# (上一版把它写成 `_check(found == 0)` —— 在那个分支里恒真,已按本仓纪律摘掉。)
+			var pick3 := _pick(pools[1], one_far, cols, rows, RESPAWN_CLEARANCE)
+			_check(pick3.x >= 0 and int(own[pick3]) != 1,
+					"★ 负例 · 从第 ② 档起跑,选出的格不含孤立单格(选到 %s,连通区 %d)"
+					% [str(pick3), int(own.get(pick3, 0))])
+		else:
+			var enemies: Array = blanking
+			var u1 := _count_usable(pools[0], enemies, cols, rows, RESPAWN_CLEARANCE)
+			var walk := _walk(pools, enemies, cols, rows, RESPAWN_CLEARANCE)
+			_check(u1 == 0, "[仪器] 该布局确实把首档筛空了(可用 %d)" % u1)
+			_check(int(walk["tier"]) >= 1,
+					"★ 负例 · 首档筛空后**落到了后面的档**(第 %d 档),不是返回 (-1,-1)"
+					% (int(walk["tier"]) + 1))
+			var wc: Vector2i = walk["cell"]
+			_check(int(own.get(wc, 0)) != 1,
+					"★ 负例 · 那一档带出来的格**不含孤立单格**(选到 %s,连通区 %d)"
+					% [str(wc), int(own.get(wc, 0))])
 
 	if not want_adaptive:
 		# ── ③ 正常图逐格锁行为:池子 == 「三宽 ∩ 连通区 ≥ OPEN_AREA_MIN」──
@@ -330,6 +345,61 @@ func _is_subset(a: Array, b: Array) -> bool:
 		if not hay.has(c):
 			return false
 	return true
+
+
+# 找一个"把首档筛空、而后面至少还有一档有货"的布局 —— 用来**端到端**驱动负例。
+# 先扫规则网格(实测能把首档筛空的是**稠密网格**布局:随机撒点到不了 —— 随机撒点到不了
+# 是因为首档那 122 格散在十来个区里,8 个敌人盖不满),再随机兜底。
+# 返回 {"layout": Array(空 = 没找到), "count": 搜过几个, "found": 命中几个}。
+func _find_blanking_layout(pools: Array, cols: int, rows: int) -> Dictionary:
+	var cands: Array = []
+	for spacing in range(3, 21):
+		for phase in [0, 1]:
+			var e: Array = []
+			for y in range(phase, rows, spacing):
+				for x in range(phase, cols, spacing):
+					e.append(Vector2i(x, y))
+			if e.size() >= 4:
+				cands.append(e)
+	for k in [8, 16, 24]:
+		for t in range(NEG_SEARCH_TRIALS / 3):
+			seed(90210 + t * 13 + k)
+			var e: Array = []
+			for i in range(k):
+				e.append(Vector2i(randi() % cols, randi() % rows))
+			cands.append(e)
+	var found := 0
+	var hit: Array = []
+	for e in cands:
+		if _has_usable(pools[0], e, cols, rows, RESPAWN_CLEARANCE):
+			continue
+		found += 1
+		var later := false
+		for i in range(1, pools.size()):
+			if _has_usable(pools[i], e, cols, rows, RESPAWN_CLEARANCE):
+				later = true
+				break
+		if later:
+			hit = e
+			break
+	return {"layout": hit, "count": cands.size(), "found": found}
+
+
+# 端到端重放调用方的循环:**逐档放宽**,返回第一个满足"离每个敌人都 ≥ clear 格"的格与该档序号。
+# 全空 → {"cell": (-1,-1), "tier": -1}(= 生产里那个哨兵值,消费端会把人摆到地图回卷角落)。
+func _walk(pools: Array, enemies: Array, cols: int, rows: int, clear: int) -> Dictionary:
+	for i in range(pools.size()):
+		var cells: Array = (pools[i] as Array).duplicate()
+		cells.shuffle()
+		for c in cells:
+			var ok := true
+			for e in enemies:
+				if GridPathfinder.toroidal_dist(c, e, cols, rows) < clear:
+					ok = false
+					break
+			if ok:
+				return {"cell": c, "tier": i}
+	return {"cell": Vector2i(-1, -1), "tier": -1}
 
 
 # 重放调用方那段"离每个敌人都 ≥ clear 格(环面曼哈顿)"的筛选:池子洗牌后取第一个满足的格。

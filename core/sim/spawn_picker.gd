@@ -27,14 +27,16 @@ const ADAPTIVE_RATIO: float = 0.5
 static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆不刷新,够用)
 static var _prefer_cache: Array = []       # 出生优选格缓存(开阔可走区;见 spawn_candidates)
 static var _fallback_cache: Array = []     # 复活兜底池缓存(见 respawn_fallback)
+static var _last_resort_cache: Array = []  # 复活末档缓存(见 respawn_last_resort)
 static var _region_cache: Dictionary = {}  # 地板格 Vector2i -> 同层连通区规模
 
 
-# 清空四张缓存。换图/换局时调用方自己决定要不要清(搬出前的行为是**从不主动清** —— 保持)。
+# 清空五张缓存。换图/换局时调用方自己决定要不要清(搬出前的行为是**从不主动清** —— 保持)。
 static func reset_cache() -> void:
 	_floor_cell_cache = []
 	_prefer_cache = []
 	_fallback_cache = []
+	_last_resort_cache = []
 	_region_cache = {}
 
 
@@ -172,24 +174,31 @@ static func spawn_candidates() -> Array:
 	return _prefer_cache
 
 
-# ── 复活/复位的**兜底池**(2026-09-19;首档筛空时的第二档)──
-# 两个宿主原本的第二档是 `floor_cells()` = **全部地板格** —— 那与"首档在小图上退化成全量"
+# ── 复活/复位的**两档兜底**(2026-09-19)──
+# 两个宿主原本的兜底档是 `floor_cells()` = **全部地板格** —— 那与"首档在小图上退化成全量"
 # 是**同一个病**,只是晚几十秒发生:干净池子里找不到"离敌人 ≥ RESPAWN_CLEARANCE"的格时,
-# 玩家会**在小间里复活**(实测该图 843 个地板格里 155 个是孤立单格区)。
-# 判据**复用 `area_threshold()`**(不另立第二套):取「连通区 ≥ 门槛」的全部地板格。
+# 玩家会**在小间里复活**(实测 factory1v1 的 843 个地板格里 155 个、demo 的 670 里 104 个
+# 是孤立单格区)。故兜底不再是一档,而是**两级**(判据都长在同一条轴 `region_sizes()` 上):
+#   第 ② 档 `respawn_fallback()`    = 连通区 ≥ `area_threshold()`(与首档同一门槛,只是不要求"三宽")
+#   第 ③ 档 `respawn_last_resort()` = 连通区 ≥ 2(**只**排除孤立单格 —— 用户裁定的下限)
 #
-# ★★ **只在自适应生效的图上收窄**;正常图上原样返回 `floor_cells()`:
-#   本次的目标是"别让小图的两档都退化成全量",正常图的主池本来就是干净的(实测 demo 的主池
-#   59 格、全部区规模 ≥26),其兜底档维持既有行为 —— 这叫**动作范围**约束,不是遗漏。
-#   (若日后要连正常图的兜底档一起收窄,删掉下面那两行 `if` 即可 —— 判据本来就是同一个。)
-# ★ 收窄**不增加**"整池筛空 → 返回 (-1,-1) → 摆到地图回卷角落"的风险:该图实测(k = 5/7/8
-#   个敌人,500 次随机布局)两档的**筛空率都是 0/500**,首档平均就有 108~113 格可用;
-#   兜底档 130 格 ⊇ 首档 122 格,更不可能先空。
+# ★★ 第 ③ 档为什么必须存在(2026-09-19 实测,不是保险起见):
+#   只收到"连通区 ≥ 门槛"时,兜底档会比原样窄一个量级(factory1v1 843→130、demo 670→61)。
+#   筛空即返回 `(-1,-1)`,而消费端 `_respawn_player` 会照算 `spawn.x * ts` ⇒ **把人摆到
+#   (-32,-32) 的地图回卷角落** —— 那比"在小间里复活"更糟(用户裁定 2026-09-19:"后者更糟")。
+#   实测(规则网格 3~20 格 × 相位 0/1 + 随机撒点,两图各 **4036** 个布局,与**收窄前**的
+#   `floor_cells()` 逐布局对账):
+#     · 只收一档(两级方案)会**新增**「旧兜底有货 ∧ 新兜底筛空」的布局:factory1v1 **1** 个、
+#       demo **5** 个 —— 那些布局下会返回 (-1,-1);
+#     · 加上第 ③ 档后,**这个新增窗口是 0**:实测"第 ③ 档筛空而收窄前的兜底档还有货"的布局
+#       **一个都没有**(两图各 4036 个)→ 三档方案的 (-1,-1) 面 == **收窄前**的面,不新增。
+#   ★ 即第 ③ 档是"把 (-1,-1) 面按回原样"的那一档,不是保险起见加的。
+# ★ 两级都**不含孤立单格**(第 ③ 档是 `≥ 2`),故"兜底档不含孤立单格"对所有图成立。
+# ★ 自适应生效的图上第 ② 档 == 「连通区 ≥ 门槛(7)」;正常图上它 = 「连通区 ≥ 20」。
+#   两图都是**收窄**(相对 `floor_cells()`),任何图都不会因此变宽。
 # ★ 返回**共享缓存**(与 `spawn_candidates()` 同一条别名纪律):调用方要在返回值上原地改,
 #   先自己 `duplicate()`。
 static func respawn_fallback() -> Array:
-	if max_region_size() >= OPEN_AREA_MIN:
-		return floor_cells()          # 正常图:维持原样(见上面 ★★)
 	if not _fallback_cache.is_empty():
 		return _fallback_cache
 	var thr := area_threshold()
@@ -200,13 +209,27 @@ static func respawn_fallback() -> Array:
 	return _fallback_cache
 
 
-# 复活/复位选格的**池子序列**:先优选(`spawn_candidates()`)→ 再兜底(`respawn_fallback()`)。
+# 末档(第 ③):全部地板格里**排除孤立单格**(连通区 == 1)的那些。
+# 这是"绝不返回 (-1,-1)"的最后一道:它几乎和收窄前的 `floor_cells()` 一样宽
+# (factory1v1 843→688、demo 670→566),只把那批**绝对走不出去**的格拿掉。
+static func respawn_last_resort() -> Array:
+	if not _last_resort_cache.is_empty():
+		return _last_resort_cache
+	var sizes := region_sizes()
+	for c in floor_cells():
+		if int(sizes.get(c, 0)) >= 2:
+			_last_resort_cache.append(c)
+	return _last_resort_cache
+
+
+# 复活/复位选格的**池子序列**:优选(`spawn_candidates()`)→ 兜底 → 末档。
 # 两处调用方(`RoyaleHost._spawn_cell` / `TeamHost._respawn_cell_for`)都读**这一份** ——
-# 顺序本身就是判据的一部分("先优选、再兜底"),抄成两份迟早改一处漏一处(这就是本次修的那个病:
-# 两处各写了一遍 `[_spawn_candidates(), _floor_cells()]`,于是两处**一起**退化成全量)。
+# 顺序本身就是判据的一部分("先优选、再兜底、最后放宽"),抄成两份迟早改一处漏一处
+# (这就是本次修的那个病:两处各写了一遍 `[_spawn_candidates(), _floor_cells()]`,于是
+#  两处**一起**退化成全量)。★ 序列**按池子大小单调不减**,且**每一档都不含孤立单格**。
 # ★ 返回的是**新数组**,但**元素是共享缓存**(见上面两条的别名纪律):要原地改先 `duplicate()`。
 static func respawn_pools() -> Array:
-	return [spawn_candidates(), respawn_fallback()]
+	return [spawn_candidates(), respawn_fallback(), respawn_last_resort()]
 
 
 # 基座附近的候选格(环面距离 ≤ radius 格)。给 3v3 的"队内散开"用:
