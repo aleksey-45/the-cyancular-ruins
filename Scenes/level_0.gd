@@ -83,6 +83,11 @@ var _clock_label: Label = null
 var _clock_warn: Label = null
 var _clock_flash := 0.0
 var _clock_msg := ""
+# 时间线 HUD(顶端可视化):条 + 已体验事件标记 + 播放头;未知事件不显示
+var _tl_hud_panel: Panel = null
+var _tl_hud_marks: Control = null
+var _tl_hud_head: ColorRect = null
+var _tl_hud_known := {}          # 事件 id → 已画标记(回拨后保留——"已体验过")
 
 
 func _ready() -> void:
@@ -356,6 +361,7 @@ func _tick_world(delta: float) -> void:
 		_clock_flash = 2.5
 		_clock_msg = str(ev.get("label", ev["action"]))
 		Sfx.play("explosion")
+	_update_tl_hud()
 	if _clock_label != null:
 		_clock_label.text = "T-%02d" % int(maxf(_timeworld.w, 0.0))
 	if _clock_warn != null:
@@ -574,6 +580,45 @@ func _apply_tl_op(op: Dictionary) -> void:
 			pass
 
 
+## 时间线 HUD 刷新:只画**已体验过**的事件(钟已降到阈值之下;回拨后标记保留——记忆),
+## 永不触发的(阈值≥w0)与未到的都不显示;播放头黄线随钟左移。每帧调用,代价为常数级。
+func _update_tl_hud() -> void:
+	if _timeworld == null or _tl_hud_panel == null:
+		return
+	var max_w: float = maxf(_timeworld.w0, 0.001)
+	var bar_w: float = maxf(_tl_hud_panel.size.x, 1.0)
+	var w_now: float = _timeworld.w
+	for e in _timeworld.timeline.entries:
+		var id: int = int(e["id"])
+		var t: float = float(e["t"])
+		if w_now < t and t < max_w and not _tl_hud_known.has(id):
+			_tl_hud_known[id] = true
+			var m := ColorRect.new()
+			m.color = _tl_event_color(str((e["fwd"] as Dictionary).get("op", "")))
+			m.size = Vector2(7, 12)
+			m.position = Vector2(clampf(t / max_w, 0.0, 1.0) * bar_w - 3.0, 1.0)
+			m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_tl_hud_marks.add_child(m)
+	_tl_hud_head.position.x = clampf(w_now / max_w, 0.0, 1.0) * bar_w - 1.0
+
+
+func _tl_event_color(kind: String) -> Color:
+	match kind:
+		"collapse":
+			return Color("#e05a5a")
+		"open":
+			return Color("#7bc47f")
+		"explode":
+			return Color("#e0a35a")
+		"wipe":
+			return Color("#d95a8a")
+		"gen":
+			return Color("#56b8c8")
+		"spawn_enemy":
+			return Color("#54a0ff")
+	return Color(0.55, 0.58, 0.63)
+
+
 func _build_clock_hud() -> void:
 	var hud := CanvasLayer.new()
 	hud.layer = 140
@@ -600,8 +645,32 @@ func _build_clock_hud() -> void:
 		_clock_warn.add_theme_font_override("font", pf)
 	_clock_warn.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_clock_warn.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_clock_warn.offset_top = 118
+	_clock_warn.offset_top = 148
 	hud.add_child(_clock_warn)
+	# 时间线可视化条:播过的世界在右侧堆积,播放头(黄)随钟左移;未知事件不画
+	_tl_hud_panel = Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.05, 0.08, 0.12, 0.82)
+	sb.border_color = Color(0.2, 0.24, 0.29, 0.9)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	_tl_hud_panel.add_theme_stylebox_override("panel", sb)
+	_tl_hud_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_tl_hud_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_tl_hud_panel.offset_top = 112
+	_tl_hud_panel.custom_minimum_size = Vector2(520, 14)
+	_tl_hud_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(_tl_hud_panel)
+	_tl_hud_marks = Control.new()
+	_tl_hud_marks.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_tl_hud_marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tl_hud_panel.add_child(_tl_hud_marks)
+	_tl_hud_head = ColorRect.new()
+	_tl_hud_head.color = Color(0.95, 0.8, 0.3)
+	_tl_hud_head.size = Vector2(2, 12)
+	_tl_hud_head.position = Vector2(-1, 1)
+	_tl_hud_head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tl_hud_marks.add_child(_tl_hud_head)
 
 
 func _on_tile_destroyed(cell: Vector2i) -> void:
