@@ -7,6 +7,9 @@ extends SceneTree
 #   端口归还/注册表删除(见 _check_teardown_funnel);杀 worker 的实现另在 worker_launcher.gd。
 #  **批次 3(3v3,2026-09-18)**:argv 契约扩到 --team/--teams(见 _check_argv_contract 的正/反向),
 #   另在 _check_team_startup_contract 钉宽限分派/走光退出/不降级/满员才开(真链路归 B 册)。
+#  **B 册 Task 4(2026-09-19)**:_check 里把清扫判据扩到**三张注册表**,并单独钉住
+#   `_sweep_stale_rooms` 那条「全空则提前 return」的并列守卫 —— 它是**独立的第二条**退出路径,
+#   漏掉一张表时列表那行照旧在、断言全绿,而那张表的房永远不清扫(静默端口泄漏)。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -344,9 +347,30 @@ func _check(src: String) -> void:
 	# ★ 别改回「直接调 _kill_worker」:那样端口回收会绕过收口,正是本层补过三次的那个泄漏。
 	if not body.contains("teardown_room(") or not body.contains("TEARDOWN_KILL"):
 		_fail = "_sweep_stale_rooms 未走拆除收口(应调 _lobby.teardown_room(..., LobbyRooms.TEARDOWN_KILL, ...))"; return
-	# 两张注册表都要被拆:rooms(1v1) 与 royale_rooms 并存,漏一张 = 那张的端口永久泄漏
+	# 三张注册表都要被拆:rooms(1v1) / royale_rooms / team_rooms 并存,漏一张 = 那张的端口永久泄漏
 	if not body.contains("stale + stale_royale"):
-		_fail = "_sweep_stale_rooms 未把两张注册表的超龄房一并拆除"; return
+		_fail = "_sweep_stale_rooms 未把多张注册表的超龄房一并拆除"; return
+	# ★★ 批次 3(Task 4):3v3 那一支的**两条**判据 —— 只查「拆除列表」是不够的,因为
+	#   末尾那条「全空则提前 return」的并列判据是**独立的第二条**退出路径:
+	#     `if stale.is_empty() and stale_royale.is_empty(): return`
+	#   漏掉 stale_team 时,**只有 3v3 房超龄**的那次 tick 会当场 return、永远不清扫 →
+	#   端口永久泄漏;而拆除列表那行照旧在、房间收集块照旧在 ⇒ 只查列表的断言**全绿**。
+	#   这正是本层反复补的同一个失败模式(见 lobby_rooms.teardown_room 的注释)的第四种形态,
+	#   且症状是**静默**的。故这里逐个点名三张表、并单独钉住那条提前返回。
+	if not body.contains("stale_team"):
+		_fail = "_sweep_stale_rooms 完全没扫 3v3 房(team_rooms 的超龄房 → worker 端口永久泄漏)"; return
+	if not body.contains("stale.is_empty() and stale_royale.is_empty() and stale_team.is_empty()"):
+		_fail = "_sweep_stale_rooms 的「无超龄房则提前 return」守卫漏了某张注册表(只有那张表的房超龄时永不清扫 → 静默端口泄漏)"; return
+	if not body.contains("stale + stale_royale + stale_team"):
+		_fail = "_sweep_stale_rooms 的拆除列表未含全部三张注册表(未被扫到的那张 → 端口永久泄漏)"; return
+	# 汇总 print 也必须报第三条界(照实登记的估值界;漏了只是日志失真,但它是上面那些界的**唯一**读数)
+	var summary := ""
+	for line in code_lines:
+		if line.begins_with('print("[lobby] 清理'):
+			summary = line
+			break
+	if summary.is_empty() or not summary.contains("3v3"):
+		_fail = "_sweep_stale_rooms 的汇总 print 未报 3v3 那一档(界有变化而日志读不出来)"; return
 
 func _finish() -> void:
 	if not _fail.is_empty():
