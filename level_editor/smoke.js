@@ -79,6 +79,63 @@ ok(Core.texOf(n9) === 9 && Core.hueOf(n9) === 4 && Core.brightOf(n9) === 4 &&
    Core.satOf(n9) === 4 && Core.alphaOf(n9) === 7, 'neutralDesc: (4,4,4,7) 且保留纹理');
 ok(Core.isAir(0) && !Core.isAir(n9), 'isAir: 只对 0 为真');
 
+// ---- 图层常量与地图对象 ----
+ok(Core.LAYER_COUNT === 4, 'LAYER_COUNT === 4');
+eq(Core.LAYER_NAMES, ['前景', '场景', '后景', '背景'], 'LAYER_NAMES 顺序:前/场/后/背景');
+eq(Core.LAYER_KINDS, ['tex', 'tex', 'tex', 'color'], 'LAYER_KINDS:背景层是颜色层');
+ok(Core.LAYER_FRONT === 0 && Core.LAYER_SCENE === 1 && Core.LAYER_BACK === 2 && Core.LAYER_BG === 3,
+   '图层索引常量');
+
+var m = Core.createMap('demo', 125, 75);
+eq(m.subCols, 500, 'createMap: subCols = 格数×4');
+eq(m.subRows, 300, 'createMap: subRows = 格数×4');
+eq(m.layers.length, 4, 'createMap: 四个图层');
+eq(m.layers.map(function (L) { return L.kind; }), ['tex', 'tex', 'tex', 'color'], 'createMap: 图层种类');
+ok(m.layers[0].desc instanceof Uint32Array, 'createMap: 前景层是 Uint32Array');
+eq(m.layers[0].desc.length, 500 * 300, 'createMap: 前景层长度 = subCols×subRows');
+ok(m.layers[3].rgba instanceof Uint32Array, 'createMap: 背景层是 rgba 数组');
+eq(m.layers[3].rgba.length, 500 * 300, 'createMap: 背景层长度');
+eq(m.players, [], 'createMap: players 初始为空数组');
+eq(m.enemies, [], 'createMap: enemies 初始为空数组');
+eq(m.comments, [], 'createMap: comments 初始为空数组');
+eq(Core.cellsWOf(m), 125, 'cellsWOf');
+eq(Core.cellsHOf(m), 75, 'cellsHOf');
+
+eq(Core.subIndex(500, 3, 2), 2 * 500 + 3, 'subIndex: 行主序 y*subCols+x');
+eq(Core.subIndex(500, 0, 0), 0, 'subIndex: 原点');
+
+throws(function () { Core.createMap('bad', 1.5, 10); }, 'createMap: 非整数格数报错');
+throws(function () { Core.createMap('bad', 0, 10); }, 'createMap: 零宽报错');
+
+// ---- 从旧编辑器沿用、与格式无关的纯函数 ----
+eq(Core.sanitizeName('My Tower #1'), 'My_Tower_1', 'sanitizeName: 非法字符被清理');
+eq(Core.sanitizeName('   spaced   name  '), 'spaced_name', 'sanitizeName: 空格合并为下划线');
+eq(Core.sanitizeName('---'), 'structure', 'sanitizeName: 全非法回落默认名');
+eq(Core.sanitizeName(''), 'structure', 'sanitizeName: 空名回落');
+eq(Core.sanitizeName('塔楼 #1'), '塔楼_1', 'sanitizeName: 保留中文');
+
+eq(Core.brushOffsets(1), { lo: 0, hi: 0 }, 'brushOffsets: 1 → 1×1');
+eq(Core.brushOffsets(2), { lo: 0, hi: 1 }, 'brushOffsets: 2 → 2×2(偏下右)');
+eq(Core.brushOffsets(3), { lo: 1, hi: 1 }, 'brushOffsets: 3 → 3×3');
+eq(Core.brushOffsets(4), { lo: 1, hi: 2 }, 'brushOffsets: 4 → 4×4(偏下右)');
+ok((function () {
+  for (var s = 1; s <= 15; s++) {
+    var o = Core.brushOffsets(s);
+    if (!o || o.lo + o.hi + 1 !== s || o.lo < 0 || o.hi < o.lo) return false;
+  }
+  return true;
+})(), 'brushOffsets: 1..15 全部满足 lo+1+hi===尺寸 且 lo≤hi');
+
+eq(Core.lineCells(0, 0, 4, 0), [[0,0],[1,0],[2,0],[3,0],[4,0]], 'lineCells: 水平线');
+eq(Core.lineCells(2, 2, 2, 5), [[2,2],[2,3],[2,4],[2,5]], 'lineCells: 垂直线');
+eq(Core.lineCells(0, 0, 2, 2), [[0,0],[1,1],[2,2]], 'lineCells: 对角线');
+eq(Core.lineCells(4, 0, 0, 0), [[4,0],[3,0],[2,0],[1,0],[0,0]], 'lineCells: 反向水平');
+eq(Core.lineCells(1, 1, 1, 1), [[1,1]], 'lineCells: 单点');
+eq(Core.lineCells(0, 0, 4, 2), [[0,0],[1,0],[2,1],[3,1],[4,2]], 'lineCells: 缓坡 Bresenham 锚定');
+
+eq(Core.normRegion(3, 2, 1, 5), { x: 1, y: 2, w: 3, h: 4 }, 'normRegion: 反向角归一化');
+eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格');
+
 // ==== 断言区结束 ====
 
 console.log('');

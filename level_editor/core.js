@@ -11,6 +11,81 @@ globalThis.Core = (function () {
   const SUB_PX = 16;               // 子格边长(世界像素)
   const CELL_PX = 64;              // 格边长(世界像素)
 
+  // ── 图层(规格 §2.1)──
+  // 顺序从外到内:前景 / 场景 / 后景 / 背景。只有「场景」参与碰撞。
+  const LAYER_COUNT = 4;
+  const LAYER_FRONT = 0, LAYER_SCENE = 1, LAYER_BACK = 2, LAYER_BG = 3;
+  const LAYER_NAMES = ['前景', '场景', '后景', '背景'];
+  const LAYER_KINDS = ['tex', 'tex', 'tex', 'color'];
+
+  // ── 地图对象 ──
+  // 全部用 TypedArray:4 层 × 150k 子格若用嵌套 JS 数组会到几十 MB 且 GC 压力巨大。
+  // 下标一律 = y * subCols + x(行主序),与文件里的排布一致。
+  function createMap(name, cellsW, cellsH) {
+    if (!Number.isInteger(cellsW) || !Number.isInteger(cellsH) || cellsW <= 0 || cellsH <= 0) {
+      throw new Error('createMap: 格数必须是正整数,收到 ' + cellsW + '×' + cellsH);
+    }
+    var subCols = cellsW * SUB_PER_CELL;
+    var subRows = cellsH * SUB_PER_CELL;
+    var n = subCols * subRows;
+    return {
+      name: String(name == null ? '' : name),
+      subCols: subCols,
+      subRows: subRows,
+      layers: [
+        { kind: 'tex', desc: new Uint32Array(n) },
+        { kind: 'tex', desc: new Uint32Array(n) },
+        { kind: 'tex', desc: new Uint32Array(n) },
+        { kind: 'color', rgba: new Uint32Array(n) },
+      ],
+      players: [],
+      enemies: [],
+      comments: [],
+    };
+  }
+  function cellsWOf(map) { return map.subCols / SUB_PER_CELL; }
+  function cellsHOf(map) { return map.subRows / SUB_PER_CELL; }
+  function subIndex(subCols, X, Y) { return Y * subCols + X; }
+
+  // ── 与格式无关的纯工具(自旧编辑器沿用)──
+  function sanitizeName(name) {
+    var n = String(name == null ? '' : name).trim();
+    n = n.replace(/\s+/g, '_');
+    n = n.replace(/[^A-Za-z0-9_一-龥-]/g, '');
+    n = n.replace(/^-+/, '');
+    if (n.length > 32) n = n.slice(0, 32);
+    return n === '' ? 'structure' : n;
+  }
+
+  // 画笔块偏移:以指针格为中心的上下/左右扩展量,保证 lo+1+hi===size。
+  // 奇数尺寸对称;偶数尺寸偏下右(否则偶数会缩水一格)。
+  function brushOffsets(size) {
+    return { lo: Math.floor((size - 1) / 2), hi: Math.ceil((size - 1) / 2) };
+  }
+
+  // Bresenham 直线路径格坐标(含两端)。
+  function lineCells(x0, y0, x1, y1) {
+    var cells = [];
+    var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    var sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    var err = dx - dy;
+    var x = x0, y = y0;
+    for (;;) {
+      cells.push([x, y]);
+      if (x === x1 && y === y1) break;
+      var e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x += sx; }
+      if (e2 < dx) { err += dx; y += sy; }
+    }
+    return cells;
+  }
+
+  // 矩形区域归一化:任意两角点 → {x, y, w, h}(含两端)。
+  function normRegion(x0, y0, x1, y1) {
+    return { x: Math.min(x0, x1), y: Math.min(y0, y1),
+             w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
+  }
+
   // ── descriptor 位域(规格 §2.3)──
   //   bit  0- 2  hue         0-7
   //   bit  3- 5  brightness  0-7
@@ -51,6 +126,13 @@ globalThis.Core = (function () {
     CELL_PX: CELL_PX,
     DESC_AIR: DESC_AIR,
     TEXTURE_MAX: TEXTURE_MAX,
+    LAYER_COUNT: LAYER_COUNT,
+    LAYER_FRONT: LAYER_FRONT, LAYER_SCENE: LAYER_SCENE,
+    LAYER_BACK: LAYER_BACK, LAYER_BG: LAYER_BG,
+    LAYER_NAMES: LAYER_NAMES, LAYER_KINDS: LAYER_KINDS,
+    createMap: createMap, cellsWOf: cellsWOf, cellsHOf: cellsHOf, subIndex: subIndex,
+    sanitizeName: sanitizeName, brushOffsets: brushOffsets,
+    lineCells: lineCells, normRegion: normRegion,
     HUE_NEUTRAL: HUE_NEUTRAL, BRI_NEUTRAL: BRI_NEUTRAL,
     SAT_NEUTRAL: SAT_NEUTRAL, ALPHA_NEUTRAL: ALPHA_NEUTRAL,
     packDesc: packDesc,
