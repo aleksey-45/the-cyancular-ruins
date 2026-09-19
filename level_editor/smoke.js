@@ -675,6 +675,53 @@ await (async function () {
   eq(back.layers[1].desc[5], 0, '任意字节: 真空气格仍是 0');
 })();
 
+// ---- v3 文本解析 ----
+(function () {
+  ok(Core.isV3Text('# cyrm-v3\n0000001F0031\n'), 'isV3Text: 有标记为真');
+  ok(!Core.isV3Text('# 普通地图\n11\n11\n'), 'isV3Text: 无标记为假');
+
+  // v3:每格 4 字符 = 3 位纹理 + 1 位形状 hex
+  var v3 = '# cyrm-v3\n# demo\n# player 12 34\n# enemy jump_bird 100 50\n0000001F0031\n';
+  var p = Core.parseV3Text(v3);
+  eq(p.cellsW, 3, 'parseV3Text: 宽 3 格');
+  eq(p.cellsH, 1, 'parseV3Text: 高 1 格');
+  eq(Array.prototype.slice.call(p.packed), [0, 31, 49], 'parseV3Text: packed 0/31(纹理1 全砖)/49(纹理3 左上 1/4)');
+  eq(p.players, [{ x: 12, y: 34 }], 'parseV3Text: players');
+  eq(p.enemies, [{ type: 'jump_bird', x: 100, y: 50 }], 'parseV3Text: enemies');
+  eq(p.comments, ['demo'], 'parseV3Text: 注释保留,标记行不算注释');
+
+  // 旧字母格式:单字符 0-9/A,2×2 收缩成 1 格,spawn 坐标 ÷2
+  var old = Core.parseV3Text('# old\n# player 112 95\n11\n11\n');
+  eq(old.cellsW, 1, '旧格式: 2×2 → 1 格宽');
+  eq(old.cellsH, 1, '旧格式: 2×2 → 1 格高');
+  eq(Array.prototype.slice.call(old.packed), [31], '旧格式: 2×2 全实心 → 全砖 31');
+  eq(old.players, [{ x: 56, y: 47 }], '旧格式: spawn 坐标 ÷2');
+
+  // 旧格式只认 0-9 与 A —— 游戏侧 _tile_char_to_value 就是这么定的,
+  // 编辑器多认 b-k 会让"导得进、跑起来一片变空气"(审计 A11)。
+  throws(function () { Core.parseV3Text('# old\n1b\n11\n'); }, '旧格式: 小写 b 报错(游戏侧不认)');
+  throws(function () { Core.parseV3Text('# old\n1B\n11\n'); }, '旧格式: 大写 B 报错(游戏侧不认)');
+
+  // 非法输入必须抛错,不能静默截断成空气(审计 A12:parseInt("0A1") === 0)
+  throws(function () { Core.parseV3Text('# cyrm-v3\n0A10\n'); }, 'v3: 纹理位含字母报错');
+  throws(function () { Core.parseV3Text('# cyrm-v3\n000X\n'); }, 'v3: 非法形状字符报错');
+  throws(function () { Core.parseV3Text('# cyrm-v3\n00000000\n0000\n'); }, 'v3: 行宽不一致报错');
+  throws(function () { Core.parseV3Text('# cyrm-v3\n000\n'); }, 'v3: 字符数非 4 倍数报错');
+  throws(function () { Core.parseV3Text('# cyrm-v3\n# 只有注释\n'); }, 'v3: 没有网格行报错');
+  throws(function () { Core.parseV3Text('# old\n'); }, '旧格式: 没有网格行报错');
+
+  // CRLF 与空行
+  var crlf = Core.parseV3Text('# cyrm-v3\r\n\r\n0000001F0031\r\n');
+  eq(Array.prototype.slice.call(crlf.packed), [0, 31, 49], 'parseV3Text: CRLF 与空行');
+
+  // 小写形状字符仍要能读(v3 写法上允许,游戏侧 shape_char_to_value 也认)
+  // ★ 输入从 brief 的 "000f" 改成 "001f"(报告里已点名):brief 里纹理位 000 = 空气,
+  //   而 _v3Pack 对 texture === 0 无条件返回 0(与游戏侧 MapFormat.pack 逐字一致),
+  //   故 "000f" 恒为 0 —— 那个输入根本走不到形状字符,断言等于空转(实测 got [0])。
+  //   换成 001 后,31 = 1*16 + 15 才真的证明 'f' 被读成了 15 而不是被当成 0/报错。
+  eq(Array.prototype.slice.call(Core.parseV3Text('# cyrm-v3\n001f\n').packed), [31], 'v3: 小写形状字符 f 可读');
+})();
+
 // ==== 断言区结束 ====
 
 console.log('');

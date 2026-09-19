@@ -428,6 +428,122 @@ globalThis.Core = (function () {
       });
   }
 
+  // ── v3 / 旧字母格式解析(只读迁移用,规格 §3.6)──
+  // ★ 这里的 packed = texture*16 + shape 是 **v3 的编码**,与 v4 的 descriptor 毫无关系。
+  //   故一律走 _v3Pack / _v3TexOf / _v3ShapeOf,绝不与 packDesc / texOf 混用。
+  const V3_MARKER = '# cyrm-v3';
+  const SHAPE_HEX = '0123456789ABCDEF';
+  // 旧字母格式只认 0-9 与 A(大小写均可),与游戏侧 MapFormat._tile_char_to_value 一致。
+  const LEGACY_CHAR = { '0':0,'1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'A':10 };
+
+  function _v3Pack(texture, shape) {
+    if (shape === 0 || texture === 0) return 0;
+    return (texture * 16 + shape) & 0xFFFF;
+  }
+  function _v3TexOf(v)   { return (v / 16) | 0; }
+  function _v3ShapeOf(v) { return v % 16; }
+
+  function isV3Text(text) {
+    var lines = String(text == null ? '' : text).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim().indexOf(V3_MARKER) === 0) return true;
+    }
+    return false;
+  }
+
+  // 旧 2×2 字母网格 → 1 格 packed(纹理取组内首个非零,形状 = 2×2 掩码)。
+  // 逻辑与游戏侧 MapFormat.convert_old_grid 逐字对应。
+  function _convertLegacy2x2(rows) {
+    var h = rows.length, w = rows[0].length;
+    var out = [];
+    for (var ny = 0; ny < Math.floor(h / 2); ny++) {
+      var row = [];
+      for (var nx = 0; nx < Math.floor(w / 2); nx++) {
+        var shape = 0, tex = 0;
+        for (var sy = 0; sy < 2; sy++) {
+          for (var sx = 0; sx < 2; sx++) {
+            var ov = rows[ny * 2 + sy][nx * 2 + sx];
+            if (ov !== 0) {
+              shape |= 1 << (sy * 2 + sx);
+              if (tex === 0) tex = ov;
+            }
+          }
+        }
+        row.push(_v3Pack(tex, shape));
+      }
+      out.push(row);
+    }
+    return out;
+  }
+
+  function parseV3Text(text) {
+    var lines = String(text == null ? '' : text).split(/\r?\n/);
+    var v3 = false;
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim().indexOf(V3_MARKER) === 0) { v3 = true; break; }
+    }
+    var rows = [], width = -1;
+    var metaText = '';
+    for (i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line === '') continue;
+      if (line.charAt(0) === '#') {
+        // ★ 版本标记行不算注释。漏了这一句 `# cyrm-v3` 会被当成一条普通注释
+        //   塞进 comments,于是"导入→导出"会往用户的 meta 里塞进一行垃圾。
+        if (/^#\s*cyrm-v\d+\s*$/.test(line)) continue;
+        metaText += line + '\n';
+        continue;
+      }
+      var row = [];
+      if (v3) {
+        if (line.length % 4 !== 0) {
+          throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行长度 ' + line.length + ' 不是 4 的倍数');
+        }
+        for (var j = 0; j < line.length; j += 4) {
+          var tstr = line.substr(j, 3);
+          if (!/^[0-9]{3}$/.test(tstr)) {
+            throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行纹理位 "' + tstr + '" 不是 3 位数字');
+          }
+          var ch = line.charAt(j + 3).toUpperCase();
+          var sv = SHAPE_HEX.indexOf(ch);
+          if (sv < 0) throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行非法形状字符 "' + line.charAt(j + 3) + '"');
+          row.push(_v3Pack(parseInt(tstr, 10), sv));
+        }
+      } else {
+        for (j = 0; j < line.length; j++) {
+          var lch = line.charAt(j).toUpperCase();
+          var lv = LEGACY_CHAR[lch];
+          if (lv === undefined) {
+            throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行非法字符 "' + line.charAt(j) + '"(旧格式只允许 0-9/A)');
+          }
+          row.push(lv);
+        }
+      }
+      if (width < 0) width = row.length;
+      else if (row.length !== width) {
+        throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行宽度 ' + row.length + ' 与首行 ' + width + ' 不一致');
+      }
+      rows.push(row);
+    }
+    if (rows.length === 0) throw new Error('parseV3Text: 地图里没有有效网格行');
+
+    var meta = parseMeta(metaText);
+    var players = meta.players, enemies = meta.enemies;
+    if (!v3) {
+      rows = _convertLegacy2x2(rows);
+      // 旧格式 2×2 → 1,spawn 坐标同步 ÷2
+      players = players.map(function (p) { return { x: Math.floor(p.x / 2), y: Math.floor(p.y / 2) }; });
+      enemies = enemies.map(function (e) { return { type: e.type, x: Math.floor(e.x / 2), y: Math.floor(e.y / 2) }; });
+    }
+    var cellsW = rows[0].length, cellsH = rows.length;
+    var packed = new Uint16Array(cellsW * cellsH);
+    for (var y = 0; y < cellsH; y++) {
+      for (var x = 0; x < cellsW; x++) packed[y * cellsW + x] = rows[y][x];
+    }
+    return { cellsW: cellsW, cellsH: cellsH, packed: packed,
+             players: players, enemies: enemies, comments: meta.comments };
+  }
+
   // ── 与格式无关的纯工具(自旧编辑器沿用)──
   function sanitizeName(name) {
     var n = String(name == null ? '' : name).trim();
@@ -527,5 +643,7 @@ globalThis.Core = (function () {
     FORMAT_VERSION: FORMAT_VERSION, HEADER_SIZE: HEADER_SIZE,
     deflateBytes: deflateBytes, inflateBytes: inflateBytes,
     encodeMap: encodeMap, decodeMap: decodeMap, layerFlags: layerFlags,
+    isV3Text: isV3Text, parseV3Text: parseV3Text,
+    _v3Pack: _v3Pack, _v3TexOf: _v3TexOf, _v3ShapeOf: _v3ShapeOf,
   };
 })();
