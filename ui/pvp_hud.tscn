@@ -57,7 +57,7 @@ horizontal_alignment = 2
 ;   以 CLAUDE.md 那一句为准(那里给了核对用的 grep 命令;本注释**故意不把那个字面量写出来**——
 ;   写了就会把它自己算成一处命中,把那条命令污染成八条):
 ;   ui/hud.gd / ui/royale_hud.gd / ui/weapon_slots.gd / ui/world_label.gd 的常量,
-;   加上本文件与 ui/pvp_hud.tscn 的 Plate(两份逐字相同的字面量)。
+;   加上本文件与 ui/team_hud.tscn 的 Plate(两份逐字相同的字面量)。
 ;   本 Plate 由 ScoreWrap(记分条)与下面的 PingWrap(延迟条)**共用**(改一个要改两个节点)。
 ;   ★ 大乱斗排行榜(royale_hud 的 _board_bg)是例外,单独是 0.25。
 [node name="ScoreWrap" type="PanelContainer" parent="."]
