@@ -56,6 +56,10 @@ const RESPAWN_CLEARANCE := 8
 # ⑤ 里搜"首档空 ∧ 兜底档有货"的布局次数(固定种子)。真找到过 = 负例可端到端驱动 → 那条断言红。
 const NEG_SEARCH_TRIALS := 800
 
+# 一局最多几个人(大乱斗 `--roles 1..8`;3v3 是 6)。只用于 ⑦ 那条**补足分支可达性**守卫:
+# 补足分支可达 ⟺ 干净池 < 人数,故用上界来判断"今天一定不可达"。
+const MAX_PLAYERS := 8
+
 var _fail := 0
 var _checks := 0
 
@@ -111,6 +115,10 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 	MazeGenerator.current_grid = grid
 	TileDefs.load_defs()
 	SpawnPicker.reset_cache()     # ★ 每进程缓存:换图不重置会静默沿用上一张图的池子
+	# ★ 播种:`_pick` / `_walk` 内部 `shuffle()` 读**全局 RNG** —— 不播的话输出里那些
+	#   "选到 (61, 90)"的读数**跨跑不可复现**(断言本身不看具体格,但读数就失去了证据价值)。
+	#   搜索段自己会 `seed(...)`,整跑仍是确定性的。
+	seed(20260919)
 
 	# ── [仪器] A `TileDefs` 真加载了 ──
 	# 纹理 11 = 梯子(type=passage)。未加载 defs 时缺省是 wall ⇒ 梯子被当墙 ⇒ 池子与生产
@@ -267,6 +275,19 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 		_check(weak.is_empty(),
 				"★ 前两档都不含「连通区 < 门槛 %d」的格(问题:%s)" % [thr, str(weak)])
 
+		# ⑦ 补足分支的**可达性守卫**(评审 Minor 2:姐妹分支 = `RoyaleHost.plan_spawns` 的
+		# `if picked.size() < n` → `_floor_cells()`)。★ 它**仍是全量地板格**(同病),但今天不可达:
+		# `spread_cells` 恒返回 `min(n, 池大小)`(本探针抽 n=2/6/8 × 三档验过),故补足分支
+		# 可达 ⟺ **干净池 < 人数**。实测池 122(factory1v1)/ 59(demo),人数上限 8 ⇒ 不可达。
+		# ★ 为什么**不**顺手把它也收窄:那个分支恰在"池子极小时"才可达,收窄会让补足**补不满** ⇒
+		#   `out[role] = (-1,-1)` ⇒ 摆到地图回卷角落 —— 按用户已裁定的偏好((-1,-1) 更糟),
+		#   这个分支**保持原样才是对的**。故这里钉"不可达",而不是改它:哪天这条红,说明池缩到了
+		#   人数以下、那个取舍真的来了,该由人来裁(而不是被静默地改掉)。
+		_check(pools[0].size() >= MAX_PLAYERS,
+				("★ 补足分支仍**不可达**:干净池 %d ≥ 人数上限 %d ⇒ `plan_spawns` 里那条 "
+				+ "`_floor_cells()` 补足走不到(它一旦可达,孤立单格会被放回开局散点;而收窄它会把 "
+				+ "(-1,-1) 放进来 —— 那个取舍要人来裁)") % [(pools[0] as Array).size(), MAX_PLAYERS])
+
 		# ── ⑤ 各条路各走一遍(正/负)—— 端到端跑调用方那段循环 ──
 		# ★ 池子序列取自**生产**(`respawn_pools()`);`_walk` 重放的是两个宿主共有的那段
 		#   **平凡的距离筛选 + 逐档放宽**(royale 判所有存活玩家、3v3 判存活敌人)。
@@ -307,9 +328,13 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 			_check(int(walk["tier"]) >= 1,
 					"★ 负例 · 首档筛空后**落到了后面的档**(第 %d 档),不是返回 (-1,-1)"
 					% (int(walk["tier"]) + 1))
+			# ★★ 这一条**不是区分度断言**(评审 2026-09-19 指出,别把它算进覆盖):它由构造保证 ——
+			#   序列里每一档都已被 ④ 钉成"不含孤立单格"(且上面刚断言过逐档放宽),故"选出来的格
+			#   不含孤立单格"必然成立。它的价值只是**把端到端那条路的结果落到具体读数上**
+			#   (`walk` 真的返回了某一档的格,且那条链是通的)—— 报覆盖时**不计入**。
 			var wc: Vector2i = walk["cell"]
 			_check(int(own.get(wc, 0)) != 1,
-					"★ 负例 · 那一档带出来的格**不含孤立单格**(选到 %s,连通区 %d)"
+					"[读数·构造保证] 负例落点 %s(连通区 %d)—— 不含孤立单格由 ④ 已保证,这条只作读数"
 					% [str(wc), int(own.get(wc, 0))])
 
 	if not want_adaptive:
@@ -453,10 +478,31 @@ func _count_usable(pool: Array, enemies: Array, cols: int, rows: int, clear: int
 func _check_wiring() -> void:
 	print("")
 	print("═══ ⑥ 宿主接线(源码级)═══")
+	# ★★ 三条 case 里那条 `_respawn_pools` 是**评审抓到的差一跳**:royale 的池来源是
+	#   `_spawn_cell` → `_respawn_pools()`(转发)。只钉 `_spawn_cell` 的话,把
+	#   `_respawn_pools` 那一行改回 `SpawnPicker.floor_cells()` ⇒ **病原样复活、61 条断言全绿**
+	#   (⑥ 存在的全部理由就是堵这个,却在它自己点名的位置上留了一跳;team 侧是直接命中、没这跳)。
+	#   `ScanUtil.func_body(code, "_respawn_pools")` 取的是 `static func _respawn_pools(` 那个体,
+	#   不会被 `func _spawn_cell(` 误命中。
 	var cases := [
 		{"file": "res://server/royale_host.gd", "fn": "_spawn_cell", "want": "_respawn_pools()"},
 		{"file": "res://server/team_host.gd", "fn": "_respawn_cell_for", "want": "respawn_pools()"},
 	]
+	# ★ `_respawn_pools` 那一条**不能用 `ScanUtil.func_body`**:它按 `"\nfunc "` 找边界,
+	#   而**不认 `static func`** ⇒ 一个 `static func` 的"函数体"会把**后面所有 static func**
+	#   一起吞进来(`_respawn_pools` 之后就是 `plan_spawns`,那里面有一处**合法**的 `_floor_cells()`
+	#   ⇒ 反向断言会假红)。故这一条走**定长窗口**(该转发函数只有两行,窗口给足 300 字符)。
+	#   (tool 的这条限制**没有改** —— 改它会连带收紧别的探针的读数,不在本次范围。)
+	var rh_src := ScanUtil.code_only(ScanUtil.read("res://server/royale_host.gd"))
+	var fi := rh_src.find("static func _respawn_pools(")
+	var fwin := rh_src.substr(fi, 300) if fi >= 0 else ""
+	_check(not fwin.is_empty(),
+			"[仪器] 取到 `static func _respawn_pools(`(找不到 = 下面两条恒真)")
+	_check(fwin.contains("SpawnPicker.respawn_pools()"),
+			"★ royale 的**转发函数** `_respawn_pools` 自己就是走 `SpawnPicker.respawn_pools()`"
+			+ "(只钉 `_spawn_cell` 会漏:把这一行改回拼 `SpawnPicker.floor_cells()` ⇒ 病原样复活)")
+	_check(not fwin.contains("floor_cells()"),
+			"★ 该转发函数体里**不得**出现 `floor_cells()`(写回去 = 兜底又退化成全量)")
 	for cs in cases:
 		var src := ScanUtil.read(String(cs["file"]))
 		if src.is_empty():
@@ -473,12 +519,25 @@ func _check_wiring() -> void:
 		_check(not dirty,
 				"★ %s 的 `%s` **不再**自己拼兜底档(把 `floor_cells()` 写回这个函数体 = 池子又退化成全量)"
 				% [cs["file"], cs["fn"]])
-	# 探针自己的 `RESPAWN_CLEARANCE` 必须与两个宿主同值(不同值 → ⑤ 的正/负例验的是另一条路)
-	var both := "%s\n%s" % [ScanUtil.read("res://server/royale_host.gd"),
-			ScanUtil.read("res://server/team_host.gd")]
-	_check(both.contains("const RESPAWN_CLEARANCE := %d" % RESPAWN_CLEARANCE),
-			"★ 两个宿主的 RESPAWN_CLEARANCE 与探针同值(= %d;漂了的话 ⑤ 的正/负例就不是生产那条路)"
-			% RESPAWN_CLEARANCE)
+	# ⑦ 的守卫**不能悬空**:它断言的是"`plan_spawns` 的补足分支走不到",而那条分支就在
+	# `RoyaleHost.plan_spawns` 里 —— 分支被删了的话那条守卫就恒真了(恒绿形状)。故钉它在位。
+	var ps_body := ScanUtil.func_body(
+			ScanUtil.code_only(ScanUtil.read("res://server/royale_host.gd")), "plan_spawns")
+	_check(not ps_body.is_empty(),
+			"[仪器] 取到 `RoyaleHost.plan_spawns` 函数体(%d 字符;空 = 下面那条恒真)" % ps_body.length())
+	_check(ps_body.contains("picked.size() < n") and ps_body.contains("_floor_cells()"),
+			"★ ⑦ 守的那条**补足分支**确实还在 `plan_spawns` 里(它被删 = ⑦ 那条成了空断言;"
+			+ "它仍在 = ⑦ 的'不可达'读数是关于真代码的)")
+
+	# 探针自己的 `RESPAWN_CLEARANCE` 必须与**每个**宿主同值(不同值 → ⑤ 的正/负例验的是另一条路)。
+	# ★ 逐文件各查一次:上一版扫的是**两文件拼接串**(`both.contains(...)`),于是**任一**文件有它
+	#   就绿,而措辞写的是"两个宿主与探针同值" —— 断言名与覆盖面不符(评审 重要 2)。
+	for f in ["res://server/royale_host.gd", "res://server/team_host.gd"]:
+		var fsrc := ScanUtil.read(f)
+		_check(not fsrc.is_empty(), "[仪器] 读得到 %s(读不到 = 下面那条恒真)" % f)
+		_check(fsrc.contains("const RESPAWN_CLEARANCE := %d" % RESPAWN_CLEARANCE),
+				"★ %s 的 RESPAWN_CLEARANCE 与探针同值(= %d;漂了的话 ⑤ 的正/负例就不是生产那条路)"
+				% [f, RESPAWN_CLEARANCE])
 
 
 # 独立的 4 邻接**环面** BFS(与生产同语义,但独立写一遍 —— 探针的判据不取自被测实现)。

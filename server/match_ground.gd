@@ -294,8 +294,12 @@ func _drop_all_but_one(p: Node2D, role: int) -> void:
 # ── 初始分布 / 换局重置 ──
 
 # 开阔地板格(1v1 的判据)。★ 联机侧用的是 `SpawnPicker.spawn_candidates()`
-# (2026-09-18 从 RoyaleHost 抽出,那边还要求同层连通区 ≥ OPEN_AREA_MIN,淘汰密封死角)。判据本体仍是
+# (2026-09-18 从 RoyaleHost 抽出;它要求同层连通区 ≥ **`SpawnPicker.area_threshold()`** ——
+# 2026-09-19 起该门槛是**自适应**的:正常图 = `OPEN_AREA_MIN`(20),本图最大连通区 < 20 时按
+# `ADAPTIVE_RATIO` 缩放,见 `core/sim/spawn_picker.gd`)。判据本体仍是
 # `MazeGenerator.is_floor_cell_with_headroom`,别在这儿抄第二份。
+# ★ 本函数**没走** `SpawnPicker`(自己扫全量地板格)⇒ **1v1 的地面武器分布不受那一波改动影响**;
+#   这里只是把注释的指向订正到现行判据(2026-09-19 评审 Minor)。
 func _ground_spawn_cells() -> Array:
 	var out: Array = []
 	if grid.is_empty():
