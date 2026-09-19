@@ -103,7 +103,9 @@ var _teams: Dictionary = {}
 var _snap_world: Dictionary = {}
 var _snap_gaps: Array[float] = []
 var _last_snap_us := 0
-var _snap_max_gap := 0.0
+var _snap_max_gap := 0.0          # 全会话最大快照间隔(含进对局建世界那段 —— 见 _on_snap_world)
+var _snap_max_phase := -1         # 它发生在哪个相位
+var _obs_max_gap := 0.0           # ★ **观察窗内**的最大间隔(相⑤ 的判据用这个)
 var _round_state := -1
 var _round := 0
 var _scores: Dictionary = {}
@@ -208,6 +210,15 @@ func _attach_lobby() -> void:
 
 func _physics_process(delta: float) -> void:
 	if _quitting:
+		return
+	# ★ 对局场景可能已经**退役**(MATCH_OVER 后客户端 6s 自动回主菜单 → `safe_change_scene`
+	#   把整具世界拆掉),而本观察者挂在 root 上、**照样在跑** —— 不判这一档就会每帧对已释放
+	#   实例取字段:`Invalid access to property or key 'global_position' on a base object of type
+	#   'previously freed'`(实测 run14)。退役即收工:把手上读数落盘、退出。
+	if _local != null and not is_instance_valid(_local):
+		if not _done:
+			_fail("对局世界已退役(客户端已离开对局)——观察者停止采样")
+			_finish()
 		return
 	_t += delta
 	_phase_t += delta
@@ -671,9 +682,12 @@ func _tick_meet_shooter(delta: float) -> void:
 			if _sub_t >= VOLLEY:
 				_bot.attack = false
 				_hp_after_bullet = _hp_of(_victim_role)
-				_bullet_rec = "BULLET shots=%d dist=%.0f los=%d before=%d after=%d hit=%d" % [
+				# ★ 记下**手上的武器类型**(1..6):6=激光枪是**即时光束、不产生子弹** ——
+				#   此时 `shots=0` 是**正确行为**而不是"枪没响",而"乙 hp 不变"也就成了空断言。
+				#   裁判据此把那一半判成**未覆盖**(而不是留一条空的绿,也不是假红)。
+				_bullet_rec = "BULLET shots=%d dist=%.0f los=%d before=%d after=%d hit=%d wtype=%d" % [
 						_shots, _dist_at_fire, 1 if _los_to(vp) else 0, _hp_before, _hp_after_bullet,
-						1 if _hp_after_bullet != _hp_before else 0]
+						1 if _hp_after_bullet != _hp_before else 0, _weapon_type()]
 				_rec(_bullet_rec)
 				_log("相③ 子弹:" + _bullet_rec)
 				_meet_sub = MEET_GL_SWITCH
@@ -812,6 +826,11 @@ func _tick_backoff(delta: float) -> void:
 	if total != _last_score_total:
 		_last_score_total = total
 		_since_kill = 0.0
+	# ★★ **第 2 局不启动回退模式**:相⑤ 的观察窗要求"对局仍在 PLAYING",而回退模式的 K 会
+	#   把第 2 局也推到收局 → 两局胜 = MATCH_OVER → 六端 6s 后自动退场,观察窗被截断
+	#   (实测 run14)。第 1 局的回退只为了"让 9 杀能到达、从而验到回合机与换边"。
+	if _round >= 2:
+		return
 	if _phase_t > 75.0 and _since_kill > 12.0:
 		_backoff = true
 		_backoff_t = 0.5
@@ -970,14 +989,18 @@ func _tick_observe() -> void:
 		var r := int(gone[0])
 		_left_in_replica = 0 if _game.get("_replicas").has(r) else 1
 		if _left_in_replica == 1 and _phase_t > LEAVE_AT + 1.0:
-			_rec("LEFT gone=%s snapmax=%.0fms playing=%d replica_gone=1"
-					% [str(gone), _snap_max_gap, 1 if not _obs_playing_bad else 0])
+			_rec("LEFT gone=%s obsmax=%.0fms sessionmax=%.0fms(sessionmax_phase=%d) playing=%d replica_gone=1"
+					% [str(gone), _obs_max_gap, _snap_max_gap, _snap_max_phase,
+					1 if not _obs_playing_bad else 0])
 			_log("相⑤ 已观察到 role %s 被移出对局(副本已拆);观察窗 %.1fs 内快照最大间隔 %.0fms"
 					% [str(gone), _phase_t, _snap_max_gap])
 			if _obs_playing_bad:
 				_fail("相⑤ 观察窗内 round_state 离开过 PLAYING(服务器不该因少人改状态)")
-			if _snap_max_gap > 1000.0:
-				_fail("相⑤ 快照间隔 %.0fms > 1s(其余端应持续收到快照)" % _snap_max_gap)
+			# ★ 判据只用**观察窗内**的最大间隔(理由见 `_on_snap_world`:全会话最大值包含
+			#   "进对局建世界"那一大段,拿它当判据会让每一跑都红 —— 那是伪影,不是服务器停了)
+			if _obs_max_gap > 1000.0:
+				_fail("相⑤ 观察窗内快照间隔 %.0fms > 1s(其余端应持续收到快照)"
+						% _obs_max_gap)
 			_finish()
 			return
 
@@ -1004,6 +1027,12 @@ func _on_snap_world(snap: Dictionary) -> void:
 		_snap_gaps.append(gap)
 		if gap > _snap_max_gap:
 			_snap_max_gap = gap
+			# ★ 记下**最大间隔发生在哪个相位**:整个会话的最大值会把"进对局建世界/建导航图"
+			#   那一大段(实测 1~2s)算进去 —— 那一段本来就没有快照可收,是**测量窗口伪影**,
+			#   不是"服务器停了"。相⑤ 要判的是**观察窗内**快照连不连,故两者分开记。
+			_snap_max_phase = _phase
+		if _phase == PH_OBSERVE and gap > _obs_max_gap:
+			_obs_max_gap = gap
 	_last_snap_us = now
 	_snap_world = snap
 
@@ -1068,6 +1097,13 @@ func _los_to(target: Vector2) -> bool:
 	var a := GridPathfinder.cell_of(_local.global_position, TILE, d.x, d.y)
 	var b := GridPathfinder.cell_of(target, TILE, d.x, d.y)
 	return MazeGenerator.has_line_of_sight(a, b)
+
+
+# 当前武器类型 id(1..6;0 = 空手)—— 与 `WeaponComponent.WEAPONS` 的键同源
+func _weapon_type() -> int:
+	if _local == null or _local.weapons == null:
+		return 0
+	return int(_local.weapons.current_slot_int())
 
 
 func _current_weapon():

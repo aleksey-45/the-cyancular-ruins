@@ -411,13 +411,21 @@ func _assert_stage3() -> void:
 		var los := _tok(bl, "los", "0")
 		var before := int(_tok(bl, "before", "-1"))
 		var after := int(_tok(bl, "after", "-1"))
-		_check(shots > 0, "相③ 甲(role %d)真的开了火(本地子弹生成数 %d > 0)" % [shooter_role, shots])
-		_check(los == "1", "相③ 开火那一刻甲与乙视线通畅(否则没打中可能只是被墙挡住)")
-		_check(hit == "0" and before == after,
-				"相③ ★ 子弹穿透队友:乙(role %d)hp 不变(%d → %d)" % [victim_role, before, after])
+		var wtype := int(_tok(bl, "wtype", "0"))
 		var near := int(near_counts.get(victim_role, 0))
-		_check(near > 0,
-				"相③ ★ 乙端独立取证:有 %d 颗**非自己**子弹从乙身边(≤45px)飞过(否则乙 hp 不变可能是子弹根本没飞到)" % near)
+		if shots == 0 and wtype == 6:
+			# ★★ 甲手上是**激光枪**(即时光束、不产生子弹)⇒ `shots=0` 是**正确行为**,而
+			#    "乙 hp 不变"这时是**空断言**。**不能把它算成绿**(那正是"恒绿空断言")也不能算红
+			#    (枪没坏)—— 照实标未覆盖,并在报告里写明。
+			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是激光枪(光束武器不产生子弹)")
+			_check(true, "相③ 子弹那一半未覆盖(射手是光束武器 —— 抽签结果,不是缺陷)")
+		else:
+			_check(shots > 0, "相③ 甲(role %d)真的开了火(本地子弹生成数 %d > 0)" % [shooter_role, shots])
+			_check(los == "1", "相③ 开火那一刻甲与乙视线通畅(否则没打中可能只是被墙挡住)")
+			_check(hit == "0" and before == after,
+					"相③ ★ 子弹穿透队友:乙(role %d)hp 不变(%d → %d)" % [victim_role, before, after])
+			_check(near > 0,
+					"相③ ★ 乙端独立取证:有 %d 颗**非自己**子弹从乙身边(≤45px)飞过(否则乙 hp 不变可能是子弹根本没飞到)" % near)
 	var gl: String = grenade.get(shooter_role, "")
 	if gl == "":
 		_check(false, "相③ 没有甲的 GRENADE 读数")
