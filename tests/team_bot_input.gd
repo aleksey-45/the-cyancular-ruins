@@ -29,6 +29,8 @@ var _slot := 0               # 背包位置(1-based)的按下边沿;0 = 无
 var _f_edge := false         # F(捡起)的按下边沿
 var _atk_edge := false       # 开火按下边沿(整帧有效,见 _attack_just_pressed_raw)
 var _atk_edge_frame := -1
+var _atk_rel_edge := false   # 开火**松开**边沿(heavy_aim 枪只在这一支开火)
+var _atk_rel_edge_frame := -1
 
 
 func source_kind() -> int:
@@ -79,9 +81,12 @@ func _attack_pressed_raw() -> bool:
 	return attack
 
 
-# ★★ "按下边沿"必须**真的给**:半自动武器(`full_auto=false`)只在 `_attack_just_pressed()`
-#    那一帧开火,而本手柄早先恒返回 false ⇒ **半自动枪一发都打不出去**(实测:相③ 的连射
-#    读数 `shots=0`,而同一段代码在手枪换成全自动武器时是 `shots=4`)。
+# ★★ **开火的三个边沿都得给,一个都不能省** —— `WeaponBase` 按枪种选边沿:
+#    · `full_auto`        → `_attack_pressed()`(按住)
+#    · 半自动(手枪等)   → `_attack_just_pressed()`
+#    · `heavy_aim`(m82a1 **与榴弹发射器**)→ `_attack_just_released()`("按住预瞄、松开发射")
+#    早先本手柄只给"按住"、两个边沿恒 false ⇒ **重型枪只进预瞄、永不发射**;而相③ 的判决
+#    依赖"甲真的开火了",于是**抽到重狙(1/6)必然判成"没开火"** —— 判决被**枪种**污染。
 # ★ 边沿在**整帧内为真**(不是"读一次即清"):真实 `Input.is_action_just_pressed` 就是这样,
 #    而同一帧里**有两处**会读它 —— 客户端组输入包(`PacketInputSource.pack_record`)与玩家自己
 #    的开火判定。读一次即清会让其中一处拿到 false(包里有边沿但本地不开火,或反过来)。
@@ -89,14 +94,19 @@ func _attack_just_pressed_raw() -> bool:
 	return _atk_edge and Engine.get_physics_frames() == _atk_edge_frame
 
 
-# 观察者在脉冲**上升沿**调一次(见 watcher 的 `_pulse_attack`)
+func _attack_just_released_raw() -> bool:
+	return _atk_rel_edge and Engine.get_physics_frames() == _atk_rel_edge_frame
+
+
+# 观察者在脉冲**上升沿 / 下降沿**各调一次(见 watcher 的 `_pulse_attack`)
 func press_attack_edge() -> void:
 	_atk_edge = true
 	_atk_edge_frame = Engine.get_physics_frames()
 
 
-func _attack_just_released_raw() -> bool:
-	return false
+func release_attack_edge() -> void:
+	_atk_rel_edge = true
+	_atk_rel_edge_frame = Engine.get_physics_frames()
 
 
 func _weapon_slot_raw() -> int:

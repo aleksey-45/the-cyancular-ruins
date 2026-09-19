@@ -32,6 +32,7 @@ const BotHandle := preload("res://tests/team_bot_input.gd")
 const RESULT_PREFIX := "team_match_probe_"
 const LOBBY_ADDR := "127.0.0.1"
 const TILE := 64
+const REPLICA_COUNT := 5          # 3v3:自己以外 5 个角色(副本数是**断言**,见 _check_team_visual_layer)
 
 # ── 时间预算(逐条都有理由;改前先读相位注释)──
 const ENTER_TIMEOUT := 90.0      # 从挂页到"进 team_game 且拿到队伍表"的兜底
@@ -39,7 +40,8 @@ const TEAMS_TIMEOUT := 25.0      # 进局后等 match_sync 应答
 const SETTLE := 1.2              # PLAYING 后静置多久再采样(COUNTDOWN 期间输入冻结,人不会动)
 const POS_TOL := 100.0           # C2 收敛判据(px):快照滞后一 tick ≈ 11.7px,100 留足余量
 # 相③ 的"到位"判据。★ **子弹那一半与榴弹那一半不同**:brief 对子弹只说"朝队友开一枪",
-# 对榴弹才要求"贴脸"。实测把子弹也卡在 170px 会让整相挂在**走位**上(连 100s 都到不了),
+# 对榴弹才要求"贴脸"。把子弹也卡在 170px 会让整相挂在**走位**上(留存的 6 份判决日志里,
+# 甲一次都没进过 170px),
 # 而子弹的证据链(乙端数"从我身边 ≤45px 飞过的非自己子弹")在 400px 上照样成立 ——
 # 目标站着不动,子弹飞过去必然要掠过它。榴弹仍要 170px(爆炸半径 350px,170 稳在内圈附近)。
 const CLOSE_PX := 400.0          # 甲进入这个距离且有视线即开火(子弹那半边)
@@ -68,7 +70,7 @@ enum {
 	PH_DONE,
 }
 # 相③ 的子状态
-enum { MEET_SEEK, MEET_VOLLEY, MEET_GL_SWITCH, MEET_GL_FIRE, MEET_SETTLE, MEET_OVER }
+enum { MEET_SEEK, MEET_SWITCH_BULLET, MEET_VOLLEY, MEET_GL_SWITCH, MEET_GL_FIRE, MEET_SETTLE, MEET_OVER }
 
 # ── 注入(探针进程给)──
 var who := "c1"
@@ -571,6 +573,9 @@ func _check_team_visual_layer() -> void:
 	var ghosts_bad := 0
 	var tints_bad := 0
 	var n := 0
+	# ★★ 副本数**必须断言**:`ghosts_bad`/`tints_bad` 数的是"副本里有多少个错的",副本**一个都没建**
+	#    时两个计数天然是 0 ⇒ 全绿而**什么都没验**(恒真空位 —— 评审点名的那个)。
+	var want_reps: int = REPLICA_COUNT
 	var reps: Dictionary = _game.get("_replicas")
 	for role in reps:
 		var r = reps[role]
@@ -594,6 +599,9 @@ func _check_team_visual_layer() -> void:
 	_log("队色/分队层:自己 layer=%d mask=%d(层对=%s 掩码对=%s);副本 %d 个(幽灵层错 %d,队色错 %d)"
 			% [_local.collision_layer, _local.collision_mask, str(layer_ok), str(mask_ok),
 			n, ghosts_bad, tints_bad])
+	if n != want_reps:
+		_fail("副本数 %d != %d(队友的队色/幽灵层**一个都没验到** —— 计数天然为 0 的恒真空位)"
+				% [n, want_reps])
 	if not layer_ok or not mask_ok:
 		_fail("自己那一半的分队碰撞层与 A 册契约不符(layer=%d mask=%d team=%d)"
 				% [_local.collision_layer, _local.collision_mask, _team])
@@ -613,7 +621,8 @@ func _tick_meet(delta: float) -> void:
 	if _shooter:
 		_tick_meet_shooter(delta)
 		return
-	# 乙:**也朝甲走**(相向而行 —— 平台跳跃图上单向走位成功率太低,实测单侧走 50s 还差
+	# 乙:**也朝甲走**(相向而行 —— 平台跳跃图上单向走位成功率太低,留存的日志里单侧走一整个
+# 窗口都还没贴合(见报告 §7)。
 	# 1800px)。走到 CLOSE_PX*1.5 内就站住不动:射击要打的是**静止靶**,两边一起飘会打不中。
 	if _role == _victim_role:
 		var sp := _pos_of(_shooter_role)
@@ -664,7 +673,7 @@ func _tick_meet_shooter(delta: float) -> void:
 				_bot.axis = 0.0
 				_bot.hold_up = false
 				_bot.hold_down = false
-				_meet_sub = MEET_VOLLEY
+				_meet_sub = MEET_SWITCH_BULLET
 				_sub_t = 0.0
 				_ready_to_fire = true
 				_hp_before = _hp_of(_victim_role)
@@ -672,6 +681,34 @@ func _tick_meet_shooter(delta: float) -> void:
 			else:
 				_nav_to(vp, CLOSE_PX * 0.6, delta)
 				_bot.attack = false
+		MEET_SWITCH_BULLET:
+			# ★★ "子弹穿透队友"这一半**必须用出弹类武器测**:5 号榴弹(打出去的是榴弹)与
+			#   6 号激光(即时光束、不产生子弹)都会让这条断言变成**假红/空绿**。手上是这两种
+			#   就换到背包里的出弹枪(1~4);换不了就**照实标未覆盖(枪种)**,不硬判。
+			_bot.axis = 0.0
+			_bot.attack = false
+			var t := _weapon_type()
+			if t >= 1 and t <= 4:
+				_meet_sub = MEET_VOLLEY
+				_sub_t = 0.0
+				_hp_before = _hp_of(_victim_role)
+				_log("甲就位(武器 %d,dist=%.0f los=1)→ 向队友 role=%d 连射 %.1fs"
+						% [t, _delta(_local.global_position, vp).length(), _victim_role, VOLLEY])
+			else:
+				var bi := _bullet_weapon_index()
+				if bi < 0:
+					_bullet_rec = "BULLET shots=0 wtype=%d reason=no_bullet_weapon" % t
+					_rec(_bullet_rec)
+					_log("相③ 子弹那一半未覆盖:背包里没有出弹类武器(手上是 %d 号)" % t)
+					_meet_sub = MEET_GL_SWITCH
+					_sub_t = 0.0
+				elif _sub_t > 2.0:
+					_bullet_rec = "BULLET shots=0 wtype=%d reason=bullet_switch_timeout" % t
+					_rec(_bullet_rec)
+					_meet_sub = MEET_GL_SWITCH
+					_sub_t = 0.0
+				else:
+					_bot.press_slot(bi + 1)
 		MEET_VOLLEY:
 			_dist_at_fire = _delta(_local.global_position, vp).length()
 			_bot.axis = 0.0
@@ -751,9 +788,12 @@ func _pulse_attack(delta: float) -> void:
 	var period := PULSE_ON + PULSE_OFF
 	var ph := fmod(_pulse_t, period)
 	var on := ph < PULSE_ON
-	# ★ 上升沿要**显式报给手柄**:半自动武器只在 `just_pressed` 那一帧开火(见 handle 注释)
+	# ★ **两个边沿都要显式报给手柄**(见 handle 的注释):半自动只在 just_pressed 那一帧开火,
+	#   而 `heavy_aim`(m82a1/榴弹发射器)只在 **just_released** 那一帧开火。
 	if on and not _bot.attack:
 		_bot.press_attack_edge()
+	elif not on and _bot.attack:
+		_bot.release_attack_edge()
 	_bot.attack = on
 
 
@@ -802,7 +842,8 @@ func _tick_brawl_phase(delta: float) -> void:
 
 
 # ★★ **回退模式**(照实登记,报告里要写明占比):脚本机器人在**平台跳跃图**上无法可靠接近
-#    对手(实测:贴身 200px、视线通畅时打了 2 分钟 0 击杀;真正的障碍是"走位到达"而不是"开火")。
+#    对手(**全部留存日志里 `killA=0`**:至今没有一次有归因击杀;真正的障碍看起来是
+#    "走位到达"而不是"开火" —— 但这一点本探针**没有**独立验证过,见报告 §7)。
 #    对局只在**先到 9 杀**时收局,所以"打不到人"= 相④ 的换边断言与相⑤ 全都跑不到。
 #    这里在"混战 90s 且最近 20s 一次击杀都没有"之后,让机器人**每 4s 按一次 K**(自杀脱困:
 #    `不分死因`给对方队 +1)把状态机推到 ROUND_OVER。它是**记录在案**的降级:
@@ -857,14 +898,15 @@ func _tick_brawl(delta: float) -> void:
 		_bot.attack = false
 		return
 	var d := _delta(_local.global_position, tgt)
-	# ★ **提前量**:两边都在动,照当前位置开火等于每发都打在敌人身后(实测:贴身 200px、
-	#   视线通畅的互射打了 2 分钟 0 击杀)。按快照里的 `vel` 外推 `dist / 弹速` 秒。
+	# ★ **提前量**:两边都在动,照当前位置开火等于每发都打在敌人身后(理论上;本探针未能
+	#   用读数证明过它 —— 见报告 §7 的未覆盖栏:(两边在动 +
+	#   弹道飞行时间)。按快照里的 `vel` 外推 `dist / 弹速` 秒。
 	#   弹速取 1000px/s 作常数:六把枪实际在 900~1400 之间,没必要为它引武器表(打不中才是问题)。
 	var t_lead: float = clampf(d.length() / 1000.0, 0.0, 0.5)
 	var aim_at := tgt + _vel_of(_nearest_enemy_role()) * t_lead
 	_bot.aim = _delta(_local.global_position, aim_at).normalized()
-	# ★ **一律逼近到 ~100px 再打**:实测"远距离对射"整局 0 击杀(两边都在动 + 弹道飞行时间
-	#   → 每发都擦过去);贴脸打时飞行时间 ~0.1s,提前量几乎不起作用,命中率才是可用的。
+	# ★ **一律逼近到 ~100px 再打**:远距离对射在本探针里从未产生击杀(两边都在动 +
+	#   弹道飞行时间 → 每发都擦过去);贴脸打时飞行时间 ~0.1s,提前量几乎不起作用。
 	#   隔墙那档(有距离但无视线)也走同一条:贴近到 100px 往往就绕到同一侧了
 	#   (实测的僵局正是"两边各贴一堵墙、相距 320px、视线 0"卡了 40s)。
 	if d.length() <= 140.0:
@@ -1097,6 +1139,18 @@ func _los_to(target: Vector2) -> bool:
 	var a := GridPathfinder.cell_of(_local.global_position, TILE, d.x, d.y)
 	var b := GridPathfinder.cell_of(target, TILE, d.x, d.y)
 	return MazeGenerator.has_line_of_sight(a, b)
+
+
+# 背包里**出弹类**武器的下标(1~4 号:手枪/步枪/重狙/霰弹;0 = 没有)。
+# ★ 排除 5 号榴弹(打出的是榴弹,不是子弹)与 6 号激光(即时光束、不产生子弹)。
+func _bullet_weapon_index() -> int:
+	if _local == null or _local.weapons == null:
+		return -1
+	for i in range(_local.weapons.inventory.held.size()):
+		var t := int((_local.weapons.inventory.held[i] as Dictionary).get("type", 0))
+		if t >= 1 and t <= 4:
+			return i
+	return -1
 
 
 # 当前武器类型 id(1..6;0 = 空手)—— 与 `WeaponComponent.WEAPONS` 的键同源

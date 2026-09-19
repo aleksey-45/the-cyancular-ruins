@@ -413,7 +413,18 @@ func _assert_stage3() -> void:
 		var after := int(_tok(bl, "after", "-1"))
 		var wtype := int(_tok(bl, "wtype", "0"))
 		var near := int(near_counts.get(victim_role, 0))
-		if shots == 0 and wtype == 6:
+		var why := _tok(bl, "reason", "")
+		if why == "no_bullet_weapon" or why == "bullet_switch_timeout":
+			# 背包里没有出弹类武器(抽到榴弹/激光,且没有第二把)—— 断言在这里**无法成立**,
+			# 照实标未覆盖(既不假红、也不留空的绿)
+			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是 %d 号(非出弹类)且无第二把武器" % wtype)
+			_check(true, "相③ 子弹那一半未覆盖(枪种 —— 抽签结果,不是缺陷)")
+		elif why == "rendezvous_timeout" or _tok(bl, "timeout", "0") == "1":
+			# ★ **走位没到位** ⇒ 这一相**没验到**,而不是"枪坏了"。判词必须写成"未覆盖",
+			#   否则读日志的人(评审也踩过)会把它当成产品缺陷。
+			_notes.append("相③ 子弹那一半**未覆盖**:甲未能在窗口内走到乙身边(走位;读数 dist=-1)")
+			_check(true, "相③ 子弹那一半未覆盖(走位没到位 —— 不是开火/伤害链路的问题)")
+		elif shots == 0 and wtype == 6:
 			# ★★ 甲手上是**激光枪**(即时光束、不产生子弹)⇒ `shots=0` 是**正确行为**,而
 			#    "乙 hp 不变"这时是**空断言**。**不能把它算成绿**(那正是"恒绿空断言")也不能算红
 			#    (枪没坏)—— 照实标未覆盖,并在报告里写明。
@@ -443,7 +454,10 @@ func _assert_stage3() -> void:
 		#   把"抽签没抽到"判成红 = 用户跑一次红一次而重启一次可能就绿,那种红没有信息量;
 		#   反过来把"切枪失败"记成未覆盖 = 放走真缺陷。两者必须分开。
 		var why := _tok(gl, "reason", "?")
-		if why == "no_grenade_launcher":
+		if why == "rendezvous_timeout":
+			_notes.append("相③ 榴弹那一半**未覆盖**:甲没能走到乙的贴脸距离(走位)")
+			_check(true, "相③ 榴弹那一半未覆盖(走位没到位 —— 不是投弹链路的问题)")
+		elif why == "no_grenade_launcher":
 			_notes.append("相③ 榴弹那一半**未覆盖**:本局无人持榴弹发射器(初始武器随机发放,抽签结果)")
 			_check(true, "相③ 榴弹那一半未覆盖(本局无榴弹发射器 —— 抽签结果,不是缺陷;见报告未覆盖分栏)")
 		else:
@@ -598,8 +612,13 @@ func _clean() -> void:
 					continue
 				var err := DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 				if err != OK:
-					push_warning("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
-							% [p, err] + "本跑该文件的读数会与残留内容混在一起,别照它归因")
+					# ★★ **当场退出,不能只警告**:`_results_ready()` 数的是"存在且以 OK/FAIL 开头"
+					#   的文件 —— 上一跑的残留会**被当成这一跑的结果**下判决(而且看不出是旧的)。
+					#   删不掉几乎只有一个原因:上一跑的客户端进程还活着(它攥着文件)。
+					print("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
+							% [p, err] + "残留文件会被当成本跑的读数下判决,故直接退出")
+					get_tree().quit(1)
+					return
 
 
 func _dump() -> String:
@@ -670,11 +689,16 @@ func _same_pairs(a: Dictionary, b: Dictionary) -> bool:
 	return true
 
 
+# 环面回绕尺寸(相②/相④ 的格距离要用)。★ **必须来自地图文件本身**,不能回落硬编码:
+# 裁判进程**从不加载地图**(它只当大厅),`MazeGenerator.current_grid` 恒空 —— 早先这里回落
+# `(150,100)`,恰好等于 `factory1v1` 的尺寸,于是"碰巧对";**换图之后会静默按错尺寸回绕**
+# (格距离全错,而断言照跑)。改为直接读地图头(`MapFormat.map_size`)。
 func _grid_dims() -> Vector2i:
-	var g: Array = MazeGenerator.current_grid
-	if g == null or g.is_empty():
+	var d := MapFormat.map_size(MatchBootstrap.PVP_MAP)
+	if d.x <= 0 or d.y <= 0:
+		push_error("PROBE: 读不到地图尺寸 %s —— 相②/相④ 的环面判据不可信" % MatchBootstrap.PVP_MAP)
 		return Vector2i(150, 100)
-	return Vector2i((g[0] as Array).size(), g.size())
+	return d
 
 
 func _check(ok: bool, msg: String) -> void:
