@@ -52,8 +52,12 @@ horizontal_alignment = 2
 ; 记分条垫深底板:它对局中直接压在地图上,地图开阔区是浅灰蓝 —— 浅色文字压上去读不清。
 ; 底板由 PanelContainer 按内容撑开(不是把 Label 拉成一条 1240 宽的横条),故包一层 wrapper。
 ; ★ 上面那份 Plate 的 0.1 与单机 HUD 的 PLATE_COLOR(ui/hud.gd)、royale 的 _plate_box **同源**
-;   (用户 2026-09-15 统一下调)。场景里是字面量,**只能人工对齐**,改一处就得改齐**四处**
-;   (第四处 = ui/team_hud.tscn 的 Plate —— 那一份是本文件的逐字复制)。
+;   (用户 2026-09-15 统一下调)。场景里是字面量,**只能人工对齐**,改一处要改齐**所有**同值处 ——
+;   别照抄"共 N 处":这个数漂过(写过"三处"、"四处",而实际有六处)。
+;   以 CLAUDE.md 那一句为准(那里给了核对用的 grep 命令;本注释**故意不把那个字面量写出来**——
+;   写了就会把它自己算成一处命中,把那条命令污染成八条):
+;   ui/hud.gd / ui/royale_hud.gd / ui/weapon_slots.gd / ui/world_label.gd 的常量,
+;   加上本文件与 ui/pvp_hud.tscn 的 Plate(两份逐字相同的字面量)。
 ;   本 Plate 由 ScoreWrap(记分条)与下面的 PingWrap(延迟条)**共用**(改一个要改两个节点)。
 ;   ★ 大乱斗排行榜(royale_hud 的 _board_bg)是例外,单独是 0.25。
 [node name="ScoreWrap" type="PanelContainer" parent="."]

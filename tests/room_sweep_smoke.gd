@@ -112,7 +112,12 @@ func _check_teardown_funnel() -> void:
 			#   `_worker_ports.erase(port)` 改名成 `_launcher.release_now(port)` —— 若不把新名字
 			#   加进来,这条门就对端口回收**彻底失明**(它只认旧字符串,而旧字符串已全仓不存在),
 			#   表现是恒绿:新加一条绕过收口的拆除路径也照过。改名/搬家时同款改这里。
-			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "rooms.erase("]:
+			# ★★ 三张注册表各留一条判据(1v1 那条就是裸 `rooms.erase(`),且 `*_rooms.erase(` 排在
+			#   裸 `rooms.erase(` **之前**:裸那条是另两条的**子串**(`team_rooms.erase(` 里就含
+			#   `rooms.erase(`)—— 所以其实三种写法都拦得住,但只留裸那条时判词会点错名字(报
+			#   "rooms.erase(" 而实际写的是 team_rooms)。反过来,也**别**把这两条当冗余删掉:删了不会
+			#   假绿(仍被子串拦住),只是判词失去分辨力 —— 那是排查时最贵的那点信息。
+			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):
 						_fail = "lobby_rooms.%s 里出现 %s —— 拆除必须走 teardown_room 单一收口" % [f["name"], pat]
