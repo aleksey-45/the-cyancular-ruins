@@ -694,10 +694,15 @@ func _fresh_attacker_role(victim_role: int) -> int:
 #   `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion`**(它是纯静态、不引 autoload)。
 # ★ 但**子弹那一路要先把归因补上**,见 `_on_bullet_hit` —— 基础实现对玩家直击不写归因。
 func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
-	# 记给**攻击者**。自伤(写端 `attribute` 因 attacker == victim **静默跳过**、meta 停在
-	# 上一名敌人身上)由新鲜度判据挡掉 ⇒ 谁都不记(与"自伤不记给任何人"一致)。
+	# 记给**攻击者**。三档都不记,各管一件事:
+	#   · 自伤:写端 `attribute` 因 attacker == victim **静默跳过**、meta 停在上一名敌人身上
+	#     ⇒ 由**新鲜度**判据挡掉(见 `ATTRIB_FRESH_MS`);
+	#   · 队友伤害:**按队过滤**(用户裁定 2026-09-19,与"只算异队击杀"同口径)—— 子弹本来就
+	#     穿队友,唯一能打到队友的是**爆炸**,不过滤就等于"朝队友扔雷即可刷 ACS",而且"爆心
+	#     队友"会反过来抬高扔雷者;
+	#   · 找不到攻击者(归因不到)→ 谁都不记。
 	var attacker := _fresh_attacker_role(int(role))
-	if attacker != 0:
+	if attacker != 0 and not same_team(attacker, int(role)):
 		var s := _stat_entry(attacker)
 		s["dmg"] = int(s["dmg"]) + int(damage)
 	super._on_player_hit(source_pos, damage, role)
@@ -802,7 +807,12 @@ func stats_payload() -> Dictionary:
 # ★ 确定性:候选按 role **升序**遍历 + 只在**严格更优**时替换 ⇒ 完全并列时天然的胜者是**最小
 #   role**。不依赖字典迭代顺序 —— 同一份状态调多少次都是同一个答案(探针 ⑬f 钉它)。
 # ★ 候选 = `_roster()`(与 `stats_payload` 同一个集合):MVP 是"这份逐人表里的第一名",
-#   不是另立一份名单 —— 已离开者也在表里(`_stats` 不清零),故也在候选里。
+#   不是另立一份名单。
+# ★★ **已离开者照样参与评选 —— 这是用户裁定(2026-09-19),不是遗漏**:取向与大乱斗
+#   `_match_winner` 的"已离开但计过分的也算"一致。他还会因为"ACS 分母 = 实际参与局数"
+#   (更小)而更容易胜出 —— 那**也是**有意的口径。
+#   ⇒ **别**因为"退了的人不该拿 MVP"把 `_left` 从候选里滤掉(那会静默改掉一条产品规则);
+#     守卫是探针 ⑬j:构造"计过分后离场、终局 MVP 指向他"那一档。
 func mvp_role() -> int:
 	var best_role := 0
 	var best_acs := -1.0

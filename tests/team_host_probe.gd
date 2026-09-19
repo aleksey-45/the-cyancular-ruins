@@ -26,8 +26,9 @@ extends Node
 #   `_respawn_player` 清归因 meta 的对等性。编号顺延(⑩/⑪ 已被占用)。
 # ⑬ 逐人数据 + ACS/MVP 由 **B 册 Task 10** 落(只做数据面):⑬a 伤害 1:1 / ⑬i 子弹那一路的
 #   归因(`_on_bullet_hit`,★ 它不走爆炸/榴弹那两条写端)/ ⑬b 队友误炸不计 `kills`(用户裁定 ②)/
-#   ⑬c 自伤不记(**专钉归因新鲜度** `ATTRIB_FRESH_MS`)/ ⑬d 加成表 / ⑬e 多杀 / ⑬f MVP 与确定性 /
-#   ⑬g 载荷形状与投递 / ⑬h 离开者的局数口径。
+#   ⑬b2 队友的爆炸**不计 dmg**(用户裁定 2026-09-19,走真爆炸路径)/ ⑬c 自伤不记
+#   (**专钉归因新鲜度** `ATTRIB_FRESH_MS`)/ ⑬d 加成表 / ⑬e 多杀 / ⑬f MVP 与确定性 /
+#   ⑬g 载荷形状与投递 / ⑬h 离开者的局数口径 / ⑬j **已离开者仍参与 MVP**(用户裁定)。
 #   ★ 同段另有一条源码级:**受击接线必须由生产持有** —— 探针调的是 `MatchHost._wire_hit_feedback`,
 #     不是自己抄的 `connect`(抄件会让"生产的接线断了"静默通过,同 `_apply_team_layers`)。
 # 掉线终局(整队走光才终局 + 走光判胜)归 **Task 8 的独立探针** `tests/team_disconnect_probe.tscn`,
@@ -889,6 +890,35 @@ func _run() -> void:
 			% [_stat(_host, 3, "kills"), st_k3])
 	_check(_stat(_host, 1, "kills") == st_k1, "★ ⑬b 也不计给受害者自己")
 
+	# ── ⑬b2 队友伤害**不计入 dmg**(用户裁定 2026-09-19,与"只算异队击杀"同口径)──
+	# ★ 走**真爆炸**(`Explosion.apply_aoe`,生产路径),不是手写归因:子弹本来就穿队友,
+	#   唯一打得到队友的就是爆炸 —— "朝队友扔雷刷 ACS"正是这条规则要堵的口子。
+	# 布景:`apply_aoe` 按 `player` 组遍历、半径 100 —— 故把受害者(1 号)单独放一处,
+	#   其余五个人(**含扔雷的 3 号**)摆到 600px 外,于是它只打得到 1 号一个。
+	_host._respawn_player(1)     # ⑬b 把 1 号打倒了,先复活(顺带清归因 meta)
+	var st_e_dmg3 := _stat(_host, 3, "dmg")
+	var st_e_k3 := _stat(_host, 3, "kills")
+	var st_e_d1 := _stat(_host, 1, "deaths")
+	var st_e_hp1: int = int(_host.players[1].hp)
+	(_host.players[1] as Node2D).global_position = Vector2(320.0, 320.0)
+	for st_e_r in [2, 3, 4, 5, 6]:
+		(_host.players[st_e_r] as Node2D).global_position = Vector2(920.0, 320.0)
+	Explosion.apply_aoe((_host.players[1] as Node2D).global_position, 100.0, 60, 400.0,
+			_host.players[3])
+	_check(int(_host.players[1].hp) < st_e_hp1,
+			"★ ⑬b2 [仪器] 队友的爆炸**真的打中了**(hp %d → %d;没打中的话下面那条恒绿)"
+			% [st_e_hp1, int(_host.players[1].hp)])
+	_check(_stat(_host, 3, "dmg") == st_e_dmg3,
+			("★ ⑬b2 队友的爆炸**不计入 dmg**(3 号 dmg 实际 %d,期望 %d;去掉异队过滤就是"
+			+ "「朝队友扔雷刷 ACS」那个口子)") % [_stat(_host, 3, "dmg"), st_e_dmg3])
+	_host._match_round_tick(0.016)      # 60 伤 > 满血 50 → 必然打死,顺带走一遍倒地边沿
+	_check(_stat(_host, 1, "deaths") == st_e_d1 + 1,
+			"★ ⑬b2 队友的爆炸**照计 deaths**(实际 %d,期望 %d)"
+			% [_stat(_host, 1, "deaths"), st_e_d1 + 1])
+	_check(_stat(_host, 3, "kills") == st_e_k3,
+			"★ ⑬b2 队友的爆炸**不计入 kills**(实际 %d,期望 %d)"
+			% [_stat(_host, 3, "kills"), st_e_k3])
+
 	# ── ⑬c 自伤不记给任何人(★ 这条专钉"归因新鲜度"判据)──
 	# 构造:1 号身上留着"被 4 号(2 队)打过"的归因,时间戳**往前挪 200ms** —— 仍在击杀窗口
 	# (`ATTRIB_WINDOW` = 3s)之内,但已超出新鲜阈值(`ATTRIB_FRESH_MS`)。
@@ -1055,6 +1085,19 @@ func _run() -> void:
 	_check(float(st_pay3[1]["acs"]) == 500.0 / 5.0,
 			"★ ⑬h 在场者:分母仍是**全场局数**(500/5 = 100,实际 %f)" % float(st_pay3[1]["acs"]))
 	_check(st_pay3.has(6), "★ ⑬h 已离开者的逐人数据**不消失**(面板仍要展示他的成绩)")
+
+	# ── ⑬j 已离开者**照样参与 MVP 评选**(用户裁定 2026-09-19;**不是遗漏**)──
+	# 取向与大乱斗 `_match_winner` 的"已离开但计过分的也算"一致;且他的 ACS 分母是
+	# **实际参与局数**(更小)⇒ 更容易胜出 —— 那也是有意的口径。
+	# 构造(接着 ⑬h 的状态):6 号计过分(300)之后在第 2 局离场,对局又打到第 5 局 ⇒
+	#   他的 ACS = 300/2 = 150,**高于**在场者 1 号(500/5 = 100)。
+	# ★ 判据必须是"MVP **指向他**":把离开者从候选里滤掉的实现会给出 1 号 ——
+	#   只断言"他还在逐人表里"(⑬h 那条)验的是载荷,验不到**候选集**,故必须让他赢一次。
+	_host._round_state = MatchHost.RoundState.MATCH_OVER
+	_host._broadcast_round_state()   # 终局那一份载荷真的走一遍(无 peer ⇒ 只是不发包)
+	_check(_host.mvp_role() == 6,
+			("★ ⑬j **已离开者仍是 MVP 候选**(用户裁定;MVP 实际 %d,期望 6 —— "
+			+ "把 `_left` 从候选里滤掉就会变成 1 号)") % _host.mvp_role())
 
 	_ran_to_end = true
 
