@@ -277,8 +277,10 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 
 		# ⑦ 补足分支的**可达性守卫**(评审 Minor 2:姐妹分支 = `RoyaleHost.plan_spawns` 的
 		# `if picked.size() < n` → `_floor_cells()`)。★ 它**仍是全量地板格**(同病),但今天不可达:
-		# `spread_cells` 恒返回 `min(n, 池大小)`(本探针抽 n=2/6/8 × 三档验过),故补足分支
-		# 可达 ⟺ **干净池 < 人数**。实测池 122(factory1v1)/ 59(demo),人数上限 8 ⇒ 不可达。
+		# `spread_cells` 恒返回 `min(n, 池大小)` —— ★ 那条不变量**不在本文件**,它钉在
+		# `tests/enemy_logic_smoke.gd` 的 `_phase_spread_cells`(「count 超过池子应返回全部」)。
+		# 本文件**从不调用 `spread_cells`**(只调 `SpawnPicker`),故这里只引用它当前提。
+		# 于是:补足分支可达 ⟺ **干净池 < 人数**。实测池 122(factory1v1)/ 59(demo),人数上限 8 ⇒ 不可达。
 		# ★ 为什么**不**顺手把它也收窄:那个分支恰在"池子极小时"才可达,收窄会让补足**补不满** ⇒
 		#   `out[role] = (-1,-1)` ⇒ 摆到地图回卷角落 —— 按用户已裁定的偏好((-1,-1) 更糟),
 		#   这个分支**保持原样才是对的**。故这里钉"不可达",而不是改它:哪天这条红,说明池缩到了

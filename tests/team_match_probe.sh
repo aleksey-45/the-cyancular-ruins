@@ -4,7 +4,8 @@
 # 用法:  timeout 1800 bash tests/team_match_probe.sh
 # 判据:  文本 `TEAM MATCH PROBE: ALL-OK`(**不看退出码** —— 挂住时 --quit-after 到期仍 exit 0
 #        且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
-# 整跑量级:3~6 分钟(相④ 要用脚本机器人互射打满 9 杀,是本探针最大的时间不确定项)。
+# 整跑量级:3~10 分钟(相④ 要打到 9 杀 —— 脚本机器人尽力交火 + 回退模式,是本探针最大的
+#          时间不确定项;预算与安全网见 tests/team_match_probe.gd 文件头「时间预算」)。
 #
 # ⚠ **跑前先确认没有别的 Godot 占着 7777** —— 本探针**不占 7777**(自当大厅,但用池外端口
 #   29200;worker 也拨到池外 29250),可本机上可能跑着用户自己的服务端。**本脚本绝不杀 7777
@@ -29,8 +30,10 @@ fi
 
 echo "[team] 起探针(大厅端口 $PROBE_LOBBY_PORT,worker 起投 $PROBE_WORKER_PORT;整跑 3~6 分钟)"
 echo "[team] 若长时间无输出:看 user://team_match_probe_cN.godotlog(子进程 stdout 父进程看不到)"
-"$GODOT" --headless --path . --quit-after 36000 res://tests/team_match_probe.tscn 2>&1 | tee "$LOG"
-RC=$?
+"$GODOT" --headless --path . --quit-after 54000 res://tests/team_match_probe.tscn 2>&1 | tee "$LOG"
+# ★ 取**探针进程自己**的退出码,不是 `tee` 的:`RC=$?` 拿到的是管道最后一环(tee 恒 0),
+#   于是 FAIL 分支会打印"退出码 0"这个**结构性永远为真**的数,把人引向"退出码没问题"。
+RC=${PIPESTATUS[0]}
 
 echo "[team] 清理本探针自己的两个端口(兜底;正常路径探针已按 PID 杀干净)"
 kill_port "$PROBE_LOBBY_PORT"

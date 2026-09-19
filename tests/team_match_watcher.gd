@@ -661,8 +661,17 @@ func _tick_meet_shooter(delta: float) -> void:
 		_bot.axis = 0.0
 		_bot.attack = false
 		if _bullet_rec == "":
-			_bullet_rec = "BULLET shots=%d dist=%.0f los=%d before=%d after=%d hit=0 timeout=1" % [
-					_shots, -1.0, 0, _hp_before, _hp_of(_victim_role)]
+			# ★★ `dist` / `los` **必须是真读数**(超时那一刻的实测值):早先这里写死 `-1.0` 与 `0`,
+			#   而裁判的判词却把它们当成"读数"念出来 —— 那等于在报告里放了一个永远是假的数。
+			#   没有目标快照(乙那份还没到)时才留 `-1`(那是"没有读数",不是"距离是 -1")。
+			var d_to := -1.0
+			var los_now := 0
+			var vp_to := _pos_of(_victim_role)
+			if vp_to != Vector2.INF:
+				d_to = _delta(_local.global_position, vp_to).length()
+				los_now = 1 if _los_to(vp_to) else 0
+			_bullet_rec = "BULLET shots=%d dist=%.0f los=%d before=%d after=%d hit=0 timeout=1 wtype=%d" % [
+					_shots, d_to, los_now, _hp_before, _hp_of(_victim_role), _weapon_type()]
 			_rec(_bullet_rec)
 		if _grenade_rec == "":
 			_grenade_rec = "GRENADE thrown=0 reason=rendezvous_timeout before=%d after=-1" % _hp_before

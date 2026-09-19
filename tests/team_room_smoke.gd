@@ -189,16 +189,27 @@ func _initialize() -> void:
 				fails.append("★ _apply_team_collision 没给 1 队设身体层 2(契约表:1 队 layer=2 / mask=21)")
 			if not coll_body.contains("& ~2"):
 				fails.append("★ _apply_team_collision 没给 1 队**抹掉**玩家层位(写成 `|= 2` 就是全员互挡 = 队友也挡我;服务器那边抹了 → 每帧回滚)")
-			if not coll_body.contains("TeamHost.TEAM_ENEMY_LAYER"):
-				fails.append("★ _apply_team_collision 未使用 TeamHost.TEAM_ENEMY_LAYER(队 B 身体层不能写死 16 —— 层位是全局资源,将来可能挪)")
+			# ★★ 判据必须是**那一行赋值本身**(`collision_layer = TeamHost.TEAM_ENEMY_LAYER`),
+			#   不能是"常量在函数体里出现过" —— 生产里这个常量出现**两次**(2 队的身体层 + 1 队
+			#   掩码里的"挡住队 B"位),所以"把 2 队的层写死成 16"(1 队那处仍留常量)、
+			#   "删掉整个 2 队分支"、两种实现都能把"出现过"喂绿,而它们正是这句话点名的变异。
+			#   钉整行赋值后:写死 16 → 红;删掉 2 队分支 → 红。
+			if not coll_body.contains("collision_layer = TeamHost.TEAM_ENEMY_LAYER"):
+				fails.append("★ _apply_team_collision 没给 2 队设 `collision_layer = TeamHost.TEAM_ENEMY_LAYER`(写死 16 / 删掉 2 队分支都在这儿红;只数'常量在体内出现过'守不住 —— 它在 1 队那一行也出现)")
 			# ★ 两条一起要:`set_ghost_layer(` 单独一条**不够** —— 写成 `set_ghost_layer(2)`
 			#   (副本幽灵体恒在玩家层 = 队友副本也挡我)时它照样在,而那一行正是"按**队**设层"
 			#   与"恒在玩家层"的全部差别(实测:只钉前一条时这条变异**照样绿**)。
 			if not (coll_body.contains("set_ghost_layer(") and coll_body.contains("_ghost_layer_of(")):
 				fails.append("★ _apply_team_collision 没给副本幽灵体按**队**配层(必须 set_ghost_layer(_ghost_layer_of(...));写成 set_ghost_layer(2) 就是队友副本也挡我 → C2 每帧回滚,不报错)")
+		# ★★ `_ghost_layer_of` 的两支**都要钉**:它体内这个常量只出现**一次**,故"按队"那个
+		#   分支被删(改成恒返 `TeamHost.TEAM_ENEMY_LAYER`)时"出现过"照样绿 —— 而那正是
+		#   "队友副本也挡我 → C2 每帧回滚"的实现。判据 = 按队判别 + 1 队那一支 + 常量,三样都要。
 		var ghost_body := ScanUtil.func_body(tcode, "_ghost_layer_of")
-		if ghost_body.is_empty() or not ghost_body.contains("TeamHost.TEAM_ENEMY_LAYER"):
-			fails.append("★ team_game 的 _ghost_layer_of 未按队返回 TeamHost.TEAM_ENEMY_LAYER(副本按**它代表那名玩家**的队设层)")
+		if ghost_body.is_empty():
+			fails.append("★ team_game 里找不到 _ghost_layer_of 的函数体(副本按队配层断言无从成立)")
+		elif not (ghost_body.contains("_team_of_role(") and ghost_body.contains("return 2")
+				and ghost_body.contains("TeamHost.TEAM_ENEMY_LAYER")):
+			fails.append("★ team_game 的 _ghost_layer_of 不是**按队两支**(必须:队号 1 → 层 2,否则 → TeamHost.TEAM_ENEMY_LAYER。恒返 TEAM_ENEMY_LAYER = 队友副本也挡我 → C2 每帧回滚,不报错)")
 		# ③ 小地图两个提供器必须**共用同一套遍历/过滤**(`_minimap_entries()`),不能各写一份 `for`。
 		#    `ui/minimap.gd` 是**按下标**对应颜色(`_other_dots[i].color = cols[i]`)——
 		#    两个数组错位一格就是"队友点画成敌人色",**不报错只误导人**;而错位最容易发生在

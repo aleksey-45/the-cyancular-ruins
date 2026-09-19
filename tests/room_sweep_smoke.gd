@@ -154,14 +154,18 @@ func _check_argv_contract() -> void:
 	# ★ 批次 3(3v3):`--team` / `--teams` 同样**两边都要在** —— 生成端(worker_launcher)拼了
 	#   而解析端(server_main)没接 = worker 收到一个它不认识的开关,静默按 1v1 形态跑;
 	#   反过来只改解析端 = 大厅拉起的 worker 永远不带队号。**文件清单只有这两个**,别漏。
+	# ★★ 判据取**剥注释视图**(`ScanUtil.code_only`),与上面那条反向检查**同口径**:反向那条
+	#   刻意用 `begins_with("#")` 跳过注释行(注释里提旧协议名是**有意的**留档),正向这条
+	#   早先却是**整文件 `contains`** —— 于是"把那一行真代码删掉、只在注释里留一句 `"--roles"`
+	#   的说明"就能把正向断言喂绿,而那正是本条要防的"只接了一半"。注释不是代码。
 	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
-		var txt2 := FileAccess.get_file_as_string(f)
-		if not txt2.contains('"--roles"'):
-			_fail = "%s 未接 --roles(集合协议只接了一半?)" % f
+		var code2 := ScanUtil.code_only(ScanUtil.read(f))
+		if not code2.contains('"--roles"'):
+			_fail = "%s 未接 --roles(集合协议只接了一半?注:判据剥掉注释 —— 光在注释里提到不算)" % f
 			return
 		for tok in ['"--team"', '"--teams"']:
-			if not txt2.contains(tok):
-				_fail = "%s 未接 %s(3v3 启动协议只接了一半?)" % [f, tok]
+			if not code2.contains(tok):
+				_fail = "%s 未接 %s(3v3 启动协议只接了一半?注:判据剥掉注释 —— 光在注释里提到不算)" % [f, tok]
 				return
 
 # ── 批次 3(3v3)新增:启动契约里"本册能做到的那一半" ──
