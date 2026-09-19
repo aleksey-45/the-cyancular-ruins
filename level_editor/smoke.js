@@ -136,6 +136,30 @@ eq(Core.lineCells(0, 0, 4, 2), [[0,0],[1,0],[2,1],[3,1],[4,2]], 'lineCells: 缓�
 eq(Core.normRegion(3, 2, 1, 5), { x: 1, y: 2, w: 3, h: 4 }, 'normRegion: 反向角归一化');
 eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格');
 
+// ---- ByteWriter / ByteReader ----
+(function () {
+  var w = new Core.ByteWriter(4);          // 故意给小容量,顺便验扩容
+  w.u8(0x12).u16(0x3456).u32(0x789ABCDE).bytes(new Uint8Array([0xAA, 0xBB]));
+  var b = w.finish();
+  eq(b.length, 1 + 2 + 4 + 2, 'ByteWriter: 长度累计正确');
+  eq(Array.prototype.slice.call(b), [0x12, 0x56, 0x34, 0xDE, 0xBC, 0x9A, 0x78, 0xAA, 0xBB],
+     'ByteWriter: 小端序');
+  var r = new Core.ByteReader(b);
+  eq(r.u8(), 0x12, 'ByteReader: u8');
+  eq(r.u16(), 0x3456, 'ByteReader: u16');
+  eq(r.u32(), 0x789ABCDE, 'ByteReader: u32 高位不为负');
+  eq(Array.prototype.slice.call(r.bytes(2)), [0xAA, 0xBB], 'ByteReader: bytes');
+  eq(r.remaining(), 0, 'ByteReader: remaining 归零');
+  throws(function () { r.u8(); }, 'ByteReader: 越界读抛错');
+  throws(function () { new Core.ByteReader(b).bytes(b.length + 1); }, 'ByteReader: bytes 越界抛错');
+  throws(function () { new Core.ByteReader(new Uint8Array(0)).u8(); }, 'ByteReader: 空 buffer 读抛错');
+})();
+
+// ---- CRC32(IEEE,标准测试向量)----
+eq(Core.crc32(new Uint8Array(0)), 0, 'crc32: 空输入为 0');
+eq(Core.crc32(new TextEncoder().encode('123456789')), 0xCBF43926, 'crc32: 标准向量 123456789');
+eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
+
 // ==== 断言区结束 ====
 
 console.log('');
