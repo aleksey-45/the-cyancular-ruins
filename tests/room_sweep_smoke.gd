@@ -10,6 +10,9 @@ extends SceneTree
 #  **B 册 Task 4(2026-09-19)**:_check 里把清扫判据扩到**三张注册表**,并单独钉住
 #   `_sweep_stale_rooms` 那条「全空则提前 return」的并列守卫 —— 它是**独立的第二条**退出路径,
 #   漏掉一张表时列表那行照旧在、断言全绿,而那张表的房永远不清扫(静默端口泄漏)。
+#  **B 册 Task 5(2026-09-19)**:3v3 分支补齐与 royale 对称的两条 —— 收集块(`for tcode in
+#   lobby.team_rooms`)+ 宽限谓词行(TEAM_MATCH_ESTIMATE / tr.in_match / SWEEP_INTERVAL);
+#   此前 3v3 一条都没有,"掏空循环"或"摘掉门控"都能全绿(同样是静默端口泄漏)。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -341,6 +344,30 @@ func _check(src: String) -> void:
 	# 反过来:1v1 的超龄判断必须保持裸 MAX_ROOM_AGE,宽限不得泄漏进 1v1 分支
 	if not code.contains("room.created_at > MAX_ROOM_AGE:"):
 		_fail = "1v1 超龄判断不再是裸 MAX_ROOM_AGE(宽限泄漏?)"; return
+	# ── B 册 Task 5(2026-09-19):3v3 的**收集块 + 宽限谓词**也要各有一针 ──
+	# ★ 此前这里与 royale 分支**不对称**:royale 那条三截谓词断言在,3v3 一条都没有。缺它时
+	#   「保留 `var stale_team` 声明、掏空 `for tcode in lobby.team_rooms:` 循环」或「把
+	#   tr.in_match / TEAM_MATCH_ESTIMATE 从宽限里摘掉」都能编译通过、上面四条(三张表名、
+	#   提前 return 的并列判据、拆除列表)全绿 —— 而那正是「守卫在、3v3 永不被清」那一档
+	#   (-worker 端口永久泄漏)。收集块与谓词行**各钉一次**:只钉删除列表那行不够,它由
+	#   stale_team 变量喂饱,变量恒空也照过。
+	if not body.contains("for tcode in lobby.team_rooms"):
+		_fail = "_sweep_stale_rooms 没有收集 3v3 超龄房的循环(team_rooms 永不被扫 → 端口永久泄漏)"; return
+	var tpred := ""
+	for i in range(code_lines.size()):
+		if code_lines[i].contains("tr.created_at > MAX_ROOM_AGE"):
+			tpred = code_lines[i]
+			if i > 0:
+				tpred = code_lines[i - 1] + "\n" + tpred
+			break
+	if tpred.is_empty():
+		_fail = "找不到 3v3 超龄判定(谓词行)"; return
+	if not tpred.contains("TEAM_MATCH_ESTIMATE"):
+		_fail = "3v3 在局宽限缺 TEAM_MATCH_ESTIMATE(宽限被删/被写死?)"; return
+	if not tpred.contains("tr.in_match"):
+		_fail = "3v3 在局宽限缺 tr.in_match 门控"; return
+	if not tpred.contains("SWEEP_INTERVAL"):
+		_fail = "3v3 在局宽限未含 SWEEP_INTERVAL(界被改回只加一局,挡不住下一次 tick?)"; return
 	# 批次 2 改法:_sweep 不再**直接**杀 worker / 删房,改走拆除收口(带 KILL 形态)。
 	# 「杀 worker + 删房 + 回收端口」这件事本身仍被 _check_teardown_funnel 钉住(那些动作只允许
 	# 出现在 _teardown_room 体内);这里只认新入口。
@@ -377,5 +404,5 @@ func _finish() -> void:
 		print("SMOKE_ROOM_SWEEP FAIL: %s" % _fail)
 		quit(1)
 		return
-	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(含大乱斗在局宽限界钉死)")
+	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(三张注册表的在局宽限界逐个钉死:1v1 裸界 / 大乱斗 RoyaleHost.MATCH_TIME / 3v3 TEAM_MATCH_ESTIMATE)")
 	quit(0)

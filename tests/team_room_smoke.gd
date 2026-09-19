@@ -1,6 +1,7 @@
 extends SceneTree
 
-# 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)。
+# 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)
+# + 一条**源码级接线断言**(⑥:team_join 里确实调了 team_next_role —— 见该节的盲区说明)。
 # 跑法: "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd
 # 通过 = `TEAM ROOM SMOKE: ALL-OK` 退出 0。
 #
@@ -28,6 +29,12 @@ func _initialize() -> void:
 		print("TEAM ROOM SMOKE: FAIL(加载/编译 lobby_rooms.gd 失败)")
 		quit(1)
 		return
+	# ★ 点名守卫的**能力边界**(别照抄到别处当通用手段):`Object.has_method()` 对**脚本资源**
+	#   只报 ClassDB 方法与 `static func` —— 非 static 的成员函数/内部类方法它**看不见**。
+	#   (仓内两处实测记载:`tests/ai_input_source_smoke.gd` 与 `tests/lib/scan_util.gd`。)
+	#   故下面这三个目标**当前必须全是 static** 才对;哪天把某个判据改成非 static,这里会给出
+	#   一条**误导性**的"未声明 X" FAIL(脚本其实声明了,只是 has_method 照不到)—— 那时改法
+	#   是换判据(如文本断言),不是把判据删掉。
 	for fn_name in ["team_ready", "team_can_join", "team_next_role"]:
 		if not script.has_method(fn_name):
 			print("TEAM ROOM SMOKE: FAIL(lobby_rooms.gd 未声明 %s)" % fn_name)
@@ -91,6 +98,16 @@ func _initialize() -> void:
 	if lrm.team_room_ready(tr4):
 		fails.append("★ 有 1 人未选边不得 ready(未选边的 role 不在 team_of 里,别把它算进任何一队)")
 	lrm.free()
+	# ⑥ team_join 里**那一行接线**本身 —— 判据函数测对了 ≠ 生产调的是它。
+	# ★ 这是本文件形态自带的盲区:①~⑤ 全在测静态判据本身,而 handler 要 autoload、`-s` 里跑不动;
+	#   于是把 `team_next_role(tr.player_role.values())` 换成内联的「人数 + 1」,上面五条**依旧全绿**,
+	#   而 role 分配已经在"有人退过"的房里出错(撞上仍在房里的高号,同一个 role 双份占用)。
+	#   故补一条便宜的**源码级**断言,用剥注释视图(注释里出现同形文本不算数)。
+	var room_src := ScanUtil.read("res://server/lobby_rooms.gd")
+	if room_src.is_empty():
+		fails.append("读不到 server/lobby_rooms.gd(接线断言无从成立)")
+	elif not ScanUtil.code_only(room_src).contains("team_next_role(tr.player_role.values())"):
+		fails.append("★ team_join 未调 team_next_role(tr.player_role.values())—— 判据函数仍在,生产那一行被换成内联写法了")
 	if fails.is_empty():
 		print("TEAM ROOM SMOKE: ALL-OK")
 		quit(0)
