@@ -270,6 +270,147 @@ globalThis.Core = (function () {
     return { players: players, enemies: enemies, comments: comments };
   }
 
+  // ── 压缩(规格 §3.5)──
+  // 用运行时原生的 CompressionStream('deflate') —— 产出 zlib(RFC1950)格式,
+  // 与 Godot 侧 PackedByteArray.decompress(n, COMPRESSION_DEFLATE) 对应。
+  // ★ 刻意不自造压缩器:自己写 RLE 就要自己写解压器,而解压器写错是那种
+  //   "大部分时候对、偶尔静默出错"的 bug。
+  function deflateBytes(bytes) {
+    if (typeof CompressionStream === 'undefined' || typeof Blob === 'undefined') {
+      return Promise.reject(new Error(
+        'deflateBytes: 本环境没有 CompressionStream/Blob;请用 encodeMap(map, {compress:false}) 导出裸 body'));
+    }
+    var stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
+    return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+  }
+  function inflateBytes(bytes) {
+    if (typeof DecompressionStream === 'undefined' || typeof Blob === 'undefined') {
+      return Promise.reject(new Error('inflateBytes: 本环境没有 DecompressionStream/Blob'));
+    }
+    var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+    return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+  }
+
+  // ── 整文件容器(规格 §3.1 / §3.2)──
+  const FORMAT_VERSION = 4;
+  const HEADER_SIZE = 20;
+  const MAGIC = [0x43, 0x59, 0x52, 0x4D];   // "CYRM"
+
+  function layerFlags(map) {
+    var f = 0;
+    for (var L = 0; L < LAYER_COUNT; L++) if (map.layers[L]) f |= (1 << L);
+    return f;
+  }
+
+  function encodeBody(map) {
+    var metaBytes = new TextEncoder().encode(buildMeta(map));
+    if (metaBytes.length > 65535) throw new Error('encodeBody: meta 超过 65535 字节');
+    var w = new ByteWriter(64 + metaBytes.length);
+    w.u16(metaBytes.length);
+    w.bytes(metaBytes);
+    for (var L = 0; L < LAYER_COUNT; L++) {
+      var layer = map.layers[L];
+      if (!layer) continue;                        // 缺层不写块,由 layer_flags 表达
+      w.bytes(layer.kind === 'tex'
+        ? encodeTexLayer(layer.desc, map.subCols, map.subRows)
+        : encodeColorLayer(layer.rgba, map.subCols, map.subRows));
+    }
+    return w.finish();
+  }
+
+  function decodeBody(body, subCols, subRows, flags) {
+    var r = new ByteReader(body);
+    var metaLen = r.u16();
+    var meta = parseMeta(new TextDecoder().decode(r.bytes(metaLen)));
+    var layers = [];
+    for (var L = 0; L < LAYER_COUNT; L++) {
+      if (!(flags & (1 << L))) { layers.push(null); continue; }
+      layers.push(LAYER_KINDS[L] === 'tex'
+        ? decodeTexLayer(r, subCols, subRows)
+        : decodeColorLayer(r, subCols, subRows));
+    }
+    if (r.remaining() !== 0) {
+      throw new Error('decodeBody: 尾部还有 ' + r.remaining() + ' 字节未消费');
+    }
+    return {
+      name: '', subCols: subCols, subRows: subRows, layers: layers,
+      players: meta.players, enemies: meta.enemies, comments: meta.comments,
+    };
+  }
+
+  // opts.compress 默认 true;传 false 走裸 body(compress=0),用来兜住
+  // "两端 deflate 实现对不上"这类风险,是一条完整可用的路径而不是半成品。
+  function encodeMap(map, opts) {
+    opts = opts || {};
+    var body, payload, compression;
+    try {
+      body = encodeBody(map);
+    } catch (e) {
+      return Promise.reject(e);
+    }
+    var compress = opts.compress !== false;
+    var pre = compress ? deflateBytes(body) : Promise.resolve(body);
+    return pre.then(function (p) {
+      payload = p;
+      compression = compress ? 1 : 0;
+      var w = new ByteWriter(HEADER_SIZE + payload.length);
+      w.u8(MAGIC[0]); w.u8(MAGIC[1]); w.u8(MAGIC[2]); w.u8(MAGIC[3]);
+      w.u8(FORMAT_VERSION);
+      w.u8(compression);
+      w.u32(body.length);          // ★ 解压后的大小
+      w.u32(crc32(body));
+      w.u16(map.subCols);
+      w.u16(map.subRows);
+      w.u8(layerFlags(map));
+      w.u8(0);
+      w.bytes(payload);
+      return w.finish();
+    });
+  }
+
+  function decodeMap(bytes) {
+    return new Promise(function (resolve) { resolve(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); })
+      .then(function (b) {
+        if (b.length < HEADER_SIZE) throw new Error('decodeMap: 文件只有 ' + b.length + ' 字节,小于头部 20 字节');
+        var r = new ByteReader(b);
+        if (r.u8() !== MAGIC[0] || r.u8() !== MAGIC[1] || r.u8() !== MAGIC[2] || r.u8() !== MAGIC[3]) {
+          throw new Error('decodeMap: magic 不是 "CYRM"');
+        }
+        var version = r.u8();
+        if (version !== FORMAT_VERSION) {
+          throw new Error('decodeMap: 版本 ' + version + ',本编辑器只认 ' + FORMAT_VERSION);
+        }
+        var compression = r.u8();
+        var bodySize = r.u32();
+        var expectCrc = r.u32();
+        var subCols = r.u16(), subRows = r.u16();
+        var flags = r.u8();
+        r.u8();
+        if (subCols <= 0 || subRows <= 0) {
+          throw new Error('decodeMap: 尺寸非法 ' + subCols + '×' + subRows);
+        }
+        if (subCols % SUB_PER_CELL !== 0 || subRows % SUB_PER_CELL !== 0) {
+          throw new Error('decodeMap: 尺寸 ' + subCols + '×' + subRows + ' 不是 ' + SUB_PER_CELL + ' 的倍数');
+        }
+        var payload = r.bytes(b.length - HEADER_SIZE);
+        var next;
+        if (compression === 0) next = Promise.resolve(payload);
+        else if (compression === 1) next = inflateBytes(payload);
+        else throw new Error('decodeMap: 未知 compression=' + compression);
+        return next.then(function (body) {
+          if (body.length !== bodySize) {
+            throw new Error('decodeMap: 解压后 ' + body.length + ' 字节,头部声明 ' + bodySize);
+          }
+          var actual = crc32(body);
+          if (actual !== expectCrc) {
+            throw new Error('decodeMap: CRC 不符(算得 0x' + actual.toString(16) +
+                            ',头部 0x' + expectCrc.toString(16) + ')');
+          }
+          return decodeBody(body, subCols, subRows, flags);
+        });
+      });
+  }
+
   // ── 与格式无关的纯工具(自旧编辑器沿用)──
   function sanitizeName(name) {
     var n = String(name == null ? '' : name).trim();
@@ -366,5 +507,8 @@ globalThis.Core = (function () {
     packDesc: packDesc,
     texOf: texOf, hueOf: hueOf, brightOf: brightOf, satOf: satOf, alphaOf: alphaOf,
     isAir: isAir, neutralDesc: neutralDesc,
+    FORMAT_VERSION: FORMAT_VERSION, HEADER_SIZE: HEADER_SIZE,
+    deflateBytes: deflateBytes, inflateBytes: inflateBytes,
+    encodeMap: encodeMap, decodeMap: decodeMap, layerFlags: layerFlags,
   };
 })();

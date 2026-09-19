@@ -38,16 +38,49 @@ function eq(actual, expected, msg) {
   if (a === e) { pass++; console.log('  ok  - ' + msg); }
   else { fail++; console.error('  FAIL - ' + msg + '\n        got: ' + a + '\n        exp: ' + e); }
 }
-function throws(fn, msg) {
-  let threw = false;
-  try { fn(); } catch (e) { threw = true; }
-  if (threw) { pass++; console.log('  ok  - ' + msg); }
-  else { fail++; console.error('  FAIL - ' + msg + ' (未抛出异常)'); }
+// ★ 反向断言必须断言「错在哪」,不能只断言「抛了」—— 只判「有没有抛」是假绿:
+//   Core.decodeMap 若因拼写错误根本不存在,抛出来的 TypeError 一样算通过。
+//   故 expectSub 是可选但强烈建议的期望子串;给了就必须出现在异常文本里。
+function errText(e) {
+  return String((e && e.message !== undefined) ? e.message : e);
+}
+function throws(fn, msg, expectSub) {
+  let e = null;
+  try { fn(); } catch (err) { e = err; }
+  if (e === null) { fail++; console.error('  FAIL - ' + msg + ' (未抛出异常)'); return; }
+  if (expectSub !== undefined && errText(e).indexOf(expectSub) < 0) {
+    fail++; console.error('  FAIL - ' + msg + ' (异常文本里没有 "' + expectSub + '")\n        got: ' + errText(e));
+    return;
+  }
+  pass++; console.log('  ok  - ' + msg);
 }
 // 异步版的 throws —— decodeMap 是 async,「坏文件必须抛错」那批断言要用它。
-async function rejects(fn, msg) {
-  try { await fn(); fail++; console.error('  FAIL - ' + msg + ' (未抛出异常)'); }
-  catch (e) { pass++; console.log('  ok  - ' + msg); }
+async function rejects(fn, msg, expectSub) {
+  let e = null;
+  try { await fn(); } catch (err) { e = err; }
+  if (e === null) { fail++; console.error('  FAIL - ' + msg + ' (未抛出异常)'); return; }
+  if (expectSub !== undefined && errText(e).indexOf(expectSub) < 0) {
+    fail++; console.error('  FAIL - ' + msg + ' (异常文本里没有 "' + expectSub + '")\n        got: ' + errText(e));
+    return;
+  }
+  pass++; console.log('  ok  - ' + msg);
+}
+// 逐字节比对,失败时报**第一个不同的下标** —— 整文件 golden 向量要用它,
+// 用 eq(JSON) 时一条差字节会打出 181 个数字的 got/exp,读不出是哪一位错。
+function sameBytes(actual, expected, msg) {
+  const a = Array.prototype.slice.call(actual);
+  if (a.length !== expected.length) {
+    fail++; console.error('  FAIL - ' + msg + ' (长度 ' + a.length + ' ≠ 期望 ' + expected.length + ')');
+    return;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== expected[i]) {
+      fail++; console.error('  FAIL - ' + msg + ' (第 ' + i + ' 字节: 实得 0x' + a[i].toString(16) +
+                            ', 期望 0x' + expected[i].toString(16) + ')');
+      return;
+    }
+  }
+  pass++; console.log('  ok  - ' + msg);
 }
 
 (async function main() {
@@ -291,6 +324,292 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   var pm = Core.parseMeta(t1);
   m2.comments = pm.comments; m2.players = pm.players; m2.enemies = pm.enemies;
   eq(Core.buildMeta(m2), t1, 'meta: build→parse→build 稳定');
+})();
+
+// ---- 整文件编解码 ----
+await (async function () {
+  function mkMap() {
+    var m = Core.createMap('demo', 6, 5);
+    var brick = Core.neutralDesc(1);
+    var moss = Core.packDesc(15, 5, 3, 6, 7);
+    var half = Core.packDesc(3, 2, 4, 4, 4);
+    for (var i = 0; i < m.layers[0].desc.length; i += 7) m.layers[0].desc[i] = half;      // 前景:稀疏装饰
+    for (i = 0; i < m.layers[1].desc.length; i++) {
+      m.layers[1].desc[i] = (i % m.subCols < 4) ? brick : 0;                              // 场景:左边一堵墙
+    }
+    for (i = 0; i < m.layers[2].desc.length; i += 13) m.layers[2].desc[i] = moss;         // 后景:零星
+    for (i = 0; i < m.layers[3].rgba.length; i++) {
+      m.layers[3].rgba[i] = ((0x102030 | (i & 0xFF)) * 0x010101) >>> 0;                   // 背景:条带
+    }
+    m.comments = ['demo', '带中文的注释'];
+    m.players = [{ x: 3, y: 4 }, { x: 10, y: 4 }];
+    m.enemies = [{ type: 'fly_bird', x: 20, y: 12 }];
+    return m;
+  }
+
+  var src = mkMap();
+  var bytes = await Core.encodeMap(src);
+  eq(Array.prototype.slice.call(bytes.subarray(0, 4)), [0x43, 0x59, 0x52, 0x4D], 'encodeMap: magic "CYRM"');
+  eq(bytes[4], Core.FORMAT_VERSION, 'encodeMap: 版本 4');
+  eq(bytes[5], 1, 'encodeMap: 默认压缩');
+  eq(bytes.length >= Core.HEADER_SIZE, true, 'encodeMap: 至少有头部');
+
+  var hr = new Core.ByteReader(bytes);
+  hr.bytes(6);
+  var bodySize = hr.u32(); hr.u32();
+  eq(hr.u16(), src.subCols, 'encodeMap: 头部 sub_cols');
+  eq(hr.u16(), src.subRows, 'encodeMap: 头部 sub_rows');
+  eq(hr.u8(), 0b1111, 'encodeMap: layer_flags 四位全开');
+  eq(hr.u8(), 0, 'encodeMap: reserved 为 0');
+
+  var back = await Core.decodeMap(bytes);
+  eq(back.subCols, src.subCols, 'decodeMap: subCols');
+  eq(back.subRows, src.subRows, 'decodeMap: subRows');
+  eq(back.layers.length, 4, 'decodeMap: 四层');
+  for (var L = 0; L < 4; L++) {
+    var key = L === 3 ? 'rgba' : 'desc';
+    eq(Array.prototype.slice.call(back.layers[L][key]), Array.prototype.slice.call(src.layers[L][key]),
+       '整文件往返: 图层 ' + L);
+  }
+  eq(back.players, src.players, '整文件往返: players');
+  eq(back.enemies, src.enemies, '整文件往返: enemies');
+  eq(back.comments, src.comments, '整文件往返: comments');
+  eq(back.layers[3].kind, 'color', '整文件往返: 背景层 kind');
+  eq(back.layers[0].kind, 'tex', '整文件往返: 前景层 kind');
+
+  // 不压缩路径
+  var raw = await Core.encodeMap(src, { compress: false });
+  eq(raw[5], 0, 'encodeMap: compress:false → compression = 0');
+  eq(raw.length, Core.HEADER_SIZE + bodySize, 'encodeMap: 不压缩时文件长度 = 20 + body_size');
+  var rawBack = await Core.decodeMap(raw);
+  eq(Array.prototype.slice.call(rawBack.layers[1].desc), Array.prototype.slice.call(src.layers[1].desc),
+     '不压缩路径: 往返一致');
+  ok(raw.length > bytes.length, '不压缩确实更大(否则压缩没起作用)');
+
+  // 缺层:置 null 的图层不进文件,解码回 null
+  var partial = Core.createMap('p', 4, 4);
+  partial.layers[0] = null;
+  partial.layers[2] = null;
+  var pEnc = await Core.encodeMap(partial, { compress: false });
+  var pr = new Core.ByteReader(pEnc); pr.bytes(18);
+  eq(pr.u8(), 0b1010, '缺层: layer_flags 只开场景与背景');
+  var pBack = await Core.decodeMap(pEnc);
+  eq(pBack.layers[0], null, '缺层: 前景回来是 null');
+  eq(pBack.layers[2], null, '缺层: 后景回来是 null');
+  ok(pBack.layers[1] !== null && pBack.layers[3] !== null, '缺层: 场景与背景仍在');
+
+  // ── 反向断言:损坏的文件必须抛错,不能静默读成一张空图 ──
+  // ★ 每条都带期望子串:只判「抛了」的话,decodeMap 拼错名字抛的 TypeError 也会全绿。
+  var badMagic = bytes.slice(); badMagic[0] = 0x00;
+  await rejects(function () { return Core.decodeMap(badMagic); }, 'decodeMap: 坏 magic 抛错', 'magic');
+
+  var badVer = bytes.slice(); badVer[4] = 99;
+  await rejects(function () { return Core.decodeMap(badVer); }, 'decodeMap: 未知版本抛错', '版本');
+
+  // ★ 这一条与 brief 给的字节不同(报告里已点名):brief 是翻压缩流的最后一个字节,
+  //   而那是 zlib 的 Adler-32 校验尾 —— Node 的 DecompressionStream 会直接以
+  //   「message 为空的 TypeError」拒绝,根本走不到我们自己的 CRC 比对。
+  //   于是断言名(CRC 不符)与实际验到的东西(解压流损坏)不是一回事,带上期望子串后当场红。
+  //   改成翻**不压缩文件 body 的最后一个字节**:这步没有解压,长度不变(body_size 仍对),
+  //   唯一能抓住它的就是 crc32(body) 的比对 —— 这才真的验到「CRC 是算在 body 内容上的」。
+  var badCrc = raw.slice(); badCrc[badCrc.length - 1] ^= 0xFF;
+  await rejects(function () { return Core.decodeMap(badCrc); }, 'decodeMap: CRC 不符抛错', 'CRC');
+
+  // 压缩流本身损坏(另一个损坏面):Node 抛的 TypeError 没有 message,故这条没有可断言的子串,
+  // 只钉「必须抛错、绝不能静默读成空图」。
+  var badStream = bytes.slice(); badStream[badStream.length - 1] ^= 0xFF;
+  await rejects(function () { return Core.decodeMap(badStream); }, 'decodeMap: deflate 流损坏抛错(不静默读成空图)');
+
+  var badSize = bytes.slice(); badSize[14] = 0; badSize[15] = 0;     // sub_cols = 0
+  await rejects(function () { return Core.decodeMap(badSize); }, 'decodeMap: 尺寸 0 抛错', '尺寸非法');
+
+  var badAlign = bytes.slice(); badAlign[14] = 6; badAlign[15] = 0;  // sub_cols = 6,非 4 倍数
+  await rejects(function () { return Core.decodeMap(badAlign); }, 'decodeMap: 尺寸非 4 倍数抛错', '倍数');
+
+  await rejects(function () { return Core.decodeMap(new Uint8Array(10)); }, 'decodeMap: 短于头部抛错', '小于头部');
+
+  // 不压缩但 body_size 与真实长度不符
+  var badLen = raw.slice();
+  badLen[6] = (bodySize + 1) & 0xFF;
+  await rejects(function () { return Core.decodeMap(badLen); }, 'decodeMap: body_size 不符抛错', '头部声明');
+
+  var badComp = bytes.slice(); badComp[5] = 7;
+  await rejects(function () { return Core.decodeMap(badComp); }, 'decodeMap: 未知 compression 抛错', 'compression');
+})();
+
+// ---- golden 字节向量(1×1 格、compress:false)----
+// ★ 为什么需要这一块:上面所有断言都是「同一个 encode/decode 对跑往返」,两端一起
+//   把字节序改反(比如 u32 写成大端)整套照样全绿,而产出的文件 Godot 读不了。
+//   这里把**完整文件字节**(20 字节头 + 161 字节 body)逐字节钉死。
+// ★ 期望序列是照着规格 §3.1/§3.2/§3.3/§3.4 **手推**出来的,不是跑一遍 encodeMap 抄的
+//   —— 抄输出只能冻结当前行为,抓不出今天就存在的字节序错。推导见下面每行注释。
+// ★ 唯一的例外是头部那 4 个 CRC 字节:CRC32 无法手算,故用一个**独立的按位实现**
+//   (下面的 refCrc32,与 core.js 的表驱动实现是两套代码)对手推出来的那 161 字节
+//   body 求值 —— 值在下面写死为 0xA9 0x79 0xF5 0x3F,并在同一个断言块里用 refCrc32
+//   复核一遍(顺带用标准向量 123456789 → 0xCBF43926 自证 refCrc32 本身是对的)。
+await (async function () {
+  // 独立按位 CRC32(无查表),只服务于本断言块
+  function refCrc32(bytes) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) {
+      c ^= bytes[i];
+      for (var k = 0; k < 8; k++) c = (c & 1) ? ((c >>> 1) ^ 0xEDB88320) : (c >>> 1);
+    }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  eq(refCrc32(new TextEncoder().encode('123456789')), 0xCBF43926, 'golden: refCrc32 自证(标准向量)');
+
+  // 手推用的最小地图:1×1 格 = 4×4 子格 = 16 个子格
+  //   前景 = 全空气;场景 = 前 8 格 neutralDesc(1)、后 8 格空气;
+  //   后景 = 全空气;背景 = 偶 0x11223344 / 奇 0xAABBCCDD
+  //   meta = 1 条注释 'hi' + 1 个出生点 (1,2)
+  var g = Core.createMap('g', 1, 1);
+  g.layers[1].desc.fill(Core.neutralDesc(1));
+  for (var i = 8; i < 16; i++) g.layers[1].desc[i] = 0;
+  for (i = 0; i < 16; i++) g.layers[3].rgba[i] = (i % 2 === 0) ? 0x11223344 : 0xAABBCCDD;
+  g.comments = ['hi'];
+  g.players = [{ x: 1, y: 2 }];
+
+  // neutralDesc(1) = packDesc(1,4,4,4,7) = 4 | 4<<3 | 4<<6 | 7<<9 | 1<<12
+  //                = 4 + 32 + 256 + 3584 + 4096 = 7972 = 0x00001F24 → 小端字节 24 1F 00 00
+  eq(Core.neutralDesc(1), 0x00001F24, 'golden: 手推依据 neutralDesc(1) === 0x00001F24');
+
+  // meta 文本 = "# hi\n# player 1 2\n" 共 18 字节(buildMeta:先注释、再出生点、末尾补 \n)
+  eq(Core.buildMeta(g), '# hi\n# player 1 2\n', 'golden: 手推依据 meta 文本');
+  var metaBytes = Array.prototype.slice.call(new TextEncoder().encode('# hi\n# player 1 2\n'));
+  eq(metaBytes.length, 18, 'golden: 手推依据 meta 长度 18');
+
+  // body 手推:18(meta)+ 24(层0)+ 28(层1)+ 24(层2)+ 65(层3)= 161 = 0xA1
+  var expectedBody = [].concat(
+    [0x12, 0x00],                       // 20..21  meta_len = 18(u16 小端)
+    metaBytes,                          // 22..39  meta UTF-8 原文
+    // ── 层0(前景)块:调色板只有空气,16 个索引全 0 → 1+2+4+1+16 = 24 字节 ──
+    [0x01],                             // 40      kind = 1(纹理层)
+    [0x01, 0x00],                       // 41..42  palette_count = 1
+    [0x00, 0x00, 0x00, 0x00],           // 43..46  palette[0] = 描述符 0(空气)
+    [0x01],                             // 47      index_width = 1(palette_count ≤ 256)
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],  // 48..63  16 个子格索引全 0
+    // ── 层1(场景)块:palette = [空气, 0x1F24] → 1+2+8+1+16 = 28 字节 ──
+    [0x01],                             // 64      kind = 1
+    [0x02, 0x00],                       // 65..66  palette_count = 2
+    [0x00, 0x00, 0x00, 0x00],           // 67..70  palette[0] = 空气
+    [0x24, 0x1F, 0x00, 0x00],           // 71..74  palette[1] = 0x00001F24(小端!)
+    [0x01],                             // 75      index_width = 1
+    [0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],  // 76..91  前 8 格索引 1、后 8 格 0
+    // ── 层2(后景)块:与层0 同(全空气)→ 24 字节 ──
+    [0x01],                             // 92      kind = 1
+    [0x01, 0x00],                       // 93..94  palette_count = 1
+    [0x00, 0x00, 0x00, 0x00],           // 95..98  palette[0] = 空气
+    [0x01],                             // 99      index_width = 1
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],  // 100..115
+    // ── 层3(背景)块:无调色板,16 格 × RGBA8888 → 1+64 = 65 字节 ──
+    [0x02],                             // 116     kind = 2(背景层)
+    [0x44, 0x33, 0x22, 0x11],           // 117..120 i=0: 0x11223344(小端 → 44 33 22 11)
+    [0xDD, 0xCC, 0xBB, 0xAA],           // 121..124 i=1: 0xAABBCCDD
+    [0x44, 0x33, 0x22, 0x11],           // 125..128 i=2
+    [0xDD, 0xCC, 0xBB, 0xAA],           // 129..132 i=3
+    [0x44, 0x33, 0x22, 0x11],           // 133..136 i=4
+    [0xDD, 0xCC, 0xBB, 0xAA],           // 137..140 i=5
+    [0x44, 0x33, 0x22, 0x11],           // 141..144 i=6
+    [0xDD, 0xCC, 0xBB, 0xAA],           // 145..148 i=7
+    [0x44, 0x33, 0x22, 0x11],           // 149..152 i=8
+    [0xDD, 0xCC, 0xBB, 0xAA],           // 153..156 i=9
+    [0x44, 0x33, 0x22, 0x11],           // 157..160 i=10
+    [0xDD, 0xCC, 0xBB, 0xAA],           // 161..164 i=11
+    [0x44, 0x33, 0x22, 0x11],           // 165..168 i=12
+    [0xDD, 0xCC, 0xBB, 0xAA],           // 169..172 i=13
+    [0x44, 0x33, 0x22, 0x11],           // 173..176 i=14
+    [0xDD, 0xCC, 0xBB, 0xAA]            // 177..180 i=15
+  );
+  eq(expectedBody.length, 161, 'golden: 手推 body 长度 = 161');
+
+  var crcVal = refCrc32(expectedBody);
+  var crcLe = [crcVal & 0xFF, (crcVal >>> 8) & 0xFF, (crcVal >>> 16) & 0xFF, (crcVal >>> 24) & 0xFF];
+  eq(crcVal, 0x3FF579A9, 'golden: 独立实现算出的 body CRC32 === 0x3FF579A9');
+  eq(crcLe, [0xA9, 0x79, 0xF5, 0x3F], 'golden: 头部 CRC 字段的小端字节');
+
+  var expectedFile = [].concat(
+    [0x43, 0x59, 0x52, 0x4D],           // 0..3    magic "CYRM"(规格 §3.1)
+    [0x04],                             // 4       version = 4
+    [0x00],                             // 5       compression = 0(compress:false)
+    [0xA1, 0x00, 0x00, 0x00],           // 6..9    body_size = 161(**解压后**字节数,小端)
+    crcLe,                              // 10..13  body_crc32(**解压后** body 的 CRC32,小端)
+    [0x04, 0x00],                       // 14..15  sub_cols = 4(1 格 × 4 子格)
+    [0x04, 0x00],                       // 16..17  sub_rows = 4
+    [0x0F],                             // 18      layer_flags = 0b1111(四层全在)
+    [0x00],                             // 19      reserved = 0
+    expectedBody                        // 20..180 body
+  );
+  eq(expectedFile.length, 181, 'golden: 手推文件长度 = 20 + 161 = 181');
+
+  var gBytes = await Core.encodeMap(g, { compress: false });
+  sameBytes(gBytes, expectedFile, 'golden: 完整文件字节逐字节比对');
+
+  // 反过来也要能读回来(免得 golden 只钉住编码侧)
+  var gBack = await Core.decodeMap(gBytes);
+  eq(gBack.subCols, 4, 'golden: 回读 subCols');
+  eq(gBack.subRows, 4, 'golden: 回读 subRows');
+  eq(gBack.players, [{ x: 1, y: 2 }], 'golden: 回读出生点');
+  eq(Array.prototype.slice.call(gBack.layers[1].desc),
+     Array.prototype.slice.call(g.layers[1].desc), 'golden: 回读场景层');
+})();
+
+// ---- 压缩路径的独立验证(golden 用 compress:false,覆盖不到的那一半)----
+// ★ 为什么还缺这一块:golden 走的是不压缩路径,那里 payload === body —— 所以
+//   「body_size / body_crc32 算在**解压后**的 body 上」这条不变量在**默认(压缩)路径**
+//   上一条断言都没有。实测:把 crc32(body) 与解码侧的比对**两端同时**改成 crc32(payload),
+//   170 条断言全绿 —— 因为往返是对称的,而文件里的 CRC 值谁也没验过。
+//   这正是指令 A 想堵的那类洞(只是 golden 按指令用的是 compress:false,够不到压缩侧),
+//   故补下面两条。★ 超出 brief,报告里已点名。
+await (async function () {
+  var zlib = require('zlib');         // smoke.js 是 Node 测试,这里刻意用另一套 zlib 实现
+
+  var m = Core.createMap('z', 6, 5);
+  var brick = Core.neutralDesc(2);
+  for (var i = 0; i < m.layers[1].desc.length; i++) m.layers[1].desc[i] = (i % 7 === 0) ? brick : 0;
+  for (i = 0; i < m.layers[3].rgba.length; i++) m.layers[3].rgba[i] = ((0x304050 | (i & 0x3F)) * 0x010101) >>> 0;
+  m.comments = ['zlib'];
+  m.players = [{ x: 2, y: 3 }];
+
+  var enc = await Core.encodeMap(m);                              // 默认压缩
+  var plain = await Core.encodeMap(m, { compress: false });
+  var body = plain.subarray(Core.HEADER_SIZE);                    // compression=0:body 就是 payload
+
+  // ① 用 Node 自带的 zlib 独立解压我们的流 —— 验它确实是 zlib(RFC1950)。
+  //    这是规格 §3.5 登记的头号风险(「两端库对 zlib 头的处理历史上有过细微差异」),
+  //    也是在没有 Godot 的情况下能对它做的最强验证:换一套实现解出来必须一模一样。
+  var got = new Uint8Array(zlib.inflateSync(Buffer.from(enc.subarray(Core.HEADER_SIZE))));
+  sameBytes(got, Array.prototype.slice.call(body), '压缩: Node zlib 独立解压结果 == 裸 body');
+  ok(enc.length < plain.length, '压缩: 压缩后确实比裸 body + 20 小');
+
+  // ② 头部那两个字段必须算在**解压后**的 body 上(两端对称改错时往返抓不到)
+  var zr = new Core.ByteReader(enc);
+  zr.bytes(6);
+  eq(zr.u32(), body.length, '压缩: body_size 是解压后的字节数(不是压缩后的)');
+  eq(zr.u32(), Core.crc32(body), '压缩: body_crc32 是解压后 body 的 CRC(不是压缩流的)');
+})();
+
+// ---- descriptor 位域 vs 任意字节:解码路径不许用 isAir 判空气 ----
+// ★ 这一块钉 指令 B:isAir(d) 是 d === 0 的严格相等,而 decodeTexLayer 读的是**任意
+//   字节**。一个「辅码非 0 而纹理为 0」的畸形描述符(0x000007FF)会让 isAir(d)===false
+//   与 texOf(d)===0 得出相反结论 —— 解码路径若拿 isAir 判「这格是空气」就会判错。
+//   解码路径的正确判据是 texOf(d) === 0(按纹理位域取值),不是整体等 0。
+await (async function () {
+  var malformed = 0x000007FF;                    // 纹理 0,但色相/亮度/饱和度三位全 1
+  eq(Core.texOf(malformed), 0, '任意字节: texOf(0x7FF) === 0(纹理位域为 0)');
+  eq(Core.isAir(malformed), false, '任意字节: isAir(0x7FF) === false(整体不等 0)—— 两者结论相反');
+
+  // 让这个畸形描述符真的走一遍文件:encoder 不校验纹理位域,原样进调色板
+  var g = Core.createMap('x', 1, 1);
+  g.layers[0].desc[5] = malformed;
+  var bytes = await Core.encodeMap(g, { compress: false });
+  var back = await Core.decodeMap(bytes);
+  eq(back.layers[0].desc[5], malformed, '任意字节: 畸形描述符原样穿过整文件往返(不被折成空气)');
+  eq(Core.texOf(back.layers[0].desc[5]), 0, '任意字节: 回读后仍应判 texOf === 0');
+  eq(back.layers[1].desc[5], 0, '任意字节: 真空气格仍是 0');
 })();
 
 // ==== 断言区结束 ====
