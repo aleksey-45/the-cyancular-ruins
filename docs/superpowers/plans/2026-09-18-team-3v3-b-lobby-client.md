@@ -1122,8 +1122,11 @@ func _minimap_others() -> Array:
 #   (`_other_dots[i].color = cols[i]`),所以只要一边过滤、另一边不过滤,在"副本已 free
 #   但尚未从 `_replicas` 抹掉"的窗口里就会**整体错位一格** ⇒ 队友点画成敌人色、**不报错**。
 #   故这里用与 `_minimap_others` **逐字相同**的 `is_instance_valid` 守卫。
-#   (更稳的做法是**一次遍历产出 `[{pos, color}]`**,让位置与颜色天然同源 —— 若你要重构成那种,
-#    记得同时改 `ui/minimap.gd` 的取用方式。)
+#   ★ **可行改法只有两种**(2026-09-19 评审补正):① 两处用**逐字相同**的守卫;② 在 `team_game`
+#    内部共用一个遍历助手(一次遍历、按同一套过滤填两个数组)。
+#     ✘ **不要**改成"一次遍历产出 `[{pos, color}]`" —— `setup_multi(local, others, colors := Callable())`
+#       的签名在 Task 7 已**冻结**(颜色就是与 others 平行的 Array),改结构要连带动 `ui/minimap.gd`,
+#       而那不在本任务的文件清单里。
 func _minimap_colors() -> Array:
 	var cols: Array = []
 	for r in _replicas:
