@@ -130,6 +130,23 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
 .canvas-toolbar .brush-label { display: flex; align-items: center; gap: 4px; font-size: 13px; }
 .canvas-toolbar input[type=number] { width: 46px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; }
 #canvas-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+
+/* ── 时空模式·时间线滑动条(风格沿用面板三色体系)── */
+#tl-strip { padding: 6px 14px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.tl-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.tl-bar {
+  position: relative; height: 36px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 6px; cursor: crosshair; user-select: none;
+}
+.tl-track { position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; background: var(--border); border-radius: 2px; }
+.tl-tick { position: absolute; top: 50%; height: 12px; width: 1px; margin-top: -6px; background: var(--border); }
+.tl-mark {
+  position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border: 1px solid rgba(11, 14, 18, .55); border-radius: 3px; cursor: grab;
+  font-size: 9px; line-height: 12px; text-align: center; color: #0b0e12; font-weight: 700;
+}
+.tl-mark.selected { outline: 2px solid var(--accent); z-index: 2; }
+.tl-mark.ghost { opacity: .45; }   /* 阈值 ≥ w0:永不触发,贴右缘半透明示警 */
 #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #statusbar {
   padding: 5px 12px; font-size: 12px; color: var(--text-dim);
@@ -227,6 +244,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
           <div style="display:flex;gap:6px">
             <button id="tl-from-sel">从选区填坐标</button>
             <button id="tl-add" class="primary" style="flex:1">添加事件</button>
+            <button id="tl-del" class="danger" hidden>删选中</button>
           </div>
         </div>
         <p class="hint">阈值须严格小于 w0 才会触发。<br>rev=可逆(回拨撤销) · re=重播(仅对 rev=0 生效:回拨后再扫过是否重演)</p>
@@ -250,6 +268,13 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <button id="btn-torus" title="跨接缝重复绘制、无边界平移">环面预览</button>
         <button id="btn-structure-export" class="primary" title="导出当前结构为地图格式(关卡用:保存为 map/demo.cyrm)">导出结构</button>
         <button id="btn-fit">适配</button>
+      </div>
+      <div id="tl-strip" hidden>
+        <div class="tl-head">
+          <span>时间线 —— 点击空白处在该时刻新建事件 · 拖动事件点改触发时间 · 点事件点选中后在右侧编辑细项</span>
+          <span id="tl-range-label">0–3600s</span>
+        </div>
+        <div class="tl-bar" id="tl-bar"></div>
       </div>
       <div id="canvas-wrap">
         <canvas id="canvas"></canvas>
@@ -715,7 +740,7 @@ window.ENEMY_REGISTRY = [
     };
 
     var state = { library: [], selectedId: null, tool: 'paint', palette: 1, shape: 15, gridOn: true,
-                  brushSize: 1, torusMode: false, spawnTool: null, selection: null, timeMode: false };
+                  brushSize: 1, torusMode: false, spawnTool: null, selection: null, timeMode: false, tlSel: null };
     var view = { zoom: 28, panX: 40, panY: 40, playerRef: null };
     var PLAYER_TILES = 1.875;  // 主角世界尺寸 120px(48×2.5) ÷ TILE 64px
     var tileCache = {};        // packed → 64×64 canvas(纹理×形状掩码)
@@ -1029,7 +1054,7 @@ window.ENEMY_REGISTRY = [
       syncSizeInputs();
       fit();
       render();
-      if (state.timeMode) renderTimeline();   // 时空模式:切结构同步时间线面板
+      if (state.timeMode) { state.tlSel = null; tlRefresh(); }   // 时空模式:切结构同步时间线面板/滑动条
     }
     function syncSizeInputs() {
       var s = sel();
@@ -1649,6 +1674,121 @@ window.ENEMY_REGISTRY = [
       };
       mk('tl-flag-rev', 'rev 可逆', true);
       mk('tl-flag-re', 're 重播', true);
+      // 表单任意输入变化 → 若正编辑选中事件则实时写回(双向绑定)
+      [args, flags].forEach(function (box) {
+        box.querySelectorAll('input').forEach(function (inp) {
+          inp.addEventListener('change', tlFormChanged);
+        });
+      });
+    }
+    var TL_KIND_COLOR = {
+      collapse: '#e05a5a', open: '#7bc47f', explode: '#e0a35a',
+      wipe: '#d95a8a', gen: '#56b8c8', spawn_enemy: '#54a0ff'
+    };
+    function tlBarMax(tl) {
+      var w0 = tl && parseFloat(tl.w0);
+      return (!isNaN(w0) && w0 > 0) ? w0 : 3600;
+    }
+    function tlRefresh() { renderTlBar(); renderTimeline(); }
+
+    // 时间线滑动条:刻度(0/25/50/75/100%)+ 事件点(kind 首字母配色);≥w0 的事件贴右缘半透明。
+    function renderTlBar() {
+      var bar = document.getElementById('tl-bar');
+      bar.innerHTML = '';
+      var s = sel();
+      var tl = s ? ensureTimeline() : null;
+      var max = tlBarMax(tl);
+      document.getElementById('tl-range-label').textContent = '0–' + max + 's';
+      [0, .25, .5, .75, 1].forEach(function (p) {
+        var t = document.createElement('div');
+        t.className = 'tl-tick';
+        t.style.left = (p * 100) + '%';
+        bar.appendChild(t);
+      });
+      var track = document.createElement('div');
+      track.className = 'tl-track';
+      bar.appendChild(track);
+      if (!tl) return;
+      tl.events.forEach(function (ev, i) {
+        var m = document.createElement('div');
+        var over = ev.t >= max;
+        m.className = 'tl-mark' + (state.tlSel === i ? ' selected' : '') + (over ? ' ghost' : '');
+        m.style.left = (over ? 99.2 : (ev.t / max) * 100) + '%';
+        m.style.background = TL_KIND_COLOR[ev.kind] || 'var(--text-dim)';
+        m.textContent = ev.kind.charAt(0);
+        m.title = tlSummary(ev) + (over ? '(⚠ 阈值≥w0,永不触发)' : '');
+        m.addEventListener('pointerdown', function (e) {
+          e.stopPropagation();
+          e.preventDefault();
+          tlSelect(i);
+          try { m.setPointerCapture(e.pointerId); } catch (err) {}
+          var dragging = true;
+          var move = function (me) {
+            if (!dragging) return;
+            var r = bar.getBoundingClientRect();
+            var p = Math.min(1, Math.max(0, (me.clientX - r.left) / r.width));
+            ev.t = Math.round(p * max * 10) / 10;
+            m.style.left = (p * 100) + '%';
+            m.classList.toggle('ghost', ev.t >= max);
+            m.title = tlSummary(ev);
+            var ti = document.getElementById('tl-t');
+            if (ti) ti.value = ev.t;
+          };
+          var up = function () {
+            dragging = false;
+            m.removeEventListener('pointermove', move);
+            m.removeEventListener('pointerup', up);
+            m.removeEventListener('pointercancel', up);
+            renderTimeline();   // 拖完刷新列表顺序
+          };
+          m.addEventListener('pointermove', move);
+          m.addEventListener('pointerup', up);
+          m.addEventListener('pointercancel', up);
+        });
+        bar.appendChild(m);
+      });
+    }
+
+    // 选中事件(滑动条/列表通用):回填表单 + 高亮;del 按钮随选中显隐
+    function tlSelect(i) {
+      state.tlSel = i;
+      var s = sel();
+      var tl = s ? ensureTimeline() : null;
+      var ev = (tl && i != null && tl.events[i]) ? tl.events[i] : null;
+      if (ev) tlFillForm(ev);
+      var del = document.getElementById('tl-del');
+      if (del) del.hidden = !ev;
+      tlRefresh();
+    }
+
+    // 事件 → 表单回填(kind 切换会重建参数输入,再逐项回填)
+    function tlFillForm(ev) {
+      var k = document.getElementById('tl-kind');
+      k.value = ev.kind;
+      renderTlForm();
+      document.getElementById('tl-t').value = ev.t;
+      document.getElementById('tl-label').value = ev.label || '';
+      tlArgFields(ev.kind).forEach(function (f, idx) {
+        var el = document.getElementById('tl-arg-' + f[0]);
+        if (el && ev.args[idx] !== undefined) el.value = ev.args[idx];
+      });
+      tlFlagFields(ev.kind).forEach(function (f) {
+        var el = document.getElementById('tl-flag-' + f[0]);
+        if (el) el.value = (ev.flags[f[0]] !== undefined && ev.flags[f[0]] !== '') ? ev.flags[f[0]] : f[2];
+      });
+      document.getElementById('tl-flag-rev').checked = !(String(ev.flags.rev) === '0' || ev.flags.rev === false);
+      document.getElementById('tl-flag-re').checked = !(String(ev.flags.re) === '0' || ev.flags.re === false);
+    }
+
+    // 表单 → 选中事件实时写回(读表单整体替换,简单一致)
+    function tlFormChanged() {
+      var s = sel();
+      var tl = s ? ensureTimeline() : null;
+      if (!tl || state.tlSel == null || !tl.events[state.tlSel]) return;
+      var ev = tlReadForm();
+      if (!ev) return;
+      tl.events[state.tlSel] = ev;
+      renderTlBar();
     }
     function tlSummary(ev) {
       var a = tlKindIsRect(ev.kind)
@@ -1665,20 +1805,34 @@ window.ENEMY_REGISTRY = [
       var w0i = document.getElementById('tl-w0');
       if (document.activeElement !== w0i) w0i.value = (tl.w0 == null || isNaN(tl.w0)) ? '' : tl.w0;
       box.innerHTML = '';
-      if (!tl.events.length) { box.innerHTML = '<p class="hint">尚无事件</p>'; return; }
-      tl.events.slice().sort(function (a, b) { return b.t - a.t; }).forEach(function (ev) {
+      if (!tl.events.length) { box.innerHTML = '<p class="hint">尚无事件(点上方时间线空白处可直接新建)</p>'; return; }
+      var idxs = tl.events.map(function (e, i) { return i; });
+      idxs.sort(function (a, b) { return tl.events[b].t - tl.events[a].t; });
+      idxs.forEach(function (i) {
+        var ev = tl.events[i];
         var row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0';
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 4px;'
+          + 'border-radius:4px;cursor:pointer;' + (state.tlSel === i ? 'background:var(--accent);' : '');
+        row.title = '点击选中(在表单/时间线上编辑)';
+        var chip = document.createElement('span');
+        chip.textContent = ev.kind.charAt(0).toUpperCase();
+        chip.style.cssText = 'width:12px;height:12px;border-radius:3px;flex:none;font-size:9px;'
+          + 'line-height:11px;text-align:center;color:#0b0e12;font-weight:700;'
+          + 'background:' + (TL_KIND_COLOR[ev.kind] || 'var(--text-dim)');
         var span = document.createElement('span');
         span.style.flex = '1';
+        span.style.color = state.tlSel === i ? '#0b0e12' : '';
         span.textContent = tlSummary(ev);
         var del = document.createElement('button');
         del.textContent = '删';
-        del.addEventListener('click', function () {
-          var i = tl.events.indexOf(ev);
-          if (i >= 0) tl.events.splice(i, 1);
-          renderTimeline();
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          tl.events.splice(i, 1);
+          if (state.tlSel === i) state.tlSel = null;
+          tlRefresh();
         });
+        row.addEventListener('click', function () { tlSelect(i); });
+        row.appendChild(chip);
         row.appendChild(span);
         row.appendChild(del);
         box.appendChild(row);
@@ -1738,12 +1892,14 @@ window.ENEMY_REGISTRY = [
     }
     function setTimeMode(on) {
       state.timeMode = on;
+      state.tlSel = null;
       var b = document.getElementById('btn-time-mode');
       b.textContent = '时空模式:' + (on ? '开' : '关');
       b.classList.toggle('active', on);
       document.getElementById('time-panel').hidden = !on;
       document.getElementById('btn-time-export').hidden = !on;
-      if (on) { renderTlForm(); renderTimeline(); }
+      document.getElementById('tl-strip').hidden = !on;
+      if (on) { renderTlForm(); tlRefresh(); }
     }
     function structureFromMap(p) {
       var name = (p.comments && p.comments[0]) ? p.comments[0] : 'structure';
@@ -2007,19 +2163,34 @@ window.ENEMY_REGISTRY = [
         renderCanvas();
       });
       els.btnStructureExport.addEventListener('click', exportStructure);
-      // 时空模式(.cyrt):模式开关 / 事件表单 / w0 / 选区反填 / 导出
+      // 时空模式(.cyrt):模式开关 / 事件表单 / w0 / 选区反填 / 导出 / 滑动条交互
       document.getElementById('btn-time-mode').addEventListener('click', function () {
         setTimeMode(!state.timeMode);
       });
       document.getElementById('btn-time-export').addEventListener('click', exportTimeMap);
-      document.getElementById('tl-kind').addEventListener('change', renderTlForm);
+      document.getElementById('tl-kind').addEventListener('change', function () {
+        renderTlForm();
+        tlFormChanged();   // 编辑选中事件时切 kind = 换性质,参数回默认由作者重填
+      });
       document.getElementById('tl-w0').addEventListener('change', function () {
         var tl = ensureTimeline();
         if (!tl) return;
         var v = parseFloat(this.value);
         tl.w0 = isNaN(v) ? null : v;
+        renderTlBar();   // 量程变了,滑动条重画
+      });
+      ['tl-t', 'tl-label', 'tl-flag-rev', 'tl-flag-re'].forEach(function (id) {
+        document.getElementById(id).addEventListener('change', tlFormChanged);
       });
       document.getElementById('tl-from-sel').addEventListener('click', tlFromSelection);
+      document.getElementById('tl-del').addEventListener('click', function () {
+        var s = sel();
+        var tl = s ? ensureTimeline() : null;
+        if (!tl || state.tlSel == null || !tl.events[state.tlSel]) return;
+        tl.events.splice(state.tlSel, 1);
+        state.tlSel = null;
+        tlRefresh();
+      });
       document.getElementById('tl-add').addEventListener('click', function () {
         var tl = ensureTimeline();
         if (!tl) { window.alert('先选中(或新建)一个结构'); return; }
@@ -2030,7 +2201,27 @@ window.ENEMY_REGISTRY = [
           window.alert('注意:阈值 T-' + ev.t + ' 不小于起始钟 w0=' + w0 + ',运行时永远不会触发');
         }
         tl.events.push(ev);
-        renderTimeline();
+        state.tlSel = tl.events.length - 1;
+        tlRefresh();
+      });
+      // 滑动条空白处点击 = 在该时刻新建事件(细项到右侧表单继续编辑)
+      document.getElementById('tl-bar').addEventListener('pointerdown', function (e) {
+        var t = e.target;
+        if (t.id !== 'tl-bar' && !t.classList.contains('tl-track') && !t.classList.contains('tl-tick')) return;
+        var s = sel();
+        if (!s) { window.alert('先选中(或导入)一个结构'); return; }
+        var tl = ensureTimeline();
+        var max = tlBarMax(tl);
+        var r = this.getBoundingClientRect();
+        var p = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+        var tt = Math.round(p * max * 10) / 10;
+        if (tt >= max) tt = Math.max(0, max - 0.1);   // 不允许点出永不触发的事件
+        var ev = tlReadForm() || { t: tt, kind: 'collapse', args: [0, 0, 4, 4], flags: {}, label: '' };
+        ev.t = tt;
+        tl.events.push(ev);
+        state.tlSel = tl.events.length - 1;
+        tlFillForm(ev);
+        tlRefresh();
       });
       renderTlForm();
     }
