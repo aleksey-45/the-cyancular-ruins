@@ -217,6 +217,52 @@ globalThis.Core = (function () {
     return { kind: 'color', rgba: rgba };
   }
 
+  // ── meta 文本(规格 §3.2)──
+  // 形状就是今天那几行 `# ...` 注释:deflate 压得掉,而且游戏侧
+  // MapFormat.parse_spawn_metadata() 零改动就能继续用。
+  // 本函数输出:先注释,再出生点(player / player2 / player3…),最后敌人。
+  function buildMeta(map) {
+    var lines = [];
+    var i;
+    for (i = 0; i < map.comments.length; i++) lines.push('# ' + map.comments[i]);
+    for (i = 0; i < map.players.length; i++) {
+      var kw = i === 0 ? 'player' : (i === 1 ? 'player2' : 'player' + (i + 1));
+      lines.push('# ' + kw + ' ' + map.players[i].x + ' ' + map.players[i].y);
+    }
+    for (i = 0; i < map.enemies.length; i++) {
+      var e = map.enemies[i];
+      lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y);
+    }
+    return lines.length ? lines.join('\n') + '\n' : '';
+  }
+
+  // 解析失败(坐标不是整数、坐标个数不够)的行**降级成注释**而不是丢掉 ——
+  // 编辑器不许静默吃掉用户写的东西。
+  function parseMeta(text) {
+    var players = [], enemies = [], comments = [];
+    var lines = String(text == null ? '' : text).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var s = lines[i].trim();
+      if (s === '') continue;
+      if (s.charAt(0) !== '#') { comments.push(s); continue; }
+      var body = s.slice(1).trim();
+      var parts = body.split(/\s+/);
+      var head = parts[0];
+      if (/^player\d*$/.test(head) && parts.length >= 3) {
+        var px = parseInt(parts[1], 10), py = parseInt(parts[2], 10);
+        if (isFinite(px) && isFinite(py)) { players.push({ x: px, y: py }); continue; }
+      } else if (head === 'enemy' && parts.length >= 4) {
+        var ex = parseInt(parts[2], 10), ey = parseInt(parts[3], 10);
+        if (isFinite(ex) && isFinite(ey) && parts[1] !== '') {
+          enemies.push({ type: parts[1], x: ex, y: ey });
+          continue;
+        }
+      }
+      comments.push(body);
+    }
+    return { players: players, enemies: enemies, comments: comments };
+  }
+
   // ── 与格式无关的纯工具(自旧编辑器沿用)──
   function sanitizeName(name) {
     var n = String(name == null ? '' : name).trim();
@@ -307,6 +353,7 @@ globalThis.Core = (function () {
     KIND_TEX: KIND_TEX, KIND_COLOR: KIND_COLOR,
     encodeTexLayer: encodeTexLayer, decodeTexLayer: decodeTexLayer,
     encodeColorLayer: encodeColorLayer, decodeColorLayer: decodeColorLayer,
+    buildMeta: buildMeta, parseMeta: parseMeta,
     HUE_NEUTRAL: HUE_NEUTRAL, BRI_NEUTRAL: BRI_NEUTRAL,
     SAT_NEUTRAL: SAT_NEUTRAL, ALPHA_NEUTRAL: ALPHA_NEUTRAL,
     packDesc: packDesc,

@@ -241,6 +241,49 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   }, 'decodeColorLayer: 错 kind 报错');
 })();
 
+// ---- meta 文本 ----
+(function () {
+  var m = Core.createMap('demo', 4, 4);
+  m.comments = ['demo', '这是一张测试图'];
+  m.players = [{ x: 3, y: 4 }, { x: 10, y: 4 }];
+  m.enemies = [{ type: 'fly_bird', x: 20, y: 12 }];
+  var text = Core.buildMeta(m);
+  eq(text, '# demo\n# 这是一张测试图\n# player 3 4\n# player2 10 4\n# enemy fly_bird 20 12\n',
+     'buildMeta: 注释在前,再 spawn');
+
+  var back = Core.parseMeta(text);
+  eq(back.comments, ['demo', '这是一张测试图'], 'parseMeta: 注释回读');
+  eq(back.players, [{ x: 3, y: 4 }, { x: 10, y: 4 }], 'parseMeta: 多个出生点回读');
+  eq(back.enemies, [{ type: 'fly_bird', x: 20, y: 12 }], 'parseMeta: 敌人回读');
+
+  // 第 3 个及以后的出生点必须原样保留(游戏侧读不到,但编辑器不许丢)
+  var m3 = Core.createMap('t', 4, 4);
+  m3.players = [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }];
+  eq(Core.parseMeta(Core.buildMeta(m3)).players.length, 3, 'parseMeta: 第 3 个出生点不丢');
+
+  // 空 meta
+  eq(Core.buildMeta(Core.createMap('t', 2, 2)), '', 'buildMeta: 什么都沒有时是空串');
+  eq(Core.parseMeta(''), { players: [], enemies: [], comments: [] }, 'parseMeta: 空串');
+
+  // 非法 spawn 行降级成注释,不丢信息也不崩
+  var bad = Core.parseMeta('# player abc 4\n# enemy\n');
+  eq(bad.players, [], 'parseMeta: 非法 player 不当出生点');
+  eq(bad.comments, ['player abc 4', 'enemy'], 'parseMeta: 非法 spawn 行降级为注释');
+
+  // 普通注释里出现 player 字样不该被误认(缺坐标)
+  eq(Core.parseMeta('# player 是主角\n').comments, ['player 是主角'], 'parseMeta: player 注释不被误认');
+
+  // CRLF 要能吃
+  eq(Core.parseMeta('# demo\r\n# player 1 2\r\n').players, [{ x: 1, y: 2 }], 'parseMeta: CRLF');
+
+  // round-trip:buildMeta → parseMeta → buildMeta 稳定
+  var t1 = Core.buildMeta(m);
+  var m2 = Core.createMap('x', 4, 4);
+  var pm = Core.parseMeta(t1);
+  m2.comments = pm.comments; m2.players = pm.players; m2.enemies = pm.enemies;
+  eq(Core.buildMeta(m2), t1, 'meta: build→parse→build 稳定');
+})();
+
 // ==== 断言区结束 ====
 
 console.log('');
