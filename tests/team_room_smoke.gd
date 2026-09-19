@@ -131,6 +131,95 @@ func _initialize() -> void:
 			fails.append("★ 名单行配色没走公共的 _row_color(一处定义 + 两处调用,实际命中 %d 次)—— 未选边档的自己那行会不亮" % row_color_hits)
 		if lcode.contains('"%d / 6 人'):
 			fails.append("★ 等待室计数行把容量 6 写死了(应引 LobbyRooms.TEAM_ROLES —— TEAM_SIZE 一改这行就撒谎)")
+	# ⑧ **悬空引用守卫**:`_enter_match_scene` 指向的对局场景必须真的存在(B 册 Task 6 创建)。
+	# ★ 为什么值一条:那个 `call_deferred("change_scene_to_file", …)` 是**字符串路径**,文件被删/
+	#   改名/写错时**什么都不报** —— 点了"开始"的六个客户端只会在换场那一刻静默停在原地(或更糟:
+	#   报一条 change_scene 失败后留在等待室)。而这条死路要**真凑齐 6 人开局**才现形,那时它长得
+	#   像"功能坏了"而不是"路径写错了"。先例:`tests/kh_l4_probe.gd` 对大乱斗入口那条
+	#   `ResourceLoader.exists` 断言(同一条理由:数字符串会把"场景被删"读成绿)。
+	# ★ 判据取**场景路径**而不是 `team_game` 字样(同 kh_l4 那条的说明):数"指向该场景的字符串"
+	#   才等于数"入口个数",数字样会把注释/变量名一起命中。
+	var entry := "res://scenes/" + "team" + "_game.tscn"
+	if lobby_src.is_empty():
+		fails.append("读不到 scenes/team_lobby.gd(悬空引用守卫无从成立)")
+	else:
+		var hits := ScanUtil.code_only(lobby_src).count(entry)
+		if hits != 1:
+			fails.append("★ 3v3 大厅入口应**恰好 1 处**指向 %s(实际 %d 处)—— 入口漏加/被删/指回别处" % [entry, hits])
+		if not ResourceLoader.exists(entry):
+			fails.append("★ 3v3 对局场景 %s 不存在(悬空引用:大厅那个 call_deferred 换场会静默失败)" % entry)
+		# ★ 顺带钉住"指向的那个场景**真的挂上了** team_game.gd"(反向:路径在但内容是空气 ——
+		#   比如只建了个空 .tscn)。读它的 ext_resource 而不是 `load()`:`-s` 阶段不该为了断言
+		#   把整个对局场景(含 Level0 那一整棵)拖进内存。
+		var tscn := FileAccess.get_file_as_string(entry) if FileAccess.file_exists(entry) else ""
+		if not tscn.contains("scenes/team_game.gd"):
+			fails.append("★ %s 没有挂 scenes/team_game.gd(空场景 = 换场成功但一行脚本都不跑)" % entry)
+	# ⑨ 3v3 客户端的**两条"漏了不报错"的接线**(B 册 Task 6;判据取源码,理由同 ⑥⑦ ——
+	#   对局场景要 autoload + 真链路,`-s` 里跑不动,真链路那份归 Task 8)。
+	#   ★ ① `_hud.set_my_team(...)`:**唯一**会把"我是哪一队"告诉 HUD 的地方。漏了不报错,
+	#     后果是 `_my_team` 恒 0 ⇒ 「本局胜利!」/「胜利!」**一次都不会出现**,赢的局报成输的
+	#     (平局那一支不受影响 —— 它走 else)。★ 行为面另由 `hud_declarative_probe` 的第二段钉住
+	#     (喂 `{winner: 我的队号}` 断言念「本局胜利!」+ 不写入时的反向对照);这里钉的是**生产
+	#     到底调没调**,两半缺一不可:只钉 HUD 那一半,`team_game` 永不调用照样全绿。
+	#   ★ ② 撞车队:本地玩家的 `collision_layer/mask` 与副本幽灵体的层必须按**队**设
+	#     (`TeamHost.TEAM_ENEMY_LAYER`)。全 1v1/大乱斗式的"全员互挡"在 3v3 是**错的**,
+	#     而错了的表现是 C2 每帧回滚(不像崩溃那样显眼)。
+	var tg_src := ScanUtil.read("res://scenes/team_game.gd")
+	if tg_src.is_empty():
+		fails.append("读不到 scenes/team_game.gd(Task 6 的两条接线断言无从成立)")
+	else:
+		var tcode := ScanUtil.code_only(tg_src)
+		var apply_body := ScanUtil.func_body(tcode, "_apply_teams")
+		if apply_body.is_empty():
+			fails.append("★ team_game 里找不到 _apply_teams 的函数体(接线断言无从成立)")
+		elif not apply_body.contains("set_my_team("):
+			fails.append("★ team_game._apply_teams 没调 _hud.set_my_team(队伍表到达后必须写入我队队号;漏了不报错,赢的局会被 HUD 报成输的)")
+		elif not apply_body.contains("_team_of_role(PvpSession.role)"):
+			fails.append("★ team_game._apply_teams 的 set_my_team 入参不是 _team_of_role(PvpSession.role)(写死队号/拿 role 当队号都会在 role 与队号错开时报错胜负)")
+		# ★ 判据收在**函数体**上而不是全文件 `contains`:全文件里"常量出现过"太容易满足 ——
+		#   把 1 队那一支换成"全员互挡"(`| 2`)、或把队 B 的层写死成 16,常量本体照旧在文件里,
+		#   全文件断言一条都不会红。契约的四个要点(见 TeamHost._apply_team_layers 那张表):
+		var coll_body := ScanUtil.func_body(tcode, "_apply_team_collision")
+		if coll_body.is_empty():
+			fails.append("★ team_game 里找不到 _apply_team_collision 的函数体(撞车队契约断言无从成立)")
+		else:
+			if not coll_body.contains("collision_layer = 2"):
+				fails.append("★ _apply_team_collision 没给 1 队设身体层 2(契约表:1 队 layer=2 / mask=21)")
+			if not coll_body.contains("& ~2"):
+				fails.append("★ _apply_team_collision 没给 1 队**抹掉**玩家层位(写成 `|= 2` 就是全员互挡 = 队友也挡我;服务器那边抹了 → 每帧回滚)")
+			if not coll_body.contains("TeamHost.TEAM_ENEMY_LAYER"):
+				fails.append("★ _apply_team_collision 未使用 TeamHost.TEAM_ENEMY_LAYER(队 B 身体层不能写死 16 —— 层位是全局资源,将来可能挪)")
+			# ★ 两条一起要:`set_ghost_layer(` 单独一条**不够** —— 写成 `set_ghost_layer(2)`
+			#   (副本幽灵体恒在玩家层 = 队友副本也挡我)时它照样在,而那一行正是"按**队**设层"
+			#   与"恒在玩家层"的全部差别(实测:只钉前一条时这条变异**照样绿**)。
+			if not (coll_body.contains("set_ghost_layer(") and coll_body.contains("_ghost_layer_of(")):
+				fails.append("★ _apply_team_collision 没给副本幽灵体按**队**配层(必须 set_ghost_layer(_ghost_layer_of(...));写成 set_ghost_layer(2) 就是队友副本也挡我 → C2 每帧回滚,不报错)")
+		var ghost_body := ScanUtil.func_body(tcode, "_ghost_layer_of")
+		if ghost_body.is_empty() or not ghost_body.contains("TeamHost.TEAM_ENEMY_LAYER"):
+			fails.append("★ team_game 的 _ghost_layer_of 未按队返回 TeamHost.TEAM_ENEMY_LAYER(副本按**它代表那名玩家**的队设层)")
+		# ③ 小地图两个提供器必须**共用同一套遍历/过滤**(`_minimap_entries()`),不能各写一份 `for`。
+		#    `ui/minimap.gd` 是**按下标**对应颜色(`_other_dots[i].color = cols[i]`)——
+		#    两个数组错位一格就是"队友点画成敌人色",**不报错只误导人**;而错位最容易发生在
+		#    "某个副本已 queue_free、尚未从 `_replicas` 抹掉"那个窗口里(一处带守卫、另一处不带
+		#    就当场错一格)。故判据是"两处都只从同一个共同遍历取数"。
+		var others_body := ScanUtil.func_body(tcode, "_minimap_others")
+		var colors_body := ScanUtil.func_body(tcode, "_minimap_colors")
+		if not (others_body.contains("_minimap_entries()") and colors_body.contains("_minimap_entries()")):
+			fails.append("★ 小地图两个提供器没共用 _minimap_entries()(各写一份 for = 过滤条件两份;某副本已 free 未摘时两数组错位一格 → 队友点画成敌人色,不报错)")
+		# ④ 队色染到**身体**上必须是 modulate **比值**(队色 / 本体主色),不能直接乘队色。
+		#    ★ 直接乘是 brief 给的初版:蓝身体 `#639BFF` × 橙 `C_TEAM_B` = `#636073` —— 一坨灰紫,
+		#      "一眼看出谁是队友"直接落空(实测图 `.superpowers/sdd/_t6_tint2.png` 第②列)。
+		#      比值则精确等于队色本身(实测逐字节相等),与头顶 ID / 小地图点位**同源同一个常量**。
+		#    ★ 局限(如实登记):本断言只钉**机制**,钉不住 `BODY_BASE_COLOR` 那个**数值**的时效性 ——
+		#      换 player.png 素材后它若不重测,六个人会一起偏色(仍然分得出谁是谁,故更易漏)。
+		#      复测办法写在 `pvp_match_client.gd` 该常量的注释里;要钉死得在探针里真读一次 PNG。
+		var tint_code := ScanUtil.code_only(ScanUtil.read("res://scenes/pvp_match_client.gd"))
+		var tint_body := ScanUtil.func_body(tint_code, "_apply_tint")
+		if tint_body.is_empty():
+			fails.append("读不到 pvp_match_client.gd 的 _apply_tint 函数体(队色染色机制断言无从成立)")
+		elif not (tint_body.contains("color_override.r / BODY_BASE_COLOR.r")
+				and tint_body.contains("color_override.b / BODY_BASE_COLOR.b")):
+			fails.append("★ 队色染色被改回「直接乘队色」了(蓝身体乘橙 = 灰紫,队色认不出;必须是 队色/本体主色 的比值)")
 	if fails.is_empty():
 		print("TEAM ROOM SMOKE: ALL-OK")
 		quit(0)

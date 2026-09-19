@@ -38,9 +38,48 @@ var _match_ended := false
 # 暂停菜单是否开着(PvP 下菜单不暂停树,靠它锁本地输入;见 _refresh_input_lock)
 var _menu_open := false
 
-func _apply_tint(body: Node, hue_deg: float) -> void:
+# 玩家本体精灵(player.png)的**主色**(RGB)。"把身体染成某个颜色"要拿它当基准去做比值。
+# ★ 数值是**实测**的不是拍的(2026-09-19):主色 `#639BFF`,占 12987 个不透明像素里的 10875(83.6%);
+#   次色 `#5585D9` 是它的暗调同色。复测办法:按 alpha>200 过滤 player.png 的全部像素,
+#   取出现次数最多的那个 RGB。
+# ★ 换 sprite 素材要重测这一行 —— 它错了不报错,只是队色会**整体偏色**(整队一起偏,所以
+#   "谁是谁"照旧分得出,更容易漏)。三个分量都非 0,故下面那句比值除法不需要额外兜底。
+const BODY_BASE_COLOR := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)   # #639BFF
+
+
+# 通用身体染色:只给角色本体 AnimatedSprite2D 上色(武器/预瞄线不染)。
+# 两条互斥的路,按 `color_override` 是否存在二选一:
+#   · 默认(1v1 / 大乱斗)= **色相旋转**:挂 `player_p2_hue.gdshader`,`hue_deg` 是旋转量,
+#     0 = 不改色(故本助手可重复调用)。
+#   · `color_override` 非透明(3v3 队色)= **modulate 比值**,见下。
+#
+# ★ 队色为什么是"modulate 比值"而不是"直接乘队色"(brief 给的是后者 —— 二选一,这里选前者
+#   但**改了算法**,理由是实测的):`modulate` 是**乘**,只能把身体压暗、改不了色相。本体主色是蓝
+#   `#639BFF`,蓝 × `C_TEAM_B`(1.0,0.62,0.45) = `(0.36,0.31,0.40)` —— 一坨**灰紫**,不是橙,
+#   "一眼看出谁是队友"直接落空(实测图 `.superpowers/sdd/_t6_tint2.png` 第②列)。
+#   改成 **`队色 / 本体主色`** 这个**比值**就精确了:输出 = 主色像素 × 比值 = **恰好队色本身**
+#   (实测:队 A 得到 `#73D9FF` = `C_TEAM_A`,队 B 得到 `#FF9E73` = `C_TEAM_B`,逐字节相等)。
+#   队色因此与头顶 ID / 小地图点位**同源同一个常量**,不存在"身体是派生色、柱子上是原色"。
+# ★ 队 A 的比值有两个分量 > 1(1.16 / 1.40)—— 这是**有意的**:`CanvasItem.modulate` 收 >1 的值,
+#   实测在 `rendering/mobile`(Forward Mobile)下原样生效(上面那两个色就是它算出来的)。
+#   队 B 那三个分量都 < 1,故它同时是"把身体压向橙"。
+# ★ 为什么不用现成的 `player_p2_hue.gdshader` 做队色(试过,hue 旋转数学上是对的,但那个 shader
+#   有个**既有的**重复乘纹理 bug:`COLOR = tex * COLOR` 而入参 COLOR 已经含纹理 ⇒ 输出是
+#   `rotate(tex) × tex × modulate`,即**纹理乘了两次**;蓝 → 橙会被那个逐通道乘积压成灰
+#   (实测 `#635963`,与"直接乘队色"一样灰)。修那个 shader 会**连带改掉 1v1 的 P2 与大乱斗的
+#   个人色相**的观感(它们今天也是 `tex²`),那不在本任务范围内 ⇒ 3v3 走另一条路,老 shader 一字未动。
+func _apply_tint(body: Node, hue_deg: float, color_override: Color = Color(0, 0, 0, 0)) -> void:
 	var canvas := body as CanvasItem
-	if canvas == null or is_zero_approx(hue_deg):
+	if canvas == null:
+		return
+	# ① 队色(modulate 比值):精确染成 `color_override` 本身
+	if color_override.a > 0.0:
+		canvas.modulate = Color(color_override.r / BODY_BASE_COLOR.r,
+				color_override.g / BODY_BASE_COLOR.g,
+				color_override.b / BODY_BASE_COLOR.b)
+		return
+	# ② 色相旋转(1v1 / 大乱斗的既有效果);0 = 不改色
+	if is_zero_approx(hue_deg):
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
@@ -248,6 +287,21 @@ func _apply_peer_hues(_hues: Dictionary) -> void:
 	push_error("PvpMatchClient: 子类必须覆写 _apply_peer_hues")
 
 
+# ── 「每个角色的颜色」那一段的**唯一分叉点**(基类钩子)──
+# `_on_match_sync` 只调它一次,不再直接调 `_apply_peer_hues`。
+#   · 默认(1v1 / 大乱斗):消费载荷里的 `hues`(每个 role 自选的色相)。
+#   · 3v3(`team_game`)覆写:消费载荷里的 `teams`(队色),**刻意不调** `_apply_peer_hues`
+#     —— 6 个人里认不出队友这个模式就没法玩,个人色相在 3v3 是无效输入。
+# ★ 签名收**整个 payload** 而不是只收 `hues`:3v3 要读的是**同一份应答里的另一个键**;
+#   只传 hues 会逼子类把 teams 先存进一个字段、再到钩子里取回来(多一条"上游写、下游读"的暗通道)。
+# ★ 两个既有子类**都不覆写它**,且默认实现与改动前那两行逐字同构("非空才染色")
+#   ⇒ 对它们是零影响(回归线:kh_l4/kh_l5/hud_declarative + 真链路探针)。
+func _apply_peer_hues_or_team(payload: Dictionary) -> void:
+	var hues: Dictionary = payload.get("hues", {})
+	if not hues.is_empty():
+		_apply_peer_hues(hues)
+
+
 func _on_match_sync(payload: Dictionary) -> void:
 	# 本应答是**进场建态**还是**重连补态**?(见 `_resync_pull_pending`;读一次即清)
 	var resync := _resync_pull_pending
@@ -255,9 +309,8 @@ func _on_match_sync(payload: Dictionary) -> void:
 	var names: Dictionary = payload.get("names", {})
 	if not names.is_empty():
 		_apply_peer_names(names)
-	var hues: Dictionary = payload.get("hues", {})
-	if not hues.is_empty():
-		_apply_peer_hues(hues)
+	# 颜色那一段走**基类钩子**(默认 = 个人色相;3v3 覆写成队色,见 `_apply_peer_hues_or_team`)
+	_apply_peer_hues_or_team(payload)
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():
 		_apply_match_options(opts)
@@ -479,6 +532,10 @@ var _retry_timer: SceneTreeTimer = null   # 单一定时器(判据见 _schedule_
 #   场景 → `pvp_game`/`royale_game._ready` 里那个订阅还在),而 `_on_match_sync` 里的出生点校正
 #   对两种口径的答案**相反**(见那一支的注释),故必须让应答自己知道是哪一次拉的。
 #   取用点:`_on_match_sync` 首行(读一次、当场清掉);置位点:`_on_resumed` 发送前那一行。
+# ★ 2026-09-19(3v3)第二个置位点:`team_game._on_round_state` 的「新一轮 COUNTDOWN」那一拉。
+#   那里问的是**同一个问题**("这条应答不是进场建态吗?") —— 换边后 `spawns` 是**新一侧**,
+#   而 `PvpSession.spawn` 手里是旧一侧,两者**必然**不一致(与重连那条同款),照进场口径
+#   硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。故它复用同一个闸,不另立标志。
 var _resync_pull_pending := false
 
 

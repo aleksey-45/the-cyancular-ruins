@@ -89,6 +89,17 @@ func _build_ghost_body(src: Node) -> void:
 		_ghost.add_child(poly)
 		_ghost_shapes[pose] = poly
 
+# 幽灵体所在碰撞层。★ **默认值不变**(`_build_ghost_body` 里那句 2,全项目唯一一处),
+# 本函数只是把它变成可改的:3v3 按**该副本代表的那名玩家**的队配层(队 B 的玩家身体在层 16,
+# 见 `TeamHost.TEAM_ENEMY_LAYER` 那张契约表)。1v1 / 大乱斗**不调它** ⇒ 行为逐字不变。
+# ★ 为什么必须跟着队走:幽灵体的全部用途是让"预测所依据的世界"与权威一致。队友之间是
+#   **完全穿透**(服务器侧两队掩码互指对方的位),副本若恒在层 2,本地预测就会被队友挡下 ——
+#   而服务器上他穿过去了 ⇒ 每帧分歧、每帧回滚(C2 的无限回滚循环,与"幽灵体缺失"同一个形状)。
+func set_ghost_layer(n: int) -> void:
+	if _ghost != null and is_instance_valid(_ghost):
+		_ghost.collision_layer = n
+
+
 # 幽灵体按姿态切换碰撞箱(与 player.gd 的 _coll_by_pose 同款)。形状必须跟姿态走:
 # 否则蹲下躲进矮通道的对手仍按站姿挡路,预测侧又会与权威不一致。
 func _set_ghost_pose(pose: int) -> void:
