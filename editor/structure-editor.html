@@ -42,6 +42,12 @@ button:hover { background: #2f363f; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #0b0e12; font-weight: 600; }
 button.danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
 
+/* 地图/时间 页签(分段控件) */
+.seg-group { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-group .seg-btn { border: none; border-radius: 0; padding: 6px 16px; background: var(--panel-2); }
+.seg-group .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-group .seg-btn.active { background: var(--accent); color: #0b0e12; font-weight: 600; }
+
 .main { display: flex; flex: 1; min-height: 0; }
 .sidebar {
   width: 264px; flex: none; display: flex; flex-direction: column; gap: 10px;
@@ -177,9 +183,12 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
   <header class="topbar">
     <h1>Structure Editor of CyR</h1>
     <div class="topbar-actions">
+      <div class="seg-group" id="mode-tabs" title="地图=画图;时间=专注编排时间线事件">
+        <button id="tab-map" class="seg-btn active">地图</button>
+        <button id="tab-time" class="seg-btn">时间</button>
+      </div>
       <button id="btn-import">导入</button>
       <button id="btn-export" class="primary">导出库</button>
-      <button id="btn-time-mode">时空模式:关</button>
       <button id="btn-time-export" class="primary" hidden>导出时空图(.cyrt)</button>
       <input type="file" id="file-import" accept=".cyrm,.cyrt,.txt,.json,text/plain,application/json" hidden>
     </div>
@@ -197,7 +206,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
           <button id="btn-del" class="danger">删除</button>
         </div>
       </section>
-      <section class="panel props-panel">
+      <section class="panel props-panel map-only">
         <h2>画布尺寸</h2>
         <div class="row">
           <label>宽 <input type="number" id="size-w" min="1"  value="12"></label>
@@ -205,19 +214,19 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         </div>
         <button id="btn-resize" class="primary" style="width:100%">应用尺寸</button>
       </section>
-      <section class="panel">
+      <section class="panel map-only">
         <h2>砖块纹理</h2>
         <div id="palette"></div>
         <p class="hint">0 = 空气 · 1–10 = 砖块纹理</p>
       </section>
-      <section class="panel">
+      <section class="panel map-only">
         <h2>砖形(2×2 子格)</h2>
         <div class="shape-panel">
           <div class="shape-mini" id="shape-mini"></div>
         </div>
         <p class="hint">点四格翻转 · 默认全满,不能清成全空</p>
       </section>
-      <section class="panel spawn-panel">
+      <section class="panel spawn-panel map-only">
         <h2>出生点</h2>
         <div id="spawn-tools" class="spawn-tools"></div>
         <p class="hint">选中工具后点格放置,右键移除。</p>
@@ -265,6 +274,7 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
         <button data-tool="erase" class="tool-btn">橡皮</button>
         <button data-tool="select" class="tool-btn">选框</button>
         <button data-tool="line" class="tool-btn">直线</button>
+        <button data-tool="pan" class="tool-btn" title="抓手:左键拖动平移画布(中键/空格+拖随时可用)">抓手</button>
         <label class="brush-label">画笔 <input type="number" id="brush-size" min="1" max="15" value="1"></label>
         <span class="spacer"></span>
         <button id="btn-undo" title="Ctrl+Z">撤销</button>
@@ -999,8 +1009,47 @@ window.ENEMY_REGISTRY = [
         }
       }
       drawSelection();
+      drawTimeEvents();
       drawBrushPreview();
       drawPlayerReference();
+      ctx.restore();
+    }
+
+    // 时间页:画布上标出所有事件的影响范围(矩形=框,圆形=圈,刷怪点=十字;选中加粗,其余半透明)
+    function drawTimeEvents() {
+      if (!state.timeMode) return;
+      var s = sel();
+      var tl = s ? ensureTimeline() : null;
+      if (!tl || !tl.events.length) return;
+      var z = view.zoom;
+      ctx.save();
+      tl.events.forEach(function (ev, i) {
+        var col = TL_KIND_COLOR[ev.kind] || '#8b94a1';
+        var selThis = state.tlSel === i;
+        ctx.globalAlpha = selThis ? 0.95 : 0.45;
+        ctx.setLineDash(selThis ? [] : [4, 3]);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = selThis ? 2 : 1;
+        if (tlKindIsRect(ev.kind)) {
+          var px = view.panX + ev.args[0] * z, py = view.panY + ev.args[1] * z;
+          ctx.strokeRect(px + .5, py + .5, ev.args[2] * z - 1, ev.args[3] * z - 1);
+        } else {
+          var cx = view.panX + (ev.args[0] + .5) * z, cy = view.panY + (ev.args[1] + .5) * z;
+          var rr = (ev.args.length > 2 ? ev.args[2] : 0) * z;
+          if (rr > 0) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            ctx.beginPath();
+            ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
+            ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6);
+            ctx.stroke();
+          }
+        }
+      });
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
       ctx.restore();
     }
     function zoomAt(mx, my, factor) {
@@ -1256,7 +1305,7 @@ window.ENEMY_REGISTRY = [
 
     // ── pointer handlers ──
     function onPointerDown(e) {
-      if (e.button === 1 || spaceDown) {
+      if (e.button === 1 || spaceDown || (e.button === 0 && state.tool === 'pan')) {
         e.preventDefault();
         drag = { mode: 'pan', sx: e.offsetX, sy: e.offsetY, ox: view.panX, oy: view.panY };
         canvas.setPointerCapture(e.pointerId);
@@ -1278,6 +1327,22 @@ window.ENEMY_REGISTRY = [
       var s = sel();
       var cell = cellAt(e.offsetX, e.offsetY);
       if (!cell || !s) return;
+      // 时间页:左键点画布 = 把选中事件移到该格(矩形=新左上角,圆形/刷怪=新圆心;尺寸不变)
+      if (e.button === 0 && state.timeMode) {
+        var tsl = ensureTimeline();
+        if (state.tlSel == null || !tsl.events[state.tlSel]) {
+          var sb = document.getElementById('statusbar');
+          if (sb) sb.textContent = '时间页:先在时间线上点选(或点空白新建)事件,再点画布放置其位置';
+          return;
+        }
+        var tev = tsl.events[state.tlSel];
+        tev.args[0] = cell.x;
+        tev.args[1] = cell.y;
+        tlFillForm(tev);
+        tlRefresh();
+        renderCanvas();
+        return;
+      }
       // 选中 spawn 工具:右键移除该格 spawn(玩家出生点任意多个,逐个删)
       if (e.button === 2 && state.spawnTool) {
         var pls = Core.playersOf(s);
@@ -1903,13 +1968,18 @@ window.ENEMY_REGISTRY = [
     function setTimeMode(on) {
       state.timeMode = on;
       state.tlSel = null;
-      var b = document.getElementById('btn-time-mode');
-      b.textContent = '时空模式:' + (on ? '开' : '关');
-      b.classList.toggle('active', on);
+      document.getElementById('tab-map').classList.toggle('active', !on);
+      document.getElementById('tab-time').classList.toggle('active', on);
       document.getElementById('time-panel').hidden = !on;
       document.getElementById('btn-time-export').hidden = !on;
       document.getElementById('tl-strip').hidden = !on;
+      // 地图编辑面板(尺寸/纹理/砖形/出生点)与画布工具栏只在「地图」页;
+      // 时间页画布=纯取坐标视图(点画布放事件位置),结构库保留(要选目标图)
+      document.querySelectorAll('.map-only').forEach(function (p) { p.hidden = on; });
+      var tb = document.querySelector('.canvas-toolbar');
+      if (tb) tb.hidden = on;
       if (on) { renderTlForm(); tlRefresh(); }
+      renderCanvas();
     }
     function structureFromMap(p) {
       var name = (p.comments && p.comments[0]) ? p.comments[0] : 'structure';
@@ -2173,10 +2243,9 @@ window.ENEMY_REGISTRY = [
         renderCanvas();
       });
       els.btnStructureExport.addEventListener('click', exportStructure);
-      // 时空模式(.cyrt):模式开关 / 事件表单 / w0 / 选区反填 / 导出 / 滑动条交互
-      document.getElementById('btn-time-mode').addEventListener('click', function () {
-        setTimeMode(!state.timeMode);
-      });
+      // 地图/时间 页签 + 时空导出 / 事件表单 / w0 / 选区反填 / 滑动条交互
+      document.getElementById('tab-map').addEventListener('click', function () { setTimeMode(false); });
+      document.getElementById('tab-time').addEventListener('click', function () { setTimeMode(true); });
       document.getElementById('btn-time-export').addEventListener('click', exportTimeMap);
       document.getElementById('tl-kind').addEventListener('change', function () {
         renderTlForm();
