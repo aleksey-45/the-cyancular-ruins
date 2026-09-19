@@ -135,13 +135,19 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
 #tl-strip { padding: 6px 14px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .tl-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
 .tl-bar {
-  position: relative; height: 36px; background: var(--panel-2);
+  position: relative; height: 46px; background: var(--panel-2);
   border: 1px solid var(--border); border-radius: 6px; cursor: crosshair; user-select: none;
 }
-.tl-track { position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; background: var(--border); border-radius: 2px; }
-.tl-tick { position: absolute; top: 50%; height: 12px; width: 1px; margin-top: -6px; background: var(--border); }
+.tl-track { position: absolute; left: 0; right: 0; top: 16px; height: 4px; background: var(--border); border-radius: 2px; }
+.tl-tick { position: absolute; top: 12px; height: 12px; width: 1px; background: var(--border); }
+.tl-tick .tl-tick-label {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; color: var(--text-dim); white-space: nowrap; pointer-events: none;
+}
+.tl-tick.first .tl-tick-label { left: 0; transform: none; }
+.tl-tick.last .tl-tick-label { left: auto; right: 0; transform: none; }
 .tl-mark {
-  position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  position: absolute; top: 18px; width: 14px; height: 14px; margin-left: -7px;
   border: 1px solid rgba(11, 14, 18, .55); border-radius: 3px; cursor: grab;
   font-size: 9px; line-height: 12px; text-align: center; color: #0b0e12; font-weight: 700;
 }
@@ -1699,10 +1705,14 @@ window.ENEMY_REGISTRY = [
       var tl = s ? ensureTimeline() : null;
       var max = tlBarMax(tl);
       document.getElementById('tl-range-label').textContent = '0–' + max + 's';
-      [0, .25, .5, .75, 1].forEach(function (p) {
+      [0, .25, .5, .75, 1].forEach(function (p, pi) {
         var t = document.createElement('div');
-        t.className = 'tl-tick';
+        t.className = 'tl-tick' + (pi === 0 ? ' first' : '') + (pi === 4 ? ' last' : '');
         t.style.left = (p * 100) + '%';
+        var lb = document.createElement('span');
+        lb.className = 'tl-tick-label';
+        lb.textContent = Math.round(max * p) + 's';
+        t.appendChild(lb);
         bar.appendChild(t);
       });
       var track = document.createElement('div');
@@ -1721,8 +1731,8 @@ window.ENEMY_REGISTRY = [
           e.stopPropagation();
           e.preventDefault();
           tlSelect(i);
-          try { m.setPointerCapture(e.pointerId); } catch (err) {}
           var dragging = true;
+          // move/up 挂 window(不依赖 setPointerCapture——合成输入/捕获失败都能吃到)
           var move = function (me) {
             if (!dragging) return;
             var r = bar.getBoundingClientRect();
@@ -1736,14 +1746,14 @@ window.ENEMY_REGISTRY = [
           };
           var up = function () {
             dragging = false;
-            m.removeEventListener('pointermove', move);
-            m.removeEventListener('pointerup', up);
-            m.removeEventListener('pointercancel', up);
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
             renderTimeline();   // 拖完刷新列表顺序
           };
-          m.addEventListener('pointermove', move);
-          m.addEventListener('pointerup', up);
-          m.addEventListener('pointercancel', up);
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up);
+          window.addEventListener('pointercancel', up);
         });
         bar.appendChild(m);
       });
@@ -1780,7 +1790,7 @@ window.ENEMY_REGISTRY = [
       document.getElementById('tl-flag-re').checked = !(String(ev.flags.re) === '0' || ev.flags.re === false);
     }
 
-    // 表单 → 选中事件实时写回(读表单整体替换,简单一致)
+    // 表单 → 选中事件实时写回(读表单整体替换,简单一致;滑动条+列表都刷新——列表不含输入框,不抢焦点)
     function tlFormChanged() {
       var s = sel();
       var tl = s ? ensureTimeline() : null;
@@ -1788,7 +1798,7 @@ window.ENEMY_REGISTRY = [
       var ev = tlReadForm();
       if (!ev) return;
       tl.events[state.tlSel] = ev;
-      renderTlBar();
+      tlRefresh();
     }
     function tlSummary(ev) {
       var a = tlKindIsRect(ev.kind)
@@ -2179,7 +2189,9 @@ window.ENEMY_REGISTRY = [
         tl.w0 = isNaN(v) ? null : v;
         renderTlBar();   // 量程变了,滑动条重画
       });
-      ['tl-t', 'tl-label', 'tl-flag-rev', 'tl-flag-re'].forEach(function (id) {
+      // 静态输入的双向绑定(rev/re 复选框由 renderTlForm 动态生成并在那里统一挂监听,
+      // 此处不能引用——boot 时还不存在,null.addEventListener 会炸断后续全部接线)
+      ['tl-t', 'tl-label'].forEach(function (id) {
         document.getElementById(id).addEventListener('change', tlFormChanged);
       });
       document.getElementById('tl-from-sel').addEventListener('click', tlFromSelection);
@@ -2216,6 +2228,7 @@ window.ENEMY_REGISTRY = [
         var p = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
         var tt = Math.round(p * max * 10) / 10;
         if (tt >= max) tt = Math.max(0, max - 0.1);   // 不允许点出永不触发的事件
+        document.getElementById('tl-t').value = tt;   // 先落时刻再读表单,避免空 T 触发校验报警
         var ev = tlReadForm() || { t: tt, kind: 'collapse', args: [0, 0, 4, 4], flags: {}, label: '' };
         ev.t = tt;
         tl.events.push(ev);
