@@ -276,6 +276,15 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   // CRLF 要能吃
   eq(Core.parseMeta('# demo\r\n# player 1 2\r\n').players, [{ x: 1, y: 2 }], 'parseMeta: CRLF');
 
+  // ★ parseInt 的前缀截断必须走降级路径,不能把原文吃掉
+  eq(Core.parseMeta('# player 3.5 4\n').comments, ['player 3.5 4'], 'parseMeta: 小数坐标整行降级为注释');
+  eq(Core.parseMeta('# player 3.5 4\n').players, [], 'parseMeta: 小数坐标不产生出生点');
+  eq(Core.parseMeta('# player 7abc 4\n').comments, ['player 7abc 4'], 'parseMeta: 带后缀坐标整行降级');
+  eq(Core.parseMeta('# player 1e3 4\n').comments, ['player 1e3 4'], 'parseMeta: 科学计数法坐标整行降级');
+  eq(Core.parseMeta('# enemy fly_bird 3.5 4\n').comments, ['enemy fly_bird 3.5 4'], 'parseMeta: 敌人坐标同理');
+  eq(Core.parseMeta('# enemy fly_bird 20 12\n').enemies, [{ type: 'fly_bird', x: 20, y: 12 }], 'parseMeta: 正常敌人行不受影响');
+  eq(Core.parseMeta('# player -5 4\n').players, [{ x: -5, y: 4 }], 'parseMeta: 负号仍按整数接受(越界由 validateMap 管)');
+
   // round-trip:buildMeta → parseMeta → buildMeta 稳定
   var t1 = Core.buildMeta(m);
   var m2 = Core.createMap('x', 4, 4);

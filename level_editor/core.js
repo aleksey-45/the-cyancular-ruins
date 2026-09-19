@@ -239,6 +239,9 @@ globalThis.Core = (function () {
   // 解析失败(坐标不是整数、坐标个数不够)的行**降级成注释**而不是丢掉 ——
   // 编辑器不许静默吃掉用户写的东西。
   function parseMeta(text) {
+    // 整数字面量(允许前导正负号)。用它而不是 isFinite,是为了拒绝 parseInt 的
+    // 前缀截断:3.5 / 7abc / 1e3 / 0x10 都必须整行走降级路径。
+    var INT_TOKEN = /^[+-]?\d+$/;
     var players = [], enemies = [], comments = [];
     var lines = String(text == null ? '' : text).split(/\r?\n/);
     for (var i = 0; i < lines.length; i++) {
@@ -248,13 +251,17 @@ globalThis.Core = (function () {
       var body = s.slice(1).trim();
       var parts = body.split(/\s+/);
       var head = parts[0];
+      // ★ 成功条件必须是「token 本身是整数字面量」,不能只判 isFinite ——
+      //   parseInt('3.5')===3 / parseInt('7abc')===7 / parseInt('1e3')===1 全都不是 NaN,
+      //   只判 isFinite 会把 "# player 3.5 4" 静默改写成 "# player 3 4",原文被吃掉。
       if (/^player\d*$/.test(head) && parts.length >= 3) {
-        var px = parseInt(parts[1], 10), py = parseInt(parts[2], 10);
-        if (isFinite(px) && isFinite(py)) { players.push({ x: px, y: py }); continue; }
+        if (INT_TOKEN.test(parts[1]) && INT_TOKEN.test(parts[2])) {
+          players.push({ x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) });
+          continue;
+        }
       } else if (head === 'enemy' && parts.length >= 4) {
-        var ex = parseInt(parts[2], 10), ey = parseInt(parts[3], 10);
-        if (isFinite(ex) && isFinite(ey) && parts[1] !== '') {
-          enemies.push({ type: parts[1], x: ex, y: ey });
+        if (INT_TOKEN.test(parts[2]) && INT_TOKEN.test(parts[3])) {
+          enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
           continue;
         }
       }
