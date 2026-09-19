@@ -25,7 +25,8 @@ var _id_self: Node2D = null
 var _id_opp: Node2D = null
 var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
 var _minimap: Minimap = null      # 小地图(设置开启时创建)
-var _opp_hues: Dictionary = {}    # 双方角色颜色 {role -> 色相}(扩展 peer_hues 下发)
+# ★ 这里本来有一个 `_opp_hues`(扩展 peer_hues 下发的 {role -> 色相})—— 2026-09-19 用户裁定
+#   **个人色相在 1v1 整体停用**后它已无读者,连带 `_apply_opp_hue()` 一并删除(不留死声明)。
 var _names: Dictionary = {}       # role(int) -> 昵称(peer_info 下发;击杀播报取名字用)
 
 func _ready() -> void:
@@ -105,7 +106,7 @@ func _ready() -> void:
 	# 要求 current 已非空,而 current 只在 deferred 实例的 _ready 里赋值,同帧第二次调用看到的
 	# 还是 null → 真会建出第二份(实测 2 份),并打破「生产路径恰好 1 处挂载点」这条既有断言。
 	# 后来者不要照别的分支把这一行补回来。
-	# P2 本体色相 -20(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
+	# P2 本体固定为「偏绿的青」(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
 	# NetBus.stop() 断连,worker 检测对局任一方断线即拆局)。开关/退出由 PauseMenu 自理
@@ -123,9 +124,9 @@ func _ready() -> void:
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
-# 进场拉取的应答。三个 handler 本身幂等(重建禁用表/覆盖染色/重设标签),重复应用无害。
-# ⚠ 必须在 `_apply_p2_tint()` **之后**生效:那道预染是"无载荷"的落地形态,本载荷里的色相要能盖过它
-# (否则对手身体退回 -65 的旧规则)。请求发在 `_ready` 末尾,应答只会更晚到,时序天然满足。
+# 进场拉取的应答。三个 handler 本身幂等(重建禁用表/重设标签/重铺染色),重复应用无害。
+# 请求发在 `_ready` 末尾,应答只会更晚到 —— 下面的 handler 都按"晚到也能用"写。
+# ★ 色相那一条(`_apply_peer_hues`)在 1v1 是**短路**的,见该函数的注释(个人色相在本模式停用)。
 
 
 # 把本地玩家摆到权威出生点。**只在开局倒计时里做** —— 已经打起来还硬拉,等于把玩家从对局里
@@ -244,15 +245,14 @@ func _on_opponent_left() -> void:
 			return
 		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
-# P2(role 2)的本体色相:**默认/无载荷**时的落地色,自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
+# P2(role 2)的本体色相 —— 1v1 里**唯一的**染色规则:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
 # 只给角色 AnimatedSprite2D 挂 hue shader(色相旋转,受击白闪/无敌半透明仍正常),武器不染。
 #
-# ★ 口径(用户 2026-09-19 裁定):**P1 是蓝、P2 是偏绿的青**。本体主色是 `#639BFF`
+# ★ 口径(用户 2026-09-19 裁定):**P1 恒为蓝、P2 恒为偏绿的青**。本体主色是 `#639BFF`
 #   (`PvpMatchClient.BODY_BASE_COLOR`,色相 ≈218.5°),-43° ⇒ **≈175.5°**(青绿区间 165~185 的偏绿侧)
-#   ⇒ 渲染出来是 `#63FFF3`。数值是**实测**的(见 `.superpowers/sdd/` 的对照图与报告),不是算出来的。
-# ★ 本常量只在**载荷缺席**时生效:`match_sync` 的 `hues` 一到,`_apply_opp_hue` 就改用
-#   **对手自己选的色相**(`Settings.pvp_color_hue`,默认 0.0 = 不染)—— 故实机里对手的颜色
-#   通常由对方的设置决定,本值只在"对手用默认色"或"载荷还没到"时看得见。
+#   ⇒ 渲染出来是 `#63FFF3`。数值是**实测**的(`.superpowers/sdd/` 的对照图与报告),不是算出来的。
+# ★ 判据链(改这个值时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`(3v3 队 2 同色),
+#   由 `tests/hue_tint_probe` 钉住。
 const P2_DEFAULT_HUE := -43.0   # 度;与 player_p2_hue.gdshader 的 uniform 默认值同值
 
 func _apply_p2_tint() -> void:
@@ -269,26 +269,25 @@ func _apply_p2_tint() -> void:
 	mat.set_shader_parameter("hue_shift", P2_DEFAULT_HUE)   # P2 本体色相旋转(= 偏绿的青,见上)
 	canvas.material = mat
 
-# 通用身体染色:只给角色本体 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/
-# 无敌半透明仍正常),武器/预瞄线不染。色相 0 = 不改色(不挂 shader),故本助手可重复调用。
-
-# 对手身体颜色:走扩展 peer_hues(每个 role 上报自己选的色相)。载荷未到 / 缺本对手项时,
-# 缺省回落与 _apply_p2_tint 同一条规则(P2 用 P2_DEFAULT_HUE,其余不染)——故 _ready 里那次
-# _apply_p2_tint() 是无载荷时的落地形态,本函数是载荷到达后的覆盖。
-# 头顶名不在这里上色:名统一中性亮白,色相只区分身体(见 NAME_COLOR 处的说明)。
-# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
+# ── 个人色相(扩展 peer_hues)在 1v1 **整体停用**(用户 2026-09-19 裁定)──
+# 载荷照旧到达(`match_sync` 的 `hues`),但本模式**不消费它**:这里只把「P2 = 偏绿的青」那条
+# 固定规则重铺一次,`hues` 的内容一律忽略。
+#
+# ★ 为什么停用(而不是"只在两人撞色时兜底"):双方都用默认 `Settings.pvp_color_hue = 0.0` 时
+#   两个身体**同为默认蓝**,1v1 就没有"谁是谁"了 —— 而"分得出"是这个模式的硬需求,
+#   不是审美。停用后 P1 恒蓝、P2 恒青,与两人各自的设置无关。
+# ★ 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的就是 `P2_DEFAULT_HUE`
+#   而**不是** `Settings.pvp_color_hue`(1v1 从未把自选色相染到本地玩家身上),所以这里只需
+#   保证**对手侧**别把它拉进来。判据(改这条时会一起动):
+#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/hue_tint_probe` 有源码断言);
+#     · P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
+# ★ `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
+#   共享钩子(`PvpMatchClient._apply_peer_hues_or_team` / `_apply_tint`)**一字未动**。
 # ★ 不要连回 NetBusExt.local_peer_hues —— 那条**推送**路径在本项目已不存在(worker 不再广播),
 #   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
-func _apply_peer_hues(hues: Dictionary) -> void:
-	_opp_hues = hues
-	_apply_opp_hue()
-
-func _apply_opp_hue() -> void:
-	if _remote_replica == null:
-		return
-	var opp := 3 - PvpSession.role
-	_apply_tint(_remote_replica.get_node_or_null("AnimatedSprite2D"),
-			float(_opp_hues.get(opp, P2_DEFAULT_HUE if opp == 2 else 0.0)))
+# 应用函数(不是信号回调):唯一入口 = `_on_match_sync`(进场拉取)。
+func _apply_peer_hues(_hues: Dictionary) -> void:
+	_apply_p2_tint()   # 幂等:重铺 P2 那道固定染色(载荷内容一律忽略)
 
 # 服务器下发的生效选项:同步禁用武器(本地数字键/滚轮同样被挡,出生枪自动改首个启用槽)。
 # ★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是**无条件**上行的 ——
