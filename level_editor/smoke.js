@@ -788,11 +788,17 @@ await (async function () {
            sMinX === o.src[0] && sMinY === o.src[1] &&
            sMaxX === o.src[0] + o.src[2] && sMaxY === o.src[1] + o.src[3];
   }
-  var eqAll = true;
+  // ★ 累积成一个布尔量时失败只知道"错了",不知道是哪个格/象限;这条断言是本计划的关键
+  //   证明,失败必须可诊断 —— 故把**首个**失败组合记进消息(一旦失败就短路,不再往下算)。
+  var eqAll = true, firstBad = null;
   for (var cx = 0; cx < 3; cx++) for (var cy = 0; cy < 3; cy++)
     for (var qx = 0; qx < 2; qx++) for (var qy = 0; qy < 2; qy++)
-      if (!quadrantEquivalent(cx, cy, qx, qy)) eqAll = false;
-  ok(eqAll, '★ 取角等价:v3 的每个象限都能被 v4 的 2×2 子格精确铺满(3×3 格 × 4 象限全查)');
+      if (eqAll && !quadrantEquivalent(cx, cy, qx, qy)) {
+        eqAll = false;
+        firstBad = 'cx=' + cx + ' cy=' + cy + ' qx=' + qx + ' qy=' + qy;
+      }
+  ok(eqAll, '★ 取角等价:v3 的每个象限都能被 v4 的 2×2 子格精确铺满(3×3 格 × 4 象限全查)'
+            + (firstBad === null ? '' : ' —— 首个失败组合:' + firstBad));
 })();
 
 // ---- v3 → v4 迁移 ----
@@ -852,6 +858,41 @@ await (async function () {
   eq(Array.prototype.slice.call(back.layers[Core.LAYER_SCENE].desc),
      Array.prototype.slice.call(m.layers[Core.LAYER_SCENE].desc), 'migrateV3: 迁移结果可二进制往返');
   eq(back.comments, ['demo'], 'migrateV3: 往返后注释仍是 demo(标记行没被当成注释)');
+})();
+
+// ---- migrateV3:非对称象限的位序与展开方向(规格 §3.6「必须写死」)----
+// ★ 上面那批样本全都**对位序不敏感**,构成一个真实的盲区:
+//     shape 15(全砖)填满四格 —— 与象限顺序无关;
+//     shape 1(bit0)的象限 (qx=0,qy=0) —— 是唯一在象限转置下不变的形状。
+//   于是把 `1 << (qy*2+qx)` 写成 `1 << (qx*2+qy)`、或把展开处的 X/Y 对调,
+//   整份 smoke 仍然全绿,而每张导入图的每个非对称象限整体转 90°(静默错位)。
+//   ★ 取角等价那条断言帮不上忙:它在自己的循环里硬编码了 `cellX*4+qx*2+dx`,
+//     从不调用 migrateV3,证明不了 migrateV3 里的 qx/qy 有没有被对调。
+//   故这里用**非对称**形状逐个钉死 bit → 子格位置:
+//     bit(qy*2+qx) 为 1 → 展开到 X∈[2qx,2qx+1]、Y∈[2qy,2qy+1](各 2×2 子格)。
+//   '#' = 该子格是纹理2 的中性描述、'.' = 空气、'?' = 非空气但纹理不对
+//   —— 三者是同一串图案里的不同字符,所以"填错纹理"与"填错位置"一样会让断言变红。
+(function () {
+  var SAMPLES = [
+    ['1', '左上/bit0 (qx0,qy0)', ['##..', '##..', '....', '....']],
+    ['2', '右上/bit1 (qx1,qy0)', ['..##', '..##', '....', '....']],
+    ['4', '左下/bit2 (qx0,qy1)', ['....', '....', '##..', '##..']],
+    ['8', '右下/bit3 (qx1,qy1)', ['....', '....', '..##', '..##']],
+  ];
+  SAMPLES.forEach(function (s) {
+    var m = Core.migrateV3(Core.parseV3Text('# cyrm-v3\n002' + s[0] + '\n'));
+    var sc = m.layers[Core.LAYER_SCENE].desc, cols = m.subCols;
+    var t = Core.neutralDesc(2);
+    var got = [];
+    for (var Y = 0; Y < 4; Y++) {
+      var row = '';
+      for (var X = 0; X < 4; X++) row += (sc[Y * cols + X] === 0 ? '.'
+                                       : (sc[Y * cols + X] === t ? '#' : '?'));
+      got.push(row);
+    }
+    eq(got, s[2], 'migrateV3: shape ' + s[0] + '(' + s[1] + ')的子格图案(4×4 全查,'
+                + '位序 bit(qy*2+qx) 与展开方向同时被钉住)');
+  });
 })();
 
 // ==== 断言区结束 ====
