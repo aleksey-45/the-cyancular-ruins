@@ -159,7 +159,14 @@ globalThis.Core = (function () {
       var p = seen.get(d);
       if (p === undefined) {
         p = pal.length;
-        if (p > 65535) throw new Error('encodeTexLayer: 调色板超过 65535 项');
+        // ★ 上界必须判在 push **之前**、且必须是 `>=`(指令 A1)。
+        //   palette_count 是 u16,能表达的最大值就是 65535;而这里的 p 是**加入该项之前**的
+        //   pal.length ⇒ 加入后 pal.length === p + 1,故合法条件是 p + 1 ≤ 65535 即 p ≤ 65534。
+        //   写成 `p > 65535` 会放行**恰好 65536 项**的调色板:紧接着的 w.u16(65536) 按位截断
+        //   成 0,产出的是「本文件自己的解码器当场拒绝(调色板为空)」的 .cyrm —— 本仓历史上
+        //   A6 类缺陷(「导出后再也导不回来」)的逐字翻版,而这次重写存在的意义正是消灭它。
+        //   错误信息里的数字必须与实际限值一致(65535 = u16 上限,不是 p 的上限)。
+        if (p >= 65535) throw new Error('encodeTexLayer: 调色板超过 65535 项(u16 上限)');
         pal.push(d);
         seen.set(d, p);
       }
@@ -276,15 +283,18 @@ globalThis.Core = (function () {
   // ★ 刻意不自造压缩器:自己写 RLE 就要自己写解压器,而解压器写错是那种
   //   "大部分时候对、偶尔静默出错"的 bug。
   function deflateBytes(bytes) {
-    if (typeof CompressionStream === 'undefined' || typeof Blob === 'undefined') {
+    // ★ 三个全局都要守:`new Response(...)` 在 Response 缺失的环境里是**同步抛**,
+    //   那会逃出 encodeMap 的 promise 契约(它承诺的是 reject,不是 throw)。
+    if (typeof CompressionStream === 'undefined' || typeof Blob === 'undefined' ||
+        typeof Response === 'undefined') {
       return Promise.reject(new Error(
-        'deflateBytes: 本环境没有 CompressionStream/Blob;请用 encodeMap(map, {compress:false}) 导出裸 body'));
+        'deflateBytes: 本环境没有 CompressionStream/Blob/Response;请用 encodeMap(map, {compress:false}) 导出裸 body'));
     }
     var stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
     return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
   }
   // 流式解压,累计输出超过 maxBytes 就中止并拒绝。
-  // maxBytes 缺省 = 不设限(向后兼容;本仓唯一调用方是 decodeMap,它会传 MAX_BODY_SIZE)。
+  // maxBytes 缺省 = 不设限(向后兼容;本仓唯一调用方是 decodeMap,它传的是头部声明的 body_size)。
   // ★ 为什么不能只靠文件头里的 body_size:那个字段**本身也是攻击者可控的** —— 把它谎报成
   //   一个通过闸门的小值(比如 4096)、而 deflate 流里塞真炸弹,则「判在解压之前」那道闸
   //   完全挡不住:new Response(stream).arrayBuffer() 会**先把整份解压结果分配出来**,
@@ -292,8 +302,11 @@ globalThis.Core = (function () {
   //   ⇒ 64KB 的 .cyrm 能解出 ≈64MB、1MB 的能解出 ≈1GB(arrayBuffer 的峰值还约等于输出的
   //   2 倍)—— **结果无界、输入有界**。所以上界必须作用在**实际输出**上。
   function inflateBytes(bytes, maxBytes) {
-    if (typeof DecompressionStream === 'undefined' || typeof Blob === 'undefined') {
-      return Promise.reject(new Error('inflateBytes: 本环境没有 DecompressionStream/Blob'));
+    // ★ 三个全局都要守(理由同 deflateBytes):少了 Response 这一条,在「前两个有、
+    //   Response 没有」的环境里 new Response(...) 会同步抛,逃出调用方的 promise 契约。
+    if (typeof DecompressionStream === 'undefined' || typeof Blob === 'undefined' ||
+        typeof Response === 'undefined') {
+      return Promise.reject(new Error('inflateBytes: 本环境没有 DecompressionStream/Blob/Response'));
     }
     var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
     // ★ 不传 maxBytes = 不设限:走原来那条一条龙实现,返回语义与旧版逐字一致 ——
@@ -319,7 +332,15 @@ globalThis.Core = (function () {
         if (total > maxBytes) {
           var err = new Error('inflateBytes: 解压输出超过 ' + maxBytes + ' 字节上限(已累计 ' +
                               total + ' 字节),中止');
-          return reader.cancel().then(function () { throw err; }, function () { throw err; });
+          // ★ 先抛再 cancel,且 cancel 是 fire-and-forget(指令 B2)。旧写法
+          //   `return reader.cancel().then(throw, throw)` 把「抛不抛得出来」押在
+          //   cancel() 会不会 settle 上 —— 它若不 settle(实现差异/流已进错误态),
+          //   这段代码就不是抛错而是**这条路永远不 settle**:本次实测,旧形态配一个
+          //   永不 settle 的 cancel 会让 node 在**跑到一半时静默退出、退出码 0、
+          //   连 `结果:` 行都不打**(未决 promise + 事件循环空转)—— 只看退出码的话
+          //   那是完美的假绿。取消只是"别继续解压"的礼貌动作,不该挂在安全路径上。
+          reader.cancel().catch(function () {});
+          throw err;
         }
         chunks.push(chunk);
         return pump();
@@ -418,6 +439,17 @@ globalThis.Core = (function () {
   // "两端 deflate 实现对不上"这类风险,是一条完整可用的路径而不是半成品。
   function encodeMap(map, opts) {
     opts = opts || {};
+    // ★ 导出前必须跑一遍 validateMap(指令 A3)。decodeMap 在尺寸/图层长度上是**严格**的
+    //   (非 4 倍数、图层长度不符一律拒收),而 encodeMap 此前**一处校验都没有** ⇒
+    //   一张 subCols 非 4 倍数的图能编码成功,产出的文件却连本编辑器自己都读不回来
+    //   —— 又一个「导出后再也导不回来」(A6 类)。errors / warnings 的划分本来就是为
+    //   这件事定的:errors 是「导出去就是坏文件」,warnings 是「能导出,但游戏里大概
+    //   不按你预期跑」。★ **只拒 errors** —— 规格 §4.7 明说校验只报告不阻止导出,
+    //   编辑器不该替用户做决定,拿 warnings 拦导出就是把"只报告"变成"阻止"。
+    var report = validateMap(map);
+    if (report.errors.length) {
+      return Promise.reject(new Error('encodeMap: 地图校验未通过 —— ' + report.errors.join(';')));
+    }
     var body, payload, compression;
     try {
       body = encodeBody(map);
@@ -444,6 +476,28 @@ globalThis.Core = (function () {
     });
   }
 
+  // ── 解码一份**外来**文件时,这个函数保证什么、不保证什么(指令 C2)──
+  // 「解码一份来路不明的 .cyrm 能得到什么」此前在代码里没有答案,只有一串散在各处的
+  // throw。写在这里,免得下游(渲染端/迁移端)误以为拿到的是一份"已校验过"的数据。
+  //
+  // 保证(不满足就 reject,绝不静默返回一张残缺的图):
+  //   ① 头部合理性:长度 ≥ 20、magic === "CYRM"、version === 4、compression ∈ {0,1};
+  //   ② 尺寸合理:sub_cols / sub_rows > 0 且都是 SUB_PER_CELL 的倍数;
+  //   ③ 解压闸门:头部声明的 body_size ≤ MAX_BODY_SIZE(判在解压之前),且解压的**实际
+  //      输出**不超过 body_size(inflateBytes 的 maxBytes);
+  //   ④ body 长度精确:解压后字节数 === 头部声明的 body_size;
+  //   ⑤ CRC 相符:算得的 CRC32 与头部字段逐位相等(CRC 只覆盖 body,**不覆盖头部**);
+  //   ⑥ body 全消费:解完四层后剩余字节必须是 0(尾部多余字节 = 文件坏了);
+  //   ⑦ 索引与调色板边界:调色板非空、index_width ∈ {1,2}、每个索引都 < palette_count;
+  //   ⑧ 每层分配前的粗筛:头部尺寸反推出的格数不得超过该层剩余字节能装下的量。
+  //
+  // **不**保证(下游要自己判,今天靠 validateMap / 渲染端):
+  //   · 调色板[0] 是空气(规格把它列为**编码端**义务,解码端不代偿);
+  //   · 描述符的纹理位 ≤ 22、或纹理 0 与整体 0 一致(0 ≡ 空气 这条不变量在解码侧**不**成立
+  //     —— 见 isAir 上方那段注释);
+  //   · 尺寸在上限内(MAX_CELLS_W/H 是**编辑器**的输入钳制,不是格式的边界条件);
+  //   · 出生点/敌人坐标在地图内、或落在非实心格里;
+  //   · sub_cols / sub_rows 与 body 里实际排布的子格数一致(那由 ⑧ 的粗筛兜底,不是精确校验)。
   function decodeMap(bytes) {
     return new Promise(function (resolve) { resolve(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); })
       .then(function (b) {
@@ -461,6 +515,12 @@ globalThis.Core = (function () {
         var expectCrc = r.u32();
         var subCols = r.u16(), subRows = r.u16();
         var flags = r.u8();
+        // ★ reserved 字节与 layer_flags 的 bit4-7 一律**读掉不判**(指令 B7):
+        //   今天写侧恒写 0(encodeMap 里 w.u8(0) / layerFlags 只看 bit0-3),
+        //   读侧刻意只认低 4 位。这是**有意的前向兼容** —— 将来若在头部扩字段
+        //   (多出的图层/新增元信息),老编辑器读新文件时降级成"忽略"而不是当场拒收。
+        //   故这里**不要**加 `reserved === 0` 或 `flags & 0xF0 === 0` 的校验:
+        //   实测 reserved = 0xAB、layer_flags = 0xFF 的头部今天都能正常解码,那是有意为之。
         r.u8();
         // ★ 指令 D:先判「头部声明的解压后大小」,再碰 payload —— 解压是把攻击者给的
         //   字节变成内存的**那一步**,判在它后面就等于没判(内存已经分配出去了)。
@@ -482,9 +542,13 @@ globalThis.Core = (function () {
         if (compression === 0) next = Promise.resolve(payload);
         else if (compression === 1) {
           // ★ 上界一并交给 inflateBytes:头里的 body_size 是**未经验证**的声明,只有
-          //   这一道作用在**实际输出**上。合法文件的解压结果恒等于 body_size,所以这里
-          //   用同一个常量是**精确**的,不是近似(不会误拒任何合法文件)。
-          next = inflateBytes(payload, MAX_BODY_SIZE);
+          //   这一道作用在**实际输出**上。★ 上界传的是 bodySize 而**不是** MAX_BODY_SIZE
+          //   (指令 B1):合法文件的解压结果**恒等于** bodySize(下面那句长度比对就是它),
+          //   所以 bodySize 是**精确**上界、不会误拒任何合法文件;而 MAX_BODY_SIZE 只是
+          //   "任何合法文件都不可能超过"的松值 —— 拿松值当这道闸,"谎报 body_size + 真炸弹"
+          //   要靠**真解压出 64MB** 才被拒(拒是拒了,那 64MB 已经花掉了),换成 bodySize
+          //   后大约 4KB 的解压结果 + 一个 chunk 就能拒。安全边界不该比它需要的宽 16000 倍。
+          next = inflateBytes(payload, bodySize);
         }
         else throw new Error('decodeMap: 未知 compression=' + compression);
         return next.then(function (body) {
@@ -504,10 +568,20 @@ globalThis.Core = (function () {
   // ── v3 / 旧字母格式解析(只读迁移用,规格 §3.6)──
   // ★ 这里的 packed = texture*16 + shape 是 **v3 的编码**,与 v4 的 descriptor 毫无关系。
   //   故一律走 _v3Pack / _v3TexOf / _v3ShapeOf,绝不与 packDesc / texOf 混用。
-  const V3_MARKER = '# cyrm-v3';
   const SHAPE_HEX = '0123456789ABCDEF';
   // 旧字母格式只认 0-9 与 A(大小写均可),与游戏侧 MapFormat._tile_char_to_value 一致。
   const LEGACY_CHAR = { '0':0,'1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'A':10 };
+  // ★ 版本标记行的**唯一**谓词(指令 B4)—— `isV3Text` 与 `parseV3Text` 两处都必须走它。
+  //   规格 §3.6 的规范写法是 `# cyrm-v3`;这里比字面**稍宽**:容许 `#cyrm-v3` 这种无空格
+  //   写法、也容许标记行尾还跟着别的字(如 `# cyrm-v3 (demo)`)。宽严本身不是重点 ——
+  //   **重点是两处必须同宽**。此前两处各写一份且不等价(跳过用 /^#\s*cyrm-v\d+\s*$/、
+  //   识别用 indexOf('# cyrm-v3') === 0),于是两种输入一头一尾各错一半:
+  //     `#cyrm-v3`        → 被跳过、却**不被识别为 v3** ⇒ 网格掉进旧字母格式(报错/错位)
+  //     `# cyrm-v3 (demo)`→ 被识别为 v3、却**不被跳过** ⇒ 标记行落进 comments,污染往返
+  //   两侧的后果都不轻,而根因只是"同一条规则写了两遍"。故收成一个函数。
+  function isV3MarkerLine(line) {
+    return /^#\s*cyrm-v\d+(\s|$)/.test(String(line).trim());
+  }
 
   function _v3Pack(texture, shape) {
     if (shape === 0 || texture === 0) return 0;
@@ -519,7 +593,7 @@ globalThis.Core = (function () {
   function isV3Text(text) {
     var lines = String(text == null ? '' : text).split(/\r?\n/);
     for (var i = 0; i < lines.length; i++) {
-      if (lines[i].trim().indexOf(V3_MARKER) === 0) return true;
+      if (isV3MarkerLine(lines[i])) return true;
     }
     return false;
   }
@@ -553,7 +627,8 @@ globalThis.Core = (function () {
     var lines = String(text == null ? '' : text).split(/\r?\n/);
     var v3 = false;
     for (var i = 0; i < lines.length; i++) {
-      if (lines[i].trim().indexOf(V3_MARKER) === 0) { v3 = true; break; }
+      // ★ 与 isV3Text 共用同一个谓词(指令 B4)—— 这两处此前是两份不等价的实现。
+      if (isV3MarkerLine(lines[i])) { v3 = true; break; }
     }
     var rows = [], width = -1;
     var metaText = '';
@@ -561,9 +636,10 @@ globalThis.Core = (function () {
       var line = lines[i].trim();
       if (line === '') continue;
       if (line.charAt(0) === '#') {
-        // ★ 版本标记行不算注释。漏了这一句 `# cyrm-v3` 会被当成一条普通注释
-        //   塞进 comments,于是"导入→导出"会往用户的 meta 里塞进一行垃圾。
-        if (/^#\s*cyrm-v\d+\s*$/.test(line)) continue;
+        // ★ 版本标记行不算注释,判据与上面那句**同一个** isV3MarkerLine(指令 B4)。
+        //   漏了这一句 `# cyrm-v3` 会被当成一条普通注释塞进 comments,于是"导入→导出"
+        //   会往用户的 meta 里塞进一行垃圾。
+        if (isV3MarkerLine(line)) continue;
         metaText += line + '\n';
         continue;
       }
@@ -603,6 +679,18 @@ globalThis.Core = (function () {
     var meta = parseMeta(metaText);
     var players = meta.players, enemies = meta.enemies;
     if (!v3) {
+      // ★ 指令 A4:旧字母格式靠 2×2 折叠成 1 格,所以宽高**必须都是 ≥2 的偶数**。
+      //   此前直接交给 `Math.floor(h/2)` / `Math.floor(w/2)`,后果有两档:
+      //     · 单行输入 → `rows[0].length` 是唯一那行,可 `rows[ny*2+1]` 是 undefined,
+      //       抛的是裸 TypeError(读 undefined 的 length)—— 用户看到的是引擎报错;
+      //     · 宽 3 × 高 4 → 返回 1×2 格,**一句话不说,两整列永久消失**。
+      //   而按规格 §3.6 迁移是**单向**的(迁移后不再导出文本),吃掉的东西找不回来。
+      //   本模块自己的绑定约束是「编辑器不许静默吃掉用户写的东西」,故在这里拦成一条
+      //   与邻近解析错误同形状的中文错误(带实际收到的宽高,便于用户对照原文)。
+      if (width < 2 || width % 2 !== 0 || rows.length < 2 || rows.length % 2 !== 0) {
+        throw new Error('parseV3Text: 旧字母格式的宽高必须都是 ≥2 的偶数(收到 ' +
+                        width + '×' + rows.length + '),否则 2×2 折叠会静默丢掉边缘行/列');
+      }
       rows = _convertLegacy2x2(rows);
       // 旧格式 2×2 → 1,spawn 坐标同步 ÷2
       players = players.map(function (p) { return { x: Math.floor(p.x / 2), y: Math.floor(p.y / 2) }; });
@@ -624,6 +712,11 @@ globalThis.Core = (function () {
   //   src: [x, y, w, h] 贴图块内偏移,恒为 8×8
   // ★ 象限由子格在 64px 格内的位置决定(X % 4 / Y % 4),不是存在数据里的字段 ——
   //   每个子格要能独立推出自己该画哪一块。
+  // ★★ 调用方约束(指令 C1):**X / Y 必须非负,调用方自己 posmod**。
+  //   JS 的 `%` 保留被除数的符号,X = -1 会得到 qx = -1 ⇒ src[0] = -8 —— 落在贴图块外,
+  //   而这里**不做**任何归一化(也不该做:归一化是"负坐标该绕到哪一格"的环面语义,
+  //   属于调用方的世界模型,不是本函数的事)。故负坐标请先用 posmod(X, subCols) 之类
+  //   绕进 [0, subCols) 再调;本函数不抛错、只会安静地给出错误的源矩形。
   function subcellRender(X, Y) {
     var qx = X % SUB_PER_CELL, qy = Y % SUB_PER_CELL;
     return { dst: [X * SUB_PX, Y * SUB_PX, SUB_PX, SUB_PX],
@@ -830,6 +923,17 @@ globalThis.Core = (function () {
   function brightOf(d) { return (d >>> 3) & 7; }
   function satOf(d)    { return (d >>> 6) & 7; }
   function alphaOf(d)  { return (d >>> 9) & 7; }
+  // ★ 指令 D(本轮刻意**只加注释、不动接口**)—— isAir 的适用域,写清楚免得被误用:
+  //   · `isAir(d)` 判的是**整体等于 DESC_AIR(0)**,只对**本编码器产出的**数据可靠:
+  //     packDesc() 保证空气恒为 0,decodeTexLayer 又原样回读自己写进去的调色板项,
+  //     所以"自己导出、自己导入"这条闭环里 isAir 是对的。
+  //   · 读**外来**文件时唯一的空气判据是 `texOf(d) === 0`(按纹理位域取值)。
+  //     一个「辅码非 0 而纹理为 0」的畸形描述符(如 0x000007FF)会让
+  //     isAir(d) === false 与 texOf(d) === 0 得出**相反**结论,而 decodeMap /
+  //     decodeTexLayer 当前**不**归一化来路不明的描述符(它是原样穿过编解码的)。
+  //   · 两种收口方式(在 decodeTexLayer 里加一行归一化 / 取消导出 isAir 并声明
+  //     `texOf(d) === 0` 是唯一判据)**都要动公开接口**,属接口决定 —— 本次不自行选,
+  //     留给控制器 / 计划 2 定。
   function isAir(d)    { return d === DESC_AIR; }
 
   // 中性描述符 = 完全按原图,一点色都不改。

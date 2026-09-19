@@ -189,6 +189,13 @@ eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格'
   eq(r.u8(), 0x12, 'ByteReader: u8');
   eq(r.u16(), 0x3456, 'ByteReader: u16');
   eq(r.u32(), 0x789ABCDE, 'ByteReader: u32 高位不为负');
+  // ★ 指令 B6:`>>> 0` 此前没有确定性断言 —— 上面那串 0x789ABCDE 的 bit31 是 0,
+  //   把 u32 写成 `|` 拼完不回绕也照样绿。全 0xFF 是唯一能逼出符号位的那组字节:
+  //   少了 `>>> 0`,`(0xFF<<24)` 是 -16777216,读出来的会是 -1 而不是 4294967295。
+  eq(new Core.ByteReader(new Uint8Array([0xFF, 0xFF, 0xFF, 0xFF])).u32(), 4294967295,
+     'ByteReader: u32 读 [FF FF FF FF] → 4294967295(bit31 置位仍是无符号)');
+  eq(new Core.ByteReader(new Uint8Array([0x00, 0x00, 0x00, 0x80])).u32(), 2147483648,
+     'ByteReader: u32 读 [00 00 00 80] → 2147483648(高位单 bit 也不是负数)');
   eq(Array.prototype.slice.call(r.bytes(2)), [0xAA, 0xBB], 'ByteReader: bytes');
   eq(r.remaining(), 0, 'ByteReader: remaining 归零');
   // ByteReader 的三处越界共用一个错误信息('ByteReader: 越界读(p+n > len)'),
@@ -255,6 +262,100 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   var bad = new Uint8Array([Core.KIND_TEX, 1, 0, 0, 0, 0, 0, 1, 99]);   // 调色板 1 项,索引 99
   throws(function () { Core.decodeTexLayer(new Core.ByteReader(bad), 1, 1); }, 'decodeTexLayer: 索引越界报错', '越出调色板');
   throws(function () { Core.decodeTexLayer(new Core.ByteReader(new Uint8Array([9])), 1, 1); }, 'decodeTexLayer: 错 kind 报错', 'decodeTexLayer: kind=');
+})();
+
+// ---- 双字节索引(index_width = 2)与调色板上界(指令 A2)----
+// ★ 为什么单起一块:此前 grep 全仓(断言里)没有任何一处涉及 iw === 2 / 65535 / 65536 ——
+//   已覆盖的只有 index_width = 1。于是**双字节编码循环、双字节解码分支、它的
+//   `p >= palCount` 错误臂、以及编码器的调色板上界本身统统没有验证**。
+//   iw = 2 不是罕见分支:任何描述符种类超过 256 的层都会走它,一张装饰丰富的
+//   400×300 地图完全够得着(1,920,000 个子格,而描述符的组合有 90,112 种)。
+await (async function () {
+  // 第 i 个非空气描述符 —— 给出一个**合法且互不相同**的描述符。
+  // texture 取 1..4095 循环,再用 (hue, bright) 区分档:共 4095×64 种 ≫ 65535。
+  function distinctDesc(i) {
+    var block = (i / 4095) | 0;
+    return Core.packDesc(1 + (i % 4095), block & 7, (block >> 3) & 7, 4, 7);
+  }
+  // ★ 自证 distinctDesc 真的两两不同 —— 否则"300 种不同描述符"是假的,
+  //   调色板会缩回 ≤256 项、双字节路径根本不会被触发,而断言照样全绿。
+  var PROBE_N = 17 * 4095;                 // 覆盖下界测试用到的全部 (texture, block) 组合
+  var probe = new Set();
+  for (var q = 0; q < PROBE_N; q++) probe.add(distinctDesc(q));
+  eq(probe.size, PROBE_N, 'A2: distinctDesc 在 ' + PROBE_N + ' 个 i 上两两不同(构造前提自证)');
+  ok(probe.size > 256, 'A2: 描述符种类确实超过 256(否则走不到双字节索引)');
+
+  // ── ① 300 种描述符 → index_width 必须是 2,往返逐格一致,长度与手算公式相符 ──
+  var subCols = 20, subRows = 16, n = subCols * subRows;    // 320 个子格
+  eq(n, 320, 'A2: 样本子格数 320(放得下 300 种 + 空气,且余 20 格空气)');
+  var desc = new Uint32Array(n);
+  for (var i = 0; i < 300; i++) desc[i] = distinctDesc(i);
+  var encL = Core.encodeTexLayer(desc, subCols, subRows);
+
+  var r = new Core.ByteReader(encL);
+  eq(r.u8(), Core.KIND_TEX, 'A2: 层块首字节 kind');
+  eq(r.u16(), 301, 'A2: 调色板 301 项(索引 0 空气 + 300 种)');
+  r.bytes(4 * 301);
+  eq(r.u8(), 2, 'A2: 调色板 > 256 项 → index_width = 2(此前零覆盖的那条分支)');
+  // 长度 = kind(1) + palette_count(2) + 调色板(4×301) + index_width(1) + 索引流(2×n)
+  eq(encL.length, 1 + 2 + 4 * 301 + 1 + 2 * n,
+     'A2: 总长度与手算公式相符(双字节索引流 ⇒ 2×n,不是 n)');
+
+  var backL = Core.decodeTexLayer(new Core.ByteReader(encL), subCols, subRows);
+  eq(Array.prototype.slice.call(backL.desc), Array.prototype.slice.call(desc),
+     'A2: 双字节索引往返逐格一致');
+  // 逐格比对还不够强(样本里 300 之后的 20 格是空气,而空气的索引是 0):
+  // 把 300 种各自点名抽查一遍,区分出"索引整体串位"这类错。
+  var allOk = true, badAt = -1;
+  for (i = 0; i < 300; i++) if (backL.desc[i] !== distinctDesc(i)) { allOk = false; badAt = i; break; }
+  ok(allOk, 'A2: 300 种描述符各自按位置回读正确' + (badAt < 0 ? '' : '(首个失败 i=' + badAt + ')'));
+  eq(backL.desc[300], 0, 'A2: 第 301 格是空气(索引 0,没被串到别处)');
+
+  // ── ② 整文件往返也要真的走通 iw = 2 ──
+  // 把 300 种放在**前景层**(层 0),且不带任何 meta ⇒ body = metaLen(2,值为 0) + 层0 块,
+  // 于是层0 块在文件里的偏移是固定的,可以直接读它的 palette_count / index_width。
+  var mPal = Core.createMap('pal', 5, 4);                  // 5×4 格 = 20×16 = 320 子格
+  var front = mPal.layers[Core.LAYER_FRONT].desc;
+  for (i = 0; i < 300; i++) front[i] = distinctDesc(i);
+  eq(Core.buildMeta(mPal), '', 'A2: 样本图无注释/出生点/敌人 ⇒ meta 为空串(下面按固定偏移读层块的前提)');
+  var rawPal = await Core.encodeMap(mPal, { compress: false });
+  var rr = new Core.ByteReader(rawPal);
+  rr.bytes(Core.HEADER_SIZE + 2);                          // 跳过头部与 meta_len(=0)
+  eq(rr.u8(), Core.KIND_TEX, 'A2: 整文件:层0 块首字节 kind');
+  eq(rr.u16(), 301, 'A2: 整文件:层0 的 palette_count === 301');
+  rr.bytes(4 * 301);
+  eq(rr.u8(), 2, 'A2: 整文件:层0 的 index_width === 2(双字节路径在整文件里也走通)');
+
+  var compPal = await Core.encodeMap(mPal);                // 默认走 deflate
+  var backPal = await Core.decodeMap(compPal);
+  eq(Array.prototype.slice.call(backPal.layers[Core.LAYER_FRONT].desc),
+     Array.prototype.slice.call(front), 'A2: 整文件往返(压缩路径,300 种描述符 / iw = 2)');
+
+  // ── ③ 调色板上界:恰好 65535 项可以,65536 项必须抛(指令 A1 的边界)──
+  // palette_count 是 u16 ⇒ 能表达的最大值是 65535;索引 0 又必须留给空气,
+  // 故"装得下的非空气描述符"上限恰好 65534 种。两条都取**恰好**那一格。
+  var nOk = 65534;
+  var descOk = new Uint32Array(nOk);
+  for (i = 0; i < nOk; i++) descOk[i] = distinctDesc(i);
+  var encOk = Core.encodeTexLayer(descOk, 2, 32767);       // 2×32767 = 65534
+  var rOk = new Core.ByteReader(encOk);
+  eq(rOk.u8(), Core.KIND_TEX, 'A2 上界: 65535 项样本的 kind');
+  eq(rOk.u16(), 65535, 'A2 上界: 恰好 65535 项调色板可以编码(且没有被截断成 0)');
+  rOk.bytes(4 * 65535);
+  eq(rOk.u8(), 2, 'A2 上界: 65535 项仍走双字节索引(最大索引 65534 放得进 u16)');
+  eq(encOk.length, 1 + 2 + 4 * 65535 + 1 + 2 * nOk, 'A2 上界: 65535 项时总长度与公式相符');
+  var backOk = Core.decodeTexLayer(new Core.ByteReader(encOk), 2, 32767);
+  eq(backOk.desc[0], distinctDesc(0), 'A2 上界: 65535 项 → 第 0 格回读');
+  eq(backOk.desc[nOk - 1], distinctDesc(nOk - 1), 'A2 上界: 65535 项 → 最后一格回读');
+
+  // 65536 项:加入第 65535 个非空气描述符时 pal.length 会到 65536 ⇒ w.u16 按位截断成 0
+  // ⇒ 解码端「调色板为空」—— 即"编码器产出自己的解码器拒绝的文件"。必须在 push 之前就拒。
+  var nBad = 65535;
+  var descBad = new Uint32Array(nBad);
+  for (i = 0; i < nBad; i++) descBad[i] = distinctDesc(i);
+  throws(function () { Core.encodeTexLayer(descBad, 3, 21845); },   // 3×21845 = 65535
+         'A2 上界: 恰好 65536 项调色板必须抛错(A1 的 off-by-one 就差在这一格)',
+         '调色板超过 65535 项');
 })();
 
 // ---- 背景层块编解码 ----
@@ -422,8 +523,10 @@ await (async function () {
   //   于是断言名(CRC 不符)与实际验到的东西(解压流损坏)不是一回事,带上期望子串后当场红。
   //   改成翻**不压缩文件 body 的最后一个字节**:这步没有解压,长度不变(body_size 仍对),
   //   唯一能抓住它的就是 crc32(body) 的比对 —— 这才真的验到「CRC 是算在 body 内容上的」。
+  // ★ 指令 B5:期望子串必须**只有它该触发的那个错误**才有。'CRC' 太松 ——
+  //   任何含 "CRC" 的运行时错误(如 `ReferenceError: CRC is not defined`)都会命中。
   var badCrc = raw.slice(); badCrc[badCrc.length - 1] ^= 0xFF;
-  await rejects(function () { return Core.decodeMap(badCrc); }, 'decodeMap: CRC 不符抛错', 'CRC');
+  await rejects(function () { return Core.decodeMap(badCrc); }, 'decodeMap: CRC 不符抛错', 'CRC 不符');
 
   // 压缩流本身损坏(另一个损坏面):翻的是 zlib 的 Adler-32 校验尾,Node 的
   // DecompressionStream 会以「message 为空的 TypeError」拒绝 —— 错因只在 e.cause.message 里
@@ -461,8 +564,11 @@ await (async function () {
   badLen[6] = (bodySize + 1) & 0xFF;
   await rejects(function () { return Core.decodeMap(badLen); }, 'decodeMap: body_size 不符抛错', '头部声明');
 
+  // ★ 指令 B5:同理,'compression' 这个子串**任何一个**未声明标识符的
+  //   `ReferenceError: compression is not defined` 都会命中 —— 而那种红是"探针写错了",
+  //   不是"这条守卫真的在跑"。钉住完整短语才排得掉这类假绿。
   var badComp = bytes.slice(); badComp[5] = 7;
-  await rejects(function () { return Core.decodeMap(badComp); }, 'decodeMap: 未知 compression 抛错', 'compression');
+  await rejects(function () { return Core.decodeMap(badComp); }, 'decodeMap: 未知 compression 抛错', '未知 compression');
 })();
 
 // ---- golden 字节向量(1×1 格、compress:false)----
@@ -680,6 +786,34 @@ await (async function () {
   ok(Core.isV3Text('# cyrm-v3\n0000001F0031\n'), 'isV3Text: 有标记为真');
   ok(!Core.isV3Text('# 普通地图\n11\n11\n'), 'isV3Text: 无标记为假');
 
+  // ★ 指令 B4:版本标记行的**同一个**谓词。此前 isV3Text 与 parseV3Text 各写一份且
+  //   不等价(跳过用 /^#\s*cyrm-v\d+\s*$/,识别用 indexOf('# cyrm-v3') === 0),
+  //   于是两种输入一头一尾各错一半:
+  //     '#cyrm-v3'(无空格)  → 被跳过、却**不被识别为 v3** ⇒ 网格掉进旧字母格式(静默错位)
+  //     '# cyrm-v3 (demo)'  → 被识别为 v3、却**不被跳过** ⇒ 标记行落进 comments,污染往返
+  //   ★ 判据刻意用**全是 0-9 的网格行** `0011`:它在两种解析器下都合法,于是旧实现
+  //     不抛错,而是安静地给出"被 2×2 折叠、格数减半"的结果 —— 那正是这类缺陷最危险的
+  //     样子。两边的期望值**自行推导**:
+  //       v3(正确)  : `0011` = 纹理 001 + 形状 hex 1 → 1*16+1 = 17;两行各 1 格 → [17,17],1×2 格
+  //       旧字母(错) : [[0,0,1,1],[0,0,1,1]] 折叠 → 组(0)=[[0,0],[0,0]]=0、组(1)=[[1,1],[1,1]]=31
+  //                    → [0,31],2×1 格
+  //     三个维度(格宽/格高/packed)都不同,不存在"改错方向却仍撞对"的巧合。
+  ok(Core.isV3Text('#cyrm-v3\n0000001F0031\n'),
+     'B4 标记行:无空格的 #cyrm-v3 也算 v3(此前不算)');
+  var nospace = Core.parseV3Text('#cyrm-v3\n0011\n0011\n');
+  eq(nospace.cellsW, 1, 'B4 标记行:无空格的 #cyrm-v3 → cellsW 1(不是旧格式折叠后的 2)');
+  eq(nospace.cellsH, 2, 'B4 标记行:无空格的 #cyrm-v3 → cellsH 2(不是旧格式折叠后的 1)');
+  eq(Array.prototype.slice.call(nospace.packed), [17, 17],
+     'B4 标记行:无空格的 #cyrm-v3 也按 v3 解析(此前掉进旧字母格式 → [0,31] 且格数减半)');
+  ok(Core.isV3Text('# cyrm-v3 (demo)\n0000001F0031\n'),
+     'B4 标记行:# cyrm-v3 后面跟着别的字仍算 v3(识别侧本来就这样)');
+  eq(Core.parseV3Text('# cyrm-v3 (demo)\n0000001F0031\n').comments, [],
+     'B4 标记行:# cyrm-v3 (demo) 不被当成注释(此前会把它塞进 comments、污染导入→导出)');
+  // 反面:谓词不能宽到把"提到 cyrm-v 的普通注释"也吃掉
+  eq(Core.parseV3Text('# cyrm-v3\n# 说明:cyrm-v3 是我们的文本格式\n0000\n').comments,
+     ['说明:cyrm-v3 是我们的文本格式'],
+     'B4 标记行:普通注释里提到 cyrm-v3 不算标记行(谓词不越界)');
+
   // v3:每格 4 字符 = 3 位纹理 + 1 位形状 hex
   var v3 = '# cyrm-v3\n# demo\n# player 12 34\n# enemy jump_bird 100 50\n0000001F0031\n';
   var p = Core.parseV3Text(v3);
@@ -739,6 +873,30 @@ await (async function () {
          '旧格式: 小写 b 报错(游戏侧不认)', '非法字符 "b"');
   throws(function () { Core.parseV3Text('# old\n1B\n11\n'); },
          '旧格式: 大写 B 报错(游戏侧不认)', '非法字符 "B"');
+
+  // ★ 指令 A4:旧字母格式靠 2×2 折叠成 1 格 ⇒ 宽高必须都是 **≥2 的偶数**。
+  //   此前直接交给 Math.floor(h/2) / Math.floor(w/2),后果分两档:
+  //     · 单行输入 → 转换后 rows 为空,紧接着的 rows[0].length 抛**裸 TypeError**;
+  //     · 宽 3 × 高 4 → 返回 1×2 格,**一句话不说、两整列永久消失**(而按 §3.6 迁移是
+  //       单向的,吃掉的东西找不回来)。本模块自己的约束是「编辑器不许静默吃掉用户写的东西」,
+  //       故必须在进转换之前拦成一条与邻近解析错误同形状的中文错误。
+  //   ★ 期望子串挑「旧字母格式的宽高」—— 它只属于这一条错误;并另钉一条「收到 3×2」,
+  //     确保错误信息里带**实际收到的尺寸**(否则用户拿着报错也对照不出原文哪不对)。
+  throws(function () { Core.parseV3Text('# old\n111\n111\n'); },
+         'A4 旧格式: 奇数宽(3)报错,不再静默丢掉一整列', '旧字母格式的宽高');
+  throws(function () { Core.parseV3Text('# old\n111\n111\n'); },
+         'A4 旧格式: 奇数宽的错误信息里带实际尺寸 3×2', '收到 3×2');
+  throws(function () { Core.parseV3Text('# old\n11\n11\n11\n'); },
+         'A4 旧格式: 奇数高(3)报错,不再静默丢掉一整行', '旧字母格式的宽高');
+  throws(function () { Core.parseV3Text('# old\n11\n'); },
+         'A4 旧格式: 单行输入报错(此前抛裸 TypeError: 读 undefined 的 length)', '旧字母格式的宽高');
+  throws(function () { Core.parseV3Text('# old\n1\n1\n'); },
+         'A4 旧格式: 宽 1(奇数且 <2)报错', '旧字母格式的宽高');
+  // 反面:合法的偶数尺寸一个都不能被误伤 —— 上面那串旧格式样本已经全跑通了,
+  // 这里再钉一条 2×2 的下界与一条更宽的偶数尺寸,免得把守卫写成 `width <= 2`。
+  eq(Core.parseV3Text('# old\n11\n11\n').cellsW, 1, 'A4 旧格式: 下界 2×2 仍可解析');
+  eq(Core.parseV3Text('# old\n1111\n1111\n').cellsW, 2, 'A4 旧格式: 宽 4(偶数)仍可解析');
+  eq(Core.parseV3Text('# old\n11\n11\n11\n11\n').cellsH, 2, 'A4 旧格式: 高 4(偶数)仍可解析');
 
   // 非法输入必须抛错,不能静默截断成空气(审计 A12:parseInt("0A1") === 0)
   throws(function () { Core.parseV3Text('# cyrm-v3\n0A10\n'); },
@@ -980,6 +1138,67 @@ eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回�
   ok(Core.validateMap(badSize).errors.length > 0, 'validateMap: 尺寸非 4 倍数给 error');
 })();
 
+// ---- encodeMap 必须自己校验(指令 A3)----
+// ★ 为什么:decodeMap 在尺寸/图层长度上是**严格**的,而 encodeMap 此前**一处校验都没有**
+//   ⇒ 一张 subCols 非 4 倍数的图能编码成功,产出的文件却连本编辑器自己都读不回来
+//   —— 又一个「导出后再也导不回来」(A6 类)。errors / warnings 的划分本来就是为这件事
+//   定的。★ 同时钉住**反向**:只有 warnings 时**不许**拒导出 —— 规格 §4.7 明说校验
+//   只报告不阻止,拿 warnings 拦导出就是把"只报告"偷偷变成"阻止"。
+await (async function () {
+  // ① errors 非空 ⇒ reject(两条导出路径都要)
+  var bad = Core.createMap('bad', 8, 8);
+  bad.players = [{ x: 1, y: 1 }];
+  bad.subCols = 30;                                    // 非 4 的倍数
+  ok(Core.validateMap(bad).errors.length > 0,
+     'A3: 前提 —— 这张图 validateMap 确实有 error(否则下面两条验的不是这件事)');
+  await rejects(function () { return Core.encodeMap(bad); },
+    'A3: encodeMap: 有 error 的地图必须 reject,而不是产出读不回来的文件', '校验未通过');
+  await rejects(function () { return Core.encodeMap(bad, { compress: false }); },
+    'A3: encodeMap: 不压缩路径同样要拒(校验在两条路径之前,不分叉)', '校验未通过');
+
+  // ② 图层长度不符(另一条 error 分支)
+  var badLen = Core.createMap('bad', 8, 8);
+  badLen.players = [{ x: 1, y: 1 }];
+  badLen.layers[Core.LAYER_SCENE].desc = new Uint32Array(16);   // 8×8 格应是 32×32 = 1024 子格
+  ok(Core.validateMap(badLen).errors.length > 0, 'A3: 前提 —— 图层长度不符也是 error');
+  await rejects(function () { return Core.encodeMap(badLen); },
+    'A3: encodeMap: 图层长度不符也必须 reject', '校验未通过');
+
+  // ③ 只有 warnings 时必须照常导出(「只拒 errors」的那一半)
+  var warnOnly = Core.createMap('warn', 8, 8);          // 无出生点 + 四层全空 = 2 条 warning
+  var wv = Core.validateMap(warnOnly);
+  eq(wv.errors.length, 0, 'A3: 前提 —— 这张图没有 error');
+  ok(wv.warnings.length >= 2, 'A3: 前提 —— 这张图确有 warning(' + wv.warnings.length + ' 条)');
+  var wEnc = await Core.encodeMap(warnOnly, { compress: false });
+  var wBack = await Core.decodeMap(wEnc);
+  eq(wBack.subCols, warnOnly.subCols, 'A3: 只有 warnings 的地图照常导出(warnings 不阻止导出)');
+  eq(wBack.subRows, warnOnly.subRows, 'A3: 只有 warnings 的地图照常导出(subRows)');
+
+  // ④ ★ 真正「导出后再也导不回来」的那一格 —— 上面那两张图 encodeBody 自己也会顺手抛
+  //   (尺寸与图层长度对不上),所以它们**证明不了**这道校验是必须的。这里手工构造一张
+  //   **自洽**的图:subCols 非 4 的倍数,但每层数组长度**恰好**等于 subCols×subRows
+  //   ⇒ encodeBody 一路成功(它只看 layer.desc.length 与 subCols×subRows 是否相等),
+  //     而产出的文件头写着 sub_cols = 6,decodeMap 的尺寸检查**当场拒收**。
+  //   这正是 A3 要堵的那个洞:不加校验就会**安静地写出一份自己读不回来的 .cyrm**。
+  //   ★ 那份"未过校验的文件"的结局另有断言钉住('decodeMap: 尺寸非 4 倍数抛错' ——
+  //     把合法文件的头部改成 sub_cols = 6 后 decodeMap 当场拒收),这里不重复造一遍。
+  var odd = Core.createMap('odd', 8, 8);
+  odd.subCols = 6;                                       // 6 不是 SUB_PER_CELL(4)的倍数
+  var oddN = odd.subCols * odd.subRows;                  // 6×32 = 192
+  odd.layers[0].desc = new Uint32Array(oddN);
+  odd.layers[1].desc = new Uint32Array(oddN);
+  odd.layers[2].desc = new Uint32Array(oddN);
+  odd.layers[3].rgba = new Uint32Array(oddN);
+  odd.players = [{ x: 1, y: 1 }];
+  var ov = Core.validateMap(odd);
+  eq(ov.errors.length > 0, true, 'A3: 前提 —— 自洽的非 4 倍数尺寸图确有 error');
+  eq(ov.errors.some(function (s) { return s.indexOf('倍数') >= 0; }), true,
+     'A3: 前提 —— 那条 error 正是尺寸非 4 的倍数(图层长度对得上,所以只有这一条)');
+  await rejects(function () { return Core.encodeMap(odd, { compress: false }); },
+    'A3: 自洽的非 4 倍数尺寸图必须 reject 而不是安静地写出读不回来的文件(变异:去掉校验即红)',
+    '校验未通过');
+})();
+
 // ---- 大图端到端 + 性能守卫 ----
 await (async function () {
   var t0 = Date.now();
@@ -1057,6 +1276,26 @@ await (async function () {
   await rejects(function () { return Core.decodeMap(lie); },
     'decodeMap: body_size 谎报成 4096 + 真炸弹,在 inflateBytes 的实际输出上界处被拒',
     'inflateBytes');
+
+  // ★ 指令 B1:上界传的必须是**头部声明的 body_size**,不是 MAX_BODY_SIZE。
+  //   两者的差别只在"谎报得**不太大**"时现形 —— 上面那条 65MB 炸弹太大,两种实现**都会拒**
+  //   (只是一个在 4KB 处拒、一个在 64MB 处拒),所以它**证明不了**上界用的是哪个值。
+  //   这里谎报 4096、真输出 8MB:远小于 64MB 上限 ⇒
+  //     传 MAX_BODY_SIZE 时这道闸**完全不响**,要等解压完 8MB、走到长度比对处才拒(已经花掉 8MB)
+  //     传 bodySize 时第一个 chunk 就拒(约 4KB + 一个 chunk)
+  //   ★ 期望子串必须挑**只有新实现才产生**的那句:'4096' 不能用 —— 旧实现那句
+  //     "解压后 8388608 字节,头部声明 4096" 里也含 '4096',拿它当判据会**假绿**。
+  var smallBomb = zlib.deflateSync(Buffer.alloc(8 * 1024 * 1024));       // 8MB ≪ 64MB 上限
+  var head2 = enc.slice(0, Core.HEADER_SIZE);
+  head2[6] = 0x00; head2[7] = 0x10; head2[8] = 0x00; head2[9] = 0x00;    // body_size = 4096
+  var lie2 = new Uint8Array(head2.length + smallBomb.length);
+  lie2.set(head2, 0);
+  lie2.set(smallBomb, head2.length);
+  ok(smallBomb.length < 1024 * 1024,
+     'B1 前提: 8MB 输出压完只有 ' + smallBomb.length + ' 字节(输入有界、结果无界)');
+  await rejects(function () { return Core.decodeMap(lie2); },
+    'B1: 谎报 4096 + 8MB 真输出(仍在 64MB 之内)时,闸门落在实际输出上、且上界 = bodySize',
+    '解压输出超过');
 
   // 兼容:不传 maxBytes = 不设限,旧调用语义一字不改
   var tiny = zlib.deflateSync(Buffer.from('cyrm', 'utf8'));
