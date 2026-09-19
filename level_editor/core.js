@@ -296,6 +296,24 @@ globalThis.Core = (function () {
   const HEADER_SIZE = 20;
   const MAGIC = [0x43, 0x59, 0x52, 0x4D];   // "CYRM"
 
+  // ── 解压后 body 的硬上限「解压后大小上限」/ MAX_BODY_SIZE(指令 D)──
+  // ★ 它堵的是 **deflate 炸弹**:deflate 的最大压缩比约 1032:1 ⇒ **几十 KB** 的
+  //   恶意/损坏文件就能解出 **GB 级**内存。而它**完全不碰头部字段**(magic / 版本 /
+  //   尺寸 / CRC 全合法),所以下面 decodeBody 里那条「按 body 实际余量反推格数上界」
+  //   的检查对它**天然无效** —— 那条管的是「头部声称的尺寸大于 body 装得下的量」,
+  //   炸弹是反过来的:声明的 body 很小、解出来极大。故必须拿**头部声明的解压后大小**
+  //   单独设一道闸,且判在**任何解压动作之前**:判在解压之后等于拒是拒了、
+  //   内存已经先分配出去了。
+  // ★ 64MB 是怎么来的 —— 合法文件最坏就多大:上限尺寸 400×300 格 = 1600×1200 子格
+  //   = 1,920,000 子格(n),四层全在、且全都取到最坏编码:
+  //     背景层(颜色)  1 + 4n                        = 1 + 7,680,000   ≈ 7.68MB
+  //     三个纹理层各   1+2+4×调色板+1+2n,调色板 ≤65535 ⇒ 4 + 262,140 + 2n
+  //                                                 = 4,102,144  ≈ 4.10MB → ×3 ≈ 12.31MB
+  //     meta          2 + 65535(u16 长度字段的上限)                    ≈ 0.07MB
+  //   合计 20,051,970 字节 ≈ 19.1MiB。取 64MB(67,108,864)= 它的 ≈3.3 倍:
+  //   对**任何**合法文件都不可能误拒,对炸弹则是一道明确的硬闸。
+  const MAX_BODY_SIZE = 64 * 1024 * 1024;
+
   function layerFlags(map) {
     var f = 0;
     for (var L = 0; L < LAYER_COUNT; L++) if (map.layers[L]) f |= (1 << L);
@@ -403,6 +421,13 @@ globalThis.Core = (function () {
         var subCols = r.u16(), subRows = r.u16();
         var flags = r.u8();
         r.u8();
+        // ★ 指令 D:先判「头部声明的解压后大小」,再碰 payload —— 解压是把攻击者给的
+        //   字节变成内存的**那一步**,判在它后面就等于没判(内存已经分配出去了)。
+        //   放在这里而不是放进更下面那段 body 长度比对里,正是因为这个顺序要求。
+        if (bodySize > MAX_BODY_SIZE) {
+          throw new Error('decodeMap: 头部声明的 body_size ' + bodySize +
+                          ' 字节超过 64MB 上限(' + MAX_BODY_SIZE + ' 字节),拒绝解压');
+        }
         if (subCols <= 0 || subRows <= 0) {
           throw new Error('decodeMap: 尺寸非法 ' + subCols + '×' + subRows);
         }
@@ -594,6 +619,104 @@ globalThis.Core = (function () {
     return map;
   }
 
+  // ── 尺寸上限(规格 §4.3 闸 1)──
+  // 旧编辑器的 clampMin(v, min, def) 第三参是"非数字时的默认值"而不是上限,
+  // 输 99999 就会去分配一张巨图然后卡死浏览器。这里给硬上限。
+  const MAX_CELLS_W = 400;
+  const MAX_CELLS_H = 300;
+  const DEFAULT_CELLS_W = 125, DEFAULT_CELLS_H = 75;
+
+  function clampMapSize(w, h) {
+    var wi = parseInt(w, 10), hi = parseInt(h, 10);
+    if (!isFinite(wi)) wi = DEFAULT_CELLS_W;
+    if (!isFinite(hi)) hi = DEFAULT_CELLS_H;
+    return {
+      w: Math.max(1, Math.min(MAX_CELLS_W, wi)),
+      h: Math.max(1, Math.min(MAX_CELLS_H, hi)),
+    };
+  }
+
+  // ── 导出前校验(规格 §4.7)──
+  // 只报告,不阻止导出 —— 编辑器不该替用户做决定。
+  // errors   = 真正非法,导出会产出坏文件
+  // warnings = 能导出,但游戏里大概不按你预期跑
+  function validateMap(map) {
+    var errors = [], warnings = [];
+    if (!map || !map.layers || map.layers.length !== LAYER_COUNT) {
+      errors.push('图层数不是 ' + LAYER_COUNT);
+      return { errors: errors, warnings: warnings };
+    }
+    if (map.subCols % SUB_PER_CELL !== 0 || map.subRows % SUB_PER_CELL !== 0) {
+      errors.push('尺寸 ' + map.subCols + '×' + map.subRows + ' 不是 ' + SUB_PER_CELL + ' 的倍数');
+    }
+    var n = map.subCols * map.subRows;
+    var L, layer;
+    for (L = 0; L < LAYER_COUNT; L++) {
+      layer = map.layers[L];
+      if (!layer) continue;
+      var arr = layer.kind === 'tex' ? layer.desc : layer.rgba;
+      if (!arr || arr.length !== n) {
+        errors.push(LAYER_NAMES[L] + '层长度不是 ' + map.subCols + '×' + map.subRows);
+      }
+    }
+    if (errors.length) return { errors: errors, warnings: warnings };
+
+    var cellsW = map.subCols / SUB_PER_CELL, cellsH = map.subRows / SUB_PER_CELL;
+    var scene = map.layers[LAYER_SCENE] ? map.layers[LAYER_SCENE].desc : null;
+
+    // 出生点
+    if (map.players.length === 0) {
+      warnings.push('一个出生点都没有');
+    }
+    if (map.players.length > 2) {
+      warnings.push('有 ' + map.players.length + ' 个出生点,但游戏只认前两个' +
+                    '(第 3 个及以后在 map_format.gd 里读不到)');
+    }
+    var i;
+    for (i = 0; i < map.players.length; i++) {
+      warnings = warnings.concat(_checkSpawn(map.players[i], '出生点 P' + (i + 1),
+                                            cellsW, cellsH, scene));
+    }
+    for (i = 0; i < map.enemies.length; i++) {
+      warnings = warnings.concat(_checkSpawn(map.enemies[i], '敌人 ' + map.enemies[i].type,
+                                            cellsW, cellsH, scene));
+    }
+
+    // 四层全空
+    var allEmpty = true;
+    for (L = 0; L < LAYER_COUNT && allEmpty; L++) {
+      layer = map.layers[L];
+      if (!layer) continue;
+      var a = layer.kind === 'tex' ? layer.desc : layer.rgba;
+      for (var k = 0; k < a.length; k++) if (a[k] !== 0) { allEmpty = false; break; }
+    }
+    if (allEmpty) warnings.push('四个图层全是空的');
+
+    return { errors: errors, warnings: warnings };
+  }
+
+  // 越界 / 落在实心格。返回 warning 文案数组(可能为空)。
+  function _checkSpawn(pt, label, cellsW, cellsH, sceneDesc) {
+    var out = [];
+    if (pt.x < 0 || pt.y < 0 || pt.x >= cellsW || pt.y >= cellsH) {
+      out.push(label + ' 坐标 (' + pt.x + ',' + pt.y + ') 越界(地图是 ' + cellsW + '×' + cellsH + ' 格)');
+      return out;
+    }
+    if (!sceneDesc) return out;
+    // 「场景」层该格 4×4 子格全非空才算实心
+    var subCols = cellsW * SUB_PER_CELL;
+    var solid = true;
+    for (var dy = 0; dy < SUB_PER_CELL && solid; dy++) {
+      for (var dx = 0; dx < SUB_PER_CELL; dx++) {
+        if (sceneDesc[(pt.y * SUB_PER_CELL + dy) * subCols + (pt.x * SUB_PER_CELL + dx)] === 0) {
+          solid = false; break;
+        }
+      }
+    }
+    if (solid) out.push(label + ' 落在实心格里(场景层该格被填满)');
+    return out;
+  }
+
   // ── 与格式无关的纯工具(自旧编辑器沿用)──
   function sanitizeName(name) {
     var n = String(name == null ? '' : name).trim();
@@ -691,10 +814,13 @@ globalThis.Core = (function () {
     texOf: texOf, hueOf: hueOf, brightOf: brightOf, satOf: satOf, alphaOf: alphaOf,
     isAir: isAir, neutralDesc: neutralDesc,
     FORMAT_VERSION: FORMAT_VERSION, HEADER_SIZE: HEADER_SIZE,
+    MAX_BODY_SIZE: MAX_BODY_SIZE,
     deflateBytes: deflateBytes, inflateBytes: inflateBytes,
     encodeMap: encodeMap, decodeMap: decodeMap, layerFlags: layerFlags,
     isV3Text: isV3Text, parseV3Text: parseV3Text,
     _v3Pack: _v3Pack, _v3TexOf: _v3TexOf, _v3ShapeOf: _v3ShapeOf,
     subcellRender: subcellRender, migrateV3: migrateV3,
+    MAX_CELLS_W: MAX_CELLS_W, MAX_CELLS_H: MAX_CELLS_H,
+    clampMapSize: clampMapSize, validateMap: validateMap,
   };
 })();

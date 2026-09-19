@@ -708,6 +708,27 @@ await (async function () {
   eq(Array.prototype.slice.call(oldA.packed), [175], '旧格式: A 参与 pack(2×2 全实心 → 10*16+15)');
   eq(Core._v3TexOf(oldA.packed[0]), 10, '旧格式: A 映射成纹理 10(不是 0/9/11)');
 
+  // ★ 指令 E:旧字母格式的**非对称**象限样本。
+  //   `_convertLegacy2x2` 里那句 `shape |= 1 << (sy * 2 + sx)` 此前只被两类样本碰过:
+  //   全实心的 2×2(→ shape 15,**与象限顺序无关**)与抛错样本(b/B)。于是把它写成
+  //   转置的 `1 << (sx * 2 + sy)` —— 或把 `sy/sx` 取反 —— 整份 smoke 仍然全绿,
+  //   而**每张导入的旧 `.txt` 的每个非对称象限都转 90°**(静默错位)。
+  //   这与 Task 9 刚修的 `migrateV3` 是同一类缺陷的另一处;区别是 migrateV3 那边
+  //   已被「非对称形状逐个钉死」那块覆盖,这边没有。
+  //   ★ 期望值**自行推导**(不照抄任何现成数字),依据就是本文件那两句实现:
+  //       shape |= 1 << (sy * 2 + sx)      sy = 行偏移(0 上 / 1 下),sx = 列偏移(0 左 / 1 右)
+  //       _v3Pack(tex, shape) = tex * 16 + shape
+  //     样本一 `'10'` / `'11'`:非零象限 (sy,sx) = (0,0)、(1,0)、(1,1)
+  //       → shape = 1<<0 | 1<<2 | 1<<3 = 1 + 4 + 8 = 13 → packed = 1*16 + 13 = 29
+  //     样本二 `'11'` / `'01'`:非零象限 (sy,sx) = (0,0)、(0,1)、(1,1)
+  //       → shape = 1<<0 | 1<<1 | 1<<3 = 1 + 2 + 8 = 11 → packed = 1*16 + 11 = 27
+  //   ★ 两个样本互为「上/下镜像」,在转置下**恰好互换**(29 ↔ 27)—— 即变异会让两条
+  //     断言同时变红,不存在"改错方向却仍撞对"的巧合。
+  eq(Array.prototype.slice.call(Core.parseV3Text('# old\n10\n11\n').packed), [29],
+     '旧格式: 非对称样本(右上缺)→ packed 29 = 纹理1 + shape 13(bit0|bit2|bit3)');
+  eq(Array.prototype.slice.call(Core.parseV3Text('# old\n11\n01\n').packed), [27],
+     '旧格式: 非对称样本(左下缺)→ packed 27 = 纹理1 + shape 11(bit0|bit1|bit3)');
+
   // 旧格式只认 0-9 与 A —— 游戏侧 _tile_char_to_value 就是这么定的,
   // 编辑器多认 b-k 会让"导得进、跑起来一片变空气"(审计 A11)。
   // ★ 指令 C(Task 8 遗留的 8 条裸 `throws` 补齐 —— 超出 brief,报告已点名):
@@ -893,6 +914,133 @@ await (async function () {
     eq(got, s[2], 'migrateV3: shape ' + s[0] + '(' + s[1] + ')的子格图案(4×4 全查,'
                 + '位序 bit(qy*2+qx) 与展开方向同时被钉住)');
   });
+})();
+
+// ---- 尺寸钳制(审计 A8:旧 clampMin 的第三参是"默认值"而不是上限,输 99999 直接卡死)----
+eq(Core.MAX_CELLS_W, 400, 'MAX_CELLS_W');
+eq(Core.MAX_CELLS_H, 300, 'MAX_CELLS_H');
+eq(Core.clampMapSize(125, 75), { w: 125, h: 75 }, 'clampMapSize: 正常值原样');
+eq(Core.clampMapSize(99999, 99999), { w: 400, h: 300 }, 'clampMapSize: 超上限被钳');
+eq(Core.clampMapSize(0, -5), { w: 1, h: 1 }, 'clampMapSize: 下限 1');
+eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回落默认');
+
+// ---- validateMap ----
+(function () {
+  var good = Core.createMap('ok', 8, 8);
+  good.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(1);
+  good.players = [{ x: 1, y: 1 }];
+  var v = Core.validateMap(good);
+  eq(v.errors, [], 'validateMap: 正常图无 error');
+
+  // 出生点落在实心格里
+  var inWall = Core.createMap('bad', 8, 8);
+  var sc = inWall.layers[Core.LAYER_SCENE].desc;
+  // ★ 超出 brief(报告已点名):brief 这里写的是 `for (i = 0; i < 16; i++) sc[i] = ...`,
+  //   注释声称「格 (0,0) 填实」—— 但那是**行主序的前 16 个子格**,即子行 0 的 X∈[0,15],
+  //   只铺满了 (0,0)(1,0)(2,0)(3,0) 四格各自的**顶行**。判据要求该格 4×4 子格**全**非空
+  //   ⇒ 格 (0,0) 远没被填实 ⇒ 恒不产生 warning ⇒ 这条断言**空转到永远为假**
+  //   (实测 brief 原样跑必红)。改成按「格内 4×4」逐个填,才是注释声称的那件事。
+  for (var dy = 0; dy < 4; dy++) {
+    for (var dx = 0; dx < 4; dx++) sc[dy * inWall.subCols + dx] = Core.neutralDesc(1);
+  }
+  inWall.players = [{ x: 0, y: 0 }];
+  ok(Core.validateMap(inWall).warnings.some(function (s) { return s.indexOf('出生点') >= 0; }),
+     'validateMap: 出生点在实心格里给 warning');
+
+  // 一个出生点都没有
+  var noSpawn = Core.createMap('n', 8, 8);
+  ok(Core.validateMap(noSpawn).warnings.some(function (s) { return s.indexOf('出生点') >= 0; }),
+     'validateMap: 没有出生点给 warning');
+
+  // 第 3 个及以后的出生点游戏读不到(审计 A3)
+  var three = Core.createMap('t', 8, 8);
+  three.players = [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }];
+  ok(Core.validateMap(three).warnings.some(function (s) { return s.indexOf('第 3 个') >= 0; }),
+     'validateMap: >2 个出生点给 warning');
+
+  // 敌人坐标越界(改尺寸后的残留,审计 A10)
+  var oob = Core.createMap('o', 8, 8);
+  oob.players = [{ x: 1, y: 1 }];
+  oob.enemies = [{ type: 'fly_bird', x: 99, y: 0 }];
+  ok(Core.validateMap(oob).warnings.some(function (s) { return s.indexOf('越界') >= 0; }),
+     'validateMap: 敌人坐标越界给 warning');
+
+  // 四层全空
+  var blank = Core.createMap('b', 8, 8);
+  blank.players = [{ x: 1, y: 1 }];
+  ok(Core.validateMap(blank).warnings.some(function (s) { return s.indexOf('空') >= 0; }),
+     'validateMap: 四层全空给 warning');
+
+  // error 只给真正非法的东西:尺寸非 4 倍数
+  var badSize = Core.createMap('s', 8, 8);
+  badSize.subCols = 30;
+  ok(Core.validateMap(badSize).errors.length > 0, 'validateMap: 尺寸非 4 倍数给 error');
+})();
+
+// ---- 大图端到端 + 性能守卫 ----
+await (async function () {
+  var t0 = Date.now();
+  var big = Core.createMap('big', 400, 300);          // 上限尺寸:1600×1200 子格 = 192 万
+  var tCreate = Date.now() - t0;
+  ok(tCreate < 2000, '大图: createMap(400×300) 耗时 ' + tCreate + 'ms < 2000ms');
+
+  // 铺一层可压缩的内容(条带),再叠一点稀疏噪声防止退化成全部相同
+  var sc = big.layers[Core.LAYER_SCENE].desc;
+  var d1 = Core.neutralDesc(1), d2 = Core.neutralDesc(2);
+  for (var i = 0; i < sc.length; i++) sc[i] = ((i / big.subCols) | 0) % 7 === 0 ? d1 : d2;
+  for (i = 0; i < sc.length; i += 997) sc[i] = Core.neutralDesc(15);
+  for (i = 0; i < big.layers[Core.LAYER_BG].rgba.length; i++) {
+    big.layers[Core.LAYER_BG].rgba[i] = ((i % 256) * 0x010101) >>> 0;
+  }
+
+  t0 = Date.now();
+  var bytes = await Core.encodeMap(big);
+  var tEnc = Date.now() - t0;
+  ok(tEnc < 8000, '大图: encodeMap 耗时 ' + tEnc + 'ms < 8000ms(压缩后 ' + bytes.length + ' 字节)');
+
+  t0 = Date.now();
+  var back = await Core.decodeMap(bytes);
+  var tDec = Date.now() - t0;
+  ok(tDec < 8000, '大图: decodeMap 耗时 ' + tDec + 'ms < 8000ms');
+
+  eq(back.subCols, big.subCols, '大图: subCols 往返');
+  eq(Array.prototype.slice.call(back.layers[Core.LAYER_SCENE].desc, 0, 64),
+     Array.prototype.slice.call(sc, 0, 64), '大图: 场景层前 64 格往返一致');
+  eq(back.layers[Core.LAYER_SCENE].desc.length, sc.length, '大图: 场景层长度');
+
+  // 高度重复的内容必须被压掉一大截。
+  // 单是场景层的裸索引流就有 sc.length 字节,压完若还比它大,说明压缩没起作用。
+  ok(bytes.length < sc.length,
+     '大图: 压缩后 ' + bytes.length + ' 字节 < 场景层裸索引流 ' + sc.length + ' 字节');
+})();
+
+// ---- 指令 D:解压后 body 的硬上限(堵 deflate 炸弹)----
+// ★ 为什么需要单独一道闸:deflate 的最大压缩比约 1032:1 ⇒ **几十 KB** 的恶意/损坏
+//   文件就能解出 **GB 级**内存,而它**完全不碰头部字段**(magic/版本/尺寸/CRC 全合法),
+//   所以「按 body 实际余量反推格数上界」那条检查对它**天然无效** —— 那条管的是
+//   「头部声称的尺寸大于 body 装得下的量」,炸弹是反过来的:body 声称很小、解出来极大。
+//   判在解压之后等于拒是拒了、内存已经先分配出去了,故必须判在**解压之前**。
+await (async function () {
+  eq(Core.MAX_BODY_SIZE, 64 * 1024 * 1024, 'MAX_BODY_SIZE === 64MB');
+
+  var m = Core.createMap('bomb', 6, 5);
+  m.layers[Core.LAYER_SCENE].desc[9] = Core.neutralDesc(3);
+  m.players = [{ x: 1, y: 1 }];
+  var enc = await Core.encodeMap(m);              // 默认走 deflate 压缩
+
+  // 只把头部 6..9(body_size,u32 小端)篡改成 0x7FFFFFFF ≈ 2GB,payload 一个字节不动
+  // —— 这正是"声明侧"的炸弹:任何在解压之后才判的守卫都已经晚了。
+  var bomb = enc.slice();
+  bomb[6] = 0xFF; bomb[7] = 0xFF; bomb[8] = 0xFF; bomb[9] = 0x7F;
+  await rejects(function () { return Core.decodeMap(bomb); },
+    'decodeMap: body_size 被声明成 0x7FFFFFFF 时在解压前拒绝', '64MB');
+
+  // 反向:这道闸不许误伤合法文件。上限尺寸(400×300)的合法 body 最坏约 20MB
+  // (推导见 core.js 该常量上方的注释),64MB 是它的 ≈3.3 倍。
+  // 把这层余量本身变成断言 —— 有人把常量调小到会误拒合法大图时,「上限尺寸」那块
+  // 的往返断言也会红,但这条给出的是**直接错因**(而不是"图读不回来了")。
+  ok(Core.MAX_BODY_SIZE > 20 * 1024 * 1024,
+     'MAX_BODY_SIZE: 大于上限尺寸合法文件的最坏 body(≈20MB),不会误拒');
 })();
 
 // ==== 断言区结束 ====
