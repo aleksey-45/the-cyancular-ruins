@@ -41,8 +41,16 @@ function eq(actual, expected, msg) {
 // ★ 反向断言必须断言「错在哪」,不能只断言「抛了」—— 只判「有没有抛」是假绿:
 //   Core.decodeMap 若因拼写错误根本不存在,抛出来的 TypeError 一样算通过。
 //   故 expectSub 是可选但强烈建议的期望子串;给了就必须出现在异常文本里。
+// ★ 为什么还要看 e.cause:Node 的 DecompressionStream 在 zlib 的 Adler-32 尾损坏时,
+//   抛的是一个 **message 为空字符串**的 TypeError,真实原因只在 e.cause.message 里
+//   (实测 "incorrect data check")。只看 e.message 的话那条断言永远取不到错因,
+//   就退化成「任何异常都算过」的假绿。
+// ★ e.cause 是 **非标准扩展**(浏览器里可能没有),故写成「有则用、无则退回空串」,
+//   绝不能让它成为硬依赖。
 function errText(e) {
-  return String((e && e.message !== undefined) ? e.message : e);
+  var msg = (e && e.message !== undefined) ? String(e.message) : String(e);
+  if (msg === '' && e && e.cause && e.cause.message) msg = String(e.cause.message);
+  return msg;
 }
 function throws(fn, msg, expectSub) {
   let e = null;
@@ -137,8 +145,8 @@ eq(Core.cellsHOf(m), 75, 'cellsHOf');
 eq(Core.subIndex(500, 3, 2), 2 * 500 + 3, 'subIndex: 行主序 y*subCols+x');
 eq(Core.subIndex(500, 0, 0), 0, 'subIndex: 原点');
 
-throws(function () { Core.createMap('bad', 1.5, 10); }, 'createMap: 非整数格数报错');
-throws(function () { Core.createMap('bad', 0, 10); }, 'createMap: 零宽报错');
+throws(function () { Core.createMap('bad', 1.5, 10); }, 'createMap: 非整数格数报错', '格数必须是正整数');
+throws(function () { Core.createMap('bad', 0, 10); }, 'createMap: 零宽报错', '格数必须是正整数');
 
 // ---- 从旧编辑器沿用、与格式无关的纯函数 ----
 eq(Core.sanitizeName('My Tower #1'), 'My_Tower_1', 'sanitizeName: 非法字符被清理');
@@ -183,9 +191,11 @@ eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格'
   eq(r.u32(), 0x789ABCDE, 'ByteReader: u32 高位不为负');
   eq(Array.prototype.slice.call(r.bytes(2)), [0xAA, 0xBB], 'ByteReader: bytes');
   eq(r.remaining(), 0, 'ByteReader: remaining 归零');
-  throws(function () { r.u8(); }, 'ByteReader: 越界读抛错');
-  throws(function () { new Core.ByteReader(b).bytes(b.length + 1); }, 'ByteReader: bytes 越界抛错');
-  throws(function () { new Core.ByteReader(new Uint8Array(0)).u8(); }, 'ByteReader: 空 buffer 读抛错');
+  // ByteReader 的三处越界共用一个错误信息('ByteReader: 越界读(p+n > len)'),
+  // 故三处的期望子串相同 —— 它仍是**本类错误独有**的(不含通用词)。
+  throws(function () { r.u8(); }, 'ByteReader: 越界读抛错', '越界读');
+  throws(function () { new Core.ByteReader(b).bytes(b.length + 1); }, 'ByteReader: bytes 越界抛错', '越界读');
+  throws(function () { new Core.ByteReader(new Uint8Array(0)).u8(); }, 'ByteReader: 空 buffer 读抛错', '越界读');
 })();
 
 // ---- CRC32(IEEE,标准测试向量)----
@@ -240,11 +250,11 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   eq(rFull.u32(), brick, '满层: 索引 1 才是砖');
 
   // 尺寸校验
-  throws(function () { Core.encodeTexLayer(new Uint32Array(5), 4, 4); }, 'encodeTexLayer: 长度不符报错');
+  throws(function () { Core.encodeTexLayer(new Uint32Array(5), 4, 4); }, 'encodeTexLayer: 长度不符报错', 'desc 长度');
   // 越界索引要抛错而不是静默
   var bad = new Uint8Array([Core.KIND_TEX, 1, 0, 0, 0, 0, 0, 1, 99]);   // 调色板 1 项,索引 99
-  throws(function () { Core.decodeTexLayer(new Core.ByteReader(bad), 1, 1); }, 'decodeTexLayer: 索引越界报错');
-  throws(function () { Core.decodeTexLayer(new Core.ByteReader(new Uint8Array([9])), 1, 1); }, 'decodeTexLayer: 错 kind 报错');
+  throws(function () { Core.decodeTexLayer(new Core.ByteReader(bad), 1, 1); }, 'decodeTexLayer: 索引越界报错', '越出调色板');
+  throws(function () { Core.decodeTexLayer(new Core.ByteReader(new Uint8Array([9])), 1, 1); }, 'decodeTexLayer: 错 kind 报错', 'decodeTexLayer: kind=');
 })();
 
 // ---- 背景层块编解码 ----
@@ -268,10 +278,10 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   eq(Core.decodeColorLayer(new Core.ByteReader(Core.encodeColorLayer(blank, 2, 2)), 2, 2).rgba instanceof Uint32Array,
      true, '背景层: 回读是 Uint32Array');
 
-  throws(function () { Core.encodeColorLayer(new Uint32Array(3), 2, 2); }, 'encodeColorLayer: 长度不符报错');
+  throws(function () { Core.encodeColorLayer(new Uint32Array(3), 2, 2); }, 'encodeColorLayer: 长度不符报错', 'rgba 长度');
   throws(function () {
     Core.decodeColorLayer(new Core.ByteReader(new Uint8Array([Core.KIND_TEX])), 1, 1);
-  }, 'decodeColorLayer: 错 kind 报错');
+  }, 'decodeColorLayer: 错 kind 报错', 'decodeColorLayer: kind=');
 })();
 
 // ---- meta 文本 ----
@@ -415,16 +425,34 @@ await (async function () {
   var badCrc = raw.slice(); badCrc[badCrc.length - 1] ^= 0xFF;
   await rejects(function () { return Core.decodeMap(badCrc); }, 'decodeMap: CRC 不符抛错', 'CRC');
 
-  // 压缩流本身损坏(另一个损坏面):Node 抛的 TypeError 没有 message,故这条没有可断言的子串,
-  // 只钉「必须抛错、绝不能静默读成空图」。
+  // 压缩流本身损坏(另一个损坏面):翻的是 zlib 的 Adler-32 校验尾,Node 的
+  // DecompressionStream 会以「message 为空的 TypeError」拒绝 —— 错因只在 e.cause.message 里
+  // ("incorrect data check")。故这条**能**带期望子串,依据是 errText 的 cause 回退。
   var badStream = bytes.slice(); badStream[badStream.length - 1] ^= 0xFF;
-  await rejects(function () { return Core.decodeMap(badStream); }, 'decodeMap: deflate 流损坏抛错(不静默读成空图)');
+  await rejects(function () { return Core.decodeMap(badStream); },
+    'decodeMap: deflate 流损坏抛错(不静默读成空图)', 'incorrect data check');
 
   var badSize = bytes.slice(); badSize[14] = 0; badSize[15] = 0;     // sub_cols = 0
   await rejects(function () { return Core.decodeMap(badSize); }, 'decodeMap: 尺寸 0 抛错', '尺寸非法');
 
   var badAlign = bytes.slice(); badAlign[14] = 6; badAlign[15] = 0;  // sub_cols = 6,非 4 倍数
   await rejects(function () { return Core.decodeMap(badAlign); }, 'decodeMap: 尺寸非 4 倍数抛错', '倍数');
+
+  // ★★ 防「损坏的文件头触发巨量分配」:CRC32 只覆盖 body、**不覆盖文件头**,所以
+  //   「CRC 有效」根本不代表头是对的 —— 这两个尺寸字段是**未经验证**的输入。
+  //   65532 既 > 0 又能被 4 整除,两道既有校验都拦不住;若不按 body 实际大小反推上界,
+  //   就会一路走到 decodeTexLayer 的 new Uint32Array(65532×65532) ≈ 17GB。
+  //   ★ 期望子串在这里**同时**承担「不是走到分配才炸」的判据:实测本机
+  //     new Uint32Array(4294443024) 是**能成功**的(实测 arrayBuffers 涨到 17177.8MB,
+  //     即 17.2GB 真的分配出去了),所以去掉这条检查后**也是抛错的** —— 抛的是解码途中的
+  //     另一个错误(实测 "decodeTexLayer: 索引 2 越出调色板 2 项",那时内存已经分配完了)。
+  //     因此「断言它不是 RangeError」在这台机器上是**空转**的:那条断言在检查被删掉时照样通过。
+  //     只有钉住我们自己的错误文本(下面这个子串)才真的验到这条检查在跑。
+  var badDims = raw.slice();
+  badDims[14] = 0xFC; badDims[15] = 0xFF;      // sub_cols = 65532(>0,且是 4 的倍数)
+  badDims[16] = 0xFC; badDims[17] = 0xFF;      // sub_rows = 65532
+  await rejects(function () { return Core.decodeMap(badDims); },
+    'decodeMap: 头部尺寸被改成 65532×65532 时在分配前拒绝', '最多只够');
 
   await rejects(function () { return Core.decodeMap(new Uint8Array(10)); }, 'decodeMap: 短于头部抛错', '小于头部');
 
@@ -590,6 +618,41 @@ await (async function () {
   zr.bytes(6);
   eq(zr.u32(), body.length, '压缩: body_size 是解压后的字节数(不是压缩后的)');
   eq(zr.u32(), Core.crc32(body), '压缩: body_crc32 是解压后 body 的 CRC(不是压缩流的)');
+})();
+
+// ---- 上限尺寸必须不受「按余量反推格数上界」那条检查的影响 ----
+// ★ 上面新加的检查是**上界**(不精确,只需要不可能通过),但松紧仍有真实风险:
+//   合法文件的余量并不宽裕 —— 最后一层若是背景层,room 恰好 = 1 + 4n,
+//   而纹理层的第一个块也只比 n 多出 6 + 4×调色板项。检查若被写成 `n >= room`
+//   或对纹理层也用 `room/4`,上限尺寸的图就会被**误拒**(而且只在图够大时才现形)。
+//   故这里拿规格 §1 的上限 400×300 格 = 1600×1200 子格真跑一遍整文件往返。
+//   ★ 走 compress:false 只为省掉这 13MB body 的 deflate 时间,与这条检查无关
+//     (检查作用在解压后的 body 上,两条路径的 body 逐字节相同)。
+await (async function () {
+  var big = Core.createMap('big', 400, 300);
+  eq(big.subCols, 1600, '上限尺寸: subCols = 400 格 × 4');
+  eq(big.subRows, 1200, '上限尺寸: subRows = 300 格 × 4');
+  var bigN = big.subCols * big.subRows;
+  eq(bigN, 1920000, '上限尺寸: 子格总数 = 1600×1200');
+  big.layers[1].desc[12345] = Core.neutralDesc(7);          // 场景层:只点一格,其余空气
+  big.layers[3].rgba[999] = 0x11223344;                    // 背景层:只点一格
+  var enc = await Core.encodeMap(big, { compress: false });
+  var back = await Core.decodeMap(enc);
+  eq(back.subCols, 1600, '上限尺寸: 回读 subCols(没被误拒)');
+  eq(back.subRows, 1200, '上限尺寸: 回读 subRows');
+  eq(back.layers[1].desc[12345], Core.neutralDesc(7), '上限尺寸: 场景层点格回读');
+  eq(back.layers[3].rgba[999], 0x11223344, '上限尺寸: 背景层点格回读');
+  eq(back.layers[1].desc.length, bigN, '上限尺寸: 场景层长度 = 子格总数');
+
+  // 最紧的一档:整份文件**只有背景层**时,进入该层那一刻的余量恰好 = 1 + n×4,
+  // 上界必须**恰好放行**(n > floor((1+4n)/4) 为假)。紧不紧与图多大无关,小图即可验。
+  // 这条专钉"把上界收紧一格"这类回归 —— 它只在余量贴边时现形。
+  var bgOnly = Core.createMap('bg', 40, 30);
+  bgOnly.layers[0] = null; bgOnly.layers[1] = null; bgOnly.layers[2] = null;
+  bgOnly.layers[3].rgba[7] = 0xAABBCCDD;
+  var bgBack = await Core.decodeMap(await Core.encodeMap(bgOnly, { compress: false }));
+  eq(bgBack.layers[3].rgba[7], 0xAABBCCDD, '上限尺寸: 只有背景层(余量恰好 1+4n)仍放行');
+  eq(bgBack.layers[0], null, '上限尺寸: 缺层仍回 null');
 })();
 
 // ---- descriptor 位域 vs 任意字节:解码路径不许用 isAir 判空气 ----

@@ -323,9 +323,26 @@ globalThis.Core = (function () {
     var metaLen = r.u16();
     var meta = parseMeta(new TextDecoder().decode(r.bytes(metaLen)));
     var layers = [];
+    var n = subCols * subRows;
     for (var L = 0; L < LAYER_COUNT; L++) {
       if (!(flags & (1 << L))) { layers.push(null); continue; }
-      layers.push(LAYER_KINDS[L] === 'tex'
+      var kind = LAYER_KINDS[L];
+      // ★ 防「损坏的文件头触发巨量分配」:CRC32 只覆盖 body、**不覆盖文件头**,
+      //   所以头部的 sub_cols / sub_rows 是**未经验证**的 —— 一枚翻错的头字节就能
+      //   让格数到 65532×65532 ≈ 43 亿(解压成功 / body_size 相符 / CRC 相符 三关全照过),
+      //   然后 decodeTexLayer 里那句 new Uint32Array(n) 就是一次 ≈17GB 的分配。
+      //   用「本层剩余字节数」反推格数的上界 —— 纹理层每格至少 1 字节索引、
+      //   颜色层每格 4 字节 RGBA,所以剩余字节数本身就是**任何一层都不可能超过**的粗筛上界
+      //   (纹理层的每格下限更低,统一拿它当粗筛即可)。**不需要精确,只需要不可能通过**。
+      //   ★ 必须判在 new Uint32Array(n) **之前** —— 判在后面等于拒是拒了、内存已经分配出去了。
+      var room = r.remaining();
+      var maxCells = kind === 'tex' ? room : ((room / 4) | 0);
+      if (n > maxCells) {
+        throw new Error('decodeBody: 图层 ' + L + '(' + kind + ')需要 ' + n + ' 个子格,但剩余 ' +
+                        room + ' 字节最多只够 ' + maxCells + ' 个 —— 头部尺寸 ' +
+                        subCols + '×' + subRows + ' 与 body 实际大小不符');
+      }
+      layers.push(kind === 'tex'
         ? decodeTexLayer(r, subCols, subRows)
         : decodeColorLayer(r, subCols, subRows));
     }
