@@ -544,6 +544,56 @@ globalThis.Core = (function () {
              players: players, enemies: enemies, comments: meta.comments };
   }
 
+  // ── 取角映射(规格 §2.2,规范定义)──
+  // 子格全局坐标 (X,Y) → 目标矩形(世界像素)+ 源矩形(贴图块内偏移)。
+  // 调用方按 (texture-1) 定位贴图块,再加这里的 src 偏移。
+  //   dst: [x, y, w, h] 世界像素,恒为 16×16
+  //   src: [x, y, w, h] 贴图块内偏移,恒为 8×8
+  // ★ 象限由子格在 64px 格内的位置决定(X % 4 / Y % 4),不是存在数据里的字段 ——
+  //   每个子格要能独立推出自己该画哪一块。
+  function subcellRender(X, Y) {
+    var qx = X % SUB_PER_CELL, qy = Y % SUB_PER_CELL;
+    return { dst: [X * SUB_PX, Y * SUB_PX, SUB_PX, SUB_PX],
+             src: [qx * (32 / SUB_PER_CELL), qy * (32 / SUB_PER_CELL),
+                   32 / SUB_PER_CELL, 32 / SUB_PER_CELL] };
+  }
+
+  // ── v3 → v4 迁移(规格 §3.6)──
+  // 旧掩码 bit (qy*2+qx) 为 1 → 新网格的 4 个子格 X∈[2qx,2qx+1], Y∈[2qy,2qy+1] 填同一纹理。
+  // 配合 subcellRender 的取角映射,这保证迁移后**视觉逐像素不变**:
+  // 旧的那块 32px 区域由 4 个 16px 子格拼回,每个取到的正是原来那 8px 象限放大 2×。
+  // 前/后/背景三层留空 —— v3 里没有它们。
+  function migrateV3(parsed) {
+    var map = createMap('', parsed.cellsW, parsed.cellsH);
+    var scene = map.layers[LAYER_SCENE].desc;
+    var subCols = map.subCols;
+    for (var cy = 0; cy < parsed.cellsH; cy++) {
+      for (var cx = 0; cx < parsed.cellsW; cx++) {
+        var v = parsed.packed[cy * parsed.cellsW + cx];
+        if (v === 0) continue;
+        var tex = _v3TexOf(v), shape = _v3ShapeOf(v);
+        if (tex === 0 || shape === 0) continue;
+        var d = neutralDesc(tex);
+        for (var qy = 0; qy < 2; qy++) {
+          for (var qx = 0; qx < 2; qx++) {
+            if (!(shape & (1 << (qy * 2 + qx)))) continue;
+            for (var dy = 0; dy < 2; dy++) {
+              for (var dx = 0; dx < 2; dx++) {
+                var X = cx * SUB_PER_CELL + qx * 2 + dx;
+                var Y = cy * SUB_PER_CELL + qy * 2 + dy;
+                scene[Y * subCols + X] = d;
+              }
+            }
+          }
+        }
+      }
+    }
+    map.players = parsed.players.map(function (p) { return { x: p.x, y: p.y }; });
+    map.enemies = parsed.enemies.map(function (e) { return { type: e.type, x: e.x, y: e.y }; });
+    map.comments = parsed.comments.slice();
+    return map;
+  }
+
   // ── 与格式无关的纯工具(自旧编辑器沿用)──
   function sanitizeName(name) {
     var n = String(name == null ? '' : name).trim();
@@ -645,5 +695,6 @@ globalThis.Core = (function () {
     encodeMap: encodeMap, decodeMap: decodeMap, layerFlags: layerFlags,
     isV3Text: isV3Text, parseV3Text: parseV3Text,
     _v3Pack: _v3Pack, _v3TexOf: _v3TexOf, _v3ShapeOf: _v3ShapeOf,
+    subcellRender: subcellRender, migrateV3: migrateV3,
   };
 })();

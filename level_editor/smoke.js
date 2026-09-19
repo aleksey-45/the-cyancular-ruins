@@ -691,11 +691,22 @@ await (async function () {
   eq(p.comments, ['demo'], 'parseV3Text: 注释保留,标记行不算注释');
 
   // 旧字母格式:单字符 0-9/A,2×2 收缩成 1 格,spawn 坐标 ÷2
-  var old = Core.parseV3Text('# old\n# player 112 95\n11\n11\n');
+  // ★ 指令 B:样本里必须带 `# enemy` 行 —— 唯一那份旧样本里没有它,于是
+  //   **enemies 的 ÷2 与 `type` 字段此前零覆盖**(写漏一个 ÷2、或把 type 丢了都不会报错)。
+  var old = Core.parseV3Text('# old\n# player 112 95\n# enemy jump_bird 100 50\n11\n11\n');
   eq(old.cellsW, 1, '旧格式: 2×2 → 1 格宽');
   eq(old.cellsH, 1, '旧格式: 2×2 → 1 格高');
   eq(Array.prototype.slice.call(old.packed), [31], '旧格式: 2×2 全实心 → 全砖 31');
   eq(old.players, [{ x: 56, y: 47 }], '旧格式: spawn 坐标 ÷2');
+  eq(old.enemies, [{ type: 'jump_bird', x: 50, y: 25 }], '旧格式: enemies 坐标 ÷2 且 type 不丢');
+
+  // ★ 指令 B(续):`LEGACY_CHAR['A']` 到此前只被**拒绝**路径碰过(b/B 报错),
+  //   **接受**路径上一次都没走到 —— 把它写成 11、或整行漏出 LEGACY_CHAR
+  //   (查表得 undefined → 报「非法字符」)都是"看着能跑"的静默错。
+  //   `A1\n11` 的 4 个象限全实心、组内首个非零是 `A` ⇒ pack 成 10*16+15。
+  var oldA = Core.parseV3Text('# old\nA1\n11\n');
+  eq(Array.prototype.slice.call(oldA.packed), [175], '旧格式: A 参与 pack(2×2 全实心 → 10*16+15)');
+  eq(Core._v3TexOf(oldA.packed[0]), 10, '旧格式: A 映射成纹理 10(不是 0/9/11)');
 
   // 旧格式只认 0-9 与 A —— 游戏侧 _tile_char_to_value 就是这么定的,
   // 编辑器多认 b-k 会让"导得进、跑起来一片变空气"(审计 A11)。
@@ -720,6 +731,115 @@ await (async function () {
   //   故 "000f" 恒为 0 —— 那个输入根本走不到形状字符,断言等于空转(实测 got [0])。
   //   换成 001 后,31 = 1*16 + 15 才真的证明 'f' 被读成了 15 而不是被当成 0/报错。
   eq(Array.prototype.slice.call(Core.parseV3Text('# cyrm-v3\n001f\n').packed), [31], 'v3: 小写形状字符 f 可读');
+
+  // ★ 指令 A：`_v3Pack` 的两个空气守卫（`shape === 0 || texture === 0` → 0）
+  //   是「迁移等价」所依赖的地基之一，此前**只被 `0000` 这一个退化样本覆盖过** ——
+  //   那里 shape 与 texture 同时为 0，分不出是哪一条守卫在生效（任意一条删掉都照样绿）。
+  //   下面两条各钉一条独立情形，两者都与游戏侧 `MapFormat.pack` 逐字同款。
+  eq(Array.prototype.slice.call(Core.parseV3Text('# cyrm-v3\n000f\n').packed), [0],
+     'v3: 纹理 000 = 空气,形状位不生效(与游戏 MapFormat.pack 同)');
+  eq(Array.prototype.slice.call(Core.parseV3Text('# cyrm-v3\n0010\n').packed), [0],
+     'v3: 形状 0 = 空气,纹理位不生效(纹理 1 也留不住)');
+})();
+
+// ---- 取角映射(§2.2 的规范定义,游戏侧 shader 必须与此一致)----
+(function () {
+  eq(Core.subcellRender(0, 0), { dst: [0, 0, 16, 16], src: [0, 0, 8, 8] }, 'subcellRender: 格内 (0,0)');
+  eq(Core.subcellRender(3, 0), { dst: [48, 0, 16, 16], src: [24, 0, 8, 8] }, 'subcellRender: 格内 (3,0)');
+  eq(Core.subcellRender(0, 3), { dst: [0, 48, 16, 16], src: [0, 24, 8, 8] }, 'subcellRender: 格内 (0,3)');
+  eq(Core.subcellRender(4, 4), { dst: [64, 64, 16, 16], src: [0, 0, 8, 8] }, 'subcellRender: 象限按 X%4 循环');
+  eq(Core.subcellRender(7, 5), { dst: [112, 80, 16, 16], src: [24, 8, 8, 8] }, 'subcellRender: 第二格右下');
+
+  // ★ 迁移正确性的全部依据:v3 的一个 32px 象限 ↔ v4 的 2×2 个 16px 子格,
+  //   目标矩形与源矩形都必须**精确铺满**(尺寸相等 + 包围盒相等 ⇒ 不重不漏)。
+  function v3QuadrantRender(cellX, cellY, qx, qy) {
+    return { dst: [cellX * 64 + qx * 32, cellY * 64 + qy * 32, 32, 32],
+             src: [qx * 16, qy * 16, 16, 16] };
+  }
+  function quadrantEquivalent(cellX, cellY, qx, qy) {
+    var o = v3QuadrantRender(cellX, cellY, qx, qy);
+    var dMinX = Infinity, dMinY = Infinity, dMaxX = -Infinity, dMaxY = -Infinity, dArea = 0;
+    var sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity;
+    for (var dy = 0; dy < 2; dy++) {
+      for (var dx = 0; dx < 2; dx++) {
+        var s = Core.subcellRender(cellX * 4 + qx * 2 + dx, cellY * 4 + qy * 2 + dy);
+        dArea += s.dst[2] * s.dst[3];
+        dMinX = Math.min(dMinX, s.dst[0]); dMinY = Math.min(dMinY, s.dst[1]);
+        dMaxX = Math.max(dMaxX, s.dst[0] + s.dst[2]); dMaxY = Math.max(dMaxY, s.dst[1] + s.dst[3]);
+        sMinX = Math.min(sMinX, s.src[0]); sMinY = Math.min(sMinY, s.src[1]);
+        sMaxX = Math.max(sMaxX, s.src[0] + s.src[2]); sMaxY = Math.max(sMaxY, s.src[1] + s.src[3]);
+      }
+    }
+    return dArea === o.dst[2] * o.dst[3] &&
+           dMinX === o.dst[0] && dMinY === o.dst[1] &&
+           dMaxX === o.dst[0] + o.dst[2] && dMaxY === o.dst[1] + o.dst[3] &&
+           sMinX === o.src[0] && sMinY === o.src[1] &&
+           sMaxX === o.src[0] + o.src[2] && sMaxY === o.src[1] + o.src[3];
+  }
+  var eqAll = true;
+  for (var cx = 0; cx < 3; cx++) for (var cy = 0; cy < 3; cy++)
+    for (var qx = 0; qx < 2; qx++) for (var qy = 0; qy < 2; qy++)
+      if (!quadrantEquivalent(cx, cy, qx, qy)) eqAll = false;
+  ok(eqAll, '★ 取角等价:v3 的每个象限都能被 v4 的 2×2 子格精确铺满(3×3 格 × 4 象限全查)');
+})();
+
+// ---- v3 → v4 迁移 ----
+await (async function () {
+  var v3 = '# cyrm-v3\n# demo\n# player 1 1\n0000001F0031\n000000000000\n';
+  var p = Core.parseV3Text(v3);
+  var m = Core.migrateV3(p);
+
+  eq(m.subCols, p.cellsW * 4, 'migrateV3: subCols = 格数×4');
+  eq(m.subRows, p.cellsH * 4, 'migrateV3: subRows = 格数×4');
+  eq(m.comments, ['demo'], 'migrateV3: 注释带过来');
+  eq(m.players, [{ x: 1, y: 1 }], 'migrateV3: 出生点带过来(坐标不缩放)');
+  // ★ 超出 brief(报告已点名):brief 的样本里没有 `# enemy` 行,于是同在 migrateV3 里的
+  //   `map.enemies = parsed.enemies.map(…)` 那**一行零覆盖** —— `type` 字段写丢或坐标
+  //   被缩放都不会让任何断言变红(指令 B 点名的正是这个风险类,只是它还有这半边)。
+  //   单起一格样本钉住它,不动上面那段的样本。
+  var em = Core.migrateV3(Core.parseV3Text('# cyrm-v3\n# enemy jump_bird 100 50\n001F\n'));
+  eq(em.enemies, [{ type: 'jump_bird', x: 100, y: 50 }],
+     'migrateV3: 敌人带过来(type 保留、坐标不缩放)');
+  eq(m.layers[Core.LAYER_FRONT].desc.some(function (v) { return v !== 0; }), false, 'migrateV3: 前景层留空');
+  eq(m.layers[Core.LAYER_BACK].desc.some(function (v) { return v !== 0; }), false, 'migrateV3: 后景层留空');
+  eq(m.layers[Core.LAYER_BG].rgba.some(function (v) { return v !== 0; }), false, 'migrateV3: 背景层留空(全透明黑)');
+
+  var scene = m.layers[Core.LAYER_SCENE].desc;
+  var brick = Core.neutralDesc(1);
+  // 格 (1,0) 的 packed = 31 = 纹理1 全砖 → 该格 16 个子格全是 brick
+  for (var dy = 0; dy < 4; dy++) {
+    for (var dx = 0; dx < 4; dx++) {
+      eq(scene[(0 * 4 + dy) * m.subCols + (1 * 4 + dx)], brick,
+         'migrateV3: 全砖格 (1,0) 的子格 (' + dx + ',' + dy + ') 填满纹理1 中性');
+    }
+  }
+  // 格 (2,0) 的 packed = 49 = 纹理3 shape 1(仅左上 1/4)→ 只有子格 (0,0),(1,0),(0,1),(1,1) 被填
+  var g3 = 3;
+  var t3 = Core.neutralDesc(g3);
+  eq(scene[(0 * 4 + 0) * m.subCols + (2 * 4 + 0)], t3, 'migrateV3: 1/4 砖格 → 子格(0,0) 有纹理3');
+  eq(scene[(0 * 4 + 0) * m.subCols + (2 * 4 + 1)], t3, 'migrateV3: 1/4 砖格 → 子格(1,0) 有纹理3');
+  eq(scene[(0 * 4 + 1) * m.subCols + (2 * 4 + 0)], t3, 'migrateV3: 1/4 砖格 → 子格(0,1) 有纹理3');
+  eq(scene[(0 * 4 + 1) * m.subCols + (2 * 4 + 1)], t3, 'migrateV3: 1/4 砖格 → 子格(1,1) 有纹理3');
+  eq(scene[(0 * 4 + 0) * m.subCols + (2 * 4 + 2)], 0, 'migrateV3: 1/4 砖格 → 子格(2,0) 是空气');
+  eq(scene[(0 * 4 + 2) * m.subCols + (2 * 4 + 0)], 0, 'migrateV3: 1/4 砖格 → 子格(0,2) 是空气');
+  eq(scene[(0 * 4 + 3) * m.subCols + (2 * 4 + 3)], 0, 'migrateV3: 1/4 砖格 → 子格(3,3) 是空气');
+
+  // 全空行不留任何东西
+  var occupied = 0;
+  for (var i = 0; i < scene.length; i++) if (scene[i] !== 0) occupied++;
+  eq(occupied, 16 + 4, 'migrateV3: 非空子格总数 = 一整格(16) + 1/4 格(4)');
+
+  // 旧字母格式也能一路迁到底
+  var oldMap = Core.migrateV3(Core.parseV3Text('# old\n11\n11\n'));
+  eq(oldMap.layers[Core.LAYER_SCENE].desc.length, 16, 'migrateV3: 旧格式迁移后尺寸');
+  eq(oldMap.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(1), 'migrateV3: 旧格式全砖格');
+
+  // 迁移出来的图必须能原样过整文件往返
+  var bytes = await Core.encodeMap(m);
+  var back = await Core.decodeMap(bytes);
+  eq(Array.prototype.slice.call(back.layers[Core.LAYER_SCENE].desc),
+     Array.prototype.slice.call(m.layers[Core.LAYER_SCENE].desc), 'migrateV3: 迁移结果可二进制往返');
+  eq(back.comments, ['demo'], 'migrateV3: 往返后注释仍是 demo(标记行没被当成注释)');
 })();
 
 // ==== 断言区结束 ====
