@@ -308,14 +308,19 @@ func _frames(n: int) -> void:
 		await get_tree().process_frame
 
 
+# ★ PNG 只是**给人看**的那一份,断言全在像素上 ⇒ 落盘失败**不算探针失败**(否则
+#   `.superpowers/sdd/`(gitignore 目录)在别的机器上不存在就会把守卫染红,理由还与本
+#   guard 无关)。目录不存在就自己建。
 func _shot(png_name: String) -> Image:
 	await _frames(2)
 	var img := get_viewport().get_texture().get_image()
 	if img == null:
 		return null
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(OUT_DIR)):
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
 	var path := OUT_DIR.path_join(png_name)
 	if img.save_png(path) != OK:
-		_check(false, "截图 %s 写入失败" % png_name)
+		print("[HUE-TINT] (提示)截图 %s 写入失败 —— 不影响断言,只是少了人眼那一份" % png_name)
 	else:
 		print("[HUE-TINT] 已存 %s" % ProjectSettings.globalize_path(path))
 	return img
