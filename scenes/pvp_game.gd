@@ -244,8 +244,17 @@ func _on_opponent_left() -> void:
 			return
 		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
-# P2(role 2)玩家角色本体色相 -20:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
-# 只给角色 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/无敌半透明仍正常),武器不染。
+# P2(role 2)的本体色相:**默认/无载荷**时的落地色,自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
+# 只给角色 AnimatedSprite2D 挂 hue shader(色相旋转,受击白闪/无敌半透明仍正常),武器不染。
+#
+# ★ 口径(用户 2026-09-19 裁定):**P1 是蓝、P2 是偏绿的青**。本体主色是 `#639BFF`
+#   (`PvpMatchClient.BODY_BASE_COLOR`,色相 ≈218.5°),-43° ⇒ **≈175.5°**(青绿区间 165~185 的偏绿侧)
+#   ⇒ 渲染出来是 `#63FFF3`。数值是**实测**的(见 `.superpowers/sdd/` 的对照图与报告),不是算出来的。
+# ★ 本常量只在**载荷缺席**时生效:`match_sync` 的 `hues` 一到,`_apply_opp_hue` 就改用
+#   **对手自己选的色相**(`Settings.pvp_color_hue`,默认 0.0 = 不染)—— 故实机里对手的颜色
+#   通常由对方的设置决定,本值只在"对手用默认色"或"载荷还没到"时看得见。
+const P2_DEFAULT_HUE := -43.0   # 度;与 player_p2_hue.gdshader 的 uniform 默认值同值
+
 func _apply_p2_tint() -> void:
 	var body: Node = null
 	if PvpSession.role == 2 and _local != null:
@@ -257,14 +266,14 @@ func _apply_p2_tint() -> void:
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", -65.0)   # P2 本体色相旋转 -65°
+	mat.set_shader_parameter("hue_shift", P2_DEFAULT_HUE)   # P2 本体色相旋转(= 偏绿的青,见上)
 	canvas.material = mat
 
 # 通用身体染色:只给角色本体 AnimatedSprite2D 挂 hue shader(COLOR 乘回 → 受击白闪/
 # 无敌半透明仍正常),武器/预瞄线不染。色相 0 = 不改色(不挂 shader),故本助手可重复调用。
 
 # 对手身体颜色:走扩展 peer_hues(每个 role 上报自己选的色相)。载荷未到 / 缺本对手项时,
-# 缺省回落与 _apply_p2_tint 同一条旧规则(P2 本体 -65,其余不染)——故 _ready 里那次
+# 缺省回落与 _apply_p2_tint 同一条规则(P2 用 P2_DEFAULT_HUE,其余不染)——故 _ready 里那次
 # _apply_p2_tint() 是无载荷时的落地形态,本函数是载荷到达后的覆盖。
 # 头顶名不在这里上色:名统一中性亮白,色相只区分身体(见 NAME_COLOR 处的说明)。
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
@@ -279,7 +288,7 @@ func _apply_opp_hue() -> void:
 		return
 	var opp := 3 - PvpSession.role
 	_apply_tint(_remote_replica.get_node_or_null("AnimatedSprite2D"),
-			float(_opp_hues.get(opp, -65.0 if opp == 2 else 0.0)))
+			float(_opp_hues.get(opp, P2_DEFAULT_HUE if opp == 2 else 0.0)))
 
 # 服务器下发的生效选项:同步禁用武器(本地数字键/滚轮同样被挡,出生枪自动改首个启用槽)。
 # ★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是**无条件**上行的 ——
