@@ -1117,12 +1117,18 @@ func _minimap_others() -> Array:
 	return arr
 
 
-# 小地图的多目标**颜色**(3v3 独有):与 _minimap_others 的**同序**一一对应 —— 顺序错位会
-# 让队友点画成敌人色,而小地图上错了**不报错**、只误导人。
+# 小地图的多目标**颜色**(3v3 独有):必须与 `_minimap_others` **同套过滤 + 同序**。
+# ★★ **只"同序"不够**(2026-09-19 评审 I-2):`ui/minimap.gd` 是**按下标对应**
+#   (`_other_dots[i].color = cols[i]`),所以只要一边过滤、另一边不过滤,在"副本已 free
+#   但尚未从 `_replicas` 抹掉"的窗口里就会**整体错位一格** ⇒ 队友点画成敌人色、**不报错**。
+#   故这里用与 `_minimap_others` **逐字相同**的 `is_instance_valid` 守卫。
+#   (更稳的做法是**一次遍历产出 `[{pos, color}]`**,让位置与颜色天然同源 —— 若你要重构成那种,
+#    记得同时改 `ui/minimap.gd` 的取用方式。)
 func _minimap_colors() -> Array:
 	var cols: Array = []
 	for r in _replicas:
-		cols.append(_team_color(int(r)))
+		if is_instance_valid(_replicas[r]):
+			cols.append(_team_color(int(r)))
 	return cols
 ```
 
