@@ -1000,7 +1000,10 @@ func _esc_leave() -> void:
 	ev.physical_keycode = KEY_ESCAPE
 	pm.call("_unhandled_input", ev)
 	var opened := bool(pm.get("_open"))
-	_rec("ESCMENU opened=%d" % (1 if opened else 0))
+	# ★ 标签**不能**写成退役类名那种拼法(`esc`+`menu`):`kh_l4_probe` 会把
+	#   "退役 EscMenu 仍有代码引用"判红 —— 它按**去注释后的全文小写**扫,日志字面量也在扫描面上
+	#   (本仓的源码级守卫就是这么设计的:宁可误报,不给退役符号留活口)。故用中性标签。
+	_rec("PAUSE_MENU opened=%d" % (1 if opened else 0))
 	if not opened:
 		_fail("按 ESC 没打开暂停菜单(_open 仍为 false)")
 	_log("已按 ESC 打开菜单 → 点「回 到 主 菜 单」(t=%.1fs)" % _t)
