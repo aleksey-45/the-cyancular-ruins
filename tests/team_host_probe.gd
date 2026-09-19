@@ -26,7 +26,9 @@ extends Node
 #   `_respawn_player` 清归因 meta 的对等性。编号顺延(⑩/⑪ 已被占用)。
 # ⑬ 逐人数据 + ACS/MVP 由 **B 册 Task 10** 落(只做数据面):⑬a 伤害 1:1 / ⑬i 子弹那一路的
 #   归因(`_on_bullet_hit`,★ 它不走爆炸/榴弹那两条写端)/ ⑬b 队友误炸不计 `kills`(用户裁定 ②)/
-#   ⑬b2 队友的爆炸**不计 dmg**(用户裁定 2026-09-19,走真爆炸路径)/ ⑬c 自伤不记
+#   ⑬b2 队友的爆炸**不计 dmg**(用户裁定 2026-09-19,走真爆炸路径)/
+#   ⑬b3 **敌方**爆炸照常计入 dmg 且**数值对得上**(与 ⑬b2 互为对照 —— 少了它,「恒不记」的坏实现
+#   能让 ⑬b2 全绿)/ ⑬c 自伤不记
 #   (**专钉归因新鲜度** `ATTRIB_FRESH_MS`)/ ⑬d 加成表 / ⑬e 多杀 / ⑬f MVP 与确定性 /
 #   ⑬g 载荷形状与投递 / ⑬h 离开者的局数口径 / ⑬j **已离开者仍参与 MVP**(用户裁定)。
 #   ★ 同段另有一条源码级:**受击接线必须由生产持有** —— 探针调的是 `MatchHost._wire_hit_feedback`,
@@ -151,6 +153,23 @@ func _set_stats(host, rows: Array) -> void:
 func _hit_conn_count(p: Node2D) -> int:
 	var c: Object = p.get_node("Combat")
 	return c.get_signal_connection_list("took_hit").size()
+
+
+# ⑬b3 的落点:全图扫第一个**不在水里**的格中心。
+# ★ 为什么非要干格:水格会把爆炸伤害 ×`explosion_decay`(0.25)⇒ 期望值就得把水因子也乘进去
+#   —— 而本条的判据是"数值对得上",带一个环境因子会让它变成"看运气"。扫一格干的,
+#   期望值就恰好是 `max_damage`(见 `⑬b3` 里"为什么把受害者摆在爆心"那段)。
+# 找不到返回 (-1,-1) → 调用方回落到受害者当前位置 + 断言水因子前提(绝不静默跳过)。
+func _find_dry_point() -> Vector2:
+	var grid: Array = MazeGenerator.current_grid
+	var ts := GameParameters.TILE_SIZE
+	var d := SpawnPicker.grid_dims()
+	for y in range(1, d.y - 1):
+		for x in range(1, maxi(d.x - 1, 2)):
+			var pos := Vector2(float(x) * ts + ts * 0.5, float(y) * ts + ts * 0.5)
+			if Water.water_mult(pos, grid) >= 1.0:
+				return pos
+	return Vector2(-1, -1)
 
 
 # rect 覆盖到的格子里有几个是**实心**(判据走 `TileDefs.is_blocked` —— 全仓"挡路"的单一来源)。
@@ -918,6 +937,39 @@ func _run() -> void:
 	_check(_stat(_host, 3, "kills") == st_e_k3,
 			"★ ⑬b2 队友的爆炸**不计入 kills**(实际 %d,期望 %d)"
 			% [_stat(_host, 3, "kills"), st_e_k3])
+
+	# ── ⑬b3 敌方爆炸**照常计入 dmg 且数值对得上**(裁定 ① 的**正向对照**)──
+	# ★★ 为什么必须有这一条:⑬b2 是**纯负向**断言("队友的爆炸 ⇒ dmg 不变")—— 一个
+	#   "什么都记不上分"的坏实现会让它**全绿**(本册一路在清的那种"看起来在测、其实恒真")。
+	#   两条合起来才是"按异队过滤"的完整证据:负向管"队友不算",正向管"**敌人照算**"。
+	#   (变异 H 就是这一对的反证:把累计整个拿掉 ⇒ ⑬b2 仍绿、⑬b3 红。)
+	# 布景与 ⑬b2 **逐字同款**,只把受害者换成**敌方**:扔雷者 1 号(1 队)、受害者 4 号(2 队)。
+	# ★ 受害者摆在**爆心**(d == 0)是刻意的:d < 内圈(`radius × 0.4`)⇒ `_falloff` 返回满值、
+	#   `cover_multiplier` **免疫遮挡** ⇒ 期望值恰好是 `max_damage`,与衰减曲线/墙/视线**全都无关**
+	#   (断言的值由布景确定,不靠运气)。唯一还要控的环境因子是水 —— 故用 `_find_dry_point()`。
+	var st_f_victim := 4        # 2 队(与扔雷者异队)
+	var st_f_thrower := 1       # 1 队
+	var st_f_max := 30          # 爆心满伤 = 期望的 dmg 增量
+	_host._respawn_player(st_f_victim)     # ⑬i 打过它(32 血),先满血复活(顺带清归因)
+	var st_f_dmg0 := _stat(_host, st_f_thrower, "dmg")
+	var st_f_hp0: int = int(_host.players[st_f_victim].hp)
+	var st_f_pt := _find_dry_point()
+	if st_f_pt.x < 0:
+		st_f_pt = (_host.players[st_f_victim] as Node2D).global_position
+	_check(Water.water_mult(st_f_pt, MazeGenerator.current_grid) >= 1.0,
+			"★ ⑬b3 [仪器] 落点是**干格**(水格会把伤害 ×0.25,期望值就得带上水因子;实际落点 %s)"
+			% str(st_f_pt))
+	(_host.players[st_f_victim] as Node2D).global_position = st_f_pt
+	for st_f_r in [1, 2, 3, 5, 6]:
+		(_host.players[st_f_r] as Node2D).global_position = st_f_pt + Vector2(600.0, 0.0)
+	Explosion.apply_aoe(st_f_pt, 100.0, st_f_max, 400.0, _host.players[st_f_thrower])
+	_check(int(_host.players[st_f_victim].hp) == st_f_hp0 - st_f_max,
+			"★ ⑬b3 [仪器] 敌方的爆炸**真的打中了**(hp %d → %d,期望 -%d;没打中的话下面那条恒绿)"
+			% [st_f_hp0, int(_host.players[st_f_victim].hp), st_f_max])
+	_check(_stat(_host, st_f_thrower, "dmg") - st_f_dmg0 == st_f_max,
+			("★ ⑬b3 敌方爆炸**照常计入 dmg 且数值对得上**(实际 +%d,期望 +%d;"
+			+ "与 ⑬b2 互为对照 —— 少了正向这条,「恒不记」的坏实现能让 ⑬b2 全绿)")
+			% [_stat(_host, st_f_thrower, "dmg") - st_f_dmg0, st_f_max])
 
 	# ── ⑬c 自伤不记给任何人(★ 这条专钉"归因新鲜度"判据)──
 	# 构造:1 号身上留着"被 4 号(2 队)打过"的归因,时间戳**往前挪 200ms** —— 仍在击杀窗口
