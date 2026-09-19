@@ -87,11 +87,24 @@ func _ready() -> void:
 	#   不发的话服务器上的玩家开不了火(PvP 直接哑火,且不会有任何报错)。
 	_setup_ground_weapons()
 	# 受击反馈:任意来源(子弹/鸟接触/鸟弹/爆炸)实际扣血 → combat.took_hit → 广播 hit_event
+	_wire_hit_feedback()
+	_broadcast_round_state()
+
+
+# 把每个玩家的 `combat.took_hit` 接到本宿主的 `_on_player_hit`。
+# ★ 接线走**裸方法名**(`Callable(self, "_on_player_hit")`)⇒ **虚分派**:子类覆写的那份才是
+#   被调到的那个(`TeamHost._on_player_hit` 的逐人伤害累计就挂在这条上)。
+# ★ 为什么抽成具名函数而不是留几行在 `_ready` 里:**手工摆位路径**(探针:role_peers 传空、
+#   玩家在 `_ready` 之后才 `_place` 进来)也要调**生产那一份**接线 —— 让探针自己再抄一遍
+#   `connect(...)` 的话,验的是抄件:哪天生产的接线断了/换了信号,探针照样绿(本仓明令禁止的
+#   "第二份真相";同 `TeamHost._apply_team_layers` 的抽法)。
+# ★ 幂等性:同一对 (信号, Callable) 重复 connect 会被 Godot 拒绝(不重复触发)。
+#   探针那条路径下 `_ready` 时 `players` 还是空的,故这里**恰好**接一次。
+func _wire_hit_feedback() -> void:
 	for role in players:
 		var combat = (players[role] as Node).get("combat")
 		if combat != null and combat.has_signal("took_hit"):
 			combat.took_hit.connect(_on_player_hit.bind(role))
-	_broadcast_round_state()
 
 # (原 `_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**下发:
 #  那次"推"与 match_start 落在同一次客户端 poll,而那一刻新场景的订阅方还不存在 → 静默丢失

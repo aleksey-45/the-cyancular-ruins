@@ -24,6 +24,12 @@ extends Node
 # ⑫ 自杀脱困(K 键)由全支最终审查的修复批落:真起一个 `server_main` 实例(不进树)调
 #   `_on_suicide_request`,验闸放行 + 无归因档(对方队 +1 / 无人被复位);⑫b 是
 #   `_respawn_player` 清归因 meta 的对等性。编号顺延(⑩/⑪ 已被占用)。
+# ⑬ 逐人数据 + ACS/MVP 由 **B 册 Task 10** 落(只做数据面):⑬a 伤害 1:1 / ⑬i 子弹那一路的
+#   归因(`_on_bullet_hit`,★ 它不走爆炸/榴弹那两条写端)/ ⑬b 队友误炸不计 `kills`(用户裁定 ②)/
+#   ⑬c 自伤不记(**专钉归因新鲜度** `ATTRIB_FRESH_MS`)/ ⑬d 加成表 / ⑬e 多杀 / ⑬f MVP 与确定性 /
+#   ⑬g 载荷形状与投递 / ⑬h 离开者的局数口径。
+#   ★ 同段另有一条源码级:**受击接线必须由生产持有** —— 探针调的是 `MatchHost._wire_hit_feedback`,
+#     不是自己抄的 `connect`(抄件会让"生产的接线断了"静默通过,同 `_apply_team_layers`)。
 # 掉线终局(整队走光才终局 + 走光判胜)归 **Task 8 的独立探针** `tests/team_disconnect_probe.tscn`,
 # **不**追加到本文件 —— 别在这里再抄一份(两份真相:改了判据只有一份会红)。
 
@@ -87,6 +93,63 @@ func _moved_from(host, roles: Array, at: Vector2) -> int:
 		if p.global_position.distance_to(at) > 2.0:
 			n += 1
 	return n
+
+
+# ── ⑬(逐人数据 + ACS/MVP,B 册 Task 10)的小工具 ──
+# 读一个人的逐人条目(缺条目 = 0,与生产 `stats_payload` 的默认值同口径)。
+func _stat(host, role: int, key: String) -> int:
+	var s: Dictionary = host._stats.get(int(role), {})
+	return int(s.get(key, 0))
+
+
+# 真打倒一个人:**走生产的归因写端 + 倒地路径**(与 ⑤ 那一段同一手法),然后推一帧状态机。
+# `killer == 0` = 无归因档(先把 meta 清掉 —— 否则上一段留下的归因会让这条退化成"有归因")。
+func _down(host, victim: int, killer: int) -> void:
+	var v: Node2D = host.players[victim]
+	if killer == 0:
+		v.remove_meta("last_damager")
+		v.remove_meta("last_damager_time")
+	else:
+		CombatFeedback.attribute(v, host.players[killer])
+	(v.get_node("Combat") as Node).force_down()
+	host._match_round_tick(0.016)
+
+
+# 某一队还站着几个(⑬d 的前提读数:加成取到几,就看这个数)。
+func _team_alive(host, team: int) -> int:
+	var n := 0
+	for r in host.players:
+		if host.team_of(int(r)) == team and not (host.players[r] as Node2D).is_downed():
+			n += 1
+	return n
+
+
+# 把对局推到**干净的一局**:用生产那条换局路径(`_start_next_round`)—— 它清 `_scores` /
+# `_down_counted` / `_respawn_pending` / `_round_kills`,并把六个人满血摆回出生点。
+# ★ 它**不清** `_stats`(整场累计,正是本段要的:量的是**增量**)。
+# ★ `_rounds_won` 必须先清:⑨b 留了 {2: 2}(已达 `TEAM_ROUNDS_TO_WIN`)→ 不清的话
+#   `_start_next_round` 直接进 MATCH_OVER,后面每一段的读数全部作废。
+func _next_round_clean(host) -> void:
+	host._rounds_won = {}
+	host._start_next_round()
+	host._round_state = MatchHost.RoundState.PLAYING
+
+
+# 手摆逐人表(⑬f/⑬g/⑬h 要的是**精确相等**的读数,靠真打摆不出来)。
+# rows = [[role, kills, deaths, dmg], …];total = dmg + kscore,这里一律只塞 dmg,
+# 于是 `acs` 的读数直接等于那几个数(分母由调用方把 `_round_num` 定住)。
+func _set_stats(host, rows: Array) -> void:
+	host._stats = {}
+	for row in rows:
+		host._stats[int(row[0])] = {"kills": int(row[1]), "deaths": int(row[2]),
+				"dmg": int(row[3]), "kscore": 0}
+
+
+# 该玩家 `Combat` 上 `took_hit` 的接线条数(⑬ 的[仪器]前提:手工摆位路径必须显式补调
+# 生产的 `_wire_hit_feedback()`,为 0 的话下面所有伤害断言都测不到东西)。
+func _hit_conn_count(p: Node2D) -> int:
+	var c: Object = p.get_node("Combat")
+	return c.get_signal_connection_list("took_hit").size()
 
 
 # rect 覆盖到的格子里有几个是**实心**(判据走 `TileDefs.is_blocked` —— 全仓"挡路"的单一来源)。
@@ -744,6 +807,254 @@ func _run() -> void:
 	if srv._host != null:
 		(srv._host as Node).free()   # 只可能出现在"复核被删掉"的那次变异跑里
 	srv.free()                       # 实例不进树(见 ⑫ 上方:`_ready` 会去 bind 7777)
+
+	# ══ ⑬ 逐人数据 + ACS / MVP(B 册 Task 10;**只做数据面**)══
+	#
+	# 覆盖 brief 那六条:⑬a 伤害 1:1 / ⑬b 队友误炸不计击杀(用户裁定 ②)/ ⑬c 自伤不记
+	# (专钉"归因新鲜度"判据)/ ⑬d 加成表 / ⑬e 多杀 / ⑬f MVP 与确定性;另加 ⑬g 载荷与口径、
+	# ⑬h 离开者的局数口径。
+	#
+	# ★★ 先把对局整体重置成"第 1 局、六人满血、逐人表清零":不重置的话上面各段的残余
+	#   (`_rounds_won = {2: 2}`、若干人倒地、`_stats` 里的旧伤害)会让读数无法手算 ——
+	#   而**手算不出来的断言就是恒绿断言**。
+	_host._round_state = MatchHost.RoundState.PLAYING
+	_host._rounds_won = {}
+	_host._round_num = 1
+	_host._scores = {}
+	_host._stats = {}
+	_host._round_kills = {}
+	_host._left = {}
+	_host._left_round = {}
+	for st_r in _host.players:
+		_host._respawn_player(int(st_r))
+	# ★ 受击接线走**生产那一份**:本探针 `role_peers` 传空 → `_ready` 那一刻 `players` 还是
+	#   空的 → 不补调就一条线都没有。自己抄一句 `connect(...)` 的话验的是抄件(生产的接线
+	#   哪天断了照样绿)—— 与 `_place` 里那句 `_apply_team_layers()` 同一条纪律。
+	_host._wire_hit_feedback()
+	_check(_hit_conn_count(_host.players[1]) == 1,
+			"[仪器] ⑬ 受击信号已按生产接线接上(实际 %d 条;为 0 则下面所有伤害断言都测不到东西)"
+			% _hit_conn_count(_host.players[1]))
+
+	# ── ⑬a 伤害 1:1 记到**攻击者**的 dmg ──
+	var st_atk := 1
+	var st_vic := 4
+	var st_dmg0 := _stat(_host, st_atk, "dmg")
+	CombatFeedback.attribute(_host.players[st_vic], _host.players[st_atk])
+	(_host.players[st_vic] as Node2D).take_hit(Vector2.ZERO, 7)
+	_check(_stat(_host, st_atk, "dmg") - st_dmg0 == 7,
+			"★ ⑬a 一次已知伤害(7)的命中 → 攻击者 dmg 恰好 +7(实际 +%d)"
+			% (_stat(_host, st_atk, "dmg") - st_dmg0))
+	_check(_stat(_host, st_vic, "dmg") == 0,
+			"★ ⑬a 受害者的 dmg 不涨(伤害记给攻击者,不是受伤者)")
+
+	# ── ⑬i 子弹那一路的归因(★ 它**不走**爆炸/榴弹那两条写端)──
+	# 为什么要单独一条:基础实现对**玩家**的子弹直击**不写归因**(只有 `RoyaleHost` 覆写补了),
+	# `TeamHost` 原先没有那份覆写 ⇒ 枪杀既不进逐人 dmg、也不进击杀归属(两处都静默:
+	# ACS 漏掉最主要的伤害来源,且"只复位击杀者"在枪杀这条路上一直不生效)。
+	# ★ 判据走**生产的裁决入口** `_adjudicate_bullets`(不是直接调 `_on_bullet_hit`):
+	#   把子弹贴到受害者身上 → 一次裁决 → 伤害与归因同时落定,走的是服务器真实那一遍。
+	var st_bshooter := 3          # 1 队
+	var st_bvictim := 4           # 2 队
+	var st_bdmg0 := _stat(_host, st_bshooter, "dmg")
+	var st_hp0: int = int(_host.players[st_bvictim].hp)
+	# ★ 字段一律走 `set()`:子弹的 `shooter`/`hit_damage` 是**脚本**变量,静态类型上看不到
+	#   (与 `_place` 上方那句 `var srv: Node = …` 同一个坑)。
+	var st_b: Node = preload("res://scenes/weapons/bullet.tscn").instantiate()
+	st_b.set("shooter", _host.players[st_bshooter])
+	st_b.set("hit_damage", 11)
+	st_b.set("velocity_vec", Vector2.ZERO)
+	st_b.set("max_range", 1000.0)
+	_host.add_child(st_b)
+	st_b.set_physics_process(false)   # 只借它当"一次子弹命中",不让它自己飞/撞墙
+	(st_b as Node2D).global_position = (_host.players[st_bvictim] as Node2D).global_position
+	_host._adjudicate_bullets()
+	_check(_stat(_host, st_bshooter, "dmg") - st_bdmg0 == 11,
+			"★ ⑬i 子弹直击:伤害记到**射手** dmg(实际 +%d,期望 +11)"
+			% (_stat(_host, st_bshooter, "dmg") - st_bdmg0))
+	_check(int(_host.players[st_bvictim].hp) == st_hp0 - 11,
+			"★ ⑬i [仪器] 子弹真的打中了(受害者 hp %d → %d,期望 -11)"
+			% [st_hp0, int(_host.players[st_bvictim].hp)])
+	_check(_host._attributed_killer(_host.players[st_bvictim]) == st_bshooter,
+			"★ ⑬i 子弹命中也写了**击杀归因**(枪杀的 kill_event 射手与「只复位击杀者」都读它;"
+			+ "少了 `_on_bullet_hit` 这一层,两者在枪杀这条路上都是 0)")
+
+	# ── ⑬b 反向断言:队友误炸 → 受害者 deaths +1,但**谁都不涨 kills**(用户裁定 ②)──
+	var st_k3 := _stat(_host, 3, "kills")
+	var st_k1 := _stat(_host, 1, "kills")
+	var st_d1 := _stat(_host, 1, "deaths")
+	_down(_host, 1, 3)          # 3 号(1 队)炸倒 1 号(1 队)
+	_check(_stat(_host, 1, "deaths") == st_d1 + 1, "★ ⑬b 队友误炸:受害者 deaths 照计(+1)")
+	_check(_stat(_host, 3, "kills") == st_k3,
+			"★ ⑬b 队友误炸**不计入击杀者 kills**(实际 %d,期望 %d;去掉 same_team 判定这里就红)"
+			% [_stat(_host, 3, "kills"), st_k3])
+	_check(_stat(_host, 1, "kills") == st_k1, "★ ⑬b 也不计给受害者自己")
+
+	# ── ⑬c 自伤不记给任何人(★ 这条专钉"归因新鲜度"判据)──
+	# 构造:1 号身上留着"被 4 号(2 队)打过"的归因,时间戳**往前挪 200ms** —— 仍在击杀窗口
+	# (`ATTRIB_WINDOW` = 3s)之内,但已超出新鲜阈值(`ATTRIB_FRESH_MS`)。
+	# ★ 这正是真实自伤的形状:写端 `CombatFeedback.attribute(p, p)` 因 `attacker == victim` 被
+	#   **静默跳过**,meta 停在**上一名敌人**身上(真对局里那一下通常发生在数百 ms~数秒前)。
+	# ★ 200ms 是保守下界:榴弹引信 0.4s、开火间隔也是几百 ms —— 任何**合理**的新鲜阈值都必须
+	#   拒绝 200ms 前的归因。**去掉那条判据**(改用 3s 窗口),这里立刻红。
+	_host._respawn_player(1)     # ⑬b 把 1 号打倒了,先复活(顺带清掉归因 meta)
+	var st_d4 := _stat(_host, 4, "dmg")
+	var st_d1b := _stat(_host, 1, "dmg")
+	CombatFeedback.attribute(_host.players[1], _host.players[4])
+	_host.players[1].set_meta("last_damager_time", Time.get_ticks_msec() - 200)
+	CombatFeedback.attribute(_host.players[1], _host.players[1])   # 自伤:写端静默跳过
+	var st_age := Time.get_ticks_msec() - int(_host.players[1].get_meta("last_damager_time"))
+	_check(st_age > TeamHost.ATTRIB_FRESH_MS and st_age < TeamHost.ATTRIB_WINDOW,
+			"[仪器] ⑬c 归因年龄 %dms 落在(新鲜阈值 %d, 击杀窗口 %d)**之间** —— 本条的区分度就靠它"
+			% [st_age, TeamHost.ATTRIB_FRESH_MS, TeamHost.ATTRIB_WINDOW])
+	(_host.players[1] as Node2D).take_hit(Vector2.ZERO, 9)
+	_check(_stat(_host, 4, "dmg") == st_d4,
+			"★ ⑬c 自伤**不记给上一名敌人**(4 号 dmg 实际 %d,期望 %d;去掉新鲜阈值这里就红)"
+			% [_stat(_host, 4, "dmg"), st_d4])
+	_check(_stat(_host, 1, "dmg") == st_d1b, "★ ⑬c 自伤也不记给自己")
+
+	# ── ⑬d 加成表:敌方存活人数 → 击杀分 ──
+	# (d0) 表本身:静态钉 1..5 的加权值。行为断言里的期望值写**字面量**、不从生产函数取,
+	#      两张一起才既钉住表、又钉住表真的被用上。
+	var st_tbl_bad: Array[String] = []
+	var st_tbl_want := [70, 90, 110, 130, 150]
+	for st_n in range(1, 6):
+		if TeamHost.kill_bonus_score(st_n) != st_tbl_want[st_n - 1]:
+			st_tbl_bad.append("%d→%d(期望 %d)"
+					% [st_n, TeamHost.kill_bonus_score(st_n), st_tbl_want[st_n - 1]])
+	_check(st_tbl_bad.is_empty(),
+			"★ ⑬d 加成表 1→70 / 2→90 / 3→110 / 4→130 / 5→150(问题:%s)" % str(st_tbl_bad))
+	# (d1) 敌方 3 人全在时击杀 → 110
+	_next_round_clean(_host)
+	_check(_team_alive(_host, 2) == 3,
+			"[仪器] ⑬d 阶段①:2 队 3 人全在(实际 %d)" % _team_alive(_host, 2))
+	var st_ks1 := _stat(_host, 1, "kscore")
+	_down(_host, 4, 1)
+	var st_gain1 := _stat(_host, 1, "kscore") - st_ks1
+	_check(st_gain1 == 110,
+			"★ ⑬d 敌方 3 人(含被击杀者)全在时击杀 → kscore +110(实际 +%d)" % st_gain1)
+	# (d2) 敌方只剩 1 人(= 受害者本人)时击杀 → 70
+	_next_round_clean(_host)
+	_down(_host, 5, 0)          # 无归因:不计任何人的击杀(deaths 照计)
+	_down(_host, 6, 0)
+	_check(_team_alive(_host, 2) == 1,
+			"[仪器] ⑬d 阶段②:2 队只剩 1 人(实际 %d)" % _team_alive(_host, 2))
+	var st_ks3 := _stat(_host, 3, "kscore")
+	_down(_host, 4, 3)
+	var st_gain3 := _stat(_host, 3, "kscore") - st_ks3
+	_check(st_gain3 == 70,
+			"★ ⑬d 敌方只剩 1 人时击杀 → kscore +70(实际 +%d);两条的**加权差 = 40**" % st_gain3)
+
+	# ── ⑬e 多杀:同一局内同一 role 的第 2 杀额外 +50 ──
+	_next_round_clean(_host)
+	var st_m0 := _stat(_host, 1, "kscore")
+	_down(_host, 4, 1)          # 第 1 杀:敌方 3 人全在 → 110(+0)
+	var st_m1 := _stat(_host, 1, "kscore") - st_m0
+	_down(_host, 5, 1)          # 第 2 杀:敌方剩 2 人(受害者 5 + 6)→ 90 + 50 = 140
+	var st_m2 := _stat(_host, 1, "kscore") - st_m0 - st_m1
+	_check(st_m1 == 110, "★ ⑬e 第 1 杀 = 110(实际 +%d)" % st_m1)
+	_check(st_m2 == 140,
+			("★ ⑬e 同一局内第 2 杀 = 90(敌方剩 2 人)+ **50 多杀加成** = 140"
+			+ "(实际 +%d;去掉多杀加成这里就是 90)") % st_m2)
+	# 多杀计数是**按 role** 的:换个人来杀,它的第 1 杀不该沾别人的连杀。
+	var st_ks2 := _stat(_host, 2, "kscore")
+	_down(_host, 6, 2)          # 2 号(1 队)的第 1 杀:敌方只剩 6 → 70 + 0
+	var st_gain2 := _stat(_host, 2, "kscore") - st_ks2
+	_check(st_gain2 == 70,
+			"★ ⑬e 多杀计数**按 role**:2 号的第 1 杀只有加权 70、不享 1 号的连杀(实际 +%d)" % st_gain2)
+
+	# ── ⑬f MVP 与确定性 ──
+	# 读法:ss=只塞 dmg、`_round_num = 1` ⇒ `acs` 就等于那一列的数,手算得出期望值。
+	_next_round_clean(_host)
+	_host._round_num = 1
+	var st_pay := {}
+	# (f1) 分差 → 指向 ACS 高者
+	_set_stats(_host, [[1, 0, 0, 300], [3, 0, 0, 100]])
+	_check(_host.mvp_role() == 1, "★ ⑬f 分差:MVP = ACS 最高者(1 号,300 vs 100)")
+	# (f2) 完全并列 → **role 号升序**
+	_set_stats(_host, [[3, 0, 0, 300], [5, 0, 0, 300]])
+	st_pay = _host.stats_payload()
+	_check(float(st_pay[3]["acs"]) == float(st_pay[5]["acs"]),
+			"[仪器] ⑬f 前提:3 号与 5 号 ACS 确实**并列**(实际 %f vs %f)—— 不并列的话下面验的不是并列规则"
+			% [float(st_pay[3]["acs"]), float(st_pay[5]["acs"])])
+	_check(_host.mvp_role() == 3, "★ ⑬f 完全并列 → **role 号升序**(3 号,不是 5 号)")
+	# (f3) ACS 并列 → 击杀多者
+	_set_stats(_host, [[3, 2, 0, 300], [5, 5, 0, 300]])
+	st_pay = _host.stats_payload()
+	_check(float(st_pay[3]["acs"]) == float(st_pay[5]["acs"]),
+			"[仪器] ⑬f 前提(f3):两人 ACS 并列(实际 %f vs %f)"
+			% [float(st_pay[3]["acs"]), float(st_pay[5]["acs"])])
+	_check(_host.mvp_role() == 5, "★ ⑬f ACS 并列 → 击杀多者(5 号 5 杀 > 3 号 2 杀)")
+	# (f4) ACS 与击杀都并列 → 阵亡少者
+	_set_stats(_host, [[3, 2, 5, 300], [5, 2, 1, 300]])
+	st_pay = _host.stats_payload()
+	_check(float(st_pay[3]["acs"]) == float(st_pay[5]["acs"])
+			and int(st_pay[3]["kills"]) == int(st_pay[5]["kills"]),
+			"[仪器] ⑬f 前提(f4):两人 ACS 与 kills 都并列(实际 %f/%d vs %f/%d)"
+			% [float(st_pay[3]["acs"]), int(st_pay[3]["kills"]),
+				float(st_pay[5]["acs"]), int(st_pay[5]["kills"])])
+	_check(_host.mvp_role() == 5, "★ ⑬f ACS 与击杀都并列 → 阵亡少者(5 号 1 死 < 3 号 5 死)")
+	# (f5) 确定性:同一状态反复调 = 同一个答案;换了字典插入顺序也还是同一个答案
+	# (实现按 role 升序遍历 + 只在**严格更优**时替换 —— 这里钉的是这条性质,不是它的写法)。
+	_check(_host.mvp_role() == _host.mvp_role() and _host.mvp_role() == 5,
+			"★ ⑬f 同一状态连续三次调用给出同一个 MVP(确定性)")
+	_set_stats(_host, [[5, 2, 1, 300], [3, 2, 5, 300]])   # 同样的值,插入顺序颠倒
+	_check(_host.mvp_role() == 5, "★ ⑬f 换字典插入顺序后答案不变(不依赖迭代顺序)")
+
+	# ── ⑬g 载荷与口径 ──
+	_set_stats(_host, [[1, 3, 1, 300]])
+	_host._round_num = 1
+	var st_pay2: Dictionary = _host.stats_payload()
+	var st_shape_bad: Array[String] = []
+	var st_want_keys := ["acs", "deaths", "dmg", "kills", "kscore"]   # 升序
+	for st_k in _host.players:
+		var st_row: Dictionary = st_pay2.get(int(st_k), {})
+		if st_row.is_empty():
+			st_shape_bad.append("role %d 缺行" % int(st_k))
+			continue
+		var st_keys: Array = st_row.keys()
+		st_keys.sort()
+		if st_keys != st_want_keys:
+			st_shape_bad.append("role %d 的键 %s" % [int(st_k), str(st_keys)])
+	_check(st_shape_bad.is_empty(),
+			"★ ⑬g 载荷形状:在场者**人人一行**(哪怕一次伤害都没打过)、键恰好五个(问题:%s)"
+			% str(st_shape_bad))
+	_check(float(st_pay2[1]["acs"]) == 300.0,
+			"★ ⑬g acs = (kscore + dmg) / 局数 = (0 + 300) / 1 = 300(实际 %f)"
+			% float(st_pay2[1]["acs"]))
+	_check(int(st_pay2[1]["kills"]) == 3 and int(st_pay2[1]["deaths"]) == 1,
+			"★ ⑬g kills/deaths/dmg 原样带出(实际 %d/%d/%d)"
+			% [int(st_pay2[1]["kills"]), int(st_pay2[1]["deaths"]), int(st_pay2[1]["dmg"])])
+	# 源码级:两个新键确实挂在 `round_state` 上(载荷的"投递"这一半在 `_broadcast_round_state`
+	# 里,而它不可从探针直接读 —— 与 ⑪ 的 `teams` 同一个角度)。
+	var st_rbody := ScanUtil.func_body(
+			ScanUtil.code_only(ScanUtil.read("res://server/team_host.gd")), "_broadcast_round_state")
+	_check(st_rbody.contains('data["stats"]'), "★ ⑬g `stats` 随 round_state 下发")
+	_check(st_rbody.contains('data["mvp"]'), "★ ⑬g `mvp` 随 round_state 下发(MATCH_OVER 分支)")
+	_check(st_rbody.contains("if not table.is_empty():"),
+			"★ ⑬g `stats` **只在非空时**带该键(与 teams / destroyed 同款纪律)")
+	# 接线归属:探针那句 `_wire_hit_feedback()` 调的必须是**生产那一份**(基类持有、`_ready` 调它)。
+	var st_mh := ScanUtil.code_only(ScanUtil.read("res://server/match_host.gd"))
+	_check(st_mh.contains("func _wire_hit_feedback(") and st_mh.contains("_wire_hit_feedback()"),
+			"★ ⑬g 受击接线由生产持有(`MatchHost._ready` 调 `_wire_hit_feedback`),探针只是调它")
+
+	# ── ⑬h 离开者的 ACS 分母 = 他**实际参与**的局数 ──
+	# 口径理由:离开者没打的那几局不该稀释他(brief 明写)。代价是分母比在场者小 —— 有意的。
+	_host._round_num = 2
+	_set_stats(_host, [[1, 0, 0, 500], [6, 0, 0, 300]])
+	_host._left = {}
+	_host._left_round = {}
+	_host.mark_disconnected(6)          # ⑥ 号在第 2 局离场(顺带验它对逐人表无副作用)
+	_check(int(_host._left_round.get(6, -1)) == 2,
+			"★ ⑬h 离场时把局号**冻结**下来(实际 %s;不记的话分母会跟着对局继续涨)"
+			% str(_host._left_round.get(6, -1)))
+	_host._round_num = 5                # 对局又打了几局
+	var st_pay3: Dictionary = _host.stats_payload()
+	_check(float(st_pay3[6]["acs"]) == 300.0 / 2.0,
+			("★ ⑬h 离开者:分母 = 他实际参与的局数(300/2 = 150,实际 %f;"
+			+ "按全场 5 局算会是 60)") % float(st_pay3[6]["acs"]))
+	_check(float(st_pay3[1]["acs"]) == 500.0 / 5.0,
+			"★ ⑬h 在场者:分母仍是**全场局数**(500/5 = 100,实际 %f)" % float(st_pay3[1]["acs"]))
+	_check(st_pay3.has(6), "★ ⑬h 已离开者的逐人数据**不消失**(面板仍要展示他的成绩)")
 
 	_ran_to_end = true
 
