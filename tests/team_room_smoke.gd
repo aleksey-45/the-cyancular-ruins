@@ -1,8 +1,10 @@
 extends SceneTree
 
 # 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)
-# + 两条**源码级**断言(⑥:team_join 里确实调了 team_next_role;⑦:3v3 建房页不得摆回基类那两个
-#   设置区块 / 计数行不得写死容量 / 名单行配色两档共用 —— 见各节的盲区说明)。
+# + **源码级**断言 ⑥~⑨(⑥:team_join 里确实调了 team_next_role;⑦:3v3 建房页不得摆回基类那两个
+#   设置区块 / 计数行不得写死容量 / 名单行配色两档共用;⑧:大厅入口指向的对局场景真的存在且挂了
+#   脚本;⑨:set_my_team 接线 / 分队碰撞层契约 / 小地图两提供器同源 / 队色是比值 —— 见各节的
+#   盲区说明)+ **像素级**断言 ⑩(`BODY_BASE_COLOR` 仍等于 `player.png` 的不透明众数色)。
 # 跑法: "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd
 # 通过 = `TEAM ROOM SMOKE: ALL-OK` 退出 0。
 #
@@ -207,12 +209,11 @@ func _initialize() -> void:
 		if not (others_body.contains("_minimap_entries()") and colors_body.contains("_minimap_entries()")):
 			fails.append("★ 小地图两个提供器没共用 _minimap_entries()(各写一份 for = 过滤条件两份;某副本已 free 未摘时两数组错位一格 → 队友点画成敌人色,不报错)")
 		# ④ 队色染到**身体**上必须是 modulate **比值**(队色 / 本体主色),不能直接乘队色。
-		#    ★ 直接乘是 brief 给的初版:蓝身体 `#639BFF` × 橙 `C_TEAM_B` = `#636073` —— 一坨灰紫,
-		#      "一眼看出谁是队友"直接落空(实测图 `.superpowers/sdd/_t6_tint2.png` 第②列)。
+		#    ★ 直接乘是 brief 给的初版:蓝身体 `#639BFF` 乘上**那版队色**(橙,现已改口径为偏绿的青)
+		#      实测是 `#636073` —— 一坨灰紫,"一眼看出谁是队友"直接落空
+		#      (实测图 `.superpowers/sdd/_t6_tint2.png` 第②列)。
 		#      比值则精确等于队色本身(实测逐字节相等),与头顶 ID / 小地图点位**同源同一个常量**。
-		#    ★ 局限(如实登记):本断言只钉**机制**,钉不住 `BODY_BASE_COLOR` 那个**数值**的时效性 ——
-		#      换 player.png 素材后它若不重测,六个人会一起偏色(仍然分得出谁是谁,故更易漏)。
-		#      复测办法写在 `pvp_match_client.gd` 该常量的注释里;要钉死得在探针里真读一次 PNG。
+		#    ★ 本档只钉**机制**(公式是比值);比值的**分母**(`BODY_BASE_COLOR` 那个数值)归 ⑩。
 		var tint_code := ScanUtil.code_only(ScanUtil.read("res://scenes/pvp_match_client.gd"))
 		var tint_body := ScanUtil.func_body(tint_code, "_apply_tint")
 		if tint_body.is_empty():
@@ -220,6 +221,54 @@ func _initialize() -> void:
 		elif not (tint_body.contains("color_override.r / BODY_BASE_COLOR.r")
 				and tint_body.contains("color_override.b / BODY_BASE_COLOR.b")):
 			fails.append("★ 队色染色被改回「直接乘队色」了(蓝身体乘橙 = 灰紫,队色认不出;必须是 队色/本体主色 的比值)")
+	# ⑩ `BODY_BASE_COLOR` 的**数值**时效性 —— 与 ⑨④ 的"机制"那一半互补(两半缺一不可)。
+	# ★ ⑨④ 钉"公式是**比值**";本档钉那个比值的**分母**仍等于 `player.png` 的主色。换素材忘了
+	#   重测 `BODY_BASE_COLOR` 时:公式照旧对、⑨④ 照旧绿,只有身体**整体偏色** —— 而六个人
+	#   一起偏、仍然分得出谁是谁 ⇒ 这是本批最容易漏的一档(评审原话)。
+	# ★ 复测办法与 `pvp_match_client.gd` 该常量注释里的那条**逐字同源**:按 alpha > 200 过滤
+	#   `player.png` 的全部像素,取出现次数最多的那个 RGB。
+	# ★ 渲染侧另有一份等价断言(`hue_tint_probe` 守卫 D,那里顺带还钉了 `C_TEAM_A` 同色)。
+	#   那条**必须真渲染**(headless 下 `get_viewport().get_texture()` 返 null ⇒ 整条探针在
+	#   截图那一步早退,守卫 D 根本跑不到),故本档不是它的复制品,而是它的 **headless 半边**:
+	#   两种跑法各自够不到对方能跑的场景。
+	var pmc_script = load("res://scenes/pvp_match_client.gd")
+	if pmc_script == null or pmc_script.reload() != OK:
+		# 同 ⑥⑦⑧⑨ 的 load 手法:失败不抛错、给一行 FAIL(否则 `-s` 下走不到 quit() → 挂到 timeout)
+		fails.append("★ 加载/编译 scenes/pvp_match_client.gd 失败(本体主色的数值断言无从成立)")
+	else:
+		var pmc_consts: Dictionary = pmc_script.get_script_constant_map()
+		if not pmc_consts.has("BODY_BASE_COLOR"):
+			fails.append("★ scenes/pvp_match_client.gd 里没有常量 BODY_BASE_COLOR")
+		else:
+			var base_key := _rgb8(pmc_consts["BODY_BASE_COLOR"])
+			# ★ 读**原始 PNG 字节**再解码,不用 `Image.load_from_file`(那条会打一条
+			#   "Loaded resource as image file, this will not work on export" 的引擎 WARNING
+			#   —— 本档要在 `-s`/headless 下干净地跑,警告会淹掉它自己的 FAIL 行)。
+			var png_bytes := FileAccess.get_file_as_bytes("res://assets/textures/player.png")
+			var png := Image.new()
+			if png_bytes.is_empty() or png.load_png_from_buffer(png_bytes) != OK:
+				fails.append("★ 读不出/解不开 assets/textures/player.png(本体主色的数值断言无从成立)")
+			else:
+				var hist: Dictionary = {}
+				for y in range(png.get_height()):
+					for x in range(png.get_width()):
+						var px := png.get_pixel(x, y)
+						if px.a > 200.0 / 255.0:
+							var key := _rgb8(px)
+							hist[key] = int(hist.get(key, 0)) + 1
+				var mode_key := Vector3i(-1, -1, -1)
+				var mode_n := 0
+				for k in hist:
+					if int(hist[k]) > mode_n:
+						mode_n = int(hist[k])
+						mode_key = k
+				if mode_key.x < 0:
+					fails.append("★ player.png 里没有一个不透明像素(本体主色的数值断言无从成立)")
+				elif mode_key != base_key:
+					fails.append(("★ player.png 的不透明众数色 #%02X%02X%02X ≠ BODY_BASE_COLOR #%02X%02X%02X"
+							+ " —— 换素材后没重测本体主色,队色(比值 = 队色 / 主色)会**整体偏**而没人发现"
+							+ "(仍分得出谁是谁,故最容易漏)")
+							% [mode_key.x, mode_key.y, mode_key.z, base_key.x, base_key.y, base_key.z])
 	if fails.is_empty():
 		print("TEAM ROOM SMOKE: ALL-OK")
 		quit(0)
@@ -228,3 +277,10 @@ func _initialize() -> void:
 		for f in fails:
 			print("  - %s" % f)
 		quit(1)
+
+
+# 颜色 → 8bit 量纲的三元组(**逐字节**口径:比对"这个 RGB"而不是浮点色,免得被 eps 放走一格)。
+# `Color` 的 8 位分量来回换算在 GDScript 里是精确的(`99.0/255.0` 与 `roundi(x*255.0)` 互逆),
+# 故这里不需要容差;真需要容差的话说明素材已经被改过了,那正是本断言要报的事。
+func _rgb8(c: Color) -> Vector3i:
+	return Vector3i(roundi(c.r * 255.0), roundi(c.g * 255.0), roundi(c.b * 255.0))

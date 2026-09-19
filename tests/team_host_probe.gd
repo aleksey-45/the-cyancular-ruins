@@ -1075,12 +1075,32 @@ func _run() -> void:
 			% [float(st_pay[3]["acs"]), int(st_pay[3]["kills"]),
 				float(st_pay[5]["acs"]), int(st_pay[5]["kills"])])
 	_check(_host.mvp_role() == 5, "★ ⑬f ACS 与击杀都并列 → 阵亡少者(5 号 1 死 < 3 号 5 死)")
-	# (f5) 确定性:同一状态反复调 = 同一个答案;换了字典插入顺序也还是同一个答案
-	# (实现按 role 升序遍历 + 只在**严格更优**时替换 —— 这里钉的是这条性质,不是它的写法)。
-	_check(_host.mvp_role() == _host.mvp_role() and _host.mvp_role() == 5,
+	# (f5) **全并列 + 反序插入** → 仍必须是 role 号升序(3 号)。
+	# ★ 为什么这一档的并列必须是"**全**"的(ACS/kills/deaths 全同):上面 f2~f4 每一档都留着
+	#   一个**严格更优**的候选,于是"不排序、按遍历顺序取严格更优"的实现会给出**同一个**答案
+	#   ⇒ 那三档照不到"按插入顺序"这一类。全并列时答案只能来自**遍历顺序**。
+	# ★★ 改法说明(2026-09-20 评审):旧版这一档是 `[[5,2,1,300],[3,2,5,300]]`(ACS 并列、
+	#   **阵亡数不同**)—— 那一档里 5 号**真的更优**,反序插入后快照式实现照样给 5 ⇒ 它其实
+	#   是个空断言。全并列 + 反序才把"顺序"变成唯一变量:按 `_stats` **插入顺序**遍历的实现
+	#   (生产中即"首次记分的先后")会先遇到 5 号并锁住它,正确实现(`roles.sort()` + 严格更优)
+	#   给 3 号。**变异反证**:把 `mvp_role` 的候选集换成 `_stats.keys()`(不排序)—— 本档红。
+	# ★ 如实登记的边界:换 `_roster()` 但不 sort 的实现**照不到** —— 本探针按 role 升序摆人,
+	#   故 roster 的插入序恰好也是升序,两种写法在这一档上同答案。要照到它得让 players 的
+	#   插入序非升序,那会动到 ⑧/⑨ 依赖的摆位,不在本次范围。
+	_set_stats(_host, [[5, 2, 1, 300], [3, 2, 1, 300]])   # ACS/kills/deaths 全同,插入顺序颠倒
+	st_pay = _host.stats_payload()
+	_check(float(st_pay[3]["acs"]) == float(st_pay[5]["acs"])
+			and int(st_pay[3]["kills"]) == int(st_pay[5]["kills"])
+			and int(st_pay[3]["deaths"]) == int(st_pay[5]["deaths"]),
+			("[仪器] ⑬f 前提(f5):3 号与 5 号 ACS/kills/deaths **全并列**(实际 %f/%d/%d vs %f/%d/%d)"
+			+ " —— 不全并列的话本档退化成空断言,验的不是「顺序」")
+			% [float(st_pay[3]["acs"]), int(st_pay[3]["kills"]), int(st_pay[3]["deaths"]),
+				float(st_pay[5]["acs"]), int(st_pay[5]["kills"]), int(st_pay[5]["deaths"])])
+	_check(_host.mvp_role() == 3,
+			("★ ⑬f 全并列且**反序插入** → 仍取 role 升序(3 号,不是 5 号);"
+			+ "按 `_stats` 插入顺序遍历的实现会给出 5 号"))
+	_check(_host.mvp_role() == _host.mvp_role() and _host.mvp_role() == 3,
 			"★ ⑬f 同一状态连续三次调用给出同一个 MVP(确定性)")
-	_set_stats(_host, [[5, 2, 1, 300], [3, 2, 5, 300]])   # 同样的值,插入顺序颠倒
-	_check(_host.mvp_role() == 5, "★ ⑬f 换字典插入顺序后答案不变(不依赖迭代顺序)")
 
 	# ── ⑬g 载荷与口径 ──
 	_set_stats(_host, [[1, 3, 1, 300]])
