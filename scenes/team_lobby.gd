@@ -16,10 +16,11 @@ extends LobbyPage
 #   ② `_enter_match_scene` 必须 `call_deferred`(worker 的 match_start 在 NetBus.poll 调用栈内
 #      到达,栈内切场景会在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误;1v1 是直切)。
 #
-# ★ 首版** knowingly 不发**的两样(照实登记,不是漏写):`_player_options()` 返回 `{}` ——
-#   房主规则项(禁用武器/回合回血)与**角色色相**一律走默认。故建房面板里的禁用武器网格与
-#   色相行在这一版**只写本机 Settings、不进对局**(那两项本来就是共用 1v1/大乱斗的设置项)。
-#   要真正接上,得等对局场景(TeamHost 那半消费 player_options)落地后一并评估。
+# ★ 首版** knowingly 不发**的规则项(照实登记,不是漏写):`_player_options()` 返回 `{}` ——
+#   房主规则项(禁用武器/回合回血)与**角色色相**一律走默认。要真正接上,得等对局场景
+#   (TeamHost 那半消费 player_options)落地后一并评估。
+#   ★ 正因如此,建房面板里**没有**「禁用武器网格」与「角色色相行」两个区块(基类提供、
+#     另两页都有)—— 原因见 _build_create_panel 里那段说明。
 
 var _code_edit: LineEdit        # 房间号(加入)
 var _invite_edit: LineEdit      # 邀请码(私密房加入)
@@ -126,21 +127,19 @@ func _build_create_panel() -> void:
 	vb.add_child(UiFactory.label("—— 创建 3v3 房间 ——", 32, UiFactory.C_ACCENT))
 	_build_public_room_row(vb)
 	# ★ 没有「人数上限」与「一局限时」两个滑块(大乱斗页有):3v3 里这两个都不是自由度 ——
-	#   开局条件就是"两队各 3 人"(房容量恒 6),赛制是三局两胜(没有可调的整局时长)。
+	#   开局条件就是"两队各 3 人"(房容量恒 TEAM_ROLES),赛制是三局两胜(没有可调的整局时长)。
 	#   换行拆成两截:32px 下这行整串约 800px,会顶破 620 宽的面板(与 royale 页的尾注同款处理)。
-	vb.add_child(UiFactory.label("6 人房(每队 3 人);进房后自己选边\n—— 房主点开始(两队各 3 人才可开局)", 32))
+	#   ★ 两个数引常量而不是写字面量:与 max_players/team_size 两处的缺省值同源,改一处不用改三处。
+	vb.add_child(UiFactory.label("%d 人房(每队 %d 人);进房后自己选边\n—— 房主点开始(两队各 %d 人才可开局)" % [
+			LobbyRooms.TEAM_ROLES, LobbyRooms.TEAM_SIZE, LobbyRooms.TEAM_SIZE], 32))
 
-	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
-	# 本页不留勾选态引用:teams 首版 `_player_options()` 返回 `{}`,建房/报到都不上发规则项
-	# (见文件头" knowingly 不发"那段)—— 收了引用也没人读,是死状态。
-	_add_weapon_grid(vb, 10)
-
-	# 自己角色颜色(色相 0-360):本页即选即存;标签另起一行是本页版式(1v1 页把标签放在行内),
-	# 故传空 label_text 自己在外面加。
-	vb.add_child(UiFactory.label("自己角色颜色:", 32))
-	_add_hue_row(vb, "", Vector2(300, 30), Vector2(46, 30))
-
-	vb.add_child(UiFactory.label("(小地图/轨迹/血条等本机显示项沿用「多人对战」设置;\n房主规则项与角色色相首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
+	# ★★ 这里**刻意没有**「禁用武器网格」与「角色色相行」两个区块(基类提供、1v1 与大乱斗页都有)。
+	#   3v3 **用队色、不用个人色相**(设计 §0 第 12 条:队色覆盖个人色相 —— 个人 hue 在本模式是
+	#   无效输入);禁用武器则不在 3v3 的规则表里,`_player_options()` 返回 `{}`,服务端也不会应用它。
+	#   ★ 更要紧的是那两个勾选框**写的是 `Settings.pvp_disabled_weapons`** —— 那是 1v1 / 大乱斗的
+	#     设置项:在 3v3 页勾一下会**连带改掉另两个模式**。那属于功能缺陷(点了没反应、又污染别人),
+	#     不是审美问题,故不留给"UI 重做那份"。
+	vb.add_child(UiFactory.label("(本页没有禁用武器与个人角色颜色这两项:\n3v3 用队色、个人色相无效;禁用武器是 1v1/大乱斗的设置项)\n(小地图/轨迹/血条等本机显示项沿用「多人对战」设置;\n房主规则项首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
 
 	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
 	create.pressed.connect(_on_create_pressed)
@@ -253,18 +252,24 @@ func _on_room_state(state: Dictionary) -> void:
 		_wait_players.add_child(UiFactory.label("—— %s ——" % head, 32, UiFactory.C_ACCENT))
 		for p in buckets[t]:
 			_wait_players.add_child(UiFactory.label(_row_text(p, my_role, state), 32,
-					UiFactory.C_TEXT if int(p.get("role", 0)) != my_role else UiFactory.C_ACCENT))
+					_row_color(p, my_role)))
 	if not (buckets[0] as Array).is_empty():
 		_wait_players.add_child(UiFactory.label("—— 未选边 ——", 32, UiFactory.C_TEXT_DIM))
 		for p in buckets[0]:
-			_wait_players.add_child(UiFactory.label(_row_text(p, my_role, state), 32, UiFactory.C_TEXT))
+			# ★ 未选边档同样按 _row_color 上色(自己那行**也要高亮**):原先这档一律 C_TEXT,
+			#   于是"自己还没选边"时唯一能认出自己的只有那个 `(我)` 标记,那行不亮。
+			_wait_players.add_child(UiFactory.label(_row_text(p, my_role, state), 32,
+					_row_color(p, my_role)))
 	var mine := int(state.get("your_role", 0))
 	# ★ 自己那支的按钮**置灰**:既少一次无意义的上行,也让「已在该队时再点该队」那条
 	#   `team_pick` 幂等 wart(服务器回"该队已满"、状态不变)不可达。
 	_pick_a.visible = _team_of_role(state, mine) != 1
 	_pick_b.visible = _team_of_role(state, mine) != 2
-	_wait_count.text = "%d / 6 人(已选边 %d 人;两队各 3 人才可开局)" % [
-			plist.size(), (buckets[1] as Array).size() + (buckets[2] as Array).size()]
+	# ★ 分母引常量而不是写 "6"/"3":与 max_players/team_size 两处的缺省值同源 —— 容量只有一个
+	#   真值来源(TEAM_ROLES=房容量、TEAM_SIZE=每队人数),写死的话 TEAM_SIZE 一改这行就**撒谎**且不报错。
+	_wait_count.text = "%d / %d 人(已选边 %d 人;两队各 %d 人才可开局)" % [
+			plist.size(), LobbyRooms.TEAM_ROLES,
+			(buckets[1] as Array).size() + (buckets[2] as Array).size(), team_size]
 	_start_btn.visible = _host and _both_ready(buckets, team_size)
 
 
@@ -283,6 +288,12 @@ func _row_text(p: Dictionary, my_role: int, state: Dictionary) -> String:
 	var role := int(p.get("role", 0))
 	return "%s%s%s" % [p.get("name", "玩家"), "(我)" if role == my_role else "",
 			"(房主)" if role == int(state.get("host_role", 0)) else ""]
+
+
+# 名单行的配色:自己那行高亮(C_ACCENT),别人 C_TEXT。**两档共用同一个真值来源** ——
+# 队内行与「未选边」行都得按它上色(未选边档曾经漏掉 → 自己没选边时那行不亮)。
+func _row_color(p: Dictionary, my_role: int) -> Color:
+	return UiFactory.C_ACCENT if int(p.get("role", 0)) == my_role else UiFactory.C_TEXT
 
 
 func _build_wait_panel() -> void:

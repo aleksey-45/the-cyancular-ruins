@@ -13,6 +13,8 @@ extends SceneTree
 #  **B 册 Task 5(2026-09-19)**:3v3 分支补齐与 royale 对称的两条 —— 收集块(`for tcode in
 #   lobby.team_rooms`)+ 宽限谓词行(TEAM_MATCH_ESTIMATE / tr.in_match / SWEEP_INTERVAL);
 #   此前 3v3 一条都没有,"掏空循环"或"摘掉门控"都能全绿(同样是静默端口泄漏)。
+#  **B 册 Task 7(2026-09-19)**:两条**收集块的循环体**断言(`stale_team.append(tr)` /
+#   `stale_royale.append(rr)`)—— 只钉 `for …` 头行是**同粒度**的洞:留头行、掏空体时上面四条全绿。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -353,6 +355,15 @@ func _check(src: String) -> void:
 	#   stale_team 变量喂饱,变量恒空也照过。
 	if not body.contains("for tcode in lobby.team_rooms"):
 		_fail = "_sweep_stale_rooms 没有收集 3v3 超龄房的循环(team_rooms 永不被扫 → 端口永久泄漏)"; return
+	# ★★ B 册 Task 7(评审留的**同粒度**洞):上面那条只认 `for …` 的**头行** —— 保留头行、
+	#   只把循环体掏空(删掉 `stale_team.append(tr)`)时,上面那条 + 既有的 `contains("stale_team")`
+	#   + 三表并列判据 + 拆除列表**四条全绿**,而 `stale_team` 恒空 ⇒ 3v3 房**永不被清**(端口泄漏)。
+	#   royale 那一侧此前**同样**没钉 append(同一个洞,不是本任务引入的退化)—— 一并补上:
+	#   两边各钉一次,守的是"循环头在、循环体是空的"这个形状。
+	if not body.contains("stale_team.append(tr)"):
+		_fail = "_sweep_stale_rooms 的 3v3 收集块循环体是空的(留了 for 头行却没 append → stale_team 恒空,3v3 房永不被清)"; return
+	if not body.contains("stale_royale.append(rr)"):
+		_fail = "_sweep_stale_rooms 的 royale 收集块循环体是空的(留了 for 头行却没 append → stale_royale 恒空,大乱斗房永不被清)"; return
 	var tpred := ""
 	for i in range(code_lines.size()):
 		if code_lines[i].contains("tr.created_at > MAX_ROOM_AGE"):

@@ -22,6 +22,7 @@ extends ProbeBase
 const PAIRS := [
 	["res://ui/royale_hud.gd", "res://ui/royale_hud.tscn", "RoyaleHud"],
 	["res://ui/combat_feedback.gd", "res://ui/combat_feedback.tscn", "CombatFeedback"],
+	["res://ui/team_hud.gd", "res://ui/team_hud.tscn", "TeamHud"],
 ]
 
 # 参数下限:防止 PAIRS 被误删成空表 → 零循环 → 恒绿

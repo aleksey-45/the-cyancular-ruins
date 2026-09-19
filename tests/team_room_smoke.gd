@@ -1,7 +1,8 @@
 extends SceneTree
 
 # 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)
-# + 一条**源码级接线断言**(⑥:team_join 里确实调了 team_next_role —— 见该节的盲区说明)。
+# + 两条**源码级**断言(⑥:team_join 里确实调了 team_next_role;⑦:3v3 建房页不得摆回基类那两个
+#   设置区块 / 计数行不得写死容量 / 名单行配色两档共用 —— 见各节的盲区说明)。
 # 跑法: "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd
 # 通过 = `TEAM ROOM SMOKE: ALL-OK` 退出 0。
 #
@@ -108,6 +109,28 @@ func _initialize() -> void:
 		fails.append("读不到 server/lobby_rooms.gd(接线断言无从成立)")
 	elif not ScanUtil.code_only(room_src).contains("team_next_role(tr.player_role.values())"):
 		fails.append("★ team_join 未调 team_next_role(tr.player_role.values())—— 判据函数仍在,生产那一行被换成内联写法了")
+	# ⑦ 3v3 建房页的三条源码断言(**B 册 Task 7** 收的评审尾巴;与上面 ⑥ 同款:页面脚本要
+	#    autoload,`-s` 里跑不动,故只能读源文本)。三条都是"听着无所谓、坏了不报错"的那类:
+	#   ① 建房面板**不得**摆基类的两个设置区块 —— 3v3 用队色(个人色相是无效输入)、禁用武器
+	#      不在 3v3 规则表里;而那两个勾选框**写的是 `Settings.pvp_disabled_weapons`**(1v1/大乱斗
+	#      的设置项)⇒ 在 3v3 页勾一下会**连带改掉另两个模式**。
+	#   ② 等待室计数行的分母必须引 `LobbyRooms.TEAM_ROLES/TEAM_SIZE` —— 写死 6/3 时
+	#      "房间容量只有一个真值来源"这句自称就不成立,TEAM_SIZE 一改这行就撒谎且不报错。
+	#   ③ 名单行配色必须**两档共用** `_row_color(...)`(一处定义 + 两处调用)——
+	#      未选边档原先一律 C_TEXT,自己还没选边时那行不亮(只有 `(我)` 标记)。
+	var lobby_src := ScanUtil.read("res://scenes/team_lobby.gd")
+	if lobby_src.is_empty():
+		fails.append("读不到 scenes/team_lobby.gd(建房页三条断言无从成立)")
+	else:
+		var lcode := ScanUtil.code_only(lobby_src)
+		for bad_call in ["_add_weapon_grid(", "_add_hue_row("]:
+			if lcode.contains(bad_call):
+				fails.append("★ 3v3 建房页又摆回了 %s —— 该区块在 3v3 不成立(色相被队色覆盖;禁用武器写 Settings.pvp_disabled_weapons,会连带改掉 1v1/大乱斗)" % bad_call)
+		var row_color_hits := lcode.count("_row_color(")
+		if row_color_hits < 3:
+			fails.append("★ 名单行配色没走公共的 _row_color(一处定义 + 两处调用,实际命中 %d 次)—— 未选边档的自己那行会不亮" % row_color_hits)
+		if lcode.contains('"%d / 6 人'):
+			fails.append("★ 等待室计数行把容量 6 写死了(应引 LobbyRooms.TEAM_ROLES —— TEAM_SIZE 一改这行就撒谎)")
 	if fails.is_empty():
 		print("TEAM ROOM SMOKE: ALL-OK")
 		quit(0)
