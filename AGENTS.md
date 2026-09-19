@@ -164,7 +164,7 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **方向已定**:单钟模型(一根世界针 W = 地图状态坐标 + 全部时间资源);击杀 → W 回拨、消费(交易/铸造封存)→ W 向毁灭推进;10ms 粒度;子弹时间决策时停;事件溯源时间线(正逆操作 + 玩家操作入史 + LIFO 回拨 + 重新武装)。首版**仅单机**,联机走「共享世界针」二期预留。
 - **文档**:设计源 `docs/design/time-dimension-gdd.md`(**v0.3 单钟定稿**,已从 editor_log 并入本线);施工图 `docs/superpowers/plans/2026-09-18-time-dimension-v1_2-build-plan.md`(范围/里程碑落点/验收/风险/版本线收敛策略)。
 - **本轮已落地(M1 纯逻辑层)**:`Globals/time_params.gd`(参数总表)/`Globals/time_clock.gd`(单钟账本:衰减·回拨·消费·10ms 量化·时停·阶段信号)/`Globals/time_timeline.gd`(事件溯源:解析/正向跨越/LIFO 回拨/逆操作完备性自检);`Globals/time_world.gd` 改为门面(**v0.1 API 保持不变**,`level_0` 与旧探针零改动);`MazeGenerator` 认 `# cyrm-v4`。
-- **验收探针**:`Tests/time_ledger_probe.gd`(`-s` 跑,实测 OK);v0.1 正向切片探针 `Tests/time_map_probe.gd` 保留;`.cyrt` 事件层探针 `Tests/time_events_probe.gd`(`-s`,覆盖新 kind 解析/rev-re 语义/v4 兼容/玩家混合 LIFO 回拨/逆操作回填,实测 OK)。示例时空图 `map/timetest2.cyrt`(六种 kind 各一);**主题大图 `map/burnt_norton.cyrt`**(《焚毁的诺顿》:150×100、w0=600s 十分钟、12 事件按五乐章编排、终末不可逆;生成器 `editor/make_burnt_norton.py`——只写地图不动引擎,玫瑰丛/荆棘/落瓣/枯藤用现有纹理 15-19 指代)。
+- **验收探针**:`Tests/time_ledger_probe.gd`(`-s` 跑,实测 OK);v0.1 正向切片探针 `Tests/time_map_probe.gd` 保留;`.cyrt` 事件层探针 `Tests/time_events_probe.gd`(`-s`,覆盖新 kind 解析/rev-re 语义/v4 兼容/玩家混合 LIFO 回拨/逆操作回填,实测 OK);玩家拆砖入史回归探针 `Tests/time_player_ops_probe.gd`(`-s` 场景级:时空图激活下 damage_tile→改前值捕获(get_cell_atlas_coords,**TileMapLayer 无 get_cell**,曾误用致榴弹炸树叶报错)→帧末入史)。示例时空图 `map/timetest2.cyrt`(六种 kind 各一);**主题大图 `map/burnt_norton.cyrt`**(《焚毁的诺顿》:150×100、w0=600s 十分钟、12 事件按五乐章编排、终末不可逆;生成器 `editor/make_burnt_norton.py`——只写地图不动引擎,玫瑰丛/荆棘/落瓣/枯藤用现有纹理 15-19 指代)。
 - **已知拦路**:①进图方向原生段错误(见「段错误排查重大进展」,时间维度会放大它)②三条版本线收敛(`editor_log` 只多文档提交;`KH_V1_1_4_propSys` 在 `8879054` 分叉、道具槽位另行重排)③事件逆操作完备性纪律(每个入史 kind 必须带正确逆操作)。
 
 ### 大乱斗模式落地(2026-09-06,RoyaleServer 分支)

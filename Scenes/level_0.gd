@@ -679,7 +679,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 	# (回调入口时贴图尚未被清,atlas.y=纹理-1、atlas.x=形状 → 还原 packed 值)。
 	if _timeworld != null and _timeworld.has_events() and not _tl_executing \
 			and wall_layer != null and not _grid_ref.is_empty():
-		var atlas: Vector2i = wall_layer.get_cell(cell)
+		var atlas: Vector2i = wall_layer.get_cell_atlas_coords(cell)
 		if atlas.x >= 0:
 			_tl_pending.append({"cell": cell, "v": (atlas.y + 1) * 16 + atlas.x})
 	if wall_layer != null and not _grid_ref.is_empty():
