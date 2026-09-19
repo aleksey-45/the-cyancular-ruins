@@ -26,13 +26,15 @@ const ADAPTIVE_RATIO: float = 0.5
 
 static var _floor_cell_cache: Array = []   # 本局地板格(懒采集;砖被拆不刷新,够用)
 static var _prefer_cache: Array = []       # 出生优选格缓存(开阔可走区;见 spawn_candidates)
+static var _fallback_cache: Array = []     # 复活兜底池缓存(见 respawn_fallback)
 static var _region_cache: Dictionary = {}  # 地板格 Vector2i -> 同层连通区规模
 
 
-# 清空三张缓存。换图/换局时调用方自己决定要不要清(搬出前的行为是**从不主动清** —— 保持)。
+# 清空四张缓存。换图/换局时调用方自己决定要不要清(搬出前的行为是**从不主动清** —— 保持)。
 static func reset_cache() -> void:
 	_floor_cell_cache = []
 	_prefer_cache = []
+	_fallback_cache = []
 	_region_cache = {}
 
 
@@ -168,6 +170,43 @@ static func spawn_candidates() -> Array:
 	else:
 		_prefer_cache = floor
 	return _prefer_cache
+
+
+# ── 复活/复位的**兜底池**(2026-09-19;首档筛空时的第二档)──
+# 两个宿主原本的第二档是 `floor_cells()` = **全部地板格** —— 那与"首档在小图上退化成全量"
+# 是**同一个病**,只是晚几十秒发生:干净池子里找不到"离敌人 ≥ RESPAWN_CLEARANCE"的格时,
+# 玩家会**在小间里复活**(实测该图 843 个地板格里 155 个是孤立单格区)。
+# 判据**复用 `area_threshold()`**(不另立第二套):取「连通区 ≥ 门槛」的全部地板格。
+#
+# ★★ **只在自适应生效的图上收窄**;正常图上原样返回 `floor_cells()`:
+#   本次的目标是"别让小图的两档都退化成全量",正常图的主池本来就是干净的(实测 demo 的主池
+#   59 格、全部区规模 ≥26),其兜底档维持既有行为 —— 这叫**动作范围**约束,不是遗漏。
+#   (若日后要连正常图的兜底档一起收窄,删掉下面那两行 `if` 即可 —— 判据本来就是同一个。)
+# ★ 收窄**不增加**"整池筛空 → 返回 (-1,-1) → 摆到地图回卷角落"的风险:该图实测(k = 5/7/8
+#   个敌人,500 次随机布局)两档的**筛空率都是 0/500**,首档平均就有 108~113 格可用;
+#   兜底档 130 格 ⊇ 首档 122 格,更不可能先空。
+# ★ 返回**共享缓存**(与 `spawn_candidates()` 同一条别名纪律):调用方要在返回值上原地改,
+#   先自己 `duplicate()`。
+static func respawn_fallback() -> Array:
+	if max_region_size() >= OPEN_AREA_MIN:
+		return floor_cells()          # 正常图:维持原样(见上面 ★★)
+	if not _fallback_cache.is_empty():
+		return _fallback_cache
+	var thr := area_threshold()
+	var sizes := region_sizes()
+	for c in floor_cells():
+		if int(sizes.get(c, 0)) >= thr:
+			_fallback_cache.append(c)
+	return _fallback_cache
+
+
+# 复活/复位选格的**池子序列**:先优选(`spawn_candidates()`)→ 再兜底(`respawn_fallback()`)。
+# 两处调用方(`RoyaleHost._spawn_cell` / `TeamHost._respawn_cell_for`)都读**这一份** ——
+# 顺序本身就是判据的一部分("先优选、再兜底"),抄成两份迟早改一处漏一处(这就是本次修的那个病:
+# 两处各写了一遍 `[_spawn_candidates(), _floor_cells()]`,于是两处**一起**退化成全量)。
+# ★ 返回的是**新数组**,但**元素是共享缓存**(见上面两条的别名纪律):要原地改先 `duplicate()`。
+static func respawn_pools() -> Array:
+	return [spawn_candidates(), respawn_fallback()]
 
 
 # 基座附近的候选格(环面距离 ≤ radius 格)。给 3v3 的"队内散开"用:

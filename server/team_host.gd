@@ -271,12 +271,16 @@ func _spawn_cell(role: int) -> Vector2i:
 # 复活点:优选开阔格中,离**所有存活敌人** ≥ RESPAWN_CLEARANCE 的第一个(池子洗牌后取首个)。
 # ★ 判据是"离敌人远",**不是**"离所有玩家远" —— 队友在附近复活是好事(royale 那条是全员互敌,
 #   故它判所有存活玩家;这里语义变了,别照抄)。
-# ★ 池子来源:`SpawnPicker` 的三张缓存是**每进程**的 `static var`,**从不主动清**。
+# ★ 池子来源:`SpawnPicker.respawn_pools()`(优选 → 兜底)。原先这里是写死的
+#   `[spawn_candidates(), floor_cells()]` —— 第二档是**全部地板格**,干净池子筛空时会把人放进
+#   **孤立单格区**的复活点里(与"开局被关住"同一个病)。池序列现在只有一处来源,且与
+#   royale 那一侧是**同一份**(两处各抄一遍正是这个病的成因)。
+# ★ `SpawnPicker` 的四张缓存是**每进程**的 `static var`,**从不主动清**。
 #   本模式 worker 一局一进程、且用固定图(`MatchBootstrap.PVP_MAP`)→ 不需要 `reset_cache()`。
 #   **若将来同一个进程里换图**(例如大厅进程也建宿主),必须显式 `SpawnPicker.reset_cache()`,
 #   否则会**静默**沿用旧图的地板格池子(不报错,只是出生点全落在上一张图的格上)。
 func _respawn_cell_for(role: int) -> Vector2i:
-	for pool: Array in [SpawnPicker.spawn_candidates(), SpawnPicker.floor_cells()]:
+	for pool: Array in SpawnPicker.respawn_pools():
 		var cells := pool.duplicate()
 		cells.shuffle()
 		for c in cells:

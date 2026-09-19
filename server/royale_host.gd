@@ -102,6 +102,12 @@ static func _spawn_candidates() -> Array:
 	return SpawnPicker.spawn_candidates()
 
 
+# 复活选格的池子序列(优选 → 兜底)。★ 与 `_spawn_candidates` 同款:**只是转发**,判据在
+# `SpawnPicker.respawn_pools` 一处(见那边的说明:两处调用方各写一遍 = 本次修的那个病)。
+static func _respawn_pools() -> Array:
+	return SpawnPicker.respawn_pools()
+
+
 # 开局散点:洗牌后贪心取两两环面距离 ≥ SPAWN_CLEARANCE 的 N 个格;不够就放宽(全量补齐)。
 # roles = 实际参战 role 列表:缺员降级开局时 role 不连续(如剩 {1,3}),
 # 必须按实际键返回,否则 spawns[role] 缺键抛错、对局卡死(自检 S2 严重 bug)。
@@ -132,7 +138,10 @@ static func plan_spawns(roles: Array) -> Dictionary:
 
 
 # 出生点:首次 = 开局散点;复活 = 优选开阔格中离所有存活敌人 ≥ RESPAWN_CLEARANCE 的随机格
-# (优选池不够 → 回退任意地板格,同样先保证离敌人远)。
+# (优选池不够 → 走**兜底池**,同样先保证离敌人远)。
+# ★ 池子序列改为读 `SpawnPicker.respawn_pools()`(2026-09-19):原来是 `[_spawn_candidates(),
+#   _floor_cells()]` —— 第二档是**全部地板格**,于是在干净池子筛空时会把人放进**孤立单格区**
+#   的复活点里(与"开局被关住"同一个病)。池序列现在只有一处来源。
 # 覆写(不可省):基类 `role_spawns()` 走 `_spawn_cell`,而本类的 `_spawn_cell` 第二次起返回
 # **动态复活点**且带 `_spawned_once` 副作用 —— 那会把复活点当开局出生点下发。
 # 本类的权威出生点就是 `_round_spawns`(由 start_on 算好传进来,与 match_start 广播的同一份)。
@@ -144,7 +153,7 @@ func _spawn_cell(role: int) -> Vector2i:
 	if not _spawned_once.has(role):
 		_spawned_once[role] = true
 		return _round_spawns.get(role, Vector2i(-1, -1))
-	for pool: Array in [_spawn_candidates(), _floor_cells()]:
+	for pool: Array in _respawn_pools():
 		var cells := pool.duplicate()
 		cells.shuffle()
 		var far: Array = []

@@ -36,6 +36,15 @@ extends SceneTree
 const MAP_BUGGY := "res://maps/factory1v1.cyrm"    # 缺陷图:最大连通区 13 < OPEN_AREA_MIN
 const MAP_NORMAL := "res://maps/demo.cyrm"         # 正常图:最大连通区 35 ≥ OPEN_AREA_MIN
 
+# 调用方那段"离敌人够远"筛选的清空距离(格)。= 两个宿主的 `RESPAWN_CLEARANCE`
+# (royale_host.gd / team_host.gd 各一个,值都是 8)—— 本探针只重放那段**平凡筛选**的形状,
+# 故这个数必须与生产同值。★ 它由 ⑥ 的源码级断言钉着(两个文件里都得写 `:= 8`),
+# 以免本探针的假设与生产**悄悄漂开**(那时 ⑤ 的正/负例验的就不是生产那条路了)。
+const RESPAWN_CLEARANCE := 8
+
+# ⑤ 里搜"首档空 ∧ 兜底档有货"的布局次数(固定种子)。真找到过 = 负例可端到端驱动 → 那条断言红。
+const NEG_SEARCH_TRIALS := 800
+
 var _fail := 0
 var _checks := 0
 
@@ -68,6 +77,7 @@ func _initialize() -> void:
 
 	_run_map(MAP_BUGGY, true)
 	_run_map(MAP_NORMAL, false)
+	_check_wiring()
 
 	if _fail == 0:
 		print("SPAWN POOL SMOKE: ALL-OK(%d 条断言)" % _checks)
@@ -195,6 +205,98 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 			"池子不小于 PREFER_MIN(否则说明档位回退到了更宽的一档:池 %d,期望集合 %d)"
 			% [pool.size(), expected.size()])
 
+	# ── ④ 复活/复位的**兜底档**:同一条病(第二档原先 = 全部地板格),同样不许含孤立格 ──
+	# 调用方(`RoyaleHost._spawn_cell` / `TeamHost._respawn_cell_for`)现在读**同一份**池序列
+	# `SpawnPicker.respawn_pools()`;这里就把那份序列整个检查一遍 —— 这就是"两条路都不含孤立格"。
+	var pools: Array = SpawnPicker.respawn_pools()
+	_check(pools.size() == 2, "复活池序列是两档(优选 → 兜底;实际 %d 档)" % pools.size())
+	if pools.size() == 2:
+		_check(_same_set(pools[0], pool),
+				"首档就是 `spawn_candidates()` 那一份(不是另抄一遍)")
+		if want_adaptive:
+			_check(_same_set(pools[1], expected.keys()),
+					"★ 兜底档逐格 == 期望集合(连通区 ≥ %d;%d 格)"
+					% [thr, (pools[1] as Array).size()])
+			_check(_is_subset(pools[0], pools[1]),
+					"★ 兜底档 ⊇ 首档(兜底不该比优选还窄;首档 %d / 兜底 %d)"
+					% [(pools[0] as Array).size(), (pools[1] as Array).size()])
+		else:
+			# ★ 动作范围:本次**不**动正常图的兜底档(它的主池本来就是干净的),逐格锁住。
+			_check(_same_set(pools[1], floor),
+					"★ 兜底档在本图**维持原样**(== 全部地板格 %d 格;本次只收窄自适应生效的图)"
+					% floor.size())
+			# [读数] 本图兜底档**没有被收窄**的代价,当场量出来(不是"大概没事"):
+			# 稠密布局能把首档筛空、而兜底档还剩货 ⇒ 正常图上"复活落进小间"这条路**是可达的**,
+			# 我们只是**按动作范围约束**没动它。若哪天要连正常图一起收窄,把 `respawn_fallback`
+			# 里那两行 `if` 删掉,这条读数会跟着变 —— 那时改它,别删它。
+			var dense: Array = []
+			for gy in range(0, rows, RESPAWN_CLEARANCE):
+				for gx in range(0, cols, RESPAWN_CLEARANCE):
+					dense.append(Vector2i(gx, gy))
+			var u1 := _count_usable(pools[0], dense, cols, rows, RESPAWN_CLEARANCE)
+			var u2 := _count_usable(pools[1], dense, cols, rows, RESPAWN_CLEARANCE)
+			var n_single_fb := 0
+			for c in pools[1]:
+				if int(own[c]) == 1:
+					n_single_fb += 1
+			print("  [info] 本图(正常图)兜底档**未收窄**:%d 格里仍有 %d 个孤立单格;"
+					% [(pools[1] as Array).size(), n_single_fb])
+			print("  [info] 稠密布局(%d 个敌人,间距 %d 格):首档可用 %d / 兜底档可用 %d"
+					% [dense.size(), RESPAWN_CLEARANCE, u1, u2])
+			_check(u1 == 0 and u2 > 0,
+					("★ [读数] 正常图上「首档筛空 → 落到兜底档」这条路**是可达的**(稠密布局下首档可用 0、"
+					+ "兜底档可用 %d),而我们按**动作范围**约束没收窄它(那 %d 格里含孤立单格)—— "
+					+ "这是有意选择,不是遗漏;收窄与否见 respawn_fallback 的 ★★") % [u2, n_single_fb])
+		if want_adaptive:
+			var bad: Array = []
+			for i in range(pools.size()):
+				var pl: Array = pools[i]
+				var n_below := 0
+				var n_single := 0
+				for c in pl:
+					if int(own[c]) < thr:
+						n_below += 1
+					if int(own[c]) == 1:
+						n_single += 1
+				if pl.is_empty() or n_below > 0 or n_single > 0:
+					bad.append("第 %d 档(空=%s / 连通区<门槛 %d 个 / 孤立单格 %d 个)"
+							% [i + 1, str(pl.is_empty()), n_below, n_single])
+			_check(bad.is_empty(),
+					"★ 复活池序列的**每一档**都非空、都不含孤立单格(问题:%s)" % str(bad))
+
+			# ── ⑤ 两条路各走一遍(正/负)—— 只重放调用方那段**平凡的距离筛选** ──
+			# ★ 池子序列取自**生产**(`respawn_pools()`);这段筛选是两个宿主共有的形状
+			#   (royale 判所有存活玩家、3v3 判存活敌人),这里为看清"这一局走哪一档"而重放一遍。
+			var one_far: Array = [Vector2i(0, 0)]
+			var pick1 := _pick(pools[0], one_far, cols, rows, RESPAWN_CLEARANCE)
+			_check(pick1.x >= 0 and int(own[pick1]) >= thr and int(own[pick1]) != 1,
+					"★ 正例 · 首档够用时走首档,且选出来的格**不是孤立单格**(选到 %s,连通区 %d)"
+					% [str(pick1), int(own.get(pick1, 0))])
+			# 负例:首档被筛空 → 落到第二档。
+			# ★★ **实测这个场景在本图构造不出来** —— 8 个"只在兜底档里"的格与首档的格交织在
+			#   同一批连通区里,能筛空首档的布局必然把兜底档一起筛空。故这里**直接从第二档起跑**
+			#   (= 调用方在第一档筛空后落到第二档时执行的**同一段代码**),断言它带出来的也干净;
+			#   并且当场搜一遍"首档空 ∧ 兜底档有货"的布局,把"构造不出来"本身变成一条读数。
+			var pick2 := _pick(pools[1], one_far, cols, rows, RESPAWN_CLEARANCE)
+			_check(pick2.x >= 0 and int(own[pick2]) >= thr and int(own[pick2]) != 1,
+					"★ 负例 · 落到兜底档时选出来的格**也不是孤立单格**(选到 %s,连通区 %d)"
+					% [str(pick2), int(own.get(pick2, 0))])
+			# 搜索:随机撒 8 个敌人(生产最多 8 人),找"首档空 ∧ 兜底档有货"。找到了 = 负例可端到端驱动,
+			# 那时 ⑤ 的负例就该改成真布局(本断言会红,提醒你换)。
+			var found := 0
+			for t in range(NEG_SEARCH_TRIALS):
+				seed(90210 + t)
+				var enemies: Array = []
+				for i in range(8):
+					enemies.append(Vector2i(randi() % cols, randi() % rows))
+				if not _has_usable(pools[0], enemies, cols, rows, RESPAWN_CLEARANCE) \
+						and _has_usable(pools[1], enemies, cols, rows, RESPAWN_CLEARANCE):
+					found += 1
+			_check(found == 0,
+					("★ 负例**不可构造**(本图几何):%d 次随机布局(每次 8 个敌人)里「首档空 ∧ 兜底档有货」"
+					+ "出现 %d 次 ⇒ 兜底档在本图**够不到**,这才是它必须被结构性地断言、而不是靠布局驱动的原因"
+					+ "(真出现了这条红 = 该把 ⑤ 的负例改成真布局)") % [NEG_SEARCH_TRIALS, found])
+
 	if not want_adaptive:
 		# ── ③ 正常图逐格锁行为:池子 == 「三宽 ∩ 连通区 ≥ OPEN_AREA_MIN」──
 		var want: Array = []
@@ -217,6 +319,96 @@ func _same_set(a: Array, b: Array) -> bool:
 	sa.sort()
 	sb.sort()
 	return sa == sb
+
+
+# a ⊆ b(元素唯一)。
+func _is_subset(a: Array, b: Array) -> bool:
+	var hay := {}
+	for c in b:
+		hay[c] = true
+	for c in a:
+		if not hay.has(c):
+			return false
+	return true
+
+
+# 重放调用方那段"离每个敌人都 ≥ clear 格(环面曼哈顿)"的筛选:池子洗牌后取第一个满足的格。
+# 找不到返回 (-1,-1)(= 生产的哨兵值)。
+func _pick(pool: Array, enemies: Array, cols: int, rows: int, clear: int) -> Vector2i:
+	var cells: Array = pool.duplicate()
+	cells.shuffle()
+	for c in cells:
+		var ok := true
+		for e in enemies:
+			if GridPathfinder.toroidal_dist(c, e, cols, rows) < clear:
+				ok = false
+				break
+		if ok:
+			return c
+	return Vector2i(-1, -1)
+
+
+# 该池子里**有没有**满足"离每个敌人都 ≥ clear 格"的格(找到即返回 —— 搜索里跑几千次,要早退)。
+func _has_usable(pool: Array, enemies: Array, cols: int, rows: int, clear: int) -> bool:
+	for c in pool:
+		var ok := true
+		for e in enemies:
+			if GridPathfinder.toroidal_dist(c, e, cols, rows) < clear:
+				ok = false
+				break
+		if ok:
+			return true
+	return false
+
+
+# 该池子里有几个满足"离每个敌人都 ≥ clear 格"的格(读数用,不判成败)。
+func _count_usable(pool: Array, enemies: Array, cols: int, rows: int, clear: int) -> int:
+	var n := 0
+	for c in pool:
+		var ok := true
+		for e in enemies:
+			if GridPathfinder.toroidal_dist(c, e, cols, rows) < clear:
+				ok = false
+				break
+		if ok:
+			n += 1
+	return n
+
+
+# ── ⑥ 源码级:两个宿主的复活选格**真的接了**这条池序列 ──
+# 承重的理由:池序列收在 `SpawnPicker` 里,但"接上没接上"是两处**调用点**的事 ——
+# 只测 `SpawnPicker` 的话,宿主里那句 `[_spawn_candidates(), _floor_cells()]` 原样留着也照样全绿
+# (那正是本次修的那个病:两处各抄一遍、一起退化成全量)。故按**函数体**扫,不是按整文件
+# (`royale_host.gd` 的 `plan_spawns` 里**另有**一处合法的 `_floor_cells()` 用途)。
+func _check_wiring() -> void:
+	print("")
+	print("═══ ⑥ 宿主接线(源码级)═══")
+	var cases := [
+		{"file": "res://server/royale_host.gd", "fn": "_spawn_cell", "want": "_respawn_pools()"},
+		{"file": "res://server/team_host.gd", "fn": "_respawn_cell_for", "want": "respawn_pools()"},
+	]
+	for cs in cases:
+		var src := ScanUtil.read(String(cs["file"]))
+		if src.is_empty():
+			_check(false, "读得到 %s(读不到 = 下面两条恒真)" % cs["file"])
+			continue
+		var body := ScanUtil.func_body(ScanUtil.code_only(src), String(cs["fn"]))
+		_check(not body.is_empty(),
+				"[仪器] 取到 %s 的 `%s` 函数体(%d 字符;空 = 下面两条恒真)"
+				% [cs["file"], cs["fn"], body.length()])
+		_check(body.contains(String(cs["want"])),
+				"★ %s 的 `%s` 走生产那份池序列(`%s`)" % [cs["file"], cs["fn"], cs["want"]])
+		# 反向:函数体里**不得**再出现第二档的地板格来源(留着它 = 本修复形同没接)
+		var dirty := body.contains("_floor_cells()") or body.contains("SpawnPicker.floor_cells()")
+		_check(not dirty,
+				"★ %s 的 `%s` **不再**自己拼兜底档(把 `floor_cells()` 写回这个函数体 = 池子又退化成全量)"
+				% [cs["file"], cs["fn"]])
+	# 探针自己的 `RESPAWN_CLEARANCE` 必须与两个宿主同值(不同值 → ⑤ 的正/负例验的是另一条路)
+	var both := "%s\n%s" % [ScanUtil.read("res://server/royale_host.gd"),
+			ScanUtil.read("res://server/team_host.gd")]
+	_check(both.contains("const RESPAWN_CLEARANCE := %d" % RESPAWN_CLEARANCE),
+			"★ 两个宿主的 RESPAWN_CLEARANCE 与探针同值(= %d;漂了的话 ⑤ 的正/负例就不是生产那条路)"
+			% RESPAWN_CLEARANCE)
 
 
 # 独立的 4 邻接**环面** BFS(与生产同语义,但独立写一遍 —— 探针的判据不取自被测实现)。
