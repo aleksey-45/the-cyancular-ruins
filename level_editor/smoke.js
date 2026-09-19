@@ -160,6 +160,60 @@ eq(Core.crc32(new Uint8Array(0)), 0, 'crc32: 空输入为 0');
 eq(Core.crc32(new TextEncoder().encode('123456789')), 0xCBF43926, 'crc32: 标准向量 123456789');
 eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
 
+// ---- 纹理层块编解码 ----
+(function () {
+  var subCols = 8, subRows = 4, n = subCols * subRows;
+  var desc = new Uint32Array(n);
+  var brick = Core.neutralDesc(3);
+  var moss = Core.packDesc(15, 4, 3, 5, 7);
+  for (var i = 0; i < n; i++) {
+    desc[i] = i < 4 ? 0 : (i < 12 ? brick : moss);
+  }
+  var enc = Core.encodeTexLayer(desc, subCols, subRows);
+  eq(enc[0], Core.KIND_TEX, 'encodeTexLayer: 首字节是 kind');
+  var r = new Core.ByteReader(enc);
+  var dec = Core.decodeTexLayer(r, subCols, subRows);
+  eq(r.remaining(), 0, 'decodeTexLayer: 字节全部消费');
+  eq(dec.kind, 'tex', 'decodeTexLayer: kind');
+  eq(Array.prototype.slice.call(dec.desc), Array.prototype.slice.call(desc), '纹理层: 往返一致');
+
+  // 空气必须占住调色板第 0 位
+  eq(dec.desc[0], 0, '纹理层: 空气回读为 0');
+
+  // 调色板恰好 3 项(空气 + 两种纹理)→ 单字节索引
+  var r2 = new Core.ByteReader(enc);
+  r2.u8();                       // kind
+  eq(r2.u16(), 3, '纹理层: 调色板 3 项');
+  eq(r2.u32(), 0, '纹理层: 调色板[0] 是空气');
+  eq(r2.u32(), brick, '纹理层: 调色板[1]');
+  eq(r2.u32(), moss, '纹理层: 调色板[2]');
+  eq(r2.u8(), 1, '纹理层: 调色板 ≤256 项 → index_width = 1');
+  eq(enc.length, 1 + 2 + 3 * 4 + 1 + n, '纹理层: 总长度 = 头 + 调色板 + 索引流');
+
+  // 空层:调色板只有空气一项
+  var empty = new Uint32Array(16);
+  var encEmpty = Core.encodeTexLayer(empty, 4, 4);
+  var r3 = new Core.ByteReader(encEmpty);
+  r3.u8();
+  eq(r3.u16(), 1, '空层: 调色板只有 1 项');
+  eq(encEmpty.length, 1 + 2 + 4 + 1 + 16, '空层: 长度');
+
+  // 即使整层没有空气格,索引 0 仍必须是空气
+  var full = new Uint32Array(16).fill(brick);
+  var rFull = new Core.ByteReader(Core.encodeTexLayer(full, 4, 4));
+  rFull.u8();
+  eq(rFull.u16(), 2, '满层: 调色板 = 空气 + 砖 = 2 项');
+  eq(rFull.u32(), 0, '满层: 索引 0 仍留给空气');
+  eq(rFull.u32(), brick, '满层: 索引 1 才是砖');
+
+  // 尺寸校验
+  throws(function () { Core.encodeTexLayer(new Uint32Array(5), 4, 4); }, 'encodeTexLayer: 长度不符报错');
+  // 越界索引要抛错而不是静默
+  var bad = new Uint8Array([Core.KIND_TEX, 1, 0, 0, 0, 0, 0, 1, 99]);   // 调色板 1 项,索引 99
+  throws(function () { Core.decodeTexLayer(new Core.ByteReader(bad), 1, 1); }, 'decodeTexLayer: 索引越界报错');
+  throws(function () { Core.decodeTexLayer(new Core.ByteReader(new Uint8Array([9])), 1, 1); }, 'decodeTexLayer: 错 kind 报错');
+})();
+
 // ==== 断言区结束 ====
 
 console.log('');
