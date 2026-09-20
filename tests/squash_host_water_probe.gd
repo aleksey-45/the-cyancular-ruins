@@ -44,11 +44,18 @@ const WATER_X_PX := (WATER_X0 + 4) * 64 + 32
 
 # ── 容差 ──
 # 参照 `PlayerParams.squash_amount = 0.10`(满冲击形变量,即"满挤压"时 scale.x 偏离 1.0 的量)。
-# 取 0.005 = 满幅的 5%:健康态在这两相里是**逐帧精确 1.0**(_air 与 _impulse 都恒为 0,
+# 取 0.005 = 满幅的 5%:健康态在这些相里是**逐帧精确 1.0**(_air 与 _impulse 都恒为 0,
 # `1.0 + 0.10*0.0` 是浮点精确的),所以容差只需容下浮点噪声与指数尾巴(实测 <= 1e-5);
-# 而删掉那个谓词后最小的真实偏离是水中下沉期的空中项
-# `clamp(320/700)*0.30 = 0.1371` → scale.x 偏 0.0137 = 满幅的 13.7%,是容差的 2.7 倍。
+# 而删掉那个谓词后相②(梯底)的真实偏离是满幅 −10%(0.10,= 本容差的 20 倍)。
+# ★ 相① 的**水中帧**那一半**不走这个常量** —— 它的余量薄一档,单列 WET_EPS。
 const NEUTRAL_EPS := 0.005
+# 相① **水中帧**那一半的上限(比 NEUTRAL_EPS 紧一档)。相① 的出生点**就在水里**,
+# 窗口里没有"入池前的空中尾巴",故健康态在 in_water 帧上是**精确 1.0000**(实测 0.0000);
+# 而鉴别信号 = `clamp(320/700)*0.30 = 0.1371` → 偏 0.0137。拿 NEUTRAL_EPS 当上限只有 **2.7 倍**
+# 余量 —— `player_swim_down` 若被调到 ~117 以下,这一半会**静默**失去判别力(绿的运行
+# 打印 `max dev 0.0000`,余量在输出上根本看不见)。收到 1e-3 后余量 ≈ **14 倍**;
+# 健康态是浮点精确的 0.0,不会误伤。
+const WET_EPS := 0.001
 # 站定末态的容差(相①)。比 NEUTRAL_EPS 松:入池触底那一下是**正当**的落地冲击 ——
 # 玩家浮到池底前 1px 时 `in_water` 先翻假(脚底探针比碰撞箱底边低 1px,见报告),
 # 随后一帧吃到重力(320 + 1600/60 = 346.7 > 落地下限 220)→ k=0.186 → 0.0185 的挤压,
@@ -275,9 +282,9 @@ func _tick_water() -> void:
 		_record("相① 前提:窗口内有水中帧", _water_frames >= 10,
 			"water 帧 %d / %d" % [_water_frames, WATER_FRAMES])
 		_check_floor()
-		_record("相① 水中(下沉期)全程中性", _wet_max_dev <= NEUTRAL_EPS,
+		_record("相① 水中(下沉期)全程中性", _wet_max_dev <= WET_EPS,
 			"in_water 帧上 max dev %.4f(帧 %d),上限 %.4f;in_water∧on_floor 重叠 %d 帧;末值 scale=(%.4f,%.4f)" % [
-				_wet_max_dev, _wet_dev_frame, NEUTRAL_EPS, _wet_floor_frames,
+				_wet_max_dev, _wet_dev_frame, WET_EPS, _wet_floor_frames,
 				_last_scale.x, _last_scale.y])
 		_record("相① 站定末态中性(brief 字面要求)", _final_dev <= SETTLED_EPS,
 			"末帧 dev %.4f,上限 %.4f(窗口内瞬时峰值 %.4f,是触底那一下正当的重力冲量)" % [
