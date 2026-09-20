@@ -824,6 +824,10 @@ const POSE_FLY := 2
 在 `scenes/player/player_replica.gd` 的 `_ready`（`:57`）末尾追加：
 
 ```gdscript
+	# ★ 脚底探针偏移:一次性问幽灵体(Step 4 会用到)。**别漏这一行** ——
+	#   漏了 `_water_feet_off` 就永远是它声明时的兜底值 24.0,水查询会整体错位。
+	#   放在建幽灵体之后(_build_ghost_body 已把 stand 那份多边形留作启用态)。
+	_water_feet_off = Water.feet_offset(_ghost) if _ghost != null else 24.0
 	squash = SquashStretch.new()
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 	add_child(squash)
@@ -900,11 +904,29 @@ const LAND_VEL_EPS := 1.0
 ```
 
 ```gdscript
-# 脚底探针偏移。★ 在 `_ready` 里**取一次**即可:本体的 `Water.feet_offset` 缓存
-# (_feet_signature 只数 CollisionShape2D)对**只有 CollisionPolygon2D** 的身体永不失效
-# ⇒ 本体的 58.0 其实是个缓存残留,副本取幽灵体的 57.0 反而更准。
-# 与本体首帧有 ~1px 差,如实登记,不复制那个失真。
-var _water_feet_off: float = 57.0
+# 脚底探针偏移(世界 px):水中查询要与本体同口径 —— 本体走 `Water.is_in_water(脚底)`,
+# 脚底 = 原点 + `Water.feet_offset(自己)`。取值在 _ready 里**一次性**问幽灵体(见下)。
+# ★ 为什么一次性问幽灵体、而不是写死一个数:幽灵体的 5 份姿态多边形是从 player.tscn **现抄**的、
+#   根同样是 scale 2.5 ⇒ `to_global` 出来的底边与本体逐像素相同(实测 stand = 57.0)。写死数会随
+#   player.tscn 的碰撞箱改动**静默漂**(水花线那种"看着没事、其实偏了"的错)。
+# ★ 为什么是**常量**而不是逐帧按姿态重算:本体那边实际也是常量 —— `Water.feet_offset` 的缓存
+#   签名只数 `CollisionShape2D` 子节点(water.gd:_feet_signature),而玩家 5 份姿态箱全是
+#   `CollisionPolygon2D`(player.tscn)⇒ 签名恒为 0、缓存永不失效 ⇒ 逐帧问与问一次同值。
+# ★ 与本体那 1px 的差(如实登记):本体**首帧**调用时 5 个姿态箱在场景里全是启用态
+#   (player.tscn 不带 disabled,而 `swim.update` 排在 `_tick_pose_and_collision` **之前**)
+#   ⇒ 它缓存的是**5 箱合并**底边 = 58.0;副本这里是幽灵体当时启用的 stand 那一份 = 57.0。
+#   差 1px。**刻意不去逐像素对齐它**:那等于把本体的缓存口径抄进第二个地方,而那份缓存哪天
+#   被修成"跟着姿态走"时,抄来的 58 会朝**反**方向漂 1px。57 才是 feet_offset 的语义值
+#   ("启用中的碰撞箱底边")。1px 在 64px 量化的格查询里最多让判据在下沉的一帧内(320px/s
+#   ≈ 5.3px/帧)提前/延后一次,可感度为零。
+var _water_feet_off: float = 24.0   # 24 = Water.feet_offset 的兜底值(幽灵体取不到时同款)
+```
+
+⚠️ 上面只是**声明**。真正的取值在 `_ready` 里 —— 忘了这一行，`_water_feet_off` 就永远是兜底的 24.0，
+水查询会整体错位。**Step 2 的 `_ready` 里要一并加**（放在建幽灵体之后）：
+
+```gdscript
+	_water_feet_off = Water.feet_offset(_ghost) if _ghost != null else 24.0
 ```
 
 ```gdscript
