@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>The Cyancular Ruins — 关卡编辑器</title>
+</head>
+<body>
+<h1>The Cyancular Ruins — 关卡编辑器</h1>
+<p>这是计划 2a 的<strong>最小骨架页</strong>:它存在的意义是让本地服务器有东西可服务、
+让 <code>core.js</code> 在真实浏览器的 HTTP 环境里被加载一次。</p>
+<p>真正的界面(渲染 / 工具栏 / 图层 / 持久化)在计划 2b 里替换本页的 body。</p>
+<p>服务器连通性:<span id="status">…</span></p>
+<script src="core.js"></script>
+<script>
+// 只依赖 core.js —— tint.js 要到 Task 4 才落地,这一版还不引用它。
+document.getElementById('status').textContent =
+  'core.js 已加载,Core.FORMAT_VERSION = ' + Core.FORMAT_VERSION +
+  ',尺寸上限 ' + Core.MAX_CELLS_W + '×' + Core.MAX_CELLS_H + ' 格';
+</script>
+</body>
+</html>
