@@ -787,8 +787,11 @@ EOF
 
 **Interfaces:**
 - Consumes: `SquashStretch.*`（Task 1）
-- Produces: `player_replica.gd` 上的 `var _vel: Vector2`、`var _pose: int`、`var squash: SquashStretch`
-  （以及 `const LAND_VEL_EPS`，见 Step 4 —— 落地判据的「`vel.y` 已骤降到 ≈0」那一半）
+- Produces: `player_replica.gd` 上的 `var _vel: Vector2`、`var _pose: int`、`var _prev_vel_y: float`、
+  `var squash: SquashStretch`、`var _water_feet_off: float`、`func _in_water() -> bool`，
+  以及 `const POSE_FLY := 2` 与 `const LAND_VEL_EPS := 1.0`（后两者见 Step 1/Step 4）
+  - ★ `_in_water()` 是**本地**水查询（读 `MazeGenerator.current_grid`），**不是**协议字段 ——
+    Task 5 Step 2b 的变异 ① 正是删掉调用点的 `_in_water()` 分支。
 
 - [ ] **Step 1: 加字段**
 
@@ -869,17 +872,52 @@ const POSE_FLY := 2
 	#     (见上),故必须加回。**别删第三次。**
 	var on_floor := (not _downed) and _pose != POSE_FLY \
 			and absf(_vel.y) < LAND_VEL_EPS
-	squash.tick(delta, _prev_vel_y, on_floor, _downed)
+	# ★ 爬梯那一半**刻意不在这里补**:本体的 `latched` 是**闩锁**,客户端手里只有无状态的位置
+	#   代理("中心/脚底落在通道格"),拿它当判据会对"路过梯子/贴梯走过"误触发 ⇒ 那是**引入
+	#   一类本体从不显示的新形变**,比留着残留更坏(用户裁定:本轮只修水中那一半)。
+	#   残留据此**如实登记**(spec §4.3):空中爬梯持续 2.5~3.0% 拉伸、梯底停下那一下 ~6.3% 挤压。
+	# ★ 水里传 0 —— 与本体同款。本体在 player.gd 对 (in_water or latched) 都清零 `_pre_move_vy`,
+	#   故水里精确中性;副本没有该信号,只能本地查。
+	#   ★★ **不需要协议字段**:本体的 `in_water` 本身就是**纯位置网格查询**
+	#     (swim_component.gd 读 MazeGenerator.current_grid),而 PvP 客户端也建同一张图 ⇒
+	#     跑同一个查询即可。水格不可破坏(tile_defs 里 destroyable 全 false)⇒ 两端不会漂。
+	#     ★ 别去加 `in_water` 字段 —— 那是本 spec 曾经写错的地方。
+	var vel_y := _prev_vel_y
+	if _in_water():
+		vel_y = 0.0
+	squash.tick(delta, vel_y, on_floor, _downed)
+	# ★ `_prev_vel_y` 记的是**原始** `_vel.y`(与本体记原始 velocity.y 同款):过滤只发生在
+	#   **传参那一刻**,出水的下一帧宿主也立刻回到原始值,故两侧同相位。
 	_prev_vel_y = _vel.y
 ```
 
-并在 `const POSE_FLY := 2`（Step 1）之后补上 `LAND_VEL_EPS`：
+并在 `const POSE_FLY := 2`（Step 1）之后补上 `LAND_VEL_EPS`，以及水查询的字段与函数：
 
 ```gdscript
 # 副本的"站在地上"判据里,「当前 _vel.y 已骤降到 ≈0」那一半的容差。
 # 本体那份由物理保证(地面上 velocity.y 恒 0),副本没有物理,必须显式判。
 const LAND_VEL_EPS := 1.0
 ```
+
+```gdscript
+# 脚底探针偏移。★ 在 `_ready` 里**取一次**即可:本体的 `Water.feet_offset` 缓存
+# (_feet_signature 只数 CollisionShape2D)对**只有 CollisionPolygon2D** 的身体永不失效
+# ⇒ 本体的 58.0 其实是个缓存残留,副本取幽灵体的 57.0 反而更准。
+# 与本体首帧有 ~1px 差,如实登记,不复制那个失真。
+var _water_feet_off: float = 57.0
+```
+
+```gdscript
+# ★ 用**渲染**用的 `global_position`(已锚到最近副本、可能不在 [0,MAP))**是安全的**:
+#   `Water.is_in_water` → `GridPathfinder.cell_of` 两端都 `posmod`,而 MAP_WIDTH/HEIGHT
+#   由 `GameParameters.refresh_map_size()` 按 `格数 × TILE_SIZE` 算出 ⇒ 恒为 64 的整数倍
+#   ⇒ 整幅平移一个副本后落回**同一格**。
+func _in_water() -> bool:
+	var gp := global_position
+	return Water.is_in_water(Vector2(gp.x, gp.y + _water_feet_off))
+```
+
+> ⚠️ 成本：每个副本每帧一次 `cell_of` + 一次网格索引 + 一次 `is_liquid`，无多边形/物理计算、无分配。
 
 - [ ] **Step 5: 编译检查**
 
