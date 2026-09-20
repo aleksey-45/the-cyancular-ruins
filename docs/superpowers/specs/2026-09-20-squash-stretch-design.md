@@ -115,10 +115,12 @@ func impulse(kind: int, strength: float = 1.0) -> void
 
 ```
 final = clampf(_air + _impulse, -1.0, 1.0)
-scale = Vector2(1.0 - AMOUNT * final, 1.0 + AMOUNT * final)
+scale = Vector2(1.0 + AMOUNT * final, 1.0 - AMOUNT * final)
 ```
 
-正 = 窄高（拉伸），负 = 宽矮（挤压）。
+**正 = 窄高（拉伸），负 = 宽矮（挤压）**，x 与 y 反向变化。
+
+⚠️ 符号方向以**增益表**为准（`squash_jump` / `squash_dash` / `squash_take_off` / `squash_charge` 为正 = 拉伸；落在 `tick()` 里的 `_impulse -= squash_land * k` 与增益表里的 `-squash_hurt` 为负 = 挤压）。本 spec 初稿的公式 `Vector2(1.0 - AMOUNT * final, ...)` 与这行文字**互相矛盾**（正 final 算出的是宽矮），是撰写时的笔误 —— 以本段公式为准。
 
 **用单标量而不是双标量**（分开记拉伸/挤压）是刻意的："冲刺中落地""起跳瞬间被击中"这类同时事件天然叠加，不需要优先级状态机 —— 这正是选纯代码方案的核心收益。
 
@@ -241,6 +243,8 @@ func _on_state_entered(_s: int) -> void:
 | JumpBird | `LUNGE_DASH` / `BACK_HOP` → 拉伸 |
 
 受击挂 `_apply_hit`（`enemy_base.gd:150`）。
+
+⚠️ **JumpBird 的小跳（`enemy_jump_bird.gd:101-102`）刻意不挂钩**（用户 2026-09-20 裁定）：它是 `_tick_chase` 里直接设 `velocity`，**不经过 `_set_state()`**，所以状态虚钩接不到。不为此另加钩子 —— 小跳的 `hop_jump_velocity = -750` 会让 §2.3 的**空中连续项**直接给出拉伸，只是没有事件那一下"脆感"。这是有意的取舍，不是遗漏。
 
 ### 4.3 对手副本（`player_replica.gd`）
 
