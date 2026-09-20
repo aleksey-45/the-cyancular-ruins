@@ -79,6 +79,14 @@ button.danger:hover { background: var(--danger); border-color: var(--danger); co
 }
 
 #palette { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+/* 调色板可破坏性角标:绿点=炸得掉(树叶/树干),灰点=永久墙(爆炸免疫) */
+.swatch { position: relative; }
+.swatch.sw-soft::after, .swatch.sw-hard::after {
+  content: ''; position: absolute; right: 2px; top: 2px; width: 5px; height: 5px;
+  border-radius: 50%;
+}
+.swatch.sw-soft::after { background: #3fb950; }
+.swatch.sw-hard::after { background: #8b94a1; }
 .swatch {
   aspect-ratio: 1; border-radius: 6px; border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
@@ -1347,7 +1355,17 @@ window.ENEMY_REGISTRY = [
         sw.className = 'swatch' + (t === 0 ? ' sw-air' : ' s' + t);
         sw.textContent = String(t);
         var tname = tileName(t);
-        sw.title = t === 0 ? '0 · 空气' : (t + ' · ' + (tname || '纹理'));
+        var def = window.TILE_DEFS && window.TILE_DEFS.tiles[String(t)];
+        sw.title = t === 0 ? '0 · 空气(画=擦除,不保留砖形)' : (t + ' · ' + (tname || '纹理'));
+        if (t > 0 && def) {
+          if (def.explosion_destroyable) {
+            sw.title += ' ✦可破坏(子弹/爆炸)';
+            sw.classList.add('sw-soft');       // 绿点:炸得掉
+          } else if (def.type === 'wall') {
+            sw.title += ' ■永久墙(爆炸免疫,只有 wipe 事件能清)';
+            sw.classList.add('sw-hard');       // 灰点:炸不动
+          }
+        }
         if (t === state.palette) sw.classList.add('selected');
         setWallSwatchBg(sw, t);
         (function (tile) {
@@ -1564,7 +1582,8 @@ window.ENEMY_REGISTRY = [
       }
 
       var erase = e.button === 2 || e.altKey || state.tool === 'erase';
-      var tile = erase ? 0 : Core.packCell(state.palette, state.shape);
+      // 空气笔刷写纯 0:不带砖形——000+形 会产出游戏里隐形/无碰撞/不可破坏的幽灵格
+      var tile = (erase || state.palette === 0) ? 0 : Core.packCell(state.palette, state.shape);
       if (state.tool === 'fill') {
         if (state.selection && inRegion(cell.x, cell.y, state.selection)) {
           // 选区激活 + 点在选区内 → 整个选区刷成当前纹理+形状(按矩形,非连通)
