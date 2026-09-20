@@ -100,10 +100,18 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
-	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → vel_y 小 → 回中性,
+	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → 回中性,
 	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
-	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
-	if _is_far_sleeping():
+	# ★ 但睡眠那一支的 vel_y **必须显式喂 0**:它不跑 move_and_slide ⇒ `_pre_move_vy`
+	#   永不刷新,是"上一次非睡眠帧"的陈旧值(可达路径:垂直击退把鸟打飞、落地那一帧的
+	#   落速被写进去;水平击退会被地面摩擦自愈,垂直不会)⇒ 落地项每帧重触发,而指数恢复
+	#   每帧只回 `1 - exp(-9/60) ≈ 14%` ⇒ 定点 ≈ -6.19k(任何 k ≳ 0.16 都被钳到 -1)
+	#   ⇒ 睡着的远鸟**永久**保持 (1.10, 0.90)。
+	#   睡眠态 vel_y 本就该是 0(地面不施重力),这个 0 是事实不是特判。
+	#   (玩家侧倒地分支是同一契约的另一处落点 —— 那边走"归零缓存",形态不同,见 spec §2.4。)
+	var sleeping := _is_far_sleeping()
+	squash.tick(delta, 0.0 if sleeping else _pre_move_vy, is_on_floor(), is_dead)
+	if sleeping:
 		_ai(delta)
 		_wrap()
 		return
@@ -150,7 +158,8 @@ func _physics_process(delta: float) -> void:
 	#   `_in_water ∧ is_on_floor()` 在敌人身上**确实会重叠**(239/1350 帧;玩家侧是 0,
 	#   因为敌人的身体停在池底上方 0.02~0.18px,探针落进水格而玩家落在支撑格),
 	#   但过滤想防的幽灵**结构上不可达**(浮力钳在 -260/+160,下沉侧 160 < 阈值 220),
-	#   而过滤会**吃掉 13 次真实落水挤压**(有过滤 min scale.x=1.0000,去掉后 0.9139)。
+	#   而过滤会**吃掉 13 次真实落水挤压**(有过滤 max scale.x=1.0000,去掉后 1.0861;
+	#   挤压方向是 x>1 ⇒ 看的是**最大** scale.x)。
 	#   ⇒ 净有害。敌人不爬梯,没有玩家侧那条真违规可类比。
 	_pre_move_vy = velocity.y
 	move_and_slide()

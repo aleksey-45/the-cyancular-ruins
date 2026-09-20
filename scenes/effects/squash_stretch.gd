@@ -100,6 +100,10 @@ func _apply() -> void:
 	if _animator == null:
 		return
 	var v := clampf(_air + _impulse, -1.0, 1.0)
-	# ★ 符号:正 v = 拉伸(窄高),负 v = 挤压(宽矮)。x 与 y 反向变化。
-	#   别写成 `1.0 - _amount * v` 配 `1.0 + ...` —— 那是反的,会让"起跳"变成压扁。
-	_animator.scale = Vector2(1.0 + _amount * v, 1.0 - _amount * v)
+	# ★ 符号:正 v = 拉伸(窄高:scale.x < 1, scale.y > 1),负 v = 挤压(宽矮)。
+	#   x 与 y 反向变化。增益表跟着这条走:jump/dash/take_off/charge 为正(拉伸),
+	#   land(减法)与 hurt(取负)为负(挤压)。
+	# ★ 别"顺手"翻成 `1.0 + _amount * v` 配 `1.0 - ...`:那会让**每个**事件都反过来
+	#   (起跳变压扁、落地变拉伸)。2026-09-20 真发生过一次 —— 当时有人把 (0.9, 1.1)
+	#   (窄高 = 拉伸)误读成宽矮,进而"纠正"了本就正确的本行。
+	_animator.scale = Vector2(1.0 - _amount * v, 1.0 + _amount * v)

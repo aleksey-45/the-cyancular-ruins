@@ -42,11 +42,11 @@ func _initialize() -> void:
 			and _near((a[1] as AnimatedSprite2D).scale.y, 1.0, 0.001),
 			"静止 → scale == (1,1),实测 %s" % str((a[1] as AnimatedSprite2D).scale))
 
-	# ② 落地冲击 → 挤压(x<1, y>1)
+	# ② 落地冲击 → 挤压(宽矮:x>1, y<1)
 	var b: Array = _mk()
 	(b[0] as SquashStretch).tick(DT, 1200.0, true, false)
 	var bs: Vector2 = (b[1] as AnimatedSprite2D).scale
-	_ok(bs.x < 1.0 and bs.y > 1.0, "落地冲击 → 挤压方向,实测 %s" % str(bs))
+	_ok(bs.x > 1.0 and bs.y < 1.0, "落地冲击 → 挤压方向(宽矮),实测 %s" % str(bs))
 	# 且不得越过 amount 上限
 	_ok(absf(bs.x - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"落地挤压不越上限(%.3f)" % PlayerParams.squash_amount)
@@ -57,18 +57,18 @@ func _initialize() -> void:
 	_ok(_near((c[1] as AnimatedSprite2D).scale.x, 1.0, 0.0005),
 			"落速 100(< 下限 220)不触发挤压,实测 %s" % str((c[1] as AnimatedSprite2D).scale))
 
-	# ④ 起跳冲击 → 拉伸(x>1, y<1)
+	# ④ 起跳冲击 → 拉伸(窄高:x<1, y>1)
 	var d: Array = _mk()
 	(d[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)
 	(d[0] as SquashStretch).tick(DT, 0.0, true, false)
 	var ds: Vector2 = (d[1] as AnimatedSprite2D).scale
-	_ok(ds.x > 1.0 and ds.y < 1.0, "起跳冲击 → 拉伸方向,实测 %s" % str(ds))
+	_ok(ds.x < 1.0 and ds.y > 1.0, "起跳冲击 → 拉伸方向(窄高),实测 %s" % str(ds))
 
-	# ⑤ 空中连续项:在空中且 |vel_y| 大 → 拉伸
+	# ⑤ 空中连续项:在空中且 |vel_y| 大 → 拉伸(窄高:x<1)
 	var e: Array = _mk()
 	(e[0] as SquashStretch).tick(DT, -700.0, false, false)
-	_ok((e[1] as AnimatedSprite2D).scale.x > 1.0,
-			"空中(vel_y=-700)→ 拉伸,实测 %s" % str((e[1] as AnimatedSprite2D).scale))
+	_ok((e[1] as AnimatedSprite2D).scale.x < 1.0,
+			"空中(vel_y=-700)→ 拉伸(窄高),实测 %s" % str((e[1] as AnimatedSprite2D).scale))
 
 	# ⑥ 指数回归:30 帧后 < 0.01,60 帧后 < 0.001
 	#    按 squash_recover=9.0 + squash_amount=0.10 推:exp(-4.5)*0.10≈0.0011、exp(-9)*0.10≈1.2e-5
@@ -96,8 +96,9 @@ func _initialize() -> void:
 			and absf(gs.y - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"多事件叠加不越上限,实测 %s" % str(gs))
 	# 且必须是"顶在上限上"而不是"被抵消回中性" —— 上一条若退化回抵消,这里立刻红
-	_ok(_near(gs.x, 1.0 + PlayerParams.squash_amount, 0.001),
-			"叠加确实停在钳位处(v=+1.0),实测 %.4f" % gs.x)
+	# (v=+1.0 是**拉伸** ⇒ x 顶在 1.0 - amount)
+	_ok(_near(gs.x, 1.0 - PlayerParams.squash_amount, 0.001),
+			"叠加确实停在钳位处(v=+1.0,窄高),实测 %.4f" % gs.x)
 
 	# ⑦b 饱和的**语义**守卫:同一组事件叠两次,结果必须与叠一次完全相同
 	#     (impulse() 的钳位让第二组落在同一个饱和点)。只删 impulse() 里那个 clampf 时,
@@ -134,7 +135,7 @@ func _initialize() -> void:
 			"敌人 profile 对 JUMP 无响应,实测 %s" % str(espr.scale))
 	es.impulse(SquashStretch.Impulse.TAKE_OFF)  # 敌人侧有 TAKE_OFF
 	es.tick(DT, 0.0, true, false)
-	_ok(espr.scale.x > 1.0, "敌人 profile 响应 TAKE_OFF,实测 %s" % str(espr.scale))
+	_ok(espr.scale.x < 1.0, "敌人 profile 响应 TAKE_OFF(拉伸,窄高),实测 %s" % str(espr.scale))
 
 	if _fail == 0:
 		print("SQUASH SMOKE: ALL-OK")

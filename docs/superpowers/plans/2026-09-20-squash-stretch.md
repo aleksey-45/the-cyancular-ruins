@@ -195,9 +195,11 @@ func _apply() -> void:
 	if _animator == null:
 		return
 	var v := clampf(_air + _impulse, -1.0, 1.0)
-	# ★ 符号:正 v = 拉伸(窄高),负 v = 挤压(宽矮)。x 与 y 反向变化。
-	#   别写成 `1.0 - _amount * v` 配 `1.0 + ...` —— 那是反的,会让"起跳"变成压扁。
-	_animator.scale = Vector2(1.0 + _amount * v, 1.0 - _amount * v)
+	# ★ 符号:正 v = 拉伸(窄高:scale.x < 1, scale.y > 1),负 v = 挤压(宽矮)。
+	#   x 与 y 反向变化。增益表跟着这条走:jump/dash/take_off/charge 为正(拉伸),
+	#   land(减法)与 hurt(取负)为负(挤压)。
+	#   别"顺手"翻成 `1.0 + _amount * v` 配 `1.0 - ...` —— 那会让每个事件都反过来。
+	_animator.scale = Vector2(1.0 - _amount * v, 1.0 + _amount * v)
 ```
 
 - [ ] **Step 4: 刷全局类缓存**
@@ -259,11 +261,11 @@ func _initialize() -> void:
 			and _near((a[1] as AnimatedSprite2D).scale.y, 1.0, 0.001),
 			"静止 → scale == (1,1),实测 %s" % str((a[1] as AnimatedSprite2D).scale))
 
-	# ② 落地冲击 → 挤压(x<1, y>1)
+	# ② 落地冲击 → 挤压(宽矮:x>1, y<1)
 	var b: Array = _mk()
 	(b[0] as SquashStretch).tick(DT, 1200.0, true, false)
 	var bs: Vector2 = (b[1] as AnimatedSprite2D).scale
-	_ok(bs.x < 1.0 and bs.y > 1.0, "落地冲击 → 挤压方向,实测 %s" % str(bs))
+	_ok(bs.x > 1.0 and bs.y < 1.0, "落地冲击 → 挤压方向(宽矮),实测 %s" % str(bs))
 	# 且不得越过 amount 上限
 	_ok(absf(bs.x - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"落地挤压不越上限(%.3f)" % PlayerParams.squash_amount)
@@ -274,18 +276,18 @@ func _initialize() -> void:
 	_ok(_near((c[1] as AnimatedSprite2D).scale.x, 1.0, 0.0005),
 			"落速 100(< 下限 220)不触发挤压,实测 %s" % str((c[1] as AnimatedSprite2D).scale))
 
-	# ④ 起跳冲击 → 拉伸(x>1, y<1)
+	# ④ 起跳冲击 → 拉伸(窄高:x<1, y>1)
 	var d: Array = _mk()
 	(d[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)
 	(d[0] as SquashStretch).tick(DT, 0.0, true, false)
 	var ds: Vector2 = (d[1] as AnimatedSprite2D).scale
-	_ok(ds.x > 1.0 and ds.y < 1.0, "起跳冲击 → 拉伸方向,实测 %s" % str(ds))
+	_ok(ds.x < 1.0 and ds.y > 1.0, "起跳冲击 → 拉伸方向(窄高),实测 %s" % str(ds))
 
-	# ⑤ 空中连续项:在空中且 |vel_y| 大 → 拉伸
+	# ⑤ 空中连续项:在空中且 |vel_y| 大 → 拉伸(窄高:x<1)
 	var e: Array = _mk()
 	(e[0] as SquashStretch).tick(DT, -700.0, false, false)
-	_ok((e[1] as AnimatedSprite2D).scale.x > 1.0,
-			"空中(vel_y=-700)→ 拉伸,实测 %s" % str((e[1] as AnimatedSprite2D).scale))
+	_ok((e[1] as AnimatedSprite2D).scale.x < 1.0,
+			"空中(vel_y=-700)→ 拉伸(窄高),实测 %s" % str((e[1] as AnimatedSprite2D).scale))
 
 	# ⑥ 指数回归:30 帧后 < 0.01,60 帧后 < 0.001
 	#    按 squash_recover=9.0 + squash_amount=0.10 推:exp(-4.5)*0.10≈0.0011、exp(-9)*0.10≈1.2e-5
@@ -328,7 +330,7 @@ func _initialize() -> void:
 			"敌人 profile 对 JUMP 无响应,实测 %s" % str(espr.scale))
 	es.impulse(SquashStretch.Impulse.TAKE_OFF)  # 敌人侧有 TAKE_OFF
 	es.tick(DT, 0.0, true, false)
-	_ok(espr.scale.x > 1.0, "敌人 profile 响应 TAKE_OFF,实测 %s" % str(espr.scale))
+	_ok(espr.scale.x < 1.0, "敌人 profile 响应 TAKE_OFF(拉伸,窄高),实测 %s" % str(espr.scale))
 
 	if _fail == 0:
 		print("SQUASH SMOKE: ALL-OK")
@@ -466,11 +468,11 @@ func _physics_process(delta: float) -> void:
 	#   它一并覆盖的两条路径**性质不同**,别当成同一个病(spec 初稿说"两条同形",实测后不成立;
 	#   见 tests/squash_host_water_probe):
 	#   · 梯子下行(720)是**真违规**,且是**每帧**不是一帧 —— `_tick_crouch_and_dash` 攀附时首行
-	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 -10%(实测 scale = (0.9000, 1.1000))。
+	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 10%(实测 scale = (1.1000, 0.9000))。
 	#   · 水中那条**不重叠**:Water.feet_offset 取碰撞箱底边 ⇒ 站在水下实心地面上时脚底探针
 	#     恒落在**支撑格自己**里、而支撑格是 wall 不是 liquid ⇒ in_water 恒假(实测
 	#     in_water∧on_floor 重叠 **0 帧**),"站池底永久 ~9% 挤压"并不存在。过滤它买到的是
-	#     **下沉窗口**那 30 帧的连续项 `_air`(320/700 × 0.30 ≈ 0.137 → scale.x 1.0137 的**拉伸**,
+	#     **下沉窗口**那 30 帧的连续项 `_air`(320/700 × 0.30 ≈ 0.137 → scale.x 0.9863 的**拉伸**,
 	#     过滤后 1.0000)⇒ 这一条是**落实设计取舍**("游泳不该有自由落体那种弹感"),不是修 bug。
 	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
@@ -545,15 +547,15 @@ Expected: 无 `SCRIPT ERROR` / `Parse Error`。游戏跑 90 帧后退出。若�
 
 1. **水中站底** —— 玩家落到水池**实心底**上，按住 S（下）步进 ~60 物理帧，断言 `player.animator.scale ≈ Vector2.ONE`
    （不按 `_pre_move_vy == 0.0`，那是内部量；按**可观测的渲染结果**断，且它同时验证了 `suppressed`/钳位链没被绕开）。
-2. **梯底按住 S** —— 同款，断言 `scale ≈ Vector2.ONE`（这条幅度更大：`k≈0.735`，坏了会读到接近 `(0.9, 1.1)`）。
-3. **反例（必须有）** —— 在**干**地面上从高处落下，断言**真的挤压**了（`scale.x < 1.0`）。没有它，前两相可以靠"永不挤压"作弊通过。
+2. **梯底按住 S** —— 同款，断言 `scale ≈ Vector2.ONE`（这条幅度更大：`k≈0.735`，坏了会读到接近 `(1.1, 0.9)`）。
+3. **反例（必须有）** —— 在**干**地面上从高处落下，断言**真的挤压**了（挤压 = 宽矮 ⇒ `scale.x > 1.0`）。没有它，前两相可以靠"永不挤压"作弊通过。
 4. **正向对照** —— 干地面上静止，断言 `scale == Vector2.ONE`。
 
 **变异验证（必做，写进报告）**：把 Step 4 改回 `_pre_move_vy = velocity.y`，跑本探针 → 相 ①、② 必须变红。
 **实测读数**（2026-09-20，容差已收到 `WET_EPS = 1e-3`）：
-- 相 ① —— `in_water 帧上 max dev 0.0137`（该帧 `scale = (1.0137, 0.9863)`；末值仍是 `(0.9997, 1.0003)`，
+- 相 ① —— `in_water 帧上 max dev 0.0137`（该帧 `scale = (0.9863, 1.0137)`；末值仍是 `(0.9997, 1.0003)`，
   因为触底后指数恢复已经把它拉回来了 —— 故断言按 **in_water 帧**取极值，不按整个窗口）。
-- 相 ② —— `max dev 0.1000`，末值 `scale = (0.9000, 1.1000)`。
+- 相 ② —— `max dev 0.1000`，末值 `scale = (1.1000, 0.9000)`。
 恢复 → 全绿。**若变不红，本守卫无效，继续迭代。**
 
 判据文本：`SQUASH HOST PROBE: ALL-OK`（读文本，不看退出码 —— `--quit-after` 挂住时也可能退 0）。
@@ -630,10 +632,14 @@ func _ready() -> void:
 
 ```gdscript
 func _physics_process(delta: float) -> void:
-	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → vel_y 小 → 回中性,
+	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → 回中性,
 	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
-	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
-	if _is_far_sleeping():
+	# ★ 但睡眠那一支的 vel_y **必须显式喂 0**:它不跑 move_and_slide ⇒ `_pre_move_vy`
+	#   永不刷新,是"上一次非睡眠帧"的陈旧值 ⇒ 落地项每帧重触发、指数恢复每帧只回 ~14%
+	#   ⇒ 定点 ≈ -6.19k 被钳到 -1 ⇒ 睡着的远鸟**永久**保持满幅挤压(见 spec §2.4)。
+	var sleeping := _is_far_sleeping()
+	squash.tick(delta, 0.0 if sleeping else _pre_move_vy, is_on_floor(), is_dead)
+	if sleeping:
 		_ai(delta)
 		_wrap()
 		return
@@ -655,7 +661,8 @@ func _physics_process(delta: float) -> void:
 	#   `_in_water ∧ is_on_floor()` 在敌人身上**确实会重叠**(239/1350 帧;玩家侧是 0,
 	#   因为敌人的身体停在池底上方 0.02~0.18px,探针落进水格而玩家落在支撑格),
 	#   但过滤想防的幽灵**结构上不可达**(浮力钳在 -260/+160,下沉侧 160 < 阈值 220),
-	#   而过滤会**吃掉 13 次真实落水挤压**(有过滤 min scale.x=1.0000,去掉后 0.9139)。
+	#   而过滤会**吃掉 13 次真实落水挤压**(有过滤 max scale.x=1.0000,去掉后 1.0861;
+	#   挤压方向是 x>1 ⇒ 看的是**最大** scale.x)。
 	#   ⇒ 净有害。敌人不爬梯,没有玩家侧那条真违规可类比。
 	_pre_move_vy = velocity.y
 	move_and_slide()
@@ -954,9 +961,9 @@ func _ready() -> void:
 		s.tick(1.0 / 60.0, 0.0, true, false)
 	_ok(is_equal_approx(spr.scale.x, 1.0), "静止 → 单位缩放")
 
-	# ② 落地冲击真的改了 scale
+	# ② 落地冲击真的改了 scale(挤压 = 宽矮:x>1, y<1)
 	s.tick(1.0 / 60.0, 1200.0, true, false)
-	_ok(spr.scale.x < 1.0 and spr.scale.y > 1.0, "落地 → 挤压,实测 %s" % str(spr.scale))
+	_ok(spr.scale.x > 1.0 and spr.scale.y < 1.0, "落地 → 挤压,实测 %s" % str(spr.scale))
 
 	# ③ ★ 硬约束:形变**不得**移动节点、不得改变全局变换的位置部分
 	_ok(spr.global_position == base_pos,
