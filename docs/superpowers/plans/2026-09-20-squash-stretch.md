@@ -641,9 +641,14 @@ func _physics_process(delta: float) -> void:
 	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
-	# ★ 必须在 move_and_slide() **之前**,且必须滤掉不是摔下来的下坠速度(spec §2.4):
-	#   `_apply_water`(:206)在水里写 buoyancy/swim 的 velocity.y,在水下实心地面上会与
-	#   is_on_floor() 同时成立 → 每帧触发落地分支。玩家侧是同一个洞(见 Task 2 Step 4)。
+	# ★ 必须在 move_and_slide() **之前**,且必须滤掉不是摔下来的下坠速度(spec §2.4)。
+	#   `_apply_water` 在水里写 buoyancy/swim 的 velocity.y,与 is_on_floor() 可能同时成立。
+	#   ⚠️ 本行是**防御性**的,不是已证的 bug:`_in_water` 与 `is_on_floor()` 在敌人身上
+	#   是否真会重叠**尚未有人量过**。玩家侧同款过滤实测的结果是"水里那条不重叠
+	#   (Water.feet_offset 让探针落在支撑格),梯子那条才是真违规" —— 敌人的水中判定
+	#   走的是另一条路径,不能照抄那个结论。
+	#   ★ Task 3 落地后应照 tests/squash_host_water_probe 的先例**量一次**敌人版本:
+	#     把本行改回 `velocity.y`,看有没有哪一相变红。变红=真 bug,不变红=纯防御。
 	_pre_move_vy = 0.0 if _in_water else velocity.y
 	move_and_slide()
 ```
