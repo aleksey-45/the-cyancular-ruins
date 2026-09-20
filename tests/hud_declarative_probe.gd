@@ -8,6 +8,16 @@ extends ProbeBase
 #      有 `[node name="C"` 声明。
 #   ③ **`TeamHud` 的 `_my_team` 契约**(语义面,见 `_check_team_my_team_contract`):那是
 #      个"外部不写就静默判错胜负"的口 —— 结构断言(①②)一个都照不到它。
+#
+# ★ ② 的**适用前提**(2026-09-20,加 `ui/match_result` 那一行时补):② 守的是「@onready
+#   取回声明节点」这件事,而**不是**每个 tscn 都必须声明节点。所以本文件先问一句
+#   `_scene_declares_nodes(tscn)`:
+#     · 声明了子节点 ⇒ 脚本必须至少取回一个(原判据,三个 HUD 一字未动);
+#     · **裸骨架**(tscn 除根之外不声明任何节点)⇒ 0 个 @onready 是**正确形状**。
+#       `ui/match_result.tscn` 正是这一种:面板由 `_ready()` 用 `UiFactory` 全建 ——
+#       那是该文件**刻意**的取舍("手写锚点是'改错了不报错'的一类")。
+#   ⚠ 别把这一段读成"放宽":它对**声明了节点的**场景一字未改。反过来,若谁把一个
+#     声明式脚本的 @onready 全删了,只要 tscn 里还留着节点,② 照旧报红。
 # 为什么值一条探针:.new() 建出来的节点**没有子节点**,而声明式脚本的 _ready 会直接
 #   解引用它们 → 硬崩溃。这不是假设 —— tests/kh_l6_probe.gd 第 10 条记的正是 B11
 #   (pvp_hud 那次)。本探针把同一份契约扩到后续搬的三套;kh_l6 第 10 条仍只守 pvp_hud,
@@ -25,6 +35,7 @@ const PAIRS := [
 	["res://ui/royale_hud.gd", "res://ui/royale_hud.tscn", "RoyaleHud"],
 	["res://ui/combat_feedback.gd", "res://ui/combat_feedback.tscn", "CombatFeedback"],
 	["res://ui/team_hud.gd", "res://ui/team_hud.tscn", "TeamHud"],
+	["res://ui/match_result.gd", "res://ui/match_result.tscn", "MatchResult"],
 ]
 
 # 参数下限:防止 PAIRS 被误删成空表 → 零循环 → 恒绿
@@ -101,6 +112,17 @@ func _check_team_my_team_contract() -> void:
 	_summary(before, "TeamHud 的 _my_team 契约:写入队号才念得出「本局胜利!/胜利!」;不写入时两条都不出现")
 
 
+# 该 .tscn 除根节点外还声明了节点吗?(决定 ② 是否适用 —— 理由见文件头。)
+# 数 `[node ` 出现次数:>1 ⇔ 除根之外还有节点。(逐行判 begins_with 而不是整串 contains,
+# 是因为 `[node name="X"` 一定顶格;`contains` 会把注释里引用的示例也算进来。)
+func _scene_declares_nodes(tscn: String) -> bool:
+	var n := 0
+	for line in tscn.split("\n"):
+		if line.begins_with("[node "):
+			n += 1
+	return n > 1
+
+
 func _check_pair(script_path: String, tscn_path: String, cls: String) -> void:
 	var before := _failures.size()
 	var exists := ResourceLoader.exists(tscn_path)
@@ -127,8 +149,10 @@ func _check_pair(script_path: String, tscn_path: String, cls: String) -> void:
 	var re := RegEx.new()
 	re.compile(RE_ONREADY)
 	var paths := re.search_all(code)
-	_check(paths.size() >= 1,
-			"%s 的 @onready $子节点 解析出 %d 个(判据可能退化成恒绿:一个 $路径都没有)" % [script_path, paths.size()])
+	# ★ ② 只在「tscn 声明了子节点」的前提下适用(理由见文件头那条)。
+	var declares_nodes := _scene_declares_nodes(tscn)
+	_check(not declares_nodes or paths.size() >= 1,
+			"%s 的 tscn 声明了子节点,但 @onready $子节点解析出 0 个(判据退化成恒绿:一个 $路径都没有)" % script_path)
 	var missing: Array[String] = []
 	for m in paths:
 		var leaf: String = (m.get_string(2) as String).split("/")[-1]
