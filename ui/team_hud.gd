@@ -88,6 +88,13 @@ func _on_round_state(data: Dictionary) -> void:
 			var winner: int = int(data.get("winner", 0))
 			if winner != 0:
 				var mine := winner == _my_team
+				# ★ 下面那个 `9` 是**字面量**,权威在 `TeamHost.TEAM_KILLS_TO_WIN`(= 9,`const`)。
+				#   本 HUD **不能**引 `TeamHost` 去取它 —— 那会把 `MatchHost` 整条链拖进客户端
+				#   (计划与 task brief 都明令禁止),所以这里**只能人工对齐**:改
+				#   `TeamHost.TEAM_KILLS_TO_WIN` 时必须**同步改这个字符串**。与 HUD 底板那种
+				#   "场景/文案里是字面量、无法共享常量,只能人工对齐"是同款坑 —— 漏改**不报错**,
+				#   只是把实际阈值念成 9(玩家按错的数去打)。
+				#   ⚠ 别改成 `%d` 再想办法拿常量:那条路就是引宿主,兜一圈还是回到同一处。
 				_set_broadcast(true, "本局胜利!" if mine else "本局落败",
 						("A 队" if winner == 1 else "B 队") + " 先到 9 杀")
 			else:
