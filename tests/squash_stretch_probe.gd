@@ -192,6 +192,18 @@ func _ready() -> void:
 	_ok(spr_stretch.scale.x < spr_neutral.scale.x and spr_stretch.scale.y > spr_neutral.scale.y,
 			"参照栏方向自洽(拉伸栏比中性栏更窄更高)")
 
+	# ③d ★ 硬约束:形变**只**写 `animator.scale` —— 精灵的 `offset` 必须仍是零。
+	#     这条堵的是"脚底锚定"那条诱惑改法:缩放绕**中心**(`AnimatedSprite2D` 没有 pivot,
+	#     `player.tscn` 只设了 `texture_filter`,故 `centered = true` 生效),所以挤压时画出来的
+	#     底边会上抬 ~4~5px、拉伸时下沉 ~3.5px。用 `offset` 反向补正能让脚底钉住 —— 但那既破了
+	#     "只写 `animator.scale`"的约束,又**没有任何别的探针看得见**(偏移是精灵内部量:
+	#     `global_position` ③ 与碰撞箱 ③b 都不动)。CLAUDE.md 有这条登记(判为真现象非缺陷)。
+	#     三栏一起判:参照栏也走同一条 `_apply()`,漏一栏就等于给它留了后门。
+	_ok(spr_neutral.offset == Vector2.ZERO and spr_stretch.offset == Vector2.ZERO
+			and spr.offset == Vector2.ZERO,
+			"形变不写 offset(三栏实测 %s / %s / %s)" % [
+				str(spr_neutral.offset), str(spr_stretch.offset), str(spr.offset)])
+
 	# ④ 等两帧后取图(让人眼看到挤压那一刻;两帧是 kh_l3_visual_probe 的先例)
 	await get_tree().process_frame
 	await get_tree().process_frame

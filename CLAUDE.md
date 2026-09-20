@@ -112,14 +112,33 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 `_air`(每帧由 `vel_y` 重算,无状态)+ `_impulse`(事件累加 + `MathUtil.approach` 指数回归)。
 **单标量**是刻意的 —— "冲刺中落地""起跳瞬间被击中"这类同时事件天然叠加,不需要优先级状态机。
 幅度上限 `squash_amount` = **0.10**(用户裁定"不要太夸张"),`v` 钳在 `[-1,1]` 故永不越界。
-★ **落地挤压由 `vel_y` 无状态推导**,不需要 `_was_on_floor`:宿主在 `is_on_floor()` 时不施重力,
-故地面上 `vel_y` 恒 0 → `on_floor && pre_move_vy > 200` 只在落地那一帧成立。与之配套,
-宿主必须在 `move_and_slide()` **之前**缓存 `_pre_move_vy`(它与帧首的 `is_on_floor()` 配对,
-二者描述同一时刻)。敌人侧状态事件走 `_on_state_entered(s)` 虚钩 —— 三只鸟各有自己的
+★ **落地挤压由 `vel_y` 无状态推导**,不需要 `_was_on_floor`:判据是
+`if on_floor and vel_y > _land_min_vy`(`scenes/effects/squash_stretch.gd`),阈值**不是字面量** ——
+玩家侧 = `PlayerParams.squash_land_min_vy`、敌人侧 = `EnemyParams.squash_land_min_vy`
+(当前**同值 220.0**;★ 本节 2026-09-20 订正过 —— 此前误写作 `> 200`,照那个数编会差 20 px/s)。
+与之配套,宿主必须在 `move_and_slide()` **之前**缓存 `_pre_move_vy`(它与帧首的
+`is_on_floor()` 配对,二者描述同一时刻),且**必须自己把"不是摔下来的"下坠速度滤掉**。
+★★ **"只在落地那一帧成立"是过滤之后的结论,不是判据本身的性质**(spec §2.4):"宿主在
+`is_on_floor()` 时不施重力 ⇒ 地面上 `vel_y` 恒 0"这个前提**只对重力路径成立** —— 水中下沉
+(`player_swim_down` = 320)与梯子下行(720)都是"站在地面/水里仍然写正 `velocity.y`",
+不滤就会持续/每帧重触发落地项(梯底按住 S 是整个对局里真正的每帧违规)。故**宿主的契约**是:
+传进 `tick()` 的 `vel_y` 必须是"地面真正吸收掉的"那个下坠速度,否则传 0 —— 玩家侧即
+`_pre_move_vy = 0.0 if (in_water or latched) else velocity.y`(敌人侧**刻意不过滤**,见下)。
+敌人侧状态事件走 `_on_state_entered(s)` 虚钩 —— 三只鸟各有自己的
 `enum State`(JumpBird 没有 TAKE_OFF),基类不能硬编码状态名。
 ★ **纯视觉:不进 `capture_state()`/`restore_state()`、不碰碰撞箱。** 玩家侧 `tick` 放
 `_physics_process` **最首行**(倒地早退之前),否则倒地后 scale 会卡在最后一个形变值上;
 敌人侧同理(放 `_is_far_sleeping()` 早退之前)。
+★★ **已知表现副产物(登记不修,2026-09-20 裁定)**:缩放绕精灵**中心** —— `AnimatedSprite2D`
+没有 pivot,`player.tscn` 只设了 `texture_filter`,故 `centered = true` 生效 ⇒ 挤压时**画出来的
+底边会上抬 ~4~5px**、拉伸时下沉 ~3.5px(约体高的 4%,包络 ~0.15s)。**这是真现象、不是缺陷**:
+脚底锚定要么得给 `animator.offset`/`position` 补一个反向平移(**破了"只写 `animator.scale`"
+这条约束**,且见下),要么得在四个场景里重摆精灵并复核武器/枪口挂点 —— 为 ±10% 的观赏性
+特征不值得。★ 这两个数**每次跑都被打印出来**(`tests/squash_stretch_probe.tscn` 的三栏像素
+包围盒:中性 y 670 / 拉伸 667 / 挤压 674;底边 = 顶边 + 高 ⇒ 挤压上抬 5px、拉伸下沉 4px,
+与上面那组区间一致,不必再手量)。**别把它当 bug"修"**:用 `offset` 补正是**没有任何探针看得见**的那种改法(偏移是
+精灵内部量,`global_position` 与碰撞箱都不动),`tests/squash_stretch_probe.tscn` 专门加了一条
+`offset == Vector2.ZERO` 的断言堵它。
 ★ **倒地必须 `suppressed = true`**:副本给根节点设了 `rotation = -90°`,而 animator 是其
 **子节点** → 此时写 `scale` 会沿**转过的轴**挤压,尸体横着变宽。本地玩家虽不旋转,但两端
 行为要一致、且尸体不该有弹性。
@@ -130,7 +149,9 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 (真渲染,含"形变不得改变全局位置"与"形变不碰碰撞箱"两条硬约束断言 + **像素级方向断言**,
 并取图供人眼验收 —— 图**自己读**,别推回给用户)。
 ★ **对手副本**复用同一个组件,数据从快照的 `vel`/`pose` 本地推导 —— `vel` 本来就在载荷里
-(`server/match_snapshot.gd:20`),只是副本此前没读,**协议零改动**。副本**不做受击挤压**
+(`server/match_snapshot.gd` 的 `world["players"][str(role)]` 那张表),只是副本此前没读,
+**协议零改动**;★ 副本探针的**相⓪**就钉在这张表的字段清单上(见下),故这里**不写行号** ——
+表一漂,行号就先失效。副本**不做受击挤压**
 (快照里没有受击事件,从 `hp` 下降推会在 AoE 多段伤害时误触发)。tick 放副本的 `_process`
 而非 `apply_snapshot`:后者没有 `delta`,而 `_process` 是副本的表现层时钟(插值推进与受击
 闪烁衰减都在那儿),挂快照回调会与插值产生拍频。
@@ -149,9 +170,20 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 变异**且已验证"只打红自己那一相":删 `_in_water()` → 相①(复现 `scale = 0.986286`)、
 值来源换回当前 `_vel.y` → 相②(`scale.x == 1.000000`)、删 `absf(_vel.y) < LAND_VEL_EPS` → 相③、
 `suppressed` 传 false → 相④。★ 相④ 的前提态**刻意取空中连续项而非落地冲击** —— 后者正是相②
-那处变异动的东西,拿它当前提会让两相被同一个变异一起打红。另一层守卫
-`tests/squash_host_water_probe.tscn` 驱动**玩家本体**(合成网格 + 真 player.tscn + 真物理),
-钉 `_pre_move_vy = 0.0 if (in_water or latched) else velocity.y` 那个谓词。
+那处变异动的东西,拿它当前提会让两相被同一个变异一起打红。★ 相④ 的判据窗口是**倒地后 8 帧**的
+max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有一条**相⓪**:把夹具字典的**键集**与
+`server/match_snapshot.gd` 里那张玩家载荷字段表**双向对账** —— 夹具键是手写的、头注声称"逐字
+一致"却**无人校验**,而删掉生产端的 `"vel": p.velocity` 会让**四相全绿**、对局里对手的形变
+**静默消失**(副本 `_prev_vel_y` 恒 0 ⇒ 空中项恒 0、落地项永不触发)。读不到源文件/定位不到那张
+表时报**红**,不静默跳过。另一层守卫 `tests/squash_host_water_probe.tscn` 驱动**玩家本体**
+(合成网格 + 真 player.tscn + 真物理),钉 `_pre_move_vy = 0.0 if (in_water or latched) else velocity.y`
+那个谓词。
+⚠ **两侧的水过滤刻意不同款,别去"统一"**:玩家侧滤 `in_water or latched`,**敌人侧刻意用裸
+`velocity.y`**(`enemy_base.gd`,原地有登记注释)。实测敌人侧 `_in_water ∧ is_on_floor()` 的重叠
+**真实存在**(239/1350 帧 —— 敌人停在池底上方 0.02~0.18px,`Water.feet_offset` 把探针放进它
+**上面那个水格**;玩家侧那个偏移落在支撑格里故为 0),但水的写入被钳在 −260/+160、**下沉侧
+160 < 阈值 220** ⇒ "幽灵挤压"结构上不可达,而过滤**会吃掉 13 次真实的落水挤压**(入水那一下
+变哑)。两侧结论不同是**实测差异**,不是不一致 —— 完整 A/B 表见 spec §2.4。
 
 ### UI(界面)
 

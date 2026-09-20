@@ -12,7 +12,9 @@ extends Node
 #
 # 做法:合成网格(照 tests/squash_host_water_probe 的建图函数取一份)+ **真 `PlayerReplica`**
 #   实例(真 tscn、真 `_ready`:真幽灵体、真 `Water.feet_offset` 脚底探针)+ **真快照字典**
-#   (键与 `server/match_snapshot.gd` 的 `world["players"][role]` 逐字一致),
+#   (键与 `server/match_snapshot.gd` 的 `world["players"][role]` 逐字一致 —— ★ 这句话由**相⓪**
+#   对着生产端源码**真的校验**,不再是靠人读:夹具键是手写的,而生产端删掉 `"vel"` 会让四相
+#   全绿、对局里对手的形变静默消失,那正是相⓪ 要堵的洞),
 #   逐帧 `apply_snapshot()` + 显式 `_process(dt)`。
 #
 # ★ 为什么显式调 `_process` 而不是交给引擎:`_process` 的 `delta` 是**变帧率**的(headless 下
@@ -66,6 +68,21 @@ const EPS := 1e-4
 # 落地那一拍就清零了)⇒ 落地项**永不触发** ⇒ scale = (1.0000, 1.0000),失败余量 0.05。
 const DROP_MIN_SQUASH := 0.5
 
+# ── 相⓪ 生产端字段表对账 ──
+# ★ 本探针喂给 `apply_snapshot()` 的字典是**手写**的,文件头声称"键与 server/match_snapshot.gd
+#   逐字一致" —— 补上这条守卫之前,**那句话没有任何东西在管**。后果不是抽象的:把生产端的
+#   `"vel": p.velocity` 删掉/改名,四相**全绿**,而对局里对手的形变**静默消失**(副本的
+#   `_prev_vel_y` 恒 0 ⇒ 空中项恒 0、落地项永不触发,一个字都不打)。
+#   判据 = 夹具键集与**生产端真源码**里那张字面量表**双向相等**:生产端少了 = 探针在喂一个
+#   不存在的字段(红);生产端多了 = 夹具漏喂(红 —— 说明头注的"逐字一致"已经不成立)。
+#   ★ 这是**源码级**守卫(不是行为级):`MatchSnapshot._broadcast_snapshot()` 是"构造 + 广播"一体的,
+#   载荷不外流、无法从返回值上读到,故"读真源码里那张表"是能做到的最便宜的**真**校验
+#   (它读的是生产文件本身,不是本探针自己的字面量)。
+# ★ 读不到源文件/定位不到那张表时**必须报红**而不是静默跳过 —— 源码级守卫最典型的失明方式
+#   就是"文件改了名 ⇒ 什么都没读到 ⇒ 断言恒真"。
+const SNAPSHOT_SRC := "res://server/match_snapshot.gd"
+const SNAPSHOT_MARK := 'world["players"][str(role)] = {'
+
 const S_WATER := 0
 const S_DROP := 1
 const S_AIR_DASH := 2
@@ -79,7 +96,12 @@ const WATER_FRAMES := 45
 #   失败余量从 +0.0361 缩到 +0.0241。这不是"差不多",是把判据的余量白送掉三分之一。
 const DROP_FRAMES := 2
 const DASH_FRAMES := 3         # ≥2:第 1 帧 `_prev_vel_y` 还是 0(新组件),第 2 帧起才是 900
-const DOWNED_ASSERT_AT := 3    # 灌值 1 帧 + 前提读数 1 帧 + 倒地那一帧(判据)
+# 相④ 的判据窗口 = 倒地后**至少 8 帧**(不是 1 帧)。
+# ★ 单帧窗口只看得见"倒地那一刻"的 scale:一个"要两帧才收敛到中性"的回归在第一帧上可能
+#   已经落回容差内(或反过来,第一帧偶然中性而后面才开始漂),单帧读**两边都漏**。
+#   `_max_dev` 取的是窗口内的**最大值**,故加宽是**单调更强**的判据,不会放松任何东西。
+const DOWNED_FRAMES := 8
+const DOWNED_ASSERT_AT := 2 + DOWNED_FRAMES   # 灌值 1 帧 + 前提读数 1 帧 + 倒地 8 帧(判据)
 
 var _rep: Node2D = null
 var _dead := false             # 空载守卫已判死(见 _begin):后续帧直接不跑
@@ -106,7 +128,80 @@ func _ready() -> void:
 	TileDefs.load_defs()
 	print("[squash_replica] 合成世界 %dx%d 格;水池 x %d..%d y %d..;干地列 x=%d;水里停位 %s" % [
 			COLS, ROWS, WATER_X0, WATER_X1, WATER_ROW0, DRY_X, str(WATER_POS)])
+	_check_producer_keys()
 	_begin(S_WATER)
+
+
+# ── 相⓪:夹具键集 vs 生产端字段表(见 SNAPSHOT_SRC 上方那段)──
+func _check_producer_keys() -> void:
+	var fixture: Array = _snapshot_dict(Vector2.ZERO, POSE_MOVE, false, Vector2.ZERO).keys()
+	fixture.sort()
+	var producer := _producer_keys()
+	if producer.is_empty():
+		_record("相⓪ 前提:能从 %s 里定位到玩家载荷字典" % SNAPSHOT_SRC, false,
+			"读到的字段表为空(文件改名?那张表被重写了?)—— 静默跳过会让本相退化成空转")
+		return
+	var missing: Array = []
+	for k in fixture:
+		if not producer.has(k):
+			missing.append(k)
+	var extra: Array = []
+	for k in producer:
+		if not fixture.has(k):
+			extra.append(k)
+	_record("相⓪ 夹具键集 == server/match_snapshot.gd 的玩家载荷字段表",
+		missing.is_empty() and extra.is_empty(),
+		"夹具 %d 键 / 生产端 %d 键;生产端缺 %s(探针在喂不存在的字段)、夹具漏喂 %s" % [
+			fixture.size(), producer.size(), str(missing), str(extra)])
+
+
+# 从生产端源码里取出那张字面量表的键(升序)。
+# ★ 用 `code_only`(剥注释)而不是裸文本:一句提到字段名的**注释**会把被删掉的键重新喂绿。
+func _producer_keys() -> Array:
+	var code := ScanUtil.code_only(ScanUtil.read(SNAPSHOT_SRC))
+	var at := code.find(SNAPSHOT_MARK)
+	if at < 0:
+		return []
+	var open := at + SNAPSHOT_MARK.length() - 1        # 指向 '{'
+	var close := _match_brace(code, open)
+	if close < 0:
+		return []
+	var block := code.substr(open + 1, close - open - 1)
+	# 该表的**值**全是表达式(没有字符串字面量),故 `"名":` 这个形状只会匹配到键。
+	# 将来若真出现"值是字符串"的字段,这里要改成按顶层逗号切分。
+	var re := RegEx.new()
+	re.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"\\s*:")
+	var out: Array = []
+	for m in re.search_all(block):
+		out.append(m.get_string(1))
+	out.sort()
+	return out
+
+
+# 与 open 处 '{' 配对的 '}' 下标(跳过字符串内的花括号;找不到返回 -1)。
+# 形状照 ScanUtil.match_paren —— 那一支只认圆括号。
+func _match_brace(src: String, open: int) -> int:
+	var depth := 0
+	var in_str := false
+	var j := open
+	while j < src.length():
+		var ch := src[j]
+		if in_str:
+			if ch == "\\":
+				j += 2                                  # 转义:连同下一字符一起跳过
+				continue
+			if ch == "\"":
+				in_str = false
+		elif ch == "\"":
+			in_str = true
+		elif ch == "{":
+			depth += 1
+		elif ch == "}":
+			depth -= 1
+			if depth == 0:
+				return j
+		j += 1
+	return -1
 
 
 func _build_grid() -> Array[Array]:
@@ -170,9 +265,11 @@ func _pos_of(stage: int) -> Vector2:
 
 # 喂一份**真快照字典**(键与 server/match_snapshot.gd 的 world["players"][role] 逐字一致),
 # 然后显式跑一帧 `_process`。
-func _step(vel: Vector2, pose: int, downed: bool) -> void:
-	var pos := _rep.global_position
-	_rep.apply_snapshot({
+# 夹具字典的**唯一构造点**(相⓪ 拿它的键集与生产端对账 ⇒ 只有一份,不会两处各写一遍)。
+# 内容刻意取"中性可过"的值:本探针只关心键的**存在性**,不关心假数据本身合不合理
+# (每相真正要的值由 `_step` 的三个实参决定)。
+func _snapshot_dict(vel: Vector2, pose: int, downed: bool, pos: Vector2) -> Dictionary:
+	return {
 		"pos": pos,
 		"vel": vel,
 		"facing": 1,
@@ -183,8 +280,14 @@ func _step(vel: Vector2, pose: int, downed: bool) -> void:
 		"downed": downed,
 		"aim": Vector2(1.0, 0.0),
 		"previewing": false,
-	}, pos, _tick)
+	}
+
+
+func _step(vel: Vector2, pose: int, downed: bool) -> void:
+	var pos := _rep.global_position
+	_rep.apply_snapshot(_snapshot_dict(vel, pose, downed, pos), pos, _tick)
 	# ★ 顺序:apply_snapshot 只**记录**数据(_vel/_pose/_downed),衰减与写 scale 都在 _process。
+	# (下表由 `_snapshot_dict` 唯一构造 —— 相⓪ 就是拿它的键集去与生产端对账的。)
 	#   本探针在 _process 之前读一次 `_prev_vel_y` —— 那时它还是**上一帧**的值,正是 `tick()`
 	#   即将消费的那一个。这是相①②③ 前提断言的来源。
 	_prem_prev_vy = _rep._prev_vel_y
@@ -291,6 +394,9 @@ func _tick_air_dash() -> void:
 #   **不取落地冲击**:落地那一对值(上一帧大、当帧 ≈0)正是 ② 号变异动的那一处 ——
 #   拿它当前提,② 号变异会让**本相的前提**一起红,四相就不再"各自只被自己那一处变异打红"。
 #   空中项与三个变异都不搭界(它只看 `_air`,且 `pose == FLY` 让 on_floor 恒假),互不干扰。
+# ★ 判据窗口是**倒地后 `DOWNED_FRAMES` = 8 帧**(不是倒地那一帧):`_max_dev` 取窗口内最大值,
+#   故加宽只会更严 —— 覆盖"要两帧才收敛"(第一帧偶然落在容差内)与"第一帧偶然中性、后面才漂"
+#   这两种单帧读法**两边都漏**的回归。
 func _tick_downed() -> void:
 	if _f <= 1:
 		# 第 1 帧只是把 900 灌进 `_prev_vel_y`(新组件的 `_prev_vel_y` 从 0 起,当帧还用不上);
@@ -306,9 +412,9 @@ func _tick_downed() -> void:
 		return
 	_step(Vector2(0.0, 900.0), POSE_FLY, true)          # downed = true
 	if _f >= DOWNED_ASSERT_AT:
-		_record("相④ 倒地(downed=true)强制中性", _max_dev <= EPS,
-			"倒地后 max dev %.6f(上限 %.6f),末值 scale=(%.6f,%.6f);副本根节点 rotation=%.4f" % [
-				_max_dev, EPS, _last_scale.x, _last_scale.y, _rep.rotation])
+		_record("相④ 倒地(downed=true)强制中性(%d 帧窗口)" % DOWNED_FRAMES, _max_dev <= EPS,
+			"倒地后 %d 帧的 max dev %.6f(帧 %d,上限 %.6f),末值 scale=(%.6f,%.6f);副本根节点 rotation=%.4f" % [
+				DOWNED_FRAMES, _max_dev, _max_dev_frame, EPS, _last_scale.x, _last_scale.y, _rep.rotation])
 		_finish()
 
 
