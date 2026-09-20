@@ -38,6 +38,7 @@
 | `scenes/enemies/enemy_jump_bird.gd` | Modify | 覆写虚钩：LUNGE_DASH / BACK_HOP |
 | `scenes/player/player_replica.gd` | Modify | 对手副本接入（读 `vel` + `_process` 里 tick） |
 | `tests/squash_stretch_smoke.gd` | **Create** | `-s` 纯逻辑冒烟 |
+| `tests/squash_host_water_probe.gd` / `.tscn` | **Create** | 宿主级行为守卫（水中站底 / 梯底按住 S / 干地反例），Task 2 Step 8b |
 | `tests/squash_stretch_probe.gd` / `.tscn` | **Create** | 真渲染探针 |
 | `CLAUDE.md` | Modify | 记录新组件与约定 |
 
@@ -464,12 +465,15 @@ func _physics_process(delta: float) -> void:
 	# ★ 且必须**滤掉不是摔下来的下坠速度**(spec §2.4):
 	#   水中 swim_component.gd:26 每帧无条件写 player_swim_down(320 > 落地下限 220),
 	#   站在水下实心地面上时 in_water 与 is_on_floor() 同时为真 → 不滤的话每帧触发落地分支,
-	#   稳态把玩家永久压在 ~9% 挤压上。梯子下行(720)同理,虽然它只触发一帧。
+	#   稳态把玩家永久压在 ~9% 挤压上。梯子下行(climb_component.gd:91,720)形状完全相同,且**同样是每帧**不是一帧 ——
+	#   `_tick_crouch_and_dash` 首行就 `if latched or in_water: return`,而 is_squat 的唯一赋值点
+	#   在该早退之后 → 攀附期间 is_squat 冻结、攀附不解除(k≈0.735 → 钳到满幅 -10%)。两条同形。
 	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
 ```
 
-> `in_water`(`:196`)与 `latched`(`:202`)在本行之前都已就位。
+> `in_water`(由 `swim.update` 返回)与 `latched`(由 `climb.is_latched()` 取得)在本行之前都已就位。
+> **本节刻意不写行号** —— 密集改动区里行号是负资产(项目既有约定),一律用符号指代。
 
 并且把 `_physics_process` 的倒地早退分支改成**同时**把该值归零（否则倒地期间它变陈旧 —— `_tick_downed` 不更新它 —— 复活首帧会与地面态配对出一个满幅假挤压）：
 
@@ -519,6 +523,36 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 ```
 
 Expected: 无 `SCRIPT ERROR` / `Parse Error`。游戏跑 90 帧后退出。若报 `Identifier "squash" not declared`，回 Step 1 确认字段加在了 `player.gd` 里（不是别的文件）。
+
+> ⚠️ 这条**只是解析检查** —— 主场景是 `main_menu`，90 帧内不跑任何玩法代码。它通过只说明"没有脚本错误"。
+
+- [ ] **Step 8b: 宿主级行为守卫（`tests/squash_host_water_probe`）**
+
+**为什么必须有**：Step 4 那个谓词（`0.0 if (in_water or latched) else velocity.y`）是本任务唯一"改了没人会发现"的地方 ——
+`tests/squash_stretch_smoke.gd` 自建裸 `AnimatedSprite2D`、**从不加载 `player.gd`**；`enemy_logic_smoke` 的玩家实例站在**干**地上；
+而 `tests/pvp_twin_smoke.gd` 虽然真驱动水中物理，但它比对的是孪生态，squash/`_pre_move_vy` **刻意在 `capture_state()` 之外**，结构上看不见。
+把 Step 4 改回裸 `velocity.y`，上述三条全部照绿。
+
+**做法**：新建 `tests/squash_host_water_probe.gd` + `.tscn`，`extends Node`、**scene 模式 headless**（autoload 在）。
+脚手架照 `tests/pvp_twin_smoke.gd:15-99` 的先例 —— 它已经造好了「合成网格 + 一个水池 + 一条梯 + 真 `player.tscn` + 真物理步进」这一整套，照抄那份的最小版本即可
+（该文件的 `COLS/ROWS/WATER_X0/WATER_X1/LADDER_X` 常量就是现成的形状）。
+
+四相：
+
+1. **水中站底** —— 玩家落到水池**实心底**上，按住 S（下）步进 ~60 物理帧，断言 `player.animator.scale ≈ Vector2.ONE`
+   （不按 `_pre_move_vy == 0.0`，那是内部量；按**可观测的渲染结果**断，且它同时验证了 `suppressed`/钳位链没被绕开）。
+2. **梯底按住 S** —— 同款，断言 `scale ≈ Vector2.ONE`（这条幅度更大：`k≈0.735`，坏了会读到接近 `(0.9, 1.1)`）。
+3. **反例（必须有）** —— 在**干**地面上从高处落下，断言**真的挤压**了（`scale.x < 1.0`）。没有它，前两相可以靠"永不挤压"作弊通过。
+4. **正向对照** —— 干地面上静止，断言 `scale == Vector2.ONE`。
+
+**变异验证（必做，写进报告）**：把 Step 4 改回 `_pre_move_vy = velocity.y`，跑本探针 → 相 1、2 必须变红（读到 `≈(0.91, 1.09)` 与 `≈(0.9, 1.1)`）；恢复 → 全绿。**若变不红，本守卫无效，继续迭代。**
+
+判据文本：`SQUASH HOST PROBE: ALL-OK`（读文本，不看退出码 —— `--quit-after` 挂住时也可能退 0）。
+`--quit-after` 给足 **3600 帧**（安全网，只在挂住时才用得上）。
+
+```bash
+"$GODOT" --headless --path . --quit-after 3600 res://tests/squash_host_water_probe.tscn
+```
 
 - [ ] **Step 9: 提交**
 

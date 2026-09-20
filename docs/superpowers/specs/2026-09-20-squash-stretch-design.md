@@ -142,7 +142,13 @@ scale = Vector2(1.0 + AMOUNT * final, 1.0 - AMOUNT * final)
 | 位置 | 写入 | 值 | 水面/地面上会怎样 |
 |---|---|---|---|
 | `swim_component.gd:26` | `velocity.y = player_swim_down` | **320** > 220 | 站在**水下实心地面**上时 `in_water` 与 `is_on_floor()` 同时为真 → **每帧**触发落地分支 |
-| `climb_component.gd:91` | 梯子下行速度 | `300×2.0×1.2` = **720** | 梯底按住 S 时触发 —— 只触发一帧（下一帧 `is_squat` 使其解除攀附），且"沿梯下到底落地"本就该挤压 |
+| `climb_component.gd:91` | 梯子下行速度 | `300×2.0×1.2` = **720** | 梯底按住 S 时**每帧**触发 |
+
+⚠️ **梯子那行不是"只触发一帧"**（本 spec 初稿如此写，2026-09-20 由复审读码推翻）：初稿的理由是"下一帧 `is_squat` 使其解除攀附"，但 `_tick_crouch_and_dash` **首行就 `if latched or in_water: return`**（`player.gd:287-289`），而 `is_squat` 的唯一赋值点在该早退**之后**（`:299`）→ 攀附期间 `is_squat` 冻结在攀附前的值，**永远不会**变 true，攀附不解除。
+
+代入 `k = (720-220)/680 ≈ 0.735` → 稳态被 `_apply()` 钳到**满幅 −10%**，比水中那条更狠。同样是"只要按着 S 站在梯底就一直压着"。
+
+★ 两条违规的形状完全相同（在水里 / 在梯上都是"宿主持续写正 `velocity.y` 且 `is_on_floor()` 为真"），所以**同一个宿主过滤谓词 `in_water or latched` 一并覆盖**。
 
 ⚠️ 水里那条**不是一闪而过**：`tick()` 每帧做 `_impulse -= k`，而恢复是指数式，稳态 `≈ -k·d/(1-d)`；代入 `k = (320-220)/680 = 0.147`、`d = exp(-9/60) = 0.861` 得 **≈ -0.91**，即站在水底就一直保持 ~9% 挤压。
 
@@ -161,8 +167,9 @@ _pre_move_vy = 0.0 if _in_water else velocity.y
 ⚠️ 但 `is_on_floor()` 在帧首读到的值是**上一帧** `move_and_slide()` 的结果。所以读取时必须与**同一次** `move_and_slide()` 之前的 `velocity.y` 配对：
 
 ```gdscript
-# 在 move_and_slide() 之前缓存（player.gd:218 前 / enemy_base.gd:135 前）
-_pre_move_vy = velocity.y
+# 在 move_and_slide() 之前缓存（player.gd / enemy_base.gd 的 move_and_slide 之前）
+# ★ 已被上面的宿主契约取代 —— 不要再写成裸的 `velocity.y`（那是本节初稿，有洞）。
+_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 ```
 
 帧首的 `is_on_floor()` 与 `_pre_move_vy` 因此描述**同一时刻**，二者一致。
