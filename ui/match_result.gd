@@ -31,7 +31,6 @@ var _panel: PanelContainer = null
 
 
 func _ready() -> void:
-	UiFactory.apply_font_recursive(self)
 	var root := Control.new()
 	root.name = "Root"
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -83,13 +82,31 @@ func _ready() -> void:
 	#   载荷要等 `show_result()` 才有 ⇒ 这里先藏起来,由它置回 true。
 	visible = false
 
+	# ★ 这一句必须排在**子节点都建好之后**。放在 `_ready()` 开头的话它走的是一棵空树
+	#   (`self` 那个时候一个子节点都没有)⇒ 等于什么也没做,却让后来读代码的人以为
+	#   "非工厂建的控件也被字体覆盖了"。今天看着没事纯粹是因为每个控件都经
+	#   `UiFactory.label`/`button`,而它们各自的 `style_control()` 已经设过字体 ——
+	#   也就是说开头那句是**在骗人**,不是在兜底。
+	UiFactory.apply_font_recursive(self)
+
 
 # 唯一入口。★ 缺键一律取默认:**绝不因为缺一个键就崩** —— 结算页崩了玩家就卡在对局里出不去。
 func show_result(payload: Dictionary) -> void:
 	_title_label.text = str(payload.get("title", ""))
 	_sub_label.text = str(payload.get("subtitle", ""))
 	_sub_label.visible = not _sub_label.text.is_empty()
+	# ★★ 清场必须**先 `remove_child` 再 `queue_free`**(与 `scenes/weapons/weapon_pickup.gd`
+	#    的 `configure()` 逐字同款)。只 `queue_free` 的话节点只是被**标记**,要到帧末才真的
+	#    没掉 —— 本帧剩下的时间里旧节仍然是 `_sections_box` 的子节点,于是:
+	#      ① 下面新加进来的 `Section0`/`Section1` **名字仍被占着** ⇒ Godot 给**新**节点自动
+	#         改名成 `Section0@2`/`Section1@2`(此后按名字取节点再也取不到);
+	#      ② 再往下那次 `get_combined_minimum_size()` 把**新旧两份一起**量进去 ⇒ 偏移量按
+	#         约两倍宽算,而布局一旦按它摆定就**不会重算** ⇒ 这一实例从此永久偏宽、偏离
+	#         (全程不报错)。
+	#    ★ 触发不是假设:3v3 的 `round_state` 会带**第二次** MATCH_OVER 载荷(新 mvp)进来。
+	#      `remove_child` 让名字当场释放,`get_children()` 里也就只剩还活着的那些。
 	for c in _sections_box.get_children():
+		_sections_box.remove_child(c)
 		c.queue_free()
 	var columns: Array = payload.get("columns", [])
 	var mvp: Dictionary = payload.get("mvp", {})
