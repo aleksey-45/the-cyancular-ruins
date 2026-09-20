@@ -17,6 +17,10 @@ const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
 }  # 与 player.gd Pose 枚举值一致
 
+# Pose.FLY 的值(= player.gd:103 的 `enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }`)。
+# 本类 extends Node2D、不继承 Player,引用不到那个枚举 —— 而下面按 pose 分支需要它。
+const POSE_FLY := 2
+
 # 幽灵体的姿态碰撞箱节点名:与 player.tscn / player.gd 的 POSE_NODE 逐字对应(同源,别改名)
 const POSE_SHAPE: Dictionary = {
 	0: "CollisionShape2D_stand", 1: "CollisionShape2D_move", 2: "CollisionShape2D_fly",
@@ -32,6 +36,17 @@ const HIT_FLASH_TIME := 0.35   # 受击闪烁时长(秒),闪烁频率对齐本�
 const HIT_FLASH_RATE := 20.0
 
 @onready var animator: AnimatedSprite2D = $AnimatedSprite2D
+
+# 补间形变(squash & stretch)。副本复用与本体同一个组件,数据换成快照。
+var squash: SquashStretch = null
+# 快照里的速度与姿态。`vel` **本来就在服务器载荷里**(server/match_snapshot.gd:20),
+# 副本此前只是没读它 —— 加这个字段是"客户端开始读一个已存在的字段",协议零改动。
+var _vel: Vector2 = Vector2.ZERO
+var _pose: int = 0
+# 上一帧的 vel.y。组件靠"上次在下落 + 现在已经落地"这一**对**值推导落地冲击,单看当前的
+# _vel.y 推不出来 —— 服务器在落地那一帧就把它清零了。与本体 "_pre_move_vy 配帧首
+# is_on_floor()" 是同款配对(见 spec §2.4)。
+var _prev_vel_y: float = 0.0
 
 var _weapon_slot_node: Node2D        # 武器挂点(运行时加,排在 AnimatedSprite2D 后 → 画在身体上层)
 var _weapon: Node2D = null           # 当前武器场景实例(惰性:未 equip,仅外观)
@@ -65,6 +80,9 @@ func _ready() -> void:
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
+	squash = SquashStretch.new()
+	squash.setup(animator, SquashStretch.Profile.PLAYER)
+	add_child(squash)
 
 # 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,
 # 只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 现抄。
@@ -110,6 +128,7 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_opponent_canonical = data["pos"]
 	_local_anchor = local_anchor
 	_have_data = true
+	_vel = data.get("vel", Vector2.ZERO)
 	_facing = 1 if int(data.get("facing", 1)) >= 0 else -1
 	var aim: Vector2 = data.get("aim", Vector2.ZERO)
 	_aim = aim if aim != Vector2.ZERO else Vector2(float(_facing), 0.0)
@@ -133,6 +152,7 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	else:
 		rotation = 0.0
 		var pose: int = clampi(int(data["pose"]), 0, POSE_SHAPE.size() - 1)
+		_pose = pose
 		animator.play(POSE_ANIM.get(pose, "idle"))
 		_set_ghost_pose(pose)
 	# ★ 幽灵体不随副本根节点的**视觉**转体而动。上面倒地分支给根节点设了 rotation = -90°,
@@ -202,3 +222,12 @@ func _process(delta: float) -> void:
 			modulate.a = 1.0
 	elif modulate.a != 1.0:
 		modulate.a = 1.0
+	# 补间形变。放在 _process 而不是 apply_snapshot:后者没有 delta,而本函数是副本的
+	# **表现层时钟**(插值推进与受击闪烁衰减都在这儿)。挂在快照回调上会与插值产生拍频。
+	# ★ 参数必须**成对**:on_floor 取**当前**姿态,vel_y 取**上一帧**的值。这与本体
+	#   "_pre_move_vy 配帧首 is_on_floor()" 是同款配对 —— 组件内部的落地判据是
+	#   `on_floor and vel_y > squash_land_min_vy`,若把当前的 _vel.y 传进去,落地那一帧
+	#   服务器已经把它清零了,挤压**永远不会触发**。
+	var on_floor := (not _downed) and _pose != POSE_FLY
+	squash.tick(delta, _prev_vel_y, on_floor, _downed)
+	_prev_vel_y = _vel.y
