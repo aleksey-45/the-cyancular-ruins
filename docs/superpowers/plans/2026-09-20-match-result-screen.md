@@ -560,6 +560,8 @@ func _build_section(sec: Dictionary, idx: int, columns: Array, mvp: Dictionary) 
 ```
 
 ★ `_ready()` 里**不显示**自己(`visible` 默认 true,但内容为空)⇒ 调用方 `add_child` 之后立刻 `show_result()`。若你发现空窗可见，在 `_ready()` 末尾加 `visible = false` 并在 `show_result()` 里置 true —— **但探针要断言"空载荷不崩"仍然成立**。
+★★ **`show_result()` 的清理必须 `remove_child` 再 `queue_free`**(与 `WeaponPickup.configure` 同款纪律):只 `queue_free` 的话旧节在本帧余下时间仍是子节点 → ① Godot 把新加的 `Section0` **自动改名**成 `Section0@2`(名字还被占着),② 随后那次 `get_combined_minimum_size()` **把两份一起算**,面板被设成约两倍宽且**此后再不重算**。触发点是真实存在的:3v3 的 `round_state` 可能在 MATCH_OVER 之后再广播一条带新 `mvp` 的终局载荷(见 CLAUDE.md §逐人数据/ACS/MVP 边界 ②)。
+★ **探针也用 `.tscn` 实例化**(不是 `MatchResult.new()`)—— 与生产同一条构造路径,否则 `layer` 这类「只写在场景里」的值探针**照不到**;并补一条 `layer == 150` 断言。
 
 - [ ] **Step 3: 写场景探针(取图 + 信号防重入)**
 
@@ -735,13 +737,19 @@ var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载
 函数加在文件里合适的位置:
 
 ```gdscript
+# ★★ 必须走**场景实例化**,不能用 `MatchResult.new()`:`layer = 150` **只写在
+#   `ui/match_result.tscn` 里**(脚本不设 layer —— 三个现有 HUD 同款写法,层位值只有那
+#   一处来源)。用 `.new()` 会拿到 CanvasLayer 默认的 **layer 1**,结算页画在 HUD(130)/
+#   小地图(131) **下面**、压暗罩盖不住它们,而计划自己的类头注释却写着「盖住一切」。
+const RESULT_SCENE := preload("res://ui/match_result.tscn")
+
 # 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
 # 各自只覆写 `_build_result_payload()`。
 # ★ 挂载幂等(`_result != null` 早退):round_state 可能不止一条 MATCH_OVER。
 func _show_result() -> void:
 	if _result != null:
 		return
-	_result = MatchResult.new()
+	_result = RESULT_SCENE.instantiate()
 	add_child(_result)
 	_result.leave_requested.connect(_leave_to_main_menu)
 	_result.show_result(_build_result_payload())
