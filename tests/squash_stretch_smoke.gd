@@ -83,15 +83,38 @@ func _initialize() -> void:
 	_ok(absf((f[1] as AnimatedSprite2D).scale.x - 1.0) < 0.001,
 			"60 帧后回归到 <0.001,实测 %.6f" % absf((f[1] as AnimatedSprite2D).scale.x - 1.0))
 
-	# ⑦ 多事件叠加不爆:同时起跳 + 冲刺 + 落地大冲击,仍不得越过 amount 上限
+	# ⑦ 多事件叠加不爆:同时起跳 + 冲刺,再叠空中项 —— 三条正项叠加必须被**钳在 +1.0 上限**
+	#    ★ 这里刻意**不走满力落地那一拍**(on_floor=false):落地项是 `-1.0`,会把饱和的
+	#    `+1.0` 原样抵消 → v 落到 0,断言就退化成"读一个 0",删掉组件里两处 clampf 也照样绿。
+	#    改成"停在钳位处"之后,删 clampf 才会真红(下面两条互补)。
 	var g: Array = _mk()
-	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)
-	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)
-	(g[0] as SquashStretch).tick(DT, 2000.0, true, false)
+	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)   # +0.75
+	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)   # +0.80 → 饱和到 +1.0
+	(g[0] as SquashStretch).tick(DT, -700.0, false, false)        # 空中项再叠 +0.30:未钳位时 v≈1.16
 	var gs: Vector2 = (g[1] as AnimatedSprite2D).scale
 	_ok(absf(gs.x - 1.0) <= PlayerParams.squash_amount + 0.0001
 			and absf(gs.y - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"多事件叠加不越上限,实测 %s" % str(gs))
+	# 且必须是"顶在上限上"而不是"被抵消回中性" —— 上一条若退化回抵消,这里立刻红
+	_ok(_near(gs.x, 1.0 + PlayerParams.squash_amount, 0.001),
+			"叠加确实停在钳位处(v=+1.0),实测 %.4f" % gs.x)
+
+	# ⑦b 饱和的**语义**守卫:同一组事件叠两次,结果必须与叠一次完全相同
+	#     (impulse() 的钳位让第二组落在同一个饱和点)。只删 impulse() 里那个 clampf 时,
+	#     两组各自累积到 1.55 / 3.10,再被同一次落地冲击减掉同一个值 → 两者分叉 = 红。
+	var g1: Array = _mk()
+	(g1[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)
+	(g1[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)
+	(g1[0] as SquashStretch).tick(DT, 2000.0, true, false)
+	var g2: Array = _mk()
+	for i in 2:
+		(g2[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)
+		(g2[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)
+	(g2[0] as SquashStretch).tick(DT, 2000.0, true, false)
+	var s1: Vector2 = (g1[1] as AnimatedSprite2D).scale
+	var s2: Vector2 = (g2[1] as AnimatedSprite2D).scale
+	_ok(_near(s1.x, s2.x, 0.0005),
+			"叠加饱和:叠两次与叠一次同值,实测 %s" % (str(s1) + " vs " + str(s2)))
 
 	# ⑧ suppressed → 立刻中性(倒地)
 	var h: Array = _mk()
