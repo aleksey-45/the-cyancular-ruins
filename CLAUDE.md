@@ -106,6 +106,53 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **`core/sim/unstick.gd`(`Unstick`,静态:把压进实心格的矩形**向上挤出去**)**:`push_up_dy(rect, ts, max_cells) -> float` 返回**刚好清空**所需的最小位移(0 = 没卡住),逐格向上找第一个整框清空的位置 —— **不是整格跳**(一格 64px,轻嵌就弹一整格很突兀,也让"落点与何时开始模拟无关"更难对)。格范围骨架仍走 `TileQuery.topmost_solid_row()`(新加,住在 `tile_query.gd` —— 那套"floori 两端 + 逐格 posmod"全项目只此一份)。★ **探测矩形四边内缩 `PROBE_INSET`(0.5px)不是可选项**:`floori(rect.end / ts)` **含端点**,一个正好 64 宽、正好对齐格线的矩形会把右边那一列也算进去 —— 那一列是墙的话会每帧判成"卡住"往上弹。当前唯一调用方是 `WeaponPickup._physics_process`(两处:`move_and_slide` 之后**以及 `_settled` 的早退分支里** —— 停稳后 `move_and_slide` 再也不跑,被后盖上的可破坏砖压住会**永久钉死**,那是解卡唯一能救回它的地方)。几何走 `CollisionAabb.world_rect`。飞鸟的"向下逃逸"是另一套(方向相反、且只在 A* 空路径时触发),本次**没动**。守卫:`tests/unstick_smoke.gd`(`-s`,含"正好对齐贴墙不算卡"这条钉内缩的用例)。
 - **世界构建**:`core/sim/world_builder.gd`(`class_name WorldBuilder`,静态):`load_grid()`(地图→current_grid/TileDefs/地图像素尺寸)、`build_sim(parent, grid)`(碰撞:永久墙+可破坏分块+攀爬基座条)。单人 Level0 与 PvP 客户端/服务器共用。
 
+### 补间形变(squash & stretch)
+`scenes/effects/squash_stretch.gd`(`class_name SquashStretch extends Node`)—— 纯表现层组件,
+挂到玩家 / 三只敌鸟 / 对手副本上,**只写 `animator.scale`**。计算模型是两个标量相加:
+`_air`(每帧由 `vel_y` 重算,无状态)+ `_impulse`(事件累加 + `MathUtil.approach` 指数回归)。
+**单标量**是刻意的 —— "冲刺中落地""起跳瞬间被击中"这类同时事件天然叠加,不需要优先级状态机。
+幅度上限 `squash_amount` = **0.10**(用户裁定"不要太夸张"),`v` 钳在 `[-1,1]` 故永不越界。
+★ **落地挤压由 `vel_y` 无状态推导**,不需要 `_was_on_floor`:宿主在 `is_on_floor()` 时不施重力,
+故地面上 `vel_y` 恒 0 → `on_floor && pre_move_vy > 200` 只在落地那一帧成立。与之配套,
+宿主必须在 `move_and_slide()` **之前**缓存 `_pre_move_vy`(它与帧首的 `is_on_floor()` 配对,
+二者描述同一时刻)。敌人侧状态事件走 `_on_state_entered(s)` 虚钩 —— 三只鸟各有自己的
+`enum State`(JumpBird 没有 TAKE_OFF),基类不能硬编码状态名。
+★ **纯视觉:不进 `capture_state()`/`restore_state()`、不碰碰撞箱。** 玩家侧 `tick` 放
+`_physics_process` **最首行**(倒地早退之前),否则倒地后 scale 会卡在最后一个形变值上;
+敌人侧同理(放 `_is_far_sleeping()` 早退之前)。
+★ **倒地必须 `suppressed = true`**:副本给根节点设了 `rotation = -90°`,而 animator 是其
+**子节点** → 此时写 `scale` 会沿**转过的轴**挤压,尸体横着变宽。本地玩家虽不旋转,但两端
+行为要一致、且尸体不该有弹性。
+★ **已知边界(登记不修)**:`prediction_rollback.gd:114` 的重放是**直接调 `_physics_process`**,
+而 `_impulse` 不在 `capture_state()` 里 → 回滚时挤压包络会**重播一次**。纯视觉、幅度 ±10%,
+表现是"弹一下";要修就得把纯视觉状态塞进权威态,那是更坏的选择。`_air` 项无状态,不受影响。
+守卫:`tests/squash_stretch_smoke.gd`(`-s`,九相纯逻辑)+ `tests/squash_stretch_probe.tscn`
+(真渲染,含"形变不得改变全局位置"与"形变不碰碰撞箱"两条硬约束断言 + **像素级方向断言**,
+并取图供人眼验收 —— 图**自己读**,别推回给用户)。
+★ **对手副本**复用同一个组件,数据从快照的 `vel`/`pose` 本地推导 —— `vel` 本来就在载荷里
+(`server/match_snapshot.gd:20`),只是副本此前没读,**协议零改动**。副本**不做受击挤压**
+(快照里没有受击事件,从 `hp` 下降推会在 AoE 多段伤害时误触发)。tick 放副本的 `_process`
+而非 `apply_snapshot`:后者没有 `delta`,而 `_process` 是副本的表现层时钟(插值推进与受击
+闪烁衰减都在那儿),挂快照回调会与插值产生拍频。
+★★ **副本的落地判据是「两半」,`pose != FLY` 那一半单独不够**:副本没有物理,`on_floor` 是
+**推导**出来的(`(not _downed) and _pose != POSE_FLY and absf(_vel.y) < LAND_VEL_EPS`)。`pose`
+只是"站在地上"的**代理**,它在**水中下沉**(姿态被强制成 MOVE/STAND,而 `vel.y` 恒为
+`player_swim_down` = 320)与**空中冲刺**(本体把 `is_charge` 判在 `not is_on_floor()` **之前**,
+故下落途中起步的冲刺给出的姿态就非 FLY)两种状态下**同样为真、而 `vel.y` 并不趋于 0** ——
+只看代理会让落地项每帧重触发,把对手压成持续/反向的形变(本体在那两种状态里都是中性的)。
+★ 水项用**客户端本地网格查询**(`_in_water()`,`Water.is_in_water(脚底)`,脚底偏移一次性从
+幽灵体量出)**而不是协议字段**:本体的 `in_water` 本身就是纯位置网格查询,客户端有同一张图。
+注:爬梯那一半**刻意不补**(客户端手里只有无状态的位置代理,对"路过梯子"会误触发,那是
+引入本体从不显示的新形变),残留如实登记为 2.5~3.0% / ~6.3%。
+守卫:**`tests/squash_replica_probe.tscn`**(四相,断言全落在 `animator.scale` 上:水中下沉
+全程中性 / 干地真落地仍挤压(反例)/ 落地判据两半都在 / 倒地强制中性)。四相各配一条**具名
+变异**且已验证"只打红自己那一相":删 `_in_water()` → 相①(复现 `scale = 0.986286`)、
+值来源换回当前 `_vel.y` → 相②(`scale.x == 1.000000`)、删 `absf(_vel.y) < LAND_VEL_EPS` → 相③、
+`suppressed` 传 false → 相④。★ 相④ 的前提态**刻意取空中连续项而非落地冲击** —— 后者正是相②
+那处变异动的东西,拿它当前提会让两相被同一个变异一起打红。另一层守卫
+`tests/squash_host_water_probe.tscn` 驱动**玩家本体**(合成网格 + 真 player.tscn + 真物理),
+钉 `_pre_move_vy = 0.0 if (in_water or latched) else velocity.y` 那个谓词。
+
 ### UI(界面)
 
 2026-09-13 做过一轮视觉评析并落地,以下几条是**现在的约定**,改界面前先看这里。
