@@ -96,26 +96,9 @@ static func _plate_box(pad_x: float, pad_y: float) -> StyleBoxFlat:
 	return sb
 
 
-# 昵称**定宽**成一列:按显示宽度(汉字/全角算 2 个半角单位)截断,超出补 …,
-# 不足的用半角空格补满。截断保证后面的状态段不被顶出面板;补满让「击杀/阵亡/状态」
-# 三列在行与行之间纵向对齐(不补的话短昵称那几行的列是错开的,整块读起来是一堆居中字)。
-# 单位宽度按字体算:拉丁走 8x16 的 DOS 位图(半角 8px),汉字走 16px 网格的 Unifont ——
-# 在 32px 字号下半角 16px、全角 32px,故「1 单位 = 半角字符宽」成立。
+# 昵称**定宽**成一列(实现在 UiFactory.fit_name,结算页共用同一份口径)。
 static func _fit_name(s: String, max_units: int) -> String:
-	var units := 0
-	var out := ""
-	for i in s.length():
-		var w := 2 if s.unicode_at(i) > 0x2E80 else 1
-		if units + w > max_units:
-			out += "…"
-			units += 1
-			break
-		units += w
-		out += s[i]
-	while units < max_units:
-		out += " "
-		units += 1
-	return out
+	return UiFactory.fit_name(s, max_units)
 
 
 func _make_label(size: int, color: Color) -> Label:

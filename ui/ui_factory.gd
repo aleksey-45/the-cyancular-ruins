@@ -52,6 +52,29 @@ static func label(text: String, size: int, color: Color = Color.WHITE) -> Label:
 	return l
 
 
+# 昵称**定宽**成一列:按显示宽度(汉字/全角算 2 个半角单位)截断,超出补 …,
+# 不足的用半角空格补满。截断保证后面的列不被顶出面板;补满让各列在行与行之间纵向对齐。
+# 单位宽度按字体算:拉丁走 8x16 的 DOS 位图(半角 8px),汉字走 16px 网格的 Unifont ——
+# 在 32px 字号下半角 16px、全角 32px,故「1 单位 = 半角字符宽」成立。**换字体要重算 max_units。**
+# ★ 2026-09-20 从 royale_hud 提上来(结算页也要用):两处各留一份的话,
+#   改截断口径时必然只改一处,而漏改**不报错**,只是列错位。
+static func fit_name(s: String, max_units: int) -> String:
+	var units := 0
+	var out := ""
+	for i in s.length():
+		var w := 2 if s.unicode_at(i) > 0x2E80 else 1
+		if units + w > max_units:
+			out += "…"
+			units += 1
+			break
+		units += w
+		out += s[i]
+	while units < max_units:
+		out += " "
+		units += 1
+	return out
+
+
 # ── 调色板(全项目 UI 配色的唯一来源)──
 #
 # 2026-09-13 视觉评析:此前每个界面各自硬编码 Color(...),同一屏里能同时出现 6 种
