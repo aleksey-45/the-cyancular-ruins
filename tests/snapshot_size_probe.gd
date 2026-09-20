@@ -58,7 +58,7 @@ func _ready() -> void:
 
 	var thin := _entry_world_thin()
 	var sz_thin := var_to_bytes(thin).size()
-	print("[size] 世界包瘦身版(短键 + 去掉副本不消费的 vel/waterproof)= %d B/人" % sz_thin)
+	print("[size] 世界包瘦身版(短键 + 不带 vel/waterproof 的值)= %d B/人" % sz_thin)
 
 	print("[size] ── N=2..8 折算(单帧载荷 / 每秒单端下行 / 服务器每秒上行)──")
 	print("[size]  N |   现方案:单帧载荷  单端下行  服务器上行 | 新方案:本人包  世界包  单端下行  服务器上行")
@@ -120,6 +120,11 @@ func _entry_render_only() -> Dictionary:
 #
 # pose/facing/weapon/aim/hp/downed/previewing 全部保留(副本 + 头顶血条在用);previewing 仍按
 # "只发不用"保留(它是日后换成音效/轮廓提示的接点,见 player_replica 的注释)。
+#
+# ※ 打印标签的措辞(2026-09-20 订正):下面那行原先写「去掉副本不消费的 vel/waterproof」——
+#   ① `vel` **不再**是"副本不消费的"(见上);② "去掉"对本字典也不准确:vel 的键整个不在,
+#   而尾部 `"v": false` 是一个**键在、值不实**的占位键。故标签改写成「不带 vel/waterproof 的
+#   **值**」,这才是本字典真正做的事(它给出的仍是**下界**,见上)。
 func _entry_world_thin() -> Dictionary:
 	var p := _player
 	return {

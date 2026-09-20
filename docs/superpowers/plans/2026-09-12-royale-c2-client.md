@@ -1295,6 +1295,14 @@ func _apply_local_state(data: Dictionary) -> void:
 # 故世界包不必再带 vel。
 ```
 
+> ⚠ **注记(2026-09-20;只加注记,不改上面的原文)**:这一步的结论**已被取代** —— `vel` 现在**有消费者**:
+> `player_replica` 的补间形变(squash & stretch)读 `vel.y`(空中连续项直接用它,落地推导还要
+> 「上一帧 `vel.y` 大 / 这一帧 ≈ 0」这一**对**值)。⇒ **`vel` 不得从载荷里去掉**;去掉会**静默**关掉
+> 对手的形变与落地效果(不报错、探针也不会红 —— 那个探针只打印、不断言 `vel` 的去留)。
+> 上面那段推理在**当时**成立(2026-09-12:`apply_server_snapshot` 刚删、副本还没读 `vel`),故原文**保留不动**;
+> 要动载荷请先读 `tests/snapshot_size_probe.gd` 顶部那段说明与
+> `docs/superpowers/specs/2026-09-20-squash-stretch-design.md` §4.3。
+
 - [ ] **Step 4: 全仓 grep 确认删干净**
 
 Run:

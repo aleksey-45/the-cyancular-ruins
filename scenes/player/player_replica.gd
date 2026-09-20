@@ -26,6 +26,23 @@ const POSE_FLY := 2
 # 本体那份由物理保证(地面上 velocity.y 恒 0),副本没有物理,必须显式判。
 const LAND_VEL_EPS := 1.0
 
+# 脚底探针偏移(世界 px):水中查询要与本体同口径 —— 本体走 `Water.is_in_water(脚底)`,
+# 脚底 = 原点 + `Water.feet_offset(自己)`。取值在 _ready 里**一次性**问幽灵体(见下)。
+# ★ 为什么一次性问幽灵体、而不是写死一个数:幽灵体的 5 份姿态多边形是从 player.tscn **现抄**的、
+#   根同样是 scale 2.5 ⇒ `to_global` 出来的底边与本体逐像素相同(实测 stand = 57.0)。写死数会随
+#   player.tscn 的碰撞箱改动**静默漂**(水花线那种"看着没事、其实偏了"的错)。
+# ★ 为什么是**常量**而不是逐帧按姿态重算:本体那边实际也是常量 —— `Water.feet_offset` 的缓存
+#   签名只数 `CollisionShape2D` 子节点(water.gd:_feet_signature),而玩家 5 份姿态箱全是
+#   `CollisionPolygon2D`(player.tscn)⇒ 签名恒为 0、缓存永不失效 ⇒ 逐帧问与问一次同值。
+# ★ 与本体那 1px 的差(如实登记):本体**首帧**调用时 5 个姿态箱在场景里全是启用态
+#   (player.tscn 不带 disabled,而 `swim.update` 排在 `_tick_pose_and_collision` **之前**)
+#   ⇒ 它缓存的是**5 箱合并**底边 = 58.0;副本这里是幽灵体当时启用的 stand 那一份 = 57.0。
+#   差 1px。**刻意不去逐像素对齐它**:那等于把本体的缓存口径抄进第二个地方,而那份缓存哪天
+#   被修成"跟着姿态走"时,抄来的 58 会朝**反**方向漂 1px。57 才是 feet_offset 的语义值
+#   ("启用中的碰撞箱底边")。1px 在 64px 量化的格查询里最多让判据在下沉的一帧内(320px/s
+#   ≈ 5.3px/帧)提前/延后一次,可感度为零。
+var _water_feet_off: float = 24.0   # 24 = Water.feet_offset 的兜底值(幽灵体取不到时同款)
+
 # 幽灵体的姿态碰撞箱节点名:与 player.tscn / player.gd 的 POSE_NODE 逐字对应(同源,别改名)
 const POSE_SHAPE: Dictionary = {
 	0: "CollisionShape2D_stand", 1: "CollisionShape2D_move", 2: "CollisionShape2D_fly",
@@ -82,6 +99,9 @@ func _ready() -> void:
 	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
 	_build_ghost_body(tmp)
 	tmp.free()
+	# 脚底探针偏移:一次性问幽灵体(_build_ghost_body 把 stand 那份多边形留作启用态,
+	# 与本体首次调用 feet_offset 时的姿态一致)。详见 _water_feet_off 的说明。
+	_water_feet_off = Water.feet_offset(_ghost) if _ghost != null else 24.0
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
@@ -204,6 +224,20 @@ func _drive_weapon_visual() -> void:
 		return
 	_weapon.drive_remote_visual(_aim, _facing)
 
+# 对手此刻是否在水中(**脚底**探针,与本体同口径 —— 本体在 swim_component.update 里同样取
+# `Water.is_in_water(脚底)`)。
+# ★ 这一格**不需要协议字段**:本体的 `in_water` 本身就是**纯位置网格查询**(swim_component.gd
+#   读 `MazeGenerator.current_grid`,而 PvP 客户端也建同一张图 —— `WorldBuilder.load_grid` 三处
+#   共用),故副本在客户端跑同一查询即可:零载荷字段、零 RPC、零服务器改动。
+# ★ 位置用渲染用的 `global_position`(已锚到最近副本、可能不在 [0,MAP))**是安全的**:
+#   `Water.is_in_water` → `GridPathfinder.cell_of` 两端都 `posmod`,而 MAP_WIDTH/HEIGHT 由
+#   `GameParameters.refresh_map_size()` 按 `格数 × TILE_SIZE` 算出 ⇒ 恒为 64 的整数倍 ⇒
+#   整幅平移一个副本后落回**同一格**(实测:锚到非 canonical 副本与 canonical 查询同值)。
+func _in_water() -> bool:
+	var gp := global_position
+	return Water.is_in_water(Vector2(gp.x, gp.y + _water_feet_off))
+
+
 func _process(delta: float) -> void:
 	if _have_data:
 		_drive_weapon_visual()
@@ -249,5 +283,20 @@ func _process(delta: float) -> void:
 	#     (见上),故必须加回。**别删第三次。**
 	var on_floor := (not _downed) and _pose != POSE_FLY \
 			and absf(_vel.y) < LAND_VEL_EPS
-	squash.tick(delta, _prev_vel_y, on_floor, _downed)
+	# ★ 水中:本体在 player.gd 把落地候选清零(`_pre_move_vy = 0.0 if (in_water or latched)`),
+	#   故本体游泳时**精确中性**;副本此前没有这一项 ⇒ 下沉期间空中连续项恒成立
+	#   (`clamp(320/700) × 0.30 ≈ 0.137`,`320` = `PlayerParams.player_swim_down`,一个常量)
+	#   → 对手下沉的全过程恒带 ~1.37% 拉伸(= scale (0.9863, 1.0137)),而本体是 1.0000。
+	#   ★ 消掉它**不需要协议字段**(旧记录称"要归零就得加字段",已作废):本体的 in_water
+	#     本身就是纯位置网格查询,客户端有同一张图 —— 见 _in_water()。
+	# ★ 爬梯那一半**刻意不在这里补**:本体的 `latched` 是**闩锁**,客户端手里只有无状态的位置
+	#   代理("中心/脚底落在通道格"),拿它当判据会对"路过梯子/贴梯走过"误触发 ⇒ 那是**引入
+	#   一类本体从不显示的新形变**,比留着残留更坏(用户裁定:本轮只修水中那一半)。
+	#   残留据此**如实登记**(spec §4.3):空中爬梯持续 2.5~3.0% 拉伸、梯底停下那一下 ~6.3% 挤压。
+	var vel_y := _prev_vel_y
+	if _in_water():
+		vel_y = 0.0
+	squash.tick(delta, vel_y, on_floor, _downed)
+	# ★ `_prev_vel_y` 记的是**原始** `_vel.y`(与本体记原始 velocity.y 同款):过滤只发生在
+	#   **传参那一刻**,出水的下一帧宿主也立刻回到原始值,故两侧同相位。
 	_prev_vel_y = _vel.y
