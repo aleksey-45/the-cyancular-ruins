@@ -1,6 +1,6 @@
 extends Control
 
-# 对局内 HUD(PvpHud / RoyaleHud)视觉验收探针(**必须带真实渲染,不能加 --headless**)。
+# 对局内 HUD(PvpHud / RoyaleHud / TeamHud)视觉验收探针(**必须带真实渲染,不能加 --headless**)。
 #   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
 #     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
 #     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
@@ -11,6 +11,8 @@ extends Control
 #   _hud_2_pvp_broadcast.png 1v1 中央广播(倒计时巨字)
 #   _hud_3_royale_board.png 大乱斗排行榜(4 行:自己/他人/复活中/离开)
 #   _hud_4_royale_over.png  大乱斗终局广播
+#   _hud_5_team_playing.png 3v3 记分条(scores/rounds_won 的键是**队号**,不是 role)
+#   _hud_6_team_tie.png     3v3 终局**平局**广播(match_winner == 0 —— 3v3 特有的可达值)
 # PNG 落 res://.superpowers/sdd/(该目录自带 .gitignore = *,不入库)。
 #
 # ★ 背景故意铺**地图开阔区的浅灰蓝**(#78969F),不是深色底:
@@ -21,6 +23,7 @@ const MAP_OPEN_COLOR := Color(0.47, 0.588, 0.624)   # ≈#78969F,实测取的地
 const OUT_DIR := "res://.superpowers/sdd"
 const PVP_HUD_SCENE := "res://ui/pvp_hud.tscn"
 const ROYALE_HUD_SCENE := "res://ui/royale_hud.tscn"
+const TEAM_HUD_SCENE := "res://ui/team_hud.tscn"
 
 var _failures: Array[String] = []
 
@@ -48,6 +51,11 @@ func _run_round() -> void:
 	var royale: RoyaleHud = (load(ROYALE_HUD_SCENE) as PackedScene).instantiate() as RoyaleHud
 	add_child(royale)
 	royale.visible = false
+	# 3v3 那一套同样**先建后藏**:它 _ready 就会弹出「对战开始」广播,不藏会串进态1~4 的取图
+	# (那 4 张是既有基线,本探针加 TeamHud 时必须逐字不变)。
+	var team: TeamHud = (load(TEAM_HUD_SCENE) as PackedScene).instantiate() as TeamHud
+	add_child(team)
+	team.visible = false
 	await _frames(3)
 
 	# ── 态1:1v1 PLAYING ──
@@ -98,8 +106,32 @@ func _run_round() -> void:
 	var img4 := await _shot("_hud_4_royale_over.png")
 	_check(_bright_in(img4, royale._big) > 0, "态4:终局大字画出来了")
 
-	# ── 四态两两不同(证明"切了状态"而不是"拍了四张一样的")──
-	for pair in [[img1, img2, "1→2"], [img2, img3, "2→3"], [img3, img4, "3→4"]]:
+	# ── 态5:3v3 记分条(scores/rounds_won 的键是**队号**)──
+	royale.visible = false   # 收起大乱斗那一套(含它的终局广播),只留 3v3 这套
+	team.visible = true
+	team.set_my_team(1)      # 外部在 match_sync 到达后写入;两队的文案都按它判"我方/对方"
+	team._on_round_state({"state": 1, "round": 2, "scores": {1: 4, 2: 6},
+			"rounds_won": {1: 1, 2: 0}, "timer": 0.0})
+	team._on_ping(48)
+	await _frames(2)
+	var img5 := await _shot("_hud_5_team_playing.png")
+	_check(_bright_in(img5, team._score_label) > 0, "态5:3v3 记分条画出了文本")
+	print("[HUD-VISUAL] 态5 记分条 = 「%s」" % team._score_label.text)
+
+	# ── 态6:3v3 终局**平局**(match_winner == 0)──
+	# ★ 0 在 3v3 是**新可达值**(两队都走光),而 pvp_hud 对 0 用的是 1v1 口径的兜底
+	#   (`"P%d 获胜!" % (1 if w1 > w2 else 2)`)⇒ 照抄会把平局念成「P2 获胜」。本相钉的就是文案。
+	team._on_round_state({"state": 3, "round": 3, "scores": {1: 12, 2: 11},
+			"rounds_won": {1: 1, 2: 1}, "match_winner": 0, "timer": 0.0})
+	await _frames(2)
+	var img6 := await _shot("_hud_6_team_tie.png")
+	_check(_bright_in(img6, team._big) > 0, "态6:3v3 终局大字画出来了")
+	_check(team._big.text.contains("平"), "态6:平局文案是「平 局」(照抄 1v1 的 P%d 兜底会把平局念成「P2 获胜」)")
+	print("[HUD-VISUAL] 态6 终局大字 = 「%s」/ 副文案 = 「%s」" % [team._big.text, team._sub.text])
+
+	# ── 各态两两不同(证明"切了状态"而不是"拍了六张一样的")──
+	for pair in [[img1, img2, "1→2"], [img2, img3, "2→3"], [img3, img4, "3→4"],
+			[img4, img5, "4→5"], [img5, img6, "5→6"]]:
 		var d := _diff(pair[0], pair[1])
 		_check(d > 500, "态%s 画面有差异(%d)" % [pair[2], d])
 		print("[HUD-VISUAL] 态%s 像素差异 = %d" % [pair[2], d])
@@ -107,6 +139,7 @@ func _run_round() -> void:
 	bg.queue_free()
 	pvp.queue_free()
 	royale.queue_free()
+	team.queue_free()
 	await _frames(2)
 
 

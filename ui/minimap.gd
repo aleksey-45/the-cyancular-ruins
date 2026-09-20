@@ -3,7 +3,7 @@ extends CanvasLayer
 
 # 小地图(可选视觉,实验分支 KikuchiHeinr):**以玩家为中心**的圆形视野。
 # 地形由 ui/minimap_circle.gdshader 画圆(圆外直接 discard),敌人点只在圆内
-# (世界距离 ≤ RANGE_CELLS 格)才显示。由 pvp_client / royale_game 按设置挂载。
+# (世界距离 ≤ RANGE_CELLS 格)才显示。由 pvp_client / royale_game / team_game 按设置挂载。
 #
 # ★ 环面:地形靠采样器 repeat_enable 免费回绕;敌人距离走 toroidal_delta_px 的
 #   最短向量 —— 玩家在接缝附近时,地图另一头的敌人**其实就在身边**,直接相减会
@@ -39,6 +39,10 @@ var _local_provider: Callable = Callable()   # () -> Vector2 本地玩家世界�
 var _enemy_provider: Callable = Callable()   # () -> Vector2 对手世界坐标(INF=无)
 # 多目标模式(大乱斗):others_provider () -> Array[Vector2],按需扩点位池
 var _others_provider: Callable = Callable()
+# 多目标模式(3v3)的可选**颜色**提供器:() -> Array[Color],与 _others_provider 的返回**同序**。
+# ★ 可选:1v1 / 大乱斗不传它 → 默认 Callable() = 不回填颜色,点位保持 ENEMY_COLOR,
+#   两者的行为**逐字不变**(见 setup_multi 的第三参默认值)。
+var _color_provider: Callable = Callable()
 var _mat: ShaderMaterial = null
 var _rect_pos := Vector2.ZERO
 var _dot_self: ColorRect
@@ -51,10 +55,15 @@ func setup(local_provider: Callable, enemy_provider: Callable) -> void:
 	_enemy_provider = enemy_provider
 
 
-# 大乱斗多目标版:others_provider 返回全部对手世界坐标数组
-func setup_multi(local_provider: Callable, others_provider: Callable) -> void:
+# 多目标版(大乱斗 N 人 / 3v3 六人):others_provider 返回全部对手世界坐标数组。
+# ★ color_provider 是**可选**第三参(3v3 分队上色用):返回与 others **同序**的颜色数组。
+#   不传 = `Callable()` = 一律 ENEMY_COLOR —— 1v1(setup)与 大乱斗(setup_multi 两参)的
+#   调用点一个字都没改,行为逐字不变。
+func setup_multi(local_provider: Callable, others_provider: Callable,
+		color_provider := Callable()) -> void:
 	_local_provider = local_provider
 	_others_provider = others_provider
+	_color_provider = color_provider
 
 
 func _ready() -> void:
@@ -133,11 +142,16 @@ func _process(_delta: float) -> void:
 	_dot_self.position = _circle_center() - _dot_self.size * 0.5
 
 	if _others_provider.is_valid():
-		# 多目标(大乱斗):按需扩池,显隐随设置 + 范围
+		# 多目标(大乱斗 / 3v3):按需扩池,显隐随设置 + 范围
 		var others: Array = _others_provider.call()
+		# ★ 队色每帧回填(不是建点时定色):match_sync 到得比小地图晚,建点时还拿不到队色。
+		var cols: Array = _color_provider.call() if _color_provider.is_valid() else []
 		while _other_dots.size() < others.size():
+			# 池子里的点建出来时先给默认色,颜色每帧可覆盖
 			_other_dots.append(_make_dot(ENEMY_COLOR))
 		for i in range(_other_dots.size()):
+			if i < cols.size():
+				(_other_dots[i] as ColorRect).color = cols[i]
 			_place_enemy_dot(_other_dots[i], others[i] if i < others.size() else Vector2.INF, p, w, h)
 		return
 	if _dot_enemy != null and _enemy_provider.is_valid():

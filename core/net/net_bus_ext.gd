@@ -109,6 +109,61 @@ func royale_rooms(rooms: Array) -> void:
 func royale_room_state(state: Dictionary) -> void:
 	local_royale_room_state.emit(state)
 
+# ── 3v3 团队大厅(与 1v1 / 大乱斗三套协议并存;RPC 名不同互不干扰)──
+# ★ 命名纪律:一律带 `team_` 前缀。既避开 NetBus 的方法表(硬纪律),也避开 royale_*(同名 = 挂错节点
+#    = 静默 no-op,beam_fired 那个先例)。
+# ★ 选边(`team_pick`)是 3v3 独有的上行:队伍**不由服务器推导**(role 号有空洞),玩家自己点。
+
+signal team_create_requested(caller: int, opts: Dictionary)
+signal team_join_requested(caller: int, code: String, invite: String)
+signal team_pick_requested(caller: int, team: int)
+signal team_leave_requested(caller: int)
+signal team_start_requested(caller: int)
+signal team_list_requested(caller: int)           # 客户端请求公开 3v3 房间列表(照 royale_list 那一对)
+signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:公开 3v3 房间列表
+signal local_team_room_state(state: Dictionary)   # 大厅 → 客户端:房间实时状态(等待室/选边)
+
+# 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String}
+@rpc("any_peer", "reliable")
+func team_create(opts: Dictionary) -> void:
+	team_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
+
+# 客户端 → 大厅:加入(私密房须带邀请码)
+@rpc("any_peer", "reliable")
+func team_join(code: String, invite: String) -> void:
+	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite)
+
+# 客户端 → 大厅:选边(team = 1 或 2)。该队已满 → 大厅回 server_message 拒绝
+@rpc("any_peer", "reliable")
+func team_pick(team: int) -> void:
+	team_pick_requested.emit(multiplayer.get_remote_sender_id(), team)
+
+# 客户端 → 大厅:退出所在 3v3 房间(开局前)
+@rpc("any_peer", "reliable")
+func team_leave() -> void:
+	team_leave_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端 → 大厅:房主请求开局(**两队各 3 人**才允许;服务端再判一次)
+@rpc("any_peer", "reliable")
+func team_start() -> void:
+	team_start_requested.emit(multiplayer.get_remote_sender_id())
+
+# 客户端 → 大厅:请求公开 3v3 房间列表(大厅回 team_rooms)
+@rpc("any_peer", "reliable")
+func team_list() -> void:
+	team_list_requested.emit(multiplayer.get_remote_sender_id())
+
+# 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
+@rpc("authority", "reliable")
+func team_rooms(rooms: Array) -> void:
+	local_team_rooms.emit(rooms)
+
+# 大厅 → 客户端:房间实时状态 {code, is_public, invite_code, host_role, team_size,
+#   players: [{role, name, team}], in_match, your_role}(等待室靠它渲染两队名单)
+@rpc("authority", "reliable")
+func team_room_state(state: Dictionary) -> void:
+	local_team_room_state.emit(state)
+
 # ── 断线重连(2026-09-17)──
 # ★ 全部进本节点,理由见文件头:原 NetBus 的方法表一律不动(改了会让与原版服务端的 RPC
 #   全部失联)。对原版 worker 本节点不存在 → 这三条静默丢弃,优雅降级成"不能重连"。

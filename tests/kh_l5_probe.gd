@@ -16,7 +16,8 @@ extends ProbeBase
 #      · COUNTDOWN 分支清队列 **且** src.reset_state()
 #      · _on_input 只把到达的包**入队**(不得就地 apply / 丢队列)——前四条只管消费侧,
 #        单独改坏生产侧能全绿(见该断言的注释)
-#   2) main 既有成果在位(server/room_manager.gd 的 sweep 族 + _kill_worker)
+#   2) main 既有成果在位(server/room_manager.gd 的 sweep 族 —— 1v1 / 大乱斗 / 3v3 三张
+#      注册表都要被扫到 + _kill_worker)
 #   3) server_main 的 _kill_port_holder 取属主进程用修正版(不是取不到属性的 % 写法)
 #   4) ★ 零演示残留(生产目录)
 #   5) ★ CombatFeedback.spawn 全仓生产路径恰好 1 处,且在 scenes/level_0.gd
@@ -197,7 +198,7 @@ func _check_room_manager() -> void:
 	if code.is_empty() or code_w.is_empty() or code_p.is_empty():
 		return
 	var needles := [
-		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 与大乱斗两族都要被扫到)", p, code],
+		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 / 大乱斗 / 3v3 三族都要被扫到)", p, code],
 		["created_at", "房间创建时间戳(超龄判据)", p, code],
 		["func kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)",
 				pw, code_w],

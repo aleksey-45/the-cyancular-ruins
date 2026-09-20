@@ -24,6 +24,52 @@ var peer_by_role: Dictionary = {}   # role -> peer_id
 var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消费不丢 just_pressed 边沿
 var grid: Array = []
 var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
+
+# 队伍表:role(int) -> 队号(1/2)。**唯一权威** —— 由大厅在 worker 命令行 `--teams` 显式传入。
+# ★ 为什么不从 role 号推导:role 由大厅的「最小空闲号」分配、有人退出后不重排,编号会留空洞
+#   ({1,3,5} 而只有 3 人),奇偶/区间推导必然出错。
+# ★ 空表 = 无队伍(1v1 / 大乱斗 / 单机):`team_of` 恒 0、`same_team` 恒 false,行为与今天一致。
+var _team_of: Dictionary = {}
+
+
+# 某 role 的队号;无队伍/不在表里 → 0(调用方按 0 处理为"不豁免、不分组",别让它变成 1)。
+func team_of(role: int) -> int:
+	return int(_team_of.get(int(role), 0))
+
+
+# 两个 role 是否同队 —— **单一来源**:子弹穿透队友、出生/复活分组、复位归属都问它。
+# ★ 任一方为 0(无队伍)一律 false:0 == 0 若算同队,1v1 里两个玩家会被判成队友、子弹全穿。
+func same_team(a_role: int, b_role: int) -> bool:
+	var a := team_of(a_role)
+	var b := team_of(b_role)
+	return a > 0 and a == b
+
+
+# 与建局基线(`_base_grid`)**不同**的格。给"重连后补破坏态"与"回大厅后回局"用:
+# 客户端重进/重连时只拿 `match_path` 重建初始地图,而服务器上是破坏后的 `grid`
+# → 不补这一份,客户端会留着服务器已摧毁的墙(**幻影墙** → 玩家撞上去 → 本地预测与服务端
+# 分歧 → 可能回滚循环),或是凭空少墙。
+# ★ 判据是"与基线不同",**不是**"当前为空":后者在将来出现"加砖"类改动时会静默漏报。
+# ★ 顺序确定性(y 升序、同 y 升序 x):载荷要能在两端逐字比对。
+# ★ 规模上限 **841**(≈8~10 KB):本类只服务 PvP 局,定图 `factory1v1.cyrm` 是 150×100 = 15000 格,
+#   但 `TileDefs.damage_tile` 只认**可破坏纹理**(15~20 且形状掩码非 0),其余一律当场拒收 ——
+#   实测 `factory1v1.cyrm` 里这样的格**恰好 841 个**,这就是本数组能有的最大长度。
+#   (旧注释写的是"全拆光 15k 条",松了约 18 倍 —— 那是把**地图格数**当成了上限。)
+# ★ 投递时机只有一处:**`match_sync` 应答**(进场一次 + 每次重连一次),不是每帧、也不是每局。
+#   空数组连键都不带(见 `server_main._on_match_sync`),所以常态下一分钱不花。
+func destroyed_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var rows := mini(grid.size(), _base_grid.size())
+	for y in range(rows):
+		var cur: Array = grid[y]
+		var base: Array = _base_grid[y]
+		var cols := mini(cur.size(), base.size())
+		for x in range(cols):
+			if int(cur[x]) != int(base[x]):
+				out.append(Vector2i(x, y))
+	return out
+
+
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 var _snapshot_accum := 0.0
@@ -54,13 +100,22 @@ const RESPAWN_DELAY := 2.0   # 局内死亡后复活延迟
 var _round_state := RoundState.COUNTDOWN
 var _round_num := 1
 var _scores: Dictionary = {}     # role -> 本局击杀
-var _rounds_won: Dictionary = {} # role -> 局胜数
+var _rounds_won: Dictionary = {} # 局胜数(键:1v1 = role;TeamHost = **队号**)—— 下一个人别按 role 查
 var _round_timer := 0.0
 var _side_swap := false          # true 时 P1 用 player2 出生点(每局换边)
 var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
 var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
 
+# ── 仅测试用:定时拆一格(相⑦ 用)──
+# 由 `--test-destroy-tile <col>,<row>[,<delay>]` 写入;到点拆一次,之后置回 (-1,-1) 只拆一次。
+# ★ 默认 (-1,-1) = 关:生产路径不带这个开关,行为与今天逐字一致。
+# ★ 为什么需要它:重连探针的 worker 是**独立进程**,探针拿不到 `_host`,只能靠命令行开关
+#   让 worker 自己在指定时刻制造"世界变了"这件事(既有的 `--test-ground-teleport` 同款手法)。
+# ★ 与 `test_ground_teleport` 一样住在**基类**(`MatchGround` 那条是本域的开关):钩子要读它,
+#   而钩子由 `MatchHost._physics_process` 每帧调,兄弟域之间互相看不见。
+static var test_destroy_cell := Vector2i(-1, -1)
+static var test_destroy_after := 0.0     # 秒;从对局开始(_ready)起算
 
 
 func _rpc_all(method: String, args: Array = [], except_role: int = -1,

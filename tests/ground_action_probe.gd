@@ -58,6 +58,7 @@ func _ready() -> void:
 func _run() -> void:
 	await _settle()
 	await _phase_payload_position_contract()
+	await _phase_payload_velocity_contract()
 	await _phase_pickup_into_free_slot()
 	await _phase_pickup_replaces_when_full()
 	await _phase_drop()
@@ -110,6 +111,55 @@ func _phase_payload_position_contract() -> void:
 			"载荷 pos == 节点 canonical_pos(%d/%d 不符)" % [bad_canonical, checked])
 	_check(bad_center == 0,
 			"载荷 pos == 服务器判定圆心(%d/%d 不符)—— 视觉中心已是节点原点,两者必须同一个值;不符 = 客户端画的枪与服务器判的位置错开,会「看着够得着却捡不起来」" % [bad_center, checked])
+
+
+# ── ⓪b 投掷落点契约:补态载荷(`match_sync` 的 `ground_weapons`)里的 `vel` 必须是
+#        **活速度**,不是条目里那份"生成时刻的 vel" ──
+# 为什么单开这一相:`ground_weapons_payload()` 曾把**活的 pos** 与**条目里那份生成时刻的 vel**
+# 配成一对发货。客户端 `WeaponPickup.configure()` 见 vel 非零就置 `_settled = false` 并从
+# "枪现在所在处"重演一整段投掷(400px/s 初速 + `weapon_fall_gravity` → 约 2 格),于是重连后
+# 那把**被丢出去的枪**在客户端被画在别处,而 F 提示读的正是客户端那份表 → "提示了 A、服务器
+# 却按 B 的位置判定";且只有那把枪下次被捡走/被扔掉才自愈。已在 `e10411f` 修
+# (`d["vel"] = _live_velocity_of(inst)`),但没有常驻守卫。
+# ★ 必须**自己造一件带初速的枪**才算数:开局那批的 vel 恒为 0、且 ⓪ 之前已 `_settle()` 全都停稳
+#   → 拿它们写"载荷 vel == 活速度"是**空转的绿**(两边都是零)。所以直给一条投掷速度生成一件、
+#   等它停稳,再断载荷里那件。**第 3 条断言(条目里仍是初速)就是"非空转"的前置** ——
+#   没有它,"载荷 vel 恒 0"照样能让主断言绿。
+func _phase_payload_velocity_contract() -> void:
+	print("[ga] ── ⓪b 补态载荷的 vel 必须是活速度(不是生成时刻那一份)──")
+	var p: Node2D = _players[1]
+	var throw_vel := Vector2(400.0, -220.0)
+	var inst: int = _host._spawn_ground_weapon(1, WeaponInventory.MAG_FULL,
+			p.global_position + Vector2(0.0, -8.0), throw_vel)
+	var pk := _host._ground_nodes.get(inst, null) as WeaponPickup
+	_check(pk != null, "投掷生成的那件有活节点(inst %d)" % inst)
+	if pk == null:
+		return
+	# 等它停稳(落体确定性;上限给足 —— 超了下面几条会如实红)
+	var waited := 0
+	while not pk._settled and waited < SETTLE_FRAMES * 2:
+		await get_tree().physics_frame
+		waited += 1
+	_check(pk._settled, "那件带初速丢出的枪已停稳(等了 %d 帧)" % waited)
+	_check(pk.velocity == Vector2.ZERO,
+			"停稳后活速度就是零(实得 %s)" % str(pk.velocity))
+	# ★ 非空转前置:`_sync_ground_positions` 只刷 `pos`、**不刷 vel**,故条目里那份仍是出生时
+	#   那条初速 —— 它绿了,下一条才在判"载荷取的是活速度还是这份初速"。
+	var entry: Dictionary = _host.ground_weapons.get_entry(inst)
+	var entry_vel: Vector2 = entry.get("vel", Vector2.ZERO)
+	_check(entry_vel == throw_vel,
+			"条目里仍是出生时那条初速 %s(实得 %s)—— 前置:证明下一条非空转" % [str(throw_vel), str(entry_vel)])
+	# ★ 主判据 + 顺带复核投掷那件的 pos 契约(⓪ 跑在它被生成之前,管不到它)
+	var got_vel := Vector2.INF
+	var got_pos := Vector2.INF
+	for e in _host.ground_weapons_payload():
+		if int(e["inst"]) == inst:
+			got_vel = e["vel"]
+			got_pos = e["pos"]
+	_check(got_vel == Vector2.ZERO,
+			"载荷 vel 是**活速度**(停稳即零)而不是出生时的初速(实得 %s;取条目里那份 = 客户端会把它重扔约 2 格)" % str(got_vel))
+	_check(got_pos.distance_to(pk.canonical_pos) <= 0.5,
+			"投掷那件的载荷 pos 仍是 canonical(%s vs %s)" % [str(got_pos), str(pk.canonical_pos)])
 
 
 # ── 阶段 ①:背包有空位 → 捡起后地面少一件、背包多一件、无替换 ──

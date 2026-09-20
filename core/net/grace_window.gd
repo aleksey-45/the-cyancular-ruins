@@ -14,6 +14,20 @@ extends RefCounted
 
 const DEFAULT_SECONDS := 30.0   # ★ 宽限期时长的唯一入口(改时长只改这里)
 
+# ── 宽限期**到点之后**该做什么:纯分派(无 autoload、无副作用、可 `-s` 测)──
+# 三个模式的答案就在这里,由 tests/grace_window_smoke 逐个钉住;调用方只做一次比较,
+# **不得**再抄一遍 if/else —— 那种写法出过一次真事故:原先 server_main 只有"大乱斗 / 其余"
+# 两支,`else` 把 1v1 **和 3v3** 一起吞了,于是 3v3 里第一个宽限到期的人会带着整局退进程
+# (用户裁定是"该队少人继续打"),而它当时不可达只因大厅还没有起 team worker 的入口。
+const ACTION_REMOVE := 0     # 移出对局(身体销毁),其余人继续打 —— 大乱斗 / 3v3
+const ACTION_TEARDOWN := 1   # 收场退进程 —— 1v1(对手走了就没人可打)
+
+
+# is_royale / is_team 直接来自 worker 的模式开关。两者任一为真都走"移出对局":
+# 大乱斗的自由混战与 3v3 的团队对抗都是"少一个人照样打得下去";1v1 少一个人就不成局。
+static func expire_action(is_royale: bool, is_team: bool) -> int:
+	return ACTION_REMOVE if (is_royale or is_team) else ACTION_TEARDOWN
+
 var _until: Dictionary = {}     # role(int) -> 到期时刻 ms
 
 
