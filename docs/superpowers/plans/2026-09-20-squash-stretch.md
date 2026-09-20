@@ -460,8 +460,24 @@ func _physics_process(delta: float) -> void:
 
 ```gdscript
 	# ---------- 执行移动 ----------
-	_pre_move_vy = velocity.y   # ← 必须在 move_and_slide() 之前:squash 靠它与帧首的 is_on_floor() 配对
+	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
+	# ★ 且必须**滤掉不是摔下来的下坠速度**(spec §2.4):
+	#   水中 swim_component.gd:26 每帧无条件写 player_swim_down(320 > 落地下限 220),
+	#   站在水下实心地面上时 in_water 与 is_on_floor() 同时为真 → 不滤的话每帧触发落地分支,
+	#   稳态把玩家永久压在 ~9% 挤压上。梯子下行(720)同理,虽然它只触发一帧。
+	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
+```
+
+> `in_water`(`:196`)与 `latched`(`:202`)在本行之前都已就位。
+
+并且把 `_physics_process` 的倒地早退分支改成**同时**把该值归零（否则倒地期间它变陈旧 —— `_tick_downed` 不更新它 —— 复活首帧会与地面态配对出一个满幅假挤压）：
+
+```gdscript
+	if combat.is_downed():
+		_pre_move_vy = 0.0
+		_tick_downed(delta)
+		return
 ```
 
 - [ ] **Step 5: 起跳钩子**
@@ -591,7 +607,10 @@ func _physics_process(delta: float) -> void:
 	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
-	_pre_move_vy = velocity.y   # ← 必须在 move_and_slide() 之前(见 spec §2.4)
+	# ★ 必须在 move_and_slide() **之前**,且必须滤掉不是摔下来的下坠速度(spec §2.4):
+	#   `_apply_water`(:206)在水里写 buoyancy/swim 的 velocity.y,在水下实心地面上会与
+	#   is_on_floor() 同时成立 → 每帧触发落地分支。玩家侧是同一个洞(见 Task 2 Step 4)。
+	_pre_move_vy = 0.0 if _in_water else velocity.y
 	move_and_slide()
 ```
 

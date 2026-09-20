@@ -135,6 +135,29 @@ scale = Vector2(1.0 + AMOUNT * final, 1.0 - AMOUNT * final)
 
 于是落地判定 = `on_floor && pre_move_vy > LAND_MIN_VY`，**不需要任何跨帧变量**。
 
+★★ **但这个前提只对重力路径成立 —— 宿主必须自己把关，把"不是摔下来的"下坠速度滤掉。**（2026-09-20 由 Task 2 审查发现并修正；初稿漏了这条。）
+
+已知的违规写入者（都是"在地面上仍然写正 `velocity.y`"）：
+
+| 位置 | 写入 | 值 | 水面/地面上会怎样 |
+|---|---|---|---|
+| `swim_component.gd:26` | `velocity.y = player_swim_down` | **320** > 220 | 站在**水下实心地面**上时 `in_water` 与 `is_on_floor()` 同时为真 → **每帧**触发落地分支 |
+| `climb_component.gd:91` | 梯子下行速度 | `300×2.0×1.2` = **720** | 梯底按住 S 时触发 —— 只触发一帧（下一帧 `is_squat` 使其解除攀附），且"沿梯下到底落地"本就该挤压 |
+
+⚠️ 水里那条**不是一闪而过**：`tick()` 每帧做 `_impulse -= k`，而恢复是指数式，稳态 `≈ -k·d/(1-d)`；代入 `k = (320-220)/680 = 0.147`、`d = exp(-9/60) = 0.861` 得 **≈ -0.91**，即站在水底就一直保持 ~9% 挤压。
+
+**因此宿主的契约是：传进 `tick()` 的 `vel_y` 必须是"地面真正吸收掉的"那个下坠速度**，否则传 0：
+
+```gdscript
+# player.gd（move_and_slide 之前）
+_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
+# enemy_base.gd（同上）
+_pre_move_vy = 0.0 if _in_water else velocity.y
+```
+
+★ 代价（已确认接受）：水中 `_air` 也一并读 0 → **游泳时没有连续项拉伸**。这被认为是**正确**的 —— 游泳不该有自由落体那种弹感，且"空中连续项"的语义本就指空中。
+★ 另一条约束：倒地期间 `_pre_move_vy` 会变陈旧（`_tick_downed` 不更新它），复活首帧会与地面态配对出一个满幅假挤压 —— 故倒地分支要把它归 0。
+
 ⚠️ 但 `is_on_floor()` 在帧首读到的值是**上一帧** `move_and_slide()` 的结果。所以读取时必须与**同一次** `move_and_slide()` 之前的 `velocity.y` 配对：
 
 ```gdscript
