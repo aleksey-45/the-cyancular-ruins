@@ -375,9 +375,12 @@ Expected: `MATCH RESULT PAYLOAD: ALL-OK`。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add ui/match_result_payload.gd tests/match_result_payload_smoke.gd
+git add ui/match_result_payload.gd ui/match_result_payload.gd.uid \
+  tests/match_result_payload_smoke.gd tests/match_result_payload_smoke.gd.uid
 git commit -m 'feat(ui): 结算载荷适配器(三模式 -> 统一形状)+ 纯逻辑冒烟'
 ```
+
+★ **两个 `.uid` 必须一起 add**(`--import` 会生成它们)。本仓跟踪 `.uid`(共 201 个),Task 3 的 Step 6 也明确列了 —— 原先这一行漏写,实施者按字面执行后如实登记,已补。
 
 ---
 
