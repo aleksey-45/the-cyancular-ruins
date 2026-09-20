@@ -39,6 +39,7 @@
 | `scenes/player/player_replica.gd` | Modify | 对手副本接入（读 `vel` + `_process` 里 tick） |
 | `tests/squash_stretch_smoke.gd` | **Create** | `-s` 纯逻辑冒烟 |
 | `tests/squash_host_water_probe.gd` / `.tscn` | **Create** | 宿主级行为守卫（水中站底 / 梯底按住 S / 干地反例），Task 2 Step 8b |
+| `tests/squash_replica_probe.gd` / `.tscn` | **Create** | 副本行为守卫（水中下沉中性 / 干地落地仍挤压 / 落地判据两半 / 倒地中性），Task 5 Step 2b |
 | `tests/squash_stretch_probe.gd` / `.tscn` | **Create** | 真渲染探针 |
 | `CLAUDE.md` | Modify | 记录新组件与约定 |
 
@@ -1016,6 +1017,43 @@ func _ready() -> void:
 	else:
 		print("SQUASH PROBE: FAIL | %d 条" % _fail)
 	get_tree().quit(1 if _fail > 0 else 0)
+```
+
+- [ ] **Step 2b: 副本行为守卫（`tests/squash_replica_probe`）**
+
+**为什么必须有**（Task 4 复审指出）：Task 4 给副本加的**水查询**与**落地判据**目前**没有任何守卫** ——
+`tests/squash_host_water_probe` 只驱动**玩家本体**，而本 Step 2 的真渲染探针只消费 `player.gd` 的 `var squash`。
+把副本调用点里的 `_in_water()` 删掉、或把 `vel_y` 还原成 `_vel.y`，**现有测试一条都不会红**。
+
+**为什么放这里**：这是最后一个任务，而副本是本特性唯一"没有物理可对照、只能从快照推导"的一环 ——
+Task 4 三轮发现的问题**全部**发生在这一环（落地判据只做了一半、水查询被误判为"不可能"、爬梯残留漏登记）。
+给它一个守卫的边际收益最高。
+
+**做法**：新建 `tests/squash_replica_probe.gd` + `.tscn`，`extends Node`、**scene 模式 headless**
+（autoload 在；副本与 `PlayerReplica` 都需要）。**不要**再加第三个合成网格 —— 照
+`tests/squash_host_water_probe.gd` 的建图函数取一份（若两地形状不同，各留各的，别硬并）。
+造一个真 `PlayerReplica`（或直接 `PlayerReplica.new()` + 手工 `_ready` 所需），**喂真快照字典**
+（键与 `server/match_snapshot.gd` 一致），逐帧驱动 `apply_snapshot` + `_process`。
+
+四相（断言都落在**可观测的** `animator.scale` 上）：
+
+1. **水中下沉 → 中性**：`pose` 取 `MOVE/STAND`（水里本体的姿态）、`vel.y` 恒为 `player_swim_down`（320），
+   跑 ~45 帧，断言 `scale == Vector2.ONE`（水查询生效时 `vel_y` 被置 0 ⇒ `_air == 0`）。
+2. **干地真落地 → 仍挤压**：前一快照 `vel.y = 900`、当前 `0`，断言 `scale.x > 1.0`（宽矮 = 挤压）。**这条是反例**，
+   没有它，相 1 可以靠"永远中性"作弊通过。
+3. **落地判据的两半都在**：`pose != FLY` 但当前 `vel.y` 仍大（模拟**空中冲刺**：姿态非 FLY、`vel_y` 大）
+   ⇒ 断言**不**触发落地项（`scale.x` 不越 1.0）。这条专钉"只做 pose 那一半"的旧 bug。
+4. **倒地 → 强制中性**：`downed = true` 时断言 `scale == Vector2.ONE`（副本倒地会给**根节点**设
+   `rotation = -PI/2`，把 scale 写进去会沿**转过的轴**挤压）。
+
+**变异验证（必做，写进报告）**：分别把 ① `_in_water()` 那一段去掉 → 相 1 必须红（复现 ~1.37% 拉伸）；
+② 把 `vel_y` 换回 `_vel.y` → 相 2 必须红（复现"静默永不触发"，`scale.x == 1.0000`）；
+③ 把落地判据的 `absf(_vel.y) < LAND_VEL_EPS` 去掉 → 相 3 必须红。**任一不变红即守卫无效，继续迭代。**
+
+判据文本 `SQUASH REPLICA PROBE: ALL-OK`；`--quit-after` 给足 **3600 帧**（安全网，只在挂住时才用得上）。
+
+```bash
+"$GODOT" --headless --path . --quit-after 3600 res://tests/squash_replica_probe.tscn
 ```
 
 - [ ] **Step 3: 跑探针并自己读图**
