@@ -45,7 +45,7 @@ const WATER_X_PX := (WATER_X0 + 4) * 64 + 32
 # ── 容差 ──
 # 参照 `PlayerParams.squash_amount = 0.10`(满冲击形变量,即"满挤压"时 scale.x 偏离 1.0 的量)。
 # 取 0.005 = 满幅的 5%:健康态在这些相里是**逐帧精确 1.0**(_air 与 _impulse 都恒为 0,
-# `1.0 + 0.10*0.0` 是浮点精确的),所以容差只需容下浮点噪声与指数尾巴(实测 <= 1e-5);
+# `1.0 - 0.10*0.0` 是浮点精确的),所以容差只需容下浮点噪声与指数尾巴(实测 <= 1e-5);
 # 而删掉那个谓词后相②(梯底)的真实偏离是满幅 10%(0.10,= 本容差的 20 倍)。
 # ★ 相① 的**水中帧**那一半**不走这个常量** —— 它的余量薄一档,单列 WET_EPS。
 const NEUTRAL_EPS := 0.005
@@ -63,8 +63,28 @@ const WET_EPS := 0.001
 # ★ 这一条**不具鉴别力**(那个冲击两个版本一模一样),它只是把 brief 的字面要求钉在文件里;
 #   相① 真正的鉴别点是下面按 in_water 帧取的极值。
 const SETTLED_EPS := 0.01
-# 反例门槛:干地高处落地必须压到**满幅的一半**以上(实测 k=1 → 满幅 0.10 → scale.x 1.10)。
+# 反例门槛:干地高处落地必须压到**满幅的一半**以上(实测 k=1 → 满幅 0.10,再经当帧指数恢复
+# 降到 scale.x = 1.0861,仍比门槛高 0.0361)。
+# ★★ 极值**只取落地帧**(`_floor_max_x`),不取整个窗口 —— 本相是本文件**唯一的方向断言**,
+#   而"方向被反过来"正是 2026-09-20 真发生过一次的缺陷,所以它的余量必须**结构性**成立、
+#   而不是碰巧够宽(`1.0 → 1.0300` 差 0.02 那种)。按帧分类把两条同向写 scale.x 的路径
+#   (空中连续项 / 落地冲击)拆开,互为噪声的关系就没有了:
+#   · 正向(现公式):落地帧被下压到 **1.0861**,对门槛 1.0500 的余量 = **+0.0361**;
+#   · 反向(`1.0 + _amount * v`):落地帧上全是**拉伸**(< 1.0)⇒ 判据红,余量见 DROP_FLOOR_FRAMES。
+#   ⇒ 空中项今天**不可能**再稀释本判据(它不对任何落地帧的读数作贡献);"整窗口取极值"那版
+#     拿空中的 `1.0 + 0.10*(1131/700 × 0.30) = 1.0300` 当极值,失败余量只有 **0.02**,且
+#     `squash_air` 一旦从 0.30 抬到 >= 0.50 就会把**反向**公式顶过门槛、判据静默转绿。
 const DROP_MIN_SQUASH := 0.5
+# ★★ 判据还只取**落地后的前 `DROP_FLOOR_FRAMES` 帧**,不是整个 floor 窗口 —— ★ 这一条是
+#   实测迭代出来的,别"简化"回整个 floor 窗口:落地冲击是**一次性**的(只在落地那一帧写
+#   满幅),此后每一帧都只是向 1.0 收敛的指数尾巴,而**尾巴两个方向都有**(公式反了同样向
+#   1.0 收敛)⇒ 窗口越长、反向公式的极值越贴近 1.0,判据就**自动**失效。实测:本相落地在
+#   第 ~43 帧而窗口开到 70 帧,尾巴有 27 帧,于是"整个 floor 窗口"那版的反向读数是 **0.9983**
+#   (失败余量 0.0517 —— 只比"整窗口"那版的 0.02 强 2.6 倍,不达标);截到前 3 帧后反向读数
+#   是 **0.9362**,失败余量 **0.1138**(5.7 倍)。
+# ★ 取 3 帧而不是 1 帧:给"分类错开一帧"留余量(见 `_sample` 的错帧说明)——真实的落地输出
+#   是首个落地帧或其下一帧,3 帧两者都盖得住,而尾巴要 5 帧以后才追上来。
+const DROP_FLOOR_FRAMES := 3
 
 const S_STAND := 0
 const S_DROP := 1
@@ -90,8 +110,15 @@ var _fails: Array[String] = []
 var _lines: Array[String] = []
 
 # 窗口统计(每相开始时清零)
-# ★ `_max_x` 只给相③ 用:挤压方向是 x>1(宽矮),故极值取**最大** scale.x。
+# ★ 两者都只给相③ 用:挤压方向是 x>1(宽矮),故极值取**最大** scale.x。
+#   `_floor_max_x` 是**判据**(只见落地帧,见 DROP_MIN_SQUASH);`_max_x` 是**读数**
+#   (整个窗口,含空中拉伸项),留着是为了让"空中项到底有没有参与"在输出上一眼看得出。
 var _max_x := -INF
+var _floor_max_x := -INF
+var _floor_max_x_frame := 0
+var _floor_seen := 0           # 已被分类为"落地帧"的采样数(判定 DROP_FLOOR_FRAMES 窗口用)
+# 上一次采样读到的 is_on_floor()。**分类专用**,见 _sample 上方的错帧说明。
+var _prev_on_floor := false
 var _max_dev := 0.0
 var _max_dev_frame := 0
 var _last_scale := Vector2.ONE
@@ -146,6 +173,12 @@ func _begin(stage: int) -> void:
 	_stage = stage
 	_f = 0
 	_max_x = -INF
+	_floor_max_x = -INF
+	_floor_max_x_frame = 0
+	_floor_seen = 0
+	# ★ 必须归 false:上一相末态多半是"站在地上",留 true 会把本相**出生时**的空中帧
+	#   当成落地帧(正是本相最怕的那类误分类)。
+	_prev_on_floor = false
 	_max_dev = 0.0
 	_max_dev_frame = 0
 	_last_scale = Vector2.ONE
@@ -192,32 +225,40 @@ func _apply_input(held: int, pressed: int) -> void:
 
 
 # 采样(本探针的 _physics_process 跑在子节点之前,故读到的是**上一帧**宿主写出的 scale;
-# 窗口是按帧取的极值,错开一帧无影响)。
+# 窗口是按帧取的极值,错开一帧无影响 —— 但**分类**受影响,见下)。
 func _sample(from_frame: int) -> void:
-	if _f < from_frame:
-		return
 	var s: Vector2 = _p.animator.scale
-	_last_scale = s
-	var dev := maxf(absf(s.x - 1.0), absf(s.y - 1.0))
-	_final_dev = dev
-	if dev > _max_dev:
-		_max_dev = dev
-		_max_dev_frame = _f
-	if s.x > _max_x:
-		_max_x = s.x
 	var wet: bool = _p.swim.in_water
 	var on_floor: bool = _p.is_on_floor()
-	if wet:
-		_water_frames += 1
-		if dev > _wet_max_dev:
-			_wet_max_dev = dev
-			_wet_dev_frame = _f
-	if on_floor:
-		_floor_frames += 1
-	if wet and on_floor:
-		_wet_floor_frames += 1
-	if _p.climb.is_latched():
-		_latch_frames += 1
+	if _f >= from_frame:
+		_last_scale = s
+		var dev := maxf(absf(s.x - 1.0), absf(s.y - 1.0))
+		_final_dev = dev
+		if dev > _max_dev:
+			_max_dev = dev
+			_max_dev_frame = _f
+		if s.x > _max_x:
+			_max_x = s.x
+		# 相③ 的判据只认**落地帧**(见 DROP_MIN_SQUASH / DROP_FLOOR_FRAMES):
+		# 空中项与落地冲击都往最大方向写 scale.x,不分开的话公式一旦反向,空中拉伸就会
+		# 顶替落地挤压当极值(实测过)。
+		if _prev_on_floor:
+			_floor_seen += 1
+			if _floor_seen <= DROP_FLOOR_FRAMES and s.x > _floor_max_x:
+				_floor_max_x = s.x
+				_floor_max_x_frame = _f
+		if wet:
+			_water_frames += 1
+			if dev > _wet_max_dev:
+				_wet_max_dev = dev
+				_wet_dev_frame = _f
+		if on_floor:
+			_floor_frames += 1
+		if wet and on_floor:
+			_wet_floor_frames += 1
+		if _p.climb.is_latched():
+			_latch_frames += 1
+	_prev_on_floor = on_floor
 
 
 func _physics_process(_delta: float) -> void:
@@ -257,9 +298,10 @@ func _tick_drop() -> void:
 	if _f >= DROP_FRAMES:
 		_check_floor()
 		var want := 1.0 + DROP_MIN_SQUASH * PlayerParams.squash_amount
-		_record("相③ 干地高处落下的反例", _max_x >= want,
-			"窗口最大 scale.x %.4f(需 >= %.4f,即至少压到满幅的 %d%%);floor 帧 %d" % [
-				_max_x, want, int(DROP_MIN_SQUASH * 100.0), _floor_frames])
+		_record("相③ 干地高处落下的反例", _floor_max_x >= want,
+			"落地后前 %d 帧上最大 scale.x %.4f(需 >= %.4f,即至少压到满幅的 %d%%),余量 %+.4f;floor 帧共 %d;整个窗口最大 %.4f(含空中拉伸项,不参与判据)" % [
+				DROP_FLOOR_FRAMES, _floor_max_x, want, int(DROP_MIN_SQUASH * 100.0),
+				_floor_max_x - want, _floor_frames, _max_x])
 		_begin(S_WATER)
 
 
