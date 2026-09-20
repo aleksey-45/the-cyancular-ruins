@@ -359,7 +359,7 @@ func _tick_world(delta: float) -> void:
 	for ev in _timeworld.tick(delta):
 		_tl_execute(ev)
 		_clock_flash = 2.5
-		_clock_msg = str(ev.get("label", ev["action"]))
+		_clock_msg = str(ev.get("label", ev["action"])) + _tl_offscreen_hint(ev)
 		Sfx.play("explosion")
 	_update_tl_hud()
 	if _clock_label != null:
@@ -380,6 +380,33 @@ func _tick_world(delta: float) -> void:
 			_clock_warn.text = ""
 	if _clock_flash > 0.0:
 		_clock_flash -= delta
+
+
+## 事件发生在玩家视野外时的方向提示(环面最短向量):" (视野外 →↗)"。
+## 没有它,远处事件只有声音+无可见效果——玩家会误以为"事件没发生"。
+func _tl_offscreen_hint(ev: Dictionary) -> String:
+	var pl := get_node_or_null("WorldViewport/Player") as Node2D
+	if pl == null:
+		return ""
+	var fwd: Dictionary = ev.get("fwd", {})
+	var center: Vector2i = fwd.get("center", Vector2i())
+	if center == Vector2i():
+		var rect: Rect2i = ev.get("rect", Rect2i())
+		if rect.size == Vector2i():
+			return ""
+		center = rect.position + rect.size / 2
+	var ts: float = GameParameters.TILE_SIZE
+	var ev_px := Vector2((center.x + 0.5) * ts, (center.y + 0.5) * ts)
+	var d := MazeGenerator.toroidal_delta_px(ev_px, pl.global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	if absf(d.x) <= 960.0 and absf(d.y) <= 720.0:
+		return ""
+	var hint := ""
+	if absf(d.x) > 960.0:
+		hint += "→" if d.x > 0.0 else "←"
+	if absf(d.y) > 720.0:
+		hint += "↓" if d.y > 0.0 else "↑"
+	return " (视野外 %s)" % hint
 
 
 ## 区域瓦片状态改写(事件执行核心):网格/渲染(9 环面副本)/持久子格/分块重建一次完成。

@@ -1122,8 +1122,9 @@ window.ENEMY_REGISTRY = [
         var s = sel();
         tlCircleCells(ev.args[0], ev.args[1], ev.args[2] || 0).forEach(function (c) {
           var packed = s.grid[c[1]][c[0]];
+          if (packed === 0) return;   // 空气无可毁——与游戏语义一致(否则预览画假摧毁块误导作者)
           var def = window.TILE_DEFS && window.TILE_DEFS.tiles[String(Core.textureOf(packed))];
-          if (packed === 0 || (def && def.explosion_destroyable)) mods[c[0] + ',' + c[1]] = 0;
+          if (def && def.explosion_destroyable) mods[c[0] + ',' + c[1]] = 0;
         });
       } else if (kind === 'spawn_enemy') {
         var count = Math.min(parseInt(ev.flags.count || '1', 10) || 1, 9);
@@ -1206,6 +1207,8 @@ window.ENEMY_REGISTRY = [
         var p = key.split(','), x = +p[0], y = +p[1];
         var px = view.panX + x * z, py = view.panY + y * z;
         var v = tlPreview.mods[key];
+        var s0 = sel();
+        if (v === 0 && s0 && s0.grid[y] && s0.grid[y][x] === 0) continue;   // 原本就是空气:无"摧毁"可言
         if (v === 0) {
           ctx.fillStyle = '#17191d';
           ctx.fillRect(px, py, z, z);
