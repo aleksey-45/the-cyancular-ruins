@@ -17,9 +17,14 @@ const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
 }  # 与 player.gd Pose 枚举值一致
 
-# Pose.FLY 的值(= player.gd:103 的 `enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }`)。
+# Pose.FLY 的值(与 player.gd 的 `enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }` 里 FLY 一致)。
 # 本类 extends Node2D、不继承 Player,引用不到那个枚举 —— 而下面按 pose 分支需要它。
+# ★ 刻意**不写行号**:该枚举在密集改动区,写死的行号漂过两次(见 spec「行号是负资产」)。
 const POSE_FLY := 2
+
+# 副本的"站在地上"判据里,「当前 _vel.y 已骤降到 ≈0」那一半的容差。
+# 本体那份由物理保证(地面上 velocity.y 恒 0),副本没有物理,必须显式判。
+const LAND_VEL_EPS := 1.0
 
 # 幽灵体的姿态碰撞箱节点名:与 player.tscn / player.gd 的 POSE_NODE 逐字对应(同源,别改名)
 const POSE_SHAPE: Dictionary = {
@@ -228,6 +233,21 @@ func _process(delta: float) -> void:
 	#   "_pre_move_vy 配帧首 is_on_floor()" 是同款配对 —— 组件内部的落地判据是
 	#   `on_floor and vel_y > squash_land_min_vy`,若把当前的 _vel.y 传进去,落地那一帧
 	#   服务器已经把它清零了,挤压**永远不会触发**。
-	var on_floor := (not _downed) and _pose != POSE_FLY
+	# ★ on_floor 的**两半都不能省**。`pose != FLY` 只是"站在地上"的**代理**,它在两种
+	#   `_vel.y` 并不趋于 0 的状态下**同样为真**:
+	#     ① 水中下沉(本图最常见):姿态被强制成 MOVE/STAND,而 `velocity.y` **恒为**
+	#        player_swim_down(=320,一个常量);
+	#     ② 空中冲刺:本体的姿态逻辑把 `is_charge` 判在 `not is_on_floor()` **之前**,故下落
+	#        途中起步的冲刺给出 on_floor=true,而冲刺只改 velocity.x。
+	#   代理单独成判 ⇒ 落地项**每帧重触发**,指数恢复把 `_impulse` 压到 ≈ -0.91:
+	#   ① 让对手**下沉期间持续** ~9% 挤压,② 更是满幅 -10%;而本体在这两种状态里都是中性的
+	#   (水中 `_pre_move_vy` 被清零、冲刺只走拉伸),即两端出现本体**从不显示**的持续/反向形变。
+	#   (另有一次性小项:带速入水那一帧 pose 先翻、`_prev_vel_y` 还攥着落速 → 假的水花挤压;
+	#    本判据把它一并挡掉,因为入水帧的当前 `_vel.y` 已不是 ≈0。)
+	#   ★ 历史:这半在计划初稿里就有,Task 2 阶段因"与 `vel_y > squash_land_min_vy` 互斥"
+	#     被删 —— 那个理由只在调用点传**当前** `_vel.y` 时成立;现在传的是 `_prev_vel_y`
+	#     (见上),故必须加回。**别删第三次。**
+	var on_floor := (not _downed) and _pose != POSE_FLY \
+			and absf(_vel.y) < LAND_VEL_EPS
 	squash.tick(delta, _prev_vel_y, on_floor, _downed)
 	_prev_vel_y = _vel.y
