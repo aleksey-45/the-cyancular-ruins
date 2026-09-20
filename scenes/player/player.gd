@@ -174,6 +174,9 @@ func _physics_process(delta: float) -> void:
 	# 结果,_pre_move_vy 是那次 move_and_slide 之前缓存的 velocity.y(见 spec §2.4)。
 	squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())
 	if combat.is_downed():
+		# _tick_downed 不更新 _pre_move_vy:不归零的话,被击杀那一刻下坠速度会**陈旧地**留满整个
+		# 倒地窗口,并与复活首帧的地面态配对 → 一个满幅假挤压脉冲。
+		_pre_move_vy = 0.0
 		_tick_downed(delta)
 		return
 	weapons.tick(delta)   # 武器帧逻辑走物理 tick(与 body 同一定时器;rollback 重放确定性)
@@ -232,7 +235,12 @@ func _physics_process(delta: float) -> void:
 	combat.apply_knock(delta)
 
 	# ---------- 执行移动 ----------
-	_pre_move_vy = velocity.y   # ← 必须在 move_and_slide() 之前:squash 靠它与帧首的 is_on_floor() 配对
+	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
+	# ★ 且必须**滤掉不是摔下来的下坠速度**(squash 的调用契约 = "地面真正吸收掉的坠落速度"):
+	#   水中 swim_component.gd:26 每帧无条件写 player_swim_down(320 > 落地下限 220),
+	#   站在水下实心地面上时 in_water 与 is_on_floor() 同时为真 → 不滤的话每帧触发落地分支,
+	#   指数恢复的稳态 ≈ -0.91,把玩家永久压在 ~9% 挤压上。梯子下行(720)同理,虽然只触发一帧。
+	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
 
 	_tick_slide_reactions()
