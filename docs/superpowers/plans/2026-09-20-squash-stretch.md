@@ -632,14 +632,20 @@ func _ready() -> void:
 
 ```gdscript
 func _physics_process(delta: float) -> void:
-	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → 回中性,
-	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
-	# ★ 但睡眠那一支的 vel_y **必须显式喂 0**:它不跑 move_and_slide ⇒ `_pre_move_vy`
-	#   永不刷新,是"上一次非睡眠帧"的陈旧值 ⇒ 落地项每帧重触发、指数恢复每帧只回 ~14%
-	#   ⇒ 定点 ≈ -6.19k 被钳到 -1 ⇒ 睡着的远鸟**永久**保持满幅挤压(见 spec §2.4)。
+	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick,
+	# 否则睡眠中的鸟会卡在最后一个形变值上。
+	# ★★ 睡眠那一支**必须清零 `_pre_move_vy` 本身**,而不能只是"这一次调用喂 0":
+	#   它不跑 move_and_slide ⇒ 缓存永不刷新 ⇒ 醒来首帧走的是醒着分支、拿到"上一次落地帧
+	#   写进缓存的落速" ⇒ 同一个满幅落地项在**醒来那一刻**重触发,`_impulse` 压向 -1.0。
+	#   后果:鸟按几秒前那次落地满幅挤压;更糟的是 TAKE_OFF 的 +0.80 加进已饱和的负值
+	#   ⇒ **起飞拉伸被抵消甚至反向成压扁**。只把实参改 0 是**半个修法**,漏掉醒来首帧。
+	# ★ 玩家侧倒地早退是同一契约的另一处落点,形态相同(那边也是 `_pre_move_vy = 0.0`)。
+	#   两处的契约都不是"缓存里存的是什么",而是 **tick() 消费什么**。
+	# ★ `sleeping` 必须只求值一次:让"喂进去的值"与"走哪条分支"必然同源,边缘帧上不会漂。
 	var sleeping := _is_far_sleeping()
-	squash.tick(delta, 0.0 if sleeping else _pre_move_vy, is_on_floor(), is_dead)
+	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
 	if sleeping:
+		_pre_move_vy = 0.0
 		_ai(delta)
 		_wrap()
 		return
