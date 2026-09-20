@@ -17,6 +17,19 @@ class shared:
 	const drown_interval: float = 1.5      # 防水值空后扣血间隔(秒)
 	const drown_damage: int = 5            # 每次扣血
 
+	# ── 补间形变(squash & stretch) ── 与 PlayerParams 同名同值,但刻意不共享常量:
+	# 两个参数类互不依赖(spec §3)。改一侧要问自己另一侧是否也该改。
+	const squash_amount: float = 0.10
+	const squash_recover: float = 9.0
+	const squash_take_off: float = 0.80        # 鸟起飞(FlyBird / BlackBird TAKE_OFF)
+	const squash_charge: float = 0.90          # 冲撞(FlyBird/BlackBird CHARGE、JumpBird LUNGE_DASH/BACK_HOP)
+	const squash_land_min_vy: float = 220.0
+	const squash_land_ref_vy: float = 900.0
+	const squash_land: float = 1.00
+	const squash_hurt: float = 0.50
+	const squash_air: float = 0.30
+	const squash_air_ref_vy: float = 700.0
+
 class JumpBird:
 	const wake_radius: float = 900.0    # 玩家多近苏醒
 	const give_up_radius: float = 1100.0 # 玩家多远放弃追击
