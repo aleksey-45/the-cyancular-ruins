@@ -26,7 +26,8 @@
 | `ui/match_result_payload.gd` | **新建** | 三个**纯静态**适配器：模式 `round_state` → 统一载荷 |
 | `ui/ui_factory.gd` | 修改 | `fit_name()` 收口(从 `RoyaleHud` 提上来) |
 | `ui/royale_hud.gd` | 修改 | `_fit_name` 改为委托 `UiFactory.fit_name`(行为不变) |
-| `scenes/pvp_game.gd` | 修改 | MATCH_OVER 分支 + `_build_result_payload()` |
+| `scenes/pvp_match_client.gd` | 修改 | **公共挂载/离场**:`_show_result()` / `_leave_to_main_menu()` + `_build_result_payload()` 默认钩子(三个客户端本就都 extends 它) |
+| `scenes/pvp_game.gd` | 修改 | MATCH_OVER 分支 + `_build_result_payload()` **覆写** |
 | `scenes/royale_game.gd` | 修改 | 同上 |
 | `scenes/team_game.gd` | 修改 | 同上(两节 + `mvp`) |
 | `tests/match_result_payload_smoke.gd` | **新建** | `-s`：三个适配器的纯逻辑冒烟 |
@@ -696,14 +697,20 @@ git commit -m 'feat(ui): 结算页控件(模式无关载荷 + leave_requested �
 
 ---
 
-## Task 4: 1v1 接入
+## Task 4: 公共挂载/离场进基类 + 1v1 接入
 
 **Files:**
-- Modify: `scenes/pvp_game.gd`(MATCH_OVER 分支)
+- Modify: `scenes/pvp_match_client.gd`(**公共** `_show_result` / `_leave_to_main_menu` / `_build_result_payload` 默认钩子)
+- Modify: `scenes/pvp_game.gd`(MATCH_OVER 分支 + `_build_result_payload()` 覆写)
 
 **Interfaces:**
 - Consumes: `MatchResultPayload.for_duel`、`MatchResult`
-- Produces: `PvpGame._build_result_payload() -> Dictionary`
+- Produces:
+  - `PvpMatchClient._show_result() -> void`、`PvpMatchClient._leave_to_main_menu() -> void`(Task 5/6 **直接复用,不得再写一份**)
+  - `PvpMatchClient._build_result_payload() -> Dictionary`(默认返回 `{}`;子类覆写)
+  - 基类成员 `_result: MatchResult`、`_last_round_state: Dictionary`
+
+★ **为什么不三份逐字复制**:`scenes/pvp_game.gd` / `royale_game.gd` / `team_game.gd` **本来就都** `extends PvpMatchClient`(`:1` 行),不存在"要动的继承链"。两个挂载/离场函数放基类,三个子类只各留一个 `_build_result_payload()` 覆写 —— 这正是本仓 `_apply_peer_hues_or_team` / `_minimap_colors` 的既有形状。另:kh_l6 第 12 条的 `_func_body` **本来就会回落到基类**找函数体,放基类让那条的改法更干净。
 
 - [ ] **Step 1: ★ 先核 `scores` 的语义(spec §5.3)**
 
@@ -711,34 +718,23 @@ git commit -m 'feat(ui): 结算页控件(模式无关载荷 + leave_requested �
 ★ 若不是击杀，本任务里 `MatchResultPayload.for_duel` 的列名(现在写"击杀")要跟着改，**不许含糊**。
 把结论写进报告。
 
-- [ ] **Step 2: 加 `_build_result_payload()`**
+- [ ] **Step 2: 往**基类** `scenes/pvp_match_client.gd` 加三个函数 + 两个成员**
 
-在 `scenes/pvp_game.gd` 里加：
+★ 这一步**只做一次**(本任务是第一个接入的模式)。Task 5 / Task 6 **绝不许再写一份** —— 那是本计划唯一被明令消除的重复。
+
+成员区(挨着既有的 `_match_ended` / `_menu_open` 一带)加:
 
 ```gdscript
-# 结算页载荷的唯一来源。★ 本函数只读状态、不碰节点树(适配器是纯函数)。
-func _build_result_payload() -> Dictionary:
-	return MatchResultPayload.for_duel(_last_round_state, _names, PvpSession.role)
+var _result: MatchResult = null             # 结算页(挂载一次,由 _show_result 建)
+var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载荷的输入之一)
 ```
 
-★ `_last_round_state` 若不存在，就在 `_on_round_state` 开头加一行 `_last_round_state = data`(声明 `var _last_round_state: Dictionary = {}`)。
-
-- [ ] **Step 3: 改 MATCH_OVER 分支(删定时器，挂结算页)**
-
-把 `scenes/pvp_game.gd` 的 MATCH_OVER 分支里**起 `create_timer(5.0)` 那一段**整段删掉，换成：
+函数加在文件里合适的位置:
 
 ```gdscript
-		# 结算页:玩家自己退(不再是 6 秒后自动回主菜单)。
-		# ★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,裸 change_scene_to_file
-		#   会同步 memdelete → 偶发原生段错误。
-		# ★ 这里**不需要**再"起定时器前捕获 tree/netbus"了(定时器没了);
-		#   但 is_inside_tree() 那条早退的**意图**保留在 _leave_to_main_menu 里。
-		_show_result()
-```
-
-并加：
-
-```gdscript
+# 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
+# 各自只覆写 `_build_result_payload()`。
+# ★ 挂载幂等(`_result != null` 早退):round_state 可能不止一条 MATCH_OVER。
 func _show_result() -> void:
 	if _result != null:
 		return
@@ -748,18 +744,49 @@ func _show_result() -> void:
 	_result.show_result(_build_result_payload())
 
 
-# 结算页 -> 主菜单。★ 防重入由 MatchResult 自己那次发信号 + safe_change_scene 的 _switching
-# 双层兜住;这里只负责"在树上才切"。
+# 结算页 -> 主菜单。★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,
+# 裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误。
+# ★ 防重入由 MatchResult 自己那次发信号 + safe_change_scene 的 _switching 双层兜住;
+#  这里只负责"在树上才切"(原定时器 lambda 里那条 is_inside_tree() 早退的**意图**搬到这里)。
 func _leave_to_main_menu() -> void:
 	if NetBus != null:
 		NetBus.stop()
-	var tree := get_tree()
 	if not is_inside_tree():
 		return
-	Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn")
+	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
+
+
+# 结算页载荷(默认空)。三个子类各覆写一份 —— 模式差异只有这一点。
+func _build_result_payload() -> Dictionary:
+	return {}
 ```
 
-★ `var _result: MatchResult = null` 与 `var _last_round_state: Dictionary = {}` 加到成员区。
+★ 原 MATCH_OVER 分支里"起定时器**之前**捕获 `tree`/`netbus`"那两行**随定时器一起删**(它们存在只是因为 lambda 到点才求值;`_leave_to_main_menu` 是同帧直接调用,`get_tree()` 现取即可)。
+
+- [ ] **Step 3: `scenes/pvp_game.gd` 加覆写 + 改 MATCH_OVER 分支**
+
+★ 成员区**不要**再声明 `_result` / `_last_round_state`(基类已有)。在 `_on_round_state` **开头**加一行记录:
+
+```gdscript
+	_last_round_state = data
+```
+
+加覆写:
+
+```gdscript
+# 结算页载荷的唯一来源。★ 本函数只读状态、不碰节点树(适配器是纯函数)。
+func _build_result_payload() -> Dictionary:
+	return MatchResultPayload.for_duel(_last_round_state, _names, PvpSession.role)
+```
+
+把 MATCH_OVER 分支里**起 `create_timer(5.0)` 那一段**整段删掉(连同上面那两行 `var tree := get_tree()` / `var netbus := NetBus`),换成:
+
+```gdscript
+		# 结算页:玩家自己退(不再是 5 秒后自动回主菜单)。
+		_show_result()
+```
+
+★ `_pause_menu.queue_free()` 与 `_refresh_input_lock()` 那几行**原样保留**(ESC 双重语义依赖前者,见 `ui/match_result.gd` 的类头注释)。
 
 - [ ] **Step 4: `--import` + 跑 1v1 相关探针**
 
@@ -770,8 +797,8 @@ Expected: 全绿。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add scenes/pvp_game.gd
-git commit -m 'feat(pvp): 1v1 接入结算页(玩家自己退，不再 6 秒自动回菜单)'
+git add scenes/pvp_match_client.gd scenes/pvp_game.gd
+git commit -m 'feat(pvp): 结算页挂载/离场收进 PvpMatchClient 基类 + 1v1 接入'
 ```
 
 ---
@@ -792,11 +819,18 @@ func _build_result_payload() -> Dictionary:
 	return MatchResultPayload.for_royale(_last_round_state, _names, PvpSession.role)
 ```
 
-★ 同样需要 `_last_round_state`(在 `_on_round_state` 开头记一份)。
+★ `_last_round_state` 是**基类**成员(Task 4 加的)—— 不要在本文件再声明,只在 `_on_round_state` **开头**记一行 `_last_round_state = data`。
 
 - [ ] **Step 2: 改 MATCH_OVER 分支**
 
-删掉 `get_tree().create_timer(6.0).timeout.connect(...)` 那一段，换成 `_show_result()`；`_show_result` / `_leave_to_main_menu` 与 Task 4 **逐字同款**(★ 两处各写一份是本计划的取舍：它们只差一个 `_build_result_payload()`，而抽公共基类要动 `PvpMatchClient` 的继承链 —— 不在本计划范围。**但两份必须逐字一致**，报告里要点明这一点)。
+删掉 `get_tree().create_timer(6.0).timeout.connect(...)` 那一段(连同其中捕获 `tree`/`netbus` 那两行)，换成:
+
+```gdscript
+		# 结算页:玩家自己退(不再是 6 秒后自动回主菜单)。
+		_show_result()
+```
+
+★★ **`_show_result` / `_leave_to_main_menu` 一个字都不要再写** —— Task 4 已把两者放进 `scenes/pvp_match_client.gd`,而本文件 `extends PvpMatchClient`,直接可用。本任务在这个文件里**只加 `_build_result_payload()` 覆写 + 换掉 MATCH_OVER 那几行**。若你写了第二份,报告里如实写明(那是缺陷,不是取舍)。
 
 ★ `_pause_menu.queue_free()` 那几行**原样保留**(ESC 双重语义依赖它，见 `ui/match_result.gd` 的类头注释)。
 ★ `_match_ended` 的输入锁语义保留 —— `_refresh_input_lock()` 照旧调用。
@@ -826,6 +860,8 @@ git commit -m 'feat(royale): 接入结算页(玩家自己退，不再 6 秒自�
 
 - [ ] **Step 1: 加 `_build_result_payload()`**
 
+★ `_last_round_state` 是**基类**成员(Task 4)—— 本文件不声明,只在 `_on_round_state` 开头记一行 `_last_round_state = data`。
+
 ```gdscript
 # ★ `my_team` 取自 `_team_of_role(PvpSession.role)` —— 队伍表从 match_sync 来;
 #   队号 0(表还没到)时 `_verdict_team` 念「失败」而不是谎报胜利。
@@ -836,7 +872,14 @@ func _build_result_payload() -> Dictionary:
 
 - [ ] **Step 2: 改 MATCH_OVER 分支**
 
-删掉 6 秒定时器那一段，换成 `_show_result()`；`_show_result` / `_leave_to_main_menu` 与 Task 4 **逐字同款**。
+删掉 6 秒定时器那一段(连同其中捕获 `tree`/`netbus` 那两行)，换成:
+
+```gdscript
+		# 结算页:玩家自己退(不再是 6 秒后自动回主菜单)。
+		_show_result()
+```
+
+★★ **`_show_result` / `_leave_to_main_menu` 一个字都不要再写** —— Task 4 已把两者放进 `scenes/pvp_match_client.gd`(本文件的基类)。本任务只加 `_build_result_payload()` 覆写 + 换掉 MATCH_OVER 那几行。
 
 - [ ] **Step 3: `--import` + 跑探针**
 
@@ -855,43 +898,71 @@ git commit -m 'feat(team): 3v3 接入结算页(两节按队 + MVP)'
 ## Task 7: `kh_l6_probe` 同步 + `CLAUDE.md`
 
 **Files:**
-- Modify: `tests/kh_l6_probe.gd`(第 9 / 9b 条)
+- Modify: `tests/kh_l6_probe.gd`(**第 9 / 9b / 12 三条**)
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: 让 `kh_l6_probe` 的第 9/9b 条认新的退场块**
+★★ **是三条,不是两条**。计划原先只点名 9 / 9b;实测第 **12** 条 `_check_exit_paths()` 也压在同一段 MATCH_OVER 退场块上,Task 4 删掉定时器后它**必然变红**,而它不在原文件清单里 —— **一并改**。
 
-先跑一次看它红在哪：
+- [ ] **Step 1: 先跑一次,把三条的红都看清楚**
 
 Run（PowerShell）：`& $GODOT --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn`
-Expected: FAIL —— 它钉的是"MATCH_OVER 退场块含菜单失效 + `is_inside_tree()` 早退"，而那段被换掉了。
+Expected: FAIL。三条各自的红点(动手前先逐条对上):
 
-★ **只改它认的入口(改成认 `_show_result` / `_leave_to_main_menu`)，不许放宽**：两条原意必须保住 —— ① 菜单在 MATCH_OVER 时失效；② 换场前有 `is_inside_tree()` 早退。
+| 条 | 位置 | 红的原因 |
+|---|---|---|
+| 9 | `_check_match_over_menu_kill`,断言 `blk.contains(N_TIMER)` | 定时器被删了 |
+| 9b | 同上、对象是 `scenes/royale_game.gd`;另断言 `blk.contains(N_INSIDE)` | 同上 |
+| 12 | `_check_exit_paths()` 的 `for spec in [["_on_round_state", …], ["_on_opponent_left", …]]` | `_on_round_state` 的函数体里**再没有换场调用**了 |
 
-- [ ] **Step 2: 改完复跑**
+- [ ] **Step 2: 逐条重定向(★ 只改入口,**不许放宽**)**
+
+三条要保住的**原意**:
+① MATCH_OVER 时暂停菜单当场失效;
+② 换场前有 `is_inside_tree()` 早退;
+③ 退场路径(换场调用)没被删。
+
+改法:
+
+1. **第 9 / 9b 条**:`blk.contains(N_TIMER)` 那条断言**整个删掉** —— 它是唯一真正作废的一条("退场定时器必须在"随"定时器没了"一起失效,留着就是要求新代码把定时器加回来)。其余两条(菜单 `queue_free()` 在场、小写菜单路径)**原样留在原对象上**:菜单失效仍在各子类的 MATCH_OVER 块里,不动。
+2. **第 9b 条的 `N_INSIDE` 断言**:`is_inside_tree()` 已随函数搬进**基类**的 `_leave_to_main_menu`,故这一条的扫描对象从"royale 的 MATCH_OVER 块"改成"`_leave_to_main_menu` 的函数体"。
+3. **第 12 条**:那个 `for spec in […]` 里 `_on_round_state` 那一项改成 `["_leave_to_main_menu", "② MATCH_OVER 退场"]`;`_on_opponent_left` 那一项**一个字不动**(它的 2.5s 定时器本计划刻意没动)。第 657 行的 `body.contains(N_BARE) or body.contains(N_SAFE)` 与 658 行"换场调用被删了?"的消息文本随扫描对象一起走。
+
+★ **工具已就绪**:`_func_body`(约 764 行)在 `pvp_game.gd` 里找不到函数时**会自动回落到 `BASE`**(`pvp_match_client.gd`),所以指到 `_leave_to_main_menu` 能直接取到基类那份函数体。
+★ ⚠ **一个可预见的假红**:第 12 条循环里的菜单路径 needle 由 `_menu_path_needles(_pc_lines)` 从 **`pvp_game.gd` 的行**里抽 —— 而 `safe_change_scene(…, "res://scenes/main_menu.tscn")` 现在只在**基类**文件里。若 needles 因此为空、或取不到,就把该处的行来源一并扩到 `_base_lines`(**扩来源是让守卫看到正确对象,不是放宽**)。别用"把断言删掉"收场。
+★ 判据一律是**文本** `ALL-OK`,不看退出码。
+
+- [ ] **Step 3: 复跑三条所在的探针**
 
 Run（PowerShell）：`& $GODOT --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn`
 Expected: `ALL-OK`。
 
-- [ ] **Step 3: `CLAUDE.md` 记录三条**
+★ **反证一条**(证明新入口真的被验到,而不是断言被架空):把基类 `_leave_to_main_menu` 里 `is_inside_tree()` 那两行注释掉 → 探针必须**变红**;还原 → 复绿。两段输出写进报告。
+
+- [ ] **Step 4: `CLAUDE.md` 记录四条**
 
 在「网络与 PvP」一节里补一小段，写清:
 1. **结算页是模式无关的**:`ui/match_result.gd` 不知道任何模式规则，载荷由 `ui/match_result_payload.gd` 的三个适配器产出;`columns` **由数据决定**(没数据的列不列，不硬造 0)。
 2. **`leave_requested` 只发一次**(防重入)，下游仍走 `Level0.safe_change_scene`。
 3. ★ **ESC 的双重语义依赖"MATCH_OVER 时销毁暂停菜单"**:对局中 ESC = 菜单，结算页上 ESC = 返回主菜单。删掉那两行会让两者同时触发。
 4. `ui/match_result.tscn` 层位 **150**(三个 HUD 130、小地图 131、暂停菜单 145)。
+5. ★ **结算页的挂载/离场在 `PvpMatchClient` 基类**(`_show_result` / `_leave_to_main_menu`),三个客户端**只各覆写 `_build_result_payload()`** —— 它们本就都 extends 它。加新模式的结算 = 写一个覆写,别在子类里再抄一份挂载。
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
 git add tests/kh_l6_probe.gd CLAUDE.md
-git commit -m 'test/docs: kh_l6 第 9/9b 认结算页的退场块 + CLAUDE.md 记录结算页三条纪律'
+git commit -m 'test/docs: kh_l6 第 9/9b/12 认结算页的退场块 + CLAUDE.md 记录结算页纪律'
 ```
 
 ---
 
 ## 自检
 
-**spec 覆盖**：§3.1 控件 → Task 3；§3.2 适配器 → Task 2；§3.3 挂载与离场 → Task 4/5/6；§4 载荷契约 → Task 2 的产出 + Task 3 的消费；§5 数据缺口 → Task 2 的 `_finish`/`_verdict*` 与 Task 4 Step 1；§6 边界 → Task 3 的 `show_result` 默认值 + `_request_leave` 防重入 + 类头 ESC 注释；§7 测试 → Task 2/3 的探针 + Task 4/5/6 的真链路跑法；Task 1 是 §3.1 里"`0.1` 常量"那条之外的 DRY 收口(`fit_name`)。
+**spec 覆盖**：§3.1 控件 → Task 3；§3.2 适配器 → Task 2；§3.3 挂载与离场 → Task 4(基类公共挂载 + 1v1)/ Task 5 / Task 6；§4 载荷契约 → Task 2 的产出 + Task 3 的消费；§5 数据缺口 → Task 2 的 `_finish`/`_verdict*` 与 Task 4 Step 1；§6 边界 → Task 3 的 `show_result` 默认值 + `_request_leave` 防重入 + 类头 ESC 注释；§7 测试 → Task 2/3 的探针 + Task 4/5/6 的真链路跑法；Task 1 是 §3.1 里"`0.1` 常量"那条之外的 DRY 收口(`fit_name`)。
+
+**2026-09-20 执行前修订(控制者,经用户裁定)**：
+- Task 4/5/6 原写"三个客户端各抄一份 `_show_result` / `_leave_to_main_menu`",理由是"抽公共基类要动 `PvpMatchClient` 的继承链" —— **该理由不成立**:三个客户端本来就都 `extends PvpMatchClient`(`:1` 行)。改为**放基类 + 子类只覆写 `_build_result_payload()`**。逐字重复逻辑块是评审规则会判缺陷的那类。
+- Task 7 原只点名 `kh_l6_probe` 第 9 / 9b 条;**第 12 条 `_check_exit_paths()` 也压在同一段退场块上**(断言 `_on_round_state` 体内必须有换场调用),Task 4 删定时器后必然变红 → 一并纳入 Task 7。
 
 **占位符扫描**：无 TBD/TODO；每个改代码的步骤都给了代码。
 
