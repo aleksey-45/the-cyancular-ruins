@@ -29,6 +29,10 @@ func _initialize() -> void:
 		fails.append("1v1 我赢了应念「胜利!」,实得 %s" % duel["title"])
 	if int(duel["sections"][0]["rows"][0]["kills"]) != 7:
 		fails.append("1v1 榜首应是 7 杀")
+	# `rank` 是行契约的一部分(`_finish` 末尾填名次)—— 删掉那段循环,榜照画、只是名次恒 0
+	if int(duel["sections"][0]["rows"][0]["rank"]) != 1:
+		fails.append("★ 榜首 rank 应被填成 1(_finish 的名次循环),实得 %d"
+				% int(duel["sections"][0]["rows"][0]["rank"]))
 
 	# ② 1v1 平局:match_winner == 0 必须念「平 局」,不许走 1v1 兜底念成 P 某人获胜
 	var draw: Dictionary = script.for_duel({ "scores": {1: 2, 2: 2}, "match_winner": 0 }, names, 1)
@@ -46,18 +50,38 @@ func _initialize() -> void:
 		fails.append("大乱斗我没赢应念「失败」,实得 %s" % roy["title"])
 
 	# ④ 3v3:两节、列含 dmg/acs、mvp 指向 ACS 最高者
+	# ★ 2 队**两条** stats:只有一条时"排序前数行号"与"排序后数行号"都得到 `row 0` ——
+	#   那条 mvp 断言会退化成空转(mvp 的行号必须落在**真会因排序移动**的那一行上)。
+	#   这里 role 5 在 `stats` 的迭代次序里排在 role 4 **之后** ⇒ 排序前它在第 2 行;
+	#   而它 ACS 400 全队最高 ⇒ 排完序升到第 1 行。于是"行号 == 0"只对**排完序再数**成立。
 	var stats := {1: {"kills": 5, "deaths": 3, "dmg": 400, "kscore": 600, "acs": 200},
 			2: {"kills": 2, "deaths": 5, "dmg": 150, "kscore": 200, "acs": 66},
-			4: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400}}
-	var team: Dictionary = script.for_team({ "stats": stats, "mvp": 4, "match_winner": 2 }, names, teams, 1)
+			4: {"kills": 3, "deaths": 4, "dmg": 300, "kscore": 350, "acs": 100},
+			5: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400}}
+	var team: Dictionary = script.for_team({ "stats": stats, "mvp": 5, "match_winner": 2 }, names, teams, 1)
 	if team["columns"] != ["kills", "deaths", "dmg", "acs"]:
 		fails.append("3v3 columns 应为 [kills,deaths,dmg,acs],实得 %s" % [team["columns"]])
 	if (team["sections"] as Array).size() != 2:
 		fails.append("★ 3v3 必须两节(按队分栏),实得 %d" % (team["sections"] as Array).size())
 	if int(team["mvp"].get("section", -1)) != 1 or int(team["mvp"].get("row", -1)) != 0:
-		fails.append("★ mvp 应指向第 2 节第 1 行(role 4 属 2 队且 ACS 最高),实得 %s" % [team["mvp"]])
+		fails.append("★ mvp 应指向第 2 节第 1 行(role 5 属 2 队、ACS 最高;排序前它在第 2 行),实得 %s" % [team["mvp"]])
 	if str(team["title"]) != "失败":
 		fails.append("3v3 我(1 队)输了应念「失败」,实得 %s" % team["title"])
+
+	# ④b ★ 3v3 平局:match_winner == 0 必须念「平 局」—— 不许走 `ui/pvp_hud.gd` 那种兜底
+	#     (`"P%d 获胜!" % …`) 把它念成「P 某人获胜」。这条**今天可达**:TeamHost.mark_disconnected
+	#     在"两队都走光"时就写 0,`ui/team_hud.gd` 也真的渲染「平 局」。
+	var team_draw: Dictionary = script.for_team({ "stats": stats, "mvp": 5, "match_winner": 0 },
+			names, teams, 1)
+	if str(team_draw["title"]) != "平 局":
+		fails.append("★ 3v3 平局应念「平 局」,实得 %s" % team_draw["title"])
+
+	# ④c ★ `my_team == 0`(队伍表还没到)必须念「失败」,不许谎报胜利。
+	#     平局那一支优先于本分支 —— 由上面 ④b 钉住(它传的就是 my_team == 1)。
+	var team_no_team: Dictionary = script.for_team({ "stats": stats, "mvp": 5, "match_winner": 1 },
+			names, teams, 0)
+	if str(team_no_team["title"]) != "失败":
+		fails.append("★ my_team == 0(队伍表未到)应念「失败」,不许谎报胜利,实得 %s" % team_no_team["title"])
 
 	# ⑤ ★ 某 role 没有 stats 条目 -> 跳过该行,不硬造 0
 	var partial: Dictionary = script.for_team({ "stats": {1: stats[1]}, "mvp": 1,
@@ -65,10 +89,13 @@ func _initialize() -> void:
 	if int((partial["sections"][1]["rows"] as Array).size()) != 0:
 		fails.append("★ 没有 stats 条目的 role 不许硬造 0 行(2 队应 0 行)")
 
-	# ⑥ ★ 排序确定性:同一份输入连算两次,载荷必须逐字段相同
-	if str(script.for_team({ "stats": stats, "mvp": 4, "match_winner": 2 }, names, teams, 1)) \
+	# ⑥ 同一份输入连算两次,载荷必须逐字段相同。
+	# ★ 它**不是**"排序确定性"的守卫:一个全序比较器(含昵称那一级 tiebreak)的纯静态排序
+	#   **天生确定**,⑥ 照不到"序排错了"(那是 ③ 的活)。它能抓的只有**不纯** ——
+	#   比较器读了会变的外部状态、或实现里藏了随机/时间。留它是为了这条反向性质。
+	if str(script.for_team({ "stats": stats, "mvp": 5, "match_winner": 2 }, names, teams, 1)) \
 			!= str(team):
-		fails.append("★ 同一输入两次调用给出了不同的榜(排序不确定)")
+		fails.append("★ 同一输入两次调用给出了不同的载荷(实现不纯,而非纯静态排序)")
 
 	if fails.is_empty():
 		print("MATCH RESULT PAYLOAD: ALL-OK")
