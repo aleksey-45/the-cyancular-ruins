@@ -93,8 +93,41 @@ function serveStatic(res, resolved, headOnly) {
       'Cache-Control': 'no-store',
     });
     if (headOnly) return res.end();
-    fs.createReadStream(resolved.file).pipe(res);
+    // ★★ 响应头**已经发出去了**,这一支只能把本次响应中止掉,不能回头改状态码。
+    //   ReadStream 的 'error' 必须在这里接管:没人接管就是一次**无人认领的 'error' 事件**
+    //   = 未捕获异常 = **整个编辑器服务器进程死掉**(客户端什么响应都收不到,用户只能重启 serve.bat)。
+    //   「stat 成功但 open 失败」是真实存在的状态,不是理论:Windows 上文件被 AV/扫描器
+    //   独占锁定、ACL 拒绝、负载下的 EMFILE、以及文件在 stat 与 createReadStream 之间被删掉
+    //   (编辑器自己重写文件时正会如此)。上面那道 404 只覆盖「stat 失败」,根本走不到这里。
+    // ★ 同步抛(createReadStream 的参数非法)与异步 'error' 是同一类「这一次读不出去」,
+    //   一并兜住:它们的正确处理都是「中止这一条响应」,而不是把服务器带走。
+    let stream;
+    try { stream = fs.createReadStream(resolved.file); }
+    catch (e) { return res.destroy(); }
+    stream.on('error', function () { res.destroy(); });
+    // ★ 防泄漏的另一半:客户端提前断开时把**源流**关掉,否则 fd 与流对象一直留到进程结束。
+    res.on('close', function () { stream.destroy(); });
+    stream.pipe(res);
   });
+}
+
+// ★ Host 白名单闸(所有路由之前)。
+//   只绑 127.0.0.1 **挡不住 DNS rebinding**:用户访问一个恶意页面时,那个页面可以把
+//   自己的域名解析到 127.0.0.1,于是它就以**同源**身份打到这个服务器上 —— 绑回环完全帮不上忙。
+//   今天它只读一个源码目录,危害有限;但只要长出可写接口(计划里的 `PUT /api/map`),
+//   它就是「从任意网页触发的任意文件写入」。
+//   ★ 判据是 Host 头必须点名**回环主机 + 本服务器实际监听的端口**:
+//     正常浏览器访问 http://127.0.0.1:8777/ 发的就是 `127.0.0.1:8777`,而 rebinding 打过来时
+//     Host 是那个恶意域名 ⇒ 正好被挡。端口取 `req.socket.localPort`(**不要写死 8777**:
+//     startServer 支持 port:0 由系统分配,冒烟测试正是这么跑的)。
+const ALLOWED_HOSTS = ['127.0.0.1', 'localhost'];
+function hostAllowed(req) {
+  const localPort = req.socket ? req.socket.localPort : 0;
+  if (!localPort) return false;                       // 拿不到监听端口 → 一律拒(宁严勿松)
+  const host = String(req.headers.host || '').toLowerCase();
+  // ★ 判据取「host:port 全等」,**不含裸主机名**:浏览器/curl 访问非默认端口时一定带端口,
+  //   放行裸名只会多开一扇门(而且裸名只在 80 端口才有意义,那不是本服务器)。
+  return ALLOWED_HOSTS.some(function (h) { return host === h + ':' + localPort; });
 }
 
 // /api/* 的分派。Task 2 会长出 /api/maps 与 GET /api/map,Task 3 再长出 PUT /api/map。
@@ -112,6 +145,11 @@ function createServer(opts) {
     logger: opts.logger || function () {},
   };
   return http.createServer(function (req, res) {
+    // ★ 所有路由之前(静态与 /api/* 都过):见 ALLOWED_HOSTS 的说明。
+    if (!hostAllowed(req)) {
+      return sendText(res, 403, 'Host 头不被接受:' + String(req.headers.host || '(缺失)') +
+                                '(只接受本机回环地址)');
+    }
     let parsed;
     try { parsed = new URL(req.url, 'http://' + DEFAULT_HOST); }
     catch (e) { return sendText(res, 400, '请求 URL 非法'); }
