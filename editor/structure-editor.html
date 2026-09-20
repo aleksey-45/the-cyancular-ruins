@@ -2183,6 +2183,7 @@ window.ENEMY_REGISTRY = [
         warns.push('有事件 count>12:游戏端会截断到 12');
       }
       if (warns.length) window.alert('导出提醒:\n· ' + warns.join('\n· '));
+      window.alert('重要:导出的 .cyrt 在浏览器「下载」目录里——游戏只读仓库 map/ 目录!\n请把下载好的文件复制到 the-cyancular-ruins/map/ 覆盖同名文件后再进游戏。\n(编辑器页面刷新会丢失未导出的改动,画完记得及时导出)');
       var text;
       try { text = Core.serializeTimeMap(s, tl); }
       catch (err) { window.alert('导出失败：' + err.message); return; }
