@@ -1,8 +1,11 @@
 extends SceneTree
 
 # 重连协议的**源码级**契约冒烟:
-#   ① 三条新 RPC 必须住在 NetBusExt,**且 NetBus 里一个都不许有**(放错节点 = 静默 no-op)
-#   ② PvpSession 的两个新字段在位(重连要靠它们)
+#   ① 三条新 RPC + 3v3 的八条 `team_*` 必须住在 NetBusExt,**且 NetBus 里一个都不许有**
+#      (放错节点 = 静默 no-op;3v3 那八条见文件末「3v3 团队协议」一节)
+#   ② 三者的 **@rpc 注解**必须逐字正确(注解错了 = RPC 静默不通,与放错节点同款静默)
+#   ③ PvpSession 的两个新字段在位(重连要靠它们)
+#   ④ `reset()` 必须把这两个字段一起清掉(否则换模式带着上一局的 token)
 # 跑法: timeout 60 "$GODOT" --headless --path . -s res://tests/reconnect_smoke.gd
 # 通过 = `RECONNECT SMOKE OK` 退出 0。
 #
@@ -18,6 +21,40 @@ const SESSION := "res://core/net/pvp_session.gd"
 
 # 本次新增的三条:必须在 Ext,不得在 NetBus
 const N_EXT_RPCS := ["session_token", "report_token", "reclaim_role"]
+
+# 这三条各自的 @rpc 注解(**逐字**要求)—— 决定它能不能被路由的那一行。
+# ★ 节点归属对了、注解错了,冒烟照样恒绿而功能坏掉:
+#   `report_token` 若写成 `authority`,客户端上行会被直接拒(authority = 只许服务器调),
+#   症状是"重连时 token 永远报不上去"且一行错都不打 —— 正是本文件要拦的那类静默 no-op。
+#   session_token 反向同理:写成 any_peer = 任何人都能伪造 token 下发。
+const N_EXT_RPC_ANN := {
+	"session_token": "@rpc(\"authority\", \"reliable\")",
+	"report_token": "@rpc(\"any_peer\", \"reliable\")",
+	"reclaim_role": "@rpc(\"any_peer\", \"reliable\")",
+}
+
+# ── 3v3 团队协议(2026-09-19,B 册 Task 2)──
+# 八条 `team_*`:六条上行(any_peer)+ 两条下发(authority)。与重连那三条**同款纪律**:
+# 必须在 NetBusExt、**不得**在 NetBus(挂错节点 = 静默 no-op)。
+const N_TEAM_RPCS := ["team_create", "team_join", "team_pick", "team_leave", "team_start",
+		"team_list", "team_rooms", "team_room_state"]
+
+# 注解同样逐字钉住 —— ★ 方向写反是**静默**的:`team_rooms` 若写成 any_peer = 任何客户端都能
+# 伪造房间列表;`team_start` 若写成 authority = 客户端的上行被直接拒("房主点了开始没反应")。
+const N_TEAM_RPC_ANN := {
+	"team_create": "@rpc(\"any_peer\", \"reliable\")",
+	"team_join": "@rpc(\"any_peer\", \"reliable\")",
+	"team_pick": "@rpc(\"any_peer\", \"reliable\")",
+	"team_leave": "@rpc(\"any_peer\", \"reliable\")",
+	"team_start": "@rpc(\"any_peer\", \"reliable\")",
+	"team_list": "@rpc(\"any_peer\", \"reliable\")",
+	"team_rooms": "@rpc(\"authority\", \"reliable\")",
+	"team_room_state": "@rpc(\"authority\", \"reliable\")",
+}
+
+const N_TEAM_SIGNALS := ["team_create_requested", "team_join_requested", "team_pick_requested",
+		"team_leave_requested", "team_start_requested", "team_list_requested",
+		"local_team_rooms", "local_team_room_state"]
 
 var _fail := 0
 
@@ -47,6 +84,29 @@ func _defines(code: String, name: String) -> bool:
 	return code.contains("func %s(" % name)
 
 
+# `func <name>(` **上方紧邻的非空行** = 它的注解。
+# 注解与 func 之间可能夹空行/注释行(注释行已被 `_code` 打成空行),故向前跳过空行。
+# 若这行注解被删掉,返回的就是上一行的代码文本 —— 与期望串不等,照样红(不是静默恒绿)。
+func _rpc_ann(code: String, name: String) -> String:
+	var lines := code.split("\n")
+	for i in lines.size():
+		if lines[i].strip_edges().begins_with("func %s(" % name):
+			var j := i - 1
+			while j >= 0 and lines[j].strip_edges().is_empty():
+				j -= 1
+			return lines[j].strip_edges() if j >= 0 else ""
+	return ""
+
+
+# 某个 func 的函数体(到下一个顶层 `func ` 为止;照 ScanUtil.func_body 的形状)
+func _func_body(code: String, name: String) -> String:
+	var i := code.find("func %s(" % name)
+	if i < 0:
+		return ""
+	var j := code.find("\nfunc ", i + 1)
+	return code.substr(i, (j - i) if j > 0 else code.length() - i)
+
+
 func _initialize() -> void:
 	var ext := _code(_read(NETBUS_EXT))
 	var bus := _code(_read(NETBUS))
@@ -64,9 +124,45 @@ func _initialize() -> void:
 	for s in ["local_session_token", "token_reported", "reclaim_requested"]:
 		_check(ext.contains("signal " + s), "NetBusExt 缺信号 %s" % s)
 
+	# ★ 注解:节点归属对了还不够 —— 决定 RPC 能不能被路由的就是这一行
+	for n in N_EXT_RPC_ANN:
+		var ann := _rpc_ann(ext, n)
+		_check(ann == N_EXT_RPC_ANN[n],
+				"★ `%s` 的 @rpc 注解必须逐字是 `%s`,实为 `%s`(注解错了 = RPC 静默不通)" %
+				[n, N_EXT_RPC_ANN[n], ann])
+
 	# PvpSession 两个字段:必须 `static var`(本类全是静态)
 	for f in ["token", "worker_port"]:
 		_check(ses.contains("static var %s" % f), "PvpSession 缺 `static var %s`" % f)
+
+	# ★ 光有字段还不够:`reset()` 必须把这两个一起清掉,否则**换模式时带着上一局的 token**
+	#   (静默陈旧态,本仓最在意的那类 bug)。同款先例 = kh_l1_probe:80-84 钉的
+	#   "reset() 未清 map_path";照它的形状写。
+	var reset_body := _func_body(ses, "reset")
+	_check(not reset_body.is_empty(), "PvpSession 里找不到 func reset()")
+	_check(reset_body.contains("token = \"\""),
+			"★ PvpSession.reset() 未清 token(换模式会带着上一局的 token 去连)")
+	_check(reset_body.contains("worker_port = 0"),
+			"★ PvpSession.reset() 未清 worker_port(重连会拿着上一局的端口直连)")
+
+	# ── 3v3 团队协议的八条 `team_*`(B 册 Task 2)──
+	# ★ **双向**:只断言"在 NetBusExt 里有"会让"两边各抄一份"照样绿,而那正是静默 no-op 的成因
+	#   (先例 `beam_fired`:NetBus / NetBusExt 各一份,接收端挂错节点 = 包到了没人接)。
+	for n in N_TEAM_RPCS:
+		_check(_defines(ext, n), "★ `%s` 必须定义在 NetBusExt(放别处 = 静默 no-op)" % n)
+		_check(not _defines(bus, n),
+				"★ `%s` **不得**出现在 NetBus(改它的方法表会让与原版服务端的 RPC 全部失联)" % n)
+
+	# 八个信号也要在(大厅/客户端都靠信号解耦)
+	for s in N_TEAM_SIGNALS:
+		_check(ext.contains("signal " + s), "NetBusExt 缺信号 %s" % s)
+
+	# 注解:上行 6 条 any_peer / 下发 2 条 authority(**逐字**)
+	for n in N_TEAM_RPC_ANN:
+		var tann := _rpc_ann(ext, n)
+		_check(tann == N_TEAM_RPC_ANN[n],
+				"★ `%s` 的 @rpc 注解必须逐字是 `%s`,实为 `%s`(注解错了 = RPC 静默不通)" %
+				[n, N_TEAM_RPC_ANN[n], tann])
 
 	if _fail == 0:
 		print("RECONNECT SMOKE OK")

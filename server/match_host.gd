@@ -8,8 +8,9 @@ extends MatchRound
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
-		ai_roles: Array = []) -> void:
+		ai_roles: Array = [], teams: Dictionary = {}) -> void:
 	_options = options
+	_team_of = teams.duplicate()
 	_round_full_heal = bool(options.get("round_full_heal", false))
 	var raw_disabled: Array = options.get("disabled_weapons", [])
 	for v in raw_disabled:
@@ -86,11 +87,24 @@ func _ready() -> void:
 	#   不发的话服务器上的玩家开不了火(PvP 直接哑火,且不会有任何报错)。
 	_setup_ground_weapons()
 	# 受击反馈:任意来源(子弹/鸟接触/鸟弹/爆炸)实际扣血 → combat.took_hit → 广播 hit_event
+	_wire_hit_feedback()
+	_broadcast_round_state()
+
+
+# 把每个玩家的 `combat.took_hit` 接到本宿主的 `_on_player_hit`。
+# ★ 接线走**裸方法名**(`Callable(self, "_on_player_hit")`)⇒ **虚分派**:子类覆写的那份才是
+#   被调到的那个(`TeamHost._on_player_hit` 的逐人伤害累计就挂在这条上)。
+# ★ 为什么抽成具名函数而不是留几行在 `_ready` 里:**手工摆位路径**(探针:role_peers 传空、
+#   玩家在 `_ready` 之后才 `_place` 进来)也要调**生产那一份**接线 —— 让探针自己再抄一遍
+#   `connect(...)` 的话,验的是抄件:哪天生产的接线断了/换了信号,探针照样绿(本仓明令禁止的
+#   "第二份真相";同 `TeamHost._apply_team_layers` 的抽法)。
+# ★ 幂等性:同一对 (信号, Callable) 重复 connect 会被 Godot 拒绝(不重复触发)。
+#   探针那条路径下 `_ready` 时 `players` 还是空的,故这里**恰好**接一次。
+func _wire_hit_feedback() -> void:
 	for role in players:
 		var combat = (players[role] as Node).get("combat")
 		if combat != null and combat.has_signal("took_hit"):
 			combat.took_hit.connect(_on_player_hit.bind(role))
-	_broadcast_round_state()
 
 # (原 `_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**下发:
 #  那次"推"与 match_start 落在同一次客户端 poll,而那一刻新场景的订阅方还不存在 → 静默丢失
@@ -120,6 +134,8 @@ func _physics_process(delta: float) -> void:
 	_sync_ground_positions()
 	# 仅测试用(`--test-ground-teleport`,见 MatchGround.test_ground_teleport):默认关。
 	_debug_keep_weapon_within_reach()
+	# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):默认关。
+	_debug_destroy_tile(delta)
 	_snapshot_accum += delta
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0
@@ -164,3 +180,23 @@ func _physics_process(delta: float) -> void:
 				continue
 			CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
 			processed += 1
+
+# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):对局开始 delay 秒后拆掉
+# 指定格,**只拆一次**。默认关(`test_destroy_cell == (-1,-1)` → 首行就 return),生产路径
+# 不带这个开关,行为与今天逐字一致。
+#
+# ★ 为什么走 `TileDefs.damage_tile` 而不是直接改 grid:那样才会经 `TileDefs.on_destroyed`
+#   → `MatchCombat._on_tile_destroyed` → `_rpc_all("tile_destroyed", …)`,也就是
+#   **与真爆炸完全同一条广播链**(重连探针的相⑦ 要验的正是这条链 + 客户端的补态)。
+# ★ 那条 print 是探针的"非空转"证据:worker 是**独立 OS 进程**(探针拿不到它的 `_host`),
+#   日志是唯一能读到它内部动作的通道;没有它,"客户端那格是空气"可以靠"那格本来就是空气"骗过。
+func _debug_destroy_tile(delta: float) -> void:
+	if MatchState.test_destroy_cell.x < 0:
+		return
+	MatchState.test_destroy_after -= delta
+	if MatchState.test_destroy_after > 0.0:
+		return
+	var cell := MatchState.test_destroy_cell
+	MatchState.test_destroy_cell = Vector2i(-1, -1)   # 只拆一次
+	print("worker: [test] 拆格 %s(相⑦ 用)" % str(cell))
+	TileDefs.damage_tile(cell, 999999, "explosion")

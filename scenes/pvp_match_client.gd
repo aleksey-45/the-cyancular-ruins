@@ -24,6 +24,7 @@ const LaserVisual := preload("res://core/present/laser_visual.gd")   # 远端光
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
 var _local: Node2D = null
 var _world: Node = null   # WorldViewport(视觉子弹/TileHitFx 副本挂这里)
+var _level0: Node = null  # 世界(Level0):补态那一路要还原可破坏砖(见 _on_match_sync)
 var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md
@@ -37,9 +38,53 @@ var _match_ended := false
 # 暂停菜单是否开着(PvP 下菜单不暂停树,靠它锁本地输入;见 _refresh_input_lock)
 var _menu_open := false
 
-func _apply_tint(body: Node, hue_deg: float) -> void:
+# 玩家本体精灵(player.png)的**主色**(RGB)。"把身体染成某个颜色"要拿它当基准去做比值。
+# ★ 数值是**实测**的不是拍的(2026-09-19):主色 `#639BFF`,占 12987 个不透明像素里的 10875(83.6%);
+#   次色 `#5585D9` 是它的暗调同色。复测办法:按 alpha>200 过滤 player.png 的全部像素,
+#   取出现次数最多的那个 RGB。
+# ★ 换 sprite 素材要重测这一行 —— 它错了不报错,只是队色会**整体偏色**(整队一起偏,所以
+#   "谁是谁"照旧分得出,更容易漏)。三个分量都非 0,故下面那句比值除法不需要额外兜底。
+const BODY_BASE_COLOR := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)   # #639BFF
+
+
+# 通用身体染色:只给角色本体 AnimatedSprite2D 上色(武器/预瞄线不染)。
+# 两条互斥的路,按 `color_override` 是否存在二选一:
+#   · `color_override` 非透明 = **modulate 比值**(见下)。用户:**3v3 队色** + **1v1 的 P2**
+#     (`pvp_game._apply_p2_tint` 传的就是队 2 那个 token ⇒ 两处同色是结构性的)。
+#   · 默认(大乱斗 / 3v3 的**个人色相**)= **色相旋转**:挂 `player_p2_hue.gdshader`,
+#     `hue_deg` 是旋转量,0 = 不改色(故本助手可重复调用)。
+#
+# ★ 队色为什么是"modulate 比值"而不是"直接乘队色"(brief 给的是后者 —— 二选一,这里选前者
+#   但**改了算法**,理由是实测的):`modulate` 是**乘**,只能把身体压暗、改不了色相。本体主色是蓝
+#   `#639BFF`,蓝 × 队色 ≠ 队色,"一眼看出谁是队友"会落空(当初拿旧队色实测:.superpowers/sdd/
+#   `_t6_tint2.png` 第②列是一坨**灰紫**)。
+#   改成 **`目标色 / 本体主色`** 这个**比值**就精确了:输出 = 主色像素 × 比值 = **恰好目标色本身**
+#   (2026-09-19 复测:队 1 得到 `#639BFF` = `C_TEAM_A`,逐字节相等;当时队 2 的 token 是 `#63FFF3`,
+#    同样是逐字节相等 —— 2026-09-20 队 2 的 token 改成 `#80F4FF`,比值随之变,链子不变,
+#    渲染侧由 `tests/hue_tint_probe` 守卫 B/C 钉住)。
+#   队色因此与头顶 ID / 小地图点位**同源同一个常量**,不存在"身体是派生色、柱子上是原色"。
+# ★ 队 2 的比值有分量 > 1(g = 244/155 ≈ 1.574、r ≈ 1.293)—— 这是**有意的**:
+#   `CanvasItem.modulate` 收 >1 的值,实测在 `rendering/mobile`(Forward Mobile)下原样生效。
+#   队 1 的比值恰为 (1,1,1)(队色 = 本体主色)⇒ 队 1 的身体就是默认蓝。
+# ★ 为什么队色(以及 1v1 的 P2)仍不走 `player_p2_hue.gdshader`(试过):hue 旋转数学上是对的,
+#   但走那条路要先知道目标色的色相、再反推该转多少度,而"输出 == 这个 token"只是数值上逼近;
+#   比值法是**结构性**成立的(输出恒等于 token 本身)。
+#   ★ 另有一条硬理由(2026-09-20):hue 旋转**保持饱和度/亮度不变**,而本体主色是 S61 V100
+#      ⇒ 它**表达不了** S50 这类目标色(用户新选的青 `#80F4FF` 正是 H185 S50 V100)。
+#   (那个 shader 的"纹理乘两次"bug 2026-09-19 已修 —— 它当年让 hue 旋转结果被逐通道乘积压灰;
+#    它现在是**个人色相**那条唯一的路,仍在生产里。)
+func _apply_tint(body: Node, hue_deg: float, color_override: Color = Color(0, 0, 0, 0)) -> void:
 	var canvas := body as CanvasItem
-	if canvas == null or is_zero_approx(hue_deg):
+	if canvas == null:
+		return
+	# ① 队色(modulate 比值):精确染成 `color_override` 本身
+	if color_override.a > 0.0:
+		canvas.modulate = Color(color_override.r / BODY_BASE_COLOR.r,
+				color_override.g / BODY_BASE_COLOR.g,
+				color_override.b / BODY_BASE_COLOR.b)
+		return
+	# ② 色相旋转(1v1 / 大乱斗的既有效果);0 = 不改色
+	if is_zero_approx(hue_deg):
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
@@ -67,11 +112,30 @@ func _apply_match_options(opts: Dictionary) -> void:
 func _on_snapshot_own(own: Dictionary) -> void:
 	if _rollback == null:
 		return
+	# ★★ 跨纪元的旧 ack **必须丢掉**(2026-09-17 整支审查的 C 项:重连后 `_acked` 被上一纪元的 ack 毒死)。
+	#   机制:重连时服务器在 `_on_reclaim` 里把 `_ack_seq[role]` 归 0 重协商锚点,而客户端要到
+	#   `_on_resumed` 才把 `_input_seq` 归零 —— 这中间(握手落地 → match_start 到达)它仍在用
+	#   **断线前那个 seq 空间**发包 → 服务器下一 tick 消费到的就是那个大 seq、`_ack_seq` 当场被写回
+	#   N+1 并立刻广播一条带它的快照;而那条快照(unreliable)落在 `_on_resumed` **刚重建**的
+	#   rollback 上(`_acked` 从 0 起)→ `_acked` 被抬到一个新纪元追不上的高度,
+	#   `PredictionRollback.on_authoritative` 的 `ack <= _acked` 把之后所有真实 ack(1,2,3…)全丢,
+	#   直到客户端自己的 seq 爬过它 —— **断线前活了多久就哑多久**(探针实测 ~560 帧 ≈ 9s;一局中段
+	#   可上万帧)。症状正是 `prediction_rollback.gd` 记过的那个静默退化:不报错、**回滚恒为 0**、
+	#   `sync_soft_state` 不再被调用 → 背包/拾取不同步("地上的枪没了、手上也没多、还开不了火")。
+	#   判据:**合法 ack 永不超过本端已发的 seq**(服务器只可能 ack 它消费过的包)→ 超过的一定是
+	#   上一个 seq 空间的残留,丢掉即正确(那几条本来就该被 `_on_resumed` 的重置作废)。
+	#   ★ 两侧的复位互为理由(服务端归 0 是为了客户端的 `_acked`,客户端重置是为了服务端的 0),
+	#     只改一侧会得到镜像的同一个洞;守卫:`tests/reconnect_probe.tscn` 相①(去掉本行即红)。
+	var ack := int(own.get("ack_seq", 0))
+	if ack > _input_seq:
+		return
 	var c2: Dictionary = own.get("c2", {})
 	if not c2.is_empty():
-		_rollback.on_authoritative(int(own.get("ack_seq", 0)), c2)
+		_rollback.on_authoritative(ack, c2)
 
-func _on_remote_tile_destroyed(cell: Vector2i) -> void:
+# silent=true 用于"重连后补破坏态":那些砖是**掉线期间**被拆的,不是刚被拆的 ——
+# 逐格播碎片会变成一屏不该有的粒子(而且几十格同时炸)。
+func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
 	if _world == null:
 		TileDefs.damage_tile(cell, 999999, "explosion")
 		return
@@ -83,6 +147,8 @@ func _on_remote_tile_destroyed(cell: Vector2i) -> void:
 		if cell.x >= 0 and cell.x < row.size():
 			tex = MazeGenerator.texture_of(int(row[cell.x]))
 	TileDefs.damage_tile(cell, 999999, "explosion")
+	if silent:
+		return
 	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
 	var ts := GameParameters.TILE_SIZE
 	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
@@ -226,31 +292,91 @@ func _apply_peer_hues(_hues: Dictionary) -> void:
 	push_error("PvpMatchClient: 子类必须覆写 _apply_peer_hues")
 
 
-func _on_match_sync(payload: Dictionary) -> void:
-	var names: Dictionary = payload.get("names", {})
-	if not names.is_empty():
-		_apply_peer_names(names)
+# ── 「每个角色的颜色」那一段的**唯一分叉点**(基类钩子)──
+# `_on_match_sync` 只调它一次,不再直接调 `_apply_peer_hues`。
+#   · 默认(1v1 / 大乱斗):消费载荷里的 `hues`(每个 role 自选的色相)。
+#   · 3v3(`team_game`)覆写:消费载荷里的 `teams`(队色),**刻意不调** `_apply_peer_hues`
+#     —— 6 个人里认不出队友这个模式就没法玩,个人色相在 3v3 是无效输入。
+# ★ 签名收**整个 payload** 而不是只收 `hues`:3v3 要读的是**同一份应答里的另一个键**;
+#   只传 hues 会逼子类把 teams 先存进一个字段、再到钩子里取回来(多一条"上游写、下游读"的暗通道)。
+# ★ 两个既有子类**都不覆写它**,且默认实现与改动前那两行逐字同构("非空才染色")
+#   ⇒ 对它们是零影响(回归线:kh_l4/kh_l5/hud_declarative + 真链路探针)。
+func _apply_peer_hues_or_team(payload: Dictionary) -> void:
 	var hues: Dictionary = payload.get("hues", {})
 	if not hues.is_empty():
 		_apply_peer_hues(hues)
+
+
+func _on_match_sync(payload: Dictionary) -> void:
+	# 本应答是**进场建态**还是**重连补态**?(见 `_resync_pull_pending`;读一次即清)
+	var resync := _resync_pull_pending
+	_resync_pull_pending = false
+	var names: Dictionary = payload.get("names", {})
+	if not names.is_empty():
+		_apply_peer_names(names)
+	# 颜色那一段走**基类钩子**(默认 = 个人色相;3v3 覆写成队色,见 `_apply_peer_hues_or_team`)
+	_apply_peer_hues_or_team(payload)
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():
 		_apply_match_options(opts)
+	# 出生点校正**只对进场那次做**:那时 `spawns[role]` 与 `PvpSession.spawn` 确实同源(都由
+	# 服务器同一次摆位产生),不一致就是 bug —— 留痕 + 以 sync 为准。
+	# ★ 重连补态那次**必然**不一致,而那不是 bug:1v1 每局换边(`match_round._start_next_round`
+	#   翻 `_side_swap` → `role_spawns()` 在 player/player2 之间对调),而 `PvpSession.spawn` 只在
+	#   进场写一次(`lobby_page` 配对时),此后无人刷新。按它硬拉 = 把玩家瞬移走,而服务器那具
+	#   身体从掉线起就没动过 → C2 下一帧又把人拉回来,顺带刷一条假告警(告警的前提在这里不成立)
+	#   淹掉探针日志。位置本来就归 C2 权威(服务器瞬移正是它要收敛的外部事件),故这条路
+	#   **既不校正、也不告警、也不回写 `PvpSession.spawn`**(回写只会让下一次校正更歪)。
 	var sp: Dictionary = payload.get("spawns", {})
-	if sp.has(PvpSession.role):
+	if not resync and sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]
 		if want != PvpSession.spawn:
-			# 不一致就是 bug(两者同源),别静默 —— 留痕后以 sync 为准
 			push_warning("match_sync: 出生点与 match_start 不一致(%s vs %s),以 sync 为准" % [
 					str(PvpSession.spawn), str(want)])
 			PvpSession.spawn = want
 			_correct_local_spawn()
 	# 地面武器**开局那批随本条拉取一并到达**(不走 weapon_spawned 推送 —— 推送会撞上
 	# "客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失"那类事故,见 CoreNet 的注释)。
+	# ★ **先清后灌**:载荷是全量,本地可能还留着掉线前的条目 → 不清会产生幽灵枪(见 _clear_ground_weapons)。
 	var gw: Array = payload.get("ground_weapons", [])
+	_clear_ground_weapons()
 	for e in gw:
 		if e is Dictionary:
 			_spawn_pickup_node(e)
+	# ★★ 补态那一路:**先把本地世界还原成建局基线,再应用 `destroyed`**。顺序不可换。
+	#   为什么必须还原:`destroyed` 表达的是「与建局基线**不同**的格」。客户端在宽限期内
+	#   **错过一次换局**时,服务器那次 `_reset_world_and_clear_dynamics()` 已经把可破坏砖全都
+	#   还原成了基线 —— 那些格于是**等于基线**、永不进载荷,而客户端本地还留着上一局拆出来的
+	#   破洞(**幻影空洞**:服务器上那里是实心墙,客户端却少一堵/多一个能钻的缝)。
+	#   客户端唯一的还原路径是新回合 COUNTDOWN 里的 `Level0.reset_destructibles()`
+	#   (见 `pvp_game._on_round_state`),而重连回来时那一局可能**已经打到 PLAYING** →
+	#   那条分支不触发 → 空洞要拖到下一个回合边界才自愈。
+	#   ★ 为什么「先还原 + 再应用」就够了:两者合起来**恰好等于服务器的 grid** ——
+	#     还原给出基线、`destroyed` 给出与基线的那份差异,而服务器那次换局正是"回基线 +
+	#     本局重新拆"(换局后新拆的格仍在 `destroyed` 里)。**不上线任何新字节**。
+	#   ★ 顺序反过来(先应用、后还原)会把刚补好的洞**又填回去**,症状与"根本没还原"逐字相同。
+	#   ★ 只在补态这一路做(闸门就是上面那个读一次即清的 `resync`):进场那次世界刚从 pristine
+	#     地图建出来,还原是多余动作(同款"进场那次本就是 no-op"的纪律见 `_clear_ground_weapons`)。
+	#   ★ 非 COUNTDOWN 时刻调用安全:`reset_destructibles()` 只重铺瓦片层 + 整层重建碰撞,
+	#     不碰玩家/子弹/地面武器(`WorldBuilder.build_sim` 只 free 自己那三个具名节点),
+	#     代价是客户端一次墙层重绘 —— 与每个回合边界本来就要做的那次活一模一样。
+	if resync and _level0 != null and _level0.has_method("reset_destructibles"):
+		_level0.reset_destructibles()
+	elif resync:
+		# ★ 该还原而没还原 —— 留一条告警。`_level0` 是**由子类赋值**的共享状态字段(两个子类各自
+		#   `_ready` 里写),漏赋值 / 赋错类型时上面那道闸**静默不成立**,还原就这么不发生,症状
+		#   (幻影空洞拖到下一个回合边界)与"根本没写这段"逐字相同 —— 而"静默"正是这整批在消灭的形态。
+		#   ★ 只告警,不改行为(告警不碰任何状态);闸门本身不动。
+		var why := ("_level0 为 null(子类 _ready 漏赋值?)" if _level0 == null
+				else "_level0 没有 reset_destructibles()(类型不对?)")
+		push_warning("match_sync(补态): 世界未还原 —— %s;幻影空洞不会填回" % why)
+	# 掉线窗口内被拆的墙(以及"换局还原"之后本局重新拆的那些):重连后补回。
+	# (进场那次该字段为空 —— 刚建的世界与基线一致。)
+	# ★ 复用 `_on_remote_tile_destroyed` 的静默形态,不另写一套清瓦片/清碰撞的逻辑。
+	var destroyed: Array = payload.get("destroyed", [])
+	for c in destroyed:
+		if c is Vector2i:
+			_on_remote_tile_destroyed(c, true)
 
 
 # ── 地面武器(2026-09-15):服务器权威,本端只渲染 + 等事件(不做客户端预测)──
@@ -300,6 +426,21 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	# 服务器告诉我们"这把是谁刚丢下的":若是**自己**,冷却期内不给提示(与它自己的判定一致)。
 	if int(data.get("by_role", -1)) == int(PvpSession.role):
 		_self_drop_until[inst] = Time.get_ticks_msec() 				+ int(PlayerParams.weapon_pickup_self_delay * 1000.0)
+
+
+# 清空本端的地面武器表与全部拾取物节点。给 `_on_match_sync` 的"先清后灌"用。
+# ★ 为什么必须先清:`match_sync` 的 `ground_weapons` 是**全量**,而重连时本地表里还留着
+#   掉线前的条目 —— 不清就直接 add,掉线期间**已被服务器移除**的那些会变成**永久幽灵枪**
+#   (看着在、按 F 无效)。这正是阶段 2-A 要闭合的两类缺口之一。
+#   进场那次本地本来是空的,清一遍是 no-op(所以统一走这条路,不为两种情况分叉)。
+func _clear_ground_weapons() -> void:
+	for inst in _pickup_nodes:
+		var n = _pickup_nodes[inst]
+		if n != null and is_instance_valid(n):
+			n.queue_free()
+	_pickup_nodes.clear()
+	ground_weapons.clear()
+	_self_drop_until.clear()
 
 
 func _remove_pickup_node(inst: int) -> void:
@@ -366,3 +507,274 @@ func _live_self_drops() -> Array:
 		else:
 			_self_drop_until.erase(inst)
 	return out
+
+
+# ── 断线重连(2026-09-17;spec §3.4 **路径甲**:局内自动重连)──
+# 「与 worker 的连接闪断」→ 自己连回去、重新认领 role、重置本地 C2 —— **不切场景、不重建世界**。
+# (路径乙"回大厅后回局、重建场景"是 spec §3.5,归下一阶段,不在本文件。)
+#
+# ★ 触发点只有"服务器断开"一条(`NetBus.local_server_message`,由 `multiplayer.server_disconnected`
+#   驱动)。对局场景此前**没人订阅**它 —— 那条信号的消费者只有 `lobby_page`,所以服务器一断客户端
+#   毫无反应:快照停更、输入自停(`_physics_process` 的 `can_send_to_server()` 转 false),玩家卡在
+#   一个静止的世界里只能按 ESC 自救。这正是 spec §1.3 记的既有缺陷。
+# ★★ 两条时间尺度,**别合并**:
+#   · `RECONNECT_RETRY_MS`(2s)= **定时器节拍** —— 多久看一眼(等应答 / 两次尝试之间);
+#   · `RECONNECT_ATTEMPT_TIMEOUT_MS`(5s)= **一次连接尝试自己的寿命** —— 一次握手最多活多久。
+#   合并成"每 2 秒 `NetBus.stop()` + 重连一次"会在**高 RTT 链路**上反复掐掉正在握手的尝试
+#   (比不掐更糟);而**只**看节拍、不掐尝试,就是 2026-09-17 修掉的那个缺陷(见 `_retry_connect`)。
+const RECONNECT_RETRY_MS := 2000
+# 一次尝试的寿命。取值依据:一次成功握手约 2~3×RTT,5s 覆盖到 ~1.6s 的 RTT(再差的链路本就没法打);
+# 而 ENet 自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 ——
+# 不主动掐就只会有一次尝试、且期间一次 tick 都没有。
+const RECONNECT_ATTEMPT_TIMEOUT_MS := 5000
+var _reconnecting := false
+var _reconnect_started_ms := 0   # ★ **真实断开**时刻(不是"关菜单"时刻,见 _begin_reconnect)
+var _reclaim_sent := false   # ★ **本条连接上**是否已发过 reclaim(判据见 _on_reconnect_retry_tick)
+var _pending_disconnect := false   # 断线时菜单开着 → 记账,关菜单再来(见 _recheck_disconnect)
+var _attempt_started_ms := 0   # 当前这次连接尝试的起飞时刻;**0 = 没有尝试在飞**
+var _retry_timer: SceneTreeTimer = null   # 单一定时器(判据见 _schedule_reconnect_retry)
+# ★ 下一条 `match_sync` 应答属于**重连补态**(而非进场建态)。两口共用同一条信号(重连不重建
+#   场景 → `pvp_game`/`royale_game._ready` 里那个订阅还在),而 `_on_match_sync` 里的出生点校正
+#   对两种口径的答案**相反**(见那一支的注释),故必须让应答自己知道是哪一次拉的。
+#   取用点:`_on_match_sync` 首行(读一次、当场清掉);置位点:`_on_resumed` 发送前那一行。
+# ★ 2026-09-19(3v3)第二个置位点:`team_game._on_round_state` 的「新一轮 COUNTDOWN」那一拉。
+#   那里问的是**同一个问题**("这条应答不是进场建态吗?") —— 换边后 `spawns` 是**新一侧**,
+#   而 `PvpSession.spawn` 手里是旧一侧,两者**必然**不一致(与重连那条同款),照进场口径
+#   硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。故它复用同一个闸,不另立标志。
+var _resync_pull_pending := false
+
+
+# 两个子类各自 `_ready` 里调一次(与 `_subscribe_ground_weapons()` 并列)。
+func _subscribe_reconnect() -> void:
+	NetBus.local_server_message.connect(_on_server_message)
+	# ★ worker 在宽限期内接受 reclaim 后会**重发一条 match_start**(载荷与首次开局同源)。
+	#   **实读确认**:对局里 `local_match_start` 此前**零订阅者** —— 它唯一的消费者是
+	#   `lobby_page._on_match_start`(`matchmaking`/`royale_lobby` 的公共基类),而那个页面在对局
+	#   场景里**不在树上** → 这条信号到对局里是**静默 no-op**。所以"重连成功"的收尾必须在这里接
+	#   (`_on_match_start_event`)—— 不能指望既有入口。
+	NetBus.local_match_start.connect(_on_match_start_event)
+
+
+func _on_server_message(msg: String) -> void:
+	if _match_ended or _reconnecting:
+		return
+	# 服务器文本播报也走这条信号,但对局期间服务器只发「对局开始」/「大乱斗开始」(已核);
+	# 大厅那些「房间已满」之类不会到对局场景。
+	if msg.contains("断开") or msg.contains("断开连接"):
+		_pending_disconnect = true
+		_begin_reconnect()
+
+
+# 菜单关掉时补一次:真掉线正好落在"菜单开着"那段窗口里时,上面那次 `_begin_reconnect` 会被挡下
+# (见它的守卫),账记在 `_pending_disconnect` 上,关菜单这一刻补上。不补的话玩家会留在一个
+# 快照停更的静止世界里 —— 正是本功能要消掉的那个状态。
+# ★ 它**不是**"按 ESC 回主菜单"那一路(原注释这么写,已被实测推翻,见 `_begin_reconnect` 的守卫)。
+#   它服务的是"菜单开着时真掉线"这一档。
+func _recheck_disconnect() -> void:
+	if _pending_disconnect:
+		_pending_disconnect = false
+		_begin_reconnect()
+
+
+# 局内自动重连:不切场景、不重建世界 —— 场景与节点原样保留,只把连接接回去。
+# ★★ "不重建场景"**不等于**"世界没变":掉线那 30 秒里服务器照跑 —— 对面把墙拆了、地上的枪
+#   被捡走/丢弃/换局重铺。所以这条路径**同样要**拉一次 `match_sync` 把破坏态与地面武器补回来
+#   (见 `_on_resumed` 末尾那一拉;`destroyed` 不是路径乙专属)。★ 别把"世界还在原地"读成
+#   "没什么要补的" —— 那正是删掉那两行、让幻影墙/幽灵枪悄悄回来的那个想法(漏了不报错)。
+func _begin_reconnect() -> void:
+	# ★ MATCH_OVER / 对手离开那两条延时回菜单的路子会先 `NetBus.stop()`,而它断开的是我们自己。
+	if _match_ended:
+		return
+	# ★ 30 秒预算的**起算点 = 真实断开这一刻**,故记在这里、且在那道菜单守卫**之前** ——
+	#   菜单开着的闪断若等"关菜单"才起算,等于凭空多拿一段预算(spec 的宽限期按**服务器**的
+	#   掉线检测起算,客户端这边晚算的那几秒会让最后几次 reclaim 打在"已被移出"上)。
+	#   ★ 只在**没人记过**时才记:关菜单时 `_recheck_disconnect()` 再来一次,预算要接着走,不重置。
+	if _reconnect_started_ms == 0:
+		_reconnect_started_ms = Time.get_ticks_msec()
+	# ★ 菜单开着**先不动,但不是放弃**(放弃会把真掉线也一起漏掉)。★★ 2026-09-17 订正本守卫的
+	#   理由:原先写的是"按 ESC →「回到主菜单」也走 `NetBus.stop()`,此刻接着重连会在回主菜单的
+	#   路上把连接接回 worker" —— **那个前提不成立**:`NetBus.stop()` 把 `multiplayer_peer` 置空,
+	#   引擎在 `set_multiplayer_peer` 里先 `clear()`、`last_connection_status` 当场复位成
+	#   DISCONNECTED,CONNECTED→DISCONNECTED 那一跃**从未被观测到** → `server_disconnected`
+	#   (本文件 `_on_server_message` 的唯一上游)**根本不会发**;而且 `PauseMenu.go_menu()` 走的是
+	#   直接 `NetBus.stop()`,连 `toggled`(→ `_recheck_disconnect`)都不经过。故"ESC 会引发重连"
+	#   这条路径不存在。
+	#   ★ 守卫**仍然保留**,理由换成成立的这一条:**菜单开着时真掉线是可能的**(服务器踢人 /
+	#   网络断),而那一刻的重连要**推迟到关菜单**再发 —— 玩家下一秒可能就点「回到主菜单」,
+	#   先把连接接回 worker 再走人,就会留下"人已走、role 仍被占"的幽灵(对手那边卡死、无报错)。
+	#   推迟的账记在 `_pending_disconnect` 上,由 `_recheck_disconnect()` 在关菜单时补。
+	#   (另一侧:`_exit_tree` 兜"重连已经在飞、玩家又按 ESC 走了"。)
+	if _menu_open:
+		return
+	_pending_disconnect = false
+	if PvpSession.token == "" or PvpSession.worker_port <= 0:
+		_abort_reconnect("重连失败(无会话令牌)")   # 原版 worker / 老大厅 → 优雅降级
+		return
+	_reconnecting = true
+	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.worker_port])
+	_retry_connect.call_deferred()
+
+
+# 连一轮(先把上一轮拆干净)。★ 与 `lobby_page` 转连 worker 那一处同款:
+# `start_client` 的地址/端口取自 `PvpSession`(大厅填好的,不重新走大厅)。
+func _retry_connect() -> void:
+	if not _reconnecting:
+		return
+	NetBus.stop()
+	_reclaim_sent = false   # 新连接 = 新的一次 reclaim 额度(旧连接上那次的成败已无意义)
+	_attempt_started_ms = 0   # 上一轮(若有)就此作废
+	# ★ 上一轮那两条**一次性结局回调若还没触发,仍挂在 MultiplayerAPI 上**(信号回调挂在对象上,
+	#   不随 `multiplayer_peer` 换掉,也不随 `NetBus.stop()` 清),不清的话新连接握手成功那一次
+	#   emit 会把它们**一起**叫起来 —— `_try_reclaim` 会被叫两次(见它的守卫)、
+	#   `_on_reconnect_failed` 的旧回调还可能把**新一轮**的尝试记账清零。故每次重连先摘干净。
+	if multiplayer.connected_to_server.is_connected(_try_reclaim):
+		multiplayer.connected_to_server.disconnect(_try_reclaim)
+	if multiplayer.connection_failed.is_connected(_on_reconnect_failed):
+		multiplayer.connection_failed.disconnect(_on_reconnect_failed)
+	var err := NetBus.start_client(PvpSession.server_address, PvpSession.worker_port)
+	if err != OK:
+		_schedule_reconnect_retry()
+		return
+	# 尝试已起飞:记下起飞时刻(掐它的唯一判据),并挂上两条一次性结局信号。
+	_attempt_started_ms = Time.get_ticks_msec()
+	multiplayer.connected_to_server.connect(_try_reclaim, CONNECT_ONE_SHOT)
+	multiplayer.connection_failed.connect(_on_reconnect_failed, CONNECT_ONE_SHOT)
+	# ★★ 成功这条**也要挂定时器**(2026-09-17 修:原先只有 `err != OK` 那条挂)。不挂的话,
+	#   "一次连接尝试正在飞"的整段期间**一次 tick 都没有** —— 宽限期判据从不被求值,而 ENet
+	#   自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 → 最坏情形是
+	#   **卡在冻结世界约 33 秒**才回主菜单,而不是设计的 30 秒(本机实测:尝试@0.15s →
+	#   `connection_failed`@31.81s → 由失败那一刻才挂上的 tick 在 ~33.8s 判超时)。
+	#   挂上之后这一路 tick 只多做一件事:到 `RECONNECT_ATTEMPT_TIMEOUT_MS` 就掐掉重开一次
+	#   (见 `_on_reconnect_retry_tick`)。
+	_schedule_reconnect_retry()
+
+
+func _on_reconnect_failed() -> void:
+	_attempt_started_ms = 0   # 这次尝试已有结局(失败)→ 下一拍重开,不必再等尝试超时
+	_schedule_reconnect_retry()
+
+
+func _try_reclaim() -> void:
+	if not _reconnecting:
+		return   # 期间已收场(超时/已离开) → 不发
+	# ★★ **本条连接上只发一次**(本功能最要害的不变量):worker 接受第一次时就 `_grace.leave(role)`
+	#   了,同一条连接上再发一次,进 `_on_reclaim` 的判据②必不成立 → 它**踢连接**。
+	#   这一行是**兜底**:正常路径由 `_retry_connect` 每次重连把旧的一次性回调摘干净来保证
+	#   (见那里的注释),但"只发一次"这件事值得在发的地方再写死一次。
+	if _reclaim_sent:
+		return
+	# 握手落地 = 这次尝试**有结局了** → 不再受"尝试超时"管辖,只剩"等应答"这一档。
+	_attempt_started_ms = 0
+	_reclaim_sent = true
+	NetBusExt.rpc_id(1, "reclaim_role", PvpSession.role, PvpSession.token)
+	# ★ 等 worker 回的 match_start(它带 spawn/map_path)。等到了才算成功,见 _on_resumed。
+	_schedule_reconnect_retry()
+
+
+# 重试节拍(单一定时器;每一拍自己判"再连一轮"还是"只等应答")。
+# ★ **一个时刻只能有一个定时器在飞**:OK 路径那条"尝试超时"会与 reclaim 后那条"等应答"重叠
+#   (`connected_to_server` 一到,`_try_reclaim` 又挂一个),不拦的话每一拍会跑两遍。
+#   已有的没到点就直接返回 —— 链条不会断:`_on_reconnect_retry_tick` 除收场那两条外**每条分支
+#   都会再挂一次**,所以任何时候都至少有一个在飞。
+func _schedule_reconnect_retry() -> void:
+	if not _reconnecting:
+		return
+	if _retry_timer != null and _retry_timer.time_left > 0.0:
+		return
+	_retry_timer = get_tree().create_timer(RECONNECT_RETRY_MS / 1000.0)
+	_retry_timer.timeout.connect(_on_reconnect_retry_tick)
+
+
+func _on_reconnect_retry_tick() -> void:
+	if not _reconnecting:
+		return
+	# ★★ 宽限期判据是**第一条**,且与"这次尝试走到哪一步"**无关** —— 两条路径(`err != OK` 与 OK)
+	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),30 秒也一定到点。
+	if Time.get_ticks_msec() - _reconnect_started_ms > int(GraceWindow.DEFAULT_SECONDS * 1000.0):
+		_abort_reconnect("重连超时,对局已结束")
+		return
+	# ★★ **同一个 role 只许发一次 reclaim**(本功能最易写错、且症状最怪的一处):
+	#   worker 接受第一次时就 `_grace.leave(role)` 了,第二次进 `_on_reclaim` 的判据②
+	#   ("该 role 必须在宽限期里")必不成立 → 它**踢连接**。表现是"刚重连上几秒又断",
+	#   看着像网络抖动,实则是自己把自己踢了,而且因为 token 是对的,查 token 查不出问题。
+	#   判据:这条连接**还活着**、且**已发过** reclaim → 该做的是**等**它的 match_start
+	#   (可靠的定向应答,连着就一定到),而不是重连一轮再发一次。
+	#   真发不出去(连接没了 / 被服务器踢了)`can_send_to_server()` 即为 false,自然走到下面重连。
+	if _reclaim_sent and NetBus.can_send_to_server():
+		_schedule_reconnect_retry()
+		return
+	# ★ 一次握手最多活 `RECONNECT_ATTEMPT_TIMEOUT_MS`(还没起飞的不受此限:0 = 无尝试在飞)。
+	#   ★ **这里绝不能用 `RECONNECT_RETRY_MS`** —— 每 2 秒 `NetBus.stop()` + 重连会在高 RTT 链路上
+	#     反复掐掉正在握手的尝试,比不掐更糟;那个值只管"多久看一眼"。
+	#   到点仍未落地 = 这次多半不会落地了(ENet 自己的超时 ~31.8s,远长于本宽限期)→ 掐掉重开,
+	#   让 30s 预算里能有若干次尝试,而不是只有一次。
+	var attempt_age := Time.get_ticks_msec() - _attempt_started_ms
+	if _attempt_started_ms > 0 and attempt_age < RECONNECT_ATTEMPT_TIMEOUT_MS:
+		_schedule_reconnect_retry()
+		return
+	_retry_connect()
+
+
+# worker 接受 reclaim 后重发的那条 match_start 到达 → 重连成功。
+func _on_match_start_event(_role: int, _spawn: Vector2i, _map_path: String) -> void:
+	# 非重连态收到它 = 首次进场那一份(由 `lobby_page` 消费;本场景那时还没建出来)或异常来源,
+	# 两种都**不动本地世界** —— 本路径不重建场景,故 role/spawn/map_path 一个都不回写
+	# (`PvpSession.spawn` 在大乱斗里是"动态复活点"语义,回写只会让下一次 `_correct_local_spawn`
+	#  把玩家瞬移走)。
+	if not _reconnecting:
+		return
+	_on_resumed()
+
+
+# 重置本地 C2 状态(spec §3.4 的 ★:不重置会把断线前的记录当"未确认输入"重放)。
+func _on_resumed() -> void:
+	_reconnecting = false
+	_reconnect_started_ms = 0
+	_reclaim_sent = false
+	_attempt_started_ms = 0
+	# ★ 必须重置:worker 在 reclaim 时把 `_ack_seq[role]` 归 0 重协商锚点,而客户端这边的 `_acked`
+	#   还停在断线前那个数 —— 不重置的话新快照的 ack 一律 `<= _acked`,`on_authoritative` 全数丢弃
+	#   (C2 静默失效,要等 seq 重新爬过断线前那个数才恢复),同时环里那些断线前的记录会被当成
+	#   未确认输入重放,与服务器的新锚点错位。
+	_input_seq = 0
+	_have_prev_seq = false
+	_prev_sent_seq = -1
+	# ★ 新实例必须**重新 bind + 设 map_px**,照抄两个子类 `_ready` 里那三行。漏了**都不报错**:
+	#   没 bind → `_handle_ack` 里 `_p == null` 直接 `_trim` 返回,分歧永不修复(静默失去 C2);
+	#   没设 map_px → 跨接缝那一帧按裸距离比,白跑一次回滚(同 `_ready` 里那条注释)。
+	_rollback = PredictionRollback.new()
+	_rollback.bind(_local)
+	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# ★ 路径甲(局内自动重连)**原来不需要 `match_sync`** —— 场景没重建、本地世界还在。
+	#   现在需要了:**世界在掉线那 30 秒里变过**。这一拉把两类丢掉的可靠事件一次补回:
+	#     · destroyed   —— 被拆的墙(不补 → 幻影墙 → 预测分歧)
+	#     · ground_weapons —— 掉落/被捡走的枪(不补 → 幽灵枪 / 看不见的枪)
+	#   ★ 顺序:上面已经把 C2 重置完了(新 rollback / _input_seq=0),**再**拉。
+	#     (原写"反过来的话应答里的出生点校正会与重置打架" —— 那条校正在补态这一路上**已不再
+	#      执行**(见 `_resync_pull_pending`),故它不再是硬约束;保持"最后拉"的形状不变。)
+	#   ★ 别把这一行删掉:它不在"进场建态"那条老路上,漏了**不报错**,只是世界悄悄不一致。
+	if NetBus.can_send_to_server():
+		# ★ 先置位再发:这条应答是**补态**口径,`_on_match_sync` 据此跳过出生点校正
+		#   (它按 `spawns` 校正/告警的前提在这里不成立,见那一支的注释)。
+		_resync_pull_pending = true
+		NetBus.rpc_id(1, "match_sync")
+	print("[pvp] 重连成功")
+
+
+func _abort_reconnect(reason: String) -> void:
+	_reconnecting = false
+	NetBus.stop()
+	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
+	print("[pvp] %s" % reason)
+
+
+# 场景离开(ESC / MATCH_OVER / 对手离开 / 进程退出)→ 停掉在飞的重连。
+# ★ 必须有:`_reconnecting` 期间玩家仍可按 ESC 离场,不停的话重连循环会**从主菜单**继续跑,
+#   连上还 reclaim 成功 → worker 认为这个 role 有人管(正是 `_begin_reconnect` 那道守卫要防的
+#   同一个后果,只是入口在另一侧:那边防"开始时",这边防"开始后")。
+# ★ 只在**真在重连**时断连:本函数跑在新场景 `_ready` **之后**(`safe_change_scene` 先 add 新场景
+#   再摘旧场景),无条件 `NetBus.stop()` 会把新场景刚建起来的连接干掉。
+func _exit_tree() -> void:
+	if _reconnecting:
+		_reconnecting = false
+		NetBus.stop()

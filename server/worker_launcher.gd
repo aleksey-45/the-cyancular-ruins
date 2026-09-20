@@ -22,8 +22,13 @@ const WORKER_PORT_SPAN := 500
 # 端口归还延迟(秒)。不能在房间清空时立刻归还:玩家转连 worker 的瞬间大厅就关房,
 # 而旧 worker 要等客户端真正断开(对局结束/退菜单)才退出,窗口期可达数分钟;
 # 立刻复用会把同端口发给新 worker → bind 冲突,或旧 worker 抢到新局的客户端(跨房间串线)。
-# 30s 足够旧 worker 走完收尾;极端情况(客户端僵死不断开)由 500 端口轮回兜底。
-const WORKER_PORT_REUSE_DELAY := 30.0
+# 极端情况(客户端僵死不断开)由 500 端口轮回兜底。
+# ★ 2026-09-17:30 → **120**。原值 30s **等于**(**不晚于**)断线宽限期(30s)——
+#   ★ 措辞订正:30 == 30 是**相等**而不是"短于",而**相等同样不安全** —— 宽限期到点那**同一刻**
+#   端口就可以被复用,`pick_port` 会把它发给新 worker,而重连的客户端手里攥着旧端口 → 连到
+#   **别的局**(它要的是"宽限期内端口一定还在手里",相等不满足这一点)。
+#   120 = 宽限期 30s + 一局的重连余量,与 royale 的 360s 同一条纪律(那边见 ROYALE_PORT_REUSE_DELAY)。
+const WORKER_PORT_REUSE_DELAY := 120.0
 # 大乱斗 worker 的端口归还延迟:按**默认**一局时长(RoyaleHost.MATCH_TIME=300)+ 收尾估,
 # 沿用 30s 会让对局中途端口被发给新 worker(串线/bind 冲突)——自检 M2。
 # ★ 已知边界(照实登记,本次不放宽):房主可用建房页的「一局限时」把一局配到 30 分钟
@@ -31,6 +36,10 @@ const WORKER_PORT_REUSE_DELAY := 30.0
 # 一局,端口可能在**旧 worker 还在跑**时就被复用。与 sweep 在局宽限同一根因(都拿默认时长
 # 当上界),修法同样要让界读**本局实际时长**(只在 worker 里)——见 _sweep_stale_rooms 的注释。
 const ROYALE_PORT_REUSE_DELAY := 360.0
+# 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀(比 1v1 长得多),与 royale 同档。
+# ★ 已知边界照旧(与 WORKER_PORT_REUSE_DELAY 的同款问题):计时从**房间拆除(≈开局)**起算,
+#   不是从局内断线起算 —— 一局中后段掉线时端口可能已被复用。
+const TEAM_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 
@@ -128,6 +137,53 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	var pid := OS.create_process(exe, args)
 	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
 			str(roles), str(ai_roles), log_path(port)])
+	return pid > 0
+
+
+# 拉起 3v3 worker(--team --roles r,r,... --teams t,t,...;其余同 spawn_royale_worker)。
+# roles 与 teams **同序**、**等长**:第 i 个 role 的队号就是 teams[i]。
+# ★ 为什么队号要显式传、不从 role 号推:role 由大厅「最小空闲号」分配,有人退出会留空洞
+#   ({1,3,5} 而 3 人),奇偶/区间推导必然出错(与 --roles 同一条纪律)。
+# ★ 本函数与 server_main.gd 的 argv 解析**逐字对应**,两边改一处必须同步改另一处
+#   (守卫见 tests/room_sweep_smoke.gd 的双向断言)。
+func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
+	if roles.size() != teams.size():
+		push_error("spawn_team_worker: roles 与 teams 长度不等(%d vs %d),拒绝拉起" % [roles.size(), teams.size()])
+		return false
+	# ★ 队号**取值**也必须在这里挡住(Task 9 评审 M2):解析端只收 1..2、越界**静默丢弃** ——
+	#   于是只校验长度的实现在 `teams = [1,1,3,2,2,2]` 上会放行(6 与 6 等长),而 worker 收到
+	#   5 个队号配 6 个 role ⇒ 解析端长度校验不过 ⇒ 子进程**开机即 quit(1)**,而本函数返回
+	#   `pid > 0`、大厅据此判定"拉起成功" ⇒ **对局永不开始,大厅侧一行报错都没有**
+	#   (实测复现:子进程的 ERROR 只写在它自己的 `worker_<port>.log` 里,而那份日志没人读;
+	#    它死在 bind 之前,所以端口没被占 —— 坏的是"大厅以为成功"这件事本身)。
+	#   B 册大厅要从房间数据拼 teams,最容易踩的就是这一脚。
+	#   校验集合与解析端接受的 {1, 2} 对齐 —— 两边改一处必须同步改另一处。
+	for t in teams:
+		if int(t) != 1 and int(t) != 2:
+			push_error("spawn_team_worker: 队号 %s 越界(只接受 1/2),拒绝拉起" % str(t))
+			return false
+	var role_strs := []
+	for r in roles:
+		role_strs.append(str(int(r)))
+	var team_strs := []
+	for t in teams:
+		team_strs.append(str(int(t)))
+	var exe := OS.get_executable_path()
+	var args: PackedStringArray
+	if OS.has_feature("editor") or OS.has_feature("template_debug"):
+		args = PackedStringArray(["--headless", "--log-file", log_path(port),
+				"--path", ProjectSettings.globalize_path("res://"),
+				"res://server/server_main.tscn", "--", "--worker", "--team",
+				"--port", str(port), "--roles", ",".join(role_strs),
+				"--teams", ",".join(team_strs)])
+	else:
+		args = PackedStringArray(["--headless", "--log-file", log_path(port),
+				"--", "--worker", "--team",
+				"--port", str(port), "--roles", ",".join(role_strs),
+				"--teams", ",".join(team_strs)])
+	var pid := OS.create_process(exe, args)
+	print("[lobby] spawn team worker pid=%d port=%d roles=%s teams=%s 日志=%s" % [pid, port,
+			str(roles), str(teams), log_path(port)])
 	return pid > 0
 
 

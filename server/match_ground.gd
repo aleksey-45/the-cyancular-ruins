@@ -145,13 +145,46 @@ func _canonical_of(inst: int) -> Vector2:
 # ★ `pos` 必须是 **canonical**(与 `_broadcast_weapon_spawned` 同一条契约)。开局这批是唯一
 #   "读表"而不是"读刚生成的节点"的投递路径,故显式走 `_canonical_of` 而不是直接 `e["pos"]` ——
 #   今天两者等价(视觉中心已合并到节点原点),但契约要写死在这里,别依赖"表恰好是对的"。
+#
+# ★★ 本函数与 `_broadcast_weapon_spawned` 共用**条目形状**,但语义**不同** —— 别把两者对齐:
+#   · `_broadcast_weapon_spawned` = **生成事件**:`pos`/`vel` 都是"这件刚被生成"那一刻的值,
+#     客户端拿这份 vel 从 canonical 重放落体,落点才与服务器一致。
+#   · 本函数 = **当前状态**:`pos` 与 `vel` **都取活节点此刻的值**(`_canonical_of` + 活速度)。
+#   ★ 本函数有两个调用时机(见 server_main._on_match_sync,同一口):**进场一次** + **每次重连一次**。
+#     重连那次是关键:那些枪在掉线窗口里早就落定了,若 `vel` 沿用条目里那份"生成时刻的值"
+#     (那是 `_broadcast_weapon_spawned` 的纪律,对本函数不适用),客户端会把它**重扔一次** ——
+#     `WeaponPickup.configure` 会置 `velocity = p_vel` **且** `_settled = false`,于是新节点
+#     从"枪现在所在处"重演一整段下落(投掷速度 ≈ 400px/s → 约 110px 飞行 + 33px 滑行 ≈ 2 格),
+#     方向正是当初扔出去的方向。它只在客户端(地面武器不进 `capture_state`、玩家不与层 8 碰撞
+#     → 不会滚回滚循环),但 **F 拾取提示读的正是客户端那份表** → 提示会指着服务器上根本没有枪的
+#     位置,违反"提示了 A、服务器却捡了 B"那条契约,且只有那把枪下次被捡走/被扔掉才自愈。
+#   ★ 为什么取**活**速度而不是"强行落定"(置 `velocity = ZERO` / `_settled = true`):后者会把
+#     一把真在半空中的枪**冻住**。取活速度则两端从**同一个 (pos, vel)** 继续模拟 —— 落体是纯
+#     确定性的(见 WeaponPickup 的"落点与何时开始模拟无关"),于是两端落点逐字一致。
+#   ★ 进场那批的语义**没有被这条改动动到**:开局散点的 `vel` 本来就是 `Vector2.ZERO`,而那时
+#     它们要么已停稳(活速度 = 0)、要么还在落那 32px(活速度是它真实的下落速度 —— 比 0 更准,
+#     落点不变,因为水平速度恒 0)。载荷 `pos` == 拾取判定圆心那条契约由 `_canonical_of` 保证,
+#     有探针钉着(`ground_action_probe` 的 ⓪ 与 ⑦)。
 func ground_weapons_payload() -> Array:
 	var out: Array = []
 	for e in ground_weapons.entries:
 		var d: Dictionary = e.duplicate(true)
-		d["pos"] = _canonical_of(int(e["inst"]))
+		var inst := int(e["inst"])
+		d["pos"] = _canonical_of(inst)
+		d["vel"] = _live_velocity_of(inst)
 		out.append(d)
 	return out
+
+
+# 一件地面武器**此刻**的速度(已停稳的是零;半空中的是它真实的速度)。
+# ★ 兜底纪律与 `_canonical_of` 同款(没有活节点 → 退回条目里那份)。这里**不重复**留痕:
+#   同一个 inst 上 `ground_weapons_payload` 会先调 `_canonical_of`,那条痕已经留过了。
+func _live_velocity_of(inst: int) -> Vector2:
+	var n = _ground_nodes.get(inst, null)
+	if n != null and is_instance_valid(n):
+		return (n as WeaponPickup).velocity
+	var e: Dictionary = ground_weapons.get_entry(inst)
+	return e.get("vel", Vector2.ZERO)
 
 
 # by_role = 这把是**谁刚丢下的**(-1 = 开局铺的/无主)。客户端靠它排除"自己刚丢的那把"
@@ -260,9 +293,13 @@ func _drop_all_but_one(p: Node2D, role: int) -> void:
 
 # ── 初始分布 / 换局重置 ──
 
-# 开阔地板格(1v1 的判据)。★ RoyaleHost 覆写成自己的 `_spawn_candidates()`
-# (那边还要求同层连通区 ≥ OPEN_AREA_MIN,淘汰密封死角)。判据本体仍是
+# 开阔地板格(1v1 的判据)。★ 联机侧用的是 `SpawnPicker.spawn_candidates()`
+# (2026-09-18 从 RoyaleHost 抽出;它要求同层连通区 ≥ **`SpawnPicker.area_threshold()`** ——
+# 2026-09-19 起该门槛是**自适应**的:正常图 = `OPEN_AREA_MIN`(20),本图最大连通区 < 20 时按
+# `ADAPTIVE_RATIO` 缩放,见 `core/sim/spawn_picker.gd`)。判据本体仍是
 # `MazeGenerator.is_floor_cell_with_headroom`,别在这儿抄第二份。
+# ★ 本函数**没走** `SpawnPicker`(自己扫全量地板格)⇒ **1v1 的地面武器分布不受那一波改动影响**;
+#   这里只是把注释的指向订正到现行判据(2026-09-19 评审 Minor)。
 func _ground_spawn_cells() -> Array:
 	var out: Array = []
 	if grid.is_empty():

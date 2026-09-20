@@ -42,9 +42,14 @@ func _adjudicate_bullets() -> void:
 			_adjudicate_grenade(bullet)
 			continue
 		# 命中裁决:对非射手玩家算 toroidal 距离
+		# ★ 队友**穿透**:`continue` 而不是 `break` —— 队友不挡弹道,后面若有敌人照样打得到。
+		#   射手 role 只查一次(循环外),别在循环里反复 _role_of。
+		var shooter_role := _role_of(bullet.shooter)
 		for role in players:
 			var p: Node2D = players[role]
 			if p == bullet.shooter:
+				continue
+			if same_team(shooter_role, int(role)):
 				continue
 			var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
@@ -69,6 +74,11 @@ func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
 	for role in players:
 		var p: Node2D = players[role]
 		if p == bullet.shooter:
+			continue
+		# ★ 直击穿透队友(与普通弹同口径)。**别顺手把爆炸也豁免** —— 用户裁定:
+		#   子弹穿透队友、爆炸对队友满效(伤害 + 击退都照吃)。爆炸走 Explosion.apply_aoe,
+		#   那条路径**按现状不动**(它本来就对所有玩家满效)。
+		if same_team(_role_of(bullet.shooter), int(role)):
 			continue
 		var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()

@@ -58,7 +58,8 @@ func spawn_all(spawns: Dictionary = {}) -> void:
 # 全图"头顶 2 格净空"的开阔地板格,供地面武器布点用(2026-09-15)。
 # ★ 判据本体在 `MazeGenerator.is_floor_cell_with_headroom` —— 本函数**只做扫描**,
 #   别再抄一份判定条件(抄一份 = 改一处漏一处,而且两处都不报错)。
-# ★ 联机侧 `RoyaleHost._floor_cells` 是同款扫描(那边还要连通区规模,故没合并)。
+# ★ 联机侧同款扫描的**真身**已搬到 `core/sim/spawn_picker.gd`(`SpawnPicker.floor_cells()`,
+#   2026-09-18 从 RoyaleHost 抽出;RoyaleHost 里只剩同名转发)(那边还要连通区规模,故没合并)。
 func open_floor_cells(grid: Array) -> Array:
 	var out: Array = []
 	if grid.is_empty():

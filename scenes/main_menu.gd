@@ -210,6 +210,12 @@ func _build_menu_buttons() -> Array:
 		Sfx.play("ui")
 		PvpSession.reset()
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
+	# 3v3 团队:与多人/大乱斗并列的第三个联机模式入口(大厅页 `team_lobby`,协议走 team_*)。
+	var team_btn := UiFactory.button("3 v 3 团 队", 32)
+	team_btn.pressed.connect(func() -> void:
+		Sfx.play("ui")
+		PvpSession.reset()
+		get_tree().change_scene_to_file("res://scenes/team_lobby.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽
 	# 也不成体系(2026-09-13 视觉评析)。按钮本身 420 宽居中,标签不必再自己凑宽度。
@@ -224,12 +230,12 @@ func _build_menu_buttons() -> Array:
 	quit_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().quit())
-	for b in [start_btn, multi_btn, royale_btn]:
+	for b in [start_btn, multi_btn, royale_btn, team_btn]:
 		play_group.add_child(b)
 	for b in [settings_btn, ver_btn]:
 		opt_group.add_child(b)
 	box.add_child(quit_btn)
-	return [start_btn, multi_btn, royale_btn, settings_btn, ver_btn, quit_btn]
+	return [start_btn, multi_btn, royale_btn, team_btn, settings_btn, ver_btn, quit_btn]
 
 
 # 浮现动画:标题先出(淡入),按钮依次淡入

@@ -43,6 +43,13 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 @onready var combat: CombatComponent = $Combat
 @onready var swim: SwimComponent = $Swim
 
+# 补间形变(squash & stretch)。运行期创建,不是场景子节点 —— 与 _reload_ring 同款。
+# ★ 纯表现层:不进 capture_state()/restore_state(),不碰碰撞箱。
+var squash: SquashStretch = null
+# move_and_slide() **之前**的 velocity.y。与帧首的 is_on_floor() 配对,供 squash 无状态推导落地。
+# ★ 不得进 capture_state(),不得被任何模拟逻辑读取 —— 只喂 squash(见 spec §5.1)。
+var _pre_move_vy: float = 0.0
+
 # 输入来源(行为不变重构):默认委托真实 Input;服务器注入 PacketInputSource 驱动远端玩家。
 var input_source: PlayerInput = LocalInputSource.new()
 
@@ -154,10 +161,22 @@ func _ready() -> void:
 	_reload_ring.visible = false
 	add_child(_reload_ring)
 	call_deferred("add_child", WaterFx.new())
+	# 补间形变:挂在**自己**身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗)。
+	# animator 是 @export 引用,场景实例化时就已就位,`_ready` 里可用。
+	squash = SquashStretch.new()
+	squash.setup(animator, SquashStretch.Profile.PLAYER)
+	add_child(squash)
 
 
 func _physics_process(delta: float) -> void:
+	# squash 放在**最首行**(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个
+	# 挤压值上(明显的视觉 bug)。参数成对读 —— is_on_floor() 是上一帧 move_and_slide 的
+	# 结果,_pre_move_vy 是那次 move_and_slide 之前缓存的 velocity.y(见 spec §2.4)。
+	squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())
 	if combat.is_downed():
+		# _tick_downed 不更新 _pre_move_vy:不归零的话,被击杀那一刻下坠速度会**陈旧地**留满整个
+		# 倒地窗口,并与复活首帧的地面态配对 → 一个满幅假挤压脉冲。
+		_pre_move_vy = 0.0
 		_tick_downed(delta)
 		return
 	weapons.tick(delta)   # 武器帧逻辑走物理 tick(与 body 同一定时器;rollback 重放确定性)
@@ -216,6 +235,17 @@ func _physics_process(delta: float) -> void:
 	combat.apply_knock(delta)
 
 	# ---------- 执行移动 ----------
+	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
+	# ★ 且必须**滤掉不是摔下来的下坠速度**(squash 的调用契约 = "地面真正吸收掉的坠落速度"):
+	#   它一并覆盖的两条路径**性质不同**,别当成同一个病(实测,见 tests/squash_host_water_probe):
+	#   · 梯子下行(720)是**真违规**,且是**每帧**不是一帧 —— `_tick_crouch_and_dash` 攀附时首行
+	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 -10%(实测 scale = (0.9000, 1.1000))。
+	#   · 水中那条**不重叠**:Water.feet_offset 取碰撞箱底边 ⇒ 站在水下实心地面上时脚底探针
+	#     恒落在**支撑格自己**里、而支撑格是 wall 不是 liquid ⇒ in_water 恒假(实测
+	#     in_water∧on_floor 重叠 **0 帧**),"站池底永久 ~9% 挤压"并不存在。过滤它买到的是
+	#     **下沉窗口**那 30 帧的连续项 `_air`(320/700 × 0.30 ≈ 0.137 → scale.x 1.0137 的**拉伸**,
+	#     过滤后 1.0000)⇒ 这一条是**落实设计取舍**("游泳不该有自由落体那种弹感"),不是修 bug。
+	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
 
 	_tick_slide_reactions()
@@ -250,6 +280,7 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) 
 		jump_buffer_timer = 0.0
 		coyote_timer = 0.0
 		jump_cut_applied = false
+		squash.impulse(SquashStretch.Impulse.JUMP)
 
 	# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
 	if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
@@ -276,6 +307,7 @@ func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:
 	if not is_charge and not is_squat and input_source.is_action_just_pressed("charge"):
 		is_charge = true
 		charge_timer = charge_duration
+		squash.impulse(SquashStretch.Impulse.DASH)
 		# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
 		if _last_move_timer > 0.0:
 			facing_direction = _last_move_dir
@@ -410,7 +442,12 @@ func _wrap_position() -> void:
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
+	# 前后比对 hp:只有**真吃到伤害**才挤压。无敌帧挡下 / 已倒地时 combat.take_hit 不改 hp,
+	# 这条判据天然把它们排除 —— 比在 combat 里回调更省事(不动组件接口)。
+	var before := combat.hp
 	combat.take_hit(source_pos, damage, ignore_iframes, knockback)
+	if combat.hp < before:
+		squash.impulse(SquashStretch.Impulse.HURT)
 
 func get_facing() -> int:
 	return facing_direction
