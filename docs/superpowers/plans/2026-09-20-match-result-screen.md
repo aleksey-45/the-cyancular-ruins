@@ -946,6 +946,7 @@ Expected: `ALL-OK`。
 3. ★ **ESC 的双重语义依赖"MATCH_OVER 时销毁暂停菜单"**:对局中 ESC = 菜单，结算页上 ESC = 返回主菜单。删掉那两行会让两者同时触发。
 4. `ui/match_result.tscn` 层位 **150**(三个 HUD 130、小地图 131、暂停菜单 145)。
 5. ★ **结算页的挂载/离场在 `PvpMatchClient` 基类**(`_show_result` / `_leave_to_main_menu`),三个客户端**只各覆写 `_build_result_payload()`** —— 它们本就都 extends 它。加新模式的结算 = 写一个覆写,别在子类里再抄一份挂载。
+6. ★ **把 `CLAUDE.md:121` 那句「昵称走 `_fit_name(名字, 14)`」改成指 `UiFactory.fit_name(名字, 14)`** —— Task 1 之后权威实现已搬到 `UiFactory`,`RoyaleHud._fit_name` 只剩一行委托。该行的**口径描述**(显示宽度、截断 + 补满、换字体要重算 `BOARD_W`/`NAME_UNITS`)**原样保留**,只改函数名归属。(Task 1 自己发现并登记:Step 4 限定它只 `git add` 那两个 UI 文件,所以那处文档留到本任务。)
 
 - [ ] **Step 5: 提交**
 
