@@ -19,7 +19,7 @@ var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_
 
 # ── 头上 ID(自己/对手昵称):世界空间文字,每帧贴到头顶 ──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,现往下压一点)
-# 头顶名字统一中性亮白(不再按角色区分颜色;P2 靠身体色相 shader 区分)。world_label 内部再叠 0.85 alpha。
+# 头顶名字统一中性亮白(不再按角色区分颜色;P2 靠身体**颜色**区分,见 `_apply_p2_tint`)。world_label 内部再叠 0.85 alpha。
 const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
@@ -106,7 +106,7 @@ func _ready() -> void:
 	# 要求 current 已非空,而 current 只在 deferred 实例的 _ready 里赋值,同帧第二次调用看到的
 	# 还是 null → 真会建出第二份(实测 2 份),并打破「生产路径恰好 1 处挂载点」这条既有断言。
 	# 后来者不要照别的分支把这一行补回来。
-	# P2 本体固定为「偏绿的青」(区分双方;只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
+	# P2 本体固定为青(`UiFactory.C_TEAM_B`;区分双方。只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
 	# NetBus.stop() 断连,worker 检测对局任一方断线即拆局)。开关/退出由 PauseMenu 自理
@@ -245,15 +245,22 @@ func _on_opponent_left() -> void:
 			return
 		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
-# P2(role 2)的本体色相 —— 1v1 里**唯一的**染色规则:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
-# 只给角色 AnimatedSprite2D 挂 hue shader(色相旋转,受击白闪/无敌半透明仍正常),武器不染。
+# P2(role 2)的本体颜色 —— 1v1 里**唯一的**染色规则:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
+# 只染角色 AnimatedSprite2D 本体(受击白闪/无敌半透明仍正常),武器不染。
 #
-# ★ 口径(用户 2026-09-19 裁定):**P1 恒为蓝、P2 恒为偏绿的青**。本体主色是 `#639BFF`
-#   (`PvpMatchClient.BODY_BASE_COLOR`,色相 ≈218.5°),-43° ⇒ **≈175.5°**(青绿区间 165~185 的偏绿侧)
-#   ⇒ 渲染出来是 `#63FFF3`。数值是**实测**的(`.superpowers/sdd/` 的对照图与报告),不是算出来的。
-# ★ 判据链(改这个值时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`(3v3 队 2 同色),
-#   由 `tests/hue_tint_probe` 钉住。
-const P2_DEFAULT_HUE := -43.0   # 度;与 player_p2_hue.gdshader 的 uniform 默认值同值
+# ★ 口径(用户 2026-09-19 裁定):**P1 恒为蓝、P2 恒为青**。P2 用的**就是** 3v3 队 2 那个 token
+#   (`UiFactory.C_TEAM_B`)—— 同一个常量、同一个机制,不是两套算法凑出近似色。
+# ★ 机制(2026-09-20 换)收在 `PvpMatchClient._apply_tint` 的**第三参**那条路:
+#   modulate **比值** = 目标色 / 本体主色(`PvpMatchClient.BODY_BASE_COLOR` = `#639BFF`)。
+#   输出**恒等于**目标 token 本身(比值法在结构上就成立)。
+#   ★ 换掉色相旋转的原因是**数学上做不到**,不是审美:色相旋转保持饱和度与亮度不变,而本体主色
+#     `#639BFF` 是 **S61 V100** ⇒ 那条路永远只能产出 S61 的色;用户 2026-09-20 新选的是
+#     **H185 S50 V100**(`#80F4FF`,S50)⇒ 只有比值法能表达。
+#   ★ `player_p2_hue.gdshader` **没有删、也还在用** —— 它现在是**个人色相**那条路
+#     (大乱斗的对手色、大乱斗/3v3 里自己那把自选色),见 `_apply_tint` 的第二条分支。
+#     本文件(1v1)**不再引用它**。
+# ★ 判据链(改这个颜色时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`,
+#   由 `tests/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
 
 func _apply_p2_tint() -> void:
 	var body: Node = null
@@ -261,24 +268,23 @@ func _apply_p2_tint() -> void:
 		body = _local.get_node_or_null("AnimatedSprite2D")
 	elif PvpSession.role == 1 and _remote_replica != null:
 		body = _remote_replica.get_node_or_null("AnimatedSprite2D")
-	var canvas := body as CanvasItem
-	if canvas == null:
+	if body == null:
 		return
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", P2_DEFAULT_HUE)   # P2 本体色相旋转(= 偏绿的青,见上)
-	canvas.material = mat
+	# 第二参(色相)在这条路上**不被读**:第三参非透明 ⇒ `_apply_tint` 直接走比值分支并 return。
+	# 写 0.0 而不是留一个"看着像参数"的角度值,免得日后有人以为它决定什么
+	# (2026-09-20 之前这里传的是 `P2_DEFAULT_HUE = -43.0`,那个常量已随机制一起删除)。
+	_apply_tint(body, 0.0, UiFactory.C_TEAM_B)
 
 # ── 个人色相(扩展 peer_hues)在 1v1 **整体停用**(用户 2026-09-19 裁定)──
-# 载荷照旧到达(`match_sync` 的 `hues`),但本模式**不消费它**:这里只把「P2 = 偏绿的青」那条
+# 载荷照旧到达(`match_sync` 的 `hues`),但本模式**不消费它**:这里只把「P2 = 青」那条
 # 固定规则重铺一次,`hues` 的内容一律忽略。
 #
 # ★ 为什么停用(而不是"只在两人撞色时兜底"):双方都用默认 `Settings.pvp_color_hue = 0.0` 时
 #   两个身体**同为默认蓝**,1v1 就没有"谁是谁"了 —— 而"分得出"是这个模式的硬需求,
 #   不是审美。停用后 P1 恒蓝、P2 恒青,与两人各自的设置无关。
-# ★ 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的就是 `P2_DEFAULT_HUE`
-#   而**不是** `Settings.pvp_color_hue`(1v1 从未把自选色相染到本地玩家身上),所以这里只需
-#   保证**对手侧**别把它拉进来。判据(改这条时会一起动):
+# ★ 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的是 `UiFactory.C_TEAM_B`
+#   这个固定 token(2026-09-20 前是等价的 `P2_DEFAULT_HUE`)而**不是** `Settings.pvp_color_hue`
+#   (1v1 从未把自选色相染到本地玩家身上),所以这里只需保证**对手侧**别把它拉进来。判据:
 #     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/hue_tint_probe` 有源码断言);
 #     · P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
 # ★ `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
