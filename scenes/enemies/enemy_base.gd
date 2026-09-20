@@ -46,6 +46,10 @@ var _drown_tick: float = 0.0     # 扣血倒计时
 var state: int = 0
 var _state_timer: float = 0.0
 var _anim: AnimatedSprite2D
+# 补间形变(squash & stretch)。纯表现层,不进任何网络同步、不碰碰撞箱。
+var squash: SquashStretch = null
+# move_and_slide() **之前**的 velocity.y,与帧首 is_on_floor() 配对(见 spec §2.4)。
+var _pre_move_vy: float = 0.0
 
 # ── 行为钩子(子类覆写)──
 func _ai(_delta: float) -> void:
@@ -62,6 +66,13 @@ func _ready() -> void:
 	add_to_group("enemies")
 	_setup_contact_area()
 	call_deferred("add_child", WaterFx.new())
+	# 补间形变。★ 用 $AnimatedSprite2D 而不是 _anim:子类 `_ready` 是**先** super._ready()
+	#   后才 `_anim = $AnimatedSprite2D`(见 enemy_jump_bird.gd:15/18),此处 _anim 还是 null。
+	#   三个敌人的 .tscn 里该节点都叫 AnimatedSprite2D。
+	squash = SquashStretch.new()
+	add_child(squash)
+	squash.setup(get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D,
+			SquashStretch.Profile.ENEMY)
 
 func _setup_contact_area() -> void:
 	var area := Area2D.new()
@@ -89,7 +100,9 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
-	# 远处睡眠优化:距玩家超唤醒半径且落地静止 → 只播睡,跳过重力/滑行/水/移动(省 CPU)
+	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → vel_y 小 → 回中性,
+	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
+	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
 	if _is_far_sleeping():
 		_ai(delta)
 		_wrap()
@@ -132,6 +145,15 @@ func _physics_process(delta: float) -> void:
 	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
+	# ★ 必须在 move_and_slide() **之前**,且必须滤掉不是摔下来的下坠速度(spec §2.4)。
+	#   `_apply_water` 在水里写 buoyancy/swim 的 velocity.y,与 is_on_floor() 可能同时成立。
+	#   ⚠️ 本行是**防御性**的,不是已证的 bug:`_in_water` 与 `is_on_floor()` 在敌人身上
+	#   是否真会重叠**尚未有人量过**。玩家侧同款过滤实测的结果是"水里那条不重叠
+	#   (Water.feet_offset 让探针落在支撑格),梯子那条才是真违规" —— 敌人的水中判定
+	#   走的是另一条路径,不能照抄那个结论。
+	#   ★ Task 3 落地后应照 tests/squash_host_water_probe 的先例**量一次**敌人版本:
+	#     把本行改回 `velocity.y`,看有没有哪一相变红。变红=真 bug,不变红=纯防御。
+	_pre_move_vy = 0.0 if _in_water else velocity.y
 	move_and_slide()
 	_wrap()
 
@@ -158,6 +180,7 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, se
 	# 死亡:击退不折入,尸体与生前一致——knock_velocity 继续独立衰减,由 _physics_process 统一结算。
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
+	squash.impulse(SquashStretch.Impulse.HURT)
 
 # 尸体专用:只施加击退(爆炸=设独立向量、枪击=叠加速度),不扣血、不触发死亡/白闪。
 func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: bool) -> void:
@@ -286,6 +309,13 @@ func _set_facing(facing_left: bool) -> void:
 func _set_state(s: int) -> void:
 	state = s
 	_state_timer = 0.0
+	_on_state_entered(s)
+
+
+# 状态进入虚钩:基类默认空实现。三个子类各有自己的 `enum State`(JumpBird 根本没有
+# TAKE_OFF),故基类**不能**硬编码状态名 —— 只能往下派发,由子类映射。
+func _on_state_entered(_s: int) -> void:
+	pass
 
 
 func _anim_duration(name: String) -> float:
