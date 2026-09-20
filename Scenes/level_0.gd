@@ -372,6 +372,10 @@ func _tick_world(delta: float) -> void:
 		elif nxt >= 0.0 and _timeworld.w - nxt <= 5.0:
 			_clock_warn.text = "⚠ 事件临近 T-%02d" % int(nxt)
 			_clock_warn.add_theme_color_override("font_color", Color(0.95, 0.75, 0.4))
+		elif nxt >= 0.0:
+			# 常显下一事件倒计时(暗色):默认 3600s 的图首事件可能在数分钟后——没这行会以为"没事件"
+			_clock_warn.text = "下一事件 T-%d(%d 秒后)" % [int(nxt), int(maxf(_timeworld.w - nxt, 0.0))]
+			_clock_warn.add_theme_color_override("font_color", Color(0.55, 0.6, 0.66))
 		else:
 			_clock_warn.text = ""
 	if _clock_flash > 0.0:
