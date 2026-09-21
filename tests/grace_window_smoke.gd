@@ -12,12 +12,27 @@ extends SceneTree
 
 var _fail := 0
 
+# ⑨ 用:`reconnect_probe` 整跑长度里"前半段"(开机/进局/闪断/重连/相⑦)的实测量级 —— 该探针
+# `FINAL_TIMEOUT` 的注释就是这个推导(取 12 让下限落在 72s)。
+const RP_PREAMBLE := 12.0
+
 
 func _check(ok: bool, msg: String) -> void:
 	if ok:
 		return
 	_fail += 1
 	print("[FAIL] ", msg)
+
+
+# ⑨ 用:从探针脚本的 `get_script_constant_map()` 里取一个预算常量。
+# ★★ 取不到时**必须报红**:直接 `float(m["X"])` 在键名写错/常量被改名时拿到 null → 静默变 0.0,
+#   而 0 永远满足"下界"那条不等式 ⇒ "取不到"会伪装成"通过"。本守卫的全部意义就是拦静默失败,
+#   故这里先记账再返回 0(调用方那条不等式多半会跟着红第二条)。
+func _budget(m: Dictionary, name: String, where: String) -> float:
+	if not m.has(name):
+		_check(false, "★ %s 里找不到常量 %s(改名/删除?)—— 本守卫已失明,别把这次运行当通过" % [where, name])
+		return 0.0
+	return float(m[name])
 
 
 func _initialize() -> void:
@@ -113,6 +128,85 @@ func _initialize() -> void:
 		_check(float(delays[k]) > float(G.DEFAULT_SECONDS),
 				"★ %s = %.0f 应大于宽限期 %.0f(belt:worker 退出后别立刻把端口发出去)"
 				% [k, delays[k], G.DEFAULT_SECONDS])
+
+	# ── ⑨ 按宽限期**算出来**的测试/跑批预算必须仍然跨得过它(2026-09-21,Task 3 折叠进来)──
+	# ★ 为什么钉这条:三个真链路探针里有一批窗口是**按宽限期算的**(reconnect_probe 的
+	#   GRACE_MIN/GRACE_MAX/FINAL_TIMEOUT/CHILD_QUIT_AFTER、team_match_watcher 的 OBSERVE_MAX、
+	#   team_match_probe 的 RESULT_WAIT/FINAL_TIMEOUT/CHILD_QUIT_AFTER)。它们**不会**自己跟着
+	#   常量动 —— 而落伍的后果不是"红一条断言",是**探针自己先到点**:安全网/收工上限先耗尽 ⇒
+	#   探针挂住、**一行裁决都不打印**,而本仓的判据是"grep 文本 ALL-OK" ⇒ 与"真失败"长得一模一样。
+	# ★★ 这个坑**已经烂过两次**(宽限期 30 → 60 时 OBSERVE_MAX 与 RESULT_WAIT 那一批同时落伍;
+	#   此前还有一次把 RENDEZVOUS_MAX 记成 70 —— 实际是 100)。故每条不等式逐个钉住,
+	#   **消息里点名是哪一条预算**(红了才知道该改谁)。
+	# ★ 只 `load()` 读常量表,**不实例化** —— 三个探针都是场景探针(extends Node、依赖 autoload),
+	#   `-s` 下既不能也不需要实例化;`--import` 也已把它们的 `class_name` 依赖解析过。
+	var p_rp := "tests/reconnect_probe.gd"
+	var p_wm := "tests/team_match_watcher.gd"
+	var p_tp := "tests/team_match_probe.gd"
+	var cst := {}    # 相对路径 → 该脚本的常量表
+	for rel in [p_rp, p_wm, p_tp]:
+		var s: GDScript = load("res://" + rel)
+		# ★ 空载守卫:load 失败还往下走(下面那句 get_script_constant_map() 会抛错)走不到 quit() → 永久挂起
+		if s == null:
+			print("GRACE_WINDOW FAILED: 找不到 res://%s(按宽限期算出来的预算无从校验)" % rel)
+			quit(1)
+			return
+		cst[rel] = s.get_script_constant_map()
+	var crp: Dictionary = cst[p_rp]
+	var cwm: Dictionary = cst[p_wm]
+	var ctp: Dictionary = cst[p_tp]
+	# `--quit-after` 的单位是**帧**,而两个探针的注释都按 `run/max_fps`(=60)折算成秒。
+	var grace := float(G.DEFAULT_SECONDS)
+	var fps := float(ProjectSettings.get_setting("run/max_fps", 60))
+	if fps <= 0.0:
+		fps = 60.0    # 不限帧(0)时按 60 估 —— 这只是一条 belt,不追求精确
+
+	var rp_min := _budget(crp, "GRACE_MIN", p_rp)
+	var rp_max := _budget(crp, "GRACE_MAX", p_rp)
+	var rp_final := _budget(crp, "FINAL_TIMEOUT", p_rp)
+	var rp_child_f := _budget(crp, "CHILD_QUIT_AFTER", p_rp)
+	var wm_observe := _budget(cwm, "OBSERVE_MAX", p_wm)
+	var tp_wait := _budget(ctp, "RESULT_WAIT", p_tp)
+	var tp_final := _budget(ctp, "FINAL_TIMEOUT", p_tp)
+	var tp_child_f := _budget(ctp, "CHILD_QUIT_AFTER", p_tp)
+	# ④ 的求和逐项取(watcher 的常量),漏掉任何一项都会让那条判据失去意义。
+	var tp_worst := (_budget(cwm, "ENTER_TIMEOUT", p_wm) + _budget(cwm, "SETTLE", p_wm)
+			+ _budget(cwm, "RENDEZVOUS_MAX", p_wm) + _budget(cwm, "BRAWL_MAX", p_wm)
+			+ _budget(cwm, "SETTLE", p_wm) + wm_observe
+			+ _budget(cwm, "PEER_WAIT", p_wm))
+
+	# ① `reconnect_probe` 相④ 量到的时长必须落进 [GRACE_MIN, GRACE_MAX] —— 窗口不含宽限期,
+	#    就会把**正确**的服务器判红(窗口下界高于它 / 上界低于它)。
+	_check(rp_min <= grace,
+			"★ tests/reconnect_probe.GRACE_MIN = %.0f > 宽限期 %.0f:相④ 会把**正确**的服务器判红(窗口下界高过实际宽限)"
+			% [rp_min, grace])
+	_check(rp_max >= grace,
+			"★ tests/reconnect_probe.GRACE_MAX = %.0f < 宽限期 %.0f:相④ 会把**正确**的服务器判红(窗口上界低于实际宽限)"
+			% [rp_max, grace])
+	# ② `reconnect_probe` 的收工上限必须大于整跑长度(= 相④ 要等满的宽限期 + 前半段 ~12s),
+	#    而子进程的帧兜底又必须大于它(否则 actor 先退,相④ 的落点换了人)。
+	_check(rp_final > grace + RP_PREAMBLE,
+			"★ tests/reconnect_probe.FINAL_TIMEOUT = %.0f ≤ 宽限期 %.0f + 前半段 %.0f:收工上限先于整跑到点(探针挂住、一行裁决都没有)"
+			% [rp_final, grace, RP_PREAMBLE])
+	_check(rp_child_f / fps > rp_final,
+			"★ tests/reconnect_probe.CHILD_QUIT_AFTER = %.0f 帧(≈%.0fs)≤ FINAL_TIMEOUT %.0fs:子进程先于本进程收工上限退出"
+			% [rp_child_f, rp_child_f / fps, rp_final])
+	# ③ `team_match_watcher` 相⑤ 的观察窗必须**盖过**宽限期到点那一刻(掉线者正是在那时被移出
+	#    对局,而 `_expire_graces` 每秒才轮询一次 ⇒ 实际落在宽限 +0~1s)。
+	_check(wm_observe > grace,
+			"★ tests/team_match_watcher.OBSERVE_MAX = %.0f ≤ 宽限期 %.0f:相⑤ 在掉线者被移出对局**之前**就关窗(恒红)"
+			% [wm_observe, grace])
+	# ④ `team_match_probe` 等 6 份客户端结果的上限必须**逐项求和**算出来(该探针注释里那句话:
+	#    这行漂过两次)。求和取**进局那一档的硬上限** `ENTER_TIMEOUT`(不是理想值 ~5s),两个 SETTLE 各一份。
+	_check(tp_wait > tp_worst,
+			"★ tests/team_match_probe.RESULT_WAIT = %.0f ≤ 最坏客户端时间线 %.1fs(ENTER_TIMEOUT+SETTLE+RENDEZVOUS_MAX+BRAWL_MAX+SETTLE+OBSERVE_MAX+PEER_WAIT):探针先放弃,表象是「只收到 N/6 份结果」"
+			% [tp_wait, tp_worst])
+	_check(tp_final > tp_wait,
+			"★ tests/team_match_probe.FINAL_TIMEOUT = %.0f ≤ RESULT_WAIT = %.0f:本进程收工上限先于等结果预算到点"
+			% [tp_final, tp_wait])
+	_check(tp_child_f / fps > tp_final,
+			"★ tests/team_match_probe.CHILD_QUIT_AFTER = %.0f 帧(≈%.0fs)≤ FINAL_TIMEOUT %.0fs:客户端子进程先于本进程收工上限退出"
+			% [tp_child_f, tp_child_f / fps, tp_final])
 
 	if _fail == 0:
 		print("GRACE_WINDOW OK")
