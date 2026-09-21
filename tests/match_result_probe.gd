@@ -18,11 +18,16 @@ extends Node
 #    **底下**,压暗罩盖不住它们。本探针此前正是用 `.new()` —— 那等于在验一条**生产不会走**
 #    的路,这一类缺陷它一个都照不到。下面每次构造都过 `_make()`,并断言 `layer == LAYER_WANT`。
 # ② **每条断言都要能真的红**。取到 null 就直接解引用/`save_png` 会在出错那一行**中止所在函数**。
-#    ★ 2026-09-21 实测更正后果 —— 取决于出错在**哪一层**,而实测的两种都**不是**这里原先写的
-#    "一行都不打印":`get_node` 取不到节点时引擎只 `ERROR` 一行,**出错的那个函数当场结束、
-#    调用方继续**。于是 `_run()`(或它调用的 lambda)里出错 = 后面的断言被**静默跳过**,
-#    而 `_ready()` 的 `await _run()` 照常恢复并打印 **ALL-OK** ⇒ **假绿**(读者会把那行当
-#    "后面那些都过了");只有出错在 `_ready()` 自己身上才是"一行都不打印"。
+#    ★ 2026-09-21 实测定案(本文件**只教这一个模型**,先前的"掐断协程、一行 verdict 都没有"
+#    是过期说法,已按实测改写):`get_node` 取不到节点 / 在 null 上调用方法时,引擎**只** `ERROR`
+#    一行,然后**出错的那个函数当场结束、调用方继续**。三层实测:
+#      · 出错在 **lambda**(`_shot` 的 `verify`)→ lambda 结束,`_shot` 在 `verify.call(m)`
+#        之后照常往下走;
+#      · 出错在 **`_shot` 自己**(即下面 `save_png` 那个形状)→ `_shot` 结束,`_run` 继续;
+#      · 出错在 **`_run` 里** → `_run` 结束,`_ready()` 的 `await _run()` 照常恢复。
+#    三层**都**打印 **ALL-OK** ⇒ **假绿**(读者把那行当"后面那些都过了")。唯一"一行都不打印"
+#    的形状是出错在 `_ready()` **自己身上**(那时连 verdict 都到不了,只能靠 `--quit-after` 收尾
+#    —— 而它照样 exit 0,与"跑通了"在退出码上不可分)。
 #    故:取图先判 `img == null` 并**响亮地记一条 FAIL**,取节点一律先 `_check(x != null)`。
 #    (下面三处取节点都按这条改过,失败形态记在各自注释里。)
 
@@ -61,9 +66,11 @@ func _run() -> void:
 	# ① 空载荷:不崩，且只画标题
 	await _shot({"title": "空"}, func(m):
 		var s: Node = m.get_node_or_null("Root/Panel/VBox/Sections")
-		# ★ 先判 null 再解引用:直接 `get_node_or_null(...).get_child_count()` 在节点缺失时
-		#   会掐断 `_shot` 协程 ⇒ "空载荷不崩"这条**硬要求**会以"超时"的形状出现(一行 verdict
-		#   都没有),与探针真挂住分不开 —— 而那正是本探针最该说清楚的一件事。
+		# ★ 先判 null 再解引用(模型见文件头 ②)。直接 `get_node_or_null(...).get_child_count()`
+		#   在节点缺失时**只结束这个 lambda**,而 `_shot` 在 `verify.call(m)` 之后**照常往下走**、
+		#   `_run`/`_ready` 也照常恢复 ⇒ "空载荷不崩"这条**硬要求**被**静默跳过**,verdict 仍是
+		#   **ALL-OK**(2026-09-21 实测:这一层不是"掐断 `_shot`、一行 verdict 都没有"—— 那是
+		#   本文件原先的旧说法,已在文件头 ② 更正)。
 		_check(s != null, "空载荷:找不到 Root/Panel/VBox/Sections(节点路径变了?)")
 		if s != null:
 			_check(s.get_child_count() == 0, "空载荷应 0 节"))
@@ -289,9 +296,13 @@ func _shot(payload: Dictionary, verify: Callable) -> void:
 	_check_centred(m)
 	var img := get_viewport().get_texture().get_image()
 	# ★ 与 `tests/hue_tint_probe.tscn` 同款,必须**响亮地记一条 FAIL 再退出**:
-	#   `--headless` 下这条链给 null,而 `save_png` 在 null 值上会**掐断 `_shot` 协程**
-	#   ⇒ `_run` 再也不恢复、`_ready()` 一行 verdict 都不打印 ⇒ 与"探针真挂住"分不开。
-	#   本探针的先决条件是真渲染,误加 `--headless` 必须当场说出来,不能装死。
+	#   `--headless` 下这条链给 null,而 `save_png` 在 null 值上**只结束 `_shot` 本身**
+	#   (模型见文件头 ②)—— `_shot` 的调用方 `_run`、以及 `_run` 的调用方 `_ready()`
+	#   **全部照常恢复** ⇒ verdict 仍打 **ALL-OK**,整段 ①~⑤ **一条都没验**却看着全绿。
+	#   ★ 本文件原先写的是"掐断 `_shot` 协程 ⇒ `_run` 再也不恢复、一行 verdict 都不打印":
+	#   2026-09-21 实测**推翻**(见文件头 ②)—— 那个说法只在出错于 `_ready()` **自己身上**
+	#   时才成立,而这里是 `_shot`。本探针的先决条件是真渲染,误加 `--headless` 必须当场
+	#   说出来,不能装死。
 	if img == null:
 		_check(false, "截图失败 —— 是不是误加了 --headless?(真渲染是本探针的前提)")
 		m.queue_free()
