@@ -260,6 +260,28 @@ func _show_result() -> void:
 		_result = RESULT_SCENE.instantiate()
 		add_child(_result)
 		_result.leave_requested.connect(_leave_to_main_menu)
+		# ★★ **挂载那一刻先用空载荷亮出来**,再折真载荷。顺序不可换 —— 这是"MATCH_OVER 之后
+		#   永远有出路"那条不变量的安全网(2026-09-21 终审 I3)。
+		#   要防的故障形状是:**`show_result()` 在它最后那句 `visible = true` 之前结束**。
+		#   那时结算页停在 `_ready()` 末尾那句 `visible = false` 上 —— **看不见、ESC 也够不着**
+		#   (它的 `_unhandled_input` 首行是 `if not visible: return`)、按钮也点不到;而此刻暂停
+		#   菜单已被 MATCH_OVER 块销毁、K 键被 `_match_ended` 挡住 ⇒ 玩家**卡死在对局里**。
+		#   ★ 可达形状(合成故障实测):载荷里混进**非字典的节** ⇒ `show_result` 里
+		#     `_build_section(sections[i], …)` 的参数类型转换当场失败 ⇒ 整个 `show_result` 在
+		#     `visible = true` **之前**结束。适配器改动 + 这页的"缺键一律取默认"口径之间,
+		#     只差一个"某节不是字典"就能走到。今天没有人踩到,所以这是**安全网**不是活 bug。
+		#   ★ 另一条**不**构成陷阱(实测,免得后人照直觉"修"错地方):`_build_result_payload()`
+		#     内部抛错只让**它自己**当场结束,而它签名是 `-> Dictionary` ⇒ 隐式返回的 null 被强制
+		#     转换成**空字典** ⇒ 退化成"可见但空"的结算页,出路仍在(实测 visible=true)。
+		#   ⇒ 关键是"亮出来"必须排在任何可能把 `show_result()` 打断的活**之前**。放进
+		#     `show_result()` 内部同样能挡住它自己那一段;放在这里则连"挂载之后、调用之前"那一小段
+		#     也一起盖住(将来谁在中间插一句会抛错的代码,也不会退化回陷阱)。
+		#   空载荷**抛不出错**:"空载荷不崩"是本页的硬要求(`tests/match_result_probe` ① 专钉),
+		#   且它只做"赋文案 + 清场建节 + `visible = true`"三件事 ⇒ 可见、ESC 生效、
+		#   "返 回 主 菜 单"按钮可用,三样退路当场到手。
+		#   ★ 正常路径**看不到这个空态**:本函数一次跑完、两句之间没有 await,布局与绘制都在帧末,
+		#     玩家看到的永远是下面那句填好的那份。
+		_result.show_result({})
 	_result.show_result(_build_result_payload())
 
 

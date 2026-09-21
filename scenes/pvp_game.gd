@@ -212,6 +212,10 @@ func _on_round_state(data: Dictionary) -> void:
 		# 类头那条硬依赖)。直接销毁菜单 —— 退出只走结算页这一条路。
 		if _pause_menu != null and is_instance_valid(_pause_menu):
 			_pause_menu.queue_free()
+			# ★ 与 royale_game / team_game **逐字对齐**(三处同款,别只改两处):留着句柄 = 留着一具
+			#   已 free 的尸体 —— `is_instance_valid()` 在帧末之后转 false 而字段仍非 null,
+			#   谁都可能顺手拿它去调方法(那时才崩)。
+			_pause_menu = null
 		_menu_open = false
 		# 菜单没了 → 回到只由 _round_locked(state 3 → false)决定 = 解锁(与旧行为一致)
 		_refresh_input_lock()

@@ -237,11 +237,6 @@ func _build_result_payload() -> Dictionary:
 	return MatchResultPayload.for_royale(_last_round_state, _names, PvpSession.role)
 
 
-# 本地输入锁的单一收口:冻结期(_round_locked)/ 菜单打开(_menu_open)/ 结算(_match_ended)
-# 任一成立就锁。**不要在各调用点各拼一次布尔** —— 那正是"修复波 1 只关住一个方向"的成因。
-# ★ 与 pvp_client._refresh_input_lock 的差别:这里多一个 _match_ended —— 大乱斗在 MATCH_OVER
-#   要锁住结算画面(自检 L6:原还能跑动开枪),而 pvp_client 的 MATCH_OVER 不锁(它靠别的方式收场)。
-
 # ── 名字 / 颜色 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
 # ★ 不要连回 NetBus.local_peer_info —— 那条**推送**路径在本项目已不存在(worker 不再广播),

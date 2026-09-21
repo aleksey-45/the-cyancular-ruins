@@ -17,6 +17,14 @@ extends ProbeBase
 #      顺手变成"更新也只一次" ⇒ 第二条 MATCH_OVER 载荷静默丢掉,而 `MatchResult.show_result`
 #      的清场重建(`ui/match_result.gd` 的 remove_child→queue_free 那段)在生产里**一次都不跑**。
 #      ★ 判据**必须剥注释** —— 正确实现的注释里就写着这行字面量(见那个函数上方)。
+#   ⑥ **结算页的最后一跳`leave_requested` 必须有人接**(源码面,见 `_check_result_leave_wiring`):
+#      那是**全仓唯一**的订阅点,删了不报错 —— 按钮与 ESC 都照常发信号,只是**没人听** ⇒
+#      MATCH_OVER 之后没有任何出路(暂停菜单已销毁、K 键被挡)。
+#   ⑦ **刷新是行为断言**(见 `_check_result_refresh_reaches_widget`):⑤ 只看字面量,而本批修
+#      的那个缺陷的真实形态是"刷新调用被**缩进一级**包进 `if` 里" —— 纯空白移动,⑤ 两条断言
+#      全绿而第二条载荷照样到不了屏幕。⑦ 直接跑生产入口 `_show_result()`(桩子只覆写
+#      `_build_result_payload()`),用**同一实例连调两次**钉"第二次真的画上去了"。
+#      ★ 它顺带覆盖 ⑤ 照不到的其它拼法(`if _result:` / `is_instance_valid(_result)`)。
 #
 # ★ ② 的**适用前提**(2026-09-20,加 `ui/match_result` 那一行时补):② 守的是「@onready
 #   取回声明节点」这件事,而**不是**每个 tscn 都必须声明节点。所以本文件先问一句
@@ -68,6 +76,8 @@ func _ready() -> void:
 	_check_team_my_team_contract()
 	_check_result_scene_instantiation()
 	_check_result_refresh_not_gated()
+	_check_result_leave_wiring()
+	_check_result_refresh_reaches_widget()
 	_finish()
 
 
@@ -210,6 +220,90 @@ func _check_result_refresh_not_gated() -> void:
 			"%s 的**代码**里出现 `%s` —— 这是恢复了「`if _result != null: return`」那种早退:第二条 MATCH_OVER 载荷(1v1 重连重播 / 3v3 收场后再广播)会被**静默丢掉**,而 MatchResult.show_result 的清场重建在生产里一次都不跑。正确形状是 `if _result == null:` 只包住「建 + 连线」,刷新调用在 if 之外。" % [
 					RESULT_HOST, RESULT_STALE_GATE])
 	_summary(before, "结算页刷新:%s 无早退闸门、%s 仍在(已剥注释)" % [RESULT_HOST, RESULT_REFRESH_CALL])
+
+
+# ── ⑥ 结算页的**最后一跳**:`leave_requested` 必须有人接 ─────────────────────
+# ★ 守的是什么:`scenes/pvp_match_client.gd` 的 `_show_result()` 里那句
+#   `_result.leave_requested.connect(_leave_to_main_menu)` 是**全仓唯一**的订阅点
+#   (报出同名信号的另两处 `royale_leave_requested` / `team_leave_requested` 是大厅房间 RPC,
+#    与这个信号无关)。删掉它**不报错**:按钮与 ESC 两条路都照常 `emit`,只是**没有任何人听** ⇒
+#   MATCH_OVER 之后**没有出路**(暂停菜单在同一刻被销毁、K 键被 `_match_ended` 挡住)——
+#   正是本批那条不变量(「MATCH_OVER 之后必须永远有出路」)的最后一跳,却零守卫:
+#   ⑤ 只管"刷新没被闸住"、`RESULT_FORBIDDEN` 只管"零 .new()",kh_l6 的 9/9b/12/16 只管
+#   "调没调 `_show_result()`"与"早退在不在",`team_room_smoke` 管的是 3v3 侧的调用点。
+# ★ 判据取**文件级 contains**(不锚 `_show_result` 的函数体):把它抽成一个具名助手、
+#   再在 `_show_result` 里调,是**等价正确修法** —— 锚死函数体会把它判成假红(仓内纪律:
+#   不假红后续任务的正确修法)。剥注释仍必需:同文件里有多段注释在讲这条信号。
+# ★ 空转防护:文件读不到时上面那条 `_check` 已报红,不会让"零命中"被读成"没问题"。
+const RESULT_LEAVE_WIRE := "leave_requested.connect("
+
+
+func _check_result_leave_wiring() -> void:
+	var before := _failures.size()
+	var code := _code_only(_read(RESULT_HOST))
+	_check(not code.is_empty(), "读不到 %s(下面那条 contains 断言在它身上无意义)" % RESULT_HOST)
+	if code.is_empty():
+		_summary(before, "%s:读文件失败,跳过" % RESULT_HOST)
+		return
+	_check(code.contains(RESULT_LEAVE_WIRE),
+			"%s 里没有 `%s`(结算页的最后一跳断了:按钮与 ESC 都发 leave_requested,但**没人接** → MATCH_OVER 之后没有任何出路 —— 暂停菜单已销毁、K 键被挡,玩家卡死在对局里)" % [
+					RESULT_HOST, RESULT_LEAVE_WIRE])
+	_summary(before, "结算页离场:%s 里 %s 在位(已剥注释)" % [RESULT_HOST, RESULT_LEAVE_WIRE])
+
+
+# ── ⑦ 结算页刷新是**行为**断言:第二条载荷必须真的画上去(不是"代码里像是对的")────
+# ★★ 为什么必须有这一条:⑤ 那条是**字面量**判据(代码里**不含** `_result != null`)。
+#   而本批修的那个缺陷的真实形态是"刷新调用被包进了 if 里",把 `_result.show_result(...)`
+#   整体**缩进一级**进 `if _result == null:` 块 —— **纯空白移动**,语义与原缺陷**逐字相同**,
+#   而 ⑤ 的两条断言(早退字符串不在 + `show_result(` 在)**照旧全绿**:第二条 MATCH_OVER 载荷
+#   照样到不了屏幕、`MatchResult.show_result` 的清场重建照样一次不跑。同理也照不到
+#   `if _result:` / `is_instance_valid(_result)` 这些拼法。
+#   ⇒ 源码判据永远只能覆盖"字面量恰好写成什么样";**行为**判据才盖得住"这段代码跑起来是什么样"。
+# ★ 走**生产入口**:桩子只覆写 `_build_result_payload()`(那正是三个子类各自覆写的唯一一口),
+#   `_show_result()` 本体一字不动 —— 挂载、连线、刷新全走真实现。
+#   ★ 用**同一个实例连调两次**(与 `match_result_probe` 的 ⑤ 同口径):"每次新建实例"的写法
+#     照不到刷新 —— 第二次永远是某个新实例的第一次。
+#   ★ 无需真渲染:断言读的是 Label 的 `text` 与 Sections 的子节点数,两者都在 `show_result()`
+#     里**同步**写好(布局在帧末,与本断言无关)⇒ 它住在 headless 的源码级探针里,跑得最勤。
+# ★ 桩的第一个载荷也要断言("第一次"):否则"两次都是空"的实现也能让第二条绿 —— 那样它证的
+#   就不是"刷新到了",而只是"有个控件在那儿"。
+class ResultPayloadStub extends PvpMatchClient:
+	var payload: Dictionary = {}
+
+	func _build_result_payload() -> Dictionary:
+		return payload
+
+
+func _check_result_refresh_reaches_widget() -> void:
+	var before := _failures.size()
+	var stub := ResultPayloadStub.new()
+	add_child(stub)
+	stub.payload = {"title": "第一次"}
+	stub._show_result()
+	var node := stub.get_node_or_null("MatchResult")
+	_check(node != null, "★ 结算页没挂到宿主上(`_show_result()` 里的 instantiate/add_child 没了?那玩家什么都看不到)")
+	if node == null:
+		stub.queue_free()
+		_summary(before, "结算页刷新(行为):结算页没挂上,跳过")
+		return
+	var title := node.get_node_or_null("Root/Panel/VBox/TitleLabel") as Label
+	_check(title != null, "找不到 Root/Panel/VBox/TitleLabel(节点路径变了?下面两条断言无从成立)")
+	if title != null:
+		_check(title.text == "第一次",
+				"第一次 `_show_result()` 后标题应为「第一次」,实得「%s」(第一次都没到 ⇒ 下面那条不是在做刷新)" % title.text)
+	# 第二次(**同一个实例**):换一份**可判别**的载荷 —— 标题不同 + 多一节
+	stub.payload = {"title": "第二次", "sections": [{"label": "只此一节", "rows": []}]}
+	stub._show_result()
+	if title != null:
+		_check(title.text == "第二次",
+				"★ 第二条 MATCH_OVER 载荷必须**画到屏幕上**:标题应为「第二次」,实得「%s」。刷新调用被包进 `if _result == null:`(哪怕只是**缩进一级**)=「挂载幂等」被顺手变成「更新也只一次」,玩家的结算页永远停在过期数据上。" % title.text)
+	var box := node.get_node_or_null("Root/Panel/VBox/Sections")
+	_check(box != null, "找不到 Root/Panel/VBox/Sections(节点路径变了?)")
+	if box != null:
+		_check(box.get_child_count() == 1,
+				"★ 第二条载荷的节没画上去:第二次的载荷带 1 节,实得 %d 节(刷新没发生;旧节清场 + 新节重建是 `show_result` 那段 remove_child→queue_free 的活,刷新不发生它一次都不跑)" % box.get_child_count())
+	stub.queue_free()
+	_summary(before, "结算页刷新(行为):同一实例连调两次 `_show_result()`,第二次的载荷(标题 + 节数)确实画到了控件上")
 
 
 # 该 .tscn 除根节点外还声明了节点吗?(决定 ② 是否适用 —— 理由见文件头。)

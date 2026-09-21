@@ -13,9 +13,14 @@ extends ProbeBase
 #
 # ⚠ T1 只建探针,不改任何生产文件。探针本身**不报错、不裁决**,只做源码级机械扫描。
 #
-# ⚠ CI 判据必须是 **grep 文本 `KH L6 PROBE: ALL-OK`**,不能只看退出码:
-#    探针中途脚本报错(解析失败/函数中断)时 --quit-after 仍会以 exit 0 退出,
-#    且**不会**打印 ALL-OK——只看退出码会把"没跑完"读成"通过"。
+# ⚠ CI 判据必须是 **grep 文本 `KH L6 PROBE: ALL-OK`**,不能只看退出码:探针中途脚本报错时
+#    `--quit-after` 仍以 exit 0 退出,退出码与"跑通了"**不可分**。
+#    ★★ 2026-09-21 订正(实测,取代本行原先那句"中途报错就**不会**打印 ALL-OK" —— **那句话
+#    已被推翻**):脚本错误(解析失败/`get_node` 取不到节点/在 null 上调用方法)**只让出错的那个
+#    函数当场结束、调用方继续** ⇒ 出错在 helper 或 `_run()` 里时 **ALL-OK 照常打印**,后面那些
+#    断言被**静默跳过**(**假绿**,比"没跑完"危险);"一行都不打印"只对出错在 `_ready()`
+#    **自己身上**成立。权威表述在 `tests/lib/probe_base.gd` 的文件头(那份是全仓源码级探针的
+#    公共契约 —— 六份探针的文件头里还有同一句过期说法,留给后续统一那一趟,别在这儿各自表述)。
 #
 # ⚠⚠ 自伤防护(本文件被自己扫描时务必守住):凡是本探针**要找的字面量**,一律用
 #    `"前" + "后"` 碎片拼出来,绝不整段写在源码里。本探针的扫描目标都是**具名生产文件**,
@@ -64,6 +69,9 @@ extends ProbeBase
 #      **实参顺序**必须是 (round_state, names, …) —— ★★ 这一档是本批**最安静的错法**:
 #      `for_duel/for_royale` 的前两个实参**都是 Dictionary**、`for_team` 的前三个都是,
 #      写反**照样编译、所有常驻测试照样绿**,只有榜渲染成乱码/空表。
+#      ③ 第 3 个实参必须是 `PvpSession.role`(2026-09-21 终审 M9 补):它决定文案
+#      (`_verdict` 里 `"胜利!" if match_winner == my_role else "失败"`)—— 写死成常量会让
+#      **某一方的 胜利/失败 念反**,而写死的号照样编译、② 那两条照样绿。
 #      见 _check_result_payload_args(1v1 与大乱斗;3v3 的那一份在 team_room_smoke ⑨⑤)。
 
 # ── 被扫文件 ────────────────────────────────────────────────────────
@@ -843,7 +851,15 @@ func _check_result_payload_args() -> void:
 		if args.size() >= 3:
 			_check(args[0].contains("_last_round_state") and args[1].contains("_names"),
 				"%s:%s 的实参顺序反了(第 1 个应是 `_last_round_state`、第 2 个应是 `_names`;★ 前两个都是 Dictionary ⇒ 写反照样编译、所有常驻测试照样绿,只有榜渲染成乱码/空表)" % [tag, path])
-	_summary(before, "结算页载荷:1v1 / 大乱斗两处 for_duel/for_royale 实参顺序在位(round_state, names, …)")
+			# ★ 第三个实参也必须钉(2026-09-21 终审 M9)。`my_role` 决定的是**文案**:
+			#   `MatchResultPayload._verdict` 里 `"胜利!" if match_winner == my_role else "失败"` ——
+			#   写死成 `1`(或任何常量)之后,**role 2 的玩家赢的局会被念成「失败」**、反之亦然,
+			#   而它照旧编译、上面两条照旧绿(前两个实参没动)。1v1 与大乱斗取的都是
+			#   `PvpSession.role`(不是 `3 - role`,也不是写死的号)。
+			_check(args[2].contains("PvpSession.role"),
+				"%s:%s 的第 3 个实参不是 `PvpSession.role`(实得「%s」)—— 硬编码 role 会把**某一方的 胜利/失败 念反**,而写死的号照样编译、上面两条断言照样绿" % [
+						tag, path, args[2].strip_edges()])
+	_summary(before, "结算页载荷:1v1 / 大乱斗两处 for_duel/for_royale 实参顺序在位(round_state, names, PvpSession.role)")
 
 
 # ── 工具 ────────────────────────────────────────────────────────────
