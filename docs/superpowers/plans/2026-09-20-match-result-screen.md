@@ -975,6 +975,13 @@ Expected: `ALL-OK`。
    ★ **保留不变的部分**:退出码从来不是判据(出错时照样 exit 0,与"跑通了"在退出码上不可分)—— 这条结论没变,改的只是它旁边那句"不打印 ALL-OK"。
    ★ 完整表述已写进 `tests/lib/probe_base.gd` 的文件头(那里是这条纪律的权威落点);CLAUDE.md 这句改成与它一致的简短版并指向它。
 7. ★ **把 `CLAUDE.md:121` 那句「昵称走 `_fit_name(名字, 14)`」改成指 `UiFactory.fit_name(名字, 14)`** —— Task 1 之后权威实现已搬到 `UiFactory`,`RoyaleHud._fit_name` 只剩一行委托。该行的**口径描述**(显示宽度、截断 + 补满、换字体要重算 `BOARD_W`/`NAME_UNITS`)**原样保留**,只改函数名归属。(Task 1 自己发现并登记:Step 4 限定它只 `git add` 那两个 UI 文件,所以那处文档留到本任务。)
+8. ★ **补一条大乱斗**接线**断言**(Task 5 评审登记:大乱斗那条调用目前**零常驻覆盖**)。本任务已经把第 9b / 12 条的扫描对象重指向基类 —— 顺手加一条:**`scenes/royale_game.gd` 的 `state == 3` 块里必须含 `_show_result()`**。理由:基类那两条常驻守卫(扫 `MatchResult.new(`、扫 `_show_result` 不得早退)**只扫基类**;Task 5 唯一的执行级证据是临时探针,已删。★ 计划给 Task 5 点名的验收跑法(`royale_soak_probe.sh`「顺带验离场」)**其实验不到它**:该探针的客户端在 MATCH_OVER 自己就退出了(`tests/royale_soak_probe.gd:421-423`),永远走不到大乱斗结算页那一段。
+9. ★ **四处被这次改动证伪的注释要一起订正**(Task 5 评审登记;它们都不支撑任何断言,所以**不会红**,但正是"半年后让人白花一小时"的那类):
+   - `server/royale_host.gd:238` —— `# 结果展示阶段:客户端 6s 后自行回菜单`
+   - `tests/royale_soak_probe.gd:25-26` 与 `:420` —— 「那条 6s 换场会把本探针一起摘掉」
+   - `tests/royale_c2_watcher.gd:429` —— 拿 6s 定时器解释 watcher 为什么死
+10. **登记(不改)**:`scenes/royale_game.gd:219` 那句「退出只走结算页这一条路(与 `pvp_client` / `team_game` 同款)」对 `pvp_client` 已是事实、对 `team_game` 是**前瞻**(它 Task 6 之前仍走自己的定时器)。`scenes/royale_game.gd:240-243` 是一条**孤儿注释**:它描述 `_refresh_input_lock`,而那个函数**根本不在本文件里**(在基类),且基类注释已说明合并后 1v1 也带 `_match_ended` —— 该说法是**反的**。
+11. ★★ **登记(绝对不要"顺手对齐")**:`scenes/royale_game.gd:215` 的 `and not _match_ended` 门**是承重的,不是不一致**。`RoyaleHost._match_winner()` 迭代的是 `players ∪ _scores`(`server/royale_host.gd:283-296`),所以**移除一个没有 `_scores` 条目(0 杀)的玩家**会少一个并列候选 ⇒ **全场都是 0 杀**时 `match_winner` 会从 `0` 翻成幸存的那个 role。今天这道门**挡住了**那次翻转;谁为了"和基类契约对齐"删掉它,大乱斗就会把该念「平 局」的场面念成「胜利!/失败」。**要删先修 `_match_winner`。**
 
 - [ ] **Step 5: 提交**
 
