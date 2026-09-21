@@ -12,6 +12,11 @@ extends ProbeBase
 #      结算页的 `layer = 150` **只住在** `ui/match_result.tscn` 里,`.new()` 建出来的是默认的
 #      layer 1 ⇒ 画在三个 HUD(130)/小地图(131)**底下**,压暗罩也盖不住(静默)。
 #      ★ 扫描面**走盘**、判据**剥注释** —— 两条理由都写在那个函数上方,别化简回去。
+#   ⑤ **`_show_result()` 不得早退**(源码面,见 `_check_result_refresh_not_gated`):
+#      结算页是「挂载一次、**每次都刷新**」。恢复 `if _result != null: return` 会把"挂载幂等"
+#      顺手变成"更新也只一次" ⇒ 第二条 MATCH_OVER 载荷静默丢掉,而 `MatchResult.show_result`
+#      的清场重建(`ui/match_result.gd` 的 remove_child→queue_free 那段)在生产里**一次都不跑**。
+#      ★ 判据**必须剥注释** —— 正确实现的注释里就写着这行字面量(见那个函数上方)。
 #
 # ★ ② 的**适用前提**(2026-09-20,加 `ui/match_result` 那一行时补):② 守的是「@onready
 #   取回声明节点」这件事,而**不是**每个 tscn 都必须声明节点。所以本文件先问一句
@@ -62,6 +67,7 @@ func _ready() -> void:
 	_summary(before, "声明式契约:扫 %d 组「脚本 ↔ 场景」,零 .new()、@onready 路径全声明" % PAIRS.size())
 	_check_team_my_team_contract()
 	_check_result_scene_instantiation()
+	_check_result_refresh_not_gated()
 	_finish()
 
 
@@ -164,6 +170,46 @@ func _check_result_scene_instantiation() -> void:
 			"这些文件用了 MatchResult.new():%s —— layer = 150 只写在 ui/match_result.tscn 里,用 .new() 会落到 CanvasLayer 默认的 layer 1,结算页画在 HUD(130)/小地图(131)下面且压暗罩盖不住(静默,只能靠眼睛看出来)。要从场景实例化。" % ", ".join(hits))
 	_summary(before, "结算页实例化:扫 %s 下 %d 个 .gd,零 MatchResult.new( (已剥注释)" % [
 			RESULT_SCAN_ROOT, files.size()])
+
+
+# ── ⑤ `_show_result()` 不得早退(结算页"挂载一次、每次都刷新")──────────────
+# ★ 守的是什么:`scenes/pvp_match_client.gd` 的 `_show_result()` 正确形状是
+#     `if _result == null:` **只包住「建 + 连线」**,而 `_result.show_result(...)` 在 if **之外**。
+#   恢复 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**":
+#     第二条 MATCH_OVER 载荷**永远到不了屏幕上**,结算页留着一份过期数据,而
+#     `MatchResult.show_result` 的清场重建(`ui/match_result.gd` 的 remove_child→queue_free
+#     那段)**在生产里一次都不会跑**。这个缺陷 2026-09-21 修过,但当时唯一的守卫是**一次性**
+#   探针(跑完已删)⇒ 谁把它改回去,今天没有任何探针会红。
+#   `tests/match_result_probe.gd` 抓不到:**它直接调 `MatchResult.show_result`**,
+#   从不经过生产入口 `_show_result()` —— 于是"探针比产品更绿"。
+# ★★ **判据必须剥注释(`_code_only`),这是本检查唯一的实现难点**:正确实现自己的注释里
+#    (该文件 `_show_result()` 上方那段,原文写着「写成 `if _result != null: return` 会…」)
+#    **就含这行字面量** ⇒ 裸 `contains` 会把**完全正确**的代码判成红的(comment-blind 的假红,
+#   与上面 ④ 里 `MatchResult.new()` 那条是同一个坑)。剥注释后:正确文件里该串**只出现在
+#   注释里** ⇒ 绿;一旦真写成早退 ⇒ 落到代码里 ⇒ 红。★ 别"化简"成裸 contains。
+# ★ 反向断言(`show_result(` 必须在)同样不能省:没有它的话,**把整个 `_show_result()` 删掉**
+#   会让上面那条早退断言恒真(空文件当然"不含 `_result != null`")—— 那是假绿不是修复。
+const RESULT_HOST := "res://scenes/pvp_match_client.gd"
+const RESULT_STALE_GATE := "_result != null"   # 早退闸门的形状(`if _result != null: return`)
+const RESULT_REFRESH_CALL := "show_result("    # 刷新调用:`_result.show_result(payload)`
+
+
+func _check_result_refresh_not_gated() -> void:
+	var before := _failures.size()
+	var code := _code_only(_read(RESULT_HOST))
+	# ★ 读不到源文件 = 这类探针最典型的失明方式(两条 contains 一真一假都无意义),必须单独报红。
+	_check(not code.is_empty(), "读不到 %s(下面两条 contains 断言在它身上都无意义)" % RESULT_HOST)
+	if code.is_empty():
+		_summary(before, "%s:读文件失败,跳过" % RESULT_HOST)
+		return
+	# 先钉"刷新调用还在":否则删掉整个函数(= 结算页根本不挂)也能让下面那条绿 —— 判据退化。
+	_check(code.contains(RESULT_REFRESH_CALL),
+			"%s 的代码里找不到 `%s`(判据退化:`_show_result()` 被删/改名时,下面那条早退断言恒真)" % [
+					RESULT_HOST, RESULT_REFRESH_CALL])
+	_check(not code.contains(RESULT_STALE_GATE),
+			"%s 的**代码**里出现 `%s` —— 这是恢复了「`if _result != null: return`」那种早退:第二条 MATCH_OVER 载荷(1v1 重连重播 / 3v3 收场后再广播)会被**静默丢掉**,而 MatchResult.show_result 的清场重建在生产里一次都不跑。正确形状是 `if _result == null:` 只包住「建 + 连线」,刷新调用在 if 之外。" % [
+					RESULT_HOST, RESULT_STALE_GATE])
+	_summary(before, "结算页刷新:%s 无早退闸门、%s 仍在(已剥注释)" % [RESULT_HOST, RESULT_REFRESH_CALL])
 
 
 # 该 .tscn 除根节点外还声明了节点吗?(决定 ② 是否适用 —— 理由见文件头。)
