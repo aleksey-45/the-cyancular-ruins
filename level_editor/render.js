@@ -66,13 +66,23 @@ globalThis.Render = (function () {
   //   不变量(规格 §4.2 的 ③ 与 ④ 是两层,换图是它们共同的失效事件)。
   //   ④ 那一侧由 Tint.setSource 自己做;③ 这一侧漏了的话,它会继续交出"用旧图集算出来、
   //   内容版本却没变"的格位图 ⇒ 审计 A2 在上一层原样复发(整张图是色块,"有时好有时坏",
-  //   不报错)。★ 顺序是"先让 Tint 校验形状、再作废" —— 形状非法时 Tint.setSource 抛错,
-  //   此时两层都还是旧的(而不是"作废了一半")。
+  //   不报错)。★ 顺序是"先把新 ④ 建出来、让它校验形状,**校验过了才提交**" —— 形状非法时
+  //   `setSource` 抛错,此时 `tiles`/`atlasPixels`/③ 的代际**一个字都没动**,两层都还是旧的
+  //   (而不是"作废了一半")。
+  // ★★ 注入 backend 那条路**尤其**要这样写(先 `tiles = 新缓存` 再 `setSource` 是缺陷):
+  //   抛错会留下一个**没有贴图源的新 ④**,而 `atlasInfo()` 仍报旧图集、③ 也没作废 ——
+  //   下一次 `tileFor` 于是抛 `Tint: 还没 setSource,拿不到贴图`,而不是照旧画老图集
+  //   (上面那句"两层都还是旧的"就成了一句假话。no-backend 那条路看不出来,因为它复用的
+  //   是同一个对象,换不换都一样)。守卫:render_smoke 相位 ②b。
   // ★ opts.backend 是给 node 冒烟用的注入缝(与 tint.js 的注入式画布同一个先例):
   //   传它就换一个新的 ④,于是"空气到底有没有进 Tint"能被**记账**而不是靠肉眼。
   function setAtlas(pixels, w, h, opts) {
-    if (opts && opts.backend) tiles = Tint.createTileCache({ backend: opts.backend });
-    tileCache().setSource(pixels, w);
+    // ★ 这里**不**走 `tileCache()`:那个 getter 自己就会写 `tiles`(惰性建),先调它等于
+    //   先把 ④ 换了再校验 —— 正是本条要修的那件事。没注入 backend 时就复用现成的那个。
+    var next = (opts && opts.backend) ? Tint.createTileCache({ backend: opts.backend })
+                                      : (tiles || Tint.createTileCache());
+    next.setSource(pixels, w);                   // 形状非法 → 抛,两层都还是旧的
+    tiles = next;
     atlasPixels = pixels; atlasW = w | 0; atlasH = h | 0;
     if (cells) cells.setSource();
   }
@@ -130,6 +140,11 @@ globalThis.Render = (function () {
       }
       misses++;
       var tile = build(L, cx, cy);
+      // ★ 重建的键也要移到**最近端**。`Map.set` 对**已存在**的键会保留原来的插入位置,
+      //   而这条路径恰恰常发生在"换图后 setSource 刻意不清表"留下的陈旧条目上 ——
+      //   不先删,刚重建出来的条目可能还蹲在最冷的位置,下一次淘汰就把它扔掉(它才刚建过)。
+      //   与上面命中那条(`entries.delete(k); entries.set(k, e)`)同款。
+      entries.delete(k);
       entries.set(k, { v: v, gen: gen, tile: tile });
       while (entries.size > maxCells) { entries.delete(entries.keys().next().value); evictions++; }
       return tile;
@@ -150,7 +165,13 @@ globalThis.Render = (function () {
   //   让出之后又一项不做 —— 死循环(而 0 是合法的注入值,测试就在用它)。
   function createSlicer(opts) {
     opts = opts || {};
-    var budget = opts.budgetMs === undefined ? DEFAULT_BUDGET_MS : opts.budgetMs;
+    var raw = opts.budgetMs === undefined ? DEFAULT_BUDGET_MS : opts.budgetMs;
+    // ★ 预算必须是**有限的数**:`now() - s0 >= NaN` 恒为 false,负预算同理永远不成立 ——
+    //   两者都会让 while 一口气做完整批,而那正是闸 2 要防的那件事,并且**不报错**
+    //   (症状是"分帧器装了等于没装",只能靠量单帧耗时才发现)。
+    //   非法值一律:非有限数 → 回落默认预算;负数 → 钳到 0(0 是合法注入值,
+    //   "每帧至少做一项"会兜住它,不会死循环)。
+    var budget = (typeof raw === 'number' && isFinite(raw)) ? Math.max(0, raw) : DEFAULT_BUDGET_MS;
     var now = opts.now || function () {
       return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
     };
@@ -159,21 +180,30 @@ globalThis.Render = (function () {
     };
     function run(items, fn) {
       var i = 0, frames = 0, maxStep = 0;
-      return new Promise(function (resolve) {
+      return new Promise(function (resolve, reject) {
+        // ★★ 抛错必须**落到这个 promise 上**。第 2 帧起 `step` 是在 `nextFrame().then(step)`
+        //   这条**没人观察**的链上跑的:裸抛会变成 unhandled rejection,`run()` 返回的
+        //   promise 于是**永远不 settle**(调用方 await 到天荒地老),而第一帧抛却能正常
+        //   reject(那时 step 还在 promise 执行器里同步跑,执行器自己会接住)。
+        //   两条路径的症状完全不同,所以只测"第一帧抛"是**区分不了**的。
         function step() {
-          var s0 = now();
-          while (i < items.length) {
-            fn(items[i], i); i++;
-            // ★ 判在**做完之后**:预算是软的(到手一项就做完它),但一格都不许超。
-            if (now() - s0 >= budget) break;
+          try {
+            var s0 = now();
+            while (i < items.length) {
+              fn(items[i], i); i++;
+              // ★ 判在**做完之后**:预算是软的(到手一项就做完它),但一格都不许超。
+              if (now() - s0 >= budget) break;
+            }
+            var d = now() - s0;
+            if (d > maxStep) maxStep = d;
+            if (i >= items.length) { resolve({ frames: frames, processed: i, maxStepMs: maxStep }); return; }
+            frames++;
+            // ★ 时间基准在**让出之后**重新取:让出一帧自己也花时间,把那段算进下一帧的
+            //   预算里会让"下一帧刚做一项就又超预算"—— 分帧退化成逐项让出。
+            nextFrame().then(step);
+          } catch (err) {
+            reject(err);                           // ← 让第 2 帧起的抛错也 settle 掉 run()
           }
-          var d = now() - s0;
-          if (d > maxStep) maxStep = d;
-          if (i >= items.length) { resolve({ frames: frames, processed: i, maxStepMs: maxStep }); return; }
-          frames++;
-          // ★ 时间基准在**让出之后**重新取:让出一帧自己也花时间,把那段算进下一帧的
-          //   预算里会让"下一帧刚做一项就又超预算"—— 分帧退化成逐项让出。
-          nextFrame().then(step);
         }
         step();
       });
@@ -259,9 +289,16 @@ globalThis.Render = (function () {
     var unit = (c.kind === 'cell' || c.kind === 'sub') ? c.kind : sp.unit;
     return { unit: unit, x0: x - lo, y0: y - lo, x1: x + hi, y1: y + hi };
   }
+  // ★★ 吸附 = **换算坐标空间**,不只是贴个标签。`hitTest` 交出来的 X/Y 是**子格号**
+  //    (与 `kind` 无关),所以 `kind: 'cell'` 的命中必须 `floor(X / SUB)` 换成**格号** ——
+  //    两个分支只差一个 `kind` 标签的话,格空间的命中会把子格号当成格号传下去,而下游
+  //    (`brushRegion` 的 unit、Task 5 的 `regionCells`)正是按 `kind` 决定要不要 ×4,
+  //    于是整支画笔偏到别处(即上文警告的"错 4 倍")。
+  //    与 UI 的 `hitOf` 同一条式子:`Math.floor(p.X / Core.SUB_PER_CELL)`。
+  //    `sub` 分支就是子格本身,`floor` 只作取整(命中坐标已经是整数)。
   function snapHit(h) {
     if (h.kind === 'sub') return { kind: 'sub', x: Math.floor(h.X), y: Math.floor(h.Y) };
-    return { kind: 'cell', x: Math.floor(h.X), y: Math.floor(h.Y) };
+    return { kind: 'cell', x: Math.floor(h.X / SUB), y: Math.floor(h.Y / SUB) };
   }
 
   // ── 选区拖动:纯读的偏移查询(B3;规格 §4.2「拖动只记 dx/dy,松手才提交」)──

@@ -111,8 +111,24 @@ function setCells(map, L, list, descOf) {
     eq(be.calls[0].size, Tint.TILE_PX, 'backend 收到的小图边长 = ' + Tint.TILE_PX);
     ok(Render.tileFor(Core.neutralDesc(3), 0, 0) !== null && be.calls.length === 1,
        '同一块第二次命中缓存(不再进 backend)');
+    const t4prev = Render.tileCache();            // 抛错**前**的 ④(捕获引用,好判"换没换")
+    const infoPrev = Render.atlasInfo();
     throws(function () { Render.setAtlas(new Uint8ClampedArray(7), 8, 1, { backend: be }); },
            '★ setAtlas 传形状不合法的图集(7 字节不是整行 8×4) → 抛错,不静默画一片透明', '不是整行');
+    // ★★ 抛错之后**一个字都不许提交**。注入 backend 那条路最容易写错 —— 先 `tiles = 新缓存`
+    //   再 `setSource`,抛错就留下一个**没有贴图源的新 ④**:`atlasInfo()` 还报旧图集、③ 也
+    //   没作废,于是下一次 `tileFor` 抛 `Tint: 还没 setSource…` 而不是照旧画老图集。
+    //   (只判"抛了没有"是拦不住它的 —— 缺陷发生时异常照样抛,只是留下了半个换图。)
+    ok(Render.tileCache() === t4prev,
+       '★★ 抛错之后 ④ **还是原来那一个对象**(注入 backend 也不许先把 ④ 换掉)');
+    eq(Render.atlasInfo(), infoPrev, '★★ 抛错之后 atlasInfo 仍报上一张图集(换图没提交)');
+    // ★ 包一层 try:变异(先换 ④ 再校验)下这里**会抛**,裸写会让整支冒烟当场崩掉、
+    //   连命名 FAIL 都打不出来 —— 那样"红"是红了,却看不出红在哪。
+    const prevStillWorks = (function () {
+      try { return Render.tileFor(Core.neutralDesc(3), 0, 0) !== null; } catch (e) { return false; }
+    })();
+    ok(prevStillWorks,
+       '★★ 抛错之后上一张图集**照旧可用**(tileFor 照旧返回小图,而不是抛 `Tint: 还没 setSource,…`)');
   })();
 
   // ==== 相位 ③ ③ 格位图缓存:两条独立的失效轴 ====
@@ -186,6 +202,25 @@ function setCells(map, L, list, descOf) {
     const after4 = t4.get(3, 0, 0, d3);
     ok(after4 !== before4, '★★ 换图之后同一块小图也是新对象(调用方不得跨换图持有 tile)');
     ok(be.calls.length >= 2, '换图之后 ④ 真的重算过(实得 backend 调用 ' + be.calls.length + ' 次)');
+
+    // ★★ 相位 ②b(承相位 ② 那条 throws 的另一半 —— 那一条只判了"抛没抛"):换图**抛错时
+    //    一层都不许提交**。这是"先换 ④ 再校验"这个缺陷唯一抓得住的地方:它发生时异常照样
+    //    抛出、`atlasInfo()` 也照样报旧图集,只有 ④ 的对象身份、③ 的代际、以及"旧图集还能
+    //    不能画"这三面能看出换图提交了一半。③ 要通过 `attachCells` 才有(故放在相位 ③b)。
+    const infoBefore = Render.atlasInfo(), genBefore = c3.stats().generation;
+    const warm3 = c3.get(Core.LAYER_SCENE, 0, 0);        // 先预热,好判"③ 没被作废"
+    const warm4 = t4.get(3, 0, 0, d3);
+    throws(function () { Render.setAtlas(new Uint8ClampedArray(7), 8, 1, { backend: be }); },
+           '★★ 换图抛错:注入 backend 时整条换图也不许提交(形状非法 → 抛)', '不是整行');
+    ok(Render.tileCache() === t4, '★★ 抛错之后 ④ 还是原来那一个对象(没被先换掉)');
+    eq(Render.atlasInfo(), infoBefore, '★★ 抛错之后 atlasInfo 仍报上一张图集');
+    eq(c3.stats().generation, genBefore, '★★ 抛错之后 ③ 的代际**没动**(换图事件根本没碰到 ③)');
+    ok(c3.get(Core.LAYER_SCENE, 0, 0) === warm3, '★★ 抛错之后 ③ 的条目仍是原来那个对象(没被作废)');
+    ok(t4.get(3, 0, 0, d3) === warm4, '★★ 抛错之后 ④ 的条目还在(上一张图集照旧可用)');
+    const stillWorks = (function () {
+      try { return Render.tileFor(Core.neutralDesc(3), 0, 0) !== null; } catch (e) { return false; }
+    })();
+    ok(stillWorks, '★★ 抛错之后 tileFor 照旧返回小图(不是抛 `Tint: 还没 setSource,…`)');
   })();
 
   // ==== 相位 ④ 闸 2:单帧预算分帧器 ====
@@ -208,11 +243,47 @@ function setCells(map, L, list, descOf) {
       eq(rep.frames, 12, '★ 每帧 8 项 × 12 帧 = 96 项,余 4 项在第 13 帧(去掉预算判断 = 这里变 0)');
       eq(rep.maxStepMs, 8, '★★ 单帧**真的**没超预算(实得 ' + rep.maxStepMs + 'ms;把预算判断删掉 = 100ms)');
 
+      // ★ 预算必须是**有限的数**:`now() - s0 >= NaN` 与 `>= 负数` 都**恒为 false** ⇒ while
+      //   会一口气做完整批(正是闸 2 要防的那件事),而且**不报错** —— 分帧器装了等于没装。
+      eq(Render.createSlicer({ budgetMs: NaN }).budgetMs, Render.DEFAULT_BUDGET_MS,
+         '★ budgetMs: NaN → 回落默认预算(原样传出的话预算判断恒 false)');
+      eq(Render.createSlicer({ budgetMs: -5 }).budgetMs, 0, '★ budgetMs: 负数 → 钳到 0(不是负数)');
+      eq(Render.createSlicer({ budgetMs: Infinity }).budgetMs, Render.DEFAULT_BUDGET_MS,
+         '★ budgetMs: Infinity → 回落默认预算(判的是"有限",不是"非负就行")');
+
       const one = Render.createSlicer({ budgetMs: 0, now: function () { return clock.t; },
                                         nextFrame: function () { clock.t += 1; return Promise.resolve(); } });
       return one.run([1, 2, 3], function () {}).then(function (r2) {
         eq(r2.processed, 3, '★ budgetMs = 0:每帧至少做一项,3 项照样全部做完(不是死循环)');
         eq(r2.frames, 2, 'budgetMs = 0 → 每帧一项,3 项让出 2 次');
+
+        // ★★ 行为面(不只是读回那个数):NaN 预算**真的**按默认预算分帧。不回落的话
+        //    frames 是 0、maxStepMs 是 100(一口气做完整批)—— 两条断言各看一面。
+        const clockN = { t: 0 };
+        const nanSlicer = Render.createSlicer({ budgetMs: NaN,
+          now: function () { return clockN.t; },
+          nextFrame: function () { clockN.t += 20; return Promise.resolve(); } });
+        return nanSlicer.run(items, function () { clockN.t += 1; }).then(function (r3) {
+          eq(r3.frames, 12, '★★ NaN 预算的行为与默认预算**一致**(12 帧;不回落 = 0 帧,一口气做完整批)');
+          eq(r3.maxStepMs, Render.DEFAULT_BUDGET_MS, '★★ NaN 预算下单帧仍守默认预算(不回落 = 100ms)');
+
+          // ★★ 第 2 帧抛错必须让 run() 的 promise **reject**。只测第 1 帧抛是**区分不了**的:
+          //    那时 step 还在 promise 执行器里同步跑,执行器本来就会接住;真正会漏的是
+          //    "让出一帧之后"那条 —— 从第 2 帧起 step 跑在 `nextFrame().then(step)` 这条
+          //    **没人观察**的链上,裸抛 = unhandled rejection,run() 的 promise 于是**永远
+          //    不 settle**(调用方 await 到天荒地老,且看不到任何错误)。
+          //    每帧一项靠 budgetMs = 0(负预算会被钳成 0,这里要的正是它)。
+          const boom = Render.createSlicer({ budgetMs: 0, now: function () { return 0; },
+                                             nextFrame: function () { return Promise.resolve(); } });
+          return boom.run([1, 2, 3], function (it) { if (it === 2) throw new Error('第二帧炸'); })
+            .then(function () {
+              fail++;
+              console.error('  FAIL - ★★ 第 2 帧抛错必须 reject 掉 run()(实得:promise 正常 settle 了)');
+            }, function (err) {
+              ok(String(err && err.message).indexOf('第二帧炸') >= 0,
+                 '★★ 第 2 帧抛错 → run() 的 promise reject(带原始异常;不是永远悬着)');
+            });
+        });
       });
     });
   })().then(function () {
@@ -282,8 +353,13 @@ function setCells(map, L, list, descOf) {
        'brushRegion: 0.75 画笔盖 3×3 子格');
     // ★ 两种单位的坐标含义不同(格 vs 子格),混用会让画笔大小整体错 4 倍 ——
     //   调用方必须看 unit 再决定是"每格填 16 子格"还是"直接就是子格"。
-    eq(Render.snapHit({ X: 9, Y: 10, zoom: 8, px: 0, py: 0, kind: 'cell' }).kind, 'cell',
-       'snapHit: 整数画笔吸附到格');
+    // ★★ 断言必须覆盖**整个返回对象**:只判 `.kind` 的话,两个分支只差一个标签也算过 ——
+    //   "吸附到格"就成了一句没人验的空话(把 `X:9,Y:10` 的子格号原样当格号传下去,恰好
+    //   也满足 `.kind === 'cell'`)。X/Y 也要取**跨格边界**的值,否则 floor(X/SUB) 与
+    //   floor(X) 分不出来(9 ÷ 4 = 2 与 9 才分得开)。
+    eq(Render.snapHit({ X: 9, Y: 10, zoom: 8, px: 0, py: 0, kind: 'cell' }), { kind: 'cell', x: 2, y: 2 },
+       '★★ snapHit: 整数画笔吸附到**格**(X/Y 是子格号 → ÷ ' + Core.SUB_PER_CELL +
+       ' 换成格号,不是原样传出去;与 UI 的 hitOf 同一条式子)');
     eq(Render.snapHit({ X: 9, Y: 10, zoom: 8, px: 0, py: 0, kind: 'sub' }), { kind: 'sub', x: 9, y: 10 },
        'snapHit: 小数画笔吸附到子格(当前子格就是命中子格)');
   })();
