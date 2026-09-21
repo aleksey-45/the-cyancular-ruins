@@ -3684,6 +3684,7 @@ EOF
       eq(mi.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '★ 水平镜像:x=3 的内容到了 x=0');
       ok(md !== null, '镜像产出差量');
     })();
+```
 
 - [ ] **Step 2: 运行,确认失败**
 
@@ -4955,6 +4956,7 @@ EOF
       eq(keep.panelOpen.lib, false, '★ 合法字段原样保留(只回落坏字段)');
       eq(keep.playerRef, def.playerRef, '★ 缺的字段补默认(不是整份丢掉)');
     })();
+```
 
 - [ ] **Step 2: 运行,确认失败**
 
