@@ -364,7 +364,14 @@ globalThis.Render = (function () {
 
     function ensureThumbs(map) {
       var px = thumbScale(map.subCols, map.subRows);
-      if (thumbs[0] && thumbPx === px && thumbs[0].width === map.subCols * px) {
+      // ★★ 复用条件必须**逐轴**判(宽 **与** 高),只判宽度是不够的:
+      //    `thumbScale` 只看**总字节数**,所以"同宽更高"的两张图可以拿到同一个刻度
+      //    (如 demo 的 500×300 子格 → 1000×600,与 500×400 子格 → 1000×800,刻度都是 2)。
+      //    这时宽度那条对得上 ⇒ 复用了那张**矮**画布,而 drawThumbPath 用五实参 drawImage
+      //    把它整张缩进 subRows*px*scale 的目标框里 ⇒ 画面纵向被拉伸/截断(默认视图
+      //    fitZoom 之后 zoom < 8,走的正是缩略图这条路,所以**默认视图就是错的**)。
+      if (thumbs[0] && thumbPx === px &&
+          thumbs[0].width === map.subCols * px && thumbs[0].height === map.subRows * px) {
         // ★★ 复用尺寸相同的旧缩略图之前,先把**新图里缺席的层**清掉:缺席层不进 thumbTasks
         //    (省一次全图扫描),于是它**不会**被重画 —— 留着旧像素的话,换到一张少层的图
         //    之后那一层会继续显示**上一张图的内容**(而缩略图路径会把它当"这一层的画面"贴出去)。
@@ -517,7 +524,9 @@ globalThis.Render = (function () {
       ctx.globalAlpha = 1;
     }
 
-    // 网格线:格线恒画,子格线只在 zoom ≥ 8 时画(C15)
+    // 网格线:格线恒画,子格线只在 zoom ≥ 4 时画。★ 规格 C15 只要求"有子格开关 + 子格级
+    //   命中",**没有**规定阈值 ⇒ 这个 4 是**本文件自己的选择**(取 4 的理由:4 px/子格
+    //   时一个子格还有 4 个屏幕像素、线还分得开;再稀就只是给画面加噪点),不是规格里的数字。
     // ★ 只画可见区(B8:不裁剪 = 每次重画整张图的线)
     function drawGrid(W, H) {
       var r = visibleSubRange(s.view, W, H, s.map.subCols, s.map.subRows);
@@ -640,6 +649,16 @@ globalThis.Render = (function () {
     }
     function invalidateAll() {
       if (!s.map) return Promise.resolve();
+      // ★★ 先让缩略图的**尺寸**对齐当前图:本方法是一条**公开入口**,而它此前不经过
+      //    ensureThumbs —— 调用方完全可能在"改了 s.map 的尺寸"之后直接进来(撤销/重做一条
+      //    kind='whole' 的差量就是这么把 subCols/subRows 就地改掉的)。少了这一步,
+      //    paintThumbRect 会往画布外写(被静默裁掉)、drawThumbPath 又会把那张旧画布拉伸到
+      //    新尺寸的目标框里 —— 两条路径都是"画面错了但不报错"。
+      // ★ 只有本方法配得起这一步:它紧接着 buildThumbs() 把**整张**重画一遍,故"重建出
+      //    空白画布"不会留下半张空白。invalidateCells(单块脏矩形)恰恰相反 —— 那里重建 =
+      //    只补一小块、其余留白,所以它继续依赖 setMap 那一侧的 ensureThumbs(尺寸只在
+      //    setMap 或本方法里才可能变,而 setMap 自己会调)。
+      ensureThumbs(s.map);
       return buildThumbs().then(render);
     }
 

@@ -363,6 +363,44 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
       rSp.setTorus(true);
       ok(cvSp.ctx.ops.filter(function (o) { return o.op === 'fillText'; }).length > 3,
          '★ 环面开着时同一批标记会随副本各画一遍(> 3 次)');
+
+      // ── ⑩k ★★ 换到一张"同宽更高"的图:缩略图必须按**高度**判、整张重建 ──
+      // ★★ ⑩i 用的是**同尺寸**换图(那张图改的只是"缺层"),走的正是复用那条路 ⇒ 它
+      //    天然抓不到"复用条件漏判高度"。这里的两张图**同宽、不同高**:
+      //    `thumbScale` 只看总字节数,所以两者拿到**同一个刻度**(前提断言把这一点钉住,
+      //    否则"复用"这条路根本不走,本相位就是空转);于是只判宽度的实现在第二张图上
+      //    复用了那张**矮**画布,而 drawThumbPath 用五实参 drawImage 把它整张缩进
+      //    subRows*px*scale 的目标框 ⇒ 画面纵向被拉伸/截断 —— 且默认视图(fitZoom 之后
+      //    zoom < 8)走的**正是**缩略图这条路,所以"默认视图是错的"而没有任何报错。
+      const shortM = Core.createMap('sh', 4, 3);        // 16×12 子格 ⇒ 缩略图 32×24
+      fillSub(shortM, Core.LAYER_SCENE, Core.neutralDesc(1));
+      fillSub(shortM, Core.LAYER_BG, 0);
+      const tallM = Core.createMap('ta', 4, 5);         // 16×20 子格 ⇒ 缩略图 32×40(同宽、更高)
+      fillSub(tallM, Core.LAYER_SCENE, Core.neutralDesc(1));
+      fillSub(tallM, Core.LAYER_BG, 0);
+      eq(Render.thumbScale(shortM.subCols, shortM.subRows),
+         Render.thumbScale(tallM.subCols, tallM.subRows),
+         '⑩k 前提:这两张图的缩略图刻度**相同**(否则复用的那条路根本不走,本相位是空转)');
+      const cvH = fakeCanvas(200, 200);
+      const rH = Render.mount(cvH, SLICE);
+      await rH.setMap(shortM);
+      const thumbH1 = rH.thumbCanvas(Core.LAYER_SCENE);
+      eq({ w: thumbH1.width, h: thumbH1.height },
+         { w: shortM.subCols * rH.thumbPx(), h: shortM.subRows * rH.thumbPx() },
+         '⑩k 前提:第一张图的缩略图尺寸 = 子格数 × 刻度(32×24)');
+      await rH.setMap(tallM);
+      const thumbH2 = rH.thumbCanvas(Core.LAYER_SCENE);
+      ok(thumbH2 !== thumbH1,
+         '★★ 换到**同宽更高**的图必须换一张缩略图画布(只判宽度的实现会在这里复用那张' +
+         '矮画布,而它随后会被整张缩进更高的目标框里 ⇒ 画面纵向拉伸/截断)');
+      eq({ w: thumbH2.width, h: thumbH2.height },
+         { w: tallM.subCols * rH.thumbPx(), h: tallM.subRows * rH.thumbPx() },
+         '★★ 缩略图的**高度**跟着新图走(期望 ' + (tallM.subRows * rH.thumbPx()) +
+         'px;漏判高度的话这里还是上一张图的 ' + (shortM.subRows * rH.thumbPx()) + 'px)');
+      ok(thumbH2.width > 0 && thumbH2.height > 0 &&
+         countOps(thumbH2.ctx, 'op', 'drawImage') > 0,
+         '★ 新缩略图确实被**画过**(钉住"建一张空白画布交差"这种假绿:' +
+         countOps(thumbH2.ctx, 'op', 'drawImage') + ' 次 drawImage)');
     } finally {
       globalThis.document = savedDoc;
     }

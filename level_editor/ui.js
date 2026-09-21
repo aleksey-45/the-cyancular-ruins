@@ -19,6 +19,10 @@ globalThis.Editor = (function () {
   var DEFAULT_CELLS_W = 125, DEFAULT_CELLS_H = 75;
 
   // 运行时状态(页面用;node 冒烟不碰它)
+  // ★ 计划 2b 的接口表把 raw/name/sourceFormat 写成 `Editor.rawBytes()/rawName()/sourceFormat()`
+  //   —— 那三个**函数不存在**,真身是下面这个 `app` 对象上的三个字段(`Editor.app.raw` /
+  //   `Editor.app.name` / `Editor.app.sourceFormat`,经导出表的 `app: app` 暴露);
+  //   Task 8/9 消费的正是 `app.*` 那形式,故无下游断裂,是**接口表那份文本错了**。
   var app = {
     r: null, canvas: null, map: null, name: null,
     raw: null, sourceFormat: null, tileDefs: null,

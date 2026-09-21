@@ -1058,6 +1058,17 @@ async function runAllPhases() {
     ok((page.match(/class="layer-row[^"]*" data-layer="\d"/g) || []).length === 4,
        '图层列表有 4 行');
     ok(/id="boot-error"/.test(page), '★ 有启动错误条(缺 Worker 时把话说清楚,而不是静默)');
+    // ★★ `ui.js` 拿这两个按钮的写法是 `var selftestBtn = $('btn-selftest'); if (selftestBtn) …`
+    //    —— 那个 `if` 是**静默降级**的闸:页面上的 id 打错一个字母、或者按钮被顺手删掉,
+    //    浏览器里**一声不响**,症状只有"这个按钮按了没反应"(控制台干净、node 侧全绿)。
+    //    而 `#btn-selftest` 打印的那行 `SELFTEST OK` 是本计划**后续每个 Task** 在浏览器侧
+    //    唯一的验收判据(#btn-fit 也一样:它是画布唯一的复位入口)—— 判据本身丢了,
+    //    后面的 Task 就再也拿不到那一行。故页面结构这一侧必须点名它们。
+    ok(/id="btn-selftest"/.test(page),
+       '★★ 页面有 id="btn-selftest"(ui.js 用 if(selftestBtn) 守卫 ⇒ id 打错 = 按钮静默失效,' +
+       '而浏览器侧的唯一验收判据就是它打印的那行 SELFTEST OK)');
+    ok(/id="btn-fit"/.test(page),
+       '★★ 页面有 id="btn-fit"(同上,同一个静默守卫;它是画布唯一的复位入口)');
     ok(page.indexOf('Editor.boot()') >= 0, '★ 页面只负责把 DOM 交给 ui.js(页面里没有编辑器逻辑)');
     ok(/__ENEMY_REGISTRY_BEGIN__/.test(page) && /window\.ENEMY_REGISTRY\s*=/.test(page),
        '★ 敌人注册表标记与 registry 都在入口页里(由 sync-enemies.js 生成)');
