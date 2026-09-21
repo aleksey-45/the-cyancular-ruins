@@ -221,6 +221,10 @@ func _match_round_tick(delta: float) -> void:
 				if not p.is_downed() or _down_counted.get(role, false):
 					continue
 				_down_counted[role] = true
+				# 掉落:倒地**这一刻**在原地丢下除随机保留一把外的全部武器(与基类同款 ——
+				# 见 `MatchGround._drop_all_but_one` 上方的完整理由)。共用 `_down_counted`
+				# 闩 ⇒ 每次死亡恰好一次;`_respawn_player` 那一支**不再**掉(会掉在出生点)。
+				_drop_all_but_one(p, int(role))
 				_deaths[int(role)] = int(_deaths.get(int(role), 0)) + 1   # 阵亡计数
 				var killer := _attributed_killer(p)
 				if killer != 0:

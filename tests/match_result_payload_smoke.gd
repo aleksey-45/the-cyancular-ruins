@@ -62,14 +62,34 @@ func _initialize() -> void:
 			fails.append("★ role 2 看自己输掉的 1v1 应念「失败」,实得 %s" % one_sided["title"])
 
 	# ③ 大乱斗:kills + deaths 两列,按 kills 降序
+	# ★★ 标题恒为「游戏结束」——**与 `match_winner` 无关**(用户 2026-09-21 裁定:
+	#    「大乱斗结算榜单不应该有任何胜利/失败,而是游戏结束」)。自由混战里 N 个人只有榜首
+	#    算"赢",把其余 N-1 个人判成「失败」既不准确也没意义。原先这里断言的是「失败」。
 	var roy: Dictionary = script.for_royale({ "scores": {1: 3, 2: 9, 3: 0},
 			"deaths": {1: 5, 2: 2, 3: 4}, "match_winner": 2 }, names, 1)
 	if roy["columns"] != ["kills", "deaths"]:
 		fails.append("大乱斗 columns 应为 [kills,deaths],实得 %s" % [roy["columns"]])
 	if int(roy["sections"][0]["rows"][0]["kills"]) != 9:
 		fails.append("★ 大乱斗榜首应是 9 杀(降序排错)")
-	if str(roy["title"]) != "失败":
-		fails.append("大乱斗我没赢应念「失败」,实得 %s" % roy["title"])
+	if str(roy["title"]) != "游戏结束":
+		fails.append("★ 大乱斗标题应是「游戏结束」,实得 %s" % roy["title"])
+
+	# ③b ★ 上一条的**反向对照**:同一份 `scores`,只把 `match_winner` / `my_role` 换成
+	#     "我赢"(两者相等),标题**必须一模一样**。
+	#     ★ 为什么单开一条:③ 那一个 fixture 里 `my_role(1) != match_winner(2)` ——
+	#       `"游戏结束" if match_winner != my_role else "胜利!"` 这类**仍然依赖胜负**的实现
+	#       在 ③ 下**照样绿**,只有本条的"赢家视角"能把它照红。
+	var roy_win: Dictionary = script.for_royale({ "scores": {1: 3, 2: 9, 3: 0},
+			"deaths": {1: 5, 2: 2, 3: 4}, "match_winner": 2 }, names, 2)
+	if str(roy_win["title"]) != "游戏结束":
+		fails.append("★ 大乱斗:即便 `my_role` 就是 `match_winner`(榜首),标题也必须是"
+				+ "「游戏结束」而**不是**「胜利!」,实得 %s" % roy_win["title"])
+	# 平局那一档同样不例外(`match_winner == 0` 时也**不许**冒出「平 局」)
+	var roy_draw: Dictionary = script.for_royale({ "scores": {1: 3, 2: 9, 3: 0},
+			"deaths": {1: 5, 2: 2, 3: 4}, "match_winner": 0 }, names, 1)
+	if str(roy_draw["title"]) != "游戏结束":
+		fails.append("★ 大乱斗平局(`match_winner == 0`)也不许念「平 局」,实得 %s"
+				% roy_draw["title"])
 
 	# ④ 3v3:两节、列含 dmg/acs、mvp 指向 ACS 最高者
 	# ★ 2 队**两条** stats:只有一条时"排序前数行号"与"排序后数行号"都得到 `row 0` ——

@@ -42,6 +42,15 @@ static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dict
 
 
 # 大乱斗。自由混战:`scores` / `deaths` 都是 role -> 计数。**没有 dmg/acs** ⇒ 不列。
+#
+# ★★ 标题恒为「游戏结束」,**与 `match_winner` 无关**(用户 2026-09-21 裁定:
+#    「大乱斗结算榜单不应该有任何胜利/失败,而是游戏结束」)。
+#    大乱斗是自由混战:N 个人里只有榜首算"赢",把 N-1 个人判成「失败」既不准确也没意义
+#    —— 榜本身就说明了名次。故**刻意不调 `_verdict`**:那个函数只服务 1v1(与 3v3 的
+#    `_verdict_team`),它们的胜利/失败语义**一个字都没动**。
+# ★ `my_role` 仍是本函数的第 3 个形参(调用方 `royale_game._build_result_payload` 传
+#    `PvpSession.role`,签名不动 —— `kh_l6_probe` 的 ⑯ 按位置钉着那个实参);
+#   本函数现在用不到它,但**不要**删:签名是三模式适配器的公共形状,删了要改调用点与探针。
 static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary:
 	var scores: Dictionary = round.get("scores", {})
 	var deaths: Dictionary = round.get("deaths", {})
@@ -50,7 +59,7 @@ static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Di
 		rows.append(_row(_name_of(names, int(role)), int(scores[role]), int(deaths.get(role, 0)), 0, 0))
 	_finish(rows, "kills")
 	return {
-		"title": _verdict(int(round.get("match_winner", 0)), my_role),
+		"title": "游戏结束",
 		"subtitle": "",
 		"columns": ["kills", "deaths"],
 		"sections": [{"label": "击杀排行榜", "color": UiFactory.C_TEXT, "rows": rows}],
@@ -118,7 +127,9 @@ static func _name_of(names: Dictionary, role: int) -> String:
 	return str(names.get(role, "玩家%d" % role))
 
 
-# 1v1 与大乱斗的 `match_winner` 是 **role 号**。0 = 平局(两人局胜相同)。
+# 1v1 的 `match_winner` 是 **role 号**。0 = 平局(两人局胜相同)。
+# ★ 本函数**只服务 1v1**(`for_duel`):大乱斗的标题走 `for_royale` 里那句恒定的
+#   「游戏结束」(自由混战没有"你输了"这个说法,见那处注释)。
 static func _verdict(match_winner: int, my_role: int) -> String:
 	if match_winner == 0:
 		return "平 局"

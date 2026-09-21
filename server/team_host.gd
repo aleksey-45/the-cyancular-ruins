@@ -349,6 +349,12 @@ func _match_round_tick(delta: float) -> void:
 		if _down_counted.get(role, false):
 			continue
 		_down_counted[role] = true
+		# 掉落:倒地**这一刻**在原地丢下除随机保留一把外的全部武器(与基类/大乱斗同款 ——
+		# 见 `MatchGround._drop_all_but_one` 上方的完整理由)。共用 `_down_counted` 闩 ⇒
+		# 每次死亡恰好一次;`_respawn_player` 那一支**不再**掉(会掉在出生点)。
+		# ★ 本行与另外两处边沿是**同一个契约的三份落地**:少写这一处,3v3 会静默退化成
+		#   "死亡不掉武器"(基类那支已删,没有别的地方会替它掉)。
+		_drop_all_but_one(p, int(role))
 		# 逐人数据(B 册 Task 10):倒下**一律**计 death;击杀只在"归因到且异队"时计给杀手。
 		# ★ 刻意放在下面 `scorer != 0` 那道闸**之外**:"这场倒地有没有给对方队加分"与"谁死了"
 		#   是两件事 —— deaths 的口径是"谁死了都算死"(用户裁定 ②)。
