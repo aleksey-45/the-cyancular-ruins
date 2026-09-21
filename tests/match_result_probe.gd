@@ -66,9 +66,14 @@ func _run() -> void:
 	# ② 1v1 单节两行：列数 == 2 + columns.size()
 	await _shot(MatchResultPayload.for_duel({"scores": {1: 7, 2: 3}, "rounds_won": {1: 2, 2: 1},
 			"match_winner": 1}, {1: "阿甲", 2: "bob"}, 1), func(m):
-		var g: GridContainer = m.get_node("Root/Panel/VBox/Sections/Section0/Rows")
-		_check(g.columns == 3, "1v1 表头列数应为 2+1=3,实得 %d" % g.columns)
-		_check(g.get_child_count() == 3 + 2 * 3, "1v1 应有 3 表头 + 2 行×3 格"))
+		# ★ 先判 null 再解引用(文件头 ②):直接 `get_node(...).columns` 在节点路径漂了时会
+		#   掐断 `_shot` 协程 ⇒ 整条 `_run` 再也不恢复、**一行 verdict 都不打印**,与"探针真挂住"
+		#   在输出上长得一模一样。
+		var g := m.get_node_or_null("Root/Panel/VBox/Sections/Section0/Rows") as GridContainer
+		_check(g != null, "1v1:找不到 Root/Panel/VBox/Sections/Section0/Rows(节点路径变了?)")
+		if g != null:
+			_check(g.columns == 3, "1v1 表头列数应为 2+1=3,实得 %d" % g.columns)
+			_check(g.get_child_count() == 3 + 2 * 3, "1v1 应有 3 表头 + 2 行×3 格"))
 
 	# ③ 3v3 两节 + MVP 标记恰好一次 + ★ 落在 MVP 行上
 	# ★ MVP 故意落在**第二节的第二个行**:每节只有一行时 `mvp.row == 0` 是**唯一可表示**的值,
@@ -79,9 +84,16 @@ func _run() -> void:
 			4: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400},
 			5: {"kills": 2, "deaths": 4, "dmg": 120, "kscore": 150, "acs": 75}},
 			"mvp": 5, "match_winner": 2}, {1: "阿甲", 4: "dave", 5: "eve"}, {1: 1, 4: 2, 5: 2}, 1), func(m):
-		var box: HBoxContainer = m.get_node("Root/Panel/VBox/Sections")
+		# ★ 先判 null 再解引用(文件头 ②;理由同上一条 —— 掐断协程 = 一行 verdict 都没有)。
+		var box := m.get_node_or_null("Root/Panel/VBox/Sections") as HBoxContainer
+		_check(box != null, "3v3:找不到 Root/Panel/VBox/Sections(节点路径变了?)")
+		if box == null:
+			return
 		_check(box.get_child_count() == 2, "3v3 应画 2 节,实得 %d" % box.get_child_count())
-		var g: GridContainer = m.get_node("Root/Panel/VBox/Sections/Section1/Rows")
+		var g := m.get_node_or_null("Root/Panel/VBox/Sections/Section1/Rows") as GridContainer
+		_check(g != null, "3v3:找不到 Root/Panel/VBox/Sections/Section1/Rows(节点路径变了?)")
+		if g == null:
+			return
 		_check(g.columns == 6, "3v3 表头列数应为 2+4=6,实得 %d" % g.columns)
 		_check(g.get_child_count() == 6 + 2 * 6, "3v3 第二节应有 6 表头 + 2 行×6 格")
 		_check(_count_marks(m) == 1, "★ MVP 标记应恰好出现 1 次,实得 %d" % _count_marks(m))
@@ -126,8 +138,15 @@ func _run() -> void:
 	ma.show_result({"title": "信号"})
 	ma._unhandled_input(esc)
 	_check(fa[0] == 1, "★ ESC 应发一次 leave_requested,实得 %d" % fa[0])
+	# ★ 第二下判的是**增量**,不是累计值。判累计值(`fa[0] == 1`)时,任何把 ESC 那一路
+	#   整个弄坏的改动(计数恒 0)**同时**让上一条与这一条变红 ⇒ 多一条纯噪声的失败行,
+	#   把真正的成因埋掉。取"首次 ESC 之后"的读数为基线,两条断言各管各的。
+	#   ⚠ 判据仍是**严格相等**(不是 `<= 1`):`<= 1` 在"第二下重发"时是 `2 <= 1` = 假,
+	#   看着还能红,但它同时放过了任何"计数倒退/被清零"的实现 —— 那正是这里要防的。
+	var after_first: int = fa[0]
 	ma._unhandled_input(esc)
-	_check(fa[0] == 1, "★ 第二次 ESC 不得再发(见 `_leaving`),实得 %d" % fa[0])
+	_check(fa[0] == after_first,
+			"★ 第二次 ESC 不得再发(见 `_leaving`):首次之后 %d,第二次之后 %d" % [after_first, fa[0]])
 	ma.queue_free()
 	await get_tree().process_frame
 
@@ -140,8 +159,13 @@ func _run() -> void:
 	mb.show_result({"title": "信号"})
 	var fb := [0]
 	mb.leave_requested.connect(func() -> void: fb[0] += 1)
-	mb.get_node("Root/Panel/VBox/BackButton").emit_signal("pressed")
-	mb.get_node("Root/Panel/VBox/BackButton").emit_signal("pressed")
+	# ★ 先判 null 再解引用(文件头 ②):路径漂了时 `get_node(...).emit_signal(...)` 会掐断
+	#   `_shot`/`_run` 协程 ⇒ **一行 verdict 都不打印**,与"探针真挂住"分不开。
+	var bb := mb.get_node_or_null("Root/Panel/VBox/BackButton") as Button
+	_check(bb != null, "④c:找不到 Root/Panel/VBox/BackButton(节点路径变了?)")
+	if bb != null:
+		bb.emit_signal("pressed")
+		bb.emit_signal("pressed")
 	_check(fb[0] == 1, "★ 连点两次按钮应只发一次 leave_requested,实得 %d" % fb[0])
 	mb.queue_free()
 	await get_tree().process_frame
@@ -187,14 +211,12 @@ func _run() -> void:
 	dup.queue_free()
 	await get_tree().process_frame
 
-	# ⑥ 三个客户端**必须从 `.tscn` 实例化**结算页(见文件头 ①)。今天这三处还没有接线(Task 4~6
-	#   才加),所以这条是**空跑**的守卫 —— 它的价值从接线那一刻起生效,而且只能靠源码扫描:
-	#   接线之前**行为断言无从下手**(那三处一个字都还没有)。
-	for p in ["res://scenes/pvp_game.gd", "res://scenes/royale_game.gd", "res://scenes/team_game.gd"]:
-		var src := FileAccess.get_file_as_string(p)
-		_check(not src.is_empty(), "读不到 %s" % p)
-		_check(not src.contains("MatchResult.new("),
-				"%s 用了 MatchResult.new() —— layer = 150 只写在 ui/match_result.tscn 里,用 .new() 会落到 CanvasLayer 默认的 layer 1,结算页画在 HUD(130)/小地图(131)下面且压暗罩盖不住(静默,只能靠眼睛看出来)。要从场景实例化。" % p)
+	# ★ 这里此前还有一条「三个客户端必须从 `.tscn` 实例化」的源码扫描(⑥)。已**整段搬走**:
+	#   它的挂载点在**基类** `scenes/pvp_match_client.gd`(三个客户端全部 extends 它),而它
+	#   守的却是一份**手写**的三个子类清单;且裸 `contains` 对注释是盲的(基类里那句注释原文
+	#   就写着 `MatchResult.new()`)。现在住在 `tests/hud_declarative_probe.gd` 的
+	#   `_check_result_scene_instantiation()`(走盘 + 剥注释,理由写在那里)。
+	#   ⚠ 别在这儿"补回来":本文件是需要**真渲染**的窗口探针,只在有人开窗口时才跑。
 
 
 # 找「带 ★ 的那个 Label」所在网格与其下标;找不到返回空数组。

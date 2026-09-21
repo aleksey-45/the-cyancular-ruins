@@ -8,6 +8,10 @@ extends ProbeBase
 #      有 `[node name="C"` 声明。
 #   ③ **`TeamHud` 的 `_my_team` 契约**(语义面,见 `_check_team_my_team_contract`):那是
 #      个"外部不写就静默判错胜负"的口 —— 结构断言(①②)一个都照不到它。
+#   ④ **`res://scenes/` 下零 `MatchResult.new(`**(源码面,见 `_check_result_scene_instantiation`):
+#      结算页的 `layer = 150` **只住在** `ui/match_result.tscn` 里,`.new()` 建出来的是默认的
+#      layer 1 ⇒ 画在三个 HUD(130)/小地图(131)**底下**,压暗罩也盖不住(静默)。
+#      ★ 扫描面**走盘**、判据**剥注释** —— 两条理由都写在那个函数上方,别化简回去。
 #
 # ★ ② 的**适用前提**(2026-09-20,加 `ui/match_result` 那一行时补):② 守的是「@onready
 #   取回声明节点」这件事,而**不是**每个 tscn 都必须声明节点。所以本文件先问一句
@@ -57,6 +61,7 @@ func _ready() -> void:
 		_check_pair(str(p[0]), str(p[1]), str(p[2]))
 	_summary(before, "声明式契约:扫 %d 组「脚本 ↔ 场景」,零 .new()、@onready 路径全声明" % PAIRS.size())
 	_check_team_my_team_contract()
+	_check_result_scene_instantiation()
 	_finish()
 
 
@@ -110,6 +115,55 @@ func _check_team_my_team_contract() -> void:
 	with_team.queue_free()
 	no_team.queue_free()
 	_summary(before, "TeamHud 的 _my_team 契约:写入队号才念得出「本局胜利!/胜利!」;不写入时两条都不出现")
+
+
+# ── ④ 结算页必须从 `.tscn` 实例化:`res://scenes/` 下零 `MatchResult.new(` ──────
+# ★★ 为什么住在**这里**,以及为什么**这两处写法都不能"化简"**(2026-09-21 评审后从
+#    `tests/match_result_probe.gd` 整段搬来 —— 那边是**放错了地方**,理由见 ①②):
+#
+#   ① **扫描面必须在「接线真正落地的地方」**。结算页的挂载点在**基类**
+#      `scenes/pvp_match_client.gd`:三个客户端(`pvp_game`/`royale_game`/`team_game`)
+#      全部 `extends PvpMatchClient`,接线(`const RESULT_SCENE := preload(...)` +
+#      `_result = RESULT_SCENE.instantiate()`)加在那**一个**文件里。
+#      此前那份判据用的是**手写**的三文件清单(恰好是三个子类)⇒ 缺陷真正会出现的那一行
+#      **一处都扫不到**,而探针照样全绿。手写清单正是它当初出错的成因,所以这里**走盘**。
+#   ② **判据必须剥注释**(`_code_only`)。基类里那句注释原文就写着
+#      「必须走场景实例化,不能用 `MatchResult.new()`」—— 裸 `contains` 会把这条
+#      **完全正确**的代码判成红的(comment-blind 的假红)。
+#   ③ 这条是**源码级**规则,不该住在需要真渲染的窗口探针里:那种探针**只在有人开窗口时**
+#      才跑,而本文件是 headless、已在例行扫描轮转里,且已经拥有「零 `<类>.new(`」这个概念
+#      —— ①②两条 `.new(` 守卫就在上面几步之外。
+#   ⚠ 别把它"简化"回「裸 contains + 固定路径清单」:①②两条会**同时**回来,而且都是静默的
+#      (假红要人去查、漏扫要等缺陷上线)。
+const RESULT_SCAN_ROOT := "res://scenes"      # 目录,不是文件清单(理由见上 ①)
+const RESULT_FORBIDDEN := "MatchResult.new("  # `.new()` 建出来的是 layer 1(理由见文件头 ④)
+
+
+func _check_result_scene_instantiation() -> void:
+	var before := _failures.size()
+	var all := _collect([RESULT_SCAN_ROOT])
+	var files: Array[String] = []
+	for p in all:
+		if str(p).ends_with(".gd"):
+			files.append(p)
+	# ★ 下限守卫:走盘走空(目录改名/被排除)时下面那条 `for` 一次都不转 ⇒ 恒绿。
+	_check(files.size() >= 1,
+			"%s 下扫到 0 个 .gd(判据退化:走盘走空 ⇒ 「零 MatchResult.new(」恒真)" % RESULT_SCAN_ROOT)
+	var hits: Array[String] = []
+	var unreadable: Array[String] = []
+	for p in files:
+		var code := _code_only(_read(p))
+		if code.is_empty():
+			unreadable.append(p)
+			continue
+		if code.contains(RESULT_FORBIDDEN):
+			hits.append(p)
+	# ★ 读不到源文件 = 这类探针最典型的失明方式(contains 恒假),必须单独报红。
+	_check(unreadable.is_empty(), "读不到这些源文件(contains 断言在它们身上恒假):%s" % ", ".join(unreadable))
+	_check(hits.is_empty(),
+			"这些文件用了 MatchResult.new():%s —— layer = 150 只写在 ui/match_result.tscn 里,用 .new() 会落到 CanvasLayer 默认的 layer 1,结算页画在 HUD(130)/小地图(131)下面且压暗罩盖不住(静默,只能靠眼睛看出来)。要从场景实例化。" % ", ".join(hits))
+	_summary(before, "结算页实例化:扫 %s 下 %d 个 .gd,零 MatchResult.new( (已剥注释)" % [
+			RESULT_SCAN_ROOT, files.size()])
 
 
 # 该 .tscn 除根节点外还声明了节点吗?(决定 ② 是否适用 —— 理由见文件头。)
