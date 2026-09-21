@@ -597,8 +597,8 @@ func _live_self_drops() -> Array:
 #   (比不掐更糟);而**只**看节拍、不掐尝试,就是 2026-09-17 修掉的那个缺陷(见 `_retry_connect`)。
 const RECONNECT_RETRY_MS := 2000
 # 一次尝试的寿命。取值依据:一次成功握手约 2~3×RTT,5s 覆盖到 ~1.6s 的 RTT(再差的链路本就没法打);
-# 而 ENet 自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 ——
-# 不主动掐就只会有一次尝试、且期间一次 tick 都没有。
+# 而 ENet 自己的连接超时实测 **~31.8s**(连一个没人监听的端口)—— 不主动掐的话,一次尝试就能吃掉
+# 宽限期(`GraceWindow.DEFAULT_SECONDS`)预算的一半上下,且那整段期间**一次 tick 都没有**。
 const RECONNECT_ATTEMPT_TIMEOUT_MS := 5000
 var _reconnecting := false
 var _reconnect_started_ms := 0   # ★ **真实断开**时刻(不是"关菜单"时刻,见 _begin_reconnect)
@@ -650,15 +650,16 @@ func _recheck_disconnect() -> void:
 
 
 # 局内自动重连:不切场景、不重建世界 —— 场景与节点原样保留,只把连接接回去。
-# ★★ "不重建场景"**不等于**"世界没变":掉线那 30 秒里服务器照跑 —— 对面把墙拆了、地上的枪
-#   被捡走/丢弃/换局重铺。所以这条路径**同样要**拉一次 `match_sync` 把破坏态与地面武器补回来
+# ★★ "不重建场景"**不等于**"世界没变":掉线那 `GraceWindow.DEFAULT_SECONDS` 秒里服务器照跑 ——
+#   对面把墙拆了、地上的枪被捡走/丢弃/换局重铺。所以这条路径**同样要**拉一次 `match_sync`,
+#   把破坏态与地面武器补回来
 #   (见 `_on_resumed` 末尾那一拉;`destroyed` 不是路径乙专属)。★ 别把"世界还在原地"读成
 #   "没什么要补的" —— 那正是删掉那两行、让幻影墙/幽灵枪悄悄回来的那个想法(漏了不报错)。
 func _begin_reconnect() -> void:
 	# ★ MATCH_OVER / 对手离开那两条延时回菜单的路子会先 `NetBus.stop()`,而它断开的是我们自己。
 	if _match_ended:
 		return
-	# ★ 30 秒预算的**起算点 = 真实断开这一刻**,故记在这里、且在那道菜单守卫**之前** ——
+	# ★ 宽限期预算的**起算点 = 真实断开这一刻**,故记在这里、且在那道菜单守卫**之前** ——
 	#   菜单开着的闪断若等"关菜单"才起算,等于凭空多拿一段预算(spec 的宽限期按**服务器**的
 	#   掉线检测起算,客户端这边晚算的那几秒会让最后几次 reclaim 打在"已被移出"上)。
 	#   ★ 只在**没人记过**时才记:关菜单时 `_recheck_disconnect()` 再来一次,预算要接着走,不重置。
@@ -714,9 +715,10 @@ func _retry_connect() -> void:
 	multiplayer.connection_failed.connect(_on_reconnect_failed, CONNECT_ONE_SHOT)
 	# ★★ 成功这条**也要挂定时器**(2026-09-17 修:原先只有 `err != OK` 那条挂)。不挂的话,
 	#   "一次连接尝试正在飞"的整段期间**一次 tick 都没有** —— 宽限期判据从不被求值,而 ENet
-	#   自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 → 最坏情形是
-	#   **卡在冻结世界约 33 秒**才回主菜单,而不是设计的 30 秒(本机实测:尝试@0.15s →
-	#   `connection_failed`@31.81s → 由失败那一刻才挂上的 tick 在 ~33.8s 判超时)。
+	#   自己的连接超时实测 **~31.8s**(连一个没人监听的端口)→ 最坏情形是**卡在冻结世界 ~32 秒**
+	#   才回主菜单(本机实测:尝试@0.15s → `connection_failed`@31.81s → 由失败那一刻才挂上的
+	#   tick 在 ~33.8s 判超时)。★ 这里的病**不是**"宽限期太短"(当年它恰好是 30s),而是那一段
+	#   期间判据**一次都没被求值** —— 所以时长改成多少,这条修复的必要性都不变。
 	#   挂上之后这一路 tick 只多做一件事:到 `RECONNECT_ATTEMPT_TIMEOUT_MS` 就掐掉重开一次
 	#   (见 `_on_reconnect_retry_tick`)。
 	_schedule_reconnect_retry()
@@ -762,7 +764,8 @@ func _on_reconnect_retry_tick() -> void:
 	if not _reconnecting:
 		return
 	# ★★ 宽限期判据是**第一条**,且与"这次尝试走到哪一步"**无关** —— 两条路径(`err != OK` 与 OK)
-	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),30 秒也一定到点。
+	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),整整一个
+	#   `GraceWindow.DEFAULT_SECONDS` 也一定到点。
 	if Time.get_ticks_msec() - _reconnect_started_ms > int(GraceWindow.DEFAULT_SECONDS * 1000.0):
 		_abort_reconnect("重连超时,对局已结束")
 		return
@@ -779,8 +782,8 @@ func _on_reconnect_retry_tick() -> void:
 	# ★ 一次握手最多活 `RECONNECT_ATTEMPT_TIMEOUT_MS`(还没起飞的不受此限:0 = 无尝试在飞)。
 	#   ★ **这里绝不能用 `RECONNECT_RETRY_MS`** —— 每 2 秒 `NetBus.stop()` + 重连会在高 RTT 链路上
 	#     反复掐掉正在握手的尝试,比不掐更糟;那个值只管"多久看一眼"。
-	#   到点仍未落地 = 这次多半不会落地了(ENet 自己的超时 ~31.8s,远长于本宽限期)→ 掐掉重开,
-	#   让 30s 预算里能有若干次尝试,而不是只有一次。
+	#   到点仍未落地 = 这次多半不会落地了(ENet 自己的超时 ~31.8s,是它的 6 倍多)→ 掐掉重开,
+	#   让宽限期预算里能放下十来次尝试,而不是宁可干等一两次。
 	var attempt_age := Time.get_ticks_msec() - _attempt_started_ms
 	if _attempt_started_ms > 0 and attempt_age < RECONNECT_ATTEMPT_TIMEOUT_MS:
 		_schedule_reconnect_retry()
@@ -819,7 +822,8 @@ func _on_resumed() -> void:
 	_rollback.bind(_local)
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# ★ 路径甲(局内自动重连)**原来不需要 `match_sync`** —— 场景没重建、本地世界还在。
-	#   现在需要了:**世界在掉线那 30 秒里变过**。这一拉把两类丢掉的可靠事件一次补回:
+	#   现在需要了:**世界在掉线那 `GraceWindow.DEFAULT_SECONDS` 秒里变过**。这一拉把两类丢掉的
+	#   可靠事件一次补回:
 	#     · destroyed   —— 被拆的墙(不补 → 幻影墙 → 预测分歧)
 	#     · ground_weapons —— 掉落/被捡走的枪(不补 → 幽灵枪 / 看不见的枪)
 	#   ★ 顺序:上面已经把 C2 重置完了(新 rollback / _input_seq=0),**再**拉。

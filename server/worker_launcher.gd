@@ -19,26 +19,31 @@ extends RefCounted
 # 发给两个 worker,后者绑定失败退出)。唯一递增 + 占用集合即可保证并发零冲突。
 const WORKER_PORT_BASE := 7800
 const WORKER_PORT_SPAN := 500
-# 端口归还延迟(秒)。不能在房间清空时立刻归还:玩家转连 worker 的瞬间大厅就关房,
-# 而旧 worker 要等客户端真正断开(对局结束/退菜单)才退出,窗口期可达数分钟;
-# 立刻复用会把同端口发给新 worker → bind 冲突,或旧 worker 抢到新局的客户端(跨房间串线)。
-# 极端情况(客户端僵死不断开)由 500 端口轮回兜底。
-# ★ 2026-09-17:30 → **120**。原值 30s **等于**(**不晚于**)断线宽限期(30s)——
-#   ★ 措辞订正:30 == 30 是**相等**而不是"短于",而**相等同样不安全** —— 宽限期到点那**同一刻**
-#   端口就可以被复用,`pick_port` 会把它发给新 worker,而重连的客户端手里攥着旧端口 → 连到
-#   **别的局**(它要的是"宽限期内端口一定还在手里",相等不满足这一点)。
-#   120 = 宽限期 30s + 一局的重连余量,与 royale 的 360s 同一条纪律(那边见 ROYALE_PORT_REUSE_DELAY)。
+# ★★ 端口归还延迟的**职责变了**(2026-09-21,显示方案落地后),但**取值没动**:
+#   今天承重的**不是**这个延迟,而是「**worker 进程活着 ⇒ 房对象与它占的端口都还在**」——
+#   房不再在"客户端转连 worker"那一刻被拆,它活到 worker 退出
+#   (`RoomManager._reclaim_finished_matches`),而端口只在 `teardown_room` 里归还。
+#   于是宽限期一定落在 worker 的存活期内(大乱斗/3v3 的 worker 判据里明确要求
+#   `_grace.size() == 0` 才退),**宽限期内重连的客户端手里那个端口一定还有效**,
+#   与这个常量取多少无关。回局侧"这个端口还是不是我的局"另由凭据里的 `worker_pid`
+#   精确回答(`RejoinRegistry.decision` 的 worker_alive 入参)。
+# ★ 那本常量现在管什么:只兜「worker 刚退出、别立刻把它的端口发给新 worker」这一小段
+#   (给进程收尾与 UDP socket 释放留时间)。30 → 120 的历史教训(30 == 30 是**相等**而不是
+#   "短于",相等同样不安全)留档在此,但那条不等式的**承重地位**已由上面那段取代
+#   —— 守卫只剩 `tests/grace_window_smoke` ⑧ 的一条 belt。
 const WORKER_PORT_REUSE_DELAY := 120.0
 # 大乱斗 worker 的端口归还延迟:按**默认**一局时长(RoyaleHost.MATCH_TIME=300)+ 收尾估,
 # 沿用 30s 会让对局中途端口被发给新 worker(串线/bind 冲突)——自检 M2。
-# ★ 已知边界(照实登记,本次不放宽):房主可用建房页的「一局限时」把一局配到 30 分钟
-# (Settings.royale_match_min → player_options 的 match_time → RoyaleHost),此时本延迟短于
-# 一局,端口可能在**旧 worker 还在跑**时就被复用。与 sweep 在局宽限同一根因(都拿默认时长
-# 当上界),修法同样要让界读**本局实际时长**(只在 worker 里)——见 _sweep_stale_rooms 的注释。
+# (房主可用建房页的「一局限时」改本局时长:Settings.royale_match_min → player_options 的
+#  match_time → RoyaleHost。)
+# ★ 已知边界(照实登记,本次不放宽):房主可用建房页把一局配到 30 分钟。★ 现在这条延迟
+#   **不再是**"端口会不会被提前复用"的界了(房活到 worker 退出 ⇒ 端口一直被占着)——
+#   但 `_sweep_stale_rooms` 的在局宽限**仍是**按默认时长估的,那一处的边界照旧,见该函数注释。
 const ROYALE_PORT_REUSE_DELAY := 360.0
-# 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀(比 1v1 长得多),与 royale 同档。
-# ★ 已知边界照旧(与 WORKER_PORT_REUSE_DELAY 的同款问题):计时从**房间拆除(≈开局)**起算,
-#   不是从局内断线起算 —— 一局中后段掉线时端口可能已被复用。
+# 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀(比 1v1 长得多),与大乱斗同档。
+# ★ 2026-09-21 起,"计时起点"这句话不再适用:房只在**对局结束**(worker 退出)后被拆,
+#   所以本值只兜"worker 刚退"那一小段(与另两档同一条职责)。
+# ★ 别把它单独并回一个更小的数:三档一起动、一起复核(理由见 WORKER_PORT_REUSE_DELAY 上方)。
 const TEAM_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
