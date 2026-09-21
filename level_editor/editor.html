@@ -2,20 +2,258 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>The Cyancular Ruins — 关卡编辑器</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Cyancular Ruins — 关卡编辑器(骨架)</title>
+<style>
+:root { --bg:#17191d; --panel:#1f2329; --panel2:#262b32; --border:#343b45;
+        --text:#d7dde5; --dim:#8b94a1; --accent:#54a0ff; --warn:#e0b34a; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font-size:14px;
+       font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+header { padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--border); }
+header h1 { font-size:16px; margin:0 0 4px; }
+header div { color:var(--dim); }
+main { display:flex; gap:12px; padding:12px; align-items:flex-start; flex-wrap:wrap; }
+section { background:var(--panel); border:1px solid var(--border); border-radius:6px;
+          padding:12px; min-width:280px; max-width:420px; }
+section h2 { font-size:14px; margin:0 0 8px; color:var(--accent); }
+button { background:var(--panel2); color:var(--text); border:1px solid var(--border);
+         border-radius:4px; padding:6px 10px; font-size:13px; cursor:pointer; }
+button:hover { border-color:var(--accent); }
+button:disabled { opacity:0.45; cursor:default; }
+input[type=range] { width:130px; vertical-align:middle; }
+input[type=number] { width:64px; background:var(--panel2); color:var(--text);
+                     border:1px solid var(--border); border-radius:4px; padding:3px 6px; }
+ul { margin:6px 0 0; padding-left:18px; color:var(--dim); }
+pre { white-space:pre-wrap; margin:8px 0 0; color:var(--dim);
+      font-family:Consolas,"Courier New",monospace; font-size:12px; }
+.row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+.row span { color:var(--dim); width:2.5em; text-align:right; }
+.swatches { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.sw { text-align:center; }
+.sw canvas { width:48px; height:48px; image-rendering:pixelated;
+             border:1px solid var(--border); background:#000; display:block; }
+.sw small { color:var(--dim); font-size:11px; }
+</style>
 </head>
 <body>
-<h1>The Cyancular Ruins — 关卡编辑器</h1>
-<p>这是计划 2a 的<strong>最小骨架页</strong>:它存在的意义是让本地服务器有东西可服务、
-让 <code>core.js</code> 在真实浏览器的 HTTP 环境里被加载一次。</p>
-<p>真正的界面(渲染 / 工具栏 / 图层 / 持久化)在计划 2b 里替换本页的 body。</p>
-<p>服务器连通性:<span id="status">…</span></p>
+<header>
+  <h1>The Cyancular Ruins — 关卡编辑器(计划 2a 骨架)</h1>
+  <div>本页是脚手架:服务器 / 编解码 / 辅码三条自检。真正的界面(渲染、工具栏、图层、持久化)在计划 2b。</div>
+</header>
+<main>
+  <section id="maps">
+    <h2>① 库(maps/*.cyrm)</h2>
+    <div class="row"><button id="btn-maps">刷新列表</button></div>
+    <ul id="maplist"><li>未加载</li></ul>
+  </section>
+
+  <section id="tintlab">
+    <h2>② 辅码实验室</h2>
+    <div class="row">纹理 <input id="tex" type="number" min="1" max="4095" value="1"></div>
+    <div class="row">色相 <input id="hue" type="range" min="0" max="7" value="4"><span id="huev">4</span></div>
+    <div class="row">亮度 <input id="bri" type="range" min="0" max="7" value="4"><span id="briv">4</span></div>
+    <div class="row">饱和 <input id="sat" type="range" min="0" max="7" value="4"><span id="satv">4</span></div>
+    <div class="row">透明 <input id="alp" type="range" min="0" max="7" value="7"><span id="alpv">7</span></div>
+    <div class="swatches" id="swatches"></div>
+    <pre id="tintinfo">正在读取 structure.png …</pre>
+  </section>
+
+  <section id="roundtrip">
+    <h2>③ 编解码往返</h2>
+    <div class="row">
+      <select id="rtname"></select>
+      <button id="btn-rt">拉取并往返</button>
+    </div>
+    <pre id="rtlog">未运行</pre>
+    <div class="row"><button id="btn-put" disabled>写端点自检(原样 PUT)</button></div>
+    <pre id="putlog">未运行(先「拉取并往返」读一份地图)</pre>
+  </section>
+</main>
+
 <script src="core.js"></script>
+<script src="tint.js"></script>
 <script>
-// 只依赖 core.js —— tint.js 要到 Task 4 才落地,这一版还不引用它。
-document.getElementById('status').textContent =
-  'core.js 已加载,Core.FORMAT_VERSION = ' + Core.FORMAT_VERSION +
-  ',尺寸上限 ' + Core.MAX_CELLS_W + '×' + Core.MAX_CELLS_H + ' 格';
+'use strict';
+// 计划 2a 的骨架页。★ 页面里**不写第二份数学**:所有像素都走 Tint.*,所有编解码都走 Core.*。
+const $ = function (id) { return document.getElementById(id); };
+
+// ── ① 库:从本地服务器列 maps/*.cyrm ──
+function refreshMaps() {
+  const ul = $('maplist');
+  ul.textContent = '加载中 …';
+  fetch('/api/maps').then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (data) {
+    ul.innerHTML = '';
+    const sel = $('rtname');
+    sel.innerHTML = '';
+    if (!data.maps.length) { ul.textContent = 'maps/ 下没有 .cyrm'; return; }
+    data.maps.forEach(function (m) {
+      const li = document.createElement('li');
+      li.textContent = m.name + ' — ' + m.size + ' 字节 — ' + new Date(m.mtime).toLocaleString();
+      ul.appendChild(li);
+      const op = document.createElement('option');
+      op.value = m.name;
+      op.textContent = m.name;
+      sel.appendChild(op);
+    });
+  }).catch(function (e) { ul.textContent = '拉取失败:' + e.message; });
+}
+$('btn-maps').addEventListener('click', refreshMaps);
+
+// ── ② 辅码实验室:16 个象限 × 当前描述符,全部走 tint.js 的缓存 ──
+let atlas = null, atlasW = 0;
+const tiles = Tint.createTileCache();
+const img = new Image();
+img.onload = function () {
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const d = ctx.getImageData(0, 0, img.width, img.height);
+  atlas = d.data;
+  atlasW = img.width;
+  tiles.setSource(atlas, atlasW);        // ★ 资源换了 = 缓存整片失效(审计 A2)
+  drawSwatches();
+};
+img.onerror = function () { $('tintinfo').textContent = 'structure.png 加载失败'; };
+img.src = 'structure.png';
+
+function drawSwatches() {
+  const hue = +$('hue').value, bri = +$('bri').value, sat = +$('sat').value, alp = +$('alp').value;
+  $('huev').textContent = hue; $('briv').textContent = bri;
+  $('satv').textContent = sat; $('alpv').textContent = alp;
+  if (!atlas) { $('tintinfo').textContent = 'structure.png 还没加载完'; return; }
+  const tex = Math.max(1, Math.min(4095, parseInt($('tex').value, 10) || 1));
+  const desc = Core.packDesc(tex, hue, bri, sat, alp);
+  const box = $('swatches');
+  box.innerHTML = '';
+  for (let qy = 0; qy < Core.SUB_PER_CELL; qy++) {
+    for (let qx = 0; qx < Core.SUB_PER_CELL; qx++) {
+      const wrap = document.createElement('div');
+      wrap.className = 'sw';
+      wrap.appendChild(tiles.get(tex, qx, qy, desc));
+      const lab = document.createElement('small');
+      lab.textContent = qx + ',' + qy;
+      wrap.appendChild(lab);
+      box.appendChild(wrap);
+    }
+  }
+  const st = tiles.stats();
+  $('tintinfo').textContent = '纹理 ' + tex + ' · 描述符 0x' + desc.toString(16) +
+    ' · 缓存:命中 ' + st.hits + ' / 未命中 ' + st.misses + ' / 淘汰 ' + st.evictions + ' / 在册 ' + st.size;
+}
+['tex', 'hue', 'bri', 'sat', 'alp'].forEach(function (id) {
+  $(id).addEventListener('input', drawSwatches);
+});
+
+// ── ③ 编解码往返:拉真地图 → decode → encode(压缩/裸)→ 再 decode,逐层比对 ──
+// ★ 下面这两个是给 ③b(写端点自检)用的:最近一次**成功读到**的原始字节与它的文件名。
+let rtBytes = null, rtName = '', rtSource = '';
+$('btn-rt').addEventListener('click', function () {
+  const name = $('rtname').value;
+  const log = $('rtlog');
+  if (!name) { log.textContent = '先选一张地图'; return; }
+  log.textContent = '拉取 ' + name + ' …';
+  const t0 = performance.now();
+  fetch('/api/map?p=' + encodeURIComponent(name))
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+    .then(function (buf) {
+      // ★ 顺手把"刚读到的原字节"记下来:③b 要把它们**原样** PUT 回去(内容零改动)。
+      rtBytes = new Uint8Array(buf);
+      rtName = name;
+      $('btn-put').disabled = false;
+      // ★★ 仓库里的 maps/*.cyrm 今天**全是 v3 文本**(`# cyrm-v3` 标记),而 decodeMap 只认
+      //    v4 二进制(magic "CYRM")—— 直接喂给它只会得到「magic 不是 "CYRM"」,两张真图
+      //    一张都读不进来。规格 §3.6 的导入本来就要认三种输入(v4 二进制 / v3 文本 /
+      //    旧字母格式),这里按它分派。★ 判据与迁移**都走 Core**(isV3Text / parseV3Text /
+      //    migrateV3)—— 页面里没有第二份格式实现,那正是本页的纪律。
+      const text = new TextDecoder().decode(rtBytes);
+      const v3 = Core.isV3Text(text);
+      rtSource = v3 ? 'v3 文本(读进来时已迁移)' : 'v4 二进制';
+      return v3 ? Core.migrateV3(Core.parseV3Text(text)) : Core.decodeMap(rtBytes);
+    })
+    .then(function (map) {
+      // ★ v4 的 body 里没有 name 字段(decodeMap 返回 name:'')——
+      //   导入方必须自己用文件名补上,否则 sanitizeName 会回落成 'structure'。
+      map.name = name.replace(/\.cyrm$/, '');
+      const report = Core.validateMap(map);
+      return Core.encodeMap(map).then(function (packed) {
+        return Core.encodeMap(map, { compress: false }).then(function (raw) {
+          return Core.decodeMap(packed).then(function (back) {
+            const same = back.layers.every(function (L, i) {
+              const a = map.layers[i];
+              if (!L || !a) return L === a;
+              const x = L.kind === 'tex' ? L.desc : L.rgba;
+              const y = a.kind === 'tex' ? a.desc : a.rgba;
+              if (x.length !== y.length) return false;
+              for (let k = 0; k < x.length; k++) if (x[k] !== y[k]) return false;
+              return true;
+            });
+            const lines = [
+              name + '  ' + map.subCols + '×' + map.subRows + ' 子格(' +
+                Core.cellsWOf(map) + '×' + Core.cellsHOf(map) + ' 格)· 来源 ' + rtSource,
+              '压缩后 ' + packed.length + ' 字节 / 裸 ' + raw.length + ' 字节(≈' +
+                (raw.length / Math.max(1, packed.length)).toFixed(1) + ':1)',
+              '往返一致:' + same + ' · 出生点 ' + map.players.length + ' · 敌人 ' +
+                map.enemies.length + ' · 注释 ' + map.comments.length,
+              '校验:error ' + report.errors.length + ' / warning ' + report.warnings.length,
+              '耗时 ' + Math.round(performance.now() - t0) + 'ms',
+            ].concat(report.warnings.map(function (w) { return '  ⚠ ' + w; }));
+            log.textContent = lines.join('\n');
+          });
+        });
+      });
+    })
+    .catch(function (e) { log.textContent = '失败:' + e.message; });
+});
+
+// ── ③b 写端点自检(硬要求 A 的落点)──
+// ★ 为什么必须有这一条:① /api/maps 与 GET /api/map 都是**只读**的,页面若只做这两件事,
+//   写端点(以及它的两道闸)在整个浏览器侧一次都没被走过;② 而写端点最容易踩的坑**只在
+//   浏览器里现形** —— 它的内容类型闸要求 `application/json`,不显式设头时浏览器给的是
+//   Blob 的默认类型 ⇒ 服务器回 **415**,用户看到的是"存不进去"(服务器不校验 body 的
+//   schema,这个类型只是个协议令牌)。
+// ★★ 写的是**刚读到的原字节**:这条自检验证的是写端点本身(请求头闸 / Origin 闸 / 原子写 /
+//   回读逐字节一致),而**不会碰用户的任何作品**。把"重新编码后的内容"写回磁盘是 2b 的
+//   Ctrl+S,那一步得先有"往返一致"的护栏 + 撤销,不在这张骨架页上做。
+// ★ 写端点只在**同源**时被接受(Origin 闸),这是设计如此,别试图绕过。
+// ★ 用 localhost 打开本页而服务器在 127.0.0.1 时,浏览器会诚实地标 `Sec-Fetch-Site:
+//   cross-site`(按 Fetch 的定义这是两个站)—— 那**仍然放行**(Origin 才是主闸)。
+$('btn-put').addEventListener('click', function () {
+  const log = $('putlog');
+  if (!rtBytes) { log.textContent = '先「拉取并往返」读一份地图'; return; }
+  const name = rtName;
+  log.textContent = 'PUT ' + name + ' …';
+  const body = new Blob([rtBytes]);          // ★ 刻意**不**给 Blob 设 type:漏头就会 415
+  fetch('/api/map?p=' + encodeURIComponent(name), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: body,
+  }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 415 ? '(内容类型不对)' : ''));
+    return r.json();
+  }).then(function (out) {
+    return fetch('/api/map?p=' + encodeURIComponent(name)).then(function (r) {
+      if (!r.ok) throw new Error('回读 HTTP ' + r.status);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      const back = new Uint8Array(buf);
+      let same = back.length === rtBytes.length;
+      for (let i = 0; same && i < back.length; i++) if (back[i] !== rtBytes[i]) same = false;
+      log.textContent = [
+        'PUT ' + name + ' → 服务器记账 ' + out.size + ' 字节(名字 ' + out.name + ')',
+        '回读 ' + back.length + ' 字节 · 与读到的那份逐字节一致:' + same,
+        '请求头显式带了 Content-Type: application/json(写端点只收这一个;不带 = 415)',
+        '本次写的是刚读到的**原字节** —— 内容零改动(写回重新编码属于 2b 的 Ctrl+S)',
+      ].join('\n');
+    });
+  }).catch(function (e) { log.textContent = '写端点自检失败:' + e.message; });
+});
+
+refreshMaps();
 </script>
 </body>
 </html>

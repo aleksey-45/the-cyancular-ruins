@@ -909,6 +909,65 @@ async function runAllPhases() {
       fs.writeFileSync(keepPath, originalBytes);
     }
   }
+
+  // ==== 相位 ⑧ 骨架页结构(真的从服务器取,不是读盘)====
+  // ★ 本相位**只能**待在这里(runAllPhases 的函数体内):main() 里那句
+  //   `// ==== 断言区结束 ====` 在 try/finally{ cleanup() } **之后**,照计划原文放在那儿
+  //   = 相位跑在清理之后,会把已删掉的 tmpRoot 重新建出来 → 每次跑留下一个 cyrm-srv-* 目录
+  //   (Task 2 的实现者用 fs 插桩实锤过;Task 1 的相位 ⑤ 也点了同一条)。
+  // ★ 号仍是 ⑧(计划原文的号):本文件里已经有一个 ⑧(rename 重试,Task 3 的定向修复带来的),
+  //   与两个 ⑤ 并存同款 —— **有意为之,别去"修正"**(改号会让计划里 Task 7 的号整体错位)。
+  // ★ 判据是"从**服务器**取回来的页面"(不是 fs.readFileSync):这样顺带证明静态服务那条路
+  //   真的把入口页发出去了(r1.status 200 已由相位 ② 钉过,但那一条不关心正文内容)。
+  {
+    const page = (await request(staticSrv.port, 'GET', '/')).body.toString('utf8');
+    ok(/<script src="core\.js"><\/script>/.test(page), '骨架页加载 core.js');
+    ok(/<script src="tint\.js"><\/script>/.test(page), '骨架页加载 tint.js');
+    (function () {
+      const srcs = [];
+      const re = /<script[^>]*\bsrc="([^"]+)"/g;
+      let m;
+      while ((m = re.exec(page)) !== null) srcs.push(m[1]);
+      ok(srcs.length >= 2, '骨架页有 ' + srcs.length + ' 个外部脚本');
+      const missing = [];
+      srcs.forEach(function (s) {
+        if (s.indexOf('://') >= 0) { missing.push(s + '(外部 URL —— 编辑器只走本机 HTTP)'); return; }
+        if (!fs.existsSync(path.join(__dirname, s))) missing.push(s);
+      });
+      ok(missing.length === 0, '★ 骨架页引用的每个脚本文件都存在(否则运行时 404):' +
+         (missing.length ? missing.join(', ') : '全部命中'));
+    })();
+    ok(page.indexOf('file://') < 0, '★ 骨架页里没有 file://(规格 §1.2:只走 HTTP)');
+    for (const id of ['maps', 'tintlab', 'roundtrip']) {
+      ok(page.indexOf('id="' + id + '"') >= 0, '骨架页有 id="' + id + '" 区块');
+    }
+    ok(page.indexOf('id="btn-maps"') >= 0 && page.indexOf('id="btn-rt"') >= 0,
+       '骨架页有两个自检按钮(库刷新 / 往返)');
+    ok(page.indexOf('Tint.') >= 0, '★ 骨架页用 Tint.*');
+    ok(page.indexOf('Core.') >= 0, '★ 骨架页用 Core.*');
+    ok(page.indexOf('createTileCache') >= 0, '★ 骨架页用 Tint.createTileCache(小图走缓存,不自己造 canvas)');
+    ok(page.indexOf('rgbToHsv') < 0 && page.indexOf('hsvToRgb') < 0,
+       '★ 骨架页里没有第二份 HSV 数学(必须调 Tint —— 两份实现迟早漂,而漂了不报错)');
+    ok(page.indexOf('Core.lineCells') < 0,
+       '★ 骨架页不调 Core.lineCells:它的坐标必须是整数,非整数/NaN 会让它死循环挂住标签页' +
+       '(账本 Task 2 Minor 3 —— 2b 加绘制工具时每个调用点都要先 Math.floor)');
+    ok(page.indexOf('__ENEMY_REGISTRY_BEGIN__') < 0,
+       '★ 敌人注册表标记仍留在 structure-editor.html(本计划不搬:搬标记、改 sync-enemies.js 的 htmlPath、' +
+       '删旧文件三件事必须同一 commit,那是 2b 的收尾动作)');
+
+    // ── 硬要求 A 的结构守卫(页面上的 PUT 必须带 application/json)──
+    // ★ 为什么要有这一对:写端点只收那一个内容类型(非简单内容类型 ⇒ 逼浏览器先发预检),
+    //   而页面若写 `fetch(url, {method:'PUT', body: new Blob([bytes])})` **不带显式头**,
+    //   浏览器给的就是 Blob 的默认类型 ⇒ **415**,用户看到的是"存不进去"(且服务器日志里
+    //   只有一行 415,看不出是前端漏了头)。这条**拦不住**那种实现的运行时行为,但能让
+    //   "页面上那个 PUT 有没有显式设头"在 node 里当场红 —— 剩下的由浏览器验收(步 5)。
+    // ★ 判据容忍引号与空白差异(反引号/双引号/多空格都算过),否则改个格式就误报。
+    ok(/method:\s*['"`]PUT['"`]/.test(page),
+       '★ 骨架页确实有 PUT 调用(写端点自检 —— /api/maps 与 GET /api/map 都是只读的)');
+    ok(/['"`]Content-Type['"`]\s*:\s*['"`]application\/json['"`]/.test(page),
+       '★★ 硬要求 A:骨架页的 PUT 显式设 Content-Type: application/json' +
+       '(不设 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ 用户看到"存不进去")');
+  }
 }
 
 (async function main() {
