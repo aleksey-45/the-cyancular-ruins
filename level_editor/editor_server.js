@@ -139,6 +139,9 @@ function mapPathFor(mapsDir, name) {
 
 // 列地图。★ 只列**打得开**的(名字不过守卫的文件列出来也点不开),但绝不静默 ——
 // 跳过的每一个都记一条日志点名。
+// ★ 待修 2:这句话原先**只在"名字不过守卫"那一条上是真的** —— stat 抛错与"同名目录"
+//   两条路径都是静默 continue。承诺与实际不符就是过度承诺(而且静默的那两条恰好是
+//   "磁盘上有个东西你以为它在库里、其实不在"这类最难自查的),故三条路径一律点名。
 function listMaps(mapsDir, logger) {
   const out = [];
   let names = [];
@@ -148,8 +151,12 @@ function listMaps(mapsDir, logger) {
   for (const n of names) {
     if (!isValidMapName(n)) { if (logger) logger('跳过不可打开的文件:' + n); continue; }
     let st;
-    try { st = fs.statSync(path.join(mapsDir, n)); } catch (e) { continue; }
-    if (!st.isFile()) continue;
+    try { st = fs.statSync(path.join(mapsDir, n)); }
+    catch (e) {
+      if (logger) logger('跳过读不到属性的文件:' + n + '(' + (e && e.message ? e.message : String(e)) + ')');
+      continue;
+    }
+    if (!st.isFile()) { if (logger) logger('跳过非文件(同名目录?):' + n); continue; }
     out.push({ name: n, size: st.size, mtime: st.mtimeMs });
   }
   return out;

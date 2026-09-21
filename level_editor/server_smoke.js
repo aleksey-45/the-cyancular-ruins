@@ -147,10 +147,17 @@ function exited(child) {
 //   (libuv 写死的行为),所以**另一个 node 进程**根本锁不住文件 —— 要制造冲突,
 //   必须有一个能指定 FileShare.None 的句柄,PowerShell 的 [IO.File]::Open(...,'None') 就是。
 //   实测:句柄在手时 fs.stat 照样成功(它只读目录项属性),而 createReadStream 异步抛 EBUSY。
-function lockFileExclusiveWin(file) {
+// ★ 待修 1 起它**可以一次锁多个文件**(传数组;传字符串 = 只锁一个,与原行为一致)。
+//   为什么必须是一个进程锁两份:句柄槽 `lockerChild` 只有**一个**(releaseLocker 只 kill 得到
+//   最后一个),起两个 PowerShell 会让先那个句柄失去引用 —— 它的释放时机交给 GC,于是
+//   `cleanup()` 删临时目录会 EBUSY。一次进程、一张句柄表,释放路径仍然只有 releaseLocker() 一条。
+function lockFileExclusiveWin(files) {
+  const list = Array.isArray(files) ? files : [files];
+  const openList = list.map(function (f) { return "'" + f + "'"; }).join(',');
+  const cmd = '$hs=@(); foreach ($f in @(' + openList + ')) { $hs += [IO.File]::Open($f,\'Open\',\'Read\',\'None\') }; ' +
+              "Write-Output 'LOCKED'; Start-Sleep -Seconds 60; $hs | ForEach-Object { $_.Close() }";
   return new Promise(function (resolve, reject) {
-    const ps = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-      "$h=[IO.File]::Open('" + file + "','Open','Read','None'); Write-Output 'LOCKED'; Start-Sleep -Seconds 60; $h.Close()"],
+    const ps = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', cmd],
       { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', settled = false;
     const timer = setTimeout(function () {
@@ -349,12 +356,24 @@ async function runAllPhases() {
     const lockSrv = track(await srv.startServer({
       rootDir: lockDir, mapsDir: path.join(tmpRoot, 'maps'), port: 0,
     }));
+    // ★★ 待修 1(/api/map 那一支):`serveMapFile` 里那 6 行守卫当时**一行断言都没有** ——
+    //   把它删掉 85/0 依然全绿,直到有人在 Windows 上撞上 AV 独占锁。本仓口径是:**这类守卫
+    //   必须有自己的反证**,不能靠"照抄了一份已经测过的代码"(serveStatic 那条根本盖不到这条分支)。
+    //   ★ 落点必须是 tmpRoot/maps 下面(地图名守卫只放行**裸文件名**),而相位 ⑥ 的
+    //     `GET /api/maps` 是**精确列表**比对 ⇒ 这个文件在本相位结束前必须删掉(见 finally)。
+    const mapsDir = path.join(tmpRoot, 'maps');
+    fs.mkdirSync(mapsDir, { recursive: true });
+    const lockedMapName = 'locked.cyrm';
+    const lockedMapPath = path.join(mapsDir, lockedMapName);
+    const lockedMapBytes = Buffer.from([7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]);
+    fs.writeFileSync(lockedMapPath, lockedMapBytes);
 
     try {
       if (process.platform !== 'win32') {
         console.log('  --    相位 ⑤ 跳过:非 Windows(独占句柄需要 .NET 的 FileShare.None)');
       } else {
-        lockerChild = await lockFileExclusiveWin(lockedPath);
+        // ★ 一次锁住两个:入口页(静态那条分支)与 locked.cyrm(/api/map 那条分支)。
+        lockerChild = await lockFileExclusiveWin([lockedPath, lockedMapPath]);
         // 前置:故障点必须真的在 open 而不在 stat —— 否则下面几条什么都没验(比如文件已被删)。
         let st = null;
         try { st = fs.statSync(lockedPath); } catch (e) { /* 前置不成立 */ }
@@ -374,17 +393,46 @@ async function runAllPhases() {
            '★★ 待修 1:出过坏文件之后服务器**还活着**(紧接着 GET /good.js → ' + rGood.status + ')');
         sameBytes(rGood.body, goodBytes, '待修 1:活着,而且读出来的字节正确(不是「活着但坏了」)');
 
+        // ── ★★ 待修 1 补:/api/map 这一支(**serveMapFile**)──
+        //   与上面两条同款,但走的是**另一份代码**:两份守卫各自独立,serveStatic 测到不证明这条测到。
+        //   前置:与 /editor.html 同理,故障点必须在 open 而不在 stat。
+        let stMap = null;
+        try { stMap = fs.statSync(lockedMapPath); } catch (e) { /* 前置不成立 */ }
+        ok(stMap !== null && stMap.isFile(),
+           '待修 1 前置:被独占锁住的地图 fs.stat **照样成功**(故障点因此在 serveMapFile 的 open)');
+
+        const rMapLock = await requestSettled(lockSrv.port, 'GET', '/api/map?p=' + lockedMapName);
+        ok(rMapLock.aborted === true && rMapLock.body.length < lockedMapBytes.length,
+           '★★ 待修 1:/api/map 的 open 失败 → 客户端拿到的是**已中止**的响应,而不是一个完整的 200 ' +
+           '(实得 status=' + rMapLock.status + ', aborted=' + rMapLock.aborted + ', body=' +
+           rMapLock.body.length + '/' + lockedMapBytes.length + 'B, err=' + (rMapLock.error || '无') + ')');
+
+        // ★ 这条才是主断言:这 6 行缺席时,ReadStream 的 'error' 无人接管 → 未捕获异常
+        //   → **整个进程退出**,这条请求根本等不到响应(整支冒烟连一行结果都打不出来)。
+        const rMapsAlive = await request(lockSrv.port, 'GET', '/api/maps');
+        ok(rMapsAlive.status === 200,
+           '★★ 待修 1:出过坏地图之后服务器**还活着**(紧接着 GET /api/maps → ' + rMapsAlive.status + ')');
+
         // ★ 反证:证明刚才那条**确实是**锁造成的,而不是"没锁上、一切正常"。
         await releaseLocker();
         const rAfter = await requestSettled(lockSrv.port, 'GET', '/editor.html');
         ok(rAfter.status === 200 && rAfter.body.length === lockedBytes.length,
            '待修 1 反证:句柄一放开,同一个 URL 立刻恢复正常(证明前一条确实栽在 open 上)(实得 ' +
            rAfter.status + ', ' + rAfter.body.length + 'B)');
+        // ★ 反证(/api/map 那一支):同一把锁、同一时刻放开,地图这条也要恢复 —— 且字节正确。
+        const rMapAfter = await requestSettled(lockSrv.port, 'GET', '/api/map?p=' + lockedMapName);
+        ok(rMapAfter.status === 200 && rMapAfter.body.length === lockedMapBytes.length,
+           '待修 1 反证(/api/map):句柄一放开立刻恢复(证明前一条确实栽在 serveMapFile 的 open 上)(实得 ' +
+           rMapAfter.status + ', ' + rMapAfter.body.length + 'B)');
       }
     } finally {
       // ★ 子进程一定要收掉:它握着句柄时连临时目录都删不掉(rmSync 会 EBUSY)。
       //   (断言失败走不到 kill 那一步 —— 所以这里必须再兜一次。)
       await releaseLocker();
+      // ★ locked.cyrm 必须在这里删掉:相位 ⑥ 的 GET /api/maps 是**精确列表**比对
+      //   (['a_first.cyrm','b_second.cyrm']),留着它会把那条一直绿着的断言判红。
+      //   非 Windows 上这个文件只是建了没用,一并删掉;删不到(例如上面提前抛错)也不该盖住真失败。
+      try { fs.unlinkSync(lockedMapPath); } catch (e) { /* 不在就跳过 */ }
     }
   }
 
@@ -447,8 +495,13 @@ async function runAllPhases() {
        '★ /api/maps: 只列合法且是文件的 .cyrm,按名字升序(notes.txt 与同名目录都不进来)');
     eq(data.maps[0].size, 2, '/api/maps: size = 文件字节数');
     ok(typeof data.maps[0].mtime === 'number' && data.maps[0].mtime > 0, '/api/maps: mtime 是数字');
+    // ★ 待修 2:这两条**必须分开**。原先只有一条、而且只覆盖 notes.txt —— 而 notes.txt 走的是
+    //   「名字不过守卫」那条路径;同名目录(sub.cyrm)走的是**另一条**(名字合法、stat 也成功、
+    //   只是不是文件)。一个原因一条断言,才钉得住"两种跳过都不静默"这句话。
     ok(logged.some(function (m) { return m.indexOf('notes.txt') >= 0; }),
-       '★ /api/maps: 被跳过的文件**点名记日志**(绝不静默消失)');
+       '★ /api/maps: **名字不过守卫**而被跳过的文件点名记日志(绝不静默消失)');
+    ok(logged.some(function (m) { return m.indexOf('sub.cyrm') >= 0; }),
+       '★ /api/maps: **不是文件**(同名目录)而被跳过的**也**点名记日志 —— 这条路径待修 2 之前是静默 continue');
 
     const rg = await request(apiSrv.port, 'GET', '/api/map?p=b_second.cyrm');
     ok(rg.status === 200, 'GET /api/map → 200');
