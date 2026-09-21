@@ -2,13 +2,26 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> ★★ **Tasks 1–5 已执行完毕(2026-09-21 同日),它们的正文是「当时写的」,不是现状。**
+> 执行时它们各自**修掉了本计划自身的若干缺陷**(简报里拦不住自己要拦的错的守卫、编译不过的冒烟、自相矛盾的用例、
+> 一个会误伤同号房的归键),并有多处**按实测偏离了正文的写法**。
+> **准确记录 = `.superpowers/sdd/progress-plan3.md`**(逐任务:提交号 + 实测 + 裁定)。
+> 本文件里 **Tasks 1–5 的正文只作历史留档** —— 核对现状请看那份台账与代码,别照着它们反推。
+> **Tasks 6–9 尚未执行**,已按后续的**用户裁定与实测**修订:入口由按钮改为**列表里点自己那间房**(见下「架构」第 3 条
+> 与 Task 7);`drop_room` 改名 `drop_port`(Task 3/4/9);探针计数改按实得的 **31** 起算(Task 6);
+> 私密房玩家的入口是一个**待裁定的开放项**(Task 7 末尾,控制者回填)。
+
 **Goal:** 玩家按 ESC 回主菜单之后,**能凭手里的凭据回到原来那一局**(不重开对局、不丢世界状态)。附带:宽限期 30s → **60s**(三模式统一),以及随之必须复核的测试预算。
 
 **Architecture:**
 
 1. **回局凭据独立成表**。token 原先存在 `Room.tokens` / `RoyaleRoom.tokens` / `TeamRoom.tokens`,随 `teardown_room` 一起消失。新立一张 `server/rejoin_registry.gd`(`class_name RejoinRegistry`,纯逻辑、不读时钟、`-s` 可测),三个房类的 `tokens` 字段**整体删除**(同一件事不留第二份记录)。凭据里带 `worker_pid`:回局查询因此**不需要房对象**,答案也是精确的。
 2. **`rejoin_request(room_code, token)` + 复用 `go_match`**。大厅判据抽成纯函数 `RejoinRegistry.decision()`(`""` = 放行),三种拒绝理由(凭据失效 / 房间号不符 / 对局已结束)各自可测。应答走**原 `go_match`** —— 于是客户端那条"连 worker → 认领 role → 进对局场景"的路与首次进场**逐字同一条**,唯一分叉是认领那一步要走 `reclaim_role`(对局已经开着,`claim_role` 会被 worker 当串线踢掉)。
-3. **入口**:主菜单一颗「回到对局」按钮(只在 `PvpSession.can_rejoin()` 时出现),三个大厅页共用基类 `LobbyPage` 的回局支路。
+3. **入口**:玩家**自己在普通房间列表里找到自己那间房、点它**。对局中的房那一行对**持有有效凭据的本人**
+   变成**可点**(点了走回局),对其他人照旧"看得见、点不动"(大厅 `join_room` / `*_join` 那三条守卫仍是那一半的保证)。
+   ★ **不设**「回到对局」按钮 —— 用户裁定原话:「不能有回到对局按钮」「玩家必须自己找到对应的房间」。
+   ★ 私人房**不进列表**(`royale_list_payload` / `team_list_payload` 跳过非公开房)⇒ 私密房玩家的回局入口是一个**待裁定的开放项**,
+   三条候选写在 **Task 7 末尾**,由控制者裁定后回填。
 
 ★ **「对局中的房看得见、进不去」不在本计划里** —— 那是**前置计划**(见下)。本计划**只**做"谁能回到那一局"。
 
@@ -27,7 +40,7 @@
 | 房记录上的冻结名单 | 同上 | `var roster: Array`(`[{role:int, name:String}]`)+ `LobbyRooms.freeze_roster(room) -> void` |
 | 房**活过**客户端转连 | `LobbyRooms.on_peer_left` / `royale_leave` / `team_leave` | in-match(`started` / `in_match`)的房在这些路径上**不拆** |
 | 对局结束即回收 | `server/room_manager.gd` | `const MATCH_SWEEP_INTERVAL := 30.0`、`_reclaim_finished_matches()`(本计划**只在它开头加一行 GC**)、`static _match_over(port, pid)` |
-| 大厅侧的场景探针 | `tests/lobby_visibility_probe.tscn` + `.gd` | 真 `RoomManager` + 三张注册表 + 关掉的梯;`EXPECTED_CHECKS` 计数(收尾比期望条数)★ 本计划在其中**追加相⑤⑥⑦**并把计数从 27 抬到 36 |
+| 大厅侧的场景探针 | `tests/lobby_visibility_probe.tscn` + `.gd` | 真 `RoomManager` + 三张注册表 + 关掉的梯;`EXPECTED_CHECKS` 计数(收尾比期望条数)★ 相⑤⑥**已落地**(计数 27 → **31**:比当时写的多一条 —— 走信号验 `reconnect` 接线的那条);本计划余下的**相⑦**再把计数抬到 **37** |
 | 拒绝入房的守卫与统一文案 | `server/lobby_rooms.gd` | `join_room` / `royale_join` / `team_join` 的 `started` / `in_match` 守卫 + 「该房间的对局已进行中,无法加入」 |
 
 ★ **反向纪律**:本计划**不得**再写一份 `pid_of` / `pid_alive` / `freeze_roster` / `*_list_payload` / `_reclaim_finished_matches`,也**不得**动显示方案的列表载荷与页面渲染。
@@ -55,19 +68,19 @@
 | `core/net/grace_window.gd` | 修改 | `DEFAULT_SECONDS` 30 → **60**(+ 把端口不变量的**新口径**写进注释) |
 | `server/worker_launcher.gd` | 修改 | **只改注释**:三档 `*_PORT_REUSE_DELAY` 的说明订正到新口径(数值不动) |
 | `server/rejoin_registry.gd` + `.uid` | **新建** | 回局凭据表(纯逻辑、不读时钟、`-s` 可测)+ 纯判据 `decision()` |
-| `server/lobby_rooms.gd` | 修改 | 三个房类:删 `tokens`;加 `var rejoin := RejoinRegistry.new()`;`teardown_room` 里 `rejoin.drop_room()` |
+| `server/lobby_rooms.gd` | 修改 | 三个房类:删 `tokens`;加 `var rejoin := RejoinRegistry.new()`;`teardown_room` 里 **`rejoin.drop_port(port)`**(★ 归键是 **worker 端口**,不是房间号 —— 落地时按实测改的,理由见 Task 4 Step 3 的 ★★ 段) |
 | `server/room_manager.gd` | 修改 | 四个 spawn 点:token 收进 `granted`、spawn 成功后 `_grant_rejoin`;`_reclaim_finished_matches` 开头加一行凭据 GC |
 | `core/net/net_bus_ext.gd` | 修改 | 两条 RPC(`rejoin_request` any_peer / `rejoin_denied` authority)+ 两个信号 |
-| `core/net/pvp_session.gd` | 修改 | `room_code` / `mode` / `rejoin` 三个字段 + `can_rejoin()` / `clear_rejoin()`;`reset()` 一起清 |
-| `scenes/lobby_page.gd` | 修改 | 回局支路(连大厅 → `rejoin_request` → `go_match`)、`_claim_role_worker` 的 reclaim 分叉、`_do_go_match` 的 token 保留、回局超时梯 |
-| `scenes/matchmaking.gd` / `royale_lobby.gd` / `team_lobby.gd` | 修改 | 记 `room_code`/`mode`;`_process` 第一行加回局超时梯 |
-| `scenes/main_menu.gd` | 修改 | 「回到对局」按钮(唯一不调 `PvpSession.reset()` 的联机入口) |
+| `core/net/pvp_session.gd` | 修改 | `room_code` / `rejoin` 两个字段 + `can_rejoin()` / **`can_rejoin_to(code)`** / `clear_rejoin()`;`reset()` 一起清。★ **`mode` 已删**(它的唯一读者是那颗被取消的按钮 —— 没读者的字段本仓不立) |
+| `scenes/lobby_page.gd` | 修改 | 回局支路(在**已连着大厅**的页上发 `rejoin_request`)、`try_rejoin_row(code)`(行被按下时的"这是我的房吗"那一问)、`_claim_role_worker` 的 reclaim 分叉、`_do_go_match` 的 token 保留、回局超时梯 |
+| `scenes/matchmaking.gd` / `royale_lobby.gd` / `team_lobby.gd` | 修改 | 记 `room_code`;`_on_room_list` 里**自己那间对局中的房改成可点**(先问"是不是我的房 + 凭据还在",**再**轮到"对局中即 disabled");`_process` 第一行加回局超时梯 |
+| `scenes/main_menu.gd` | **不改** | ★ 原「回到对局」按钮**已取消**(用户裁定:不能有回到对局按钮)⇒ 入口改为列表里自己那间房,**本文件一个字不动** |
 | `tests/grace_window_smoke.gd` | 修改 | 钉 `DEFAULT_SECONDS == 60` + 「归还延迟 > 宽限期」这条**次要 belt**(口径写在注释里) |
-| `tests/reconnect_smoke.gd` | 修改 | 两条新 RPC 的节点归属/注解 + `PvpSession` 三个字段与 `reset()` |
+| `tests/reconnect_smoke.gd` | 修改 | 两条新 RPC 的节点归属/注解(**Task 5 已落地**)+ `PvpSession` 的字段与 `reset()`(Task 6) |
 | `tests/reconnect_probe.gd` | 修改 | 时间预算随宽限期 60 重算(`GRACE_MIN/MAX`、`FINAL_TIMEOUT`、子进程兜底) |
 | `tests/team_match_watcher.gd` / `tests/team_match_probe.gd` | 修改 | 相⑤ 观察窗与 `RESULT_WAIT` 按同一口径重算 |
 | `tests/rejoin_registry_smoke.gd` + `.uid` | **新建** | `-s`:凭据表 + 判据(三种拒绝 + 放行)+ TTL 与宽限期的跨文件不变量 |
-| `tests/lobby_visibility_probe.gd`(显示方案交的) | 修改 | 追加相⑤⑥⑦(`EXPECTED_CHECKS` 27 → 36) |
+| `tests/lobby_visibility_probe.gd`(显示方案交的) | 修改 | 追加相⑦(`EXPECTED_CHECKS` **31 → 37** —— 31 是相⑤⑥ 落地后的实得值,见上表) |
 | `tests/rejoin_probe.tscn` + `.gd` + `.uid` + `tests/rejoin_watcher.gd` + `.uid` + `tests/rejoin_probe.sh` | **新建** | **真链路**端到端回局探针(真大厅 + 真 worker + 3 个真客户端;**用户跑**)。★ 观察者**没有 `.tscn`**:它由探针 `load(...).new()` 挂到 `root` 上(与 `reconnect_watcher` / `team_match_watcher` 同款) |
 | `CLAUDE.md` | 修改 | 记录 2-B 的纪律 + 宽限期 60 的连带 |
 
@@ -312,7 +325,9 @@ git commit -m 'test: 宽限期 60 之后重算三处窗口;端口归还延迟的
   - `RejoinRegistry.grant(token: String, code: String, role: int, worker_port: int, worker_pid: int, now_ms: int) -> void`
   - `RejoinRegistry.lookup(token: String, now_ms: int) -> Dictionary`(过期 ⇒ `{}`;**不改表**)
   - `RejoinRegistry.decision(entry: Dictionary, code: String, worker_alive: bool) -> String`(**静态纯函数**;`""` = 放行)
-  - `RejoinRegistry.drop_token(token) -> void` / `drop_room(code) -> int` / `prune(now_ms) -> int` / `size() -> int`
+  - `RejoinRegistry.drop_token(token) -> void` / **`drop_port(worker_port) -> int`** / `prune(now_ms) -> int` / `size() -> int`
+    ★ **归键是 worker 端口,不是房间号**(落地时按 Task 5 的实证改名):三张注册表共享同一个 4 位房号空间,
+      按 code 作废会**一次清掉同号另一间房的凭据**(实测 2 份 vs 1 份,且一行日志都没有)。守卫 `tests/rejoin_keying_probe.tscn`。
   - `RejoinRegistry.TOKEN_TTL_SECONDS := 3600.0`
 
 - [ ] **Step 1: 写失败的 `-s` 冒烟 `tests/rejoin_registry_smoke.gd`**
@@ -602,7 +617,14 @@ Run(PowerShell):`Select-String -Path server\server_main.gd -Pattern '_tokens'` �
 		print("  同时作废 %d 份回局凭据" % ntk)
 ```
 
-★ 位置在 `royale_rooms.erase(...)` 之前或之后都行(`drop_room` 只按 `room.code` 全等匹配),但**必须在同一个函数体内** —— `room_sweep_smoke` 的收口纪律只允许**端口归还 / 注册表删除**出现在 `teardown_room` / `_release_port_later` 里,而 `rejoin.drop_room(` 这个串不匹配它监视的任何一个模式(`_release_port_later(` / `launcher.release_now(` / `royale_rooms.erase(` / `team_rooms.erase(` / `rooms.erase(`),故是安全的;**别把这段挪到调用方**(那时它就成了"第二处拆除动作")。
+★ 位置在 `royale_rooms.erase(...)` 之前或之后都行(全等匹配那一间),但**必须在同一个函数体内** —— `room_sweep_smoke` 的收口纪律只允许**端口归还 / 注册表删除**出现在 `teardown_room` / `_release_port_later` 里,而 `rejoin.drop_room(` 这个串不匹配它监视的任何一个模式(`_release_port_later(` / `launcher.release_now(` / `royale_rooms.erase(` / `team_rooms.erase(` / `rooms.erase(`),故是安全的;**别把这段挪到调用方**(那时它就成了"第二处拆除动作")。
+
+★★ **上面这段代码块落地时改了一处标识符(2026-09-21,Task 5 的实证)**:`rejoin.drop_room(room.code)` → **`rejoin.drop_port(port)`**
+(`teardown_room` 手里本来就有 `port`)。**归键必须是 worker 端口,不是房间号** —— 三张注册表的房号空间**重叠**
+(都是 `_generate_code()` 的 4 位号),构造"两间同号的房"实测:按 code 作废会**一次清掉 2 份凭据**(同号另一间房的玩家
+再也回不来,而一行日志都没有),按端口只清 1 份。★ 这与 `teardown_room` 自己那句"**别拿 `room.code` 去三张表里撞库**"
+是同一条纪律,只是当年没把它应用到这张新表上。守卫:`tests/rejoin_keying_probe.tscn`;冒烟侧 `tests/rejoin_registry_smoke` ⑤
+(别名 `drop_room` **不复存在**,别再按老名字写)。
 
 - [ ] **Step 4: `RoomManager` 四个 spawn 点登记凭据**
 
@@ -677,7 +699,7 @@ git commit -m 'feat(net): 回局凭据的登记(spawn 成功后带 pid)与拆除
 **Files:**
 - Modify: `core/net/net_bus_ext.gd`(末尾"断线重连"一节之后)
 - Modify: `tests/reconnect_smoke.gd`
-- Modify: `tests/lobby_visibility_probe.gd`(相⑤⑥,`EXPECTED_CHECKS` 27 → 30)
+- Modify: `tests/lobby_visibility_probe.gd`(相⑤⑥,**落地为** `EXPECTED_CHECKS` 27 → **31** —— ★ 比这里当时写的 30 多一条:走**信号**(`emit`)验那行 `connect` 接线的那条,三条直调 handler 的断言照不到它)
 
 **Interfaces:**
 - Consumes: `RejoinRegistry`(Task 3)、`LobbyRooms.rejoin`(Task 4)、`WorkerLauncher.pid_alive`(显示方案)
@@ -844,27 +866,38 @@ git commit -m 'feat(net): rejoin_request / rejoin_denied 两条 RPC + 大厅侧�
 
 ---
 
-## Task 6: `PvpSession` 三个字段 + `LobbyPage` 回局支路(+ 探针相⑦)
+## Task 6: `PvpSession` 两个字段 + `LobbyPage` 回局支路(+ 探针相⑦)
 
 **Files:**
 - Modify: `core/net/pvp_session.gd`
 - Modify: `scenes/lobby_page.gd`
 - Modify: `scenes/matchmaking.gd` / `scenes/royale_lobby.gd` / `scenes/team_lobby.gd`(`_process` 第一行)
 - Modify: `tests/reconnect_smoke.gd`(字段与 `reset()`)
-- Modify: `tests/lobby_visibility_probe.gd`(相⑦,`EXPECTED_CHECKS` 30 → 36)
+- Modify: `tests/lobby_visibility_probe.gd`(相⑦,`EXPECTED_CHECKS` **31 → 37**)
 
 **Interfaces:**
 - Produces:
-  - `PvpSession.room_code: String` / `mode: String` / `rejoin: bool`
-  - `PvpSession.can_rejoin() -> bool` / `PvpSession.clear_rejoin() -> void`
-  - `LobbyPage._request_rejoin()` / `_on_rejoin_denied(reason)` / `_tick_rejoin_timeout() -> bool`
+  - `PvpSession.room_code: String` / `rejoin: bool`
+  - `PvpSession.can_rejoin() -> bool` / `can_rejoin_to(code: String) -> bool` / `clear_rejoin() -> void`
+  - `LobbyPage.try_rejoin_row(code) -> bool`(行被按下时的**唯一**问句,三页共用)/ `_request_rejoin()` / `_on_rejoin_denied(reason)` / `_tick_rejoin_timeout() -> bool`
+
+★★ **本任务相对原稿的最大改动 = 入口换了**(详见 Task 7 与本文件顶部那条 ★★):回局**不再**由主菜单的「回到对局」
+按钮触发(用户裁定**取消那颗按钮**),而是**玩家在房间列表里点自己那间房**。由此三处跟着变,且都写在下面的步骤里:
+
+1. `PvpSession.mode` **删掉**(它唯一的读者是那颗被取消的按钮里"把玩家送回哪一页"的路由)——
+   ★ 本仓纪律:**没读者的字段不立**(这条纪律就写在本任务 Step 2 的注释里,原文如此)。
+2. `_request_rejoin()` **不再连大厅、也不碰地址框**:触发它的那一行本身就是 `room_list` 载荷里来的 ⇒ 本页
+   **此刻一定连着大厅**。原来那套"地址取 `PvpSession.server_address`、不看地址框"的绕法是为了绕开
+   "三个大厅页地址框默认值不同"—— 入口一改,那个陷阱**整个消失**(连 `_with_lobby` 都不需要了)。
+3. 承重的问句从"按钮亮不亮"变成 **`can_rejoin_to(code)`**("这是我的房吗 + 凭据还成立吗"),
+   且它必须**早于**"对局中即 disabled"被问到(见 Task 7 Step 1)。
 
 - [ ] **Step 1: 先加冒烟断言(此时必红)**
 
 `tests/reconnect_smoke.gd` 里 `for f in ["token", "worker_port"]:` 那个循环扩成:
 
 ```gdscript
-	for f in ["token", "worker_port", "room_code", "mode", "rejoin"]:
+	for f in ["token", "worker_port", "room_code", "rejoin"]:
 		_check(ses.contains("static var %s" % f), "PvpSession 缺 `static var %s`" % f)
 ```
 
@@ -872,13 +905,14 @@ git commit -m 'feat(net): rejoin_request / rejoin_denied 两条 RPC + 大厅侧�
 
 ```gdscript
 	_check(reset_body.contains("room_code = \"\""),
-			"★ PvpSession.reset() 未清 room_code(换模式会拿着上一局的房号去请求回局)")
-	_check(reset_body.contains("mode = \"\""),
-			"★ PvpSession.reset() 未清 mode(回局会把人送进错的大厅页)")
+			"★ PvpSession.reset() 未清 room_code —— 下一局会拿着上一局的房号去问「这行是不是我的房」")
 	_check(reset_body.contains("rejoin = false"),
 			"★ PvpSession.reset() 未清 rejoin(下一局会拿 claim_role 去当回局、被 worker 当串线踢掉)")
-	_check(ses.contains("static func can_rejoin()") and ses.contains("static func clear_rejoin()"),
-			"PvpSession 缺 can_rejoin() / clear_rejoin()(主菜单按钮与回局失败路径都要用)")
+	_check(ses.contains("static func can_rejoin()") and ses.contains("static func can_rejoin_to(")
+			and ses.contains("static func clear_rejoin()"),
+			"PvpSession 缺 can_rejoin() / can_rejoin_to() / clear_rejoin()(行的可点性与回局失败路径都要用)")
+	_check(not ses.contains("static var mode"),
+			"★ PvpSession 不该再有 mode —— 它唯一的读者(主菜单那颗按钮的路由)已随用户裁定取消")
 ```
 
 跑一次确认红:
@@ -891,24 +925,32 @@ Expected: `RECONNECT SMOKE FAILED: …`
 在 `static var worker_port: int = 0` 之后加:
 
 ```gdscript
-# ── 「回大厅后回局」(路径乙)的三个字段(2026-09-21,阶段 2-B)──
-# ★ 与上面两条同款纪律:**加字段前先 grep 确认有读者**。三个都有:
-#   room_code : 回局请求要带上它(大厅按它**交叉核对**凭据;主键仍是 token)。
+# ── 「回大厅后回局」(路径乙)的两个字段(2026-09-21,阶段 2-B)──
+# ★ 与上面两条同款纪律:**加字段前先 grep 确认有读者**。两个都有:
+#   room_code : ① 回局请求要带上它(大厅按它**交叉核对**凭据;主键仍是 token);
+#               ② **行可点性的那一半判据**(`can_rejoin_to` 拿它比"这一行是不是我的房")。
 #               ★ 它当年被删过一次(只写不读)—— 现在有读者了才回来。
-#   mode      : 主菜单那颗「回到对局」要知道把玩家送回**哪个大厅页**("pvp"/"royale"/"team")。
-#               ★ 它**不是**"是不是大乱斗局"的判据(那条仍然是"从哪个场景进来",见本文件
-#                 下面那段)—— 它只回答"回局走哪一页",故名字取 mode 而不是 royale。
 #   rejoin    : 一次性开关:下一次 `go_match` 是**回局**(认领 role 走 `reclaim_role`,
-#               而不是 `claim_role`)。
+#               而不是 `claim_role`)。置位点是 `LobbyPage.try_rejoin_row()`(列表里点自己那间房)。
+# ★★ **原稿里的第三个字段 `mode` 已删除**:它的唯一用途是"那颗按钮要把玩家送回哪个大厅页"
+#   的路由(`main_menu._rejoin_scene_path()`),而**用户裁定取消那颗按钮** —— 玩家自己在
+#   对应的那页找房间 ⇒ 没有读者。本仓纪律:没读者的字段不立(它自己就是我们当年删掉
+#   `room_code` 的理由)。★ 别再"顺手把它加回来留念":那会让 `reconnect_smoke` 的反向断言红。
 static var room_code: String = ""
-static var mode: String = ""
 static var rejoin: bool = false
 
 
-# 手里还攥着一局的凭据吗?(主菜单那颗「回到对局」按钮的唯一判据。)
-# ★ 做成函数而不是让调用方各写一遍与条件:它还要求 mode 已知 —— 不然按钮点了没有去处。
+# 手里还攥着**某一局**的凭据吗?(粗判据:三个字段齐。)
 static func can_rejoin() -> bool:
-	return token != "" and worker_port > 0 and room_code != "" and mode != ""
+	return token != "" and worker_port > 0 and room_code != ""
+
+
+# 「**这一行**是不是我的房、而且我还能回去?」—— 房间列表每一行渲染时与行被按下时**共用**
+# 这**一个**判据(两处各写一遍是漂的成因:漏一处就是"看着可点、点了没用"或反过来)。
+# ★ 为什么必须带上房号:光判 `can_rejoin()` 会让**别人那间对局中的房**也可点 —— 点下去发出的是
+#   回局请求,而凭据里的房号对不上,玩家看到的是"回局被拒"(一句与眼前那间房无关的话)。
+static func can_rejoin_to(code: String) -> bool:
+	return can_rejoin() and room_code == code
 
 
 # 清掉回局凭据(大厅答"回不去了" / 回局超时时调)。
@@ -918,69 +960,80 @@ static func clear_rejoin() -> void:
 	token = ""
 	worker_port = 0
 	room_code = ""
-	mode = ""
 	rejoin = false
 ```
 
-`reset()` 里补三行(挨着 `token = ""` / `worker_port = 0`):
+`reset()` 里补两行(挨着 `token = ""` / `worker_port = 0`):
 
 ```gdscript
 	room_code = ""
-	mode = ""
 	rejoin = false
 ```
 
 - [ ] **Step 3: `LobbyPage` 加回局支路**
 
-`_finish_lobby_ready()` 里把最后那行 `_request_list.call_deferred(...)` 换成:
+`_finish_lobby_ready()` 里**只补一行信号接线**(其余原样保留 —— 进页照常拉房间列表):
 
 ```gdscript
 	NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)
 	UiFactory.apply_font_recursive(self)
-	# ★ 「回局」与「进大厅拉列表」是**同一个位置的两条岔路**:回局的玩家一进本页就该找大厅要
-	#   `go_match`,而不是拉房间列表(列表对他没有意义,他手上有更硬的凭据)。
-	if PvpSession.rejoin:
-		_request_rejoin.call_deferred()
-	else:
-		_request_list.call_deferred("正在连接服务器获取房间列表…")
+	# 进页自动连大厅拉房间列表(列表区域不再是一片空白;手动刷新仍可用)
+	_request_list.call_deferred("正在连接服务器获取房间列表…")
 ```
+
+★★ **原稿在这里有的那个 `if PvpSession.rejoin: _request_rejoin()` 岔路已删除**,理由不是"简化"而是**入口变了**:
+触发回局的是**列表里的那一行**,而列表本来就要拉 ⇒ "进页先拉列表"与"进页先请求回局"不再是同一个位置的两条岔路
+(拉列表是回局的前置)。留着那条岔路还会**抢跑**:行还没渲染出来就先发了回局请求。
 
 在 `_do_go_match` 之上加一整节:
 
 ```gdscript
 # ── 回大厅后回局(spec §3.4 路径乙;2026-09-21)──
-# 玩家按 ESC 回主菜单 → 主菜单的「回到对局」把他送回**本页**(那条路刻意**不**调
-# `PvpSession.reset()` —— token/worker_port/room_code 就是凭据)。本页做三件事:
-#   ① 连大厅(地址取 `PvpSession.server_address`,**不看地址框**);
-#   ② 发 `rejoin_request(房间号, token)`;
-#   ③ 大厅复用 `go_match` 把它送回原 worker —— 之后与首次进场**逐字同一条路**。
-# ★ 唯一的岔路在 `_claim_role_worker`(对局已经开着 → 必须发 `reclaim_role`)。
+# 入口 = **本页房间列表里"自己那间房"那一行被按下**(见 `try_rejoin_row`;三个大厅页共用这一份)。
+# 本页做三件事:
+#   ① 发 `rejoin_request(房间号, token)` —— ★ **此刻本页一定连着大厅**(那一行就是 `room_list`
+#      载荷里来的),故这里**不连大厅、不碰地址框、也不走 `_with_lobby`**:照原稿搬会
+#      `NetBus.stop()` + 重连一次,把刚拿到的列表连同自己那一行一起丢掉。
+#   ② 大厅复用 `go_match` 把它送回原 worker —— 之后与首次进场**逐字同一条路**。
+#   ③ 唯一的岔路在 `_claim_role_worker`(对局已经开着 → 必须发 `reclaim_role`)。
+# ★ 原稿那条"地址取 `PvpSession.server_address` 而不是地址框(三个页的地址框默认值不同)"的绕法
+#   随入口一起作废:它防的是"从主菜单按按钮进来时页还没连上、只能照地址框连"那一档,而现在
+#   玩家**就站在已经连上的那一页**上。
 var _rejoin_sent_ms := 0
 
 
+# 房间列表里某一行被按下时,**先问这一句**(三页的 `_on_room_list` 都调它)。
+# 返回 true = 这一行是我的房且凭据还在 ⇒ 已走回局;false = 交给调用方走普通加入。
+# ★★ 它同时是**行可点性**的判据(页面渲染那一行时也要问同一句)—— 两处共用一个函数,
+#    免得"看着可点、点了没用"或反过来。
+func try_rejoin_row(code: String) -> bool:
+	if not PvpSession.can_rejoin_to(code):
+		return false
+	PvpSession.rejoin = true
+	_request_rejoin()
+	return true
+
+
 func _request_rejoin() -> void:
-	# 凭据不完整(理论上到不了:按钮本就不该亮)→ 退回正常的拉列表,别把玩家卡在空白页
+	# 凭据不完整(理论上到不了:行本就不该可点)→ 清掉开关,别把玩家卡在"回局态"
 	if not PvpSession.can_rejoin():
 		PvpSession.rejoin = false
-		_request_list.call_deferred("正在连接服务器获取房间列表…")
+		_status.text = "回局凭据已失效,请重新建房/加入"
 		return
-	# ★ 地址必须取 `PvpSession.server_address` 而不是地址框:三个大厅页的地址框默认值**不同**
-	#   (大乱斗/3v3 页默认 127.0.0.1,1v1 页默认云地址)—— 照地址框走会连到**另一个**大厅,
-	#   症状只是"回不去",而房其实好好地在另一台机器上。
-	_addr_edit.text = PvpSession.server_address
+	_rejoin_sent_ms = Time.get_ticks_msec()
 	_status.text = "正在回到对局…"
-	_with_lobby(func() -> void:
-		_rejoin_sent_ms = Time.get_ticks_msec()
-		_status.text = "正在回到对局…"
-		NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token))
+	NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token)
 
 
 # 大厅答"回不去了"(凭据失效 / 房间号不符 / 对局已结束):清掉凭据并留在本页。
-# ★ 必须清:否则主菜单那颗按钮永远亮着、按了永远失败(而玩家完全不知道为什么)。
+# ★ 必须清:否则那一行**永远是可点的**,而每次点都是同一句失败(玩家完全不知道为什么)。
 func _on_rejoin_denied(reason: String) -> void:
 	PvpSession.clear_rejoin()
 	_rejoin_sent_ms = 0
 	_status.text = "无法回到对局:%s(可在此重新建房/加入)" % reason
+	# ★ 凭据一清,那一行在**下一次渲染**时必须回到"对局中(灰色、点不动)"。本页没有"就地改一行"
+	#   的路径,重拉列表是唯一的重渲染入口 —— 少了它,玩家眼前那行还停在"可点"的样子上。
+	_request_list("已刷新房间列表")
 
 
 # 回局请求发出后大厅一直没应答的兜底(15s)。没有它,玩家会停在一句"正在回到对局…"上,
@@ -1041,7 +1094,7 @@ func _return_to_lobby(msg: String) -> void:
 	_connecting_worker = false
 	_claimed_ms = 0
 	# ★ 回局失败的各种兜底都汇到这里:不清 `rejoin` 就会让页停在"回局态"反复重试(每次都失败)。
-	#   `token` **不清** —— 它可能还有效(比如只是 worker 端口没放行),玩家可以回主菜单再试。
+	#   `token` **不清** —— 它可能还有效(比如只是 worker 端口没放行),玩家可以在列表里再点一次那一行。
 	PvpSession.rejoin = false
 	_rejoin_sent_ms = 0
 	_on_return_to_lobby()
@@ -1058,53 +1111,59 @@ func _return_to_lobby(msg: String) -> void:
 		return
 ```
 
-★ 每条梯的**相对顺序**别动(1v1 是 `[worker → join → 大厅 → claim]`、另两页是 `[worker → claim → 大厅 → ack]`);回局那条插在最前面是安全的:它只在 `PvpSession.rejoin` 为真时可能返回 true,而那一段里下面几条梯的判据都还不成立。
+★ 每条梯的**相对顺序**别动(1v1 是 `[worker → join → 大厅 → claim]`、另两页是 `[worker → claim → 大厅 → ack]`);回局那条插在最前面是安全的:它只在 `PvpSession.rejoin` 为真时可能返回 true,而那一档只在**玩家点过自己那间房之后**才出现 —— 那一刻下面几条梯的判据都还不成立(它们要等 `go_match`)。
 
-- [ ] **Step 5: 探针补 `can_rejoin()` 的真值表(相⑦)**
+- [ ] **Step 5: 探针补 `can_rejoin_to()` 的真值表(相⑦)**
 
-`tests/lobby_visibility_probe.gd`:把 `EXPECTED_CHECKS` 改成 `36`,`_ready()` 里 `_phase_rejoin()` 之后插 `_phase_session_flags()`,并加函数:
+`tests/lobby_visibility_probe.gd`:把 `EXPECTED_CHECKS` 改成 **`37`**(★ **基数取实得的 31**,不是原稿写的 30/36 —— 详见文件结构表那一行与 `_phase_rejoin` 的函数头),`_ready()` 里 `_phase_rejoin()` 之后插 `_phase_session_flags()`,并加函数:
 
 ```gdscript
-# ── ⑦ 凭据判据的真值表(`PvpSession.can_rejoin()` / `clear_rejoin()`)──
+# ── ⑦ 凭据判据的真值表(`PvpSession.can_rejoin_to()` / `clear_rejoin()`)──
 # ★ 放在这个**场景**探针里而不是 `-s` 冒烟:`-s` 阶段 autoload 尚未实例化,而本仓已有教训
 #   ——`-s` 脚本碰全局类要走 load()/get_script_constant_map() 那套绕法,为一个真值表不值得。
-# ★ 这一条防的是"按钮亮着但按了没用":can_rejoin() 少判一个字段(比如漏了 mode),
-#   按钮就会出现,而回局必然失败。
+# ★ 这一条防的是"那一行看着可点、点了没用":`can_rejoin_to()` 少判一个字段(比如漏了房号),
+#   列表里**别人那间对局中的房**也会变可点 —— 点下去发的是回局请求,而凭据里的房号对不上,
+#   玩家看到的是"回局被拒"(一句与眼前那间房无关的话)。房号那一条就是为它立的。
 # ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**自己摆过的值,
 #   否则同一进程里后面的相会读到脏值(本探针是独立进程,但同仓的纪律如此)。
 func _phase_session_flags() -> void:
-	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.mode]
-	PvpSession.token = "tk"; PvpSession.worker_port = 29901
-	PvpSession.room_code = "9021"; PvpSession.mode = "pvp"
-	_check(PvpSession.can_rejoin(), "⑦ 四个字段齐 → 可回局")
-	PvpSession.mode = ""
-	_check(not PvpSession.can_rejoin(), "⑦ ★ mode 缺 → 不可回局(否则按钮点了没有去处)")
-	PvpSession.mode = "pvp"; PvpSession.room_code = ""
-	_check(not PvpSession.can_rejoin(), "⑦ room_code 缺 → 不可回局(回局请求带不上房号)")
-	PvpSession.room_code = "9021"; PvpSession.token = ""
-	_check(not PvpSession.can_rejoin(), "⑦ token 缺 → 不可回局")
+	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code]
+	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9021"
+	_check(PvpSession.can_rejoin_to("9021"), "⑦ 凭据齐 + 房号对上 → 这一行可点(回局)")
+	_check(not PvpSession.can_rejoin_to("9999"),
+			"⑦ ★ 房号不符 → 不可点(防的是「别人那间对局中的房」也变可点,点下去只会收到一句无关的拒绝)")
+	PvpSession.token = ""
+	_check(not PvpSession.can_rejoin_to("9021"), "⑦ token 缺 → 不可点")
 	PvpSession.token = "tk"; PvpSession.worker_port = 0
-	_check(not PvpSession.can_rejoin(), "⑦ worker_port 缺 → 不可回局")
-	PvpSession.rejoin = true
+	_check(not PvpSession.can_rejoin_to("9021"), "⑦ worker_port 缺 → 不可点(连不回那一局)")
+	PvpSession.worker_port = 29901; PvpSession.room_code = ""
+	_check(not PvpSession.can_rejoin_to("9021"), "⑦ room_code 缺 → 不可点(回局请求带不上房号)")
+	PvpSession.room_code = "9021"; PvpSession.rejoin = true
 	PvpSession.clear_rejoin()
 	_check(PvpSession.token == "" and PvpSession.worker_port == 0 \
-			and PvpSession.room_code == "" and PvpSession.mode == "" and not PvpSession.rejoin,
-			"⑦ ★ clear_rejoin() 必须把五个字段一起清(漏一个就是「按钮永远亮着」)")
-	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]
-	PvpSession.room_code = keep[2]; PvpSession.mode = keep[3]
+			and PvpSession.room_code == "" and not PvpSession.rejoin,
+			"⑦ ★ clear_rejoin() 必须把四个字段一起清(漏一个就是「那一行永远可点」)")
+	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]; PvpSession.room_code = keep[2]
 ```
+
+★ **新断言共 6 条**(31 → 37),与原稿的条数一致但**换了一条**:原稿第 2 条是"`mode` 缺 → 不可回局",
+而 `mode` 已随按钮一起取消(Step 2),替换它的是**房号那一条** —— 它守的是新入口独有的那档错
+(列表里点**别人**对局中的房),比原稿那条更贴现在这个设计。★ 别把这条省了去凑"少一条也没关系":
+`can_rejoin_to` 的 `room_code == code` 那半一旦漏掉,列表里每一间对局中的房都会变成可点,
+而**探针与真链路都不会红**(点下去才失败,玩家看到的是"回局被拒")。
 
 - [ ] **Step 6: `--import` + 三条冒烟 + 探针**
 
 Run(PowerShell):`& $GODOT --headless --path . --import`
 Run(PowerShell):`& $GODOT --headless --path . -s res://tests/reconnect_smoke.gd` → `RECONNECT SMOKE OK`
 Run(PowerShell):`& $GODOT --headless --path . -s res://tests/rejoin_registry_smoke.gd` → `REJOIN REGISTRY: ALL-OK`
-Run(PowerShell):`& $GODOT --headless --path . --quit-after 3600 res://tests/lobby_visibility_probe.tscn` → `LOBBY VISIBILITY PROBE: ALL-OK(36 条断言)`
+Run(PowerShell):`& $GODOT --headless --path . --quit-after 3600 res://tests/lobby_visibility_probe.tscn` → `LOBBY VISIBILITY PROBE: ALL-OK(37 条断言)`
 
 - [ ] **Step 7: 变异反证(两条)**
 
-1. 把 `can_rejoin()` 里的 `and mode != ""` 删掉 ⇒ 相⑦ 的「mode 缺 → 不可回局」应红;还原。
-2. 把 `_do_go_match` 里那句 `if _pending_token != "":` 的守卫删掉(退化成无条件覆盖)⇒ 这一条**探针照不到**(它没有对端、走不到 `_do_go_match`)—— ★ **照实登记**:该行的守卫由真链路探针 `tests/rejoin_probe` 的相 c1 覆盖(见 Task 8 Step 6 的第 1 条反证)。
+1. 把 `can_rejoin_to()` 里的 `and room_code == code` 删掉(退化成只看 `can_rejoin()`)⇒ 相⑦ 的
+   「房号不符 → 不可点」应红;还原。
+2. 把 `_do_go_match` 里那句 `if _pending_token != "":` 的守卫删掉(退化成无条件覆盖)⇒ 这一条**探针照不到**(它没有对端、走不到 `_do_go_match`)—— ★ **照实登记**:该行的守卫由真链路探针 `tests/rejoin_probe` 的相 c1 覆盖(见 Task 8 Step 6 的反证**第 3 条**)。
 
 两段(或一段 + 一条登记)写进报告。
 
@@ -1113,97 +1172,128 @@ Run(PowerShell):`& $GODOT --headless --path . --quit-after 3600 res://tests/lobb
 ```bash
 git add core/net/pvp_session.gd scenes/lobby_page.gd scenes/matchmaking.gd \
   scenes/royale_lobby.gd scenes/team_lobby.gd tests/reconnect_smoke.gd tests/lobby_visibility_probe.gd
-git commit -m 'feat(net): 回局支路(连大厅 → rejoin_request → go_match → reclaim_role)+ PvpSession 凭据字段'
+git commit -m 'feat(net): 回局支路(列表里点自己那间房 → rejoin_request → go_match → reclaim_role)+ PvpSession 凭据字段'
 ```
 
 ---
 
-## Task 7: 主菜单「回到对局」按钮 + 三个大厅页记 `room_code`/`mode`
+## Task 7: 三个大厅页记 `room_code` + **自己那间房那行改成可点**(回局入口)
 
 **Files:**
-- Modify: `scenes/main_menu.gd`(`_build_menu_buttons` 与返回数组)
-- Modify: `scenes/matchmaking.gd` / `scenes/royale_lobby.gd` / `scenes/team_lobby.gd`(记两个字段)
+- Modify: `scenes/matchmaking.gd` / `scenes/royale_lobby.gd` / `scenes/team_lobby.gd`
+- ★ **`scenes/main_menu.gd` 一个字不动** —— 原「回到对局」按钮**已取消**
 
 **Interfaces:**
-- Consumes: `PvpSession.can_rejoin()` / `PvpSession.mode` / `PvpSession.rejoin`
-- Produces: 主菜单上一个 `name = "RejoinButton"` 的按钮(真链路探针按这个名字找它)
+- Consumes: `PvpSession.can_rejoin_to(code)` / `PvpSession.rejoin` / `LobbyPage.try_rejoin_row(code)`
+- Produces: 三个页面的 `_on_room_list` 里,**自己那间对局中的房那一行可点**(点了走回局)
 
-- [ ] **Step 1: 三个大厅页记下"这一局从哪来"**
+### ★★ 为什么不是按钮(用户裁定,别再往回改)
 
-`scenes/matchmaking.gd`:`_on_room_created(code)` 里加 `PvpSession.room_code = code`;`_join_code(code)` 里在发 `join_room` **之前**加 `PvpSession.room_code = code`;`_enter_match_scene()` 改成:
+用户原话:**「不能有回到对局按钮」**、**「玩家必须自己找到对应的房间」**。
+于是入口必须落在**玩家自己找房**的那条既有动作上 —— 也就是大厅页的房间列表:
+「对局中的房看得见、进不去」那条路已经建好了(前置计划),它现在长出**第二个状态**:
 
-```gdscript
-func _enter_match_scene() -> void:
-	# ★ 记下"本局从哪个大厅页进来" —— 回局(路径乙)靠它把玩家送回**对的**那一页。
-	#   它**不是**"是不是大乱斗局"的判据(那条仍是"从哪个场景进来"),只是回局的路由标签。
-	PvpSession.mode = "pvp"
-	get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
+| 点这一行的人 | 那一行 | 点下去 |
+|---|---|---|
+| **手里有这间房的有效凭据的本人** | **可点**(与普通房间同样的外观/焦点) | 走回局(`try_rejoin_row` → `rejoin_request` → `go_match` → `reclaim_role`) |
+| 其他任何人 | 照旧 `disabled`、不吃焦点(前置计划已交付) | 点不动(服务端 `join_room`/`*_join` 三条守卫仍是那一半的保证) |
+
+### ★ 顺序是承重的:先问"这是我的房吗",**再**问"对局中吗"
+
+三个页面的 `_on_room_list` 今天都是**直接** `btn.disabled = in_match`(1v1 在 `scenes/matchmaking.gd` 的
+`_on_room_list`,`in_match` 取自列表载荷;大乱斗/3v3 同款)。**照原样加"自己那间房可点"会在这一行上翻车**:
+`in_match` 为真 ⇒ 那行已经被 `disabled` + `FOCUS_NONE` 收拾掉了,**回局这一档连点都点不到** ——
+表现只是"回到大厅以后列表里自己那间房是灰的,回不去",而**一行报错都没有**。
+
+故判据的**次序**是本任务唯一的硬约束:
+
+```
+  ① 先问 `PvpSession.can_rejoin_to(code)`(这是我的房 + 凭据还在)→ 是 ⇒ **可点**(走回局)
+  ② 不是我的房,才轮到"in_match ⇒ disabled"这一档(前置计划的既有行为,一个字不改)
 ```
 
-`scenes/royale_lobby.gd`:`_on_room_state(state)` 开头加 `PvpSession.room_code = str(state.get("code", ""))`;`_enter_match_scene()` 里在 `get_tree().call_deferred(...)` **之前**加 `PvpSession.mode = "royale"`。
+### ★ 前置计划留下的"对局中的房一律拒绝"那几条断言:口径要改述,行为不动
 
-`scenes/team_lobby.gd`:同款(`_on_room_state` 开头记 `room_code`;`_enter_match_scene()` 里在 `get_tree().call_deferred(...)` 之前加 `PvpSession.mode = "team"`)。
+| 断言在哪 | 本批要不要动 |
+|---|---|
+| `tests/lobby_visibility_probe.gd` 相①②③(三人各一模式) | **断言本体一字不改** —— 它们用的 `P_C` 是**没有凭据的第三人**,新设计下**仍然必拒**;要改的是**它表达的那句话**:「对局中的房**一律**拒绝」→「对局中的房**对无凭据者**一律拒绝」。★ 该探针**观测不到补集那一半**(凭据持有者不被拒):它没有对端,而凭据那一侧走的是大厅的 `on_rejoin_request`(**相⑤⑥ 已落地**)与**客户端**的行可点性(**只有真链路探针咬得住**,Task 8 相 c1) |
+| `tests/team_room_smoke.gd` | ★ **实测无关** —— 全文件既没有 `in_match` 也没有任何"对局中拒绝"的断言(`grep -n in_match tests/team_room_smoke.gd` **0 命中**),本批不动它 |
+| `tests/room_sweep_smoke.gd` 的 `_check_join_refusal_guards` | **照旧有效,但它的前提要在注释里写明**:三条 join 守卫(`if room.started:` / `if rr.in_match:` / `if tr.in_match:`)不变、文案不变,**凭据那条路不许进这三条守卫** —— 即**不许**在 `join_room`/`royale_join`/`team_join` 里插"有凭据就放行"的分支:那等于把"回局"混进"入房"语义,而 `room_sweep_smoke` 那条守卫(`同款断言:守卫必须用'这一局在进行中'判`)会当场变成一句空话。回局一律走 `rejoin_request`(Task 5 已落地) |
 
-- [ ] **Step 2: 主菜单加按钮**
+- [ ] **Step 1: 三个大厅页记 `room_code` + 自己那行改成可点**
 
-在 `scenes/main_menu.gd` 的 `_build_menu_buttons()` 里,`team_btn` 那段之后、注释「字间距一律单空格」之前插入:
-
-```gdscript
-	# ★ 「回到对局」:只有**手里还攥着一局的凭据**时才出现(按 ESC 回主菜单之后想回去)。
-	#   它是**唯一一个不调 `PvpSession.reset()` 的联机入口** —— reset 会把 token/worker_port/
-	#   room_code 清掉,而那三样正是回局唯一的凭据(与 reconnect_smoke 的 reset 断言看着相反,
-	#   其实守的是两件事:`reset()` 必须清干净,而这条路**根本不走** reset)。
-	# ★ 名字写死给真链路探针用(`tests/rejoin_watcher` 按名字找它并 emit pressed)。
-	var rejoin_btn := UiFactory.button("回 到 对 局", 32)
-	rejoin_btn.name = "RejoinButton"
-	rejoin_btn.visible = PvpSession.can_rejoin()
-	rejoin_btn.pressed.connect(func() -> void:
-		Sfx.play("ui")
-		PvpSession.rejoin = true
-		get_tree().change_scene_to_file(_rejoin_scene_path()))
-```
-
-把它加进 play 组与返回数组:
+`scenes/matchmaking.gd`:
+- `_on_room_created(code)` 里加 `PvpSession.room_code = code`;
+- `_join_code(code)` 里在发 `join_room` **之前**加 `PvpSession.room_code = code`;
+- `_enter_match_scene()` **不动**(原稿要在这里写的 `PvpSession.mode = "pvp"` 随 `mode` 一起取消);
+- `_on_room_list` 里那两行 `btn.disabled = in_match` / `if in_match:` 换成:
 
 ```gdscript
-	for b in [start_btn, multi_btn, royale_btn, team_btn, rejoin_btn]:
-		play_group.add_child(b)
-```
-```gdscript
-	return [start_btn, multi_btn, royale_btn, team_btn, rejoin_btn, settings_btn, ver_btn, quit_btn]
-```
-
-★ 浮现动画对隐藏按钮无副作用(`_emerge` 只推 `modulate:a`),不必特殊处理。
-
-在 `_build_menu_buttons` 之后加:
-
-```gdscript
-# 回局要回**哪一页**:凭据里记着 `mode`(三个大厅页各写一次)。未知 mode 兜到 1v1 页
-# (can_rejoin() 已经把空 mode 挡在按钮之外,这里只是不给一条 null 路径)。
-func _rejoin_scene_path() -> String:
-	match PvpSession.mode:
-		"royale":
-			return "res://scenes/royale_lobby.tscn"
-		"team":
-			return "res://scenes/team_lobby.tscn"
-		_:
-			return "res://scenes/matchmaking.tscn"
+		# ★★ 次序是承重的:**先问「这是我的房吗 + 凭据还在吗」**,这一档**可点**(点了走回局);
+		#    不是我的房,才轮到「对局中 ⇒ disabled」那一档(前置计划交付的既有行为)。
+		#    反过来写(先按 in_match 禁用)= 回局这一档连点都点不到,而**一行报错都没有**
+		#    —— 表现只是"回到大厅后自己那间房是灰的,回不去"。
+		var mine := PvpSession.can_rejoin_to(code)
+		btn.disabled = in_match and not mine
+		if btn.disabled:
+			btn.focus_mode = Control.FOCUS_NONE
+		else:
+			btn.focus_mode = Control.FOCUS_ALL
+			btn.pressed.connect(func() -> void:
+				Sfx.play("ui")
+				# 我的房 ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
+				if not try_rejoin_row(code):
+					_join_code(code))
 ```
 
-- [ ] **Step 3: 自检(启动不报错 + 四个入口都能起)**
+★ 上面那段**整段照抄**到 `scenes/royale_lobby.gd` 与 `scenes/team_lobby.gd` 的 `_on_room_list`,
+只把最后那个 `_join_code(code)` 换成各自既有的 `_join_room(code, "")`(另两页没有 `_join_code` 这个方法名);
+两页的 `_on_room_state(state)` 开头照旧记 `PvpSession.room_code = str(state.get("code", ""))`
+(★ 原稿要它们顺带记的 `mode` 一并取消),`_enter_match_scene()` **不动**。
+
+★ 三页的状态栏文案里那句「对局中的照列但**不可进**」要顺手订正(1v1 页是
+`"共 %d 个房间(未满优先;对局中的照列但不可进)"`,另两页同款)—— 现在是"**对局中的照列:自己的房可点(回局),
+别人的点不动**"。★ 文案是**给玩家看的唯一线索**,而探针**一条都照不到它**(没有断言、没有取图):
+漏改不报错,只是玩家读到的说明与实际行为相反。
+
+- [ ] **Step 2: 自检(启动不报错 + 四个入口都能起)**
 
 Run(PowerShell):`& $GODOT --headless --path . --import`
-Run(PowerShell):`& $GODOT --headless --path . --quit-after 120` → exit 0、无 `SCRIPT ERROR`(主菜单是默认场景)
+Run(PowerShell):`& $GODOT --headless --path . --quit-after 120` → exit 0、无 `SCRIPT ERROR`(主菜单是默认场景 —— 本批**没碰它**,这一跑是回归)
 Run(PowerShell):`& $GODOT --headless --path . --quit-after 120 res://scenes/matchmaking.tscn` → 无 `SCRIPT ERROR`
 Run(PowerShell):`& $GODOT --headless --path . --quit-after 120 res://scenes/royale_lobby.tscn` → 无 `SCRIPT ERROR`
 Run(PowerShell):`& $GODOT --headless --path . --quit-after 120 res://scenes/team_lobby.tscn` → 无 `SCRIPT ERROR`
 
-- [ ] **Step 4: 提交**
+★ 这一跑**照不到"次序写反"**(没有对端、列表永远空)⇒ 那一档由 Task 8 相 c1 咬住(它走真列表、
+真点那一行)。照实登记。
+
+- [ ] **Step 3: 提交**
 
 ```bash
-git add scenes/main_menu.gd scenes/matchmaking.gd scenes/royale_lobby.gd scenes/team_lobby.gd
-git commit -m 'feat(ui): 主菜单「回到对局」按钮(唯一不走 PvpSession.reset 的联机入口)+ 三页记凭据字段'
+git add scenes/matchmaking.gd scenes/royale_lobby.gd scenes/team_lobby.gd
+git commit -m 'feat(ui): 回局入口改为列表里自己那间房(先问"是不是我的房"再轮到"对局中即禁用");三页记 room_code'
 ```
+
+### ★★ 开放项(待裁定):**私密房**玩家的回局入口 —— **控制者**裁定后回填本节
+
+回局的入口是"列表里点自己那间房",而**私密房根本不进列表**:
+`royale_list_payload` 与 `team_list_payload` 各有一行 `if not rr.is_public: continue`
+(`server/lobby_rooms.gd`,两条载荷都在 `server/` 侧构造)。★ 1v1 房**没有** `is_public` 概念
+(`room_list_payload` 不过滤),故**本项只影响大乱斗与 3v3**。
+⇒ 后果:在私密房里打到一半按 ESC 回主菜单的玩家,**列表里没有那一行可点**,回局入口整个不存在
+(而凭据其实还在他手里,大厅也会放行)。
+
+三条候选(★ **本计划不选** —— 用户尚未裁定;控制者裁定后在此回填,并同步改 Task 6 的
+`can_rejoin_to` 用法、Task 8 的相 c1 与 Task 9 第 4 条):
+
+- **(甲) 只对本人列出他自己的私密房**:`*_list_payload` 增加一个"请求者 peer 在不在这间房的 `roster` 里"
+  的判据 —— ★ 注意载荷目前是**纯构造、拿不到调用者上下文**(`royale_list`/`team_list` 拿到 `caller` 之后才调它),
+  故这条会**改载荷签名与两个调用点**(`royale_list` / `team_list`),不是一行 if。
+- **(乙) 接受"私密房不能回局"**:不写代码,把这条边界**照实登记**进 `CLAUDE.md`(Task 9 第 4 条)与本计划的自检记录;
+  私密房里回主菜单的玩家只能重新建房/让房主重开。
+- **(丙) 给私密房另开一个入口**(例如邀请码框旁边一颗「回到我的对局」):能满足需求,但**方向上是那颗被否掉的
+  按钮的回归** —— 用户原话是「不能有回到对局按钮」「玩家必须自己找到对应的房间」,选它等于把那两条裁定绕过去。
+  ★ 除非用户改口,否则不该选。
 
 ---
 
@@ -1222,9 +1312,9 @@ git commit -m 'feat(ui): 主菜单「回到对局」按钮(唯一不走 PvpSessi
 
 | 端 | 角色 | 干什么 |
 |---|---|---|
-| c1 | actor(role 1) | 建房 → 开局 → 进 `pvp_game` → 打到 PLAYING → **按 ESC → 点「回到主菜单」** → 在主菜单点「回到对局」→ 回到**原局**。断言:role 与离开前一致 + **回局后重新收到服务器广播**(PLAYING 计数严格增长) |
+| c1 | actor(role 1) | 建房 → 开局 → 进 `pvp_game` → 打到 PLAYING → **按 ESC → 点「回到主菜单」** → **(在主菜单上)重新进入 1v1 大厅页 → 在房间列表里找到自己那间房那一行 → 点它** → 回到**原局**。断言:① 自己那行**可点**(`disabled == false`,而别人看到的是灰的);② role 与离开前一致;③ **回局后重新收到服务器广播**(PLAYING 计数严格增长) |
 | c2 | 对手(role 2) | 点列表加入 → 进 `pvp_game` → 全程保持在线(它是"这一局还在"的见证) |
-| c3 | 第三人 | 只连大厅:**列表里看得见这个房**(`in_match == true`)+ **加入被拒**(收不到 `room_joined`/`go_match`,收到拒绝提示)。★ 这一相是**显示方案**的线上投递证据(显示方案自己没有真链路探针,见那份计划的自检记录) |
+| c3 | 第三人 | 只连大厅:**列表里看得见这个房**(`in_match == true`)+ **加入被拒**(收不到 `room_joined`/`go_match`,收到拒绝提示)。★ 这一相是**显示方案**的线上投递证据(显示方案自己没有真链路探针,见那份计划的自检记录);★ 它同时是**新入口的反向对照**:同一行,`c3` 手里没有凭据 ⇒ 客户端**不**把它变成可点(`try_rejoin_row` 返回 false 走普通加入),服务端也照旧拒 |
 
 **不覆盖什么(照实登记)**:大乱斗 / 3v3 的回局端到端(那要 6~8 个客户端与一条更长的比赛);这两个模式的**差异部分**(`in_match` 门控、列表、拒绝入房)已由显示方案的 `tests/lobby_visibility_probe` 在三模式上逐个钉住,而回局的客户端代码(`LobbyPage` + `PvpMatchClient`)三个模式**共用同一份**。
 
@@ -1538,17 +1628,26 @@ extends Node
 # 回局真链路探针的**观察者**(每端一个,挂在 root 上;换场不会把它带走)。
 # 三端各跑一条剧本:
 #   c1 = actor:建房 → 开局 → 进 pvp_game → 到 PLAYING → **ESC + 点「回到主菜单」** →
-#        主菜单点「回到对局」→ 回到**原局**。断言两条:
+#        **重新进入 1v1 大厅页 → 在房间列表里找到自己那间房那一行 → 点它** → 回到**原局**。
+#        断言三条:
+#          ⓪ 那一行**可点**(`disabled == false`)—— ★ 这是**新入口本身**的断言:前置计划交付的行为是
+#             "对局中的房一律 disabled",而回局这一档要在**同一行**上把它翻过来。少了这一条,
+#             "次序写反"(先按 in_match 禁用)会以"c1 一直点不动 → 超时"的形式表现,与"回局坏了"分不开。
 #          ① 回局后 `PvpSession.role` 与离开前**一致**(大厅把凭据里的 role 发对了);
 #          ② **重新收到服务器广播**(PLAYING 的 `round_state` 计数严格增长)—— 这是"真的回到
 #             那一局"的唯一客观证据:离场期间客户端断着、一条广播都收不到。
 #        ★ 不拿 instance_id 做断言:路径乙**会重建场景**,节点 ID 必然不同 —— 服务端那具身体
 #          确实没销毁,但客户端**观测不到**它,写成断言就是伪断言。服务端身体未销毁由
 #          `tests/reconnect_probe` 相①(路径甲,不重建场景)钉住。
+#        ★ **不点主菜单里那颗按钮**(它已随用户裁定取消):回主菜单之后,本端**自己再挂一份大厅页**
+#          (与首次挂载同一手法,见 `_attach_page_in`)—— 探针要在意的"玩家自己找到那间房"这一段,
+#          落在**列表里点行**上;而主菜单那几步(点「1 v 1」)只是换场,不承载判据。
 #   c2 = 对手:点列表加入 → 进 pvp_game → 全程在线(它是"这一局还在"的见证)。
 #   c3 = 第三人:**只连大厅**:①列表里看得见这个房(in_match=true)②加入被拒。
 #        ★ ② 是用户点名的要求("C 可以看到 A 与 B 的房间,尽管无论在对战还是掉线 C 都不应该进去")
 #          —— 服务端的 `join_room` 守卫由这一条在**真链路**上验一次。
+#        ★ 它同时是 c1 那一行的**反向对照**:同一行、同一份载荷,c3 手里没有凭据 ⇒ 客户端不该
+#          把它变可点(本端断言:那一行 `disabled == true`)。
 # 失败时把结果写进 `user://rejoin_probe_<who>.result`(子进程 stdout 父进程看不到)。
 #
 # ★ 与 team_match_watcher 同款的两条纪律:
@@ -1559,7 +1658,7 @@ extends Node
 const LOBBY_ADDR := "127.0.0.1"
 const ENTER_TIMEOUT := 60.0      # 从挂页到"进 pvp_game 且到 PLAYING"
 const PLAY_SETTLE := 3.0         # PLAYING 后静置(让快照跑起来,身体有个明确的位置读数)
-const REJOIN_TIMEOUT := 30.0     # 按「回到对局」后等回到 pvp_game
+const REJOIN_TIMEOUT := 30.0     # 点了自己那行之后等回到 pvp_game
 const RESULT_WAIT := 40.0        # c3 等"一个不会来的 room_joined"的上限
 
 var who := ""
@@ -1582,6 +1681,9 @@ var _go_match := 0               # c3:收到 go_match 的次数
 var _server_msgs: Array[String] = []
 var _room_rows := -1             # c3:最近一次列表里"对局中"的行数
 var _room_code := ""
+var _row_seen := false           # c1:自己那间房那一行已经出现在列表里
+var _row_disabled := true        # c1:那一行的 `disabled`(新入口的断言:必须是 false)
+var _c3_row_disabled := true     # c3:同一行的 `disabled`(反向对照:必须是 true)
 # c2/c3 落盘后**保持在线**(见 _finish:裁判还要继续观察这一局),只有 c1(actor)自己退。
 var hold_alive := false
 
@@ -1620,24 +1722,60 @@ func _on_lobby_connected() -> void:
 
 
 func _attach_page() -> void:
-	if _page != null:
-		return
-	var cs := get_tree().current_scene
-	if cs == null:
+	_attach_page_in(get_tree().current_scene,
+			(on_create if who == "c1" else on_refresh))
+
+
+# 把一份**真**大厅页挂进当前场景(首次进场与 c1 回局前各一次,同一份实现)。
+# ★ 三行"先置位再入树"里**有两行是本批实测出来的**(原稿只有 `_connected` / `_connected_addr`):
+#   ① `PvpSession.server_address = LOBBY_ADDR` —— `matchmaking.gd` 的地址框**默认值取的就是它**
+#      (`ui_factory.line_edit(..., PvpSession.server_address)`),而 `_with_lobby` 的快路判据是
+#      `_connected_addr == _addr_edit.text` ⇒ 不拨它,页 `_ready` 那次 deferred `_request_list`
+#      会判"地址变了"→ `NetBus.stop()` + 按**默认端口 7777** 重连:本进程与探针大厅(29300)的
+#      连接当场拆掉,而本探针明确规定不碰 7777(症状是"c1 从这一刻起什么都收不到")。
+#   ② 同一行对**转连 worker** 也是必需的:`_do_go_match` 用 `PvpSession.server_address` 连 worker,
+#      而 worker 就在 127.0.0.1 —— 不拨它,c1/c2 会去连**云地址**上的 29350(必失败)。
+func _attach_page_in(cs: Node, action: Callable) -> void:
+	if cs == null or _page != null:
 		return
 	_page = load("res://scenes/matchmaking.tscn").instantiate()
-	# ★ 先置位再入树(理由见文件头)
+	PvpSession.server_address = LOBBY_ADDR
 	_page.set("_connected", true)
 	_page.set("_connected_addr", LOBBY_ADDR)
 	cs.add_child(_page)
-	_log("真大厅页已挂载")
-	if who == "c1":
-		_page.call("_on_create_pressed")
-	else:
-		_page.call("_on_refresh_pressed")     # 等列表到了再点加入 / 再看一眼
+	_log("真大厅页已挂载(%s)" % cs.name)
+	action.call()
+
+
+func on_create() -> void:
+	_page.call("_on_create_pressed")
+
+
+func on_refresh() -> void:
+	_page.call("_on_refresh_pressed")
+
+
+# 在房间列表里按**房号**找那一行(三页的按钮文案都是 `"房间 %s …" % code`,逐字对应)。
+# ★ 找不到时调用方必须**立刻 FAIL**,不能静默等超时 —— 那种失败与"回局坏了"在输出上长得一样。
+func _find_row_button(code: String) -> Button:
+	if not is_instance_valid(_page) or _page.get("_list_box") == null or code == "":
+		return null
+	for c in _page.get("_list_box").get_children():
+		if c is Button and (c as Button).text.begins_with("房间 %s" % code):
+			return c
+	return null
 
 
 func _on_room_list(rooms: Array) -> void:
+	if who == "c1":
+		# ★ c1 读的是那一行的**可点性**:手里的凭据就是"这一行是我的"的证明 ⇒ 必须可点。
+		#   它只能在这里取 —— `disabled` 是客户端**渲染出来的 Button** 上的状态,载荷里没有这个字段。
+		var mine := _find_row_button(_room_code)
+		if mine != null:
+			_row_seen = true
+			_row_disabled = mine.disabled
+			_rec("ROW code=%s disabled=%s" % [_room_code, str(_row_disabled)])
+		return
 	if who != "c3":
 		return
 	var in_match := 0
@@ -1647,11 +1785,17 @@ func _on_room_list(rooms: Array) -> void:
 			_room_code = str(r.get("code", ""))
 			_rec("ROW code=%s in_match=1 names=%s" % [_room_code, str(r.get("names", []))])
 	_room_rows = in_match
-	if in_match == 1 and _phase == 0:
-		# 看见了 → 立刻试图进去(必须被拒)
-		_phase = 1
-		_phase_t = 0.0
-		_page.call("_join_code", _room_code)
+	if in_match == 1:
+		# ★ c3 读的是同一行的**另一半**:它**没有**凭据 ⇒ 必须不可点(`try_rejoin_row` 会返回 false
+		#   走普通加入)。c1 与 c3 这两条合起来才说明"可点性"是**按人**判的,而不是"一律可点"。
+		var row := _find_row_button(_room_code)
+		if row != null:
+			_c3_row_disabled = row.disabled
+		if _phase == 0:
+			# 看见了 → 立刻试图进去(必须被拒)
+			_phase = 1
+			_phase_t = 0.0
+			_page.call("_join_code", _room_code)
 
 
 func _physics_process(delta: float) -> void:
@@ -1691,22 +1835,13 @@ func _is_game(n: Node) -> bool:
 	return n is PvpMatchClient
 
 
-func _find_rejoin_button(n: Node) -> Button:
-	if n == null:
-		return null
-	if n is Button and n.name == "RejoinButton":
-		return n
-	for c in n.get_children():
-		var b := _find_rejoin_button(c)
-		if b != null:
-			return b
-	return null
-
-
 # ── c1(actor)──
-var _c1_sub := 0      # 0 建房/等开局 1 打一会 2 已按 ESC 回主菜单 3 已点「回到对局」
+var _c1_sub := 0      # 0 建房/等开局 1 打一会 2 已按 ESC 回主菜单 3 已点自己那间房那一行
 func _tick_c1() -> void:
-	if _page == null or _phase_t > ENTER_TIMEOUT + REJOIN_TIMEOUT + RESULT_WAIT:
+	# ★ 只看**总预算**,不看 `_page` 的死活:相 2 里本端**故意**要经历"页被换场带走 → 再挂一份",
+	#   把 `not is_instance_valid(_page)` 写进这条守卫会让相 2 永远进不去(总超时兜底)。
+	#   各相自己的界(等列表 / 等回局)写在各自的 `_phase_t` 判据里。
+	if _phase_t > ENTER_TIMEOUT + REJOIN_TIMEOUT + RESULT_WAIT:
 		_finish("c1 超时(阶段 %d)" % _c1_sub)
 		return
 	match _c1_sub:
@@ -1726,12 +1861,37 @@ func _tick_c1() -> void:
 				_phase_t = 0.0
 			return
 		2:
-			# 等主菜单出现,点「回到对局」
-			var btn := _find_rejoin_button(get_tree().current_scene)
-			if btn == null:
+			# ★ 回到主菜单之后,本端**自己再挂一份大厅页**(与首次进场同一手法)。生产里玩家是
+			#   在主菜单点「1 v 1」进这一页的,那一步只是换场、不承载任何判据;本探针要在意的
+			#   是**"自己在列表里找到那间房"那一段**,也就是下面的点行。
+			if _game != null:
+				return                    # 还在对局场景里(换场还没发生)
+			if is_instance_valid(_page) and not _page.is_inside_tree():
+				_page = null              # 旧的被换场带走了(它挂在旧场景下 = 生产的形状)
+			if not is_instance_valid(_page):
+				_page = null
+				_attach_page_in(get_tree().current_scene, on_refresh)
 				return
-			_log("找到「回到对局」按钮 → 点它")
-			btn.pressed.emit()
+			if not _row_seen:
+				if _phase_t > ENTER_TIMEOUT:
+					_fail("c1 ★ 回到大厅页后 %.0fs 没在列表里看到自己那间房(%s)" % [ENTER_TIMEOUT, _room_code])
+					_finish("")
+				return                    # 列表还没到
+			var row := _find_row_button(_room_code)
+			if row == null:
+				# ★ 立刻 FAIL,不静默等超时(那种失败与"回局坏了"长得一样)
+				_fail("c1 ★ 列表里没有自己那间房那一行(code=%s)—— 显示方案那一半坏了?" % _room_code)
+				_finish("")
+				return
+			if row.disabled:
+				# ★★ 这一条就是**新入口本身**:同一个房、同一份载荷,别人(见 c3)看到的是
+				#    disabled,而**手里有凭据的本人**必须可点。次序写反(先按 in_match 禁用)
+				#    会在这一条上当场红 —— 而不是以"点了没反应"的形式混进超时里。
+				_fail("c1 ★ 自己那间对局中的房那一行是 disabled —— 回局入口不存在(次序写反?)")
+			else:
+				_ok("c1 ★ 自己那间对局中的房那一行**可点**(disabled=false)")
+			_log("找到自己那间房那一行 → 点它")
+			row.pressed.emit()
 			_c1_sub = 3
 			_phase_t = 0.0
 			return
@@ -1799,6 +1959,12 @@ func _tick_c3() -> void:
 		if _room_rows != 1:
 			_fail("c3 ★ 没在列表里看到那个对局中的房(实得 %d 行)" % _room_rows)
 		_ok("c3 ★ 第三人能看到对局中的房(%d 行,code=%s)" % [_room_rows, _room_code])
+		# ★ 反向对照(c1 那条断言的另一半):同一行、同一份载荷,手里**没有凭据**的人看到的
+		#   必须是"点不动"。两条合起来才说明可点性是**按人**判的,而不是"那一刻所有人都能进"。
+		if not _c3_row_disabled:
+			_fail("c3 ★ 那一行对**没有凭据的第三人**也是可点的 —— 可点性不是按人判的")
+		else:
+			_ok("c3 ★ 同一行对第三人仍是 disabled(按人判:凭据在他的手里,不在我手里)")
 		if _joins != 0:
 			_fail("c3 ★ 加入被拒失败:收到了 room_joined(%d 次)" % _joins)
 		if _go_match != 0:
@@ -1917,12 +2083,17 @@ exit 1
 Run(**让用户跑**):`timeout 900 bash tests/rejoin_probe.sh`
 Expected: `REJOIN PROBE: ALL-OK`。失败时先看 `tests/rejoin_probe.log` 与 `user://rejoin_probe_c{1,2,3}.godlog`。
 
-- [ ] **Step 6: 反证(**让用户跑**,两条)**
+- [ ] **Step 6: 反证(**让用户跑**,三条)**
 
-1. 把 `scenes/lobby_page.gd` 的 `_claim_role_worker` 里那段 `if PvpSession.rejoin:` 分支**删掉**(让它永远走 `claim_role`)⇒ 再跑一次 ⇒ c1 的"回到对局"必须**红**(被 worker 当串线踢掉,卡在大厅页)。还原。
-2. 把 `scenes/lobby_page.gd` 的 `_do_go_match` 里那句 `if _pending_token != "":` 守卫**删掉**(退化成无条件 `PvpSession.token = _pending_token`)⇒ 再跑一次 ⇒ c1 必须**红**:回局那条路上大厅**不重发** `session_token`,无条件覆盖会把凭据抹成空串 → `reclaim_role` 被 worker 以"令牌不匹配"拒并踢连接。还原 → 复绿。
+1. **次序反证(新入口独有,先跑这条)**:把三页 `_on_room_list` 里的
+   `btn.disabled = in_match and not mine` 改回前置计划的 `btn.disabled = in_match`
+   (即"先按对局中禁用")⇒ 再跑一次 ⇒ c1 必须**红**,且**红在那条专门的断言上**
+   (“自己那间对局中的房那一行是 disabled”),而不是以"点了没反应"混进超时里。还原 → 复绿。
+   ★ 这条是**本批新入口**的守卫:没有它,"次序写反"只表现为 c1 卡在大厅页。
+2. 把 `scenes/lobby_page.gd` 的 `_claim_role_worker` 里那段 `if PvpSession.rejoin:` 分支**删掉**(让它永远走 `claim_role`)⇒ 再跑一次 ⇒ c1 的"回到对局"必须**红**(被 worker 当串线踢掉,卡在大厅页)。还原。
+3. 把 `scenes/lobby_page.gd` 的 `_do_go_match` 里那句 `if _pending_token != "":` 守卫**删掉**(退化成无条件 `PvpSession.token = _pending_token`)⇒ 再跑一次 ⇒ c1 必须**红**:回局那条路上大厅**不重发** `session_token`,无条件覆盖会把凭据抹成空串 → `reclaim_role` 被 worker 以"令牌不匹配"拒并踢连接。还原 → 复绿。
 
-两段输出写进报告。
+三段输出写进报告。
 
 - [ ] **Step 7: 提交**
 
@@ -1942,11 +2113,11 @@ git commit -m 'test(net): 回局真链路端到端探针(actor 离场再回局 +
 - [ ] **Step 1: 记录这几条(每条都是"后人会踩"的)**
 
 1. **宽限期 = 60 秒(三模式统一)**,唯一入口 `GraceWindow.DEFAULT_SECONDS`;`pvp_match_client` 的重连预算读的就是它(同源,不用改)。★ **测试预算**里凡按宽限期算出来的窗口(`reconnect_probe` 的 `GRACE_MIN/MAX/FINAL_TIMEOUT`、`team_match_watcher.OBSERVE_MAX`、`team_match_probe.RESULT_WAIT`)**必须同步重算**,否则症状是"一行 ALL-OK 都没有",与真失败分不开。★ **端口归还延迟与宽限期不再绑定**:承重的是"worker 进程活着 ⇒ 房与它占的端口都还在"(房活到 worker 退出),那条"延迟 > 宽限期"只剩 belt 地位(守卫 `grace_window_smoke` ⑧,注释里写明它是 belt)。
-2. **回局凭据表 `server/rejoin_registry.gd`**(`RejoinRegistry`):token → `(code, role, worker_port, worker_pid, expires_at)`。★ 三个房类的 `tokens` 字段**已删除**(同一件事只留一处记录)。★ 判据是**纯函数** `decision()`;**TTL 只是表的 GC 上界**(1h,且**不得短于宽限期**), "这一局还在不在"由 `worker_pid` 的活性回答(`WorkerLauncher.pid_alive`)。★ `teardown_room` 里 `rejoin.drop_room(room.code)` 作废该房凭据;表的 GC 搭显示方案的 30s 回收梯(`_reclaim_finished_matches` 首行),不另立定时器。
-3. **回局路径 = 复用 `go_match`**:`LobbyPage` 连大厅 → `rejoin_request(room_code, token)` → 大厅 `NetBus.reply(caller, "go_match", role, port)` → 客户端与首次进场**逐字同一条路**(转连 worker、等 `match_start`、进对局场景),**唯一分叉**是认领那一步走 `reclaim_role`(对局已开着,`claim_role` 会被 `_on_role_claimed` 当串线踢)。★ `_do_go_match` 里"只在收到新 token 时才覆盖"那一行是**承重**的:回局路上大厅不重发 `session_token`,无条件覆盖会把凭据抹成空串。
-4. **入口**:主菜单 `RejoinButton`(`PvpSession.can_rejoin()` 为真才显示)是**唯一不调 `PvpSession.reset()` 的联机入口**。`PvpSession` 新增 `room_code` / `mode` / `rejoin` 三个字段(都有读者)+ `can_rejoin()` / `clear_rejoin()`。
-5. **前置**:本批依赖**显示方案**(`docs/superpowers/plans/2026-09-21-in-progress-room-visibility.md`)先落地 —— 房活过转连、`worker_pid`/`roster` 字段、`WorkerLauncher.pid_of/pid_alive`、30s 回收梯都是它交付的。★ 别再在本批里重造任何一个。
-6. **守缺口照实登记**:`lobby_visibility_probe` 观测不到回局**放行路径的真实 `go_match` 发送**(无对端 ⇒ `NetBus.reply` 静默跳过)—— 那一条只由真链路探针 `rejoin_probe` 覆盖;`can_rejoin()` 这一类真值表在探针里,`_do_go_match` 的 token 守卫也只有真链路能咬住。
+2. **回局凭据表 `server/rejoin_registry.gd`**(`RejoinRegistry`):token → `(code, role, worker_port, worker_pid, expires_at)`。★ 三个房类的 `tokens` 字段**已删除**(同一件事只留一处记录)。★ 判据是**纯函数** `decision()`;**TTL 只是表的 GC 上界**(1h,且**不得短于宽限期**), "这一局还在不在"由 `worker_pid` 的活性回答(`WorkerLauncher.pid_alive`)。★ `teardown_room` 里作废该房凭据走 **`rejoin.drop_port(worker_port)`** —— ★★ **文档里必须写清"为什么按端口而不是按房号"**:三张注册表(1v1 / 大乱斗 / 3v3)的房号**共用同一个 4 位空间**(`_generate_code()`),按 `room.code` 反查会**误伤同号的另一间房**;实测构造两间同号房:按 code 作废一次清掉 **2** 份凭据、按端口只清 **1** 份 —— 而失效那间的玩家只是"回不去",**一行日志都没有**。★ 这与 `teardown_room` 自己那句"**别拿 `room.code` 去三张表里撞库**"是同一条纪律(守卫 `tests/rejoin_keying_probe.tscn`)。★ 表的 GC 搭显示方案的 30s 回收梯(`_reclaim_finished_matches` 首行),不另立定时器。
+3. **回局路径 = 复用 `go_match`**:玩家在**大厅页的房间列表里点自己那间房**那一行 → `LobbyPage.try_rejoin_row(code)` → `rejoin_request(room_code, token)` → 大厅 `NetBus.reply(caller, "go_match", role, port)` → 客户端与首次进场**逐字同一条路**(转连 worker、等 `match_start`、进对局场景),**唯一分叉**是认领那一步走 `reclaim_role`(对局已开着,`claim_role` 会被 `_on_role_claimed` 当串线踢)。★ `_do_go_match` 里"只在收到新 token 时才覆盖"那一行是**承重**的:回局路上大厅不重发 `session_token`,无条件覆盖会把凭据抹成空串。
+4. **入口 = 列表里自己那间房那一行(★ 用户裁定:`不能有回到对局按钮`、`玩家必须自己找到对应的房间`;别再把它做成主菜单按钮)**:对局中的房那一行**对持有该房有效凭据的本人可点**、对其他人照旧 `disabled`,判据是 `PvpSession.can_rejoin_to(code)`,且它必须**先于**"`in_match` ⇒ disabled"被问到(次序写反 = 回局入口不存在,且不报错)。`PvpSession` 新增 `room_code` / `rejoin` 两个字段(都有读者)+ `can_rejoin()` / `can_rejoin_to()` / `clear_rejoin()`;★ 原先计划的 `mode` 字段与 `main_menu.gd` 的改动**随按钮一起取消**(`mode` 的唯一读者就是那颗按钮的路由 —— 没读者的字段不立)。★★ **照实登记一条缺口**:私密房**不进列表**(`royale_list_payload` / `team_list_payload` 跳过非公开房;1v1 无此概念)⇒ **私密房玩家目前没有回局入口**,三条候选(甲只对本人列出 / 乙接受不能回局 / 丙另给入口=那颗被否掉的按钮的回归)由用户裁定 —— ★ **别在文档里把它写成"已支持"**。
+5. **前置**:本批依赖**显示方案**(`docs/superpowers/plans/2026-09-21-in-progress-room-visibility.md`)先落地 —— 房活过转连、`worker_pid`/`roster` 字段、`WorkerLauncher.pid_of/pid_alive`、30s 回收梯、以及**"对局中的房照列但点不动"那一行的既有渲染**都是它交付的。★ 别再在本批里重造任何一个;★ 本批对它的**唯一**改动 = Task 4 往 `_reclaim_finished_matches` 首行加一句凭据 GC,以及**客户端**那一行的 `disabled` 判据多了"是我的房则例外"这一档(服务端三条 join 守卫一个字不动)。
+6. **守缺口照实登记**:`lobby_visibility_probe` 观测不到回局**放行路径的真实 `go_match` 发送**(无对端 ⇒ `NetBus.reply` 静默跳过)—— 那一条只由真链路探针 `rejoin_probe` 覆盖;`can_rejoin_to()` 的真值表在探针里(相⑦),**而"三页 `_on_room_list` 真的按它判那一行"只有真链路相 c1 咬得住**(`room_sweep_smoke` 那三条 join 守卫管的是**服务端**,且**刻意**不含凭据分支);`_do_go_match` 的 token 守卫也只有真链路能咬住。
 
 - [ ] **Step 2: 提交**
 
@@ -1978,12 +2149,14 @@ git commit -m 'docs: CLAUDE.md 记录阶段 2-B(凭据表/回局复用 go_match/
 - **`_sweep_stale_rooms` 的在局宽限仍是估的**(大乱斗取 `RoyaleHost.MATCH_TIME` 默认值、3v3 取 `TEAM_MATCH_ESTIMATE`),CLAUDE.md 早已登记这条边界;本批**不放宽**,因为真正的界(本局实际时长)只在 worker 里。
 - **1v1 worker 在"一个 claim 都没有"时会一直挂着**(既有行为,`server_main` 只给 royale/team 配了超时梯):本批不修,房与端口的泄漏由 2h 超龄清扫兜住(显示方案那条路径会 `TEARDOWN_KILL` 连 worker 一起杀)。
 - **端口池压力的数字**:占用 ≈ 一局 + 最多一个梯周期(30s)+ 归还延迟;3v3 最坏 ≈ 一局 + 30 + 360。池子 `WORKER_PORT_SPAN = 500`,本作量级无虞。
-- **HUD 的「掉线中 / 重连中」可见性**(spec §4 阶段 3)本批**不做** —— 回局这条路的可用性不依赖它(玩家在**主菜单**上看到那颗按钮就知道能回去)。★ 这是**明确的范围裁量**,不是漏写。
-- **`_do_go_match` 的 token 守卫在本批的探针里咬不住**(`lobby_visibility_probe` 没有对端、走不到那条路)—— 已登记,由 Task 8 的反证第 2 条与真链路相 c1 覆盖。
+- **HUD 的「掉线中 / 重连中」可见性**(spec §4 阶段 3)本批**不做** —— 回局这条路的可用性不依赖它(玩家在**自己那间房那一行**上就能看出能不能回去:可点 = 能回)。★ 这是**明确的范围裁量**,不是漏写。
+- **`_do_go_match` 的 token 守卫在本批的探针里咬不住**(`lobby_visibility_probe` 没有对端、走不到那条路)—— 已登记,由 Task 8 的反证第 3 条与真链路相 c1 覆盖。
 - **大乱斗 / 3v3 的回局端到端没有真链路覆盖**(要 6~8 个客户端与一条更长的比赛);这两个模式的差异部分由显示方案的三模式探针钉住,而回局的客户端代码三个模式**共用同一份**。
+- ★ **私密房玩家没有回局入口**(私密房不进列表 ⇒ 没有那一行可点)—— **待用户裁定**,三条候选在 Task 7 末尾;本批**不选**,也不许在文档里写成"已支持"。
+- ★ **"那一行可点"在本批的抽成性守卫里只到客户端渲染层**:`room_sweep_smoke` 那三条 join 守卫的源码断言管的是**服务端**那一半(它们保持"对局中即拒绝"),"是不是我的房 + 凭据还在"这一问只存在于 `PvpSession.can_rejoin_to()` 与三页的 `_on_room_list` —— 前者有 相⑦ 的真值表,后者的**接线**只有真链路相 c1(点行 → 回局成功)咬得住。
 
-**占位符扫描**:无 TBD / TODO / "类似 Task N";每个改代码的步骤都给了完整代码(含 Task 8 的观察者:`_refresh_game()` / `_is_game()` / `_find_rejoin_button()` 都是逐行可抄的实现,不是"照别的文件写")。
+**占位符扫描**:无 TBD / TODO / "类似 Task N";每个改代码的步骤都给了完整代码(含 Task 8 的观察者:`_refresh_game()` / `_is_game()` / `_find_row_button()` / `_attach_page_in()` 都是逐行可抄的实现,不是"照别的文件写")。★ **唯一的开放项**是 Task 7 末尾那条「私密房玩家的回局入口」—— 它按用户裁定缺席,故写成**控制者回填**的三选一标记,不是占位符。
 
-**类型一致性**:`RejoinRegistry.decision(entry, code, worker_alive) -> String` 在 Task 3 定义、Task 5 按同一签名调用;`RejoinRegistry.grant(token, code, role, worker_port, worker_pid, now_ms)` 在 Task 3 定义、Task 4 的 `_grant_rejoin` 按同一签名调用;`WorkerLauncher.pid_of/pid_alive` 由**显示方案**定义、Task 4/5 按同一签名调用;`LobbyRooms.rejoin` 在 Task 4 定义并被 Task 5(`lookup`/`drop_token`)与 Task 4 的回收梯(`prune`)按同一名字用;`PvpSession.{room_code, mode, rejoin, can_rejoin, clear_rejoin}` 在 Task 6 定义,Task 7(按钮)按同一名字用;追加到显示方案探针里的相在 Task 5(`EXPECTED_CHECKS` 30)与 Task 6(36)各抬一次,与各自新增的断言条数一致(3 + 6)。
+**类型一致性**:`RejoinRegistry.decision(entry, code, worker_alive) -> String` 在 Task 3 定义、Task 5 按同一签名调用;`RejoinRegistry.grant(token, code, role, worker_port, worker_pid, now_ms)` 在 Task 3 定义、Task 4 的 `_grant_rejoin` 按同一签名调用;★ 作废走 **`RejoinRegistry.drop_port(worker_port)`**(Task 3/4 落地时按实证改名,`drop_room` **不存在**);`WorkerLauncher.pid_of/pid_alive` 由**显示方案**定义、Task 4/5 按同一签名调用;`LobbyRooms.rejoin` 在 Task 4 定义并被 Task 5(`lookup`/`drop_token`)与 Task 4 的回收梯(`prune`)按同一名字用;`PvpSession.{room_code, rejoin, can_rejoin, can_rejoin_to, clear_rejoin}` 在 Task 6 定义,**Task 6 Step 3 的 `try_rejoin_row` 与 Task 7 的行渲染**按同一名字用;追加到显示方案探针里的相:相⑤⑥ **已落地**(`EXPECTED_CHECKS` 27 → **31**,4 条),相⑦ 再抬到 **37**(6 条)—— 与 Task 6 Step 5 里那条"新断言共 6 条"的算术一致。
 
 **跑法分工**:agent 可跑 = `--import`、全部 `-s` 冒烟、`tests/lobby_visibility_probe.tscn`、各页面的 `--quit-after 120` 启动自检;**用户跑** = `tests/reconnect_probe.tscn`(池外端口,但耗时长且按 PID 杀子进程)、`tests/rejoin_probe.sh`(真大厅 + 真 worker,与用户自己的大厅**共用一个 worker 端口池**)、以及一切占 7777 的既有脚本(`tests/pvp_room_smoke.sh` / `tests/room_sweep_smoke.sh` 等)。
