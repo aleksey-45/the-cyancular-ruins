@@ -1354,7 +1354,38 @@ EOF
     - `mapFromBytes(fileName, bytes) -> Promise<{map, sourceFormat}>`
     - `selfTest() -> Promise<String>`(返回一行机器可判的结论:`SELFTEST OK` 或 `SELFTEST FAIL: …`)
     - `openFromUrl() -> Promise<void>`
-    - `rawBytes() -> Uint8Array|null` / `rawName() -> String|null` / `sourceFormat() -> String|null`
+    - `app.raw -> Uint8Array|null` / `app.name -> String|null` / `app.sourceFormat -> String|null`
+      ★ 2026-09-21 订正:初版这条写的是 `rawBytes()` / `rawName()` / `sourceFormat()` **三个函数**,
+      而交付源码里它们**是 `app` 上的三个字段**(经 `app: app` 一起导出),没有同名函数 ——
+      Task 3 的评审查过 Task 8/9 的消费点,它们用的正是 `app.sourceFormat` / `app.raw`,
+      **故无下游破坏**,只是这份接口表原先写错了。`detectFormat` / `mapFromBytes` 是真函数,与表相符。
+
+> ★★ **本节下面的代码块是「落地前的初版」,不是最终交付。** Task 3 实现后经过一轮评审修复
+> (`eb8c6c9`),交付物是 `level_editor/render.js` / `ui.js` / `editor.html` / `server_smoke.js`
+> —— **那几份才是事实**。评审对交付面的核对结论(供参考):`mount()` 一族与 `ui.js` 与本节源码
+> **逐字相同**,只有 4 处已声明偏差(F1 分派 + `opts.slicer` 注入缝 + `openMap` await `setMap`
+> + `screenToSub` 空图守卫),外加 `selfTest` 里**多两个探针**(`localStorage` / `IndexedDB`
+> —— 计划风险登记表本来就要求 `SELFTEST` 覆盖这两样,而计划自己的 `selfTest` 源码里没有)。
+>
+> **照抄本节会踩到的两处(交付已修,评审标为 Important)**:
+> ① **缩略图复用的判据只判宽、不判高** —— `ensureThumbs` 的复用条件若只比 `width`,
+>    **同宽不同高**的图会复用错高度的画布(`drawThumbPath` 用五参 `drawImage` 整张缩放铺进去)
+>    ⇒ 缩略图被拉伸/截断。可达且**在默认视图上现形**:开 `demo.cyrm`(缩略图 1000×600)后开一张
+>    同宽更高的图(需 1000×800)时 `thumbScale` 仍返回 2,而复用条件只判宽 ⇒ 直接命中;
+>    `fitZoom` 让默认视图 < zoom 8,**走的正是缩略图路径**。交付:两轴都判,且 `invalidateAll`
+>    也补调 `ensureThumbs`(`invalidateCells` 刻意不动 —— 在那儿重建 = 一个脏矩形 + 其余空白)。
+> ② **相位 ⑧ 少了两个非工具按钮的存在断言** —— 新页面扫描只断言 8 个**工具**按钮,而
+>    `#btn-selftest` / `#btn-fit` 没断言,`ui.js` 又用 `if (selftestBtn)` 兜住 ⇒ **id 打错会静默
+>    变成"点了没反应"**;而 `SELFTEST` 那一行是后续**每个 Task 唯一的浏览器侧判据**。
+>    交付:`server_smoke.js` 的相位 ⑧ 补了这两条(页面扫描仍是"只增"的方向)。
+>
+> ★ 另外交付的 `server_smoke` 相位 ⑧ 比本节**少约 20 条**(23 → 12,净 −11):评审逐条分类过
+> —— 多数被更强的"六脚本顺序 + 页面结构"断言取代,其余**搬进 Task 5 的 `editor_smoke.js`**
+> (计划 Global Constraints 里点名的三条纪律断言就在这里),**但有两处当时没有任何后继**,
+> 现已分别就地补掉(见 ②)与挂号到 Task 5("错误必须可见、不许沉默空面板"的源码级形态)。
+>
+> **测试块**:交付与本节相比,`render_smoke` 多了约 52 条(112 → 164),含相位 ⑩k
+> (**同宽不同高**换图,专钉 ①)。本节测试块仍全绿,但**更弱**。
 
 - [ ] **Step 1: 在 `render.js` 末尾(`return { … }` 之前)加 `mount()` 一族**
 
