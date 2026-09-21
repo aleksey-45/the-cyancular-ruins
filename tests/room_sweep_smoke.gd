@@ -42,6 +42,7 @@ func _initialize() -> void:
 	_check_teardown_funnel()
 	_check_team_startup_contract()
 	_check_team_spawn_guard()
+	_check_worker_pid_tracking()
 	_finish()
 
 
@@ -418,6 +419,30 @@ func _check(src: String) -> void:
 			break
 	if summary.is_empty() or not summary.contains("3v3"):
 		_fail = "_sweep_stale_rooms 的汇总 print 未报 3v3 那一档(界有变化而日志读不出来)"; return
+
+# ── 2026-09-21(「看得见进不去」批)新增:worker pid 的登记与归还 ──
+# ★ 为什么钉它:「对局中的房什么时候消失」这条判据是**这一局的 worker 进程还在不在**
+#   (三种模式的 worker 都在对局结束时自己退)。pid 的来源就是这里:端口 → pid 的映射。
+# ★ 归还端口时**不清 pid** 的后果是**静默**的:大厅会认为一个已经结束(甚至端口已被复用给
+#   别的局)的对局还活着 —— 房永远不出现在回收名单里,而端口与列表位一直占着。
+func _check_worker_pid_tracking() -> void:
+	if _fail != "":
+		return
+	var L := WorkerLauncher.new()
+	# 直接摆内部表(与 _check_team_spawn_guard 只喂非法输入同一个取向:本冒烟不该真拉起子进程)。
+	# 端口取 7770:在 WorkerLauncher 的端口池(7800~8299)之外,故意不碰大厅/worker 的号段。
+	L.set("_worker_pids", {7770: 4242})
+	if L.pid_of(7770) != 4242:
+		_fail = "WorkerLauncher.pid_of 没读到登记过的 pid"
+		return
+	if L.pid_alive(0) or L.pid_alive(-1):
+		_fail = "★ pid_alive(<=0) 必须是 false(登记发生在 spawn 成功之后,那之前的窗口别判成活着)"
+		return
+	L.release_now(7770)
+	if L.pid_of(7770) != 0:
+		_fail = "★ 端口归还后未清 pid(房会被判成「还在」→ 永久占着列表位与端口)"
+		return
+
 
 func _finish() -> void:
 	if not _fail.is_empty():

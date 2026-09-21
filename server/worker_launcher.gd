@@ -42,6 +42,7 @@ const ROYALE_PORT_REUSE_DELAY := 360.0
 const TEAM_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
+var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
 
 
 # 立刻把端口还给池子(不等 worker 退出)。调用方语义见 room_manager 的 TEARDOWN_* 三档。
@@ -49,6 +50,9 @@ func release_now(port: int) -> void:
 	if port <= 0:
 		return
 	_worker_ports.erase(port)
+	# ★ 必须一起清:pid 与"端口在不在用"是同一份事实。只清一半的后果是回收梯把一个
+	#   已经结束(甚至端口已被复用给别的局)的对局判成"还在" → 房永不被回收,一直挂在列表里。
+	_worker_pids.erase(port)
 
 
 # 分配一个当前未占用的 worker 端口(唯一递增 + 占用集合;见类头注释,勿用 bind 探测)。
@@ -62,6 +66,22 @@ func pick_port() -> int:
 			_worker_ports[p] = true
 			return p
 	return -1
+
+
+# 本端口上那具 worker 的 pid(没拉起过 / 已归还 → 0)。
+# ★ 谁需要它:大厅的「这一局结束了吗」判据(`RoomManager._reclaim_finished_matches`)——
+#   三种模式的 worker 都在对局结束时自己退,"进程还在吗"是唯一的精确答案;任何按
+#   "一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口与列表位)。
+func pid_of(port: int) -> int:
+	return int(_worker_pids.get(port, 0))
+
+
+# 这个 pid 还在跑吗?★ **pid <= 0 一律 false**(= "不在")。理由:pid 的登记发生在
+# `OS.create_process` 成功**之后**,而 `started/in_match = true` 在它之前 —— 中间那个窗口
+# 里 pid 还是 0;判"活着"会让"开局那一瞬被自己的回收梯拆掉"成为可能,判"不在"最多让那一局
+# 晚一个梯周期(30s)才被发现(那时它已经有 pid 了)。
+static func pid_alive(pid: int) -> bool:
+	return pid > 0 and OS.is_process_running(pid)
 
 
 # ── worker 的引擎日志落盘(两个 spawn 共用)──
@@ -97,6 +117,8 @@ func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 		args.append("--ai-roles")
 		args.append(",".join(roles))
 	var pid := OS.create_process(exe, args)
+	if pid > 0:
+		_worker_pids[port] = pid
 	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s 日志=%s" % [pid, port,
 			str(OS.has_feature("editor")), str(ai_roles), log_path(port)])
 	return pid > 0
@@ -135,6 +157,8 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	if OS.get_cmdline_user_args().has("--test-ground-teleport"):
 		args.append("--test-ground-teleport")
 	var pid := OS.create_process(exe, args)
+	if pid > 0:
+		_worker_pids[port] = pid
 	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
 			str(roles), str(ai_roles), log_path(port)])
 	return pid > 0
@@ -182,6 +206,8 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 				"--port", str(port), "--roles", ",".join(role_strs),
 				"--teams", ",".join(team_strs)])
 	var pid := OS.create_process(exe, args)
+	if pid > 0:
+		_worker_pids[port] = pid
 	print("[lobby] spawn team worker pid=%d port=%d roles=%s teams=%s 日志=%s" % [pid, port,
 			str(roles), str(teams), log_path(port)])
 	return pid > 0
