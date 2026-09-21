@@ -56,6 +56,18 @@ const N_TEAM_SIGNALS := ["team_create_requested", "team_join_requested", "team_p
 		"team_leave_requested", "team_start_requested", "team_list_requested",
 		"local_team_rooms", "local_team_room_state"]
 
+# ── 回大厅后回局(阶段 2-B,2026-09-21)──
+# 两条:一条上行(客户端 → 大厅)、一条下发(大厅 → 客户端)。与上面那些**同款纪律**:
+# 必须在 NetBusExt、**不得**在 NetBus(挂错节点 = 静默 no-op,而症状只是"回局永远失败")。
+const N_REJOIN_RPCS := ["rejoin_request", "rejoin_denied"]
+
+const N_REJOIN_RPC_ANN := {
+	"rejoin_request": "@rpc(\"any_peer\", \"reliable\")",
+	"rejoin_denied": "@rpc(\"authority\", \"reliable\")",
+}
+
+const N_REJOIN_SIGNALS := ["rejoin_requested", "local_rejoin_denied"]
+
 var _fail := 0
 
 
@@ -163,6 +175,21 @@ func _initialize() -> void:
 		_check(tann == N_TEAM_RPC_ANN[n],
 				"★ `%s` 的 @rpc 注解必须逐字是 `%s`,实为 `%s`(注解错了 = RPC 静默不通)" %
 				[n, N_TEAM_RPC_ANN[n], tann])
+
+	# ── 回局协议的两条(阶段 2-B)──
+	for n in N_REJOIN_RPCS:
+		_check(_defines(ext, n), "★ `%s` 必须定义在 NetBusExt(放别处 = 静默 no-op)" % n)
+		_check(not _defines(bus, n),
+				"★ `%s` **不得**出现在 NetBus(改它的方法表会让与原版服务端的 RPC 全部失联)" % n)
+	for s in N_REJOIN_SIGNALS:
+		_check(ext.contains("signal " + s), "NetBusExt 缺信号 %s" % s)
+	# ★ 方向写反是**静默**的:`rejoin_denied` 若写成 any_peer = 任何客户端都能伪造"你的对局结束了";
+	#   `rejoin_request` 若写成 authority = 客户端的上行被直接拒("按钮点了没反应")。
+	for n in N_REJOIN_RPC_ANN:
+		var rann := _rpc_ann(ext, n)
+		_check(rann == N_REJOIN_RPC_ANN[n],
+				"★ `%s` 的 @rpc 注解必须逐字是 `%s`,实为 `%s`(注解错了 = RPC 静默不通)" %
+				[n, N_REJOIN_RPC_ANN[n], rann])
 
 	if _fail == 0:
 		print("RECONNECT SMOKE OK")

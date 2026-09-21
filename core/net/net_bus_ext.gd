@@ -190,3 +190,24 @@ signal reclaim_requested(caller: int, role: int, token: String)
 @rpc("any_peer", "reliable")
 func reclaim_role(role: int, token: String) -> void:
 	reclaim_requested.emit(multiplayer.get_remote_sender_id(), role, token)
+
+# ── 回大厅后回局(阶段 2-B,2026-09-21)──
+# 玩家按 ESC 回主菜单 → 回**对应模式**的大厅页,在那里他**自己那间房照常列在列表里**
+# (显示方案:对局中的房看得见、对别人进不去)。凭(房间号, token)点它 → 大厅把 `go_match`
+# **原样再发一次**,客户端于是走与首次进场**逐字同一条**转连/认领路径。
+# ★ 入口**不是**一颗专门的「回到对局」按钮(设计已改,2026-09-21):大厅侧的判据是
+#   "**这个 caller 有没有资格重进这间房**",而不是"哪颗按钮被点了"。
+# ★ 成功那一路**不另开信号**:复用的是原 NetBus 的 `go_match`(方法表一个字不动)。
+# ★ 失败那一路必须显式告诉客户端 —— 否则它会一直等一个永不到来的 go_match,而凭据没清。
+signal rejoin_requested(caller: int, code: String, token: String)
+
+@rpc("any_peer", "reliable")
+func rejoin_request(code: String, token: String) -> void:
+	rejoin_requested.emit(multiplayer.get_remote_sender_id(), code, token)
+
+# 大厅 → 客户端:这一局回不去了(凭据失效 / 房间号不符 / 对局已结束)。
+signal local_rejoin_denied(reason: String)
+
+@rpc("authority", "reliable")
+func rejoin_denied(reason: String) -> void:
+	local_rejoin_denied.emit(reason)

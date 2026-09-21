@@ -35,8 +35,9 @@ const P_C := 103
 #   helper/lambda 里出错会让调用方照常继续、判词照打(见 tests/lib/probe_base.gd 文件头)。
 #   少跑一条就红 —— 这正是"ALL-OK 不等于全都跑过"那条纪律的落点。
 #   ★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
-# ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27)。
-const EXPECTED_CHECKS := 27
+# ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27;
+#   阶段 2-B Task 5 加 ⑤⑥ 共 3 条 → 30)。
+const EXPECTED_CHECKS := 30
 
 var _rm: Node = null
 var _checks := 0
@@ -63,6 +64,7 @@ func _ready() -> void:
 	_phase_royale()
 	_phase_team()
 	_phase_reclaim()
+	_phase_rejoin()
 	_finish()
 
 
@@ -226,6 +228,33 @@ func _phase_reclaim() -> void:
 	_check(_rm.lobby.rooms.has("9011"), "④ ★ worker pid 活着(本进程)→ 房**不许**被回收")
 	_check(not _rm.lobby.royale_rooms.has("9012"), "④ worker pid 已退 → 大乱斗房必须被回收")
 	_check(_rm.lobby.team_rooms.has("9013"), "④ ★ pid 还没登记(拉起中)→ 不得判成结束")
+
+
+# ── ⑤⑥ 回局判据在**生产 handler** 上的行为(不是只测那个纯函数)──
+# ★ 为什么两半都要:纯函数测过了(`tests/rejoin_registry_smoke`),而 handler 里
+#   "查 → 判 → 发"这三步的**接线**没测 —— 把 `lookup` 写成 `lookup(token, now + 一个很大的数)`
+#   或把 `code` 传错,纯函数照样全绿。
+# ★ 本探针**观测不到 go_match**(没有对端 → `NetBus.reply` 静默跳过),故这里能断言的是
+#   拒绝路径的**副作用**(死 worker 时凭据被清)。**放行路径的真实发送**由真链路探针覆盖
+#   (`tests/rejoin_probe`),这条边界照实登记。
+# ★ 拆除那一侧的归键(端口而非房间号)另有一个专属守卫:`tests/rejoin_keying_probe.tscn`
+#   ——「两间同号的房」那个病态输入在**真 teardown_room** 上跑,本相不重复造。
+func _phase_rejoin() -> void:
+	var now := Time.get_ticks_msec()
+	# ① 房间号不符:拒绝,且凭据**不被**清(worker 还活着,值得让玩家重试一次)
+	_rm.lobby.rejoin.grant("tk_x", "9021", 1, 29921, OS.get_process_id(), now)
+	_rm.lobby.on_rejoin_request(P_C, "9999", "tk_x")
+	_check(not _rm.lobby.rejoin.lookup("tk_x", now).is_empty(),
+			"⑤ 房间号不符:拒绝但**不清**凭据(worker 还活着,能重试)")
+	# ② worker 已退:拒绝 + **清掉**凭据(它再也不会成立)
+	_rm.lobby.rejoin.grant("tk_y", "9021", 1, 29922, 999999, now)
+	_rm.lobby.on_rejoin_request(P_C, "9021", "tk_y")
+	_check(_rm.lobby.rejoin.lookup("tk_y", now).is_empty(),
+			"⑥ ★ worker 已退:拒绝并把这份凭据当场作废(留着只会骗下一个请求)")
+	# ③ 凭据根本不存在:拒绝,且不得凭空造出凭据
+	_rm.lobby.on_rejoin_request(P_C, "9021", "tk_not_exist")
+	_check(_rm.lobby.rejoin.lookup("tk_not_exist", now).is_empty(),
+			"⑥ 未知 token:拒绝且不登记任何东西")
 
 
 func _find_row(arr: Array, code: String) -> Dictionary:

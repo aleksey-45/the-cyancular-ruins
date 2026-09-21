@@ -7,7 +7,9 @@ extends SceneTree
 # ═══ 为什么需要它 ═══
 # ★ 这张表的错法全是**静默**的:TTL 边界取 > 会让"正好到点"永不过期(表只增不减);
 #   判据顺序写反会把"凭据根本不存在"报成"房间号不符"(玩家看到的提示是错的、排查方向也是错的);
-#   `drop_room` 按前缀匹配会把别的房的凭据一起清掉(那一局的玩家再也回不去,而没有任何日志)。
+#   `drop_room` 按前缀匹配会把别的房的凭据一起清掉(那一局的玩家再也回不去,而没有任何日志);
+#   ★ 2026-09-21:归键从**房间号**改成 **worker 端口**(`drop_port`)—— 房号空间在三张注册表之间
+#     是重叠的,按 code 作废会误伤**同号**的另一间房(同一个"范围比该有的大"的错,只是换了一层)。
 # ★ 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() → 进程永久挂起。
 #
 # ★★ 断言段计数(2026-09-21):`ALL-OK` 只证明"没有失败",**不证明"全都跑了"**(本仓咬过四次)——
@@ -74,7 +76,7 @@ func _initialize() -> void:
 	_ran += 1
 	# ★★ brief 原文这里写的是 `..., 4243, 0)`(与 tk_a 同一时刻登记)—— 那样 tk_b 的到期时刻
 	#   与 tk_a 相同(都 = ttl),`prune(ttl)` 会把**两条一起**清掉,而本段下面三条断言
-	#   ("清掉 1 条" / "剩 1 条(tk_b)" / "不得动没过期的")与 ⑤ 的"drop_room 应清 2 条(tk_b + tk_c)"
+	#   ("清掉 1 条" / "剩 1 条(tk_b)" / "不得动没过期的")与 ⑤("tk_b 必须是 drop_port 的目标")、⑥
 	#   都要求 tk_b 活过 `ttl`。故把登记时刻改成 `ttl`(tk_b 是**后来**登记的),本段意图不变。
 	r.grant("tk_b", "5678", 2, 29002, 4243, ttl)
 	# ★ `r` 是 `S.new()` 的结果(无静态类型)⇒ 这里**不能用 `:=`**:返回值是 Variant,
@@ -111,17 +113,29 @@ func _initialize() -> void:
 	if r.decision(live, "5678", true) != "":
 		fails.append("★ 三者都对必须放行,实得理由:%s" % r.decision(live, "5678", true))
 
-	# ── ⑤ drop_room 只掉那一间房的凭据(另一间房的必须还在)──
+	# ── ⑤ drop_port 只掉**那一局**的凭据(同号的另一间房、以及别的房的都必须还在)──
+	# ★★ 归键是 **worker 端口**,不是房间号(2026-09-21 改):三张注册表(`rooms` /
+	#   `royale_rooms` / `team_rooms`)的房号空间**重叠** —— 三处都只用 `_generate_code()` 的
+	#   4 位号、且各查各的 `has(code)`,所以"1v1 的 5678"与"大乱斗的 5678"可以**同时存在**。
+	#   故下面 tk_b / tk_c **故意同号不同端口**:tk_b 是"要被拆的那一局",tk_c 是"同号的另一间房"
+	#   —— 按 code 键时它会跟着 tk_b 一起消失(损坏有界但**一行日志都没有**)。
 	_ran += 1
-	r.grant("tk_c", "5678", 1, 29003, 4244, 0)
+	r.grant("tk_c", "5678", 1, 29003, 4244, 0)   # ★ 与 tk_b **同号**、不同 worker 端口
 	r.grant("tk_d", "7777", 1, 29004, 4245, 0)
-	var dropped: int = r.drop_room("5678")   # 同上:不能 `:=`
-	if dropped != 2:
-		fails.append("drop_room(5678) 应清掉 2 条(tk_b + tk_c),实得 %d" % dropped)
+	var dropped: int = r.drop_port(29002)   # 同上:不能 `:=`
+	if dropped != 1:
+		fails.append("drop_port(29002) 应清掉 1 条(tk_b),实得 %d" % dropped)
+	if r.lookup("tk_c", 0).is_empty():
+		fails.append("★ drop_port 不得动**同号的另一间房**的凭据(房号空间重叠 —— 按 code 键就是这个下场)")
 	if r.lookup("tk_d", 0).is_empty():
-		fails.append("★ drop_room 不得动别的房的凭据(按 code **全等**比,不是前缀/包含)")
-	if r.size() != 1:
-		fails.append("drop_room 之后 size 应为 1,实得 %d" % r.size())
+		fails.append("★ drop_port 不得动别的房的凭据")
+	if r.size() != 2:
+		fails.append("drop_port 之后 size 应为 2,实得 %d" % r.size())
+	# ★ 反向:端口 <= 0 不许当成"通配"(凭据的 worker_port 恒 > 0,0 不可能是任何一条的键)
+	if r.drop_port(0) != 0:
+		fails.append("★ drop_port(0) 清了东西 —— 0 不是任何一条凭据的键,当成通配会一次清光整张表")
+	if r.size() != 2:
+		fails.append("drop_port(0) 不得改变表,实得 size=%d" % r.size())
 
 	# ── ⑥ drop_token 只掉那一个 ──
 	_ran += 1

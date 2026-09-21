@@ -22,6 +22,10 @@ extends SceneTree
 #      (收口那条只扫 lobby_rooms.gd,扫不到写在编排层的绕道 —— 这正是该函数存在的理由);
 #   ③ 新增 `_check_rejoin_spawn_wiring`:四个 spawn 点逐个点名必须在 spawn **之后**登记凭据,
 #      且 GC 搭在 30s 回收梯上(漏一个的症状是静默的:那个模式永远回不去)。
+#  **阶段 2-B Task 5(2026-09-21,同日)**:**改名跟随** —— `rejoin.drop_room(code)` →
+#   `rejoin.drop_port(worker_port)`(三张注册表的房号空间重叠,按 code 作废会误伤同号的另一间房)。
+#   上面①②两处的判据串跟着改;`_check_reclaim_ladder` 那条**两种写法都收**(旧名留给"有人把按
+#   code 的版本加回来"这一档)。★ 这是**跟着改名**,不是放宽白名单 —— 方向别搞反。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -152,9 +156,13 @@ func _check_teardown_funnel() -> void:
 			#   作废某房的凭据同样是"拆除动作"。加它之前,**把 `drop_room` 挪到调用方**(本仓对
 			#   `teardown_room` 明令禁止的那件事)这条门**完全看不见** —— 实测:挪进
 			#   `_reclaim_finished_matches`(另一个文件)后本冒烟仍报 OK,而"同一件事两处实现"
-			#   这条纪律就只剩注释在守。判据只认**当前**的调用形状(`rejoin.drop_room(`),
+			#   这条纪律就只剩注释在守。判据只认**当前**的调用形状(`rejoin.drop_port(`),
 			#   改名/搬家时同款改这里(与上面 `_launcher.release_now` 那条同一条纪律)。
-			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase(", "rejoin.drop_room("]:
+			# ★★ 2026-09-21 同日**改名**:`drop_room(code)` → `drop_port(worker_port)`(三张注册表
+			#   的房号空间重叠,按 code 作废会误伤同号的另一间房)。★ 这里是**跟着改名**,不是
+			#   "为了让某处的调用过关而放宽" —— 放宽的方向(把不在收口里的调用也收进白名单)
+			#   恰恰是这条门存在要拦的事,别往那边改。
+			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase(", "rejoin.drop_port("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):
 						_fail = "lobby_rooms.%s 里出现 %s —— 拆除必须走 teardown_room 单一收口" % [f["name"], pat]
@@ -563,7 +571,7 @@ func _check_reclaim_ladder() -> void:
 	if not mo.contains("pid <= 0") or not mo.contains("port <= 0"):
 		_fail = "★ _match_over 没把 port/pid <= 0 判成「没结束」(开局那一瞬会被自己的回收梯拆掉)"
 		return
-	# ★★ 阶段 2-B(Task 4,2026-09-21)新增的**反向**断言:凭据表作废(`rejoin.drop_room`)必须
+	# ★★ 阶段 2-B(Task 4,2026-09-21)新增的**反向**断言:凭据表作废(`rejoin.drop_port`)必须
 	#   留在 `teardown_room` 体内(上面那条"绕道直接删注册表"的同一件事 —— 凭据表也是一张注册表)。
 	#   ★ 为什么必须在这里另加一条:上面那条正向断言(`_check_teardown_funnel`)只扫
 	#   `server/lobby_rooms.gd`,**扫不到写在 room_manager 里的绕道** —— 这正是本函数存在的理由。
@@ -571,11 +579,15 @@ func _check_reclaim_ladder() -> void:
 	#   的拆除循环,**本冒烟照旧报 OK** —— 那份"别把这段挪到调用方"的纪律当时只剩注释在守。
 	#   ★ 这是一条**否定式**判据(不许出现),不是"必须出现":凭据登记(`rejoin.grant`)在
 	#   `_grant_rejoin` 里、是正常路径,别把两者混为一谈。
-	#   ★ 判据**只收 `drop_room(`**:那是"整房作废"(拆除动作)。`drop_token(` 是"消费掉某一份
-	#   凭据",不是拆除动作、将来可能合法地出现在别处,收进来只会造出假红。
-	if code.contains("rejoin.drop_room("):
-		_fail = "★ room_manager 里出现 rejoin.drop_room( —— 凭据作废必须留在 teardown_room 体内(挪到调用方 = 同一件事两处实现)"
-		return
+	#   ★ 判据**只收 `drop_port(`/`drop_room(` 两种写法**:那是"整房作废"(拆除动作)。`drop_token(`
+	#   是"消费掉某一份凭据",不是拆除动作、将来可能合法地出现在别处,收进来只会造出假红。
+	#   ★ 两种写法都收:本函数落地当天 `drop_room` 改名成了 `drop_port`(见 `_check_teardown_funnel`
+	#   那条注释)—— 只留旧名的门对**当前**的绕道彻底失明,只留新名的门认不出有人把按 code 的
+	#   版本加回来。多留一个字符串在这里是**加宽判据面**,与"放宽白名单"是相反的方向。
+	for stale in ["rejoin.drop_port(", "rejoin.drop_room("]:
+		if code.contains(stale):
+			_fail = "★ room_manager 里出现 %s —— 凭据作废必须留在 teardown_room 体内(挪到调用方 = 同一件事两处实现)" % stale
+			return
 	_done.append("_check_reclaim_ladder")
 
 

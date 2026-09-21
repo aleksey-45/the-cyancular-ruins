@@ -91,9 +91,9 @@ class TeamRoom:
 var team_rooms: Dictionary = {}   # code -> TeamRoom
 
 # 回局凭据表(阶段 2-B)。★ 它**独立于房对象**:房被拆除时凭据要不要跟着消失,由
-# `teardown_room` **显式**决定(`rejoin.drop_room`),而不是由"房对象还在不在"隐式决定
+# `teardown_room` **显式**决定(`rejoin.drop_port`),而不是由"房对象还在不在"隐式决定
 # —— 回局的查询要在大厅侧活过拆除(见 RejoinRegistry 的类头)。三个房类原先各有一份
-# `tokens` 字段,随本次一起删除:同一件事只留一处记录。
+# `tokens` 字段,随 Task 4 一起删除:同一件事只留一处记录。
 var rejoin := RejoinRegistry.new()
 
 
@@ -137,6 +137,8 @@ func _enter_tree() -> void:
 	NetBusExt.team_pick_requested.connect(team_pick)
 	NetBusExt.team_leave_requested.connect(team_leave)
 	NetBusExt.team_list_requested.connect(team_list)
+	# 回局(阶段 2-B):上行是"我这间房还让我回吗" —— 判据与答复都在本类(它持有凭据表)。
+	NetBusExt.rejoin_requested.connect(on_rejoin_request)
 
 func _exit_tree() -> void:
 	NetBus.room_create_requested.disconnect(create_room)
@@ -153,6 +155,7 @@ func _exit_tree() -> void:
 	NetBusExt.team_pick_requested.disconnect(team_pick)
 	NetBusExt.team_leave_requested.disconnect(team_leave)
 	NetBusExt.team_list_requested.disconnect(team_list)
+	NetBusExt.rejoin_requested.disconnect(on_rejoin_request)
 
 func on_lobby_name(caller: int, name: String) -> void:
 	_peer_names[caller] = name if not name.is_empty() else "Anon"
@@ -722,6 +725,37 @@ func team_list(caller: int) -> void:
 		NetBusExt.rpc_id(caller, "team_rooms", team_list_payload())
 
 
+# ── 回大厅后回局(spec §3.4 路径乙)──
+# 客户端在自己的大厅页上**点自己那间房**(对局中的房照常列在列表里,对别人点它只会被
+# `join_room`/`*_join` 那句「该房间的对局已进行中,无法加入」拒掉)。**应答复用 `go_match`**
+# (方法表一个字不动),于是客户端那条"连 worker → 认领 role → 进对局场景"的路与首次进场
+# **逐字同一条**。
+# ★ 这里**不判对局状态**("你还在宽限期吗"只有 worker 手里的 `_grace` 知道),只判两件事:
+#   凭据对不对得上、以及**这一局的 worker 还在不在** —— 后者防止把一个客户端送到一个已经结束、
+#   端口可能已被复用给别的对局的地址上。★ "晚了"的那一档(认领时该 role 已不在宽限期)由
+#   worker 的 `_on_reclaim` 判并踢连接,客户端会回到大厅页并看到失败提示(路径乙的已知边界)。
+# ★ 判据本体是**纯函数**(`RejoinRegistry.decision`):四种组合在 `-s` 冒烟里逐个钉住,
+#   本函数只做"查 → 判 → 发",不在这里再写一遍 if/else(那正是漂的成因)。
+func on_rejoin_request(caller: int, code: String, token: String) -> void:
+	var now := Time.get_ticks_msec()
+	var e := rejoin.lookup(token, now)
+	var alive := WorkerLauncher.pid_alive(int(e.get("worker_pid", 0)))
+	var why := RejoinRegistry.decision(e, code, alive)
+	if why != "":
+		# ★ worker 已经退了 → 这份凭据再也不会成立,当场清掉:留着它只会让**下一个**请求
+		#   再走一遍同样的拒绝。
+		if not e.is_empty() and not alive:
+			rejoin.drop_token(token)
+		print("[lobby] 拒绝回局(peer=%d):%s" % [caller, why])
+		if NetBus.is_peer_live(caller):
+			NetBusExt.rpc_id(caller, "rejoin_denied", why)
+		return
+	print("[lobby] 回局:房间 %s role %d → worker 端口 %d" % [
+			code, int(e.get("role", 0)), int(e.get("worker_port", 0))])
+	# 复用原版 go_match:签名与首次进场完全相同(role, port)
+	NetBus.reply(caller, "go_match", int(e.get("role", 0)), int(e.get("worker_port", 0)))
+
+
 # 房间状态广播(等待室/选边)。与 royale 那两条同款:call_deferred + 帧末再等一帧 + 开局后不再发。
 func _broadcast_team_state(tr: TeamRoom) -> void:
 	_flush_team_state.call_deferred(tr)
@@ -815,7 +849,11 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 	print("%s %s 拆除(端口 %d %s)" % [kind, room.code, port, how])
 	# ★ 这一局的凭据随房一起作废:房都拆了,worker 要么已经退了、要么马上会被杀,留着凭据
 	#   只会让回局把客户端送到一个已经不属于它的端口上(而且**没有一行报错**)。
-	var ntk := rejoin.drop_room(room.code)
+	# ★★ 键是 **worker 端口**(`port`,上面刚从 `room.worker_port` 取的那一份),**不是
+	#   `room.code`**(2026-09-21 修):三张注册表的房号空间重叠,按 code 作废会误伤**同号**的
+	#   另一间房里那位玩家的凭据 —— 与上面那一行 `is` 判定是**同一个坑**(同一段注释里就写着
+	#   "别拿 room.code 去三张表里撞库",这里原先自己踩的就是它)。详见 RejoinRegistry.drop_port。
+	var ntk := rejoin.drop_port(port)
 	if ntk > 0:
 		print("  同时作废 %d 份回局凭据" % ntk)
 	if disconnect_peers:
