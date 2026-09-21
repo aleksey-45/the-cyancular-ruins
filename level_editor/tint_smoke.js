@@ -244,6 +244,86 @@ function makeAtlas() {
            'buildTilePixels: 图集里没有这块(越出下边界)抛错', '图集');
   })();
 
+  // ==== 相位 ⑦ tinted-tile 缓存(规格 §4.2 ④ / §4.3 闸 1)====
+  (function () {
+    // 注入式 backend:node 里没有 canvas,缓存把"画出来的像素"交给 backend ——
+    // 我们记录它收到了什么,于是能断言"缓存给出去的像素 = 直算的像素"。
+    const made = [];
+    const backend = {
+      createTile: function (pixels, size) {
+        made.push({ pixels: pixels, size: size });
+        return { fake: true, pixels: pixels, size: size };
+      },
+    };
+    const atlas = makeAtlas();
+    const N1 = Core.neutralDesc(1), N2 = Core.neutralDesc(2), N3 = Core.neutralDesc(3), N4 = Core.neutralDesc(4);
+
+    // 没 setSource 就 get → 抛错(而不是画出一块空白)
+    const bare = Tint.createTileCache({ backend: backend });
+    throws(function () { bare.get(1, 0, 0, N1); }, 'createTileCache: 没 setSource 就 get → 抛错', 'setSource');
+
+    const cache = Tint.createTileCache({ maxSize: 3, backend: backend });
+    cache.setSource(atlas, ATLAS_W);
+    const a = cache.get(3, 2, 1, Core.neutralDesc(3));
+    eq(made.length, 1, '未命中才会让 backend 造图');
+    ok(a && a.fake === true, 'get 返回的正是 backend 造出来的那个对象');
+    sameBytes(made[0].pixels,
+              Tint.buildTilePixels(atlas, ATLAS_W, 3, 2, 1, Core.neutralDesc(3)),
+              '★ 缓存交给 backend 的像素与直接算的逐字节一致(缓存没有改坏像素)');
+    eq(made[0].size, Tint.TILE_PX, 'backend 收到的尺寸是 16');
+    ok(a === cache.get(3, 2, 1, Core.neutralDesc(3)), '相同键第二次命中同一个对象');
+    eq(made.length, 1, '命中不再造图');
+    eq(cache.stats(), { hits: 1, misses: 1, evictions: 0, size: 1, maxSize: 3 }, 'stats 记账(hits/misses/evictions/size)');
+    ok(cache.has(3, 2, 1, Core.neutralDesc(3)), 'has: 命中');
+    ok(!cache.has(3, 2, 1, Core.packDesc(3, 5, 4, 4, 7)),
+       '★ 描述符不同 = 不同键(同一象限的不同辅码各存一份)');
+    ok(!cache.has(2, 2, 1, Core.neutralDesc(3)), '★ 纹理不同 = 不同键');
+    ok(!cache.has(3, 1, 1, Core.neutralDesc(3)), '★ 象限不同 = 不同键');
+
+    // LRU:maxSize 3,塞第 4 个 → 最久未用的那个被淘汰
+    cache.clear();
+    cache.get(1, 0, 0, N1);            // A
+    cache.get(2, 0, 0, N2);            // B
+    cache.get(3, 0, 0, N3);            // C
+    cache.get(1, 0, 1, N1);            // D → A 最久未用,被淘汰
+    ok(!cache.has(1, 0, 0, N1), '★ LRU: 塞第 4 个时最久未用的那个被淘汰');
+    ok(cache.has(2, 0, 0, N2) && cache.has(3, 0, 0, N3) && cache.has(1, 0, 1, N1), 'LRU: 其余三个还在');
+    eq(cache.stats().size, 3, 'LRU: 容量守住 maxSize');
+    ok(cache.stats().evictions >= 1, 'LRU: 淘汰计数被记上');
+    cache.get(2, 0, 0, N2);            // 命中 → B 提到最近端
+    cache.get(4, 0, 0, N4);            // E → 淘汰此时最久未用的 C
+    ok(cache.has(2, 0, 0, N2), '★ LRU: 命中过的条目被提到最近端(没被淘汰)');
+    ok(!cache.has(3, 0, 0, N3), '★ LRU: 被淘汰的是最久未用的那个');
+
+    // ★★ 换图必须整片失效 —— 审计 A2 的原样翻版:
+    //    旧编辑器在 structure.png 加载完成前写进纯色兜底且**永不失效**,
+    //    于是地图一直是色块,还"有时好有时坏"。
+    const beforeStats = cache.stats();
+    cache.setSource(atlas, ATLAS_W);
+    eq(cache.stats().size, 0, '★★ setSource 清空缓存(资源换了 = 缓存全废,不许留旧的色块)');
+    ok(!cache.has(3, 0, 0, N3), 'setSource 之后旧条目查不到');
+    ok(cache.stats().hits === beforeStats.hits && cache.stats().misses === beforeStats.misses,
+       'setSource 不重置记账(hits/misses 是累计量)');
+    const m0 = made.length;
+    cache.get(3, 0, 0, N3);
+    eq(made.length - m0, 1, 'setSource 之后同一个键会重新造(确实失效了,不是"命中旧图")');
+
+    // maxSize 0 = 不缓存
+    const nocache = Tint.createTileCache({ maxSize: 0, backend: backend });
+    nocache.setSource(atlas, ATLAS_W);
+    const m1 = made.length;
+    nocache.get(1, 0, 0, N1);
+    nocache.get(1, 0, 0, N1);
+    eq(made.length - m1, 2, 'maxSize 0 → 每次都现造(不缓存)');
+    eq(nocache.stats().size, 0, 'maxSize 0 → size 恒 0');
+    eq(Tint.createTileCache({ backend: backend }).stats().maxSize, Tint.DEFAULT_MAX_TILES,
+       '默认 maxSize = DEFAULT_MAX_TILES');
+
+    // ★ 浏览器默认后端在 node 里必须**明确报错**,而不是悄悄画不出来
+    throws(function () { Tint.DEFAULT_BACKEND.createTile(new Uint8ClampedArray(4), 1); },
+           '★ DEFAULT_BACKEND 在 node(没有 document)里明确抛错', 'document');
+  })();
+
   // ==== 断言区结束 ====
   console.log('');
   console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');

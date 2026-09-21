@@ -135,6 +135,77 @@ globalThis.Tint = (function () {
     return out;
   }
 
+  // ── tinted-tile 缓存(规格 §4.2 ④)──
+  // 键 = (纹理, 象限, 描述符) → 一张 16×16 小图。贴图源只有 32×32,一块小图 256 像素,
+  // 手算极便宜 —— 但同一块会被画成千上万次,故必须缓存。
+  // ★ 画布是**注入**的:node 里没有 document,缓存把"画出来的像素"交给 backend,
+  //   于是缓存的键/淘汰/失效逻辑在 node 里可以完整断言。
+  var DEFAULT_BACKEND = {
+    createTile: function (pixels, size) {
+      if (typeof document === 'undefined') {
+        throw new Error('Tint: 本环境没有 document,请给 createTileCache 传 backend(node 测试用)');
+      }
+      var c = document.createElement('canvas');
+      c.width = size;
+      c.height = size;
+      var ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = false;       // 最近邻,与项目其余部分一致
+      ctx.putImageData(new ImageData(pixels, size, size), 0, 0);
+      return c;
+    },
+  };
+
+  function createTileCache(opts) {
+    opts = opts || {};
+    var maxSize = opts.maxSize === undefined ? DEFAULT_MAX_TILES : opts.maxSize;
+    var backend = opts.backend || DEFAULT_BACKEND;
+    // ★ Map 的**插入序就是 LRU 序**:命中时 delete + set 把条目提到末尾,
+    //   淘汰时取 keys().next().value(最老的那个)。
+    var tiles = new Map();
+    var atlas = null, atlasWidth = 0;
+    var hits = 0, misses = 0, evictions = 0;
+
+    // ★★ 换图**必须**整片失效(审计 A2):旧编辑器在 structure.png 加载完成前写进
+    //    纯色兜底、且永不失效 —— 于是地图一直是色块,而且"有时好有时坏"。
+    //    资源换了就是换了,没有"部分还新鲜"这回事。
+    function setSource(data, width) {
+      atlas = data;
+      atlasWidth = width | 0;
+      tiles.clear();
+    }
+    function tileKey(texture, qx, qy, desc) {
+      return texture + '/' + (qx & 3) + '/' + (qy & 3) + '/' + (desc >>> 0);
+    }
+    function get(texture, qx, qy, desc) {
+      var k = tileKey(texture, qx, qy, desc);
+      var hit = tiles.get(k);
+      if (hit !== undefined) {
+        hits++;
+        tiles.delete(k);
+        tiles.set(k, hit);                     // 提到最近使用端
+        return hit;
+      }
+      misses++;
+      if (!atlas) throw new Error('Tint: 还没 setSource,拿不到贴图(别在图片加载完成前画)');
+      var tile = backend.createTile(buildTilePixels(atlas, atlasWidth, texture, qx, qy, desc), TILE_PX);
+      if (maxSize > 0) {
+        tiles.set(k, tile);
+        while (tiles.size > maxSize) {
+          tiles.delete(tiles.keys().next().value);
+          evictions++;
+        }
+      }
+      return tile;
+    }
+    function has(texture, qx, qy, desc) { return tiles.has(tileKey(texture, qx, qy, desc)); }
+    function clear() { tiles.clear(); }
+    function stats() {
+      return { hits: hits, misses: misses, evictions: evictions, size: tiles.size, maxSize: maxSize };
+    }
+    return { setSource: setSource, get: get, has: has, clear: clear, stats: stats,
+             tileKey: tileKey };
+  }
+
   // 缓存上限(Task 5 用):8192 × 16×16×4 字节 = 正好 8MB(规格 §4.3 闸 1)。
   var DEFAULT_MAX_TILES = 8192;
 
@@ -147,5 +218,6 @@ globalThis.Tint = (function () {
     BLOCK_PX: BLOCK_PX, QUAD_PX: QUAD_PX, TILE_PX: TILE_PX,
     textureBlockRect: textureBlockRect, buildTilePixels: buildTilePixels,
     DEFAULT_MAX_TILES: DEFAULT_MAX_TILES,
+    DEFAULT_BACKEND: DEFAULT_BACKEND, createTileCache: createTileCache,
   };
 })();
