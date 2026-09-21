@@ -36,8 +36,10 @@ const P_C := 103
 #   少跑一条就红 —— 这正是"ALL-OK 不等于全都跑过"那条纪律的落点。
 #   ★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
 # ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27;
-#   阶段 2-B Task 5 加 ⑤⑥ 共 3 条 → 30)。
-const EXPECTED_CHECKS := 30
+#   阶段 2-B Task 5 加 ⑤⑥ 共 **4** 条 → **31**)。
+#   ★ 比 brief 的 30 多一条:第 ④ 条(走信号那条**接线**断言)—— brief 只列了三条直调 handler
+#     的断言,而"connect 那行被删"这一档**三条都照绿**(见 `_phase_rejoin` 的函数头)。
+const EXPECTED_CHECKS := 31
 
 var _rm: Node = null
 var _checks := 0
@@ -237,6 +239,12 @@ func _phase_reclaim() -> void:
 # ★ 本探针**观测不到 go_match**(没有对端 → `NetBus.reply` 静默跳过),故这里能断言的是
 #   拒绝路径的**副作用**(死 worker 时凭据被清)。**放行路径的真实发送**由真链路探针覆盖
 #   (`tests/rejoin_probe`),这条边界照实登记。
+# ★★ ④ 那一条**不是**多余的:`NetBusExt.rejoin_requested → on_rejoin_request` 这一行**接线**
+#   此前**零覆盖** —— 上面三条都是**直调 handler**,把 `_enter_tree` 里那行 connect 删掉,
+#   它们照样全绿(handler 本体没问题),而生产里回局**永远失败且一行报错都没有**
+#   (净的静默 no-op,与"RPC 挂错节点"同一类)。故第 ④ 条**走信号**(emit)而不直调:
+#   能观测到副作用(凭据被清)就说明那行 connect 在。同款纪律的先例:`team_room_smoke` ⑥
+#   「判据函数测对了 ≠ 生产调的是它」。
 # ★ 拆除那一侧的归键(端口而非房间号)另有一个专属守卫:`tests/rejoin_keying_probe.tscn`
 #   ——「两间同号的房」那个病态输入在**真 teardown_room** 上跑,本相不重复造。
 func _phase_rejoin() -> void:
@@ -255,6 +263,13 @@ func _phase_rejoin() -> void:
 	_rm.lobby.on_rejoin_request(P_C, "9021", "tk_not_exist")
 	_check(_rm.lobby.rejoin.lookup("tk_not_exist", now).is_empty(),
 			"⑥ 未知 token:拒绝且不登记任何东西")
+	# ④ 接线:同一件事**走信号**(emit)再验一次 —— 只直调 handler 时,`_enter_tree` 里那行
+	#    `NetBusExt.rejoin_requested.connect(on_rejoin_request)` 被删也全绿(见函数头)。
+	#    用"死 worker"那一档造可观测的副作用(与②同一手法)。
+	_rm.lobby.rejoin.grant("tk_w", "9021", 1, 29923, 999999, now)
+	NetBusExt.rejoin_requested.emit(P_C, "9021", "tk_w")
+	_check(_rm.lobby.rejoin.lookup("tk_w", now).is_empty(),
+			"⑥ ★ 信号接线在位(emit rejoin_requested 能落到生产 handler:connect 被删就红)")
 
 
 func _find_row(arr: Array, code: String) -> Dictionary:
