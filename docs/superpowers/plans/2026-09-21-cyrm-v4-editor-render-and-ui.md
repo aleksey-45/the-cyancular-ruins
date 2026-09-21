@@ -2195,15 +2195,28 @@ Expected: 两条都打印 `ok: …`,退出码 0。
     });
     ok(orderOk, '★★ 六个外部脚本按依赖顺序排:core → tile_defs → tint → render → io → ui' +
        '(首个不对:' + firstBad + ';tint 对 Core 是硬依赖,render 对两者是硬依赖)');
-    ok(!/<script src="\//.test(page) && page.indexOf('://') < 0,
-       '★ 页面里没有绝对路径/外部 URL 的脚本(编辑器只走本机 HTTP)');
+    // ★★ 只查 `<script src>` 的**值**。初版拿整页做 `page.indexOf('://') < 0`,而页面里
+    //    **合法地**含 `://` —— 敌人注册表每条都带 `"scene": "res://…"`(Step 4 刚写进去的)
+    //    ⇒ 这条断言在同一个 commit 落地的那一刻就假红。要判的是"脚本从哪来",不是
+    //    "整页有没有冒号斜杠"。
+    const srcVals = (page.match(/<script\s+src="[^"]*"/g) || []).map(function (t) {
+      return /src="([^"]*)"/.exec(t)[1];
+    });
+    ok(srcVals.length >= 6 && srcVals.every(function (v) {
+      return v.charAt(0) !== '/' && v.indexOf('://') < 0;
+    }), '★ 页面里的脚本都是相对路径、没有绝对路径/外部 URL(编辑器只走本机 HTTP)');
     ok(page.indexOf('file://') < 0, '★ 页面里没有 file://(规格 §1.2:只走 HTTP)');
     ok(/id="map-canvas"/.test(page), '页面有 id="map-canvas"');
     ok(/id="toolbar"/.test(page) && /id="lib"/.test(page) && /id="right"/.test(page) &&
        /id="statusbar"/.test(page), '§4.5 的四块版式都在(工具条 / 库 / 右栏 / 状态栏)');
     ok((page.match(/class="tool" data-tool=/g) || []).length === 8,
        '工具条有 8 个工具按钮(画笔/矩形/油漆桶/橡皮/直线/选框/吸管/渐变)');
-    ok((page.match(/class="layer-row"/g) || []).length === 4, '图层列表有 4 行');
+    // ★★ 用 `class="layer-row[^"]*"` 而不是 `class="layer-row"` 字面量:图层行里有一行带
+    //    ` cur`(`.layer-row.cur` 是当前图层),字面量只匹配到 **3** 行 ⇒ 原来那条断言
+    //    **不可能通过**。也不能图省事写 `\blayer-row\b` —— 那会把上面 `<style>` 里同样含
+    //    `layer-row` 的 4 条 CSS 选择器一起数进来(得到 8)。
+    ok((page.match(/class="layer-row[^"]*" data-layer="\d"/g) || []).length === 4,
+       '图层列表有 4 行');
     ok(/id="boot-error"/.test(page), '★ 有启动错误条(缺 Worker 时把话说清楚,而不是静默)');
     ok(page.indexOf('Editor.boot()') >= 0, '★ 页面只负责把 DOM 交给 ui.js(页面里没有编辑器逻辑)');
     ok(/__ENEMY_REGISTRY_BEGIN__/.test(page) && /window\.ENEMY_REGISTRY\s*=/.test(page),
