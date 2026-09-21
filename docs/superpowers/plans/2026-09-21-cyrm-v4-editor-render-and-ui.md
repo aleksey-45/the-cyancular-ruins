@@ -113,6 +113,32 @@
     - `encodeMap(map, opts) -> Promise<Uint8Array>` / `decodeMap(bytes) -> Promise<Object>` / `ping() -> Promise<Object>` —— 共用同一个惰性创建的单例 codec
   - `WorkerLike` 的形状(注入契约):`{postMessage(msg):void, onmessage:(ev)=>void, onerror?:(ev)=>void, terminate?():void}`
 
+> ★★ **本节下面的代码块是「落地前的初版」,不是最终交付。** Task 1 实现后经历了两轮评审修复
+> (`98b2319`、`54a6d22` —— 分别是"评审发现的 8 条"与"守卫加固的 4 条",逐条见账本),交付的两份源码
+> 与下面这些块**已有实质差异**。**别把它们当成要照抄的实现要求,也别指望"重新抽一次 Task 1
+> 的 brief 就等于拿到最新版"**:重新抽会把已经修掉的缺陷原样带回来,而 `node --check`
+> 那类检查**照样报绿**(陈旧代码块仍然能编译)⇒ 这是**静默**漂移。要看最新源码就读
+> `level_editor/io.js` 与 `level_editor/worker_io_smoke.js`,或看账本 `.superpowers/sdd/progress.md`
+> 里 Task 1 的各条(含每处改动的理由与变异证据)。
+>
+> **`io.js` 与下面那块的差异(六组,每处都在源码里用中文注释点名了理由)**:
+> ① 删掉**零调用点**的 `errText` 死副本(错误文本在 `worker.js` 里就格式化好、随 `{ok:false,error}` 回来了),文件头补了模块说明;
+> ② 删掉死 API `workerStarts()` 与它的计数器 `started`;
+> ③ `onerror` 由 `if (typeof worker.onerror !== 'function') { … }` 改成**无条件**覆盖 ——
+>    原写法遇到"工厂返回了自带 `onerror` 的 worker"就**不订阅**本 codec 的失败处理,
+>    而代码看上去"已经处理了 onerror"(崩溃后所有在飞请求永久悬挂);
+> ④ `postMessage` 包 try/catch:抛时删掉表里自己那一条再抛(否则 resolver 被永久攥着、
+>    `pendingCount()` 再也回不到 0,而调用方只看到一次失败);
+> ⑤ 新增 `reapWorker()`,`failAll` 与 `terminate()` **共用同一个死亡收口** —— 原先
+>    `onerror` 那条只标死、**不收走** worker,线程一直被引着直到页面关掉;
+> ⑥ `terminate()` 改为"先真回收、再在 `dead === null` 时 `failAll(…)`":在飞请求不再永不 settle,
+>    下一次调用也不再**静默**新建一个 worker,且先前死因不被后一次覆盖。
+>
+> **`worker_io_smoke.js` 从 196 行长到 345 行**:桩改为按应答**自己的 id** 派生交付次序
+> (既非恒等也**非倒序** —— 精确倒序会让"取最新待决条目"的实现恰好全对,那是个假绿洞),
+> 并新增尾部相位(未知 `op`、`onerror → failAll`、`terminate` 的收口)与"测试自己的 factory
+> 计数"断言(用来真正观测"有没有静默又起一个 worker")。
+
 - [ ] **Step 1: 写测试 `level_editor/worker_io_smoke.js`(此时必然红)**
 
 新建 `level_editor/worker_io_smoke.js`:
