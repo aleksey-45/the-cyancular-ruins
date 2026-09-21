@@ -162,6 +162,8 @@ func _on_room_list(rooms: Array) -> void:
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
 			continue
+		# ★ 对局中的房 players 记的是**冻结名单**的条数(1v1 恒 2)→ 自然落进 full 那一档排到最后,
+		#   正是想要的观感(在打的排最后,可加入的排前面),不需要为它另写一条排序。
 		(full if int(r.get("players", 2)) >= 2 else partial).append(r)
 	var order: Array = partial + full
 	if order.is_empty():
@@ -173,12 +175,17 @@ func _on_room_list(rooms: Array) -> void:
 	for r in order:
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
+		# ★ 对局中的房**照列**但**点不动**(用户要求:"所有人都可以看到所有房间(包括游戏已经
+		#   进行的房间)…无论在对战还是掉线 C 都不应该进去")。服务端 `join_room` 那边也拒
+		#   (`room.started`)—— **两半都要**:`disabled` 是体验,服务端那道才是保证
+		#   (在「房间号」框里手敲房号、或旧客户端绕过界面,照样进不去)。
+		var in_match := bool(r.get("in_match", false))
 		var occ: String = ""
 		var names: Array = r.get("names", [])
 		if not names.is_empty():
 			occ = "   玩家: " + ", ".join(names)
 		var btn := Button.new()
-		btn.text = "房间 %s    %d/2%s" % [code, players, occ]
+		btn.text = "房间 %s    %s%s" % [code, "对局中" if in_match else "%d/2" % players, occ]
 		UiFactory.style_control(btn, 16)
 		UiFactory.style_row_button(btn)
 		btn.custom_minimum_size = Vector2(600, 46)
@@ -186,14 +193,18 @@ func _on_room_list(rooms: Array) -> void:
 		# 两行的房间号列 / 人数列天然对齐。原先居中排版,行的长短一变整串就跟着左右漂
 		# ——「1/2」在两行里位置都不同,读起来是一堆居中的字而不是一张表。
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		# 点击方块直接加入(已满的由服务器拒绝并自动刷新列表)
-		btn.disabled = false
-		btn.focus_mode = Control.FOCUS_ALL
-		btn.pressed.connect(func() -> void:
-			Sfx.play("ui")
-			_join_code(code))
+		# ★ 对局中的行**不接 handler、也不吃键盘焦点**:焦点环能落到它上面等于邀请一次注定
+		#   失败的按下(`UiFactory.style_row_button` 早就带了 disabled 的样式,不新增任何颜色)。
+		btn.disabled = in_match
+		if in_match:
+			btn.focus_mode = Control.FOCUS_NONE
+		else:
+			btn.focus_mode = Control.FOCUS_ALL
+			btn.pressed.connect(func() -> void:
+				Sfx.play("ui")
+				_join_code(code))
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个房间(未满优先)" % order.size()
+	_status.text = "共 %d 个房间(未满优先;对局中的照列但不可进)" % order.size()
 
 
 # 本页比大乱斗多两段:①点了失效/已满的房间 → 提示并自动刷新一次(列表常驻陈旧房间,点了必失败);

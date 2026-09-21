@@ -250,7 +250,7 @@ func _on_royale_rooms(rooms: Array) -> void:
 		var empty := UiFactory.label("暂无公开房间 —— 右侧「创建房间」开一把大乱斗", 32, Color(0.8, 0.85, 0.9))
 		empty.custom_minimum_size = Vector2(620, 40)
 		_list_box.add_child(empty)
-		_status.text = "共 0 个公开房间"
+		_status.text = "共 0 个公开房间(对局中的照列但不可进)"
 		return
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
@@ -258,16 +258,24 @@ func _on_royale_rooms(rooms: Array) -> void:
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
 		var maxp := int(r.get("max_players", 4))
+		# ★ 对局中的房**照列**但**点不动**(与 1v1 页同款:可见性与拒绝入房是同一件事的两半;
+		#   服务端 `royale_join` / `team_join` 的 in_match 守卫才是那道保证)。
+		var in_match := bool(r.get("in_match", false))
 		var occ := ""
 		var names: Array = r.get("names", [])
 		if not names.is_empty():
 			occ = "   " + ", ".join(names)
-		var btn := UiFactory.button("房间 %s      %d/%d%s" % [code, players, maxp, occ], 32, Vector2(620, 46))
-		btn.pressed.connect(func() -> void:
-			Sfx.play("ui")
-			_join_room(code, ""))
+		var btn := UiFactory.button("房间 %s      %s%s" % [code,
+				"对局中" if in_match else "%d/%d" % [players, maxp], occ], 32, Vector2(620, 46))
+		btn.disabled = in_match
+		if in_match:
+			btn.focus_mode = Control.FOCUS_NONE
+		else:
+			btn.pressed.connect(func() -> void:
+				Sfx.play("ui")
+				_join_room(code, ""))
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个公开房间" % rooms.size()
+	_status.text = "共 %d 个公开房间(对局中的照列但不可进)" % rooms.size()
 
 # 房间实时状态 → 等待室面板
 func _on_room_state(state: Dictionary) -> void:
