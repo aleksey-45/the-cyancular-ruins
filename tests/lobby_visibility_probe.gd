@@ -16,6 +16,9 @@ extends Node
 #   都是**静默**的(房不死 = 端口与列表位永久占用;房早死 = 谁也看不见)。
 # ★ 列表可见性与拒绝入房是**同一件事的两半**:房留着才会出现在列表里,而出现之后必须**进不去**。
 #   只断言"列表里有它"会让一个"能点进去"的实现全绿 —— 那正是把第三人放进了别人的对局里。
+#   ★★ 2026-09-21(回局入口批)把这句话**收窄**成「对局中的房**对无凭据者**一律拒绝」:
+#   相①②③ 的断言本体一字不改(它们用的 `P_C` 就是那个无凭据的第三人),变的只是**它表达的那句话**;
+#   而**补集那一半**(持凭据的本人那一行可点 ⇒ 点了回局)由相⑧咬住。
 #   ★★ 故拒绝那一半用**非满房**造:1v1 房里 1 人 / 大乱斗 2 人(上限 8)/ 3v3 房里 2 人时,
 #   唯一的拒绝理由只剩 `started` / `in_match` —— 用满房造会被「房间已满」喂绿(等于没验)。
 # ★ 本探针建的是**真 RoomManager + 真 LobbyRooms**(与生产同一条构造路径),房记录由探针手工摆:
@@ -36,10 +39,13 @@ const P_C := 103
 #   少跑一条就红 —— 这正是"ALL-OK 不等于全都跑过"那条纪律的落点。
 #   ★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
 # ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27;
-#   阶段 2-B Task 5 加 ⑤⑥ 共 **4** 条 → **31**;阶段 2-B Task 6 加 ⑦ 共 **6** 条 → **37**)。
+#   阶段 2-B Task 5 加 ⑤⑥ 共 **4** 条 → **31**;阶段 2-B Task 6 加 ⑦ 共 **6** 条 → **37**;
+#   阶段 2-B Task 7 加 ⑧ 共 **1** 条 → **38**)。
 #   ★ 比 brief 的 30 多一条:第 ④ 条(走信号那条**接线**断言)—— brief 只列了三条直调 handler
 #     的断言,而"connect 那行被删"这一档**三条都照绿**(见 `_phase_rejoin` 的函数头)。
-const EXPECTED_CHECKS := 37
+#   ★ ⑧ 是**一条聚合**断言(内部三页逐页核对、失败时逐页点名),**不是三条** —— 相⑧要断的是
+#     三页共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
+const EXPECTED_CHECKS := 38
 
 var _rm: Node = null
 var _checks := 0
@@ -68,6 +74,7 @@ func _ready() -> void:
 	_phase_reclaim()
 	_phase_rejoin()
 	_phase_session_flags()
+	_phase_own_row_clickable()
 	_finish()
 
 
@@ -122,7 +129,7 @@ func _phase_1v1() -> void:
 	var before := r.players.size()
 	_rm.lobby.join_room(P_C, ROOM_1V1)
 	_check(r.players.size() == before and not r.players.has(P_C),
-			"① ★ 第三人 join_room 被拒(房里 1 人:唯一能拒它的就是 started)")
+			"① ★ 第三人(**无凭据**)join_room 被拒(房里 1 人:唯一能拒它的就是 started)—— 补集那一半见相⑧")
 
 
 # ── ② 大乱斗:同 ①(门控是 in_match,不是 started)──
@@ -158,7 +165,7 @@ func _phase_royale() -> void:
 	var before := rr.players.size()
 	_rm.lobby.royale_join(P_C, ROOM_ROYALE, "")
 	_check(rr.players.size() == before and not rr.players.has(P_C),
-			"② ★ 第三人 royale_join 被拒(2/8 非满房:唯一能拒它的是 in_match)")
+			"② ★ 第三人(**无凭据**)royale_join 被拒(2/8 非满房:唯一能拒它的是 in_match)")
 
 
 # ── ③ 3v3:同上(与大乱斗逐字同款,门控也是 in_match)──
@@ -195,7 +202,7 @@ func _phase_team() -> void:
 	var before := tr.players.size()
 	_rm.lobby.team_join(P_C, ROOM_TEAM, "")
 	_check(tr.players.size() == before and not tr.players.has(P_C),
-			"③ ★ 第三人 team_join 被拒(2/6 非满房:唯一能拒它的是 in_match)")
+			"③ ★ 第三人(**无凭据**)team_join 被拒(2/6 非满房:唯一能拒它的是 in_match)")
 
 
 # ── ④ 对局结束即回收:worker 进程还在 → 房不许动;worker 退了 → 房必须被回收 ──
@@ -306,3 +313,88 @@ func _find_row(arr: Array, code: String) -> Dictionary:
 		if e is Dictionary and str(e.get("code", "")) == code:
 			return e
 	return {}
+
+
+# ── ⑧ 「对局中的房对**无凭据者**一律拒绝」的**补集**:持凭据者那一行**可点** ──
+# ★ 相①②③ 断的是**服务端**那一半(无凭据的第三人 `join_room`/`*_join` 进不去),相⑧ 断的是
+#   **客户端**那一半(持凭据的本人那一行可点 ⇒ 点它走回局)。两半合起来才是本任务那句
+#   「对局中的房照列:自己的房可点(回局),别人的点不动」。
+# ★★ 它守的是本任务**唯一的硬约束** —— 两个问句的**次序**:
+#     ① 先问 `PvpSession.can_rejoin_to(code)`(这是我的房吗 + 凭据还在吗)→ 可点;
+#     ② 不是我的房,才轮到「`in_match` ⇒ disabled」那一档。
+#   把次序写反(`btn.disabled = in_match` / `if in_match:` 先问对局中)时,自己那间房那一行被
+#   `disabled` + `FOCUS_NONE` 收拾掉 ⇒ 回局这一档**连点都点不到**,而**一行报错都没有**
+#   (症状只是"回到大厅后自己那间房是灰的,回不去")。
+#   ★ 实测(2026-09-21):次序写反时,本探针**原有 37 条**断言、`lobby_row_probe` 的 24 条、
+#     `room_sweep_smoke`、`team_room_smoke`、以及四个场景加载**全部照绿** —— 这一条是唯一咬得住的。
+# ★ 页面**不入树**(与 `lobby_row_probe` 同一手法):`_ready` 一跑就会 `_request_list(...)` 去连大厅
+#   (1v1 页默认云地址)⇒ 本探针不开任何 socket、也不碰用户的 7777。故手工摆好渲染函数要读的
+#   两个成员(`_list_box` / `_status`),再直调那三个渲染函数。
+# ★ 判"点不动"用的是 `Button.pressed` 上的**连接数**:`disabled` 只是观感,真正的"点了没有反应"
+#   是**没有连任何 handler**(与 `lobby_row_probe` 同款)。
+# ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**(同相⑦)。
+func _phase_own_row_clickable() -> void:
+	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.rejoin]
+	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9001"
+	# 三页各喂三行:**9001 = 我的房**(凭据里的房号就是它,载荷仍标 in_match)、
+	# **9002 = 别人的对局中的房**(同样是 in_match,凭据不是它的)、9003 = 普通未满房(正向对照)
+	var rows_1v1: Array = [
+		{"code": "9001", "players": 2, "names": ["阿甲", "bob"], "in_match": true},
+		{"code": "9002", "players": 2, "names": ["阿甲", "bob"], "in_match": true},
+		{"code": "9003", "players": 1, "names": ["阿甲"], "in_match": false},
+	]
+	var rows_n: Array = [
+		{"code": "9001", "players": 2, "max_players": 8, "names": ["阿甲", "bob"], "in_match": true},
+		{"code": "9002", "players": 2, "max_players": 8, "names": ["阿甲", "bob"], "in_match": true},
+		{"code": "9003", "players": 1, "max_players": 8, "names": ["阿甲"], "in_match": false},
+	]
+	var bad: Array[String] = []
+	var reasons: Array = [
+			_own_row_reason("res://scenes/matchmaking.tscn", "_on_room_list", "1v1", rows_1v1),
+			_own_row_reason("res://scenes/royale_lobby.tscn", "_on_royale_rooms", "大乱斗", rows_n),
+			_own_row_reason("res://scenes/team_lobby.tscn", "_on_team_rooms", "3v3", rows_n)]
+	for r: String in reasons:
+		if r != "":
+			bad.append(r)
+	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]
+	PvpSession.room_code = keep[2]; PvpSession.rejoin = keep[3]
+	# ★ 一条聚合断言(三页逐页核对,失败时逐页点名)—— 条数约定见 EXPECTED_CHECKS 的注释
+	_check(bad.is_empty(),
+			"⑧ ★ 三页:持凭据者自己那间房那一行**可点**(点它走回局)、别人的对局中的房仍点不动 —— 实得:%s"
+			% ("三页全对" if bad.is_empty() else " / ".join(bad)))
+
+
+# 渲染一页的房间列表,只判那一行;返回 "" = 全对,否则返回"页:哪个条件不成立"
+func _own_row_reason(scene_path: String, fn: String, tag: String, rows: Array) -> String:
+	var p: Node = (load(scene_path) as PackedScene).instantiate()
+	var box := VBoxContainer.new()
+	var st := Label.new()
+	p.set("_list_box", box)     # 不入树 ⇒ `_ready` 不跑 ⇒ 这两个成员还是 null,得手工摆
+	p.set("_status", st)
+	p.call(fn, rows)
+	var mine := _row_button(box, "9001")     # 我的房(房号与凭据一致)
+	var other := _row_button(box, "9002")    # 别人的对局中的房(无凭据)
+	var why := ""
+	if mine == null or other == null:
+		why = "行没画出来"
+	elif mine.disabled:
+		why = "自己那间房被 disabled(次序写反:先问了「对局中」⇒ 回局连点都点不到)"
+	elif mine.pressed.get_connections().size() != 1:
+		why = "自己那间房没接 handler(disabled 只是观感,不接 handler 才是真的点不动)"
+	elif mine.focus_mode != Control.FOCUS_ALL:
+		why = "自己那间房不吃键盘焦点"
+	elif not other.disabled:
+		why = "别人那间对局中的房**可点**了(凭据的房号那半判据漏了)"
+	elif not other.pressed.get_connections().is_empty():
+		why = "别人那间对局中的房接上了 handler"
+	box.free()   # 两个成员不是 p 的子节点,p.free() 管不到它们(否则退出时报 orphan)
+	st.free()
+	p.free()
+	return "" if why == "" else "%s:%s" % [tag, why]
+
+
+func _row_button(box: Node, code: String) -> Button:
+	for c in box.get_children():
+		if c is Button and (c as Button).text.contains(code):
+			return c
+	return null

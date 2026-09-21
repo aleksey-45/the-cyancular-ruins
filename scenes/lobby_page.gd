@@ -309,6 +309,18 @@ func _request_rejoin() -> void:
 		PvpSession.rejoin = false
 		_status.text = "回局凭据已失效,请重新建房/加入"
 		return
+	# ★★ 发送前先判活(与上面 `_with_lobby` 快路里那条**同一条纪律**、同一个症状):回局入口
+	#    **刻意不走 `_with_lobby`**(它会把刚拿到的列表连同自己那一行一起丢掉),所以这一判
+	#    必须自带。断线后那一行**还画在屏上**(列表是断线前拉的),点它等于把
+	#    `rejoin_request` 打在 ENet 已拆掉的 peer 上 —— 正是那条
+	#    `Unable to send packet on channel 0, max channels: 0`。
+	#    走 `_request_list` 顺带把重连拉起来(它内部会判活并落到重连路径),而不是把玩家
+	#    留在一句"正在回到对局…"上;**`rejoin` 也要清掉** —— 否则下一次 `go_match` 会错走
+	#    `reclaim_role` 分支(`_claim_role_worker` 只看这个开关)。
+	if not NetBus.can_send_to_server():
+		PvpSession.rejoin = false
+		_request_list("与大厅的连接已断开——正在重连并刷新房间列表…")
+		return
 	_rejoin_sent_ms = Time.get_ticks_msec()
 	_status.text = "正在回到对局…"
 	NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token)

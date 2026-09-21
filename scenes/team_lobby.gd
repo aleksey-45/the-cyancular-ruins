@@ -198,7 +198,7 @@ func _on_team_rooms(rooms: Array) -> void:
 		var empty := UiFactory.label("暂无公开房间 —— 右侧「创建房间」开一把 3v3", 32, UiFactory.C_TEXT)
 		empty.custom_minimum_size = Vector2(620, 40)
 		_list_box.add_child(empty)
-		_status.text = "共 0 个公开房间(对局中的照列但不可进)"
+		_status.text = "共 0 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)"
 		return
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
@@ -208,6 +208,7 @@ func _on_team_rooms(rooms: Array) -> void:
 		var maxp := int(r.get("max_players", LobbyRooms.TEAM_ROLES))
 		# ★ 对局中的房**照列**但**点不动**(与 1v1 页同款:可见性与拒绝入房是同一件事的两半;
 		#   服务端 `royale_join` / `team_join` 的 in_match 守卫才是那道保证)。
+		# ★ 自己那间房是这一档的**唯一例外**(持凭据者点它 = 回局)—— 见紧随其后那一段。
 		var in_match := bool(r.get("in_match", false))
 		var occ := ""
 		var names: Array = r.get("names", [])
@@ -215,15 +216,23 @@ func _on_team_rooms(rooms: Array) -> void:
 			occ = "   " + ", ".join(names)
 		var btn := UiFactory.button("房间 %s      %s%s" % [code,
 				"对局中" if in_match else "%d/%d" % [players, maxp], occ], 32, Vector2(620, 46))
-		btn.disabled = in_match
-		if in_match:
+		# ★★ 次序是承重的:**先问「这是我的房吗 + 凭据还在吗」**,这一档**可点**(点了走回局);
+		#    不是我的房,才轮到「对局中 ⇒ disabled」那一档(前置计划交付的既有行为)。
+		#    反过来写(先按 in_match 禁用)= 回局这一档连点都点不到,而**一行报错都没有**
+		#    —— 表现只是"回到大厅后自己那间房是灰的,回不去"。
+		var mine := PvpSession.can_rejoin_to(code)
+		btn.disabled = in_match and not mine
+		if btn.disabled:
 			btn.focus_mode = Control.FOCUS_NONE
 		else:
+			btn.focus_mode = Control.FOCUS_ALL
 			btn.pressed.connect(func() -> void:
 				Sfx.play("ui")
-				_join_room(code, ""))
+				# 我的房 ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
+				if not try_rejoin_row(code):
+					_join_room(code, ""))
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个公开房间(对局中的照列但不可进)" % rooms.size()
+	_status.text = "共 %d 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)" % rooms.size()
 
 
 # 等待室:两队名单 + 未选边档 + 选边按钮 + 房主开局按钮。
@@ -232,6 +241,12 @@ func _on_room_state(state: Dictionary) -> void:
 	_in_room = true
 	_team_ack = true
 	_my_room = state
+	# ★ 记下自己这间房的房号(与 1v1 页 `_on_room_created`/`_join_code` 同款):列表里那一行
+	#   "是不是我的房"全靠它比(`can_rejoin_to`)。本页建房 / 点列表加入 / 填邀请码三条路
+	#   **都只经这一个 handler**,故这一行就是本页唯一的记账点 —— 漏了它,回局入口对本页
+	#   整个失效(房号恒空 ⇒ 自己那间房被当"别人的房"禁用),而**一行报错都没有**。
+	var code := str(state.get("code", ""))
+	PvpSession.room_code = code
 	var my_role := int(state.get("your_role", 0))
 	_host = int(state.get("host_role", 0)) == my_role
 	if _create_panel != null:
@@ -239,7 +254,6 @@ func _on_room_state(state: Dictionary) -> void:
 	if _wait_panel == null:
 		_build_wait_panel()
 	_wait_panel.visible = true
-	var code := str(state.get("code", ""))
 	var invite := str(state.get("invite_code", "")) if not bool(state.get("is_public", true)) else ""
 	_wait_title.text = "—— 3v3 房间 %s ——%s" % [code, "  邀请码 %s" % invite if invite != "" else ""]
 	for c in _wait_players.get_children():

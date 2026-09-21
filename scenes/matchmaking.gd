@@ -148,6 +148,10 @@ func _join_code(code: String) -> void:
 		_status.text = "请填房间号"
 		return
 	_with_lobby(func() -> void:
+		# ★ 记下自己这间房的房号:列表里那一行"是不是我的房"全靠它比(`can_rejoin_to`)。
+		#   排在发 RPC **之前** —— 应答可能先于本行的返回值到(同一帧里 _on_room_list 就会
+		#   渲染那一行),晚一步记就会漏判一次。
+		PvpSession.room_code = code
 		_status.text = "加入房间 %s,等待配对…" % code
 		_join_sent_ms = Time.get_ticks_msec()
 		NetBus.rpc_id(1, "join_room", code))
@@ -179,6 +183,7 @@ func _on_room_list(rooms: Array) -> void:
 		#   进行的房间)…无论在对战还是掉线 C 都不应该进去")。服务端 `join_room` 那边也拒
 		#   (`room.started`)—— **两半都要**:`disabled` 是体验,服务端那道才是保证
 		#   (在「房间号」框里手敲房号、或旧客户端绕过界面,照样进不去)。
+		# ★ 自己那间房是这一档的**唯一例外**(持凭据者点它 = 回局)—— 见紧随其后那一段。
 		var in_match := bool(r.get("in_match", false))
 		var occ: String = ""
 		var names: Array = r.get("names", [])
@@ -195,16 +200,23 @@ func _on_room_list(rooms: Array) -> void:
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		# ★ 对局中的行**不接 handler、也不吃键盘焦点**:焦点环能落到它上面等于邀请一次注定
 		#   失败的按下(`UiFactory.style_row_button` 早就带了 disabled 的样式,不新增任何颜色)。
-		btn.disabled = in_match
-		if in_match:
+		# ★★ 次序是承重的:**先问「这是我的房吗 + 凭据还在吗」**,这一档**可点**(点了走回局);
+		#    不是我的房,才轮到「对局中 ⇒ disabled」那一档(前置计划交付的既有行为)。
+		#    反过来写(先按 in_match 禁用)= 回局这一档连点都点不到,而**一行报错都没有**
+		#    —— 表现只是"回到大厅后自己那间房是灰的,回不去"。
+		var mine := PvpSession.can_rejoin_to(code)
+		btn.disabled = in_match and not mine
+		if btn.disabled:
 			btn.focus_mode = Control.FOCUS_NONE
 		else:
 			btn.focus_mode = Control.FOCUS_ALL
 			btn.pressed.connect(func() -> void:
 				Sfx.play("ui")
-				_join_code(code))
+				# 我的房 ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
+				if not try_rejoin_row(code):
+					_join_code(code))
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个房间(未满优先;对局中的照列但不可进)" % order.size()
+	_status.text = "共 %d 个房间(未满优先;对局中的照列:自己的房可点(回局),别人的点不动)" % order.size()
 
 
 # 本页比大乱斗多两段:①点了失效/已满的房间 → 提示并自动刷新一次(列表常驻陈旧房间,点了必失败);
@@ -230,6 +242,9 @@ func _on_server_message(t: String) -> void:
 
 
 func _on_room_created(code: String) -> void:
+	# ★ 同 `_join_code`:建房那条路也要记 —— 否则房主从列表里点**自己**那间房时,
+	#   `can_rejoin_to(code)` 因房号不符而假,那一行被当"别人的房"禁用(回局入口对房主失效)。
+	PvpSession.room_code = code
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 
 
