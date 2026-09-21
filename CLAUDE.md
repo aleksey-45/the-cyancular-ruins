@@ -108,10 +108,24 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 
 ### 补间形变(squash & stretch)
 `scenes/effects/squash_stretch.gd`(`class_name SquashStretch extends Node`)—— 纯表现层组件,
-挂到玩家 / 三只敌鸟 / 对手副本上,**只写 `animator.scale`**。计算模型是两个标量相加:
+挂到玩家 / 三只敌鸟上,**只写 `animator.scale`**。计算模型是两个标量相加:
 `_air`(每帧由 `vel_y` 重算,无状态)+ `_impulse`(事件累加 + `MathUtil.approach` 指数回归)。
 **单标量**是刻意的 —— "冲刺中落地""起跳瞬间被击中"这类同时事件天然叠加,不需要优先级状态机。
-幅度上限 `squash_amount` = **0.10**(用户裁定"不要太夸张"),`v` 钳在 `[-1,1]` 故永不越界。
+幅度上限 `squash_amount` = **0.06**(用户 2026-09-21 实测后从 0.10 收到 0.06,原话「玩家有点太果冻了」;
+同批 `squash_recover` 9→16、`squash_air` 0.30→0.10),`v` 钳在 `[-1,1]` 故永不越界。
+★★ **模式闸门 `set_landing_only(true)` = 形变只在单机生效,联机只留「玩家落地那一下」**
+(2026-09-21 用户裁定,原话「把本次合并的优化在多人模式都取消掉,仅在单人模式应用,除了玩家落地的
+优化」)。开关在**组件**里、由宿主 `player.gd` 的 `_ready` 按 `Level0.pvp_mode` 打开(单机不调 ⇒
+`_landing_only` 默认 false ⇒ 单机与三只敌鸟的行为逐字不变)。接线点选 `Level0.pvp_mode` 而不是
+`CombatComponent.pvp_arena`,因为本文件本来就用前者判模式(捡枪/按 R 重启那几处同款),且它与
+"本局是不是联机"严格同义;**服务器进程不实例化 Level0 ⇒ 那边恒 false,但服务器不渲染、无影响**。
+闸门**关掉的两样**:`impulse()` 的三个写入口(JUMP/DASH/HURT,在写入口拦而不是在四个调用点各判
+—— 调用点漏判是**静默**的)与 `_air` 空中连续项;**落地项照常**。守卫:`tests/squash_stretch_smoke.gd`
+⑩a(落地仍挤压)/⑩b(三个脉冲全哑)/⑩c(空中项哑)/⑩d(`player.gd` 到底有没有按 `pvp_mode` 打开它
+—— 源码级,因为组件默认关闭时"没人打开"是完全静默的)。
+★ **对手副本的形变已整体删除**(2026-09-21):副本不再挂 `SquashStretch`,连 `_vel`/`_pose`/
+`_prev_vel_y`/脚底水查询(`_in_water()` 与 `_water_feet_off`)一起删干净,不留死组件。
+⇒ 快照载荷里的 `vel` 字段在客户端**当前没有消费者**(服务器照旧发;删它属协议改动,未做)。
 ★ **落地挤压由 `vel_y` 无状态推导**,不需要 `_was_on_floor`:判据是
 `if on_floor and vel_y > _land_min_vy`(`scenes/effects/squash_stretch.gd`),阈值**不是字面量** ——
 玩家侧 = `PlayerParams.squash_land_min_vy`、敌人侧 = `EnemyParams.squash_land_min_vy`
@@ -133,62 +147,50 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 没有 pivot,`player.tscn` 只设了 `texture_filter`,故 `centered = true` 生效 ⇒ 挤压时**画出来的
 底边会上抬 ~4~5px**、拉伸时下沉 ~3.5px(约体高的 4%,包络 ~0.15s)。**这是真现象、不是缺陷**:
 脚底锚定要么得给 `animator.offset`/`position` 补一个反向平移(**破了"只写 `animator.scale`"
-这条约束**,且见下),要么得在四个场景里重摆精灵并复核武器/枪口挂点 —— 为 ±10% 的观赏性
+这条约束**,且见下),要么得在四个场景里重摆精灵并复核武器/枪口挂点 —— 为 ±6% 的观赏性
 特征不值得。★ 这两个数**每次跑都被打印出来**(`tests/squash_stretch_probe.tscn` 的三栏像素
 包围盒:中性 y 670 / 拉伸 667 / 挤压 674;底边 = 顶边 + 高 ⇒ 挤压上抬 5px、拉伸下沉 4px,
 与上面那组区间一致,不必再手量)。**别把它当 bug"修"**:用 `offset` 补正是**没有任何探针看得见**的那种改法(偏移是
 精灵内部量,`global_position` 与碰撞箱都不动),`tests/squash_stretch_probe.tscn` 专门加了一条
 `offset == Vector2.ZERO` 的断言堵它。
-★ **倒地必须 `suppressed = true`**:副本给根节点设了 `rotation = -90°`,而 animator 是其
-**子节点** → 此时写 `scale` 会沿**转过的轴**挤压,尸体横着变宽。本地玩家虽不旋转,但两端
-行为要一致、且尸体不该有弹性。
+★ **倒地必须 `suppressed = true`**:尸体不该有弹性。(原先还有一半理由 —— "副本给根节点设了
+`rotation = -90°`、animator 是其子节点、此时写 `scale` 会沿转过的轴挤压" —— 随 2026-09-21
+副本形变整体删除而**不再适用**;本地玩家并不旋转,留下的是"行为一致 + 尸体无弹性"这条。)
 ★ **已知边界(登记不修)**:`prediction_rollback.gd:114` 的重放是**直接调 `_physics_process`**,
-而 `_impulse` 不在 `capture_state()` 里 → 回滚时挤压包络会**重播一次**。纯视觉、幅度 ±10%,
+而 `_impulse` 不在 `capture_state()` 里 → 回滚时挤压包络会**重播一次**。纯视觉、幅度 ±6%,
 表现是"弹一下";要修就得把纯视觉状态塞进权威态,那是更坏的选择。`_air` 项无状态,不受影响。
 ★ **`_impulse` 有两个写入口,各自钳一次 `[-1,1]`**:`impulse()` 的加法,以及 `tick()` 里那句
 `_impulse -= _land_gain * k` **之后紧跟的一行 `clampf`**(2026-09-20 终审补)。`_apply()` 里钳
-`final` 只保住**画面**不越 `0.90/1.10`,保不住内部量 —— 宿主违约(每帧喂同一个"不是摔下来的"
+`final` 只保住**画面**不越 `0.94/1.06`,保不住内部量 —— 宿主违约(每帧喂同一个"不是摔下来的"
 下坠速度,梯底按住 S 就是)时那一次减法每帧重来,而指数恢复每帧只回 ~14% ⇒ 无钳位时会收敛到
 定点 `-k·d/(1-d)`(睡眠鸟那处 ≈ `-6.19k`)⇒ 之后任意一次 `impulse()` 的**正**增益都加在更负的
 基数上,起跳/冲刺的拉伸被压低、显形推后(~0.1s 量级)。守卫:`tests/squash_stretch_smoke.gd` ⑦e。
-守卫:`tests/squash_stretch_smoke.gd`(`-s`,纯逻辑:参数镜像 / 九相 / 上下行饱和 ⑦c⑦d / ⑦e 写入口钳位)
+守卫:`tests/squash_stretch_smoke.gd`(`-s`,纯逻辑:参数镜像 / 九相 / 上下行饱和 ⑦c⑦d / ⑦e 写入口钳位
+/ ⑩a–⑩d 模式闸门)
 + **四条场景探针** —— `tests/squash_stretch_probe.tscn`
 (真渲染,含"形变不得改变全局位置"与"形变不碰碰撞箱"两条硬约束断言 + **像素级方向断言**,
-并取图供人眼验收 —— 图**自己读**,别推回给用户)、
+并取图供人眼验收 —— 图**自己读**,别推回给用户;★ 它**必须真实渲染**,headless 下截图给 null
+⇒ 判 `FAIL` 并早退,别把那条 FAIL 读成"形变坏了")、
 `tests/squash_host_water_probe.tscn`(玩家侧过滤谓词 + 倒地两件事)、
 **`tests/squash_host_enemy_probe.tscn`**(★ 敌鸟侧:三只鸟的状态映射 / SLEEP 不挂钩 /
 `_apply_hit` 的 HURT / **睡眠缓存归零与醒来首帧**。这一面是本特性**唯一真出过 bug**的地方,
 而它的守卫一度只是实现期的一支临时探针、跑完即删 ⇒ 删或误映射任何一处都**不会有测试变红**;
 现在的断言清单是照那支探针的留存输出逐条恢复的)、
-`tests/squash_replica_probe.tscn`(副本:水查询 / 落地判据两半 / 倒地中性,另加**相⓪**)。
-★ **对手副本**复用同一个组件,数据从快照的 `vel`/`pose` 本地推导 —— `vel` 本来就在载荷里
-(`server/match_snapshot.gd` 的 `world["players"][str(role)]` 那张表),只是副本此前没读,
-**协议零改动**;★ 副本探针的**相⓪**就钉在这张表的字段清单上(见下),故这里**不写行号** ——
-表一漂,行号就先失效。副本**不做受击挤压**
-(快照里没有受击事件,从 `hp` 下降推会在 AoE 多段伤害时误触发)。tick 放副本的 `_process`
-而非 `apply_snapshot`:后者没有 `delta`,而 `_process` 是副本的表现层时钟(插值推进与受击
-闪烁衰减都在那儿),挂快照回调会与插值产生拍频。
-★★ **副本的落地判据是「两半」,`pose != FLY` 那一半单独不够**:副本没有物理,`on_floor` 是
-**推导**出来的(`(not _downed) and _pose != POSE_FLY and absf(_vel.y) < LAND_VEL_EPS`)。`pose`
-只是"站在地上"的**代理**,它在**水中下沉**(姿态被强制成 MOVE/STAND,而 `vel.y` 恒为
-`player_swim_down` = 320)与**空中冲刺**(本体把 `is_charge` 判在 `not is_on_floor()` **之前**,
-故下落途中起步的冲刺给出的姿态就非 FLY)两种状态下**同样为真、而 `vel.y` 并不趋于 0** ——
-只看代理会让落地项每帧重触发,把对手压成持续/反向的形变(本体在那两种状态里都是中性的)。
-★ 水项用**客户端本地网格查询**(`_in_water()`,`Water.is_in_water(脚底)`,脚底偏移一次性从
-幽灵体量出)**而不是协议字段**:本体的 `in_water` 本身就是纯位置网格查询,客户端有同一张图。
-注:爬梯那一半**刻意不补**(客户端手里只有无状态的位置代理,对"路过梯子"会误触发,那是
-引入本体从不显示的新形变),残留如实登记为 2.5~3.0% / ~6.3%。
-守卫:**`tests/squash_replica_probe.tscn`**(四相,断言全落在 `animator.scale` 上:水中下沉
-全程中性 / 干地真落地仍挤压(反例)/ 落地判据两半都在 / 倒地强制中性)。四相各配一条**具名
-变异**且已验证"只打红自己那一相":删 `_in_water()` → 相①(复现 `scale = 0.986286`)、
-值来源换回当前 `_vel.y` → 相②(`scale.x == 1.000000`)、删 `absf(_vel.y) < LAND_VEL_EPS` → 相③、
-`suppressed` 传 false → 相④。★ 相④ 的前提态**刻意取空中连续项而非落地冲击** —— 后者正是相②
-那处变异动的东西,拿它当前提会让两相被同一个变异一起打红。★ 相④ 的判据窗口是**倒地后 8 帧**的
-max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有一条**相⓪**:把夹具字典的**键集**与
-`server/match_snapshot.gd` 里那张玩家载荷字段表**双向对账** —— 夹具键是手写的、头注声称"逐字
-一致"却**无人校验**,而删掉生产端的 `"vel": p.velocity` 会让**四相全绿**、对局里对手的形变
-**静默消失**(副本 `_prev_vel_y` 恒 0 ⇒ 空中项恒 0、落地项永不触发)。读不到源文件/定位不到那张
-表时报**红**,不静默跳过。另一层守卫 `tests/squash_host_water_probe.tscn` 驱动**玩家本体**
+`tests/squash_replica_probe.tscn`(**已经被"去形变"掏空,现在守的不是形变** —— 见下)。
+★ **敌人侧的接线是"事实上单机专属",本轮一个字未动,也别去动**:形变只对三只敌鸟有意义,
+而联机模式**根本没有敌人**(`level_0.gd` 在 `pvp_mode` 下早退于 `EnemySpawner.load_all` 之前)
+⇒ 给它们加模式闸门是纯粹的空转。
+★★ **对手副本的形变已整体删除**(2026-09-21)。原设计里副本复用同一个组件、数据从快照的
+`vel`/`pose` 本地推导(`vel` 本来就在载荷里,协议零改动),其中相⓪ 守卫的那张字段表至今有效 ——
+但形变那一整套(组件实例、`_vel`/`_pose`/`_prev_vel_y`、脚底水查询 `_in_water()` 与 `_water_feet_off`、
+以及"落地判据两半"与"爬梯那一半刻意不补"那段推理)**随本次裁定一并删除,不留死声明也不留死组件**。
+⇒ 快照载荷里的 `vel` 字段在客户端**当前没有消费者**(服务器照旧发;删它属协议改动,未做)。
+⇒ `tests/squash_replica_probe.tscn` **保住了文件与相⓪**(它守的是**快照载荷的键集**,与形变无关:
+副本读的七个字段里只有 `pos`/`pose` 是直取、缺了会响,其余五个走 `data.get(…, 默认值)`,
+生产端改名只会让副本静默退化成默认值),四相 squash 断言全删,另加**相①/①b 位置平滑**两条
+—— 后者正是上面「副本位置平滑」那条纪律的守卫。★ 文件名里的 `squash_replica` 是历史名,
+刻意没改(改路径要连 `.tscn` 与 `.gd.uid` 一起搬,收益为零);要正名的话本文件有两处引用。
+另一层守卫 `tests/squash_host_water_probe.tscn` 驱动**玩家本体**
 (合成网格 + 真 player.tscn + 真物理),钉 `_pre_move_vy = 0.0 if (in_water or latched) else velocity.y`
 那个谓词。
 ⚠ **两侧的水过滤刻意不同款,别去"统一"**:玩家侧滤 `in_water or latched`,**敌人侧刻意用裸
@@ -242,7 +244,7 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
 ### 网络与 PvP(阶段 1 + 2 + 4:匹配进图 + 对局互通 + 回合制)
 - 服务器:`server/server_main.tscn` 入口(headless)。**双模式**:无参=大厅(默认 7777),`--worker --port P`=对局 worker。**一服多局**:大厅的**房间账本**在 `server/lobby_rooms.gd`(`LobbyRooms extends Node`:房间注册表 + 房间侧 RPC handler + 拆除收口 `teardown_room`;**做成 Node 是因为要用 `multiplayer` 与 `get_tree()`**——这正是它当年搬不出 room_manager 的原因),**进程编排与清扫**在 `server/room_manager.gd`(`RoomManager`:持有 `launcher` 与 `lobby`,拉 worker、让玩家转连、每 10min 清扫超龄房)。两者**单向依赖**:`lobby` 不知道 RoomManager;1v1 凑齐两人由 `pairing_ready` **信号**上去(避免 back-reference;`lobby` 是公开字段,探针/观察者要读注册表)。建房/配对(2 人就绪)→ 给每局拉起一个独立 worker 子进程(`OS.create_process`,同 exe `--headless --worker --port P`;开发=editor 带 `--path`+场景,导出 exe 靠 `main_scene.dedicated_server`)→ 发 `go_match(role,port)` 让两端转连。**worker 内跑 `server/server_main.gd`(worker 分支)**:独占 UDP 端口,等两客户端 `claim_role` 收齐 role1/2 → `MatchBootstrap.start_on`(`server/match_bootstrap.gd`,static:重算地图尺寸、给两端 `match_start`、建 `server/match_host.gd`)→ `MatchHost` 权威对局;任一方离开 → **先进宽限期**(见下「断线重连」:不再当场拆局),到点仍未回来才拆局退出释放端口。各局=独立进程 → **内存隔离**,共享全局(current_grid/TileDefs)不跨局互踩。端口分配用「唯一递增 + 占用集合」(`WorkerLauncher.pick_port`,基准 7800;实现与两档归还延迟的完整理由见 `server/worker_launcher.gd`)——**不要**在本进程 bind 探测空闲(worker 是独立进程,大厅探测看不到别的进程已占端口,并发会把同端口发给两个 worker)。大厅在玩家转连后断开即关房归还端口。
 - **`MatchHost`(每房间一个)**:建世界(WorldBuilder 只碰撞不渲染)+ 两个 `Player.tscn` 实例注入 `NetworkInputSource` 权威模拟;**每物理 tick 每 role 恰好消费 1 个 FIFO 输入包**(按 seq 序,1:1 同序 = C2 rollback 锚点;队列空=缺包沿用上一包 held)并回带 `ack_seq`、60Hz 广播快照(带 `tick` 序 + `ack_seq` + `c2` 权威整态 `capture_state()`)、裁决子弹命中并广播 `bullet_spawn`/`hit_event`;**爆炸弹(榴弹)不走玩家半径补刀销毁**(子弹碰撞掩码不含玩家层、伤全靠落地引信爆炸 AoE——若按普通弹半径补刀结算+销毁会吞掉引信致无爆炸;故 `_adjudicate_bullets` 对 `explodes` 弹改走 `_adjudicate_grenade`:**只结算一次直接命中、不销毁**,见 §武器与子弹);即时光束武器(激光)权威开火经 `_broadcast_pending_beams()`(紧挨 `_adjudicate_bullets`)轮询各角色当前武器的 `collect_pending_beam_report()` → `beam_fired` 广播给**非射手端**(射手自己客户端已本地预测画自己的光束)。开局 pin PvP 地图后要调 `GameParameters.refresh_map_size()` 重算世界尺寸(_ready 启动时算的是随机 demo 图,工厂图 9600 宽不同,不重算则环面回绕按错边界出现空气墙)。**回合制**:`_match_round_tick` 状态机 COUNTDOWN→PLAYING→ROUND_OVER→MATCH_OVER;**击杀定义:对方死亡都算**——每物理帧倒地转换检测(`is_downed` 边沿)不分死因(枪杀/爆炸/溺水/自伤/无射手)一律给对方 +1(弃用旧 pvp_killer 射手归因);局内死亡 2s 复活(`_respawn_player`:死者回本方出生点、满血/防水、武器回 1);**每次击杀后活着的胜方也立刻回本方出生点但保留当前血量、不回血**(`_reset_survivor`,防复活点连杀);每局先到 5 击杀赢、三局两胜、局间 `_side_swap` 换边。**换局纪律**:进新局前 `_reset_world_and_clear_dynamics()` 把可破坏砖/碰撞整层还原为建局基线(`_base_grid` 深拷贝)+ 清光场上子弹(`bullet` 组)+ 重置 `_seen_bullets`;客户端收到新一轮 COUNTDOWN 同刻 `Level0.reset_destructibles()`(用 `_pristine_grid` 重铺)+ 清本地视觉子弹 → 两端每局从同一基线出发,无幽灵墙/跨局残留。**COUNTDOWN 3 秒双端禁移动/开火**:服务器不喂输入(清空缓冲 + `NetworkInputSource.reset_state()` 连 held/axis 一起清,防上一包方向让冻结期漂移);客户端 `player.set_controls_locked` 现在**连带冻结整个 input_source**(`InputSource.frozen`),锁住移动+开火——C2 下本地预测倒计时里不自走(C2 关时本地玩家本就服务器渲染、自然不动);进 PLAYING 解锁。局内击杀→复活/活方复位不动砖。
-- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号;配对完成收到大厅 `go_match` 后**断开大厅、`start_client(server_address, worker_port)` 转连该局 worker 并 `claim_role`**,再等 worker 的 `match_start`)→ `pvp_game`(`pvp_game.gd`:Level0 pvp_mode 世界 + 补后处理 + 每 tick 上报输入 + 快照消费)。**本地玩家 = C2 客户端预测(rollback)**:玩家由引擎自步进读真实 Input(aim/手感=单机);`pvp_game` 每帧在玩家步进前 `note_post_step(prev_seq)` + `reconcile()`(见 `core/net/prediction_rollback.gd`),输入包带单调 `seq`,服务器每物理 tick FIFO 消费 1 包并回带 `ack_seq` + 权威整态 `capture_state()`;分歧 → `restore_state` 权威态 + 重放未确认输入(错在哪补哪,非橡皮筋拉拢)。复盘见 `docs/pvp-c2-retrospective.md`(P1–P7,2026-09-06 P1/P2/P5 冒烟钉死、其余按实现落实)。**★ 2026-09-12(批次 5):旧的 `server_rendered` 保底一族(`set_server_rendered`/`apply_server_snapshot`/`_update_server_rendered`)与 `LOCAL_PREDICTION_ENABLED` 开关已整体删除** —— 全项目只剩这一条联机链路,大乱斗客户端走同一套(见下条)。守卫:`tests/royale_c2_probe` 的 A①「生产目录零残留」。远端对手 = `PlayerReplica` 视觉副本(显示对手当前武器并按快照 `aim` 摆枪,经 `weapon_base.drive_remote_visual` 驱动朝向/枪口仰角,不开火不读鼠标)。★ 快照的 `weapon` 是**武器类型 id**、**`0` = 空手**(服务器侧把**最后一把**丢出去的那一刻是唯一成因):副本必须认这个 0 —— `apply_snapshot` 的守卫是 `if slot != _weapon_slot_int`,**别写成 `slot > 0 and …`**(写了的话对手丢光枪后我方视角里他**一直举着那把已经不存在的枪**;握两把以上时丢一把会自动换另一把、slot 变了照常重建,所以看不出来)。守卫 `tests/ground_client_probe` ⑦。**★ 它不是"纯视觉"**:副本还挂一个**幽灵碰撞体**(`StaticBody2D`,`collision_layer=2`/`mask=0`,5 份姿态 `CollisionPolygon2D` 从 `Player.tscn` 现抄 → 与玩家碰撞箱同源;按快照 `pose` 切换,`downed` 时不切与服务器一致;副本入 `player_replica` 组供上一条的榴弹接触判定用)。**为什么必须有**:C2 只步进自己的玩家,客户端世界里没有对手身体 = "对手挡住我"这条信息在预测侧不存在 → 本地预测穿过去、服务器挡住 → 每帧分歧每帧回滚(**无限回滚循环,不是调参能缓解的**)。配套两端客户端 `_ready` 各补一行 `_local.collision_mask |= 2`(服务器侧 `match_host` 早就给每个玩家设了;**不能改 `Player.tscn` 的场景常量**——`enemy_logic_smoke` 有 `player mask == 5` 断言)。**只减小分歧不消除**(副本位置是插值、落后约一 tick),验收按"回滚次数下降多少"量:`tests/replica_ghost_probe.tscn` 给对照读数(在位 0 回滚/摘掉 277 回滚)。**★ 对手的预瞄红线看不到**(用户裁定 2026-09-11):heavy_aim 预瞄线**只有使用者本人可见**,`drive_remote_visual` 显式把副本武器的 `_aiming` 压回 false;服务端快照仍带 `previewing` 字段但客户端刻意不消费(留作日后换成音效/轮廓等提示形式的接点)。回归钉在 `tests/preview_visibility_probe.tscn`(双向:本人必须看得到 + 副本必须看不到)。**副本位置插值(重要)**:`player_replica` 位置走**双快照 tick 域 alpha 插值**——缓冲最近若干 canonical,渲染时钟落后最新 1 tick、按真实时间在相邻两快照间线性插值(`apply_snapshot` 带 tick 入缓冲;姿态/朝向/aim/倒地/武器仍按最新快照即时,只有位置平滑落后);时钟只在 tick 域走、不依赖两端时钟同步,丢包/卡顿冻结在最新已收位置,快照续上把时钟重置到最新窗口继续,不回退。插值结果跨接缝取 `toroidal_delta_px` 最短向量后取模回 canonical,再 `anchor_to_nearest` 锚到本地玩家最近副本渲染——每帧直接归位到可见副本,无旧指数/差分追赶(旧法:渲染位置与目标相隔整幅地图时最短向量=0,副本一旦落远副本就永远留在那 → 对手渲染到屏幕外「看不见」)。
+- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号;配对完成收到大厅 `go_match` 后**断开大厅、`start_client(server_address, worker_port)` 转连该局 worker 并 `claim_role`**,再等 worker 的 `match_start`)→ `pvp_game`(`pvp_game.gd`:Level0 pvp_mode 世界 + 补后处理 + 每 tick 上报输入 + 快照消费)。**本地玩家 = C2 客户端预测(rollback)**:玩家由引擎自步进读真实 Input(aim/手感=单机);`pvp_game` 每帧在玩家步进前 `note_post_step(prev_seq)` + `reconcile()`(见 `core/net/prediction_rollback.gd`),输入包带单调 `seq`,服务器每物理 tick FIFO 消费 1 包并回带 `ack_seq` + 权威整态 `capture_state()`;分歧 → `restore_state` 权威态 + 重放未确认输入(错在哪补哪,非橡皮筋拉拢)。复盘见 `docs/pvp-c2-retrospective.md`(P1–P7,2026-09-06 P1/P2/P5 冒烟钉死、其余按实现落实)。**★ 2026-09-12(批次 5):旧的 `server_rendered` 保底一族(`set_server_rendered`/`apply_server_snapshot`/`_update_server_rendered`)与 `LOCAL_PREDICTION_ENABLED` 开关已整体删除** —— 全项目只剩这一条联机链路,大乱斗客户端走同一套(见下条)。守卫:`tests/royale_c2_probe` 的 A①「生产目录零残留」。远端对手 = `PlayerReplica` 视觉副本(显示对手当前武器并按快照 `aim` 摆枪,经 `weapon_base.drive_remote_visual` 驱动朝向/枪口仰角,不开火不读鼠标)。★ 快照的 `weapon` 是**武器类型 id**、**`0` = 空手**(服务器侧把**最后一把**丢出去的那一刻是唯一成因):副本必须认这个 0 —— `apply_snapshot` 的守卫是 `if slot != _weapon_slot_int`,**别写成 `slot > 0 and …`**(写了的话对手丢光枪后我方视角里他**一直举着那把已经不存在的枪**;握两把以上时丢一把会自动换另一把、slot 变了照常重建,所以看不出来)。守卫 `tests/ground_client_probe` ⑦。**★ 它不是"纯视觉"**:副本还挂一个**幽灵碰撞体**(`StaticBody2D`,`collision_layer=2`/`mask=0`,5 份姿态 `CollisionPolygon2D` 从 `Player.tscn` 现抄 → 与玩家碰撞箱同源;按快照 `pose` 切换,`downed` 时不切与服务器一致;副本入 `player_replica` 组供上一条的榴弹接触判定用)。**为什么必须有**:C2 只步进自己的玩家,客户端世界里没有对手身体 = "对手挡住我"这条信息在预测侧不存在 → 本地预测穿过去、服务器挡住 → 每帧分歧每帧回滚(**无限回滚循环,不是调参能缓解的**)。配套两端客户端 `_ready` 各补一行 `_local.collision_mask |= 2`(服务器侧 `match_host` 早就给每个玩家设了;**不能改 `Player.tscn` 的场景常量**——`enemy_logic_smoke` 有 `player mask == 5` 断言)。**只减小分歧不消除**(副本位置是**追赶**出来的、比权威落后一点),验收按"回滚次数下降多少"量:`tests/replica_ghost_probe.tscn` 给对照读数(在位 0 回滚/摘掉 277 回滚)。**★ 对手的预瞄红线看不到**(用户裁定 2026-09-11):heavy_aim 预瞄线**只有使用者本人可见**,`drive_remote_visual` 显式把副本武器的 `_aiming` 压回 false;服务端快照仍带 `previewing` 字段但客户端刻意不消费(留作日后换成音效/轮廓等提示形式的接点)。回归钉在 `tests/preview_visibility_probe.tscn`(双向:本人必须看得到 + 副本必须看不到)。**副本位置平滑(重要,2026-09-21 换回)**:`player_replica` 位置走**自身差分指数追赶** —— 每帧朝「锚到本地玩家最近副本的目标点」按 `1 - exp(-INTERP_RATE·Δ)`(`INTERP_RATE` = 12.0,值取自 `aa1d8f0^`)收敛。姿态/朝向/aim/倒地/武器仍按最新快照即时套用,只有位置平滑。★ **为什么把「双快照 tick 域 alpha 插值」换掉**:那是**实测**结论,不是口味 —— `SnapshotInterp.push()` 每收一包就把渲染时钟重置到 `latest - 1`,而 `advance()` 每帧推进 `delta * 60`;在 **60fps 渲染 + 60Hz 快照**下那恰好是 1.0 tick ⇒ 下一帧时钟正好落在 `latest`,`sample()` 走**冻结在最新**那一支 ⇒ 渲染的就是最新包的原值,与"绕过插值直落"逐项相同(对照跑验证过)。于是对手的平滑度 = **包的到达平滑度**:到达抖动 8/25ms 时 **49.6% 的帧零位移、50.4% 的帧走两步**(用户报「位置一跳一跳,看起来敌方掉帧」)。同一抖动下指数追赶实测**零位移 0.0% / 双步 0.0%**、每帧位移 max 5.5px(理想 5.0)、RMS 偏差 0.569px(旧法 5.000px)。读数与模型见 `.superpowers/sdd/revert-smoothing-report.md`。★ **首次定位必须直落**(`_placed`,一帧到位,不做追赶):副本创建在世界原点,追赶要十几帧才到位,而那十几帧里幽灵体停在错位置 ⇒ 本地预测与权威分歧 ⇒ 白回滚一次(`replica_ghost_probe` ② 实测 rb=0→1)。★★ **旧方案当年那条致命缺陷已单独修掉、且必须一直保留**:渲染位置与目标相隔整幅地图时最短向量=0,副本一旦落远副本就永远留在那 → 对手渲染到屏幕外「看不见」。**解法与"平滑 vs 插值"无关**:把**目标**锚到本地玩家最近副本(`anchor_to_nearest`)再以普通差量追赶,渲染结果最后再锚一次。**别"顺手简化"掉那两个锚定** —— 守卫 `tests/squash_replica_probe.tscn` 相①/①b 专钉它(相①b 用"朴素差恰好 = 一整幅地图宽"这个位置,正是 `toroidal_delta_px` 会给出 0 的充要条件)。★ 文件名里的 `squash_replica` 是历史名:副本的补间形变已随下一条整体删除,该文件现在守的是**快照载荷键集**(相⓪)+ **位置平滑**两件事。
   - **PvP 客户端的 KH 加成(L6)**:对手头顶血条(`Settings.pvp_show_enemy_hp`)/小地图(`pvp_show_minimap`)/子弹拖尾(`pvp_show_trajectories`)/击杀播报(`kill_event`)/命中 X 标记(`hit_confirm`)/对局生效选项(`match_sync` 的 `options` → `weapons.set_enabled_slots`;权威是服务器 MatchHost,按 role1 的 `player_options` 生效)/对手身体色相(`peer_hues`,**只染身体、头顶名保持中性亮白 `NAME_COLOR`**)。
     - ★ **节点分工是故意不对称的,别"统一"**:`hit_confirm`/`match_options`/`peer_hues` 走 **`NetBusExt`**(KH 的扩展协议),而 **`beam_fired` 走 `NetBus`** —— 发送端 `MatchHost._broadcast_beam_fired` 用的是 `NetBus.rpc_id`,接收端也必须 `NetBus.local_beam_fired`;把接收端改到 `NetBusExt` 会**静默 no-op**(对手激光视觉消失且不报错)。`core/net/net_bus_ext.gd` 里的同名 `beam_fired` 是 KH 遗留重复。
     - **开局载荷改为「客户端进场主动拉取」**(2026-09-12 换,见下条「大乱斗」§:三载荷 + 出生点统一走 `match_sync`)。★ 本行原先写的「直接订阅 + `PvpSession.pending_*` 交接两条投递路径」是**已被取代的旧方案**,`PvpSession.pending_*` 与两个 `_consume_pending_payloads`、两个大厅的 `_cache_*` 都已删除。**不要照那段旧描述去加第二条投递路径** —— 方向反转(客户端拉)之后就不存在「推给正在切场景的客户端」这个竞态类了;守卫 `tests/match_sync_probe.tscn` 带反向断言:那些交接标识符一个都不许复活。
