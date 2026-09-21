@@ -523,6 +523,212 @@ async function runAllPhases() {
     const rMapsPost = await request(apiSrv.port, 'POST', '/api/maps', Buffer.from([1]));
     ok(rMapsPost.status === 405, 'POST /api/maps → 405');
   }
+
+  // ==== 相位 ⑦ PUT /api/map 原子写 ====
+  // ★ 同相位 ⑤ / ⑥ 的编号说明(计划原文的号,与 Task 1 的静态读失败 ⑤ 相撞);
+  //   位置同理,必须在 runAllPhases() 里面。
+  {
+    const mapsDir = path.join(tmpRoot, 'maps');
+    const readBack = function (n) { return fs.readFileSync(path.join(mapsDir, n)); };
+    const noTmpLeft = function () {
+      return fs.readdirSync(mapsDir).every(function (n) {
+        return n.indexOf('.tmp') < 0;
+      }) && fs.readdirSync(path.join(mapsDir, 'sub.cyrm')).every(function (n) {
+        return n.indexOf('.tmp') < 0;
+      });
+    };
+    // ★ 写端点只收 application/json(硬要求 A:CSRF,理由见相位末尾那一块)——
+    //   所以本相位每一条**合法**的 PUT 都必须显式带上它。下面是它们的公共头。
+    const PUT_JSON = { 'Content-Type': 'application/json' };
+    const apiSrv = track(await srv.startServer({
+      rootDir: __dirname, mapsDir: mapsDir, port: 0,
+    }));
+    // 一个 maxMapBytes 很小的服务器,专门用来验 413 —— 不用真发 64MB。
+    const smallSrv = track(await srv.startServer({
+      rootDir: __dirname, mapsDir: mapsDir, port: 0, maxMapBytes: 16,
+    }));
+
+    const put = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([7, 7, 7]), PUT_JSON);
+    ok(put.status === 200, 'PUT 新文件 → 200(实得 ' + put.status + ')');
+    eq(JSON.parse(put.body.toString('utf8')), { name: 'c_new.cyrm', size: 3 }, 'PUT 回 JSON {name,size}');
+    sameBytes(readBack('c_new.cyrm'), Buffer.from([7, 7, 7]), 'PUT: 落盘字节与请求体一致');
+    ok(noTmpLeft(), '★ PUT 之后没有残留临时文件');
+
+    const put2 = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([1, 2, 3, 4]), PUT_JSON);
+    ok(put2.status === 200, 'PUT 覆盖已有文件 → 200');
+    sameBytes(readBack('c_new.cyrm'), Buffer.from([1, 2, 3, 4]), 'PUT: 覆盖后是新内容(不留尾巴)');
+
+    // ── 反向:被拒的写绝不能动到已有文件 ──
+    const before = readBack('c_new.cyrm');
+    const rBadName = await request(apiSrv.port, 'PUT', '/api/map?p=' + encodeURIComponent('../evil.cyrm'),
+                                   Buffer.from([0xEE]), PUT_JSON);
+    ok(rBadName.status === 400, '★ PUT 路径穿越名 → 400');
+    ok(!fs.existsSync(path.join(tmpRoot, 'evil.cyrm')), '★ PUT 没有在 maps/ 之外写出任何文件');
+    const rEmpty = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.alloc(0), PUT_JSON);
+    ok(rEmpty.status === 400, 'PUT 空请求体 → 400(不许用空内容覆盖地图)');
+    const rBig = await request(smallSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.alloc(64, 1), PUT_JSON);
+    ok(rBig.status === 413, '★ PUT 超过 maxMapBytes → 413(实得 ' + rBig.status + ')');
+    sameBytes(readBack('c_new.cyrm'), before,
+              '★★ 三种被拒的 PUT 之后,原文件逐字节没变');
+    ok(noTmpLeft(), '被拒的 PUT 也没留临时文件');
+
+    // ★ 写失败的清理路径:目标是**一个非空目录** → rename 必失败 → 临时文件必须被删掉。
+    const rDir = await request(apiSrv.port, 'PUT', '/api/map?p=sub.cyrm', Buffer.from([1, 2]), PUT_JSON);
+    ok(rDir.status === 500, '★ PUT 目标是个目录 → 500(写失败,实得 ' + rDir.status + ')');
+    ok(fs.statSync(path.join(mapsDir, 'sub.cyrm')).isDirectory() &&
+       fs.existsSync(path.join(mapsDir, 'sub.cyrm', 'keep.txt')),
+       '★ 写失败后那个目录连同里面的文件都还在(没有被毁掉)');
+    ok(noTmpLeft(), '★★ 写失败后临时文件被清掉(否则每次失败都在 maps/ 里留垃圾)');
+
+    // 头请求不能带 body(顺带验 HEAD 分支)
+    const rHead = await request(apiSrv.port, 'HEAD', '/api/map?p=c_new.cyrm');
+    ok(rHead.status === 200 && rHead.body.length === 0, 'HEAD /api/map → 200 且无正文');
+
+    // ── ★★ 硬要求 A:CSRF —— 写端点只收 application/json,且一个 CORS 头都不答 ──
+    // ★ Host 白名单闸挡的是 **DNS rebinding**;它挡不住这一类:恶意页面直接
+    //   `fetch('http://127.0.0.1:8777/api/map', {method:'PUT', body})` 时,浏览器发的 `Host`
+    //   **就是** `127.0.0.1:8777` —— 完全合法,闸照过。读端点安全(没有 CORS 头 ⇒ 跨源拿不到
+    //   响应体),但**写端点**上,一个「简单请求」(不触发预检的那些组合)会被**直接处理**。
+    //   故写端点必须自己要求一个**非简单**形态,逼浏览器先发预检 —— 而预检我们一个 CORS 头都不答
+    //   ⇒ 浏览器根本不会把那条 PUT 发出来。
+    // ★★ 反过来:**绝不要加 `Access-Control-Allow-Origin`** —— 那等于把预检答成通过,
+    //    会把本来安全的**读**端点一起拖下水。下面第 ④ / ⑤ 条就是钉这个的。
+    {
+      const beforeA = readBack('c_new.cyrm');
+      // ① 简单请求的经典内容类型。★ 它本身不是"简单方法"(PUT 不在 CORS 安全方法名单里),
+      //    这条钉的是**类型闸**本身:哪天有人给写端点加上 POST,它就是唯一还站着的东西。
+      const rPlain = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
+                                   { 'Content-Type': 'text/plain' });
+      ok(rPlain.status === 415,
+         '★★ 硬要求 A:Content-Type: text/plain(简单请求的组合)→ 415 拒绝(实得 ' + rPlain.status + ')');
+      // ② 一个 Content-Type 都不带(node/curl 的默认行为)也一样拒 —— "缺省即放行"是最容易漏的缺口。
+      const rNoCt = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]));
+      ok(rNoCt.status === 415, '★ 硬要求 A:不带 Content-Type → 415(实得 ' + rNoCt.status + ')');
+      // ③ Origin 是别的站 → 403。跨源的非简单请求一定会带 Origin。
+      const rCross = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
+                                   { 'Content-Type': 'application/json', Origin: 'http://evil.example.com' });
+      ok(rCross.status === 403,
+         '★ 硬要求 A:Origin 是别的站(类型对、来源错)→ 403(实得 ' + rCross.status + ')');
+      // ④ Sec-Fetch-Site 是**浏览器专有**头(在 forbidden header 名单上,页面 JS 改不了它)。
+      //    ★ 这条**刻意不带 Origin**:Sec-Fetch-Site 是"没有 Origin 可判"时的兜底(见实现注释)。
+      const rSite = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
+                                  { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site' });
+      ok(rSite.status === 403,
+         '★ 硬要求 A:没有 Origin、而 Sec-Fetch-Site: cross-site → 403(兜底那道)(实得 ' +
+         rSite.status + ')');
+      sameBytes(readBack('c_new.cyrm'), beforeA,
+                '★★ 硬要求 A:四条被拒的跨源 / 非 JSON PUT 之后,原文件逐字节没变');
+      ok(noTmpLeft(), '★ 硬要求 A:被拒的跨源 PUT 也没留临时文件');
+
+      // ⑤ 预检本身:浏览器发的 OPTIONS 必须拿不到**任何** Access-Control-* 头 ——
+      //    这是"跨源写根本发不出来"的地基(答了 ACAO 就等于把预检放行)。
+      const rOpt = await request(apiSrv.port, 'OPTIONS', '/api/map?p=c_new.cyrm', null,
+                                 { Origin: 'http://evil.example.com',
+                                   'Access-Control-Request-Method': 'PUT',
+                                   'Access-Control-Request-Headers': 'content-type' });
+      const corsKeys = Object.keys(rOpt.headers).filter(function (h) { return h.indexOf('access-control-') === 0; });
+      ok(corsKeys.length === 0,
+         '★★ 硬要求 A:跨源预检(OPTIONS)一个 Access-Control-* 头都不答(实得 status=' + rOpt.status +
+         ', ' + (corsKeys.length ? corsKeys.join(',') : '无 CORS 头') + ')');
+
+      // ④b ★ 防**误伤自己人**:编辑器可以从 localhost 或 127.0.0.1 任一个名字打开,而按 Fetch
+      //     的"同站"定义这**两个名字是两个站** —— 于是从 localhost 打开的页面去写 127.0.0.1 时,
+      //     浏览器会诚实地标 `Sec-Fetch-Site: cross-site`。那时**必须放行**(Origin 是主闸),
+      //     否则"用 localhost 打开编辑器"就存不进任何地图(而且只在写端点现形,读端点一切正常)。
+      const rLoop = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([4, 4]),
+                                  { 'Content-Type': 'application/json',
+                                    Origin: 'http://localhost:' + apiSrv.port,
+                                    'Sec-Fetch-Site': 'cross-site' });
+      ok(rLoop.status === 200,
+         '★★ 硬要求 A:Origin 是回环的另一个名字(localhost)+ Sec-Fetch-Site: cross-site → 放行' +
+         '(Origin 是主闸,别用"同站"判自家页面)(实得 ' + rLoop.status + ')');
+      const rLoop2 = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([4, 4]),
+                                   { 'Content-Type': 'application/json',
+                                     Origin: 'http://127.0.0.1:' + apiSrv.port });
+      ok(rLoop2.status === 200,
+         '★ 硬要求 A:Origin: http://127.0.0.1:<实际端口>(浏览器在非简单请求上一定会带)→ 放行' +
+         '(实得 ' + rLoop2.status + ')');
+
+      // ⑥ 那条**成功**的 PUT 也不许带 CORS 头(带了 = 跨源读得到响应体,把读端点也拖下水)。
+      const rOkA = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([5, 5]), PUT_JSON);
+      ok(rOkA.status === 200 && rOkA.headers['access-control-allow-origin'] === undefined,
+         '★ 硬要求 A:同源 PUT 照常 200、且响应里没有 Access-Control-Allow-Origin(实得 ' +
+         rOkA.status + ')');
+      // ⑦ 带参数的 JSON 类型必须照收 —— 不然会**误伤自家前端**(浏览器 fetch 带 charset 时发的就是它)。
+      const rCharset = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([6, 6]),
+                                     { 'Content-Type': 'application/json; charset=utf-8' });
+      ok(rCharset.status === 200,
+         '★ 硬要求 A:application/json; charset=utf-8 照收(否则自家 fetch 会被自己挡掉)(实得 ' +
+         rCharset.status + ')');
+      sameBytes(readBack('c_new.cyrm'), Buffer.from([6, 6]), '★ 硬要求 A:带参数的 JSON 类型确实写进去了');
+      // ⑧ 那个"简单请求"的**真实攻击形态**:POST + text/plain + 跨源 Origin。它**不预检**、
+      //    会被浏览器直接发出去 —— 而本端点只收 PUT ⇒ 它根本进不了写路径。
+      const rSimple = await request(apiSrv.port, 'POST', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
+                                    { 'Content-Type': 'text/plain', Origin: 'http://evil.example.com' });
+      ok(rSimple.status === 405,
+         '★ 硬要求 A:简单请求的真实形态(POST + text/plain + 跨源 Origin)→ 405(实得 ' +
+         rSimple.status + ')');
+      sameBytes(readBack('c_new.cyrm'), Buffer.from([6, 6]), '★ 硬要求 A:那条简单请求也没动到文件');
+    }
+
+    // ── ★★ 硬要求 B:符号链接 —— 写端点必须按**真实路径**再判一次包含性 ──
+    // ★ 现有两道闸(裸文件名正则 + mapPathFor 里的字符串包含性)判的都是**路径字符串**,
+    //   而 `fs.stat` / `fs.writeFile` / `fs.realpath` 这一族**会跟随符号链接**。
+    //   对读端点这只是低危(要求攻击者已经能往 maps/ 里放一个链接);但写端点走同一条路径时
+    //   会升级成「把编辑器当任意文件写入器」—— 故这里按 realpath 再判一次。
+    {
+      const outsideDir = path.join(tmpRoot, 'outside');
+      fs.mkdirSync(outsideDir, { recursive: true });
+      const victimPath = path.join(outsideDir, 'victim.cyrm');
+      const victimBytes = Buffer.from('★ maps/ 之外的文件 —— 写端点一个字节都不许碰它', 'utf8');
+      fs.writeFileSync(victimPath, victimBytes);
+      const linkName = 'link_out.cyrm';
+      const linkPath = path.join(mapsDir, linkName);
+
+      // ① 守卫本体(与"能不能建链接"无关的那一半):目标经 realpath 后落在 maps/ 之外 → 必须抛。
+      //    ★ 断言必须同时判**错在哪**(照 rejects() 的纪律):只判"有没有抛"是假绿 ——
+      //      守卫不存在时抛出来的 TypeError 一样算通过。
+      let guardErr = null;
+      try { srv.assertWriteTargetInside(mapsDir, victimPath, linkName); } catch (e) { guardErr = e; }
+      ok(guardErr !== null && errText(guardErr).indexOf('maps 目录之外') >= 0,
+         '★ 硬要求 B 守卫本体:目标真实路径落在 maps/ 之外 → 抛错并点名原因(实得:' +
+         (guardErr === null ? '(未抛错)' : errText(guardErr)) + ')');
+      sameBytes(fs.readFileSync(victimPath), victimBytes,
+                '★ 硬要求 B:那次调用(它只是判,不写)之后外部文件仍逐字节未变');
+
+      // ② 端到端:在 maps/ 里造一个指向**外部**的链接,PUT 它必须被拒。
+      //    ★ 本机(Windows、非管理员)建不了**文件**符号链接(EPERM —— 需要 SeCreateSymbolicLinkPrivilege
+      //      或开发者模式),但**目录联接(junction)**不需要特权。守卫判的是"真实路径落在哪里",
+      //      与链接的类型无关,故这是等价的实测。建不了就打印一行跳过(**不计入 ok/FAIL**),
+      //      绝不写会飘的断言。
+      let linked = false;
+      try { fs.symlinkSync(outsideDir, linkPath, 'junction'); linked = true; }
+      catch (e) { console.log('  --    硬要求 B 跳过(端到端那两条):本环境建不了符号链接/联接(' + errText(e) + ')'); }
+      try {
+        if (linked) {
+          ok(fs.lstatSync(linkPath).isSymbolicLink(),
+             '硬要求 B 前置:' + linkName + ' 确实是一个链接(不是普通文件)');
+          ok(fs.realpathSync(linkPath) === fs.realpathSync(outsideDir),
+             '硬要求 B 前置:它的**真实路径**落在 maps/ 之外(' + fs.realpathSync(linkPath) + ')');
+          const rLink = await request(apiSrv.port, 'PUT', '/api/map?p=' + linkName, Buffer.from([0xAA, 0xBB]),
+                                      PUT_JSON);
+          ok(rLink.status === 403,
+             '★★ 硬要求 B:PUT 一个指向 maps/ 之外的链接 → 403 拒绝(实得 ' + rLink.status +
+             ';若实得 500 说明它是走到 rename 才失败的,那就不是 realpath 闸挡的)');
+          sameBytes(fs.readFileSync(victimPath), victimBytes,
+                    '★★ 硬要求 B:那个外部文件逐字节未变(被拒的写一个字节都没落盘)');
+          ok(fs.existsSync(linkPath), '★ 硬要求 B:链接本身也还在(没有被 rename 覆盖掉)');
+          ok(fs.readdirSync(outsideDir).length === 1,
+             '★ 硬要求 B:maps/ 之外那个目录里没有多出任何东西(实得 ' +
+             fs.readdirSync(outsideDir).join(',') + ')');
+          ok(noTmpLeft(), '★ 硬要求 B:被拒的链接写也没在 maps/ 里留临时文件');
+        }
+      } finally {
+        // ★ 一定要收掉:留着它会让后面任何一个"列 maps/ 目录"的断言多出一个条目。
+        try { if (fs.existsSync(linkPath)) fs.unlinkSync(linkPath); } catch (e) { /* 清不掉不该盖住真失败 */ }
+      }
+    }
+  }
 }
 
 (async function main() {
