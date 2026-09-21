@@ -120,7 +120,12 @@ func _ready() -> void:
 	add_child(_pause_menu)
 	# ★ 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已经建好、订阅齐了才开口要,
 	#   所以不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
-	NetBus.rpc_id(1, "match_sync")
+	# ★ 判活再发(全仓纪律「定向发送前一律先判活」):这是**定向可靠包**,而"进场景 → 请求"之间
+	#   连接完全可能已经不可用(worker 中途死掉 / 被踢)→ 往 ENet 已拆掉的 peer 发就是那条
+	#   `Unable to send packet on channel 0`。客户端侧的判据是 `can_send_to_server()`
+	#   (它比 `is_peer_live(1)` 多要求"本端已 CONNECTED")。
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "match_sync")
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 

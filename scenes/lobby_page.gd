@@ -191,7 +191,14 @@ func _with_lobby(action: Callable) -> void:
 		addr = _lobby_fallback_addr()
 		_addr_edit.text = addr
 	PvpSession.server_address = addr
-	if _connected and _connected_addr == addr:
+	# ★★ `NetBus.can_send_to_server()` **不是可选项**(2026-09-21 加):`_connected` 是**本端自己的
+	#   记账**(只在连上 / 连接失败 / 主动重连时翻),**不随对端断开更新** —— 服务器掉线或踢人
+	#   之后它仍是 true,于是"已连上"这条快路会把请求发往一个 **ENet 已拆掉的 peer**,也就是
+	#   那条 `Unable to send packet on channel 0, max channels: 0`(而它是**周期性**的:
+	#   刷新列表 / 加入 / 建房都走这里 ⇒ 断线后连点几次就报几次)。
+	#   加了这一判,断线后的第一次点击就落到下面的**重连**路径:动作存进 `_pending_action`,
+	#   连上大厅之后自动补发 ⇒ 既不报错,也顺手修好"服务器断了、界面看着还连着"这个状态。
+	if _connected and _connected_addr == addr and NetBus.can_send_to_server():
 		action.call()
 		return
 	_status.text = "正在连接服务器…"

@@ -102,7 +102,9 @@ func _ready() -> void:
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
 	# ★ 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已建好并订阅齐了才开口要,
 	#   故不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
-	NetBus.rpc_id(1, "match_sync")
+	# ★ 判活再发(全仓纪律,与 `pvp_game` 那处逐字同款):定向可靠包,连接可能已经不可用。
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "match_sync")
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
@@ -202,6 +204,10 @@ func _on_kill_event(killer: int, victim: int) -> void:
 # K = 自杀脱困:卡进墙/夹缝时主动放弃生命,走服务器权威 2s 复活(不计入任何人击杀)。
 func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
+		return
+	# ★ 判活再发(全仓纪律):按 K 的那一刻连接可能已经不可用(worker 中途死掉 / 被踢),
+	#   而这是**定向可靠包** ⇒ 不判就是那条 channel 0 错误。
+	if not NetBus.can_send_to_server():
 		return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_K:

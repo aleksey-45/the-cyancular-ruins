@@ -21,6 +21,11 @@ extends ProbeBase
 #   · 守卫 D 钉 `C_TEAM_A == BODY_BASE_COLOR == player.png 众数`:改了本体主色却没改队色 ⇒
 #     两队一起偏,但**仍分得出谁是谁**,所以最容易漏(team_room_smoke 登记过这条局限)。
 #   · 守卫 C 是**反向**的:大乱斗必须**继续**消费 peer_hues(别被"1v1 停用"顺手删掉)。
+#   · 守卫 E(2026-09-21,用户报「3v3 青队玩家还是看见自己是蓝色的」):3v3 的**自己**那具
+#     必须也是队色 —— 它此前传的是 `Settings.pvp_color_hue`(默认 0 = 不改色 ⇒ 身体恒为本体蓝
+#     = 队 1 色)。这条同时补上 CLAUDE.md 登记过的那个**守卫缺口**(`team_game` 把颜色来源改错时
+#     **一个探针都不会红**):① 走生产的 `_refresh_team_colors()` 看像素;② `team_game.gd` 对
+#     `pvp_color_hue` 零引用;③ 颜色钩子必须消费 `teams` 且不进 `_apply_peer_hues`。
 #
 # ★ 染色一律走**生产那份代码**:
 #   · 1v1 那三具调用 `pvp_game._apply_p2_tint()` 本体(离线 `.new()`,把 `PvpSession.role` /
@@ -33,6 +38,7 @@ const PLAYER_SCENE := "res://scenes/player/player.tscn"
 const SHADER_PATH := "res://scenes/player/player_p2_hue.gdshader"
 const PVP_GAME := "res://scenes/pvp_game.gd"
 const ROYALE_GAME := "res://scenes/royale_game.gd"
+const TEAM_GAME := "res://scenes/team_game.gd"
 const BODY_TEXTURE := "res://assets/textures/player.png"
 
 # 头顶 ID 的底板实色(`ui/world_label.gd` 的 `黑 0.1` 压在 ui/hud.gd 注释记的地图开阔区
@@ -41,7 +47,14 @@ const BACKDROP := Color(0x6C / 255.0, 0x87 / 255.0, 0x90 / 255.0)
 const BODY_SCALE := 4.0        # 48×48 的帧 → 192px
 const ROW1_Y := 340.0          # 1v1:P1 本地 / P2 本地 / 控制组
 const ROW2_Y := 900.0          # 3v3:队 1 / 队 2 / role 1 眼里的对手副本
+const ROW3_Y := 1240.0         # 3v3:**自己**(队 2)那具 —— 守卫 E 用
 const XS := [280.0, 960.0, 1640.0]
+
+# 守卫 E 的**确定性**前提:探针把自选色相临时摆成 120°(绿)。
+# 旧实现(`_apply_tint(sprite, Settings.pvp_color_hue)`,即"自己仍是自选色")会把身体染成绿 ⇒
+# 与队 2 的青**不同** ⇒ 守卫 E ① 红;而若自选色相停在默认 0(不改色),旧实现留下的身体是本体蓝
+# —— 那**同样**不等于队 2 的 token,故两种情况都红。摆 120° 只是让"红"更显眼、不依赖存档值。
+const FALSIFY_HUE_DEG := 120.0
 
 # 「青」区间(用户 2026-09-19 裁定:青绿区间 165~185 的偏绿侧;2026-09-20 把队 2 / P2 的色相
 # 定到 185 整)。★ 上界那 +0.5° 是 **8bit 量化余量**,不是放宽口径:`#80F4FF` 是 H185 S50 V100
@@ -102,9 +115,13 @@ func _run() -> void:
 	_tint(_spr["队2"], 0.0, UiFactory.C_TEAM_B)
 	# ⑥ role 1 眼里的**对手副本**(1v1 的另一半):生产该染**它**,而不是染本地那具
 	_spr["P2副本"] = _spawn(ps, "P2副本", Vector2(XS[2], ROW2_Y))
+	# ⑦ 3v3 的**自己**(守卫 E):队 2 的人看自己那具 —— 生产该把它染成队 2 色
+	_spr["3v3自己"] = _spawn(ps, "3v3自己", Vector2(XS[2], ROW3_Y))
 
 	# ★★ 1v1 那三具的染色**由生产自己做**(见 `_apply_production_p2_tint`)。
 	_apply_production_p2_tint(pvp_script)
+	# ★★ 3v3「自己」那具同样由**生产**做(见 `_apply_production_team_self_tint`)。
+	_apply_production_team_self_tint()
 
 	await _frames(6)
 	_img = await _shot("_hue_guard_p1_p2.png")
@@ -116,6 +133,7 @@ func _run() -> void:
 	_guard_b_two_colors()
 	_guard_c_royale_still_consumes_hues()
 	_guard_d_token_sources()
+	_guard_e_team_self_tint()
 
 
 # ── ★★ 染色**不抄**:把 `pvp_game._apply_p2_tint()` 本体的两个分支各走一遍 ──
@@ -144,6 +162,35 @@ func _apply_production_p2_tint(pvp_script: GDScript) -> void:
 	# 早退守卫:三具根都在,否则上面 `game.set(..., null)` 会让生产静默什么都不染
 	_check(_roots.has("P1") and _roots.has("P2") and _roots.has("P2副本"),
 			"探针自己没备齐三具身体根(生产染色断言无从成立)")
+
+
+# ── ★★ 3v3「自己」那具的染色也**不抄**:把 `team_game._refresh_team_colors()` 本体走一遍 ──
+# 只摆好它要读的四个输入(`_local` / `_replicas` / `_teams` / `PvpSession.role`),其余不碰
+# —— 该函数只读这些(`_refresh_names` 里那张 `_id_labels` 表默认是空的,不触任何节点)。
+# ★ 为什么必须走生产函数而不是探针自己调 `_apply_tint(..., C_TEAM_B)`:后者恒真,
+#   **验不到"生产到底有没有这么染"** —— 而本守卫要守的正是那一处(2026-09-21 用户报的
+#   「3v3 青队玩家还是看见自己是蓝色的」就是那里传错了来源)。
+func _apply_production_team_self_tint() -> void:
+	var tg_script: GDScript = load(TEAM_GAME)
+	if tg_script == null:
+		_check(false, "team_game.gd 载入失败(3v3 自身队色断言无从成立)")
+		return
+	var game: Node2D = tg_script.new()
+	if game == null:
+		_check(false, "team_game.gd 实例化失败(生产那条染色路径无从执行)")
+		return
+	var saved_role := PvpSession.role
+	var saved_hue := Settings.pvp_color_hue
+	PvpSession.role = 5                       # 本探针把它摆在**队 2**
+	Settings.pvp_color_hue = FALSIFY_HUE_DEG  # 旧实现会把身体染成这个色(见常量注释)
+	game.set("_local", _roots.get("3v3自己"))
+	game.set("_replicas", {})
+	game.set("_teams", {5: 2})
+	game.call("_refresh_team_colors")
+	PvpSession.role = saved_role
+	Settings.pvp_color_hue = saved_hue
+	game.free()
+	_check(_roots.has("3v3自己"), "探针自己没备齐 3v3「自己」那具身体根(守卫 E ① 无从成立)")
 
 
 # ── 守卫 A:shader 的 `COLOR` 语义(入参已含纹理)──
@@ -277,6 +324,40 @@ func _guard_d_token_sources() -> void:
 			("★ C_TEAM_A %s ≠ PvpMatchClient.BODY_BASE_COLOR %s —— 队 1 不再等于本体那种蓝"
 			+ "(队色与本体主色是同一条链,要一起改)") % [_hex(UiFactory.C_TEAM_A), _hex(PvpMatchClient.BODY_BASE_COLOR)])
 	_summary(before, "守卫 D:player.png 众数 == BODY_BASE_COLOR == C_TEAM_A")
+
+
+# ── 守卫 E:3v3 的**自己**也是队色(2026-09-21 用户裁定「青队玩家还是看见自己是蓝色的」)──
+# 这条补的是一个**登记在案**的守卫缺口:`team_game` 把「自己那具用哪个来源」改错时,原先
+# **一个探针都不会红**(guard C 只管 1v1 与大乱斗两侧,3v3 那一段当时没有断言)。
+#   ① **行为**(像素):生产的 `_refresh_team_colors()` → 自己那具的众数色**逐字节等于**
+#      `C_TEAM_B`(队 2)。旧实现传的是 `Settings.pvp_color_hue` ⇒ 要么绿(摆的 120°)、
+#      要么本体蓝(默认 0)—— 两种都不等于 token ⇒ 红。
+#   ② **源码**:`team_game.gd` 对 `Settings.pvp_color_hue` **零引用**(与 guard C ② 对
+#      `pvp_game.gd` 的同款口径:个人色相在 3v3 整体停用,它在本模式不再有任何落点)。
+#   ③ **源码**:基类钩子 `_apply_peer_hues_or_team` 的覆写**必须消费 `teams`**、且**不得**
+#      调 `_apply_peer_hues`(那正是缺口描述里"改回基类默认也不会红"的那一处)。
+func _guard_e_team_self_tint() -> void:
+	var before := _failures.size()
+	# ① 行为:自己那具的像素色 == 队 2 token
+	var me := _modal(_spr["3v3自己"])
+	_check(_same_rgb(me, UiFactory.C_TEAM_B),
+			("★ 3v3 里**自己**的身体应恰好是 C_TEAM_B %s(实测 %s)—— 生产把" +
+			"自己那具染成了别的来源(旧实现是 Settings.pvp_color_hue;默认 0 = 不改色 ⇒ 本体蓝)。" +
+			"用户原话:「3v3 青队玩家还是看见自己是蓝色的」") % [_hex(UiFactory.C_TEAM_B), _hex(me)])
+	# ② 源码:3v3 整份文件对自选色相零引用(注释不算)
+	var tg := _code_only(_read(TEAM_GAME))
+	_check(not tg.contains("pvp_color_hue"),
+			("★ team_game.gd 又引用 Settings.pvp_color_hue 了 —— 3v3 的自选色相已按用户裁定停用" +
+			"(自己与队友必须同队色,个人色相在本模式没有落点)"))
+	# ③ 源码:颜色那一段的钩子必须**继续**消费 teams,且不进基类那条"个人色相"路
+	var hook := _func_body(tg, "_apply_peer_hues_or_team")
+	_check(not hook.is_empty(), "读不到 team_game.gd 的 _apply_peer_hues_or_team")
+	_check(hook.contains("teams"),
+			"★ 3v3 的 _apply_peer_hues_or_team 不再消费载荷里的 teams 了 —— 队色是本模式唯一的颜色来源")
+	_check(not hook.contains("_apply_peer_hues("),
+			"★ 3v3 的颜色钩子里出现 _apply_peer_hues 了 —— peer_hues 在本模式是无效输入(6 个人认不出队友)")
+	_summary(before, "守卫 E:3v3 自己 == 队 2 token(%s)/ 文件零引用 pvp_color_hue / 钩子只消费 teams"
+			% _hex(me))
 
 
 # ── 生产路径的染色助手:直接调 `PvpMatchClient._apply_tint`(不实例化进树;
