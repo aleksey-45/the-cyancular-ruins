@@ -222,16 +222,33 @@ $('btn-rt').addEventListener('click', function () {
 // ★ 写端点只在**同源**时被接受(Origin 闸),这是设计如此,别试图绕过。
 // ★ 用 localhost 打开本页而服务器在 127.0.0.1 时,浏览器会诚实地标 `Sec-Fetch-Site:
 //   cross-site`(按 Fetch 的定义这是两个站)—— 那**仍然放行**(Origin 才是主闸)。
+// ★ 字节比对只此一份(纯比较,不是格式逻辑)。
+function bytesEqual(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 $('btn-put').addEventListener('click', function () {
   const log = $('putlog');
   if (!rtBytes) { log.textContent = '先「拉取并往返」读一份地图'; return; }
   const name = rtName;
   log.textContent = 'PUT ' + name + ' …';
-  const body = new Blob([rtBytes]);          // ★ 刻意**不**给 Blob 设 type:漏头就会 415
-  fetch('/api/map?p=' + encodeURIComponent(name), {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: body,
+  // ★ 写之前**再读一次**,确认盘上那份仍是我们手里的这份 —— 否则这次"原样写回"会把
+  //   用户在别处(另一个编辑器 / git checkout)改过的内容覆盖成我们手里的旧字节。
+  //   把它挡在这里,"内容零改动"这句话才是无条件的。
+  fetch('/api/map?p=' + encodeURIComponent(name)).then(function (r) {
+    if (!r.ok) throw new Error('写前预检 HTTP ' + r.status);
+    return r.arrayBuffer();
+  }).then(function (buf) {
+    if (!bytesEqual(new Uint8Array(buf), rtBytes)) {
+      throw new Error('磁盘上那份已经不是读到的这份了(别处改过?),拒绝覆盖 —— 重新「拉取并往返」再来一次');
+    }
+    const body = new Blob([rtBytes]);        // ★ 刻意**不**给 Blob 设 type:漏头就会 415
+    return fetch('/api/map?p=' + encodeURIComponent(name), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+    });
   }).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 415 ? '(内容类型不对)' : ''));
     return r.json();
@@ -241,8 +258,7 @@ $('btn-put').addEventListener('click', function () {
       return r.arrayBuffer();
     }).then(function (buf) {
       const back = new Uint8Array(buf);
-      let same = back.length === rtBytes.length;
-      for (let i = 0; same && i < back.length; i++) if (back[i] !== rtBytes[i]) same = false;
+      const same = bytesEqual(back, rtBytes);
       log.textContent = [
         'PUT ' + name + ' → 服务器记账 ' + out.size + ' 字节(名字 ' + out.name + ')',
         '回读 ' + back.length + ' 字节 · 与读到的那份逐字节一致:' + same,
