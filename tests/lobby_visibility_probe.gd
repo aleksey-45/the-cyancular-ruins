@@ -25,14 +25,18 @@ extends Node
 #   发送那一半由真链路探针覆盖(见设计 §6.4)。
 
 const ROOM_1V1 := "9001"
+const ROOM_ROYALE := "9002"
+const ROOM_TEAM := "9003"
 const P_A := 101     # 假 peer id:本探针不开 socket,这些数字只用来占位
 const P_B := 102
 const P_C := 103
 
 # ★★ 断言计数:ALL-OK 只证明"没有一条断言失败",**不证明"该跑的断言都跑过"** ——
 #   helper/lambda 里出错会让调用方照常继续、判词照打(见 tests/lib/probe_base.gd 文件头)。
-#   少跑一条就红。★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
-const EXPECTED_CHECKS := 8
+#   少跑一条就红 —— 这正是"ALL-OK 不等于全都跑过"那条纪律的落点。
+#   ★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
+# ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27)。
+const EXPECTED_CHECKS := 24
 
 var _rm: Node = null
 var _checks := 0
@@ -56,6 +60,8 @@ func _ready() -> void:
 	#   "什么错都没有"的情况下变红。
 	_rm.set_process(false)
 	_phase_1v1()
+	_phase_royale()
+	_phase_team()
 	_finish()
 
 
@@ -111,6 +117,79 @@ func _phase_1v1() -> void:
 	_rm.lobby.join_room(P_C, ROOM_1V1)
 	_check(r.players.size() == before and not r.players.has(P_C),
 			"① ★ 第三人 join_room 被拒(房里 1 人:唯一能拒它的就是 started)")
+
+
+# ── ② 大乱斗:同 ①(门控是 in_match,不是 started)──
+func _phase_royale() -> void:
+	var rr := LobbyRooms.RoyaleRoom.new()
+	rr.code = ROOM_ROYALE
+	rr.host_peer = P_A
+	rr.players = [P_A, P_B]
+	rr.player_role = {P_A: 1, P_B: 2}
+	rr.max_players = 8
+	rr.in_match = true
+	rr.worker_port = 29902
+	rr.worker_pid = 0
+	_rm.lobby.royale_rooms[rr.code] = rr
+	_rm.lobby._peer_names[P_A] = "阿甲"
+	_rm.lobby._peer_names[P_B] = "bob"
+	_rm.lobby.freeze_roster(rr)
+	_check(rr.roster.size() == 2, "② 开局时名单被冻进房记录(2 条)")
+
+	_rm.lobby.on_peer_left(P_A)
+	_rm.lobby.on_peer_left(P_B)
+	_check(_rm.lobby.royale_rooms.has(ROOM_ROYALE), "② ★ 全员断开大厅后大乱斗房仍在")
+	_check(rr.players.is_empty(), "② 房内在线名单已空")
+
+	var row := _find_row(_rm.lobby.royale_list_payload(), ROOM_ROYALE)
+	_check(not row.is_empty(), "② ★ 第三人能在列表里看到这个房")
+	_check(not row.is_empty() and bool(row.get("in_match", false)), "② 列表行带 in_match=true")
+	_check(not row.is_empty() and row.get("names", []) == ["阿甲", "bob"], "② 名单取自冻结的那份")
+	_check(not row.is_empty() and int(row.get("players", 0)) == 2, "② 列表显示 2 人(取自 roster)")
+
+	# ★ 非满房:2/8 —— 唯一能拒的理由就是 in_match
+	rr.players = [P_A]
+	var before := rr.players.size()
+	_rm.lobby.royale_join(P_C, ROOM_ROYALE, "")
+	_check(rr.players.size() == before and not rr.players.has(P_C),
+			"② ★ 第三人 royale_join 被拒(2/8 非满房:唯一能拒它的是 in_match)")
+
+
+# ── ③ 3v3:同上(与大乱斗逐字同款,门控也是 in_match)──
+func _phase_team() -> void:
+	var tr := LobbyRooms.TeamRoom.new()
+	tr.code = ROOM_TEAM
+	tr.host_peer = P_A
+	tr.players = [P_A, P_B]
+	tr.player_role = {P_A: 1, P_B: 2}
+	tr.team_of = {1: 1, 2: 2}
+	tr.in_match = true
+	tr.worker_port = 29903
+	tr.worker_pid = 0
+	_rm.lobby.team_rooms[tr.code] = tr
+	_rm.lobby._peer_names[P_A] = "阿甲"
+	_rm.lobby._peer_names[P_B] = "bob"
+	_rm.lobby.freeze_roster(tr)
+	_check(tr.roster.size() == 2, "③ 开局时名单被冻进房记录(2 条)")
+
+	_rm.lobby.on_peer_left(P_A)
+	_rm.lobby.on_peer_left(P_B)
+	_check(_rm.lobby.team_rooms.has(ROOM_TEAM), "③ ★ 全员断开大厅后 3v3 房仍在")
+	_check(tr.players.is_empty(), "③ 房内在线名单已空")
+
+	var row := _find_row(_rm.lobby.team_list_payload(), ROOM_TEAM)
+	_check(not row.is_empty(), "③ ★ 第三人能在列表里看到这个房")
+	_check(not row.is_empty() and bool(row.get("in_match", false)), "③ 列表行带 in_match=true")
+	_check(not row.is_empty() and row.get("names", []) == ["阿甲", "bob"], "③ 名单取自冻结的那份")
+	_check(not row.is_empty() and int(row.get("players", 0)) == 2, "③ 列表显示 2 人(取自 roster)")
+
+	# ★ 非满房:2/6 —— 唯一能拒的理由就是 in_match
+	tr.players = [P_A]
+	tr.team_of = {1: 1}
+	var before := tr.players.size()
+	_rm.lobby.team_join(P_C, ROOM_TEAM, "")
+	_check(tr.players.size() == before and not tr.players.has(P_C),
+			"③ ★ 第三人 team_join 被拒(2/6 非满房:唯一能拒它的是 in_match)")
 
 
 func _find_row(arr: Array, code: String) -> Dictionary:

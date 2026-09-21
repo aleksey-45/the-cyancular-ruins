@@ -71,6 +71,8 @@ func royale_start(caller: int) -> void:
 		return
 	rr.worker_port = port
 	rr.in_match = true
+	# ★ 开局那一刻把名单冻进房记录(理由见 LobbyRooms.freeze_roster 的注释)。
+	lobby.freeze_roster(rr)
 	# ★ token 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
 	#   之后再发就静默丢失(Task 2 的 session_token 注释)。spawn 之前发则一定更早。
 	for pid in rr.players:
@@ -85,6 +87,10 @@ func royale_start(caller: int) -> void:
 		#   后续清扫按这个陈旧端口号去杀进程,可能误杀另一个正在跑的对局 worker。
 		lobby.teardown_room(rr, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
 		return
+	# ★ spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
+	#   那张端口→pid 表)。★ 位置不能挪到 spawn 之前:拉起失败那一刻 pid 还是 0,
+	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
+	rr.worker_pid = _launcher.pid_of(port)
 	# 房主对局选项经 worker 侧 NetBusExt.player_options 以 role1 报到为准;这里随开局存档不打扰
 	print("大乱斗房 %s 开局(%d 人,roles %s)→ worker 端口 %d" % [rr.code, rr.players.size(),
 			str(rr.player_role.values()), port])
@@ -171,6 +177,8 @@ func royale_start_ai(caller: int) -> void:
 		return
 	rr.worker_port = port
 	rr.in_match = true
+	# ★ 开局那一刻把名单冻进房记录(理由见 LobbyRooms.freeze_roster 的注释)。
+	lobby.freeze_roster(rr)
 	# AI role 号 = 1..max_players 内**人类未占用**的空闲号(见 _royale_free_roles)
 	var ai_roles := lobby.royale_free_roles(rr, ai_count)
 	# ★ token 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
@@ -187,6 +195,10 @@ func royale_start_ai(caller: int) -> void:
 		# ★ 走拆除单一收口(2026-09-14,修 M1;同 royale_start 的理由)
 		lobby.teardown_room(rr, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
 		return
+	# ★ spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
+	#   那张端口→pid 表)。★ 位置不能挪到 spawn 之前:拉起失败那一刻 pid 还是 0,
+	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
+	rr.worker_pid = _launcher.pid_of(port)
 	print("大乱斗房 %s AI 补位开局(%d 真人 + %d AI)→ worker 端口 %d" % [rr.code, rr.players.size(), ai_count, port])
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(rr, port)
@@ -216,6 +228,8 @@ func team_start(caller: int) -> void:
 		return
 	tr.worker_port = port
 	tr.in_match = true
+	# ★ 开局那一刻把名单冻进房记录(理由见 LobbyRooms.freeze_roster 的注释)。
+	lobby.freeze_roster(tr)
 	# ★ token 必须在 **go_match 之前**发(go_match 一到客户端就 NetBus.stop() 断大厅;晚发静默丢失)
 	for pid in tr.players:
 		var tk := LobbyRooms.new_token()
@@ -236,6 +250,10 @@ func team_start(caller: int) -> void:
 		# ★ 走拆除单一收口(同 royale_start 的理由:收口会归还端口 + 摘注册表 + 通知房内玩家)
 		lobby.teardown_room(tr, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
 		return
+	# ★ spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
+	#   那张端口→pid 表)。★ 位置不能挪到 spawn 之前:拉起失败那一刻 pid 还是 0,
+	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
+	tr.worker_pid = _launcher.pid_of(port)
 	print("3v3 房 %s 开局(roles %s / teams %s)→ worker 端口 %d" % [tr.code,
 			str(roles), str(teams), port])
 	await get_tree().create_timer(0.3).timeout

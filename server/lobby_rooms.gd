@@ -53,16 +53,20 @@ var _peer_names: Dictionary = {}   # peer id -> 昵称(客户端连上大厅时�
 class RoyaleRoom:
 	var code: String = ""
 	var host_peer: int = 0
-	var players: Array[int] = []          # peer ids(房内成员,含房主)
+	var players: Array[int] = []          # peer ids(房内成员,**只表示"此刻还连在大厅这个房里的人"**)
 	var player_role: Dictionary = {}      # peer id -> role(1..N,大乱斗角色号)
 	var is_public := true
 	var invite_code := ""                 # 私密房凭此码进入
 	var max_players := ROYALE_DEFAULT_MAX
 	var options: Dictionary = {}          # 房主对局选项(禁武器/回合回血),开局随房主生效
-	var in_match := false                 # 已开局(拒绝加入;成员转连 worker 后房即散)
+	var in_match := false                 # 已开局(拒绝加入;成员转连 worker 后房**仍保留**,见 on_peer_left)
 	var worker_port: int = 0              # 本房拉起的大乱斗 worker 端口(关房时归还)
+	# worker 进程的 pid(拉起成功后由 RoomManager 登记;0 = 拉起中 → 判"没结束")。理由见 Room.worker_pid
+	var worker_pid: int = 0
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超龄清理用,与 Room.created_at 同形)
 	var tokens: Dictionary = {}          # peer_id -> 一次性会话令牌(断线重连用;开局时按 role 下发)
+	# 开局那一刻冻结的名单 [{role:int, name:String}](理由见 Room.roster 的注释)
+	var roster: Array = []
 
 var royale_rooms: Dictionary = {}   # code -> RoyaleRoom
 
@@ -73,15 +77,19 @@ var royale_rooms: Dictionary = {}   # code -> RoyaleRoom
 class TeamRoom:
 	var code: String = ""
 	var host_peer: int = 0
-	var players: Array[int] = []          # peer ids
+	var players: Array[int] = []          # peer ids(**只表示"此刻还连在大厅这个房里的人"**)
 	var player_role: Dictionary = {}      # peer id -> role(1..6,最小空闲号)
 	var team_of: Dictionary = {}          # role(int) -> 1/2(**选边前不在表里**)
 	var is_public := true
 	var invite_code := ""
 	var in_match := false
 	var worker_port: int = 0
+	# worker 进程的 pid(拉起成功后由 RoomManager 登记;0 = 拉起中 → 判"没结束")。理由见 Room.worker_pid
+	var worker_pid: int = 0
 	var created_at := 0.0
 	var tokens: Dictionary = {}           # peer_id -> 会话令牌(断线重连用)
+	# 开局那一刻冻结的名单 [{role:int, name:string}](理由见 Room.roster 的注释)
+	var roster: Array = []
 
 var team_rooms: Dictionary = {}   # code -> TeamRoom
 
@@ -299,13 +307,18 @@ func on_peer_left(peer_id: int) -> void:
 			continue
 		if room.players.is_empty():
 			teardown_room(room)   # 延迟归还端口(worker 会自己退;见 WORKER_PORT_REUSE_DELAY)
-	# 大乱斗房:掉线即离房(空房关闭;房主掉线转移;开局后成员转连 worker 断开大厅属正常流转)
+	# 大乱斗房:掉线即离房(未开局的空房才关闭;房主掉线转移;开局后成员转连 worker 断开大厅属正常流转)
 	for rcode in royale_rooms.keys():
 		var rr: RoyaleRoom = royale_rooms[rcode]
 		if not rr.players.has(peer_id):
 			continue
 		rr.players.erase(peer_id)
 		rr.player_role.erase(peer_id)
+		# ★ 对局中(`in_match`)的房**不拆**(2026-09-21):成员转连 worker 时会全部断开大厅,
+		#   拆了就再也不会出现在列表里。回收改由 `_reclaim_finished_matches` 按"worker 进程还在不在"判。
+		#   ★ 这里**不再发**那句"配对已取消"式的提示(与 1v1 同款理由:房没有被取消)。
+		if rr.in_match:
+			continue
 		if rr.players.is_empty():
 			# 大乱斗按默认一局时长给更长的回收延迟(远长于 1v1,自检 M2);已知边界见
 			# WorkerLauncher.ROYALE_PORT_REUSE_DELAY 的常量注释
@@ -314,19 +327,21 @@ func on_peer_left(peer_id: int) -> void:
 			if rr.host_peer == peer_id:
 				rr.host_peer = rr.players[0]
 				print("大乱斗房 %s 房主转移 → peer %d" % [rcode, rr.host_peer])
-			# ★ 已开局的房**不广播等待室状态**:开局后成员都在转连 worker(会陆续断开大厅),
-			#   广播已无意义(等待室界面已经没了),而这些成员正处在"ENet 已断、断开信号未处理"
-			#   的窗口里 —— 发给它们必然打 "max channels: 0" 且包丢(实测:连等一帧都躲不开,
-			#   get_peers() 对这类 peer 的滞后不止一帧)。等待中的房照常广播(那是等待室名单刷新)。
+			# ★ 已开局的房**不广播等待室状态**(既有理由:成员正在转连 worker,发给它们必然踩
+			#   "max channels: 0" 且包丢)。这一条 `if` 现在永远为真(in_match 已在上面 continue),
+			#   但**保留**它:它是那件事的守卫,不是死代码 —— 删了会让后来者以为"开局后也可以广播"。
 			if not rr.in_match:
 				_broadcast_royale_state(rr)
 	# 3v3 房:与大乱斗逐字同款(掉线即离房;空房关闭;房主掉线转移;开局后成员转连 worker 断开大厅
 	# 属正常流转)。★ **这一段不在 brief 的代码块里,但没有它 3v3 房会漏两处**:
 	#   ① 等待期有人关掉客户端(或踢网线)→ 该 peer 永久留在 `players` 里,房间列表显示幽灵人数、
 	#      `host_peer` 可能指向死人 → **这个房再也不可能凑齐 6 人开局**,也没人认领;
-	#   ② 开局后 6 人转连 worker 会**全部**触发本函数 → 若这里不摘房,`worker_port` 直到
-	#      _sweep_stale_rooms 的 2h 超龄才归还(1v1/大乱斗都是当场归还)。
-	#      本层为「端口泄漏」这同一个失败模式已补过三次,不能靠 sweep 兜底当第一道防线。
+	#   ② 开局后 6 人转连 worker 会**全部**触发本函数 → 那时若不摘人,`players` 会一直显示 6 个
+	#      早已不在大厅的 peer(列表人数造假),`host_peer` 也可能指向死人。
+	# ★ 2026-09-21 订正:本条原先写的是「若这里不摘房,worker_port 直到 sweep 的 2h 超龄才归还」
+	#   —— 房现在是**刻意不拆**的(对局中的房必须活到对局结束,见下面那条 `if tr.in_match`,
+	#   否则"看得见"与"回局"都无从谈起),端口归还改由回收梯按 **worker 进程活性**判(设计 §2.4)。
+	#   本循环剩下的职责是 ①② 里的"摘人/转移房主",不是"拆房"。
 	for tcode in team_rooms.keys():
 		var tr: TeamRoom = team_rooms[tcode]
 		if not tr.players.has(peer_id):
@@ -337,6 +352,8 @@ func on_peer_left(peer_id: int) -> void:
 		for r in tr.team_of.keys():
 			if not tr.player_role.values().has(int(r)):
 				tr.team_of.erase(r)
+		if tr.in_match:
+			continue   # 对局中:房活到 worker 退出(理由与大乱斗逐字同款)
 		if tr.players.is_empty():
 			teardown_room(tr)
 		else:
@@ -474,39 +491,53 @@ func royale_leave(caller: int) -> void:
 		return
 	rr.players.erase(caller)
 	rr.player_role.erase(caller)
-	if rr.players.is_empty():
-		# 「退出房间」按钮走的是这条路径(它**不断开大厅 peer** → on_peer_left 不会为它触发);
-		# 房间随即从 royale_rooms 摘除,而 _sweep_stale_rooms / on_peer_left 都只遍历
-		# royale_rooms → 之后**再无任何路径**能归还本房端口。开局过的房会把端口永久占死
-		# (500 个耗尽后 WorkerLauncher.pick_port 恒 -1,大厅彻底拉不起 worker)。
-		# 故与其他大乱斗拆除路径同法归还,并同样走大乱斗那条更长的复用延迟
-		# (一局进行中,旧 worker 还在跑,见 ROYALE_PORT_REUSE_DELAY)。
+	if rr.players.is_empty() and not rr.in_match:
+		# 「退出房间」按钮**不断开大厅 peer** → on_peer_left 不会为它触发;房间随即从注册表摘除,
+		# 而 sweep / on_peer_left 都只遍历注册表 → 之后**再无任何路径**能归还本房端口。
+		# 故与其他大乱斗拆除路径同法归还,并同样走大乱斗那条更长的复用延迟。
+		# ★ 对局中不拆(与 on_peer_left 同款):否则"看得见"与"回局"都没了。
 		teardown_room(rr)
 	else:
-		if rr.host_peer == caller:
+		# ★ 房主转移那一行必须带 `not rr.players.is_empty()`:对局中的房可能**一个人都不在线**
+		#   (全体转连走了),而 `rr.players[0]` 在空数组上会**越界报错**(静默改行为的典型)。
+		if rr.host_peer == caller and not rr.players.is_empty():
 			rr.host_peer = rr.players[0]
-		# 已开局的房不广播等待室状态(与 on_peer_left 同一理由:成员正在转连 worker,
-		# 发给它们只会踩 "max channels: 0" 并丢包,等待室界面也已不存在)
+		# 已开局的房不广播等待室状态(与 on_peer_left 同一理由)
 		if not rr.in_match:
 			_broadcast_royale_state(rr)
 
-# 公开房间列表(只列未开局的;[{code, players, max_players, names}])
-func royale_list(caller: int) -> void:
+# 公开房间列表的**纯构造**(理由同 room_list_payload:无对端时 reply 静默跳过 ⇒ 不抽出来
+# 探针观测不到)。★ 只列**公开**房;`in_match` 的房**照列**(第三人要看得见),未开局的空房
+# 仍不列(那是幽灵房)。
+func royale_list_payload() -> Array:
 	var arr: Array = []
 	for code in royale_rooms:
 		var rr: RoyaleRoom = royale_rooms[code]
-		if rr.in_match or not rr.is_public or rr.players.is_empty():
+		if not rr.is_public:
+			continue
+		if rr.in_match:
+			var dn: Array = []
+			for e in rr.roster:
+				dn.append(str((e as Dictionary).get("name", "玩家")))
+			arr.append({"code": code, "players": rr.roster.size(), "max_players": rr.max_players,
+					"names": dn, "in_match": true})
+			continue
+		if rr.players.is_empty():
 			continue
 		var names: Array = []
 		for peer_id in rr.players:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": code, "players": rr.players.size(),
-				"max_players": rr.max_players, "names": names})
+				"max_players": rr.max_players, "names": names, "in_match": false})
+	return arr
+
+
+func royale_list(caller: int) -> void:
 	# 判活同 NetBus.reply:请求与断开可能挤在同一次 poll 里(见 NetBus.reply 的注释)。
 	# 本节点(NetBusExt)没有自己的 reply 助手 —— 判据是**跨节点的单一来源**(NetBus.is_peer_live),
 	# 所以这里显式判一次;大厅里其余 NetBusExt 站定走的是 `is_peer_online` 包一层。
 	if NetBus.is_peer_live(caller):
-		NetBusExt.rpc_id(caller, "royale_rooms", arr)
+		NetBusExt.rpc_id(caller, "royale_rooms", royale_list_payload())
 
 #  精确且不需要任何特例函数。见 server_main.gd 文件头。)
 
@@ -646,31 +677,46 @@ func team_leave(caller: int) -> void:
 	for r in tr.team_of.keys():
 		if not tr.player_role.values().has(int(r)):
 			tr.team_of.erase(r)
-	if tr.players.is_empty():
+	if tr.players.is_empty() and not tr.in_match:
 		# ★ 「退出房间」按钮**不断开大厅 peer** → on_peer_left 不会为它触发;房间随即摘除,
 		#   而 sweep / on_peer_left 只遍历注册表 → 之后再无路径归还端口(与 royale_leave 同款坑)。
 		teardown_room(tr)
 	else:
-		if tr.host_peer == caller:
+		# ★ 同 royale_leave:对局中的房可能一个人都不在线,`tr.players[0]` 之前必须判空。
+		if tr.host_peer == caller and not tr.players.is_empty():
 			tr.host_peer = tr.players[0]
 		if not tr.in_match:
 			_broadcast_team_state(tr)
 
 
-func team_list(caller: int) -> void:
+# 公开 3v3 房间列表的**纯构造**(与 royale_list_payload 逐字同款,`max_players` 取 TEAM_ROLES)
+func team_list_payload() -> Array:
 	var arr: Array = []
 	for c in team_rooms:
 		var tr: TeamRoom = team_rooms[c]
-		if tr.in_match or not tr.is_public or tr.players.is_empty():
+		if not tr.is_public:
+			continue
+		if tr.in_match:
+			var dn: Array = []
+			for e in tr.roster:
+				dn.append(str((e as Dictionary).get("name", "玩家")))
+			arr.append({"code": c, "players": tr.roster.size(), "max_players": TEAM_ROLES,
+					"names": dn, "in_match": true})
+			continue
+		if tr.players.is_empty():
 			continue
 		var names: Array = []
 		for peer_id in tr.players:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": c, "players": tr.players.size(),
-				"max_players": TEAM_ROLES, "names": names})
+				"max_players": TEAM_ROLES, "names": names, "in_match": false})
+	return arr
+
+
+func team_list(caller: int) -> void:
 	# 判活同 royale_list:请求与断开可能挤在同一次 poll 里(见 NetBus.reply 的注释)。
 	if NetBus.is_peer_live(caller):
-		NetBusExt.rpc_id(caller, "team_rooms", arr)
+		NetBusExt.rpc_id(caller, "team_rooms", team_list_payload())
 
 
 # 房间状态广播(等待室/选边)。与 royale 那两条同款:call_deferred + 帧末再等一帧 + 开局后不再发。
