@@ -856,6 +856,92 @@ async function runAllPhases() {
          '整个修复结构上失效)');
     }
 
+    // ①d ★★★ 退避**逐档**钉住(待修 1 的后半:RENAME_RETRY_MAX_MS 的**应用**)。
+    //    ★ 缺口是什么:上面三条(名单/额度/上限)钉的全是**常量本身**,而常量**怎么被用**
+    //      一次都没被观测过 —— 本相位此前**每一条**注入调用都传了 noSleep,退避算出来就丢。
+    //      于是把 `Math.min` 从退避公式里整个删掉、常量照留:三个冒烟**全绿**,而"无界增长"
+    //      原样回来 —— 11 档退避 20/40/80/…/20480ms ≈ **41 秒**最坏等待(用户只会以为卡死)。
+    //      这正是"常量被守卫、应用没被守卫"的教科书缺口:守卫贴着常量的**值**写,而缺陷
+    //      住在常量的**用法**里。(与上面 `RENAME_RETRY_MAX_MS <= 100` 那条不重复:那条它
+    //      删不掉,删掉的是引用它的 Math.min。)
+    //    ★ 做法:注入一个**记录型** sleepFn(只把每次的延迟推进数组、**不真睡**)+ 一个恒定
+    //      EPERM 的 renameFn 把额度用满 ⇒ 断言对象是**纯逻辑**:零耗时、不读时钟、
+    //      不受机器负载影响,且覆盖**全部**档位(不只前几档)。
+    //    ★ 三条断言各有分工:逐档相等(整条曲线) / 最大值 ≤ 上限(带名字的那条不变量) /
+    //      末档**恰好等于**上限(上限必须真的**生效**,而不只是"没被超" —— 一个把上限写成
+    //      `BASE*2^n > MAX ? BASE : ...` 之类的坏实现能混过前两条)。
+    {
+      const recorded = [];
+      const recSleep = function (ms) { recorded.push(ms); /* 刻意不真睡:本块只要序列 */ };
+      const neverRenames = function () { throw eperm(); };
+      let err = null;
+      try { await srv.renameWithRetry('t', 'g', neverRenames, recSleep); } catch (e) { err = e; }
+      const expected = [];
+      for (let i = 0; i < srv.RENAME_MAX_ATTEMPTS - 1; i++) {
+        expected.push(Math.min(srv.RENAME_RETRY_MAX_MS,
+                               srv.RENAME_RETRY_BASE_MS * Math.pow(2, i)));
+      }
+      const maxRecorded = Math.max.apply(null, recorded.concat([0]));
+      ok(err !== null, '★ 待修 1:恒定 EPERM 用满额度后照原样抛出(实得:' +
+         (err === null ? '(未抛错 —— 重试变成无限循环了)' : errText(err)) + ')');
+      // ★ 断言的是**整条曲线**,不是"最大值没超":后者漏得掉"前几档就没按 base 翻倍"
+      //   这类错(曲线整体平移一格也照样不超上限)。
+      eq(recorded, expected,
+         '★★ 待修 1:退避序列**逐档** = min(' + srv.RENAME_RETRY_MAX_MS + 'ms, ' +
+         srv.RENAME_RETRY_BASE_MS + '×2^(n-1)) —— 前两档按 base 翻倍、之后被上限钳住,' +
+         '共 ' + expected.length + ' 档(实得 ' + JSON.stringify(recorded) + ')');
+      ok(maxRecorded <= srv.RENAME_RETRY_MAX_MS,
+         '★★ 待修 1:退避最大值 ≤ 上限 ' + srv.RENAME_RETRY_MAX_MS + 'ms' +
+         '(把 Math.min 从退避公式里拿掉 = 在这里红;实得最大 ' + maxRecorded + 'ms)');
+      ok(recorded.length > 0 &&
+         recorded[recorded.length - 1] === srv.RENAME_RETRY_MAX_MS,
+         '★★ 待修 1:末档**恰好**被钳到上限(上限必须真的生效,而不只是"恰好没被超")' +
+         '(实得末档 ' + recorded[recorded.length - 1] + 'ms)');
+    }
+
+    // ①e ★★「让出了事件循环」≠「真的等了」(待修 2 的后半)。
+    //    ★ ①c 只证明重试期内事件循环**前进过**;而一个 **setImmediate** 形态的 sleep
+    //      (一个循环回合、**~0 实际时间** ⇒ 12 次重试在一个 tick 里跑完)能让 ①c **照样绿**
+    //      —— 那时攥着 fd 的持有者根本没机会释放,修复**结构上失效而断言全绿**(复审实测)。
+    //      ①c 与这条合起来才是"异步退避"的完整判据:**让出**(①c)+ **真的等**(本条)。
+    //    ★ 判据:这次**不注入 sleepFn**(走生产那条默认路径,被测的就是它),改在注入的
+    //      renameFn 里给每次尝试盖时间戳 ⇒ 相邻两次尝试的**间隔**就是那一档退避**实际**
+    //      睡掉的时间。断言每个间隔 ≥ 该档期望值的一半。
+    //      · 默认实现(`setTimeout`):间隔 ≈ 20/40/50 ⇒ 过。
+    //      · `setImmediate` 实现:间隔 ≈ 0 ⇒ **红**。
+    //    ★ 只取下界、**不设上界**:定时器只会晚醒不会早醒(故正常档不飘),而"晚醒"就是
+    //      机器负载 —— 拿它当上界等于把负载写进判据(本相位开头那句"不用活竞态测"同一个理由)。
+    //    ★ 档位只取 3 次失败(不是用满额度):本块的判据是**每个**间隔都真的等掉了,3 档
+    //      已经覆盖"首次退避"与"被上限钳住那一档",而真睡 3 次只要 ~110ms(用满要 ~510ms)。
+    {
+      const stamps = [];
+      let calls = 0;
+      const stamping = function () {
+        stamps.push(Date.now());
+        calls++;
+        if (calls <= 3) throw eperm();
+        return undefined;                          // 第 4 次成功
+      };
+      let err = null;
+      try { await srv.renameWithRetry('t', 'g', stamping); } catch (e) { err = e; }
+      const gaps = [];
+      for (let i = 1; i < stamps.length; i++) gaps.push(stamps[i] - stamps[i - 1]);
+      const wantGaps = [];
+      for (let i = 0; i < 3; i++) {
+        wantGaps.push(Math.min(srv.RENAME_RETRY_MAX_MS,
+                               srv.RENAME_RETRY_BASE_MS * Math.pow(2, i)));
+      }
+      ok(err === null && calls === 4,
+         '★ 待修 2:默认退避(不注入 sleepFn)下第 4 次尝试成功(实得 calls=' + calls +
+         ', err=' + (err === null ? '无' : errText(err)) + ')');
+      let waited = gaps.length === 3;
+      for (let i = 0; i < 3 && waited; i++) waited = gaps[i] >= wantGaps[i] / 2;
+      ok(waited,
+         '★★ 待修 2:每次退避**真的把那一档睡掉了**(相邻尝试间隔 ≥ 该档期望的一半)' +
+         ' —— 不是 setImmediate 那种"让出循环但不等"的假 sleep(实得间隔 ' +
+         JSON.stringify(gaps) + 'ms / 期望档位 ' + JSON.stringify(wantGaps) + 'ms)');
+    }
+
     // ② 一直 EPERM → 抛出,且**临时文件已清理**、**原文件逐字节未变**。
     //    ★ 走 writeMapAtomic(不是 renameWithRetry):"临时文件被清掉"这条清理逻辑
     //      住在 writeMapAtomic 的 catch 里,只测 renameWithRetry 覆盖不到它。
