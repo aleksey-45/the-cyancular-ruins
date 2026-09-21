@@ -737,11 +737,14 @@ function setCells(map, L, list, descOf) {
     ok(c3.stats().size === 1 && t4.stats().size === 1, '两层各有一条条目(前置条件)');
 
     Render.setAtlas(a2, ATLAS_W, ATLAS_H);       // ★ 换图(**不换 backend**,要的就是同一个 ④)
-    eq(c3.stats().size, 0, '★★ 换图之后 ③ 被清空(漏了这一句 = A2 在上一层复发)');
+    // ★★ 换图**不清表** —— 陈旧条目留着,靠代际不等恒 miss 作废(见 `setSource` 的注释:
+    //   清了表,`e.gen === gen` 就成了死代码,Step 5 那条变异再也杀不掉任何东西)。
+    eq(c3.stats().size, 1, '★ 换图之后 ③ **不清表**(陈旧条目还在 —— 它靠代际作废,不是靠清空)');
+    eq(c3.stats().generation, 1, '★ ③ 的代际 +1(setSource 追的是它)');
     eq(t4.stats().size, 0, '★★ 换图之后 ④ 被清空(Tint.setSource 自己做的)');
-    ok(c3.stats().generation === 1, '★ ③ 的代际 +1(setSource 追的是它)');
     const after3 = c3.get(Core.LAYER_SCENE, 0, 0);
-    ok(after3 !== before3, '★★ 换图之后同一个格键**是新对象**(调用方不得跨换图持有格位图)');
+    ok(after3 !== before3, '★★ 换图之后同一个格键**是新对象**(漏了 = A2 在上一层复发)');
+    eq(c3.stats().misses, 2, '★★ 换图之后同一个格键**必须重新构建**(只判内容版本号的话这里会是命中)');
     const after4 = t4.get(3, 0, 0, d3);
     ok(after4 !== before4, '★★ 换图之后同一块小图也是新对象(调用方不得跨换图持有 tile)');
     ok(be.calls.length >= 2, '换图之后 ④ 真的重算过(实得 backend 调用 ' + be.calls.length + ' 次)');
@@ -999,7 +1002,11 @@ globalThis.Render = (function () {
     function version(L, cx, cy) { var v = ver.get(key(L, cx, cy)); return v === undefined ? 0 : v; }
     function touch(L, cx, cy) { ver.set(key(L, cx, cy), version(L, cx, cy) + 1); }
     // ★★ ③ 的作废。规格 §4.2 ③ 的"内容版本号"说的是轴 ①;换图是轴 ②。
-    function setSource() { gen++; entries.clear(); }
+    // ★★ **刻意不清表**:陈旧条目留着,靠 gen 不等**恒 miss**、被重建覆盖。
+  //   清了表的话 `get` 里那句 `e.gen === gen` 就成了**死代码** —— 表里不可能有旧代际的条目,
+  //   那句判断永远为真,Task 2 Step 5 那条变异(删掉 gen 比较)便再也杀不掉任何东西,
+  //   而它正是审计 A2 复发时唯一抓得住的地方。2026-09-21 用户裁定:让 gen 承重。
+  function setSource() { gen++; }
     function get(L, cx, cy) {
       var k = key(L, cx, cy);
       var v = version(L, cx, cy);
@@ -1198,15 +1205,18 @@ Expected: 全部 `ok -`,末行 `RENDER SMOKE OK`,退出码 0。
 
 Run: `cd level_editor && node render_smoke.js`
 
-Expected: 相位 ③b 至少三条报红 ——
+Expected: 相位 ③b **两条**报红 ——
 
 ```
-  FAIL - ★★ 换图之后 ③ 被清空(漏了这一句 = A2 在上一层复发)
-  FAIL - ★★ 换图之后同一个格键**是新对象**(调用方不得跨换图持有格位图)
-  FAIL - ★★ 换图之后同一块小图也是新对象(调用方不得跨换图持有 tile)
+  FAIL - ★★ 换图之后同一个格键**是新对象**(漏了 = A2 在上一层复发)
+  FAIL - ★★ 换图之后同一个格键**必须重新构建**(只判内容版本号的话这里会是命中)
 ```
 
 退出码 1。**确认之后把那一行改回来**,再跑一次确认恢复全绿。这条变异的含义:它模拟的正是审计 A2 在老编辑器里的形态("贴图换了,缓存却还新鲜")—— 把它原样搬到第三层缓存上,只有专门为"代际"写的那几条断言抓得住。
+
+★ **为什么是两条而不是三条**:`size` 与 `generation` 那两条在变异下**照样通过**(不清表 ⇒ 条目数不变;gen 也确实 +1)—— 真正承重的只有"新对象"与"必须重新构建"这两条,它们分别从**返回值的身份**与**命中计数**两个角度看同一件事。
+
+★★ **由此 `setSource` 不许再改回 `entries.clear()`**:一旦清表,这句变异变成**零红**,本层唯一那条守卫就废了(而那正是审计 A2 复发时无人报警的形态)。`eq(c3.stats().size, 1, …)` 那一条就是钉这件事的 —— 它断言的是"陈旧条目不得被静默清空",不是审美。
 
 - [ ] **Step 6: 确认三个既有冒烟一个都没动**
 
@@ -2475,7 +2485,7 @@ Expected: 相位 ⑩ 头一条报 `FAIL - 新脏区集是空的`,随后整块报
     }
 ```
 
-★ **`setAtlas` 与 ③ 的耦合**:`Render.setAtlas` 会 `cells.setSource()`,而 `cells` 是模块级变量(由 `attachCells` 装上)—— `setMap` 里刚 `attachCells` 的那个就是它,所以"换图"与"换贴图"两条路都会作废 ③。**这条依赖是有意的**:换贴图时 `renderer` 里的 `cellCache` 变量与模块级的 `cells` 指向**同一个对象**,不存在"作废了另一个"的可能。若将来有人让 `mount` 不 `attachCells`,这条就断了 —— 所以 Task 3 的 `setMap` 里那一行 `attachCells(cellCache)` 不许删(render_smoke 相位 ③b 从模块侧钉住了"attach 之后 setAtlas 会清 ③")。
+★ **`setAtlas` 与 ③ 的耦合**:`Render.setAtlas` 会 `cells.setSource()`,而 `cells` 是模块级变量(由 `attachCells` 装上)—— `setMap` 里刚 `attachCells` 的那个就是它,所以"换图"与"换贴图"两条路都会作废 ③。**这条依赖是有意的**:换贴图时 `renderer` 里的 `cellCache` 变量与模块级的 `cells` 指向**同一个对象**,不存在"作废了另一个"的可能。若将来有人让 `mount` 不 `attachCells`,这条就断了 —— 所以 Task 3 的 `setMap` 里那一行 `attachCells(cellCache)` 不许删(render_smoke 相位 ③b 从模块侧钉住了"attach 之后 setAtlas 会让 ③ 的代际 +1、从而把陈旧条目全判成未命中")。
 
 追加编辑入口与视图操作:
 
@@ -5466,7 +5476,7 @@ node 到不了浏览器,**这不是可以省略的步骤**:计划 2a 的终审�
 | 风险 | 影响 | 缓解 |
 |---|---|---|
 | **浏览器半边从未运行**(计划 2a 的唯一验收缺口) | 整页打不开、渲染全错、Worker 起不来 —— 而 node 一条断言都拦不住 | Task 3 就把真页面跑起来(计划里第 3 个 Task),并且每个浏览器 Task 都带**人眼清单 + `SELFTEST` 一行**;`SELFTEST` 里覆盖 Worker ping/往返、图集加载、画布尺寸、IndexedDB、localStorage —— 「能在浏览器里跑」由它给出**可粘贴**的判据 |
-| **③ 与 ④ 的作废耦合断掉**(审计 A2 的上一层复发) | 换贴图后整张图是色块,"有时好有时坏",不报错 | `setAtlas` 是**唯一**换图入口,同时作废两层;`attachCells` 让 `setMap` 与 ③ 绑定;`render_smoke` 相位 ③b 走**生产路径**断言两条轴(变异:去掉 `gen` 比较 → 三条红) |
+| **③ 与 ④ 的作废耦合断掉**(审计 A2 的上一层复发) | 换贴图后整张图是色块,"有时好有时坏",不报错 | `setAtlas` 是**唯一**换图入口,同时作废两层;`attachCells` 让 `setMap` 与 ③ 绑定;`render_smoke` 相位 ③b 走**生产路径**断言两条轴(变异:去掉 `gen` 比较 → **两条红**;`setSource` 不清表是这条守卫成立的前提) |
 | ③ 的 `build` 回调只存 tile 引用 ⇒ 有人"优化"成存像素 | 一屏 15MB、缓存比工作集还小、换图后仍交出旧像素 | 计划「决定 ②」写明了理由;相位 ③b 的"换图后是新对象"断言在两种实现下都成立,**但**`DEFAULT_CELL_MAX = 8192` 与注释点明了口径 |
 | 长作业(油漆桶 / 渐变 / 全屏重建)漏了分帧 | 大图上一操作就卡几秒,"页面像死了" | 闸 2 由 `Render.createSlicer` 统一提供,并有**确定性**断言(预算 8ms、每项 1ms → 每帧 8 项、单帧 ≤ 8ms);油漆桶/渐变/建层/缩略图四条长路径都走它 |
 | `Core.lineCells` 拿到非整数坐标 | **死循环挂住整个标签页**(不是返回错值) | 所有调用点收在 `strokePoints` 与 `lineTargets` 两处,都在同一行 `Math.floor`;`editor_smoke` 相位 ⑪ 扫源码钉住"没有第二个没 floor 的调用点" |
@@ -5477,4 +5487,4 @@ node 到不了浏览器,**这不是可以省略的步骤**:计划 2a 的终审�
 | IndexedDB 配额失败 | 草稿丢失,用户以为"编辑器帮我存着呢" | 落盘失败的 catch 里**明确报状态栏**(不静默);启动时草稿盘不可用也报一次;人眼清单第 4 条专门验它 |
 | 探针在搬家(2b 的重构)中失明 | 断言对着不存在的代码恒绿 | 相位 ①b / ⑧ 是**被教会**新真值(方向反转 + 只判页面结构)而不是删掉;纪律断言搬进 `editor_smoke` 相位 ⑪ 并**加严**(扫源码而不是扫页面文本);Task 10 Step 5 再给人眼一遍 grep 双保险 |
 | 缩略图构建在大图上慢 | 打开大图时"页面像卡了一下" | 缩略图**总是**经分帧器建(每 8 行一个任务);400×300 格时自动降到 1px/子格(30MB → 7.7MB);`thumbScale` 有断言 |
-| 双模块同心:`Render.mount` 里 `attachCells` 被后人删掉 | `setAtlas` 不再作废 `mount` 的 ③ ⇒ A2 复发 | 相位 ③b 从**模块侧**钉住"attach 之后 setAtlas 会清 ③";`setMap` 里那一行有注释点名不许删 |
+| 双模块同心:`Render.mount` 里 `attachCells` 被后人删掉 | `setAtlas` 不再作废 `mount` 的 ③ ⇒ A2 复发 | 相位 ③b 从**模块侧**钉住"attach 之后 setAtlas 会让 ③ 的代际 +1、陈旧条目全判未命中";`setMap` 里那一行有注释点名不许删 |
