@@ -90,7 +90,8 @@ const S_STAND := 0
 const S_DROP := 1
 const S_WATER := 2
 const S_LADDER := 3
-const S_DONE := 4
+const S_DOWNED := 4
+const S_DONE := 5
 
 const STAND_FRAMES := 45
 const DROP_FRAMES := 70
@@ -98,6 +99,17 @@ const WATER_FRAMES := 60
 const LADDER_SETTLE := 12      # 抓梯/下落过程不计入窗口(那几帧的空中项是正当的)
 const LADDER_FRAMES := 75
 const LADDER_LATCH_AT := 8     # 在空中按一下「上」抓住梯子(按住 S 时落地会成为蹲,蹲会解除攀附)
+
+# ── 相⑤(倒地)── 见 `_tick_downed` 上方那段:它一次覆盖 player.gd 里**两处**此前没人守的契约。
+# 落体帧数取 30:相③ 实测全程落地在第 ~43 帧,故此刻人还在空中(~205px 高)、落速已 ≈ 800 ——
+# 恰好是"带着落速被打倒"这个前提;再 8 帧也只落下 ~110px,窗口内始终在空中。
+const DOWN_AT := 30
+const DOWNED_FRAMES := 8       # 与副本探针的相④ 同宽:单帧窗口"两边都漏"(见那边的推导)
+const REVIVE_FRAMES := 6
+const DOWN_SUB_FALL := 0
+const DOWN_SUB_WINDOW := 1
+const DOWN_SUB_LAND := 2
+const DOWN_SUB_REVIVE := 3
 
 var _host: Node2D = null
 var _p = null
@@ -130,6 +142,10 @@ var _wet_floor_frames := 0     # in_water ∧ is_on_floor 的帧数(证据用,�
 # 只在 in_water 为真的帧上取的极值 —— 相① 真正的鉴别点
 var _wet_max_dev := 0.0
 var _wet_dev_frame := 0
+# 相⑤(倒地)
+var _sub := 0
+var _pre_down_vy := 0.0
+var _downed_air_frames := 0
 
 
 func _ready() -> void:
@@ -188,6 +204,9 @@ func _begin(stage: int) -> void:
 	_wet_floor_frames = 0
 	_wet_max_dev = 0.0
 	_wet_dev_frame = 0
+	_sub = DOWN_SUB_FALL
+	_pre_down_vy = 0.0
+	_downed_air_frames = 0
 	if _p != null and is_instance_valid(_p):
 		_p.queue_free()
 	_p = PLAYER_SCENE.instantiate()
@@ -208,6 +227,9 @@ func _spawn_of(stage: int) -> Vector2:
 			return Vector2(WATER_X_PX, REST_Y - 160.0)
 		S_LADDER:
 			return Vector2(LADDER_X_PX, REST_Y - 120.0)
+		S_DOWNED:
+			# 与相③ 同一起点(干地高处):本相要的就是"落地前手上先攥着一个真落速"
+			return Vector2(DRY_X, REST_Y - 400.0)
 	return Vector2(DRY_X, REST_Y)
 
 
@@ -274,6 +296,8 @@ func _physics_process(_delta: float) -> void:
 			_tick_water()
 		S_LADDER:
 			_tick_ladder()
+		S_DOWNED:
+			_tick_downed()
 
 
 # ── 相④ 干地静止(正向对照):不挤压 ──
@@ -313,10 +337,18 @@ func _tick_drop() -> void:
 #   反观"整个窗口"里最大的偏离是入池触底那一下**正当**的重力冲量(0.0185,两个版本
 #   一模一样,见 SETTLED_EPS 的推导),拿它当判据会把容差撑到鉴别点之上。
 # ★ 另记 in_water ∧ is_on_floor 的重叠帧数:本几何下它是 **0** ——
-#   `Water.feet_offset` 取的是**碰撞箱底边**(58px;站立/移动/蹲/飞都是 57px,仅 charge 58),
-#   而人站在实心地面上时底边正好压在支撑格顶面 ⇒ 脚底探针永远落在**支撑格自己**里,
-#   而支撑格是 wall ⇒ 站定后 in_water 恒假。故 brief 预期的"站定后每帧触发落地分支、
-#   稳态 ~9% 挤压"在本作几何下**不成立**;谓词真正买下的是下沉期那几十帧(见报告)。
+#   `Water.feet_offset` 返回的是**启用中碰撞箱的世界底边**相对原点的偏移,本探针实测 **58px**。
+#   ★★ 但这个 58 与"某个姿态箱"**不是一回事**,别把它们读成同一个数(本注释 2026-09-20 订正过):
+#     · 58(探针实测值)= **第一帧缓存下来的合并值**。`Water.feet_offset` 按 `_feet_signature()`
+#       缓存,而那个签名只累加 `CollisionShape2D` 子节点的 instance_id —— 玩家的 5 个姿态箱
+#       全是 `CollisionPolygon2D` ⇒ **签名恒 0 ⇒ 缓存永不失效**,它冻结在**首次调用那一刻**
+#       的几何上;那一刻 5 个姿态箱还没被 `_tick_pose_and_collision` 收敛成单箱,合并后的底边
+#       = 最低的那个 = charge 的 58。
+#     · 57 / 58(姿态箱自己的底边)= **两档**:站立/移动/蹲/飞是 **57px**,只有 charge 是 **58px**。
+#   下面那条结论("脚底探针落在支撑格自己里")依赖的正是 **57 那一档**:58 > 57 ⇒ 探针比站姿
+#   身体底边**低 1px**,人站在实心地面上时它就越过格线落进**支撑格自己**,而支撑格是 wall
+#   ⇒ 站定后 in_water 恒假。故 brief 预期的"站定后每帧触发落地分支、稳态 ~9% 挤压"
+#   在本作几何下**不成立**;谓词真正买下的是下沉期那几十帧(见报告)。
 func _tick_water() -> void:
 	_f += 1
 	_apply_input(PacketInputSource.BIT_DOWN, 0)
@@ -352,8 +384,76 @@ func _tick_ladder() -> void:
 		_record("相② 梯底按住 S 全程中性", _max_dev <= NEUTRAL_EPS,
 			"max dev %.4f(帧 %d)末值 scale=(%.4f,%.4f)" % [
 				_max_dev, _max_dev_frame, _last_scale.x, _last_scale.y])
-		_begin(S_DONE)
-		_finish()
+		_begin(S_DOWNED)
+
+
+# ── 相⑤ 倒地:一次覆盖 player.gd 里**两处**此前都没人守的契约 ──
+# `squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())` 这一行里有两件事:
+#   ① 第四参 = `combat.is_downed()` ⇒ **倒地强制中性**。本地玩家不旋转,但副本会(根节点
+#      `rotation = -90°`,而 animator 是它的**子节点**)⇒ 此时写 scale 会沿转过的轴挤压。
+#      把这一参换成 `false` 后:倒地**下落期间**空中连续项照常生效 ⇒ 屏幕上一条尸体
+#      一边翻着跟头一边被拉长。本相窗口刻意取"刚被打倒、人还在空中"那 8 帧,就是冲它去的。
+#   ② 倒地分支里的 `_pre_move_vy = 0.0` ⇒ 缓存**归零**。不归零的话,被击杀那一刻的下坠速度
+#      会**陈旧地**留满整个倒地窗口(该分支不跑 move_and_slide、没人刷新它),复活首帧一落到
+#      地面上就与地面态配成一次**满幅假挤压脉冲**。删掉那一行,本相的第三段断言(复活后
+#      6 帧)即变红 —— 而前两段照样全绿,所以三段缺一不可。
+# ★ 顺序必须"带落速倒 → 落地 → 复活"整串走完:只读"倒地时中性"照不到 ②(那一条的病只
+#   在**复活那一帧**显形)。本相的两条鉴别信号分别落在第二段与第三段,互不遮蔽。
+func _tick_downed() -> void:
+	_f += 1
+	_apply_input(0, 0)
+	match _sub:
+		DOWN_SUB_FALL:
+			_sample(0)
+			if _f >= DOWN_AT:
+				# 前提:此刻手上真有"这一帧要消费的"那个缓存值,且人还在空中
+				_pre_down_vy = _p._pre_move_vy
+				_p.combat.force_down()
+				_record("相⑤ 前提:倒地那一刻手上有真落速且仍在空中",
+					_pre_down_vy >= 700.0 and not _p.is_on_floor(),
+					"_pre_move_vy = %.1f(需 >= 700)、on_floor = %s(需 false)" % [
+						_pre_down_vy, str(_p.is_on_floor())])
+				_sub = DOWN_SUB_WINDOW
+				_f = 0
+				_max_dev = 0.0
+				_max_dev_frame = 0
+				_downed_air_frames = 0
+		DOWN_SUB_WINDOW:
+			_sample(1)
+			if not _p.is_on_floor():
+				_downed_air_frames += 1
+			if _f >= DOWNED_FRAMES:
+				# 前提:窗口里确实有够多的帧仍在空中 —— 全在地上时第四参换不换都一样(退化成空转)
+				_record("相⑤ 前提:倒地窗口里有足够多帧仍在空中", _downed_air_frames >= 6,
+					"倒地 ∧ 空中 %d / %d 帧" % [_downed_air_frames, DOWNED_FRAMES])
+				_record("相⑤ 倒地 %d 帧强制中性(tick 的第四参 = is_downed)" % DOWNED_FRAMES,
+					_max_dev <= NEUTRAL_EPS,
+					"max dev %.4f(帧 %d),上限 %.4f,末值 scale=(%.4f,%.4f)" % [
+						_max_dev, _max_dev_frame, NEUTRAL_EPS, _last_scale.x, _last_scale.y])
+				_sub = DOWN_SUB_LAND
+				_f = 0
+		DOWN_SUB_LAND:
+			# 倒地**不取消物理**(与敌人统一):继续受重力直到落地
+			_sample(0)
+			if _p.is_on_floor():
+				# 证据(不是判据):落地后缓存里还剩多少 —— 直接读出"归零那一行在不在"
+				var stale: float = _p._pre_move_vy
+				_max_dev = 0.0
+				_max_dev_frame = 0
+				_p.combat.revive()
+				_sub = DOWN_SUB_REVIVE
+				_f = 0
+				_record("相⑤ 证据:倒地期间落地后缓存已被归零(下一段的因)", absf(stale) <= 5.0,
+					"落地后 _pre_move_vy = %.1f(需 ≈ 0;!= 0 ⇒ 复活首帧会把它当成落速用)" % stale)
+		DOWN_SUB_REVIVE:
+			_sample(1)
+			if _f >= REVIVE_FRAMES:
+				_record("相⑤ 复活后 %d 帧内中性(倒地分支的 _pre_move_vy = 0.0)" % REVIVE_FRAMES,
+					_max_dev <= NEUTRAL_EPS,
+					"max dev %.4f(帧 %d),上限 %.4f,末值 scale=(%.4f,%.4f)" % [
+						_max_dev, _max_dev_frame, NEUTRAL_EPS, _last_scale.x, _last_scale.y])
+				_begin(S_DONE)
+				_finish()
 
 
 func _check_floor() -> void:

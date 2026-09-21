@@ -164,8 +164,14 @@ func _ready() -> void:
 	# 补间形变:挂在**自己**身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗)。
 	# animator 是 @export 引用,场景实例化时就已就位,`_ready` 里可用。
 	squash = SquashStretch.new()
-	squash.setup(animator, SquashStretch.Profile.PLAYER)
+	# ★ 顺序与另**两个**宿主统一:`add_child()` 之后才 `setup()`(三只敌鸟 / 对手副本都是这个序)。
+	#   两种序今天**等价** —— `SquashStretch` 没有 `_ready`,入树不触发任何按参数建出来的东西。
+	#   之所以仍然要统一:本仓对"配置与入树谁先"另有一条**相反**的规矩(`WeaponPickup.configure()`
+	#   必须**先于**`add_child()`,否则 `_ready` 会拿 @export 默认值先建一次,见 CLAUDE.md)——
+	#   同仓两种序并存时,加 `_ready` 的人无从判断该照哪一条。将来给本组件加 `_ready`(例如
+	#   自己建 animator)必须回头把这三处一起倒过来。
 	add_child(squash)
+	squash.setup(animator, SquashStretch.Profile.PLAYER)
 
 
 func _physics_process(delta: float) -> void:

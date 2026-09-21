@@ -71,8 +71,14 @@ func _ready() -> void:
 	#   三个敌人的 .tscn 里该节点都叫 AnimatedSprite2D。
 	squash = SquashStretch.new()
 	add_child(squash)
-	squash.setup(get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D,
-			SquashStretch.Profile.ENEMY)
+	# ★ 查不到 animator 就**当场报错**,不让它静默降级:组件侧容忍 null animator(`_apply()` 直接
+	#   return),于是这条查表失败的表现是"这只鸟永远不变形",一个字都不打 —— 那种沉默正是
+	#   本特性最贵的失败形态。三个 .tscn 现在都叫 AnimatedSprite2D,改名/漏改名必须响。
+	var anim := get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+	if anim == null:
+		push_error("EnemyBase: 找不到 AnimatedSprite2D 节点,补间形变将静默失效(节点名 = %s)"
+				% name)
+	squash.setup(anim, SquashStretch.Profile.ENEMY)
 
 func _setup_contact_area() -> void:
 	var area := Area2D.new()
@@ -165,6 +171,10 @@ func _physics_process(delta: float) -> void:
 	knock_velocity *= exp(-knock_decay_rate * delta)
 	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
 	# ★ 敌人侧**不做任何过滤**,就是裸值 —— 这是实测后的裁定(spec §2.4):
+	#   ⚠ **这些读数的出处**:下面那几个数(`239/1350` 帧、`13 次真实落水挤压`、`1.0861`)
+	#   是 2026-09-20 由一个**临时探针**量出来的,该探针**已删除、此后从未重测** ——
+	#   本注释是它们**唯一**的留存处,别把它们当"随时可以复跑出来的当前事实"引用。
+	#   裁定本身不依赖重测(方向不随几何变化:过滤净有害),故按原样保留。
 	#   `_in_water ∧ is_on_floor()` 在敌人身上**确实会重叠**(239/1350 帧;玩家侧是 0,
 	#   因为敌人的身体停在池底上方 0.02~0.18px,探针落进水格而玩家落在支撑格),
 	#   但过滤想防的幽灵**结构上不可达**(浮力钳在 -260/+160,下沉侧 160 < 阈值 220),

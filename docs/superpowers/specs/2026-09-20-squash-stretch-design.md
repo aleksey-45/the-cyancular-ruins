@@ -21,44 +21,48 @@
 
 | 证据 | 内容 |
 |---|---|
-| `enemy_base.gd:277-281` | 敌人朝向走 `_anim.flip_h`，**不碰 scale** |
-| `player.gd:325`、`:540` | 玩家朝向走 `animator.flip_h` |
-| `player_replica.gd:116` | 副本朝向走 `animator.flip_h` |
+| `EnemyBase._set_facing()` | 敌人朝向走 `_anim.flip_h`，**不碰 scale** |
+| `player.gd` 的 `_tick_facing()` 与 `restore_state()` | 玩家朝向走 `animator.flip_h` |
+| `PlayerReplica.apply_snapshot()` | 副本朝向走 `animator.flip_h` |
 
-`scenes/**/*.tscn` 里 `scale` 只出现在武器（`weapon_base.gd:348/397` 的 `scale.x = facing`）与其他节点上，**没有任何角色用 scale 做镜像**。所以写 `animator.scale` 不会与朝向打架 —— 这是本设计最大的前置风险，已排除。
+★ **本节一律用符号指代、不写行号**（2026-09-20 订正）：原文给出的是三处**行号**，它们在本轮密集改动后全部漂了（`enemy_base.gd` 的 `_set_facing` 漂了 +42 行、`player.gd` 那两处 +36/+41 行、副本 +44 行）。本文件的既定口径（见 §2.4 末）就是"密集改动区里行号是负资产"—— 这里照办。
+
+`scenes/**/*.tscn` 里 `scale` 只出现在武器（`WeaponBase` 的朝向处理 `scale.x = facing`）与其他节点上，**没有任何角色用 scale 做镜像**。所以写 `animator.scale` 不会与朝向打架 —— 这是本设计最大的前置风险，已排除。
 
 ### 1.2 项目里零 AnimationPlayer
 
 `scenes/**/*.tscn` 中 `AnimationPlayer` / `AnimationTree` / `Tween` **一个都没有**（仅出现在 `RELEASE.md` 与 `cyancular_build_profile.gdbuild` 的类列表里）。动画一律是 `AnimatedSprite2D` + 状态机 `play()`。
 
-### 1.3 玩家 `_physics_process` 的挂点顺序（`player.gd:159-222`）
+### 1.3 玩家 `_physics_process` 的挂点顺序（`player.gd`）
 
 ```
-159  func _physics_process(delta):
-160      if combat.is_downed(): _tick_downed(delta); return     ← 早退
-163      weapons.tick / combat.update_iframe_blink
-167-187  切枪 / 换弹 / 拾取丢弃
-196-206  swim.update / climb.update
-208      _tick_vertical(delta, ...)      ← 起跳发生在这里（:244-252）
-209-212  crouch / horizontal / facing / pose
-216      combat.apply_knock
-219      move_and_slide()                ← 落地判定的事实来源
-221-222  _tick_slide_reactions / _wrap_position
+func _physics_process(delta):
+    if combat.is_downed(): _tick_downed(delta); return     ← 早退
+    weapons.tick / combat.update_iframe_blink
+    切枪 / 换弹 / 拾取丢弃
+    swim.update / climb.update
+    _tick_vertical(delta, ...)          ← 起跳事件发生在它里面
+    crouch / horizontal / facing / pose
+    combat.apply_knock
+    _pre_move_vy = ... ; move_and_slide()   ← 落地判定的事实来源
+    _tick_slide_reactions / _wrap_position
 ```
 
-### 1.4 敌人 `_physics_process` 的挂点（`enemy_base.gd:91-136`）
+（★ 骨架里每个步骤都给行号是 2026-09-20 订正掉的 —— 本文件通篇改成符号指代，理由见 §2.4 末。）
+
+### 1.4 敌人 `_physics_process` 的挂点（`enemy_base.gd`）
 
 ```
-91   func _physics_process(delta):
-93       if _is_far_sleeping(): _ai(delta); _wrap(); return     ← 早退
-98-106   gravity（is_on_floor() 时跳过）/ 地面摩擦
-108-116  _ai / _anim_update / 接触伤害
-118-125  受击/死亡白闪
-130      _apply_water
-133-135  move_and_collide(knock_velocity) / move_and_slide()
+func _physics_process(delta):
+    if _is_far_sleeping(): _ai(delta); _wrap(); return     ← 早退
+    gravity（is_on_floor() 时跳过）/ 地面摩擦
+    _ai / _anim_update / 接触伤害
+    受击/死亡白闪
+    _apply_water
+    move_and_collide(knock_velocity) / move_and_slide()
 ```
 
-`_set_state()` 在 `enemy_base.gd:286-288`，只有两行（`state = s` + `_state_timer = 0.0`），是全部状态切换的唯一收口。
+`EnemyBase._set_state()` 只有两行（`state = s` + `_state_timer = 0.0`）加一次虚钩派发，是全部状态切换的唯一收口。
 
 ### 1.5 三只鸟的状态枚举各不相同
 
@@ -73,7 +77,7 @@
 ### 1.6 敌人只存在于单机
 
 `EnemySpawner` 的引用方只有 `level_0.gd` / `hud.gd` / `combat_feedback.gd` / 敌人自身 / 测试。
-`level_0.gd:236` 在 `pvp_mode` 时**早退**，`EnemySpawner.load_types()` 与 `spawn_all()`（`:238-243`）都在早退之后。
+`Level0._ready()` 在 `pvp_mode` 时**早退**，`EnemySpawner.load_types()` 与 `spawn_all()` 都在那次早退之后。
 
 → **PvP / 大乱斗不生成任何敌人**，敌人侧 squash 无联机影响。
 
@@ -90,7 +94,7 @@
 | 3 | AnimationPlayer 一次只跑一个 animation | 而"同时发生"（冲刺中落地、起跳瞬间被击中）在本项目是常态，叠加/打断要自写优先级机，代码反而更多 |
 | 4 | 强度必须动态 | 落地挤压量该由落速决定；AnimationPlayer 是固定曲线，要动态只能 `seek()` 手控，把它的优势全用掉 |
 | 5 | 副本要复用同一套逻辑 | 纯代码下副本直接传快照数据跑同一组件 |
-| 6 | 项目已有三个对应物 | `ClimbComponent`/`CombatComponent`/`WeaponComponent`（约定"组件不写自己的 `_physics_process`，由根显式按序调"）、`MathUtil.approach`（`math_util.gd:11`，指数缓动的单一来源）、`PlayerParams`/`EnemyParams` 参数体系 |
+| 6 | 项目已有三个对应物 | `ClimbComponent`/`CombatComponent`/`WeaponComponent`（约定"组件不写自己的 `_physics_process`，由根显式按序调"）、`MathUtil.approach`（指数缓动的单一来源）、`PlayerParams`/`EnemyParams` 参数体系 |
 
 AnimationPlayer 唯一真优势是"曲线在编辑器可视化调、美术能参与"。用户已知悉并选择了纯代码。
 
@@ -122,6 +126,8 @@ scale = Vector2(1.0 - AMOUNT * final, 1.0 + AMOUNT * final)
 
 ⚠️ 符号方向以**增益表**为准（`squash_jump` / `squash_dash` / `squash_take_off` / `squash_charge` 为正 = 拉伸；落在 `tick()` 里的 `_impulse -= squash_land * k` 与增益表里的 `-squash_hurt` 为负 = 挤压）。
 
+★ `_impulse` 有**两个写入口**（`impulse()` 的加法、`tick()` 里的那次减法），**两处都要各自钳一次**（`[-1, 1]`）—— 只在 `_apply()` 里钳 `final` 保不住内部量，见 §3 末那条补记。
+
 ★★ **（2026-09-20 订正，Task 3 审查）这段曾在实现期被反过来。** 当时有人把 `(0.90, 1.10)`（窄高 = 拉伸）误读成"宽矮"，于是把本行改成 `Vector2(1.0 + AMOUNT * final, ...)`，还在此处写下"初稿公式是撰写时的笔误"一段 —— **那一段才是错的**，公式与那段说明现已一并订回。**别照那段话再翻一次**：翻过去会让**每个**事件都反（起跳变压扁、落地变拉伸），而当时的四个测试是照着翻转后的公式写的，于是全绿通过 —— 变异验证验的是**一致性**，不是**方向**（`tests/squash_stretch_smoke.gd` 的断言方向与标签本轮同步翻正）。
 
 **用单标量而不是双标量**（分开记拉伸/挤压）是刻意的："冲刺中落地""起跳瞬间被击中"这类同时事件天然叠加，不需要优先级状态机 —— 这正是选纯代码方案的核心收益。
@@ -130,7 +136,7 @@ scale = Vector2(1.0 - AMOUNT * final, 1.0 + AMOUNT * final)
 
 ### 2.4 落地判定：无状态推导，不用 `_was_on_floor`
 
-`_tick_vertical` 在 `is_on_floor()` 时**不施重力**（`player.gd:229-235` 的 if/else），所以：
+`_tick_vertical` 在 `is_on_floor()` 时**不施重力**（该函数里的 if/else 分支），所以：
 
 - **站立时** `velocity.y` 恒为 0
 - **落地那一帧** `move_and_slide()` 之前的 `velocity.y` 必然是个大正数
@@ -143,8 +149,8 @@ scale = Vector2(1.0 - AMOUNT * final, 1.0 + AMOUNT * final)
 
 | 位置 | 写入 | 值 | 水面/地面上会怎样 |
 |---|---|---|---|
-| `swim_component.gd:26` | `velocity.y = player_swim_down` | **320** > 220 | ⚠️ **实测：不会重叠**（见下），本条不构成每帧违规；过滤它买到的是别的（见下） |
-| `climb_component.gd:91` | 梯子下行速度 | `300×2.0×1.2` = **720** | 梯底按住 S 时**每帧**触发 |
+| `SwimComponent.update()` | `velocity.y = player_swim_down` | **320** > 220 | ⚠️ **实测：不会重叠**（见下），本条不构成每帧违规；过滤它买到的是别的（见下） |
+| `ClimbComponent.update()` 的下行分支 | 梯子下行速度 | `300×2.0×1.2` = **720** | 梯底按住 S 时**每帧**触发 |
 
 ⚠️ **梯子那行不是"只触发一帧"**（本 spec 初稿如此写，2026-09-20 由复审读码推翻）：初稿的理由是"下一帧 `is_squat` 使其解除攀附"，但 `_tick_crouch_and_dash` **首行就 `if latched or in_water: return`**，而 `is_squat` 的唯一赋值点在该早退**之后** → 攀附期间 `is_squat` 冻结在攀附前的值，**永远不会**变 true，攀附不解除。
 
@@ -193,6 +199,7 @@ _pre_move_vy = velocity.y
 ★ 代价（已确认接受）：水中 `_air` 也一并读 0 → **游泳时没有连续项拉伸**。这被认为是**正确**的 —— 游泳不该有自由落体那种弹感，且"空中连续项"的语义本就指空中。
 ★ 另一条约束：倒地期间 `_pre_move_vy` 会变陈旧（`_tick_downed` 不更新它），复活首帧会与地面态配对出一个满幅假挤压 —— 故倒地分支要把它归 0。
 ★ **同类第二条（2026-09-20，Task 3 审查）**：敌人的 `_is_far_sleeping()` 早退**不跑 `move_and_slide`** ⇒ 那一支里 `_pre_move_vy` 同样**永不刷新**，而 `tick()` 在它之前跑 ⇒ 陈旧值（上一次非睡眠帧的落速）让落地项**每帧重触发**，指数恢复每帧只回 `1 - exp(-9/60) ≈ 14%` ⇒ 定点 ≈ `-6.19k`（任何 `k ≳ 0.16` 都被钳到 `-1`）⇒ 被垂直击退打飞、落地时 `|vx| ≤ 5` 的远鸟**永久**保持满幅挤压。故那一支**归零缓存本身**（睡眠分支里 `_pre_move_vy = 0.0`，与玩家侧倒地早退形态相同；`tick()` 那行因此直接传 `_pre_move_vy`）。
+（★ 2026-09-20 补：上面那个 `-6.19k` 定点是**当时**没有写入口钳位时的算式。同批给 `tick()` 的减法补了钳位（§3 末）⇒ 今天这种违约只会把它按在 `-1` 上，定点不再成立，而"远鸟永久保持满幅挤压"这个**症状**不变 —— 缓存归零那一行仍是唯一的修法。）
 ★★ 只把"喂给 `tick()` 的值"改 0 是**半个修法**（2026-09-20 复审）：睡眠帧确实安全了，但缓存**整个睡眠期都陈旧**，而**醒来首帧** `_is_far_sleeping()` 已是 false ⇒ 走的是醒着那条路，拿到 "`is_on_floor() == true` + 把它送进睡眠的那次落速" ⇒ 同一个满幅落地项在**醒来那一刻**重触发，`_impulse` 压向 `-1.0`。后果是鸟按**几秒前**那次落地满幅挤压，且 TAKE_OFF 的 `+0.80` 加进已饱和的负值 ⇒ **起飞拉伸被抵消甚至反向成压扁**。故必须清**缓存**，不是清这一次的实参 —— 契约是 "`tick()` 消费什么"，不是"缓存里存的是什么"。
 
 ⚠️ 但 `is_on_floor()` 在帧首读到的值是**上一帧** `move_and_slide()` 的结果。所以读取时必须与**同一次** `move_and_slide()` 之前的 `velocity.y` 配对：
@@ -242,15 +249,28 @@ const squash_air_ref_vy: float = 700.0     # 空中连续项参考速度
 
 **`0.10` 是上限，不是每项的幅度** —— `final` 被钳在 `[-1, 1]`，所以实际形变永远不超过 `0.90 / 1.10`。叠加多少项都不会爆。
 
+★★ **补记（2026-09-20 终审修复）：`_impulse` 的两个写入口**各自**钳一次。**
+`final` 那一层钳位只保住**画面**不越 `0.90 / 1.10`，它保不住**内部量**：`_impulse` 有两个写入口 ——
+`impulse()` 的加法**本来就有** `clampf(..., -1.0, 1.0)`，而 `tick()` 里那句
+`_impulse -= _land_gain * k` **原先没有**。宿主违约（每帧喂同一个"不是摔下来的"下坠速度）时
+那一减会**每帧重来**，而指数恢复每帧只回 `1 - exp(-9/60) ≈ 14%` ⇒ `_impulse` 收敛到定点
+`-k·d/(1-d)`（睡眠鸟那一处 ≈ `-6.19k`）而**不是**停在 `-1`。
+**现在减法之后紧跟一行同样的 `clampf(..., -1.0, 1.0)`**，不变量变成"`_impulse` 恒在 `[-1, 1]`"。
+可见收益：之后任意一次 `impulse()` 的**正**增益不会加在一个更负的基数上 —— 起跳/冲刺的拉伸
+不再被压低、显形推后（~0.1s 量级的包络）。今天可达的路径只有**一次性叠加**（刚受击 `-0.5`
+紧接着一次硬落地 `-1.0` ≈ `-1.4`）；它是**状态量**，一旦漂下去只能靠时间回来。
+守卫：`tests/squash_stretch_smoke.gd` 的 ⑦ / ⑦b（上行饱和 + 语义）与 ⑦c / ⑦d（**下行**饱和的
+边界值与语义）四条一起钉住两侧钳位。
+
 ---
 
 ## 4. 挂点
 
 ### 4.1 玩家（`player.gd`）
 
-`tick` 放在 `_physics_process` **第一行**（`:160` 的倒地早退**之前**），不是末尾。三个理由：
+`tick` 放在 `_physics_process` **第一行**（`combat.is_downed()` 那次倒地早退**之前**），不是末尾。三个理由：
 
-1. 倒地早退（`:160-162`）不会漏掉 tick —— 否则 `animator.scale` 会**卡在最后一个挤压值**上（明显的视觉 bug）
+1. 倒地早退不会漏掉 tick —— 否则 `animator.scale` 会**卡在最后一个挤压值**上（明显的视觉 bug）
 2. `is_on_floor()` 与 `_pre_move_vy` 在帧首是配对的（§2.4）
 3. 与 `move_and_slide()` 解耦，重放时顺序稳定
 
@@ -263,19 +283,19 @@ func _physics_process(delta: float) -> void:
     ...
 ```
 
-新增字段：`var _pre_move_vy: float = 0.0`，在 `move_and_slide()`（`:219`）**之前**赋值。
+新增字段：`var _pre_move_vy: float = 0.0`，在 `_physics_process` 里 `move_and_slide()` **之前**赋值。
 
 事件钩子：
 
 | 事件 | 位置 |
 |---|---|
-| 起跳 | `_tick_vertical` `:249` 之后 |
-| 冲刺 | `_tick_crouch_and_dash` `:276-278`（`is_charge = true` 处） |
-| 受击 | 根 `take_hit`（公开接口，已保留） |
+| 起跳 | `_tick_vertical` 里设置 `velocity.y = jump_velocity * mult.y` 之后 |
+| 冲刺 | `_tick_crouch_and_dash` 里 `is_charge = true` 那一处 |
+| 受击 | 根 `Player.take_hit()`（公开接口，已保留） |
 
 ### 4.2 敌鸟（`EnemyBase` + 三个子类）
 
-`tick` 同样放 `_physics_process` **第一行**（`:93` 的 `_is_far_sleeping()` 早退**之前**），这样睡眠时也走 tick（睡眠 → `vel_y` 小 → 自然回中性，正是想要的行为）。
+`tick` 同样放 `_physics_process` **第一行**（`_is_far_sleeping()` 那次早退**之前**），这样睡眠时也走 tick（睡眠 → `vel_y` 小 → 自然回中性，正是想要的行为）。
 
 ```gdscript
 func _physics_process(delta: float) -> void:
@@ -284,9 +304,9 @@ func _physics_process(delta: float) -> void:
         ...
 ```
 
-`_pre_move_vy` 在 `move_and_slide()`（`:135`）之前赋值。
+`_pre_move_vy` 在 `EnemyBase._physics_process` 里 `move_and_slide()` 之前赋值。
 
-**状态事件走虚钩**（因为三只鸟枚举不同，见 §1.5）。基类 `_set_state()`（`:286-288`）加一行：
+**状态事件走虚钩**（因为三只鸟枚举不同，见 §1.5）。基类 `EnemyBase._set_state()` 加一行：
 
 ```gdscript
 func _set_state(s: int) -> void:
@@ -306,24 +326,24 @@ func _on_state_entered(_s: int) -> void:
 | BlackBird | `TAKE_OFF` / `CHARGE` → 拉伸 |
 | JumpBird | `LUNGE_DASH` / `BACK_HOP` → 拉伸 |
 
-受击挂 `_apply_hit`（`enemy_base.gd:150`）。
+受击挂 `EnemyBase._apply_hit()`（不是 `hurt()` —— 尸体走 `_apply_knock_only()`，挂在后者会重复触发）。
 
-⚠️ **JumpBird 的小跳（`enemy_jump_bird.gd:101-102`）刻意不挂钩**（用户 2026-09-20 裁定）：它是 `_tick_chase` 里直接设 `velocity`，**不经过 `_set_state()`**，所以状态虚钩接不到。不为此另加钩子 —— 小跳的 `hop_jump_velocity = -750` 会让 §2.3 的**空中连续项**直接给出拉伸，只是没有事件那一下"脆感"。这是有意的取舍，不是遗漏。
+⚠️ **JumpBird 的小跳（`_tick_chase` 里那一下直接设 `velocity`）刻意不挂钩**（用户 2026-09-20 裁定）：它是 `_tick_chase` 里直接设 `velocity`，**不经过 `_set_state()`**，所以状态虚钩接不到。不为此另加钩子 —— 小跳的 `hop_jump_velocity = -750` 会让 §2.3 的**空中连续项**直接给出拉伸，只是没有事件那一下"脆感"。这是有意的取舍，不是遗漏。
 
 ### 4.3 对手副本（`player_replica.gd`）
 
 复用同一个 `SquashStretch` 组件，数据换来源。
 
-**`vel` 已经在服务器载荷里**：`server/match_snapshot.gd:20` 发 `"vel": p.velocity`。副本当前**没读**它（`apply_snapshot`）：`player_replica.gd:109-147` 只读 `pos/facing/aim/weapon/previewing/downed/pose`。
+**`vel` 已经在服务器载荷里**：`MatchSnapshot._broadcast_snapshot()` 的玩家载荷里就有 `"vel": p.velocity`（`server/match_snapshot.gd`）。副本当前**没读**它（`PlayerReplica.apply_snapshot()` 只读 `pos/facing/aim/weapon/previewing/downed/pose`）。
 
-→ 在 `apply_snapshot` 里加一行 `_vel = data.get("vel", Vector2.ZERO)` 即可。**这是客户端开始读一个本来就存在的字段，协议零改动、服务器零改动**。先例：`tests/reconnect_watcher.gd:292` 早就在读 `pl.get("vel", Vector2.ZERO)`。
+→ 在 `apply_snapshot` 里加一行 `_vel = data.get("vel", Vector2.ZERO)` 即可。**这是客户端开始读一个本来就存在的字段，协议零改动、服务器零改动**。先例：`tests/reconnect_watcher.gd` 早就在读 `pl.get("vel", Vector2.ZERO)`。
 
-**tick 放在 `_process(delta)`（`:182`）末尾，不是 `apply_snapshot`。** 两个理由：
+**tick 放在 `PlayerReplica._process(delta)` 末尾，不是 `apply_snapshot`。** 两个理由：
 
 1. `apply_snapshot` **没有 `delta`** —— 包络衰减需要它
-2. `_process` 正是副本的**表现层时钟**：插值推进（`:186` `_interp.advance(delta)`）与受击闪烁衰减（`:197-202`）都在那里。挤压包络若挂在快照回调上（60Hz 物理时钟），会与插值（渲染时钟）产生拍频
+2. `_process` 正是副本的**表现层时钟**：插值推进（`_interp.advance(delta)`）与受击闪烁衰减都在那里。挤压包络若挂在快照回调上（60Hz 物理时钟），会与插值（渲染时钟）产生拍频
 
-⚠️ `_process` 里那段受击闪烁（`:197-202`）就是**同款先例** —— 一个按 `delta` 衰减的视觉包络。照它写。
+⚠️ `_process` 里那段受击闪烁就是**同款先例** —— 一个按 `delta` 衰减的视觉包络。照它写。
 
 `apply_snapshot` 只负责**记录数据**（新增字段 `_vel`；`_pose` 与 `_downed` 已在函数内可读），衰减与写 scale 全在 `_process`。
 
@@ -430,19 +450,18 @@ var on_floor := (not _downed) and _pose != POSE_FLY \
 
 | 检查 | 结论 |
 |---|---|
-| 是否进 `capture_state()`（`player.gd:449`） | ❌ 不进。squash 状态住在组件里，不在 `Player` 上 |
-| 是否被 `restore_state()`（`player.gd:499`）重置 | ❌ 被碰的是 `velocity`/`animator.flip_h`（`:502`、`:540`），**不含 scale** |
-| 是否影响碰撞箱 | ❌ 碰撞走 `Pose → CollisionPolygon2D`（`player.gd:348-349`），是独立的世界空间多边形，与 `animator.scale` 无关 |
+| 是否进 `Player.capture_state()` | ❌ 不进。squash 状态住在组件里，不在 `Player` 上 |
+| 是否被 `Player.restore_state()` 重置 | ❌ 被碰的是 `velocity` / `animator.flip_h`，**不含 scale** |
+| 是否影响碰撞箱 | ❌ 碰撞走 `Pose → CollisionPolygon2D`（`POSE_NODE` 那张表 + `_coll_by_pose`），是独立的世界空间多边形，与 `animator.scale` 无关 |
 | 是否影响 `CollisionAabb.world_rect` | ❌ 它读 `CollisionPolygon2D` / `CollisionShape2D`，不读精灵 |
 | 是否影响 `SpriteBounds.from_sprite`（`WeaponPickup` 用） | ❌ 那是武器自己的 sprite，角色 scale 不参与 |
 | `_pre_move_vy` 是否进 `capture_state()` | ❌ **不得进**，且**不得被任何模拟逻辑读取**（只喂 squash） |
 
 ### 5.2 倒地必须强制中性 —— 副本会沿转过的轴挤压
 
-`player_replica.apply_snapshot` 倒地时给**根节点**设旋转：
+`PlayerReplica.apply_snapshot()` 倒地时给**根节点**设旋转：
 
-```
-player_replica.gd:128-130
+```gdscript
     if _downed:
         animator.stop()
         rotation = -PI / 2.0 * float(_facing)
@@ -450,7 +469,7 @@ player_replica.gd:128-130
 
 而 `animator` 是**根节点的子节点** → 此时写 `animator.scale` 会作用在**旋转 90° 后的局部轴**上，尸体横着变宽。
 
-（注意 `:138-144` 有同款先例：幽灵体正因这个旋转而被单独压回 `global_rotation = 0`。）
+（注意同一个函数里也有同款先例：幽灵体正因这个旋转而被单独压回 `global_rotation = 0`。）
 
 → **两边都要 `suppressed = true`**：副本（因为旋转轴）与本地玩家（虽然本地玩家不旋转 —— `player.gd` 全文件零 `rotation` —— 但尸体弹跳本身不合理，且两端行为应一致）。
 
@@ -460,7 +479,7 @@ squash 只读 `velocity.y` 的标量，不做任何位置/距离计算 → 天�
 
 ### 5.4 回滚重放会重播挤压包络（已读代码证实，登记不修）
 
-`core/net/prediction_rollback.gd:114` → `_p._physics_process(PHYS_DT)`
+`PredictionRollback` 的重放分支 → `_p._physics_process(PHYS_DT)`
 
 **重放是直接调玩家的 `_physics_process`**。而 `_impulse` 不在 `capture_state()` 里、`restore_state()` 也不会重置它 → 重放时事件钩子（起跳/冲刺）会重新触发，挤压包络**重播一次**。
 
@@ -470,7 +489,7 @@ squash 只读 `velocity.y` 的标量，不做任何位置/距离计算 → 天�
 
 ### 5.5 副本落地时机略钝（用户已接受的代价）
 
-副本位置走**双快照 tick 域插值**、渲染时钟落后最新 1 tick，而 §4.3 的落地推导读的是 `_vel`/`pose` 的**最新**快照值（这两个字段是即时套用的，不插值 —— 见 `player_replica.gd:145-147` 的注释）。
+副本位置走**双快照 tick 域插值**、渲染时钟落后最新 1 tick，而 §4.3 的落地推导读的是 `_vel`/`pose` 的**最新**快照值（这两个字段是即时套用的，不插值 —— 见 `apply_snapshot()` 末尾"位置交给插值缓冲、pose/facing 等即时套用"那段注释）。
 
 所以姿态切换是即时的、位置是插值的 → 推导出的落地**瞬时性**与本体一致，但配合上位置滞后，视觉上会比本体**略钝**。这是用户选"本地推导、协议不改"时接受的代价。
 
@@ -502,6 +521,13 @@ squash 只读 `velocity.y` 的标量，不做任何位置/距离计算 → 天�
 - **低落速不触发**：`vel_y = 100`（< `squash_land_min_vy`）不产生挤压
 - **`suppressed = true` → 立刻中性**
 - 多事件叠加不爆
+- ★ **下行饱和的边界与语义**（⑦c / ⑦d，2026-09-20 补）：上行饱和（⑦ `v == +1.0`）与"叠两次
+  == 叠一次"（⑦b）原先各有一条，**下行一条都没有** ⇒ ⑦c 钉 `v == -1.0`（`scale.x == 1.0 +
+  squash_amount`，`delta = 0` 冻掉指数恢复才读到**边界值本身**），⑦d 钉"叠四组 == 叠两组"
+  （**不能**带落地项，否则两组一起被 `_apply()` 收进 −1、分叉被抹平成空转）。
+- ★ **参数镜像**（⓪，2026-09-20 补）：两侧 8 个同名 `squash_*` 常量逐个同值 + `squash_amount`
+  **仍等于用户裁定的 0.10**。在此之前**没有一条**测试钉住那个数：四处测试的阈值全是相对
+  `PlayerParams.squash_amount` 表达的，把它抬到 0.20 一条都不会红。
 
 ⚠️ 写这条冒烟时注意项目既有纪律：`_initialize()` 里 `load()` 之后立刻判空并 `quit(1)`（否则抛错会永久挂起），且跑的时候套 `timeout`。
 
@@ -513,10 +539,26 @@ squash 只读 `velocity.y` 的标量，不做任何位置/距离计算 → 天�
 - 断言 `animator.scale` 真被改过、且**碰撞箱世界 AABB 与世界位置未受影响**（对照 §5.1）
 - 存图供**人眼**验收 —— 图要**自己读**，不推回给用户（这一步在历史上抓到过两个数值全绿的 bug）
 
+### 7.3 宿主级守卫（实现期落地，2026-09-20 补齐常驻化）
+
+四条**场景**探针（都 `--headless`，判据是文本 `ALL-OK`），把"宿主接线"这一面钉住 ——
+这一面恰恰是"改错了不报错"的重灾区（形变静默失效、或者静默反向）：
+
+| 探针 | 守什么 |
+|---|---|
+| `tests/squash_host_water_probe.tscn` | 玩家侧 `_pre_move_vy` 的那个过滤谓词；相⑤ 另守倒地两件事（`tick` 第四参 + 倒地分支归零） |
+| `tests/squash_host_enemy_probe.tscn` | **敌鸟侧**：三只鸟各状态映射 / SLEEP 不挂钩 / `_apply_hit` 的 HURT / 睡眠缓存归零与醒来首帧 |
+| `tests/squash_replica_probe.tscn` | 副本侧：水查询 / 落地判据两半 / 倒地中性，另加相⓪（夹具键集与生产端字段表**双向**对账） |
+| `tests/squash_stretch_probe.tscn` | 真渲染（**不许加 `--headless`**）：方向、像素包围盒、"不改位置/不碰碰撞箱/不写 `offset`"三条硬约束 |
+
+★ `tests/squash_host_enemy_probe` 的来历：敌鸟侧那面接线在实现期只有一份**临时**探针量过
+（输出留在 `.superpowers/sdd/task-3-report.md`），探针删掉之后就再没有任何东西看着它 ——
+而本特性唯一真出过 bug 的**正是**那一面（`b89420c`）。常驻化的断言清单照那份输出逐条恢复。
+
 ---
 
 ## 8. 未决 / 留给实现计划的事
 
 - JumpBird 的实际状态转换点需要逐个核对（grep 只看到 `_set_state(State.SLEEP)` 一处显式调用，其余跳跃可能是直接设 `velocity.y`）—— §4.2 的虚钩映射以实际代码为准。
 - `PlayerParams` 与 `EnemyParams.shared` 里是否已有同名常量需先查重（避免重复定义）。
-- 敌人侧 `_downed` 无对应概念，用 `is_dead` 代替（`enemy_base.gd:28`）—— 语义一致（尸体不该弹）。
+- 敌人侧 `_downed` 无对应概念，用 `EnemyBase.is_dead` 代替 —— 语义一致（尸体不该弹）。

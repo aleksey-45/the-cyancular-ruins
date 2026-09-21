@@ -91,6 +91,16 @@ func tick(delta: float, vel_y: float, on_floor: bool, suppressed: bool) -> void:
 	if on_floor and vel_y > _land_min_vy:
 		var k := clampf((vel_y - _land_min_vy) / maxf(_land_ref_vy - _land_min_vy, 1.0), 0.0, 1.0)
 		_impulse -= _land_gain * k
+		# ★ 减法之后必须**自己**再钳一次 —— `impulse()` 里那个 clampf 管不到这里:
+		#   宿主违约(每帧喂同一个"不是摔下来的"下坠速度)时本条每帧重复减同一个满幅值,
+		#   而指数恢复每帧只回 `1 - exp(-9/60) ≈ 14%` ⇒ `_impulse` 收敛到**定点**
+		#   `-k·d/(1-d)`(睡眠鸟那一处实测 ≈ -6.19k,任何 k ≳ 0.16 都沉到 -1 以下),
+		#   而不是停留在 -1。后果不是"更扁一点":之后任意一次 `impulse()` 的**正**增益都加在
+		#   更负的基数上 ⇒ 起跳/冲刺的拉伸被压低、显形推后(约 0.1s 量级的包络),
+		#   "冲刺中起跳""受击后立刻起跳"那几下招牌脆感随之消失。
+		#   今天可达的路径只有**一次性叠加**(刚受击 -0.5 紧接着一次硬落地 -1.0 ≈ -1.4);
+		#   而它是**状态量**:一旦漂下去,只能靠时间回来。钳在写入口,与 `impulse()` 同款约定。
+		_impulse = clampf(_impulse, -1.0, 1.0)
 
 	_impulse = MathUtil.approach(_impulse, 0.0, _recover, delta)
 	_apply()

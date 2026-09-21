@@ -145,9 +145,22 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 ★ **已知边界(登记不修)**:`prediction_rollback.gd:114` 的重放是**直接调 `_physics_process`**,
 而 `_impulse` 不在 `capture_state()` 里 → 回滚时挤压包络会**重播一次**。纯视觉、幅度 ±10%,
 表现是"弹一下";要修就得把纯视觉状态塞进权威态,那是更坏的选择。`_air` 项无状态,不受影响。
-守卫:`tests/squash_stretch_smoke.gd`(`-s`,九相纯逻辑)+ `tests/squash_stretch_probe.tscn`
+★ **`_impulse` 有两个写入口,各自钳一次 `[-1,1]`**:`impulse()` 的加法,以及 `tick()` 里那句
+`_impulse -= _land_gain * k` **之后紧跟的一行 `clampf`**(2026-09-20 终审补)。`_apply()` 里钳
+`final` 只保住**画面**不越 `0.90/1.10`,保不住内部量 —— 宿主违约(每帧喂同一个"不是摔下来的"
+下坠速度,梯底按住 S 就是)时那一次减法每帧重来,而指数恢复每帧只回 ~14% ⇒ 无钳位时会收敛到
+定点 `-k·d/(1-d)`(睡眠鸟那处 ≈ `-6.19k`)⇒ 之后任意一次 `impulse()` 的**正**增益都加在更负的
+基数上,起跳/冲刺的拉伸被压低、显形推后(~0.1s 量级)。守卫:`tests/squash_stretch_smoke.gd` ⑦e。
+守卫:`tests/squash_stretch_smoke.gd`(`-s`,纯逻辑:参数镜像 / 九相 / 上下行饱和 ⑦c⑦d / ⑦e 写入口钳位)
++ **四条场景探针** —— `tests/squash_stretch_probe.tscn`
 (真渲染,含"形变不得改变全局位置"与"形变不碰碰撞箱"两条硬约束断言 + **像素级方向断言**,
-并取图供人眼验收 —— 图**自己读**,别推回给用户)。
+并取图供人眼验收 —— 图**自己读**,别推回给用户)、
+`tests/squash_host_water_probe.tscn`(玩家侧过滤谓词 + 倒地两件事)、
+**`tests/squash_host_enemy_probe.tscn`**(★ 敌鸟侧:三只鸟的状态映射 / SLEEP 不挂钩 /
+`_apply_hit` 的 HURT / **睡眠缓存归零与醒来首帧**。这一面是本特性**唯一真出过 bug**的地方,
+而它的守卫一度只是实现期的一支临时探针、跑完即删 ⇒ 删或误映射任何一处都**不会有测试变红**;
+现在的断言清单是照那支探针的留存输出逐条恢复的)、
+`tests/squash_replica_probe.tscn`(副本:水查询 / 落地判据两半 / 倒地中性,另加**相⓪**)。
 ★ **对手副本**复用同一个组件,数据从快照的 `vel`/`pose` 本地推导 —— `vel` 本来就在载荷里
 (`server/match_snapshot.gd` 的 `world["players"][str(role)]` 那张表),只是副本此前没读,
 **协议零改动**;★ 副本探针的**相⓪**就钉在这张表的字段清单上(见下),故这里**不写行号** ——
