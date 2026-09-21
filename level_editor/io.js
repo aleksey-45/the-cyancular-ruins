@@ -29,10 +29,20 @@ globalThis.Io = (function () {
     var pending = new Map();
     var dead = null;
 
-    // ★ 唯一的"整条链死掉"收口:拒光在飞请求 + 清表 + 标死。
+    // ★ 唯一的"整条链死掉"收口:拒光在飞请求 + 清表 + 标死 + **回收那个 worker**。
     //   dead 一立,ensure() 就抛 —— 于是之后**任何**调用都当场失败,而不是悄悄再起一个 worker。
+    //   ★ 回收放进这个收口,是为了让**两条死法**(terminate() 与 worker.onerror)收场一致:
+    //     修复轮 1 把回收只写在 terminate() 里,onerror 那条于是把 worker 引用**留着** ——
+    //     线程还活着、还被这个 codec 引着,直到页面关掉为止(而"codec 已死"的语义正是
+    //     "它背后没有任何东西还在跑")。两条死法必须同样收场。
+    //     terminate() 已在调用 failAll 之前自己回收过一遍,故那里不会重复 terminate(幂等)。
+    function reapWorker() {
+      if (worker && typeof worker.terminate === 'function') worker.terminate();
+      worker = null;
+    }
     function failAll(err) {
       dead = err;
+      reapWorker();
       pending.forEach(function (p) { p.reject(err); });
       pending.clear();
     }
@@ -93,12 +103,14 @@ globalThis.Io = (function () {
       pendingCount: function () { return pending.size; },
       isDead: function () { return dead !== null; },
       terminate: function () {
-        if (worker && typeof worker.terminate === 'function') worker.terminate();
-        worker = null;
+        // 先真的停掉线程,再走上面那个共用死法收口(它自己也会回收,此处只是把这一刀
+        // 明确写在前面 —— 两条死法共用同一个收口)。
+        reapWorker();
         // ★ terminate 之后**不可能**再有应答回来(worker 已死,worker.js 的应答也走不回来),
         //   所以在飞请求必须当场拒掉:留着就是永不 settle 的 promise,调用方以为"停掉它
         //   就不再有后台活动"却一直挂在 await 上。连带标死 —— 否则下一次调用会**静默**
         //   新建一个 worker,而调用方以为自己已经把它关掉了。
+        //   ★ 已死则保留先前的死因(dead 只认第一个错因,不被后一次覆盖)。
         if (dead === null) failAll(new Error('Io: codec 已被 terminate() —— 在飞的请求不会再有应答'));
       },
     };

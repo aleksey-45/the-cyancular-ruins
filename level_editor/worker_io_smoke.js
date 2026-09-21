@@ -55,12 +55,19 @@ async function rejects(fn, msg, expectSub) {
 }
 
 // ── 假 Worker:把消息异步交给**真的** worker.js,再把应答异步交回 ──
-// ★★ 应答**乱序**投递(见 deliver)。真 Worker 的应答顺序本来就不保证等于请求顺序
-//    (不同 op 耗时不同、调度不确定),而"按 id 配对"这条断言只有**乱序**才吃劲:
-//    桩若按 request 顺序回包,"最老的那条 pending"永远就是发起者 —— 把 io.js 的
-//    `pending.get(m.id)` 换成"取最老的一条"照样全绿(task-1-report §6 C 实测)。
+// ★★ 应答**乱序**投递(见 deliver):真 Worker 的应答顺序本来就不保证等于请求顺序
+//    (不同 op 耗时不同、调度不确定),而"按 id 配对"这条断言只有**乱序**才吃劲 ——
+//    交付顺序既不能是请求顺序(那样"取最老 pending"能蒙对),也不能是它的**倒序**
+//    (那样"取最新 pending"能蒙对)。两种错法各有一个共轭排列,故排列必须由应答
+//    **自己的 id** 决定,不能是"到达下标的某个函数"。
 let live = null;
+// ★ 测试自己的工厂调用计数 —— 用来钉住"那次失败**没有另起一个 worker**"。
+//   `w.sent` 做不到这件事:新起的 worker 是**另一个对象**、有自己的 sent 计数器,
+//   所以 `eq(w3.sent, 1)` 看不见"偷偷新建了一个"(它只看得见"忘了置空 worker,于是又往
+//   那个已 terminate 的 worker 投了一条")。修复轮 2 起两条计数各钉各的,标签不再越权。
+let spawns = 0;
 function makeWorker() {
+  spawns++;
   const w = {
     onmessage: null, onerror: null, terminated: false, sent: 0, delivered: 0, ready: [],
     postMessage: function (msg) {
@@ -78,18 +85,32 @@ function makeWorker() {
   return w;
 }
 
-// ★ 攒到"这一批请求全都拿到应答了"才一次**倒序**吐出:最早那条请求的应答最后到,
-//   于是"取最老 pending"的实现在这里必红。判定条件是「已交付数 + 攒着数 === 已发出数」,
-//   所以最后一条应答**一定**会被交付(不会因为倒序永远扣住它),单独一条请求也是立刻交付。
+// ★ 攒到"这一批请求全都拿到应答了"才一次吐出,交付顺序**只由各条应答自己的 id 决定**
+//   (按 id 升序后整体循环左移 ⌈n/3⌉ 位),与它们**到达的先后**无关。
+//   ★★ 为什么必须"既非恒等、也非倒序":相位 ⑤ 那条「按 id 配对」断言吃劲的唯一前提就是
+//     交付顺序 ≠ 请求顺序,而两个退化排列各自放走一种错法 ——
+//       · 恒等(按到达顺序原样吐)⇒ 桩等价于"应答顺序 = 请求顺序",于是 io.js 的
+//         `pending.get(m.id)` 换成"取**最老**的一条 pending"照样全绿;
+//       · 倒序(修复轮 1 的写法)⇒ "取**最新**的一条 pending"又恰好次次命中,同样全绿
+//         (实测;这正是修复轮 2 的 A:两种错法各有一个共轭排列能让它蒙对)。
+//     ⌈n/3⌉ 位左移:n ≥ 3 时 k ∈ [1, n-2],天然避开恒等(k=0)与倒序(k=n-1)。
+//     n=1 只有恒等一种排列、n=2 只有恒等与倒序两种 —— 这两个尺寸下"两者都不是"不存在;
+//     本文件的并发批只有 n=6(相位 ⑤)与 n=1,故不受影响(将来若真出现 n=2 的批,
+//     相位 ⑤ 那条断言的强度会退化到"只钉得住次序、钉不住 id 配对")。
+//   判定条件是「已交付数 + 攒着数 === 已发出数」,所以最后一条应答**一定**会被交付
+//   (不会因为重排被永久扣住),单独一条请求也是立刻交付。
 //   ★ 它有个前提:每条**已发出**的请求最终都会回一条应答(本文件的用例都满足)。若将来出现
 //     "发了请求就 terminate、不等应答"的用例,被扣住的那条应答会留到 120 秒看门狗 ——
 //     那时该用例本身的形态要改,不是这里漏发。
 function deliver(w, out) {
   w.ready.push(out);
   if (w.ready.length !== w.sent - w.delivered) return;
-  const batch = w.ready.splice(0, w.ready.length).reverse();
-  w.delivered += batch.length;
-  batch.forEach(function (o) {
+  const batch = w.ready.splice(0, w.ready.length);
+  batch.sort(function (a, b) { return a.id - b.id; });    // ← 规范序:只由 id 决定,与到达顺序无关
+  const k = Math.ceil(batch.length / 3) % batch.length;   // ← 再整体左移 k 位(n=1 → 0)
+  const ordered = batch.slice(k).concat(batch.slice(0, k));
+  w.delivered += ordered.length;
+  ordered.forEach(function (o) {
     if (typeof w.onmessage === 'function') w.onmessage({ data: o });
   });
 }
@@ -143,10 +164,15 @@ async function tailPhases() {
                 '★ worker.onerror → 在飞请求**当场被拒**(不是永远挂着)', 'Io: 编解码 worker 出错');
   eq(c2.pendingCount(), 0, 'onerror 之后 pending 表清空(没有留住不 settle 的 resolver)');
   ok(c2.isDead() === true, 'onerror 之后 codec 被标死(isDead() === true)');
+  // ★ 两条死法必须收场一致(修复轮 2 的 B):terminate() 会真的回收底层 worker,onerror
+  //   那条一度只标死、把 worker 引用留着 —— 线程一直活着并被这个 codec 引到页面关掉为止。
+  ok(live.terminated === true, '★ onerror 死法与 terminate 死法一样会**回收 worker**(线程不残留、引用不挂着)');
   const sentAfterError = live.sent;
+  const spawnsAfterError = spawns;
   await rejects(function () { return c2.ping(); },
                 '★ 标死之后**再调用也失败** —— 不静默新建 worker 重试', 'Io: 编解码 worker 出错');
-  eq(live.sent, sentAfterError, '那次失败没有偷偷再往 worker 发一条消息');
+  eq(live.sent, sentAfterError, '那次失败没有**又往同一个(已崩的)worker 投一条消息**');
+  eq(spawns, spawnsAfterError, '★ 那次失败也没有**另起一个 worker** 重试(测试工厂的调用次数不变)');
 
   // ==== 相位 ⑩ terminate() 时在飞的请求必须被拒,不能留悬挂 promise ====
   const c3 = Io.createCodec({ workerFactory: makeWorker });
@@ -154,6 +180,7 @@ async function tailPhases() {
   const inflight3 = c3.ping();
   // ★ worker 是**惰性**建的(第一次调用才 factory()),故 live 必须在调用**之后**取。
   const w3 = live;
+  const spawnsBefore = spawns;
   eq(c3.pendingCount(), 1, 'terminate 之前确实有一条在飞请求');
   c3.terminate();
   ok(w3.terminated === true, 'terminate() 真的终止了底层 worker');
@@ -162,7 +189,9 @@ async function tailPhases() {
   eq(c3.pendingCount(), 0, '★ terminate() 之后 pending 表清空(pendingCount() 回到 0)');
   ok(c3.isDead() === true, '★ terminate() 之后 codec 标死 —— 下一次调用不会**静默**新建一个 worker');
   await rejects(function () { return c3.ping(); }, 'terminate 之后再调用也失败', 'terminate');
-  eq(w3.sent, 1, '那次失败没有偷偷再往 worker 发一条消息');
+  // ★ 两条计数各钉各的(w3.sent 与"有没有另起一个 worker"是**两件事**):
+  eq(w3.sent, 1, '那次失败没有**又往那个已 terminate 的 worker 投一条消息**(worker 引用确实被置空了)');
+  eq(spawns, spawnsBefore, '★ 那次失败也没有**另起一个 worker**(测试工厂的调用次数不变)');
 
   // ==== 相位 ⑪ postMessage 抛(浏览器里不可克隆的 map 就是 DataCloneError)====
   // ★ 这一条钉的是**账目**:单条消息发不出去,表里那条必须被清掉,否则 pendingCount()
@@ -189,7 +218,12 @@ async function tailPhases() {
 
 (async function main() {
   setTimeout(function () {
-    console.error('FAIL: 120 秒超时 —— 有请求永不 settle(应答没被投递?)');
+    console.error('FAIL: 120 秒超时 —— 有请求永不 settle。**两种成因都要查**,别只怀疑第一种:');
+    console.error('  (1) 那条请求的应答**根本没被投递**(worker 没回 / 桩把它扣住了 / 请求压根没发出去);');
+    console.error('  (2) 应答**投给了别的请求**(按 id 配对错 —— 于是两条请求一起悬挂:');
+    console.error('      拿到别人应答的那条结果不对、真正该拿的那条永远等不到)。');
+    console.error('  先看上面有没有"未抛出异常 / 结果不对"的 FAIL 行(那是 (2) 的特征),');
+    console.error('  再看桩的交付顺序(见 deliver)与 worker 是否真的回了包。');
     process.exit(1);
   }, 120000);
 
