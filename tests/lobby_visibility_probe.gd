@@ -374,8 +374,9 @@ func _own_row_reason(scene_path: String, fn: String, tag: String, rows: Array) -
 	p.call(fn, rows)
 	var mine := _row_button(box, "9001")     # 我的房(房号与凭据一致)
 	var other := _row_button(box, "9002")    # 别人的对局中的房(无凭据)
+	var open_ := _row_button(box, "9003")    # 普通未满房(正向对照)
 	var why := ""
-	if mine == null or other == null:
+	if mine == null or other == null or open_ == null:
 		why = "行没画出来"
 	elif mine.disabled:
 		why = "自己那间房被 disabled(次序写反:先问了「对局中」⇒ 回局连点都点不到)"
@@ -387,6 +388,8 @@ func _own_row_reason(scene_path: String, fn: String, tag: String, rows: Array) -
 		why = "别人那间对局中的房**可点**了(凭据的房号那半判据漏了)"
 	elif not other.pressed.get_connections().is_empty():
 		why = "别人那间对局中的房接上了 handler"
+	elif open_.disabled or open_.pressed.get_connections().size() != 1:
+		why = "普通未满的房变得点不动了(判据写成了 `not mine` 之类 —— 正常加入被弄坏)"
 	box.free()   # 两个成员不是 p 的子节点,p.free() 管不到它们(否则退出时报 orphan)
 	st.free()
 	p.free()
