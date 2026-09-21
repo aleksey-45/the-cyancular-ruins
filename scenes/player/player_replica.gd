@@ -77,6 +77,16 @@ var _opponent_canonical := Vector2.ZERO   # 最新快照的服务器 canonical �
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
 var _have_data := false
 var _facing := 1
+# **瞄准侧**(与 `_facing` **不是**同一个量,枪口外观只认这一个)。`_facing` 来自快照的
+# `facing` 字段 = 服务器的 `facing_direction` = **走路朝向**(player.gd 的移动代码排在
+# `weapons.tick` **之后**,每帧覆盖 `_auto_aim` 写进去的瞄准侧);而枪口俯仰必须按**瞄准侧**
+# 折叠(clamp_pitch 先 `dir.x * facing`)。二者混用时,倒着走(A 往左走、鼠标朝右)会让
+# `local = (-1, 0.3)` → 163° → 钳到 +limit → 再 `× -1` ⇒ 枪口**折到反侧极限而上翘**
+# (2026-09-21 用户报:"A 往回走的时候,在 B 眼里枪还会翘起来"）。
+# 本体那边由 `_auto_aim` 的 `_aim_facing` 承担同一职责(它算出的瞄准侧与身体朝向分离),
+# 下面是它的逐字同款规则(见 weapon_base.gd 的 `_auto_aim`):鼠标有明确水平分量则跟随并
+# **记住**,近垂直瞄(±0.1 以内)沿用上次明确侧,不随走路翻侧。
+var _aim_facing := 1
 var _aim := Vector2(1.0, 0.0)
 var _previewing := false   # 对手是否正在预瞄(heavy 蓄力)。快照仍带该字段,但**不再驱动任何外观**
                            # ——预瞄红线只有使用者本人可见(用户裁定 2026-09-11);保留是给日后
@@ -157,6 +167,12 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_facing = 1 if int(data.get("facing", 1)) >= 0 else -1
 	var aim: Vector2 = data.get("aim", Vector2.ZERO)
 	_aim = aim if aim != Vector2.ZERO else Vector2(float(_facing), 0.0)
+	# 瞄准侧=枪口外观唯一的朝向来源(见 `_aim_facing` 的说明)。规则照抄 `_auto_aim` 的
+	# `weapon_base.gd` 那三行:明确水平分量才翻侧并**闩住**,近垂直瞄沿用上次。
+	# `_aim` 的零向量兜底(上面那行落成 `(±_facing, 0)`)天然落进"明确分量"那一支 ⇒
+	# 快照不给方向时,瞄准侧会自动跟随走路朝向(与旧行为一致,不是退化)。
+	if absf(_aim.x) > 0.1:
+		_aim_facing = 1 if _aim.x > 0.0 else -1
 	animator.flip_h = _facing < 0
 	# 武器:槽位变了才重建(玩家每次换枪服务器快照带新槽位)。
 	# ★ `slot == 0`(空手)必须与"换了一把"同等对待 —— 那是服务器侧玩家把**最后一把**丢出去的
@@ -219,10 +235,14 @@ func _swap_weapon(slot: int) -> void:
 
 # 枪口朝向/枪口仰角:委托 WeaponBase.drive_remote_visual(副本武器不 equip,由其驱动外观,
 # 不读鼠标/不开火)。★ 预瞄红线**不在此画**(用户裁定 2026-09-11:只有使用者本人可见)。
+# ★ 第二个参数是 **`_aim_facing`(瞄准侧)不是 `_facing`(走路朝向)**:该参数同时决定
+#   `clamp_pitch` 的折叠坐标系与 `scale.x`,两者都必须跟"枪指向哪边"。喂走路朝向会让
+#   倒走时枪口折到反侧并翘起(见 `_aim_facing` 说明);身体翻转(animator.flip_h)与倒地
+#   转体继续用 `_facing`,那是它本来就正确的地方。
 func _drive_weapon_visual() -> void:
 	if _weapon == null or not _weapon.has_method("drive_remote_visual"):
 		return
-	_weapon.drive_remote_visual(_aim, _facing)
+	_weapon.drive_remote_visual(_aim, _aim_facing)
 
 # 对手此刻是否在水中(**脚底**探针,与本体同口径 —— 本体在 swim_component.update 里同样取
 # `Water.is_in_water(脚底)`)。

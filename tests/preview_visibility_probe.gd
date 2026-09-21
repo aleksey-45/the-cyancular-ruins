@@ -26,6 +26,7 @@ var _fail := 0
 func _ready() -> void:
 	await _check_owner_sees_own_line()
 	await _check_replica_never_shows_line()
+	await _check_replica_backpedal_pitch()
 
 	if _fail == 0:
 		print("PREVIEW VISIBILITY: ALL-OK")
@@ -103,6 +104,40 @@ func _check_replica_never_shows_line() -> void:
 	await _frames(4)
 	rep._drive_weapon_visual()
 	_check(absf(rw.rotation) > 0.01, "副本枪口仰角仍被照常驱动(只去掉红线,不废外观)")
+
+
+# ③ ★ 往回走时对手枪口不得翘起(2026-09-21 用户报:"A 往回走的时候,在 B 眼里枪还会翘起来")。
+# 成因:快照的 `facing` 是**走路朝向**(player.gd 的 facing_direction,移动代码排在 weapons.tick
+# **之后**、每帧覆盖 _auto_aim 写入的瞄准侧),而副本此前把它**同时**喂给「身体翻转」与
+# 「枪口俯仰钳制」。钳制在**朝向折叠后的坐标系**里算(clamp_pitch 先 `dir.x * facing`):
+# 走路朝左而瞄向右时 local=(-1, 0.3) → 163° → 钳到 +65° → 再 `× -1` ⇒ **-65° 上翘**。
+# 本体不受影响:它的枪用 _auto_aim 自己算出的瞄准侧(_aim_facing,不读被走路覆盖的 get_facing())。
+# 期望值 = 按**瞄准侧**折叠后的小幅俯仰:atan2(0.3, 1) ≈ +16.7°(m82a1 的钳制是 65°,远未到限)。
+# 判据只看**符号与量级**(不钉精确浮点),且额外来一条"没被折到钳制极限"的断言。
+func _check_replica_backpedal_pitch() -> void:
+	var rep: Node2D = (load("res://scenes/player/player_replica.tscn") as PackedScene).instantiate()
+	add_child(rep)
+	await _frames(4)
+
+	var anchor := Vector2(500.0, 500.0)
+	var aim := Vector2(1.0, 0.3)   # 明确指向右侧、略向下
+	rep.apply_snapshot({"pos": Vector2(520.0, 500.0), "facing": -1, "aim": aim,
+			"weapon": int(HEAVY_SLOT), "previewing": false, "hp": 100, "pose": 0, "downed": false},
+			anchor, 1)
+	await _frames(4)
+	rep._drive_weapon_visual()
+	var rw: Node2D = rep._weapon
+	if rw == null:
+		_check(false, "副本武器已按快照槽位建出来(倒走用例)")
+		return
+	var limit := deg_to_rad(float(rw.pitch_clamp_deg))
+	_check(rw.rotation > 0.05 and rw.rotation < 0.6,
+			"★ 倒走(走路 facing=-1)+ 瞄向右下 → 枪口是瞄向那侧的**小幅下俯**(得 %.3f rad ≈ %.1f°,期望 ≈ +0.292 rad ≈ 16.7°)" % [rw.rotation, rad_to_deg(rw.rotation)])
+	_check(absf(absf(rw.rotation) - limit) > 0.05,
+			"...且没有被折到 ±pitch_clamp 的极限(%.3f rad,钳制 ±%.3f rad —— 折到极限就是本条要抓的那个 bug)" % [rw.rotation, limit])
+	_check(rw.scale.x > 0.0, "枪身横向同样跟瞄准侧(走路朝左不影响枪指向哪边)")
+	rep.queue_free()
+	await _frames(2)
 
 
 func _check(ok: bool, what: String) -> void:
