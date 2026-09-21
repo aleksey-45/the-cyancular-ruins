@@ -129,6 +129,15 @@ function setCells(map, L, list, descOf) {
     })();
     ok(prevStillWorks,
        '★★ 抛错之后上一张图集**照旧可用**(tileFor 照旧返回小图,而不是抛 `Tint: 还没 setSource,…`)');
+
+    // ★★ 容量也不许为**负**。`w` 由 `Tint.setSource` 校验,而 `h` 没有任何人校验(setAtlas
+    //   原样 `h | 0` 存下)—— 畸形的 h 让 floor(h / BLOCK_PX) 为负 ⇒ 容量是负数。而计划的
+    //   `clampTexture` 把任何 **< 1** 的容量都当"没有信息"、**静默**放宽到 TEXTURE_MAX,
+    //   负数正好从那道闸下钻过去。钳到 0 就堵住了(0 = 明确的"一块都放不下")。
+    Render.setAtlas(makeAtlas(), ATLAS_W, -64);
+    eq(Render.atlasCapacity(), 0,
+       '★★ 畸形高度(h = -64)下容量钳到 0、不是负数(负数会被 clampTexture 读成"没有信息"、静默放宽到 TEXTURE_MAX)');
+    Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H);   // 还原:下面的相位还要用这张好图集
   })();
 
   // ==== 相位 ③ ③ 格位图缓存:两条独立的失效轴 ====
@@ -164,6 +173,40 @@ function setCells(map, L, list, descOf) {
     c3.get(Core.LAYER_SCENE, 4, 0);
     eq(c3.stats().evictions, 1, 'LRU: 超出上限淘汰 1 个');
     eq(c3.stats().size, 4, 'LRU: 容量守住 maxCells');
+
+    // ★★ 重建出来的条目也必须挪到**最近端**。`Map.set` 对**已存在**的键保留原来的插入位置,
+    //   而这条重建路径恰恰常落在"换图后 setSource 刻意不清表"留下的陈旧条目上 —— 不先
+    //   `delete` 的话,刚重建出来的条目仍蹲在最冷位置,下一次淘汰就把它扔掉(它才刚建过)。
+    //   ★ 两面各用一个**新**缓存:同一个缓存里连着判两面的话,第一个 `get` 已经把 LRU 序改了,
+    //     第二面在新旧实现下都是 miss,分不出来。两面共用同一个序列(`lruSeq`):
+    //   get(A) → get(B) → touch(A) → get(A)(★ 走**重建**)→ get(C)(超上限 → 淘汰一个)。
+    const lruSeq = function (c) {
+      c.get(Core.LAYER_SCENE, 0, 0);               // A
+      c.get(Core.LAYER_SCENE, 1, 0);               // B
+      c.touch(Core.LAYER_SCENE, 0, 0);             // A 内容变了 → 下一次 get(A) 走**重建**
+      c.get(Core.LAYER_SCENE, 0, 0);               // ← 被修的那一处:重建后要移到最近端
+      c.get(Core.LAYER_SCENE, 2, 0);               // C:maxCells = 2 → 淘汰一个
+    };
+    const lru1 = (function () {
+      let n = 0;
+      const c = Render.createCellCache({ maxCells: 2, build: function () { n++; return { n: n }; } });
+      lruSeq(c);
+      return { c: c, built: function () { return n; } };
+    })();
+    const b1 = lru1.built();
+    lru1.c.get(Core.LAYER_SCENE, 0, 0);            // 刚重建的那个键
+    eq(lru1.built(), b1,
+       '★★ LRU: 刚**重建**出来的条目已经在最近端(got 比 exp 多 1 = 它被自己这次重建后的第一次淘汰扔掉了,正是旧实现)');
+    const lru2 = (function () {
+      let n = 0;
+      const c = Render.createCellCache({ maxCells: 2, build: function () { n++; return { n: n }; } });
+      lruSeq(c);
+      return { c: c, built: function () { return n; } };
+    })();
+    const b2 = lru2.built();
+    lru2.c.get(Core.LAYER_SCENE, 1, 0);            // 这一面里该被淘汰的是 B
+    eq(lru2.built(), b2 + 1,
+       '★★ LRU: 被淘汰的正是 B(它已被扔掉 → 这里必须重建一次;exp 就是那个 +1。旧实现下 B 还在 = 命中,got 差 1)');
 
     const st = c3.stats();
     ok(typeof st.hits === 'number' && typeof st.misses === 'number' &&
@@ -204,9 +247,17 @@ function setCells(map, L, list, descOf) {
     ok(be.calls.length >= 2, '换图之后 ④ 真的重算过(实得 backend 调用 ' + be.calls.length + ' 次)');
 
     // ★★ 相位 ②b(承相位 ② 那条 throws 的另一半 —— 那一条只判了"抛没抛"):换图**抛错时
-    //    一层都不许提交**。这是"先换 ④ 再校验"这个缺陷唯一抓得住的地方:它发生时异常照样
-    //    抛出、`atlasInfo()` 也照样报旧图集,只有 ④ 的对象身份、③ 的代际、以及"旧图集还能
-    //    不能画"这三面能看出换图提交了一半。③ 要通过 `attachCells` 才有(故放在相位 ③b)。
+    //    一层都不许提交**。③ 要先 `attachCells` 才有,故这一相位落在相位 ③b 里。
+    //    ★ 本相位**不是**"这个缺陷唯一抓得住的地方":真正承重的是**两面** —— **④ 的对象
+    //      身份**与**"旧图集还能不能画"** —— 而相位 ② 那一对(`tileCache()` 身份 +
+    //      `tileFor` 照旧返回小图)没挂 ③ 也照样抓得住同一个缺陷(变异实测:四条红全在这两面上)。
+    //    ★ 反过来,下面这几条在这个缺陷(先换 ④ 再校验)下**照样绿**,别把它们读成判据:
+    //      `atlasInfo()`、③ 的**代际**、③ 的条目身份 —— 改动只落在 ④ 那一侧,
+    //      `cells.setSource()` 压根没被走到;旧 ④ 的条目那条同理(旧缓存对象根本没被碰过)。
+    //    ★ 其中"③ 的代际"与"③ 的条目身份"是一对:凡是"把 ③ 的作废提到校验之前"这一类变异,
+    //      两条会**一起**红(代际一动,条目身份那条必然跟着变)—— 即那种变异下有一条是冗余的。
+    //      两条都留着,是因为它们各自记录一件事(代际动没动 / 条目还是不是原来那个);
+    //      这里只是**不**声称"每一面都能独立判别"。
     const infoBefore = Render.atlasInfo(), genBefore = c3.stats().generation;
     const warm3 = c3.get(Core.LAYER_SCENE, 0, 0);        // 先预热,好判"③ 没被作废"
     const warm4 = t4.get(3, 0, 0, d3);
@@ -282,6 +333,22 @@ function setCells(map, L, list, descOf) {
             }, function (err) {
               ok(String(err && err.message).indexOf('第二帧炸') >= 0,
                  '★★ 第 2 帧抛错 → run() 的 promise reject(带原始异常;不是永远悬着)');
+            })
+            .then(function () {
+              // ★★ 上面那条只堵住了"**step 自己**抛"。同一个洞的另一半是"**让出的那一帧**
+              //    自己失败":注入的 `nextFrame()` 交回 rejected promise 时,只写
+              //    `.then(step)` 的实现既不 resolve 也不 reject —— `step` 一次都不会再被
+              //    调到,`run()` 的 promise **永远悬着**(浏览器里就是一条 unhandledrejection
+              //    + 调用方 await 到天荒地老)。判据与上面那条同款:必须 reject、带原始异常。
+              const dead = Render.createSlicer({ budgetMs: 0, now: function () { return 0; },
+                nextFrame: function () { return Promise.reject(new Error('这一帧没等到')); } });
+              return dead.run([1, 2, 3], function () {}).then(function () {
+                fail++;
+                console.error('  FAIL - ★★ 让出那一帧 reject 时也必须 reject 掉 run()(实得:promise 正常 settle 了)');
+              }, function (err) {
+                ok(String(err && err.message).indexOf('这一帧没等到') >= 0,
+                   '★★ nextFrame() 交回 rejected promise → run() 的 promise reject(不是永远悬着)');
+              });
             });
         });
       });

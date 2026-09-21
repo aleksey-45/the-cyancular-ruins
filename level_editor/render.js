@@ -89,7 +89,14 @@ globalThis.Render = (function () {
   function atlasInfo() { return atlasPixels ? { width: atlasW, height: atlasH } : null; }
   // ★ 图纸容量 = 列 × 行(320×320 的图集 = 100 块)。**不是**描述符位宽 4095 ——
   //   tint 的越界判据就是"图集里有没有这一块",拿 4095 当上界 ⇒ 101~4095 全部抛。
-  function atlasCapacity() { return atlasW > 0 ? Math.floor(atlasW / Tint.BLOCK_PX) * Math.floor(atlasH / Tint.BLOCK_PX) : 0; }
+  // ★★ `Math.max(0, …)` 不是装饰:`w` 由 `Tint.setSource` 校验,**`h` 从来没被任何人校验过**
+  //   (setAtlas 原样 `h | 0` 存下),畸形的 `h`(如负数)会让 `floor(h / BLOCK_PX)` 为负 ⇒
+  //   容量算出**负数**;而计划的 `clampTexture` 把任何 **< 1** 的容量都当"没有信息"、
+  //   **静默**放宽到 TEXTURE_MAX —— 负数于是伪装成"没信息"穿过那道闸。钳到 0 就堵住这条路
+  //   (0 = 明确的"一块都放不下",不是一个负数)。
+  function atlasCapacity() {
+    return atlasW > 0 ? Math.max(0, Math.floor(atlasW / Tint.BLOCK_PX) * Math.floor(atlasH / Tint.BLOCK_PX)) : 0;
+  }
 
   // 取一张 16×16 小图。**唯一**该调 Tint.get 的地方。
   // ★★ desc === 0(空气)必须在**进 Tint 之前**短路:空气是地图数据里最常见的一格,
@@ -200,7 +207,12 @@ globalThis.Render = (function () {
             frames++;
             // ★ 时间基准在**让出之后**重新取:让出一帧自己也花时间,把那段算进下一帧的
             //   预算里会让"下一帧刚做一项就又超预算"—— 分帧退化成逐项让出。
-            nextFrame().then(step);
+            // ★★ 第二个实参同样是承重的:上面那个洞堵的是"`step` 自己抛",这一个堵的是
+            //   "**让出的那一帧**抛"(注入的 `nextFrame()` 交回 rejected promise,例如
+            //   帧回调里出了错 / 分帧被中止)。只写 `.then(step)` 的话,这个 rejection 落在
+            //   **没人观察**的派生链上 —— `step` 一次都不会被调到,`run()` 的 promise 就悬
+            //   在那里(与上面同一个病,只换了输入),症状是一模一样的"永远不 settle"。
+            nextFrame().then(step, reject);
           } catch (err) {
             reject(err);                           // ← 让第 2 帧起的抛错也 settle 掉 run()
           }
