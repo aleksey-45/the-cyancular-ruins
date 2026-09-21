@@ -245,13 +245,21 @@ const RESULT_SCENE := preload("res://ui/match_result.tscn")
 
 # 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
 # 各自只覆写 `_build_result_payload()`。
-# ★ 挂载幂等(`_result != null` 早退):round_state 可能不止一条 MATCH_OVER。
+# ★★ **挂载一次、但每次都要刷新**(`if _result == null` 只包住"建 + 连线")。
+#   写成 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**":
+#   第二条 MATCH_OVER 载荷就永远到不了屏幕上,而 `MatchResult.show_result` 的清场重建
+#   (`ui/match_result.gd` 的 remove_child→queue_free 那段)在生产里**一次都不会跑** ——
+#   探针却直接调它、照绿。**探针比产品更绿**是这里最难发现的形状。
+#   ★ 第二条载荷**可达**(不是假想):1v1 —— `server_main.gd` 在每次 reclaim 成功后重播当前
+#     `round_state`,掉线重连的客户端就会收到第二条 MATCH_OVER;3v3 —— `team_host.gd` 的
+#     `_finish_match()` 在战斗进行中直接把 PLAYING→MATCH_OVER,而倒地边沿检测在
+#     `match _round_state:` **之前**且**不看状态** ⇒ MATCH_OVER 之后再死人会再广播一条
+#     带新 `stats`/`mvp` 的终局载荷;`mark_disconnected` 那条同款。
 func _show_result() -> void:
-	if _result != null:
-		return
-	_result = RESULT_SCENE.instantiate()
-	add_child(_result)
-	_result.leave_requested.connect(_leave_to_main_menu)
+	if _result == null:
+		_result = RESULT_SCENE.instantiate()
+		add_child(_result)
+		_result.leave_requested.connect(_leave_to_main_menu)
 	_result.show_result(_build_result_payload())
 
 

@@ -24,9 +24,12 @@ static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dict
 	var scores: Dictionary = round.get("scores", {})
 	var rows: Array = []
 	for role in [1, 2]:
-		if not scores.has(role):
-			continue
-		rows.append(_row(_name_of(names, role), int(scores[role]), 0, 0, 0))
+		# ★ `scores` 是 role -> **本局击杀**,1v1 只有这两个 role ⇒ 缺条目 = **本局 0 杀**,
+		#   不是"没有这个人的数据"(与 `for_team` 的 `stats` 那条**规则不同**,别照抄:
+		#   那边缺条目真的是"掉线/中途加入" ⇒ 刻意跳过那一行)。
+		#   ★ 写成 `if not scores.has(role): continue` 会在一局 5-0 时画出**只有一行**的
+		#     1v1 榜 —— 输的那位从自己的结算页上**消失**,且不报错。
+		rows.append(_row(_name_of(names, role), int(scores.get(role, 0)), 0, 0, 0))
 	_finish(rows, "kills")
 	var won: Dictionary = round.get("rounds_won", {})
 	return {

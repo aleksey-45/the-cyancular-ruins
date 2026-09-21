@@ -223,8 +223,6 @@ func _on_round_state(data: Dictionary) -> void:
 func _build_result_payload() -> Dictionary:
 	return MatchResultPayload.for_duel(_last_round_state, _names, PvpSession.role)
 
-# 本地输入锁的单一收口:冻结期(_round_locked)与菜单打开(_menu_open)任一成立就锁。
-# 不要在两个调用点各拼一次布尔 —— 那正是修复波 1 只关住一个方向的原因。
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
 func _on_opponent_left() -> void:

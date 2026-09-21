@@ -39,6 +39,28 @@ func _initialize() -> void:
 	if str(draw["title"]) != "平 局":
 		fails.append("★ 1v1 平局应念「平 局」,实得 %s" % draw["title"])
 
+	# ②b ★★ 1v1:某 role **没有 `scores` 条目** = 本局 0 杀,**必须照样出行**(不是跳过)。
+	#      `for_duel` 遍历的是写死的 `[1, 2]`,缺条目只可能是"0 杀"——`_scores` 是
+	#      `role -> 本局击杀`(`server/match_state.gd`),没写进字典就是没拿到人头。
+	#      ★ 写成 `if not scores.has(role): continue` 会在一局 5-0 时画出**只有一行**的榜:
+	#        输的那位从**自己的**结算页上消失(他正是要看到自己那一行的人),全程不报错。
+	#      ★ 这条与 ⑤(3v3 缺 `stats` 条目**就该跳过**)方向相反,**两条都要在**:
+	#        无脑统一成一版,总有一个模式错。
+	var one_sided: Dictionary = script.for_duel({ "scores": {1: 5}, "rounds_won": {1: 2, 2: 0},
+			"match_winner": 1 }, names, 2)
+	if (one_sided["sections"][0]["rows"] as Array).size() != 2:
+		fails.append("★ 1v1 缺 scores 条目的 role 必须仍出一行(0 杀),实得 %d 行"
+				% (one_sided["sections"][0]["rows"] as Array).size())
+	else:
+		var loser: Dictionary = one_sided["sections"][0]["rows"][1]
+		if int(loser["kills"]) != 0:
+			fails.append("★ 缺条目的 role 那一行应是 0 杀,实得 %d" % int(loser["kills"]))
+		if str(loser["name"]) != "bob":
+			fails.append("★ 缺条目的 role 那一行应仍是 role 2 的昵称,实得 %s" % loser["name"])
+		# 输的那位(role 2,看自己的结算页)必须看到「失败」,不是别人赢的文案
+		if str(one_sided["title"]) != "失败":
+			fails.append("★ role 2 看自己输掉的 1v1 应念「失败」,实得 %s" % one_sided["title"])
+
 	# ③ 大乱斗:kills + deaths 两列,按 kills 降序
 	var roy: Dictionary = script.for_royale({ "scores": {1: 3, 2: 9, 3: 0},
 			"deaths": {1: 5, 2: 2, 3: 4}, "match_winner": 2 }, names, 1)
