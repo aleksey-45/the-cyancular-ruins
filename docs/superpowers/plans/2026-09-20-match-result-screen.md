@@ -975,7 +975,14 @@ Expected: `ALL-OK`。
    ★ **保留不变的部分**:退出码从来不是判据(出错时照样 exit 0,与"跑通了"在退出码上不可分)—— 这条结论没变,改的只是它旁边那句"不打印 ALL-OK"。
    ★ 完整表述已写进 `tests/lib/probe_base.gd` 的文件头(那里是这条纪律的权威落点);CLAUDE.md 这句改成与它一致的简短版并指向它。
 7. ★ **把 `CLAUDE.md:121` 那句「昵称走 `_fit_name(名字, 14)`」改成指 `UiFactory.fit_name(名字, 14)`** —— Task 1 之后权威实现已搬到 `UiFactory`,`RoyaleHud._fit_name` 只剩一行委托。该行的**口径描述**(显示宽度、截断 + 补满、换字体要重算 `BOARD_W`/`NAME_UNITS`)**原样保留**,只改函数名归属。(Task 1 自己发现并登记:Step 4 限定它只 `git add` 那两个 UI 文件,所以那处文档留到本任务。)
-8. ★ **补一条大乱斗**接线**断言**(Task 5 评审登记:大乱斗那条调用目前**零常驻覆盖**)。本任务已经把第 9b / 12 条的扫描对象重指向基类 —— 顺手加一条:**`scenes/royale_game.gd` 的 `state == 3` 块里必须含 `_show_result()`**。理由:基类那两条常驻守卫(扫 `MatchResult.new(`、扫 `_show_result` 不得早退)**只扫基类**;Task 5 唯一的执行级证据是临时探针,已删。★ 计划给 Task 5 点名的验收跑法(`royale_soak_probe.sh`「顺带验离场」)**其实验不到它**:该探针的客户端在 MATCH_OVER 自己就退出了(`tests/royale_soak_probe.gd:421-423`),永远走不到大乱斗结算页那一段。
+8. ★★ **补三个模式的**接线**断言**(Task 5 / Task 6 评审登记:**三条调用目前零常驻覆盖**)。
+   本任务已经把第 9b / 12 条的扫描对象重指向基类 —— 顺手补齐:
+   - **`scenes/royale_game.gd` 的 `state == 3` 块里必须含 `_show_result()`**;
+   - **`scenes/team_game.gd` 的 `state == 3` 块里必须含 `_show_result()`**;
+   - ★★ **`scenes/team_game.gd` 的 `_build_result_payload()` 里 `_names` 与 `_teams` 的实参顺序不得写反。**
+     理由:基类那两条常驻守卫(扫 `MatchResult.new(`、扫 `_show_result` 不得早退)**只扫基类**;而三个模式各自的调用点是临时探针验的,已删。★ 计划给 Task 5 点名的验收跑法(`royale_soak_probe.sh`「顺带验离场」)**其实验不到它**:该探针的客户端在 MATCH_OVER 自己就退出了(`tests/royale_soak_probe.gd:421-423`),永远走不到大乱斗结算页那一段。
+   ★★ **那两个 Dictionary 实参写反了**会**照样编译、照样全绿**:`for_team(round, names, teams, my_team)` 里 `_names` 与 `_teams` 都是 `Dictionary`,写反只会让榜渲染成乱码/空表,而**所有常驻测试都不会红**。这是本计划里最安静的一种错法。
+   ★ **不需要新探针文件**:`tests/team_room_smoke.gd` 已经在读 `res://scenes/team_game.gd` 并按**函数体**断言(见该文件 ⑨ 一族),在那里加两行即可。
 9. ★ **四处被这次改动证伪的注释要一起订正**(Task 5 评审登记;它们都不支撑任何断言,所以**不会红**,但正是"半年后让人白花一小时"的那类):
    - `server/royale_host.gd:238` —— `# 结果展示阶段:客户端 6s 后自行回菜单`
    - `tests/royale_soak_probe.gd:25-26` 与 `:420` —— 「那条 6s 换场会把本探针一起摘掉」
