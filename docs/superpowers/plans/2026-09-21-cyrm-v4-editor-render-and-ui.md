@@ -581,6 +581,38 @@ EOF
   - `selectionSource(sel, dx, dy, X, Y) -> {hit:Boolean, X, Y}`
   - `rectUnion(a, b)`、`rectIsEmpty(r)`
 
+> ★★ **本节下面的代码块是「落地前的初版」,不是最终交付,而且**其中有**会重新引入缺陷**的地方。**
+> Task 2 实现后经历了两轮评审修复(`215df03`、`da04b6f`)。**交付物是
+> `level_editor/render.js` 与 `level_editor/render_smoke.js`,那两份才是事实**;
+> 本节的块只是当初的主张。照抄本节会踩到下面这些(逐条理由与变异证据见账本
+> `.superpowers/sdd/progress.md` 的 Task 2 各条):
+>
+> **已在上文就地订正的两处**(别再改回去):
+> ① `brushRegion` 的 `unit` 必须取自 **`hit`** 那一侧的坐标空间(见上面那段的注释);
+> ② `snapHit` 的格分支必须 **÷ `SUB_PER_CELL`** —— 初版两个分支只差一个 `kind`,名字/注释/
+>    断言都说"吸附"而实际不换算(即把子格号当格号交出去,正是本文件警告过的"错 4 倍")。
+>
+> **本节仍是初版、尚未就地订正的(照抄会重新引入)**:
+> ③ **`setAtlas` 先把 `tiles` 换成新缓存、之后才让 `setSource` 校验** ⇒ 抛错时模块手里留着
+>    一个**没有 `setSource` 过的新 ④**,而 `atlasInfo()` 还报旧图集、③ 也没作废 ⇒ 下一次
+>    `tileFor` 抛 `Tint: 还没 setSource…`。本节 `setAtlas` 上方的注释("形状非法时两层都还是
+>    旧的")**只在没有注入 backend 时成立**。交付:先把候选缓存建到局部变量、**校验通过之后**
+>    才赋 `tiles`(于是"对 `tiles` 的每一次写都发生在 `setSource` 之后"是无例外的不变量;
+>    注意**别用 `tileCache()` 那个 getter** —— 它自己会惰性写 `tiles`,等于又变回"先换再校验")。
+> ④ `createCellCache` 的 `get` 未命中路径缺 `entries.delete(k)` ⇒ 重建的条目**停在最冷端**,
+>    与相邻那句"Map 的插入序 = LRU 序"矛盾(只是多重建几次,不改输出)。
+> ⑤ `createSlicer` 不校验 `budgetMs`(`now()-s0 >= NaN` 恒假)⇒ NaN/负预算**一帧干完**,
+>    正是闸 2 要防的那种"页面像死了"。
+> ⑥ `run()` 里 `nextFrame().then(step)` **没有拒绝处理** ⇒ `nextFrame` 若返回被拒的 promise,
+>    `run()` **永不 settle** 且成为未处理拒绝。交付是 `.then(step, reject)`。
+> ⑦ `atlasCapacity()` 的 `h` 没被钳(`Tint.setSource` 只校验 `w`)⇒ 传错 `h` 会得到**负容量**,
+>    而 Task 5 的 `clampTexture` 把任何 `< 1` 的 cap 当作"没信息"**静默放宽**到 `TEXTURE_MAX`。
+>    交付在 `atlasCapacity` 里 `Math.max(0, …)`。
+>
+> **测试块**:交付的 `render_smoke.js` 比本节多 **20** 条断言(92 → 112),并把 `snapHit` 那条
+> 从"只读 `.kind`"**收紧成整对象相等** —— 旧写法在"不吸附"的变异下**照样通过**(这正是它当初
+> 没能拦住 ② 的原因)。本节的测试块**可以照抄**(它仍然全绿),但它是**更弱**的一份。
+
 - [ ] **Step 1: 写测试 `level_editor/render_smoke.js`(此时必然红)**
 
 新建 `level_editor/render_smoke.js`:
@@ -1175,8 +1207,13 @@ globalThis.Render = (function () {
     return { unit: unit, x0: x - lo, y0: y - lo, x1: x + hi, y1: y + hi };
   }
   function snapHit(h) {
+    // ★★ 两个分支**必须真的换算**,不能只改返回的 `kind`:`hitTest` 给的是**子格坐标**,
+    //    而 `kind:'cell'`(整数画笔)要的是**格号** ⇒ 格分支必须 ÷ `SUB_PER_CELL`。
+    //    初版两个分支只差一个 `kind`、坐标原样返回 —— 名字、注释、断言文案都说"吸附",
+    //    实际把子格号当格号交出去,正是本文件警告过的那种"错 4 倍"(2026-09-21 评审发现;
+    //    计划自己的 `hitOf` 就是 `Math.floor(p.X / k)`,即"在除",这就定了哪种读法对)。
     if (h.kind === 'sub') return { kind: 'sub', x: Math.floor(h.X), y: Math.floor(h.Y) };
-    return { kind: 'cell', x: Math.floor(h.X), y: Math.floor(h.Y) };
+    return { kind: 'cell', x: Math.floor(h.X / Core.SUB_PER_CELL), y: Math.floor(h.Y / Core.SUB_PER_CELL) };
   }
 
   // ── 选区拖动:纯读的偏移查询(B3;规格 §4.2「拖动只记 dx/dy,松手才提交」)──
