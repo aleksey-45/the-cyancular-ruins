@@ -50,7 +50,7 @@ pre { white-space:pre-wrap; margin:8px 0 0; color:var(--dim);
 
   <section id="tintlab">
     <h2>② 辅码实验室</h2>
-    <div class="row">纹理 <input id="tex" type="number" min="1" max="4095" value="1"></div>
+    <div class="row">纹理 <input id="tex" type="number" min="1" value="1"></div>
     <div class="row">色相 <input id="hue" type="range" min="0" max="7" value="4"><span id="huev">4</span></div>
     <div class="row">亮度 <input id="bri" type="range" min="0" max="7" value="4"><span id="briv">4</span></div>
     <div class="row">饱和 <input id="sat" type="range" min="0" max="7" value="4"><span id="satv">4</span></div>
@@ -104,7 +104,16 @@ function refreshMaps() {
 $('btn-maps').addEventListener('click', refreshMaps);
 
 // ── ② 辅码实验室:16 个象限 × 当前描述符,全部走 tint.js 的缓存 ──
-let atlas = null, atlasW = 0;
+let atlas = null, atlasW = 0, atlasH = 0;
+// ★★ 纹理号的**上界 = 图集的真实容量**(列 × 行),不是描述符位宽 4095。
+//    三处数字在这一格上互相打架:游戏调色板 22、图集真实容量 100(320÷32 的平方)、
+//    描述符位宽 4095 —— 而 `Tint.get` → `buildTilePixels` 只按"图集里有没有这一块"判,
+//    于是**只有 4095 那一支会抛**:实测 tex=22 与 100 都好,101/500/4095 直接抛。
+//    ★ 为什么不钳到游戏调色板 22:22 是 `tile_defs.json` 的调色板,而本页**没有**加载它
+//      (它是 node 侧的模块),照抄一个 22 进来就是**第二份调色板**——正是本仓反复吃亏的
+//      "两份实现迟早漂"。图集容量却能**从加载进来的图**直接量出来,与 tint.js 的越界判据
+//      同源(同一个 BLOCK_PX、同一张图的尺寸),改图集也不会漂。
+let atlasCap = 1;
 const tiles = Tint.createTileCache();
 const img = new Image();
 img.onload = function () {
@@ -115,18 +124,34 @@ img.onload = function () {
   const d = ctx.getImageData(0, 0, img.width, img.height);
   atlas = d.data;
   atlasW = img.width;
+  atlasH = img.height;
+  atlasCap = Math.floor(atlasW / Tint.BLOCK_PX) * Math.floor(atlasH / Tint.BLOCK_PX);
+  $('tex').max = String(atlasCap);       // 输入框的上界也跟着图集走(顺手给浏览器一个提示)
   tiles.setSource(atlas, atlasW);        // ★ 资源换了 = 缓存整片失效(审计 A2)
   drawSwatches();
 };
 img.onerror = function () { $('tintinfo').textContent = 'structure.png 加载失败'; };
 img.src = 'structure.png';
 
+// ★★ 重绘包一层 try/catch:本函数**先** `box.innerHTML = ''` 再逐块 `tiles.get()`,
+//    而 tiles.get 是会抛的(纹理号超出图集 / 空气描述符 / backend 报错)—— 抛在清空之后,
+//    表现是 16 个色块**全空**、信息行停在**上一轮**的旧文本:一个**沉默的**空面板。
+//    ★ 钳制(用户输入那一层)与抛错(tint.js 里"编程错误"的哨兵)是**两道**分工:
+//      钳制让正常输入到不了抛错那一支,这一层兜住"钳制没盖住的那些"(例如 backend 报错)。
 function drawSwatches() {
+  try {
+    drawSwatchesBody();
+  } catch (e) {
+    $('tintinfo').textContent = '辅码实验室出错:' + (e && e.message ? e.message : String(e));
+  }
+}
+function drawSwatchesBody() {
   const hue = +$('hue').value, bri = +$('bri').value, sat = +$('sat').value, alp = +$('alp').value;
   $('huev').textContent = hue; $('briv').textContent = bri;
   $('satv').textContent = sat; $('alpv').textContent = alp;
   if (!atlas) { $('tintinfo').textContent = 'structure.png 还没加载完'; return; }
-  const tex = Math.max(1, Math.min(4095, parseInt($('tex').value, 10) || 1));
+  // ★ 钳到**图集容量**(见 atlasCap 的说明):「能输入」与「能画」不许分成两回事。
+  const tex = Math.max(1, Math.min(atlasCap, parseInt($('tex').value, 10) || 1));
   const desc = Core.packDesc(tex, hue, bri, sat, alp);
   const box = $('swatches');
   box.innerHTML = '';

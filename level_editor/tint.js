@@ -6,7 +6,10 @@
 // ★ 像素数学必须与游戏侧 shader **逐像素一致**(规格 §2.3;交接文档 §2.2 是同一份公式):
 //     · 是 **HSV** 不是 HSL(饱和度/亮度取的是 HSV 的 S 与 V);
 //     · 色相 h' = fposmod(h + (H-4)*15, 360),八档**不对称**(−60°…+45°);
-//     · 亮度/饱和度是**乘法** (k-4)*0.1 —— 暗部不会被压成纯黑,中性档 4 恰好是恒等元;
+//     · 亮度/饱和度是**乘法**,乘数 = (k+6)/10(即 MUL 表 0.6…1.3)——
+//       暗部不会被压成纯黑,中性档 4 恰好是恒等元(×1.0);
+//       ★ 别写成 (k-4)*0.1:那既不是乘数、也不是正确的增量(它是"加法"那一支的形状,
+//         而在"乘法 vs 加法"正是本文件判别性要求的地方,写错一支等于把结论说反);
 //     · alpha a' = a * (A/7),中性档在 **7**(不在 4)。
 // ★ 纯逻辑 + 注入式画布:node 里能直接 require 进来断言(`node tint_smoke.js`)。
 globalThis.Tint = (function () {
@@ -94,6 +97,22 @@ globalThis.Tint = (function () {
   var QUAD_PX = 32 / Core.SUB_PER_CELL;     // 8
   var TILE_PX = Core.SUB_PX;                // 16 = 象限 8px 放大 2×,正好一个子格
 
+  // ★★ 象限坐标归一化 + 越界守卫(键与像素数学**必须用同一个约定**)。
+  //    旧实现有**两条平行的约定**:缓存的键用 `(qx & 3)`(负数被位运算折到 3),
+  //    而像素数学用 `qx % Core.SUB_PER_CELL`(负数保持负)。实测后果比"键不好看"重得多:
+  //    `get(1,-1,0,desc)` 会**先造出一张错图、并存进象限 3 的键**,随后 `get(1,3,0,desc)`
+  //    **直接命中那张错图**(两次调用返回同一个对象)。
+  //    今天所有调用方都只循环 0..3,但"从坐标算象限"的调用方(2b 的环面 / 拖拽选区)
+  //    出现负坐标很正常 ⇒ 这里把越界坐标**当场抛掉**,回绕由调用方自己先做(别猜)。
+  var SUB = Core.SUB_PER_CELL;
+  function quadIndex(q, which) {
+    if (typeof q !== 'number' || !isFinite(q) || Math.floor(q) !== q || q < 0 || q >= SUB) {
+      throw new Error('象限坐标 ' + which + ' = ' + q + ' 非法(合法范围 0..' + (SUB - 1) +
+                      ';环面回绕请调用方先自己 ' + which + ' % ' + SUB + ')');
+    }
+    return q % SUB;
+  }
+
   function textureBlockRect(texture, atlasWidth) {
     var cols = Math.floor(atlasWidth / BLOCK_PX);
     var i = (texture | 0) - 1;
@@ -106,17 +125,30 @@ globalThis.Tint = (function () {
   // 纯像素:从**图集**(整张 structure.png 的 RGBA)里取纹理 T 的第 (qx,qy) 个 8px 象限,
   // 按描述符 tint,再**最近邻**放大 2× 成 16×16。返回 Uint8ClampedArray(16*16*4)。
   // ★ 放大必须是最近邻(不是插值)—— 与项目其余的 texture_filter=nearest 口径一致。
+  // ★★ 调用方契约(**这个函数会抛,别把它当纯函数用**):下面四种实参一律抛错 ——
+  //    ① `desc === 0`(**空气**):空气没有贴图。★ 空气是地图数据里**最常见**的那一格,
+  //       渲染循环若不先过滤 desc === 0,第一帧就抛、而且每帧都在同一处抛;
+  //    ② 纹理号**超出图集行/列**(如 320×320 的图集里只到第 100 块,101 起就抛);
+  //    ③ `texture` 实参与 `Core.texOf(desc)` **不一致**(见下);
+  //    ④ 象限坐标不是 0..SUB_PER_CELL-1 的整数(见 quadIndex)。
   function buildTilePixels(atlas, atlasWidth, texture, qx, qy, desc) {
     if (Core.texOf(desc) === 0) {
       throw new Error('buildTilePixels: 空气格没有贴图(desc=0x' + (desc >>> 0).toString(16) + ')');
     }
     var rect = textureBlockRect(texture, atlasWidth);
-    var srcX = rect.x + (qx % Core.SUB_PER_CELL) * QUAD_PX;
-    var srcY = rect.y + (qy % Core.SUB_PER_CELL) * QUAD_PX;
+    var srcX = rect.x + quadIndex(qx, 'qx') * QUAD_PX;
+    var srcY = rect.y + quadIndex(qy, 'qy') * QUAD_PX;
     var rows = atlas.length / (atlasWidth * 4);
     if (srcX + QUAD_PX > atlasWidth || srcY + QUAD_PX > rows) {
       throw new Error('buildTilePixels: 图集里没有纹理 ' + texture + ' 的象限 (' + qx + ',' + qy +
                       ') —— 图集是 ' + atlasWidth + '×' + rows);
+    }
+    // ★ 实参 `texture` 必须**就是**描述符里那个:不一致时上面两条都拦不住(那块在坐标系里
+    //   是存在的),于是函数**一声不响地**画出另一块砖的像素 —— 屏幕上是一块颜色不对的砖,
+    //   而调用方以为自己传对了。这属于"编程错误"档,与 desc=0 同级,故当场抛。
+    if (Core.texOf(desc) !== texture) {
+      throw new Error('buildTilePixels: 纹理实参 ' + texture + ' 与描述符里的纹理 ' +
+                      Core.texOf(desc) + ' 不一致(desc=0x' + (desc >>> 0).toString(16) + ')');
     }
     var scale = TILE_PX / QUAD_PX;
     var out = new Uint8ClampedArray(TILE_PX * TILE_PX * 4);
@@ -168,18 +200,52 @@ globalThis.Tint = (function () {
     // ★★ 换图**必须**整片失效(审计 A2):旧编辑器在 structure.png 加载完成前写进
     //    纯色兜底、且永不失效 —— 于是地图一直是色块,而且"有时好有时坏"。
     //    资源换了就是换了,没有"部分还新鲜"这回事。
+    // ★★ 调用方契约:必须传**平坦的 RGBA 数组**(浏览器里就是 `imageData.data`),
+    //    **不是** `ImageData` 对象本身 —— 传对象会**静默**画出一整张全透明小图
+    //    (理由见下面的形状守卫)。这不是"建议",是形状闸:不符合形状当场抛。
     function setSource(data, width) {
+      // ★★ 形状守卫(I2):最自然的误用是把 `ImageData` **对象**传进来,而不是它的 `.data`。
+      //    那时 `atlas.length` 是 `undefined` ⇒ `buildTilePixels` 里 rows = NaN ⇒
+      //    那条边界比较(`> NaN`)恒为 false ⇒ **一路产出全透明小图且不报错**
+      //    (规格 §7 风险登记里"不静默画空白"那条缓解,在 setSource 这一层原本是开着的)。
+      //    ★ 守卫只做在**参数形状**上:像素数学里的抛错仍旧是"编程错误"的哨兵,别动它。
+      if (!data || typeof data.length !== 'number' || !isFinite(data.length) || data.length <= 0) {
+        throw new Error('setSource: data 必须是平坦的 RGBA 数组(ImageData 的话请传它的 .data),实得 ' +
+                        (data === null || data === undefined ? String(data) : typeof data) +
+                        (data && typeof data.length === 'number' ? '(length=' + data.length + ')' : ''));
+      }
+      var w = width | 0;
+      // 每像素 4 字节 ⇒ 宽度必须是 4 的倍数(否则"行"不是整数字节);
+      // 且总字节数必须是**整行**(宽度×4)的整数倍,否则宽度与数据对不上、rows 是分数。
+      if (w <= 0 || w % 4 !== 0) {
+        throw new Error('setSource: 图集宽度必须是正的、4 的倍数(每像素 4 字节),实得 ' + width);
+      }
+      if (data.length % (w * 4) !== 0) {
+        throw new Error('setSource: 图集字节数 ' + data.length + ' 不是整行(' + w + '×4 = ' + (w * 4) +
+                        ' 字节)的整数倍 —— 宽度与数据对不上');
+      }
       atlas = data;
-      atlasWidth = width | 0;
+      atlasWidth = w;
       tiles.clear();
     }
+    // 键与像素数学取的是**同一个**象限约定(quadIndex):越界坐标在这里就抛,
+    // 不允许"键折到 3、像素按负数取"那种两条约定并存的状态(见 quadIndex 的说明)。
     function tileKey(texture, qx, qy, desc) {
-      return texture + '/' + (qx & 3) + '/' + (qy & 3) + '/' + (desc >>> 0);
+      return texture + '/' + quadIndex(qx, 'qx') + '/' + quadIndex(qy, 'qy') + '/' + (desc >>> 0);
     }
+    // ★★ 调用方契约(**这个函数会抛**):`desc === 0`(空气)与"纹理号超出图集行/列"都会抛,
+    //    越界象限坐标与纹理/描述符不一致同样抛 —— 全部由 buildTilePixels 抛出(见它的注释)。
+    //    ★ 空气是地图数据里最常见的一格:渲染循环必须先 `if (desc === 0) continue;`,
+    //      否则第一帧就抛、且每帧都在同一处抛。
     function get(texture, qx, qy, desc) {
       var k = tileKey(texture, qx, qy, desc);
-      var hit = tiles.get(k);
-      if (hit !== undefined) {
+      // ★★ 命中判据必须是 `tiles.has(k)`,不能写成 `tiles.get(k) !== undefined`:
+      //    backend 若返回 `undefined`(或将来某个 backend 这么做),后者恒为假 ⇒ 那张图
+      //    **永不命中**,却已经占着槽位、计入 size、还能把活条目挤掉(实测
+      //    `{hits:0,misses:2,size:1}` 且 `has()` 为 true)。
+      //    "命中了没有"只有一条判据,get 与 has 必须走同一条。
+      if (tiles.has(k)) {
+        var hit = tiles.get(k);
         hits++;
         tiles.delete(k);
         tiles.set(k, hit);                     // 提到最近使用端

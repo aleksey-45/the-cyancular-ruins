@@ -188,6 +188,16 @@ function serveMapFile(res, target, name, headOnly) {
   });
 }
 
+// 请求体超限时抛的错误:带一个显式标记,让 receiveMapFile 能把它与别的写失败分开
+// (超限 = 413,安全闸拒绝 = 403,其余 = 500)。
+// ★ 与 rejectWrite 是**同一条纪律:用标记,不认错误文本** —— 文本会被将来改字面量的人
+//   改掉(改完 413 就静默退化成 500),而标记改了会当场红。
+function rejectTooLarge(message) {
+  const e = new Error(message);
+  e.tooLarge = true;
+  return e;
+}
+
 // 读请求体,带硬上限。
 // ★ 超限守的是**内存**、不是带宽:超限之后不再收集(超限那一块根本不留下),
 //   但仍把请求读完再回 413 —— 中途 destroy 会让客户端拿到 ECONNRESET 而不是那条错误信息。
@@ -208,7 +218,7 @@ function readBody(req, maxBytes) {
       if (!overflow) chunks.push(c);
     });
     req.on('end', function () {
-      if (overflow) return reject(new Error('请求体超过 ' + maxBytes + ' 字节上限'));
+      if (overflow) return reject(rejectTooLarge('请求体超过 ' + maxBytes + ' 字节上限'));
       resolve(Buffer.concat(chunks, total));
     });
     req.on('error', reject);
@@ -401,7 +411,10 @@ function receiveMapFile(req, res, name, ctx) {
     });
   }).catch(function (err) {
     const msg = (err && err.message) ? err.message : String(err);
-    if (msg.indexOf('上限') >= 0) { sendText(res, 413, msg); return; }
+    // ★ M3:413 与下面的 403 用**同一款判据**——显式标记,而不是 `msg.indexOf('上限')`。
+    //   认得是错误文本的话,哪天有人把 readBody 里那句消息改个词,413 就静默退化成 500
+    //   (而 500 在用户眼里是"服务器坏了",不是"这份文件太大了")。
+    if (err && err.tooLarge === true) { sendText(res, 413, msg); return; }
     // ★ 安全闸的拒绝(符号链接指到 maps/ 之外等)与"真的写失败了"分开,理由见 rejectWrite。
     if (err && err.writeRejected === true) { sendText(res, 403, msg); return; }
     sendText(res, 500, '写入失败:' + msg);

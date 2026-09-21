@@ -1015,6 +1015,10 @@ async function runAllPhases() {
       let m;
       while ((m = re.exec(page)) !== null) srcs.push(m[1]);
       ok(srcs.length >= 2, '骨架页有 ' + srcs.length + ' 个外部脚本');
+      // ★★ M6:顺序也是契约。tint.js 对 Core 是**硬依赖**(文件头第一句就是"必须先加载
+      //   core.js"),顺序反了整页当场死(只在浏览器里现形,node 侧一条断言都拦不住)。
+      ok(page.indexOf('src="core.js"') >= 0 && page.indexOf('src="core.js"') < page.indexOf('src="tint.js"'),
+         '★★ core.js 必须排在 tint.js **之前**(tint.js 的档位常量全部取自 Core,顺序反了整页当场死)');
       const missing = [];
       srcs.forEach(function (s) {
         if (s.indexOf('://') >= 0) { missing.push(s + '(外部 URL —— 编辑器只走本机 HTTP)'); return; }
@@ -1034,6 +1038,26 @@ async function runAllPhases() {
     ok(page.indexOf('createTileCache') >= 0, '★ 骨架页用 Tint.createTileCache(小图走缓存,不自己造 canvas)');
     ok(page.indexOf('rgbToHsv') < 0 && page.indexOf('hsvToRgb') < 0,
        '★ 骨架页里没有第二份 HSV 数学(必须调 Tint —— 两份实现迟早漂,而漂了不报错)');
+    // ── ★★ I1:纹理号的上界必须从**图集容量**派生,不是描述符位宽 4095 ──
+    // ★ 三处数字在这一格上互相打架:游戏调色板 22 / 图集容量 100(320÷32 的平方)/
+    //   描述符位宽 4095 —— 而 `Tint.get → buildTilePixels` 只按"图集里有没有这一块"判,
+    //   于是**只有 4095 那一支会抛**:实测 tex=22 与 100 都好,101/500/4095 直接抛;
+    //   放大伤害的是页面**先** `box.innerHTML=''` 再逐块取图 ⇒ 抛在清空之后 = 16 个色块
+    //   全空、信息行停在旧文本,一个**沉默的**空面板。而本页是 2b 的真正入口页。
+    // ★ 判据是"**裸** 4095"(拿它当上界/当 input 的 max),不是"页面上出现过这个字符串":
+    //   页面的注释里**故意**留着 4095 这个名字(它记的就是"为什么不能钳到 4095"),
+    //   照 `indexOf('4095') < 0` 写会把自己的说明文字判红。拦住"改回去"的是这两条形态。
+    ok(!/max="4095"/.test(page) && !/Math\.min\(\s*4095/.test(page),
+       '★★ 骨架页不得把纹理号钳到 4095(描述符位宽;tint.js 按图集判,101 起就抛 ⇒ 沉默空面板)');
+    ok(/atlasCap\s*=\s*Math\.floor\(atlasW \/ Tint\.BLOCK_PX\)\s*\*\s*Math\.floor\(atlasH \/ Tint\.BLOCK_PX\)/
+         .test(page),
+       '★★ 纹理号上界从**图集的列 × 行**派生(块 32px = Tint.BLOCK_PX)—— 与 tint.js 的越界判据同源,' +
+       '改图集也不会漂');
+    ok(/Math\.max\(1, Math\.min\(atlasCap,/.test(page),
+       '★★ 真正交给 Tint.get 的那个纹理实参被 atlasCap 钳过(「能输入」与「能画」不许分成两回事)');
+    ok(/try\s*\{[\s\S]{0,80}drawSwatchesBody\(\)/.test(page) && /catch\s*\(e\)\s*\{\s*[\s\S]{0,120}tintinfo/
+         .test(page),
+       '★ 重绘包了 try/catch 并把消息写到 #tintinfo(抛在 box.innerHTML=\'\' 之后 = 沉默空面板)');
     ok(page.indexOf('Core.lineCells') < 0,
        '★ 骨架页不调 Core.lineCells:它的坐标必须是整数,非整数/NaN 会让它死循环挂住标签页' +
        '(账本 Task 2 Minor 3 —— 2b 加绘制工具时每个调用点都要先 Math.floor)');

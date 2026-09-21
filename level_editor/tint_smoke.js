@@ -83,6 +83,13 @@ function makeAtlas() {
   eq(Tint.mulOf(4), 1, '亮度/饱和度中性档 4 → ×1.0(恒等元)');
   eq(Tint.alphaScaleOf(7), 1, 'alpha 中性档 7 → ×1');
   ok(Math.abs(Tint.alphaScaleOf(4) - 4 / 7) < 1e-12, '★ alpha 档 4 是 4/7 而不是 1');
+  // ★★ 整表钉住(M2),不只钉中性档与档 4 两个采样点:变异实测 —— 把 ALPHA_NUM 的档 1 与
+  //    档 2 **对调**,上面每一条(含 alphaScaleOf(4)=4/7 与 alphaScaleOf(7)=1)**全绿**,
+  //    而 alpha 档 1 与档 2 的整体透明度互换 —— 透明度的档位表正是本文件头号关切。
+  eq(Tint.ALPHA_NUM, [0, 1, 2, 3, 4, 5, 6, 7], 'alpha 档位表(分子 0..7,中性档在 7)');
+  eq([0, 1, 2, 3, 4, 5, 6, 7].map(Tint.alphaScaleOf),
+     [0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1],
+     '★ alpha 整表 [0..7].map(alphaScaleOf) = 0, 1/7 … 1(逐档单调,中性档 7 恰为恒等)');
   ok(Tint.BLOCK_PX === 32 && Tint.QUAD_PX === 8 && Tint.TILE_PX === 16,
      '贴图几何:块 32 / 象限 8 / 小图 16(= Core.SUB_PX)');
   ok(Tint.TILE_PX === Core.SUB_PX && Tint.QUAD_PX * 2 === Tint.TILE_PX,
@@ -242,6 +249,17 @@ function makeAtlas() {
            'buildTilePixels: 空气格没有贴图,抛错', '空气');
     throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 31, 0, 0, neutral); },
            'buildTilePixels: 图集里没有这块(越出下边界)抛错', '图集');
+    // ★ I3.3:纹理实参必须**就是**描述符里那个 —— 不一致时上面两条都拦不住(那块在坐标系里
+    //   存在),旧实现会一声不响地画出**另一块砖**的像素(屏幕上是一块颜色不对的砖)。
+    throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, 0, 0, Core.neutralDesc(5)); },
+           '★ buildTilePixels: 纹理实参与描述符里的纹理不一致 → 抛错(不许画另一块砖)', '不一致');
+    // ★ I3.2:象限坐标越界(含负数)一律抛 —— 旧实现靠 `%` 静默取负、靠 `& 3` 静默折到 3。
+    throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, -1, 0, neutral); },
+           '★ buildTilePixels: 象限坐标 -1 → 抛错(不许静默取负)', '象限坐标');
+    throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, 0, 4, neutral); },
+           '★ buildTilePixels: 象限坐标 4(越界)→ 抛错', '象限坐标');
+    throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, 0.5, 0, neutral); },
+           '★ buildTilePixels: 象限坐标 0.5(非整数)→ 抛错', '象限坐标');
   })();
 
   // ==== 相位 ⑦ tinted-tile 缓存(规格 §4.2 ④ / §4.3 闸 1)====
@@ -322,6 +340,67 @@ function makeAtlas() {
     // ★ 浏览器默认后端在 node 里必须**明确报错**,而不是悄悄画不出来
     throws(function () { Tint.DEFAULT_BACKEND.createTile(new Uint8ClampedArray(4), 1); },
            '★ DEFAULT_BACKEND 在 node(没有 document)里明确抛错', 'document');
+
+    // ════════════ 下面三条(I2 / I3.1 / I3.2)刻意放在本块**最后**:
+    //   上面好几条断言数的是 `made.length` 这类相对计数,插在中间会把它们整体挪位。
+    //   各自用自己的 backend(与共享的 `made` 完全隔离)。
+
+    // ── I3.1 命中判据:必须是 `has(k)`,不能是 `get(k) !== undefined` ──
+    // ★ 一个返回 undefined 的 backend 在旧判据下:那张图**永不命中**,却已经占着槽位、
+    //   计入 size、还能把活条目挤掉 —— 实测 {hits:0,misses:2,size:1} 且 has() 为 true。
+    const undefBackend = { createTile: function () { return undefined; } };
+    const uc = Tint.createTileCache({ maxSize: 3, backend: undefBackend });
+    uc.setSource(atlas, ATLAS_W);
+    uc.get(1, 0, 0, N1);
+    uc.get(1, 0, 0, N1);
+    eq(uc.stats(), { hits: 1, misses: 1, evictions: 0, size: 1, maxSize: 3 },
+       '★★ 缓存: backend 返回 undefined 时**照样命中**(命中判据是 has(k),不是 get(k) !== undefined)');
+    ok(uc.has(1, 0, 0, N1), '★ 缓存: 上面那条的条目 has() 为 true(与命中判据同一条)');
+
+    // ── I3.2 键的象限约定必须与像素数学**同一条** ──
+    // ★ 旧实现:键用 `(qx & 3)`、像素用 `qx % SUB_PER_CELL` ⇒ `get(3,-1,0,desc)` 会先造出
+    //   一张**错图**并存进**象限 3 的键**,随后 `get(3,3,0,desc)` **直接命中那张错图**
+    //   (两次调用返回同一个对象)。今天所有调用方都只循环 0..3,但"从坐标算象限"的
+    //   调用方(2b 的环面 / 拖拽选区)出现负坐标很正常。
+    const made2 = [];
+    const backend2 = {
+      createTile: function (pixels, size) {
+        made2.push({ pixels: pixels, size: size });
+        return { fake: true, pixels: pixels, size: size };
+      },
+    };
+    const qc = Tint.createTileCache({ backend: backend2 });
+    qc.setSource(atlas, ATLAS_W);
+    throws(function () { qc.get(3, -1, 0, Core.neutralDesc(3)); },
+           '★★ 缓存: 象限坐标 -1 → 抛错(不许"折到象限 3"再造出一张错图)', '象限坐标');
+    eq(made2.length, 0, '★ 越界坐标连一张图都没造(抛出发生在建图之前)');
+    eq(qc.stats().size, 0, '★ 越界坐标一个条目都没写进缓存(不留幽灵条目)');
+    const q3 = qc.get(3, 3, 0, Core.neutralDesc(3));
+    sameBytes(q3.pixels, Tint.buildTilePixels(atlas, ATLAS_W, 3, 3, 0, Core.neutralDesc(3)),
+              '★★ 象限 3 拿到的是**正确**那张(旧实现在这里会命中 -1 那趟造出来的错图)');
+    ok(qc.has(3, 3, 0, Core.neutralDesc(3)), '★ 象限 3 的键确实落在 3 上');
+
+    // ── I2 setSource 的形状守卫:最自然的误用必须**当场抛**,不许静默画全透明 ──
+    // ★ 传 `ImageData` **对象**而不是 `.data`:旧实现 `atlas.length` 是 undefined ⇒
+    //   buildTilePixels 里 rows = NaN ⇒ 边界比较(`> NaN`)恒假 ⇒ 一路产出全透明小图。
+    const shape = Tint.createTileCache({ backend: backend2 });
+    throws(function () { shape.setSource({ data: atlas, width: ATLAS_W }, ATLAS_W); },
+           '★★ setSource: 传 ImageData **对象**(而不是它的 .data)→ 抛错', 'RGBA 数组');
+    throws(function () { shape.setSource(undefined, ATLAS_W); },
+           '★ setSource: data 是 undefined → 抛错', 'RGBA 数组');
+    throws(function () { shape.setSource(atlas, 6); },
+           '★ setSource: 宽度不是 4 的倍数 → 抛错', '4 的倍数');
+    throws(function () { shape.setSource(atlas, 0); },
+           '★ setSource: 宽度 0 → 抛错', '4 的倍数');
+    throws(function () { shape.setSource(atlas.subarray(0, 100), ATLAS_W); },
+           '★ setSource: 字节数不是整行(宽×4)的整数倍 → 抛错(否则 rows 是分数)', '整数倍');
+    // ★ 被形状闸拒掉的调用**不许**动到上一份图集(守卫在赋值之前)
+    shape.setSource(atlas, ATLAS_W);
+    const s1 = shape.get(3, 0, 0, N3);
+    throws(function () { shape.setSource(atlas.subarray(0, 100), ATLAS_W); },
+           '(对照)同一条非整行的数据依旧被拒', '整数倍');
+    ok(shape.has(3, 0, 0, N3) && shape.get(3, 0, 0, N3) === s1,
+       '★ 被形状闸拒掉的 setSource 不清缓存、不换图集(上一份还完好)');
   })();
 
   // ==== 断言区结束 ====
