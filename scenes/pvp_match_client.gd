@@ -37,6 +37,8 @@ var _prev_sent_seq := 0
 var _match_ended := false
 # 暂停菜单是否开着(PvP 下菜单不暂停树,靠它锁本地输入;见 _refresh_input_lock)
 var _menu_open := false
+var _result: MatchResult = null             # 结算页(挂载一次,由 _show_result 建)
+var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载荷的输入之一)
 
 # 玩家本体精灵(player.png)的**主色**(RGB)。"把身体染成某个颜色"要拿它当基准去做比值。
 # ★ 数值是**实测**的不是拍的(2026-09-19):主色 `#639BFF`,占 12987 个不透明像素里的 10875(83.6%);
@@ -227,6 +229,47 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 func _refresh_input_lock() -> void:
 	if _local != null and _local.has_method("set_controls_locked"):
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
+
+
+# ── 结算页(2026-09-21):挂载与离场**三个模式共用**,各自只覆写 `_build_result_payload()` ──
+# ★ 为什么在基类:三个客户端(`pvp_game` / `royale_game` / `team_game`)**本来就都**
+#   `extends PvpMatchClient`,不存在"要动继承链"这件事。挂载/离场逐字同构,抄三份必然漂 ——
+#   与本文件既有的 `_apply_peer_hues_or_team` / `_replica_for` 是同一个形状。
+# ★★ 必须走**场景实例化**,不能用 `MatchResult.new()`:`layer = 150` **只写在
+#   `ui/match_result.tscn` 里**(脚本不设 layer —— 三个现有 HUD 同款写法,层位值只有那
+#   一处来源)。用 `.new()` 会拿到 CanvasLayer 默认的 **layer 1**,结算页画在 HUD(130)/
+#   小地图(131) **下面**、压暗罩盖不住它们,而计划自己的类头注释却写着「盖住一切」。
+#   ★ 这条有守卫:`tests/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,
+#     出现 `MatchResult.new(` 即红。
+const RESULT_SCENE := preload("res://ui/match_result.tscn")
+
+# 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
+# 各自只覆写 `_build_result_payload()`。
+# ★ 挂载幂等(`_result != null` 早退):round_state 可能不止一条 MATCH_OVER。
+func _show_result() -> void:
+	if _result != null:
+		return
+	_result = RESULT_SCENE.instantiate()
+	add_child(_result)
+	_result.leave_requested.connect(_leave_to_main_menu)
+	_result.show_result(_build_result_payload())
+
+
+# 结算页 -> 主菜单。★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,
+# 裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误。
+# ★ 防重入由 MatchResult 自己那次发信号 + safe_change_scene 的 _switching 双层兜住;
+#  这里只负责"在树上才切"(原定时器 lambda 里那条 is_inside_tree() 早退的**意图**搬到这里)。
+func _leave_to_main_menu() -> void:
+	if NetBus != null:
+		NetBus.stop()
+	if not is_inside_tree():
+		return
+	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
+
+
+# 结算页载荷(默认空)。三个子类各覆写一份 —— 模式差异只有这一点。
+func _build_result_payload() -> Dictionary:
+	return {}
 
 
 # ── 对手副本访问器:两个模式**唯一的结构性差异**就收在这一个口上 ──
