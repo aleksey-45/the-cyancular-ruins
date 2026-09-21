@@ -729,6 +729,131 @@ async function runAllPhases() {
       }
     }
   }
+
+  // ==== 相位 ⑧ rename 重试(待修 1:Windows 上目标被打开时 EPERM)====
+  // ★ 号是**新给的**(⑧):前面 ①~⑦ 的号沿用计划原文,加号动它们会让计划里 Task 6 的
+  //   ⑦/⑧/⑨ 错位。本相位是 Task 1~3 之后的一次定向修复带来的,故排在最后。
+  // ★ 本相位的断言文本用「待修 1」前缀,与相位 ⑤ 的那批(静态读失败)是**两次不同的
+  //   修复 dispatch 的同一个编号**——同两个 ⑤ 并存一样是有意为之,别去统一它。
+  // ★ 为什么**不用活的读写竞态**测这条:它必然飘 —— 要掐到"读者正攥着句柄"的那一瞬
+  //   (实测:读者在,21 次尝试全 500;读者走,紧接着就 200),拿它当断言就是把
+  //   "机器负载/调度"写进了判据。这里改成把 rename **注入**进去,于是
+  //   「前两次 EPERM 第三次成功」是纯逻辑、秒级、且能顺带断言**尝试次数**
+  //   (只断言"最终成功"的话,把重试砍成 1 次也照样绿 = 空转)。
+  // ★★ 目标目录用**独立的一份**(不是相位 ⑥/⑦ 的 maps/):本相位会往盘上写文件,
+  //    而相位 ⑥ 的 /api/maps 是**精确列表**比对 —— 混用会让那条断言随相位顺序变红。
+  // ★ 不启服务器:被测的是纯逻辑(renameWithRetry / writeMapAtomic),HTTP 那一层
+  //   已由相位 ⑦ 的 200/500 覆盖。
+  {
+    // 注入用的"同步抛"rename(与 fs.renameSync 同形态)与一个不真的等的 sleep。
+    const noSleep = function () { /* 立即返回:注入契约是"返回什么都行" */ };
+    const eperm = function () { const e = new Error('EPERM: operation not permitted, rename'); e.code = 'EPERM'; return e; };
+    const retryDir = path.join(tmpRoot, 'retry_maps');
+    fs.mkdirSync(retryDir, { recursive: true });
+    const keepName = 'keep.cyrm';
+    const keepPath = path.join(retryDir, keepName);
+    const originalBytes = Buffer.from('★ 原来那张地图 —— 失败的写一个字节都不许动它', 'utf8');
+    fs.writeFileSync(keepPath, originalBytes);
+    const noTmpInRetryDir = function () {
+      return fs.readdirSync(retryDir).every(function (n) { return n.indexOf('.tmp') < 0; });
+    };
+
+    // ★ 常量本身也钉住:重试名单少了 EPERM,下面那条"两次 EPERM 第三次成功"会红;
+    //   但少了 EBUSY/EACCES 没有任何断言会红 —— 那两码是**同一个根因**的别称,
+    //   漏一个就等于在那些机器上静默退回"保存失败对用户可见"。
+    ok(srv.RENAME_RETRY_CODES.indexOf('EPERM') >= 0 &&
+       srv.RENAME_RETRY_CODES.indexOf('EBUSY') >= 0 &&
+       srv.RENAME_RETRY_CODES.indexOf('EACCES') >= 0,
+       '★ 待修 1:重试名单含 EPERM / EBUSY / EACCES(实得 ' + JSON.stringify(srv.RENAME_RETRY_CODES) + ')');
+    ok(srv.RENAME_MAX_ATTEMPTS >= 3 && srv.RENAME_MAX_ATTEMPTS <= 5,
+       '★ 待修 1:总尝试次数在 3~5 之间(实得 ' + srv.RENAME_MAX_ATTEMPTS + ')');
+
+    // ① 前两次 EPERM、第三次成功 → 成功,且**恰好**调用了 3 次。
+    {
+      let calls = 0;
+      const flaky = function () {
+        calls++;
+        if (calls <= 2) throw eperm();
+        return undefined;                 // 第三次成功(renameFn 允许同步返回)
+      };
+      let err = null;
+      try { await srv.renameWithRetry('t', 'g', flaky, noSleep); } catch (e) { err = e; }
+      ok(err === null, '★ 待修 1:EPERM 两次后第三次成功 → 不抛(实得 ' +
+         (err === null ? '成功' : errText(err)) + ')');
+      ok(calls === 3, '★★ 待修 1:重试确实发生了 —— 调用次数 3(实得 ' + calls +
+         ';为 1 = 根本没重试,> 3 = 退避多算了)');
+    }
+
+    // ①b 同一条,但注入的是**异步 reject** 形态 —— 那才是生产里的默认实现
+    //     (fs.promises.rename)。★ 这一条与 ① 不重复:同步抛与异步 reject 走的是
+    //     两条不同的 catch 路径,只兜住一条的实现会在另一条上**一次都不重试**。
+    {
+      let calls = 0;
+      const flakyAsync = function () {
+        calls++;
+        if (calls <= 2) return Promise.reject(eperm());
+        return Promise.resolve();
+      };
+      let err = null;
+      try { await srv.renameWithRetry('t', 'g', flakyAsync, noSleep); } catch (e) { err = e; }
+      ok(err === null && calls === 3,
+         '★ 待修 1:异步 reject 形态(生产默认那条)同样重试到第 3 次成功(实得 calls=' + calls +
+         ', err=' + (err === null ? '无' : errText(err)) + ')');
+    }
+
+    // ② 一直 EPERM → 抛出,且**临时文件已清理**、**原文件逐字节未变**。
+    //    ★ 走 writeMapAtomic(不是 renameWithRetry):"临时文件被清掉"这条清理逻辑
+    //      住在 writeMapAtomic 的 catch 里,只测 renameWithRetry 覆盖不到它。
+    {
+      let calls = 0;
+      const alwaysEperm = function () { calls++; throw eperm(); };
+      let err = null;
+      try { await srv.writeMapAtomic(retryDir, keepName, Buffer.from([0xEE, 0xEE]), alwaysEperm, noSleep); }
+      catch (e) { err = e; }
+      ok(err !== null && errText(err).indexOf('EPERM') >= 0,
+         '★ 待修 1:一直 EPERM → 抛出并保留错误码(实得:' +
+         (err === null ? '(未抛错)' : errText(err)) + ')');
+      ok(calls === srv.RENAME_MAX_ATTEMPTS,
+         '★ 待修 1:用满 ' + srv.RENAME_MAX_ATTEMPTS + ' 次尝试才放弃(实得 ' + calls + ')');
+      sameBytes(fs.readFileSync(keepPath), originalBytes,
+                '★★ 待修 1:写失败之后原文件逐字节未变(失败是 fail-safe 的)');
+      ok(noTmpInRetryDir(), '★★ 待修 1:写失败之后临时文件被清掉(否则每次失败都在 maps/ 里留垃圾)');
+    }
+
+    // ③ 不在重试名单里的码(EIO / ENOENT)→ **立即抛,一次都不重试**。
+    //    ★ 这条防的是"图省事写成无条件重试":那会让真正的磁盘错误也多等 300ms 才报,
+    //      而且掩盖掉"错在哪"。
+    {
+      const cases = ['EIO', 'ENOENT'];
+      for (const code of cases) {
+        let calls = 0;
+        // ★ 必须**真的抛**(返回一个 Error 对象不算失败 —— 那会被 Promise 当成成功值),
+        //   否则这条断言测的是"什么都没发生"。
+        const other = function () { calls++; const e = new Error(code + ': 注入的别的错'); e.code = code; throw e; };
+        let err = null;
+        try { await srv.writeMapAtomic(retryDir, keepName, Buffer.from([0x01]), other, noSleep); }
+        catch (e) { err = e; }
+        ok(err !== null && errText(err).indexOf(code) >= 0 && calls === 1,
+           '★ 待修 1:' + code + ' 不在重试名单 → 立即抛且只调用 1 次(实得 calls=' + calls +
+           ', err=' + (err === null ? '(未抛错)' : errText(err)) + ')');
+      }
+      sameBytes(fs.readFileSync(keepPath), originalBytes,
+                '★ 待修 1:两条"立即抛"之后原文件仍逐字节未变');
+      ok(noTmpInRetryDir(), '★ 待修 1:两条"立即抛"也没留临时文件');
+    }
+
+    // ④ 重试的**成功**路径:同一张图连做两次 PUT(注入 rename)后,盘上就是新字节、
+    //    mapPathFor 的返回值照旧是 {name,size} —— 钉住"异步化没把成功路径改坏"。
+    {
+      const okRename = function (t, g) { fs.renameSync(t, g); };
+      const out = await srv.writeMapAtomic(retryDir, keepName, Buffer.from([7, 7, 7, 7]), okRename, noSleep);
+      eq(out, { name: keepName, size: 4 }, '★ 待修 1:异步化之后成功路径照旧返回 {name,size}');
+      sameBytes(fs.readFileSync(keepPath), Buffer.from([7, 7, 7, 7]), '★ 待修 1:成功路径确实落盘');
+      ok(noTmpInRetryDir(), '★ 待修 1:成功路径不留临时文件');
+      // 收尾:还原成原始内容,免得将来有人把这个目录也列进某个"精确列表"断言。
+      fs.writeFileSync(keepPath, originalBytes);
+    }
+  }
 }
 
 (async function main() {

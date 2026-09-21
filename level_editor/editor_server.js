@@ -265,11 +265,74 @@ function assertWriteTargetInside(mapsDir, target, name) {
   }
 }
 
+// ── rename 的**可重试**错误码(待修 1)──
+// ★ 为什么需要重试:Windows 上覆盖一个**还有打开句柄**的文件走的是
+//   `MoveFileEx(REPLACE_EXISTING)`,它会被拒绝并报 `EPERM`(不是 EBUSY)—— 实测复现:
+//   对一张已有地图连做 4 次 PUT,同时有读者在 GET 同一张图 → 4/4 全部 500;读者一停,
+//   紧接着 2 次 PUT 立刻 200。而**本服务器自己的读路径就是那个持有者之一**
+//   (`serveMapFile` 的 createReadStream 在流完之前一直攥着 fd),所以"载入后马上保存"
+//   这种最普通的前端动作就能撞上。
+// ★ 不限于本进程:杀毒扫描器、Windows Search、OneDrive/Dropbox 同步 `maps/` 目录,
+//   任何持有者都给出同一个错误码 —— 这正是"重试"而不是"只在自家读路径上想办法"
+//   的理由(改自家读路径只能消掉本进程那一半持有者)。
+// ★ 只重试这三码,其余(`EIO`/`ENOENT`/`ENOSPC`/`EINVAL`…)一律**立即抛**:
+//   重试一个"重试也没用"的错误码只是让用户多等 300ms 才看到同一条错误信息。
+const RENAME_RETRY_CODES = ['EPERM', 'EBUSY', 'EACCES'];
+// 总尝试次数(含第一次)。5 次 × 退避 20/40/80/160ms = 最坏多等 300ms。
+const RENAME_MAX_ATTEMPTS = 5;
+const RENAME_RETRY_BASE_MS = 20;
+
+function defaultSleep(ms) {
+  return new Promise(function (r) { setTimeout(r, ms); });
+}
+
+// 带重试的 rename。★ `renameFn` 与 `sleepFn` **可注入**就是为了让测试**确定性** ——
+// 「前两次抛 EPERM、第三次成功」这种事用"活的读写竞态"去测必然飘(要掐到读者正好在场的
+// 那一瞬),注入之后它是纯逻辑,而且能顺带断言**尝试次数**(只断言"最终成功"的话,
+// 把重试次数改成 1 也照样绿 —— 那等于没测)。
+// ★★ 刻意**不做**同步退避(虽然 `Atomics.wait` 能同步睡):同步睡会把事件循环冻住,
+//    而竞争者(正在流地图的那个读流)**恰恰需要事件循环转起来才能把 fd 关掉**。
+//    实测(2MiB 地图 + 慢客户端):同步退避 21 次尝试 / 1270ms,期内读者前进 **0 字节**、
+//    全部失败;异步退避同期读者前进 1.9MiB、第 9 次成功。同步版对这个 bug
+//    **结构上无效**,不是参数没调好。
+// ★ 返回 Promise 而不是同步值:这是 `writeMapAtomic` 由同步改成异步的直接原因,
+//   契约变化与调用链的影响见该函数与 receiveMapFile 的注释。
+function renameWithRetry(tmpPath, target, renameFn, sleepFn) {
+  const rename = renameFn || function (a, b) { return fs.promises.rename(a, b); };
+  const sleep = sleepFn || defaultSleep;
+  let attempts = 0;
+  function attempt() {
+    attempts++;
+    // ★ 包一层 Promise.resolve().then(...):注入的实现可能是**同步抛**(fs.renameSync
+    //   就是),也可能是**异步 reject**(fs.promises.rename)。两种都得走同一条重试路径,
+    //   否则同步抛那一支会直接穿出去、一次都不重试(而它正是默认实现的等价写法)。
+    return Promise.resolve().then(function () { return rename(tmpPath, target); })
+      .then(function () { return attempts; })
+      .catch(function (e) {
+        const code = e && e.code !== undefined ? String(e.code) : '';
+        if (RENAME_RETRY_CODES.indexOf(code) < 0) throw e;          // 不在名单里 → 立即抛
+        if (attempts >= RENAME_MAX_ATTEMPTS) throw e;               // 用完额度 → 照原样抛
+        // ★ Promise.resolve(...) 兜住"注入一个同步的 sleepFn"(测试里就是一个空函数):
+        //   注入契约因此是"返回什么都可以",同步/异步实现都走得通。
+        return Promise.resolve(sleep(RENAME_RETRY_BASE_MS * Math.pow(2, attempts - 1)))
+          .then(attempt);
+      });
+  }
+  return attempt();
+}
+
 let tmpSeq = 0;
 // 原子写:先写同目录的临时文件,再 rename 覆盖目标。
 // ★ 临时文件必须落在**同一个目录**(同一卷)里:跨卷 rename 会退化成"复制 + 删除",
 //   那就不是原子的了 —— 而这个函数的全部意义就是"断电也不会留下半截地图"。
-function writeMapAtomic(mapsDir, name, bytes) {
+// ★★ 本函数**是异步的**(返回 Promise),这是待修 1 带出来的契约变化:
+//    rename 那一步走 renameWithRetry(理由见它的注释 —— 同步退避会把事件循环冻住、
+//    反而让持有句柄的读者永远放不掉 fd)。调用方只有 receiveMapFile 一处,而它本来
+//    就在 readBody 的 promise 链上,故**调用链零改动**(把返回值 return 出去即可)。
+// ★ `renameFn` / `sleepFn` 是给测试的注入点(可选)。生产调用一律不传。
+//   失败清理留在**同一个 catch** 里(注入与否都覆盖得到):临时文件必须删掉,
+//   否则每次失败都在 maps/ 里留垃圾。
+async function writeMapAtomic(mapsDir, name, bytes, renameFn, sleepFn) {
   const target = mapPathFor(mapsDir, name);
   fs.mkdirSync(mapsDir, { recursive: true });
   // ★★ 闸在**建目录之后、碰任何文件之前**:realpath 要求目录已存在,而"被拒的写一个字节都
@@ -278,7 +341,7 @@ function writeMapAtomic(mapsDir, name, bytes) {
   const tmp = target + '.' + process.pid + '.' + (++tmpSeq) + '.tmp';
   try {
     fs.writeFileSync(tmp, bytes);
-    fs.renameSync(tmp, target);
+    await renameWithRetry(tmp, target, renameFn, sleepFn);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (e2) { /* 清理失败不改写主错误 */ }
     throw e;
@@ -294,9 +357,13 @@ function receiveMapFile(req, res, name, ctx) {
       sendText(res, 400, '空请求体:拒绝用空内容覆盖地图');
       return;
     }
-    const out = writeMapAtomic(ctx.mapsDir, name, buf);
-    ctx.logger('写入 ' + name + ' ' + out.size + ' 字节');
-    sendJson(res, 200, out);
+    // ★★ 必须**return** 出去(待修 1):writeMapAtomic 现在返回 Promise,不 return 的话
+    //    它的失败会成为一个**无人认领的 rejection**(既不会被下面的 .catch 接住,
+    //    也不会回给客户端 —— 症状正是"PUT 永不回响应"这类最难查的形态)。
+    return writeMapAtomic(ctx.mapsDir, name, buf).then(function (out) {
+      ctx.logger('写入 ' + name + ' ' + out.size + ' 字节');
+      sendJson(res, 200, out);
+    });
   }).catch(function (err) {
     const msg = (err && err.message) ? err.message : String(err);
     if (msg.indexOf('上限') >= 0) { sendText(res, 413, msg); return; }
@@ -536,6 +603,8 @@ module.exports = {
   serveMapFile: serveMapFile,
   WRITE_CONTENT_TYPE: WRITE_CONTENT_TYPE, writeGuardReject: writeGuardReject,
   readBody: readBody, rejectWrite: rejectWrite,
+  RENAME_RETRY_CODES: RENAME_RETRY_CODES, RENAME_MAX_ATTEMPTS: RENAME_MAX_ATTEMPTS,
+  RENAME_RETRY_BASE_MS: RENAME_RETRY_BASE_MS, renameWithRetry: renameWithRetry,
   assertWriteTargetInside: assertWriteTargetInside, writeMapAtomic: writeMapAtomic,
   receiveMapFile: receiveMapFile,
   createServer: createServer, startServer: startServer,
