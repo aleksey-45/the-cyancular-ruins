@@ -243,6 +243,9 @@ func _on_room_joined(role: int) -> void:
 # 不让「点了幽灵房间」永久停在"正在连接对局服务器/等待配对"。
 # ★ 本页的梯顺序是 [worker → join → 大厅 → claim],与基类注释里登记的一致;**别重排**。
 func _process(_delta: float) -> void:
+	# 0) 回局(路径乙):请求发出后大厅 15s 无应答 —— 早于下面几条梯,因为此刻它们都还没启动
+	if _tick_rejoin_timeout():
+		return
 	# 1) 转连 worker 12s 无连接(死端口):不再只是提示,直接回大厅并刷新
 	if _tick_worker_connect_timeout():
 		return

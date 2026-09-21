@@ -356,6 +356,9 @@ func _on_leave_room() -> void:
 # ★ 本页的梯顺序是 `[worker → claim → 大厅 → ack]`,与大乱斗页逐字同款;**别重排**
 #   (1v1 页是 `[worker → join → 大厅 → claim]` —— 两条顺序不同,合并会静默改行为)。
 func _process(_delta: float) -> void:
+	# 0) 回局(路径乙):请求发出后大厅 15s 无应答 —— 早于下面几条梯,因为此刻它们都还没启动
+	if _tick_rejoin_timeout():
+		return
 	# 1) 转连 worker 12s 没连上(worker 死了/端口没放行):**回大厅重连 + 刷新列表**
 	if _tick_worker_connect_timeout():
 		return

@@ -22,6 +22,43 @@ static var spawn: Vector2i = Vector2i(-1, -1)   # 本端出生点(match_sync 下
 static var token: String = ""
 static var worker_port: int = 0
 
+# ── 「回大厅后回局」(路径乙)的两个字段(2026-09-21,阶段 2-B)──
+# ★ 与上面两条同款纪律:**加字段前先 grep 确认有读者**。两个都有:
+#   room_code : ① 回局请求要带上它(大厅按它**交叉核对**凭据;主键仍是 token);
+#               ② **行可点性的那一半判据**(`can_rejoin_to` 拿它比"这一行是不是我的房")。
+#               ★ 它当年被删过一次(只写不读)—— 现在有读者了才回来。
+#   rejoin    : 一次性开关:下一次 `go_match` 是**回局**(认领 role 走 `reclaim_role`,
+#               而不是 `claim_role`)。置位点是 `LobbyPage.try_rejoin_row()`(列表里点自己那间房)。
+# ★★ **原稿里的第三个字段 `mode` 已删除**:它的唯一用途是"那颗按钮要把玩家送回哪个大厅页"
+#   的路由(`main_menu._rejoin_scene_path()`),而**用户裁定取消那颗按钮** —— 玩家自己在
+#   对应的那页找房间 ⇒ 没有读者。本仓纪律:没读者的字段不立(它自己就是我们当年删掉
+#   `room_code` 的理由)。★ 别再"顺手把它加回来留念":那会让 `reconnect_smoke` 的反向断言红。
+static var room_code: String = ""
+static var rejoin: bool = false
+
+
+# 手里还攥着**某一局**的凭据吗?(粗判据:三个字段齐。)
+static func can_rejoin() -> bool:
+	return token != "" and worker_port > 0 and room_code != ""
+
+
+# 「**这一行**是不是我的房、而且我还能回去?」—— 房间列表每一行渲染时与行被按下时**共用**
+# 这**一个**判据(两处各写一遍是漂的成因:漏一处就是"看着可点、点了没用"或反过来)。
+# ★ 为什么必须带上房号:光判 `can_rejoin()` 会让**别人那间对局中的房**也可点 —— 点下去发出的是
+#   回局请求,而凭据里的房号对不上,玩家看到的是"回局被拒"(一句与眼前那间房无关的话)。
+static func can_rejoin_to(code: String) -> bool:
+	return can_rejoin() and room_code == code
+
+
+# 清掉回局凭据(大厅答"回不去了" / 回局超时时调)。
+# ★ 与 `reset()` **分开**:`reset()` 会把 `server_address` 也拨回云默认 —— 在人家的自建服上
+#   调它等于把玩家踢到另外一台机器去。
+static func clear_rejoin() -> void:
+	token = ""
+	worker_port = 0
+	room_code = ""
+	rejoin = false
+
 # ── 「本局禁了哪些枪」的权威在哪(2026-09-14 加,别再四处找)──
 #   · 联机对局:**服务器 MatchHost**。客户端侧的真生效点是
 #     `player.weapons.set_enabled_slots(disabled)` —— 在 `pvp_client._apply_match_options` /
@@ -52,3 +89,5 @@ static func reset() -> void:
 	spawn = Vector2i(-1, -1)
 	token = ""
 	worker_port = 0
+	room_code = ""
+	rejoin = false

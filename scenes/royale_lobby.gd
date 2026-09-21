@@ -362,6 +362,9 @@ func _on_leave_room() -> void:
 # claim 后 25s 仍没 match_start(worker 中途死掉/对局没起来)同样回大厅。
 # ★ 本页的梯顺序是 [worker → claim → 大厅 → ack],与基类注释里登记的一致;**别重排**。
 func _process(_delta: float) -> void:
+	# 0) 回局(路径乙):请求发出后大厅 15s 无应答 —— 早于下面几条梯,因为此刻它们都还没启动
+	if _tick_rejoin_timeout():
+		return
 	# 1) 转连 worker 12s 没连上(worker 死了/端口没放行):**回大厅重连 + 刷新列表**,
 	#    不再只留一句提示让玩家干等在等待室里(本页原来没有任何恢复路径)。
 	if _tick_worker_connect_timeout():

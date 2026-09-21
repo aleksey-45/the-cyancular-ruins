@@ -18,6 +18,7 @@ extends SceneTree
 const NETBUS := "res://core/net/net_bus.gd"
 const NETBUS_EXT := "res://core/net/net_bus_ext.gd"
 const SESSION := "res://core/net/pvp_session.gd"
+const LOBBY_PAGE := "res://scenes/lobby_page.gd"
 
 # 本次新增的三条:必须在 Ext,不得在 NetBus
 const N_EXT_RPCS := ["session_token", "report_token", "reclaim_role"]
@@ -143,8 +144,8 @@ func _initialize() -> void:
 				"★ `%s` 的 @rpc 注解必须逐字是 `%s`,实为 `%s`(注解错了 = RPC 静默不通)" %
 				[n, N_EXT_RPC_ANN[n], ann])
 
-	# PvpSession 两个字段:必须 `static var`(本类全是静态)
-	for f in ["token", "worker_port"]:
+	# PvpSession 字段:必须 `static var`(本类全是静态)
+	for f in ["token", "worker_port", "room_code", "rejoin"]:
 		_check(ses.contains("static var %s" % f), "PvpSession 缺 `static var %s`" % f)
 
 	# ★ 光有字段还不够:`reset()` 必须把这两个一起清掉,否则**换模式时带着上一局的 token**
@@ -156,6 +157,15 @@ func _initialize() -> void:
 			"★ PvpSession.reset() 未清 token(换模式会带着上一局的 token 去连)")
 	_check(reset_body.contains("worker_port = 0"),
 			"★ PvpSession.reset() 未清 worker_port(重连会拿着上一局的端口直连)")
+	_check(reset_body.contains("room_code = \"\""),
+			"★ PvpSession.reset() 未清 room_code —— 下一局会拿着上一局的房号去问「这行是不是我的房」")
+	_check(reset_body.contains("rejoin = false"),
+			"★ PvpSession.reset() 未清 rejoin(下一局会拿 claim_role 去当回局、被 worker 当串线踢掉)")
+	_check(ses.contains("static func can_rejoin()") and ses.contains("static func can_rejoin_to(")
+			and ses.contains("static func clear_rejoin()"),
+			"PvpSession 缺 can_rejoin() / can_rejoin_to() / clear_rejoin()(行的可点性与回局失败路径都要用)")
+	_check(not ses.contains("static var mode"),
+			"★ PvpSession 不该再有 mode —— 它唯一的读者(主菜单那颗按钮的路由)已随用户裁定取消")
 
 	# ── 3v3 团队协议的八条 `team_*`(B 册 Task 2)──
 	# ★ **双向**:只断言"在 NetBusExt 里有"会让"两边各抄一份"照样绿,而那正是静默 no-op 的成因
@@ -190,6 +200,26 @@ func _initialize() -> void:
 		_check(rann == N_REJOIN_RPC_ANN[n],
 				"★ `%s` 的 @rpc 注解必须逐字是 `%s`,实为 `%s`(注解错了 = RPC 静默不通)" %
 				[n, N_REJOIN_RPC_ANN[n], rann])
+
+	# ── 回局支路的**生产接线**(阶段 2-B Task 6)──
+	# ★ 为什么这几条必须在这里:回局那几件生产方式**没有任何探针走过** —— `try_rejoin_row` /
+	#   `_request_rejoin` / `_on_rejoin_denied` / `_tick_rejoin_timeout` 在今天全仓**零调用**
+	#   (行渲染与行按下是 Task 7,真链路是 Task 8)。于是下面这两种删法**一行报错都不会有**:
+	#     · `_finish_lobby_ready` 里那行 connect 删掉 ⇒ 大厅答的 `rejoin_denied` 没人接 ⇒
+	#       凭据永不清、那一行**永远可点**、每次点都是同一句失败;
+	#     · 三页 `_process` 里那条梯删掉 ⇒ 15s 兜底**根本不存在**,玩家停在一句"正在回到对局…"上。
+	#   ★ 两条都按**函数体**判:全文件 `contains` 会被别处的同名调用喂绿(本仓的老毛病,
+	#     先例 = `team_room_smoke` ⑨②"按函数体判而不是全文件 contains")。
+	for p in [LOBBY_PAGE, "res://scenes/matchmaking.gd", "res://scenes/royale_lobby.gd",
+			"res://scenes/team_lobby.gd"]:
+		_check(not _read(p).is_empty(), "读不到 %s" % p)
+	_check(_func_body(_code(_read(LOBBY_PAGE)), "_finish_lobby_ready").contains(
+			"NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)"),
+			"★ LobbyPage._finish_lobby_ready() 未接 `local_rejoin_denied` —— 大厅答「回不去」时凭据永不清、那一行永远可点")
+	for p in ["res://scenes/matchmaking.gd", "res://scenes/royale_lobby.gd",
+			"res://scenes/team_lobby.gd"]:
+		_check(_func_body(_code(_read(p)), "_process").contains("_tick_rejoin_timeout()"),
+				"★ %s 的 _process 未接回局超时梯 —— 大厅 15s 没应答时玩家卡在「正在回到对局…」上" % p)
 
 	if _fail == 0:
 		print("RECONNECT SMOKE OK")

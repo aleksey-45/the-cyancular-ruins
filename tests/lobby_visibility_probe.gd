@@ -36,10 +36,10 @@ const P_C := 103
 #   少跑一条就红 —— 这正是"ALL-OK 不等于全都跑过"那条纪律的落点。
 #   ★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
 # ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27;
-#   阶段 2-B Task 5 加 ⑤⑥ 共 **4** 条 → **31**)。
+#   阶段 2-B Task 5 加 ⑤⑥ 共 **4** 条 → **31**;阶段 2-B Task 6 加 ⑦ 共 **6** 条 → **37**)。
 #   ★ 比 brief 的 30 多一条:第 ④ 条(走信号那条**接线**断言)—— brief 只列了三条直调 handler
 #     的断言,而"connect 那行被删"这一档**三条都照绿**(见 `_phase_rejoin` 的函数头)。
-const EXPECTED_CHECKS := 31
+const EXPECTED_CHECKS := 37
 
 var _rm: Node = null
 var _checks := 0
@@ -67,6 +67,7 @@ func _ready() -> void:
 	_phase_team()
 	_phase_reclaim()
 	_phase_rejoin()
+	_phase_session_flags()
 	_finish()
 
 
@@ -270,6 +271,34 @@ func _phase_rejoin() -> void:
 	NetBusExt.rejoin_requested.emit(P_C, "9021", "tk_w")
 	_check(_rm.lobby.rejoin.lookup("tk_w", now).is_empty(),
 			"⑥ ★ 信号接线在位(emit rejoin_requested 能落到生产 handler:connect 被删就红)")
+
+
+# ── ⑦ 凭据判据的真值表(`PvpSession.can_rejoin_to()` / `clear_rejoin()`)──
+# ★ 放在这个**场景**探针里而不是 `-s` 冒烟:`-s` 阶段 autoload 尚未实例化,而本仓已有教训
+#   ——`-s` 脚本碰全局类要走 load()/get_script_constant_map() 那套绕法,为一个真值表不值得。
+# ★ 这一条防的是"那一行看着可点、点了没用":`can_rejoin_to()` 少判一个字段(比如漏了房号),
+#   列表里**别人那间对局中的房**也会变可点 —— 点下去发的是回局请求,而凭据里的房号对不上,
+#   玩家看到的是"回局被拒"(一句与眼前那间房无关的话)。房号那一条就是为它立的。
+# ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**自己摆过的值,
+#   否则同一进程里后面的相会读到脏值(本探针是独立进程,但同仓的纪律如此)。
+func _phase_session_flags() -> void:
+	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code]
+	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9021"
+	_check(PvpSession.can_rejoin_to("9021"), "⑦ 凭据齐 + 房号对上 → 这一行可点(回局)")
+	_check(not PvpSession.can_rejoin_to("9999"),
+			"⑦ ★ 房号不符 → 不可点(防的是「别人那间对局中的房」也变可点,点下去只会收到一句无关的拒绝)")
+	PvpSession.token = ""
+	_check(not PvpSession.can_rejoin_to("9021"), "⑦ token 缺 → 不可点")
+	PvpSession.token = "tk"; PvpSession.worker_port = 0
+	_check(not PvpSession.can_rejoin_to("9021"), "⑦ worker_port 缺 → 不可点(连不回那一局)")
+	PvpSession.worker_port = 29901; PvpSession.room_code = ""
+	_check(not PvpSession.can_rejoin_to("9021"), "⑦ room_code 缺 → 不可点(回局请求带不上房号)")
+	PvpSession.room_code = "9021"; PvpSession.rejoin = true
+	PvpSession.clear_rejoin()
+	_check(PvpSession.token == "" and PvpSession.worker_port == 0 \
+			and PvpSession.room_code == "" and not PvpSession.rejoin,
+			"⑦ ★ clear_rejoin() 必须把四个字段一起清(漏一个就是「那一行永远可点」)")
+	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]; PvpSession.room_code = keep[2]
 
 
 func _find_row(arr: Array, code: String) -> Dictionary:

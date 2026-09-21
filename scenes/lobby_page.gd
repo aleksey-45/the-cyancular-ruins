@@ -67,6 +67,7 @@ func _finish_lobby_ready() -> void:
 	NetBusExt.local_session_token.connect(_on_session_token)
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
+	NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)
 	UiFactory.apply_font_recursive(self)
 	# 进页自动连大厅拉房间列表(列表区域不再是一片空白;手动刷新仍可用)
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
@@ -276,6 +277,67 @@ func _on_go_match(role: int, port: int) -> void:
 	_do_go_match.call_deferred()
 
 
+# ── 回大厅后回局(spec §3.4 路径乙;2026-09-21)──
+# 入口 = **本页房间列表里"自己那间房"那一行被按下**(见 `try_rejoin_row`;三个大厅页共用这一份)。
+# 本页做三件事:
+#   ① 发 `rejoin_request(房间号, token)` —— ★ **此刻本页一定连着大厅**(那一行就是 `room_list`
+#      载荷里来的),故这里**不连大厅、不碰地址框、也不走 `_with_lobby`**:照原稿搬会
+#      `NetBus.stop()` + 重连一次,把刚拿到的列表连同自己那一行一起丢掉。
+#   ② 大厅复用 `go_match` 把它送回原 worker —— 之后与首次进场**逐字同一条路**。
+#   ③ 唯一的岔路在 `_claim_role_worker`(对局已经开着 → 必须发 `reclaim_role`)。
+# ★ 原稿那条"地址取 `PvpSession.server_address` 而不是地址框(三个页的地址框默认值不同)"的绕法
+#   随入口一起作废:它防的是"从主菜单按按钮进来时页还没连上、只能照地址框连"那一档,而现在
+#   玩家**就站在已经连上的那一页**上。
+var _rejoin_sent_ms := 0
+
+
+# 房间列表里某一行被按下时,**先问这一句**(三页的 `_on_room_list` 都调它)。
+# 返回 true = 这一行是我的房且凭据还在 ⇒ 已走回局;false = 交给调用方走普通加入。
+# ★★ 它同时是**行可点性**的判据(页面渲染那一行时也要问同一句)—— 两处共用一个函数,
+#    免得"看着可点、点了没用"或反过来。
+func try_rejoin_row(code: String) -> bool:
+	if not PvpSession.can_rejoin_to(code):
+		return false
+	PvpSession.rejoin = true
+	_request_rejoin()
+	return true
+
+
+func _request_rejoin() -> void:
+	# 凭据不完整(理论上到不了:行本就不该可点)→ 清掉开关,别把玩家卡在"回局态"
+	if not PvpSession.can_rejoin():
+		PvpSession.rejoin = false
+		_status.text = "回局凭据已失效,请重新建房/加入"
+		return
+	_rejoin_sent_ms = Time.get_ticks_msec()
+	_status.text = "正在回到对局…"
+	NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token)
+
+
+# 大厅答"回不去了"(凭据失效 / 房间号不符 / 对局已结束):清掉凭据并留在本页。
+# ★ 必须清:否则那一行**永远是可点的**,而每次点都是同一句失败(玩家完全不知道为什么)。
+func _on_rejoin_denied(reason: String) -> void:
+	PvpSession.clear_rejoin()
+	_rejoin_sent_ms = 0
+	_status.text = "无法回到对局:%s(可在此重新建房/加入)" % reason
+	# ★ 凭据一清,那一行在**下一次渲染**时必须回到"对局中(灰色、点不动)"。本页没有"就地改一行"
+	#   的路径,重拉列表是唯一的重渲染入口 —— 少了它,玩家眼前那行还停在"可点"的样子上。
+	_request_list("已刷新房间列表")
+
+
+# 回局请求发出后大厅一直没应答的兜底(15s)。没有它,玩家会停在一句"正在回到对局…"上,
+# 而本页的其它兜底梯(worker 转连 / claim)此时**都还没启动**(它们要等 `go_match` 之后)。
+# ★ 判据里带 `PvpSession.rejoin`:回局成功时它已被清掉,这条梯自然失效(claim 那条接管)。
+func _tick_rejoin_timeout() -> bool:
+	if PvpSession.rejoin and _rejoin_sent_ms > 0 \
+			and Time.get_ticks_msec() - _rejoin_sent_ms > 15000:
+		_rejoin_sent_ms = 0
+		PvpSession.clear_rejoin()
+		_status.text = "回局请求无响应——已放弃,请重新建房/加入"
+		return true
+	return false
+
+
 func _do_go_match() -> void:
 	if _pending_go_role < 0:
 		return
@@ -284,7 +346,11 @@ func _do_go_match() -> void:
 	_pending_go_role = -1
 	_pending_go_port = -1
 	PvpSession.role = role
-	PvpSession.token = _pending_token
+	# ★ 只在**真收到新 token** 时才覆盖:回局那条路大厅**不重发** `session_token`(客户端那
+	#   一份就是凭据本身),无条件写会把手里唯一能证明"我是原来那个人"的串抹成空
+	#   → `reclaim_role` 必被 worker 拒(理由"令牌不匹配")并**踢连接**,而现场一个字都没有。
+	if _pending_token != "":
+		PvpSession.token = _pending_token
 	PvpSession.worker_port = port      # 局内自动重连要直连同一个端口
 	_pending_token = ""
 	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
@@ -301,6 +367,17 @@ func _do_go_match() -> void:
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
 	_claimed_ms = Time.get_ticks_msec()
+	# ★★ 回局(路径乙)与首次进场的**唯一分叉**:对局**已经开着**,`claim_role` 会被 worker 的
+	#   `_on_role_claimed` 当串线连接**踢掉**(它的第一款判据就是 `_match_started`),必须改发
+	#   `reclaim_role`(宽限期内重新认领自己那个 role)。用错那一条的症状是"刚连上就被踢",
+	#   且没有任何报错 —— 只有 worker 日志里一行"拒绝串线连接"。
+	# ★ 回局时**不发** `player_options`/`report_token`:worker 侧两条 handler 都按
+	#   `_claims[r] == caller` 反查,而此刻新 peer 还没进 `_claims`(要等 reclaim 被接受)
+	#   → 两条都静默 no-op;而 token 首次 claim 时就报过一次,worker 手里那份正是要比对的那份。
+	if PvpSession.rejoin:
+		PvpSession.rejoin = false
+		NetBusExt.rpc_id(1, "reclaim_role", role, PvpSession.token)
+		return
 	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 	NetBusExt.rpc_id(1, "player_options", _player_options())
@@ -315,6 +392,10 @@ func _claim_role_worker(role: int) -> void:
 func _return_to_lobby(msg: String) -> void:
 	_connecting_worker = false
 	_claimed_ms = 0
+	# ★ 回局失败的各种兜底都汇到这里:不清 `rejoin` 就会让页停在"回局态"反复重试(每次都失败)。
+	#   `token` **不清** —— 它可能还有效(比如只是 worker 端口没放行),玩家可以在列表里再点一次那一行。
+	PvpSession.rejoin = false
+	_rejoin_sent_ms = 0
 	_on_return_to_lobby()
 	NetBus.stop()
 	_connected = false
