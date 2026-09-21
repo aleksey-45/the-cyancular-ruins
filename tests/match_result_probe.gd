@@ -71,14 +71,19 @@ func _run() -> void:
 		_check(g.get_child_count() == 3 + 2 * 3, "1v1 应有 3 表头 + 2 行×3 格"))
 
 	# ③ 3v3 两节 + MVP 标记恰好一次 + ★ 落在 MVP 行上
+	# ★ MVP 故意落在**第二节的第二个行**:每节只有一行时 `mvp.row == 0` 是**唯一可表示**的值,
+	#   行号算错一行也照样绿 —— 那正是"MVP 高亮落错行"这一类缺陷的样子。第二节两行,行号才真的
+	#   有得错(下面那条 ★ 位置断言按昵称格判,`mvp` 指向第 2 行的 `eve`、不是第 1 行的 `dave`)。
 	await _shot(MatchResultPayload.for_team({"stats": {
 			1: {"kills": 5, "deaths": 3, "dmg": 400, "kscore": 600, "acs": 200},
-			4: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400}},
-			"mvp": 4, "match_winner": 2}, {1: "阿甲", 4: "dave"}, {1: 1, 4: 2}, 1), func(m):
+			4: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400},
+			5: {"kills": 2, "deaths": 4, "dmg": 120, "kscore": 150, "acs": 75}},
+			"mvp": 5, "match_winner": 2}, {1: "阿甲", 4: "dave", 5: "eve"}, {1: 1, 4: 2, 5: 2}, 1), func(m):
 		var box: HBoxContainer = m.get_node("Root/Panel/VBox/Sections")
 		_check(box.get_child_count() == 2, "3v3 应画 2 节,实得 %d" % box.get_child_count())
 		var g: GridContainer = m.get_node("Root/Panel/VBox/Sections/Section1/Rows")
 		_check(g.columns == 6, "3v3 表头列数应为 2+4=6,实得 %d" % g.columns)
+		_check(g.get_child_count() == 6 + 2 * 6, "3v3 第二节应有 6 表头 + 2 行×6 格")
 		_check(_count_marks(m) == 1, "★ MVP 标记应恰好出现 1 次,实得 %d" % _count_marks(m))
 		# ★ 只数"★ 出现几次"是**位置盲**的:mvp 行号差一行照样只有 1 个标记 —— 那正是
 		#   "MVP 高亮落错行"这一类缺陷的样子。要钉的是**哪一行**:★ 所在的**同一个网格**里,
@@ -90,34 +95,55 @@ func _run() -> void:
 			var mg: GridContainer = hit[0]
 			var mi: int = hit[1]
 			var name_lbl: Label = mg.get_child(mi + 1) as Label
-			var want := UiFactory.fit_name("dave", MatchResult.NAME_UNITS)
+			var want := UiFactory.fit_name("eve", MatchResult.NAME_UNITS)
 			_check(name_lbl != null and name_lbl.text == want,
-					"★ 必须落在 MVP 行(dave)的昵称格:期望「%s」,实得「%s」" % [
+					"★ 必须落在 MVP 行(eve,第二行)的昵称格:期望「%s」,实得「%s」" % [
 							want, "" if name_lbl == null else name_lbl.text]))
 
-	# ④ 连点两次按钮 + ESC -> 只发一次信号
-	var mm := _make()
-	add_child(mm)
-	_check(mm.layer == LAYER_WANT,
+	# ④a 可见性闸门 + ④b ESC 那一路(实例 A;下面 ④c 的按钮那一路用**另一个新实例**)
+	# ★★ **两条路各用各的实例** —— 这是本探针最要紧的一处修法。此前两者共用一个实例、且 ESC 先驱动:
+	#    ESC 一发就把 `_leaving` 闩上,后面两次 `emit_signal("pressed")` **物理上发不出信号**
+	#    ⇒ 删掉 `back.pressed.connect(_request_leave)` 整条探针照样全绿 —— 而"返回主菜单按钮点了
+	#    没反应"正是本页最该拦住的缺陷(结算页坏了 = 玩家卡在对局里出不去)。
+	#    分开实例之后两条断言各自**非空转**:删连接 ⇒ ④c 红;删 `_unhandled_input` 的 ESC 分支 ⇒ ④b 红。
+	var ma := _make()
+	add_child(ma)
+	_check(ma.layer == LAYER_WANT,
 			"★ 层位必须由 .tscn 声明(三个 HUD 是 130、小地图 131):期望 %d,实得 %d" % [
-					LAYER_WANT, mm.layer])
-	mm.show_result({"title": "信号"})
-	var fired := [0]
-	mm.leave_requested.connect(func() -> void: fired[0] += 1)
-	# ★ ESC 那一路此前**没被测过**(下面两条都是直接 `emit_signal("pressed")`):键盘事件走
-	#   `_unhandled_input`,与按钮**不同源**,而 `_leaving` 是两者唯一的闸门。所以先驱动 ESC、
-	#   断言它**恰好**发一次;随后两次连点必须仍然只有那一次。
-	#   ⚠ 顺序不能倒:先连点再驱动 ESC 的话 `_leaving` 早就为真,那条 ESC 断言**恒真**
-	#     (与上面"只数标记不看行"是同一类空转断言)。
+					LAYER_WANT, ma.layer])
+	var fa := [0]
+	ma.leave_requested.connect(func() -> void: fa[0] += 1)
 	var esc := InputEventKey.new()
 	esc.pressed = true
 	esc.physical_keycode = KEY_ESCAPE
-	mm._unhandled_input(esc)
-	_check(fired[0] == 1, "★ ESC 应发一次 leave_requested,实得 %d" % fired[0])
-	mm.get_node("Root/Panel/VBox/BackButton").emit_signal("pressed")
-	mm.get_node("Root/Panel/VBox/BackButton").emit_signal("pressed")
-	_check(fired[0] == 1, "★ 连点两次应只发一次 leave_requested,实得 %d" % fired[0])
-	mm.queue_free()
+	# ★ ④a **可见性闸门**:`_unhandled_input` 首行是 `if not visible: return`,而控件在
+	#   `show_result()` 之前一直隐藏(`_ready()` 末尾那句 `visible = false`)——
+	#   没有这条,闸门被删掉也不会有任何断言变红(露出一块空面板的窗口里按 ESC 会提前换场)。
+	_check(not ma.visible, "★ `show_result()` 之前必须不可见(否则会先露出一块空面板 + 按钮)")
+	ma._unhandled_input(esc)
+	_check(fa[0] == 0, "★ 不可见时 ESC 不得发 leave_requested(闸门被删了?),实得 %d" % fa[0])
+	# ④b 可见之后 ESC **恰好**发一次,再按第二下**仍是**一次(`_leaving` 闩)。
+	ma.show_result({"title": "信号"})
+	ma._unhandled_input(esc)
+	_check(fa[0] == 1, "★ ESC 应发一次 leave_requested,实得 %d" % fa[0])
+	ma._unhandled_input(esc)
+	_check(fa[0] == 1, "★ 第二次 ESC 不得再发(见 `_leaving`),实得 %d" % fa[0])
+	ma.queue_free()
+	await get_tree().process_frame
+
+	# ④c 按钮那一路(**新实例**:上一个实例的 `_leaving` 已被 ESC 闩上,共用会让这条恒真)
+	var mb := _make()
+	add_child(mb)
+	_check(mb.layer == LAYER_WANT,
+			"★ 层位必须由 .tscn 声明(三个 HUD 是 130、小地图 131):期望 %d,实得 %d" % [
+					LAYER_WANT, mb.layer])
+	mb.show_result({"title": "信号"})
+	var fb := [0]
+	mb.leave_requested.connect(func() -> void: fb[0] += 1)
+	mb.get_node("Root/Panel/VBox/BackButton").emit_signal("pressed")
+	mb.get_node("Root/Panel/VBox/BackButton").emit_signal("pressed")
+	_check(fb[0] == 1, "★ 连点两次按钮应只发一次 leave_requested,实得 %d" % fb[0])
+	mb.queue_free()
 	await get_tree().process_frame
 
 	# ⑤ 同一实例**连调两次** `show_result` -> 旧节当场摘掉、名字没被顶成 `@2`、面板不翻倍
@@ -161,6 +187,15 @@ func _run() -> void:
 	dup.queue_free()
 	await get_tree().process_frame
 
+	# ⑥ 三个客户端**必须从 `.tscn` 实例化**结算页(见文件头 ①)。今天这三处还没有接线(Task 4~6
+	#   才加),所以这条是**空跑**的守卫 —— 它的价值从接线那一刻起生效,而且只能靠源码扫描:
+	#   接线之前**行为断言无从下手**(那三处一个字都还没有)。
+	for p in ["res://scenes/pvp_game.gd", "res://scenes/royale_game.gd", "res://scenes/team_game.gd"]:
+		var src := FileAccess.get_file_as_string(p)
+		_check(not src.is_empty(), "读不到 %s" % p)
+		_check(not src.contains("MatchResult.new("),
+				"%s 用了 MatchResult.new() —— layer = 150 只写在 ui/match_result.tscn 里,用 .new() 会落到 CanvasLayer 默认的 layer 1,结算页画在 HUD(130)/小地图(131)下面且压暗罩盖不住(静默,只能靠眼睛看出来)。要从场景实例化。" % p)
+
 
 # 找「带 ★ 的那个 Label」所在网格与其下标;找不到返回空数组。
 func _find_mark(sections: Node) -> Array:
@@ -198,6 +233,14 @@ func _check_centred(m: MatchResult) -> void:
 	_check(absf(got.x - want.x) <= CENTRE_TOL and absf(got.y - want.y) <= CENTRE_TOL,
 			"★ 面板必须居中:期望中心 (%.1f, %.1f),实得 (%.1f, %.1f)" % [
 					want.x, want.y, got.x, got.y])
+	# ★ **装得下**这条与居中是一体两面:面板比视口宽时,居中会让它**对称地**裁掉左右两边 ——
+	#   那就是本断言存在的理由(3v3 时 B 队四列整列在屏幕外)的**镜像**:居中照样成立、图照样
+	#   读不出来,只判中心就全绿放过去了。
+	var vp := get_viewport().get_visible_rect()
+	var prect := p.get_global_rect()
+	_check(prect.size.x <= vp.size.x and prect.size.y <= vp.size.y,
+			"★ 面板必须装得下视口(比视口大 = 对称裁掉两边,与『没居中』同类的镜像缺陷):面板 %.1f×%.1f,视口 %.1f×%.1f" % [
+					prect.size.x, prect.size.y, vp.size.x, vp.size.y])
 
 
 func _shot(payload: Dictionary, verify: Callable) -> void:

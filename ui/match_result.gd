@@ -2,6 +2,7 @@ class_name MatchResult
 extends CanvasLayer
 
 # 对局结算页(**模式无关**)。层位 150。
+# ★ 层位只住在 `ui/match_result.tscn` 里 ⇒ 本控件**只能从场景实例化**,绝不 `MatchResult.new()`(那是 CanvasLayer 默认的 layer 1,画在 HUD/小地图底下且压暗罩盖不住)。
 #
 # ★★ 两条纪律,改之前先想清楚:
 #   ① 本控件**不知道任何模式的规则** —— 不读 NetBus / Settings / 不 import 任何 *Host。
