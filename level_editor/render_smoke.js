@@ -62,11 +62,313 @@ function setCells(map, L, list, descOf) {
   return map;
 }
 
+// ── 相位 ⑩ 的替身:一个把每次 ctx 调用都记下来的假画布 ──
+// ★ `this.fillStyle` / `this.globalAlpha` 在**调用那一刻**取 —— 渲染代码是"先设样式再画",
+//   不看调用点取值就分不出"用了哪个颜色",而背景层那两条断言的判据正是颜色。
+function fakeCtx() {
+  const ops = [];
+  const c = {
+    ops: ops,
+    imageSmoothingEnabled: true, globalAlpha: 1,
+    fillStyle: '', strokeStyle: '', font: '', textAlign: '', textBaseline: '', lineWidth: 1,
+    setTransform: function () {}, save: function () {}, restore: function () {},
+    beginPath: function () {},
+    moveTo: function (x, y) { ops.push({ op: 'moveTo', x: x, y: y }); },
+    lineTo: function () {},
+    stroke: function () { ops.push({ op: 'stroke', style: String(this.strokeStyle) }); },
+    fillRect: function (x, y, w, h) {
+      ops.push({ op: 'fillRect', style: String(this.fillStyle), alpha: this.globalAlpha, x: x, y: y, w: w, h: h });
+    },
+    clearRect: function (x, y, w, h) { ops.push({ op: 'clearRect', x: x, y: y, w: w, h: h }); },
+    drawImage: function (img, x, y, w, h) {
+      ops.push({ op: 'drawImage', alpha: this.globalAlpha, x: x, y: y, w: w, h: h });
+    },
+    fillText: function (t, x, y) { ops.push({ op: 'fillText', t: String(t), x: x, y: y }); },
+    strokeRect: function (x, y, w, h) {
+      ops.push({ op: 'strokeRect', style: String(this.strokeStyle), x: x, y: y, w: w, h: h });
+    },
+  };
+  return c;
+}
+function fakeCanvas(w, h) {
+  const c = { width: w | 0, height: h | 0, parentElement: null, ctx: fakeCtx() };
+  c.getContext = function () { return c.ctx; };
+  return c;
+}
+// 把一整层的每一格都写成同一个值(背景层 = 一个颜色,纹理层 = 一个描述符)
+function fillSub(map, L, v) {
+  const a = map.layers[L].kind === 'tex' ? map.layers[L].desc : map.layers[L].rgba;
+  a.fill(v >>> 0);
+  return map;
+}
+function countOps(ctx, prop, val) {
+  return ctx.ops.filter(function (o) { return o[prop] === val; }).length;
+}
+function someOp(ctx, fn) { return ctx.ops.some(fn); }
+
 (async function main() {
   setTimeout(function () {
     console.error('FAIL: 120 秒超时 —— 某个断言挂住了(分帧器的 nextFrame 没被注入?)');
     process.exit(1);
   }, 120000);
+
+  // ==== 相位 ⑩ 画布挂载:首帧渲染 + 背景层是 RGBA 不是描述符(mount 一族)====
+  // ★★ **位置是承重的**:本相位排在 ① 之前,因为它是**唯一**用 `await` 的相位 —— 而
+  //    `await` 只在这个函数体里合法。相位 ④ 的那个 IIFE 是**同步**的,⑤~⑨ 又都嵌在它的
+  //    `.then(回调)` 里(那个回调不是 async)⇒ 把本相位写在 ⑨ 后面就是
+  //    `ReferenceError: await is not defined`(它被当成一个未声明的标识符、
+  //    在**所有断言都跑完之后**才抛)。★ 这一条是实测踩出来的,不是推理。
+  // ★ 本相位在 node 里**真的跑** mount():三样替身 —— document.createElement('canvas')、
+  //   画布 ctx(把每次调用记进 ops)、分帧器的 nextFrame(mount 的 opts.slicer 注入缝,与
+  //   createSlicer 的 opts.now/nextFrame 同一个先例)。DOM 只出现在 mount() 内部(顶层
+  //   一行不碰),所以在这里置替身是安全的。
+  // ★★ 这里真正防的两件事都是**静默**的,只有"真的画一遍并记账"才看得见:
+  //    ① 背景层是 RGBA、纹理层是描述符 —— 拿 texOf 判背景层不抛,只是结论没意义
+  //       (纹理位恰好为 0 的颜色会被当成空气 ⇒ 整层不可见);
+  //    ② < 8px/子格(缩略图路径)与 ≥ 8px/子格(逐子格路径)是**两条完全不同的实现**,
+  //       只测一条,另一条坏了照样全绿。
+  await (async function () {
+    ok(typeof Render.mount === 'function', 'Render.mount 存在(画布挂载的入口,T3 的交付面)');
+    if (typeof Render.mount !== 'function') return;
+    eq(Render.DRAW_ORDER, [3, 2, 1, 0],
+       '★★ DRAW_ORDER 从内到外:背景(3)最先画、前景(0)最后画(盖在最上面)');
+    // ★ 本相位要画真的 tile,所以图集必须先就位(`Tint.get` 在 `setSource` 之前会**抛**;
+    //   合成图集与 backend 替身与相位 ②/③b 同一份 —— 默认 backend 走 ImageData,node 里没有)。
+    Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H, { backend: spyBackend() });
+
+    const savedDoc = globalThis.document;
+    const made = [];
+    globalThis.document = { createElement: function () { const c = fakeCanvas(0, 0); made.push(c); return c; } };
+    const SLICE = { slicer: { nextFrame: function () { return Promise.resolve(); } } };
+    try {
+      // ── ⑩a 挂载与接口面 ──
+      const cv0 = fakeCanvas(240, 160);
+      const r0 = Render.mount(cv0, SLICE);
+      const want = ['setMap', 'map', 'setLayer', 'layer', 'setView', 'view', 'setGrid', 'setSubGrid',
+        'setTorus', 'setDimOthers', 'setLayerVisible', 'layerVisible', 'setLayerLocked', 'layerLocked',
+        'setSelection', 'selection', 'render', 'resize', 'fit', 'invalidateCells', 'invalidateAll',
+        'thumbCanvas', 'screenToSub', 'subToScreen', 'stats'];
+      const missing = want.filter(function (k) { return typeof r0[k] !== 'function'; });
+      ok(missing.length === 0, '★ mount() 的接口面齐全(Task 4/5/7 照它写)' +
+         (missing.length ? ':缺 ' + missing.join(', ') : ''));
+      ok(cv0.ctx.imageSmoothingEnabled === false,
+         '★ 主 ctx 关了插值(A5:不关,砖块放大后是糊的)');
+      r0.render();
+      ok(r0.map() === null && r0.stats().renders === 0, '★ 没 setMap 时 render() 是空操作(不抛、不画、不计数)');
+
+      // ── ⑩b 首次 setMap:缩略图路径(< 8px/子格)──
+      // 场景层放 4 个点,其中两个**贴着右边界**(14/15 子格)—— ⑩d 要靠它们判环面副本。
+      const m1 = Core.createMap('m1', 4, 3);            // 16×12 子格
+      setCells(m1, Core.LAYER_SCENE, [[0, 0], [5, 5], [14, 1], [15, 2]],
+               function () { return Core.neutralDesc(1); });
+      fillSub(m1, Core.LAYER_BG, 0);
+      const cv1 = fakeCanvas(200, 150);
+      const r1 = Render.mount(cv1, SLICE);
+      await r1.setMap(m1);
+      ok(r1.map() === m1, 'setMap 之后 map() 拿到同一张图');
+      eq(r1.layer(), Core.LAYER_SCENE, '默认图层 = 场景(与页面 .layer-row.cur 那一行一致)');
+      eq(r1.stats().thumbsBuilt, 1, 'setMap **只**建一次缩略图(① 每层一张)');
+      ok(r1.stats().renders >= 1, '★ setMap 末尾自己渲染首帧(不是等别人来调 render)');
+      const tp = Render.thumbScale(m1.subCols, m1.subRows);
+      eq(r1.thumbCanvas(Core.LAYER_SCENE).width, m1.subCols * tp,
+         '★ 缩略图宽度 = 子格数 × 刻度(单位是**缩略图像素**,不是子格数、也不是屏幕像素)');
+      cv1.ctx.ops.length = 0;
+      r1.setView({ x: 0, y: 0, zoom: 4 });
+      eq(countOps(cv1.ctx, 'op', 'drawImage'), 16,
+         '★ < 8px/子格 走缩略图路径:每层**一次** drawImage 顶掉整层(4 层 × 4 份可见副本 = 16,' +
+         '不是逐子格 —— 逐子格会是几百次)');
+
+      // ── ⑩c resize / 缩放钳制 / fit ──
+      const cvR = fakeCanvas(50, 40);
+      const rR = Render.mount(cvR, SLICE);
+      const wrap = fakeCanvas(320, 240);
+      wrap.clientWidth = 320; wrap.clientHeight = 240;
+      cvR.parentElement = wrap;
+      cvR.ctx.imageSmoothingEnabled = true;             // 模拟浏览器在改尺寸时把 ctx 状态重置掉
+      rR.resize();
+      eq({ w: cvR.width, h: cvR.height }, { w: 320, h: 240 },
+         'resize() 按父容器的 clientWidth/Height 定画布像素尺寸(不是 CSS 尺寸)');
+      ok(cvR.ctx.imageSmoothingEnabled === false,
+         '★★ 改尺寸会重置 ctx 状态 ⇒ resize 里必须**重设** imageSmoothingEnabled(漏了 = 放大后糊)');
+      rR.setView({ x: 0, y: 0, zoom: 9999 });
+      eq(rR.view().zoom, Render.MAX_ZOOM, '★ setView 的缩放被钳到 MAX_ZOOM(用户输入钳制,不报错)');
+      rR.setView({ x: 0, y: 0, zoom: -5 });
+      eq(rR.view().zoom, Render.MIN_ZOOM, '★ 负缩放的钳到 MIN_ZOOM');
+      rR.setView({ x: 0, y: 0, zoom: NaN });
+      eq(rR.view().zoom, Render.MIN_ZOOM, '★ NaN 缩放也钳到 MIN_ZOOM(NaN 不报错地毁掉整张画布)');
+      await rR.setMap(m1);
+      rR.setView({ x: 99, y: 99, zoom: 32 });
+      rR.fit();
+      ok(rR.view().x < 0 && rR.view().y < 0 && rR.view().x > -4 && rR.view().y > -4,
+         'fit() 把地图居中(视图原点落在 −2/−1.5 这种小负数上:CSS 的 0 点不是左上角)');
+
+      // ── ⑩d ≥ 8px/子格:逐子格路径 + 环面副本 ──
+      cv1.ctx.ops.length = 0;
+      r1.setView({ x: 0, y: 0, zoom: 16 });
+      ok(countOps(cv1.ctx, 'op', 'drawImage') > 0,
+         '★ ≥ 8px/子格 换逐子格路径(每格一次 drawImage,Task 4 才换成 ② + ③ + 脏区)');
+      // 网格线:格线恒画,子格线只在 zoom ≥ 4 且开了子格时画(C15)
+      // ★ 判据用 moveTo(线段起点)而不是 stroke(整条路径一次):两组线各 `beginPath`+`stroke`,
+      //   于是 stroke 恒为 2 —— 拿它判"子格线开没开"是**分不出来**的(两条线都画了空路径)。
+      const coarseMoves = countOps(cv1.ctx, 'op', 'moveTo');
+      ok(coarseMoves > 0, '格线按**可见区**画出来(moveTo ' + coarseMoves + ' 条线段;B8:不裁剪 = 每次重画整张图)');
+      cv1.ctx.ops.length = 0;
+      r1.setSubGrid(true);
+      const subMoves = countOps(cv1.ctx, 'op', 'moveTo');
+      ok(subMoves > coarseMoves,
+         '★★ setSubGrid(true) 多画一层子格线(' + subMoves + ' > ' + coarseMoves +
+         '):格线 64px、子格线 16px,后者密 4 倍');
+      r1.setSubGrid(false);
+      // ★★ 副本坐标必须折回主网格再读:视口左边缘越过接缝时,另一侧的副本上要**照样有内容**
+      cv1.ctx.ops.length = 0;
+      r1.setView({ x: -3, y: 0, zoom: 16 });
+      const acrossSeam = countOps(cv1.ctx, 'op', 'drawImage');
+      cv1.ctx.ops.length = 0;
+      r1.setTorus(false);
+      const noTorus = countOps(cv1.ctx, 'op', 'drawImage');
+      r1.setTorus(true);
+      eq([acrossSeam, noTorus], [4, 2],
+         '★★ 跨接缝时副本上有内容(贴着右边界的 14/15 子格):环面开 4 次绘制、关 2 次' +
+         '(实得 ' + acrossSeam + ' / ' + noTorus + ')');
+      const hs = r1.screenToSub(0, 0);
+      ok(hs.X >= 0 && hs.X < m1.subCols && hs.Y >= 0 && hs.Y < m1.subRows,
+         '★ screenToSub 在副本上也折回 [0, subCols)(A4:副本上能落笔)');
+
+      // ── ⑩e 两条方向的坐标换算互为逆 ──
+      r1.setView({ x: 3, y: 2, zoom: 16 });
+      const s2 = r1.subToScreen(5, 6);
+      eq(s2, { x: (5 - 3) * 16, y: (6 - 2) * 16 }, 'subToScreen: 世界 → 屏幕(相对视图原点)');
+      eq(r1.screenToSub(s2.x + 1, s2.y + 1), { X: 5, Y: 6 },
+         '★★ screenToSub(subToScreen(X,Y)) 回到 (X,Y):两条方向互为逆(错一个整支画笔偏到别处)');
+      ok(r1.screenToSub(-1000, -1000).X >= 0, '★ 负的屏幕坐标也折回 [0, subCols)(环面世界里这是常态)');
+
+      // ── ⑩f 层可见性 / 压暗 / 选区框 ──
+      cv1.ctx.ops.length = 0;
+      r1.setLayerVisible(Core.LAYER_SCENE, false);
+      const hidden = countOps(cv1.ctx, 'op', 'drawImage');
+      cv1.ctx.ops.length = 0;
+      r1.setLayerVisible(Core.LAYER_SCENE, true);
+      const shown = countOps(cv1.ctx, 'op', 'drawImage');
+      eq([hidden, shown > 0], [0, true], '★ 层可见性闸真的拦住了绘制(隐藏 0 次 / 打开 ' + shown + ' 次)');
+      ok(r1.layerVisible(Core.LAYER_SCENE) === true, 'layerVisible 读回 true');
+      r1.setLayerLocked(Core.LAYER_FRONT, true);
+      ok(r1.layerLocked(Core.LAYER_FRONT) === true && r1.layerLocked(Core.LAYER_SCENE) === false,
+         'setLayerLocked/layerLocked 往返(锁定不重画 —— 它只挡绘制工具的写入)');
+      r1.setLayer(Core.LAYER_FRONT);                    // 当前层换成前景 ⇒ 场景层成了"非当前层"
+      ok(someOp(cv1.ctx, function (o) { return o.op === 'drawImage' && o.alpha === 0.4; }),
+         '★★ 非当前层压暗 60%(globalAlpha 0.4)');
+      cv1.ctx.ops.length = 0;
+      r1.setDimOthers(false);
+      ok(someOp(cv1.ctx, function (o) { return o.op === 'drawImage' && o.alpha === 1; }),
+         'setDimOthers(false) 之后不再压暗(同一层、同一个绘制点)');
+      r1.setDimOthers(true);
+      r1.setLayer(Core.LAYER_SCENE);
+      cv1.ctx.ops.length = 0;
+      r1.setSelection({ x: 2, y: 2, w: 4, h: 4 });
+      eq(countOps(cv1.ctx, 'op', 'strokeRect'), 1, 'setSelection 立刻重画并画出选区框(1 个 strokeRect)');
+      eq(r1.selection(), { x: 2, y: 2, w: 4, h: 4 }, 'selection() 读回选区');
+      ok(r1.setSelection(null) === undefined && r1.selection() === null,
+         '★ setSelection(null) 清掉选区(并重画 —— 旧框不许留在屏幕上)');
+
+      // ── ⑩g 脏矩形:编辑几格之后只重画那几格的缩略图 ──
+      eq(r1.invalidateCells(Core.LAYER_SCENE, [{ cx: 0, cy: 0 }, { cx: 3, cy: 2 }]),
+         { x: 0, y: 0, w: 16, h: 12 },
+         '★★ invalidateCells:格坐标 → 子格并集矩形(格 × ' + Core.SUB_PER_CELL + ',两个格并成一个矩形)');
+      eq(r1.invalidateCells(Core.LAYER_SCENE, []), null, '★ invalidateCells: 空清单 → null(不做任何事)');
+
+      // ── ⑩h ★★ 背景层是 RGBA,不是描述符(F1:两种颜色、两种不同的静默失败)──
+      // 不透明红 #FF0000FF 的**纹理位域**恰好是 0(#FF0000FF >>> 12 & 0xFFF = 0)⇒ 拿它当
+      // 空气判 = 整层**看不见**;不透明青 #00FFFFFF(页面背景色输入框的默认值)的纹理位域是
+      // 4095 = "图集里没有的那块砖" ⇒ 漏掉"先判层再判纹理"的地方会当场抛 Tint 越界错。
+      const bgMap = Core.createMap('bg', 2, 2);          // 8×8 子格
+      fillSub(bgMap, Core.LAYER_SCENE, 0);               // 纹理层全空气 ⇒ texOf 一次都不该被调到
+      fillSub(bgMap, Core.LAYER_BG, 0);
+      bgMap.layers[Core.LAYER_BG].rgba[0] = 0xff0000ff;  // (0,0) 不透明红
+      bgMap.layers[Core.LAYER_BG].rgba[1] = 0x00ffffff;  // (1,0) 不透明青
+      bgMap.layers[Core.LAYER_BG].rgba[2] = 0xff000000;  // (2,0) 全透明(alpha 0)= 这一格没颜色
+      const cvBg = fakeCanvas(200, 200);
+      const rBg = Render.mount(cvBg, SLICE);
+      await rBg.setMap(bgMap);
+      const thumbBg = rBg.thumbCanvas(Core.LAYER_BG);
+      const origTexOf = Core.texOf;
+      const texOfArgs = [];
+      Core.texOf = function (d) { texOfArgs.push(d >>> 0); return origTexOf(d); };
+      let bgThrew = null;
+      try {
+        cvBg.ctx.ops.length = 0;
+        rBg.setView({ x: 0, y: 0, zoom: 16 });           // ≥ 8 ⇒ 逐子格路径(另一条是缩略图)
+        await rBg.invalidateAll();                       // 顺手把 ① 缩略图整片重画(两条路径都过一遍)
+      } catch (e) { bgThrew = e; } finally { Core.texOf = origTexOf; }
+      ok(bgThrew === null, '★★ 不透明青背景(#00FFFFFF,纹理位域 = 4095)渲染不抛异常(' +
+         (bgThrew ? String(bgThrew.message) : '无异常') + ')');
+      eq(texOfArgs.length, 0,
+         '★★ 背景层的 RGBA 一个都没进 Core.texOf(实得 ' + texOfArgs.length + ' 次):' +
+         'RGBA 与描述符长得一样、含义完全不同,按层种类分派才是唯一正确的读法');
+      ok(countOps(cvBg.ctx, 'style', 'rgba(255,0,0,1)') > 0,
+         '★★ 不透明红背景**画出来了**(fillRect rgba(255,0,0,1))—— 它的纹理位域是 0,' +
+         '按"空气"判会整层不可见(静默)');
+      ok(countOps(cvBg.ctx, 'style', 'rgba(0,255,255,1)') > 0,
+         '★★ 不透明青背景也画出来了(rgba(0,255,255,1) = cssOfRGBA 的 0xRRGGBBAA 次序)');
+      ok(!someOp(cvBg.ctx, function (o) { return o.style === 'rgba(255,0,0,0)'; }),
+         '★ alpha = 0 的格**不画**全透明色块(画了 = 把下面的像素改成"什么都没画",而缩略图上' +
+         '那意味着留着上一帧的内容)');
+      // ★ 缩略图路径与逐格路径**处置不同**,且都对:缩略图是长期存在的位图(有旧像素要清),
+      //   逐格路径的底色由 render() 开头的整屏 fillRect 负责(那里没有旧像素)。
+      ok(someOp(thumbBg.ctx, function (o) {
+           return o.op === 'clearRect' && o.x === 2 * rBg.thumbPx() && o.y === 0 &&
+                  o.w === rBg.thumbPx() && o.h === rBg.thumbPx();
+         }),
+         '★★ 缩略图里 alpha = 0 的格被**清掉**(那一格有上一帧的像素,不清就留着)');
+      ok(someOp(thumbBg.ctx, function (o) { return o.op === 'fillRect' && o.style === 'rgba(255,0,0,1)'; }),
+         '★★ **缩略图**路径同样把红色背景画进 ① 的缩略图(两条绘制路径都得按层种类分派,' +
+         '只修一条另一条照样是看不见的)');
+      cvBg.ctx.ops.length = 0;
+      rBg.setGrid(false);
+      eq(countOps(cvBg.ctx, 'op', 'stroke'), 0,
+         '★ setGrid(false) 之后一个 stroke 都不画(网格是两遍全屏描线里的一遍)');
+      rBg.setGrid(true);
+
+      // ── ⑩i 换到一张"缺层"的图:那一层的旧缩略图必须清掉 ──
+      // ★ 缺席层不进 thumbTasks(省一次全图扫描),于是它**不会**被重画 —— 尺寸相同时
+      //   ensureThumbs 走复用那条路,旧像素就留在那儿了(症状:换图后那一层继续显示上一张图)。
+      const noBg = Core.createMap('nobg', 2, 2);         // 同尺寸 ⇒ 复用缩略图
+      noBg.layers[Core.LAYER_BG] = null;                 // 缺席层 = 全空气(规格 §2.4)
+      thumbBg.ctx.ops.length = 0;
+      await rBg.setMap(noBg);
+      ok(someOp(thumbBg.ctx, function (o) {
+           return o.op === 'clearRect' && o.w === thumbBg.width && o.h === thumbBg.height;
+         }),
+         '★★ 换到缺背景层的图之后,那一张旧缩略图被整片清掉(否则它继续显示上一张图的内容,' +
+         '而缩略图路径会把它当"这一层的画面"贴上去)');
+
+      // ── ⑩j 出生点 / 敌人标记 ──
+      const mSp = Core.createMap('sp', 2, 2);
+      fillSub(mSp, Core.LAYER_BG, 0);
+      mSp.players.push({ x: 0, y: 0 });
+      mSp.players.push({ x: 1, y: 1 });
+      mSp.enemies.push({ x: 1, y: 0 });
+      const cvSp = fakeCanvas(200, 200);
+      const rSp = Render.mount(cvSp, SLICE);
+      await rSp.setMap(mSp);
+      rSp.setTorus(false);                              // 只留 [0,0] 那一份副本 ⇒ 每个标记一次
+      rSp.setView({ x: 0, y: 0, zoom: 16 });
+      cvSp.ctx.ops.length = 0;                          // ★ 清在**视图定好之后**(set* 自己会渲染)
+      rSp.render();
+      const labels = cvSp.ctx.ops.filter(function (o) { return o.op === 'fillText'; })
+        .map(function (o) { return o.t; });
+      eq(labels.slice().sort().join(','), 'E,P1,P2',
+         '★★ 出生点/敌人标记:3 个标记 = 3 次 fillText(不是整图遍历,只画有标记的格;' +
+         'P 的编号与 players 的顺序一致)');
+      cvSp.ctx.ops.length = 0;
+      rSp.setTorus(true);
+      ok(cvSp.ctx.ops.filter(function (o) { return o.op === 'fillText'; }).length > 3,
+         '★ 环面开着时同一批标记会随副本各画一遍(> 3 次)');
+    } finally {
+      globalThis.document = savedDoc;
+    }
+    ok(made.length >= 8, '★ 缩略图确实经 document.createElement("canvas") 建出来(' +
+       made.length + ' 张:每层一张 × 每张图)');
+  })();
 
   // ==== 相位 ① 环面折算与空层 ====
   eq(Render.wrapIdx(-1, 4), 3, 'wrapIdx: -1 → 3(负数也折回正区间)');

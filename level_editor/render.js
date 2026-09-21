@@ -322,6 +322,368 @@ globalThis.Render = (function () {
     return { hit: false, X: X, Y: Y };
   }
 
+  // ── 图层绘制顺序 ──
+  // 前景(0)是"从外到内"的第一层 ⇒ **最后**画(盖在最上面);背景(3)最先画。
+  var DRAW_ORDER = [3, 2, 1, 0];
+
+  // ── 层的**种类**:决定那一格怎么读 ──
+  // ★★ 纹理层是**描述符**(走 Core.texOf / Tint),背景层是 **RGBA 0xRRGGBBAA**
+  //    (走 cssOfRGBA / fillRect)。两者都是 32 位无符号数,长得一模一样、含义完全不同 ——
+  //    把 RGBA 喂给 Core.texOf **不抛**,只是结论毫无意义,而两种颜色各有一种静默症状:
+  //      · 不透明红 #FF0000FF(背景色输入框里随手就有):(0xFF0000FF >>> 12) & 0xFFF = 0
+  //        ⇒ 被当成**空气** ⇒ 整层看不见;
+  //      · 不透明青 #00FFFFFF(输入框的默认值):texOf = 4095 = "图集里没有的那块砖"
+  //        ⇒ 任何一处漏掉"先判层、再判纹理"的地方都当场抛 Tint 的越界错(闸门越少越容易漏)。
+  //    判据取 core.js 的单一来源(LAYER_KINDS),**别**在渲染层再抄一份 [0,0,0,1] ——
+  //    那就是第二份实现,而两份实现迟早漂、且漂了不报错。
+  function layerIsColor(L) { return Core.LAYER_KINDS[L] === 'color'; }
+
+  // ── 画布挂载(规格 §4.2)──
+  // ★ T3 这一版是**朴素**的:缩略图路径走 ①(每层一张、按脏矩形更新),
+  //   而 ≥ 8 px/子格 的路径逐子格 drawImage(旧编辑器的 B2 做法,能看但慢)。
+  //   Task 4 把后者换成 ② 视口离屏层 + ③ 格位图缓存 + 脏区 + 3×3。
+  // ★ opts.slicer 是**注入缝**(与 setAtlas 的 opts.backend / createSlicer 的 opts.now 同款):
+  //   浏览器里不传,node 冒烟传一个确定的 nextFrame —— 不传的话缩略图那座分帧器在 node 里
+  //   会去碰不存在的 requestAnimationFrame。
+  function mount(canvas, opts) {
+    opts = opts || {};
+    var ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;      // ★ 审计 A5:主 ctx 不关插值 ⇒ 放大后砖块是糊的
+    var s = {
+      map: null, layer: Core.LAYER_SCENE,
+      view: { x: 0, y: 0, zoom: 8 },
+      grid: true, subGrid: false, torus: true, dimOthers: true,
+      layerVisible: [true, true, true, true],
+      layerLocked: [false, false, false, false],
+      selection: null,
+    };
+    var thumbs = [null, null, null, null];
+    var thumbPx = THUMB_PX;
+    var slicer = createSlicer(opts.slicer || {});
+    var stat = { thumbMs: 0, renders: 0, lastRenderMs: 0, thumbsBuilt: 0 };
+
+    function ensureThumbs(map) {
+      var px = thumbScale(map.subCols, map.subRows);
+      if (thumbs[0] && thumbPx === px && thumbs[0].width === map.subCols * px) {
+        // ★★ 复用尺寸相同的旧缩略图之前,先把**新图里缺席的层**清掉:缺席层不进 thumbTasks
+        //    (省一次全图扫描),于是它**不会**被重画 —— 留着旧像素的话,换到一张少层的图
+        //    之后那一层会继续显示**上一张图的内容**(而缩略图路径会把它当"这一层的画面"贴出去)。
+        //    只判"尺寸变了没"是抓不住的(尺寸一样 ⇒ 走的就是这条路)。
+        for (var Lc = 0; Lc < Core.LAYER_COUNT; Lc++) {
+          if (thumbs[Lc] && !layerArray(map, Lc)) {
+            thumbs[Lc].getContext('2d').clearRect(0, 0, thumbs[Lc].width, thumbs[Lc].height);
+          }
+        }
+        return false;
+      }
+      thumbPx = px;
+      for (var L = 0; L < Core.LAYER_COUNT; L++) {
+        thumbs[L] = document.createElement('canvas');
+        thumbs[L].width = map.subCols * px;
+        thumbs[L].height = map.subRows * px;
+        var c = thumbs[L].getContext('2d');
+        c.imageSmoothingEnabled = false;
+      }
+      return true;
+    }
+
+    // 画缩略图的一块矩形(单位 = 子格;rect 由调用方保证在图内)
+    // ★ 逐子格 drawImage / fillRect 是这里唯一的成本(默认图 15 万次),所以缩略图**总是**
+    //   经分帧器建(闸 2):大图上是"慢慢画出来",不是"页面死掉"。
+    // ★★ **先按层种类分派**、再谈内容:RGBA 永远走不到 Core.texOf / Tint 那条路上
+    //    (见 layerIsColor —— 这一句就是那个缺陷的闸门,不是装饰)。
+    function paintThumbRect(L, rect) {
+      var tc = thumbs[L] && thumbs[L].getContext('2d');
+      if (!tc) return;
+      var px = thumbPx;
+      var colorLayer = layerIsColor(L);              // 判据取一次,不在逐格循环里重算
+      for (var Y = rect.y; Y < rect.y + rect.h; Y++) {
+        for (var X = rect.x; X < rect.x + rect.w; X++) {
+          var raw = descAt(s.map, L, X, Y);
+          if (colorLayer) {
+            // 背景层 = RGBA:alpha = 0(createMap 的初值就是 0)⇒ 这一格**没有颜色**,
+            // 清掉;其余一律按颜色画。
+            // ★ 这里**不许**出现 texOf:红色 #FF0000FF 的纹理位恰好是 0,拿 texOf 当"空气"判
+            //   会把整层判没(见 layerIsColor 的两条症状)。
+            if (((raw >>> 0) & 255) === 0) { tc.clearRect(X * px, Y * px, px, px); continue; }
+            tc.fillStyle = cssOfRGBA(raw);
+            tc.fillRect(X * px, Y * px, px, px);
+            continue;
+          }
+          if (raw === 0 || Core.texOf(raw) === 0) { tc.clearRect(X * px, Y * px, px, px); continue; }
+          var t = tileFor(raw, X, Y);
+          if (t) tc.drawImage(t, X * px, Y * px, px, px);
+        }
+      }
+    }
+
+    // 把一整层的缩略图切成"每 8 行一组"的任务交给分帧器
+    function thumbTasks(map) {
+      var tasks = [], rows = 8;
+      for (var L = 0; L < Core.LAYER_COUNT; L++) {
+        if (!layerArray(map, L)) continue;             // 缺席层不画(全空气)
+        for (var y = 0; y < map.subRows; y += rows) {
+          tasks.push({ L: L, rect: { x: 0, y: y, w: map.subCols, h: Math.min(rows, map.subRows - y) } });
+        }
+      }
+      return tasks;
+    }
+
+    function buildThumbs() {
+      if (!s.map) return Promise.resolve();
+      var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      var tasks = thumbTasks(s.map);
+      stat.thumbsBuilt++;
+      return slicer.run(tasks, function (t) { paintThumbRect(t.L, t.rect); }).then(function () {
+        stat.thumbMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+      });
+    }
+
+    function cssOfRGBA(v) {
+      var u = v >>> 0;
+      return 'rgba(' + ((u >>> 24) & 255) + ',' + ((u >>> 16) & 255) + ',' +
+             ((u >>> 8) & 255) + ',' + ((u & 255) / 255) + ')';
+    }
+
+    // ★ 用鼠标坐标算世界坐标的两个方向:命中(C15 子格级)与反算(画 spawn 标记)
+    function screenToSub(px, py) {
+      // ★ 还没打开地图时返回中性值(闸 1:用户输入钳制,不报错回滚)——
+      //   指针事件比 setMap 早到是完全可能的,而这里抛错只会表现为"点了没反应"。
+      if (!s.map) return { X: 0, Y: 0 };
+      return hitTest(s.view, px, py, s.map.subCols, s.map.subRows);
+    }
+    function subToScreen(X, Y) {
+      return { x: (X - s.view.x) * s.view.zoom, y: (Y - s.view.y) * s.view.zoom };
+    }
+
+    function torusList(W, H) {
+      if (!s.torus) return [[0, 0]];
+      return torusOffsets(s.view, W, H, s.map.subCols, s.map.subRows);
+    }
+
+    // 路径一:< 8 px/子格 → 一次 drawImage 顶掉几十万次(规格 §4.2 ①)
+    function drawThumbPath(W, H) {
+      var px = thumbPx;
+      var scale = s.view.zoom / px;                  // 缩略图像素 → 屏幕像素
+      var offs = torusList(W, H), i, L;
+      for (i = 0; i < offs.length; i++) {
+        for (var oi = 0; oi < DRAW_ORDER.length; oi++) {
+          L = DRAW_ORDER[oi];
+          if (!s.layerVisible[L] || !thumbs[L]) continue;
+          ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== Core.LAYER_BG) ? 0.4 : 1;
+          ctx.drawImage(thumbs[L],
+                        (offs[i][0] - s.view.x) * s.view.zoom,
+                        (offs[i][1] - s.view.y) * s.view.zoom,
+                        s.map.subCols * px * scale, s.map.subRows * px * scale);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 路径二:≥ 8 px/子格 → 逐子格(Task 4 换成 ② + ③ + 脏区)
+    function drawLayerPath(W, H) {
+      var r = visibleSubRange(s.view, W, H, s.map.subCols, s.map.subRows);
+      var offs = torusList(W, H);
+      for (var oi = 0; oi < DRAW_ORDER.length; oi++) {
+        var L = DRAW_ORDER[oi];
+        if (!s.layerVisible[L]) continue;
+        var colorLayer = layerIsColor(L);            // ★ 与 paintThumbRect 同一道分派
+        ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== Core.LAYER_BG) ? 0.4 : 1;
+        for (var i = 0; i < offs.length; i++) {
+          var dx = offs[i][0], dy = offs[i][1];
+          var x0 = Math.max(r.x0, dx), x1 = Math.min(r.x1, dx + s.map.subCols);
+          var y0 = Math.max(r.y0, dy), y1 = Math.min(r.y1, dy + s.map.subRows);
+          for (var Y = y0; Y < y1; Y++) {
+            for (var X = x0; X < x1; X++) {
+              // ★ 副本坐标折回主网格后再读(所以副本上也能落笔、也画得对)
+              var raw = descAt(s.map, L, X - dx, Y - dy);
+              var p;
+              if (colorLayer) {
+                // ★★ 背景层 = RGBA,读完**直接**画颜色 —— 见 layerIsColor 的两条症状。
+                if (((raw >>> 0) & 255) === 0) continue;
+                p = subToScreen(X, Y);
+                ctx.fillStyle = cssOfRGBA(raw);
+                ctx.fillRect(p.x, p.y, s.view.zoom, s.view.zoom);
+                continue;
+              }
+              if (raw === 0 || Core.texOf(raw) === 0) continue;
+              p = subToScreen(X, Y);
+              var t = tileFor(raw, X - dx, Y - dy);
+              if (t) ctx.drawImage(t, p.x, p.y, s.view.zoom, s.view.zoom);
+            }
+          }
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 网格线:格线恒画,子格线只在 zoom ≥ 8 时画(C15)
+    // ★ 只画可见区(B8:不裁剪 = 每次重画整张图的线)
+    function drawGrid(W, H) {
+      var r = visibleSubRange(s.view, W, H, s.map.subCols, s.map.subRows);
+      var z = s.view.zoom;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+      ctx.beginPath();
+      if (s.subGrid && z >= 4) {
+        for (var X = Math.floor(r.x0 / 1); X <= r.x1; X++) {
+          var sx = Math.round((X - s.view.x) * z) + 0.5;
+          if (sx < -1 || sx > W + 1) continue;
+          ctx.moveTo(sx, 0); ctx.lineTo(sx, H);
+        }
+        for (var Y = r.y0; Y <= r.y1; Y++) {
+          var sy = Math.round((Y - s.view.y) * z) + 0.5;
+          if (sy < -1 || sy > H + 1) continue;
+          ctx.moveTo(0, sy); ctx.lineTo(W, sy);
+        }
+      }
+      ctx.stroke();
+      // 格线(64px = 4 个子格)
+      ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+      ctx.beginPath();
+      for (var X2 = Math.floor(r.x0 / SUB) * SUB; X2 <= r.x1; X2 += SUB) {
+        var sx2 = Math.round((X2 - s.view.x) * z) + 0.5;
+        if (sx2 < -1 || sx2 > W + 1) continue;
+        ctx.moveTo(sx2, 0); ctx.lineTo(sx2, H);
+      }
+      for (var Y2 = Math.floor(r.y0 / SUB) * SUB; Y2 <= r.y1; Y2 += SUB) {
+        var sy2 = Math.round((Y2 - s.view.y) * z) + 0.5;
+        if (sy2 < -1 || sy2 > H + 1) continue;
+        ctx.moveTo(0, sy2); ctx.lineTo(W, sy2);
+      }
+      ctx.stroke();
+    }
+
+    // spawn 标记 + 选区框。★ 字体/对齐**设一次**(B8:每标记重设 font 是排版最贵的一项)。
+    function drawOverlay(W, H) {
+      if (!s.map) return;
+      ctx.save();
+      ctx.font = '12px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      var offs = torusList(W, H);
+      var mark = function (cellX, cellY, color, label) {
+        for (var i = 0; i < offs.length; i++) {
+          var X = cellX * SUB - offs[i][0], Y = cellY * SUB - offs[i][1];
+          var p = subToScreen(X, Y);
+          if (p.x < -64 || p.y < -64 || p.x > W + 64 || p.y > H + 64) continue;
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 0.75;
+          ctx.fillRect(p.x, p.y, 4 * s.view.zoom, 4 * s.view.zoom);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#000';
+          ctx.fillText(label, p.x + 2 * s.view.zoom, p.y + 2 * s.view.zoom);
+        }
+      };
+      for (var i = 0; i < s.map.players.length; i++) {
+        mark(s.map.players[i].x, s.map.players[i].y, '#54a0ff', 'P' + (i + 1));
+      }
+      for (var j = 0; j < s.map.enemies.length; j++) {
+        mark(s.map.enemies[j].x, s.map.enemies[j].y, '#c96fb0', 'E');
+      }
+      if (s.selection) {
+        var a = subToScreen(s.selection.x, s.selection.y);
+        ctx.strokeStyle = '#e0b34a';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(a.x, a.y, s.selection.w * s.view.zoom, s.selection.h * s.view.zoom);
+      }
+      ctx.restore();
+    }
+
+    // ★ 唯一渲染入口(B6:旧实现同一帧连画两次画布)
+    function render() {
+      if (!s.map) return;
+      var W = canvas.width, H = canvas.height;
+      var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#0e1013';
+      ctx.fillRect(0, 0, W, H);
+      if (zoomPath(s.view.zoom) === 'thumb') drawThumbPath(W, H); else drawLayerPath(W, H);
+      if (s.grid) drawGrid(W, H);
+      drawOverlay(W, H);
+      stat.renders++;
+      stat.lastRenderMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+    }
+
+    // 尺寸变化:**只有一个机制**(B7:ResizeObserver 与 window.resize 同时挂 = 每次 resize 建两遍)
+    function resize() {
+      var wrap = canvas.parentElement;
+      var w = Math.max(1, wrap ? wrap.clientWidth : canvas.width);
+      var h = Math.max(1, wrap ? wrap.clientHeight : canvas.height);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w; canvas.height = h;
+        ctx.imageSmoothingEnabled = false;            // ★ 改尺寸会重置 ctx 状态,必须重设
+        render();
+      }
+    }
+
+    function fit() {
+      if (!s.map) return;
+      s.view.zoom = fitZoom(s.map.subCols, s.map.subRows, canvas.width, canvas.height, 24);
+      s.view.x = -(canvas.width / s.view.zoom - s.map.subCols) / 2;
+      s.view.y = -(canvas.height / s.view.zoom - s.map.subRows) / 2;
+      render();
+    }
+
+    // 编辑某几个格之后:重画它们的缩略图块(Uint32Array 的下标 → 格坐标)
+    function invalidateCells(L, list) {
+      if (!s.map) return null;
+      var rect = null;
+      for (var i = 0; i < list.length; i++) {
+        var r = { x: list[i].cx * SUB, y: list[i].cy * SUB, w: SUB, h: SUB };
+        rect = rectUnion(rect, r);
+      }
+      if (!rect) return null;
+      if (thumbs[L]) paintThumbRect(L, rect);
+      return rect;
+    }
+    function invalidateAll() {
+      if (!s.map) return Promise.resolve();
+      return buildThumbs().then(render);
+    }
+
+    function setMap(map) {
+      s.map = map;
+      s.selection = null;
+      ensureThumbs(map);
+      return buildThumbs().then(function () {
+        s.view.zoom = fitZoom(map.subCols, map.subRows, canvas.width, canvas.height, 24);
+        s.view.x = -(canvas.width / s.view.zoom - map.subCols) / 2;
+        s.view.y = -(canvas.height / s.view.zoom - map.subRows) / 2;
+        render();
+      });
+    }
+
+    return {
+      setMap: setMap, map: function () { return s.map; },
+      setLayer: function (L) { s.layer = L; render(); }, layer: function () { return s.layer; },
+      setView: function (v) {
+        s.view.x = v.x; s.view.y = v.y;
+        s.view.zoom = clampZoom(v.zoom === undefined ? s.view.zoom : v.zoom);
+        render();
+      },
+      view: function () { return { x: s.view.x, y: s.view.y, zoom: s.view.zoom }; },
+      setGrid: function (b) { s.grid = !!b; render(); },
+      setSubGrid: function (b) { s.subGrid = !!b; render(); },
+      setTorus: function (b) { s.torus = !!b; render(); },
+      setDimOthers: function (b) { s.dimOthers = !!b; render(); },
+      setLayerVisible: function (L, b) { s.layerVisible[L] = !!b; render(); },
+      layerVisible: function (L) { return s.layerVisible[L]; },
+      setLayerLocked: function (L, b) { s.layerLocked[L] = !!b; },
+      layerLocked: function (L) { return s.layerLocked[L]; },
+      setSelection: function (sel) { s.selection = sel; render(); },
+      selection: function () { return s.selection; },
+      render: render, resize: resize, fit: fit,
+      invalidateCells: invalidateCells, invalidateAll: invalidateAll,
+      thumbCanvas: function (L) { return thumbs[L]; },
+      thumbPx: function () { return thumbPx; },
+      screenToSub: screenToSub, subToScreen: subToScreen,
+      stats: function () { return { thumbMs: stat.thumbMs, renders: stat.renders,
+                                    lastRenderMs: stat.lastRenderMs, thumbsBuilt: stat.thumbsBuilt }; },
+    };
+  }
+
   // ── 脏区 ──
   function rectUnion(a, b) {
     if (!a) return { x: b.x, y: b.y, w: b.w, h: b.h };
@@ -347,5 +709,6 @@ globalThis.Render = (function () {
     visibleSubRange: visibleSubRange, torusOffsets: torusOffsets, hitTest: hitTest,
     MAX_BRUSH_CELLS: MAX_BRUSH_CELLS, brushSpan: brushSpan, brushRegion: brushRegion, snapHit: snapHit,
     selectionSource: selectionSource, rectUnion: rectUnion, rectIsEmpty: rectIsEmpty,
+    DRAW_ORDER: DRAW_ORDER, mount: mount,
   };
 })();

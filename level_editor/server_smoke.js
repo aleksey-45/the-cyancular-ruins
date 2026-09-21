@@ -206,16 +206,20 @@ async function runAllPhases() {
     ok(/pause/.test(bat), 'serve.bat: 结尾 pause(否则启动失败时窗口一闪而过,看不到原因)');
   })();
 
-  // ==== 相位 ①b 集成约束:旧编辑器与它的注册表标记必须原样活着 ====
+  // ==== 相位 ①b 集成约束:入口页换人了(计划 2b 的退休动作)====
+  // ★ 相位原文是"structure-editor.html 仍在、注册表标记在它里面、sync 指向它" ——
+  //   那三条是为"2a 不碰旧页"写的。2b 把入口页换成 editor.html 并删掉旧页,
+  //   于是三条**方向全部反转**(断言不是被删掉,是被**教会**了新的真值)。
   (function () {
     const oldHtml = path.join(__dirname, 'structure-editor.html');
-    ok(fs.existsSync(oldHtml), '集成约束: structure-editor.html 仍在(本计划不重写它)');
-    const src = fs.readFileSync(oldHtml, 'utf8');
-    ok(src.indexOf('/*__ENEMY_REGISTRY_BEGIN__*/') >= 0 && src.indexOf('/*__ENEMY_REGISTRY_END__*/') >= 0,
-       '集成约束: 敌人注册表两个标记都在');
+    ok(!fs.existsSync(oldHtml), '★ 旧页面 structure-editor.html 已退休(2b 的入口页是 editor.html)');
+    const newHtml = fs.readFileSync(path.join(__dirname, 'editor.html'), 'utf8');
+    ok(newHtml.indexOf('/*__ENEMY_REGISTRY_BEGIN__*/') >= 0 &&
+       newHtml.indexOf('/*__ENEMY_REGISTRY_END__*/') >= 0,
+       '★★ 敌人注册表两个标记已经搬进 editor.html(少了它 --check 直接红)');
     const sync = fs.readFileSync(path.join(__dirname, 'sync-enemies.js'), 'utf8');
-    ok(/htmlPath = path\.join\(dir, 'structure-editor\.html'\)/.test(sync),
-       '集成约束: sync-enemies.js 仍指向 structure-editor.html(搬它必须与搬标记同一 commit)');
+    ok(/htmlPath = path\.join\(dir, 'editor\.html'\)/.test(sync),
+       '★★ sync-enemies.js 的 htmlPath 指向 editor.html(漏了它 = 注册表静默漂移)');
     let out = '', code = 0;
     try {
       out = execFileSync(process.execPath, [path.join(__dirname, 'sync-enemies.js'), '--check'],
@@ -996,87 +1000,69 @@ async function runAllPhases() {
     }
   }
 
-  // ==== 相位 ⑧ 骨架页结构(真的从服务器取,不是读盘)====
+  // ==== 相位 ⑧ 入口页结构(真的从服务器取,不是读盘)====
   // ★ 本相位**只能**待在这里(runAllPhases 的函数体内):main() 里那句
   //   `// ==== 断言区结束 ====` 在 try/finally{ cleanup() } **之后**,照计划原文放在那儿
   //   = 相位跑在清理之后,会把已删掉的 tmpRoot 重新建出来 → 每次跑留下一个 cyrm-srv-* 目录
   //   (Task 2 的实现者用 fs 插桩实锤过;Task 1 的相位 ⑤ 也点了同一条)。
-  // ★ 号仍是 ⑧(计划原文的号):本文件里已经有一个 ⑧(rename 重试,Task 3 的定向修复带来的),
-  //   与两个 ⑤ 并存同款 —— **有意为之,别去"修正"**(改号会让计划里 Task 7 的号整体错位)。
-  // ★ 判据是"从**服务器**取回来的页面"(不是 fs.readFileSync):这样顺带证明静态服务那条路
-  //   真的把入口页发出去了(r1.status 200 已由相位 ② 钉过,但那一条不关心正文内容)。
+  // ★ 号仍是 ⑧(计划原文的号),本文件里另有一个 ⑧(rename 重试)—— 与两个 ⑤ 并存同款,
+  //   **有意为之,别去"修正"**。
+  // ★ 2b 之后本相位只判"**页面结构**":入口页由 2a 的骨架页换成真页面,原来那些
+  //   "骨架页必须有 id=roundtrip"之类的断言描述的是**已经不存在的页面**。
+  //   纪律类断言(不许第二份 HSV / lineCells 必须 floor / PUT 必须带 Content-Type)
+  //   搬到 editor_smoke.js —— 它们要扫的是 ui.js / render.js 的源码,不是页面文本。
   {
     const page = (await request(staticSrv.port, 'GET', '/')).body.toString('utf8');
-    ok(/<script src="core\.js"><\/script>/.test(page), '骨架页加载 core.js');
-    ok(/<script src="tint\.js"><\/script>/.test(page), '骨架页加载 tint.js');
+    // ── 脚本清单与**顺序**:core → tile_defs → tint → render → io → ui ──
+    const want = ['core.js', 'tile_defs.js', 'tint.js', 'render.js', 'io.js', 'ui.js'];
+    let prev = -1, orderOk = true, firstBad = '';
+    want.forEach(function (s) {
+      const tag = '<script src="' + s + '"></script>';
+      const at = page.indexOf(tag);
+      if (at < 0) { orderOk = false; if (!firstBad) firstBad = s + '(缺失)'; return; }
+      if (at < prev) { orderOk = false; if (!firstBad) firstBad = s + '(顺序)'; }
+      prev = at;
+    });
+    ok(orderOk, '★★ 六个外部脚本按依赖顺序排:core → tile_defs → tint → render → io → ui' +
+       '(首个不对:' + firstBad + ';tint 对 Core 是硬依赖,render 对两者是硬依赖)');
+    // ★★ 只查 `<script src>` 的**值**。初版拿整页做 `page.indexOf('://') < 0`,而页面里
+    //    **合法地**含 `://` —— 敌人注册表每条都带 `"scene": "res://…"`(Step 4 刚写进去的)
+    //    ⇒ 这条断言在同一个 commit 落地的那一刻就假红。要判的是"脚本从哪来",不是
+    //    "整页有没有冒号斜杠"。
+    const srcVals = (page.match(/<script\s+src="[^"]*"/g) || []).map(function (t) {
+      return /src="([^"]*)"/.exec(t)[1];
+    });
+    ok(srcVals.length >= 6 && srcVals.every(function (v) {
+      return v.charAt(0) !== '/' && v.indexOf('://') < 0;
+    }), '★ 页面里的脚本都是相对路径、没有绝对路径/外部 URL(编辑器只走本机 HTTP)');
+    // ★★ 这一条**不是**计划原文里有的,是本次改写**刻意保留**的旧断言(原文相位 ⑧ 有,
+    //    新相位只列了"顺序"与"相对路径"两条)。理由:它判的是**页面文本**这一侧的
+    //    页面结构,而不是 ui.js/render.js 的源码 —— 不在搬去 editor_smoke.js 的那一类里。
+    //    少了它的后果很具体:`<script src>` 里打错一个字母 ⇒ 那个文件 404 ⇒ 整页在浏览器里
+    //    **静默死掉**(节点侧的其它断言全绿,因为服务器只是老老实实回了 404)。
     (function () {
-      const srcs = [];
-      const re = /<script[^>]*\bsrc="([^"]+)"/g;
-      let m;
-      while ((m = re.exec(page)) !== null) srcs.push(m[1]);
-      ok(srcs.length >= 2, '骨架页有 ' + srcs.length + ' 个外部脚本');
-      // ★★ M6:顺序也是契约。tint.js 对 Core 是**硬依赖**(文件头第一句就是"必须先加载
-      //   core.js"),顺序反了整页当场死(只在浏览器里现形,node 侧一条断言都拦不住)。
-      ok(page.indexOf('src="core.js"') >= 0 && page.indexOf('src="core.js"') < page.indexOf('src="tint.js"'),
-         '★★ core.js 必须排在 tint.js **之前**(tint.js 的档位常量全部取自 Core,顺序反了整页当场死)');
-      const missing = [];
-      srcs.forEach(function (s) {
-        if (s.indexOf('://') >= 0) { missing.push(s + '(外部 URL —— 编辑器只走本机 HTTP)'); return; }
-        if (!fs.existsSync(path.join(__dirname, s))) missing.push(s);
-      });
-      ok(missing.length === 0, '★ 骨架页引用的每个脚本文件都存在(否则运行时 404):' +
+      const missing = srcVals.filter(function (s) { return !fs.existsSync(path.join(__dirname, s)); });
+      ok(missing.length === 0, '★ 页面引用的每个脚本文件都真实存在(否则运行时 404、整页静默死掉):' +
          (missing.length ? missing.join(', ') : '全部命中'));
     })();
-    ok(page.indexOf('file://') < 0, '★ 骨架页里没有 file://(规格 §1.2:只走 HTTP)');
-    for (const id of ['maps', 'tintlab', 'roundtrip']) {
-      ok(page.indexOf('id="' + id + '"') >= 0, '骨架页有 id="' + id + '" 区块');
-    }
-    ok(page.indexOf('id="btn-maps"') >= 0 && page.indexOf('id="btn-rt"') >= 0,
-       '骨架页有两个自检按钮(库刷新 / 往返)');
-    ok(page.indexOf('Tint.') >= 0, '★ 骨架页用 Tint.*');
-    ok(page.indexOf('Core.') >= 0, '★ 骨架页用 Core.*');
-    ok(page.indexOf('createTileCache') >= 0, '★ 骨架页用 Tint.createTileCache(小图走缓存,不自己造 canvas)');
+    ok(page.indexOf('file://') < 0, '★ 页面里没有 file://(规格 §1.2:只走 HTTP)');
+    ok(/id="map-canvas"/.test(page), '页面有 id="map-canvas"');
+    ok(/id="toolbar"/.test(page) && /id="lib"/.test(page) && /id="right"/.test(page) &&
+       /id="statusbar"/.test(page), '§4.5 的四块版式都在(工具条 / 库 / 右栏 / 状态栏)');
+    ok((page.match(/class="tool" data-tool=/g) || []).length === 8,
+       '工具条有 8 个工具按钮(画笔/矩形/油漆桶/橡皮/直线/选框/吸管/渐变)');
+    // ★★ 用 `class="layer-row[^"]*"` 而不是 `class="layer-row"` 字面量:图层行里有一行带
+    //    ` cur`(`.layer-row.cur` 是当前图层),字面量只匹配到 **3** 行 ⇒ 原来那条断言
+    //    **不可能通过**。也不能图省事写 `\blayer-row\b` —— 那会把上面 `<style>` 里同样含
+    //    `layer-row` 的 4 条 CSS 选择器一起数进来(得到 8)。
+    ok((page.match(/class="layer-row[^"]*" data-layer="\d"/g) || []).length === 4,
+       '图层列表有 4 行');
+    ok(/id="boot-error"/.test(page), '★ 有启动错误条(缺 Worker 时把话说清楚,而不是静默)');
+    ok(page.indexOf('Editor.boot()') >= 0, '★ 页面只负责把 DOM 交给 ui.js(页面里没有编辑器逻辑)');
+    ok(/__ENEMY_REGISTRY_BEGIN__/.test(page) && /window\.ENEMY_REGISTRY\s*=/.test(page),
+       '★ 敌人注册表标记与 registry 都在入口页里(由 sync-enemies.js 生成)');
     ok(page.indexOf('rgbToHsv') < 0 && page.indexOf('hsvToRgb') < 0,
-       '★ 骨架页里没有第二份 HSV 数学(必须调 Tint —— 两份实现迟早漂,而漂了不报错)');
-    // ── ★★ I1:纹理号的上界必须从**图集容量**派生,不是描述符位宽 4095 ──
-    // ★ 三处数字在这一格上互相打架:游戏调色板 22 / 图集容量 100(320÷32 的平方)/
-    //   描述符位宽 4095 —— 而 `Tint.get → buildTilePixels` 只按"图集里有没有这一块"判,
-    //   于是**只有 4095 那一支会抛**:实测 tex=22 与 100 都好,101/500/4095 直接抛;
-    //   放大伤害的是页面**先** `box.innerHTML=''` 再逐块取图 ⇒ 抛在清空之后 = 16 个色块
-    //   全空、信息行停在旧文本,一个**沉默的**空面板。而本页是 2b 的真正入口页。
-    // ★ 判据是"**裸** 4095"(拿它当上界/当 input 的 max),不是"页面上出现过这个字符串":
-    //   页面的注释里**故意**留着 4095 这个名字(它记的就是"为什么不能钳到 4095"),
-    //   照 `indexOf('4095') < 0` 写会把自己的说明文字判红。拦住"改回去"的是这两条形态。
-    ok(!/max="4095"/.test(page) && !/Math\.min\(\s*4095/.test(page),
-       '★★ 骨架页不得把纹理号钳到 4095(描述符位宽;tint.js 按图集判,101 起就抛 ⇒ 沉默空面板)');
-    ok(/atlasCap\s*=\s*Math\.floor\(atlasW \/ Tint\.BLOCK_PX\)\s*\*\s*Math\.floor\(atlasH \/ Tint\.BLOCK_PX\)/
-         .test(page),
-       '★★ 纹理号上界从**图集的列 × 行**派生(块 32px = Tint.BLOCK_PX)—— 与 tint.js 的越界判据同源,' +
-       '改图集也不会漂');
-    ok(/Math\.max\(1, Math\.min\(atlasCap,/.test(page),
-       '★★ 真正交给 Tint.get 的那个纹理实参被 atlasCap 钳过(「能输入」与「能画」不许分成两回事)');
-    ok(/try\s*\{[\s\S]{0,80}drawSwatchesBody\(\)/.test(page) && /catch\s*\(e\)\s*\{\s*[\s\S]{0,120}tintinfo/
-         .test(page),
-       '★ 重绘包了 try/catch 并把消息写到 #tintinfo(抛在 box.innerHTML=\'\' 之后 = 沉默空面板)');
-    ok(page.indexOf('Core.lineCells') < 0,
-       '★ 骨架页不调 Core.lineCells:它的坐标必须是整数,非整数/NaN 会让它死循环挂住标签页' +
-       '(账本 Task 2 Minor 3 —— 2b 加绘制工具时每个调用点都要先 Math.floor)');
-    ok(page.indexOf('__ENEMY_REGISTRY_BEGIN__') < 0,
-       '★ 敌人注册表标记仍留在 structure-editor.html(本计划不搬:搬标记、改 sync-enemies.js 的 htmlPath、' +
-       '删旧文件三件事必须同一 commit,那是 2b 的收尾动作)');
-
-    // ── 硬要求 A 的结构守卫(页面上的 PUT 必须带 application/json)──
-    // ★ 为什么要有这一对:写端点只收那一个内容类型(非简单内容类型 ⇒ 逼浏览器先发预检),
-    //   而页面若写 `fetch(url, {method:'PUT', body: new Blob([bytes])})` **不带显式头**,
-    //   浏览器给的就是 Blob 的默认类型 ⇒ **415**,用户看到的是"存不进去"(且服务器日志里
-    //   只有一行 415,看不出是前端漏了头)。这条**拦不住**那种实现的运行时行为,但能让
-    //   "页面上那个 PUT 有没有显式设头"在 node 里当场红 —— 剩下的由浏览器验收(步 5)。
-    // ★ 判据容忍引号与空白差异(反引号/双引号/多空格都算过),否则改个格式就误报。
-    ok(/method:\s*['"`]PUT['"`]/.test(page),
-       '★ 骨架页确实有 PUT 调用(写端点自检 —— /api/maps 与 GET /api/map 都是只读的)');
-    ok(/['"`]Content-Type['"`]\s*:\s*['"`]application\/json['"`]/.test(page),
-       '★★ 硬要求 A:骨架页的 PUT 显式设 Content-Type: application/json' +
-       '(不设 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ 用户看到"存不进去")');
+       '★ 页面里没有第二份 HSV 数学(像素一律走 Tint.*)');
   }
 
   // ==== 相位 ⑨ 端到端:core.js 编出来的字节 → 服务器 → core.js 解回来 ====
