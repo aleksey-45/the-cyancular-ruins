@@ -1006,6 +1006,7 @@ git commit -m 'test/docs: kh_l6 第 9/9b/12 认结算页的退场块 + CLAUDE.md
 **2026-09-20 执行前修订(控制者,经用户裁定)**：
 - Task 4/5/6 原写"三个客户端各抄一份 `_show_result` / `_leave_to_main_menu`",理由是"抽公共基类要动 `PvpMatchClient` 的继承链" —— **该理由不成立**:三个客户端本来就都 `extends PvpMatchClient`(`:1` 行)。改为**放基类 + 子类只覆写 `_build_result_payload()`**。逐字重复逻辑块是评审规则会判缺陷的那类。
 - Task 7 原只点名 `kh_l6_probe` 第 9 / 9b 条;**第 12 条 `_check_exit_paths()` 也压在同一段退场块上**(断言 `_on_round_state` 体内必须有换场调用),Task 4 删定时器后必然变红 → 一并纳入 Task 7。
+- ★ **Task 2 的 `for_duel` 已偏离本文件上面的写法(2026-09-21,执行中修,方向正确)。** 本文件 Task 2 那段给的实现是 `if not scores.has(role): continue` —— **那是错的**:1v1 的 `_scores` 缺条目意味着**本局 0 杀**,不是"没数据",照它写会让 **5-0 那局的输家从自己的结算页上消失**(只剩一行)。已落地的 `ui/match_result_payload.gd` 改为对两个 duel role 取 `int(scores.get(role, 0))`,由 `tests/match_result_payload_smoke.gd` 的 ②b 钉住。★ **`for_team` 的相反规则(缺 `stats` ⇒ 跳过该行)是刻意的,没动** —— 那里缺条目真的是"没数据"(掉线/中途加入)。两条规则方向相反,smoke 的 ②b 与 ⑤ 双向钉住,**别统一成一版**。(本条原先只记在 progress 台账里,最终评审指出计划正文仍写着旧写法、下个照计划执行的人会把代码"修"回去,故补记在此。)
 
 **占位符扫描**：无 TBD/TODO；每个改代码的步骤都给了代码。
 
