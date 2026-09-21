@@ -83,6 +83,37 @@ func _initialize() -> void:
 	# 反向:两个枚举常量必须可区分(写成同一个值 = 上面四条里至少两条恒真,分派等于没有)
 	_check(G.ACTION_REMOVE != G.ACTION_TEARDOWN, "两个动作枚举必须可区分")
 
+	# ── ⑧ 宽限期时长 + 端口归还延迟的**次要 belt**(2026-09-21,阶段 2-B)──
+	# ★ 为什么钉时长:重连的重试预算直接读这个常量(`scenes/pvp_match_client.gd` 的
+	#   `_on_reconnect_retry_tick` 第一条判据),单一来源不会漂;但**测试预算**是按它算出来的
+	#   窗口(`reconnect_probe` 的 GRACE_MIN/MAX/FINAL_TIMEOUT、`team_match_watcher.OBSERVE_MAX`、
+	#   `team_match_probe.RESULT_WAIT`),那些不会自己跟着动 → 症状是"一行 ALL-OK 都没有"
+	#   (安全网先耗尽),与真失败长得一模一样。故在这里钉住这个数。
+	_check(absf(G.DEFAULT_SECONDS - 60.0) < 0.001,
+			"宽限期应为 60.0 秒(用户裁定:1v1 / 3v3 / 大乱斗三模式统一)。实得 %.1f" % G.DEFAULT_SECONDS)
+	# ★★ 下面这条不等式**已经不是承重的那条了**(2026-09-21,显示方案落地后):
+	#   承重的换成了「**worker 进程活着 ⇒ 房对象与它占的端口都还在**」—— 房活到 worker 退出,
+	#   而端口只在 `teardown_room` 里归还,所以宽限期内的客户端手里那个端口一定还有效,
+	#   **与延迟常量的取值无关**。真正的"这个端口还是不是我的局"由凭据里的 `worker_pid`
+	#   精确回答(`RejoinRegistry.decision` 的 worker_alive 入参),不再是定时估的。
+	#   保留这条 belt 的理由:它拦不住真正的病,但能在"有人把某个延迟改成荒谬的小数"时
+	#   当场响一声 —— ★ 它**必须**写在注释里说明自己是 belt,否则后代会把它当承重件去优化。
+	var W: GDScript = load("res://server/worker_launcher.gd")
+	# ★ 空载守卫:load 失败还往下走会抛错,而 -s 抛错走不到 quit() → 进程永久挂起
+	if W == null:
+		print("GRACE_WINDOW FAILED: 找不到 server/worker_launcher.gd(归还延迟的 belt 无从校验)")
+		quit(1)
+		return
+	var delays := {
+		"WORKER_PORT_REUSE_DELAY(1v1)": float(W.WORKER_PORT_REUSE_DELAY),
+		"ROYALE_PORT_REUSE_DELAY(大乱斗)": float(W.ROYALE_PORT_REUSE_DELAY),
+		"TEAM_PORT_REUSE_DELAY(3v3)": float(W.TEAM_PORT_REUSE_DELAY),
+	}
+	for k in delays:
+		_check(float(delays[k]) > float(G.DEFAULT_SECONDS),
+				"★ %s = %.0f 应大于宽限期 %.0f(belt:worker 退出后别立刻把端口发出去)"
+				% [k, delays[k], G.DEFAULT_SECONDS])
+
 	if _fail == 0:
 		print("GRACE_WINDOW OK")
 		quit(0)
