@@ -164,8 +164,25 @@ func _ready() -> void:
 	# 补间形变:挂在**自己**身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗)。
 	# animator 是 @export 引用,场景实例化时就已就位,`_ready` 里可用。
 	squash = SquashStretch.new()
-	squash.setup(animator, SquashStretch.Profile.PLAYER)
+	# ★ 顺序与另**两个**宿主统一:`add_child()` 之后才 `setup()`(三只敌鸟 / 对手副本都是这个序)。
+	#   两种序今天**等价** —— `SquashStretch` 没有 `_ready`,入树不触发任何按参数建出来的东西。
+	#   之所以仍然要统一:本仓对"配置与入树谁先"另有一条**相反**的规矩(`WeaponPickup.configure()`
+	#   必须**先于**`add_child()`,否则 `_ready` 会拿 @export 默认值先建一次,见 CLAUDE.md)——
+	#   同仓两种序并存时,加 `_ready` 的人无从判断该照哪一条。将来给本组件加 `_ready`(例如
+	#   自己建 animator)必须回头把这三处一起倒过来。
 	add_child(squash)
+	squash.setup(animator, SquashStretch.Profile.PLAYER)
+	# ★ 模式闸门(2026-09-21 用户裁定):形变**只在单机生效**,联机模式(1v1/大乱斗/3v3)全部取消 ——
+	#   **唯一例外是落地那一下**("除了玩家落地的优化")。闸门放组件里(只关事件脉冲 + 空中连续项),
+	#   理由见 `squash_stretch.gd` 文件头(要静音的地方散在 4 处,调用点漏判不报错)。
+	# ★ 判据用 `Level0.pvp_mode`:本文件本来就用它判模式(捡枪/按 R 重启那几处同款),且它与
+	#   "本局是不是联机"严格同义 —— `pvp_game`/`royale_game`/`team_game` 都在实例化世界**之前**
+	#   置 true,故玩家 `_ready` 读到的一定是终值(`player.tscn` 的 _ready 没有别的模式默认)。
+	#   ★ 不用 `CombatComponent.pvp_arena`:那个是"取消命中无敌帧"的开关,语义不同(服务器侧也置
+	#   true,而服务器根本不渲染);也不要读 `input_source` 的类型 —— 那是实现细节,会随输入源分裂而漂。
+	# ★ 单机**不调**这个开关 ⇒ `_landing_only` 保持 false ⇒ 单机行为与加闸门之前逐字相同。
+	if Level0.pvp_mode:
+		squash.set_landing_only(true)
 
 
 func _physics_process(delta: float) -> void:
@@ -239,12 +256,16 @@ func _physics_process(delta: float) -> void:
 	# ★ 且必须**滤掉不是摔下来的下坠速度**(squash 的调用契约 = "地面真正吸收掉的坠落速度"):
 	#   它一并覆盖的两条路径**性质不同**,别当成同一个病(实测,见 tests/squash_host_water_probe):
 	#   · 梯子下行(720)是**真违规**,且是**每帧**不是一帧 —— `_tick_crouch_and_dash` 攀附时首行
-	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 -10%(实测 scale = (0.9000, 1.1000))。
+	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 -10%(实测 scale = (1.1000, 0.9000))。
 	#   · 水中那条**不重叠**:Water.feet_offset 取碰撞箱底边 ⇒ 站在水下实心地面上时脚底探针
 	#     恒落在**支撑格自己**里、而支撑格是 wall 不是 liquid ⇒ in_water 恒假(实测
 	#     in_water∧on_floor 重叠 **0 帧**),"站池底永久 ~9% 挤压"并不存在。过滤它买到的是
-	#     **下沉窗口**那 30 帧的连续项 `_air`(320/700 × 0.30 ≈ 0.137 → scale.x 1.0137 的**拉伸**,
-	#     过滤后 1.0000)⇒ 这一条是**落实设计取舍**("游泳不该有自由落体那种弹感"),不是修 bug。
+	#     **下沉窗口**那 30 帧的连续项 `_air`(320/700 × 0.30 ≈ 0.137 → **拉伸**;按组件的
+	#     `scale = (1−0.10v, 1+0.10v)` 读出来是 **scale = (0.9863, 1.0137)** —— 拉伸那一侧是
+	#     **y**(1.0137),x 是 0.9863;过滤后 1.0000)⇒ 这一条是**落实设计取舍**
+	#     ("游泳不该有自由落体那种弹感"),不是修 bug。
+	#     ★ 副本侧同口径的那一项已于 2026-09-20 补上(player_replica._in_water,客户端本地网格
+	#       查询,零协议字段);爬梯那一半仍是残留,见 spec §4.3。
 	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
 

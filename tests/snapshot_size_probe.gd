@@ -58,7 +58,7 @@ func _ready() -> void:
 
 	var thin := _entry_world_thin()
 	var sz_thin := var_to_bytes(thin).size()
-	print("[size] 世界包瘦身版(短键 + 去掉副本不消费的 vel/waterproof)= %d B/人" % sz_thin)
+	print("[size] 世界包瘦身版(短键 + 不带 vel/waterproof 的值)= %d B/人" % sz_thin)
 
 	print("[size] ── N=2..8 折算(单帧载荷 / 每秒单端下行 / 服务器每秒上行)──")
 	print("[size]  N |   现方案:单帧载荷  单端下行  服务器上行 | 新方案:本人包  世界包  单端下行  服务器上行")
@@ -105,11 +105,26 @@ func _entry_render_only() -> Dictionary:
 	return d
 
 
-# 世界包瘦身版:①短键(协议两端同改,值不变)②去掉副本 apply_snapshot 根本不读的 vel/waterproof。
-# 唯一消费 vel 的是 player.apply_server_snapshot —— 那条路已在 C2 迁移(批次 5,2026-09-12)删除,
-# 故世界包不必再带 vel。
+# 世界包瘦身版:①短键(协议两端同改,值不变)②去掉 `vel` —— ⚠ ② 是**不可实现**的那一条,见下。
+#
+# ★★ **`vel` 的去留史(改这条前先读完)**:
+#   · Task 4(2026-09-20)让 `player_replica` 的补间形变读它 ⇒ 当时"去掉 vel"是**不可实现**的
+#     (空中连续项取 `vel.y`,落地推导还要"上一帧大 + 这一帧 ≈0"这一对值,见当时的 `_prev_vel_y`)。
+#   · **2026-09-21 用户裁定"形变只在单机生效",副本那一整套(连带 `vel` 的消费)已整体删除**
+#     ⇒ `vel` 在客户端**当前没有消费者**,`_entry_world_thin()` 的"去掉 vel"一栏重新变成
+#     **可实现**的。
+#     ⚠ 但"没有消费者"≠"现在就该删":删它要**两端同改**(协议改动),而本轮只做客户端侧删除,
+#       服务器照旧发 —— 于是两者之差(vel 的字节数)**今天是一个真实可达的瘦身额度**,
+#       而不再是下界外的虚数。真要削包时记得连着 `server/match_snapshot.gd` 那张表一起改。
+#   本探针**只打印,不断言** vel 的去留(这一点是刻意的:它量的是体积,不是行为)。
+#
 # pose/facing/weapon/aim/hp/downed/previewing 全部保留(副本 + 头顶血条在用);previewing 仍按
 # "只发不用"保留(它是日后换成音效/轮廓提示的接点,见 player_replica 的注释)。
+#
+# ※ 打印标签的措辞(2026-09-20 订正):下面那行原先写「去掉副本不消费的 vel/waterproof」——
+#   ① `vel` **不再**是"副本不消费的"(见上);② "去掉"对本字典也不准确:vel 的键整个不在,
+#   而尾部 `"v": false` 是一个**键在、值不实**的占位键。故标签改写成「不带 vel/waterproof 的
+#   **值**」,这才是本字典真正做的事(它给出的仍是**下界**,见上)。
 func _entry_world_thin() -> Dictionary:
 	var p := _player
 	return {

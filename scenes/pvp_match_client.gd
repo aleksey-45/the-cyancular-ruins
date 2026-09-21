@@ -37,6 +37,8 @@ var _prev_sent_seq := 0
 var _match_ended := false
 # 暂停菜单是否开着(PvP 下菜单不暂停树,靠它锁本地输入;见 _refresh_input_lock)
 var _menu_open := false
+var _result: MatchResult = null             # 结算页(挂载一次,由 _show_result 建)
+var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载荷的输入之一)
 
 # 玩家本体精灵(player.png)的**主色**(RGB)。"把身体染成某个颜色"要拿它当基准去做比值。
 # ★ 数值是**实测**的不是拍的(2026-09-19):主色 `#639BFF`,占 12987 个不透明像素里的 10875(83.6%);
@@ -227,6 +229,77 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 func _refresh_input_lock() -> void:
 	if _local != null and _local.has_method("set_controls_locked"):
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
+
+
+# ── 结算页(2026-09-21):挂载与离场**三个模式共用**,各自只覆写 `_build_result_payload()` ──
+# ★ 为什么在基类:三个客户端(`pvp_game` / `royale_game` / `team_game`)**本来就都**
+#   `extends PvpMatchClient`,不存在"要动继承链"这件事。挂载/离场逐字同构,抄三份必然漂 ——
+#   与本文件既有的 `_apply_peer_hues_or_team` / `_replica_for` 是同一个形状。
+# ★★ 必须走**场景实例化**,不能用 `MatchResult.new()`:`layer = 150` **只写在
+#   `ui/match_result.tscn` 里**(脚本不设 layer —— 三个现有 HUD 同款写法,层位值只有那
+#   一处来源)。用 `.new()` 会拿到 CanvasLayer 默认的 **layer 1**,结算页画在 HUD(130)/
+#   小地图(131) **下面**、压暗罩盖不住它们,而计划自己的类头注释却写着「盖住一切」。
+#   ★ 这条有守卫:`tests/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,
+#     出现 `MatchResult.new(` 即红。
+const RESULT_SCENE := preload("res://ui/match_result.tscn")
+
+# 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
+# 各自只覆写 `_build_result_payload()`。
+# ★★ **挂载一次、但每次都要刷新**(`if _result == null` 只包住"建 + 连线")。
+#   写成 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**":
+#   第二条 MATCH_OVER 载荷就永远到不了屏幕上,而 `MatchResult.show_result` 的清场重建
+#   (`ui/match_result.gd` 的 remove_child→queue_free 那段)在生产里**一次都不会跑** ——
+#   探针却直接调它、照绿。**探针比产品更绿**是这里最难发现的形状。
+#   ★ 第二条载荷**可达**(不是假想):1v1 —— `server_main.gd` 在每次 reclaim 成功后重播当前
+#     `round_state`,掉线重连的客户端就会收到第二条 MATCH_OVER;3v3 —— `team_host.gd` 的
+#     `_finish_match()` 在战斗进行中直接把 PLAYING→MATCH_OVER,而倒地边沿检测在
+#     `match _round_state:` **之前**且**不看状态** ⇒ MATCH_OVER 之后再死人会再广播一条
+#     带新 `stats`/`mvp` 的终局载荷;`mark_disconnected` 那条同款。
+func _show_result() -> void:
+	if _result == null:
+		_result = RESULT_SCENE.instantiate()
+		add_child(_result)
+		_result.leave_requested.connect(_leave_to_main_menu)
+		# ★★ **挂载那一刻先用空载荷亮出来**,再折真载荷。顺序不可换 —— 这是"MATCH_OVER 之后
+		#   永远有出路"那条不变量的安全网(2026-09-21 终审 I3)。
+		#   要防的故障形状是:**`show_result()` 在它最后那句 `visible = true` 之前结束**。
+		#   那时结算页停在 `_ready()` 末尾那句 `visible = false` 上 —— **看不见、ESC 也够不着**
+		#   (它的 `_unhandled_input` 首行是 `if not visible: return`)、按钮也点不到;而此刻暂停
+		#   菜单已被 MATCH_OVER 块销毁、K 键被 `_match_ended` 挡住 ⇒ 玩家**卡死在对局里**。
+		#   ★ 可达形状(合成故障实测):载荷里混进**非字典的节** ⇒ `show_result` 里
+		#     `_build_section(sections[i], …)` 的参数类型转换当场失败 ⇒ 整个 `show_result` 在
+		#     `visible = true` **之前**结束。适配器改动 + 这页的"缺键一律取默认"口径之间,
+		#     只差一个"某节不是字典"就能走到。今天没有人踩到,所以这是**安全网**不是活 bug。
+		#   ★ 另一条**不**构成陷阱(实测,免得后人照直觉"修"错地方):`_build_result_payload()`
+		#     内部抛错只让**它自己**当场结束,而它签名是 `-> Dictionary` ⇒ 隐式返回的 null 被强制
+		#     转换成**空字典** ⇒ 退化成"可见但空"的结算页,出路仍在(实测 visible=true)。
+		#   ⇒ 关键是"亮出来"必须排在任何可能把 `show_result()` 打断的活**之前**。放进
+		#     `show_result()` 内部同样能挡住它自己那一段;放在这里则连"挂载之后、调用之前"那一小段
+		#     也一起盖住(将来谁在中间插一句会抛错的代码,也不会退化回陷阱)。
+		#   空载荷**抛不出错**:"空载荷不崩"是本页的硬要求(`tests/match_result_probe` ① 专钉),
+		#   且它只做"赋文案 + 清场建节 + `visible = true`"三件事 ⇒ 可见、ESC 生效、
+		#   "返 回 主 菜 单"按钮可用,三样退路当场到手。
+		#   ★ 正常路径**看不到这个空态**:本函数一次跑完、两句之间没有 await,布局与绘制都在帧末,
+		#     玩家看到的永远是下面那句填好的那份。
+		_result.show_result({})
+	_result.show_result(_build_result_payload())
+
+
+# 结算页 -> 主菜单。★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,
+# 裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误。
+# ★ 防重入由 MatchResult 自己那次发信号 + safe_change_scene 的 _switching 双层兜住;
+#  这里只负责"在树上才切"(原定时器 lambda 里那条 is_inside_tree() 早退的**意图**搬到这里)。
+func _leave_to_main_menu() -> void:
+	if NetBus != null:
+		NetBus.stop()
+	if not is_inside_tree():
+		return
+	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
+
+
+# 结算页载荷(默认空)。三个子类各覆写一份 —— 模式差异只有这一点。
+func _build_result_payload() -> Dictionary:
+	return {}
 
 
 # ── 对手副本访问器:两个模式**唯一的结构性差异**就收在这一个口上 ──

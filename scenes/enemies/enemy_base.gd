@@ -46,6 +46,10 @@ var _drown_tick: float = 0.0     # 扣血倒计时
 var state: int = 0
 var _state_timer: float = 0.0
 var _anim: AnimatedSprite2D
+# 补间形变(squash & stretch)。纯表现层,不进任何网络同步、不碰碰撞箱。
+var squash: SquashStretch = null
+# move_and_slide() **之前**的 velocity.y,与帧首 is_on_floor() 配对(见 spec §2.4)。
+var _pre_move_vy: float = 0.0
 
 # ── 行为钩子(子类覆写)──
 func _ai(_delta: float) -> void:
@@ -62,6 +66,19 @@ func _ready() -> void:
 	add_to_group("enemies")
 	_setup_contact_area()
 	call_deferred("add_child", WaterFx.new())
+	# 补间形变。★ 用 $AnimatedSprite2D 而不是 _anim:子类 `_ready` 是**先** super._ready()
+	#   后才 `_anim = $AnimatedSprite2D`(见 enemy_jump_bird.gd:15/18),此处 _anim 还是 null。
+	#   三个敌人的 .tscn 里该节点都叫 AnimatedSprite2D。
+	squash = SquashStretch.new()
+	add_child(squash)
+	# ★ 查不到 animator 就**当场报错**,不让它静默降级:组件侧容忍 null animator(`_apply()` 直接
+	#   return),于是这条查表失败的表现是"这只鸟永远不变形",一个字都不打 —— 那种沉默正是
+	#   本特性最贵的失败形态。三个 .tscn 现在都叫 AnimatedSprite2D,改名/漏改名必须响。
+	var anim := get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+	if anim == null:
+		push_error("EnemyBase: 找不到 AnimatedSprite2D 节点,补间形变将静默失效(节点名 = %s)"
+				% name)
+	squash.setup(anim, SquashStretch.Profile.ENEMY)
 
 func _setup_contact_area() -> void:
 	var area := Area2D.new()
@@ -89,8 +106,28 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
-	# 远处睡眠优化:距玩家超唤醒半径且落地静止 → 只播睡,跳过重力/滑行/水/移动(省 CPU)
-	if _is_far_sleeping():
+	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → 回中性,
+	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
+	# ★ 睡眠那一支**归零 `_pre_move_vy` 本身**(就在下面的 early return 里),不是"临时喂个 0":
+	#   ① 睡眠**期间**:那一支不跑 move_and_slide ⇒ 缓存永不刷新,是"上一次非睡眠帧"的陈旧值
+	#      (可达路径:垂直击退把鸟打飞、落地那一帧的落速被写进去;水平击退会被地面摩擦自愈,
+	#      垂直不会)⇒ 落地项每帧重触发,而指数恢复每帧只回 `1 - exp(-9/60) ≈ 14%`
+	#      ⇒ 定点 ≈ -6.19k(任何 k ≳ 0.16 都被钳到 -1)⇒ 睡着的远鸟**永久**保持 (1.10, 0.90)。
+	#   ② ★ **醒来首帧**(2026-09-20 审查补)才是那个真正的洞:`_is_far_sleeping()` 那时已是 false
+	#      ⇒ 走的是下面**醒着**的那条路,拿到 "`is_on_floor()==true` + 把它**送进睡眠的那次落速**"
+	#      (落地帧把落速写进缓存,而它此后一直陈旧)⇒ 同一个满幅落地项在**醒来那一刻**重触发,
+	#      `_impulse` 压向 -1.0。后果:鸟按**几秒前**那次落地满幅挤压;更糟的是 TAKE_OFF 的
+	#      `+0.80` 加进已饱和的负值 ⇒ **起飞拉伸被抵消甚至反向成压扁**(本特性的招牌动作没了)。
+	#      ⇒ 只把"喂给 tick 的值"改 0 是**半个修法**(漏掉醒来首帧),必须**清零缓存本身**。
+	#   睡眠态 vel_y 本就该是 0(地面不施重力),这个 0 是事实不是特判。
+	# ★ 玩家侧倒地早退是同一契约的另一处落点,形态**相同**(那边也是 `_pre_move_vy = 0.0`,
+	#   见 player.gd / spec §2.4):两处的契约都不是"缓存里存的是什么",而是 **tick() 消费什么**
+	#   —— 它只认"地面真正吸收掉的那个下坠速度",缓存陈旧就必须清。故两个宿主读法一致。
+	var sleeping := _is_far_sleeping()
+	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
+	if sleeping:
+		# 醒来首帧那一半的解法(见上):清的是**缓存**,不是这一次调用的实参。
+		_pre_move_vy = 0.0
 		_ai(delta)
 		_wrap()
 		return
@@ -132,6 +169,19 @@ func _physics_process(delta: float) -> void:
 	# (地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
+	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
+	# ★ 敌人侧**不做任何过滤**,就是裸值 —— 这是实测后的裁定(spec §2.4):
+	#   ⚠ **这些读数的出处**:下面那几个数(`239/1350` 帧、`13 次真实落水挤压`、`1.0861`)
+	#   是 2026-09-20 由一个**临时探针**量出来的,该探针**已删除、此后从未重测** ——
+	#   本注释是它们**唯一**的留存处,别把它们当"随时可以复跑出来的当前事实"引用。
+	#   裁定本身不依赖重测(方向不随几何变化:过滤净有害),故按原样保留。
+	#   `_in_water ∧ is_on_floor()` 在敌人身上**确实会重叠**(239/1350 帧;玩家侧是 0,
+	#   因为敌人的身体停在池底上方 0.02~0.18px,探针落进水格而玩家落在支撑格),
+	#   但过滤想防的幽灵**结构上不可达**(浮力钳在 -260/+160,下沉侧 160 < 阈值 220),
+	#   而过滤会**吃掉 13 次真实落水挤压**(有过滤 max scale.x=1.0000,去掉后 1.0861;
+	#   挤压方向是 x>1 ⇒ 看的是**最大** scale.x)。
+	#   ⇒ 净有害。敌人不爬梯,没有玩家侧那条真违规可类比。
+	_pre_move_vy = velocity.y
 	move_and_slide()
 	_wrap()
 
@@ -158,6 +208,7 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, se
 	# 死亡:击退不折入,尸体与生前一致——knock_velocity 继续独立衰减,由 _physics_process 统一结算。
 	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
 	_hit_flash_time = EnemyParams.shared.hit_flash
+	squash.impulse(SquashStretch.Impulse.HURT)
 
 # 尸体专用:只施加击退(爆炸=设独立向量、枪击=叠加速度),不扣血、不触发死亡/白闪。
 func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: bool) -> void:
@@ -286,6 +337,13 @@ func _set_facing(facing_left: bool) -> void:
 func _set_state(s: int) -> void:
 	state = s
 	_state_timer = 0.0
+	_on_state_entered(s)
+
+
+# 状态进入虚钩:基类默认空实现。三个子类各有自己的 `enum State`(JumpBird 根本没有
+# TAKE_OFF),故基类**不能**硬编码状态名 —— 只能往下派发,由子类映射。
+func _on_state_entered(_s: int) -> void:
+	pass
 
 
 func _anim_duration(name: String) -> float:
