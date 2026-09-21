@@ -388,3 +388,12 @@ func _water_swim_dir() -> Vector2:
 # 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
 func _is_asleep() -> bool:
 	return state == State.SLEEP
+
+
+# 状态进入 → 形变事件。enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }
+func _on_state_entered(s: int) -> void:
+	match s:
+		State.TAKE_OFF:
+			squash.impulse(SquashStretch.Impulse.TAKE_OFF)
+		State.CHARGE:
+			squash.impulse(SquashStretch.Impulse.CHARGE)
