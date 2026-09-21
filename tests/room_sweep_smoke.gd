@@ -43,6 +43,7 @@ func _initialize() -> void:
 	_check_team_startup_contract()
 	_check_team_spawn_guard()
 	_check_worker_pid_tracking()
+	_check_join_refusal_guards()
 	_finish()
 
 
@@ -442,6 +443,37 @@ func _check_worker_pid_tracking() -> void:
 	if L.pid_of(7770) != 0:
 		_fail = "★ 端口归还后未清 pid(房会被判成「还在」→ 永久占着列表位与端口)"
 		return
+
+
+# ── 2026-09-21(「看得见进不去」批)新增:三条 join 的**拒绝守卫与文案** ──
+# ★ 为什么是源码级:文案是**发给玩家看的字符串**,而探针里没有对端 ——
+#   `NetBus.reply` 在 `is_peer_live(caller)` 为假时**静默跳过**(见 NetBus.reply 的注释),
+#   所以那句话在探针里根本观测不到。行为面(调用方没被 append 进 players)由
+#   `tests/lobby_visibility_probe.tscn` 相①/②/③ 断言,这里断言的是**那句话本身**。
+# ★ 为什么文案值得一条断言:1v1 原先对"对局进行中"说的是「房间已满」—— 那是假话,而且会命中
+#   大厅页 `_on_server_message` 的**自动刷新**分支(那条只认旧文案)。改文案 = 静默改行为。
+# ★ 另钉一条反向:三条守卫必须**用"这一局在进行中"判**(started / in_match),不许退化成
+#   "房满 / 人数"之类的替代判据 —— 后者在"房里只剩 1 人"时放行,正是本批要堵的那档。
+func _check_join_refusal_guards() -> void:
+	if _fail != "":
+		return
+	var code := ScanUtil.code_only(ScanUtil.read("res://server/lobby_rooms.gd"))
+	var cases := [
+		["join_room", "if room.started:"],
+		["royale_join", "if rr.in_match:"],
+		["team_join", "if tr.in_match:"],
+	]
+	for c in cases:
+		var body := ScanUtil.func_body(code, str(c[0]))
+		if body.is_empty():
+			_fail = "找不到 %s 的函数体" % c[0]
+			return
+		if not body.contains(c[1]):
+			_fail = "★ %s 缺少「对局中即拒绝」的守卫(%s)—— 对局中的房会被第三人加入" % [c[0], c[1]]
+			return
+		if not body.contains('"该房间的对局已进行中,无法加入"'):
+			_fail = "%s 的拒绝文案不是三模式统一的那一句" % c[0]
+			return
 
 
 func _finish() -> void:

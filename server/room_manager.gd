@@ -243,9 +243,15 @@ func team_start(caller: int) -> void:
 
 # ── 配对完成 → 拉起对局 worker 并让两端转连 ──
 func _start_match(room: LobbyRooms.Room) -> void:
-	# 先置 started:配对瞬间任何一方掉线都走 on_peer_left 的「started 即关房」分支,
-	# 不会留下 1/2 幽灵房;同时也挡住第三人在这 0.3s 窗口误入重复拉起 worker。
+	# 先置 started:同刻挡住第三人在这 0.3s 窗口误入(`join_room` 的 started 守卫)重复拉起 worker。
+	# ★ 2026-09-21 订正:本条原先还写着「配对瞬间任何一方掉线都走 on_peer_left 的 started 即关房
+	#   分支」—— 那条分支**已删除**(对局中的房必须活到对局结束,否则列表里再也看不见它,见
+	#   LobbyRooms.on_peer_left 的注释)。掉线不再关房;回收改由回收梯按 **worker 进程活性**判
+	#   (设计 §2.4)。★ 故下面两处 `if not lobby.rooms.has(...)` 今天**实际已够不着**,保留作防御。
 	room.started = true
+	# ★ 开局那一刻把名单冻进房记录:成员转连 worker 后会陆续断开大厅,靠 players/_peer_names
+	#   渲染的对局中列表会退化成"玩家/玩家"(见 LobbyRooms.freeze_roster 的注释)。
+	lobby.freeze_roster(room)
 	var port := _launcher.pick_port()
 	if port < 0:
 		# 起不来局:房间作废,通知双方(不再滞留)
@@ -265,6 +271,10 @@ func _start_match(room: LobbyRooms.Room) -> void:
 		NetBus.reply(room.players[0], "server_message", "无法启动对局")
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
+	# ★ spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
+	#   那张端口→pid 表)。★ 位置不能挪到 spawn 之前:拉起失败那一刻 pid 还是 0,
+	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
+	room.worker_pid = _launcher.pid_of(port)
 	# 稍等 worker 完成 bind,再通知两端转连(worker 很快,300ms 足够)
 	await get_tree().create_timer(0.3).timeout
 	if not lobby.rooms.has(room.code):   # 0.3s 内已有玩家掉线触发关房 → 别再给幽灵房发 go_match

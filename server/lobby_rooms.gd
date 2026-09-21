@@ -32,12 +32,19 @@ var launcher: WorkerLauncher = null
 
 class Room:
 	var code: String = ""
-	var players: Array[int] = []          # peer ids
+	var players: Array[int] = []          # peer ids(**只表示"此刻还连在大厅这个房里的人"**)
 	var player_role: Dictionary = {}      # peer id -> 1/2
-	var started := false                 # 已拉起 worker/已配对:拒绝再次加入,一方掉线即整房作废
+	var started := false                 # 已拉起 worker/已配对:拒绝再次加入
 	var worker_port: int = 0              # 本房间拉起的 worker 用的 UDP 端口(关房时归还)
+	# worker 进程的 pid(拉起成功后由 RoomManager 登记)。★ 它是"这一局还在不在"的唯一精确判据:
+	# 三种模式的 worker 都在对局结束时自己退;0 = 还没登记(拉起中)→ 一律判**没结束**。
+	var worker_pid: int = 0
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超时清理用)
 	var tokens: Dictionary = {}          # peer_id -> 一次性会话令牌(断线重连用;开局时按 role 下发)
+	# 开局那一刻冻结的名单 [{role:int, name:String}]。★ 成员转连 worker 后会陆续断开大厅:
+	# `players` 会空掉、`_peer_names` 会被擦掉 —— 对局中房间的列表渲染**只能**读这一份
+	# (否则第三人看到的是"玩家, 玩家")。冻结点在 RoomManager 的四处开局。
+	var roster: Array = []
 
 var rooms: Dictionary = {}   # code -> Room
 var _peer_names: Dictionary = {}   # peer id -> 昵称(客户端连上大厅时上报,列表/建房展示)
@@ -139,21 +146,51 @@ func _exit_tree() -> void:
 func on_lobby_name(caller: int, name: String) -> void:
 	_peer_names[caller] = name if not name.is_empty() else "Anon"
 
-# 刷新房间列表:回当前所有非空房间(号码 + 人数 + 在房玩家昵称;人数≥2 为已满,客户端据此禁用/排序)。
-func on_list_rooms(caller: int) -> void:
+# 房间列表的**纯构造**(不含发送)。★ 抽出来是为了可测:探针没有对端,`NetBus.reply` 会静默
+# 跳过 → 列表内容**观测不到**(与"拒绝为什么看副作用"同一个理由)。
+# ★ `started`(= 对局中)的房**照列**:第三人要看得见它(用户裁定),而"进不去"由 `join_room`
+#   那一侧的 `started` 守卫保证 —— 可见性与拒绝入房是同一件事的两半,缺一条就是"看不见"或"进得去"。
+# ★ 对局中那一行的名单取**冻结的那份**:`players` 已空、`_peer_names` 已擦,读它们只会得到
+#   "玩家/玩家"这种退化读数。
+func room_list_payload() -> Array:
 	var arr: Array = []
 	for code in rooms:
 		var room: Room = rooms[code]
-		if room.players.is_empty():
+		if room.players.is_empty() and not room.started:
 			continue
 		var names: Array = []
-		for peer_id in room.players:
-			names.append(_peer_names.get(peer_id, "玩家"))
-		arr.append({"code": code, "players": room.players.size(), "names": names})
-	NetBus.reply(caller, "room_list", arr)
+		var count := 0
+		if room.started:
+			for e in room.roster:
+				names.append(str((e as Dictionary).get("name", "玩家")))
+			count = room.roster.size()
+		else:
+			for peer_id in room.players:
+				names.append(_peer_names.get(peer_id, "玩家"))
+			count = room.players.size()
+		arr.append({"code": code, "players": count, "names": names, "in_match": room.started})
+	return arr
+
+
+# 刷新房间列表:回当前所有非空房间(号码 + 人数 + 在房玩家昵称;人数≥2 为已满,客户端据此禁用/排序)。
+func on_list_rooms(caller: int) -> void:
+	NetBus.reply(caller, "room_list", room_list_payload())
 
 func _generate_code() -> String:
 	return "%04d" % (randi() % 10000)
+
+# 把"开局那一刻在房里的名单"冻进房记录(role + 昵称快照)。
+# ★ 谁调:RoomManager 在**每一处开局**调一次(`_start_match` / `royale_start` /
+#   `royale_start_ai` / `team_start`)—— 那是"这一局有哪些人"唯一确定的时刻。
+# ★ 为什么是快照而不是"读时现算":成员转连 worker 时会**陆续断开大厅**(`on_peer_left`),
+#   而那时 `players` 会被清空、`_peer_names` 会被擦掉;对局中的房要在列表里显示名单,
+#   就只能靠这份冻结的副本。名单错了不报错,只会让第三人看到"玩家, 玩家"。
+func freeze_roster(room) -> void:
+	var out: Array = []
+	for pid in room.players:
+		out.append({"role": int(room.player_role.get(pid, 0)),
+				"name": str(_peer_names.get(pid, "玩家"))})
+	room.roster = out
 
 # 一次性会话令牌(16 位 hex)。★ 旧 Godot 的 `randi()` 是 32 位,拼两次取 16 hex 得 64 位熵 ——
 # 够防"误顶替"(同网段知道房号的人猜不中),**不防**恶意爆破(本设计不承担反作弊,见 spec §2)。
@@ -218,8 +255,11 @@ func join_room(caller: int, code: String) -> void:
 		return
 	var room: Room = rooms[code]
 	if room.started:
-		# 已开局(worker 已拉起):双方已转连对局,列表残留期间拒绝第三人误入
-		NetBus.reply(caller, "server_message", "房间已满")
+		# 对局中(worker 已拉起):成员已转连对局,**照列在列表里但进不去**。
+		# ★ 文案不能再说"房间已满":房里可能只剩 1 人在线(对手掉线 / 自己还没转连),那是假话,
+		#   而且「房间已满」会命中大厅页 `matchmaking._on_server_message` 的**自动刷新**分支 ——
+		#   刷新对这一个房毫无意义(它本来就该一直在列表里)。三模式文案**逐字统一**。
+		NetBus.reply(caller, "server_message", "该房间的对局已进行中,无法加入")
 		return
 	if room.players.size() >= 2:
 		NetBus.reply(caller, "server_message", "房间已满")
@@ -247,18 +287,17 @@ func on_peer_left(peer_id: int) -> void:
 			continue
 		room.players.erase(peer_id)
 		room.player_role.erase(peer_id)
-		# 关房条件:空房,或已开局(worker 已拉起)后任一方掉线。
-		# 开局后双方会相继转连 worker 断开大厅;若只走掉一方(如房主在配对瞬间掉线),
-		# 旧逻辑会留下 1/2 幽灵房:对局实际已死,房却常驻列表可被反复加入、重复拉起 worker。
-		# 改为:started 房一方掉线即整房作废,防幽灵房/连环僵尸 worker。
-		if room.players.is_empty() or room.started:
-			# 开局后仍留在房内的一方(还没收到 go_match/还没转连):告知并放走,别让它干等
-			if not room.players.is_empty():
-				for survivor in room.players:
-					# 判在线:本函数的调用方就是"有人刚断开",留下的这一方可能也在同批断开
-					# (双方收到 go_match 后一起断)——同步发给它会报 channel 错误(见 is_peer_online)
-					if is_peer_online(survivor):
-						NetBus.reply(survivor, "server_message", "配对已取消(对手离开),请刷新列表")
+		# 关房条件:**只有"还没开局"的房才因空而关**。
+		# ★★ 对局中(`started`)的房**不拆**(2026-09-21):客户端转连 worker 时会**全部**断开
+		#   大厅,拆了它就再也不会出现在列表里 —— "看得见"与"回局"两件事都要求它活到对局结束。
+		#   回收改由 `RoomManager._reclaim_finished_matches` 按"**worker 进程还在不在**"判(精确)。
+		# ★ 这里**不再发**"配对已取消(对手离开)"那句提示:房没有被取消,那句话会是假的。
+		#   真出问题(对手根本没连上 worker)由客户端自己的 12s 转连兜底 / 25s claim 兜底收尾。
+		# ★ 代价照实登记(见设计 §2.4):双方都在 go_match 后立刻消失时,那一个 worker 与那一个
+		#   端口会白占到 2h 超龄清扫为止;玩家不会卡住。
+		if room.started:
+			continue
+		if room.players.is_empty():
 			teardown_room(room)   # 延迟归还端口(worker 会自己退;见 WORKER_PORT_REUSE_DELAY)
 	# 大乱斗房:掉线即离房(空房关闭;房主掉线转移;开局后成员转连 worker 断开大厅属正常流转)
 	for rcode in royale_rooms.keys():
@@ -411,7 +450,8 @@ func royale_join(caller: int, code: String, invite: String) -> void:
 		return
 	var rr: RoyaleRoom = royale_rooms[code]
 	if rr.in_match:
-		NetBus.reply(caller, "server_message", "对局已开始")
+		# 同 join_room:对局中照列但进不去;文案三模式逐字统一(见那里为什么不能说"房间已满")。
+		NetBus.reply(caller, "server_message", "该房间的对局已进行中,无法加入")
 		return
 	if rr.players.size() >= rr.max_players:
 		NetBus.reply(caller, "server_message", "房间已满")
@@ -558,7 +598,8 @@ func team_join(caller: int, code: String, invite: String) -> void:
 		return
 	var tr: TeamRoom = team_rooms[code]
 	if tr.in_match:
-		NetBus.reply(caller, "server_message", "对局已开始")
+		# 同 join_room / royale_join:文案三模式逐字统一。
+		NetBus.reply(caller, "server_message", "该房间的对局已进行中,无法加入")
 		return
 	if tr.players.size() >= TEAM_ROLES:
 		NetBus.reply(caller, "server_message", "房间已满(6 人)")
