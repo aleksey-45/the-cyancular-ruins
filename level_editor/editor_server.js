@@ -276,11 +276,44 @@ function assertWriteTargetInside(mapsDir, target, name) {
 //   任何持有者都给出同一个错误码 —— 这正是"重试"而不是"只在自家读路径上想办法"
 //   的理由(改自家读路径只能消掉本进程那一半持有者)。
 // ★ 只重试这三码,其余(`EIO`/`ENOENT`/`ENOSPC`/`EINVAL`…)一律**立即抛**:
-//   重试一个"重试也没用"的错误码只是让用户多等 300ms 才看到同一条错误信息。
+//   重试一个"重试也没用"的错误码只是让用户多等一整套退避(现在最坏 ~510ms)才看到同一条错误信息。
 const RENAME_RETRY_CODES = ['EPERM', 'EBUSY', 'EACCES'];
-// 总尝试次数(含第一次)。5 次 × 退避 20/40/80/160ms = 最坏多等 300ms。
-const RENAME_MAX_ATTEMPTS = 5;
+// ── 额度与退避(待修 1 的复审实测,见下面那张表;别凭感觉改这两个数)──
+// ★★ 为什么是 12 而不是 5:出厂那一版(5 次 / 退避 20-160ms)是**照着论证写反了**的 ——
+//    选型论证里"异步退避第 9 次成功"那个第 9 次,本身就**落在出厂额度 5 之外**。
+//    复审用真 HTTP 服务器 + 真 61KB 地图(`factory1v1.cyrm`)+ 持续 GET 该图的读者 +
+//    20 次连续 PUT 复跑,得到(失败数 / 20):
+//
+//      | 配置                        | 20 次 PUT 的失败数        |
+//      |-----------------------------|---------------------------|
+//      | 出厂(5 次 / 20-160ms)      | 6                     ★   |
+//      | 去掉重试(MAX=1)的对照      | 14                        |
+//      | 20 次 / 固定 50ms           | 0                     ★   |
+//
+//    本机复跑(同一手段,见 task-3-report.md 的复跑表;失败**全部**是 EPERM):
+//      · 读者紧循环(周期 ≈1.5ms,比复审那台更狠)5 轮 × 20 次:
+//        出厂 **34/100**、本档 **6/100**、12 次×固定 50ms 6/100、20 次×固定 50ms 1/100。
+//      · 读者 ≈50ms 一轮:出厂 0/60、本档 0/60(普通场景本来就已修好)。
+//    ★ 诚实边界两条,别把结论读过头:
+//      ① 复审的 HTTP 组**可能被相位锁定**(退避是 2 的幂、读者 GET 周期约 10.5ms,近似整数倍
+//         会让每次尝试落在同一相位 ⇒ 可能**高估**真实失败率);进程内那组(2MiB 图 + 逐块
+//         read()、块间让出事件循环)不受此影响,结论一致 —— 故"预算不够宽"这个判断是稳的。
+//      ② 本档**不是 0 失败**:在最狠的那个读者节奏下仍有 ~6% 残留(20 次 PUT 里约 1 次),
+//         而 20 次×50ms 是 1/100。残留的根因是"读者几乎全程攥着 fd"这种极端形态,
+//         真机上是"载入后马上保存"那一类**瞬时**持有 —— 出厂参数在那档就已 0/60。
+//         想再压只能继续加额度(超出 dispatch 给的 10~12 上限),没做。
+// ★ 退避**封顶在 50ms**(不是继续翻倍):12 次若继续翻倍,末次退避就到 20s、最坏总等待
+//   两分钟量级 —— 那是用户会以为"卡死了"的档。封顶之后最坏总等待
+//   = 20+40+9×50 ≈ **510ms**,仍是人的等待阈值以内。
+//   ★ 别以为"封顶会拖累命中率":实测 12 次×固定 50ms(6/100)与本档 6/100 **打平** ——
+//     封顶拿回的是"总等待有上界",没拿命中率去换。
+// ★ **固有代价(照实说)**:目标**永久**不可写时(只读属性文件、被别人用独占句柄长期打开),
+//   用户现在要多等这 ~510ms 才看到同一条 500。那正是"重试 EPERM"的必然成本,不是缺陷;
+//   不加额度的代价则是"最普通的前端动作(载入后马上保存)常态性 500",两害相权取此。
+const RENAME_MAX_ATTEMPTS = 12;
 const RENAME_RETRY_BASE_MS = 20;
+// 退避上限。理由见上(封顶而不是继续翻倍)。
+const RENAME_RETRY_MAX_MS = 50;
 
 function defaultSleep(ms) {
   return new Promise(function (r) { setTimeout(r, ms); });
@@ -314,8 +347,10 @@ function renameWithRetry(tmpPath, target, renameFn, sleepFn) {
         if (attempts >= RENAME_MAX_ATTEMPTS) throw e;               // 用完额度 → 照原样抛
         // ★ Promise.resolve(...) 兜住"注入一个同步的 sleepFn"(测试里就是一个空函数):
         //   注入契约因此是"返回什么都可以",同步/异步实现都走得通。
-        return Promise.resolve(sleep(RENAME_RETRY_BASE_MS * Math.pow(2, attempts - 1)))
-          .then(attempt);
+        // ★ 退避 = min(上限, base × 2^(n-1)) = 20/40/50/50/…(上限的理由见常量那一段)。
+        const backoff = Math.min(RENAME_RETRY_MAX_MS,
+                                 RENAME_RETRY_BASE_MS * Math.pow(2, attempts - 1));
+        return Promise.resolve(sleep(backoff)).then(attempt);
       });
   }
   return attempt();
@@ -604,7 +639,8 @@ module.exports = {
   WRITE_CONTENT_TYPE: WRITE_CONTENT_TYPE, writeGuardReject: writeGuardReject,
   readBody: readBody, rejectWrite: rejectWrite,
   RENAME_RETRY_CODES: RENAME_RETRY_CODES, RENAME_MAX_ATTEMPTS: RENAME_MAX_ATTEMPTS,
-  RENAME_RETRY_BASE_MS: RENAME_RETRY_BASE_MS, renameWithRetry: renameWithRetry,
+  RENAME_RETRY_BASE_MS: RENAME_RETRY_BASE_MS, RENAME_RETRY_MAX_MS: RENAME_RETRY_MAX_MS,
+  renameWithRetry: renameWithRetry,
   assertWriteTargetInside: assertWriteTargetInside, writeMapAtomic: writeMapAtomic,
   receiveMapFile: receiveMapFile,
   createServer: createServer, startServer: startServer,

@@ -735,6 +735,9 @@ async function runAllPhases() {
   //   ⑦/⑧/⑨ 错位。本相位是 Task 1~3 之后的一次定向修复带来的,故排在最后。
   // ★ 本相位的断言文本用「待修 1」前缀,与相位 ⑤ 的那批(静态读失败)是**两次不同的
   //   修复 dispatch 的同一个编号**——同两个 ⑤ 并存一样是有意为之,别去统一它。
+  //   ★ 同款:「待修 2」在本文件里也已经被 listMaps 那条用过一次(相位 ⑥),而**本文的**
+  //     待修 2 是"默认退避必须让出事件循环"(下面 ①c 那两条,前缀带「待修 2:」)。
+  //     前缀是**按 dispatch 编号**的、不唯一,判据要看断言文本的内容,别按前缀 grep。
   // ★ 为什么**不用活的读写竞态**测这条:它必然飘 —— 要掐到"读者正攥着句柄"的那一瞬
   //   (实测:读者在,21 次尝试全 500;读者走,紧接着就 200),拿它当断言就是把
   //   "机器负载/调度"写进了判据。这里改成把 rename **注入**进去,于是
@@ -765,8 +768,16 @@ async function runAllPhases() {
        srv.RENAME_RETRY_CODES.indexOf('EBUSY') >= 0 &&
        srv.RENAME_RETRY_CODES.indexOf('EACCES') >= 0,
        '★ 待修 1:重试名单含 EPERM / EBUSY / EACCES(实得 ' + JSON.stringify(srv.RENAME_RETRY_CODES) + ')');
-    ok(srv.RENAME_MAX_ATTEMPTS >= 3 && srv.RENAME_MAX_ATTEMPTS <= 5,
-       '★ 待修 1:总尝试次数在 3~5 之间(实得 ' + srv.RENAME_MAX_ATTEMPTS + ')');
+    // ★★ 范围随待修 1 的复审改成 10~12(原为 3~5):出厂那版 5 次**不够宽** ——
+    //    复审(真 HTTP + 真 61KB 地图 + 持续 GET 读者 + 20 次 PUT)实测出厂参数 6/20 失败、
+    //    掉重试的对照 14/20、20 次 × 固定 50ms 则 0/20。下界 10 是"至少比出厂翻一倍"、
+    //    上界 12 是"最坏总等待仍在半秒量级" —— 两边都不是凭感觉:表在 editor_server.js
+    //    那两个常量的注释里。★ 这条仍只判**范围**:具体值由断言 #7(用满 N 次)参数化跟上。
+    ok(srv.RENAME_MAX_ATTEMPTS >= 10 && srv.RENAME_MAX_ATTEMPTS <= 12,
+       '★ 待修 1:总尝试次数在 10~12 之间(实得 ' + srv.RENAME_MAX_ATTEMPTS + ')');
+    // ★ 退避上限:少了它,额度一放宽就会退回"翻倍到 160ms"那套稀疏尝试。
+    ok(srv.RENAME_RETRY_MAX_MS > 0 && srv.RENAME_RETRY_MAX_MS <= 100,
+       '★ 待修 1:退避封顶在 100ms 以内(实得 ' + srv.RENAME_RETRY_MAX_MS + 'ms)');
 
     // ① 前两次 EPERM、第三次成功 → 成功,且**恰好**调用了 3 次。
     {
@@ -801,6 +812,50 @@ async function runAllPhases() {
          ', err=' + (err === null ? '无' : errText(err)) + ')');
     }
 
+    // ①c ★★ 默认退避**必须真的让出事件循环**(待修 2 —— 这套修复赖以成立的那条缝)。
+    //    ★ 为什么必须补这条:本相位此前**每一条**注入调用都传了 noSleep,而相位 ⑦ 的真实
+    //      PUT 永远第一次就成功、从不走到 sleep ⇒ 把默认退避换成**同步等待**,整套测试
+    //      (145 通过 / 0 失败 / SERVER SMOKE OK)照样全绿 —— 而同步退避对这个 bug
+    //      **结构上无效**:它冻住的正是那个"必须把 fd 关掉"的读流(实测:同步退避 21 次
+    //      尝试期内读者前进 0 字节、全部失败,见 editor_server.js 里 renameWithRetry 的注释)。
+    //      也就是"修复静默失效"这件事,此前没有任何断言拦得住。
+    //    ★ 判据:注入「第一次 EPERM、之后成功」的 renameFn,**刻意不传 sleepFn**
+    //      (让默认退避真跑),同时在旁路开一个自续的 `setImmediate` 计数器 —— 事件循环
+    //      每转一圈 +1;重试前后各读一次,断言**重试窗口内它确实前进过**。
+    //      · 默认实现(`setTimeout`):睡必须等一个定时器相位 ⇒ 事件循环一定转过 ⇒ 计数 > 0。
+    //      · `Atomics.wait` 实现:整个重试(含那次"睡")全在微任务里跑完,一次宏任务都
+    //        不让出 ⇒ 计数**恰好为 0** ⇒ 红。(实测变异:见 task-3-report.md。)
+    //    ★ 用 setImmediate 而不是 setTimeout(0):后者受 Windows 15.6ms 定时器粒度影响、
+    //      且一个窗口里只烧一次;setImmediate 每个循环回合都烧,信号更硬、不受粒度影响。
+    {
+      let loopTicks = 0;
+      let ticking = true;
+      (function arm() {
+        setImmediate(function () { if (!ticking) return; loopTicks++; arm(); });
+      })();
+      let calls = 0;
+      const oneEperm = function () {
+        calls++;
+        if (calls <= 1) throw eperm();
+        return undefined;
+      };
+      let err = null;
+      const ticksBefore = loopTicks;
+      try {
+        // ★ 只有一个实参:走**默认** sleep(生产那条路径)。
+        await srv.renameWithRetry('t', 'g', oneEperm);
+      } catch (e) { err = e; }
+      const ticksDuring = loopTicks - ticksBefore;
+      ticking = false;
+      ok(err === null && calls === 2,
+         '★ 待修 2:默认退避(不注入 sleepFn)下 EPERM 一次后第二次成功(实得 calls=' + calls +
+         ', err=' + (err === null ? '无' : errText(err)) + ')');
+      ok(ticksDuring > 0,
+         '★★ 待修 2:重试期间**事件循环确实前进过** —— 默认退避是异步让出,不是同步等待' +
+         '(实得 ' + ticksDuring + ' 个循环回合;为 0 = 换成了 Atomics.wait 那类同步 sleep,' +
+         '整个修复结构上失效)');
+    }
+
     // ② 一直 EPERM → 抛出,且**临时文件已清理**、**原文件逐字节未变**。
     //    ★ 走 writeMapAtomic(不是 renameWithRetry):"临时文件被清掉"这条清理逻辑
     //      住在 writeMapAtomic 的 catch 里,只测 renameWithRetry 覆盖不到它。
@@ -821,7 +876,7 @@ async function runAllPhases() {
     }
 
     // ③ 不在重试名单里的码(EIO / ENOENT)→ **立即抛,一次都不重试**。
-    //    ★ 这条防的是"图省事写成无条件重试":那会让真正的磁盘错误也多等 300ms 才报,
+    //    ★ 这条防的是"图省事写成无条件重试":那会让真正的磁盘错误也多等一整套退避才报,
     //      而且掩盖掉"错在哪"。
     {
       const cases = ['EIO', 'ENOENT'];
