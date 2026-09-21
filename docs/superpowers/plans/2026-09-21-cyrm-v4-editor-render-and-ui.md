@@ -562,7 +562,7 @@ EOF
 **Interfaces:**
 - Consumes:`globalThis.Core`(`SUB_PER_CELL` / `LAYER_*` / `texOf`)、`globalThis.Tint`(`createTileCache` / `TILE_PX` / `BLOCK_PX`)
 - Produces(`globalThis.Render`):
-  - 常量:`MIN_ZOOM=1`、`MAX_ZOOM=64`、`ZOOM_THRESHOLD=8`、`THUMB_PX=2`、`THUMB_MAX_BYTES`、`DEFAULT_BUDGET_MS=8`、`DEFAULT_CELL_MAX=8192`、`DIRTY_RECT_MAX`
+  - 常量:`MIN_ZOOM=1`、`MAX_ZOOM=64`、`ZOOM_THRESHOLD=8`、`THUMB_PX=2`、`THUMB_MAX_BYTES`、`DEFAULT_BUDGET_MS=8`、`DEFAULT_CELL_MAX=8192`
   - `wrapIdx(v, n) -> Number`(对负数也正确)
   - `quadOf(v) -> Number`(恒在 `0..SUB-1`)
   - `layerArray(map, L) -> TypedArray|null`(缺席层 → `null`)
@@ -1164,7 +1164,15 @@ globalThis.Render = (function () {
     var x = Math.floor(isFinite(c.x) ? c.x : 0);
     var y = Math.floor(isFinite(c.y) ? c.y : 0);
     var lo = Math.floor((sp.n - 1) / 2), hi = Math.ceil((sp.n - 1) / 2);
-    return { unit: sp.unit, x0: x - lo, y0: y - lo, x1: x + hi, y1: y + hi };
+    // ★★ unit 必须描述 x0..x1 **所在的**坐标空间 —— 它们取自 `hit`(`hit.x` 是格号还是子格号),
+    //    而**不是** `size` 那一侧。稳态下两者相等(UI 的 `hitOf` 用 `brushSpan(size).unit` 定 kind,
+    //    且只在那里定一次),但一旦不等,按 size 标注就会让 Task 5 的 `regionCells` 把子格坐标
+    //    当成格号去 ×4 ⇒ 整支画笔偏到别处(即下面那条注释警告的"错 4 倍")。
+    //    Task 5 的 rect 分支就是这么标它的 region 的(`unit: from.kind`,同样取自 hit)。
+    //    (2026-09-21:初版这里写的是 `unit: sp.unit`,相位 ⑧ 的
+    //     `brushRegion({kind:'sub',…}, 1|3)` 两条正是为它写的 —— 测试是对的,本行原先是缺陷。)
+    var unit = (c.kind === 'cell' || c.kind === 'sub') ? c.kind : sp.unit;
+    return { unit: unit, x0: x - lo, y0: y - lo, x1: x + hi, y1: y + hi };
   }
   function snapHit(h) {
     if (h.kind === 'sub') return { kind: 'sub', x: Math.floor(h.X), y: Math.floor(h.Y) };
