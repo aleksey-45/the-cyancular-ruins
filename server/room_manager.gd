@@ -370,10 +370,15 @@ func _sweep_stale_rooms() -> void:
 		#   几分钟内就开局),而正确的修法是让宽限读**本局实际时长**——该值只存在于 worker 的
 		#   RoyaleHost 里,sweep 手里没有,要修得先把实际时长回传/登记到房上,属另行评估的范围。
 		# 等待中(in_match=false)的房不占端口、杀不到任何东西,仍按裸 MAX_ROOM_AGE 清,无需宽限。
-		# 1v1 分支不享受同样宽限:"started 房一方掉线即整房作废"(_start_match/on_peer_left)堵住的
-		# 是**泄漏**,不是**竞态**——同一个开局转连窗口在 1v1 同样成立:started 房在 _start_match 的
-		# await 与客户端转连期间仍持有端口,却按裸 MAX_ROOM_AGE 判超龄,同样可能被一次 tick 连 worker
-		# 一起杀掉。本次不动 1v1 是**刻意的范围裁剪**(照实登记,而非已修好);若要同样收紧需另行评估。
+		# ★ 1v1 分支**刻意不享受**同样宽限。2026-09-21 订正本条的**理由**(行为一字未动):
+		#   旧理由引的是「started 房一方掉线即整房作废」(_start_match / on_peer_left 那条 started 分支)
+		#   —— 那条分支**已删除**,对局中的 1v1 房现在活到 worker 退出、回收改按 worker 进程活性判。
+		#   即 1v1 与另两个模式**在房间寿命上已经同款**,而宽限**仍然只有它没有** —— 这是一条
+		#   **照实登记的既有不对称**,不是"因为不会发生所以不必加"。
+		#   ★ 不收紧的**实际**依据是**量级**:触发它得先满足"房龄 ≥2h",而一局只有几分钟(正常房
+		#   建房后几分钟内就开局)。但那不等于那扇窗不存在:同一个"开局转连窗口"在 1v1 同样成立 ——
+		#   started 房在 `_start_match` 的 await 与客户端转连期间仍持有端口,一个房龄恰好 ≥2h 的房
+		#   会在那次 tick 被连 worker 一起杀掉。本批**刻意不改**(范围裁剪,而非已修好);要收紧需另行评估。
 		var in_match_grace := (SWEEP_INTERVAL + RoyaleHost.MATCH_TIME) if rr.in_match else 0.0
 		if now - rr.created_at > MAX_ROOM_AGE + in_match_grace:
 			stale_royale.append(rr)

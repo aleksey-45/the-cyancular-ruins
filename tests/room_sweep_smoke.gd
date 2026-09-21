@@ -18,6 +18,25 @@ extends SceneTree
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
+# ★★ 2026-09-21(「看得见进不去」批 Task 6 补):**本文件每个 `_check_*` 都必须跑到尾**。
+#   为什么需要:本文件的 `_check_*` 全是"`_fail` 非空就早退"的写法,而 **GDScript 的脚本错误
+#   (`Invalid call. Nonexistent function …` 这类)不给 `_fail` 赋值** —— 它只让**出错的那个
+#   函数当场结束**,调用方 `_initialize` 照常往下走,`_finish()` 于是打出 OK。实测(本批
+#   Task 1 首次发现、Task 6 原样复现):把 `WorkerLauncher.pid_of` 连名带 4 处调用一起改名
+#   (只改定义的话 `room_manager.gd` 先编不过、会走另一条红路),输出多一段
+#     `SCRIPT ERROR: Invalid call. Nonexistent function 'pid_of' in base 'RefCounted (WorkerLauncher)'`
+#   而 verdict **仍是 `SMOKE_ROOM_SWEEP OK`** —— 那一组断言被静默跳过,读起来像"全过"。
+#   (同源的完整表述在 `tests/lib/probe_base.gd` 文件头:`ALL-OK` 只证明"没有任何一条断言
+#   失败",不证明"该跑的断言都跑过";两个新场景探针用 `_checks >= EXPECTED_CHECKS` 堵它。)
+# ★ 判据为什么成立:`_fail` 为空时,任何"提前 return"都只可能来自函数开头那条
+#   `if _fail != "": return` —— 而它只在 `_fail` 已非空时点火,与 `_fail` 为空矛盾。
+#   故 `_fail` 为空 ⟺ 「没有正式断言失败」;此时名单不全就**只可能**是"有函数没跑到尾"。
+const CHECK_NAMES := [
+	"_check", "_check_argv_contract", "_check_teardown_funnel",
+	"_check_team_startup_contract", "_check_team_spawn_guard",
+	"_check_worker_pid_tracking", "_check_join_refusal_guards", "_check_reclaim_ladder",
+]
+var _done: Array[String] = []
 
 func _initialize() -> void:
 	var src := FileAccess.get_file_as_string("res://server/room_manager.gd")
@@ -125,6 +144,7 @@ func _check_teardown_funnel() -> void:
 					if not allowed.has(f["name"]):
 						_fail = "lobby_rooms.%s 里出现 %s —— 拆除必须走 teardown_room 单一收口" % [f["name"], pat]
 						return
+	_done.append("_check_teardown_funnel")
 
 
 # ── 批次 2 新增:role 协议必须是**显式 role 集合**(--roles)──
@@ -170,6 +190,7 @@ func _check_argv_contract() -> void:
 			if not code2.contains(tok):
 				_fail = "%s 未接 %s(3v3 启动协议只接了一半?注:判据剥掉注释 —— 光在注释里提到不算)" % [f, tok]
 				return
+	_done.append("_check_argv_contract")
 
 # ── 批次 3(3v3)新增:启动契约里"本册能做到的那一半" ──
 # ★ 边界照实写明:**真链路**(6 个真客户端连上 `--team` worker → 满员开局 → 有人掉线 →
@@ -282,6 +303,7 @@ func _check_team_startup_contract() -> void:
 	if not excl.contains("quit(1)"):
 		_fail = "--royale/--team 互斥守卫里没有 quit(1)(空块 = 守卫守不住,静默开成错的那一半)"
 		return
+	_done.append("_check_team_startup_contract")
 
 
 # ── 批次 3(3v3)新增:生成端的 fail-fast(队号**取值**)──
@@ -299,6 +321,7 @@ func _check_team_spawn_guard() -> void:
 	if bad_val:
 		_fail = "spawn_team_worker 放行了越界队号(长度相等、队号 3 越界 → 子进程开机即 quit、大厅判定成功、零报错)"
 		return
+	_done.append("_check_team_spawn_guard")
 
 
 func _check(src: String) -> void:
@@ -421,6 +444,8 @@ func _check(src: String) -> void:
 			break
 	if summary.is_empty() or not summary.contains("3v3"):
 		_fail = "_sweep_stale_rooms 的汇总 print 未报 3v3 那一档(界有变化而日志读不出来)"; return
+	# ★ 本函数**跑到尾**的凭证(判据在 _finish;理由见文件头那段)。下面的每个 _check_* 同款。
+	_done.append("_check")
 
 # ── 2026-09-21(「看得见进不去」批)新增:worker pid 的登记与归还 ──
 # ★ 为什么钉它:「对局中的房什么时候消失」这条判据是**这一局的 worker 进程还在不在**
@@ -444,6 +469,7 @@ func _check_worker_pid_tracking() -> void:
 	if L.pid_of(7770) != 0:
 		_fail = "★ 端口归还后未清 pid(房会被判成「还在」→ 永久占着列表位与端口)"
 		return
+	_done.append("_check_worker_pid_tracking")
 
 
 # ── 2026-09-21(「看得见进不去」批)新增:三条 join 的**拒绝守卫与文案** ──
@@ -475,6 +501,7 @@ func _check_join_refusal_guards() -> void:
 		if not body.contains('"该房间的对局已进行中,无法加入"'):
 			_fail = "%s 的拒绝文案不是三模式统一的那一句" % c[0]
 			return
+	_done.append("_check_join_refusal_guards")
 
 
 # ── 2026-09-21 新增:对局中房间的**回收梯接线** ──
@@ -521,12 +548,31 @@ func _check_reclaim_ladder() -> void:
 	if not mo.contains("pid <= 0") or not mo.contains("port <= 0"):
 		_fail = "★ _match_over 没把 port/pid <= 0 判成「没结束」(开局那一瞬会被自己的回收梯拆掉)"
 		return
+	_done.append("_check_reclaim_ladder")
 
 
 func _finish() -> void:
+	# ★★ 名单对账(见文件头那段)。**只在 `_fail` 为空时**做:`_fail` 非空说明已有正式断言失败,
+	#   那时早就打 FAIL 了,再叠一条"没跑到尾"只会把真原因淹掉。
+	# ★ 判据为什么成立:`_fail` 为空时,任何 `_check_*` 的提前 return 都只可能来自函数开头那条
+	#   `if _fail != "": return` —— 而它只在 `_fail` 已非空时点火,与前提矛盾。故 `_fail` 为空 ⟺
+	#   「没有正式断言失败」;此时名单不全就**只可能**是"那个函数没跑到尾"(脚本错误)。
+	if _fail.is_empty():
+		var missing: Array[String] = []
+		for n in CHECK_NAMES:
+			if not _done.has(n):
+				missing.append(n)
+		if not missing.is_empty():
+			_fail = ("★★ 这些检查**没跑到尾**(多半是脚本错误让那个函数当场结束,而它不给 _fail 赋值):%s"
+					% str(missing))
+		elif _done.size() != CHECK_NAMES.size():
+			# 反向:名单比实跑少 ⇒ 加了新检查却没把它登记进 CHECK_NAMES(新检查会**不受本对账保护**)。
+			# 让它红,而不是静默放行 —— 那正是本条要堵的方向。
+			_fail = ("★★ 跑过的检查数(%d)与 CHECK_NAMES(%d)不符 —— 加/删了 _check_* 却没同步名单"
+					% [_done.size(), CHECK_NAMES.size()])
 	if not _fail.is_empty():
 		print("SMOKE_ROOM_SWEEP FAIL: %s" % _fail)
 		quit(1)
 		return
-	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(三张注册表的在局宽限界逐个钉死:1v1 裸界 / 大乱斗 RoyaleHost.MATCH_TIME / 3v3 TEAM_MATCH_ESTIMATE)")
+	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(三张注册表的在局宽限界逐个钉死:1v1 裸界 / 大乱斗 RoyaleHost.MATCH_TIME / 3v3 TEAM_MATCH_ESTIMATE;%d 项检查全部跑到尾)" % _done.size())
 	quit(0)

@@ -216,8 +216,13 @@ func _stage_wait_full() -> void:
 	for r in tr.team_of:
 		by[int(tr.team_of[r])] = int(by.get(int(tr.team_of[r]), 0)) + 1
 	print("PROBE: 6 人已到齐并选边完毕 → 队号表 %s(每队 %s)" % [str(tr.team_of), str(by)])
-	# ★ 立刻**存档**:房在开局那一刻就被对局消费掉了(`teardown_room`),到收尾时再读
-	#   `_room()` 只会得到 null —— 队伍表必须在这里取走(实测:收尾时读到的是空房)。
+	# ★ 立刻**存档**:成员转连 worker 后会陆续断开大厅,`on_peer_left` 把它们从 `player_role`
+	#   摘掉,并连带把 `team_of` 里**已无人持有的 role 逐个 erase**(见 lobby_rooms.on_peer_left
+	#   的 3v3 那一段)—— 到收尾时再读 `_room()` 拿到的是**空队伍表**。
+	#   ★★ 2026-09-21 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局
+	#   消费掉了(`teardown_room`)」—— 对局中的房现在**刻意不拆**(它要活到 worker 退出,否则
+	#   "看得见 / 回局"两件事都无从谈起),所以收尾时房**还在**,只是表已经空了。故"必须在这里
+	#   存档"照旧成立,变的只是原因。
 	for r in tr.team_of:
 		_lobby_teams[int(r)] = int(tr.team_of[r])
 	_notes.append("大厅队伍表 %s" % str(tr.team_of))
