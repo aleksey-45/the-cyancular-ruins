@@ -13,9 +13,14 @@ extends ProbeBase
 #
 # ⚠ T1 只建探针,不改任何生产文件。探针本身**不报错、不裁决**,只做源码级机械扫描。
 #
-# ⚠ CI 判据必须是 **grep 文本 `KH L6 PROBE: ALL-OK`**,不能只看退出码:
-#    探针中途脚本报错(解析失败/函数中断)时 --quit-after 仍会以 exit 0 退出,
-#    且**不会**打印 ALL-OK——只看退出码会把"没跑完"读成"通过"。
+# ⚠ CI 判据必须是 **grep 文本 `KH L6 PROBE: ALL-OK`**,不能只看退出码:探针中途脚本报错时
+#    `--quit-after` 仍以 exit 0 退出,退出码与"跑通了"**不可分**。
+#    ★★ 2026-09-21 订正(实测,取代本行原先那句"中途报错就**不会**打印 ALL-OK" —— **那句话
+#    已被推翻**):脚本错误(解析失败/`get_node` 取不到节点/在 null 上调用方法)**只让出错的那个
+#    函数当场结束、调用方继续** ⇒ 出错在 helper 或 `_run()` 里时 **ALL-OK 照常打印**,后面那些
+#    断言被**静默跳过**(**假绿**,比"没跑完"危险);"一行都不打印"只对出错在 `_ready()`
+#    **自己身上**成立。权威表述在 `tests/lib/probe_base.gd` 的文件头(那份是全仓源码级探针的
+#    公共契约 —— 六份探针的文件头里还有同一句过期说法,留给后续统一那一趟,别在这儿各自表述)。
 #
 # ⚠⚠ 自伤防护(本文件被自己扫描时务必守住):凡是本探针**要找的字面量**,一律用
 #    `"前" + "后"` 碎片拼出来,绝不整段写在源码里。本探针的扫描目标都是**具名生产文件**,
@@ -26,7 +31,7 @@ extends ProbeBase
 #    也不能让"零引用"类断言变红。另外凡断言"某口在位",必须同时校验**被调方真的存在**
 #    (脚本方法表 / 资源是否存在),否则删掉被调方那条断言照样绿。
 #
-# ── 15 条不变量(逐条对应本文件的 _check_*)────────────────────────────
+# ── 16 条不变量(逐条对应本文件的 _check_*)────────────────────────────
 #   1  输入包带单调 seq          —— B4:包内无 seq → 服务器 _ack_seq 永停 0,回滚锚点全失
 #   2  快照两条包的分工:世界包**不得**写本端玩家,本人包必须喂 on_authoritative
 #                                —— B6:C2 全断 + 权威位置强写进正在预测的玩家 = 橡皮筋
@@ -40,8 +45,13 @@ extends ProbeBase
 #       要么永远绿的门。接替它们的是 tests/royale_c2_probe 的 A①「生产目录零残留」,**无条件**)
 #   7  输入锁单一收口 _round_locked or _menu_open —— B7/B9:菜单开着仍能跑动开枪
 #   8  _pause_menu 是字段且接 toggled —— B10:不持句柄不接信号 → 锁失效
-#   9  MATCH_OVER 块销毁暂停菜单 —— B8:5s 内 ESC 后定时器仍再触发 + lambda 里 get_tree() 为 null
+#   9  MATCH_OVER 块销毁暂停菜单 + 弹结算页(不动内容,只把"必须有 create_timer"换成
+#      "必须调 `_show_result()`")—— B8 的原意是"ESC 不能同时触发两条退场路";
+#      ★ 2026-09-21 结算页批次:那条 N 秒退场**定时器已删**(退场改成"玩家自己在结算页上退"),
+#        故原 `blk.contains(N_TIMER)` 整条**移除** —— 留着就是要求新代码把定时器加回来
 #  9b  同一件事的**大乱斗**分支(scenes/royale_game.gd)—— 第三条退场路径,当年漏改,_check_royale_match_over_menu_kill
+#      ★ 其 `is_inside_tree()` 早退随退出路径搬进了**基类** `_leave_to_main_menu`(三模式共用),
+#        故那一条的扫描对象从"royale 的 MATCH_OVER 块"改成那个函数体(原意不变:换场前有早退)
 #  10  pvp_hud 走声明式 tscn(不是 PvpHud.new())—— B11:null 解引用必崩
 #  11  激光收端在 NetBus(不是 NetBusExt)—— B12:收错节点 = 对手激光静默 no-op
 #  12  退出路径:大写零命中 + 路径① 已保护 + **本文件裸切恰为 0**(T4 起为无条件判据,见该断言
@@ -49,9 +59,20 @@ extends ProbeBase
 #                                会让本探针从 T1 红到 T4,而没人能过的门会被删掉。过渡形状拦不住
 #                                **整体退回**;翻无条件后该边界关闭)
 #                                (已知边界逐条登记在 _check_exit_paths 的函数头)
+#      ★ 2026-09-21 结算页批次:② 的扫描对象从 `_on_round_state`(那条 5s 定时器已删)改为
+#        **基类** `_leave_to_main_menu`(结算页那条退出路径),③ 对手离开那条**一字不动**
 #  13  零 Level0.menu_demo 引用 —— B14:引用不存在的静态变量 → 报错
 #  14  激光归因仍走 CombatFeedback.attribute —— KH 的裸 set_meta 只能追加,不得替换
 #  15  头顶名统一 NAME_COLOR(U1 的决定)—— B13:回退按角色双色
+#  16  ★ 2026-09-21 结算页批次:三个模式的**结算页接线** —— ① MATCH_OVER 块里必须调
+#      `_show_result()`(删了不报错,只是那一屏永不出现);② `_build_result_payload()` 折载荷时
+#      **实参顺序**必须是 (round_state, names, …) —— ★★ 这一档是本批**最安静的错法**:
+#      `for_duel/for_royale` 的前两个实参**都是 Dictionary**、`for_team` 的前三个都是,
+#      写反**照样编译、所有常驻测试照样绿**,只有榜渲染成乱码/空表。
+#      ③ 第 3 个实参必须是 `PvpSession.role`(2026-09-21 终审 M9 补):它决定文案
+#      (`_verdict` 里 `"胜利!" if match_winner == my_role else "失败"`)—— 写死成常量会让
+#      **某一方的 胜利/失败 念反**,而写死的号照样编译、② 那两条照样绿。
+#      见 _check_result_payload_args(1v1 与大乱斗;3v3 的那一份在 team_room_smoke ⑨⑤)。
 
 # ── 被扫文件 ────────────────────────────────────────────────────────
 const PC := "res://scenes/" + "pvp_game.gd"
@@ -107,7 +128,9 @@ const N_SET_LOCKED := "set_controls" + "_locked"
 const N_PAUSE := "_pause" + "_menu"
 const N_TOGGLED := ".toggled" + ".connect("
 const N_QUEUE_FREE := "queue" + "_free()"
-const N_TIMER := "create" + "_timer("
+# ★ `N_TIMER`("create" + "_timer(")曾用于第 9/9b 条 —— 2026-09-21 结算页批次后**已无读者**:
+#   那两条断言守的"退场定时器必须存在"随定时器一起作废(留着就是要求把定时器加回来),
+#   故常量一并删除,不留死声明。③ 对手离开那条 2.5s 定时器仍在,但本条从不按它做断言。
 const N_INSIDE := "is_inside" + "_tree()"
 const N_PRELOAD_HUD := "preload(\"res://ui/" + "pvp_hud.tscn\")"
 const N_NEW_HUD := "Pvp" + "Hud.new("
@@ -133,6 +156,15 @@ const N_HIT_MARKER := "Combat" + "Feedback." + "hit_marker("
 # KH 版替换统一归因入口的形态:裸写 meta(绕过 attribute 的时效戳)。拆开写是防自匹配。
 const N_RAW_META := "set_" + "meta(\"last_" + "damager\""
 const N_MENU_DEMO := "menu" + "_demo"
+# ── 结算页(2026-09-21)──────────────────────────────────────────────
+# 挂载/离场**收在基类**(`PvpMatchClient._show_result` / `_leave_to_main_menu`),三个子类各覆写
+# `_build_result_payload()`。故 MATCH_OVER 块里要找的是"调了 `_show_result()`"、退场路径要找的是
+# 基类那个函数体。碎片拼接同「自伤防护」。
+const N_SHOW_RESULT := "_show" + "_result"
+const N_LEAVE_FN := "_leave" + "_to_main_menu"
+# 三个适配器各自的入口(顺序断言要按名取那次调用的实参表)
+const N_FOR_DUEL := "MatchResult" + "Payload.for_" + "duel("
+const N_FOR_ROYALE := "MatchResult" + "Payload.for_" + "royale("
 # 扫描器自检用的"必然存在"标识符:同一次扫描里它必须被找到,否则"零命中"不可信
 const N_CANARY := "pvp" + "_mode"
 const MIN_CANARY_HITS := 5
@@ -192,6 +224,7 @@ func _ready() -> void:
 	_check_no_menu_demo()
 	_check_laser_attribution()
 	_check_name_color()
+	_check_result_payload_args()
 	_finish()
 
 
@@ -434,10 +467,14 @@ func _check_pause_menu_field() -> void:
 	_summary(before, "暂停菜单:字段@%d,赋值@%d,toggled@%d(回调写 _menu_open + 重求锁)" % [i_field, i_assign, i_tog])
 
 
-# ── 9) MATCH_OVER 块内销毁暂停菜单(B8)────────────────────────────────
-# MATCH_OVER 后 5s 定时器才回主菜单;这 5s 内 ESC 仍能弹出暂停菜单 → 另一条退场路径
-# 先跑,定时器到点再切一次(行为可疑,且 lambda 里 `get_tree()` 在节点已摘树时为 null)。
-# 故 MATCH_OVER 分支必须**(a) 保留退场定时器**、**(b) 让菜单当场失效**。
+# ── 9) MATCH_OVER 块:销毁暂停菜单 + 弹结算页(B8)─────────────────────
+# 原缺陷:MATCH_OVER 后那条 N 秒定时器到期才回主菜单,而这期间 ESC 仍能弹出暂停菜单 →
+# 另一条退场路径先跑,定时器到点再切一次(行为可疑,且 lambda 里 `get_tree()` 在节点已摘树时为 null)。
+# 故 MATCH_OVER 分支必须**(a) 让菜单当场失效**。
+# ★ 2026-09-21 结算页批次:退场改成「弹结算页 + 玩家自己退」——
+#   · 定时器**已删**,故"必须有 `create_timer(`"那条断言整个移除(留着就是要求把定时器加回来);
+#   · 接替它的是 **(b) 本块必须调 `_show_result()`** —— 删了**不报错**,只是那一屏永不出现
+#     (玩家会停在对局里没有任何出路)。`_show_result` 本身在基类,本块只需"调用了"。
 func _check_match_over_menu_kill() -> void:
 	var before := _failures.size()
 	var body := _func_body(_pc_code, "_on" + "_round_state")
@@ -451,16 +488,21 @@ func _check_match_over_menu_kill() -> void:
 	if i >= 0:
 		var blk := _block_after(lines, i)
 		_check(blk.contains(N_PAUSE) and blk.contains(N_QUEUE_FREE),
-			"MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 这 5s 内按 ESC 会让定时器再触发一次" % [N_PAUSE, N_QUEUE_FREE])
-		_check(blk.contains(N_TIMER), "MATCH_OVER 块的退场定时器不在(`%s`)" % N_TIMER)
-	_summary(before, "MATCH_OVER 块:暂停菜单失效 + 退场定时器都在(分支@%d)" % i)
+			"MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 结算页上 ESC(返回主菜单)会与暂停菜单的 ESC **同时**触发" % [N_PAUSE, N_QUEUE_FREE])
+		_check(blk.contains(N_SHOW_RESULT + "()"),
+			"MATCH_OVER 块里没有 `%s()`(退场路径被删了?玩家会停在对局里,没有结算页也没有回主菜单的路)" % N_SHOW_RESULT)
+	_summary(before, "MATCH_OVER 块:暂停菜单失效 + 结算页调用都在(分支@%d)" % i)
 
 
 # ── 9b) 大乱斗客户端 MATCH_OVER 块的同一件事(9) 的第二个对象)──────────────
-# 与 9) **同款缺陷、不同文件**:scenes/royale_game.gd 的 MATCH_OVER 也起了一条 6s 退场定时器,
+# 与 9) **同款缺陷、不同文件**:scenes/royale_game.gd 的 MATCH_OVER 当年也起了一条 6s 退场定时器,
 # 而它的暂停菜单**没有**当场失效、lambda 里也**没有** `is_inside_tree()` 早退 ——
 # 玩家在这 6s 内按 ESC 就能先回一次主菜单,定时器到点再切一次(把刚建出来的主菜单当 old 退役)。
 # pvp_client 早已修过;royale_game 是第三条路径,当年漏了。2026-09-12 补齐,本断言即其守卫。
+# ★ 2026-09-21:定时器没了(同 9),故"N 秒内 ESC"那段已不成立;剩下两条按**原意**重定向 ——
+#   ① 菜单当场失效仍在 royale 的 MATCH_OVER 块里(不动)+ 本块必须调 `_show_result()`;
+#   ② `is_inside_tree()` 早退**随退出路径搬进了基类** `_leave_to_main_menu`,故改扫**那个函数体**
+#      (原意不变:换场前有早退,已从别的退出路径离开时不再叠加第二次换场)。
 func _check_royale_match_over_menu_kill() -> void:
 	var before := _failures.size()
 	if _rg_code.is_empty():
@@ -477,11 +519,17 @@ func _check_royale_match_over_menu_kill() -> void:
 	if i >= 0:
 		var blk := _block_after(lines, i)
 		_check(blk.contains(N_PAUSE) and blk.contains(N_QUEUE_FREE),
-			"royale MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 这 6s 内按 ESC 会让定时器再触发一次" % [N_PAUSE, N_QUEUE_FREE])
-		_check(blk.contains(N_TIMER), "royale MATCH_OVER 块的退场定时器不在(`%s`)" % N_TIMER)
-		_check(blk.contains(N_INSIDE),
-			"royale MATCH_OVER 定时器的 lambda 里没有 `%s` 早退(已从别的退出路径离开时会叠加第二次换场)" % N_INSIDE)
-	_summary(before, "royale MATCH_OVER 块:暂停菜单失效 + 退场定时器 + 早退都在(分支@%d)" % i)
+			"royale MATCH_OVER 块里没有暂停菜单失效处理(`%s.%s`)→ 结算页上 ESC(返回主菜单)会与暂停菜单的 ESC **同时**触发" % [N_PAUSE, N_QUEUE_FREE])
+		_check(blk.contains(N_SHOW_RESULT + "()"),
+			"royale MATCH_OVER 块里没有 `%s()`(退场路径被删了?玩家会停在对局里,没有结算页也没有回主菜单的路)" % N_SHOW_RESULT)
+	# ② 早退:扫描对象 = 基类的退出路径(见函数头)
+	var leave := _body_anywhere(N_LEAVE_FN)
+	_check(not leave.is_empty(),
+		"取不到基类 `%s` 的函数体(退出路径搬家/改名了?→ 下面那条早退断言无从落地)" % N_LEAVE_FN)
+	if not leave.is_empty():
+		_check(leave.contains(N_INSIDE),
+			"`%s` 里没有 `%s` 早退(已从别的退出路径离开时会叠加第二次换场)" % [N_LEAVE_FN, N_INSIDE])
+	_summary(before, "royale MATCH_OVER 块:暂停菜单失效 + 结算页调用 + `%s` 里的早退都在(分支@%d)" % [N_LEAVE_FN, i])
 
 
 # ── 10) pvp_hud 走声明式 tscn,不是 PvpHud.new()(B11)─────────────────
@@ -589,13 +637,19 @@ func _check_beam_routing() -> void:
 # 三条退场路径的现状(实测,非推断):
 #   ① ESC/暂停菜单 —— 在 **ui/pause_menu.gd**(不在本文件),已走
 #      `Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")` ✅
-#   ② MATCH_OVER 5s 定时器 / ③ 对手离开 2.5s 定时器 —— 在本文件,**仍是裸
-#      `get_tree().change_scene_to_file("res://scenes/main_menu.tscn")`** ❌(T4 的交付物)
-# 为什么 ②③ 今天不写成"必须走 safe_change_scene":那是 **T4 的交付物,不是今天的既有性质**
-# (计划表自己的 main 侧一栏也写着"仅 ESC 合规")。若在这里写成硬断言,T1 起就是红的 →
-# T2/T3 的验收门(`kh_l6_probe` 全绿)永远过不了 = 一道没人能通过的门。
-# 故 (c) 取**过渡守卫**形状:本文件一旦出现 safe_change_scene(收口开始),就不许再残留
-# 任何裸切。今天 antecedent 为假 → 绿;T4 落地后它变成精确约束(半修即红)。
+#   ② MATCH_OVER —— ★ 2026-09-21 结算页批次:**已搬到基类** `_leave_to_main_menu`
+#      (结算页 `leave_requested` → 那里 → `safe_change_scene`);原先那条 5s 定时器已删。
+#      本条的扫描对象随之改成 `N_LEAVE_FN`(经 `_body_anywhere` 回落到基类)✅
+#   ③ 对手离开 2.5s 定时器 —— 仍在 `pvp_game.gd`,已走
+#      `Level0.safe_change_scene(tree, …)` ✅(本计划**刻意没动**它,见 12 的已知边界)
+# 判据是"两条路径都在场且用小写菜单路径"。(下面那段"过渡守卫"的历史说明**留档不改** ——
+# 它讲的是 (c) 那条裸切禁令的演化,与 ② 换了扫描对象无关;只是其中的时态已成过去式,
+# (c) 今天是**无条件**的。)
+# 【留档·当时为什么不把 ②③ 写成"必须走 safe_change_scene"】那是 **T4 的交付物,不是当时的
+# 既有性质**(计划表自己的 main 侧一栏也写着"仅 ESC 合规")。写成硬断言会让本探针从 T1 起
+# 就是红的 → T2/T3 的验收门(`kh_l6_probe` 全绿)永远过不了 = 一道没人能通过的门。
+# 故 (c) 当时取**过渡守卫**形状:本文件一旦出现 safe_change_scene(收口开始),就不许再残留
+# 任何裸切。T4 落地后它已翻成精确约束(半修即红),见下面 (c) 处的说明。
 #
 # ★★ 已知边界(如实登记,别把这条守卫说大)★★
 #   · **(c) 的鉴别力是单向的**:"**一旦开始收口,就不许半途退回**"。
@@ -642,10 +696,15 @@ func _check_exit_paths() -> void:
 		_check(_find_lines(pm_lines, N_BARE).is_empty(),
 			"%s 里出现裸 %s(游戏世界含全量碰撞,同步析构会偶发原生段错误)" % [PM_PATH, N_BARE])
 	# 本文件的两条退场路径必须在场且用小写菜单路径(存在性 + 大小写)
+	# ★ 2026-09-21 结算页批次:② 的扫描对象从 `_on_round_state`(那条 5s 定时器已删)改成
+	#   **基类** `_leave_to_main_menu` —— 故这一条走 `_body_anywhere`(找不到就回落到 BASE),
+	#   不再是 `_func_body(_pc_code, …)`。③ 对手离开那条**一字不动**(它 2.5s 的定时器本计划没动)。
+	# ★ needle 的来源仍是 `_pc_lines`:③ 那一支的 `"res://scenes/main_menu.tscn"` 还在本文件里,
+	#   且 `_menu_path_needles` 的第一项**恒为**该内联字面量 ⇒ needles 永不为空(不会静默失明)。
 	var needles := _menu_path_needles(_pc_lines)
-	for spec in [["_on" + "_round_state", "② MATCH_OVER 定时器"], ["_on" + "_opponent_left", "③ 对手离开定时器"]]:
+	for spec in [[N_LEAVE_FN, "② MATCH_OVER 退场(基类;结算页 → 主菜单)"], ["_on" + "_opponent_left", "③ 对手离开定时器"]]:
 		var fn := str(spec[0])
-		var body := _func_body(_pc_code, fn)
+		var body := _body_anywhere(fn)
 		_check(not body.is_empty(), "取不到 %s 的函数体(%s 没了?)" % [fn, spec[1]])
 		if not body.is_empty():
 			var b_lines := body.split("\n")
@@ -759,7 +818,64 @@ func _check_name_color() -> void:
 	_summary(before, "头顶名:%s 在且两个标签都用它上色,%s 零命中" % [N_NAME_COLOR, N_ROLE_COLOR])
 
 
+# ── 16) 结算页:各模式载荷适配器的**实参顺序**(2026-09-21)─────────────────
+# 背景:挂载/离场收在基类(那两条常驻守卫只扫基类),而**三个子类的调用点**此前只被临时探针
+# 验过、临时探针已删 ⇒ 零常驻覆盖(`royale_soak_probe` 也验不到:它的客户端在 MATCH_OVER
+# 当场就自己退了、走不到结算页那一段)。故这里补上,按"文件本来就在被读"落点:
+#   ① `state == 3` 块里必须调 `_show_result()` —— 已并入 9)(1v1)/ 9b)(大乱斗);
+#   ② 本函数:`_build_result_payload()` 折载荷时的**实参顺序**(1v1 与大乱斗;3v3 在 team_room_smoke ⑨⑤)。
+# ★★ 为什么②必须机械断言 —— 这是本批**最安静的错法**:
+#   `for_duel(round, names, my_role)` / `for_royale(round, names, my_role)` 的前两个实参
+#   **都是 Dictionary**(`for_team` 前三个都是)⇒ 写反**照样编译、所有常驻测试照样绿**,
+#   只有榜渲染成**乱码 / 空表**。
+#   ★ 判据取"**每个位置上是什么**"而不是"两个名字都出现过":后者对换位**恒绿**(正是要拦的那件事)。
+func _check_result_payload_args() -> void:
+	var before := _failures.size()
+	for spec in [["① 1v1", PC, _pc_code, N_FOR_DUEL], ["② 大乱斗", RG, _rg_code, N_FOR_ROYALE]]:
+		var tag := str(spec[0])
+		var path := str(spec[1])
+		var code := str(spec[2])
+		var callee := str(spec[3])
+		_check(not code.is_empty(), "%s:读不到 %s(实参顺序断言无从成立)" % [tag, path])
+		if code.is_empty():
+			continue
+		var body := _func_body(code, "_build_result_payload")
+		_check(not body.is_empty(), "%s:取不到 %s._build_result_payload 的函数体" % [tag, path])
+		if body.is_empty():
+			continue
+		var args := _call_args(body, callee)
+		_check(not args.is_empty(), "%s:%s 里没有 `%s` 调用(结算页载荷没了?)" % [tag, path, callee])
+		if args.is_empty():
+			continue
+		_check(args.size() >= 3, "%s:%s 的实参只有 %d 个(应 ≥3:round_state / names / my_role)" % [tag, path, args.size()])
+		if args.size() >= 3:
+			_check(args[0].contains("_last_round_state") and args[1].contains("_names"),
+				"%s:%s 的实参顺序反了(第 1 个应是 `_last_round_state`、第 2 个应是 `_names`;★ 前两个都是 Dictionary ⇒ 写反照样编译、所有常驻测试照样绿,只有榜渲染成乱码/空表)" % [tag, path])
+			# ★ 第三个实参也必须钉(2026-09-21 终审 M9)。`my_role` 决定的是**文案**:
+			#   `MatchResultPayload._verdict` 里 `"胜利!" if match_winner == my_role else "失败"` ——
+			#   写死成 `1`(或任何常量)之后,**role 2 的玩家赢的局会被念成「失败」**、反之亦然,
+			#   而它照旧编译、上面两条照旧绿(前两个实参没动)。1v1 与大乱斗取的都是
+			#   `PvpSession.role`(不是 `3 - role`,也不是写死的号)。
+			_check(args[2].contains("PvpSession.role"),
+				"%s:%s 的第 3 个实参不是 `PvpSession.role`(实得「%s」)—— 硬编码 role 会把**某一方的 胜利/失败 念反**,而写死的号照样编译、上面两条断言照样绿" % [
+						tag, path, args[2].strip_edges()])
+	_summary(before, "结算页载荷:1v1 / 大乱斗两处 for_duel/for_royale 实参顺序在位(round_state, names, PvpSession.role)")
+
+
 # ── 工具 ────────────────────────────────────────────────────────────
+
+# 取 `text` 里**这一次** `callee` 调用的顶层实参表(跨行调用也认);找不到返回空数组。
+# `callee` 带尾括号(如 `"X.for_duel("`),故起点就是那个 `(`。切分走 ScanUtil.split_args
+# (嵌套括号/字符串内的逗号不算分隔符)—— 实参里含 `_team_of_role(PvpSession.role)` 这类调用也能切对。
+func _call_args(text: String, callee: String) -> Array[String]:
+	var at := text.find(callee)
+	if at < 0:
+		return []
+	var open := at + callee.length() - 1
+	var close := _match_paren(text, open)
+	if close < 0:
+		return []
+	return _split_args(text.substr(open + 1, close - open - 1))
 
 # 取函数体:`pvp_game.gd` 找不到就到**共享基类**里找(见 BASE 的注释)。
 # ★ 都找不到时返回空串 —— 各调用点都有「取不到 … 函数体(改名/挪走了?)」的断言,

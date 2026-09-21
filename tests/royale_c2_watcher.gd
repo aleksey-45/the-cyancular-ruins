@@ -426,8 +426,11 @@ func _finish(ok: bool, msg: String) -> void:
 #   (RoyaleHost.mark_disconnected → _finish_match → MATCH_OVER);而 MATCH_OVER 期间
 #   `_match_round_tick` 的 PLAYING 分支不再跑 → **另一方正在等的「2s 复活」永远不会发生**。
 #   本探针第一版实测就踩到了:spawned 模式下 c2 断言完(PLAYING+1.5s)先退 → c1 卡在"等复活"
-#   → 6s 后 MATCH_OVER 的退场定时器把场景一换,挂在 root 上的本观察者被摘出树 → `_process` 停
-#   → 结果文件没写、进程留着、大厅判它断开。
+#   → ★ 2026-09-21 订正:当年那条链的最后一环是「6s 后 MATCH_OVER 的退场定时器把场景一换,
+#     挂在 root 上的本观察者被摘出树 → `_process` 停 → 结果文件没写」。那条**自动换场已随结算页
+#     批次删除**(改成玩家自己退)⇒ 那一环不再存在;但下面那条纪律**仍要守**、且理由更强了:
+#     现在没有任何东西会自动换场,谁先退谁就把对方留在 MATCH_OVER 之后的静止世界里 ——
+#     两边都**先写好结果**再等对面,是唯一不依赖退出时序的收尾方式。
 #   故:两边都**先写好结果**再等对面也写好,然后一起退 —— 退出顺序不再由胜负时序决定。
 #   (这也是大乱斗的既有性质,不是 bug:剩余 <2 人即终局。)
 func _wait_peer_then_quit(ok: bool) -> void:

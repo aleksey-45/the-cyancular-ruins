@@ -235,7 +235,7 @@ func _match_round_tick(delta: float) -> void:
 			if _match_time <= 0.0:
 				_finish_match()
 		RoundState.MATCH_OVER:
-			pass   # 结果展示阶段:客户端 6s 后自行回菜单
+			pass   # 结果展示阶段:客户端弹结算页,**玩家自己退**(不再有 N 秒自动回菜单)
 
 
 # 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role。

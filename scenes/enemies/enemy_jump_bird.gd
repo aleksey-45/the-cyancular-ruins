@@ -152,3 +152,15 @@ func _water_swim_dir() -> Vector2:
 # 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
 func _is_asleep() -> bool:
 	return state == State.SLEEP
+
+
+# 状态进入 → 形变事件。enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP }
+# ★ `_tick_chase` 里的小跳(enemy_jump_bird.gd:101-102)**刻意不挂钩** —— 它直接设 velocity、
+#   不经过 _set_state,状态虚钩接不到;不为它另加钩子(用户 2026-09-20 裁定)。那一下的
+#   hop_jump_velocity = -750 会让空中连续项直接给出拉伸,只是没有事件那一下"脆感"。
+func _on_state_entered(s: int) -> void:
+	match s:
+		State.LUNGE_DASH:
+			squash.impulse(SquashStretch.Impulse.CHARGE)
+		State.BACK_HOP:
+			squash.impulse(SquashStretch.Impulse.CHARGE)

@@ -331,8 +331,10 @@ func _unhandled_input(event: InputEvent) -> void:
 #  - COUNTDOWN 且 round>1(新一轮):服务器已 `_reset_world_and_clear_dynamics()`(还原砖 +
 #    清子弹 + 重铺地面武器 + 各人背包重置),这里同刻清本地子弹并复位砖,两端从同一基线出发。
 #    ★ 并在同一处**重拉一次 `match_sync`** —— 见下面那一段注释(换边)。
-#  - MATCH_OVER → 6s 后断连回主菜单(记分/胜负播报由 `TeamHud` 负责)。
+#  - MATCH_OVER → 弹结算页,**玩家自己退**(不再是 6s 后自动回主菜单);记分/胜负播报仍由
+#    `TeamHud` 负责(它画的是对局中的小记分条,结算页是终局那一屏,两者不冲突)。
 func _on_round_state(data: Dictionary) -> void:
+	_last_round_state = data
 	var state := int(data.get("state", 0))
 	_round_locked = state == 0
 	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
@@ -359,22 +361,34 @@ func _on_round_state(data: Dictionary) -> void:
 			_resync_pull_pending = true
 			NetBus.rpc_id(1, "match_sync")
 	elif state == 3:   # TeamHost.RoundState.MATCH_OVER(胜负已判:局胜或整队走光)
+		# ★★ **刻意没有 `and not _match_ended` 这道闸**(与大乱斗不同,别照抄过来加对称):
+		#   本模式的 MATCH_OVER **会有第二条载荷**,而结算页必须跟着刷新 ——
+		#   `TeamHost._finish_match()` 在**战斗进行中**直接把 PLAYING→MATCH_OVER,而倒地边沿
+		#   检测在 `match _round_state:` **之前**、且**不看状态** ⇒ 终局之后再死人会再广播一条
+		#   带**新 `stats`/`mvp`** 的终局载荷(见基类 `_show_result` 的注释)。
 		_match_ended = true
-		# ★ ESC 菜单随即失效、退出只走定时器这一条路(与另两个客户端同款):不销毁的话玩家能在这
-		#   6s 里按 ESC → 回主菜单,而本定时器到点会**再切一次场景**(把刚建出来的主菜单当 old 退役)。
+		# ★ ESC 菜单随即失效、退出只走结算页这一条路(与另两个客户端同款):不销毁菜单的话玩家能
+		#   在结算页上再弹一次暂停菜单 —— 本页的 ESC(返回主菜单)与菜单的 ESC 会**同时**触发
+		#   (见 `ui/match_result.gd` 类头那条硬依赖)。
+		#   ★ 上一版这里还兼职"别让 6s 退场定时器在玩家已从别的路径离开后再切一次场景";定时器已
+		#     换成结算页(那条风险改由 `MatchResult` 的 `leave_requested` 只发一次 +
+		#     `safe_change_scene` 的 `_switching` 兜住),但**这两行仍然必须留** —— 上面的 ESC
+		#     双重语义依赖它。
 		if _pause_menu != null and is_instance_valid(_pause_menu):
 			_pause_menu.queue_free()
 			_pause_menu = null
-		# 捕获 tree/autoload 引用:玩家若已从别的路径离开,本节点会被 safe_change_scene 摘出树,
-		# 到点时对不在树上的实例求值会出错
-		var tree := get_tree()
-		var netbus := NetBus
-		get_tree().create_timer(6.0).timeout.connect(func() -> void:
-			netbus.stop()
-			if not is_inside_tree():
-				return   # 已从别的退出路径离开 → 不再叠加第二次换场
-			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
+		# 结算页:玩家自己退(不再是 6 秒后自动回主菜单)。
+		_show_result()
 	_refresh_input_lock()   # 单一收口:三个维度任一成立即锁(见基类函数定义)
+
+
+# 结算页载荷的唯一来源。★ 本函数只读状态、不碰节点树(适配器是纯函数)。
+# `_last_round_state` 是**基类**成员(记录在同名函数开头),本文件不再声明。
+func _build_result_payload() -> Dictionary:
+	# ★ `my_team` 取自 `_team_of_role(PvpSession.role)` —— 队伍表从 `match_sync` 来;
+	#   队号 0(表还没到)时 `_verdict_team` 念「失败」而不是谎报胜利。
+	return MatchResultPayload.for_team(_last_round_state, _names, _teams,
+			_team_of_role(PvpSession.role))
 
 
 # ── 名字 / 颜色 ──

@@ -184,8 +184,10 @@ func _on_kill_event(killer: int, victim: int) -> void:
 # 回合状态:
 #  - COUNTDOWN 且 round>1(新一轮):服务器已把可破坏砖还原 + 清子弹,这里同刻清本地子弹并复位砖,
 #    保证两端从同一基线出发,不残留"多拆/少拆"的幽灵碰撞、旧子弹不跨局冒出。
-#  - MATCH_OVER → 延时后断连回主菜单(记分/胜利失败显示由 PvpHud 负责)。
+#  - MATCH_OVER → 弹结算页,**玩家自己退**(不再是 5s 后自动回主菜单);记分/胜利失败
+#    仍由 PvpHud 负责(它画的是对局中的小记分条,结算页是终局那一屏,两者不冲突)。
 func _on_round_state(data: Dictionary) -> void:
+	_last_round_state = data
 	var state := int(data.get("state", 0))
 	# COUNTDOWN(开局/换局 3 秒):锁本地武器开火(移动由服务器权威冻结,本地玩家服务器渲染自然不动)。
 	_round_locked = state == 0
@@ -205,28 +207,26 @@ func _on_round_state(data: Dictionary) -> void:
 		#   match_sync 兜住。守卫见 tests/net_ground_probe.gd 的反向断言。
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
-		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可提前回主菜单,而下面
-		# 这条 5s 定时器仍会再触发一次 safe_change_scene(已在主菜单上再切一次 = 行为可疑)。
-		# 直接销毁菜单 —— 退出只走定时器这一条路。
+		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可在结算页上再弹一次
+		# 暂停菜单 —— 而本页的 ESC(返回主菜单)与菜单的 ESC 会**同时**触发(见 ui/match_result.gd
+		# 类头那条硬依赖)。直接销毁菜单 —— 退出只走结算页这一条路。
 		if _pause_menu != null and is_instance_valid(_pause_menu):
 			_pause_menu.queue_free()
+			# ★ 与 royale_game / team_game **逐字对齐**(三处同款,别只改两处):留着句柄 = 留着一具
+			#   已 free 的尸体 —— `is_instance_valid()` 在帧末之后转 false 而字段仍非 null,
+			#   谁都可能顺手拿它去调方法(那时才崩)。
+			_pause_menu = null
 		_menu_open = false
 		# 菜单没了 → 回到只由 _round_locked(state 3 → false)决定 = 解锁(与旧行为一致)
 		_refresh_input_lock()
-		# 起定时器**之前**捕获 tree/netbus:lambda 里现取 get_tree() 是到点才求值,而那时本节点
-		# 可能已被别的退出路径换场摘树 → 返回 null → 报错(兄弟场景 royale_game 的同一处修法)。
-		var tree := get_tree()
-		var netbus := NetBus
-		get_tree().create_timer(5.0).timeout.connect(func() -> void:
-			netbus.stop()
-			if not is_inside_tree():
-				return   # 已从别的退出路径(ESC/暂停菜单)离开 → 不再叠加第二次换场
-			# 游戏世界含全量碰撞,裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误,
-			# 故走游戏世界的退役挂起式换场(与路径①同机制)。
-			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
+		# 结算页:玩家自己退(不再是 5 秒后自动回主菜单)。
+		_show_result()
 
-# 本地输入锁的单一收口:冻结期(_round_locked)与菜单打开(_menu_open)任一成立就锁。
-# 不要在两个调用点各拼一次布尔 —— 那正是修复波 1 只关住一个方向的原因。
+# 结算页载荷的唯一来源。★ 本函数只读状态、不碰节点树(适配器是纯函数)。
+# `_last_round_state` 是**基类**成员(记录在同名函数开头),本文件不再声明。
+func _build_result_payload() -> Dictionary:
+	return MatchResultPayload.for_duel(_last_round_state, _names, PvpSession.role)
+
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
 func _on_opponent_left() -> void:
