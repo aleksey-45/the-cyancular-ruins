@@ -28,6 +28,13 @@ const MAX_ROOM_AGE := 7200.0        # 房间允许存在上限(秒=2h)
 const TEAM_MATCH_ESTIMATE := 1800.0
 var _sweep_acc := 0.0
 
+# 对局中房间的回收梯周期(秒)。★ 比 SWEEP_INTERVAL(600s)密得多,因为判据与目的都不同:
+# 那条是"房挂太久了"(超龄清扫),这条是"**这一局结束了**" —— 端口与列表位白占的代价是
+# "池子少一个 / 列表里挂着一个死房",10 分钟一轮意味着每局结束后要多占最多 10 分钟。
+# 30s 是"比端口归还延迟(120/360)小一个量级"的量级选择,与宽限期无关(判据不读宽限期)。
+const MATCH_SWEEP_INTERVAL := 30.0
+var _match_sweep_acc := 0.0
+
 
 func _enter_tree() -> void:
 	# 房间账本:本类持有并装配(注入 launcher),两者单向依赖。
@@ -319,6 +326,11 @@ func _process(delta: float) -> void:
 	if _sweep_acc >= SWEEP_INTERVAL:
 		_sweep_acc = 0.0
 		_sweep_stale_rooms()
+	# ★ 对局中房间的回收走**另一条更密的**梯(判据与目的都不同,见 MATCH_SWEEP_INTERVAL)。
+	_match_sweep_acc += delta
+	if _match_sweep_acc >= MATCH_SWEEP_INTERVAL:
+		_match_sweep_acc = 0.0
+		_reclaim_finished_matches()
 
 # 清理:房间从创建起超 MAX_ROOM_AGE 秒 → 杀其 worker(若有)→ 踢房内玩家 → 删房归还端口。
 # 刻意偏离移植来源(非误改):原清扫只遍历 rooms(1v1),royale_rooms / team_rooms 是合并后
@@ -397,6 +409,46 @@ func _sweep_stale_rooms() -> void:
 		print("%s %s 超时清理(存活 %.0f 秒)" % [
 				"大乱斗房" if room is LobbyRooms.RoyaleRoom else ("3v3 房" if room is LobbyRooms.TeamRoom else "房间"),
 				room.code, now - room.created_at])
+
+# 对局结束即回收:`in_match`(1v1 是 `started`)的房不再在"客户端转连 worker"那一刻被拆,
+# 于是**必须有替代的回收路径** —— 否则端口与列表位永久占用(本层为「端口泄漏」这同一个失败
+# 模式补过的第五次)。
+# ★ 判据 = **worker 进程还在不在**(`WorkerLauncher.pid_alive`):三种模式的 worker 都在对局
+#   结束时自己退(1v1 宽限到点收场退进程 / 大乱斗与 3v3 全员走光),这是"这局结束了吗"的
+#   **精确**答案;任何按"一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口)。
+# ★ 兜底仍在:2h 超龄清扫(`_sweep_stale_rooms`)会把"worker 一直不退"的僵尸房连进程一起杀掉
+#   —— 两条路径并存,不是二选一。
+# ★ 回收**必须走拆除单一收口**(端口归还/注册表删除只许出现在 `lobby_rooms.teardown_room`
+#   与 `_release_port_later` 里;`room_sweep_smoke` 的 `_check_reclaim_ladder` 钉住本函数)。
+func _reclaim_finished_matches() -> void:
+	var done: Array = []
+	for code in lobby.rooms:
+		var room: LobbyRooms.Room = lobby.rooms[code]
+		if room.started and _match_over(room.worker_port, room.worker_pid):
+			done.append(room)
+	for rcode in lobby.royale_rooms:
+		var rr: LobbyRooms.RoyaleRoom = lobby.royale_rooms[rcode]
+		if rr.in_match and _match_over(rr.worker_port, rr.worker_pid):
+			done.append(rr)
+	for tcode in lobby.team_rooms:
+		var tr: LobbyRooms.TeamRoom = lobby.team_rooms[tcode]
+		if tr.in_match and _match_over(tr.worker_port, tr.worker_pid):
+			done.append(tr)
+	for room in done:
+		var kind := "大乱斗房" if room is LobbyRooms.RoyaleRoom \
+				else ("3v3 房" if room is LobbyRooms.TeamRoom else "房间")
+		print("[lobby] 对局结束,回收%s %s(端口 %d)" % [kind, room.code, room.worker_port])
+		lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED)
+
+
+# 这一局结束了吗(worker 进程已经不在)?★ `port <= 0` 或 `pid <= 0` 一律**不算**结束 ——
+# 那两种取值都只出现在"拉起中"的窗口里(`worker_port` 在 `pick_port` 之后才赋值,pid 在
+# `create_process` 成功之后才登记),判成结束会让开局那一瞬被自己的回收梯拆掉。
+static func _match_over(port: int, pid: int) -> bool:
+	if port <= 0 or pid <= 0:
+		return false
+	return not WorkerLauncher.pid_alive(pid)
+
 
 # 建局引导已搬到 server/match_bootstrap.gd(MatchBootstrap.start_on)—— 那是 worker 进程内的
 # 职责,与对局宿主(MatchHost/RoyaleHost)同侧;留在大厅的房间注册表里会让 worker 因

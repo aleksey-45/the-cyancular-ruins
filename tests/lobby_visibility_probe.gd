@@ -36,7 +36,7 @@ const P_C := 103
 #   少跑一条就红 —— 这正是"ALL-OK 不等于全都跑过"那条纪律的落点。
 #   ★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
 # ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27)。
-const EXPECTED_CHECKS := 24
+const EXPECTED_CHECKS := 27
 
 var _rm: Node = null
 var _checks := 0
@@ -62,6 +62,7 @@ func _ready() -> void:
 	_phase_1v1()
 	_phase_royale()
 	_phase_team()
+	_phase_reclaim()
 	_finish()
 
 
@@ -190,6 +191,41 @@ func _phase_team() -> void:
 	_rm.lobby.team_join(P_C, ROOM_TEAM, "")
 	_check(tr.players.size() == before and not tr.players.has(P_C),
 			"③ ★ 第三人 team_join 被拒(2/6 非满房:唯一能拒它的是 in_match)")
+
+
+# ── ④ 对局结束即回收:worker 进程还在 → 房不许动;worker 退了 → 房必须被回收 ──
+# ★ 判据是"**worker 进程还在不在**":三种模式的 worker 都在对局结束时自己退,而任何按
+#   "一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口与列表位)。
+# ★ 反向那一半(**活的 pid 不回收**)不能省:只断言"死的会收"会让一个"见谁收谁"的实现全绿,
+#   而那会把正在进行的对局连端口一起端掉。
+# ★ 第三条(pid 还没登记)**同样不能省**:`worker_pid` 的登记发生在 `create_process` 成功
+#   **之后**,把 0 判成"结束"会让开局那一瞬被自己的回收梯拆掉。
+func _phase_reclaim() -> void:
+	# 活的 pid:用**本进程自己** —— 它一定活着,不需要拉起任何子进程
+	var live := OS.get_process_id()
+	var r := LobbyRooms.Room.new()
+	r.code = "9011"
+	r.started = true
+	r.worker_port = 29911
+	r.worker_pid = live
+	_rm.lobby.rooms[r.code] = r
+	var rr := LobbyRooms.RoyaleRoom.new()
+	rr.code = "9012"
+	rr.in_match = true
+	rr.worker_port = 29912
+	rr.worker_pid = 999999        # 本机上不该存在的 pid
+	_rm.lobby.royale_rooms[rr.code] = rr
+	var tr := LobbyRooms.TeamRoom.new()
+	tr.code = "9013"
+	tr.in_match = true
+	tr.worker_port = 29913
+	tr.worker_pid = 0             # ★ 还没登记 pid(拉起中)→ **不得**被判成结束
+	_rm.lobby.team_rooms[tr.code] = tr
+
+	_rm._reclaim_finished_matches()
+	_check(_rm.lobby.rooms.has("9011"), "④ ★ worker pid 活着(本进程)→ 房**不许**被回收")
+	_check(not _rm.lobby.royale_rooms.has("9012"), "④ worker pid 已退 → 大乱斗房必须被回收")
+	_check(_rm.lobby.team_rooms.has("9013"), "④ ★ pid 还没登记(拉起中)→ 不得判成结束")
 
 
 func _find_row(arr: Array, code: String) -> Dictionary:

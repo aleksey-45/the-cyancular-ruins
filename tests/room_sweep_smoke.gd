@@ -44,6 +44,7 @@ func _initialize() -> void:
 	_check_team_spawn_guard()
 	_check_worker_pid_tracking()
 	_check_join_refusal_guards()
+	_check_reclaim_ladder()
 	_finish()
 
 
@@ -474,6 +475,52 @@ func _check_join_refusal_guards() -> void:
 		if not body.contains('"该房间的对局已进行中,无法加入"'):
 			_fail = "%s 的拒绝文案不是三模式统一的那一句" % c[0]
 			return
+
+
+# ── 2026-09-21 新增:对局中房间的**回收梯接线** ──
+# ★ 为什么"接线"要单独钉:行为探针(`tests/lobby_visibility_probe.tscn` 相④)是**手工调**
+#   `_reclaim_finished_matches()` 的 —— 把 `_process` 里那次调用删掉,行为探针**照样全绿**,
+#   而生产里房永远不会被回收(端口与列表位白占)。本仓对这类"两半"的既有先例:
+#   `team_room_smoke` ⑨①(接线面)对 `hud_declarative_probe` ③(行为面)—— 缺一不可。
+# ★ 另一条:回收不能绕道直接删注册表。既有的 `_check_teardown_funnel` 只扫
+#   `server/lobby_rooms.gd`,**扫不到写在 room_manager 里的绕道** —— 那正是本函数存在的理由。
+func _check_reclaim_ladder() -> void:
+	if _fail != "":
+		return
+	var src := ScanUtil.read("res://server/room_manager.gd")
+	if src.is_empty():
+		_fail = "无法读取 room_manager.gd"
+		return
+	var code := ScanUtil.code_only(src)
+	if not code.contains("const MATCH_SWEEP_INTERVAL := 30.0"):
+		_fail = "缺 MATCH_SWEEP_INTERVAL=30 常量(回收梯的周期)"
+		return
+	var proc := ScanUtil.func_body(code, "_process")
+	if proc.is_empty():
+		_fail = "找不到 RoomManager._process"
+		return
+	if not proc.contains("_reclaim_finished_matches()"):
+		_fail = "★ _process 没调 _reclaim_finished_matches —— 对局结束后房与端口永不被回收"
+		return
+	var fn := ScanUtil.func_body(code, "_reclaim_finished_matches")
+	if fn.is_empty():
+		_fail = "找不到 _reclaim_finished_matches"
+		return
+	if not fn.contains("teardown_room("):
+		_fail = "★ 回收梯没走拆除单一收口(端口归还/注册表删除只许出现在 teardown_room)"
+		return
+	# 三张注册表都要被扫:漏一张 = 那张的房永不被回收(静默端口泄漏,本层补过五次的那个模式)
+	for pat in ["for code in lobby.rooms", "for rcode in lobby.royale_rooms", "for tcode in lobby.team_rooms"]:
+		if not fn.contains(pat):
+			_fail = "★ 回收梯漏扫了一张注册表(%s)→ 那张的房与端口永不被回收" % pat
+			return
+	var mo := ScanUtil.func_body(code, "_match_over")
+	if mo.is_empty():
+		_fail = "找不到 _match_over"
+		return
+	if not mo.contains("pid <= 0") or not mo.contains("port <= 0"):
+		_fail = "★ _match_over 没把 port/pid <= 0 判成「没结束」(开局那一瞬会被自己的回收梯拆掉)"
+		return
 
 
 func _finish() -> void:
