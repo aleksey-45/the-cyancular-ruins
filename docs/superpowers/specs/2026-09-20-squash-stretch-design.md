@@ -224,13 +224,13 @@ _pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 **共同项**（两边同名同值，各自定义在自己的参数文件里 —— 两个参数类互不依赖，不建共享常量）：
 
 ```gdscript
-const squash_amount: float = 0.10          # 满冲击形变量 → 最多 0.90 / 1.10
-const squash_recover: float = 9.0          # 冲击回归速率（指数）
+const squash_amount: float = 0.06          # 满冲击形变量 → 最多 0.94 / 1.06
+const squash_recover: float = 16.0         # 冲击回归速率（指数）
 const squash_land_min_vy: float = 220.0    # 落速低于此不挤压（下小台阶不触发）
 const squash_land_ref_vy: float = 900.0    # 达到此落速 = 满挤压
 const squash_land: float = 1.00            # 落地挤压上限
 const squash_hurt: float = 0.50            # 受击挤压
-const squash_air: float = 0.30             # 空中连续项上限
+const squash_air: float = 0.10             # 空中连续项上限
 const squash_air_ref_vy: float = 700.0     # 空中连续项参考速度
 ```
 

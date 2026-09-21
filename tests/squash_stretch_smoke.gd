@@ -15,8 +15,11 @@ const MIRRORED_CONSTS := [
 	"squash_amount", "squash_recover", "squash_land_min_vy", "squash_land_ref_vy",
 	"squash_land", "squash_hurt", "squash_air", "squash_air_ref_vy",
 ]
-# 用户裁定的幅度上限("不要太夸张")。**写死**是刻意的:这里是唯一钉住"0.10 这个数本身"的地方。
-const RULED_AMOUNT := 0.10
+# 用户裁定的幅度上限。**写死**是刻意的:这里是唯一钉住"这个数本身"的地方。
+# ★ 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」)—— 同批把
+#   `squash_recover` 9→16、`squash_air` 0.30→0.10(三项一起收,事件强度不动)。
+#   两侧参数文件必须同改:本文件上方逐名钉死这 8 个同名常量。
+const RULED_AMOUNT := 0.06
 
 var _fail: int = 0
 # 本冒烟建的所有节点(`_mk()` 与 ⑨ 的手搭实例)。不入树 ⇒ 不 free 就是 ObjectDB 泄漏,
@@ -126,7 +129,9 @@ func _initialize() -> void:
 			"空中(vel_y=-700)→ 拉伸(窄高),实测 %s" % str((e[1] as AnimatedSprite2D).scale))
 
 	# ⑥ 指数回归:30 帧后 < 0.01,60 帧后 < 0.001
-	#    按 squash_recover=9.0 + squash_amount=0.10 推:exp(-4.5)*0.10≈0.0011、exp(-9)*0.10≈1.2e-5
+	#    按 squash_recover=16.0 + squash_amount=0.06 推(2026-09-21 更新):
+	#    exp(-8)*0.06≈2.0e-5、exp(-16)*0.06≈6.8e-9 —— 两条阈值都远宽于实测,故本相不受
+	#    recover 上调的影响(它只会让回归更快)。
 	var f: Array = _mk()
 	(f[0] as SquashStretch).tick(DT, 1200.0, true, false)   # 先制造一个大冲击
 	for i in 30:
@@ -142,10 +147,21 @@ func _initialize() -> void:
 	#    ★ 这里刻意**不走满力落地那一拍**(on_floor=false):落地项是 `-1.0`,会把饱和的
 	#    `+1.0` 原样抵消 → v 落到 0,断言就退化成"读一个 0",删掉组件里两处 clampf 也照样绿。
 	#    改成"停在钳位处"之后,删 clampf 才会真红(下面两条互补)。
+	#    ★★ `delta = 0.0` 是**承重的**(与 ⑦c 同款、理由同):本相的过冲余量**只等于
+	#    `squash_air`**,而指数恢复每帧要吃 `1-exp(-recover/60)`。2026-09-21 把 `squash_air`
+	#    0.30→0.10、`squash_recover` 9→16 之后,恢复吃的(0.234)压过了空中项给的(0.10)
+	#    ⇒ **过冲消失**,本相读到的成了 0.9480 而不是边界值 0.94 —— 断言失败,而组件是对的。
+	#    冻掉恢复项后过冲恒为 `squash_air`,与 `squash_recover` 解耦。
 	var g: Array = _mk()
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)   # +0.75
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)   # +0.80 → 饱和到 +1.0
-	(g[0] as SquashStretch).tick(DT, -700.0, false, false)        # 空中项再叠 +0.30:未钳位时 v≈1.16
+	(g[0] as SquashStretch).tick(0.0, -700.0, false, false)       # 空中项再叠 squash_air(未钳位时 v = 1 + air)
+	#    ★★ 前提断言:本相的判别力 == `amount × squash_air`。把"余量被调到看不见"变成**红**,
+	#    而不是让本相静默退化成一个恒真断言(`squash_air` 降到 0.02 时余量只剩 0.0012,
+	#    与下面的 0.001 epsilon 同量级 ⇒ 会悄悄失去判别力)。这是本文件反复用到的同一手法。
+	_ok(PlayerParams.squash_amount * PlayerParams.squash_air > 0.002,
+			"本相过冲余量足够(== amount × squash_air = %.4f);不够就调回 squash_air 或改本相构造"
+			% (PlayerParams.squash_amount * PlayerParams.squash_air))
 	var gs: Vector2 = (g[1] as AnimatedSprite2D).scale
 	_ok(absf(gs.x - 1.0) <= PlayerParams.squash_amount + 0.0001
 			and absf(gs.y - 1.0) <= PlayerParams.squash_amount + 0.0001,

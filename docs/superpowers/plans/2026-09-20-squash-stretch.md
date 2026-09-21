@@ -75,17 +75,19 @@
 
 ```gdscript
 # ── 补间形变(squash & stretch,见 scenes/effects/squash_stretch.gd) ──
-# 上限 0.10 = 满冲击时最少 0.90 / 最多 1.10 —— 用户裁定"不要太夸张"。
-# 任何一项都是**在 [-1,1] 的合成量上相乘**,叠加多少事件都不会超过这个上限。
-const squash_amount: float = 0.10          # 满冲击形变量
-const squash_recover: float = 9.0          # 冲击回归速率(指数,越大回正越快)
+# 上限 0.06 = 满冲击时最少 0.94 / 最多 1.06。
+# ★ 2026-09-21 用户实测后从 0.10 收到 0.06("玩家有点太果冻了"),同批 squash_recover 9→16、
+#   squash_air 0.30→0.10(三项一起收,事件强度不动)。**这组值是活的** —— 下面内嵌的清单
+#   与 `core/config/player_params.gd` 必须同步,否则照本计划重跑会把旧值写回去。
+const squash_amount: float = 0.06          # 满冲击形变量
+const squash_recover: float = 16.0         # 冲击回归速率(指数,越大回正越快)
 const squash_jump: float = 0.75            # 起跳拉伸
 const squash_land_min_vy: float = 220.0    # 落速低于此不挤压(下小台阶不触发)
 const squash_land_ref_vy: float = 900.0    # 达到此落速 = 满挤压
 const squash_land: float = 1.00            # 落地挤压上限
 const squash_hurt: float = 0.50            # 受击挤压
 const squash_dash: float = 0.80            # 冲刺拉伸
-const squash_air: float = 0.30             # 空中连续项上限
+const squash_air: float = 0.10             # 空中连续项上限
 const squash_air_ref_vy: float = 700.0     # 空中连续项参考速度
 ```
 
@@ -96,15 +98,15 @@ const squash_air_ref_vy: float = 700.0     # 空中连续项参考速度
 ```gdscript
 	# ── 补间形变(squash & stretch) ── 与 PlayerParams 同名同值,但刻意不共享常量:
 	# 两个参数类互不依赖(spec §3)。改一侧要问自己另一侧是否也该改。
-	const squash_amount: float = 0.10
-	const squash_recover: float = 9.0
+	const squash_amount: float = 0.06
+	const squash_recover: float = 16.0
 	const squash_take_off: float = 0.80        # 鸟起飞(FlyBird / BlackBird TAKE_OFF)
 	const squash_charge: float = 0.90          # 冲撞(FlyBird/BlackBird CHARGE、JumpBird LUNGE_DASH/BACK_HOP)
 	const squash_land_min_vy: float = 220.0
 	const squash_land_ref_vy: float = 900.0
 	const squash_land: float = 1.00
 	const squash_hurt: float = 0.50
-	const squash_air: float = 0.30
+	const squash_air: float = 0.10
 	const squash_air_ref_vy: float = 700.0
 ```
 
