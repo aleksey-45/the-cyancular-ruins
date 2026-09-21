@@ -15,6 +15,13 @@ extends SceneTree
 #   此前 3v3 一条都没有,"掏空循环"或"摘掉门控"都能全绿(同样是静默端口泄漏)。
 #  **B 册 Task 7(2026-09-19)**:两条**收集块的循环体**断言(`stale_team.append(tr)` /
 #   `stale_royale.append(rr)`)—— 只钉 `for …` 头行是**同粒度**的洞:留头行、掏空体时上面四条全绿。
+#  **阶段 2-B Task 4(2026-09-21,回局凭据的登记与清理)**:三处 ——
+#   ① `_check_teardown_funnel` 的模式表加 `rejoin.drop_room(`(凭据表也是一张注册表,"整房作废"
+#      同样是拆除动作;加它之前把该调用挪出收口**这条门完全看不见**,已实测);
+#   ② `_check_reclaim_ladder` 加一条**反向**断言:room_manager 里不许出现 `rejoin.drop_room(`
+#      (收口那条只扫 lobby_rooms.gd,扫不到写在编排层的绕道 —— 这正是该函数存在的理由);
+#   ③ 新增 `_check_rejoin_spawn_wiring`:四个 spawn 点逐个点名必须在 spawn **之后**登记凭据,
+#      且 GC 搭在 30s 回收梯上(漏一个的症状是静默的:那个模式永远回不去)。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -35,6 +42,7 @@ const CHECK_NAMES := [
 	"_check", "_check_argv_contract", "_check_teardown_funnel",
 	"_check_team_startup_contract", "_check_team_spawn_guard",
 	"_check_worker_pid_tracking", "_check_join_refusal_guards", "_check_reclaim_ladder",
+	"_check_rejoin_spawn_wiring",
 ]
 var _done: Array[String] = []
 
@@ -64,6 +72,7 @@ func _initialize() -> void:
 	_check_worker_pid_tracking()
 	_check_join_refusal_guards()
 	_check_reclaim_ladder()
+	_check_rejoin_spawn_wiring()
 	_finish()
 
 
@@ -139,7 +148,13 @@ func _check_teardown_funnel() -> void:
 			#   `rooms.erase(`)—— 所以其实三种写法都拦得住,但只留裸那条时判词会点错名字(报
 			#   "rooms.erase(" 而实际写的是 team_rooms)。反过来,也**别**把这两条当冗余删掉:删了不会
 			#   假绿(仍被子串拦住),只是判词失去分辨力 —— 那是排查时最贵的那点信息。
-			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase("]:
+			# ★★ 阶段 2-B(Task 4,2026-09-21)新增 `rejoin.drop_room(`:凭据表**也是一张注册表**,
+			#   作废某房的凭据同样是"拆除动作"。加它之前,**把 `drop_room` 挪到调用方**(本仓对
+			#   `teardown_room` 明令禁止的那件事)这条门**完全看不见** —— 实测:挪进
+			#   `_reclaim_finished_matches`(另一个文件)后本冒烟仍报 OK,而"同一件事两处实现"
+			#   这条纪律就只剩注释在守。判据只认**当前**的调用形状(`rejoin.drop_room(`),
+			#   改名/搬家时同款改这里(与上面 `_launcher.release_now` 那条同一条纪律)。
+			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase(", "rejoin.drop_room("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):
 						_fail = "lobby_rooms.%s 里出现 %s —— 拆除必须走 teardown_room 单一收口" % [f["name"], pat]
@@ -548,7 +563,60 @@ func _check_reclaim_ladder() -> void:
 	if not mo.contains("pid <= 0") or not mo.contains("port <= 0"):
 		_fail = "★ _match_over 没把 port/pid <= 0 判成「没结束」(开局那一瞬会被自己的回收梯拆掉)"
 		return
+	# ★★ 阶段 2-B(Task 4,2026-09-21)新增的**反向**断言:凭据表作废(`rejoin.drop_room`)必须
+	#   留在 `teardown_room` 体内(上面那条"绕道直接删注册表"的同一件事 —— 凭据表也是一张注册表)。
+	#   ★ 为什么必须在这里另加一条:上面那条正向断言(`_check_teardown_funnel`)只扫
+	#   `server/lobby_rooms.gd`,**扫不到写在 room_manager 里的绕道** —— 这正是本函数存在的理由。
+	#   ★ 实测(未加本条时):把 `lobby.rejoin.drop_room(room.code)` 挪进 `_reclaim_finished_matches`
+	#   的拆除循环,**本冒烟照旧报 OK** —— 那份"别把这段挪到调用方"的纪律当时只剩注释在守。
+	#   ★ 这是一条**否定式**判据(不许出现),不是"必须出现":凭据登记(`rejoin.grant`)在
+	#   `_grant_rejoin` 里、是正常路径,别把两者混为一谈。
+	#   ★ 判据**只收 `drop_room(`**:那是"整房作废"(拆除动作)。`drop_token(` 是"消费掉某一份
+	#   凭据",不是拆除动作、将来可能合法地出现在别处,收进来只会造出假红。
+	if code.contains("rejoin.drop_room("):
+		_fail = "★ room_manager 里出现 rejoin.drop_room( —— 凭据作废必须留在 teardown_room 体内(挪到调用方 = 同一件事两处实现)"
+		return
 	_done.append("_check_reclaim_ladder")
+
+
+# ── 阶段 2-B(Task 4,2026-09-21)新增:四个 spawn 点**都**登记回局凭据 ──
+# ★ 为什么是源码级:登记跑在"spawn 成功之后",要真拉起 worker 才走得到 —— 本文件里没有可用的
+#   行为探针(真链路归 **Task 8 的 `tests/rejoin_probe.sh`**,本步不重复造)。而**漏掉任何一个**
+#   spawn 点的症状是**静默**的:那个模式的玩家点「回到对局」永远得到"凭据已失效",大厅侧
+#   一行报错都没有 —— 正是本仓反复登记的"守卫在、东西不在"那一档。
+# ★ 四个点**逐个点名**,不数 `_grant_rejoin(` 的个数:个数会随实现漂,而且数不出"漏的是哪一个"
+#   (口径同 `_check_teardown_funnel` 的注释)。`royale_start_ai` 最容易漏 —— 它是 AI 补位那条
+#   冷门分支,而且它的 `granted` 只许收真人 role(范围必须与 token 循环一致)。
+func _check_rejoin_spawn_wiring() -> void:
+	if _fail != "":
+		return
+	var code := ScanUtil.code_only(ScanUtil.read("res://server/room_manager.gd"))
+	var spawns := ["_start_match", "royale_start", "royale_start_ai", "team_start"]
+	for f in spawns:
+		var body := ScanUtil.func_body(code, f)
+		if body.is_empty():
+			_fail = "找不到 %s 的函数体" % f
+			return
+		# ① 该 spawn 点必须登记凭据(否则那个模式永远回不去,且零报错)
+		if not body.contains("_grant_rejoin("):
+			_fail = "★ %s 未登记回局凭据(该模式点「回到对局」永远得到「凭据已失效」,且零报错)" % f
+			return
+		# ② 登记必须排在 **spawn 调用之后**:凭据里的 worker_pid 是"这一局还在不在"的唯一判据,
+		#    登记早了 pid 还是 0 → `RejoinRegistry.decision` 把还在打的局判成"已结束"。
+		#    ★ 判据落在**同一函数体内的先后**(不是"文件里某个位置")—— 顺序错了不报错,只静默失真。
+		var at_spawn := body.find("spawn_")
+		if at_spawn < 0 or body.find("_grant_rejoin(") < at_spawn:
+			_fail = "★ %s 的 _grant_rejoin( 未排在 spawn 调用之后(凭据里的 worker_pid 会是 0)" % f
+			return
+	# ③ 凭据表的 GC 必须搭在 30s 回收梯上:TTL 只是表的上界,不为它另立定时器(同一件事不留两处)
+	var rec := ScanUtil.func_body(code, "_reclaim_finished_matches")
+	if rec.is_empty():
+		_fail = "找不到 _reclaim_finished_matches"
+		return
+	if not rec.contains("lobby.rejoin.prune("):
+		_fail = "★ 回收梯未清过期凭据(lobby.rejoin.prune)—— 凭据表只增不减,表会无限长大"
+		return
+	_done.append("_check_rejoin_spawn_wiring")
 
 
 func _finish() -> void:

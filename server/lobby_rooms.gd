@@ -40,7 +40,6 @@ class Room:
 	# 三种模式的 worker 都在对局结束时自己退;0 = 还没登记(拉起中)→ 一律判**没结束**。
 	var worker_pid: int = 0
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超时清理用)
-	var tokens: Dictionary = {}          # peer_id -> 一次性会话令牌(断线重连用;开局时按 role 下发)
 	# 开局那一刻冻结的名单 [{role:int, name:String}]。★ 成员转连 worker 后会陆续断开大厅:
 	# `players` 会空掉、`_peer_names` 会被擦掉 —— 对局中房间的列表渲染**只能**读这一份
 	# (否则第三人看到的是"玩家, 玩家")。冻结点在 RoomManager 的四处开局。
@@ -64,7 +63,6 @@ class RoyaleRoom:
 	# worker 进程的 pid(拉起成功后由 RoomManager 登记;0 = 拉起中 → 判"没结束")。理由见 Room.worker_pid
 	var worker_pid: int = 0
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超龄清理用,与 Room.created_at 同形)
-	var tokens: Dictionary = {}          # peer_id -> 一次性会话令牌(断线重连用;开局时按 role 下发)
 	# 开局那一刻冻结的名单 [{role:int, name:String}](理由见 Room.roster 的注释)
 	var roster: Array = []
 
@@ -87,11 +85,16 @@ class TeamRoom:
 	# worker 进程的 pid(拉起成功后由 RoomManager 登记;0 = 拉起中 → 判"没结束")。理由见 Room.worker_pid
 	var worker_pid: int = 0
 	var created_at := 0.0
-	var tokens: Dictionary = {}           # peer_id -> 会话令牌(断线重连用)
 	# 开局那一刻冻结的名单 [{role:int, name:string}](理由见 Room.roster 的注释)
 	var roster: Array = []
 
 var team_rooms: Dictionary = {}   # code -> TeamRoom
+
+# 回局凭据表(阶段 2-B)。★ 它**独立于房对象**:房被拆除时凭据要不要跟着消失,由
+# `teardown_room` **显式**决定(`rejoin.drop_room`),而不是由"房对象还在不在"隐式决定
+# —— 回局的查询要在大厅侧活过拆除(见 RejoinRegistry 的类头)。三个房类原先各有一份
+# `tokens` 字段,随本次一起删除:同一件事只留一处记录。
+var rejoin := RejoinRegistry.new()
 
 
 # ── 3v3 的**纯判据**(静态:`-s` 可测;RPC handler 与 RoomManager 都调它们,判据只有这一份)──
@@ -810,6 +813,11 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 		how = "立即归还(worker 未起来)"
 	var kind := "大乱斗房" if is_royale else ("3v3 房" if is_team else "房间")
 	print("%s %s 拆除(端口 %d %s)" % [kind, room.code, port, how])
+	# ★ 这一局的凭据随房一起作废:房都拆了,worker 要么已经退了、要么马上会被杀,留着凭据
+	#   只会让回局把客户端送到一个已经不属于它的端口上(而且**没有一行报错**)。
+	var ntk := rejoin.drop_room(room.code)
+	if ntk > 0:
+		print("  同时作废 %d 份回局凭据" % ntk)
 	if disconnect_peers:
 		for peer_id in peers:
 			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
