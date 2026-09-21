@@ -17,9 +17,14 @@ extends Node
 #    `.new()` 建出来的是 **layer 1** 的 CanvasLayer ⇒ 结算页画在三个 HUD(130)与小地图(131)
 #    **底下**,压暗罩盖不住它们。本探针此前正是用 `.new()` —— 那等于在验一条**生产不会走**
 #    的路,这一类缺陷它一个都照不到。下面每次构造都过 `_make()`,并断言 `layer == LAYER_WANT`。
-# ② **每条断言都要能真的红**。取到 null 就直接解引用/`save_png` 会把协程掐断 ⇒ `_ready()`
-#    **一行都不打印**,和"探针真挂住"在输出上**长得一模一样**(本仓明确警告过这种误读)。
+# ② **每条断言都要能真的红**。取到 null 就直接解引用/`save_png` 会在出错那一行**中止所在函数**。
+#    ★ 2026-09-21 实测更正后果 —— 取决于出错在**哪一层**,而实测的两种都**不是**这里原先写的
+#    "一行都不打印":`get_node` 取不到节点时引擎只 `ERROR` 一行,**出错的那个函数当场结束、
+#    调用方继续**。于是 `_run()`(或它调用的 lambda)里出错 = 后面的断言被**静默跳过**,
+#    而 `_ready()` 的 `await _run()` 照常恢复并打印 **ALL-OK** ⇒ **假绿**(读者会把那行当
+#    "后面那些都过了");只有出错在 `_ready()` 自己身上才是"一行都不打印"。
 #    故:取图先判 `img == null` 并**响亮地记一条 FAIL**,取节点一律先 `_check(x != null)`。
+#    (下面三处取节点都按这条改过,失败形态记在各自注释里。)
 
 const MATCH_RESULT_SCENE := "res://ui/match_result.tscn"
 const LAYER_WANT := 150        # 只住在 .tscn 里;三个 HUD = 130、小地图 = 131、暂停菜单 = 145
@@ -66,9 +71,11 @@ func _run() -> void:
 	# ② 1v1 单节两行：列数 == 2 + columns.size()
 	await _shot(MatchResultPayload.for_duel({"scores": {1: 7, 2: 3}, "rounds_won": {1: 2, 2: 1},
 			"match_winner": 1}, {1: "阿甲", 2: "bob"}, 1), func(m):
-		# ★ 先判 null 再解引用(文件头 ②):直接 `get_node(...).columns` 在节点路径漂了时会
-		#   掐断 `_shot` 协程 ⇒ 整条 `_run` 再也不恢复、**一行 verdict 都不打印**,与"探针真挂住"
-		#   在输出上长得一模一样。
+		# ★ 先判 null 再解引用(文件头 ②)。**实测的失败形态**(2026-09-21,把 `Rows` 改名):
+		#   直接 `get_node(...)` 取不到节点 ⇒ 引擎只 `ERROR` 一行,而**出错的那个函数当场结束、
+		#   调用方继续** —— 于是这个 lambda 里**剩下的断言被静默跳过**,`_shot`/`_run` 照常往下走。
+		#   若没有别处恰好也撞到同一个改名(那次碰巧是 ③ 替它报了红),verdict 就是 **ALL-OK**:
+		#   一条**假绿**(读者会以为这两条都过了),比"探针挂住"危险得多。
 		var g := m.get_node_or_null("Root/Panel/VBox/Sections/Section0/Rows") as GridContainer
 		_check(g != null, "1v1:找不到 Root/Panel/VBox/Sections/Section0/Rows(节点路径变了?)")
 		if g != null:
@@ -84,7 +91,7 @@ func _run() -> void:
 			4: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400},
 			5: {"kills": 2, "deaths": 4, "dmg": 120, "kscore": 150, "acs": 75}},
 			"mvp": 5, "match_winner": 2}, {1: "阿甲", 4: "dave", 5: "eve"}, {1: 1, 4: 2, 5: 2}, 1), func(m):
-		# ★ 先判 null 再解引用(文件头 ②;理由同上一条 —— 掐断协程 = 一行 verdict 都没有)。
+		# ★ 先判 null 再解引用(文件头 ②;失败形态的实测记录见上一条 —— 另两处 lambda 同款)。
 		var box := m.get_node_or_null("Root/Panel/VBox/Sections") as HBoxContainer
 		_check(box != null, "3v3:找不到 Root/Panel/VBox/Sections(节点路径变了?)")
 		if box == null:
@@ -159,8 +166,11 @@ func _run() -> void:
 	mb.show_result({"title": "信号"})
 	var fb := [0]
 	mb.leave_requested.connect(func() -> void: fb[0] += 1)
-	# ★ 先判 null 再解引用(文件头 ②):路径漂了时 `get_node(...).emit_signal(...)` 会掐断
-	#   `_shot`/`_run` 协程 ⇒ **一行 verdict 都不打印**,与"探针真挂住"分不开。
+	# ★ 先判 null 再解引用(文件头 ②)。这里与上面两处**形态不同**:它直接在 `_run` 里
+	#   (不经过 lambda),出错会**结束 `_run` 本身** —— ④c 自己的断言与**整段 ⑤** 一起被跳过,
+	#   而 `_ready` 的 `await _run()` 照常恢复、打印的却是 **ALL-OK**(2026-09-21 实测:把
+	#   `BackButton` 改名即复现,输出里只有一行 `ERROR: Node not found` + `ALL-OK`)。
+	#   那是**假绿**,比文件头 ② 预言的"一行都不打印"更坏:读者会把那行 ALL-OK 当成"④c 与 ⑤ 都过了"。
 	var bb := mb.get_node_or_null("Root/Panel/VBox/BackButton") as Button
 	_check(bb != null, "④c:找不到 Root/Panel/VBox/BackButton(节点路径变了?)")
 	if bb != null:
