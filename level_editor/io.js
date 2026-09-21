@@ -29,22 +29,30 @@ globalThis.Io = (function () {
     var pending = new Map();
     var dead = null;
 
-    // ★ 唯一的"整条链死掉"收口:拒光在飞请求 + 清表 + 标死 + **回收那个 worker**。
+    // ★ 唯一的"整条链死掉"收口:标死 + 拒光在飞请求 + 清表 + **回收那个 worker**。
     //   dead 一立,ensure() 就抛 —— 于是之后**任何**调用都当场失败,而不是悄悄再起一个 worker。
     //   ★ 回收放进这个收口,是为了让**两条死法**(terminate() 与 worker.onerror)收场一致:
     //     修复轮 1 把回收只写在 terminate() 里,onerror 那条于是把 worker 引用**留着** ——
     //     线程还活着、还被这个 codec 引着,直到页面关掉为止(而"codec 已死"的语义正是
     //     "它背后没有任何东西还在跑")。两条死法必须同样收场。
-    //     terminate() 已在调用 failAll 之前自己回收过一遍,故那里不会重复 terminate(幂等)。
+    //   ★★ 收口内部有**两处顺序是承重的**(修复轮 3 的 C/D):
+    //     · D —— "dead 只认第一个错因"这条不变量由这里的 `if (dead === null)` 保证。
+    //       修复轮 2 只把这句守卫写在 terminate() 那一处,而注释里却写成收口的性质:
+    //       别处再走一次收口就会把先前的死因覆盖掉。守卫挪进来,注释才成立。
+    //     · C —— **先标死、先拒光、先清表,回收放最后**:worker.terminate() 万一抛,
+    //       在飞的 promise 也已经拿到失败了。反过来的话这一抛会把它们全留下,
+    //       而调用方只看到一个异常("谁都没被拒"这件事没有任何信号)。
     function reapWorker() {
-      if (worker && typeof worker.terminate === 'function') worker.terminate();
+      // ★ 先置空引用,再 terminate:terminate() 若抛,也不留下一个"看着还活着"的 worker。
+      var w = worker;
       worker = null;
+      if (w && typeof w.terminate === 'function') w.terminate();
     }
     function failAll(err) {
-      dead = err;
-      reapWorker();
+      if (dead === null) dead = err;
       pending.forEach(function (p) { p.reject(err); });
       pending.clear();
+      reapWorker();
     }
 
     function ensure() {
@@ -103,15 +111,16 @@ globalThis.Io = (function () {
       pendingCount: function () { return pending.size; },
       isDead: function () { return dead !== null; },
       terminate: function () {
-        // 先真的停掉线程,再走上面那个共用死法收口(它自己也会回收,此处只是把这一刀
-        // 明确写在前面 —— 两条死法共用同一个收口)。
-        reapWorker();
         // ★ terminate 之后**不可能**再有应答回来(worker 已死,worker.js 的应答也走不回来),
         //   所以在飞请求必须当场拒掉:留着就是永不 settle 的 promise,调用方以为"停掉它
         //   就不再有后台活动"却一直挂在 await 上。连带标死 —— 否则下一次调用会**静默**
         //   新建一个 worker,而调用方以为自己已经把它关掉了。
-        //   ★ 已死则保留先前的死因(dead 只认第一个错因,不被后一次覆盖)。
-        if (dead === null) failAll(new Error('Io: codec 已被 terminate() —— 在飞的请求不会再有应答'));
+        //   ★★ 修复轮 3 起这里**不再**自己先回收一刀、也不自带 `if (dead === null)` 守卫:
+        //     调用方的守卫管不了"回收本身抛错"那条路 —— 那一抛会让本方法带着"dead 还没立、
+        //     worker 引用还没置空"的状态退出,留下一个看着还活着的 codec(C);
+        //     "保留先前死因"这条不变量也挪进了 failAll(D),两处守卫同一句话会各自漂。
+        //     两条死法(terminate / onerror)现在**逐字**只走同一个收口。
+        failAll(new Error('Io: codec 已被 terminate() —— 在飞的请求不会再有应答'));
       },
     };
   }

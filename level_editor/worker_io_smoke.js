@@ -54,6 +54,17 @@ async function rejects(fn, msg, expectSub) {
   pass++; console.log('  ok  - ' + msg);
 }
 
+// ★★ 两个时限的分工(修复轮 3 的 A1)—— 加的是**一层更紧的边界**,不是替换安全网:
+//   · 120000(下面看门狗,值**保持不动**)= 全局兜底:任何一处 stall 的最后一道网。
+//   · PHASE5_TIMEOUT_MS = 只罩相位 ⑤ 那个并发批的**局部**时限。它存在的唯一理由是
+//     "让红的形态可用":配对错的实现会把某几条请求永久留在表里 → 整批永不 settle,于是
+//     整个进程被 120 秒看门狗收走 —— 输出里**没有具名 FAIL**,而且 ⑤ 之后的相位一条都评不到,
+//     变异轮的断言总数被截断在 ~17(全绿基线 60),红的形态与跑了多少都不可比。
+//     有了它,stall 2 秒就出一条具名 FAIL,⑥~⑪ 照常评。
+//   量级:整个冒烟跑完不到一秒(全程是异步消息往返,没有真算力),2 秒是三个数量级的余量,
+//   不会在负载重的机器上假红。★ 别拿它替换看门狗 —— 它只罩一个相位,罩不住别处。
+const PHASE5_TIMEOUT_MS = 2000;
+
 // ── 假 Worker:把消息异步交给**真的** worker.js,再把应答异步交回 ──
 // ★★ 应答**乱序**投递(见 deliver):真 Worker 的应答顺序本来就不保证等于请求顺序
 //    (不同 op 耗时不同、调度不确定),而"按 id 配对"这条断言只有**乱序**才吃劲 ——
@@ -106,9 +117,26 @@ function deliver(w, out) {
   w.ready.push(out);
   if (w.ready.length !== w.sent - w.delivered) return;
   const batch = w.ready.splice(0, w.ready.length);
+  const arrivals = batch.map(function (o) { return o.id; });   // ← 到达序(batch 下面会被就地排序,先留一份)
   batch.sort(function (a, b) { return a.id - b.id; });    // ← 规范序:只由 id 决定,与到达顺序无关
   const k = Math.ceil(batch.length / 3) % batch.length;   // ← 再整体左移 k 位(n=1 → 0)
   const ordered = batch.slice(k).concat(batch.slice(0, k));
+  // ★★ 桩**自己**的排列也要断言(修复轮 3 的 A2):相位 ⑤ 那条「按 id 配对」断言的全部力量
+  //    都压在上面那条约定("交付序既非到达序、亦非其倒序")上,而它此前只存在于本段注释的
+  //    算式里 —— 谁把 ⌈n/3⌉ 改回退化值(0 = 恒等 / reverse() = 倒序),注释不会红、相位 ⑤
+  //    也不会红,那条约定就**静默**失效了。这里直接对**实际交付出去的那个序列**下断言。
+  //    n ≥ 3 时左移量落进 [1, n-2],两个退化排列都够不着;n=1 只有恒等一种排列、n=2 只有
+  //    恒等与倒序两种(见上),故这两个尺寸不判 —— 当前用例的并发批只有 n=6(相位 ⑤)与 n=1。
+  if (arrivals.length >= 3) {
+    const delivered = ordered.map(function (o) { return o.id; });
+    const reversed = arrivals.slice().reverse();
+    ok(delivered.join(',') !== arrivals.join(','),
+       '★ 桩的交付序 ≠ 到达序(恒等排列会让「取**最老** pending」蒙对 —— 相位 ⑤ 的强度全靠这里):' +
+       '到达 ' + arrivals.join(',') + ' → 交付 ' + delivered.join(','));
+    ok(delivered.join(',') !== reversed.join(','),
+       '★ 桩的交付序 ≠ 到达序的倒序(倒序排列会让「取**最新** pending」蒙对):' +
+       '到达 ' + arrivals.join(',') + ' → 交付 ' + delivered.join(','));
+  }
   w.delivered += ordered.length;
   ordered.forEach(function (o) {
     if (typeof w.onmessage === 'function') w.onmessage({ data: o });
@@ -173,6 +201,14 @@ async function tailPhases() {
                 '★ 标死之后**再调用也失败** —— 不静默新建 worker 重试', 'Io: 编解码 worker 出错');
   eq(live.sent, sentAfterError, '那次失败没有**又往同一个(已崩的)worker 投一条消息**');
   eq(spawns, spawnsAfterError, '★ 那次失败也没有**另起一个 worker** 重试(测试工厂的调用次数不变)');
+  // ★★ D:死因只认**第一个** —— 这句不变量现在由 failAll 里的 `if (dead === null)` 保证
+  //   (修复轮 3 把它从 terminate() 的调用点挪进了收口)。这里再走一次收口(对已死的 codec
+  //   调 terminate())把它变成承重的:守卫若被删掉,下面那条断言读到的是 "已被 terminate()",
+  //   而死因被后来者改写的代价正是"排查时拿到的不是谁先把它弄死的"。
+  c2.terminate();
+  await rejects(function () { return c2.ping(); },
+                '★ 已死的 codec 再死一次:死因仍是**最先**那一个(不被后一次覆盖)',
+                'Io: 编解码 worker 出错');
 
   // ==== 相位 ⑩ terminate() 时在飞的请求必须被拒,不能留悬挂 promise ====
   const c3 = Io.createCodec({ workerFactory: makeWorker });
@@ -190,7 +226,12 @@ async function tailPhases() {
   ok(c3.isDead() === true, '★ terminate() 之后 codec 标死 —— 下一次调用不会**静默**新建一个 worker');
   await rejects(function () { return c3.ping(); }, 'terminate 之后再调用也失败', 'terminate');
   // ★ 两条计数各钉各的(w3.sent 与"有没有另起一个 worker"是**两件事**):
-  eq(w3.sent, 1, '那次失败没有**又往那个已 terminate 的 worker 投一条消息**(worker 引用确实被置空了)');
+  //   ★★ 本行标签原先还带一句"(worker 引用确实被置空了)" —— 那句话 `eq(w3.sent, 1)`
+  //     **证不出来**(修复轮 3 的 B):失败那次调用在 ensure() 里就抛了,根本走不到
+  //     postMessage,所以"terminate() 置了 dead 但忘了把 worker 置空"与"确实置空了"
+  //     都会让 sent 停在 1,整段 ⑩ 照样全绿。要真证它得给 io.js 加一个读 worker 引用的
+  //     API —— 那是给生产面扩权,不做。故只留这条断言真正钉得住的那半句。
+  eq(w3.sent, 1, '那次失败没有**又往那个已 terminate 的 worker 投一条消息**');
   eq(spawns, spawnsBefore, '★ 那次失败也没有**另起一个 worker**(测试工厂的调用次数不变)');
 
   // ==== 相位 ⑪ postMessage 抛(浏览器里不可克隆的 map 就是 DataCloneError)====
@@ -280,7 +321,7 @@ async function tailPhases() {
       const mm = fillMap(Core.createMap('c' + n, n, 2), Core.LAYER_SCENE, n * 31);
       jobs.push(codec.encodeMap(mm).then(function (b) { return { n: n, b: b }; }));
     }
-    return Promise.all(jobs).then(function (outs) {
+    const batch = Promise.all(jobs).then(function (outs) {
       let allOk = true, firstBad = '';
       return Promise.all(outs.map(function (o) {
         return codec.decodeMap(o.b).then(function (mm) {
@@ -297,7 +338,28 @@ async function tailPhases() {
         eq(codec.pendingCount(), 0, '全部 settle 之后 pending 表清空(不会泄漏)');
       });
     });
-  })().then(function () {
+    // ★★ A1:本相位的**局部**时限(见文件头 PHASE5_TIMEOUT_MS 的理由)。它加的是
+    //    "stall 的形态",不改本相位的任何断言 —— 下面那个 `.catch` 在本相位没走完时
+    //    记一条具名 FAIL,好让 ⑥~⑪ 照常评、变异轮的断言总数与基线可比。看门狗仍是最后一道网。
+    let timer = null;
+    const bound = new Promise(function (_, reject) {
+      timer = setTimeout(function () {
+        reject(new Error('并发的 encode/decode 有请求在 ' + (PHASE5_TIMEOUT_MS / 1000) +
+                         ' 秒内没有 settle —— 至少一条应答没有回到它自己的 promise' +
+                         '(按 id 配对错;桩的交付排列见 deliver)'));
+      }, PHASE5_TIMEOUT_MS);
+    });
+    // ★ 正常路径上把定时器收掉:留着它会让进程尾巴上多挂一个 2 秒的 pending timer。
+    return Promise.race([batch, bound]).finally(function () { clearTimeout(timer); });
+  })().catch(function (e) {
+    // ★ 两种来源:上面那条局部时限(配对错 → 整批永不 settle),或本相位自己真出错
+    //   (如某次 decode 被拒)。两种都在这里记一条**具名 FAIL**,而且 ⑥~⑪ 照常评 ——
+    //   这正是 A1 要的形态:红的那一刻就知道破的是哪条约定、还剩几个相位没评,而不是整轮
+    //   被看门狗收走(旧写法下真出错会落到最外层那个"未捕获异常,后面的断言一行都没跑")。
+    //   ★ 真因由 errText(e) 带出 —— 别靠猜是哪一种。★ 不是放宽:fail>0 ⇒ 退出码仍是 1。
+    ok(false, '★ 相位 ⑤ 未走完(超时 ' + (PHASE5_TIMEOUT_MS / 1000) +
+       ' 秒未 settle,或本相位自身出错): ' + errText(e));
+  }).then(function () {
 
   // ==== 相位 ⑥ ping 与 terminate ====
   return codec.ping().then(function (p) {
