@@ -170,7 +170,11 @@ function lockFileExclusiveWin(file) {
   });
 }
 
-// ★ 全部相位(① ①b ② ③ ④ ⑤)都跑在这里,由下面的 main() 包在 try/finally 里调 —— 清理因此**必定**执行。
+// ★ 全部相位(① ①b ② ③ ④ ⑤ 静态读失败、⑤ 地图名守卫、⑥ API)都跑在这里,由下面的 main() 包在 try/finally 里调 —— 清理因此**必定**执行。
+//   ★ 两个 ⑤ 是**有意为之**:Task 1 加固时插进来的「静态读失败」与计划里 Task 2 的「地图名守卫」撞号,
+//     改成 ⑥/⑦ 会让计划里 Task 3 / Task 6 的 ⑦ / ⑧ 整体错位 —— 故保留原号,两个相位头也都点了名。
+//   ★★ 新相位一律加在**本函数体内**:main() 里 `// ==== 断言区结束 ====` 那句在 try/finally{ cleanup() }
+//     **之后**,加在那里 = 相位跑在清理之后,每次跑都会把已删掉的 tmpRoot 重新建出来(真实踩过)。
 //   (相位体刻意留在与原先相同的缩进层级:把它们整体缩进一层会让 diff 淹没实质改动。)
 async function runAllPhases() {
   // ★ 自检缝(默认关闭,只认环境变量):用来实际验证「失败路径也会清理临时目录」(待修 4)。
@@ -382,6 +386,89 @@ async function runAllPhases() {
       //   (断言失败走不到 kill 那一步 —— 所以这里必须再兜一次。)
       await releaseLocker();
     }
+  }
+
+  // ==== 相位 ⑤ 地图名守卫(规格 §4.9,风险登记点名"必须写测试")====
+  // ★ 编号沿用计划原文:Task 1 加固时插进来的「相位 ⑤ 静态读失败」占了同一个号。
+  //   改号会让计划里 Task 3 / Task 6 的 ⑦ / ⑧ 错位,故两个 ⑤ 并存(有意为之,不是笔误)。
+  // ★★ 本相位必须留在 runAllPhases() **里面**(不是 main() 里 `// ==== 断言区结束 ====` 之前):
+  //   那句注释在 main() 的 try/finally{ cleanup() } **之后**,放那里 = 相位跑在清理之后,
+  //   每次跑都会把已删掉的 tmpRoot 重新建出来 → 每次留下一个 cyrm-srv-* 临时目录(已实测)。
+  {
+    const bad = ['', 'demo', 'demo.txt', 'a.cyrm.bak', '..cyrm', '.cyrm', 'demo.cyrm\n',
+                 '../demo.cyrm', '..%2fdemo.cyrm', '/demo.cyrm', 'a/b.cyrm', 'a\\b.cyrm',
+                 'C:\\demo.cyrm', 'demo cyrm', 'demo\n.cyrm', 'demo.cyrm/x', '..\\..\\x.cyrm',
+                 'demo\u0000.cyrm', 'x'.repeat(65) + '.cyrm', null, 42, undefined];
+    let allRejected = true, firstFail = '';
+    for (const n of bad) {
+      // ★ 用「不提前 return」的写法:一条失败不该让后面 15 条一条都不跑(否则修一处红一处)。
+      if (srv.isValidMapName(n) !== false) { allRejected = false; if (!firstFail) firstFail = JSON.stringify(n); }
+    }
+    ok(allRejected, '★ isValidMapName 拒绝全部 ' + bad.length + ' 个非法名(首个漏网:' + firstFail + ')');
+    const good = ['demo.cyrm', 'factory1v1.cyrm', 'a.cyrm', 'A_1-2.cyrm', 'x'.repeat(58) + '.cyrm'];
+    let allAccepted = true, firstGoodFail = '';
+    for (const n of good) {
+      if (srv.isValidMapName(n) !== true) { allAccepted = false; if (!firstGoodFail) firstGoodFail = n; }
+    }
+    ok(allAccepted, 'isValidMapName 接受全部 ' + good.length + ' 个合法名(首个漏网:' + firstGoodFail + ')');
+    ok(srv.MAP_NAME_RE.source === '^[A-Za-z0-9_\\-]+\\.cyrm$', 'MAP_NAME_RE 与规格 §4.9 逐字一致');
+    ok(srv.MAX_MAP_NAME_LEN === 64, 'MAX_MAP_NAME_LEN === 64(规格的正则没有长度上界,这条是防御性补充)');
+    let threw = false;
+    try { srv.mapPathFor(tmpRoot, '../evil.cyrm'); } catch (e) { threw = true; }
+    ok(threw, 'mapPathFor: 非法名抛错(不返回一个越界的路径)');
+    eq(srv.mapPathFor(tmpRoot, 'ok.cyrm'), path.join(path.resolve(tmpRoot), 'ok.cyrm'),
+       'mapPathFor: 合法名 = mapsDir + 名字');
+  }
+
+  // ==== 相位 ⑥ /api/maps + GET /api/map ====
+  // ★ 同相位 ⑤ 的编号说明(计划原文的号,与 Task 1 的静态读失败 ⑤ 相撞);
+  //   位置同理,必须在 runAllPhases() 里面。
+  {
+    const mapsDir = path.join(tmpRoot, 'maps');
+    fs.mkdirSync(mapsDir, { recursive: true });
+    fs.writeFileSync(path.join(mapsDir, 'b_second.cyrm'), Buffer.from([1, 2, 3, 4, 5]));
+    fs.writeFileSync(path.join(mapsDir, 'a_first.cyrm'), Buffer.from([9, 9]));
+    fs.writeFileSync(path.join(mapsDir, 'notes.txt'), 'not a map');
+    fs.mkdirSync(path.join(mapsDir, 'sub.cyrm'), { recursive: true });
+    fs.writeFileSync(path.join(mapsDir, 'sub.cyrm', 'keep.txt'), 'x');
+    const logged = [];
+    const apiSrv = track(await srv.startServer({
+      rootDir: __dirname, mapsDir: mapsDir, port: 0,
+      logger: function (m) { logged.push(m); },
+    }));
+
+    eq(srv.listMaps(path.join(tmpRoot, 'no_such_dir'), null), [], 'listMaps: 目录不存在 = 空库,不抛错');
+
+    const rm = await request(apiSrv.port, 'GET', '/api/maps');
+    ok(rm.status === 200, 'GET /api/maps → 200');
+    ok(/^application\/json/.test(String(rm.headers['content-type'])), 'GET /api/maps → application/json');
+    const data = JSON.parse(rm.body.toString('utf8'));
+    eq(data.maps.map(function (m) { return m.name; }), ['a_first.cyrm', 'b_second.cyrm'],
+       '★ /api/maps: 只列合法且是文件的 .cyrm,按名字升序(notes.txt 与同名目录都不进来)');
+    eq(data.maps[0].size, 2, '/api/maps: size = 文件字节数');
+    ok(typeof data.maps[0].mtime === 'number' && data.maps[0].mtime > 0, '/api/maps: mtime 是数字');
+    ok(logged.some(function (m) { return m.indexOf('notes.txt') >= 0; }),
+       '★ /api/maps: 被跳过的文件**点名记日志**(绝不静默消失)');
+
+    const rg = await request(apiSrv.port, 'GET', '/api/map?p=b_second.cyrm');
+    ok(rg.status === 200, 'GET /api/map → 200');
+    ok(rg.headers['content-type'] === 'application/octet-stream', 'GET /api/map → octet-stream');
+    sameBytes(rg.body, Buffer.from([1, 2, 3, 4, 5]), 'GET /api/map: 字节原样返回');
+    ok(rg.headers['cache-control'] === 'no-store', 'GET /api/map → no-store');
+
+    const r404 = await request(apiSrv.port, 'GET', '/api/map?p=nope.cyrm');
+    ok(r404.status === 404, 'GET /api/map 不存在的名字 → 404');
+    const rMiss = await request(apiSrv.port, 'GET', '/api/map');
+    ok(rMiss.status === 400, 'GET /api/map 缺 p 参数 → 400');
+    const rTrav = await request(apiSrv.port, 'GET', '/api/map?p=' + encodeURIComponent('../package.json'));
+    ok(rTrav.status === 400, '★ GET /api/map 路径穿越名 → 400');
+    ok(rTrav.body.toString('utf8').indexOf('"name"') < 0, '★ 那个 400 的正文里没有 package.json 的内容');
+    const rTrav2 = await request(apiSrv.port, 'GET', '/api/map?p=' + encodeURIComponent('..%2fdemo.cyrm'));
+    ok(rTrav2.status === 400, '★ GET /api/map 编码过的穿越名 → 400');
+    const rPost = await request(apiSrv.port, 'POST', '/api/map?p=b_second.cyrm', Buffer.from([1]));
+    ok(rPost.status === 405, 'POST /api/map → 405');
+    const rMapsPost = await request(apiSrv.port, 'POST', '/api/maps', Buffer.from([1]));
+    ok(rMapsPost.status === 405, 'POST /api/maps → 405');
   }
 }
 

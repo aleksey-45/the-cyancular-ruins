@@ -111,6 +111,76 @@ function serveStatic(res, resolved, headOnly) {
   });
 }
 
+// ── 地图名守卫(规格 §4.9)──
+// ★ 没有这一条,一个本地网页就能读写整块磁盘 —— 它是本文件唯一的安全边界,
+//   也是规格 §7 风险登记里点名"这条必须写测试"的那一条。
+// 只接受**裸文件名**:不接受路径分隔符(/ 与 \)、不接受 ..、不接受空字节、不接受绝对路径。
+const MAP_NAME_RE = /^[A-Za-z0-9_\-]+\.cyrm$/;
+// 规格的正则没有长度上界;这条是防御性补充(真名由 core.js 的 sanitizeName 生成,
+// ≤32 字符 + ".cyrm" = 37,64 留了一倍余量)。
+const MAX_MAP_NAME_LEN = 64;
+
+function isValidMapName(name) {
+  if (typeof name !== 'string') return false;
+  if (name.length === 0 || name.length > MAX_MAP_NAME_LEN) return false;
+  // 空字节:正则本来就不放行,这里再挡一次 —— 防的是"将来有人把正则改宽"。
+  if (name.indexOf('\0') >= 0) return false;
+  return MAP_NAME_RE.test(name);
+}
+
+function mapPathFor(mapsDir, name) {
+  if (!isValidMapName(name)) throw new Error('地图名非法:' + JSON.stringify(name));
+  const dir = path.resolve(mapsDir);
+  const target = path.resolve(dir, name);
+  // 双保险:即便正则哪天被改宽,这里也保证出去的路径一定在 maps/ 里面。
+  if (target.indexOf(dir + path.sep) !== 0) throw new Error('地图名越出 maps 目录:' + name);
+  return target;
+}
+
+// 列地图。★ 只列**打得开**的(名字不过守卫的文件列出来也点不开),但绝不静默 ——
+// 跳过的每一个都记一条日志点名。
+function listMaps(mapsDir, logger) {
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(mapsDir); }
+  catch (e) { return out; }                     // 目录不存在 = 空库,不是错误
+  names.sort();
+  for (const n of names) {
+    if (!isValidMapName(n)) { if (logger) logger('跳过不可打开的文件:' + n); continue; }
+    let st;
+    try { st = fs.statSync(path.join(mapsDir, n)); } catch (e) { continue; }
+    if (!st.isFile()) continue;
+    out.push({ name: n, size: st.size, mtime: st.mtimeMs });
+  }
+  return out;
+}
+
+function serveMapFile(res, target, name, headOnly) {
+  fs.stat(target, function (err, st) {
+    if (err || !st.isFile()) return sendText(res, 404, '找不到地图 ' + name);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': st.size,
+      'Cache-Control': 'no-store',
+    });
+    if (headOnly) return res.end();
+    // ★★ 与 serveStatic 同一条教训(Task 1 的待修 1):响应头**已经发出去了**,
+    //   这一支只能把本次响应中止掉,不能回头改状态码。ReadStream 的 'error' 必须在这里接管:
+    //   没人接管就是一次**无人认领的 'error' 事件** = 未捕获异常 = **整个编辑器服务器进程死掉**
+    //   (而 serve.bat 是整场开着的 ⇒ 一个坏文件把编辑器打下来,用户只能重启)。
+    //   「stat 成功但 open 失败」是真实状态,不是理论:Windows 上 AV/扫描器独占锁、ACL 拒绝、
+    //   负载下的 EMFILE、以及文件在 stat 与 createReadStream 之间被删掉(编辑器自己正在重写它)。
+    //   上面那道 404 只覆盖「stat 失败」,根本走不到这里。
+    let stream;
+    try { stream = fs.createReadStream(target); }
+    catch (e) { return res.destroy(); }
+    stream.on('error', function () { res.destroy(); });
+    // ★ 防泄漏的另一半:客户端提前断开时把**源流**关掉,否则 fd 与流对象一直留到进程结束。
+    res.on('close', function () { stream.destroy(); });
+    stream.pipe(res);
+  });
+}
+
 // ★ Host 白名单闸(所有路由之前)。
 //   只绑 127.0.0.1 **挡不住 DNS rebinding**:用户访问一个恶意页面时,那个页面可以把
 //   自己的域名解析到 127.0.0.1,于是它就以**同源**身份打到这个服务器上 —— 绑回环完全帮不上忙。
@@ -130,8 +200,27 @@ function hostAllowed(req) {
   return ALLOWED_HOSTS.some(function (h) { return host === h + ':' + localPort; });
 }
 
-// /api/* 的分派。Task 2 会长出 /api/maps 与 GET /api/map,Task 3 再长出 PUT /api/map。
+// /api/* 的分派。Task 3 再长出 PUT /api/map。
 function handleApi(req, res, parsed, ctx) {
+  if (parsed.pathname === '/api/maps') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405, '只接受 GET');
+    const maps = listMaps(ctx.mapsDir, ctx.logger);
+    ctx.logger('列出 ' + maps.length + ' 张地图');
+    return sendJson(res, 200, { maps: maps });
+  }
+  if (parsed.pathname === '/api/map') {
+    const name = parsed.searchParams.get('p');
+    // ★ 名字不过关一律在**碰文件系统之前**回 400。
+    if (!isValidMapName(name)) {
+      return sendText(res, 400,
+        '地图名非法(只接受裸文件名 ' + MAP_NAME_RE.source + '):' + JSON.stringify(name));
+    }
+    const target = mapPathFor(ctx.mapsDir, name);
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      return serveMapFile(res, target, name, req.method === 'HEAD');
+    }
+    return sendText(res, 405, '只接受 GET');
+  }
   return sendText(res, 404, '未知接口 ' + parsed.pathname);
 }
 
@@ -250,6 +339,9 @@ module.exports = {
   DEFAULT_INDEX: DEFAULT_INDEX, MAX_MAP_BYTES: MAX_MAP_BYTES,
   MIME: MIME, mimeOf: mimeOf, sendText: sendText, sendJson: sendJson,
   staticFileFor: staticFileFor, serveStatic: serveStatic, handleApi: handleApi,
+  MAP_NAME_RE: MAP_NAME_RE, MAX_MAP_NAME_LEN: MAX_MAP_NAME_LEN,
+  isValidMapName: isValidMapName, mapPathFor: mapPathFor, listMaps: listMaps,
+  serveMapFile: serveMapFile,
   createServer: createServer, startServer: startServer,
   describePortOwner: describePortOwner, openBrowser: openBrowser, parseArgs: parseArgs,
 };
