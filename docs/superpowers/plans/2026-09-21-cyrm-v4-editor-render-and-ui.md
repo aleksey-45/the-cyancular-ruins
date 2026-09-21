@@ -308,6 +308,10 @@ function fillMap(map, L, seed) {
     if (fail === 0) console.log('WORKER IO SMOKE OK');
     process.exit(fail === 0 ? 0 : 1);
   });
+  // ★ 计划原文**漏印了这一行**(相位 ⑤ 那个 `.then(function () {` 回调的收尾)。
+  //   缺了它整个文件是 SyntaxError: Unexpected end of input,一行断言都跑不到
+  //   (Task 1 实现时实测)。按括号平衡补上,无任何断言被改动。
+  });
 })().catch(function (err) {
   console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
   console.error(err && err.stack ? err.stack : String(err));
