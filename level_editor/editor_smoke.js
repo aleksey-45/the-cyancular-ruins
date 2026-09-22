@@ -2883,6 +2883,420 @@ function countNonZero(map, L) {
     }
   }
 
+  // ==== 相位 ⑯ ★★★ 四条规格要求"造好了却没人能碰到"的功能:把线接上 ====
+  // ★★ 为什么必须另立一相(整支终审查出来的四条遗漏):内核写了、测试全绿、导出表也列了,
+  //    而**生产里零调用点** —— "函数写对 + 导出表列上"这两件事在冒烟里**看不出**"用户碰不到",
+  //    因为断言一直在直接调那个函数。四条各自的死法:
+  //      ① 镜像(规格 §4.4 的选框):`mirrorRegion` 只有测试在调 ⇒ 热键那条路不存在;
+  //      ② 改尺寸(审计 A10):`resizeMap` 只被 `btn-dup` 用(**尺寸不变**)⇒ 整条 `kind:'whole'`
+  //         历史分支在生产里是死的(Task 6 修的那个别名 bug、`applyEntry` 的 whole 分支、
+  //         `pushAndShow` 的 `whole ⇒ invalidateAll` 分派,全都只有测试在跑);
+  //      ③ 压缩(规格 §3.5):两处 encode 都写死 `compress:true` ⇒ 那条"完整可用的退路"
+  //         (compression=0)不可达 —— 而浏览器 deflate 与 Godot COMPRESSION_DEFLATE 的
+  //         兼容性至今**没实测过**,这条退路是唯一的兜底;
+  //      ④ 空格拖拽(规格 §4.8):`pointerdown` 只认中键与 Alt。
+  // ★ 判据一律取**副作用**(地图改了没 / 历史能不能撤 / 走的是哪条渲染入口 / 发出去的第 6 个
+  //   字节是几),而不是"没抛"。替身:window.addEventListener(抓处理器)、按 id 惰性建的假 DOM、
+  //   记账的渲染器、记账的 fetch、记账的 Io.encodeMap。
+  {
+    const s16 = { add: globalThis.addEventListener, doc: globalThis.document,
+                  r: Editor.app.r, map: Editor.app.map, canvas: Editor.app.canvas,
+                  name: Editor.app.name, st: Editor.app.st, tileDefs: Editor.app.tileDefs,
+                  fmt: Editor.app.sourceFormat, raw: Editor.app.raw,
+                  ls: globalThis.localStorage, timer: globalThis.setTimeout,
+                  fetch: globalThis.fetch, confirm: globalThis.confirm };
+    const realTimer16 = globalThis.setTimeout;
+    const handlers16 = {}, errs16 = [], calls16 = [];
+    let status16 = '', sel16 = null;
+    // ── 假 DOM(照相位 ⑭ 的手法:按 id 惰性建、记住挂上来的监听器;`_h[type]` 存**数组**,
+    //    因为同一个事件可能有多个处理器)──
+    const els16 = {}, made16 = [];
+    // ★ `#palette` 的派生提示行走 `box.parentNode.insertBefore(...)`(见 buildPanels)⇒ 每个假
+    //   元素都要有一个**能 insertBefore 的**父节点,否则建面板那一步当场抛。
+    const root16 = { parentNode: null, className: '', style: {}, classList: null,
+                     insertBefore: function () {}, appendChild: function () {} };
+    function mkEl16(id) {
+      const el = {
+        id: id, textContent: '', value: '', checked: false, hidden: false, className: '',
+        style: {}, dataset: {}, children: [], _h: {},
+        parentNode: root16, nextSibling: null,
+        classList: { add: function () {}, remove: function () {}, toggle: function () {},
+                     contains: function () { return false; } },
+        addEventListener: function (t, fn) { (el._h[t] = el._h[t] || []).push(fn); },
+        appendChild: function (c) { el.children.push(c); return c; },
+        insertBefore: function (c) { el.children.push(c); return c; },
+        removeChild: function () {}, querySelector: function () { return mkEl16(null); },
+        click: function () {
+          (el._h.click || []).forEach(function (fn) { fn({ stopPropagation: function () {}, target: el }); });
+        },
+      };
+      return el;
+    }
+    const statusEl16 = mkEl16('status-msg');
+    Object.defineProperty(statusEl16, 'textContent',
+      { set: function (v) { status16 = String(v); }, get: function () { return status16; } });
+    function el16(id) {
+      if (els16[id]) return els16[id];
+      for (let i = 0; i < made16.length; i++) if (made16[i].id === id) return (els16[id] = made16[i]);
+      return (els16[id] = mkEl16(id));
+    }
+    const layerRows16 = [1, 2, 3, 4].map(function (L) {
+      const r = mkEl16(null); r.dataset = { layer: String(L) }; return r;
+    });
+    const toolBtns16 = Editor.TOOLS.map(function (t) {
+      const b = mkEl16(null); b.dataset = { tool: t }; return b;
+    });
+    const gradBtn16 = mkEl16(null);
+    const dom16 = {
+      getElementById: function (id) { return id === 'status-msg' ? statusEl16 : el16(id); },
+      querySelectorAll: function (sel) {
+        if (sel === '#layers .layer-row') return layerRows16;
+        if (sel === '#toolbar .tool') return toolBtns16;
+        return [];
+      },
+      querySelector: function (sel) {
+        return String(sel).indexOf('gradient') >= 0 ? gradBtn16 : null;
+      },
+      createElement: function () { const e = mkEl16(null); made16.push(e); return e; },
+    };
+    // ★ 记两个账:渲染入口("走的是哪条路")与"平移被叫过没有"
+    Editor.app.canvas = {
+      width: 80, height: 80,
+      setPointerCapture: function () {},
+      getBoundingClientRect: function () { return { left: 0, top: 0 }; },
+      addEventListener: function (t, fn) { this['on' + t] = fn; },
+    };
+    Editor.app.r = {
+      view: function () { return { x: 0, y: 0, zoom: 1 }; },
+      layer: function () { return Core.LAYER_SCENE; },
+      selection: function () { return sel16; },
+      setSelection: function (s) { sel16 = s ? { x: s.x, y: s.y, w: s.w, h: s.h } : null; },
+      setSelDrag: function () {}, setPreview: function () {}, setLayer: function () {},
+      setGrid: function () {}, setSubGrid: function () {}, setTorus: function () {},
+      setDimOthers: function () {}, setZoomAt: function () { return Promise.resolve(); },
+      setMap: function () { return Promise.resolve(); },
+      screenToSub: function () { return { X: 0, Y: 0 }; },
+      editCells: function () { calls16.push('editCells'); },
+      render: function () { calls16.push('render'); },
+      invalidateAll: function () { calls16.push('invalidateAll'); return Promise.resolve(); },
+      panBy: function () { calls16.push('panBy'); return Promise.resolve(); },
+    };
+    globalThis.addEventListener = function (t, fn) { handlers16[t] = fn; };
+    globalThis.document = dom16;
+    Editor.app.tileDefs = globalThis.TILE_DEFS;
+    // ★ 报错通道:记下来(相位 ⑬/⑭ 同款 —— 处理器全在 guard 里跑,替身少一个方法就会变成
+    //   一条被吞掉的异常,最后那条"一条错都没进过 sink"就是防这个的)。
+    Editor.setErrorSink(function (t) { errs16.push(String(t)); });
+    const press16 = function (k, target, extra) {
+      const ev = { key: k, target: target, ctrl: false, meta: false, shift: false, altKey: false,
+                   button: 0, clientX: 0, clientY: 0, pointerId: 1 };
+      if (extra) Object.keys(extra).forEach(function (kk) { ev[kk] = extra[kk]; });
+      ev.defaultPrevented = false;
+      ev.preventDefault = function () { ev.defaultPrevented = true; };
+      handlers16.keydown(ev);
+      return ev;
+    };
+    const release16 = function (k, target) {
+      const ev = { key: k, target: target, ctrl: false, meta: false, shift: false, altKey: false };
+      ev.defaultPrevented = false;
+      ev.preventDefault = function () { ev.defaultPrevented = true; };
+      handlers16.keyup(ev);
+      return ev;
+    };
+    // 把撤销栈清空。★ 判据必须是 `=== null`(历史空了的**唯一**信号):cells / spawn 类条目
+    //   交回的是 `undefined`(falsy)—— 拿真假值当循环条件会在第一条 spawn 条目上**提前退出**,
+    //   于是"历史已空"那条前置断言是假的(后面"没进历史"那几条就都成了假绿)。
+    const drain16 = async function () {
+      let n = 0;
+      while (true) {
+        const r = Editor.doUndo();
+        if (r === null) break;
+        await r;
+        if (++n > 400) break;
+      }
+    };
+    try {
+      Editor.app.map = Editor.createEmptyMap('p16', 4, 3);
+      Editor.installInteraction();               // ← 真装一遍(handler 与**生产状态对象**都来自这里)
+      ok(typeof handlers16.keydown === 'function' && typeof handlers16.keyup === 'function' &&
+         typeof handlers16.blur === 'function' && typeof Editor.app.canvas.onpointerdown === 'function',
+         '⑯ 前提:installInteraction 挂上了 keydown / keyup / blur / pointerdown(实得 keydown=' +
+         typeof handlers16.keydown + ' keyup=' + typeof handlers16.keyup + ' blur=' +
+         typeof handlers16.blur + ')');
+      Editor.buildPanels();                      // ← 真建一遍面板(尺寸那颗按钮必须真的接上)
+      // ★ 照 `editor.html` 里那个 `checked` 属性:假元素默认 `checked=false`,不补这一行的话
+      //   "没存过状态时的默认"那条断言量的是**替身**的默认,而不是页面的默认。
+      el16('opt-compress').checked = true;
+
+      // ════ ⑯a 镜像(规格 §4.4;热键 H/V 是自选的,规格 §4.8 的表里没有镜像键)════
+      eq(Editor.commandFor({ key: 'h' }), 'mirror:h', '★★ H → 水平镜像(规格 §4.4 的选框要有镜像)');
+      eq(Editor.commandFor({ key: 'H' }), 'mirror:h', '★ 大写 H 同样(判据一律小写化)');
+      eq(Editor.commandFor({ key: 'v' }), 'mirror:v', '★★ V → 垂直镜像');
+      eq(Editor.commandFor({ key: 'v', ctrl: true }), 'paste',
+         '★★ Ctrl+V 仍是粘贴 —— 带修饰键的分支在上面就 return 了,`v` 这一条与它不撞');
+      eq(Editor.commandFor({ key: 'h', ctrl: true }), null,
+         '★ Ctrl+H 表外 → null(不拦浏览器自己的快捷键)');
+      // 一张 3×1 格的图:格 0/1/2 分别填 A/B/C(各 4 个子格宽、4 行高)
+      const A16 = Core.neutralDesc(3), B16 = Core.neutralDesc(5), C16 = Core.neutralDesc(7);
+      const mm16 = Core.createMap('m16', 3, 1);
+      const arr16 = mm16.layers[Core.LAYER_SCENE].desc;
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          arr16[y * 12 + x] = A16; arr16[y * 12 + 4 + x] = B16; arr16[y * 12 + 8 + x] = C16;
+        }
+      }
+      Editor.app.map = mm16;
+      sel16 = { x: 0, y: 0, w: 12, h: 1 };        // 只框第一**行**子格 ⇒ 垂直镜像什么都不变
+      const evMir16 = press16('h', { tagName: 'BODY' });
+      ok(evMir16.defaultPrevented === true, '★ 镜像热键被拦下(preventDefault)');
+      eq(arr16[0], C16,
+         '★★★ H 水平镜像:格 0 现在装的是**原来的格 2**(实得 tex ' + Core.texOf(arr16[0]) +
+         ' —— 热键根本不接的话这里还是 tex ' + Core.texOf(A16) + ')');
+      eq(arr16[4], B16, '★ 中轴那一格不动(镜像不是"整体搬走")');
+      eq(arr16[8], A16, '★★ 格 2 现在装的是原来的格 0');
+      ok(calls16.indexOf('editCells') >= 0,
+         '★ 落笔走的是 editCells(与别的差量同一条路;实得 ' + JSON.stringify(calls16) + ')');
+      await Editor.doUndo();
+      eq([Core.texOf(arr16[0]), Core.texOf(arr16[4]), Core.texOf(arr16[8])],
+         [Core.texOf(A16), Core.texOf(B16), Core.texOf(C16)],
+         '★★★ 撤销把镜像**撤回原样** —— 它真的进了历史(相位 ⑯ 之前 `mirrorRegion` 零调用点,这条无从谈起)');
+      await Editor.doRedo();
+      eq([Core.texOf(arr16[0]), Core.texOf(arr16[8])], [Core.texOf(C16), Core.texOf(A16)],
+         '★★ 重做又把镜像做回来(差量两半都对)');
+      // 同一张图换 V:框**整块**(3 格宽 × 1 行高时垂直镜像仍然是空的)⇒ 先把内容做成上下可辨
+      arr16[0] = A16; arr16[4] = B16; arr16[8] = C16;      // 先还原成一行三色
+      for (let x = 0; x < 4; x++) arr16[3 * 12 + x] = 0;    // 清掉第 2 行
+      sel16 = { x: 0, y: 0, w: 4, h: 4 };                   // 只框格 0 的 4×4 子格
+      press16('v', { tagName: 'BODY' });
+      eq(arr16[3 * 12], A16,
+         '★★ V 垂直镜像:格 0 的最后一行拿到了第一行那份(实得 tex ' + Core.texOf(arr16[3 * 12]) + ')');
+      eq(arr16[0], 0, '★ 而第一行被换成了原来的最后一行(空)');
+      // ── ⑯a② 非法轴:抛错 → 进同一条报错通道 → **历史一个条目都不许进** ──
+      await drain16();
+      eq(await Editor.doUndo(), null, '⑯ 前提:历史已经清空(撤销到底了)');
+      const before16 = Array.from(arr16);
+      errs16.length = 0;
+      eq(Editor.mirrorSelection('x'), null,
+         '★★★ 非法轴:交回 null(`mirrorRegion` 抛出的中文错**不许**被当成差量交给历史)');
+      ok(errs16.length === 1 && errs16[0].indexOf('镜像轴非法') >= 0,
+         '★★★ 非法轴的错经 `guard` 落到**同一条报错通道**(用户看得见;实得 ' + JSON.stringify(errs16) + ')');
+      eq(Array.from(arr16), before16, '★★ 非法轴一格都没改(不是"镜像了一半")');
+      eq(await Editor.doUndo(), null,
+         '★★★ 非法轴**没有**往历史里塞条目:撤销栈仍是空的(塞进去的话这一步会返回一个什么都不做的条目,' +
+         '"撤销"按下去像没反应)');
+      // 反向对照:合法轴但**内容没变**(1×1 格:这条轴上就是回文)同样不塞条目
+      sel16 = { x: 0, y: 0, w: 4, h: 4 };
+      eq(Editor.mirrorSelection('h'), null, '★ (对照)内容没变的镜像交回 null');
+      ok(status16.indexOf('没变') >= 0,
+         '★ 说了一句"没变"(不许静默;实得 "' + status16 + '")');
+      eq(await Editor.doUndo(), null, '★★ 内容没变的那次也没进历史(空差量进历史 = 撤销按下去像没反应)');
+      errs16.length = 0;      // ★ 上面那一次是**故意**触发的非法轴:清了它,末尾那条"一条错都没进过"才有牙齿
+
+      // ════ ⑯b 改尺寸(审计 A10;★ 这是 `resizeMap` / `wholeDiff` / `whole` 历史分支的
+      //      生产入口)════
+      const mz16 = Editor.createEmptyMap('z16', 4, 3);
+      const dz16 = mz16.layers[Core.LAYER_SCENE].desc;
+      for (let i = 0; i < 4; i++) dz16[i] = Core.neutralDesc(6);      // 格(0,0) 有内容
+      mz16.players = [{ x: 1, y: 0 }, { x: 9, y: 9 }];                 // 第二条越界
+      mz16.enemies = [{ type: 'fly_bird', x: 0, y: 0 }, { type: 'jump_bird', x: 40, y: 40 }];
+      Editor.app.map = mz16;
+      Editor.app.name = 'z16.cyrm';
+      Editor.app.sourceFormat = 'v4';
+      calls16.length = 0;
+      el16('size-w').value = '2';
+      el16('size-h').value = '3';
+      el16('btn-resize').click();                  // ← 走**生产**的点击处理器
+      eq([Editor.app.map.subCols, Editor.app.map.subRows], [8, 12],
+         '★★★ 应用尺寸真的改了图(2×3 格 = 8×12 子格;实得 ' + Editor.app.map.subCols + '×' +
+         Editor.app.map.subRows + ')。★ 这条同时钉住"按钮真的接上了" —— 只写函数不接按钮时这里是原尺寸');
+      eq(Editor.app.map.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(6),
+         '★ 重叠区的内容被保留');
+      eq(Editor.app.map.players.length, 1,
+         '★★ 越界的出生点被丢掉(留在图外 = 游戏读到网格外坐标,A10 说的正是这件事)');
+      eq(Editor.app.map.enemies.length, 1, '★ 图内的敌人留着');
+      ok(status16.indexOf('A10') >= 0 && status16.indexOf('出生点') >= 0 &&
+         status16.indexOf('(9,9)') >= 0,
+         '★★★ A10 的**提示**在状态栏上:点名了丢掉的那一项(不许静默清理;实得 "' + status16 + '")');
+      ok(calls16.indexOf('invalidateAll') >= 0 && calls16.indexOf('editCells') < 0 &&
+         calls16.indexOf('render') < 0,
+         '★★ 画布按新尺寸**重新挂**:走的是 `invalidateAll`(`diffCells` 对 whole 是空数组 ⇒ ' +
+         '只 render() 的话整张图停在旧尺寸上;实得 ' + JSON.stringify(calls16) + ')');
+      eq([el16('size-w').value, el16('size-h').value], ['2', '3'],
+         '★ 两个框回显的是**改后**的尺寸');
+      // ★★★ whole 历史分支:撤销必须把**尺寸**退回去(这也是"整个分支真的在生产里跑起来了"的唯一判据)
+      calls16.length = 0;
+      await Editor.doUndo();
+      eq([Editor.app.map.subCols, Editor.app.map.subRows], [16, 12],
+         '★★★ 撤销一次改尺寸:图回到 4×3 格(实得 ' + Editor.app.map.subCols + '×' +
+         Editor.app.map.subRows + ')。★ 只把 `app.map` 换成新对象(而不是原地装)的实现会在这里红:' +
+         'before === after ⇒ 撤销什么都不做');
+      eq(Editor.app.map.players.length, 2, '★★ 出生点也跟着回来了(whole 快照里带着它们)');
+      ok(calls16.indexOf('invalidateAll') >= 0, '★ 撤销 whole 也要重挂画布(不是 setMap:不重置视野与选区)');
+      await Editor.doRedo();
+      eq(Editor.app.map.subCols, 8, '★★ 重做又回到 2×3 格(差量两半都对)');
+      // ── 闸 1:输入一律**钳制**,不报错回滚 ──
+      el16('size-w').value = '99999';
+      el16('size-h').value = 'bad';
+      el16('btn-resize').click();                  // ★ 不抛(抛的话经 window.onerror 变成「页面异常:…」)
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [400, 75],
+         '★★ 输 99999 / 非数字都不抛:超大数被 `Core.clampMapSize` 钳到 400,非数字回落到默认高 75' +
+         '(尺寸闸只此一条路;实得 ' + Core.cellsWOf(Editor.app.map) + '×' +
+         Core.cellsHOf(Editor.app.map) + ')');
+      eq([el16('size-w').value, el16('size-h').value], ['400', '75'],
+         '★ 钳制结果**回显**到框里(否则用户以为它接受了 99999)');
+      ok(status16.indexOf('没有越界项') >= 0,
+         '★ 放大不丢任何东西时也照实说(实得 "' + status16 + '")');
+      // ── 反向对照:尺寸没变 ⇒ 不进历史 ──
+      await drain16();
+      el16('btn-resize').click();                  // 框里与图同尺寸(400×75)
+      ok(status16.indexOf('尺寸没变') >= 0, '★ 尺寸没变时说了一句(实得 "' + status16 + '")');
+      eq(await Editor.doUndo(), null, '★★ 尺寸没变的那次**不进历史**(空条目进历史 = 撤销按下去像没反应)');
+
+      // ════ ⑯c 压缩开关(规格 §3.5)════
+      ok(!!Editor.encodeForWrite && Editor.DEFAULT_COMPRESS === true,
+         '★ 默认**勾上**(规格 §3.5:导出面板上的「压缩」默认勾上)');
+      eq(Editor.optCompress(), true, '★ 控件不在/没改过时按默认走');
+      const seenOpts16 = [];
+      const realEncode16 = globalThis.Io.encodeMap;
+      globalThis.Io.encodeMap = function (map, o) {
+        seenOpts16.push(o);
+        return realEncode16.call(globalThis.Io, map, o);
+      };
+      try {
+        el16('opt-compress').checked = false;
+        const rawBytes16 = await Editor.encodeForWrite(Editor.app.map);
+        el16('opt-compress').checked = true;
+        const zipBytes16 = await Editor.encodeForWrite(Editor.app.map);
+        eq([rawBytes16[5], zipBytes16[5]], [0, 1],
+           '★★★ 开关真的走到了 `encodeMap`:取消勾选 = compression=0(裸 body)、勾上 = 1。' +
+           '★ 这条比"实参对不对"更强 —— 它是**真 codec** 产出的第 6 个字节(实得 ' +
+           rawBytes16[5] + '/' + zipBytes16[5] + ')');
+        eq(seenOpts16, [{ compress: false }, { compress: true }],
+           '★★ 两条路都可达,而且走的是**同一个**助手(`encodeForWrite`)');
+      } finally {
+        globalThis.Io.encodeMap = realEncode16;
+      }
+      // ★★ 端到端:真保存那条路写出去的文件,头里那一位也要跟着开关走 ——
+      //    "开关接上了"与"写盘真的用它"是两件事(中间隔着一个 `saveCurrent`)。
+      const put16 = [];
+      globalThis.fetch = function (url, init) {
+        if (init && init.method === 'PUT') {
+          put16.push({ url: String(url), init: init });
+          return Promise.resolve({ ok: true, status: 200,
+            json: function () { return Promise.resolve({ name: 'w16.cyrm', size: 9 }); } });
+        }
+        return Promise.resolve({ ok: true, status: 200,
+          json: function () { return Promise.resolve({ maps: [] }); } });
+      };
+      Editor.app.map = Editor.createEmptyMap('w16', 2, 1);
+      Editor.app.name = 'w16.cyrm';
+      Editor.app.sourceFormat = 'v4';
+      el16('opt-compress').checked = false;
+      await Editor.saveCurrent(false);
+      const putRaw16 = put16.length ? new Uint8Array(await put16[0].init.body.arrayBuffer()) : null;
+      eq(putRaw16 ? putRaw16[5] : null, 0,
+         '★★★ 取消勾选之后 **Ctrl+S 写出去的那份 .cyrm** 是裸 body(compression=0)' +
+         '(实得 ' + (putRaw16 ? putRaw16[5] : '(没有请求)') + ')—— 这就是规格 §3.5 的那条退路,' +
+         '此前两处 encode 都写死 compress:true,用户碰不到它');
+      el16('opt-compress').checked = true;
+      put16.length = 0;
+      await Editor.saveCurrent(false);
+      const putZip16 = put16.length ? new Uint8Array(await put16[0].init.body.arrayBuffer()) : null;
+      eq(putZip16 ? putZip16[5] : null, 1, '★ 勾上之后同一个出口写的是压缩路径(compression=1)');
+      // ── ⑯c② 持久化(与别的小状态同一层、同一条路)──
+      const ls16 = {};
+      globalThis.localStorage = {
+        getItem: function (k) { return (k in ls16) ? ls16[k] : null; },
+        setItem: function (k, v) { ls16[k] = String(v); },
+        removeItem: function (k) { delete ls16[k]; },
+      };
+      // ★ 只把"延迟"改成 0(不是"立刻同步跑"):立刻跑会让 io.js 自己的超时定时器在**应答
+      //   之前**触发(那个 codec 在 node 里是同步替身,但定时器是真的)。
+      globalThis.setTimeout = function (fn) { return realTimer16(fn, 0); };
+      try {
+        el16('opt-compress').checked = false;
+        Editor.persistUi();
+        await new Promise(function (r) { realTimer16(r, 0); });
+        await new Promise(function (r) { realTimer16(r, 0); });
+        const saved16 = JSON.parse(ls16[Editor.UI_STATE_KEY] || '{}');
+        eq(saved16.compress, false, '★★ 取消勾选之后那份小状态里 `compress:false`');
+        eq(Editor.readUiState(ls16).compress, false, '★★ 读回来还是 false(不是"存了不读")');
+      } finally {
+        globalThis.setTimeout = s16.timer;
+      }
+      eq(Editor.uiStateDefaults().compress, true, '★ 默认值 = 勾上(老存档没有这个字段时也走它)');
+      el16('opt-compress').checked = true;
+      Editor.app.uist = Editor.readUiState(ls16);
+      Editor.applyUiState();
+      eq(el16('opt-compress').checked, false,
+         '★★★ applyUiState 把它按回界面(勾选框与状态一致)');
+      Editor.app.uist = null;
+      el16('opt-compress').checked = true;         // 还原成默认,别把状态漂到后面的断言里
+
+      // ════ ⑯d 空格拖拽平移(规格 §4.8)════
+      // ★★ "不许滚页面"这一条的判据只能是 `preventDefault`:空格是浏览器的向下翻页键,
+      //    node 里没有真的滚动可观测 —— 拦下默认行为就是"不滚"的**全部**内容。
+      const evSpace16 = press16(' ', { tagName: 'BODY' });
+      ok(evSpace16.defaultPrevented === true,
+         '★★★ 页面上按下空格被**认领**并拦下默认行为(不拦 = 按空格准备拖拽时右边栏先滚一屏)');
+      calls16.length = 0;
+      Editor.app.canvas.onpointerdown({ button: 0, altKey: false, clientX: 10, clientY: 20, pointerId: 1 });
+      ok(!!Editor.app.st.panning,
+         '★★★ 空格 + 左键拖拽 = 平移(实得 panning=' + JSON.stringify(Editor.app.st.panning) + ')');
+      ok(!Editor.app.st.stroke, '★ 而且没有顺手起一笔(平移与落笔是两条路)');
+      Editor.app.canvas.onpointermove({ clientX: 30, clientY: 45 });
+      ok(calls16.indexOf('panBy') >= 0,
+         '★★ 拖动真的平移了画布(实得 ' + JSON.stringify(calls16) + ')');
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 30, clientY: 45 });
+      ok(!Editor.app.st.panning, '★ 松手结束平移');
+      // ── ⑯d② 松开空格之后左键**不是**平移(反向对照)──
+      release16(' ', { tagName: 'BODY' });
+      Editor.app.canvas.onpointerdown({ button: 0, altKey: false, clientX: 10, clientY: 20, pointerId: 1 });
+      ok(!Editor.app.st.panning, '★★ (反向对照)松开空格之后左键不再是平移');
+      Editor.app.st.stroke = null;                 // 那一下起的是普通笔画,清掉
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 10, clientY: 20 });
+      // ── ⑯d③ 焦点在**输入框**里:空格一个都不许拦(用户是在敲空格)──
+      const evSpaceIn16 = press16(' ', { tagName: 'INPUT' });
+      ok(evSpaceIn16.defaultPrevented === false,
+         '★★★ 焦点在输入框里时空格**不**被认领、也不 preventDefault(敲得进空格)');
+      Editor.app.canvas.onpointerdown({ button: 0, altKey: false, clientX: 10, clientY: 20, pointerId: 1 });
+      ok(!Editor.app.st.panning, '★★ 输入框里按的空格也不该让画布进入平移');
+      Editor.app.st.stroke = null;
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 10, clientY: 20 });
+      // ── ⑯d④ 按住空格时窗口失焦(Alt+Tab):keyup 到不了这个页面 ⇒ blur 必须清位 ──
+      press16(' ', { tagName: 'BODY' });
+      handlers16.blur();
+      Editor.app.canvas.onpointerdown({ button: 0, altKey: false, clientX: 10, clientY: 20, pointerId: 1 });
+      ok(!Editor.app.st.panning,
+         '★★★ 失焦之后空格状态被清掉(不清的话回来一拖就莫名其妙地平移,而用户以为自己早松手了)');
+      Editor.app.st.stroke = null;
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 10, clientY: 20 });
+      // ── ⑯d⑤ 中键 / Alt 那两条老路不许被这次改动碰坏(评审的"改一处忘一处"方向)──
+      Editor.app.canvas.onpointerdown({ button: 1, altKey: false, clientX: 1, clientY: 2, pointerId: 1 });
+      ok(!!Editor.app.st.panning, '★ (对照)中键拖拽照旧平移');
+      Editor.app.canvas.onpointerup({ button: 1, clientX: 1, clientY: 2 });
+      Editor.app.canvas.onpointerdown({ button: 0, altKey: true, clientX: 1, clientY: 2, pointerId: 1 });
+      ok(!!Editor.app.st.panning, '★ (对照)Alt + 左键照旧平移');
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 1, clientY: 2 });
+
+      eq(errs16.length, 0,
+         '★★ 整个相位里**一条错误都没进过 sink**(⑯a 那一条是故意触发并已断言的那次;' +
+         '替身少一个方法就会变成一条被吞掉的异常;实得 ' + JSON.stringify(errs16) + ')');
+    } finally {
+      Editor.setErrorSink(null);
+      globalThis.addEventListener = s16.add;
+      globalThis.document = s16.doc;
+      globalThis.localStorage = s16.ls;
+      globalThis.setTimeout = s16.timer;
+      globalThis.fetch = s16.fetch;
+      globalThis.confirm = s16.confirm;
+      Editor.app.r = s16.r; Editor.app.map = s16.map; Editor.app.canvas = s16.canvas;
+      Editor.app.name = s16.name; Editor.app.st = s16.st; Editor.app.tileDefs = s16.tileDefs;
+      Editor.app.sourceFormat = s16.fmt; Editor.app.raw = s16.raw;
+      if (s16.ls === undefined) { try { delete globalThis.localStorage; } catch (e) {} }
+    }
+  }
+
   console.log('');
   console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
   if (fail === 0) console.log('EDITOR SMOKE OK');

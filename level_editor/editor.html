@@ -123,6 +123,16 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
       <button id="spawn-enemy">放敌人</button>
     </div>
     <div class="desc-row"><button id="spawn-clear">清空出生点</button></div>
+    <h2>画布尺寸</h2>
+    <div class="desc-row"><span>宽</span><input id="size-w" type="number" min="1" max="400" step="1" value="125"><span>格</span></div>
+    <div class="desc-row"><span>高</span><input id="size-h" type="number" min="1" max="300" step="1" value="75"><span>格</span></div>
+    <div class="desc-row">
+      <button id="btn-resize" title="重叠区的内容保留;落在新图之外的出生点/敌人会被移除并在状态栏报出来(审计 A10)">应用尺寸</button>
+    </div>
+    <h2>导出</h2>
+    <div class="desc-row">
+      <label><input id="opt-compress" type="checkbox" checked title="取消 = 导裸 body(compression=0)。浏览器 deflate 与 Godot COMPRESSION_DEFLATE 的兼容性未实测,这条是退路(规格 §3.5)"> 压缩(deflate)</label>
+    </div>
   </div>
 </div>
 

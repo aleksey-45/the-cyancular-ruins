@@ -487,6 +487,51 @@ globalThis.Editor = (function () {
         : ('出生点落在图外 (' + d.x + ',' + d.y + '),已移除');
     });
   }
+  // ── 改尺寸面板(规格 A10;★ 这是 `resizeMap` / `wholeDiff` / `applyEntry` 的 whole 分支
+  //    在**生产**里的唯一入口)──
+  // ★★ 尺寸闸只此一条路:`applySize` → `resizeMap` → `createEmptyMap` → `Core.clampMapSize`。
+  //    这里**不**再写一次 `Core.createMap` 调用 —— 相位 ⑪ 数着那个调用点(恰好两处),而且
+  //    第二个造图入口就是 A8 原样复发(输 99999 分配巨图卡死)。
+  // ★ 输入框回显**只在**这一个函数里写:它是"DOM 与状态一致"那条纪律的尺寸版 ——
+  //    输了 99999 而框里仍写着 99999、图却已经是 400×300,是同一类"看到的与发生的是两回事"。
+  function sizeInputsSync() {
+    if (!app.map) return;
+    var w = $('size-w'), h = $('size-h');
+    if (w) w.value = String(Core.cellsWOf(app.map));
+    if (h) h.value = String(Core.cellsHOf(app.map));
+  }
+  function applySize() {
+    if (!app.map) { status('先打开一张地图'); return null; }
+    var wEl = $('size-w'), hEl = $('size-h');
+    // ★ 闸 1:用户输入一律**钳制**,不报错回滚(NaN / 0 / 99999 都落到合法区间)
+    var c = Core.clampMapSize(wEl ? wEl.value : '', hEl ? hEl.value : '');
+    var curW = Core.cellsWOf(app.map), curH = Core.cellsHOf(app.map);
+    if (c.w === curW && c.h === curH) {
+      sizeInputsSync();                     // ★ 钳制结果照样回显(输 99999 → 框里变 400)
+      status('尺寸没变(' + c.w + '×' + c.h + '),没有改动地图');
+      return null;
+    }
+    // ★★ before 快照必须取在**改之前**,而 `wholeDiff` 的 `seal()` 快照的是**建它时抓的那个
+    //    对象** ⇒ 中间不许换 `app.map` 的引用,只能把新尺寸**原地**装进去(`adoptMapInto`)。
+    //    直接 `app.map = out.map` 的话 before === after:撤销/重做都无效,且一个字都不报。
+    var wd = wholeDiff(app.map, 'resize');
+    var out = resizeMap(app.map, c.w, c.h);
+    adoptMapInto(app.map, out.map);
+    // ★ 走既有的落笔出口:kind:'whole' ⇒ `pushAndShow` 会派到 `invalidateAll`(画布按新尺寸
+    //   **重新挂**)并把这一条推进历史。
+    pushAndShow(wd.seal());
+    // ★ 状态栏那一格与两个输入框都要跟着翻 —— `pushAndShow` 只调 `statusLine()`(它管的是
+    //   工具/纹理/选区/撤销深度那一排),**不含**尺寸,也不碰输入框。少了这一句,改完尺寸之后
+    //   状态栏仍写着旧尺寸、框里也仍是刚输的那个数(与"DOM 必须与状态一致"同一条纪律)。
+    refreshStatus();
+    // ★★ A10:越界项**要报出来**。`resizeMap` 只丢不钳(钳一个出生点到边界上是替用户做决定),
+    //    所以这里报的就是它丢掉的那几项 —— 静默清理等于"导出去游戏读到网格外坐标"。
+    var lines = resizeReportLines(out.dropped);
+    status('尺寸改为 ' + out.size.w + '×' + out.size.h + ' 格' +
+           (lines.length ? (';A10 越界项已清理 ' + lines.length + ' 项:' + lines.join(';'))
+                         : ';没有越界项'));
+    return null;
+  }
 
   // ── 热键表(规格 §4.8)──
   // ★ 纯函数:输入事件对象的一个子集,输出命令字符串。★ Ctrl 与 Cmd 一视同仁
@@ -516,6 +561,16 @@ globalThis.Editor = (function () {
       return null;
     }
     if (KEY_TOOLS[k]) return 'tool:' + KEY_TOOLS[k];
+    // ★ 镜像(规格 §4.4 的选框:可移动 / 删除 / 复制粘贴 / **镜像**)—— 规格 §4.8 的热键表里
+    //   **没有**镜像键,这里是自选的:`H` 水平 / `V` 垂直。选它的理由:
+    //    ① 助记(horizontal / vertical),与「H 打不出别的意思」这条一致;
+    //    ② 两个键在**今天全部绑定**里都没被占:`B/E/G/L/M/I` 是工具、`[`/`]` 是画笔、`0-9`
+    //       是图层、方向键是平移、Del/Esc 是选区;`V` 只被 `Ctrl+V` 占(带修饰键的分支在
+    //       上面就 `return` 了,两条路不会撞)。
+    //    ③ 不借 Shift/Ctrl:H/V 是**一个轴一个键**的直接映射,而"按 Shift 再按某种镜像键"
+    //       还得记住哪个修饰键管哪条轴。
+    if (k === 'h') return 'mirror:h';
+    if (k === 'v') return 'mirror:v';
     if (k === '[') return 'brush-smaller';
     if (k === ']') return 'brush-bigger';
     if (k >= '0' && k <= '9') return 'layer:' + k;
@@ -618,6 +673,21 @@ globalThis.Editor = (function () {
         return entry;
       },
     };
+  }
+  // 把 src 的六个字段**原地**装进 dst(★ 不换引用、不做拷贝)。
+  // ★★ 为什么必须是"原地"而不是 `app.map = out.map`:改尺寸那条路要的差量是
+  //    `wholeDiff(app.map, …)` → 改 → `seal()`,而 **seal() 快照的是它建时抓的那个对象**
+  //    (闭包参数,不是"当时的 app.map")。中间换了引用 ⇒ after 拿到的仍是**改前**那份
+  //    (before === after):撤销/重做双双无效,而**一个字都不报**(条目在历史里、深度也涨了)。
+  // ★ 字段表与 `applyEntry` 的 whole 分支**同一份**(它那边是**防御性拷贝**,因为快照与
+  //    地图会长期共存;这里相反 —— `out.map` 是刚造出来的、只有本函数一个持有者,
+  //    照搬那六个字段之后它就该被丢掉)。
+  function adoptMapInto(dst, src) {
+    dst.subCols = src.subCols; dst.subRows = src.subRows;
+    dst.layers = src.layers;
+    dst.players = src.players; dst.enemies = src.enemies;
+    dst.comments = src.comments;
+    return dst;
   }
   function applyEntry(map, e, dir) {
     if (!e) return;
@@ -789,6 +859,32 @@ globalThis.Editor = (function () {
     return { kind: 'cells', layer: L, idx: Int32Array.from(idx),
              before: Uint32Array.from(before), after: Uint32Array.from(after), tag: 'mirror' };
   }
+  // 镜像**当前选区**(`mirrorRegion` 的生产入口:热键 H / V,以及以后可能加的按钮)。
+  // ★★ 三条纪律各挡一种"看不见的坏":
+  //    ① 非法轴 ⇒ `mirrorRegion` **抛**中文错。它必须经 `guard`(页面上现有的那条报错
+  //       通道)落到状态栏;而下面那句 `if (out.threw) return;` 是**承重的** —— 少了它,
+  //       紧接着的"没改动"文案会把刚写上去的错**覆盖掉**,用户看到的是一句
+  //       「镜像:选区内容没变」,而真相是"这个轴名根本不存在"。
+  //    ② 抛出的错**绝不许**进历史:历史只收 `diff|null`。一条 why 对象被 `push` 进去,
+  //       撤销时 `applyEntry` 会拿它当差量读(字段全 undefined)⇒ 撤销静默失灵。
+  //    ③ 什么都没变(`mirrorRegion` 回 null:单格选区、或者这条轴上是回文)不落历史 ——
+  //       空差量进历史会让"撤销"按下去像没反应(撤销掉一条什么都没干的条目)。
+  function mirrorSelection(axis) {
+    var sel = app.r.selection();
+    if (!sel) { status('先框选一块,再按 H(水平)/ V(垂直)镜像'); return null; }
+    var out = { diff: null, threw: false };
+    guard('镜像', function () {
+      try { out.diff = mirrorRegion(app.map, app.r.layer(), sel, axis); }
+      catch (e) { out.threw = true; throw e; }        // 上报给 sink(见 ①),但要先记下来
+      return null;
+    });
+    if (out.threw) return null;                       // ★★ 状态栏上那句话是错的说明,别覆盖它
+    if (!out.diff) { status('镜像:选区内容没变(这条轴上是回文),没有改动地图'); return null; }
+    pushAndShow(out.diff);
+    status('已' + (axis === 'h' ? '水平' : '垂直') + '镜像选区(' +
+           (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格)');
+    return out.diff;
+  }
 
   // ── 交互(指针 / 滚轮 / 热键)──
   // ★ 一切落笔都走同一条路:applyTool(只碰地图)→ 差量进历史 → renderer.editCells
@@ -818,6 +914,27 @@ globalThis.Editor = (function () {
       return;
     }
     el.textContent = dirty ? '未保存' : '已保存';
+  }
+
+  // ── 编码出口(规格 §3.5 的「压缩」勾选框)──
+  // ★★ 规格 §3.5 的退路:`compression = 0`(裸 body)是一条**完整可用的路径**,不是半成品 ——
+  //    浏览器 `CompressionStream('deflate')` 与 Godot `COMPRESSION_DEFLATE` 能不能对上,
+  //    设计期**无法实跑验证**(要同时跑浏览器与 Godot),而这条分支的浏览器那一半至今也没验过。
+  // ★★ **唯一**读这个开关的地方,而且是**一处对三处共用**的一条路:
+  //    · 真文件(`saveCurrent`,Ctrl+S / 另存为)
+  //    · 草稿盘(`saveDraft`)
+  //    · 崩溃槽位(`installCrashFence` 的 snapshot)
+  //    ★ 前两处**必须同值**,否则 `offerDraft` 那道 `sameBytes(rec.bytes, app.raw)` 会比出
+  //      "不同"——于是一次开机弹一次**假的**「发现一份还没写盘的草稿」,而两份内容其实一模一样
+  //      (那种假提示能让用户按下去,把草稿盖回真文件)。三处共用一条路,这个坑就不存在。
+  //    ★ 它也顺手满足"别处不许再硬编码这个选项":多一处硬编码就是"改一处忘一处"。
+  var DEFAULT_COMPRESS = true;         // 规格 §3.5:默认勾上
+  function optCompress() {
+    var el = $('opt-compress');
+    return el ? !!el.checked : DEFAULT_COMPRESS;   // 控件不在(启动早期/替身)⇒ 按默认
+  }
+  function encodeForWrite(map) {
+    return Io.encodeMap(map, { compress: optCompress() });
   }
 
   function pushAndShow(diff) {
@@ -856,6 +973,11 @@ globalThis.Editor = (function () {
       // ★ 尺寸可能变了 ⇒ 整片重来。**不是** setMap:那个会把视图重新"适配"并清掉选区,
       //   而撤销一次尺寸变化不该把视野和选区一起重置(而且它建的是"新图"语义)。
       out = Promise.resolve(app.r.invalidateAll());
+      // ★ 还有那两处**不在画布上**的尺寸显示:状态栏的 `#st-size` 与尺寸面板的两个框。
+      //   `invalidateAll` 只管渲染,`statusLine` 只管工具/纹理/选区/撤销深度 ⇒ 少了这一句,
+      //   撤销一次改尺寸之后画布已经回到 4×3,而框里仍写着 400×75 —— 再按一次「应用尺寸」
+      //   就把图又改回 400×75(用户以为"尺寸没变")。与 applySize 里那一句同一条纪律。
+      refreshStatus();
     } else if (e.kind === 'cells') {
       var cells = diffCells(app.map, e);
       if (cells.length) app.r.editCells(e.layer, cells); else app.r.render();
@@ -936,6 +1058,13 @@ globalThis.Editor = (function () {
   function installInteraction() {
     var cv = app.canvas;
     undoHistory = createHistory({});
+    // ── 空格 = 平移修饰键(规格 §4.8:「`Space` 拖拽 / 中键拖拽」平移)──
+    // ★ 它**不**放进 `commandFor`:那张表返回的是"按下即执行的一条命令",而空格本身不执行
+    //   任何东西 —— 它只是**下一次拖拽的修饰**。放进表里会长出一个与真身对不上的分支。
+    // ★ 它是一个**按下/抬起**的状态,不是一个事件:故 keydown 置位、keyup 与 `blur` 清位。
+    //   `blur` 那一条不是装饰:按住空格去点别的窗口(或 Alt+Tab)时 keyup 根本到不了这个
+    //   页面,清不掉的话回来一拖就莫名其妙地平移(而用户以为自己早松手了)。
+    var spaceDown = false;
     // ★ 两个颜色槽:规格 §4.4 的渐变是"两端各选一色" ⇒ 必须**两个**颜色状态
     //   (rgba = 起点、rgba2 = 终点)。页面今天只有一个 #bg-color 色槽(Task 8 接),
     //   所以第二个先给一个与起点**明显不同**的默认值 —— 给成同一个色的话渐变会退化成
@@ -950,7 +1079,7 @@ globalThis.Editor = (function () {
     cv.addEventListener('pointerdown', function (ev) {
       if (cv.setPointerCapture) cv.setPointerCapture(ev.pointerId);
       guard('pointerdown', function () {
-        if (ev.button === 1 || ev.altKey) {          // 中键 / Alt = 平移
+        if (ev.button === 1 || ev.altKey || (spaceDown && ev.button === 0)) {   // 中键 / Alt / 空格+左键 = 平移
           app.st.panning = { x: ev.clientX, y: ev.clientY };
           return;
         }
@@ -1150,6 +1279,16 @@ globalThis.Editor = (function () {
       //    `#brush-size` 这类输入框今天就在 DOM 里(editor.html),Task 8 还会把面板的输入全部接上。
       // ★ 判据:`input` / `textarea` / `select` / contenteditable(规格 §4.8 的热键只在画布上生效)。
       if (isTypingTarget(ev.target)) return;
+      // ★★ 空格(规格 §4.8:`Space` 拖拽 = 平移)—— 只有**认领了这个键**的时候才拦默认行为,
+      //    而"认领"的判据就是上面那行早退(`isTypingTarget`):焦点在输入控件里时这里一步都
+      //    不走,于是空格照旧是一个**字符**(不是"什么也没发生")。
+      // ★ 拦的是什么:空格是浏览器的**向下翻页**键,而 `#right` / `#lib-list` 都是
+      //    `overflow:auto` ⇒ 不拦的话,按下空格准备拖拽时右边栏先滚一屏;`keyup` 那一半同样
+      //    要拦 —— 浏览器还会把空格当"按下当前聚焦的按钮"(点过「应用尺寸」之后那颗按钮
+      //    仍带着焦点),不拦就是"想平移,结果又改了一次尺寸"。
+      //    ★ 一并 `return`:表外的键不拦,而空格是**被表外那条规则排除在外**的一个特例,
+      //      它自己就是修饰键,不该再往命令分派里走。
+      if (ev.key === ' ') { spaceDown = true; ev.preventDefault(); return; }
       var cmd = commandFor(ev);
       if (!cmd) return;                                  // ★ 表外的键一律不拦
       guard('keydown', function () {
@@ -1182,6 +1321,7 @@ globalThis.Editor = (function () {
           pushAndShow(out.diff);
           if (sel) app.r.setSelection({ x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h });
         }
+        else if (cmd.indexOf('mirror:') === 0) { pend = mirrorSelection(cmd.slice(7)); }
         else if (cmd === 'clear-selection') {
           var s3 = app.r.selection();
           if (!s3) { status('先框选一块'); return; }
@@ -1212,6 +1352,16 @@ globalThis.Editor = (function () {
         return pend;
       });
     });
+
+    // 空格抬起 = 松开平移修饰键(见上面 keydown 里那段说明:keyup 那一半也要拦 ——
+    // 浏览器会把空格当"按下当前聚焦的按钮")。★ 判据与 keydown 同款:输入控件里不拦。
+    window.addEventListener('keyup', function (ev) {
+      if (ev.key !== ' ') return;
+      if (isTypingTarget(ev.target)) return;
+      spaceDown = false;
+      ev.preventDefault();
+    });
+    window.addEventListener('blur', function () { spaceDown = false; });
 
     statusLine();
   }
@@ -1338,7 +1488,7 @@ globalThis.Editor = (function () {
     //    `Content-Type: application/json` 与"body 是**裸字节**"这两条纪律都钉在那里
     //    (不设头 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ "点了保存、磁盘上那份没变",
     //    而且**不报错回滚**)。这里再拼一份 fetch 就是第二个出口,迟早只改一处。
-    return Io.encodeMap(app.map, { compress: true }).then(function (bytes) {
+    return encodeForWrite(app.map).then(function (bytes) {
       // ★★ 备份**排在真保存之前**,而且走的是**同一个** `putMapBytes` 出口(页面上发 PUT
       //    的地方仍然只有一处 —— 另一个 fetch 就是第二个出口,迟早只改一处)。
       // ★ 备份写不进去就**不写盘**:这次转换是单向的,备份是唯一的退路;先写盘再发现备份
@@ -1476,6 +1626,7 @@ globalThis.Editor = (function () {
     //   之后语义就漂了(审计 A13)。
     return { layer: Core.LAYER_SCENE, zoom: 0, tool: 'brush', brushSize: 1,
              grid: true, subGrid: false, torus: true, dimOthers: true,
+             compress: DEFAULT_COMPRESS,
              panelOpen: { lib: true, right: true },
              playerRef: { cx: 0, cy: 0, visible: false }, selectedTexture: 1 };
   }
@@ -1498,7 +1649,7 @@ globalThis.Editor = (function () {
     if (isFinite(obj.brushSize) && obj.brushSize > 0) {
       out.brushSize = Math.max(0.25, Math.min(Render.MAX_BRUSH_CELLS, obj.brushSize));
     }
-    ['grid', 'subGrid', 'torus', 'dimOthers'].forEach(function (k) {
+    ['grid', 'subGrid', 'torus', 'dimOthers', 'compress'].forEach(function (k) {
       if (typeof obj[k] === 'boolean') out[k] = obj[k];
     });
     if (obj.panelOpen && typeof obj.panelOpen === 'object') {
@@ -1718,7 +1869,7 @@ globalThis.Editor = (function () {
     var mapAtEntry = app.map;
     var key = currentDraftKey();
     var name = app.name, name2 = app.map.name, fmt = app.sourceFormat;
-    return Io.encodeMap(mapAtEntry, { compress: true }).then(function (bytes) {
+    return encodeForWrite(mapAtEntry).then(function (bytes) {
       // ★★ 编码期间可能**已经有了一次 Ctrl+S**:它把这一版(或更新的一版)写进了真文件,
       //    并把草稿标干净 —— 这时再写回一份 `dirty` 的草稿,下次打开就会弹一次**假**的
       //    恢复提示(而且**不报错**)。故落盘前再看一眼。★ 这一条 `force` **也**要过:
@@ -1896,6 +2047,12 @@ globalThis.Editor = (function () {
     });
     var dim = $('dim-others');
     if (dim) dim.checked = !!u.dimOthers;
+    // ★★ 压缩开关也要按回去 —— 而且只在**存过这个字段**时才动它:老存档(这份状态是
+    //    `cyrm.ui.v1`,没有 `compress`)里没有它,照 `!!u.compress` 写会把框**取消勾选**
+    //    (页面上写死的默认是"勾上"),于是"没存过"被读成"用户不要压缩" —— 一次静默的
+    //    文件格式变更。缺字段时就该保持页面默认(与 readUiState 逐字段回落同一条纪律)。
+    var cp = $('opt-compress');
+    if (cp && typeof u.compress === 'boolean') cp.checked = u.compress;
     var bsEl = $('brush-size');
     if (bsEl) bsEl.value = String(app.st.brushSize);
   }
@@ -1914,6 +2071,7 @@ globalThis.Editor = (function () {
         subGrid: $('tg-subgrid') ? $('tg-subgrid').classList.contains('on') : false,
         torus: $('tg-torus') ? $('tg-torus').classList.contains('on') : true,
         dimOthers: $('dim-others') ? !!$('dim-others').checked : true,
+        compress: optCompress(),
         panelOpen: prev.panelOpen, playerRef: prev.playerRef,
         selectedTexture: Core.texOf(app.st.desc),
       };
@@ -1944,7 +2102,7 @@ globalThis.Editor = (function () {
   function installCrashFence() {
     function snapshot(why) {
       if (!app.map || !app.db) return;
-      Io.encodeMap(app.map, { compress: true }).then(function (bytes) {
+      encodeForWrite(app.map).then(function (bytes) {
         return idbPut(app.db, CRASH_STORE, {
           key: 'crash', name: app.name, name2: app.map.name, bytes: bytes,
           savedAt: Date.now(), why: String(why || '').slice(0, 200),
@@ -2115,6 +2273,28 @@ globalThis.Editor = (function () {
         if (!app.map) { status('先打开一张地图'); return null; }
         return pushAndShow(clearSpawns(app.map));
       });
+    });
+    // ── 画布尺寸面板(规格 A10)──
+    // ★ 与上面四个出生点按钮同款:没打开地图时说一句话,而不是把 `resizeMap(null, …)` 的
+    //   TypeError 抛进 click 处理器(同一个面板里两种说法)。
+    // ★ 输入框里的回车也当"应用尺寸":两个数字框 + 一颗按钮的版式里,按回车什么都不发生
+    //   是最容易被当成"坏了"的一种手感。
+    var rsBtn = $('btn-resize');
+    if (rsBtn) rsBtn.addEventListener('click', function () { guard('改尺寸', applySize); });
+    ['size-w', 'size-h'].forEach(function (id) {
+      var el = $(id);
+      if (el) el.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        guard('改尺寸', applySize);
+      });
+    });
+    // ★ 压缩开关(规格 §3.5):值本身在**用的时候**读(`optCompress`),这里只负责说一句
+    //   ——"改了要不要紧"这件事没有别的可见面(它不改地图、不改历史)。
+    var cpBox = $('opt-compress');
+    if (cpBox) cpBox.addEventListener('change', function () {
+      status(cpBox.checked ? '导出/保存:压缩(deflate)'
+                           : '导出/保存:裸 body(compression=0;浏览器与 Godot 的 deflate 万一对不上,这条是退路)');
     });
     var libList = $('lib-list');
     if (libList) {
@@ -2338,6 +2518,11 @@ globalThis.Editor = (function () {
     var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
     set('st-name', (m.name || '(无名)') + (app.name ? ' · ' + app.name : ''));
     set('st-size', Core.cellsWOf(m) + '×' + Core.cellsHOf(m) + ' 格');
+    // ★★ 尺寸面板的两个框也要跟着走 —— 与 `renderSaveState` 同一条纪律("DOM 必须与状态一致"):
+    //    打开/新建/复制/改尺寸/草稿恢复**每一条**换图的路上,框里都必须是**这张图**的尺寸。
+    //    ★ 这里挂(而不是在每一条路上各写一次):`refreshStatus` 就是那几条路的公共收口,
+    //      漏一处就是"框里写着上一张图的尺寸,一按应用尺寸把当前这张改了"。
+    sizeInputsSync();
     var rep = Core.validateMap(m);
     set('st-valid', rep.errors.length ? ('error ' + rep.errors.length)
                                       : (rep.warnings.length ? ('⚠ ' + rep.warnings.length) : '校验 OK'));
@@ -2593,6 +2778,11 @@ globalThis.Editor = (function () {
 
     TOOLS: TOOLS, TOOL_LABELS: TOOL_LABELS, DERIVED_TEXTURES: DERIVED_TEXTURES,
     createEmptyMap: createEmptyMap, resizeMap: resizeMap, resizeReportLines: resizeReportLines,
+    // ★ 2026-09-22:改尺寸面板(规格 A10)与"压缩"开关(规格 §3.5)接上之后,这几个才有
+    //   生产调用点 —— 在那之前 `resizeMap` 只被 `btn-dup` 用(**尺寸不变**),
+    //   `wholeDiff` / `applyEntry` 的 whole 分支 / `pushAndShow` 的 whole 分派只有测试在跑。
+    applySize: applySize, sizeInputsSync: sizeInputsSync, adoptMapInto: adoptMapInto,
+    optCompress: optCompress, encodeForWrite: encodeForWrite, DEFAULT_COMPRESS: DEFAULT_COMPRESS,
     texturePalette: texturePalette, clampTexture: clampTexture, validateLines: validateLines,
     paintCells: paintCells, valueFor: valueFor, regionCells: regionCells, inRect: inRect,
     idxOf: idxOf, strokePoints: strokePoints, lineTargets: lineTargets, toSub: toSub,
@@ -2606,7 +2796,7 @@ globalThis.Editor = (function () {
     createHistory: createHistory, snapshotMap: snapshotMap, bytesOfSnapshot: bytesOfSnapshot,
     wholeDiff: wholeDiff, applyEntry: applyEntry, diffCells: diffCells, cellCountOf: cellCountOf,
     copyRegion: copyRegion, clipSize: clipSize, pasteRegion: pasteRegion,
-    moveRegion: moveRegion, mirrorRegion: mirrorRegion,
+    moveRegion: moveRegion, mirrorRegion: mirrorRegion, mirrorSelection: mirrorSelection,
     installInteraction: installInteraction, runJob: runJob, statusLine: statusLine,
     pushAndShow: pushAndShow, doUndo: doUndo, doRedo: doRedo, hitOf: hitOf,
     brushSteps: function () { return BRUSH_STEPS.slice(); }, setBrush: setBrush, setLayer: setLayer,
