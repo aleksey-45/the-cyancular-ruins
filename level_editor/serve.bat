@@ -1,11 +1,18 @@
 @echo off
-rem serve.bat —— 起本地编辑器服务器并打开浏览器(规格 §4.9)。
-rem ★ 编辑器只通过 HTTP 打开:file:// 下没有 Worker、没有同源、也读不到 maps/。
-rem ★ 中文错误信息要靠 UTF-8 代码页,否则 cmd 里是乱码。
+rem serve.bat -- start the local editor server and open the browser (spec 4.9).
+rem The editor is served over HTTP only: under file:// there is no Worker,
+rem no same-origin, and maps/ cannot be read.
+rem
+rem ASCII-ONLY ON PURPOSE: cmd.exe parses a batch file byte by byte in the
+rem console code page, so a UTF-8 line containing Chinese loses alignment and
+rem fragments of it get executed as commands (symptom: a burst of
+rem "'xxx' is not recognized as an internal or external command" and, when the
+rem flow breaks, the window closes instantly). Keep this file ASCII-only.
+rem chcp 65001 below is for NODE's own output (the server prints Chinese).
 chcp 65001 >nul
 cd /d "%~dp0"
-echo [serve] 正在启动编辑器服务器(node editor_server.js)...
+echo [serve] starting editor server (node editor_server.js) ...
 node editor_server.js
 echo.
-echo [serve] 服务器已退出(退出码 %ERRORLEVEL%)。
+echo [serve] server exited (exit code %ERRORLEVEL%).
 pause
