@@ -191,7 +191,9 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       eq(r1.thumbCanvas(Core.LAYER_SCENE).width, m1.subCols * tp,
          '★ 缩略图宽度 = 子格数 × 刻度(单位是**缩略图像素**,不是子格数、也不是屏幕像素)');
       cv1.ctx.ops.length = 0;
-      r1.setView({ x: 0, y: 0, zoom: 4 });
+      // ★ 组视图入口现在**可能**返回分帧重建的 promise(评审发现 6):一律 await,别让一次
+      //   意外拒绝变成"未处理的 promise 拒绝"把进程直接打死(那样一条具名 FAIL 都不会有)。
+      await r1.setView({ x: 0, y: 0, zoom: 4 });
       eq(countOps(cv1.ctx, 'op', 'drawImage'), 16,
          '★ < 8px/子格 走缩略图路径:每层**一次** drawImage 顶掉整层(4 层 × 4 份可见副本 = 16,' +
          '不是逐子格 —— 逐子格会是几百次)');
@@ -208,15 +210,17 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
          'resize() 按父容器的 clientWidth/Height 定画布像素尺寸(不是 CSS 尺寸)');
       ok(cvR.ctx.imageSmoothingEnabled === false,
          '★★ 改尺寸会重置 ctx 状态 ⇒ resize 里必须**重设** imageSmoothingEnabled(漏了 = 放大后糊)');
-      rR.setView({ x: 0, y: 0, zoom: 9999 });
+      await rR.setView({ x: 0, y: 0, zoom: 9999 });   // 还没 setMap ⇒ 同步返回,await 无害
       eq(rR.view().zoom, Render.MAX_ZOOM, '★ setView 的缩放被钳到 MAX_ZOOM(用户输入钳制,不报错)');
-      rR.setView({ x: 0, y: 0, zoom: -5 });
+      await rR.setView({ x: 0, y: 0, zoom: -5 });
       eq(rR.view().zoom, Render.MIN_ZOOM, '★ 负缩放的钳到 MIN_ZOOM');
-      rR.setView({ x: 0, y: 0, zoom: NaN });
+      await rR.setView({ x: 0, y: 0, zoom: NaN });
       eq(rR.view().zoom, Render.MIN_ZOOM, '★ NaN 缩放也钳到 MIN_ZOOM(NaN 不报错地毁掉整张画布)');
       await rR.setMap(m1);
-      rR.setView({ x: 99, y: 99, zoom: 32 });
-      rR.fit();
+      // ★★ 下面两条**一定**返回分帧重建的 promise(有图 + zoom ≥ 8)—— 漏 await 的话一次
+      //    意外拒绝会在断言全绿之后以"未处理的 promise 拒绝"收场(评审发现 6)。
+      await rR.setView({ x: 99, y: 99, zoom: 32 });
+      await rR.fit();
       ok(rR.view().x < 0 && rR.view().y < 0 && rR.view().x > -4 && rR.view().y > -4,
          'fit() 把地图居中(视图原点落在 −2/−1.5 这种小负数上:CSS 的 0 点不是左上角)');
 
@@ -243,6 +247,9 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       // ★★ 副本必须**逐层铺出去**:视口左边缘越过接缝时,离屏层那一份要被平移 −subCols×zoom
       //    再画一次(合成次数 = 层数 × 副本数)。★ 离屏层本身读格时就**环面折算**,所以
       //    副本不会画错内容(偏移是 subCols 的整数倍 ⇒ 折算前后是同一格)。
+      // ★★ 本节**只**数次数(评审发现 5):这个视图下 ±subCols 那几份副本必然整个落在画布外
+      //    ("接缝另一侧的内容画出来了没有"它答不了)—— 那一条的真守卫是 ⑪e(接缝另一侧的
+      //    像素有没有被画到 x ≥ 96)。
       cv1.ctx.ops.length = 0;
       await r1.setView({ x: -3, y: 0, zoom: 16 });
       const acrossSeam = countOps(cv1.ctx, 'op', 'drawImage');
@@ -251,8 +258,10 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const noTorus = countOps(cv1.ctx, 'op', 'drawImage');
       r1.setTorus(true);
       eq([acrossSeam, noTorus], [8, 4],
-         '★★ 跨接缝时每层被**逐副本**合成(2 份副本 × 4 层 = 8 次 drawImage);关掉环面 = ' +
-         '1 份 × 4 层 = 4 次(实得 ' + acrossSeam + ' / ' + noTorus + ')');
+         '★★ 环面开关决定"每层被**合成几次**":跨接缝 2 份副本 × 4 层 = 8 次 drawImage,' +
+         '关掉环面 1 份 × 4 层 = 4 次(实得 ' + acrossSeam + ' / ' + noTorus + ')。' +
+         '★ 本断言**只**数次数 —— 这个视图下 ±subCols 那几份副本必然整个落在画布外,' +
+         '所以它**不是**"接缝另一侧的内容被画出来了"的判据(那一条看 ⑪e:像素画到 x ≥ 96)');
       const hs = r1.screenToSub(0, 0);
       ok(hs.X >= 0 && hs.X < m1.subCols && hs.Y >= 0 && hs.Y < m1.subRows,
          '★ screenToSub 在副本上也折回 [0, subCols)(A4:副本上能落笔)');
@@ -266,9 +275,12 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       ok(r1.screenToSub(-1000, -1000).X >= 0, '★ 负的屏幕坐标也折回 [0, subCols)(环面世界里这是常态)');
 
       // ── ⑩f 层可见性 / 压暗 / 选区框 ──
-      // ★★ 判据是"**那一层**有没有被合成上去",不再是"drawImage 总次数为 0":② 之后主画布
-      //    上画的是四张离屏层(每层各几份副本),藏掉一层只会让**它那几份**消失,其余三层
-      //    照画(总次数 4 → 3)。"次数变成 0"是**逐子格**那条旧路径的说法。
+      // ★★ 判据从"drawImage 总次数为 0"改成"少了几次":② 之后主画布上画的是四张离屏层
+      //    (每层各几份副本),藏掉一层只会让**它那几份**消失,其余三层照画(总次数 4 → 3)。
+      //    "次数变成 0"是**逐子格**那条旧路径的说法。
+      // ★★ 但**次数分不出两件事**(评审发现 5):"可见性闸拦住了那一层"与"那一层压根没有
+      //    离屏层"—— drawLayerPath 里 `!s.layerVisible[L]` 与 `!layerCv[L]` 走的是**同一个**
+      //    continue。真守卫在 ⑪a(按**对象身份**判"主画布合成的就是那一层的离屏层")。
       cv1.ctx.ops.length = 0;
       r1.setLayerVisible(Core.LAYER_SCENE, false);
       const hidden = countOps(cv1.ctx, 'op', 'drawImage');
@@ -276,8 +288,10 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       r1.setLayerVisible(Core.LAYER_SCENE, true);
       const shown = countOps(cv1.ctx, 'op', 'drawImage');
       ok(hidden === shown - 1 && hidden > 0,
-         '★ 层可见性闸拦住的是**那一层**的离屏层:隐藏场景层之后合成就正好少它那 1 份副本' +
-         '(实得 隐藏 ' + hidden + ' 次 / 显示 ' + shown + ' 次;其余 ' + hidden + ' 次照画)');
+         '★ 隐藏场景层之后 drawImage 正好少 1 次(实得 隐藏 ' + hidden + ' 次 / 显示 ' + shown +
+         ' 次;其余 ' + hidden + ' 次照画)。★ 次数**只**说明"合成的份数少了一份"——' +
+         '"那一层有没有离屏层"它分不出来(`!s.layerVisible[L]` 与 `!layerCv[L]` 共用同一个 continue);' +
+         '真守卫在 ⑪a(按**对象身份**判主画布合成的就是那一层的离屏层)');
       ok(r1.layerVisible(Core.LAYER_SCENE) === true, 'layerVisible 读回 true');
       r1.setLayerLocked(Core.LAYER_FRONT, true);
       ok(r1.layerLocked(Core.LAYER_FRONT) === true && r1.layerLocked(Core.LAYER_SCENE) === false,
@@ -389,7 +403,9 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const rSp = Render.mount(cvSp, SLICE);
       await rSp.setMap(mSp);
       rSp.setTorus(false);                              // 只留 [0,0] 那一份副本 ⇒ 每个标记一次
-      rSp.setView({ x: 0, y: 0, zoom: 16 });
+      // ★ zoom 16 + 有图 ⇒ 返回分帧重建的 promise,必须 await(评审发现 6);漏了的话
+      //   下面的记账就建在"重建还没落地"的半旧状态上,而拒绝还会静默打死进程。
+      await rSp.setView({ x: 0, y: 0, zoom: 16 });
       cvSp.ctx.ops.length = 0;                          // ★ 清在**视图定好之后**(set* 自己会渲染)
       rSp.render();
       const labels = cvSp.ctx.ops.filter(function (o) { return o.op === 'fillText'; })
@@ -1009,6 +1025,44 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       eq(r.stats().panCopies, pc1 + 1,
          '★ 对齐之后平移才走搬移那条路(上一条不是"把搬移整条删掉"也能过的空断言)');
 
+      // ── ⑪h ★★ 直接调 buildLayers()(不经 viewChanged)时,平移同样不许自拷贝 ──
+      // ⑪d2 钉的是"不干净就不搬移"这条**后果**;这一条钉"谁把 layersClean 放下的"。
+      // 本方法是**公开入口**(文件尾的导出表里有它),调用方(编辑后整批重建 / Task 8 换贴图源)
+      // 完全可能**不**先走 viewChanged() 就进来 —— 那一刻重建已经在飞、离屏层是半旧的,
+      // 而 layersClean 若还是 true,panBy 就会拿一张半旧的图自拷贝搬移,脏标记此刻已经清干净
+      // ⇒ **永久错位**(谁也补不回来)。故 layersClean 必须在 buildLayers 的**入口**就放下。
+      const pc2 = r.stats().panCopies;
+      const pRebuild = r.buildLayers();               // 不 await:重建在飞,且**没**走 viewChanged
+      await r.panBy(16, 0);
+      eq(r.stats().panCopies, pc2,
+         '★★ 重建在飞(直接调 buildLayers、没走 viewChanged)时平移**不做**自拷贝搬移' +
+         '(实得 ' + pc2 + ' → ' + r.stats().panCopies + ';入口没放下 layersClean 的话这里会 +1)');
+      await pRebuild;
+
+      // ── ⑪i ★★ 平移的位移先量化到整像素(view / 边条 / 自拷贝三者同源)──
+      // 自拷贝是 drawImage,而插值关掉之后光栅器会把偏移**吸附到整像素**;`s.view` 若按精确值
+      // 前进 ⇒ 每次平移最多差 0.5px、而且**会累积**(边条只补"新露出来的那一条",永远不去纠正
+      // 已经攒下的偏差)= 内容慢慢从网格/覆盖层上漂走(不报错、只看着不对)。⇒ 位移在入口一次量化。
+      const v0i = r.view();
+      const opsBefore = offScene.ctx.ops.length;
+      await r.panBy(16.4, 0);
+      const opsPan = offScene.ctx.ops.slice(opsBefore);   // ★ 只看这次平移新记下的那几笔
+      ok(opsPan.some(function (o) {
+           return o.op === 'drawImage' && o.comp === 'copy' && o.x === -16 && o.y === 0;
+         }),
+         '★★ 自拷贝的偏移是**整像素**的 −16(不是 −16.4)—— 光栅器不会替我们吸附,' +
+         '让它吸附一次就攒一次偏差');
+      eq(r.view().x - v0i.x, 16 / v0i.zoom,
+         '★★ view 前进的也是**量化后**的 16px(不是 16.4/zoom):与自拷贝**同源**,偏差不再累积');
+      ok(opsPan.some(function (o) { return o.op === 'clearRect' && o.x === 184 && o.w === 16; }),
+         '★★ 补的边条也是量化后的 16px 宽(clearRect 184,0,16,150)—— 三条链同源,' +
+         '搬移与补画才不会错开');
+      const v0drop = r.view();
+      await r.panBy(0.4, 0);
+      eq([r.view().x, r.view().y], [v0drop.x, v0drop.y],
+         '★ 不足 1px 的平移被**丢弃**(0.4px 走十次 = 一步都不动)。这是量化刻意付的代价,' +
+         '与闸 1 同口径(钳制,不报错、不回滚):"不动"好过"越拖越歪"');
+
       // ── ⑪e 环面:视图越过右边界时,接缝另一侧的内容照样画进离屏层(不是黑的)──
       const cvE = fakeCanvas(200, 150);
       const sinceE = made2.length;
@@ -1030,6 +1084,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       //    (变异实测:把 buildLayers 改成一次循环画完,那版断言照样全绿)。
       let yields = 0;
       const cvF = fakeCanvas(200, 150);
+      const sinceF = made2.length;
       const rF = Render.mount(cvF, {
         slicer: { budgetMs: 0, nextFrame: function () { yields++; return Promise.resolve(); } },
       });
@@ -1039,11 +1094,126 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       ok(yields > y0,
          '★★ 全屏重建(换图/改缩放/改窗口)走分帧器:一次 buildLayers 让出了 ' + (yields - y0) +
          ' 帧 —— 闸 2 要的是"慢慢画出来",不是"页面死掉"');
+
+      // ── ⑪g ★★ 代际守卫:过期那一轮的条带**一项都不画** ──
+      // ⑪d2 钉的是它的后果之一(不干净就不搬移);这一条钉守卫**本身**。视图/尺寸/图集一变,
+      // 在飞那一轮剩下的条带必须一条都不落笔 —— 否则它会在**新**内容之上再糊一层旧像素,
+      // 而 layersClean 此刻已经(或马上会)变成真 ⇒ 画面**永久**错位、没有任何报错。
+      // ★ 观测量取 clearRect 的次数:paintLayerRect 每处理一项恰好 clearRect 一次(缺席层那条
+      //   分支至多多一次整画布 clearRect)。假画布没有像素,但"这一项落没落笔"它记得下来。
+      await rF.setView({ x: 0, y: 0, zoom: 16 });        // ★ 整数 zoom:条带不会退化,基线才可比
+      const offF = layerCanvasesSince(made2, sinceF, 200, 150);
+      ok(offF.length === Core.LAYER_COUNT,
+         '⑪g 前提:rF 的四张离屏层都在(实得 ' + offF.length + ' 张,尺寸 = 主画布)');
+      const sumClears = function () {
+        let n = 0;
+        for (let i = 0; i < Core.LAYER_COUNT; i++) n += countOps(offF[i].ctx, 'op', 'clearRect');
+        return n;
+      };
+      let cF0 = sumClears();
+      await rF.buildLayers();                            // 基准:单独一轮落了多少笔
+      const single = sumClears() - cF0;
+      ok(single > 0, '⑪g 前提:单独一轮全屏重建确实落了笔(' + single + ' 次 clearRect)');
+      cF0 = sumClears();
+      const pStale = rF.buildLayers();                   // 同步跑掉第 1 项(此刻它还**是**新鲜的)
+      const firstTask = sumClears() - cF0;               // 过期那一轮唯一允许落笔的那一项
+      const pFresh = rF.buildLayers();                   // ★ 代际 +1 ⇒ pStale 剩下的整条作废
+      await Promise.all([pStale, pFresh]);
+      const both = sumClears() - cF0;
+      ok(firstTask > 0, '⑪g 前提:在飞那一轮同步跑掉的那 1 项确实落了笔(' + firstTask + ' 次 clearRect)');
+      eq(both, single + firstTask,
+         '★★ 两轮重叠时的落笔数 = 一轮 + 它同步跑掉的第一项:期望 ' + (single + firstTask) +
+         ' (= ' + single + ' + ' + firstTask + '),实得 ' + both +
+         ' ⇒ 过期那一轮**除了第一项一项都不画**。' +
+         '守卫没了这里会是 ' + (2 * single) + ' —— 过期条带在新内容上再糊一层旧像素,' +
+         '而 layersClean 已经是真 ⇒ 永久错位');
     } finally {
       globalThis.document = savedDoc;
     }
     ok(made2.length > 0, '★ ⑪ 的离屏层确实经 document.createElement("canvas") 建出来(' +
        made2.length + ' 张:每层一张 × 每张图)');
+  })();
+
+  // ==== 相位 ⑫ ★★ 视图入口的失败必须**看得见**(不能变成一条没人观察的 promise 拒绝)====
+  // ★★ 要防的症状(评审发现 1):改图集/换图之后 `tileFor` 会抛(`图集里没有纹理 N`)。
+  //    Task 4 **之前** ≥8 那条路是 render() 里的**同步**循环 ⇒ 抛出直接落进 ui.js 的 guard
+  //    (同步 try/catch),用户看到 `出错了(...)`。Task 4 **之后**同一个抛出发生在**分帧器的
+  //    任务回调**里 ⇒ 它变成 run() 的**拒绝**:guard 接不住,而 render() 这一次根本没执行
+  //    ⇒ 画布**默默停在上一帧**、只在控制台留一行错 —— 正是本仓最防的"按了没反应"。
+  // ★ 本相位把两条契约**分开**钉:① 屏幕上看得见(经渲染自己的 error sink);② 想 await 的
+  //   调用方**照样拿到那次拒绝**(修法只挂观察者:不吞错、也不替换返回的那个 promise)。
+  await (async function () {
+    const savedDoc2 = globalThis.document;
+    const savedEditor = globalThis.Editor;
+    const made3 = [];
+    globalThis.document = { createElement: function () { const c = fakeCanvas(0, 0); made3.push(c); return c; } };
+    // ★ 页面那条通道就是 ui.js 的 status()(= 状态栏 #status-msg);这里换成一个记账替身。
+    //   node 里本来没有 globalThis.Editor(ui.js 不在场),所以这也顺带钉住了"渲染是**运行时**
+    //   找那条通道、不在模块顶层引 ui.js"。
+    const seen = [];
+    globalThis.Editor = { status: function (t) { seen.push(String(t)); } };
+    const SLICE2 = { slicer: { nextFrame: function () { return Promise.resolve(); } } };
+    // ★ 本相位**故意**触发两次真实抛错,而默认 sink 除了写状态栏还会 `console.error`(那是
+    //   调试轨迹,不是测试失败)—— 但它会把"stderr 0 字节"这条验收指标弄脏。⇒ 局部接住
+    //   console.error,收尾时**只**把测试自己那几行 FAIL 回放到真 stderr(不回放 = 本相位里的
+    //   失败会被静默吞掉,而计数照样红 —— 一条没有消息的 FAIL)。
+    const realConsoleError = console.error;
+    const errLines = [];
+    console.error = function () {
+      errLines.push(Array.prototype.map.call(arguments, String).join(' '));
+    };
+    try {
+      // ★ 图集必须是**确定的那一张**:默认 backend 在 node 里会抛 `Tint: 本环境没有 document`
+      //   —— 那样"抛了"虽然也成立,却钉不住是哪条路在抛、报的是哪个原因。
+      Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H, { backend: spyBackend() });
+      const badMap = Core.createMap('bad', 2, 2);                    // 8×8 子格
+      fillSub(badMap, Core.LAYER_BG, 0);
+      fillSub(badMap, Core.LAYER_SCENE, 0);
+      badMap.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(99); // ★ 图集只有 3×10 = 30 块
+      const cvB = fakeCanvas(200, 200);
+      const rB = Render.mount(cvB, SLICE2);
+      // 缩略图那条路(< 8)同样会抛 —— 那一条由 ui.js 的 guard(同步 try/catch)兜住,这里先吃掉。
+      await rB.setMap(badMap).catch(function () {});
+      seen.length = 0;
+      let rej = null;
+      const p = rB.setView({ x: 0, y: 0, zoom: 16 });                 // ≥ 8 ⇒ 走到 tileFor 的抛错
+      ok(!!p && typeof p.then === 'function',
+         '⑫ 前提:setView 在 ≥ 8 这条路上返回分帧重建的 promise(实得 ' +
+         (p === undefined ? 'undefined' : typeof p) + ')');
+      await p.then(function () {}, function (e) { rej = e; });
+      ok(rej !== null,
+         '★★ 视图入口返回的那个 promise **仍然拒绝**(实得 ' + (rej ? 'rejected' : 'fulfilled') +
+         '):修法只给它挂了一个观察者 —— 没吞错、没替换返回对象,想 await / 想自己 catch 的调用方照旧拿得到');
+      eq(seen.length, 1,
+         '★★ 同一次失败**在屏幕上看得见**:经渲染自己的 error sink(= ui.js 那条状态栏通道)' +
+         '报了 1 条。修之前这里是 0 —— 那是一条没人观察的拒绝,画布默默停在上一帧');
+      const msg = rej ? String(rej.message) : '';
+      ok(seen.length === 1 && seen[0].indexOf('出错了(setView)') === 0 && msg !== '' &&
+         seen[0].indexOf(msg) >= 0,
+         '★★ 那条消息**指名道姓**:以 `出错了(setView)` 开头、并把抛出原因带上(' + msg +
+         ')—— 不是一条泛泛的"未处理的 promise 拒绝"(实得 ' + JSON.stringify(seen[0]) + ')');
+      // ★ 接口增补:报错通道**可换**(页面/探针接自己的日志 / 断言)。换掉之后默认那条就不该再收到。
+      const alt = [];
+      rB.setErrorSink(function (t) { alt.push(String(t)); });
+      seen.length = 0;
+      await rB.setView({ x: 0, y: 0, zoom: 16 }).catch(function () {});
+      eq([seen.length, alt.length], [0, 1],
+         '★ setErrorSink 换掉了报错通道(默认那条收到 0 条 / 换上的收到 1 条)');
+      ok(errLines.some(function (l) { return l.indexOf('出错了(setView)') === 0; }),
+         '默认 sink 除了写页面的那条通道,也把原因写进了 console.error(调试轨迹留着,' +
+         '共 ' + errLines.length + ' 行)');
+    } finally {
+      globalThis.document = savedDoc2;
+      globalThis.Editor = savedEditor;
+      // 还原图集(与相位 ② 末尾同款):别把"带替身 backend 的那张"留给下一位。
+      Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H);
+      console.error = realConsoleError;
+      for (let i = 0; i < errLines.length; i++) {
+        if (errLines[i].indexOf('  FAIL - ') === 0) realConsoleError(errLines[i]);
+      }
+    }
+    ok(made3.length > 0, '★ ⑫ 的离屏层确实经 document.createElement("canvas") 建出来(' +
+       made3.length + ' 张)');
   })();
 
   }).then(function () {

@@ -362,6 +362,63 @@ globalThis.Render = (function () {
     var slicer = createSlicer(opts.slicer || {});
     var stat = { thumbMs: 0, renders: 0, lastRenderMs: 0, thumbsBuilt: 0 };
 
+    // ── ★★ 视图入口的失败**必须看得见**(评审发现 1)──
+    // Task 4 之后 resize/fit/setView/setZoomAt/panBy/setMap/invalidateAll 都返回**由分帧器
+    // 派生出来的 promise**(全屏重建是分帧的)。而 ≥8 那条路上的抛错(`tileFor` 的
+    // `Tint: 图集里没有纹理 N` —— 改图集/换图之后就够得着)现在发生在**任务回调**里,
+    // 于是它变成 run() 的**拒绝**,不再是 render() 里那次同步抛出:
+    //   · 页面侧唯一的消费者(ui.js 的 guard)是**同步** try/catch ⇒ 接不住;
+    //   · `render()` 这一次根本没执行 ⇒ 画布**默默停在上一帧**,只在控制台留一行错。
+    // 这正是本仓最防的那类"按了没反应"。⇒ 在**返回之前**给链子挂一个观察者。
+    // ★ 两条契约同时成立,缺一不可:
+    //   ① 想 await / 想自己 catch 的调用方**照样拿到那次拒绝**(这里只挂观察者,不改、不吞
+    //      也不替换返回的那个 promise);
+    //   ② 完全不管返回值的调用方,也能在**屏幕上的同一条通道**里看到原因(状态栏)。
+    // ★ 副作用(这正是我们要的):它把这条拒绝从全局 unhandledrejection 那张网里摘了出来
+    //   (窗口有了拒绝处理函数,引擎就不再报"未处理")⇒ 用户收到的是一条**指名道姓**的消息,
+    //   而不是"未处理的 promise 拒绝"。两条都出现才是坏味道(catch 写在 then 链末端)。
+    function msgOf(e) {
+      // ui.js 有一份同款(msgOf);它本批冻结,故这里不能共享 —— 两边都只做"取出人能读的那句"。
+      if (!e) return '未知错误';
+      var m = (e.message !== undefined) ? String(e.message) : String(e);
+      if (m === '' && e.cause && e.cause.message) m = String(e.cause.message);
+      return m === '' ? String(e) : m;
+    }
+    function defaultErrorSink(text, err) {
+      // ★ 走**页面已经在用的那条通道**:ui.js 的 status()(= 状态栏 #status-msg)。
+      //   运行时查找,不在模块顶层引 ui.js —— 依赖顺序是 core → tint → render → io → ui,
+      //   加载期 ui.js 还不存在(顶层引 = node 冒烟当场炸)。
+      var shown = false;
+      try {
+        var E = globalThis.Editor;
+        if (E && typeof E.status === 'function') { E.status(text); shown = true; }
+      } catch (e1) { shown = false; }
+      if (!shown) {
+        try {
+          var el = (typeof document !== 'undefined' && document.getElementById)
+            ? document.getElementById('status-msg') : null;
+          if (el) { el.textContent = String(text); shown = true; }
+        } catch (e2) { shown = false; }
+      }
+      if (typeof console !== 'undefined' && console.error) console.error(text, err);
+    }
+    var errorSink = (typeof opts.onError === 'function') ? opts.onError : defaultErrorSink;
+    function reportViewError(label, err) {
+      var text = '出错了(' + label + '):' + msgOf(err);
+      try { errorSink(text, err); }
+      catch (e) {
+        // ★ 报错通道自己坏了也不许把异常扔回调用方(那就成了第二处"看得见才怪")。
+        if (typeof console !== 'undefined' && console.error) console.error(text, e);
+      }
+    }
+    // 给"会拒绝的入口"挂观察者,并**原样**返回那个 promise(见上面两条契约)。
+    function observed(label, p) {
+      if (p && typeof p.then === 'function') {
+        p.then(null, function (e) { reportViewError(label, e); });
+      }
+      return p;
+    }
+
     function ensureThumbs(map) {
       var px = thumbScale(map.subCols, map.subRows);
       // ★★ 复用条件必须**逐轴**判(宽 **与** 高),只判宽度是不够的:
@@ -502,6 +559,10 @@ globalThis.Render = (function () {
     // ★ 视图/图集/尺寸的代际:在飞的那一轮重建靠它作废(见 viewChanged)。
     var layerGen = 0;
     var layersClean = false;                         // 四张离屏层是否与**当前视图**一致
+    // ★★ 两个名字相近、**量的不是一件事**(评审发现 9),人眼清单两个都要读:
+    //      · `layerRebuilds` = **flushDirty 的脏区重画次数**(编辑一格 = 该层 +1,单位是"块");
+    //      · `layerRebuildMs` = **一次整片 buildLayers 的耗时**(单位是毫秒)。
+    //    计划把这两个键名钉死了(接口表),故这里只**标注**、不改名(改名会与计划文本对不上)。
     var stat2 = { cellsHits: 0, cellsMisses: 0, cellsSize: 0,
                   layerRebuilds: 0, layerRebuildMs: 0, panCopies: 0 };
 
@@ -618,6 +679,13 @@ globalThis.Render = (function () {
     //    ⇒ 裁 = 视图拖过边界时左边一条黑带(人眼清单第 4 条会当场看到)。
     function buildLayers() {
       if (!s.map) return Promise.resolve();
+      // ★★ 入口就把 layersClean **放下**(评审发现 2):`++layerGen` 只作废**在飞**的那一轮,
+      //    管不到"这一轮还没落地"—— 而"还没落地"这段时间里离屏层是**半旧**的。
+      //    本方法是**公开入口**(见文件尾的导出表),调用方(编辑后整批重建 / Task 8 换贴图源)
+      //    完全可能**不**先走 viewChanged() 就进来;那时 layersClean 若还是 true,panBy 就会拿
+      //    一张半旧的图自拷贝搬移,而脏标记此刻已经清干净了 ⇒ 谁也补不回来 = **永久错位**。
+      //    仓内现有调用方都先 viewChanged(),所以今天不出事 —— 这一行是给"将来的直接调用方"的。
+      layersClean = false;
       var myGen = ++layerGen;
       var r = visibleSubRange(s.view, canvas.width, canvas.height, s.map.subCols, s.map.subRows);
       var tasks = [];
@@ -644,7 +712,15 @@ globalThis.Render = (function () {
     // ★★ 3×3 的合成:每份副本都是把**同一张**离屏层按「副本世界偏移 × zoom」平移后再画一次。
     //    偏移是 subCols/subRows 的整数倍,而 paintLayerRect 读格时本来就环面折算
     //    ⇒ 每份副本在任意位置画出来的内容都等于"该处应有的内容"(折算前后是同一格),
-    //    副本之间不会互相画错;它们保证的是"屏幕每一处都有一份盖上去"。
+    //    副本之间不会互相画错。
+    // ★★ 但**别把"多份副本"读成承重**(评审发现 8;报告 §9.1):离屏层的像素系 = 屏幕系,
+    //    它上面已经按**可见范围本身**把每一处应有的内容都铺好了 —— 越出主网格的那些像素由
+    //    paintLayerRect 的**环面折算**补上。所以 ±subCols/±subRows 那几份副本画的是
+    //    **同一批像素**,在当前坐标系下是**冗余**的;"屏幕每一处都有一份盖上去"这个保证
+    //    来自 paintLayerRect 的折算,**不是**来自这里。
+    //    留着它们的两个理由:① 环面 N×N 铺贴是计划明列的交付面;② `setTorus` 开关的可见
+    //    行为就是它(⑩d 钉住的 [8,4])。真要省这几笔全画布 drawImage/层/帧,把 `offs` 收成
+    //    [[0,0]] 即可(⑩d 的期望值要同改)—— 那是省冗余,不是拆保证。
     // ★ 切层 ≠ 重画:压暗/可见性只在**合成**这一层做(4 次 drawImage),不碰任何一层的离屏内容。
     function drawLayerPath(W, H) {
       flushDirty();
@@ -774,7 +850,7 @@ globalThis.Render = (function () {
       //    (脏矩形只补一小块,其余留白)。丢掉之后由 buildLayers 分帧重来一遍。
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();
-      if (s.map && zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
+      if (s.map && zoomPath(s.view.zoom) === 'layers') return observed('resize', buildLayers().then(render));
       render();
     }
 
@@ -785,7 +861,7 @@ globalThis.Render = (function () {
       s.view.y = -(canvas.height / s.view.zoom - s.map.subRows) / 2;
       // ★ 适配改的是 zoom ⇒ 每个子格多少像素都变了,离屏层整片失效(全屏重建,闸 2 分帧)
       viewChanged();
-      if (zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
+      if (zoomPath(s.view.zoom) === 'layers') return observed('fit', buildLayers().then(render));
       render();
     }
 
@@ -819,9 +895,9 @@ globalThis.Render = (function () {
       //    放大之后不对 —— 而"放大才看得见"正是这条路径的常态)。
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();
-      return buildThumbs().then(function () {
+      return observed('invalidateAll', buildThumbs().then(function () {
         return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
-      }).then(render);
+      }).then(render));
     }
 
     function setMap(map) {
@@ -834,14 +910,14 @@ globalThis.Render = (function () {
       // ★ ② 同理:旧离屏层画的是上一张图,连尺寸都可能不同 ⇒ 丢掉重来(见 resize 的注释)。
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();                                  // 在飞的那一轮重建画的是上一张图 ⇒ 作废
-      return buildThumbs().then(function () {
+      return observed('setMap', buildThumbs().then(function () {
         s.view.zoom = fitZoom(map.subCols, map.subRows, canvas.width, canvas.height, 24);
         s.view.x = -(canvas.width / s.view.zoom - map.subCols) / 2;
         s.view.y = -(canvas.height / s.view.zoom - map.subRows) / 2;
         // ★ 适配之后落在缩略图路径(< 8)时**不**建离屏层:大图一上来就白画一屏(它是分帧的,
         //   但那几帧白费);等真放大到 ≥8 时 setZoomAt 会建。③ 与 ① 不受影响。
         return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
-      }).then(render);
+      }).then(render));
     }
 
     // ── 编辑与视图操作(规格 §4.2)──
@@ -885,6 +961,15 @@ globalThis.Render = (function () {
       if (!s.map) return;
       if (!isFinite(dxPx)) dxPx = 0;
       if (!isFinite(dyPx)) dyPx = 0;
+      // ★★ 位移**先量化到整像素**(评审发现 3):自拷贝是 drawImage,而插值关掉之后光栅器会
+      //    把它的偏移吸附到整像素,`s.view` 却按**精确值**前进 ⇒ 每次平移最多差 0.5px,而且
+      //    **会累积** —— 边条只补"新露出来的那一条",永远不去纠正已经攒下的偏差 ⇒ 内容是
+      //    "慢慢从网格/覆盖层上漂走"(改窗口大小或拖久了才看得出来,不报错)。
+      //    ★ 只量化自拷贝的偏移是不够的:view / panStrips / 自拷贝三者必须**同源**,否则
+      //      上面那条累积照样发生。故在这里一次量化,后面三处全用这个值。
+      //    ★ 代价(照实):不足 1px 的平移被**丢弃**(0.4px 走十次 = 一步都不动)。这是刻意的
+      //      ——"不动"比"越拖越歪"好,而且它与闸 1 的口径一致(钳制,不报错、不回滚)。
+      dxPx = Math.round(dxPx); dyPx = Math.round(dyPx);
       if (dxPx === 0 && dyPx === 0) return;
       var W = canvas.width, H = canvas.height;
       s.view.x += dxPx / s.view.zoom;
@@ -892,9 +977,9 @@ globalThis.Render = (function () {
       if (zoomPath(s.view.zoom) !== 'layers') { render(); return; }
       // ★★ 视图一动,在飞的那一轮重建(条带按旧视图算的)就不能再往这些画布上写 ——
       //    而"自拷贝搬移"又要求整张图属于同一次视图。不干净时老实走整片重建(分帧)。
-      if (!layersClean) return buildLayers().then(render);
+      if (!layersClean) return observed('panBy', buildLayers().then(render));
       // ★ 位移大到整块都被换掉时,自拷贝已经没有意义 ⇒ 也走分帧重建(而不是一帧画满屏)
-      if (Math.abs(dxPx) >= W || Math.abs(dyPx) >= H) { viewChanged(); return buildLayers().then(render); }
+      if (Math.abs(dxPx) >= W || Math.abs(dyPx) >= H) { viewChanged(); return observed('panBy', buildLayers().then(render)); }
       var strips = panStrips(W, H, dxPx, dyPx);
       for (var L = 0; L < Core.LAYER_COUNT; L++) {
         var cv = layerCv[L];
@@ -921,7 +1006,7 @@ globalThis.Render = (function () {
       s.view.x = v.x; s.view.y = v.y; s.view.zoom = v.zoom;
       viewChanged();
       if (!s.map || zoomPath(s.view.zoom) !== 'layers') { render(); return Promise.resolve(); }
-      return buildLayers().then(render);
+      return observed('setZoomAt', buildLayers().then(render));
     }
 
     return {
@@ -933,7 +1018,7 @@ globalThis.Render = (function () {
         // ★ 换视图 = 离屏层整片失效(见 buildLayers 的坐标系说明);平移请走 panBy(它是
         //   像素级搬移,只补边条)。本方法留给"跳到某个视图"这种**整片换**的场合。
         viewChanged();
-        if (s.map && zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
+        if (s.map && zoomPath(s.view.zoom) === 'layers') return observed('setView', buildLayers().then(render));
         render();
       },
       view: function () { return { x: s.view.x, y: s.view.y, zoom: s.view.zoom }; },
@@ -952,6 +1037,9 @@ globalThis.Render = (function () {
       invalidateCells: invalidateCells, invalidateAll: invalidateAll,
       editCells: editCells, panBy: panBy, setZoomAt: setZoomAt, buildLayers: buildLayers,
       cells: function () { return cellCache; },
+      // ★ 报错通道是**可换的**(评审发现 1 的接口增补):默认写页面状态栏(= ui.js 的
+      //   status() 那条通道),页面/探针可以换掉它做断言或接自己的日志。传非函数则回落默认。
+      setErrorSink: function (fn) { errorSink = (typeof fn === 'function') ? fn : defaultErrorSink; },
       thumbCanvas: function (L) { return thumbs[L]; },
       thumbPx: function () { return thumbPx; },
       screenToSub: screenToSub, subToScreen: subToScreen,
