@@ -165,7 +165,16 @@ globalThis.Editor = (function () {
   }
 
   // ── 目标集合(单位换算 + 环面 + 选区约束)──
-  function inRect(r, x, y) { return !r || (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h); }
+  // ── 选区(clip)的成员判据 ──
+  // ★★ **判据本体只有一处**:`Render.inSel`(render.js)—— 拖动预览的源格查询
+  //    (`selectionSource`)、`moveRegion` 的 from 集合与这里转调的是同一个函数,所以
+  //    "预览 / 落笔 / 框内落笔"三处**不可能**再分岔。
+  // ★★ 给了 `W`/`H` 就按**环面**折算(先各自折算到主网格、再比相对偏移)。这修掉的是
+  //    "接缝另一侧的那半截静默漏掉"那一类:`regionCells` 此前是"先把每一格折算回主网格、
+  //    再用**非折算**的 `inRect` 比大小" —— 于是一个**自己跨着接缝**的选区(如 96 宽的图上
+  //    `{x:93,w:6}` 盖住 93..95 与 0..2)只在 93..95 上落笔,0..2 那半边**画不进去、也不报错**
+  //    (评审发现:Important 2)。非折算的调用点(不给 W/H)语义与从前逐字相同。
+  function inRect(r, x, y, W, H) { return !r || Render.inSel(r, x, y, W, H); }
   function idxOf(map, X, Y) {
     return Render.wrapIdx(Y, map.subRows) * map.subCols + Render.wrapIdx(X, map.subCols);
   }
@@ -174,7 +183,7 @@ globalThis.Editor = (function () {
     var out = [], seen = new Set();
     function add(X, Y) {
       var wx = Render.wrapIdx(X, map.subCols), wy = Render.wrapIdx(Y, map.subRows);
-      if (!inRect(clip, wx, wy)) return;                 // ★ C12:选区约束绘制
+      if (!inRect(clip, wx, wy, map.subCols, map.subRows)) return;   // ★ C12:选区约束绘制(环面)
       var i = wy * map.subCols + wx;
       if (seen.has(i)) return;                           // 环面下 3×3 会重复命中,去重
       seen.add(i); out.push(i);
@@ -211,7 +220,7 @@ globalThis.Editor = (function () {
     var out = [], seen = new Set();
     for (var i = 0; i < pts.length; i++) {
       var wx = Render.wrapIdx(pts[i].x, map.subCols), wy = Render.wrapIdx(pts[i].y, map.subRows);
-      if (!inRect(clip, wx, wy)) continue;
+      if (!inRect(clip, wx, wy, map.subCols, map.subRows)) continue;
       var idx = wy * map.subCols + wx;
       if (seen.has(idx)) continue;
       seen.add(idx); out.push(idx);
@@ -338,7 +347,7 @@ globalThis.Editor = (function () {
           var ny = Render.wrapIdx(y + (k === 2 ? 1 : k === 3 ? -1 : 0), rows);
           var ni = ny * cols + nx;
           if (seen.has(ni)) continue;
-          if (!inRect(opts.clip, nx, ny)) continue;        // 选区内外是两块互不连通的地
+          if (!inRect(opts.clip, nx, ny, cols, rows)) continue;   // 选区内外是两块互不连通的地
           if (arr && arr[ni] !== seedVal) continue;
           seen.add(ni); queue.push(ni);
         }
@@ -385,7 +394,7 @@ globalThis.Editor = (function () {
       while (head < totalCells && n < lim) {
         var X = head % cols, Y = (head - X) / cols;
         head++; n++;
-        if (!inRect(opts.clip, X, Y)) continue;        // ★ 选区约束(与 regionCells 同一条判据)
+        if (!inRect(opts.clip, X, Y, cols, rows)) continue;   // ★ 选区约束(与 regionCells 同一条判据)
         var t = len2 === 0 ? 0 : ((X - ax) * dx + (Y - ay) * dy) / len2;
         t = t < 0 ? 0 : (t > 1 ? 1 : t);
         out.push({ i: Y * cols + X, rgba: lerpRGBA(rgba0, rgba1, t) });
@@ -918,12 +927,19 @@ globalThis.Editor = (function () {
         if (ev.button !== 0) return;
         var hit = hitOf(ev);
         var sel = app.r.selection();
+        // ★ 没打开地图时退回线性口径(与 Render.inSel 的 W/H 缺省同款)——指针事件比 setMap
+        //   早到是可能的(闸 1:钳制,不报错)
+        var W = app.map ? app.map.subCols : 0, H = app.map ? app.map.subRows : 0;
         if (app.st.tool === 'select') {
           // ★ 判"按在选区里"必须先把命中**换算到子格**:整格命中给的是格号,而选区是子格单位
           //   —— 直接比会差 4 倍(而且**永远不成立**),表现为"选框工具一拖就是在重新框选,
           //   选区永远拖不动"。换算只有 toSub 一处。
+          // ★★ 判据与 `regionCells` 的 clip **同一个**(`inRect` → `Render.inSel`,带环面折算):
+          //   三个"选区"口径(按下算不算在选区里 / 框内落笔算不算有目标 / moveRegion 的 from
+          //   集合)此前是**三种**,各自在接缝那一侧给出不同答案 —— 最刺眼的一种是"框里画，
+          //   一半画得进去、一半什么都没发生"。
           var hs = toSub(hit);
-          if (sel && inRect(sel, hs.x, hs.y)) {
+          if (sel && inRect(sel, hs.x, hs.y, W, H)) {
             app.st.selDrag = { from: hit, dx: 0, dy: 0 };   // 选区内按下 = 拖动它
           } else {
             app.st.selStart = hit;

@@ -772,6 +772,13 @@ function countNonZero(map, L) {
     const savedAdd = globalThis.addEventListener;
     const savedDoc13 = globalThis.document;
     const savedR13 = Editor.app.r, savedMap13 = Editor.app.map, savedCv13 = Editor.app.canvas;
+    // ★★ `app.st` 也必须存/还:⑬c 会把它**整个换掉**(换成一个干净的笔画状态),
+    //   而它是**生产状态对象** —— ⑬ 今天是最后一个相位所以看不出问题,但 Task 8 往后
+    //    追加相位时会**继承一个别人的画笔/描述符**(工具、笔刷大小、颜色全变),那种漂移
+    //    不报错、只让后面的相位"按错的初始条件"跑。
+    const savedSt13 = Editor.app.st;
+    // ★ 命中坐标按需可变(默认恒落格 (1,1)):跨接缝那几条要把指针放到指定的子格上。
+    let sub13 = { X: 5, Y: 5 };
     const handlers = {};
     const errs13 = [];
     globalThis.addEventListener = function (type, fn) { handlers[type] = fn; };
@@ -797,7 +804,7 @@ function countNonZero(map, L) {
       setPreview: function () { calls13.push('setPreview'); },
       layer: function () { return Core.LAYER_SCENE; },
       setLayer: function () { calls13.push('setLayer'); },
-      screenToSub: function () { return { X: 5, Y: 5 }; },        // 恒落格 (1,1)
+      screenToSub: function () { return { X: sub13.X, Y: sub13.Y }; },   // 默认恒落格 (1,1)
       editCells: function () { calls13.push('editCells'); },
       render: function () { calls13.push('render'); },
       invalidateAll: function () { calls13.push('invalidateAll'); return Promise.resolve(); },
@@ -869,8 +876,82 @@ function countNonZero(map, L) {
       eq(inBox.length, 1,
          '★★ 拖动之后"在框内落笔"有目标(实得 ' + inBox.length + ' 个 —— 0 个就是' +
          '"用户在框里画、什么都没发生、状态栏也不说")');
-      eq(Editor.regionCells(mB, { unit: 'sub', x0: 30, y0: 4, x1: 30, y1: 4 }, { x: 30, y: 4, w: 4, h: 4 }).length, 0,
-         '★★ (对照)未折算的 {x:30} 让框内落笔**一个目标都没有** —— 这就是评审发现 3 的静默症状');
+      // ── ⑬b3 ★★★ 接缝的**三个口径**必须合一(Important 2)──
+      // ★ 病灶:"选区"在本仓里此前是**三种**判据 ——
+      //   ① `regionCells` 的 clip:`inRect(clip, wx, wy)`(**非**折算的线性区间);
+      //   ② `pointerdown` 的"按在选区里":同一个非折算 inRect;
+      //   ③ `moveRegion` 的 from 集合 / 拖动预览:`Render.inSel`(**环面**折算)。
+      //   三者在接缝那一侧给出不同答案 ⇒ 最刺眼的一种是"框里画:一半画得进去、另一半
+      //   静默什么都没发生(状态栏也不说)"。
+      // ★ 现在三处都转调 `Render.inSel`(ui.js 的 `inRect` 就是它),下面按**行为**逐条钉。
+      const mS = filled(Core.createMap('s', 24, 3), Core.LAYER_SCENE, Core.neutralDesc(4));  // 96×12 子格
+      Editor.app.map = mS;
+      const WRAP_SEL = { x: 93, y: 4, w: 6, h: 4 };          // 盖住子格 93,94,95,**0,1,2**
+      const at = function (x, y) {
+        return Editor.regionCells(mS, { unit: 'sub', x0: x, y0: y, x1: x, y1: y }, WRAP_SEL).length;
+      };
+      eq([at(93, 4), at(94, 4), at(95, 4), at(0, 4), at(1, 4), at(2, 4), at(3, 4), at(4, 4)],
+         [1, 1, 1, 1, 1, 1, 0, 0],
+         '★★★ 一个**自己跨着接缝**的选区({x:93,w:6} 盖住 93..95 与 0..2)在框内落笔时, ' +
+         '绕过去的那半截也算数:93/94/95/0/1/2 六个都有目标、3/4 没有。旧实现用**非折算**的 ' +
+         'inRect ⇒ 0/1/2 三个**静默拿不到**(用户在框里画,一半画得进去、一半什么都没发生)');
+      eq(Editor.regionCells(mS, { unit: 'sub', x0: 0, y0: 4, x1: 0, y1: 4 }, WRAP_SEL).length,
+         Render.inSel(WRAP_SEL, 0, 4, mS.subCols, mS.subRows) ? 1 : 0,
+         '★★★ 并且它与**落笔那一侧**的判据(`Render.inSel`,即 moveRegion 的 from 集合)' +
+         '逐格一致:子格 0 在一侧是 ' + Render.inSel(WRAP_SEL, 0, 4, mS.subCols, mS.subRows) +
+         '、在另一侧是 ' + Editor.regionCells(mS, { unit: 'sub', x0: 0, y0: 4, x1: 0, y1: 4 }, WRAP_SEL).length +
+         '(两者必须相等 —— 这就是"三个口径合一"的可判形式)');
+      eq(Editor.regionCells(mB, { unit: 'sub', x0: 6, y0: 4, x1: 6, y1: 4 }, { x: 30, y: 4, w: 4, h: 4 }).length, 1,
+         '★★ 连带:选区落在 [0, subCols) **之外**(24 宽的图上 x=30、宽 4 ⇒ 折算后就是 6..9)' +
+         '时不再"一格都筛不进来" —— 环面判据下 30 与 6 是同一个选区(与 idxOf 对每一格的处理同源)。' +
+         '★ 旧断言在这里期望 **0**,钉的是"未折算的 clip 静默失效"这条**症状**;本轮修掉之后 ' +
+         '那条症状已不可能出现,故改钉"折算后等价"这条更强的(期望 0 现在只可能来自' +
+         '"判据又退回非折算"——即回归)');
+
+      // ── ⑬b4 ★★ 跨接缝的**框选**(Reachable A):子格 23 一格 → 拖过右边缘绕回格 0 ──
+      // ★ 这条**照实记录当前的语义**,不是"要它变成什么样"。命中坐标在 `hitTest`/`screenToSub`
+      //   里就已经折算回 [0, subCols),`subRectOf` 只对两个端点取 min/max ⇒ 绕过去的那一段
+      //   被读成"0 到 92 的线性区间",结果是**整整一行**(w = 96 子格 = 24 格)。
+      //   用户想要的是 {x:23,w:2}(格 23 与格 0)。
+      // ★ 详见报告:改成**环面区间**要动的东西不在本轮范围内(命中在 subRectOf 看到之前
+      //   就已经折算过 ⇒ 方向信息已丢失),这里先把今天的语义钉住 —— 以免"没修"被读成"没这事"。
+      Editor.app.map = mS;
+      Editor.app.st.tool = 'select';
+      Editor.app.st.brushSize = 1;                     // 整数画笔 ⇒ 命中是**格**号
+      Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
+      sel13 = null;
+      sub13 = { X: 92, Y: 4 };                         // 按下:格 23 的左上子格
+      Editor.app.canvas.onpointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+      ok(!!Editor.app.st.selStart, '⑬ 前提:pointerdown 起了框选(选区为空 ⇒ 走的不是"拖选区")');
+      sub13 = { X: 0, Y: 4 };                          // 拖过右边缘 ⇒ 折算回子格 0
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
+      eq(sel13, { x: 0, y: 4, w: 96, h: 4 },
+         '★★ 跨接缝框选(格 23 → 绕过右边缘回到格 0)存下来的是**整整一行**(实得 ' +
+         JSON.stringify(sel13) + ';用户想要的是 {x:92,w:5})—— 两个端点在命中那一步就已经' +
+         '折算回 [0, subCols),方向信息丢失,subRectOf 只能取 min/max。' +
+         '★ 这条钉的是**今天的语义**:它同时是"删除键会抹掉一整行"那条已知缺陷的证据');
+      eq(Editor.regionCells(mS, { unit: 'cell', x0: 0, y0: 1, x1: 23, y1: 1 }, sel13).length, 24 * SUB * SUB,
+         '★ 连带:那一整行的 24 格(384 个子格)**全在**框内(旧口径与新口径在这里一致 ——' +
+         '一行本来就没有"绕过去的那半截"可言)。这条是上一条的**后果**面:用户的删除会命中' +
+         '24 格而不是他框的 2 格');
+
+      // ── ⑬b5 ★★★ "按在选区里"必须用**同一个**判据(三个口径里的第 ② 处)──
+      sel13 = WRAP_SEL;                                // 盖住 93..95 与 0..2
+      Editor.app.st.tool = 'select';
+      Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
+      sub13 = { X: 1, Y: 4 };                          // 按在**绕过去的那半截**里(子格 1)
+      Editor.app.canvas.onpointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+      ok(!!Editor.app.st.selDrag && !Editor.app.st.selStart,
+         '★★★ 按在**绕过去的那半截**(子格 1,属于 {x:93,w:6})里 = 拖动它,而不是重新框选' +
+         '(实得 selDrag=' + !!Editor.app.st.selDrag + ' / selStart=' + !!Editor.app.st.selStart + ';' +
+         '旧实现用非折算的 inRect ⇒ 判成"没按在选区里" ⇒ 一拖就是在重新框选,选区永远拖不动)');
+      Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
+      sub13 = { X: 6, Y: 4 };                          // 按在选区**之外**(子格 6)
+      Editor.app.canvas.onpointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+      ok(!Editor.app.st.selDrag && !!Editor.app.st.selStart,
+         '★ (对照)按在选区**之外**(子格 6)仍然起框选 —— 上一条不是"永远走拖动那条路"');
+      Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
+      sub13 = { X: 5, Y: 5 };                          // 还原恒落格 (1,1)
       ok(calls13.indexOf('editCells') >= 0 && calls13.indexOf('setSelection') >= 0,
          '★ 这一步真的走了"搬动 + 存回选区"两条路(实得 ' + JSON.stringify(calls13) + ')');
 
@@ -934,6 +1015,7 @@ function countNonZero(map, L) {
       globalThis.addEventListener = savedAdd;
       globalThis.document = savedDoc13;
       Editor.app.r = savedR13; Editor.app.map = savedMap13; Editor.app.canvas = savedCv13;
+      Editor.app.st = savedSt13;
     }
   } catch (err) {
     console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');

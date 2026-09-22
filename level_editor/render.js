@@ -328,9 +328,13 @@ globalThis.Render = (function () {
     return { hit: false, X: X, Y: Y };
   }
 
-  // 选区在环面上的**成员判据**(与 UI 的 `regionCells` / `moveRegion` 的 from 集合同口径):
-  // 先各自折算到主网格,再比**相对偏移** —— 于是"选区自己跨着接缝"(先前的拖动把选区挪到了
-  // 接缝另一侧)也算得对(绝对比大小会在那种选区上恒 false)。
+  // 选区在环面上的**成员判据**,而且它是**唯一一处** —— UI 的 `inRect` 直接转调它
+  // (ui.js:inRect),故 `regionCells` 的 clip / 油漆桶 / 渐变 / 直线 / "按在选区里"五个
+  // 调用点与这里的 `moveRegion` from 集合是**同一条判据**。
+  // ★ 公式:先各自折算到主网格,再比**相对偏移** —— 于是"选区自己跨着接缝"(先前的拖动把
+  //   选区挪到了接缝另一侧,如 96 宽的图上 `{x:93,w:6}` 盖住 93..95 与 0..2)也算得对;
+  //   **绝对比大小**(`x >= sel.x && x < sel.x + sel.w`)会在那种选区上静默漏掉绕过去的那半截。
+  // ★ 不给 W/H 时退回线性区间(旧口径),给了一律折算。
   function inSel(sel, X, Y, W, H) {
     if (!sel) return false;
     if (!(W > 0 && H > 0)) {
@@ -344,7 +348,10 @@ globalThis.Render = (function () {
   // 一个矩形在环面上折算后的**规范分解**(至多 4 块):拖动预览要重画的区域必须落在这些块里。
   // ★ 只取"左上角折算"是不够的:矩形**自己**跨过接缝时(x1 < x0),折算后是两段区间 ——
   //   取并集会漏掉另一头那半截(那半边的烤痕永远留着)；取"包围盒"则会把整幅图都算进去。
-  //   ★ `sel` 的 w/h ≤ subCols/subRows 是前提(选区由两次命中决定,这一点恒成立)。
+  //   ★★ 本函数**不依赖** `w ≤ W`:"矩形自己跨接缝"这条分支就是为 w 大于一整行时准备的
+  //   (本文件的 `canonRects` 不变量写成"w>0"即可)—— 而 UI 的选区**确实**可以是
+  //   `{x:93,w:6}`(96 宽):先前的拖动把选区挪过接缝时,`pointerup` 存回的是**折算后**的
+  //   左上角,宽度原样带过来 ⇒ x+w 可以越过 W。故这里只要求 w>0,不假设 x+w ≤ W。
   function canonRects(r, W, H) {
     var out = [];
     if (!r || r.w <= 0 || r.h <= 0) return out;
@@ -504,7 +511,7 @@ globalThis.Render = (function () {
       var colorLayer = layerIsColor(L);              // 判据取一次,不在逐格循环里重算
       for (var Y = rect.y; Y < rect.y + rect.h; Y++) {
         for (var X = rect.x; X < rect.x + rect.w; X++) {
-          var q = dragSource(X, Y);                    // ★ 拖动中:读**源**子格(纯读)
+          var q = dragSource(L, X, Y);                 // ★ 拖动中:读**源**子格(纯读;只对活动层)
           var raw = q.hit ? descAt(s.map, L, q.X, q.Y) : 0;
           if (colorLayer) {
             // 背景层 = RGBA:alpha = 0(createMap 的初值就是 0)⇒ 这一格**没有颜色**,
@@ -673,7 +680,7 @@ globalThis.Render = (function () {
             // 这里什么都不画)。★ 这里**不许**出现 texOf(见 buildCell 的两条静默症状)。
             for (var kc = 0; kc < SUB * SUB; kc++) {
               var Xc = bx + (kc % SUB), Yc = by + Math.floor(kc / SUB);
-              var qc = dragSource(Xc, Yc);                 // ★ 拖动中:读**源**子格(纯读)
+              var qc = dragSource(L, Xc, Yc);              // ★ 拖动中:读**源**子格(纯读;只对活动层)
               var rawc = qc.hit ? descAt(s.map, L, qc.X, qc.Y) : 0;
               if (((rawc >>> 0) & 255) === 0) continue;
               c.fillStyle = cssOfRGBA(rawc);
@@ -690,7 +697,7 @@ globalThis.Render = (function () {
           //     偏移是格对齐时(整数画笔 + 整格选区)这一步是恒等;偏移落在子格上时按格取整
           //     —— 只见于小数画笔的选区,是拖动途中的子格级近似,松手后由 moveRegion 归位。
           var gx = wrapIdx(cx, cw), gy = wrapIdx(cy, ch);
-          var q = dragSource(gx * SUB, gy * SUB);
+          var q = dragSource(L, gx * SUB, gy * SUB);
           if (!q.hit) continue;                            // 被腾空的源区 ⇒ 这一格不画
           var tilesOfCell = cellCache.get(L, wrapIdx(Math.floor(q.X / SUB), cw),
                                              wrapIdx(Math.floor(q.Y / SUB), ch));  // ★ ③:这一格的 16 个 tile
@@ -865,16 +872,14 @@ globalThis.Render = (function () {
       if (s.selection) {
         // ★ 拖动中:框按**偏移后**的位置画(数据还没动 —— 松手才 moveRegion)。框跟手走
         //   是拖动过程中**唯一**看得见的反馈:`setSelDrag` 只调 render()。
-        //   ★ 2026-09-22:拖动预览的**内容**现在也跟手了(`setSelDrag` 会标脏并重画源∪目标,
-        //     见 markDragDirty)—— 那时这一句"要等别的重画才显形"的描述已过时。
-        // ★★ 兜底读 `selDrag.sel`:拖动着而选区**已经没了**是合法状态(Esc 走
-        //    `cancel-selection` → `setSelection(null)`,而左键还按着)—— 块内一律读
-        //    `s.selection.x` 在这条路上就是读 null。
-        //    ★ 今天真正挡住它的是**外层**那句 `if (s.selection)`(实测:外层留着、这里换回
-        //      `s.selection`,render() 照样不抛 —— 评审发现 6 的机制到不了这里),所以这一行是
-        //      **防御性**的:它只在"外层那道判据将来被放松"时生效(那时若照旧读 `s.selection.x`,
-        //      渲染里会每帧抛 TypeError,画布整个停住)。不变量与两条断言见 ⑬(不抛 + 选区为空
-        //      时不画框)。
+        //   ★ 2026-09-22:拖动预览的**内容**现在也跟手了(`setSelDrag`/`setSelection` 会重画
+        //     源∪目标,见 markDragDirty)—— 那时这一句"要等别的重画才显形"的描述已过时。
+        // ★★ `|| (s.selDrag ? s.selDrag.sel : null)` 这一段是**防御性、今天不可达**:
+        //    外层那句 `if (s.selection)` 就在上面一行,而 `s.selDrag` 只在选区非空时才会被设上
+        //    (实测:外层留着、这里换回 `s.selection`,render() 照样不抛)。
+        //    ★ 而且它**不能**被"放松外层判据"这条路用上:那时它会在选区为空、拖动还在的状态下
+        //      **画出一个框**,正是 ⑬h 那条"选区为空时不画框"要禁止的。留着只是为了"外层若被
+        //      放松,这一行至少不抛"(不抛的不变量由 ⑬h 钉住),不是一条活路径。
         var base = s.selection || (s.selDrag ? s.selDrag.sel : null);
         var sel = (base && s.selDrag)
           ? { x: base.x + s.selDrag.dx, y: base.y + s.selDrag.dy, w: base.w, h: base.h }
@@ -949,6 +954,11 @@ globalThis.Render = (function () {
     function setPreview(rect) { s.preview = rect; render(); }
     // 拖动中的选区:目标格 (X,Y) 的内容来自源格 (X-dx, Y-dy)(纯读,不改进数据)。
     // ★ 坐标一律是**子格**(选区的 x/y/w/h 与 dx/dy 都是子格单位 —— 见 UI 的 subRectOf)。
+    // ★★ **只有活动层**(`L === s.layer`)读偏移 —— 落笔 `moveRegion` 只搬 `app.r.layer()`
+    //    那一层,其余三层的像素在提交时**一个都不动**。四层一起偏移的话:那三层的内容在
+    //    拖动时也跟着光标走、松手又弹回去(预览 ≠ 落笔,而且是**看得见**的不一致 —— BG 层
+    //    从不被压暗,它跟着动最显眼),代价还翻四倍。层号由**调用方**给,故 `markDragDirty`
+    //    只需标一层(见那里)。
     // ★★ 三种目标格,与"松手后 moveRegion 真正写出来的结果"**逐格一致**(预览必须等于落笔):
     //    ① 源格在选区内        ⇒ 读源格(被搬过来的那部分);
     //    ② 源格在外、目标在选区内 ⇒ 那是**被腾空的源区** ⇒ hit:false(不画);
@@ -959,8 +969,8 @@ globalThis.Render = (function () {
     //    ★★ 一律传 `W`/`H`(环面折算,评审发现 2):拖动跨过接缝时目标格落到图的另一头,
     //      非折算的查询会在那里读到"目标格自己的内容" —— 而落笔(`moveRegion` 走 `idxOf`)
     //      搬过去的是**源格的内容**,预览与落笔就在接缝那一侧分了岔。
-    function dragSource(X, Y) {
-      if (!s.selDrag) return { hit: true, X: X, Y: Y };
+    function dragSource(L, X, Y) {
+      if (!s.selDrag || L !== s.layer) return { hit: true, X: X, Y: Y };
       var W = s.map ? s.map.subCols : 0, H = s.map ? s.map.subRows : 0;
       var sel = s.selDrag.sel, q = selectionSource(sel, s.selDrag.dx, s.selDrag.dy, X, Y, W, H);
       if (q.hit) return q;
@@ -975,10 +985,10 @@ globalThis.Render = (function () {
     //    松手 —— 提交只按最终偏移结算(`moveRegion` 的 源 ∪ 目标)⇒ 在更早的偏移上被烤过、
     //    而最终偏移没碰到的那些格**永远留着别人的内容**(直到有别的东西把它们标脏)。
     //    框会回到正确位置 ⇒ 用户看到的是"地图上凭空多了一块错的内容",没有任何报错。
-    // ★ 修法:偏移一变(**以及清除时**)把「源区 ∪ 目标区」标脏并重画 —— 于是烤痕的寿命
-    //    不长于这一次拖动。★ 标的是**规范化**后的两块(`canonRects`,与 `dragSource` 同一套
-    //    折算):跨接缝拖动时目标落在图的另一头,照未折算的坐标标脏会漏掉那一头。
-    // ★★ 上一次的两块也要一起标:清除时 `s.selDrag` 已经没了,只有这里记得它烤在哪。
+    // ★ 修法:偏移一变(**以及清除时**)把「源区 ∪ 目标区」重画一遍 —— 于是烤痕的寿命
+    //    不长于这一次拖动。★ 重画的是**规范化**后的两块(`canonRects`,与 `dragSource` 同一套
+    //    折算):跨接缝拖动时目标落在图的另一头,照未折算的坐标重画会漏掉那一头。
+    // ★★ 上一次那两块也要一起重画:清除时 `s.selDrag` 已经没了,只有这里记得它烤在哪。
     //    ★ 归纳口径:每一步之后,"存着偏移内容的格"恰好 = 当前偏移的 源 ∪ 目标
     //    (其余格读到的都是它们自己的内容,见 `dragSource` 的第 ③ 种情形)——
     //    故只需记住**上一次**那两块,不必攒整段拖动的历史。
@@ -987,22 +997,45 @@ globalThis.Render = (function () {
     //    差量**会走 `invalidateAll` → `buildThumbs`(Ctrl+Z 在按住左键时照样按得下去)。
     //    不重画的话偏移会被烤进 ①,而 < 8px/子格 那条路合成的正是 ① ⇒ 症状与评审发现 1
     //    一字不差,只是换了一条路。成本 = 块面积 × 缩略图刻度(每子格 1~2px),比 ② 那侧小得多。
-    var dragRects = null;                             // 上一次拖动预览烤过的规范块(至多 8 块)
+    // ★★ **只在活动层**(见 `dragSource`):偏移只烤在 `s.layer` 上,所以"记它烤在哪"必须
+    //    连**层号**一起记 —— 用户可以在拖动途中切层(数字键 1-4),那时旧层上那批偏移像素
+    //    必须擦掉(它现在读到的是"没拖过"的内容),新层上则要烤出偏移。
+    var dragBake = null;                              // { L: 烤在哪一层, rects: [规范块] } 或 null
     function markDragDirty() {
       if (!s.map) return;
-      var W = s.map.subCols, H = s.map.subRows, now = [];
+      var W = s.map.subCols, H = s.map.subRows, L = s.layer, now = [];
       if (s.selDrag) {
         var sel = s.selDrag.sel;
         now = canonRects({ x: sel.x, y: sel.y, w: sel.w, h: sel.h }, W, H)
           .concat(canonRects({ x: sel.x + s.selDrag.dx, y: sel.y + s.selDrag.dy, w: sel.w, h: sel.h }, W, H));
       }
-      var all = now.concat(dragRects || []);
-      dragRects = s.selDrag ? now : null;
-      for (var L = 0; L < Core.LAYER_COUNT; L++) {
-        for (var i = 0; i < all.length; i++) layerDirty[L] = rectUnion(layerDirty[L], all[i]);
-        if (!thumbs[L]) continue;                     // ① 还没建(没 setMap)⇒ 没什么可烤
-        for (var j = 0; j < all.length; j++) paintThumbRect(L, all[j]);
-      }
+      var prev = dragBake;
+      dragBake = s.selDrag ? { L: L, rects: now } : null;
+      // ★ 活动层:当前偏移的 源 ∪ 目标;同层时把**上一次**那批并进来一起画(一次重画一层)。
+      // ★★ 逐块重画,**不取包围盒**(闸 2):跨接缝时这两块分居图的两头,包围盒是**整行**
+      //    (目标横跨两半时甚至是整幅图)—— 高倍 + 大选区下那是全屏 clearRect 加每层数千次
+      //    drawImage,**每次 pointermove** 都付,远超 ~8ms 的单帧预算,而且**没有**走
+      //    `createSlicer`(去烤是同步路径)。`canonRects` 本来就把正确的两块算出来了,
+      //    取包围盒是白送掉那个信息。
+      repaintDrag(L, (prev && prev.L === L) ? now.concat(prev.rects) : now);
+      // ★★ 层变了:上一次那批烤在**旧层**上 —— 旧层此刻读到的是"没拖过"的内容,那些像素
+      //    必须擦掉(不擦 = 旧层留着一次拖动预览的残影,直到有别的东西标脏它)。
+      if (prev && prev.L !== L) repaintDrag(prev.L, prev.rects);
+    }
+
+    // 把一批规范块在**某一层**的 ② 离屏层(与 ① 缩略图)上重画。
+    // ★ `layerRebuilds` 与 `flushDirty` 记的是**同一本账**(该层 +1)——"偏移一变重画一次"
+    //   在自检数字里看得见。
+    // ★ 缺席层(`map.layers[L] === null`)直接跳过:它一个像素都没有,不存在"偏移内容"可擦;
+    //   而 `flushDirty` 对缺席层走的是"整张画布 clearRect"那条路 —— 拖动中每帧白付几次全屏
+    //   清屏,且它**不计数**(layerRebuilds 只数 paintLayerRect 那一条)。这正是闸 2 要避免的
+    //   那种看不见的成本。
+    function repaintDrag(L, rects) {
+      if (!rects.length || !layerArray(s.map, L)) return;
+      for (var i = 0; i < rects.length; i++) paintLayerRect(L, rects[i]);
+      stat2.layerRebuilds++;
+      if (!thumbs[L]) return;                         // ① 还没建(没 setMap)⇒ 没什么可烤
+      for (var j = 0; j < rects.length; j++) paintThumbRect(L, rects[j]);
     }
 
     // 编辑某几个格之后:重画它们的缩略图块(Uint32Array 的下标 → 格坐标)
@@ -1151,7 +1184,9 @@ globalThis.Render = (function () {
 
     return {
       setMap: setMap, map: function () { return s.map; },
-      setLayer: function (L) { s.layer = L; render(); }, layer: function () { return s.layer; },
+      // ★ 切层 = 拖动预览的**烤点换了一层**(偏移只烤在活动层上,见 dragSource/markDragDirty):
+      //   旧层那批偏移像素要擦、新层要烤。数字键 1-4 在拖动途中照样按得下去。
+      setLayer: function (L) { s.layer = L; markDragDirty(); render(); }, layer: function () { return s.layer; },
       setView: function (v) {
         s.view.x = v.x; s.view.y = v.y;
         s.view.zoom = clampZoom(v.zoom === undefined ? s.view.zoom : v.zoom);
@@ -1171,7 +1206,11 @@ globalThis.Render = (function () {
       layerVisible: function (L) { return s.layerVisible[L]; },
       setLayerLocked: function (L, b) { s.layerLocked[L] = !!b; },
       layerLocked: function (L) { return s.layerLocked[L]; },
-      setSelection: function (sel) { s.selection = sel; render(); },
+      // ★★ 选区一变也要去烤:Esc 取消选区**时左键还按着**(selDrag 还在)是合法状态 ——
+      //    框没了,而偏移像素会**留到下一次 pointermove/pointerup 才被擦**(那之间是几十毫秒
+      //    的"选区的视觉没了、内容还在偏移上")。"选区为空 ⇒ 内容立刻归位"才是这条不变量
+      //    该有的窗口:改一次选区就把烤痕清掉,不必等下一次指针事件。
+      setSelection: function (sel) { s.selection = sel; markDragDirty(); render(); },
       selection: function () { return s.selection; },
       setSelDrag: setSelDrag, setPreview: setPreview,
       isDraggingSelection: function () { return !!s.selDrag; },
@@ -1254,7 +1293,8 @@ globalThis.Render = (function () {
     zoomPath: zoomPath, clampZoom: clampZoom, fitZoom: fitZoom, thumbScale: thumbScale,
     visibleSubRange: visibleSubRange, torusOffsets: torusOffsets, hitTest: hitTest,
     MAX_BRUSH_CELLS: MAX_BRUSH_CELLS, brushSpan: brushSpan, brushRegion: brushRegion, snapHit: snapHit,
-    selectionSource: selectionSource, rectUnion: rectUnion, rectIsEmpty: rectIsEmpty,
+    selectionSource: selectionSource, inSel: inSel,
+    rectUnion: rectUnion, rectIsEmpty: rectIsEmpty,
     createDirtySet: createDirtySet, panStrips: panStrips, zoomAround: zoomAround,
     DRAW_ORDER: DRAW_ORDER, mount: mount,
   };
