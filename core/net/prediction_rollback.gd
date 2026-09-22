@@ -53,6 +53,19 @@ var map_px: Vector2 = Vector2.ZERO
 const DEFAULT_POS_TOL := 2.0
 var pos_tol: float = DEFAULT_POS_TOL
 
+# 接触期(与远端玩家**身体**贴身)的位置容差。★ 凭什么能放宽:贴身时那点位置分歧由**接触几何**
+# 决定,而回滚纠正不动它 —— 实测(见 tests/brawl_rollback_probe)1/2/4/8px 四档的接触期偏差
+# **逐项相同**(中位 1.6 / p95 25~30),即那每帧一次的回滚"本来就没买到精度"。
+# ★ 取值先与 pos_tol 同值(2.0)落地 —— 此时行为与改动前**逐字相同**;扫描出结论后只改这一行。
+#   取值依据见 docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md §3.4。
+const DEFAULT_CONTACT_POS_TOL := 2.0
+var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
+
+# 接入方每物理步写一次:本帧是否正在贴身(`Player.touching_player()`)。
+# ★ 默认 false = 改动前的行为。★ 它**不进 capture_state()/restore_state()**、不上行 ——
+#   纯客户端本地量(它只是"这次的偏差要不要较真"的提示,不是模拟状态)。
+var in_contact: bool = false
+
 func bind(p) -> void:
 	_p = p
 
@@ -158,7 +171,10 @@ func _close_enough(a: Dictionary, b: Dictionary) -> bool:
 		return false
 	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
 		return false
-	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > pos_tol:
+	# 容差按**接触与否**二选一:非接触期的位置分歧是真的(要立刻纠正),
+	# 接触期的位置分歧是接触几何噪声(实测纠正不动,见 contact_pos_tol 的说明)。
+	var tol: float = contact_pos_tol if in_contact else pos_tol
+	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > tol:
 		return false
 	var va: Vector2 = a.get("vel", Vector2.ZERO)
 	var vb: Vector2 = b.get("vel", Vector2.ZERO)
