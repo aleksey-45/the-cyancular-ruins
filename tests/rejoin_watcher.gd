@@ -3,7 +3,7 @@ extends Node
 # 回局真链路探针的**观察者**(每端一个,挂在 root 上;换场不会把它带走)。
 # 三端各跑一条剧本:
 #   c1 = actor:建房 → 开局 → 进 pvp_game → 到 PLAYING → **ESC + 点「回到主菜单」** →
-#        **自己重连大厅 → 再挂一份真大厅页 → 在房间列表里点自己那间房那一行** → 回到**原局**。
+#        **按主菜单上那颗「1 v 1」**(生产入口)→ 在房间列表里点自己那间房那一行 → 回到**原局**。
 #        断言四条(见 `_tick_c1` 的相 3):
 #          ⓪ 那一行**可点**(`disabled == false`)—— ★ 这是**新入口本身**的断言:前置计划交付的行为是
 #             "对局中的房一律 disabled",而回局这一档要在**同一行**上把它翻过来。少了这一条,
@@ -15,9 +15,16 @@ extends Node
 #        ★ 不拿 instance_id 做断言:路径乙**会重建场景**,节点 ID 必然不同 —— 服务端那具身体
 #          确实没销毁,但客户端**观测不到**它,写成断言就是伪断言。服务端身体未销毁由
 #          `tests/reconnect_probe` 相①(路径甲,不重建场景)钉住。
-#        ★ **不点主菜单里那颗按钮**(它已随用户裁定取消):回主菜单之后,本端**自己再挂一份大厅页**
-#          (与首次挂载同一手法,见 `_attach_page_in`)—— 探针要在意的"玩家自己找到那间房"这一段,
-#          落在**列表里点行**上;而主菜单那几步只是换场,不承载判据。
+#        ★★ **两次进场都走生产入口** = 按主菜单上那颗「1 v 1」(`main_menu.gd` 里
+#          `PvpSession.enter_mode(MODE_PVP)` + `change_scene_to_file(matchmaking.tscn)`),
+#          再由**生产那条 `change_scene_to_file`** 建出真大厅页 —— 本端只在页 `_ready` **之前**
+#          预置"已连着本探针大厅"(`_on_node_added`;生产连的是默认端口 7777,本探针不能碰)。
+#        ★★★ 这里**曾经**写着「主菜单那几步只是换场,不承载判据」并用 `_attach_page_in`
+#          **直接挂页** —— 那句话是**错的**,而且正好错在承重的那一步:主菜单那三个联机按钮
+#          的 `PvpSession.reset()` **就是**抹掉回局凭据的那一步(C1)。于是整条测试链
+#          (包括本探针自己的那条"自己那间房那一行必须可点")在**生产里根本回不去的实现**上
+#          一直全绿 —— 唯一会红的观测者绕过了唯一会红的那一步。
+#          ⇒ **别再绕过主菜单**;要改这条路径,先想清楚"凭据是在哪一拍没的"。
 #   c2 = 对手:点列表加入 → 进 pvp_game → **在场上留满一个观察窗**(`C2_OBSERVE`),然后才落盘。
 #        ★ brief 把 c2 定位成"这一局还在的见证",但**没有给它任何断言**(进了局就 `_finish`,
 #          零条断言也算 OK)。这里补四条**它自己能观测**的:在场并看到 PLAYING / 掉线者的身体
@@ -46,10 +53,13 @@ extends Node
 #      `in_match`(它只在 in_match 那一行上才动手,故早刷新不会误入房)。梯节拍沿用
 #      `team_match_watcher._tick_lobby_join` 的 1.5s,并且**只在连接活着时发**(绝不让页走到
 #      "未连 → 重连默认端口 7777"那一条)。
-#   ③ **c1 回主菜单后要先自己把大厅连接接回来**(生产里那一步是"页 `_ready` → `_with_lobby` →
-#      `NetBus.start_client(addr)`,端口取**默认 7777**;本探针的大厅在池外 29300,照那条走会去连
-#      用户的 7777 并且永远连不上)。所以本端按"先连上、再挂页"的同一手法自己做一次,让页走
-#      **已连**的快路 —— 这正是生产里"玩家站在一个已经连着的大厅页上"的那个前提。
+#   ③ **本端自己维持与大厅(29300)的连接**,页不许自己去连(生产里那一步是"页 `_ready` →
+#      `_with_lobby` → `NetBus.start_client(addr)`,端口取**默认 7777**;本探针的大厅在池外
+#      29300,照那条走会去连用户的 7777 并且永远连不上)。手法:`_on_node_added` 在页 `_ready`
+#      **之前**预置 `_connected/_connected_addr`(**并把 `PvpSession.server_address` 拨回本探针大厅**
+#      —— 主菜单按钮里的 `enter_mode()` 会 `reset()` 成云默认,而页的地址框拿它做初值),
+#      于是页的 `_request_list` 走**已连快路**;万一还是走了慢路(预置没赶上),`_drive_to_lobby_page`
+#      有一条兜底修复(重连 29300 + 把地址框拨回来),两条路都不碰 7777。
 #   ④ `_page` 一律用 `is_instance_valid` 判死活(brief 在 `_tick_c2` 里只判 `== null`):
 #      换场后 `_page` 是**已释放对象**,对已释放对象取字段会抛
 #      `Invalid access … previously freed`(本仓实测踩过,见 team_match_watcher 文件头)。
@@ -61,6 +71,8 @@ extends Node
 
 const LOBBY_ADDR := "127.0.0.1"
 const ENTER_TIMEOUT := 60.0      # 从挂页到"进 pvp_game 且到 PLAYING"
+const MENU_TIMEOUT := 25.0       # 按下主菜单那颗模式按钮 → 生产路径把大厅页建出来
+const MENU_BTN_TEXT := "1 v 1"   # 与 main_menu.gd 的文案逐字一致
 const PLAY_SETTLE := 3.0         # PLAYING 后静置(让快照跑起来,身体有个明确的位置读数)
 const REJOIN_TIMEOUT := 30.0     # 点了自己那行之后等回到 pvp_game
 const RESULT_WAIT := 40.0        # c3 等"一个不会来的 room_joined"的上限
@@ -113,13 +125,25 @@ var _snap_with_opp := 0
 var _hard_t := 0.0
 # c2/c3 落盘后**保持在线**(见 _finish:裁判还要继续观察这一局),只有 c1(actor)自己退。
 var hold_alive := false
-# c1 回主菜单后"大厅连接已经接回来"这一步完成了吗
-var _lobby_back := false
-var _lobby_back_sent := false
+# c1:本端正在连大厅(页不许自己连,见文件头偏离③)。
+# ★ **判据一律用 `NetBus.can_send_to_server()`**、不用"曾经连上过"的闩:ESC 回主菜单那条路会
+#   `NetBus.stop()`(`PauseMenu.go_menu` 对 PvP 无条件断连),闩会停在 true 而连接已经没了。
+var _lobby_back_connecting := false
+# c1:主菜单那颗模式按钮按过了吗 / 页一就位要调的那个动作(首次=建房,回局=刷新)
+var _menu_clicked := false
+var _page_action: Callable = Callable()
+var _page_action_done := false
+# c1:`_on_node_added` 预置钩子命中了几次(读数:0 = 页是走上树**之后**才被接管的,走了兜底修复)
+var _hook_hits := 0
+var _repairs := 0
 
 
 func _ready() -> void:
 	hold_alive = who != "c1"
+	if who == "c1":
+		# ★ 生产入口那条路要靠这个钩子(理由见 `_on_node_added` / 文件头偏离③)
+		get_tree().node_added.connect(_on_node_added)
+		_lobby_back_connecting = true   # 下面的 start_client 正在连,别让重连路径插一脚
 	NetBus.local_room_created.connect(func(code: String) -> void:
 		_room_code = code
 		_log("建房成功:%s" % code))
@@ -138,18 +162,165 @@ func _ready() -> void:
 		_log("server_message: %s" % t))
 	multiplayer.connected_to_server.connect(_on_lobby_connected, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
+		_lobby_back_connecting = false   # 放开重连路径(否则 `_reconnect_lobby` 永远早退)
 		_fail("连大厅失败(%s:%d)" % [LOBBY_ADDR, lobby_port]))
 	NetBus.start_client(LOBBY_ADDR, lobby_port)
 
 
 func _on_lobby_connected() -> void:
-	NetBus.rpc_id(1, "lobby_name", "BOT%d" % (1 if who == "c1" else (2 if who == "c2" else 3)))
+	_lobby_back_connecting = false
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "lobby_name", "BOT%d" % (1 if who == "c1" else (2 if who == "c2" else 3)))
+	if who == "c1":
+		# ★ c1 **不直接挂页**:走生产入口(主菜单那颗模式按钮)—— 理由见文件头。
+		_enter_main_menu.call_deferred()
+		return
 	_attach_page.call_deferred()
 
 
 func _attach_page() -> void:
 	_attach_page_in(get_tree().current_scene,
 			(on_create if who == "c1" else on_refresh))
+
+
+# ── c1:生产入口那两步(与 main_menu.gd 那颗「1 v 1」按钮逐字同路)──
+# 换到主菜单。★ 生产里玩家从对局退出来就落在这里(`Level0.safe_change_scene` →
+# `scenes/main_menu.tscn`),本端第一次进场也照这条路走(而不是把页挂进探针场景)。
+func _enter_main_menu() -> void:
+	_log("换到主菜单(生产入口从这里开始)")
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+
+
+# 大厅页入树时(生产那条 `change_scene_to_file` 建出来的)**在它 `_ready` 之前**把两件事摆好:
+#   ① `PvpSession.server_address = LOBBY_ADDR` —— 页的地址框拿它做初值,而主菜单按钮里的
+#      `enter_mode()` 会 `reset()` 成云默认;
+#   ② `_connected` / `_connected_addr` —— 让页的 `_request_list` 走"已连大厅"的**快路**。
+# ★★ 为什么必须是 `node_added`:`_connected` 是页自己的私有变量、新建时恒 false,而页 `_ready`
+#    末尾就把 `_request_list` 排进 deferred ⇒ 晚一拍(下一帧)再补就来不及了:页已经走了慢路
+#    (`NetBus.stop()` 拆掉本端与 29300 的连接 + `start_client(addr)` **按默认端口 7777** 去连
+#    用户自己的服务端)。`node_added` 早于 `_ready`,所以这两个值在这里设是**生效的**。
+func _on_node_added(n: Node) -> void:
+	if not (n is LobbyPage) or not n.has_method("_on_room_list"):
+		return
+	_hook_hits += 1
+	PvpSession.server_address = LOBBY_ADDR
+	var preset := not bool(n.get("_connected"))
+	if preset:
+		n.set("_connected", true)
+		n.set("_connected_addr", LOBBY_ADDR)
+	_rec("HOOK page#%d 预置已连=%s" % [_hook_hits, str(preset)])
+	_log("大厅页入树(生产路径)→ 预置『已连着 %s:%d』=%s" % [LOBBY_ADDR, lobby_port, str(preset)])
+
+
+# 把玩家带到**一份真的、已连上大厅的**大厅页前 —— 两次进场(开局前 / 回局前)共用,且
+# **两次都走生产入口**。返回 true = `_page` 已就位且大厅连接可用。
+# ★ 它**不实例化也不 add_child 页面**:页由主菜单那颗按钮里的 `change_scene_to_file` 建出来
+#   (`get_tree().current_scene`),本端只是等它出现。
+func _drive_to_lobby_page(first: bool) -> bool:
+	if is_instance_valid(_page):
+		return true
+	if not NetBus.can_send_to_server():
+		# ★ 必须先连上再让页入树:页的 `_with_lobby` 快路判据里有 `can_send_to_server()`,
+		#   不成立时它会 `NetBus.stop()` + 按**默认端口 7777** 去连(用户自己的服务端)。
+		_reconnect_lobby("先把大厅接回来再放页进来")
+		return false
+	var cs := get_tree().current_scene
+	if not _menu_clicked:
+		if not _is_main_menu(cs):
+			return false       # 换场还没落到主菜单(第一次由 _on_lobby_connected 触发)
+		_menu_clicked = true
+		_page_action = (on_create if first else on_refresh)
+		_page_action_done = false
+		_phase_t = 0.0
+		return _press_menu_mode_button()
+	var p := _current_lobby_page(cs)
+	if p == null:
+		if _phase_t > MENU_TIMEOUT:
+			# ★ 判词把**现场**一起带上("卡在哪一步"只能靠它 —— 本探针的失败读数只有 `_dump()`
+			#   的**尾部 20 行**,别指望从别处反推)。
+			_fail("c1 ★ 按下主菜单「%s」后 %.0fs 没等到大厅页(生产那条 change_scene 没落地?)"
+					% [MENU_BTN_TEXT, MENU_TIMEOUT]
+					+ ";现场:阶段 %d / 当前场景 %s / 页 %s / 连大厅=%s / 按过按钮=%s"
+					% [_c1_sub, _script_path(cs), str(is_instance_valid(_page)),
+						str(NetBus.can_send_to_server()), str(_menu_clicked)])
+			_finish("")
+		return false
+	_page = p
+	_page_bound = true
+	_rec("PAGE 生产路径(hook=%d 重连=%d 已连=%s)" %
+			[_hook_hits, _repairs, str(NetBus.can_send_to_server())])
+	if not _page_action_done and _page_action.is_valid() and NetBus.can_send_to_server():
+		_page_action_done = true
+		_page_action.call()
+	return true
+
+
+# 按主菜单上那颗「1 v 1」(真按钮回调 = `enter_mode` + `change_scene_to_file`)。
+# ★ 文案与 `main_menu.gd` 里逐字一致;找不到即判红(与"回局坏了"分得开)。
+func _press_menu_mode_button() -> bool:
+	var menu := get_tree().current_scene
+	var btn := _find_button_text(menu, MENU_BTN_TEXT)
+	if btn == null:
+		_fail("c1 ★ 主菜单上找不到「%s」那颗按钮(还没换到主菜单?或菜单改了文案)" % MENU_BTN_TEXT)
+		_finish("")
+		return false
+	_rec("MENU press «%s»" % MENU_BTN_TEXT)
+	_log("按主菜单「%s」(生产入口:PvpSession.enter_mode + change_scene_to_file)" % MENU_BTN_TEXT)
+	btn.pressed.emit()
+	return true
+
+
+func _find_button_text(root: Node, text: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and (root as Button).text.strip_edges() == text:
+		return root
+	for c in root.get_children():
+		var b := _find_button_text(c, text)
+		if b != null:
+			return b
+	return null
+
+
+func _is_main_menu(n: Node) -> bool:
+	return _script_path(n).ends_with("scenes/main_menu.gd")
+
+
+func _current_lobby_page(n: Node) -> Node:
+	# 三页共用基类;`_on_room_list` 只 1v1 页有(本探针的大厅是 1v1 那条路)
+	if n is LobbyPage and n.has_method("_on_room_list"):
+		return n
+	return null
+
+
+func _script_path(n: Node) -> String:
+	if n == null:
+		return ""
+	var s: Variant = n.get_script()
+	if s == null or not (s is Script):
+		return ""
+	return str((s as Script).resource_path)
+
+
+# 把 `_page` 与换场对齐:页随旧场景一起被 free 掉之后,下一次进场要重新按按钮(生产入口)。
+# ★ 只有"**曾经绑过、又被换场带走**"才复位 `_menu_clicked`;页还**没建出来**时不能复位 ——
+#   否则每帧都会再按一次按钮(而按钮里是 `change_scene_to_file`)。
+# ★★ "曾经绑过"必须用**自己的布尔** `_page_bound`,**不能**写 `_page != null` ——
+#   实测(Godot 4.7.1;复现 = 三行:`var n := Node.new(); get_root().add_child(n); n.free()`
+#   之后 `print(n != null)` 打的是 **false**):
+#   **已释放对象的引用与 `null` 比较是 `true`**(`freed != null` → false、`freed == null` → true),
+#   所以 `_page != null` 在页被换场带走之后**恒为 false** ⇒ `had` 恒 false ⇒ `_menu_clicked`
+#   永不复位 ⇒ 回局那一相**永远按不下第二次按钮**,症状是"按下主菜单按钮后 25s 没等到大厅页"
+#   (2026-09-22 实测踩到,读了三条读数才定位)。判"页还在不在"只有 `is_instance_valid()`。
+var _page_bound := false
+
+func _sync_page() -> void:
+	if is_instance_valid(_page) and _page.is_inside_tree():
+		return
+	_page = null
+	if _page_bound:
+		_page_bound = false
+		_menu_clicked = false   # 页是被换场带走的 ⇒ 下一次进场要重新按按钮(生产入口)
 
 
 # 把一份**真**大厅页挂进当前场景(首次进场与 c1 回局前各一次,同一份实现)。
@@ -331,17 +502,25 @@ func _is_game(n: Node) -> bool:
 # ── c1(actor)──
 var _c1_sub := 0      # 0 建房/等开局 1 打一会 2 已按 ESC 回主菜单 3 已点自己那间房那一行
 func _tick_c1(delta: float) -> void:
-	# ★ 只看**总预算**,不看 `_page` 的死活:相 2 里本端**故意**要经历"页被换场带走 → 再挂一份",
-	#   把 `not is_instance_valid(_page)` 写进这条守卫会让相 2 永远进不去(总超时兜底)。
+	# ★ 只看**总预算**,不看 `_page` 的死活:相 2 里本端**故意**要经历"页被换场带走 → 再走一次
+	#   生产入口",把 `not is_instance_valid(_page)` 写进这条守卫会让相 2 永远进不去(总超时兜底)。
 	#   各相自己的界(等列表 / 等回局)写在各自的 `_phase_t` 判据里。
-	if _phase_t > ENTER_TIMEOUT + REJOIN_TIMEOUT + RESULT_WAIT:
+	if _phase_t > ENTER_TIMEOUT + MENU_TIMEOUT + REJOIN_TIMEOUT + RESULT_WAIT:
 		_finish("c1 超时(阶段 %d)" % _c1_sub)
 		return
+	_sync_page()
 	match _c1_sub:
 		0:
+			# 进对局前那一份大厅页也**走生产入口**(理由见文件头:两次进场同一条路)。
+			# ★ 页那一路**不是**推进条件:本相唯一的推进条件是"真进了对局场景"。
+			#   把"页还不存在"也当成"不能推进"会让本相卡死 —— 页在进对局那一刻被换场带走,
+			#   此后 `_drive_to_lobby_page(true)` 恒返回 false ⇒ ESC 那一步**永远不发生**
+			#   (2026-09-22 实测踩到,与 `_sync_page` 那个 null 语义的坑同时发作)。
+			_drive_to_lobby_page(true)
 			if _game != null:
 				_c1_sub = 1
 				_phase_t = 0.0
+				_rec("PHASE 0→1 进对局场景")
 			return
 		1:
 			if _game != null and _playing_seen and _phase_t > PLAY_SETTLE:
@@ -355,23 +534,12 @@ func _tick_c1(delta: float) -> void:
 				_phase_t = 0.0
 			return
 		2:
-			# ★ 回到主菜单之后,本端**自己再挂一份大厅页**(与首次进场同一手法)。生产里玩家是
-			#   在主菜单点「1 v 1」进这一页的,那一步只是换场、不承载任何判据;本探针要在意的
-			#   是**"自己在列表里找到那间房"那一段**,也就是下面的点行。
+			# ★★ 回到主菜单之后**再走一次生产入口**(按那颗「1 v 1」按钮)—— 这一步就是 C1 的
+			#    现场:从前本端在这里**直接挂页**,恰好绕过了"按钮 → `enter_mode` → 凭据还在不在"
+			#    这一问 ⇒ 拿着生产里根本拿不到的凭据全绿(见文件头那条纠正)。
 			if _game != null:
 				return                    # 还在对局场景里(换场还没发生)
-			if is_instance_valid(_page) and not _page.is_inside_tree():
-				_page = null              # 旧的被换场带走了(它挂在旧场景下 = 生产的形状)
-			if not is_instance_valid(_page):
-				_page = null
-				if not _lobby_back:
-					# ★ 偏离③:先把大厅连接接回来(否则页的 `_with_lobby` 会去连**默认端口 7777**)
-					if NetBus.can_send_to_server():
-						_lobby_back = true
-					else:
-						_connect_lobby_back()
-						return
-				_attach_page_in(get_tree().current_scene, on_refresh)
+			if not _drive_to_lobby_page(false):
 				return
 			_tick_refresh(delta, _row_seen)
 			if not _row_seen:
@@ -387,9 +555,15 @@ func _tick_c1(delta: float) -> void:
 				return
 			if row.disabled:
 				# ★★ 这一条就是**新入口本身**:同一个房、同一份载荷,别人(见 c3)看到的是
-				#    disabled,而**手里有凭据的本人**必须可点。次序写反(先按 in_match 禁用)
-				#    会在这一条上当场红 —— 而不是以"点了没反应"的形式混进超时里。
-				_fail("c1 ★ 自己那间对局中的房那一行是 disabled —— 回局入口不存在(次序写反?)")
+				#    disabled,而**手里有凭据的本人**必须可点。它有两种成因,判词两个都点名:
+				#      ① 次序写反(先按 in_match 禁用)—— 前三页渲染那一半;
+				#      ② **凭据在半路上没了**(C1:主菜单那颗按钮把 `token/worker_port/room_code`
+				#         一起清了)⇒ `can_rejoin_to` 恒 false。★ 这一条正是 C1 的验收断言:
+				#         把凭据清回 `reset()` 里,本行立刻红(反证实测过)。
+				_fail("c1 ★ 自己那间对局中的房那一行是 disabled —— 回局入口不存在"
+						+ "(凭据还在吗?token=%s port=%d code=%s;或次序写反?)"
+						% ["有" if PvpSession.token != "" else "**空**", PvpSession.worker_port,
+							PvpSession.room_code])
 			else:
 				_ok("c1 ★ 自己那间对局中的房那一行**可点**(disabled=false)")
 			_log("找到自己那间房那一行 → 点它")
@@ -423,26 +597,46 @@ func _tick_c1(delta: float) -> void:
 			return
 
 
-# 回主菜单之后把大厅连接接回来(偏离③;理由见文件头)。★ 端口是**本探针的大厅端口**,
-# 不是默认的 7777 —— 页自己的重连路径永远按默认端口走,这正是必须在本端先连上的原因。
-func _connect_lobby_back() -> void:
-	if _lobby_back_sent:
+# 把大厅连接接回**本探针的大厅**(偏离③:页自己的重连路径永远按默认端口 7777 走,
+# 那是用户自己的服务端,本探针不碰)。★ **可重入**:开局前要接一次;而回主菜单后若页还是
+# 走了慢路(它 `NetBus.stop()` + 按默认端口重连),还要再接一次 —— 故这里**不设一次性闸**。
+# ★ 判据是**当下的连接**(`can_send_to_server()`),不是 `_lobby_back` 那个"曾经连上过"的闩:
+#   ESC 回主菜单那条路会 `NetBus.stop()`(`PauseMenu.go_menu` 对 PvP 无条件断连 —— 那正是
+#   worker 把身体送进宽限期的方式),而 `_lobby_back` 还停在 true。
+func _reconnect_lobby(tag: String) -> void:
+	if NetBus.can_send_to_server():
 		return
-	_lobby_back_sent = true
+	if _lobby_back_connecting:
+		return
+	_lobby_back_connecting = true
+	_repairs += 1
 	NetBus.stop()
 	var err := NetBus.start_client(LOBBY_ADDR, lobby_port)
 	if err != OK:
-		_fail("c1 ★ 回大厅:start_client(%s:%d) 失败 err=%d" % [LOBBY_ADDR, lobby_port, err])
+		_lobby_back_connecting = false
+		_fail("c1 ★ %s:start_client(%s:%d) 失败 err=%d" % [tag, LOBBY_ADDR, lobby_port, err])
 		_finish("")
 		return
 	multiplayer.connection_failed.connect(func() -> void:
-		_fail("c1 ★ 回大厅失败(%s:%d)" % [LOBBY_ADDR, lobby_port])
+		_lobby_back_connecting = false
+		_fail("c1 ★ %s:连大厅失败(%s:%d)" % [tag, LOBBY_ADDR, lobby_port])
 		_finish(""), CONNECT_ONE_SHOT)
 	multiplayer.connected_to_server.connect(func() -> void:
-		_lobby_back = true
-		NetBus.rpc_id(1, "lobby_name", "BOT1")
-		_log("已重新连上大厅(%s:%d)→ 现在挂大厅页找自己那间房" % [LOBBY_ADDR, lobby_port]),
+		_lobby_back_connecting = false
+		if NetBus.can_send_to_server():
+			NetBus.rpc_id(1, "lobby_name", "BOT1")
+		_log("%s:已重新连上大厅(%s:%d)" % [tag, LOBBY_ADDR, lobby_port]),
 			CONNECT_ONE_SHOT)
+	# ★ 若页还活着且走了慢路,它的地址框此刻指着**别处**(云默认 / 用户的大厅)——
+	#   把地址框与 `PvpSession.server_address` 一起拨回本探针大厅,否则页下一次 `_with_lobby`
+	#   的快路判据(`_connected_addr == addr`)**永远不成立**,它会一次次拆掉我们的连接。
+	if is_instance_valid(_page):
+		PvpSession.server_address = LOBBY_ADDR
+		var box: Node = _page.get("_addr_edit")
+		if box is LineEdit:
+			(box as LineEdit).text = LOBBY_ADDR
+		_page.set("_connected", true)
+		_page.set("_connected_addr", LOBBY_ADDR)
 
 
 func _esc_and_menu() -> void:
