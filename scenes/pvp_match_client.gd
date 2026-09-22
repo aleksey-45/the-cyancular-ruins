@@ -32,6 +32,24 @@ var _rollback = null            # PredictionRollback
 var _input_seq := 0             # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
 var _have_prev_seq := false
 var _prev_sent_seq := 0
+# ── 网络统计读数(2026-09-22 诊断用,★ 默认关)──────────────────────────────
+# 开关:`-- --netstat`。★ 必须写在 `--` 之后 —— 与 `server_main` 的 `--worker` 同款口径;
+# 写在 `--` 前面会被 Godot 丢掉、**静默失效**。默认关 ⇒ 生产行为逐字不变(只多一次布尔判断)。
+# 一次打一行,四个量(后三个是判据,不是装饰):
+#   gap   = `_input_seq - 最后收到的 ack` = 本端已发、服务器还没确认的包数
+#           ⇒ 「RTT + 服务端积压」的总和(×16.67ms 就是端到端滞后)
+#   ping  = `NetBus.ping_ms`(= HUD 右下角那个数,EWMA 平滑的**纯网络** RTT)
+#   积压  = gap×16.67 − ping ⇒ **扣掉网络之后**还剩多少是服务器没来得及消费的
+#           (CLAUDE.md 把「每 tick 只消费 1 包、无上限无丢弃」登记为「越玩越卡」的第一嫌疑点;
+#            本条就是判它**成不成立**的量:稳定贴着 0 = 无罪,一路涨 = 实锤)
+#   回滚  = `rollback_count()` 的**每秒增量** ⇒ 本地预测被拉回的频率
+#           (「按了键角色被拽回去」的直接量;恒为 0 也可能是哑火,见 on_authoritative 的 ack 闸)
+var _netstat := false
+var _netstat_checked := false
+var _netstat_acc := 0.0
+var _netstat_prev_rb := 0
+var _last_ack := 0
+var _netstat_steps := 0     # 两次打印之间的物理步数(=物理步/秒,因为本函数每物理步调一次)
 # MATCH_OVER 之后回菜单途中:忽略对手断线播报;也让输入锁把它算作一维(见 _refresh_input_lock)。
 # 1v1 里它只在 MATCH_OVER 那一刻置 true;大乱斗同。
 var _match_ended := false
@@ -124,6 +142,7 @@ func _on_snapshot_own(own: Dictionary) -> void:
 	var ack := int(own.get("ack_seq", 0))
 	if ack > _input_seq:
 		return
+	_last_ack = ack          # 网络统计读数用(诊断,默认关)
 	var c2: Dictionary = own.get("c2", {})
 	if not c2.is_empty():
 		_rollback.on_authoritative(ack, c2)
@@ -184,6 +203,42 @@ func _physics_process(_delta: float) -> void:
 		_rollback.note_input(_input_seq, pkt)
 	# 地面武器:锚点 + 落点同步 + F 提示(纯本地表现,不参与预测)
 	_tick_ground_weapons()
+	# 网络统计读数(诊断,默认关)
+	_netstat_tick(_delta)
+
+
+# 网络统计读数:见 `_netstat` 的说明(2026-09-22 诊断用;`-- --netstat` 打开)。
+# ★ 开关走 `OS.get_cmdline_user_args()` 且**懒查一次**(本类没有 `_ready` —— 三个子类各有一个,
+#   在基类再加会被覆盖掉,静默失效)。
+func _netstat_tick(delta: float) -> void:
+	if not _netstat_checked:
+		_netstat_checked = true
+		_netstat = OS.get_cmdline_user_args().has("--netstat")
+	if not _netstat:
+		return
+	# 本函数由 `_physics_process` 每物理步调一次 ⇒ 两次打印之间的调用次数就是**物理步/秒**。
+	# 它显著高于渲染帧率 ⇒ 说明有物理追赶(catch-up),那会一次性发出成串输入包 —— 正是
+	# 服务端队列被顶上去的形态。这一行是为了回答"headless 夹具是不是每帧跑多个物理步"
+	# (若是,则夹具里测到的队列可能根本不在真实 60fps 对局里出现)。
+	_netstat_steps += 1
+	_netstat_acc += delta
+	if _netstat_acc < 1.0:
+		return
+	_netstat_acc = 0.0
+	var gap := _input_seq - _last_ack
+	var lag_ms := float(gap) * 1000.0 / 60.0
+	var ping := NetBus.ping_ms
+	var rb := 0
+	if _rollback != null:
+		rb = int(_rollback.rollback_count())
+	var where := Vector2.ZERO
+	if _local != null and is_instance_valid(_local):
+		where = (_local as Node2D).global_position
+	print("[netstat] seq=%d ack=%d gap=%d(滞后 %.0fms) | ping=%dms | 扣网后积压≈%.0fms | 回滚累计=%d (+%d/s) | pos=(%.0f,%.0f) | 物理步/秒=%d 渲染fps=%d"
+			% [_input_seq, _last_ack, gap, lag_ms, ping, lag_ms - float(ping), rb, rb - _netstat_prev_rb,
+			where.x, where.y, _netstat_steps, Engine.get_frames_per_second()])
+	_netstat_steps = 0
+	_netstat_prev_rb = rb
 
 
 func _on_bullet_spawn(data: Dictionary) -> void:

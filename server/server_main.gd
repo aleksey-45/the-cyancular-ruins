@@ -147,7 +147,7 @@ func _ready() -> void:
 	_fetch_public_ip()
 
 # ── 本机 IP 展示:服主开服即见,不用再手动 ipconfig ──
-# 局域网 IP 同步打印(朋友在「多人对战→服务器地址」里填它);公网 IP 异步拉一次(离线/超时静默)。
+# 局域网 IP 同步打印(朋友在「1v1→服务器地址」里填它);公网 IP 异步拉一次(离线/超时静默)。
 func _print_local_ips() -> void:
 	var ips: Array = []
 	for a in IP.get_local_addresses():
@@ -163,7 +163,7 @@ func _print_local_ips() -> void:
 	_lan_ip_text = ", ".join(ips)
 	print("本机局域网 IP: " + _lan_ip_text + "(把第一个填进「服务器地址」,端口 7777)")
 	_write_ip_file("本机局域网 IP: %s
-(朋友在「多人对战→服务器地址」里填第一个;端口 7777)
+(朋友在「1v1→服务器地址」里填第一个;端口 7777)
 " % _lan_ip_text)
 
 func _priv_score(ip: String) -> int:
