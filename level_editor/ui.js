@@ -370,22 +370,27 @@ globalThis.Editor = (function () {
     var dx = Math.floor(b.x) - Math.floor(a.x), dy = Math.floor(b.y) - Math.floor(a.y);
     var ax = Math.floor(a.x), ay = Math.floor(a.y);
     var len2 = dx * dx + dy * dy;
-    var all = regionCells(map, { unit: 'sub', x0: 0, y0: 0, x1: map.subCols - 1, y1: map.subRows - 1 },
-                          opts.clip || null);
+    // ★★ **不预展开整张图**:旧版在这里对全图调一次 regionCells(500×300 = 15 万条,外加
+    //    一个同样大的 Set)—— 那一下是**同步**跑完的,作业还没开始分帧就先卡一帧。
+    //    改成逐格推进:顺序仍是行主序(与"全图 regionCells"逐条相同 ⇒ `result()` 的次序不变),
+    //    但第一块只算第一块。★ 唯一的语义差异:`scanned` 现在数的是**扫过的格**(含被选区
+    //    挡掉的),与油漆桶那边的口径一致(它也数扫过的),而不再是"被收下的格"。
+    var cols = map.subCols, rows = map.subRows;
+    var totalCells = cols * rows;
     var out = [];
     var head = 0, done = false;
     function runChunk(maxSteps) {
       var n = 0;
       var lim = (maxSteps === undefined || maxSteps < 1) ? 1 : maxSteps;
-      while (head < all.length && n < lim) {
-        var i = all[head++];
-        n++;
-        var X = i % map.subCols, Y = Math.floor(i / map.subCols);
+      while (head < totalCells && n < lim) {
+        var X = head % cols, Y = (head - X) / cols;
+        head++; n++;
+        if (!inRect(opts.clip, X, Y)) continue;        // ★ 选区约束(与 regionCells 同一条判据)
         var t = len2 === 0 ? 0 : ((X - ax) * dx + (Y - ay) * dy) / len2;
         t = t < 0 ? 0 : (t > 1 ? 1 : t);
-        out.push({ i: i, rgba: lerpRGBA(rgba0, rgba1, t) });
+        out.push({ i: Y * cols + X, rgba: lerpRGBA(rgba0, rgba1, t) });
       }
-      if (head >= all.length) done = true;
+      if (head >= totalCells) done = true;
       return { done: done, scanned: n, total: out.length };
     }
     return { runChunk: runChunk, result: function () { return out.slice(); } };
@@ -766,6 +771,373 @@ globalThis.Editor = (function () {
              before: Uint32Array.from(before), after: Uint32Array.from(after), tag: 'mirror' };
   }
 
+  // ── 交互(指针 / 滚轮 / 热键)──
+  // ★ 一切落笔都走同一条路:applyTool(只碰地图)→ 差量进历史 → renderer.editCells
+  //   (只碰缓存与像素)。把"改数据"与"作废缓存"分成两步是刻意的:漏了哪一半
+  //   都能在断言里指名道姓。
+  var undoHistory = null;
+  var clipboard = null;
+
+  function pushAndShow(diff) {
+    if (!diff) return false;
+    undoHistory.push(diff);
+    // ★ 两条路都要走:kind:'whole'(改尺寸/换图)改的是**尺寸本身**,`diffCells` 对它是
+    //   空数组 ⇒ 只 render() 的话整张图停在旧尺寸/旧内容上(画面错了、一个字都不报)。
+    //   invalidateAll 会把缩略图与 ② 一起整片重建(它自己带尺寸对齐,见那边的注释)。
+    if (diff.kind === 'whole') { Promise.resolve(app.r.invalidateAll()); statusLine(); return true; }
+    var cells = diffCells(app.map, diff);
+    if (cells.length) app.r.editCells(diff.layer, cells);
+    else app.r.render();
+    statusLine();
+    return true;
+  }
+  function doUndo() {
+    var e = undoHistory.undo();
+    if (!e) { status('没有可撤销的操作'); return null; }
+    applyEntry(app.map, e, -1);
+    return afterStateChange(e);
+  }
+  function doRedo() {
+    var e = undoHistory.redo();
+    if (!e) { status('没有可重做的操作'); return null; }
+    applyEntry(app.map, e, +1);
+    return afterStateChange(e);
+  }
+  function afterStateChange(e) {
+    var out = null;
+    if (e.kind === 'whole') {
+      // ★ 尺寸可能变了 ⇒ 整片重来。**不是** setMap:那个会把视图重新"适配"并清掉选区,
+      //   而撤销一次尺寸变化不该把视野和选区一起重置(而且它建的是"新图"语义)。
+      out = Promise.resolve(app.r.invalidateAll());
+    } else if (e.kind === 'cells') {
+      var cells = diffCells(app.map, e);
+      if (cells.length) app.r.editCells(e.layer, cells); else app.r.render();
+    } else app.r.render();
+    statusLine();
+    return out;
+  }
+  // 长作业(油漆桶 / 渐变):分帧驱动(闸 2)。★★ 让出帧的判据是**时间预算**
+  //   (`Render.createSlicer`,默认 8ms/帧),不是固定条数 —— 固定条数在慢机器上照样能把
+  //   一帧撑爆,而那正是闸 2 要防的。作业对象只提供"跑一个量子",**一帧跑几个量子由预算定**。
+  var JOB_QUANTUM = 2048;        // 一个量子的格数:小到慢机器上一帧也撑不爆(它是超调的上界)
+  var JOB_QUANTA = 4096;         // 一轮的量子额度。★ 取得**故意大**:一轮结束必须是因为
+                                 //   **预算到点**,而不是因为"条数跑完了"—— 后者又变成固定条数节拍器;
+                                 //   作业提前做完时剩下的条目是空转(立即返回),不花时间。
+  function runJob(job, onApply, label) {
+    var slicer = Render.createSlicer({});
+    var done = false, total = 0;
+    function quantum() {
+      if (done) return;
+      var r = job.runChunk(JOB_QUANTUM);
+      total = r.total;
+      if (r.done) { done = true; return; }
+      status((label || '处理中') + ' … ' + total);
+    }
+    function pass() {
+      if (done) return Promise.resolve();
+      return slicer.run(new Array(JOB_QUANTA), quantum).then(pass);
+    }
+    return pass().then(function () { onApply(total); });
+  }
+  function statusLine() {
+    if (!app.map) return;
+    var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
+    set('st-tool', '工具 ' + (TOOL_LABELS[app.st.tool] || app.st.tool) + ' × ' + app.st.brushSize);
+    set('st-tex', '纹理 ' + Core.texOf(app.st.desc));
+    set('st-desc', '辅码 ' + Core.hueOf(app.st.desc) + '/' + Core.brightOf(app.st.desc) + '/' +
+                   Core.satOf(app.st.desc) + '/' + Core.alphaOf(app.st.desc));
+    var sel = app.r.selection();
+    set('st-sel', sel ? ('选区 ' + (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格') : '无选区');
+    set('st-undo', '撤销 ' + undoHistory.depth() + ' / 重做 ' + undoHistory.redoDepth());
+  }
+
+  function hitOf(ev) {
+    var cv = app.canvas;
+    var rect = cv.getBoundingClientRect();
+    var p = app.r.screenToSub(ev.clientX - rect.left, ev.clientY - rect.top);
+    // ★ 两种单位的吸附只在 hitOf 里决定一次:整数画笔吸附到格、小数画笔吸附到子格
+    var unit = Render.brushSpan(app.st.brushSize).unit;
+    var k = Core.SUB_PER_CELL;
+    return unit === 'sub' ? { kind: 'sub', x: p.X, y: p.Y }
+                          : { kind: 'cell', x: Math.floor(p.X / k), y: Math.floor(p.Y / k) };
+  }
+  function k2of(hit) { return hit.kind === 'cell' ? Core.SUB_PER_CELL : 1; }
+  function stNow() {
+    return { map: app.map, layer: app.r.layer(), desc: app.st.desc, rgba: app.st.rgba,
+             rgba2: app.st.rgba2, brushSize: app.st.brushSize, selection: app.r.selection(),
+             descOnly: app.st.descOnly };
+  }
+  function subRectOf(from, to) {
+    var k = Core.SUB_PER_CELL;
+    var x0 = from.x * k2of(from), y0 = from.y * k2of(from);
+    var x1 = to.x * k2of(to), y1 = to.y * k2of(to);
+    return { x: Math.min(x0, x1), y: Math.min(y0, y1),
+             w: Math.abs(x1 - x0) + k, h: Math.abs(y1 - y0) + k };
+  }
+  // Shift 约束后的落点(★ 规格 §4.8)。★ 预览与落笔**必须**走同一个函数 ——
+  //   否则预览画的是 A、松手落下去的是 B(这类不一致只在动手时才看得出来)。
+  function shiftHit(from, to, shift) {
+    var c = constrainLine(toSub(from), toSub(to), shift);
+    return { kind: 'sub', x: c.x, y: c.y };
+  }
+  function squareHit(from, to, shift) {
+    var c = constrainSquare(toSub(from), toSub(to), shift);
+    return { kind: 'sub', x: c.x, y: c.y };
+  }
+
+  function installInteraction() {
+    var cv = app.canvas;
+    undoHistory = createHistory({});
+    // ★ 两个颜色槽:规格 §4.4 的渐变是"两端各选一色" ⇒ 必须**两个**颜色状态
+    //   (rgba = 起点、rgba2 = 终点)。页面今天只有一个 #bg-color 色槽(Task 8 接),
+    //   所以第二个先给一个与起点**明显不同**的默认值 —— 给成同一个色的话渐变会退化成
+    //   纯色填充,而且看不出来(那一版的"渐变"就是那样)。
+    app.st = { tool: 'brush', brushSize: 1, desc: Core.neutralDesc(1),
+               rgba: 0xFF00FFFF, rgba2: 0x101820FF,
+               descOnly: false, selStart: null, stroke: null, panning: null, selDrag: null,
+               gradStart: null };
+
+    cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+    cv.addEventListener('pointerdown', function (ev) {
+      if (cv.setPointerCapture) cv.setPointerCapture(ev.pointerId);
+      guard('pointerdown', function () {
+        if (ev.button === 1 || ev.altKey) {          // 中键 / Alt = 平移
+          app.st.panning = { x: ev.clientX, y: ev.clientY };
+          return;
+        }
+        if (ev.button !== 0) return;
+        var hit = hitOf(ev);
+        var sel = app.r.selection();
+        if (app.st.tool === 'select') {
+          // ★ 判"按在选区里"必须先把命中**换算到子格**:整格命中给的是格号,而选区是子格单位
+          //   —— 直接比会差 4 倍(而且**永远不成立**),表现为"选框工具一拖就是在重新框选,
+          //   选区永远拖不动"。换算只有 toSub 一处。
+          var hs = toSub(hit);
+          if (sel && inRect(sel, hs.x, hs.y)) {
+            app.st.selDrag = { from: hit, dx: 0, dy: 0 };   // 选区内按下 = 拖动它
+          } else {
+            app.st.selStart = hit;
+          }
+          return;
+        }
+        if (app.st.tool === 'picker') {
+          var rect0 = cv.getBoundingClientRect();
+          var p = app.r.screenToSub(ev.clientX - rect0.left, ev.clientY - rect0.top);
+          var v = pickAt(app.map, app.r.layer(), p.X, p.Y);
+          if (app.r.layer() === Core.LAYER_BG) app.st.rgba = v >>> 0;
+          else if (Core.texOf(v) !== 0) app.st.desc = v >>> 0;   // ★ 空气不吸(会吸出一个空纹理)
+          status('吸管:0x' + (v >>> 0).toString(16) + (Core.texOf(v) === 0 ? '(空气,未采用)' : ''));
+          statusLine();
+          return;
+        }
+        if (app.st.tool === 'bucket') {
+          var s0 = stNow();
+          var job = createBucketJob(app.map, s0.layer, hit.x * k2of(hit), hit.y * k2of(hit),
+                                    { clip: s0.selection });
+          runJob(job, function () {
+            pushAndShow(paintCells(app.map, s0.layer, job.result(), valueFor(s0, s0.layer)));
+          }, '油漆桶填充');
+          return;
+        }
+        if (app.st.tool === 'gradient') {
+          // ★ 规格 §4.4:渐变**仅背景层**。工具按钮只是压暗(视觉提示),真正的闸在这里 ——
+          //   少了它,在纹理层拖渐变会**悄悄改掉背景层**(屏幕上看不出,因为背景在最底下)。
+          if (app.r.layer() !== Core.LAYER_BG) { status('渐变只能用在背景层(它改的是颜色,不是纹理)'); return; }
+          app.st.gradStart = hit;
+          return;
+        }
+        app.st.stroke = { from: hit, last: hit };     // 画笔/橡皮/矩形/直线
+      });
+    });
+
+    cv.addEventListener('pointermove', function (ev) {
+      guard('pointermove', function () {
+        if (app.st.panning) {
+          var dxp = ev.clientX - app.st.panning.x, dyp = ev.clientY - app.st.panning.y;
+          app.st.panning.x = ev.clientX; app.st.panning.y = ev.clientY;
+          // ★ 视图入口返回**分帧重建派生出来的 promise**:交回给 guard 收口(相位 ⑪ 的
+          //   逐行规则同源 —— 漏了就是"按了没反应"只在控制台留一行)。
+          return Promise.resolve(app.r.panBy(dxp, dyp));
+        }
+        var hit = hitOf(ev);
+        if (app.st.selDrag) {                          // ★ 拖动只记偏移(不碰数据)
+          var f = app.st.selDrag.from;
+          var ddx = hit.x * k2of(hit) - f.x * k2of(f);
+          var ddy = hit.y * k2of(hit) - f.y * k2of(f);
+          app.st.selDrag.dx = ddx; app.st.selDrag.dy = ddy;
+          app.r.setSelDrag(app.r.selection(), ddx, ddy);
+          return;
+        }
+        if (app.st.selStart) { app.r.setPreview(subRectOf(app.st.selStart, squareHit(app.st.selStart, hit, ev.shiftKey))); return; }
+        if (app.st.gradStart) { app.r.setPreview(subRectOf(app.st.gradStart, hit)); return; }
+        if (app.st.stroke) {
+          if (app.st.tool === 'brush' || app.st.tool === 'eraser') {
+            pushAndShow(applyTool(stNow(), app.st.tool, app.st.stroke.last, hit));
+            app.st.stroke.last = hit;
+          } else if (app.st.tool === 'line') {
+            app.r.setPreview(subRectOf(app.st.stroke.from, shiftHit(app.st.stroke.from, hit, ev.shiftKey)));
+          } else {
+            app.r.setPreview(subRectOf(app.st.stroke.from, hit));
+          }
+        }
+      });
+    });
+
+    cv.addEventListener('pointerup', function (ev) {
+      guard('pointerup', function () {
+        if (app.st.panning) { app.st.panning = null; return; }
+        var hit = hitOf(ev);
+        if (app.st.selDrag) {
+          var sd = app.st.selDrag;
+          app.st.selDrag = null;
+          app.r.setSelDrag(null, 0, 0);
+          if (sd.dx !== 0 || sd.dy !== 0) {
+            var cur = app.r.selection();
+            pushAndShow(moveRegion(app.map, app.r.layer(), cur, sd.dx, sd.dy));
+            app.r.setSelection({ x: cur.x + sd.dx, y: cur.y + sd.dy, w: cur.w, h: cur.h });
+          }
+          statusLine();
+          return;
+        }
+        if (app.st.selStart) {
+          var rect = subRectOf(app.st.selStart, squareHit(app.st.selStart, hit, ev.shiftKey));
+          app.st.selStart = null;
+          app.r.setPreview(null);
+          app.r.setSelection(rect);
+          statusLine();
+          return;
+        }
+        if (app.st.gradStart) {
+          var a = app.st.gradStart;
+          app.st.gradStart = null;
+          app.r.setPreview(null);
+          var s1 = stNow();
+          var gj = createGradientJob(app.map,
+            { x: a.x * k2of(a), y: a.y * k2of(a) },
+            { x: hit.x * k2of(hit), y: hit.y * k2of(hit) },
+            s1.rgba, s1.rgba2, { clip: s1.selection });   // ★ 两端各一色(不是同一个色)
+          runJob(gj, function () {
+            var res = gj.result(), targets = [], values = [], n = 0;
+            for (var i = 0; i < res.length; i++) { targets.push(res[i].i); values.push(res[i].rgba); }
+            pushAndShow(paintCells(app.map, Core.LAYER_BG, targets, function () { return values[n++]; }));
+          }, '渐变');
+          return;
+        }
+        if (app.st.stroke) {
+          var st0 = app.st.stroke;
+          app.st.stroke = null;
+          app.r.setPreview(null);
+          if (app.st.tool === 'rect') {
+            pushAndShow(applyTool(stNow(), 'rect', st0.from, hit));
+          } else if (app.st.tool === 'line') {
+            // ★ Shift 约束(规格 §4.8):直线锁水平/垂直/45° —— 与预览同一个函数
+            pushAndShow(applyTool(stNow(), 'line', st0.from, shiftHit(st0.from, hit, ev.shiftKey)));
+          }
+        }
+      });
+    });
+
+    cv.addEventListener('wheel', function (ev) {
+      guard('wheel', function () {
+        ev.preventDefault();
+        var rect = cv.getBoundingClientRect();
+        // ★ 视图入口的 promise 同样收口(见上面 pointermove 的说明)
+        var zp = Promise.resolve(app.r.setZoomAt(ev.clientX - rect.left, ev.clientY - rect.top,
+                                                 ev.deltaY < 0 ? 1.25 : 0.8));
+        statusLine();
+        return zp;
+      });
+    }, { passive: false });
+
+    window.addEventListener('keydown', function (ev) {
+      var cmd = commandFor(ev);
+      if (!cmd) return;                                  // ★ 表外的键一律不拦
+      guard('keydown', function () {
+        ev.preventDefault();
+        var pend = null;                                 // 视图入口交回的 promise(交给 guard 收口)
+        if (cmd.indexOf('tool:') === 0) { app.st.tool = cmd.slice(5); selectToolButton(); }
+        else if (cmd === 'brush-smaller') { setBrush(bumpBrush(app.st.brushSize, -1)); }
+        else if (cmd === 'brush-bigger') { setBrush(bumpBrush(app.st.brushSize, 1)); }
+        else if (cmd.indexOf('layer:') === 0) { setLayer(parseInt(cmd.slice(6), 10)); }
+        else if (cmd === 'undo') pend = doUndo();
+        else if (cmd === 'redo') pend = doRedo();
+        else if (cmd === 'copy') {
+          clipboard = copyRegion(app.map, app.r.layer(), app.r.selection());
+          status(clipboard ? '已复制 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h : '先框选一块');
+        }
+        else if (cmd === 'cut') {
+          var s2 = app.r.selection();
+          if (!s2) { status('先框选一块'); return; }
+          clipboard = copyRegion(app.map, app.r.layer(), s2);
+          pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
+                                  brushSize: 0.25, selection: s2 },
+                                'rect', { kind: 'sub', x: s2.x, y: s2.y },
+                                { kind: 'sub', x: s2.x + s2.w - 1, y: s2.y + s2.h - 1 }));
+        }
+        else if (cmd === 'paste') {
+          var sel = app.r.selection();
+          var at = sel ? { x: sel.x, y: sel.y } : { x: 0, y: 0 };
+          var out = pasteRegion(app.map, app.r.layer(), clipboard, at.x, at.y);
+          if (!out.ok) { status('粘贴失败:' + out.why); return; }
+          pushAndShow(out.diff);
+          if (sel) app.r.setSelection({ x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h });
+        }
+        else if (cmd === 'clear-selection') {
+          var s3 = app.r.selection();
+          if (!s3) { status('先框选一块'); return; }
+          pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
+                                  brushSize: 0.25, selection: s3 },
+                                'rect', { kind: 'sub', x: s3.x, y: s3.y },
+                                { kind: 'sub', x: s3.x + s3.w - 1, y: s3.y + s3.h - 1 }));
+        }
+        else if (cmd === 'cancel-selection') { app.r.setSelection(null); }
+        else if (cmd.indexOf('pan:') === 0) { pend = arrowPan(cmd.slice(4)); }
+        else if (cmd === 'save' || cmd === 'save-as') { status('保存:计划里的 Task 8 才接上'); }
+        statusLine();
+        return pend;
+      });
+    });
+
+    statusLine();
+  }
+
+  var BRUSH_STEPS = [0.25, 0.5, 0.75, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  function bumpBrush(cur, dir) {
+    var i = BRUSH_STEPS.indexOf(cur);
+    if (i < 0) i = 3;
+    return BRUSH_STEPS[Math.max(0, Math.min(BRUSH_STEPS.length - 1, i + dir))];
+  }
+  function setBrush(v) {
+    app.st.brushSize = Math.max(0.25, Math.min(Render.MAX_BRUSH_CELLS, v));
+    var el = $('brush-size');
+    if (el) el.value = String(app.st.brushSize);
+    statusLine();
+  }
+  function arrowPan(dir) {
+    var step = 64;
+    var d = { left: [-step, 0], right: [step, 0], up: [0, -step], down: [0, step] }[dir];
+    if (!d) return null;
+    return Promise.resolve(app.r.panBy(d[0], d[1]));      // ★ 视图入口:promise 交给 guard
+  }
+  function selectToolButton() {
+    document.querySelectorAll('#toolbar .tool').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.tool === app.st.tool);
+    });
+    statusLine();
+  }
+  function setLayer(L) {
+    if (!(L >= 0 && L < Core.LAYER_COUNT)) return;
+    app.r.setLayer(L);
+    document.querySelectorAll('#layers .layer-row').forEach(function (row) {
+      row.classList.toggle('cur', parseInt(row.dataset.layer, 10) === L);
+    });
+    // ★ 规格 §4.5:选中的是**背景层**时,右侧的纹理调色板换成颜色选择器,工具条里只有
+    //   「渐变」额外可用。这个 hook 由 Task 8 提供(typeof 守卫:Task 7 单独跑时也能过)。
+    if (typeof syncPanelForLayer === 'function') syncPanelForLayer();
+    statusLine();
+  }
+
   // ── 图集(Task 3:结构图 一次装进来;换图由 Task 8 的"重载贴图"按钮触发)──
   function loadAtlas() {
     return new Promise(function (resolve, reject) {
@@ -876,7 +1248,11 @@ globalThis.Editor = (function () {
     // ★★ onError 指到 ui 的 sink:渲染侧那条观察者(resize/fit/setView/… 的拒绝)与
     //    guard 的报告写**同一条通道**,不靠 render 自己去摸 Editor.status。
     app.r = Render.mount(app.canvas, { onError: reportError });
-    var ro = new ResizeObserver(function () { guard('resize', function () { app.r.resize(); }); });
+    // ★ 指针 / 滚轮 / 热键 / 撤销重做 / 长作业驱动都挂在 installInteraction 里(它自己初始化
+    //   工具状态)—— 必须在 mount **之后**:它一进来就要用 app.r。★ 工具条与图层行的**点击**
+    //   由 Task 8 的 installPanels() 接(那时才有面板),这里只管画布上的指针与键盘。
+    installInteraction();
+    var ro = new ResizeObserver(function () { guard('resize', function () { return app.r.resize(); }); });
     ro.observe(app.canvas.parentElement);
     window.addEventListener('error', function (ev) {
       status('页面异常:' + (ev && ev.message ? ev.message : '未知'));
@@ -891,7 +1267,7 @@ globalThis.Editor = (function () {
       });
     }
     var fitBtn = $('btn-fit');
-    if (fitBtn) fitBtn.addEventListener('click', function () { guard('fit', function () { app.r.fit(); }); });
+    if (fitBtn) fitBtn.addEventListener('click', function () { guard('fit', function () { return app.r.fit(); }); });
 
     // ★ 图集必须先就位(渲染第一帧就要它);失败要说出来,而不是画一片黑。
     loadAtlas().then(function () {
@@ -1047,5 +1423,8 @@ globalThis.Editor = (function () {
     wholeDiff: wholeDiff, applyEntry: applyEntry, diffCells: diffCells, cellCountOf: cellCountOf,
     copyRegion: copyRegion, clipSize: clipSize, pasteRegion: pasteRegion,
     moveRegion: moveRegion, mirrorRegion: mirrorRegion,
+    installInteraction: installInteraction, runJob: runJob, statusLine: statusLine,
+    pushAndShow: pushAndShow, doUndo: doUndo, doRedo: doRedo, hitOf: hitOf,
+    brushSteps: function () { return BRUSH_STEPS.slice(); }, setBrush: setBrush, setLayer: setLayer,
   };
 })();

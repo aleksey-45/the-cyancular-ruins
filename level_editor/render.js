@@ -356,6 +356,8 @@ globalThis.Render = (function () {
       layerVisible: [true, true, true, true],
       layerLocked: [false, false, false, false],
       selection: null,
+      preview: null,       // 拖矩形/直线时的预览框(子格单位)
+      selDrag: null,       // {sel, dx, dy}:选区拖动中(拖动只记偏移,松手才提交)
     };
     var thumbs = [null, null, null, null];
     var thumbPx = THUMB_PX;
@@ -463,7 +465,8 @@ globalThis.Render = (function () {
       var colorLayer = layerIsColor(L);              // 判据取一次,不在逐格循环里重算
       for (var Y = rect.y; Y < rect.y + rect.h; Y++) {
         for (var X = rect.x; X < rect.x + rect.w; X++) {
-          var raw = descAt(s.map, L, X, Y);
+          var q = dragSource(X, Y);                    // ★ 拖动中:读**源**子格(纯读)
+          var raw = q.hit ? descAt(s.map, L, q.X, q.Y) : 0;
           if (colorLayer) {
             // 背景层 = RGBA:alpha = 0(createMap 的初值就是 0)⇒ 这一格**没有颜色**,
             // 清掉;其余一律按颜色画。
@@ -631,7 +634,8 @@ globalThis.Render = (function () {
             // 这里什么都不画)。★ 这里**不许**出现 texOf(见 buildCell 的两条静默症状)。
             for (var kc = 0; kc < SUB * SUB; kc++) {
               var Xc = bx + (kc % SUB), Yc = by + Math.floor(kc / SUB);
-              var rawc = descAt(s.map, L, Xc, Yc);
+              var qc = dragSource(Xc, Yc);                 // ★ 拖动中:读**源**子格(纯读)
+              var rawc = qc.hit ? descAt(s.map, L, qc.X, qc.Y) : 0;
               if (((rawc >>> 0) & 255) === 0) continue;
               c.fillStyle = cssOfRGBA(rawc);
               c.fillRect((Xc - s.view.x) * z, (Yc - s.view.y) * z, z, z);
@@ -641,11 +645,16 @@ globalThis.Render = (function () {
           // ★ ③ 的键必须是**主网格上的格号**:环面让同一格有多种写法(cx = -1 与 cx = cellsW-1),
           //   不折算的话同一格会缓存两条条目,而编辑只 touch 其中一条 ⇒ 接缝另一侧的副本
           //   继续显示**陈旧内容**(画面错了、一个字都不报)。
-          // ★★ Task 7 的拖动偏移就从下面这一行接:把两个实参换成源格
-          //   `Render.selectionSource(sel, dx, dy, gx, gy)` 交出的 (X, Y) —— 画的位置仍是
-          //   目标格(bx/by,见循环体的最后一行),只有**读**是偏移过的。
+          // ★★ 拖动偏移从这里接:拖动中读的是**源格**(纯读,不改进数据),画的位置仍是
+          //   目标格(bx/by,见循环体最后一行)—— 只有"读"是偏移过的。
+          //   ★ 传进去的是**子格**坐标(选区与偏移都是子格单位),取缓存键前再折回格号:
+          //     偏移是格对齐时(整数画笔 + 整格选区)这一步是恒等;偏移落在子格上时按格取整
+          //     —— 只见于小数画笔的选区,是拖动途中的子格级近似,松手后由 moveRegion 归位。
           var gx = wrapIdx(cx, cw), gy = wrapIdx(cy, ch);
-          var tilesOfCell = cellCache.get(L, gx, gy);      // ★ ③:这一格的 16 个 tile
+          var q = dragSource(gx * SUB, gy * SUB);
+          if (!q.hit) continue;                            // 被腾空的源区 ⇒ 这一格不画
+          var tilesOfCell = cellCache.get(L, wrapIdx(Math.floor(q.X / SUB), cw),
+                                             wrapIdx(Math.floor(q.Y / SUB), ch));  // ★ ③:这一格的 16 个 tile
           for (var k = 0; k < tilesOfCell.length; k++) {
             var t = tilesOfCell[k];
             if (!t) continue;
@@ -806,11 +815,27 @@ globalThis.Render = (function () {
       for (var j = 0; j < s.map.enemies.length; j++) {
         mark(s.map.enemies[j].x, s.map.enemies[j].y, '#c96fb0', 'E');
       }
+      if (s.preview) {
+        var pv = subToScreen(s.preview.x, s.preview.y);
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = '#54a0ff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(pv.x, pv.y, s.preview.w * s.view.zoom, s.preview.h * s.view.zoom);
+        ctx.setLineDash([]);
+      }
       if (s.selection) {
-        var a = subToScreen(s.selection.x, s.selection.y);
+        // ★ 拖动中:框按**偏移后**的位置画(数据还没动 —— 松手才 moveRegion)。框跟手走
+        //   是拖动过程中**唯一**看得见的反馈:`setSelDrag` 只调 render(),而 render() 是
+        //   合成已经烤好的 ①/② 位图(`paintLayerRect` / `paintThumbRect` 要等脏区或重建才跑)
+        //   ⇒ 偏移查询要等别的重画(缩放/平移/窗口变化)才显形。见 Task 7 报告的"已知边界"。
+        var sel = s.selDrag
+          ? { x: s.selection.x + s.selDrag.dx, y: s.selection.y + s.selDrag.dy,
+              w: s.selection.w, h: s.selection.h }
+          : s.selection;
+        var a = subToScreen(sel.x, sel.y);
         ctx.strokeStyle = '#e0b34a';
         ctx.lineWidth = 2;
-        ctx.strokeRect(a.x, a.y, s.selection.w * s.view.zoom, s.selection.h * s.view.zoom);
+        ctx.strokeRect(a.x, a.y, sel.w * s.view.zoom, sel.h * s.view.zoom);
       }
       ctx.restore();
     }
@@ -863,6 +888,30 @@ globalThis.Render = (function () {
       viewChanged();
       if (zoomPath(s.view.zoom) === 'layers') return observed('fit', buildLayers().then(render));
       render();
+    }
+
+    // ── 选区拖动:**只记偏移**(B3)。渲染时对选区内的格做**偏移查询**(纯读),
+    //    松手才提交一次 moveRegion —— 老实现每次 pointermove 都深拷贝三份全图(B3)。
+    function setSelDrag(sel, dx, dy) {
+      s.selDrag = sel ? { sel: sel, dx: dx, dy: dy } : null;
+      render();
+    }
+    function setPreview(rect) { s.preview = rect; render(); }
+    // 拖动中的选区:目标格 (X,Y) 的内容来自源格 (X-dx, Y-dy)(纯读,不改进数据)。
+    // ★ 坐标一律是**子格**(选区的 x/y/w/h 与 dx/dy 都是子格单位 —— 见 UI 的 subRectOf)。
+    // ★★ 三种目标格,与"松手后 moveRegion 真正写出来的结果"**逐格一致**(预览必须等于落笔):
+    //    ① 源格在选区内        ⇒ 读源格(被搬过来的那部分);
+    //    ② 源格在外、目标在选区内 ⇒ 那是**被腾空的源区** ⇒ hit:false(不画);
+    //    ③ 两边都在选区外      ⇒ 原样读它自己(没被动过的底)。
+    //    ★ 少了 ③(把"目标不在偏移后的选区里"一律当腾空)的后果不是"少画一点":drag 的偏移
+    //      一动,除选区外的**整整一张图**都判成腾空 ⇒ 拖动时地图整体消失、只剩一个框在飘。
+    //      `selectionSource` 只答"源格在不在选区里",第 ③ 种情形要靠**目标格**自己判。
+    function dragSource(X, Y) {
+      if (!s.selDrag) return { hit: true, X: X, Y: Y };
+      var sel = s.selDrag.sel, q = selectionSource(sel, s.selDrag.dx, s.selDrag.dy, X, Y);
+      if (q.hit) return q;
+      var vacated = (X >= sel.x && X < sel.x + sel.w && Y >= sel.y && Y < sel.y + sel.h);
+      return vacated ? { hit: false, X: X, Y: Y } : { hit: true, X: X, Y: Y };
     }
 
     // 编辑某几个格之后:重画它们的缩略图块(Uint32Array 的下标 → 格坐标)
@@ -1033,6 +1082,8 @@ globalThis.Render = (function () {
       layerLocked: function (L) { return s.layerLocked[L]; },
       setSelection: function (sel) { s.selection = sel; render(); },
       selection: function () { return s.selection; },
+      setSelDrag: setSelDrag, setPreview: setPreview,
+      isDraggingSelection: function () { return !!s.selDrag; },
       render: render, resize: resize, fit: fit,
       invalidateCells: invalidateCells, invalidateAll: invalidateAll,
       editCells: editCells, panBy: panBy, setZoomAt: setZoomAt, buildLayers: buildLayers,
