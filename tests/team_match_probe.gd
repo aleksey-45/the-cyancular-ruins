@@ -5,7 +5,7 @@ extends Node
 # 跑法(用户侧):
 #   timeout 1800 bash tests/team_match_probe.sh
 # 或直接:
-#   "$GODOT" --headless --path . --quit-after 36000 res://tests/team_match_probe.tscn
+#   "$GODOT" --headless --path . --quit-after 54000 res://tests/team_match_probe.tscn
 # 判据:**文本 `TEAM MATCH PROBE: ALL-OK`**(不看退出码 —— 探针挂住时 `--quit-after` 到期仍
 # exit 0 且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
 #
@@ -24,8 +24,11 @@ extends Node
 #        ★ 这一对**缺一不可**:只验"穿透"会让"伤害系统整个坏了"也全绿。
 #        ★ 另外从**乙端**独立取证:数"从我身边飞过(≤45px)的**非自己**子弹"——没有它,
 #          "乙 hp 不变"可以靠"子弹根本没飞到"骗过(墙挡住的假绿)。
-#   相④ 打满一局 + 换边 —— 脚本机器人互射到 9 杀 → ROUND_OVER → 第 2 局开局后各端出生点
-#        已对调(用**生产函数** `TeamHost.compute_swap_spawns` 算期望,再与实测比对)。
+#   相④ **打到 9 杀**(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已对调(用**生产函数**
+#        `TeamHost.compute_swap_spawns` 算期望,再与实测比对)。★ 9 杀是**脚本机器人尽力交火 +
+#        回退模式(K 自杀脱困)**共同的结果:实测机器人在平台跳跃图上接近不了对手,9 杀多半由
+#        回退模式推动(逐端读数 `REC BACKOFF`,裁判照实打出来)—— 故这一相验的是**回合机 +
+#        整队换边 + 换边重拉 match_sync**(那三样与"谁杀的"无关),而不是"枪法"。
 #        断言各端 `scores` 的键是队号 1/2、`rounds_won` 六端一致。
 #   相⑤ 少人继续 —— 6 号客户端在 PLAYING 中途**按 ESC 离场**(唯一走 `safe_change_scene`
 #        的局内退出路径)→ 服务器**不**终局、其余 5 端仍持续收到快照(间隔 < 1s)、且掉线者
@@ -48,9 +51,11 @@ extends Node
 #   根本杀不到),worker 另按 UDP 端口补一刀(它才是真的 bind 端口那一侧)。
 #
 # ═══ 时间预算 ═══
-#   相①~③ 约 40~90s;相④ 打到 9 杀是**脚本机器人互射**的结果,是本探针最大的时间不确定项
-#   (上限 `BRAWL_MAX`=210s);相⑤ 的观察窗要等满 30s 宽限期(上限 60s)。
-#   整跑量级 3~6 分钟;安全网 `--quit-after 36000`(60fps 下 = 600s)。
+#   相①~③ 约 40~90s;相④ 打到 9 杀是**脚本机器人尽力交火 + 回退模式**的结果,是本探针最大的时间
+#   不确定项(上限 `BRAWL_MAX`=210s);相⑤ 的观察窗要等满 60s 宽限期(上限 `OBSERVE_MAX`=110s)。
+#   整跑量级 3~10 分钟;安全网 `--quit-after 54000`(60fps 下 = 900s;`run/max_fps=60`);
+#   本进程自己的收工上限 `FINAL_TIMEOUT`=780s(> 等结果预算 `RESULT_WAIT`=680s;
+#   ★ `RESULT_WAIT` 一旦超过 780 就必须同步抬 `FINAL_TIMEOUT`,否则收工上限会先于预算到点)。
 
 const RESULT_PREFIX := "team_match_probe_"
 # ★ 端口纪律(与 reconnect_probe 的常量区同源,改这几个数之前先读文件头"端口纪律"):
@@ -61,14 +66,20 @@ const WORKER_PORT_OUT := 29250     # `RoomManager` 的 `pick_port` 起投点(见
 const POOL_LOW := 7800
 const POOL_HIGH := 8300
 const CLIENT_COUNT := 6
-const CHILD_QUIT_AFTER := "36000"  # 子进程兜底(60fps ≈ 600s);正常由本进程收尾/按 PID 杀
+const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由本进程收尾/按 PID 杀
 const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
-const FINAL_TIMEOUT := 560.0       # 本进程的收工上限(整跑量级 4~9 分钟)
-# 等 6 份客户端结果文件的上限。★ 必须**大于**客户端自己的时间线(它们的相位全靠自己的时钟推):
-#   进局 ~5s + 相②1.2s + 相③(RENDEZVOUS_MAX 70) + 相④(BRAWL_MAX 210) + 换边 ~5s +
-#   相⑤(OBSERVE_MAX 60) + 六端互相等(PEER_WAIT 120)= ~470s。给少了会在客户端还在跑时
-#   就判"只收到 N 份结果"退出 —— 而那不是功能坏了,是**探针自己的预算算错了**。
-const RESULT_WAIT := 500.0
+const FINAL_TIMEOUT := 780.0       # 本进程的收工上限(整跑量级 4~10 分钟;预算见下)
+# 等 6 份客户端结果文件的上限。★ 必须**大于**客户端自己的时间线(它们的相位全靠自己的时钟推),
+#   且**逐项按 watcher 的常量求和算出来** —— 别凭印象写:这行漂过两次,一次把 `RENDEZVOUS_MAX`
+#   记成了 70(实际是 **100**),一次停在宽限期还是 30s 时的那份求和(2026-09-21 宽限期 30 → 60,
+#   `OBSERVE_MAX` 60 → 110,整条求和随之 +50)。越时的表象是"只收到 N/6 份客户端结果",
+#   读起来像产品故障,其实是**探针自己的预算算错了**。逐项(各项都是 watcher 的常量):
+#     进局 ~5s + SETTLE 1.2 + RENDEZVOUS_MAX 100 + BRAWL_MAX 210 + 换局 SETTLE 1.2
+#     + OBSERVE_MAX 110 + PEER_WAIT 120 ≈ 547.4s;
+#     进局那一档的硬上限是 `ENTER_TIMEOUT` **90s**(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。
+#   ★ 680 < `FINAL_TIMEOUT` 780(收工上限仍在预算之上);**一旦本值超过 780 就必须同步抬
+#     `FINAL_TIMEOUT`**,否则收工上限先到点 ⇒ 症状同样是"只收到 N/6 份结果"。
+const RESULT_WAIT := 680.0
 
 var _role := "lobby"
 var _who := "c1"
@@ -85,6 +96,7 @@ var _hb := 30.0
 var _lobby_teams: Dictionary = {}   # 选边完毕那一刻大厅的队伍表(房在开局后被消费掉,不能再读)
 var _failures: Array[String] = []
 var _notes: Array[String] = []
+var _dims_failed := false           # 地图尺寸读不到的 FAIL 只记一次(见 _grid_dims)
 var _done := false
 
 
@@ -120,10 +132,17 @@ func _run_orchestrator() -> void:
 	#   本探针收尾按 UDP 端口杀 worker(兜底层)时不看属主,撞上池内端口就有误杀别人对局的
 	#   危险。拨到池外即从根上避开(pick_port 会立刻回卷 `_next_port`,故这只影响**第一发**)。
 	_rm.get("_launcher").set("_next_port", WORKER_PORT_OUT)
-	_clean()
+	# ★ `_clean()` 失败(上一跑的进程还活着)时**必须整段收工**:只 push 一条然后继续拉起客户端
+	#   的话,6 个新客户端与那批残留进程会互相覆盖 `.result`,而且本进程退出后 `_kill_children()`
+	#   再也不跑 ⇒ 留下一堆**孤儿进程**攥着文件,把下一跑也逼进这一支(实测复现过)。
+	if not _clean():
+		print("PROBE: 清理失败(多半是上一跑的进程还活着)—— 不拉起客户端,直接退出")
+		get_tree().quit(1)
+		return
 	print("PROBE: 大厅就绪(port %d,池外);worker 起投端口 %d" % [LOBBY_PORT, WORKER_PORT_OUT])
 	if OS.get_cmdline_user_args().has("--nospawn"):
 		print("PROBE: --nospawn:不拉客户端子进程,请人工另起 6 个 `-- --role=cN`")
+		print("PROBE: ★ 此模式**不会**判 ALL-OK —— 跨端断言一条都跑不到(见 _finish 的闸门),收尾必记一条 FAIL")
 		return
 	for i in range(1, CLIENT_COUNT + 1):
 		_spawn_client(i)
@@ -201,8 +220,13 @@ func _stage_wait_full() -> void:
 	for r in tr.team_of:
 		by[int(tr.team_of[r])] = int(by.get(int(tr.team_of[r]), 0)) + 1
 	print("PROBE: 6 人已到齐并选边完毕 → 队号表 %s(每队 %s)" % [str(tr.team_of), str(by)])
-	# ★ 立刻**存档**:房在开局那一刻就被对局消费掉了(`teardown_room`),到收尾时再读
-	#   `_room()` 只会得到 null —— 队伍表必须在这里取走(实测:收尾时读到的是空房)。
+	# ★ 立刻**存档**:成员转连 worker 后会陆续断开大厅,`on_peer_left` 把它们从 `player_role`
+	#   摘掉,并连带把 `team_of` 里**已无人持有的 role 逐个 erase**(见 lobby_rooms.on_peer_left
+	#   的 3v3 那一段)—— 到收尾时再读 `_room()` 拿到的是**空队伍表**。
+	#   ★★ 2026-09-21 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局
+	#   消费掉了(`teardown_room`)」—— 对局中的房现在**刻意不拆**(它要活到 worker 退出,否则
+	#   "看得见 / 回局"两件事都无从谈起),所以收尾时房**还在**,只是表已经空了。故"必须在这里
+	#   存档"照旧成立,变的只是原因。
 	for r in tr.team_of:
 		_lobby_teams[int(r)] = int(tr.team_of[r])
 	_notes.append("大厅队伍表 %s" % str(tr.team_of))
@@ -249,7 +273,15 @@ func _finish(why: String) -> void:
 	if _done:
 		return
 	_done = true
-	if not _child_pids.is_empty():
+	# ★★ **没拉起过子进程 = 一条跨端断言都没跑**:相①~⑤ 的全部跨端断言都住在 `_assert_stage3()`
+	#   里,而它此前只在"`_child_pids` 非空"时才被调 ⇒ `--nospawn`(人工另起 6 个客户端排障用)
+	#   恒跳过全部跨端断言、`_failures` 为空 ⇒ 打出一行**全空的** `TEAM MATCH PROBE: ALL-OK`,
+	#   而此刻只跑过大厅那三个"房间存在吗"的阶段。那正是本册重点扫查的那一类
+	#   ("还在跑、还是绿的、但已经什么都不验了")—— 且出现在本册唯一的头条证据上。
+	#   故这一支**记失败**:`--nospawn` 是排障模式,不是可判通过的一跑。
+	if _child_pids.is_empty():
+		_check(false, "没有子进程 → 跨端断言一条都没跑(--nospawn 只用于人工排障;这一跑不判通过)")
+	else:
 		_assert_stage3()
 	_kill_children()
 	if why != "":
@@ -286,6 +318,7 @@ func _assert_stage3() -> void:
 	var near_counts := {}
 	var kill_attr := {}
 	var kill_unattr := {}
+	var teamfmt := {}
 	var k2_ok := 0
 	var k2_seen := 0
 	var msync_seen := 0
@@ -351,6 +384,9 @@ func _assert_stage3() -> void:
 			_check(false, "%s 没收到过 team_room_state(等待室渲染路径没跑到)" % tag)
 		if int(_tok(inf, "wait_rows", "0")) <= 0:
 			_check(false, "%s 的等待室名单一行都没画出来" % tag)
+		var tfl := _rec_line(text, "TEAMFMT")
+		if tfl != "":
+			teamfmt[role] = tfl
 		if _tok(inf, "match_over", "0") == "1":
 			_check(false, "%s 观察到 MATCH_OVER(相⑤ 要求服务器不终局)" % tag)
 		if shots < 0:
@@ -367,6 +403,27 @@ func _assert_stage3() -> void:
 		tcount[int(lobby_teams[r])] = int(tcount.get(int(lobby_teams[r]), 0)) + 1
 	_check(tcount[1] == 3 and tcount[2] == 3, "相① 大厅队伍表是 3+3(实得 %s)" % str(tcount))
 
+	# ── 相① 队色 + 分队碰撞层(客户端 TEAMFMT 读数;成功也打一行,便于回溯)──
+	if teamfmt.size() == CLIENT_COUNT:
+		var bad_l := 0
+		var bad_m := 0
+		var bad_g := 0
+		var bad_t := 0
+		var bad_n := 0
+		for r in teamfmt:
+			var tl2: String = teamfmt[r]
+			bad_l += 0 if _tok(tl2, "ok_layer", "0") == "1" else 1
+			bad_m += 0 if _tok(tl2, "ok_mask", "0") == "1" else 1
+			bad_g += int(_tok(tl2, "ghosts_bad", "0"))
+			bad_t += int(_tok(tl2, "tints_bad", "0"))
+			bad_n += 0 if int(_tok(tl2, "reps", "0")) == CLIENT_COUNT - 1 else 1
+		_check(bad_l == 0 and bad_m == 0 and bad_g == 0 and bad_t == 0 and bad_n == 0,
+				"相① ★ 队色 + 分队碰撞层六端逐值对齐(层错 %d / 掩码错 %d / 幽灵层错 %d / 队色错 %d / 副本数不对 %d)"
+				% [bad_l, bad_m, bad_g, bad_t, bad_n])
+	else:
+		_check(false, "相① 只有 %d/%d 端写出了 TEAMFMT 读数(队色/分层没验到)"
+				% [teamfmt.size(), CLIENT_COUNT])
+
 	# ── 相① 收敛(C2)──
 	for r in conv_ok:
 		_check(bool(conv_ok[r]), "相① role %d 本地玩家与权威快照收敛" % r)
@@ -374,20 +431,23 @@ func _assert_stage3() -> void:
 	# ── 相② 按队散点:队内最大距离 < 队间最小距离 ──
 	if r1.size() == CLIENT_COUNT:
 		var d := _grid_dims()
-		var max_in := 0
-		var min_cross := 1 << 30
-		var rs: Array = r1.keys()
-		rs.sort()
-		for a in range(rs.size()):
-			for b in range(a + 1, rs.size()):
-				var dist := MazeGenerator.toroidal_dist(r1[rs[a]], r1[rs[b]], d.x, d.y)
-				if int(r1_team.get(rs[a], 0)) == int(r1_team.get(rs[b], 0)):
-					max_in = maxi(max_in, dist)
-				else:
-					min_cross = mini(min_cross, dist)
-		_check(min_cross > max_in,
-				"相② 队间最小距离 %d 格 > 队内最大距离 %d 格(6 个出生点)" % [min_cross, max_in])
-		_notes.append("相② 队内最大 %d 格 / 队间最小 %d 格" % [max_in, min_cross])
+		if d == Vector2i.ZERO:
+			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL;没有尺寸就不算环面距离(算出来只会误导)
+		else:
+			var max_in := 0
+			var min_cross := 1 << 30
+			var rs: Array = r1.keys()
+			rs.sort()
+			for a in range(rs.size()):
+				for b in range(a + 1, rs.size()):
+					var dist := MazeGenerator.toroidal_dist(r1[rs[a]], r1[rs[b]], d.x, d.y)
+					if int(r1_team.get(rs[a], 0)) == int(r1_team.get(rs[b], 0)):
+						max_in = maxi(max_in, dist)
+					else:
+						min_cross = mini(min_cross, dist)
+			_check(min_cross > max_in,
+					"相② 队间最小距离 %d 格 > 队内最大距离 %d 格(6 个出生点)" % [min_cross, max_in])
+			_notes.append("相② 队内最大 %d 格 / 队间最小 %d 格" % [max_in, min_cross])
 	else:
 		_check(false, "相② 只收到 %d/6 个出生点读数" % r1.size())
 
@@ -413,14 +473,42 @@ func _assert_stage3() -> void:
 		var after := int(_tok(bl, "after", "-1"))
 		var wtype := int(_tok(bl, "wtype", "0"))
 		var near := int(near_counts.get(victim_role, 0))
-		if shots == 0 and wtype == 6:
+		var why := _tok(bl, "reason", "")
+		if why == "no_bullet_weapon" and wtype == 0:
+			# ★★ **空手是缺陷,不是抽签**:`wtype == 0` = 手上没有武器 —— 而这是**已登记的生产
+			#   失效**("服务器玩家必须有枪…不发的话服务器上玩家开不了火,PvP **静默哑火**")。
+			#   早先这一档与"抽到榴弹/激光"共用一条 `_check(true, …)`,于是空手会让相③ 打出一行
+			#   **OK** 而不是红 —— 真缺陷被读成"抽签结果"。故先判**武器前提**。
+			_check(false, "相③ 甲(role %d)是**空手**(wtype=0)却进了连射子状态 —— 「服务器玩家必须有枪」这条生产前提没成立(空手 = PvP 静默哑火),不是抽签"
+					% shooter_role)
+		elif why == "no_bullet_weapon":
+			# 背包里没有出弹类武器(抽到榴弹/激光,且没有第二把)—— 断言在这里**无法成立**。
+			# ★ 只进 `_notes`,**不占断言账本**:一句恒真的 `_check(true, …)` 是"恒绿空断言",
+			#   而它还会把"这一相没验到"伪装成"这一相过了"。
+			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是 %d 号(非出弹类)且无第二把武器 —— 枪种抽签" % wtype)
+		elif why == "bullet_switch_timeout":
+			# ★ **这一档必须保持红**(与榴弹那半边的口径对齐):背包里**有**出弹枪却 2s 没切过去
+			#   = 产品/协议异常(本仓有"滚轮切枪被权威 wslot 拉回"的前科),不是抽签。
+			_check(false, "相③ 背包里有出弹类武器却切不过去(bullet_switch_timeout)—— 不是抽签,是缺陷")
+		elif why == "rendezvous_timeout" or _tok(bl, "timeout", "0") == "1":
+			# ★ 这一相**没验到**,而不是"枪坏了" —— 判词只许写"未覆盖",否则读日志的人(评审也踩过)
+			#   会把它当成产品缺陷。★ **成因照实写"未验证"**:早先这里断言"不是开火/伤害链路的问题",
+			#   而那条因果**本探针从未验证过** —— `team_bot_input.gd` 自己写着"输入链丢边沿会产生
+			#   **恰好这个症状**且不报错",两者在读数上**分不开**。
+			# ★ 只进 `_notes`,不占断言账本(理由同上一条)。dist/los 是**真读数**(取自超时那一刻,
+			#   见 watcher 的 `_tick_meet_shooter`),不再是写死的 -1/0。
+			_notes.append(("相③ 子弹那一半**未覆盖**:甲未能在走位窗口内走到乙身边"
+					+ "(超时读数 dist=%s los=%s)★ **成因未验证** —— 「输入边沿丢失」症状与「走位没到位」相同"
+					+ "(见 team_bot_input.gd),本探针分不清")
+					% [_tok(bl, "dist", "?"), los])
+		elif shots == 0 and wtype == 6:
 			# ★★ 甲手上是**激光枪**(即时光束、不产生子弹)⇒ `shots=0` 是**正确行为**,而
 			#    "乙 hp 不变"这时是**空断言**。**不能把它算成绿**(那正是"恒绿空断言")也不能算红
-			#    (枪没坏)—— 照实标未覆盖,并在报告里写明。
-			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是激光枪(光束武器不产生子弹)")
-			_check(true, "相③ 子弹那一半未覆盖(射手是光束武器 —— 抽签结果,不是缺陷)")
+			#    (枪没坏)—— 照实标未覆盖,只进 `_notes`。
+			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是激光枪(光束武器不产生子弹)—— 枪种抽签")
 		else:
-			_check(shots > 0, "相③ 甲(role %d)真的开了火(本地子弹生成数 %d > 0)" % [shooter_role, shots])
+			_check(shots > 0,
+					"相③ 甲(role %d)真的开了火(本地**峰值并发**子弹数 %d > 0 ⇒ 至少响过一枪)" % [shooter_role, shots])
 			_check(los == "1", "相③ 开火那一刻甲与乙视线通畅(否则没打中可能只是被墙挡住)")
 			_check(hit == "0" and before == after,
 					"相③ ★ 子弹穿透队友:乙(role %d)hp 不变(%d → %d)" % [victim_role, before, after])
@@ -443,9 +531,15 @@ func _assert_stage3() -> void:
 		#   把"抽签没抽到"判成红 = 用户跑一次红一次而重启一次可能就绿,那种红没有信息量;
 		#   反过来把"切枪失败"记成未覆盖 = 放走真缺陷。两者必须分开。
 		var why := _tok(gl, "reason", "?")
-		if why == "no_grenade_launcher":
-			_notes.append("相③ 榴弹那一半**未覆盖**:本局无人持榴弹发射器(初始武器随机发放,抽签结果)")
-			_check(true, "相③ 榴弹那一半未覆盖(本局无榴弹发射器 —— 抽签结果,不是缺陷;见报告未覆盖分栏)")
+		if why == "rendezvous_timeout":
+			# ★ 与子弹那半边**同口径**:判词只写"未覆盖",且不把未经证实的因果写成结论 ——
+			#   「输入边沿丢失」与「走位慢」在读数上分不开(见 team_bot_input.gd 文件头)。
+			# ★ 只进 `_notes`,不占断言账本(恒真的 `_check(true, …)` 是"恒绿空断言")。
+			_notes.append("相③ 榴弹那一半**未覆盖**:甲没能走到乙的贴脸距离内 ★ 成因未验证(同子弹那半边)")
+		elif why == "no_grenade_launcher":
+			# ★ 判词照实:那是**甲自己的背包**里没有 5 号武器(初始/复活只随机发一把),
+			#   不等于"本局无人持榴弹发射器" —— 早先那句是过度断言。
+			_notes.append("相③ 榴弹那一半**未覆盖**:甲背包里没有榴弹发射器(初始武器随机发一把)—— 枪种抽签")
 		else:
 			_check(false, "相③ 榴弹没投出去:%s" % why)
 
@@ -479,32 +573,51 @@ func _assert_stage3() -> void:
 		# ★ 这一条**记读数、不当红**(理由见 watcher 的 `_tick_backoff`):脚本机器人能不能
 		#   在平台跳跃图上接近对手,是**探针的质量**,不是产品缺陷 —— 判成红只会让"用户跑一次
 		#   红一次"而重启一次可能就绿(没有信息量)。真交火为 0 时报告里**照实写明**它未覆盖。
+		# ★★ 这一栏**只作读数,不作绿断言**(与榴弹那半边同口径):`ka>=1` 会让"9 杀主要靠
+		#   回退模式推"这种局面照样全绿(run20 实测:`ka=1` 而 `killU=10`、`REC BACKOFF n=1..7`)。
+		# ★★ 回退模式那一句**必须真去解析 `REC BACKOFF` 再下判词**:早先那句话是**写死的**
+		#   ("仍在推动回合"),裁判侧**从不解析**这个读数 —— 于是没启用回退模式的那一跑也会
+		#   照着念,报告里的"未覆盖分栏"跟着失真。这里按端读一遍(有该行 ⟺ 该端 `_backoff` 被置起)。
+		var bo_tags: Array = []
+		var bo_max := 0
+		for i in range(1, CLIENT_COUNT + 1):
+			var bkl := _rec_line(_read_result("c%d" % i), "BACKOFF")
+			if bkl == "":
+				continue
+			bo_tags.append(i)
+			bo_max = maxi(bo_max, int(_tok(bkl, "n", "0")))
 		if ka >= 1:
-			_check(true, "相④ 真实交火击杀 %d 次(非全靠自杀脱困)" % ka)
-		else:
-			_notes.append("相④ **真实交火击杀 0 次** —— 这一半未覆盖(机器人未能在图上接近对手);"
-					+ "回合由回退模式(按 K)推动,REC BACKOFF 是它的痕迹")
-		_notes.append("相④ 击杀来源:有归因 %d 次 / 无归因(自杀等)%d 次" % [ka, ku])
+			_check(true, "相④ 真实交火击杀 %d 次(读数;这一栏**不是**「非空转」的证明 —— 见下一行的回退模式读数)" % ka)
+		var bo_txt := ("**无端报告启用回退模式(REC BACKOFF)**" if bo_tags.is_empty()
+				else "**回退模式(REC BACKOFF)被 %d 端启用(最大 n=%d),回合有一部分是它推的**"
+						% [bo_tags.size(), bo_max])
+		_notes.append("相④ 击杀来源:有归因(真实交火)%d 次 / 无归因(自杀等)%d 次 —— %s;这一半只作读数、不作绿断言"
+				% [ka, ku, bo_txt])
+		if ka == 0:
+			_notes.append("相④ **真实交火击杀 0 次** —— 这一半未覆盖")
 		_notes.append("相④ 第 1 局:%s" % round1[round1.keys()[0]])
 
 	# ── 相④ 换边:期望值用**生产函数**算,不是探针自己推 ──
 	if r2.size() == CLIENT_COUNT and r1.size() == CLIENT_COUNT:
 		var want: Dictionary = TeamHost.compute_swap_spawns(r1, lobby_teams)
 		_check(not want.is_empty(), "相④ 换边表非空(两队人数相等)")
-		var bad := 0
 		var d := _grid_dims()
-		for r in want:
-			if not r2.has(r):
-				bad += 1
-				continue
-			var got: Vector2i = r2[r]
-			var exp: Vector2i = want[r]
-			if MazeGenerator.toroidal_dist(got, exp, d.x, d.y) > 1:
-				bad += 1
-		_check(bad == 0, "相④ ★ 整队换边:第 2 局各端出生点 == 第 1 局对调(生产函数算的期望;不符 %d 个)" % bad)
-		# 换边那一拍客户端**重拉 match_sync**:每端都应 ≥2 次应答(进场 1 + 换局 1)
-		_check(msync_seen == CLIENT_COUNT and msync_min >= 2,
-				"相④ ★ 换边后各端都重拉了 match_sync(六端最少应答次数 %d,应 ≥2)" % msync_min)
+		if d == Vector2i.ZERO:
+			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL(同相②)
+		else:
+			var bad := 0
+			for r in want:
+				if not r2.has(r):
+					bad += 1
+					continue
+				var got: Vector2i = r2[r]
+				var exp: Vector2i = want[r]
+				if MazeGenerator.toroidal_dist(got, exp, d.x, d.y) > 1:
+					bad += 1
+			_check(bad == 0, "相④ ★ 整队换边:第 2 局各端出生点 == 第 1 局对调(生产函数算的期望;不符 %d 个)" % bad)
+			# 换边那一拍客户端**重拉 match_sync**:每端都应 ≥2 次应答(进场 1 + 换局 1)
+			_check(msync_seen == CLIENT_COUNT and msync_min >= 2,
+					"相④ ★ 换边后各端都重拉了 match_sync(六端最少应答次数 %d,应 ≥2)" % msync_min)
 	else:
 		_check(false, "相④ 换边读数不全(第 2 局出生点 %d/6)" % r2.size())
 
@@ -517,6 +630,7 @@ func _assert_stage3() -> void:
 	if esc_tag != "":
 		_check(esc_role != 0, "相⑤ 离场者的 role 已知(%d)" % esc_role)
 		var obs := 0
+		var obs_gaps: Array = []
 		for i in range(1, CLIENT_COUNT + 1):
 			var tag := "c%d" % i
 			if tag == esc_tag:
@@ -527,9 +641,26 @@ func _assert_stage3() -> void:
 				continue
 			if _tok(ll, "gone", "").contains(str(esc_role)):
 				obs += 1
+			# ★ 观察窗内的快照间隔:六端一起看。**服务端停发**必然同时命中**所有**在线客户端;
+			#   只有**一个**客户端超时,那是**那个进程自己**卡了一下(本机同时跑 8 个 Godot),
+			#   而"服务器还在发"这一命题恰好由**其余端的读数**证明(它们的窗口与它同一段墙钟)。
+			#   故:≥2 端超 1s ⇒ 红(服务器停了);恰好 1 端 ⇒ 记读数并说明;全 ≤1s ⇒ 绿。
+			obs_gaps.append([tag, float(_tok(ll, "obsmax", "0").replace("ms", ""))])
 		_check(obs == CLIENT_COUNT - 1,
 				"相⑤ ★ 其余 %d 端都观察到 role %d 已被移出对局(仍持续收快照、服务器不终局)"
 				% [CLIENT_COUNT - 1, esc_role])
+		var gap_txt := ""
+		for pair in obs_gaps:
+			gap_txt += "%s=%.0fms " % [pair[0], float(pair[1])]
+		# ★★ 判据是**每一端各自零容忍**(与观察者侧同一条:`_obs_max_gap > 1000` 即红)。
+		#   **不做"≥2 端才红"的容忍**:单端超 1s 有两种可能 ——
+		#     (甲) 该客户端进程自己卡了一下(本机同时跑 8 个 Godot);
+		#     (乙) **服务器对那一个 peer 的定向投递异常**(`snapshot_own` 是逐 peer 定向发的,
+		#          只卡一端恰恰是那条路的可疑症状)。
+		#   探针**分不清**这两者,故**保守判红**;要放宽得先有能区分它们的证据。
+		_check(obs_gaps.is_empty() or gap_max(obs_gaps) <= 1000.0,
+				"相⑤ ★ 观察窗内快照连续(被观察的 %d 端最大间隔: %s;单端超 1s 也判红 —— 可能是该客户端自身停顿,也可能是服务器对**该 peer** 的定向投递异常,探针无法区分)"
+				% [obs_gaps.size(), gap_txt])
 
 
 # ════════════════════ 子进程 / 文件 ════════════════════
@@ -589,7 +720,7 @@ func _tail(path: String, n: int) -> String:
 
 # 开工前清掉上一跑的产物。★ 删除**必须看返回值**:上一跑的客户端若还活着(它攥着自己的
 # `.result`/`.log`),删除会失败,新进程会与之混写 → 人会照着混了旧内容的文件做错误归因。
-func _clean() -> void:
+func _clean() -> bool:
 	for i in range(1, CLIENT_COUNT + 1):
 		for tag in ["c%d" % i]:
 			for suffix in ["result", "log", "godotlog"]:
@@ -598,8 +729,13 @@ func _clean() -> void:
 					continue
 				var err := DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 				if err != OK:
-					push_warning("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
-							% [p, err] + "本跑该文件的读数会与残留内容混在一起,别照它归因")
+					# ★★ **当场退出,不能只警告**:`_results_ready()` 数的是"存在且以 OK/FAIL 开头"
+					#   的文件 —— 上一跑的残留会**被当成这一跑的结果**下判决(而且看不出是旧的)。
+					#   删不掉几乎只有一个原因:上一跑的客户端进程还活着(它攥着文件)。
+					print("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
+							% [p, err] + "残留文件会被当成本跑的读数下判决,故直接退出")
+					return false
+	return true
 
 
 func _dump() -> String:
@@ -670,11 +806,29 @@ func _same_pairs(a: Dictionary, b: Dictionary) -> bool:
 	return true
 
 
+# 环面回绕尺寸(相②/相④ 的格距离要用)。★ **必须来自地图文件本身**,不能回落硬编码:
+# 裁判进程**从不加载地图**(它只当大厅),`MazeGenerator.current_grid` 恒空 —— 早先这里回落
+# `(150,100)`,恰好等于 `factory1v1` 的尺寸,于是"碰巧对";**换图之后会静默按错尺寸回绕**
+# (格距离全错,而断言照跑)。改为直接读地图头(`MapFormat.map_size`)。
+# ★★ 读不到时**返回 `Vector2i.ZERO` 并记一条 FAIL,绝不回落任何字面量**:回落到一个"本图像素的
+#   尺寸"正是上面说的"碰巧对" —— 它会让换图后**照样全绿**。返回零则调用方一眼可见(相②/相④
+#   的环面判据直接跳过,而这条 FAIL 已经把整跑判红)。失败**只记一次**(两个调用点各调一次)。
 func _grid_dims() -> Vector2i:
-	var g: Array = MazeGenerator.current_grid
-	if g == null or g.is_empty():
-		return Vector2i(150, 100)
-	return Vector2i((g[0] as Array).size(), g.size())
+	var d := MapFormat.map_size(MatchBootstrap.PVP_MAP)
+	if d.x <= 0 or d.y <= 0:
+		if not _dims_failed:
+			_dims_failed = true
+			_check(false, "读不到地图尺寸 %s —— 相②/相④ 的环面判据不可信(**不回落字面量**:回落 (150,100) 恰好是本图尺寸,换图后会静默按错尺寸回绕)"
+					% MatchBootstrap.PVP_MAP)
+		return Vector2i.ZERO
+	return d
+
+
+func gap_max(a: Array) -> float:
+	var m := 0.0
+	for pair in a:
+		m = maxf(m, float(pair[1]))
+	return m
 
 
 func _check(ok: bool, msg: String) -> void:

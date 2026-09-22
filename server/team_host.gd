@@ -3,7 +3,8 @@ extends MatchHost
 
 # 3v3 团队对抗权威对局(第三个模式宿主,与 RoyaleHost 平级)。
 #  - 6 人(两队各 3)、三局两胜、每队先到 TEAM_KILLS_TO_WIN 击杀赢一局、局间**整队换边**;
-#    局内死亡 2s 复活;击杀后**只把击杀者本人**送回本方出生点(队友不动)。
+#    局内死亡 2s 复活。★ 击杀后**不**复位任何人(2026-09-21 用户要求删掉「把击杀者送回本方
+#    出生点」那条规则):击杀者原地不动 —— 代价与理由见 `_match_round_tick` 里那段。
 #  - 计分**不分死因**:任一玩家倒地 → 对方队 +1(枪杀/爆炸/溺水/自伤/队友误炸一律如此)。
 #  - 子弹穿透队友(在 MatchCombat 裁决层,按 role 判);**爆炸对队友满效**(现状行为,未改)。
 #  - 掉线:宽限期内身体留场;宽限期到点走 `mark_disconnected` —— **整队走光才终局**(掉 1 人
@@ -56,6 +57,12 @@ const MULTI_KILL_BONUS := 50        # 同一局内该 role 的第 2、3… 个�
 # ★ 已知边界(登记在报告里,未修):同**一帧**内先被敌人打中、再被自己的爆炸炸到,meta 仍是
 #   那名敌人且年龄 ≈ 0 —— 那一下会被记到敌人账上。根治要改写端(`CombatFeedback`/`Explosion`),
 #   不在本任务范围。
+# ★★ 阈值成立的前提是"**归因与伤害同一调用栈**"(真实命中路径 ≈ 0~1ms)。**将来新增
+#   「延迟扣血」型伤害必须自己每帧重写归因** —— `LaserWeaponBase` 的**缝 2**(命中结算)明确
+#   把"持续/灼烧型"列为**预定扩展位**,而那种实现是"命中时写一次归因、后续帧再扣血":扣血
+#   那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人 `dmg` 恒少且不报错
+#   (没有断言、没有日志,只是 ACS 数字偏低)。写端不重写归因的话,这条阈值就是那个扩展位的
+#   唯一提示。
 const ATTRIB_FRESH_MS := 8
 
 var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 match_start 广播的同一份)
@@ -271,12 +278,16 @@ func _spawn_cell(role: int) -> Vector2i:
 # 复活点:优选开阔格中,离**所有存活敌人** ≥ RESPAWN_CLEARANCE 的第一个(池子洗牌后取首个)。
 # ★ 判据是"离敌人远",**不是**"离所有玩家远" —— 队友在附近复活是好事(royale 那条是全员互敌,
 #   故它判所有存活玩家;这里语义变了,别照抄)。
-# ★ 池子来源:`SpawnPicker` 的三张缓存是**每进程**的 `static var`,**从不主动清**。
+# ★ 池子来源:`SpawnPicker.respawn_pools()`(优选 → 兜底)。原先这里是写死的
+#   `[spawn_candidates(), floor_cells()]` —— 第二档是**全部地板格**,干净池子筛空时会把人放进
+#   **孤立单格区**的复活点里(与"开局被关住"同一个病)。池序列现在只有一处来源,且与
+#   royale 那一侧是**同一份**(两处各抄一遍正是这个病的成因)。
+# ★ `SpawnPicker` 的四张缓存是**每进程**的 `static var`,**从不主动清**。
 #   本模式 worker 一局一进程、且用固定图(`MatchBootstrap.PVP_MAP`)→ 不需要 `reset_cache()`。
 #   **若将来同一个进程里换图**(例如大厅进程也建宿主),必须显式 `SpawnPicker.reset_cache()`,
 #   否则会**静默**沿用旧图的地板格池子(不报错,只是出生点全落在上一张图的格上)。
 func _respawn_cell_for(role: int) -> Vector2i:
-	for pool: Array in [SpawnPicker.spawn_candidates(), SpawnPicker.floor_cells()]:
+	for pool: Array in SpawnPicker.respawn_pools():
 		var cells := pool.duplicate()
 		cells.shuffle()
 		for c in cells:
@@ -339,6 +350,12 @@ func _match_round_tick(delta: float) -> void:
 		if _down_counted.get(role, false):
 			continue
 		_down_counted[role] = true
+		# 掉落:倒地**这一刻**在原地丢下除随机保留一把外的全部武器(与基类/大乱斗同款 ——
+		# 见 `MatchGround._drop_all_but_one` 上方的完整理由)。共用 `_down_counted` 闩 ⇒
+		# 每次死亡恰好一次;`_respawn_player` 那一支**不再**掉(会掉在出生点)。
+		# ★ 本行与另外两处边沿是**同一个契约的三份落地**:少写这一处,3v3 会静默退化成
+		#   "死亡不掉武器"(基类那支已删,没有别的地方会替它掉)。
+		_drop_all_but_one(p, int(role))
 		# 逐人数据(B 册 Task 10):倒下**一律**计 death;击杀只在"归因到且异队"时计给杀手。
 		# ★ 刻意放在下面 `scorer != 0` 那道闸**之外**:"这场倒地有没有给对方队加分"与"谁死了"
 		#   是两件事 —— deaths 的口径是"谁死了都算死"(用户裁定 ②)。
@@ -354,7 +371,16 @@ func _match_round_tick(delta: float) -> void:
 			#   给 0 加守卫会让"队友误炸/溺水导致的倒地"在客户端完全无声。
 			_broadcast_kill(_attributed_killer(p), int(role))
 			_broadcast_round_state()
-			_reset_killer_only(p, int(role))
+			# ★★ 2026-09-21 用户要求**删除**「击杀者复位」这一步(原为 `_reset_killer_only(p, int(role))`,
+			#   该函数已随本次改动整体删除)。现在的行为:击杀者**原地不动**,受害者 2s 后回本方出生点复活。
+			#   ★ 代价照实记录,**不粉饰**:被删掉的那条规则是**为反「反复活点蹲守」而立**的 ——
+			#     有它时击杀者会被立刻送回本方出生点,于是没法杵在对手的复活点旁边等着再打一次。
+			#     删除之后 3v3 **不再有**这条性质:击杀者可以守在对手出生点,等对面 2s 后落下来再补一轮。
+			#     用户知情并接受(这是"击杀后还被传送"这一体验的对价)。**将来若想找回这条性质,
+			#     别在原地重建它** —— 正确的形状是"复活点选点避开存活敌人"(`_respawn_cell_for` 那条
+			#     `RESPAWN_CLEARANCE` 已经在做一半),而不是再把击杀者瞬移走。
+			#   ★ 只动 3v3:1v1 的 `MatchRound._reset_survivor`(`match_round.gd`)与大乱斗**都原样保留** ——
+			#     本函数是整体覆写、不走 `super`,两条路径本来就不相干。
 	match _round_state:
 		RoundState.COUNTDOWN:
 			_round_timer -= delta
@@ -503,7 +529,9 @@ func _broadcast_round_state() -> void:
 
 
 # ── 击杀归因(自带一份,不从基类上提)──
-# `kill_event` 要带"是谁杀的"(归因不到就带 0),Task 6 的"只复位击杀者"也读它,故在这里落。
+# `kill_event` 要带"是谁杀的"(归因不到就带 0),故在这里落。
+# ★ 2026-09-21:原先还有一个读端 —— 「击杀后复位击杀者」那条规则(已按用户要求删除)。
+#   现在它只服务"击杀归属"这一族(`kill_event` 的射手字段 + `_record_down` 的逐人 `kills`)。
 # ★ 为什么自带而不是把 `RoyaleHost._attributed_killer` 上提到基类:基类的归属由
 #   `tests/kh_l5_probe.gd` 的"新接口归属(基类不得含子类方法)"反向断言守着,为省 12 行去动
 #   那条探针不划算;两份都不足 15 行,读的还是同一个 meta(单一来源仍是 CombatFeedback)。
@@ -531,37 +559,6 @@ func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
 		if players[role] == shooter:
 			return int(role)
 	return 0
-
-
-# 击杀后复位:**只把击杀者本人**送回本方出生点(保留血量,不治疗),队友不动。
-# (1v1 是"另一方即活方回出生点";三人队里"活方"没有唯一解 —— 用户裁定只动击杀者。)
-# ★ 三个"不复位"的档,一个都不能省:
-#   · 无归因(溺水/自伤/K 自杀)→ killer 0;
-#   · 队友互炸(归因指向同队的人)→ 得分照样给对方队,但**不把队友送回出生点**;
-#   · 击杀者自己也倒了(同归于尽)→ 他去走自己的复活流程。
-# ★ 提前落地说明:本函数按 Task 6 的语义**整段落在这里**(Task 5 的 `_match_round_tick`
-#   要调它,留桩会在运行期报未定义函数);Task 6 剩下的只是它那三条专属断言的探针。
-func _reset_killer_only(victim: Node2D, victim_role: int) -> void:
-	var killer_role := _attributed_killer(victim)
-	if killer_role == 0:
-		return
-	if same_team(killer_role, victim_role):
-		return
-	var killer: Node2D = players.get(killer_role)
-	if killer == null or not is_instance_valid(killer) or killer.is_downed():
-		return
-	var spawn: Vector2i = _round_spawns.get(killer_role, Vector2i(-1, -1))
-	# ★ 兜底值 `(-1,-1)` 必须**在这里拦掉**:不拦的话下面会算出 `(-32,-32)` 并把击杀者
-	#   送到地图外 —— 不报错、人凭空消失(与 `_respawn_cell_for` 的 `(-1,-1)` 契约同款)。
-	#   正常路径恒有值(`plan_team_spawns` / `start_on` 保证),这条只在表坏掉时生效。
-	if spawn.x < 0:
-		push_error("TeamHost: role %d 不在 _round_spawns 里,击杀者复位跳过" % killer_role)
-		return
-	var ts := GameParameters.TILE_SIZE
-	killer.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
-	killer.velocity = Vector2.ZERO
-	if killer.has_method("cancel_jump_state"):
-		killer.cancel_jump_state()
 
 
 # ── 中途掉线(宽限期到点后由 server_main 调)—— 移出对局,但**整队走光才终局** ──
@@ -629,8 +626,10 @@ func _finish_match() -> void:
 # 异常卡死(嵌墙/夹缝)时主动放弃生命:走正常倒地边沿 → 2s 复活;先清 `last_damager` 归因,
 # 自杀不计入任何人击杀。
 # ★ 与 `RoyaleHost.request_suicide_role` **逐字同构**(那边 12 行,规则 7"不分死因"对两个模式
-#   同样成立)。在 3v3 下它落进**无归因**档:倒地 → **对方队 +1**;而 `_reset_killer_only`
-#   因 killer 0 早退 ⇒ **无人被复位**(spec §10 第 ⑩ 行的"无归因(溺水/自杀)→ 无人被复位")。
+#   同样成立)。在 3v3 下它落进**无归因**档:倒地 → **对方队 +1**、且无人被计入击杀
+#   (`_record_down` / `kill_event` 都读 `_attributed_killer` = 0)。
+#   ★ spec §10 第 ⑩ 行原本还写了一句"无归因 → **无人被复位**" —— 那条规则(以及那个三分档)
+#     已随「击杀者复位」整体删除(2026-09-21,见 `_match_round_tick`),现在**任何**归因下都无人被复位。
 # ★★ 本函数**必须留在子类**:`tests/kh_l5_probe.gd` 的"新接口归属"反向断言把
 #    `request_suicide_role` 列进**禁入基类**名单(搬进基类 = 未定义符号)。
 # ★ 为什么值得为它单独接一条闸:三局两胜里卡死的玩家比大乱斗难受得多(不能退、只能等对局
@@ -694,10 +693,15 @@ func _fresh_attacker_role(victim_role: int) -> int:
 #   `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion`**(它是纯静态、不引 autoload)。
 # ★ 但**子弹那一路要先把归因补上**,见 `_on_bullet_hit` —— 基础实现对玩家直击不写归因。
 func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
-	# 记给**攻击者**。自伤(写端 `attribute` 因 attacker == victim **静默跳过**、meta 停在
-	# 上一名敌人身上)由新鲜度判据挡掉 ⇒ 谁都不记(与"自伤不记给任何人"一致)。
+	# 记给**攻击者**。三档都不记,各管一件事:
+	#   · 自伤:写端 `attribute` 因 attacker == victim **静默跳过**、meta 停在上一名敌人身上
+	#     ⇒ 由**新鲜度**判据挡掉(见 `ATTRIB_FRESH_MS`);
+	#   · 队友伤害:**按队过滤**(用户裁定 2026-09-19,与"只算异队击杀"同口径)—— 子弹本来就
+	#     穿队友,唯一能打到队友的是**爆炸**,不过滤就等于"朝队友扔雷即可刷 ACS",而且"爆心
+	#     队友"会反过来抬高扔雷者;
+	#   · 找不到攻击者(归因不到)→ 谁都不记。
 	var attacker := _fresh_attacker_role(int(role))
-	if attacker != 0:
+	if attacker != 0 and not same_team(attacker, int(role)):
 		var s := _stat_entry(attacker)
 		s["dmg"] = int(s["dmg"]) + int(damage)
 	super._on_player_hit(source_pos, damage, role)
@@ -706,10 +710,12 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 # 子弹直击的归因写入。★ **不可省**(与 `RoyaleHost._on_bullet_hit` 逐字同构):服务器上子弹
 # 撞玩家不靠物理(子弹掩码 5 = 地形+敌人,不含玩家层),只经 `_adjudicate_bullets` 到这里,
 # 而基础实现里**没有** `CombatFeedback.attribute`。
-# 不写这一步的后果(两处,都是静默):
+# 不写这一步的后果(都是静默):
 #   ① 逐人 `dmg` 漏掉**最主要的伤害来源** ⇒ ACS 直接失真;
-#   ② `_attributed_killer` 对枪杀恒 0 ⇒ `kill_event` 的射手恒 0,且 `_reset_killer_only` 早退
-#      (击杀者不被送回出生点)—— A 册的"只复位击杀者"在**枪杀**这条路上一直没生效。
+#   ② `_attributed_killer` 对枪杀恒 0 ⇒ `kill_event` 的射手恒 0(逐人 `kills` 也全漏),
+#      即"枪杀在客户端播报里没有击杀者"。
+# ★ 历史上这里还列过第 ③ 条:「击杀者复位在枪杀这条路上一直没生效」—— 那条规则已按用户要求
+#   删除(2026-09-21),故不再是本行的理由;①② 两条与它无关,照旧成立。
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
@@ -802,7 +808,12 @@ func stats_payload() -> Dictionary:
 # ★ 确定性:候选按 role **升序**遍历 + 只在**严格更优**时替换 ⇒ 完全并列时天然的胜者是**最小
 #   role**。不依赖字典迭代顺序 —— 同一份状态调多少次都是同一个答案(探针 ⑬f 钉它)。
 # ★ 候选 = `_roster()`(与 `stats_payload` 同一个集合):MVP 是"这份逐人表里的第一名",
-#   不是另立一份名单 —— 已离开者也在表里(`_stats` 不清零),故也在候选里。
+#   不是另立一份名单。
+# ★★ **已离开者照样参与评选 —— 这是用户裁定(2026-09-19),不是遗漏**:取向与大乱斗
+#   `_match_winner` 的"已离开但计过分的也算"一致。他还会因为"ACS 分母 = 实际参与局数"
+#   (更小)而更容易胜出 —— 那**也是**有意的口径。
+#   ⇒ **别**因为"退了的人不该拿 MVP"把 `_left` 从候选里滤掉(那会静默改掉一条产品规则);
+#     守卫是探针 ⑬j:构造"计过分后离场、终局 MVP 指向他"那一档。
 func mvp_role() -> int:
 	var best_role := 0
 	var best_acs := -1.0

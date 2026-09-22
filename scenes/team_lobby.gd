@@ -5,7 +5,7 @@ extends LobbyPage
 # 选边按钮 + 房主开局)。自建服务器(RoomManager → `--team` worker)。
 # 协议走 NetBusExt 的 `team_*` 系列(六条上行 / 两条下行);开局**复用原版 go_match(role,port)**
 # 转连 worker —— 那条 RPC 的签名与 1v1/大乱斗完全相同,故不另开协议。
-# 视觉项(小地图/轨迹/血条)沿用「多人对战」设置(Settings.pvp_*),此处不重复摆放。
+# 视觉项(小地图/轨迹/血条)沿用「1v1」设置(Settings.pvp_*),此处不重复摆放。
 # 控件一律走 UiFactory(像素字体与字号规范的单一来源),字号必须是 16 的倍数。
 #
 # 连接状态机 / 转连 worker / 按钮工厂都在基类 `LobbyPage` 里 —— 本文件只留 3v3 的差异:
@@ -57,9 +57,11 @@ func _ready() -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
-	# 3v3 协议在 NetBusExt(自建服务端才有):原作者云服不支持 → 默认本机,不默认云地址
-	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(250, 40), "服务器地址(3v3=自建服)", "127.0.0.1")
-	var addr_hint := UiFactory.label("3v3 需自建服务器:点「启动/重启本机服务器」即可本机开服(同目录需有 Cyancular Ruins Server.exe);朋友加入填开服机 IP(异地用 VPN 组网);原作者云服不支持 3v3", 16, UiFactory.C_TEXT)
+	# 地址默认跟 1v1 页一致(取 `PvpSession.server_address`)。
+	# ★ 2026-09-22 用户裁定:云服**同样支持** 3v3 —— 原先这里硬编码 "127.0.0.1"、理由是
+	#   "原作者云服不支持 3v3",那条判断是错的,已删。
+	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(250, 40), "服务器地址", PvpSession.server_address)
+	var addr_hint := UiFactory.label("朋友加入请填开服机的 IP(端口 7777);本机开服点「启动/重启本机服务器」(同目录需有 Cyancular Ruins Server.exe)", 16, UiFactory.C_TEXT)
 	addr_hint.position = Vector2(60, 160)
 	addr_hint.size = Vector2(900, 26)
 	add_child(addr_hint)
@@ -139,7 +141,7 @@ func _build_create_panel() -> void:
 	#   ★ 更要紧的是那两个勾选框**写的是 `Settings.pvp_disabled_weapons`** —— 那是 1v1 / 大乱斗的
 	#     设置项:在 3v3 页勾一下会**连带改掉另两个模式**。那属于功能缺陷(点了没反应、又污染别人),
 	#     不是审美问题,故不留给"UI 重做那份"。
-	vb.add_child(UiFactory.label("(本页没有禁用武器与个人角色颜色这两项:\n3v3 用队色、个人色相无效;禁用武器是 1v1/大乱斗的设置项)\n(小地图/轨迹/血条等本机显示项沿用「多人对战」设置;\n房主规则项首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
+	vb.add_child(UiFactory.label("(本页没有禁用武器与个人角色颜色这两项:\n3v3 用队色、个人色相无效;禁用武器是 1v1/大乱斗的设置项)\n(小地图/轨迹/血条等本机显示项沿用「1v1」设置;\n房主规则项首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
 
 	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
 	create.pressed.connect(_on_create_pressed)
@@ -198,7 +200,7 @@ func _on_team_rooms(rooms: Array) -> void:
 		var empty := UiFactory.label("暂无公开房间 —— 右侧「创建房间」开一把 3v3", 32, UiFactory.C_TEXT)
 		empty.custom_minimum_size = Vector2(620, 40)
 		_list_box.add_child(empty)
-		_status.text = "共 0 个公开房间"
+		_status.text = "共 0 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)"
 		return
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
@@ -206,16 +208,34 @@ func _on_team_rooms(rooms: Array) -> void:
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
 		var maxp := int(r.get("max_players", LobbyRooms.TEAM_ROLES))
+		# ★ 对局中的房**照列**但**点不动**(与 1v1 页同款:可见性与拒绝入房是同一件事的两半;
+		#   服务端 `royale_join` / `team_join` 的 in_match 守卫才是那道保证)。
+		# ★ 自己那间房是这一档的**唯一例外**(持凭据者点它 = 回局)—— 见紧随其后那一段。
+		var in_match := bool(r.get("in_match", false))
 		var occ := ""
 		var names: Array = r.get("names", [])
 		if not names.is_empty():
 			occ = "   " + ", ".join(names)
-		var btn := UiFactory.button("房间 %s      %d/%d%s" % [code, players, maxp, occ], 32, Vector2(620, 46))
-		btn.pressed.connect(func() -> void:
-			Sfx.play("ui")
-			_join_room(code, ""))
+		var btn := UiFactory.button("房间 %s      %s%s" % [code,
+				"对局中" if in_match else "%d/%d" % [players, maxp], occ], 32, Vector2(620, 46))
+		# ★★ 次序是承重的:**先问「这是我的房吗 + 凭据还在吗」**,这一档**可点**(点了走回局);
+		#    不是我的房,才轮到「对局中 ⇒ disabled」那一档(前置计划交付的既有行为)。
+		#    反过来写(先按 in_match 禁用)= 回局这一档连点都点不到,而**一行报错都没有**
+		#    —— 表现只是"回到大厅后自己那间房是灰的,回不去"。
+		var mine := PvpSession.can_rejoin_to(code)
+		btn.disabled = in_match and not mine
+		if btn.disabled:
+			btn.focus_mode = Control.FOCUS_NONE
+		else:
+			btn.focus_mode = Control.FOCUS_ALL
+			btn.pressed.connect(func() -> void:
+				Sfx.play("ui")
+				# 我的房**且对局中** ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
+				# ★ `in_match` 必须传进去(I2):自己那间**还没开局**的等待室要走普通加入。
+				if not try_rejoin_row(code, in_match):
+					_join_room(code, ""))
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个公开房间" % rooms.size()
+	_status.text = "共 %d 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)" % rooms.size()
 
 
 # 等待室:两队名单 + 未选边档 + 选边按钮 + 房主开局按钮。
@@ -224,6 +244,14 @@ func _on_room_state(state: Dictionary) -> void:
 	_in_room = true
 	_team_ack = true
 	_my_room = state
+	# ★ 记下自己这间房的房号(与 1v1 页 `_on_room_created`/`_on_room_joined` 同款):列表里那一行
+	#   "是不是我的房"全靠它比(`can_rejoin_to`)。本页建房 / 点列表加入 / 填邀请码三条路
+	#   **都只经这一个 handler**,故这一行就是本页唯一的记账点 —— 漏了它,回局入口对本页
+	#   整个失效(房号恒空 ⇒ 自己那间房被当"别人的房"禁用),而**一行报错都没有**。
+	# ★ 走 `note_room()` 而不是直接赋值:它顺手把**上一间房**的凭据作废(换了房号时)——
+	#   等待室每收到一次房间状态都会走一遍本函数,同号时它是 no-op(见 `note_room` 的注释)。
+	var code := str(state.get("code", ""))
+	PvpSession.note_room(code)
 	var my_role := int(state.get("your_role", 0))
 	_host = int(state.get("host_role", 0)) == my_role
 	if _create_panel != null:
@@ -231,7 +259,6 @@ func _on_room_state(state: Dictionary) -> void:
 	if _wait_panel == null:
 		_build_wait_panel()
 	_wait_panel.visible = true
-	var code := str(state.get("code", ""))
 	var invite := str(state.get("invite_code", "")) if not bool(state.get("is_public", true)) else ""
 	_wait_title.text = "—— 3v3 房间 %s ——%s" % [code, "  邀请码 %s" % invite if invite != "" else ""]
 	for c in _wait_players.get_children():
@@ -348,6 +375,9 @@ func _on_leave_room() -> void:
 # ★ 本页的梯顺序是 `[worker → claim → 大厅 → ack]`,与大乱斗页逐字同款;**别重排**
 #   (1v1 页是 `[worker → join → 大厅 → claim]` —— 两条顺序不同,合并会静默改行为)。
 func _process(_delta: float) -> void:
+	# 0) 回局(路径乙):请求发出后大厅 15s 无应答 —— 早于下面几条梯,因为此刻它们都还没启动
+	if _tick_rejoin_timeout():
+		return
 	# 1) 转连 worker 12s 没连上(worker 死了/端口没放行):**回大厅重连 + 刷新列表**
 	if _tick_worker_connect_timeout():
 		return
@@ -355,17 +385,17 @@ func _process(_delta: float) -> void:
 	if _tick_claim_timeout():
 		return
 	_tick_lobby_connect_timeout()
-	# 建房/加入 8s 无应答:NetBusExt 协议在自建服务端才有,原作者云服会静默丢弃
+	# 建房/加入 8s 无应答(地址不通 / 对端不是同版本的服务器)
 	if not _team_ack and _team_sent_ms > 0 and Time.get_ticks_msec() - _team_sent_ms > 8000:
 		_team_sent_ms = 0
-		_status.text = "8 秒无响应——该服务器不支持 3v3(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
+		_status.text = "8 秒无响应——地址不通,或该服务器不是最新版(开服方请用最新服务端)"
 
 
 # ── 基类钩子(本页实现)────────────────────────────────────────────
 
-# 3v3 与大乱斗同:协议只在自建服上有 → 空地址回退本机,不回退云地址
+# 空地址回退:与 1v1 页同款,取会话里的服务器地址(不再特判本机)
 func _lobby_fallback_addr() -> String:
-	return "127.0.0.1"
+	return PvpSession.server_address
 
 
 # 已在 3v3 房间中(先退出房间再操作):_with_lobby 在 _in_room 时拒绝一切操作,

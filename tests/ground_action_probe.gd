@@ -271,9 +271,15 @@ func _phase_stress() -> void:
 	_check(_host.ground_weapons.size() > 0, "40 轮后地面仍有武器(%d 件)" % _host.ground_weapons.size())
 
 
-# ── 阶段 ⑥:复活路径 `_drop_all_but_one`(除随机一把外全丢在死亡点)──
+# ── 阶段 ⑥:`_drop_all_but_one` **自身的契约**(除随机一把外,其余全丢在 `p` 当前所在位置)──
+# ★★ 2026-09-21 订正本相标题:原先写的是「复活路径 `_drop_all_but_one`」—— 它**已不是**复活路径。
+#   用户 2026-09-21 裁定「掉落的武器应该在死亡后直接原地掉落」,调用点因此从 `_respawn_player`
+#   移到了**倒地边沿**(三处各一条:`MatchRound` / `RoyaleHost` / `TeamHost` 的 `_match_round_tick`)。
+# ★ 本探针**直接调** `_host._drop_all_but_one(p, 1)`,验的是**函数自身**的契约(留一把 + 其余
+#   落在 `p` 当前所在位置)—— 契约未变,故本相照旧有效、断言一字不改。**时机**那一半(必须在
+#   倒地边沿掉、且复活时不得再掉第二次)不在这里,由 `tests/death_drop_probe` 钉。
 func _phase_drop_all_but_one() -> void:
-	print("[ga] ── ⑥ 复活:除随机一把外全丢出 ──")
+	print("[ga] ── ⑥ _drop_all_but_one:除随机一把外全丢出 ──")
 	var p: Node2D = _players[1]
 	p.weapons.set_initial_inventory([1, 2, 3, 5])
 	_check(p.weapons.inventory.held.size() == 4, "先塞 4 把(实际 %d)" % p.weapons.inventory.held.size())

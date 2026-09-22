@@ -12,7 +12,22 @@ extends RefCounted
 #   而时长取 0 时那条分支永不触发(同 CombatFeedback.ATTRIB_WINDOW_MS 的注释)。
 # ★ 重复 enter 是**刷新**到期时刻,不叠加 —— 掉线两次不该得到两倍宽限。
 
-const DEFAULT_SECONDS := 30.0   # ★ 宽限期时长的唯一入口(改时长只改这里)
+# ★ 宽限期时长的唯一入口(改时长只改这里)。
+# ★★ 2026-09-21:30 → **60**(用户裁定:1v1 / 3v3 / 大乱斗三个模式统一,不再分档)。
+#   改这一个数会同时动**两处**,改之前两处一起看:
+#     ① `scenes/pvp_match_client.gd` 的重连重试预算(`_on_reconnect_retry_tick` 的第一条判据)
+#        读的就是本常量 —— 单一来源,不会漂;60s 下 `RECONNECT_RETRY_MS`(2s)与
+#        `RECONNECT_ATTEMPT_TIMEOUT_MS`(5s)不变,一次闪断里的重试次数由 ~15 变 ~30,
+#        是"更从容"而不是行为变化。
+#     ② **测试预算**:凡按"宽限期多久"算出来的窗口都要重算 —— `tests/reconnect_probe.gd`
+#        的 `GRACE_MIN/MAX` 与 `FINAL_TIMEOUT`、`tests/team_match_watcher.gd` 的 `OBSERVE_MAX`、
+#        `tests/team_match_probe.gd` 的 `RESULT_WAIT`(它的头部注释要求**逐项求和**算,别凭印象)。
+#        这三处是 Task 2。
+# ★ 端口归还延迟(`WorkerLauncher` 的三个 `*_PORT_REUSE_DELAY`)**不再与本值绑定**:
+#   承重的是"worker 进程活着 ⇒ 房与它占的端口都还在"(房活到 worker 退出,见
+#   `RoomManager._reclaim_finished_matches`)。守卫只留一条 belt 形式的宽松下界
+#   (`tests/grace_window_smoke` ⑧),口径写在那一处。
+const DEFAULT_SECONDS := 60.0
 
 # ── 宽限期**到点之后**该做什么:纯分派(无 autoload、无副作用、可 `-s` 测)──
 # 三个模式的答案就在这里,由 tests/grace_window_smoke 逐个钉住;调用方只做一次比较,

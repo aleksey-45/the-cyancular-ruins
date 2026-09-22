@@ -1,6 +1,6 @@
 extends Node
 
-# TeamHost:按队出生散点 / 按队计分 / 只复位击杀者 / 换边。场景模式。
+# TeamHost:按队出生散点 / 按队计分 / 击杀后**不复位任何人** / 换边。场景模式。
 # 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/team_host_probe.tscn
 # 通过 = `TEAM HOST: ALL-OK`。
 #
@@ -14,7 +14,9 @@ extends Node
 # ①②③ 由 Task 4 落(出生散点 / 换边点集 / 宿主接线);
 # ④ 按队计分、⑥ 收局由 Task 5 落(④ 在那时被**换掉** —— Task 4 那版数值上巧合重合、
 #   区分不了团队语义,见 ④ 里的说明);
-# ⑤ 只复位击杀者由 Task 6 落(brief 正文里这段写作 ⑦/⑩,同一个东西);
+# ⑤ 击杀后不复活/不传送任何人由 Task 6 落(brief 正文里这段写作 ⑦/⑩,同一个东西);
+#   ★ **2026-09-21 整体反转**:用户要求删掉「把击杀者送回本方出生点」那条规则,本段据此把
+#   断言改成反面(击杀者**原地不动**)。详见 ⑤ 段首的说明。
 # ⑧ 换边/终局由 Task 7 落(⑧ = 直接调 `_start_next_round`,⑨ = 把状态机**推过** ROUND_OVER
 #    —— 后者才验得到"虚分派落在覆写上",见 ⑨ 的说明);
 # ⑪ match_sync 应答带 teams(源码级:路由在 server_main 的私有方法里,探针跑不到那条路)由
@@ -26,8 +28,11 @@ extends Node
 #   `_respawn_player` 清归因 meta 的对等性。编号顺延(⑩/⑪ 已被占用)。
 # ⑬ 逐人数据 + ACS/MVP 由 **B 册 Task 10** 落(只做数据面):⑬a 伤害 1:1 / ⑬i 子弹那一路的
 #   归因(`_on_bullet_hit`,★ 它不走爆炸/榴弹那两条写端)/ ⑬b 队友误炸不计 `kills`(用户裁定 ②)/
-#   ⑬c 自伤不记(**专钉归因新鲜度** `ATTRIB_FRESH_MS`)/ ⑬d 加成表 / ⑬e 多杀 / ⑬f MVP 与确定性 /
-#   ⑬g 载荷形状与投递 / ⑬h 离开者的局数口径。
+#   ⑬b2 队友的爆炸**不计 dmg**(用户裁定 2026-09-19,走真爆炸路径)/
+#   ⑬b3 **敌方**爆炸照常计入 dmg 且**数值对得上**(与 ⑬b2 互为对照 —— 少了它,「恒不记」的坏实现
+#   能让 ⑬b2 全绿)/ ⑬c 自伤不记
+#   (**专钉归因新鲜度** `ATTRIB_FRESH_MS`)/ ⑬d 加成表 / ⑬e 多杀 / ⑬f MVP 与确定性 /
+#   ⑬g 载荷形状与投递 / ⑬h 离开者的局数口径 / ⑬j **已离开者仍参与 MVP**(用户裁定)。
 #   ★ 同段另有一条源码级:**受击接线必须由生产持有** —— 探针调的是 `MatchHost._wire_hit_feedback`,
 #     不是自己抄的 `connect`(抄件会让"生产的接线断了"静默通过,同 `_apply_team_layers`)。
 # 掉线终局(整队走光才终局 + 走光判胜)归 **Task 8 的独立探针** `tests/team_disconnect_probe.tscn`,
@@ -71,7 +76,7 @@ func _place(host, role: int, at: Vector2i) -> Node2D:
 	return p
 
 
-# ── ⑤(只复位击杀者)的两个小工具 ──
+# ── ⑤(击杀后无人被移动)的两个小工具 ──
 # 把这些人全挪到同一个"远点"。★ 不这么做的话,"没被复位"与"被送回自己的出生点"可能落在
 # 同一数值上,断言就成了恒真的摆设(远点按构造 ≠ 任何出生点,故两者必然可区分)。
 # 已倒地的人也能挪 —— 这里只动 `global_position`,不碰战斗状态。
@@ -150,6 +155,23 @@ func _set_stats(host, rows: Array) -> void:
 func _hit_conn_count(p: Node2D) -> int:
 	var c: Object = p.get_node("Combat")
 	return c.get_signal_connection_list("took_hit").size()
+
+
+# ⑬b3 的落点:全图扫第一个**不在水里**的格中心。
+# ★ 为什么非要干格:水格会把爆炸伤害 ×`explosion_decay`(0.25)⇒ 期望值就得把水因子也乘进去
+#   —— 而本条的判据是"数值对得上",带一个环境因子会让它变成"看运气"。扫一格干的,
+#   期望值就恰好是 `max_damage`(见 `⑬b3` 里"为什么把受害者摆在爆心"那段)。
+# 找不到返回 (-1,-1) → 调用方回落到受害者当前位置 + 断言水因子前提(绝不静默跳过)。
+func _find_dry_point() -> Vector2:
+	var grid: Array = MazeGenerator.current_grid
+	var ts := GameParameters.TILE_SIZE
+	var d := SpawnPicker.grid_dims()
+	for y in range(1, d.y - 1):
+		for x in range(1, maxi(d.x - 1, 2)):
+			var pos := Vector2(float(x) * ts + ts * 0.5, float(y) * ts + ts * 0.5)
+			if Water.water_mult(pos, grid) >= 1.0:
+				return pos
+	return Vector2(-1, -1)
 
 
 # rect 覆盖到的格子里有几个是**实心**(判据走 `TileDefs.is_blocked` —— 全仓"挡路"的单一来源)。
@@ -381,9 +403,15 @@ func _run() -> void:
 			"★ 到 %d 杀收局" % TeamHost.TEAM_KILLS_TO_WIN)
 	_check(int(_host._rounds_won.get(1, 0)) == 1, "局胜记在**队**上(1 队 = 1)")
 
-	# ── ⑤ 只复位击杀者本人(Task 6;brief 正文里这段写作 ⑦/⑩,同一个东西)──
-	# 语义:击杀后**只**把击杀者送回本方出生点(保留血量,不治疗),队友不动。
-	# ★ 三个"不复位"的档一个都不能省:无归因 / 队友误炸 / 同归于尽。
+	# ── ⑤ 击杀后**不**复位任何人(★ 2026-09-21 按用户要求把本段整体**反转**)──
+	#
+	# ★★ 本条**曾经断言的是反面**:「击杀后只把击杀者送回本方出生点(保留血量,不治疗),
+	#    队友不动」+ 三个"不复位"档。那条规则已整体删除(`team_host.gd` 的 `_reset_killer_only`
+	#    连同它**唯一的调用点**一起没了)。本段据此**反转**,不是删掉断言、也不是放宽它 ——
+	#    反转后的断言照样能红:把那次调用加回去,(b) 立刻报"人又被传送了"(已实测,见交接报告)。
+	# ★ 保留下来的形状:(a)(c)(d) 三条的**计分**半句(无归因 / 队友误炸 / 同归于尽 → 分照样
+	#   给对方队)与复位规则无关、原样有效;**它们各自的"无人移动"半句现在是同一条主张的三个
+	#   实例**(击杀不移动任何人),故 (b) 才是核心 —— 它是唯一"旧规则下真会移动人"的档。
 	# ★★ 每条先把在场的人全挪到一个**统一的"远点"**(按构造 ≠ 任何出生点):
 	#   否则"没被复位"与"被送回自己的出生点"可能落在同一数值上 —— 那种断言恒绿、没有区分度
 	#   (brief 里 (a) 那版 `位置不变 or 已倒地` 就是这种:受害者必然已倒地 → 恒真)。
@@ -391,10 +419,12 @@ func _run() -> void:
 	_host._scores = {}
 	var ts := GameParameters.TILE_SIZE
 	var all_roles: Array = [1, 2, 3, 4, 5, 6]
-	# ★ 钉住"让 `_reset_killer_only` 里那条 `spawn.x < 0` 早退**不可达**"的前提。
-	#   为什么钉这个而不去覆盖那个分支本身:它是 `push_error` + return(不是纯 return),
-	#   覆盖它每次都会刷一行 ERROR —— 与本仓"杂散 ERROR 会淹掉真失败"的纪律冲突。
-	#   而"每个在场 role 都有出生点"才是真会先坏的东西,且它**响**(不是静默)。
+	# ★ 「每个在场 role 都有出生点」这条**不变量**。它原先是为了钉住 `_reset_killer_only` 里
+	#   那条 `spawn.x < 0` 早退**不可达**(而那个分支本身是 `push_error` + return,覆盖它每次都
+	#   会刷一行 ERROR —— 与本仓"杂散 ERROR 会淹掉真失败"的纪律冲突,故不去覆盖那个分支)。
+	#   ★ 2026-09-21 那个函数已删除,但这条断言**照样有主**:`_round_spawns` 缺项会把
+	#     `_spawn_cell` / `_respawn_player` 的 `(-1,-1)` 兜底值喂成 `(-32,-32)`(人凭空消失),
+	#     而"每个在场 role 都有出生点"是真会先坏的东西,且它**响**(不是静默)。
 	for r in _host.players:
 		var sp: Vector2i = _host._round_spawns.get(r, Vector2i(-1, -1))
 		_check(sp.x >= 0 and sp.y >= 0,
@@ -422,12 +452,14 @@ func _run() -> void:
 	_check(alive_roles == [1, 3, 4, 6],
 			"[仪器] ⑤ 开跑前在场的是 1/3/4/6 号(2/5 已在 ④⑥ 倒地;实际 %s)" % str(alive_roles))
 
-	# (a) 无归因(溺水 / 自伤 / K 自杀 → killer 0):2 队的 6 号倒地 → 1 队 +1,但**无人被复位**
+	# (a) 无归因(溺水 / 自伤 / K 自杀 → killer 0):2 队的 6 号倒地 → 1 队 +1(规则 7 不分死因),
+	#     且**无人被移动**。
 	# ★ 用**过期归因**构造这条早退:6 号身上留着"被 1 号(1 队)打过"的 meta,但时间戳超出
 	#   `ATTRIB_WINDOW`。为什么不用"压根没有 meta":那条路上 `players.get(0)` 是 null,
 	#   **任何**实现都会 return —— 断言恒绿、没有区分度(正是上面那条自检要防的失败模式)。
-	#   带 meta 但过期才是真能走到 `killer_role == 0` 早退的构造:少了时效判定 → 1 号被
-	#   从远点送回出生点 → 红。
+	# ★ 这条构造原先还兼着"让 `_reset_killer_only` 走到 `killer_role == 0` 早退"的职责;
+	#   复位规则删除后那个职责消失,它剩下的价值是"无归因档的**计分**照旧"这一半
+	#   (另一半 —— 无归因的 `kill_event` 射手为 0 —— 在 ⑬ 里)。
 	var p6: Node2D = _host.players[6]
 	CombatFeedback.attribute(p6, _host.players[1])
 	p6.set_meta("last_damager_time", Time.get_ticks_msec() - TeamHost.ATTRIB_WINDOW - 1000)
@@ -436,43 +468,51 @@ func _run() -> void:
 	_check(int(_host._scores.get(1, 0)) == 1 and int(_host._scores.get(2, 0)) == 0,
 			"★ 无归因 · 2 队的 6 号倒地 → 1 队 +1(实际 %s)" % str(_host._scores))
 	var escaped_a := _moved_from(_host, all_roles, away)
-	_check(escaped_a == 0, "★ 无归因 · 无人被复位(实际有 %d 人离开了远点)" % escaped_a)
+	_check(escaped_a == 0, "★ 无归因 · 无人被移动(实际有 %d 人离开了远点)" % escaped_a)
 
-	# (b) 异队击杀:1 号(1 队)打 4 号(2 队)→ 4 号倒地,**1 号被送回本方出生点**,
-	#     而同队的 3 号(1 队)一步不动 —— "只复位击杀者本人"的另一半就在这条。
+	# (b) ★★ **核心**:异队击杀 —— 1 号(1 队)打 4 号(2 队)→ 4 号倒地,**1 号原地不动**。
+	#     这正是旧规则里唯一会移动人的那一档(它曾经断言 1 号被送回出生点),故反转后的断言
+	#     落在这里:哪天有人把那次复位调用加回来,下面第一条立刻红。
 	_host._scores = {}
 	var p1: Node2D = _host.players[1]
-	# ★ 规则 6 的另一半是"**保留血量、不治疗**(与 `_reset_survivor` 同款)"—— 位置断言
-	#   **抓不到**它:把实现改写成 `_respawn_player(killer_role)` 会满血 + 掉武器(位置照样对),
-	#   而"手工搬位 + 补血"的变体更是全绿。故把血量与背包都设成**非满/非默认**再断言没被改。
+	# ★ 除了位置,击杀者的**战斗状态也不得被动过** —— 位置断言抓不到"顺手补血/补弹/掉武器"
+	#   那类变体:把实现改写成 `_respawn_player(killer_role)` 会满血 + 掉武器(位置照样对得上)。
+	#   故把血量、残弹、背包、速度都设成**可辨认的非默认值**再断言原样。
+	#   (旧规则下这几条写的是"复位**保留**血量";现在它们是"击杀者**完全不受影响**"的一部分。)
 	var low_hp := 30                      # PlayerParams.player_max_hp = 50,30 是非满值
 	p1.apply_authoritative_state(low_hp, p1.max_waterproof, false)
 	p1.weapons.set_initial_inventory([1, 2])
 	p1.weapons.current_weapon().mag_ammo = 3
+	p1.velocity = Vector2(123.0, -45.0)   # 非零:旧的复位会把它清成 ZERO
 	CombatFeedback.attribute(_host.players[4], p1)
 	(_host.players[4].get_node("Combat") as Node).force_down()
 	_host._match_round_tick(0.016)
-	_check(p1.hp == low_hp,
-			"★ 异队击杀 · 击杀者复位**保留血量**(实际 %d,期望 %d)" % [p1.hp, low_hp])
-	_check(p1.weapons.current_weapon() != null and p1.weapons.current_weapon().mag_ammo == 3,
-			"★ 异队击杀 · 击杀者复位**不补弹**(实际 %s)"
-			% str(p1.weapons.current_weapon().mag_ammo if p1.weapons.current_weapon() != null else "空手"))
-	_check(p1.weapons.inventory.held.size() == 2,
-			"★ 异队击杀 · 击杀者复位**不掉武器**(背包仍 2 把,实际 %d)"
-			% p1.weapons.inventory.held.size())
 	var home1: Vector2i = _host._round_spawns[1]
 	var want1 := Vector2(home1.x * ts + ts * 0.5, home1.y * ts + ts * 0.5)
-	_check(p1.global_position.distance_to(want1) < 2.0,
-			"★ 异队击杀 · 击杀者(1 号)被送回本方出生点(距目标 %.1fpx)"
-			% p1.global_position.distance_to(want1))
-	_check(p1.global_position.distance_to(away) > 2.0,
-			"★ 异队击杀 · 击杀者确实**离开**了远点(否则上一条可能是「没动」蒙对的)")
-	_check(p1.velocity.is_zero_approx(), "★ 异队击杀 · 击杀者速度清零")
+	# ★ 反向对照:远点按构造 ≠ 出生点(开跑前那个 `while spawn_taken.has(away_cell)` 保证),
+	#   故"人还在远点"这条**不可能**靠"远点恰好就是 1 号出生点"蒙对。把那个前提变成读数。
+	_check(away.distance_to(want1) > 2.0,
+			"[仪器] 远点与 1 号出生点确实不同(相距 %.1fpx;相同则下一条恒绿)"
+			% away.distance_to(want1))
+	_check(p1.global_position.distance_to(away) < 2.0,
+			"★★ 异队击杀 · 击杀者(1 号)**原地不动**(距远点 %.1fpx;非 0 = 人又被传送了 ——"
+			% p1.global_position.distance_to(away)
+			+ " 2026-09-21 已按用户要求删掉「击杀后把击杀者送回出生点」那条规则)")
+	_check(p1.hp == low_hp,
+			"★ 异队击杀 · 击杀者血量不被改(实际 %d,期望 %d)" % [p1.hp, low_hp])
+	_check(p1.weapons.current_weapon() != null and p1.weapons.current_weapon().mag_ammo == 3,
+			"★ 异队击杀 · 击杀者不补弹(实际 %s)"
+			% str(p1.weapons.current_weapon().mag_ammo if p1.weapons.current_weapon() != null else "空手"))
+	_check(p1.weapons.inventory.held.size() == 2,
+			"★ 异队击杀 · 击杀者不掉武器(背包仍 2 把,实际 %d)"
+			% p1.weapons.inventory.held.size())
+	_check(p1.velocity.is_equal_approx(Vector2(123.0, -45.0)),
+			"★ 异队击杀 · 击杀者速度不被清零(实际 %s)" % str(p1.velocity))
 	_check((_host.players[3] as Node2D).global_position.distance_to(away) < 2.0,
-			"★ 异队击杀 · **同队队友(3 号)一步不动**")
+			"★ 异队击杀 · **同队队友(3 号)同样一步不动**")
 
-	# (c) 队友误炸:3 号(1 队)炸倒 1 号(1 队)→ 分照样给**对方队**(2 队),但 3 号**不被复位**
-	#     3 号此刻在远点:漏了 `same_team` 判定的话它会被送回自己的出生点 → 红。
+	# (c) 队友误炸:3 号(1 队)炸倒 1 号(1 队)→ 分照样给**对方队**(2 队)。计分这半句与复位
+	#     规则无关、原样有效;3 号不被移动那半句现在是"击杀不移动任何人"的一个实例。
 	_host._scores = {}
 	CombatFeedback.attribute(_host.players[1], _host.players[3])
 	(_host.players[1].get_node("Combat") as Node).force_down()
@@ -481,10 +521,10 @@ func _run() -> void:
 			"★ 队友误炸 · 分照样给**对方队**(2 队 +1;实际 %s)" % str(_host._scores))
 	_check(int(_host._scores.get(1, 0)) == 0, "★ 队友误炸 · 1 队不涨分(实际 %s)" % str(_host._scores))
 	_check((_host.players[3] as Node2D).global_position.distance_to(away) < 2.0,
-			"★ 队友误炸 · 击杀者(3 号,与受害者同队)不被复位")
+			"★ 队友误炸 · 击杀者(3 号)原地不动")
 
-	# (d) 同归于尽:6 号(2 队,已在 (a) 倒地)是击杀者,3 号(1 队)是受害者 → 6 号**不倒第二次**
-	#     漏了 `killer.is_downed()` 判定的话,6 号会被从远点送回它的出生点 → 红。
+	# (d) 同归于尽:6 号(2 队,已在 (a) 倒地)是击杀者,3 号(1 队)是受害者 —— 分照样给对方队;
+	#     而 6 号(已倒地)一步不动(旧规则这一档靠 `killer.is_downed()` 早退)。
 	_host._scores = {}
 	CombatFeedback.attribute(_host.players[3], _host.players[6])
 	(_host.players[3].get_node("Combat") as Node).force_down()
@@ -492,7 +532,7 @@ func _run() -> void:
 	_check(int(_host._scores.get(2, 0)) == 1,
 			"★ 同归于尽 · 分照样给对方队(2 队 +1;实际 %s)" % str(_host._scores))
 	_check((_host.players[6] as Node2D).global_position.distance_to(away) < 2.0,
-			"★ 同归于尽 · 已倒地的击杀者不被复位(它去走自己的复活流程)")
+			"★ 同归于尽 · 击杀者原地不动(它去走自己的复活流程)")
 
 	# ── ⑧ 换边:第 2 局开局后,role1 站在原 role4 的出生点上 ──
 	var before1: Vector2i = _host._round_spawns[1]
@@ -751,12 +791,16 @@ func _run() -> void:
 			% [suicide_enemy, suicide_team, str(_host._scores)])
 	var escaped_suicide := _moved_from(_host, all_roles, away)
 	_check(escaped_suicide == 0,
-			"★ ⑫ 自杀 · **无人被复位**(实际有 %d 人离开了远点)" % escaped_suicide)
+			"★ ⑫ 自杀 · **无人被移动**(实际有 %d 人离开了远点;无归因档不再有专属语义 ——"
+			% escaped_suicide
+			+ " 2026-09-21 起任何归因下都无人被移动)")
 
 	# ── ⑫b 复活清归因 meta(与 `RoyaleHost._respawn_player` 对等)──
 	# `TeamHost._respawn_player` 的 6 行覆写:复活后的环境死亡(溺水等)不再记到复活前最后
-	# 射手头上。★ 判据用 `has_meta`,**不**用"复活后再来一次自杀看分给谁" —— 后者会被
-	# `_reset_killer_only` 的 `is_downed()` 早退掩掉,红不出来(换了个形状的恒绿断言)。
+	# 射手头上。★ 判据用 `has_meta`,**不**用"复活后再来一次自杀看分给谁" —— `request_suicide_role`
+	# 自己就先 `remove_meta` 了 `last_damager`,那条路**无论复活清不清都看不出差别**(换了个形状的
+	# 恒绿断言)。★ 原文把这条掩蔽归给 `_reset_killer_only` 的 `is_downed()` 早退;那个函数已随
+	# 「击杀者复位」一起删除(2026-09-21),掩蔽成因改成上面那条(它一直成立,只是当时没写)。
 	CombatFeedback.attribute(_host.players[1], _host.players[4])
 	_check((_host.players[1] as Node2D).has_meta("last_damager"),
 			"[仪器] ⑫b 复活前 meta 确实在(否则下面那条恒绿)")
@@ -850,7 +894,7 @@ func _run() -> void:
 	# ── ⑬i 子弹那一路的归因(★ 它**不走**爆炸/榴弹那两条写端)──
 	# 为什么要单独一条:基础实现对**玩家**的子弹直击**不写归因**(只有 `RoyaleHost` 覆写补了),
 	# `TeamHost` 原先没有那份覆写 ⇒ 枪杀既不进逐人 dmg、也不进击杀归属(两处都静默:
-	# ACS 漏掉最主要的伤害来源,且"只复位击杀者"在枪杀这条路上一直不生效)。
+	# ACS 漏掉最主要的伤害来源,且 `kill_event` 的射手恒 0)。
 	# ★ 判据走**生产的裁决入口** `_adjudicate_bullets`(不是直接调 `_on_bullet_hit`):
 	#   把子弹贴到受害者身上 → 一次裁决 → 伤害与归因同时落定,走的是服务器真实那一遍。
 	var st_bshooter := 3          # 1 队
@@ -875,7 +919,7 @@ func _run() -> void:
 			"★ ⑬i [仪器] 子弹真的打中了(受害者 hp %d → %d,期望 -11)"
 			% [st_hp0, int(_host.players[st_bvictim].hp)])
 	_check(_host._attributed_killer(_host.players[st_bvictim]) == st_bshooter,
-			"★ ⑬i 子弹命中也写了**击杀归因**(枪杀的 kill_event 射手与「只复位击杀者」都读它;"
+			"★ ⑬i 子弹命中也写了**击杀归因**(`kill_event` 的射手与逐人 `kills` 都读它;"
 			+ "少了 `_on_bullet_hit` 这一层,两者在枪杀这条路上都是 0)")
 
 	# ── ⑬b 反向断言:队友误炸 → 受害者 deaths +1,但**谁都不涨 kills**(用户裁定 ②)──
@@ -888,6 +932,68 @@ func _run() -> void:
 			"★ ⑬b 队友误炸**不计入击杀者 kills**(实际 %d,期望 %d;去掉 same_team 判定这里就红)"
 			% [_stat(_host, 3, "kills"), st_k3])
 	_check(_stat(_host, 1, "kills") == st_k1, "★ ⑬b 也不计给受害者自己")
+
+	# ── ⑬b2 队友伤害**不计入 dmg**(用户裁定 2026-09-19,与"只算异队击杀"同口径)──
+	# ★ 走**真爆炸**(`Explosion.apply_aoe`,生产路径),不是手写归因:子弹本来就穿队友,
+	#   唯一打得到队友的就是爆炸 —— "朝队友扔雷刷 ACS"正是这条规则要堵的口子。
+	# 布景:`apply_aoe` 按 `player` 组遍历、半径 100 —— 故把受害者(1 号)单独放一处,
+	#   其余五个人(**含扔雷的 3 号**)摆到 600px 外,于是它只打得到 1 号一个。
+	_host._respawn_player(1)     # ⑬b 把 1 号打倒了,先复活(顺带清归因 meta)
+	var st_e_dmg3 := _stat(_host, 3, "dmg")
+	var st_e_k3 := _stat(_host, 3, "kills")
+	var st_e_d1 := _stat(_host, 1, "deaths")
+	var st_e_hp1: int = int(_host.players[1].hp)
+	(_host.players[1] as Node2D).global_position = Vector2(320.0, 320.0)
+	for st_e_r in [2, 3, 4, 5, 6]:
+		(_host.players[st_e_r] as Node2D).global_position = Vector2(920.0, 320.0)
+	Explosion.apply_aoe((_host.players[1] as Node2D).global_position, 100.0, 60, 400.0,
+			_host.players[3])
+	_check(int(_host.players[1].hp) < st_e_hp1,
+			"★ ⑬b2 [仪器] 队友的爆炸**真的打中了**(hp %d → %d;没打中的话下面那条恒绿)"
+			% [st_e_hp1, int(_host.players[1].hp)])
+	_check(_stat(_host, 3, "dmg") == st_e_dmg3,
+			("★ ⑬b2 队友的爆炸**不计入 dmg**(3 号 dmg 实际 %d,期望 %d;去掉异队过滤就是"
+			+ "「朝队友扔雷刷 ACS」那个口子)") % [_stat(_host, 3, "dmg"), st_e_dmg3])
+	_host._match_round_tick(0.016)      # 60 伤 > 满血 50 → 必然打死,顺带走一遍倒地边沿
+	_check(_stat(_host, 1, "deaths") == st_e_d1 + 1,
+			"★ ⑬b2 队友的爆炸**照计 deaths**(实际 %d,期望 %d)"
+			% [_stat(_host, 1, "deaths"), st_e_d1 + 1])
+	_check(_stat(_host, 3, "kills") == st_e_k3,
+			"★ ⑬b2 队友的爆炸**不计入 kills**(实际 %d,期望 %d)"
+			% [_stat(_host, 3, "kills"), st_e_k3])
+
+	# ── ⑬b3 敌方爆炸**照常计入 dmg 且数值对得上**(裁定 ① 的**正向对照**)──
+	# ★★ 为什么必须有这一条:⑬b2 是**纯负向**断言("队友的爆炸 ⇒ dmg 不变")—— 一个
+	#   "什么都记不上分"的坏实现会让它**全绿**(本册一路在清的那种"看起来在测、其实恒真")。
+	#   两条合起来才是"按异队过滤"的完整证据:负向管"队友不算",正向管"**敌人照算**"。
+	#   (变异 H 就是这一对的反证:把累计整个拿掉 ⇒ ⑬b2 仍绿、⑬b3 红。)
+	# 布景与 ⑬b2 **逐字同款**,只把受害者换成**敌方**:扔雷者 1 号(1 队)、受害者 4 号(2 队)。
+	# ★ 受害者摆在**爆心**(d == 0)是刻意的:d < 内圈(`radius × 0.4`)⇒ `_falloff` 返回满值、
+	#   `cover_multiplier` **免疫遮挡** ⇒ 期望值恰好是 `max_damage`,与衰减曲线/墙/视线**全都无关**
+	#   (断言的值由布景确定,不靠运气)。唯一还要控的环境因子是水 —— 故用 `_find_dry_point()`。
+	var st_f_victim := 4        # 2 队(与扔雷者异队)
+	var st_f_thrower := 1       # 1 队
+	var st_f_max := 30          # 爆心满伤 = 期望的 dmg 增量
+	_host._respawn_player(st_f_victim)     # ⑬i 打过它(32 血),先满血复活(顺带清归因)
+	var st_f_dmg0 := _stat(_host, st_f_thrower, "dmg")
+	var st_f_hp0: int = int(_host.players[st_f_victim].hp)
+	var st_f_pt := _find_dry_point()
+	if st_f_pt.x < 0:
+		st_f_pt = (_host.players[st_f_victim] as Node2D).global_position
+	_check(Water.water_mult(st_f_pt, MazeGenerator.current_grid) >= 1.0,
+			"★ ⑬b3 [仪器] 落点是**干格**(水格会把伤害 ×0.25,期望值就得带上水因子;实际落点 %s)"
+			% str(st_f_pt))
+	(_host.players[st_f_victim] as Node2D).global_position = st_f_pt
+	for st_f_r in [1, 2, 3, 5, 6]:
+		(_host.players[st_f_r] as Node2D).global_position = st_f_pt + Vector2(600.0, 0.0)
+	Explosion.apply_aoe(st_f_pt, 100.0, st_f_max, 400.0, _host.players[st_f_thrower])
+	_check(int(_host.players[st_f_victim].hp) == st_f_hp0 - st_f_max,
+			"★ ⑬b3 [仪器] 敌方的爆炸**真的打中了**(hp %d → %d,期望 -%d;没打中的话下面那条恒绿)"
+			% [st_f_hp0, int(_host.players[st_f_victim].hp), st_f_max])
+	_check(_stat(_host, st_f_thrower, "dmg") - st_f_dmg0 == st_f_max,
+			("★ ⑬b3 敌方爆炸**照常计入 dmg 且数值对得上**(实际 +%d,期望 +%d;"
+			+ "与 ⑬b2 互为对照 —— 少了正向这条,「恒不记」的坏实现能让 ⑬b2 全绿)")
+			% [_stat(_host, st_f_thrower, "dmg") - st_f_dmg0, st_f_max])
 
 	# ── ⑬c 自伤不记给任何人(★ 这条专钉"归因新鲜度"判据)──
 	# 构造:1 号身上留着"被 4 号(2 队)打过"的归因,时间戳**往前挪 200ms** —— 仍在击杀窗口
@@ -993,12 +1099,32 @@ func _run() -> void:
 			% [float(st_pay[3]["acs"]), int(st_pay[3]["kills"]),
 				float(st_pay[5]["acs"]), int(st_pay[5]["kills"])])
 	_check(_host.mvp_role() == 5, "★ ⑬f ACS 与击杀都并列 → 阵亡少者(5 号 1 死 < 3 号 5 死)")
-	# (f5) 确定性:同一状态反复调 = 同一个答案;换了字典插入顺序也还是同一个答案
-	# (实现按 role 升序遍历 + 只在**严格更优**时替换 —— 这里钉的是这条性质,不是它的写法)。
-	_check(_host.mvp_role() == _host.mvp_role() and _host.mvp_role() == 5,
+	# (f5) **全并列 + 反序插入** → 仍必须是 role 号升序(3 号)。
+	# ★ 为什么这一档的并列必须是"**全**"的(ACS/kills/deaths 全同):上面 f2~f4 每一档都留着
+	#   一个**严格更优**的候选,于是"不排序、按遍历顺序取严格更优"的实现会给出**同一个**答案
+	#   ⇒ 那三档照不到"按插入顺序"这一类。全并列时答案只能来自**遍历顺序**。
+	# ★★ 改法说明(2026-09-20 评审):旧版这一档是 `[[5,2,1,300],[3,2,5,300]]`(ACS 并列、
+	#   **阵亡数不同**)—— 那一档里 5 号**真的更优**,反序插入后快照式实现照样给 5 ⇒ 它其实
+	#   是个空断言。全并列 + 反序才把"顺序"变成唯一变量:按 `_stats` **插入顺序**遍历的实现
+	#   (生产中即"首次记分的先后")会先遇到 5 号并锁住它,正确实现(`roles.sort()` + 严格更优)
+	#   给 3 号。**变异反证**:把 `mvp_role` 的候选集换成 `_stats.keys()`(不排序)—— 本档红。
+	# ★ 如实登记的边界:换 `_roster()` 但不 sort 的实现**照不到** —— 本探针按 role 升序摆人,
+	#   故 roster 的插入序恰好也是升序,两种写法在这一档上同答案。要照到它得让 players 的
+	#   插入序非升序,那会动到 ⑧/⑨ 依赖的摆位,不在本次范围。
+	_set_stats(_host, [[5, 2, 1, 300], [3, 2, 1, 300]])   # ACS/kills/deaths 全同,插入顺序颠倒
+	st_pay = _host.stats_payload()
+	_check(float(st_pay[3]["acs"]) == float(st_pay[5]["acs"])
+			and int(st_pay[3]["kills"]) == int(st_pay[5]["kills"])
+			and int(st_pay[3]["deaths"]) == int(st_pay[5]["deaths"]),
+			("[仪器] ⑬f 前提(f5):3 号与 5 号 ACS/kills/deaths **全并列**(实际 %f/%d/%d vs %f/%d/%d)"
+			+ " —— 不全并列的话本档退化成空断言,验的不是「顺序」")
+			% [float(st_pay[3]["acs"]), int(st_pay[3]["kills"]), int(st_pay[3]["deaths"]),
+				float(st_pay[5]["acs"]), int(st_pay[5]["kills"]), int(st_pay[5]["deaths"])])
+	_check(_host.mvp_role() == 3,
+			("★ ⑬f 全并列且**反序插入** → 仍取 role 升序(3 号,不是 5 号);"
+			+ "按 `_stats` 插入顺序遍历的实现会给出 5 号"))
+	_check(_host.mvp_role() == _host.mvp_role() and _host.mvp_role() == 3,
 			"★ ⑬f 同一状态连续三次调用给出同一个 MVP(确定性)")
-	_set_stats(_host, [[5, 2, 1, 300], [3, 2, 5, 300]])   # 同样的值,插入顺序颠倒
-	_check(_host.mvp_role() == 5, "★ ⑬f 换字典插入顺序后答案不变(不依赖迭代顺序)")
 
 	# ── ⑬g 载荷与口径 ──
 	_set_stats(_host, [[1, 3, 1, 300]])
@@ -1055,6 +1181,19 @@ func _run() -> void:
 	_check(float(st_pay3[1]["acs"]) == 500.0 / 5.0,
 			"★ ⑬h 在场者:分母仍是**全场局数**(500/5 = 100,实际 %f)" % float(st_pay3[1]["acs"]))
 	_check(st_pay3.has(6), "★ ⑬h 已离开者的逐人数据**不消失**(面板仍要展示他的成绩)")
+
+	# ── ⑬j 已离开者**照样参与 MVP 评选**(用户裁定 2026-09-19;**不是遗漏**)──
+	# 取向与大乱斗 `_match_winner` 的"已离开但计过分的也算"一致;且他的 ACS 分母是
+	# **实际参与局数**(更小)⇒ 更容易胜出 —— 那也是有意的口径。
+	# 构造(接着 ⑬h 的状态):6 号计过分(300)之后在第 2 局离场,对局又打到第 5 局 ⇒
+	#   他的 ACS = 300/2 = 150,**高于**在场者 1 号(500/5 = 100)。
+	# ★ 判据必须是"MVP **指向他**":把离开者从候选里滤掉的实现会给出 1 号 ——
+	#   只断言"他还在逐人表里"(⑬h 那条)验的是载荷,验不到**候选集**,故必须让他赢一次。
+	_host._round_state = MatchHost.RoundState.MATCH_OVER
+	_host._broadcast_round_state()   # 终局那一份载荷真的走一遍(无 peer ⇒ 只是不发包)
+	_check(_host.mvp_role() == 6,
+			("★ ⑬j **已离开者仍是 MVP 候选**(用户裁定;MVP 实际 %d,期望 6 —— "
+			+ "把 `_left` 从候选里滤掉就会变成 1 号)") % _host.mvp_role())
 
 	_ran_to_end = true
 

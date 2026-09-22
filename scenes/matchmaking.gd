@@ -15,6 +15,8 @@ const OPT_LABEL_W := 440.0
 var _code_edit: LineEdit
 var _auto_refreshed := false   # 「点了看起来未满却已满」后只自动刷新一次,手动刷新再放开
 var _join_sent_ms := 0     # 刚发出 join_room 的时间戳:服务端无任何应答(幽灵房间)时兜底回大厅刷新
+# 刚请求加入的房号,**等服务端答"成功"了才写进 `PvpSession`**(见 `_on_room_joined`;I1)
+var _join_code_pending := ""
 
 
 func _ready() -> void:
@@ -148,6 +150,17 @@ func _join_code(code: String) -> void:
 		_status.text = "请填房间号"
 		return
 	_with_lobby(func() -> void:
+		# ★★ 房号**只暂存**,等服务端答"加进去了"才写进 `PvpSession`(`_on_room_joined`)——
+		#   这就是 I1:原先在**发 RPC 之前**写,于是任何一次**失败**的加入(房间已满 /
+		#   对局已进行中 / 敲错房号)都会把 `room_code` 留成**别人的**那间房,此后
+		#   `can_rejoin_to(我自己的房)` 恒 false ⇒ **自己那间房那一行永远是灰的**,
+		#   且没有任何操作能把它恢复(要等下一次成功加入)。
+		#   ★ 原注释的理由("应答可能先于本行的返回值到,晚一步记就会漏判一次")**不成立**:
+		#     应答到达那一刻 `PvpSession.token` 还是**空串**(它由大厅在开局前才发),
+		#     而 `can_rejoin_to()` 要求 token 非空 ⇒ 那一行那一刻本来就不可能是"我的房"。
+		#   ★ `royale_lobby` / `team_lobby` 一直是这个写法(写在成功信号 `_on_room_state` 里)
+		#     —— 同一概念别留两种实现。三页统一记房号的口子是 `PvpSession.note_room()`。
+		_join_code_pending = code
 		_status.text = "加入房间 %s,等待配对…" % code
 		_join_sent_ms = Time.get_ticks_msec()
 		NetBus.rpc_id(1, "join_room", code))
@@ -162,6 +175,8 @@ func _on_room_list(rooms: Array) -> void:
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
 			continue
+		# ★ 对局中的房 players 记的是**冻结名单**的条数(1v1 恒 2)→ 自然落进 full 那一档排到最后,
+		#   正是想要的观感(在打的排最后,可加入的排前面),不需要为它另写一条排序。
 		(full if int(r.get("players", 2)) >= 2 else partial).append(r)
 	var order: Array = partial + full
 	if order.is_empty():
@@ -173,12 +188,18 @@ func _on_room_list(rooms: Array) -> void:
 	for r in order:
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
+		# ★ 对局中的房**照列**但**点不动**(用户要求:"所有人都可以看到所有房间(包括游戏已经
+		#   进行的房间)…无论在对战还是掉线 C 都不应该进去")。服务端 `join_room` 那边也拒
+		#   (`room.started`)—— **两半都要**:`disabled` 是体验,服务端那道才是保证
+		#   (在「房间号」框里手敲房号、或旧客户端绕过界面,照样进不去)。
+		# ★ 自己那间房是这一档的**唯一例外**(持凭据者点它 = 回局)—— 见紧随其后那一段。
+		var in_match := bool(r.get("in_match", false))
 		var occ: String = ""
 		var names: Array = r.get("names", [])
 		if not names.is_empty():
 			occ = "   玩家: " + ", ".join(names)
 		var btn := Button.new()
-		btn.text = "房间 %s    %d/2%s" % [code, players, occ]
+		btn.text = "房间 %s    %s%s" % [code, "对局中" if in_match else "%d/2" % players, occ]
 		UiFactory.style_control(btn, 16)
 		UiFactory.style_row_button(btn)
 		btn.custom_minimum_size = Vector2(600, 46)
@@ -186,14 +207,27 @@ func _on_room_list(rooms: Array) -> void:
 		# 两行的房间号列 / 人数列天然对齐。原先居中排版,行的长短一变整串就跟着左右漂
 		# ——「1/2」在两行里位置都不同,读起来是一堆居中的字而不是一张表。
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		# 点击方块直接加入(已满的由服务器拒绝并自动刷新列表)
-		btn.disabled = false
-		btn.focus_mode = Control.FOCUS_ALL
-		btn.pressed.connect(func() -> void:
-			Sfx.play("ui")
-			_join_code(code))
+		# ★ 对局中的行**不接 handler、也不吃键盘焦点**:焦点环能落到它上面等于邀请一次注定
+		#   失败的按下(`UiFactory.style_row_button` 早就带了 disabled 的样式,不新增任何颜色)。
+		# ★★ 次序是承重的:**先问「这是我的房吗 + 凭据还在吗」**,这一档**可点**(点了走回局);
+		#    不是我的房,才轮到「对局中 ⇒ disabled」那一档(前置计划交付的既有行为)。
+		#    反过来写(先按 in_match 禁用)= 回局这一档连点都点不到,而**一行报错都没有**
+		#    —— 表现只是"回到大厅后自己那间房是灰的,回不去"。
+		var mine := PvpSession.can_rejoin_to(code)
+		btn.disabled = in_match and not mine
+		if btn.disabled:
+			btn.focus_mode = Control.FOCUS_NONE
+		else:
+			btn.focus_mode = Control.FOCUS_ALL
+			btn.pressed.connect(func() -> void:
+				Sfx.play("ui")
+				# 我的房**且对局中** ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
+				# ★ `in_match` 必须传进去(I2):自己那间**还没开局**的房要走普通加入,
+				#   拿它去回局只会收到一句"凭据失效"(见 `try_rejoin_row` 的注释)。
+				if not try_rejoin_row(code, in_match):
+					_join_code(code))
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个房间(未满优先)" % order.size()
+	_status.text = "共 %d 个房间(未满优先;对局中的照列:自己的房可点(回局),别人的点不动)" % order.size()
 
 
 # 本页比大乱斗多两段:①点了失效/已满的房间 → 提示并自动刷新一次(列表常驻陈旧房间,点了必失败);
@@ -205,6 +239,7 @@ func _on_server_message(t: String) -> void:
 		# 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,
 		# 栈内立刻 NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误
 		_join_sent_ms = 0   # 服务端已明确应答,停掉 join 兜底
+		_join_code_pending = ""   # 加入被拒 ⇒ 那间房与我无关,别留给下一次的成功信号(I1)
 		if not _auto_refreshed:
 			_auto_refreshed = true
 			_request_list.call_deferred("%s → 已自动刷新列表" % t)
@@ -219,10 +254,17 @@ func _on_server_message(t: String) -> void:
 
 
 func _on_room_created(code: String) -> void:
+	# ★ 同 `_on_room_joined`:建房那条路也要记 —— 否则房主从列表里点**自己**那间房时,
+	#   `can_rejoin_to(code)` 因房号不符而假,那一行被当"别人的房"禁用(回局入口对房主失效)。
+	PvpSession.note_room(code)
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 
 
+# 服务端答"加进去了" —— **本页唯一**记加入房号的地方(见 `_join_code` 的 I1 那段)。
 func _on_room_joined(role: int) -> void:
+	if not _join_code_pending.is_empty():
+		PvpSession.note_room(_join_code_pending)
+		_join_code_pending = ""
 	# 注意:此处不清 _join_sent_ms——入房后到 go_match 之间若房主掉线、大厅关房,
 	# 客户端会收不到 go_match 也没有任何后续;保留该兜底计时(超时自动刷新回大厅)。
 	_status.text = "已加入,等待开战……"
@@ -232,6 +274,9 @@ func _on_room_joined(role: int) -> void:
 # 不让「点了幽灵房间」永久停在"正在连接对局服务器/等待配对"。
 # ★ 本页的梯顺序是 [worker → join → 大厅 → claim],与基类注释里登记的一致;**别重排**。
 func _process(_delta: float) -> void:
+	# 0) 回局(路径乙):请求发出后大厅 15s 无应答 —— 早于下面几条梯,因为此刻它们都还没启动
+	if _tick_rejoin_timeout():
+		return
 	# 1) 转连 worker 12s 无连接(死端口):不再只是提示,直接回大厅并刷新
 	if _tick_worker_connect_timeout():
 		return
@@ -290,8 +335,10 @@ func _worker_timeout_msg() -> String:
 	return "对局服务器无响应(房间可能已失效)——已返回大厅并刷新,请换一个房间"
 
 
-# claim 后 25s 仍未 match_start:对方未就绪(房间失效/对端掉线/云服无降级开局)→
+# claim 后 25s 仍未 match_start:对方未就绪(房间失效 / 对端掉线 / worker 中途死掉)→
 # 放弃本局并自动重连大厅,恢复列表/建房能力(原「连接对局服务器」永久卡死)
+# ★ 2026-09-22 删去原文里的「云服无降级开局」——降级开局是**大乱斗**的语义(1v1 本就没有),
+#   而且「云服不支持」这条判断整体是错的(用户裁定:云服同样支持三个联机模式)。
 func _claim_timeout_msg() -> String:
 	return "对手未就绪(房间可能已失效)——已返回大厅并刷新,请换一个房间"
 

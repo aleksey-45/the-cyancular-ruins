@@ -271,7 +271,15 @@ func _try_server_drop(p: Node2D, role: int) -> void:
 	_broadcast_weapon_spawned(ni, role)
 
 
-# 复活:从背包**随机**保留一条,其余在死亡点散开掉出(用户 2026-09-15 裁定)。
+# 从背包**随机**保留一条(并 equip 它),其余在 `p` **当前所在位置**散开掉出。
+# 唯一调用时机 = **倒地边沿**(用户 2026-09-21 裁定「掉落的武器应该在死亡后直接原地掉落」),
+# 调用点有三处,各对应一个模式的倒地边沿: `MatchRound._match_round_tick`(1v1)、
+# `RoyaleHost._match_round_tick`(大乱斗)、`TeamHost._match_round_tick`(3v3)。
+# ★ 为什么不挂在复活流程里(旧实现的写法):`_respawn_player` **先把人瞬移到出生点**,
+#   再调本函数 —— 于是"死亡点"掉落实为"出生点掉落";而且尸体在 2s 倒地窗里继续走物理
+#   (重力/击退衰减/滑行),到复活那一刻它早已不在死亡的那一格。
+# ★ 保留哪一把由 `random_keep_one()` 决定(内部已 equip)—— 倒地时选定的那把会一路跟着
+#   玩家复活,所以 `_respawn_player` 里**不再**需要(也**不许**)再调一次本函数。
 # ★ 不补满弹:与"残弹跟着枪走"一致,也与改动前(服务器复活只 equip)一致。
 func _drop_all_but_one(p: Node2D, role: int) -> void:
 	if p.weapons == null:
@@ -294,8 +302,12 @@ func _drop_all_but_one(p: Node2D, role: int) -> void:
 # ── 初始分布 / 换局重置 ──
 
 # 开阔地板格(1v1 的判据)。★ 联机侧用的是 `SpawnPicker.spawn_candidates()`
-# (2026-09-18 从 RoyaleHost 抽出,那边还要求同层连通区 ≥ OPEN_AREA_MIN,淘汰密封死角)。判据本体仍是
+# (2026-09-18 从 RoyaleHost 抽出;它要求同层连通区 ≥ **`SpawnPicker.area_threshold()`** ——
+# 2026-09-19 起该门槛是**自适应**的:正常图 = `OPEN_AREA_MIN`(20),本图最大连通区 < 20 时按
+# `ADAPTIVE_RATIO` 缩放,见 `core/sim/spawn_picker.gd`)。判据本体仍是
 # `MazeGenerator.is_floor_cell_with_headroom`,别在这儿抄第二份。
+# ★ 本函数**没走** `SpawnPicker`(自己扫全量地板格)⇒ **1v1 的地面武器分布不受那一波改动影响**;
+#   这里只是把注释的指向订正到现行判据(2026-09-19 评审 Minor)。
 func _ground_spawn_cells() -> Array:
 	var out: Array = []
 	if grid.is_empty():

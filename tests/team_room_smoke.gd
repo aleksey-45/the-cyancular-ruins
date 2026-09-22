@@ -1,8 +1,10 @@
 extends SceneTree
 
 # 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)
-# + 两条**源码级**断言(⑥:team_join 里确实调了 team_next_role;⑦:3v3 建房页不得摆回基类那两个
-#   设置区块 / 计数行不得写死容量 / 名单行配色两档共用 —— 见各节的盲区说明)。
+# + **源码级**断言 ⑥~⑨(⑥:team_join 里确实调了 team_next_role;⑦:3v3 建房页不得摆回基类那两个
+#   设置区块 / 计数行不得写死容量 / 名单行配色两档共用;⑧:大厅入口指向的对局场景真的存在且挂了
+#   脚本;⑨:set_my_team 接线 / 分队碰撞层契约 / 小地图两提供器同源 / 队色是比值 —— 见各节的
+#   盲区说明)+ **像素级**断言 ⑩(`BODY_BASE_COLOR` 仍等于 `player.png` 的不透明众数色)。
 # 跑法: "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd
 # 通过 = `TEAM ROOM SMOKE: ALL-OK` 退出 0。
 #
@@ -164,6 +166,7 @@ func _initialize() -> void:
 	#   ★ ② 撞车队:本地玩家的 `collision_layer/mask` 与副本幽灵体的层必须按**队**设
 	#     (`TeamHost.TEAM_ENEMY_LAYER`)。全 1v1/大乱斗式的"全员互挡"在 3v3 是**错的**,
 	#     而错了的表现是 C2 每帧回滚(不像崩溃那样显眼)。
+	#   ★ ⑤ 结算页接线(B 册 Task 7 收的评审尾巴:Task 5/6 的两条调用此前**零常驻覆盖**)。
 	var tg_src := ScanUtil.read("res://scenes/team_game.gd")
 	if tg_src.is_empty():
 		fails.append("读不到 scenes/team_game.gd(Task 6 的两条接线断言无从成立)")
@@ -187,16 +190,27 @@ func _initialize() -> void:
 				fails.append("★ _apply_team_collision 没给 1 队设身体层 2(契约表:1 队 layer=2 / mask=21)")
 			if not coll_body.contains("& ~2"):
 				fails.append("★ _apply_team_collision 没给 1 队**抹掉**玩家层位(写成 `|= 2` 就是全员互挡 = 队友也挡我;服务器那边抹了 → 每帧回滚)")
-			if not coll_body.contains("TeamHost.TEAM_ENEMY_LAYER"):
-				fails.append("★ _apply_team_collision 未使用 TeamHost.TEAM_ENEMY_LAYER(队 B 身体层不能写死 16 —— 层位是全局资源,将来可能挪)")
+			# ★★ 判据必须是**那一行赋值本身**(`collision_layer = TeamHost.TEAM_ENEMY_LAYER`),
+			#   不能是"常量在函数体里出现过" —— 生产里这个常量出现**两次**(2 队的身体层 + 1 队
+			#   掩码里的"挡住队 B"位),所以"把 2 队的层写死成 16"(1 队那处仍留常量)、
+			#   "删掉整个 2 队分支"、两种实现都能把"出现过"喂绿,而它们正是这句话点名的变异。
+			#   钉整行赋值后:写死 16 → 红;删掉 2 队分支 → 红。
+			if not coll_body.contains("collision_layer = TeamHost.TEAM_ENEMY_LAYER"):
+				fails.append("★ _apply_team_collision 没给 2 队设 `collision_layer = TeamHost.TEAM_ENEMY_LAYER`(写死 16 / 删掉 2 队分支都在这儿红;只数'常量在体内出现过'守不住 —— 它在 1 队那一行也出现)")
 			# ★ 两条一起要:`set_ghost_layer(` 单独一条**不够** —— 写成 `set_ghost_layer(2)`
 			#   (副本幽灵体恒在玩家层 = 队友副本也挡我)时它照样在,而那一行正是"按**队**设层"
 			#   与"恒在玩家层"的全部差别(实测:只钉前一条时这条变异**照样绿**)。
 			if not (coll_body.contains("set_ghost_layer(") and coll_body.contains("_ghost_layer_of(")):
 				fails.append("★ _apply_team_collision 没给副本幽灵体按**队**配层(必须 set_ghost_layer(_ghost_layer_of(...));写成 set_ghost_layer(2) 就是队友副本也挡我 → C2 每帧回滚,不报错)")
+		# ★★ `_ghost_layer_of` 的两支**都要钉**:它体内这个常量只出现**一次**,故"按队"那个
+		#   分支被删(改成恒返 `TeamHost.TEAM_ENEMY_LAYER`)时"出现过"照样绿 —— 而那正是
+		#   "队友副本也挡我 → C2 每帧回滚"的实现。判据 = 按队判别 + 1 队那一支 + 常量,三样都要。
 		var ghost_body := ScanUtil.func_body(tcode, "_ghost_layer_of")
-		if ghost_body.is_empty() or not ghost_body.contains("TeamHost.TEAM_ENEMY_LAYER"):
-			fails.append("★ team_game 的 _ghost_layer_of 未按队返回 TeamHost.TEAM_ENEMY_LAYER(副本按**它代表那名玩家**的队设层)")
+		if ghost_body.is_empty():
+			fails.append("★ team_game 里找不到 _ghost_layer_of 的函数体(副本按队配层断言无从成立)")
+		elif not (ghost_body.contains("_team_of_role(") and ghost_body.contains("return 2")
+				and ghost_body.contains("TeamHost.TEAM_ENEMY_LAYER")):
+			fails.append("★ team_game 的 _ghost_layer_of 不是**按队两支**(必须:队号 1 → 层 2,否则 → TeamHost.TEAM_ENEMY_LAYER。恒返 TEAM_ENEMY_LAYER = 队友副本也挡我 → C2 每帧回滚,不报错)")
 		# ③ 小地图两个提供器必须**共用同一套遍历/过滤**(`_minimap_entries()`),不能各写一份 `for`。
 		#    `ui/minimap.gd` 是**按下标**对应颜色(`_other_dots[i].color = cols[i]`)——
 		#    两个数组错位一格就是"队友点画成敌人色",**不报错只误导人**;而错位最容易发生在
@@ -207,12 +221,11 @@ func _initialize() -> void:
 		if not (others_body.contains("_minimap_entries()") and colors_body.contains("_minimap_entries()")):
 			fails.append("★ 小地图两个提供器没共用 _minimap_entries()(各写一份 for = 过滤条件两份;某副本已 free 未摘时两数组错位一格 → 队友点画成敌人色,不报错)")
 		# ④ 队色染到**身体**上必须是 modulate **比值**(队色 / 本体主色),不能直接乘队色。
-		#    ★ 直接乘是 brief 给的初版:蓝身体 `#639BFF` × 橙 `C_TEAM_B` = `#636073` —— 一坨灰紫,
-		#      "一眼看出谁是队友"直接落空(实测图 `.superpowers/sdd/_t6_tint2.png` 第②列)。
+		#    ★ 直接乘是 brief 给的初版:蓝身体 `#639BFF` 乘上**那版队色**(橙,现已改口径为偏绿的青)
+		#      实测是 `#636073` —— 一坨灰紫,"一眼看出谁是队友"直接落空
+		#      (实测图 `.superpowers/sdd/_t6_tint2.png` 第②列)。
 		#      比值则精确等于队色本身(实测逐字节相等),与头顶 ID / 小地图点位**同源同一个常量**。
-		#    ★ 局限(如实登记):本断言只钉**机制**,钉不住 `BODY_BASE_COLOR` 那个**数值**的时效性 ——
-		#      换 player.png 素材后它若不重测,六个人会一起偏色(仍然分得出谁是谁,故更易漏)。
-		#      复测办法写在 `pvp_match_client.gd` 该常量的注释里;要钉死得在探针里真读一次 PNG。
+		#    ★ 本档只钉**机制**(公式是比值);比值的**分母**(`BODY_BASE_COLOR` 那个数值)归 ⑩。
 		var tint_code := ScanUtil.code_only(ScanUtil.read("res://scenes/pvp_match_client.gd"))
 		var tint_body := ScanUtil.func_body(tint_code, "_apply_tint")
 		if tint_body.is_empty():
@@ -220,6 +233,96 @@ func _initialize() -> void:
 		elif not (tint_body.contains("color_override.r / BODY_BASE_COLOR.r")
 				and tint_body.contains("color_override.b / BODY_BASE_COLOR.b")):
 			fails.append("★ 队色染色被改回「直接乘队色」了(蓝身体乘橙 = 灰紫,队色认不出;必须是 队色/本体主色 的比值)")
+		# ⑤ 结算页接线(B 册 Task 7)。挂载/离场本身**收在基类**(`PvpMatchClient._show_result`
+		#   / `_leave_to_main_menu`),本文件只负责"调了"。两条都是"删了/写反了不报错"的那类:
+		#   ① MATCH_OVER 块里必须调 `_show_result()` —— 删了不报错,只是**结算页永不出现**
+		#      (玩家停在对局里,既没有结算页也没有回主菜单的路)。判据取"**那个分支里**有调用",
+		#      不是"文件里出现过" —— 后者对"把调用挪出分支/挪成无条件"恒绿。
+		#   ② `_build_result_payload()` 折载荷时 `_names` 与 `_teams` 的**实参顺序**不得写反。
+		#      ★★ 这是本计划**最安静的错法**:`for_team(round, names, teams, my_team)` 的前三个
+		#      实参**都是 Dictionary**,写反**照样编译、所有常驻测试照样绿**,只有榜渲染成
+		#      乱码/空表。★ 判据取"**每个位置上是什么**"(「两个名字都出现过」对换位**恒绿**)。
+		#   ★ 这正是"只扫基类那两条常驻守卫"照不到的那一半(它们管挂载/离场,不管谁来调)。
+		var tcv := ScanUtil.code_view(tg_src)
+		var cv_lines := tcv.split("\n")
+		var i_mo := -1
+		for k in range(cv_lines.size()):
+			if cv_lines[k].contains("state == 3"):
+				i_mo = k
+				break
+		if i_mo < 0:
+			fails.append("★ team_game 里找不到 MATCH_OVER 分支(`state == 3`)—— 结算页接线断言无从成立")
+		elif not _block_after(cv_lines, i_mo).contains("_show_result()"):
+			fails.append("★ team_game 的 MATCH_OVER 块没调 _show_result()(退场路径被删了?玩家会停在对局里,没有结算页也没有回主菜单的路)")
+		var payload_body2 := ScanUtil.func_body(tcode, "_build_result_payload")
+		if payload_body2.is_empty():
+			fails.append("★ team_game 里找不到 _build_result_payload 的函数体(结算页载荷断言无从成立)")
+		else:
+			var call_at := payload_body2.find("MatchResultPayload.for_team(")
+			if call_at < 0:
+				fails.append("★ team_game._build_result_payload 没调 MatchResultPayload.for_team(3v3 的结算页载荷没了)")
+			else:
+				var open := payload_body2.find("(", call_at)
+				var close := ScanUtil.match_paren(payload_body2, open)
+				if close < 0:
+					fails.append("★ MatchResultPayload.for_team 的调用括号配不上(实参顺序断言无从成立)")
+				else:
+					var args := ScanUtil.split_args(payload_body2.substr(open + 1, close - open - 1))
+					if args.size() < 4:
+						fails.append("★ MatchResultPayload.for_team 的实参只有 %d 个(应 4 个:round_state / names / teams / my_team)" % args.size())
+					else:
+						if not args[1].contains("_names"):
+							fails.append("★ for_team 第 2 个实参不是 _names(签名是 round_state, names, teams, my_team;★ 前三个都是 Dictionary ⇒ 写反照样编译、所有常驻测试照样绿,只有榜渲染成乱码/空表)")
+						if not args[2].contains("_teams"):
+							fails.append("★ for_team 第 3 个实参不是 _teams(同上:names 与 teams 写反是**静默**的)")
+	# ⑩ `BODY_BASE_COLOR` 的**数值**时效性 —— 与 ⑨④ 的"机制"那一半互补(两半缺一不可)。
+	# ★ ⑨④ 钉"公式是**比值**";本档钉那个比值的**分母**仍等于 `player.png` 的主色。换素材忘了
+	#   重测 `BODY_BASE_COLOR` 时:公式照旧对、⑨④ 照旧绿,只有身体**整体偏色** —— 而六个人
+	#   一起偏、仍然分得出谁是谁 ⇒ 这是本批最容易漏的一档(评审原话)。
+	# ★ 复测办法与 `pvp_match_client.gd` 该常量注释里的那条**逐字同源**:按 alpha > 200 过滤
+	#   `player.png` 的全部像素,取出现次数最多的那个 RGB。
+	# ★ 渲染侧另有一份等价断言(`hue_tint_probe` 守卫 D,那里顺带还钉了 `C_TEAM_A` 同色)。
+	#   那条**必须真渲染**(headless 下 `get_viewport().get_texture()` 返 null ⇒ 整条探针在
+	#   截图那一步早退,守卫 D 根本跑不到),故本档不是它的复制品,而是它的 **headless 半边**:
+	#   两种跑法各自够不到对方能跑的场景。
+	var pmc_script = load("res://scenes/pvp_match_client.gd")
+	if pmc_script == null or pmc_script.reload() != OK:
+		# 同 ⑥⑦⑧⑨ 的 load 手法:失败不抛错、给一行 FAIL(否则 `-s` 下走不到 quit() → 挂到 timeout)
+		fails.append("★ 加载/编译 scenes/pvp_match_client.gd 失败(本体主色的数值断言无从成立)")
+	else:
+		var pmc_consts: Dictionary = pmc_script.get_script_constant_map()
+		if not pmc_consts.has("BODY_BASE_COLOR"):
+			fails.append("★ scenes/pvp_match_client.gd 里没有常量 BODY_BASE_COLOR")
+		else:
+			var base_key := _rgb8(pmc_consts["BODY_BASE_COLOR"])
+			# ★ 读**原始 PNG 字节**再解码,不用 `Image.load_from_file`(那条会打一条
+			#   "Loaded resource as image file, this will not work on export" 的引擎 WARNING
+			#   —— 本档要在 `-s`/headless 下干净地跑,警告会淹掉它自己的 FAIL 行)。
+			var png_bytes := FileAccess.get_file_as_bytes("res://assets/textures/player.png")
+			var png := Image.new()
+			if png_bytes.is_empty() or png.load_png_from_buffer(png_bytes) != OK:
+				fails.append("★ 读不出/解不开 assets/textures/player.png(本体主色的数值断言无从成立)")
+			else:
+				var hist: Dictionary = {}
+				for y in range(png.get_height()):
+					for x in range(png.get_width()):
+						var px := png.get_pixel(x, y)
+						if px.a > 200.0 / 255.0:
+							var key := _rgb8(px)
+							hist[key] = int(hist.get(key, 0)) + 1
+				var mode_key := Vector3i(-1, -1, -1)
+				var mode_n := 0
+				for k in hist:
+					if int(hist[k]) > mode_n:
+						mode_n = int(hist[k])
+						mode_key = k
+				if mode_key.x < 0:
+					fails.append("★ player.png 里没有一个不透明像素(本体主色的数值断言无从成立)")
+				elif mode_key != base_key:
+					fails.append(("★ player.png 的不透明众数色 #%02X%02X%02X ≠ BODY_BASE_COLOR #%02X%02X%02X"
+							+ " —— 换素材后没重测本体主色,队色(比值 = 队色 / 主色)会**整体偏**而没人发现"
+							+ "(仍分得出谁是谁,故最容易漏)")
+							% [mode_key.x, mode_key.y, mode_key.z, base_key.x, base_key.y, base_key.z])
 	if fails.is_empty():
 		print("TEAM ROOM SMOKE: ALL-OK")
 		quit(0)
@@ -228,3 +331,33 @@ func _initialize() -> void:
 		for f in fails:
 			print("  - %s" % f)
 		quit(1)
+
+
+# 颜色 → 8bit 量纲的三元组(**逐字节**口径:比对"这个 RGB"而不是浮点色,免得被 eps 放走一格)。
+# `Color` 的 8 位分量来回换算在 GDScript 里是精确的(`99.0/255.0` 与 `roundi(x*255.0)` 互逆),
+# 故这里不需要容差;真需要容差的话说明素材已经被改过了,那正是本断言要报的事。
+func _rgb8(c: Color) -> Vector3i:
+	return Vector3i(roundi(c.r * 255.0), roundi(c.g * 255.0), roundi(c.b * 255.0))
+
+
+# 某行的缩进宽度(制表符/空格都算一列)。
+# ⚠ 入参必须是**保留缩进**的视图(`ScanUtil.code_view`),`code_only` 会 strip_edges ⇒ 恒 0。
+func _indent_of(line: String) -> int:
+	var n := 0
+	while n < line.length() and (line[n] == "\t" or line[n] == " "):
+		n += 1
+	return n
+
+
+# 第 i 行**所属块**的正文:紧随其后、缩进严格更大的那些行(给"某分支里必须调 X"类断言用 ——
+# 判据取"那个分支里",不是"文件里出现过";后者对"把调用挪出分支"恒绿)。
+func _block_after(lines: PackedStringArray, i: int) -> String:
+	if i < 0 or i >= lines.size():
+		return ""
+	var base := _indent_of(lines[i])
+	var out: Array[String] = []
+	for k in range(i + 1, lines.size()):
+		if _indent_of(lines[k]) <= base:
+			break
+		out.append(lines[k])
+	return "\n".join(out)

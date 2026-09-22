@@ -19,29 +19,35 @@ extends RefCounted
 # 发给两个 worker,后者绑定失败退出)。唯一递增 + 占用集合即可保证并发零冲突。
 const WORKER_PORT_BASE := 7800
 const WORKER_PORT_SPAN := 500
-# 端口归还延迟(秒)。不能在房间清空时立刻归还:玩家转连 worker 的瞬间大厅就关房,
-# 而旧 worker 要等客户端真正断开(对局结束/退菜单)才退出,窗口期可达数分钟;
-# 立刻复用会把同端口发给新 worker → bind 冲突,或旧 worker 抢到新局的客户端(跨房间串线)。
-# 极端情况(客户端僵死不断开)由 500 端口轮回兜底。
-# ★ 2026-09-17:30 → **120**。原值 30s **等于**(**不晚于**)断线宽限期(30s)——
-#   ★ 措辞订正:30 == 30 是**相等**而不是"短于",而**相等同样不安全** —— 宽限期到点那**同一刻**
-#   端口就可以被复用,`pick_port` 会把它发给新 worker,而重连的客户端手里攥着旧端口 → 连到
-#   **别的局**(它要的是"宽限期内端口一定还在手里",相等不满足这一点)。
-#   120 = 宽限期 30s + 一局的重连余量,与 royale 的 360s 同一条纪律(那边见 ROYALE_PORT_REUSE_DELAY)。
+# ★★ 端口归还延迟的**职责变了**(2026-09-21,显示方案落地后),但**取值没动**:
+#   今天承重的**不是**这个延迟,而是「**worker 进程活着 ⇒ 房对象与它占的端口都还在**」——
+#   房不再在"客户端转连 worker"那一刻被拆,它活到 worker 退出
+#   (`RoomManager._reclaim_finished_matches`),而端口只在 `teardown_room` 里归还。
+#   于是宽限期一定落在 worker 的存活期内(大乱斗/3v3 的 worker 判据里明确要求
+#   `_grace.size() == 0` 才退),**宽限期内重连的客户端手里那个端口一定还有效**,
+#   与这个常量取多少无关。回局侧"这个端口还是不是我的局"另由凭据里的 `worker_pid`
+#   精确回答(`RejoinRegistry.decision` 的 worker_alive 入参)。
+# ★ 那本常量现在管什么:只兜「worker 刚退出、别立刻把它的端口发给新 worker」这一小段
+#   (给进程收尾与 UDP socket 释放留时间)。30 → 120 的历史教训(30 == 30 是**相等**而不是
+#   "短于",相等同样不安全)留档在此,但那条不等式的**承重地位**已由上面那段取代
+#   —— 守卫只剩 `tests/grace_window_smoke` ⑧ 的一条 belt。
 const WORKER_PORT_REUSE_DELAY := 120.0
 # 大乱斗 worker 的端口归还延迟:按**默认**一局时长(RoyaleHost.MATCH_TIME=300)+ 收尾估,
 # 沿用 30s 会让对局中途端口被发给新 worker(串线/bind 冲突)——自检 M2。
-# ★ 已知边界(照实登记,本次不放宽):房主可用建房页的「一局限时」把一局配到 30 分钟
-# (Settings.royale_match_min → player_options 的 match_time → RoyaleHost),此时本延迟短于
-# 一局,端口可能在**旧 worker 还在跑**时就被复用。与 sweep 在局宽限同一根因(都拿默认时长
-# 当上界),修法同样要让界读**本局实际时长**(只在 worker 里)——见 _sweep_stale_rooms 的注释。
+# (房主可用建房页的「一局限时」改本局时长:Settings.royale_match_min → player_options 的
+#  match_time → RoyaleHost。)
+# ★ 已知边界(照实登记,本次不放宽):房主可用建房页把一局配到 30 分钟。★ 现在这条延迟
+#   **不再是**"端口会不会被提前复用"的界了(房活到 worker 退出 ⇒ 端口一直被占着)——
+#   但 `_sweep_stale_rooms` 的在局宽限**仍是**按默认时长估的,那一处的边界照旧,见该函数注释。
 const ROYALE_PORT_REUSE_DELAY := 360.0
-# 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀(比 1v1 长得多),与 royale 同档。
-# ★ 已知边界照旧(与 WORKER_PORT_REUSE_DELAY 的同款问题):计时从**房间拆除(≈开局)**起算,
-#   不是从局内断线起算 —— 一局中后段掉线时端口可能已被复用。
+# 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀(比 1v1 长得多),与大乱斗同档。
+# ★ 2026-09-21 起,"计时起点"这句话不再适用:房只在**对局结束**(worker 退出)后被拆,
+#   所以本值只兜"worker 刚退"那一小段(与另两档同一条职责)。
+# ★ 别把它单独并回一个更小的数:三档一起动、一起复核(理由见 WORKER_PORT_REUSE_DELAY 上方)。
 const TEAM_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
+var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
 
 
 # 立刻把端口还给池子(不等 worker 退出)。调用方语义见 room_manager 的 TEARDOWN_* 三档。
@@ -49,6 +55,9 @@ func release_now(port: int) -> void:
 	if port <= 0:
 		return
 	_worker_ports.erase(port)
+	# ★ 必须一起清:pid 与"端口在不在用"是同一份事实。只清一半的后果是回收梯把一个
+	#   已经结束(甚至端口已被复用给别的局)的对局判成"还在" → 房永不被回收,一直挂在列表里。
+	_worker_pids.erase(port)
 
 
 # 分配一个当前未占用的 worker 端口(唯一递增 + 占用集合;见类头注释,勿用 bind 探测)。
@@ -62,6 +71,22 @@ func pick_port() -> int:
 			_worker_ports[p] = true
 			return p
 	return -1
+
+
+# 本端口上那具 worker 的 pid(没拉起过 / 已归还 → 0)。
+# ★ 谁需要它:大厅的「这一局结束了吗」判据(`RoomManager._reclaim_finished_matches`)——
+#   三种模式的 worker 都在对局结束时自己退,"进程还在吗"是唯一的精确答案;任何按
+#   "一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口与列表位)。
+func pid_of(port: int) -> int:
+	return int(_worker_pids.get(port, 0))
+
+
+# 这个 pid 还在跑吗?★ **pid <= 0 一律 false**(= "不在")。理由:pid 的登记发生在
+# `OS.create_process` 成功**之后**,而 `started/in_match = true` 在它之前 —— 中间那个窗口
+# 里 pid 还是 0;判"活着"会让"开局那一瞬被自己的回收梯拆掉"成为可能,判"不在"最多让那一局
+# 晚一个梯周期(30s)才被发现(那时它已经有 pid 了)。
+static func pid_alive(pid: int) -> bool:
+	return pid > 0 and OS.is_process_running(pid)
 
 
 # ── worker 的引擎日志落盘(两个 spawn 共用)──
@@ -97,6 +122,8 @@ func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 		args.append("--ai-roles")
 		args.append(",".join(roles))
 	var pid := OS.create_process(exe, args)
+	if pid > 0:
+		_worker_pids[port] = pid
 	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s 日志=%s" % [pid, port,
 			str(OS.has_feature("editor")), str(ai_roles), log_path(port)])
 	return pid > 0
@@ -135,6 +162,8 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	if OS.get_cmdline_user_args().has("--test-ground-teleport"):
 		args.append("--test-ground-teleport")
 	var pid := OS.create_process(exe, args)
+	if pid > 0:
+		_worker_pids[port] = pid
 	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
 			str(roles), str(ai_roles), log_path(port)])
 	return pid > 0
@@ -182,6 +211,8 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 				"--port", str(port), "--roles", ",".join(role_strs),
 				"--teams", ",".join(team_strs)])
 	var pid := OS.create_process(exe, args)
+	if pid > 0:
+		_worker_pids[port] = pid
 	print("[lobby] spawn team worker pid=%d port=%d roles=%s teams=%s 日志=%s" % [pid, port,
 			str(roles), str(teams), log_path(port)])
 	return pid > 0
