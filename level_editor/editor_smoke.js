@@ -495,6 +495,154 @@ function countNonZero(map, L) {
        '★★ 视图入口的**拒绝**同样上报这条通道,且交回的 promise 已收口(调用方忘了 await 也不会冒' +
        '"未处理的 promise 拒绝"):' + JSON.stringify(seen));
     Editor.setErrorSink(null);          // 还原默认通道(后面的断言不再借它)
+
+    // ==== 相位 ⑫ 历史 / 剪贴板 / 选区移动(A1 的重写)====
+    // 差量历史:200 步 + 字节预算(闸 1)
+    const hist = Editor.createHistory({});
+    eq(Editor.MAX_UNDO, 200, 'MAX_UNDO = 200(规格 §4.3 闸 1)');
+    eq(hist.depth(), 0, '新历史是空的');
+    const hm = Core.createMap('h', 2, 1);
+    hist.push({ kind: 'cells', layer: Core.LAYER_SCENE, idx: Int32Array.from([0]),
+                before: Uint32Array.from([0]), after: Uint32Array.from([Core.neutralDesc(1)]) });
+    eq(hist.depth(), 1, 'push 之后深度 1');
+    ok(hist.undo() !== null, 'undo 返回被撤销的那一条');
+    eq(hist.depth(), 0, 'undo 之后深度 0');
+    eq(hist.redoDepth(), 1, 'redo 栈里有 1 条');
+    ok(hist.redo() !== null, 'redo 返回被重做的那一条');
+    hist.push(null);
+    eq(hist.depth(), 1, '★ push(null) 不记(空操作不进历史)');
+
+    // 200 步上限:第 201 步起把最老的挤掉
+    const h2 = Editor.createHistory({ maxSteps: 3 });
+    [[0, 1], [0, 2], [0, 3], [0, 4]].forEach(function (pair) {
+      h2.push({ kind: 'cells', layer: Core.LAYER_SCENE, idx: Int32Array.from([pair[0]]),
+                before: Uint32Array.from([pair[1] - 1]), after: Uint32Array.from([pair[1]]) });
+    });
+    eq(h2.depth(), 3, '★ maxSteps 3:第 4 条挤掉最老的,深度守住 3');
+    const hm2 = Core.createMap('h', 2, 1);
+    hm2.layers[Core.LAYER_SCENE].desc[0] = 4;
+    Editor.applyEntry(hm2, h2.undo(), -1);
+    eq(hm2.layers[Core.LAYER_SCENE].desc[0], 3, '撤销写回 before');
+    Editor.applyEntry(hm2, h2.undo(), -1);
+    Editor.applyEntry(hm2, h2.undo(), -1);
+    eq(h2.depth(), 0, '撤到底');
+    eq(hm2.layers[Core.LAYER_SCENE].desc[0], 1, '★★ 只能撤到"最老的那条"为止(被挤掉的那步回不去)');
+    eq(h2.undo(), null, '空历史 undo → null(不抛)');
+
+    // 字节预算:超了就从最老的开始丢
+    const h3 = Editor.createHistory({ maxSteps: 200, maxBytes: 800 });
+    const mkDiff = function (n) {
+      return { kind: 'cells', layer: Core.LAYER_SCENE, idx: new Int32Array(n),
+               before: new Uint32Array(n), after: new Uint32Array(n) };
+    };
+    h3.push(mkDiff(20));                       // 12 + 20*4*3 = 252 字节
+    h3.push(mkDiff(20));
+    h3.push(mkDiff(20));
+    eq(h3.depth(), 3, '★ 字节预算内:3 条都留着(756 ≤ 800)');
+    h3.push(mkDiff(20));
+    ok(h3.depth() === 3 && h3.bytes() <= 800, '★★ 超字节预算 → 丢最老的,且字节数回落到预算内(实得 ' +
+       h3.depth() + ' 条 / ' + h3.bytes() + ' 字节)');
+    ok(Editor.bytesOfEntry(mkDiff(20)) > 0, 'bytesOfEntry 给出正数(字节预算是按它算的)');
+
+    // 整图级(改尺寸)也能撤
+    const hw = Core.createMap('w', 2, 1);
+    hw.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(4);
+    const wd = Editor.wholeDiff(hw, 'resize');
+    const resized = Editor.resizeMap(hw, 4, 3).map;
+    hw.subCols = resized.subCols; hw.subRows = resized.subRows; hw.layers = resized.layers;
+    wd.seal();
+    ok(wd.entry.bytes > 0, '★ 整图级差量记了字节数(字节预算才管得住它)');
+    Editor.applyEntry(hw, wd.entry, -1);
+    eq(hw.subCols, 8, '★★ 撤销改尺寸:子格数回退');
+    eq(hw.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '内容也回退');
+
+    // spawn 差量能撤(审计 A9)
+    const hsp = Core.createMap('s', 4, 3);
+    const sd = Editor.addSpawn(hsp, 'player', 1, 1);
+    eq(hsp.players.length, 1, '放了出生点');
+    Editor.applyEntry(hsp, sd, -1);
+    eq(hsp.players.length, 0, '★★ 撤销:出生点没了(A9 —— 出生点/敌人的增删必须在历史里)');
+    Editor.applyEntry(hsp, sd, +1);
+    eq(hsp.players.length, 1, '重做:出生点回来了');
+
+    // 差量 → 格坐标列表(交给 renderer.editCells 作废 ③)
+    const mdk = Core.createMap('k', 2, 1);          // 8×4 子格:下标 0/5/6 落在 (0,0) 与 (1,0)
+    const dk = Editor.paintCells(mdk, Core.LAYER_SCENE, [0, 5, 6], function () { return Core.neutralDesc(2); });
+    eq(Editor.diffCells(mdk, dk).length, 2, '★ diffCells:下标 0/5/6 → 2 个不同的格(0,0) 与 (1,0)');
+    eq(Editor.diffCells(mdk, dk)[0], { cx: 0, cy: 0 }, 'diffCells 的第一个是 (0,0)');
+    eq(Editor.diffCells(mdk, dk)[1], { cx: 1, cy: 0 }, 'diffCells 的第二个是 (1,0)');
+
+    // ==== 剪贴板 ====
+    await (async function () {
+      const cm = Core.createMap('c', 2, 1);           // 8×4 子格
+      cm.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(3);
+      cm.layers[Core.LAYER_SCENE].desc[1] = Core.neutralDesc(4);
+      const clip = Editor.copyRegion(cm, Core.LAYER_SCENE, { x: 6, y: 0, w: 4, h: 4 });
+      eq(clip.w, 4, 'clip 的宽');
+      eq(clip.kind, 'tex', '纹理层的剪贴板是描述符');
+      // ★ 选区跨接缝:{6,7} + {0,1}:后两列必须是绕回来的那一侧
+      eq(clip.desc[2], Core.neutralDesc(3), '★★ 复制跨环面:选区的第 3 列绕回 x=0');
+      eq(clip.desc[3], Core.neutralDesc(4), '★★ 第 4 列绕回 x=1');
+      eq(clip.desc[0], 0, '第 1 列(x=6)本来就是空的');
+
+      const pm = Core.createMap('p', 3, 1);           // 12×4
+      const out = Editor.pasteRegion(pm, Core.LAYER_SCENE, clip, 2, 2);
+      ok(out.ok === true, '粘贴到纹理层成功');
+      eq(pm.layers[Core.LAYER_SCENE].desc[2 * 12 + 4], Core.neutralDesc(3), '★ 粘贴落在目标位置');
+      Editor.applyEntry(pm, out.diff, -1);
+      eq(Editor.cellCountOf(pm, Core.LAYER_SCENE), 0, '撤销之后粘贴的内容没了');
+
+      const bad = Editor.pasteRegion(pm, Core.LAYER_BG, clip, 0, 0);
+      eq(bad.ok, false, '★★ 纹理层的剪贴板**不能**粘到背景层(决定 ④:两种数据类型不互转)');
+      ok(bad.why && bad.why.length > 0, '拒绝时给出原因(给状态栏用,不静默)');
+
+      const bm = Core.createMap('b', 2, 1);
+      bm.layers[Core.LAYER_BG].rgba[0] = 0x11223344;
+      const bclip = Editor.copyRegion(bm, Core.LAYER_BG, { x: 0, y: 0, w: 2, h: 2 });
+      eq(bclip.kind, 'color', '背景层的剪贴板是 RGBA');
+      const bout = Editor.pasteRegion(bm, Core.LAYER_BG, bclip, 4, 0);
+      eq(bm.layers[Core.LAYER_BG].rgba[0], 0x11223344, '★ 背景层粘回背景层可以');
+      ok(bout.diff !== null, '背景粘贴产出差量');
+      const texToBg = Editor.pasteRegion(bm, Core.LAYER_BG, clip, 0, 0);
+      eq(texToBg.ok, false, '反过来也一样:纹理剪贴板粘不进背景层');
+    })();
+
+    // ==== 选区移动(A1 的重写)====
+    (function () {
+      const mm = Core.createMap('m', 2, 2);            // 8×8 子格
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) {
+        mm.layers[Core.LAYER_SCENE].desc[y * 8 + x] = Core.neutralDesc(6);
+      }
+      const before = Editor.cellCountOf(mm, Core.LAYER_SCENE);
+      eq(before, 32, '前置:左半边 32 个子格被填');
+      const sel = { x: 0, y: 0, w: 4, h: 8 };
+      const d = Editor.moveRegion(mm, Core.LAYER_SCENE, sel, 2, 0);
+      eq(Editor.cellCountOf(mm, Core.LAYER_SCENE), 32,
+         '★★ A1:移动之后**一个格子都没丢**(旧实现把被裁掉的列静默删掉)');
+      eq(mm.layers[Core.LAYER_SCENE].desc[0], 0, '源区里没被目标覆盖的列被腾空');
+      eq(mm.layers[Core.LAYER_SCENE].desc[2], Core.neutralDesc(6), '★ 目标列拿到了源列的内容');
+      eq(mm.layers[Core.LAYER_SCENE].desc[5], Core.neutralDesc(6), '★ 目标列的最右一格也在');
+      eq(mm.layers[Core.LAYER_SCENE].desc[6], 0, '★ A1 的原始病灶:map 宽 8,目标列到 5 为止,x=6/7 不该被动');
+
+      const mm2 = Core.createMap('m', 2, 2);
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) {
+        mm2.layers[Core.LAYER_SCENE].desc[y * 8 + x] = Core.neutralDesc(6);
+      }
+      const snap = Array.from(mm2.layers[Core.LAYER_SCENE].desc);
+      eq(Editor.moveRegion(mm2, Core.LAYER_SCENE, { x: 0, y: 0, w: 4, h: 8 }, 1000, 0), null,
+         '★★ 拖动超出整幅地图:环面折算后是恒等位移 ⇒ 返回 null(旧实现会在这里把内容裁没)');
+      eq(Array.from(mm2.layers[Core.LAYER_SCENE].desc).join(','), snap.join(','),
+         '★★ 而且地图逐格没变(不是"返回 null 但偷偷改了")');
+
+      // 镜像
+      const mi = Core.createMap('i', 2, 2);
+      mi.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(3);
+      mi.layers[Core.LAYER_SCENE].desc[3] = Core.neutralDesc(4);
+      const md = Editor.mirrorRegion(mi, Core.LAYER_SCENE, { x: 0, y: 0, w: 4, h: 4 }, 'h');
+      eq(mi.layers[Core.LAYER_SCENE].desc[3], Core.neutralDesc(3), '★ 水平镜像:x=0 的内容到了 x=3');
+      eq(mi.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '★ 水平镜像:x=3 的内容到了 x=0');
+      ok(md !== null, '镜像产出差量');
+    })();
   } catch (err) {
     console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
     console.error(err && err.stack ? err.stack : String(err));

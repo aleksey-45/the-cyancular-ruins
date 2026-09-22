@@ -504,6 +504,245 @@ globalThis.Editor = (function () {
   }
   function hasSelection(st) { return !!(st && st.selection); }
 
+  // ── 历史(差量撤销;闸 1:200 步 + 字节预算)──
+  // ★ 差量而不是整图快照:一张 125×75 的图是 2.4MB,200 份就是 480MB。
+  // ★ 但"改尺寸/换图"这类操作没法差量(table 级),故留一条整图快照的通道
+  //   (kind:'whole'),并按**字节**记账 —— 字节预算才是真闸,步数只是廉价上界。
+  var MAX_UNDO = 200;
+  var MAX_UNDO_BYTES = 64 * 1024 * 1024;
+
+  function bytesOfEntry(e) {
+    if (!e) return 0;
+    if (e.kind === 'cells') return 12 + e.idx.length * 4 + e.before.length * 4 + e.after.length * 4;
+    if (e.kind === 'spawn') {
+      var n = (e.before ? e.before.players.length + e.before.enemies.length : 0) +
+              (e.after ? e.after.players.length + e.after.enemies.length : 0);
+      return 64 + 32 * n;
+    }
+    if (e.kind === 'whole') return 64 + (e.bytes || 0);
+    return 64;
+  }
+
+  function createHistory(opts) {
+    opts = opts || {};
+    var maxSteps = opts.maxSteps === undefined ? MAX_UNDO : opts.maxSteps;
+    var maxBytes = opts.maxBytes === undefined ? MAX_UNDO_BYTES : opts.maxBytes;
+    var undos = [], redos = [], total = 0;
+    function trim() {
+      while (undos.length > maxSteps) { total -= bytesOfEntry(undos.shift()); }
+      // ★ 至少留一条:一条都留不住时"撤销"这个功能就整体失效了(比多占几 MB 更糟)
+      while (total > maxBytes && undos.length > 1) { total -= bytesOfEntry(undos.shift()); }
+    }
+    return {
+      push: function (e) {
+        if (!e) return false;                       // 空操作不进历史
+        undos.push(e); total += bytesOfEntry(e);
+        redos.length = 0;                           // ★ 新编辑之后重做链断掉(标准语义)
+        trim();
+        return true;
+      },
+      undo: function () {
+        if (!undos.length) return null;
+        var e = undos.pop(); total -= bytesOfEntry(e);
+        redos.push(e);
+        return e;
+      },
+      redo: function () {
+        if (!redos.length) return null;
+        var e = redos.pop(); total += bytesOfEntry(e);
+        undos.push(e);
+        return e;
+      },
+      depth: function () { return undos.length; },
+      redoDepth: function () { return redos.length; },
+      bytes: function () { return total; },
+      clear: function () { undos.length = 0; redos.length = 0; total = 0; },
+    };
+  }
+
+  // 整图快照(只给"改尺寸/换图"这类整图级操作用)
+  function snapshotMap(map) {
+    var layers = [];
+    for (var L = 0; L < Core.LAYER_COUNT; L++) {
+      var lay = map.layers[L];
+      if (!lay) { layers.push(null); continue; }
+      layers.push(lay.kind === 'tex' ? { kind: 'tex', desc: new Uint32Array(lay.desc) }
+                                     : { kind: 'color', rgba: new Uint32Array(lay.rgba) });
+    }
+    var sp = snapshotSpawns(map);
+    return { subCols: map.subCols, subRows: map.subRows, layers: layers,
+             players: sp.players, enemies: sp.enemies, comments: map.comments.slice() };
+  }
+  function bytesOfSnapshot(s) {
+    var n = 0;
+    for (var L = 0; L < s.layers.length; L++) {
+      var lay = s.layers[L];
+      if (!lay) continue;
+      n += (lay.kind === 'tex' ? lay.desc.length : lay.rgba.length) * 4;
+    }
+    return n;
+  }
+  // 用法:var wd = wholeDiff(map, 'resize'); …做完改动…; wd.seal(); history.push(wd.entry);
+  function wholeDiff(map, tag) {
+    var entry = { kind: 'whole', tag: tag || '', before: snapshotMap(map), bytes: 0 };
+    entry.bytes = bytesOfSnapshot(entry.before);
+    return {
+      entry: entry,
+      seal: function () {
+        entry.after = snapshotMap(map);
+        entry.bytes += bytesOfSnapshot(entry.after);
+        return entry;
+      },
+    };
+  }
+  function applyEntry(map, e, dir) {
+    if (!e) return;
+    var i;
+    if (e.kind === 'cells') {
+      var arr = Render.layerArray(map, e.layer);
+      if (!arr) return;
+      var src = dir < 0 ? e.before : e.after;
+      for (i = 0; i < e.idx.length; i++) arr[e.idx[i]] = src[i];
+      return;
+    }
+    if (e.kind === 'spawn') {
+      var v = dir < 0 ? e.before : e.after;
+      map.players = v.players.map(function (p) { return { x: p.x, y: p.y }; });
+      map.enemies = v.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+      return;
+    }
+    if (e.kind === 'whole') {
+      var s = dir < 0 ? e.before : e.after;
+      if (!s) return;
+      map.subCols = s.subCols; map.subRows = s.subRows;
+      map.layers = s.layers.map(function (lay) {
+        if (!lay) return null;
+        return lay.kind === 'tex' ? { kind: 'tex', desc: lay.desc } : { kind: 'color', rgba: lay.rgba };
+      });
+      map.players = s.players.map(function (p) { return { x: p.x, y: p.y }; });
+      map.enemies = s.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+      map.comments = s.comments.slice();
+    }
+  }
+  // 差量 → 去重后的格坐标列表(交给 renderer.editCells 作废 ③ 与重画缩略图)
+  function diffCells(map, e) {
+    if (!e || e.kind !== 'cells') return [];
+    var seen = new Set(), out = [];
+    for (var i = 0; i < e.idx.length; i++) {
+      var X = e.idx[i] % map.subCols, Y = Math.floor(e.idx[i] / map.subCols);
+      var cx = Math.floor(X / Core.SUB_PER_CELL), cy = Math.floor(Y / Core.SUB_PER_CELL);
+      var k = cx + '/' + cy;
+      if (seen.has(k)) continue;
+      seen.add(k); out.push({ cx: cx, cy: cy });
+    }
+    return out;
+  }
+  function cellCountOf(map, L) {
+    var a = Render.layerArray(map, L);
+    if (!a) return 0;
+    var n = 0;
+    for (var i = 0; i < a.length; i++) if (a[i] !== 0) n++;
+    return n;
+  }
+
+  // ── 剪贴板(跨图层粘贴只允许"纹理 ↔ 纹理")──
+  function copyRegion(map, L, sel) {
+    if (!sel) return null;
+    var arr = Render.layerArray(map, L);
+    var n = sel.w * sel.h, x, y;
+    if (L === Core.LAYER_BG) {
+      var rgba = new Uint32Array(n);
+      for (y = 0; y < sel.h; y++) {
+        for (x = 0; x < sel.w; x++) rgba[y * sel.w + x] = arr ? arr[idxOf(map, sel.x + x, sel.y + y)] : 0;
+      }
+      return { kind: 'color', w: sel.w, h: sel.h, rgba: rgba };
+    }
+    var desc = new Uint32Array(n);
+    for (y = 0; y < sel.h; y++) {
+      for (x = 0; x < sel.w; x++) desc[y * sel.w + x] = arr ? arr[idxOf(map, sel.x + x, sel.y + y)] : 0;
+    }
+    return { kind: 'tex', w: sel.w, h: sel.h, desc: desc };
+  }
+  function clipSize(clip) { return clip ? { w: clip.w, h: clip.h } : { w: 0, h: 0 }; }
+  // ★ 决定 ④:两种数据类型不互相猜。拒绝时**给出原因**(状态栏要显示),不静默。
+  function pasteRegion(map, L, clip, X, Y) {
+    if (!clip) return { ok: false, why: '剪贴板是空的' };
+    var isColorLayer = (L === Core.LAYER_BG);
+    if (isColorLayer && clip.kind !== 'color') {
+      return { ok: false, why: '剪贴板是纹理层内容,不能粘到背景层(两种数据类型不互转)' };
+    }
+    if (!isColorLayer && clip.kind !== 'tex') {
+      return { ok: false, why: '剪贴板是背景层的颜色,不能粘到纹理层' };
+    }
+    var targets = [], values = [], x, y;
+    for (y = 0; y < clip.h; y++) {
+      for (x = 0; x < clip.w; x++) {
+        targets.push(idxOf(map, Math.floor(X) + x, Math.floor(Y) + y));
+        values.push(clip.kind === 'tex' ? clip.desc[y * clip.w + x] : clip.rgba[y * clip.w + x]);
+      }
+    }
+    var order = 0;
+    var diff = paintCells(map, L, targets, function () { return values[order++]; });
+    return { ok: true, diff: diff };
+  }
+
+  // ── 选区移动(A1 的重写)──
+  // ★ 旧实现的病灶:maxDX = 宽 − 选区宽 **漏了 − 选区.x**,拖动越界后
+  //   moveRegion(先清源区再贴目标区)把被裁掉的列静默删掉。
+  // ★ 新实现没有"裁剪"这一步:目标格 = 源格 + 偏移(两边都环面折算),
+  //   源区里**没被目标覆盖**的格被清空。于是"拖到图外"在环面上就是恒等位移,
+  //   结果是"什么都没变"而不是"内容被裁掉"。
+  function moveRegion(map, L, sel, dx, dy) {
+    if (!sel) return null;
+    var arr = Render.layerArray(map, L);
+    if (!arr) return null;
+    var from = new Map(), to = new Map();
+    var x, y;
+    for (y = 0; y < sel.h; y++) {
+      for (x = 0; x < sel.w; x++) {
+        var si = idxOf(map, sel.x + x, sel.y + y);
+        var di = idxOf(map, sel.x + x + dx, sel.y + y + dy);
+        from.set(si, true);
+        to.set(di, arr[si]);                       // ★ 一次性算出目标值(基于**旧**数组读)
+      }
+    }
+    var keys = new Set();
+    to.forEach(function (_, k) { keys.add(k); });
+    from.forEach(function (_, k) { keys.add(k); });   // 源区里没被覆盖的格 → 写空气
+    var idx = [], before = [], after = [];
+    keys.forEach(function (k) {
+      var nv = to.has(k) ? to.get(k) : 0;
+      if (arr[k] === nv) return;
+      idx.push(k); before.push(arr[k]); after.push(nv);
+    });
+    for (var i = 0; i < idx.length; i++) arr[idx[i]] = after[i];
+    if (!idx.length) return null;
+    return { kind: 'cells', layer: L, idx: Int32Array.from(idx),
+             before: Uint32Array.from(before), after: Uint32Array.from(after), tag: 'move' };
+  }
+
+  // ── 镜像(规格 §4.4 的选框:可移动 / 删除 / 复制粘贴 / 镜像)──
+  function mirrorRegion(map, L, sel, axis) {
+    if (!sel) return null;
+    var arr = Render.layerArray(map, L);
+    if (!arr) return null;
+    var idx = [], before = [], after = [], x, y;
+    for (y = 0; y < sel.h; y++) {
+      for (x = 0; x < sel.w; x++) {
+        var sx = (axis === 'h') ? (sel.w - 1 - x) : x;
+        var sy = (axis === 'v') ? (sel.h - 1 - y) : y;
+        var di = idxOf(map, sel.x + x, sel.y + y);
+        var si = idxOf(map, sel.x + sx, sel.y + sy);
+        if (arr[di] === arr[si]) continue;
+        idx.push(di); before.push(arr[di]); after.push(arr[si]);
+      }
+    }
+    for (var i = 0; i < idx.length; i++) arr[idx[i]] = after[i];
+    if (!idx.length) return null;
+    return { kind: 'cells', layer: L, idx: Int32Array.from(idx),
+             before: Uint32Array.from(before), after: Uint32Array.from(after), tag: 'mirror' };
+  }
+
   // ── 图集(Task 3:结构图 一次装进来;换图由 Task 8 的"重载贴图"按钮触发)──
   function loadAtlas() {
     return new Promise(function (resolve, reject) {
@@ -780,5 +1019,10 @@ globalThis.Editor = (function () {
     snapshotSpawns: snapshotSpawns, spawnDiff: spawnDiff, spawnIndexAt: spawnIndexAt,
     addSpawn: addSpawn, removeSpawn: removeSpawn, clearSpawns: clearSpawns,
     commandFor: commandFor, hasSelection: hasSelection,
+    MAX_UNDO: MAX_UNDO, MAX_UNDO_BYTES: MAX_UNDO_BYTES, bytesOfEntry: bytesOfEntry,
+    createHistory: createHistory, snapshotMap: snapshotMap, bytesOfSnapshot: bytesOfSnapshot,
+    wholeDiff: wholeDiff, applyEntry: applyEntry, diffCells: diffCells, cellCountOf: cellCountOf,
+    copyRegion: copyRegion, clipSize: clipSize, pasteRegion: pasteRegion,
+    moveRegion: moveRegion, mirrorRegion: mirrorRegion,
   };
 })();
