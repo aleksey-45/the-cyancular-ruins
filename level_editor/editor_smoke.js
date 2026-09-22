@@ -759,6 +759,182 @@ function countNonZero(map, L) {
         Editor.mirrorRegion(mi, Core.LAYER_SCENE, { x: 0, y: 0, w: 4, h: 4 }, 'x');
       }, '★★ 非法镜像轴:当场拒绝并给出原因(旧实现退化成恒等、静默回 null)', '镜像轴非法');
     })();
+
+    // ==== 相位 ⑬ 画布交互接线:真装一遍 installInteraction,按**副作用**判 ====
+    // ★ Task 7 的 399 行接线(指针 / 热键 / 选区拖动)此前一条断言都没有。本相位把
+    //   `installInteraction()` 真装一遍(它只碰 `app.canvas` 与 `window`,两处都在这里替身掉),
+    //   然后**直接调它挂上去的处理器** —— 处理器本体、命令分派、落笔路径全是生产代码,
+    //   断言读的是它们真做出来的副作用(工具换了没 / 地图改了没 / 哪条渲染入口被调了)。
+    // ★ 三个替身,别的都不碰:window.addEventListener(抓注册的处理器)、document(只
+    //   getElementById / querySelectorAll 两个入口,一律回空)、一个**记账**的渲染器(app.r)。
+    //   ★ 收尾时把 app 的四样还原 + 断言**一条错误都没进过 sink**(处理器是在 `guard` 里跑的,
+    //     替身少了哪个方法都会变成一条被吞掉的异常 —— 那条断言就是防这个的)。
+    const savedAdd = globalThis.addEventListener;
+    const savedDoc13 = globalThis.document;
+    const savedR13 = Editor.app.r, savedMap13 = Editor.app.map, savedCv13 = Editor.app.canvas;
+    const handlers = {};
+    const errs13 = [];
+    globalThis.addEventListener = function (type, fn) { handlers[type] = fn; };
+    globalThis.document = { getElementById: function () { return null; },
+                            querySelectorAll: function () { return []; } };
+    Editor.setErrorSink(function (t) { errs13.push(String(t)); });
+    const calls13 = [];
+    let sel13 = null;
+    Editor.app.canvas = {
+      setPointerCapture: function () {},
+      getBoundingClientRect: function () { return { left: 0, top: 0 }; },
+      addEventListener: function (type, fn) { this['on' + type] = fn; },
+    };
+    // ★ 记账型渲染器:只记"哪条路被调了" + 一份可读写的选区(地图仍是**真** core 的地图,
+    //   故落笔/搬动是真改数据 —— 断言能落到像素以外的东西上)。
+    Editor.app.r = {
+      selection: function () { return sel13; },
+      setSelection: function (s) {
+        calls13.push('setSelection');
+        sel13 = s ? { x: s.x, y: s.y, w: s.w, h: s.h } : null;
+      },
+      setSelDrag: function () { calls13.push('setSelDrag'); },
+      setPreview: function () { calls13.push('setPreview'); },
+      layer: function () { return Core.LAYER_SCENE; },
+      setLayer: function () { calls13.push('setLayer'); },
+      screenToSub: function () { return { X: 5, Y: 5 }; },        // 恒落格 (1,1)
+      editCells: function () { calls13.push('editCells'); },
+      render: function () { calls13.push('render'); },
+      invalidateAll: function () { calls13.push('invalidateAll'); return Promise.resolve(); },
+    };
+    try {
+      Editor.installInteraction();
+      ok(typeof handlers.keydown === 'function' && typeof Editor.app.canvas.onpointerdown === 'function' &&
+         typeof Editor.app.canvas.onpointerup === 'function',
+         '⑬ 前提:installInteraction 在 window 上挂了 keydown、在画布上挂了 pointerdown/up' +
+         '(keydown=' + typeof handlers.keydown + ')');
+
+      // ── ⑬a ★★ 热键不许劫持输入框(评审发现 4)──
+      const pressKey = function (k, target) {
+        const ev = { key: k, target: target, ctrl: false, meta: false, shift: false, altKey: false };
+        ev.defaultPrevented = false;
+        ev.preventDefault = function () { ev.defaultPrevented = true; };
+        handlers.keydown(ev);
+        return ev;
+      };
+      ok(Editor.isTypingTarget({ tagName: 'INPUT' }) && Editor.isTypingTarget({ tagName: 'TEXTAREA' }) &&
+         Editor.isTypingTarget({ tagName: 'SELECT' }) && Editor.isTypingTarget({ isContentEditable: true }) &&
+         !Editor.isTypingTarget({ tagName: 'BODY' }) && !Editor.isTypingTarget(null) && !Editor.isTypingTarget({}),
+         '★ isTypingTarget:input/textarea/select/contenteditable 四种都算,body/null/空对象都不算');
+      Editor.app.st.tool = 'brush';
+      const evBody = pressKey('l', { tagName: 'BODY' });
+      ok(evBody.defaultPrevented === true && Editor.app.st.tool === 'line',
+         '★★ (阳性对照)焦点在页面上时 L 键照旧:拦下浏览器默认行为并切到直线工具' +
+         '(实得 preventDefault=' + evBody.defaultPrevented + ' tool=' + Editor.app.st.tool + ')');
+      Editor.app.st.tool = 'brush';
+      const evIn = pressKey('l', { tagName: 'INPUT' });
+      ok(evIn.defaultPrevented === false && Editor.app.st.tool === 'brush',
+         '★★★ 焦点在**输入框**里时同一个键一个都不拦:L 键不换工具、也不 preventDefault' +
+         '(实得 preventDefault=' + evIn.defaultPrevented + ' tool=' + Editor.app.st.tool + ')');
+      Editor.app.st.tool = 'brush';
+      const evDigit = pressKey('2', { tagName: 'INPUT' });
+      ok(evDigit.defaultPrevented === false && calls13.indexOf('setLayer') < 0,
+         '★★ 输入框里按数字键不切图层(用户是在打字:数字键 1-4 是切层的热键)');
+      // ★★ 破坏性那条:Backspace 在输入框里必须**既**不 preventDefault(数字删得掉)
+      //    **又**不去 erase 掉整个选区。
+      const mK = filled(Core.createMap('k', 4, 4), Core.LAYER_SCENE, Core.neutralDesc(3));
+      Editor.app.map = mK;
+      Editor.app.st.tool = 'brush';
+      sel13 = { x: 0, y: 0, w: 8, h: 8 };
+      calls13.length = 0;
+      const evBs = pressKey('Backspace', { tagName: 'INPUT' });
+      ok(evBs.defaultPrevented === false && calls13.indexOf('editCells') < 0 &&
+         mK.layers[Core.LAYER_SCENE].desc[0] === Core.neutralDesc(3),
+         '★★★ 输入框里按 Backspace:不拦(字符删得掉)、**也不清空选区**(实得 preventDefault=' +
+         evBs.defaultPrevented + ' / 落笔 ' + (calls13.indexOf('editCells') >= 0 ? '发生了' : '没发生') + ')');
+      calls13.length = 0;
+      pressKey('Backspace', { tagName: 'BODY' });
+      ok(calls13.indexOf('editCells') >= 0 && mK.layers[Core.LAYER_SCENE].desc[0] === 0,
+         '★★ (阳性对照)同一个 Backspace 在页面焦点下**确实**清空选区(上一条不是"这个键根本没接上")');
+
+      // ── ⑬b ★★ 跨接缝拖动之后选区必须存回**折算后**的坐标(评审发现 3)──
+      const mB = filled(Core.createMap('b', 6, 3), Core.LAYER_SCENE, Core.neutralDesc(4));   // 24×12 子格
+      Editor.app.map = mB;
+      Editor.app.st.tool = 'select';
+      sel13 = { x: 22, y: 4, w: 4, h: 4 };                     // 选区跨着接缝(子格 22..25)
+      Editor.app.st.selDrag = { from: { kind: 'sub', x: 22, y: 4 }, dx: 8, dy: 0 };
+      calls13.length = 0;
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
+      eq(sel13, { x: 6, y: 4, w: 4, h: 4 },
+         '★★★ 拖动跨过接缝(22..25 右移 8 ⇒ 落下位置 30)之后,选区存的是**折算后**的 6:' +
+         '存 30 会让 regionCells 的 inRect(clip) 一格都筛不进来(实得 ' + JSON.stringify(sel13) + ')');
+      // ★ 后果断言 —— "框内落笔有没有目标"才是用户能感觉到的那个面(0 个 = 在框里画、
+      //   什么都没发生、**连状态栏都不说**:paintCells 回 null ⇒ pushAndShow 回 false)。
+      const inBox = Editor.regionCells(mB, { unit: 'sub', x0: 6, y0: 4, x1: 6, y1: 4 }, sel13);
+      eq(inBox.length, 1,
+         '★★ 拖动之后"在框内落笔"有目标(实得 ' + inBox.length + ' 个 —— 0 个就是' +
+         '"用户在框里画、什么都没发生、状态栏也不说")');
+      eq(Editor.regionCells(mB, { unit: 'sub', x0: 30, y0: 4, x1: 30, y1: 4 }, { x: 30, y: 4, w: 4, h: 4 }).length, 0,
+         '★★ (对照)未折算的 {x:30} 让框内落笔**一个目标都没有** —— 这就是评审发现 3 的静默症状');
+      ok(calls13.indexOf('editCells') >= 0 && calls13.indexOf('setSelection') >= 0,
+         '★ 这一步真的走了"搬动 + 存回选区"两条路(实得 ' + JSON.stringify(calls13) + ')');
+
+      // ── ⑬c ★ 单击(按下与松开之间没有 pointermove)也要落一次笔(评审发现 7)──
+      const mC = Core.createMap('c', 4, 4);
+      Editor.app.map = mC;
+      sel13 = null;
+      Editor.app.st = { tool: 'brush', brushSize: 1, desc: Core.neutralDesc(7), rgba: 0xFF00FFFF,
+                        rgba2: 0x101820FF, descOnly: false, selStart: null, stroke: null,
+                        panning: null, selDrag: null, gradStart: null };
+      calls13.length = 0;
+      Editor.app.canvas.onpointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+      ok(!!Editor.app.st.stroke && Editor.app.st.stroke.painted === false,
+         '⑬ 前提:pointerdown 起了笔画且标记未落笔(实得 ' + JSON.stringify(Editor.app.st.stroke) + ')');
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
+      eq(countNonZero(mC, Core.LAYER_SCENE), Core.SUB_PER_CELL * Core.SUB_PER_CELL,
+         '★★ 单击画笔落了一次笔(格 (1,1) 的 16 个子格都写上了纹理 7):旧实现只在 pointermove 里' +
+         '落笔 ⇒ 单击一个字都不改、也不报错(矩形/直线是松手才落笔的,所以只有画笔/橡皮会这样)');
+
+      // ── ⑬b2 ★★ Esc 取消选区、左键还按着时松手(评审发现 6 的**真身**在 ui.js 这一侧)──
+      // 拖动分支此前**无条件**读 `cur.x`,而 cancel-selection 把选区置 null ⇒ 在 guard 里抛
+      // TypeError(用户看到一条错,而且这次拖动**什么都没做**,连"松开"这个动作都没收尾)。
+      // 判据两条:① 没有错误进 sink;② 没有可搬的东西就**不动地图**。
+      const mE = filled(Core.createMap('e', 6, 3), Core.LAYER_SCENE, Core.neutralDesc(4));
+      Editor.app.map = mE;
+      const nE = countNonZero(mE, Core.LAYER_SCENE);
+      Editor.app.st.tool = 'select';
+      sel13 = null;                                   // ← Esc 已经把选区清掉了
+      Editor.app.st.selDrag = { from: { kind: 'sub', x: 22, y: 4 }, dx: 8, dy: 0 };
+      calls13.length = 0; errs13.length = 0;
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
+      ok(errs13.length === 0 && calls13.indexOf('editCells') < 0 &&
+         countNonZero(mE, Core.LAYER_SCENE) === nE,
+         '★★ 选区已被 Esc 取消之后松手:不抛(没有错误进 sink)、也不改地图(实得 errs=' +
+         JSON.stringify(errs13) + ' calls=' + JSON.stringify(calls13) + ')');
+
+      // ── ⑬d ★★ pushAndShow 的 whole ⇒ invalidateAll 分派(评审发现 5 的 ui 半边)──
+      const mW = Core.createMap('w', 2, 1);
+      Editor.app.map = mW;
+      calls13.length = 0;
+      eq(Editor.pushAndShow(Editor.wholeDiff(mW, 'resize').seal()), true, '⑬ 前提:whole 差量被接受');
+      ok(calls13.indexOf('invalidateAll') >= 0 && calls13.indexOf('editCells') < 0 &&
+         calls13.indexOf('render') < 0,
+         '★★ kind=whole 走 **invalidateAll**(diffCells 对它是空数组 ⇒ 只 render() 的话整张图' +
+         '停在旧尺寸/旧内容上;实得 ' + JSON.stringify(calls13) + ')');
+      calls13.length = 0;
+      const mN = Core.createMap('n', 2, 1);
+      const nd = Editor.applyTool(stOf(mN, Core.LAYER_SCENE), 'brush',
+                                  { kind: 'cell', x: 0, y: 0 }, { kind: 'cell', x: 0, y: 0 });
+      Editor.app.map = mN;
+      ok(Editor.pushAndShow(nd) === true && calls13.indexOf('editCells') >= 0 &&
+         calls13.indexOf('invalidateAll') < 0,
+         '★ (对照)普通差量走 editCells(不是"两条路都掉进 invalidateAll"也能过;实得 ' +
+         JSON.stringify(calls13) + ')');
+
+      eq(errs13.length, 0,
+         '★★ 整个相位里**一条错误都没进过 sink**:处理器全在 guard 里跑,替身少一个方法就会' +
+         '变成一条被吞掉的异常(实得 ' + JSON.stringify(errs13) + ')');
+    } finally {
+      Editor.setErrorSink(null);
+      globalThis.addEventListener = savedAdd;
+      globalThis.document = savedDoc13;
+      Editor.app.r = savedR13; Editor.app.map = savedMap13; Editor.app.canvas = savedCv13;
+    }
   } catch (err) {
     console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
     console.error(err && err.stack ? err.stack : String(err));

@@ -1216,6 +1216,226 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
        made3.length + ' 张)');
   })();
 
+  // ==== 相位 ⑬ ★★ 拖动预览:三种目标格 / 环面折算 / **去烤**(评审发现 1、2、5、6)====
+  // ★ 这条链(Task 7 的 `dragSource` 一族)此前**零覆盖**,而它正是 D6 的全部内容:
+  //   `paintLayerRect` 的纹理分支在"拖动中"改用**源格**的 `cellCache.get`(③ 的键替换)。
+  //   故这里在**纹理层 + 真图集**上按 tile 的**对象身份**逐子格判三种情形:
+  //     ① 目标格读**源格**的内容;② 被腾空的源区**一个子格都不画**;③ 源∪目标之外原样不动。
+  // ★ 另两件只有"真的画一遍并记账"才看得见:
+  //   · 拖动跨过接缝时预览读的是**哪一格**(评审发现 2:非折算的查询会让预览与落笔分岔);
+  //   · 偏移一变 / 清除时「源 ∪ 目标」必须被**重画**(评审发现 1:烤进 ② 的偏移内容若不
+  //     重画,会在更早的偏移上**永远留着** —— 提交只按最终偏移结算)。
+  // ★ 替身与相位 ⑩/⑪/⑫ 同款(document.createElement / 记录型 ctx / 注入的 nextFrame),
+  //   图集必须**带替身 backend** 重设一次:相位 ⑫ 收尾时还原的是**默认** backend(它走
+  //   ImageData,node 里没有)⇒ 本相位里任何一次 tileFor 都会抛。
+  await (async function () {
+    Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H, { backend: spyBackend() });
+    const savedDocD = globalThis.document;
+    const made4 = [];
+    globalThis.document = { createElement: function () { const c = fakeCanvas(0, 0); made4.push(c); return c; } };
+    const SLICE_D = { slicer: { nextFrame: function () { return Promise.resolve(); } } };
+    try {
+      const SB = Core.SUB_PER_CELL;
+      const ZD = 16;                                        // 子格 → 像素(视图在 x=y=0)
+      // 6×3 格(24×12 子格):格 (1,1) = A(纹理 5)、格 (4,1) = B(纹理 9),其余格是空气。
+      // ★ 逐**子格**填满整格(setCells 那种"一格一个子格"在这里不够:断言要逐 16 个子格比)。
+      const mD = Core.createMap('d6', 6, 3);
+      const fillCell = function (L, cx, cy, desc) {
+        const a = mD.layers[L].desc;
+        for (let qy = 0; qy < SB; qy++) {
+          for (let qx = 0; qx < SB; qx++) a[(cy * SB + qy) * mD.subCols + (cx * SB + qx)] = desc;
+        }
+      };
+      fillCell(Core.LAYER_SCENE, 1, 1, Core.neutralDesc(5));       // A
+      fillCell(Core.LAYER_SCENE, 4, 1, Core.neutralDesc(9));       // B
+      const cvD = fakeCanvas(640, 400);                          // 24×12 子格在 zoom 16 下一屏装得下
+      const sinceD = made4.length;
+      const rD = Render.mount(cvD, SLICE_D);
+      await rD.setMap(mD);
+      const offD = layerCanvasesSince(made4, sinceD, 640, 400)[Core.LAYER_SCENE];
+      ok(!!offD, '⑬ 前提:纹理层的离屏层建出来了(尺寸 = 主画布)');
+      await rD.setView({ x: 0, y: 0, zoom: ZD });                 // ≥ 8 ⇒ ② 那条路
+
+      // 这一格画的是不是**这些** tile:16 个子格逐个按**对象身份**比(位置 = 子格号 × zoom)
+      const drawnOps = function () {
+        return offD.ctx.ops.filter(function (o) { return o.op === 'drawImage'; });
+      };
+      const subPx = function (sx, sy) { return { x: sx * ZD, y: sy * ZD }; };
+      const cellMatches = function (cx, cy, tiles) {
+        for (let k = 0; k < SB * SB; k++) {
+          const p = subPx(cx * SB + (k % SB), cy * SB + Math.floor(k / SB));
+          const got = drawnOps().filter(function (o) { return o.x === p.x && o.y === p.y; });
+          // ★ 同一格**允许多次落笔**,但每一笔都必须是**这一张** tile:② 的条带按**格**迭代,
+          //   而一格(4 个子格行)常常跨两条带 ⇒ 相邻条带各画它一次(像素上幂等 —— 同一张图
+          //   画在同一处)。判"画的**是不是**这张"才是这条断言的全部内容,"画几次"不是。
+          if (got.length < 1 || !got.every(function (o) { return o.img === tiles[k]; })) return false;
+        }
+        return true;
+      };
+      const cellAnyDraw = function (cx, cy) {
+        for (let k = 0; k < SB * SB; k++) {
+          const p = subPx(cx * SB + (k % SB), cy * SB + Math.floor(k / SB));
+          if (drawnOps().some(function (o) { return o.x === p.x && o.y === p.y; })) return true;
+        }
+        return false;
+      };
+
+      const tA = rD.cells().get(Core.LAYER_SCENE, 1, 1);
+      const tB = rD.cells().get(Core.LAYER_SCENE, 4, 1);
+      ok(tA.every(Boolean) && tB.every(Boolean),
+         '⑬ 前提:A/B 两格的 16 个子格都解析出了 tile(实得 A ' + tA.filter(Boolean).length +
+         ' / B ' + tB.filter(Boolean).length + ' 个)');
+      ok(tA.some(function (t, i) { return t !== tB[i]; }),
+         '⑬ 前提:A 与 B 是**不同**的 tile(否则下面分不出"读的是谁")');
+      ok(!cellAnyDraw(0, 1) && cellMatches(4, 1, tB),
+         '⑬ 前提(基线,不空转):没拖动时格 (0,1) 是空气一个子格都不画、格 (4,1) 画的是它自己(B)');
+
+      // ── ⑬a 三种目标格(偏移 +2 格 ⇒ 目标格 = 0:环面折算)──
+      // ★ 这一批用**整片重建**逼出重画(而不是靠 setSelDrag 的去烤):三条断言的证据要**只**
+      //   来自 `dragSource` —— 去烤那条路坏了不该让它们跟着红(两件事的变异归属要分得开)。
+      rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
+      offD.ctx.ops.length = 0;
+      await rD.buildLayers();                       // 拖动中的整片重建(滚轮缩放 / 平移那条路)
+      ok(cellMatches(0, 1, tB),
+         '★★★ (a) 目标格 (0,1) 读的是**源格 (4,1)** 的 16 个 tile(对象身份逐子格比):' +
+         '这就是 D6 —— ③ 的缓存键按"源格"取,而像素落在**目标格**的位置');
+      ok(!cellAnyDraw(4, 1),
+         '★★ (b) 被腾空的源格 (4,1) 一个子格都不画(它属于选区、偏移后没人补它 —— ' +
+         '画了就是"复制了一份"而不是"搬过去")');
+      ok(cellMatches(1, 1, tA),
+         '★★ (c) 源∪目标**之外**的格 (1,1) 原样画它自己的内容(③:少了它,偏移一动整张图都' +
+         '判成腾空 ⇒ 地图整体消失、只剩一个框在飘)');
+
+      // ── ⑬b ★★ 拖动预览是"烤"进 ② 的:偏移一变就必须把「上一次的 源∪目标」一起重画 ──
+      const rb0 = rD.stats().layerRebuilds;
+      offD.ctx.ops.length = 0;
+      rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, SB, 0);   // 偏移改到 +1 格
+      eq(rD.stats().layerRebuilds - rb0, Core.LAYER_COUNT,
+         '★★ 偏移一变:脏区被标给**四层**并由 render() 当场重画(实得 ' +
+         (rD.stats().layerRebuilds - rb0) + ' 次;旧实现这里是 0 —— setSelDrag 只合成旧位图, ' +
+         '偏移要等别的重画才显形)');
+      ok(someOp(offD.ctx, function (o) {
+           return o.op === 'clearRect' && o.x === 0 && o.y === 1 * SB * ZD &&
+                  o.w === 6 * SB * ZD && o.h === SB * ZD;
+         }),
+         '★★★ 重画的矩形覆盖**上一次**偏移烤过的两块(子格 0..23 整行:clearRect 0,64,384,64):' +
+         '新偏移只碰子格 16..19 —— 只标当前偏移的话,更早那次偏移烤在格 0 上的内容' +
+         '(提交时**不会**被 moveRegion 碰到)会永远留在画面上(评审发现 1)');
+      ok(!cellAnyDraw(0, 1) && cellMatches(5, 1, tB),
+         '★★★ 改偏移之后:格 0 那块被**清掉且什么都没画**(它是空气)、内容跟到新目标格 5 —— ' +
+         '两条合起来才说明"格 0 上那次烤痕真的被抹掉了"(只看没画 = 分不出"重画过"与"没重画")');
+
+      // ── ⑬d ★★ 清除(松手 / 取消):烤痕不许活过这次拖动 ──
+      const rb1 = rD.stats().layerRebuilds;
+      offD.ctx.ops.length = 0;
+      rD.setSelDrag(null, 0, 0);
+      eq(rD.stats().layerRebuilds - rb1, Core.LAYER_COUNT,
+         '★★ 清除时同样把上一次的两块标脏重画(实得 ' + (rD.stats().layerRebuilds - rb1) +
+         ' 次;少了它,最后那次偏移的烤痕会一直留到有别的东西标脏那一块为止)');
+      ok(someOp(offD.ctx, function (o) {
+           return o.op === 'clearRect' && o.x === 4 * SB * ZD && o.y === 1 * SB * ZD &&
+                  o.w === 2 * SB * ZD && o.h === SB * ZD;
+         }),
+         '★★ 重画的正是**上一次**那两个块(子格 16..23 ⇒ clearRect 256,64,128,64)');
+      ok(cellMatches(4, 1, tB),
+         '★★ 松手后源格 (4,1) 画回**它自己**的内容(预览的"腾空"不是粘住的状态:' +
+         '拖动结束时格子上的像素必须与没拖过完全一样)');
+
+      // ── ⑬e ★★ ① 缩略图那条路(< 8px/子格)同样去烤(评审发现 1 的另一条路)──
+      // ★ 它在**今天**只有一个入口:`invalidateAll`(→ buildThumbs)或 `invalidateCells` ——
+      //   而"撤销/重做一条 kind='whole' 的差量"就会走 invalidateAll,而 Ctrl+Z 在按住左键
+      //   拖动时照样按得下去。烤进 ① 的偏移同样会在更早的偏移上永远留着(< 8 合成的就是 ①)。
+      const thumbD = rD.thumbCanvas(Core.LAYER_SCENE);
+      const tpx = thumbD.width / mD.subCols;
+      ok(!!thumbD && tpx >= 1, '⑬ 前提:① 的缩略图在(刻度 ' + tpx + 'px/子格)');
+      const thumbDrawsIn = function (cx, cy) {
+        return thumbD.ctx.ops.filter(function (o) {
+          return o.op === 'drawImage' && o.x >= cx * SB * tpx && o.x < (cx + 1) * SB * tpx &&
+                 o.y >= cy * SB * tpx && o.y < (cy + 1) * SB * tpx;
+        });
+      };
+      await rD.setView({ x: 0, y: 0, zoom: 2 });                 // < 8 ⇒ ① 那条路
+      thumbD.ctx.ops.length = 0;
+      rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
+      const tG0 = thumbDrawsIn(0, 1);
+      ok(tG0.length === SB * SB && tG0.every(function (o) { return tB.indexOf(o.img) >= 0; }) &&
+         thumbDrawsIn(4, 1).length === 0,
+         '★★★ ① 也被去烤:目标格 0 的 16 个子格画的是**源格 (4,1)** 的 tile、被腾空的源格一格不画' +
+         '(实得目标格 ' + tG0.length + ' 笔 / 源格 ' + thumbDrawsIn(4, 1).length + ' 笔;' +
+         '不重画的话这里是 0 笔 —— 偏移被烤进 ①,而 < 8 合成的正是 ①)');
+      await rD.setView({ x: 0, y: 0, zoom: ZD });                // 回到 ② 那条路
+
+      // ── ⑬f ★★ 颜色层的拖动:同一个 dragSource,但这条分支传进去的是**子格**坐标 ──
+      // ★ 它可能是**负的**(视图越过左侧接缝时 cx = −1 ⇒ Xc = −4),全靠 `wrapIdx` 折回来。
+      //   ⑪c 只钉过"颜色层不把 RGBA 喂进 texOf",拖动这一段此前一条断言都没有。
+      const mCol = Core.createMap('col6', 6, 3);
+      mCol.layers[Core.LAYER_BG].rgba[(1 * SB) * mCol.subCols + (4 * SB)] = 0xff0000ff;  // 格(4,1)的左上子格 = 不透明红
+      const cvCol = fakeCanvas(640, 400);
+      const sinceCol = made4.length;
+      const rCol = Render.mount(cvCol, SLICE_D);
+      await rCol.setMap(mCol);
+      const offCol = layerCanvasesSince(made4, sinceCol, 640, 400)[Core.LAYER_BG];
+      ok(!!offCol, '⑬ 前提:颜色层的离屏层建出来了');
+      await rCol.setView({ x: 0, y: 0, zoom: ZD });
+      offCol.ctx.ops.length = 0;
+      rCol.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
+      ok(someOp(offCol.ctx, function (o) {
+           return o.op === 'fillRect' && o.style === 'rgba(255,0,0,1)' &&
+                  o.x === 0 && o.y === 1 * SB * ZD;
+         }),
+         '★★ 颜色层拖动:源子格 (16,4) 的红被画到**目标格 0 的 (0,4)** —— 与纹理分支共用同一个' +
+         'dragSource(若那条分支不折算,这里读到的是目标格自己的 RGBA = alpha 0 ⇒ 什么都不画)');
+      ok(!someOp(offCol.ctx, function (o) {
+           return o.op === 'fillRect' && o.style === 'rgba(255,0,0,1)' &&
+                  o.x === 4 * SB * ZD && o.y === 1 * SB * ZD;
+         }),
+         '★★ 被腾空的源格不再画那块红(不然就是"复制"而不是"搬")');
+
+      // ── ⑬g ★★ 折算口径(与 UI 的 idxOf / moveRegion 同一个 wrap)──
+      const SEL_X = { x: 4 * SB, y: 1 * SB, w: SB, h: SB };      // 格 (4,1)
+      eq(Render.selectionSource(SEL_X, 2 * SB, 0, 0, 1 * SB, 24, 12), { hit: true, X: 4 * SB, Y: 1 * SB },
+         '★★★ selectionSource 给了 W/H 就按环面折算:目标格 (0,1) 的内容来自**源格 (4,1)**' +
+         '(24 → 0)。不折算的那版在这里读到的是"目标格自己的内容" ⇒ 预览 ≠ 落笔(评审发现 2)');
+      eq(Render.selectionSource(SEL_X, 2 * SB, 0, 0, 1 * SB), { hit: false, X: 0, Y: 1 * SB },
+         '★★ (对照)5 实参 = 旧的非折算口径:老调用点的语义一个字没变(它们都在主网格内,' +
+         '折算与非折算在那里是恒等)');
+      eq(Render.selectionSource({ x: 22, y: 4, w: 4, h: 4 }, 0, 0, 0, 4, 24, 12).hit, true,
+         '★★ 选区**自己**跨着接缝(子格 22..25)时成员判据照样对:折算后它盖住子格 0' +
+         '(与 regionCells / moveRegion 的 from 集合同口径 —— 绝对比大小在那种选区上恒 false)');
+      eq(Render.selectionSource({ x: 22, y: 4, w: 4, h: 4 }, 0, 0, 8, 4, 24, 12).hit, false,
+         '★ 折算不是"整行都算在选区内"(子格 8 不在 22..25 折算后的那一段里)');
+
+      // ── ⑬h ★★ Esc 取消选区、左键还按着(拖动中)时 render() 不许抛 ──
+      // ★ "选区为空而 selDrag 还在"是**真到得了**的状态(Esc 走 cancel-selection,而左键
+      //   还按着)。今天挡住这次读的是**外层**那句 `if (s.selection)`(不是 drawOverlay 里
+      //   的那一行)⇒ 下面两条钉的是**不变量**本身:
+      //     ① 这个状态下 render() 不抛(外层判据哪天被放松、而块内照旧读 `s.selection.x`,
+      //        这条会红 —— 那是每帧一次 TypeError、画布整个停住);
+      //     ② 选区为空时**不画**那个拖动框(框是"选区"的视觉,没有选区就没有框)。
+      //   ★ 别把 ① 读成"review 说的 TypeError 今天在场上":实测把块内换回 `s.selection`
+      //     (保留外层判据)照样全绿 —— 机制到不了这里,false positive 已写进报告。
+      let threwSel = null;
+      cvD.ctx.ops.length = 0;
+      try {
+        rD.setSelection({ x: 4 * SB, y: 1 * SB, w: SB, h: SB });
+        rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, SB, 0);
+        cvD.ctx.ops.length = 0;                     // ★ 只留"选区已空"之后那一次 render 的笔迹
+        rD.setSelection(null);                      // ← 用户按 Esc(cancel-selection)
+        rD.render();
+      } catch (e) { threwSel = e; }
+      ok(threwSel === null, '★★ 选区被取消而拖动还在时 render() 不抛(实得 ' +
+         (threwSel ? String(threwSel.message) : '无异常') + ')');
+      ok(!someOp(cvD.ctx, function (o) { return o.op === 'strokeRect' && o.style === '#e0b34a'; }),
+         '★★ 选区已经为空时**不画**拖动框(框属于选区;这条同时钉住外层那道判据还在 —— ' +
+         '少了它,块内读 `s.selection.x` 会抛)');
+      rD.setSelDrag(null, 0, 0);
+    } finally {
+      globalThis.document = savedDocD;
+    }
+    ok(made4.length > 0, '★ ⑬ 的离屏层确实经 document.createElement("canvas") 建出来(' +
+       made4.length + ' 张)');
+  })();
+
   }).then(function () {
   console.log('');
   console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');

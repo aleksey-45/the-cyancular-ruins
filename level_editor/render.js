@@ -314,12 +314,51 @@ globalThis.Render = (function () {
   }
 
   // ── 选区拖动:纯读的偏移查询(B3;规格 §4.2「拖动只记 dx/dy,松手才提交」)──
-  function selectionSource(sel, dx, dy, X, Y) {
+  // ★★ `W`/`H`(= map.subCols/subRows)是**可选**的:给了就按**环面折算**(与 UI 的 `idxOf`
+  //    / `moveRegion` 同一套 wrap),不给 = 不折算。★ 拖动查询**必须**给 —— 拖动跨过接缝时
+  //    目标格落在图的另一头(24 → 0),不折算的话预览读到的是"目标格**自己**的内容"、
+  //    而松手 `moveRegion` 真搬过去的是**源格的内容**(`idxOf` 折算) ⇒ 预览 ≠ 落笔
+  //    (评审发现 2:同一个"偏移查询"两套坐标,只在接缝那一侧现形)。
+  // ★ 旧的非折算调用点都是"整数都在主网格内"的纯逻辑查询(`sel` 与 `X` 本就规范),
+  //    折算与否是恒等 —— 故 5 实参的旧口径**保留**(不是第二份实现:`inSel` 只有一处判据)。
+  function selectionSource(sel, dx, dy, X, Y, W, H) {
     var sx = X - dx, sy = Y - dy;
-    if (sx >= sel.x && sx < sel.x + sel.w && sy >= sel.y && sy < sel.y + sel.h) {
-      return { hit: true, X: sx, Y: sy };
-    }
+    if (W > 0 && H > 0) { sx = wrapIdx(sx, W); sy = wrapIdx(sy, H); }
+    if (inSel(sel, sx, sy, W, H)) return { hit: true, X: sx, Y: sy };
     return { hit: false, X: X, Y: Y };
+  }
+
+  // 选区在环面上的**成员判据**(与 UI 的 `regionCells` / `moveRegion` 的 from 集合同口径):
+  // 先各自折算到主网格,再比**相对偏移** —— 于是"选区自己跨着接缝"(先前的拖动把选区挪到了
+  // 接缝另一侧)也算得对(绝对比大小会在那种选区上恒 false)。
+  function inSel(sel, X, Y, W, H) {
+    if (!sel) return false;
+    if (!(W > 0 && H > 0)) {
+      return X >= sel.x && X < sel.x + sel.w && Y >= sel.y && Y < sel.y + sel.h;
+    }
+    var ox = wrapIdx(wrapIdx(X, W) - wrapIdx(sel.x, W), W);
+    var oy = wrapIdx(wrapIdx(Y, H) - wrapIdx(sel.y, H), H);
+    return ox < sel.w && oy < sel.h;
+  }
+
+  // 一个矩形在环面上折算后的**规范分解**(至多 4 块):拖动预览要重画的区域必须落在这些块里。
+  // ★ 只取"左上角折算"是不够的:矩形**自己**跨过接缝时(x1 < x0),折算后是两段区间 ——
+  //   取并集会漏掉另一头那半截(那半边的烤痕永远留着)；取"包围盒"则会把整幅图都算进去。
+  //   ★ `sel` 的 w/h ≤ subCols/subRows 是前提(选区由两次命中决定,这一点恒成立)。
+  function canonRects(r, W, H) {
+    var out = [];
+    if (!r || r.w <= 0 || r.h <= 0) return out;
+    var x0 = wrapIdx(r.x, W), x1 = wrapIdx(r.x + r.w - 1, W);
+    var y0 = wrapIdx(r.y, H), y1 = wrapIdx(r.y + r.h - 1, H);
+    var xs = (x1 >= x0) ? [[x0, x1]] : [[x0, W - 1], [0, x1]];
+    var ys = (y1 >= y0) ? [[y0, y1]] : [[y0, H - 1], [0, y1]];
+    for (var i = 0; i < ys.length; i++) {
+      for (var j = 0; j < xs.length; j++) {
+        out.push({ x: xs[j][0], y: ys[i][0],
+                   w: xs[j][1] - xs[j][0] + 1, h: ys[i][1] - ys[i][0] + 1 });
+      }
+    }
+    return out;
   }
 
   // ── 图层绘制顺序 ──
@@ -825,17 +864,27 @@ globalThis.Render = (function () {
       }
       if (s.selection) {
         // ★ 拖动中:框按**偏移后**的位置画(数据还没动 —— 松手才 moveRegion)。框跟手走
-        //   是拖动过程中**唯一**看得见的反馈:`setSelDrag` 只调 render(),而 render() 是
-        //   合成已经烤好的 ①/② 位图(`paintLayerRect` / `paintThumbRect` 要等脏区或重建才跑)
-        //   ⇒ 偏移查询要等别的重画(缩放/平移/窗口变化)才显形。见 Task 7 报告的"已知边界"。
-        var sel = s.selDrag
-          ? { x: s.selection.x + s.selDrag.dx, y: s.selection.y + s.selDrag.dy,
-              w: s.selection.w, h: s.selection.h }
-          : s.selection;
-        var a = subToScreen(sel.x, sel.y);
-        ctx.strokeStyle = '#e0b34a';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(a.x, a.y, sel.w * s.view.zoom, sel.h * s.view.zoom);
+        //   是拖动过程中**唯一**看得见的反馈:`setSelDrag` 只调 render()。
+        //   ★ 2026-09-22:拖动预览的**内容**现在也跟手了(`setSelDrag` 会标脏并重画源∪目标,
+        //     见 markDragDirty)—— 那时这一句"要等别的重画才显形"的描述已过时。
+        // ★★ 兜底读 `selDrag.sel`:拖动着而选区**已经没了**是合法状态(Esc 走
+        //    `cancel-selection` → `setSelection(null)`,而左键还按着)—— 块内一律读
+        //    `s.selection.x` 在这条路上就是读 null。
+        //    ★ 今天真正挡住它的是**外层**那句 `if (s.selection)`(实测:外层留着、这里换回
+        //      `s.selection`,render() 照样不抛 —— 评审发现 6 的机制到不了这里),所以这一行是
+        //      **防御性**的:它只在"外层那道判据将来被放松"时生效(那时若照旧读 `s.selection.x`,
+        //      渲染里会每帧抛 TypeError,画布整个停住)。不变量与两条断言见 ⑬(不抛 + 选区为空
+        //      时不画框)。
+        var base = s.selection || (s.selDrag ? s.selDrag.sel : null);
+        var sel = (base && s.selDrag)
+          ? { x: base.x + s.selDrag.dx, y: base.y + s.selDrag.dy, w: base.w, h: base.h }
+          : base;
+        if (sel) {
+          var a = subToScreen(sel.x, sel.y);
+          ctx.strokeStyle = '#e0b34a';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(a.x, a.y, sel.w * s.view.zoom, sel.h * s.view.zoom);
+        }
       }
       ctx.restore();
     }
@@ -894,6 +943,7 @@ globalThis.Render = (function () {
     //    松手才提交一次 moveRegion —— 老实现每次 pointermove 都深拷贝三份全图(B3)。
     function setSelDrag(sel, dx, dy) {
       s.selDrag = sel ? { sel: sel, dx: dx, dy: dy } : null;
+      markDragDirty();                                // ★ 见下:偏移一变就**去烤**
       render();
     }
     function setPreview(rect) { s.preview = rect; render(); }
@@ -906,12 +956,53 @@ globalThis.Render = (function () {
     //    ★ 少了 ③(把"目标不在偏移后的选区里"一律当腾空)的后果不是"少画一点":drag 的偏移
     //      一动,除选区外的**整整一张图**都判成腾空 ⇒ 拖动时地图整体消失、只剩一个框在飘。
     //      `selectionSource` 只答"源格在不在选区里",第 ③ 种情形要靠**目标格**自己判。
+    //    ★★ 一律传 `W`/`H`(环面折算,评审发现 2):拖动跨过接缝时目标格落到图的另一头,
+    //      非折算的查询会在那里读到"目标格自己的内容" —— 而落笔(`moveRegion` 走 `idxOf`)
+    //      搬过去的是**源格的内容**,预览与落笔就在接缝那一侧分了岔。
     function dragSource(X, Y) {
       if (!s.selDrag) return { hit: true, X: X, Y: Y };
-      var sel = s.selDrag.sel, q = selectionSource(sel, s.selDrag.dx, s.selDrag.dy, X, Y);
+      var W = s.map ? s.map.subCols : 0, H = s.map ? s.map.subRows : 0;
+      var sel = s.selDrag.sel, q = selectionSource(sel, s.selDrag.dx, s.selDrag.dy, X, Y, W, H);
       if (q.hit) return q;
-      var vacated = (X >= sel.x && X < sel.x + sel.w && Y >= sel.y && Y < sel.y + sel.h);
+      var vacated = inSel(sel, X, Y, W, H);
       return vacated ? { hit: false, X: X, Y: Y } : { hit: true, X: X, Y: Y };
+    }
+
+    // ── 拖动预览的**去烤**(评审发现 1)──
+    // ★★ 症状:② 的离屏层是**烤**进去的。拖动中滚轮缩放(`setZoomAt` → `viewChanged()` +
+    //    `buildLayers()`)或任何整片重建,都会把 `dragSource` 的偏移结果**画死在 ② 上**,
+    //    而 `buildLayers` 结尾还把 `layersClean` 抬成 true。此后用户拖到**第二个**偏移、
+    //    松手 —— 提交只按最终偏移结算(`moveRegion` 的 源 ∪ 目标)⇒ 在更早的偏移上被烤过、
+    //    而最终偏移没碰到的那些格**永远留着别人的内容**(直到有别的东西把它们标脏)。
+    //    框会回到正确位置 ⇒ 用户看到的是"地图上凭空多了一块错的内容",没有任何报错。
+    // ★ 修法:偏移一变(**以及清除时**)把「源区 ∪ 目标区」标脏并重画 —— 于是烤痕的寿命
+    //    不长于这一次拖动。★ 标的是**规范化**后的两块(`canonRects`,与 `dragSource` 同一套
+    //    折算):跨接缝拖动时目标落在图的另一头,照未折算的坐标标脏会漏掉那一头。
+    // ★★ 上一次的两块也要一起标:清除时 `s.selDrag` 已经没了,只有这里记得它烤在哪。
+    //    ★ 归纳口径:每一步之后,"存着偏移内容的格"恰好 = 当前偏移的 源 ∪ 目标
+    //    (其余格读到的都是它们自己的内容,见 `dragSource` 的第 ③ 种情形)——
+    //    故只需记住**上一次**那两块,不必攒整段拖动的历史。
+    // ★★ ① 缩略图那条路(< 8px/子格)同样要去烤,**判据与 ② 同源**(同一批规范块):它的烤点
+    //    一样存在 —— `paintThumbRect` 也读 `dragSource`,而**撤销/重做一条 kind='whole' 的
+    //    差量**会走 `invalidateAll` → `buildThumbs`(Ctrl+Z 在按住左键时照样按得下去)。
+    //    不重画的话偏移会被烤进 ①,而 < 8px/子格 那条路合成的正是 ① ⇒ 症状与评审发现 1
+    //    一字不差,只是换了一条路。成本 = 块面积 × 缩略图刻度(每子格 1~2px),比 ② 那侧小得多。
+    var dragRects = null;                             // 上一次拖动预览烤过的规范块(至多 8 块)
+    function markDragDirty() {
+      if (!s.map) return;
+      var W = s.map.subCols, H = s.map.subRows, now = [];
+      if (s.selDrag) {
+        var sel = s.selDrag.sel;
+        now = canonRects({ x: sel.x, y: sel.y, w: sel.w, h: sel.h }, W, H)
+          .concat(canonRects({ x: sel.x + s.selDrag.dx, y: sel.y + s.selDrag.dy, w: sel.w, h: sel.h }, W, H));
+      }
+      var all = now.concat(dragRects || []);
+      dragRects = s.selDrag ? now : null;
+      for (var L = 0; L < Core.LAYER_COUNT; L++) {
+        for (var i = 0; i < all.length; i++) layerDirty[L] = rectUnion(layerDirty[L], all[i]);
+        if (!thumbs[L]) continue;                     // ① 还没建(没 setMap)⇒ 没什么可烤
+        for (var j = 0; j < all.length; j++) paintThumbRect(L, all[j]);
+      }
     }
 
     // 编辑某几个格之后:重画它们的缩略图块(Uint32Array 的下标 → 格坐标)

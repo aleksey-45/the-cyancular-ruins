@@ -483,6 +483,15 @@ globalThis.Editor = (function () {
   //   (meta):本工具只在本机跑,而 Mac 上那个键是 Cmd。表外的键一律返回 null ——
   //   返回 null 才是"不拦浏览器自己的快捷键"。
   var KEY_TOOLS = { b: 'brush', e: 'eraser', g: 'bucket', l: 'line', m: 'select', i: 'picker' };
+  // 事件目标是不是一个"正在打字"的控件(评审发现 4)。★ 判据取 tagName 与 isContentEditable,
+  // **不取** `ev.target === document.activeElement` 之类:合成事件 / 焦点在 body 时 target 就是
+  // body,那样的判据会把"按在画布上"也判成输入(热键整个失灵,而症状是"什么键都没反应")。
+  function isTypingTarget(el) {
+    if (!el || typeof el !== 'object') return false;
+    var t = String(el.tagName == null ? '' : el.tagName).toLowerCase();
+    if (t === 'input' || t === 'textarea' || t === 'select') return true;
+    return el.isContentEditable === true;
+  }
   function commandFor(ev) {
     var e = ev || {};
     var k = String(e.key == null ? '' : e.key).toLowerCase();
@@ -947,7 +956,7 @@ globalThis.Editor = (function () {
           app.st.gradStart = hit;
           return;
         }
-        app.st.stroke = { from: hit, last: hit };     // 画笔/橡皮/矩形/直线
+        app.st.stroke = { from: hit, last: hit, painted: false };   // 画笔/橡皮/矩形/直线
       });
     });
 
@@ -975,6 +984,7 @@ globalThis.Editor = (function () {
           if (app.st.tool === 'brush' || app.st.tool === 'eraser') {
             pushAndShow(applyTool(stNow(), app.st.tool, app.st.stroke.last, hit));
             app.st.stroke.last = hit;
+            app.st.stroke.painted = true;              // ★ 见 pointerup:单击也要落一次笔
           } else if (app.st.tool === 'line') {
             app.r.setPreview(subRectOf(app.st.stroke.from, shiftHit(app.st.stroke.from, hit, ev.shiftKey)));
           } else {
@@ -992,10 +1002,20 @@ globalThis.Editor = (function () {
           var sd = app.st.selDrag;
           app.st.selDrag = null;
           app.r.setSelDrag(null, 0, 0);
-          if (sd.dx !== 0 || sd.dy !== 0) {
-            var cur = app.r.selection();
+          // ★ 选区可能**已经没有**了(Esc 走 cancel-selection,而左键还按着)⇒ 没有可搬的
+          //   东西。少了这层判,下面那句 `cur.x` 会抛 TypeError(在 pointerup 里 = 落笔
+          //   路径整个断掉)。
+          var cur = app.r.selection();
+          if (cur && (sd.dx !== 0 || sd.dy !== 0)) {
             pushAndShow(moveRegion(app.map, app.r.layer(), cur, sd.dx, sd.dy));
-            app.r.setSelection({ x: cur.x + sd.dx, y: cur.y + sd.dy, w: cur.w, h: cur.h });
+            // ★★ 存回去的选区必须**折算**(评审发现 3):拖动跨过接缝时 `cur.x + sd.dx` 会
+            //    落到 [0, subCols) 之外,而 `regionCells` 是"先折算每一格、再 inRect(clip, wx, wy)"
+            //    ⇒ clip.x < 0 时**一格都进不来**:框内所有画笔/矩形/直线/油漆桶都产出空集合,
+            //    `paintCells` 回 null、`pushAndShow` 回 false —— 而且**一条状态栏消息都没有**
+            //    (用户在框里画,什么都没发生,也不告诉他为什么)。
+            app.r.setSelection({ x: Render.wrapIdx(cur.x + sd.dx, app.map.subCols),
+                                 y: Render.wrapIdx(cur.y + sd.dy, app.map.subRows),
+                                 w: cur.w, h: cur.h });
           }
           statusLine();
           return;
@@ -1033,6 +1053,13 @@ globalThis.Editor = (function () {
           } else if (app.st.tool === 'line') {
             // ★ Shift 约束(规格 §4.8):直线锁水平/垂直/45° —— 与预览同一个函数
             pushAndShow(applyTool(stNow(), 'line', st0.from, shiftHit(st0.from, hit, ev.shiftKey)));
+          } else if (!st0.painted) {
+            // ★ 按下与松开之间**没有** pointermove(单击)时,画笔/橡皮的落笔只在 pointermove
+            //   那条路上发生 ⇒ 一次单击什么都不画。矩形/直线是松手才落笔、故单击有效;
+            //   而"拿画笔点一格"是最常见的编辑动作,必须同样有效。
+            // ★ 判据取 `painted` 而不是"last 是否等于 from":pointermove 在**同一格**内也会落笔
+            //   (last 仍等于 from),那时再落一次就会往历史里塞一条毫无作用的空差量。
+            pushAndShow(applyTool(stNow(), app.st.tool, st0.from, st0.from));
           }
         }
       });
@@ -1051,6 +1078,13 @@ globalThis.Editor = (function () {
     }, { passive: false });
 
     window.addEventListener('keydown', function (ev) {
+      // ★★ 焦点在**输入控件**里时,一个键都不许拦(评审发现 4):本处理器按键**命令**分发,
+      //    而表里有 `Backspace/Delete → clear-selection`、`0-9 → 切层`、`b/e/g/l/m/i → 换工具`、
+      //    方向键 → 平移。焦点在输入框里时这些键是**打字**:按 Backspace 会**先被 preventDefault**
+      //    (数字删不掉)再**真去 erase 掉整个选区** —— 数据被改,而用户以为自己只是在删一个字符。
+      //    `#brush-size` 这类输入框今天就在 DOM 里(editor.html),Task 8 还会把面板的输入全部接上。
+      // ★ 判据:`input` / `textarea` / `select` / contenteditable(规格 §4.8 的热键只在画布上生效)。
+      if (isTypingTarget(ev.target)) return;
       var cmd = commandFor(ev);
       if (!cmd) return;                                  // ★ 表外的键一律不拦
       guard('keydown', function () {
@@ -1417,7 +1451,7 @@ globalThis.Editor = (function () {
     createBucketJob: createBucketJob, createGradientJob: createGradientJob, lerpRGBA: lerpRGBA,
     snapshotSpawns: snapshotSpawns, spawnDiff: spawnDiff, spawnIndexAt: spawnIndexAt,
     addSpawn: addSpawn, removeSpawn: removeSpawn, clearSpawns: clearSpawns,
-    commandFor: commandFor, hasSelection: hasSelection,
+    commandFor: commandFor, hasSelection: hasSelection, isTypingTarget: isTypingTarget,
     MAX_UNDO: MAX_UNDO, MAX_UNDO_BYTES: MAX_UNDO_BYTES, bytesOfEntry: bytesOfEntry,
     createHistory: createHistory, snapshotMap: snapshotMap, bytesOfSnapshot: bytesOfSnapshot,
     wholeDiff: wholeDiff, applyEntry: applyEntry, diffCells: diffCells, cellCountOf: cellCountOf,
