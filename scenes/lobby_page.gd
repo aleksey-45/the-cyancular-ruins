@@ -379,10 +379,17 @@ func _do_go_match() -> void:
 func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
 	_claimed_ms = Time.get_ticks_msec()
-	# ★★ 回局(路径乙)与首次进场的**唯一分叉**:对局**已经开着**,`claim_role` 会被 worker 的
-	#   `_on_role_claimed` 当串线连接**踢掉**(它的第一款判据就是 `_match_started`),必须改发
-	#   `reclaim_role`(宽限期内重新认领自己那个 role)。用错那一条的症状是"刚连上就被踢",
-	#   且没有任何报错 —— 只有 worker 日志里一行"拒绝串线连接"。
+	# ★★ 回局(路径乙)与首次进场的**唯一分叉**:对局**已经开着**,`claim_role` 这条走不得,
+	#   必须改发 `reclaim_role`(宽限期内重新认领自己那个 role)。
+	#   ★ **它的失败形态是"静默"、不是"被踢"**(2026-09-21 订正;原先这里写的是"会被
+	#   `_on_role_claimed` 当串线连接踢掉,日志里留一行拒绝串线" —— **那句话是错的**,真链路探针
+	#   实测 worker 侧连一行拒绝都没有):`server_main._begin_match` 在开局那一刻就
+	#   `NetBus.role_claimed.disconnect(_on_role_claimed)` —— 迟到的 `claim_role`
+	#   **根本没有收件人**,既不踢人也不打印(`_match_started` 那第一款判据因此**不可达**)。
+	#   ⇒ 可观察的后果是"**这个客户端再也回不来**":它卡在大厅页,靠本页 claim 兜底梯
+	#   (`_return_to_lobby`)收场。★ 反证(删掉本分支)红的仍是"点了自己那间房 30s 没回到对局"
+	#   那条契约断言,证据是 **worker 日志里"某个拒绝行的缺席"** —— 最弱的一种信号形状,
+	#   别指望日志告诉你走错了哪条。
 	# ★ 回局时**不发** `player_options`/`report_token`:worker 侧两条 handler 都按
 	#   `_claims[r] == caller` 反查,而此刻新 peer 还没进 `_claims`(要等 reclaim 被接受)
 	#   → 两条都静默 no-op;而 token 首次 claim 时就报过一次,worker 手里那份正是要比对的那份。
