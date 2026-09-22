@@ -1258,8 +1258,26 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const offsAll = layerCanvasesSince(made4, sinceD, 640, 400);   // 下标 = 层号(见该助手)
       const offD = offsAll[Core.LAYER_SCENE];
       ok(!!offD, '⑬ 前提:纹理层的离屏层建出来了(尺寸 = 主画布)');
-      ok(offsAll.length === Core.LAYER_COUNT && offsAll[Core.LAYER_SCENE] === offD,
-         '⑬ 前提:四层的离屏层都在(实得 ' + offsAll.length + ' 张;缺一张下面"其余层不动"就判不出来)');
+      // ★★ 前提:"四层都在"必须连**下标 = 层号**这条约定一起钉住,而旧写法
+      //    `offsAll.length === LAYER_COUNT && offsAll[LAYER_SCENE] === offD` 是**半句同义反复**:
+      //    `offD` 就是从 `offsAll` 里取出来的那一个,后半句恒真 ⇒ 实际只判了长度。
+      //    索引与层号一旦错位(`ensureLayerCanvas` 的创建顺序变了),它**照样全绿**,而下面
+      //    "其余层不动 / 后景层留在原地 / 缺席层不进去烤"全都判在**错的画布**上。
+      // ★ 判据改用一条**独立**的证据 —— 合成顺序里的对象身份:`drawLayerPath` 按
+      //    DRAW_ORDER = [背景, 后景, 场景, 前景] 逐层 drawImage ⇒ 主画布上**首次出现的
+      //    四个不同画布**,按顺序就该是 3,2,1,0 号层的离屏层。这条与 made4 的创建顺序
+      //    无关,故"下标 = 层号"是被**另一条链**验证的,不再是同义反复。
+      const composed = [];
+      const imgsD = drawnImages(cvD.ctx);
+      for (let i = 0; i < imgsD.length; i++) if (composed.indexOf(imgsD[i]) < 0) composed.push(imgsD[i]);
+      const orderD = [Core.LAYER_BG, Core.LAYER_BACK, Core.LAYER_SCENE, Core.LAYER_FRONT];
+      let mapD = (composed.length === Core.LAYER_COUNT);
+      for (let i = 0; mapD && i < orderD.length; i++) if (composed[i] !== offsAll[orderD[i]]) mapD = false;
+      ok(offsAll.length === Core.LAYER_COUNT && mapD,
+         '⑬ 前提:四层的离屏层都在**且下标 = 层号**(实得 ' + offsAll.length + ' 张;' +
+         '合成顺序里首次出现的画布数 = ' + composed.length + ',逐位对上 DRAW_ORDER 的 ' +
+         '[3,2,1,0] = ' + mapD + '。★ 这一条不是"offsAll[L] === offD"那种同义反复:' +
+         '创建顺序错位时那条恒真,而这条会红)');
       await rD.setView({ x: 0, y: 0, zoom: ZD });                 // ≥ 8 ⇒ ② 那条路
 
       // 这一格画的是不是**这些** tile:16 个子格逐个按**对象身份**比(位置 = 子格号 × zoom)
@@ -1286,6 +1304,24 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
         return false;
       };
 
+      // ★★ 拖动**必须锚在一份选区上**(本相位所有拖动步骤的共用前提):生产里 pointerdown
+      //    只在"按在选区里"时才起拖动(ui.js),故 `s.selection`(已提交的选区)与
+      //    `s.selDrag.sel`(拖动锚着的那份)**从不分叉**。而 `dragSource` 的早退现在含
+      //    `!s.selection`(选区被取消 ⇒ 偏移不再生效 —— 少了它,Esc 之后内容会留在偏移上)。
+      //    ⇒ 替身这边要自己满足这个前提:只调 setSelDrag 而不先设选区 = **生产到不了的状态**,
+      //    偏移根本不会生效(整段预览断言都会红,而那是**前提**不成立,不是功能坏了)。
+      //    ★ 两步的顺序照生产:先有选区,再起/改拖动。
+      //    ★ 选区**已经在同一个矩形上**时不再调 setSelection:那会多出一次去烤重画,把
+      //      「改偏移恰好重画一次」这类记账断言搅乱(量到的会是 2)。这一步只在**本渲染器
+      //      第一次**拖动时落地,之后各步与旧口径逐字相同。
+      const dragOn = function (rr, sel, dx, dy) {
+        const cur = rr.selection();
+        if (!cur || cur.x !== sel.x || cur.y !== sel.y || cur.w !== sel.w || cur.h !== sel.h) {
+          rr.setSelection(sel);
+        }
+        rr.setSelDrag(sel, dx, dy);
+      };
+
       const tA = rD.cells().get(Core.LAYER_SCENE, 1, 1);
       const tB = rD.cells().get(Core.LAYER_SCENE, 4, 1);
       ok(tA.every(Boolean) && tB.every(Boolean),
@@ -1299,7 +1335,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       // ── ⑬a 三种目标格(偏移 +2 格 ⇒ 目标格 = 0:环面折算)──
       // ★ 这一批用**整片重建**逼出重画(而不是靠 setSelDrag 的去烤):三条断言的证据要**只**
       //   来自 `dragSource` —— 去烤那条路坏了不该让它们跟着红(两件事的变异归属要分得开)。
-      rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
+      dragOn(rD, { x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
       offD.ctx.ops.length = 0;
       await rD.buildLayers();                       // 拖动中的整片重建(滚轮缩放 / 平移那条路)
       ok(cellMatches(offD, 0, 1, tB),
@@ -1328,7 +1364,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const rb0 = rD.stats().layerRebuilds;
       offD.ctx.ops.length = 0;
       for (let Lz = 0; Lz < Core.LAYER_COUNT; Lz++) offsAll[Lz].ctx.ops.length = 0;
-      rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, SB, 0);   // 偏移改到 +1 格
+      dragOn(rD, { x: 4 * SB, y: 1 * SB, w: SB, h: SB }, SB, 0);   // 偏移改到 +1 格
       eq(rD.stats().layerRebuilds - rb0, 1,
          '★★★ 偏移一变:脏区只在**活动层**上重画一次(实得 ' +
          (rD.stats().layerRebuilds - rb0) + ' 次;旧实现这里是 4 —— 四层各烤一遍,而落笔' +
@@ -1364,6 +1400,19 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       ok(!cellAnyDraw(offD, 0, 1) && cellMatches(offD, 5, 1, tB),
          '★★★ 改偏移之后:格 0 那块被**清掉且什么都没画**(它是空气)、内容跟到新目标格 5 —— ' +
          '两条合起来才说明"格 0 上那次烤痕真的被抹掉了"(只看没画 = 分不出"重画过"与"没重画")');
+      // ★★ 同一块**不重复画**(Minor):源格 (4,1) 在这次偏移里是源、在上一次偏移里**也是源**
+      //    (选区没变 ⇒ 源块必然同时落在「当前偏移的源∪目标」与「上一次那两块」里)⇒ 两组
+      //    直接 concat 会把它画两遍。旧实现取 `rectUnion` 的包围盒,顺带把重复"吃掉"了 ——
+      //    改成逐块之后这份去重得自己补上(四元组判等,见 `dedupRects`)。
+      // ★ 判据取**块数恰好 3**(源格 4 / 新目标格 5 / 上一次的目标格 0):不去重是 4。
+      //   它与上面两条都不同面 —— 上面两条判"哪些块被画了",这条判"有没有一块被画两遍"。
+      const bakeClears = offD.ctx.ops.filter(function (o) { return o.op === 'clearRect'; })
+        .map(function (o) { return [o.x, o.y, o.w, o.h]; });
+      eq(bakeClears.length, 3,
+         '★★ 去重:源格在新旧偏移里各出现一次,去重后只画 3 块(实得 ' + bakeClears.length + ' 块: ' +
+         JSON.stringify(bakeClears) + ')。不去重会把它连画两遍 —— 每次 pointermove 白付一次' +
+         '**最大那块**(整块选区)的 clearRect + 一格 16 次 drawImage,而画出来的像素与前一遍' +
+         '逐字节相同');
 
       // ── ⑬d ★★ 清除(松手 / 取消):烤痕不许活过这次拖动 ──
       const rb1 = rD.stats().layerRebuilds;
@@ -1397,7 +1446,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       //   (最坏一整幅图)的 clearRect + 每层数千次 drawImage —— 而这条路径**没有**走
       //   createSlicer(去烤是同步的),闸 2 的单帧预算就是这么破的。
       offD.ctx.ops.length = 0;
-      rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);   // 源 = 格 4,目标 = 格 0
+      dragOn(rD, { x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);   // 源 = 格 4,目标 = 格 0
       const seamClears = offD.ctx.ops.filter(function (o) { return o.op === 'clearRect'; })
         .map(function (o) { return [o.x, o.y, o.w, o.h]; });
       ok(seamClears.some(function (r) { return r[0] === 0 && r[2] === SB * ZD; }) &&
@@ -1430,7 +1479,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const offSw = layerCanvasesSince(made4, sinceSw, 640, 400);      // 下标 = 层号
       const opsOf = function (L) { return offSw[L].ctx.ops.length; };
       for (let Lz = 0; Lz < Core.LAYER_COUNT; Lz++) offSw[Lz].ctx.ops.length = 0;
-      rSw.setSelDrag({ x: 1 * SB, y: 1 * SB, w: SB, h: SB }, 3 * SB, 0);   // 格 1 → 格 4
+      dragOn(rSw, { x: 1 * SB, y: 1 * SB, w: SB, h: SB }, 3 * SB, 0);   // 格 1 → 格 4
       ok(opsOf(Core.LAYER_SCENE) > 0 && opsOf(Core.LAYER_BACK) === 0,
          '★★★ ① 拖动预览只烤**活动层**(场景层):后景层一个 op 都没有(实得 场景 ' +
          opsOf(Core.LAYER_SCENE) + ' / 后景 ' + opsOf(Core.LAYER_BACK) + ')');
@@ -1444,7 +1493,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
          opsOf(Core.LAYER_BACK) + ' 个 op / 场景层擦了目标格 ' + erased +
          ';不擦 = 旧层留着一次拖动预览的残影,直到有别的东西标脏它)');
       for (let Lz = 0; Lz < Core.LAYER_COUNT; Lz++) offSw[Lz].ctx.ops.length = 0;
-      rSw.setSelDrag({ x: 1 * SB, y: 1 * SB, w: SB, h: SB }, 3 * SB, 0);
+      dragOn(rSw, { x: 1 * SB, y: 1 * SB, w: SB, h: SB }, 3 * SB, 0);
       ok(opsOf(Core.LAYER_BACK) > 0 && opsOf(Core.LAYER_SCENE) === 0,
          '★★★ ③ 切层之后继续拖:动的是**后景层**、场景层一个 op 都没有(实得 后景 ' +
          opsOf(Core.LAYER_BACK) + ' / 场景 ' + opsOf(Core.LAYER_SCENE) +
@@ -1465,7 +1514,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const offAb = layerCanvasesSince(made4, sinceAb, 256, 200);
       rAb.setLayer(Core.LAYER_FRONT);                        // 活动层本身就是缺席层
       offAb[Core.LAYER_FRONT].ctx.ops.length = 0;
-      rAb.setSelDrag({ x: 0, y: 0, w: SB, h: SB }, SB, 0);
+      dragOn(rAb, { x: 0, y: 0, w: SB, h: SB }, SB, 0);
       ok(offAb[Core.LAYER_FRONT].ctx.ops.length === 0,
          '★ 缺席层不被去烤碰:拖动一步之后它**一个 op 都没有**(实得 ' +
          offAb[Core.LAYER_FRONT].ctx.ops.length + ' 个;旧实现在这里是一条整张画布宽的 ' +
@@ -1487,7 +1536,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       };
       await rD.setView({ x: 0, y: 0, zoom: 2 });                 // < 8 ⇒ ① 那条路
       thumbD.ctx.ops.length = 0;
-      rD.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
+      dragOn(rD, { x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
       const tG0 = thumbDrawsIn(0, 1);
       ok(tG0.length === SB * SB && tG0.every(function (o) { return tB.indexOf(o.img) >= 0; }) &&
          thumbDrawsIn(4, 1).length === 0,
@@ -1513,7 +1562,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       //   (旧实现在这条上是"四层都动",所以不切层也能过;那正是被修掉的行为)。
       rCol.setLayer(Core.LAYER_BG);
       offCol.ctx.ops.length = 0;
-      rCol.setSelDrag({ x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
+      dragOn(rCol, { x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
       ok(someOp(offCol.ctx, function (o) {
            return o.op === 'fillRect' && o.style === 'rgba(255,0,0,1)' &&
                   o.x === 0 && o.y === 1 * SB * ZD;
@@ -1549,8 +1598,14 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       //     ② 选区为空时**不画**那个拖动框(框是"选区"的视觉,没有选区就没有框)。
       //   ★ 别把 ① 读成"review 说的 TypeError 今天在场上":实测把块内换回 `s.selection`
       //     (保留外层判据)照样全绿 —— 机制到不了这里,false positive 已写进报告。
-      //     ③ ★ 而且**取消选区那一刻**烤痕就该没了(见下第 ③ 条断言):选中变空 ⇒ 内容归位,
-      //        不必等下一次 pointermove/pointerup。
+      //     ③ ★★ 而且**取消选区那一刻内容就该归位**(见下第 ③ 条断言)。
+      //     ★★ ③ 的判据必须落在**内容**上(逐子格比 tile),不能是"哪一块被重画过":
+      //        "重画过"这件事在**旧实现**里同样成立 —— 去烤重画的偏移来源是 `s.selDrag`
+      //        (它此刻还在),画的还是**同一份偏移**,像素与重画前逐字节相同 ⇒
+      //        `clearRect(5*SB*ZD, …) 存在`这类断言**恒真**,它只证明"setSelection 调过
+      //        markDragDirty",证不了内容归位(旧写法就是那样,两种实现都放行)。
+      //        换成"源格 (4,1) 画回**它自己**的 tile、偏移目标格 (5,1) 一格都不画"之后:
+      //        旧实现下这两半**同时**红(源格继续空着、目标格继续是 tB)。
       let threwSel = null;
       cvD.ctx.ops.length = 0;
       try {
@@ -1559,12 +1614,19 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
         cvD.ctx.ops.length = 0;                     // ★ 只留"选区已空"之后那一次 render 的笔迹
         offD.ctx.ops.length = 0;                    // ★ 同上(离屏那一侧:烤痕记在这里)
         rD.setSelection(null);                      // ← 用户按 Esc(cancel-selection)
-        ok(someOp(offD.ctx, function (o) {
-             return o.op === 'clearRect' && o.x === 5 * SB * ZD && o.y === 1 * SB * ZD;
-           }),
-           '★★ Esc(选区置空)**当场**就去烤:活动层上"偏移后的目标格"那块立刻被重画' +
-           '(实得离屏层 ' + offD.ctx.ops.length + ' 个 op)。少了这一步,框没了而偏移像素会' +
-           '留到下一次 pointermove/pointerup —— 那之间是几十毫秒的"视觉说没了、内容还在别处"');
+        const drawsInCell = function (off, cx, cy) {
+          const x0 = cx * SB * ZD, y0 = cy * SB * ZD;
+          return drawnOps(off).filter(function (o) {
+            return o.x >= x0 && o.x < x0 + SB * ZD && o.y >= y0 && o.y < y0 + SB * ZD;
+          }).length;
+        };
+        ok(cellMatches(offD, 4, 1, tB) && !cellAnyDraw(offD, 5, 1),
+           '★★★ Esc(选区置空)那一刻内容就**归位**:源格 (4,1) 画回它自己的 16 个 tile、' +
+           '偏移目标格 (5,1) 一个子格都不画(实得 源格 ' + drawsInCell(offD, 4, 1) + ' 笔 / 目标格 ' +
+           drawsInCell(offD, 5, 1) + ' 笔)。' +
+           '少了 `dragSource` 那道"选区没了 ⇒ 偏移不生效"的判据,这一次重画画的是**同一份偏移**' +
+           '(偏移来源 `s.selDrag` 还在)⇒ 源格继续空着、目标格继续是 tB —— 框没了、内容却还在' +
+           '偏移上,而且一条错误都没有');
         cvD.ctx.ops.length = 0;
         rD.render();
       } catch (e) { threwSel = e; }

@@ -1014,13 +1014,21 @@ globalThis.Editor = (function () {
       guard('pointerup', function () {
         if (app.st.panning) { app.st.panning = null; return; }
         var hit = hitOf(ev);
-        if (app.st.selDrag) {
-          var sd = app.st.selDrag;
+        // ★★ 拖动分支:记录先取到**局部变量**再判 —— **没有在飞的记录就整支跳过**(早退)。
+        //    这条早退是承重的,而且它挡的是**两种**"没有记录":
+        //    ① 本次按下起的是别的动作(框选/笔画),那两条分支在下面各管各的;
+        //    ② 这次拖动**已经被取消**了 —— Esc 的 cancel-selection 会把 `app.st.selDrag`
+        //       清掉(见那里):视觉上已经取消,松手就**一个格都不许搬**(否则"看着取消了、
+        //       数据却动了"是最坏那种不一致)。
+        //    ★ `sd` 的**字段**必须排在判过 `sd` 之后才读:取消之后 `sd` 是 null,少了这层
+        //      判会去读它的 `dx`(在 pointerup 里抛 TypeError = 落笔路径整个断掉 ——
+        //      "点了一下,什么都没发生,控制台里一条错")。
+        var sd = app.st.selDrag;
+        if (sd) {
           app.st.selDrag = null;
           app.r.setSelDrag(null, 0, 0);
-          // ★ 选区可能**已经没有**了(Esc 走 cancel-selection,而左键还按着)⇒ 没有可搬的
-          //   东西。少了这层判,下面那句 `cur.x` 会抛 TypeError(在 pointerup 里 = 落笔
-          //   路径整个断掉)。
+          // ★ 选区**可能已经**没有了(Esc 走 cancel-selection,而左键还按着)⇒ 没有可搬的
+          //   东西。少了这层判,下面那句 `cur.x` 会抛 TypeError(同款后果)。
           var cur = app.r.selection();
           if (cur && (sd.dx !== 0 || sd.dy !== 0)) {
             pushAndShow(moveRegion(app.map, app.r.layer(), cur, sd.dx, sd.dy));
@@ -1141,7 +1149,22 @@ globalThis.Editor = (function () {
                                 'rect', { kind: 'sub', x: s3.x, y: s3.y },
                                 { kind: 'sub', x: s3.x + s3.w - 1, y: s3.y + s3.h - 1 }));
         }
-        else if (cmd === 'cancel-selection') { app.r.setSelection(null); }
+        else if (cmd === 'cancel-selection') {
+          // ★★ Esc 可能在**拖动途中**按下去(左键还按着、`selDrag` 还在飞)而照样合法:选区没了
+          //    ⇒ **没有可搬的东西**,这次拖动整支作废。要一起做的是三件事:
+          //    ① 清**在飞的拖动记录**(`app.st.selDrag`)—— 它是"这一支拖动还算不算数"的唯一
+          //       依据:松手时 pointerup 的拖动分支因此**根本不进**(少了它,提交与否只剩"选区
+          //       还在不在"一条判据,"取消"与"别的什么把选区清掉了"就分不开了);
+          //    ② 让渲染侧撤掉偏移(`setSelDrag(null)`):内部走一遍 `markDragDirty`,把烤过的
+          //       两块按"内容归位"重画 —— 归位是**当场**的,不必等下一次指针事件;
+          //    ③ 清选区,框消失。
+          //    ★ ②③ 谁先谁后都一样(去烤按哪几块画由 `s.selDrag` 决定,而重画出来的是**什么**
+          //      由 `dragSource` 决定 —— 两条判据现在都含 `s.selection`);① 必须排在最前,
+          //      因为紧随其后的 pointermove/pointerup 判的正是它。
+          app.st.selDrag = null;
+          app.r.setSelDrag(null, 0, 0);
+          app.r.setSelection(null);
+        }
         else if (cmd.indexOf('pan:') === 0) { pend = arrowPan(cmd.slice(4)); }
         else if (cmd === 'save' || cmd === 'save-as') { status('保存:计划里的 Task 8 才接上'); }
         statusLine();

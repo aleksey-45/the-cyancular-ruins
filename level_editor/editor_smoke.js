@@ -772,11 +772,16 @@ function countNonZero(map, L) {
     const savedAdd = globalThis.addEventListener;
     const savedDoc13 = globalThis.document;
     const savedR13 = Editor.app.r, savedMap13 = Editor.app.map, savedCv13 = Editor.app.canvas;
-    // ★★ `app.st` 也必须存/还:⑬c 会把它**整个换掉**(换成一个干净的笔画状态),
-    //   而它是**生产状态对象** —— ⑬ 今天是最后一个相位所以看不出问题,但 Task 8 往后
-    //    追加相位时会**继承一个别人的画笔/描述符**(工具、笔刷大小、颜色全变),那种漂移
-    //    不报错、只让后面的相位"按错的初始条件"跑。
-    const savedSt13 = Editor.app.st;
+    // ★★ `app.st` 也必须存/还 —— 而且必须是**字段快照**,不是只存引用:
+    //    ① `installInteraction()`(紧接着那一步)会把 `app.st` **整个换成**一个新对象
+    //       (它就是**生产状态对象**的来源,见 ui.js 的初始化;在那之前 `app.st` 根本不存在
+    //       —— `var app = {…}` 里没有 `st` 这个字段);
+    //    ② 本相位后续各步又在那**同一个对象**上**原地改字段**(⑬b4/⑬b5 的 `tool='select'`、
+    //       `brushSize=1`)。
+    //    ⇒ 只还引用 = 那些字段的改动跟着对象一起"还"回去(等于没还):后面追加的相位会**继承
+    //      一个别人的画笔**(工具/笔刷大小/颜色全变),而那种漂移不报错、只让它们"按错的初始
+    //      条件"跑。故快照取在 `installInteraction()` **之后**(下方),收尾时逐字段还回去。
+    let savedSt13 = null, savedStFields13 = null;
     // ★ 命中坐标按需可变(默认恒落格 (1,1)):跨接缝那几条要把指针放到指定的子格上。
     let sub13 = { X: 5, Y: 5 };
     const handlers = {};
@@ -786,6 +791,10 @@ function countNonZero(map, L) {
                             querySelectorAll: function () { return []; } };
     Editor.setErrorSink(function (t) { errs13.push(String(t)); });
     const calls13 = [];
+    // ★ 渲染侧 `setSelDrag` 的**实参**账(修复轮 3 新增的观测面):原来的记账只记"被调过",
+    //   而 Esc 取消拖动那条路的重点恰恰是**传的是 null**(= 要求撤掉偏移 ⇒ 去烤)。
+    //   分不出实参就判不了"到底有没有把偏移撤掉"。
+    const selDragArgs13 = [];
     let sel13 = null;
     Editor.app.canvas = {
       setPointerCapture: function () {},
@@ -800,7 +809,10 @@ function countNonZero(map, L) {
         calls13.push('setSelection');
         sel13 = s ? { x: s.x, y: s.y, w: s.w, h: s.h } : null;
       },
-      setSelDrag: function () { calls13.push('setSelDrag'); },
+      setSelDrag: function (s, dx, dy) {
+        calls13.push('setSelDrag');
+        selDragArgs13.push(s ? { x: s.x, y: s.y, dx: dx, dy: dy } : null);
+      },
       setPreview: function () { calls13.push('setPreview'); },
       layer: function () { return Core.LAYER_SCENE; },
       setLayer: function () { calls13.push('setLayer'); },
@@ -811,6 +823,13 @@ function countNonZero(map, L) {
     };
     try {
       Editor.installInteraction();
+      // ★ 生产状态对象的**字段快照**取在这里(见相位头那条注释:installInteraction 之前
+      //   `app.st` 是 undefined,取在那里等于没取)。
+      savedSt13 = Editor.app.st;
+      savedStFields13 = savedSt13 ? Object.assign({}, savedSt13) : null;
+      ok(!!savedSt13 && savedSt13.tool === 'brush' && savedSt13.brushSize === 1,
+         '⑬ 前提:生产状态对象建出来了且是初始值(tool=brush / brushSize=1)—— ' +
+         '收尾那条"逐字段还回去"断言比的正是这两个字段');
       ok(typeof handlers.keydown === 'function' && typeof Editor.app.canvas.onpointerdown === 'function' &&
          typeof Editor.app.canvas.onpointerup === 'function',
          '⑬ 前提:installInteraction 在 window 上挂了 keydown、在画布上挂了 pointerdown/up' +
@@ -912,7 +931,10 @@ function countNonZero(map, L) {
       // ★ 这条**照实记录当前的语义**,不是"要它变成什么样"。命中坐标在 `hitTest`/`screenToSub`
       //   里就已经折算回 [0, subCols),`subRectOf` 只对两个端点取 min/max ⇒ 绕过去的那一段
       //   被读成"0 到 92 的线性区间",结果是**整整一行**(w = 96 子格 = 24 格)。
-      //   用户想要的是 {x:23,w:2}(格 23 与格 0)。
+      //   用户想要的是**两个格**(格 23 与格 0)= 子格 `{x:92,w:8}`(92..95 折回 0..3)
+      //   —— 存值的单位一律是**子格**,与下面断言的期望值同量纲。
+      //   ★ 修复轮 3 订正:此处曾写作 `{x:23,w:2}`(格),与断言消息里的子格值**不同量纲**,
+      //     两者无法对读;消息里那个 `w:5` 也是错的(8 才对,见 `subRectOf` 的 k=4 那条路)。
       // ★ 详见报告:改成**环面区间**要动的东西不在本轮范围内(命中在 subRectOf 看到之前
       //   就已经折算过 ⇒ 方向信息已丢失),这里先把今天的语义钉住 —— 以免"没修"被读成"没这事"。
       Editor.app.map = mS;
@@ -927,7 +949,8 @@ function countNonZero(map, L) {
       Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
       eq(sel13, { x: 0, y: 4, w: 96, h: 4 },
          '★★ 跨接缝框选(格 23 → 绕过右边缘回到格 0)存下来的是**整整一行**(实得 ' +
-         JSON.stringify(sel13) + ';用户想要的是 {x:92,w:5})—— 两个端点在命中那一步就已经' +
+         JSON.stringify(sel13) + ';用户想要的是子格 {x:92,w:8}(= 格 23 与格 0))—— ' +
+         '两个端点在命中那一步就已经' +
          '折算回 [0, subCols),方向信息丢失,subRectOf 只能取 min/max。' +
          '★ 这条钉的是**今天的语义**:它同时是"删除键会抹掉一整行"那条已知缺陷的证据');
       eq(Editor.regionCells(mS, { unit: 'cell', x0: 0, y0: 1, x1: 23, y1: 1 }, sel13).length, 24 * SUB * SUB,
@@ -939,17 +962,21 @@ function countNonZero(map, L) {
       sel13 = WRAP_SEL;                                // 盖住 93..95 与 0..2
       Editor.app.st.tool = 'select';
       Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
-      sub13 = { X: 1, Y: 4 };                          // 按在**绕过去的那半截**里(子格 1)
+      // ★ 单位换算:整数画笔(brushSize=1)下 `hitOf` 给的是**格**号,由 `toSub` 折成子格 ——
+      //   `X:1` ⇒ 格 0 ⇒ **子格 0**(不是"子格 1";修复轮 3 订正,见 ⑬b5 下面那条同款)。
+      sub13 = { X: 1, Y: 4 };                          // 按在**绕过去的那半截**里(格 0 = 子格 0)
       Editor.app.canvas.onpointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
       ok(!!Editor.app.st.selDrag && !Editor.app.st.selStart,
-         '★★★ 按在**绕过去的那半截**(子格 1,属于 {x:93,w:6})里 = 拖动它,而不是重新框选' +
+         '★★★ 按在**绕过去的那半截**(格 0 = 子格 0,属于 {x:93,w:6})里 = 拖动它,而不是重新框选' +
          '(实得 selDrag=' + !!Editor.app.st.selDrag + ' / selStart=' + !!Editor.app.st.selStart + ';' +
          '旧实现用非折算的 inRect ⇒ 判成"没按在选区里" ⇒ 一拖就是在重新框选,选区永远拖不动)');
       Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
-      sub13 = { X: 6, Y: 4 };                          // 按在选区**之外**(子格 6)
+      // ★ 同上:`X:6` ⇒ 格 1 ⇒ **子格 4**(那条"子格 6"的旧注释把命中单位当成了子格)。
+      //   判据不变:格 1(子格 4..7)整格都在 {x:93,w:6} 折算后的区间**之外**。
+      sub13 = { X: 6, Y: 4 };                          // 按在选区**之外**(格 1 = 子格 4)
       Editor.app.canvas.onpointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
       ok(!Editor.app.st.selDrag && !!Editor.app.st.selStart,
-         '★ (对照)按在选区**之外**(子格 6)仍然起框选 —— 上一条不是"永远走拖动那条路"');
+         '★ (对照)按在选区**之外**(格 1 = 子格 4)仍然起框选 —— 上一条不是"永远走拖动那条路"');
       Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
       sub13 = { X: 5, Y: 5 };                          // 还原恒落格 (1,1)
       ok(calls13.indexOf('editCells') >= 0 && calls13.indexOf('setSelection') >= 0,
@@ -988,6 +1015,49 @@ function countNonZero(map, L) {
          '★★ 选区已被 Esc 取消之后松手:不抛(没有错误进 sink)、也不改地图(实得 errs=' +
          JSON.stringify(errs13) + ' calls=' + JSON.stringify(calls13) + ')');
 
+      // ── ⑬b2b ★★★ Esc 在**拖动途中**按下去(走**真入口**:keydown → cancel-selection)──
+      // ★ ⑬b2 手工摆出"选区已经没了"这个**状态**;这一条走用户真会走的那条路(按 Esc),
+      //   把三件事一起钉住 —— 它们缺一不可,少了任何一件都只是"看着像取消":
+      //   ① 视觉取消:渲染侧必须被要求**撤掉偏移**(`setSelDrag(null)`;它内部会去烤,
+      //      内容当场归位 —— 渲染侧那一半的像素判据在 render_smoke 的 ⑬h③);
+      //   ② 松手**不提交**:在飞的拖动记录已被清掉 ⇒ pointerup 的拖动分支根本不进;
+      //   ③ 记录不在时 pointerup 也不许去读它的字段(guard 里抛 = 静默一条错)。
+      const mE2 = filled(Core.createMap('e2', 6, 3), Core.LAYER_SCENE, Core.neutralDesc(4));
+      Editor.app.map = mE2;
+      const nE2 = countNonZero(mE2, Core.LAYER_SCENE);
+      Editor.app.st.tool = 'select';
+      sel13 = { x: 4, y: 4, w: 4, h: 4 };
+      Editor.app.st.selDrag = { from: { kind: 'sub', x: 4, y: 4 }, dx: 4, dy: 0 };   // ← 拖动在飞
+      calls13.length = 0; selDragArgs13.length = 0; errs13.length = 0;
+      pressKey('Escape', { tagName: 'BODY' });
+      ok(Editor.app.st.selDrag === null && sel13 === null &&
+         selDragArgs13.length === 1 && selDragArgs13[0] === null,
+         '★★★ Esc 在**拖动途中**按下:在飞的拖动记录与选区一起清掉,并且**当场**要求渲染侧' +
+         '撤掉偏移(setSelDrag 的实参必须是 null;实得实参 ' + JSON.stringify(selDragArgs13) +
+         ' / 记录还在=' + !!Editor.app.st.selDrag + ' / 选区=' + JSON.stringify(sel13) + ')。' +
+         '★ 少了清记录这一半,"取消"与"别的什么把选区清掉了"就分不开 —— 松手时提交与否' +
+         '只剩"选区还在不在"一条判据');
+      calls13.length = 0; errs13.length = 0;
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
+      ok(errs13.length === 0 && calls13.indexOf('editCells') < 0 &&
+         countNonZero(mE2, Core.LAYER_SCENE) === nE2,
+         '★★★ 取消之后松手:**不抛、一个格都不搬**(实得 errs=' + JSON.stringify(errs13) +
+         ' / editCells=' + (calls13.indexOf('editCells') >= 0) + ' / 改动格数=' +
+         (countNonZero(mE2, Core.LAYER_SCENE) - nE2) + ')。★ 视觉上已经取消、数据却动了是最坏' +
+         '那种不一致,而它只在"Esc 之后松手"这条路上现形');
+      // ★ 单独隔离"没有在飞记录"这一支(判据必须先于读 `sd` 的字段):记录不在、**而选区在**
+      //   —— 这正是"先读 sd 再看选区"的写法会去读 null 的那一帧(pointerup 里抛 TypeError
+      //   = 落笔路径整个断掉,而且只在取消之后松手时现形)。
+      sel13 = { x: 4, y: 4, w: 4, h: 4 };
+      Editor.app.st.selDrag = null;
+      Editor.app.st.selStart = null; Editor.app.st.stroke = null; Editor.app.st.gradStart = null;
+      calls13.length = 0; errs13.length = 0;
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
+      ok(errs13.length === 0 && calls13.indexOf('editCells') < 0 &&
+         calls13.indexOf('setSelection') < 0,
+         '★★ 没有在飞的拖动记录时(选区还在)pointerup 既不抛也不提交(实得 errs=' +
+         JSON.stringify(errs13) + ' calls=' + JSON.stringify(calls13) + ')');
+
       // ── ⑬d ★★ pushAndShow 的 whole ⇒ invalidateAll 分派(评审发现 5 的 ui 半边)──
       const mW = Core.createMap('w', 2, 1);
       Editor.app.map = mW;
@@ -1015,8 +1085,26 @@ function countNonZero(map, L) {
       globalThis.addEventListener = savedAdd;
       globalThis.document = savedDoc13;
       Editor.app.r = savedR13; Editor.app.map = savedMap13; Editor.app.canvas = savedCv13;
-      Editor.app.st = savedSt13;
+      // ★ 先把字段**逐个**还回原对象,再把引用还回去 —— 两半缺一不可:只还引用时,
+      //   ⑬b4/⑬b5 原地改过的 `tool`(='select')仍在那个对象上(见相位头那条注释)。
+      if (savedSt13 && savedStFields13) {
+        for (const k13 in savedStFields13) savedSt13[k13] = savedStFields13[k13];
+      }
+      if (savedSt13) Editor.app.st = savedSt13;
     }
+
+    // ── ⑬ 收尾 ★★ `app.st` 必须**逐字段**还成生产初始状态(相位头那条注释的可判形式)──
+    // ★ 判据取**字段值**(tool / brushSize / 无在飞状态)而不是"还是同一个对象":对象身份
+    //   两种实现完全一样(都是同一个引用),漂出去的恰恰是**字段**;而 `tool` 的初始值是
+    //   'brush'(ui.js 建状态对象那一行),⑬b4/⑬b5 把它原地改成了 'select'。
+    // ★ 它同时钉住"还的是**生产**对象"这件事:漏掉整段还原时这里会读到 undefined。
+    ok(!!Editor.app.st && Editor.app.st.tool === 'brush' && Editor.app.st.brushSize === 1 &&
+       !Editor.app.st.selDrag && !Editor.app.st.selStart && !Editor.app.st.stroke,
+       '★★ 相位收尾:app.st 被**逐字段**还成生产初始状态(tool=brush / brushSize=1 / 无在飞状态;' +
+       '实得 tool=' + (Editor.app.st && Editor.app.st.tool) + ' brushSize=' +
+       (Editor.app.st && Editor.app.st.brushSize) + ' selDrag=' + !!(Editor.app.st && Editor.app.st.selDrag) +
+       ')。★ 只还引用的话,⑬b4/⑬b5 **原地**改过的 tool 会以 \'select\' 漂到后面追加的相位里' +
+       '(不报错,只让它们按错的初始条件跑)');
   } catch (err) {
     console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
     console.error(err && err.stack ? err.stack : String(err));

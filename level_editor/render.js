@@ -345,6 +345,25 @@ globalThis.Render = (function () {
     return ox < sel.w && oy < sel.h;
   }
 
+  // 一批规范块**按四元组去重**(顺序保持首次出现的那次)。
+  // ★★ 为什么必须有:去烤要把「当前偏移的 源∪目标」与「上一次那两块」并起来重画,而
+  //    选区**没变**时源块必然同时出现在这两组里(`now` 的第一块就是源块)⇒ 直接 concat
+  //    会把**同一块画两遍**。旧实现取 `rectUnion` 的包围盒,顺带把重复"吃掉"了 ——
+  //    改成逐块重画之后,这份去重必须自己补上:否则每次 pointermove 白付一次该块的
+  //    clearRect + 一格 16 次 drawImage,而它偏偏是**最大**的那一块(整块选区)。
+  // ★ 判据取 (x, y, w, h) 四元组而不是对象身份:两组矩形是各自 `canonRects` 算出来的,
+  //   同一块在两边是**两个不同对象**(值相等)。
+  function dedupRects(list) {
+    var out = [], seen = {};
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i], key = r.x + ',' + r.y + ',' + r.w + ',' + r.h;
+      if (seen[key]) continue;
+      seen[key] = 1;
+      out.push(r);
+    }
+    return out;
+  }
+
   // 一个矩形在环面上折算后的**规范分解**(至多 4 块):拖动预览要重画的区域必须落在这些块里。
   // ★ 只取"左上角折算"是不够的:矩形**自己**跨过接缝时(x1 < x0),折算后是两段区间 ——
   //   取并集会漏掉另一头那半截(那半边的烤痕永远留着)；取"包围盒"则会把整幅图都算进去。
@@ -969,8 +988,14 @@ globalThis.Render = (function () {
     //    ★★ 一律传 `W`/`H`(环面折算,评审发现 2):拖动跨过接缝时目标格落到图的另一头,
     //      非折算的查询会在那里读到"目标格自己的内容" —— 而落笔(`moveRegion` 走 `idxOf`)
     //      搬过去的是**源格的内容**,预览与落笔就在接缝那一侧分了岔。
+    // ★★ **选区没了,偏移就不再生效** —— 判据里必须有 `s.selection`(不是只有 `s.selDrag`)。
+    //    Esc 取消选区时"左键还按着"是合法状态,而框没了就**没有可搬的东西**:此时若还照
+    //    `s.selDrag` 读偏移,画面上的内容会留在"被搬过去"的位置上 —— 用户看到的是"框没了、
+    //    内容却在别处",而且它会一直留到下一次 pointermove/pointerup 才被擦掉。
+    //    ★ 与 `markDragDirty` 里那句 `s.selDrag && s.selection` 是**同一个判据**:一处说偏移
+    //      生效、另一处说不生效,去烤就会记错账(记下"烤着的格"其实没烤)。
     function dragSource(L, X, Y) {
-      if (!s.selDrag || L !== s.layer) return { hit: true, X: X, Y: Y };
+      if (!s.selDrag || !s.selection || L !== s.layer) return { hit: true, X: X, Y: Y };
       var W = s.map ? s.map.subCols : 0, H = s.map ? s.map.subRows : 0;
       var sel = s.selDrag.sel, q = selectionSource(sel, s.selDrag.dx, s.selDrag.dy, X, Y, W, H);
       if (q.hit) return q;
@@ -1004,20 +1029,28 @@ globalThis.Render = (function () {
     function markDragDirty() {
       if (!s.map) return;
       var W = s.map.subCols, H = s.map.subRows, L = s.layer, now = [];
-      if (s.selDrag) {
+      // ★★ 判据与 `dragSource` 的早退**逐字同源**:偏移只在"拖动在飞 **且** 选区还在"时生效。
+      //    选区被取消(Esc)而 selDrag 还挂着时,`dragSource` 已经一律读原格 ⇒ 这一刻
+      //    **没有任何格**存着偏移内容,`now` 必须是空的、`dragBake` 必须是 null;
+      //    照旧按 selDrag 记的话,账本会声称"这两块烤着",而它们其实已经归位。
+      var live = !!s.selDrag && !!s.selection;
+      if (live) {
         var sel = s.selDrag.sel;
         now = canonRects({ x: sel.x, y: sel.y, w: sel.w, h: sel.h }, W, H)
           .concat(canonRects({ x: sel.x + s.selDrag.dx, y: sel.y + s.selDrag.dy, w: sel.w, h: sel.h }, W, H));
       }
       var prev = dragBake;
-      dragBake = s.selDrag ? { L: L, rects: now } : null;
+      dragBake = live ? { L: L, rects: now } : null;
       // ★ 活动层:当前偏移的 源 ∪ 目标;同层时把**上一次**那批并进来一起画(一次重画一层)。
       // ★★ 逐块重画,**不取包围盒**(闸 2):跨接缝时这两块分居图的两头,包围盒是**整行**
       //    (目标横跨两半时甚至是整幅图)—— 高倍 + 大选区下那是全屏 clearRect 加每层数千次
       //    drawImage,**每次 pointermove** 都付,远超 ~8ms 的单帧预算,而且**没有**走
       //    `createSlicer`(去烤是同步路径)。`canonRects` 本来就把正确的两块算出来了,
       //    取包围盒是白送掉那个信息。
-      repaintDrag(L, (prev && prev.L === L) ? now.concat(prev.rects) : now);
+      // ★★ `dedupRects`:源块在 `now` 与 `prev.rects` 里**各有一份**(选区没变时必然如此)——
+      //    不去重就会把它连画两遍(见 `dedupRects` 的说明)。`now` 自己也要过一遍:dx=dy=0
+      //    时源与目标**是同一个矩形**(按下还没拖,pointerdown 之后立刻就 markDragDirty)。
+      repaintDrag(L, dedupRects((prev && prev.L === L) ? now.concat(prev.rects) : now));
       // ★★ 层变了:上一次那批烤在**旧层**上 —— 旧层此刻读到的是"没拖过"的内容,那些像素
       //    必须擦掉(不擦 = 旧层留着一次拖动预览的残影,直到有别的东西标脏它)。
       if (prev && prev.L !== L) repaintDrag(prev.L, prev.rects);
@@ -1206,10 +1239,15 @@ globalThis.Render = (function () {
       layerVisible: function (L) { return s.layerVisible[L]; },
       setLayerLocked: function (L, b) { s.layerLocked[L] = !!b; },
       layerLocked: function (L) { return s.layerLocked[L]; },
-      // ★★ 选区一变也要去烤:Esc 取消选区**时左键还按着**(selDrag 还在)是合法状态 ——
-      //    框没了,而偏移像素会**留到下一次 pointermove/pointerup 才被擦**(那之间是几十毫秒
-      //    的"选区的视觉没了、内容还在偏移上")。"选区为空 ⇒ 内容立刻归位"才是这条不变量
-      //    该有的窗口:改一次选区就把烤痕清掉,不必等下一次指针事件。
+      // ★★ 选区一变也要去烤:Esc 取消选区**时左键还按着**(selDrag 还在)是合法状态。
+      //    ★ 但这一句 `markDragDirty()` **单独并不足以**让内容归位 —— 它只负责"把烤过的那几块
+      //      重画一遍",而重画画出来的是**什么**,由 `dragSource` 决定:选区空掉之后
+      //      `dragSource` 的早退(gate 里含 `!s.selection`)才让它一律读原格。两半合起来
+      //      才是"选区为空 ⇒ 内容**当场**归位"这条不变量:少了 `dragSource` 那一半,这次重画
+      //      画的还是**同一份偏移**(偏移来源是 `s.selDrag`,而它此刻仍然在),像素与重画前
+      //      逐字节相同 —— 框没了,内容却还在偏移上,而且一条错误都没有。
+      //    ★ 调用方(ui.js 的 cancel-selection)另外还要 `setSelDrag(null, 0, 0)`:把这次
+      //      拖动整个作废(松手时 pointerup 也就不会再提交它)。
       setSelection: function (sel) { s.selection = sel; markDragDirty(); render(); },
       selection: function () { return s.selection; },
       setSelDrag: setSelDrag, setPreview: setPreview,
