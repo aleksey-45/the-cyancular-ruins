@@ -39,6 +39,9 @@ const MAX_STEP_PX := 8.0                # 单帧最大位移上限(理想 5.0;�
 const CANON_X := 1000.0                 # 相 A 采样点:开阔处,只由快照驱动,与地形/物理无关
 const CANON_Y0 := 1000.0
 const SEAM_NEAR_PX := 200.0             # 相 B:渲染位置到锚点的**未回绕** |Δx| 上限
+# 相 C:幽灵体到"未经平滑的权威位置"的偏差上限。幽灵体吃的是原始值,故必须 ≈ 0;
+# 2.0 只是给浮点与"同帧刚体移动要等下一个物理步"留的余量,不是容许它滞后。
+const GHOST_ERR_MAX := 2.0
 
 var _rep: Node2D = null
 var _canon := Vector2(CANON_X, CANON_Y0)
@@ -55,6 +58,10 @@ var _results: Array = []                # [{jitter, ratio, max_step}]
 var _phase := "A"
 var _seam_f := 0
 var _anchor := Vector2(CANON_X, CANON_Y0)
+# 相 C 的解耦守卫(每档抖动都采):幽灵体距"未经平滑的权威位置"的最大偏差。
+# 它必须 ≈ 0 —— 幽灵体要的是**最小陈旧**,跟平滑后的渲染位置是错的(理由见 player_replica)。
+var _ghost_err_max := 0.0
+var _render_err_max := 0.0              # 对照读数:渲染位置距同一目标的偏差(平滑 = 这个有值)
 
 
 func _ready() -> void:
@@ -87,6 +94,8 @@ func _begin_case(jitter_ms: float) -> void:
 	_still = 0
 	_max_step = 0.0
 	_acc_ms = 0.0
+	_ghost_err_max = 0.0
+	_render_err_max = 0.0
 	_gap = _next_gap(jitter_ms)
 
 
@@ -143,6 +152,13 @@ func _phase_a() -> void:
 		_still += 1
 	_max_step = maxf(_max_step, d)
 	_prev = p
+	# 相 C 采样:同一帧里比较"幽灵体"与"渲染位置"各自距**未经平滑的权威位置**多远。
+	var tgt := MazeGenerator.anchor_to_nearest(_canon, _anchor,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var ghost := _rep.get_node_or_null("GhostBody") as Node2D
+	if ghost != null:
+		_ghost_err_max = maxf(_ghost_err_max, ghost.global_position.distance_to(tgt))
+	_render_err_max = maxf(_render_err_max, p.distance_to(tgt))
 	_f += 1
 	if _f < FRAMES:
 		return
@@ -150,6 +166,12 @@ func _phase_a() -> void:
 	_results.append({"jitter": jitter_ms, "ratio": ratio, "max_step": _max_step})
 	print("[replica_smoothness] 相A 抖动 ±%.1f ms:零位移帧 %d/%d = %.4f;单帧最大位移 %.3f px(理想 %.1f)"
 			% [jitter_ms, _still, _f, ratio, _max_step, STEP_PX])
+	print("[replica_smoothness] 相C 抖动 ±%.1f ms:幽灵体距权威位置最大 %.3f px(上限 %.1f);渲染位置距同一目标最大 %.1f px(平滑滞后)"
+			% [jitter_ms, _ghost_err_max, GHOST_ERR_MAX, _render_err_max])
+	if _ghost_err_max > GHOST_ERR_MAX:
+		_fail("相C 幽灵体没有跟上未经平滑的权威位置(偏差 %.3f px,上限 %.1f)—— 它会变成一条低通滤波后的、更陈旧的碰撞代理"
+				% [_ghost_err_max, GHOST_ERR_MAX])
+		return
 	_case += 1
 	if _case < JITTER_CASES.size():
 		_start_case()

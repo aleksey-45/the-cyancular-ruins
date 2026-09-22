@@ -271,6 +271,17 @@ func _process(delta: float) -> void:
 			# 渲染位置归到本地玩家(相机)最近副本:确保渲染在可见副本,不留在远副本。
 			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		# ★★ 幽灵体**不跟着平滑走**(2026-09-22):它跟的是**未经平滑的原始权威位置** `target`。
+		#   幽灵体的唯一职责是让"预测所依据的世界"与权威世界一致(见文件头),它要的是
+		#   **最小陈旧**,不是好看。而指数追赶是个低通滤波器 —— 目标以 300px/s 移动时它额外
+		#   落后 `v / INTERP_RATE ≈ 25px`,那 25px 会直接变成"本地预测撞在一个位置不对的对手
+		#   身上" ⇒ 白白多出分歧。
+		#   ★ 这条还保证了一件更要紧的事:**预测路径与改回指数追赶之前逐位相同** —— 那时的
+		#     alpha 插值在 60fps 下退化成"直落最新包"(见文件头),幽灵体跟的就是这个原始值。
+		#     所以"画面变平滑"与"回滚面零回归"两件事可以同时成立,不必二选一。
+		#   ★ `target` 与渲染位置用的是**同一个** anchor_to_nearest,故两者仍在同一副本空间。
+		if _ghost != null:
+			_ghost.global_position = target
 	# 受击闪烁:本地玩家被打是 iframe 半透明眨眼,副本同款(看得见"打中了")。
 	if _hit_flash_t > 0.0:
 		_hit_flash_t = maxf(_hit_flash_t - delta, 0.0)
