@@ -18,7 +18,7 @@ present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听
   (选中的地图文件 + `current_grid`)并转发;`.cyrm` 格式进 `map_format`、环面几何与寻路进
   `grid_pathfinder`(阶段 5.7)。
 - `net/`(11)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
-  `net_bus` `net_bus_ext` `prediction_rollback` `snapshot_interp` `pvp_session` `proc_util`
+  `net_bus` `net_bus_ext` `prediction_rollback` `pvp_session` `proc_util`
   `local_server`
   —— 改协议/联机手感/进程编排时动这里。★ **输入源放这里**(`player_input` 纯接口 +
   `local_input_source` / `packet_input_source` / `ai_input_source` 三个实现):

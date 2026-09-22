@@ -3,15 +3,27 @@ extends Node2D
 # ★ 它**不是**纯视觉:还带一个只参与碰撞的「幽灵体」(见 _build_ghost_body)。原因:C2 客户端预测
 #   只步进自己的玩家,若客户端世界里没有对手身体,「对手挡住我」这条信息在预测侧根本不存在 →
 #   本地预测穿过去、服务器把你挡住 → 每帧分歧、每帧回滚(C2 的无限回滚循环,不是调参能缓解的)。
-#   幽灵体让预测所依据的世界与权威世界一致。★ 它只**减小**分歧不消除(副本位置是插值、落后约
-#   一 tick),验收按「回滚次数下降多少」量,别按「归零」验收。
-# pose/facing/aim/previewing/downed/weapon 按「最新快照」即时套用(反应不落后,位置才有插值)。
-# 位置走「双快照 + tick 域 alpha 插值」:算法本身已收进 `core/snapshot_interp.gd`(SnapshotInterp,
-# 2026-09-14 —— 此前本类与 enemy_replica 各有一份逐字同款;那段是环面插值的热点,CLAUDE.md 专门
-# 记过教训,且有独立行为冒烟 tests/snapshot_interp_smoke.gd)。本类只负责:把勾子喂给它、
-# 每帧推进时钟、以及把插值结果**锚到本地玩家(相机)最近副本**(保证渲染在可见副本,见 _process)。
+#   幽灵体让预测所依据的世界与权威世界一致。★ 它只**减小**分歧不消除(副本位置比权威落后一点),
+#   验收按「回滚次数下降多少」量,别按「归零」验收。
+# pose/facing/aim/previewing/downed/weapon 按「最新快照」即时套用(反应不落后,位置才平滑)。
+#
+# 位置走「自身差分指数追赶」:每帧朝「锚到本地玩家最近副本的目标点」按 `1 - exp(-INTERP_RATE*Δ)`
+# 收敛。**2026-09-22 用户裁定,从「双快照 tick 域 alpha 插值」改回这个方案** —— 依据是实测:
+# `SnapshotInterp.push()` 每收一包就把渲染时钟重置到 `latest - 1`,而 `advance()` 每帧推进
+# `delta * 60`;在 **60fps 渲染 + 60Hz 快照**下那恰好是 1.0 tick ⇒ 下一帧时钟正好落在 `latest`
+# 上,`sample()` 走"冻结在最新"那一支 ⇒ 渲染的就是**最新包的原值**,与"绕过插值直落"逐项相同。
+# 于是对手的平滑度 == 包的到达平滑度:到达抖动 ±8ms 时 **11.67% 的帧零位移、单帧走到 2 个包的
+# 距离**(±16ms 时 24.67% / 3 个包)—— 也就是用户报的「位置一跳一跳,看起来敌方掉帧」。
+# 指数追赶对同样的到达抖动是**连续**收敛,不把抖动原样透传到画面上。
+# 读数由 `tests/replica_smoothness_probe.tscn` 常驻钉住(改前红 / 改后绿)。
+# ★★ 旧方案当年那条**致命缺陷已单独修掉、且必须一直保留**:渲染位置与目标相隔整幅地图时
+# 最短向量为 0 ⇒ 副本一旦漂到远副本就**永远留在那儿**(对手被渲染到屏幕外「看不见」)。
+# 现在的解法是把**目标点**锚到本地玩家最近副本再以普通差量追赶 —— 这与"平滑 vs 插值"**无关**,
+# 是独立的一件事。**别"顺手简化"掉下面那两个 `anchor_to_nearest`。**
 
-const KEEP_TICKS := 8       # 位置缓冲保留窗口(最新前 8 tick;对手要更长的抗抖动窗,鸟只要 4)
+# 指数追赶速率(越大越跟手)。取自 2026-09-03 的 `aa1d8f0^`(旧平滑方案的最后一个版本;
+# 该常量本身从 `2cfbea3` 起就是这个值)—— 刻意复用旧值,不新调参。
+const INTERP_RATE := 12.0
 
 const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
@@ -73,9 +85,16 @@ var _prev_vel_y: float = 0.0
 var _weapon_slot_node: Node2D        # 武器挂点(运行时加,排在 AnimatedSprite2D 后 → 画在身体上层)
 var _weapon: Node2D = null           # 当前武器场景实例(惰性:未 equip,仅外观)
 var _weapon_slot_int := 0            # 服务器权威槽位
-var _opponent_canonical := Vector2.ZERO   # 最新快照的服务器 canonical 位置(缓冲未满时直落用)
+# 最新快照的服务器 canonical 位置 —— 指数追赶的**目标**来源(每帧锚到本地玩家最近副本,见 _process)。
+var _opponent_canonical := Vector2.ZERO
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
 var _have_data := false
+# 首次定位是否已**直落**(见 _process)。★ 指数追赶**不能**用于开场第一帧:副本被创建在世界
+# 原点,直接开始追赶要十几帧才到位,而那十几帧里幽灵体停在错位置 ⇒ 本地预测与权威分歧
+# ⇒ 白回滚一次(replica_ghost_probe ② 实测:直落时 rb=0,追赶时 rb=1)。旧方案(`aa1d8f0^`)
+# 没有这一条,是因为那会儿副本走的是"缓冲未满时直落最新权威位置"那条支路 —— 平滑换回来时
+# 这一半被一起丢了,故在此显式补回。
+var _placed := false
 var _facing := 1
 var _aim := Vector2(1.0, 0.0)
 var _previewing := false   # 对手是否正在预瞄(heavy 蓄力)。快照仍带该字段,但**不再驱动任何外观**
@@ -87,9 +106,6 @@ var _hit_flash_t := 0.0
 # ── 幽灵碰撞体(只碰撞、不参与任何逻辑)──
 var _ghost: StaticBody2D = null
 var _ghost_shapes: Dictionary = {}   # pose(int) -> CollisionPolygon2D
-
-# ── 位置插值(算法在 core/snapshot_interp.gd;惰性构造见 _ensure_interp)──
-var _interp: SnapshotInterp = null
 
 func _ready() -> void:
 	add_to_group(GROUP)
@@ -149,7 +165,11 @@ func _set_ghost_pose(pose: int) -> void:
 	for p in _ghost_shapes:
 		(_ghost_shapes[p] as CollisionPolygon2D).disabled = p != pose
 
-func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
+# ★ 第三个形参 `_tick` 现在**不参与任何计算**(位置不再走 tick 域缓冲),保留它纯粹是为了
+#   不改调用面:三个生产调用点(`pvp_game` / `royale_game` / `team_game`)与一批探针都按
+#   三参调用,快照的 `tick` 也确实是副本的契约字段(哪天要按 tick 丢乱序包就得用它)。
+#   名字带下划线 = GDScript 不再报 UNUSED_PARAMETER。
+func apply_snapshot(data: Dictionary, local_anchor: Vector2, _tick: int) -> void:
 	_opponent_canonical = data["pos"]
 	_local_anchor = local_anchor
 	_have_data = true
@@ -187,16 +207,7 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	#   只让身体精灵转体。大乱斗 2s 一复活,倒地是常态,这是持续分歧源。
 	if _ghost != null:
 		_ghost.global_rotation = 0.0
-	# 位置交给插值缓冲(pose/facing 等即时套用,位置平滑落后一小段,分毫不可感)
-	_ensure_interp()
-	_interp.push(tick, data["pos"])
-
-# 惰性构造插值器:它要读地图尺寸,而尺寸由场景在 `GameParameters.refresh_map_size()` 之后才定下来。
-# 放在 _ready 里会在「副本早于 refresh_map_size 创建」时**静默**拿到错的边界(环面回绕按错尺寸 →
-# 出现空气墙),故推迟到**首次收到快照**才建 —— 那一定在场景 _ready 走完之后。
-func _ensure_interp() -> void:
-	if _interp == null:
-		_interp = SnapshotInterp.new(KEEP_TICKS, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# 位置不在这里动:本类没有 delta,而指数追赶必须逐帧推进 —— 见 _process。
 
 # 服务器裁决命中:打的是对手 → 副本受击反馈(白闪/眨眼),让射手看到"打中了"。
 func play_hit(_source_pos: Vector2) -> void:
@@ -241,16 +252,24 @@ func _in_water() -> bool:
 func _process(delta: float) -> void:
 	if _have_data:
 		_drive_weapon_visual()
-		if _interp != null and _interp.ready():
-			_interp.advance(delta)
-			var canonical := _interp.sample()
-			# 插值出的 canonical 锚到本地玩家(相机)最近副本渲染:保证在可见副本。
-			# 不做自身差分追赶——旧实现那句「最短向量=0 会卡在远副本」由这里直接锚定消解。
-			global_position = MazeGenerator.anchor_to_nearest(canonical, _local_anchor,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		# 目标 = 对手 canonical 锚到本地玩家(相机)最近副本,每帧重算(跟随相机跨接缝)。
+		var target := MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		# 首次定位**直落**(理由见 `_placed`):目标本身已锚到本地玩家最近副本,直接落上去即可。
+		if not _placed:
+			global_position = target
+			_placed = true
 		else:
-			# 缓冲未满(开场首个快照):直落最新权威位置,不做插值
-			global_position = MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor,
+			# 当前渲染位置也锚到 target 所在的副本空间,再做**普通差量**追赶。
+			# ★★ 别改成 `toroidal_delta_px(global_position, target, …)` 的"最短路径"写法:渲染位置与
+			#   目标相隔整幅地图时最短向量为 0,副本一旦漂到远副本就永远留在那儿(对手渲染到屏幕外
+			#   「看不见」)—— 那正是旧方案被替换掉的原因。先把两端各自锚进同一副本空间,差量才是
+			#   要追赶的那个真实位移。
+			var current := MazeGenerator.anchor_to_nearest(global_position, target,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+			global_position += (target - current) * (1.0 - exp(-INTERP_RATE * delta))
+			# 渲染位置归到本地玩家(相机)最近副本:确保渲染在可见副本,不留在远副本。
+			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# 受击闪烁:本地玩家被打是 iframe 半透明眨眼,副本同款(看得见"打中了")。
 	if _hit_flash_t > 0.0:
