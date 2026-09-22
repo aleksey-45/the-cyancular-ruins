@@ -4235,6 +4235,43 @@ EOF
   - `Editor.doUndo() / Editor.doRedo() -> void`
   - `Editor.pushAndShow(diff) -> Boolean`(★ 唯一的"改数据之后作废缓存"入口)
 
+> ★★ **本节下面的代码块是「落地前的初版」;交付的 `render.js` / `ui.js` / `render_smoke.js` /
+> `editor_smoke.js` 才是事实**(`df0ccc7` → `47951a3` → `2fac9f9` → `ec6e3fd`,两轮评审 + 一轮增量复审)。
+> 照抄本节会踩到下列各处,其中前三条会被**两轮评审**逐条判为"必须偏离":
+>
+> ① **本节 Step 1 的补丁目标已经不存在**。它说去改 `paintLayerRect` 里的
+>    `var raw = descAt(s.map, L, X - dx, Y - dy);` —— Task 4 把那个函数整个换掉了,现在读 ③。
+>    正确接线见 **Task 4 节首那条接线说明**:改的是 **③ 读取的键**(换成 `dragSource()` 交出的源格、
+>    再 `wrapIdx` 一次),`!hit ⇒ continue`,而**画的位置(`bx/by`)不许动** —— 拖动只改"读哪一格"。
+> ② **`dragSource` 的 `!hit` 必须收窄到"被腾空的源区"**,不能裸转发:裸转发会让 `!hit` 覆盖
+>    选区外的**每一格** ⇒ **第一个拖动像素就把整张图抹空**(变异盲测出来的)。判据从**目标格**算,
+>    才是区分"移动过的区域"与"没动过的画面"的唯一办法。
+> ③ **选择工具的"按在选区里"必须先 `toSub` 换算**:本节写的是 `hit.kind === 'sub' && inRect(...)`,
+>    而 `hitOf` 在 `brushSpan(size).unit === 'cell'` 时返回 `kind:'cell'`,默认整数画笔正是这种
+>    ⇒ 本节那条**是死条件,选区永远拖不动**。`toSub` 是仓里唯一的格↔子格换算、对子格命中是恒等。
+>
+> ④ **`dragSource` 只对活动层算偏移**(三个调用点都要带层号)。否则预览 ≠ 落笔:`moveRegion` 只动
+>    活动层,而合成时 **BG 层永不压暗** ⇒ BG 与三个压暗层的**内容也会跟着手走、松手又弹回**,
+>    而本节那句"预览必须等于落笔"对 4 层里的 3 层是假的。
+> ⑤ **`markDragDirty` 要逐块重画,不要用 `rectUnion` 的包围盒**:包围盒在跨接缝时给的是
+>    **整行**(实测 `clearRect(0,64,384,64)`:只变 8 格却重画 24 格);逐块是两块 64×64。
+> ⑥ **接缝口径必须三处合一**(`inSel` ≡ `regionCells` 的 clip ≡ `moveRegion` 的源集):
+>    `render.js` 导出 `inSel`,`ui.js` 的 `inRect` 转调它。本节的**非折算** `inRect(clip, wx, wy)`
+>    把选区读成线性区间 ⇒ 跨缝的存值会让**框内落笔/Delete 静默无效**(一字不说)。
+> ⑦ **Esc 语义**:`dragSource` 与 `markDragDirty` 的偏移来源是 **`s.selDrag`**(不是 `s.selection`)
+>    ⇒ 只清 `s.selection` 时那次"去烤"是 **no-op**(重画用的还是偏移后的源)。要真归位:
+>    `dragSource` 认 `!s.selection`,且 pointerup **先取证再判**、无记录整支跳过
+>    (否则取消后仍会提交那次 `moveRegion`,而清掉记录又会让 `sd.dx` 抛)。
+>
+> **接口表待补**:`Editor.doUndo() / doRedo()` 与 `panBy / setZoomAt / resize / fit` 现在**返回
+> promise**(被"视图入口必须收口"这条推出来的良性加宽),本节/brief 写的是 `-> void`。
+> **人眼清单第 4 条应读作**:「**框与内容都跟手**,**数据**松手才提交一次」—— 规格 §4.2 要的是
+> 渲染期的偏移查询(纯读),像素跟手正是它。
+> **已知限制(与"跨接缝框选"一并裁定,勿单独改)**:跨接缝框选产出**整行**选区;且小数画笔框出的
+> 选区**每轴被放大 3 个子格**(`subRectOf` 的 `+ k` 恒为 `SUB_PER_CELL`)。两条都**不属静默类**:
+> 框会被画出来、用户看得见,而且三处口径合一后三者**同错**。⑬b4 已照实钉住今天的语义。
+> **测试块**:交付比本节多得多(`render_smoke` 253、`editor_smoke` 244,含相位 ⑬ 的拖动/D6/接缝覆盖)。
+
 - [ ] **Step 1: `render.js`:预览框、拖动中的选区框、拖动时的偏移绘制**
 
 在 `mount` 的状态对象里补两个字段(与 `selection` 并列):
