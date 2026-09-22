@@ -343,12 +343,16 @@ Expected: `ROLLBACK FIDELITY PROBE: FAIL`,两条新断言都红(实得 0 处、h
 Run: `source tests/env.sh && "$GODOT" --headless --path . res://tests/rollback_fidelity_probe.tscn`
 Expected: 末行 `ROLLBACK FIDELITY PROBE: ALL-OK`。
 
-★ 同时跑一次三个客户端场景的启动自检,确认没有解析错:
+★ 同时做一次脚本加载自检 —— `rollback_fidelity_probe` **不加载** `pvp_match_client.gd`，
+所以它抓不到那个文件的解析错:
 
 ```bash
-source tests/env.sh && "$GODOT" --headless --path . res://scenes/pvp_game.tscn --quit-after 120
+source tests/env.sh && "$GODOT" --headless --path . res://scenes/pvp_game.tscn --quit-after 120 2>&1 \
+    | grep -i "parse error\|script error" || echo "无脚本错"
 ```
-Expected: 无 `SCRIPT ERROR` / `Parse Error`(headless 下世界建不起来属正常,只看有无脚本错)。
+Expected: **不得**出现含 `pvp_match_client` 的 `Parse Error` / `SCRIPT ERROR`。
+★ 其它报错（世界建不起来、`PvpSession` 没状态）是 headless 裸跑对局场景的正常现象，**不算红** ——
+判据只认"指向我们改的那个文件的解析错"。
 
 - [ ] **Step 5: 变异验证**
 
