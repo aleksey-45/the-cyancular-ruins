@@ -1225,16 +1225,48 @@ function countNonZero(map, L) {
     eq(Editor.needsV3Backup('v4', 'd.cyrm', backed14), false, '★ v4 源:没有要转换的原文,不备');
     eq(Editor.needsV3Backup(null, 'e.cyrm', backed14), false, '没打开地图时不备');
     eq(Editor.needsV3Backup('v3', null, backed14), false, '还没有落过盘的新图(没有文件名)不备');
-    // ── ⑭ ★★ 备份名 = `<名>.v3.bak`(结尾不是 .cyrm;用户 2026-09-22 裁定的名字)──
-    eq(Editor.v3BackupName('demo.cyrm'), 'demo.v3.bak',
-       '★★ 备份名 = `<名>.v3.bak`(基名去 `.cyrm` 后再接后缀)');
+    // ── ⑭ ★★ 备份名 = `<基名>_<8 位十六进制>.v3.bak`(结尾不是 .cyrm;用户 2026-09-22 裁定的名字)──
+    // ★★ 2026-09-22 复核 Minor 5 起**多了一段哈希**,于是这几条从"名字长什么样"升级成
+    //    "名字**单射**":金值钉住方案本身不漂,后面两组钉住"两个不同的文件名不许落到同一格"。
+    eq(Editor.v3BackupName('demo.cyrm'), 'demo_c9869709.v3.bak',
+       '★★ 备份名 = `<基名>_<FNV-1a 32 位十六进制>.v3.bak`(金值;换哈希 / 换截断长度都会红)');
+    eq(Editor.v3BackupName('demo.cyrm'), Editor.v3BackupName('demo.cyrm'),
+       '★★ 同一个文件名**每次**得到同一个备份名(确定性:不然同一张图每次保存都另开一份退路)');
     eq(Editor.v3BackupName('demo.cyrm').toLowerCase().endsWith('.cyrm'), false,
        '★★★ 备份名**不以 `.cyrm` 结尾** —— 游戏 `_random_cyrm` 的 `.ends_with(".cyrm")` 抽不到它');
-    eq(Editor.v3BackupName('图 1.cyrm'), '1.v3.bak',
+    eq(Editor.v3BackupName('图 1.cyrm'), '1_a67de2f9.v3.bak',
        '★ 服务器仍只收 `[A-Za-z0-9_-]` 的基名:汉字被收掉(不然备份被 400 拒 ⇒ 保存整个卡死)');
-    eq(Editor.v3BackupName('.cyrm'), 'map.v3.bak', '★ 收完一个字符都不剩 → 兜底名 `map`');
-    ok(Editor.v3BackupName('x'.repeat(80) + '.cyrm').length <= 64,
-       '★ 备份名不超过服务器的 MAX_MAP_NAME_LEN=64(基名截 40 + 后缀)');
+    eq(Editor.v3BackupName('.cyrm'), 'map_3744a8d0.v3.bak', '★ 收完一个字符都不剩 → 兜底名 `map`');
+    ok(/^[A-Za-z0-9_-]+\.v3\.bak$/.test(Editor.v3BackupName('x'.repeat(80) + '.cyrm')) &&
+       Editor.v3BackupName('x'.repeat(80) + '.cyrm').length <= 64,
+       '★ 备份名的基名字符集合法、且不超过服务器的 MAX_MAP_NAME_LEN=64' +
+       '(基名截 24 + `_` + 8 位哈希 + 后缀 = 40;实得 ' +
+       Editor.v3BackupName('x'.repeat(80) + '.cyrm').length + ')');
+    // ★★★ 撞名:**旧方案**(收干净 + 截前 40)这两对各自落到**同一个**备份名上 ——
+    //     而它们的两份原文不是同一份 ⇒ 第二张图的保存会把第一张的退路**静默覆盖**
+    //     (两张 v3 那时都已经转成 v4 了,退路是唯一的一份)。
+    ok(Editor.v3BackupName('图1.cyrm') !== Editor.v3BackupName('1.cyrm') &&
+       Editor.v3BackupName('图甲.cyrm') !== Editor.v3BackupName('图乙.cyrm'),
+       '★★★ 被"收干净"收成同一个基名(`1` / `map`)的两个**不同**文件名 ⇒ 备份名必须不同' +
+       '(`图1.cyrm` 与 `1.cyrm` 旧方案都是 `1.v3.bak`;`图甲.cyrm` 与 `图乙.cyrm` 都是 `map.v3.bak`)');
+    ok(Editor.v3BackupName('a'.repeat(40) + 'X.cyrm') !==
+       Editor.v3BackupName('a'.repeat(40) + 'Y.cyrm'),
+       '★★★ 截断也撞不上:前 40 字完全相同的两个长名字,备份名**不同**(旧方案截到同一个前缀)');
+    // ★★★ 而服务器**真的**还认这些名字:拿生成出来的名字去问服务器**自己的**校验
+    //      (不是"看起来像"—— 那正是"备份被 400 拒 ⇒ 保存整个卡死"这条路的入口)。
+    const srvName14 = require('./editor_server.js');
+    ok(srvName14.isValidMapName(Editor.v3BackupName('demo.cyrm')) === true &&
+       srvName14.isValidMapName(Editor.v3BackupName('图 1.cyrm')) === true &&
+       srvName14.isValidMapName(Editor.v3BackupName('x'.repeat(80) + '.cyrm')) === true &&
+       srvName14.isValidMapName('.v3.bak') === false &&
+       srvName14.isValidMapName(Editor.v3BackupName('demo.cyrm') + 'x') === false,
+       '★★★ 服务器自己的 `isValidMapName` **收下**这些备份名,而裸 `.v3.bak` 与"后缀后面再多一个字符"' +
+       '照旧拒(放宽的只有那**一个后缀**,不是整套校验)');
+    ok(Editor.isBackupName('demo_c9869709.v3.bak') === true &&
+       Editor.isBackupName('DEMO.V3.BAK') === true &&
+       Editor.isBackupName('demo.cyrm') === false && Editor.isBackupName('.v3.bak') === false &&
+       Editor.isBackupName('') === false && Editor.isBackupName(null) === false,
+       '★★ `isBackupName` 认得出备份(大小写不敏感)—— 而地图名、裸后缀、空串都不算');
     eq(Editor.freshName('my map!'), 'my_map.cyrm', '★ freshName 走 sanitizeName(服务器只收裸文件名)');
 
     // ★★ 敌人类型来自**页面里的** ENEMY_REGISTRY —— 它只定义在 `editor.html` 里,node 侧
@@ -1559,17 +1591,18 @@ function countNonZero(map, L) {
              '★★★ 确认框说了**决定性的那件事**:游戏现在读不了 v4,要等期 E 迁移 map_format.gd' +
              '(旧文案只说「不可逆」—— 用户不知道自己换来的是一张游戏打不开的图;实得 ' +
              JSON.stringify(askText14) + ')');
-          ok(askText14.indexOf('demo_v3src.v3.bak') >= 0,
-             '★★ 确认框**点名**了备份文件(用户得知道退路落在哪个名字上;实得 ' +
+          ok(askText14.indexOf(Editor.v3BackupName('demo_v3src.cyrm')) >= 0,
+             '★★ 确认框**点名**了备份文件(用户得知道退路落在哪个名字上;文案里那个名字必须' +
+             '与下面真写出去的那个**同源** —— 两处各写一份字面量就是"说的与做的不是一回事";实得 ' +
              JSON.stringify(askText14) + ')');
           // ② 两条 PUT:备份在前、真保存在后,走的是**同一个**出口
           eq(putLog14.length, 2,
              '★★★ 首次转换保存 = **两条** PUT(原文备份 + 真保存;实得 ' + putLog14.length + ' 条)');
           const b14 = putLog14.length === 2 ? putLog14[0] : null;
           const s14 = putLog14.length === 2 ? putLog14[1] : null;
-          ok(!!b14 && b14.url.indexOf('/api/map?p=demo_v3src.v3.bak') >= 0,
-             '★★★ 第一条 PUT 就是**原文备份**,名字是 `<名>.v3.bak`(2026-09-22 用户裁定的那个名字;' +
-             '实得 "' + (b14 ? b14.url : '(没有请求)') + '")');
+          ok(!!b14 && b14.url.indexOf('/api/map?p=' + Editor.v3BackupName('demo_v3src.cyrm')) >= 0,
+             '★★★ 第一条 PUT 就是**原文备份**,名字是确认框**点名过**的那一个' +
+             '(`<基名>_<哈希>.v3.bak`;实得 "' + (b14 ? b14.url : '(没有请求)') + '")');
           ok(!!s14 && s14.url.indexOf('/api/map?p=demo_v3src.cyrm') >= 0,
              '★★★ 第二条 PUT 才是真保存(实得 "' + (s14 ? s14.url : '(没有请求)') + '")');
           ok(!!b14 && !!b14.init && b14.init.method === 'PUT' && !!b14.init.body,
@@ -1615,11 +1648,14 @@ function countNonZero(map, L) {
              '实得 ' + putLog14.length + ' 条)');
           const bC = putLog14.length === 2 ? putLog14[0] : null;
           const sC = putLog14.length === 2 ? putLog14[1] : null;
-          ok(!!bC && bC.url.indexOf('/api/map?p=demo_v3src2.v3.bak') >= 0,
-             '★★★ 第二张图的备份落在**它自己的** `<名>.v3.bak` 上(逐文件,不是共用第一张的名字;实得 "' +
+          ok(!!bC && bC.url.indexOf('/api/map?p=' + Editor.v3BackupName('demo_v3src2.cyrm')) >= 0,
+             '★★★ 第二张图的备份落在**它自己的**备份名上(逐文件,不是共用第一张的名字;实得 "' +
              (bC ? bC.url : '(没有请求)') + '")');
           ok(!!sC && sC.url.indexOf('/api/map?p=demo_v3src2.cyrm') >= 0,
              '★★ 第二条才是第二张图的真保存(实得 "' + (sC ? sC.url : '(没有请求)') + '")');
+          ok(Editor.v3BackupName('demo_v3src.cyrm') !== Editor.v3BackupName('demo_v3src2.cyrm'),
+             '★★ 两张图的备份名是**两个**名字(逐文件那半边在**命名**上也成立 —— ' +
+             '一个恒定名会让上面两条"各自落到自己的名字上"同时通过,而两份退路互相覆盖)');
           const bCBytes = bC && bC.init && bC.init.body
             ? Array.from(new Uint8Array(await bC.init.body.arrayBuffer())) : null;
           eq(bCBytes, Array.from(origC),
@@ -2667,6 +2703,44 @@ function countNonZero(map, L) {
             Editor.app.canvas = savedCanvas15b;
             Editor.app.st = savedSt15b;
           }
+
+          // ── ③ ★★★ 自检那条入口(2026-09-22 复核 Important 2:同一类"没护栏的异步入口")──
+          // ★★ `selfTest()` **会拒绝**:它消费 `Io.ping()` / `Io.encodeMap` / `Io.decodeMap`,
+          //    而 io.js 那个 30s 超时是新的拒绝源;自检自己也在探"可能失败"的东西
+          //    (`indexedDB` / `localStorage`)。丢掉那条 promise = 一次未处理的拒绝 ⇒ 闸 4 的
+          //    围栏**写一份崩溃快照** ⇒ 下次开机弹一个**假的**「上次异常退出,要恢复吗?」
+          //    (屏幕上那张图一次都没崩过),同时状态栏那句自检结果被顶掉。
+          // ★ 判据取**行为**(与 ① ② 同款):装真围栏 → 喂一次真失败 → 看崩溃槽位有没有多一条。
+          // ★★ 关键在于**不接**它交回的那个 promise:生产里按钮那一侧也不接(`addEventListener`
+          //    的返回值没人要)。接了就等于替它上了护栏,这条断言会变成空转。
+          const savedStats15b = Editor.app.r.stats;
+          const savedPing15b = globalThis.Io.ping;
+          Editor.app.r.stats = function () { return { thumbsBuilt: 0 }; };
+          globalThis.Io.ping = function () {
+            return Promise.reject(new Error('自检用的假 ping 失败(复核 Important 2)'));
+          };
+          tab15.crash.clear();
+          escaped15.length = 0;
+          el15('status-msg').textContent = '';
+          Editor.runSelfTest();                     // ★ 故意不接(见上);也不 await
+          ok(await until15(function () {
+               return el15('status-msg').textContent.indexOf('出错了(自检)') >= 0;
+             }),
+             '★★★ 自检失败经 `guard` 落到**状态栏**(「出错了(自检):…」;实得 "' +
+             el15('status-msg').textContent + '")—— 没有护栏的实现这里写的是' +
+             '「未处理的 promise 拒绝:…」,那一句本身就是护栏缺位的症状');
+          ok(el15('status-msg').textContent.indexOf('假 ping 失败') >= 0,
+             '★ 那句话里带着**原因**(不是一句没有线索的"出错了";实得 "' +
+             el15('status-msg').textContent + '")');
+          // ★ 反向断言给足时间:拒绝是**异步**投递的(与 ① 同一个 `until15` 预算 ⇒ 红的形态可比)。
+          await until15(function () { return false; });
+          eq(escaped15.length, 0,
+             '★★★ 那次自检失败**没有**逃到全局围栏(裸 `selfTest().then(...)` 的实现这里 ≥1)');
+          eq(tab15.crash.size, 0,
+             '★★★ 也没有写崩溃槽位 —— 这就是"下次开机弹一个假提示"的全部内容(实得 ' +
+             tab15.crash.size + ' 条)');
+          globalThis.Io.ping = savedPing15b;
+          Editor.app.r.stats = savedStats15b;
         } finally {
           process.removeListener('unhandledRejection', onUnhandled15);
           globalThis.addEventListener = savedAdd15b;
@@ -3132,23 +3206,65 @@ function countNonZero(map, L) {
          'before === after ⇒ 撤销什么都不做');
       eq(Editor.app.map.players.length, 2, '★★ 出生点也跟着回来了(whole 快照里带着它们)');
       ok(calls16.indexOf('invalidateAll') >= 0, '★ 撤销 whole 也要重挂画布(不是 setMap:不重置视野与选区)');
+      // ★★ 2026-09-22 复核 Minor 9:撤销一次改尺寸之后,那两个框也必须跟着翻 ——
+      //    `applyEntry` 的 whole 分支调 `refreshStatus()`(`ui.js:976-980`)就是为这件事写的,
+      //    而此前只断言了 `subCols/subRows` ⇒ **删掉那一句照样全绿**(框里留着 2×3,
+      //    再按一次「应用尺寸」就把图又改回 2×3,而用户以为尺寸没变)。
+      eq([el16('size-w').value, el16('size-h').value], ['4', '3'],
+         '★★★ 撤销之后两个框回显的是**退回去**的尺寸(4×3)—— 只改渲染不碰面板的实现会在这里红' +
+         '(实得 ' + JSON.stringify([el16('size-w').value, el16('size-h').value]) + ')');
       await Editor.doRedo();
       eq(Editor.app.map.subCols, 8, '★★ 重做又回到 2×3 格(差量两半都对)');
+      eq([el16('size-w').value, el16('size-h').value], ['2', '3'],
+         '★★ 重做之后框也跟着翻回去(两条路都接在 `refreshStatus()` 上)');
       // ── 闸 1:输入一律**钳制**,不报错回滚 ──
       el16('size-w').value = '99999';
-      el16('size-h').value = 'bad';
+      el16('size-h').value = '99999';
       el16('btn-resize').click();                  // ★ 不抛(抛的话经 window.onerror 变成「页面异常:…」)
-      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [400, 75],
-         '★★ 输 99999 / 非数字都不抛:超大数被 `Core.clampMapSize` 钳到 400,非数字回落到默认高 75' +
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [400, 300],
+         '★★ 输 99999 不抛:被 `Core.clampMapSize` 钳到上界 400×300' +
          '(尺寸闸只此一条路;实得 ' + Core.cellsWOf(Editor.app.map) + '×' +
          Core.cellsHOf(Editor.app.map) + ')');
-      eq([el16('size-w').value, el16('size-h').value], ['400', '75'],
+      eq([el16('size-w').value, el16('size-h').value], ['400', '300'],
          '★ 钳制结果**回显**到框里(否则用户以为它接受了 99999)');
       ok(status16.indexOf('没有越界项') >= 0,
          '★ 放大不丢任何东西时也照实说(实得 "' + status16 + '")');
+      // ── ★★★ 2026-09-22 复核 Minor 6:"清空 / 垃圾"输入 = **这一项不改** ──
+      // ★★ 旧行为(上一版这条断言钉住的正是它):`Core.clampMapSize('')` 回落到
+      //    `DEFAULT_CELLS_W/H = 125×75` —— 那是**造新图**的语义。在"改尺寸"这条路上
+      //    它是一次**静默缩图**:把宽那个框删空(真浏览器里 `<input type=number>` 读回来
+      //    就是空串)按「应用尺寸」,400 宽的图当场变成 125 宽,用户以为自己什么都没输。
+      // ★ 先把历史清空:下面那条"不进历史"的断言只有在**本来就没有**待撤销条目时才有牙齿。
+      await drain16();
+      eq(await Editor.doUndo(), null, '⑯b 前提:历史已清空(下面"清空输入不进历史"才有牙齿)');
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [4, 3],
+         '⑯b 前提:撤销到底之后图回到最初那张 4×3 格');
+      el16('size-w').value = '';                   // 用户把宽删光了
+      el16('size-h').value = 'bad';                // 垃圾(真浏览器里读回来同样是空串)
+      el16('btn-resize').click();
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [4, 3],
+         '★★★ 空着 / 不是数字的那一项**按原值处理**(图仍是 4×3;旧实现回落到默认 125×75 ⇒ ' +
+         '这里会红,而画布上是一次**静默缩图**:400 宽的图被删空宽那一格就变成 125×300)');
+      eq([el16('size-w').value, el16('size-h').value], ['4', '3'],
+         '★★ 两个框**回显当前尺寸**(而不是留着那个被清空/垃圾的值 —— 与"DOM 必须与状态一致"同一条)');
+      ok(status16.indexOf('尺寸没变(4×3),没有改动地图') >= 0 &&
+         status16.indexOf('宽保留 4') >= 0 && status16.indexOf('高保留 3') >= 0,
+         '★★★ 而且**说得出理由**(不许静默:状态栏逐项点名"哪一项没给数、按原值走了";实得 "' +
+         status16 + '")');
+      eq(await Editor.doUndo(), null,
+         '★★ 清空输入的那一次**什么都没改** ⇒ 也不进历史(空条目进历史 = 撤销按下去像没反应)');
+      // ── ★★ 一半给数、一半空着:给数的那一项照旧生效(闸 1 的"钳制不回滚"没被这次改动碰坏)──
+      el16('size-w').value = '5';
+      el16('size-h').value = '';
+      el16('btn-resize').click();
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [5, 3],
+         '★★ "宽给数、高空着"= 只改宽(空着那一项留住当前的 3;**不是**整条操作作废,' +
+         '也不是拿 75 顶上去)');
+      ok(status16.indexOf('尺寸改为 5×3 格') >= 0 && status16.indexOf('高保留 3') >= 0,
+         '★★ 改成功了也照样点名那一项(实得 "' + status16 + '")');
       // ── 反向对照:尺寸没变 ⇒ 不进历史 ──
       await drain16();
-      el16('btn-resize').click();                  // 框里与图同尺寸(400×75)
+      el16('btn-resize').click();                  // 框里与图同尺寸(`drain16` 撤销时 `refreshStatus` 已回显)
       ok(status16.indexOf('尺寸没变') >= 0, '★ 尺寸没变时说了一句(实得 "' + status16 + '")');
       eq(await Editor.doUndo(), null, '★★ 尺寸没变的那次**不进历史**(空条目进历史 = 撤销按下去像没反应)');
 
@@ -3294,6 +3410,339 @@ function countNonZero(map, L) {
       Editor.app.name = s16.name; Editor.app.st = s16.st; Editor.app.tileDefs = s16.tileDefs;
       Editor.app.sourceFormat = s16.fmt; Editor.app.raw = s16.raw;
       if (s16.ls === undefined) { try { delete globalThis.localStorage; } catch (e) {} }
+    }
+  }
+
+  // ==== 相位 ⑰ ★★★ 2026-09-22 复核那一批修复:四处"看起来没事、其实静默出错"的路 ====
+  // ★★ 为什么必须另立一相:这四条各自都是**不报错**的坏 —— 每一条在旧实现下都"跑得通、
+  //    一行红字都没有",而代价分别是**丢掉一份原文**(C1)、**把改动写到接缝另一边**(I1)、
+  //    **一个卡住的修饰键**(Minor 1)、**把退路文件当地图打开并覆盖**(Minor 2)。
+  //    ★ 判据一律取**副作用**(PUT 的 body 字节 / 选区还在不在 / 拖拽起的是平移还是落笔 /
+  //      库列表里有没有那一行),而不是"没抛"。
+  // ★ 替身口径与 ⑯ 同款:按 id 惰性建的假 DOM、记账的渲染器、记账的 fetch、记账的 confirm。
+  {
+    const s17 = { add: globalThis.addEventListener, doc: globalThis.document,
+                  r: Editor.app.r, map: Editor.app.map, canvas: Editor.app.canvas,
+                  name: Editor.app.name, st: Editor.app.st, tileDefs: Editor.app.tileDefs,
+                  fmt: Editor.app.sourceFormat, raw: Editor.app.raw, db: Editor.app.db,
+                  confirm: globalThis.confirm, fetch: globalThis.fetch,
+                  loc: globalThis.location, timer: globalThis.setTimeout };
+    const realTimer17 = globalThis.setTimeout;
+    let status17 = '';
+    const els17 = {}, handlers17 = {}, errs17 = [], calls17 = [], puts17 = [];
+    const root17 = { parentNode: null, className: '', style: {}, classList: null,
+                     insertBefore: function () {}, appendChild: function () {} };
+    function mkEl17(id) {
+      const el = {
+        id: id, textContent: '', value: '', checked: false, hidden: false, className: '',
+        style: {}, dataset: {}, children: [], _h: {},
+        parentNode: root17, nextSibling: null,
+        classList: { add: function () {}, remove: function () {}, toggle: function () {},
+                     contains: function () { return false; } },
+        addEventListener: function (t, fn) { el._h[t] = fn; },
+        appendChild: function (c) { el.children.push(c); return c; },
+        insertBefore: function (c) { el.children.push(c); return c; },
+        removeChild: function () {}, querySelector: function () { return mkEl17(null); },
+        click: function () {
+          (el._h.click ? [el._h.click] : []).forEach(function (fn) {
+            fn({ stopPropagation: function () {}, target: el });
+          });
+        },
+      };
+      return el;
+    }
+    const statusEl17 = mkEl17('status-msg');
+    Object.defineProperty(statusEl17, 'textContent',
+      { set: function (v) { status17 = String(v); }, get: function () { return status17; } });
+    function el17(id) {
+      if (els17[id]) return els17[id];
+      return (els17[id] = mkEl17(id));
+    }
+    const dom17 = {
+      getElementById: function (id) { return id === 'status-msg' ? statusEl17 : el17(id); },
+      querySelectorAll: function () { return []; },
+      // ★ 只有这一条查询要真给东西:`openFromUrl` 的兜底是"打开列表**第一行**" ——
+      //   那是 Minor 2a 唯一的可见面(库里混进一行备份 ⇒ 开机就打开一份退路)。
+      querySelector: function (sel) {
+        if (String(sel) === '#lib-list .lib-row') {
+          return el17('lib-list').children.length ? el17('lib-list').children[0] : null;
+        }
+        return null;
+      },
+      createElement: function () { return mkEl17(null); },
+    };
+    let sel17 = null, asked17 = 0;
+    const libRows17 = [{ name: 'A.cyrm', size: 100, mtime: 1 },
+                       { name: 'A_e3c115d7.v3.bak', size: 90, mtime: 2 },
+                       { name: 'B_0123456789abcde.v3.bak', size: 80, mtime: 3 },
+                       { name: 'C.cyrm', size: 70, mtime: 4 }];
+    const A_TEXT17 = '# cyrm-v3\n001f001f001f\n001f001f001f\n';
+    const aBytes17 = new TextEncoder().encode(A_TEXT17);
+    // ★ B:magic 是 "CYRM"(所以 `detectFormat` 判成 v4)、但长度不足 ⇒ `Core.decodeMap`
+    //   当场拒(服务器上那种被截断/写坏的 `.cyrm` 就是这样)。
+    const bBytes17 = new Uint8Array([0x43, 0x59, 0x52, 0x4D, 4, 0]);
+    const bodies17 = { 'A.cyrm': aBytes17, 'B.cyrm': bBytes17 };
+    const draftRec17 = { key: 'A', name: 'A.cyrm', name2: 'A', bytes: aBytes17,
+                         sourceFormat: 'v3', savedAt: 1, dirty: true };
+    globalThis.addEventListener = function (t, fn) { handlers17[t] = fn; };
+    globalThis.document = dom17;
+    // ★ `openFromUrl` 读 `location.search`;而 **node 里根本没有 location**(⑭ 的替身也是
+    //   自己补的)。空 search = 走"打开列表第一行"那条兜底 —— 正是 Minor 2a 那条路。
+    globalThis.location = { search: '' };
+    globalThis.confirm = function () { asked17++; return false; };
+    globalThis.fetch = function (url, init) {
+      const u = String(url);
+      if (init && init.method === 'PUT') {
+        puts17.push({ url: u, init: init });
+        return Promise.resolve({ ok: true, status: 200,
+          json: function () { return Promise.resolve({ name: 'x.cyrm', size: 1 }); } });
+      }
+      if (u.indexOf('/api/maps') === 0) {
+        return Promise.resolve({ ok: true, status: 200,
+          json: function () { return Promise.resolve({ maps: libRows17 }); } });
+      }
+      const q = u.indexOf('/api/map?p=');
+      if (q >= 0) {
+        const p = decodeURIComponent(u.slice(q + '/api/map?p='.length));
+        const body = bodies17[p];
+        if (!body) return Promise.resolve({ ok: false, status: 404 });
+        return Promise.resolve({ ok: true, status: 200, arrayBuffer: function () {
+          return Promise.resolve(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength));
+        } });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    };
+    Editor.app.tileDefs = globalThis.TILE_DEFS;
+    Editor.setErrorSink(function (t) { errs17.push(String(t)); });
+    Editor.app.canvas = {
+      width: 80, height: 80,
+      setPointerCapture: function () {},
+      getBoundingClientRect: function () { return { left: 0, top: 0 }; },
+      addEventListener: function (t, fn) { this['on' + t] = fn; },
+    };
+    Editor.app.r = {
+      view: function () { return { x: 0, y: 0, zoom: 1 }; },
+      layer: function () { return Core.LAYER_SCENE; },
+      selection: function () { return sel17; },
+      setSelection: function (s) { sel17 = s ? { x: s.x, y: s.y, w: s.w, h: s.h } : null; },
+      setSelDrag: function () {}, setPreview: function () {}, setLayer: function () {},
+      setGrid: function () {}, setSubGrid: function () {}, setTorus: function () {},
+      setDimOthers: function () {}, setZoomAt: function () { return Promise.resolve(); },
+      setMap: function () { calls17.push('setMap'); return Promise.resolve(); },
+      screenToSub: function () { return { X: 0, Y: 0 }; },
+      editCells: function () { calls17.push('editCells'); },
+      render: function () { calls17.push('render'); },
+      invalidateAll: function () { calls17.push('invalidateAll'); return Promise.resolve(); },
+      panBy: function () { calls17.push('panBy'); return Promise.resolve(); },
+      stats: function () { return { thumbsBuilt: 0 }; },
+    };
+    try {
+      Editor.buildPanels();                        // ← 真建一遍面板(尺寸按钮 / 库列表委托都得真接上)
+      Editor.installInteraction();                 // ← 真装一遍(空格修饰键那一对处理器)
+
+      // ════ ⑰a ★★★ 一次**失败**的打开不许污染 `app.raw`(复核 C1)════
+      // ★★ 复现的就是评审跑出来的那条路:打开 A.cyrm(v3 文本,`app.raw` = A 的原文)→
+      //    库列表里点一个**损坏**的 B.cyrm(解码拒绝,编辑器照实报出来)→ 不重新打开任何东西,
+      //    直接 Ctrl+S。旧实现里 `app.raw` 在**解码之前**就被赋成了 B 的字节,于是:
+      //      ① 原文备份写的是 `A.v3.bak`(名字取自 `app.name`,那还是 A),**内容是 B 的字节**;
+      //      ② 紧接着 `A.cyrm` 被写成 v4 ⇒ **A 的 v3 原文消失**,而磁盘上那份"退路"看着挺像回事。
+      await Editor.openMap('A.cyrm');
+      eq([Editor.app.name, Editor.app.sourceFormat], ['A.cyrm', 'v3'],
+         '⑰a 前提:A 打开成功且是 v3 文本(sourceFormat = v3 是"要写原文备份"的判据)');
+      eq(Array.from(Editor.app.raw), Array.from(aBytes17),
+         '⑰a 前提:`app.raw` = A 在磁盘上的原文(`# cyrm-v3…`)');
+      let openBThrew17 = false;
+      await Editor.openMap('B.cyrm').then(function () { return null; },
+                                          function () { openBThrew17 = true; return null; });
+      ok(openBThrew17,
+         '⑰a 前提:B **真的**打不开(截断的 .cyrm ⇒ `Io.decodeMap` 拒绝;不拒绝的话下面几条无从谈起)');
+      eq(Editor.app.name, 'A.cyrm', '★ 打开失败**不改** `app.name`(屏幕上那张图没动过)');
+      eq(Editor.app.sourceFormat, 'v3', '★ 同上:`sourceFormat`(要写备份的判据也不许被挪)');
+      eq(Editor.app.map && Editor.app.map.name, 'A',
+         '★ 同上:`app.map` 仍是 A 那张(`decodeMap` 返回的 name 是空串,由 `mapFromBytes` 补文件名)');
+      ok(Editor.app.raw && Array.from(Editor.app.raw)[0] === 35 &&
+         Array.from(Editor.app.raw)[1] === 32,
+         '★★★ `app.raw` **仍是 A 的字节**(首字节 35,32 = "# ";旧实现这里是 B 的 ' +
+         '67,89,82,77,4,0 —— 而 `app.map`/`app.name` 全还是 A ⇒ 一个字段与它描述的文件错位)');
+      // ── 同一根因的另一半:`offerDraft` 的 `sameBytes(rec.bytes, app.raw)` ──
+      // ★★ 那道闸的意思是"草稿与**磁盘上那份**逐字节相同 ⇒ 不必问"。比错文件之后它等于不存在:
+      //    一次普通的打开失败就换来一次**假**的「发现一份还没写盘的草稿,要恢复吗?」。
+      Editor.app.db = {
+        transaction: function () {
+          return { objectStore: function () {
+            return { get: function () {
+              const rq = { result: draftRec17, onsuccess: null, onerror: null };
+              realTimer17(function () { if (rq.onsuccess) rq.onsuccess({ target: rq }); }, 0);
+              return rq;
+            } };
+          } };
+        },
+      };
+      asked17 = 0;
+      eq(await Editor.offerDraft(), false,
+         '★★★ 草稿与**当前这张图在磁盘上的字节**逐字节相同 ⇒ 不恢复(那道字节闸真的在比 A)');
+      eq(asked17, 0,
+         '★★★ 而且一次确认框都没弹 —— 旧实现 `app.raw` 是 B 的字节,比出"不同"就弹一次' +
+         '**假**的恢复提示(实得 ' + asked17 + ' 次)');
+      // ── 真保存:备份里必须是 A 的字节 ──
+      globalThis.confirm = function () { asked17++; return true; };
+      Editor.app.db = s17.db;
+      asked17 = 0;
+      puts17.length = 0;
+      // ★ 这里**不断言**"又问了一次确认":确认是**会话级**的(决定 ⑤),而前面的相位早就
+      //   确认过了 ⇒ 这一次不会再问。要钉的是**备份那半边**(它才是逐文件的)。
+      await Editor.saveCurrent(false);
+      eq(puts17.length, 2, '⑰a 前提:一条备份 + 一条真保存(实得 ' + puts17.length + ' 条)');
+      const bakPut17 = puts17.length === 2 ? puts17[0] : null;
+      const savePut17 = puts17.length === 2 ? puts17[1] : null;
+      ok(!!bakPut17 && bakPut17.url.indexOf('.v3.bak') >= 0 &&
+         bakPut17.url.indexOf('/api/map?p=' + Editor.v3BackupName('A.cyrm')) >= 0,
+         '★ 第一条 PUT 是 A 的原文备份,**名字取自 A**(实得 "' +
+         (bakPut17 ? bakPut17.url : '(没有请求)') + '")');
+      const bakBytes17 = bakPut17 && bakPut17.init && bakPut17.init.body
+        ? Array.from(new Uint8Array(await bakPut17.init.body.arrayBuffer())) : null;
+      eq(bakBytes17, Array.from(aBytes17),
+         '★★★ A 的备份里是 **A 的**原文(旧实现写进去的是 B 的 67,89,82,77,4,0 —— ' +
+         '而 A.cyrm 紧接着被写成 v4 ⇒ **A 的 v3 原文就此消失**,磁盘上那份备份还是' +
+         '"看着对"的;实得 ' + JSON.stringify(bakBytes17 && bakBytes17.slice(0, 6)) + ')');
+      ok(!!savePut17 && savePut17.url.indexOf('/api/map?p=A.cyrm') >= 0,
+         '★ 第二条才是 A 自己的真保存(实得 "' + (savePut17 ? savePut17.url : '(没有请求)') + '")');
+
+      // ════ ⑰b ★★★ 缩小地图之后**装不下**的选区必须清掉(复核 Important 1)════
+      // ★★ `invalidateAll` **不清选区**(只有 `setMap` 清),而 `idxOf` 对越界坐标**取模** ——
+      //    于是留下来的那个框有两个症状,都不报错:① 框画在**图外**(render 按原坐标画);
+      //    ② 凡是消费选区(`mirrorRegion` / `regionCells` / `copyRegion`)的工具都把落在图外的格
+      //    **折回图里**落笔:镜像线不在框画的那条线上,接缝附近凭空多出一片改动。
+      // ★ 场景:16×16 格(64×64 子格)的图,在**右边缘**框 {x:40,w:8}(40+8=48 ≤ 64,装得下),
+      //   再缩成 8×16 格(32 子格宽)⇒ 48 > 32,**装不下了**。
+      const m17 = Editor.createEmptyMap('s17', 16, 16);
+      const arr17 = m17.layers[Core.LAYER_SCENE].desc;
+      for (let y = 0; y < m17.subRows; y++) {
+        for (let x = 0; x < m17.subCols; x++) arr17[y * m17.subCols + x] = Core.neutralDesc(1 + (x % 8));
+      }
+      Editor.app.map = m17;
+      Editor.app.name = 's17.cyrm';
+      Editor.app.sourceFormat = 'v4';
+      sel17 = { x: 40, y: 0, w: 8, h: 4 };
+      eq([m17.subCols, m17.subRows], [64, 64], '⑰b 前提:图是 16×16 格 = 64×64 子格');
+      ok(sel17.x + sel17.w <= m17.subCols, '⑰b 前提:这个框**此刻装得下**(48 ≤ 64)');
+      el17('size-w').value = '8';
+      el17('size-h').value = '16';
+      el17('btn-resize').click();                 // ← 走**生产**的点击处理器
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [8, 16],
+         '⑰b 前提:图真的缩成了 8×16 格(32 子格宽)');
+      eq(sel17, null,
+         '★★★ 装不下的选区被**清掉**了(旧实现把 {x:40,y:0,w:8,h:4} 原样留着 ⇒ 下面那条镜像' +
+         '会把 40..47 折成图内的格落笔;实得 ' + JSON.stringify(sel17) + ')');
+      ok(status17.indexOf('选区超出新尺寸') >= 0,
+         '★★ 而且**说得出理由**(清掉是看得见的,但"为什么"要写在状态栏上;实得 "' + status17 + '")');
+      const before17 = Array.from(arr17);
+      status17 = '';
+      eq(Editor.mirrorSelection('h'), null,
+         '★★★ 没有选区 ⇒ 镜像什么都不做(旧实现这里会返回一条差量并**静默改掉**折回图内那批格)');
+      ok(status17.indexOf('先框选一块') >= 0,
+         '★ 说了"先框选一块"(实得 "' + status17 + '")');
+      eq(Array.from(arr17), before17,
+         '★★★ 一格都没改 —— 这就是"镜像线不在框画的那条线上"那件事的**代价**');
+      // ── ⑰b② 撤销/重做那条**whole** 支路同样要判(它走的是 `afterStateChange`)──
+      // ★ 先撤销(revert 回 4×4),再框一块"在新尺寸下装不下"的选区,再重做一次缩小。
+      await Editor.doUndo();
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [16, 16],
+         '⑰b② 前提:撤销把尺寸退回 16×16');
+      sel17 = { x: 40, y: 0, w: 8, h: 4 };        // 又框了一块(这次是在 16×16 的图上)
+      status17 = '';
+      await Editor.doRedo();                      // ← 重做那次缩小:框又装不下了
+      eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [8, 16],
+         '⑰b② 前提:重做又把图缩成 8×16');
+      eq(sel17, null,
+         '★★★ 撤销/重做那条 whole 支路也清(只修 `applySize` 的实现在这里会红 —— ' +
+         '而用户从改尺寸起就一路按 Ctrl+Z / Ctrl+Y 是很普通的操作)');
+      ok(status17.indexOf('选区超出新尺寸') >= 0, '★ 同样说了理由(实得 "' + status17 + '")');
+      // ── 反向对照:装得下的选区**不许**被清(否则"别无条件重置选区"那条纪律就废了)──
+      sel17 = { x: 0, y: 0, w: 8, h: 4 };
+      eq(Editor.dropStaleSelection(), false,
+         '★ (反向对照)装得下的选区原样留着(清它是"每次改尺寸都把用户的框扔了")');
+      eq(sel17, { x: 0, y: 0, w: 8, h: 4 }, '★ 而且没被改过');
+
+      // ════ ⑰c ★★ 库列表里不许出现原文备份(复核 Minor 2a)════
+      // ★★ 服务器的 `listMaps` 照旧列出 `*.v3.bak`(那是它的既有语义),但客户端不能把它们
+      //    当地图:`openFromUrl` 的兜底是"打开列表**第一行**" ⇒ 列表里混进备份之后,
+      //    开机就可能**直接打开一份退路**。判据取两处:列表里没有那一行 + 兜底打开的不是备份。
+      el17('lib-list').children.length = 0;
+      await Editor.refreshLibrary();
+      const rows17 = el17('lib-list').children.map(function (li) { return li.dataset.name; });
+      eq(rows17, ['A.cyrm', 'C.cyrm'],
+         '★★★ 两句 `*.v3.bak` 都被滤掉了(实得 ' + JSON.stringify(rows17) + ')');
+      ok(el17('lib-list').textContent.indexOf('.v3.bak') < 0,
+         '★ 连兜底文案里也不出现备份名(列表为空时那句也一样)');
+      calls17.length = 0;
+      await Editor.openFromUrl();                 // location.search 为空 ⇒ 走"打开第一行"那条兜底
+      eq(Editor.app.name, 'A.cyrm',
+         '★★★ 兜底打开的是**第一张真地图**(旧实现列表里第一行就可能是一份 `.v3.bak` ⇒ ' +
+         '开机直接把退路当地图打开)');
+      // ── ⑰c② 备份**不是**保存目标(Minor 2b;`?p=` 直开那条路列表过滤管不到)──
+      Editor.app.name = 'A_e3c115d7.v3.bak';
+      Editor.app.map = Editor.createEmptyMap('A', 2, 2);
+      Editor.app.sourceFormat = 'v4';
+      puts17.length = 0;
+      status17 = '';
+      await Editor.saveCurrent(false);            // Ctrl+S
+      eq(puts17.length, 0,
+         '★★★ 就地保存一份**备份**被拒了:一个 PUT 都没发(旧实现把 v4 写进 `A.v3.bak`, ' +
+         '名字还漂成 `Av3bak.v3.bak` —— 退路就此换成 v4,而不报错)');
+      ok(status17.indexOf('.v3.bak') >= 0 && status17.indexOf('另存为') >= 0,
+         '★★ 拒绝要**说得出理由**(点名那个文件 + 指条明路;实得 "' + status17 + '")');
+      puts17.length = 0;
+      await Editor.saveCurrent(true);             // 另存为照旧可用
+      ok(puts17.length === 1 && puts17[0].url.indexOf('.v3.bak') < 0,
+         '★★ 而「另存为」照旧写得出去(拒的只是"就地覆盖退路";实得 ' +
+         JSON.stringify(puts17.map(function (p) { return p.url; })) + ')');
+
+      // ════ ⑰d ★★ 一个卡不住的空格修饰键(复核 Minor 1)════
+      // ★★ 原先 keyup 的早退("焦点在输入控件里 ⇒ 不拦")排在**清位之前**,于是这条极普通的
+      //    手顺能把平移修饰键**永久卡住**:按住空格 → 还按着时点进一个输入框 → 松手(keyup 的
+      //    target 是那个输入框 ⇒ 早退)⇒ `spaceDown` 仍是 true ⇒ 此后**每一次左键拖拽都变平移**。
+      const press17 = function (type, key, target) {
+        const ev = { key: key, target: target, ctrl: false, meta: false, shift: false,
+                     altKey: false, defaultPrevented: false };
+        ev.preventDefault = function () { ev.defaultPrevented = true; };
+        handlers17[type](ev);
+        return ev;
+      };
+      const BODY17 = { tagName: 'BODY' }, INPUT17 = { tagName: 'INPUT' };
+      press17('keydown', ' ', BODY17);            // 按住空格(焦点在 body)
+      const evUpIn17 = press17('keyup', ' ', INPUT17);   // ← 还按着时点进输入框,然后松手
+      ok(evUpIn17.defaultPrevented === false,
+         '★★ 焦点在输入框里时 keyup **不** preventDefault(空格照旧是一个字符,' +
+         '浏览器那半边的判据没被这次改动碰坏)');
+      calls17.length = 0;
+      Editor.app.canvas.onpointerdown({ button: 0, altKey: false, clientX: 10, clientY: 20, pointerId: 1 });
+      ok(!Editor.app.st.panning,
+         '★★★ 而 `spaceDown` **已经被清掉**了:这一拖不是平移(旧实现这里 panning 是被设上的 —— ' +
+         '用户以为自己早松手了,而每一次拖拽都在平移画布)');
+      Editor.app.st.stroke = null;                // 那一下起的是普通笔画,清掉
+      Editor.app.canvas.onpointerup({ button: 0, clientX: 10, clientY: 20 });
+      // ── 反向对照:焦点在 body 上时 keyup 照旧 preventDefault(那一半不许被这次改动碰坏)──
+      press17('keydown', ' ', BODY17);
+      const evUpBody17 = press17('keyup', ' ', BODY17);
+      ok(evUpBody17.defaultPrevented === true,
+         '★ (对照)焦点在 body 上时 keyup 照旧 preventDefault(浏览器会把空格当"按下当前' +
+         '聚焦的按钮")');
+
+      eq(errs17.length, 0,
+         '★★ 整个相位里**一条错误都没进过 sink**(替身少一个方法就会变成一条被吞掉的异常;实得 ' +
+         JSON.stringify(errs17) + ')');
+    } finally {
+      Editor.setErrorSink(null);
+      globalThis.addEventListener = s17.add;
+      globalThis.document = s17.doc;
+      globalThis.confirm = s17.confirm;
+      globalThis.fetch = s17.fetch;
+      if (s17.loc === undefined) { try { delete globalThis.location; } catch (e) {} }
+      else globalThis.location = s17.loc;
+      Editor.app.r = s17.r; Editor.app.map = s17.map; Editor.app.canvas = s17.canvas;
+      Editor.app.name = s17.name; Editor.app.st = s17.st; Editor.app.tileDefs = s17.tileDefs;
+      Editor.app.sourceFormat = s17.fmt; Editor.app.raw = s17.raw; Editor.app.db = s17.db;
     }
   }
 

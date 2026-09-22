@@ -500,15 +500,51 @@ globalThis.Editor = (function () {
     if (w) w.value = String(Core.cellsWOf(app.map));
     if (h) h.value = String(Core.cellsHOf(app.map));
   }
+  // ★★ "这一格没有给一个数"的判据(2026-09-22 复核 Minor 6):`parseInt` 出来不是有限数。
+  //    ★ 用**同一把尺子**量 `Core.clampMapSize`(它内部就是 `parseInt(v,10)` + `isFinite`)
+  //      —— 两处口径不同的话,"什么算非数字"就有了两份答案。
+  //    ★ 为什么非要这一条:`<input type="number">` 里删光或填垃圾,读回来是**空串**,
+  //      而 `Core.clampMapSize('')` 回落到 `DEFAULT_CELLS_W/H = 125×75` —— 那是**造新图**的
+  //      语义。在"改尺寸"这条路上它是一次**静默缩图**:400×300 的图里把宽那个框删空、
+  //      按「应用尺寸」,图变成 125×300(用户以为自己什么都没输、什么都没改)。
+  function sizeInputNum(el) {
+    if (!el) return null;
+    var n = parseInt(String(el.value == null ? '' : el.value), 10);
+    return isFinite(n) ? n : null;
+  }
+  // ★★ 选区必须**装得下当前尺寸**才留得住(2026-09-22 复核 Important 1)。
+  //    改尺寸(以及撤销/重做一次改尺寸)会把图**变小**,而 `invalidateAll` **不清选区**
+  //    (只有 `setMap` 清,见 render.js)—— 留下的那个框于是:① 画在**图外**
+  //    (render 按原坐标画框,而框已经没有对应的格了,它看上去贴在接缝那一侧);
+  //    ② 更要命的是**凡是消费选区**的工具都走 `idxOf` 的**取模**折算
+  //    (`mirrorRegion` / `regionCells` / `copyRegion` …)⇒ 静默把落在图外的格
+  //    **折回图里**落笔:镜像线不在框画的那条线上、接缝附近凭空空出一片改动,**一个字都不报**。
+  //    ★ 清掉是**看得见**的(框当场消失),所以这是"说得出理由"的那一半;钳到边界
+  //      会让框画在一个它从来不占的位置上(用户以为镜像还是对称的)。
+  function dropStaleSelection() {
+    if (!app.r || !app.map) return false;
+    var sel = app.r.selection();
+    if (!sel) return false;
+    if (sel.x + sel.w <= app.map.subCols && sel.y + sel.h <= app.map.subRows) return false;
+    app.r.setSelection(null);
+    return true;
+  }
   function applySize() {
     if (!app.map) { status('先打开一张地图'); return null; }
     var wEl = $('size-w'), hEl = $('size-h');
-    // ★ 闸 1:用户输入一律**钳制**,不报错回滚(NaN / 0 / 99999 都落到合法区间)
-    var c = Core.clampMapSize(wEl ? wEl.value : '', hEl ? hEl.value : '');
     var curW = Core.cellsWOf(app.map), curH = Core.cellsHOf(app.map);
+    // ★ 闸 1:用户输入一律**钳制**,不报错回滚(NaN / 0 / 99999 都落到合法区间)
+    // ★★ 但"没给数"与"给了个数"是两回事(Minor 6):没给的那一项按**当前尺寸**走,
+    //    不是按 `clampMapSize` 的默认 125/75(那是造新图的语义)。见 `sizeInputNum`。
+    var wNum = sizeInputNum(wEl), hNum = sizeInputNum(hEl);
+    var c = Core.clampMapSize(wNum === null ? curW : wNum, hNum === null ? curH : hNum);
+    var ig = [];
+    if (wNum === null) ig.push('宽保留 ' + curW);
+    if (hNum === null) ig.push('高保留 ' + curH);
+    var igTxt = ig.length ? (';' + ig.join(',') + '(那一格是空的或不是数字 ⇒ 这一项不改)') : '';
     if (c.w === curW && c.h === curH) {
       sizeInputsSync();                     // ★ 钳制结果照样回显(输 99999 → 框里变 400)
-      status('尺寸没变(' + c.w + '×' + c.h + '),没有改动地图');
+      status('尺寸没变(' + c.w + '×' + c.h + '),没有改动地图' + igTxt);
       return null;
     }
     // ★★ before 快照必须取在**改之前**,而 `wholeDiff` 的 `seal()` 快照的是**建它时抓的那个
@@ -524,12 +560,17 @@ globalThis.Editor = (function () {
     //   工具/纹理/选区/撤销深度那一排),**不含**尺寸,也不碰输入框。少了这一句,改完尺寸之后
     //   状态栏仍写着旧尺寸、框里也仍是刚输的那个数(与"DOM 必须与状态一致"同一条纪律)。
     refreshStatus();
+    // ★★ 选区装不下新尺寸就**清掉**(Important 1;理由见 `dropStaleSelection`)。★ 排在
+    //    `adoptMapInto` 之后(`app.map.subCols` 此刻才是新尺寸)。
+    var selDropped = dropStaleSelection();
     // ★★ A10:越界项**要报出来**。`resizeMap` 只丢不钳(钳一个出生点到边界上是替用户做决定),
     //    所以这里报的就是它丢掉的那几项 —— 静默清理等于"导出去游戏读到网格外坐标"。
     var lines = resizeReportLines(out.dropped);
     status('尺寸改为 ' + out.size.w + '×' + out.size.h + ' 格' +
            (lines.length ? (';A10 越界项已清理 ' + lines.length + ' 项:' + lines.join(';'))
-                         : ';没有越界项'));
+                         : ';没有越界项') +
+           igTxt +
+           (selDropped ? ';选区超出新尺寸,已清掉' : ''));
     return null;
   }
 
@@ -973,6 +1014,12 @@ globalThis.Editor = (function () {
       // ★ 尺寸可能变了 ⇒ 整片重来。**不是** setMap:那个会把视图重新"适配"并清掉选区,
       //   而撤销一次尺寸变化不该把视野和选区一起重置(而且它建的是"新图"语义)。
       out = Promise.resolve(app.r.invalidateAll());
+      // ★★ 但**装不下**的选区必须清掉(Important 1;理由见 `dropStaleSelection`)。这两条不矛盾:
+      //    "别无条件重置视野与选区"是不要**每次**都清,而这是"这一条框在新尺寸下已经没有
+      //    对应的格了"。★ 撤销/重做**都要**(顺序:撤销把图放大 ⇒ 框还在;重做又缩小 ⇒ 那时
+      //    才轮到清),而"谁在什么时候把它框小了"与用户下一次框选之间隔着任意多步操作 ⇒
+      //    只能**每次**整片重来时判一遍。
+      if (dropStaleSelection()) status('选区超出新尺寸,已清掉');
       // ★ 还有那两处**不在画布上**的尺寸显示:状态栏的 `#st-size` 与尺寸面板的两个框。
       //   `invalidateAll` 只管渲染,`statusLine` 只管工具/纹理/选区/撤销深度 ⇒ 少了这一句,
       //   撤销一次改尺寸之后画布已经回到 4×3,而框里仍写着 400×75 —— 再按一次「应用尺寸」
@@ -1354,11 +1401,18 @@ globalThis.Editor = (function () {
     });
 
     // 空格抬起 = 松开平移修饰键(见上面 keydown 里那段说明:keyup 那一半也要拦 ——
-    // 浏览器会把空格当"按下当前聚焦的按钮")。★ 判据与 keydown 同款:输入控件里不拦。
+    // 浏览器会把空格当"按下当前聚焦的按钮")。
+    // ★★ 清位必须**无条件**做,只有 `preventDefault` 才走"输入控件里不拦"那道早退
+    //    (2026-09-22 复核 Minor 1)。原先那一行早退排在清位**之前**,于是这条**极普通**的
+    //    手顺能把修饰键**永久卡住**:按住空格(此刻焦点在 body,`spaceDown = true`)→ 还按着的
+    //    同时点进一个输入框 → 松手(keyup 的 target 是那个输入框 ⇒ 早退 ⇒ `spaceDown` 仍是
+    //    true)→ 此后**每一次左键拖拽都变成平移**,而用户以为自己松开空格很久了。
+    //    ★ 判据正确的那一半("焦点在输入框里时**不认领**这个键":不 preventDefault,空格照旧
+    //      是一个字符)原样保留 —— 见下面那条断言。
     window.addEventListener('keyup', function (ev) {
       if (ev.key !== ' ') return;
+      spaceDown = false;                  // ★ 清位与"认不认领"无关:键已经抬起来了
       if (isTypingTarget(ev.target)) return;
-      spaceDown = false;
       ev.preventDefault();
     });
     window.addEventListener('blur', function () { spaceDown = false; });
@@ -1434,22 +1488,52 @@ globalThis.Editor = (function () {
     return !backed.has(fileName);
   }
   function freshName(base) { return Core.sanitizeName(base) + '.cyrm'; }
-  // ── 原文备份的文件名 = `<名>.v3.bak` ──
+  // ── 原文备份的文件名 = `<基名>_<8 位十六进制>.v3.bak` ──
   // ★★ 结尾**不是** `.cyrm`,于是游戏的 `_random_cyrm`(`f.to_lower().ends_with(".cyrm")`)
   //    抽不到它 —— 备份不会混进随机地图池,这一点由实证钉住(见报告 §item2)。
   // ★ 上一轮做不出这个名字(服务器当时只放行 `<基名>.cyrm`);2026-09-22 用户裁定
   //    **唯一**放宽一次 `editor_server.js` 的名字校验(只多接受 `.v3.bak` 这一个后缀),
   //    于是这里改回原本想要的名字。
   var V3_BACKUP_SUFFIX = '.v3.bak';
+  var V3_BACKUP_STEM_MAX = 24;
+  // ★★ 为什么要有那段哈希(2026-09-22 复核 Minor 5):"收干净 + 截前 40 字"**不是单射** ——
+  //    `图1.cyrm` 与 `1.cyrm` 收完都是 `1`,`图甲.cyrm` / `图乙.cyrm` 收完都是空(`map`),
+  //    而两个长名字截到同一个 40 字前缀的图会**共用同一份退路**。撞名的代价不是报错
+  //    (不报错更糟):第二张图的原文会把第一张的退路**静默覆盖**,而两张 v3 都已经转成 v4 了。
+  //    ★ 输入取**完整原文件名**(截断前那一份),于是"截断"这条撞法也一并闭合。
+  //    ★ FNV-1a 32 位、输出补到 8 位十六进制:这里没有攻击者,要挡的是"两个看着不相干的
+  //      名字落到同一格"这类意外,32 位足够(且比引入一个哈希依赖便宜得多)。
+  //    ★ 基名仍**只许** `[A-Za-z0-9_-]`(服务器的 `MAP_NAME_RE` 没有放宽):哈希是十六进制、
+  //      连接符用 `_` ⇒ 整名最长 24+1+8+7 = 40 < `MAX_MAP_NAME_LEN`(64,守卫在 editor_smoke)。
+  function fnv1a32(str) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) {
+      h = h ^ str.charCodeAt(i);
+      // ★ `Math.imul` 才是 32 位乘法:`h * 16777619` 在双精度里溢出,低位不可靠。
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h >>> 0;
+  }
   function v3BackupName(name) {
+    var full = String(name == null ? '' : name);
     // ★ 自己按服务器的字符集**收干净**:种子名可能来自 `freshName`(它走
     //   `Core.sanitizeName`,**放行汉字**),而汉字不在服务器的 `[A-Za-z0-9_\-]` 里 ——
     //   不过滤的话备份会被 400 拒掉,而"备份写不进去就不写盘"会把保存整个卡死。
     //   ★ 顺带把基名里的 `.` 也收掉:改写后的服务器校验**仍然**只许基名是 `[A-Za-z0-9_-]`
     //     (放行的只有一个后缀),留着 `.` 一样会被 400。
-    var base = String(name == null ? '' : name).replace(/\.cyrm$/i, '').replace(/[^A-Za-z0-9_-]/g, '');
+    var base = full.replace(/\.cyrm$/i, '').replace(/[^A-Za-z0-9_-]/g, '');
     if (!base) base = 'map';
-    return base.slice(0, 40) + V3_BACKUP_SUFFIX;
+    var hex = fnv1a32(full).toString(16);
+    while (hex.length < 8) hex = '0' + hex;
+    return base.slice(0, V3_BACKUP_STEM_MAX) + '_' + hex + V3_BACKUP_SUFFIX;
+  }
+  // ★★ 这个名字是不是一份**原文备份**(Minor 2):备份**不是**地图 —— 它的内容是这张图
+  //    **原文**(v3 文本)的最后一手退路,把它当保存目标就地覆盖 = 退路换成 v4 且名字漂成
+  //    `<名>v3bak.v3.bak`(不报错)。库列表与 `saveCurrent` 两处都拿它当判据。
+  function isBackupName(name) {
+    var s = String(name == null ? '' : name);
+    if (s.length <= V3_BACKUP_SUFFIX.length) return false;
+    return s.slice(-V3_BACKUP_SUFFIX.length).toLowerCase() === V3_BACKUP_SUFFIX;
   }
   function saveTargetName(asNew) {
     if (!app.map) return null;
@@ -1457,6 +1541,16 @@ globalThis.Editor = (function () {
   }
   function saveCurrent(asNew) {
     if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
+    // ★★ 备份**不是**保存目标(2026-09-22 复核 Minor 2b):`.v3.bak` 装的是这张图**原文**
+    //    的最后一手退路,就地覆盖它 = 把退路换成 v4(名字还会漂成 `<名>v3bak.v3.bak`)。
+    //    ★ 它**不丢数据**(覆盖的是一份备份,不是地图),但退路就这么没了、而且不报错 ——
+    //      与"备份是唯一的退路"那条纪律直接冲突。要接着改这张图就用「另存为」另起一个名字。
+    //    ★ 库列表那一侧另有一道闸(`refreshLibrary` 过滤)—— 但列表只管点击,
+    //      `?p=xxx.v3.bak` 这条 URL 直接打开的路它管不到,故这里必须有。
+    if (!asNew && isBackupName(app.name)) {
+      status('这是一份原文备份(' + app.name + '),不是地图 —— 不能就地覆盖它。请用「另存为」另起一个名字');
+      return Promise.resolve();
+    }
     // ★★ 确认与备份是**两条独立的门**(2026-09-22 拆开;上一轮它们共用一个会话级标记):
     //    · **确认** = 每会话一次(决定 ⑤ 的原意:同一个决定问一次就够,用户已签核);
     //    · **备份** = **每个文件一次**(`v3BackedUp`)—— 否则同一会话里保存**第二张** v3 图时
@@ -2469,10 +2563,28 @@ globalThis.Editor = (function () {
     return fetch('/api/map?p=' + encodeURIComponent(name))
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
       .then(function (buf) {
-        app.raw = new Uint8Array(buf);
-        return mapFromBytes(name, app.raw);
+        // ★★ 字节先落在**局部量**里:解码**成功**之后才认领成 `app.raw`(见下一条注释)。
+        var bytes = new Uint8Array(buf);
+        return mapFromBytes(name, bytes).then(function (out) {
+          return { out: out, bytes: bytes };
+        });
       })
-      .then(function (out) {
+      .then(function (got) {
+        var out = got.out;
+        // ★★★ `app.raw` **只能**在这里认领(此刻解码已经成功)—— 2026-09-22 复核 C1:
+        //    它此前写在上一步("拿到字节"就写),于是一次**失败**的打开会把**那个失败文件**
+        //    的字节留在 `app.raw` 里,而 `app.map` / `app.name` / `app.sourceFormat` 仍是
+        //    **上一张**图的(失败路径一个字段都不改,那是刻意的:屏幕上那张图没动过)。
+        //    两个读者当场就错,而两处**都不报错**:
+        //      ① `saveCurrent` 的原文备份取的就是 `app.raw`(`backupBytes = app.raw`)——
+        //         于是 `A.v3.bak` 里装的是 **B** 的字节,而紧接着 `A.cyrm` 被写成 v4:
+        //         **A 的原文没了,磁盘上那份"退路"还在、看着还挺像回事**;
+        //      ② `offerDraft` 的 `sameBytes(rec.bytes, app.raw)` 拿草稿与**另一个文件**
+        //         比字节 ⇒ "草稿与文件逐字节相同就别问"那道闸等于不存在(假恢复提示)。
+        //    ★ 前提是**常态**:磁盘上有一张 v3 图开着,库列表里点到另一个损坏/截断/版本
+        //      不支持的 `.cyrm`,解码失败(编辑器会照实报出来,于是用户接着干活),
+        //      然后 Ctrl+S —— 一次单向转换 + 一份装错字节的备份。
+        app.raw = got.bytes;
         app.map = out.map; app.name = name; app.sourceFormat = out.sourceFormat;
         dirty = false;                 // ★★ 打开 = 屏幕上这份与磁盘上那份**同源**(见 dirty 那段)
         // ★★ 同一个纪律的**另两笔账也要一起归位**,漏了哪一笔都是"不报错但看得见":
@@ -2538,8 +2650,16 @@ globalThis.Editor = (function () {
       var ul = $('lib-list');
       if (!ul) return;
       ul.innerHTML = '';
-      if (!data.maps.length) { ul.textContent = 'maps/ 下没有 .cyrm'; return; }
-      data.maps.forEach(function (mm) {
+      // ★★ 原文备份**不进库列表**(2026-09-22 复核 Minor 2a)。服务器的 `listMaps` 照旧会
+      //    列出 `*.v3.bak`(那是它的既有语义,本次没动),但客户端**不能**把它们当地图:
+      //    ① `openFromUrl` 的兜底是"打开列表**第一行**" —— 列表里混进备份之后,开机就可能
+      //       直接打开一份退路(用户以为自己打开的是地图);
+      //    ② 打开一份备份再 Ctrl+S 会把 v4 写进那份退路里(见 `saveCurrent` 那道闸)。
+      //    ★ 只过滤**显示**这一侧:磁盘上那份文件、服务器那份列表、以及 `?p=` 直开那条路
+      //      都不受影响(所以 `saveCurrent` 那道闸不可省)。
+      var rows = (data.maps || []).filter(function (mm) { return !isBackupName(mm.name); });
+      if (!rows.length) { ul.textContent = 'maps/ 下没有 .cyrm'; return; }
+      rows.forEach(function (mm) {
         var li = document.createElement('li');
         li.className = 'lib-row';
         li.dataset.name = mm.name;
@@ -2584,9 +2704,7 @@ globalThis.Editor = (function () {
     //   免得同一次异常挂在两对监听上、状态栏被写两遍而快照只挂在其中一对上。
     var selftestBtn = $('btn-selftest');
     if (selftestBtn) {
-      selftestBtn.addEventListener('click', function () {
-        selfTest().then(function (line) { status(line); });
-      });
+      selftestBtn.addEventListener('click', runSelfTest);
     }
     var fitBtn = $('btn-fit');
     if (fitBtn) fitBtn.addEventListener('click', function () { guard('fit', function () { return app.r.fit(); }); });
@@ -2637,9 +2755,7 @@ globalThis.Editor = (function () {
       installUiStateSave();
       return null;
     }).then(function () {
-      if (new URLSearchParams(location.search).has('selftest')) {
-        return selfTest().then(function (line) { status(line); });
-      }
+      if (new URLSearchParams(location.search).has('selftest')) return runSelfTest();
       return null;
     }).catch(function (e) {
       status('启动失败:' + msgOf(e));
@@ -2648,6 +2764,23 @@ globalThis.Editor = (function () {
 
   // ── 浏览器自检(★ node 到不了的那半边 —— 人眼验收就靠它打印的那一行)──
   // 判据:文本 `SELFTEST OK`;失败逐条列出。人在浏览器里点「自检」按钮,把那行贴回报告。
+  //
+  // ★★ 自检是页面上的**异步入口**之一,必须与别的入口同一条纪律:经 `guard` 收口
+  //    (2026-09-22 复核 Important 2)。它现在**会拒绝** —— `selfTest` 消费 `Io.ping()` /
+  //    `Io.encodeMap` / `Io.decodeMap`,而 io.js 那个 30s 超时是新的拒绝源(codec 死了 /
+  //    被 terminate 掉 / 压缩路径抛),此外自检自己也会把 `indexedDB`、`localStorage`
+  //    当成"可能失败"来探(那是它的本职)。丢掉那条 promise 就是一次**未处理的拒绝**:
+  //    闸 4 的围栏会写一份崩溃快照 ⇒ 下次开机弹一个**假的**「上次异常退出,要恢复吗?」
+  //    ——而屏幕上那张图**一次都没崩过**;同时状态栏那句自检结果被「未处理的 promise 拒绝」
+  //    顶掉(用户看到的是"自检按钮坏了")。
+  // ★ 抽成具名函数是为了让它**可被 node 驱动**:判"有没有护栏"必须是**行为**断言
+  //   (装一遍真的围栏、让一次真失败跑过去、看崩溃槽位有没有多一条),而不是源码里 grep
+  //   一个 `guard(` —— 见 editor_smoke 相位 ⑮b⑩b ③。
+  function runSelfTest() {
+    return guard('自检', function () {
+      return selfTest().then(function (line) { status(line); return line; });
+    });
+  }
 
   // ★ localStorage:写 → 读 → 删。隐私模式或被策略禁用时 setItem **会抛** ——
   //   这是纯浏览器的失败面,node 侧一条断言都拦不住(持久化在 Task 9 落地在那上面)。
@@ -2716,10 +2849,17 @@ globalThis.Editor = (function () {
       } catch (eTool) { check('落笔产出差量(整格 16 个子格)', false, msgOf(eTool)); }
       // ★ "按了没反应"那条通道:故意抛一次,看它有没有落在 sink 上(自定义 sink 时不会
       //   写状态栏、也不会 console.error —— 所以这一条不会污染下面的画面与控制台)。
+      // ★★ 探完必须把调用方那个 sink **还原**(不是置 null;2026-09-22 复核 Important 2):
+      //    自检是**异步**入口,它交回的那条 promise 之后还会走 `guard` 的失败分支 ——
+      //    而那时 sink 若已被置 null,`reportError` 就会走默认那条(`else status(text)`**加**
+      //    `console.error`)。浏览器里那只是控制台噪音;node 冒烟里它是 **stderr 上的一行**,
+      //    而"stderr 有字节 = 有东西红了"正是整份冒烟赖以成立的那个信号 —— 冲掉它等于
+      //    把一条本来会红的断言洗白。
+      var savedSinkST = errorSinkFn;
       var sinkGot = null;
       setErrorSink(function (t) { sinkGot = t; });
       guard('自检', function () { throw new Error('自检用的假错'); });
-      setErrorSink(null);
+      setErrorSink(savedSinkST);
       check('guard 的失败上报到 sink(可见)', !!sinkGot && sinkGot.indexOf('自检用的假错') >= 0,
             sinkGot || '没有上报 —— 那就成了"按了没反应"');
       check('地图已打开', app.map !== null);
@@ -2804,7 +2944,10 @@ globalThis.Editor = (function () {
     buildPanels: buildPanels, syncPanelForLayer: syncPanelForLayer,
     saveCurrent: saveCurrent, saveTargetName: saveTargetName,
     needsV3Confirm: needsV3Confirm, needsV3Backup: needsV3Backup,
-    v3BackupName: v3BackupName, freshName: freshName,
+    v3BackupName: v3BackupName, isBackupName: isBackupName, freshName: freshName,
+    // ★ 2026-09-22 复核:自检那条异步入口的**具名**收口(相位 ⑮b⑩b ③ 驱动它,判据是
+    //   "一次真失败之后崩溃槽位有没有多一条");`dropStaleSelection` 给相位 ⑰ 直接用。
+    runSelfTest: runSelfTest, dropStaleSelection: dropStaleSelection,
     importEnemyTypes: importEnemyTypes, exportReport: exportReport, showExportReport: showExportReport,
     spawnAt: spawnAt,
 
