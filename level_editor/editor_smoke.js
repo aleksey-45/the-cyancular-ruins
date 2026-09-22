@@ -501,8 +501,11 @@ function countNonZero(map, L) {
     const hist = Editor.createHistory({});
     eq(Editor.MAX_UNDO, 200, 'MAX_UNDO = 200(规格 §4.3 闸 1)');
     // ★ 钉住字节预算的默认值:它才是**真闸**(步数只是廉价上界),值写错正是它要防的那件事
+    // ★ 出处订正:64MB **不在规格里** —— 规格 §4.3 的"闸 1"表只列了「撤销步数 200(差量)」一条,
+    //   字节预算是**计划**加的(值本身是对的,原先那句"规格 §4.3"是把计划写成了规格)。
     eq(Editor.MAX_UNDO_BYTES, 64 * 1024 * 1024,
-       'MAX_UNDO_BYTES = 64MB(规格 §4.3;默认预算的行为面见下面"不给 maxBytes"那条)');
+       'MAX_UNDO_BYTES = 64MB(★ 出自**计划**,规格 §4.3 闸 1 只有「撤销步数 200(差量)」,无此项;' +
+       '默认预算的行为面见下面"不给 maxBytes"那条)');
     eq(hist.depth(), 0, '新历史是空的');
     const hm = Core.createMap('h', 2, 1);
     hist.push({ kind: 'cells', layer: Core.LAYER_SCENE, idx: Int32Array.from([0]),
@@ -547,12 +550,30 @@ function countNonZero(map, L) {
        h3.depth() + ' 条 / ' + h3.bytes() + ' 字节)');
     ok(Editor.bytesOfEntry(mkDiff(20)) > 0, 'bytesOfEntry 给出正数(字节预算是按它算的)');
 
+    // ★★ 默认**步数**(不给 opts.maxSteps)必须真的在生效 —— 上面那条走的是显式传 maxSteps:3
+    //    的历史,默认那一支一次都没跑到(它只有被**显式**传值时才被验过)。默认值漏掉那个三元
+    //    (写成 `opts.maxSteps`)时 `undos.length > undefined` 恒 false ⇒ **完全没有上限**,
+    //    而整个冒烟照样全绿 —— 这条是那个洞的唯一守卫(与上面"默认字节预算"同款的镜像)。
+    //    ★ 每条 mkDiff(1) 只 12 + 1*4*3 = 24 字节,201 条共 4824 字节,远在字节预算内,
+    //      所以这里红就只能是步数闸的问题。
+    const hdefSteps = Editor.createHistory({});
+    for (let i = 0; i < 201; i++) hdefSteps.push(mkDiff(1));
+    eq(hdefSteps.depth(), 200,
+       '★★ 默认步数上限在生效:推 201 条(**不给 maxSteps**)后深度停在 200(实得 ' +
+       hdefSteps.depth() + ' 条 / ' + hdefSteps.bytes() + ' 字节)');
+
     // ★★ 默认预算(不给 opts.maxBytes)必须**真的在生效** —— 上面那条走的是显式传
     //    maxBytes 的历史,碰不到默认那一支;默认值退化成 Infinity / 漏掉那支三元,这里才红。
     //    ★ 用**合成的** whole 条目(bytes 字段直接写字节数)而不是真分配 64MB:
     //      bytesOfEntry(whole) 本来就只读 `e.bytes` —— 这正是变异 M4 要钉的那一行。
     const hdef = Editor.createHistory({});          // 不给 maxBytes ⇒ 应走 MAX_UNDO_BYTES
-    hdef.push({ kind: 'whole', tag: 'fake', bytes: Editor.MAX_UNDO_BYTES, before: null, after: null });
+    // ★ 用**真的**快照(而不是 before/after: null):将来谁把 bytesOfEntry(whole) 改成"从快照
+    //   现算字节",null 会在 push 里炸成一次**未捕获异常**(后面的断言一行都跑不到、只留下一行
+    //   FAIL: 未捕获异常),而真快照下它会退化成一条**具名 FAIL**(那条 whole 不再超预算 ⇒
+    //   深度 3 ≠ 2)。测试要在重构下"红得可读",不是在重构下崩掉。
+    const hdry = Core.createMap('hd', 2, 1);
+    hdef.push({ kind: 'whole', tag: 'fake', bytes: Editor.MAX_UNDO_BYTES,
+                before: Editor.snapshotMap(hdry), after: Editor.snapshotMap(hdry) });
     hdef.push(mkDiff(20));
     hdef.push(mkDiff(20));
     eq(hdef.depth(), 2, '★★ 默认字节预算在生效:超预算的 whole 条目被挤掉,只剩后两条(实得 ' +
@@ -589,14 +610,38 @@ function countNonZero(map, L) {
     eq(hz.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4),
        '★★ 撤销改尺寸 → 落一笔 → 再撤销:地图回到**原始**状态,不是被污染的 before');
 
+    // ★★ 快照拷贝的**另一半**:`seal()` 定格之后继续在地图上落笔,`entry.after` 快照不得
+    //    跟着变。上面那条钉的是 before(撤销之后落笔),**after 那一侧此前一条断言都没有** ——
+    //    于是 `snapshotMap` 退回 `desc: lay.desc` 时整个相位 ⑫ 照样全绿(既有的 hz 组在
+    //    seal 与 undo 之间夹了一次 resize,活数组当场被换掉,alias 照不出来),同一个退化
+    //    可以无声无息地回来。这条是它的守卫。
+    //    ★ 这里刻意**不夹 undo**:`applyEntry` 会把 map.layers 换成防御性拷贝,一旦换了,
+    //      活数组与快照就脱钩了 —— 必须在"seal 完、还没撤销"这个窗口里落笔才测得准。
+    const hq = Core.createMap('q', 2, 1);
+    hq.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(4);
+    const qd = Editor.wholeDiff(hq, 'resize');
+    qd.seal();                                     // 快照在这一刻定格
+    const qp = Editor.paintCells(hq, Core.LAYER_SCENE, [0], function () { return Core.neutralDesc(9); });
+    ok(qp !== null, '★ seal() 之后仍能在地图上落笔(下面那条才有意义)');
+    eq(qd.entry.after.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4),
+       '★★ seal() 之后落笔**没写进历史条目的 after 快照**(alias 实现下这里会变成 9 —— ' +
+       '重做会拿一份被污染的 after 恢复地图)');
+
     // ★★ 「字节预算管得住整图级操作」不能只靠"记了个正数"(把 bytesOfEntry 的 whole 分支
     //    退化成 `return 64`,上面那条 `> 0` 照样绿 —— 变异 M4 实测 0 红)。两条:
     //    ① 数值面:一条 whole 条目至少要把 before 那份快照算进总账
     ok(Editor.bytesOfEntry(wd.entry) >= Editor.bytesOfSnapshot(wd.entry.before),
        '★★ bytesOfEntry(whole) ≥ before 快照的字节量(实得 ' + Editor.bytesOfEntry(wd.entry) +
        ' ≥ ' + Editor.bytesOfSnapshot(wd.entry.before) + ')—— 记常数过不了这条');
-    //    ② 行为面:预算 1000 装不下这条 whole 条目(2×1 格 = 8×4 子格 ×4 层 ×4 字节 =
-    //       512/份,before+after ⇒ 64+512+512 = 1088)⇒ 字节闸真的在管整图级
+    //    ② 行为面:预算 1000 装不下这条 whole 条目 —— `wd` 是 **2×1 格建图、改成 4×3 格之后**
+    //       才 seal 的,所以两份快照**不一样大**:
+    //         before = 2×1 格 = 8×4 子格 ×4 层 ×4 字节 = 512
+    //         after  = 4×3 格 = 16×12 子格 ×4 层 ×4 字节 = 3072
+    //         bytesOfEntry = 64 + 512 + 3072 = **3648**
+    //       ⇒ 字节闸真的在管整图级。
+    //       ★ 1088(= 64+512+512)是**下面 wd2**(没改过尺寸的 2×1 图)那条的数字 ——
+    //         原先这里错把它写在本条上(断言不受影响:它们打印的是实得值,3648 > 1000
+    //         反倒让"至少超预算"这条 guard 更结实;错的只是注释)。
     const hwb = Editor.createHistory({ maxBytes: 1000 });
     hwb.push(wd.entry);
     eq(hwb.depth(), 1, '★ 单条 whole 条目就超预算 ⇒ 只丢到"至少留一条"为止(实得 ' + hwb.depth() + ' 条)');
@@ -607,6 +652,19 @@ function countNonZero(map, L) {
     wd2.seal();
     hwb.push(wd2.entry);
     eq(hwb.depth(), 1, '★★ 再来一条 whole 就把最老的挤掉(whole 的字节数真的参与闸门)');
+
+    // ★★ 错误用法必须**看得见**:`wholeDiff` 没 `seal()` 就把 entry 推进历史时,`after` 快照
+    //    不存在 ⇒ 撤销照常(有 before)、**重做一个字都不做**(静默 no-op)。这条走全局报错
+    //    通道(node 侧换成自定义 sink 接住,stderr 因此仍保持 0 字节 —— 与相位 ⑪ 同款手法)。
+    const hbad = Core.createMap('bad', 2, 1);
+    const badwd = Editor.wholeDiff(hbad, 'resize');     // ★ 故意不 seal()
+    const wseen = [];
+    Editor.setErrorSink(function (text) { wseen.push(String(text)); });
+    Editor.applyEntry(hbad, badwd.entry, +1);           // 重做 —— after 快照不存在
+    Editor.setErrorSink(null);
+    ok(wseen.length === 1 && wseen[0].indexOf('重做无效') >= 0,
+       '★★ seal() 之前就进历史的 whole 条目:重做时**上报**而不是静默 no-op(实得 ' +
+       JSON.stringify(wseen) + ')');
 
     // spawn 差量能撤(审计 A9)
     const hsp = Core.createMap('s', 4, 3);
@@ -694,6 +752,12 @@ function countNonZero(map, L) {
       eq(mi.layers[Core.LAYER_SCENE].desc[3], Core.neutralDesc(3), '★ 水平镜像:x=0 的内容到了 x=3');
       eq(mi.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '★ 水平镜像:x=3 的内容到了 x=0');
       ok(md !== null, '镜像产出差量');
+      // ★★ 非法 axis 必须**当场拒绝并给出原因** —— 旧实现里没有任何一支命中 ⇒ `di === si` ⇒
+      //    退化成恒等 ⇒ 静默返回 null,与"镜像了一圈、内容恰好没变"**完全同形**(调用方分不出
+      //    轴写错和这次镜像没改动任何格)。抛出的是带原因的中文错,而不是哑 null。
+      throws(function () {
+        Editor.mirrorRegion(mi, Core.LAYER_SCENE, { x: 0, y: 0, w: 4, h: 4 }, 'x');
+      }, '★★ 非法镜像轴:当场拒绝并给出原因(旧实现退化成恒等、静默回 null)', '镜像轴非法');
     })();
   } catch (err) {
     console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');

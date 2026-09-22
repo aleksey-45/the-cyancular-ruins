@@ -613,7 +613,16 @@ globalThis.Editor = (function () {
     }
     if (e.kind === 'whole') {
       var s = dir < 0 ? e.before : e.after;
-      if (!s) return;
+      if (!s) {
+        // ★ 原先这里是**静默 return**,而它的成因只有一种:`wholeDiff` 还没 `seal()` 就把
+        //   entry 塞进了历史(seal 之前 `after` 快照根本不存在)。症状是"撤销有反应、重做
+        //   一点反应都没有",且一个字都不报 —— 接口没法强制调用顺序(entry 就是普通对象),
+        //   所以**如实上报**,而不是吞掉。
+        // ★ 不抛异常:走到这里时历史栈已经动过了(undo 已把这条 pop 进 redo 栈),
+        //   抛出会把历史留在半截状态。这是"要看得见",不是"要炸掉"。
+        reportError('重做无效:这条整图级历史没有 after 快照(wholeDiff 的 seal() 还没调用,条目就进了历史)');
+        return;
+      }
       map.subCols = s.subCols; map.subRows = s.subRows;
       // ★★ 必须**防御性拷贝**:直接 alias 快照数组的话,撤销之后地图与 entry.before
       //   共用同一份 TypedArray —— 用户再落一笔就写进了历史条目里,下一次撤销恢复的是
@@ -728,6 +737,16 @@ globalThis.Editor = (function () {
   // ── 镜像(规格 §4.4 的选框:可移动 / 删除 / 复制粘贴 / 镜像)──
   function mirrorRegion(map, L, sel, axis) {
     if (!sel) return null;
+    // ★★ 非法 axis 必须**当场说人话**,不能靠"两个坐标算出来一样"退化成恒等、再静默回 null ——
+    //    那与"镜像了一圈、内容恰好没变"在返回值上**完全同形**,调用方(历史栈/工具栏)分不出
+    //    "轴写错了"和"这次镜像没改动任何格"。
+    // ★ 处理方式与 `createGradientJob` 对非法图层同款(调用方的**编程错误** ⇒ 抛一条带原因的
+    //   中文错),而不是回一个 `{ok:false, why}`:后者会把本函数文档化的返回类型 `diff|null`
+    //   破成三种形状,而 Task 7 的 `history.push(mirrorRegion(...))` 会直接拿到那个对象当真。
+    //   抛出的错在上层被 `guard(...)` 接住 → 落进状态栏,用户看得见、程序不崩。
+    if (axis !== 'h' && axis !== 'v') {
+      throw new Error('镜像轴非法(只能是 h 水平 / v 垂直):实得 ' + String(axis));
+    }
     var arr = Render.layerArray(map, L);
     if (!arr) return null;
     var idx = [], before = [], after = [], x, y;
