@@ -990,9 +990,16 @@ globalThis.Editor = (function () {
           var s0 = stNow();
           var job = createBucketJob(app.map, s0.layer, hit.x * k2of(hit), hit.y * k2of(hit),
                                     { clip: s0.selection });
-          runJob(job, function () {
-            pushAndShow(paintCells(app.map, s0.layer, job.result(), valueFor(s0, s0.layer)));
-          }, '油漆桶填充');
+          // ★★ `runJob` 交回的是**一整条分帧链的 promise**(`slicer.run` → `onApply` → 落笔),
+          //    丢掉它 = 拒绝逃到**全局围栏**,而围栏会 `snapshot()` ⇒ 一次普通的落笔失败
+          //    (编辑/渲染入口抛)会把当前图写进崩溃槽位,下次开机弹**假的**「上次异常退出」。
+          //    交给 `guard` 收口:`guard` 是**终点**(它自己吞掉结果、只往状态栏写一行),
+          //    故这里不是"第二处接住",而是**唯一**该接住的地方(与 pointermove/pointerup 同款)。
+          guard('油漆桶填充', function () {
+            return runJob(job, function () {
+              pushAndShow(paintCells(app.map, s0.layer, job.result(), valueFor(s0, s0.layer)));
+            }, '油漆桶填充');
+          });
           return;
         }
         if (app.st.tool === 'gradient') {
@@ -1091,11 +1098,15 @@ globalThis.Editor = (function () {
             { x: a.x * k2of(a), y: a.y * k2of(a) },
             { x: hit.x * k2of(hit), y: hit.y * k2of(hit) },
             s1.rgba, s1.rgba2, { clip: s1.selection });   // ★ 两端各一色(不是同一个色)
-          runJob(gj, function () {
-            var res = gj.result(), targets = [], values = [], n = 0;
-            for (var i = 0; i < res.length; i++) { targets.push(res[i].i); values.push(res[i].rgba); }
-            pushAndShow(paintCells(app.map, Core.LAYER_BG, targets, function () { return values[n++]; }));
-          }, '渐变');
+          // ★★ 与「油漆桶填充」同一条理由(同一个 `runJob` 出口、同一个"丢掉 promise = 一次
+          //    普通的失败换来一个假的崩溃提示")。
+          guard('渐变', function () {
+            return runJob(gj, function () {
+              var res = gj.result(), targets = [], values = [], n = 0;
+              for (var i = 0; i < res.length; i++) { targets.push(res[i].i); values.push(res[i].rgba); }
+              pushAndShow(paintCells(app.map, Core.LAYER_BG, targets, function () { return values[n++]; }));
+            }, '渐变');
+          });
           return;
         }
         if (app.st.stroke) {
@@ -1241,25 +1252,57 @@ globalThis.Editor = (function () {
     statusLine();
   }
 
-  // ── 保存(★ 决定 ⑤:v3 源首次保存要一次显式确认)──
+  // ── 保存(★ 决定 ⑤:v3 源首次保存要一次显式确认 + 一份原文备份)──
   // ★ 为什么必须确认:仓库里 maps/*.cyrm **今天全是 v3 文本**,而 Ctrl+S 写回原文件
   //   (规格 §4.6)⇒ 一次 Ctrl+S 就把 v3 原文转成 v4 二进制,而迁移是**单向**的
   //   (规格 §3.6「迁移是一次性的」)。期 E 会专门做迁移并先提交一份 v3 原文留档。
+  // ★★ 用户裁定(2026-09-22):**确认框要说出决定性的那件事**(游戏今天读不了 v4),
+  //    并且在这次转换写盘**之前**把 v3 原文落一份备份到同目录。
   var v3Confirmed = false;
   function needsV3Confirm(srcFmt, confirmed) {
     if (!srcFmt) return false;
     return (srcFmt === 'v3' || srcFmt === 'legacy') && !confirmed;
   }
   function freshName(base) { return Core.sanitizeName(base) + '.cyrm'; }
+  // ── 原文备份的文件名 ──
+  // ★★ 想要的是 `<名>.v3.bak`(结尾**不是** `.cyrm`,于是游戏的 `_random_cyrm` 抽不到它)。
+  //    ★ 但这条路**走不通**:`editor_server.js`(冻结)的写端点是
+  //      `MAP_NAME_RE = /^[A-Za-z0-9_\-]+\.cyrm$/` —— 基名里连 `.` 都不许有,故
+  //      `demo.v3.bak` 与 `demo.v3.bak.cyrm` **都会被 400 拒掉**(实测:见
+  //      `.superpowers/sdd/proof_item1_backup_name.js`;两个候选各自 HTTP 400、磁盘上
+  //      一个字节都没落)。**服务器接受的每一个名字都以 `.cyrm` 结尾**,
+  //      所以"(a) 服务器接受 + (b) 不以 .cyrm 结尾"这两个条件**不可兼得**。
+  //    ★ 取舍:备份**必须真的落盘**(它是这次单向转换唯一的退路),故保 (a)、放弃 (b) ——
+  //      退到最近的可写名 `<名>_v3bak.cyrm`。**代价照实说**:它以 `.cyrm` 结尾 ⇒ 会进
+  //      游戏的随机地图池、也会出现在编辑器库列表里(内容就是原文 v3,游戏读得动)。
+  //      彻底关掉这一面需要动 `editor_server.js`(基名放行 `.bak`/`.v3.bak`)或让编辑器
+  //      指向仓外地图目录(`node editor_server.js --maps <dir>`),两者都不在本轮范围。
+  var V3_BACKUP_SUFFIX = '_v3bak.cyrm';
+  function v3BackupName(name) {
+    // ★ 自己按服务器的字符集**收干净**:种子名可能来自 `freshName`(它走
+    //   `Core.sanitizeName`,**放行汉字**),而汉字不在服务器的 `[A-Za-z0-9_\-]` 里 ——
+    //   不过滤的话备份会被 400 拒掉,而"备份写不进去就不写盘"会把保存整个卡死。
+    var base = String(name == null ? '' : name).replace(/\.cyrm$/i, '').replace(/[^A-Za-z0-9_-]/g, '');
+    if (!base) base = 'map';
+    return base.slice(0, 40) + V3_BACKUP_SUFFIX;
+  }
   function saveTargetName(asNew) {
     if (!app.map) return null;
     return asNew ? freshName((app.map.name || 'map') + '_copy') : app.name;
   }
   function saveCurrent(asNew) {
     if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
+    // ★★ 确认与备份是**同一个一次性条件**的两半:一次转换保存 = 一次确认 + 一份原文备份。
+    //    `needsV3Confirm` 读的就是"本会话还没确认过",故第二次保存两半都不再发生。
+    var backupName = null, backupBytes = null;
     if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
-      var okGo = window.confirm('原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
-                                '期 E 会专门做迁移并先提交一份 v3 原文留档。(本次会话不再询问)');
+      backupBytes = app.raw || null;                 // 磁盘上那份的**原文**(打开时留下的)
+      backupName = backupBytes ? v3BackupName(app.name) : null;
+      var okGo = window.confirm(
+        '原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
+        '★ 游戏现在**读不了** v4 —— 在期 E 把 map_format.gd 迁移过去之前,这个文件在游戏里会失效。\n' +
+        (backupName ? ('保存前会先把原文备份到 ' + backupName + '。\n') : '') +
+        '(本次会话不再询问)');
       if (!okGo) { status('已取消保存(磁盘上那份没有被碰过)'); return Promise.resolve(); }
       v3Confirmed = true;
     }
@@ -1274,7 +1317,19 @@ globalThis.Editor = (function () {
     //    (不设头 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ "点了保存、磁盘上那份没变",
     //    而且**不报错回滚**)。这里再拼一份 fetch 就是第二个出口,迟早只改一处。
     return Io.encodeMap(app.map, { compress: true }).then(function (bytes) {
-      return putMapBytes(name, bytes).then(function (out) {
+      // ★★ 备份**排在真保存之前**,而且走的是**同一个** `putMapBytes` 出口(页面上发 PUT
+      //    的地方仍然只有一处 —— 另一个 fetch 就是第二个出口,迟早只改一处)。
+      // ★ 备份写不进去就**不写盘**:这次转换是单向的,备份是唯一的退路;先写盘再发现备份
+      //   失败 = 原文与退路一起没了。故这里把失败**抛出去**(外层 catch 会说「保存失败」,
+      //   而磁盘上那份确实一个字都没动)。
+      var pre = backupName
+        ? putMapBytes(backupName, backupBytes).then(null, function (e) {
+            throw new Error('原文备份写不进去(' + backupName + '):' + msgOf(e) +
+                            ' —— 没有动磁盘上那一份');
+          })
+        : Promise.resolve();
+      return pre.then(function () { return putMapBytes(name, bytes); })
+                .then(function (out) {
         app.name = name;
         app.raw = bytes;
         app.sourceFormat = 'v4';
@@ -1294,7 +1349,11 @@ globalThis.Editor = (function () {
         //   实现),直接 `.then` 会在这里炸成一次 TypeError —— 那会被外层 catch 说成
         //   「保存失败」,而保存其实成功了(徽标已经翻成已保存,两句话又打起来)。
         return Promise.resolve(guard('库列表刷新', function () { return refreshLibrary(); }))
-               .then(function () { status('已保存 ' + out.name + '(' + out.size + ' 字节)'); });
+               .then(function () {
+                 // ★ 备份名报出来:用户得知道退路在哪(它在库列表里也看得见)。
+                 status('已保存 ' + out.name + '(' + out.size + ' 字节)' +
+                        (backupName ? ',原文备份 ' + backupName : ''));
+               });
       });
     }).catch(function (e) {
       // ★ 保存失败要**说出来**;磁盘上那份没被动过(服务器是原子写)
@@ -1428,7 +1487,19 @@ globalThis.Editor = (function () {
       };
     }
     if (isFinite(obj.selectedTexture) && obj.selectedTexture > 0) {
-      out.selectedTexture = clampTexture(obj.selectedTexture, Render.atlasCapacity());
+      // ★★ 这里**不许**用图集派生的上界钳(`clampTexture(…, Render.atlasCapacity())`)。
+      //    理由是一条真实的启动时序:`bootLoad` 在**图集存在之前**就读这份状态
+      //    (readUiState 在前、loadAtlas() 在后),而 `setAtlas` 之前 `atlasCapacity()` 是 **0**
+      //    ⇒ `clampTexture` 把"cap < 1"当"没有信息"、返回 **1** ⇒ 存进去的 7 每次开机变 1,
+      //    下一次 `persistUi` 再把 1 写回 localStorage(`persistUi` 存的是
+      //    `selectedTexture: Core.texOf(app.st.desc)`,而 `app.st.desc` 正是下面
+      //    `applyUiState` 那个钳制结果派生的)—— **每一次开机、永远、静默**地毁掉用户选中的纹理。
+      //    ★ 而这一条冒烟当年看不见:测试**直接注入 `app.uist`**(绕过了 readUiState)——
+      //      一个不可能失败的守卫。新守卫走真序列:`readUiState → setAtlas → applyUiState`。
+      //    ★ 钳制**没有**被删掉,只是挪到了它该在的地方:`applyUiState` 跑在 `loadAtlas()`
+      //      **之后**,那里才是"图集真的装好了"的时刻(那一处仍走 clampTexture)。
+      //    这里只做"字段自身合法吗":是有限数、> 0(0 会让 Tint 抛;NaN/负数不是"没存过")。
+      out.selectedTexture = Math.floor(obj.selectedTexture);
     }
     return out;
   }
@@ -1780,6 +1851,12 @@ globalThis.Editor = (function () {
     app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
     app.st.tool = u.tool;
     app.st.brushSize = u.brushSize;
+    // ★★ 与上面那条 `setLayer` 是**同一个模式、同一个理由**:状态改了就必须把 DOM 也搬过去。
+    //    `app.st.tool` 只是**状态**,工具条那一排按钮的高亮(`#toolbar .tool` 上的 `on`)
+    //    由 `selectToolButton()` 画 —— 少了这一句,重载之后**高亮钉在 editor.html 写死的画笔上**,
+    //    而实际生效的是存下来的那个工具(比如「直线」)。用户看到的与正在发生的又是两回事,
+    //    而且一个字都不报(与 `setLayer` 那条同属"DOM 必须与状态一致")。
+    selectToolButton();
     if (u.selectedTexture > 0) {
       app.st.desc = Core.packDesc(clampTexture(u.selectedTexture, Render.atlasCapacity()),
                                   Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
@@ -2016,7 +2093,15 @@ globalThis.Editor = (function () {
     if (libList) {
       libList.addEventListener('click', function (ev) {          // ★ 委托一次,不给每行挂监听
         var row = ev.target.closest ? ev.target.closest('.lib-row') : null;
-        if (row && row.dataset.name) openMap(row.dataset.name);
+        // ★★ 必须经 `guard` 收口:`openMap` 的失败是**常态**(点到一个陈旧/写错的名字 ⇒ HTTP 404),
+        //    而丢掉这个 promise 会让拒绝逃到**全局围栏** —— 围栏会 `snapshot()`,于是
+        //    "一次普通的打开失败"把**当前这张图**写进崩溃槽位,下次开机弹**假的**
+        //    「上次异常退出,要恢复吗?」。这正是账本已经打过两次的那类假提示。
+        //    ★ `guard` 是终点:失败变成状态栏上一行「出错了(打开地图):HTTP 404」(看得见),
+        //      且一个字节都不进崩溃槽位。
+        if (row && row.dataset.name) {
+          guard('打开地图', function () { return openMap(row.dataset.name); });
+        }
       });
     }
     var bn = $('btn-new'), bd = $('btn-dup'), br = $('btn-rename'), bx = $('btn-del');

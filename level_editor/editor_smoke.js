@@ -1124,6 +1124,82 @@ function countNonZero(map, L) {
        ')。★ 只还引用的话,⑬b4/⑬b5 **原地**改过的 tool 会以 \'select\' 漂到后面追加的相位里' +
        '(不报错,只让它们按错的初始条件跑)');
 
+    // ==== 相位 ⑬d ★★★ 开机的 UI 小状态:图集**还没装**时读、装上之后再按回界面 ====
+    // ★★★ 为什么必须在这里(⑭ 之前):`bootLoad` 的真实顺序是 `readUiState` **在前**、
+    //    `loadAtlas()` **在后**(`setAtlas` 之前 `atlasCapacity()` 是 **0**)。而 ⑭ 会把一张
+    //    512×640 的图集装进来 ⇒ **⑭ 之后**再测这条就测不到了(那时容量是 320,坏实现也能过)。
+    //    故本相位钉在"图集还没装"这一刻,并**明文断言这个前提**(红了就知道是排序漂了)。
+    // ★★ 老断言为什么看不见这个 bug:`editor_smoke` 当年**直接注入 `app.uist`**(绕过
+    //    `readUiState`)—— 一个**不可能失败**的守卫。本相位走**真序列**:
+    //    `readUiState → setAtlas → applyUiState`。
+    await (async function () {
+      const savedDoc13d = globalThis.document;
+      const savedR13d = Editor.app.r, savedMap13d = Editor.app.map;
+      const savedUist13d = Editor.app.uist, savedDesc13d = Editor.app.st.desc;
+      try {
+        // ★ 工具条替身(形状照 editor.html 第 58~66 行:`.tool` + `data-tool`,
+        //   高亮是 `classList` 的 `on`)。`selectToolButton()` 就是按这两个字段画的。
+        const toolBtns13d = ['brush', 'rect', 'bucket', 'eraser', 'line', 'select',
+                             'picker', 'gradient'].map(function (t) {
+          const on = { on: t === 'brush' };              // 生产初始态:buildPanels 末尾按 tool=brush 画的
+          return { dataset: { tool: t },
+                   classList: { toggle: function (c, v) { on[c] = !!v; },
+                                contains: function (c) { return !!on[c]; } },
+                   _on: on };
+        });
+        globalThis.document = {
+          getElementById: function () { return null; },
+          querySelector: function () { return null; },
+          querySelectorAll: function (sel) { return sel === '#toolbar .tool' ? toolBtns13d : []; },
+        };
+        const calls13d = [];
+        Editor.app.r = {
+          view: function () { return { x: 0, y: 0, zoom: 1 }; },
+          layer: function () { return Core.LAYER_SCENE; },
+          selection: function () { return null; },       // statusLine 会读它
+          setLayer: function (L) { calls13d.push('setLayer:' + L); },
+          setGrid: function () {}, setSubGrid: function () {}, setTorus: function () {},
+          setDimOthers: function () {}, setZoomAt: function () { return Promise.resolve(); },
+        };
+        Editor.app.map = Editor.createEmptyMap('uist_probe', 4, 4);
+
+        eq(Render.atlasCapacity(), 0,
+           '★★★ 前提:此刻图集**还没装**(容量 0)—— 这正是 `bootLoad` 读 UI 状态那一刻的真实条件' +
+           '(实得 ' + Render.atlasCapacity() + ';不为 0 说明本相位的排序漂到 ⑭ 之后了)');
+        // ★★ 存进去的是 7,而"图集还没装"时 `clampTexture` 对 cap<1 给的是 **1**
+        //    ⇒ 用图集上界钳的实现会把 7 变成 1,并让下一次 `persistUi` 把 1 写回 localStorage。
+        const store13d = {};
+        store13d[Editor.UI_STATE_KEY] = JSON.stringify({ selectedTexture: 7, tool: 'line' });
+        const u13d = Editor.readUiState(store13d);
+        eq(u13d.selectedTexture, 7,
+           '★★★ `readUiState` **不得**用图集派生的上界钳:图集还没装时存下来的纹理位必须原样留着' +
+           '(实得 ' + u13d.selectedTexture + ' —— 为 1 就是"每次开机静默毁掉用户选中的纹理")');
+        // ── 开机那条路的后半段:图集装上之后才 applyUiState ──
+        Render.setAtlas(new Uint8ClampedArray(512 * 640 * 4), 512, 640);
+        ok(Render.atlasCapacity() >= 7, '⑬d 前提:图集装好了(容量 ' + Render.atlasCapacity() + ')');
+        Editor.app.uist = u13d;
+        Editor.app.st.desc = Core.neutralDesc(1);
+        Editor.applyUiState();
+        eq(Core.texOf(Editor.app.st.desc), 7,
+           '★★★ 存下来的纹理位**活到了界面上**(`applyUiState` 在 `setAtlas` 之后跑,钳制该在那里做;' +
+           '实得 ' + Core.texOf(Editor.app.st.desc) + ')。★ 钳制没被删掉,只是挪到了它该在的时机' +
+           '(此刻容量是 ' + Render.atlasCapacity() + ')');
+        // ── 同一条链的另一半:**工具条高亮**也要跟着状态走(与 `setLayer` 同一个模式)──
+        const on13d = function (t) { return toolBtns13d.filter(function (b) { return b.dataset.tool === t; })[0]._on.on; };
+        ok(on13d('line') && !on13d('brush'),
+           '★★★ `applyUiState` 必须把**工具条高亮**也搬过去:存的是「直线」⇒ 高亮在直线那一颗上、' +
+           '画笔那颗要灭(实得 line=' + on13d('line') + ' brush=' + on13d('brush') + ')。' +
+           '★ 少了 `selectToolButton()` 就是"高亮钉在 editor.html 写死的画笔上、实际生效的是直线"' +
+           ' —— 用户看到的与正在发生的不是一回事,而且一个字都不报');
+        eq(Editor.app.st.tool, 'line', '(对照)工具状态本身照旧按回去了');
+      } finally {
+        globalThis.document = savedDoc13d;
+        Editor.app.r = savedR13d; Editor.app.map = savedMap13d;
+        Editor.app.uist = savedUist13d;
+        if (Editor.app.st) Editor.app.st.desc = savedDesc13d;
+      }
+    })();
+
     // ==== 相位 ⑭ 保存路径与面板工作流的纯逻辑(Task 8)====
     // ★ 编号:brief 写的是「相位 ⑬」,但 Task 7 已经占用了 ⑬(画布交互接线),故顺延为 ⑭
     //   —— 位置仍在 ⑫ 的镜像段之后(与 brief 的意图一致:接在历史/剪贴板那段后面)。
@@ -1428,6 +1504,70 @@ function countNonZero(map, L) {
          '★★ app.name 更新成真正落盘的那个名字(实得 ' + Editor.app.name + ')');
       eq(Editor.app.sourceFormat, 'v4',
          '★★ app.sourceFormat 更新成 v4(落盘的就是 v4 二进制;实得 ' + Editor.app.sourceFormat + ')');
+
+      // ── ⑭d2 ★★★ v3 源首次保存:**确认框说出决定性事实** + **原文备份先落盘**(用户裁定 2026-09-22)──
+      // ★ 为什么必须另立一条:确认框原先只说「不可逆」,而**决定性的事实**是"游戏今天读不了 v4"
+      //   (实测 v4 → `map_size (3,0)`、0 行)——用户以为自己只是换了个格式,实际上是**把一张能玩的
+      //   图换成游戏打不开的**。备份那一半同理:仓库里两张真图今天都是 v3,而本分支把退休页的
+      //   `<a download>` 出口也拆了 ⇒ 一次 Ctrl+S 之后原文**只剩 git 里那份**。
+      // ★★ 断言口径:①确认文案里那三件事都在;②备份**真的**从**唯一**那个写盘出口出去了、
+      //   字节 == 打开时那份原文(逐字节);③备份**排在真保存之前**(两条 PUT 的先后);
+      //   ④第二次保存不再写备份(同一会话只写一次 —— 与确认框同一个一次性条件)。
+      await (async function () {
+        const savedConfirm14 = globalThis.confirm;
+        let asked14 = 0, askText14 = '';
+        globalThis.confirm = function (t) { asked14++; askText14 = String(t); return true; };
+        try {
+          const v3text = '# cyrm-v3\n001f001f\n001f001f\n';
+          const orig14 = new TextEncoder().encode(v3text);
+          Editor.app.map = Editor.createEmptyMap('demo_v3src', 4, 4);
+          Editor.app.name = 'demo_v3src.cyrm';
+          Editor.app.sourceFormat = 'v3';              // ← 本次会话**第一次**转换保存
+          Editor.app.raw = orig14;                     // 磁盘上那份的原文(openMap 留下的)
+          putLog14.length = 0;
+          await Editor.saveCurrent(false);
+          eq(asked14, 1, '⑭d2 前提:首次转换保存**问了一次**(实得 ' + asked14 + ' 次)');
+          // ★ 三件事一件都不能少:转成 v4 二进制 / 不可逆 / **游戏现在读不了 v4**(以及期 E 才迁移)
+          ok(askText14.indexOf('v4 二进制') >= 0 && askText14.indexOf('不可逆') >= 0,
+             '★★ 确认框说了"保存会把它转成 v4 二进制、不可逆"(实得 ' + JSON.stringify(askText14) + ')');
+          ok(askText14.indexOf('读不了') >= 0 && askText14.indexOf('map_format.gd') >= 0,
+             '★★★ 确认框说了**决定性的那件事**:游戏现在读不了 v4,要等期 E 迁移 map_format.gd' +
+             '(旧文案只说「不可逆」—— 用户不知道自己换来的是一张游戏打不开的图;实得 ' +
+             JSON.stringify(askText14) + ')');
+          ok(askText14.indexOf('demo_v3src_v3bak.cyrm') >= 0,
+             '★★ 确认框**点名**了备份文件(用户得知道退路落在哪个名字上;实得 ' +
+             JSON.stringify(askText14) + ')');
+          // ② 两条 PUT:备份在前、真保存在后,走的是**同一个**出口
+          eq(putLog14.length, 2,
+             '★★★ 首次转换保存 = **两条** PUT(原文备份 + 真保存;实得 ' + putLog14.length + ' 条)');
+          const b14 = putLog14.length === 2 ? putLog14[0] : null;
+          const s14 = putLog14.length === 2 ? putLog14[1] : null;
+          ok(!!b14 && b14.url.indexOf('/api/map?p=demo_v3src_v3bak.cyrm') >= 0,
+             '★★★ 第一条 PUT 就是**原文备份**(名字以 `_v3bak.cyrm` 结尾;实得 "' +
+             (b14 ? b14.url : '(没有请求)') + '")');
+          ok(!!s14 && s14.url.indexOf('/api/map?p=demo_v3src.cyrm') >= 0,
+             '★★★ 第二条 PUT 才是真保存(实得 "' + (s14 ? s14.url : '(没有请求)') + '")');
+          ok(!!b14 && !!b14.init && b14.init.method === 'PUT' && !!b14.init.body,
+             '★ 备份走的也是那个唯一的 PUT 出口(带上了 body)');
+          const bBytes14 = b14 && b14.init && b14.init.body
+            ? Array.from(new Uint8Array(await b14.init.body.arrayBuffer())) : null;
+          eq(bBytes14, Array.from(orig14),
+             '★★★ 备份里是**原文那些字节**(逐字节比;不是编码后的 v4 —— 退路必须是原文)');
+          // ③ 第二次保存:同会话已经确认过 ⇒ 不再问、也不再写备份(门与确认框是同一个)
+          Editor.app.sourceFormat = 'v3';              // ★ 刻意**退回** v3:证明门是那个一次性标记、不是源格式
+          putLog14.length = 0;
+          await Editor.saveCurrent(false);
+          eq(asked14, 1, '★★ 第二次保存不再问(问的次数仍是 ' + asked14 + ')');
+          eq(putLog14.length, 1,
+             '★★★ 第二次保存**只有一条** PUT —— 备份不重写(否则每存一次都在 maps/ 里多一份;实得 ' +
+             putLog14.length + ' 条)');
+          ok(putLog14.length === 1 && putLog14[0].url.indexOf('_v3bak') < 0,
+             '★ 那一条是真保存,不是备份(实得 "' +
+             (putLog14.length ? putLog14[0].url : '(没有请求)') + '")');
+        } finally {
+          globalThis.confirm = savedConfirm14;
+        }
+      })();
 
       // ── ⑭e ★★★ 启动链路:打开的成败**不决定**面板建不建(评审 Important 2)──
       // ★★ 原先那条链是 `loadAtlas → openFromUrl → buildPanels`,而 `.catch` 只有一个 ⇒
@@ -1780,7 +1920,12 @@ function countNonZero(map, L) {
                      classList: { toggle: function (c, v) { on[c] = !!v; },
                                   add: function () {}, remove: function () {},
                                   contains: function (c) { return !!on[c]; } },
-                     addEventListener: function () {},
+                     // ★★ 记账(而不是空实现):相位 ⑩b 要驱动**生产真的挂上去**的那个点击
+                     //    处理器(`#lib-list` 的委托那一只)—— "直接调 openMap"对"入口把
+                     //    promise 丢掉"这个改动完全不敏感,只有真处理器才判得出来。
+                     //    一个事件可以挂多个处理器(buildPanels 跑过几次就是几个),故存**数组**。
+                     _h: {},
+                     addEventListener: function (t, fn) { (el._h[t] = el._h[t] || []).push(fn); },
                      appendChild: function (c) { el.children.push(c); return c; },
                      insertBefore: function (c) { el.children.push(c); return c; },
                      removeChild: function () {}, querySelector: function () { return null; } };
@@ -2305,6 +2450,159 @@ function countNonZero(map, L) {
            '★ 未处理的拒绝同样落一份(两条路都兜)');
       } finally {
         globalThis.addEventListener = savedAdd15;
+      }
+
+      // ── ⑩b ★★★ 两处 async 入口必须**收口**:普通的失败不许换来一个**假的**崩溃提示 ──
+      // ★ 机制(症状链):入口把 promise **丢掉** ⇒ 拒绝逃到全局围栏 ⇒ **围栏会 `snapshot()`**
+      //   ⇒ 一次普通的打开失败(点到一个陈旧/写错的名字 = HTTP 404)会把**当前这张图**
+      //   写进崩溃槽位 ⇒ 下次开机弹一个**假的**「上次异常退出,要恢复吗?」。
+      //   这正是账本已经打过两次的那类假提示,而它离"用户数据被覆盖"只差一次点击。
+      // ★★ node 里 `window` 没有真的 unhandledrejection 事件,故这里架一座**桥**:
+      //   `process.on('unhandledRejection')`(node 对"没人接的拒绝"的**真**事件)→ 交给
+      //   生产挂上去的那个处理器。★ 桥先被**反证**一次(手工造一个裸拒绝:必须真的逃进来、
+      //   真的落一份快照)—— 否则下面"没逃、没快照"两条就是**空转断言**(一个不可能失败的守卫)。
+      // ★ 报错通道换成"转发给状态栏"(= 生产无自定义 sink 时 `reportError` 的 `else status(text)`
+      //   那一条):既能断言"用户看得见",又不往 stderr 写一个字(默认通道会 `console.error`)。
+      {
+        const hooked15b = {};
+        const savedAdd15b = globalThis.addEventListener;
+        const savedSink15b = null;                  // 生产默认通道 = 无自定义 sink
+        const escaped15 = [];
+        const onUnhandled15 = function (reason) {
+          escaped15.push(reason);
+          if (typeof hooked15b.unhandledrejection === 'function') {
+            hooked15b.unhandledrejection({ reason: reason });
+          }
+        };
+        globalThis.addEventListener = function (evt, fn) { hooked15b[evt] = fn; };
+        process.on('unhandledRejection', onUnhandled15);
+        try {
+          Editor.setErrorSink(function (t) { Editor.status(String(t)); });
+          Editor.installCrashFence();
+          Editor.app.map = Editor.createEmptyMap('open_fail_probe', 4, 4);
+          Editor.app.name = 'open_fail_probe.cyrm';
+          Editor.app.sourceFormat = 'v4';
+
+          // ── 反证:桥真的通(裸拒绝会逃进来 + 真的落到崩溃槽位)──
+          tab15.crash.clear();
+          escaped15.length = 0;
+          Promise.reject(new Error('裸拒绝(证明这座桥真的通)'));
+          ok(await until15(function () { return escaped15.length > 0; }),
+             '★★ ⑩b 前提(反证):一个**裸拒绝**真的会逃到全局围栏(等不到 ⇒ 下面两条"没逃"是空转)');
+          ok(await until15(function () { return tab15.crash.has('crash'); }),
+             '★★ ⑩b 前提(反证):而围栏**真的**会把当前这张图写进崩溃槽位 —— 这就是"假提示"的来路');
+
+          // ── ① 库列表点击 → 打开地图(HTTP 404)──
+          // ★★ 驱动的是**真的那个点击处理器**(buildPanels 挂在 `#lib-list` 上的委托那一只),
+          //    不是"直接调 openMap" —— 后者对"入口把 promise 丢掉"这个改动**完全不敏感**。
+          globalThis.fetch = function (url) {
+            const u = String(url);
+            if (u.indexOf('/api/maps') === 0) {
+              return Promise.resolve({ ok: true, status: 200,
+                                       json: function () { return Promise.resolve({ maps: [] }); } });
+            }
+            return Promise.resolve({ ok: false, status: 404 });
+          };
+          tab15.crash.clear();
+          escaped15.length = 0;
+          el15('status-msg').textContent = '';
+          const libHandlers15b = (els15['lib-list'] && els15['lib-list']._h &&
+                                  els15['lib-list']._h.click) || [];
+          ok(libHandlers15b.length > 0,
+             '★★ ⑩b 前提:`#lib-list` 上真的挂着生产那个点击处理器(实得 ' +
+             libHandlers15b.length + ' 个)');
+          libHandlers15b.forEach(function (h) {
+            h({ target: { closest: function () { return { dataset: { name: 'ghost.cyrm' } }; } } });
+          });
+          ok(await until15(function () {
+               return el15('status-msg').textContent.indexOf('打开地图') >= 0;
+             }),
+             '★★★ 打开失败在状态栏上**说出来**了(「出错了(打开地图):…」;实得 "' +
+             el15('status-msg').textContent + '")');
+          ok(el15('status-msg').textContent.indexOf('404') >= 0,
+             '★ 那句话里带着原因(HTTP 404 —— 不是一句没有线索的"出错了")');
+          // ★ 反向断言给足时间:拒绝事件是**异步**投递的,只 tick 一次就判"没逃"是假绿。
+          //   预算与上面那条反证**同一个**(until15 的 200 次 tick),故红的形态可比。
+          await until15(function () { return false; });
+          eq(escaped15.length, 0,
+             '★★★ 那一次失败**没有**逃到全局围栏(逃了就说明入口又变成裸调用了;实得 ' +
+             escaped15.length + ' 次)');
+          eq(tab15.crash.size, 0,
+             '★★★ 崩溃槽位里**什么都没有**(这就是"下次开机弹假提示"的全部内容;实得 ' +
+             tab15.crash.size + ' 条)');
+
+          // ── ② 长作业(`runJob`)的两个入口:油漆桶 / 渐变 ──
+          // ★★ 判据同款:`runJob` 交回的是一整条**分帧链**的 promise,丢掉它 = 一次普通的
+          //    落笔失败(编辑/渲染入口抛)换来一个假的崩溃提示。
+          const savedCanvas15b = Editor.app.canvas, savedSt15b = Editor.app.st;
+          const savedEdit15b = Editor.app.r.editCells, savedScreen15b = Editor.app.r.screenToSub;
+          const savedPreview15b = Editor.app.r.setPreview;   // pointerup 的渐变分支会调它
+          const canvasH15b = {};
+          Editor.app.canvas = {
+            width: 80, height: 80,
+            setPointerCapture: function () {},
+            getBoundingClientRect: function () { return { left: 0, top: 0 }; },
+            addEventListener: function (t, fn) { canvasH15b[t] = fn; },
+          };
+          Editor.app.r.screenToSub = function () { return { X: 0, Y: 0 }; };   // 落格 (0,0)
+          Editor.app.r.setPreview = function () {};
+          Editor.app.r.editCells = function () { throw new Error('测试:批量落笔失败'); };
+          // ★★ rAF 桩(只为这一小段装、收尾还回去):`runJob` 的分帧器要的 `nextFrame`
+          //    默认走 `requestAnimationFrame`(render.js),而 node 里**没有**这个全局
+          //    ⇒ 只要那条链需要**第二帧**,它就会以"requestAnimationFrame is not defined"
+          //    拒掉 —— 那是**测试环境**的产物,会把这条断言想看的那个错(**注进去的落笔失败**)
+          //    整个盖掉(实测:没有这个桩时,渐变那条读到的是这句 rAF 报错)。
+          //    ★ 桩用真宏任务(与 `until15` 同一个 `realSetTimeout15`),于是分帧链真能跑完。
+          const savedRaf15b = globalThis.requestAnimationFrame;
+          globalThis.requestAnimationFrame = function (cb) { realSetTimeout15(cb, 0); };
+          Editor.installInteraction();                 // 真装一遍(它建的处理器才是生产那一份)
+          try {
+            ok(typeof canvasH15b.pointerdown === 'function' &&
+               typeof canvasH15b.pointerup === 'function',
+               '⑩b 前提:画布上挂着 pointerdown/up');
+            // 油漆桶
+            Editor.app.st.tool = 'bucket';
+            tab15.crash.clear(); escaped15.length = 0;
+            el15('status-msg').textContent = '';
+            canvasH15b.pointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+            ok(await until15(function () {
+                 return el15('status-msg').textContent.indexOf('油漆桶填充') >= 0;
+               }),
+               '★★★ 油漆桶那条链失败也**说出来**了(「出错了(油漆桶填充):…」;实得 "' +
+               el15('status-msg').textContent + '")');
+            await until15(function () { return false; });
+            eq(escaped15.length, 0,
+               '★★★ 油漆桶失败**没有**逃到全局围栏(裸 `runJob(...)` 的实现这里 ≥1)');
+            eq(tab15.crash.size, 0, '★★★ 也没有写崩溃槽位');
+            // 渐变(pointerdown 起终点、pointerup 才真跑那条分帧链)
+            Editor.setLayer(Core.LAYER_BG);            // 规格 §4.4:渐变仅背景层
+            Editor.app.st.tool = 'gradient';
+            tab15.crash.clear(); escaped15.length = 0;
+            el15('status-msg').textContent = '';
+            canvasH15b.pointerdown({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+            ok(!!Editor.app.st.gradStart, '⑩b 前提:pointerdown 起了渐变起点');
+            canvasH15b.pointerup({ button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+            ok(await until15(function () {
+                 return el15('status-msg').textContent.indexOf('渐变') >= 0;
+               }),
+               '★★★ 渐变那条链失败也**说出来**了(「出错了(渐变):…」;实得 "' +
+               el15('status-msg').textContent + '")');
+            await until15(function () { return false; });
+            eq(escaped15.length, 0, '★★★ 渐变失败**没有**逃到全局围栏');
+            eq(tab15.crash.size, 0, '★★★ 也没有写崩溃槽位');
+          } finally {
+            Editor.app.r.editCells = savedEdit15b;
+            Editor.app.r.screenToSub = savedScreen15b;
+            globalThis.requestAnimationFrame = savedRaf15b;
+            Editor.app.r.setPreview = savedPreview15b;
+            Editor.app.canvas = savedCanvas15b;
+            Editor.app.st = savedSt15b;
+          }
+        } finally {
+          process.removeListener('unhandledRejection', onUnhandled15);
+          globalThis.addEventListener = savedAdd15b;
+          Editor.setErrorSink(savedSink15b);
+        }
       }
 
       // ── ⑪ 闸 4 的**读**侧:下次打开时"崩溃槽位比主槽位新" ⇒ 问一次并恢复 ──
