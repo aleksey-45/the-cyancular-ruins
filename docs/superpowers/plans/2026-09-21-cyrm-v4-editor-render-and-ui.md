@@ -3175,8 +3175,12 @@ function countNonZero(map, L) {
        '★★ Core.lineCells 的每个调用点都在同一行先 Math.floor(实得 ' + calls + ' 处,未 floor 的 ' + bad + ' 处)');
 
     // ★ createMap 只许经过一个闸(clampMapSize),否则就是 A8 原样复发
-    eq((ui.match(/Core\.createMap\(/g) || []).length, 1,
-       '★★ ui.js 里 Core.createMap 只出现 **1** 次(在 createEmptyMap 里,带 clampMapSize)');
+    // ★★ 2026-09-21 订正:初版断言"只出现 **1** 次",但 `ui.js` 里**确实有两处** ——
+    //    `createEmptyMap`(经 `clampMapSize`,是唯一的造图入口)与 Task 3 的 `selfTest()`
+    //    (写死的 4×3 测试图,**不是用户输入**)。数成 1 会让这条断言**不可能通过**。
+    //    改成"逐处点名"的记账:恰好两处 —— 牙齿留在**钳制**那半边(下面那条 clampMapSize)。
+    eq((ui.match(/Core\.createMap\(/g) || []).length, 2,
+       '★★ ui.js 里 Core.createMap 恰好两处(createEmptyMap 与 selfTest 的写死测试图;多一处就是新开了造图入口)');
     ok(/function createEmptyMap[\s\S]{0,200}Core\.clampMapSize/.test(ui),
        '★★ createEmptyMap 走 clampMapSize(createMap 自己不判上限:输 99999 会分配巨图卡死)');
 
