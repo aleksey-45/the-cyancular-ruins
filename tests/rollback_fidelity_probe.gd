@@ -157,3 +157,25 @@ func _check_source_guard() -> void:
 			found = true
 			break
 	_check(found, "pvp_client 给控制器设了 map_px(不设 = 环面修复惰性且静默)")
+
+	# ② 接触提示的接线(`in_contact` 必须在 reconcile() 之前写)。
+	#    漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
+	#    ★ 日后若换了入口,请把这里改成认新入口,**别删掉这条断言**。
+	var txt2 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd")
+	var lines := txt2.split("\n")
+	var hint_line := -1
+	var note_line := -1
+	var hint_count := 0
+	for i in range(lines.size()):
+		var line := lines[i]
+		if line.strip_edges().begins_with("#"):
+			continue
+		if line.contains("_rollback.in_contact =") and line.contains("touching_player()"):
+			hint_count += 1
+			hint_line = i
+		if line.contains(".note_post_step(") and note_line < 0:
+			note_line = i
+	_check(hint_count == 1,
+			"接触提示只许有**一处**赋值(实得 %d 处 —— 0 = 漏接线,>1 = 有两处在抢)" % hint_count)
+	_check(hint_line >= 0 and note_line >= 0 and hint_line < note_line,
+			"接触提示的赋值排在 note_post_step/reconcile 之前(hint@%d, note@%d)" % [hint_line, note_line])

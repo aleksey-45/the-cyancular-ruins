@@ -187,6 +187,10 @@ func _physics_process(_delta: float) -> void:
 	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
 	if _rollback != null:
 		if _have_prev_seq:
+			# 贴身提示:只在**接触期**放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。
+			# ★ 必须在 reconcile() 之前 —— 它是消费方。★ 漏了这一行 = **静默**退回 2px 容差,
+			#   故 rollback_fidelity_probe 有一条源码守卫钉住它的位置与唯一性。
+			_rollback.in_contact = _local.touching_player()
 			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
 			_rollback.reconcile()
 	var src: PlayerInput = _local.input_source
