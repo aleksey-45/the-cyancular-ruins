@@ -1352,8 +1352,13 @@ globalThis.Editor = (function () {
   }
 
   // 闸 4 的判据(纯函数,便于断言):崩溃槽位比主槽位新 ⇒ 上次是异常退出。
+  // ★ `declined` = 这条快照**已经问过、用户说不要** ⇒ 不再拿它反复问:不记的话一次偶发
+  //   页面异常会把**每一次**打开都变成「上次异常退出」(直到用户碰巧 Ctrl+S 把草稿写新,
+  //   才靠"比主草稿旧"压下去)—— 一次性的异常变成一个永久的开机弹窗。
+  //   ★ 新的一次崩溃会**重写**这条记录(不带 declined)⇒ 照问,所以它挡不住真正的下一次。
   function crashIsNewer(crashRec, mainRec) {
     if (!crashRec) return false;
+    if (crashRec.declined) return false;
     if (!mainRec) return true;
     return (crashRec.savedAt || 0) > (mainRec.savedAt || 0);
   }
@@ -1461,13 +1466,30 @@ globalThis.Editor = (function () {
       tx.onabort = function () { reject(tx.error || new Error('IndexedDB 写被中止')); };
     });
   }
-  function idbGetAll(db, store) {
+  // ★★ 交回 **null** = "读不到"(与"空库" `[]` **分开**):把"读失败"折成"什么都没有"是
+  //    静默失败最常见的形状 —— 调用方于是没法把"没有要清的东西"与"根本读不到"分开。
+  function idbReadAll(db, store) {
     return new Promise(function (resolve) {
-      var tx = db.transaction(store, 'readonly');
-      var rq = tx.objectStore(store).getAll();
+      var tx, rq;
+      try { tx = db.transaction(store, 'readonly'); rq = tx.objectStore(store).getAll(); }
+      catch (e) { resolve(null); return; }
       rq.onsuccess = function () { resolve(rq.result || []); };
-      rq.onerror = function () { resolve([]); };
+      rq.onerror = function () { resolve(null); };
     });
+  }
+  // ★ 只用 `count()` 问条数 —— 记录本体(每张草稿带着**编码后的整张图**,规格 §4.3 每张 2.4MB)
+  //   一个字节都不反序列化。清理闸门要判"超没超"只需要这个数(见 pruneDrafts)。
+  function idbCount(db, store) {
+    return new Promise(function (resolve) {
+      var tx, rq;
+      try { tx = db.transaction(store, 'readonly'); rq = tx.objectStore(store).count(); }
+      catch (e) { resolve(null); return; }
+      rq.onsuccess = function () { resolve(typeof rq.result === 'number' ? rq.result : 0); };
+      rq.onerror = function () { resolve(null); };    // ★ null = 读不到(不是"0 条")
+    });
+  }
+  function idbGetAll(db, store) {
+    return idbReadAll(db, store).then(function (r) { return r || []; });
   }
   var draftTimer = null;
   var draftRev = 0;              // 地图每次变动 +1(判"这一版写过没有")
@@ -1549,19 +1571,42 @@ globalThis.Editor = (function () {
       return idbPut(app.db, DRAFT_STORE, rec).then(function () { return true; });
     }).catch(function () { return false; });   // 标不干净不影响"已经存盘了"这个事实
   }
+  // ── 闸 1 的清理(库条目数上限 60)──
+  // ★★ **先数条数,再决定要不要读记录本体**:`getAll()` 会把库里每一条都反序列化进主线程
+  //    内存,而每张草稿带着**编码后的整张图**(规格 §4.3 的闸 1 表:每张 2.4MB)⇒ 满库时
+  //    每一次防抖落盘之后都要在一次 `getAll` 里物化几十 MB。没到上限的**常态**路径因此
+  //    只剩一次 `count()`(闸 2 的同一条纪律:主线程上不做与"要不要动手"无关的重活)。
+  // ★★ 两条失败路径都必须**说出来**(读不到条数 / 读不到记录列表 / 删除事务失败):
+  //    清理不生效是静默的话,用户只会看到草稿盘悄悄涨过 60 条,直到配额炸掉才发现 —— 而
+  //    "读失败"与"没到上限"在静默实现里长得**一模一样**。
+  //    ★ 但**不拒绝这次写入**:最新的那份劳动正是这一层存在的理由,永远先保住它。
+  //    ★ 报的都是状态栏**同一行**(与成功那条「已清掉 N 条最老的」同位),**不碰** `#st-save`
+  //      —— 那一格的自动保存时刻要留住(handoff 2)。
   function pruneDrafts() {
-    return idbGetAll(app.db, DRAFT_STORE).then(function (recs) {
-      var plan = evictPlan(recs.map(function (r) {
-        return { key: r.key, savedAt: r.savedAt, dirty: !!r.dirty };
-      }), MAX_LIB);
-      if (!plan.drop.length) return null;
-      var tx = app.db.transaction(DRAFT_STORE, 'readwrite');
-      plan.drop.forEach(function (k) { tx.objectStore(DRAFT_STORE).delete(k); });
-      return new Promise(function (resolve) {
-        tx.oncomplete = function () { status('草稿盘超过 ' + MAX_LIB + ' 条,已清掉 ' + plan.drop.length + ' 条最老的'); resolve(true); };
-        tx.onerror = function () { resolve(false); };
+    var didNotRun = '(这次的草稿已存下,但 ' + MAX_LIB + ' 条上限这次没生效)';
+    return idbCount(app.db, DRAFT_STORE).then(function (n) {
+      if (n === null) { status('草稿盘清理失败:读不到条目数 ' + didNotRun); return null; }
+      if (n <= MAX_LIB) return null;                  // ★ 常态:只数一次,一条都不读
+      return idbReadAll(app.db, DRAFT_STORE).then(function (recs) {
+        if (recs === null) { status('草稿盘清理失败:读不到草稿列表 ' + didNotRun); return null; }
+        var plan = evictPlan(recs.map(function (r) {
+          return { key: r.key, savedAt: r.savedAt, dirty: !!r.dirty };
+        }), MAX_LIB);
+        if (!plan.drop.length) return null;
+        var tx;
+        try { tx = app.db.transaction(DRAFT_STORE, 'readwrite'); }
+        catch (e) { status('草稿盘清理失败:' + msgOf(e) + ' ' + didNotRun); return null; }
+        plan.drop.forEach(function (k) { tx.objectStore(DRAFT_STORE).delete(k); });
+        return new Promise(function (resolve) {
+          tx.oncomplete = function () { status('草稿盘超过 ' + MAX_LIB + ' 条,已清掉 ' + plan.drop.length + ' 条最老的'); resolve(true); };
+          tx.onerror = function () { status('草稿盘清理失败:删不掉那 ' + plan.drop.length + ' 条 ' + didNotRun); resolve(false); };
+          tx.onabort = function () { status('草稿盘清理失败:删除事务被中止 ' + didNotRun); resolve(false); };
+        });
       });
-    }).catch(function () { return null; });
+    }).catch(function (e) {
+      status('草稿盘清理失败:' + msgOf(e) + ' ' + didNotRun);
+      return null;
+    });
   }
   function loadDraft(key) {
     if (!app.db) return Promise.resolve(null);
@@ -1622,7 +1667,14 @@ globalThis.Editor = (function () {
       //   —— 拆成两行的话它就是"没被收口的视图入口",而那正是"按了没反应"那条通道。
       guard('恢复缩放', function () { return app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur); });
     }
-    app.r.setLayer(u.layer);
+    // ★★ 这一处必须走**本文件**的 `setLayer`(它内部再调 `app.r.setLayer`)—— 直接调
+    //    `app.r.setLayer` 只换渲染层,而**面板与图层行不会跟着动**:`.layer-row.cur` 仍钉在
+    //    `editor.html` 里写死的那一行(场景),`syncPanelForLayer()` 也不会因为恢复出来的层
+    //    再跑一遍(它在 `buildPanels` 末尾跑过一次,那时渲染层还是默认的 LAYER_SCENE)。
+    //    症状是**用户看到的与正在发生的是两回事**:右侧摆着纹理调色板、图层行高亮「场景」,
+    //    而刷子已经画到存下来的那一层(背景层)上了 —— 而且一个字都不报(规格 §4.6 把
+    //    「当前图层」列为要恢复的状态,下面那几个开关走的是同一条纪律:DOM 必须与状态一致)。
+    setLayer(u.layer);
     app.r.setGrid(u.grid); app.r.setSubGrid(u.subGrid);
     app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
     app.st.tool = u.tool;
@@ -1714,7 +1766,17 @@ globalThis.Editor = (function () {
       if (!crashIsNewer(crash, main)) return false;
       var yes = window.confirm('上次异常退出,已恢复到崩溃前(草稿:' + (crash.name2 || crash.name || '?') +
                                ')。要打开它吗?');
-      if (!yes) return false;
+      if (!yes) {
+        // ★ 记下"问过、用户不要":不记的话下一次打开又弹同一个框(`crashIsNewer` 读这个字段)。
+        //   ★ 记录本身**留着** —— 那是没写盘的活,不能因为点了一次"不要"就删掉。
+        crash.declined = true;
+        return idbPut(app.db, CRASH_STORE, crash).then(function () { return false; })
+                 .catch(function () { return false; })      // 记不住只是下次再问一次
+                 .then(function () {
+                   status('崩溃快照仍在崩溃槽位里(屏幕上的图没被动过)');
+                   return false;
+                 });
+      }
       return Io.decodeMap(crash.bytes).then(function (map) {
         map.name = crash.name2 || '';
         app.map = map; app.name = crash.name; app.sourceFormat = 'v4';
@@ -1722,9 +1784,24 @@ globalThis.Editor = (function () {
         guard('崩溃恢复', function () { return app.r.setMap(map); });
         refreshStatus(); statusLine();
         status('已从崩溃前快照恢复:' + (crash.name || ''));
-        return true;
+        return consumeCrashSlot().then(function () { return true; });
       }).catch(function (e) { status('崩溃快照解码失败:' + msgOf(e)); return false; });
     }).catch(function (e) { status('崩溃槽位读取失败:' + msgOf(e)); return false; });
+  }
+  // ★ 恢复成功 ⇒ **消费掉**这条快照:留着的话**每一次**打开都会再弹一次「上次异常退出」
+  //   (一次偶发页面异常 = 一个永久的开机弹窗 —— 用户每次开编辑器都看得见)。清不掉不是致命的
+  //   (下一次打开还会问,而那时用户点"不要"会被 `declined` 记住),故这一处失败**不打扰用户**
+  //   —— 它是报告里"静默清单"的一条(有意的静默:退化方向是安全的)。
+  function consumeCrashSlot() {
+    return new Promise(function (resolve) {
+      var tx;
+      try { tx = app.db.transaction(CRASH_STORE, 'readwrite'); }
+      catch (e) { resolve(false); return; }
+      tx.objectStore(CRASH_STORE).delete('crash');
+      tx.oncomplete = function () { resolve(true); };
+      tx.onerror = function () { resolve(false); };
+      tx.onabort = function () { resolve(false); };
+    });
   }
 
   // ── 面板构建(★ 每个控件只挂一次监听 —— 审计 A16:旧实现同时挂了 22 个独立监听

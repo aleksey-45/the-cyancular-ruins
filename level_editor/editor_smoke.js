@@ -1527,6 +1527,12 @@ function countNonZero(map, L) {
   eq(Editor.crashIsNewer({ savedAt: 100 }, null), true, '没有主草稿 → 有崩溃快照就提示');
   eq(Editor.crashIsNewer(null, { savedAt: 1 }), false, '没有崩溃快照 → 不提示');
   eq(Editor.crashIsNewer(null, null), false, '两个都没有 → 不提示');
+  // ★★ 问过、用户说"不要"的那一条**不再问**(不记的话一次偶发页面异常会把每一次打开都变成
+  //    "上次异常退出" —— 那是个永久弹窗,直到用户碰巧 Ctrl+S 把草稿写新)
+  eq(Editor.crashIsNewer({ savedAt: 200, declined: true }, { savedAt: 100 }), false,
+     '★ 已拒绝过的崩溃快照不再提示(与它比主草稿新不新无关)');
+  eq(Editor.crashIsNewer({ savedAt: 200, declined: false }, { savedAt: 100 }), true,
+     '★ (对照)`declined:false` 照常提示(挡的是"一刀切成不提示"))');
 
   // 库条目 60 上限:先丢"已保存且最老"的
   (function () {
@@ -1539,7 +1545,12 @@ function countNonZero(map, L) {
     const dropped = recs.filter(function (r) { return plan.drop.indexOf(r.key) >= 0; });
     ok(dropped.every(function (r) { return !r.dirty; }),
        '★★ 先丢**已保存**的(脏的那份是用户还没写盘的劳动,不许丢)');
-    ok(plan.drop.length === 5, '★ 同条件时丢最老的(实得 ' + plan.drop.join(',') + ')');
+    // ★★★ 上一版这里写的是 `plan.drop.length === 5` —— 那与上面那条 eq 是同一条断言(数两遍),
+    //    **同条件时的取舍(丢哪几条)从没被钉过**(只有"全是脏的"那一支钉了 k0/k1)。这里改成
+    //    判**身份**:65 条里脏的是偶数号(savedAt 更大的是后面的),故要丢的正是最老的那 5 条
+    //    **干净**记录 k1/k3/k5/k7/k9。★ 条数由身份蕴含,故没有丢掉任何东西。
+    eq(plan.drop.slice().sort(), ['k1', 'k3', 'k5', 'k7', 'k9'],
+       '★★★ 同条件时丢**最老的那几条干净记录**(不是"丢够 5 条就算";实得 ' + plan.drop.join(',') + ')');
     const allDirty = recs.map(function (r) { return { key: r.key, savedAt: r.savedAt, dirty: true }; });
     const plan2 = Editor.evictPlan(allDirty, 60);
     eq(plan2.drop.length, 5, '全是脏的时也得丢够(否则上限失效)');
@@ -1593,17 +1604,30 @@ function countNonZero(map, L) {
     try {
       // ── 假 IndexedDB(两张表:草稿盘、崩溃槽位)──
       const tab15 = { draft: new Map(), crash: new Map() };
+      // ★ 两个开关 + 一个读数,专给相位 ⑫(闸 1 的**代价形状**与两条失败路径):
+      //   · `count`     —— 让 `count()` 的请求失败(读不到条数);
+      //   · `deleteTx`  —— 让**含 delete 的**那个事务失败(真 IDB 出错时事务不提交 ⇒
+      //                    一条 `later` 都不跑);只认含 delete 的事务,否则连这次写入
+      //                    自己都会失败,那测的就不是"清理失败"了;
+      //   · `read`      —— 到上限时读了几次**记录本体**(`getAll`)。"没到上限就一次都不读"
+      //                    这条不变量只能靠计数钉住:它是**代价**不是行为,断不了对错。
+      const fail15 = { count: false, deleteTx: false };
+      const idbReads15 = { count: 0, getAll: 0 };
       function fakeDb15() {
-        function txOf(store) {
+        function txOf(store, mode) {
           const tx = { error: null, oncomplete: null, onerror: null, onabort: null };
           const later = [];
+          let hasDelete = false;
           tx.objectStore = function () {
             return {
               // ★ 写与删都**在事务提交那一刻**才落到表里(真 IndexedDB 就是这样:
               //   `put()` 只是把操作排进事务)。替身若当场改表,"记录已存在"就不再等价于
               //   "这次落盘走完了" —— 那正是本相位头几版把时序判错的地方。
               put: function (rec) { later.push(function () { tab15[store].set(rec.key, rec); }); },
-              delete: function (k) { later.push(function () { tab15[store].delete(k); }); },
+              delete: function (k) {
+                hasDelete = true;
+                later.push(function () { tab15[store].delete(k); });
+              },
               get: function (k) {
                 const rq = { result: null, onsuccess: null, onerror: null };
                 later.push(function () {
@@ -1612,7 +1636,20 @@ function countNonZero(map, L) {
                 });
                 return rq;
               },
+              // ★ `count()` 只回一个数:**记录本体一个字节都不反序列化**(上游的"先数后读"
+              //   就是靠它把常态路径变成"不物化任何 bytes")。
+              count: function () {
+                idbReads15.count++;
+                const rq = { result: 0, onsuccess: null, onerror: null };
+                later.push(function () {
+                  if (fail15.count) { if (rq.onerror) rq.onerror({ target: rq }); return; }
+                  rq.result = tab15[store].size;
+                  if (rq.onsuccess) rq.onsuccess({ target: rq });
+                });
+                return rq;
+              },
               getAll: function () {
+                idbReads15.getAll++;
                 const rq = { result: [], onsuccess: null, onerror: null };
                 later.push(function () {
                   rq.result = Array.from(tab15[store].values());
@@ -1623,6 +1660,10 @@ function countNonZero(map, L) {
             };
           };
           realSetTimeout15(function () {
+            if (fail15.deleteTx && mode === 'readwrite' && hasDelete) {
+              if (tx.onerror) tx.onerror({ target: tx });    // ★ 失败的事务不提交
+              return;
+            }
             later.forEach(function (f) { f(); });
             if (tx.oncomplete) tx.oncomplete({ target: tx });
           }, 0);
@@ -1678,11 +1719,33 @@ function countNonZero(map, L) {
         return el;
       }
       let made15 = 0;
+      // ★★ 四个图层行替身(前景/场景/后景/背景,与 editor.html 的 `.layer-row` 同形):
+      //     `setLayer`(ui 那一层)要按 `dataset.layer` 把 `.cur` 挪到对应行上。不给行替身的话
+      //     "恢复的是哪一层"只剩 `#palette` 一个证据 —— 而那是**同一件事的另一个证据**,
+      //     两个都想要。初始 `.cur` 照 editor.html 写死在「场景」(data-layer=1)上:这样
+      //     "只改渲染层"的实现会露馅(渲染层变了、`.cur` 还钉在 1)。
+      const rows15 = [Core.LAYER_FRONT, Core.LAYER_SCENE, Core.LAYER_BACK,
+                      Core.LAYER_BG].map(function (L) {
+        const on = { cur: (L === Core.LAYER_SCENE) };
+        const row = el15('layer-row-' + L);
+        row.dataset = { layer: String(L) };
+        row.classList = { toggle: function (c, v) { on[c] = !!v; },
+                          add: function (c) { on[c] = true; }, remove: function (c) { on[c] = false; },
+                          contains: function (c) { return !!on[c]; } };
+        // buildPanels 会给 .vis / .lock 各挂一个监听 ⇒ 它们也得是能 addEventListener 的对象。
+        row.querySelector = function () { return { addEventListener: function () {}, style: {} }; };
+        return row;
+      });
+      const curRow15 = function () {
+        let out = -1;
+        rows15.forEach(function (r) { if (r.classList.contains('cur')) out = parseInt(r.dataset.layer, 10); });
+        return out;
+      };
       globalThis.document = {
         // ★ 任何 id 都给一个假元素(不是只给 st-save / status-msg):⑨ 要真跑一遍
         //   `bootLoad` → `buildPanels`(它摸十几个 id、还要 appendChild/insertBefore)。
         getElementById: function (id) { return el15(id); },
-        querySelectorAll: function () { return []; },
+        querySelectorAll: function (sel) { return sel === '#layers .layer-row' ? rows15 : []; },
         querySelector: function () { return null; },
         createElement: function (tag) {
           if (tag === 'canvas') {
@@ -1696,12 +1759,16 @@ function countNonZero(map, L) {
         },
       };
       Editor.app.canvas = { width: 80, height: 80 };
+      // ★ `layer()` / `setLayer()` 这一对要**写成状态**(不是两个常量):`syncPanelForLayer`
+      //   的判据就是 `app.r.layer()` —— 两个都返回常量的替身会把"渲染层真的换了吗"这件事
+      //   从判据里抹掉(`setLayer` 只是记一笔、`layer()` 永远回 LAYER_SCENE)。
+      let renderLayer15 = Core.LAYER_SCENE;
       Editor.app.r = {
         view: function () { return { x: 0, y: 0, zoom: 1 }; },
-        layer: function () { return Core.LAYER_SCENE; },
+        layer: function () { return renderLayer15; },
         selection: function () { return null; },
         setMap: function () { calls15.push('setMap'); return Promise.resolve(); },
-        setLayer: function (L) { calls15.push('setLayer:' + L); },
+        setLayer: function (L) { renderLayer15 = L; calls15.push('setLayer:' + L); },
         setGrid: function (b) { calls15.push('setGrid:' + b); },
         setSubGrid: function (b) { calls15.push('setSubGrid:' + b); },
         setTorus: function (b) { calls15.push('setTorus:' + b); },
@@ -1880,6 +1947,10 @@ function countNonZero(map, L) {
       // ── ⑦ 第 3 层:applyUiState 把 UI 小状态真的按回界面(含"缩放只在 setMap 之后")──
       Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
       calls15.length = 0;
+      // ★ 图集此刻的容量:⑭ 的替身(512×640)留下的是 320。**这一条前提不写死** —— 见下面
+      //   纹理那条断言的说明。
+      const cap15 = Render.atlasCapacity();
+      const pre15 = Editor.app.st.desc;            // 恢复**之前**的那份描述符(四个辅码档位)
       Editor.app.uist = { layer: Core.LAYER_BG, zoom: 0, tool: 'line', brushSize: 3,
                           grid: false, subGrid: true, torus: false, dimOthers: false,
                           panelOpen: { lib: true, right: true },
@@ -1892,17 +1963,41 @@ function countNonZero(map, L) {
          '★ 两个开关也按回去了(setGrid/setTorus 收到 false)');
       eq(el15('tg-grid').classList.contains('on'), false,
          '★★ DOM 与状态**一致**(开关显示关着 —— 否则"页面显示的"与"实际用的"是两回事)');
+      // ★★★ 上面那条只证明"渲染层收到了 3"。**面板与图层行是另一回事**(它们由 ui 那一层的
+      //     `setLayer` 管):只调 `app.r.setLayer` 的话,屏幕右侧仍摆着纹理调色板、`.cur` 仍钉在
+      //    「场景」行上,而刷子已经画到背景层了 —— 用户看到的与正在发生的不是一回事,且不报错。
+      //    故这里把**面板**与**行**两个证据都钉住(变异:换回 `app.r.setLayer` ⇒ 这两条红)。
+      eq(el15('palette').style.display, 'none',
+         '★★★ 存下来的是背景层 ⇒ 纹理调色板必须**藏起来**(背景层用颜色选择器,规格 §4.5);' +
+         '实得 ' + JSON.stringify(el15('palette').style.display));
+      eq(curRow15(), Core.LAYER_BG,
+         '★★★ 图层行的 `.cur` 在**存下来的那一层**上(不是永远钉在 editor.html 写死的「场景」行上);' +
+         '实得 ' + curRow15());
       eq(calls15.indexOf('setZoomAt'), -1,
          '★ 存下来的 zoom=0 是"没存过缩放"的哨兵 ⇒ **不碰** setMap 自己 fit 出来的缩放');
       Editor.app.uist.zoom = 2.5;
       calls15.length = 0;
       Editor.applyUiState();
       ok(calls15.indexOf('setZoomAt') >= 0, '★ 真存过缩放时要恢复它(setZoomAt 被调了)');
-      eq(Editor.app.st.desc === Core.packDesc(5, Core.hueOf(Editor.app.st.desc),
-                                              Core.brightOf(Editor.app.st.desc),
-                                              Core.satOf(Editor.app.st.desc),
-                                              Core.alphaOf(Editor.app.st.desc)), true,
-         '★ 选中的纹理也按回去了(只换纹理位,四个辅码档位不动)');
+      // ★★ 纹理那条断言**不能写死 5**:`clampTexture` 对"容量 < 1(没有信息)"给的是 **1**
+      //    (不是放宽到描述符位宽那个上界 —— 见 ui.js 里那段说明),而图集状态是**上一个相位
+      //    留下的**(⑭ 的 finally 不还原 atlas,它留的是 512×640 ⇒ cap 320)。写死 5 的话,
+      //    哪天 ⑭ 改成空图集,这条会**因为环境**而红(而且看不出是环境问题)。故判据取
+      //    `clampTexture(5, cap)`(= 生产那条钳制本身)。
+      // ★★ 但"与图集无关"的另一面是:容量 < 5 时 5 会被钳成 cap,而 cap 可能**恰好等于**
+      //    恢复前那份的纹理位(空图集下两者都是 1)⇒ 那条就**不再证明**"纹理位真的被按回去了",
+      //    只剩"不越界"。故把前提**明文断言出来**(红了就知道是环境,而不是功能坏)——
+      //    本相位假设 ⑭ 留下的 atlas 还在;要脱离这个前提,本相位得自己 `Render.setAtlas(…)`。
+      ok(cap15 >= 5,
+         '★★ 前提:图集容量 ≥ 5(实得 ' + cap15 + ')—— 本相位假设 ⑭ 留下的图集还在' +
+         '(512×640 ⇒ 320)。★ 容量 < 5 时下面那条只剩"不越界"这一半(5 被钳成 cap,' +
+         '而 cap 与恢复前那份的纹理位可能相等),不是功能红');
+      eq(Editor.app.st.desc === Core.packDesc(Editor.clampTexture(5, cap15),
+                                              Core.hueOf(pre15), Core.brightOf(pre15),
+                                              Core.satOf(pre15), Core.alphaOf(pre15)), true,
+         '★ 选中的纹理也按回去了(只换纹理位,四个辅码档位**不动** —— 与恢复**之前**那份逐位比;' +
+         '纹理位按 clampTexture(5, ' + cap15 + ') 判,故与图集状态无关;' +
+         '恢复前那份的纹理位 = ' + Core.texOf(pre15) + ')');
 
       // ── ⑧ 源码级:那两个函数**确实**被生产代码调用(导出表列着 ≠ 有人调)──
       const uiSrc15 = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
@@ -2033,30 +2128,137 @@ function countNonZero(map, L) {
       }
 
       // ── ⑪ 闸 4 的**读**侧:下次打开时"崩溃槽位比主槽位新" ⇒ 问一次并恢复 ──
-      const crashedMap15 = Editor.createEmptyMap('crash_probe', 4, 4);
-      crashedMap15.enemies.push({ x: 1, y: 1, type: 'fly_bird' },
-                               { x: 2, y: 2, type: 'fly_bird' });
-      tab15.crash.set('crash', { key: 'crash', name: 'crash_probe.cyrm', name2: 'crash_probe',
-                                 bytes: await globalThis.Io.encodeMap(crashedMap15, { compress: true }),
-                                 savedAt: Date.now() + 10000, why: '测试造的崩溃' });
-      Editor.app.map = Editor.createEmptyMap('crash_probe', 4, 4);
-      Editor.app.name = 'crash_probe.cyrm';
-      asked15 = 0; answer15 = true;
-      globalThis.confirm = function () { asked15++; return answer15; };
+      // ★ 这一段要造好几份崩溃快照,故抽成一个"往槽位里放一份"的小助手(每次都是新字节)。
+      const putCrash15 = async function (savedAt, extra) {
+        const m = Editor.createEmptyMap('crash_probe', 4, 4);
+        m.enemies.push({ x: 1, y: 1, type: 'fly_bird' }, { x: 2, y: 2, type: 'fly_bird' });
+        const rec = { key: 'crash', name: 'crash_probe.cyrm', name2: 'crash_probe',
+                      bytes: await globalThis.Io.encodeMap(m, { compress: true }),
+                      savedAt: savedAt, why: '测试造的崩溃' };
+        Object.keys(extra || {}).forEach(function (k) { rec[k] = extra[k]; });
+        tab15.crash.set('crash', rec);
+        Editor.app.map = Editor.createEmptyMap('crash_probe', 4, 4);
+        Editor.app.name = 'crash_probe.cyrm';
+        asked15 = 0; answer15 = true;
+        globalThis.confirm = function () { asked15++; return answer15; };
+      };
+      await putCrash15(Date.now() + 10000);
       eq(await Editor.checkCrashSlot(), true,
          '★★★ 崩溃槽位比主草稿新 ⇒ checkCrashSlot 交回 true 并恢复(闸 4 的另一半)');
       eq(asked15, 1, '★★ 恢复前**问了**一次(不静默把画布换掉)');
       eq(Editor.app.map.enemies.length, 2, '★★ 恢复的是崩溃前那张(2 个敌人),不是屏幕上那份');
       ok(el15('status-msg').textContent.indexOf('已从崩溃前快照恢复') >= 0,
          '★★ 恢复要**说一句**(实得 "' + el15('status-msg').textContent + '")');
+      // ★★★ 恢复成功 ⇒ 这条快照要被**消费掉**:不删的话**每一次**打开都会再弹一次
+      //     「上次异常退出」(一次偶发页面异常 = 一个永久的开机弹窗,用户可见)。
+      eq(tab15.crash.has('crash'), false,
+         '★★★ 恢复成功后崩溃槽位被**消费掉**(否则每一次打开都再问一遍;实得还在:' +
+         tab15.crash.has('crash') + ')');
+      // ★★ 点"不要"那一支:记录**留着**(那是没写盘的活),但要把"问过、不要"记上 ——
+      //    于是同一条快照不再反复问;而新的一次崩溃(不带 declined)照问。
+      await putCrash15(Date.now() + 20000);
+      answer15 = false;
+      eq(await Editor.checkCrashSlot(), false, '★ 用户点"不要" ⇒ 不恢复');
+      eq(asked15, 1, '★ 那一支真问了');
+      ok(tab15.crash.has('crash'),
+         '★★ 点"不要"时崩溃快照**留着**(那是没写盘的活,不能因为点了一次就删)');
+      eq(tab15.crash.get('crash') && tab15.crash.get('crash').declined, true,
+         '★★ 记下了"问过、不要"(不然下一次打开又弹同一个框)');
+      ok(el15('status-msg').textContent.indexOf('崩溃快照仍在崩溃槽位里') >= 0,
+         '★★ 说了一句"没有打开它"(实得 "' + el15('status-msg').textContent + '")');
+      eq(await Editor.checkCrashSlot(), false, '★★ 同一条崩溃快照**不再问第二次**');
+      eq(asked15, 1, '★★★ 那一次连确认框都没弹(一次偶发异常不该变成每次打开都弹)');
+      answer15 = true;
+      await putCrash15(Date.now() + 30000);            // 新的一次崩溃:记录被重写
+      eq(await Editor.checkCrashSlot(), true,
+         '★★ (对照)新的一次崩溃(记录被重写、不带 declined)照问照恢复');
+      eq(asked15, 1, '★ (对照)那次也真问了');
       // 反向:崩溃槽位比主草稿**旧** ⇒ 不提示(否则每次打开都弹一次无关的框)
-      tab15.crash.get('crash').savedAt = 1;
-      Editor.app.map = Editor.createEmptyMap('crash_probe', 4, 4);
+      await putCrash15(1);
       el15('status-msg').textContent = '';
       asked15 = 0;
       eq(await Editor.checkCrashSlot(), false, '★ 崩溃槽位比主草稿旧 ⇒ 不提示');
       eq(asked15, 0, '★★ 那一次连确认框都没弹(不是"问了但没恢复")');
       tab15.crash.clear();
+
+      // ── ⑮b ⑫ 闸 1 的清理:代价形状(先数后读)+ 两条失败路径都要说话 ──
+      // ★★ 编号:这是 ⑮b 的**子相位** ⑫(与文件前面那个顶层「相位 ⑫ 历史/剪贴板/选区移动」
+      //    不是一件事)—— 子相位的编号在自己的括号里连续排,而消息里一律带 `⑮b⑫` 前缀,
+      //    免得"红的是第几相"变成指代不清(⑮ 当初顺延就是因为同一份文件里两个 ⑭)。
+      // ★★ 为什么单立一相:
+      //    ① **代价形状**——清理跑在**每一次**防抖落盘之后,而库满时每张草稿带着编码后的整张
+      //       图(规格 §4.3 的闸 1 表:每张 2.4MB)。"没到上限时一条都不反序列化"是**代价**而
+      //       不是行为,断不了对错,只能靠"`getAll` 被调了几次"这个读数钉住(变异见报告)。
+      //    ② **两条失败路径**(读不到 / 删不掉)都要在状态栏**说出话** —— 静默的话"闸 1 不
+      //       生效"与"没到上限"长得一模一样,用户只会看到草稿盘悄悄涨过 60 条。
+      //    ★ 同时钉住"失败**不拒绝这次写入**":最新那份劳动必须留下。
+      tab15.draft.clear();
+      Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
+      Editor.app.name = 'draft_probe.cyrm';
+      Editor.app.sourceFormat = 'v4';
+      idbReads15.count = 0; idbReads15.getAll = 0;
+      el15('status-msg').textContent = '';
+      Editor.markDirty();
+      await Editor.saveDraft(false);                  // ← 生产那条链:编码 → 落盘 → 清理
+      eq(tab15.draft.size, 1, '⑮b⑫ 前提:这一笔真落进了草稿盘');
+      ok(idbReads15.count >= 1, '★ 清理闸门先问**条数**(count)—— 它是"要不要读记录本体"的唯一判据');
+      eq(idbReads15.getAll, 0,
+         '★★★ 库**没到**上限时 `getAll` 一次都不调(实得 ' + idbReads15.getAll + ' 次):' +
+         '常态路径只物化一个整数,而不是把库里每张草稿(每张带着整张图的字节)读进主线程');
+      // 灌到超过上限:65 条"已保存且更老"的 + 刚写的那一条 ⇒ 必须丢掉最老的 6 条
+      for (let i = 0; i < 65; i++) {
+        tab15.draft.set('old' + i, { key: 'old' + i, name: 'old' + i + '.cyrm', name2: 'old' + i,
+                                     bytes: new Uint8Array([i]), sourceFormat: 'v4',
+                                     savedAt: 1000 + i, dirty: false });
+      }
+      idbReads15.count = 0; idbReads15.getAll = 0;
+      el15('status-msg').textContent = '';
+      Editor.markDirty();
+      await Editor.saveDraft(false);
+      eq(tab15.draft.size, Editor.MAX_LIB,
+         '★★ 清理真的把总数压回上限之内(实得 ' + tab15.draft.size + ')');
+      ok(!tab15.draft.has('old0') && !tab15.draft.has('old5'),
+         '★★ 丢的是**最老的**那几条(old0/old5 都已不在)');
+      ok(tab15.draft.has('draft_probe'),
+         '★★ 刚写的那一条**没被丢**(清理不许动最新的活 —— 脏记录本来就排在队尾)');
+      ok(idbReads15.getAll >= 1,
+         '★ 到了上限才读记录本体(与上面那条一起钉住"先数后读":没超就一次不读、超了才读)');
+      ok(el15('status-msg').textContent.indexOf('已清掉 6 条最老的') >= 0,
+         '★ 清掉了就说一句(实得 "' + el15('status-msg').textContent + '")');
+      // 失败路径之一:**读不到条数**(真环境里是事务打不开 / 配额被拒)
+      fail15.count = true;
+      idbReads15.count = 0; idbReads15.getAll = 0;
+      el15('status-msg').textContent = '';
+      Editor.markDirty();
+      await Editor.saveDraft(false);
+      ok(tab15.draft.has('draft_probe'),
+         '★★★ 数不到条数时**这次写入照样留下**(上限不生效的代价由用户承担,但作品必须保住)');
+      ok(el15('status-msg').textContent.indexOf('草稿盘清理失败') >= 0 &&
+         el15('status-msg').textContent.indexOf('读不到条目数') >= 0,
+         '★★★ 读失败**说出来**了(实得 "' + el15('status-msg').textContent + '")—— ' +
+         '静默折叠成"没到上限"是这一层的失败面里最不该有的那种');
+      eq(idbReads15.getAll, 0, '★ 数不到条数就**不去读记录**(读也没意义,白物化一遍)');
+      ok(el15('st-save').textContent.indexOf('已自动保存') === 0,
+         '★ 报的是**状态栏那一行**,没去顶 `#st-save`(自动保存时刻要留住;实得 "' +
+         el15('st-save').textContent + '")');
+      fail15.count = false;
+      // 失败路径之二:**删除事务失败**(删不掉 ⇒ 上限同样没生效,同样必须说话)
+      // ★ 先补一条干净记录把库顶到**超过**上限:上面那次失败没清成,但库正好是 60 条
+      //   (`<= MAX_LIB` 就走不到删除那一支)—— 补到 61 条才踩得到这条路径。
+      tab15.draft.set('extra', { key: 'extra', name: 'extra.cyrm', name2: 'extra',
+                                 bytes: new Uint8Array([9]), sourceFormat: 'v4',
+                                 savedAt: 1, dirty: false });
+      fail15.deleteTx = true;
+      el15('status-msg').textContent = '';
+      Editor.markDirty();
+      await Editor.saveDraft(false);
+      ok(el15('status-msg').textContent.indexOf('草稿盘清理失败') >= 0 &&
+         el15('status-msg').textContent.indexOf('删不掉') >= 0,
+         '★★★ 删除事务失败也说出来了(实得 "' + el15('status-msg').textContent + '")');
+      ok(tab15.draft.size > Editor.MAX_LIB,
+         '⑮b⑫ 前提:那一次确实没清成(实得 ' + tab15.draft.size + ' 条)—— 否则这条测不到删除失败');
+      ok(tab15.draft.has('draft_probe'), '★ 删除失败也**不影响这次写入**');
+      fail15.deleteTx = false;
     } finally {
       globalThis.document = savedDoc15; globalThis.confirm = savedConfirm15;
       globalThis.setTimeout = savedSetTimeout15; globalThis.clearTimeout = savedClearTimeout15;
