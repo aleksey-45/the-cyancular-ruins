@@ -15,7 +15,8 @@ globalThis.Editor = (function () {
   if (!Render) throw new Error('ui.js: 必须先加载 render.js');
   if (!Io) throw new Error('ui.js: 必须先加载 io.js');
 
-  var UI_STATE_KEY = 'cyrm.ui.v1';
+  // ★ `UI_STATE_KEY` 在下面「持久化三层」那一节里(Task 9 之前它在这里、且**零调用点**:
+  //   一个声明了没人用的常量比没有更糟 —— 读代码的人会以为小状态那一层已经落地了)。
   var DEFAULT_CELLS_W = 125, DEFAULT_CELLS_H = 75;
 
   // 运行时状态(页面用;node 冒烟不碰它)
@@ -804,18 +805,25 @@ globalThis.Editor = (function () {
   // ★★ 纪律:它**只**在「保存真的成功」与「打开真的成功」两处清零,**绝不**挂在
   //    `guard(...)` 的决议上 —— `guard` 失败时决议的是 `undefined`(见它的实现),把清零
   //    链在它上面会把一次**失败**的保存标成「已保存」,而磁盘上那份一个字都没变。
-  // ★ 今天它写的是「未保存 / 已保存」;Task 9 的草稿盘会接管这一格(改成「已自动保存 12:34」),
-  //    届时这两个文案就是"没有草稿盘"时的降级值。
+  // ★ 今天它写的是「未保存 / 已保存」;Task 9 的草稿盘**接管了**这一格(「已自动保存 12:34」,
+  //    规格 §4.5 的措辞),那两个文案于是降级成"没有草稿盘时"的回落值。
+  // ★★ **一个写入者**:三种文案全在这里决定,别处只改 `dirty` / `lastAutoSaveAt` 两个变量。
+  //    两个写入者(草稿盘直接写 DOM + 这里重画)会互相打脸 —— 那正是 Task 8 修过的那类 bug。
   var dirty = false;
   function renderSaveState() {
     var el = $('st-save');
-    if (el) el.textContent = dirty ? '未保存' : '已保存';
+    if (!el) return;
+    if (app.db && lastAutoSaveAt) {
+      el.textContent = '已自动保存 ' + new Date(lastAutoSaveAt).toLocaleTimeString();
+      return;
+    }
+    el.textContent = dirty ? '未保存' : '已保存';
   }
 
   function pushAndShow(diff) {
     if (!diff) return false;
     undoHistory.push(diff);
-    dirty = true;                     // ★ 落了笔 ⇒ 磁盘上那份已经不等于屏幕上这一份了
+    markDirty();                      // ★ 落了笔 ⇒ 磁盘上那份已经不等于屏幕上这一份了(+ 排草稿)
     // ★ 两条路都要走:kind:'whole'(改尺寸/换图)改的是**尺寸本身**,`diffCells` 对它是
     //   空数组 ⇒ 只 render() 的话整张图停在旧尺寸/旧内容上(画面错了、一个字都不报)。
     //   invalidateAll 会把缩略图与 ② 一起整片重建(它自己带尺寸对齐,见那边的注释)。
@@ -843,7 +851,7 @@ globalThis.Editor = (function () {
     // ★ 撤销/重做也是一次**改动**:回到"保存时那一刻"的图上仍然显示「未保存」——
     //   这是刻意的(要判"撤销回去了没有"得比整份字节,那是 Task 9 草稿盘的事)。
     //   反过来(把撤销当"变干净")会把"撤了两步、其实还脏着"标成已保存,那才是错的。
-    dirty = true;
+    markDirty();
     if (e.kind === 'whole') {
       // ★ 尺寸可能变了 ⇒ 整片重来。**不是** setMap:那个会把视图重新"适配"并清掉选区,
       //   而撤销一次尺寸变化不该把视野和选区一起重置(而且它建的是"新图"语义)。
@@ -1258,6 +1266,9 @@ globalThis.Editor = (function () {
     var name = saveTargetName(asNew);
     if (!name) return Promise.resolve();
     status('保存 ' + name + ' …');
+    // ★ 草稿盘那条记录挂在**存盘前**那个键上("另存为"会换名字,存完再问键就找不到了
+    //   —— 于是旧名字下那条脏草稿会**留着**,下次打开那张旧图时弹一次假的恢复提示)。
+    var draftAt = currentDraftKey();
     // ★★ 写盘**只走 `putMapBytes` 这一个出口**(页面上唯一发 PUT 的地方):PUT 的
     //    `Content-Type: application/json` 与"body 是**裸字节**"这两条纪律都钉在那里
     //    (不设头 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ "点了保存、磁盘上那份没变",
@@ -1268,6 +1279,9 @@ globalThis.Editor = (function () {
         app.raw = bytes;
         app.sourceFormat = 'v4';
         dirty = false;                 // ★★ 只有**真的**写成功了才清(见 dirty 那段的纪律)
+        // ★ 草稿盘那条也标干净(同一个"真的成功了"):它与磁盘上那份现在同源,
+        //   下次打开不该再问一次 —— 与上面那行**同一条纪律、同一处**。
+        markDraftSaved(draftAt);
         refreshStatus();
         statusLine();
         // ★★ 库列表刷新排在**说结果之前**:那条 GET 失败时 `guard` 会往**同一条状态栏**
@@ -1312,6 +1326,405 @@ globalThis.Editor = (function () {
     var rep = exportReport();
     window.alert(rep.lines.join('\n'));
     status(rep.ok ? '导出校验:没有 error' : '导出校验:有 error(encodeMap 会拒绝导出)');
+  }
+
+  // ── 持久化三层(规格 §4.6)+ 闸 4(崩溃前快照)──
+  // ① 真文件 maps/*.cyrm(Ctrl+S 写回,Task 8)② IndexedDB 草稿盘 ③ localStorage 只存 UI 小状态。
+  // ★★ 三层是**递进**的:"作品"的最高保真副本永远是**真文件**;草稿盘兜住"还没写盘的活";
+  //    localStorage 只放"下次打开时界面该长什么样"这种小状态。
+  var DRAFT_DB = 'cyrm-editor';
+  var DRAFT_STORE = 'draft';
+  var CRASH_STORE = 'crash';
+  var UI_STATE_KEY = 'cyrm.ui.v1';       // ★ 带版本号:将来换字段可以让老的那份自然失效
+  var MAX_LIB = 60;                      // 库条目上限(规格 §4.3 闸 1)
+  var DRAFT_DEBOUNCE_MS = 1500;          // 最后一笔之后多久落盘(不是每笔都写)
+  var UI_SAVE_THROTTLE_MS = 500;         // localStorage 是**同步**写:每帧写会掉帧
+
+  // ★ 草稿盘的主键 = sanitizeName(文件名):库的身份就是**文件名**(计划 2a 的裁决 ②),
+  //   另铸一套 id 必然与文件那一套漂。
+  function draftKey(name) { return Core.sanitizeName(nameFromFile(name)); }
+  // ★ "当前这张图"的键只有这一处:**写进去的**与**读出来的**必须是同一个键,
+  //   否则症状是"草稿盘里明明有一条,恢复时说什么都没有"(而且不报错)。
+  //   `app.name` 是带 `.cyrm` 的文件名;新建还没写盘的图只有 `app.map.name`(不带后缀)——
+  //   draftKey 对两者归一(先去掉后缀、再 sanitizeName)。
+  function currentDraftKey() {
+    return draftKey(app.name || (app.map ? app.map.name : '') || '');
+  }
+
+  // 闸 4 的判据(纯函数,便于断言):崩溃槽位比主槽位新 ⇒ 上次是异常退出。
+  function crashIsNewer(crashRec, mainRec) {
+    if (!crashRec) return false;
+    if (!mainRec) return true;
+    return (crashRec.savedAt || 0) > (mainRec.savedAt || 0);
+  }
+
+  // 库条目上限(闸 1:60)。★ 先丢"已保存且最老"的 —— 脏的那份是用户还没写盘的劳动。
+  function evictPlan(records, maxEntries) {
+    var list = (records || []).slice();
+    var cap = (maxEntries === undefined) ? MAX_LIB : maxEntries;
+    if (list.length <= cap) return { keep: list.map(function (r) { return r.key; }), drop: [] };
+    var sorted = list.slice().sort(function (a, b) {
+      var ad = a.dirty ? 1 : 0, bd = b.dirty ? 1 : 0;
+      if (ad !== bd) return ad - bd;                 // 干净的排前面(先被丢)
+      return (a.savedAt || 0) - (b.savedAt || 0);     // 同样干净时,最老的先丢
+    });
+    var drop = sorted.slice(0, list.length - cap).map(function (r) { return r.key; });
+    var keep = [];
+    list.forEach(function (r) { if (drop.indexOf(r.key) < 0) keep.push(r.key); });
+    return { keep: keep, drop: drop };
+  }
+
+  // ── 第 3 层:localStorage 小状态(★ 读损坏值一律回落默认:编辑器要能开)──
+  function uiStateDefaults() {
+    // ★ 玩家参考图的位置**按格坐标**存(cx/cy):按屏幕像素存的话,换窗口大小/换缩放
+    //   之后语义就漂了(审计 A13)。
+    return { layer: Core.LAYER_SCENE, zoom: 0, tool: 'brush', brushSize: 1,
+             grid: true, subGrid: false, torus: true, dimOthers: true,
+             panelOpen: { lib: true, right: true },
+             playerRef: { cx: 0, cy: 0, visible: false }, selectedTexture: 1 };
+  }
+  // ★★ 逐字段校验:一个坏字段不该把整份状态丢掉,也不该把坏值原样喂给渲染器。
+  //   ★ 缩放那一处是**钳**不是"回落默认":默认的 0 是"没存过缩放"的哨兵(见 applyUiState),
+  //     而 `zoom:-1` 这种**存过但坏了**的值必须钳到合法区间 —— 回落成 0 的话,那个坏值
+  //     只是被静默换成另一个"没信息"的值,用户看到的还是"缩放没恢复",查不出是坏数据。
+  function readUiState(store) {
+    var def = uiStateDefaults();
+    var raw = null;
+    try { raw = store ? store[UI_STATE_KEY] : null; } catch (e) { raw = null; }
+    if (!raw) return def;
+    var obj = null;
+    try { obj = JSON.parse(raw); } catch (e) { return def; }
+    if (!obj || typeof obj !== 'object') return def;
+    var out = uiStateDefaults();
+    if (obj.layer >= 0 && obj.layer < Core.LAYER_COUNT) out.layer = obj.layer | 0;
+    if (isFinite(obj.zoom)) out.zoom = Render.clampZoom(obj.zoom);
+    if (TOOLS.indexOf(obj.tool) >= 0) out.tool = obj.tool;
+    if (isFinite(obj.brushSize) && obj.brushSize > 0) {
+      out.brushSize = Math.max(0.25, Math.min(Render.MAX_BRUSH_CELLS, obj.brushSize));
+    }
+    ['grid', 'subGrid', 'torus', 'dimOthers'].forEach(function (k) {
+      if (typeof obj[k] === 'boolean') out[k] = obj[k];
+    });
+    if (obj.panelOpen && typeof obj.panelOpen === 'object') {
+      if (typeof obj.panelOpen.lib === 'boolean') out.panelOpen.lib = obj.panelOpen.lib;
+      if (typeof obj.panelOpen.right === 'boolean') out.panelOpen.right = obj.panelOpen.right;
+    }
+    if (obj.playerRef && typeof obj.playerRef === 'object') {
+      var pr = obj.playerRef;
+      out.playerRef = {
+        cx: isFinite(pr.cx) ? Math.floor(pr.cx) : def.playerRef.cx,
+        cy: isFinite(pr.cy) ? Math.floor(pr.cy) : def.playerRef.cy,
+        visible: pr.visible === true,
+      };
+    }
+    if (isFinite(obj.selectedTexture) && obj.selectedTexture > 0) {
+      out.selectedTexture = clampTexture(obj.selectedTexture, Render.atlasCapacity());
+    }
+    return out;
+  }
+  function writeUiState(store, uist) {
+    try { store.setItem(UI_STATE_KEY, JSON.stringify(uist)); }
+    catch (e) { /* 私密模式/配额满:UI 小状态丢了不影响作品,静默 */ }
+  }
+  // ★ 取 localStorage 这件事本身在私密模式下就可能抛(不是只有 setItem 会)——
+  //   收在一处,读与写的调用方都不必各自 try。
+  function localStore() {
+    try {
+      return (typeof window !== 'undefined' && window.localStorage) ? window.localStorage : null;
+    } catch (e) { return null; }
+  }
+
+  // ── 第 2 层:IndexedDB 草稿盘 ──
+  // ★ 开不出来就是开不出来(私密模式 / 被策略拦 / 环境没有 indexedDB):**不降级、不抛** ——
+  //   少了草稿盘编辑器仍然能用(Ctrl+S 那条路一个字都不变),但必须**说一句**,
+  //   否则用户以为"编辑器帮我存着呢"(规格 §4.6 的失败面)。
+  function openDraftStore() {
+    return new Promise(function (resolve) {
+      if (typeof indexedDB === 'undefined') { resolve(null); return; }
+      var req;
+      try { req = indexedDB.open(DRAFT_DB, 1); } catch (e) { resolve(null); return; }
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains(DRAFT_STORE)) db.createObjectStore(DRAFT_STORE, { keyPath: 'key' });
+        if (!db.objectStoreNames.contains(CRASH_STORE)) db.createObjectStore(CRASH_STORE, { keyPath: 'key' });
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { resolve(null); };      // 配额/私密模式:草稿盘不可用也要能用编辑器
+    });
+  }
+  function idbPut(db, store, rec) {
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).put(rec);
+      tx.oncomplete = function () { resolve(true); };
+      tx.onerror = function () { reject(tx.error || new Error('IndexedDB 写失败')); };
+      tx.onabort = function () { reject(tx.error || new Error('IndexedDB 写被中止')); };
+    });
+  }
+  function idbGetAll(db, store) {
+    return new Promise(function (resolve) {
+      var tx = db.transaction(store, 'readonly');
+      var rq = tx.objectStore(store).getAll();
+      rq.onsuccess = function () { resolve(rq.result || []); };
+      rq.onerror = function () { resolve([]); };
+    });
+  }
+  var draftTimer = null;
+  var draftRev = 0;              // 地图每次变动 +1(判"这一版写过没有")
+  var draftSavedRev = -1;        // 上一次草稿落盘时的 rev
+  var lastAutoSaveAt = 0;        // 状态栏那一格要显示的自动保存时刻(0 = 本局还没自动存过)
+
+  // ★★ 唯一一处"地图变了"的落笔:设脏标记 + 排一次防抖落盘。全项目**五个**改动点
+  //   (落一笔 / 撤销重做 / 新建 / 复制 / 改名)都走这里 —— 散开写 `dirty = true` 的话,
+  //   新加一个改动点只会忘掉草稿那一半,而那是**不报错**的(草稿盘悄悄少一条)。
+  function markDirty() {
+    dirty = true;
+    draftRev++;
+    scheduleDraftSave();
+  }
+  // 防抖:最后一笔之后 DRAFT_DEBOUNCE_MS 才落盘(每笔都写盘 = 每笔都过一次编码 worker)
+  // ★ `return`:把落盘那条链交回去。定时器回调的返回值本来没人接,交回去是为了让
+  //   "防抖到点之后到底写成了没有"**可以被 await**(否则只能靠数拍数猜 —— 那会变成
+  //   "看机器忙不忙",editor_smoke 相位 ⑮b 的上一版就是那样红的)。
+  function scheduleDraftSave() {
+    if (!app.map || !app.db) return;             // 草稿盘不可用:连定时器都不排
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(function () { draftTimer = null; return saveDraft(false); }, DRAFT_DEBOUNCE_MS);
+  }
+  // 离开页面/刷新前的那次补刀:防抖可能还没到点 —— 不补的话"刚画完就 F5"丢掉最后 1.5 秒的活。
+  // ★ 判据用 `dirty`(磁盘那一侧)而不是 rev:刚 Ctrl+S 过的图不该因为一次刷新又被标成脏草稿
+  //   (那会让下次打开弹一次**假**的恢复提示)。
+  function flushDraft() {
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+    if (!dirty) return Promise.resolve();
+    return saveDraft(true);                      // force:绕过节流(见 saveDraft)
+  }
+  // 落盘一份草稿(含字节:草图以**编码后的字节**存,恢复时走同一条解码路)
+  // ★ `force` = 不因为"这一版写过"就跳过(离开页面前那一刀要的是**此刻**的一份)。
+  //   不带 force 时那道判据挡的是:落了笔 → Ctrl+S(`markDraftSaved` 把 rev 记下)→ 那个
+  //   还在飞的防抖定时器到点又把同内容写回**脏**草稿(下次打开于是弹一次假的恢复提示)。
+  // ★★ 但 `force` 越不过**编码之后**那道判据 —— 那一条不是"省点活",是正确性(见下)。
+  function saveDraft(force) {
+    if (!app.map || !app.db) return Promise.resolve();
+    var rev = draftRev;
+    if (!force && rev <= draftSavedRev) return Promise.resolve();
+    return Io.encodeMap(app.map, { compress: true }).then(function (bytes) {
+      // ★★ 编码期间可能**已经有了一次 Ctrl+S**:它把这一版(或更新的一版)写进了真文件,
+      //    并把草稿标干净 —— 这时再写回一份 `dirty` 的草稿,下次打开就会弹一次**假**的
+      //    恢复提示(而且**不报错**)。故落盘前再看一眼。★ 这一条 `force` **也**要过:
+      //    离开页面前那一刀同样不该把"已经进真文件的那一版"写回成脏草稿。
+      if (rev <= draftSavedRev) return null;
+      var rec = { key: currentDraftKey(),
+                  name: app.name, name2: app.map.name, bytes: bytes,
+                  sourceFormat: app.sourceFormat, savedAt: Date.now(), dirty: true };
+      return idbPut(app.db, DRAFT_STORE, rec).then(function () {
+        draftSavedRev = rev;             // 能走到这里 ⇒ 上面那道判据刚过,故这一定是**推进**
+        lastAutoSaveAt = rec.savedAt;
+      });
+    }).then(function () {
+      renderSaveState();               // 状态栏那一格由草稿盘接管(handoff 2)
+      return pruneDrafts();
+    }).catch(function (e) {
+      // ★ 配额失败要**明确告知**,不静默吞掉(规格 §4.6):作品还在(内存里),
+      //   但用户必须知道"没有第二份",该 Ctrl+S 了。
+      status('草稿盘写入失败:' + msgOf(e) + '(作品仍在,请尽快 Ctrl+S 写盘)');
+    });
+  }
+  // Ctrl+S **成功**之后:磁盘上那份就是屏幕上这份 ⇒ 草稿盘里那条标干净(不删:留着它,
+  // 既是"上次停在哪"的记录,也让 evictPlan 优先淘汰它)。
+  // ★ 与 `dirty = false` 同一处、同一条纪律:只有真的写成功了才调它。
+  function markDraftSaved(key) {
+    if (!app.db) return Promise.resolve(false);
+    // ★ 三件事一起做,缺一条都会留下症状:
+    //   ① `draftSavedRev` 推到当前 rev —— 那个还在飞的防抖定时器到点时会走 saveDraft 顶部
+    //      那道判据,从而**不会**把刚标干净的草稿重新写脏(否则下次打开弹一次假的恢复提示);
+    //   ② `lastAutoSaveAt` 归零 —— `#st-save` 交回 Task 8 那对文案:磁盘上那份就是屏幕上
+    //      这份了,再显示「已自动保存 12:34」是**误导**(那读起来像是最新的那一份);
+    //   ③ 草稿记录本身标 `dirty:false`(启动时的 `offerDraft` 只问脏的)。
+    draftSavedRev = draftRev;
+    lastAutoSaveAt = 0;
+    return loadDraft(key || currentDraftKey()).then(function (rec) {
+      if (!rec) return false;
+      rec.dirty = false;
+      return idbPut(app.db, DRAFT_STORE, rec).then(function () { return true; });
+    }).catch(function () { return false; });   // 标不干净不影响"已经存盘了"这个事实
+  }
+  function pruneDrafts() {
+    return idbGetAll(app.db, DRAFT_STORE).then(function (recs) {
+      var plan = evictPlan(recs.map(function (r) {
+        return { key: r.key, savedAt: r.savedAt, dirty: !!r.dirty };
+      }), MAX_LIB);
+      if (!plan.drop.length) return null;
+      var tx = app.db.transaction(DRAFT_STORE, 'readwrite');
+      plan.drop.forEach(function (k) { tx.objectStore(DRAFT_STORE).delete(k); });
+      return new Promise(function (resolve) {
+        tx.oncomplete = function () { status('草稿盘超过 ' + MAX_LIB + ' 条,已清掉 ' + plan.drop.length + ' 条最老的'); resolve(true); };
+        tx.onerror = function () { resolve(false); };
+      });
+    }).catch(function () { return null; });
+  }
+  function loadDraft(key) {
+    if (!app.db) return Promise.resolve(null);
+    return new Promise(function (resolve) {
+      var tx = app.db.transaction(DRAFT_STORE, 'readonly');
+      var rq = tx.objectStore(DRAFT_STORE).get(key);
+      rq.onsuccess = function () { resolve(rq.result || null); };
+      rq.onerror = function () { resolve(null); };
+    });
+  }
+  // ── 草稿盘的**读**侧:启动时那份"没写盘的活"要不要恢复 ──
+  // ★ 判据是记录自己的 `dirty`(Ctrl+S 成功会把它标干净)—— 存过盘的下次不再问。
+  // ★★ **不静默恢复**:画布上突然换成一份与真文件不同的图,而用户以为它就是文件里那份,
+  //   接下来一按 Ctrl+S 就把草稿盖回文件上 —— 那是这一层最坏的一种失败。故一律**问一次**。
+  function offerDraft() {
+    if (!app.db || !app.map) return Promise.resolve(false);
+    var key = currentDraftKey();
+    return loadDraft(key).then(function (rec) {
+      if (!rec || !rec.dirty || !rec.bytes) return false;
+      // ★★ 再判一道(挡"假提示"那一类):草稿那份与**刚从真文件读进来**的字节逐字节相同
+      //    ⇒ 那一版已经在文件里了,只是"标干净"那一步没落地(页面关得太快,或者走了"另存为")。
+      //    问它就是一次**假**恢复提示 —— 而这层的承诺是"存的活不丢",不是"每次都问一遍"。
+      //    ★ 退化的方向是安全的:万一编码哪天不再确定,这里只是问得多一点。
+      if (sameBytes(rec.bytes, app.raw)) return false;
+      var yes = window.confirm('发现一份还没写盘的草稿(' +
+                               new Date(rec.savedAt || 0).toLocaleString() + '),要恢复吗?');
+      if (!yes) { status('草稿仍在草稿盘里(屏幕上的图没被动过)'); return false; }
+      return Io.decodeMap(rec.bytes).then(function (map) {
+        map.name = rec.name2 || map.name || '';
+        app.map = map; app.sourceFormat = 'v4';
+        if (rec.name) app.name = rec.name;
+        dirty = true;                       // ★ 屏幕上这份 ≠ 磁盘上那份 ⇒ 必须说「未保存」
+        guard('草稿恢复', function () { return app.r.setMap(map); });
+        refreshStatus(); statusLine();
+        status('已从草稿恢复:' + (rec.name2 || key));
+        return true;
+      });
+    }).catch(function (e) { status('草稿恢复失败:' + msgOf(e)); return false; });
+  }
+  // 逐字节相同(长度先过;两边都可能是 Uint8Array,也可能有一个是 null —— 那就不相同)
+  function sameBytes(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // ── UI 小状态(第 3 层):恢复与落盘 ──
+  function applyUiState() {
+    var u = app.uist;
+    if (!u) return;
+    // ★ 缩放必须在**地图打开之后**恢复:setMap 自己会 fit(),先设会被它覆盖掉。
+    //   `u.zoom === 0` 是"没存过缩放"的哨兵 ⇒ 保持 setMap 的 fit。
+    var cur = app.r.view().zoom;
+    if (u.zoom > 0 && cur > 0 && Math.abs(u.zoom - cur) > 1e-6) {
+      // ★ guard 收口:视图入口返回的是**分帧重建**派生出来的 promise,抛在任务回调里
+      //   是一次拒绝,同步 try/catch 接不住(见 guard 的说明)。
+      // ★★ `guard(` 与那次调用**必须同一行**(editor_smoke 相位 ⑪ 的扫描口径就是按行看的)
+      //   —— 拆成两行的话它就是"没被收口的视图入口",而那正是"按了没反应"那条通道。
+      guard('恢复缩放', function () { return app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur); });
+    }
+    app.r.setLayer(u.layer);
+    app.r.setGrid(u.grid); app.r.setSubGrid(u.subGrid);
+    app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
+    app.st.tool = u.tool;
+    app.st.brushSize = u.brushSize;
+    if (u.selectedTexture > 0) {
+      app.st.desc = Core.packDesc(clampTexture(u.selectedTexture, Render.atlasCapacity()),
+                                  Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
+                                  Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
+    }
+    // ★ DOM 必须与上面保持一致:否则"页面显示的"与"实际用的"是两回事(开关显示关着、其实开着)
+    [['tg-grid', u.grid], ['tg-subgrid', u.subGrid], ['tg-torus', u.torus]].forEach(function (pair) {
+      var el = $(pair[0]);
+      if (el) el.classList.toggle('on', !!pair[1]);
+    });
+    var dim = $('dim-others');
+    if (dim) dim.checked = !!u.dimOthers;
+    var bsEl = $('brush-size');
+    if (bsEl) bsEl.value = String(app.st.brushSize);
+  }
+  var uiSaveTimer = null;
+  // ★ 节流(不是逐帧):localStorage 是**同步**写,每帧写会掉帧。挂在几个明确的变更点上,
+  //   不侵入 Task 7 的交互代码。
+  function persistUi() {
+    if (uiSaveTimer || !app.map || !app.st) return;
+    uiSaveTimer = setTimeout(function () {
+      uiSaveTimer = null;
+      var prev = app.uist || uiStateDefaults();
+      app.uist = {
+        layer: app.r.layer(), zoom: app.r.view().zoom, tool: app.st.tool,
+        brushSize: app.st.brushSize,
+        grid: $('tg-grid') ? $('tg-grid').classList.contains('on') : true,
+        subGrid: $('tg-subgrid') ? $('tg-subgrid').classList.contains('on') : false,
+        torus: $('tg-torus') ? $('tg-torus').classList.contains('on') : true,
+        dimOthers: $('dim-others') ? !!$('dim-others').checked : true,
+        panelOpen: prev.panelOpen, playerRef: prev.playerRef,
+        selectedTexture: Core.texOf(app.st.desc),
+      };
+      writeUiState(localStore(), app.uist);
+    }, UI_SAVE_THROTTLE_MS);
+  }
+  // ★ 绑定一律经 onWin:node 冒烟里 `window` 是 globalThis 而 **globalThis 没有
+  //   addEventListener**(Node 24 实测),裸 `window.addEventListener(...)` 会在
+  //   `bootLoad()` 的第一行就抛 —— 那会让"打开失败也要有面板"(⑭e)那条路一起红,
+  //   而根因与面板毫无关系。
+  function onWin(evt, fn, opts) {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    window.addEventListener(evt, fn, opts);
+  }
+  function installUiStateSave() {
+    ['click', 'change', 'wheel', 'keyup', 'pointerup'].forEach(function (evt) {
+      onWin(evt, persistUi, { passive: true });
+    });
+    onWin('pagehide', function () { persistUi(); flushDraft(); });
+  }
+
+  // ── 闸 4:全局错误围栏 + 崩溃前快照 ──
+  // ★ 这条是兜底:就算前面三道闸哪里漏了,作品也不会丢,最坏只丢最后一笔。
+  // ★★ 与 Task 3/4 那对监听的关系:boot() 里原本挂着 `error` / `unhandledrejection`
+  //    **只写状态栏**的一对。这里**不再挂第二对**(两对同事件 = 一次异常把状态栏写两遍,
+  //    而快照只挂在其中一对上 —— 日后改一对忘一对是**静默**的),而是把那一对**整个搬进来**、
+  //    各加一行 `snapshot(...)`。装它的地方因此只剩 bootLoad() 一处。
+  function installCrashFence() {
+    function snapshot(why) {
+      if (!app.map || !app.db) return;
+      Io.encodeMap(app.map, { compress: true }).then(function (bytes) {
+        return idbPut(app.db, CRASH_STORE, {
+          key: 'crash', name: app.name, name2: app.map.name, bytes: bytes,
+          savedAt: Date.now(), why: String(why || '').slice(0, 200),
+        });
+      }).catch(function () { /* 崩溃路径上什么都不该再抛 */ });
+    }
+    onWin('error', function (ev) {
+      status('页面异常:' + (ev && ev.message ? ev.message : '未知'));
+      snapshot(ev && ev.message);
+    });
+    onWin('unhandledrejection', function (ev) {
+      status('未处理的 promise 拒绝:' + msgOf(ev && ev.reason));
+      snapshot('unhandledrejection');
+    });
+  }
+  // 下次打开时看一眼崩溃槽位:比主草稿新 ⇒ 上次是异常退出 ⇒ 问一次要不要恢复。
+  // ★ 它排在 openFromUrl() **之后**(bootLoad 的顺序):恢复出来的图要**压住**文件里那份,
+  //   否则用户点了"确定"、屏幕上却是刚从文件打开的那张(人眼清单第 3 条正是看这个)。
+  function checkCrashSlot() {
+    if (!app.db) return Promise.resolve(false);
+    return Promise.all([idbGetAll(app.db, CRASH_STORE), idbGetAll(app.db, DRAFT_STORE)]).then(function (both) {
+      var crash = (both[0] || []).filter(function (r) { return r.key === 'crash'; })[0] || null;
+      var main = (both[1] || []).sort(function (a, b) { return (b.savedAt || 0) - (a.savedAt || 0); })[0] || null;
+      if (!crashIsNewer(crash, main)) return false;
+      var yes = window.confirm('上次异常退出,已恢复到崩溃前(草稿:' + (crash.name2 || crash.name || '?') +
+                               ')。要打开它吗?');
+      if (!yes) return false;
+      return Io.decodeMap(crash.bytes).then(function (map) {
+        map.name = crash.name2 || '';
+        app.map = map; app.name = crash.name; app.sourceFormat = 'v4';
+        dirty = true;                  // ★ 屏幕上这份 ≠ 磁盘上那份(不回血:该 Ctrl+S 了)
+        guard('崩溃恢复', function () { return app.r.setMap(map); });
+        refreshStatus(); statusLine();
+        status('已从崩溃前快照恢复:' + (crash.name || ''));
+        return true;
+      }).catch(function (e) { status('崩溃快照解码失败:' + msgOf(e)); return false; });
+    }).catch(function (e) { status('崩溃槽位读取失败:' + msgOf(e)); return false; });
   }
 
   // ── 面板构建(★ 每个控件只挂一次监听 —— 审计 A16:旧实现同时挂了 22 个独立监听
@@ -1424,7 +1837,7 @@ globalThis.Editor = (function () {
       app.map = m; app.name = freshName(name);
       app.sourceFormat = 'v4';
       undoHistory = createHistory({});
-      dirty = true;                   // ★ 新建只活在内存里(还没写盘)⇒ 磁盘状态是「未保存」
+      markDirty();                    // ★ 新建只活在内存里(还没写盘)⇒ 磁盘状态是「未保存」
       // ★ setMap 返回的是**分帧重建**派生出来的 promise(Task 4)⇒ 必须收口:抛在任务回调里
       //   是一次 promise 拒绝,同步 try/catch 接不住(用户看到的就是"点了新建、画面不动")。
       guard('新建地图', function () { return app.r.setMap(m); });
@@ -1439,7 +1852,7 @@ globalThis.Editor = (function () {
       app.name = freshName(copy.name);
       app.sourceFormat = 'v4';
       undoHistory = createHistory({});
-      dirty = true;                   // ★ 同上:副本也只活在内存里(还没写盘)
+      markDirty();                    // ★ 同上:副本也只活在内存里(还没写盘)
       guard('复制地图', function () { return app.r.setMap(copy); });   // ★ 同上:分帧重建的 promise
       status('已复制为 ' + app.name + '(还没写盘)');
       refreshStatus();
@@ -1450,7 +1863,7 @@ globalThis.Editor = (function () {
       if (!n) return;
       app.map.name = Core.sanitizeName(n);
       app.name = app.map.name + '.cyrm';
-      dirty = true;                   // ★ 改名只改内存里那份(磁盘上还是旧名字,要 Ctrl+S 才落盘)
+      markDirty();                    // ★ 改名只改内存里那份(磁盘上还是旧名字,要 Ctrl+S 才落盘)
       status('改名为 ' + app.name + '(还要 Ctrl+S 才写盘)');
       refreshStatus();
     });
@@ -1668,12 +2081,9 @@ globalThis.Editor = (function () {
     installInteraction();
     var ro = new ResizeObserver(function () { guard('resize', function () { return app.r.resize(); }); });
     ro.observe(app.canvas.parentElement);
-    window.addEventListener('error', function (ev) {
-      status('页面异常:' + (ev && ev.message ? ev.message : '未知'));
-    });
-    window.addEventListener('unhandledrejection', function (ev) {
-      status('未处理的 promise 拒绝:' + msgOf(ev && ev.reason));
-    });
+    // ★ 页面异常 / 未处理的 promise 拒绝那**一对**监听不在这里了:它们与"崩溃前快照"是
+    //   同一件事的两半(Task 9 的闸 4),整套搬进 `installCrashFence()`(bootLoad 的第一步),
+    //   免得同一次异常挂在两对监听上、状态栏被写两遍而快照只挂在其中一对上。
     var selftestBtn = $('btn-selftest');
     if (selftestBtn) {
       selftestBtn.addEventListener('click', function () {
@@ -1697,10 +2107,37 @@ globalThis.Editor = (function () {
   // ★ `buildPanels` 只读 `app.tileDefs`(boot 里就位)与 `app.r`(已 mount),对 `app.map`
   //    只有**一处**引用(清空出生点那个处理器)且不读任何地图尺寸 —— 所以"等图打开"没有
   //    任何理由;而它自己带 null 守卫,没图也能建。
+  //
+  // ★★ Task 9 的启动顺序(三段各自的**理由**都在这里,别照抄一段就删一段):
+  //    ① `installCrashFence()` 第一件事就装:后面任何一步抛出都要能被它接住;
+  //    ② 草稿盘要在**打开地图之前**就绪(`offerDraft` 要用它;它打不开只影响"自动存");
+  //    ③ 崩溃槽位 / 草稿盘的检查排在 `openFromUrl()` **之后** —— 恢复出来的那份必须
+  //       **压住**刚从文件打开的那份:反过来的话用户点了"确定",屏幕上却是文件里那张
+  //       (人眼清单第 3 条看的正是这个),而且**一个字都不报**;
+  //    ④ `applyUiState()` 必须排在 `setMap` 之后(setMap 自己会 fit,先设会被它覆盖)。
   function bootLoad() {
-    return loadAtlas().then(function () {
+    installCrashFence();
+    app.uist = readUiState(localStore());
+    app.db = null;
+    return openDraftStore().then(function (db) {
+      app.db = db;
+      if (!db) status('草稿盘不可用(私密模式?)—— 编辑器仍可用,但请及时 Ctrl+S 存盘');
+    }).then(function () {
+      return loadAtlas();
+    }).then(function () {
       buildPanels();
       return openFromUrl();
+    }).then(function () {
+      return checkCrashSlot();
+    }).then(function (recovered) {
+      // ★ 崩溃快照比草稿新时才轮到草稿盘(两个都问一遍会连弹两个"要不要恢复" ——
+      //   而崩溃那份本来就是更新的那一份)。
+      if (recovered) return false;
+      return offerDraft();
+    }).then(function () {
+      applyUiState();
+      installUiStateSave();
+      return null;
     }).then(function () {
       if (new URLSearchParams(location.search).has('selftest')) {
         return selfTest().then(function (line) { status(line); });
@@ -1801,6 +2238,11 @@ globalThis.Editor = (function () {
       }
       return probeIndexedDb().then(function (idb) {
         check('IndexedDB 可打开', idb.ok, idb.why);
+        // ★ 与上一条**不是**同一件事:上面那条开的是自检自己那个临时库(证明"能开"),
+        //   这一条说的是**草稿盘这个库**有没有真开出来 —— 它打不开时编辑器照常能用,
+        //   只是自动存那一层静默缺席,所以必须有一条能一行看到的读数。
+        check('草稿盘已打开(app.db)', app.db !== null && app.db !== undefined,
+              app.db ? '' : '草稿盘打不开:自动存不会发生,只能靠 Ctrl+S');
         return Io.ping().then(function (p) {
           check('Worker ping 有应答', p && p.pong === true);
           // 端到端:真浏览器里的 Worker + CompressionStream 往返一次
@@ -1861,5 +2303,19 @@ globalThis.Editor = (function () {
     needsV3Confirm: needsV3Confirm, freshName: freshName,
     importEnemyTypes: importEnemyTypes, exportReport: exportReport, showExportReport: showExportReport,
     spawnAt: spawnAt,
+
+    // 持久化三层 + 闸 4(Task 9)
+    DRAFT_DB: DRAFT_DB, DRAFT_STORE: DRAFT_STORE, CRASH_STORE: CRASH_STORE,
+    UI_STATE_KEY: UI_STATE_KEY, MAX_LIB: MAX_LIB, DRAFT_DEBOUNCE_MS: DRAFT_DEBOUNCE_MS,
+    draftKey: draftKey, crashIsNewer: crashIsNewer, evictPlan: evictPlan,
+    uiStateDefaults: uiStateDefaults, readUiState: readUiState, writeUiState: writeUiState,
+    openDraftStore: openDraftStore, saveDraft: saveDraft, loadDraft: loadDraft,
+    installCrashFence: installCrashFence, checkCrashSlot: checkCrashSlot,
+    applyUiState: applyUiState, persistUi: persistUi, installUiStateSave: installUiStateSave,
+    // ★ 下面四个是"接线"那一半的可驱动面:handoff 3 要的是**真实调用点**(落笔 → 防抖
+    //   落盘;启动 → 询问恢复),而它们**只在浏览器里**跑得到 —— node 侧靠 export 出来的
+    //   这四个入口 + 一个假 IndexedDB 把同一条链真跑一遍(见 editor_smoke 相位 ⑮b)。
+    markDirty: markDirty, scheduleDraftSave: scheduleDraftSave, flushDraft: flushDraft,
+    markDraftSaved: markDraftSaved, offerDraft: offerDraft,
   };
 })();

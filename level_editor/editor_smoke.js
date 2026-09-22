@@ -1510,6 +1510,566 @@ function countNonZero(map, L) {
     process.exit(1);
   }
 
+  // ==== 相位 ⑮ 持久化的纯逻辑(★ 需要 DOM 的那半边由人眼验收)====
+  // ★ 编号:brief 写的是「相位 ⑭」,但 Task 8 已经占用了 ⑭(保存路径与面板工作流)——
+  //   同一份文件里两个 ⑭ 会让"第几个相位红了"这件事失去指代,故顺延为 ⑮。
+  eq(Editor.draftKey('demo.cyrm'), 'demo', '★ draftKey 由 sanitizeName 派生(不另铸一套 id)');
+  eq(Editor.draftKey('my-map.cyrm'), 'my-map', 'draftKey: 连字符保留');
+  eq(Editor.draftKey(''), 'structure', 'draftKey: 空名回落(与 Core.sanitizeName 同源)');
+  eq(Editor.MAX_LIB, 60, 'MAX_LIB = 60(规格 §4.3 闸 1)');
+  ok(Editor.DRAFT_DEBOUNCE_MS >= 500, '草稿落盘有防抖(不是每笔都写盘)');
+  eq(Editor.DRAFT_DB, 'cyrm-editor', 'DRAFT_DB 名字固定(换名 = 老草稿全丢)');
+  eq(Editor.UI_STATE_KEY, 'cyrm.ui.v1', 'UI_STATE_KEY 带版本号');
+
+  // 崩溃槽位比主槽位新 → 提示恢复
+  eq(Editor.crashIsNewer({ savedAt: 200 }, { savedAt: 100 }), true, '★ 崩溃快照比主草稿新 → 提示恢复');
+  eq(Editor.crashIsNewer({ savedAt: 100 }, { savedAt: 200 }), false, '主草稿更新 → 不提示');
+  eq(Editor.crashIsNewer({ savedAt: 100 }, null), true, '没有主草稿 → 有崩溃快照就提示');
+  eq(Editor.crashIsNewer(null, { savedAt: 1 }), false, '没有崩溃快照 → 不提示');
+  eq(Editor.crashIsNewer(null, null), false, '两个都没有 → 不提示');
+
+  // 库条目 60 上限:先丢"已保存且最老"的
+  (function () {
+    const recs = [];
+    for (let i = 0; i < 65; i++) recs.push({ key: 'k' + i, savedAt: 1000 + i, dirty: i % 2 === 0 });
+    const plan = Editor.evictPlan(recs, 60);
+    eq(plan.keep.length + plan.drop.length, 65, '★ 不丢条目:keep + drop = 全部');
+    eq(plan.keep.length, 60, '★ 上限 60:留下 60 条');
+    eq(plan.drop.length, 5, '★ 丢 5 条');
+    const dropped = recs.filter(function (r) { return plan.drop.indexOf(r.key) >= 0; });
+    ok(dropped.every(function (r) { return !r.dirty; }),
+       '★★ 先丢**已保存**的(脏的那份是用户还没写盘的劳动,不许丢)');
+    ok(plan.drop.length === 5, '★ 同条件时丢最老的(实得 ' + plan.drop.join(',') + ')');
+    const allDirty = recs.map(function (r) { return { key: r.key, savedAt: r.savedAt, dirty: true }; });
+    const plan2 = Editor.evictPlan(allDirty, 60);
+    eq(plan2.drop.length, 5, '全是脏的时也得丢够(否则上限失效)');
+    ok(plan2.drop.indexOf('k0') >= 0 && plan2.drop.indexOf('k1') >= 0, '全靠 savedAt 时丢最老的');
+    eq(Editor.evictPlan([], 60), { keep: [], drop: [] }, '空库 → 空计划(不抛)');
+  })();
+
+  // localStorage 的 UI 小状态:读到损坏值一律回落默认(★ 尤其"玩家参考图按格坐标存")
+  (function () {
+    const def = Editor.uiStateDefaults();
+    ok(def.playerRef && typeof def.playerRef.cx === 'number' && typeof def.playerRef.cy === 'number',
+       '★★ 玩家参考图位置按**格坐标**存(cx/cy),不是屏幕像素(A13)');
+    ok(def.layer >= 0 && def.layer < 4, '默认图层合法');
+    const store = {};
+    eq(Editor.readUiState(store), def, '空的 storage → 全集默认值');
+    store[Editor.UI_STATE_KEY] = '{ 这不是 JSON';
+    eq(Editor.readUiState(store), def, '★ 坏 JSON → 回落默认(不抛,编辑器还能开)');
+    store[Editor.UI_STATE_KEY] = JSON.stringify({ layer: 99, zoom: -1, tool: 'nope', brushSize: 1e9 });
+    const fixed = Editor.readUiState(store);
+    eq(fixed.layer, def.layer, '★ 越界图层 → 回落默认(而不是让渲染器拿到 99)');
+    ok(fixed.zoom > 0, '★ 负 zoom → 钳到合法值(clampZoom 不返回 0)');
+    ok(Editor.TOOLS.indexOf(fixed.tool) >= 0, '★ 表外的工具名 → 回落默认(否则状态栏显示 undefined)');
+    ok(fixed.brushSize <= 15, '★ 天大的画笔 → 钳到 15');
+    store[Editor.UI_STATE_KEY] = JSON.stringify({ panelOpen: { lib: false } });
+    const keep = Editor.readUiState(store);
+    eq(keep.panelOpen.lib, false, '★ 合法字段原样保留(只回落坏字段)');
+    eq(keep.playerRef, def.playerRef, '★ 缺的字段补默认(不是整份丢掉)');
+  })();
+
+  // ==== 相位 ⑮b ★★★ 接线:**行为**层面(草稿盘真的挂在"落笔"与"启动"两条路上)====
+  // ★★ 为什么必须另立一相(handoff 3 / 用户裁定 D2):计划里 `saveDraft` / `loadDraft`
+  //    **零调用点** —— 函数写对 + 导出表列上,照样是一个**不存在的草稿盘**:`DRAFT_DEBOUNCE_MS`
+  //    是死值,而人眼清单那条「等 2 秒 → F12 → IndexedDB → 应有记录」永远观察不到任何东西。
+  //    故这一相不测"函数返回什么"(那是 ⑮ 的事),而是**把生产那两条路真跑一遍**:
+  //      ① 落一笔(`spawnAt` → `pushAndShow` → `markDirty`)→ 防抖到点 → 假 IndexedDB 里出现记录;
+  //      ② 启动那一侧(`offerDraft` → `loadDraft`)→ 真把草稿那份恢复出来。
+  // ★ 替身口径与 ⑬/⑭ 同款,但有两处**必须**这样写:
+  //    · 假 IndexedDB 的回调走**真** setTimeout(异步)—— 真 IDB 就是异步的,同步替身会把
+  //      "写盘还没落完就去读"这类时序错**抹平**(那正是"先清后灌"那类 bug 的藏身处);
+  //    · 给 ui.js 的 `setTimeout` 换成**记账**的假表:能直接看到"防抖排了没有、延时多少、
+  //      第二笔有没有重排",而不用真等 1.5 秒(等真实时间会让这条断言变成"看运气")。
+  {
+    const realSetTimeout15 = globalThis.setTimeout;
+    const savedDoc15 = globalThis.document, savedConfirm15 = globalThis.confirm;
+    const savedSetTimeout15 = globalThis.setTimeout, savedClearTimeout15 = globalThis.clearTimeout;
+    const savedIndexedDb15 = globalThis.indexedDB, savedFetch15 = globalThis.fetch;
+    const savedR15 = Editor.app.r, savedMap15 = Editor.app.map, savedName15 = Editor.app.name;
+    const savedFmt15 = Editor.app.sourceFormat, savedDb15 = Editor.app.db;
+    const savedCv15 = Editor.app.canvas, savedUist15 = Editor.app.uist;
+    const savedSt15 = Editor.app.st, savedRaw15 = Editor.app.raw;
+    try {
+      // ── 假 IndexedDB(两张表:草稿盘、崩溃槽位)──
+      const tab15 = { draft: new Map(), crash: new Map() };
+      function fakeDb15() {
+        function txOf(store) {
+          const tx = { error: null, oncomplete: null, onerror: null, onabort: null };
+          const later = [];
+          tx.objectStore = function () {
+            return {
+              // ★ 写与删都**在事务提交那一刻**才落到表里(真 IndexedDB 就是这样:
+              //   `put()` 只是把操作排进事务)。替身若当场改表,"记录已存在"就不再等价于
+              //   "这次落盘走完了" —— 那正是本相位头几版把时序判错的地方。
+              put: function (rec) { later.push(function () { tab15[store].set(rec.key, rec); }); },
+              delete: function (k) { later.push(function () { tab15[store].delete(k); }); },
+              get: function (k) {
+                const rq = { result: null, onsuccess: null, onerror: null };
+                later.push(function () {
+                  rq.result = tab15[store].get(k) || null;
+                  if (rq.onsuccess) rq.onsuccess({ target: rq });
+                });
+                return rq;
+              },
+              getAll: function () {
+                const rq = { result: [], onsuccess: null, onerror: null };
+                later.push(function () {
+                  rq.result = Array.from(tab15[store].values());
+                  if (rq.onsuccess) rq.onsuccess({ target: rq });
+                });
+                return rq;
+              },
+            };
+          };
+          realSetTimeout15(function () {
+            later.forEach(function (f) { f(); });
+            if (tx.oncomplete) tx.oncomplete({ target: tx });
+          }, 0);
+          return tx;
+        }
+        return { objectStoreNames: { contains: function () { return true; } },
+                 createObjectStore: function () { return {}; }, transaction: txOf };
+      }
+      // ── 记账的假 setTimeout(只给 ui.js 用;替身自己用 realSetTimeout15)──
+      // ★ 三种状态要分清:**待跑**(排上了还没到点)、**被撤**(clearTimeout)、**已跑**
+      //   (防抖到点/我手动跑过)。混在一起就会把"上一次已经跑完的那个"也算成在飞 ——
+      //   本相位的头两版就是这么红的(测试自己的账目错,不是生产错)。
+      const timers15 = [], killed15 = [];
+      let timerSeq15 = 0;
+      globalThis.setTimeout = function (fn, ms) { timerSeq15++; timers15.push({ id: timerSeq15, fn: fn, ms: ms, ran: false }); return timerSeq15; };
+      globalThis.clearTimeout = function (id) { killed15.push(id); };
+      const pending15 = function () {
+        return timers15.filter(function (t) { return !t.ran && killed15.indexOf(t.id) < 0; });
+      };
+      const fire15 = function (t) { t.ran = true; return t.fn(); };
+      async function tick15() {                      // 走一次**真**的宏任务:把微任务链全放干净
+        await new Promise(function (res) { realSetTimeout15(res, 0); });
+      }
+      // ★ 有界地等一个**异步副作用**落地(上界 200 拍,超了按失败算 —— 不许悄悄放行)。
+      //   ★★ 只有一处需要它:`saveCurrent` **刻意不** await 草稿盘那一步(见那里的注释:
+      //      真文件那条路不该依赖草稿盘),所以"标干净"是在它交回之后才落地的。
+      //      其余几处都直接 await 生产交回的那条链(`fire15` / `flushDraft` / `saveCurrent`)。
+      async function until15(cond) {
+        for (let i = 0; i < 200; i++) { if (cond()) return true; await tick15(); }
+        return false;
+      }
+      // ── 只认几个 id 的 document + 会记账的 app.r ──
+      const calls15 = [];
+      const els15 = {};
+      function el15(id) {
+        if (els15[id]) return els15[id];
+        const on = {};
+        const el = { id: id, textContent: '', value: '', checked: false, hidden: false,
+                     style: {}, dataset: {}, children: [], className: '',
+                     // ★ parentNode 也要"够真":`syncPanelForLayer` 会顺着 parentNode 一路往上
+                     //   找 `.desc-row`(找不到就停在某个对象上写 `style.display`)—— 给个裸对象
+                     //   会在那里抛,而那是**替身**的缺口,不是生产的错。
+                     parentNode: { style: {}, insertBefore: function () {}, appendChild: function () {} },
+                     nextSibling: null,
+                     classList: { toggle: function (c, v) { on[c] = !!v; },
+                                  add: function () {}, remove: function () {},
+                                  contains: function (c) { return !!on[c]; } },
+                     addEventListener: function () {},
+                     appendChild: function (c) { el.children.push(c); return c; },
+                     insertBefore: function (c) { el.children.push(c); return c; },
+                     removeChild: function () {}, querySelector: function () { return null; } };
+        els15[id] = el;
+        return el;
+      }
+      let made15 = 0;
+      globalThis.document = {
+        // ★ 任何 id 都给一个假元素(不是只给 st-save / status-msg):⑨ 要真跑一遍
+        //   `bootLoad` → `buildPanels`(它摸十几个 id、还要 appendChild/insertBefore)。
+        getElementById: function (id) { return el15(id); },
+        querySelectorAll: function () { return []; },
+        querySelector: function () { return null; },
+        createElement: function (tag) {
+          if (tag === 'canvas') {
+            return { width: 0, height: 0, getContext: function () {
+              return { drawImage: function () {},
+                       getImageData: function (x, y, w, h) { return { data: new Uint8ClampedArray(w * h * 4) }; } };
+            } };
+          }
+          made15++;
+          return el15('made' + made15);
+        },
+      };
+      Editor.app.canvas = { width: 80, height: 80 };
+      Editor.app.r = {
+        view: function () { return { x: 0, y: 0, zoom: 1 }; },
+        layer: function () { return Core.LAYER_SCENE; },
+        selection: function () { return null; },
+        setMap: function () { calls15.push('setMap'); return Promise.resolve(); },
+        setLayer: function (L) { calls15.push('setLayer:' + L); },
+        setGrid: function (b) { calls15.push('setGrid:' + b); },
+        setSubGrid: function (b) { calls15.push('setSubGrid:' + b); },
+        setTorus: function (b) { calls15.push('setTorus:' + b); },
+        setDimOthers: function (b) { calls15.push('setDimOthers:' + b); },
+        setZoomAt: function () { calls15.push('setZoomAt'); return Promise.resolve(); },
+        editCells: function () { calls15.push('editCells'); },
+        render: function () { calls15.push('render'); },
+        invalidateAll: function () { calls15.push('invalidateAll'); return Promise.resolve(); },
+      };
+      Editor.app.map = null; Editor.app.db = null;
+
+      // ── ① 环境里**没有** indexedDB ⇒ 草稿盘是 null(而不是抛)──
+      delete globalThis.indexedDB;
+      eq((typeof indexedDB === 'undefined'), true, '⑮b 前提:这个进程里本来就没有 indexedDB');
+      eq(await Editor.openDraftStore(), null,
+         '★★ 没有 indexedDB 时 openDraftStore 交回 null(**不抛**)—— 编辑器少了草稿盘照样要能开');
+
+      // ── ② 装上假 indexedDB:草稿盘能开出来 ──
+      globalThis.indexedDB = { open: function () {
+        const req = { result: fakeDb15(), onupgradeneeded: null, onsuccess: null, onerror: null };
+        realSetTimeout15(function () {
+          if (req.onupgradeneeded) req.onupgradeneeded({ target: req });
+          if (req.onsuccess) req.onsuccess({ target: req });
+        }, 0);
+        return req;
+      } };
+      const db15 = await Editor.openDraftStore();
+      ok(!!db15, '★ openDraftStore 从真有一张 indexedDB 的环境里开出了库');
+      Editor.app.db = db15;
+
+      // ── ③ 接线之一:落一笔 → 防抖 → 草稿盘里出现记录 ──
+      const map15 = Editor.createEmptyMap('draft_probe', 4, 4);
+      Editor.app.map = map15;
+      Editor.app.name = 'draft_probe.cyrm';
+      Editor.app.sourceFormat = 'v4';
+      Editor.spawnAt('enemy', 0);                     // ← 生产里真实的一笔(与 ⑭c 同一个入口)
+      eq(Editor.app.map.enemies.length, 1, '⑮b 前提:那一笔真的落进了地图');
+      eq(pending15().length, 1, '★★★ 落一笔就排了一次草稿落盘(实得 ' + pending15().length + ' 次)');
+      // ★ 下面几处取字段前**先判有没有那个对象**:这一相是"接线断了"的守卫,而接线断了
+      //   时那些对象就是 undefined —— 直接取字段会**抛出去中断整条冒烟**(后面的断言一行
+      //   都不跑,看着像"探针挂了"),而这里要的是**一条条红**。
+      const t15 = pending15()[0];
+      eq(t15 && t15.ms, Editor.DRAFT_DEBOUNCE_MS,
+         '★★ 那个定时器的延时**就是** DRAFT_DEBOUNCE_MS(1500)—— 换个数就是另一个防抖口径');
+      eq(tab15.draft.size, 0, '★★ 防抖没到点之前**一个字节都没写**(草稿盘不是每笔都写)');
+      Editor.spawnAt('enemy', 0);                     // 1.5 秒内的第二笔
+      eq(pending15().length, 1, '★★ 第二笔是**重排**(clearTimeout + 再排一次),不是排队');
+      eq(killed15.length, 1, '★ 重排真的把上那个定时器清掉了(否则会写两份)');
+
+      // 到点:跑那个定时器(`fire15` 交回的就是生产那条链的 promise ⇒ 直接 await)
+      const t15b = pending15()[0];
+      ok(!!t15b, '⑮b 前提:到点的那个定时器还排着(没有它就没得跑,下面几条按接线断了算)');
+      if (t15b) await fire15(t15b);
+      const rec15 = tab15.draft.get('draft_probe');
+      ok(!!rec15,
+         '★★★ 防抖到点之后草稿盘里**真的**有一条记录(键 = 文件名去后缀)—— ' +
+         '"落笔 → 防抖 → 落盘"这条线是活的,而不是两个没人调的纯函数');
+      eq(rec15 && rec15.key, 'draft_probe', '★ 键 = sanitizeName(文件名去后缀)');
+      eq(rec15 && rec15.name, 'draft_probe.cyrm', '★ 记录里带着真文件名(重建时要用它写回同一张图)');
+      ok(!!(rec15 && rec15.bytes && rec15.bytes.length), '★ 存的是**编码后的字节**(不是内存里的对象)');
+      eq(rec15 && rec15.dirty, true, '★ 还没写盘 ⇒ dirty(启动时"要不要问"的判据就是它)');
+      eq(typeof (rec15 && rec15.savedAt), 'number', '★ 记了 savedAt(崩溃槽位与它比新旧)');
+      ok(el15('st-save').textContent.indexOf('已自动保存') === 0,
+         '★★ #st-save 由草稿盘接管(handoff 2:不然它与 Task 8 的「未保存/已保存」两个写入者互打;实得 "' +
+         el15('st-save').textContent + '")');
+      const back15 = rec15 ? await globalThis.Io.decodeMap(rec15.bytes) : null;
+      ok(!!back15, '★ 存进去的字节能**解回同一张图**(恢复那条路走的就是它)');
+      if (back15) {
+        eq(back15.enemies.length, Editor.app.map.enemies.length, '★ 解回来的张数与原图一致');
+      }
+
+      // ── ④ 离开页面前那一刀(flushDraft):不等防抖,但只在真脏时补 ──
+      const before15 = (tab15.draft.get('draft_probe') || {}).savedAt;
+      Editor.markDirty();                             // 又画了一笔 ⇒ 定时器在飞
+      eq(pending15().length, 1, '⑮b 前提:又排上一次防抖');
+      await Editor.flushDraft();                      // flushDraft 交回落盘那条链的 promise
+      const rec15b = tab15.draft.get('draft_probe');
+      eq(pending15().length, 0, '★★ flushDraft 把那个还在飞的防抖**撤了**(不留两个写入者)');
+      ok(!!rec15b && rec15b.savedAt >= before15, '★★ 离开前那一刀把草稿补到了最新(savedAt 前移)');
+      eq(rec15b && rec15b.dirty, true, '★ 补的这一份仍是脏的(屏幕上那份确实还没进真文件)');
+
+      // ── ⑤ Ctrl+S **成功** ⇒ 那条草稿标干净;而"保存前遗留的那个定时器"到点不许把它写脏 ──
+      globalThis.fetch = function (url) {
+        const u = String(url);
+        if (u.indexOf('/api/maps') === 0) {
+          return Promise.resolve({ ok: true, status: 200,
+                                   json: function () { return Promise.resolve({ maps: [] }); } });
+        }
+        return Promise.resolve({ ok: true, status: 200,
+                                 json: function () { return Promise.resolve({ name: 'draft_probe.cyrm', size: 12 }); } });
+      };
+      Editor.markDirty();                             // ← 这一笔的防抖定时器**留着不跑**(模拟"保存先到")
+      const stale15 = pending15()[0];
+      await Editor.saveCurrent(false);                // 真走 saveCurrent(写盘出口 + 标干净)
+      const recD15 = function () { return tab15.draft.get('draft_probe') || null; };
+      ok(await until15(function () { return !!recD15() && recD15().dirty === false; }),
+         '★★ 保存成功后草稿那条**标干净**(下次打开不该再问一次;等不到 = 标干净那条链断了)');
+      eq(el15('st-save').textContent, '已保存',
+         '★★ (交接点)存盘之后 #st-save 交回 Task 8 那对文案 —— 磁盘上那份就是屏幕上这份了,' +
+         '再显示「已自动保存 12:34」是**误导**(实得 "' + el15('st-save').textContent + '")');
+      if (stale15) await fire15(stale15);             // 保存**之前**排的那个定时器现在到点
+      eq(recD15() && recD15().dirty, false,
+         '★★★ 保存前遗留的那个防抖定时器到点后**不会**把干净的草稿重新写脏' +
+         '(否则下次打开弹一次**假**的恢复提示 —— 那是这层最容易出的错,而且不报错)');
+
+      // ── ⑤b ★★★ 与"保存"**赛跑**的那次落盘(不是先后,是同时)──
+      // ★ 上一条钉的是"保存完了定时器才到点"(顺序)。这一条钉的是**交错**:一次草稿落盘
+      //   已经开工(编码在飞),Ctrl+S 的收尾在这中间落地 —— 那次落盘落地时必须**放弃**
+      //   (它编码的那一版已经在真文件里了),否则草稿被重新写脏,下次打开弹**假**的恢复提示。
+      // ★ 构造法:`saveDraft` 编码期间会 await 一次,而 `markDraftSaved` 把"这一版已进真文件"
+      //   这件事**同步**记下(它的首行)—— 于是"保存先落地"这件事可以在同一个 tick 里造出来。
+      await Editor.markDraftSaved();                       // 先把草稿标干净(起跑状态)
+      await until15(function () { return recD15() && recD15().dirty === false; });
+      const racing15 = Editor.saveDraft(true);             // 这次落盘**不等它**(它在飞)
+      const savedMark15 = Editor.markDraftSaved();         // 保存的收尾插进来(同步推 rev)
+      await racing15;
+      await savedMark15;
+      eq(recD15() && recD15().dirty, false,
+         '★★★ 与"保存"赛跑的那次落盘落地之后,草稿**仍然是干净的**' +
+         '(编码完成后再看一眼 rev:这一版已经进真文件了 ⇒ 这次落盘必须放弃)');
+
+      // ── ⑥ 接线之二:启动时 offerDraft → loadDraft → 恢复(问一次,不静默覆盖)──
+      Editor.spawnAt('enemy', 0);                     // 再画一笔(草稿那份现在共 3 个敌人)
+      const dirtyMap15 = Editor.app.map;
+      eq(dirtyMap15.enemies.length, 3, '⑮b 前提:草稿那份现在是 3 个敌人');
+      await Editor.flushDraft();
+      eq(recD15() && recD15().dirty, true, '⑮b 前提:又变成"没写盘的活"');
+
+      // 模拟"关掉页面、重新打开这张图":屏幕上先是从**真文件**打开的那份(内容不同)
+      let asked15 = 0, answer15 = true;
+      globalThis.confirm = function () { asked15++; return answer15; };
+      Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);   // 文件里那份:空的
+      Editor.app.name = 'draft_probe.cyrm';
+      const restored15 = await Editor.offerDraft();
+      eq(asked15, 1, '★★ 有一份没写盘的草稿 ⇒ 启动时**问一次**(不静默)');
+      eq(restored15, true, '★★★ offerDraft 真的用 loadDraft 读回了草稿并恢复(handoff 3 的接线)');
+      eq(Editor.app.map.enemies.length, 3, '★★ 恢复的是**草稿那份**内容(而不是文件里那份空的)');
+      ok(calls15.indexOf('setMap') >= 0, '★ 恢复走 app.r.setMap(画面真的换了,不是只改了内存)');
+      ok(el15('status-msg').textContent.indexOf('已从草稿恢复') >= 0,
+         '★★ 恢复要**说一句**(用户得知道屏幕上是草稿、不是文件;实得 "' +
+         el15('status-msg').textContent + '")');
+
+      // 点"取消":屏幕上的图一个字都不动(问过但不覆盖)
+      Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
+      answer15 = false;
+      eq(await Editor.offerDraft(), false, '★ 用户点取消 ⇒ 不恢复');
+      eq(Editor.app.map.enemies.length, 0, '★★ 点取消时**屏幕上那份没被碰过**(不是"恢复了又撤销")');
+      eq(asked15, 2, '★ (对照)取消那次也是真问了');
+
+      // 干净的草稿(存过盘):连问都不问
+      if (recD15()) recD15().dirty = false;
+      Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
+      eq(await Editor.offerDraft(), false, '★ 存过盘的草稿不再问(否则每次都弹一次)');
+      eq(asked15, 2, '★★ 那一次**没有**弹确认框(asked 没涨)');
+
+      // 没有地图可打开时:不问、不抛
+      Editor.app.map = null;
+      globalThis.confirm = function () { asked15++; return true; };
+      eq(await Editor.offerDraft(), false, '★ 一张图都没打开时 offerDraft 直接交回 false');
+
+      // ★★ "假提示"那一类:草稿那份与**真文件里**那份逐字节相同 ⇒ 不该问。
+      //   现实里的成因是"Ctrl+S 成功、但标干净那一步没落地就刷新了页面"(或走了另存为)——
+      //   文件里明明已经是最新的,再弹一次"要不要恢复草稿"是**假**的,而用户按下去会把
+      //   同一份图再解一遍(更糟的是它看着像"有东西没保存")。
+      Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
+      if (recD15()) recD15().dirty = true;
+      Editor.app.raw = recD15() ? recD15().bytes : null;       // 文件里那份 = 草稿那份(逐字节)
+      asked15 = 0;
+      eq(await Editor.offerDraft(), false, '★★★ 草稿与刚打开的文件**逐字节相同** ⇒ 不恢复');
+      eq(asked15, 0, '★★ 那一次连确认框都没弹(假提示那一类的正面守卫)');
+      Editor.app.raw = new Uint8Array([1, 2, 3]);              // 文件里那份**不同** ⇒ 照问
+      globalThis.confirm = function () { asked15++; return false; };
+      eq(await Editor.offerDraft(), false, '★ (对照)字节不同时仍然问(用户这次点了取消)');
+      eq(asked15, 1, '★ (对照)这一次真弹了确认框');
+
+      // ── ⑦ 第 3 层:applyUiState 把 UI 小状态真的按回界面(含"缩放只在 setMap 之后")──
+      Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
+      calls15.length = 0;
+      Editor.app.uist = { layer: Core.LAYER_BG, zoom: 0, tool: 'line', brushSize: 3,
+                          grid: false, subGrid: true, torus: false, dimOthers: false,
+                          panelOpen: { lib: true, right: true },
+                          playerRef: { cx: 7, cy: 9, visible: true }, selectedTexture: 5 };
+      Editor.applyUiState();
+      eq(Editor.app.st.tool, 'line', '★★ applyUiState 把图层/工具按回界面(tool=line)');
+      eq(Editor.app.st.brushSize, 3, '★ 画笔大小也按回去了');
+      ok(calls15.indexOf('setLayer:3') >= 0, '★ setLayer 收到的是存下来的那一层(3=背景)');
+      ok(calls15.indexOf('setGrid:false') >= 0 && calls15.indexOf('setTorus:false') >= 0,
+         '★ 两个开关也按回去了(setGrid/setTorus 收到 false)');
+      eq(el15('tg-grid').classList.contains('on'), false,
+         '★★ DOM 与状态**一致**(开关显示关着 —— 否则"页面显示的"与"实际用的"是两回事)');
+      eq(calls15.indexOf('setZoomAt'), -1,
+         '★ 存下来的 zoom=0 是"没存过缩放"的哨兵 ⇒ **不碰** setMap 自己 fit 出来的缩放');
+      Editor.app.uist.zoom = 2.5;
+      calls15.length = 0;
+      Editor.applyUiState();
+      ok(calls15.indexOf('setZoomAt') >= 0, '★ 真存过缩放时要恢复它(setZoomAt 被调了)');
+      eq(Editor.app.st.desc === Core.packDesc(5, Core.hueOf(Editor.app.st.desc),
+                                              Core.brightOf(Editor.app.st.desc),
+                                              Core.satOf(Editor.app.st.desc),
+                                              Core.alphaOf(Editor.app.st.desc)), true,
+         '★ 选中的纹理也按回去了(只换纹理位,四个辅码档位不动)');
+
+      // ── ⑧ 源码级:那两个函数**确实**被生产代码调用(导出表列着 ≠ 有人调)──
+      const uiSrc15 = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+      ok(/function markDirty[\s\S]{0,200}scheduleDraftSave\(\)/.test(uiSrc15),
+         '★★ 生产里的落笔那一处(markDirty)排了草稿落盘');
+      ok((uiSrc15.match(/markDirty\(\);/g) || []).length >= 5,
+         '★★ 五个改动点(落一笔/撤销重做/新建/复制/改名)全走 markDirty —— 散开写会**静默**丢掉草稿那一半');
+      ok(/function pushAndShow[\s\S]{0,400}markDirty\(\)/.test(uiSrc15),
+         '★★ "落一笔"那条路(pushAndShow)走的是 markDirty');
+      ok(/function offerDraft[\s\S]{0,900}loadDraft\(/.test(uiSrc15),
+         '★★ offerDraft 走 loadDraft(不是另写一条读法)');
+      ok(/function bootLoad[\s\S]{0,1200}offerDraft\(\)/.test(uiSrc15),
+         '★★★ 启动那条链(bootLoad)里**调了** offerDraft —— 这是 D2 那个缺陷的正面守卫');
+      ok(/function bootLoad[\s\S]{0,900}checkCrashSlot\(\)/.test(uiSrc15),
+         '★★ 闸 4 的检查也在启动链里');
+      // ★★ 判据按**事件名**数,不按助手函数的拼法:写成 `onWin('error', …)` 还是
+      //    `window.addEventListener('error', …)`,对"同一事件挂了几个写入者"是同一件事。
+      //    (前一版数的是 `onWin('error'` —— 于是在别处**原生拼法**再挂一对时它照样全绿,
+      //     变异验证当场咬到。)
+      eq((uiSrc15.match(/(?:addEventListener|onWin)\(\s*['"](?:error|unhandledrejection)['"]/g) || []).length, 2,
+         '★★ ui.js 里"页面异常 / 未处理的拒绝"的监听**一共就两处**(= 闸 4 的那一对):多一处就是' +
+         '同一次异常有第二个写入者(状态栏写两遍,而快照只挂在其中一个上)');
+      ok(/function installCrashFence[\s\S]{0,900}onWin\('error'/.test(uiSrc15),
+         '★ 那一对就在 installCrashFence 里(不是散在别处的第二份实现)');
+      // ★★ 顺序本身是契约(计划 Step 3 的那段 boot 链把两个恢复都排在打开**之前**):反了的话
+      //    用户点了"确定"、屏幕上却是刚从文件打开的那张 —— 而且**一个字都不报**。
+      //    取 bootLoad 的函数体,量三处调用的**先后**(⑨ 从行为上验的是同一条)。
+      const bl15 = uiSrc15.slice(uiSrc15.indexOf('function bootLoad()'));
+      const blCut15 = bl15.indexOf('\n  function ', 10);
+      const blBody15 = blCut15 > 0 ? bl15.slice(0, blCut15) : bl15;
+      ok(blBody15.indexOf('openFromUrl()') > 0 &&
+         blBody15.indexOf('openFromUrl()') < blBody15.indexOf('checkCrashSlot()') &&
+         blBody15.indexOf('openFromUrl()') < blBody15.indexOf('offerDraft()'),
+         '★★★ 启动链里两个恢复都排在 openFromUrl() **之后**(反了 = 恢复被文件里那份盖掉,且不报错)');
+      ok(blBody15.indexOf('buildPanels()') < blBody15.indexOf('openFromUrl()'),
+         '★ 面板仍建在打开**之前**(Task 8 修复轮 1:打开失败也必须有面板)');
+
+      // ── ⑨ ★★★ 真跑一遍 `bootLoad()`:启动那条链**行为上**确实去问了一次草稿 ──
+      // ★★ 为什么源码级那条(上面 `bootLoad … offerDraft()`)不够:它只证明"函数名出现在
+      //    函数体附近",一个把它删掉、却在紧邻的注释里写回这个名字的实现**照样全绿**
+      //    (本相位就是这么被咬过一次的 —— 变异验证时上一版 0 红)。故这一步真的把
+      //    `bootLoad()` 跑完:真文件里是**空**的那张图,草稿盘里是**3 个敌人**的那一份,
+      //    `confirm` 答"要" —— 跑完之后 `app.map` 必须是**草稿那份**,而且状态栏说了话。
+      const savedImage15 = globalThis.Image, savedLoc15 = globalThis.location;
+      globalThis.Image = function () {
+        const img = this;
+        img.width = 512; img.height = 640; img.onload = null; img.onerror = null;
+        Object.defineProperty(img, 'src', {
+          get: function () { return 'structure.png'; },
+          set: function () { if (img.onload) img.onload(); },
+        });
+      };
+      globalThis.location = { search: '?p=boot_probe.cyrm' };
+
+      const draftMap15 = Editor.createEmptyMap('boot_probe', 4, 4);
+      draftMap15.enemies.push({ x: 1, y: 1, type: 'fly_bird' },
+                              { x: 2, y: 2, type: 'fly_bird' },
+                              { x: 3, y: 3, type: 'fly_bird' });
+      const fileMap15 = Editor.createEmptyMap('boot_probe', 4, 4);      // 真文件里那份:空的
+      tab15.draft.set('boot_probe', {
+        key: 'boot_probe', name: 'boot_probe.cyrm', name2: 'boot_probe',
+        bytes: await globalThis.Io.encodeMap(draftMap15, { compress: true }),
+        sourceFormat: 'v4', savedAt: Date.now(), dirty: true,
+      });
+      const fileBytes15 = await globalThis.Io.encodeMap(fileMap15, { compress: true });
+      globalThis.fetch = function (url) {
+        const u = String(url);
+        if (u.indexOf('/api/maps') === 0) {
+          return Promise.resolve({ ok: true, status: 200,
+                                   json: function () { return Promise.resolve({ maps: [] }); } });
+        }
+        return Promise.resolve({ ok: true, status: 200,
+                                 arrayBuffer: function () { return Promise.resolve(
+                                   fileBytes15.buffer.slice(fileBytes15.byteOffset,
+                                                            fileBytes15.byteOffset + fileBytes15.byteLength)); } });
+      };
+      asked15 = 0; answer15 = true;
+      globalThis.confirm = function () { asked15++; return answer15; };
+      Editor.app.tileDefs = globalThis.TILE_DEFS;
+      Editor.app.map = null; Editor.app.name = null; Editor.app.raw = null;
+      await Editor.bootLoad();
+      eq(asked15, 1,
+         '★★★ `bootLoad()` 真的问了一次"要不要恢复草稿"(实得问 ' + asked15 + ' 次)—— ' +
+         'D2 那个缺陷的**行为**守卫:零调用点的实现这里必然问 0 次');
+      ok(el15('status-msg').textContent.indexOf('启动失败') < 0,
+         '⑮b 前提:启动链没有半路失败(实得 "' + el15('status-msg').textContent + '")');
+      eq(Editor.app.map && Editor.app.map.enemies.length, 3,
+         '★★★ 启动完之后画布上是**草稿那份**(3 个敌人),不是真文件里那份(空的)' +
+         ' —— 恢复必须排在 openFromUrl() **之后**才压得住');
+      ok(el15('status-msg').textContent.indexOf('已从草稿恢复') >= 0,
+         '★★ 状态栏说了这件事(实得 "' + el15('status-msg').textContent + '")');
+      globalThis.Image = savedImage15; globalThis.location = savedLoc15;
+
+      // ── ⑩ 闸 4 的**写**侧:页面异常 ⇒ 当场把当前图写进崩溃槽位 ──
+      // ★ 这条是这一层存在的全部理由("最坏只丢最后一笔"),而它只在**页面真的抛**的时候跑 ——
+      //   node 里没有真 window.onerror,所以这里按 ⑬ 的老办法:给 `addEventListener` 一个
+      //   记账替身,把生产挂上去的处理函数**拿出来直接调**(而不是"源码里出现过就过")。
+      const hooked15 = {};
+      const savedAdd15 = globalThis.addEventListener;
+      globalThis.addEventListener = function (evt, fn) { hooked15[evt] = fn; };
+      try {
+        Editor.app.map = Editor.createEmptyMap('crash_probe', 4, 4);
+        Editor.app.name = 'crash_probe.cyrm';
+        Editor.installCrashFence();
+        ok(typeof hooked15.error === 'function' && typeof hooked15.unhandledrejection === 'function',
+           '★★ 闸 4 挂了**页面异常**与**未处理的拒绝**两条(两条缺一,那半边就静默没有快照)');
+        tab15.crash.clear();
+        el15('status-msg').textContent = '';
+        hooked15.error({ message: '手工制造一次崩溃' });
+        await until15(function () { return tab15.crash.has('crash'); });
+        const crash15 = tab15.crash.get('crash');
+        ok(!!crash15,
+           '★★★ 页面异常当场把**当前这张图**写进了崩溃槽位(键 crash;等不到 = 崩溃围栏是空的)');
+        eq(crash15 && crash15.key, 'crash', '★ 崩溃槽位的键固定是 crash');
+        eq(crash15 && crash15.name, 'crash_probe.cyrm', '★ 记着真文件名(恢复时要写回同一张图)');
+        ok(!!(crash15 && crash15.bytes && crash15.bytes.length), '★ 存的是编码后的字节');
+        ok(!!crash15 && String(crash15.why).indexOf('手工制造一次崩溃') >= 0,
+           '★ 记下了异常文本(事后能知道崩在哪;实得 ' + JSON.stringify(crash15 && crash15.why) + ')');
+        ok(el15('status-msg').textContent.indexOf('页面异常') >= 0,
+           '★★ 异常在状态栏**说出来**了(不是静默;实得 "' + el15('status-msg').textContent + '")');
+        tab15.crash.clear();
+        hooked15.unhandledrejection({ reason: new Error('拒绝也要兜住') });
+        await until15(function () { return tab15.crash.has('crash'); });
+        eq(tab15.crash.get('crash') && tab15.crash.get('crash').why, 'unhandledrejection',
+           '★ 未处理的拒绝同样落一份(两条路都兜)');
+      } finally {
+        globalThis.addEventListener = savedAdd15;
+      }
+
+      // ── ⑪ 闸 4 的**读**侧:下次打开时"崩溃槽位比主槽位新" ⇒ 问一次并恢复 ──
+      const crashedMap15 = Editor.createEmptyMap('crash_probe', 4, 4);
+      crashedMap15.enemies.push({ x: 1, y: 1, type: 'fly_bird' },
+                               { x: 2, y: 2, type: 'fly_bird' });
+      tab15.crash.set('crash', { key: 'crash', name: 'crash_probe.cyrm', name2: 'crash_probe',
+                                 bytes: await globalThis.Io.encodeMap(crashedMap15, { compress: true }),
+                                 savedAt: Date.now() + 10000, why: '测试造的崩溃' });
+      Editor.app.map = Editor.createEmptyMap('crash_probe', 4, 4);
+      Editor.app.name = 'crash_probe.cyrm';
+      asked15 = 0; answer15 = true;
+      globalThis.confirm = function () { asked15++; return answer15; };
+      eq(await Editor.checkCrashSlot(), true,
+         '★★★ 崩溃槽位比主草稿新 ⇒ checkCrashSlot 交回 true 并恢复(闸 4 的另一半)');
+      eq(asked15, 1, '★★ 恢复前**问了**一次(不静默把画布换掉)');
+      eq(Editor.app.map.enemies.length, 2, '★★ 恢复的是崩溃前那张(2 个敌人),不是屏幕上那份');
+      ok(el15('status-msg').textContent.indexOf('已从崩溃前快照恢复') >= 0,
+         '★★ 恢复要**说一句**(实得 "' + el15('status-msg').textContent + '")');
+      // 反向:崩溃槽位比主草稿**旧** ⇒ 不提示(否则每次打开都弹一次无关的框)
+      tab15.crash.get('crash').savedAt = 1;
+      Editor.app.map = Editor.createEmptyMap('crash_probe', 4, 4);
+      el15('status-msg').textContent = '';
+      asked15 = 0;
+      eq(await Editor.checkCrashSlot(), false, '★ 崩溃槽位比主草稿旧 ⇒ 不提示');
+      eq(asked15, 0, '★★ 那一次连确认框都没弹(不是"问了但没恢复")');
+      tab15.crash.clear();
+    } finally {
+      globalThis.document = savedDoc15; globalThis.confirm = savedConfirm15;
+      globalThis.setTimeout = savedSetTimeout15; globalThis.clearTimeout = savedClearTimeout15;
+      globalThis.fetch = savedFetch15;
+      if (savedIndexedDb15 === undefined) delete globalThis.indexedDB;
+      else globalThis.indexedDB = savedIndexedDb15;
+      Editor.app.r = savedR15; Editor.app.map = savedMap15; Editor.app.name = savedName15;
+      Editor.app.sourceFormat = savedFmt15; Editor.app.db = savedDb15;
+      Editor.app.canvas = savedCv15; Editor.app.uist = savedUist15;
+      Editor.app.st = savedSt15; Editor.app.raw = savedRaw15;
+    }
+  }
+
   console.log('');
   console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
   if (fail === 0) console.log('EDITOR SMOKE OK');
