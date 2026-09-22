@@ -292,11 +292,21 @@ var _rejoin_sent_ms := 0
 
 
 # 房间列表里某一行被按下时,**先问这一句**(三页的 `_on_room_list` 都调它)。
-# 返回 true = 这一行是我的房且凭据还在 ⇒ 已走回局;false = 交给调用方走普通加入。
+# 返回 true = 这一行是我的房、凭据还在、**而且是"对局中"** ⇒ 已走回局;false = 交给调用方走普通加入。
 # ★★ 它同时是**行可点性**的判据(页面渲染那一行时也要问同一句)—— 两处共用一个函数,
 #    免得"看着可点、点了没用"或反过来。
-func try_rejoin_row(code: String) -> bool:
+# ★★ 两个条件缺一不可,**且次序不变**(先问"是不是我的房 + 凭据还在",再轮到"对局中"):
+#    · `can_rejoin_to(code)`(房号 + 凭据):写反成"先看 in_match" ⇒ 自己那间房**连点都点不到**;
+#    · `in_match`(**2026-09-22 加**,I2):只看前一条的话,手里有凭据时**自己那间还没开局的
+#      等待中的房**也会走回局分支 —— 而那种房在大厅侧**没有凭据表条目**(凭据是开局前才发的),
+#      于是必收 `rejoin_denied`("凭据失效"),而**普通加入那一半根本不会发生**
+#      (本函数已经 return true,调用方不再 `_join_code`)。玩家看到的是"点了自己的房,
+#      冒出一句与眼前这间房无关的拒绝"。★ 等待中的房本来就该走普通加入(与别人点它一样)。
+func try_rejoin_row(code: String, in_match: bool) -> bool:
 	if not PvpSession.can_rejoin_to(code):
+		return false
+	# 第二问:**这一行是不是"对局中"**(I2,2026-09-22 加)
+	if not in_match:
 		return false
 	PvpSession.rejoin = true
 	_request_rejoin()

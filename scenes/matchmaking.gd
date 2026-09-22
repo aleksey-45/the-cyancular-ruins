@@ -15,6 +15,8 @@ const OPT_LABEL_W := 440.0
 var _code_edit: LineEdit
 var _auto_refreshed := false   # 「点了看起来未满却已满」后只自动刷新一次,手动刷新再放开
 var _join_sent_ms := 0     # 刚发出 join_room 的时间戳:服务端无任何应答(幽灵房间)时兜底回大厅刷新
+# 刚请求加入的房号,**等服务端答"成功"了才写进 `PvpSession`**(见 `_on_room_joined`;I1)
+var _join_code_pending := ""
 
 
 func _ready() -> void:
@@ -148,10 +150,17 @@ func _join_code(code: String) -> void:
 		_status.text = "请填房间号"
 		return
 	_with_lobby(func() -> void:
-		# ★ 记下自己这间房的房号:列表里那一行"是不是我的房"全靠它比(`can_rejoin_to`)。
-		#   排在发 RPC **之前** —— 应答可能先于本行的返回值到(同一帧里 _on_room_list 就会
-		#   渲染那一行),晚一步记就会漏判一次。
-		PvpSession.room_code = code
+		# ★★ 房号**只暂存**,等服务端答"加进去了"才写进 `PvpSession`(`_on_room_joined`)——
+		#   这就是 I1:原先在**发 RPC 之前**写,于是任何一次**失败**的加入(房间已满 /
+		#   对局已进行中 / 敲错房号)都会把 `room_code` 留成**别人的**那间房,此后
+		#   `can_rejoin_to(我自己的房)` 恒 false ⇒ **自己那间房那一行永远是灰的**,
+		#   且没有任何操作能把它恢复(要等下一次成功加入)。
+		#   ★ 原注释的理由("应答可能先于本行的返回值到,晚一步记就会漏判一次")**不成立**:
+		#     应答到达那一刻 `PvpSession.token` 还是**空串**(它由大厅在开局前才发),
+		#     而 `can_rejoin_to()` 要求 token 非空 ⇒ 那一行那一刻本来就不可能是"我的房"。
+		#   ★ `royale_lobby` / `team_lobby` 一直是这个写法(写在成功信号 `_on_room_state` 里)
+		#     —— 同一概念别留两种实现。三页统一记房号的口子是 `PvpSession.note_room()`。
+		_join_code_pending = code
 		_status.text = "加入房间 %s,等待配对…" % code
 		_join_sent_ms = Time.get_ticks_msec()
 		NetBus.rpc_id(1, "join_room", code))
@@ -212,8 +221,10 @@ func _on_room_list(rooms: Array) -> void:
 			btn.focus_mode = Control.FOCUS_ALL
 			btn.pressed.connect(func() -> void:
 				Sfx.play("ui")
-				# 我的房 ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
-				if not try_rejoin_row(code):
+				# 我的房**且对局中** ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
+				# ★ `in_match` 必须传进去(I2):自己那间**还没开局**的房要走普通加入,
+				#   拿它去回局只会收到一句"凭据失效"(见 `try_rejoin_row` 的注释)。
+				if not try_rejoin_row(code, in_match):
 					_join_code(code))
 		_list_box.add_child(btn)
 	_status.text = "共 %d 个房间(未满优先;对局中的照列:自己的房可点(回局),别人的点不动)" % order.size()
@@ -228,6 +239,7 @@ func _on_server_message(t: String) -> void:
 		# 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,
 		# 栈内立刻 NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误
 		_join_sent_ms = 0   # 服务端已明确应答,停掉 join 兜底
+		_join_code_pending = ""   # 加入被拒 ⇒ 那间房与我无关,别留给下一次的成功信号(I1)
 		if not _auto_refreshed:
 			_auto_refreshed = true
 			_request_list.call_deferred("%s → 已自动刷新列表" % t)
@@ -242,13 +254,17 @@ func _on_server_message(t: String) -> void:
 
 
 func _on_room_created(code: String) -> void:
-	# ★ 同 `_join_code`:建房那条路也要记 —— 否则房主从列表里点**自己**那间房时,
+	# ★ 同 `_on_room_joined`:建房那条路也要记 —— 否则房主从列表里点**自己**那间房时,
 	#   `can_rejoin_to(code)` 因房号不符而假,那一行被当"别人的房"禁用(回局入口对房主失效)。
-	PvpSession.room_code = code
+	PvpSession.note_room(code)
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 
 
+# 服务端答"加进去了" —— **本页唯一**记加入房号的地方(见 `_join_code` 的 I1 那段)。
 func _on_room_joined(role: int) -> void:
+	if not _join_code_pending.is_empty():
+		PvpSession.note_room(_join_code_pending)
+		_join_code_pending = ""
 	# 注意:此处不清 _join_sent_ms——入房后到 go_match 之间若房主掉线、大厅关房,
 	# 客户端会收不到 go_match 也没有任何后续;保留该兜底计时(超时自动刷新回大厅)。
 	_status.text = "已加入,等待开战……"

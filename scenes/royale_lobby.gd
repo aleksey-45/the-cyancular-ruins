@@ -280,8 +280,9 @@ func _on_royale_rooms(rooms: Array) -> void:
 			btn.focus_mode = Control.FOCUS_ALL
 			btn.pressed.connect(func() -> void:
 				Sfx.play("ui")
-				# 我的房 ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
-				if not try_rejoin_row(code):
+				# 我的房**且对局中** ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
+				# ★ `in_match` 必须传进去(I2):自己那间**还没开局**的等待室要走普通加入。
+				if not try_rejoin_row(code, in_match):
 					_join_room(code, ""))
 		_list_box.add_child(btn)
 	_status.text = "共 %d 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)" % rooms.size()
@@ -291,12 +292,14 @@ func _on_room_state(state: Dictionary) -> void:
 	_in_room = true
 	_royale_ack = true
 	_my_room = state
-	# ★ 记下自己这间房的房号(与 1v1 页 `_on_room_created`/`_join_code` 同款):列表里那一行
+	# ★ 记下自己这间房的房号(与 1v1 页 `_on_room_created`/`_on_room_joined` 同款):列表里那一行
 	#   "是不是我的房"全靠它比(`can_rejoin_to`)。本页建房 / 点列表加入 / 填邀请码三条路
 	#   **都只经这一个 handler**,故这一行就是本页唯一的记账点 —— 漏了它,回局入口对本页
 	#   整个失效(房号恒空 ⇒ 自己那间房被当"别人的房"禁用),而**一行报错都没有**。
+	# ★ 走 `note_room()` 而不是直接赋值:它顺手把**上一间房**的凭据作废(换了房号时)——
+	#   等待室每收到一次房间状态都会走一遍本函数,同号时它是 no-op(见 `note_room` 的注释)。
 	var code := str(state.get("code", ""))
-	PvpSession.room_code = code
+	PvpSession.note_room(code)
 	var my_role := _my_role_in(state)
 	_host = int(state.get("host_role", 0)) == my_role
 	if _create_panel != null:

@@ -4,10 +4,27 @@ extends SceneTree
 #   ① 三条新 RPC + 3v3 的八条 `team_*` 必须住在 NetBusExt,**且 NetBus 里一个都不许有**
 #      (放错节点 = 静默 no-op;3v3 那八条见文件末「3v3 团队协议」一节)
 #   ② 三者的 **@rpc 注解**必须逐字正确(注解错了 = RPC 静默不通,与放错节点同款静默)
-#   ③ PvpSession 的两个新字段在位(重连要靠它们)
-#   ④ `reset()` 必须把这两个字段一起清掉(否则换模式带着上一局的 token)
+#   ③ PvpSession 的凭据字段在位(重连/回局都要靠它们)
+#   ④ ★★ **回局凭据的生死线**(2026-09-22 按 C1 整条重写,**原第 ④ 条是反的**):
+#      凭据必须**活过"回主菜单 → 再进大厅页"**(那正是路径乙的意义),只在
+#        · 换模式(`enter_mode` 里 `mode` 变了)
+#        · 大厅答"回不去了" / 回局超时(`clear_rejoin` 的另外两个调用点)
+#        · 玩家进了**另一间**房(`note_room`)
+#      时作废。§「凭据的生死线」那一节逐条钉住,连"主菜单那三个按钮走 `enter_mode`"一起。
+#   ⑤ `try_rejoin_row` 的两个条件(是我的房 + 凭据还在 + **这一行是对局中**)
+#   ⑥ **四条新判活守卫**的常驻源码断言(§6;I3:`tests/rpc_liveness_probe` 的扫描面
+#      **不含 `scenes/`**,K 键那两条与 `send_ping` 此前零守卫)
 # 跑法: timeout 60 "$GODOT" --headless --path . -s res://tests/reconnect_smoke.gd
 # 通过 = `RECONNECT SMOKE OK` 退出 0。
+#
+# ★★ **原来的第 ④ 条是反的,而且它把 C1 钉在了原地**:它断言 `reset()` **必须**清
+#   `room_code` / `rejoin`,理由写的是"下一局会拿着上一局的房号去问这行是不是我的房"。
+#   而 `reset()` 正是主菜单那三个联机按钮调的那个函数 ⇒ 玩家从对局回主菜单、再按同一个模式
+#   进来时,凭据**正好在那一拍**被抹掉 ⇒ 回局入口在生产里**永远不可达**
+#   (自己那间"对局中"的房恒为灰)。整支终审 2026-09-22 定性为 Critical。
+#   ⇒ 本文件现在是**反向**断言:`reset()` **不许**碰凭据(见 `_check_rejoin_lifecycle`)。
+#   ★ 教训(别再犯):一条"某函数必须清某字段"的断言,要连**那个函数被谁调**一起看 ——
+#     这条守卫的错不在断言本身,而在它把一个"进页复位"函数当成了"下车清理"函数。
 #
 # ═══ 为什么是源码级 ═══
 # ★ RPC 放错节点**不会报错**:原 NetBus 与原版服务端逐字节一致是硬纪律,而 NetBusExt 对
@@ -19,6 +36,12 @@ const NETBUS := "res://core/net/net_bus.gd"
 const NETBUS_EXT := "res://core/net/net_bus_ext.gd"
 const SESSION := "res://core/net/pvp_session.gd"
 const LOBBY_PAGE := "res://scenes/lobby_page.gd"
+const MAIN_MENU := "res://scenes/main_menu.gd"
+const PAGE_1V1 := "res://scenes/matchmaking.gd"
+const PAGE_ROYALE := "res://scenes/royale_lobby.gd"
+const PAGE_TEAM := "res://scenes/team_lobby.gd"
+const GAME_ROYALE := "res://scenes/royale_game.gd"
+const GAME_TEAM := "res://scenes/team_game.gd"
 
 # 本次新增的三条:必须在 Ext,不得在 NetBus
 const N_EXT_RPCS := ["session_token", "report_token", "reclaim_role"]
@@ -148,24 +171,10 @@ func _initialize() -> void:
 	for f in ["token", "worker_port", "room_code", "rejoin"]:
 		_check(ses.contains("static var %s" % f), "PvpSession 缺 `static var %s`" % f)
 
-	# ★ 光有字段还不够:`reset()` 必须把这两个一起清掉,否则**换模式时带着上一局的 token**
-	#   (静默陈旧态,本仓最在意的那类 bug)。同款先例 = kh_l1_probe:80-84 钉的
-	#   "reset() 未清 map_path";照它的形状写。
-	var reset_body := _func_body(ses, "reset")
-	_check(not reset_body.is_empty(), "PvpSession 里找不到 func reset()")
-	_check(reset_body.contains("token = \"\""),
-			"★ PvpSession.reset() 未清 token(换模式会带着上一局的 token 去连)")
-	_check(reset_body.contains("worker_port = 0"),
-			"★ PvpSession.reset() 未清 worker_port(重连会拿着上一局的端口直连)")
-	_check(reset_body.contains("room_code = \"\""),
-			"★ PvpSession.reset() 未清 room_code —— 下一局会拿着上一局的房号去问「这行是不是我的房」")
-	_check(reset_body.contains("rejoin = false"),
-			"★ PvpSession.reset() 未清 rejoin(下一局会拿 claim_role 去当回局、被 worker 当串线踢掉)")
 	_check(ses.contains("static func can_rejoin()") and ses.contains("static func can_rejoin_to(")
 			and ses.contains("static func clear_rejoin()"),
 			"PvpSession 缺 can_rejoin() / can_rejoin_to() / clear_rejoin()(行的可点性与回局失败路径都要用)")
-	_check(not ses.contains("static var mode"),
-			"★ PvpSession 不该再有 mode —— 它唯一的读者(主菜单那颗按钮的路由)已随用户裁定取消")
+	_check_rejoin_lifecycle(ses)
 
 	# ── 3v3 团队协议的八条 `team_*`(B 册 Task 2)──
 	# ★ **双向**:只断言"在 NetBusExt 里有"会让"两边各抄一份"照样绿,而那正是静默 no-op 的成因
@@ -216,10 +225,12 @@ func _initialize() -> void:
 	_check(_func_body(_code(_read(LOBBY_PAGE)), "_finish_lobby_ready").contains(
 			"NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)"),
 			"★ LobbyPage._finish_lobby_ready() 未接 `local_rejoin_denied` —— 大厅答「回不去」时凭据永不清、那一行永远可点")
-	for p in ["res://scenes/matchmaking.gd", "res://scenes/royale_lobby.gd",
-			"res://scenes/team_lobby.gd"]:
+	for p in [PAGE_1V1, PAGE_ROYALE, PAGE_TEAM]:
 		_check(_func_body(_code(_read(p)), "_process").contains("_tick_rejoin_timeout()"),
 				"★ %s 的 _process 未接回局超时梯 —— 大厅 15s 没应答时玩家卡在「正在回到对局…」上" % p)
+
+	_check_rejoin_ui_wiring()
+	_check_liveness_guards()
 
 	if _fail == 0:
 		print("RECONNECT SMOKE OK")
@@ -227,3 +238,101 @@ func _initialize() -> void:
 	else:
 		print("RECONNECT SMOKE FAILED: %d" % _fail)
 		quit(1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# §④ 回局凭据的**生死线**(2026-09-22,按 C1 重写)
+# ══════════════════════════════════════════════════════════════════════════════
+# ★★ 本节的立场与原第 ④ 条**相反**:原断言要求 `reset()` 清凭据,而 `reset()` 正是主菜单那三个
+#    联机按钮调的那个函数 ⇒ 玩家从对局回主菜单、再按同一个模式进来时凭据正好在那一拍被抹掉
+#    ⇒ 回局入口在生产里**不可达**(C1)。现在钉的是:
+#      · `reset()` **不许**碰凭据(进页复位 ≠ 下车清理);
+#      · 凭据只在**换模式**(`enter_mode` 的 `mode` 判别)、大厅拒绝/超时(`clear_rejoin`
+#        另外两个调用点)、以及**换了一间房**(`note_room`)时作废。
+# ★ 全部按**函数体**判(全文件 `contains` 会被别处同名调用喂绿 —— 本仓老毛病)。
+func _check_rejoin_lifecycle(ses: String) -> void:
+	var reset_body := _func_body(ses, "reset")
+	_check(not reset_body.is_empty(), "PvpSession 里找不到 func reset()")
+	_check(not (reset_body.contains("token = \"\"") or reset_body.contains("worker_port = 0")
+			or reset_body.contains("room_code = \"\"") or reset_body.contains("rejoin = false")),
+			"★★ PvpSession.reset() 又清起回局凭据了 —— 主菜单那三个联机按钮每按一次就调它一次,"
+			+ "清了就是「回到对局后自己那间房是灰的、回不去」(C1:整条路径乙在生产里不可达)")
+	_check(not reset_body.contains("clear_rejoin()"),
+			"★ PvpSession.reset() 调了 clear_rejoin()(同上一款:进页复位 ≠ 下车清理)")
+	_check(reset_body.contains("map_path = \"\""),
+			"PvpSession.reset() 未清 map_path(换局会漏上一局的地图;进页该复位的仍是它)")
+
+	_check(ses.contains("static var mode"),
+			"★ PvpSession 缺 static var mode —— 它是「该不该因模式切换作废凭据」的判别器:"
+			+ "三张注册表的房号共用同一个 4 位空间,不判模式时 1v1 的凭据会让**同号的 3v3 房**看起来像「我的房」")
+	var em := _func_body(ses, "enter_mode")
+	_check(not em.is_empty(), "★ PvpSession 缺 enter_mode()(主菜单那三个模式按钮的唯一入口)")
+	_check(em.contains("if mode != m:") and em.contains("clear_rejoin()"),
+			"★ enter_mode() 必须**只在换模式时**作废凭据 —— 少了 `if mode != m:` 那一问 = 同模式重进也清,"
+			+ "C1 当场复发(而症状只是「自己那间房是灰的」)")
+	_check(em.contains("reset()"), "★ enter_mode() 未走 reset()(role/spawn/map_path 就没人复位了)")
+
+	var nr := _func_body(ses, "note_room")
+	_check(not nr.is_empty(), "★ PvpSession 缺 note_room()(三页记房号的唯一入口)")
+	_check(nr.contains("clear_rejoin()") and nr.contains("room_code = code"),
+			"★ note_room() 必须「换了房号 ⇒ 清掉上一间的凭据,再把新房号记上」(漏了清 ="
+			+ "上一局的 token 配着这一间的房号,点那一行只会收到一句与眼前这间房无关的拒绝)")
+
+
+# ── §⑤ 三页的接线(回局入口 + I2 的第二个条件)──
+func _check_rejoin_ui_wiring() -> void:
+	var mm := _code(_read(MAIN_MENU))
+	_check(not mm.is_empty(), "读不到 %s" % MAIN_MENU)
+	var buttons := _func_body(mm, "_build_menu_buttons")
+	# 三个按钮**各按各的模式**进页 —— 少一个/写错模式 = 换模式时凭据不清(串模式)
+	for pair in [["PvpSession.MODE_PVP", "res://scenes/matchmaking.tscn"],
+			["PvpSession.MODE_TEAM", "res://scenes/team_lobby.tscn"],
+			["PvpSession.MODE_ROYALE", "res://scenes/royale_lobby.tscn"]]:
+		_check(buttons.contains("PvpSession.enter_mode(%s)" % pair[0])
+				and buttons.contains(pair[1]),
+				"★ 主菜单缺「enter_mode(%s) → %s」那一支(模式判别器就断了)" % [pair[0], pair[1]])
+	_check(not buttons.contains("PvpSession.reset()"),
+			"★★ 主菜单又出现裸的 PvpSession.reset() —— 它就是 C1:进页时不复位凭据,"
+			+ "从对局回主菜单再按同一模式时凭据被抹掉,自己那间房恒为灰")
+
+	var lp := _code(_read(LOBBY_PAGE))
+	var try_body := _func_body(lp, "try_rejoin_row")
+	# ★★ 判据写 `if not in_match`,**不写 `in_match`**:参数名本身就在函数签名行里,而签名行属于
+	#    `_func_body` 的返回 ⇒ 只判名字的话,把整个守卫删掉照样绿(变异实测踩到,本仓
+	#    "守卫的变异让它自己全绿"那一类)。断的必须是**那一问**。
+	_check(try_body.contains("can_rejoin_to(code)") and try_body.contains("if not in_match"),
+			"★ LobbyPage.try_rejoin_row() 少了 in_match 那一问(I2):自己那间**还没开局**的房会走回局,"
+			+ "而大厅侧没有它的凭据 ⇒ 玩家看到一句与眼前这间房无关的「凭据失效」,普通加入还不发生")
+	for pair in [[PAGE_1V1, "_on_room_list", "1v1"], [PAGE_ROYALE, "_on_royale_rooms", "大乱斗"],
+			[PAGE_TEAM, "_on_team_rooms", "3v3"]]:
+		var body := _func_body(_code(_read(pair[0])), pair[1])
+		_check(body.contains("try_rejoin_row(code, in_match)"),
+				"★ %s 的 %s 调 try_rejoin_row 时没把 in_match 传进去(I2)" % [pair[2], pair[1]])
+		_check(body.contains("can_rejoin_to(code)"),
+				"★ %s 的 %s 不再问「这一行是不是我的房」(回局入口那一半没了)" % [pair[2], pair[1]])
+	# 三页记房号**统一**走 note_room(别再各自写 `PvpSession.room_code = …`)
+	for pair in [[PAGE_1V1, "_on_room_created"], [PAGE_1V1, "_on_room_joined"],
+			[PAGE_ROYALE, "_on_room_state"], [PAGE_TEAM, "_on_room_state"]]:
+		var t := _func_body(_code(_read(pair[0])), pair[1])
+		_check(t.contains("PvpSession.note_room("),
+				"★ %s 的 %s 未走 PvpSession.note_room()(记房号 + 作废上一间凭据的唯一入口)"
+				% [pair[0].get_file(), pair[1]])
+	_check(_func_body(_code(_read(PAGE_1V1)), "_join_code").contains("_join_code_pending"),
+			"★ 1v1 的 _join_code 未把房号**暂存**到 _join_code_pending(I1):写在发 RPC 之前的话,"
+			+ "一次失败的加入会把 room_code 留成**别人的**那间房,自己那间房这一行此后永远是灰的")
+
+
+# ── §⑥ 判活守卫的常驻源码断言(I3)──
+# ★ 为什么必须在这里:`tests/rpc_liveness_probe` 的扫描面是 `server/` + `core/net/`,
+#   **`scenes/` 不在里面**(那个文件头照实登记了)。于是客户端这四条判活的守卫
+#   —— K 键 ×2(royale/3v3 的自杀脱困)与 `send_ping` —— **一条常驻守卫都没有**:
+#   删掉判活不会让任何测试变红,而它要防的是那条 `Unable to send packet on channel 0, max channels: 0`
+#   (往 ENet 已拆掉的 peer 发定向可靠包)。与上面的回局接线断言同一形状:按**函数体**判。
+func _check_liveness_guards() -> void:
+	var ping_body := _func_body(_code(_read(NETBUS)), "send_ping")
+	_check(ping_body.contains("can_send_to_server()"),
+			"★ NetBus.send_ping() 丢了判活 —— 它是每 0.5s 一次的周期发送,离场那几帧必报 channel 0")
+	for pair in [[GAME_ROYALE, "royale_game"], [GAME_TEAM, "team_game"]]:
+		var body := _func_body(_code(_read(pair[0])), "_unhandled_input")
+		_check(body.contains("NetBus.can_send_to_server()") and body.contains("suicide_request"),
+				"★ %s 的 K 键自杀(_unhandled_input)丢了判活 —— 定向可靠包发往已拆掉的 peer" % pair[1])
