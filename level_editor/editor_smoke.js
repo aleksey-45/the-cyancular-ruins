@@ -1210,6 +1210,31 @@ function countNonZero(map, L) {
     eq(Editor.needsV3Confirm('legacy', false), true, '★ 旧字母格式源:同样要确认');
     eq(Editor.needsV3Confirm('v3', true), false, '★ 已经确认过一次的会话不再问第二次');
     eq(Editor.needsV3Confirm(null, false), false, '没打开地图时不问');
+    // ── ⑭ ★★ 备份的**逐文件**门(2026-09-22)──
+    // ★ 为什么单独立这几条:确认框每会话一次是**故意的**(决定 ⑤),但备份**不能**跟着它
+    //   一起变成每会话一次 —— 那样同一会话里第二张 v3 图既不被问、也不被备份,**静默**转成 v4。
+    const backed14 = new Set();
+    eq(Editor.needsV3Backup('v3', 'a.cyrm', backed14), true,
+       '★★ 备份门:本会话还没备份过的 v3 文件 → 要备(哪怕确认框不会再问)');
+    backed14.add('a.cyrm');
+    eq(Editor.needsV3Backup('v3', 'a.cyrm', backed14), false,
+       '★★ 同一个文件已经备份过 → 不再备(重复保存不在 maps/ 里堆副本)');
+    eq(Editor.needsV3Backup('v3', 'b.cyrm', backed14), true,
+       '★★★ **逐文件**:同一会话里另一个 v3 文件**照样要备**(上一轮两半共用会话级标记 ⇒ 这里会红)');
+    eq(Editor.needsV3Backup('legacy', 'c.cyrm', backed14), true, '★ 旧字母格式源同样要备');
+    eq(Editor.needsV3Backup('v4', 'd.cyrm', backed14), false, '★ v4 源:没有要转换的原文,不备');
+    eq(Editor.needsV3Backup(null, 'e.cyrm', backed14), false, '没打开地图时不备');
+    eq(Editor.needsV3Backup('v3', null, backed14), false, '还没有落过盘的新图(没有文件名)不备');
+    // ── ⑭ ★★ 备份名 = `<名>.v3.bak`(结尾不是 .cyrm;用户 2026-09-22 裁定的名字)──
+    eq(Editor.v3BackupName('demo.cyrm'), 'demo.v3.bak',
+       '★★ 备份名 = `<名>.v3.bak`(基名去 `.cyrm` 后再接后缀)');
+    eq(Editor.v3BackupName('demo.cyrm').toLowerCase().endsWith('.cyrm'), false,
+       '★★★ 备份名**不以 `.cyrm` 结尾** —— 游戏 `_random_cyrm` 的 `.ends_with(".cyrm")` 抽不到它');
+    eq(Editor.v3BackupName('图 1.cyrm'), '1.v3.bak',
+       '★ 服务器仍只收 `[A-Za-z0-9_-]` 的基名:汉字被收掉(不然备份被 400 拒 ⇒ 保存整个卡死)');
+    eq(Editor.v3BackupName('.cyrm'), 'map.v3.bak', '★ 收完一个字符都不剩 → 兜底名 `map`');
+    ok(Editor.v3BackupName('x'.repeat(80) + '.cyrm').length <= 64,
+       '★ 备份名不超过服务器的 MAX_MAP_NAME_LEN=64(基名截 40 + 后缀)');
     eq(Editor.freshName('my map!'), 'my_map.cyrm', '★ freshName 走 sanitizeName(服务器只收裸文件名)');
 
     // ★★ 敌人类型来自**页面里的** ENEMY_REGISTRY —— 它只定义在 `editor.html` 里,node 侧
@@ -1534,7 +1559,7 @@ function countNonZero(map, L) {
              '★★★ 确认框说了**决定性的那件事**:游戏现在读不了 v4,要等期 E 迁移 map_format.gd' +
              '(旧文案只说「不可逆」—— 用户不知道自己换来的是一张游戏打不开的图;实得 ' +
              JSON.stringify(askText14) + ')');
-          ok(askText14.indexOf('demo_v3src_v3bak.cyrm') >= 0,
+          ok(askText14.indexOf('demo_v3src.v3.bak') >= 0,
              '★★ 确认框**点名**了备份文件(用户得知道退路落在哪个名字上;实得 ' +
              JSON.stringify(askText14) + ')');
           // ② 两条 PUT:备份在前、真保存在后,走的是**同一个**出口
@@ -1542,9 +1567,9 @@ function countNonZero(map, L) {
              '★★★ 首次转换保存 = **两条** PUT(原文备份 + 真保存;实得 ' + putLog14.length + ' 条)');
           const b14 = putLog14.length === 2 ? putLog14[0] : null;
           const s14 = putLog14.length === 2 ? putLog14[1] : null;
-          ok(!!b14 && b14.url.indexOf('/api/map?p=demo_v3src_v3bak.cyrm') >= 0,
-             '★★★ 第一条 PUT 就是**原文备份**(名字以 `_v3bak.cyrm` 结尾;实得 "' +
-             (b14 ? b14.url : '(没有请求)') + '")');
+          ok(!!b14 && b14.url.indexOf('/api/map?p=demo_v3src.v3.bak') >= 0,
+             '★★★ 第一条 PUT 就是**原文备份**,名字是 `<名>.v3.bak`(2026-09-22 用户裁定的那个名字;' +
+             '实得 "' + (b14 ? b14.url : '(没有请求)') + '")');
           ok(!!s14 && s14.url.indexOf('/api/map?p=demo_v3src.cyrm') >= 0,
              '★★★ 第二条 PUT 才是真保存(实得 "' + (s14 ? s14.url : '(没有请求)') + '")');
           ok(!!b14 && !!b14.init && b14.init.method === 'PUT' && !!b14.init.body,
@@ -1553,16 +1578,60 @@ function countNonZero(map, L) {
             ? Array.from(new Uint8Array(await b14.init.body.arrayBuffer())) : null;
           eq(bBytes14, Array.from(orig14),
              '★★★ 备份里是**原文那些字节**(逐字节比;不是编码后的 v4 —— 退路必须是原文)');
-          // ③ 第二次保存:同会话已经确认过 ⇒ 不再问、也不再写备份(门与确认框是同一个)
-          Editor.app.sourceFormat = 'v3';              // ★ 刻意**退回** v3:证明门是那个一次性标记、不是源格式
+          // ③ 第二次保存**同一个文件**:确认框不再问,备份也不再写 —— 但现在的理由是
+          //    "**这个文件**本会话已经备份过了"(`v3BackedUp` 是**逐文件**的表),
+          //    而不是上一轮那句"会话只备一次"(那正是下面 ⑭d2c 要打掉的缺陷)。
+          Editor.app.sourceFormat = 'v3';              // ★ 刻意**退回** v3:证明门是那张表、不是源格式
           putLog14.length = 0;
           await Editor.saveCurrent(false);
           eq(asked14, 1, '★★ 第二次保存不再问(问的次数仍是 ' + asked14 + ')');
           eq(putLog14.length, 1,
              '★★★ 第二次保存**只有一条** PUT —— 备份不重写(否则每存一次都在 maps/ 里多一份;实得 ' +
              putLog14.length + ' 条)');
-          ok(putLog14.length === 1 && putLog14[0].url.indexOf('_v3bak') < 0,
+          ok(putLog14.length === 1 && putLog14[0].url.indexOf('.v3.bak') < 0,
              '★ 那一条是真保存,不是备份(实得 "' +
+             (putLog14.length ? putLog14[0].url : '(没有请求)') + '")');
+
+          // ── ⑭d2c ★★★ **逐文件**备份:同一会话里保存**第二张** v3 图,必须有它自己的一份 ──
+          // ★ 为什么必须另立一条(2026-09-22):上一轮备份与确认框共用**同一个会话级**标记
+          //   (`v3Confirmed`)⇒ 同一会话里保存第二张 v3 图时两半都不发生:既不问、也不备,
+          //   那次**单向**转换是**静默**的 —— 用户手里那张能玩的 v3 图被换成一张游戏打不开的
+          //   v4,而退路一份都没有。安全网只盖住了会话里第一张图。
+          // ★ 这里复现的正是那个场景:`v3Confirmed` 此时已经是 true(上一张已经确认过),
+          //   故确认**不该**再问(决定 ⑤ 保持),而备份**必须**照写。
+          const v3textC = '# cyrm-v3\n001f001f\n001f001f\n001f001f\n';
+          const origC = new TextEncoder().encode(v3textC);
+          ok(Array.from(origC).join(',') !== Array.from(orig14).join(','),
+             '⑭d2c 前提:第二张图的原文与第一张**不同字节**(否则下面那条逐字节比什么都证明不了)');
+          Editor.app.map = Editor.createEmptyMap('demo_v3src2', 4, 4);
+          Editor.app.name = 'demo_v3src2.cyrm';
+          Editor.app.sourceFormat = 'v3';              // ← 打开**第二张** v3 图之后的状态
+          Editor.app.raw = origC;                      // 第二张图在磁盘上的原文
+          putLog14.length = 0;
+          await Editor.saveCurrent(false);
+          eq(asked14, 1, '★★★ 第二张图**不再问**(确认仍是每会话一次;问的次数仍是 ' + asked14 + ')');
+          eq(putLog14.length, 2,
+             '★★★ 但第二张 v3 图**照样有自己的备份** = 两条 PUT(会话级门的实现在这里只有 1 条;' +
+             '实得 ' + putLog14.length + ' 条)');
+          const bC = putLog14.length === 2 ? putLog14[0] : null;
+          const sC = putLog14.length === 2 ? putLog14[1] : null;
+          ok(!!bC && bC.url.indexOf('/api/map?p=demo_v3src2.v3.bak') >= 0,
+             '★★★ 第二张图的备份落在**它自己的** `<名>.v3.bak` 上(逐文件,不是共用第一张的名字;实得 "' +
+             (bC ? bC.url : '(没有请求)') + '")');
+          ok(!!sC && sC.url.indexOf('/api/map?p=demo_v3src2.cyrm') >= 0,
+             '★★ 第二条才是第二张图的真保存(实得 "' + (sC ? sC.url : '(没有请求)') + '")');
+          const bCBytes = bC && bC.init && bC.init.body
+            ? Array.from(new Uint8Array(await bC.init.body.arrayBuffer())) : null;
+          eq(bCBytes, Array.from(origC),
+             '★★★ 第二张图的备份里是**它自己那份原文**(逐字节比;写成第一张的字节也会红)');
+          // ④ 同一张第二图再存一次:仍只有一条 —— 逐文件去重的另一半(别退化成"每次保存都备")
+          Editor.app.sourceFormat = 'v3';
+          putLog14.length = 0;
+          await Editor.saveCurrent(false);
+          eq(putLog14.length, 1,
+             '★★ 第二张图再存一次也只有**一条** PUT(每个文件只备一次;实得 ' + putLog14.length + ' 条)');
+          ok(putLog14.length === 1 && putLog14[0].url.indexOf('.v3.bak') < 0,
+             '★ 那一条同样是真保存,不是备份(实得 "' +
              (putLog14.length ? putLog14[0].url : '(没有请求)') + '")');
         } finally {
           globalThis.confirm = savedConfirm14;

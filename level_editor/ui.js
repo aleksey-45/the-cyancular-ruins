@@ -1263,25 +1263,40 @@ globalThis.Editor = (function () {
     if (!srcFmt) return false;
     return (srcFmt === 'v3' || srcFmt === 'legacy') && !confirmed;
   }
+  // ── ★★ 原文备份是**逐文件**的,不是每会话一次(2026-09-22 修)──
+  // ★ 缺陷照实说:上一轮让**备份**与确认框共用 `v3Confirmed` 这**同一个会话级**标记 ⇒
+  //   同一会话里保存**第二张** v3 图时,`needsV3Confirm` 已经是 false,**两半都不再发生** ——
+  //   那次单向转换既没有确认、也没有备份,**静默**把一个文件转成了 v4。安全网只盖住了第一张图。
+  // ★ 修法(最小改动):确认框保持每会话一次(决定 ⑤ 的原意:同一个决定问一次就够),
+  //   另立一张「本会话已经备份过哪些文件」的表 `v3BackedUp`,键 = **保存目标那个文件名**。
+  //   于是每个被转换的源文件各自得到一份 `<名>.v3.bak`,同一个文件重复保存只写一次。
+  // ★ 用 `Set`(不是普通对象):图名合法字符里含 `_`,`__proto__.cyrm` 这种名字在普通对象上
+  //   赋值 `__proto__` 会被**静默忽略**、读回来是 `Object.prototype`(truthy)⇒ 那条分支
+  //   永远不备份而**不报错**。Set 没有这个坑。
+  // ★ 记账**只在备份真的写成功之后**落(见 saveCurrent):写失败时保存整个中止,
+  //   `sourceFormat` 仍是 v3 ⇒ 用户重试那一次**必须**再写一遍备份,否则第二遍就可能无备份落盘。
+  var v3BackedUp = new Set();
+  function needsV3Backup(srcFmt, fileName, backed) {
+    // `fileName` 为空 = 这张图还没落过盘(新建后直接 Ctrl+S)⇒ 磁盘上没有"原文"可备,
+    //   本来也不会写备份(下面还要看 `app.raw`)。在这里挡一道,免得往表里塞一个空键。
+    if (!srcFmt || !fileName) return false;
+    if (!(srcFmt === 'v3' || srcFmt === 'legacy')) return false;
+    return !backed.has(fileName);
+  }
   function freshName(base) { return Core.sanitizeName(base) + '.cyrm'; }
-  // ── 原文备份的文件名 ──
-  // ★★ 想要的是 `<名>.v3.bak`(结尾**不是** `.cyrm`,于是游戏的 `_random_cyrm` 抽不到它)。
-  //    ★ 但这条路**走不通**:`editor_server.js`(冻结)的写端点是
-  //      `MAP_NAME_RE = /^[A-Za-z0-9_\-]+\.cyrm$/` —— 基名里连 `.` 都不许有,故
-  //      `demo.v3.bak` 与 `demo.v3.bak.cyrm` **都会被 400 拒掉**(实测:见
-  //      `.superpowers/sdd/proof_item1_backup_name.js`;两个候选各自 HTTP 400、磁盘上
-  //      一个字节都没落)。**服务器接受的每一个名字都以 `.cyrm` 结尾**,
-  //      所以"(a) 服务器接受 + (b) 不以 .cyrm 结尾"这两个条件**不可兼得**。
-  //    ★ 取舍:备份**必须真的落盘**(它是这次单向转换唯一的退路),故保 (a)、放弃 (b) ——
-  //      退到最近的可写名 `<名>_v3bak.cyrm`。**代价照实说**:它以 `.cyrm` 结尾 ⇒ 会进
-  //      游戏的随机地图池、也会出现在编辑器库列表里(内容就是原文 v3,游戏读得动)。
-  //      彻底关掉这一面需要动 `editor_server.js`(基名放行 `.bak`/`.v3.bak`)或让编辑器
-  //      指向仓外地图目录(`node editor_server.js --maps <dir>`),两者都不在本轮范围。
-  var V3_BACKUP_SUFFIX = '_v3bak.cyrm';
+  // ── 原文备份的文件名 = `<名>.v3.bak` ──
+  // ★★ 结尾**不是** `.cyrm`,于是游戏的 `_random_cyrm`(`f.to_lower().ends_with(".cyrm")`)
+  //    抽不到它 —— 备份不会混进随机地图池,这一点由实证钉住(见报告 §item2)。
+  // ★ 上一轮做不出这个名字(服务器当时只放行 `<基名>.cyrm`);2026-09-22 用户裁定
+  //    **唯一**放宽一次 `editor_server.js` 的名字校验(只多接受 `.v3.bak` 这一个后缀),
+  //    于是这里改回原本想要的名字。
+  var V3_BACKUP_SUFFIX = '.v3.bak';
   function v3BackupName(name) {
     // ★ 自己按服务器的字符集**收干净**:种子名可能来自 `freshName`(它走
     //   `Core.sanitizeName`,**放行汉字**),而汉字不在服务器的 `[A-Za-z0-9_\-]` 里 ——
     //   不过滤的话备份会被 400 拒掉,而"备份写不进去就不写盘"会把保存整个卡死。
+    //   ★ 顺带把基名里的 `.` 也收掉:改写后的服务器校验**仍然**只许基名是 `[A-Za-z0-9_-]`
+    //     (放行的只有一个后缀),留着 `.` 一样会被 400。
     var base = String(name == null ? '' : name).replace(/\.cyrm$/i, '').replace(/[^A-Za-z0-9_-]/g, '');
     if (!base) base = 'map';
     return base.slice(0, 40) + V3_BACKUP_SUFFIX;
@@ -1292,12 +1307,19 @@ globalThis.Editor = (function () {
   }
   function saveCurrent(asNew) {
     if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
-    // ★★ 确认与备份是**同一个一次性条件**的两半:一次转换保存 = 一次确认 + 一份原文备份。
-    //    `needsV3Confirm` 读的就是"本会话还没确认过",故第二次保存两半都不再发生。
-    var backupName = null, backupBytes = null;
-    if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
+    // ★★ 确认与备份是**两条独立的门**(2026-09-22 拆开;上一轮它们共用一个会话级标记):
+    //    · **确认** = 每会话一次(决定 ⑤ 的原意:同一个决定问一次就够,用户已签核);
+    //    · **备份** = **每个文件一次**(`v3BackedUp`)—— 否则同一会话里保存**第二张** v3 图时
+    //      两半都不发生,那次单向转换是**静默**的,安全网只盖住第一张图。
+    // ★ 备份名先算出来:确认框的文案要**点名**那条退路(按"确定"之前用户就该知道原文落在哪)。
+    var backupName = null, backupBytes = null, backupKey = null;
+    if (needsV3Backup(app.sourceFormat, app.name, v3BackedUp)) {
       backupBytes = app.raw || null;                 // 磁盘上那份的**原文**(打开时留下的)
       backupName = backupBytes ? v3BackupName(app.name) : null;
+      // ★ 记账的键取**此刻**的名字(下面 `app.name = name` 会把它改掉,那时再读就不是同一个文件了)。
+      backupKey = backupName ? app.name : null;
+    }
+    if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
       var okGo = window.confirm(
         '原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
         '★ 游戏现在**读不了** v4 —— 在期 E 把 map_format.gd 迁移过去之前,这个文件在游戏里会失效。\n' +
@@ -1323,7 +1345,12 @@ globalThis.Editor = (function () {
       //   失败 = 原文与退路一起没了。故这里把失败**抛出去**(外层 catch 会说「保存失败」,
       //   而磁盘上那份确实一个字都没动)。
       var pre = backupName
-        ? putMapBytes(backupName, backupBytes).then(null, function (e) {
+        ? putMapBytes(backupName, backupBytes).then(function () {
+            // ★★ 记账**只能在备份真的落盘之后**:写失败时保存整个中止、`sourceFormat` 仍是 v3
+            //    ⇒ 用户重试那一次**必须**再写一遍备份。提前记账会让重试**跳过备份**、直接把 v4
+            //    写下去 —— 那正是这份备份要防的事(相当于备份从来没存在过)。
+            v3BackedUp.add(backupKey);
+          }, function (e) {
             throw new Error('原文备份写不进去(' + backupName + '):' + msgOf(e) +
                             ' —— 没有动磁盘上那一份');
           })
@@ -2586,7 +2613,8 @@ globalThis.Editor = (function () {
 
     buildPanels: buildPanels, syncPanelForLayer: syncPanelForLayer,
     saveCurrent: saveCurrent, saveTargetName: saveTargetName,
-    needsV3Confirm: needsV3Confirm, freshName: freshName,
+    needsV3Confirm: needsV3Confirm, needsV3Backup: needsV3Backup,
+    v3BackupName: v3BackupName, freshName: freshName,
     importEnemyTypes: importEnemyTypes, exportReport: exportReport, showExportReport: showExportReport,
     spawnAt: spawnAt,
 

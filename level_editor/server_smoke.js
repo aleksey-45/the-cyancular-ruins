@@ -463,13 +463,68 @@ async function runAllPhases() {
       if (srv.isValidMapName(n) !== true) { allAccepted = false; if (!firstGoodFail) firstGoodFail = n; }
     }
     ok(allAccepted, 'isValidMapName 接受全部 ' + good.length + ' 个合法名(首个漏网:' + firstGoodFail + ')');
-    ok(srv.MAP_NAME_RE.source === '^[A-Za-z0-9_\\-]+\\.cyrm$', 'MAP_NAME_RE 与规格 §4.9 逐字一致');
+    // ★★ 这条断言**逐字钉住整个正则**。★ 2026-09-22 的授权放宽后它必须跟着改(旧的
+    //    `^[A-Za-z0-9_\-]+\.cyrm$` 已经不再是事实),换成的这条**至少一样强**:它仍然钉"整串",
+    //    故任何**再**放宽(多加一个后缀、基名放行 `.`、把分组写成 `.*` …)都会在这里红。
+    ok(srv.MAP_NAME_RE.source === '^[A-Za-z0-9_\\-]+(?:\\.cyrm|\\.v3\\.bak)$',
+       '★★ MAP_NAME_RE 逐字钉住:规格 §4.9 的 `.cyrm` + 2026-09-22 授权放行的唯一后缀 `.v3.bak`');
     ok(srv.MAX_MAP_NAME_LEN === 64, 'MAX_MAP_NAME_LEN === 64(规格的正则没有长度上界,这条是防御性补充)');
     let threw = false;
     try { srv.mapPathFor(tmpRoot, '../evil.cyrm'); } catch (e) { threw = true; }
     ok(threw, 'mapPathFor: 非法名抛错(不返回一个越界的路径)');
     eq(srv.mapPathFor(tmpRoot, 'ok.cyrm'), path.join(path.resolve(tmpRoot), 'ok.cyrm'),
        'mapPathFor: 合法名 = mapsDir + 名字');
+
+    // ── 相位 ⑤b ★★ 2026-09-22(用户裁定):名字校验的**唯一**一次放宽 = 多接受 `.v3.bak` ──
+    // ★ 为什么非放行不可:编辑器在 v3→v4 的**单向**转换写盘**之前**要落一份原文备份
+    //   (唯一的退路),而备份名必须是 `<名>.v3.bak` —— 结尾**不是** `.cyrm`,游戏的
+    //   `_random_cyrm`(`f.to_lower().ends_with(".cyrm")`)才抽不到它,备份不会混进随机地图池。
+    // ★★ 这一组是**双向**断言:新后缀被接受 **且** 旧的拒绝面**一条都不少**。理由:这条守卫是
+    //   "一个本地网页不许读写任意路径"的**唯一**边界,放宽成"任意后缀"、或让基名能带 `.`
+    //   (那样 `../x.v3.bak`、`a.b.v3.bak` 就进来了)都等于把边界拆掉 —— 故接受用例与
+    //   等量的拒绝用例成对出现,只加接受不加拒绝的实现会在这里红。
+    ok(srv.isValidMapName('demo.v3.bak') === true,
+       '★★★ 新后缀被接受:`demo.v3.bak`(= 地图名去 `.cyrm` + `.v3.bak`,编辑器的原文备份名)');
+    ok(srv.isValidMapName('factory1v1.v3.bak') === true,
+       '★ 真地图名 + 新后缀也接受(factory1v1.v3.bak)');
+    ok(srv.isValidMapName('x'.repeat(57) + '.v3.bak') === true,
+       '★ 新后缀下长度上界仍然生效:恰好 64 字符(57 + 7)接受');
+    const badBak = ['a.bak', 'a.v3bak', 'a.v3.bak.cyrm', 'a.cyrm.bak', 'v3.bak', '.v3.bak',
+                    '..v3.bak', '../a.v3.bak', '..%2fa.v3.bak', '/a.v3.bak', 'a/b.v3.bak',
+                    'a\\b.v3.bak', 'C:\\a.v3.bak', 'a.b.v3.bak', 'a b.v3.bak', 'a.v3.bak\n',
+                    '..\\..\\x.v3.bak', 'a\u0000.v3.bak', 'x'.repeat(58) + '.v3.bak'];
+    let bakRejected = true, firstBakFail = '';
+    for (const n of badBak) {
+      if (srv.isValidMapName(n) !== false) { bakRejected = false; if (!firstBakFail) firstBakFail = JSON.stringify(n); }
+    }
+    ok(bakRejected, '★★★ 放宽**只**多了那一个后缀:另外 ' + badBak.length +
+       ' 个"名字里有 `.` 但不是 `.v3.bak` 后缀 / 想走路径 / 过长"的名字**照样全拒**' +
+       '(首个漏网:' + firstBakFail + ')');
+    // ★ 逐个子集点名(上面那条是"全拒"的汇总;这几条说明每个子集**各自**被拒,不是靠运气)
+    ok(srv.isValidMapName('a.bak') === false && srv.isValidMapName('demo.txt') === false &&
+       srv.isValidMapName('a.v3bak') === false,
+       '★★ 例外只给 `.v3.bak` 这一个后缀:`.bak` / `.txt` / `.v3bak`(少个点)都不行');
+    ok(srv.isValidMapName('a.b.v3.bak') === false && srv.isValidMapName('a.cyrm.bak') === false,
+       '★★ 基名里**不许有 `.`**(`a.b.v3.bak`、`a.cyrm.bak` 都拒 —— 备份名是"去 `.cyrm` 再接后缀")');
+    ok(srv.isValidMapName('../a.v3.bak') === false && srv.isValidMapName('..v3.bak') === false &&
+       srv.isValidMapName('/a.v3.bak') === false && srv.isValidMapName('a/b.v3.bak') === false &&
+       srv.isValidMapName('a\\b.v3.bak') === false && srv.isValidMapName('C:\\a.v3.bak') === false,
+       '★★★ 新后缀**不是**绕过路径守卫的后门:遍历(`../a.v3.bak`、`..v3.bak`、`..%2fa.v3.bak`)' +
+       '与绝对/含分隔符的名字一律照拒');
+    // ③ 旧的 `.cyrm` 那一档**一个字都没动**:同一个名字在放宽前后都接受
+    ok(srv.isValidMapName('demo.cyrm') === true && srv.isValidMapName('A_1-2.cyrm') === true,
+       '★★ 放宽**没有**碰 `.cyrm` 那一档:普通地图名照旧接受(旧行为一字未变)');
+    // ④ 新旧两档在**真路径**上的一致性:`mapPathFor` 对新后缀同样只拼 mapsDir + 名字
+    // ★ 两条都写成"不抛出去"的形式:`mapPathFor` 对非法名是**抛错**,直接写在 `eq(...)` 里
+    //   一旦正则被改坏就会把整场冒烟**中断**在异常上(后面几十条断言一条都跑不到、也没有
+    //   计数行)—— 症状看着像"冒烟自己坏了",而不是"这条守卫坏了"。
+    function tryPathFor(n) { try { return { ok: true, p: srv.mapPathFor(tmpRoot, n) }; } catch (e) { return { ok: false }; } }
+    const pBak = tryPathFor('demo.v3.bak');
+    ok(pBak.ok && pBak.p === path.join(path.resolve(tmpRoot), 'demo.v3.bak'),
+       '★ mapPathFor: 新后缀 = mapsDir + 名字(与 `.cyrm` 同一条路径拼接;实得 ' +
+       (pBak.ok ? pBak.p : '(抛错了 —— 名字没被接受)') + ')');
+    ok(tryPathFor('../evil.v3.bak').ok === false,
+       '★★ mapPathFor: 带新后缀的遍历名照样抛错(第二道"路径必须在 maps/ 里"的闸)');
   }
 
   // ==== 相位 ⑥ /api/maps + GET /api/map ====
