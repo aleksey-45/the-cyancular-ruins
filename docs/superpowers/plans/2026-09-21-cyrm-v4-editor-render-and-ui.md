@@ -2811,6 +2811,41 @@ EOF
   - `validateLines(report) -> Array<String>`(§4.7 的点名清单)
   - `hasSelection(st) -> Boolean`
 
+> ★★ **本节下面的代码块是「落地前的初版」;交付的 `ui.js` 与 `editor_smoke.js` 才是事实。**
+> 评审做过一次**剥注释、归空白**的逐字 diff:交付代码与本节 Step 3 只差**三处** ——
+> ① `clampTexture` 的容量回落(见下);② 删掉一个**死变量** `var sub = Core.SUB_PER_CELL;`;
+> ③ 橡皮那行的**死三元** `return L === Core.LAYER_BG ? 0 : 0` → `return 0`。
+> 其余(含 `constrainLine` / `constrainSquare` / `applyTool` / 两个作业工厂 / `commandFor` /
+> `resizeMap`)**逐字节相同**,导出键表也相同。
+>
+> **★ ① `clampTexture` 的回落方向改过 —— 以本节自己那五条断言(契约)为准,不以本节给码为准。**
+> 给码在 `cap < 1` 时回落 `TEXTURE_MAX`(⇒ 保留输入,`clampTexture(5, 0)` 得 **5**),而本节第 ⑤ 条
+> 断言要的是 **1**。那五条(`0→1` / `999→100` / `3→3` / `NaN→1` / `cap 0→1`)构成一条自洽的
+> `[1, cap]` 契约,给码在第五条上是**唯一的异类**。交付:容量 `<1` ⇒ **1**;`atlasCap` 缺省时
+> **自问图集**(`Render.atlasCapacity()`)。
+>
+> **★ 三处期望字面量订正(改的是期望值,`constrainLine` 一字未动)**:本节两条 45° 用例期望
+> `{10,8}` / `{-10,8}` —— 那正是**未约束**的结果(`floor(b)`),与**同一行自己的注释**
+> (「其余 → 锁成 45°(取两轴较大者)」)以及兄弟用例 `constrainSquare({0,0},{10,3})` 期望的
+> `{10,10}` **自相矛盾**;且那两条用例 `|dx|,|dy|` **相同、只差符号** ⇒ 没有任何公式能返回两个
+> 不同结果。`constrainSquare({4,4},{0,1})` 指望的 `{x:-6,y:1}` 同样不是任何公式的输出
+> (`|dx|=4, |dy|=3 ⇒ m=4 ⇒ (0,0)`)。⇒ 三处**期望值**订正为锁后的值,**实现未被拗**。
+>
+> **★ 有两条断言的守护者不是本节代码**:`valueFor` 里的空气守卫
+> (`if (oldV === 0 || Core.texOf(oldV) === 0) return oldV;`)**删掉也不会让任何断言变红** ——
+> 因为 `Core.packDesc`(`core.js:913-921`)把纹理 ≤0 **塌成 `DESC_AIR`**,空气子格无论如何都映射到 0、
+> 永不进 diff。所以"空气不长纹理"那两条其实由 `core.js` 钉住(子条件
+> `oldV !== 0 && texOf(oldV) === 0` 只能来自手写/损坏的解码描述符,今天**无覆盖**)。
+>
+> **★ 本 Task 交付的接口实况(与本节上方的接口行不一致,一律以 `ui.js` 为准)**:
+> `spawnDiff(before, after)`(**不是** `(map, before)`)、
+> `spawnIndexAt(map, cellX, cellY, kind?)`(第 4 参可选且真实存在);
+> `putMapBytes(name, bytes)` 是**唯一的 PUT 出口**(现在**没有生产调用点** ——
+> **Task 8 必须调它**,否则会出现第二处 PUT 而那条"只许一处"的断言**照样绿**)。
+>
+> **测试块**:交付的 `editor_smoke.js` 有 **149** 条断言(本节测试块是它的子集),并含相位 ⑪b 的
+> **行为面**(在注入的 world 里真跑 `applyTool` + 错误 sink)—— 那是 node 能触及的、最接近浏览器的一条。
+
 - [ ] **Step 1: 写测试 `level_editor/editor_smoke.js`(此时必然红)**
 
 新建 `level_editor/editor_smoke.js`:
