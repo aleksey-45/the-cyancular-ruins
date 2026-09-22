@@ -3741,6 +3741,34 @@ EOF
   - `mirrorRegion(map, L, sel, axis) -> diff|null`(`axis`:`'h'`|`'v'`)
   - `cellCountOf(map, L) -> Number`
 
+> ★★ **本节下面的代码块是「落地前的初版」;交付的 `ui.js` / `editor_smoke.js` 才是事实。**
+> Task 6 实现后经过一轮修复(`f1d384d` → `c910d4b`)。照抄本节会踩到:
+>
+> ① **`applyEntry` 的 `whole` 分支必须拷贝快照数组(已就地订正,见上文)** —— 别名会让
+>    「撤销改尺寸 → 落笔 → 再撤销」恢复**被污染的** before(静默"撤销没撤干净")。漏的是**还原**
+>    那一侧;`snapshotMap` 那侧本来就是拷贝的。
+> ② **`bytesOfEntry` 的 whole 分支写成 `return 64 + (e.bytes || 0)` 是"退化也能全绿"的形态** ——
+>    把它改成 `return 64` 也照样通过,而它是"**字节预算管得住整图级操作**"的唯一依据。
+>    交付:数值面(`bytesOfEntry(whole) >= bytesOfSnapshot(before)`)+ **行为面**
+>    (预算 1000 装不下 1088 字节的 whole 条目 ⇒ 推第二条必须把第一条挤掉)。改这行变异 ⇒ **4 红**。
+> ③ **`MAX_UNDO_BYTES` 本节没有任何断言** —— 而它才是真闸(200 步只是廉价上界)。
+>    交付钉了:常量值 + "不给 `maxBytes` 时**默认预算真在生效**" + "**单条超预算仍 `depth === 1`**"
+>    (后者同时守住 `createHistory` 那句"至少留一条"的守卫)。
+> ④ 本节 Step 2 的"运行,确认失败"**预告文本错**:本节测试里 `Editor.createHistory({})` 排在
+>    `eq(Editor.MAX_UNDO, …)` **之前** ⇒ TypeError 当场抛出、那条 eq **根本没跑到**,实测**没有**
+>    它预告的 `FAIL - MAX_UNDO` 那一行。(是预测文本错,不是实现错 —— 实现者没去改测试对齐。)
+>
+> **测试块**:交付的 `editor_smoke.js` 有 **209** 条断言(本节测试块是它的子集)。
+>
+> **★ 浏览器半边(不要给用户一份做不到的清单)**:本 Task 的新 API 在**生产代码里零调用点** ——
+> `commandFor` **零调用点**、`data-tool` 与 `keydown` **各 0 次**(`ui.js` 里 `addEventListener`
+> 只有 4 处:window error / unhandledrejection / 自检 / 适配)。⇒ 本 commit 在浏览器里**只能**验
+> 「页面加载 / 库列表 / 打开地图 / 画布出图 / 自检 / 适配」;**撤销 / 重做 / 复制 / 粘贴 / 剪裁 /
+> 选区移动 / 镜像的可交互验收归 Task 7**(指针与热键是它接的)。
+>
+> **★ 变异手法的坑(实践得来的)**:把变异写成**空函数体的 `while`** 会让测试进程**死循环挂住** ——
+> 那不是"变红",是把冒烟挂死。变异要表达成一条**会失败的断言**,不是一次挂起。
+
 - [ ] **Step 1: 在 `editor_smoke.js` 的 `// ==== 相位 ⑪` 之后追加相位 ⑫**
 
 ```js
@@ -4017,7 +4045,16 @@ Expected: `FAIL - MAX_UNDO = 200(规格 §4.3 闸 1)`,随后 `TypeError: Editor.
       map.subCols = s.subCols; map.subRows = s.subRows;
       map.layers = s.layers.map(function (lay) {
         if (!lay) return null;
-        return lay.kind === 'tex' ? { kind: 'tex', desc: lay.desc } : { kind: 'color', rgba: lay.rgba };
+        // ★★ **必须拷贝**(2026-09-21 实现时抓到的真 bug):初版这里是
+        //    `{ kind:'tex', desc: lay.desc }` / `{ kind:'color', rgba: lay.rgba }` ——
+        //    把**快照的数组别名**给了活地图。于是「撤销一次改尺寸 → 落笔编辑」时,
+        //    笔迹**写进了 `entry.before`**,下一次撤销恢复的是**被污染的** before ⇒
+        //    「撤销没撤干净,而且一字不报」。`snapshotMap` 那侧本来就是拷贝的
+        //    (见它里面的 `new Uint32Array(...)`),漏的是**还原**这一侧。
+        //    ★ 它今天没有生产调用点(要 Task 7/8 接上"改尺寸"才可达)⇒ 全绿、无人会碰到 ——
+        //      正因如此才要在这里堵死,而不是等它带着数据污染进入后续 Task。
+        return lay.kind === 'tex' ? { kind: 'tex', desc: new Uint32Array(lay.desc) }
+                                  : { kind: 'color', rgba: new Uint32Array(lay.rgba) };
       });
       map.players = s.players.map(function (p) { return { x: p.x, y: p.y }; });
       map.enemies = s.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
