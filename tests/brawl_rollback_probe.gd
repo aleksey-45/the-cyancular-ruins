@@ -295,9 +295,13 @@ func _run_pass(variant: int, n: int) -> void:
 			_check(med <= 3.0 and p95 <= 35.0,
 					"N=%d %s 放宽后接触期偏差没有变大(中位 %.1f / p95 %.1f;基线 1.6 / 25~30)"
 					% [n, VARIANT_NAME[variant], med, p95])
+			# ★ bar 是「**严格**优于 2px 档」而不是「不超过它的一半」:GDScript 的 `/` 是**整除**
+			#   (`9 / 2 == 4`),而 N=2 在**任何**容差下回滚数都停在 5(那 5 次是容差去不掉的)
+			#   ⇒ `5 <= 4` 恒假 ⇒ N=2 接线前红、接线后也红,这条在 N=2 上**没有鉴别力**。
+			#   `base > 0` 那半保留:它防的是 `_find` 取不到(返回 -1)。
 			var base := _find(Variant.TOL2, n)
-			_check(base > 0 and rb <= base / 2,
-					"N=%d %s 确实买到了东西(回滚 %d ≤ 2px 档 %d 的一半)"
+			_check(base > 0 and rb < base,
+					"N=%d %s 确实买到了东西(回滚 %d < 2px 档 %d,严格更少)"
 					% [n, VARIANT_NAME[variant], rb, base])
 
 	for o in _opps:
