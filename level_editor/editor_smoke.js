@@ -1162,15 +1162,112 @@ function countNonZero(map, L) {
     const savedCv14 = Editor.app.canvas, savedName14 = Editor.app.name;
     let view14 = { x: 0, y: 0, zoom: 1 };
     let status14 = '';
+    // ★★ 修复轮 1:这一版替身"够真"到能装下面三个新子相位 —— ⑭c/⑭d 要**驱动真的
+    //    click 处理器**(判据是它的副作用,而不是"没抛"),⑭e 还要真跑一遍 `buildPanels()`
+    //    (它摸十几个 id、一次 createElement、两处 querySelectorAll,还要查挂上来的监听器)。
+    //    故:按 id 惰性建假元素、记住挂上去的监听器、给一个 `click()` 把处理器真跑一遍。
+    //    ★ `createElement` 造出来的元素也进册:真 DOM 里 `getElementById` 找得到的正是它们
+    //      (buildPanels 给派生提示行设的 `id='palette-hint'` 就是这么被 syncPanelForLayer
+    //      看见的) —— 只按 id 惰性建的话,生产代码设的那个 id 与替身里那个会**是两个对象**。
+    const els14 = {};
+    const made14 = [];
+    function mkRow14() {                                  // 一个"看起来像 .desc-row"的假行
+      return { className: 'desc-row', style: {}, parentNode: null, textContent: '',
+               classList: { contains: function (c) { return c === 'desc-row'; },
+                            add: function () {}, remove: function () {}, toggle: function () {} } };
+    }
+    const root14 = { parentNode: null, className: '', style: {}, classList: null,
+                     insertBefore: function () {}, appendChild: function () {} };
+    function mkEl14(id) {
+      const el = {
+        id: id, textContent: '', value: '', checked: false, hidden: false, className: '',
+        style: {}, dataset: {}, children: [], _h: {},
+        parentNode: root14, nextSibling: null,
+        classList: { add: function () {}, remove: function () {}, toggle: function () {},
+                     contains: function () { return false; } },
+        addEventListener: function (type, fn) { el._h[type] = fn; },
+        appendChild: function (c) { el.children.push(c); return c; },
+        insertBefore: function (c) { el.children.push(c); return c; },
+        removeChild: function () {}, querySelector: function () { return mkEl14(null); },
+        click: function () { if (el._h.click) el._h.click({ stopPropagation: function () {}, target: el }); },
+      };
+      return el;
+    }
+    function elOf14(id) {
+      if (els14[id]) return els14[id];
+      for (let i = 0; i < made14.length; i++) if (made14[i].id === id) return (els14[id] = made14[i]);
+      return (els14[id] = mkEl14(id));
+    }
+    // ★ `#status-msg` 单独一件:**它的文本要能被读**(下面那些 refusal 断言读的就是"理由"
+    //   那句话),故不走惰性建那一套,而是绑到 `status14` 这个记账变量上。
+    const statusEl14 = { id: 'status-msg', style: {}, dataset: {}, children: [],
+                         addEventListener: function () {}, appendChild: function () {},
+                         classList: { add: function () {}, remove: function () {}, toggle: function () {},
+                                      contains: function () { return false; } } };
+    Object.defineProperty(statusEl14, 'textContent',
+      { set: function (v) { status14 = String(v); }, get: function () { return status14; } });
+    // 图层 4 行 / 工具条 8 个按钮:真给(phase ⑭e 要拿它们证明监听器装上了),渐变按钮单给。
+    const layerRows14 = [1, 2, 3, 4].map(function (L) {
+      const r = mkEl14(null); r.dataset = { layer: String(L) }; return r;
+    });
+    const toolBtns14 = Editor.TOOLS.map(function (t) { const b = mkEl14(null); b.dataset = { tool: t }; return b; });
+    const gradBtn14 = mkEl14(null);
+    const dom14 = {
+      getElementById: function (id) { return id === 'status-msg' ? statusEl14 : elOf14(id); },
+      querySelectorAll: function (sel) {
+        if (sel === '#layers .layer-row') return layerRows14;
+        if (sel === '#toolbar .tool') return toolBtns14;
+        return [];
+      },
+      querySelector: function (sel) {
+        return String(sel).indexOf('gradient') >= 0 ? gradBtn14 : null;
+      },
+      createElement: function (tag) {
+        if (tag === 'canvas') {                          // loadAtlas 要一块能读像素的画布
+          return { width: 0, height: 0, getContext: function () {
+            return { drawImage: function () {},
+                     getImageData: function (x, y, w, h) { return { data: new Uint8ClampedArray(w * h * 4) }; } };
+          } };
+        }
+        const e = mkEl14(null); made14.push(e); return e;
+      },
+    };
+    const savedImage14 = globalThis.Image, savedLoc14 = globalThis.location,
+          savedFetch14 = globalThis.fetch;
+    // ★ 图集替身:512×640(16×20 块,与真 structure.png 同形状),onload 立刻回调。
+    globalThis.Image = function () {
+      const img = this;
+      img.width = 512; img.height = 640; img.onload = null; img.onerror = null;
+      Object.defineProperty(img, 'src', {
+        get: function () { return 'structure.png'; },
+        set: function () { if (img.onload) img.onload(); },
+      });
+    };
+    // ★ 记账的 fetch 替身(**只**在内存里演;测试不许往真 maps/ 写):PUT 可切 ok/500,
+    //   `GET /api/map?p=` 可切 404,`GET /api/maps` 恒空库。
+    const putLog14 = [];
+    let putMode14 = 'ok', mapGetMode14 = 'ok';
+    const fetch14 = function (url, init) {
+      const u = String(url);
+      if (init && init.method === 'PUT') {
+        putLog14.push({ url: u, init: init });
+        if (putMode14 !== 'ok') return Promise.resolve({ ok: false, status: 500 });
+        return Promise.resolve({ ok: true, status: 200,
+          json: function () { return Promise.resolve({ name: 'dirty_copy.cyrm', size: 42 }); } });
+      }
+      if (u.indexOf('/api/maps') === 0) {
+        return Promise.resolve({ ok: true, status: 200,
+          json: function () { return Promise.resolve({ maps: [] }); } });
+      }
+      if (mapGetMode14 !== 'ok') return Promise.resolve({ ok: false, status: 404 });
+      return Promise.resolve({ ok: true, status: 200,
+        arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(0)); } });
+    };
     try {
-      // ★ 替身:面板/spawn 这一路要 DOM(状态栏)与画布尺寸,还要一个能读的视图。
-      //   ★ 状态栏那个替身会**记账**(refusal 的"理由"是它唯一的可见面,不记就没法断言)。
-      globalThis.document = { getElementById: function (id) {
-                                if (id !== 'status-msg') return null;
-                                return { set textContent(v) { status14 = String(v); },
-                                         get textContent() { return status14; } };
-                              },
-                              querySelectorAll: function () { return []; } };
+      // ★ 状态栏那个替身会**记账**(refusal 的"理由"是它唯一的可见面,不记就没法断言)。
+      globalThis.document = dom14;
+      globalThis.location = { search: '?p=stale_name.cyrm' };
+      globalThis.fetch = fetch14;
       const calls14 = [];
       Editor.app.canvas = { width: 80, height: 80 };
       Editor.app.r = {
@@ -1208,13 +1305,29 @@ function countNonZero(map, L) {
       //    多出来的那条位置恰好是 index 1 = **P2**(brief 原码走 addSpawn 的 push 就是这样
       //    把 P2 悄悄换掉的;而且只有 P1 时它不会报越界,纯静默)。
       Editor.app.map.players.length = 1;
-      view14 = { x: 8, y: 8, zoom: 1 };                    // cx=cy=12(与 P1 的 10,10 可辨)
+      view14 = { x: 8, y: 8, zoom: 1 };                    // 视图中心格 = 12,12 —— **越界**,见下条
       Editor.spawnAt('player', 0);
       eq(Editor.app.map.players.length, 1,
          '★★ 只有 P1 时再放 P1:原位覆盖,**不许**长出第 2 条(= P2 被悄悄换掉;实得 ' +
          Editor.app.map.players.length + ' 条)');
-      eq([Editor.app.map.players[0].x, Editor.app.map.players[0].y], [12, 12],
-         '★ P1 原位覆盖面写的是**这一次**的坐标');
+      // ★★ 2026-09-22(修复轮 1)订正期望值 12,12 → 4,4:这张图只有 **8 格宽**,视图中心
+      //    算出来的格 12 是**越界**的。修复前那条路把越界值原样写进数据(只有
+      //    `Core.validateMap` 看得见),而这条断言当时恰恰把那个**错值**钉成了"正确答案"
+      //    (测试与代码同错 ⇒ 全绿)。修复后与 `addSpawn`/`spawnIndexAt` 同量纲:
+      //    `wrapIdx(12, 8) = 4`。判据没变(仍是"写的是**这一次**的坐标"),只是这一次的
+      //    坐标现在必须是**折算后**的。
+      eq([Editor.app.map.players[0].x, Editor.app.map.players[0].y], [4, 4],
+         '★ P1 原位覆盖面写的是**这一次**的坐标(**折算回本图范围**之后:8 格宽的图上,视图中心格 12 ⇒ 4)');
+      // ★★ 视图拖到图外(`panBy` **不钳**视图,render.js)时,记录的坐标必须仍在 `[0, 格数)`:
+      //    这是"panned-off-map 的视图"那条真实路径 —— 修好之前它写进磁盘的就是 −90,−90。
+      const w8 = Core.cellsWOf(Editor.app.map), h8 = Core.cellsHOf(Editor.app.map);
+      view14 = { x: -400, y: -400, zoom: 1 };
+      Editor.spawnAt('player', 0);
+      const p14 = Editor.app.map.players[0];
+      ok(p14.x >= 0 && p14.x < w8 && p14.y >= 0 && p14.y < h8 && p14.x === Render.wrapIdx(-90, w8) &&
+         p14.y === Render.wrapIdx(-90, h8),
+         '★★ 视图拖到图外(panBy 不钳视图)时记录的 P1 必须在 [0,' + w8 + ') 内且是**折算后**的值' +
+         '(实得 ' + p14.x + ',' + p14.y + ';修复前会原样写下 −90,−90)');
 
       // ④ P1+P2 都在时再放 P1:仍是原位覆盖,P2 一个字都不许动
       view14 = { x: 0, y: 4, zoom: 1 };
@@ -1252,10 +1365,144 @@ function countNonZero(map, L) {
       Editor.app.map = null;
       eq(Editor.exportReport(), { lines: ['还没打开地图'], ok: false },
          '★ 没打开地图时报告说的是人话(不是空面板)');
+
+      // ── ⑭c ★★★ `#st-save` 的三种转变(修复轮 1 / 评审 Important 1)──
+      // ★★ 状态栏右侧并排的是**两件事**:`#st-save` 说"磁盘上那份是不是这一份",`#status-msg`
+      //    说"刚刚发生了什么"。`#st-save` 原先是**没有任何写入者**的静态文案(editor.html
+      //    写死「未保存」)⇒ Ctrl+S 成功那一刻同一条状态栏上会同时出现
+      //    「未保存 | 已保存 demo_copy.cyrm(1234 字节)」—— 两个相邻的 span 当场互相打脸。
+      // ★★ 三条里最重要的是**第三条**:保存**失败**时它必须仍是「未保存」。把清零链在
+      //    `guard(...)` 的决议上(那是这个功能最自然的写法)`guard` 失败时决议的是
+      //    `undefined`,于是**失败**会被标成「已保存」,而磁盘上那份一个字都没变。
+      Editor.app.map = Editor.createEmptyMap('dirty', 4, 4);
+      Editor.app.name = 'before.cyrm';
+      Editor.app.sourceFormat = null;                      // 无源格式 ⇒ needsV3Confirm 不问
+      Editor.app.raw = null;
+      const badge14 = function () { return elOf14('st-save').textContent; };
+      view14 = { x: 0, y: 0, zoom: 1 };
+      Editor.spawnAt('enemy', 0);                          // ① 落一笔(真差量、进真历史)
+      eq(badge14(), '未保存',
+         '★★ ①落一笔之后 #st-save 说「未保存」(实得 "' + badge14() + '")');
+      putMode14 = 'ok';
+      await Editor.saveCurrent(true);                      // ② 保存成功
+      eq(badge14(), '已保存',
+         '★★ ②保存成功后 #st-save 翻成「已保存」(实得 "' + badge14() + '")');
+      ok(status14.indexOf('已保存') >= 0,
+         '★ 同一刻 #status-msg 说的也是「已保存 …」(两格说的是同一件事;实得 "' + status14 + '")');
+      view14 = { x: 0, y: 0, zoom: 1 };
+      Editor.spawnAt('enemy', 0);                          // ③ 先弄脏(否则是上一次的残留)
+      eq(badge14(), '未保存', '⑭c 前提:再落一笔之后回到「未保存」');
+      putMode14 = 'fail';
+      await Editor.saveCurrent(true);                      // ★ 保存**失败**
+      ok(status14.indexOf('保存失败') >= 0,
+         '★★ 保存失败要**说出来**(#status-msg 里有「保存失败」;实得 "' + status14 + '")');
+      eq(badge14(), '未保存',
+         '★★★ ③保存**失败**之后 #st-save 仍是「未保存」(磁盘上那份一个字都没变;实得 "' +
+         badge14() + '")。★ 把 `dirty = false` / 徽标重画链在 `guard(...)` 的决议上,' +
+         '`guard` 失败时决议的 `undefined` 会让这一格翻成「已保存」—— 本条就是那个陷阱的守卫');
+
+      // ── ⑭d ★★ 保存流程真的把字节交给了**写盘出口**,也真的更新了 app.name / sourceFormat
+      //    (评审 Important 1 的 bonus:此前一条断言都没有)──
+      // ★ 为什么必须另立一条:把 `saveCurrent` 改成一行早退(`return Promise.resolve();`)
+      //   时,⑭c 里只有 ② 会红,而 ② 的判据是**徽标文案** —— "只翻徽标、不写盘"的实现
+      //   照样能过。这条直接钉住"字节确实从那个唯一的出口出去了"。
+      putMode14 = 'ok';
+      Editor.app.name = 'before.cyrm';                     // 与保存后的名字**可辨**
+      Editor.app.sourceFormat = null;                      // 同上:改了才看得出来
+      Editor.app.raw = null;
+      putLog14.length = 0;
+      await Editor.saveCurrent(true);
+      eq(putLog14.length, 1,
+         '★★ 一次 saveCurrent = **恰好一次**写盘请求(早退的实现这里是 0;实得 ' + putLog14.length + ' 次)');
+      // ★ 后两条**先判有没有那一次**再取字段:空数组上取 `[0].url` 会抛出去**中断整条冒烟**
+      //   (后面的断言一行都不跑,看着像"探针挂了"),而这里要的是**失败**。
+      const put14 = putLog14.length ? putLog14[0] : null;
+      ok(!!put14 && put14.url.indexOf('/api/map?p=dirty_copy.cyrm') >= 0,
+         '★ 写的是 saveTargetName 算出来的那个名字(实得 "' + (put14 ? put14.url : '(没有请求)') + '")');
+      ok(!!put14 && put14.init && put14.init.method === 'PUT',
+         '★ 走的还是那个唯一的 PUT 出口(实得 ' + (put14 && put14.init ? put14.init.method : '(没有请求)') + ')');
+      ok(Editor.app.raw && Editor.app.raw.length > 0,
+         '★ app.raw 换成了这一份新编码出来的字节(实得 ' +
+         (Editor.app.raw ? Editor.app.raw.length + ' 字节' : String(Editor.app.raw)) + ')');
+      eq(Editor.app.name, 'dirty_copy.cyrm',
+         '★★ app.name 更新成真正落盘的那个名字(实得 ' + Editor.app.name + ')');
+      eq(Editor.app.sourceFormat, 'v4',
+         '★★ app.sourceFormat 更新成 v4(落盘的就是 v4 二进制;实得 ' + Editor.app.sourceFormat + ')');
+
+      // ── ⑭e ★★★ 启动链路:打开的成败**不决定**面板建不建(评审 Important 2)──
+      // ★★ 原先那条链是 `loadAtlas → openFromUrl → buildPanels`,而 `.catch` 只有一个 ⇒
+      //    `openFromUrl()` 一旦拒绝(`?p=` 是个陈旧/写错的名字 → `openMap` 抛 HTTP 404;
+      //    `.cyrm` 解不开;structure.png 拿不到),整条链**短路到 catch**,`buildPanels()`
+      //    一行都没跑:工具条、图层行、调色板、出生点四个按钮**一个监听都没装上**,而且
+      //    **没有重建路径** —— 屏幕上只有一行「启动失败:…」。用户会以为编辑器坏了,
+      //    而不是"这张图打不开"。★ 计划 Step 3 原写的是"排在 openFromUrl() 之后"。
+      // ★ 判据是**真驱动**(点一下按钮看它的副作用),不是"没抛":后者拦不住
+      //    "buildPanels 跑了但那只按钮没接上"。
+      Editor.app.map = null;                               // 打开失败后就是这状态
+      Editor.app.tileDefs = globalThis.TILE_DEFS;
+      mapGetMode14 = 'fail';                               // ?p=stale_name.cyrm → HTTP 404
+      await Editor.bootLoad();
+      ok(status14.indexOf('启动失败') >= 0,
+         '⑭e 前提:这次打开**真的**失败了(#status-msg 里有「启动失败」;实得 "' + status14 + '")');
+      ok(elOf14('palette').children.length > 0,
+         '★★★ 打开失败之后调色板**仍然建出来了**(实得 ' + elOf14('palette').children.length +
+         ' 个格子)—— 面板建在打开之后的话这里是 0');
+      const toolBefore14 = Editor.app.st.tool;
+      toolBtns14.forEach(function (b) { if (b.dataset.tool === 'line') b.click(); });
+      eq(Editor.app.st.tool, 'line',
+         '★★★ 打开失败之后工具条按钮**仍然接上了**(点「直线」真换工具:' + toolBefore14 +
+         ' → ' + Editor.app.st.tool + ')');
+      status14 = '';
+      elOf14('spawn-clear').click();
+      eq(status14, '先打开一张地图',
+         '★★ 打开失败之后「清空出生点」说的是三个兄弟按钮那一句人话(不是「页面异常:…」;实得 "' +
+         status14 + '")');
+      status14 = '';
+      elOf14('btn-del').click();
+      ok(status14.indexOf('删除地图') >= 0,
+         '★ 面板上的其它按钮也接上了(「删除」按钮给出了它的说明;实得 "' + status14 + '")');
+      // ★ 背景层:派生提示行与「只改辅码」那一行都要跟着调色板一起藏(修复轮 1 / Minor 3)。
+      const rows14 = { 'desc-hue': mkRow14(), 'desc-bri': mkRow14(), 'desc-sat': mkRow14(),
+                       'desc-alp': mkRow14(), 'desc-only': mkRow14() };
+      Object.keys(rows14).forEach(function (id) { elOf14(id).parentNode = rows14[id]; });
+      Editor.app.r.layer = function () { return Core.LAYER_BG; };
+      Editor.syncPanelForLayer();
+      ok(elOf14('palette-hint').style.display === 'none',
+         '★★ 切到背景层时**派生提示行**(「纹理 22 不进调色板…」)跟着 #palette 一起藏' +
+         '(它是 palette 的派生行,留着就是浮在空面板底下;实得 "' +
+         elOf14('palette-hint').style.display + '")');
+      ok(rows14['desc-only'].style.display === 'none',
+         '★★ 「只改辅码」那一行也藏了(它管的正是那四个已经藏掉的档位;隐藏要落到**整行**' +
+         '上 —— 它的 input 外面还包着一层 label;实得 "' + rows14['desc-only'].style.display + '")');
+      ok(rows14['desc-hue'].style.display === 'none',
+         '★ (对照)四个档位那一行照旧藏(没有为了修上面两条把它弄丢)');
+      eq(elOf14('bg-color-row').style.display, '',
+         '★ (对照)背景层自己的两个色槽是**显示**出来的');
+      Editor.app.r.layer = function () { return Core.LAYER_SCENE; };
+      Editor.syncPanelForLayer();
+      eq(elOf14('palette-hint').style.display, '',
+         '★ 切回纹理层时派生提示行要**回来**(藏了不还原 = 提示永久消失)');
+      eq(rows14['desc-only'].style.display, '',
+         '★ 切回纹理层时「只改辅码」那一行也回来');
     } finally {
       globalThis.document = savedDoc14;
       Editor.app.r = savedR14; Editor.app.map = savedMap14;
       Editor.app.canvas = savedCv14; Editor.app.name = savedName14;
+      globalThis.Image = savedImage14; globalThis.location = savedLoc14;
+      globalThis.fetch = savedFetch14;
+      // ★★ 历史与敌人注册表也要还(修复轮 1)。⑭a 的 6 次 `spawnAt` 走的是**真**
+      //    `pushAndShow` —— 它们真的进了 ⑬ 装出来的那本**真**历史;`ENEMY_REGISTRY` 是
+      //    ⑭ 从 editor.html 的标记块里读出来装上的。只还前面那五样引用的话,后面追加的
+      //    相位会**带着别人的 6 条差量**起跑(撤销一次撤掉的是 ⑭ 的出生点,而它以为撤的是
+      //    自己那笔),而那种漂移**不报错**、只让它们按错的初始条件跑。
+      // ★ 还法就是**再装一遍** `installInteraction()`:它建的正是生产初始状态(历史清空 +
+      //    `app.st` 回初值)。它只碰 `app.canvas` 与 `window`,故这两处给空替身。
+      const savedAdd14 = globalThis.addEventListener, savedCv14b = Editor.app.canvas;
+      globalThis.addEventListener = function () {};
+      Editor.app.canvas = { addEventListener: function () {} };
+      Editor.installInteraction();
+      globalThis.addEventListener = savedAdd14; Editor.app.canvas = savedCv14b;
+      delete globalThis.ENEMY_REGISTRY;
     }
   } catch (err) {
     console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');

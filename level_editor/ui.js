@@ -796,9 +796,26 @@ globalThis.Editor = (function () {
   var undoHistory = null;
   var clipboard = null;
 
+  // ── 磁盘状态(`#st-save` 那一格,规格 §4.5 的状态栏)──
+  // ★★ 状态栏右侧并排的是**两件事**:`#st-save` 说"磁盘上那份是不是这一份",`#status-msg`
+  //    说"刚刚发生了什么"。没有这个标志时 `#st-save` 是一格**没有任何写入者**的静态文案
+  //    (`editor.html` 写死「未保存」),于是 Ctrl+S 成功的那一刻同一条状态栏上会同时出现
+  //    「未保存 | 已保存 demo_copy.cyrm(1234 字节)」—— 两个相邻的 span 当场互相打脸。
+  // ★★ 纪律:它**只**在「保存真的成功」与「打开真的成功」两处清零,**绝不**挂在
+  //    `guard(...)` 的决议上 —— `guard` 失败时决议的是 `undefined`(见它的实现),把清零
+  //    链在它上面会把一次**失败**的保存标成「已保存」,而磁盘上那份一个字都没变。
+  // ★ 今天它写的是「未保存 / 已保存」;Task 9 的草稿盘会接管这一格(改成「已自动保存 12:34」),
+  //    届时这两个文案就是"没有草稿盘"时的降级值。
+  var dirty = false;
+  function renderSaveState() {
+    var el = $('st-save');
+    if (el) el.textContent = dirty ? '未保存' : '已保存';
+  }
+
   function pushAndShow(diff) {
     if (!diff) return false;
     undoHistory.push(diff);
+    dirty = true;                     // ★ 落了笔 ⇒ 磁盘上那份已经不等于屏幕上这一份了
     // ★ 两条路都要走:kind:'whole'(改尺寸/换图)改的是**尺寸本身**,`diffCells` 对它是
     //   空数组 ⇒ 只 render() 的话整张图停在旧尺寸/旧内容上(画面错了、一个字都不报)。
     //   invalidateAll 会把缩略图与 ② 一起整片重建(它自己带尺寸对齐,见那边的注释)。
@@ -823,6 +840,10 @@ globalThis.Editor = (function () {
   }
   function afterStateChange(e) {
     var out = null;
+    // ★ 撤销/重做也是一次**改动**:回到"保存时那一刻"的图上仍然显示「未保存」——
+    //   这是刻意的(要判"撤销回去了没有"得比整份字节,那是 Task 9 草稿盘的事)。
+    //   反过来(把撤销当"变干净")会把"撤了两步、其实还脏着"标成已保存,那才是错的。
+    dirty = true;
     if (e.kind === 'whole') {
       // ★ 尺寸可能变了 ⇒ 整片重来。**不是** setMap:那个会把视图重新"适配"并清掉选区,
       //   而撤销一次尺寸变化不该把视野和选区一起重置(而且它建的是"新图"语义)。
@@ -867,6 +888,7 @@ globalThis.Editor = (function () {
     var sel = app.r.selection();
     set('st-sel', sel ? ('选区 ' + (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格') : '无选区');
     set('st-undo', '撤销 ' + undoHistory.depth() + ' / 重做 ' + undoHistory.redoDepth());
+    renderSaveState();                // ★ 每落一笔都要跟着翻(状态栏是"现在"的样子)
   }
 
   function hitOf(ev) {
@@ -1245,12 +1267,20 @@ globalThis.Editor = (function () {
         app.name = name;
         app.raw = bytes;
         app.sourceFormat = 'v4';
-        status('已保存 ' + out.name + '(' + out.size + ' 字节)');
-        // ★ 库列表里的字节数/时间跟着更新。它自己是一次 GET,失败与"保存成功"无关 ⇒
-        //   走 guard 收口(不吞、也不把成功两个字盖掉以外的语义变化)。
-        guard('库列表刷新', function () { return refreshLibrary(); });
+        dirty = false;                 // ★★ 只有**真的**写成功了才清(见 dirty 那段的纪律)
         refreshStatus();
         statusLine();
+        // ★★ 库列表刷新排在**说结果之前**:那条 GET 失败时 `guard` 会往**同一条状态栏**
+        //    写一行错误 —— 先写「已保存 …」再被它盖掉的话,用户看到的是"刷新失败了",
+        //    而保存其实**成功了**(人眼验收清单恰恰是叫用户去看那一行)。故:先把刷新
+        //    (无论成败)走完,最后才把保存结果写在最上面那一行。
+        //    ★ 代价照实说:刷新失败那行于是只在控制台(reportError 的 console.error)里
+        //      留痕、状态栏上是一句「已保存」。刷新只是"列表里的字节数/时间",不影响落盘。
+        // ★ `Promise.resolve(...)` 不是装饰:`guard` 在**同步**抛时返回的是 `null`(见它的
+        //   实现),直接 `.then` 会在这里炸成一次 TypeError —— 那会被外层 catch 说成
+        //   「保存失败」,而保存其实成功了(徽标已经翻成已保存,两句话又打起来)。
+        return Promise.resolve(guard('库列表刷新', function () { return refreshLibrary(); }))
+               .then(function () { status('已保存 ' + out.name + '(' + out.size + ' 字节)'); });
       });
     }).catch(function (e) {
       // ★ 保存失败要**说出来**;磁盘上那份没被动过(服务器是原子写)
@@ -1323,6 +1353,9 @@ globalThis.Editor = (function () {
     if (DERIVED_TEXTURES.length) {
       var hint = document.createElement('div');
       hint.className = 'desc-row';
+      // ★★ 给它一个 id:它是 `#palette` 的**派生行**,背景层上必须跟着一起藏 —— 否则
+      //    「纹理 22 不进调色板…」会孤零零浮在一个空面板底下(见 syncPanelForLayer)。
+      hint.id = 'palette-hint';
       hint.textContent = '纹理 ' + DERIVED_TEXTURES.join('/') + ' 不进调色板:游戏侧由地形自动派生';
       box.parentNode.insertBefore(hint, box.nextSibling);
     }
@@ -1367,7 +1400,15 @@ globalThis.Editor = (function () {
     if (p1) p1.addEventListener('click', function () { spawnAt('player', 0); });
     if (p2) p2.addEventListener('click', function () { spawnAt('player', 1); });
     if (en) en.addEventListener('click', function () { spawnAt('enemy', 0); });
-    if (cl) cl.addEventListener('click', function () { pushAndShow(clearSpawns(app.map)); });
+    // ★★ 与它三个兄弟(`spawn-p1`/`spawn-p2`/`spawn-enemy`,都走 spawnAt)对齐:没打开地图时
+    //    说「先打开一张地图」,而不是把 `clearSpawns(null)` 的 TypeError 抛进 click 处理器 ——
+    //    后者经 window.onerror 变成「页面异常:…」,同一个面板里四个按钮两种说法。
+    if (cl) cl.addEventListener('click', function () {
+      guard('清空出生点', function () {
+        if (!app.map) { status('先打开一张地图'); return null; }
+        return pushAndShow(clearSpawns(app.map));
+      });
+    });
     var libList = $('lib-list');
     if (libList) {
       libList.addEventListener('click', function (ev) {          // ★ 委托一次,不给每行挂监听
@@ -1383,6 +1424,7 @@ globalThis.Editor = (function () {
       app.map = m; app.name = freshName(name);
       app.sourceFormat = 'v4';
       undoHistory = createHistory({});
+      dirty = true;                   // ★ 新建只活在内存里(还没写盘)⇒ 磁盘状态是「未保存」
       // ★ setMap 返回的是**分帧重建**派生出来的 promise(Task 4)⇒ 必须收口:抛在任务回调里
       //   是一次 promise 拒绝,同步 try/catch 接不住(用户看到的就是"点了新建、画面不动")。
       guard('新建地图', function () { return app.r.setMap(m); });
@@ -1397,6 +1439,7 @@ globalThis.Editor = (function () {
       app.name = freshName(copy.name);
       app.sourceFormat = 'v4';
       undoHistory = createHistory({});
+      dirty = true;                   // ★ 同上:副本也只活在内存里(还没写盘)
       guard('复制地图', function () { return app.r.setMap(copy); });   // ★ 同上:分帧重建的 promise
       status('已复制为 ' + app.name + '(还没写盘)');
       refreshStatus();
@@ -1407,6 +1450,7 @@ globalThis.Editor = (function () {
       if (!n) return;
       app.map.name = Core.sanitizeName(n);
       app.name = app.map.name + '.cyrm';
+      dirty = true;                   // ★ 改名只改内存里那份(磁盘上还是旧名字,要 Ctrl+S 才落盘)
       status('改名为 ' + app.name + '(还要 Ctrl+S 才写盘)');
       refreshStatus();
     });
@@ -1441,14 +1485,26 @@ globalThis.Editor = (function () {
   function syncPanelForLayer() {
     var isBg = (app.r.layer() === Core.LAYER_BG);
     var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? '' : 'none'; };
+    // ★★ 藏的是**整行**,不是控件的直接父节点:面板里各控件的父节点并不统一 —— 四个档位
+    //    select 的父节点就是 `.desc-row`,而「只改辅码」那个 input 外面还包着一层 <label>
+    //    ⇒ 直接写 parentNode 的话后者只藏掉 label,那一行仍占着位置(而且只读得出"少了个
+    //    勾选框",看不出是故意的)。故一律向上找到 `.desc-row`。
+    var hideRow = function (id, on) {
+      var el = $(id);
+      if (!el) return;
+      var row = el;
+      while (row && !(row.classList && row.classList.contains('desc-row'))) row = row.parentNode;
+      if (row) row.style.display = on ? '' : 'none';
+    };
     show('palette', !isBg);
+    show('palette-hint', !isBg);       // ★ 派生行跟着调色板走(见 buildPanels 里插它的那一段)
     show('bg-color-row', isBg);
     show('bg-color-row2', isBg);
     show('bg-color-title', isBg);
-    ['desc-hue', 'desc-bri', 'desc-sat', 'desc-alp'].forEach(function (id) {
-      var el = $(id);
-      if (el && el.parentNode) el.parentNode.style.display = isBg ? 'none' : '';
-    });
+    ['desc-hue', 'desc-bri', 'desc-sat', 'desc-alp'].forEach(function (id) { hideRow(id, !isBg); });
+    // ★ 「只改辅码」与四个档位是**同一组**(它管的就是那四档),故同显同藏 —— 否则背景层上
+    //   它会挂在一个已经没有别的控件的「辅码」区块里。
+    hideRow('desc-only', !isBg);
     var titles = document.querySelectorAll('#right h2');
     for (var i = 0; i < titles.length; i++) {
       if (titles[i].textContent === '辅码') titles[i].style.display = isBg ? 'none' : '';
@@ -1478,10 +1534,16 @@ globalThis.Editor = (function () {
         return;
       }
       var before = snapshotSpawns(app.map);
-      if (app.map.players.length === playerIndex) app.map.players.push({ x: cx, y: cy });
-      else app.map.players[playerIndex] = { x: cx, y: cy };
+      // ★★ 折算回本图范围:`addSpawn`(436)与 `spawnIndexAt`(420)都这么做,这条路此前漏了。
+      //    `panBy` **不钳**视图(render.js)⇒ 环面模式下把视图拖到图外时,"视图中心那一格"
+      //    算出来是越界的,于是磁盘上多出一条 x/y 出圈的出生点 —— 只有 `Core.validateMap`
+      //    看得见它(而游戏侧读到的位置是另一回事)。两条路必须同量纲。
+      var px = Render.wrapIdx(Math.floor(cx), Core.cellsWOf(app.map));
+      var py = Render.wrapIdx(Math.floor(cy), Core.cellsHOf(app.map));
+      if (app.map.players.length === playerIndex) app.map.players.push({ x: px, y: py });
+      else app.map.players[playerIndex] = { x: px, y: py };
       pushAndShow(spawnDiff(before, snapshotSpawns(app.map)));
-      status('P' + (playerIndex + 1) + ' 放到 (' + cx + ',' + cy + ')');
+      status('P' + (playerIndex + 1) + ' 放到 (' + px + ',' + py + ')');
       return;
     }
     pushAndShow(addSpawn(app.map, 'enemy', cx, cy, types[0] || 'fly_bird'));
@@ -1517,6 +1579,7 @@ globalThis.Editor = (function () {
       })
       .then(function (out) {
         app.map = out.map; app.name = name; app.sourceFormat = out.sourceFormat;
+        dirty = false;                 // ★★ 打开 = 屏幕上这份与磁盘上那份**同源**(见 dirty 那段)
         return Promise.resolve(app.r.setMap(app.map)).then(function () {
           refreshStatus();
           status('已打开 ' + name + '(' + out.sourceFormat + ')');
@@ -1552,6 +1615,7 @@ globalThis.Editor = (function () {
     var rep = Core.validateMap(m);
     set('st-valid', rep.errors.length ? ('error ' + rep.errors.length)
                                       : (rep.warnings.length ? ('⚠ ' + rep.warnings.length) : '校验 OK'));
+    renderSaveState();                // ★ 打开/新建/复制/改名/保存后都要跟着翻
   }
 
   // ── 库列表 ──
@@ -1620,12 +1684,24 @@ globalThis.Editor = (function () {
     if (fitBtn) fitBtn.addEventListener('click', function () { guard('fit', function () { return app.r.fit(); }); });
 
     // ★ 图集必须先就位(渲染第一帧就要它);失败要说出来,而不是画一片黑。
-    loadAtlas().then(function () {
+    bootLoad();
+  }
+
+  // ── 启动装载(★ 抽成函数是为了让"打开失败"那条路也能被 node 单独驱动:editor_smoke 相位 ⑭e)──
+  // ★★ 面板**必须建在打开之前**。原先它挂在"打开之后"(计划 Step 3 的写法),那条链是
+  //    `loadAtlas → openFromUrl → buildPanels`,而 `.catch` 只有一个 —— 于是 `openFromUrl()`
+  //    一旦拒绝(`?p=` 是个陈旧或写错的名字 → `openMap` 抛 HTTP 404;`.cyrm` 解不开;
+  //    structure.png 拿不到),整条链**短路到 catch**,`buildPanels()` 一行都没跑:
+  //    工具条、图层行、调色板、出生点四个按钮**一个监听都没装上**,从此**没有重建路径**,
+  //    屏幕上只有一行「启动失败:…」。用户会以为编辑器坏了,而不是"这张图打不开"。
+  // ★ `buildPanels` 只读 `app.tileDefs`(boot 里就位)与 `app.r`(已 mount),对 `app.map`
+  //    只有**一处**引用(清空出生点那个处理器)且不读任何地图尺寸 —— 所以"等图打开"没有
+  //    任何理由;而它自己带 null 守卫,没图也能建。
+  function bootLoad() {
+    return loadAtlas().then(function () {
+      buildPanels();
       return openFromUrl();
     }).then(function () {
-      // ★ 面板要排在**图打开之后**建:调色板与 spawn 工具都读 app.map 那一侧的尺寸,
-      //   而且 buildPanels 结尾会刷一遍状态栏。它自己带 null 守卫(没图也能建)。
-      buildPanels();
       if (new URLSearchParams(location.search).has('selftest')) {
         return selfTest().then(function (line) { status(line); });
       }
@@ -1752,7 +1828,7 @@ globalThis.Editor = (function () {
   }
 
   return {
-    boot: boot, guard: guard, status: status, msgOf: msgOf,
+    boot: boot, bootLoad: bootLoad, guard: guard, status: status, msgOf: msgOf,
     setErrorSink: setErrorSink, reportError: reportError,
     nameFromFile: nameFromFile, detectFormat: detectFormat, mapFromBytes: mapFromBytes,
     openMap: openMap, openFromUrl: openFromUrl, refreshLibrary: refreshLibrary,
