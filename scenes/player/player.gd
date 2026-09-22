@@ -172,17 +172,6 @@ func _ready() -> void:
 	#   自己建 animator)必须回头把这三处一起倒过来。
 	add_child(squash)
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
-	# ★ 模式闸门(2026-09-21 用户裁定):形变**只在单机生效**,联机模式(1v1/大乱斗/3v3)全部取消 ——
-	#   **唯一例外是落地那一下**("除了玩家落地的优化")。闸门放组件里(只关事件脉冲 + 空中连续项),
-	#   理由见 `squash_stretch.gd` 文件头(要静音的地方散在 4 处,调用点漏判不报错)。
-	# ★ 判据用 `Level0.pvp_mode`:本文件本来就用它判模式(捡枪/按 R 重启那几处同款),且它与
-	#   "本局是不是联机"严格同义 —— `pvp_game`/`royale_game`/`team_game` 都在实例化世界**之前**
-	#   置 true,故玩家 `_ready` 读到的一定是终值(`player.tscn` 的 _ready 没有别的模式默认)。
-	#   ★ 不用 `CombatComponent.pvp_arena`:那个是"取消命中无敌帧"的开关,语义不同(服务器侧也置
-	#   true,而服务器根本不渲染);也不要读 `input_source` 的类型 —— 那是实现细节,会随输入源分裂而漂。
-	# ★ 单机**不调**这个开关 ⇒ `_landing_only` 保持 false ⇒ 单机行为与加闸门之前逐字相同。
-	if Level0.pvp_mode:
-		squash.set_landing_only(true)
 
 
 func _physics_process(delta: float) -> void:

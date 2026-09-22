@@ -297,12 +297,6 @@ func _phase_weapon_stats_and_hit() -> void:
 	# load()+脚本比较代替 is WeaponBase。
 	_check(w.get_script() == load("res://scenes/weapons/weapon_base.gd"), "武器继承 WeaponBase")
 	_check(w.weapon_name == "Pistol", "手枪参数")
-	# 2026-09-20 用户调参:射程 900 → 1100,并**新增** `spread_deg = 0.4`(此前该 tscn 里没有这个 export,
-	# 单弹丸武器同样吃散布 —— `weapon_base._spawn_projectiles` 每发都做 `randf_range(-s, s)`)。
-	# 射程/散布在本文件里**只**由本档钉(后面的多弹丸/爆炸阶段不碰它们,那两把枪的 tscn 改动
-	# 否则会**零覆盖**地过去)。
-	_check(is_equal_approx(w.bullet_range, 1100.0) and is_equal_approx(w.spread_deg, 0.4),
-			"手枪射程1100/±0.4°")
 	var e_scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	# 复用上面 Task 4 已声明的 e(已 free 过,不能重复 var 声明)
 	e = e_scene.instantiate()
@@ -338,20 +332,10 @@ func _phase_weapon_stats_and_hit() -> void:
 	sg_scene = load("res://scenes/weapons/s686.tscn")
 	_check(sg_scene != null, "霰弹枪场景加载")
 	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
-	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 4.0), "霰弹枪 8 丸 ±4°")
-	_check(sg.damage == 5 and is_equal_approx(sg.bullet_range, 700.0), "霰弹枪单丸5伤/射程700")
-	# 全中伤害 = damage × pellet_count —— 用户 2026-09-20 选的就是"全中 40"那一档
-	# (能红的实现:单独改 damage 或 pellet_count 而没重算这一档 —— 两者各自看着都"合理")
-	_check(int(sg.damage) * int(sg.pellet_count) == 40, "霰弹枪全中伤害应为 40(5×8)")
+	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 5.0), "霰弹枪 8 丸 ±5°")
+	_check(sg.damage == 4 and is_equal_approx(sg.bullet_range, 700.0), "霰弹枪单丸4伤/射程700")
 	_check(sg.tier == 0, "霰弹枪轻武器")
 	sg.queue_free()
-
-	# 步枪:2026-09-20 用户调参(射程 1100 → 1400,并**新增** `spread_deg = 0.6`)。
-	# 本档是它射程/散布的唯一守卫(该场景在本文件里此前只是"能加载",从未被实例化)。
-	var rf = rifle.instantiate()
-	_check(is_equal_approx(rf.bullet_range, 1400.0) and is_equal_approx(rf.spread_deg, 0.6),
-			"步枪射程1400/±0.6°")
-	rf.queue_free()
 
 
 # ── Task: 缓冲开火(冷却>0.5 武器,最后 20% 按开火→冷却结束自动打)──

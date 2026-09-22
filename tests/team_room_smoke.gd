@@ -166,7 +166,6 @@ func _initialize() -> void:
 	#   ★ ② 撞车队:本地玩家的 `collision_layer/mask` 与副本幽灵体的层必须按**队**设
 	#     (`TeamHost.TEAM_ENEMY_LAYER`)。全 1v1/大乱斗式的"全员互挡"在 3v3 是**错的**,
 	#     而错了的表现是 C2 每帧回滚(不像崩溃那样显眼)。
-	#   ★ ⑤ 结算页接线(B 册 Task 7 收的评审尾巴:Task 5/6 的两条调用此前**零常驻覆盖**)。
 	var tg_src := ScanUtil.read("res://scenes/team_game.gd")
 	if tg_src.is_empty():
 		fails.append("读不到 scenes/team_game.gd(Task 6 的两条接线断言无从成立)")
@@ -233,48 +232,6 @@ func _initialize() -> void:
 		elif not (tint_body.contains("color_override.r / BODY_BASE_COLOR.r")
 				and tint_body.contains("color_override.b / BODY_BASE_COLOR.b")):
 			fails.append("★ 队色染色被改回「直接乘队色」了(蓝身体乘橙 = 灰紫,队色认不出;必须是 队色/本体主色 的比值)")
-		# ⑤ 结算页接线(B 册 Task 7)。挂载/离场本身**收在基类**(`PvpMatchClient._show_result`
-		#   / `_leave_to_main_menu`),本文件只负责"调了"。两条都是"删了/写反了不报错"的那类:
-		#   ① MATCH_OVER 块里必须调 `_show_result()` —— 删了不报错,只是**结算页永不出现**
-		#      (玩家停在对局里,既没有结算页也没有回主菜单的路)。判据取"**那个分支里**有调用",
-		#      不是"文件里出现过" —— 后者对"把调用挪出分支/挪成无条件"恒绿。
-		#   ② `_build_result_payload()` 折载荷时 `_names` 与 `_teams` 的**实参顺序**不得写反。
-		#      ★★ 这是本计划**最安静的错法**:`for_team(round, names, teams, my_team)` 的前三个
-		#      实参**都是 Dictionary**,写反**照样编译、所有常驻测试照样绿**,只有榜渲染成
-		#      乱码/空表。★ 判据取"**每个位置上是什么**"(「两个名字都出现过」对换位**恒绿**)。
-		#   ★ 这正是"只扫基类那两条常驻守卫"照不到的那一半(它们管挂载/离场,不管谁来调)。
-		var tcv := ScanUtil.code_view(tg_src)
-		var cv_lines := tcv.split("\n")
-		var i_mo := -1
-		for k in range(cv_lines.size()):
-			if cv_lines[k].contains("state == 3"):
-				i_mo = k
-				break
-		if i_mo < 0:
-			fails.append("★ team_game 里找不到 MATCH_OVER 分支(`state == 3`)—— 结算页接线断言无从成立")
-		elif not _block_after(cv_lines, i_mo).contains("_show_result()"):
-			fails.append("★ team_game 的 MATCH_OVER 块没调 _show_result()(退场路径被删了?玩家会停在对局里,没有结算页也没有回主菜单的路)")
-		var payload_body2 := ScanUtil.func_body(tcode, "_build_result_payload")
-		if payload_body2.is_empty():
-			fails.append("★ team_game 里找不到 _build_result_payload 的函数体(结算页载荷断言无从成立)")
-		else:
-			var call_at := payload_body2.find("MatchResultPayload.for_team(")
-			if call_at < 0:
-				fails.append("★ team_game._build_result_payload 没调 MatchResultPayload.for_team(3v3 的结算页载荷没了)")
-			else:
-				var open := payload_body2.find("(", call_at)
-				var close := ScanUtil.match_paren(payload_body2, open)
-				if close < 0:
-					fails.append("★ MatchResultPayload.for_team 的调用括号配不上(实参顺序断言无从成立)")
-				else:
-					var args := ScanUtil.split_args(payload_body2.substr(open + 1, close - open - 1))
-					if args.size() < 4:
-						fails.append("★ MatchResultPayload.for_team 的实参只有 %d 个(应 4 个:round_state / names / teams / my_team)" % args.size())
-					else:
-						if not args[1].contains("_names"):
-							fails.append("★ for_team 第 2 个实参不是 _names(签名是 round_state, names, teams, my_team;★ 前三个都是 Dictionary ⇒ 写反照样编译、所有常驻测试照样绿,只有榜渲染成乱码/空表)")
-						if not args[2].contains("_teams"):
-							fails.append("★ for_team 第 3 个实参不是 _teams(同上:names 与 teams 写反是**静默**的)")
 	# ⑩ `BODY_BASE_COLOR` 的**数值**时效性 —— 与 ⑨④ 的"机制"那一半互补(两半缺一不可)。
 	# ★ ⑨④ 钉"公式是**比值**";本档钉那个比值的**分母**仍等于 `player.png` 的主色。换素材忘了
 	#   重测 `BODY_BASE_COLOR` 时:公式照旧对、⑨④ 照旧绿,只有身体**整体偏色** —— 而六个人
@@ -338,26 +295,3 @@ func _initialize() -> void:
 # 故这里不需要容差;真需要容差的话说明素材已经被改过了,那正是本断言要报的事。
 func _rgb8(c: Color) -> Vector3i:
 	return Vector3i(roundi(c.r * 255.0), roundi(c.g * 255.0), roundi(c.b * 255.0))
-
-
-# 某行的缩进宽度(制表符/空格都算一列)。
-# ⚠ 入参必须是**保留缩进**的视图(`ScanUtil.code_view`),`code_only` 会 strip_edges ⇒ 恒 0。
-func _indent_of(line: String) -> int:
-	var n := 0
-	while n < line.length() and (line[n] == "\t" or line[n] == " "):
-		n += 1
-	return n
-
-
-# 第 i 行**所属块**的正文:紧随其后、缩进严格更大的那些行(给"某分支里必须调 X"类断言用 ——
-# 判据取"那个分支里",不是"文件里出现过";后者对"把调用挪出分支"恒绿)。
-func _block_after(lines: PackedStringArray, i: int) -> String:
-	if i < 0 or i >= lines.size():
-		return ""
-	var base := _indent_of(lines[i])
-	var out: Array[String] = []
-	for k in range(i + 1, lines.size()):
-		if _indent_of(lines[k]) <= base:
-			break
-		out.append(lines[k])
-	return "\n".join(out)

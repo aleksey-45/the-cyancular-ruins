@@ -5,7 +5,7 @@ extends LobbyPage
 # 选边按钮 + 房主开局)。自建服务器(RoomManager → `--team` worker)。
 # 协议走 NetBusExt 的 `team_*` 系列(六条上行 / 两条下行);开局**复用原版 go_match(role,port)**
 # 转连 worker —— 那条 RPC 的签名与 1v1/大乱斗完全相同,故不另开协议。
-# 视觉项(小地图/轨迹/血条)沿用「多人对战」设置(Settings.pvp_*),此处不重复摆放。
+# 视觉项(小地图/轨迹/血条)沿用「1v1」设置(Settings.pvp_*),此处不重复摆放。
 # 控件一律走 UiFactory(像素字体与字号规范的单一来源),字号必须是 16 的倍数。
 #
 # 连接状态机 / 转连 worker / 按钮工厂都在基类 `LobbyPage` 里 —— 本文件只留 3v3 的差异:
@@ -57,9 +57,11 @@ func _ready() -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
-	# 3v3 协议在 NetBusExt(自建服务端才有):原作者云服不支持 → 默认本机,不默认云地址
-	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(250, 40), "服务器地址(3v3=自建服)", "127.0.0.1")
-	var addr_hint := UiFactory.label("3v3 需自建服务器:点「启动/重启本机服务器」即可本机开服(同目录需有 Cyancular Ruins Server.exe);朋友加入填开服机 IP(异地用 VPN 组网);原作者云服不支持 3v3", 16, UiFactory.C_TEXT)
+	# 地址默认跟 1v1 页一致(取 `PvpSession.server_address`)。
+	# ★ 2026-09-22 用户裁定:云服**同样支持** 3v3 —— 原先这里硬编码 "127.0.0.1"、理由是
+	#   "原作者云服不支持 3v3",那条判断是错的,已删。
+	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(250, 40), "服务器地址", PvpSession.server_address)
+	var addr_hint := UiFactory.label("朋友加入请填开服机的 IP(端口 7777);本机开服点「启动/重启本机服务器」(同目录需有 Cyancular Ruins Server.exe)", 16, UiFactory.C_TEXT)
 	addr_hint.position = Vector2(60, 160)
 	addr_hint.size = Vector2(900, 26)
 	add_child(addr_hint)
@@ -139,7 +141,7 @@ func _build_create_panel() -> void:
 	#   ★ 更要紧的是那两个勾选框**写的是 `Settings.pvp_disabled_weapons`** —— 那是 1v1 / 大乱斗的
 	#     设置项:在 3v3 页勾一下会**连带改掉另两个模式**。那属于功能缺陷(点了没反应、又污染别人),
 	#     不是审美问题,故不留给"UI 重做那份"。
-	vb.add_child(UiFactory.label("(本页没有禁用武器与个人角色颜色这两项:\n3v3 用队色、个人色相无效;禁用武器是 1v1/大乱斗的设置项)\n(小地图/轨迹/血条等本机显示项沿用「多人对战」设置;\n房主规则项首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
+	vb.add_child(UiFactory.label("(本页没有禁用武器与个人角色颜色这两项:\n3v3 用队色、个人色相无效;禁用武器是 1v1/大乱斗的设置项)\n(小地图/轨迹/血条等本机显示项沿用「1v1」设置;\n房主规则项首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
 
 	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
 	create.pressed.connect(_on_create_pressed)
@@ -355,17 +357,17 @@ func _process(_delta: float) -> void:
 	if _tick_claim_timeout():
 		return
 	_tick_lobby_connect_timeout()
-	# 建房/加入 8s 无应答:NetBusExt 协议在自建服务端才有,原作者云服会静默丢弃
+	# 建房/加入 8s 无应答(地址不通 / 对端不是同版本的服务器)
 	if not _team_ack and _team_sent_ms > 0 and Time.get_ticks_msec() - _team_sent_ms > 8000:
 		_team_sent_ms = 0
-		_status.text = "8 秒无响应——该服务器不支持 3v3(需自建最新服务端:开服方双击 start_server.bat),或地址不通"
+		_status.text = "8 秒无响应——地址不通,或该服务器不是最新版(开服方请用最新服务端)"
 
 
 # ── 基类钩子(本页实现)────────────────────────────────────────────
 
-# 3v3 与大乱斗同:协议只在自建服上有 → 空地址回退本机,不回退云地址
+# 空地址回退:与 1v1 页同款,取会话里的服务器地址(不再特判本机)
 func _lobby_fallback_addr() -> String:
-	return "127.0.0.1"
+	return PvpSession.server_address
 
 
 # 已在 3v3 房间中(先退出房间再操作):_with_lobby 在 _in_room 时拒绝一切操作,
