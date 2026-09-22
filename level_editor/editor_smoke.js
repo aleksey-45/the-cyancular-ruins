@@ -1604,15 +1604,20 @@ function countNonZero(map, L) {
     try {
       // ── 假 IndexedDB(两张表:草稿盘、崩溃槽位)──
       const tab15 = { draft: new Map(), crash: new Map() };
-      // ★ 两个开关 + 一个读数,专给相位 ⑫(闸 1 的**代价形状**与两条失败路径):
+      // ★ 两个开关 + 一本读数账,专给相位 ⑫(闸 1 的**代价形状**与两条失败路径):
       //   · `count`     —— 让 `count()` 的请求失败(读不到条数);
+      //   · `get`       —— 让**单条读**的请求失败(启动路径上"崩溃槽位读不到"那条失败面,
+      //                    真环境里是事务打不开 / 配额被拒);
       //   · `deleteTx`  —— 让**含 delete 的**那个事务失败(真 IDB 出错时事务不提交 ⇒
       //                    一条 `later` 都不跑);只认含 delete 的事务,否则连这次写入
       //                    自己都会失败,那测的就不是"清理失败"了;
-      //   · `read`      —— 到上限时读了几次**记录本体**(`getAll`)。"没到上限就一次都不读"
-      //                    这条不变量只能靠计数钉住:它是**代价**不是行为,断不了对错。
-      const fail15 = { count: false, deleteTx: false };
-      const idbReads15 = { count: 0, getAll: 0 };
+      //   · `getAll` / `cursor` / `keys` —— 三种读各记一笔:**整库读**(`getAll`)、
+      //                    索引值游标**物化了几条记录本体**(`cursor`)、索引键游标用了几次
+      //                    (`keys`,只给一个数、不物化任何记录)。"常态一条都不读 / 到上限
+      //                    只读够淘汰那几条"这两条不变量只能靠计数钉住:它们是**代价**不是
+      //                    行为,断不了对错。
+      const fail15 = { count: false, deleteTx: false, get: false };
+      const idbReads15 = { count: 0, getAll: 0, cursor: 0, keys: 0 };
       function fakeDb15() {
         function txOf(store, mode) {
           const tx = { error: null, oncomplete: null, onerror: null, onabort: null };
@@ -1631,6 +1636,7 @@ function countNonZero(map, L) {
               get: function (k) {
                 const rq = { result: null, onsuccess: null, onerror: null };
                 later.push(function () {
+                  if (fail15.get) { if (rq.onerror) rq.onerror({ target: rq }); return; }
                   rq.result = tab15[store].get(k) || null;
                   if (rq.onsuccess) rq.onsuccess({ target: rq });
                 });
@@ -1657,6 +1663,57 @@ function countNonZero(map, L) {
                 });
                 return rq;
               },
+              // ★★ 索引(库版本 2 加的 `savedAt`):生产只用它做两条查询 ——
+              //   「最新一条的 savedAt」(键游标,降序)与「按时间升序逐条挑淘汰对象」(值游标)。
+              //   ★ 替身按**同一个语义**实现:索引是**稀疏**的(真 IDB 里 savedAt 不是数的记录
+              //     根本不进索引),升/降序按 savedAt 排。
+              //   ★ 两种游标各记一本账:`values` 数**记录本体被物化了几条**(值游标),
+              //     `keys` 数键游标用了几次 —— 生产那两条查询的成本形状全在这两个数上。
+              index: function () {
+                const recsIn = function (dir) {
+                  const list = Array.from(tab15[store].values()).filter(function (r) {
+                    return typeof r.savedAt === 'number';
+                  });
+                  list.sort(function (a, b) {
+                    return dir === 'prev' ? b.savedAt - a.savedAt : a.savedAt - b.savedAt;
+                  });
+                  return list;
+                };
+                return {
+                  openCursor: function (range, dir) {
+                    const rq = { result: null, onsuccess: null, onerror: null };
+                    later.push(function () {
+                      const recs = recsIn(dir);
+                      let i = 0;
+                      const step = function () {
+                        if (i >= recs.length) {
+                          rq.result = null;
+                          if (rq.onsuccess) rq.onsuccess({ target: rq });   // 真 IDB:走完交回 null
+                          return;
+                        }
+                        const rec = recs[i++];
+                        idbReads15.cursor++;              // ★ 物化一条**记录本体**
+                        rq.result = { key: rec.savedAt, primaryKey: rec.key, value: rec,
+                                      continue: function () { realSetTimeout15(step, 0); } };
+                        if (rq.onsuccess) rq.onsuccess({ target: rq });
+                      };
+                      step();
+                    });
+                    return rq;
+                  },
+                  openKeyCursor: function (range, dir) {
+                    const rq = { result: null, onsuccess: null, onerror: null };
+                    later.push(function () {
+                      const recs = recsIn(dir);
+                      idbReads15.keys++;
+                      // ★ 只给**索引键**(一个数)与主键,**不给记录本体** —— 这正是它便宜的原因
+                      rq.result = recs.length ? { key: recs[0].savedAt, primaryKey: recs[0].key } : null;
+                      if (rq.onsuccess) rq.onsuccess({ target: rq });
+                    });
+                    return rq;
+                  },
+                };
+              },
             };
           };
           realSetTimeout15(function () {
@@ -1671,6 +1728,18 @@ function countNonZero(map, L) {
         }
         return { objectStoreNames: { contains: function () { return true; } },
                  createObjectStore: function () { return {}; }, transaction: txOf };
+      }
+      // ★★ 升级请求上的 `transaction`(真 IDB 把它挂在 `req.transaction` 上):生产在
+      //    `onupgradeneeded` 里要经它拿到**已经在用的**那个 store 补建 `savedAt` 索引
+      //    (版本 1 → 2 升级路径)。不给的话那一步会抛 —— 而抛在 `onupgradeneeded` 里
+      //    是**整套草稿盘开不出来**(openDraftStore 走 onerror → null),症状是"草稿盘没了"。
+      function upgradeReq15(db) {
+        return { result: db, transaction: {
+          objectStore: function () {
+            return { indexNames: { contains: function () { return false; } },
+                     createIndex: function () {} };
+          },
+        }, onupgradeneeded: null, onsuccess: null, onerror: null };
       }
       // ── 记账的假 setTimeout(只给 ui.js 用;替身自己用 realSetTimeout15)──
       // ★ 三种状态要分清:**待跑**(排上了还没到点)、**被撤**(clearTimeout)、**已跑**
@@ -1787,8 +1856,11 @@ function countNonZero(map, L) {
          '★★ 没有 indexedDB 时 openDraftStore 交回 null(**不抛**)—— 编辑器少了草稿盘照样要能开');
 
       // ── ② 装上假 indexedDB:草稿盘能开出来 ──
+      // ★ 走的是**真**的升级回调(onupgradeneeded → 生产在那儿建 store 与 `savedAt` 索引):
+      //   替身这边要照真 IDB 的形状给 `req.transaction`(生产用它给"已经在用的库"补建索引),
+      //   少了它那一步会抛 —— 而抛在升级回调里等于"整套草稿盘开不出来"。
       globalThis.indexedDB = { open: function () {
-        const req = { result: fakeDb15(), onupgradeneeded: null, onsuccess: null, onerror: null };
+        const req = upgradeReq15(fakeDb15());
         realSetTimeout15(function () {
           if (req.onupgradeneeded) req.onupgradeneeded({ target: req });
           if (req.onsuccess) req.onsuccess({ target: req });
@@ -1889,6 +1961,114 @@ function countNonZero(map, L) {
       eq(recD15() && recD15().dirty, false,
          '★★★ 与"保存"赛跑的那次落盘落地之后,草稿**仍然是干净的**' +
          '(编码完成后再看一眼 rev:这一版已经进真文件了 ⇒ 这次落盘必须放弃)');
+
+      // ── ⑤c ★★★ 与"**换图**/**改名**"赛跑的那次落盘(终审 C1:一次静默的内容掉包)──
+      // ★ 症状链(评审发现 Critical 1):编码在飞时用户点了库里的**另一张图** —— `openMap`
+      //   把 `app.map`/`app.name` 换成 B,而编码交回的是 **A 的字节**;记录于是写成
+      //   `{key:'B', name:'B.cyrm', bytes:<A 的地形>, dirty:true}`。下次打开 B:字节比不过
+      //   B 的文件 ⇒ 弹一次恢复 ⇒ 用户按下它 ⇒ 屏幕上是 **A 的地形而文件名写着 B.cyrm**
+      //   ⇒ 一次 Ctrl+S 就把 **A 的地形写进 maps/B.cyrm**。字节相等那道闸让这件事**更糟**:
+      //   它把"一次假提示"换成了"静默掉包"。
+      // ★ 构造法:`Io.encodeMap` 交回的是 worker 的**异步**应答 ⇒ `saveDraft()` 同步跑完
+      //   (编码已经在飞)之后、`.then` 落地**之前**,同一 tick 里把 app 的状态换掉 ——
+      //   与 ⑤b 用的是**同一个**交错手法(那次换的是 rev,这次换的是图)。
+      // ★★ 两个**独立**的一半,缺一不可(下面 A/B 两相各让一半承重):
+      //   ① 记录的两半(它**是谁** / 它是**什么内容**)必须在**同一个瞬间**取;
+      //   ② 编码期间换过图 ⇒ 这次落盘**整笔放弃**(身份判据 `app.map !== mapAtEntry`)。
+      //   A 相(换图)由 ② 承重,而 ① 被 ② 挡住(所以单看 A 相杀不掉"只改一半");B 相(**改名**
+      //   —— app.map **对象没换**,只换了名字)判据只看身份 ⇒ 这时 ① 独自承重:记录必须落在
+      //   **取字节那一刻**的那张身份上,而不是写盘那一刻的名字。
+      const savedMap15c = Editor.app.map, savedName15c = Editor.app.name;
+      const savedFmt15c = Editor.app.sourceFormat;
+      try {
+        // ── A 相:编码期间**换图** ──
+        const mapA15 = Editor.createEmptyMap('switch_a', 4, 4);
+        Editor.app.map = mapA15; Editor.app.name = 'switch_a.cyrm'; Editor.app.sourceFormat = 'v4';
+        Editor.markDirty();
+        await Editor.flushDraft();                    // 把 A 那份脏草稿落下来(起跑状态)
+        const recA15 = tab15.draft.get('switch_a') || null;
+        ok(!!recA15 && recA15.dirty === true, '⑤cA 前提:A 有一份没写盘的草稿');
+        Editor.spawnAt('enemy', 0);                   // 又画一笔 ⇒ A 的那份草稿要更新
+        const inFlightA15 = Editor.saveDraft(true);   // ← 不等它:编码在飞
+        const mapB15 = Editor.createEmptyMap('switch_b', 4, 4);
+        Editor.app.map = mapB15; Editor.app.name = 'switch_b.cyrm';   // ← openMap 的收尾就是这个形状
+        await inFlightA15;
+        eq(tab15.draft.has('switch_b'), false,
+           '★★★ 编码期间换了图 ⇒ 这次落盘**整笔放弃**(草稿盘里不许出现 switch_b 那条记录):' +
+           '写下去就是"新 key + 旧字节",下次打开 B 会弹恢复、一按 Ctrl+S 就把 A 的地形写进 B');
+        const recA15b = tab15.draft.get('switch_a') || null;
+        ok(recA15b === recA15,
+           '★★★ 而 A 那条记录**一个字都没被动过**(同一条记录对象、还是脏的;实得 ' +
+           JSON.stringify(recA15b && recA15b.key) + ')');
+
+        // ── B 相:编码期间**改名**(app.map 对象没换)──
+        const mapR15 = Editor.createEmptyMap('ren_a', 4, 4);
+        Editor.app.map = mapR15; Editor.app.name = 'ren_a.cyrm';
+        Editor.markDirty();
+        await Editor.flushDraft();                    // 起跑:ren_a 有一份脏草稿
+        ok(!!tab15.draft.get('ren_a'), '⑤cB 前提:ren_a 有一份草稿');
+        Editor.spawnAt('enemy', 0);
+        const inFlightR15 = Editor.saveDraft(true);   // ← 编码在飞
+        mapR15.name = 'ren_b'; Editor.app.name = 'ren_b.cyrm';        // ← 生产里「改名」按钮的形状
+        await inFlightR15;
+        eq(tab15.draft.has('ren_b'), false,
+           '★★★ 编码期间改名 ⇒ 那条记录**不许**落到新名字下(它带着的是改名**之前**的字节,' +
+           '而"下次打开 ren_b"读到的会是一份对不上的草稿)');
+        const recR15 = tab15.draft.get('ren_a') || null;
+        ok(!!recR15 && recR15.name === 'ren_a.cyrm' && recR15.name2 === 'ren_a',
+           '★★★ 记录落在**取字节那一刻**的名字上(key/name/name2 三处都是;实得 ' +
+           JSON.stringify([recR15 && recR15.key, recR15 && recR15.name, recR15 && recR15.name2]) + ')');
+      } finally {
+        // ★ 这一相借用了"当前图"这个全局状态 ⇒ 用完必须还回 ⑥ 需要的那张(它按
+        //   "草稿那份现在共 3 个敌人"接着往下跑)。
+        Editor.app.map = savedMap15c; Editor.app.name = savedName15c;
+        Editor.app.sourceFormat = savedFmt15c;
+      }
+      await Editor.flushDraft();                      // 把这一相留下的防抖定时器结清(别留给 ⑥)
+      tab15.draft.delete('switch_a');
+      tab15.draft.delete('ren_a');
+
+      // ── ⑤d ★★★ 打开一张图 ⇒ 那两笔账**一起归位**(终审 Minor 1 + 评审说的"兄弟 bug")──
+      // ★ 症状一(Minor 1):`lastAutoSaveAt` 是**上一张图**那一局的时刻,换图之后状态栏那一格
+      //   仍写着「已自动保存 12:34」—— 用户读到的是"这张图存过了"(而它这一局一次都没自动存过)。
+      // ★ 症状二(同一个函数里的另一半):`openMap` 不推 `draftSavedRev` 的话,**上一张图**留下的
+      //   那个还在飞的防抖定时器到点会给这张"刚打开、一笔都没画过"的图写出一条 `dirty:true`
+      //   的草稿 ⇒ 下次开机打开它弹一次**假**的恢复提示。
+      // ★ 两笔都落在 openMap 的同一个 `.then` 里(与 `dirty = false` 同一处、同一条纪律)。
+      Editor.app.map = Editor.createEmptyMap('minor1_a', 4, 4);
+      Editor.app.name = 'minor1_a.cyrm'; Editor.app.sourceFormat = 'v4';
+      Editor.markDirty();
+      await Editor.flushDraft();
+      ok(el15('st-save').textContent.indexOf('已自动保存') === 0,
+         '⑤d 前提:状态栏那一格此刻是「已自动保存 …」(实得 "' + el15('st-save').textContent + '")');
+      Editor.markDirty();                             // ★ 给 minor1_a 排一次防抖,**留着不跑**
+      const staleMinor15 = pending15()[0];
+      const otherBytes15 = await globalThis.Io.encodeMap(Editor.createEmptyMap('minor1_b', 4, 4),
+                                                         { compress: true });
+      globalThis.fetch = function (url) {
+        const u = String(url);
+        if (u.indexOf('/api/maps') === 0) {
+          return Promise.resolve({ ok: true, status: 200,
+                                   json: function () { return Promise.resolve({ maps: [] }); } });
+        }
+        return Promise.resolve({ ok: true, status: 200,
+                                 arrayBuffer: function () { return Promise.resolve(
+                                   otherBytes15.buffer.slice(otherBytes15.byteOffset,
+                                                             otherBytes15.byteOffset + otherBytes15.byteLength)); } });
+      };
+      await Editor.openMap('minor1_b.cyrm');           // ← 生产那条路(真 fetch → 真解码 → 真 setMap)
+      eq(Editor.app.name, 'minor1_b.cyrm', '⑤d 前提:真把另一张图打开了');
+      eq(el15('st-save').textContent, '已保存',
+         '★★★ 换图之后状态栏那一格**归零**:显示的是这张图自己的磁盘状态,而不是**上一张图**的' +
+         '自动保存时刻(实得 "' + el15('st-save').textContent + '")');
+      if (staleMinor15) await fire15(staleMinor15);     // ← 上一张图那个定时器现在到点
+      eq(tab15.draft.has('minor1_b'), false,
+         '★★★ 它到点时**不许**给"刚打开、一笔都没画过"的新图写草稿:写下去就是一条 `dirty:true`, ' +
+         '下次开机打开这张图会弹一次**假**的恢复提示(实得 ' + tab15.draft.has('minor1_b') + ')');
+      tab15.draft.delete('minor1_a');
+      // ★ 与 ⑤c 一样:这一相借用了"当前图"这个全局状态 ⇒ 用完还回 ⑥ 需要的那张。
+      Editor.app.map = savedMap15c; Editor.app.name = savedName15c;
+      Editor.app.sourceFormat = savedFmt15c;
 
       // ── ⑥ 接线之二:启动时 offerDraft → loadDraft → 恢复(问一次,不静默覆盖)──
       Editor.spawnAt('enemy', 0);                     // 再画一笔(草稿那份现在共 3 个敌人)
@@ -2179,6 +2359,35 @@ function countNonZero(map, L) {
       asked15 = 0;
       eq(await Editor.checkCrashSlot(), false, '★ 崩溃槽位比主草稿旧 ⇒ 不提示');
       eq(asked15, 0, '★★ 那一次连确认框都没弹(不是"问了但没恢复")');
+
+      // ── ⑪b ★★★ 启动这一路的**代价形状**:点读 + 索引键游标,不是整库读(终审评审 I3)──
+      // ★ 原来这里为了求"主草稿最新那个 `savedAt`"把**草稿盘整库**读进来(每张草稿带着编码后
+      //   的整张图,规格 §4.3:每张 2.4MB),而它要的只是一个时刻。判据是**读数**:整库读 0 次、
+      //   值游标(会物化记录本体)0 次、键游标 ≥ 1 次(只回一个数)。
+      await putCrash15(Date.now() + 40000);
+      idbReads15.getAll = 0; idbReads15.cursor = 0; idbReads15.keys = 0;
+      eq(await Editor.checkCrashSlot(), true, '⑪b 前提:这一份崩溃快照比主草稿新 ⇒ 恢复');
+      eq([idbReads15.getAll, idbReads15.cursor], [0, 0],
+         '★★★ 崩溃槽位这一路**一条记录本体都没读**(整库读 ' + idbReads15.getAll +
+         ' 次 / 值游标 ' + idbReads15.cursor + ' 次):它只需要"主草稿最新那个时刻"');
+      ok(idbReads15.keys >= 1,
+         '★★ 那个时刻是**索引键游标**给的(只回一个数,' + idbReads15.keys + ' 次)');
+
+      // ── ⑪c ★★★ 读失败要**说出来**,不许折成"没有崩溃快照"(终审评审 I3)──
+      // ★ 折成"没有"的实现在行为上与"真没有"**完全一样**(都是静默 return false)⇒ 这一层
+      //   最后一次抢救就这么消失了,而用户以为自己只是没触发过它。
+      await putCrash15(Date.now() + 50000);
+      asked15 = 0;
+      el15('status-msg').textContent = '';
+      fail15.get = true;                              // ← 单条读失败(真环境:事务打不开 / 配额)
+      eq(await Editor.checkCrashSlot(), false, '⑪c 读不到时不恢复(不知道有没有,就不动屏幕)');
+      fail15.get = false;
+      ok(el15('status-msg').textContent.indexOf('崩溃槽位读取失败') >= 0 &&
+         el15('status-msg').textContent.indexOf('读不到') >= 0,
+         '★★★ 而且**说了出来**(实得 "' + el15('status-msg').textContent + '")—— ' +
+         '静默折叠成"没有崩溃快照"是这一层最不能有的失败面(作品丢了而没人知道)');
+      eq(asked15, 0, '★ 读不到时不弹确认框(不拿一份可能不存在的快照去问)');
+      ok(tab15.crash.has('crash'), '★ 读失败**不许**碰崩溃槽位里那条记录');
       tab15.crash.clear();
 
       // ── ⑮b ⑫ 闸 1 的清理:代价形状(先数后读)+ 两条失败路径都要说话 ──
@@ -2196,14 +2405,18 @@ function countNonZero(map, L) {
       Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
       Editor.app.name = 'draft_probe.cyrm';
       Editor.app.sourceFormat = 'v4';
-      idbReads15.count = 0; idbReads15.getAll = 0;
+      idbReads15.count = 0; idbReads15.getAll = 0; idbReads15.cursor = 0; idbReads15.keys = 0;
       el15('status-msg').textContent = '';
       Editor.markDirty();
       await Editor.saveDraft(false);                  // ← 生产那条链:编码 → 落盘 → 清理
       eq(tab15.draft.size, 1, '⑮b⑫ 前提:这一笔真落进了草稿盘');
       ok(idbReads15.count >= 1, '★ 清理闸门先问**条数**(count)—— 它是"要不要读记录本体"的唯一判据');
-      eq(idbReads15.getAll, 0,
-         '★★★ 库**没到**上限时 `getAll` 一次都不调(实得 ' + idbReads15.getAll + ' 次):' +
+      // ★★ 判据从"`getAll` 一次都不调"**加严**成"三种读一次都没有":生产里已经没有整库读
+      //    那条路了(`idbReadAll`/`idbGetAll` 整套删掉),索引游标也是读,一并钉住。
+      //    旧口径:eq(idbReads15.getAll, 0, '… getAll 一次都不调 …')
+      eq([idbReads15.getAll, idbReads15.cursor, idbReads15.keys], [0, 0, 0],
+         '★★★ 库**没到**上限时**一条记录都不读**(实得 整库读 ' + idbReads15.getAll +
+         ' / 索引值游标 ' + idbReads15.cursor + ' / 键游标 ' + idbReads15.keys + ' 次):' +
          '常态路径只物化一个整数,而不是把库里每张草稿(每张带着整张图的字节)读进主线程');
       // 灌到超过上限:65 条"已保存且更老"的 + 刚写的那一条 ⇒ 必须丢掉最老的 6 条
       for (let i = 0; i < 65; i++) {
@@ -2211,7 +2424,7 @@ function countNonZero(map, L) {
                                      bytes: new Uint8Array([i]), sourceFormat: 'v4',
                                      savedAt: 1000 + i, dirty: false });
       }
-      idbReads15.count = 0; idbReads15.getAll = 0;
+      idbReads15.count = 0; idbReads15.getAll = 0; idbReads15.cursor = 0; idbReads15.keys = 0;
       el15('status-msg').textContent = '';
       Editor.markDirty();
       await Editor.saveDraft(false);
@@ -2221,13 +2434,43 @@ function countNonZero(map, L) {
          '★★ 丢的是**最老的**那几条(old0/old5 都已不在)');
       ok(tab15.draft.has('draft_probe'),
          '★★ 刚写的那一条**没被丢**(清理不许动最新的活 —— 脏记录本来就排在队尾)');
-      ok(idbReads15.getAll >= 1,
-         '★ 到了上限才读记录本体(与上面那条一起钉住"先数后读":没超就一次不读、超了才读)');
+      // ★★ 判据从"到了上限**读**了记录本体"改成"到了上限**只读够淘汰那几条**" —— 更强:
+      //    旧的 `ok(idbReads15.getAll >= 1)` 只要求"读过",一个把整库 getAll 进来的实现
+      //    照样满足它(而那正是要防的代价);这条要求**上界**。
+      //    ★ 这里 66 条里只有刚写的 draft_probe 是脏的,而它按 savedAt 排在最后 ⇒ 走 6 条
+      //      (old0..old5)就凑够 6 条干净的 ⇒ 恰好 6 条。
+      ok(idbReads15.getAll === 0 && idbReads15.keys === 0 && idbReads15.cursor === 6,
+         '★★★ 到了上限走**索引值游标**逐条挑牺牲者:只物化 ' + idbReads15.cursor +
+         ' 条记录本体(= 要丢的那 6 条,够数就停),整库读 0 次 / 键游标 0 次。' +
+         '★ 旧实现是 `getAll` 把 66 条(每条带着整张图的字节)一次读进主线程 —— ' +
+         '而"库满着"是**常态**(写入顶过上限、清一条又回到上限)');
       ok(el15('status-msg').textContent.indexOf('已清掉 6 条最老的') >= 0,
          '★ 清掉了就说一句(实得 "' + el15('status-msg').textContent + '")');
+      // ★★ 淘汰口径的**关键一格**:库里有一条**比所有干净记录都老**的脏记录(没写盘的活)——
+      //    `evictPlan` 的口径是"干净优先、同龄最老优先" ⇒ 牺牲者必须还是**干净的**那条,
+      //    脏的那一条一个都不能动。走索引键序逐条挑的实现很容易在这里错成"谁最老丢谁",
+      //    而那会**静默丢掉用户还没写盘的劳动**(正是这一层的存在理由)。
+      tab15.draft.set('olddirty', { key: 'olddirty', name: 'olddirty.cyrm', name2: 'olddirty',
+                                    bytes: new Uint8Array([7]), sourceFormat: 'v4',
+                                    savedAt: 1, dirty: true });        // ← 比谁都老、但是脏的
+      idbReads15.count = 0; idbReads15.getAll = 0; idbReads15.cursor = 0; idbReads15.keys = 0;
+      el15('status-msg').textContent = '';
+      Editor.markDirty();
+      await Editor.saveDraft(false);
+      ok(tab15.draft.has('olddirty'),
+         '★★★ 最老的那条**是脏的**(没写盘的活)⇒ 它**不许**被丢(丢它 = 静默丢掉用户的作品)');
+      ok(!tab15.draft.has('old6'),
+         '★★★ 而丢的仍是**干净且最老**的那条(old6):走的顺序里先遇到 olddirty(跳过)、再遇到' +
+         'old6(凑够 1 条干净的就停)');
+      eq(idbReads15.cursor, 2,
+         '★★ 走的过程恰好读了 2 条(1 条被跳过的脏 + 1 条干净的牺牲者;实得 ' + idbReads15.cursor +
+         ')—— 早退发生在**凑够干净的**那一刻,而不是走完整库 61 条');
+      eq(tab15.draft.size, Editor.MAX_LIB, '★ 总数仍压回上限(实得 ' + tab15.draft.size + ')');
+      // ★ olddirty **留在库里**(它是"没写盘的活"的那一档,下面那条删除失败路径正好还要它
+      //   占着一个位置 —— 库在那一相之前必须正好等于上限)。
       // 失败路径之一:**读不到条数**(真环境里是事务打不开 / 配额被拒)
       fail15.count = true;
-      idbReads15.count = 0; idbReads15.getAll = 0;
+      idbReads15.count = 0; idbReads15.getAll = 0; idbReads15.cursor = 0; idbReads15.keys = 0;
       el15('status-msg').textContent = '';
       Editor.markDirty();
       await Editor.saveDraft(false);
@@ -2237,7 +2480,8 @@ function countNonZero(map, L) {
          el15('status-msg').textContent.indexOf('读不到条目数') >= 0,
          '★★★ 读失败**说出来**了(实得 "' + el15('status-msg').textContent + '")—— ' +
          '静默折叠成"没到上限"是这一层的失败面里最不该有的那种');
-      eq(idbReads15.getAll, 0, '★ 数不到条数就**不去读记录**(读也没意义,白物化一遍)');
+      eq([idbReads15.getAll, idbReads15.cursor, idbReads15.keys], [0, 0, 0],
+         '★ 数不到条数就**一条记录都不读**(读也没意义,白物化一遍)');
       ok(el15('st-save').textContent.indexOf('已自动保存') === 0,
          '★ 报的是**状态栏那一行**,没去顶 `#st-save`(自动保存时刻要留住;实得 "' +
          el15('st-save').textContent + '")');

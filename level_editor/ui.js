@@ -1335,6 +1335,11 @@ globalThis.Editor = (function () {
   var DRAFT_DB = 'cyrm-editor';
   var DRAFT_STORE = 'draft';
   var CRASH_STORE = 'crash';
+  // ★ 库版本 **2** = 给草稿盘加 `savedAt` 索引。它换来的是两条**不物化记录本体**的查询:
+  //   「最新一条的 savedAt」(启动时的崩溃槽位比对)与「按时间升序挑淘汰对象」(闸 1 的清理)。
+  //   两条以前都靠 `getAll` 把整库读进主线程(每张草稿带着编码后的整张图,规格 §4.3:2.4MB)。
+  var DRAFT_DB_VERSION = 2;
+  var DRAFT_TIME_INDEX = 'savedAt';
   var UI_STATE_KEY = 'cyrm.ui.v1';       // ★ 带版本号:将来换字段可以让老的那份自然失效
   var MAX_LIB = 60;                      // 库条目上限(规格 §4.3 闸 1)
   var DRAFT_DEBOUNCE_MS = 1500;          // 最后一笔之后多久落盘(不是每笔都写)
@@ -1447,14 +1452,32 @@ globalThis.Editor = (function () {
     return new Promise(function (resolve) {
       if (typeof indexedDB === 'undefined') { resolve(null); return; }
       var req;
-      try { req = indexedDB.open(DRAFT_DB, 1); } catch (e) { resolve(null); return; }
+      try { req = indexedDB.open(DRAFT_DB, DRAFT_DB_VERSION); } catch (e) { resolve(null); return; }
       req.onupgradeneeded = function () {
         var db = req.result;
-        if (!db.objectStoreNames.contains(DRAFT_STORE)) db.createObjectStore(DRAFT_STORE, { keyPath: 'key' });
+        // ★★ 两条路都要把索引建出来:全新库那条是 createObjectStore 之后建,而**已经在用的库**
+        //    升上来时 store 已经在了(而且里面还有老记录)—— 那时要经升级事务拿到它、补建索引。
+        //    只建一条路的话,老库升上来之后那两条查询**读不到任何东西**(索引不存在 ⇒ 游标
+        //    永远 null),而症状是"崩溃快照永远不提示 / 清理永远不生效" —— 一个字都不报。
+        //    ★ 老记录不需要迁移:索引是 IDB 自己按 keyPath 从现有记录里抽建的(稀疏索引),
+        //      它们的 `savedAt` 本来就有(三处写入点都写)。
+        var st = db.objectStoreNames.contains(DRAFT_STORE)
+          ? req.transaction.objectStore(DRAFT_STORE)
+          : db.createObjectStore(DRAFT_STORE, { keyPath: 'key' });
+        if (st && st.indexNames && !st.indexNames.contains(DRAFT_TIME_INDEX)) {
+          st.createIndex(DRAFT_TIME_INDEX, 'savedAt');
+        }
         if (!db.objectStoreNames.contains(CRASH_STORE)) db.createObjectStore(CRASH_STORE, { keyPath: 'key' });
       };
       req.onsuccess = function () { resolve(req.result); };
       req.onerror = function () { resolve(null); };      // 配额/私密模式:草稿盘不可用也要能用编辑器
+      // ★★ 版本 2 带来的一种新情形:另一个标签页还按**版本 1** 开着这张库 ⇒ 升级被**阻塞**
+      //    (浏览器等它关闭,期间既不 success 也不 error)。不接这一下的话这条 promise
+      //    **永远不 settle**,而 `bootLoad` 正 await 着它 —— 症状是"编辑器白屏 / 永远停在启动",
+      //    连面板都不建。这里按同一条口径收场:交回 null(草稿盘这一局不可用,状态栏那句话
+      //    照旧会说),编辑器照常打开 —— 与"开不出草稿盘"逐字同一个退化方向。
+      //    ★ 同一份文件里的 `selfTest()` 早就这么接了(它给的是 2 秒兜底),这不是新花样。
+      req.onblocked = function () { resolve(null); };
     });
   }
   function idbPut(db, store, rec) {
@@ -1464,17 +1487,6 @@ globalThis.Editor = (function () {
       tx.oncomplete = function () { resolve(true); };
       tx.onerror = function () { reject(tx.error || new Error('IndexedDB 写失败')); };
       tx.onabort = function () { reject(tx.error || new Error('IndexedDB 写被中止')); };
-    });
-  }
-  // ★★ 交回 **null** = "读不到"(与"空库" `[]` **分开**):把"读失败"折成"什么都没有"是
-  //    静默失败最常见的形状 —— 调用方于是没法把"没有要清的东西"与"根本读不到"分开。
-  function idbReadAll(db, store) {
-    return new Promise(function (resolve) {
-      var tx, rq;
-      try { tx = db.transaction(store, 'readonly'); rq = tx.objectStore(store).getAll(); }
-      catch (e) { resolve(null); return; }
-      rq.onsuccess = function () { resolve(rq.result || []); };
-      rq.onerror = function () { resolve(null); };
     });
   }
   // ★ 只用 `count()` 问条数 —— 记录本体(每张草稿带着**编码后的整张图**,规格 §4.3 每张 2.4MB)
@@ -1488,8 +1500,75 @@ globalThis.Editor = (function () {
       rq.onerror = function () { resolve(null); };    // ★ null = 读不到(不是"0 条")
     });
   }
-  function idbGetAll(db, store) {
-    return idbReadAll(db, store).then(function (r) { return r || []; });
+  // ★★ 单条读:`ok:false` = **读不到**(事务打不开 / 请求失败),`rec:null` = 读到了、那条不存在。
+  //    两者**必须**分得开(与 `idbCount` 的 `null` = 读不到 是同一条纪律,只是单条读没有
+  //    "空库"那一档):把"读失败"折成"没有这条记录"会让「上次异常退出」那一次抢救**无声消失**
+  //    —— 那是这一层最后一次兜底,静默没了就等于作品丢了而没人知道(见 checkCrashSlot)。
+  //    ★ 本文件里**没有**整库读(`getAll`)那条路了:启动与清理两条路径都改成点读/索引游标
+  //      (每张草稿带着编码后的整张图,整库读就是把几十 MB 反序列化进主线程)。
+  function idbGetOne(db, store, key) {
+    return new Promise(function (resolve) {
+      var tx, rq;
+      try { tx = db.transaction(store, 'readonly'); rq = tx.objectStore(store).get(key); }
+      catch (e) { resolve({ ok: false, rec: null }); return; }
+      rq.onsuccess = function () { resolve({ ok: true, rec: rq.result || null }); };
+      rq.onerror = function () { resolve({ ok: false, rec: null }); };
+      // ★ 事务级的失败(配额/被中止)不一定冒泡到请求上,这里兜住同一件事;已经 resolve 过
+      //   的那一次不受影响(promise 只认第一个)。
+      if (tx) tx.onabort = function () { resolve({ ok: false, rec: null }); };
+    });
+  }
+  // ★★ 草稿盘里**最新**一条的 savedAt:走索引的**键游标**(`openKeyCursor`)—— 交回来的
+  //    就是索引键本身(一个数),**一个字节的记录本体都不反序列化**。这原来是启动路径上的
+  //    一次整库 `getAll`(每张草稿带着编码后的整张图),而它要的只是"最新的那个时刻"。
+  //    `savedAt: null` = 库里一条都没有(索引是稀疏的:没有 savedAt 的记录不进索引 ——
+  //    今天三处写入点都写它,真出现这种记录也只是"不参与比对",不影响任何写入)。
+  function idbNewestSavedAt(db) {
+    return new Promise(function (resolve) {
+      var tx, rq;
+      try {
+        tx = db.transaction(DRAFT_STORE, 'readonly');
+        rq = tx.objectStore(DRAFT_STORE).index(DRAFT_TIME_INDEX).openKeyCursor(null, 'prev');
+      } catch (e) { resolve({ ok: false, savedAt: null }); return; }
+      rq.onsuccess = function () {
+        var cur = rq.result;
+        resolve({ ok: true, savedAt: (cur && typeof cur.key === 'number') ? cur.key : null });
+      };
+      rq.onerror = function () { resolve({ ok: false, savedAt: null }); };
+      if (tx) tx.onabort = function () { resolve({ ok: false, savedAt: null }); };
+    });
+  }
+  // ★★ 到了条数上限时找牺牲者:**按 savedAt 升序逐条走**,凑够"干净的"那几条就停 ——
+  //    不是把整库 `getAll` 进来。满库是**常态**(到上限之后每一次写入会把它顶过上限、
+  //    清一条又回到上限),所以这条路径上的 `getAll` 是"每次防抖落盘都要物化整库"。
+  //    ★ 淘汰口径**不在这里**,仍然只有一处(`evictPlan`):干净的记录在它的排序里整体排在
+  //      脏的前面,而它们在时间轴上也是升序 ⇒ "走的时候遇到的前 need 条干净的"**恰好**就是
+  //      `evictPlan` 会丢掉的那 need 条。干净的凑不够 need 时一直走到遍历完(退化成整库都读,
+  //      而非读全不可的那种库旧实现也只能这么做),此时交回的 entries 就是全库、口径逐字不变。
+  //    ★ 交回 `{entries, clean}`:调用方用 `entries.length - need` 当 cap 喂给 evictPlan
+  //      (两种情形同一条公式,见 pruneDrafts)。★ 读失败交回 **null**(与"库是空的"分开)。
+  function idbWalkDraftVictims(db, need) {
+    return new Promise(function (resolve) {
+      var tx, rq;
+      try {
+        tx = db.transaction(DRAFT_STORE, 'readonly');
+        rq = tx.objectStore(DRAFT_STORE).index(DRAFT_TIME_INDEX).openCursor(null, 'next');
+      } catch (e) { resolve(null); return; }
+      var entries = [], clean = 0, done = false;
+      var finish = function (out) { if (done) return; done = true; resolve(out); };
+      rq.onsuccess = function () {
+        if (done) return;
+        var cur = rq.result;
+        if (!cur) { finish({ entries: entries, clean: clean }); return; }   // 走完了
+        var rec = cur.value || {};
+        if (!rec.dirty) clean++;
+        entries.push({ key: cur.primaryKey, savedAt: cur.key, dirty: !!rec.dirty });
+        if (clean >= need) { finish({ entries: entries, clean: clean }); return; }
+        cur['continue']();                            // ★ 不调它,游标就停在第一条上
+      };
+      rq.onerror = function () { finish(null); };
+      if (tx) tx.onabort = function () { finish(null); };
+    });
   }
   var draftTimer = null;
   var draftRev = 0;              // 地图每次变动 +1(判"这一版写过没有")
@@ -1526,19 +1605,35 @@ globalThis.Editor = (function () {
   //   不带 force 时那道判据挡的是:落了笔 → Ctrl+S(`markDraftSaved` 把 rev 记下)→ 那个
   //   还在飞的防抖定时器到点又把同内容写回**脏**草稿(下次打开于是弹一次假的恢复提示)。
   // ★★ 但 `force` 越不过**编码之后**那道判据 —— 那一条不是"省点活",是正确性(见下)。
+  // ★★ 一条记录的两半(它**是谁** / 它是**什么内容**)必须在**同一个瞬间**取:编码是异步的
+  //    (codec 是 Worker,400×300 的图 × 4 层 ≈ 30MB ⇒ 几百毫秒到几秒),而这段时间里用户
+  //    完全可能**换一张图**(点库里的另一张 —— 见 openMap,它**不问**有没有没写盘的活)。
+  //    编码之后再读 `currentDraftKey()`/`app.name` 的话:写出来的是 `{key:'B', name:'B.cyrm',
+  //    bytes: <A 的内容>}` —— 下次打开 B、字节比不过 B 的文件 ⇒ 弹一次恢复 ⇒ 用户一按
+  //    Ctrl+S 就把 **A 的地形写进 maps/B.cyrm**。字节相等那道闸让这件事**更糟**,不是更好:
+  //    它把"一次假提示"换成了"静默的内容掉包"。
   function saveDraft(force) {
     if (!app.map || !app.db) return Promise.resolve();
     var rev = draftRev;
     if (!force && rev <= draftSavedRev) return Promise.resolve();
-    return Io.encodeMap(app.map, { compress: true }).then(function (bytes) {
+    // ★ 进编码**之前**取:内容的来源,以及这份内容属于谁
+    var mapAtEntry = app.map;
+    var key = currentDraftKey();
+    var name = app.name, name2 = app.map.name, fmt = app.sourceFormat;
+    return Io.encodeMap(mapAtEntry, { compress: true }).then(function (bytes) {
       // ★★ 编码期间可能**已经有了一次 Ctrl+S**:它把这一版(或更新的一版)写进了真文件,
       //    并把草稿标干净 —— 这时再写回一份 `dirty` 的草稿,下次打开就会弹一次**假**的
       //    恢复提示(而且**不报错**)。故落盘前再看一眼。★ 这一条 `force` **也**要过:
       //    离开页面前那一刀同样不该把"已经进真文件的那一版"写回成脏草稿。
       if (rev <= draftSavedRev) return null;
-      var rec = { key: currentDraftKey(),
-                  name: app.name, name2: app.map.name, bytes: bytes,
-                  sourceFormat: app.sourceFormat, savedAt: Date.now(), dirty: true };
+      // ★★ 另一半:**这一版字节属于哪张图**(身份,不是名字)。编码期间 `app.map` 被换过
+      //    (openMap / 新建 / 复制 / 崩溃恢复)⇒ 这条记录**没有任何意义**:它的 key 是新的
+      //    那张、字节是旧的那张。此时唯一正确的动作是**整笔放弃** —— 新的那张图自己那一版
+      //    会由它自己的防抖定时器落盘(openMap 已经把 `draftSavedRev` 推到当前 rev,所以
+      //    "刚打开、一笔没画"的那张图连一条脏记录都不会留下 ⇒ 也不会在下一次开机弹提示)。
+      if (app.map !== mapAtEntry) return null;
+      var rec = { key: key, name: name, name2: name2, bytes: bytes,
+                  sourceFormat: fmt, savedAt: Date.now(), dirty: true };
       return idbPut(app.db, DRAFT_STORE, rec).then(function () {
         draftSavedRev = rev;             // 能走到这里 ⇒ 上面那道判据刚过,故这一定是**推进**
         lastAutoSaveAt = rec.savedAt;
@@ -1576,6 +1671,9 @@ globalThis.Editor = (function () {
   //    内存,而每张草稿带着**编码后的整张图**(规格 §4.3 的闸 1 表:每张 2.4MB)⇒ 满库时
   //    每一次防抖落盘之后都要在一次 `getAll` 里物化几十 MB。没到上限的**常态**路径因此
   //    只剩一次 `count()`(闸 2 的同一条纪律:主线程上不做与"要不要动手"无关的重活)。
+  // ★★ 到了上限**也不是**整库读:走 `idbWalkDraftVictims`(索引键序逐条,凑够就停)——
+  //    满库是**常态**(写入把它顶过上限、清一条又回到上限),故"到上限就 getAll"等于
+  //    "每次防抖落盘都物化整库",而这正是上一段要防的那件事、只是换到了"永远满着"这个状态上。
   // ★★ 两条失败路径都必须**说出来**(读不到条数 / 读不到记录列表 / 删除事务失败):
   //    清理不生效是静默的话,用户只会看到草稿盘悄悄涨过 60 条,直到配额炸掉才发现 —— 而
   //    "读失败"与"没到上限"在静默实现里长得**一模一样**。
@@ -1587,11 +1685,14 @@ globalThis.Editor = (function () {
     return idbCount(app.db, DRAFT_STORE).then(function (n) {
       if (n === null) { status('草稿盘清理失败:读不到条目数 ' + didNotRun); return null; }
       if (n <= MAX_LIB) return null;                  // ★ 常态:只数一次,一条都不读
-      return idbReadAll(app.db, DRAFT_STORE).then(function (recs) {
-        if (recs === null) { status('草稿盘清理失败:读不到草稿列表 ' + didNotRun); return null; }
-        var plan = evictPlan(recs.map(function (r) {
-          return { key: r.key, savedAt: r.savedAt, dirty: !!r.dirty };
-        }), MAX_LIB);
+      var need = n - MAX_LIB;
+      return idbWalkDraftVictims(app.db, need).then(function (walk) {
+        if (walk === null) { status('草稿盘清理失败:读不到草稿列表 ' + didNotRun); return null; }
+        // ★★ cap 取 `entries.length - need`:走的这一批**要么**恰好含 need 条干净的
+        //    (这时 evictPlan 丢掉的就是它们),**要么**就是全库(干净的凑不够 ⇒ 一直走完),
+        //    那时 `entries.length - need` 正好还原成 MAX_LIB —— 两种情形同一条公式,
+        //    淘汰口径仍然只有 `evictPlan` 这一处。
+        var plan = evictPlan(walk.entries, walk.entries.length - need);
         if (!plan.drop.length) return null;
         var tx;
         try { tx = app.db.transaction(DRAFT_STORE, 'readwrite'); }
@@ -1758,11 +1859,23 @@ globalThis.Editor = (function () {
   // 下次打开时看一眼崩溃槽位:比主草稿新 ⇒ 上次是异常退出 ⇒ 问一次要不要恢复。
   // ★ 它排在 openFromUrl() **之后**(bootLoad 的顺序):恢复出来的图要**压住**文件里那份,
   //   否则用户点了"确定"、屏幕上却是刚从文件打开的那张(人眼清单第 3 条正是看这个)。
+  // ★★ 两处**读取**都是点读,不是整库 `getAll`(启动路径上每一次物化整库 = 几十 MB):
+  //   崩溃槽位是一条记录(`get('crash')`),而"主草稿有多新"只要一个时刻 —— 走索引键游标。
+  // ★★ 读失败**不许**折成"没有崩溃快照":那是这一层最后一次兜底,静默消失 = 作品丢了而
+  //   没人知道。故两条点读都交回 `ok:false`,这里把它变成状态栏上的一句话。
   function checkCrashSlot() {
     if (!app.db) return Promise.resolve(false);
-    return Promise.all([idbGetAll(app.db, CRASH_STORE), idbGetAll(app.db, DRAFT_STORE)]).then(function (both) {
-      var crash = (both[0] || []).filter(function (r) { return r.key === 'crash'; })[0] || null;
-      var main = (both[1] || []).sort(function (a, b) { return (b.savedAt || 0) - (a.savedAt || 0); })[0] || null;
+    return Promise.all([idbGetOne(app.db, CRASH_STORE, 'crash'),
+                        idbNewestSavedAt(app.db)]).then(function (both) {
+      var cre = both[0], newest = both[1];
+      if (!cre.ok || !newest.ok) {
+        status('崩溃槽位读取失败:草稿盘读不到(这一次的「上次异常退出」没有检查到)');
+        return false;
+      }
+      var crash = cre.rec;
+      // ★ `crashIsNewer` 只读 `savedAt` ⇒ 这里按同一个形状交一个"记录"给它(索引键游标
+      //   拿到的就是那个时刻,记录本体一个字节都没读)。
+      var main = (newest.savedAt === null) ? null : { savedAt: newest.savedAt };
       if (!crashIsNewer(crash, main)) return false;
       var yes = window.confirm('上次异常退出,已恢复到崩溃前(草稿:' + (crash.name2 || crash.name || '?') +
                                ')。要打开它吗?');
@@ -2070,6 +2183,17 @@ globalThis.Editor = (function () {
       .then(function (out) {
         app.map = out.map; app.name = name; app.sourceFormat = out.sourceFormat;
         dirty = false;                 // ★★ 打开 = 屏幕上这份与磁盘上那份**同源**(见 dirty 那段)
+        // ★★ 同一个纪律的**另两笔账也要一起归位**,漏了哪一笔都是"不报错但看得见":
+        //   ① `draftSavedRev` 推到当前 rev —— **上一张图**留下的那个还在飞的防抖定时器到点
+        //      时会走 saveDraft 顶部那道判据,于是**不会**给这张"刚从文件打开、一笔都没画过"
+        //      的图写出一条 `dirty:true` 的草稿。不推的话:下次开机打开这张图会弹一次**假**的
+        //      恢复提示(而且草稿里那份与文件里那份逐字节相同 —— 全靠 offerDraft 的字节闸兜住,
+        //      那是**第二道**防线,不该当第一道用)。★ 与 Ctrl+S 的收尾 markDraftSaved 推的是
+        //      同一个变量、同一条理由。
+        //   ② `lastAutoSaveAt` 归零 —— 否则状态栏那一格显示的是**上一张图**的「已自动保存
+        //      12:34」,而这张图这一局还没自动存过(人眼读到的是"这张图存过了")。
+        draftSavedRev = draftRev;
+        lastAutoSaveAt = 0;
         return Promise.resolve(app.r.setMap(app.map)).then(function () {
           refreshStatus();
           status('已打开 ' + name + '(' + out.sourceFormat + ')');

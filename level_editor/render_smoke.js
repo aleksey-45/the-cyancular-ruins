@@ -672,6 +672,80 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
     ok(stillWorks, '★★ 抛错之后 tileFor 照旧返回小图(不是抛 `Tint: 还没 setSource,…`)');
   })();
 
+  // ==== 相位 ③c ★★ 换图必须**连 ① 与 ② 一起**作废(终审评审发现 I2)====
+  // ★ ③b 钉的是 ③ 与 ④(那条不变量当年就是按这两层写的),①② **此前零覆盖** —— 而它们
+  //   各有一条"看着不对、一个字都不报"的路:
+  //     · ① 是**默认 fit 视图**走的那条(大图必然 < 8 px/子格)⇒ 换图之后继续画旧图集的砖,
+  //       直到某次 invalidateAll/setMap(A2 原样复发);
+  //     · ② 更糟:`layersClean` 不被碰 ⇒ ≥8 下平移时 `panBy` 判"这一层是干净的",自拷贝
+  //       旧像素、只把新露出的边条按**新**图集补上 ⇒ 屏幕上是**新旧混着**。
+  // ★ 判据落在**像素的来源**上(与 ③b 同款,不是"重画过没有"):换图之后 ①/② 收到的每一张
+  //   小图都必须是**新图集**算出来的。替身 backend 每次建图都记一个序号 ⇒ "旧图集的小图"
+  //   可以被指名(它画出来的正是"一半新一半旧"那张脸)。
+  await (async function () {
+    const savedDoc3c = globalThis.document;
+    const made3c = [];
+    globalThis.document = { createElement: function () { const c = fakeCanvas(0, 0); made3c.push(c); return c; } };
+    const tick3c = function () { return new Promise(function (res) { setTimeout(res, 0); }); };
+    try {
+      const be = spyBackend();
+      Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H, { backend: be });
+      const m = Core.createMap('atlas3c', 6, 3);              // 24×12 子格
+      fillSub(m, Core.LAYER_SCENE, Core.neutralDesc(5));       // 整层都是砖 ⇒ ①② 都有像素
+      const cv = fakeCanvas(640, 400);
+      const r = Render.mount(cv, { slicer: { nextFrame: function () { return Promise.resolve(); } } });
+      await r.setMap(m);
+      await r.setView({ x: 0, y: 0, zoom: 16 });               // ≥8 ⇒ 两条路都在用
+      const thumbOld = r.thumbCanvas(Core.LAYER_SCENE);
+      const offOld = layerCanvasesSince(made3c, 0, 640, 400)[Core.LAYER_SCENE];
+      ok(!!thumbOld && !!offOld && countOps(thumbOld.ctx, 'op', 'drawImage') > 0 &&
+         countOps(offOld.ctx, 'op', 'drawImage') > 0,
+         '③c 前提:换图**之前** ① 与 ② 都画过(drawImage 笔迹分别 ' +
+         (thumbOld ? countOps(thumbOld.ctx, 'op', 'drawImage') : -1) + ' / ' +
+         (offOld ? countOps(offOld.ctx, 'op', 'drawImage') : -1) + ' 笔)—— 否则下面两条是空转');
+      const nOld = be.calls.length;                           // 旧图集一共建了多少张小图
+      const a2 = makeAtlas(); a2[0] = 111; a2[1] = 222;       // 两张**不同**的图集
+      Render.setAtlas(a2, ATLAS_W, ATLAS_H);                  // ← 换图(不换 backend:同一个 ④)
+      // ★ 惰性作废:setAtlas 只记账,①② 的丢弃与重画在下一次 render() 里落地
+      cv.ctx.ops.length = 0;
+      r.render();
+      const since3c = made3c.length;                          // 这之后建出来的才是**新**一代
+      const offsNew = function () { return layerCanvasesSince(made3c, since3c, 640, 400); };
+      let waited = 0;
+      for (; waited < 60; waited++) {
+        const th = r.thumbCanvas(Core.LAYER_SCENE);
+        const offs = offsNew();
+        if (th && th !== thumbOld && countOps(th.ctx, 'op', 'drawImage') > 0 &&
+            offs.length === Core.LAYER_COUNT &&
+            offs.some(function (c) { return c.ctx.ops.length > 0; })) break;
+        await tick3c();
+      }
+      const thumbNew = r.thumbCanvas(Core.LAYER_SCENE);
+      const thumbDraws = thumbNew ? drawnImages(thumbNew.ctx) : [];
+      const thumbOldBricks = thumbDraws.filter(function (t) { return t.n <= nOld; }).length;
+      ok(thumbNew && thumbNew !== thumbOld && thumbDraws.length > 0 && thumbOldBricks === 0,
+         '★★★ 换图之后 ① **整片重建**,且画的全是**新图集**的小图(实得 ' + thumbDraws.length +
+         ' 笔,其中旧图集的 ' + thumbOldBricks + ' 笔;等 ' + waited + ' 拍)。' +
+         '★ 只判"重画过一次"是不够的:重画时照样可以读旧的 ③/旧小图 ⇒ A2 原样复发 —— ' +
+         '判据必须落在**小图是谁算出来的**上');
+      const offsN = offsNew();
+      const offDraws = [];
+      offsN.forEach(function (c) { drawnImages(c.ctx).forEach(function (t) { offDraws.push(t); }); });
+      const offOldBricks = offDraws.filter(function (t) { return t.n <= nOld; }).length;
+      ok(offsN.length === Core.LAYER_COUNT && offDraws.length > 0 && offOldBricks === 0,
+         '★★★ ② 同样按新图集整片重铺(实得 ' + offsN.length + ' 张新离屏层 / ' + offDraws.length +
+         ' 笔,其中旧图集的 ' + offOldBricks + ' 笔)。' +
+         '★ 少了它,`layersClean` 不被碰 ⇒ ≥8 下平移会自拷贝旧像素、只给新露出的边条补新砖');
+      ok(drawnImages(cv.ctx).indexOf(offOld) < 0,
+         '★★★ 换图之后主画布**不再合成旧的 ② 画布**(它必须被丢掉、由新的那张顶上;' +
+         '实得旧画布出现 ' + drawnImages(cv.ctx).filter(function (c) { return c === offOld; }).length +
+         ' 次)。★ 不丢的话屏幕上就是"一半旧图集、一半新图集"');
+    } finally {
+      globalThis.document = savedDoc3c;
+      Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H);         // 还原(与相位 ② 末尾同款)
+    }
+  })();
+
   // ==== 相位 ④ 闸 2:单帧预算分帧器 ====
   (function () {
     // 注入时钟与"下一帧":每项花 1ms,让出一帧再走 20ms(模拟真实的帧间隔)。
@@ -1636,6 +1710,72 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
          '★★ 选区已经为空时**不画**拖动框(框属于选区;这条同时钉住外层那道判据还在 —— ' +
          '少了它,块内读 `s.selection.x` 会抛)');
       rD.setSelDrag(null, 0, 0);
+
+      // ── ⑬i ★★★ 去烤的**代价形状**:只重画**当前那条路**那份数据(终审评审发现 I1)──
+      // ★ 背景:①(缩略图)与 ②(视口离屏层)是**两份**数据,同一时刻只有一份在屏幕上,
+      //   而两条路的成本形状**恰好相反** ——
+      //     · ② 的成本 = "与画布相交的格"数 × 每格 16 次 drawImage,**低倍时最大**(整幅图都
+      //       可能落在画布内),而低倍走的正是 ① 那条路 ⇒ 那份活一个字都看不见;
+      //     · ① 的成本 = 选区面积 × 缩略图刻度(与缩放无关),高倍时同样看不见。
+      // ★★ 判据取**读数**(不是"块宽 ≤ 1 格"那种代理):把一次 pointermove 在两条路上各自产生
+      //   的 op 数出来,并断言**另一条路一个 op 都没有**、当前那条路的活**有界**(有界在那里
+      //   才说明它没在替整幅图干活)。数字直接印在断言里 —— 这就是"每次 pointermove 付多少"
+      //   的量化口径(变异:把 repaintDrag 的路径分派删掉 ⇒ 两条"另一条路 0 个 op"当场红)。
+      const mBig = Core.createMap('big', 62, 37);              // 248×148 子格(大图量级)
+      fillSub(mBig, Core.LAYER_SCENE, Core.neutralDesc(7));    // 整层都是砖:② 的活最重
+      const cvBig = fakeCanvas(1600, 1200);
+      const sinceBig = made4.length;
+      const rBig = Render.mount(cvBig, SLICE_D);
+      await rBig.setMap(mBig);
+      const fitBig = rBig.view().zoom;
+      ok(fitBig > 0 && fitBig < Render.ZOOM_THRESHOLD && Render.zoomPath(fitBig) === 'thumb',
+         '⑬i 前提:默认 fit 视图落在**缩略图**那条路(实得 ' + fitBig.toFixed(2) +
+         ' px/子格)—— 这一条正是评审发现 I1 的触发条件:大图的默认视图就是它');
+      const thumbBig = rBig.thumbCanvas(Core.LAYER_SCENE);
+      ok(!!thumbBig, '⑬i 前提:① 的缩略图建出来了');
+      // 先把 ② 建出来(≥8 那条路),再回到 ① 那条路 —— 断言要判的是"另一条路**没被动过**",
+      // 那一条路得先存在(否则"零个 op"是空转)。
+      await rBig.setView({ x: 0, y: 0, zoom: 16 });
+      const offsBig = layerCanvasesSince(made4, sinceBig, 1600, 1200);
+      ok(offsBig.length === Core.LAYER_COUNT,
+         '⑬i 前提:② 的四张离屏层建出来了(实得 ' + offsBig.length + ' 张)');
+      const opsOnBig = function (which) {
+        let n = 0;
+        offsBig.forEach(function (c) { n += c.ctx.ops.length; });
+        return n;
+      };
+      // 大选区:20×12 格(80×48 子格)。★ 它同时是"① 那条路的活"的量化口径。
+      const SEL_BIG = { x: 20 * SB, y: 10 * SB, w: 20 * SB, h: 12 * SB };
+      const selSubBig = SEL_BIG.w * SEL_BIG.h;
+      await rBig.setView({ x: 0, y: 0, zoom: 16 });            // 回到 ② 那条路(已建好)
+      offsBig.forEach(function (c) { c.ctx.ops.length = 0; });
+      thumbBig.ctx.ops.length = 0;
+      dragOn(rBig, SEL_BIG, SB, 0);                            // ← 一次 pointermove
+      const layOpsBig = opsOnBig(), thmOpsOnLayers = thumbBig.ctx.ops.length;
+      // 高倍下 ② 的活的上界 = "与画布相交的格"数 × 16(每格 16 子格各一次 drawImage):
+      //   视图在 (0,0)、z=16、1600×1200 ⇒ 可见 100×75 子格 = 25×19 格。
+      const cellsVisBig = Math.ceil(1600 / 16 / SB) * Math.ceil(1200 / 16 / SB);
+      ok(thmOpsOnLayers === 0 && layOpsBig > 0 && layOpsBig <= cellsVisBig * SB * SB,
+         '★★★ ≥8(② 那条路)上拖动一步:① 侧**一个 op 都没有**(实得 ' + thmOpsOnLayers +
+         ' 个),② 侧的活**有界**且在可见区之内(' + layOpsBig + ' 个 op ≤ 可见格数 ' +
+         cellsVisBig + ' × 16 = ' + (cellsVisBig * SB * SB) + ')。' +
+         '★ ① 在高倍下根本不在屏幕上(合成走 drawLayerPath)⇒ 那份活是白付');
+      rBig.setSelDrag(null, 0, 0);
+      // 换到 ① 那条路(< 8):这一次**只许碰 ①**。② 的四张画布一个 op 都不许涨 ——
+      // 那正是评审发现 I1 量到的那笔(低倍时 ② 的活最大,却一个字都看不见)。
+      await rBig.setView({ x: 0, y: 0, zoom: 3 });
+      offsBig.forEach(function (c) { c.ctx.ops.length = 0; });
+      thumbBig.ctx.ops.length = 0;
+      dragOn(rBig, SEL_BIG, SB, 0);                            // ← 再走一次 pointermove
+      const layOpsThumb = opsOnBig(), thmOpsBig = thumbBig.ctx.ops.length;
+      ok(layOpsThumb === 0 && thmOpsBig > 0 && thmOpsBig <= selSubBig * 2,
+         '★★★ <8(① 那条路)上拖动一步:② 侧**一个 op 都没有**(实得 ' + layOpsThumb +
+         ' 个);① 侧的活与**选区面积**成正比(' + thmOpsBig + ' 个 op ≤ 选区 ' + selSubBig +
+         ' 子格 × 2 = ' + (selSubBig * 2) + ')。' +
+         '★ 去分派之前这里是「源 ∪ 目标(∪ 上一次那两块)」与画布的交集 × 每格 16 次 ' +
+         'drawImage —— 低倍时画布覆盖的格数**最大**(整幅图都可能落在里面),与选区大小无关, ' +
+         '而低倍合成的偏偏是 ① ⇒ 那一整份活一个字都看不见');
+      rBig.setSelDrag(null, 0, 0);
     } finally {
       globalThis.document = savedDocD;
     }

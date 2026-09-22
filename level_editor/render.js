@@ -51,7 +51,7 @@ globalThis.Render = (function () {
     return a[wrapIdx(Y, map.subRows) * map.subCols + wrapIdx(X, map.subCols)];
   }
 
-  // ── 贴图源与 ④(换图 = 两层一起作废)──
+  // ── 贴图源与 ④(换图 = **四层一起作废**:①②③④,见 setAtlas)──
   var atlasPixels = null, atlasW = 0, atlasH = 0;
   var tiles = null;                              // ④:惰性建(见 tileCache())
   var cells = null;                              // ③:由 attachCells 装上(Task 4 的 mount 装它)
@@ -62,8 +62,33 @@ globalThis.Render = (function () {
   function attachCells(cache) { cells = cache; return cells; }
   function cellCache() { return cells; }
 
-  // ★ 唯一的换图入口。它必须**同时**作废 ③ 与 ④ —— 这一条是账本点名带进计划 2b 的
-  //   不变量(规格 §4.2 的 ③ 与 ④ 是两层,换图是它们共同的失效事件)。
+  // ★★ 换图要作废的是**四层**(① 缩略图 / ② 视口离屏层 / ③ 格位图 / ④ 小图缓存),而模块层
+  //   只拿得到 ③ 与 ④(③ 靠 attachCells 那条接缝交上来,④ 由 Tint.setSource 自己清)。
+  //   ① 与 ② **住在 mount 的闭包里**(它们的 state 是每挂载一份的)—— 故 mount 用
+  //   `attachViewInvalidator` 把"这次换图作废你那一份 ①②"登记上来,setAtlas 提交完 ④/③
+  //   之后调它。
+  //   ★ 少了这条接缝的症状**两条路各一个、且都不报错**:
+  //     · ① 那条路(默认 fit 视图走的就是它,大图必然 < 8 px/子格)会继续画**旧图集**的砖,
+  //       直到某次 invalidateAll/setMap —— 正是本文件组织起来要防的那类 A2 复发("看着不对、
+  //       一个字都不说");
+  //     · ② 那条路更糟:它的 `layersClean` 不会被碰,于是 ≥8 下平移时 `panBy` 判"这一层是
+  //       干净的" ⇒ 自拷贝旧像素、只把新露出的边条按**新**图集补上 ⇒ 屏幕上是**新旧混着**,
+  //       连"慢慢重画"那种退化都没有。
+  //   ★ 作废器**只做同步的丢弃/记账,不做重画**:大图的 ①② 重画是几十万次 drawImage,
+  //     必须经 `createSlicer` 分帧(闸 2),那是挂载侧自己在下一次 `render()` 里安排的事。
+  //   ★ 收成**一张表**而不是单个槽位:第二个 mount(今天没有,但这是公开入口,与
+  //     `attachCells` 同一个先例)不该把前一个的作废悄悄吞掉 —— 单槽位下前一个 mount 的
+  //     ①② 会留着旧图集的砖块,而它一个字都不报。
+  var atlasInvalidators = [];
+  function attachViewInvalidator(fn) {
+    if (typeof fn !== 'function' || atlasInvalidators.indexOf(fn) >= 0) return fn;
+    atlasInvalidators.push(fn);
+    return fn;
+  }
+
+  // ★ 唯一的换图入口。它必须**同时**作废 ①②③④ —— 这一条是账本点名带进计划 2b 的
+  //   不变量(规格 §4.2 的 ③ 与 ④ 是两层,换图是它们共同的失效事件),**① 与 ② 同属这一条**
+  //   (它们是"像素/位图"那一侧的两条路,换图之后一样一个字都不成立,见 attachViewInvalidator)。
   //   ④ 那一侧由 Tint.setSource 自己做;③ 这一侧漏了的话,它会继续交出"用旧图集算出来、
   //   内容版本却没变"的格位图 ⇒ 审计 A2 在上一层原样复发(整张图是色块,"有时好有时坏",
   //   不报错)。★ 顺序是"先把新 ④ 建出来、让它校验形状,**校验过了才提交**" —— 形状非法时
@@ -85,6 +110,11 @@ globalThis.Render = (function () {
     tiles = next;
     atlasPixels = pixels; atlasW = w | 0; atlasH = h | 0;
     if (cells) cells.setSource();
+    // ★★ ①②③④ **四层一起作废**:③ 上一行、④ 在 setSource 里、①② 由挂载侧登记的作废器
+    //    做(见 attachViewInvalidator;它只丢/记账,重画在下一次 render() 里分帧进行)。
+    //    ★ 顺序照旧是"**先提交、后作废**":校验抛错发生在上两行,那时这一圈还没跑到,故
+    //    "抛错 ⇒ 一层都没提交"这条不变量不变。
+    for (var i = 0; i < atlasInvalidators.length; i++) atlasInvalidators[i]();
   }
   function atlasInfo() { return atlasPixels ? { width: atlasW, height: atlasH } : null; }
   // ★ 图纸容量 = 列 × 行(320×320 的图集 = 100 块)。**不是**描述符位宽 4095 ——
@@ -428,6 +458,16 @@ globalThis.Render = (function () {
     var thumbPx = THUMB_PX;
     var slicer = createSlicer(opts.slicer || {});
     var stat = { thumbMs: 0, renders: 0, lastRenderMs: 0, thumbsBuilt: 0 };
+
+    // ★★ 换图(setAtlas)必须把 ① 与 ② 也一起作废 —— 那两层的 state 全住在这个闭包里,
+    //    模块层看不见,故由这里登记一个作废器(与 setMap 里 `attachCells` 完全同一个先例)。
+    //    **只作废 ③④ 的实现会让 ① 继续画旧图集的砖、② 更是新旧混着**(见
+    //    attachViewInvalidator 上的两条症状)。
+    //    ★ 这里只**记账**(一行,不碰任何像素、也不碰 ③/④):真正的丢弃与重画排在
+    //      **下一次 render()** 里(见 syncAtlas)——① 的重画在大图上是几十万次 drawImage,
+    //      当场同步做就等于把闸 2 取消了,而那时候屏幕上还什么都没变。
+    var atlasSync = false;                          // 换图之后 ①② 需要整片重来
+    attachViewInvalidator(function () { atlasSync = !!s.map; return null; });
 
     // ── ★★ 视图入口的失败**必须看得见**(评审发现 1)──
     // Task 4 之后 resize/fit/setView/setZoomAt/panBy/setMap/invalidateAll 都返回**由分帧器
@@ -916,8 +956,14 @@ globalThis.Render = (function () {
     // ★ 唯一渲染入口(B6:旧实现同一帧连画两次画布)
     // ★★ 三条路径按 zoom 分工:① 缩略图(< 8)、② 视口离屏层(≥ 8);**合成**那一步
     //    (层可见性/压暗/3×3 副本)两条路都走 ⇒ "切层"只是重新合成,永远不重画任何一层。
+    // ★★ 换图之后的**唯一**收口就在这里:①② 的像素全是按旧图集算出来的,而它们只可能被
+    //    **这一条路**合成到屏幕上(drawThumbPath / drawLayerPath)⇒ 在唯一入口上作废,
+    //    既不会漏(没有第二条显示路径),也不会白付(没人看的时候一次重画都不做 —— 例如
+    //    换过图之后这个 mount 再也没被 render 过)。★ 本帧**不画**:上一次的画面留在屏幕上,
+    //    重建落地后由它自己的 `.then(render)` 画(与 invalidateAll 那条链同一个形状)。
     function render() {
       if (!s.map) return;
+      if (atlasSync) { syncAtlas(); return; }
       var W = canvas.width, H = canvas.height;
       var t0 = nowMs();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1054,19 +1100,46 @@ globalThis.Render = (function () {
       // ★★ 层变了:上一次那批烤在**旧层**上 —— 旧层此刻读到的是"没拖过"的内容,那些像素
       //    必须擦掉(不擦 = 旧层留着一次拖动预览的残影,直到有别的东西标脏它)。
       if (prev && prev.L !== L) repaintDrag(prev.L, prev.rects);
+      // ★ 这次拖动结束(松手 / 选区被取消):账结清。**必须排在上面两次重画之后** ——
+      //   清除那一步同样要把 ① 上最后那批偏移像素擦掉(它此刻还存着偏移,`live` 已经是 false,
+      //   而 `repaintDrag` 读的是 `dragSource`,同一个判据)。
+      if (!live) dragBakedThumb = false;
     }
 
-    // 把一批规范块在**某一层**的 ② 离屏层(与 ① 缩略图)上重画。
+    // 把一批规范块在**当前那条路**上重画。
     // ★ `layerRebuilds` 与 `flushDirty` 记的是**同一本账**(该层 +1)——"偏移一变重画一次"
     //   在自检数字里看得见。
     // ★ 缺席层(`map.layers[L] === null`)直接跳过:它一个像素都没有,不存在"偏移内容"可擦;
     //   而 `flushDirty` 对缺席层走的是"整张画布 clearRect"那条路 —— 拖动中每帧白付几次全屏
     //   清屏,且它**不计数**(layerRebuilds 只数 paintLayerRect 那一条)。这正是闸 2 要避免的
     //   那种看不见的成本。
+    // ★★ **按当前路径分派**(闸 2 的成本形状,评审发现 I1):① 缩略图(< 8 px/子格 时由
+    //    `drawThumbPath` 合成)与 ② 视口离屏层(≥ 8 时由 `drawLayerPath` 合成)是**两份**数据,
+    //    同一时刻只有一份在屏幕上。两条路的成本形状**恰好相反**:
+    //      · ② 的成本 = "与画布相交的格"数 × 每格 16 次 drawImage —— **低倍时最大**(整幅图
+    //        都可能落在画布内),而低倍走的正是 ① 那条路 ⇒ 那份活一个字都看不见,却是每次
+    //        pointermove 几十到几百毫秒(1600×1200 画布、z≈3、大选区 ⇒ 约 1.2 万格 × 16 次
+    //        drawImage);实测读数见 render_smoke 相位 ⑬i。
+    //      · ① 的成本 = 选区面积 × 缩略图刻度(与缩放无关),高倍时同样看不见。
+    //    ★ 另一条路的像素**不会被留在半旧状态**:换回 ≥8 一定经过 `setZoomAt`/`setView`/`fit`/
+    //      `resize`,它们都走 `viewChanged()` ⇒ `layersClean=false` ⇒ `buildLayers()` 整片重建
+    //      ②(按**当前**偏移)。① 侧见下面的 `dragBakedThumb`。
+    // ★★ 但 ① 还有**第二条**被烤进去的路,光跳过它就会留下错内容:拖动途中 `invalidateAll`
+    //    (撤销/重做一条 kind='whole' 的差量)会走 `buildThumbs`,而 `paintThumbRect` 读的正是
+    //    `dragSource` ⇒ 那一整张缩略图都被按**当时**的偏移烤一遍;此后每步只重画"当前偏移的
+    //    源∪目标"是补不回来的(烤的是**整张**),所以它必须在**换回 ① 那条路时**才归位。
+    //    ⇒ 记一个 `dragBakedThumb`:这次拖动动过 ① 就照旧两侧都重画(此时那一侧的重画是
+    //    **必要的**,不是白付);没动过才跳过(常态:高倍下拖一次,① 上根本没有偏移像素)。
+    var dragBakedThumb = false;                       // 本次拖动是否往 ① 烤过偏移
     function repaintDrag(L, rects) {
       if (!rects.length || !layerArray(s.map, L)) return;
-      for (var i = 0; i < rects.length; i++) paintLayerRect(L, rects[i]);
-      stat2.layerRebuilds++;
+      if (zoomPath(s.view.zoom) === 'layers') {
+        for (var i = 0; i < rects.length; i++) paintLayerRect(L, rects[i]);
+        stat2.layerRebuilds++;
+        if (!dragBakedThumb) return;                  // ★ 常态:① 上没有这次拖动的偏移像素
+      } else {
+        dragBakedThumb = true;                        // ★ 这一次拖动把偏移烤进了 ①
+      }
       if (!thumbs[L]) return;                         // ① 还没建(没 setMap)⇒ 没什么可烤
       for (var j = 0; j < rects.length; j++) paintThumbRect(L, rects[j]);
     }
@@ -1102,6 +1175,28 @@ globalThis.Render = (function () {
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();
       return observed('invalidateAll', buildThumbs().then(function () {
+        return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
+      }).then(render));
+    }
+
+    // ★★ 换图之后 ①② 的整片重来(**在下一次 render() 里落地**,见 render 的头一段)。
+    //    · ② 的画布直接丢掉:它的像素是按**旧**图集铺的,留着就会被 `drawLayerPath` 合成
+    //      上去(而"新旧混着"比"空一会儿"难查得多)。`viewChanged()` 再把 `layersClean`
+    //      放下 ⇒ 之后的平移/缩放/本方法排的那次 buildLayers 都会整片重来。
+    //    · ① 的位图同理丢掉(`thumbs[L] = null`,与 ensureThumbs 的重建条件不冲突):
+    //      `paintThumbRect` 与 `drawThumbPath` 都判它,null 时一个像素都不画 ——
+    //      "缩略图经分帧器慢慢画出来"本来就是这一层的常态(闸 2),这里付的是同一笔账。
+    //    ★ 重画一律经 `buildThumbs`(它走 createSlicer)⇒ 单帧预算不破。
+    //    ★ 顺序:先丢、再让缩略图**重建出画布**(ensureThumbs)、再分帧画 —— 与
+    //      invalidateAll 逐字同一套动作(区别只在"谁触发"与"先不画这一帧")。
+    function syncAtlas() {
+      atlasSync = false;
+      for (var L = 0; L < Core.LAYER_COUNT; L++) {
+        layerCv[L] = null; layerDirty[L] = null; thumbs[L] = null;
+      }
+      viewChanged();
+      ensureThumbs(s.map);
+      return observed('setAtlas', buildThumbs().then(function () {
         return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
       }).then(render));
     }
@@ -1324,7 +1419,7 @@ globalThis.Render = (function () {
     wrapIdx: wrapIdx, quadOf: quadOf,
     layerArray: layerArray, descAt: descAt, rgbaAt: rgbaAt,
     setAtlas: setAtlas, atlasInfo: atlasInfo, atlasCapacity: atlasCapacity, tileCache: tileCache,
-    attachCells: attachCells, cellCache: cellCache,
+    attachCells: attachCells, cellCache: cellCache, attachViewInvalidator: attachViewInvalidator,
     tileFor: tileFor,
     createCellCache: createCellCache,
     createSlicer: createSlicer,
