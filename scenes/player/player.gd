@@ -475,6 +475,26 @@ func is_downed() -> bool:
 func is_charging() -> bool:
 	return is_charge
 
+# 本物理步的滑动碰撞里有没有"非地形"的碰撞体(= 远端玩家身体所在的层)。
+# ★ 用途:C2 客户端预测把「是否正在贴身」喂给 PredictionRollback,让它只在贴身时放宽容差
+#   (见 docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md)。
+# ★ 判**层**不判组名/节点名:判 `player_replica` 组要在本文件写字面量,而 player_replica.gd 在
+#   `_ready` 里 preload 了 player.tscn ⇒ 两边互相引用成环;判 `TeamHost.TEAM_ENEMY_LAYER` 又会把
+#   `server/` 拖进核心玩家类。层判据零字符串耦合,且同时覆盖 1v1/大乱斗(层 2)与 3v3 敌方(层 16)。
+# ★ 地形恒为层 1 ⇒ `& ~1` 就是"非地形"。本地玩家的 mask 里除地形外只有对手幽灵体;
+#   3v3 队友的幽灵体在层 2、而本地 mask 不含 2 ⇒ 根本不产生滑动碰撞 ⇒ 队友不算接触(与"队友不互挡"一致)。
+# ★ 写成**函数**而不是每帧刷新的字段:本文件 move_and_slide() 有 3 个调用点
+#   (_physics_process / _tick_downed / restore_state),做字段必然漏刷一处,而漏了**不报错**。
+func touching_player() -> bool:
+	for i in range(get_slide_collision_count()):
+		var col := get_slide_collision(i)
+		if col == null:
+			continue
+		var co := col.get_collider() as CollisionObject2D
+		if co != null and (co.collision_layer & ~1) != 0:
+			return true
+	return false
+
 func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
