@@ -111,6 +111,48 @@ func _wire_hit_feedback() -> void:
 #  (自检 B2:禁武器闸门没上)。现在 options 随 `NetBus.match_sync` 的应答一起给。
 #  消费者 `tests/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
 
+# ── 网络统计读数(2026-09-22 诊断用,★ 默认关;`-- --netstat`)────────────────
+# 每 role 的**待消费输入队列长度**。
+# ★ 为什么必须有这一格:客户端侧量到的 `gap`(已发未确认)在两种成因下**读数一样** ——
+#   ① 服务端消费不过来,包真堆在 `_pending_input` 里;② 服务端消费得动,但包在路上
+#   (ENet 可靠通道在高 RTT 下的节流/窗口)。只有这一格能把它们分开:队列小 ⇒ 是②。
+var _netstat := false
+var _netstat_checked := false
+var _netstat_acc := 0.0
+var _netstat_trace := false     # 逐帧队列追踪(`--netstat-trace`,前 600 tick)
+var _netstat_trace_f := 0
+
+
+func _netstat_tick(delta: float) -> void:
+	if not _netstat_checked:
+		_netstat_checked = true
+		var ua := OS.get_cmdline_user_args()
+		_netstat = ua.has("--netstat")
+		# `--netstat-trace`:逐帧打(只在前 600 tick ≈ 10 秒),用于定位"那个固定偏置是哪一刻
+		# 被顶上去的"。★ 每秒一行的采样看不见 0.13 秒的爬升 —— 实测队列在开局 1 秒内从 0
+		# 跳到 8 然后就永远停在那儿(ρ=1,没有回复力),那一下只能逐帧看。
+		_netstat_trace = ua.has("--netstat-trace")
+	if not _netstat and not _netstat_trace:
+		return
+	if _netstat_trace:
+		_netstat_trace_f += 1
+		if _netstat_trace_f <= 600:
+			var tparts: Array[String] = []
+			for role in _pending_input:
+				tparts.append("%d=%d" % [role, (_pending_input[role] as Array).size()])
+			print("[trc] f=%d state=%d q={%s}" % [_netstat_trace_f, _round_state, ", ".join(tparts)])
+		if not _netstat:
+			return
+	_netstat_acc += delta
+	if _netstat_acc < 1.0:
+		return
+	_netstat_acc = 0.0
+	var parts: Array[String] = []
+	for role in _pending_input:
+		parts.append("%d=%d" % [role, (_pending_input[role] as Array).size()])
+	print("[netstat-srv] 待消费队列(包) %s" % ", ".join(parts))
+
+
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
@@ -169,6 +211,8 @@ func _physics_process(delta: float) -> void:
 	_broadcast_pending_beams()
 	# 回合制:击杀倒地转换检测 + 状态机推进(倒计时/复活/回合结束/换边)
 	_match_round_tick(delta)
+	# 网络统计读数(诊断,默认关)
+	_netstat_tick(delta)
 	# 分帧重建可破坏碰撞块(爆炸拆墙)
 	if not _dirty_chunks.is_empty():
 		var processed := 0

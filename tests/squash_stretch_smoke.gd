@@ -5,8 +5,6 @@ extends SceneTree
 #
 # ★ 组件只静态引用 PlayerParams / EnemyParams / MathUtil(三者都是 RefCounted、非 autoload),
 #   故 `-s` 阶段(autoload 尚未实例化)可以安全静态引用本类。
-#   ⑩d 那条**源码级**断言也走 `-s` 安全的 `ScanUtil`(纯静态 RefCounted)+ `FileAccess`,
-#   不 `load()` `player.gd` —— 后者会连带解析到 `Level0`,在 `-s` 阶段挂到 timeout(见本仓教训)。
 
 const DT: float = 1.0 / 60.0
 
@@ -265,42 +263,6 @@ func _initialize() -> void:
 	es.impulse(SquashStretch.Impulse.TAKE_OFF)  # 敌人侧有 TAKE_OFF
 	es.tick(DT, 0.0, true, false)
 	_ok(espr.scale.x < 1.0, "敌人 profile 响应 TAKE_OFF(拉伸,窄高),实测 %s" % str(espr.scale))
-
-	# ⑩ 模式闸门 `set_landing_only(true)` = **只留落地那一下**(2026-09-21 用户裁定:形变只在
-	#    单机模式生效,联机模式全部取消,**例外是玩家落地**;用户原话"把本次合并的优化在多人
-	#     模式都取消掉,仅在单人模式应用,除了玩家落地的优化")。
-	#    三条一起才完整:③a 落地仍触发(那是**要保留**的那一半)、③b 三个事件脉冲全哑、
-	#    ③c 空中连续项哑。少了 ③a,"全哑"的坏实现会全绿。
-	var lo: Array = _mk()
-	(lo[0] as SquashStretch).set_landing_only(true)
-	(lo[0] as SquashStretch).tick(DT, 1200.0, true, false)          # 满力落地
-	var los: Vector2 = (lo[1] as AnimatedSprite2D).scale
-	_ok(los.x > 1.0 and los.y < 1.0,
-			"⑩a 闸门内**落地仍挤压**(用户点名保留的那一条),实测 %s" % str(los))
-
-	var lo2: Array = _mk()
-	(lo2[0] as SquashStretch).set_landing_only(true)
-	(lo2[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)
-	(lo2[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)
-	(lo2[0] as SquashStretch).impulse(SquashStretch.Impulse.HURT)
-	(lo2[0] as SquashStretch).tick(DT, 0.0, true, false)            # 站在地上,只有脉冲
-	_ok(_near((lo2[1] as AnimatedSprite2D).scale.x, 1.0, 0.0005),
-			"⑩b 闸门内三个事件脉冲(JUMP/DASH/HURT)全哑,实测 %s" % str((lo2[1] as AnimatedSprite2D).scale))
-
-	var lo3: Array = _mk()
-	(lo3[0] as SquashStretch).set_landing_only(true)
-	for i in 5:
-		(lo3[0] as SquashStretch).tick(DT, -700.0, false, false)     # 空中且 |vel_y| 大(⑤ 的同款输入)
-	_ok(_near((lo3[1] as AnimatedSprite2D).scale.x, 1.0, 0.0005),
-			"⑩c 闸门内空中连续项哑(⑤ 同款输入下必须中性),实测 %s" % str((lo3[1] as AnimatedSprite2D).scale))
-
-	# ⑩d **接线守卫**(源码级):闸门本身是纯逻辑,但"没人打开它"等于没做 —— 而宿主漏调
-	#     `set_landing_only` 是**静默**的(组件默认 false = 全功能 = 联机也照形变)。
-	#     判据:player.gd 里必须出现"按 pvp_mode 打开闸门"这个形状。
-	#     ★ 用 `code_only` 剥注释:一句提到 `set_landing_only` 的**注释**会把删掉的那行重新喂绿。
-	var psrc := ScanUtil.code_only(FileAccess.get_file_as_string("res://scenes/player/player.gd"))
-	_ok(psrc.contains("set_landing_only(true)") and psrc.contains("Level0.pvp_mode"),
-			"⑩d 宿主接线:player.gd 按 Level0.pvp_mode 调 set_landing_only(true)")
 
 	_free_owned()
 

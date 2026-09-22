@@ -52,7 +52,7 @@ func _run() -> void:
 		await tree.create_timer(0.4).timeout
 		_press_by_text(tree.current_scene, "开 始 探 索")
 	elif mode == "mp":
-		_press_by_text(tree.current_scene, "多 人 对 战")
+		_press_by_text(tree.current_scene, "1 v 1")   # 文案 2026-09-21 起是「1 v 1」(原「多 人 对 战」)
 	elif mode == "royale":
 		_press_by_text(tree.current_scene, "大 乱 斗")
 	elif mode == "team":

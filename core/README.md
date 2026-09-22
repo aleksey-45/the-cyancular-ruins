@@ -17,12 +17,10 @@ present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听
   —— 改地图格式/碰撞语义/环面数学时动这里。★ `maze_generator` 只留**会话状态**
   (选中的地图文件 + `current_grid`)并转发;`.cyrm` 格式进 `map_format`、环面几何与寻路进
   `grid_pathfinder`(阶段 5.7)。
-- `net/`(10)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
+- `net/`(11)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
   `net_bus` `net_bus_ext` `prediction_rollback` `pvp_session` `proc_util`
   `local_server`
-  —— 改协议/联机手感/进程编排时动这里。★ 原第 11 个是 `snapshot_interp`(副本位置的双快照
-  tick 域插值),2026-09-21 随副本改回**自身差分指数追赶**整体删除(实测那套插值在
-  60fps 渲染 + 60Hz 快照下是空操作,平滑度等于包的到达平滑度)。★ **输入源放这里**(`player_input` 纯接口 +
+  —— 改协议/联机手感/进程编排时动这里。★ **输入源放这里**(`player_input` 纯接口 +
   `local_input_source` / `packet_input_source` / `ai_input_source` 三个实现):
   它们的价值就体现在"本地输入 / 网络包 / AI 脚本"三种来源可换,与联机是同一条轴。
 - `config/`(6)`build_info` `enemy_params` `game_parameters` `player_params` `run_options`
