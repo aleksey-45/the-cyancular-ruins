@@ -17,6 +17,12 @@ func _match_round_tick(delta: float) -> void:
 		if _down_counted.get(role, false):
 			continue
 		_down_counted[role] = true
+		# 掉落:倒地**这一刻**在原地丢下"除随机保留一把"外的全部武器(用户 2026-09-21 裁定)。
+		# ★ 必须在**倒地边沿**、不能在复活流程里(旧实现):`_respawn_player` 是先把人瞬移到
+		#   出生点再调掉落 ⇒ 掉在出生点;而且尸体在 2s 倒地窗里继续走物理(重力/击退衰减/
+		#   滑行),等到复活那一刻它早已不在死亡的那一格了。
+		# ★ 复用计分那个 `_down_counted` 闩 ⇒ 每次死亡恰好丢一次(与复活那一支互不重复)。
+		_drop_all_but_one(p, role)
 		# 击杀定义:对方死亡都算 —— 不分死因(枪杀/爆炸/溺水/自伤/无射手)一律记给对方 +1。
 		# (旧实现靠 pvp_killer 射手归因、无射手不计分,已废弃。)
 		var scorer := _opponent_of(role)
@@ -52,7 +58,7 @@ func _match_round_tick(delta: float) -> void:
 		RoundState.MATCH_OVER:
 			pass   # 对局结束,等玩家退出/服务器关房
 
-# 局内死亡复活:倒计时后重生(重置血量/防水/位置/武器)。
+# 局内死亡复活:倒计时后重生(重置血量/防水/位置;背包不动 —— 武器已在倒地时掉落)。
 
 func _handle_respawns(delta: float) -> void:
 	for role in _respawn_pending.keys():
@@ -60,7 +66,9 @@ func _handle_respawns(delta: float) -> void:
 		if _respawn_pending[role] <= 0.0:
 			_respawn_player(role)
 
-# 重生:摆到本局出生点,血量/防水/倒地复位,背包**只随机保留一把**(其余掉在死亡点)。
+# 重生:摆到本局出生点,血量/防水/倒地复位。
+# ★ 背包**不在这里动** —— 武器早在**倒地那一刻**就掉在倒地位置了(见 `_match_round_tick`,
+#   用户 2026-09-21 裁定「死亡后直接原地掉落」);这里再掉一次会掉在出生点、且是多余的一遍。
 
 func _respawn_player(role: int) -> void:
 	var p: Node2D = players[role]
@@ -71,10 +79,6 @@ func _respawn_player(role: int) -> void:
 	p.apply_authoritative_state(p.max_hp, p.max_waterproof, false)
 	if p.has_method("cancel_jump_state"):
 		p.cancel_jump_state()
-	# 复活:除**背包里随机一把**外,其余全丢在死亡点(用户 2026-09-15 裁定)。
-	# ★ 换掉了原来的 equip(default_slot()) —— 那条会把手上的枪换回默认槽,而背包
-	#   现在是玩家资产,复活只该"随机留一把";不补满弹(与"残弹跟着枪走"一致)。
-	_drop_all_but_one(p, role)
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
 

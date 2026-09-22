@@ -15,9 +15,40 @@ extends SceneTree
 #   此前 3v3 一条都没有,"掏空循环"或"摘掉门控"都能全绿(同样是静默端口泄漏)。
 #  **B 册 Task 7(2026-09-19)**:两条**收集块的循环体**断言(`stale_team.append(tr)` /
 #   `stale_royale.append(rr)`)—— 只钉 `for …` 头行是**同粒度**的洞:留头行、掏空体时上面四条全绿。
+#  **阶段 2-B Task 4(2026-09-21,回局凭据的登记与清理)**:三处 ——
+#   ① `_check_teardown_funnel` 的模式表加 `rejoin.drop_room(`(凭据表也是一张注册表,"整房作废"
+#      同样是拆除动作;加它之前把该调用挪出收口**这条门完全看不见**,已实测);
+#   ② `_check_reclaim_ladder` 加一条**反向**断言:room_manager 里不许出现 `rejoin.drop_room(`
+#      (收口那条只扫 lobby_rooms.gd,扫不到写在编排层的绕道 —— 这正是该函数存在的理由);
+#   ③ 新增 `_check_rejoin_spawn_wiring`:四个 spawn 点逐个点名必须在 spawn **之后**登记凭据,
+#      且 GC 搭在 30s 回收梯上(漏一个的症状是静默的:那个模式永远回不去)。
+#  **阶段 2-B Task 5(2026-09-21,同日)**:**改名跟随** —— `rejoin.drop_room(code)` →
+#   `rejoin.drop_port(worker_port)`(三张注册表的房号空间重叠,按 code 作废会误伤同号的另一间房)。
+#   上面①②两处的判据串跟着改;`_check_reclaim_ladder` 那条**两种写法都收**(旧名留给"有人把按
+#   code 的版本加回来"这一档)。★ 这是**跟着改名**,不是放宽白名单 —— 方向别搞反。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
+# ★★ 2026-09-21(「看得见进不去」批 Task 6 补):**本文件每个 `_check_*` 都必须跑到尾**。
+#   为什么需要:本文件的 `_check_*` 全是"`_fail` 非空就早退"的写法,而 **GDScript 的脚本错误
+#   (`Invalid call. Nonexistent function …` 这类)不给 `_fail` 赋值** —— 它只让**出错的那个
+#   函数当场结束**,调用方 `_initialize` 照常往下走,`_finish()` 于是打出 OK。实测(本批
+#   Task 1 首次发现、Task 6 原样复现):把 `WorkerLauncher.pid_of` 连名带 4 处调用一起改名
+#   (只改定义的话 `room_manager.gd` 先编不过、会走另一条红路),输出多一段
+#     `SCRIPT ERROR: Invalid call. Nonexistent function 'pid_of' in base 'RefCounted (WorkerLauncher)'`
+#   而 verdict **仍是 `SMOKE_ROOM_SWEEP OK`** —— 那一组断言被静默跳过,读起来像"全过"。
+#   (同源的完整表述在 `tests/lib/probe_base.gd` 文件头:`ALL-OK` 只证明"没有任何一条断言
+#   失败",不证明"该跑的断言都跑过";两个新场景探针用 `_checks >= EXPECTED_CHECKS` 堵它。)
+# ★ 判据为什么成立:`_fail` 为空时,任何"提前 return"都只可能来自函数开头那条
+#   `if _fail != "": return` —— 而它只在 `_fail` 已非空时点火,与 `_fail` 为空矛盾。
+#   故 `_fail` 为空 ⟺ 「没有正式断言失败」;此时名单不全就**只可能**是"有函数没跑到尾"。
+const CHECK_NAMES := [
+	"_check", "_check_argv_contract", "_check_teardown_funnel",
+	"_check_team_startup_contract", "_check_team_spawn_guard",
+	"_check_worker_pid_tracking", "_check_join_refusal_guards", "_check_reclaim_ladder",
+	"_check_rejoin_spawn_wiring",
+]
+var _done: Array[String] = []
 
 func _initialize() -> void:
 	var src := FileAccess.get_file_as_string("res://server/room_manager.gd")
@@ -42,6 +73,10 @@ func _initialize() -> void:
 	_check_teardown_funnel()
 	_check_team_startup_contract()
 	_check_team_spawn_guard()
+	_check_worker_pid_tracking()
+	_check_join_refusal_guards()
+	_check_reclaim_ladder()
+	_check_rejoin_spawn_wiring()
 	_finish()
 
 
@@ -117,11 +152,22 @@ func _check_teardown_funnel() -> void:
 			#   `rooms.erase(`)—— 所以其实三种写法都拦得住,但只留裸那条时判词会点错名字(报
 			#   "rooms.erase(" 而实际写的是 team_rooms)。反过来,也**别**把这两条当冗余删掉:删了不会
 			#   假绿(仍被子串拦住),只是判词失去分辨力 —— 那是排查时最贵的那点信息。
-			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase("]:
+			# ★★ 阶段 2-B(Task 4,2026-09-21)新增 `rejoin.drop_room(`:凭据表**也是一张注册表**,
+			#   作废某房的凭据同样是"拆除动作"。加它之前,**把 `drop_room` 挪到调用方**(本仓对
+			#   `teardown_room` 明令禁止的那件事)这条门**完全看不见** —— 实测:挪进
+			#   `_reclaim_finished_matches`(另一个文件)后本冒烟仍报 OK,而"同一件事两处实现"
+			#   这条纪律就只剩注释在守。判据只认**当前**的调用形状(`rejoin.drop_port(`),
+			#   改名/搬家时同款改这里(与上面 `_launcher.release_now` 那条同一条纪律)。
+			# ★★ 2026-09-21 同日**改名**:`drop_room(code)` → `drop_port(worker_port)`(三张注册表
+			#   的房号空间重叠,按 code 作废会误伤同号的另一间房)。★ 这里是**跟着改名**,不是
+			#   "为了让某处的调用过关而放宽" —— 放宽的方向(把不在收口里的调用也收进白名单)
+			#   恰恰是这条门存在要拦的事,别往那边改。
+			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase(", "rejoin.drop_port("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):
 						_fail = "lobby_rooms.%s 里出现 %s —— 拆除必须走 teardown_room 单一收口" % [f["name"], pat]
 						return
+	_done.append("_check_teardown_funnel")
 
 
 # ── 批次 2 新增:role 协议必须是**显式 role 集合**(--roles)──
@@ -167,6 +213,7 @@ func _check_argv_contract() -> void:
 			if not code2.contains(tok):
 				_fail = "%s 未接 %s(3v3 启动协议只接了一半?注:判据剥掉注释 —— 光在注释里提到不算)" % [f, tok]
 				return
+	_done.append("_check_argv_contract")
 
 # ── 批次 3(3v3)新增:启动契约里"本册能做到的那一半" ──
 # ★ 边界照实写明:**真链路**(6 个真客户端连上 `--team` worker → 满员开局 → 有人掉线 →
@@ -279,6 +326,7 @@ func _check_team_startup_contract() -> void:
 	if not excl.contains("quit(1)"):
 		_fail = "--royale/--team 互斥守卫里没有 quit(1)(空块 = 守卫守不住,静默开成错的那一半)"
 		return
+	_done.append("_check_team_startup_contract")
 
 
 # ── 批次 3(3v3)新增:生成端的 fail-fast(队号**取值**)──
@@ -296,6 +344,7 @@ func _check_team_spawn_guard() -> void:
 	if bad_val:
 		_fail = "spawn_team_worker 放行了越界队号(长度相等、队号 3 越界 → 子进程开机即 quit、大厅判定成功、零报错)"
 		return
+	_done.append("_check_team_spawn_guard")
 
 
 func _check(src: String) -> void:
@@ -418,11 +467,199 @@ func _check(src: String) -> void:
 			break
 	if summary.is_empty() or not summary.contains("3v3"):
 		_fail = "_sweep_stale_rooms 的汇总 print 未报 3v3 那一档(界有变化而日志读不出来)"; return
+	# ★ 本函数**跑到尾**的凭证(判据在 _finish;理由见文件头那段)。下面的每个 _check_* 同款。
+	_done.append("_check")
+
+# ── 2026-09-21(「看得见进不去」批)新增:worker pid 的登记与归还 ──
+# ★ 为什么钉它:「对局中的房什么时候消失」这条判据是**这一局的 worker 进程还在不在**
+#   (三种模式的 worker 都在对局结束时自己退)。pid 的来源就是这里:端口 → pid 的映射。
+# ★ 归还端口时**不清 pid** 的后果是**静默**的:大厅会认为一个已经结束(甚至端口已被复用给
+#   别的局)的对局还活着 —— 房永远不出现在回收名单里,而端口与列表位一直占着。
+func _check_worker_pid_tracking() -> void:
+	if _fail != "":
+		return
+	var L := WorkerLauncher.new()
+	# 直接摆内部表(与 _check_team_spawn_guard 只喂非法输入同一个取向:本冒烟不该真拉起子进程)。
+	# 端口取 7770:在 WorkerLauncher 的端口池(7800~8299)之外,故意不碰大厅/worker 的号段。
+	L.set("_worker_pids", {7770: 4242})
+	if L.pid_of(7770) != 4242:
+		_fail = "WorkerLauncher.pid_of 没读到登记过的 pid"
+		return
+	if L.pid_alive(0) or L.pid_alive(-1):
+		_fail = "★ pid_alive(<=0) 必须是 false(登记发生在 spawn 成功之后,那之前的窗口别判成活着)"
+		return
+	L.release_now(7770)
+	if L.pid_of(7770) != 0:
+		_fail = "★ 端口归还后未清 pid(房会被判成「还在」→ 永久占着列表位与端口)"
+		return
+	_done.append("_check_worker_pid_tracking")
+
+
+# ── 2026-09-21(「看得见进不去」批)新增:三条 join 的**拒绝守卫与文案** ──
+# ★ 为什么是源码级:文案是**发给玩家看的字符串**,而探针里没有对端 ——
+#   `NetBus.reply` 在 `is_peer_live(caller)` 为假时**静默跳过**(见 NetBus.reply 的注释),
+#   所以那句话在探针里根本观测不到。行为面(调用方没被 append 进 players)由
+#   `tests/lobby_visibility_probe.tscn` 相①/②/③ 断言,这里断言的是**那句话本身**。
+# ★ 为什么文案值得一条断言:1v1 原先对"对局进行中"说的是「房间已满」—— 那是假话,而且会命中
+#   大厅页 `_on_server_message` 的**自动刷新**分支(那条只认旧文案)。改文案 = 静默改行为。
+# ★ 另钉一条反向:三条守卫必须**用"这一局在进行中"判**(started / in_match),不许退化成
+#   "房满 / 人数"之类的替代判据 —— 后者在"房里只剩 1 人"时放行,正是本批要堵的那档。
+# ★★ 2026-09-21(回局入口批)补一条**前提**(下方判据与文案一个字节都没改):
+#   `tests/lobby_visibility_probe` 相①②③ 断的是「对局中的房**对无凭据者**一律拒绝」——
+#   "回局"那条路**刻意不经过这三条守卫**:它走 `rejoin_request`(大厅侧 `on_rejoin_request`,
+#   按凭据表放行),客户端侧则在列表里把持凭据的那一行画成**可点**(相⑧)。
+#   故**不许**在这三个 handler 里插"有凭据就放行"的分支 —— 那等于把"回局"混进"入房"语义,
+#   而本函数这条守卫**当场变成一句空话且红不起来**(它判的是那条 `if` 还在,前面加一条
+#   前置分支它照样绿)。
+func _check_join_refusal_guards() -> void:
+	if _fail != "":
+		return
+	var code := ScanUtil.code_only(ScanUtil.read("res://server/lobby_rooms.gd"))
+	var cases := [
+		["join_room", "if room.started:"],
+		["royale_join", "if rr.in_match:"],
+		["team_join", "if tr.in_match:"],
+	]
+	for c in cases:
+		var body := ScanUtil.func_body(code, str(c[0]))
+		if body.is_empty():
+			_fail = "找不到 %s 的函数体" % c[0]
+			return
+		if not body.contains(c[1]):
+			_fail = "★ %s 缺少「对局中即拒绝」的守卫(%s)—— 对局中的房会被第三人加入" % [c[0], c[1]]
+			return
+		if not body.contains('"该房间的对局已进行中,无法加入"'):
+			_fail = "%s 的拒绝文案不是三模式统一的那一句" % c[0]
+			return
+	_done.append("_check_join_refusal_guards")
+
+
+# ── 2026-09-21 新增:对局中房间的**回收梯接线** ──
+# ★ 为什么"接线"要单独钉:行为探针(`tests/lobby_visibility_probe.tscn` 相④)是**手工调**
+#   `_reclaim_finished_matches()` 的 —— 把 `_process` 里那次调用删掉,行为探针**照样全绿**,
+#   而生产里房永远不会被回收(端口与列表位白占)。本仓对这类"两半"的既有先例:
+#   `team_room_smoke` ⑨①(接线面)对 `hud_declarative_probe` ③(行为面)—— 缺一不可。
+# ★ 另一条:回收不能绕道直接删注册表。既有的 `_check_teardown_funnel` 只扫
+#   `server/lobby_rooms.gd`,**扫不到写在 room_manager 里的绕道** —— 那正是本函数存在的理由。
+func _check_reclaim_ladder() -> void:
+	if _fail != "":
+		return
+	var src := ScanUtil.read("res://server/room_manager.gd")
+	if src.is_empty():
+		_fail = "无法读取 room_manager.gd"
+		return
+	var code := ScanUtil.code_only(src)
+	if not code.contains("const MATCH_SWEEP_INTERVAL := 30.0"):
+		_fail = "缺 MATCH_SWEEP_INTERVAL=30 常量(回收梯的周期)"
+		return
+	var proc := ScanUtil.func_body(code, "_process")
+	if proc.is_empty():
+		_fail = "找不到 RoomManager._process"
+		return
+	if not proc.contains("_reclaim_finished_matches()"):
+		_fail = "★ _process 没调 _reclaim_finished_matches —— 对局结束后房与端口永不被回收"
+		return
+	var fn := ScanUtil.func_body(code, "_reclaim_finished_matches")
+	if fn.is_empty():
+		_fail = "找不到 _reclaim_finished_matches"
+		return
+	if not fn.contains("teardown_room("):
+		_fail = "★ 回收梯没走拆除单一收口(端口归还/注册表删除只许出现在 teardown_room)"
+		return
+	# 三张注册表都要被扫:漏一张 = 那张的房永不被回收(静默端口泄漏,本层补过五次的那个模式)
+	for pat in ["for code in lobby.rooms", "for rcode in lobby.royale_rooms", "for tcode in lobby.team_rooms"]:
+		if not fn.contains(pat):
+			_fail = "★ 回收梯漏扫了一张注册表(%s)→ 那张的房与端口永不被回收" % pat
+			return
+	var mo := ScanUtil.func_body(code, "_match_over")
+	if mo.is_empty():
+		_fail = "找不到 _match_over"
+		return
+	if not mo.contains("pid <= 0") or not mo.contains("port <= 0"):
+		_fail = "★ _match_over 没把 port/pid <= 0 判成「没结束」(开局那一瞬会被自己的回收梯拆掉)"
+		return
+	# ★★ 阶段 2-B(Task 4,2026-09-21)新增的**反向**断言:凭据表作废(`rejoin.drop_port`)必须
+	#   留在 `teardown_room` 体内(上面那条"绕道直接删注册表"的同一件事 —— 凭据表也是一张注册表)。
+	#   ★ 为什么必须在这里另加一条:上面那条正向断言(`_check_teardown_funnel`)只扫
+	#   `server/lobby_rooms.gd`,**扫不到写在 room_manager 里的绕道** —— 这正是本函数存在的理由。
+	#   ★ 实测(未加本条时):把 `lobby.rejoin.drop_room(room.code)` 挪进 `_reclaim_finished_matches`
+	#   的拆除循环,**本冒烟照旧报 OK** —— 那份"别把这段挪到调用方"的纪律当时只剩注释在守。
+	#   ★ 这是一条**否定式**判据(不许出现),不是"必须出现":凭据登记(`rejoin.grant`)在
+	#   `_grant_rejoin` 里、是正常路径,别把两者混为一谈。
+	#   ★ 判据**只收 `drop_port(`/`drop_room(` 两种写法**:那是"整房作废"(拆除动作)。`drop_token(`
+	#   是"消费掉某一份凭据",不是拆除动作、将来可能合法地出现在别处,收进来只会造出假红。
+	#   ★ 两种写法都收:本函数落地当天 `drop_room` 改名成了 `drop_port`(见 `_check_teardown_funnel`
+	#   那条注释)—— 只留旧名的门对**当前**的绕道彻底失明,只留新名的门认不出有人把按 code 的
+	#   版本加回来。多留一个字符串在这里是**加宽判据面**,与"放宽白名单"是相反的方向。
+	for stale in ["rejoin.drop_port(", "rejoin.drop_room("]:
+		if code.contains(stale):
+			_fail = "★ room_manager 里出现 %s —— 凭据作废必须留在 teardown_room 体内(挪到调用方 = 同一件事两处实现)" % stale
+			return
+	_done.append("_check_reclaim_ladder")
+
+
+# ── 阶段 2-B(Task 4,2026-09-21)新增:四个 spawn 点**都**登记回局凭据 ──
+# ★ 为什么是源码级:登记跑在"spawn 成功之后",要真拉起 worker 才走得到 —— 本文件里没有可用的
+#   行为探针(真链路归 **Task 8 的 `tests/rejoin_probe.sh`**,本步不重复造)。而**漏掉任何一个**
+#   spawn 点的症状是**静默**的:那个模式的玩家点「回到对局」永远得到"凭据已失效",大厅侧
+#   一行报错都没有 —— 正是本仓反复登记的"守卫在、东西不在"那一档。
+# ★ 四个点**逐个点名**,不数 `_grant_rejoin(` 的个数:个数会随实现漂,而且数不出"漏的是哪一个"
+#   (口径同 `_check_teardown_funnel` 的注释)。`royale_start_ai` 最容易漏 —— 它是 AI 补位那条
+#   冷门分支,而且它的 `granted` 只许收真人 role(范围必须与 token 循环一致)。
+func _check_rejoin_spawn_wiring() -> void:
+	if _fail != "":
+		return
+	var code := ScanUtil.code_only(ScanUtil.read("res://server/room_manager.gd"))
+	var spawns := ["_start_match", "royale_start", "royale_start_ai", "team_start"]
+	for f in spawns:
+		var body := ScanUtil.func_body(code, f)
+		if body.is_empty():
+			_fail = "找不到 %s 的函数体" % f
+			return
+		# ① 该 spawn 点必须登记凭据(否则那个模式永远回不去,且零报错)
+		if not body.contains("_grant_rejoin("):
+			_fail = "★ %s 未登记回局凭据(该模式点「回到对局」永远得到「凭据已失效」,且零报错)" % f
+			return
+		# ② 登记必须排在 **spawn 调用之后**:凭据里的 worker_pid 是"这一局还在不在"的唯一判据,
+		#    登记早了 pid 还是 0 → `RejoinRegistry.decision` 把还在打的局判成"已结束"。
+		#    ★ 判据落在**同一函数体内的先后**(不是"文件里某个位置")—— 顺序错了不报错,只静默失真。
+		var at_spawn := body.find("spawn_")
+		if at_spawn < 0 or body.find("_grant_rejoin(") < at_spawn:
+			_fail = "★ %s 的 _grant_rejoin( 未排在 spawn 调用之后(凭据里的 worker_pid 会是 0)" % f
+			return
+	# ③ 凭据表的 GC 必须搭在 30s 回收梯上:TTL 只是表的上界,不为它另立定时器(同一件事不留两处)
+	var rec := ScanUtil.func_body(code, "_reclaim_finished_matches")
+	if rec.is_empty():
+		_fail = "找不到 _reclaim_finished_matches"
+		return
+	if not rec.contains("lobby.rejoin.prune("):
+		_fail = "★ 回收梯未清过期凭据(lobby.rejoin.prune)—— 凭据表只增不减,表会无限长大"
+		return
+	_done.append("_check_rejoin_spawn_wiring")
+
 
 func _finish() -> void:
+	# ★★ 名单对账(见文件头那段)。**只在 `_fail` 为空时**做:`_fail` 非空说明已有正式断言失败,
+	#   那时早就打 FAIL 了,再叠一条"没跑到尾"只会把真原因淹掉。
+	# ★ 判据为什么成立:`_fail` 为空时,任何 `_check_*` 的提前 return 都只可能来自函数开头那条
+	#   `if _fail != "": return` —— 而它只在 `_fail` 已非空时点火,与前提矛盾。故 `_fail` 为空 ⟺
+	#   「没有正式断言失败」;此时名单不全就**只可能**是"那个函数没跑到尾"(脚本错误)。
+	if _fail.is_empty():
+		var missing: Array[String] = []
+		for n in CHECK_NAMES:
+			if not _done.has(n):
+				missing.append(n)
+		if not missing.is_empty():
+			_fail = ("★★ 这些检查**没跑到尾**(多半是脚本错误让那个函数当场结束,而它不给 _fail 赋值):%s"
+					% str(missing))
+		elif _done.size() != CHECK_NAMES.size():
+			# 反向:名单比实跑少 ⇒ 加了新检查却没把它登记进 CHECK_NAMES(新检查会**不受本对账保护**)。
+			# 让它红,而不是静默放行 —— 那正是本条要堵的方向。
+			_fail = ("★★ 跑过的检查数(%d)与 CHECK_NAMES(%d)不符 —— 加/删了 _check_* 却没同步名单"
+					% [_done.size(), CHECK_NAMES.size()])
 	if not _fail.is_empty():
 		print("SMOKE_ROOM_SWEEP FAIL: %s" % _fail)
 		quit(1)
 		return
-	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(三张注册表的在局宽限界逐个钉死:1v1 裸界 / 大乱斗 RoyaleHost.MATCH_TIME / 3v3 TEAM_MATCH_ESTIMATE)")
+	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(三张注册表的在局宽限界逐个钉死:1v1 裸界 / 大乱斗 RoyaleHost.MATCH_TIME / 3v3 TEAM_MATCH_ESTIMATE;%d 项检查全部跑到尾)" % _done.size())
 	quit(0)

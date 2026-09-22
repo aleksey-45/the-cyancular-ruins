@@ -52,9 +52,10 @@ extends Node
 #
 # ═══ 时间预算 ═══
 #   相①~③ 约 40~90s;相④ 打到 9 杀是**脚本机器人尽力交火 + 回退模式**的结果,是本探针最大的时间
-#   不确定项(上限 `BRAWL_MAX`=210s);相⑤ 的观察窗要等满 30s 宽限期(上限 60s)。
-#   整跑量级 3~10 分钟;安全网 `--quit-after 54000`(60fps 下 = 900s);
-#   本进程自己的收工上限 `FINAL_TIMEOUT`=780s(> 等结果预算 `RESULT_WAIT`=620s)。
+#   不确定项(上限 `BRAWL_MAX`=210s);相⑤ 的观察窗要等满 60s 宽限期(上限 `OBSERVE_MAX`=110s)。
+#   整跑量级 3~10 分钟;安全网 `--quit-after 54000`(60fps 下 = 900s;`run/max_fps=60`);
+#   本进程自己的收工上限 `FINAL_TIMEOUT`=780s(> 等结果预算 `RESULT_WAIT`=680s;
+#   ★ `RESULT_WAIT` 一旦超过 780 就必须同步抬 `FINAL_TIMEOUT`,否则收工上限会先于预算到点)。
 
 const RESULT_PREFIX := "team_match_probe_"
 # ★ 端口纪律(与 reconnect_probe 的常量区同源,改这几个数之前先读文件头"端口纪律"):
@@ -69,13 +70,16 @@ const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由�
 const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
 const FINAL_TIMEOUT := 780.0       # 本进程的收工上限(整跑量级 4~10 分钟;预算见下)
 # 等 6 份客户端结果文件的上限。★ 必须**大于**客户端自己的时间线(它们的相位全靠自己的时钟推),
-#   且**逐项按 watcher 的常量求和算出来** —— 别凭印象写:这行漂过一次,把 `RENDEZVOUS_MAX`
-#   记成了 70(实际是 **100**),于是最坏的 ~501.2s **超过**了当时那个 500.0。越时的表象是
-#   "只收到 N/6 份客户端结果",读起来像产品故障,其实是**探针自己的预算算错了**。逐项:
+#   且**逐项按 watcher 的常量求和算出来** —— 别凭印象写:这行漂过两次,一次把 `RENDEZVOUS_MAX`
+#   记成了 70(实际是 **100**),一次停在宽限期还是 30s 时的那份求和(2026-09-21 宽限期 30 → 60,
+#   `OBSERVE_MAX` 60 → 110,整条求和随之 +50)。越时的表象是"只收到 N/6 份客户端结果",
+#   读起来像产品故障,其实是**探针自己的预算算错了**。逐项(各项都是 watcher 的常量):
 #     进局 ~5s + SETTLE 1.2 + RENDEZVOUS_MAX 100 + BRAWL_MAX 210 + 换局 SETTLE 1.2
-#     + OBSERVE_MAX 60 + PEER_WAIT 120 ≈ 497.4s;
-#   进局那一档的硬上限是 `ENTER_TIMEOUT` **90s**(不是 5s),最坏 ≈ 582.4s ⇒ 取 620 兜住两种走法。
-const RESULT_WAIT := 620.0
+#     + OBSERVE_MAX 110 + PEER_WAIT 120 ≈ 547.4s;
+#     进局那一档的硬上限是 `ENTER_TIMEOUT` **90s**(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。
+#   ★ 680 < `FINAL_TIMEOUT` 780(收工上限仍在预算之上);**一旦本值超过 780 就必须同步抬
+#     `FINAL_TIMEOUT`**,否则收工上限先到点 ⇒ 症状同样是"只收到 N/6 份结果"。
+const RESULT_WAIT := 680.0
 
 var _role := "lobby"
 var _who := "c1"
@@ -216,8 +220,13 @@ func _stage_wait_full() -> void:
 	for r in tr.team_of:
 		by[int(tr.team_of[r])] = int(by.get(int(tr.team_of[r]), 0)) + 1
 	print("PROBE: 6 人已到齐并选边完毕 → 队号表 %s(每队 %s)" % [str(tr.team_of), str(by)])
-	# ★ 立刻**存档**:房在开局那一刻就被对局消费掉了(`teardown_room`),到收尾时再读
-	#   `_room()` 只会得到 null —— 队伍表必须在这里取走(实测:收尾时读到的是空房)。
+	# ★ 立刻**存档**:成员转连 worker 后会陆续断开大厅,`on_peer_left` 把它们从 `player_role`
+	#   摘掉,并连带把 `team_of` 里**已无人持有的 role 逐个 erase**(见 lobby_rooms.on_peer_left
+	#   的 3v3 那一段)—— 到收尾时再读 `_room()` 拿到的是**空队伍表**。
+	#   ★★ 2026-09-21 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局
+	#   消费掉了(`teardown_room`)」—— 对局中的房现在**刻意不拆**(它要活到 worker 退出,否则
+	#   "看得见 / 回局"两件事都无从谈起),所以收尾时房**还在**,只是表已经空了。故"必须在这里
+	#   存档"照旧成立,变的只是原因。
 	for r in tr.team_of:
 		_lobby_teams[int(r)] = int(tr.team_of[r])
 	_notes.append("大厅队伍表 %s" % str(tr.team_of))
