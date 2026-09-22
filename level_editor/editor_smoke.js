@@ -500,6 +500,9 @@ function countNonZero(map, L) {
     // 差量历史:200 步 + 字节预算(闸 1)
     const hist = Editor.createHistory({});
     eq(Editor.MAX_UNDO, 200, 'MAX_UNDO = 200(规格 §4.3 闸 1)');
+    // ★ 钉住字节预算的默认值:它才是**真闸**(步数只是廉价上界),值写错正是它要防的那件事
+    eq(Editor.MAX_UNDO_BYTES, 64 * 1024 * 1024,
+       'MAX_UNDO_BYTES = 64MB(规格 §4.3;默认预算的行为面见下面"不给 maxBytes"那条)');
     eq(hist.depth(), 0, '新历史是空的');
     const hm = Core.createMap('h', 2, 1);
     hist.push({ kind: 'cells', layer: Core.LAYER_SCENE, idx: Int32Array.from([0]),
@@ -544,6 +547,17 @@ function countNonZero(map, L) {
        h3.depth() + ' 条 / ' + h3.bytes() + ' 字节)');
     ok(Editor.bytesOfEntry(mkDiff(20)) > 0, 'bytesOfEntry 给出正数(字节预算是按它算的)');
 
+    // ★★ 默认预算(不给 opts.maxBytes)必须**真的在生效** —— 上面那条走的是显式传
+    //    maxBytes 的历史,碰不到默认那一支;默认值退化成 Infinity / 漏掉那支三元,这里才红。
+    //    ★ 用**合成的** whole 条目(bytes 字段直接写字节数)而不是真分配 64MB:
+    //      bytesOfEntry(whole) 本来就只读 `e.bytes` —— 这正是变异 M4 要钉的那一行。
+    const hdef = Editor.createHistory({});          // 不给 maxBytes ⇒ 应走 MAX_UNDO_BYTES
+    hdef.push({ kind: 'whole', tag: 'fake', bytes: Editor.MAX_UNDO_BYTES, before: null, after: null });
+    hdef.push(mkDiff(20));
+    hdef.push(mkDiff(20));
+    eq(hdef.depth(), 2, '★★ 默认字节预算在生效:超预算的 whole 条目被挤掉,只剩后两条(实得 ' +
+       hdef.depth() + ' 条 / ' + hdef.bytes() + ' 字节)');
+
     // 整图级(改尺寸)也能撤
     const hw = Core.createMap('w', 2, 1);
     hw.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(4);
@@ -555,6 +569,44 @@ function countNonZero(map, L) {
     Editor.applyEntry(hw, wd.entry, -1);
     eq(hw.subCols, 8, '★★ 撤销改尺寸:子格数回退');
     eq(hw.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '内容也回退');
+
+    // ★★ 整图级撤销之后,地图必须与 entry 里的快照**解耦**(旧实现 `desc: lay.desc` 是
+    //    alias:撤销后再落一笔就写进了历史条目,下一次撤销恢复的是被污染的 before ——
+    //    "撤销没撤干净"且一个字都不报;字节数不变,字节闸也发现不了)。
+    const hz = Core.createMap('z', 2, 1);
+    hz.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(4);
+    const zd = Editor.wholeDiff(hz, 'resize');
+    const zsz = Editor.resizeMap(hz, 4, 3).map;
+    hz.subCols = zsz.subCols; hz.subRows = zsz.subRows; hz.layers = zsz.layers;
+    zd.seal();
+    Editor.applyEntry(hz, zd.entry, -1);
+    eq(hz.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '撤销改尺寸后内容回到 before');
+    const zp = Editor.paintCells(hz, Core.LAYER_SCENE, [0], function () { return Core.neutralDesc(9); });
+    ok(zp !== null, '撤销之后落笔产出差量(下面两条才有意义)');
+    eq(zd.entry.before.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4),
+       '★★ 落笔**没写进历史条目的 before 快照**(alias 实现下这里会变成 9)');
+    Editor.applyEntry(hz, zd.entry, -1);
+    eq(hz.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4),
+       '★★ 撤销改尺寸 → 落一笔 → 再撤销:地图回到**原始**状态,不是被污染的 before');
+
+    // ★★ 「字节预算管得住整图级操作」不能只靠"记了个正数"(把 bytesOfEntry 的 whole 分支
+    //    退化成 `return 64`,上面那条 `> 0` 照样绿 —— 变异 M4 实测 0 红)。两条:
+    //    ① 数值面:一条 whole 条目至少要把 before 那份快照算进总账
+    ok(Editor.bytesOfEntry(wd.entry) >= Editor.bytesOfSnapshot(wd.entry.before),
+       '★★ bytesOfEntry(whole) ≥ before 快照的字节量(实得 ' + Editor.bytesOfEntry(wd.entry) +
+       ' ≥ ' + Editor.bytesOfSnapshot(wd.entry.before) + ')—— 记常数过不了这条');
+    //    ② 行为面:预算 1000 装不下这条 whole 条目(2×1 格 = 8×4 子格 ×4 层 ×4 字节 =
+    //       512/份,before+after ⇒ 64+512+512 = 1088)⇒ 字节闸真的在管整图级
+    const hwb = Editor.createHistory({ maxBytes: 1000 });
+    hwb.push(wd.entry);
+    eq(hwb.depth(), 1, '★ 单条 whole 条目就超预算 ⇒ 只丢到"至少留一条"为止(实得 ' + hwb.depth() + ' 条)');
+    ok(hwb.bytes() >= Editor.bytesOfSnapshot(wd.entry.before),
+       '★★ 那一条在总账里按快照字节数记着(实得 ' + hwb.bytes() + ' 字节,至少要 ' +
+       Editor.bytesOfSnapshot(wd.entry.before) + ')');
+    const wd2 = Editor.wholeDiff(Core.createMap('w2', 2, 1), 'resize');
+    wd2.seal();
+    hwb.push(wd2.entry);
+    eq(hwb.depth(), 1, '★★ 再来一条 whole 就把最老的挤掉(whole 的字节数真的参与闸门)');
 
     // spawn 差量能撤(审计 A9)
     const hsp = Core.createMap('s', 4, 3);

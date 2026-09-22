@@ -615,9 +615,13 @@ globalThis.Editor = (function () {
       var s = dir < 0 ? e.before : e.after;
       if (!s) return;
       map.subCols = s.subCols; map.subRows = s.subRows;
+      // ★★ 必须**防御性拷贝**:直接 alias 快照数组的话,撤销之后地图与 entry.before
+      //   共用同一份 TypedArray —— 用户再落一笔就写进了历史条目里,下一次撤销恢复的是
+      //   被污染的 before(「撤销没撤干净」且一个字都不报;字节数也不变,字节闸发现不了)。
       map.layers = s.layers.map(function (lay) {
         if (!lay) return null;
-        return lay.kind === 'tex' ? { kind: 'tex', desc: lay.desc } : { kind: 'color', rgba: lay.rgba };
+        return lay.kind === 'tex' ? { kind: 'tex', desc: new Uint32Array(lay.desc) }
+                                  : { kind: 'color', rgba: new Uint32Array(lay.rgba) };
       });
       map.players = s.players.map(function (p) { return { x: p.x, y: p.y }; });
       map.enemies = s.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
