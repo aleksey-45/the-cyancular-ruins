@@ -451,6 +451,9 @@ globalThis.Render = (function () {
       return 'rgba(' + ((u >>> 24) & 255) + ',' + ((u >>> 16) & 255) + ',' +
              ((u >>> 8) & 255) + ',' + ((u & 255) / 255) + ')';
     }
+    function nowMs() {
+      return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
 
     // ★ 用鼠标坐标算世界坐标的两个方向:命中(C15 子格级)与反算(画 spawn 标记)
     function screenToSub(px, py) {
@@ -487,38 +490,175 @@ globalThis.Render = (function () {
       ctx.globalAlpha = 1;
     }
 
-    // 路径二:≥ 8 px/子格 → 逐子格(Task 4 换成 ② + ③ + 脏区)
+    // ── ② 视口离屏层(★ 绝不建全图离屏:500×300 子格按 16px 是 8000×4800 = 153MB,
+    //    浏览器会直接拒绝)──
+    // ★★ 像素坐标系的定义(整个 ② 都靠它):离屏层像素 (px,py) ↔ 世界子格
+    //    (view.x + px/zoom, view.y + py/zoom) —— 与屏幕**同一套**坐标。于是
+    //    · 平移 = 像素级自拷贝搬移 + 只补新露出的边条;
+    //    · 3×3 副本 = 把这**同一张**图按「副本世界偏移 × zoom」平移后再画一次。
+    var layerCv = [null, null, null, null];
+    var layerDirty = [null, null, null, null];      // 每层一个子格矩形(null = 干净)
+    var cellCache = null;                            // ③
+    // ★ 视图/图集/尺寸的代际:在飞的那一轮重建靠它作废(见 viewChanged)。
+    var layerGen = 0;
+    var layersClean = false;                         // 四张离屏层是否与**当前视图**一致
+    var stat2 = { cellsHits: 0, cellsMisses: 0, cellsSize: 0,
+                  layerRebuilds: 0, layerRebuildMs: 0, panCopies: 0 };
+
+    // ★ 视图一动(平移/缩放/换图/改尺寸):在飞的那一轮重建**整个作废**。
+    //   ★★ 少了这一步会留下**永久性**的错位内容:分帧重建的条带矩形是按**旧视图**算的,
+    //   而 paintLayerRect 又按**当前视图**换算像素 ⇒ 视图一动,剩下的条带就画到了别处;
+    //   更糟的是它会与"自拷贝搬移"混在一起(搬移的前提是整张图属于**同一次**视图的产物),
+    //   而脏标记此刻已经清干净了 —— 谁都不会再补那几块。
+    //   ⇒ 纪律:**视图不干净时,平移一律改走整片重建**(见 panBy 的第一条判据)。
+    function viewChanged() { layerGen++; layersClean = false; }
+
+    function ensureLayerCanvas(L) {
+      if (layerCv[L] && layerCv[L].width === canvas.width && layerCv[L].height === canvas.height) return layerCv[L];
+      var c = document.createElement('canvas');
+      c.width = canvas.width; c.height = canvas.height;
+      c.getContext('2d').imageSmoothingEnabled = false;   // ★ 离屏也必须关插值(A5)
+      layerCv[L] = c;
+      layerDirty[L] = null;
+      return c;
+    }
+
+    // ③ 的 build 回调:把一格的 16 个子格**解析成 16 个 tile 引用**(空气 → null)。
+    // ★ 像素只存在 ④ 里;这里不复制像素,所以 ③ 的条目极小(见 DEFAULT_CELL_MAX 的说明)。
+    // ★★ 只有**纹理层**会走到这里 —— 颜色层的 16 个子格是 RGBA,由 paintLayerRect 的颜色
+    //   分支直接取色。两者长得一模一样、含义完全不同:RGBA 喂给 Core.texOf 不抛,只是结论
+    //   毫无意义(#ff0000ff 的纹理位是 0 ⇒ 整层当空气 ⇒ 看不见; #00ffffff 的纹理位是 4095
+    //   ⇒ tileFor 当场抛 Tint 越界)。判据一律取 layerIsColor,不在循环里另抄一份。
+    function buildCell(L, cx, cy) {
+      var out = new Array(SUB * SUB);
+      var bx = cx * SUB, by = cy * SUB;
+      for (var qy = 0; qy < SUB; qy++) {
+        for (var qx = 0; qx < SUB; qx++) {
+          var raw = descAt(s.map, L, bx + qx, by + qy);
+          out[qy * SUB + qx] = (raw === 0 || Core.texOf(raw) === 0) ? null : tileFor(raw, qx, qy);
+        }
+      }
+      return out;
+    }
+
+    // 重画某一层的离屏上的一块矩形(单位 = 子格;矩形允许越出画布**与主网格**,内部裁剪)
+    // ★ 越出主网格是**常态**:离屏层的像素系与屏幕同一套,视图越过接缝时那半边像素只有
+    //   靠折算后的格才填得上(descAt 本来就环面折算)。绝不许按"主网格"裁剪 —— 裁了就是
+    //   视图拖过边界时的一整条空白(而 3×3 副本**填不上**它,理由见 buildLayers 的注释)。
+    function paintLayerRect(L, rect) {
+      var cv = ensureLayerCanvas(L);
+      var c = cv.getContext('2d');
+      var z = s.view.zoom;
+      // 世界子格 → 画布局部像素
+      var px0 = Math.max(0, Math.floor((rect.x - s.view.x) * z));
+      var py0 = Math.max(0, Math.floor((rect.y - s.view.y) * z));
+      var px1 = Math.min(cv.width, Math.ceil((rect.x + rect.w - s.view.x) * z));
+      var py1 = Math.min(cv.height, Math.ceil((rect.y + rect.h - s.view.y) * z));
+      if (px1 <= px0 || py1 <= py0) return;
+      c.clearRect(px0, py0, px1 - px0, py1 - py0);
+      if (!layerArray(s.map, L)) return;                 // 缺席层 = 全空气(已清干净)
+      var cell0x = Math.floor((s.view.x + px0 / z) / SUB), cell1x = Math.ceil((s.view.x + px1 / z) / SUB);
+      var cell0y = Math.floor((s.view.y + py0 / z) / SUB), cell1y = Math.ceil((s.view.y + py1 / z) / SUB);
+      // ★★ 按层种类**分派**(判据取一次,不在逐格循环里重算)—— 这就是 F1 那道闸门。
+      var colorLayer = layerIsColor(L);
+      var cw = Core.cellsWOf(s.map), ch = Core.cellsHOf(s.map);
+      for (var cy = cell0y; cy < cell1y; cy++) {
+        for (var cx = cell0x; cx < cell1x; cx++) {
+          var bx = cx * SUB, by = cy * SUB;
+          if (colorLayer) {
+            // 颜色层:逐子格读 RGBA、直接填色。alpha = 0 = 这一格没有颜色(上面已 clearRect,
+            // 这里什么都不画)。★ 这里**不许**出现 texOf(见 buildCell 的两条静默症状)。
+            for (var kc = 0; kc < SUB * SUB; kc++) {
+              var Xc = bx + (kc % SUB), Yc = by + Math.floor(kc / SUB);
+              var rawc = descAt(s.map, L, Xc, Yc);
+              if (((rawc >>> 0) & 255) === 0) continue;
+              c.fillStyle = cssOfRGBA(rawc);
+              c.fillRect((Xc - s.view.x) * z, (Yc - s.view.y) * z, z, z);
+            }
+            continue;
+          }
+          // ★ ③ 的键必须是**主网格上的格号**:环面让同一格有多种写法(cx = -1 与 cx = cellsW-1),
+          //   不折算的话同一格会缓存两条条目,而编辑只 touch 其中一条 ⇒ 接缝另一侧的副本
+          //   继续显示**陈旧内容**(画面错了、一个字都不报)。
+          // ★★ Task 7 的拖动偏移就从下面这一行接:把两个实参换成源格
+          //   `Render.selectionSource(sel, dx, dy, gx, gy)` 交出的 (X, Y) —— 画的位置仍是
+          //   目标格(bx/by,见循环体的最后一行),只有**读**是偏移过的。
+          var gx = wrapIdx(cx, cw), gy = wrapIdx(cy, ch);
+          var tilesOfCell = cellCache.get(L, gx, gy);      // ★ ③:这一格的 16 个 tile
+          for (var k = 0; k < tilesOfCell.length; k++) {
+            var t = tilesOfCell[k];
+            if (!t) continue;
+            var X = bx + (k % SUB), Y = by + Math.floor(k / SUB);   // ★ 画在**目标格**的位置
+            c.drawImage(t, (X - s.view.x) * z, (Y - s.view.y) * z, z, z);
+          }
+        }
+      }
+    }
+
+    // 重建所有"脏"的离屏层。★ 编辑之后只重画脏矩形 ⇒ 成本 O(脏区),不是 O(全屏)。
+    // ★ 隐藏层**也照画**:离屏内容与可见性无关(与 ① 缩略图同一条纪律 —— 可见性/压暗只在
+    //   render() 合成时生效)。反过来("隐藏就不画")会让"隐藏 → 编辑 → 显示"看到一片旧内容。
+    function flushDirty() {
+      for (var L = 0; L < Core.LAYER_COUNT; L++) {
+        if (!layerDirty[L]) continue;
+        var d = layerDirty[L];
+        layerDirty[L] = null;
+        if (!layerArray(s.map, L)) { ensureLayerCanvas(L).getContext('2d').clearRect(0, 0, canvas.width, canvas.height); continue; }
+        paintLayerRect(L, d);
+        stat2.layerRebuilds++;
+      }
+    }
+
+    // 全屏重建(闸 2「全屏重建 → 分帧」):四层各切成若干条,交给分帧器。
+    // ★★ 重画的世界范围就是**可见范围本身**(visibleSubRange),**不**裁到主网格 ——
+    //    离屏层的像素系与屏幕同一套,所以"可见范围"里落在主网格之外的像素(视图越过接缝
+    //    时必然出现)必须用**折算后**的格去填。裁了会留一整条空白,而 3×3 的副本**填不上**:
+    //    副本的贴图偏移是「副本世界偏移 × zoom」,对"视口 12.5 格宽、地图 500 格"这种常态,
+    //    隔壁副本被平移 −8000px、整个落在画布外,根本进不到屏幕。
+    //    ⇒ 裁 = 视图拖过边界时左边一条黑带(人眼清单第 4 条会当场看到)。
+    function buildLayers() {
+      if (!s.map) return Promise.resolve();
+      var myGen = ++layerGen;
+      var r = visibleSubRange(s.view, canvas.width, canvas.height, s.map.subCols, s.map.subRows);
+      var tasks = [];
+      var bands = 16;
+      var h = Math.max(1, Math.ceil((r.y1 - r.y0) / bands));
+      for (var L = 0; L < Core.LAYER_COUNT; L++) {
+        layerDirty[L] = null;
+        ensureLayerCanvas(L);
+        for (var y = r.y0; y < r.y1; y += h) {
+          tasks.push({ L: L, rect: { x: r.x0, y: y, w: r.x1 - r.x0, h: Math.min(h, r.y1 - y) } });
+        }
+      }
+      var t0 = nowMs();
+      return slicer.run(tasks, function (t) {
+        if (myGen !== layerGen) return;              // ★ 过期的一轮:整条作废(视图/尺寸/图集已变)
+        paintLayerRect(t.L, t.rect);
+      }).then(function () {
+        if (myGen !== layerGen) return;              // ★ 过期的一轮不许把 layersClean 抬起来
+        stat2.layerRebuildMs = nowMs() - t0;
+        layersClean = true;
+      });
+    }
+
+    // ★★ 3×3 的合成:每份副本都是把**同一张**离屏层按「副本世界偏移 × zoom」平移后再画一次。
+    //    偏移是 subCols/subRows 的整数倍,而 paintLayerRect 读格时本来就环面折算
+    //    ⇒ 每份副本在任意位置画出来的内容都等于"该处应有的内容"(折算前后是同一格),
+    //    副本之间不会互相画错;它们保证的是"屏幕每一处都有一份盖上去"。
+    // ★ 切层 ≠ 重画:压暗/可见性只在**合成**这一层做(4 次 drawImage),不碰任何一层的离屏内容。
     function drawLayerPath(W, H) {
-      var r = visibleSubRange(s.view, W, H, s.map.subCols, s.map.subRows);
+      flushDirty();
       var offs = torusList(W, H);
+      var z = s.view.zoom;
       for (var oi = 0; oi < DRAW_ORDER.length; oi++) {
         var L = DRAW_ORDER[oi];
-        if (!s.layerVisible[L]) continue;
-        var colorLayer = layerIsColor(L);            // ★ 与 paintThumbRect 同一道分派
+        if (!s.layerVisible[L] || !layerCv[L]) continue;
+        // ★ 尺寸对不上的离屏层(改窗口之后、重建还没跑到)一路都不许画:它的像素刻度属于
+        //   上一块画布,画出去是"整层错位",而空白会被下一次重建补上(resize 已经把它丢掉)。
+        if (layerCv[L].width !== W || layerCv[L].height !== H) continue;
         ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== Core.LAYER_BG) ? 0.4 : 1;
         for (var i = 0; i < offs.length; i++) {
-          var dx = offs[i][0], dy = offs[i][1];
-          var x0 = Math.max(r.x0, dx), x1 = Math.min(r.x1, dx + s.map.subCols);
-          var y0 = Math.max(r.y0, dy), y1 = Math.min(r.y1, dy + s.map.subRows);
-          for (var Y = y0; Y < y1; Y++) {
-            for (var X = x0; X < x1; X++) {
-              // ★ 副本坐标折回主网格后再读(所以副本上也能落笔、也画得对)
-              var raw = descAt(s.map, L, X - dx, Y - dy);
-              var p;
-              if (colorLayer) {
-                // ★★ 背景层 = RGBA,读完**直接**画颜色 —— 见 layerIsColor 的两条症状。
-                if (((raw >>> 0) & 255) === 0) continue;
-                p = subToScreen(X, Y);
-                ctx.fillStyle = cssOfRGBA(raw);
-                ctx.fillRect(p.x, p.y, s.view.zoom, s.view.zoom);
-                continue;
-              }
-              if (raw === 0 || Core.texOf(raw) === 0) continue;
-              p = subToScreen(X, Y);
-              var t = tileFor(raw, X - dx, Y - dy);
-              if (t) ctx.drawImage(t, p.x, p.y, s.view.zoom, s.view.zoom);
-            }
-          }
+          ctx.drawImage(layerCv[L], offs[i][0] * z, offs[i][1] * z);
         }
       }
       ctx.globalAlpha = 1;
@@ -600,10 +740,12 @@ globalThis.Render = (function () {
     }
 
     // ★ 唯一渲染入口(B6:旧实现同一帧连画两次画布)
+    // ★★ 三条路径按 zoom 分工:① 缩略图(< 8)、② 视口离屏层(≥ 8);**合成**那一步
+    //    (层可见性/压暗/3×3 副本)两条路都走 ⇒ "切层"只是重新合成,永远不重画任何一层。
     function render() {
       if (!s.map) return;
       var W = canvas.width, H = canvas.height;
-      var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      var t0 = nowMs();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#0e1013';
@@ -612,7 +754,11 @@ globalThis.Render = (function () {
       if (s.grid) drawGrid(W, H);
       drawOverlay(W, H);
       stat.renders++;
-      stat.lastRenderMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+      stat.lastRenderMs = nowMs() - t0;
+      // ★ ③ 的记账随 render 同步一份(状态栏/自检读 stats(),不必自己去问 ③)
+      stat2.cellsHits = cellCache ? cellCache.stats().hits : 0;
+      stat2.cellsMisses = cellCache ? cellCache.stats().misses : 0;
+      stat2.cellsSize = cellCache ? cellCache.stats().size : 0;
     }
 
     // 尺寸变化:**只有一个机制**(B7:ResizeObserver 与 window.resize 同时挂 = 每次 resize 建两遍)
@@ -620,11 +766,16 @@ globalThis.Render = (function () {
       var wrap = canvas.parentElement;
       var w = Math.max(1, wrap ? wrap.clientWidth : canvas.width);
       var h = Math.max(1, wrap ? wrap.clientHeight : canvas.height);
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w; canvas.height = h;
-        ctx.imageSmoothingEnabled = false;            // ★ 改尺寸会重置 ctx 状态,必须重设
-        render();
-      }
+      if (canvas.width === w && canvas.height === h) return;
+      canvas.width = w; canvas.height = h;
+      ctx.imageSmoothingEnabled = false;            // ★ 改尺寸会重置 ctx 状态,必须重设
+      // ★★ 离屏层的像素是**按旧画布尺寸**铺的 ⇒ 尺寸一改整片失效,旧画布必须**丢掉**:
+      //    留着的话 drawLayerPath 会把它按新目标框画出去(整层错位),而"只标脏"也不行
+      //    (脏矩形只补一小块,其余留白)。丢掉之后由 buildLayers 分帧重来一遍。
+      for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
+      viewChanged();
+      if (s.map && zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
+      render();
     }
 
     function fit() {
@@ -632,6 +783,9 @@ globalThis.Render = (function () {
       s.view.zoom = fitZoom(s.map.subCols, s.map.subRows, canvas.width, canvas.height, 24);
       s.view.x = -(canvas.width / s.view.zoom - s.map.subCols) / 2;
       s.view.y = -(canvas.height / s.view.zoom - s.map.subRows) / 2;
+      // ★ 适配改的是 zoom ⇒ 每个子格多少像素都变了,离屏层整片失效(全屏重建,闸 2 分帧)
+      viewChanged();
+      if (zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
       render();
     }
 
@@ -659,19 +813,115 @@ globalThis.Render = (function () {
       //    只补一小块、其余留白,所以它继续依赖 setMap 那一侧的 ensureThumbs(尺寸只在
       //    setMap 或本方法里才可能变,而 setMap 自己会调)。
       ensureThumbs(s.map);
-      return buildThumbs().then(render);
+      // ★★ 同理,② 的离屏层也是"按内容铺的位图":整张图变了(或是尺寸变了)之后,
+      //    它们一个像素都不再成立 ⇒ 与缩略图一起整片重建(丢弃 + 分帧重来)。
+      //    只 render() 的话,≥8 px/子格 那条路上会继续显示**改动前**的内容(缩略图对了、
+      //    放大之后不对 —— 而"放大才看得见"正是这条路径的常态)。
+      for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
+      viewChanged();
+      return buildThumbs().then(function () {
+        return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
+      }).then(render);
     }
 
     function setMap(map) {
       s.map = map;
       s.selection = null;
       ensureThumbs(map);
+      // ★ 换图 = 内容全变:③ 必须**整片**重建(旧的格位图属于上一张图,连键都可能相同)
+      cellCache = createCellCache({ maxCells: DEFAULT_CELL_MAX, build: buildCell });
+      attachCells(cellCache);
+      // ★ ② 同理:旧离屏层画的是上一张图,连尺寸都可能不同 ⇒ 丢掉重来(见 resize 的注释)。
+      for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
+      viewChanged();                                  // 在飞的那一轮重建画的是上一张图 ⇒ 作废
       return buildThumbs().then(function () {
         s.view.zoom = fitZoom(map.subCols, map.subRows, canvas.width, canvas.height, 24);
         s.view.x = -(canvas.width / s.view.zoom - map.subCols) / 2;
         s.view.y = -(canvas.height / s.view.zoom - map.subRows) / 2;
-        render();
-      });
+        // ★ 适配之后落在缩略图路径(< 8)时**不**建离屏层:大图一上来就白画一屏(它是分帧的,
+        //   但那几帧白费);等真放大到 ≥8 时 setZoomAt 会建。③ 与 ① 不受影响。
+        return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
+      }).then(render);
+    }
+
+    // ── 编辑与视图操作(规格 §4.2)──
+    // 把脏矩形裁到主网格(单位 = 子格)。★ 编辑永远落在 [0, 子格数) 里,所以这是**守卫**
+    //   而不是必需:越界的脏矩形(将来的调用方算错)不该让离屏层去画一片莫名其妙的东西。
+    function clipped(r) {
+      if (!r) return null;
+      var x0 = Math.max(0, r.x), y0 = Math.max(0, r.y);
+      var x1 = Math.min(s.map.subCols, r.x + r.w), y1 = Math.min(s.map.subRows, r.y + r.h);
+      if (x1 <= x0 || y1 <= y0) return null;
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    }
+
+    // ★★ 编辑之后的**唯一**入口:三件事一次做完(否则总有一层忘了作废)
+    //    ① ③ 的 touch(内容版本号)② ② 的脏矩形 ③ ① 的缩略图块
+    // ★ 颜色层**不进 ③**(它的内容是 RGBA,不是 tile 引用 —— 见 buildCell 的说明):
+    //   它的"内容版本号"就是地图数组本身,重画由下面的脏矩形负责。
+    var dirtySet = createDirtySet();
+    function editCells(L, list) {
+      if (!s.map || !list || !list.length) return;
+      var colorLayer = layerIsColor(L);
+      for (var i = 0; i < list.length; i++) {
+        if (!colorLayer) cellCache.touch(L, list[i].cx, list[i].cy);
+        dirtySet.addCell(L, list[i].cx, list[i].cy);
+      }
+      var box = dirtySet.rect();
+      dirtySet.clear();
+      if (!box) return;
+      // ★ 脏矩形只对**这一层**有意义(合成时按层拆):③ 的版本号是每格一条,
+      //   而"这一层要不要重画"只需要一个上界(包围盒偏大只会多画一点,不会画错)。
+      var inner = clipped(box);
+      if (inner && layerArray(s.map, L)) layerDirty[L] = rectUnion(layerDirty[L], inner);
+      invalidateCells(L, list);                       // ①(缩略图那块矩形)
+      render();
+    }
+
+    // 平移(单位 = 画布像素,方向 = **视图/世界**的位移:view.x 增加 dxPx/zoom)。
+    // ★★ 内容是**反向**搬移的(向右看 = 画面往左走),所以自拷贝的偏移取负 —— 与
+    //    panStrips 的分工严格互补:那边给出"新露出来、要补画的边条"。
+    function panBy(dxPx, dyPx) {
+      if (!s.map) return;
+      if (!isFinite(dxPx)) dxPx = 0;
+      if (!isFinite(dyPx)) dyPx = 0;
+      if (dxPx === 0 && dyPx === 0) return;
+      var W = canvas.width, H = canvas.height;
+      s.view.x += dxPx / s.view.zoom;
+      s.view.y += dyPx / s.view.zoom;
+      if (zoomPath(s.view.zoom) !== 'layers') { render(); return; }
+      // ★★ 视图一动,在飞的那一轮重建(条带按旧视图算的)就不能再往这些画布上写 ——
+      //    而"自拷贝搬移"又要求整张图属于同一次视图。不干净时老实走整片重建(分帧)。
+      if (!layersClean) return buildLayers().then(render);
+      // ★ 位移大到整块都被换掉时,自拷贝已经没有意义 ⇒ 也走分帧重建(而不是一帧画满屏)
+      if (Math.abs(dxPx) >= W || Math.abs(dyPx) >= H) { viewChanged(); return buildLayers().then(render); }
+      var strips = panStrips(W, H, dxPx, dyPx);
+      for (var L = 0; L < Core.LAYER_COUNT; L++) {
+        var cv = layerCv[L];
+        if (!cv || cv.width !== W || cv.height !== H) continue;
+        var c = cv.getContext('2d');
+        c.globalCompositeOperation = 'copy';
+        c.drawImage(cv, -dxPx, -dyPx);
+        c.globalCompositeOperation = 'source-over';
+        for (var i = 0; i < strips.length; i++) {
+          var st = strips[i];
+          // 边条对应的世界矩形:像素 → 子格(补画按**新**视图换算,与搬移后的像素对齐)
+          var wx = s.view.x + st.x / s.view.zoom, wy = s.view.y + st.y / s.view.zoom;
+          paintLayerRect(L, { x: wx, y: wy, w: st.w / s.view.zoom, h: st.h / s.view.zoom });
+        }
+      }
+      stat2.panCopies++;
+      render();
+    }
+
+    // 以光标为锚缩放(滚轮):★ 缩放改变的是"每个子格多少像素" ⇒ 离屏层**所有**内容失效,
+    // 只能整片重建(闸 2 分帧 —— 大图上是"慢慢画出来",不是"页面死掉")。
+    function setZoomAt(px, py, factor) {
+      var v = zoomAround(s.view, px, py, factor);
+      s.view.x = v.x; s.view.y = v.y; s.view.zoom = v.zoom;
+      viewChanged();
+      if (!s.map || zoomPath(s.view.zoom) !== 'layers') { render(); return Promise.resolve(); }
+      return buildLayers().then(render);
     }
 
     return {
@@ -680,6 +930,10 @@ globalThis.Render = (function () {
       setView: function (v) {
         s.view.x = v.x; s.view.y = v.y;
         s.view.zoom = clampZoom(v.zoom === undefined ? s.view.zoom : v.zoom);
+        // ★ 换视图 = 离屏层整片失效(见 buildLayers 的坐标系说明);平移请走 panBy(它是
+        //   像素级搬移,只补边条)。本方法留给"跳到某个视图"这种**整片换**的场合。
+        viewChanged();
+        if (s.map && zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
         render();
       },
       view: function () { return { x: s.view.x, y: s.view.y, zoom: s.view.zoom }; },
@@ -687,6 +941,7 @@ globalThis.Render = (function () {
       setSubGrid: function (b) { s.subGrid = !!b; render(); },
       setTorus: function (b) { s.torus = !!b; render(); },
       setDimOthers: function (b) { s.dimOthers = !!b; render(); },
+      // ★ 可见性只影响**合成**(离屏内容照旧保留)⇒ 开关是 4 次 drawImage 的事,不重画任何一层。
       setLayerVisible: function (L, b) { s.layerVisible[L] = !!b; render(); },
       layerVisible: function (L) { return s.layerVisible[L]; },
       setLayerLocked: function (L, b) { s.layerLocked[L] = !!b; },
@@ -695,11 +950,17 @@ globalThis.Render = (function () {
       selection: function () { return s.selection; },
       render: render, resize: resize, fit: fit,
       invalidateCells: invalidateCells, invalidateAll: invalidateAll,
+      editCells: editCells, panBy: panBy, setZoomAt: setZoomAt, buildLayers: buildLayers,
+      cells: function () { return cellCache; },
       thumbCanvas: function (L) { return thumbs[L]; },
       thumbPx: function () { return thumbPx; },
       screenToSub: screenToSub, subToScreen: subToScreen,
-      stats: function () { return { thumbMs: stat.thumbMs, renders: stat.renders,
-                                    lastRenderMs: stat.lastRenderMs, thumbsBuilt: stat.thumbsBuilt }; },
+      stats: function () {
+        return { thumbMs: stat.thumbMs, renders: stat.renders, lastRenderMs: stat.lastRenderMs,
+                 thumbsBuilt: stat.thumbsBuilt, cellsHits: stat2.cellsHits, cellsMisses: stat2.cellsMisses,
+                 cellsSize: stat2.cellsSize, layerRebuilds: stat2.layerRebuilds,
+                 layerRebuildMs: stat2.layerRebuildMs, panCopies: stat2.panCopies };
+      },
     };
   }
 
@@ -712,6 +973,42 @@ globalThis.Render = (function () {
     return { x: x, y: y, w: x2 - x, h: y2 - y };
   }
   function rectIsEmpty(r) { return !r || r.w <= 0 || r.h <= 0; }
+
+  // ── ② 的脏区簿记(纯逻辑:编辑 → 标脏;切层 → 只合成;平移 → 搬移 + 补边条)──
+  // ★ 跨层的脏矩形合成用**一个**盒子就够:合成时按层拆是在 ② 的离屏层上做的,
+  //   而"这一帧要不要重画"只需要一个上界(包围盒偏大只会多画一点,不会画错)。
+  // ★ 没有容量上限:**这是有界的**(它只装调用方交上来的那几个格/矩形,用完即 clear),
+  //   与"每帧累积的集合"不是一类东西。
+  function createDirtySet() {
+    var box = null;
+    function addRect(r) { box = rectUnion(box, r); }
+    // 格坐标(64px 格)→ 子格矩形
+    function addCell(L, cx, cy) { addRect({ x: cx * SUB, y: cy * SUB, w: SUB, h: SUB }); }
+    return { addRect: addRect, addCell: addCell,
+             rect: function () { return box ? { x: box.x, y: box.y, w: box.w, h: box.h } : null; },
+             clear: function () { box = null; } };
+  }
+
+  // 画布自拷贝之后"新露出来"的那一条(单位 = 画布像素)。位移超过画布尺寸 = 整块重画。
+  // ★ 参数是**视图/世界**的位移方向(view.x 增加 dxPx/zoom):画面内容是**反向**走的,
+  //   所以"向右看 10px"新露出来的是**右边**那 10px。调用方那里的自拷贝偏移是它的相反数。
+  function panStrips(w, h, dx, dy) {
+    var out = [];
+    if (dx === 0 && dy === 0) return out;
+    if (Math.abs(dx) >= w || Math.abs(dy) >= h) return [{ x: 0, y: 0, w: w, h: h }];
+    if (dx > 0) out.push({ x: w - dx, y: 0, w: dx, h: h });
+    if (dx < 0) out.push({ x: 0, y: 0, w: -dx, h: h });
+    if (dy > 0) out.push({ x: 0, y: h - dy, w: w, h: dy });
+    if (dy < 0) out.push({ x: 0, y: 0, w: w, h: -dy });
+    return out;
+  }
+
+  // 以光标为锚缩放:光标下的那一子格在缩放前后停在原地。
+  function zoomAround(view, px, py, factor) {
+    var z = clampZoom(view.zoom * (isFinite(factor) && factor > 0 ? factor : 1));
+    var wx = view.x + px / view.zoom, wy = view.y + py / view.zoom;
+    return { x: wx - px / z, y: wy - py / z, zoom: z };
+  }
 
   return {
     MIN_ZOOM: MIN_ZOOM, MAX_ZOOM: MAX_ZOOM, ZOOM_THRESHOLD: ZOOM_THRESHOLD,
@@ -728,6 +1025,7 @@ globalThis.Render = (function () {
     visibleSubRange: visibleSubRange, torusOffsets: torusOffsets, hitTest: hitTest,
     MAX_BRUSH_CELLS: MAX_BRUSH_CELLS, brushSpan: brushSpan, brushRegion: brushRegion, snapHit: snapHit,
     selectionSource: selectionSource, rectUnion: rectUnion, rectIsEmpty: rectIsEmpty,
+    createDirtySet: createDirtySet, panStrips: panStrips, zoomAround: zoomAround,
     DRAW_ORDER: DRAW_ORDER, mount: mount,
   };
 })();

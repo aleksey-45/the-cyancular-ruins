@@ -81,7 +81,13 @@ function fakeCtx() {
     },
     clearRect: function (x, y, w, h) { ops.push({ op: 'clearRect', x: x, y: y, w: w, h: h }); },
     drawImage: function (img, x, y, w, h) {
-      ops.push({ op: 'drawImage', alpha: this.globalAlpha, x: x, y: y, w: w, h: h });
+      // ★ `img` 也记下来:② 之后主画布上画的是**离屏层那张画布**(不是小图),而
+      //   "隐藏的那一层没被合成""主画布合成的是哪一张离屏层"这类断言只能靠**对象身份**判
+      //   (数次数是分不出来的:一层的副本数与别的层一样)。
+      // ★ `comp` 是调用那一刻的 globalCompositeOperation:平移的自拷贝用 'copy'
+      //   (整块替换),拿它才能把"搬移"与"合成"分开判。
+      ops.push({ op: 'drawImage', img: img, comp: this.globalCompositeOperation,
+                 alpha: this.globalAlpha, x: x, y: y, w: w, h: h });
     },
     fillText: function (t, x, y) { ops.push({ op: 'fillText', t: String(t), x: x, y: y }); },
     strokeRect: function (x, y, w, h) {
@@ -105,6 +111,18 @@ function countOps(ctx, prop, val) {
   return ctx.ops.filter(function (o) { return o[prop] === val; }).length;
 }
 function someOp(ctx, fn) { return ctx.ops.some(fn); }
+// ★ 主画布上被 drawImage 过的**画布对象**(按出现顺序,允许重复):② 之后"这一层有没有
+//   被合成上去"只能按对象身份判(数次数分不出来 —— 各层的副本数是一样的)。
+function drawnImages(ctx) {
+  return ctx.ops.filter(function (o) { return o.op === 'drawImage' && o.img; })
+    .map(function (o) { return o.img; });
+}
+// ★ 从 `made` 里挑出"尺寸等于主画布"的那几张 —— 就是 ② 的离屏层(缩略图的尺寸是
+//   子格数 × 刻度,两者只有在极小图上才会撞上;这一批用到的图都撞不上)。
+//   ensureLayerCanvas 按 L 递增创建 ⇒ 顺序就是 [前景, 场景, 后景, 背景]。
+function layerCanvasesSince(made, sinceIdx, w, h) {
+  return made.slice(sinceIdx).filter(function (c) { return c.width === w && c.height === h; });
+}
 
 (async function main() {
   setTimeout(function () {
@@ -202,11 +220,14 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
       ok(rR.view().x < 0 && rR.view().y < 0 && rR.view().x > -4 && rR.view().y > -4,
          'fit() 把地图居中(视图原点落在 −2/−1.5 这种小负数上:CSS 的 0 点不是左上角)');
 
-      // ── ⑩d ≥ 8px/子格:逐子格路径 + 环面副本 ──
+      // ── ⑩d ≥ 8px/子格:视口离屏层路径(②)+ 环面副本 ──
+      // ★★ 视图一变,② 的四张离屏层整片失效 ⇒ setView 是**分帧重建**(闸 2),要 await。
+      //    重建之后的合成次数 = **层数 × 副本数**(不再与"有内容的格数"有关 —— 主画布
+      //    上画的是那张离屏层,一层的副本数就是环面铺了几份)。
       cv1.ctx.ops.length = 0;
-      r1.setView({ x: 0, y: 0, zoom: 16 });
+      await r1.setView({ x: 0, y: 0, zoom: 16 });
       ok(countOps(cv1.ctx, 'op', 'drawImage') > 0,
-         '★ ≥ 8px/子格 换逐子格路径(每格一次 drawImage,Task 4 才换成 ② + ③ + 脏区)');
+         '★ ≥ 8px/子格 换视口离屏层路径(主画布上合成的是 ② 的离屏层,不是逐子格的小图)');
       // 网格线:格线恒画,子格线只在 zoom ≥ 4 且开了子格时画(C15)
       // ★ 判据用 moveTo(线段起点)而不是 stroke(整条路径一次):两组线各 `beginPath`+`stroke`,
       //   于是 stroke 恒为 2 —— 拿它判"子格线开没开"是**分不出来**的(两条线都画了空路径)。
@@ -219,23 +240,25 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
          '★★ setSubGrid(true) 多画一层子格线(' + subMoves + ' > ' + coarseMoves +
          '):格线 64px、子格线 16px,后者密 4 倍');
       r1.setSubGrid(false);
-      // ★★ 副本坐标必须折回主网格再读:视口左边缘越过接缝时,另一侧的副本上要**照样有内容**
+      // ★★ 副本必须**逐层铺出去**:视口左边缘越过接缝时,离屏层那一份要被平移 −subCols×zoom
+      //    再画一次(合成次数 = 层数 × 副本数)。★ 离屏层本身读格时就**环面折算**,所以
+      //    副本不会画错内容(偏移是 subCols 的整数倍 ⇒ 折算前后是同一格)。
       cv1.ctx.ops.length = 0;
-      r1.setView({ x: -3, y: 0, zoom: 16 });
+      await r1.setView({ x: -3, y: 0, zoom: 16 });
       const acrossSeam = countOps(cv1.ctx, 'op', 'drawImage');
       cv1.ctx.ops.length = 0;
       r1.setTorus(false);
       const noTorus = countOps(cv1.ctx, 'op', 'drawImage');
       r1.setTorus(true);
-      eq([acrossSeam, noTorus], [4, 2],
-         '★★ 跨接缝时副本上有内容(贴着右边界的 14/15 子格):环面开 4 次绘制、关 2 次' +
-         '(实得 ' + acrossSeam + ' / ' + noTorus + ')');
+      eq([acrossSeam, noTorus], [8, 4],
+         '★★ 跨接缝时每层被**逐副本**合成(2 份副本 × 4 层 = 8 次 drawImage);关掉环面 = ' +
+         '1 份 × 4 层 = 4 次(实得 ' + acrossSeam + ' / ' + noTorus + ')');
       const hs = r1.screenToSub(0, 0);
       ok(hs.X >= 0 && hs.X < m1.subCols && hs.Y >= 0 && hs.Y < m1.subRows,
          '★ screenToSub 在副本上也折回 [0, subCols)(A4:副本上能落笔)');
 
       // ── ⑩e 两条方向的坐标换算互为逆 ──
-      r1.setView({ x: 3, y: 2, zoom: 16 });
+      await r1.setView({ x: 3, y: 2, zoom: 16 });
       const s2 = r1.subToScreen(5, 6);
       eq(s2, { x: (5 - 3) * 16, y: (6 - 2) * 16 }, 'subToScreen: 世界 → 屏幕(相对视图原点)');
       eq(r1.screenToSub(s2.x + 1, s2.y + 1), { X: 5, Y: 6 },
@@ -243,13 +266,18 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
       ok(r1.screenToSub(-1000, -1000).X >= 0, '★ 负的屏幕坐标也折回 [0, subCols)(环面世界里这是常态)');
 
       // ── ⑩f 层可见性 / 压暗 / 选区框 ──
+      // ★★ 判据是"**那一层**有没有被合成上去",不再是"drawImage 总次数为 0":② 之后主画布
+      //    上画的是四张离屏层(每层各几份副本),藏掉一层只会让**它那几份**消失,其余三层
+      //    照画(总次数 4 → 3)。"次数变成 0"是**逐子格**那条旧路径的说法。
       cv1.ctx.ops.length = 0;
       r1.setLayerVisible(Core.LAYER_SCENE, false);
       const hidden = countOps(cv1.ctx, 'op', 'drawImage');
       cv1.ctx.ops.length = 0;
       r1.setLayerVisible(Core.LAYER_SCENE, true);
       const shown = countOps(cv1.ctx, 'op', 'drawImage');
-      eq([hidden, shown > 0], [0, true], '★ 层可见性闸真的拦住了绘制(隐藏 0 次 / 打开 ' + shown + ' 次)');
+      ok(hidden === shown - 1 && hidden > 0,
+         '★ 层可见性闸拦住的是**那一层**的离屏层:隐藏场景层之后合成就正好少它那 1 份副本' +
+         '(实得 隐藏 ' + hidden + ' 次 / 显示 ' + shown + ' 次;其余 ' + hidden + ' 次照画)');
       ok(r1.layerVisible(Core.LAYER_SCENE) === true, 'layerVisible 读回 true');
       r1.setLayerLocked(Core.LAYER_FRONT, true);
       ok(r1.layerLocked(Core.LAYER_FRONT) === true && r1.layerLocked(Core.LAYER_SCENE) === false,
@@ -288,15 +316,23 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
       bgMap.layers[Core.LAYER_BG].rgba[2] = 0xff000000;  // (2,0) 全透明(alpha 0)= 这一格没颜色
       const cvBg = fakeCanvas(200, 200);
       const rBg = Render.mount(cvBg, SLICE);
+      const madeBeforeBg = made.length;
       await rBg.setMap(bgMap);
       const thumbBg = rBg.thumbCanvas(Core.LAYER_BG);
+      // ★★ ② 之后主画布上画的是**离屏层那张画布**,颜色层的 fillRect 落在离屏层自己的
+      //    ctx 上 —— 所以这几条判据要看**离屏层**(按对象身份取:尺寸等于主画布的
+      //    四张就是它,创建顺序 = 层号递增),同时另判"那张离屏层确实被合成到主画布上"。
+      const bgLayerCvs = layerCanvasesSince(made, madeBeforeBg, 200, 200);
+      const bgOff = bgLayerCvs[Core.LAYER_BG];
+      ok(bgLayerCvs.length === Core.LAYER_COUNT && !!bgOff,
+         '⑩h 前提:② 的离屏层按层各建了一张(实得 ' + bgLayerCvs.length + ' 张,尺寸 = 主画布)');
       const origTexOf = Core.texOf;
       const texOfArgs = [];
       Core.texOf = function (d) { texOfArgs.push(d >>> 0); return origTexOf(d); };
       let bgThrew = null;
       try {
         cvBg.ctx.ops.length = 0;
-        rBg.setView({ x: 0, y: 0, zoom: 16 });           // ≥ 8 ⇒ 逐子格路径(另一条是缩略图)
+        await rBg.setView({ x: 0, y: 0, zoom: 16 });      // ≥ 8 ⇒ ② 的离屏层路径(另一条是缩略图)
         await rBg.invalidateAll();                       // 顺手把 ① 缩略图整片重画(两条路径都过一遍)
       } catch (e) { bgThrew = e; } finally { Core.texOf = origTexOf; }
       ok(bgThrew === null, '★★ 不透明青背景(#00FFFFFF,纹理位域 = 4095)渲染不抛异常(' +
@@ -304,13 +340,15 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
       eq(texOfArgs.length, 0,
          '★★ 背景层的 RGBA 一个都没进 Core.texOf(实得 ' + texOfArgs.length + ' 次):' +
          'RGBA 与描述符长得一样、含义完全不同,按层种类分派才是唯一正确的读法');
-      ok(countOps(cvBg.ctx, 'style', 'rgba(255,0,0,1)') > 0,
-         '★★ 不透明红背景**画出来了**(fillRect rgba(255,0,0,1))—— 它的纹理位域是 0,' +
-         '按"空气"判会整层不可见(静默)');
-      ok(countOps(cvBg.ctx, 'style', 'rgba(0,255,255,1)') > 0,
+      ok(countOps(bgOff.ctx, 'style', 'rgba(255,0,0,1)') > 0,
+         '★★ 不透明红背景**画出来了**(② 的离屏层里有 fillRect rgba(255,0,0,1))—— 它的纹理' +
+         '位域是 0,按"空气"判会整层不可见(静默)');
+      ok(countOps(bgOff.ctx, 'style', 'rgba(0,255,255,1)') > 0,
          '★★ 不透明青背景也画出来了(rgba(0,255,255,1) = cssOfRGBA 的 0xRRGGBBAA 次序)');
-      ok(!someOp(cvBg.ctx, function (o) { return o.style === 'rgba(255,0,0,0)'; }),
-         '★ alpha = 0 的格**不画**全透明色块(画了 = 把下面的像素改成"什么都没画",而缩略图上' +
+      ok(someOp(cvBg.ctx, function (o) { return o.op === 'drawImage' && o.img === bgOff; }),
+         '★★ 主画布上合成的正是**那一张**颜色层离屏层(颜色像素只落在 ② 里,靠合成才上屏)');
+      ok(!someOp(bgOff.ctx, function (o) { return o.style === 'rgba(255,0,0,0)'; }),
+         '★ alpha = 0 的格**不画**全透明色块(画了 = 把下面的像素改成"什么都没画",而离屏层上' +
          '那意味着留着上一帧的内容)');
       // ★ 缩略图路径与逐格路径**处置不同**,且都对:缩略图是长期存在的位图(有旧像素要清),
       //   逐格路径的底色由 render() 开头的整屏 fillRect 负责(那里没有旧像素)。
@@ -483,11 +521,15 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
   // ==== 相位 ③ ③ 格位图缓存:两条独立的失效轴 ====
   (function () {
     let built = 0;
+    // ★ 判据是"**这一步**有没有动模块状态",不是"模块里现在是不是 null":Task 4 起
+    //   mount 的 setMap 会 attachCells(换图的作废链条靠它闭合,见相位 ③b),所以
+    //   本相位跑到这里时模块里**已经有**一个(前面那些 mount 装上去的)。
+    const cellsBefore = Render.cellCache();
     const c3 = Render.createCellCache({
       maxCells: 4,
       build: function (L, cx, cy) { built++; return { L: L, cx: cx, cy: cy, n: built }; },
     });
-    eq(Render.cellCache(), null, 'createCellCache 本身**不**改模块状态(装上要走 attachCells)');
+    ok(Render.cellCache() === cellsBefore, 'createCellCache 本身**不**改模块状态(装上要走 attachCells)');
     Render.attachCells(c3);
     ok(Render.cellCache() === c3, 'attachCells 之后 cellCache() 就是它');
     const a1 = c3.get(Core.LAYER_SCENE, 0, 0);
@@ -693,7 +735,12 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
         });
       });
     });
-  })().then(function () {
+  })().then(async function () {
+  // ★★ 这个回调是 **async** 的:相位 ⑪ 要 await(mount 的 setView/setMap 是分帧重建,
+  //    不 await 就会在"重建还没落地"的状态上做断言)。★ 相位 ⑩(本回调开头那一块)是
+  //    **同步** IIFE —— 它没有 await,放这里是合法的;反过来,谁往这个回调里加 await
+  //    都必须先确认它在 async 函数里(本文件顶部那段注释记的就是这个坑:await 写在
+  //    非 async 函数里,只会在**所有断言跑完之后**抛 `ReferenceError: await is not defined`)。
 
   // ==== 相位 ⑤ 缩放阈值 / 缩略图刻度 / 适配 ====
   eq(Render.ZOOM_THRESHOLD, 8, '阈值 8 px/子格(规格 §4.2 的分工表)');
@@ -784,6 +831,222 @@ function someOp(ctx, fn) { return ctx.ops.some(fn); }
        'rectUnion: 脏区合并(缩略图/离屏层按它重画)');
   })();
 
+  // ==== 相位 ⑩ 脏区与"编辑一格只重画一格"(规格 §4.2 ②③)====
+  (function () {
+    // ② 的脏区簿记是纯逻辑:编辑 → 脏矩形;切层 → 只合成;平移 → 搬移 + 补边条。
+    const d = Render.createDirtySet();
+    eq(d.rect(), null, '新脏区集是空的');
+    d.addCell(0, 3, 4);
+    eq(d.rect(), { x: 12, y: 16, w: 4, h: 4 }, 'addCell(0,3,4) → 子格矩形 (12,16,4,4)');
+    d.addCell(0, 5, 4);
+    eq(d.rect(), { x: 12, y: 16, w: 12, h: 4 }, '★ 两个格合并成一个包围盒(不是两次重画)');
+    d.addCell(2, 0, 0);
+    // ★★ 期望值是**计划里的笔误订正**:计划在这一条写的是 `w: 20`(那是 h 的值)。
+    //    三个格 (0,3)/(0,5)/(2,0) 的子格并集是 x 0..24、y 0..20 —— 与本节前两条
+    //    ((12,16,12,4) 已经把 x 撑到 24)以及相位 ⑨ 钉住的 rectUnion 语义(两轴各取
+    //    min/max)一致;`w: 20` 与"addCell(0,5,4) 之后 w = 12"**自相矛盾**(12..24 并上
+    //    0..4 不可能只有 20 宽)。按语义取 24(实现不改 —— 改的是这条期望值)。
+    eq(d.rect(), { x: 0, y: 0, w: 24, h: 20 }, '★ 跨层也并进同一个盒子(合成时才按层拆)');
+    d.clear();
+    eq(d.rect(), null, 'clear 之后又空了');
+    d.addRect({ x: 1, y: 2, w: 3, h: 4 });
+    eq(d.rect(), { x: 1, y: 2, w: 3, h: 4 }, 'addRect: 直接给子格矩形');
+
+    // 平移后的"补边条"几何:画布自拷贝之后只重画新露出来的那一条
+    eq(Render.panStrips(800, 600, 10, 0), [{ x: 790, y: 0, w: 10, h: 600 }],
+       '★ panStrips: 向右移 10px → 只有右边 10px 需要重画(整块搬移 + 补边条)');
+    eq(Render.panStrips(800, 600, 0, -10), [{ x: 0, y: 0, w: 800, h: 10 }],
+       '★ panStrips: 向上移 10px → 只有上边 10px');
+    eq(Render.panStrips(800, 600, 900, 0), [{ x: 0, y: 0, w: 800, h: 600 }],
+       '★ panStrips: 位移超过画布尺寸 → 整块重画(自拷贝已经没有意义)');
+    eq(Render.panStrips(800, 600, 0, 0), [], '位移为 0 → 没有要补的边条');
+
+    // 以光标为锚的缩放:光标下的那一子格在缩放前后必须停在原地
+    const v0 = { x: 100, y: 50, zoom: 8 };
+    const v1 = Render.zoomAround(v0, 400, 300, 2);
+    eq(v1.zoom, 16, 'zoomAround: 倍率 2 → zoom 8 → 16');
+    const before = { X: v0.x + 400 / v0.zoom, Y: v0.y + 300 / v0.zoom };
+    const after = { X: v1.x + 400 / v1.zoom, Y: v1.y + 300 / v1.zoom };
+    ok(Math.abs(before.X - after.X) < 1e-9 && Math.abs(before.Y - after.Y) < 1e-9,
+       '★★ zoomAround: 光标下的子格缩放前后**不动**(锚点保持,这是"缩放到鼠标位置"的全部含义)');
+    const v2 = Render.zoomAround(v0, 400, 300, 1e9);
+    ok(v2.zoom <= Render.MAX_ZOOM, '★ zoomAround 也钳在上限(用户输入钳制)');
+  })();
+
+  // ==== 相位 ⑪ ② 的离屏层:画布侧(三条路径 / 脏区 / 平移 / 环面 / 闸 2)====
+  // ★★ 相位 ⑩ 只钉了**纯逻辑**(脏区集/边条几何/锚点缩放)。这一相位钉的是另一半:
+  //    三条路径各自**画的是谁**、编辑一格只重画一格、平移靠自拷贝、环面在 ≥8 那条路上
+  //    把接缝另一侧画满、全屏重建真的过了分帧器。★ 它**真的**跑 mount()(三样替身与
+  //    相位 ⑩ 同款:document.createElement / 记录型 ctx / 注入的 nextFrame),故必须
+  //    自己装一次 document 替身(相位 ⑩ 那次的 finally 已经把它还原了)。
+  // ★ 判"哪条路径画了哪张图"一律按**对象身份**(drawImage 的第一个实参),不数次数:
+  //   ② 之后主画布上画的是离屏层那张画布,一层画几次与"有内容的格数"完全无关。
+  await (async function () {
+    const savedDoc = globalThis.document;
+    const made2 = [];
+    globalThis.document = { createElement: function () { const c = fakeCanvas(0, 0); made2.push(c); return c; } };
+    const SLICE = { slicer: { nextFrame: function () { return Promise.resolve(); } } };
+    try {
+      // 4×3 格(16×12 子格)的小图:内容在 (0,0)/(1,1)/(3,2) 三格 —— (0,0) 是给 ⑪e 的
+      // 跨接缝那条用的(它折算后落在屏幕右侧那半张上)。
+      const mM = Core.createMap('t4', 4, 3);
+      fillSub(mM, Core.LAYER_BG, 0);
+      fillSub(mM, Core.LAYER_SCENE, 0);
+      setCells(mM, Core.LAYER_SCENE, [[0, 0], [1, 1], [3, 2]],
+               function () { return Core.neutralDesc(1); });
+      const cv = fakeCanvas(200, 150);
+      const since = made2.length;
+      const r = Render.mount(cv, SLICE);
+      await r.setMap(mM);
+      const offs = layerCanvasesSince(made2, since, 200, 150);
+      ok(offs.length === Core.LAYER_COUNT && !!offs[Core.LAYER_SCENE],
+         '⑪ 前提:② 为四层各建了一张离屏层(尺寸 = 主画布;实得 ' + offs.length + ' 张)');
+      const offScene = offs[Core.LAYER_SCENE];
+
+      // ── ⑪a 三条路径各画各的:缩略图(< 8)与离屏层(≥ 8)是两套完全不同的实现 ──
+      cv.ctx.ops.length = 0;                                // ★ 清在 set* 之前(set* 自己会渲染)
+      await r.setView({ x: 0, y: 0, zoom: 4 });
+      ok(drawnImages(cv.ctx).indexOf(r.thumbCanvas(Core.LAYER_SCENE)) >= 0 &&
+         drawnImages(cv.ctx).indexOf(offScene) < 0,
+         '★ < 8px/子格 合成的是 ① 的缩略图(② 的离屏层一次都没上场)');
+      cv.ctx.ops.length = 0;
+      await r.setView({ x: 0, y: 0, zoom: 16 });
+      ok(drawnImages(cv.ctx).indexOf(offScene) >= 0 &&
+         drawnImages(cv.ctx).indexOf(r.thumbCanvas(Core.LAYER_SCENE)) < 0,
+         '★★ ≥ 8px/子格 合成的是 ② 的离屏层(缩略图不上场)—— 同一个 render() 入口,两条路径互斥');
+
+      // ── ⑪b 编辑一格:只重画那一层的一块(不是整层、不是四层)──
+      const rb0 = r.stats().layerRebuilds;
+      const miss0 = r.stats().cellsMisses;
+      r.editCells(Core.LAYER_SCENE, [{ cx: 1, cy: 1 }]);
+      eq(r.stats().layerRebuilds - rb0, 1,
+         '★★ 编辑一格 → 只重画**那一层**的一块脏区(实得 ' + (r.stats().layerRebuilds - rb0) +
+         ' 次;整片重建会是 ' + Core.LAYER_COUNT + ' 次 —— 这正是 ② 存在的理由)');
+      eq(r.cells().version(Core.LAYER_SCENE, 1, 1), 1,
+         '★ editCells 走了 ③ 的 touch(被编辑那一格的内容版本号 +1)');
+      eq(r.cells().version(Core.LAYER_SCENE, 3, 2), 0,
+         '★ 没被编辑的格**不**动版本号(动了 = 整层都白重建)');
+      ok(r.stats().cellsMisses > miss0,
+         '★ 被 touch 的那一格在重画时是**未命中**(③ 真的重新算过它,不是继续交旧 tile)');
+
+      // ── ⑪b2 ★★ ③ 的键必须折算到主网格:同一格只有一条条目 ──
+      // 视图越过左接缝时,离屏层读到的是 cx = −1 这样的**负格号**(折算后才是 3。视口
+      // x ∈ [−3, 9.5) ⇒ 格 −1,0,1,2 —— 格 3 **只**会以 −1 这个写法被读到)。
+      // 键不折算的话同一格会缓存两条,而编辑只 touch 得掉其中一条 ⇒ 接缝另一侧的副本
+      // 继续显示陈旧内容(画面错了、一个字都不报)。
+      // ★ 先 clear():不然后面那次"未命中"可能来自**上一个视图**留下的条目(那个视图
+      //   正好直读过格 3),断言就变成空转(变异实测:不清 = M2 全绿)。
+      r.cells().clear();
+      await r.setView({ x: -3, y: 0, zoom: 16 });
+      const mSeam = r.cells().stats().misses;      // ★ 读 ③ 自己的计数器(stat2 只在 render 里同步)
+      r.cells().get(Core.LAYER_SCENE, 3, 0);
+      eq(r.cells().stats().misses - mSeam, 0,
+         '★★ 同一格在环面下只有**一条**缓存条目(未命中 ' + (r.cells().stats().misses - mSeam) +
+         ' 次 ⇒ 键没折算:同一格两条,编辑只作废得掉一条)');
+
+      // ── ⑪c 颜色层:在 ≥8 这条路上也走**颜色分支**(全屏重建 + 脏区重画两条都过)──
+      const cMap = Core.createMap('c4', 2, 2);
+      fillSub(cMap, Core.LAYER_SCENE, 0);
+      fillSub(cMap, Core.LAYER_BG, 0);
+      cMap.layers[Core.LAYER_BG].rgba[0] = 0xff0000ff;   // 不透明红(纹理位域 = 0)
+      cMap.layers[Core.LAYER_BG].rgba[1] = 0x00ffffff;   // 不透明青(纹理位域 = 4095)
+      const cvC = fakeCanvas(200, 200);
+      const sinceC = made2.length;
+      const rC = Render.mount(cvC, SLICE);
+      await rC.setMap(cMap);
+      const offC = layerCanvasesSince(made2, sinceC, 200, 200)[Core.LAYER_BG];
+      ok(!!offC, '⑪c 前提:颜色层的离屏层建出来了(尺寸 = 主画布)');
+      const cyanRects = function () {
+        return countOps(offC.ctx, 'style', 'rgba(0,255,255,1)');
+      };
+      const origTexOf2 = Core.texOf;
+      const texOfArgs2 = [];
+      Core.texOf = function (d) { texOfArgs2.push(d >>> 0); return origTexOf2(d); };
+      let threw2 = null;
+      let cyanBefore = -1;
+      try {
+        await rC.setView({ x: 0, y: 0, zoom: 16 });         // ★ 全屏重建那条路
+        cyanBefore = cyanRects();
+        // ★ 编辑**格** (0,0):青色在子格 (1,0),它属于格 (0,0)(rgba 数组按**子格**下标,
+        //   4 个子格 = 1 格)。编辑格 (1,0) 是碰不到它的。
+        rC.editCells(Core.LAYER_BG, [{ cx: 0, cy: 0 }]);     // ★ 脏区重画那条路
+      } catch (e) { threw2 = e; } finally { Core.texOf = origTexOf2; }
+      ok(threw2 === null, '★★ 颜色层在 ≥8 这条路上不抛异常(' +
+         (threw2 ? String(threw2.message) : '无异常') + ')');
+      eq(texOfArgs2.length, 0,
+         '★★ 颜色层在 ≥8 这条路上也没把 RGBA 喂进 Core.texOf(实得 ' + texOfArgs2.length +
+         ' 次)—— RGBA 的纹理位域要么是 0(整层当空气 ⇒ 看不见)、要么是 4095(当场抛)');
+      ok(cyanRects() > cyanBefore,
+         '★★ 颜色层的**脏区重画**同样走颜色分支(编辑之后那块又画了一遍 rgba(0,255,255,1))');
+      ok(!someOp(offC.ctx, function (o) { return o.style === 'rgba(255,0,0,0)'; }),
+         '★ alpha = 0 的子格不画全透明色块(它已经有底色,画了就是把内容抹掉)');
+
+      // ── ⑪d 平移:canvas 自拷贝搬移 + 只补新露出的边条 ──
+      const pc0 = r.stats().panCopies;
+      const clears0 = countOps(offScene.ctx, 'op', 'clearRect');
+      await r.panBy(16, 0);                                 // 视图往右看 16px
+      eq(r.stats().panCopies, pc0 + 1, '★ 平移走的是自拷贝搬移那条路(panCopies +1)');
+      ok(someOp(offScene.ctx, function (o) {
+           return o.op === 'drawImage' && o.comp === 'copy' && o.x === -16 && o.y === 0;
+         }),
+         '★★ 自拷贝的偏移是 **−dxPx**(视图往右 = 画面往左):写成 +16 的话画面会以两倍速度反向跑,而边条又补在右边');
+      eq(countOps(offScene.ctx, 'op', 'clearRect') - clears0, 1,
+         '★★ 搬移之后只补**一条**边条(1 次 clearRect,不是整屏重画 —— 那条路是 O(全屏))');
+      const stripClear = offScene.ctx.ops.filter(function (o) {
+        return o.op === 'clearRect' && o.x === 184 && o.w === 16 && o.h === 150;
+      });
+      ok(stripClear.length === 1,
+         '★★ 补的正是**新露出来的右边**那 16px(clearRect 184,0,16,150;世界矩形 = 新视图的右边缘)');
+
+      // ── ⑪d2 ★★ 视图没重建完时**不做**自拷贝搬移(搬移的前提是整张图属于同一次视图)──
+      const pPending = r.setView({ x: 40, y: 40, zoom: 16 });   // 不 await:重建在飞
+      const pc1 = r.stats().panCopies;
+      await r.panBy(16, 0);
+      eq(r.stats().panCopies, pc1,
+         '★★ 离屏层还没跟当前视图对齐时,平移**不做**自拷贝搬移(否则搬的是一张半旧的图,而脏标记已清 ⇒ 永久错位)');
+      await pPending;
+      await r.panBy(16, 0);
+      eq(r.stats().panCopies, pc1 + 1,
+         '★ 对齐之后平移才走搬移那条路(上一条不是"把搬移整条删掉"也能过的空断言)');
+
+      // ── ⑪e 环面:视图越过右边界时,接缝另一侧的内容照样画进离屏层(不是黑的)──
+      const cvE = fakeCanvas(200, 150);
+      const sinceE = made2.length;
+      const rE = Render.mount(cvE, SLICE);
+      await rE.setMap(mM);
+      const offE = layerCanvasesSince(made2, sinceE, 200, 150)[Core.LAYER_SCENE];
+      offE.ctx.ops.length = 0;
+      await rE.setView({ x: 10, y: 0, zoom: 16 });          // 可见 [10, 22.5):主网格只到 16
+      const xs = offE.ctx.ops.filter(function (o) { return o.op === 'drawImage'; })
+        .map(function (o) { return o.x; });
+      const maxX = xs.length ? Math.max.apply(null, xs) : -1;
+      ok(maxX >= 96,
+         '★★ 视图越过右边界(主网格右缘落在屏幕 x = 96)时,离屏层被画到 x = ' + maxX +
+         ':接缝另一侧的格由**环面折算**补上(按主网格裁剪 = 右边一大条黑 —— 人眼清单第 4 条)');
+
+      // ── ⑪f 闸 2:全屏重建经分帧器(不是一帧画完)──
+      // ★★ 判据取**一次纯 buildLayers()** 前后的让出次数:setMap 里那条 rebuild 与缩略图
+      //    共用同一座分帧器,拿"setMap 之后 yields > 0"判会**被缩略图那条路蒙过去**
+      //    (变异实测:把 buildLayers 改成一次循环画完,那版断言照样全绿)。
+      let yields = 0;
+      const cvF = fakeCanvas(200, 150);
+      const rF = Render.mount(cvF, {
+        slicer: { budgetMs: 0, nextFrame: function () { yields++; return Promise.resolve(); } },
+      });
+      await rF.setMap(mM);
+      const y0 = yields;
+      await rF.buildLayers();
+      ok(yields > y0,
+         '★★ 全屏重建(换图/改缩放/改窗口)走分帧器:一次 buildLayers 让出了 ' + (yields - y0) +
+         ' 帧 —— 闸 2 要的是"慢慢画出来",不是"页面死掉"');
+    } finally {
+      globalThis.document = savedDoc;
+    }
+    ok(made2.length > 0, '★ ⑪ 的离屏层确实经 document.createElement("canvas") 建出来(' +
+       made2.length + ' 张:每层一张 × 每张图)');
+  })();
+
+  }).then(function () {
   console.log('');
   console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
   if (fail === 0) console.log('RENDER SMOKE OK');
