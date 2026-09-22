@@ -418,7 +418,13 @@ function countNonZero(map, L) {
        '★★ clampTexture 的容量缺省时**自己问图集**(Render.atlasCapacity()),不写死数码');
 
     // ★ PUT 必须显式带 Content-Type(写端点只收 application/json;不带 = 415)
-    ok(/method:\s*['"`]PUT['"`]/.test(ui), '★ ui.js 有 PUT 调用(写端点;GET 都是只读的)');
+    // ★★ 2026-09-22(Task 8)订正:原来是"源码里出现过 PUT 就算过"的存在性断言。Task 8 的
+    //    保存流程接进来之后,真正的失败面是**保存流程自己又拼了一份 fetch** —— 那一份多半
+    //    漏掉 Content-Type(⇒ 415 ⇒ "点了保存、磁盘上那份没变,只有一行红字"),而存在性
+    //    断言**照样是绿的**。故改成**计数**,与同一文件里 `Core.createMap(` 那条同款口径:
+    //    写盘出口**只有** `putMapBytes` 一个。
+    eq((ui.match(/method:\s*['"`]PUT['"`]/g) || []).length, 1,
+       '★★ ui.js 里 PUT **恰好一处**(唯一的写出口 putMapBytes;多一处 = 保存流程自己拼了第二份 fetch)');
     ok(/['"`]Content-Type['"`]\s*:\s*['"`]application\/json['"`]/.test(ui),
        '★★ PUT 显式设 Content-Type: application/json(不设 = 浏览器给 Blob 的默认类型 ⇒ 415 ⇒ 用户看到"存不进去")');
     // ★★ 光扫字符串还不够:上面两条只证明"字面量在源码里",不证明"发出的请求带着它"。
@@ -438,6 +444,18 @@ function countNonZero(map, L) {
       eq(sent[0].init.method, 'PUT', '★★ 行为断言:请求方法就是 PUT(不只是源码里出现过这个词)');
       eq(sent[0].init.headers && sent[0].init.headers['Content-Type'], 'application/json',
          '★★ 行为断言:请求头真的带 Content-Type: application/json(少了它就是 415)');
+      // ★★ body 必须是**裸字节**:写端点(editor_server.js)把这个 buffer **原样落盘**,
+      //    头里的 application/json 是**跨域闸(CSRF)**、不是编码声明。改成 JSON 编码
+      //    (= `JSON.stringify`)会把一份坏文件写进去,而"PUT 只有一处 + 头也对"两条
+      //    **都还是绿的** —— 所以这条得单独钉。
+      const putBlob14 = sent[0].init.body;
+      // ★ 先判类型再取内容:body 不是 Blob 时 `.arrayBuffer` 直接不存在 ⇒ 抛出去会**中断整个
+      //   冒烟**(后面的断言一行都不跑,看着像"探针挂了")。判据要的是**失败**,不是抛出。
+      const putBody14 = (putBlob14 && typeof putBlob14.arrayBuffer === 'function')
+                        ? Array.from(new Uint8Array(await putBlob14.arrayBuffer())) : null;
+      eq(putBody14, [1, 2, 3],
+         '★★ body 是**裸字节**(不是 JSON 编码;写端点把 buffer 原样落盘,JSON 化会写出一份坏文件。' +
+         '实得 ' + JSON.stringify(putBody14) + ')');
       eq(wout, { name: 'x.cyrm', size: 12 }, 'putMapBytes: 交回服务器那份应答(调用方要报字节数)');
     } finally {
       globalThis.fetch = realFetch;
@@ -1105,6 +1123,140 @@ function countNonZero(map, L) {
        (Editor.app.st && Editor.app.st.brushSize) + ' selDrag=' + !!(Editor.app.st && Editor.app.st.selDrag) +
        ')。★ 只还引用的话,⑬b4/⑬b5 **原地**改过的 tool 会以 \'select\' 漂到后面追加的相位里' +
        '(不报错,只让它们按错的初始条件跑)');
+
+    // ==== 相位 ⑭ 保存路径与面板工作流的纯逻辑(Task 8)====
+    // ★ 编号:brief 写的是「相位 ⑬」,但 Task 7 已经占用了 ⑬(画布交互接线),故顺延为 ⑭
+    //   —— 位置仍在 ⑫ 的镜像段之后(与 brief 的意图一致:接在历史/剪贴板那段后面)。
+    eq(Editor.saveTargetName(false), null, 'saveTargetName(false): 未打开任何地图 → null(调用方提示先打开)');
+    eq(Editor.needsV3Confirm('v4', false), false, '★★ v4 源:直接保存,不问(v4 → v4 是无损的)');
+    eq(Editor.needsV3Confirm('v3', false), true,
+       '★★ v3 文本源:首次保存要确认(保存会把它转成 v4 二进制,不可逆 —— 规格 §3.6)');
+    eq(Editor.needsV3Confirm('legacy', false), true, '★ 旧字母格式源:同样要确认');
+    eq(Editor.needsV3Confirm('v3', true), false, '★ 已经确认过一次的会话不再问第二次');
+    eq(Editor.needsV3Confirm(null, false), false, '没打开地图时不问');
+    eq(Editor.freshName('my map!'), 'my_map.cyrm', '★ freshName 走 sanitizeName(服务器只收裸文件名)');
+
+    // ★★ 敌人类型来自**页面里的** ENEMY_REGISTRY —— 它只定义在 `editor.html` 里,node 侧
+    //    `globalThis.ENEMY_REGISTRY` 是 undefined。故这里把那段**标记块**从 editor.html 里
+    //    读出来真跑一遍;**不是**抄一份写死的清单(那正是这个注册表要防的漂移)。
+    const html14 = fs.readFileSync(path.join(__dirname, 'editor.html'), 'utf8');
+    const regBlock14 = /\/\*__ENEMY_REGISTRY_BEGIN__\*\/([\s\S]*?)\/\*__ENEMY_REGISTRY_END__\*\//
+                       .exec(html14);
+    ok(!!regBlock14,
+       '★ editor.html 里有 ENEMY_REGISTRY 的标记块(自检夹具的唯一来源;找不到 = 后面两条是假绿)');
+    // ★ 装夹具**之前**先断言它读不出任何东西:证明 importEnemyTypes 里没有一份写死的清单
+    delete globalThis.ENEMY_REGISTRY;
+    eq(Editor.importEnemyTypes(), [],
+       '★★ 页面注册表缺席时 importEnemyTypes 返回 [](它不是写死的清单 —— 写死的那版这里会非空)');
+    if (regBlock14) new Function(regBlock14[1])();   // 块体就是 `window.ENEMY_REGISTRY = [ … ];`
+    ok(Editor.importEnemyTypes().length > 0, '★ 敌人类型来自页面里的 ENEMY_REGISTRY(不是写死的清单)');
+    ok(Editor.importEnemyTypes().indexOf('fly_bird') >= 0, '注册表里有 fly_bird');
+
+    // ── ⑭a 出生点的**位置**语义(handoff 13:brief 原码把"条数"当成了"下标")──
+    // ★★ 游戏侧 `map_format.gd` 按**顺序**读 player / player2 ⇒ "放 P2"必须写第 **1** 条。
+    //    brief 原码 `players.length <= playerIndex → push` 在**零出生点**的图上放 P2 会 push
+    //    出 index 0 的记录(游戏读成 P1);"放 P1"走 addSpawn 的 push,连点两次会把 P2
+    //    **悄悄换成**新的那条。两条都只在数据里现形,状态栏还说着"P2 放到 …"。
+    const savedDoc14 = globalThis.document;
+    const savedR14 = Editor.app.r, savedMap14 = Editor.app.map;
+    const savedCv14 = Editor.app.canvas, savedName14 = Editor.app.name;
+    let view14 = { x: 0, y: 0, zoom: 1 };
+    let status14 = '';
+    try {
+      // ★ 替身:面板/spawn 这一路要 DOM(状态栏)与画布尺寸,还要一个能读的视图。
+      //   ★ 状态栏那个替身会**记账**(refusal 的"理由"是它唯一的可见面,不记就没法断言)。
+      globalThis.document = { getElementById: function (id) {
+                                if (id !== 'status-msg') return null;
+                                return { set textContent(v) { status14 = String(v); },
+                                         get textContent() { return status14; } };
+                              },
+                              querySelectorAll: function () { return []; } };
+      const calls14 = [];
+      Editor.app.canvas = { width: 80, height: 80 };
+      Editor.app.r = {
+        view: function () { return view14; },
+        layer: function () { return Core.LAYER_SCENE; },
+        selection: function () { return null; },
+        setSelection: function () {}, setSelDrag: function () {}, setPreview: function () {},
+        editCells: function () { calls14.push('editCells'); },
+        render: function () { calls14.push('render'); },
+        invalidateAll: function () { calls14.push('invalidateAll'); return Promise.resolve(); },
+      };
+      Editor.app.map = Editor.createEmptyMap('t', 8, 8);     // 32×32 子格
+      Editor.app.name = null;
+
+      // ① 零出生点的图上放 P2:必须**拒绝**,而不是 push 出一条会被读成 P1 的记录
+      Editor.spawnAt('player', 1);
+      eq(Editor.app.map.players.length, 0,
+         '★★ 零出生点的图上「放 P2」**不许**写盘:players 必须仍是 0 条(brief 原码在这里 push 出 ' +
+         '1 条 index 0 的记录 = 游戏侧读成 **P1**,而状态栏说着"P2 放到 …";实得 ' +
+         Editor.app.map.players.length + ' 条)');
+      ok(status14.indexOf('先放 P1') >= 0,
+         '★★ 拒绝要**说得出理由**(不许静默无反应;实得状态栏 "' + status14 + '")');
+
+      // ② 放 P1 → 放 P2:P2 落在**第 1 条**(位置语义)
+      Editor.spawnAt('player', 0);
+      eq(Editor.app.map.players.length, 1, '★ 放 P1(空图)= 第 0 条');
+      const p1at14 = { x: Editor.app.map.players[0].x, y: Editor.app.map.players[0].y };
+      view14 = { x: 0, y: 4, zoom: 1 };                    // 挪一格 ⇒ P2 与 P1 的坐标可辨
+      Editor.spawnAt('player', 1);
+      eq(Editor.app.map.players.length, 2, '★ 放 P2 = 写第 **1** 条(不是又多一条)');
+      ok(Editor.app.map.players[1].x !== p1at14.x || Editor.app.map.players[1].y !== p1at14.y,
+         '★ P2 是**这一次**的坐标(与 P1 不同,故能看出写的是哪一条)');
+
+      // ③ 图上**只有 P1** 时再放一次 P1:必须**原位覆盖**、不许长出第 2 条 ——
+      //    多出来的那条位置恰好是 index 1 = **P2**(brief 原码走 addSpawn 的 push 就是这样
+      //    把 P2 悄悄换掉的;而且只有 P1 时它不会报越界,纯静默)。
+      Editor.app.map.players.length = 1;
+      view14 = { x: 8, y: 8, zoom: 1 };                    // cx=cy=12(与 P1 的 10,10 可辨)
+      Editor.spawnAt('player', 0);
+      eq(Editor.app.map.players.length, 1,
+         '★★ 只有 P1 时再放 P1:原位覆盖,**不许**长出第 2 条(= P2 被悄悄换掉;实得 ' +
+         Editor.app.map.players.length + ' 条)');
+      eq([Editor.app.map.players[0].x, Editor.app.map.players[0].y], [12, 12],
+         '★ P1 原位覆盖面写的是**这一次**的坐标');
+
+      // ④ P1+P2 都在时再放 P1:仍是原位覆盖,P2 一个字都不许动
+      view14 = { x: 0, y: 4, zoom: 1 };
+      Editor.spawnAt('player', 1);
+      const p2at14 = { x: Editor.app.map.players[1].x, y: Editor.app.map.players[1].y };
+      view14 = { x: 8, y: 8, zoom: 1 };
+      Editor.spawnAt('player', 0);
+      eq(Editor.app.map.players.length, 2,
+         '★★ 已有一对出生点时再放 P1 **不许**长出第 3 条(实得 ' + Editor.app.map.players.length + ' 条)');
+      ok(Editor.app.map.players[1].x === p2at14.x && Editor.app.map.players[1].y === p2at14.y,
+         '★★ P2 原位不动(位置语义的正面判据)');
+
+      // ④ 敌人仍是**追加**(它们没有位置语义,顺序无关)
+      Editor.spawnAt('enemy', 0);
+      Editor.spawnAt('enemy', 0);
+      eq(Editor.app.map.enemies.length, 2, '★ 敌人是追加语义(与出生点刻意不同)');
+      // ★ 不写死 'fly_bird':期望值取自**同一个注册表**(写死的话注册表一改顺序这条就红,
+      //   而且它是"敌人类型确实来自页面注册表"这条链的末端证据)。
+      eq(Editor.app.map.enemies[0].type, Editor.importEnemyTypes()[0],
+         '★ 敌人类型取自注册表的第一项(实得 ' + Editor.app.map.enemies[0].type + ')');
+
+      // ── ⑭b 导出校验(规格 §4.7:只报告,不阻止导出)──
+      const rep14 = Editor.exportReport();
+      eq(rep14.ok, true, '★ 干净的小图:ok = true(errors 为空 ⇒ encodeMap 不会拒绝)');
+      ok(rep14.lines.join('\n').indexOf('出生点 2') >= 0 &&
+         rep14.lines.join('\n').indexOf('敌人 2') >= 0,
+         '★ 报告里有出生点/敌人条数(实得 ' + JSON.stringify(rep14.lines) + ')');
+      Editor.app.map.players.push({ x: 1, y: 1 });          // 第 3 个出生点
+      // ★ 判**逐字那一行**,不是"文本里含『第 3 个及以后』":`Core.validateMap` 自己那条
+      //   警告里也有同样六个字("…(第 3 个及以后在 map_format.gd 里读不到)"),用子串判
+      //   的话把 exportReport 那行**删掉**这条照样绿。
+      ok(Editor.exportReport().lines.indexOf(
+           '⚠ 第 3 个及以后的出生点游戏侧读不到(map_format.gd 只认 player/player2)') >= 0,
+         '★★ >2 个出生点要有一行**自己的**明确警告(map_format.gd 只认 player/player2)');
+      Editor.app.map = null;
+      eq(Editor.exportReport(), { lines: ['还没打开地图'], ok: false },
+         '★ 没打开地图时报告说的是人话(不是空面板)');
+    } finally {
+      globalThis.document = savedDoc14;
+      Editor.app.r = savedR14; Editor.app.map = savedMap14;
+      Editor.app.canvas = savedCv14; Editor.app.name = savedName14;
+    }
   } catch (err) {
     console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
     console.error(err && err.stack ? err.stack : String(err));

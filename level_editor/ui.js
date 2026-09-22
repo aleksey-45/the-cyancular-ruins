@@ -1166,7 +1166,7 @@ globalThis.Editor = (function () {
           app.r.setSelection(null);
         }
         else if (cmd.indexOf('pan:') === 0) { pend = arrowPan(cmd.slice(4)); }
-        else if (cmd === 'save' || cmd === 'save-as') { status('保存:计划里的 Task 8 才接上'); }
+        else if (cmd === 'save' || cmd === 'save-as') { pend = saveCurrent(cmd === 'save-as'); }
         statusLine();
         return pend;
       });
@@ -1209,6 +1209,283 @@ globalThis.Editor = (function () {
     //   「渐变」额外可用。这个 hook 由 Task 8 提供(typeof 守卫:Task 7 单独跑时也能过)。
     if (typeof syncPanelForLayer === 'function') syncPanelForLayer();
     statusLine();
+  }
+
+  // ── 保存(★ 决定 ⑤:v3 源首次保存要一次显式确认)──
+  // ★ 为什么必须确认:仓库里 maps/*.cyrm **今天全是 v3 文本**,而 Ctrl+S 写回原文件
+  //   (规格 §4.6)⇒ 一次 Ctrl+S 就把 v3 原文转成 v4 二进制,而迁移是**单向**的
+  //   (规格 §3.6「迁移是一次性的」)。期 E 会专门做迁移并先提交一份 v3 原文留档。
+  var v3Confirmed = false;
+  function needsV3Confirm(srcFmt, confirmed) {
+    if (!srcFmt) return false;
+    return (srcFmt === 'v3' || srcFmt === 'legacy') && !confirmed;
+  }
+  function freshName(base) { return Core.sanitizeName(base) + '.cyrm'; }
+  function saveTargetName(asNew) {
+    if (!app.map) return null;
+    return asNew ? freshName((app.map.name || 'map') + '_copy') : app.name;
+  }
+  function saveCurrent(asNew) {
+    if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
+    if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
+      var okGo = window.confirm('原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
+                                '期 E 会专门做迁移并先提交一份 v3 原文留档。(本次会话不再询问)');
+      if (!okGo) { status('已取消保存(磁盘上那份没有被碰过)'); return Promise.resolve(); }
+      v3Confirmed = true;
+    }
+    var name = saveTargetName(asNew);
+    if (!name) return Promise.resolve();
+    status('保存 ' + name + ' …');
+    // ★★ 写盘**只走 `putMapBytes` 这一个出口**(页面上唯一发 PUT 的地方):PUT 的
+    //    `Content-Type: application/json` 与"body 是**裸字节**"这两条纪律都钉在那里
+    //    (不设头 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ "点了保存、磁盘上那份没变",
+    //    而且**不报错回滚**)。这里再拼一份 fetch 就是第二个出口,迟早只改一处。
+    return Io.encodeMap(app.map, { compress: true }).then(function (bytes) {
+      return putMapBytes(name, bytes).then(function (out) {
+        app.name = name;
+        app.raw = bytes;
+        app.sourceFormat = 'v4';
+        status('已保存 ' + out.name + '(' + out.size + ' 字节)');
+        // ★ 库列表里的字节数/时间跟着更新。它自己是一次 GET,失败与"保存成功"无关 ⇒
+        //   走 guard 收口(不吞、也不把成功两个字盖掉以外的语义变化)。
+        guard('库列表刷新', function () { return refreshLibrary(); });
+        refreshStatus();
+        statusLine();
+      });
+    }).catch(function (e) {
+      // ★ 保存失败要**说出来**;磁盘上那份没被动过(服务器是原子写)
+      status('保存失败:' + msgOf(e));
+    });
+  }
+
+  // ── 敌人类型(来自页面里的注册表 —— 不写死清单)──
+  function importEnemyTypes() {
+    var reg = globalThis.ENEMY_REGISTRY;
+    if (!reg || !reg.length) return [];
+    return reg.map(function (e) { return String(e.id); });
+  }
+
+  // ── 导出校验(规格 §4.7:只警告,不阻止导出)──
+  function exportReport() {
+    if (!app.map) return { lines: ['还没打开地图'], ok: false };
+    var rep = Core.validateMap(app.map);
+    var lines = validateLines(rep);
+    if (!lines.length) lines = ['校验通过:没有发现问题'];
+    lines.push('尺寸 ' + Core.cellsWOf(app.map) + '×' + Core.cellsHOf(app.map) + ' 格 · 出生点 ' +
+               app.map.players.length + ' · 敌人 ' + app.map.enemies.length);
+    if (app.map.players.length > 2) {
+      lines.push('⚠ 第 3 个及以后的出生点游戏侧读不到(map_format.gd 只认 player/player2)');
+    }
+    return { lines: lines, ok: rep.errors.length === 0 };
+  }
+  function showExportReport() {
+    var rep = exportReport();
+    window.alert(rep.lines.join('\n'));
+    status(rep.ok ? '导出校验:没有 error' : '导出校验:有 error(encodeMap 会拒绝导出)');
+  }
+
+  // ── 面板构建(★ 每个控件只挂一次监听 —— 审计 A16:旧实现同时挂了 22 个独立监听
+  //    与一个容器委托,点一次跑两遍)──
+  function buildPanels() {
+    document.querySelectorAll('#layers .layer-row').forEach(function (row) {
+      var L = parseInt(row.dataset.layer, 10);
+      row.addEventListener('click', function () { setLayer(L); });
+      row.querySelector('.vis').addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        var on = !app.r.layerVisible(L);
+        app.r.setLayerVisible(L, on);
+        this.style.opacity = on ? '1' : '0.35';
+      });
+      row.querySelector('.lock').addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        var on = !app.r.layerLocked(L);
+        app.r.setLayerLocked(L, on);
+        this.style.opacity = on ? '0.35' : '1';
+      });
+    });
+    // 纹理调色板(★ 从 tile_defs 派生;纹理 22 不在其中 —— 审计 A7)
+    var pal = texturePalette(app.tileDefs);
+    var box = $('palette');
+    pal.forEach(function (e) {
+      var b = document.createElement('button');
+      b.className = 'sw';
+      b.title = e.tex + ' ' + e.name + (e.type ? '(' + e.type + ')' : '');
+      b.textContent = String(e.tex);
+      b.addEventListener('click', function () {
+        app.st.desc = Core.packDesc(e.tex, Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
+                                    Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
+        document.querySelectorAll('#palette .sw').forEach(function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        statusLine();
+      });
+      box.appendChild(b);
+    });
+    if (DERIVED_TEXTURES.length) {
+      var hint = document.createElement('div');
+      hint.className = 'desc-row';
+      hint.textContent = '纹理 ' + DERIVED_TEXTURES.join('/') + ' 不进调色板:游戏侧由地形自动派生';
+      box.parentNode.insertBefore(hint, box.nextSibling);
+    }
+    // 辅码四组档位
+    [['desc-hue', 'hueOf'], ['desc-bri', 'brightOf'],
+     ['desc-sat', 'satOf'], ['desc-alp', 'alphaOf']].forEach(function (spec) {
+      var sel = $(spec[0]);
+      if (!sel) return;
+      for (var k = 0; k < Core.SUB_PER_CELL * 2; k++) {
+        var o = document.createElement('option');
+        o.value = String(k); o.textContent = String(k);
+        sel.appendChild(o);
+      }
+      sel.value = String(Core[spec[1]](app.st.desc));
+      sel.addEventListener('change', function () {
+        app.st.desc = Core.packDesc(Core.texOf(app.st.desc), +$('desc-hue').value, +$('desc-bri').value,
+                                    +$('desc-sat').value, +$('desc-alp').value);
+        statusLine();
+      });
+    });
+    var only = $('desc-only');
+    if (only) only.addEventListener('change', function () { app.st.descOnly = only.checked; });
+    var bs = $('brush-size');
+    if (bs) {
+      bs.addEventListener('change', function () { setBrush(parseFloat(bs.value) || 1); });
+    }
+    document.querySelectorAll('#toolbar .tool').forEach(function (b) {
+      b.addEventListener('click', function () { app.st.tool = b.dataset.tool; selectToolButton(); });
+    });
+    $('tg-grid').addEventListener('click', function () {
+      this.classList.toggle('on'); app.r.setGrid(this.classList.contains('on'));
+    });
+    $('tg-subgrid').addEventListener('click', function () {
+      this.classList.toggle('on'); app.r.setSubGrid(this.classList.contains('on'));
+    });
+    $('tg-torus').addEventListener('click', function () {
+      this.classList.toggle('on'); app.r.setTorus(this.classList.contains('on'));
+    });
+    var dim = $('dim-others');
+    if (dim) dim.addEventListener('change', function () { app.r.setDimOthers(dim.checked); });
+    var p1 = $('spawn-p1'), p2 = $('spawn-p2'), en = $('spawn-enemy'), cl = $('spawn-clear');
+    if (p1) p1.addEventListener('click', function () { spawnAt('player', 0); });
+    if (p2) p2.addEventListener('click', function () { spawnAt('player', 1); });
+    if (en) en.addEventListener('click', function () { spawnAt('enemy', 0); });
+    if (cl) cl.addEventListener('click', function () { pushAndShow(clearSpawns(app.map)); });
+    var libList = $('lib-list');
+    if (libList) {
+      libList.addEventListener('click', function (ev) {          // ★ 委托一次,不给每行挂监听
+        var row = ev.target.closest ? ev.target.closest('.lib-row') : null;
+        if (row && row.dataset.name) openMap(row.dataset.name);
+      });
+    }
+    var bn = $('btn-new'), bd = $('btn-dup'), br = $('btn-rename'), bx = $('btn-del');
+    if (bn) bn.addEventListener('click', function () {
+      var name = window.prompt('新地图名字(不含 .cyrm)', 'new_map');
+      if (!name) return;
+      var m = createEmptyMap(name, 125, 75);       // ★ 尺寸只经这一个闸
+      app.map = m; app.name = freshName(name);
+      app.sourceFormat = 'v4';
+      undoHistory = createHistory({});
+      // ★ setMap 返回的是**分帧重建**派生出来的 promise(Task 4)⇒ 必须收口:抛在任务回调里
+      //   是一次 promise 拒绝,同步 try/catch 接不住(用户看到的就是"点了新建、画面不动")。
+      guard('新建地图', function () { return app.r.setMap(m); });
+      status('新建 ' + app.name + '(还没写盘 —— Ctrl+S 才落盘)');
+      refreshStatus(); statusLine();
+    });
+    if (bd) bd.addEventListener('click', function () {
+      if (!app.map) { status('先打开一张地图'); return; }
+      var copy = resizeMap(app.map, Core.cellsWOf(app.map), Core.cellsHOf(app.map)).map;
+      copy.name = (app.map.name || 'map') + '_copy';
+      app.map = copy;
+      app.name = freshName(copy.name);
+      app.sourceFormat = 'v4';
+      undoHistory = createHistory({});
+      guard('复制地图', function () { return app.r.setMap(copy); });   // ★ 同上:分帧重建的 promise
+      status('已复制为 ' + app.name + '(还没写盘)');
+      refreshStatus();
+    });
+    if (br) br.addEventListener('click', function () {
+      if (!app.map) { status('先打开一张地图'); return; }
+      var n = window.prompt('新的名字(不含 .cyrm)', app.map.name);
+      if (!n) return;
+      app.map.name = Core.sanitizeName(n);
+      app.name = app.map.name + '.cyrm';
+      status('改名为 ' + app.name + '(还要 Ctrl+S 才写盘)');
+      refreshStatus();
+    });
+    if (bx) bx.addEventListener('click', function () {
+      status('删除地图请直接在磁盘上删 maps/ 下的文件(编辑器不做删除动作 —— 这是故意的)');
+    });
+    var exp = $('btn-export');
+    if (exp) exp.addEventListener('click', showExportReport);
+    // ★ 背景层的两个颜色槽(规格 §4.4/§4.5):①起点 ②终点。**两个槽是渐变的全部**——
+    //   只接一个的话"渐变"永远退化成一个纯色(两端同色),而且看不出来。
+    //   背景层是不透明的真彩(#RRGGBB → 0xRRGGBBFF;alpha 由辅码那一路管不了它)。
+    [['bg-color', 'rgba'], ['bg-color2', 'rgba2']].forEach(function (spec) {
+      var inp = $(spec[0]), lab = $(spec[0] + '-val');
+      if (!inp) return;
+      var m0 = /^#([0-9a-f]{6})$/i.exec(inp.value);
+      if (m0) app.st[spec[1]] = (parseInt(m0[1], 16) * 256 + 255) >>> 0;
+      inp.addEventListener('input', function () {
+        var m = /^#([0-9a-f]{6})$/i.exec(inp.value);
+        if (!m) return;
+        app.st[spec[1]] = (parseInt(m[1], 16) * 256 + 255) >>> 0;
+        if (lab) lab.textContent = inp.value;
+        statusLine();
+      });
+    });
+    selectToolButton();
+    syncPanelForLayer();
+    statusLine();
+  }
+
+  // 背景层时把"纹理调色板 + 辅码"换成"颜色选择器"(规格 §4.5)。
+  // ★ 只切显示,不动任何数据:切回纹理层时用户刚才选的纹理/辅码还在。
+  function syncPanelForLayer() {
+    var isBg = (app.r.layer() === Core.LAYER_BG);
+    var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('palette', !isBg);
+    show('bg-color-row', isBg);
+    show('bg-color-row2', isBg);
+    show('bg-color-title', isBg);
+    ['desc-hue', 'desc-bri', 'desc-sat', 'desc-alp'].forEach(function (id) {
+      var el = $(id);
+      if (el && el.parentNode) el.parentNode.style.display = isBg ? 'none' : '';
+    });
+    var titles = document.querySelectorAll('#right h2');
+    for (var i = 0; i < titles.length; i++) {
+      if (titles[i].textContent === '辅码') titles[i].style.display = isBg ? 'none' : '';
+    }
+    // ★ 工具条上"渐变只在背景层可用":其余工具照旧(纹理层没有颜色可插值,故渐变**只在**背景层)
+    var g = document.querySelector('#toolbar .tool[data-tool="gradient"]');
+    if (g) g.style.opacity = isBg ? '1' : '0.45';
+  }
+
+  function spawnAt(kind, playerIndex) {
+    if (!app.map) { status('先打开一张地图'); return; }
+    var v = app.r.view();
+    // 视图中心那一格(不猜鼠标位置:按下按钮时鼠标在按钮上)
+    var cx = Math.round((v.x + app.canvas.width / v.zoom / 2) / Core.SUB_PER_CELL);
+    var cy = Math.round((v.y + app.canvas.height / v.zoom / 2) / Core.SUB_PER_CELL);
+    var types = importEnemyTypes();
+    if (kind === 'player') {
+      // ★★ P1/P2 是**位置**语义、不是"第几条记录":游戏侧 `map_format.gd` 按顺序读
+      //    `player` / `player2`。故放 P1 = **写第 0 条**,放 P2 = **写第 1 条**。
+      //    ★ 缺号一律**显式拒绝**并说明理由 —— 绝不 push 出一条位置不对的记录:在零出生点的
+      //      图上放 P2 而 push 出去,磁盘上那条会被游戏读成 **P1**(状态栏刚说"P2 放到 …",
+      //      数据却是 P1),而且**一个字都不报**。同理,"放 P1"若也走 push,图上只有 P1 时
+      //      再点一次就会长出第 2 条 —— 那条位置正好是 **P2**,于是 P2 被**悄悄换掉**。
+      if (app.map.players.length < playerIndex) {
+        status('先放 P' + playerIndex + ':出生点按位置读(player / player2),P' + (playerIndex + 1) +
+               ' 之前必须有 P' + playerIndex);
+        return;
+      }
+      var before = snapshotSpawns(app.map);
+      if (app.map.players.length === playerIndex) app.map.players.push({ x: cx, y: cy });
+      else app.map.players[playerIndex] = { x: cx, y: cy };
+      pushAndShow(spawnDiff(before, snapshotSpawns(app.map)));
+      status('P' + (playerIndex + 1) + ' 放到 (' + cx + ',' + cy + ')');
+      return;
+    }
+    pushAndShow(addSpawn(app.map, 'enemy', cx, cy, types[0] || 'fly_bird'));
+    status('敌人放到 (' + cx + ',' + cy + ')');
   }
 
   // ── 图集(Task 3:结构图 一次装进来;换图由 Task 8 的"重载贴图"按钮触发)──
@@ -1346,6 +1623,9 @@ globalThis.Editor = (function () {
     loadAtlas().then(function () {
       return openFromUrl();
     }).then(function () {
+      // ★ 面板要排在**图打开之后**建:调色板与 spawn 工具都读 app.map 那一侧的尺寸,
+      //   而且 buildPanels 结尾会刷一遍状态栏。它自己带 null 守卫(没图也能建)。
+      buildPanels();
       if (new URLSearchParams(location.search).has('selftest')) {
         return selfTest().then(function (line) { status(line); });
       }
@@ -1499,5 +1779,11 @@ globalThis.Editor = (function () {
     installInteraction: installInteraction, runJob: runJob, statusLine: statusLine,
     pushAndShow: pushAndShow, doUndo: doUndo, doRedo: doRedo, hitOf: hitOf,
     brushSteps: function () { return BRUSH_STEPS.slice(); }, setBrush: setBrush, setLayer: setLayer,
+
+    buildPanels: buildPanels, syncPanelForLayer: syncPanelForLayer,
+    saveCurrent: saveCurrent, saveTargetName: saveTargetName,
+    needsV3Confirm: needsV3Confirm, freshName: freshName,
+    importEnemyTypes: importEnemyTypes, exportReport: exportReport, showExportReport: showExportReport,
+    spawnAt: spawnAt,
   };
 })();

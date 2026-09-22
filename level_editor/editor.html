@@ -84,6 +84,7 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
       <button id="btn-dup">复制</button>
       <button id="btn-rename">重命名</button>
       <button id="btn-del">删除</button>
+      <button id="btn-export">导出校验</button>
     </div>
   </div>
   <div id="canvas-wrap"><canvas id="map-canvas"></canvas></div>
@@ -106,8 +107,14 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
     <div class="desc-row"><label><input id="desc-only" type="checkbox"> 只改辅码(不碰纹理)</label></div>
     <h2 id="bg-color-title">颜色(背景层)</h2>
     <div class="desc-row" id="bg-color-row">
+      <span>起点</span>
       <input id="bg-color" type="color" value="#00ffff">
       <span id="bg-color-val">#00ffff</span>
+    </div>
+    <div class="desc-row" id="bg-color-row2">
+      <span>终点</span>
+      <input id="bg-color2" type="color" value="#101820">
+      <span id="bg-color2-val">#101820</span>
     </div>
     <h2>出生点工具</h2>
     <div class="desc-row">
