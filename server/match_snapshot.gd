@@ -28,9 +28,15 @@ func _broadcast_snapshot() -> void:
 			"previewing": previewing,
 		}
 	# ★ 一次 rpc():ENet 层单次序列化 + 广播。逐 rpc_id 循环会把 O(N²) 加回来(那正是拆包要治的)。
-	# 这条守卫只是为了"一个 peer 都没有时别发包"(原实现逐 peer 判 live_peers 的作用);
-	# 拆成广播后无法再逐 peer 判,代价是"刚断开"窗口里会多一条 channel 错误 —— 可接受,且丢失无后果。
-	if not multiplayer.get_peers().is_empty():
+	# ★★ 判据必须是「**表里每一个** peer 都能收包」(`NetBus.all_peers_sendable`),不能是老的
+	#    `not get_peers().is_empty()`:广播在 ENet 层是**逐 peer** 发包,表里只要还剩一个
+	#    处于"队列已拆、API 还没忘掉"窗口的 peer(典型:本帧刚被 `disconnect_peer` 踢掉的那个),
+	#    这一发就会打 `Unable to send packet on channel 0/1, max channels: 0`。
+	#    2026-09-21 实测(未改之前,reconnect_probe 的 worker 日志):每拒绝一次错的 reclaim,
+	#    有一帧**同时**报 channel 0 与 channel 1,backtrace 两行都指向本行 —— 老判据拦不住它
+	#    (`get_peers()` 滞后,正是 `NetBus.is_peer_live` 那段注释里说过的那件事)。
+	#    代价只有"那一帧不发世界包":它本来就是 unreliable,少一帧无后果。
+	if NetBus.all_peers_sendable():
 		NetBus.rpc("snapshot_world", world)
 	# ② **本人包**:各自的 ack + 权威整态 c2 —— 只有本人需要(客户端 rollback 拿它锚定/重放)。
 	# 逐 peer 定向(体积小,不构成 O(N²))。仍判 live peer:避免给正在断开的客户端发 ——

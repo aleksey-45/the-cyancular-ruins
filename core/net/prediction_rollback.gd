@@ -53,6 +53,32 @@ var map_px: Vector2 = Vector2.ZERO
 const DEFAULT_POS_TOL := 2.0
 var pos_tol: float = DEFAULT_POS_TOL
 
+# 接触期(与远端玩家**身体**贴身)的位置容差。★ 凭什么能放宽:贴身时那点位置分歧由**接触几何**
+# 决定,而回滚纠正不动它 —— 实测(见 tests/brawl_rollback_probe)1/2/4/8px 四档的接触期偏差
+# **逐项相同**(中位 1.6 / p95 25~30),即那每帧一次的回滚"本来就没买到精度"。
+#
+# ★ 取值 8.0(2026-09-22 控制器按 Task 4 的两次扫描裁定)。定值规则 = 「满足判据 2 的档里取最小」,
+#   裁定理由:**实测 8/16/32 在 N=2/4/8 读数同一批(N=2 全是 5 = 下限),16/32 买不到更多,
+#   只多付软接触。** 扫描读数区间(★ 其中 16/32 两档**跨轮次不一致**,故只记大致范围):
+#     回滚次数        接触期 8px = N2 5 / N4 8 / N8 5;16px 与 32px 在 N=2 也是 5,在 N=4/N=8
+#                     上**跨轮次抖动**(N=4 约 8~21、N=8 约 4~15 —— 离散读数、只记大致范围)
+#                     且**没有系统性更低** ⇒ 往上买不到东西。
+#     接触期偏差      判据 2 的上界是 中位 ≤3 / p95 ≤35,8/16/32 **三档全绿**,且中位 1.6、
+#                     p95 25.0~30.5 —— **与 2px 基线逐项相同**(§1.2 那条"白拿"在 32px 上仍成立)。
+#     对照基线        全局 2px 档 N=2 回滚 9;1px 历史基线 N=2 回滚 221。
+#   ⇒ 8 与 16/32 频率同档,而软接触(本改动唯一的手感代价,spec §6)只有体宽 80px 的 1/10 ——
+#     往上多付的软接触换不来任何频率收益,**最小的那个就是买到的差额最大的那个**。
+# ★ 别只照数字读:这条是**扫描结论**,不是随手可调的旋钮。要动它得重跑 brawl_rollback_probe 的
+#   CONTACT 族并复核上面三条读数 —— 探针里那些判据(提示命中率 / 偏差不恶化 / 严格优于 2px 档)
+#   就是为此立的。设计依据见 docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md §3.4。
+const DEFAULT_CONTACT_POS_TOL := 8.0
+var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
+
+# 接入方每物理步写一次:本帧是否正在贴身(`Player.touching_player()`)。
+# ★ 默认 false = 改动前的行为。★ 它**不进 capture_state()/restore_state()**、不上行 ——
+#   纯客户端本地量(它只是"这次的偏差要不要较真"的提示,不是模拟状态)。
+var in_contact: bool = false
+
 func bind(p) -> void:
 	_p = p
 
@@ -158,7 +184,10 @@ func _close_enough(a: Dictionary, b: Dictionary) -> bool:
 		return false
 	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
 		return false
-	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > pos_tol:
+	# 容差按**接触与否**二选一:非接触期的位置分歧是真的(要立刻纠正),
+	# 接触期的位置分歧是接触几何噪声(实测纠正不动,见 contact_pos_tol 的说明)。
+	var tol: float = contact_pos_tol if in_contact else pos_tol
+	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > tol:
 		return false
 	var va: Vector2 = a.get("vel", Vector2.ZERO)
 	var vb: Vector2 = b.get("vel", Vector2.ZERO)

@@ -4,8 +4,10 @@ extends Node
 #
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 14400 res://tests/reconnect_probe.tscn
-#   ★ 用 **14400**(=240s 安全网)而不是别处的 3600:本探针要跑满一个 30s 宽限期,整跑 ~42s 墙钟,
-#     3600(=60s)只剩 ~18s 余量,机器一忙就会先耗尽安全网(表现是"一行 ALL-OK 都没有",看着像坏了)。
+#   ★ 用 **14400**(=240s 安全网)而不是别处的 3600:本探针要跑满一个 60s 宽限期,整跑 ~72s 墙钟,
+#     3600(=60s)连整跑都盖不住,机器一忙就会先耗尽安全网(表现是"一行 ALL-OK 都没有",看着像坏了)。
+#   ★ `--quit-after` 的单位是**帧**,本工程 `run/max_fps=60`(project.godot)⇒ 1 帧 = 1/60s
+#     (实测 600 帧 = 10.0s + ~1.2s 启动开销)。下面每个预算都是按这个换算写的。
 # 判据:文本 `RECONNECT PROBE: ALL-OK`(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0
 #       且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
 #
@@ -85,9 +87,10 @@ extends Node
 #   **本探针就是抓出它的那一件工具**;那个确定性装置留着不删 —— 它保证"谁删掉
 #   `_pending_input[role] = []` 那一行谁红"(没有装置时这个竞态只有 ~50% 命中,见 watcher 的注释)。
 # ═══ 时间预算(为什么必须并行)═══
-#   整跑约 **42s 墙钟**(相④要等满一个 30s 宽限期),安全网是 `--quit-after 14400`(240s)——
-#   早先用 3600(=60s)时余量只有 ~18s,已按 289cd86 提到 14400(见文件头跑法那两条) ——
-#   故三组 worker/客户端**全部并行**跑,且每个子进程自带 `--quit-after`(150s)兜底。
+#   整跑约 **72s 墙钟**(相④要等满一个 60s 宽限期:前半段"开机→进局→闪断→重连→相⑦"≈12s),
+#   安全网是 `--quit-after 14400`(240s)——
+#   早先用 3600(=60s)时连整跑都盖不住,已按 289cd86 提到 14400(见文件头跑法那两条) ——
+#   故三组 worker/客户端**全部并行**跑,且每个子进程自带 `--quit-after`(18000 帧 ≈ 300s)兜底。
 
 const PREFIX := "reconnect_probe_"
 # ═══ ★★ 三个 worker 端口必须落在**大厅的 worker 端口池之外** ═══
@@ -103,15 +106,27 @@ const PREFIX := "reconnect_probe_"
 const W1V1 := 29001       # 1v1 worker 端口(池外)
 const WROY := 29002       # 大乱斗 worker 端口(池外)
 const WIDLE := 29090      # 空载大乱斗 worker 端口(池外)
-const CHILD_QUIT_AFTER := "9000"   # 子进程兜底(150s):正常由探针自己收尾/杀端口
+# 子进程兜底(18000 帧 ≈ 300s)。★ 这个"一直在跑"本身是**承重**的:actor 写完结果后要**保持连接**待命
+# (见 reconnect_watcher 文件头「actor 收工后不退出」),它若自己先退,相位④ 的落点就换了人。
+# 故它必须大于本进程的收工上限 `FINAL_TIMEOUT`(118s)与整跑长度(~72s)。
+# ★ **照实登记**:旧值 9000(150s)按 60fps 换算**仍然满足**上面那两条(150 > 118 > 72)——
+#   所以这次翻倍是**留余量**(与 FINAL_TIMEOUT 的 58 → 118 同一个"翻倍"形状),不是不等式要求。
+#   别把它当成"旧值已失效"来引述;真要动它,上面那两条不等式的方向仍必须成立。
+const CHILD_QUIT_AFTER := "18000"
 const BOOT_TIMEOUT := 30.0         # 等 worker/客户端就绪的上限
-const FINAL_TIMEOUT := 58.0        # 本进程的收工上限(整跑 ~42s;--quit-after 14400 = 240s 安全网)
+# 本进程的收工上限。★ 推导:整跑 ≈ **60**(相④要等满的宽限期)+ **~12**(前半段:开机/进局/
+#   闪断/重连/相⑦)≈ 72s ⇒ 上限必须**大于 72**。取 118 = 2 × `GRACE_MIN`(旧的 58 正是 2 × 29,
+#   同一个形状),比下限多留 ~46s 给负载抖动;仍远小于 `--quit-after 14400`(=240s)那道安全网。
+const FINAL_TIMEOUT := 118.0
 # 相⑥的窗口:worker 打完「就绪」后的 [1,3] 秒内不得退出、不得打「全员离开,大乱斗结束」
 const IDLE_LOW := 1.0
 const IDLE_HIGH := 3.0
 const IDLE_BONUS := 14.0           # 之后按既有 M1 守卫正当退出(10s);这一相**必须有它**
-const GRACE_MIN := 29.0            # 相④的时间判据(宽限期 30s ± 上面两种粒度)
-const GRACE_MAX := 36.0
+# 相④的时间判据(宽限期 60s ± 两种粒度;★ 改 `GraceWindow.DEFAULT_SECONDS` 必须重算这三个数)。
+# 下界 59 = 60 − 1(本进程记「进宽限」那一刻与服务器真正 `enter` 之间有 ~0.3s 的采样粒度,取整);
+# 上界 68 = 60 + 1(`_expire_graces` 每秒轮询一次的粒度)+ 7(负载余量;旧值 30/36 同形)。
+const GRACE_MIN := 59.0
+const GRACE_MAX := 68.0
 # ── 相⑦:w1v1 worker 的两个测试开关(生产路径都不带;argv 解析见 server/server_main.gd)──
 # 拆格延迟(秒)的**计时起点是建局**(`MatchHost._ready`,即 COUNTDOWN 开始),而 watcher 的时钟
 # 以 **PLAYING** 为 0,两者差一个 `COUNTDOWN_TIME`(3s)。换算后要同时满足:
@@ -306,10 +321,10 @@ func _worker_evidence() -> void:
 
 
 # 相④:1v1 worker 的宽限期到点收场。
-# ★ 判据是**时间差**不只是"打了那行字":宽限期 30s 是 spec 的硬承诺,只断言"最终会退出"
-#   会把"10s 就判超时"这种坏实现放过去。`_expire_graces` 每秒轮询一次 → 实测落在 [30,31]s,
-#   本进程的采样粒度再加 ~0.3s。起点取**第二次**「进宽限」(第一次是 c1 的闪断、被 reclaim 救回;
-#   第二次是 c2 的永久掉线 —— 它就是该到点的那一个),两行都在 worker 日志里带序号校验。
+# ★ 判据是**时间差**不只是"打了那行字":宽限期(`GraceWindow.DEFAULT_SECONDS`)是 spec 的硬承诺,
+#   只断言"最终会退出"会把"10s 就判超时"这种坏实现放过去。`_expire_graces` 每秒轮询一次 →
+#   实测落在 [60,61]s,本进程的采样粒度再加 ~0.3s。起点取**第二次**「进宽限」(第一次是 c1 的闪断、
+#   被 reclaim 救回;第二次是 c2 的永久掉线 —— 它就是该到点的那一个),两行都在 worker 日志里带序号校验。
 func _track_grace() -> void:
 	var txt := _read(_log_path("w1v1"))
 	if txt == "":
@@ -326,7 +341,7 @@ func _track_grace() -> void:
 		if _grace_stamps.size() >= 1:
 			var since := _t - _grace_stamps[_grace_stamps.size() - 1]
 			_check(since >= GRACE_MIN and since <= GRACE_MAX,
-					"相④:宽限期到点耗时 %.1fs ∈ [%.0f, %.0f](GraceWindow.DEFAULT_SECONDS=30)"
+					"相④:宽限期到点耗时 %.1fs ∈ [%.0f, %.0f](GraceWindow.DEFAULT_SECONDS=60)"
 					% [since, GRACE_MIN, GRACE_MAX])
 		print("PROBE: 相④ 1v1 worker 收场退出(t=%.1fs)" % _t)
 

@@ -2,8 +2,8 @@ extends Node
 
 # 幽灵碰撞体探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
-#   "$GODOT" --headless --path . res://tests/replica_ghost_probe.tscn
-# 期望:每条 [ghost] … 通过,末行 "REPLICA GHOST PROBE: ALL-OK",退出码 0。
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/replica_ghost_probe.tscn
+# 期望:每条 [ghost] … 通过,末行 "REPLICA GHOST PROBE: ALL-OK"(判据是这行文本,不是退出码)。
 #
 # 存在理由:玩家互相碰撞**服务器侧早就有**(server/match_host.gd 给每个玩家 mask |= 2),
 # 缺的是客户端 —— 客户端世界里只有一具 PlayerReplica,而它此前是 `extends Node2D`、**零碰撞体**。
@@ -50,6 +50,7 @@ var _results: Array[String] = []
 # 单趟状态
 var _running := false
 var _ghost_on := true
+var _touched_any := false   # 本趟里 P.touching_player() 命中过没有(判据不是空转的证据)
 var _tick := 0
 var _max_dev := 0.0
 var _max_px := -INF      # P 整趟走到过的最右位置(终帧位置受回滚相位影响,不作判据)
@@ -99,6 +100,7 @@ func _run_pass(ghost_on: bool) -> void:
 	_tick = 0
 	_max_dev = 0.0
 	_max_px = -INF
+	_touched_any = false
 	_a_hist = []
 	ctrl = PredictionRollback.new()
 	srcA = PacketInputSource.new()
@@ -153,6 +155,8 @@ func _run_pass(ghost_on: bool) -> void:
 		_check(_max_px < obstacle_x, "① 幽灵体挡住了预测端玩家(最远只到 %.2f,未越过副本 %.2f)" % [
 				_max_px, obstacle_x])
 		_check(rb == 0 and dx < 0.5, "② 权威与预测轨迹一致、零回滚(rb=%d, Δx=%.3f)" % [rb, dx])
+		# ⑤ 判据确实命中过(本趟 P 全程顶在幽灵体上)⇒ 证明它不是在空转
+		_check(_touched_any, "⑤ 幽灵体在位时 touching_player() 命中过")
 	else:
 		# 负向对照:两条都必须反过来,否则说明①/② 是"无论有没有幽灵体都成立"的空转断言。
 		# ③ 与**正向那趟的读数**比,不跟障碍坐标比 —— 回滚会把 P 反复拉回 A 的权威位置,
@@ -161,6 +165,10 @@ func _run_pass(ghost_on: bool) -> void:
 				"③ 摘掉幽灵体后不再被挡(最远 %.2f,幽灵体在位时只有 %.2f)" % [_max_px, _ghost_on_max_px])
 		_check(rb > 0 and _max_dev > 1.0, "④ 摘掉幽灵体后出现分歧与回滚(rb=%d, 分歧=%.2f px)" % [
 				rb, _max_dev])
+		# ⑥ 负向对照:幽灵体被摘除(层置 0)后**全程不得命中**。
+		#    ★ 这条同时钉住"地形不算接触":P 全程踩在地板上(层 1),判据若写成
+		#      `collision_layer != 0`(忘了 `& ~1`)会**恒真**,这里当场红。
+		_check(not _touched_any, "⑥ 摘掉幽灵体后 touching_player() 全程为假(地形层不算接触)")
 
 	# 清场等下一趟(deferred 队列在 process_frame 后清空,WaterFx 那种 _ready 里 call_deferred
 	# 的挂载不会砸在已释放节点上)
@@ -194,6 +202,9 @@ func _physics_process(_delta: float) -> void:
 	var pp := Vector2(P.global_position)
 	_max_dev = maxf(_max_dev, (pa - pp).length())
 	_max_px = maxf(_max_px, pp.x)
+	# 接触判据读数(生产里由 PvpMatchClient 在玩家步进前读一次,见 pvp_match_client.gd)
+	if P.touching_player():
+		_touched_any = true
 	_tick += 1
 
 

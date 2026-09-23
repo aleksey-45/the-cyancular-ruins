@@ -52,18 +52,26 @@ const REACH := 200.0      # A 面前留出的空场(让包能动起来,不是一
 const LAYER_AUTH := 32    # 层6:权威侧(真身之间互相碰撞)
 const LAYER_GHOST := 2    # 层2:玩家层 —— P 认这一层,幽灵体就在这层
 
-enum Variant { NONE, STATIC, PROD, TOL2, TOL4, TOL8, EXTRAP }
+enum Variant { NONE, STATIC, PROD, TOL2, TOL4, TOL8, EXTRAP, CONTACT8, CONTACT16, CONTACT32 }
 
 # 诊断开关:置 true 时每 60 tick 打一行位置/分歧/rb。只在排查探针本身时打开
 # (正常跑要关,否则读数被刷屏;本仓判绿靠 grep 末行,不靠日志长度)。
 const TRACE := false
 
 const VARIANT_NAME := ["幽灵体摘除(对照)", "对手站着不动(健全性对照)",
-		"容差 1px(历史基线)", "容差 2px(已采纳)", "容差 4px", "容差 8px", "幽灵体外推(已证伪)"]
+		"容差 1px(历史基线)", "容差 2px(已采纳)", "容差 4px", "容差 8px", "幽灵体外推(已证伪)",
+		"接触期 8px", "接触期 16px", "接触期 32px"]
 
 # 各变体的位置容差(px)。**全部显式写**:控制器的默认值已采纳 2.0(见其 DEFAULT_POS_TOL),
 # 不写死的话"历史基线"那一档会跟着默认值漂,表就不可比了。
-const VARIANT_TOL := [1.0, 1.0, 1.0, 2.0, 4.0, 8.0, 1.0]
+const VARIANT_TOL := [1.0, 1.0, 1.0, 2.0, 4.0, 8.0, 1.0, 2.0, 2.0, 2.0]
+
+# 三档 CONTACT 的**接触期**容差(与 Variant.CONTACT8..CONTACT32 同序)。
+# ★ pos_tol 对它们恒为 2.0 —— 本族要验的是"非接触期保持严格、接触期放宽"。
+const CONTACT_TOLS := [8.0, 16.0, 32.0]
+
+static func _is_contact_variant(v: int) -> bool:
+	return v >= int(Variant.CONTACT8)
 
 var _host: Node2D = null
 var _spawn := Vector2.ZERO
@@ -92,6 +100,7 @@ var _running := false
 var _tick := 0
 var _contact_ticks := 0
 var _max_dev := 0.0
+var _hint_ticks := 0    # 本趟里接触提示命中的 tick 数(恒 0 = 本档等同 2px 档 = 空转)
 var _rb_devs: Array[float] = []   # 每次回滚发生时的修正量(px)
 var _devs: Array[float] = []      # 接触期间的 |A-P|(px)= 容忍住的稳态偏差(软接触)
 
@@ -143,6 +152,10 @@ func _ready() -> void:
 	for v in [Variant.PROD, Variant.TOL2, Variant.TOL4, Variant.TOL8, Variant.EXTRAP]:
 		for n in [2, 4, 8]:
 			passes.append([v, n])
+	# CONTACT 族放最后:上面那条"买到了东西"的判据要读 2px 档的读数(_find),它得先跑完。
+	for v in [Variant.CONTACT8, Variant.CONTACT16, Variant.CONTACT32]:
+		for n in [2, 4, 8]:
+			passes.append([v, n])
 
 	for p in passes:
 		await _run_pass(int(p[0]), int(p[1]))
@@ -154,6 +167,12 @@ func _ready() -> void:
 	#   注:消息里避开裸 % 号,否则 % 格式化会因非法转换而整个失效(实测踩过)。
 	var tol: float = PredictionRollback.new().pos_tol
 	_check(tol >= 2.0, "控制器默认容差已采纳(要求 >= 2px,实际 %.1f px)" % tol)
+
+	# 接触期容差的**采纳值守卫**:退回 2.0 会让贴身频率回到每帧一次,而那是**静默**的
+	# (不报错、本探针除这一条外照绿)—— 故把"默认值本身"变成断言。
+	# 注:同一条纪律 —— 消息里避开裸 % 号(上面那条的注释记着为什么)。
+	var ctol: float = PredictionRollback.new().contact_pos_tol
+	_check(ctol >= 8.0, "接触期容差已采纳(要求 >= 8px,实际 %.1f px)" % ctol)
 
 	_summarize()
 
@@ -174,6 +193,7 @@ func _run_pass(variant: int, n: int) -> void:
 	_tick = 0
 	_contact_ticks = 0
 	_max_dev = 0.0
+	_hint_ticks = 0
 	_rb_devs = []
 	_devs = []
 	_a_hist = []
@@ -185,6 +205,13 @@ func _run_pass(variant: int, n: int) -> void:
 	ctrl = PredictionRollback.new()
 	# ★ 容差是回滚频率的闸门(见 core/prediction_rollback.gd 的 pos_tol 注释)
 	ctrl.pos_tol = VARIANT_TOL[variant]
+	# CONTACT 族:接触期容差显式给(与 pos_tol 一样是"显式写死才可比"的道理)。
+	# ★ 写成 if/else 而不是三元:三元在 GDScript 里两支都要求值,`CONTACT_TOLS[variant - 7]`
+	#   对非 CONTACT 档会算出负下标 —— 那种错报在探针启动时,看着像探针坏了。
+	if _is_contact_variant(variant):
+		ctrl.contact_pos_tol = CONTACT_TOLS[variant - int(Variant.CONTACT8)]
+	else:
+		ctrl.contact_pos_tol = VARIANT_TOL[variant]
 	srcA = PacketInputSource.new()
 
 	var pack_x := _spawn.x + REACH
@@ -264,6 +291,40 @@ func _run_pass(variant: int, n: int) -> void:
 				"N=%d %s 确实处于贴身状态(接触占比 %.0f%%)" % [
 						n, VARIANT_NAME[variant], 100.0 * float(_contact_ticks) / float(RUN)])
 
+		# CONTACT 族的三条判据(缺一条本改动就可能是空转 —— 见 spec §3.4)
+		if _is_contact_variant(variant):
+			_check(_hint_ticks > 0,
+					"N=%d %s 接触提示确实命中过(命中 %d tick / 几何接触 %d tick);恒 0 = 本档等同 2px 档"
+					% [n, VARIANT_NAME[variant], _hint_ticks, _contact_ticks])
+			var med := _pct(_devs, 0.50)
+			var p95 := _pct(_devs, 0.95)
+			_check(med <= 3.0 and p95 <= 35.0,
+					"N=%d %s 放宽后接触期偏差没有变大(中位 %.1f / p95 %.1f;基线 1.6 / 25~30)"
+					% [n, VARIANT_NAME[variant], med, p95])
+			# ★ bar 是「**严格**优于 2px 档」而不是「不超过它的一半」:GDScript 的 `/` 是**整除**
+			#   (`9 / 2 == 4`),而 N=2 在**任何**容差下回滚数都停在 5(那 5 次是容差去不掉的)
+			#   ⇒ `5 <= 4` 恒假 ⇒ N=2 接线前红、接线后也红,这条在 N=2 上**没有鉴别力**。
+			#   `base > 0` 那半保留:它防的是 `_find` 取不到(返回 -1)。
+			var base := _find(Variant.TOL2, n)
+			# ★★ 这条判据**只对已采纳的那一档打分**(Variant.CONTACT8);16px/32px 两档照旧**打印
+			#   读数**、只是**不判**。为什么:它比的是两个**各自都在抖的离散量** —— 本档的 `rb`
+			#   与 2px 档的分母 `base`,而分母自己就会在 13~17 之间跳(与本次改动无关)。两者抖到
+			#   同一量级时 `rb < base` 就翻面。实账:Task 4 §7.4 记着**同配置 5 遍假红 1 遍**
+			#   (`N=8 接触期 16px`:回滚 15 < 2px 档 13),§7.5 的变异轮又记着同一 bar「**既会假红
+			#   也会假绿**」(提示全关时仍有 3 格绿)⇒ 它的分辨率只够挡「整档没生效」,挡不住这种
+			#   ±2 倍抖动。而定值 8px 那天又实测到 32px 档同一格(`N=8 接触期 32px`:15 < 13)。
+			#   **已采纳档 CONTACT8 至今一次没红过** ⇒ 能承载这条断言的只有它。
+			#   ⚠ 但**不删** 16/32 的读数:本探针是**扫描仪器** —— 日后重调容差(见
+			#   `core/net/prediction_rollback.gd` 的 DEFAULT_CONTACT_POS_TOL 注释)要拿这三档比,
+			#   读数必须留着(下面 else 照打)。收窄的只是「判据」,不是「仪器」。
+			if variant == Variant.CONTACT8:
+				_check(base > 0 and rb < base,
+						"N=%d %s 确实买到了东西(回滚 %d < 2px 档 %d,严格更少)"
+						% [n, VARIANT_NAME[variant], rb, base])
+			else:
+				print("[brawl]   · N=%d %s 读数:回滚 %d vs 2px 档 %d(未采纳档,只记读数不判)"
+						% [n, VARIANT_NAME[variant], rb, base])
+
 	for o in _opps:
 		(o as Node).queue_free()
 	A.queue_free()
@@ -323,6 +384,14 @@ func _physics_process(_delta: float) -> void:
 	var rb_before := ctrl.rollback_count()
 	var dev_before := MazeGenerator.toroidal_delta_px(
 			A.global_position, P.global_position, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+	# ★ 接触提示按**生产同款**喂:读 P 上一次步进留下的滑动碰撞(生产里是基类在玩家步进前读
+	#   `_local.touching_player()`)。★ 别用本探针那个 `|o.x - A.x| < 90` 的几何代理 ——
+	#   那量的是"权威侧在不在接触",与生产喂进去的不是同一个量。
+	if _is_contact_variant(_variant):
+		ctrl.in_contact = P.touching_player()
+		if ctrl.in_contact:
+			_hint_ticks += 1
+
 	ctrl.advance(recA)
 	if ctrl.rollback_count() > rb_before:
 		_rb_devs.append(dev_before)

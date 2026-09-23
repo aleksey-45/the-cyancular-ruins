@@ -52,6 +52,10 @@ const N_APPLY_SNAP := "apply_server" + "_snapshot("
 # 源码里就出现了要找的那串字面量(虽然 tests/ 不在扫描根里,纪律照旧)。
 const N_ALIVE_KEY := "\"ali" + "ve\""
 
+# 本探针自当大厅时客户端该连的地址。★ 与 `tests/royale_c2_probe.gd` 的同名常量**必须同值**
+# (那边用它拨地址,这边用它核对"确实连上了本探针的大厅,而不是云服")。
+const LOBBY_ADDR := "127.0.0.1"
+
 var who := "c1"
 var lobby: Node = null           # 真 royale_lobby.tscn 实例(本进程里被驱动的那份)
 
@@ -148,7 +152,17 @@ func _stage_lobby() -> void:
 		return
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
-		return   # 真大厅面板自己会连 127.0.0.1(_ready 里的 _request_list)
+		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
+	# ★★ 守卫:连上的必须是**本探针的大厅**,不能是云服。生产默认地址就是云
+	#   (`PvpSession.server_address` 初值 120.53.107.140),而本探针是**实例化真
+	#   `royale_lobby.tscn` 让它自己连** —— `royale_c2_probe._run_client` 漏了那句地址预置时,
+	#   两端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是 c1/c2 自己的
+	#   「已连接服务器」(它们确实连上了,只是连的是**别人**),而编排器一条 `玩家连入` 都没有
+	#   ⇒ 只剩一个 90 秒超时,看着像"大厅坏了"。当场点名,别让下一个人再从超时逆推。
+	if String(lobby.get("_connected_addr")) != LOBBY_ADDR:
+		_finish(false, "本端连的是 %s,不是本探针大厅 %s —— 检查 royale_c2_probe._run_client 的地址预置"
+				% [lobby.get("_connected_addr"), LOBBY_ADDR])
+		return
 	if who == "c1":
 		_log("大厅已连,建房")
 		lobby.call("_on_create_pressed")   # 等价于点「创建房间」(公开房,人数上限默认 4)
@@ -426,8 +440,11 @@ func _finish(ok: bool, msg: String) -> void:
 #   (RoyaleHost.mark_disconnected → _finish_match → MATCH_OVER);而 MATCH_OVER 期间
 #   `_match_round_tick` 的 PLAYING 分支不再跑 → **另一方正在等的「2s 复活」永远不会发生**。
 #   本探针第一版实测就踩到了:spawned 模式下 c2 断言完(PLAYING+1.5s)先退 → c1 卡在"等复活"
-#   → 6s 后 MATCH_OVER 的退场定时器把场景一换,挂在 root 上的本观察者被摘出树 → `_process` 停
-#   → 结果文件没写、进程留着、大厅判它断开。
+#   → ★ 2026-09-21 订正:当年那条链的最后一环是「6s 后 MATCH_OVER 的退场定时器把场景一换,
+#     挂在 root 上的本观察者被摘出树 → `_process` 停 → 结果文件没写」。那条**自动换场已随结算页
+#     批次删除**(改成玩家自己退)⇒ 那一环不再存在;但下面那条纪律**仍要守**、且理由更强了:
+#     现在没有任何东西会自动换场,谁先退谁就把对方留在 MATCH_OVER 之后的静止世界里 ——
+#     两边都**先写好结果**再等对面,是唯一不依赖退出时序的收尾方式。
 #   故:两边都**先写好结果**再等对面也写好,然后一起退 —— 退出顺序不再由胜负时序决定。
 #   (这也是大乱斗的既有性质,不是 bug:剩余 <2 人即终局。)
 func _wait_peer_then_quit(ok: bool) -> void:

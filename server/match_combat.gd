@@ -108,8 +108,15 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	# 协议只传 canonical [0,MAP):子弹锚到射手最近副本后可能是副本偏移坐标,归位。
 	var canonical_pos := MazeGenerator.wrap_to_range(bullet.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# 射手 role:① 排除广播对象(原样)② **随载荷下发** —— 接收端要靠它认出"这颗是谁打的"。
+	# ★ 接收端拿它做两件事:把视觉副本的 `shooter` 指向射手副本(否则榴弹的 `_check_player_contact`
+	#   会在**出膛那一刻**就把射手自己的副本当成目标、当场起短引信 —— 客户端上那颗敌方榴弹
+	#   会"刚飞出来就炸");以及「该停在哪」的队友豁免(3v3)。
+	# ★ 加法式扩展:老客户端忽略未知键,不协商。
+	var shooter_role := _role_of(bullet.shooter)
 	var data := {
 		"scene": scene_path,
+		"shooter_role": shooter_role,
 		"pos": canonical_pos,
 		"vel": bullet.velocity_vec,
 		"speed": bullet.speed,
@@ -130,7 +137,7 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	if bullet.explosion_visual != null:
 		data["visual"] = bullet.explosion_visual.resource_path
 	# 发给非射手客户端(bullet.shooter 是 Node,反查成 role 才能交给 _rpc_all)
-	_rpc_all("bullet_spawn", [data], _role_of(bullet.shooter))
+	_rpc_all("bullet_spawn", [data], shooter_role)
 
 # 即时光束武器(激光)权威开火上报:每物理帧轮询各角色当前武器,把"本帧要广播的光束"发给非射手端。
 # 时序与子弹广播同款:MatchHost 父先于子 → 这里读到的是上一物理帧玩家步进里 fire 记下的上报,
