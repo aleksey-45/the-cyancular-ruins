@@ -306,9 +306,24 @@ func _run_pass(variant: int, n: int) -> void:
 			#   ⇒ `5 <= 4` 恒假 ⇒ N=2 接线前红、接线后也红,这条在 N=2 上**没有鉴别力**。
 			#   `base > 0` 那半保留:它防的是 `_find` 取不到(返回 -1)。
 			var base := _find(Variant.TOL2, n)
-			_check(base > 0 and rb < base,
-					"N=%d %s 确实买到了东西(回滚 %d < 2px 档 %d,严格更少)"
-					% [n, VARIANT_NAME[variant], rb, base])
+			# ★★ 这条判据**只对已采纳的那一档打分**(Variant.CONTACT8);16px/32px 两档照旧**打印
+			#   读数**、只是**不判**。为什么:它比的是两个**各自都在抖的离散量** —— 本档的 `rb`
+			#   与 2px 档的分母 `base`,而分母自己就会在 13~17 之间跳(与本次改动无关)。两者抖到
+			#   同一量级时 `rb < base` 就翻面。实账:Task 4 §7.4 记着**同配置 5 遍假红 1 遍**
+			#   (`N=8 接触期 16px`:回滚 15 < 2px 档 13),§7.5 的变异轮又记着同一 bar「**既会假红
+			#   也会假绿**」(提示全关时仍有 3 格绿)⇒ 它的分辨率只够挡「整档没生效」,挡不住这种
+			#   ±2 倍抖动。而定值 8px 那天又实测到 32px 档同一格(`N=8 接触期 32px`:15 < 13)。
+			#   **已采纳档 CONTACT8 至今一次没红过** ⇒ 能承载这条断言的只有它。
+			#   ⚠ 但**不删** 16/32 的读数:本探针是**扫描仪器** —— 日后重调容差(见
+			#   `core/net/prediction_rollback.gd` 的 DEFAULT_CONTACT_POS_TOL 注释)要拿这三档比,
+			#   读数必须留着(下面 else 照打)。收窄的只是「判据」,不是「仪器」。
+			if variant == Variant.CONTACT8:
+				_check(base > 0 and rb < base,
+						"N=%d %s 确实买到了东西(回滚 %d < 2px 档 %d,严格更少)"
+						% [n, VARIANT_NAME[variant], rb, base])
+			else:
+				print("[brawl]   · N=%d %s 读数:回滚 %d vs 2px 档 %d(未采纳档,只记读数不判)"
+						% [n, VARIANT_NAME[variant], rb, base])
 
 	for o in _opps:
 		(o as Node).queue_free()
