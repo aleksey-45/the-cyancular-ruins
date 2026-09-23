@@ -452,10 +452,25 @@ var _hint_ticks := 0    # 本趟里接触提示命中的 tick 数(恒 0 = 本档
 				"N=%d %s 放宽后接触期偏差没有变大(中位 %.1f / p95 %.1f;基线 1.6 / 25~30)"
 				% [n, VARIANT_NAME[variant], med, p95])
 		var base := _find(Variant.TOL2, n)
-		_check(base > 0 and rb <= base / 2,
-				"N=%d %s 确实买到了东西(回滚 %d ≤ 2px 档 %d 的一半)"
+		# ★ bar 是「**严格**优于 2px 档」而不是「不超过它的一半」:GDScript 的 `/` 是**整除**
+		#   (`9 / 2 == 4`),而 N=2 在**任何**容差下回滚数都停在 5(那 5 次是容差去不掉的)
+		#   ⇒ `5 <= 4` 恒假 ⇒ N=2 接线前红、接线后也红,这条在 N=2 上**没有鉴别力**。
+		#   `base > 0` 那半保留:它防的是 `_find` 取不到(返回 -1)。
+		_check(base > 0 and rb < base,
+				"N=%d %s 确实买到了东西(回滚 %d < 2px 档 %d,严格更少)"
 				% [n, VARIANT_NAME[variant], rb, base])
 ```
+
+★ **上面这段是订正后的形态**(2026-09-22 定案):本计划初稿写的是
+`_check(base > 0 and rb <= base / 2, "… ≤ 2px 档 %d 的一半")`,**那是错的、且错得没鉴别力** ——
+GDScript 的 `/` 是**整除**(`9 / 2 == 4`),而 N=2 在**每一种**容差下的可达下界都是 **5**
+⇒ `5 <= 4` 恒假 ⇒ 那条 bar 在 N=2 上**接线前红、接线后也红**,量不出任何东西。
+实账见 `.superpowers/sdd/task-4-report.md` §6.1 与 §7。
+
+★ 另有一处(2026-09-23 用户裁定):**这条判据只在「已采纳档」`Variant.CONTACT8` 上打分**,
+16px/32px 两档**照旧打印读数、只是不判** —— 它比的是两个各自都在抖的离散量(2px 档的分母自己
+在 13~17 之间跳),三档全判会有低频假红(Task 4 §7.4 同配置 5 遍假红 1 遍;定值当天又在 32px 档复现)。
+读数**不删**是因为本探针是**扫描仪器**;理由与实账见 spec §3.4「扫描结果」末尾。
 
 (f) `_ready()` 的跑批清单:在现有两个循环**之后**(必须之后 —— 判据要用 `_find(Variant.TOL2, n)`)加:
 
@@ -494,8 +509,14 @@ N=8 接触期 8px   ...
 - [ ] **Step 4: 把读数交用户过目并定值**
 
 把汇总表原样贴给用户,并**按 spec §3.4 的定值规则**提出建议:在满足判据 2 的档位里取最小;
-三档全满足则取 **16**;若没有任何一档满足判据 2(**接触期偏差随容差显著变大**),
+三档全满足则取 **16**(★ **本句已被实测取代,见下**);若没有任何一档满足判据 2(**接触期偏差随容差显著变大**),
 **停下来报告,不要硬填一个"看起来能压住次数"的值**。
+
+★ **本节末尾这句"三档全满足则取 **16**"已被实测取代**(2026-09-22 定案):三档**确实**全满足判据 2,
+但**频率也全同档**(8px = N2 5 / N4 8 / N8 5;16px 与 32px 在 N=2 也是 5,在 N=4/N=8 上落在 8~15
+抖动且无系统性更低)⇒ 按"满足判据 2 的档里取最小"得到的采纳值是 **8.0**,不是 16。
+依据与读数见 `docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md` §3.4
+的「扫描结果」。**别照上面那句去填 16。**
 
 - [ ] **Step 5: 提交(探针)**
 
@@ -550,16 +571,29 @@ const DEFAULT_CONTACT_POS_TOL := 2.0
 ```bash
 source tests/env.sh
 "$GODOT" --headless --path . --quit-after 40000 res://tests/brawl_rollback_probe.tscn
-"$GODOT" --headless --path . res://tests/rollback_fidelity_probe.tscn
-"$GODOT" --headless --path . res://tests/replica_ghost_probe.tscn
-"$GODOT" --headless --path . res://tests/replica_smoothness_probe.tscn
-"$GODOT" --headless --path . -s res://tests/pvp_reconcile_smoke.gd
+"$GODOT" --headless --path . --quit-after 3600 res://tests/rollback_fidelity_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/replica_ghost_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/replica_smoothness_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/pvp_reconcile_smoke.tscn
 "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd
 ```
 
 Expected: 逐个 grep 到各自的通过文本(`BRAWL ROLLBACK PROBE: ALL-OK`、
-`ROLLBACK FIDELITY PROBE: ALL-OK`、`REPLICA GHOST PROBE: ALL-OK`、`SMOKE OK` 等)。
+`ROLLBACK FIDELITY PROBE: ALL-OK`、`REPLICA GHOST PROBE: ALL-OK`、`SMOKE_RECONCILE OK`、`SMOKE OK`)。
 **逐个看文本,不看退出码。**
+
+★★ **本清单订正过两处(2026-09-22;初稿的两个缺陷让一位实现者白挂 8 小时,别再抄错)**:
+
+1. **`pvp_reconcile_smoke` 是场景探针(`.tscn`)**,初稿写成 `-s res://tests/pvp_reconcile_smoke.gd`
+   —— `-s` 下**没有 autoload**,于是
+   `SCRIPT ERROR: Compile Error: Identifier not found: GameParameters`,**一条断言都跑不到**。
+   正确形式 = `--quit-after 3600 res://tests/pvp_reconcile_smoke.tscn`,判词 `SMOKE_RECONCILE OK`。
+2. **三个场景探针初稿没给 `--quit-after` 安全网**,而本仓明令场景探针一律给(统一 **3600** 帧;
+   `brawl_rollback_probe` 因为要跑 28 趟而用 40000)。安全网**只在探针挂住时才用得上**,
+   放宽不花代价;给少了会在机器负载重时**先耗尽**,表现为"一行 `ALL-OK` 都没有"、看着像功能坏了。
+
+★ 怎么分两种跑法(按脚本首行):`extends SceneTree` → `-s res://tests/<名>.gd`(autoload 不存在);
+`extends Node` → `--quit-after <帧数> res://tests/<名>.tscn`。跑新冒烟一律套 `timeout`。
 
 ★ 真链路两条(`tests/royale_c2_probe.tscn` / `tests/reconnect_probe.tscn`)**归用户跑**。
 
@@ -578,6 +612,9 @@ git commit -m "feat(net): 接触期容差定值 <N>px(依据:<扫描结论>)+ �
 - Modify: `CLAUDE.md`(§网络与 PvP 的 C2 段 + §测试 的探针清单)
 - Modify: `docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md`(§2.1 末尾那句)
 - Modify: `docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md`(§4/§7 落点订正 + 扫描结果)
+- Modify: **本计划自身**(`docs/superpowers/plans/2026-09-22-contact-rollback-tolerance.md`)
+  —— ★ 本任务在落地过程中订正了**计划里写错的三处**(Task 4 (e) 的 bar、Task 4 Step 4 的"取 16"、
+  Task 5 Step 3 的命令清单),故计划文件本身也在本任务的提交范围内(见 Step 4)。
 
 **Interfaces:**
 - Consumes: 全部前面的产出
@@ -618,9 +655,15 @@ git commit -m "feat(net): 接触期容差定值 <N>px(依据:<扫描结论>)+ �
 - [ ] **Step 4: 提交**
 
 ```bash
-git add CLAUDE.md docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md
-git commit -m "docs: 接触期容差落地记录 + 订正 09-12 那条证据不足的证伪理由"
+git add CLAUDE.md docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md docs/superpowers/plans/2026-09-22-contact-rollback-tolerance.md
+git commit -m "docs(net): 接触期容差落地记录 + 订正 09-12 那条证据不足的证伪理由"
 ```
+
+★ 第 4 个路径(**本计划文件自己**)是本任务补上的:初稿只列了三个文档,而本任务同时订正了
+计划里写错的地方(File 表里列出的三处)—— 不改它,下一读者拿到的还是一份带错 bar 与错命令的清单。
+★ commit message 用 `type(scope): 中文描述`(本仓约定),故写 `docs(net):` 而不是裸 `docs:`。
+★ **只 add 这四个文件** —— 不许 `git add -A`/`git add .`:本仓有过并行会话被 `git add -A`
+卷走无关改动的先例。
 
 ---
 
