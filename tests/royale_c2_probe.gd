@@ -32,6 +32,10 @@ const RESULT_PREFIX := "royale_c2_probe_"
 const GO_FILE := "user://royale_c2_probe_go.txt"
 const ORCH_DEADLINE := 90.0
 
+# 本探针自当大厅时客户端要连的地址。★ 与 `tests/royale_c2_watcher.gd` 的同名常量**必须同值**
+# (那边用它核对"确实连的是本探针的大厅",见其 `_stage_lobby` 的守卫)。
+const LOBBY_ADDR := "127.0.0.1"
+
 var _role := "lobby"
 var _c1_peer := 0
 var _code := ""
@@ -106,6 +110,12 @@ func _process(delta: float) -> void:
 				_read_result("c2"), _client_logs()])
 		get_tree().quit(1)
 		return
+	# ★ 两边都出结果 = 两个客户端都收工了 ⇒ 立刻收尾,**不必等到 stage 2**。
+	#   早失败那类(如 watcher 的"连错服务器"守卫)在 0.3s 就写完结果,而 stage 0/1 原先不读结果
+	#   ⇒ 裁判干等满 90s 才把同一份 FAIL 打出来(实测:那 90s 里它什么都没做)。
+	#   判据与下面 stage 2 的**完全同款** —— 仍要求**两边都**出结果,理由见 `_finish_from_results`。
+	if _both_clients_done():
+		return
 	match _stage:
 		0:
 			if _created_t < 0.0 or _t - _created_t < 0.3:
@@ -122,20 +132,7 @@ func _process(delta: float) -> void:
 			print("PROBE: 房内 2 人,已发起开局(拉起 worker 子进程)")
 			_stage = 2
 		2:
-			var r1: String = _read_result("c1")
-			var r2: String = _read_result("c2")
-			# ★ 必须**两边都出结果**才收工 —— 绝不能一见到 FAIL 就 quit:
-			#   两个客户端是**并发**的,任何一个先退都会改变另一个的处境(大乱斗「剩余 <2 人即终局」,
-			#   另一方的复活会被当场掐掉)。一见到 FAIL 就走 = 让"先失败的那个"把"还没跑完的那个"
-			#   带下水,报告里只留一个 `(未完成)` 且看不出为什么。本探针第一版实测踩到的正是这个:
-			#   c2 断言完(必然带 A① 残留 → FAIL)先出结果,裁判当场退出,c1 死在"等复活"里。
-			if _has_result(r1) and _has_result(r2):
-				var ok := r1.begins_with("OK") and r2.begins_with("OK")
-				print(("PROBE: ALL-OK" if ok else "PROBE: FAIL") + "\n  c1: %s\n  c2: %s" % [r1, r2])
-				if not ok:
-					print(_client_logs())   # 失败时把两端的日志一起摊开(否则子进程里发生了什么是盲区)
-				get_tree().quit(0 if ok else 1)
-				return
+			pass   # 「两边都出结果就收工」已提到 `_process` 顶部统一处理(见那里的注释)
 
 
 func _rm() -> Node:
@@ -160,9 +157,35 @@ func _read_result(who: String) -> String:
 	return f.get_as_text().strip_edges() if f != null else "(读取失败)"
 
 
-# 该端是否**已经出结果**(不论成败)。见 stage 2 的说明:必须两边都出才算跑完。
+# 该端是否**已经出结果**(不论成败)。见 `_both_clients_done` 的说明:必须两边都出才算跑完。
 func _has_result(r: String) -> bool:
 	return r.begins_with("OK") or r.begins_with("FAIL")
+
+
+# ★ 两个客户端**都**出结果了吗?这是收工的**唯一**判据。
+#   ★★ **绝不能一见到 FAIL 就 quit**:两个客户端是**并发**的,任何一个先退都会改变另一个的
+#   处境(大乱斗「剩余 <2 人即终局」,另一方的复活会被当场掐掉)。一见到 FAIL 就走 = 让"先失败的
+#   那个"把"还没跑完的那个"带下水,报告里只留一个 `(未完成)` 且看不出为什么。本探针第一版实测
+#   踩到的正是这个:c2 断言完(必然带 A① 残留 → FAIL)先出结果,裁判当场退出,c1 死在"等复活"里。
+#   ★ 提在 `_process` 顶部(而不是只放 stage 2)是为了**早失败**那类:它们在 0.3s 就写完结果,
+#   那时裁判还在 stage 0/1,原先不读结果 ⇒ 干等满 90s 才把同一份 FAIL 打出来。
+func _both_clients_done() -> bool:
+	var r1: String = _read_result("c1")
+	var r2: String = _read_result("c2")
+	if not (_has_result(r1) and _has_result(r2)):
+		return false
+	_finish_from_results(r1, r2)
+	return true
+
+
+# 两端都有结果了 → 打印合并判词并按成败退出。结果文件只在客户端**收工**时才写,
+# 故「两边都有」⇒ 这一趟已经结束,任何阶段都能收尾。
+func _finish_from_results(r1: String, r2: String) -> void:
+	var ok := r1.begins_with("OK") and r2.begins_with("OK")
+	print(("PROBE: ALL-OK" if ok else "PROBE: FAIL") + "\n  c1: %s\n  c2: %s" % [r1, r2])
+	if not ok:
+		print(_client_logs())   # 失败时把两端的日志一起摊开(否则子进程里发生了什么是盲区)
+	get_tree().quit(0 if ok else 1)
 
 
 # 客户端子进程的 stdout 父进程看不到(Windows 不继承句柄)→ 读两样落盘的东西并打出来:
@@ -199,6 +222,17 @@ func _run_client() -> void:
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
 	if FileAccess.file_exists(lp):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
+	# ★★ **必须把地址拨到本探针的大厅**。生产默认是**云服**(`PvpSession.server_address` 初值
+	#   120.53.107.140),而客户端这一侧是**实例化真 `royale_lobby.tscn`** 让它自己连 ——
+	#   不拨的话两端会静默连到**云上那台真服务器**(还会在它上面真的建/进房间),
+	#   而编排器(本进程的 7777 大厅)**一条 `玩家连入` 都收不到** ⇒ `royale_create_requested`
+	#   永不发射 ⇒ `go.txt` 恒空、c1 卡阶段 1、c2 卡阶段 0,最后只给一个 90 秒超时。
+	#   ★ 这个坑**静默且极难归因**:日志里满是 c1/c2 自己的「已连接服务器」,看着像连上了。
+	#   范本:`tests/rejoin_watcher.gd` 的 `_on_node_added`(那边更麻烦 —— 它连 7777 都不许碰,
+	#   故要在页 `_ready` **之前**预置 `_connected/_connected_addr`);本探针要的正是真连接,
+	#   故只需在实例化**之前**拨地址即可。
+	#   ★ 守卫:`royale_c2_watcher._stage_lobby` 会核对 `_connected_addr`,连错就当场红。
+	PvpSession.server_address = LOBBY_ADDR
 	var watcher: Node = load("res://tests/royale_c2_watcher.gd").new()
 	watcher.who = _role
 	watcher.lobby = load("res://scenes/royale_lobby.tscn").instantiate()

@@ -74,6 +74,7 @@ func _ready() -> void:
 	await _phase_pickup_prompt(player, lvl)
 	await _phase_drop_hold(player, lvl)
 	await _phase_slot_placement(player, lvl)
+	await _phase_same_type_selection(player, lvl)
 
 	# ── 有真实渲染时顺手取一张图,供**人眼**确认地上的枪真的画出来了 ──
 	# (headless 下 get_image() 返回 null,跳过;断言部分两条腿都能跑。)
@@ -155,6 +156,52 @@ func _phase_slot_placement(player: Node, lvl: Node) -> void:
 		_check(slots_bottom > 0.0 and slots.position.y > 0.0,
 				"%d 把枪时容量格子留在画面内(y=%.0f)" % [plan.size(), slots.position.y])
 	# 收尾:还原一张"图里好看"的背包(下面取图那步会再摆一次,这里只是别留 4 把的乱状态)
+	player.weapons.set_initial_inventory([1])
+	for i in 6:
+		await get_tree().process_frame
+
+
+# ── 同型号两把:左下角**只许高亮一把**(用户 2026-09-23 报:「捡起两把型号相同的枪,UI 显示错误」)──
+# 根因:`_refresh_weapon_boxes` 原先按**类型**判选中(`sel := t == cur`),而 `current_slot_int()`
+# 返回的正是**类型 id**(见 `weapon_component.gd` 的 `_current_slot`)—— 同型号两把类型相同
+# ⇒ **两行同时**被判选中(深底 + 大图标 + 名称/残弹),而实际手持的只有一把。
+# ★ 判据必须落在**渲染结果**上(数出几个"选中外观"),不能只查某一行的属性:
+#   `_weapon_name` / `_ammo_label` 是**单例**(后被赋值的覆盖前者),只查它们永远"正常"。
+# ★ 单机开局本来就**每种散 2 把**,故这条路径出厂即可达,不是边角。
+func _phase_same_type_selection(player: Node, lvl: Node) -> void:
+	var hud: Node = lvl.get_node_or_null("HUD")
+	if hud == null:
+		_check(false, "Level0 里有 HUD 节点")
+		return
+	player.weapons.set_initial_inventory([1, 1])   # 两把同型号(手枪)
+	for i in 6:
+		await get_tree().process_frame
+	var box: Node = hud.get("_weapon_box")
+	if box == null:
+		_check(false, "HUD 拿不到 _weapon_box")
+		return
+	var boxes: Array = []
+	for c in box.get_children():
+		if c is PanelContainer:      # `_drop_bar` 是 ColorRect,天然排除
+			boxes.append(c)
+	_check(boxes.size() == 2, "两把同型号应画出 2 个武器框(实得 %d)" % boxes.size())
+	# 判据①:深底(选中外观)的框**恰好一个**
+	var deep := 0
+	for b in boxes:
+		var sb := (b as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
+		if sb != null and sb.bg_color.a > 0.0:
+			deep += 1
+	_check(deep == 1,
+			"同型号两把时只有 1 个框是选中外观(实得 %d 个 —— 2 个 = 按**类型**判选中了)" % deep)
+	# 判据②(与①独立):带"名称+残弹"详情块的框也只许一个
+	var infos := 0
+	for b in boxes:
+		for row in (b as PanelContainer).get_children():
+			for g in row.get_children():
+				if g is VBoxContainer:
+					infos += 1
+	_check(infos == 1, "同型号两把时只有 1 个框带名称/残弹详情块(实得 %d)" % infos)
+	# 收尾还原
 	player.weapons.set_initial_inventory([1])
 	for i in 6:
 		await get_tree().process_frame

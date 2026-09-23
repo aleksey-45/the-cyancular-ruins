@@ -131,6 +131,32 @@ func can_send_to_server() -> bool:
 	return is_peer_live(1)
 
 
+# **广播**前的判据:表里**每一个** peer 现在都能收包吗?(空表 = false:没人可发)
+#
+# ★★ 为什么广播也要判活、而且判据必须是"**全部**都行" —— 这是 2026-09-21 定位到的那条
+#   `Unable to send packet on channel 0/1, max channels: 0` 的主来源:
+#   `rpc()`(广播)在 ENet 层是**逐 peer 发包**(不是"一次发出、由 ENet 跳过坏 peer"),
+#   所以表里只要还剩**一个**处于"队列已拆、MultiplayerAPI 还没忘掉"窗口的 peer,这一发就报错。
+#   而那个 peer 往往正是**我们自己刚踢掉的那个**:`disconnect_peer()` 当场把它的通道数清零
+#   (`enet_peer_reset_queues`),而它要从 `get_peers()` 里消失得等**下一次 poll**。
+#   实测证据(2026-09-21,`tests/reconnect_probe` 的 worker 日志,当前树、未改之前):
+#   每拒绝一次错的 reclaim 就有一帧**同时**报 channel 0 与 channel 1,且 GDScript backtrace
+#   两行都指向 `_broadcast_snapshot (server/match_snapshot.gd:34)` → `_physics_process`。
+#   (通道号是证据:`0` = reliable、`1` = unreliable —— 一帧里两条都出现,说明那一发在
+#    ENet 层逐 peer 走了两条通道。)
+# ★ 返回 false 的代价只是"这一帧先别广播":快照走 unreliable,少一帧没有任何后果。
+# ★ 别把它写成 `not multiplayer.get_peers().is_empty()`(那是老判据,也是这条错误的成因):
+#   `get_peers()` 滞后,它把正在断开的 peer 仍报为"在"。
+func all_peers_sendable() -> bool:
+	var ids := multiplayer.get_peers()
+	if ids.is_empty():
+		return false
+	for id in ids:
+		if not is_peer_live(int(id)):
+			return false
+	return true
+
+
 # 定向回一条 RPC(答复某个 caller)。**对端已经不活着就静默跳过**(返回 false),不报错、不发。
 #
 # ★ 为什么必须收口到一个口:请求与"对端断开"经常挤在**同一次 poll** 里 —— ENet 按到达顺序处理
@@ -295,7 +321,12 @@ func server_message(text: String) -> void:
 	local_server_message.emit(text)
 
 # ── 延迟测量:客户端周期 ping → 服务器原样回 pong → 客户端算 RTT(EWMA 平滑)──
+# ★ 判活**收在本函数里**(不是只靠调用点):`pvp_match_client` 那处已带 `can_send_to_server()`,
+#   但这是"每 0.5s 一次"的周期发送 —— 多一个调用点就多一条往死 peer 发包的路,而这个函数
+#   自己知道该问谁。2026-09-21 审计时它是 `rpc_id(` 里**唯一**没在函数体自带判据的一条。
 func send_ping() -> void:
+	if not can_send_to_server():
+		return
 	_ping_sent_ms = Time.get_ticks_msec()
 	rpc_id(1, "ping")
 

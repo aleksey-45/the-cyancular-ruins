@@ -55,6 +55,8 @@ var _netstat_steps := 0     # 两次打印之间的物理步数(=物理步/秒,�
 var _match_ended := false
 # 暂停菜单是否开着(PvP 下菜单不暂停树,靠它锁本地输入;见 _refresh_input_lock)
 var _menu_open := false
+var _result: MatchResult = null             # 结算页(挂载一次,由 _show_result 建)
+var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载荷的输入之一)
 
 # 玩家本体精灵(player.png)的**主色**(RGB)。"把身体染成某个颜色"要拿它当基准去做比值。
 # ★ 数值是**实测**的不是拍的(2026-09-19):主色 `#639BFF`,占 12987 个不透明像素里的 10875(83.6%);
@@ -67,25 +69,30 @@ const BODY_BASE_COLOR := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)   # #639BFF
 
 # 通用身体染色:只给角色本体 AnimatedSprite2D 上色(武器/预瞄线不染)。
 # 两条互斥的路,按 `color_override` 是否存在二选一:
-#   · 默认(1v1 / 大乱斗)= **色相旋转**:挂 `player_p2_hue.gdshader`,`hue_deg` 是旋转量,
-#     0 = 不改色(故本助手可重复调用)。
-#   · `color_override` 非透明(3v3 队色)= **modulate 比值**,见下。
+#   · `color_override` 非透明 = **modulate 比值**(见下)。用户:**3v3 队色** + **1v1 的 P2**
+#     (`pvp_game._apply_p2_tint` 传的就是队 2 那个 token ⇒ 两处同色是结构性的)。
+#   · 默认(大乱斗 / 3v3 的**个人色相**)= **色相旋转**:挂 `player_p2_hue.gdshader`,
+#     `hue_deg` 是旋转量,0 = 不改色(故本助手可重复调用)。
 #
 # ★ 队色为什么是"modulate 比值"而不是"直接乘队色"(brief 给的是后者 —— 二选一,这里选前者
 #   但**改了算法**,理由是实测的):`modulate` 是**乘**,只能把身体压暗、改不了色相。本体主色是蓝
 #   `#639BFF`,蓝 × 队色 ≠ 队色,"一眼看出谁是队友"会落空(当初拿旧队色实测:.superpowers/sdd/
 #   `_t6_tint2.png` 第②列是一坨**灰紫**)。
-#   改成 **`队色 / 本体主色`** 这个**比值**就精确了:输出 = 主色像素 × 比值 = **恰好队色本身**
-#   (2026-09-19 复测:队 1 得到 `#639BFF` = `C_TEAM_A`、队 2 得到 `#63FFF3` = `C_TEAM_B`,逐字节相等)。
+#   改成 **`目标色 / 本体主色`** 这个**比值**就精确了:输出 = 主色像素 × 比值 = **恰好目标色本身**
+#   (2026-09-19 复测:队 1 得到 `#639BFF` = `C_TEAM_A`,逐字节相等;当时队 2 的 token 是 `#63FFF3`,
+#    同样是逐字节相等 —— 2026-09-20 队 2 的 token 改成 `#80F4FF`,比值随之变,链子不变,
+#    渲染侧由 `tests/hue_tint_probe` 守卫 B/C 钉住)。
 #   队色因此与头顶 ID / 小地图点位**同源同一个常量**,不存在"身体是派生色、柱子上是原色"。
-# ★ 队 2 的比值有分量 > 1(g = 1.645)—— 这是**有意的**:`CanvasItem.modulate` 收 >1 的值,
-#   实测在 `rendering/mobile`(Forward Mobile)下原样生效(上面那个 `#63FFF3` 就是它算出来的)。
+# ★ 队 2 的比值有分量 > 1(g = 244/155 ≈ 1.574、r ≈ 1.293)—— 这是**有意的**:
+#   `CanvasItem.modulate` 收 >1 的值,实测在 `rendering/mobile`(Forward Mobile)下原样生效。
 #   队 1 的比值恰为 (1,1,1)(队色 = 本体主色)⇒ 队 1 的身体就是默认蓝。
-# ★ 为什么队色仍不走 `player_p2_hue.gdshader`(试过):hue 旋转数学上是对的,但走那条路要先知道
-#   队色的色相、再反推该转多少度,而"输出 == 队色这个 token"只是数值上逼近;比值法是**结构性**
-#   成立的(输出恒等于 token 本身)。
-#   (2026-09-19 起那个 shader 的"纹理乘两次"bug 已修 —— 它当年让 hue 旋转结果被逐通道乘积压灰;
-#    修的是 1v1 的 P2 与大乱斗/3v3 的**个人色相**,与队色这条链互不影响。)
+# ★ 为什么队色(以及 1v1 的 P2)仍不走 `player_p2_hue.gdshader`(试过):hue 旋转数学上是对的,
+#   但走那条路要先知道目标色的色相、再反推该转多少度,而"输出 == 这个 token"只是数值上逼近;
+#   比值法是**结构性**成立的(输出恒等于 token 本身)。
+#   ★ 另有一条硬理由(2026-09-20):hue 旋转**保持饱和度/亮度不变**,而本体主色是 S61 V100
+#      ⇒ 它**表达不了** S50 这类目标色(用户新选的青 `#80F4FF` 正是 H185 S50 V100)。
+#   (那个 shader 的"纹理乘两次"bug 2026-09-19 已修 —— 它当年让 hue 旋转结果被逐通道乘积压灰;
+#    它现在是**个人色相**那条唯一的路,仍在生产里。)
 func _apply_tint(body: Node, hue_deg: float, color_override: Color = Color(0, 0, 0, 0)) -> void:
 	var canvas := body as CanvasItem
 	if canvas == null:
@@ -180,6 +187,10 @@ func _physics_process(_delta: float) -> void:
 	# 再 reconcile 到期权威(分歧 → restore+重放重对齐)。顺序:先记预测态,reconcile 才比得上 ring[C]。
 	if _rollback != null:
 		if _have_prev_seq:
+			# 贴身提示:只在**接触期**放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。
+			# ★ 必须在 reconcile() 之前 —— 它是消费方。★ 漏了这一行 = **静默**退回 2px 容差,
+			#   故 rollback_fidelity_probe 有一条源码守卫钉住它的位置与唯一性。
+			_rollback.in_contact = _local.touching_player()
 			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
 			_rollback.reconcile()
 	var src: PlayerInput = _local.input_source
@@ -203,6 +214,8 @@ func _physics_process(_delta: float) -> void:
 		_rollback.note_input(_input_seq, pkt)
 	# 地面武器:锚点 + 落点同步 + F 提示(纯本地表现,不参与预测)
 	_tick_ground_weapons()
+	# 本地视觉子弹撞到玩家 → 收掉(纯表现,见 _cull_bullet_contacts 的注释)
+	_cull_bullet_contacts()
 	# 网络统计读数(诊断,默认关)
 	_netstat_tick(_delta)
 
@@ -265,9 +278,63 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
 	_world.add_child(b)
+	# ★ 视觉副本也要认射手:见 `_broadcast_bullet_spawn` 的注释(榴弹"出膛即炸")。
+	#   指向**射手副本**而不是本地玩家 —— `BulletBase` 里凡是用 `shooter` 的地方都自带
+	#   类型/分组守卫(见 `_wrap` 的 `is_in_group("player")` 与 `_check_player_contact`
+	#   的 `n == shooter`),拿副本当射手不会破坏它们。
+	b.shooter = _replica_for(int(data.get("shooter_role", 0)))
 	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
 	if Settings.pvp_show_trajectories:
 		BulletTrail.attach(b, data["color"])
+
+
+# ── 本地视觉子弹撞到"该打的人" → 立刻消失(用户 2026-09-22:「画面效果看起来还是像穿透」)──
+# **为什么需要这条**:客户端那颗子弹的 `collision_mask = 5`(地形 1 + 敌人层 4),而**对手在
+# 客户端只是一具层 2 的幽灵体**(`player_replica._ghost`)**⇒ 物理上永远撞不到** —— 子弹从对手
+# 身上穿过去、一直飞到撞墙或超射程;而服务器早已按半径裁决、扣了血、销毁了它那两颗。
+# 玩家看到的因此是"伤害算到了,画面上却像穿透"。
+#
+# **判据用与服务器裁决同一个常量**:`BulletBase.PLAYER_HIT_RADIUS`(= `MatchHost.HIT_RADIUS`
+# 引用的那一个)+ 同一套环面最短距离 ⇒ "子弹停在哪"与"服务器判在哪"是**同一个公式**算出来的,
+# 不是凑出来的相似值(凑的话两者迟早漂)。
+#
+# ★ 只收**本地视觉副本**:`apply_damage == false`(客户端子弹都带这个标记;权威侧在服务器进程,
+#   本类不在那儿跑)。权威裁决一个字都不受影响 —— 伤害永远由服务器说了算,这里只改画面。
+# ★ **榴弹(`explodes`)不走这条**:它的引信/反弹由 `BulletBase._check_player_contact` 管,
+#   在这里把节点收掉会把爆炸一起吞掉。
+func _cull_bullet_contacts() -> void:
+	for n in get_tree().get_nodes_in_group("bullet"):
+		var b := n as BulletBase
+		if b == null or b.apply_damage or b.explodes:
+			continue
+		if _bullet_contact_target(b) != null:
+			b.queue_free()   # 立刻:queue_free 在本帧绘制**之前**生效,不会多亮一帧
+
+
+# 这颗视觉子弹此刻有没有贴上"该打的人";有则返回那个节点,否则 null。
+# 候选 = `BulletBase.CONTACT_GROUPS`(player = 本地玩家;player_replica = 对手副本),
+# 排掉射手本人 —— 与 `_check_player_contact` 同一候选集,再叠一层队别过滤(3v3 队友穿透)。
+func _bullet_contact_target(b: BulletBase) -> Node2D:
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	for group in BulletBase.CONTACT_GROUPS:
+		for n in get_tree().get_nodes_in_group(group):
+			if n == b.shooter or not (n is Node2D):
+				continue
+			if not _bullet_hits_entity(b, n as Node2D):
+				continue
+			var d := GridPathfinder.toroidal_delta_px(b.global_position,
+					(n as Node2D).global_position, w, h).length()
+			if d < BulletBase.PLAYER_HIT_RADIUS:
+				return n as Node2D
+	return null
+
+
+# 这颗视觉子弹能不能停在那个实体上。默认**能**(1v1 / 大乱斗:除了射手,谁都能挡)。
+# 3v3 覆写:与射手同队的排掉 —— 规则 12「队友不互挡 + 子弹穿透队友」;
+# 不覆写的话队友副本会把自己的子弹吃掉(与服务器裁决相反,且不报错)。
+func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
+	return true
 
 
 # 本地输入锁的单一口(三个维度:冻结期 / 菜单打开 / 结算后回菜单途中)。
@@ -277,6 +344,77 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 func _refresh_input_lock() -> void:
 	if _local != null and _local.has_method("set_controls_locked"):
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
+
+
+# ── 结算页(2026-09-21):挂载与离场**三个模式共用**,各自只覆写 `_build_result_payload()` ──
+# ★ 为什么在基类:三个客户端(`pvp_game` / `royale_game` / `team_game`)**本来就都**
+#   `extends PvpMatchClient`,不存在"要动继承链"这件事。挂载/离场逐字同构,抄三份必然漂 ——
+#   与本文件既有的 `_apply_peer_hues_or_team` / `_replica_for` 是同一个形状。
+# ★★ 必须走**场景实例化**,不能用 `MatchResult.new()`:`layer = 150` **只写在
+#   `ui/match_result.tscn` 里**(脚本不设 layer —— 三个现有 HUD 同款写法,层位值只有那
+#   一处来源)。用 `.new()` 会拿到 CanvasLayer 默认的 **layer 1**,结算页画在 HUD(130)/
+#   小地图(131) **下面**、压暗罩盖不住它们,而计划自己的类头注释却写着「盖住一切」。
+#   ★ 这条有守卫:`tests/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,
+#     出现 `MatchResult.new(` 即红。
+const RESULT_SCENE := preload("res://ui/match_result.tscn")
+
+# 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
+# 各自只覆写 `_build_result_payload()`。
+# ★★ **挂载一次、但每次都要刷新**(`if _result == null` 只包住"建 + 连线")。
+#   写成 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**":
+#   第二条 MATCH_OVER 载荷就永远到不了屏幕上,而 `MatchResult.show_result` 的清场重建
+#   (`ui/match_result.gd` 的 remove_child→queue_free 那段)在生产里**一次都不会跑** ——
+#   探针却直接调它、照绿。**探针比产品更绿**是这里最难发现的形状。
+#   ★ 第二条载荷**可达**(不是假想):1v1 —— `server_main.gd` 在每次 reclaim 成功后重播当前
+#     `round_state`,掉线重连的客户端就会收到第二条 MATCH_OVER;3v3 —— `team_host.gd` 的
+#     `_finish_match()` 在战斗进行中直接把 PLAYING→MATCH_OVER,而倒地边沿检测在
+#     `match _round_state:` **之前**且**不看状态** ⇒ MATCH_OVER 之后再死人会再广播一条
+#     带新 `stats`/`mvp` 的终局载荷;`mark_disconnected` 那条同款。
+func _show_result() -> void:
+	if _result == null:
+		_result = RESULT_SCENE.instantiate()
+		add_child(_result)
+		_result.leave_requested.connect(_leave_to_main_menu)
+		# ★★ **挂载那一刻先用空载荷亮出来**,再折真载荷。顺序不可换 —— 这是"MATCH_OVER 之后
+		#   永远有出路"那条不变量的安全网(2026-09-21 终审 I3)。
+		#   要防的故障形状是:**`show_result()` 在它最后那句 `visible = true` 之前结束**。
+		#   那时结算页停在 `_ready()` 末尾那句 `visible = false` 上 —— **看不见、ESC 也够不着**
+		#   (它的 `_unhandled_input` 首行是 `if not visible: return`)、按钮也点不到;而此刻暂停
+		#   菜单已被 MATCH_OVER 块销毁、K 键被 `_match_ended` 挡住 ⇒ 玩家**卡死在对局里**。
+		#   ★ 可达形状(合成故障实测):载荷里混进**非字典的节** ⇒ `show_result` 里
+		#     `_build_section(sections[i], …)` 的参数类型转换当场失败 ⇒ 整个 `show_result` 在
+		#     `visible = true` **之前**结束。适配器改动 + 这页的"缺键一律取默认"口径之间,
+		#     只差一个"某节不是字典"就能走到。今天没有人踩到,所以这是**安全网**不是活 bug。
+		#   ★ 另一条**不**构成陷阱(实测,免得后人照直觉"修"错地方):`_build_result_payload()`
+		#     内部抛错只让**它自己**当场结束,而它签名是 `-> Dictionary` ⇒ 隐式返回的 null 被强制
+		#     转换成**空字典** ⇒ 退化成"可见但空"的结算页,出路仍在(实测 visible=true)。
+		#   ⇒ 关键是"亮出来"必须排在任何可能把 `show_result()` 打断的活**之前**。放进
+		#     `show_result()` 内部同样能挡住它自己那一段;放在这里则连"挂载之后、调用之前"那一小段
+		#     也一起盖住(将来谁在中间插一句会抛错的代码,也不会退化回陷阱)。
+		#   空载荷**抛不出错**:"空载荷不崩"是本页的硬要求(`tests/match_result_probe` ① 专钉),
+		#   且它只做"赋文案 + 清场建节 + `visible = true`"三件事 ⇒ 可见、ESC 生效、
+		#   "返 回 主 菜 单"按钮可用,三样退路当场到手。
+		#   ★ 正常路径**看不到这个空态**:本函数一次跑完、两句之间没有 await,布局与绘制都在帧末,
+		#     玩家看到的永远是下面那句填好的那份。
+		_result.show_result({})
+	_result.show_result(_build_result_payload())
+
+
+# 结算页 -> 主菜单。★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,
+# 裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误。
+# ★ 防重入由 MatchResult 自己那次发信号 + safe_change_scene 的 _switching 双层兜住;
+#  这里只负责"在树上才切"(原定时器 lambda 里那条 is_inside_tree() 早退的**意图**搬到这里)。
+func _leave_to_main_menu() -> void:
+	if NetBus != null:
+		NetBus.stop()
+	if not is_inside_tree():
+		return
+	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
+
+
+# 结算页载荷(默认空)。三个子类各覆写一份 —— 模式差异只有这一点。
+func _build_result_payload() -> Dictionary:
+	return {}
 
 
 # ── 对手副本访问器:两个模式**唯一的结构性差异**就收在这一个口上 ──
@@ -429,6 +567,28 @@ func _on_match_sync(payload: Dictionary) -> void:
 			_on_remote_tile_destroyed(c, true)
 
 
+# ── 拾取诊断插桩(默认关)──────────────────────────────────────────────
+# 开关:`-- --pickup-diag`。★ 必须写在 `--` 之后 —— 与 `--netstat` / `server_main` 的
+#   `--worker` 同款口径;写在前面会被 Godot 丢掉、**静默失效**。
+# 默认关 ⇒ 生产行为逐字不变(只多一次懒查开关的布尔判断)。
+#
+# 用来回答「地上的枪**看得见**、走过去却没有 F 提示」这一类问题 —— 那种症状只有两种成因:
+#   ① 客户端压根没建出这把枪(`_spawn_pickup_node` 的早退是**静默 return**);
+#   ② 建出来了,但它的 `canonical_pos`(提示判据读的那个值)与**画出来的位置**不在一处。
+# 两个成因在画面上长得一模一样,只能靠数字分:下面逐条打"认不认、canonical/render/玩家各在哪、
+# 三条闸门各是真是假"。判据是**玩家 400px 内的枪**每 30 物理帧打一行(默认关时不打)。
+var _pickup_diag := false
+var _pickup_diag_checked := false
+var _pickup_diag_frame := 0
+
+
+func _pickup_diag_on() -> bool:
+	if not _pickup_diag_checked:
+		_pickup_diag_checked = true
+		_pickup_diag = OS.get_cmdline_user_args().has("--pickup-diag")
+	return _pickup_diag
+
+
 # ── 地面武器(2026-09-15):服务器权威,本端只渲染 + 等事件(不做客户端预测)──
 var ground_weapons := GroundWeaponField.new()
 var _pickup_nodes: Dictionary = {}    # inst -> WeaponPickup
@@ -456,6 +616,13 @@ func _on_weapon_removed(data: Dictionary) -> void:
 
 
 func _spawn_pickup_node(data: Dictionary) -> void:
+	# 诊断:早退是**静默**的 —— 先把"为什么没建"打出来(判据见 _pickup_diag 的注释)
+	if _pickup_diag_on():
+		print("[pkd] ← spawned inst=%s type=%s by_role=%s pos=%s vel=%s | world=%s local=%s 已有=%s" % [
+				str(data.get("inst", -1)), str(data.get("type_id", -1)), str(data.get("by_role", -1)),
+				str(data.get("pos", Vector2.ZERO)), str(data.get("vel", Vector2.ZERO)),
+				"有" if _world != null else "空", "有" if _local != null else "空",
+				"是" if _pickup_nodes.has(int(data.get("inst", 0))) else "否"])
 	if _world == null:
 		return
 	var inst := int(data.get("inst", 0))
@@ -500,6 +667,8 @@ func _remove_pickup_node(inst: int) -> void:
 		n.queue_free()
 	_pickup_nodes.erase(inst)
 	_self_drop_until.erase(inst)
+	if _pickup_diag_on():
+		print("[pkd] ← removed inst=%d" % inst)
 
 
 # 每帧:① 把锚点推给所有地面武器(接缝另一侧的枪要画在身边那一份上);
@@ -519,6 +688,7 @@ func _tick_ground_weapons() -> void:
 		var e: Dictionary = ground_weapons.get_entry(int(inst))
 		if not e.is_empty():
 			e["pos"] = pk.canonical_pos
+	_pickup_diag_frame += 1
 	_update_pickup_prompt(lp)
 
 
@@ -543,6 +713,20 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
+		# 诊断:玩家附近的枪逐条打(判据见 _pickup_diag 的注释)。★ `can=否` 时把
+		# **三条闸门各是真是假**分开打 —— 合成一个 false 就没法从日志看出是哪一条挡的。
+		# ★ `canon` 与 `render` 两栏是这条插桩的**重点**:两者本应只差整数个地图宽/高;
+		#   若 `render` 落在玩家身边而 `canon` 不是,就说明"画出来的枪"与"判据读的枪"分家了。
+		if _pickup_diag_on() and _pickup_diag_frame % 30 == 0:
+			var dd := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
+			if dd <= 400.0:
+				print("[pkd]   inst=%d type=%d d=%.1f can=%s | 冷却=%s 启用=%s | canon=(%.0f,%.0f) render=(%.0f,%.0f) 玩家=(%.0f,%.0f) settled=%s" % [
+						int(inst), int(pk.type_id), dd, "是" if can else "否",
+						"是" if _live_self_drops().has(int(inst)) else "否",
+						"是" if _local.weapons.is_slot_enabled(int(pk.type_id)) else "否",
+						pk.canonical_pos.x, pk.canonical_pos.y,
+						pk.global_position.x, pk.global_position.y, lp.x, lp.y,
+						"是" if pk._settled else "否"])
 
 
 # 仍在冷却期内的"自己刚丢下的" inst(与服务器 MatchGround._live_self_drops 同口径)。
@@ -574,8 +758,8 @@ func _live_self_drops() -> Array:
 #   (比不掐更糟);而**只**看节拍、不掐尝试,就是 2026-09-17 修掉的那个缺陷(见 `_retry_connect`)。
 const RECONNECT_RETRY_MS := 2000
 # 一次尝试的寿命。取值依据:一次成功握手约 2~3×RTT,5s 覆盖到 ~1.6s 的 RTT(再差的链路本就没法打);
-# 而 ENet 自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 ——
-# 不主动掐就只会有一次尝试、且期间一次 tick 都没有。
+# 而 ENet 自己的连接超时实测 **~31.8s**(连一个没人监听的端口)—— 不主动掐的话,一次尝试就能吃掉
+# 宽限期(`GraceWindow.DEFAULT_SECONDS`)预算的一半上下,且那整段期间**一次 tick 都没有**。
 const RECONNECT_ATTEMPT_TIMEOUT_MS := 5000
 var _reconnecting := false
 var _reconnect_started_ms := 0   # ★ **真实断开**时刻(不是"关菜单"时刻,见 _begin_reconnect)
@@ -627,15 +811,16 @@ func _recheck_disconnect() -> void:
 
 
 # 局内自动重连:不切场景、不重建世界 —— 场景与节点原样保留,只把连接接回去。
-# ★★ "不重建场景"**不等于**"世界没变":掉线那 30 秒里服务器照跑 —— 对面把墙拆了、地上的枪
-#   被捡走/丢弃/换局重铺。所以这条路径**同样要**拉一次 `match_sync` 把破坏态与地面武器补回来
+# ★★ "不重建场景"**不等于**"世界没变":掉线那 `GraceWindow.DEFAULT_SECONDS` 秒里服务器照跑 ——
+#   对面把墙拆了、地上的枪被捡走/丢弃/换局重铺。所以这条路径**同样要**拉一次 `match_sync`,
+#   把破坏态与地面武器补回来
 #   (见 `_on_resumed` 末尾那一拉;`destroyed` 不是路径乙专属)。★ 别把"世界还在原地"读成
 #   "没什么要补的" —— 那正是删掉那两行、让幻影墙/幽灵枪悄悄回来的那个想法(漏了不报错)。
 func _begin_reconnect() -> void:
 	# ★ MATCH_OVER / 对手离开那两条延时回菜单的路子会先 `NetBus.stop()`,而它断开的是我们自己。
 	if _match_ended:
 		return
-	# ★ 30 秒预算的**起算点 = 真实断开这一刻**,故记在这里、且在那道菜单守卫**之前** ——
+	# ★ 宽限期预算的**起算点 = 真实断开这一刻**,故记在这里、且在那道菜单守卫**之前** ——
 	#   菜单开着的闪断若等"关菜单"才起算,等于凭空多拿一段预算(spec 的宽限期按**服务器**的
 	#   掉线检测起算,客户端这边晚算的那几秒会让最后几次 reclaim 打在"已被移出"上)。
 	#   ★ 只在**没人记过**时才记:关菜单时 `_recheck_disconnect()` 再来一次,预算要接着走,不重置。
@@ -691,9 +876,10 @@ func _retry_connect() -> void:
 	multiplayer.connection_failed.connect(_on_reconnect_failed, CONNECT_ONE_SHOT)
 	# ★★ 成功这条**也要挂定时器**(2026-09-17 修:原先只有 `err != OK` 那条挂)。不挂的话,
 	#   "一次连接尝试正在飞"的整段期间**一次 tick 都没有** —— 宽限期判据从不被求值,而 ENet
-	#   自己的连接超时实测 **~31.8s**(连一个没人监听的端口),长于 30s 的宽限期 → 最坏情形是
-	#   **卡在冻结世界约 33 秒**才回主菜单,而不是设计的 30 秒(本机实测:尝试@0.15s →
-	#   `connection_failed`@31.81s → 由失败那一刻才挂上的 tick 在 ~33.8s 判超时)。
+	#   自己的连接超时实测 **~31.8s**(连一个没人监听的端口)→ 最坏情形是**卡在冻结世界 ~32 秒**
+	#   才回主菜单(本机实测:尝试@0.15s → `connection_failed`@31.81s → 由失败那一刻才挂上的
+	#   tick 在 ~33.8s 判超时)。★ 这里的病**不是**"宽限期太短"(当年它恰好是 30s),而是那一段
+	#   期间判据**一次都没被求值** —— 所以时长改成多少,这条修复的必要性都不变。
 	#   挂上之后这一路 tick 只多做一件事:到 `RECONNECT_ATTEMPT_TIMEOUT_MS` 就掐掉重开一次
 	#   (见 `_on_reconnect_retry_tick`)。
 	_schedule_reconnect_retry()
@@ -739,7 +925,8 @@ func _on_reconnect_retry_tick() -> void:
 	if not _reconnecting:
 		return
 	# ★★ 宽限期判据是**第一条**,且与"这次尝试走到哪一步"**无关** —— 两条路径(`err != OK` 与 OK)
-	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),30 秒也一定到点。
+	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),整整一个
+	#   `GraceWindow.DEFAULT_SECONDS` 也一定到点。
 	if Time.get_ticks_msec() - _reconnect_started_ms > int(GraceWindow.DEFAULT_SECONDS * 1000.0):
 		_abort_reconnect("重连超时,对局已结束")
 		return
@@ -756,8 +943,8 @@ func _on_reconnect_retry_tick() -> void:
 	# ★ 一次握手最多活 `RECONNECT_ATTEMPT_TIMEOUT_MS`(还没起飞的不受此限:0 = 无尝试在飞)。
 	#   ★ **这里绝不能用 `RECONNECT_RETRY_MS`** —— 每 2 秒 `NetBus.stop()` + 重连会在高 RTT 链路上
 	#     反复掐掉正在握手的尝试,比不掐更糟;那个值只管"多久看一眼"。
-	#   到点仍未落地 = 这次多半不会落地了(ENet 自己的超时 ~31.8s,远长于本宽限期)→ 掐掉重开,
-	#   让 30s 预算里能有若干次尝试,而不是只有一次。
+	#   到点仍未落地 = 这次多半不会落地了(ENet 自己的超时 ~31.8s,是它的 6 倍多)→ 掐掉重开,
+	#   让宽限期预算里能放下十来次尝试,而不是宁可干等一两次。
 	var attempt_age := Time.get_ticks_msec() - _attempt_started_ms
 	if _attempt_started_ms > 0 and attempt_age < RECONNECT_ATTEMPT_TIMEOUT_MS:
 		_schedule_reconnect_retry()
@@ -796,7 +983,8 @@ func _on_resumed() -> void:
 	_rollback.bind(_local)
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# ★ 路径甲(局内自动重连)**原来不需要 `match_sync`** —— 场景没重建、本地世界还在。
-	#   现在需要了:**世界在掉线那 30 秒里变过**。这一拉把两类丢掉的可靠事件一次补回:
+	#   现在需要了:**世界在掉线那 `GraceWindow.DEFAULT_SECONDS` 秒里变过**。这一拉把两类丢掉的
+	#   可靠事件一次补回:
 	#     · destroyed   —— 被拆的墙(不补 → 幻影墙 → 预测分歧)
 	#     · ground_weapons —— 掉落/被捡走的枪(不补 → 幽灵枪 / 看不见的枪)
 	#   ★ 顺序:上面已经把 C2 重置完了(新 rollback / _input_seq=0),**再**拉。

@@ -347,22 +347,41 @@ func snapshot_inventory() -> Array:
 
 # 用权威整态重建背包。**必须先于 equip(wslot)** —— 否则重放时可能切到客户端
 # 背包里没有的类型,走到 equip() 的"没有就加"分支,凭空造出一把服务器没有的枪。
-func restore_inventory(entries: Array) -> void:
+# 返回值:**是否按 `want_inst` 解析成功**(即手持下标来自权威的 `winst`)。
+# ★ 调用方靠它决定"重建实例时走下标还是走类型" —— 见 `player._apply_weapon_state`。
+#   返回 false 表示走的是**按类型**兜底(老载荷无 `winst`、或权威那把不在表里),
+#   此时下标只代表"旧类型那把",拿它去重建会把权威的 wslot 顶掉。
+func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 	# ★ **类型还在就保持手持那把不重建**:`restore_state` 每次 reconcile 都会调到这里,
 	#   而无脑重建 = 每帧 queue_free 旧枪 + 新建一把 + deferred 入树 —— 入树前那一帧
 	#   `tick()`/`fire()` 全是空转(该帧的开火边沿直接丢掉),而且白烧一次 instantiate。
 	#   只在"权威说的东西变了"时才动武器实例。
+	#
+	# ★★ `want_inst` = 权威说"手持的是**哪一把**"(`capture_state` 的 `winst`)。
+	#   **必须先按 inst 找**:`inst` 逐把唯一,而同型号两把**类型相同** ⇒ 按类型找只能拿到第 0 把
+	#   ⇒ `_current_index` 与手上真正那把分家:残弹写进**错的那把**、**丢弃丢错把**、
+	#   左上角武器框高亮错(用户 2026-09-23 报的就是最后这一条的表现)。
+	#   找不到(老载荷没带 `winst`、或权威那把不在表里)时**退回按类型** —— 行为与改动前逐字相同。
 	var keep_type := _current_slot
 	inventory.restore(entries)
-	var idx := inventory.first_index_of_type(keep_type) if keep_type > 0 else -1
+	var idx := inventory.index_of_inst(want_inst) if want_inst > 0 else -1
+	var by_inst := idx >= 0
+	if not by_inst:
+		idx = inventory.first_index_of_type(keep_type) if keep_type > 0 else -1
 	if idx >= 0:
 		_current_index = idx
+		# ★★ `_current_slot` **保持 `keep_type`(旧类型),不要改成表里那一条的类型** ——
+		#   调用方 `player._apply_weapon_state` 靠 `wslot != _current_slot` 决定**要不要 `equip()`**,
+		#   而 `equip()` 顺带**重建武器实例**。改成表里那条的类型后,同类型时那个判据恒假
+		#   ⇒ 实例永不重建 ⇒ 被清空过背包的一方恢复后**手上没枪**,武器不再写 `set_facing`,
+		#   与权威在 `facing` 上发散(`pvp_twin_smoke` 实测 tick=255 红)。真正的类型不一致
+		#   那一档仍由调用方的 `equip(wslot)` 收尾 —— 那是**已有**行为,别绕开它。
 		_current_slot = keep_type
 		var mag := int(inventory.held[idx]["mag"])
 		if mag != WeaponInventory.MAG_FULL and _weapon != null and is_instance_valid(_weapon):
 			_restore_mag.call_deferred(_weapon, clampi(mag, 0, _weapon.mag_size))
 		inventory_changed.emit()
-		return
+		return by_inst
 	# 权威说手上那把没了(或本来空手)→ 清空手持,让调用方按 wslot 重新 equip
 	# ★ 武器实例也要放掉:只清索引的话 `_weapon` 还活着,而 `tick()`/`fire()` 只判
 	#   `_player_ok()`(player 非空且没倒地)、**不看索引** → 手上留着一把索引 -1 却照常
@@ -373,6 +392,7 @@ func restore_inventory(entries: Array) -> void:
 	_current_index = -1
 	_current_slot = 0
 	inventory_changed.emit()
+	return false
 
 
 func _flush_current_mag() -> void:
@@ -414,6 +434,15 @@ func current_weapon() -> WeaponBase:
 
 func current_slot_int() -> int:
 	return _current_slot
+
+
+# 手持那一条的 `inst`(逐把唯一);空手 / 下标越界返回 0。
+# ★ 与 `current_slot_int()` 的分工:那个是**类型 id**(协议/副本按它走),同型号两把**恒等**;
+#   这个才回答"是**哪一把**"—— 权威态(`capture_state` 的 `winst`)与 UI 高亮都需要它。
+func current_inst() -> int:
+	if _current_index < 0 or _current_index >= inventory.held.size():
+		return 0
+	return int(inventory.held[_current_index]["inst"])
 
 
 func movement_multiplier() -> Vector2:

@@ -59,6 +59,7 @@ func _run() -> void:
 	await _phase_prompt_near_weapon()
 	await _phase_pickup_removal()
 	await _phase_authoritative_inventory_change()
+	await _phase_same_type_equip()
 	await _phase_cycle_stress()
 	await _phase_switch_field_contract()
 	await _phase_replica_empty_hands()
@@ -167,6 +168,49 @@ func _phase_authoritative_inventory_change() -> void:
 	_check(w.current_weapon() == null,
 			"权威空手后不得留有可开火的武器实例(实际 %s)" % str(w.current_weapon()))
 	_check(is_instance_valid(_local), "本地玩家仍有效")
+
+
+# ── ④b 同型号两把:权威态必须能表达"手持的是**哪一把**" ──
+# 用户 2026-09-23 报「捡起两把型号相同的枪,UI 显示错误」。左下角那一处按类型判选中(已单独修,
+# 见 `ui/hud.gd`);**这一相钉的是更底下那层**:权威态里 `wslot` 只有**类型 id**,而
+# `restore_inventory` 原先用 `first_index_of_type` 反查 ⇒ 同型号时永远落回**第 0 把**,
+# 于是 `_current_index` 与手上真正那把(`_weapon`)分家。
+# ★ 后果不止 UI:`_flush_current_mag` 会把残弹写进**错的那把**、**丢弃会丢掉错的那把**。
+# ★ 判据落在**背包条目**上(手持那一条的 `inst`),不落在 `current_slot_int()` —— 后者是
+#   **类型 id**,同型号两把恒等 ⇒ 拿它断言**永远绿**(这正是旧冒烟漏掉它的原因)。
+func _phase_same_type_equip() -> void:
+	print("[gc] ── ④b 同型号两把:手持哪一把 ──")
+	var w: WeaponComponent = _local.weapons
+	# ★ **三把**同型号,两条断言各指一把**不同**的枪(inst=3 / inst=2)。
+	#   只用两把的话第二条会**假绿**:前一条红时下标停在 inst=1,而第二条若也要 inst=1
+	#   就恰好"看起来对"(实测踩过 —— 一个断言必须能独立地红)。
+	var inv: Array = [
+		{"type": 1, "inst": 1, "mag": 5},
+		{"type": 1, "inst": 2, "mag": 6},
+		{"type": 1, "inst": 3, "mag": 7},
+	]
+	# ① 硬回灌(restore_state)指向 **inst=3**
+	_local.restore_state({"wslot": 1, "winst": 3, "inv": inv})
+	for i in 10:
+		await get_tree().physics_frame
+	_check(w.inventory.held.size() == 3,
+			"三把同型号都按权威重建(实际 %d)" % w.inventory.held.size())
+	var idx: int = w._current_index
+	var got := int(w.inventory.held[idx]["inst"]) if idx >= 0 and idx < w.inventory.held.size() else -1
+	_check(got == 3,
+			"硬回灌手持的是权威指定的那把(inst=3);实得下标 %d / inst %d —— 1 = 落回第 0 把了" % [idx, got])
+	# ② 软同步(sync_soft_state)指向 **inst=2** —— 另一条路径,且目标与①不同
+	_local.sync_soft_state({"wslot": 1, "winst": 2, "inv": inv})
+	for i in 10:
+		await get_tree().physics_frame
+	var idx2: int = w._current_index
+	var got2 := int(w.inventory.held[idx2]["inst"]) if idx2 >= 0 and idx2 < w.inventory.held.size() else -1
+	_check(got2 == 2,
+			"软同步换到另一把同型号(inst=2);实得下标 %d / inst %d" % [idx2, got2])
+	# 收尾:还原成单把手枪,别把状态留给后面几相
+	_local.weapons.set_initial_inventory([1])
+	for i in 6:
+		await get_tree().physics_frame
 
 
 # ── ⑤ 拾取/丢出交替 60 轮 ──

@@ -22,8 +22,11 @@ extends Node
 #      故快照里的 ack_seq 恒为 0 → 客户端无从推算 _pending_input 积压。
 #      输入积压是本机压测量不到的**代码级风险**,只在报告里给机制与触发条件。
 #   3. 崩溃判据 = 结果文件缺失 / 客户端进程消失,**不是** "没看见报错"。
-#   4. MATCH_OVER 之后 royale_game 那条 6s 回主菜单的换场路径**不在本探针覆盖内**
-#      (客户端在 MATCH_OVER 当场写结果并退出,否则换场会把探针自己摘掉、丢掉全部读数)。
+#   4. MATCH_OVER 之后 royale_game **结算页**那条出场路径(玩家自己点「返回主菜单」)不在本探针
+#      覆盖内 —— 客户端在 MATCH_OVER 当场写结果并退出,**本探针的观测窗就到这里**。
+#      ★ 2026-09-21 订正:原先这里写的是"否则那条 6s 自动回主菜单的换场会把探针自己摘掉" ——
+#        **自动退场已随结算页批次删除**(改成玩家自己退),headless 探针不会去点那个按钮 ⇒
+#        到 MATCH_OVER 收尾是**探针自己的选择**,不是被换场摘掉。
 
 const BotInput := preload("res://tests/soak_bot_input.gd")
 
@@ -417,7 +420,9 @@ func _on_round_state(data: Dictionary) -> void:
 	_round_states += 1
 	if not (data.get("left", []) as Array).is_empty():
 		_saw_left += 1
-	# MATCH_OVER(=3)当场收尾:晚一步 royale_game 那条 6s 换场会把本探针一起摘掉、读数全丢
+	# MATCH_OVER(=3)当场收尾:★ 2026-09-21 订正 —— 当年写的是"晚一步那条 6s 自动换场会把本探针
+	# 一起摘掉、读数全丢";自动退场**已删除**(改成玩家自己在结算页上退),而 headless 探针不会去点
+	# 那个按钮 ⇒ 观测窗**必须**自己在这里收(不收就永远等不到下一步,没有别的力量会推动它)。
 	if int(data.get("state", -1)) == 3 and _match_running:
 		_match_over = true
 		_finish(true, "跑到 MATCH_OVER")

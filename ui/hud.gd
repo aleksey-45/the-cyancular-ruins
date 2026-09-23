@@ -201,11 +201,17 @@ func _refresh_weapon_boxes() -> void:
 	_ammo_label = null
 	_weapon_icon = null
 	_weapon_name = null
-	var cur: int = _player.weapons.current_slot_int()
 	var held_index := 0
+	var cur_index: int = _player.weapons._current_index
 	for e in _player.weapons.inventory.held:
 		var t := int(e["type"])
-		var sel := t == cur
+		# ★★ 判选中必须按**背包下标**,不能按**类型**(用户 2026-09-23:「捡起两把型号相同的枪,
+		#   左下角 UI 显示错误」)。`current_slot_int()` 返回的是**类型 id**(见 weapon_component.gd
+		#   的 `_current_slot`),拿它去比 `e["type"]` 在**同型号两把**时对两行**同时成立**
+		#   ⇒ 两个框一起变成深底 + 大图标 + 名称/残弹。而单机开局**每种散 2 把**,出厂即可达。
+		#   ★ 与 `ui/weapon_slots.gd` 的格子高亮**同源**(那条一直是按下标比 `_current_index`)。
+		#   `_current_index == -1`(空手)时一个都不选中 —— 与改动前同观感。
+		var sel := held_index == cur_index
 		var box := PanelContainer.new()
 		var bs := StyleBoxFlat.new()
 		bs.bg_color = Color(0, 0, 0, 0.28) if sel else Color(0, 0, 0, 0)   # 选中的底更深(用户 2026-09-16)

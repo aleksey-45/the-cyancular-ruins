@@ -25,7 +25,7 @@ extends Node
 #     ① `round_state` 恒为 PLAYING(服务器不终局、该队少人继续);
 #     ② 掉线者在**世界快照**里消失 → `team_game._on_snapshot_world` 把它的副本/头顶 ID 一起拆掉
 #        (`_replica_for(role) == null`)。这正是"该 role 已被移出对局"在客户端的**唯一**投影。
-#   两条都要等宽限期(30s)到点才成立 —— 观察窗按它定,见 OBSERVE_MAX。
+#   两条都要等宽限期(60s)到点才成立 —— 观察窗按它定,见 OBSERVE_MAX。
 
 const BotHandle := preload("res://tests/team_bot_input.gd")
 
@@ -52,7 +52,12 @@ const NEAR_PX := 45.0            # (乙端)"子弹从我身边飞过"的判定�
 const BRAWL_MAX := 210.0         # 相④ 打到 9 杀的上限(脚本机器人互射)
 const FIGHT_PX := 520.0          # 混战:进入这个距离且视线通畅就开火
 const LEAVE_AT := 2.5            # 第 2 局 PLAYING 后多久按 ESC(相⑤)
-const OBSERVE_MAX := 60.0        # 相⑤ 观察窗(宽限期 30s + 余量)
+# 相⑤ 观察窗。★ 推导:必须盖住「宽限期(`GraceWindow.DEFAULT_SECONDS`)到点」这一刻 ——
+#   掉线者被移出对局发生在宽限到期时,而 `_expire_graces` 每秒才轮询一次(故实际落在 60~61s),
+#   本端还要从第 2 局 PLAYING 起算(`_tick_swap` 里 6 号按 ESC 与本端进窗**同一拍**)。
+#   取 110 = 60 + 50(旧值 60 = 30 + 30,同形:盖住宽限期后余下 ~50s 给负载与轮询粒度)。
+#   ★ 改 `GraceWindow.DEFAULT_SECONDS` 必须重算这里;它同时进 `team_match_probe.RESULT_WAIT` 的求和。
+const OBSERVE_MAX := 110.0
 const PEER_WAIT := 120.0         # 等其它 5 端写结果的上限(本端最后一个走)
 # 开火脉冲:三类武器(全自动按住连发 / 半自动按下单发 / heavy_aim 松开发射)在**脉冲**下都能开火。
 const PULSE_ON := 0.30

@@ -102,7 +102,9 @@ func _ready() -> void:
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
 	# ★ 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已建好并订阅齐了才开口要,
 	#   故不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
-	NetBus.rpc_id(1, "match_sync")
+	# ★ 判活再发(全仓纪律,与 `pvp_game` 那处逐字同款):定向可靠包,连接可能已经不可用。
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "match_sync")
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
@@ -203,42 +205,43 @@ func _on_kill_event(killer: int, victim: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
 		return
+	# ★ 判活再发(全仓纪律):按 K 的那一刻连接可能已经不可用(worker 中途死掉 / 被踢),
+	#   而这是**定向可靠包** ⇒ 不判就是那条 channel 0 错误。
+	if not NetBus.can_send_to_server():
+		return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_K:
 		NetBusExt.rpc_id(1, "suicide_request")
 
 
 func _on_round_state(data: Dictionary) -> void:
+	_last_round_state = data
 	var state := int(data.get("state", 0))
 	_round_locked = state == 0
-	if state == 3 and not _match_ended:   # MATCH_OVER → 展示结果 6s 后回主菜单
+	if state == 3 and not _match_ended:   # MATCH_OVER → 弹结算页,玩家自己退
 		_match_ended = true
 		# 结算画面的输入锁由下面的 _refresh_input_lock() 统一给(经 _match_ended 那一维)——
 		# 自检 L6:这片画面原还能跑动开枪。
-		# ★ ESC 菜单随即失效、退出只走定时器这一条路(与 pvp_client 同款):
-		#   不销毁菜单的话,玩家能在这 6s 里按 ESC → 回到主菜单(safe_change_scene 已经切过一次),
-		#   6s 到点本定时器会**再切一次场景** —— 把刚建出来的主菜单当 old 退役、并 free 掉
-		#   _retired 里原本那具游戏世界。后果不致命但结构上是错的,而 pvp_client 正是为此
-		#   专门加了这两行(见该文件 MATCH_OVER 分支的注释),大乱斗这条是第三条路径、当年漏了。
+		# ★ ESC 菜单随即失效、退出只走结算页这一条路(与 pvp_client / team_game 同款):
+		#   不销毁菜单的话,玩家能在结算页上再弹一次暂停菜单 —— 本页的 ESC(返回主菜单)与
+		#   菜单的 ESC 会**同时**触发(见 ui/match_result.gd 类头那条硬依赖)。
+		#   ★ 上一版这里还兼职"别让 6s 退场定时器在玩家已从别的路径离开后再切一次场景";
+		#     定时器已换成结算页(那条风险改由 MatchResult 的 `leave_requested` 只发一次 +
+		#     `safe_change_scene` 的 `_switching` 兜住),但**这两行仍然必须留** ——
+		#     上面的 ESC 双重语义依赖它。
 		if _pause_menu != null and is_instance_valid(_pause_menu):
 			_pause_menu.queue_free()
 			_pause_menu = null
-		# 捕获 tree/autoload 引用:玩家若已从别的路径离开,本节点会被 safe_change_scene 摘出树,
-		# 到点时对不在树上的实例求值会出错(自检 L6)
-		var tree := get_tree()
-		var netbus := NetBus
-		get_tree().create_timer(6.0).timeout.connect(func() -> void:
-			netbus.stop()
-			if not is_inside_tree():
-				return   # 已从别的退出路径离开 → 不再叠加第二次换场
-			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
+		# 结算页:玩家自己退(不再是 6 秒后自动回主菜单)。
+		_show_result()
 	_refresh_input_lock()   # 单一收口:三个维度任一成立即锁(见函数定义)
 
 
-# 本地输入锁的单一收口:冻结期(_round_locked)/ 菜单打开(_menu_open)/ 结算(_match_ended)
-# 任一成立就锁。**不要在各调用点各拼一次布尔** —— 那正是"修复波 1 只关住一个方向"的成因。
-# ★ 与 pvp_client._refresh_input_lock 的差别:这里多一个 _match_ended —— 大乱斗在 MATCH_OVER
-#   要锁住结算画面(自检 L6:原还能跑动开枪),而 pvp_client 的 MATCH_OVER 不锁(它靠别的方式收场)。
+# 结算页载荷的唯一来源。★ 本函数只读状态、不碰节点树(适配器是纯函数)。
+# `_last_round_state` 是**基类**成员(记录在同名函数开头),本文件不再声明。
+func _build_result_payload() -> Dictionary:
+	return MatchResultPayload.for_royale(_last_round_state, _names, PvpSession.role)
+
 
 # ── 名字 / 颜色 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。

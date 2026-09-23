@@ -5,9 +5,11 @@ extends PvpMatchClient
 #
 # 与另外两个客户端的**全部**差异只有三处:
 #   ① 副本是 5 个 —— 结构上与大乱斗**逐字同款**(`_replicas` 按快照 role 懒建),故那一侧不重写;
-#   ② **队色覆盖个人色相** —— 本体染色 / 头顶 ID / 小地图点位一律问 `_team_color(role)`;
-#      `peer_hues` 在本模式是**无效输入**(基类钩子 `_apply_peer_hues_or_team` 被覆写成只消费
-#      `teams`,连 `_apply_peer_hues` 都不进 —— 不是"染完再盖",是根本不走那条路);
+#   ② **队色覆盖个人色相** —— 本体染色(**含自己那具**) / 头顶 ID / 小地图点位一律问
+#      `_team_color(role)`;`peer_hues` 在本模式是**无效输入**(基类钩子 `_apply_peer_hues_or_team`
+#      被覆写成只消费 `teams`,连 `_apply_peer_hues` 都不进 —— 不是"染完再盖",是根本不走那条路);
+#      ★ 2026-09-21 用户裁定:「3v3 青队玩家还是看见自己是蓝色的」⇒ **自己那具也改走队色**,
+#        个人色相在本模式**整体停用**(此前它唯一的落点就是自己那具)。见 `_refresh_team_colors`。
 #   ③ **队友不互挡**的**客户端一半**(服务端那一半在 `TeamHost._apply_team_layers`,契约数值见
 #      `_apply_team_collision` 的注释)。★ 这条漏了的后果与"幽灵碰撞体缺失"同款:C2 每帧回滚。
 #
@@ -94,12 +96,22 @@ func _ready() -> void:
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
 	add_child(_pause_menu)
-	# 自己的染色(设置色相)。★ 3v3 下**自己仍是自选色** —— 队色只在"看别人"时生效,
-	#   与另两个模式同款(个人色相在 3v3 唯一还生效的地方就是这一处)。
-	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
+	# ★ 自己那具的染色**不在这里做**,等队伍表(见 `_refresh_team_colors`)—— 2026-09-21 用户
+	#   裁定:**3v3 下自己是队色**,与"看别人"同一份来源(个人色相在本模式**整体停用**)。
+	#   用户原话:「3v3 青队玩家还是看见自己是蓝色的」—— 根因就是这一行此前传的是
+	#   `Settings.pvp_color_hue`,而它的默认值 0 = **不改色** ⇒ 身体恒为本体蓝
+	#   (= 队 1 的颜色,青队玩家因此看见自己与队 1 同色)。
+	#   队伍表随下面那一拉 `match_sync` 到达 → `_apply_teams` → `_refresh_team_colors()`。
+	#   在那之前身体保持**未染色**(本体蓝,与另两个模式刚进场时逐字同款)。
+	#   ★ 别在这里补一句"表到达前先用 pvp_color_hue 兜一下":那是给**同一个语义**开第二条
+	#     来源(且会在倒计时里闪一次颜色,玩家看得见),而这张表一个 RTT 就到。
+	#   ★ 表真缺了(`_apply_peer_hues_or_team` 的 push_warning 那一支)则整局保持本体蓝 ——
+	#     那条路已有响亮的告警,不是静默。
 	# ★ 进场**主动拉**一次(昵称/队伍/生效选项/出生点/地面武器/destroyed)。本场景此刻已建好并
 	#   订阅齐了才开口要,故不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
-	NetBus.rpc_id(1, "match_sync")
+	# ★ 判活再发(全仓纪律,与另两个对局场景那两处逐字同款):定向可靠包,连接可能已经不可用。
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "match_sync")
 	print("进入 3v3:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
@@ -136,6 +148,29 @@ func _team_of_role(role: int) -> int:
 	return int(_teams.get(role, 0))
 
 
+# 反查某个节点(自己 / 某个副本)是哪个 role。查不到返回 0(= 与 `_team_of_role` 的"表外"同码)。
+func _role_of_node(n: Node) -> int:
+	if n == null:
+		return 0
+	if n == _local:
+		return int(PvpSession.role)
+	for role in _replicas:
+		if _replicas[role] == n:
+			return int(role)
+	return 0
+
+
+# 覆写基类:3v3 里**队友副本不挡自己的子弹**(规则 12「子弹穿透队友」)。
+# ★ 基类默认"除射手外谁都能挡"对 1v1/大乱斗是对的;不覆写的话,队友副本会把子弹吃掉 ——
+#   而服务器那边是穿过去的 ⇒ 客户端凭空少一颗子弹,且**一条报错都没有**。
+func _bullet_hits_entity(b: BulletBase, ent: Node2D) -> bool:
+	var sr := _role_of_node(b.shooter)
+	var er := _role_of_node(ent)
+	if sr == 0 or er == 0:
+		return true        # 认不出队:退回基类语义(能挡),不静默改成"全穿透"
+	return _team_of_role(sr) != _team_of_role(er)
+
+
 # 队色统一收在**这里**:自己的染色、副本染色、头顶 ID、小地图点位都问它。
 # ★ 3v3 下**个人色相不生效**(`peer_hues` 被队色覆盖)—— 这是规则不是审美:
 #   6 个人里认不出队友,这个模式就没法玩。`_apply_peer_hues_or_team` 里**不要**再调 `_apply_peer_hues`。
@@ -150,9 +185,15 @@ func _team_color(role: int) -> Color:
 
 # 把队色刷到**身体**上。★ 机制收在 `PvpMatchClient._apply_tint` 的第三参里(modulate **比值**,
 # 不是直接乘队色 —— 那样蓝身体乘橙会变灰紫),这里的第三参就是"染成这个颜色"。
+# ★★ **自己那具与副本走逐字同一条路**(2026-09-21 用户裁定):队色的**单一来源**只有
+#    `_team_color(_team_of_role(role))` 这一处 —— 此前自己那具传的是 `Settings.pvp_color_hue`
+#    (自选色相),于是"青队玩家看见自己是蓝色"(默认色相 0 = 不改色 ⇒ 恒为本体蓝 = 队 1 色)。
+#    个人色相在 3v3 因此**整体停用**(它在本模式再无任何落点;大乱斗那侧不受影响)。
+# ★ 队号 0(队伍表还没到)时**不染自己**:`_team_color(0)` 返回中性亮白,把它糊在自己身上
+#   比"保持本体蓝"更糟。表一个 RTT 就到,这一支只在表缺失时才走得到(那里另有 push_warning)。
 func _refresh_team_colors() -> void:
-	if _local != null:
-		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)   # 自己仍是自选色
+	if _local != null and _team_of_role(PvpSession.role) != 0:
+		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), 0.0, _team_color(PvpSession.role))
 	for role in _replicas:
 		if is_instance_valid(_replicas[role]):
 			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"), 0.0,
@@ -322,6 +363,9 @@ func _on_kill_event(killer: int, victim: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
 		return
+	# ★ 判活再发(全仓纪律,与 `royale_game` 那处逐字同款):定向可靠包,连接可能已不可用。
+	if not NetBus.can_send_to_server():
+		return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_K:
 		NetBusExt.rpc_id(1, "suicide_request")
@@ -331,8 +375,10 @@ func _unhandled_input(event: InputEvent) -> void:
 #  - COUNTDOWN 且 round>1(新一轮):服务器已 `_reset_world_and_clear_dynamics()`(还原砖 +
 #    清子弹 + 重铺地面武器 + 各人背包重置),这里同刻清本地子弹并复位砖,两端从同一基线出发。
 #    ★ 并在同一处**重拉一次 `match_sync`** —— 见下面那一段注释(换边)。
-#  - MATCH_OVER → 6s 后断连回主菜单(记分/胜负播报由 `TeamHud` 负责)。
+#  - MATCH_OVER → 弹结算页,**玩家自己退**(不再是 6s 后自动回主菜单);记分/胜负播报仍由
+#    `TeamHud` 负责(它画的是对局中的小记分条,结算页是终局那一屏,两者不冲突)。
 func _on_round_state(data: Dictionary) -> void:
+	_last_round_state = data
 	var state := int(data.get("state", 0))
 	_round_locked = state == 0
 	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
@@ -359,22 +405,34 @@ func _on_round_state(data: Dictionary) -> void:
 			_resync_pull_pending = true
 			NetBus.rpc_id(1, "match_sync")
 	elif state == 3:   # TeamHost.RoundState.MATCH_OVER(胜负已判:局胜或整队走光)
+		# ★★ **刻意没有 `and not _match_ended` 这道闸**(与大乱斗不同,别照抄过来加对称):
+		#   本模式的 MATCH_OVER **会有第二条载荷**,而结算页必须跟着刷新 ——
+		#   `TeamHost._finish_match()` 在**战斗进行中**直接把 PLAYING→MATCH_OVER,而倒地边沿
+		#   检测在 `match _round_state:` **之前**、且**不看状态** ⇒ 终局之后再死人会再广播一条
+		#   带**新 `stats`/`mvp`** 的终局载荷(见基类 `_show_result` 的注释)。
 		_match_ended = true
-		# ★ ESC 菜单随即失效、退出只走定时器这一条路(与另两个客户端同款):不销毁的话玩家能在这
-		#   6s 里按 ESC → 回主菜单,而本定时器到点会**再切一次场景**(把刚建出来的主菜单当 old 退役)。
+		# ★ ESC 菜单随即失效、退出只走结算页这一条路(与另两个客户端同款):不销毁菜单的话玩家能
+		#   在结算页上再弹一次暂停菜单 —— 本页的 ESC(返回主菜单)与菜单的 ESC 会**同时**触发
+		#   (见 `ui/match_result.gd` 类头那条硬依赖)。
+		#   ★ 上一版这里还兼职"别让 6s 退场定时器在玩家已从别的路径离开后再切一次场景";定时器已
+		#     换成结算页(那条风险改由 `MatchResult` 的 `leave_requested` 只发一次 +
+		#     `safe_change_scene` 的 `_switching` 兜住),但**这两行仍然必须留** —— 上面的 ESC
+		#     双重语义依赖它。
 		if _pause_menu != null and is_instance_valid(_pause_menu):
 			_pause_menu.queue_free()
 			_pause_menu = null
-		# 捕获 tree/autoload 引用:玩家若已从别的路径离开,本节点会被 safe_change_scene 摘出树,
-		# 到点时对不在树上的实例求值会出错
-		var tree := get_tree()
-		var netbus := NetBus
-		get_tree().create_timer(6.0).timeout.connect(func() -> void:
-			netbus.stop()
-			if not is_inside_tree():
-				return   # 已从别的退出路径离开 → 不再叠加第二次换场
-			Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
+		# 结算页:玩家自己退(不再是 6 秒后自动回主菜单)。
+		_show_result()
 	_refresh_input_lock()   # 单一收口:三个维度任一成立即锁(见基类函数定义)
+
+
+# 结算页载荷的唯一来源。★ 本函数只读状态、不碰节点树(适配器是纯函数)。
+# `_last_round_state` 是**基类**成员(记录在同名函数开头),本文件不再声明。
+func _build_result_payload() -> Dictionary:
+	# ★ `my_team` 取自 `_team_of_role(PvpSession.role)` —— 队伍表从 `match_sync` 来;
+	#   队号 0(表还没到)时 `_verdict_team` 念「失败」而不是谎报胜利。
+	return MatchResultPayload.for_team(_last_round_state, _names, _teams,
+			_team_of_role(PvpSession.role))
 
 
 # ── 名字 / 颜色 ──

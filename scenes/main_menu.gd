@@ -202,21 +202,27 @@ func _build_menu_buttons() -> Array:
 	start_btn.pressed.connect(_on_single_pressed)
 	# 文案 2026-09-21 由「多 人 对 战」改为「1 v 1」:菜单里三个联机入口现在按
 	# 1v1 / 3v3 / 大乱斗 并列,旧的「多人」在这里读不出"到底是哪一种多人"。
+	# ★★ 三个联机按钮一律走 `PvpSession.enter_mode(<本模式>)`,**不要**写回裸的
+	#   `PvpSession.reset()`:回局凭据要活过"回主菜单"这一步(那正是路径乙的意义),
+	#   而 `enter_mode` 只在**换了模式**时才作废它(理由见 pvp_session.gd 的 `mode` 那段:
+	#   三张注册表的房号空间是共用的,不判模式就会串)。写回 `reset()` = 玩家从对局回主菜单、
+	#   再按同一个模式进来时凭据被抹掉 → 自己那间"对局中"的房恒为灰、回不去
+	#   (**而一行报错都没有**) —— 这就是 C1。`reconnect_smoke` 有源码级断言钉着这三处。
 	var multi_btn := UiFactory.button("1 v 1", 32)
 	multi_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
-		PvpSession.reset()
+		PvpSession.enter_mode(PvpSession.MODE_PVP)
 		get_tree().change_scene_to_file("res://scenes/matchmaking.tscn"))
 	# 3v3 团队:与多人/大乱斗并列的第三个联机模式入口(大厅页 `team_lobby`,协议走 team_*)。
 	var team_btn := UiFactory.button("3 v 3 团 队", 32)
 	team_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
-		PvpSession.reset()
+		PvpSession.enter_mode(PvpSession.MODE_TEAM)
 		get_tree().change_scene_to_file("res://scenes/team_lobby.tscn"))
 	var royale_btn := UiFactory.button("大 乱 斗", 32)
 	royale_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
-		PvpSession.reset()
+		PvpSession.enter_mode(PvpSession.MODE_ROYALE)
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽
