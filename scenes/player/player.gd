@@ -539,6 +539,12 @@ func capture_state() -> Dictionary:
 		"down": combat.downed,
 		"knock": combat.knock_velocity,
 		"wslot": weapons._current_slot,
+		# ★ 手持那一条的 **inst**(逐把唯一)。`wslot` 只有**类型 id**,同型号两把恒等 ——
+		#   光凭它,恢复端无法知道权威手持的是**哪一把**(会静默落回第 0 把:
+		#   残弹写错条目 / 丢弃丢错把 / 左下角武器框高亮错,用户 2026-09-23 报的即最后一条)。
+		#   ★ 与 mag/rld 同口径:进 capture/restore,**不进** `_close_enough` 的比对。
+		#   ★ 加法式键:老接收端忽略未知键,不协商。
+		"winst": weapons.current_inst(),
 	}
 	# 背包整表(每条 {type, inst, mag})。★ 即便不做客户端预测也必须进整态:
 	#   restore_state 会 equip(wslot),若不先重建背包,重放时可能切到客户端背包里
@@ -622,7 +628,11 @@ func restore_state(st: Dictionary) -> void:
 #   所以**先比指纹再动手**:restore_inventory 会 emit inventory_changed →
 #   ui/hud.gd 整体重建武器框,无脑调 = 每帧新建/销毁一堆 Control。
 func sync_soft_state(st: Dictionary) -> void:
+	# ★ 指纹必须**连 `winst` 一起比**:同型号两把之间换手时 `wslot`(类型)与背包结构**都不变**,
+	#   只看那两样会把整条软同步**跳过** ⇒ 上面 `restore_inventory` 的 inst 解析根本没机会跑。
+	#   ★ 缺键时的默认值取"当前值" ⇒ 老载荷(无 `winst`)行为与改动前逐字相同。
 	if int(st.get("wslot", weapons._current_slot)) == weapons._current_slot \
+			and int(st.get("winst", weapons.current_inst())) == weapons.current_inst() \
 			and _inv_structure_equal(st.get("inv", [])):
 		return
 	_apply_weapon_state(st)
@@ -648,9 +658,23 @@ func _inv_structure_equal(want: Array) -> bool:
 #   就丢了;先 equip 再 restore,则 equip 是在**旧背包**上工作(凭空造枪/丢枪)。
 func _apply_weapon_state(st: Dictionary) -> void:
 	var wslot := int(st.get("wslot", weapons._current_slot))
-	weapons.restore_inventory(st.get("inv", []))
+	# ★ 把"手持的是哪一把"交给 restore_inventory 按 **inst** 解析(同型号两把只有它能区分);
+	#   下面那句按类型的 `equip` 只作**兜底**(老载荷无 `winst`、或权威那把不在表里时)。
+	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
 	if wslot > 0 and wslot != weapons._current_slot:
-		weapons.equip(str(wslot))
+		# 手上**实例**的类型与权威不符(`_current_slot` 由 `_equip_index`/`_unequip` 维护,
+		# 即活实例的类型)→ 必须重建。这是**已有**行为,别绕开。
+		# ★★ 但重建的**落点**要分两种,`by_inst` 就是那个判别器:
+		#   · 按 `winst` 解析成功 → 走 `equip_index(下标)`。**不能**用 `equip(wslot)` ——
+		#     后者按**类型**找第一个,同型号两把时会把刚解析对的下标**冲回第 0 把**
+		#     (本改动要修的正是这件事;实测把它写回去 ⇒ ground_client_probe ④b 当场红)。
+		#   · 按类型兜底(老载荷无 `winst`、或权威那把不在表里)→ 保**原样**走 `equip(wslot)`。
+		#     此时手里那个下标只代表"旧类型那把",拿它重建会把权威的 wslot 顶掉
+		#     (实测:④ 那条 `切到权威的 wslot` 会红)。
+		if by_inst and weapons._current_index >= 0:
+			weapons.equip_index(weapons._current_index)
+		else:
+			weapons.equip(str(wslot))
 	var w: WeaponBase = weapons._weapon
 	if w != null:
 		w.fire_cd_timer = float(st.get("fire_cd", w.fire_cd_timer))
