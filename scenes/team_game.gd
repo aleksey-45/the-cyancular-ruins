@@ -148,6 +148,29 @@ func _team_of_role(role: int) -> int:
 	return int(_teams.get(role, 0))
 
 
+# 反查某个节点(自己 / 某个副本)是哪个 role。查不到返回 0(= 与 `_team_of_role` 的"表外"同码)。
+func _role_of_node(n: Node) -> int:
+	if n == null:
+		return 0
+	if n == _local:
+		return int(PvpSession.role)
+	for role in _replicas:
+		if _replicas[role] == n:
+			return int(role)
+	return 0
+
+
+# 覆写基类:3v3 里**队友副本不挡自己的子弹**(规则 12「子弹穿透队友」)。
+# ★ 基类默认"除射手外谁都能挡"对 1v1/大乱斗是对的;不覆写的话,队友副本会把子弹吃掉 ——
+#   而服务器那边是穿过去的 ⇒ 客户端凭空少一颗子弹,且**一条报错都没有**。
+func _bullet_hits_entity(b: BulletBase, ent: Node2D) -> bool:
+	var sr := _role_of_node(b.shooter)
+	var er := _role_of_node(ent)
+	if sr == 0 or er == 0:
+		return true        # 认不出队:退回基类语义(能挡),不静默改成"全穿透"
+	return _team_of_role(sr) != _team_of_role(er)
+
+
 # 队色统一收在**这里**:自己的染色、副本染色、头顶 ID、小地图点位都问它。
 # ★ 3v3 下**个人色相不生效**(`peer_hues` 被队色覆盖)—— 这是规则不是审美:
 #   6 个人里认不出队友,这个模式就没法玩。`_apply_peer_hues_or_team` 里**不要**再调 `_apply_peer_hues`。

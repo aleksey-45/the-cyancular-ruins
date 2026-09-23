@@ -214,6 +214,8 @@ func _physics_process(_delta: float) -> void:
 		_rollback.note_input(_input_seq, pkt)
 	# 地面武器:锚点 + 落点同步 + F 提示(纯本地表现,不参与预测)
 	_tick_ground_weapons()
+	# 本地视觉子弹撞到玩家 → 收掉(纯表现,见 _cull_bullet_contacts 的注释)
+	_cull_bullet_contacts()
 	# 网络统计读数(诊断,默认关)
 	_netstat_tick(_delta)
 
@@ -276,9 +278,63 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 			b.explosion_visual = load(data["visual"])
 	b.global_position = data["pos"]
 	_world.add_child(b)
+	# ★ 视觉副本也要认射手:见 `_broadcast_bullet_spawn` 的注释(榴弹"出膛即炸")。
+	#   指向**射手副本**而不是本地玩家 —— `BulletBase` 里凡是用 `shooter` 的地方都自带
+	#   类型/分组守卫(见 `_wrap` 的 `is_in_group("player")` 与 `_check_player_contact`
+	#   的 `n == shooter`),拿副本当射手不会破坏它们。
+	b.shooter = _replica_for(int(data.get("shooter_role", 0)))
 	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
 	if Settings.pvp_show_trajectories:
 		BulletTrail.attach(b, data["color"])
+
+
+# ── 本地视觉子弹撞到"该打的人" → 立刻消失(用户 2026-09-22:「画面效果看起来还是像穿透」)──
+# **为什么需要这条**:客户端那颗子弹的 `collision_mask = 5`(地形 1 + 敌人层 4),而**对手在
+# 客户端只是一具层 2 的幽灵体**(`player_replica._ghost`)**⇒ 物理上永远撞不到** —— 子弹从对手
+# 身上穿过去、一直飞到撞墙或超射程;而服务器早已按半径裁决、扣了血、销毁了它那两颗。
+# 玩家看到的因此是"伤害算到了,画面上却像穿透"。
+#
+# **判据用与服务器裁决同一个常量**:`BulletBase.PLAYER_HIT_RADIUS`(= `MatchHost.HIT_RADIUS`
+# 引用的那一个)+ 同一套环面最短距离 ⇒ "子弹停在哪"与"服务器判在哪"是**同一个公式**算出来的,
+# 不是凑出来的相似值(凑的话两者迟早漂)。
+#
+# ★ 只收**本地视觉副本**:`apply_damage == false`(客户端子弹都带这个标记;权威侧在服务器进程,
+#   本类不在那儿跑)。权威裁决一个字都不受影响 —— 伤害永远由服务器说了算,这里只改画面。
+# ★ **榴弹(`explodes`)不走这条**:它的引信/反弹由 `BulletBase._check_player_contact` 管,
+#   在这里把节点收掉会把爆炸一起吞掉。
+func _cull_bullet_contacts() -> void:
+	for n in get_tree().get_nodes_in_group("bullet"):
+		var b := n as BulletBase
+		if b == null or b.apply_damage or b.explodes:
+			continue
+		if _bullet_contact_target(b) != null:
+			b.queue_free()   # 立刻:queue_free 在本帧绘制**之前**生效,不会多亮一帧
+
+
+# 这颗视觉子弹此刻有没有贴上"该打的人";有则返回那个节点,否则 null。
+# 候选 = `BulletBase.CONTACT_GROUPS`(player = 本地玩家;player_replica = 对手副本),
+# 排掉射手本人 —— 与 `_check_player_contact` 同一候选集,再叠一层队别过滤(3v3 队友穿透)。
+func _bullet_contact_target(b: BulletBase) -> Node2D:
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	for group in BulletBase.CONTACT_GROUPS:
+		for n in get_tree().get_nodes_in_group(group):
+			if n == b.shooter or not (n is Node2D):
+				continue
+			if not _bullet_hits_entity(b, n as Node2D):
+				continue
+			var d := GridPathfinder.toroidal_delta_px(b.global_position,
+					(n as Node2D).global_position, w, h).length()
+			if d < BulletBase.PLAYER_HIT_RADIUS:
+				return n as Node2D
+	return null
+
+
+# 这颗视觉子弹能不能停在那个实体上。默认**能**(1v1 / 大乱斗:除了射手,谁都能挡)。
+# 3v3 覆写:与射手同队的排掉 —— 规则 12「队友不互挡 + 子弹穿透队友」;
+# 不覆写的话队友副本会把自己的子弹吃掉(与服务器裁决相反,且不报错)。
+func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
+	return true
 
 
 # 本地输入锁的单一口(三个维度:冻结期 / 菜单打开 / 结算后回菜单途中)。
@@ -511,6 +567,28 @@ func _on_match_sync(payload: Dictionary) -> void:
 			_on_remote_tile_destroyed(c, true)
 
 
+# ── 拾取诊断插桩(默认关)──────────────────────────────────────────────
+# 开关:`-- --pickup-diag`。★ 必须写在 `--` 之后 —— 与 `--netstat` / `server_main` 的
+#   `--worker` 同款口径;写在前面会被 Godot 丢掉、**静默失效**。
+# 默认关 ⇒ 生产行为逐字不变(只多一次懒查开关的布尔判断)。
+#
+# 用来回答「地上的枪**看得见**、走过去却没有 F 提示」这一类问题 —— 那种症状只有两种成因:
+#   ① 客户端压根没建出这把枪(`_spawn_pickup_node` 的早退是**静默 return**);
+#   ② 建出来了,但它的 `canonical_pos`(提示判据读的那个值)与**画出来的位置**不在一处。
+# 两个成因在画面上长得一模一样,只能靠数字分:下面逐条打"认不认、canonical/render/玩家各在哪、
+# 三条闸门各是真是假"。判据是**玩家 400px 内的枪**每 30 物理帧打一行(默认关时不打)。
+var _pickup_diag := false
+var _pickup_diag_checked := false
+var _pickup_diag_frame := 0
+
+
+func _pickup_diag_on() -> bool:
+	if not _pickup_diag_checked:
+		_pickup_diag_checked = true
+		_pickup_diag = OS.get_cmdline_user_args().has("--pickup-diag")
+	return _pickup_diag
+
+
 # ── 地面武器(2026-09-15):服务器权威,本端只渲染 + 等事件(不做客户端预测)──
 var ground_weapons := GroundWeaponField.new()
 var _pickup_nodes: Dictionary = {}    # inst -> WeaponPickup
@@ -538,6 +616,13 @@ func _on_weapon_removed(data: Dictionary) -> void:
 
 
 func _spawn_pickup_node(data: Dictionary) -> void:
+	# 诊断:早退是**静默**的 —— 先把"为什么没建"打出来(判据见 _pickup_diag 的注释)
+	if _pickup_diag_on():
+		print("[pkd] ← spawned inst=%s type=%s by_role=%s pos=%s vel=%s | world=%s local=%s 已有=%s" % [
+				str(data.get("inst", -1)), str(data.get("type_id", -1)), str(data.get("by_role", -1)),
+				str(data.get("pos", Vector2.ZERO)), str(data.get("vel", Vector2.ZERO)),
+				"有" if _world != null else "空", "有" if _local != null else "空",
+				"是" if _pickup_nodes.has(int(data.get("inst", 0))) else "否"])
 	if _world == null:
 		return
 	var inst := int(data.get("inst", 0))
@@ -582,6 +667,8 @@ func _remove_pickup_node(inst: int) -> void:
 		n.queue_free()
 	_pickup_nodes.erase(inst)
 	_self_drop_until.erase(inst)
+	if _pickup_diag_on():
+		print("[pkd] ← removed inst=%d" % inst)
 
 
 # 每帧:① 把锚点推给所有地面武器(接缝另一侧的枪要画在身边那一份上);
@@ -601,6 +688,7 @@ func _tick_ground_weapons() -> void:
 		var e: Dictionary = ground_weapons.get_entry(int(inst))
 		if not e.is_empty():
 			e["pos"] = pk.canonical_pos
+	_pickup_diag_frame += 1
 	_update_pickup_prompt(lp)
 
 
@@ -625,6 +713,20 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
+		# 诊断:玩家附近的枪逐条打(判据见 _pickup_diag 的注释)。★ `can=否` 时把
+		# **三条闸门各是真是假**分开打 —— 合成一个 false 就没法从日志看出是哪一条挡的。
+		# ★ `canon` 与 `render` 两栏是这条插桩的**重点**:两者本应只差整数个地图宽/高;
+		#   若 `render` 落在玩家身边而 `canon` 不是,就说明"画出来的枪"与"判据读的枪"分家了。
+		if _pickup_diag_on() and _pickup_diag_frame % 30 == 0:
+			var dd := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
+			if dd <= 400.0:
+				print("[pkd]   inst=%d type=%d d=%.1f can=%s | 冷却=%s 启用=%s | canon=(%.0f,%.0f) render=(%.0f,%.0f) 玩家=(%.0f,%.0f) settled=%s" % [
+						int(inst), int(pk.type_id), dd, "是" if can else "否",
+						"是" if _live_self_drops().has(int(inst)) else "否",
+						"是" if _local.weapons.is_slot_enabled(int(pk.type_id)) else "否",
+						pk.canonical_pos.x, pk.canonical_pos.y,
+						pk.global_position.x, pk.global_position.y, lp.x, lp.y,
+						"是" if pk._settled else "否"])
 
 
 # 仍在冷却期内的"自己刚丢下的" inst(与服务器 MatchGround._live_self_drops 同口径)。
