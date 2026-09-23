@@ -32,6 +32,10 @@ const RESULT_PREFIX := "royale_c2_probe_"
 const GO_FILE := "user://royale_c2_probe_go.txt"
 const ORCH_DEADLINE := 90.0
 
+# 本探针自当大厅时客户端要连的地址。★ 与 `tests/royale_c2_watcher.gd` 的同名常量**必须同值**
+# (那边用它核对"确实连的是本探针的大厅",见其 `_stage_lobby` 的守卫)。
+const LOBBY_ADDR := "127.0.0.1"
+
 var _role := "lobby"
 var _c1_peer := 0
 var _code := ""
@@ -199,6 +203,17 @@ func _run_client() -> void:
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
 	if FileAccess.file_exists(lp):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
+	# ★★ **必须把地址拨到本探针的大厅**。生产默认是**云服**(`PvpSession.server_address` 初值
+	#   120.53.107.140),而客户端这一侧是**实例化真 `royale_lobby.tscn`** 让它自己连 ——
+	#   不拨的话两端会静默连到**云上那台真服务器**(还会在它上面真的建/进房间),
+	#   而编排器(本进程的 7777 大厅)**一条 `玩家连入` 都收不到** ⇒ `royale_create_requested`
+	#   永不发射 ⇒ `go.txt` 恒空、c1 卡阶段 1、c2 卡阶段 0,最后只给一个 90 秒超时。
+	#   ★ 这个坑**静默且极难归因**:日志里满是 c1/c2 自己的「已连接服务器」,看着像连上了。
+	#   范本:`tests/rejoin_watcher.gd` 的 `_on_node_added`(那边更麻烦 —— 它连 7777 都不许碰,
+	#   故要在页 `_ready` **之前**预置 `_connected/_connected_addr`);本探针要的正是真连接,
+	#   故只需在实例化**之前**拨地址即可。
+	#   ★ 守卫:`royale_c2_watcher._stage_lobby` 会核对 `_connected_addr`,连错就当场红。
+	PvpSession.server_address = LOBBY_ADDR
 	var watcher: Node = load("res://tests/royale_c2_watcher.gd").new()
 	watcher.who = _role
 	watcher.lobby = load("res://scenes/royale_lobby.tscn").instantiate()

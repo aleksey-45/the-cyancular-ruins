@@ -52,6 +52,10 @@ const N_APPLY_SNAP := "apply_server" + "_snapshot("
 # 源码里就出现了要找的那串字面量(虽然 tests/ 不在扫描根里,纪律照旧)。
 const N_ALIVE_KEY := "\"ali" + "ve\""
 
+# 本探针自当大厅时客户端该连的地址。★ 与 `tests/royale_c2_probe.gd` 的同名常量**必须同值**
+# (那边用它拨地址,这边用它核对"确实连上了本探针的大厅,而不是云服")。
+const LOBBY_ADDR := "127.0.0.1"
+
 var who := "c1"
 var lobby: Node = null           # 真 royale_lobby.tscn 实例(本进程里被驱动的那份)
 
@@ -148,7 +152,17 @@ func _stage_lobby() -> void:
 		return
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
-		return   # 真大厅面板自己会连 127.0.0.1(_ready 里的 _request_list)
+		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
+	# ★★ 守卫:连上的必须是**本探针的大厅**,不能是云服。生产默认地址就是云
+	#   (`PvpSession.server_address` 初值 120.53.107.140),而本探针是**实例化真
+	#   `royale_lobby.tscn` 让它自己连** —— `royale_c2_probe._run_client` 漏了那句地址预置时,
+	#   两端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是 c1/c2 自己的
+	#   「已连接服务器」(它们确实连上了,只是连的是**别人**),而编排器一条 `玩家连入` 都没有
+	#   ⇒ 只剩一个 90 秒超时,看着像"大厅坏了"。当场点名,别让下一个人再从超时逆推。
+	if String(lobby.get("_connected_addr")) != LOBBY_ADDR:
+		_finish(false, "本端连的是 %s,不是本探针大厅 %s —— 检查 royale_c2_probe._run_client 的地址预置"
+				% [lobby.get("_connected_addr"), LOBBY_ADDR])
+		return
 	if who == "c1":
 		_log("大厅已连,建房")
 		lobby.call("_on_create_pressed")   # 等价于点「创建房间」(公开房,人数上限默认 4)
