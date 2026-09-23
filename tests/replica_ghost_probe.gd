@@ -2,8 +2,8 @@ extends Node
 
 # 幽灵碰撞体探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
 # 跑法:
-#   "$GODOT" --headless --path . res://tests/replica_ghost_probe.tscn
-# 期望:每条 [ghost] … 通过,末行 "REPLICA GHOST PROBE: ALL-OK",退出码 0。
+#   "$GODOT" --headless --path . --quit-after 3600 res://tests/replica_ghost_probe.tscn
+# 期望:每条 [ghost] … 通过,末行 "REPLICA GHOST PROBE: ALL-OK"(判据是这行文本,不是退出码)。
 #
 # 存在理由:玩家互相碰撞**服务器侧早就有**(server/match_host.gd 给每个玩家 mask |= 2),
 # 缺的是客户端 —— 客户端世界里只有一具 PlayerReplica,而它此前是 `extends Node2D`、**零碰撞体**。
