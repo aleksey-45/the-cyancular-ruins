@@ -168,6 +168,12 @@ func _ready() -> void:
 	var tol: float = PredictionRollback.new().pos_tol
 	_check(tol >= 2.0, "控制器默认容差已采纳(要求 >= 2px,实际 %.1f px)" % tol)
 
+	# 接触期容差的**采纳值守卫**:退回 2.0 会让贴身频率回到每帧一次,而那是**静默**的
+	# (不报错、本探针除这一条外照绿)—— 故把"默认值本身"变成断言。
+	# 注:同一条纪律 —— 消息里避开裸 % 号(上面那条的注释记着为什么)。
+	var ctol: float = PredictionRollback.new().contact_pos_tol
+	_check(ctol >= 8.0, "接触期容差已采纳(要求 >= 8px,实际 %.1f px)" % ctol)
+
 	_summarize()
 
 	if _failures.is_empty():
