@@ -143,6 +143,17 @@ func _role_of(node: Node) -> int:
 	return -1
 
 
+# 两名玩家是否同队。给**武器**用(它们只拿得到节点,拿不到 role)。
+# ★ 1v1 / 大乱斗 / 单机:队伍表为空 ⇒ `team_of` 恒 0 ⇒ `same_team` 恒 false ⇒ 本函数恒 false
+#   ⇒ 调用方(激光)的行为与今天**逐字不变**。这是本接口的安全性质,别改成"没表就返回 true"。
+# ★ `_role_of` 查不到时返回 **-1**(不是 0),而 `same_team(-1, -1)` 同样是 false
+#   (`team_of` 对未登记返回 0,判据是 `a > 0 and a == b`)—— 两种"查不到"都安全。
+func is_friendly(a: Node, b: Node) -> bool:
+	if a == null or b == null:
+		return false
+	return same_team(_role_of(a), _role_of(b))
+
+
 # ── 出生点原语(阶段 5.6:**必须住在本底座**,不能在 MatchHost 里)──
 # 父类的 MatchRound._respawn_player 要调它,而 GDScript 的父类方法解析不了子类符号 ——
 # 方法与字段是同一条约束(实测踩到:放子类里直接 "Function _spawn_cell() not found in base self")。
