@@ -82,7 +82,7 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		"held": held,
 		"pressed": pressed,
 		"released": released,
-		"weapon": src.get_weapon_slot_pressed(),
+		"weapon": src.get_switch_index_pressed(),
 		"aim": aim,
 	}
 
@@ -164,7 +164,7 @@ func _attack_just_pressed_raw() -> bool:
 func _attack_just_released_raw() -> bool:
 	return _released & BIT_ATTACK != 0
 
-func _weapon_slot_raw() -> int:
+func _switch_index_raw() -> int:
 	return _weapon
 
 func _pickup_pressed_raw() -> bool:

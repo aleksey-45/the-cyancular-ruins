@@ -203,15 +203,15 @@ func _phase_inventory_roundtrip() -> void:
 		return
 
 	# 开局空手(单机初始背包为空,武器散落在图上)
-	_check(wep.current_slot_int() == 0, "开局空手(实际槽 %d)" % wep.current_slot_int())
+	_check(wep.current_type_id() == 0, "开局空手(实际槽 %d)" % wep.current_type_id())
 	_check(wep.inventory.held.size() == 0, "开局背包为空")
 
 	# 捡手枪(2格) → 直接进背包并上手
 	var r1: int = wep.pick_up(1, 12)
 	await get_tree().physics_frame
 	_check(r1 == 0, "放得下时应返回 0(无替换),实际 %d" % r1)
-	_check(wep.current_slot_int() == 1, "捡起后手上是它(实际 %d)" % wep.current_slot_int())
-	_check(wep.inventory.used_slots() == 2, "占用 2 格(实际 %d)" % wep.inventory.used_slots())
+	_check(wep.current_type_id() == 1, "捡起后手上是它(实际 %d)" % wep.current_type_id())
+	_check(wep.inventory.used_cell_count() == 2, "占用 2 格(实际 %d)" % wep.inventory.used_cell_count())
 
 	# ★ 视觉缩放:武器挂在 Player 下时继承根的 scale=2.5(player.tscn),
 	#   地面态得自己补上 —— 漏了就是"地上的枪小 2.5 倍",**而且不报错**。
@@ -236,7 +236,7 @@ func _phase_inventory_roundtrip() -> void:
 	# 捡重狙(4格) → 2+4=6,仍放得下
 	_check(wep.pick_up(3, 5) == 0, "重狙应放得下")
 	await get_tree().physics_frame
-	_check(wep.inventory.used_slots() == 6, "占用 6 格(实际 %d)" % wep.inventory.used_slots())
+	_check(wep.inventory.used_cell_count() == 6, "占用 6 格(实际 %d)" % wep.inventory.used_cell_count())
 
 	# ★ 捡第二把重狙(4格) → 6+4=10 > 8,放不下 → **替换手上当前那把**(现在是重狙)
 	#   返回被换下的类型 id,残弹经 take_last_dropped 交还
@@ -245,7 +245,7 @@ func _phase_inventory_roundtrip() -> void:
 	var d: Dictionary = wep.take_last_dropped()
 	_check(int(d.get("mag", -1)) == 5,
 			"被换下的那把的残弹要交还调用方(实际 %s;换下的应是那把 5 发的重狙)" % str(d))
-	_check(wep.inventory.used_slots() == 6, "替换后占用仍是 6 格(实际 %d)" % wep.inventory.used_slots())
+	_check(wep.inventory.used_cell_count() == 6, "替换后占用仍是 6 格(实际 %d)" % wep.inventory.used_cell_count())
 
 	# 边界:此刻占 6 格(手枪2 + 重狙4)→ 轻武器(2)塞得进 8,重武器(4)塞不进 10
 	_check(wep.inventory.can_hold(1), "6 格时应还塞得进一把轻武器(6+2=8)")
@@ -261,16 +261,16 @@ func _phase_inventory_roundtrip() -> void:
 
 	# ★ 被禁用闸门拒绝时必须返回 PICKUP_DENIED(-1) —— 与"捡成功、没替换"(0)分开。
 	#   混在一起的话 Level0.try_pickup_for 会把地面那把**直接删掉而玩家什么都没拿到**。
-	wep.set_enabled_slots([5])
+	wep.set_enabled_types([5])
 	var denied: int = wep.pick_up(5, 3)
 	_check(denied == WeaponComponent.PICKUP_DENIED,
 			"被禁用闸门拒绝应返回 PICKUP_DENIED(-1),实际 %d" % denied)
-	wep.set_enabled_slots([])
+	wep.set_enabled_types([])
 
 	# 清空背包 → 回到空手
 	wep.set_initial_inventory([])
 	await get_tree().physics_frame
-	_check(wep.current_slot_int() == 0 and wep.inventory.held.is_empty(), "清空背包后回到空手")
+	_check(wep.current_type_id() == 0 and wep.inventory.held.is_empty(), "清空背包后回到空手")
 	pl.queue_free()
 	await get_tree().physics_frame
 

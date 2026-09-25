@@ -38,8 +38,8 @@ func _ready() -> void:
 
 	# 开局**携带手枪**(2026-09-15 用户要求;此前是空手)
 	if player != null:
-		_check(player.weapons.current_slot_int() == 1,
-				"单机开局应携带手枪(实际槽 %d)" % player.weapons.current_slot_int())
+		_check(player.weapons.current_type_id() == 1,
+				"单机开局应携带手枪(实际槽 %d)" % player.weapons.current_type_id())
 		_check(player.weapons.inventory.held.size() == 1,
 				"开局背包里应只有那一把(实际 %d)" % player.weapons.inventory.held.size())
 
@@ -162,8 +162,8 @@ func _phase_slot_placement(player: Node, lvl: Node) -> void:
 
 
 # ── 同型号两把:左下角**只许高亮一把**(用户 2026-09-23 报:「捡起两把型号相同的枪,UI 显示错误」)──
-# 根因:`_refresh_weapon_boxes` 原先按**类型**判选中(`sel := t == cur`),而 `current_slot_int()`
-# 返回的正是**类型 id**(见 `weapon_component.gd` 的 `_current_slot`)—— 同型号两把类型相同
+# 根因:`_refresh_weapon_boxes` 原先按**类型**判选中(`sel := t == cur`),而 `current_type_id()`
+# 返回的正是**类型 id**(见 `weapon_component.gd` 的 `_current_type`)—— 同型号两把类型相同
 # ⇒ **两行同时**被判选中(深底 + 大图标 + 名称/残弹),而实际手持的只有一把。
 # ★ 判据必须落在**渲染结果**上(数出几个"选中外观"),不能只查某一行的属性:
 #   `_weapon_name` / `_ammo_label` 是**单例**(后被赋值的覆盖前者),只查它们永远"正常"。

@@ -18,7 +18,7 @@ extends RefCounted
 const TIER_LIGHT := 0
 const TIER_MEDIUM := 1
 const TIER_HEAVY := 2
-const SLOT_COST: Dictionary = {TIER_LIGHT: 2, TIER_MEDIUM: 3, TIER_HEAVY: 4}
+const CELL_COST: Dictionary = {TIER_LIGHT: 2, TIER_MEDIUM: 3, TIER_HEAVY: 4}
 
 const MAX_WEAPONS := 4
 const CAPACITY := 8
@@ -44,10 +44,10 @@ func tier_of(type_id: int) -> int:
 
 
 func cost_of(type_id: int) -> int:
-	return int(SLOT_COST.get(tier_of(type_id), SLOT_COST[TIER_LIGHT]))
+	return int(CELL_COST.get(tier_of(type_id), CELL_COST[TIER_LIGHT]))
 
 
-func used_slots() -> int:
+func used_cell_count() -> int:
 	var n := 0
 	for e in held:
 		n += cost_of(int(e["type"]))
@@ -59,7 +59,7 @@ func used_slots() -> int:
 func can_hold(type_id: int) -> bool:
 	if held.size() >= MAX_WEAPONS:
 		return false
-	return used_slots() + cost_of(type_id) <= CAPACITY
+	return used_cell_count() + cost_of(type_id) <= CAPACITY
 
 
 func add(type_id: int, mag: int) -> int:
@@ -89,9 +89,9 @@ func first_index_of_type(type_id: int) -> int:
 	return -1
 
 
-# 紧凑排布:第 index 把占据格子 [slot_start(index), slot_start(index)+cost)。
+# 紧凑排布:第 index 把占据格子 [cell_start(index), cell_start(index)+cost)。
 # 删中间一条,其后整体左移 —— 换来实现上的"格子永不空洞",HUD 上看到的是整段移动。
-func slot_start(index: int) -> int:
+func cell_start(index: int) -> int:
 	var n := 0
 	for i in range(0, mini(index, held.size())):
 		n += cost_of(int(held[i]["type"]))

@@ -30,10 +30,10 @@ var _self_drop_until: Dictionary = {}  # role -> {inst: 解禁时刻(ms)},防"�
 # 本局投放的武器类型清单:每种 2 把,跳过被禁的槽位。
 func _server_weapon_types() -> Array:
 	var out: Array = []
-	for slot in [1, 2, 3, 4, 5, 6]:
-		if not _disabled_weapons.has(slot):
-			out.append(slot)
-			out.append(slot)
+	for type_id in [1, 2, 3, 4, 5, 6]:
+		if not _disabled_weapons.has(type_id):
+			out.append(type_id)
+			out.append(type_id)
 	return out
 
 
@@ -259,7 +259,7 @@ func _try_server_pickup(p: Node2D, role: int) -> void:
 
 
 func _try_server_drop(p: Node2D, role: int) -> void:
-	if p.weapons.current_slot_int() == 0:
+	if p.weapons.current_type_id() == 0:
 		return   # 空手没什么可丢
 	var e: Dictionary = p.weapons.drop_current()
 	if e.is_empty():

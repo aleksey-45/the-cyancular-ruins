@@ -832,7 +832,7 @@ func _gl_equip() -> String:
 			break
 	if idx_gl < 0:
 		return "no_grenade_launcher"
-	if int(_local.weapons.current_slot_int()) == 5:
+	if int(_local.weapons.current_type_id()) == 5:
 		return "ok"
 	_bot.press_slot(idx_gl + 1)
 	if _sub_t > 2.0:
@@ -1189,7 +1189,7 @@ func _bullet_weapon_index() -> int:
 func _weapon_type() -> int:
 	if _local == null or _local.weapons == null:
 		return 0
-	return int(_local.weapons.current_slot_int())
+	return int(_local.weapons.current_type_id())
 
 
 func _current_weapon():

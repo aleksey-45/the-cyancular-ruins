@@ -213,9 +213,9 @@ func _assert_inventory_landed(t: int) -> void:
 				or int(want[i]["inst"]) != int(got[i]["inst"]):
 			_violation = "背包内容不一致:权威 %s,预测 %s" % [str(want), str(got)]
 			return
-	if int(P.weapons.current_slot_int()) != int(A.weapons.current_slot_int()):
+	if int(P.weapons.current_type_id()) != int(A.weapons.current_type_id()):
 		_violation = "手持槽位没落地:权威 %d,预测 %d" % [
-				A.weapons.current_slot_int(), P.weapons.current_slot_int()]
+				A.weapons.current_type_id(), P.weapons.current_type_id()]
 		return
 	# ★ 反向断言:这条修复**不得**引入新的回滚 —— 它买的是"零回滚也能同步",
 	#   不是"多回滚几次"。撤掉 Task 2 的改动时,红的是上面那条,不是这条。

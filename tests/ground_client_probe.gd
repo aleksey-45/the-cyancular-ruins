@@ -48,7 +48,7 @@ func _ready() -> void:
 	_client._world = _world
 	_client._local = _local
 	print("[gc] 客户端探针就绪:地图 %s,本地玩家槽 %d" % [
-			MAP.get_file(), _local.weapons.current_slot_int()])
+			MAP.get_file(), _local.weapons.current_type_id()])
 	_run()
 
 
@@ -152,7 +152,7 @@ func _phase_authoritative_inventory_change() -> void:
 	_local.restore_state({"wslot": 4, "inv": inv})
 	_check(w.inventory.held.size() == 2,
 			"背包按权威重建(旧 %d → 新 %d,期望 2)" % [before, w.inventory.held.size()])
-	_check(w.current_slot_int() == 4, "切到权威的 wslot(实际 %d)" % w.current_slot_int())
+	_check(w.current_type_id() == 4, "切到权威的 wslot(实际 %d)" % w.current_type_id())
 	for i in 10:
 		await get_tree().physics_frame
 	_check(w.current_weapon() == null or is_instance_valid(w.current_weapon()),
@@ -176,7 +176,7 @@ func _phase_authoritative_inventory_change() -> void:
 # `restore_inventory` 原先用 `first_index_of_type` 反查 ⇒ 同型号时永远落回**第 0 把**,
 # 于是 `_current_index` 与手上真正那把(`_weapon`)分家。
 # ★ 后果不止 UI:`_flush_current_mag` 会把残弹写进**错的那把**、**丢弃会丢掉错的那把**。
-# ★ 判据落在**背包条目**上(手持那一条的 `inst`),不落在 `current_slot_int()` —— 后者是
+# ★ 判据落在**背包条目**上(手持那一条的 `inst`),不落在 `current_type_id()` —— 后者是
 #   **类型 id**,同型号两把恒等 ⇒ 拿它断言**永远绿**(这正是旧冒烟漏掉它的原因)。
 func _phase_same_type_equip() -> void:
 	print("[gc] ── ④b 同型号两把:手持哪一把 ──")
@@ -255,22 +255,22 @@ func _phase_switch_field_contract() -> void:
 	print("[gc] ── ⑥ 切枪包字段 = 背包位置 ──")
 	var w: WeaponComponent = _local.weapons
 	w.set_initial_inventory([3, 1])   # 位置 0 = 重狙(类型 3)、位置 1 = 手枪(类型 1)
-	_check(w.inventory.held.size() == 2 and w.current_slot_int() == 3,
-			"先摆成两把(实际 %d 把,手上槽 %d)" % [w.inventory.held.size(), w.current_slot_int()])
+	_check(w.inventory.held.size() == 2 and w.current_type_id() == 3,
+			"先摆成两把(实际 %d 把,手上槽 %d)" % [w.inventory.held.size(), w.current_type_id()])
 	# 从位置 0 往正方向滚一次 → 目标位置 1
 	w.request_net_cycle(1)
 	var sent: int = w.consume_net_slot()
 	_check(sent == 2, "滚轮上行的是**背包位置** 2(实际 %d)" % sent)
 	_check(sent != 1, "上行值不得是目标那把的**类型 id**(1)—— 消费端按位置读,发类型 id 会切错/越界")
-	_check(w._current_index == 1 and w.current_slot_int() == 1,
-			"本地同刻切到位置 1(实际 index=%d slot=%d)" % [w._current_index, w.current_slot_int()])
+	_check(w._current_index == 1 and w.current_type_id() == 1,
+			"本地同刻切到位置 1(实际 index=%d slot=%d)" % [w._current_index, w.current_type_id()])
 	# 再走一遍**消费端口径**(服务器 `player.gd` 的那句):同一个字段必须还原出同一个位置
 	w.equip_index(0)
 	_check(w._current_index == 0, "先切回位置 0(实际 %d)" % w._current_index)
 	w.equip_index(sent - 1)
-	_check(w._current_index == 1 and w.current_slot_int() == 1,
+	_check(w._current_index == 1 and w.current_type_id() == 1,
 			"按消费端口径 equip_index(字段 - 1) 落回同一把(实际 index=%d slot=%d)" % [
-					w._current_index, w.current_slot_int()])
+					w._current_index, w.current_type_id()])
 	_check(is_instance_valid(_local), "切枪后本地玩家仍有效")
 
 
@@ -292,7 +292,7 @@ func _phase_replica_empty_hands() -> void:
 	for i in 3:
 		await get_tree().physics_frame
 	_check(rep._weapon != null, "先握上一把(实际 %s)" % str(rep._weapon))
-	_check(rep._weapon_slot_int == 2, "槽位记成 2(实际 %d)" % rep._weapon_slot_int)
+	_check(rep._weapon_type_int == 2, "槽位记成 2(实际 %d)" % rep._weapon_type_int)
 	# 服务器说:他把最后一把丢出去了 → 空手
 	snap["weapon"] = 0
 	rep.apply_snapshot(snap, anchor, 2)
@@ -300,14 +300,14 @@ func _phase_replica_empty_hands() -> void:
 		await get_tree().physics_frame
 	_check(rep._weapon == null,
 			"权威空手后副本不得还举着枪(实际 %s)" % str(rep._weapon))
-	_check(rep._weapon_slot_int == 0, "槽位回到 0(实际 %d)" % rep._weapon_slot_int)
+	_check(rep._weapon_type_int == 0, "槽位回到 0(实际 %d)" % rep._weapon_type_int)
 	# 再握一把:同槽位之外的类型要能重建(证明 0 那一档没有把状态写坏)
 	snap["weapon"] = 4
 	rep.apply_snapshot(snap, anchor, 3)
 	for i in 3:
 		await get_tree().physics_frame
-	_check(rep._weapon != null and rep._weapon_slot_int == 4,
-			"空手之后仍能重建武器(实际 %s / 槽 %d)" % [str(rep._weapon), rep._weapon_slot_int])
+	_check(rep._weapon != null and rep._weapon_type_int == 4,
+			"空手之后仍能重建武器(实际 %s / 槽 %d)" % [str(rep._weapon), rep._weapon_type_int])
 	# ★ 收尾要**等它真的没**:`queue_free` 只是标记,探针末尾同帧就 `quit()` 的话,副本连同
 	#   它手上那把武器都还活着 → 退出时报 "N ObjectDB instances / 1 RID leaked"(上一版实测)。
 	rep.queue_free()

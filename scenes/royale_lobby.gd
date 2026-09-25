@@ -122,10 +122,10 @@ func _build_create_panel() -> void:
 	_build_match_time_row(vb)
 
 	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
-	_add_weapon_grid(vb, 10, func(cell: Node, slot: int) -> void:
+	_add_weapon_grid(vb, 10, func(cell: Node, type_id: int) -> void:
 		# 本页要多记一笔:建房时读 _weapon_checks 的勾选态(1v1 页不留引用,直接读 Settings)
 		var cb: CheckButton = cell.get_meta("cb")
-		cb.set_meta("slot", slot)
+		cb.set_meta("type_id", type_id)
 		_weapon_checks.append(cb))
 
 	# 自己角色颜色(色相 0-360):本页即选即存;开局转连 worker 报到时随 player_options 上发,
@@ -217,7 +217,7 @@ func _on_create_pressed() -> void:
 	var disabled: Array = []
 	for cb in _weapon_checks:
 		if cb.button_pressed:
-			disabled.append(int(cb.get_meta("slot", 0)))
+			disabled.append(int(cb.get_meta("type_id", 0)))
 	_with_lobby(func() -> void:
 		_status.text = "建房中…"
 		_royale_ack = false

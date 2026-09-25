@@ -112,7 +112,7 @@ func _attack_just_pressed_raw() -> bool:
 func _attack_just_released_raw() -> bool:
 	return bool(_released.get("attack", false))
 
-func _weapon_slot_raw() -> int:
+func _switch_index_raw() -> int:
 	var s := _slot
 	_slot = 0        # 读一次即清,与真实 Input 的"本轮刚按下"语义一致
 	return s

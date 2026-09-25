@@ -250,7 +250,7 @@ func _compare(a, b, _snap: Dictionary, restored: bool) -> void:
 		#   被帧末的延迟写回抹掉」(C1)需要把那个序列构造出来才走得进去,靠"开火 tick 与
 		#   restore tick 交错"碰不到(理由见 _build_plan 那段注释)。C1 由
 		#   `tests/ammo_rollback_probe.tscn` 专门覆盖,这里**刻意不比**手持实例的弹数。
-		"wslot": a.weapons.current_slot_int() == b.weapons.current_slot_int(),
+		"wslot": a.weapons.current_type_id() == b.weapons.current_type_id(),
 		"inv": _inv_key(a) == _inv_key(b),
 	}
 	for k in checks:

@@ -340,13 +340,14 @@ func _fill_version_panel(panel: PanelContainer) -> PanelContainer:
 func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	var checks: Array[CheckButton] = []
 	var check_list: VBoxContainer = panel.get_node("VBox/CheckList")
-	for slot in [1, 2, 3, 4, 5, 6]:
+	for type_id in [1, 2, 3, 4, 5, 6]:
 		var cb := CheckButton.new()
-		cb.text = "%d. %s" % [slot, WeaponComponent.DISPLAY_NAMES[slot]]
-		cb.icon = WeaponIcons.silhouette(slot)   # 纯白像素剪影,便于辨认
+		# ★ 不带编号:那个数字**看起来**是键位,而 type_id 与键位毫无关系(用户 2026-09-25 定)。
+		cb.text = WeaponComponent.DISPLAY_NAMES[type_id]
+		cb.icon = WeaponIcons.silhouette(type_id)   # 纯白像素剪影,便于辨认
 		cb.expand_icon = false
 		UiFactory.style_check(cb, 32)
-		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)
+		cb.button_pressed = Settings.sp_disabled_weapons.has(type_id)
 		checks.append(cb)
 		check_list.add_child(cb)
 

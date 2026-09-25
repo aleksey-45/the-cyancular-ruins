@@ -67,10 +67,10 @@ func is_attack_just_pressed() -> bool:
 func is_attack_just_released() -> bool:
 	return not frozen and _attack_just_released_raw()
 
-func get_weapon_slot_pressed() -> int:
+func get_switch_index_pressed() -> int:
 	if frozen:
 		return 0
-	return _weapon_slot_raw()
+	return _switch_index_raw()
 
 # 拾取(F 按下边沿) / 丢弃(Q 长按满阈值后的那一次边沿)。
 # ★ 与其它读口同款:冻结一律在此短路,子类**不得覆写这两个**(覆写即绕开冻结)。
@@ -111,8 +111,8 @@ func _attack_just_released_raw() -> bool:
 	push_error("PlayerInput: 子类必须覆写 _attack_just_released_raw()")
 	return false
 
-func _weapon_slot_raw() -> int:
-	push_error("PlayerInput: 子类必须覆写 _weapon_slot_raw()")
+func _switch_index_raw() -> int:
+	push_error("PlayerInput: 子类必须覆写 _switch_index_raw()")
 	return 0
 
 func _pickup_pressed_raw() -> bool:

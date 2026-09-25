@@ -451,13 +451,13 @@ func _phase_equip_switch() -> void:
 	_check(p.weapons._weapon != null, "set_initial_inventory 后装备第一把")
 	if p.weapons._weapon != null:
 		_check(p.weapons._weapon.weapon_name == "Pistol", "默认武器是手枪")
-		p.weapons.equip("2")   # 步枪(WEAPONS 注册表槽 2;组件化后按槽键,不再传场景路径)
+		p.weapons.equip_type(2)   # 步枪(WEAPONS 注册表槽 2;组件化后按槽键,不再传场景路径)
 		await physics_frame
 		_check(p.weapons._weapon.weapon_name == "Rifle", "切枪到步枪")
 		# 切枪冷却继承:旧武器剩余冷却不能被切枪刷掉。
 		# equip() 同步执行,不 await(否则 _process 已扣掉一帧冷却)。
 		p.weapons._weapon.fire_cd_timer = 0.7
-		p.weapons.equip("1")
+		p.weapons.equip_type(1)
 		_check(is_equal_approx(p.weapons._weapon.fire_cd_timer, 0.7), "切枪继承剩余冷却")
 	p.free()
 

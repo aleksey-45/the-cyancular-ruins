@@ -127,7 +127,7 @@ func _apply_match_options(opts: Dictionary) -> void:
 	for v in opts.get("disabled_weapons", []):
 		disabled.append(int(v))
 	if _local != null:
-		_local.weapons.set_enabled_slots(disabled)
+		_local.weapons.set_enabled_types(disabled)
 
 func _on_snapshot_own(own: Dictionary) -> void:
 	if _rollback == null:
@@ -709,7 +709,7 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 			continue
 		var pk := n as WeaponPickup
 		var can := false
-		if _local != null and not _live_self_drops().has(int(inst)) 				and _local.weapons.is_slot_enabled(int(pk.type_id)):
+		if _local != null and not _live_self_drops().has(int(inst)) 				and _local.weapons.is_type_enabled(int(pk.type_id)):
 			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
@@ -723,7 +723,7 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 				print("[pkd]   inst=%d type=%d d=%.1f can=%s | 冷却=%s 启用=%s | canon=(%.0f,%.0f) render=(%.0f,%.0f) 玩家=(%.0f,%.0f) settled=%s" % [
 						int(inst), int(pk.type_id), dd, "是" if can else "否",
 						"是" if _live_self_drops().has(int(inst)) else "否",
-						"是" if _local.weapons.is_slot_enabled(int(pk.type_id)) else "否",
+						"是" if _local.weapons.is_type_enabled(int(pk.type_id)) else "否",
 						pk.canonical_pos.x, pk.canonical_pos.y,
 						pk.global_position.x, pk.global_position.y, lp.x, lp.y,
 						"是" if pk._settled else "否"])

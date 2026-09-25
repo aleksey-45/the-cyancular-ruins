@@ -43,7 +43,7 @@ func _edge_now(name: String) -> bool:
 var hold_up := false
 var hold_down := false
 
-var _slot := 0               # 背包位置(1-based)的按下边沿;'0 = 无'(整帧有效,见 _weapon_slot_raw)
+var _slot := 0               # 背包位置(1-based)的按下边沿;'0 = 无'(整帧有效,见 _switch_index_raw)
 
 
 func source_kind() -> int:
@@ -144,8 +144,8 @@ func release_attack_edge() -> void:
 	_set_edge("atk_rel")
 
 
-func _weapon_slot_raw() -> int:
-	# ★ 同样整帧有效(理由见文件头那一段):`get_weapon_slot_pressed()` 一帧里被**本地装备**
+func _switch_index_raw() -> int:
+	# ★ 同样整帧有效(理由见文件头那一段):`get_switch_index_pressed()` 一帧里被**本地装备**
 	#   与**上行包**各读一次 —— 读一次即清会让其中一处丢边沿(表现:切枪在服务器侧不生效)。
 	return _slot if _edge_now("slot") else 0
 

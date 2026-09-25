@@ -189,7 +189,7 @@ func _physics_process(delta: float) -> void:
 	combat.update_iframe_blink(delta)
 
 	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
-	var wslot := input_source.get_weapon_slot_pressed()
+	var wslot := input_source.get_switch_index_pressed()
 	if wslot > 0:
 		# ★ 数字键选的是**背包第 N 把**(1-4),不是"武器类型 id"。
 		#   旧代码走 equip(str(wslot)) —— 那是按**类型**切的:按 2 会切到"步枪"这个类型,
@@ -538,7 +538,7 @@ func capture_state() -> Dictionary:
 		"ifr": combat.iframes,
 		"down": combat.downed,
 		"knock": combat.knock_velocity,
-		"wslot": weapons._current_slot,
+		"wslot": weapons._current_type,
 		# ★ 手持那一条的 **inst**(逐把唯一)。`wslot` 只有**类型 id**,同型号两把恒等 ——
 		#   光凭它,恢复端无法知道权威手持的是**哪一把**(会静默落回第 0 把:
 		#   残弹写错条目 / 丢弃丢错把 / 左下角武器框高亮错,用户 2026-09-23 报的即最后一条)。
@@ -631,7 +631,7 @@ func sync_soft_state(st: Dictionary) -> void:
 	# ★ 指纹必须**连 `winst` 一起比**:同型号两把之间换手时 `wslot`(类型)与背包结构**都不变**,
 	#   只看那两样会把整条软同步**跳过** ⇒ 上面 `restore_inventory` 的 inst 解析根本没机会跑。
 	#   ★ 缺键时的默认值取"当前值" ⇒ 老载荷(无 `winst`)行为与改动前逐字相同。
-	if int(st.get("wslot", weapons._current_slot)) == weapons._current_slot \
+	if int(st.get("wslot", weapons._current_type)) == weapons._current_type \
 			and int(st.get("winst", weapons.current_inst())) == weapons.current_inst() \
 			and _inv_structure_equal(st.get("inv", [])):
 		return
@@ -653,16 +653,16 @@ func _inv_structure_equal(want: Array) -> bool:
 
 
 # 武器/弹药的权威字段回灌(restore_state 与 sync_soft_state 共用)。
-# ★ 顺序不可反:先读 wslot(此时 _current_slot 还有值,可作默认),再 restore_inventory
-#   (它会把 _current_slot 清 0),最后 equip。反过来的话——先 restore,wslot 的默认值
+# ★ 顺序不可反:先读 wslot(此时 _current_type 还有值,可作默认),再 restore_inventory
+#   (它会把 _current_type 清 0),最后 equip。反过来的话——先 restore,wslot 的默认值
 #   就丢了;先 equip 再 restore,则 equip 是在**旧背包**上工作(凭空造枪/丢枪)。
 func _apply_weapon_state(st: Dictionary) -> void:
-	var wslot := int(st.get("wslot", weapons._current_slot))
+	var wslot := int(st.get("wslot", weapons._current_type))
 	# ★ 把"手持的是哪一把"交给 restore_inventory 按 **inst** 解析(同型号两把只有它能区分);
 	#   下面那句按类型的 `equip` 只作**兜底**(老载荷无 `winst`、或权威那把不在表里时)。
 	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
-	if wslot > 0 and wslot != weapons._current_slot:
-		# 手上**实例**的类型与权威不符(`_current_slot` 由 `_equip_index`/`_unequip` 维护,
+	if wslot > 0 and wslot != weapons._current_type:
+		# 手上**实例**的类型与权威不符(`_current_type` 由 `_equip_index`/`_unequip` 维护,
 		# 即活实例的类型)→ 必须重建。这是**已有**行为,别绕开。
 		# ★★ 但重建的**落点**要分两种,`by_inst` 就是那个判别器:
 		#   · 按 `winst` 解析成功 → 走 `equip_index(下标)`。**不能**用 `equip(wslot)` ——
@@ -674,7 +674,7 @@ func _apply_weapon_state(st: Dictionary) -> void:
 		if by_inst and weapons._current_index >= 0:
 			weapons.equip_index(weapons._current_index)
 		else:
-			weapons.equip(str(wslot))
+			weapons.equip_type(wslot)
 	var w: WeaponBase = weapons._weapon
 	if w != null:
 		w.fire_cd_timer = float(st.get("fire_cd", w.fire_cd_timer))
@@ -757,7 +757,7 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	_waterproof_drown_timer = 0.0
 	weapons.cancel_aim()
 	# ★ 2026-09-15(背包化):这里**不再**动背包。
-	#   原先那三行(reset_mag_state → equip(default_slot()) → refill_current_weapon)是
+	#   原先那三行(reset_mag_state → equip(default_type()) → refill_current_weapon)是
 	#   "复活即回默认枪 + 满弹"的旧语义,而背包现在是**玩家资产**:单机的重开由
 	#   `Level0.restart_single` 统一重置(清空 + 重新散落),联机的复活另有规则
 	#   (除随机一把外全丢,见联机计划)。放进本函数会让两条路径互相打架 ——
@@ -832,7 +832,7 @@ func _try_pickup() -> void:
 
 
 func _try_drop() -> void:
-	if weapons.current_slot_int() == 0:
+	if weapons.current_type_id() == 0:
 		return   # 空手没什么可丢
 	var e: Dictionary = weapons.drop_current()
 	if e.is_empty():
@@ -860,7 +860,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if Level0.pvp_mode:
 				weapons.request_net_cycle(dir)
 			else:
-				weapons.cycle_slot(dir)
+				weapons.cycle_index(dir)
 			return
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。

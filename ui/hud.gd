@@ -206,8 +206,8 @@ func _refresh_weapon_boxes() -> void:
 	for e in _player.weapons.inventory.held:
 		var t := int(e["type"])
 		# ★★ 判选中必须按**背包下标**,不能按**类型**(用户 2026-09-23:「捡起两把型号相同的枪,
-		#   左下角 UI 显示错误」)。`current_slot_int()` 返回的是**类型 id**(见 weapon_component.gd
-		#   的 `_current_slot`),拿它去比 `e["type"]` 在**同型号两把**时对两行**同时成立**
+		#   左下角 UI 显示错误」)。`current_type_id()` 返回的是**类型 id**(见 weapon_component.gd
+		#   的 `_current_type`),拿它去比 `e["type"]` 在**同型号两把**时对两行**同时成立**
 		#   ⇒ 两个框一起变成深底 + 大图标 + 名称/残弹。而单机开局**每种散 2 把**,出厂即可达。
 		#   ★ 与 `ui/weapon_slots.gd` 的格子高亮**同源**(那条一直是按下标比 `_current_index`)。
 		#   `_current_index == -1`(空手)时一个都不选中 —— 与改动前同观感。
@@ -303,7 +303,7 @@ func _place_weapon_slots() -> void:
 	_slots.offset_top = _slots.offset_bottom - WeaponSlots.PANEL_H
 
 
-func _on_weapon_changed(_slot: int) -> void:
+func _on_weapon_changed(_type_id: int) -> void:
 	# ★ 直接重建整个列表,别去改"某个缓存下来的 Label/Icon" —— 那两样在每次重建时都会被
 	#   queue_free,而**释放后的对象不是 null**,`!= null` 挡不住它,表现为
 	#   "Trying to cast a freed object"(实测踩到:weapon_changed 先于 inventory_changed 发射,

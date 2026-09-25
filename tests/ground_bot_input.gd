@@ -55,7 +55,7 @@ func _attack_just_pressed_raw() -> bool:
 func _attack_just_released_raw() -> bool:
 	return false
 
-func _weapon_slot_raw() -> int:
+func _switch_index_raw() -> int:
 	return 0
 
 func _pickup_pressed_raw() -> bool:

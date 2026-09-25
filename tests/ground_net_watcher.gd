@@ -309,7 +309,7 @@ func _debug_step(delta: float) -> void:
 		_hb_t = 0.0
 		var rb = _game.get("_rollback")
 		_log("♥ t=%.0f 相=%d 本地背包=%d 槽=%d 我丢=%d 我捡=%d 全场丢=%d 捡=%d 地面=%d rb=%s" % [
-				_t, _phase, _local.weapons.inventory.held.size(), _local.weapons.current_slot_int(),
+				_t, _phase, _local.weapons.inventory.held.size(), _local.weapons.current_type_id(),
 				_my_spawned, _my_removed, _spawned, _removed, _game.ground_weapons.size(),
 				"无" if rb == null else "last=%d ack=%d caps=%d seqs=%d pend=%d rollback=%d" % [
 						int(rb.last_applied()), int(rb._acked),
@@ -398,7 +398,7 @@ func _step_seek(_delta: float) -> void:
 		_cycles += 1
 		_log("第 %d 轮完成(捡走;地面还有 %d 件;客户端背包 %d 把/槽 %d)" % [
 				_cycles, _game.ground_weapons.size(),
-				_local.weapons.inventory.held.size(), _local.weapons.current_slot_int()])
+				_local.weapons.inventory.held.size(), _local.weapons.current_type_id()])
 		_restart_phase(PH_DROP)
 		return
 	# ★ 前 STAND_TRY 秒**先站着按 F**:开了 `--test-ground-teleport` 的服务器会把枪喂到脚下

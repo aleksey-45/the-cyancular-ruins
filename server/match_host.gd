@@ -79,9 +79,9 @@ func _ready() -> void:
 	_round_timer = COUNTDOWN_TIME
 	# 禁用武器槽位:_init 时玩家 @onready 未就绪(不能碰 weapons),进树后应用
 	for role in players:
-		(players[role] as Node).weapons.set_enabled_slots(_disabled_weapons)
+		(players[role] as Node).weapons.set_enabled_types(_disabled_weapons)
 	# 地面武器:铺 12 把 + 每个玩家随机拿 1 把。
-	# ★ 必须排在 set_enabled_slots **之后** —— 与单机 `_give_starting_weapon` 同款理由:
+	# ★ 必须排在 set_enabled_types **之后** —— 与单机 `_give_starting_weapon` 同款理由:
 	#   先给再禁的话,手上一旦是禁用武器会被判成空手。
 	# ★ 这同时是**服务器玩家有枪的唯一来源**:player.tscn 自身的 _ready 给的是空背包,
 	#   不发的话服务器上的玩家开不了火(PvP 直接哑火,且不会有任何报错)。

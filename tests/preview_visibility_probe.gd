@@ -47,7 +47,7 @@ func _check_owner_sees_own_line() -> void:
 		_check(false, "Level0 里找得到 WorldViewport/Player")
 		return
 	var wep: Node = player.weapons
-	wep.equip(HEAVY_SLOT)
+	wep.equip_type(int(HEAVY_SLOT))
 	await _frames(4)
 
 	var w: Node = wep.current_weapon()

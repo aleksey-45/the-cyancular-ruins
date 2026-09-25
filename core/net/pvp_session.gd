@@ -108,7 +108,7 @@ static func note_room(code: String) -> void:
 
 # ── 「本局禁了哪些枪」的权威在哪(2026-09-14 加,别再四处找)──
 #   · 联机对局:**服务器 MatchHost**。客户端侧的真生效点是
-#     `player.weapons.set_enabled_slots(disabled)` —— 在 `pvp_client._apply_match_options` /
+#     `player.weapons.set_enabled_types(disabled)` —— 在 `pvp_client._apply_match_options` /
 #     `royale_game._apply_match_options` 里,紧跟载荷解析那一行。载荷来自 match_sync 的 options
 #     (服务器按 role1 的 player_options 生效)。
 #   · 单机:**`RunOptions.disabled_weapons`**(菜单写入,`level_0.gd:94` 读)。

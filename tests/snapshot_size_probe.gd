@@ -35,7 +35,7 @@ func _check(ok: bool, msg: String) -> void:
 func _ready() -> void:
 	var ts: PackedScene = load("res://scenes/player/player.tscn")
 	_player = ts.instantiate()
-	add_child(_player)          # _ready 跑完(weapons.equip("1") 等)再取 capture_state
+	add_child(_player)          # _ready 跑完(weapons.equip_type(1) 等)再取 capture_state
 	await get_tree().physics_frame
 
 	var entry := _entry_current()
@@ -90,7 +90,7 @@ func _render_fields() -> Dictionary:
 		"vel": p.velocity,
 		"facing": p.get_facing(),
 		"pose": p.state,
-		"weapon": p.weapons.current_slot_int(),
+		"weapon": p.weapons.current_type_id(),
 		"hp": p.hp,
 		"waterproof": p.waterproof,
 		"downed": p.is_downed(),
@@ -131,7 +131,7 @@ func _entry_world_thin() -> Dictionary:
 		"p": Vector2i(roundi(p.global_position.x), roundi(p.global_position.y)),
 		"f": p.get_facing(),
 		"s": p.state,
-		"w": p.weapons.current_slot_int(),
+		"w": p.weapons.current_type_id(),
 		"h": p.hp,
 		"d": p.is_downed(),
 		"a": p.get_current_aim_dir(),

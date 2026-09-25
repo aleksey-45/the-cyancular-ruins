@@ -2,7 +2,7 @@ class_name WeaponSlots
 extends Control
 
 # 4×2 武器槽位格子(左下角)。每格 = 1 格容量;武器按**紧凑排布**占据连续的格子
-# (见 WeaponInventory.slot_start)。三态:未占据=淡灰 / 已占据=淡青 / 手持那把占的格=深青。
+# (见 WeaponInventory.cell_start)。三态:未占据=淡灰 / 已占据=淡青 / 手持那把占的格=深青。
 #
 # ★ **自包含**:能自己 new() 出来挂到任意节点下,不依赖任何 HUD 的继承关系。
 #   PvpHud 与 RoyaleHud 是**并列的两个 `extends CanvasLayer`**(没有继承关系),
@@ -54,7 +54,7 @@ func setup(weapons: WeaponComponent) -> void:
 	refresh()
 
 
-func _on_changed(_slot: int) -> void:
+func _on_changed(_type_id: int) -> void:
 	refresh()
 
 
@@ -82,7 +82,7 @@ func _draw() -> void:
 	owner_of.fill(-1)
 	for i in held.size():
 		var cost: int = inv.cost_of(int(held[i]["type"]))
-		var start: int = inv.slot_start(i)
+		var start: int = inv.cell_start(i)
 		for c in range(start, start + cost):
 			if c >= 0 and c < WeaponInventory.CAPACITY:
 				owner_of[c] = i

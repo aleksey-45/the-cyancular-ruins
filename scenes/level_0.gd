@@ -238,7 +238,7 @@ func _ready() -> void:
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
-	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
+	$WorldViewport/Player.weapons.set_enabled_types(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
 	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
@@ -486,25 +486,25 @@ const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 # 单机开局武器:玩家**手里带一把**(用户 2026-09-15 要求「单机模式初始携带手枪」),
 # 其余散落在地图上。
 #
-# ★ 必须排在 `set_enabled_slots` **之后** —— 如果先给再禁,手上一旦是被禁的那把,
-#   `set_enabled_slots` 会判成"没有可用的"→ 空手;过滤顺序反了就直接白给。
-# ★ 用 `default_slot()`(最小**启用**槽位)而不是写死 "1":玩家禁用手枪时应当发下一把,
+# ★ 必须排在 `set_enabled_types` **之后** —— 如果先给再禁,手上一旦是被禁的那把,
+#   `set_enabled_types` 会判成"没有可用的"→ 空手;过滤顺序反了就直接白给。
+# ★ 用 `default_type()`(最小**启用**槽位)而不是写死 "1":玩家禁用手枪时应当发下一把,
 #   而不是发一把本局根本不让用的枪。发出来的仍是手枪,除非手枪被禁。
 # ★ 本函数只服务单机;PvP/大乱斗的初始武器由服务器 MatchHost 自己决定(见联机计划)。
 func _give_starting_weapon(p: Node) -> void:
 	if p == null or p.weapons == null:
 		return
-	p.weapons.set_initial_inventory([int(p.weapons.default_slot())])
+	p.weapons.set_initial_inventory([int(p.weapons.default_type())])
 
 
 # 单机初始武器清单:每种 2 把,跳过本局被禁的槽位。
-# (禁用武器不该出现在地图上 —— 与 set_enabled_slots 同源:RunOptions.disabled_weapons)
+# (禁用武器不该出现在地图上 —— 与 set_enabled_types 同源:RunOptions.disabled_weapons)
 func _default_weapon_types() -> Array:
 	var out: Array = []
-	for slot in [1, 2, 3, 4, 5, 6]:
-		if not RunOptions.disabled_weapons.has(slot):
-			out.append(slot)
-			out.append(slot)
+	for type_id in [1, 2, 3, 4, 5, 6]:
+		if not RunOptions.disabled_weapons.has(type_id):
+			out.append(type_id)
+			out.append(type_id)
 	return out
 
 
@@ -641,7 +641,7 @@ func _update_pickup_prompt() -> void:
 		var pk := n as WeaponPickup
 		var can := false
 		if pl != null and not self_drops.has(int(inst)):
-			if pl.weapons.is_slot_enabled(int(pk.type_id)):
+			if pl.weapons.is_type_enabled(int(pk.type_id)):
 				var d := GridPathfinder.toroidal_delta_px(
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius

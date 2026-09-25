@@ -68,7 +68,7 @@ func _initialize() -> void:
 	#   此断言必须打在**子类实例**上:基类自己的实现无法证明子类听话。
 	#   口径来自 core/input_source.gd 的类头注释与 player.set_controls_locked 的调用点。
 	#   注:本类把 is_action_pressed / is_action_just_released / is_attack_just_released /
-	#   get_weapon_slot_pressed 实现成**常量**(与 frozen 无关),故那 4 条不具鉴别力 —— 但
+	#   get_switch_index_pressed 实现成**常量**(与 frozen 无关),故那 4 条不具鉴别力 —— 但
 	#   它们仍要断言(修完必须全绿),具鉴别力的是 get_axis / just_pressed / attack_pressed /
 	#   attack_just_pressed 这 4 条(它们会回放写入的值,能照出"未短路")。
 	src.aim = Vector2.UP
@@ -83,7 +83,7 @@ func _initialize() -> void:
 	_check(not src.is_attack_pressed(), "frozen:is_attack_pressed 为 false")
 	_check(not src.is_attack_just_pressed(), "frozen:is_attack_just_pressed 为 false")
 	_check(not src.is_attack_just_released(), "frozen:is_attack_just_released 为 false")
-	_check(src.get_weapon_slot_pressed() == 0, "frozen:get_weapon_slot_pressed 为 0")
+	_check(src.get_switch_index_pressed() == 0, "frozen:get_switch_index_pressed 为 0")
 	_check(not src.is_pickup_pressed(), "frozen:is_pickup_pressed 为 false")
 	_check(not src.is_drop_pressed(), "frozen:is_drop_pressed 为 false")
 	# 瞄准是**刻意**不冻的:冻结期武器仍要按注入方向摆枪
@@ -91,7 +91,7 @@ func _initialize() -> void:
 	src.frozen = false
 	# 不逐条断言那些"在基类与覆写里都是同一个常量"的读口(is_action_pressed 恒 false、
 	# is_action_just_released 恒 false、is_attack_just_released 恒 false、
-	# get_weapon_slot_pressed 恒 0)—— 那种断言无论覆写与否都通过,是空转。
+	# get_switch_index_pressed 恒 0)—— 那种断言无论覆写与否都通过,是空转。
 
 	# AiNavigator:只建实例断言成员与接口(不入树 → _physics_process/_ready 都不会跑,
 	# 故读 host 的那行不会被触发;T2 的 AI 生成块按这几个成员名赋值,名错即静默失效)

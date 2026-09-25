@@ -179,8 +179,8 @@ func _phase_pickup_into_free_slot() -> void:
 			"地面少一件(%d → %d)" % [before_ground, _host.ground_weapons.size()])
 	_check(p.weapons.inventory.held.size() == before_inv + 1,
 			"背包多一件(%d → %d)" % [before_inv, p.weapons.inventory.held.size()])
-	_check(p.weapons.current_slot_int() == type_id,
-			"捡起的那把成为手持(槽 %d,期望 %d)" % [p.weapons.current_slot_int(), type_id])
+	_check(p.weapons.current_type_id() == type_id,
+			"捡起的那把成为手持(槽 %d,期望 %d)" % [p.weapons.current_type_id(), type_id])
 	_check(p.global_position == p.global_position, "玩家仍有效(未在拾取中被释放)")
 
 
@@ -192,8 +192,8 @@ func _phase_pickup_replaces_when_full() -> void:
 	# 它照 `add()` 直加、不过容量闸门;要测闸门就得自己摆成"刚好满"的合法状态,别拿它塞 4 把)
 	p.weapons.set_initial_inventory([3, 3])
 	_check(p.weapons.inventory.held.size() == 2, "塞满后是 2 把重型(实际 %d)" % p.weapons.inventory.held.size())
-	_check(p.weapons.inventory.used_slots() == WeaponInventory.CAPACITY,
-			"且正好占满容量(%d/%d)" % [p.weapons.inventory.used_slots(), WeaponInventory.CAPACITY])
+	_check(p.weapons.inventory.used_cell_count() == WeaponInventory.CAPACITY,
+			"且正好占满容量(%d/%d)" % [p.weapons.inventory.used_cell_count(), WeaponInventory.CAPACITY])
 	var before_ground: int = _host.ground_weapons.size()
 	# 挑一把**没被禁**且不在手上的:捡起它会超出容量 → 必须走"替换手上那把"这条分支
 	var e: Dictionary = _nearest_entry(p.global_position)
@@ -201,17 +201,17 @@ func _phase_pickup_replaces_when_full() -> void:
 		_check(false, "场上有可捡的武器(②)")
 		return
 	_stand_on(p, e["pos"])
-	var held_type: int = p.weapons.current_slot_int()
+	var held_type: int = p.weapons.current_type_id()
 	await _press(1, PacketInputSource.BIT_PICKUP)
 	_check(p.weapons.inventory.held.size() == 2,
 			"替换而非丢弃:背包仍是 2 把(实际 %d)" % p.weapons.inventory.held.size())
-	_check(p.weapons.inventory.used_slots() <= WeaponInventory.CAPACITY,
-			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_slots(), WeaponInventory.CAPACITY])
+	_check(p.weapons.inventory.used_cell_count() <= WeaponInventory.CAPACITY,
+			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_cell_count(), WeaponInventory.CAPACITY])
 	# 一进一出 → 地面数量不变(捡走 1、掉下 1)
 	_check(_host.ground_weapons.size() == before_ground,
 			"地面数量不变(捡 1 掉 1):%d → %d" % [before_ground, _host.ground_weapons.size()])
-	_check(p.weapons.current_slot_int() != held_type or held_type == int(e["type_id"]),
-			"手上换成了新捡的那把(旧 %d → 新 %d)" % [held_type, p.weapons.current_slot_int()])
+	_check(p.weapons.current_type_id() != held_type or held_type == int(e["type_id"]),
+			"手上换成了新捡的那把(旧 %d → 新 %d)" % [held_type, p.weapons.current_type_id()])
 
 
 # ── 阶段 ③:Q 长按的**完成边沿**上行 → 手上那把掉出 ──

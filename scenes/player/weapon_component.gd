@@ -8,7 +8,7 @@ extends Node
 # ★ 2026-09-15 起是**背包模型**:玩家有 8 格容量预算(轻2/中3/重4)与 4 把上限
 #   (两条独立闸门,见 WeaponInventory)。此前是"按类型 id 1-6 直接切枪、无条件持有全部"。
 #
-# ★ `_current_slot` 刻意**仍是武器类型 id**(1-6),不是背包位置:快照的 weapon 字段
+# ★ `_current_type` 刻意**仍是武器类型 id**(1-6),不是背包位置:快照的 weapon 字段
 #   (match_snapshot)、capture_state 的 wslot、PlayerReplica._swap_weapon 全按类型 id 走
 #   —— 协议与副本因此零改动。背包位置只用于本地按键/滚轮。
 
@@ -24,7 +24,7 @@ const WEAPONS: Dictionary = {
 # 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
 const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪"}
 
-# 武器重量档(轻/中/重),决定占几格容量(见 WeaponInventory.SLOT_COST:轻2/中3/重4)。
+# 武器重量档(轻/中/重),决定占几格容量(见 WeaponInventory.CELL_COST:轻2/中3/重4)。
 # ★ 与各 .tscn 的 `tier =` export **刻意重复** —— 这份表让"这枪多重"不必实例化武器场景
 #   就能问(实例化会连带 preload bullet.tscn)。漂移由 enemy_logic_smoke 的
 #   `_phase_weapon_registry` 逐条钉住(键集 / tscn export / 枚举数值三样都比)。
@@ -39,11 +39,11 @@ const TIERS: Dictionary = {
 	6: WeaponBase.Tier.MEDIUM,   # 激光枪
 }
 
-signal weapon_changed(slot: int)    # equip 成功后发射(菜单图标/HUD 武器显示跟随);0 = 空手
+signal weapon_changed(type_id: int)    # equip 成功后发射(菜单图标/HUD 武器显示跟随);0 = 空手
 signal inventory_changed()          # 背包内容变化(格子 UI 跟随)
 
 # 当前手持的**类型 id**(1-6);0 = 空手(背包为空)。
-var _current_slot: int = 0
+var _current_type: int = 0
 var _current_index: int = -1        # 在 inventory.held 里的下标;-1 = 空手
 var _weapon: WeaponBase = null
 var inventory: WeaponInventory
@@ -51,7 +51,7 @@ var body: CharacterBody2D
 
 # 启用的武器槽位(1-6)。单机由 Level0 按 RunOptions 设置;PvP 由客户端按服务器
 # 下发的 match_options 设置。数字键/滚轮切枪都会跳过禁用槽位。
-var enabled_slots: Array = [1, 2, 3, 4, 5, 6]
+var enabled_types: Array = [1, 2, 3, 4, 5, 6]
 
 # ★ 武器**图标与选择格**(silhouette / make_weapon_check)不在这里 —— 它们是纯 UI,
 #   2026-09-15 阶段 4.1 搬去了 `ui/weapon_icons.gd`(WeaponIcons)。
@@ -67,12 +67,12 @@ func _ready() -> void:
 	body = get_parent() as CharacterBody2D
 
 
-func set_enabled_slots(disabled: Array[int]) -> void:
-	enabled_slots = [1, 2, 3, 4, 5, 6].filter(func(s: int) -> bool: return not disabled.has(s))
-	if enabled_slots.is_empty():
-		enabled_slots = [1]   # 不允许全禁:至少留手枪
+func set_enabled_types(disabled: Array[int]) -> void:
+	enabled_types = [1, 2, 3, 4, 5, 6].filter(func(s: int) -> bool: return not disabled.has(s))
+	if enabled_types.is_empty():
+		enabled_types = [1]   # 不允许全禁:至少留手枪
 	# 当前拿着的枪被禁 → 切到背包里第一把没被禁的;没有就空手
-	if _current_slot > 0 and not is_slot_enabled(_current_slot):
+	if _current_type > 0 and not is_type_enabled(_current_type):
 		var fallback := _first_enabled_index()
 		if fallback >= 0:
 			_equip_index(fallback)
@@ -80,20 +80,20 @@ func set_enabled_slots(disabled: Array[int]) -> void:
 			_unequip()
 
 
-func is_slot_enabled(slot: int) -> bool:
-	return enabled_slots.has(slot)
+func is_type_enabled(type_id: int) -> bool:
+	return enabled_types.has(type_id)
 
 
 func _first_enabled_index() -> int:
 	for i in inventory.held.size():
-		if is_slot_enabled(int(inventory.held[i]["type"])):
+		if is_type_enabled(int(inventory.held[i]["type"])):
 			return i
 	return -1
 
 
 # 默认槽位 = 最小的启用槽位(出生/复活用它,防止出生武器被禁后空手)。
-func default_slot() -> String:
-	return str(enabled_slots[0]) if enabled_slots.size() > 0 else "1"
+func default_type() -> String:
+	return str(enabled_types[0]) if enabled_types.size() > 0 else "1"
 
 
 # ── 初始背包 ──
@@ -103,7 +103,7 @@ func set_initial_inventory(types: Array) -> void:
 	inventory.clear()
 	_unequip()
 	for t in types:
-		if is_slot_enabled(int(t)):
+		if is_type_enabled(int(t)):
 			inventory.add(int(t), WeaponInventory.MAG_FULL)
 	inventory_changed.emit()
 	var idx := _first_enabled_index()
@@ -113,7 +113,7 @@ func set_initial_inventory(types: Array) -> void:
 
 # ── 切枪 ──
 # 滚轮/数字键都走背包**位置**,不再走"启用槽位表"。
-func cycle_slot(dir: int) -> void:
+func cycle_index(dir: int) -> void:
 	var next := _peek_cycle(dir)
 	if next < 0 or next == _current_index:
 		# 无槽可切(只有一把 / 目标即当前):早退。与 request_net_cycle 同形;
@@ -129,7 +129,7 @@ func _peek_cycle(dir: int) -> int:
 		return -1
 	var order: Array[int] = []
 	for i in n:
-		if is_slot_enabled(int(inventory.held[i]["type"])):
+		if is_type_enabled(int(inventory.held[i]["type"])):
 			order.append(i)
 	if order.is_empty():
 		return -1
@@ -173,9 +173,8 @@ func consume_net_slot() -> int:
 # ★ 背包里没有这个类型就**加入** —— 这不是便利,是必需:联机不做客户端预测时,
 #   服务器说"你现在有重狙"而客户端背包里可能还没有它;restore_state 重放 wslot
 #   会走到这条路径。容量不足时也照加:权威说有什么就是什么,超容由服务器负责。
-func equip(slot: String) -> void:
-	var type_id := int(slot)
-	if not is_slot_enabled(type_id):
+func equip_type(type_id: int) -> void:
+	if not is_type_enabled(type_id):
 		Sfx.play("deny")
 		return
 	var idx := inventory.first_index_of_type(type_id)
@@ -216,7 +215,7 @@ func _equip_index(index: int) -> void:
 		push_error("weapon_slot not assigned")
 		return
 	_current_index = index
-	_current_slot = type_id
+	_current_type = type_id
 	_weapon = scene.instantiate() as WeaponBase
 	# ★ 必须在 add_child **之前**:add_child 是 deferred 的,而 `_ready` 会把 mag_ammo 重置为满
 	#   ⇒ 入树后再同步写会晚于 `_ready`?不会 —— 但入树前写**根本无效**(会被 `_ready` 冲掉)。
@@ -239,7 +238,7 @@ func _unequip() -> void:
 		_weapon.queue_free()
 	_weapon = null
 	_current_index = -1
-	_current_slot = 0
+	_current_type = 0
 	weapon_changed.emit(0)
 	inventory_changed.emit()
 
@@ -273,7 +272,7 @@ var _last_dropped: Dictionary = {}
 const PICKUP_DENIED := -1
 
 func pick_up(type_id: int, mag: int) -> int:
-	if not is_slot_enabled(type_id):
+	if not is_type_enabled(type_id):
 		Sfx.play("deny")
 		return PICKUP_DENIED
 	if inventory.can_hold(type_id):
@@ -282,7 +281,7 @@ func pick_up(type_id: int, mag: int) -> int:
 		_equip_index(inventory.held.size() - 1)
 		return 0
 	# 放不下 → 与手上那把交换。
-	# 手上空着(背包空)时容量必然够(空背包 used_slots()=0,任何 cost ≤ 4 ≤ 8),
+	# 手上空着(背包空)时容量必然够(空背包 used_cell_count()=0,任何 cost ≤ 4 ≤ 8),
 	# 所以这条分支只在"背包非空但全被禁用 → _current_index < 0"时才可能走到,直接拒绝。
 	if _current_index < 0:
 		Sfx.play("deny")
@@ -318,7 +317,7 @@ func drop_current() -> Dictionary:
 	_weapon.queue_free()
 	_weapon = null
 	_current_index = -1
-	_current_slot = 0
+	_current_type = 0
 	inventory_changed.emit()
 	# 手上那把没了 → 自动拿背包里第一把(丢完就空手站着很怪);背包空则彻底空手。
 	var idx := _first_enabled_index()
@@ -373,7 +372,7 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 	#   ⇒ `_current_index` 与手上真正那把分家:残弹写进**错的那把**、**丢弃丢错把**、
 	#   左上角武器框高亮错(用户 2026-09-23 报的就是最后这一条的表现)。
 	#   找不到(老载荷没带 `winst`、或权威那把不在表里)时**退回按类型** —— 行为与改动前逐字相同。
-	var keep_type := _current_slot
+	var keep_type := _current_type
 	inventory.restore(entries)
 	var idx := inventory.index_of_inst(want_inst) if want_inst > 0 else -1
 	var by_inst := idx >= 0
@@ -381,13 +380,13 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 		idx = inventory.first_index_of_type(keep_type) if keep_type > 0 else -1
 	if idx >= 0:
 		_current_index = idx
-		# ★★ `_current_slot` **保持 `keep_type`(旧类型),不要改成表里那一条的类型** ——
-		#   调用方 `player._apply_weapon_state` 靠 `wslot != _current_slot` 决定**要不要 `equip()`**,
+		# ★★ `_current_type` **保持 `keep_type`(旧类型),不要改成表里那一条的类型** ——
+		#   调用方 `player._apply_weapon_state` 靠 `wslot != _current_type` 决定**要不要 `equip()`**,
 		#   而 `equip()` 顺带**重建武器实例**。改成表里那条的类型后,同类型时那个判据恒假
 		#   ⇒ 实例永不重建 ⇒ 被清空过背包的一方恢复后**手上没枪**,武器不再写 `set_facing`,
 		#   与权威在 `facing` 上发散(`pvp_twin_smoke` 实测 tick=255 红)。真正的类型不一致
 		#   那一档仍由调用方的 `equip(wslot)` 收尾 —— 那是**已有**行为,别绕开它。
-		_current_slot = keep_type
+		_current_type = keep_type
 		inventory_changed.emit()
 		return by_inst
 	# 权威说手上那把没了(或本来空手)→ 清空手持,让调用方按 wslot 重新 equip
@@ -398,7 +397,7 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 		_weapon.queue_free()
 	_weapon = null
 	_current_index = -1
-	_current_slot = 0
+	_current_type = 0
 	inventory_changed.emit()
 	return false
 
@@ -431,12 +430,12 @@ func current_weapon() -> WeaponBase:
 	return _weapon
 
 
-func current_slot_int() -> int:
-	return _current_slot
+func current_type_id() -> int:
+	return _current_type
 
 
 # 手持那一条的 `inst`(逐把唯一);空手 / 下标越界返回 0。
-# ★ 与 `current_slot_int()` 的分工:那个是**类型 id**(协议/副本按它走),同型号两把**恒等**;
+# ★ 与 `current_type_id()` 的分工:那个是**类型 id**(协议/副本按它走),同型号两把**恒等**;
 #   这个才回答"是**哪一把**"—— 权威态(`capture_state` 的 `winst`)与 UI 高亮都需要它。
 func current_inst() -> int:
 	if _current_index < 0 or _current_index >= inventory.held.size():

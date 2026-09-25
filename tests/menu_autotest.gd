@@ -165,7 +165,7 @@ func _run_play_session(tree: SceneTree) -> void:
 		_fire_once(player)
 		await tree.create_timer(0.12).timeout
 	# 打炮:切第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定
-	player.weapons.equip("5")
+	player.weapons.equip_type(5)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):
 		_fire_once(player)
@@ -180,7 +180,7 @@ func _run_play_session(tree: SceneTree) -> void:
 	var suicide_src := AiInputSource.new()
 	suicide_src.aim = Vector2(0.0, 1.0)   # 正下方
 	player.set_input_source(suicide_src)
-	player.weapons.equip("5")
+	player.weapons.equip_type(5)
 	await tree.create_timer(0.4).timeout
 	for _i in range(4):
 		_fire_once(player)
@@ -203,7 +203,7 @@ func _run_play_session(tree: SceneTree) -> void:
 			str(player.is_downed()), tree.get_nodes_in_group("enemies").size(),
 			tree.get_nodes_in_group("bullet").size()])
 	# ── 再开两枪(用户指定的最后一段操作)──
-	player.weapons.equip("1")
+	player.weapons.equip_type(1)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):
 		_fire_once(player)
