@@ -69,6 +69,13 @@ func _physics_process(_delta: float) -> void:
 	if P == null or not _fail.is_empty():
 		return
 	_tick += 1
+	# ★ 超时自守卫:本探针每个"等一下"都可能永远等不到(武器永不入树 / 开火被冷却挡住)。
+	#   没有它,探针会耗尽 `--quit-after` 才退出、**一行裁决都不打印** —— 那与真失败在输出上
+	#   不可分(本仓登记过的坑)。正常路径在 `WARMUP + SETTLE` 帧内跑完,余量给足。
+	if _tick > WARMUP + 120:
+		_check(false, "探针超时:等了 %d 帧仍未走到裁决(武器没入树?开火被挡?)" % _tick)
+		_finish()
+		return
 	var w = P.weapons.current_weapon()
 	if _fired_at < 0:
 		if _tick < WARMUP or w == null or not w.is_inside_tree():

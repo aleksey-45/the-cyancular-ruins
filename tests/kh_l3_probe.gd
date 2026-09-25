@@ -385,8 +385,9 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	#   记账并存 = 同类型两把必然串弹,而且完全不报错。
 	#   ★ 不能直接 contains("_mag_state") —— **保留**的 `func reset_mag_state()` 里就含这个
 	#     子串,裸 contains 会恒红。改成钉三种**使用形式**:声明、下标读写、方法调用。
-	#     (`_restore_mag` / `reset_mag_state` 是刻意保留的:前者是入树后恢复残弹的延迟回调,
-	#      后者已改成"把当前残弹同步进背包条目",不再有独立的表。)
+	#     (`reset_mag_state` 是刻意保留的:它已改成"把当前残弹同步进背包条目",不再有独立的表;
+	#      残弹写入口是 `apply_mag` —— 同步写,未入树的实例走 `pending_mag` 由 `_ready` 消费,
+	#      原先帧末回填的 `_restore_mag` 已随 pending_mag 一起删除。)
 	_check(not wc_src.contains("var _mag_state"), "weapon_component.gd 又声明了 _mag_state 残弹表")
 	_check(not wc_src.contains("_mag_state["), "weapon_component.gd 又在下标读写 _mag_state")
 	_check(not wc_src.contains("_mag_state."), "weapon_component.gd 又在调 _mag_state 的方法")
