@@ -228,7 +228,9 @@ Expected: 两行都是 `0`。
 它是 `setup` 两参建的 —— 先把它 `visible = false`，否则两个圆叠在一起、取色取到的是叠加结果）：
 
 ```gdscript
-	# ── ⑤ 3v3:自己那个点 = **队色** + 一圈白描边(与颜色正交的维度)──
+	# ── ⑥ 3v3:自己那个点 = **队色** + 一圈白描边(与颜色正交的维度)──
+	# ★ 编号从 ⑥ 起:`tests/minimap_circle_probe.gd` 里 ①②③④⑤ **都已被占用**
+	#   (⑤ 是"圆不压延迟条"那条几何断言)—— 别再用 ⑤,否则同一个文件里两个 ⑤。
 	# ★ 必须真渲染:判据落在像素上(headless 下 get_image() 返回 null ⇒ 整段静默跳过)。
 	mm.visible = false
 	var TEAM_B := UiFactory.C_TEAM_B
@@ -254,8 +256,11 @@ Expected: 两行都是 `0`。
 		var ring_px := 0
 		for i in range(24):
 			var a := TAU * float(i) / 24.0
-			var q := Vector2i(int(center.x + cos(a) * 6.0), int(center.y + sin(a) * 6.0))
-			if _near(img_team.get_pixelv(q), Color(1, 1, 1), 0.08):
+			# ★ 变量名**不能**叫 `q`:`_ready()` 上面那条"圆不压延迟条"的几何断言
+			#   (`var q := Vector2(...)`)已经在**同一个函数作用域**里声明过它 ⇒ 重名是 Parse Error,
+			#   而后果是**整段探针一条断言都不跑**(2026-09-25 实现者实测踩到,已改名)。
+			var q_ring := Vector2i(int(center.x + cos(a) * 6.0), int(center.y + sin(a) * 6.0))
+			if _near(img_team.get_pixelv(q_ring), Color(1, 1, 1), 0.08):
 				ring_px += 1
 		_check(ring_px >= 18,
 				"自己那个点应有**白描边**(24 个采样点里 %d 个命中白色,期望 ≥ 18)" % ring_px)
@@ -271,15 +276,15 @@ Expected: 两行都是 `0`。
 			var ring2 := 0
 			for i in range(24):
 				var a2 := TAU * float(i) / 24.0
-				var q2 := Vector2i(int(center.x + cos(a2) * 6.0), int(center.y + sin(a2) * 6.0))
-				if _near(img_no_ring.get_pixelv(q2), Color(1, 1, 1), 0.08):
+				var q_ring2 := Vector2i(int(center.x + cos(a2) * 6.0), int(center.y + sin(a2) * 6.0))
+				if _near(img_no_ring.get_pixelv(q_ring2), Color(1, 1, 1), 0.08):
 					ring2 += 1
 			_check(ring2 < 6,
 					"★ 关掉描边后白色采样必须掉下来(实际 %d)—— 否则上面那条是恒真的" % ring2)
 		mm_team.set_process(true)
 		mm_team._ring_self.visible = true
 
-	# ── ⑥ 反向对照:不传自色提供器 ⇒ 退回 SELF_COLOR、且描边不可见 ──
+	# ── ⑦ 反向对照:不传自色提供器 ⇒ 退回 SELF_COLOR、且描边不可见 ──
 	# ★ 这条是"1v1 / 大乱斗行为逐字不变"的守卫 —— 没有它,把默认分支写成"恒走队色"
 	#   (或干脆恒真)也能让相⑤全绿,而那会让那两模式的小地图自己那个点变成中性亮白。
 	mm_team.visible = false
