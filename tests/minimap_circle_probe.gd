@@ -122,6 +122,75 @@ func _ready() -> void:
 		var wall_px := _count_near(img, g, WALL, 0.12)
 		_check(wall_px > 500, "圆内应画出地形(墙色像素 %d,期望 > 500)" % wall_px)
 
+	# ── ⑤ 3v3:自己那个点 = **队色** + 一圈白描边(与颜色正交的维度)──
+	# ★ 必须真渲染:判据落在像素上(headless 下 get_image() 返回 null ⇒ 整段静默跳过)。
+	mm.visible = false
+	var TEAM_B := UiFactory.C_TEAM_B
+	var mm_team := Minimap.new()
+	mm_team.setup_multi(
+		func() -> Vector2: return _local,
+		func() -> Array: return [],          # 无他人点:本相只验"我"
+		func() -> Array: return [],
+		func() -> Color: return TEAM_B)
+	add_child(mm_team)
+	await _frames(2)
+	var img_team := await _shot("minimap_self_dot.png")
+	if img_team.get_width() > 0:
+		var center := _circle_center_on_screen()
+		# ① 点的**底色**是队色,不是 SELF_COLOR
+		var px_dot := img_team.get_pixelv(Vector2i(int(center.x), int(center.y)))
+		_check(_near(px_dot, TEAM_B, 0.08),
+				"3v3 自己那个点的底色应是队色(实际 %s、期望 %s、SELF_COLOR 是 %s)" % [
+					str(px_dot), str(TEAM_B), str(Minimap.SELF_COLOR)])
+		_check(not _near(px_dot, Minimap.SELF_COLOR, 0.08),
+				"★ 反向:底色**不得**还是 SELF_COLOR(那就是没修)")
+		# ② 描边存在:点在点外侧、但仍在描边框内的一圈取色(8×8 点 + 4px 边框 ⇒ 半径 4..8 那一带)
+		var ring_px := 0
+		for i in range(24):
+			var a := TAU * float(i) / 24.0
+			# ★ 变量名不能叫 `q`:`_ready()` 上面那条"圆不压延迟条"的几何断言已经声明过 `q`
+			#   (GDScript 里嵌套块重名是 Parse Error ⇒ 整条探针一行都跑不到)。
+			var q_ring := Vector2i(int(center.x + cos(a) * 6.0), int(center.y + sin(a) * 6.0))
+			if _near(img_team.get_pixelv(q_ring), Color(1, 1, 1), 0.08):
+				ring_px += 1
+		_check(ring_px >= 18,
+				"自己那个点应有**白描边**(24 个采样点里 %d 个命中白色,期望 ≥ 18)" % ring_px)
+		# ③ 正交维度的**鉴别力**:把描边关掉,同样的采样必须掉下来
+		# ★ 必须先 `set_process(false)` —— `Minimap._process` 每帧都会把 `_ring_self.visible`
+		#   按 `_self_color_provider` 写回去,直接改 `visible` 会被下一帧覆盖
+		#   ⇒ 两张图一模一样 ⇒ 下面那条**必然**失败(那是探针自己的错,不是实现的错)。
+		mm_team.set_process(false)
+		mm_team._ring_self.visible = false
+		await _frames(2)
+		var img_no_ring := await _shot("minimap_self_dot_noring.png")
+		if img_no_ring.get_width() > 0:
+			var ring2 := 0
+			for i in range(24):
+				var a2 := TAU * float(i) / 24.0
+				var q_ring2 := Vector2i(int(center.x + cos(a2) * 6.0), int(center.y + sin(a2) * 6.0))
+				if _near(img_no_ring.get_pixelv(q_ring2), Color(1, 1, 1), 0.08):
+					ring2 += 1
+			_check(ring2 < 6,
+					"★ 关掉描边后白色采样必须掉下来(实际 %d)—— 否则上面那条是恒真的" % ring2)
+		mm_team.set_process(true)
+		mm_team._ring_self.visible = true
+
+	# ── ⑥ 反向对照:不传自色提供器 ⇒ 退回 SELF_COLOR、且描边不可见 ──
+	# ★ 这条是"1v1 / 大乱斗行为逐字不变"的守卫 —— 没有它,把默认分支写成"恒走队色"
+	#   (或干脆恒真)也能让相⑤全绿,而那会让那两模式的小地图自己那个点变成中性亮白。
+	mm_team.visible = false
+	var mm_plain := Minimap.new()
+	mm_plain.setup_multi(
+		func() -> Vector2: return _local,
+		func() -> Array: return [],
+		func() -> Array: return [])
+	add_child(mm_plain)
+	await _frames(2)
+	_check(_near(mm_plain._dot_self.color, Minimap.SELF_COLOR, 0.001),
+			"不传自色提供器 ⇒ 自己那个点应保持 SELF_COLOR(实际 %s)" % str(mm_plain._dot_self.color))
+	_check(not mm_plain._ring_self.visible,
+			"不传自色提供器 ⇒ 白描边**不可见**(1v1 / 大乱斗没有这个问题,别给它们加标记)")
+
 	_finish()
 
 

@@ -211,6 +211,16 @@ func _initialize() -> void:
 		elif not (ghost_body.contains("_team_of_role(") and ghost_body.contains("return 2")
 				and ghost_body.contains("TeamHost.TEAM_ENEMY_LAYER")):
 			fails.append("★ team_game 的 _ghost_layer_of 不是**按队两支**(必须:队号 1 → 层 2,否则 → TeamHost.TEAM_ENEMY_LAYER。恒返 TEAM_ENEMY_LAYER = 队友副本也挡我 → C2 每帧回滚,不报错)")
+		# ★★ 表外 / 队伍表未到时的**落层**必须与服务端"什么都不配"(保持 `_ready` 里那句层 2)
+		#   对齐。旧实现把"未知"当成了**队 2**:客户端幽灵体层 16、服务端层 2 ⇒ 队 2 的玩家
+		#   在服务端**会**被挡住、在客户端**不会** ⇒ C2 每帧分歧(不报错)。
+		#   ★ 上面那一组"按队两支"**区分不了**这两种写法(旧的一行三元三样全含)——
+		#     鉴别点在**结构**:新形状是 `match` + 两支 + **match 之外**的兜底 `return 2`,
+		#     故 `return 2` 出现**两次**,而旧写法只有一次。
+		if ghost_body.count("return 2") < 2:
+			fails.append("★ _ghost_layer_of 丢了表外兜底:未知队号必须落到层 2(与服务端'什么都不配'对齐);旧写法把未知当队 2 ⇒ 两端层不一致 ⇒ C2 每帧分歧,不报错")
+		if not ghost_body.contains("match"):
+			fails.append("★ _ghost_layer_of 的形状不对:必须是 `match _team_of_role(...)` + 两支 + match **之外**的 `return 2`(GDScript 的 match 体内 `continue` 是 fall-through,兜底写进 match 会静默多跑一支)")
 		# ③ 小地图两个提供器必须**共用同一套遍历/过滤**(`_minimap_entries()`),不能各写一份 `for`。
 		#    `ui/minimap.gd` 是**按下标**对应颜色(`_other_dots[i].color = cols[i]`)——
 		#    两个数组错位一格就是"队友点画成敌人色",**不报错只误导人**;而错位最容易发生在

@@ -74,15 +74,18 @@ func _ready() -> void:
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
-	# 小地图(多目标 + **队色**):三个提供器**同序**一一对应(错位 = 队友点画成敌人色,不报错只误导人)。
-	# ★ 后两个用**具名方法**而不是内联 lambda —— 三个 lambda 中间那个要以 `return arr,` 结尾,
-	#   那是本仓没写过的形状(计划里标注过的坑);具名方法直接绕开,且两个方法挨着写、同序可核。
+	# 小地图(多目标 + **队色**):四个提供器**同序**一一对应(错位 = 队友点画成敌人色,不报错只误导人)。
+	# ★ 后三个用**具名方法**而不是内联 lambda —— lambda 里要以 `return arr,` 结尾才能带出数组,
+	#   那是本仓没写过的形状(计划里标注过的坑);具名方法直接绕开,且几个方法挨着写、同序可核。
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
+		# ★ 四个提供器**同序/同源**对应(错位 = 队友点画成敌人色,不报错只误导人)。
+		#   后三个用**具名方法**而不是内联 lambda —— 见下面 _minimap_* 三兄弟。
 		minimap.setup_multi(
 			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
 			Callable(self, "_minimap_others"),
-			Callable(self, "_minimap_colors"))
+			Callable(self, "_minimap_colors"),
+			Callable(self, "_minimap_self_color"))
 		add_child(minimap)
 	# HUD(记分条按队号)+ Esc 菜单
 	# ★ 声明式场景实例化,不能 `TeamHud.new()` —— 那个建出来的 CanvasLayer 没有子节点,
@@ -201,11 +204,22 @@ func _refresh_team_colors() -> void:
 	_refresh_names()
 
 
-# 某个 role 的副本**幽灵体**该在的层(契约表见 `_apply_team_collision`)。
-# ★ 队号 0(不在队伍表里)走 else = 层 16 —— 与 brief 给的那句逐字一致,A 册服务端侧对未知队号
-#   是"什么都不配"(保持层 2)+ `push_error`;生产路径上不该出现队号 0,这里**不写特例**(登记在报告)。
+# 副本幽灵体代表的那名玩家,其队号 → 幽灵体该放的碰撞层。
+# ★ **未知队号(0 / 表外 role / 队伍表还没到)一律返回 2** —— 与服务端 `_apply_team_layers`
+#   的"什么都不配 = 保持 `_ready` 的层 2"**逐值对齐**。
+#   旧实现是 `return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER` ——
+#   它把"未知"当成了**队 2**,于是客户端与服务端对同一具身体放**不同的层**
+#   (服务端层 2 / 客户端幽灵体层 16),而两队掩码不同 ⇒ 队 2 的玩家在服务端**会**被挡住、
+#   在客户端**不会** ⇒ C2 每帧分歧。
+# ★ 今天这条在**生产路径上到不了**(3v3 worker 的 `team_map()` 恒非空),所以修它是
+#   "消除一个静默不对称",不是修一个用户可见的 bug —— 别把它写成用户报的症状。
 func _ghost_layer_of(role: int) -> int:
-	return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER
+	match _team_of_role(role):
+		1:
+			return 2
+		2:
+			return TeamHost.TEAM_ENEMY_LAYER
+	return 2   # 表外 / 表未到:与服务端"什么都不配"(保持层 2)对齐,不再落到队 2 的层
 
 
 # ── 队友不互挡:**客户端**那一半(服务端那一半在 `TeamHost._apply_team_layers`)──
@@ -266,6 +280,15 @@ func _minimap_colors() -> Array:
 	for e in _minimap_entries():
 		arr.append(_team_color(int(e[0])))
 	return arr
+
+
+# "我"那个点的颜色:与**身体 / 头顶 ID 同源** —— 三处都问 `_team_color(role)`(单一来源)。
+# ★ 惰性求值(每帧被 Minimap 调一次),不是建点时定色:队色由 `match_sync` 下发,比小地图建立晚。
+# ★ 自己那具的身体自 2026-09-21 起也走队色(用户裁定"3v3 青队玩家还是看见自己是蓝色的"被修)——
+#   本条让**小地图上那个点**跟上同一口径,此前它是恒定的 SELF_COLOR(`#99F2FF`),
+#   与队色 `C_TEAM_B`(`#80F4FF`)只差 Δ=(25,2,0) ⇒ 青队玩家分不清自己与队友。
+func _minimap_self_color() -> Color:
+	return _team_color(PvpSession.role)
 
 
 # 进场拉取的应答。★ 本文件**不覆写** `_on_match_sync`(六件事全在基类),只覆写颜色那一段的钩子。
