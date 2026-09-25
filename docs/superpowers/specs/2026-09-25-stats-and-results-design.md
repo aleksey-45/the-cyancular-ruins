@@ -9,6 +9,47 @@
 
 ---
 
+## ★ 订正（2026-09-26 逐条事实核验）
+
+核验逐条读代码得出，完整表（含文件:行号证据）在 **`.superpowers/sdd/stats-spec-verify.md`**；
+**下文的权威落点是那三份实施计划**，本文件相应段落的历史文本**不改写**，只在这里点名：
+
+- ★★ **§1.2 / §4 的「3v3 的 `stats` / `mvp` 今天没有任何消费者」是错的（❌）。**
+  消费者**已经存在**：`ui/match_result_payload.gd:74-75` 读 `round.get("stats")` / `round.get("mvp")`，
+  `:83-85` 把 kills/deaths/dmg/acs 与 mvp 的行号画上结算页；生产调用链是
+  `scenes/team_game.gd:452-456` → `scenes/pvp_match_client.gd:388-400` 的 `_show_result()`。
+  ⇒ §4 那句"从**3v3 独有的两个无消费者键**变成…"的**前提不成立**；计划 3 在 3v3 一侧因此是
+  **改名 + 加列**（`dmg`→`dealt`、补 `assists`/`taken`），**不是"投递"**。
+  ★ 订正 CLAUDE.md 那条登记时请按"消费者**已**到位"写（那条写于 2026-09-20，2026-09-21 结算页
+  批次落地当天即失效），"两个键保留、别顺手删"的裁定**不变**。
+- ★★ **§3.5 的「故『自伤』有触发点，不需要新机制」是错的（❌）。**
+  伤害事件确实有（`core/sim/explosion.gd::apply_aoe` 的玩家循环不排除投掷者），但
+  **归因到"自己"的通道没有**：`CombatFeedback.attribute()` 在 `attacker == victim` 时**静默跳过**，
+  而 `_on_player_hit` 唯一的攻击者来源是那个 meta（8ms 新鲜窗口，`_fresh_attacker_role`）
+  ⇒ 自伤在那里与"归因不到"**完全不可区分**。惩罚要扣"对自己造成的伤害"就必须**新增**一条
+  只表示自伤的通道（`CombatFeedback.note_self_hit` / `is_fresh_self_hit` +
+  `Explosion.apply_aoe` 在 `shooter == victim` 时写一笔）。
+  ★ 该通道的**唯一守卫**是计划 2 加的 `tests/team_host_probe` ⑬n（撤掉那笔标记它立刻红，
+  而 ⑬m/⑬n2 仍绿）—— 别把它读成"顺手加的一条探针"。
+- **⚠️ 定位要改的三处**（照着下面这些去找，别按原文的锚点找）：
+  `_scores` / `_rounds_won` **声明在 `server/match_state.gd:102-103`**（不在 §1.2 点名的
+  `server/match_round.gd`，后者只是它们的 payload 构造处）；`_deaths` 在 `server/royale_host.gd:25`。
+  `mvp_role()` 本体在 **`server/team_host.gd:817-837`**（附录写的 `:807` 起是它上方的注释块）。
+- **⚠️ 两处算术/引文要改的**：§3.2 标定表里"s686 霰弹 8 丸 ×5"= **40** 而非 50（一发打不死满血），
+  其余三例成立；§1.3 引的 `kill_bonus_score` 源码**漏了 `clampi(enemy_alive, 1, 5)`**
+  （真实实现是 `BASE + PER_ALIVE × clampi(...)`）。
+- **⚠️ 助攻判据的第二个合取项**：§3.4 写的
+  `same_team(attacker, killer) and not same_team(attacker, victim)` —— 后半个合取项在
+  `_record_down` 里**恒真**（能记成击杀 ⇒ killer 与 victim 异队且都非 0）⇒ 它不是鉴别点，
+  留着只为把规则读得出来；真正吃劲的是 `same_team(attacker, killer)`。
+- **★ spec 没写、实现必须自己定的两处**（已由计划 1/3 定下，改动它们前先回来看）：
+  ① 旧公式的剩余物 `MULTI_KILL_BONUS` / `_round_kills` / `_enemy_alive_including_victim` **随
+  §3.2 一起删除**（新公式没有多杀项，留着就是死代码）；② **1v1 的 `kills` 无归因** ——
+  按该模式自己的记分口径（「不分死因、对方死亡都算」）记给对手，否则结算页的击杀数会**低于**
+  记分条上的分数（5 杀取胜却显示 3 杀），理由与守卫在计划 3 的 `server/match_round.gd` 那一段。
+
+---
+
 ## 1. 背景
 
 ### 1.1 用户要的四件事（2026-09-25）
