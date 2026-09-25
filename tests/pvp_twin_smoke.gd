@@ -69,13 +69,20 @@ func _ready() -> void:
 		while w != null and not w.is_inside_tree() and waited < 120:
 			await get_tree().physics_frame
 			waited += 1
-		if waited >= 120:
+		if w != null and not w.is_inside_tree():
+			# ★ 判据是"**仍然**不在树里",不是 `waited >= 120`:循环可能在那一帧刚好等到它入树,
+			#   而 `waited` 照样等于 120 ⇒ 边界帧假红(2026-09-25 复核指出)。
 			_violation = "等待武器入树超时(120 帧,current_weapon=%s)" % str(w)
 			_fail()
 			return
-		if w != null:
-			w.mag_ammo = 4     # 残弹非满:被"切枪回满弹"或"漏字段"破坏时指纹会变
-			p.weapons.reset_mag_state()
+		# ★ `w == null` 必须**报错**而不是跳过:下面那句"残弹非满"是本冒烟 `inv` 指纹的**唯一**
+		#   鉴别力来源 —— 静默跳过等于冒烟退化成永远绿(与上面那条守卫同一类)。
+		if w == null:
+			_violation = "玩家 %s 没有武器(set_initial_inventory 没装上?)—— '残弹非满'前提不成立" % p.name
+			_fail()
+			return
+		w.mag_ammo = 4     # 残弹非满:被"切枪回满弹"或"漏字段"破坏时指纹会变
+		p.weapons.reset_mag_state()
 	print("[pvp_twin] 世界 %dx%d 格;玩家出生 %s;计划 %d tick(restore every %d)" % [
 		COLS, ROWS, spawn, TOTAL, RESTORE_EVERY])
 
