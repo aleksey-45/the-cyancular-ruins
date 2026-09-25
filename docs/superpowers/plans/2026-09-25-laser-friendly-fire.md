@@ -155,6 +155,15 @@ func _run() -> void:
 			4: Vector2i(34, ROW), 5: Vector2i(38, ROW), 6: Vector2i(42, ROW)}
 	_host = TeamHost.new(MAP, {}, {}, [], spawns, TEAMS)
 	add_child(_host)
+	# ★★ 2026-09-25 订正:合成网格必须在 `TeamHost.new` **之后**重设一次。
+	#   本代码块上面那句注释("先填 `current_grid`,`TeamHost._init` 的 `if grid.is_empty()`
+	#   守卫就不会再去读地图")**不成立** —— `TeamHost._init` 自己那道守卫只管它那一小段,
+	#   它随后调的**超类** `MatchHost._init`(`server/match_host.gd:19-21`)是**无条件**的:
+	#       `MazeGenerator.set_map_file(map_path)` + `grid = WorldBuilder.load_grid()`
+	#   ⇒ 先进树的合成网格**必被覆盖**。实测(实现者留档):生效的是 `factory1v1.cyrm`
+	#   (150×100),光束在里面撞墙**反射折返**、二次扫过敌人 ⇒ 红的成因是几何、与本特性无关,
+	#   那样的探针修复后也会因同样几何原因红 = **等于没验**。
+	MazeGenerator.current_grid = _build_grid()
 	# ★ 关掉宿主自己的物理帧:`quit(0)` 是帧末生效,不关的话中间还会跑一帧 `_physics_process`
 	#   → 快照广播去读尚未摆位的 `players`,在断言全过之后刷一屏 SCRIPT ERROR
 	#   (与 `team_host_probe` / `royale_disconnect_count_probe` 同款理由)。
@@ -369,9 +378,12 @@ Expected: 全绿（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT
   守卫：`tests/laser_team_probe.tscn`（队友不掉血 **且** 队友身后的敌人照常掉血）。
 ```
 
-★ 同时订正 spec 的一处计数口径：`same_team` 全仓是 **5 个调用点**（`match_combat` ×2 /
-`team_host` ×2，外加 `match_state` 里的**定义**本身），不是 spec §1.2 ① 写的"7 个"——
-那 7 是 grep 的**行数**（含定义行与一句注释）。写文档时按 5 个调用点表述。
+★ 同时订正 spec 的一处计数口径：`same_team` **修前**全仓是 **5 个调用点** —— 构成为
+`match_combat` ×2（:52 / :81）+ **`team_host` ×3**（:296 / :704 / :731）；`match_state.gd:42`
+是**定义**，另计。spec §1.2 ① 写的"7 个"是 grep 的**行数**（含定义行与一句注释）。
+★ 本次改动**又新增了一个调用点**（`match_state.gd` 的 `is_friendly` 体内）⇒ 文档里一律说
+"**修前** 5 个"，别写"今天共 N 个" —— CLAUDE.md 相邻那条 bullet 明文立过"本条刻意不写共 N 处、
+以 grep 为准"的规矩（那个数**漂过**）。
 
 - [ ] **Step 3: 提交**
 

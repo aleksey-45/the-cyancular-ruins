@@ -38,7 +38,7 @@
 | `ui/minimap.gd` | 圆形小地图（地形着色器 + 点） | **加**可选第四参 `self_color_provider`、白描边节点 `_ring_self`；`_process` 每帧回填自色 |
 | `scenes/team_game.gd` | 3v3 客户端（队色 / 幽灵体层 / 小地图提供器） | **加** `_minimap_self_color()`；**传**第四参；**改** `_ghost_layer_of` 的表外分支 |
 | `tests/minimap_circle_probe.gd` | 小地图真渲染探针（已有渲染 rig：`_shot`/`_near`/`_count_near`/`_frames`） | **加**相⑤（自色 + 描边）与相⑥（回到无提供器 ⇒ `SELF_COLOR`） |
-| `tests/team_room_smoke.gd` | 3v3 房间纯逻辑 + 源码级接线断言 | **加** ⑨⑥：`_ghost_layer_of` 的表外分支不得再落到队 2 的层 |
+| `tests/team_room_smoke.gd` | 3v3 房间纯逻辑 + 源码级接线断言 | **加**两条函数体断言（接在既有 `ghost_body` 那组之后）：`_ghost_layer_of` 的表外分支必须落到层 2 |
 
 ---
 
@@ -242,7 +242,6 @@ Expected: 两行都是 `0`。
 	await _frames(2)
 	var img_team := await _shot("minimap_self_dot.png")
 	if img_team.get_width() > 0:
-		var c := Minimap.RADIUS_PX
 		var center := _circle_center_on_screen()
 		# ① 点的**底色**是队色,不是 SELF_COLOR
 		var px_dot := img_team.get_pixelv(Vector2i(int(center.x), int(center.y)))
@@ -261,6 +260,10 @@ Expected: 两行都是 `0`。
 		_check(ring_px >= 18,
 				"自己那个点应有**白描边**(24 个采样点里 %d 个命中白色,期望 ≥ 18)" % ring_px)
 		# ③ 正交维度的**鉴别力**:把描边关掉,同样的采样必须掉下来
+		# ★ 必须先 `set_process(false)` —— `Minimap._process` 每帧都会把 `_ring_self.visible`
+		#   按 `_self_color_provider` 写回去,直接改 `visible` 会被下一帧覆盖
+		#   ⇒ 两张图一模一样 ⇒ 下面那条**必然**失败(那是探针自己的错,不是实现的错)。
+		mm_team.set_process(false)
 		mm_team._ring_self.visible = false
 		await _frames(2)
 		var img_no_ring := await _shot("minimap_self_dot_noring.png")
@@ -273,6 +276,7 @@ Expected: 两行都是 `0`。
 					ring2 += 1
 			_check(ring2 < 6,
 					"★ 关掉描边后白色采样必须掉下来(实际 %d)—— 否则上面那条是恒真的" % ring2)
+		mm_team.set_process(true)
 		mm_team._ring_self.visible = true
 
 	# ── ⑥ 反向对照:不传自色提供器 ⇒ 退回 SELF_COLOR、且描边不可见 ──
@@ -326,35 +330,45 @@ Read `.superpowers/sdd/minimap_self_dot.png`：圆心那个点应是**青色**�
 
 **Interfaces:**
 - Consumes: `ScanUtil`（`tests/lib/scan_util.gd`，探针已 `extends ProbeBase`）。
-- Produces: 新断言 ⑨⑥。
+- Produces: 两条新的函数体断言（复用现成的 `tcode` / `ghost_body`）。
 
-- [ ] **Step 1: 加 ⑨⑥**
+- [ ] **Step 1: 加两条断言（接在既有的 `ghost_body` 那段之后，复用现成变量）**
 
-`tests/team_room_smoke.gd` 里照 ⑨② 的写法（**按函数体**断言，不是全文件 `contains` ——
-全文件断言下把别处也改了就抓不到），加一条：
+`tests/team_room_smoke.gd` **已经**在函数体断言那一段里取了 `_ghost_layer_of` 的函数体：
 
 ```gdscript
-	# ⑨⑥ 未知队号的幽灵体层:表外 **必须** 落到 2(与服务端"什么都不配"逐值对齐),
-	#     ★ 旧实现是 `return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER`
-	#       —— 它把"未知"当成队 2,两端对同一具身体放不同的层 ⇒ C2 每帧分歧(不报错)。
-	#     断言两件事:① 函数体里不再有那个单行三元;② 函数体里有一个写在 `match` **之外**的
-	#     `return 2`(match 体内 `continue` 是 fall-through,守卫写在 match 里会静默多跑一支)。
-	var gl_src := _body_of("res://scenes/team_game.gd", "_ghost_layer_of")
-	_check(not gl_src.contains("else TeamHost.TEAM_ENEMY_LAYER"),
-			"★ `_ghost_layer_of` 又变回单行三元(表外落队 2 的层 = 与服务器不对称)")
-	_check(gl_src.contains("return 2"),
-			"`_ghost_layer_of` 的表外分支不再是 2(应与服务端'什么都不配'对齐)")
+			var ghost_body := ScanUtil.func_body(tcode, "_ghost_layer_of")
 ```
 
-★ 函数体取法照 `team_room_smoke` ⑨② 的既有写法（若那里用的是 `ProbeBase` 的
-`_body_of` / `ScanUtil.func_body`，用同一套；**先看 ⑨② 怎么取的，照抄**）。
+紧跟着（约 :211-213）有三条"按队两支"的断言。★★ **那三条区分不了本次要修的两种写法**：
+旧的一行三元 `return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER` 同样含
+`_team_of_role(` / `return 2` / `TeamHost.TEAM_ENEMY_LAYER`，三条全过。
 
-- [ ] **Step 2: 跑 —— 先证明 ⑨⑥ 会红**
+在那一组断言之后**紧接着**加两条，**复用现成的 `tcode` 与 `ghost_body`，不要另取一份**：
 
-临时把 `_ghost_layer_of` 改回旧的一行三元（`return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER`），跑：
+```gdscript
+			# ★★ 表外 / 队伍表未到时的**落层**必须与服务端"什么都不配"(保持 `_ready` 里那句层 2)
+			#   对齐。旧实现把"未知"当成了**队 2**:客户端幽灵体层 16、服务端层 2 ⇒ 队 2 的玩家
+			#   在服务端**会**被挡住、在客户端**不会** ⇒ C2 每帧分歧(不报错)。
+			#   ★ 上面那一组"按队两支"**区分不了**这两种写法(旧的一行三元三样全含)——
+			#     鉴别点在**结构**:新形状是 `match` + 两支 + **match 之外**的兜底 `return 2`,
+			#     故 `return 2` 出现**两次**,而旧写法只有一次。
+			if ghost_body.count("return 2") < 2:
+				fails.append("★ _ghost_layer_of 丢了表外兜底:未知队号必须落到层 2(与服务端'什么都不配'对齐);旧写法把未知当队 2 ⇒ 两端层不一致 ⇒ C2 每帧分歧,不报错")
+			if not ghost_body.contains("match"):
+				fails.append("★ _ghost_layer_of 的形状不对:必须是 `match _team_of_role(...)` + 两支 + match **之外**的 `return 2`(GDScript 的 match 体内 `continue` 是 fall-through,兜底写进 match 会静默多跑一支)")
+```
+
+★ 本文件是 **`extends SceneTree` 的 `-s` 冒烟**（不是 `ProbeBase` 场景探针），
+报失败用 **`fails.append(...)`**；函数体取法用 **`ScanUtil.func_body(code_only源码, "函数名")`**。
+
+- [ ] **Step 2: 跑 —— 先证明这两条会红**
+
+临时把 `_ghost_layer_of` 改回旧的一行三元
+（`return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER`），跑：
 
 ```bash
-source tests/env.sh && "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd 2>&1 | grep -E "TEAM ROOM|FAIL"
+source tests/env.sh && "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd 2>&1 | grep -E "TEAM ROOM|_ghost_layer_of"
 ```
 Expected: `FAIL`，且点名 `_ghost_layer_of`。确认后改回新实现。
 
@@ -401,7 +415,7 @@ git commit -m "feat(team): 小地图自己那个点改队色 + 白描边;未知�
 
 **1. 覆盖面**（对照 spec §3.2 + §3.3）：可选第四参 ✅ Task 1 Step 2；每帧求值 ✅ Task 1 Step 4；
 白描边（正交维度）✅ Task 1 Step 3；team_game 接线 ✅ Task 2 Step 1/2；1v1/大乱斗不变 ✅ 相⑥；
-未知队号统一 ✅ Task 2 Step 3 + ⑨⑥；验收判据 2（新渲染断言 + 反证）✅ Task 3 Step 2；
+未知队号统一 ✅ Task 2 Step 3 + Task 4 那两条函数体断言；验收判据 2（新渲染断言 + 反证）✅ Task 3 Step 2；
 判据 3（既有探针全绿）✅ Task 4 Step 3。
 
 **2. 占位符扫描**：无 TBD / "类似 Task N"；每处改动都给了完整代码与确切锚点。
