@@ -100,6 +100,15 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
+# 入树前的"待生效残弹"。0 是合法弹数,故哨兵不能用 0;`WeaponInventory.MAG_FULL` 是 -1,
+# 故哨兵用 -2。
+# ★ 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
+#   `call_deferred("add_child")` 入树,而 `_ready()` 会把 `mag_ammo` 重置为 `mag_size`
+#   ⇒ 入树前同步写残弹会被冲掉。原先的对策是"排一个帧末 deferred 写回",但那个写回会
+#   覆盖它之后发生的一切(含回滚重放期间打出的每一发)。改成入树前设好、`_ready` 一次消费,
+#   写入就同步且顺序确定。
+const MAG_UNSET := -2
+var pending_mag: int = MAG_UNSET
 var _reloading := false
 var _reload_t := 0.0
 var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
@@ -160,6 +169,11 @@ static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> f
 
 func _ready() -> void:
 	mag_ammo = mag_size
+	# ★ 入树前若有人塞了残弹,在这里一次消费掉 —— 这是"入树前写入"唯一生效的地方。
+	#   消费后复位哨兵,免得后续 `_ready`(理论上不会跑第二次)或探针误读。
+	if pending_mag != MAG_UNSET:
+		mag_ammo = clampi(pending_mag, 0, mag_size)
+		pending_mag = MAG_UNSET
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)

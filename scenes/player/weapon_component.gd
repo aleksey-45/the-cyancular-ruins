@@ -218,12 +218,14 @@ func _equip_index(index: int) -> void:
 	_current_index = index
 	_current_slot = type_id
 	_weapon = scene.instantiate() as WeaponBase
+	# ★ 必须在 add_child **之前**:add_child 是 deferred 的,而 `_ready` 会把 mag_ammo 重置为满
+	#   ⇒ 入树后再同步写会晚于 `_ready`?不会 —— 但入树前写**根本无效**(会被 `_ready` 冲掉)。
+	#   故这里直接把条目残弹塞进 pending_mag,由 `_ready` 消费。
+	#   MAG_FULL(-1)语义是"满弹",交给 `_ready` 的 mag_size 即可,不设 pending。
+	if int(inventory.held[index]["mag"]) != WeaponInventory.MAG_FULL:
+		_weapon.pending_mag = clampi(int(inventory.held[index]["mag"]), 0, _weapon.mag_size)
 	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
-	var mag := int(inventory.held[index]["mag"])
-	if mag != WeaponInventory.MAG_FULL:
-		# 武器 _ready(入树时)会把 mag_ammo 重置为满:恢复必须排在 deferred add 之后
-		_restore_mag.call_deferred(_weapon, clampi(mag, 0, _weapon.mag_size))
 	Sfx.play("switch")
 	weapon_changed.emit(type_id)
 	inventory_changed.emit()
@@ -242,9 +244,18 @@ func _unequip() -> void:
 	inventory_changed.emit()
 
 
-func _restore_mag(w: WeaponBase, ammo: int) -> void:
-	if is_instance_valid(w):
-		w.mag_ammo = ammo
+# 把一个权威/条目里的弹数写到武器实例上。**同步**,不再排 deferred。
+# ★ 分支只有一条判据 —— `is_inside_tree()`:
+#   · 已入树:`_ready` 早已跑过(mag_ammo 被设成 mag_size),同步写就是终值;
+#   · 未入树:本帧刚 `instantiate` 出来,`_ready` 还没跑,直接写会被它冲掉 ⇒ 交给 pending_mag。
+#   这个判据与 `_equip_index` 里那处"残弹写回只认已入树的枪"是同一条(那里防的是读未 _ready 的 0)。
+static func apply_mag(w: WeaponBase, mag: int) -> void:
+	if w == null or not is_instance_valid(w):
+		return
+	if w.is_inside_tree():
+		w.mag_ammo = clampi(mag, 0, w.mag_size)
+	else:
+		w.pending_mag = clampi(mag, 0, w.mag_size)
 
 
 # ── 拾取 / 丢弃 ──
@@ -377,9 +388,6 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 		#   与权威在 `facing` 上发散(`pvp_twin_smoke` 实测 tick=255 红)。真正的类型不一致
 		#   那一档仍由调用方的 `equip(wslot)` 收尾 —— 那是**已有**行为,别绕开它。
 		_current_slot = keep_type
-		var mag := int(inventory.held[idx]["mag"])
-		if mag != WeaponInventory.MAG_FULL and _weapon != null and is_instance_valid(_weapon):
-			_restore_mag.call_deferred(_weapon, clampi(mag, 0, _weapon.mag_size))
 		inventory_changed.emit()
 		return by_inst
 	# 权威说手上那把没了(或本来空手)→ 清空手持,让调用方按 wslot 重新 equip

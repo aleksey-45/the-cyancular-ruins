@@ -3,7 +3,11 @@ extends Node
 # B 每 K tick 被强行搞乱后再 restore_state(A 快照)+ 同输入继续,必须与从不被打断的 A 逐 tick 收敛。
 # 漏一个 capture_state 字段 → B 重放与 A 发散 → 冒烟失败(capture/restore 见 player.gd)。
 # 跑法:用户自跑(见 Tests/pvp_twin_smoke.sh / CLAUDE.md)。
-# 注意:本冒烟驱动「纯移动/攀爬/游泳」输入(不开火),场景模式= autoload 已实例化(GameParameters 等)。
+# 注意:本冒烟驱动「移动/攀爬/游泳 + 周期开火」输入(开火让孪生覆盖到「回滚恢复期间开火」
+# 这个面,见 _build_plan),场景模式= autoload 已实例化(GameParameters 等)。
+# ★ 它**不**覆盖 C1(「restore 之后同帧打出的那一发会不会被帧末写回抹掉」)—— 那条判据
+#   靠"开火 tick 与 restore tick 交错"碰不到,必须把那个序列**构造**出来,见
+#   `tests/ammo_rollback_probe.tscn`。
 #
 # 根因背景(docs/pvp-c2-retrospective.md):v1 回拉的根因之一是两端模拟不孪生 + 校正拉拢。
 # 新 C2 把「整态 PlayerState」作为权威格式:本冒烟先钉死 capture_state 无漏,才谈网络协议。
@@ -52,10 +56,17 @@ func _ready() -> void:
 	for p in [A, B]:
 		p.weapons.set_initial_inventory([1, 2, 4])
 	await get_tree().physics_frame
+	# ★ 必须等武器**入树**再写残弹:`_equip_index` 用 `call_deferred("add_child")` 入树,
+	#   而 `_ready` 会把 `mag_ammo` 重置为满 ⇒ **入树前写会被静默冲掉**(实测 `in=false mag=4`
+	#   → 下一帧 `in=true mag=12`),"残弹非满"这个前提就没了。写完同步进背包条目 ——
+	#   `_inv_key` 比的是**条目**,不是实例(条目默认 `MAG_FULL`,不同步则指纹恒不动)。
 	for p in [A, B]:
 		var w = p.weapons.current_weapon()
+		while w != null and not w.is_inside_tree():
+			await get_tree().physics_frame
 		if w != null:
 			w.mag_ammo = 4     # 残弹非满:被"切枪回满弹"或"漏字段"破坏时指纹会变
+			p.weapons.reset_mag_state()
 	print("[pvp_twin] 世界 %dx%d 格;玩家出生 %s;计划 %d tick(restore every %d)" % [
 		COLS, ROWS, spawn, TOTAL, RESTORE_EVERY])
 
@@ -90,12 +101,19 @@ func _build_grid() -> Array[Array]:
 func _build_plan() -> void:
 	for _t in range(WARMUP):
 		_plan.append({})
-	var prev := {"up": false, "down": false, "charge": false}
+	var prev := {"up": false, "down": false, "charge": false, "attack": false}
 	for i in range(ACTIVE):
 		var ax := 0.0
 		var up := false
 		var down := false
 		var charge := false
+		# ★ 开火:半自动手枪每 7 tick 一发,只为与 RESTORE_EVERY(12) 交错,让"回滚恢复
+		#   期间开火"这个面被覆盖到。
+		# ★ `7 与 12 互质 ⇒ 每 84 tick 必被走到一次` 这类推论**不成立**(别照它推):手枪
+		#   `fire_cooldown` = 0.3s 量化到 7-tick 输入网格上,有效开火周期 = **21 tick**
+		#   (冷却中不重置冷却)⇒ 开火 tick ≡ 1 (mod 3),而 restore tick ≡ 0 (mod 3)
+		#   ⇒ **永不同帧**。C1 需要专门构造序列,见 `tests/ammo_rollback_probe.tscn`。
+		var atk := (i % 7 == 3)
 		# 长距离左右横扫:保证经过梯列(x5)与水池(x16..24),触发攀爬/游泳路径
 		var sw := i % 240
 		if sw < 100:
@@ -123,12 +141,15 @@ func _build_plan() -> void:
 		if up: h |= BIT_UP
 		if down: h |= BIT_DOWN
 		if charge: h |= BIT_CHARGE
+		if atk: h |= PacketInputSource.BIT_ATTACK
 		if up and not prev.up: p |= BIT_UP
 		if not up and prev.up: r |= BIT_UP
 		if down and not prev.down: p |= BIT_DOWN
 		if not down and prev.down: r |= BIT_DOWN
 		if charge and not prev.charge: p |= BIT_CHARGE
-		prev = {"up": up, "down": down, "charge": charge}
+		if atk and not prev.get("attack", false): p |= PacketInputSource.BIT_ATTACK
+		if not atk and prev.get("attack", false): r |= PacketInputSource.BIT_ATTACK
+		prev = {"up": up, "down": down, "charge": charge, "attack": atk}
 		_plan.append({"h": h, "p": p, "r": r, "ax": ax})
 
 func _apply_input(src: PacketInputSource, i: int) -> void:
@@ -137,7 +158,8 @@ func _apply_input(src: PacketInputSource, i: int) -> void:
 		return
 	var pk: Dictionary = _plan[i]
 	var ax: float = pk.get("ax", 0.0)
-	# aim 常量(1,0):孪生不开火,aim 只经武器 _auto_aim 影响朝向;恒定=两端确定一致。
+	# aim 常量(1,0):开火方向两端一致(开火本身由 pressed 里的 BIT_ATTACK 驱动),
+	# aim 另经武器 _auto_aim 影响朝向;恒定=两端确定一致。
 	src.apply_packet({
 		"seq": i,
 		"ax": ax,
@@ -206,8 +228,12 @@ func _compare(a, b, _snap: Dictionary, restored: bool) -> void:
 		"downed": a.combat.downed == b.combat.downed,
 		"hp": a.combat.hp == b.combat.hp,
 		# 武器:当前手持类型 + 背包指纹(类型序列 + 各把残弹)。
-		# ★ 比的是**背包条目里的** mag,不是 `_weapon.mag_ammo` —— 后者由
-		#   `_restore_mag.call_deferred` 在帧末回填,同帧比会当成发散(假红)。
+		# ★ 比的是**背包条目里的** mag(每条一个 inst),不是 `_weapon.mag_ammo`:前者是
+		#   "这个背包记着的"、进 `capture_state` 的 `inv`,两边同源可逐 tick 比;后者是
+		#   "手上这一把的",而且**本冒烟抓不到它** —— 「restore 之后同帧打出的那一发会不会
+		#   被帧末的延迟写回抹掉」(C1)需要把那个序列构造出来才走得进去,靠"开火 tick 与
+		#   restore tick 交错"碰不到(理由见 _build_plan 那段注释)。C1 由
+		#   `tests/ammo_rollback_probe.tscn` 专门覆盖,这里**刻意不比**手持实例的弹数。
 		"wslot": a.weapons.current_slot_int() == b.weapons.current_slot_int(),
 		"inv": _inv_key(a) == _inv_key(b),
 	}

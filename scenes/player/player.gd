@@ -683,7 +683,9 @@ func _apply_weapon_state(st: Dictionary) -> void:
 		w._aim_facing = int(st.get("aim_f", w._aim_facing))
 		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
 		# 弹药/装填随权威整态回灌(见 capture_state 里那段"为什么进整态、为什么不进比对")
-		w.mag_ammo = int(st.get("mag", w.mag_ammo))
+		# ★ 走 apply_mag:本帧刚重建过实例时 `_weapon` 还没入树,同步写会被 `_ready` 冲掉。
+		#   这是个**同步**调用(不再排 deferred)—— 回滚重放期间打出的每一发因此得以保留。
+		WeaponComponent.apply_mag(w, int(st.get("mag", w.mag_ammo)))
 		w._reloading = bool(st.get("rld", w._reloading))
 		w._reload_t = float(st.get("rld_t", w._reload_t))
 
