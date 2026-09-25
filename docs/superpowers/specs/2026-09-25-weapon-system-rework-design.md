@@ -6,6 +6,53 @@
 
 ---
 
+## ★ 2026-09-25 事实核验订正（**动笔 / 实施前必读**）
+
+逐条核验见 `.superpowers/sdd/weapon-spec-verify.md`（42 条：23 ✅ / 14 ⚠️ / **5 ❌**）。
+下面按**核实后的事实**执行，别照本 spec 正文写：
+
+1. **★★ §4.3 要的机制已经做完了**（`eeda162` + `f33249b`）：`current_inst()`、
+   `restore_inventory(entries, want_inst)`、`sync_soft_state` 比 `winst`、`_apply_weapon_state`
+   的 `by_inst` 重建分流**全在位**，`ground_client_probe` ④b 还在两条路径上做了行为断言。
+   ★ 本 spec 提议的判据 `winst != weapons.current_inst()` **是错的** —— 它跑在 `restore_inventory`
+   之后，解析成功时**恒假**，照它写会**绕过**现有的重建落点。**别再动 §4.3 的机制**；
+   真要动，先复现残余症状（用户 2026-09-23 报的 UI 高亮错已由 `f33249b` 修掉）。
+2. **"加第 7 把枪 = 零 GDScript"还差三处**，本 spec 全篇未提：① `export_presets.cfg` 的
+   `include_filter` 没加 `data/weapons.json` ⇒ **导出 exe 里就没有这份 json**（读空 ⇒ push_error、
+   注册表空 ⇒ 无枪）；② `tests/level0_weapon_scatter_probe.gd:48` 硬断言 `== 12`；
+   ③ §4.1 的协议改动会**反证** `tests/net_ground_probe.gd:144` 与 `tests/ground_client_probe.gd` ⑥
+   （后者明确断言上行值**不得**是 type id）—— 这两条**必须改写**，而不是 §7.4 写的"保持全绿"。
+3. **§5 的"与 `EnemySpawner` 同款"不成立**：`enemy_spawner.gd:29-31` 对**逐条**的问题（缺字段 /
+   非 Dictionary）是 `continue` **静默跳过、不 push_error**；`push_error` + 整表留空只发生在
+   **文件级**。"逐条校验 + 跳过坏条 + push_error"是**新约定**，别声称同款。
+4. **§6.1 的"5/6 号键那两个动作还在"是假的**：`project.godot` 的 input 段只有 `1`–`4`
+   （`:97/:102/:107/:112`），且 `kh_l3_probe.gd:116-118` **反向断言** 5–0 不得有动作。
+   把数调到 5+ 时第 5 把**只能靠滚轮**；要开 5/6 号键得先加动作 + 改 `LocalInputSource` 的
+   `range(1, 5)`。
+5. **§附 的 `refill_current_weapon` 行已过时**：该函数 2026-09-25 已删除（计划 1 落地），
+   `kh_l4_probe` 那两条断言也一并删了。
+
+**要紧的 ⚠️（同样按核实后的事实执行）**
+
+- **§4.2 的 registry 必须返回裸 `int`，不能返回 `WeaponBase.Tier`** —— `weapon_base.gd:7` 有
+  `preload("res://scenes/weapons/bullet.tscn")`，引它会把 autoload 拖进 `-s`，破坏本 spec 自己
+  要求的"`-s` 可测"（`weapon_inventory.gd:6-9` 记的正是这条）。与 `WeaponInventory` 同款：**注入**。
+- **§4.4 不是"只把 const 改成字段"**：静态读 `WeaponInventory.CAPACITY` 另有 **8 处**
+  （`ui/weapon_slots.gd:81,87,90,102`、`tests/ground_action_probe.gd:195,196,208,209`），
+  外加 `enemy_logic_smoke.gd:1158-1159` 读类常量 —— 改实例字段后这些是**静默 / 报错面**。
+- **§4.1 那个键被大量探针手搓**：上行键 **≥14 处**、下行快照 `"weapon"` **≥5 处**夹具；改键名要一并改。
+- **§4.2 的"五处"实为 6 个字面量 / 5 个文件**（`weapon_component.gd:71` 是第二处）；
+  本 spec 引的那条 grep 原样跑返回 **11 行**（另 5 行是无关的 role 列表）。
+- **§3 的 rename 表漏了外部调用方**：`set_enabled_slots` 在 `level_0.gd:241` /
+  `pvp_match_client.gd:130` / `match_host.gd:82`（+ 探针 ≥12 处）；`default_slot()` 在
+  `level_0.gd:497`；`push/consume_net_slot` 在 `pvp_match_client.gd:202`。
+- **§10.2 的结论未被证据支持**：引擎源码里输入泵在本帧 physics **之前**
+  （`os_windows.cpp:2352`），探针日志与"跨帧间隙"相容、但推不出"同帧不会互相覆盖"。
+  它属"已排除的伪发现"，不影响设计，**但别照它写断言**。
+- `weapon_icons.gd:68` 是 `"%d %s"`（本 spec 引作 `"%d. %s"`）。
+
+---
+
 ## 1. 背景
 
 ### 1.1 症状（用户报的，2026-09-25）
@@ -180,8 +227,16 @@ if wslot > 0 and wslot != weapons._current_slot:   # 两边都是**类型 id**
 于是 `_current_index` 已经指向 B、而场上活着的 `_weapon` 还是为 A 建的那个节点。
 类型相同所以几何无差别，**但 `mag_ammo` 挂在实例上** —— 两边就此分家，而 HUD 读实例。
 
-**改成判 `inst`**：`if winst > 0 and winst != weapons.current_inst()`。重建后
-`equip_index(index_of_inst(winst))`。
+~~**改成判 `inst`**：`if winst > 0 and winst != weapons.current_inst()`。重建后
+`equip_index(index_of_inst(winst))`。~~
+
+★ **2026-09-25 订正：本节要的机制已经落地（`eeda162` + `f33249b`），且上面那个判据是错的** ——
+它跑在 `restore_inventory` **之后**、解析成功时**恒假**，会**绕过**现有的重建落点。
+现状：`restore_inventory(entries, want_inst)` 先按 inst 解析手持下标（解析成功时**故意**保持
+`_current_slot = keep_type`），`_apply_weapon_state` 用 `by_inst` 决定重建落点（成功走
+`equip_index(_current_index)`、兜底才走 `equip(str(wslot))`），`sync_soft_state` 的指纹已含 `winst`，
+`ground_client_probe` ④b 在两条路径上各指一把同型号枪做了**行为级**断言。
+⇒ **本节的机制不要再动**；要动先复现残余症状。
 
 ### 4.4 容量与把数可配（不接能力系统）
 
