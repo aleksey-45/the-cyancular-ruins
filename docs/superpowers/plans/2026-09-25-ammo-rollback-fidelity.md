@@ -73,7 +73,12 @@ if mag != WeaponInventory.MAG_FULL and _weapon != null and is_instance_valid(_we
 
 ---
 
-### Task 1: 把 C1 变成红灯
+### ~~Task 1: 把 C1 变成红灯~~（★ 2026-09-25 作废）
+
+> **本节 Step 1–4 全部作废,不要执行。** 实现者逐字落地后实测证明这条路走不通
+> (两条独立成因,见文末「Task 1R」的成因表)。**改按文末的 `Task 1R` 执行。**
+
+### Task 1（原始版，已作废，仅存档）
 
 **Files:**
 - Modify: `tests/pvp_twin_smoke.gd`
@@ -325,7 +330,8 @@ Expected: `SMOKE_TWIN OK: … 0 字段发散`。
 - [ ] **Step 7: 提交**
 
 ```bash
-git add scenes/weapons/weapon_base.gd scenes/player/weapon_component.gd scenes/player/player.gd tests/pvp_twin_smoke.gd
+git add scenes/weapons/weapon_base.gd scenes/player/weapon_component.gd scenes/player/player.gd \
+        tests/pvp_twin_smoke.gd tests/ammo_rollback_probe.gd tests/ammo_rollback_probe.tscn
 git commit -m "fix(pvp): 回滚不再抹掉弹数 —— 删掉 _restore_mag 帧末写回,改 pending_mag 入树前设定"
 ```
 
@@ -440,6 +446,258 @@ Expected: 判据行全绿。
 git add CLAUDE.md
 git commit -m "docs(claude): 武器小节登记 pending_mag 与弹数纠正路径的残余边界"
 ```
+
+---
+
+## Task 1R（2026-09-25 修订）: 专用探针 —— 让 C1 变成红灯
+
+> 本 Task **取代**上面的 Task 1（后者已作废,只存档）。**先读本节,再动手。**
+
+**Files:**
+- Create: `tests/ammo_rollback_probe.gd`
+- Create: `tests/ammo_rollback_probe.tscn`
+- Modify: `tests/pvp_twin_smoke.gd` —— **撤掉** `"mag"` 断言与 `_mag_of()`,订正三处陈旧注释,
+  并修掉它自己那处 `mag_ammo = 4` 空操作。
+
+**Interfaces:**
+- Consumes: `Player.capture_state()` / `restore_state()`、`WeaponComponent.reset_mag_state()`、
+  `WeaponComponent.apply_mag()`（Task 3 产出）、`PacketInputSource.{clear_edges, apply_packet, BIT_ATTACK}`。
+- Produces: 一个**会红**的探针。判据是文本 `AMMO ROLLBACK PROBE: ALL-OK`。
+
+**为什么必须另起探针（实测，非推断）**
+
+2026-09-25 实现者把原 Task 1 逐字落地后实测到两条**独立**成因，任一条都足以让那条断言失效：
+
+| # | 现象 | 成因 |
+|---|---|---|
+| ① | `"mag"` 在**每个** restore 轮恒假 | 孪生的 sabotage（`set_initial_inventory([])`）每次清空 B 的背包 ⇒ 每次 restore 都**重建武器实例** ⇒ 比较那一刻 B 的枪**未入树**（`_mag_of` 只能返回哨兵 `-1`），而 A 从没被搞乱、枪一直在树里。原计划注释里"两边都是 -1"的前提不成立。 |
+| ② | 去掉 ① 之后断言**修复前就是绿的** | 手枪 `fire_cooldown = 0.3s` 量化到 7-tick 输入网格上，**有效开火周期 = 21 tick**（冷却中不重置冷却）⇒ 开火 tick ≡ 1 (mod 3)，而 `RESTORE_EVERY = 12` ⇒ restore tick ≡ 0 (mod 3) ⇒ **永不同帧**，C1 从未被走到。原计划那句"7 与 12 互质 ⇒ 每 84 tick 必被走到一次"漏算了冷却量化。 |
+
+⇒ 所以本 Task 不再"靠周期碰运气"，而是**把 C1 的序列直接构造出来**。
+
+- [ ] **Step 1: 写探针**
+
+创建 `tests/ammo_rollback_probe.gd`：
+
+```gdscript
+extends Node
+# C1 专用探针:`restore_state` 之后**同帧**打出的那一发,会不会被帧末的延迟写回抹掉。
+#
+# 跑法:`--headless --quit-after 3600 res://tests/ammo_rollback_probe.tscn`
+# 判据:文本 `AMMO ROLLBACK PROBE: ALL-OK`(**不看退出码** —— 探针挂住时 --quit-after 到期仍
+#       exit 0,一行裁决都不打印)。
+#
+# 机制(修复前):`WeaponComponent.restore_inventory` 把权威弹数按
+# `_restore_mag.call_deferred(...)` 排到帧末,而 `restore_state` 之后**同帧**打出的每一发
+# 都排在它之前 ⇒ 帧末被覆盖回旧值,客户端弹数只增不减。本探针把那个序列直接构造出来:
+#   ① 等玩家落地、武器入树,把手上弹数置成非满(4),并同步进**背包条目**;
+#   ② 取快照 → `restore_state(快照)` —— 修复前这一步排下 deferred(值 = 4);
+#   ③ **同一物理帧**内按一次开火边沿 ⇒ 玩家 `_physics_process` 打出一发(4 → 3);
+#   ④ 等 SETTLE 帧读 `mag_ammo`:修复前 = 4(被覆盖),修复后 = 3。
+#
+# ★ 为什么每条前置都要显式断言:本探针每一步都踩在同一类陷阱上 ——
+#   「**未入树时写状态会被 `_ready` 冲掉,而且不报错**」。
+#   · 手上弹数要在**武器入树之后**写(否则被 `_ready` 的 `mag_ammo = mag_size` 冲掉);
+#   · 背包条目的 mag 要**显式**同步(条目默认是 `MAG_FULL = -1`,而 `restore_inventory` 只在
+#     条目 mag ≠ MAG_FULL 时才排 deferred ⇒ 不同步的话 C1 那一支**根本不会被走到**,
+#     探针在修复前也是绿的 = 零鉴别力);
+#   · `reset_mag_state()` / `_flush_current_mag()` 自身也只在武器入树时才写。
+#   三者任一失效,探针都会静默退化成"永远绿",故每一条都配一条断言。
+
+const COLS := 24
+const ROWS := 10
+const TILE_WALL := 31      # 纹理 1 全砖(墙)
+const WARMUP := 30         # 无输入:落地 + 等武器入树
+const MAG_START := 4       # 非满弹(mag_size = 12);必须 ≠ MAG_FULL(-1),否则 deferred 那一支不排
+const SETTLE := 3          # 打出那一发之后等几帧再读(帧末 flush 至少要一帧)
+
+var P = null
+var _tick := 0
+var _fired_at := -1
+var _expected := -1
+var _checks := 0
+var _fail := ""
+
+
+func _ready() -> void:
+	GameParameters.MAP_WIDTH = COLS * GameParameters.TILE_SIZE
+	GameParameters.MAP_HEIGHT = ROWS * GameParameters.TILE_SIZE
+	MazeGenerator.current_grid = _build_grid()
+	TileDefs.load_defs()
+	var host := Node2D.new()
+	host.name = "Host"
+	add_child(host)
+	WorldBuilder.build_sim(host, MazeGenerator.current_grid)
+	var ts := GameParameters.TILE_SIZE
+	P = preload("res://scenes/player/player.tscn").instantiate()
+	P.name = "AmmoProbe"
+	P.set_input_source(PacketInputSource.new())
+	host.add_child(P)
+	P.global_position = Vector2(6 * ts + ts * 0.5, 3 * ts + ts * 0.5)
+	P.weapons.set_initial_inventory([1])   # 只给手枪(type_id 1)
+
+
+func _build_grid() -> Array[Array]:
+	var grid: Array[Array] = []
+	for y in range(ROWS):
+		var row: Array[int] = []
+		for x in range(COLS):
+			row.append(TILE_WALL if y == ROWS - 1 else 0)
+		grid.append(row)
+	return grid
+
+
+func _physics_process(_delta: float) -> void:
+	if P == null or not _fail.is_empty():
+		return
+	_tick += 1
+	# ★ 超时自守卫:本探针每个"等一下"都可能永远等不到(武器永不入树 / 开火被冷却挡住)。
+	#   没有它,探针会耗尽 `--quit-after` 才退出、**一行裁决都不打印** —— 那与真失败在输出上
+	#   不可分(本仓登记过的坑)。正常路径在 `WARMUP + SETTLE` 帧内跑完,余量给足。
+	if _tick > WARMUP + 120:
+		_check(false, "探针超时:等了 %d 帧仍未走到裁决(武器没入树?开火被挡?)" % _tick)
+		_finish()
+		return
+	var w = P.weapons.current_weapon()
+	if _fired_at < 0:
+		if _tick < WARMUP or w == null or not w.is_inside_tree():
+			return        # 武器由 call_deferred 入树:没入树就继续等(此时写状态会被 _ready 冲掉)
+		w.mag_ammo = MAG_START
+		_check(int(w.mag_ammo) == MAG_START,
+			"置残弹失败:写 %d、读回 %d(武器未入树时写会被 _ready 冲成 mag_size)" % [MAG_START, int(w.mag_ammo)])
+		P.weapons.reset_mag_state()   # ★ 把手上弹数同步进**背包条目**(默认 MAG_FULL ⇒ 不排 deferred)
+		_check(int(P.weapons.inventory.held[P.weapons._current_index]["mag"]) == MAG_START,
+			"背包条目残弹没同步上 ⇒ restore_inventory 不会排 deferred,C1 根本没被走到(探针会假绿)")
+		if not _fail.is_empty():
+			return
+		# ★ 同一物理帧内:restore(修复前在此排下帧末 deferred) → 开火边沿。
+		#   本节点是场景根、玩家是它的孙子节点 ⇒ 玩家的 `_physics_process` 在本函数**之后**跑,
+		#   那一发正落在"restore 之后、帧末 flush 之前"—— C1 的窗口就是这一段。
+		P.restore_state(P.capture_state())
+		_apply_attack()
+		_fired_at = _tick
+		_expected = MAG_START - 1
+		return
+	# 后续帧清掉边沿:别让 `pressed` 挂在那里、在冷却允许时又打出一发(那会让期望值变成 2)
+	(P.input_source as PacketInputSource).clear_edges()
+	if _tick >= _fired_at + SETTLE:
+		var got := int(w.mag_ammo) if w != null else -99
+		_check(got == _expected,
+			"弹数被帧末写回覆盖:restore 后同帧打出一发,期望 %d、实得 %d" % [_expected, got])
+		_finish()
+
+
+func _apply_attack() -> void:
+	var src := P.input_source as PacketInputSource
+	src.clear_edges()
+	src.apply_packet({
+		"seq": _tick, "ax": 0.0,
+		"held": PacketInputSource.BIT_ATTACK,
+		"pressed": PacketInputSource.BIT_ATTACK,
+		"released": 0,
+		"weapon": 0,
+		"aim": Vector2(1.0, 0.0),
+	})
+
+
+func _check(ok: bool, msg: String) -> void:
+	_checks += 1
+	if not ok and _fail.is_empty():
+		_fail = msg
+
+
+func _finish() -> void:
+	if _fail.is_empty():
+		print("AMMO ROLLBACK PROBE: ALL-OK(%d 条断言)" % _checks)
+		get_tree().quit(0)
+	else:
+		print("AMMO ROLLBACK PROBE: FAIL —— %s" % _fail)
+		get_tree().quit(1)
+```
+
+- [ ] **Step 2: 建场景**
+
+创建 `tests/ammo_rollback_probe.tscn`（与 `tests/pvp_twin_smoke.tscn` 逐字同构，只改名字与脚本）：
+
+```
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/ammo_rollback_probe.gd" id="1"]
+
+[node name="AmmoRollbackProbe" type="Node"]
+script = ExtResource("1")
+```
+
+- [ ] **Step 3: 先证明它会红（修复前的世界）**
+
+当前工作区里 Task 2/3 的修复**已经应用且未提交**。先把它备份成一份可恢复的补丁，再暂存掉：
+
+```bash
+git diff -- scenes/weapons/weapon_base.gd scenes/player/weapon_component.gd scenes/player/player.gd \
+  > .superpowers/sdd/ammo-fix.patch
+git stash push -- scenes/weapons/weapon_base.gd scenes/player/weapon_component.gd scenes/player/player.gd
+```
+
+Run:
+```bash
+"$GODOT" --headless --path . --quit-after 3600 res://tests/ammo_rollback_probe.tscn 2>&1 | grep -E "AMMO ROLLBACK"
+```
+Expected: `AMMO ROLLBACK PROBE: FAIL —— 弹数被帧末写回覆盖:restore 后同帧打出一发,期望 3、实得 4`
+
+★ **这是本批唯一的红绿分界**。若它在这里**绿**了，说明探针没踩到 C1（最可能是背包条目 `mag` 没同步上，
+或 `restore_inventory` 那一支没排 deferred）—— 停下排查，**不要**继续；
+若它红在 `置残弹失败`/`背包条目残弹没同步上`，那是探针自身的构造问题，同样停下排查。
+
+- [ ] **Step 4: 恢复修复，确认转绿**
+
+```bash
+git stash pop
+git diff --stat -- scenes/weapons/weapon_base.gd scenes/player/weapon_component.gd scenes/player/player.gd   # 应与 Step 3 备份前一致
+```
+
+Run:
+```bash
+"$GODOT" --headless --path . --quit-after 3600 res://tests/ammo_rollback_probe.tscn 2>&1 | grep -E "AMMO ROLLBACK"
+```
+Expected: `AMMO ROLLBACK PROBE: ALL-OK(3 条断言)`
+
+★ 若 `git stash pop` 有冲突，用 `.superpowers/sdd/ammo-fix.patch` 恢复（`git apply`），
+并**在报告里记明**用了哪条路。反证步的「还原」会吃掉未提交改动，这一步必须逐字确认后再往下走。
+
+- [ ] **Step 5: 从孪生冒烟里撤掉那条 mag 断言**
+
+`tests/pvp_twin_smoke.gd`：
+1. 删掉 `_compare()` 里实现者加的那行 `"mag": …`（**连同 `-1` 守卫一起删** —— 用户裁定：
+   撤掉断言，不保留弱守卫）。
+2. 删掉 `_mag_of()` 辅助函数。
+3. **保留**开火输入（`atk` / `BIT_ATTACK` 那几行）—— 它让孪生覆盖到"回滚恢复期间开火"这个面。
+4. 订正三处陈旧注释：文件头（`:6` 的「不开火」）、`:140`（`# aim 常量(1,0):孪生不开火,…`）、
+   以及 `_inv_key()` 上方原本解释"为何不比 `_weapon.mag_ammo`"的那段（`:209-210`）——
+   撤掉断言之后那段话已无对象，改成"比的是**背包条目里的** mag"即可。
+5. **修掉这个文件自己的一处空操作**：`:52-58` 那句"给两人一个非空且**残弹非满**的背包"是假的 ——
+   `await get_tree().physics_frame` 之后武器**仍未入树**，`w.mag_ammo = 4` 随后被 `_ready` 冲成
+   `mag_size`（实测 `in=false mag=4` → 下一帧 `in=true mag=12`）。改成等到入树再写：
+   在 `for p in [A, B]:` 那个循环里，先 `while w != null and not w.is_inside_tree(): await get_tree().physics_frame`，
+   再写 `mag_ammo`，然后调 `p.weapons.reset_mag_state()` 同步进条目。
+
+★ 第 5 步是**独立**的一件事：若它让孪生红在 `mag` **以外**的字段上，把这一步单独回退、
+在报告里记明（那是一条新发现，不是本批的失败）——**不要**为了让孪生变绿去改判据。
+
+Run:
+```bash
+"$GODOT" --headless --path . --quit-after 3600 res://tests/pvp_twin_smoke.tscn 2>&1 | grep -E "SMOKE_TWIN|字段"
+```
+Expected: `SMOKE_TWIN OK: 640 ticks, … 0 字段发散`
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add scenes/weapons/weapon_base.gd scenes/player/weapon_component.gd scenes/player/player.gd \
+        tests/pvp_twin_smoke.gd tests/ammo_rollback_probe.gd tests/ammo_rollback_probe.tscn
+git commit -m "fix(pvp): 回滚不再抹掉弹数 —— 删掉 _restore_mag 帧末写回,改 pending_mag 入树前设定"
+```
+
+（`tests/ammo_rollback_probe.gd.uid` 由 Godot 自己生成，若 `git status` 显示它就一并加上。）
 
 ---
 
