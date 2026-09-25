@@ -32,6 +32,12 @@
 `set_enabled_slots` 改成 `set_enabled_types`、`_current_slot` 改成 `_current_type` 的人。
 **本计划全篇使用 spec §3 的词汇**（`type_id` / `inst` / `index`），一处都不写旧名。
 
+★★ **但 spec §3 那张表是不完整的** —— 计划 2 的改名范围比它长，多出来的几条本计划**会碰到**
+（`cell_start` / `used_cell_count()` / `CELL_COST` / `equip_type(int)`，以及形参/循环变量
+`slot`→`type_id`）。**以计划 2 的改名表为准，不以 spec §3，也不以本计划的片段为准**
+（Global Constraints 有完整清单）。核验报告实测：照 spec §3 的 9 项写会让后两份计划
+出现 **2 处 Parse Error + 2 处运行时挂起** —— 那是本批代价最高的一致性缺陷。
+
 **Task 1 的 Step 0 是这条前提的机械检查**：旧名若还在，停下、先跑计划 2。
 
 ## Global Constraints
@@ -41,6 +47,10 @@
 - **判据一律是 grep 文本**，不看退出码：场景探针挂住时 `--quit-after` 到期仍 `exit 0`
   且一行裁决都不打印。★ 更尖的一层（`tests/lib/probe_base.gd` 文件头）：
   **grep 到 `ALL-OK` 只证明"没有任何断言失败"，不证明"该跑的断言都跑过"**。
+- ★★ **命令里的 `2>&1` 一个都不能省。** `enemy_logic_smoke._check` 的失败行走的是
+  **`printerr`（stderr）**(`tests/enemy_logic_smoke.gd:64`)，`level0_weapon_scatter_probe._check`
+  同理（`printerr("  FAIL - " …)`）；去掉 `2>&1` 会把"红了"读成"没有输出"，
+  而"没有输出"在本仓恰好是**另一种**已知故障形态（脚本没跑起来）—— 两者会撞车。
 - `--quit-after` **统一给 3600 帧**（安全网，只在挂住时用得上）。
 - 引擎二进制走环境变量：先 `source tests/env.sh`，再用 `"$GODOT"`。
 - 提交**按名 `git add`** 单个文件，不用 `git add -A` / `git add .`；提交信息单行。
@@ -60,6 +70,19 @@
   **不是**这条功能的机制。别在文档里把它写成"不加就导出没有枪"。
 - ★ **`WeaponRegistry` 不得 `load()` 任何武器场景**；`tier_of()` 返回**裸 `int`**。
   理由见 Task 2 的文件头注释（`weapon_base.gd:7` 的 export 默认值 preload 了 `bullet.tscn`）。
+- ★★ **词汇与行号口径（本批的核验报告点名过这条，代价最高）**：
+  本计划的所有代码都写在**计划 1 之后**的世界里。计划 1 是**唯一**做改名的那一份，它的改名表
+  比 spec §3 的 9 项更长，本计划会碰到的有：`WeaponInventory.slot_start`→**`cell_start`**、
+  `used_slots`→**`used_cell_count()`**、`SLOT_COST`→**`CELL_COST`**、
+  `equip(String)`→**`equip_type(int)`**，以及形参/循环变量 `slot`→**`type_id`**
+  （`player_replica._swap_weapon`、`weapon_icons.silhouette`、`level_0`/`match_ground`/
+  `lobby_page`/`main_menu` 四处循环）。**照抄旧名 = Parse Error 或运行时错，不是行为变化。**
+  保留 `slot` 的只有：`Player.weapon_slot` 挂点、`WeaponSlots` / `C_SLOT_*` 容量格 UI、
+  `capture_state()` 的 `wslot` 键。**拿不准时以计划 1 的改名表为准，不以本计划的片段为准。**
+- ★ **行号只作参考。** 本计划的行号取自 `main`（计划 1 **之前**）。计划 1 会给
+  `scenes/player/weapon_component.gd` **插入若干新函数**（`inst_at_index` / `equip_inst` /
+  `take_uplink_switch`）并删掉一行 ⇒ 该文件的行号会漂。每处改动都给了"改前"的原文片段，
+  **按内容定位**；行号对不上时不要怀疑改动本身。
 
 ---
 
@@ -75,7 +98,7 @@
 | `server/match_ground.gd` | 联机地面武器权威 | `_server_weapon_types` 同上 |
 | `scenes/lobby_page.gd` | 两个大厅页共用的基类 | `_add_weapon_grid` 的 `[1..6]` → `all_ids()` |
 | `scenes/main_menu.gd` | 主菜单 | `_fill_sp_panel` 的 `[1..6]` → `all_ids()`；**`i + 1` → `ids[i]`** |
-| `scenes/player/player_replica.gd` | 对手视觉副本 | `WEAPONS.get(str(slot))` → `WeaponRegistry.scene_of(slot)` |
+| `scenes/player/player_replica.gd` | 对手视觉副本 | `WEAPONS.get(str(slot))` → `WeaponRegistry.scene_of(type_id)`（形参已被计划 1 改名为 `type_id`） |
 | `scenes/weapons/weapon_pickup.gd` | 地面武器（独立场景） | `WEAPONS.get(...)` → `WeaponRegistry.scene_of(...)` |
 | `ui/weapon_icons.gd` | 剪影 + 选择格（纯 UI） | `WEAPONS` / `DISPLAY_NAMES` → registry |
 | `ui/hud.gd` | 单机 HUD | `DISPLAY_NAMES.get(t, "空手")` → registry + 兜底 |
@@ -107,9 +130,14 @@ source tests/env.sh
 sed 's/#.*//' scenes/player/weapon_component.gd \
   | grep -cE "_current_slot|set_enabled_slots|is_slot_enabled|enabled_slots|current_slot_int|default_slot|push_net_slot|consume_net_slot"
 sed 's/#.*//' ui/weapon_slots.gd | grep -c "slot_start"
+echo "--- 计划 2 的新名必须在位（否则上面那两个 0 只是'文件被删了'）---"
+grep -c "_current_type\|enabled_types\|set_enabled_types" scenes/player/weapon_component.gd
+grep -c "cell_start" ui/weapon_slots.gd
 ```
-Expected: 两行都是 **0**。任何一个非 0 ⇒ 计划 2 未落地，**停下**，先跑计划 2
-（本计划的代码写的是改名后的词汇，硬上会写进错的名字）。
+Expected: 前两行都是 **0**，紧接着两行都 **≥ 1**。
+任何一个不对 ⇒ 计划 2 未落地，**停下**，先跑计划 2
+（本计划的代码写的是改名后的词汇，硬上会写进错的名字 —— 那是 Parse Error，不是行为变化）。
+★ 只查"旧名为 0"会被"文件不存在/被清空"骗过，所以**正反两面都要查**。
 
 - [ ] **Step 1: 改写 `_phase_weapon_registry`**
 
@@ -294,23 +322,36 @@ Run:
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd \
   2>&1 | tail -60
 ```
-Expected（改动前，**必须是这一组**）:
+Expected（改动前，**必须是这一组、恰好 10 条**）:
 ```
   FAIL - 读得到 res://data/weapons.json(读不到 = 文件还没建)
   FAIL - core/sim/weapon_registry.gd 存在且可加载
-  FAIL - json 至少有 1 条合格条目
+  FAIL - json 至少有 1 条合格条目(实际 0)
   FAIL - 生产代码里不得再有硬编码的武器 id 列表(命中:[res://scenes/level_0.gd, ...])
   FAIL - res://scenes/level_0.gd 的 _default_weapon_types() 应改用 WeaponRegistry.all_ids()
-  ... （另 5 条 ⑥）
+  FAIL - res://scenes/lobby_page.gd 的 _add_weapon_grid() 应改用 WeaponRegistry.all_ids()
+  FAIL - res://scenes/main_menu.gd 的 _fill_sp_panel() 应改用 WeaponRegistry.all_ids()
+  FAIL - res://server/match_ground.gd 的 _server_weapon_types() 应改用 WeaponRegistry.all_ids()
+  FAIL - res://scenes/player/weapon_component.gd 的 _init() 应改用 WeaponRegistry.all_ids()
+  FAIL - res://scenes/player/weapon_component.gd 的 set_enabled_types() 应改用 WeaponRegistry.all_ids()
+SMOKE OK
 ```
-★ **判读规则**（这三条不成立就不要往下走）：
+（10 = ① 2 条 + `json 至少有 1 条` 1 条 + ④ 1 条 + ⑥ 6 条。★ **末尾仍必须是 `SMOKE OK`**
+—— 本相是"红了但没打断"。若一行 `SMOKE OK` 都没有，说明抛错了，见下面的判读规则。）
+★ **判读规则**（这几条不成立就不要往下走）：
 - ④ 的命中清单必须**恰好是 5 个文件**：`scenes/level_0.gd`、`scenes/lobby_page.gd`、
   `scenes/main_menu.gd`、`server/match_ground.gd`、`scenes/player/weapon_component.gd`。
   多出别的文件 ⇒ 扫到了假阳性，先查清（多半是某个 `[1, 2, 3, 4, 5, 6]` 被写成了别的含义）。
 - ③ 与 ⑦ **不得出现**在 FAIL 列表里：`wr == null` ⇒ ③ 整段被跳过（`if wr != null`），
   ⑦ 同理。这是设计如此，不是漏跑。
-- ⑤ 里的 tier 对齐三条（`TIER_LIGHT` / `TIER_MEDIUM` / `TIER_HEAVY`）今天**本来就是绿的**，
-  若它们红了，说明 `WeaponInventory` 被人改过，与本次无关 —— 停下报告。
+- ② 的逐条断言**不得出现**：json 是空的 ⇒ `if not json_text.is_empty():` 整块跳过。
+  这一条是"json 文件建好之后"的事（Task 2 Step 5 才验）。
+- ④ 组里的 tier 对齐三条（`TIER_LIGHT` / `TIER_MEDIUM` / `TIER_HEAVY`）与容量两条
+  （`wi.MAX_WEAPONS` / `wi.CAPACITY`）今天**本来就是绿的**，若它们红了，说明
+  `WeaponInventory` 被人改过，与本次无关 —— 停下报告。
+- ★ **若命令挂住 / 一行 `SMOKE OK` 都没有**：那是**脚本错误**（旧名残留、或 `ScanUtil`
+  解析不出来），不是"断言失败"。本计划全文用计划 1 之后的词汇；出现这种形状时，
+  第一嫌疑是某处把 `slot` / `used_slots` / `SLOT_COST` 之类的旧名写回去了。
 
 - [ ] **Step 3: 本 Step 不提交**
 
@@ -540,9 +581,11 @@ Run:
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd \
   2>&1 | grep -E "FAIL|SMOKE"
 ```
-Expected: FAIL 列表**只剩 ⑤ 一条 + ⑥ 六条**（命中的 6 个字面量 + 6 个还没改的宿主函数）。
+Expected: FAIL 列表**恰好 7 条** = ⑤ 一条（命中的 6 个字面量）+ ⑥ 六条（还没改的宿主函数），
+外加末尾的 `SMOKE OK`。
 `读得到 res://data/weapons.json` / `core/sim/weapon_registry.gd 存在且可加载` /
-所有 `tier_of(...)` / `tiers_map()` / `默认启用表` 这些**必须已不在 FAIL 列表里**。
+`json 至少有 1 条合格条目` / 所有 `tier_of(...)` / `tiers_map()` / `scene_of(...)` /
+`name_of(...)` / `has(...)` / `默认启用表必须等于注册表全部 id` —— 这些**必须已不在 FAIL 列表里**。
 ★ 若 `默认启用表必须等于注册表全部 id` 红了：`enabled_types` 还是那条硬编码
 `[1, 2, 3, 4, 5, 6]`，而注册表也是 `[1..6]` ⇒ 本该相等。红了说明 json 的 id 集合不是
 `{1..6}`（多半手抖写了 0 或 7），回去核 Step 1 的内容。
@@ -582,10 +625,13 @@ Expected: `FAIL - id 1:tscn 的 tier(0)必须等于 json 的 "medium"(1)`。
 
 - [ ] **Step 1: `weapon_component.gd` 删表 + 三处改问 registry**
 
+★ 本 Step 的**行号取自 `main`（计划 1 之前）**，且计划 1 会给这个文件插入新函数 ⇒
+按下面给出的**内容**定位（三块 `const` 的名字 + 三个函数的原文），别硬按行号跳。
+
 删掉 `:15-22`（`WEAPONS`）、`:25`（`DISPLAY_NAMES`）、`:33-40`（`TIERS`）三块的
 `const` 声明**连同它们上方的说明注释**（注释讲的是三张表互相对账，判据已搬到 json 上）。
 
-`:42-58` 之间那个 `enabled_slots`（计划 2 后叫 `enabled_types`）声明，改成**空表 + 注释**：
+`:54` 那个 `enabled_slots`（计划 1 后叫 `enabled_types`）声明，改成**空表 + 注释**：
 
 ```gdscript
 # 启用的武器**类型 id**。默认全开 = 注册表里全部 id(在 `_init` 里赋值);
@@ -605,7 +651,7 @@ func _init() -> void:
 	enabled_types = WeaponRegistry.all_ids()
 ```
 
-`:70-80` 的 `set_enabled_slots`（计划 2 后叫 `set_enabled_types`）改成：
+`:70-80` 的 `set_enabled_slots`（计划 1 已改名为 `set_enabled_types`）改成：
 
 ```gdscript
 func set_enabled_types(disabled: Array[int]) -> void:
@@ -636,58 +682,72 @@ func set_enabled_types(disabled: Array[int]) -> void:
 		return
 ```
 
-★ `is_slot_enabled` / `_first_enabled_index` / `equip` / `pick_up` 里的**调用名**由计划 2
-改成 `is_type_enabled`（本计划**不重复**做那个改名）。**只替代换表查询**，别顺手改别的语义。
+★ 本 Step **只替代"换表查询"这三处**。函数名与调用名一律是**计划 1 改完的**：
+`is_type_enabled`（原 `is_slot_enabled`）、`_current_type`（原 `_current_slot`）、
+`equip_type(...)`（原 `equip(String)`，签名从 `String` 变 `int`）、`used_cell_count()`
+（原 `used_slots()`）、`CELL_COST`（原 `SLOT_COST`）、`cell_start()`（原 `slot_start`）。
+**上游名写回去 = Parse Error**；`_first_enabled_index` / `_unequip` / `pick_up` / `add` 没改名，
+**别顺手改别的语义**。
 
 - [ ] **Step 2: 四处 `[1, 2, 3, 4, 5, 6]` 改成 `WeaponRegistry.all_ids()`**
+
+★ 下面四段里的循环变量一律是 **`type_id`** —— 计划 1 的 Task 1 Step 4 **已经**把
+`level_0` / `match_ground` / `lobby_page` / `main_menu` 四处循环里的 `slot`/`slot_i`
+改成了 `type_id`/`type_i`。本 Step 改的是**列表来源**，不是再改一次名字。
 
 `scenes/level_0.gd:502-508`：
 
 ```gdscript
-# 单机初始武器清单:每种 2 把,跳过本局被禁的槽位。
+# 单机初始武器清单:每种 2 把,跳过本局被禁的类型。
 # (禁用武器不该出现在地图上 —— 与 set_enabled_types 同源:RunOptions.disabled_weapons)
 # ★ 清单来自注册表(json 顺序 = 散落顺序)。加第 7 把枪只改 json,这里一个字不动。
 func _default_weapon_types() -> Array:
 	var out: Array = []
-	for slot: int in WeaponRegistry.all_ids():
-		if not RunOptions.disabled_weapons.has(slot):
-			out.append(slot)
-			out.append(slot)
+	for type_id in WeaponRegistry.all_ids():
+		if not RunOptions.disabled_weapons.has(type_id):
+			out.append(type_id)
+			out.append(type_id)
 	return out
 ```
 
 `server/match_ground.gd:31-37`：
 
 ```gdscript
-# 本局投放的武器类型清单:每种 2 把,跳过被禁的槽位。
+# 本局投放的武器类型清单:每种 2 把,跳过被禁的类型。
 # ★ 与单机 `Level0._default_weapon_types` **同源**(都取注册表),差别只在禁用表是哪个。
 func _server_weapon_types() -> Array:
 	var out: Array = []
-	for slot: int in WeaponRegistry.all_ids():
-		if not _disabled_weapons.has(slot):
-			out.append(slot)
-			out.append(slot)
+	for type_id in WeaponRegistry.all_ids():
+		if not _disabled_weapons.has(type_id):
+			out.append(type_id)
+			out.append(type_id)
 	return out
 ```
 
-`scenes/lobby_page.gd:107`（该行上方的 `# 显式 int:…` 注释保留，它讲的正是这个写法）：
+`scenes/lobby_page.gd:107`（只改循环的**来源**；函数体里那 6 处 `type_i` 是计划 1 改的名，
+**不动**）：
 
 ```gdscript
-	for slot: int in WeaponRegistry.all_ids():
+	for type_id: int in WeaponRegistry.all_ids():
 ```
+★ 该行上方的注释（`# 显式 int:循环变量来自字面量数组,`var slot_i := slot` 推断不出类型…`）
+**必须一并改写**：`all_ids()` 返回 `Array[int]`，不再是"字面量数组"这个理由了。
+改成：`# 显式 int:入库的是 Array[int],循环变量跟着同类型,别让它退化成 Variant。`
+（核验报告 §2.8 点名了这条注释：理由不成立而注释留着就是误导。）
 ★ 这里改完，`_add_weapon_grid` 的函数体就让 Task 1 的 ⑥ 满足了。
 
-`scenes/main_menu.gd:343` 起的那一段：
+`scenes/main_menu.gd:343` 起的那一段（`for` 用计划 1 的 `type_id`；`cb.text` **不带编号**
+—— 编号是计划 1 Step 5 刚删掉的，别装回来）：
 
 ```gdscript
 	var ids: Array[int] = WeaponRegistry.all_ids()
-	for slot: int in ids:
+	for type_id: int in ids:
 		var cb := CheckButton.new()
-		cb.text = "%d. %s" % [slot, WeaponRegistry.name_of(slot)]
-		cb.icon = WeaponIcons.silhouette(slot)   # 纯白像素剪影,便于辨认
+		cb.text = WeaponRegistry.name_of(type_id)
+		cb.icon = WeaponIcons.silhouette(type_id)   # 纯白像素剪影,便于辨认
 		cb.expand_icon = false
 		UiFactory.style_check(cb, 32)
-		cb.button_pressed = Settings.sp_disabled_weapons.has(slot)
+		cb.button_pressed = Settings.sp_disabled_weapons.has(type_id)
 		checks.append(cb)
 		check_list.add_child(cb)
 ```
@@ -709,15 +769,20 @@ lambda**，不是新引入的写法。
 
 - [ ] **Step 3: 四个"按 id 查场景/名字"的调用方改问 registry**
 
-`scenes/player/player_replica.gd:236-240`（`_swap_weapon` 体内）：
+★ 下面两处的形参名是 **`type_id`** —— 计划 1 的 Task 1 Step 4 已经把
+`player_replica._swap_weapon(slot)` 与 `weapon_icons.silhouette(slot)` 的形参改成了 `type_id`。
+**照抄写成 `slot` 就是 Parse Error**（那是本批核验报告点名的两处硬错）。
+
+`scenes/player/player_replica.gd`（`_swap_weapon` 体内，原 `:238`）：
 
 ```gdscript
-	var scene_path: String = WeaponRegistry.scene_of(slot)
+	var scene_path: String = WeaponRegistry.scene_of(type_id)
 	if scene_path.is_empty():
 		return
 ```
 
-`scenes/weapons/weapon_pickup.gd:100-104`（`_build_visual` 开头）：
+`scenes/weapons/weapon_pickup.gd:100-104`（`_build_visual` 开头；这里 `type_id` 是**成员变量**，
+计划 1 没动它）：
 
 ```gdscript
 func _build_visual() -> void:
@@ -728,20 +793,23 @@ func _build_visual() -> void:
 		return
 ```
 
-`ui/weapon_icons.gd:22`（`silhouette` 开头，`:22` 是那行 `load(WeaponComponent.WEAPONS…)`）：
+`ui/weapon_icons.gd:22`（`silhouette` 开头）：
 
 ```gdscript
-	var scene_path := WeaponRegistry.scene_of(slot)
+	var scene_path := WeaponRegistry.scene_of(type_id)
 	var scene: PackedScene = load(scene_path) if not scene_path.is_empty() else null
 ```
-`ui/weapon_icons.gd:68`：**只把名字的来源换掉**，数字前缀按当时的文件为准
-（计划 2 若已删掉 `"%d %s"` 里的 `%d`，保持删掉的样子；本计划不碰那件事）：
+
+`ui/weapon_icons.gd:68`（`make_weapon_check` 体内，形参同样是计划 1 改过的 `type_id`）：
 
 ```gdscript
-	var l := UiFactory.label("%d %s" % [slot, WeaponRegistry.name_of(slot)], font_size)
+	var l := UiFactory.label(WeaponRegistry.name_of(type_id), font_size)
 ```
+★ **不带编号** —— 计划 1 的 Step 5 刚把 `"%d %s" % [slot, …]` 那个假键位编号删掉，
+本 Step 只换**名字的来源**，别把它装回来。`font_size` 的实参位置也不动
+（`kh_l4_probe` 按下标 1 取它）。
 
-`ui/hud.gd:265`：
+`ui/hud.gd:265`（`t` 是 `:209` 的 `var t := int(e["type"])`，计划 1 **没动**它）：
 
 ```gdscript
 			var nm := WeaponRegistry.name_of(t)
@@ -781,8 +849,8 @@ Expected: `SMOKE OK`（且无 FAIL）、`WEAPON PICKUP PROBE: ALL-OK`、`KH L3 P
 
 - [ ] **Step 6: 反证（逐个证明 ⑤⑥ 会红）**
 
-1. 把 `scenes/level_0.gd` 的 `for slot: int in WeaponRegistry.all_ids():` 临时改回
-   `for slot in [1, 2, 3, 4, 5, 6]:`，跑 Step 5 的第一条命令。
+1. 把 `scenes/level_0.gd` 的 `for type_id in WeaponRegistry.all_ids():` 临时改回
+   **计划 1 之后的那句字面量**：`for type_id in [1, 2, 3, 4, 5, 6]:`，跑 Step 5 的第一条命令。
    Expected: `FAIL - 生产代码里不得再有硬编码的武器 id 列表(命中:[res://scenes/level_0.gd])`
    **且** `FAIL - res://scenes/level_0.gd 的 _default_weapon_types() 应改用 …
    WeaponRegistry.all_ids()` —— ⑤⑥ 两条**一起**红，且**点名**到那个文件。
@@ -850,7 +918,9 @@ EOF
 
 - [ ] **Step 2: `kh_l3` 的"全禁"字面量改成 `all_ids()`**
 
-`tests/kh_l3_probe.gd:187` 那一段的本意是**把全部武器类型都禁掉**再验兜底：
+`tests/kh_l3_probe.gd:187` 那一段的本意是**把全部武器类型都禁掉**再验兜底
+（按**内容**定位：那句 `wep.set_enabled_types([1, 2, 3, 4, 5, 6])`；
+计划 1 对 `kh_l3_probe.gd` **不增删行**，故 `:187` 应当仍然对得上 —— 对不上就按内容找）：
 
 ```gdscript
 	# 全禁 → 兜底非空(KH 的兜底是 [1]),否则出生即空手
@@ -867,18 +937,20 @@ EOF
 把 `scenes/level_0.gd` 的 `_default_weapon_types` 临时加一行"跳过 5 号"：
 
 ```gdscript
-	for slot: int in WeaponRegistry.all_ids():
-		if slot == 5:      # ← 临时,反证用
+	for type_id in WeaponRegistry.all_ids():
+		if type_id == 5:      # ← 临时,反证用
 			continue
-		if not RunOptions.disabled_weapons.has(slot):
+		if not RunOptions.disabled_weapons.has(type_id):
 ```
 Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 \
   res://tests/level0_weapon_scatter_probe.tscn 2>&1 | grep -E "ALL-OK|FAIL|每种注册"
 ```
-Expected: `FAIL - 每种注册武器都应铺到(缺 [5];…)` **且**
-`FAIL - 开局应铺 12 件地面武器(实际 10)` —— 两条一起红。
+Expected: `FAIL - 每种注册武器都应铺到(缺 [5];场上实际 {1: 2, 2: 2, 3: 2, 4: 2, 6: 2})` **且**
+`FAIL - 开局应铺 12 件地面武器(6 种 × 2,实际 10)` —— 两条一起红。
+★ 第二条的文案必须与 Task 4 Step 1 里写的那个格式串**逐字对上**
+（`"开局应铺 %d 件地面武器(%d 种 × 2,实际 %d)"`）；对不上说明 Step 1 被改动过，先核它。
 ★ 这一条正是"加了新枪但散落表漏了它"的可复现形态。确认后**删掉那两行**，再跑一次确认全绿。
 
 - [ ] **Step 4: 跑 `kh_l3`**
@@ -1055,7 +1127,17 @@ EOF
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。`data/weapons.json` 与
 `weapon_registry.gd` 都给的是**完整内容**；每处调用点都给了完整代码块与确切行号。
 
-**3. 类型一致性**：`all_ids() -> Array[int]`（Task 2 定义；Task 3 的 `for slot: int in …`、
+**2b. 词汇（本批核验报告的 ❌ 项，已修）**：本计划全篇用的是**计划 2 改名之后**的名字 ——
+形参/循环变量 `type_id`（不是 `slot`）、`equip_type`、`is_type_enabled`、`_current_type`、
+`cell_start()`、`used_cell_count()`、`CELL_COST`。
+★ 上一版把两处写成 `WeaponRegistry.scene_of(slot)`（`player_replica._swap_weapon` 与
+`weapon_icons.silhouette` 的形参已被计划 2 改名为 `type_id`）⇒ **Parse Error**；
+`main_menu` / `weapon_icons` 的菜单文案还把计划 2 刚删掉的 `%d. ` 编号装了回去 ⇒
+静默改回了"假键位编号"。两处都已按计划 2 改名表重写。
+★ **spec §3 那张表不完整**（不含 `used_slots` / `SLOT_COST` / 形参 `slot` 那几条）——
+**以计划 2 的改名表为准**。
+
+**3. 类型一致性**：`all_ids() -> Array[int]`（Task 2 定义；Task 3 的 `for type_id: int in …`、
 Task 4 的 `var want_types: Array[int] = …` 都按 int 用）；`tier_of() -> int`（**不是** `Tier`）；
 `tiers_map() -> Dictionary` 喂 `WeaponInventory.new(tiers: Dictionary)`
 （`core/sim/weapon_inventory.gd:38`）；`name_of` 对未知 id 返回 `""`（`ui/hud.gd` 的兜底据此写）。

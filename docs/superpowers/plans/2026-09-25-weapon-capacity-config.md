@@ -10,7 +10,8 @@
 实例字段；`ui/weapon_slots.gd` 的 `capacity` 从背包取、`rows` / `panel_h` 由它派生
 （`COLS` 恒 4，容量长大时格阵**向下长**，不换行宽）——
 `PANEL_W` 只跟列数有关 ⇒ **仍是常量**，`PANEL_H` 与 `ROWS` 两个常量**删掉**。
-`PANEL_H` 的静态读者（`ui/hud.gd:301,303` 与 `attach_to` 自己）改读实例字段 `panel_h`。
+`PANEL_H` 的静态读者（`ui/hud.gd:303` 是**全仓唯一**一处，加上 `attach_to` 自己那两行）
+改读实例字段 `panel_h`。
 
 **Tech Stack:** Godot 4.7.1（标准版）、GDScript、`-s` 冒烟、场景探针（`--headless --quit-after`）。
 
@@ -27,10 +28,17 @@
 **计划 2 → 计划 3 → 计划 4（本计划）。**
 
 原因：① `ui/weapon_slots.gd:85` 调的是 `WeaponInventory.cell_start(index)`，而
-`slot_start → cell_start` 那个改名是**计划 2** 做的（spec §3）；② 计划 3 会改
+`slot_start → cell_start` 那个改名是**计划 2** 做的；② 计划 3 会改
 `weapon_component.gd` 的 `_init`（`WeaponInventory.new(WeaponRegistry.tiers_map())`），
 本计划**不动那一行**（它仍是一次普通构造，默认参数正好给出 8 / 4）。
 **本计划全篇使用 spec §3 的词汇**（`type_id` / `inst` / `index`），一处都不写旧名。
+
+★★ **spec §3 那张表是不完整的** —— 计划 2 的改名范围比它长，多出来的几条本计划**每一处都要用**
+（`used_slots()`→**`used_cell_count()`**、`SLOT_COST`→**`CELL_COST`**，以及
+`cell_start()` / `equip_type(int)` / 形参或循环变量 `slot`→`type_id`）。
+**以计划 2 的改名表为准，不以 spec §3，也不以本计划的片段为准。**
+核验报告实测：照 spec §3 的 9 项写，本计划的替换片段会造成 **1 处 Parse Error + 2 处运行时挂起**
+（其中一处会让本计划 Step 6 的"若命令 hang ⇒ 某个探针写成了直接取属性"这条判读规则**指错方向**）。
 
 **Task 1 的 Step 0 是这条前提的机械检查**。
 
@@ -46,6 +54,12 @@
   新接口的地方，一律先做一次不抛错的探测**（`get_property_list()` /
   `get_script_constant_map()` / 源码文本），探到了才敢调。
 - `--quit-after` **统一给 3600 帧**（安全网，只在挂住时用得上）。
+- ★★ **命令里的 `2>&1` 一个都不能省。** `enemy_logic_smoke._check` 与
+  `level0_weapon_scatter_probe._check` 的失败行走的是 **`printerr`（stderr）**
+  （`tests/enemy_logic_smoke.gd:64`）；去掉 `2>&1` 会把"红了"读成"没有输出"，
+  而"没有输出"在本仓恰好是**另一种**已知故障形态（脚本没跑起来 / 挂住）—— 两者会撞车。
+  （`weapon_inventory_smoke._check` 与 `ground_action_probe._check` 走的是 `print`（stdout），
+  但统一带 `2>&1` 更省心。）
 - 引擎二进制走环境变量：先 `source tests/env.sh`，再用 `"$GODOT"`。
 - 提交**按名 `git add`** 单个文件，不用 `git add -A` / `git add .`；提交信息单行。
   本仓在 Windows 上经 Git Bash 跑：提交信息含引号/反引号时用 `git commit -F - <<'EOF'`，
@@ -57,6 +71,18 @@
   会**照样编得过**，但读的是"默认值"而不是"这个背包的容量" —— 那是**静默的错值**，
   正是本计划要消灭的东西（spec §4.4）。默认值改名叫 `DEFAULT_CAPACITY` /
   `DEFAULT_MAX_WEAPONS`，含义是"构造时的默认"，不是"任何实例的容量"。
+- ★★ **本计划的全部代码都写在计划 2 改名之后的词汇上。** 会碰到的改名（以计划 2 的改名表为准）：
+  `used_slots()`→**`used_cell_count()`**、`SLOT_COST`→**`CELL_COST`**、`slot_start`→`cell_start`、
+  `equip(String)`→`equip_type(int)`、`_current_slot`→`_current_type`、`is_slot_enabled`→
+  `is_type_enabled`、`enabled_slots`→`enabled_types`、`set_enabled_slots`→`set_enabled_types`，
+  以及形参/循环变量 `slot`→`type_id`。保留 `slot` 的只有 `Player.weapon_slot` 挂点、
+  `WeaponSlots` / `C_SLOT_*` 容量格 UI、`capture_state()` 的 `wslot` 键。
+  **`CAPACITY` / `MAX_WEAPONS` 不在改名表里**（它们是本计划要删的）。
+  ★ 写回旧名 = Parse Error 或运行时错；**运行时错在 `-s` 冒烟里表现为"挂住"，不是"红"**
+  （Step 6 的判读规则专门写了这一条，别把它读成别的成因）。
+- ★ **行号只作参考**：本计划的行号取自 `main`（计划 2 之前），且计划 3 会改
+  `enemy_logic_smoke.gd` 的 `_phase_weapon_registry`（那一段落在我 Task 1 Step 3 的锚点上）。
+  每处都给了"改前"的原文片段，**按内容定位**。
 
 ---
 
@@ -67,7 +93,7 @@
 | `core/sim/weapon_inventory.gd` | 背包纯逻辑（两条闸门 / 残弹记账） | `MAX_WEAPONS` / `CAPACITY` **常量删除** → 实例字段 `max_weapons` / `capacity`；加 `DEFAULT_*` 与 setter；`_init` 收三个参数 |
 | `ui/weapon_slots.gd` | 左下角容量格子（自绘） | `ROWS` / `PANEL_H` **常量删除** → `capacity` / `rows` / `panel_h` 实例字段；加 `rows_for()` / `panel_h_for()` / `_derive_layout()`；4 处静态读改本地 |
 | `ui/hud.gd` | 单机 HUD | `WeaponSlots.PANEL_H` → `_slots.panel_h`（:303 一处） |
-| `tests/weapon_inventory_smoke.gd` | 背包纯逻辑冒烟 | 默认值两条改指 `DEFAULT_*`；**新增**一段"容量/把数可配" |
+| `tests/weapon_inventory_smoke.gd` | 背包纯逻辑冒烟 | `:74-78` 默认值两条改指 `DEFAULT_*`；**新增**一段"容量/把数可配" |
 | `tests/enemy_logic_smoke.gd` | 主冒烟 | 两条 `wi.MAX_WEAPONS`/`wi.CAPACITY` 改指 `DEFAULT_*`；**末尾追加** `_phase_weapon_capacity()` |
 | `tests/ground_action_probe.gd` | 联机拾取/丢弃探针 | 4 处 `WeaponInventory.CAPACITY` → `p.weapons.inventory.capacity` |
 | `tests/level0_weapon_scatter_probe.gd` | 单机散落/版式探针 | `_phase_slot_placement` 加一条"默认容量下面板高 = 59" |
@@ -100,29 +126,35 @@ echo "--- 计划 2：改名 ---"
 sed 's/#.*//' scenes/player/weapon_component.gd \
   | grep -cE "_current_slot|set_enabled_slots|is_slot_enabled|enabled_slots|slot_start"
 sed 's/#.*//' ui/weapon_slots.gd | grep -c "slot_start"
+echo "--- 计划 1：新名必须已经在（否则上面那两个 0 只是"文件被删了"）---"
+grep -c "used_cell_count\|CELL_COST" core/sim/weapon_inventory.gd
+grep -c "cell_start" ui/weapon_slots.gd
 echo "--- 计划 3：注册表 ---"
 sed 's/#.*//' scenes/player/weapon_component.gd | grep -c "WeaponRegistry"
 ```
-Expected: 前两行都是 `0`；第三行 ≥ 1。
+Expected: 前两行都是 `0`；**紧接着两行都必须 ≥ 1**（计划 1 的新名已在位 —— 只查"旧名为 0"
+会被"文件根本不存在/被清空"骗过）；最后一行的注册表计数 ≥ 1。
 任何一个不对 ⇒ 对应计划未落地，**停下**。
 
 - [ ] **Step 1: `weapon_inventory_smoke.gd` 的默认值两条改口径**
 
-`:74-77` 现在是直接取 `WI.MAX_WEAPONS` / `WI.CAPACITY`（`WI` 是 `load()` 出来的
-GDScript 对象）。**常量一删，直接取属性就会抛错**，而 `-s` 脚本抛错走不到 `quit()`
-⇒ **进程永久挂起**。改成查常量表 + 读默认值：
+`:74-78` 现在是直接取 `WI.MAX_WEAPONS` / `WI.CAPACITY` / `WI.CELL_COST`
+（★ 第三个在计划 1 之前叫 `SLOT_COST`；计划 1 之后应当是 `CELL_COST`，若还是旧名说明计划 1
+没跑完）。**常量一删或一改名，直接取属性就会抛错**，而 `-s` 脚本抛错走不到 `quit()`
+⇒ **进程永久挂起**（不是"干净的红"）。改成查常量表 + 读默认值：
 
 ```gdscript
 	# ★ 默认值一律走 `get_script_constant_map()`:常量不存在时直接取属性会抛错,而 -s 脚本
 	#   抛错走不到 quit() → **进程永久挂起**(本仓铁律,见上面 WI == null 那段)。
 	#   `.get(name, -1)` 的存在性检查让"常量还没改名"表现为**干净的红**。
+	# ★ `CELL_COST` 是计划 1 改的名(原 `SLOT_COST`)—— 写回旧名同样会抛错 ⇒ 挂起。
 	var wconsts: Dictionary = WI.get_script_constant_map()
 	var def_cap := int(wconsts.get("DEFAULT_CAPACITY", -1))
 	var def_max := int(wconsts.get("DEFAULT_MAX_WEAPONS", -1))
 	_check(def_max == 4, "DEFAULT_MAX_WEAPONS 必须恰好是 4(实际 %d)" % def_max)
 	_check(def_cap == 8, "DEFAULT_CAPACITY 必须恰好是 8(实际 %d)" % def_cap)
-	_check(int(WI.SLOT_COST[int(WI.TIER_LIGHT)]) == 2, "轻武器必须恰好占 2 格")
-	_check(int(WI.SLOT_COST[int(WI.TIER_LIGHT)]) * def_max == def_cap,
+	_check(int(WI.CELL_COST[int(WI.TIER_LIGHT)]) == 2, "轻武器必须恰好占 2 格")
+	_check(int(WI.CELL_COST[int(WI.TIER_LIGHT)]) * def_max == def_cap,
 		"轻武器 cost × 4 应恰好等于容量(这条等式一旦不成立,上面那条注释就该重写)")
 ```
 ★ 上面那段注释里"上面那条注释"指的是本节开头那段**关于两条闸门互相蕴含**的长注释
@@ -163,16 +195,19 @@ GDScript 对象）。**常量一删，直接取属性就会抛错**，而 `-s` �
 		wide.add(5, 5)
 		wide.add(5, 5)
 		wide.add(5, 5)                      # 三把重型 = 12 格(加起来正好到顶)
-		_check(wide.used_slots() == 12, "宽松配置下三把重型 = 12 格(实际 %d)" % wide.used_slots())
+		_check(wide.used_cell_count() == 12,
+				"宽松配置下三把重型 = 12 格(实际 %d)" % wide.used_cell_count())
 		_check(not wide.can_hold(1), "★ 容量闸门读的是**字段**:12 格满了,最便宜的档也放不下")
 		# ③ 两条闸门**互相独立** —— 这是本节的核心断言,今天靠真表造不出来(见上面那段长注释)
 		var by_cap = WI.new(tiers, 4, 9)
 		by_cap.add(5, 5)                    # 重型 4 格 = 正好占满 4 格,而把数还剩 8
-		_check(by_cap.used_slots() == 4, "容量 4 的背包放一把重型正好占满(实际 %d)" % by_cap.used_slots())
+		_check(by_cap.used_cell_count() == 4,
+				"容量 4 的背包放一把重型正好占满(实际 %d)" % by_cap.used_cell_count())
 		_check(not by_cap.can_hold(1), "★ 容量闸门单独生效(把数上限 9 没拦,是容量拦的)")
 		var by_max = WI.new(tiers, 100, 1)
 		by_max.add(1, 5)                    # 轻 2 格,容量还剩 98
-		_check(by_max.used_slots() == 2, "容量 100 的背包放一把轻型只占 2 格(实际 %d)" % by_max.used_slots())
+		_check(by_max.used_cell_count() == 2,
+				"容量 100 的背包放一把轻型只占 2 格(实际 %d)" % by_max.used_cell_count())
 		_check(not by_max.can_hold(1), "★ 把数闸门单独生效(容量剩 98 格,是把数上限拦的)")
 		# ④ setter 路径
 		by_max.set_capacity(0)
@@ -190,8 +225,8 @@ GDScript 对象）。**常量一删，直接取属性就会抛错**，而 `-s` �
 
 - [ ] **Step 3: `enemy_logic_smoke.gd` 的两条默认值断言改口径**
 
-`_phase_weapon_registry()` 末尾那两条（**计划 3 之后**的位置，内容仍是
-`_check(int(wi.MAX_WEAPONS) == 4, …)` / `_check(int(wi.CAPACITY) == 8, …)`）改成：
+`_phase_weapon_registry()` **末尾**那两条（**计划 3 改完之后**的版本；按内容定位 ——
+那句 `_check(int(wi.MAX_WEAPONS) == 4, …)` 与紧邻的 `_check(int(wi.CAPACITY) == 8, …)`）改成：
 
 ```gdscript
 	# ★ 原先是 `int(wi.MAX_WEAPONS)` / `int(wi.CAPACITY)` 直取属性 —— 常量改名成字段之后
@@ -203,10 +238,13 @@ GDScript 对象）。**常量一删，直接取属性就会抛错**，而 `-s` �
 	_check(int(wconsts.get("DEFAULT_CAPACITY", -1)) == 8,
 			"WeaponInventory.DEFAULT_CAPACITY == 8(实际 %s)" % str(wconsts.get("DEFAULT_CAPACITY")))
 ```
+★ **这两行是计划 3 点名"别删"的**（它的 ④ 组末尾写着"归容量可配那份计划改判据"）——
+按内容找它们，行号会被计划 3 改写的那一段带漂。
 
 - [ ] **Step 4: `enemy_logic_smoke.gd` 追加 `_phase_weapon_capacity()`**
 
-① 在 `_initialize()` 的**最后一行**（`:127` 的 `_phase_weapon_registry()` 之后）加：
+① 在 `_initialize()` 的末尾加一行（**`main` 上最后一行是 `:128` 的 `_phase_spread_cells()`**，
+计划 3 只改写 `:127` 那个函数体、不增删行 ⇒ 插在 `_phase_spread_cells()` **之后**）：
 ```gdscript
 	_phase_weapon_capacity()        # ★ 同上,只追加在末尾
 ```
@@ -288,22 +326,41 @@ Expected（改动前，**必须是这一组**）:
 ```
 [FAIL] DEFAULT_MAX_WEAPONS 必须恰好是 4(实际 -1)
 [FAIL] DEFAULT_CAPACITY 必须恰好是 8(实际 -1)
-[FAIL] 轻武器 cost × 4 应恰好等于容量(...)
+[FAIL] 轻武器 cost × 4 应恰好等于容量(这条等式一旦不成立,上面那条注释就该重写)
 [FAIL] ★ WeaponInventory 应有**实例字段** capacity(不再是类常量 CAPACITY)
 [FAIL] ★ WeaponInventory 应有**实例字段** max_weapons(不再是类常量 MAX_WEAPONS)
 [FAIL] ★ 容量/把数可配的四组行为断言被跳过(字段还没改,期望在这一步红)
 WEAPON_INVENTORY FAILED: 6
 ```
+★★ **逐条来历（核验报告点名要求过的"红为什么会出现"，别只抄数字）**：
+- 前两条：`DEFAULT_*` 还**不是**常量（本计划的 Task 2 才加），`get_script_constant_map()`
+  查不到 ⇒ `.get(name, -1)` 拿到哨兵 `-1` ⇒ `-1 == 4` / `-1 == 8` 为假 ⇒ 干净 FAIL。
+- 第三条：`CELL_COST[TIER_LIGHT] = 2`，而 `def_max = -1`、`def_cap = -1`
+  ⇒ `2 * (-1) = -2 != -1` ⇒ FAIL。
+  ★ **这一条是"计划 1 已改名"的证据**：若这里还写着 `SLOT_COST`，取 GDScript 对象的
+  不存在常量会抛错 ⇒ `_initialize()` 中断 ⇒ **挂住，一行都不打印**，
+  而下面那条判读规则会把挂住误判成"守卫写错了"。所以名字必须一次写对。
+- 第四、五条：`capacity` / `max_weapons` 还**不是**实例字段（`get_property_list()` 里没有）。
+- 第六条的 `if has_capacity and has_max:` 为假 ⇒ 走 `else` ⇒ 那四组行为断言（含
+  `used_cell_count()` 三处）**一条都不执行** —— 这正是守卫存在的理由：改动前碰到
+  不存在的字段/函数会抛错，而 `-s` 冒烟里抛错 = 挂住。
+- `WEAPON_INVENTORY FAILED: 6`：`_check` 只累加计数、不抛错，故**计数与退出码都正常**。
 ```
   FAIL - WeaponInventory.DEFAULT_MAX_WEAPONS == 4(实际 <null>)
   FAIL - WeaponInventory.DEFAULT_CAPACITY == 8(实际 <null>)
   FAIL - ★ WeaponSlots 应导出 rows_for() / panel_h_for() 两个静态派生函数
+SMOKE OK
 ```
+（第三条之后 `_phase_weapon_capacity()` 就 `return` 了 ⇒ 后面那些 `rows_for(...)` 断言
+**不执行** —— 它们要等 `has_derivation` 为真。末尾仍须有 `SMOKE OK`。）
 （`level0_weapon_scatter_probe` 那一条**应当是绿的**，理由见 Step 5。）
 ★ **判读规则**：
-- `weapon_inventory_smoke` **必须打完** `WEAPON_INVENTORY FAILED: N` 再退出 ——
-  若命令**超时/hang**（一行 `WEAPON_INVENTORY` 都不打印），说明某个探针写成了直接取属性
-  （Step 2 的 `if has_capacity and has_max:` 守卫少了/写成了 early `return`），回去核 Step 2。
+- `weapon_inventory_smoke` **必须打完** `WEAPON_INVENTORY FAILED: 6` 再退出。
+- ★★ **若命令超时/hang**（一行 `WEAPON_INVENTORY` 都不打印）：先用
+  `grep -n "used_slots\|SLOT_COST" tests/weapon_inventory_smoke.gd` 查**旧名残留**
+  （那会抛错 ⇒ 挂住），**再**去查 Step 2 的 `if has_capacity and has_max:` 守卫。
+  ★ 顺序不能反 —— 这条判读规则上一版写成"hang ⇒ 一定是守卫少了"，而计划自己在
+  Step 1 里留着 `SLOT_COST` 时**恰好**会以那种形状挂住，会把人指到错的方向（核验报告 §2.6）。
 - `enemy_logic_smoke` 的文件末尾**必须仍有 `SMOKE OK`** —— 那正是"新断言被静默跳过"
   与"新断言干净地红了"的分界：本次预期是**红了但没打断**。若连 `SMOKE OK` 都没有，
   说明抛错了，回去核 Step 3/4 的守卫。
@@ -372,10 +429,14 @@ func set_max_weapons(n: int) -> void:
 func can_hold(type_id: int) -> bool:
 	if held.size() >= max_weapons:
 		return false
-	return used_slots() + cost_of(type_id) <= capacity
+	return used_cell_count() + cost_of(type_id) <= capacity
 ```
+★ `can_hold` 里那个 `used_slots()` 是**计划 1 改过名的 `used_cell_count()`** —— 本 Step 只换
+数据源（常量 → 字段），**不改名**。写回 `used_slots()` 是**同一脚本内的调用** ⇒ **Parse Error**
+（响亮，不会静默）。
 ★ `weapon_inventory.gd` 里**没有别的** `CAPACITY`/`MAX_WEAPONS` 读者（本文件的
-`used_slots` / `cost_of` / `add` / `restore` 都不碰它们）—— 改完 `grep -n "MAX_WEAPONS\|CAPACITY"`
+`used_cell_count` / `cost_of` / `add` / `restore` 都不碰它们）—— 改完
+`grep -n "MAX_WEAPONS\|CAPACITY" core/sim/weapon_inventory.gd`
 在这个文件里应当只剩 `DEFAULT_*` 与 `max_weapons`/`capacity`。
 
 - [ ] **Step 2: `ui/weapon_slots.gd` 派生**
@@ -525,15 +586,16 @@ Step 2 已改）。
 	# 先把背包塞满:两把重型 = 4+4 = 8 格 = 默认容量(★ 用 set_initial_inventory 是**发放**路径,
 	# 它照 `add()` 直加、不过容量闸门;要测闸门就得自己摆成"刚好满"的合法状态,别拿它塞 4 把)
 ```
-`:195-196` / `:208-209`：
+`:195-196` / `:208-209`（★ `used_slots()` → **`used_cell_count()`** 是**计划 1 改的名**；
+本 Step 只把常量换成字段。这里在探针里是**动态调用**，写回旧名不报错、只在运行时炸）：
 
 ```gdscript
-	_check(p.weapons.inventory.used_slots() == cap,
-			"且正好占满容量(%d/%d)" % [p.weapons.inventory.used_slots(), cap])
+	_check(p.weapons.inventory.used_cell_count() == cap,
+			"且正好占满容量(%d/%d)" % [p.weapons.inventory.used_cell_count(), cap])
 ```
 ```gdscript
-	_check(p.weapons.inventory.used_slots() <= cap,
-			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_slots(), cap])
+	_check(p.weapons.inventory.used_cell_count() <= cap,
+			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_cell_count(), cap])
 ```
 
 - [ ] **Step 5: 跑 —— 应该全绿；然后逐条反证**
@@ -572,6 +634,9 @@ Expected: `WEAPON_INVENTORY OK`、`SMOKE OK`（无 FAIL）、
    Expected: `FAIL - WeaponSlots.setup() 必须调 _derive_layout()(…)`。
 5. **默认观感有没有变**：把 `panel_h_for` 的 `return` 临时改成 `return 60.0`，跑第 3 条命令。
    Expected: `FAIL - 1 把枪时容量面板高应仍是 59px(实际 60.0)`（四个 loadout 各一条，共 4 条）。
+   ★ **同时**会红一条**不在本组命令里**的：`enemy_logic_smoke` 的 `panel_h_for(8) = 59(实际 60.0)`
+   —— 那是同一处变异的第二个观测点（跑第 2 条命令能看到）。两条一起红是预期的，
+   别按"越界"读。
    ★ 既有的**间隙**断言（`间隙恒为 8px`）**不会**红 —— `offset_top` 与 `size.y` 都由同一个
    `panel_h` 推出，两者一起平移 ⇒ 间隙不变。所以要钉住"默认高没变"只能靠这一条。
 6. 全部改回来，再跑一遍上面那组命令确认恢复全绿。
@@ -680,6 +745,14 @@ Task 2 Step 2；"协议零改动" ✅（默认值不变，没有任何协议字�
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。每处改动都给了完整代码块与确切锚点。
 唯一的"按当时情况写"是 `inv.cell_start(i)` 那一行 —— 那是**计划 2** 的地盘，
 已就地注明（本计划改的只有 `CAPACITY` → `capacity`）。
+
+**2b. 词汇（本批核验报告的 ❌ 项，已修）**：本计划全篇用的是**计划 2 改名之后**的名字 ——
+`used_cell_count()`（原 `used_slots()`）、`CELL_COST`（原 `SLOT_COST`）、`cell_start()`
+（原 `slot_start`）。★ spec §3 那张表**不完整**（不含 `used_slots` / `SLOT_COST` 两条），
+照它写会让本计划的 Step 1 里留下 `WI.SLOT_COST` ⇒ 取不存在的常量 ⇒ **`-s` 冒烟挂住**
+（不是红），而它又落在 `if has_capacity and has_max:` **守卫之外**、守卫拦不住 ——
+而 Step 6 上一版的判读规则会把这种挂住误判成"守卫写少了"。现已：① 名字全部改对；
+② Step 6 补了"先查旧名残留、再查守卫"的顺序，并把那条误导性的推断删掉。
 
 **3. 类型一致性**：`rows_for(cap: int) -> int` / `panel_h_for(cap: int) -> float`
 （Task 1 Step 4 的断言按 int / float 分别 `int(...)` 与 `is_equal_approx(float(...))`）；
