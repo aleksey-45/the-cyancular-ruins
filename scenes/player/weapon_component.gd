@@ -419,21 +419,12 @@ func reset_mag_state() -> void:
 	_flush_current_mag()
 
 
-# 复活/重启用:把当前武器的弹夹补满。
-# 必须 call_deferred —— equip() 排下的 _restore_mag 会在帧末把旧残弹写回,
-# 同帧同步写会被它覆盖(复活了却只有 3 发,且无报错)。本调用排在 _restore_mag 之后
-# 入 defer 队列 → 帧末后写者胜 = 满弹。
-func refill_current_weapon() -> void:
-	var w := _weapon
-	if w != null:
-		_refill_mag.call_deferred(w)
-
-
-func _refill_mag(w: WeaponBase) -> void:
-	if is_instance_valid(w):
-		w.mag_ammo = w.mag_size
-	if _current_index >= 0 and _current_index < inventory.held.size():
-		inventory.held[_current_index]["mag"] = WeaponInventory.MAG_FULL
+# ★ 2026-09-25:原 `refill_current_weapon()` / `_refill_mag()` **已删除**。它们存在的唯一理由是
+#   "`_refill_mag` 必须 deferred、且要排在 `equip()` 排下的 `_restore_mag.call_deferred` 之后" ——
+#   而 `_restore_mag` 这条帧末写回本身已随 `pending_mag` 一起删除(回滚不再抹掉弹数)。
+#   且全仓**没有任何生产调用点**(复活满弹由 `Level0.restart_single` 统一重置背包)。
+#   ⚠ 删掉 `_restore_mag` **不等于**弹数有了常规纠正路径:`_close_enough` 仍不比 `mag`,
+#     `sync_soft_state` 的指纹只比结构 ⇒ 非回滚来源的弹数分歧仍会静默保留(见 CLAUDE.md 武器小节)。
 
 
 func current_weapon() -> WeaponBase:

@@ -15,7 +15,7 @@ extends ProbeBase
 #   3) ★ 字号规范:全仓所有字号载体都是 16 的倍数(见下方四类载体)
 #   4) 退役的 ESC 菜单零引用(类不存在、文件不存在、无代码引用)
 #   5) L4 新接口在位(Level0.safe_change_scene 必须 static / restart_single /
-#      Player.restart_at / WeaponComponent.refill_current_weapon+reset_mag_state)
+#      Player.restart_at / WeaponComponent.reset_mag_state)
 #   6) 主菜单的大乱斗入口恰 1 处且指向 royale_lobby.tscn(L4 约束 2 已到期反转:
 #      L4 那版是「零 royale 字样」,L5 连场景一起加后改为正向钉「必须恰有 1 个入口」)
 #
@@ -235,8 +235,11 @@ func _check_old_escape_menu_retired() -> void:
 #   Level0.safe_change_scene —— 必须是 **static**:调用方之一是菜单里的 PauseMenu(那时
 #     场上是游戏世界退役后的新场景/甚至无 Level0 实例),实例方法在那儿根本调不到。
 #   Level0.restart_single(单人倒地按 R 的原地复位)、Player.restart_at(回出生点+满血满氧+
-#     武器回默认槽)、WeaponComponent.refill_current_weapon / reset_mag_state(复活满弹;
-#     refill 必须 deferred,见其注释:要在 _restore_mag 之后写才不被覆盖)。
+#     武器回默认槽)、WeaponComponent.reset_mag_state(把当前残弹同步进背包条目)。
+#   ★ 2026-09-25:原先还有 `refill_current_weapon`(复活满弹)。它随 `_restore_mag` 那条帧末写回
+#     一起删除 —— 它存在的唯一理由是"deferred 要排在 `_restore_mag` 之后",那条机制没了,
+#     而它也从没有过生产调用点。下面 specs 名单里那项与 `_refill_mag.call_deferred(` 那条断言
+#     一并删掉(**改探针认新形状,不是把函数加回来**)。
 func _check_new_api() -> void:
 	var lv_path := "res://scenes/level_0.gd"
 	var lv := load(lv_path) as GDScript
@@ -252,7 +255,6 @@ func _check_new_api() -> void:
 	var specs := [
 		[lv_path, "restart_single"],
 		["res://scenes/player/player.gd", "restart_at"],
-		["res://scenes/player/weapon_component.gd", "refill_current_weapon"],
 		["res://scenes/player/weapon_component.gd", "reset_mag_state"],
 	]
 	for spec in specs:
@@ -264,10 +266,7 @@ func _check_new_api() -> void:
 			continue
 		if _method_info(gs, name) == null:
 			_failures.append("%s 缺方法 %s" % [path, name])
-	# 组件边界:复活的"满弹"不许绕过组件去直接摸私有状态
-	_check(_read("res://scenes/player/weapon_component.gd").contains("_refill_mag.call_deferred("),
-			"weapon_component.refill_current_weapon 未用 call_deferred(会被 _restore_mag 覆盖 = 复活不满弹)")
-	print("[L4] 新接口:Level0.safe_change_scene(static)/restart_single、Player.restart_at、WeaponComponent.refill_current_weapon+reset_mag_state 全部在位")
+	print("[L4] 新接口:Level0.safe_change_scene(static)/restart_single、Player.restart_at、WeaponComponent.reset_mag_state 全部在位")
 
 
 # ── 6) 主菜单的大乱斗入口:L4 约束 2 的到期日已到(断言反转)───────────
