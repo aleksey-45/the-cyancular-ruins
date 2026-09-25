@@ -394,7 +394,9 @@ git commit -m "refactor(weapon): 删掉 refill_current_weapon 死路径 —— �
 ### Task 5: 全量回归、真链路验收、登记残余
 
 **Files:**
-- Modify: `CLAUDE.md`（武器小节：把 `_restore_mag` 的描述换成 `pending_mag`）
+- Modify: `CLAUDE.md`（**玩家小节**：登记 `apply_mag`/`pending_mag` 这个唯一写入口 + 下面的残余边界。
+  ★ 2026-09-25 订正:原文写的是"武器小节:把 `_restore_mag` 的描述换成 `pending_mag`" —— 那是**空操作**，
+  `CLAUDE.md` 里 `_restore_mag` 的 grep 命中是 **0**。要写的是**新接口本身**，不是替换一段不存在的描述。）
 
 - [ ] **Step 1: 跑全部受影响的既有探针**
 
