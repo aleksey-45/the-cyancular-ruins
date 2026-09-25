@@ -26,7 +26,12 @@ const COLS := 24
 const ROWS := 10
 const TILE_WALL := 31      # 纹理 1 全砖(墙)
 const WARMUP := 30         # 无输入:落地 + 等武器入树
-const MAG_START := 4       # 非满弹(mag_size = 12);必须 ≠ MAG_FULL(-1),否则 deferred 那一支不排
+# 非满弹。★ 必须 ≠ `WeaponInventory.MAG_FULL`(-1):条目是满弹时 `restore_inventory` 那一支
+# 根本不排 deferred,C1 就走不到 ⇒ 探针**在修复前也是绿的**(假绿)。
+# ★ 它与手枪(`pistol_test.tscn`)的 `mag_size` **耦合**:那个值被改到 ≤ 4 时,下面那次
+# `w.mag_ammo = MAG_START` 仍会"成功"(裸写不钳位),但 `_ready`/`apply_mag` 那条路会钳到
+# `mag_size` ⇒ 期望值 3 变成**假红**。改手枪弹夹容量时回来一起看这个数。
+const MAG_START := 4
 const SETTLE := 3          # 打出那一发之后等几帧再读(帧末 flush 至少要一帧)
 
 var P = null
@@ -35,6 +40,7 @@ var _fired_at := -1
 var _expected := -1
 var _checks := 0
 var _fail := ""
+var _done := false
 
 
 func _ready() -> void:
@@ -66,7 +72,13 @@ func _build_grid() -> Array[Array]:
 
 
 func _physics_process(_delta: float) -> void:
-	if P == null or not _fail.is_empty():
+	if P == null or _done:
+		return
+	# ★ 断言一失败就**当场裁决**,不能只是 return:那样 `_tick` 不再增长、下面的超时守卫永远到不了、
+	#   `_finish()` 永不调用 ⇒ 探针耗尽 `--quit-after` 才退出且**一行裁决都不打印** ——
+	#   那与"真失败"在输出上不可分(本仓登记过的坑;`_finish()` 自带 `_done` 防重入)。
+	if not _fail.is_empty():
+		_finish()
 		return
 	_tick += 1
 	# ★ 超时自守卫:本探针每个"等一下"都可能永远等不到(武器永不入树 / 开火被冷却挡住)。
@@ -125,6 +137,9 @@ func _check(ok: bool, msg: String) -> void:
 
 
 func _finish() -> void:
+	if _done:
+		return    # `quit()` 帧末才生效:本帧之后可能还会被调一次,防重入(否则裁决打印两遍)
+	_done = true
 	if _fail.is_empty():
 		print("AMMO ROLLBACK PROBE: ALL-OK(%d 条断言)" % _checks)
 		get_tree().quit(0)

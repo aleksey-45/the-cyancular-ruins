@@ -62,8 +62,17 @@ func _ready() -> void:
 	#   `_inv_key` 比的是**条目**,不是实例(条目默认 `MAG_FULL`,不同步则指纹恒不动)。
 	for p in [A, B]:
 		var w = p.weapons.current_weapon()
-		while w != null and not w.is_inside_tree():
+		# ★ 等待必须有上界:没有它,fixture 漂移(武器始终没装上)会让本冒烟耗尽 `--quit-after`
+		#   且**一行裁决都不打印** —— 与真失败在输出上不可分(2026-09-25 评审指出,与
+		#   `ammo_rollback_probe` 那条超时守卫同一类)。
+		var waited := 0
+		while w != null and not w.is_inside_tree() and waited < 120:
 			await get_tree().physics_frame
+			waited += 1
+		if waited >= 120:
+			_violation = "等待武器入树超时(120 帧,current_weapon=%s)" % str(w)
+			_fail()
+			return
 		if w != null:
 			w.mag_ammo = 4     # 残弹非满:被"切枪回满弹"或"漏字段"破坏时指纹会变
 			p.weapons.reset_mag_state()
