@@ -178,7 +178,7 @@ func is_friendly(a: Node, b: Node) -> bool:
 |---|---|---|
 | 服务端配碰撞层 | `push_error` + **什么都不配**（保持层 2 / 掩码 7） | `server/team_host.gd::_apply_team_layers` |
 | 客户端取颜色 | 返回**中性亮白** | `scenes/team_game.gd::_team_color` |
-| 客户端配幽灵体层 | 落到 `else` = **层 16 = 队 2 的层** | `scenes/team_game.gd::_ghost_layer_of` |
+| 客户端配幽灵体层 | 落到 `else` = **层 16 = 队 2 的层**（★ 已修，见本节末订正） | `scenes/team_game.gd::_ghost_layer_of` |
 
 **前两者是自洽的**（"不属于任何队"）；**第三者不是** —— 它把"未知"当成了队 2。
 后果是客户端与服务器对同一具身体**放不同的层**：服务端在层 2，客户端幽灵体在层 16。
@@ -197,6 +197,20 @@ func _ghost_layer_of(role: int) -> int:
 
 ★ 今天这条**在生产路径上到不了**（3v3 worker 的 `team_map()` 恒非空），所以修它是"消除一个
 静默不对称"，不是修一个可见 bug。**照实登记这一点**，别把它说成用户报的症状。
+
+★ **订正（2026-09-25 已落地，提交 `29f3e37`）**：本节已按上面的设计实施 ——
+`scenes/team_game.gd::_ghost_layer_of` 现为 `match _team_of_role(role)` + 两支 + **match 之外**的
+兜底 `return 2`（`match` 体内 `continue` 是 fall-through，兜底写进 `match` 会静默多跑一支）。
+⇒ 今天"未知队号"的口径是**两处已统一**：客户端的**颜色**（`_team_color` 返回中性亮白）与
+客户端的**幽灵体层**（落层 2）都表示"**不属于任何队**"；服务端仍是"什么都不配 = 保持默认层"
+（**没有**在服务端引入"未知"这个概念）。
+★ 上面那张表与上文**按原样保留** —— 它记的是**修前**的三种口径，是这条设计的动机来源；
+**现在的权威口径**在 `CLAUDE.md` 的「3v3 团队模式」→「队友不互挡的分队碰撞层契约」那条与
+`scenes/team_game.gd::_ghost_layer_of` 自身。
+★ 守卫：`tests/team_room_smoke.gd` ⑨② 在既有的"按队两支"三条之后新增两条**结构**断言
+（`return 2` 出现**两次** + 函数体含 `match`）—— 既有那三条**区分不了**新旧两种写法
+（旧的一行三元同样含 `_team_of_role(` / `return 2` / `TeamHost.TEAM_ENEMY_LAYER`，三条全过）；
+实测把实现改回旧的一行三元，只有新增的两条红。
 
 ---
 

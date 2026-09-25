@@ -79,8 +79,6 @@ func _ready() -> void:
 	#   那是本仓没写过的形状(计划里标注过的坑);具名方法直接绕开,且几个方法挨着写、同序可核。
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
-		# ★ 四个提供器**同序/同源**对应(错位 = 队友点画成敌人色,不报错只误导人)。
-		#   后三个用**具名方法**而不是内联 lambda —— 见下面 _minimap_* 三兄弟。
 		minimap.setup_multi(
 			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
 			Callable(self, "_minimap_others"),

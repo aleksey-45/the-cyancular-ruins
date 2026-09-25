@@ -122,16 +122,20 @@ func _ready() -> void:
 		var wall_px := _count_near(img, g, WALL, 0.12)
 		_check(wall_px > 500, "圆内应画出地形(墙色像素 %d,期望 > 500)" % wall_px)
 
-	# ── ⑤ 3v3:自己那个点 = **队色** + 一圈白描边(与颜色正交的维度)──
+	# ── ⑥ 3v3:自己那个点 = **队色** + 一圈白描边(与颜色正交的维度)──
 	# ★ 必须真渲染:判据落在像素上(headless 下 get_image() 返回 null ⇒ 整段静默跳过)。
+	# ★ 编号从 ⑥ 起 —— 上面那个 ⑤ 是"圆不得压到延迟条"(几何断言),别与它混。
 	mm.visible = false
 	var TEAM_B := UiFactory.C_TEAM_B
+	# ★ 一格数组:下面 ④ 要**改它**来验"提供器是每帧求值、不是建点时缓存一次"。
+	#   写成 `func() -> Color: return TEAM_B` 那个常量闭包**验不出**这条(两种实现都绿)。
+	var self_col := [TEAM_B]
 	var mm_team := Minimap.new()
 	mm_team.setup_multi(
 		func() -> Vector2: return _local,
 		func() -> Array: return [],          # 无他人点:本相只验"我"
 		func() -> Array: return [],
-		func() -> Color: return TEAM_B)
+		func() -> Color: return self_col[0])
 	add_child(mm_team)
 	await _frames(2)
 	var img_team := await _shot("minimap_self_dot.png")
@@ -172,12 +176,29 @@ func _ready() -> void:
 					ring2 += 1
 			_check(ring2 < 6,
 					"★ 关掉描边后白色采样必须掉下来(实际 %d)—— 否则上面那条是恒真的" % ring2)
+		# ★ 恢复写在内层 `if` **之外**:`img_no_ring` 取图失败(width 0)时内层整段跳过,
+		#   恢复写在内层就会漏 ⇒ 下面 ④ 的换色验不到(那是探针自己的错,不是实现的错)。
 		mm_team.set_process(true)
 		mm_team._ring_self.visible = true
 
-	# ── ⑥ 反向对照:不传自色提供器 ⇒ 退回 SELF_COLOR、且描边不可见 ──
+		# ── ④ 提供器必须**每帧求值**,不是建点时缓存一次 ──
+		# ★ 这条钉的正是"第四参为什么是 Callable 而不是 Color":队色由 `match_sync` 下发、
+		#   比小地图建立**晚** ⇒ 若在 `setup_multi` 里把颜色解析一次存起来,3v3 整局那个点
+		#   会**恒为建点时的颜色**(中性亮白)—— 而那正是设计要避免的那个失败。
+		# ★ 判据必须**跟着一次变化**走(改掉闭包返回的颜色,看像素跟不跟);恒定的闭包
+		#   (`func() -> Color: return TEAM_B`)对"每帧求值"与"缓存一次"**两种实现都给绿**。
+		self_col[0] = UiFactory.C_TEAM_A
+		await _frames(2)
+		var img_swap := await _shot("minimap_self_dot_swapped.png")
+		if img_swap.get_width() > 0:
+			var px_swap := img_swap.get_pixelv(Vector2i(int(center.x), int(center.y)))
+			_check(_near(px_swap, UiFactory.C_TEAM_A, 0.08),
+					"★ 提供器必须**每帧求值**:返回色从 C_TEAM_B 改成 C_TEAM_A 后自己那个点应跟着变(实际 %s、期望 %s;停在上一个颜色 = 建点时缓存了一次)" % [
+						str(px_swap), str(UiFactory.C_TEAM_A)])
+
+	# ── ⑦ 反向对照:不传自色提供器 ⇒ 退回 SELF_COLOR、且描边不可见 ──
 	# ★ 这条是"1v1 / 大乱斗行为逐字不变"的守卫 —— 没有它,把默认分支写成"恒走队色"
-	#   (或干脆恒真)也能让相⑤全绿,而那会让那两模式的小地图自己那个点变成中性亮白。
+	#   (或干脆恒真)也能让相⑥全绿,而那会让那两模式的小地图自己那个点变成中性亮白。
 	mm_team.visible = false
 	var mm_plain := Minimap.new()
 	mm_plain.setup_multi(
