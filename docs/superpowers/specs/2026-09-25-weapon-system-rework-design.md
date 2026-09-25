@@ -17,11 +17,21 @@
    ★ 本 spec 提议的判据 `winst != weapons.current_inst()` **是错的** —— 它跑在 `restore_inventory`
    之后，解析成功时**恒假**，照它写会**绕过**现有的重建落点。**别再动 §4.3 的机制**；
    真要动，先复现残余症状（用户 2026-09-23 报的 UI 高亮错已由 `f33249b` 修掉）。
-2. **"加第 7 把枪 = 零 GDScript"还差三处**，本 spec 全篇未提：① `export_presets.cfg` 的
-   `include_filter` 没加 `data/weapons.json` ⇒ **导出 exe 里就没有这份 json**（读空 ⇒ push_error、
-   注册表空 ⇒ 无枪）；② `tests/level0_weapon_scatter_probe.gd:48` 硬断言 `== 12`；
+2. **"加第 7 把枪 = 零 GDScript"还差几处**，本 spec 全篇未提：① `export_presets.cfg` 的
+   `include_filter` 里**没有**任何 `data/*.json` 的兜底（它现在只列了 `maps/*.cyrm,data/enemies.json`）
+   —— ★ **机制存疑，别照任何一方的结论写**：`data/` 下没有 `.import`、`.godot/imported/` 里没有
+   json 产物、而 `TileDefs` 是 `FileAccess.open` **裸读**，按 Godot 的导出规则裸读文件**需要**列进
+   `include_filter`（`data/enemies.json` 被列上大概正是这个原因）；但 `data/tile_defs.json`
+   恰恰没被列，而它今天在用 ⇒ 也可能 `all_resources` 本就带上了它。
+   **动作**：把新 json 显式列进过滤器（成本为零的保险），并在**导出产物**里确认它真的在
+   —— 这条只能由发布产物回答，别在文档里断言。⚠ 顺带登记：`data/tile_defs.json` 不在过滤器里
+   这一条**可能是既有的发布版缺陷**（`TileDefs` 有"未加载时非 0 即墙"的兜底 ⇒ 表现为梯子不可爬、
+   水变实心、可破坏砖不可破坏，而**不会崩**）—— 值得单独查一次；
+   ② `tests/level0_weapon_scatter_probe.gd:48` 硬断言 `== 12`；
    ③ §4.1 的协议改动会**反证** `tests/net_ground_probe.gd:144` 与 `tests/ground_client_probe.gd` ⑥
-   （后者明确断言上行值**不得**是 type id）—— 这两条**必须改写**，而不是 §7.4 写的"保持全绿"。
+   （后者明确断言上行值**不得**是 type id）—— 这两条**必须改写**，而不是 §7.4 写的"保持全绿"；
+   ④ `tests/kh_l3_probe.gd:187` 是一张**武器** id 列表（核验报告误记成"无关 role 列表"），
+   第 7 把枪会让 `:190` 红。
 3. **§5 的"与 `EnemySpawner` 同款"不成立**：`enemy_spawner.gd:29-31` 对**逐条**的问题（缺字段 /
    非 Dictionary）是 `continue` **静默跳过、不 push_error**；`push_error` + 整表留空只发生在
    **文件级**。"逐条校验 + 跳过坏条 + push_error"是**新约定**，别声称同款。
