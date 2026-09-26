@@ -34,6 +34,11 @@ static var pvp_mode: bool = false
 # 就复现 —— 与「拆除逻辑散在多处」同病。此处一处覆盖全部现有与将来的调用方。
 static var _switching: bool = false
 
+## 个人钟账户与时间场(单机;PvP 不建 → 时间系统整体旁路)
+static var grain_account: GrainAccount = null
+static var time_field: TimeField = null
+
+
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	if _switching:
 		return   # 已有一次换场在飞:忽略后到的请求(目标都是主菜单,先到者胜)
@@ -239,6 +244,10 @@ func _ready() -> void:
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
+	# 个人钟(第一阶段):单机建账户与世界时间场(PvP 不建 → TimeField.current 为 null,倍率恒 1)
+	grain_account = GrainAccount.new()
+	time_field = TimeField.new(grain_account)
+	TimeField.current = time_field
 	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
@@ -354,6 +363,9 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
+	if time_field != null and not pvp_mode:
+		time_field.update(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
 	_update_pickup_prompt()
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰

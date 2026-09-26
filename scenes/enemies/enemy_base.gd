@@ -106,6 +106,7 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
+	delta = TimeField.enemy_delta(delta, self)   # 时间场:回溯冻结/加速/贷款(精英例外)
 	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → 回中性,
 	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
 	# ★ 睡眠那一支**归零 `_pre_move_vy` 本身**(就在下面的 early return 里),不是"临时喂个 0":

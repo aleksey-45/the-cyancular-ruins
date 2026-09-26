@@ -175,6 +175,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	delta = TimeField.player_delta(delta)   # 时间场:回溯冻结/加速 ×2
 	# squash 放在**最首行**(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个
 	# 挤压值上(明显的视觉 bug)。参数成对读 —— is_on_floor() 是上一帧 move_and_slide 的
 	# 结果,_pre_move_vy 是那次 move_and_slide 之前缓存的 velocity.y(见 spec §2.4)。

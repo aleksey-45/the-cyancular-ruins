@@ -7,7 +7,7 @@ extends Node
 const SAVE_PATH := "user://settings.cfg"
 
 # 可重映射的动作(1-5 切枪槽固定,不开放重绑)。
-const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q"]
+const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q", "rewind", "haste"]
 
 # ── 音量(0-1 线性)──
 var master_volume: float = 0.8:
@@ -154,6 +154,14 @@ func load_settings() -> void:
 		#   于是**每加一个新可重绑动作,老玩家启动就刷一屏报错**。空数组语义完全相同
 		#   (下面的 is_empty() 分支会跳过),但不会报错。
 		var arr = cf.get_value("bindings", action, [])
+		# 迁移(2026-09-26):Shift 从 down 改拨给 rewind,老存档里 down 的 Shift 绑定必须摘掉
+		if action == "down" and arr is Array:
+			var cleaned: Array = []
+			for item in arr:
+				if item is Dictionary and int(item.get("k", 0)) == KEY_SHIFT:
+					continue
+				cleaned.append(item)
+			arr = cleaned
 		if arr is Array and not (arr as Array).is_empty():
 			InputMap.action_erase_events(action)
 			for item in arr:

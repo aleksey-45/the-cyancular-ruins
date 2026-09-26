@@ -62,6 +62,7 @@ func _ready() -> void:
 	add_to_group("bullet")
 
 func _physics_process(delta: float) -> void:
+	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)
 	if gravity_factor > 0.0:
 		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 		if not velocity_vec.is_zero_approx():
