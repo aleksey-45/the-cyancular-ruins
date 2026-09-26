@@ -25,12 +25,12 @@
 ### 纪律与不变量
 - **单机闸门**:时间系统只在 `Level0` 单机路径建立;任何 PvP/联机场景不得启用(`TimeField.current` 必须为 null)。
 - **精英定义**:`set_meta("elite", true)`(乌鸫 `_ready` 自带)。精英=免疫回溯(不入快照)、加速与玩家同步、击杀掉 300 颗粒。
-- **回放期不结算伤害**:玩家 `take_hit` 早退、普通敌整帧早退、子弹不步进(精英照常)。
+- **回放期伤害语义(B8)**:普通实体之间不结算伤害(玩家 `take_hit` 早退/普通敌整帧早退/子弹不步进);**但倒飞的子弹穿过精英时照常结算**——`Level0._rewind_elite_hits` 每帧对回放弹×精英做距离判定,每颗弹对同一精英只结算一次(meta `rw_hit_ids`),这就是策划案的「回退造成二次伤害」。快照子弹带 `dmg/impact` 供其复用。
 - **瓦片回溯(B7)**已落地:玩家拆砖经 `TileDefs.on_destroyed` → `_on_tile_destroyed` 捕获改前值(清空前从渲染层 atlas 读回)→ `TileLedger` 帧末入账 → 回放时按 `(target, cursor]` 区间 **t 降序** 写回四层(网格/9 环面副本/持久子格/脏块);非玩家破坏(未来事件)走别的口,本阶段只有玩家口径。
 - 本轮**不动** `Engine.time_scale`(物理/tween/网络不受扰),倍率集中在三处 delta 注入(玩家/敌人/子弹物理帧首行)。
 
 ### 探针(`-s` 或场景模式)
-`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)。
+`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算)。
 
 ### 检查点分支(用户要求的逐批回退点)
-`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原)。
+`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害)。

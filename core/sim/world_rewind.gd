@@ -60,6 +60,8 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 			"p": (b as Node2D).global_position,
 			"v": b.get("velocity_vec"),
 			"from_player": sh != null and sh is Node and (sh as Node).is_in_group("player"),
+			"dmg": int(b.get("hit_damage")),
+			"impact": float(b.get("hit_impact")),
 		})
 	_frames.append({
 		"t": _t,
@@ -147,6 +149,8 @@ func _apply_bullets(list: Array, player: Node) -> void:
 			if bool(meta["from_player"]):
 				nb.set("shooter", player)
 			nb.set("apply_damage", true)
+			nb.set("hit_damage", int(meta.get("dmg", 0)))
+			nb.set("hit_impact", float(meta.get("impact", 0.0)))
 		_replay_bullets.append(nb)
 	for i in list.size():
 		var nb2 = _replay_bullets[i]
@@ -164,6 +168,11 @@ func _apply_bullets(list: Array, player: Node) -> void:
 ## 当前回放目标时间(秒):瓦片账本按同一时间轴取区间还原。
 func current_target() -> float:
 	return _t - _cursor
+
+
+## 回放中的子弹节点(回溯期 Level0 用它们对精英做二次伤害判定)。
+func replay_bullets() -> Array:
+	return _replay_bullets
 
 
 func frame_count() -> int:

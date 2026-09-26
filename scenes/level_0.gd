@@ -401,6 +401,39 @@ func _process(_delta: float) -> void:
 
 # 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。
 ## 单格写回(瓦片回溯用):网格 + 9 环面副本渲染 + 持久子格 2×2 + 脏块重建标记。
+## 回溯期子弹对精英的二次伤害(策划案:「回退造成二次伤害」)——
+## 回溯中普通实体冻结/由快照摆位,唯有精英照常存在;倒飞的子弹再次穿过它就再吃一次伤害。
+func _rewind_elite_hits() -> void:
+	if _rewind == null:
+		return
+	var elites: Array = []
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if is_instance_valid(e) and e.has_meta("elite") and not bool(e.get("is_dead")):
+			elites.append(e)
+	if elites.is_empty():
+		return
+	for b in _rewind.replay_bullets():
+		if not is_instance_valid(b):
+			continue
+		var dmg := int(b.get("hit_damage"))
+		if dmg <= 0:
+			continue
+		var bp: Vector2 = (b as Node2D).global_position
+		for e in elites:
+			var ep: Vector2 = (e as Node2D).global_position
+			var d := MazeGenerator.toroidal_delta_px(bp, ep,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+			if d.length() > 42.0:
+				continue
+			var hit_ids: Array = b.get_meta("rw_hit_ids", [])
+			if hit_ids.has(e.get_instance_id()):
+				continue
+			hit_ids.append(e.get_instance_id())
+			b.set_meta("rw_hit_ids", hit_ids)
+			var dir := d.normalized() if not d.is_zero_approx() else Vector2.RIGHT
+			e.call("hurt", dmg, dir, float(b.get("hit_impact")))
+
+
 func _restore_cell(cell: Vector2i, v: int) -> void:
 	if _grid_ref.is_empty() or wall_layer == null:
 		return
@@ -727,6 +760,9 @@ func _tick_rewind(delta: float) -> void:
 	if rewinding:
 		WorldRewind.hold_corpses = false
 		_rewind.step(delta, pl)
+		# 二次伤害:倒飞的子弹穿过**精英**(精英不受回溯,照常在场)时再结算一次伤害。
+		# 每颗回放弹对同一精英只结算一次(meta 记 id),避免逐帧反复扣血。
+		_rewind_elite_hits()
 		# 瓦片还原:跨过 target 的破坏按 t 降序写回(最新破坏先还,最早的值最后落地)
 		if _tile_ledger != null and _tile_cursor >= 0.0:
 			var target := _rewind.current_target()
