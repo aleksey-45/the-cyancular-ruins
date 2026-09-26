@@ -35,6 +35,39 @@ func _initialize() -> void:
 	if int(duel["sections"][0]["rows"][0]["rank"]) != 1:
 		fails.append("★ 榜首 rank 应被填成 1(_finish 的名次循环),实得 %d"
 				% int(duel["sections"][0]["rows"][0]["rank"]))
+	# ★★ 1v1 的 MVP 指向(本批唯一的新行为)。★ 本夹具里 MVP(role 1)恰好就是榜首 ⇒
+	#   它只钉"`mvp` 整块不许为空/不指向别处";**"行号必须在排完序之后数"那半边**由 ①b 钉。
+	if int(duel["mvp"].get("section", -1)) != 0 or int(duel["mvp"].get("row", -1)) != 0:
+		fails.append("★ 1v1:mvp 应指向 {section:0, row:0}(role 1 即榜首),实得 %s"
+				% [duel["mvp"]])
+	# ①c ★★ 「造成 / 承受」两列的**值**必须各读各的键(`dealt` / `taken`)。
+	#   ★ 为什么非要有**值**断言(与 ④d 那条 3v3 的同款理由,本批给 1v1 与大乱斗补齐):
+	#     `_row(..., taken, dealt, ...)` 两个实参**对调**是**一行就编得过**的改动,而上面
+	#     所有列名/列数/排序/rank 断言**照样全绿** —— 图上就是「造成」「承受」两列互换。
+	#   ★ 两行都判、且两个数刻意取得不同:`dealt` 与 `taken` 被读成同一个键时也红。
+	var d0: Dictionary = duel["sections"][0]["rows"][0]
+	if int(d0["dealt"]) != 500 or int(d0["taken"]) != 200:
+		fails.append(("★ 1v1:role 1 应 dealt=500 / taken=200(各读各的键),实得 dealt=%d / taken=%d"
+				+ " —— 两列实参互换时这里红") % [int(d0["dealt"]), int(d0["taken"])])
+	var d1: Dictionary = duel["sections"][0]["rows"][1]
+	if int(d1["dealt"]) != 300 or int(d1["taken"]) != 400:
+		fails.append("★ 1v1:role 2 应 dealt=300 / taken=400,实得 dealt=%d / taken=%d"
+				% [int(d1["dealt"]), int(d1["taken"])])
+
+	# ①b ★★ 1v1:mvp **行号必须在排完序之后数**(本批唯一的新行为,此前**零断言**:
+	#     退回 `"mvp": {}`、或把数行号那段挪到 `_finish()` 之前,两支冒烟都会照旧全绿)。
+	#     ★ 夹具刻意让 **MVP 不是榜首**:role 2 的 9 杀排到第 1 行,而它在 `for_duel`
+	#       写死的遍历次序 `[1, 2]` 里本来在第 2 行 ⇒ 只有"排完序再数"才给得出 `row 0`;
+	#       挪到排序之前 ⇒ `row 1` ⇒ 这里红。
+	#     ★ 另一半:`mvp` 整块退回 `{}`(`for_royale` 那个形状)**也**落到这条上。
+	var duel_mvp: Dictionary = script.for_duel({ "stats": {
+			1: {"kills": 3, "deaths": 4, "assists": 0, "dealt": 100, "taken": 250, "kscore": 300, "acs": 100},
+			2: {"kills": 9, "deaths": 1, "assists": 0, "dealt": 450, "taken": 120, "kscore": 900, "acs": 450}},
+			"rounds_won": {1: 0, 2: 2}, "mvp": 2, "match_winner": 2 }, names, 1)
+	if int(duel_mvp["mvp"].get("section", -1)) != 0 or int(duel_mvp["mvp"].get("row", -1)) != 0:
+		fails.append(("★ 1v1 的 mvp 行号必须在**排完序之后**数:role 2(9 杀)应落到第 1 行"
+				+ " = {section:0, row:0},实得 %s —— `\"mvp\": {}`(整块退掉)与「排序前数」"
+				+ "两种实现都会落到这里") % [duel_mvp["mvp"]])
 
 	# ② 1v1 平局:match_winner == 0 必须念「平 局」,不许走 1v1 兜底念成 P 某人获胜
 	var draw: Dictionary = script.for_duel({ "stats": {
@@ -88,6 +121,14 @@ func _initialize() -> void:
 				+ " `rows[0]` 会越界,整支冒烟会**挂住**而不是失败(本仓判据:挂住与失败不可分)")
 	elif int(rrows[0]["kills"]) != 9:
 		fails.append("★ 大乱斗榜首应是 9 杀(降序排错)")
+	# ③c ★★ 大乱斗的「造成 / 承受」也必须各读各的键(与 ①c 同款理由,`for_royale` 一个函数
+	#   一个改动点,故两处各判一次):榜首 role 2 的 dealt/taken 刻意取不等值(400 / 100)——
+	#   两列实参对调、或两列都读同一个键时这里红,而列名/列数/排序/标题断言**一个都不会红**。
+	if not rrows.is_empty():
+		if int(rrows[0]["dealt"]) != 400 or int(rrows[0]["taken"]) != 100:
+			fails.append(("★ 大乱斗榜首(role 2)应 dealt=400 / taken=100(各读各的键),"
+					+ "实得 dealt=%d / taken=%d —— 两列实参互换时这里红")
+					% [int(rrows[0]["dealt"]), int(rrows[0]["taken"])])
 	if str(roy["title"]) != "游戏结束":
 		fails.append("★ 大乱斗标题应是「游戏结束」,实得 %s" % roy["title"])
 
@@ -179,14 +220,41 @@ func _initialize() -> void:
 	#   ★ 本适配器**不做**回退读 `scores`/`deaths`:那会让同一件事有两个来源(两份真相),
 	#     而两端由同一份仓库/同一个 exe 一起更新 —— 加法的性质是"老**接收端**忽略未知键",
 	#     不是"新接收端兼容老服务端"。
-	var no_stats_duel: Dictionary = script.for_duel({ "match_winner": 1 }, names, 1)
-	if (no_stats_duel["sections"][0]["rows"] as Array).size() != 2:
-		fails.append("★ 缺 `stats` 时 1v1 仍应出两行(0 值),实得 %d 行"
-				% (no_stats_duel["sections"][0]["rows"] as Array).size())
-	var no_stats_roy: Dictionary = script.for_royale({ "match_winner": 1 }, names, 1)
-	if (no_stats_roy["sections"][0]["rows"] as Array).size() != 0:
-		fails.append("★ 缺 `stats` 时大乱斗应是空榜(不硬造行),实得 %d 行"
-				% (no_stats_roy["sections"][0]["rows"] as Array).size())
+	# ★★ 夹具**带 `scores`**(局内 HUD 那个数据面,形状 = `role -> 击杀数` 的 int)、
+	#    **不带 `stats`** —— 这正是"回退读 `scores`"那条实现会现形的形状:原夹具两样都没有,
+	#    于是"整块不读"与"回退读 `scores`"给出**同一个**载荷,⑦ 的两个分支**都拦不住它**。
+	#    ★ 1v1 的行是写死 `[1, 2]` 的 ⇒ 榜**永远不为空**,所以这里判的自变量是**值**
+	#      (回退实现会把 `scores` 的 5/3 画上「击杀」列),不是行数。
+	var no_stats_duel: Dictionary = script.for_duel({ "scores": {1: 5, 2: 3}, "deaths": {1: 1, 2: 2},
+			"match_winner": 1 }, names, 1)
+	var nsd: Array = no_stats_duel["sections"][0]["rows"]
+	if nsd.size() != 2:
+		fails.append("★ 缺 `stats` 时 1v1 仍应出两行(0 值),实得 %d 行" % nsd.size())
+	else:
+		for ri in nsd.size():
+			var nr: Dictionary = nsd[ri]
+			if int(nr["kills"]) != 0 or int(nr["dealt"]) != 0 or int(nr["acs"]) != 0:
+				fails.append(("★ 缺 `stats` 时 1v1 的行必须**全是 0**(本适配器刻意**不回退**读 `scores`):"
+						+ "第 %d 行实得 kills=%d / dealt=%d / acs=%d —— 回退读 `scores` 时这里会读到真实的击杀数")
+						% [ri + 1, int(nr["kills"]), int(nr["dealt"]), int(nr["acs"])])
+	# ⑦b ★ 大乱斗:同样**只**给 `scores`(没有 `stats`)⇒ 必须**空榜**。
+	#    `for_royale` 遍历的是 `stats` 的键 ⇒ 回退读 `scores` 会凭空多出 N 行,而上面的
+	#    列名/列数/标题断言**一个都不会红**(它们只看非空那一路)。
+	var scores_only_roy: Dictionary = script.for_royale({ "scores": {1: 5, 2: 3}, "deaths": {1: 1, 2: 2},
+			"match_winner": 1 }, names, 1)
+	var sor: Array = scores_only_roy["sections"][0]["rows"]
+	if sor.size() != 0:
+		fails.append(("★ 只有 `scores`(无 `stats`)时大乱斗必须是空榜:回退读 `scores` 会画出 %d 行"
+				+ "(本适配器不做回退 —— `scores` 是「本局击杀」,不是结算页要的整场口径)")
+				% sor.size())
+	# ⑦c ★ 3v3 同理:两节都必须为空(同一处改动的第三个落点,一句话的代价)。
+	var scores_only_team: Dictionary = script.for_team({ "scores": {1: 5, 4: 3}, "match_winner": 1 },
+			names, teams, 1)
+	var sot0: Array = scores_only_team["sections"][0]["rows"]
+	var sot1: Array = scores_only_team["sections"][1]["rows"]
+	if sot0.size() != 0 or sot1.size() != 0:
+		fails.append(("★ 只有 `scores`(无 `stats`)时 3v3 两节都必须为空,实得 A 队 %d 行 / B 队 %d 行"
+				+ " —— 回退读 `scores` 时这里红") % [sot0.size(), sot1.size()])
 
 	# ⑧ ★★ **每个列键都必须有标题**(`ui/match_result.gd` 的 `COLUMN_TITLES`)。
 	#   表头走 `COLUMN_TITLES.get(col, col)` —— 漏一个键**不报错**,只是那一列的表头退化成

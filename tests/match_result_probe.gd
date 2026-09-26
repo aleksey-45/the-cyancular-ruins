@@ -76,11 +76,15 @@ func _run() -> void:
 			_check(s.get_child_count() == 0, "空载荷应 0 节"))
 
 	# ② 1v1 单节两行：列数 == 2 + columns.size()
-	# ★ 夹具与 `-s` 冒烟的 ① 同款(行数据走 `stats`;`scores` 已经不是本页的数据面)。
+	# ★ 夹具与 `-s` 冒烟的 **①b** 同款(行数据走 `stats`;`scores` 已经不是本页的数据面)。
+	# ★★ 刻意让 **MVP 不是榜首**:role 2 的 9 杀排到第 1 行,而它在 `for_duel` 写死的遍历
+	#   次序 `[1, 2]` 里本来在第 2 行 ⇒ 下面那条 ★ 位置断言对"行号排序前数 / 排序后数"
+	#   **才不空转**。原先的夹具里 role 1 既是榜首又是 MVP,两种实现给出**同一个**行号,
+	#   位置那一半是恒真的 —— 而"高亮落错行"正是这一类断言唯一要拦的东西。
 	await _shot(MatchResultPayload.for_duel({"stats": {
-			1: {"kills": 7, "deaths": 2, "assists": 0, "dealt": 500, "taken": 200, "kscore": 800, "acs": 400},
-			2: {"kills": 3, "deaths": 5, "assists": 0, "dealt": 300, "taken": 400, "kscore": 250, "acs": 125}},
-			"rounds_won": {1: 2, 2: 1}, "mvp": 1, "match_winner": 1},
+			1: {"kills": 3, "deaths": 4, "assists": 0, "dealt": 100, "taken": 250, "kscore": 300, "acs": 100},
+			2: {"kills": 9, "deaths": 1, "assists": 0, "dealt": 450, "taken": 120, "kscore": 900, "acs": 450}},
+			"rounds_won": {1: 0, 2: 2}, "mvp": 2, "match_winner": 2},
 			{1: "阿甲", 2: "bob"}, 1), func(m):
 		# ★ 先判 null 再解引用(文件头 ②)。**实测的失败形态**(2026-09-21,把 `Rows` 改名):
 		#   直接 `get_node(...)` 取不到节点 ⇒ 引擎只 `ERROR` 一行,而**出错的那个函数当场结束、
@@ -91,7 +95,25 @@ func _run() -> void:
 		_check(g != null, "1v1:找不到 Root/Panel/VBox/Sections/Section0/Rows(节点路径变了?)")
 		if g != null:
 			_check(g.columns == 2 + 5, "1v1 表头列数应为 2+5=7,实得 %d" % g.columns)
-			_check(g.get_child_count() == 7 + 2 * 7, "1v1 应有 7 表头 + 2 行×7 格"))
+			_check(g.get_child_count() == 7 + 2 * 7, "1v1 应有 7 表头 + 2 行×7 格")
+		# ★★ 1v1 的 MVP 星标(本批唯一的新行为;② 此前**只**判列数与格子数 ⇒
+		#   `for_duel` 的 `mvp` 退回 `{}`、或指向**错的行**,②/③ 都不会红 —— ③ 守的是 3v3
+		#   那份载荷。"1v1 结算页没有 MVP 星 / 星标落在别人那一行"就是这样静默上线的。
+		#   判据与 ③ 同款:**恰好一个 ★,且它落在 MVP 行的昵称格上**;本夹具的 MVP 在
+		#   **第 1 行的 role 2**(见上文),故位置那一半对"排序前数 / 排序后数"真的有效。
+		var secs1: Node = m.get_node_or_null("Root/Panel/VBox/Sections")
+		_check(secs1 != null, "1v1:Sections 取不到(MVP 星标断言无从成立)")
+		if secs1 != null:
+			_check(_count_marks(m) == 1, "★ 1v1 也必须有 MVP 星标(恰好 1 个),实得 %d 个"
+					% _count_marks(m))
+			var hit1 := _find_mark(secs1)
+			_check(not hit1.is_empty(), "1v1:★ 应落在某个 Rows 网格的格子里(没找到 ⇒ 下面那条位置断言会空转)")
+			if not hit1.is_empty():
+				var nm1: Label = (hit1[0] as GridContainer).get_child(int(hit1[1]) + 1) as Label
+				var want1 := UiFactory.fit_name("bob", MatchResult.NAME_UNITS)
+				_check(nm1 != null and nm1.text == want1,
+						"★ 1v1:★ 必须落在 MVP 行(bob —— 9 杀排到第 1 行)的昵称格:期望「%s」,实得「%s」" % [
+								want1, "" if nm1 == null else nm1.text]))
 
 	# ③ 3v3 两节 + MVP 标记恰好一次 + ★ 落在 MVP 行上
 	# ★ MVP 故意落在**第二节的第二个行**:每节只有一行时 `mvp.row == 0` 是**唯一可表示**的值,
