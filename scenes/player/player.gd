@@ -908,7 +908,12 @@ func rewind_restore(d: Dictionary) -> void:
 	if d["v"] != null:
 		velocity = d["v"]
 	combat.knock_velocity = Vector2.ZERO
-	combat.hp = int(d["hp"])
+	# ★ 必须发 hp_changed:HUD 血条只听信号(不是每帧轮询),直接改 combat.hp 不改的话
+	#   血条会停在旧值 —— 玩家看到的"血量没有回溯"就是这个(内部数值其实已还原)。
+	var hp_before := combat.hp
+	combat.hp = clampi(int(d["hp"]), 0, combat.max_hp)
+	if combat.hp != hp_before:
+		combat.hp_changed.emit(combat.hp, combat.max_hp)
 	facing_direction = int(d["facing"])
 	var downed_now := is_downed()
 	# 武器弹量回溯(用户要求):背包各格残弹 + 手持那件实弹;当前武器不同则切回

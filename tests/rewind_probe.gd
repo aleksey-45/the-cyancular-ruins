@@ -77,7 +77,9 @@ func _run() -> void:
 	for i in 60:
 		await tree.physics_frame
 
-	# ④ 按住 Shift 回溯 ~3s(真实按键路径)
+	# ④ 按住 Shift 回溯 ~3s(真实按键路径);顺带监听 hp_changed(HUD 血条的唯一刷新通道)
+	var hp_events := [0]
+	player.hp_changed.connect(func(_cur: int, _mx: int) -> void: hp_events[0] += 1)
 	Input.action_press("rewind")
 	for i in 180:
 		await tree.physics_frame
@@ -101,6 +103,8 @@ func _run() -> void:
 		_fail("玩家位置未倒回(距快照 %.1fpx)" % p_back.distance_to(p0))
 	if int(player.get("hp")) < hp0:
 		_fail("玩家 HP 未倒回(现 %d 快照 %d)" % [int(player.get("hp")), hp0])
+	if hp_events[0] <= 0:
+		_fail("回溯未向 HUD 发血量通知(hp_changed 未触发 → 血条不会刷新)")
 	if elite != null and is_instance_valid(elite) and not bool(elite.get("is_dead")):
 		_fail("精英被回溯复活了(应保持死亡)")
 
