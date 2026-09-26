@@ -176,6 +176,8 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	delta = TimeField.player_delta(delta)   # 时间场:回溯冻结/加速 ×2
+	if TimeField.current != null and TimeField.current.is_rewinding():
+		return   # 回溯中玩家整帧冻结(位置由回放器摆;武器/输入/姿态都不推进)
 	# squash 放在**最首行**(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个
 	# 挤压值上(明显的视觉 bug)。参数成对读 —— is_on_floor() 是上一帧 move_and_slide 的
 	# 结果,_pre_move_vy 是那次 move_and_slide 之前缓存的 velocity.y(见 spec §2.4)。
@@ -453,6 +455,9 @@ func _wrap_position() -> void:
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
+	# 回溯中不受任何伤害(位置在被回放器搬运,接触判定可能在瞬移中误触发)
+	if TimeField.current != null and TimeField.current.is_rewinding():
+		return
 	# 前后比对 hp:只有**真吃到伤害**才挤压。无敌帧挡下 / 已倒地时 combat.take_hit 不改 hp,
 	# 这条判据天然把它们排除 —— 比在 combat 里回调更省事(不动组件接口)。
 	var before := combat.hp
@@ -896,3 +901,17 @@ func _update_reload_ring() -> void:
 
 
 const RELOAD_RING_OFFSET := Vector2(58.0, -44.0)   # 世界单位:x 朝"后侧"、y 朝上(2026-09-16 上移)
+
+## 回溯还原(WorldRewind 调用):位置/速度/HP/朝向/倒地态回到快照帧。
+func rewind_restore(d: Dictionary) -> void:
+	global_position = d["p"]
+	if d["v"] != null:
+		velocity = d["v"]
+	combat.knock_velocity = Vector2.ZERO
+	combat.hp = int(d["hp"])
+	facing_direction = int(d["facing"])
+	var downed_now := is_downed()
+	if bool(d["downed"]) and not downed_now:
+		combat.set_downed_by_rewind(true)
+	elif not bool(d["downed"]) and downed_now:
+		combat.revive()

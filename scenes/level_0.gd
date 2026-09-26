@@ -37,6 +37,8 @@ static var _switching: bool = false
 ## 个人钟账户与时间场(单机;PvP 不建 → 时间系统整体旁路)
 static var grain_account: GrainAccount = null
 static var time_field: TimeField = null
+var _rewind: WorldRewind = null   # 世界快照/回放(单机;PvP 不建)
+var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退出)
 
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
@@ -248,6 +250,7 @@ func _ready() -> void:
 	grain_account = GrainAccount.new()
 	time_field = TimeField.new(grain_account)
 	TimeField.current = time_field
+	_rewind = WorldRewind.new($WorldViewport)
 	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
@@ -365,7 +368,8 @@ func _paint_water(grid: Array[Array]) -> void:
 func _process(_delta: float) -> void:
 	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
 	if time_field != null and not pvp_mode:
-		time_field.update(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
+		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
+		_tick_rewind(_delta)
 	_update_pickup_prompt()
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
@@ -626,6 +630,33 @@ func _live_self_drops() -> Array:
 #   在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
 # ★ 与 `try_pickup_for` 的选法**仍然是同一套** —— 按 F 捡的仍是最近那把,只是"能捡"的
 #   每一把都会提示(踩到其中任何一把都能捡起来)。
+## 时间场驱动缝(探针直调;正常路径由 _process 传真实按键态)
+func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
+	time_field.update(delta, want_rewind, want_haste)
+
+
+## 世界回放 tick:录制 ↔ 回放的状态机 + 尸体保留/过期清理(单机)
+func _tick_rewind(delta: float) -> void:
+	if _rewind == null:
+		return
+	var pl := get_node_or_null("WorldViewport/Player")
+	var rewinding: bool = time_field != null and time_field.is_rewinding()
+	if rewinding and not _rewind.was_rewinding:
+		_rewind.begin()
+	elif not rewinding and _rewind.was_rewinding:
+		_rewind.finish()
+	_rewind.was_rewinding = rewinding
+	_prev_time_mode = time_field.mode if time_field != null else 0
+	if rewinding:
+		WorldRewind.hold_corpses = false
+		_rewind.step(delta, pl)
+	else:
+		WorldRewind.hold_corpses = true
+		_rewind.record(delta, pl, get_tree().get_nodes_in_group("enemies"),
+				get_tree().get_nodes_in_group("bullet"))
+		WorldRewind.expire_corpses(get_tree())
+
+
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
 	# ★ 先把表里的 pos 刷成**视觉中心**(可见的枪在哪),判定与提示才与玩家看到的一致。
