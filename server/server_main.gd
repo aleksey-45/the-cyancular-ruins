@@ -575,16 +575,22 @@ func _begin_match() -> void:
 	_match_started = true
 	if NetBus.role_claimed.is_connected(_on_role_claimed):
 		NetBus.role_claimed.disconnect(_on_role_claimed)
+	# 房主选的地图(随 player_options 上报):**客户端路径不可信** → 过 MapCatalog 校验
+	# (只认仓内 res://maps/*.cyrm、拒绝 `..`、必须有双出生点)。不合规一律回落默认 PvP 图,
+	# 绝不让"上报了一个本机才有的 exe 旁地图"变成一端加载失败。
+	var match_map := MapCatalog.resolve_pvp_map(str(_claim_opts.get(1, {}).get("map", "")))
+	if match_map == "":
+		match_map = MatchBootstrap.PVP_MAP
 	if _team_mode:
 		# 房主(role1)规则项随 claim 上报生效; TeamHost.start_on 负责按队散点出生 + 逐角色 match_start。
 		# ★ 第 4 个实参是 `teams`(role→队号),不是 spawns —— 见 TeamHost._init 上方那条注释。
-		_host = TeamHost.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _team_of_role)
+		_host = TeamHost.start_on(_claims, match_map, _claim_opts.get(1, {}), _team_of_role)
 	elif _royale:
 		# 房主(role1)规则项随 claim 上报生效; RoyaleHost.start_on 负责散点出生 + match_start
-		_host = RoyaleHost.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = RoyaleHost.start_on(_claims, match_map, _claim_opts.get(1, {}), _ai_roles)
 	else:
 		# 服务器权威规则项以房主(role1)选项为准(经 NetBusExt 上报;缺省=全默认)
-		_host = MatchBootstrap.start_on(_claims, MatchBootstrap.PVP_MAP, _claim_opts.get(1, {}), _ai_roles)
+		_host = MatchBootstrap.start_on(_claims, match_map, _claim_opts.get(1, {}), _ai_roles)
 	add_child(_host)
 	# AI 补位昵称:唯一名 + -computer 后缀(排行榜/头顶显示,地位与真人等同)
 	for ai_r in _ai_roles:

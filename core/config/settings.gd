@@ -27,6 +27,11 @@ var wheel_switch: bool = true
 # ── 单人开局选项存档(记住上次选择)──
 var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
 
+# 选图(2026-09-26):"" = 随机(= 上游行为:进图时从 res://maps 里现挑一份,会话内固定)。
+# 单人/联机各记一条;联机的三个模式(1v1/大乱斗/3v3)共用一条"上次选的图",省得每页各存一份。
+var sp_map_path: String = ""
+var mp_map_path: String = ""
+
 # ── PvP 选项(本地偏好类直接生效;服务器权威类由房主下发,见 MatchHost)──
 var pvp_show_trajectories: bool = true  # 显示敌方武器(子弹)轨迹
 var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生效项,房主值优先)
@@ -111,6 +116,8 @@ func save() -> void:
 	cf.set_value("audio", "sfx_volume", sfx_volume)
 	cf.set_value("controls", "wheel_switch", wheel_switch)
 	cf.set_value("single", "disabled_weapons", sp_disabled_weapons)
+	cf.set_value("single", "map_path", sp_map_path)
+	cf.set_value("pvp", "map_path", mp_map_path)
 	cf.set_value("pvp", "show_trajectories", pvp_show_trajectories)
 	cf.set_value("pvp", "round_full_heal", pvp_round_full_heal)
 	cf.set_value("pvp", "show_enemy_hp", pvp_show_enemy_hp)
@@ -139,6 +146,8 @@ func load_settings() -> void:
 	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
 	wheel_switch = bool(cf.get_value("controls", "wheel_switch", true))
 	sp_disabled_weapons.assign(cf.get_value("single", "disabled_weapons", []))
+	sp_map_path = str(cf.get_value("single", "map_path", ""))
+	mp_map_path = str(cf.get_value("pvp", "map_path", ""))
 	pvp_show_trajectories = bool(cf.get_value("pvp", "show_trajectories", true))
 	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))
 	pvp_show_enemy_hp = bool(cf.get_value("pvp", "show_enemy_hp", true))
