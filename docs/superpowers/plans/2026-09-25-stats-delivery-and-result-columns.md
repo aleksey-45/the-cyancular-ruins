@@ -672,16 +672,35 @@ Run（★ **必须套 `timeout`** —— `-s` 脚本没有 `--quit-after` 兜底
 ```bash
 source tests/env.sh && timeout 120 "$GODOT" --headless --path . -s res://tests/match_result_payload_smoke.gd 2>&1 | grep -E "MATCH RESULT|★"
 ```
-Expected —— 四条 `★`，而且**进程必须正常退出**（看到 `MATCH RESULT PAYLOAD: FAIL` 那一行）：
-- `★ 1v1 的 columns 应为 [kills, deaths, dealt, taken, acs],实得 [kills]`
-- `★ 大乱斗 columns 应为 [kills,deaths,dealt,taken],实得 [kills, deaths]`
-  （★ 这一条**只有在 (c2) 的判空守卫已经加好时**才会以这个形式出现 —— 否则本步会先
-  **挂住**，因为旧 `for_royale` 读不到 `scores` ⇒ `rows` 空 ⇒ 原 `:72` 的 `rows[0]` 越界
-  ⇒ `_initialize()` 中断 ⇒ 不 `quit()`）
-- `★ 3v3 columns 应为 [kills,deaths,assists,dealt,taken,acs],实得 [kills, deaths, dmg, acs]`
-- 1v1 的 `★ 榜首应是 7 杀`（旧 `for_duel` 读 `scores`，新夹具只给了 `stats` ⇒ 0 杀）
-  ＋ 1v1 的 `★ 缺 scores 条目的 role 必须仍出一行` 与 `rank` 两条**此时仍绿**
-  （旧 `for_duel` 写死遍历 `[1,2]` ⇒ 恒出两行、`_finish` 照填 rank）。
+Expected —— ★ **实测订正：九条红，不是四条**（本计划**第五张**被实测纠正的期望表）。而且
+**进程必须正常退出**（看到 `MATCH RESULT PAYLOAD: FAIL` 那一行、`EXIT=1`）：
+
+```
+  - ★ 1v1 的 columns 应为 [kills, deaths, dealt, taken, acs],实得 ["kills"]
+  - 1v1 榜首应是 7 杀
+  - ★ 缺条目的 role 那一行应仍是 role 2 的昵称,实得 阿甲
+  - 大乱斗 columns 应为 [kills,deaths,dealt,taken],实得 ["kills", "deaths"]
+  - ★ 大乱斗榜为空(夹具缺 `stats` / 适配器还没改读 `stats`?)—— 不判空的话 `rows[0]` 会越界,…
+  - 3v3 columns 应为 [kills,deaths,assists,dealt,taken,acs],实得 ["kills", "deaths", "dealt", "acs"]
+  - ★ MatchResultPayload 里找不到 `C_DUEL`(列常量改名了?)
+  - ★ MatchResultPayload 里找不到 `C_ROYALE`(列常量改名了?)
+  - ★ MatchResultPayload 里找不到 `C_TEAM`(列常量改名了?)
+```
+
+**四处与初稿不同（逐条都有实测）**：
+1. **初稿只列了四条** —— 漏了 1v1 的 `榜首应是 7 杀`、`缺条目的 role 那一行应仍是 role 2 的昵称`
+   （见 ③）与 Step 1 那三条"找不到 `C_*` 常量"（常量是本 Task 才加的）。
+2. **大乱斗那条与"榜为空"那条在源码里**没有 `★`** —— 而本步给的命令是
+   `grep -E "MATCH RESULT|★"` ⇒ **照 brief 自己的命令根本看不到这两行**（内容对、标记错）。
+3. **漏了一条真红**：`★ 缺条目的 role 那一行应仍是 role 2 的昵称,实得 阿甲`。
+   成因值得记住：旧适配器下**两行 kills 都是 0** ⇒ 三级排序落到**昵称级**，
+   `"bob"(0x62) < "阿甲"(0x963F)` ⇒ **两行互换** ⇒ `rows[1]` 不再是 bob。
+   （初稿说这条"此时仍绿" —— 它同块里的**前两条**确实绿、**第三条**红。）
+4. **3v3 那条的"实得"初稿写 `dmg`，实际是 `dealt`** —— 探针夹具早在 `60860fd` 就是 `dealt`
+   ⇒ Step 5(b) 那个 `dmg`→`dealt` 的改动是**空操作**。
+
+★ 进程**没有挂住**（verdict 正常打印）⇒ (c2) 的判空守卫确实堵住了初稿预言的那个挂住形状
+（旧 `for_royale` 读不到 `scores` ⇒ `rows` 空 ⇒ 原 `:72` 的 `rows[0]` 越界）。
 
 ★★ **挂住 ≠ 失败，而它们在本仓的输出里长得一样**（都是"看不到 FAIL 文本"）：本步若
 `timeout` 到点后**一行 verdict 都没打印**，先回去看 (c2) 的判空守卫有没有加 —— 那是本步
