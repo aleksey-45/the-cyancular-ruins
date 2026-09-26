@@ -23,6 +23,13 @@ func _match_round_tick(delta: float) -> void:
 		#   滑行),等到复活那一刻它早已不在死亡的那一格了。
 		# ★ 复用计分那个 `_down_counted` 闩 ⇒ 每次死亡恰好丢一次(与复活那一支互不重复)。
 		_drop_all_but_one(p, role)
+		# 逐人统计(★ 2026-09-25):倒地边沿记 death(一律)与击杀。
+		# ★ 击杀记给**对手**,口径与下面的 `scorer` 逐字一致 —— 1v1 的计分规则是
+		#   「不分死因、对方死亡都算」(用户裁定),它**没有归因**:自杀/溺水也让对方 +1 分。
+		#   结算页的 kills 必须与记分条同口径,否则"5 杀取胜"的局在结算页上只显示 3 杀(不报错)。
+		# ★ **不能**在这里用击杀归因那个具名函数:它住子类,而基类并集里出现它的名字会让
+		#   `tests/kh_l5_probe.gd:544-549` 的反向断言变红(子类方法不得泄漏进基类)。
+		_record_down(int(role), _opponent_of(int(role)))
 		# 击杀定义:对方死亡都算 —— 不分死因(枪杀/爆炸/溺水/自伤/无射手)一律记给对方 +1。
 		# (旧实现靠 pvp_killer 射手归因、无射手不计分,已废弃。)
 		var scorer := _opponent_of(role)
@@ -170,6 +177,18 @@ func _broadcast_round_state() -> void:
 		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
+		# MVP:整场 ACS 最高者(并列 → 击杀多者 → 阵亡少者 → role 升序,见底座 `mvp_role`)。
+		# ★ 与 `match_winner` **同款时机**:只在 MATCH_OVER 带(局中还没有"整场"可言)。
+		# ★ 1v1 也给 —— spec §4 明说"1v1 也可给";口径与 3v3 **逐字相同**,不限制在胜方
+		#   (换公式之后"MVP 常在败方"的那个结构性来源已经没了,见 spec §1.3)。
+		data["mvp"] = mvp_role()
+	# 逐人数据:与 `destroyed` / `ground_weapons` / 3v3 同款纪律 —— **只在非空时带该键**
+	# (1v1 只有两个 role,一次广播多几十字节;空表不占带宽,旧客户端忽略未知键)。
+	# ★ 本函数是 **1v1 专用**:`RoyaleHost` 与 `TeamHost` 都整体覆写了 `_broadcast_round_state`,
+	#   不会与本段叠加(同一份数据只投递一次)。
+	var table := stats_payload()
+	if not table.is_empty():
+		data["stats"] = table
 	_rpc_all("round_state", [data])
 
 
