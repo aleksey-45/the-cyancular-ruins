@@ -112,7 +112,7 @@ func _stat(host, role: int, key: String) -> int:
 
 # 逐人积分 / 场均:**读生产载荷**(推导值),别自己重算公式 —— 重算就是第二份真相。
 # ★ 这条读法在"改生产之前"也能跑(`stats_payload` 两个世界都有),故本 Task 的红是**干净的值不匹配**,
-#   不是"方法不存在 ⇒ 出错 ⇒ 整段静默跳过 ⇒ 假绿"。
+#   而不是"方法不存在 ⇒ SCRIPT ERROR + 一个由 null 派生的空读数"。
 func _kscore(host, role: int) -> int:
 	return int(host.stats_payload()[int(role)]["kscore"])
 
@@ -122,12 +122,13 @@ func _acs(host, role: int) -> float:
 
 
 # 助攻表读数(表: victim_role -> {attacker_role: 时刻ms})。
-# ★★ 必须走 `host.get("_assist_times")` 而**不是** `host._assist_times`:
-#   字段在本 Task 的红阶段**还不存在**,而不存在的属性**直接取**会抛
-#   `Invalid get index '_assist_times'` ⇒ **只结束 `_run()`**、`_ready()` 的 `await` 照常恢复、
-#   `_finish()` 照打 **`TEAM HOST: ALL-OK`(假绿)**,后面所有断言被静默跳过。
-#   `Object.get()` 对不存在的属性**静默返回 null** ⇒ 那种情况退化成"表是空的" =
-#   干净的值不匹配(FAIL)。这条差别就是"探针真的会红"与"探针假绿"的差别,别"简化"它。
+# ★★ 走 `host.get("_assist_times")` 而**不是** `host._assist_times`:字段在本 Task 的红阶段
+#   还不存在,直接取会抛 `Invalid get index '_assist_times'`(一条 SCRIPT ERROR + 一个由 null
+#   派生的空读数,断言里看不出"表里到底有什么");`Object.get()` 对不存在的属性静默返回 null
+#   ⇒ 这里能把它归一成"空表",调用方的 `_check` 因而打出一条**带真实表状态**的值不匹配。
+# ★★ 但**别把这条读法说成"防假绿"** —— 实测(读数见 `_age_assist` 注释):访问不存在的属性
+#   只结束**出错的那个函数**,调用方照常往下跑、后面的断言照跑、`_ran_to_end` 照常置位,
+#   受影响的那条 `_check` 因拿到 null/空值而**红** ⇒ verdict 是干净的 FAIL,不是 ALL-OK。
 func _assist_table(host, victim_role: int) -> Dictionary:
 	var t: Variant = host.get("_assist_times")
 	if not (t is Dictionary):
@@ -138,7 +139,17 @@ func _assist_table(host, victim_role: int) -> Dictionary:
 
 # 把表里那一笔的时刻往前挪(等 3s 不现实)。返回 false = 表/条目还不存在。
 # ★ 与 `_assist_table` 同款理由:字段不存在时**什么都不做**,由调用方的 `_check` 把它变成
-#   干净的红,而不是中断 `_run()` 的假绿。
+#   一条干净的红。
+# ★★ 保留 `Object.get()` 的收益是**可读的诊断**,不是"拦住假绿" —— 实测,一个辅助函数里
+#   访问不存在的属性只结束**那个函数**,调用方继续、其后的断言照跑、`_ran_to_end` **照样到达**;
+#   受影响的 `_check` 因拿到 null/空值而**失败** ⇒ verdict 是干净的 FAIL。实测读数:
+#     SCRIPT ERROR: Invalid access to property or key '_no_such_field_at_all' on a base object of type 'Node'.
+#        at: _bad_read (...)
+#     TMP check FAILED: A 解引用返回值
+#     TMP ran_to_end=true fails=1
+#     TMP: FAIL
+#   即:不这么写得到的是一条 SCRIPT ERROR 加一个由 null 派生的、看不懂的读数;这么写得到的
+#   是一句"表还没落地"的值不匹配。别"简化"成直接取属性。
 func _age_assist(host, victim_role: int, attacker_role: int, ago_ms: int) -> bool:
 	var t: Variant = host.get("_assist_times")
 	if not (t is Dictionary):
@@ -1376,9 +1387,18 @@ func _run() -> void:
 	#   (或"助攻永远不记"的坏实现)照样全绿。
 	#   ★ 本段**最后**跑:新建宿主会重载全局网格,前面几段(尤其 ⑬b3 的 `_find_dry_point`)
 	#   依赖它保持不动。
-	#   ★ brief 原文这里多写了一个 `[]`(`TeamHost.new(MAP, {}, {}, [], [], {…}, {})` = 7 个
-	#   实参,而 `TeamHost._init` 只收 6 个)⇒ 调用当场出错、`_run()` 中断、`_finish()` 照打
-	#   `ALL-OK`(假绿)。按同文件既有的 `TeamHost.new(MAP, {}, {}, [], teams, TEAMS)` 补正。
+	#   ★ 实参个数是**编译期**核的:多给一个实参(写成 7 个)当场是 Parse Error ——
+	#     `SCRIPT ERROR: Parse Error: Too many arguments for "new()" call. Expected at most 6 but received 7.`
+	#     (紧跟着还有一条 `Invalid argument for "new()" function: argument 5 should be "Dictionary" but is "Array".`
+	#      —— 多出来的那个 `[]` 顶掉了第 5 个实参的位置,是同一次写错的第二条诊断)
+	#     `ERROR: Failed to load script "res://tests/team_host_probe.gd" with error "Parse error".`
+	#   ⇒ 场景根**没有脚本** ⇒ **一行都不打印**(实测整跑 **8 行**输出、`TEAM HOST:` 零命中)、
+	#   `--quit-after` 到点照常 `EXIT=0` —— 正是 CLAUDE.md 记的那档"与超时在退出码上不可分"。
+	#   ★ 它**不是假绿**(判据是 grep `TEAM HOST: ALL-OK`,拿不到就判红),但**150 条断言一条都跑不到**;
+	#   而 `_ran_to_end` 那道闸**兜不住它** —— 那道闸只管 `_run()` 里的**运行期**中断,管不了脚本加载失败。
+	#   ★ 上面这段来自**故意写成 7 个实参**的一次试跑(不是 brief 的缺陷:brief 与计划里原文都
+	#   是 6 个实参,与 `TeamHost._init(map_path, role_peers, options, ai_roles, spawns, teams)` 对得上)。
+	#   按同文件既有的 `TeamHost.new(MAP, {}, {}, [], teams, TEAMS)` 补正。
 	var st_plain = TeamHost.new(MAP, {}, {}, [],
 			{1: Vector2i(5, 10), 2: Vector2i(9, 10), 4: Vector2i(30, 10)}, {})
 	add_child(st_plain)
@@ -1394,7 +1414,10 @@ func _run() -> void:
 			"★ ⑬l [正向对照] 队伍表为空时**击杀照记**(实际 %d)" % _stat(st_plain, 2, "kills"))
 	_check(_stat(st_plain, 1, "assists") == 0,
 			"★ ⑬l 队伍表为空 ⇒ **没有任何助攻**(实际 %d)" % _stat(st_plain, 1, "assists"))
-	st_plain.free()
+	# ★ 这里**不能**用 `free()`:`_run()` 是在 `physics_frame` 的发射里跑的,同步 `free()` 会把
+	#   `WaterFx` 那类 deferred 子节点添加与渲染器的 RID 释放队列一起卡在队列里,
+	#   进程结束时多出一串 texture / CanvasItem / ObjectDB 泄漏警告(实测读数见报告)。
+	st_plain.queue_free()
 
 	_ran_to_end = true
 
