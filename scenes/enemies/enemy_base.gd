@@ -193,6 +193,9 @@ func _physics_process(delta: float) -> void:
 	#   挤压方向是 x>1 ⇒ 看的是**最大** scale.x)。
 	#   ⇒ 净有害。敌人不爬梯,没有玩家侧那条真违规可类比。
 	_pre_move_vy = velocity.y
+	# 时间场:水平运动走速度域(move_and_slide 用引擎 delta,缩放 delta 不改变位移);
+	# 计时器/动画/重力仍走上面的 delta 缩放。精英与玩家同步,普通敌放慢。
+	velocity.x *= TimeField.enemy_speed_mult(self)
 	move_and_slide()
 	_wrap()
 

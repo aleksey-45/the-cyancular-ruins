@@ -174,10 +174,19 @@ func _ready() -> void:
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 
 
+var _speed_mult := 1.0  # 时间场速度域倍率(加速 1.4;跨函数用,故设成员)
+var _ghost_t := 0.0     # 残影生成计时(加速时)
+var _ghost_flip := false  # 红/蓝交替
+
+
 func _physics_process(delta: float) -> void:
-	delta = TimeField.player_delta(delta)   # 时间场:回溯冻结/加速 ×2
+	# 时间场:回溯整帧冻结(位置由回放器摆);加速走**速度域**——move_and_slide() 用引擎
+	# 自己的 delta,缩放 delta 只会让重力和计时器变快(实测手感:只有坠落快、跳跃变低、
+	# 移速不变)。因此:tick 类 ×tm、水平速度目标 ×tm、重力/跳跃保持原样(跳跃高度不变)。
+	var tm := TimeField.player_speed_mult()
+	_speed_mult = tm
 	if TimeField.current != null and TimeField.current.is_rewinding():
-		return   # 回溯中玩家整帧冻结(位置由回放器摆;武器/输入/姿态都不推进)
+		return
 	# squash 放在**最首行**(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个
 	# 挤压值上(明显的视觉 bug)。参数成对读 —— is_on_floor() 是上一帧 move_and_slide 的
 	# 结果,_pre_move_vy 是那次 move_and_slide 之前缓存的 velocity.y(见 spec §2.4)。
@@ -188,7 +197,19 @@ func _physics_process(delta: float) -> void:
 		_pre_move_vy = 0.0
 		_tick_downed(delta)
 		return
-	weapons.tick(delta)   # 武器帧逻辑走物理 tick(与 body 同一定时器;rollback 重放确定性)
+	weapons.tick(delta * tm)   # 加速时开火/换弹节拍 ×tm(武器帧逻辑走物理 tick)
+
+	# 加速残影:红/蓝交替拖尾(用户要求"很明显")
+	if _speed_mult > 1.0:
+		_ghost_t -= delta
+		if _ghost_t <= 0.0:
+			_ghost_t = 0.045
+			var anim := animator   # @export 引用,场景实例化即就位
+			if anim != null:
+				var tint := Color(1.0, 0.25, 0.25, 0.55) if _ghost_flip else Color(0.3, 0.4, 1.0, 0.55)
+				_ghost_flip = not _ghost_flip
+				AfterImage.spawn(get_parent(), anim, tint)
+
 	combat.update_iframe_blink(delta)
 
 	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
@@ -338,7 +359,7 @@ func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mul
 			# 收尾交回下方 accel/air-brake 平滑减速,不做 1500→750 突变半刹。
 	else:
 		# 蹲走:蹲态目标换成 crouch_walk_speed(可小步左右移动);非蹲态走 move_speed。
-		var speed_target := crouch_walk_speed if is_squat else move_speed
+		var speed_target := (crouch_walk_speed if is_squat else move_speed) * _speed_mult
 		var target_velocity_x = horizontal_input * speed_target * mult.x
 		if horizontal_input != 0:
 			if is_on_floor():

@@ -719,6 +719,14 @@ func _tick_time_visuals(delta: float) -> void:
 	elif rewinding:
 		mult -= 0.15
 	Sfx.pitch_mult = clampf(mult, 0.7, 1.8)
+	# 加速高亮:主角与敌人整体提亮(背景由 shader 压暗 → 角色自然"跳"出来)
+	var glow := Color(1.65, 1.65, 1.65) if time_field.is_hasting() else Color.WHITE
+	var pl := get_node_or_null("WorldViewport/Player") as Node2D
+	if pl != null:
+		pl.modulate = glow
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if is_instance_valid(e) and e is Node2D:
+			(e as Node2D).modulate = glow
 
 
 ## 时间场驱动缝(探针直调;正常路径由 _process 传真实按键态)
