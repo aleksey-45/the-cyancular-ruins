@@ -88,12 +88,15 @@
 
 ```gdscript
 # 助攻表读数(表: victim_role -> {attacker_role: 时刻ms})。
-# ★★ 必须走 `host.get("_assist_times")` 而**不是** `host._assist_times`:
+# ★★ 必须走 `host.get("_assist_times")` 而**不是** `host._assist_times`。
 #   字段在本 Task 的红阶段**还不存在**,而不存在的属性**直接取**会抛
-#   `Invalid get index '_assist_times'` ⇒ **只结束 `_run()`**、`_ready()` 的 `await` 照常恢复、
-#   `_finish()` 照打 **`TEAM HOST: ALL-OK`(假绿)**,后面所有断言被静默跳过。
-#   `Object.get()` 对不存在的属性**静默返回 null** ⇒ 那种情况退化成"表是空的" =
-#   干净的值不匹配(FAIL)。这条差别就是"探针真的会红"与"探针假绿"的差别,别"简化"它。
+#   `Invalid access to property or key '_assist_times'`(**实测**)。
+#   ★★ 但它**不是**假绿 —— **实测**形态是:错误只结束**这个助手**,调用方照常往下走
+#   (受影响的 `_check` 拿到 null/空值 ⇒ 照样**红**),`_ran_to_end` 也会被走到 ⇒
+#   verdict 是 **`FAIL`**。(拿一个临时场景探针量过:助手内部报错后,紧随其后的断言**照跑**、
+#   `ran_to_end=true`、verdict `FAIL`。)⇒ 保留 `Object.get()` 的理由是**诊断质量**:
+#   它把"字段还没落地"变成一条**带着表内容**的值不匹配,而不是一行 SCRIPT ERROR + 一个
+#   null 派生出来的怪值。**别"简化"回直接取**,但也别再拿"防假绿"当理由。
 func _assist_table(host, victim_role: int) -> Dictionary:
 	var t: Variant = host.get("_assist_times")
 	if not (t is Dictionary):
@@ -104,7 +107,8 @@ func _assist_table(host, victim_role: int) -> Dictionary:
 
 # 把表里那一笔的时刻往前挪(等 3s 不现实)。返回 false = 表/条目还不存在。
 # ★ 与 `_assist_table` 同款理由:字段不存在时**什么都不做**,由调用方的 `_check` 把它变成
-#   干净的红,而不是中断 `_run()` 的假绿。
+#   一条**干净的红**(实测:助手内部报错只结束助手本身,调用方继续、后面的断言照样跑、
+#   verdict 是 `FAIL` —— 不是假绿)。
 func _age_assist(host, victim_role: int, attacker_role: int, ago_ms: int) -> bool:
 	var t: Variant = host.get("_assist_times")
 	if not (t is Dictionary):
@@ -152,9 +156,13 @@ func _park_all_but(host, keep: Array, at: Vector2) -> void:
 	# (k1) 甲(1 号,1 队)打乙(4 号,2 队)60 伤害
 	var st_a_k1 := _stat(_host, 1, "assists")
 	var st_a_k2 := _stat(_host, 2, "assists")
-	var st_a_ks1 := _kscore(_host, 1)
 	CombatFeedback.attribute(_host.players[4], _host.players[1])
 	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 60)
+	# ★★ `st_a_ks1` 必须在**那 60 伤害之后**读:这一枪本身就给甲 `dealt += 60` ⇒ kscore 已 +12
+	#   (`ScoreRules.kscore(0, 1, 60, …) == 62`,实测)。在伤害**之前**读的话,下面那条
+	#   "助攻进 kscore" 要断的就是 **+62**(助攻 50 + 伤害 12)而不是 +50 ⇒ **实现正确也不会绿**;
+	#   同理 Step 2 的红也不是表里写的 `+0` 而是 `+12`。移到伤害之后读,两处都回到干净的值。
+	var st_a_ks1 := _kscore(_host, 1)
 	_check(_assist_table(_host, 4).has(1),
 			"★ ⑬k [仪器] 甲的那一枪必须进了助攻表(否则下面两条恒真;表=%s)"
 			% str(_assist_table(_host, 4)))
@@ -179,6 +187,13 @@ func _park_all_but(host, keep: Array, at: Vector2) -> void:
 	# (k2) 窗口外不记助攻 —— 把表里那一笔的时刻往前挪出 3s
 	# ★ 这里是**直接改表**(唯一一处手写表):等 3s 不现实,而窗口判据必须被验到。
 	#   `_age_assist` 的防御写法见它的注释(字段不存在时返回 false,由下面这条断言红出来)。
+	# ★★ 但改表**之前必须先重打一枪**:清空点是**复活**,而 (k1) 末尾刚复活过 4 号 ⇒ 此刻
+	#   `_assist_times[4]` 整张子表已被 `_clear_assist_table` 抹掉。少了这一枪,`_age_assist` 会因
+	#   "条目不存在"返回 false ⇒ 那条 [仪器] 断言在**正确实现下也会红**(它守的是"窗口判据真的
+	#   被验到",而不是"表是空的")。★ 与 (k1) 同理,必须在 (k1) 的**复活之后**、且是**新的**一枪。
+	CombatFeedback.attribute(_host.players[4], _host.players[1])
+	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 5)
+	_check(_assist_table(_host, 4).has(1), "[仪器] ⑬k 前提:重打的那一枪进了表")
 	_check(_age_assist(_host, 4, 1, TeamHost.ATTRIB_WINDOW + 1000)
 			and Time.get_ticks_msec() - int(_assist_table(_host, 4).get(1, 0)) > TeamHost.ATTRIB_WINDOW,
 			"[仪器] ⑬k 前提:表里那一笔确实**已超窗**(否则下面那条验的不是窗口判据)")
@@ -250,6 +265,7 @@ Expected（补表**之前**）—— 五条，逐条对：
 | ⑬k `甲**记一次助攻**` | +1 → **+0** | 表空 ⇒ `_record_down` 循环里一个候选都没有 |
 | ⑬k `助攻进 kscore` | +50 → **+0** | 同上（`assists` 恒 0） |
 | ⑬k `[仪器] 复活**之前**表还在` | 非空 → **空** | 同上 |
+| ⑬k `[仪器] 前提：重打的那一枪进了表` | true → **false** | 同上（(k2) 那一枪也进不去表） |
 | ⑬k `[仪器] 前提：表里那一笔确实**已超窗**` | true → **false** | `_age_assist()` 对不存在的字段返回 false |
 | ⑬k `[仪器] 前提：队友那一枪确实进了表` | true → **false** | 同上 |
 | （⑬k 其余两条 + ⑬l 两条） | —— | **此时是绿的**，见下 |
@@ -260,9 +276,11 @@ Expected（补表**之前**）—— 五条，逐条对：
 ★ 本步**不会再假绿**：探针读表一律走 `_assist_table()` / `_age_assist()` 两个**防御**助手
 （`host.get("_assist_times")` 对不存在的属性静默返回 null），所以上面六条都是**干净的值不匹配**。
 ★ **别把这两个助手"简化"回 `host._assist_times`** —— 直接取不存在的属性会抛
-`Invalid get index`，那**只结束 `_run()`**、`_ready()` 的 `await` 照常恢复、`_finish()` 照打
-**`TEAM HOST: ALL-OK`（假绿）**，后面的断言全被静默跳过。这就是本步 Expected 与探针写法
-必须**成对**改的原因：改一半（探针直接取字段 / Expected 照旧写一串 FAIL）必被这一步卡住。
+`Invalid access to property or key …`（**实测**）。★ 它的形态**不是**假绿而是**更难读的红**：
+错误只结束**助手**、调用方继续、后面的断言**照样跑**、verdict 是 `FAIL`（拿临时场景探针量过）。
+⇒ 保留防御读是为了让红**带着表内容**可读，不是为了"防假绿"。
+★ 因此本步 Expected 与探针写法**必须成对**改：只改一半（探针直接取字段 / Expected 照旧写
+一串 FAIL）会让差分不清成因。
 
 - [ ] **Step 3: 底座加表（先只加字段与写入口，读端留空）**
 
@@ -766,10 +784,13 @@ EOF
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。五段探针都是完整可跑的代码块；
 每个反证都点名**会红哪一条**并给出**夹具为什么能到达那个状态**（Step 2 的 Expected 一律是表格）。
 ★ 两个**防御式探针助手**是承重的、不是风格选择：`_assist_table()` / `_age_assist()` 走
-`host.get("_assist_times")`（不存在的属性静默返回 null），把"字段还没建"退化成**值不匹配**；
-直接写 `host._assist_times` 会抛 `Invalid get index` ⇒ `_run()` 中断 ⇒ `_finish()` 照打
-`TEAM HOST: ALL-OK` = **假绿**。同理 `_park_all_but()` 用"遍历 `players` 减掉例外"而不是写死
-role 列表（`players[6]` 已被 ⑬h 摘掉，写死会中断）。三处都写明了"别简化"。
+`host.get("_assist_times")`（不存在的属性静默返回 null），把"字段还没建"退化成**带表内容的值不匹配**；
+直接写 `host._assist_times` 会抛 `Invalid access to property or key …`（**实测**）。
+★ 订正：旧稿这里写"直接写 ⇒ `_run()` 中断 ⇒ 打 `ALL-OK` = 假绿"，**实测不成立** ——
+助手内部的错误只结束**助手**，调用方继续、断言照跑、verdict 是 `FAIL`（见 Step 1 助手注释里
+那条实测）。保留防御读的理由是**诊断质量**，且这一条属于"本计划的错误结论"，不是笔误。
+同理 `_park_all_but()` 用"遍历 `players` 减掉例外"而不是写死 role 列表（`players[6]` 已被 ⑬h
+摘掉，写死会中断）。三处都写明了"别简化"。
 
 **3. 类型一致性**：`_note_hit(victim_role: int, attacker_role: int) -> void` 与
 `MatchCombat._on_player_hit` 的调用实参一致；`_clear_assist_table(victim_role: int) -> void` 与
