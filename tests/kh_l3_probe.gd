@@ -164,7 +164,14 @@ func _check_gate(wep: WeaponComponent) -> void:
 	_check(not wep.is_type_enabled(1), "set_enabled_types([1,2]) 后槽1 仍启用(过滤器失效)")
 	_check(not wep.is_type_enabled(2), "set_enabled_types([1,2]) 后槽2 仍启用(过滤器失效)")
 	_check(wep.is_type_enabled(3), "set_enabled_types([1,2]) 后槽3 应仍启用")
-	_check(wep.enabled_types.size() == 4, "set_enabled_types([1,2]) 后启用表应剩 4 项(实际 %s)" % str(wep.enabled_types))
+	# ★ 剩余条数按**注册表**算(全 id 数 − 被禁的 2 个),不写死 4 —— 写死的话它其实是
+	#   "本仓有 6 把枪"的**第二份拷贝**(与散落探针原来那个 `== 12` 同源):加第 7 把枪时
+	#   它**会红**,而那条红的成因与"过滤器坏了"毫无关系。本仓库的承诺是"加第 7 把枪
+	#   只改一个 json",任何"这件事本身就把测试打红"的断言都是这条承诺的反例。
+	#   ★ 判据不减弱:"恰好剩这么多"仍然拦得住"一个都没过滤掉"与"过滤多了"。
+	var all_count := WeaponRegistry.all_ids().size()
+	_check(wep.enabled_types.size() == all_count - 2,
+			"set_enabled_types([1,2]) 后启用表应剩 %d 项(实际 %s)" % [all_count - 2, str(wep.enabled_types)])
 
 	var d := wep.default_type()
 	_check(d != "1" and d != "2", "默认槽位落在被禁槽位:%s" % d)
