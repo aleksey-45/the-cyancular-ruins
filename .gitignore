@@ -36,3 +36,8 @@ local_ip.txt
 
 # Python 字节码缓存(tools/ 下的脚本被 import 时会生成)
 __pycache__/
+
+# 本机残留(旧线工具/日志看守/编辑器配置;不属于上游工程)
+DevTools/
+gamelogs/
+.zcode/

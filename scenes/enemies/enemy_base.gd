@@ -26,6 +26,7 @@ const GROUND_FRICTION: float = 0.85  # 落地时水平速度衰减系数
 const STOP_EPSILON: float = 5.0      # 水平速度低于此值直接归零,避免贴地滑行
 
 var is_dead: bool = false
+var _rewind_hold: bool = false   # 录制期死亡保留的尸体(隐藏待复活;非精英)
 var _hit_flash_time: float = 0.0
 var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
 var _player_overlapping: bool = false
@@ -106,6 +107,10 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
+	delta = TimeField.enemy_delta(delta, self)   # 时间场:回溯冻结/加速/贷款(精英例外)
+	# 回溯中普通敌人整帧跳过(位置由回放器摆;接触伤害/白闪/AI 全不结算);精英照常
+	if TimeField.current != null and TimeField.current.is_rewinding() and not has_meta("elite"):
+		return
 	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → 回中性,
 	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
 	# ★ 睡眠那一支**归零 `_pre_move_vy` 本身**(就在下面的 early return 里),不是"临时喂个 0":
@@ -157,7 +162,13 @@ func _physics_process(delta: float) -> void:
 	if _death_timer > 0.0:
 		_death_timer -= delta
 		if _death_timer <= 0.0:
-			queue_free()
+			if _rewind_hold:
+				# 保留尸体:隐藏 + 停物理,等回放复活;过期由 WorldRewind.expire_corpses 清理
+				visible = false
+				set_physics_process(false)
+				_death_timer = -1.0
+			else:
+				queue_free()
 			return
 	_flash_update()
 	if is_dead:
@@ -182,6 +193,9 @@ func _physics_process(delta: float) -> void:
 	#   挤压方向是 x>1 ⇒ 看的是**最大** scale.x)。
 	#   ⇒ 净有害。敌人不爬梯,没有玩家侧那条真违规可类比。
 	_pre_move_vy = velocity.y
+	# 时间场:水平运动走速度域(move_and_slide 用引擎 delta,缩放 delta 不改变位移);
+	# 计时器/动画/重力仍走上面的 delta 缩放。精英与玩家同步,普通敌放慢。
+	velocity.x *= TimeField.enemy_speed_mult(self)
 	move_and_slide()
 	_wrap()
 
@@ -287,6 +301,10 @@ func _begin_death() -> void:
 	# (单机击杀播报已于 2026-09-17 删除 —— 这里原先调 CombatFeedback.notify_enemy_killed,
 	#  那是它唯一的触发点。PvP 的播报走 NetBus.kill_event,不经过本函数。)
 	_death_timer = EnemyParams.shared.death_flash_time
+	# 录制期保留尸体:不 queue_free,白闪结束后隐藏待复活(精英除外——杀了就是杀了)
+	if WorldRewind.hold_corpses and not has_meta("elite"):
+		_rewind_hold = true
+		set_meta("rw_death_ms", Time.get_ticks_msec())
 	_on_death()
 
 
@@ -460,3 +478,25 @@ func _wrap() -> void:
 		return
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+
+## 回溯还原(WorldRewind 调用):把本敌置回快照帧的状态(含**复活**)。
+func rewind_restore(d: Dictionary) -> void:
+	var was_dead := is_dead
+	global_position = d["p"]
+	if d["v"] != null:
+		velocity = d["v"]
+	hp = int(d["hp"])
+	is_dead = bool(d["dead"])
+	if was_dead and not is_dead:
+		# 复活:重新入世(可见 + 物理 + 取消保留;白闪与计时清零)
+		visible = true
+		set_physics_process(true)
+		_rewind_hold = false
+		if has_meta("rw_death_ms"):
+			remove_meta("rw_death_ms")
+		_death_timer = -1.0
+		_hit_flash_time = 0.0
+		_flash_update()
+	elif not was_dead and is_dead:
+		# 倒回"将死未死"帧:按快照的可见性处理(通常在白闪中点)
+		visible = bool(d["vis"])

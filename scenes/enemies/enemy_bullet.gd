@@ -21,6 +21,13 @@ func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -
 
 
 func _physics_process(delta: float) -> void:
+	# 时间场(B13):加速 = 主角时间被加快 ⇒ **除主角外一切实体变慢**,敌方弹也不例外
+	# (其位移 = velocity_vec × delta,故缩放 delta 就能真的变慢);回溯整帧冻结(位置由回放器摆)。
+	# ★ 本类**整个覆写了基类的 _physics_process**,基类首行那句 TimeField.bullet_delta
+	#   在这条路径上永远不会跑 —— 这正是"加速时子弹没变慢"的原因。
+	delta = TimeField.bullet_delta(delta, self)
+	if TimeField.current != null and TimeField.current.is_rewinding():
+		return
 	velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 	rotation = velocity_vec.angle()
 	_apply_water_drag(delta)

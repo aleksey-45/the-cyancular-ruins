@@ -174,7 +174,19 @@ func _ready() -> void:
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 
 
+var _speed_mult := 1.0  # 时间场速度域倍率(加速 1.4;跨函数用,故设成员)
+var _ghost_t := 0.0     # 残影生成计时(加速时)
+var _ghost_flip := false  # 红/蓝交替
+
+
 func _physics_process(delta: float) -> void:
+	# 时间场:回溯整帧冻结(位置由回放器摆);加速走**速度域**——move_and_slide() 用引擎
+	# 自己的 delta,缩放 delta 只会让重力和计时器变快(实测手感:只有坠落快、跳跃变低、
+	# 移速不变)。因此:tick 类 ×tm、水平速度目标 ×tm、重力/跳跃保持原样(跳跃高度不变)。
+	var tm := TimeField.player_speed_mult()
+	_speed_mult = tm
+	if TimeField.current != null and TimeField.current.is_rewinding():
+		return
 	# squash 放在**最首行**(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个
 	# 挤压值上(明显的视觉 bug)。参数成对读 —— is_on_floor() 是上一帧 move_and_slide 的
 	# 结果,_pre_move_vy 是那次 move_and_slide 之前缓存的 velocity.y(见 spec §2.4)。
@@ -185,7 +197,19 @@ func _physics_process(delta: float) -> void:
 		_pre_move_vy = 0.0
 		_tick_downed(delta)
 		return
-	weapons.tick(delta)   # 武器帧逻辑走物理 tick(与 body 同一定时器;rollback 重放确定性)
+	weapons.tick(delta * tm)   # 加速时开火/换弹节拍 ×tm(武器帧逻辑走物理 tick)
+
+	# 加速残影:红/蓝交替拖尾(用户要求"很明显")
+	if _speed_mult > 1.0:
+		_ghost_t -= delta
+		if _ghost_t <= 0.0:
+			_ghost_t = 0.045
+			var anim := animator   # @export 引用,场景实例化即就位
+			if anim != null:
+				var tint := Color(1.0, 0.25, 0.25, 0.55) if _ghost_flip else Color(0.3, 0.4, 1.0, 0.55)
+				_ghost_flip = not _ghost_flip
+				AfterImage.spawn(get_parent(), anim, tint)
+
 	combat.update_iframe_blink(delta)
 
 	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
@@ -335,7 +359,7 @@ func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mul
 			# 收尾交回下方 accel/air-brake 平滑减速,不做 1500→750 突变半刹。
 	else:
 		# 蹲走:蹲态目标换成 crouch_walk_speed(可小步左右移动);非蹲态走 move_speed。
-		var speed_target := crouch_walk_speed if is_squat else move_speed
+		var speed_target := (crouch_walk_speed if is_squat else move_speed) * _speed_mult
 		var target_velocity_x = horizontal_input * speed_target * mult.x
 		if horizontal_input != 0:
 			if is_on_floor():
@@ -452,6 +476,9 @@ func _wrap_position() -> void:
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
+	# 回溯中不受任何伤害(位置在被回放器搬运,接触判定可能在瞬移中误触发)
+	if TimeField.current != null and TimeField.current.is_rewinding():
+		return
 	# 前后比对 hp:只有**真吃到伤害**才挤压。无敌帧挡下 / 已倒地时 combat.take_hit 不改 hp,
 	# 这条判据天然把它们排除 —— 比在 combat 里回调更省事(不动组件接口)。
 	var before := combat.hp
@@ -895,3 +922,36 @@ func _update_reload_ring() -> void:
 
 
 const RELOAD_RING_OFFSET := Vector2(58.0, -44.0)   # 世界单位:x 朝"后侧"、y 朝上(2026-09-16 上移)
+
+## 回溯还原(WorldRewind 调用):位置/速度/HP/朝向/倒地态回到快照帧。
+func rewind_restore(d: Dictionary) -> void:
+	global_position = d["p"]
+	if d["v"] != null:
+		velocity = d["v"]
+	combat.knock_velocity = Vector2.ZERO
+	# ★ 必须发 hp_changed:HUD 血条只听信号(不是每帧轮询),直接改 combat.hp 不改的话
+	#   血条会停在旧值 —— 玩家看到的"血量没有回溯"就是这个(内部数值其实已还原)。
+	var hp_before := combat.hp
+	combat.hp = clampi(int(d["hp"]), 0, combat.max_hp)
+	if combat.hp != hp_before:
+		combat.hp_changed.emit(combat.hp, combat.max_hp)
+	facing_direction = int(d["facing"])
+	var downed_now := is_downed()
+	# 武器弹量回溯(用户要求):背包各格残弹 + 手持那件实弹;当前武器不同则切回
+	var wc = weapons
+	if wc != null and d.has("wmags"):
+		var inv = wc.get("inventory")
+		if inv != null:
+			var held: Array = inv.get("held")
+			var mags: Array = d["wmags"]
+			for i in mini(held.size(), mags.size()):
+				held[i]["mag"] = int(mags[i])
+		if int(d.get("widx", -1)) != int(wc.get("_current_index")) and int(d.get("widx", -1)) >= 0:
+			wc.call("equip_index", int(d["widx"]))
+		var live2 = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+		if live2 != null and is_instance_valid(live2) and int(d.get("wlive", -1)) >= 0:
+			live2.set("mag_ammo", int(d["wlive"]))
+	if bool(d["downed"]) and not downed_now:
+		combat.set_downed_by_rewind(true)
+	elif not bool(d["downed"]) and downed_now:
+		combat.revive()

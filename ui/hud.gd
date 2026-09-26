@@ -78,6 +78,12 @@ const KILL_COUNTER_SCENE := preload("res://ui/kill_counter.tscn")
 func _ready() -> void:
 	layer = LAYER
 	_build_kill_label()
+	# 个人钟怀表(第一阶段;数据源 Level0.grain_account,为空自隐)——摆血条/氧条下方
+	var watch := WatchHud.new()
+	watch.position = Vector2(MARGIN.x, MARGIN.y + 100.0)
+	add_child(watch)
+	# 时间模式中心标志(回溯 ◁◁ / 加速 ▶▶;常态自隐)
+	add_child(TimeSymbolHud.new())
 	var spawner := get_parent().get_node_or_null("EnemySpawner")
 	if spawner != null and spawner.has_signal("enemy_spawned"):
 		spawner.enemy_spawned.connect(_on_enemy_spawned)

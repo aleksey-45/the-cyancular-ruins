@@ -97,6 +97,19 @@ func force_down() -> void:
 	if not downed:
 		_downed()
 
+## 回溯专用:把倒地态置为 v(不扣血/不发 went_down 的常规副作用,仅状态与动画)。
+## 供 Player.rewind_restore 使用——"倒回到倒地那一刻"要精确复原,而不是再触发一次死亡流程。
+func set_downed_by_rewind(v: bool) -> void:
+	if downed == v:
+		return
+	downed = v
+	var animator: AnimatedSprite2D = body.animator
+	if animator != null:
+		animator.play("downed" if v else "idle")
+	if v:
+		went_down.emit()
+
+
 func revive() -> void:
 	if not downed:
 		return

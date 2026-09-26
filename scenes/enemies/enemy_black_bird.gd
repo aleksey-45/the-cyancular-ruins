@@ -30,6 +30,8 @@ var _appear_timer: float = 0.0         # 传送后 appear 播完剩余(期间空
 
 
 func _ready() -> void:
+	# 精英标(第一阶段):免疫回溯(WorldRewind 不入快照)、加速与玩家同步、击杀掉 300 颗粒
+	set_meta("elite", true)
 	super._ready()
 	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.BlackBird.wake_radius
@@ -397,3 +399,8 @@ func _on_state_entered(s: int) -> void:
 			squash.impulse(SquashStretch.Impulse.TAKE_OFF)
 		State.CHARGE:
 			squash.impulse(SquashStretch.Impulse.CHARGE)
+
+## 死亡:掉 300 颗粒结晶(碎裂→飞向怀表→吸收时入账+表体颤抖)。基类虚钩覆写。
+func _on_death() -> void:
+	super()
+	GrainCrystalFx.spawn(get_parent(), global_position, TimeParams.ELITE_GRAIN_DROP)
