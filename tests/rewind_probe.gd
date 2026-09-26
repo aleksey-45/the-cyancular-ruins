@@ -37,8 +37,8 @@ func _run() -> void:
 	var target: Node = null
 	var elite: Node = null
 	for e in tree.get_nodes_in_group("enemies"):
-		if not (e is Node2D) or bool(e.get("is_dead")):
-			continue
+		if not (e is Node2D) or bool(e.get("is_dead")) or e.has_meta("elite"):
+			continue   # 真乌鸫(B5 起自带 elite 标)不入"普通怪"用例——它本来就不参与回溯
 		if target == null:
 			target = e
 		elif elite == null:
@@ -84,6 +84,11 @@ func _run() -> void:
 	if not Level0.time_field.is_rewinding():
 		_fail("时间场未进入 REWIND")
 
+	if not is_instance_valid(target):
+		_fail("目标怪节点已释放(尸体保留机制失灵)")
+		print("REWIND PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
+		tree.quit(1)
+		return
 	var revived: bool = not bool(target.get("is_dead"))
 	if not revived:
 		_fail("普通怪未被回溯复活")
@@ -96,7 +101,7 @@ func _run() -> void:
 		_fail("玩家位置未倒回(距快照 %.1fpx)" % p_back.distance_to(p0))
 	if int(player.get("hp")) < hp0:
 		_fail("玩家 HP 未倒回(现 %d 快照 %d)" % [int(player.get("hp")), hp0])
-	if elite != null and not bool(elite.get("is_dead")):
+	if elite != null and is_instance_valid(elite) and not bool(elite.get("is_dead")):
 		_fail("精英被回溯复活了(应保持死亡)")
 
 	# ⑤ 回溯中免疫伤害

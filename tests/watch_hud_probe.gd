@@ -110,8 +110,18 @@ func _run() -> void:
 	if not center.text.begins_with("-"):
 		_fail("贷款中表心应显示负数(现 %s)" % center.text)
 
+	# ⑥ Sfx 全局音调随贷款深度上抬;贷满锁定 → 怀表红闪
+	acc.spend(0.5, 100.0)   # 借满 100 → 锁定
+	await _wait_ms(150)
+	if Sfx.pitch_mult <= 1.0:
+		_fail("贷款中 Sfx 音调未上抬(%.2f)" % Sfx.pitch_mult)
+	if not acc.locked:
+		_fail("借满未锁定")
+	if float(watch.get("_lock_flash_t")) <= 0.0:
+		_fail("锁定后怀表未红闪")
+
 	if _fails.is_empty():
-		print("WATCH HUD PROBE: OK(挂载/读数/滚动收敛/底片ramp/压暗ramp/贷款负数与深度直传)")
+		print("WATCH HUD PROBE: OK(挂载/读数/滚动收敛/底片ramp/压暗ramp/贷款负数与深度直传/音调上抬/锁定红闪)")
 		tree.quit(0)
 	else:
 		print("WATCH HUD PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])

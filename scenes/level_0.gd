@@ -254,6 +254,11 @@ func _ready() -> void:
 	time_field = TimeField.new(grain_account)
 	TimeField.current = time_field
 	_rewind = WorldRewind.new($WorldViewport)
+	# 贷款锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
+	grain_account.loan_locked.connect(func() -> void:
+		var w = get_tree().get_first_node_in_group("watch_hud")
+		if w != null and w.has_method("flash_locked"):
+			w.flash_locked())
 	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
@@ -651,10 +656,29 @@ func _tick_time_visuals(delta: float) -> void:
 			if vp_size.x > 0.0 and vp_size.y > 0.0:
 				uv = Vector2(0.5, 0.5) + (pl.global_position - cam.get_screen_center_position()) 						* cam.zoom / vp_size
 	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t, uv)
+	# 贷款/加速/回溯的音调变形(全局系数;贷款越深越尖)
+	var depth := time_field.loan_depth()
+	var mult := 1.0 + TimeParams.LOAN_PITCH_RANGE * depth
+	if time_field.is_hasting():
+		mult += 0.12
+	elif rewinding:
+		mult -= 0.15
+	Sfx.pitch_mult = clampf(mult, 0.7, 1.8)
 
 
 ## 时间场驱动缝(探针直调;正常路径由 _process 传真实按键态)
+var _prev_want_rewind := false
+var _prev_want_haste := false
+
+
 func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
+	# 锁定/空账时的按键空转:按下那一下给 deny 反馈(否则玩家以为键坏了)
+	if grain_account != null and want_rewind and not _prev_want_rewind and not grain_account.can_spend():
+		Sfx.play("deny")
+	if grain_account != null and want_haste and not _prev_want_haste and not grain_account.can_spend():
+		Sfx.play("deny")
+	_prev_want_rewind = want_rewind
+	_prev_want_haste = want_haste
 	time_field.update(delta, want_rewind, want_haste)
 
 

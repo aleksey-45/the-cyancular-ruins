@@ -13,6 +13,10 @@ static var _cache: Dictionary = {}
 # 轻微随机音高的音效(开枪类,避免每次一模一样的机械感)
 const PITCH_VARIATION := ["shoot", "shoot_heavy", "shotgun", "hit"]
 
+## 全局音调系数(时间玩法驱动:贷款深度→升高、加速→略升、回溯→略降;1.0=无效果)。
+## 只影响播放瞬间的 pitch_scale,不改资源/总线;BGM 接入后同源使用。
+static var pitch_mult: float = 1.0
+
 
 ## 播放一个音效。kind 见 _build;pitch 缩放音调;volume_db 附加增益(负值更轻)。
 static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> void:
@@ -27,7 +31,7 @@ static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> vo
 	p.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	p.process_mode = Node.PROCESS_MODE_ALWAYS   # 单机暂停树时 UI 音效仍可播
 	p.volume_db = volume_db
-	p.pitch_scale = pitch * (randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
+	p.pitch_scale = pitch * pitch_mult * (randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
 	# 游戏启动链(_ready 里 equip→switch 音)树正在建子节点,直接 add_child 会被拒:
 	# 延迟到帧末入树,再依序延迟播放(保证此时已进树)。
 	tree.root.add_child.call_deferred(p)
