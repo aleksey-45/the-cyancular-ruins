@@ -40,6 +40,9 @@ static var time_field: TimeField = null
 var _rewind: WorldRewind = null   # 世界快照/回放(单机;PvP 不建)
 var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退出)
 var _post_process: PostProcess = null
+var _tile_ledger: TileLedger = null      # 玩家拆砖账本(瓦片回溯)
+var _tile_pending: Array = []            # 本帧待入账的格(帧末合并)
+var _tile_cursor: float = -1.0           # 本次回溯的瓦片还原高水位
 var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
 var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
 
@@ -254,6 +257,7 @@ func _ready() -> void:
 	time_field = TimeField.new(grain_account)
 	TimeField.current = time_field
 	_rewind = WorldRewind.new($WorldViewport)
+	_tile_ledger = TileLedger.new()
 	# 贷款锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
 	grain_account.loan_locked.connect(func() -> void:
 		var w = get_tree().get_first_node_in_group("watch_hud")
@@ -396,7 +400,32 @@ func _process(_delta: float) -> void:
 
 
 # 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。
+## 单格写回(瓦片回溯用):网格 + 9 环面副本渲染 + 持久子格 2×2 + 脏块重建标记。
+func _restore_cell(cell: Vector2i, v: int) -> void:
+	if _grid_ref.is_empty() or wall_layer == null:
+		return
+	var cols: int = _grid_ref[0].size()
+	var rows: int = _grid_ref.size()
+	if cell.x < 0 or cell.y < 0 or cell.x >= cols or cell.y >= rows:
+		return
+	_grid_ref[cell.y][cell.x] = v
+	for ty in range(-1, 2):
+		for tx in range(-1, 2):
+			wall_layer.set_cell(Vector2i(cell.x + tx * cols, cell.y + ty * rows), 0,
+					Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
+	if not _destructible_sub.is_empty():
+		for qy in range(2):
+			for qx in range(2):
+				_destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = v
+		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+
+
 func _on_tile_destroyed(cell: Vector2i) -> void:
+	# 瓦片回溯捕获(**清空前**从渲染层读改前值;仅单机时间系统激活且非回放期)
+	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() 			and wall_layer != null and not _grid_ref.is_empty():
+		var atlas: Vector2i = wall_layer.get_cell_atlas_coords(cell)
+		if atlas.x >= 0:
+			_tile_pending.append({"cell": cell, "v": (atlas.y + 1) * 16 + atlas.x})
 	if wall_layer != null and not _grid_ref.is_empty():
 		var cols: int = _grid_ref[0].size()
 		var rows: int = _grid_ref.size()
@@ -690,6 +719,7 @@ func _tick_rewind(delta: float) -> void:
 	var rewinding: bool = time_field != null and time_field.is_rewinding()
 	if rewinding and not _rewind.was_rewinding:
 		_rewind.begin()
+		_tile_cursor = _rewind.recorded_seconds()   # 瓦片还原高水位=进入回溯时刻
 	elif not rewinding and _rewind.was_rewinding:
 		_rewind.finish()
 	_rewind.was_rewinding = rewinding
@@ -697,11 +727,24 @@ func _tick_rewind(delta: float) -> void:
 	if rewinding:
 		WorldRewind.hold_corpses = false
 		_rewind.step(delta, pl)
+		# 瓦片还原:跨过 target 的破坏按 t 降序写回(最新破坏先还,最早的值最后落地)
+		if _tile_ledger != null and _tile_cursor >= 0.0:
+			var target := _rewind.current_target()
+			for e in _tile_ledger.take_range(target, _tile_cursor):
+				for c in e["cells"]:
+					_restore_cell(c["cell"], int(c["v"]))
+			_tile_cursor = target
 	else:
 		WorldRewind.hold_corpses = true
 		_rewind.record(delta, pl, get_tree().get_nodes_in_group("enemies"),
 				get_tree().get_nodes_in_group("bullet"))
 		WorldRewind.expire_corpses(get_tree())
+		# 瓦片账本:帧末入账本帧拆掉的格;并裁剪超出回溯窗口的旧条目
+		if _tile_ledger != null:
+			if not _tile_pending.is_empty():
+				_tile_ledger.record(_rewind.recorded_seconds(), _tile_pending)
+				_tile_pending = []
+			_tile_ledger.prune(_rewind.recorded_seconds() - TimeParams.SNAP_SECONDS)
 
 
 func _update_pickup_prompt() -> void:

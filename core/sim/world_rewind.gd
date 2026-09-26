@@ -161,6 +161,11 @@ func _apply_bullets(list: Array, player: Node) -> void:
 
 # ── 查询/维护 ───────────────────────────────────────────────
 
+## 当前回放目标时间(秒):瓦片账本按同一时间轴取区间还原。
+func current_target() -> float:
+	return _t - _cursor
+
+
 func frame_count() -> int:
 	return _frames.size()
 
