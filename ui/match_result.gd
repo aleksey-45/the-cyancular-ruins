@@ -22,7 +22,7 @@ extends CanvasLayer
 
 signal leave_requested
 
-const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "dmg": "伤害", "acs": "ACS"}
+const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "dealt": "伤害", "acs": "ACS"}
 const NAME_UNITS := 12                 # 昵称定宽(半角单位);换字体要重算
 const SIZE_TITLE := 48
 const SIZE_BODY := 32

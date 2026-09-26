@@ -81,7 +81,7 @@ static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my
 				continue
 			var s: Dictionary = stats[role]
 			rows.append(_row(_name_of(names, int(role)), int(s.get("kills", 0)),
-					int(s.get("deaths", 0)), int(s.get("dmg", 0)), int(s.get("acs", 0)),
+					int(s.get("deaths", 0)), int(s.get("dealt", 0)), int(s.get("acs", 0)),
 					int(role) == mvp_role))
 		_finish(rows, "acs")
 		sections.append({
@@ -100,15 +100,15 @@ static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my
 	return {
 		"title": _verdict_team(int(round.get("match_winner", 0)), my_team),
 		"subtitle": "局胜 %d - %d" % [int(won.get(1, 0)), int(won.get(2, 0))],
-		"columns": ["kills", "deaths", "dmg", "acs"],
+		"columns": ["kills", "deaths", "dealt", "acs"],
 		"sections": sections,
 		"mvp": pos,
 	}
 
 
-static func _row(nm: String, kills: int, deaths: int, dmg: int, acs: int, mvp: bool = false) -> Dictionary:
+static func _row(nm: String, kills: int, deaths: int, dealt: int, acs: int, mvp: bool = false) -> Dictionary:
 	return {"rank": 0, "name": nm, "kills": kills, "deaths": deaths,
-			"dmg": dmg, "acs": acs, "mvp": mvp}
+			"dealt": dealt, "acs": acs, "mvp": mvp}
 
 
 # 确定性排序 + 填名次:主键降序 → 阵亡升序 → 昵称升序。

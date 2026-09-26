@@ -94,9 +94,9 @@ func _run() -> void:
 	#   行号算错一行也照样绿 —— 那正是"MVP 高亮落错行"这一类缺陷的样子。第二节两行,行号才真的
 	#   有得错(下面那条 ★ 位置断言按昵称格判,`mvp` 指向第 2 行的 `eve`、不是第 1 行的 `dave`)。
 	await _shot(MatchResultPayload.for_team({"stats": {
-			1: {"kills": 5, "deaths": 3, "dmg": 400, "kscore": 600, "acs": 200},
-			4: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400},
-			5: {"kills": 2, "deaths": 4, "dmg": 120, "kscore": 150, "acs": 75}},
+			1: {"kills": 5, "deaths": 3, "dealt": 400, "kscore": 600, "acs": 200},
+			4: {"kills": 8, "deaths": 1, "dealt": 900, "kscore": 1200, "acs": 400},
+			5: {"kills": 2, "deaths": 4, "dealt": 120, "kscore": 150, "acs": 75}},
 			"mvp": 5, "match_winner": 2}, {1: "阿甲", 4: "dave", 5: "eve"}, {1: 1, 4: 2, 5: 2}, 1), func(m):
 		# ★ 先判 null 再解引用(文件头 ②;失败形态的实测记录见上一条 —— 另两处 lambda 同款)。
 		var box := m.get_node_or_null("Root/Panel/VBox/Sections") as HBoxContainer
@@ -197,8 +197,8 @@ func _run() -> void:
 	var dup := _make()
 	add_child(dup)
 	var team_payload := MatchResultPayload.for_team({"stats": {
-			1: {"kills": 5, "deaths": 3, "dmg": 400, "kscore": 600, "acs": 200},
-			4: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400}},
+			1: {"kills": 5, "deaths": 3, "dealt": 400, "kscore": 600, "acs": 200},
+			4: {"kills": 8, "deaths": 1, "dealt": 900, "kscore": 1200, "acs": 400}},
 			"mvp": 4, "match_winner": 2}, {1: "阿甲", 4: "dave"}, {1: 1, 4: 2}, 1)
 	dup.show_result(team_payload)
 	await get_tree().process_frame

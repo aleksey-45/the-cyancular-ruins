@@ -91,24 +91,37 @@ func _initialize() -> void:
 		fails.append("★ 大乱斗平局(`match_winner == 0`)也不许念「平 局」,实得 %s"
 				% roy_draw["title"])
 
-	# ④ 3v3:两节、列含 dmg/acs、mvp 指向 ACS 最高者
+	# ④ 3v3:两节、列含 dealt/acs、mvp 指向 ACS 最高者
 	# ★ 2 队**两条** stats:只有一条时"排序前数行号"与"排序后数行号"都得到 `row 0` ——
 	#   那条 mvp 断言会退化成空转(mvp 的行号必须落在**真会因排序移动**的那一行上)。
 	#   这里 role 5 在 `stats` 的迭代次序里排在 role 4 **之后** ⇒ 排序前它在第 2 行;
 	#   而它 ACS 400 全队最高 ⇒ 排完序升到第 1 行。于是"行号 == 0"只对**排完序再数**成立。
-	var stats := {1: {"kills": 5, "deaths": 3, "dmg": 400, "kscore": 600, "acs": 200},
-			2: {"kills": 2, "deaths": 5, "dmg": 150, "kscore": 200, "acs": 66},
-			4: {"kills": 3, "deaths": 4, "dmg": 300, "kscore": 350, "acs": 100},
-			5: {"kills": 8, "deaths": 1, "dmg": 900, "kscore": 1200, "acs": 400}}
+	var stats := {1: {"kills": 5, "deaths": 3, "dealt": 400, "kscore": 600, "acs": 200},
+			2: {"kills": 2, "deaths": 5, "dealt": 150, "kscore": 200, "acs": 66},
+			4: {"kills": 3, "deaths": 4, "dealt": 300, "kscore": 350, "acs": 100},
+			5: {"kills": 8, "deaths": 1, "dealt": 900, "kscore": 1200, "acs": 400}}
 	var team: Dictionary = script.for_team({ "stats": stats, "mvp": 5, "match_winner": 2 }, names, teams, 1)
-	if team["columns"] != ["kills", "deaths", "dmg", "acs"]:
-		fails.append("3v3 columns 应为 [kills,deaths,dmg,acs],实得 %s" % [team["columns"]])
+	if team["columns"] != ["kills", "deaths", "dealt", "acs"]:
+		fails.append("3v3 columns 应为 [kills,deaths,dealt,acs],实得 %s" % [team["columns"]])
 	if (team["sections"] as Array).size() != 2:
 		fails.append("★ 3v3 必须两节(按队分栏),实得 %d" % (team["sections"] as Array).size())
 	if int(team["mvp"].get("section", -1)) != 1 or int(team["mvp"].get("row", -1)) != 0:
 		fails.append("★ mvp 应指向第 2 节第 1 行(role 5 属 2 队、ACS 最高;排序前它在第 2 行),实得 %s" % [team["mvp"]])
 	if str(team["title"]) != "失败":
 		fails.append("3v3 我(1 队)输了应念「失败」,实得 %s" % team["title"])
+
+	# ④d ★★ 伤害列必须真读到**生产端现在发出的那个键**(`dealt`)。
+	#     ★ 为什么非要有这条**值**断言:上面的夹具是**本冒烟自己喂的**,而消费端读不到的键
+	#       (`s.get("dmg", 0)` 那种旧键)在**所有列名/计数/排序断言下照样全绿** —— 榜上
+	#       伤害列恒 0,一个字都不报。e393f88 把生产端键从 `dmg` 改成 `dealt` 之后,
+	#       这正是线上「3v3 结算页伤害全是 0」那个静默缺陷的形状:只改列名抓不住它。
+	var t1rows: Array = team["sections"][0]["rows"]
+	var t_dealt := -1
+	if not t1rows.is_empty():
+		t_dealt = int(t1rows[0]["dealt"])
+	if t_dealt != 400:
+		fails.append(("★ 3v3 伤害列必须读到生产端的 `dealt` 键(role 1 应 400),实得 %d —— "
+				+ "读回旧键 `dmg` 时这里恒 0,而上面所有计数断言照样全绿") % t_dealt)
 
 	# ④b ★ 3v3 平局:match_winner == 0 必须念「平 局」—— 不许走 `ui/pvp_hud.gd` 那种兜底
 	#     (`"P%d 获胜!" % …`) 把它念成「P 某人获胜」。这条**今天可达**:TeamHost.mark_disconnected
