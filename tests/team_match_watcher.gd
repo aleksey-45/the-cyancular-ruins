@@ -730,7 +730,7 @@ func _tick_meet_shooter(delta: float) -> void:
 					_meet_sub = MEET_GL_SWITCH
 					_sub_t = 0.0
 				else:
-					_bot.press_slot(bi + 1)
+					_bot.press_switch_index(bi + 1)
 		MEET_VOLLEY:
 			_dist_at_fire = _delta(_local.global_position, vp).length()
 			_bot.axis = 0.0
@@ -834,7 +834,7 @@ func _gl_equip() -> String:
 		return "no_grenade_launcher"
 	if int(_local.weapons.current_type_id()) == 5:
 		return "ok"
-	_bot.press_slot(idx_gl + 1)
+	_bot.press_switch_index(idx_gl + 1)
 	if _sub_t > 2.0:
 		return "switch_timeout"
 	return "switching"

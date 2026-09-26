@@ -8,7 +8,7 @@ extends Node
 # 为什么单开一个:`ground_action_probe` 证了**服务器权威侧**那条路是干净的,而用户报的
 # 「捡武器崩溃」在两端共用的另一头 —— 客户端。客户端上**只有拾取才会走到**的那段是:
 #   `NetBus.local_weapon_removed` → `PvpMatchClient._remove_pickup_node`;
-# 以及背包被权威改动后的 `restore_inventory` + `equip`(快照 c2 那条)。
+# 以及背包被权威改动后的 `restore_inventory` + `equip_type`(快照 c2 那条)。
 # 开局铺的那 12 把只走 `_spawn_pickup_node`,所以"开局看得见枪"不能证明拾取这条路没问题。
 #
 # 做法:真 Level0(pvp_mode → 只建世界)+ 真 Player + 一个**没入树**的 `PvpMatchClient` 实例
@@ -139,7 +139,7 @@ func _phase_pickup_removal() -> void:
 	_check(is_instance_valid(_local), "本地玩家仍有效")
 
 
-# ── ④ 权威改了背包(拾取的 c2):restore_inventory + equip ──
+# ── ④ 权威改了背包(拾取的 c2):restore_inventory + equip_type ──
 func _phase_authoritative_inventory_change() -> void:
 	print("[gc] ── ④ 权威背包变化(快照 c2 那条)──")
 	var w: WeaponComponent = _local.weapons
@@ -284,7 +284,7 @@ func _phase_switch_field_contract() -> void:
 
 # ── ⑦ 对手副本:权威说"空手"(丢光最后一把)→ 手上不能还举着 ──
 # 快照的 `weapon` 变 0 只有一种成因:服务器侧玩家把**最后一把**丢出去。原实现写作
-# `if slot > 0 and slot != ...` → 空手这一档被整个忽略,副本**一直举着那把已经不存在的枪**。
+# `if type_id > 0 and type_id != ...` → 空手这一档被整个忽略,副本**一直举着那把已经不存在的枪**。
 func _phase_replica_empty_hands() -> void:
 	print("[gc] ── ⑦ 副本:权威空手 → 手上必须空 ──")
 	var rep: Node2D = preload("res://scenes/player/player_replica.tscn").instantiate()

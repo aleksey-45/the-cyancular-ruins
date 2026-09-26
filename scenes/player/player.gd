@@ -552,8 +552,8 @@ func capture_state() -> Dictionary:
 		"winst": weapons.current_inst(),
 	}
 	# 背包整表(每条 {type, inst, mag})。★ 即便不做客户端预测也必须进整态:
-	#   restore_state 会 equip(wslot),若不先重建背包,重放时可能切到客户端背包里
-	#   **没有的类型** → 走到 equip() 的"没有就加"分支 → 凭空造出一把服务器没有的枪。
+	#   restore_state 会 equip_type(wslot),若不先重建背包,重放时可能切到客户端背包里
+	#   **没有的类型** → `equip_type` 只 push_error、**不再凭空造枪**(§4.5,2026-09-25)。
 	# ★ 与 mag/rld 同口径:只进 capture/restore,**不进** `_close_enough` 的比对
 	#   (后者是显式白名单,只比 down/hp/pos/vel —— 只要不主动加进去就自动满足)。
 	st["inv"] = weapons.snapshot_inventory()
@@ -659,21 +659,21 @@ func _inv_structure_equal(want: Array) -> bool:
 
 # 武器/弹药的权威字段回灌(restore_state 与 sync_soft_state 共用)。
 # ★ 顺序不可反:先读 wslot(此时 _current_type 还有值,可作默认),再 restore_inventory
-#   (它会把 _current_type 清 0),最后 equip。反过来的话——先 restore,wslot 的默认值
-#   就丢了;先 equip 再 restore,则 equip 是在**旧背包**上工作(凭空造枪/丢枪)。
+#   (它会把 _current_type 清 0),最后 equip_type。反过来的话——先 restore,wslot 的默认值
+#   就丢了;先 equip_type 再 restore,则 equip_type 是在**旧背包**上工作(切错枪/切不动)。
 func _apply_weapon_state(st: Dictionary) -> void:
 	var wslot := int(st.get("wslot", weapons._current_type))
 	# ★ 把"手持的是哪一把"交给 restore_inventory 按 **inst** 解析(同型号两把只有它能区分);
-	#   下面那句按类型的 `equip` 只作**兜底**(老载荷无 `winst`、或权威那把不在表里时)。
+	#   下面那句按类型的 `equip_type` 只作**兜底**(老载荷无 `winst`、或权威那把不在表里时)。
 	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
 	if wslot > 0 and wslot != weapons._current_type:
 		# 手上**实例**的类型与权威不符(`_current_type` 由 `_equip_index`/`_unequip` 维护,
 		# 即活实例的类型)→ 必须重建。这是**已有**行为,别绕开。
 		# ★★ 但重建的**落点**要分两种,`by_inst` 就是那个判别器:
-		#   · 按 `winst` 解析成功 → 走 `equip_index(下标)`。**不能**用 `equip(wslot)` ——
+		#   · 按 `winst` 解析成功 → 走 `equip_index(下标)`。**不能**用 `equip_type(wslot)` ——
 		#     后者按**类型**找第一个,同型号两把时会把刚解析对的下标**冲回第 0 把**
 		#     (本改动要修的正是这件事;实测把它写回去 ⇒ ground_client_probe ④b 当场红)。
-		#   · 按类型兜底(老载荷无 `winst`、或权威那把不在表里)→ 保**原样**走 `equip(wslot)`。
+		#   · 按类型兜底(老载荷无 `winst`、或权威那把不在表里)→ 保**原样**走 `equip_type(wslot)`。
 		#     此时手里那个下标只代表"旧类型那把",拿它重建会把权威的 wslot 顶掉
 		#     (实测:④ 那条 `切到权威的 wslot` 会红)。
 		if by_inst and weapons._current_index >= 0:
@@ -762,7 +762,7 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	_waterproof_drown_timer = 0.0
 	weapons.cancel_aim()
 	# ★ 2026-09-15(背包化):这里**不再**动背包。
-	#   原先那三行(reset_mag_state → equip(default_type()) → refill_current_weapon)是
+	#   原先那三行(reset_mag_state → equip_type(int(default_type())) → refill_current_weapon)是
 	#   "复活即回默认枪 + 满弹"的旧语义,而背包现在是**玩家资产**:单机的重开由
 	#   `Level0.restart_single` 统一重置(清空 + 重新散落),联机的复活另有规则
 	#   (除随机一把外全丢,见联机计划)。放进本函数会让两条路径互相打架 ——

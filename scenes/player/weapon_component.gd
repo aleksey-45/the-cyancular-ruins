@@ -2,7 +2,7 @@ class_name WeaponComponent
 extends Node
 
 # 武器子系统:注册表 / 背包 / 换枪 / 移动惩罚 / 后坐。枪实例挂在 body.weapon_slot 下。
-# 由根 player.gd 驱动(equip 在 _ready/换枪输入,movement_multiplier 每物理帧,
+# 由根 player.gd 驱动(equip_type 在 _ready/换枪输入,movement_multiplier 每物理帧,
 # apply_recoil 由 weapon_base 经根转发)。
 #
 # ★ 2026-09-15 起是**背包模型**:玩家有 8 格容量预算(轻2/中3/重4)与 4 把上限
@@ -39,7 +39,7 @@ const TIERS: Dictionary = {
 	6: WeaponBase.Tier.MEDIUM,   # 激光枪
 }
 
-signal weapon_changed(type_id: int)    # equip 成功后发射(菜单图标/HUD 武器显示跟随);0 = 空手
+signal weapon_changed(type_id: int)    # equip_type 成功后发射(菜单图标/HUD 武器显示跟随);0 = 空手
 signal inventory_changed()          # 背包内容变化(格子 UI 跟随)
 
 # 当前手持的**类型 id**(1-6);0 = 空手(背包为空)。
@@ -98,7 +98,7 @@ func default_type() -> String:
 
 # ── 初始背包 ──
 # 由调用方决定:单机 = 空表(开局空手,枪散落在地图上);联机 = 一条随机武器。
-# ★ 必须排在 _ready(Player 会在这里调它)里的任何 equip 之前。
+# ★ 必须排在 _ready(Player 会在这里调它)里的任何 equip_type 之前。
 func set_initial_inventory(types: Array) -> void:
 	inventory.clear()
 	_unequip()
@@ -117,7 +117,7 @@ func cycle_index(dir: int) -> void:
 	var next := _peek_cycle(dir)
 	if next < 0 or next == _current_index:
 		# 无槽可切(只有一把 / 目标即当前):早退。与 request_net_cycle 同形;
-		# 否则会白重建一次武器实例 + 响一声 switch(equip 每次都 instantiate)。
+		# 否则会白重建一次武器实例 + 响一声 switch(equip_type 每次都 instantiate)。
 		return
 	_equip_index(next)
 
@@ -191,19 +191,23 @@ func inst_at_index(index: int) -> int:
 	return int(inventory.held[index]["inst"])
 
 
-# 按**类型 id**切枪(网络包 / rollback 走这条)。
-# ★ 背包里没有这个类型就**加入** —— 这不是便利,是必需:联机不做客户端预测时,
-#   服务器说"你现在有重狙"而客户端背包里可能还没有它;restore_state 重放 wslot
-#   会走到这条路径。容量不足时也照加:权威说有什么就是什么,超容由服务器负责。
+# 按**类型 id**切枪(rollback / 权威兜底走这条)。
+# ★ 背包里没有这个类型 = **异常**,不再"顺手造一把"(§4.5,2026-09-25 改)。
+#   旧实现有一条"没有就加"(注释写着"这不是便利,是必需…服务器说'你现在有重狙'而客户端背包里
+#   可能还没有它")。§4.1 落地后这条兜底**不再需要**:客户端背包只从权威态(`inv`)重建,
+#   而 `restore_inventory` 先跑、`_apply_weapon_state` 的 `by_inst` 再判重建落点
+#   ⇒ "权威说的那把不在本地表里"只可能是**真异常**。
+#   ★ 更要紧的是:它会**静默改变背包长度**,而那正是"两端 held 不同序"的另一条产生源
+#   (§4.1 要消灭的东西)。所以这里降级成 push_error + **不加入**。
+#   ★ 单机不受影响:`pick_up` 走 `WeaponInventory.add`,不经过本函数。
 func equip_type(type_id: int) -> void:
 	if not is_type_enabled(type_id):
 		Sfx.play("deny")
 		return
 	var idx := inventory.first_index_of_type(type_id)
 	if idx < 0:
-		idx = inventory.held.size()
-		inventory.add(type_id, WeaponInventory.MAG_FULL)
-		inventory_changed.emit()
+		push_error("equip_type: 背包里没有类型 %d —— 不再凭空加入(§4.5;见本函数注释)" % type_id)
+		return
 	_equip_index(idx)
 
 
@@ -390,8 +394,8 @@ func snapshot_inventory() -> Array:
 	return inventory.snapshot()
 
 
-# 用权威整态重建背包。**必须先于 equip(wslot)** —— 否则重放时可能切到客户端
-# 背包里没有的类型,走到 equip() 的"没有就加"分支,凭空造出一把服务器没有的枪。
+# 用权威整态重建背包。**必须先于 equip_type(wslot)** —— 否则重放时可能切到客户端
+# 背包里没有的类型,`equip_type` 只 push_error、不加入(§4.5)。
 # 返回值:**是否按 `want_inst` 解析成功**(即手持下标来自权威的 `winst`)。
 # ★ 调用方靠它决定"重建实例时走下标还是走类型" —— 见 `player._apply_weapon_state`。
 #   返回 false 表示走的是**按类型**兜底(老载荷无 `winst`、或权威那把不在表里),
@@ -416,15 +420,15 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 	if idx >= 0:
 		_current_index = idx
 		# ★★ `_current_type` **保持 `keep_type`(旧类型),不要改成表里那一条的类型** ——
-		#   调用方 `player._apply_weapon_state` 靠 `wslot != _current_type` 决定**要不要 `equip()`**,
-		#   而 `equip()` 顺带**重建武器实例**。改成表里那条的类型后,同类型时那个判据恒假
+		#   调用方 `player._apply_weapon_state` 靠 `wslot != _current_type` 决定**要不要 `equip_type()`**,
+		#   而 `equip_type()` 顺带**重建武器实例**。改成表里那条的类型后,同类型时那个判据恒假
 		#   ⇒ 实例永不重建 ⇒ 被清空过背包的一方恢复后**手上没枪**,武器不再写 `set_facing`,
 		#   与权威在 `facing` 上发散(`pvp_twin_smoke` 实测 tick=255 红)。真正的类型不一致
-		#   那一档仍由调用方的 `equip(wslot)` 收尾 —— 那是**已有**行为,别绕开它。
+		#   那一档仍由调用方的 `equip_type(wslot)` 收尾 —— 那是**已有**行为,别绕开它。
 		_current_type = keep_type
 		inventory_changed.emit()
 		return by_inst
-	# 权威说手上那把没了(或本来空手)→ 清空手持,让调用方按 wslot 重新 equip
+	# 权威说手上那把没了(或本来空手)→ 清空手持,让调用方按 wslot 重新 equip_type
 	# ★ 武器实例也要放掉:只清索引的话 `_weapon` 还活着,而 `tick()`/`fire()` 只判
 	#   `_player_ok()`(player 非空且没倒地)、**不看索引** → 手上留着一把索引 -1 却照常
 	#   开火的**幽灵枪**。早先这条路径要等一次回滚才走得到,软回灌之后是常路。
@@ -454,7 +458,7 @@ func reset_mag_state() -> void:
 
 
 # ★ 2026-09-25:原 `refill_current_weapon()` / `_refill_mag()` **已删除**。它们存在的唯一理由是
-#   "`_refill_mag` 必须 deferred、且要排在 `equip()` 排下的 `_restore_mag.call_deferred` 之后" ——
+#   "`_refill_mag` 必须 deferred、且要排在 `equip_type()` 排下的 `_restore_mag.call_deferred` 之后" ——
 #   而 `_restore_mag` 这条帧末写回本身已随 `pending_mag` 一起删除(回滚不再抹掉弹数)。
 #   且全仓**没有任何生产调用点**(复活满弹由 `Level0.restart_single` 统一重置背包)。
 #   ⚠ 删掉 `_restore_mag` **不等于**弹数有了常规纠正路径:`_close_enough` 仍不比 `mag`,

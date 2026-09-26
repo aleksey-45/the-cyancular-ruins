@@ -47,7 +47,10 @@ func _check_owner_sees_own_line() -> void:
 		_check(false, "Level0 里找得到 WorldViewport/Player")
 		return
 	var wep: Node = player.weapons
-	wep.equip_type(int(HEAVY_SLOT))
+	# ★ 同 (a):必须走**发放路径**。单机开局只发一把手枪(`default_type()`),背包里**没有**重狙
+	#   ⇒ `equip_type(3)` 自 §4.5 起是 push_error + 不加入 ⇒ 这条探针会拿到手枪,
+	#   `槽 %s 是 heavy_aim 武器` 直接红(PREVIEW VISIBILITY: FAIL(1 条))。
+	wep.pick_up(int(HEAVY_SLOT), WeaponInventory.MAG_FULL)
 	await _frames(4)
 
 	var w: Node = wep.current_weapon()

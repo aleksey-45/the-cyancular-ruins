@@ -2,7 +2,7 @@ extends PlayerInput
 
 # 3v3 真链路探针(`tests/team_match_probe.*`)的脚本手柄:**一根哑手柄**。
 # 它自己不做任何决策 —— 只把观察者(`team_match_watcher.gd`)每物理帧写进来的
-# `axis` / `aim` / `attack` / 一次性边沿(jump / slot / F)报给输入读口。
+# `axis` / `aim` / `attack` / 一次性边沿(jump / switch_index / F)报给输入读口。
 #
 # ★ 为什么决策不放这儿:决策要读**真 team_game 的运行时状态**(快照里别人的位置、自己的
 #   背包、地面武器表、A* 世界网格),而观察者本来就挂在 root 上、跨换场存活、能直接读那些
@@ -43,7 +43,7 @@ func _edge_now(name: String) -> bool:
 var hold_up := false
 var hold_down := false
 
-var _slot := 0               # 背包位置(1-based)的按下边沿;'0 = 无'(整帧有效,见 _switch_index_raw)
+var _switch_index := 0       # 背包位置(1-based)的按下边沿;'0 = 无'(整帧有效,见 _switch_index_raw)
 
 
 func source_kind() -> int:
@@ -56,9 +56,9 @@ func press_jump() -> void:
 	_set_edge("jump")
 
 
-func press_slot(i: int) -> void:
-	_slot = i
-	_set_edge("slot")
+func press_switch_index(i: int) -> void:
+	_switch_index = i
+	_set_edge("switch_index")
 
 
 # ★ 本探针**从不调用它**(机器人不捡枪)。留着是因为"拾取"是输入面的一部分,删了会让
@@ -147,7 +147,7 @@ func release_attack_edge() -> void:
 func _switch_index_raw() -> int:
 	# ★ 同样整帧有效(理由见文件头那一段):`get_switch_index_pressed()` 一帧里被**本地装备**
 	#   与**上行包**各读一次 —— 读一次即清会让其中一处丢边沿(表现:切枪在服务器侧不生效)。
-	return _slot if _edge_now("slot") else 0
+	return _switch_index if _edge_now("switch_index") else 0
 
 
 func _pickup_pressed_raw() -> bool:

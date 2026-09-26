@@ -164,8 +164,11 @@ func _run_play_session(tree: SceneTree) -> void:
 	for _i in range(6):
 		_fire_once(player)
 		await tree.create_timer(0.12).timeout
-	# 打炮:切第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定
-	player.weapons.equip_type(5)
+	# 打炮:拿到第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定
+	# ★ 必须走**发放路径**(pick_up),不能走 equip_type —— 后者自 2026-09-25 起对
+	#   "背包里没有这个类型"是 push_error + 不加入(§4.5),照旧调它会**静默拿到手枪**
+	#   (打炮那段变成打手枪,榴弹自杀那一段直接不倒地),而那只是个 ERROR 日志。
+	player.weapons.pick_up(5, WeaponInventory.MAG_FULL)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):
 		_fire_once(player)

@@ -9,7 +9,7 @@ extends ProbeBase
 # 期望:打印 "KH L3 PROBE: ALL-OK" 且退出码 0。
 #
 # 存在理由:L3(换弹玩法 + 五把枪弹夹数值 + 武器槽位闸门 + 滚轮切枪 + 残弹记忆)落地后,
-# 上述新行为在 enemy_logic_smoke 里只覆盖到 equip/切枪/继承冷却,**实际装填、闸门拒绝、
+# 上述新行为在 enemy_logic_smoke 里只覆盖到 equip_type/切枪/继承冷却,**实际装填、闸门拒绝、
 # 滚轮跳过禁用槽、_mag_state 语义一条断言都没有**。本探针就是来补这个洞的。
 #
 # --quit-after 是安全网:本脚本引用 Settings/Level0/Sfx 等 autoload 标识符;若某个 autoload
@@ -173,15 +173,15 @@ func _check_gate(wep: WeaponComponent) -> void:
 	_check(slot_after_gate == 3,
 			"当前枪被禁后未自动切到背包里第一把启用的(实际槽位 %d,期望 3)" % slot_after_gate)
 
-	# equip 被闸门拒绝:槽位不变
+	# equip_type 被闸门拒绝:槽位不变
 	wep.equip_type(1)
 	await _frames(2)
 	_check(wep.current_type_id() == slot_after_gate,
-			"equip(\"1\") 未被闸门拒绝(槽位 %d → %d)" % [slot_after_gate, wep.current_type_id()])
-	# 反向锚:同样调用一次**允许**的槽位,必须真的切过去(证明"不切"不是 equip 整体坏掉)
+			"equip_type(1) 未被闸门拒绝(槽位 %d → %d)" % [slot_after_gate, wep.current_type_id()])
+	# 反向锚:同样调用一次**允许**的槽位,必须真的切过去(证明"不切"不是 equip_type 整体坏掉)
 	wep.equip_type(4)
 	await _frames(3)
-	_check(wep.current_type_id() == 4, "equip(\"4\") 应正常切换到槽4(实际 %d)" % wep.current_type_id())
+	_check(wep.current_type_id() == 4, "equip_type(4) 应正常切换到槽4(实际 %d)" % wep.current_type_id())
 
 	# 全禁 → 兜底非空(KH 的兜底是 [1]),否则出生即空手
 	wep.set_enabled_types([1, 2, 3, 4, 5, 6])
@@ -192,6 +192,21 @@ func _check_gate(wep: WeaponComponent) -> void:
 
 	wep.set_enabled_types([])   # 恢复全开
 	await _frames(3)
+
+	# ⑤ 背包里没有的类型:equip_type 不得**凭空加一把**(§4.5,2026-09-25)
+	# ★ 这条在改动前是**红**的:旧实现有一条"没有就加"的分支(注释写着"这不是便利,是必需")——
+	#   它会让 held **悄悄变长**,而那正是"两端背包不同序"的另一条产生源(§4.1 要消灭的东西)。
+	# ★ 类型选 5(榴弹发射器):此刻它**是启用的**、且**不在**背包 [1,3,4] 里 ——
+	#   两个条件缺一不可(选一个被禁的类型会被闸门先挡掉,那条分支根本走不到 ⇒ 假绿)。
+	# ★ 旧实现还会**静默超容**:1+3+4 = 8 格已经占满,再加一把重的 = 12 格,而 add() 不代替闸门。
+	var n_before := wep.inventory.held.size()
+	var t_before := wep.current_type_id()
+	wep.equip_type(5)
+	await _frames(3)
+	_check(wep.inventory.held.size() == n_before,
+			"equip_type 对背包里没有的类型**凭空加了一把**(%d → %d 把)" % [n_before, wep.inventory.held.size()])
+	_check(wep.current_type_id() == t_before,
+			"equip_type 对背包里没有的类型仍切了枪(类型 %d → %d)" % [t_before, wep.current_type_id()])
 
 
 # ── 3) 滚轮切枪:在**背包位置**之间循环,跳过被禁的类型 ──────────────
@@ -310,9 +325,9 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 			"第一把的残弹应原样保留 3(实际 %s)" % str(first_back.mag_ammo if first_back != null else "<无>"))
 
 
-# ── 5b) ★ 同帧两次 equip:未入树的枪不得被记账(残弹被抹成 0)────────────
-# 竞态(修前为真 bug):equip() 用 call_deferred("add_child", 新枪) 入树,**_ready 要到帧末才跑**,
-# 而 mag_ammo 满弹是在 _ready 里设的 → 新枪在入树前 mag_ammo 恒为 0。若同帧再 equip 一次,
+# ── 5b) ★ 同帧两次 equip_type:未入树的枪不得被记账(残弹被抹成 0)────────────
+# 竞态(修前为真 bug):equip_type() 用 call_deferred("add_child", 新枪) 入树,**_ready 要到帧末才跑**,
+# 而 mag_ammo 满弹是在 _ready 里设的 → 新枪在入树前 mag_ammo 恒为 0。若同帧再 equip_type 一次,
 # 第二次的「旧武器」正是这把未入树的枪,照记 `_mag_state[old_slot] = _weapon.mag_ammo`
 # 就把**被略过的那个中间槽**记成 0;之后切回该槽 → 只拿到 0 残弹(不是回满),fire() 靠
 # start_reload() 自愈 = 交火中白交一次 1.0~2.8s 装填。它坏掉的正是 L3 要交付的「残弹记忆」。
@@ -343,7 +358,7 @@ func _check_same_frame_cycle(wep: WeaponComponent) -> void:
 	_check(wep.current_type_id() == 1, "同帧切枪前置:未回到槽1(实际 %d)" % wep.current_type_id())
 
 	# ★ 同帧两次 cycle_index(1):位置 0 → 1 → 2,位置1(步枪)是被"略过"的中间那把。
-	# 两次调用之间**没有 await** → 第二次 equip 看到的旧武器(那把新步枪)还没入树。
+	# 两次调用之间**没有 await** → 第二次 equip_type 看到的旧武器(那把新步枪)还没入树。
 	wep.cycle_index(1)
 	wep.cycle_index(1)
 	await _frames(3)

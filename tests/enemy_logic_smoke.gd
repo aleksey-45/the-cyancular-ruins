@@ -455,7 +455,7 @@ func _phase_equip_switch() -> void:
 		await physics_frame
 		_check(p.weapons._weapon.weapon_name == "Rifle", "切枪到步枪")
 		# 切枪冷却继承:旧武器剩余冷却不能被切枪刷掉。
-		# equip() 同步执行,不 await(否则 _process 已扣掉一帧冷却)。
+		# equip_type() 同步执行,不 await(否则 _process 已扣掉一帧冷却)。
 		p.weapons._weapon.fire_cd_timer = 0.7
 		p.weapons.equip_type(1)
 		_check(is_equal_approx(p.weapons._weapon.fire_cd_timer, 0.7), "切枪继承剩余冷却")
@@ -1124,7 +1124,7 @@ func _phase_weapon_registry() -> void:
 
 	# ① 三个注册表键集相同
 	# ★ 必须**归一化成 int** 再比:WEAPONS 的键是字符串("1".."6",因为装备路径是
-	#   equip(str(slot)) → load(WEAPONS[slot])),而 DISPLAY_NAMES / TIERS 的键是整数。
+	#   equip_type(type_id) → load(WEAPONS[str(type_id)])),而 DISPLAY_NAMES / TIERS 的键是整数。
 	#   直接比数组会永远不等 —— 而"永远不等"看起来像真发现了漏填,其实是类型没归一。
 	var keys_w: Array = (wc.WEAPONS as Dictionary).keys().map(func(k): return int(k))
 	var keys_n: Array = (wc.DISPLAY_NAMES as Dictionary).keys().map(func(k): return int(k))
