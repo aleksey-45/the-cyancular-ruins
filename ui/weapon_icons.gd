@@ -7,8 +7,8 @@ extends RefCounted
 # 后坐/残弹记忆),与渲染毫无关系;而这两个函数的消费者**全是 UI**:lobby_page 的禁用武器网格、
 # main_menu 的选枪栏、ui/hud 的左下角武器显示。2026-09-15 阶段 4.1 拆出来。
 #
-# ★ 数据仍来自 `WeaponComponent`:WEAPONS(槽位→场景路径)与 DISPLAY_NAMES(中文名)是注册表的
-#   单一来源,本文件**不复制一份**(复制了就会出现「加了新武器只有一边知道」)。
+# ★ 数据来自 `WeaponRegistry`(唯一来源 `data/weapons.json`):场景路径与中文名都在那里,
+#   本文件**不复制一份**(复制了就会出现「加了新武器只有一边知道」)。
 
 
 # 纯白像素剪影缓存(type_id → Texture2D):从武器场景的 Sprite2D 图集切片,
@@ -19,7 +19,8 @@ static func silhouette(type_id: int) -> Texture2D:
 	if _silhouette_cache.has(type_id):
 		return _silhouette_cache[type_id]
 	var tex: Texture2D = null
-	var scene: PackedScene = load(WeaponComponent.WEAPONS.get(str(type_id), "")) if WeaponComponent.WEAPONS.has(str(type_id)) else null
+	var scene_path := WeaponRegistry.scene_of(type_id)
+	var scene: PackedScene = load(scene_path) if not scene_path.is_empty() else null
 	if scene != null:
 		var inst := scene.instantiate()
 		var sprites := inst.find_children("*", "Sprite2D", true, false)
@@ -66,6 +67,6 @@ static func make_weapon_check(type_id: int, checked: bool, font_size: int, on_to
 	# 走 UiFactory:它同时写 font 与 font_size 两个 override。原先只写字号 → 本行文字
 	# 落回默认主题字体,与同页面其它 Label(像素字体)不一致。
 	# ★ 不带编号(理由同上)。`font_size` 的**实参位置不动** —— kh_l4_probe 按下标 1 取它。
-	var l := UiFactory.label(WeaponComponent.DISPLAY_NAMES[type_id], font_size)
+	var l := UiFactory.label(WeaponRegistry.name_of(type_id), font_size)
 	cell.add_child(l)
 	return cell

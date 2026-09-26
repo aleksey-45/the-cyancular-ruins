@@ -103,8 +103,8 @@ func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) 
 	wgrid.add_theme_constant_override("h_separation", h_sep)
 	wgrid.add_theme_constant_override("v_separation", 6)
 	parent.add_child(wgrid)
-	# 显式 int:循环变量来自字面量数组,`var type_i := type_id` 推断不出类型会整文件解析失败
-	for type_id: int in [1, 2, 3, 4, 5, 6]:
+	# 显式 int:入库的是 Array[int],循环变量跟着同类型,别让它退化成 Variant。
+	for type_id: int in WeaponRegistry.all_ids():
 		var type_i := type_id
 		var cell := WeaponIcons.make_weapon_check(type_i, Settings.pvp_disabled_weapons.has(type_i),
 				32, func(on: bool) -> void:

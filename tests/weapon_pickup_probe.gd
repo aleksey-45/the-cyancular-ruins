@@ -99,7 +99,7 @@ func _phase_collision_shape() -> void:
 #   (6,3)×WORLD_SCALE = (15, 7.5) 世界像素 —— 而拾取半径只有 64px,且**不报错**。
 #   只测手枪(上面那一相)是抓不到的:手枪的根节点本来就是零变换。
 func _phase_all_weapons_centered() -> void:
-	for t in WeaponComponent.WEAPONS.keys():
+	for t in WeaponRegistry.all_ids():
 		var type_id := int(t)
 		var pk: WeaponPickup = load(PICKUP_SCENE).instantiate()
 		pk.configure(type_id, type_id, 12, Vector2.ZERO)
@@ -319,7 +319,7 @@ func _check_pickup_visual(pk: WeaponPickup, tag: String) -> void:
 		return
 	_check(spr.texture != null, "%s:Sprite2D 应有贴图" % tag)
 	# 视觉必须是**请求的那个型号**:槽 5 是榴弹发射器,而 tscn 的 @export 默认是手枪
-	var want: PackedScene = load(WeaponComponent.WEAPONS[str(pk.type_id)])
+	var want: PackedScene = load(WeaponRegistry.scene_of(int(pk.type_id)))
 	_check(want != null, "%s:注册表里应有槽 %d 的场景" % [tag, pk.type_id])
 	if want == null:
 		return

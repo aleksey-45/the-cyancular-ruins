@@ -27,10 +27,11 @@ var _ground_nodes: Dictionary = {}     # inst -> WeaponPickup(服务器侧;headl
 var _self_drop_until: Dictionary = {}  # role -> {inst: 解禁时刻(ms)},防"丢完立刻捡回"
 
 
-# 本局投放的武器类型清单:每种 2 把,跳过被禁的槽位。
+# 本局投放的武器类型清单:每种 2 把,跳过被禁的类型。
+# ★ 与单机 `Level0._default_weapon_types` **同源**(都取注册表),差别只在禁用表是哪个。
 func _server_weapon_types() -> Array:
 	var out: Array = []
-	for type_id in [1, 2, 3, 4, 5, 6]:
+	for type_id in WeaponRegistry.all_ids():
 		if not _disabled_weapons.has(type_id):
 			out.append(type_id)
 			out.append(type_id)

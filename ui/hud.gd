@@ -262,7 +262,10 @@ func _refresh_weapon_boxes() -> void:
 			_weapon_name = Label.new()
 			UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)
 			_weapon_name.add_theme_color_override("font_color", UiFactory.C_TEXT)
-			_weapon_name.text = WeaponComponent.DISPLAY_NAMES.get(t, "空手")
+			# ★ 兜底留着的理由:`t` 来自**背包条目**(上面那行),不是来自注册表 ——
+			#   老存档/异常背包里可能有注册表已删掉的 id,那种时候显示"空手"而不是空串。
+			var nm := WeaponRegistry.name_of(t)
+			_weapon_name.text = nm if not nm.is_empty() else "空手"
 			info.add_child(_weapon_name)
 			_ammo_label = Label.new()
 			UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)

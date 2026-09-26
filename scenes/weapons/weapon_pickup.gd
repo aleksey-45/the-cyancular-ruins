@@ -98,7 +98,8 @@ func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
 
 
 func _build_visual() -> void:
-	var scene: PackedScene = load(WeaponComponent.WEAPONS.get(str(type_id), ""))
+	var scene_path := WeaponRegistry.scene_of(type_id)
+	var scene: PackedScene = load(scene_path) if not scene_path.is_empty() else null
 	if scene == null:
 		push_warning("WeaponPickup: 槽 %d 没有武器场景,地面掉落物将是空壳" % type_id)
 		return

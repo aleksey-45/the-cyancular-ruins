@@ -497,11 +497,12 @@ func _give_starting_weapon(p: Node) -> void:
 	p.weapons.set_initial_inventory([int(p.weapons.default_type())])
 
 
-# 单机初始武器清单:每种 2 把,跳过本局被禁的槽位。
+# 单机初始武器清单:每种 2 把,跳过本局被禁的类型。
 # (禁用武器不该出现在地图上 —— 与 set_enabled_types 同源:RunOptions.disabled_weapons)
+# ★ 清单来自注册表(json 顺序 = 散落顺序)。加第 7 把枪只改 json,这里一个字不动。
 func _default_weapon_types() -> Array:
 	var out: Array = []
-	for type_id in [1, 2, 3, 4, 5, 6]:
+	for type_id in WeaponRegistry.all_ids():
 		if not RunOptions.disabled_weapons.has(type_id):
 			out.append(type_id)
 			out.append(type_id)

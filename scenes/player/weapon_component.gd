@@ -12,32 +12,10 @@ extends Node
 #   (match_snapshot)、capture_state 的 wslot、PlayerReplica._swap_weapon 全按类型 id 走
 #   —— 协议与副本因此零改动。背包位置只用于本地按键/滚轮。
 
-const WEAPONS: Dictionary = {
-	"1": "res://scenes/weapons/pistol_test.tscn",
-	"2": "res://scenes/weapons/rifle_test.tscn",
-	"3": "res://scenes/weapons/m82a1.tscn",
-	"4": "res://scenes/weapons/s686.tscn",
-	"5": "res://scenes/weapons/grenade_launcher.tscn",
-	"6": "res://scenes/weapons/laser_gun.tscn",
-}
-
-# 武器显示名(菜单选择栏 / HUD 左下角共用,单一来源)
-const DISPLAY_NAMES: Dictionary = {1: "手枪", 2: "步枪", 3: "重狙 M82A1", 4: "霰弹 S686", 5: "榴弹发射器", 6: "激光枪"}
-
-# 武器重量档(轻/中/重),决定占几格容量(见 WeaponInventory.CELL_COST:轻2/中3/重4)。
-# ★ 与各 .tscn 的 `tier =` export **刻意重复** —— 这份表让"这枪多重"不必实例化武器场景
-#   就能问(实例化会连带 preload bullet.tscn)。漂移由 enemy_logic_smoke 的
-#   `_phase_weapon_registry` 逐条钉住(键集 / tscn export / 枚举数值三样都比)。
-# ★ 加新武器时**这里也要加一行** —— 漏了的表现是**容量算错**(轻武器被当成重武器,
-#   8 格只能带两把),而且完全不报错,是三条注册表里最难发现的一条。
-const TIERS: Dictionary = {
-	1: WeaponBase.Tier.LIGHT,    # 手枪
-	2: WeaponBase.Tier.MEDIUM,   # 步枪
-	3: WeaponBase.Tier.HEAVY,    # 重狙 M82A1
-	4: WeaponBase.Tier.LIGHT,    # 霰弹 S686
-	5: WeaponBase.Tier.HEAVY,    # 榴弹发射器
-	6: WeaponBase.Tier.MEDIUM,   # 激光枪
-}
+# ★★ 本文件从前有三张 GDScript 常量表(场景路径 / 显示名 / 重量档),2026-09-26 已**整体删除**
+#   —— 它们现在只在 `data/weapons.json` 里,唯一来源是 `core/sim/weapon_registry.gd`
+#   (`WeaponRegistry`)。这里**不留任何一份副本**:留一张就会与 json 分家,而"加第 7 把枪
+#   只改一个 json"正是本计划要买到的东西(守卫 = enemy_logic_smoke 的 ⑤b)。
 
 signal weapon_changed(type_id: int)    # equip_type 成功后发射(菜单图标/HUD 武器显示跟随);0 = 空手
 signal inventory_changed()          # 背包内容变化(格子 UI 跟随)
@@ -49,9 +27,13 @@ var _weapon: WeaponBase = null
 var inventory: WeaponInventory
 var body: CharacterBody2D
 
-# 启用的武器槽位(1-6)。单机由 Level0 按 RunOptions 设置;PvP 由客户端按服务器
-# 下发的 match_options 设置。数字键/滚轮切枪都会跳过禁用槽位。
-var enabled_types: Array = [1, 2, 3, 4, 5, 6]
+# 启用的武器**类型 id**。默认全开 = 注册表里全部 id(**在 `_init` 里赋值** —— 不在这里);
+# 单机由 Level0 按 RunOptions 设置;PvP 由客户端按服务器下发的 match_options 设置。
+# 数字键/滚轮切枪都会跳过被禁的类型。
+# ★ 从前这里是硬编码的 `[1, 2, 3, 4, 5, 6]`:加第 7 把枪时漏改它,新枪**永远拿不到也开不了**,
+#   且**完全不报错**。赋值搬进 `_init` 不是风格偏好 —— `ScanUtil.func_body` 断言不了
+#   class 级的 `var`,只有把它放进函数体, ⑥ 那条守卫才存在。
+var enabled_types: Array = []
 
 # ★ 武器**图标与选择格**(silhouette / make_weapon_check)不在这里 —— 它们是纯 UI,
 #   2026-09-15 阶段 4.1 搬去了 `ui/weapon_icons.gd`(WeaponIcons)。
@@ -60,7 +42,13 @@ var enabled_types: Array = [1, 2, 3, 4, 5, 6]
 
 func _init() -> void:
 	# 在 _init 而不是 _ready 建:探针会 new() 出组件直接调方法,不一定入树。
-	inventory = WeaponInventory.new(TIERS)
+	inventory = WeaponInventory.new(WeaponRegistry.tiers_map())
+	# ★★ **默认启用表必须在构造期就填好,且必须走 `all_ids()`** —— 两件事都只在这一行成立:
+	#   ① ⑦(`comp.enabled_types == registry.all_ids()`)读的是**刚 new() 出来**的组件;
+	#   ② Task 1 的 ⑥ 锚在**函数体**上:`ScanUtil.func_body` 表达不了 class 级的 `var`,
+	#      所以上面那条 `var enabled_types: Array = [...]` 必须**先是空表**,
+	#      再由这一行填 —— 只把那条 var 改成 `all_ids()` 会让 ⑤ 绿、⑥ 红。
+	enabled_types = WeaponRegistry.all_ids()
 
 
 func _ready() -> void:
@@ -68,9 +56,13 @@ func _ready() -> void:
 
 
 func set_enabled_types(disabled: Array[int]) -> void:
-	enabled_types = [1, 2, 3, 4, 5, 6].filter(func(s: int) -> bool: return not disabled.has(s))
+	enabled_types = WeaponRegistry.all_ids().filter(func(t: int) -> bool: return not disabled.has(t))
 	if enabled_types.is_empty():
-		enabled_types = [1]   # 不允许全禁:至少留手枪
+		# 不允许全禁:至少留**注册表里的第一把**(今天 = 1 号手枪)。
+		# ★ 这里从前写死 `[1]`。注册表化之后"手枪"这个概念只活在 json 的顺序里,
+		#   写死一个 id 会在将来重排 json / 删号时**静默**指到别的枪。
+		var ids := WeaponRegistry.all_ids()
+		enabled_types = [ids[0]] if not ids.is_empty() else []
 	# 当前拿着的枪被禁 → 切到背包里第一把没被禁的;没有就空手
 	if _current_type > 0 and not is_type_enabled(_current_type):
 		var fallback := _first_enabled_index()
@@ -246,9 +238,10 @@ func _equip_index(index: int) -> void:
 		_weapon.queue_free()
 		_weapon = null
 	var type_id := int(inventory.held[index]["type"])
-	var scene: PackedScene = load(WEAPONS.get(str(type_id), ""))
+	var scene_path := WeaponRegistry.scene_of(type_id)
+	var scene: PackedScene = load(scene_path) if not scene_path.is_empty() else null
 	if scene == null:
-		push_error("weapon scene not found: " + str(WEAPONS.get(str(type_id), "<无此槽>")))
+		push_error("weapon scene not found: id=%d(%s)" % [type_id, scene_path])
 		return
 	if body == null or body.weapon_slot == null:
 		push_error("weapon_slot not assigned")

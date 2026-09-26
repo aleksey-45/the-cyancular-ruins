@@ -197,7 +197,7 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, _tick: int) -> void
 	# 武器:槽位变了才重建(玩家每次换枪服务器快照带新槽位)。
 	# ★ `type_id == 0`(空手)必须与"换了一把"同等对待 —— 那是服务器侧玩家把**最后一把**丢出去的
 	#   那一刻。原先写成 `type_id > 0 and type_id != ...`,空手这一档被整个忽略 → 副本**一直举着那把
-	#   已经不存在的枪**。`_swap_weapon(0)` 本来就是写好的空手路径(`WEAPONS` 查不到 → 留空),
+	#   已经不存在的枪**。`_swap_weapon(0)` 本来就是写好的空手路径(注册表查不到 → 留空),
 	#   原先只是进不去。开局人手一把,所以"对手把枪丢了"几乎必然命中它;握两把以上时丢一把会
 	#   自动换到另一把(type_id 变了,照常重建)—— 这也正是它一直没被发现的原因。
 	var type_id := int(data.get("type_id", 0))
@@ -235,8 +235,8 @@ func _swap_weapon(type_id: int) -> void:
 	if _weapon != null:
 		_weapon.queue_free()
 		_weapon = null
-	var scene_path: String = WeaponComponent.WEAPONS.get(str(type_id), "")
-	if scene_path == "":
+	var scene_path: String = WeaponRegistry.scene_of(type_id)
+	if scene_path.is_empty():
 		return
 	var scene: PackedScene = load(scene_path)
 	if scene == null:

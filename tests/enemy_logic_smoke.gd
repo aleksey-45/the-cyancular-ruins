@@ -1102,14 +1102,27 @@ func _phase_collision_aabb() -> void:
 	e.free()
 
 
-# ── 武器注册表三条对齐(2026-09-15,武器槽位计划 Task 2)──
-# 加新武器时漏填注册表的表现各不相同:
-#   WEAPONS 漏 → 切枪时 load("") 报错(响);DISPLAY_NAMES 漏 → HUD 显示 "?"(看得见);
+const REGISTRY_SRC := "res://core/sim/weapon_registry.gd"
+const REGISTRY_JSON := "res://data/weapons.json"
+# json 的 tier 字符串 → 数值。★ 这是**探针自己**的一份口径,刻意不引注册表 ——
+#   本相要在"注册表文件还不存在"时也跑得出干净的断言(见下面 wr 的取法)。
+#   它与 WeaponBase.Tier 的对齐由本相 ③ 钉着。
+const TIER_STRINGS := {"light": 0, "medium": 1, "heavy": 2}
+
+
+# ── 武器注册表单一来源(data/weapons.json,2026-09-25)──
+# 旧口径(三张 GDScript 常量表)下,加新武器时漏填的表现各不相同:
+#   WEAPONS 漏 → 切枪时 load("") 报错(响);DISPLAY_NAMES 漏 → HUD 显示空(看得见);
 #   TIERS 漏 → **容量算错**(轻武器被当成重武器,8 格只能带两把),完全不报错。
-# 第三条最容易漏,所以三条一起钉。
+# 现在三样都在**同一份 json 的同一行**里,结构性地不可能漏一半;但"改了 json 忘了改
+# tscn 的 tier export"仍然可能(两份数据刻意重复,与 `data/enemies.json` 同构),故逐条比。
 #
-# ★ 用 get_script_constant_map() 而不是脚本上直接取属性:常量不存在时属性访问会抛运行时错,
-#   而 -s 脚本里抛错走不到 quit() → **进程永久挂起**(本仓踩过)。这里先查表再取值。
+# ★★ 为什么用 `load()` 拿到 GDScript 再调它的**静态函数**,而不直接写 `WeaponRegistry.xxx()`:
+#   本文件是 `-s` 冒烟,而**全局类名在文件不存在时会让整个脚本 Parse Error** ⇒ 一条断言都
+#   跑不到、进程挂死(`-s` 脚本抛错走不到 quit(),本仓踩过)。`load()` + 空守卫让"文件还没建"
+#   表现为**干净的红**,而不是超时。
+#   ★ 静态函数**可以**在 GDScript 对象上调:引擎 `modules/gdscript/gdscript.cpp:928-940` 的
+#   `GDScript::callp` 就是查 `member_functions` 并 `ERR_FAIL` 掉非 static 的那一个。
 func _phase_weapon_registry() -> void:
 	var wc: GDScript = load("res://scenes/player/weapon_component.gd")
 	var wi: GDScript = load("res://core/sim/weapon_inventory.gd")
@@ -1117,46 +1130,177 @@ func _phase_weapon_registry() -> void:
 	_check(wc != null and wi != null and wb != null, "武器注册表三件套可加载")
 	if wc == null or wi == null or wb == null:
 		return
-	var consts: Dictionary = wc.get_script_constant_map()
-	_check(consts.has("TIERS"), "WeaponComponent 有 TIERS 注册表")
-	if not consts.has("TIERS"):
-		return
 
-	# ① 三个注册表键集相同
-	# ★ 必须**归一化成 int** 再比:WEAPONS 的键是字符串("1".."6",因为装备路径是
-	#   equip_type(type_id) → load(WEAPONS[str(type_id)])),而 DISPLAY_NAMES / TIERS 的键是整数。
-	#   直接比数组会永远不等 —— 而"永远不等"看起来像真发现了漏填,其实是类型没归一。
-	var keys_w: Array = (wc.WEAPONS as Dictionary).keys().map(func(k): return int(k))
-	var keys_n: Array = (wc.DISPLAY_NAMES as Dictionary).keys().map(func(k): return int(k))
-	var keys_t: Array = (consts["TIERS"] as Dictionary).keys().map(func(k): return int(k))
-	keys_w.sort()
-	keys_n.sort()
-	keys_t.sort()
-	_check(not keys_w.is_empty(), "WEAPONS 注册表非空")
-	_check(keys_w == keys_n, "WEAPONS 与 DISPLAY_NAMES 键集相同(归一化后)")
-	_check(keys_w == keys_t, "WEAPONS 与 TIERS 键集相同(归一化后)")
+	# ── ① 注册表文件到位 ──
+	var json_text := FileAccess.get_file_as_string(REGISTRY_JSON)
+	_check(not json_text.is_empty(), "读得到 " + REGISTRY_JSON + "(读不到 = 文件还没建)")
+	var wr: GDScript = null
+	if ResourceLoader.exists(REGISTRY_SRC):
+		wr = load(REGISTRY_SRC)
+	_check(wr != null, "core/sim/weapon_registry.gd 存在且可加载")
 
-	# ② TIERS 与各 .tscn 的 tier = export 逐条一致
-	#    两份数据是**刻意重复**的:不实例化武器场景就问得到"这枪多重"(实例化会连带 preload
-	#    bullet.tscn)。代价就是要靠这条断言兜住漂移。
-	for k in keys_w:
-		var slot := int(k)
-		var scene: PackedScene = load(wc.WEAPONS[str(slot)])
-		_check(scene != null, "槽 %d 的武器场景可加载" % slot)
-		if scene == null:
-			continue
-		var inst: Node = scene.instantiate()
-		_check(int(inst.tier) == int((consts["TIERS"] as Dictionary)[slot]),
-				"槽 %d 的 tscn tier 与 WEAPONS/TIERS 注册表一致" % slot)
-		inst.free()
+	# ── ② json ↔ 各 .tscn 的 tier export ↔ 枚举值(逐条对账)──
+	var rows := {}   # id -> {name, tier, scene}
+	if not json_text.is_empty():
+		var parsed: Variant = JSON.parse_string(json_text)
+		var ok_shape := typeof(parsed) == TYPE_DICTIONARY and (parsed.get("weapons", []) is Array)
+		_check(ok_shape, "weapons.json 顶层是 {\"weapons\": [...]}")
+		if ok_shape:
+			for raw in parsed["weapons"]:
+				if typeof(raw) != TYPE_DICTIONARY:
+					_check(false, "每条都应是对象(实际 %s)" % str(raw))
+					continue
+				var e: Dictionary = raw
+				# ★ 用 `int(...)` 归一化:JSON 的数字在 GDScript 里解析成 float,
+				#   不归一化的话 `rows.has(id)` 会永远假(1.0 != 1),而 `row.size()` 却是对的 ——
+				#   那种"一半对一半错"最难查。
+				var id := int(e.get("id", 0))
+				var tier_s := str(e.get("tier", ""))
+				var scene_path := str(e.get("scene", ""))
+				var wname := str(e.get("name", ""))
+				_check(id > 0, "id 是正整数(实际 %s)" % str(e.get("id")))
+				_check(not rows.has(id), "id %d 不重复" % id)
+				_check(not wname.is_empty(), "id %d 有 name" % id)
+				_check(TIER_STRINGS.has(tier_s), "id %d 的 tier 是三值之一(实际 \"%s\")" % [id, tier_s])
+				var tscene: PackedScene = load(scene_path)
+				_check(tscene != null, "id %d 的 scene 能 load(%s)" % [id, scene_path])
+				if tscene != null:
+					var inst: Node = tscene.instantiate()
+					var want_tier := int(TIER_STRINGS.get(tier_s, -1))
+					_check(int(inst.tier) == want_tier,
+							"id %d:tscn 的 tier(%d)必须等于 json 的 \"%s\"(%d)" % [
+								id, int(inst.tier), tier_s, want_tier])
+					inst.free()
+				rows[id] = {"name": wname, "tier": tier_s, "scene": scene_path}
+	# ★ 这一条**放在 if 外面**:json 文件缺席时它也要红(否则"文件没建"这件事只有上面
+	#   那一条在报,而"json 建了但一条都不合格"这条路径就没有守卫)。
+	_check(rows.size() > 0, "json 至少有 1 条合格条目(实际 %d)" % rows.size())
 
-	# ③ WeaponInventory 的 tier 常量与 WeaponBase.Tier 数值对齐
-	#    (wi 刻意不 import weapon_base,所以这条对齐是**约定**而不是编译器保证的)
+	# ── ③ 注册表的查询结果 == 上面那份 json(防"json 对、注册表映射写错")──
+	if wr != null:
+		var reg_ids: Array = wr.all_ids()
+		_check(reg_ids.size() == rows.size(),
+				"注册表条数应等于 json 合格条数(%d vs %d)" % [reg_ids.size(), rows.size()])
+		for id in rows:
+			var r: Dictionary = rows[id]
+			_check(int(wr.tier_of(int(id))) == int(TIER_STRINGS[r["tier"]]),
+					"tier_of(%d) 应 = %d(实际 %d)" % [id, int(TIER_STRINGS[r["tier"]]), int(wr.tier_of(int(id)))])
+			_check(str(wr.scene_of(int(id))) == str(r["scene"]),
+					"scene_of(%d) 应 = %s(实际 %s)" % [id, str(r["scene"]), str(wr.scene_of(int(id)))])
+			_check(str(wr.name_of(int(id))) == str(r["name"]),
+					"name_of(%d) 应 = %s(实际 %s)" % [id, str(r["name"]), str(wr.name_of(int(id)))])
+			_check(wr.has(int(id)), "has(%d) 为真" % id)
+			_check(not wr.has(int(id) + 9000), "has(%d) 为假(越界 id 不该命中)" % (int(id) + 9000))
+		var want_map := {}
+		for id in rows:
+			want_map[id] = int(TIER_STRINGS[(rows[id] as Dictionary)["tier"]])
+		var got_map: Dictionary = wr.tiers_map()
+		var map_ok := got_map.size() == want_map.size()
+		for id in want_map:
+			if int(got_map.get(id, -1)) != int(want_map[id]):
+				map_ok = false
+		_check(map_ok, "tiers_map() 与 json 逐条一致(实际 %s、期望 %s)" % [str(got_map), str(want_map)])
+
+	# ── ④ WeaponInventory 的 tier 常量与 WeaponBase.Tier 数值对齐(旧版原有,一处没动)──
+	#    (wi 刻意不 import weapon_base,所以这条对齐是**约定**而不是编译器保证的。
+	#     WeaponRegistry.TIER_NAMES 直接复用 wi.TIER_*,故本相 ③ 的比对已覆盖它。)
 	_check(int(wi.TIER_LIGHT) == int(wb.Tier.LIGHT), "TIER_LIGHT 与 WeaponBase.Tier.LIGHT 对齐")
 	_check(int(wi.TIER_MEDIUM) == int(wb.Tier.MEDIUM), "TIER_MEDIUM 与 WeaponBase.Tier.MEDIUM 对齐")
 	_check(int(wi.TIER_HEAVY) == int(wb.Tier.HEAVY), "TIER_HEAVY 与 WeaponBase.Tier.HEAVY 对齐")
+	# ★ 下面两条**原样保留**(旧版 `:1158-1159`)。它们是"容量 8 / 把数上限 4 是游戏规则"
+	#   的钉子,归**计划 4**(容量/把数可配)改判据 —— 那时它们会改成读
+	#   `DEFAULT_CAPACITY` / `DEFAULT_MAX_WEAPONS`。本计划**别删**它们。
 	_check(int(wi.MAX_WEAPONS) == 4, "WeaponInventory.MAX_WEAPONS == 4")
 	_check(int(wi.CAPACITY) == 8, "WeaponInventory.CAPACITY == 8")
+
+	# ── ⑤ 生产代码里不得再有硬编码的武器 id 列表 ──
+	# 6 个字面量 / 5 个文件(weapon_component.gd 里有两处)全部改问 all_ids() 之后,本相零命中。
+	# ★ 判据用**剥注释 + 去空格**的视图:`[1,2,3,4,5,6]`(无空格)也要挡住。
+	# ★ 只扫生产目录(scenes/core/server/ui):tests 里的 `[1, 2, 3, 4, 5, 6]` 有合法的
+	#   **role 列表**用途(`team_host_probe.gd:373,421`、`team_spawn_smoke.gd:28,36`),扫进
+	#   tests 会恒红 —— 唯一例外(`kh_l3_probe.gd:187` 那处真是武器列表)由 Task 4 点名处理。
+	var offenders: Array = []
+	for path in ScanUtil.collect(["res://scenes", "res://core", "res://server", "res://ui"]):
+		var src := ScanUtil.read(path)
+		if src.is_empty():
+			continue
+		if ScanUtil.code_only(src).replace(" ", "").contains("[1,2,3,4,5,6]"):
+			offenders.append(path)
+	_check(offenders.is_empty(),
+			"生产代码里不得再有硬编码的武器 id 列表(命中:%s)" % str(offenders))
+
+	# ── ⑤b 那三张表必须**被删掉**,不是被绕过(2026-09-26 补:本相才是"本计划成败判据"的守卫)──
+	# ★★ 为什么单开一条、而且它比 ⑤/⑥ 都重要:
+	#   ⑤ 的判据是 `contains("[1,2,3,4,5,6]")`,而那三张表的键/值是 `"1".."6"` 与 `1..6:` ——
+	#   **一个 `[1, 2, 3, 4, 5, 6]` 字面量都不含** ⇒ 表就算原样留着,⑤ 也全绿。
+	#   ⑥ 只覆盖**六处循环/初始化的宿主**(`_default_weapon_types` / `_add_weapon_grid` /
+	#   `_fill_sp_panel` / `_server_weapon_types` / `_init` / `set_enabled_types`);
+	#   而三张表还有**五个真正的读点**不在⑥ 里 ——
+	#     `scenes/player/player_replica.gd`(对手手里的枪外观)
+	#     `scenes/weapons/weapon_pickup.gd`(地面武器的视觉)
+	#     `ui/weapon_icons.gd`(剪影 + 选择格上的名字)
+	#     `ui/hud.gd`(左下角武器名)
+	#   ⇒ **只把⑥ 的六处接上注册表、留下三张表**的"半迁移"会让本计划的承诺
+	#   (「加第 7 把枪只改一个 json」)**静默失效**:菜单/散落里出现了 7 号枪,
+	#   而它在对手手里、在地上、在图标与 HUD 名字上**全都不存在**,且一条断言都不红。
+	# ★ 为什么"断言表被删"就**足够**、不必逐点断言读点改对了:
+	#   表一删,任何**没**改到注册表的读点当场是 **Parse Error**(类常量不存在)——
+	#   响亮、定位精确、无法静默绕过。⇒ 这一条 + 编译器合起来就把"删干净"钉死了。
+	# ★ 判据必须用 `\b…\b`,**不能**用裸 `contains()` —— 裸的会踩 `MAX_WEAPONS`:
+	#   `const MAX_WEAPONS := 4` 含子串 `WEAPONS` ⇒ 恒红,而它是**该留**的常量名
+	#   (计划 4 之后叫 `DEFAULT_MAX_WEAPONS`,一样含)。
+	#   PCRE 的 `\w` 含下划线 ⇒ `\bWEAPONS\b` 不命中 `MAX_WEAPONS`。
+	# ★ `ScanUtil.read` 读不到时返回 `""` ⇒ 这里 `continue`(跳过)。目录扫描可以接受这个形状
+	#   (文件是同一次 walk 列出来的,列得出就读得到);⑥ 那 6 个**具名**文件则另有显式的
+	#   "读不到就红"。
+	var re_tbl := RegEx.create_from_string("\\b(WEAPONS|DISPLAY_NAMES|TIERS)\\b")
+	var stale_tables: Array = []
+	for path in ScanUtil.collect(["res://scenes", "res://core", "res://server", "res://ui"]):
+		var code := ScanUtil.code_only(ScanUtil.read(path))
+		if code.is_empty():
+			continue
+		for m in re_tbl.search_all(code):
+			stale_tables.append("%s::%s" % [path, m.get_string(1)])
+	_check(stale_tables.is_empty(),
+			"那三张旧表必须**删掉**(不是绕过);命中(文件::表名)= %s" % str(stale_tables))
+
+	# ── ⑥ 六处字面量的**宿主**确实改问了注册表 ──
+	# ★ ⑤ 挡的是"还留着老写法",⑥ 挡的是"新写法没接上" —— 只有 ⑤ 时,把
+	#   `_default_weapon_types` 整个删掉(或改成 `return []`)照样全绿。
+	# ★ 按**函数体**判,不按整文件 contains:同一文件里别处出现 `all_ids()` 不能替这一处背书
+	#   (level_0.gd 有 600+ 行)。
+	var sites := [
+		{"path": "res://scenes/level_0.gd", "func": "_default_weapon_types"},
+		{"path": "res://scenes/lobby_page.gd", "func": "_add_weapon_grid"},
+		{"path": "res://scenes/main_menu.gd", "func": "_fill_sp_panel"},
+		{"path": "res://server/match_ground.gd", "func": "_server_weapon_types"},
+		{"path": "res://scenes/player/weapon_component.gd", "func": "_init"},
+		{"path": "res://scenes/player/weapon_component.gd", "func": "set_enabled_types"},
+	]
+	for s in sites:
+		var src := ScanUtil.read(s["path"])
+		if src.is_empty():
+			_check(false, "读到 %s(读不到就是红,不是静默跳过)" % s["path"])
+			continue
+		var body := ScanUtil.func_body(ScanUtil.code_only(src), s["func"])
+		if body.is_empty():
+			_check(false, "在 %s 里找到函数 %s()" % [s["path"], s["func"]])
+			continue
+		_check(body.contains("WeaponRegistry.all_ids()"),
+				"%s 的 %s() 应改用 WeaponRegistry.all_ids()" % [s["path"], s["func"]])
+
+	# ── ⑦ 覆盖性:默认启用表必须**等于**注册表全部 id ──
+	# 这是 spec §4.2 点名要加、而今天**没有**的那条守卫。
+	# ★ 三处散落/菜单/禁用网格现在都从 all_ids() 取数 ⇒ "覆盖"是构造性的(由 ⑥ 保证);
+	#   真正会漂的是**默认启用表** —— 它今天是一条硬编码的 `[1, 2, 3, 4, 5, 6]`,
+	#   加第 7 把枪时漏改它,新枪**永远拿不到也开不了**,而**完全不报错**。
+	if wr != null:
+		var want_ids: Array = wr.all_ids()
+		var comp = wc.new()
+		_check(comp.enabled_types == want_ids,
+				"默认启用表必须等于注册表全部 id(实际 %s、注册表 %s)" % [
+					str(comp.enabled_types), str(want_ids)])
+		comp.free()
 
 
 # ── 布点工具 spread_cells(2026-09-15 从 RoyaleHost.plan_spawns 抽出)──

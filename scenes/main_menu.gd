@@ -340,10 +340,11 @@ func _fill_version_panel(panel: PanelContainer) -> PanelContainer:
 func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	var checks: Array[CheckButton] = []
 	var check_list: VBoxContainer = panel.get_node("VBox/CheckList")
-	for type_id in [1, 2, 3, 4, 5, 6]:
+	var ids: Array[int] = WeaponRegistry.all_ids()
+	for type_id: int in ids:
 		var cb := CheckButton.new()
 		# ★ 不带编号:那个数字**看起来**是键位,而 type_id 与键位毫无关系(用户 2026-09-25 定)。
-		cb.text = WeaponComponent.DISPLAY_NAMES[type_id]
+		cb.text = WeaponRegistry.name_of(type_id)
 		cb.icon = WeaponIcons.silhouette(type_id)   # 纯白像素剪影,便于辨认
 		cb.expand_icon = false
 		UiFactory.style_check(cb, 32)
@@ -358,7 +359,11 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		Settings.sp_disabled_weapons.clear()
 		for i in checks.size():
 			if checks[i].button_pressed:
-				Settings.sp_disabled_weapons.append(i + 1)
+				# ★ 必须是 `ids[i]`:**不能**写成 `i + 1`。序号只在"json 恰好是 1..N 的
+				#   稠密连续段"时才等于 type_id —— 一旦重排 json 或留下空洞,`i + 1` 会
+				#   **静默禁用错的那把枪**(而今天 ids == [1..6],两种写法同结果,正是
+				#   "改了不报错"的那一类)。
+				Settings.sp_disabled_weapons.append(int(ids[i]))
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		_enter_level0())
