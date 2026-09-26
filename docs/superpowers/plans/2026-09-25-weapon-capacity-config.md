@@ -307,7 +307,42 @@ func _phase_weapon_capacity() -> void:
 	var body_derive := ScanUtil.func_body(ScanUtil.code_only(src), "_derive_layout")
 	_check(body_derive.contains("inventory.capacity"),
 			"_derive_layout() 必须从**背包**读容量(不能是另一个写死的数)")
+	# ②b **画的格数必须跟着派生的 `capacity`**(2026-09-26 补:这是"半迁移"的最后一个洞)
+	# ★ 洞的形状:把 `_draw` 里的 `WeaponInventory.CAPACITY`(常量被删 ⇒ 必须改)偷懒换成
+	#   `DEFAULT_CAPACITY` —— 于是 `_derive_layout()` 照样被调、`panel_h` 照样对,
+	#   而**格阵恒画 8 格**,容量调到 12 也不长。上面三条**全绿**。
+	# ★ 判据不能只是 `contains("capacity")`:坏写法里的 `DEFAULT_CAPACITY` 也含这个词 ⇒
+	#   必须**反面一起判**(不得出现 `DEFAULT_CAPACITY`)。
+	var body_draw := ScanUtil.func_body(ScanUtil.code_only(src), "_draw")
+	_check(body_draw.contains("capacity") and not body_draw.contains("DEFAULT_CAPACITY"),
+			"★ _draw() 必须按**本实例的 capacity** 画格子,不得读 DEFAULT_CAPACITY(那是默认值,不是本实例的容量)")
+	var body_empty := ScanUtil.func_body(ScanUtil.code_only(src), "_draw_empty_cells")
+	_check(body_empty.contains("capacity") and not body_empty.contains("DEFAULT_CAPACITY"),
+			"★ _draw_empty_cells() 同上(空背包那条路径也要跟着容量长)")
 ```
+★ **②b 是源码级判据**(格数组是 `draw_rect` 画出来的,不渲染就数不到)—— 真像素版的替代是
+`kh_l3_visual_probe`,**本次不做**,登记在 Self-Review 的已知边界里。
+
+★★ **这些断言各自钉住哪个"半迁移"(2026-09-26 逐条核过,答案:除了下面补掉的那个洞,
+半迁移过不去)** —— "半迁移"= 字段/构造/setter 都加了,但**闸门或绘制仍读默认值**:
+
+| 半迁移的形状 | 哪个断言红 | 为什么它红 |
+|---|---|---|
+| `can_hold` 仍读 `DEFAULT_CAPACITY`(字段白加了) | `★ 容量闸门单独生效` | `by_cap` 是 **4 格容量占 4 格** ⇒ 换回默认 8 之后 `4+2 <= 8` 成立,"放不下"变成"放得下" |
+| `can_hold` 仍读 `DEFAULT_MAX_WEAPONS` | `★ 把数闸门单独生效` | `by_max` 是 **容量 100 / 上限 1** ⇒ 上限换回 4 之后 `1 >= 4` 不成立,闸门穿到容量那层(98 格够) |
+| 构造实参没存进字段 | `构造实参生效` | 直接读 `wide.capacity` / `wide.max_weapons` |
+| setter 没写进字段 | `setter 设值生效` | `set_capacity(12)` 后直接读字段 |
+| 缺 `capacity`/`max_weapons` 字段 | 两条字段存在性 + `else` 分支的"被跳过" | `get_property_list()` 探不到 |
+| 派生公式写死 | `rows_for(12) = 3` / `panel_h_for(12) = 84` | 纯函数直接比 |
+| 公式写了但没人调 | `setup() 必须调 _derive_layout()` 等三条 | 按**函数体**判 |
+| **`_draw` 仍画默认格数**(★ 2026-09-26 补的洞) | **②b 的两条** | 判据是"含 `capacity` **且不含** `DEFAULT_CAPACITY`" —— 只判前一半会漏 |
+| 默认观感被改坏 | 场景探针的 `size.y == 59` + `panel_h_for(8) = 59` | 前后都绿,靠变异证明有牙 |
+
+★ **两处刻意"不判"**（登记,别当成漏）:
+- **`rows` / `capacity` 这两个字段本身**只有"存在"这一个断言,没有"值对不对"的行为断言 ——
+  因为它们的值由 `_derive_layout()` 决定,而那条链由 ② 的三条函数体断言 + ③ 的公式断言覆盖;
+  再给字段加值断言等于把同一条链数两遍。
+- **"容器真的画了 12 格"** 没有像素级断言(见上,②b 是源码级)。
 
 - [ ] **Step 5: `level0_weapon_scatter_probe.gd` 加一条"默认容量下面板高"**
 
@@ -664,7 +699,14 @@ Expected: `WEAPON_INVENTORY OK`、`SMOKE OK`（无 FAIL）、
    别按"越界"读。
    ★ 既有的**间隙**断言（`间隙恒为 8px`）**不会**红 —— `offset_top` 与 `size.y` 都由同一个
    `panel_h` 推出，两者一起平移 ⇒ 间隙不变。所以要钉住"默认高没变"只能靠这一条。
-6. 全部改回来，再跑一遍上面那组命令确认恢复全绿。
+6. **绘制的格数真的跟着容量吗（②b 的变异）**：把 `_draw` 里那三处 `capacity` 临时换成
+   `DEFAULT_CAPACITY`（`owner_of.resize(…)` / `c < …` / `for cell in …` 各一处），跑第 2 条命令。
+   Expected: `FAIL - ★ _draw() 必须按**本实例的 capacity** 画格子,不得读 DEFAULT_CAPACITY(…)`。
+   ★ **上面 ①–⑤ 全绿**（`panel_h_for`、`_derive_layout`、接线三条一个都不红）——
+   这正是 ②b 存在的理由:那是唯一能看见"面板长了、格阵没长"的判据。
+   ★ 同一条变异也会让 `_draw_empty_cells` 那条红（如果它的 `for cell in capacity` 也换了）。
+   确认后改回来。
+7. 全部改回来，再跑一遍上面那组命令确认恢复全绿。
 
 - [ ] **Step 6: 提交（Task 1 + Task 2 合并为一次）**
 
@@ -767,6 +809,18 @@ Task 2 Step 1；`WeaponSlots` 的 `ROWS` 派生、`COLS` 固定 4、`PANEL_W`/`P
 Task 2 Step 2；"协议零改动" ✅（默认值不变，没有任何协议字段被碰，Task 3 Step 1 的
 `squash_replica_probe` / `pvp_twin_smoke` 是它的守卫）；§6.2 的已知边界 ✅ Task 3 Step 2。
 
+**1b. "半迁移会不会过"（2026-09-26 逐条核过 —— 除一个洞外,过不去;洞已补）**：
+判据的**分工**在 Task 1 Step 4 的对照表里（九种半迁移 → 各自哪条红）。要点：
+- **容量闸门**由 `by_cap = WI.new(tiers, 4, 9)` 的 `★ 容量闸门单独生效` 钉住,
+  **把数闸门**由 `by_max = WI.new(tiers, 100, 1)` 的 `★ 把数闸门单独生效` 钉住 ——
+  两个夹具的**构造实参刻意选成"换回默认值就反转"**（4 格 vs 默认 8；上限 1 vs 默认 4）,
+  否则那两条断言会像 `wide`(12/6) 那条一样**两种实现都给假**、等于空转。
+- **已补的洞**：原来没有任何断言管 `_draw` / `_draw_empty_cells` 用不用派生的 `capacity`
+  ⇒ "面板高了、格阵还是 8 格"能全绿穿过。现由 **②b** 钉住（含 `capacity` **且不含**
+  `DEFAULT_CAPACITY` —— 只判前半会漏）,反证见 Task 2 Step 5 的第 6 条。
+- **两处刻意不判**（登记）：`rows` / `capacity` 字段本身只判"存在"（值由同一条链决定,
+  再断言等于数两遍）；"容器真画了 12 格"没有像素级断言（②b 是源码级）。
+
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。每处改动都给了完整代码块与确切锚点。
 唯一的"按当时情况写"是 `inv.cell_start(i)` 那一行 —— 那是**计划 2** 的地盘，
 已就地注明（本计划改的只有 `CAPACITY` → `capacity`）。
@@ -798,3 +852,10 @@ Task 2 Step 2；"协议零改动" ✅（默认值不变，没有任何协议字�
   （`:97/:102/:107/:112`），且 `kh_l3_probe.gd:116-118` **反向断言** 5–0 不得有动作。
   ⇒ 把数调到 5+ 时第 5 把**只能靠滚轮**；要开 5/6 号键得先加动作 + 改
   `LocalInputSource` 的 `range(1, 5)`。**本计划不做**（spec 明确登记为已知边界）。
+- **没有"运行时把容量改成 N 之后 UI 自动跟上"的路径**：`WeaponSlots.refresh()` 会重取容量
+  并重画,但**没有任何东西会替你调它**,也没人重排面板（HUD 的 `_place_weapon_slots()`）。
+  今天生产路径上没有改容量的地方,故这一条**没有调用点** —— 真接能力系统时它是第一个要接的线。
+- **"容器真画了 N 格"没有像素级守卫**：②b 是**源码级**的（格数组是 `draw_rect` 出来的,
+  不渲染数不到）。要真像素得加在 `kh_l3_visual_probe`（真渲染探针）里,本次不做。
+- **`rows` / `panel_h` 是"派生出来的",不是"协议里同步的"**：与容量本身一样,默认值不变
+  所以两端天然一致;按能力分叉那天,容量必须进权威同步（Task 3 Step 2 已登记）。

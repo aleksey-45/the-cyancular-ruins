@@ -281,6 +281,55 @@ func _phase_weapon_registry() -> void:
 	_check(offenders.is_empty(),
 			"生产代码里不得再有硬编码的武器 id 列表(命中:%s)" % str(offenders))
 
+	# ── ⑤b 那三张表必须**被删掉**,不是被绕过(2026-09-26 补:本相才是"本计划成败判据"的守卫)──
+	# ★★ 为什么单开一条、而且它比 ⑤/⑥ 都重要:
+	#   ⑤ 的判据是 `contains("[1,2,3,4,5,6]")`,而那三张表的键/值是 `"1".."6"` 与 `1..6:` ——
+	#   **一个 `[1, 2, 3, 4, 5, 6]` 字面量都不含** ⇒ 表就算原样留着,⑤ 也全绿。
+	#   ⑥ 只覆盖**六处循环/初始化的宿主**(`_default_weapon_types` / `_add_weapon_grid` /
+	#   `_fill_sp_panel` / `_server_weapon_types` / `_init` / `set_enabled_types`);
+	#   而三张表还有**五个真正的读点**不在⑥ 里 ——
+	#     `scenes/player/player_replica.gd:238`(对手手里的枪外观)
+	#     `scenes/weapons/weapon_pickup.gd:101`(地面武器的视觉)
+	#     `ui/weapon_icons.gd:22`(剪影)、`ui/weapon_icons.gd:69`(选择格上的名字)
+	#     `ui/hud.gd:265`(左下角武器名)
+	#   ⇒ **只把⑥ 的六处接上注册表、留下三张表**的"半迁移"会让本计划的承诺
+	#   (「加第 7 把枪只改一个 json」)**静默失效**:菜单/散落里出现了 7 号枪,
+	#   而它在对手手里、在地上、在图标与 HUD 名字上**全都不存在**,且一条断言都不红。
+	#   ★ 改动**前**这条的红面(实测 9 对,逐字对上才算读对了):
+	#     `player_replica.gd::WEAPONS` / `weapon_component.gd::WEAPONS` /
+	#     `weapon_pickup.gd::WEAPONS` / `weapon_icons.gd::WEAPONS` /
+	#     `main_menu.gd::DISPLAY_NAMES` / `weapon_component.gd::DISPLAY_NAMES` /
+	#     `hud.gd::DISPLAY_NAMES` / `weapon_icons.gd::DISPLAY_NAMES` /
+	#     `weapon_component.gd::TIERS`
+	#     ★ 三张表**全在 weapon_component.gd 里**,而该文件的 6 个读点分布在 4 个文件里 ——
+	#       这正是"删表"必须由**扫描**兜、不能只靠⑥ 那六处宿主的原因。
+	# ★ 为什么"断言表被删"就**足够**、不必逐点断言读点改对了:
+	#   表一删,任何**没**改到注册表的读点当场是 **Parse Error**(类常量不存在)——
+	#   响亮、定位精确、无法静默绕过。⇒ 这一条 + 编译器合起来就把"删干净"钉死了。
+	# ★ 判据必须用 `\b…\b`,**不能**用裸 `contains()` —— 裸的会踩 `MAX_WEAPONS`:
+	#   `const MAX_WEAPONS := 4` 含子串 `WEAPONS` ⇒ 恒红,而它是**该留**的常量名
+	#   (计划 4 之后叫 `DEFAULT_MAX_WEAPONS`,一样含)。
+	#   PCRE 的 `\w` 含下划线 ⇒ `\bWEAPONS\b` 不命中 `MAX_WEAPONS`。
+	#   ★ 已实测两种写法今天的命中差:裸 contains = 5 个文件(多一个
+	#     `core/sim/weapon_inventory.gd`,就是 `MAX_WEAPONS` 那一处);
+	#     `\b` = 4 个文件 —— 差别正好是那个假阳性。
+	# ★ `ScanUtil.read` 读不到时返回 `""` ⇒ 这里 `continue`(跳过)。目录扫描可以接受这个形状
+	#   (文件是同一次 walk 列出来的,列得出就读得到);⑥ 那 6 个**具名**文件则另有显式的
+	#   "读不到就红"。
+	# ★ 三个 API 都核过引擎源码(不必猜):`RegEx.create_from_string`(`modules/regex/regex.cpp:421`
+	#   的静态绑定)、`search_all`(`:426`)、`RegExMatch.get_string(name)` 的 `name` 可以是**序号**
+	#   (`:153`,`DEFVAL(0)`)。
+	var re_tbl := RegEx.create_from_string("\\b(WEAPONS|DISPLAY_NAMES|TIERS)\\b")
+	var stale_tables: Array = []
+	for path in ScanUtil.collect(["res://scenes", "res://core", "res://server", "res://ui"]):
+		var code := ScanUtil.code_only(ScanUtil.read(path))
+		if code.is_empty():
+			continue
+		for m in re_tbl.search_all(code):
+			stale_tables.append("%s::%s" % [path, m.get_string(1)])
+	_check(stale_tables.is_empty(),
+			"那三张旧表必须**删掉**(不是绕过);命中(文件::表名)= %s" % str(stale_tables))
+
 	# ── ⑥ 六处字面量的**宿主**确实改问了注册表 ──
 	# ★ ⑤ 挡的是"还留着老写法",⑥ 挡的是"新写法没接上" —— 只有 ⑤ 时,把
 	#   `_default_weapon_types` 整个删掉(或改成 `return []`)照样全绿。
@@ -351,21 +400,24 @@ Run:
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd \
   2>&1 | tail -60
 ```
-Expected（改动前，**必须是这一组、恰好 10 条**）:
+Expected（改动前，**必须是这一组、恰好 11 条**）:
 ```
   FAIL - 读得到 res://data/weapons.json(读不到 = 文件还没建)
   FAIL - core/sim/weapon_registry.gd 存在且可加载
   FAIL - json 至少有 1 条合格条目(实际 0)
   FAIL - 生产代码里不得再有硬编码的武器 id 列表(命中:[res://scenes/level_0.gd, ...])
+  FAIL - 那三张旧表必须**删掉**(不是绕过);命中(文件::表名) = [... 共 9 对 ...]
   FAIL - res://scenes/level_0.gd 的 _default_weapon_types() 应改用 WeaponRegistry.all_ids()
   FAIL - res://scenes/lobby_page.gd 的 _add_weapon_grid() 应改用 WeaponRegistry.all_ids()
   FAIL - res://scenes/main_menu.gd 的 _fill_sp_panel() 应改用 WeaponRegistry.all_ids()
   FAIL - res://server/match_ground.gd 的 _server_weapon_types() 应改用 WeaponRegistry.all_ids()
   FAIL - res://scenes/player/weapon_component.gd 的 _init() 应改用 WeaponRegistry.all_ids()
   FAIL - res://scenes/player/weapon_component.gd 的 set_enabled_types() 应改用 WeaponRegistry.all_ids()
-FAILURES: ["读得到 …weapons.json(读不到 = 文件还没建)", … 共 10 条]
+FAILURES: ["读得到 …weapons.json(读不到 = 文件还没建)", … 共 11 条]
 ```
-（10 = ① 2 条 + `json 至少有 1 条` 1 条 + ④ 1 条 + ⑥ 6 条。）
+（11 = ① 2 条 + `json 至少有 1 条` 1 条 + ⑤ 1 条 + **⑤b 1 条** + ⑥ 6 条。
+★ **⑤b 那条是"半迁移"的唯一防线** —— 它红在"三张表还在",而 ⑤ 对那三张表**完全无感**
+（表里没有 `[1, 2, 3, 4, 5, 6]` 这种字面量）。见 Task 1 Step 1 里 ⑤b 的注释。）
 ★★ **尾行不是 `SMOKE OK`，而且这一趟的退出码是 1 —— 那是正常的红，不是崩溃。**
 `tests/enemy_logic_smoke.gd:130-135` 是：
 ```gdscript
@@ -507,8 +559,9 @@ static func _ensure_loaded() -> void:
 		var e: Dictionary = raw
 		# ★★ `int(...)` **不是可选的美化**:JSON 的数字一律解析成 float(`1` 变 `1.0`),
 		#   而 `1.0` 当字典键 / 当 `int` 形参 / 去 `.has(type_id)` 都会**静默不命中**。
-		#   id 全程必须是真 int —— 出口 `all_ids()` 里那一次 `int(...)` 是二次保险,
-		#   这里这次才是正本(顺带把非数字的 `id` 归一成 0、被下面那条挡掉)。
+		#   ☆ 但要说准分工:**拆掉这一处不会让 ⑦ 红**(下面的读点各自 `int(...)` 补住了,
+		#   出口 `all_ids()` 那次也补住了)—— 它是"`_entries` 里不存 float"的防线,
+		#   不是"数组不假红"的防线。后者在 `all_ids()` 的出口那一行。
 		var id := int(e.get("id", 0))
 		if id <= 0:
 			push_error("WeaponRegistry: weapons[%d].id 不是正整数(实际 %s),已跳过" % [idx, str(e.get("id"))])
@@ -544,20 +597,22 @@ static func _ensure_loaded() -> void:
 
 # ★★ **必须返回真正的 int,一个 float 都不能有**(2026-09-26 订正)。
 #   坑在 JSON:`JSON.parse_string` 把**所有数字都解析成 float** ⇒ `e["id"]` 是 `1.0` 而不是 `1`。
-#   两步都要 `int(...)`:装载时 `var id := int(e.get("id", 0))`(那一步同时做校验),
-#   以及这里 `out.append(int(e["id"]))`(二次保险,也是**要命的那一步**)。
+#   下面这一处 `int(...)` **就是承重的那一处** —— 已实测:
+#   · 拆掉**这里** ⇒ `all_ids()` 返回 float ⇒ ⑦(`comp.enabled_types == want_ids`)与任何
+#     "id 数组比字面量 int 数组"的断言**假红**(`Array[int] [1,2,3] == Array [1,2,3]` 为真,
+#     但 `== [1, 2, 3.0]` 为**假**)—— 而假红看起来像"接线漏了"。
+#   · 拆掉**装载期**那处 `int()`(`var id := int(e.get("id", 0))`)**不会**让 ⑦ 红
+#     (`_entries` 里存 float,但这一行仍把它们转成 int 再吐出去)。
+#   ⇒ **两处都要在,分工不同**:这一行保"出口数组是真 int";装载那行保"`_entries` 里不存 float"
+#     (今天所有读点各自 `int(...)` 补住了,所以拆掉它不显形 —— **别拿 ⑦ 绿去证明它多余**)。
 #   为什么不容忍 float:`type_id` 全仓当 int 用 —— 它是 `tier_of(type_id: int)` /
-#   `is_type_enabled(type_id: int)` / `WeaponInventory.SLOT_COST` 一类**字典的键**、
+#   `is_type_enabled(type_id: int)` / `WeaponInventory.CELL_COST` 一类**字典的键**、
 #   以及 `enabled_types.has(type_id)` 的入参;混进 float 会在这些地方**静默不命中**。
-#   ★ 更直接的一条(已实测):`Array[int] [1,2,3] == Array [1,2,3]` 为**真**,
-#   但 `== [1, 2, 3.0]` 为**假** —— 于是任何拿 id 数组去比**字面量 int 数组**的断言
-#   (enemy_logic_smoke 的 ⑦、以及将来任何探针)会变成**假红**,而且看起来像"接线漏了"。
-#   那正是本文件 ② 那条"float 当键会让 has() 永远假"的镜像。
 static func all_ids() -> Array[int]:
 	_ensure_loaded()
 	var out: Array[int] = []
 	for e in _entries:
-		out.append(int(e["id"]))
+		out.append(int(e["id"]))   # ★★ 承重:出口必须是 int(见上)
 	return out
 
 
@@ -623,6 +678,15 @@ include_filter="maps/*.cyrm,data/*.json"
 ★ 为什么是 glob 而不是再点一个文件名：约束是"**加第 7 把枪不许再动这个文件**"。
 （已核实：`.json` 本来就是 Resource 类型、已被 `all_resources` 收录，所以这条改的是**保险**
 而不是机制 —— 论证见 Global Constraints 那条。）
+★★ **这条只被静态确认了一半，写清楚边界**（2026-09-26 记）：静态能定的是
+**收集器这一半** —— `.json` 被认成 `JSON` 类型的 Resource（`json_resource_format.cpp:75-86`），
+而 `all_resources` 的收集器只跳过 `TextFile`（`editor_export_platform.cpp:644-649` +
+`editor_file_system.cpp:2452-2454`）⇒ **它应当被收录**。旁证是 `data/tile_defs.json`
+今天不在 `include_filter` 里却工作正常（同一个机制）。
+**后半段(这份 json 真的在 `.pck` 里、且 `FileAccess.get_file_as_string` 读得到)只能由一次
+真导出回答** —— 那是**用户的发布流程**（`tools/build_release.py`），agent **不代跑发布**。
+⇒ 这一条**没有**自动化守卫，已登记为已知边界；真正的判据在 Task 5 Step 5 的实机确认里。
+★ **别在文档里把它写成"不加就导出没有枪"** —— 那是被推翻的说法（见 Global Constraints）。
 
 - [ ] **Step 4: 刷新全局类缓存**
 
@@ -634,15 +698,16 @@ Expected: 无 `Parse Error` / `SCRIPT ERROR`。
 ★ 这一步**不可省**：新建的 `class_name` 文件不进全局类缓存的话，Task 3 里那些
 `WeaponRegistry.xxx()` 引用会当场 `Could not resolve class`（见 CLAUDE.md 的「测试」一节）。
 
-- [ ] **Step 5: 跑 Task 1 的冒烟，确认 ① ② ③ ④ 转绿、⑤ ⑥ 仍红**
+- [ ] **Step 5: 跑 Task 1 的冒烟，确认 ① ② ③ ④ 转绿、⑤ ⑤b ⑥ 仍红**
 
 Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd \
   2>&1 | grep -E "  FAIL - |FAILURES"
 ```
-Expected: FAIL 列表**恰好 7 条** = ⑤ 一条（命中的 6 个字面量）+ ⑥ 六条（还没改的宿主函数），
-末尾是 **`FAILURES: [… 7 条 …]`（stderr）+ 退出码 1** ——
+Expected: FAIL 列表**恰好 8 条** = ⑤ 一条（命中的 6 个字面量）+ **⑤b 一条（三张表还在）**
++ ⑥ 六条（还没改的宿主函数），
+末尾是 **`FAILURES: [… 8 条 …]`（stderr）+ 退出码 1** ——
 **不是 `SMOKE OK`**（有失败时 `enemy_logic_smoke.gd:130-135` 走 `else` 支，见 Task 1 Step 2）。
 ★ 删掉命令里的 `2>&1` 会把这一行整条吞掉，剩下的输出看着像"什么都没发生"。
 `读得到 res://data/weapons.json` / `core/sim/weapon_registry.gd 存在且可加载` /
@@ -653,20 +718,36 @@ Expected: FAIL 列表**恰好 7 条** = ⑤ 一条（命中的 6 个字面量）
 `{1..6}`（多半手抖写了 0 或 7），回去核 Step 1 的内容。
 ★ ⑦ 那条能绿的**前提**是 `all_ids()` 返回的是**真 int**（不是 JSON 来的 float）——
 `Array[int] [1,2,3] == Array [1,2,3]` 为真、`== [1,2,3.0]` 为**假**。
-真红了先看 `all_ids()` 有没有漏掉 `int(...)`，别急着怀疑接线（见 Task 2 Step 2 的注释）。
+真红了先看 `all_ids()` **出口**有没有漏掉 `int(...)`，别急着怀疑接线
+（★ 出口那一处才是承重的，理由见 Task 2 Step 2 的注释）。
 
-- [ ] **Step 6: 反证（把 json 改坏，确认 ② 会红并点名）**
+- [ ] **Step 6: 反证（三处，逐个点名）**
 
-临时把 `data/weapons.json` 里 id 1 的 `"tier": "light"` 改成 `"tier": "medium"`，跑：
+1. **② 真的在读盘上的 json**：临时把 `data/weapons.json` 里 id 1 的 `"tier": "light"`
+   改成 `"tier": "medium"`，跑：
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd \
   2>&1 | grep -E "id 1|FAIL" | head -8
 ```
 Expected: `FAIL - id 1:tscn 的 tier(0)必须等于 json 的 "medium"(1)`。
 ★ 这一条证明 ② **真的在读盘上的 json**，而不是在读某个缓存/常量。
-确认后**改回来**，再跑一次 Step 5 的命令确认恢复。
+2. **注册表的出口转换承重**：把 `all_ids()` 里 `out.append(int(e["id"]))` 临时改成
+   `out.append(e["id"])`，跑同一条命令。
+Expected: ⑦ 红 —— `默认启用表必须等于注册表全部 id(实际 [… 1.0, 2.0 …]、注册表 […])`；
+成因是 `Array[int] [1,2,3] == Array [1,2,3.0]` 为**假**（元素是 float，不是 int）。
+★ 反过来，把**装载期**那个 `int()` 拆掉（`var id := int(e.get("id", 0))` → `e.get("id", 0)`）
+**不会**让 ⑦ 红 —— 实现者 2026-09-26 实测过（`_entries` 存 float，但出口那次 `int()` 仍然是 int）。
+**两处都要在，但分工不同**：出口那次是"数组不假红"的唯一防线；
+装载那次是"`_entries` 里不存 float"的唯一防线（今天所有读点各自 `int(...)` 补住了 ⇒ 拆了它不显形，
+**别拿 ⑦ 绿去证明它多余**）。两处都**改回来**再继续。
+3. **⑤b 不是空转**：把 `DISPLAY_NAMES` 的一小部分临时放回 `weapon_component.gd`
+   （例如只留 `const DISPLAY_NAMES: Dictionary = {1: "手枪"}`，**不用**它），跑同一条命令。
+Expected: `FAIL - 那三张旧表必须**删掉**(不是绕过);命中(文件::表名) = [res://scenes/player/weapon_component.gd::DISPLAY_NAMES]`
+—— **且 ⑤ 仍绿**（那一行不含 `[1,2,3,4,5,6]`）。
+★ 这一步是本条最重要的反证：它证明"留下一张表但没人用"**只有 ⑤b 抓得到**，
+而这正是"半迁移"的形状。确认后**删掉那行**，再跑一次 Step 5 的命令确认恢复。
 
-★ 本 Step **不提交**（工作区此刻仍有 ⑤⑥ 红，与 Task 3 合并提交）。
+★ 本 Step **不提交**（工作区此刻仍有 ⑤/⑤b/⑥ 红，与 Task 3 合并提交）。
 
 ---
 
@@ -689,6 +770,15 @@ Expected: `FAIL - id 1:tscn 的 tier(0)必须等于 json 的 "medium"(1)`。
 - Produces: ⑤⑥ 转绿；项目里不再有 `WeaponComponent.WEAPONS` / `DISPLAY_NAMES` / `TIERS`。
 
 - [ ] **Step 1: `weapon_component.gd` 删表 + 三处改问 registry**
+
+★★ **本 Step 的动作是"删掉三张表",不是"让调用方绕过它们"** —— 两者在**行为上**不同:
+表一删,**五个真正的读点**(`player_replica.gd:238` / `weapon_pickup.gd:101` /
+`weapon_icons.gd:22,69` / `hud.gd:265`)当场变成 **Parse Error**,逼着 Step 3 把它们改到
+注册表 —— 这正是"加第 7 把枪只改一个 json"成立的前提。表留着而只改 ⑥ 那六处宿主的话,
+那五个读点会**静默**停在 6 把枪上(新枪在对手手里/地上/图标/HUD 名字里都不存在),
+而 Task 1 的 **⑤b** 就是为这条设的守卫(见那里)。
+★ 所以:**别"为了让它先编过"而保留任何一张表** —— 编不过是本 Step 的必经状态,
+Step 2/3 逐处补完。
 
 ★ 本 Step 的**行号取自 `main`（计划 1 之前）**，且计划 1 会给这个文件插入新函数 ⇒
 按下面给出的**内容**定位（三块 `const` 的名字 + 三个函数的原文），别硬按行号跳。
@@ -1162,7 +1252,24 @@ Expected: 逐行 `ALL-OK` / `SMOKE OK` / `*_OK`。
 ★ `kh_l3_probe` 与 `kh_l5_probe` 里有**源码级**断言（`kh_l3_probe.gd:406` 断 `level_0.gd`
 含 `set_enabled_types(RunOptions.disabled_weapons)`）—— 本计划没动那一行，应当原样绿。
 
-- [ ] **Step 5: 登记进 CLAUDE.md**
+- [ ] **Step 5: 发布产物确认（★ 归用户，agent 不代跑发布）**
+
+本批有一条**只有发布产物能回答**的问题：`data/weapons.json` 到底进没进 `.pck`。
+静态论证只到"收集器应当收录它"这一半（见 Task 2 Step 3 的边界说明），**真导出才是裁判**。
+
+Run（**用户**）:
+```bash
+python tools/build_release.py          # 或用户惯用的导出流程
+```
+Expected: 导出成功、脚本自带的产物冒烟通过，**且实机起发布版后主菜单的禁用武器列表
+里 6 把枪都在**（列表空 / 只有手枪 = json 没进包）。
+★ 若真的没进包：`WeaponRegistry._ensure_loaded()` 会 `push_error` 两次
+（"读不到 …" + "注册表为空"），而那两次 **只在 stderr**、不影响进程退出 ⇒
+**光看"游戏能启动"是看不出来的**，必须看那份列表。
+★ 这条**不阻塞** Task 5 的前四步（源码树上的行为与它无关），但它是本计划
+"加第 7 把枪只改一个 json"这条承诺在**发布版**上成立的前提。
+
+- [ ] **Step 6: 登记进 CLAUDE.md**
 
 在 **§砖块属性与破坏（`data/tile_defs.json`）** 那一节之后，紧挨着补一条新条目
 （与 `data/enemies.json` / `data/tile_defs.json` 的"单一来源 + 同步脚本"体例并列）：
@@ -1185,12 +1292,24 @@ Expected: 逐行 `ALL-OK` / `SMOKE OK` / `*_OK`。
   (落点:`level_0._default_weapon_types` / `match_ground._server_weapon_types` /
   `lobby_page._add_weapon_grid` / `main_menu._fill_sp_panel` / `weapon_component` 的
   `_init` 与 `set_enabled_types`)。
+  ★★ **必须是"删掉",不是"绕过"**:三张表还有 **5 个真正的读点不在上面那份名单里**
+  (`player_replica.gd:238` 对手手里的枪外观 / `weapon_pickup.gd:101` 地面武器的视觉 /
+  `ui/weapon_icons.gd:22,69` 剪影与选择格名字 / `ui/hud.gd:265` 左下角武器名)——
+  表留着而只改上面那 6 处,新枪会在这些地方**静默消失**。
+  守卫是 `_phase_weapon_registry` 的 **⑤b**:按 `\b(WEAPONS|DISPLAY_NAMES|TIERS)\b`
+  扫生产目录,零命中。(`\b` 是必需的:裸 `contains("WEAPONS")` 会踩 `MAX_WEAPONS`。)
 - **加第 7 把枪 = 改 1 个 json + 加 1 个 tscn,零 GDScript 改动**。守卫:
   `enemy_logic_smoke._phase_weapon_registry` 的 ⑤(生产代码里不得再有硬编码武器 id 列表,
-  按**目录扫描**判)/ ⑥(六处宿主的函数体确实调了 `all_ids()`)/ ⑦(默认启用表 == 注册表全部 id);
+  按**目录扫描**判)/ **⑤b(三张旧表必须删掉——"半迁移"的唯一防线)** /
+  ⑥(六处宿主的函数体确实调了 `all_ids()`)/ ⑦(默认启用表 == 注册表全部 id);
   `level0_weapon_scatter_probe` 的覆盖性断言(每种注册武器都铺到了)。
   ★ ⑦ 是"漏改 `enabled_types` ⇒ 新枪永远拿不到也开不了、且不报错"那条的唯一守卫,
   它的牙齿要用"临时加一条 json"来验(见计划的 Task 5)。
+  ★ `all_ids()` 的**出口**那个 `int(...)` 是承重的(JSON 数字是 float,`Array[int] [1,2,3]`
+  与 `[1,2,3.0]` **不相等**)—— 拆了它,任何"id 数组比字面量"的断言会**假红**。
+- **发布产物侧没有自动化守卫**:`data/weapons.json` 进不进 `.pck` 只由一次**真导出**回答
+  (静态只能论证到"`_export_find_resources` 只跳 `TextFile`,而 `.json` 是 `JSON` 类型")
+  —— 见计划的 Task 5 Step 5。`include_filter` 的 `data/*.json` 是**保险**不是机制。
 - **加载校验是"新约定"**:文件级格式错 → `push_error` + 整表留空(与 `EnemySpawner` 同款);
   **逐条**不合格(缺字段/非对象/`id` 非正整数/`id` 重复/`tier` 非三值/`scene` 不存在)→
   `push_error` + **跳过该条**。★ 这**不是** `EnemySpawner` 的约定 ——
@@ -1202,7 +1321,7 @@ Expected: 逐行 `ALL-OK` / `SMOKE OK` / `*_OK`。
 ① §4.2 的"五处硬编码"实为 **6 个字面量 / 5 个文件**（`weapon_component.gd` 里 `set_enabled_types`
 与 `_init` 各一处）；② §5 的"与 `EnemySpawner` 同款"**不成立**（逐条那一半是新约定，见上）。
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 7: 提交**
 
 ```bash
 git add CLAUDE.md
@@ -1216,10 +1335,24 @@ EOF
 ## Self-Review
 
 **1. 覆盖面**（对照 spec §4.2 + §5）：registry 六个查询 + json 形状 ✅ Task 2；
-"删三张表、调用方改问 registry" ✅ Task 3；"五处 `[1..6]`" ✅ Task 3（**按核实后的事实写成
-6 个字面量 / 5 个文件**，含 spec 漏掉的 `weapon_component.gd:71` 那处）；
-"守卫改判据 json ↔ tscn ↔ 枚举 + 新增覆盖性" ✅ Task 1（③/⑦）+ Task 4（散落覆盖性）；
+"删三张表、调用方改问 registry" ✅ Task 3（★ **删**不是绕过 —— 见下 1b）；"五处 `[1..6]`" ✅ Task 3
+（**按核实后的事实写成 6 个字面量 / 5 个文件**，含 spec 漏掉的 `weapon_component.gd:71` 那处）；
+"守卫改判据 json ↔ tscn ↔ 枚举 + 新增覆盖性" ✅ Task 1（③/⑤b/⑥/⑦）+ Task 4（散落覆盖性）；
 "加第 7 把枪 = 零 GDScript" ✅ Task 5 Step 1（**实际走一遍**，不是读代码）。
+
+**1b. 守卫真的钉住了"加第 7 把枪只改一个 json"吗（2026-09-26 逐条核过）**：
+- **补的那个洞**：⑤ 的判据是 `contains("[1,2,3,4,5,6]")`，而三张表的键/值是 `"1".."6"` 与 `1..6:`
+  —— **一个那样的字面量都不含** ⇒ 表原样留着 ⑤ 也全绿；而 ⑥ 只覆盖**六处循环/初始化宿主**，
+  三张表另外还有 **5 个真读点**（`player_replica.gd:238` / `weapon_pickup.gd:101` /
+  `weapon_icons.gd:22,69` / `hud.gd:265`）不在 ⑥ 里。⇒ 只改 ⑥ 六处、留表的**半迁移**
+  会让承诺**静默失效**。**已补 ⑤b**：`\b(WEAPONS|DISPLAY_NAMES|TIERS)\b` 扫生产目录、
+  零命中断言（`\b` 必需 —— 裸 `contains("WEAPONS")` 会踩 `MAX_WEAPONS`，实测多命中
+  `core/sim/weapon_inventory.gd`）。
+  为什么"断言表被删"就足够、不必逐点断言读点：**表一删，没改到的读点就是 Parse Error**，
+  响亮且无法静默绕过 ⇒ ⑤b + 编译器合起来把"删干净"钉死。
+- **⑤b 的红是可达的**（改动前实测 9 对，逐条列在 Task 1 Step 1 的注释里），
+  且 Task 2 Step 6 的反证 #3 专门证明"留一张没人用的表"**只有 ⑤b 抓得到**。
+- Task 1 的红灯计数随之从 10 变 **11**（Task 2 之后是 8）——**已逐处改齐**。
 
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。`data/weapons.json` 与
 `weapon_registry.gd` 都给的是**完整内容**；每处调用点都给了完整代码块与确切行号。
@@ -1238,6 +1371,11 @@ EOF
 Task 4 的 `var want_types: Array[int] = …` 都按 int 用）；`tier_of() -> int`（**不是** `Tier`）；
 `tiers_map() -> Dictionary` 喂 `WeaponInventory.new(tiers: Dictionary)`
 （`core/sim/weapon_inventory.gd:38`）；`name_of` 对未知 id 返回 `""`（`ui/hud.gd` 的兜底据此写）。
+★ **两个 `int()` 的分工说准了**（2026-09-26，按实现者的变异实测）：`all_ids()` **出口**那个
+`out.append(int(e["id"]))` 是承重的（拆了它 ⇒ ⑦ 与任何"id 数组比字面量"的断言**假红**，
+因为 `Array[int] [1,2,3] == Array [1,2,3.0]` 为**假**）；**装载期**那个
+（`var id := int(e.get("id", 0))`）拆了**不会**让 ⑦ 红 —— 它是"`_entries` 里不存 float"的防线，
+今天被各读点的 `int(...)` 逐处补住。**两处都留，但别把"⑦ 绿"当成装载那个多余的证据。**
 
 **4. 与另两份计划的关系** ✅ 见文件头的"关系"一节。本计划**不碰** §3 的改名
 （那是计划 2）、**不碰** `WeaponInventory.CAPACITY`/`MAX_WEAPONS`（那是计划 4）。
@@ -1248,7 +1386,10 @@ Task 4 的 `var want_types: Array[int] = …` 都按 int 用）；`tier_of() -> 
 - **`WeaponRegistry` 的 `scene` 校验只是"路径存在"**，不是"能 load"；真正的 load 校验在
   `enemy_logic_smoke` 的 ② 里（那条**跑在源码树上**，不跑在发布产物上）。发布产物侧的兜底是
   `_ensure_loaded` 末尾那条"注册表为空"的 `push_error`。
-- **`data/weapons.json` 进导出包靠的是 `all_resources`（`.json` 是 Resource 类型）**，
-  Task 2 Step 3 的 glob 是保险带而非机制（论证见 Global Constraints）。
+- **`data/weapons.json` 进导出包**：机制是 `all_resources` 收录 `.json`（它是 `JSON` 类型的
+  Resource）。★ **这条只被静态确认了一半** —— 静态能定的是**收集器这一半**
+  （`_export_find_resources` 只跳 `TextFile`），**"这份 json 真的在 `.pck` 里、且 `FileAccess`
+  读得到"只能由一次真导出回答**（用户的发布流程）。⇒ **没有自动化守卫**，Task 2 Step 3 的 glob
+  是保险带而非机制，判据在 Task 5 Step 5（**归用户**）。
 - `tests/preview_visibility_probe.gd:21` 与 `tests/team_match_watcher.gd:1188` 的**注释**里
   仍写着 `weapon_component.WEAPONS` —— 只是注释，本计划不改（顺手改也行，不构成断言）。
