@@ -1425,6 +1425,10 @@ func _run() -> void:
 	var st_d_k4 := _stat(_host, 2, "deaths")
 	var st_a_k4a := _stat(_host, 4, "assists")     # 敌人(4 号,2 队)
 	var st_a_k4b := _stat(_host, 3, "assists")     # 队友(3 号,1 队)
+	# ★ 顺手把 `team_kills` 也钉住(评审 F2 的免费补丁):本段**恰好制造了一次队友击杀**,
+	#   而那一笔在别处**没有任何断言**(`grep team_kills tests/` 原先只有 `_set_stats` 的零初始化)
+	#   —— 计划 2 的 ⑬m 要到 Task 2 才有。取**增量**更稳(不怕前面几段的残余)。
+	var st_tk_k4 := _stat(_host, 1, "team_kills")  # 补刀的队友(1 号,1 队)
 	CombatFeedback.attribute(_host.players[2], _host.players[4])   # 敌人打乙
 	(_host.players[2] as Node2D).take_hit(Vector2.ZERO, 10)
 	CombatFeedback.attribute(_host.players[2], _host.players[3])   # 队友(误伤)打乙
@@ -1436,6 +1440,10 @@ func _run() -> void:
 	_check(_stat(_host, 2, "deaths") - st_d_k4 == 1,
 			"[仪器] ⑬k 前提:这一下**真的走完了倒地边沿**"
 			+ "(deaths 没 +1 = `_record_down` 没跑,下面两条恒真)")
+	_check(_stat(_host, 1, "team_kills") - st_tk_k4 == 1,
+			("★ ⑬k 队友击杀给**肇事者**记一次 `team_kills`(实际 +%d,期望 +1)"
+			+ " —— 惩罚公式靠它,而这一笔在本段之外**没有守卫**(⑬m 要到 Task 2)")
+			% (_stat(_host, 1, "team_kills") - st_tk_k4))
 	_check(_stat(_host, 4, "assists") - st_a_k4a == 0,
 			("★ ⑬k 乙被**自己队友**补掉 ⇒ 之前打过乙的**敌人**(4 号)**不得**记助攻"
 			+ "(实际 +%d);助攻块挪到早退之前**并**删掉前半句就会给 +1")
