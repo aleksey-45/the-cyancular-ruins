@@ -231,8 +231,13 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 			# ★★ **不进这两列的三档**(2026-09-26 订正:旧措辞写"三档都不记",而自伤**确实会记**
 			#   —— 只是记进 `self_damage` 那一列,不是"不记";照旧措辞读会得出相反的结论):
 			#   ① **自伤** ⇒ 记进**自己**的 `self_damage`(写端 `CombatFeedback.attribute` 在
-			#      attacker == victim 时静默跳过,读端靠 `Explosion` 那笔 `note_self_hit`
-			#      + `ATTRIB_FRESH_MS` 新鲜度认出来,见 `match_state.gd` 的 `_fresh_attacker_role`);
+			#      attacker == victim 时静默跳过 ⇒ 自伤没有归因通道,读端靠 `Explosion` 那笔
+			#      `note_self_hit` + `ATTRIB_FRESH_MS` 新鲜度认出来 —— **读端就在本文件下面几行**
+			#      的 `CombatFeedback.is_fresh_self_hit(...)`(`:stat_self` 那一行),
+			#      ★ **不是** `match_state.gd` 的 `_fresh_attacker_role` —— 那是**攻击者**归因的
+			#      新鲜度函数,`last_self_hit_time` 它一个字节都不读;照旧指针去找会找不到这条通道);
+			#      ★ 标记的另一半:写真实(非自伤)归因时 `CombatFeedback.attribute()` 会**当场作废**
+			#      上一响留下的自伤标记,免得"自己先炸、敌人后炸"被记成自伤(守卫 ⑬n3/⑬n4);
 			#   ② **队友伤害** ⇒ 记进**肇事者**的 `team_damage`(按 `same_team` 过滤);
 			#   ③ **归因不到**(meta 缺失或不新鲜)⇒ **哪儿都不记**,是本钩子唯一真正丢弃的一档。
 			# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ 这两列就等于"对所有人的伤害",
