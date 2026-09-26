@@ -29,6 +29,11 @@ NetBus="*res://core/net/net_bus.gd"
 NetBusExt="*res://core/net/net_bus_ext.gd"
 Settings="*res://core/config/settings.gd"
 
+[debug]
+
+"回到主菜单è¿ç§è¡¨è±¡åæ¨(2026-09-12çæºæµåºçå»æå´©æºå°±æ¯è¿ç§å¤å¢)ãfile_logging/enable_file_logging"=true
+"有些时候才崩çé®é¢æ¶,#æ¯å¤è·ä¸è½®æ¢éå°±å°ä¸ä»½ç°åº,èç°åºæ°æ°æ¯æç¼ºçä¸è¥¿ã#æå°64:åä»½æ¯KBéçº§,å ä¸äºå¤å°çfile_logging/max_log_files"=64
+
 [display]
 
 window/size/viewport_width=1920
@@ -61,12 +66,21 @@ up={
 down={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":83,"key_label":0,"unicode":115,"location":0,"echo":false,"script":null)
-, Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":4194325,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
 ]
 }
 charge={
 "deadzone": 0.2,
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":88,"key_label":0,"unicode":120,"location":0,"echo":false,"script":null)
+]
+}
+rewind={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":4194325,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+haste={
+"deadzone": 0.2,
+"events": [Object(InputEventMouseButton,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"button_mask":0,"position":Vector2(0, 0),"global_position":Vector2(0, 0),"factor":1.0,"button_index":2,"canceled":false,"pressed":false,"double_click":false,"script":null)
 ]
 }
 toggle_barrel={
@@ -118,18 +132,3 @@ Q={
 [rendering]
 
 renderer/rendering_method="mobile"
-
-[debug]
-
-# 发布版的客户端/服务端也要落一份引擎日志到 user://logs/。
-# 为什么必须显式开:Godot 的 `enable_file_logging.pc`(release 模板)默认是 **false**,而本仓的
-# 客户端导出是 **GUI 子系统(无控制台)** —— 崩了/报错了在用户机器上**一个字都留不下来**,
-# 只能靠"窗口没了""回到主菜单"这种表象反推(2026-09-12 真机测出的击杀崩溃就是这种处境)。
-file_logging/enable_file_logging=true
-file_logging/enable_file_logging.pc=true
-# ★ 留存份数:Godot 默认只留 **5** 份 `godot<时间戳>.log`,超了就轮转删最老的。
-# 2026-09-17 实测代价:用户那份唯一的崩溃现场(`godot2026-09-16T22.18.41.log`)在
-# 后面几轮探针跑过之后**被挤掉了** —— 追一个"有些时候才崩"的问题时,
-# 每多跑一轮探针就少一份现场,而现场恰恰是最缺的东西。
-# 提到 64:单份是 KB 量级,占不了多少盘;换来的是"崩了之后还能回头翻"。
-file_logging/max_log_files=64
