@@ -50,7 +50,10 @@
   且一行裁决都不打印。★ 更尖的一层（`tests/lib/probe_base.gd` 文件头）：
   **grep 到 `ALL-OK` 只证明"没有任何断言失败"，不证明"该跑的断言都跑过"**。
   本计划要新增的断言大多落在 `-s` 冒烟里，而 `-s` 冒烟里"出错的那个函数当场结束、
-  调用方继续"⇒ 后面的断言被**静默跳过**、verdict 照打 `SMOKE OK`。故**凡是要碰
+  调用方继续"⇒ 后面那些断言被**静默跳过**、**一个字都不会出现**，而裁决行照打它该打的那一行
+  （`enemy_logic_smoke`：`_failures` 为空时 `SMOKE OK`、否则 `FAILURES: […]`；
+  `weapon_inventory_smoke`：`WEAPON_INVENTORY OK` / `FAILED: N`）。
+  ⇒ **判据是"逐条比名字与条数"，不是"有没有那行裁决"。** 故**凡是要碰
   新接口的地方，一律先做一次不抛错的探测**（`get_property_list()` /
   `get_script_constant_map()` / 源码文本），探到了才敢调。
 - `--quit-after` **统一给 3600 帧**（安全网，只在挂住时用得上）。
@@ -121,6 +124,14 @@
 Run:
 ```bash
 source tests/env.sh
+# ★ 先确认文件都在。不做这一步的话,文件缺失会让下面的 `grep -c` 因为**读不到输入**
+#   而打印 0,而"0 个旧名"这条期望就被**假满足**了(命令没报错,只是没在看东西)。
+missing=0
+for f in scenes/player/weapon_component.gd ui/weapon_slots.gd \
+         core/sim/weapon_inventory.gd tests/weapon_inventory_smoke.gd; do
+  if [ ! -f "$f" ]; then echo "MISSING: $f"; missing=1; fi
+done
+if [ "$missing" = 1 ]; then echo "★ 上面有 MISSING —— 停下,下面的计数不可信"; fi
 echo "--- 计划 2：改名 ---"
 # ★ 剥掉注释再数:`sed 's/#.*//'` —— 注释里提到旧名不算数(计划 2 未必逐条改注释)。
 sed 's/#.*//' scenes/player/weapon_component.gd \
@@ -231,7 +242,8 @@ Expected: 前两行都是 `0`；**紧接着两行都必须 ≥ 1**（计划 1 �
 ```gdscript
 	# ★ 原先是 `int(wi.MAX_WEAPONS)` / `int(wi.CAPACITY)` 直取属性 —— 常量改名成字段之后
 	#   那是运行时错,而本文件是 -s 冒烟 ⇒ 错在 helper 里"该函数当场结束、调用方继续"
-	#   ⇒ 后面断言被静默跳过、verdict 照打 SMOKE OK(**假绿**)。故走常量表 + 哨兵默认值。
+	#   ⇒ 后面断言被静默跳过、一个字都不出现,而裁决行照打(**假绿**——
+	#   只有"逐条比名字/条数"才拦得住)。故走常量表 + 哨兵默认值。
 	var wconsts: Dictionary = wi.get_script_constant_map()
 	_check(int(wconsts.get("DEFAULT_MAX_WEAPONS", -1)) == 4,
 			"WeaponInventory.DEFAULT_MAX_WEAPONS == 4(实际 %s)" % str(wconsts.get("DEFAULT_MAX_WEAPONS")))
@@ -263,8 +275,9 @@ func _phase_weapon_capacity() -> void:
 	var src := ScanUtil.read("res://ui/weapon_slots.gd")
 	_check(not src.is_empty(), "读到 ui/weapon_slots.gd(读不到就是红,不是静默跳过)")
 	# ★★ 必须先看源码文本再敢调:`ws.rows_for(...)` 在函数不存在时会**抛错**,
-	#   而 -s 冒烟里 helper 抛错 ⇒ 本函数当场结束、调用方继续 ⇒ verdict 照打 SMOKE OK(**假绿**)。
-	#   本函数是 helper(不是 _initialize),所以这里 `return` 是安全的、不会挂进程。
+	#   而 -s 冒烟里 helper 抛错 ⇒ 本函数当场结束、调用方继续 ⇒ 下面那些断言
+	#   被静默跳过(裁决行照打 —— **假绿**)。本函数是 helper(不是 _initialize),
+	#   所以这里 `return` 是安全的、不会挂进程。
 	var has_derivation := src.contains("static func rows_for") and src.contains("static func panel_h_for")
 	_check(has_derivation, "★ WeaponSlots 应导出 rows_for() / panel_h_for() 两个静态派生函数")
 	if not has_derivation:
@@ -318,7 +331,7 @@ Run:
 source tests/env.sh
 "$GODOT" --headless --path . -s res://tests/weapon_inventory_smoke.gd 2>&1 | tail -20
 "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 \
-  | grep -E "FAIL|SMOKE" | tail -20
+  | grep -E "  FAIL - |FAILURES" | tail -20
 "$GODOT" --headless --path . --quit-after 3600 res://tests/level0_weapon_scatter_probe.tscn \
   2>&1 | grep -E "ALL-OK|FAIL"
 ```
@@ -349,10 +362,15 @@ WEAPON_INVENTORY FAILED: 6
   FAIL - WeaponInventory.DEFAULT_MAX_WEAPONS == 4(实际 <null>)
   FAIL - WeaponInventory.DEFAULT_CAPACITY == 8(实际 <null>)
   FAIL - ★ WeaponSlots 应导出 rows_for() / panel_h_for() 两个静态派生函数
-SMOKE OK
+FAILURES: ["WeaponInventory.DEFAULT_MAX_WEAPONS == 4(实际 <null>)", … 共 3 条]
+退出码 1
 ```
 （第三条之后 `_phase_weapon_capacity()` 就 `return` 了 ⇒ 后面那些 `rows_for(...)` 断言
-**不执行** —— 它们要等 `has_derivation` 为真。末尾仍须有 `SMOKE OK`。）
+**不执行** —— 它们要等 `has_derivation` 为真。）
+★★ **这一趟的尾行是 `FAILURES: […]`（走 `printerr`，即 stderr）+ 退出码 1，
+不是 `SMOKE OK`** —— `tests/enemy_logic_smoke.gd:130-135` 只在 `_failures.is_empty()` 时
+才打 `SMOKE OK`、`quit(0)`；有失败时走 `else` 支打 `FAILURES:` 并 `quit(1)`。
+所以：命令里的 **`2>&1` 不能省**（否则尾行整条看不见），**别把退出码 1 当异常**。
 （`level0_weapon_scatter_probe` 那一条**应当是绿的**，理由见 Step 5。）
 ★ **判读规则**：
 - `weapon_inventory_smoke` **必须打完** `WEAPON_INVENTORY FAILED: 6` 再退出。
@@ -361,9 +379,11 @@ SMOKE OK
   （那会抛错 ⇒ 挂住），**再**去查 Step 2 的 `if has_capacity and has_max:` 守卫。
   ★ 顺序不能反 —— 这条判读规则上一版写成"hang ⇒ 一定是守卫少了"，而计划自己在
   Step 1 里留着 `SLOT_COST` 时**恰好**会以那种形状挂住，会把人指到错的方向（核验报告 §2.6）。
-- `enemy_logic_smoke` 的文件末尾**必须仍有 `SMOKE OK`** —— 那正是"新断言被静默跳过"
-  与"新断言干净地红了"的分界：本次预期是**红了但没打断**。若连 `SMOKE OK` 都没有，
-  说明抛错了，回去核 Step 3/4 的守卫。
+- `enemy_logic_smoke` 的尾行必须是 `FAILURES:`，且列表里**恰好是上面点名的那 3 条**。
+  ★ 这才是"新断言干净地红了"与"被静默跳过"的分界 —— 判据是**逐条比名字与条数**
+  （`FAILURES` 里少了 `rows_for` 那一条，说明那条断言被跳过了），
+  **不是**"有没有 `SMOKE OK`"（这一趟本来就不该有 `SMOKE OK`）。
+  ★ 若连 `FAILURES:` 那一行都没有：那是抛错/挂住，回去核 Step 3/4 的守卫。
 
 - [ ] **Step 7: 本 Step 不提交**
 
@@ -611,9 +631,14 @@ source tests/env.sh
   2>&1 | grep -E "ALL-OK|FAIL"
 "$GODOT" --headless --path . --quit-after 120 res://scenes/main_menu.tscn 2>&1 \
   | grep -cE "SCRIPT ERROR|Parse Error"
+# ★ 只看上面那个数字**不够**:场景没跑起来时一行都不打印,而 `grep -c` 照样打 0。
+#   把总行数一起打出来 —— 0 行 = 场景压根没加载,那不是"没有报错"。
+out=$("$GODOT" --headless --path . --quit-after 120 res://scenes/main_menu.tscn 2>&1)
+echo "错误行数=$(echo "$out" | grep -cE 'SCRIPT ERROR|Parse Error')  总行数=$(echo "$out" | wc -l)"
 ```
 Expected: `WEAPON_INVENTORY OK`、`SMOKE OK`（无 FAIL）、
-`LEVEL0 SCATTER: ALL-OK`、`GROUND ACTION PROBE: ALL-OK`、最后一行 `0`。
+`LEVEL0 SCATTER: ALL-OK`、`GROUND ACTION PROBE: ALL-OK`、
+最后一行形如 `错误行数=0  总行数=<几十以上>`（**总行数 0 = 假绿**，不是通过）。
 
 **反证（逐条，改回来再跑下一条）**：
 1. **闸门读的到底是字段吗**：把 `weapon_inventory.gd` 的 `can_hold` 里

@@ -126,6 +126,15 @@
 Run:
 ```bash
 source tests/env.sh
+# ★ 先确认这四个文件都在。不做这一步的话,文件缺失/被删会让下面的 `grep -c` 因为
+#   **读不到输入**而打印 0,而"0 个旧名"这条期望就被**假满足**了 ——
+#   这是机械命令静默失效的典型形态(命令本身没报错,只是没在看东西)。
+missing=0
+for f in scenes/player/weapon_component.gd ui/weapon_slots.gd \
+         core/sim/weapon_inventory.gd scenes/level_0.gd; do
+  if [ ! -f "$f" ]; then echo "MISSING: $f"; missing=1; fi
+done
+if [ "$missing" = 1 ]; then echo "★ 上面有 MISSING —— 停下,下面的计数不可信"; fi
 # 剥掉注释再数:`sed 's/#.*//'` —— 注释里提到旧名不算数(计划 2 未必逐条改注释)。
 sed 's/#.*//' scenes/player/weapon_component.gd \
   | grep -cE "_current_slot|set_enabled_slots|is_slot_enabled|enabled_slots|current_slot_int|default_slot|push_net_slot|consume_net_slot"
@@ -134,7 +143,7 @@ echo "--- 计划 2 的新名必须在位（否则上面那两个 0 只是'文件
 grep -c "_current_type\|enabled_types\|set_enabled_types" scenes/player/weapon_component.gd
 grep -c "cell_start" ui/weapon_slots.gd
 ```
-Expected: 前两行都是 **0**，紧接着两行都 **≥ 1**。
+Expected: **没有任何 `MISSING`**；前两行都是 **0**，紧接着两行都 **≥ 1**。
 任何一个不对 ⇒ 计划 2 未落地，**停下**，先跑计划 2
 （本计划的代码写的是改名后的词汇，硬上会写进错的名字 —— 那是 Parse Error，不是行为变化）。
 ★ 只查"旧名为 0"会被"文件不存在/被清空"骗过，所以**正反两面都要查**。
@@ -277,6 +286,26 @@ func _phase_weapon_registry() -> void:
 	#   `_default_weapon_types` 整个删掉(或改成 `return []`)照样全绿。
 	# ★ 按**函数体**判,不按整文件 contains:同一文件里别处出现 `all_ids()` 不能替这一处背书
 	#   (level_0.gd 有 600+ 行)。
+	#
+	# ★★ **`weapon_component.gd` 那一处锚在 `_init` 上是刻意的,而且它约束了实现形状**
+	#   (2026-09-26 订正):该文件的两个字面量分别在 `:54`(**class 级**的
+	#   `var enabled_types: Array = [1, 2, 3, 4, 5, 6]`)与 `:71`(`set_enabled_types` 体内),
+	#   **`_init` 的函数体里一个字面量都没有** ⇒ 这条断言今天为假。
+	#   为什么不锚 `:54`:**`ScanUtil.func_body` 表达不了 class 级的 `var`** ——
+	#   它按 `"func " + name + "("` 找起点,没有函数就没有起点。
+	#   为什么选"把默认值搬进 `_init`"而不是"换个锚点":默认值只能活在两处之一是
+	#   **语言事实** —— class 级 initializer 或 `_init`;而 ⑦ 要求"刚 `new()` 出来"
+	#   的组件就带全量启用表 ⇒ 必须在构造期完成。既然 class 级那处**无法被任何机制断言**,
+	#   就把它搬进 `_init`(Task 3 Step 1 做的正是这件事)。
+	#   ⇒ **⑤ + ⑥ 合起来把实现形状钉死了**:`:54` 的字面量必须消失(⑤),
+	#     且 `_init` 体内必须出现 `all_ids()`(⑥)。两种改法能满足:
+	#     ① `var enabled_types: Array = []` + `_init` 里 `enabled_types = all_ids()`
+	#        ← **本计划选这条**(Task 3 Step 1 就是这个形状);
+	#     ② `var enabled_types: Array = []` + `_init` 里 `set_enabled_types([])`
+	#        ← 也能过 ⑥,但多绕一层、且与 `set_enabled_types` 的"入参是被禁表"语义易混,
+	#        **不采用**。
+	#   ★ 别把 `:54` 改成 `WeaponRegistry.all_ids()` 了事 —— 那样 ⑤ 绿、⑥ 红,
+	#     而 ⑥ 的红会看起来像"`_init` 没接上",查半天。
 	var sites := [
 		{"path": "res://scenes/level_0.gd", "func": "_default_weapon_types"},
 		{"path": "res://scenes/lobby_page.gd", "func": "_add_weapon_grid"},
@@ -334,10 +363,22 @@ Expected（改动前，**必须是这一组、恰好 10 条**）:
   FAIL - res://server/match_ground.gd 的 _server_weapon_types() 应改用 WeaponRegistry.all_ids()
   FAIL - res://scenes/player/weapon_component.gd 的 _init() 应改用 WeaponRegistry.all_ids()
   FAIL - res://scenes/player/weapon_component.gd 的 set_enabled_types() 应改用 WeaponRegistry.all_ids()
-SMOKE OK
+FAILURES: ["读得到 …weapons.json(读不到 = 文件还没建)", … 共 10 条]
 ```
-（10 = ① 2 条 + `json 至少有 1 条` 1 条 + ④ 1 条 + ⑥ 6 条。★ **末尾仍必须是 `SMOKE OK`**
-—— 本相是"红了但没打断"。若一行 `SMOKE OK` 都没有，说明抛错了，见下面的判读规则。）
+（10 = ① 2 条 + `json 至少有 1 条` 1 条 + ④ 1 条 + ⑥ 6 条。）
+★★ **尾行不是 `SMOKE OK`，而且这一趟的退出码是 1 —— 那是正常的红，不是崩溃。**
+`tests/enemy_logic_smoke.gd:130-135` 是：
+```gdscript
+	if _failures.is_empty():
+		print("SMOKE OK")
+		quit(0)
+	else:
+		printerr("FAILURES: " + str(_failures))   # ← 有失败时走这一支
+		quit(1)
+```
+⇒ 有失败时**打的是 `FAILURES: […]`（走 `printerr`，即 stderr）并 `quit(1)`**。
+★ 命令里的 **`2>&1` 不能省**（不然连 `FAILURES:` 都看不到），而且**别把 `quit(1)` 当失败信号**
+去 `set -e` —— 本相的整趟run 预期就是"退出码 1 + 恰好 10 条 FAIL"。
 ★ **判读规则**（这几条不成立就不要往下走）：
 - ④ 的命中清单必须**恰好是 5 个文件**：`scenes/level_0.gd`、`scenes/lobby_page.gd`、
   `scenes/main_menu.gd`、`server/match_ground.gd`、`scenes/player/weapon_component.gd`。
@@ -349,14 +390,18 @@ SMOKE OK
 - ④ 组里的 tier 对齐三条（`TIER_LIGHT` / `TIER_MEDIUM` / `TIER_HEAVY`）与容量两条
   （`wi.MAX_WEAPONS` / `wi.CAPACITY`）今天**本来就是绿的**，若它们红了，说明
   `WeaponInventory` 被人改过，与本次无关 —— 停下报告。
-- ★ **若命令挂住 / 一行 `SMOKE OK` 都没有**：那是**脚本错误**（旧名残留、或 `ScanUtil`
-  解析不出来），不是"断言失败"。本计划全文用计划 1 之后的词汇；出现这种形状时，
-  第一嫌疑是某处把 `slot` / `used_slots` / `SLOT_COST` 之类的旧名写回去了。
+- ★ **若连一行 `FAIL - ` 都没有（或整条命令挂住不返回）**：那是**脚本错误**
+  （旧名残留、或 `ScanUtil` 解析不出来），不是"断言失败"。本计划全文用计划 1 之后的词汇；
+  出现这种形状时，第一嫌疑是某处把 `slot` / `used_slots` / `SLOT_COST` 之类的旧名写回去了。
 
-- [ ] **Step 3: 本 Step 不提交**
+- [ ] **Step 3: 本 Step 本应不提交（★ 已被现实推翻，见下）**
 
-Task 1 是 TDD 的中间态（测试红、实现还没写）。它与 Task 2、Task 3 **合并为一次提交**
-（见 Task 3 Step 4）。
+Task 1 是 TDD 的中间态（测试红、实现还没写），原计划与 Task 2、Task 3 **合并为一次提交**。
+★★ **实际执行时被派工指令覆盖了**：Task 1 已**单独**提交为 `128ef7c`
+（`tests/enemy_logic_smoke.gd` only，+149/−40），**留下了一个红状态的提交**。
+计划方（协调者）会把 Task 2 改成 `git reset --soft HEAD~1` 让测试文件与迁移一起落，
+**不要**再按本 Step 的"不提交"去理解历史。**对本计划文本的其余部分没有影响** ——
+Task 2/3 的判据仍按"注册表到位之后"写。
 
 ---
 
@@ -460,6 +505,10 @@ static func _ensure_loaded() -> void:
 			push_error("WeaponRegistry: weapons[%d] 不是对象,已跳过" % idx)
 			continue
 		var e: Dictionary = raw
+		# ★★ `int(...)` **不是可选的美化**:JSON 的数字一律解析成 float(`1` 变 `1.0`),
+		#   而 `1.0` 当字典键 / 当 `int` 形参 / 去 `.has(type_id)` 都会**静默不命中**。
+		#   id 全程必须是真 int —— 出口 `all_ids()` 里那一次 `int(...)` 是二次保险,
+		#   这里这次才是正本(顺带把非数字的 `id` 归一成 0、被下面那条挡掉)。
 		var id := int(e.get("id", 0))
 		if id <= 0:
 			push_error("WeaponRegistry: weapons[%d].id 不是正整数(实际 %s),已跳过" % [idx, str(e.get("id"))])
@@ -493,6 +542,17 @@ static func _ensure_loaded() -> void:
 		push_error("WeaponRegistry: 注册表为空 —— json 里没有合格条目,或导出包漏了 %s" % PATH)
 
 
+# ★★ **必须返回真正的 int,一个 float 都不能有**(2026-09-26 订正)。
+#   坑在 JSON:`JSON.parse_string` 把**所有数字都解析成 float** ⇒ `e["id"]` 是 `1.0` 而不是 `1`。
+#   两步都要 `int(...)`:装载时 `var id := int(e.get("id", 0))`(那一步同时做校验),
+#   以及这里 `out.append(int(e["id"]))`(二次保险,也是**要命的那一步**)。
+#   为什么不容忍 float:`type_id` 全仓当 int 用 —— 它是 `tier_of(type_id: int)` /
+#   `is_type_enabled(type_id: int)` / `WeaponInventory.SLOT_COST` 一类**字典的键**、
+#   以及 `enabled_types.has(type_id)` 的入参;混进 float 会在这些地方**静默不命中**。
+#   ★ 更直接的一条(已实测):`Array[int] [1,2,3] == Array [1,2,3]` 为**真**,
+#   但 `== [1, 2, 3.0]` 为**假** —— 于是任何拿 id 数组去比**字面量 int 数组**的断言
+#   (enemy_logic_smoke 的 ⑦、以及将来任何探针)会变成**假红**,而且看起来像"接线漏了"。
+#   那正是本文件 ② 那条"float 当键会让 has() 永远假"的镜像。
 static func all_ids() -> Array[int]:
 	_ensure_loaded()
 	var out: Array[int] = []
@@ -579,16 +639,21 @@ Expected: 无 `Parse Error` / `SCRIPT ERROR`。
 Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd \
-  2>&1 | grep -E "FAIL|SMOKE"
+  2>&1 | grep -E "  FAIL - |FAILURES"
 ```
 Expected: FAIL 列表**恰好 7 条** = ⑤ 一条（命中的 6 个字面量）+ ⑥ 六条（还没改的宿主函数），
-外加末尾的 `SMOKE OK`。
+末尾是 **`FAILURES: [… 7 条 …]`（stderr）+ 退出码 1** ——
+**不是 `SMOKE OK`**（有失败时 `enemy_logic_smoke.gd:130-135` 走 `else` 支，见 Task 1 Step 2）。
+★ 删掉命令里的 `2>&1` 会把这一行整条吞掉，剩下的输出看着像"什么都没发生"。
 `读得到 res://data/weapons.json` / `core/sim/weapon_registry.gd 存在且可加载` /
 `json 至少有 1 条合格条目` / 所有 `tier_of(...)` / `tiers_map()` / `scene_of(...)` /
 `name_of(...)` / `has(...)` / `默认启用表必须等于注册表全部 id` —— 这些**必须已不在 FAIL 列表里**。
 ★ 若 `默认启用表必须等于注册表全部 id` 红了：`enabled_types` 还是那条硬编码
 `[1, 2, 3, 4, 5, 6]`，而注册表也是 `[1..6]` ⇒ 本该相等。红了说明 json 的 id 集合不是
 `{1..6}`（多半手抖写了 0 或 7），回去核 Step 1 的内容。
+★ ⑦ 那条能绿的**前提**是 `all_ids()` 返回的是**真 int**（不是 JSON 来的 float）——
+`Array[int] [1,2,3] == Array [1,2,3]` 为真、`== [1,2,3.0]` 为**假**。
+真红了先看 `all_ids()` 有没有漏掉 `int(...)`，别急着怀疑接线（见 Task 2 Step 2 的注释）。
 
 - [ ] **Step 6: 反证（把 json 改坏，确认 ② 会红并点名）**
 
@@ -631,14 +696,16 @@ Expected: `FAIL - id 1:tscn 的 tier(0)必须等于 json 的 "medium"(1)`。
 删掉 `:15-22`（`WEAPONS`）、`:25`（`DISPLAY_NAMES`）、`:33-40`（`TIERS`）三块的
 `const` 声明**连同它们上方的说明注释**（注释讲的是三张表互相对账，判据已搬到 json 上）。
 
-`:54` 那个 `enabled_slots`（计划 1 后叫 `enabled_types`）声明，改成**空表 + 注释**：
+`:54` 那个 `enabled_slots`（计划 1 后叫 `enabled_types`）声明，改成**空表 + 注释**
+（**这一处与下面 `_init` 那一行是同一条改动**，形状由 Task 1 的 ⑤+⑥ 共同钉死）：
 
 ```gdscript
-# 启用的武器**类型 id**。默认全开 = 注册表里全部 id(在 `_init` 里赋值);
+# 启用的武器**类型 id**。默认全开 = 注册表里全部 id(**在 `_init` 里赋值** —— 不在这里);
 # 单机由 Level0 按 RunOptions 设置;PvP 由客户端按服务器下发的 match_options 设置。
 # 数字键/滚轮切枪都会跳过被禁的类型。
-# ★ 从前这里是一条硬编码的 `[1, 2, 3, 4, 5, 6]`:加第 7 把枪时漏改它,新枪**永远拿不到
-#   也开不了**,而且**完全不报错**。赋值搬进 `_init` 是为了让它可被函数体断言钉住。
+# ★ 从前这里是硬编码的 `[1, 2, 3, 4, 5, 6]`:加第 7 把枪时漏改它,新枪**永远拿不到也开不了**,
+#   且**完全不报错**。赋值搬进 `_init` 不是风格偏好 —— `ScanUtil.func_body` 断言不了
+#   class 级的 `var`,只有把它放进函数体, ⑥ 那条守卫才存在。
 var enabled_types: Array = []
 ```
 
@@ -648,6 +715,11 @@ var enabled_types: Array = []
 func _init() -> void:
 	# 在 _init 而不是 _ready 建:探针会 new() 出组件直接调方法,不一定入树。
 	inventory = WeaponInventory.new(WeaponRegistry.tiers_map())
+	# ★★ **默认启用表必须在构造期就填好,且必须走 `all_ids()`** —— 两件事都只在这一行成立:
+	#   ① ⑦(`comp.enabled_types == registry.all_ids()`)读的是**刚 new() 出来**的组件;
+	#   ② Task 1 的 ⑥ 锚在**函数体**上:`ScanUtil.func_body` 表达不了 class 级的 `var`,
+	#      所以 `:54` 那条 `var enabled_types: Array = [1, 2, 3, 4, 5, 6]` 必须**先变成空表**,
+	#      再由这一行填 —— 只把 `:54` 改成 `all_ids()` 会让 ⑤ 绿、⑥ 红。
 	enabled_types = WeaponRegistry.all_ids()
 ```
 
@@ -671,7 +743,8 @@ func set_enabled_types(disabled: Array[int]) -> void:
 			_unequip()
 ```
 
-`:210-214` 的场景查询（`_equip_index` 体内）改成：
+`_equip_index` 体内那三行换表查询（**`main` 上是 `:210-214`；计划 1 往这个文件里插了函数，
+现已漂到 `:248-252`**）改成：
 
 ```gdscript
 	var type_id := int(inventory.held[index]["type"])
@@ -681,6 +754,9 @@ func set_enabled_types(disabled: Array[int]) -> void:
 		push_error("weapon scene not found: id=%d(%s)" % [type_id, scene_path])
 		return
 ```
+★ 定位方式：找 `load(WEAPONS.get(str(type_id), ""))` 那一行（全文件只有一处）。
+★ 同文件里的 `:54`（`enabled_types` 的 class 级声明）**这一步先不动**，它在下一步一起改 ——
+两处的形状是**一条**改动，别只改一半（只改一处的结果：⑤ 红或 ⑥ 红，见上面 `_init` 的注释）。
 
 ★ 本 Step **只替代"换表查询"这三处**。函数名与调用名一律是**计划 1 改完的**：
 `is_type_enabled`（原 `is_slot_enabled`）、`_current_type`（原 `_current_slot`）、
@@ -730,19 +806,24 @@ func _server_weapon_types() -> Array:
 ```gdscript
 	for type_id: int in WeaponRegistry.all_ids():
 ```
-★ 该行上方的注释（`# 显式 int:循环变量来自字面量数组,`var slot_i := slot` 推断不出类型…`）
+★ 该行上方的注释（**现状**：`# 显式 int:循环变量来自字面量数组,`var type_i := type_id`
+推断不出类型会整文件解析失败`）
 **必须一并改写**：`all_ids()` 返回 `Array[int]`，不再是"字面量数组"这个理由了。
 改成：`# 显式 int:入库的是 Array[int],循环变量跟着同类型,别让它退化成 Variant。`
 （核验报告 §2.8 点名了这条注释：理由不成立而注释留着就是误导。）
 ★ 这里改完，`_add_weapon_grid` 的函数体就让 Task 1 的 ⑥ 满足了。
 
 `scenes/main_menu.gd:343` 起的那一段（`for` 用计划 1 的 `type_id`；`cb.text` **不带编号**
-—— 编号是计划 1 Step 5 刚删掉的，别装回来）：
+—— 编号是计划 1 Step 5 刚删掉的，别装回来）。
+★ **行号已漂**：计划 1 Step 5 在原文案那行**上方加了一行注释**，故现在是
+**`:343` 循环 / `:346` `cb.text`（原文案的下方多了一行注释）/ `:361` `i + 1`**（原 `:360`）。
+按给出的原文定位，别按旧行号跳：
 
 ```gdscript
 	var ids: Array[int] = WeaponRegistry.all_ids()
 	for type_id: int in ids:
 		var cb := CheckButton.new()
+		# ★ 保留计划 1 加的那行注释(它讲的是"编号看起来像键位",与本改动无关)。
 		cb.text = WeaponRegistry.name_of(type_id)
 		cb.icon = WeaponIcons.silhouette(type_id)   # 纯白像素剪影,便于辨认
 		cb.expand_icon = false
@@ -751,7 +832,7 @@ func _server_weapon_types() -> Array:
 		checks.append(cb)
 		check_list.add_child(cb)
 ```
-★★ **`:360` 的 `i + 1` 必须一起改成 `ids[i]`**（同一段 `go.pressed` 的闭包里）：
+★★ **`:361` 的 `i + 1` 必须一起改成 `ids[i]`**（同一段 `go.pressed` 的闭包里）：
 
 ```gdscript
 		for i in checks.size():
@@ -800,12 +881,13 @@ func _build_visual() -> void:
 	var scene: PackedScene = load(scene_path) if not scene_path.is_empty() else null
 ```
 
-`ui/weapon_icons.gd:68`（`make_weapon_check` 体内，形参同样是计划 1 改过的 `type_id`）：
+`ui/weapon_icons.gd:69`（`make_weapon_check` 体内，形参同样是计划 1 改过的 `type_id`；
+★ 行号已漂：计划 1 Step 5 在上方加了一行注释，`main` 上的 `:68` 现在是 `:69`）：
 
 ```gdscript
 	var l := UiFactory.label(WeaponRegistry.name_of(type_id), font_size)
 ```
-★ **不带编号** —— 计划 1 的 Step 5 刚把 `"%d %s" % [slot, …]` 那个假键位编号删掉，
+★ **不带编号** —— 计划 1 的 Step 5 刚把 `"%d %s"` 那个假键位编号删掉，
 本 Step 只换**名字的来源**，别把它装回来。`font_size` 的实参位置也不动
 （`kh_l4_probe` 按下标 1 取它）。
 
@@ -820,7 +902,8 @@ func _build_visual() -> void:
 
 - [ ] **Step 4: `tests/weapon_pickup_probe.gd` 跟着改（**不改就是 Parse Error**）**
 
-`:102` 与 `:322` 两处直接引用 `WeaponComponent.WEAPONS`，表删了就编不过：
+`:102` 与 `:322` 两处直接引用 `WeaponComponent.WEAPONS`，表删了就编不过
+（两处行号**已核**：计划 1 只是同行改名，没增删这两行）：
 
 ```gdscript
 	for t in WeaponRegistry.all_ids():
@@ -961,6 +1044,11 @@ source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://test
   2>&1 | grep -E "KH L3|FAIL|全禁"
 ```
 Expected: `KH L3 PROBE: ALL-OK`，且 `全禁后兜底` 那三条仍是 `ok`。
+★★ **本步不产生红绿分界**（6 把枪时 `[1, 2, 3, 4, 5, 6]` 与 `all_ids()` 同结果）——
+它是一条**前瞻性**改动，牙齿在"第 7 把枪"那一档才露出来，所以 **Task 5 Step 1 的跑批里
+必须带上 `kh_l3_probe`**：那时若 `:187` 还写着 `[1, 2, 3, 4, 5, 6]`，兜底会变成 `[7]`、
+`is_type_enabled(1)` 变假 ⇒ `全禁后兜底不是 [1]` 红。没有那一档，本步就是一条**验不出差别**的
+改动（本仓最该避免的形状）。
 
 - [ ] **Step 5: 提交**
 
@@ -1001,15 +1089,22 @@ source tests/env.sh
   2>&1 | grep -E "ALL-OK|FAIL"
 "$GODOT" --headless --path . --quit-after 3600 res://tests/weapon_pickup_probe.tscn \
   2>&1 | grep -E "ALL-OK|FAIL"
-"$GODOT" --headless --path . --quit-after 120 res://scenes/main_menu.tscn 2>&1 \
-  | grep -cE "SCRIPT ERROR|Parse Error"
+"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l3_probe.tscn \
+  2>&1 | grep -E "KH L3|FAIL|全禁"
+# ★ 下面这条只看数字是**不够**的:场景没跑起来时一行都不打印,而 `grep -c` 照样打 0。
+#   故把行数一起打出来 —— 行数为 0 = 场景压根没跑,那不是"没有报错"。
+out=$("$GODOT" --headless --path . --quit-after 120 res://scenes/main_menu.tscn 2>&1)
+echo "错误行数=$(echo "$out" | grep -cE 'SCRIPT ERROR|Parse Error')  总行数=$(echo "$out" | wc -l)"
 ```
 Expected: **全绿** —— `SMOKE OK`（无 FAIL，含 ⑦ 的"默认启用表 == 注册表全部 id"，
 它现在比的是 `[1..7]`）、`LEVEL0 SCATTER: ALL-OK`（14 件）、`WEAPON PICKUP PROBE: ALL-OK`、
-最后一行 `0`。
+`KH L3 PROBE: ALL-OK`（★ 这一条是本批**唯一**能验 Task 4 Step 2 那条改动的地方，
+见那里的说明）、最后一行形如 `错误行数=0  总行数=<几十以上>`。
 ★ **这就是 spec §7.1 要的"实际走一遍"**：注意本次**一个 `.gd` 文件都没改**。
 ★ 若 ⑦ 红了（`默认启用表…实际 [1,2,3,4,5,6]、注册表 [1..7]`）⇒ `enabled_types` 的赋值
 没有真的走 `all_ids()`，回去看 Task 3 Step 1。
+★ 若 `kh_l3_probe` 的 `全禁后兜底不是 [1](实际启用表 [7])` 红了 ⇒ Task 4 Step 2 漏了
+（`:187` 还写着 `[1, 2, 3, 4, 5, 6]`）。
 
 - [ ] **Step 2: 反证 —— 证明 ⑦ 有牙齿**
 
@@ -1017,9 +1112,11 @@ Expected: **全绿** —— `SMOKE OK`（无 FAIL，含 ⑦ 的"默认启用表 
 `enabled_types = WeaponRegistry.all_ids()` 临时改成 `enabled_types = [1, 2, 3, 4, 5, 6]`，跑：
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd \
-  2>&1 | grep -E "默认启用表|SMOKE"
+  2>&1 | grep -E "默认启用表|FAILURES"
 ```
-Expected: `FAIL - 默认启用表必须等于注册表全部 id(实际 [1, 2, 3, 4, 5, 6]、注册表 [1, 2, 3, 4, 5, 6, 7])`。
+Expected: `FAIL - 默认启用表必须等于注册表全部 id(实际 [1, 2, 3, 4, 5, 6]、注册表 [1, 2, 3, 4, 5, 6, 7])`
+**加上**尾行 `FAILURES: […]`（这一趟红了 ⇒ 走 `printerr` + `quit(1)`，**不会是 `SMOKE OK`**；
+`smoke.gd:130-135`）。★ `2>&1` 不能省 —— `FAILURES` 在 stderr 上。
 ★ 这**就是**"加了第 7 把枪但漏改 `enabled_types` ⇒ 新枪永远拿不到也开不了、且不报错"
 那条 bug 的可复现形态。确认后改回来。
 
