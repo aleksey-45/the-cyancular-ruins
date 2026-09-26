@@ -39,6 +39,7 @@ var _lock_flash_t := 0.0           # 贷款锁定红闪(B6 用)
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_to_group("watch_hud")   # 结晶 FX 靠它找表心(屏幕空间目标)
 	_dial_tex = _build_dial_texture()
 	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(DIAL + 14, -16))
 	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(DIAL + 14, BIG_FONT - 4))
@@ -165,3 +166,9 @@ func tremble() -> void:
 ## 贷款锁定红闪(B6 调用)
 func flash_locked() -> void:
 	_lock_flash_t = 1.2
+
+## 吸收结晶:入账 + 颤抖(结晶 FX 到达时调用;数值动画由 _process 自动追随)
+func absorb(amount: int) -> void:
+	if Level0.grain_account != null:
+		Level0.grain_account.deposit(amount)
+	tremble()
