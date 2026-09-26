@@ -71,6 +71,8 @@ func _ready() -> void:
 
 func _run() -> void:
 	_phase_source_contract()
+	_phase_downlink_key()
+	_require_ran("downlink_key")
 	_phase_opposite_order()
 	_require_ran("opposite_order")
 	_phase_missing_inst()
@@ -115,6 +117,24 @@ func _phase_source_contract() -> void:
 	_check(not plp.contains("equip_index(wslot - 1)"),
 			"player.gd 还在按**背包位置**解上行值 —— 两端 held 顺序不同时会切到不同的枪")
 	_summary(before, "相① 协议与解析点的形状")
+
+
+# ── 相⑤ 下行:世界包的"拿的是哪种枪"字段叫 type_id,且**两端同名**(★ 改动前逐条红)──
+# ★ 为什么必须**两端一起**断言:只改一端**不报错** —— 副本那句 `data.get("type_id", 0)`
+#   读不到键会拿到默认 0 ⇒ 副本**一直空手**(对手的枪凭空消失)。这是本批唯一
+#   "改一半完全静默"的地方,故判据是**一对**而不是一条。
+func _phase_downlink_key() -> void:
+	var before := _failures.size()
+	var mss := _code_only(_read("res://server/match_snapshot.gd"))
+	var pre := _code_only(_read("res://scenes/player/player_replica.gd"))
+	_check(mss.contains("\"type_id\": p.weapons.current_type_id()"),
+			"下行快照生产端没把 weapon 字段改名 type_id")
+	_check(not mss.contains("\"weapon\": p.weapons."),
+			"下行快照生产端还发着旧键 weapon —— 与上行同名不同义")
+	_check(pre.contains("data.get(\"type_id\", 0)"),
+			"副本没读 type_id —— 生产端改了名而它照旧读 weapon 的话,副本会**静默空手**")
+	_summary(before, "相⑤ 下行键两端同源")
+	_ran["downlink_key"] = true
 
 
 # ── 相② 两端 held 顺序相反 → 按同一个键必须切到同一把 ──

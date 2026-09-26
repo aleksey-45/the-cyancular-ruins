@@ -280,7 +280,7 @@ func _snapshot_dict(vel: Vector2, pose: int, downed: bool, pos: Vector2) -> Dict
 		"vel": vel,
 		"facing": 1,
 		"pose": pose,
-		"weapon": 0,
+		"type_id": 0,
 		"hp": 100,
 		"waterproof": 100.0,
 		"downed": downed,

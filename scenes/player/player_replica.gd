@@ -200,7 +200,7 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, _tick: int) -> void
 	#   已经不存在的枪**。`_swap_weapon(0)` 本来就是写好的空手路径(`WEAPONS` 查不到 → 留空),
 	#   原先只是进不去。开局人手一把,所以"对手把枪丢了"几乎必然命中它;握两把以上时丢一把会
 	#   自动换到另一把(type_id 变了,照常重建)—— 这也正是它一直没被发现的原因。
-	var type_id := int(data.get("weapon", 0))
+	var type_id := int(data.get("type_id", 0))
 	if type_id != _weapon_type_int:
 		_swap_weapon(type_id)
 	_previewing = bool(data.get("previewing", false))

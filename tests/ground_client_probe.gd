@@ -294,7 +294,7 @@ func _phase_replica_empty_hands() -> void:
 	var anchor: Vector2 = _local.global_position
 	var snap := {
 		"pos": anchor + Vector2(200.0, 0.0), "vel": Vector2.ZERO, "facing": 1, "pose": 0,
-		"hp": 100, "downed": false, "aim": Vector2.RIGHT, "weapon": 2,
+		"hp": 100, "downed": false, "aim": Vector2.RIGHT, "type_id": 2,
 	}
 	rep.apply_snapshot(snap, anchor, 1)
 	for i in 3:
@@ -302,7 +302,7 @@ func _phase_replica_empty_hands() -> void:
 	_check(rep._weapon != null, "先握上一把(实际 %s)" % str(rep._weapon))
 	_check(rep._weapon_type_int == 2, "槽位记成 2(实际 %d)" % rep._weapon_type_int)
 	# 服务器说:他把最后一把丢出去了 → 空手
-	snap["weapon"] = 0
+	snap["type_id"] = 0
 	rep.apply_snapshot(snap, anchor, 2)
 	for i in 3:
 		await get_tree().physics_frame
@@ -310,7 +310,7 @@ func _phase_replica_empty_hands() -> void:
 			"权威空手后副本不得还举着枪(实际 %s)" % str(rep._weapon))
 	_check(rep._weapon_type_int == 0, "槽位回到 0(实际 %d)" % rep._weapon_type_int)
 	# 再握一把:同槽位之外的类型要能重建(证明 0 那一档没有把状态写坏)
-	snap["weapon"] = 4
+	snap["type_id"] = 4
 	rep.apply_snapshot(snap, anchor, 3)
 	for i in 3:
 		await get_tree().physics_frame

@@ -117,7 +117,7 @@ func _snapshot_dict(pos: Vector2) -> Dictionary:
 		"vel": Vector2.ZERO,
 		"facing": 1,
 		"pose": 1,
-		"weapon": 0,
+		"type_id": 0,
 		"hp": 100,
 		"waterproof": 100.0,
 		"downed": false,

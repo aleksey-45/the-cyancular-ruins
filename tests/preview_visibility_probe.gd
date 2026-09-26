@@ -76,7 +76,7 @@ func _check_replica_never_shows_line() -> void:
 
 	var anchor := Vector2(500.0, 500.0)
 	rep.apply_snapshot({"pos": Vector2(520.0, 500.0), "facing": 1, "aim": Vector2.RIGHT,
-			"weapon": int(HEAVY_SLOT), "previewing": true, "hp": 100, "pose": 0, "downed": false},
+			"type_id": int(HEAVY_SLOT), "previewing": true, "hp": 100, "pose": 0, "downed": false},
 			anchor, 1)
 	await _frames(4)
 	rep._drive_weapon_visual()   # 副本每帧由 _process 驱动;显式再推一次,不依赖帧序
@@ -91,7 +91,7 @@ func _check_replica_never_shows_line() -> void:
 	# 负向对照:previewing=false 也必须不可见(若上面那条是靠"恒不可见"蒙对的,这里会一起过 ——
 	# 两条一起才说明是"因为 previewing 不生效",而不是"整条链根本没接通")。
 	rep.apply_snapshot({"pos": Vector2(520.0, 500.0), "facing": 1, "aim": Vector2.RIGHT,
-			"weapon": int(HEAVY_SLOT), "previewing": false, "hp": 100, "pose": 0, "downed": false},
+			"type_id": int(HEAVY_SLOT), "previewing": false, "hp": 100, "pose": 0, "downed": false},
 			anchor, 2)
 	await _frames(4)
 	rep._drive_weapon_visual()
@@ -99,7 +99,7 @@ func _check_replica_never_shows_line() -> void:
 
 	# 反空转:副本武器的朝向/枪口旋转**仍必须被驱动**(不能为了去掉红线把整个外观驱动也删了)。
 	rep.apply_snapshot({"pos": Vector2(520.0, 500.0), "facing": 1, "aim": Vector2(0.0, -1.0),
-			"weapon": int(HEAVY_SLOT), "previewing": false, "hp": 100, "pose": 0, "downed": false},
+			"type_id": int(HEAVY_SLOT), "previewing": false, "hp": 100, "pose": 0, "downed": false},
 			anchor, 3)
 	await _frames(4)
 	rep._drive_weapon_visual()
@@ -122,7 +122,7 @@ func _check_replica_backpedal_pitch() -> void:
 	var anchor := Vector2(500.0, 500.0)
 	var aim := Vector2(1.0, 0.3)   # 明确指向右侧、略向下
 	rep.apply_snapshot({"pos": Vector2(520.0, 500.0), "facing": -1, "aim": aim,
-			"weapon": int(HEAVY_SLOT), "previewing": false, "hp": 100, "pose": 0, "downed": false},
+			"type_id": int(HEAVY_SLOT), "previewing": false, "hp": 100, "pose": 0, "downed": false},
 			anchor, 1)
 	await _frames(4)
 	rep._drive_weapon_visual()

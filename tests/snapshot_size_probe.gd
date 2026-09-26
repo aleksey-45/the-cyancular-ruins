@@ -90,7 +90,7 @@ func _render_fields() -> Dictionary:
 		"vel": p.velocity,
 		"facing": p.get_facing(),
 		"pose": p.state,
-		"weapon": p.weapons.current_type_id(),
+		"type_id": p.weapons.current_type_id(),
 		"hp": p.hp,
 		"waterproof": p.waterproof,
 		"downed": p.is_downed(),

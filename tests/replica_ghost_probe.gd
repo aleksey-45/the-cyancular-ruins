@@ -124,7 +124,7 @@ func _run_pass(ghost_on: bool) -> void:
 	_replica = (preload("res://scenes/player/player_replica.tscn") as PackedScene).instantiate()
 	_host.add_child(_replica)
 	_replica.apply_snapshot({"pos": Vector2(obstacle_x, _spawn.y), "facing": -1,
-			"aim": Vector2.LEFT, "weapon": 0, "previewing": false, "hp": 50, "pose": 0,
+			"aim": Vector2.LEFT, "type_id": 0, "previewing": false, "hp": 50, "pose": 0,
 			"downed": false}, _spawn, 1)
 	_ghost = _replica.get_node_or_null("GhostBody") as StaticBody2D
 	if _ghost == null:
@@ -289,7 +289,7 @@ func _test_downed_ghost_rotation() -> void:
 	var rep: Node2D = (preload("res://scenes/player/player_replica.tscn") as PackedScene).instantiate()
 	_host.add_child(rep)
 	await get_tree().process_frame
-	rep.apply_snapshot({"pos": _spawn, "facing": 1, "aim": Vector2.RIGHT, "weapon": 0,
+	rep.apply_snapshot({"pos": _spawn, "facing": 1, "aim": Vector2.RIGHT, "type_id": 0,
 			"previewing": false, "hp": 0, "pose": 0, "downed": true}, _spawn, 1)
 	await get_tree().process_frame
 	var g := rep.get_node_or_null("GhostBody") as Node2D
