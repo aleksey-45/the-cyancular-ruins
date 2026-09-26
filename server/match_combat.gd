@@ -189,6 +189,9 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
 	# 命中确认(NetBusExt):告诉射手"你打中了"→ 客户端屏幕中心 X 标记。只发射手本人;
 	# RoyaleHost 覆写先写归因 meta 再 super 到这里,大乱斗同样生效。
+	# ★ 本函数**自己不写归因** —— 子弹直击的 `CombatFeedback.attribute` 写在子类覆写里
+	#   (`RoyaleHost` / `TeamHost`)。1v1 直接建 `MatchHost`、没有那层覆写 ⇒ 1v1 的子弹
+	#   **不计入逐人 `dealt`**(见 `_on_player_hit` 头注与 CLAUDE.md 的登记)。
 	var shooter_role := 0
 	for r in players:
 		if players[r] == bullet.shooter:
@@ -209,6 +212,11 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	# "归因写入 `CombatFeedback.attribute` 都在 `take_hit` 之前"(本仓明文纪律,见
 	# core/sim/explosion.gd:54 与 scenes/weapons/laser_weapon_base.gd:233),于是
 	# `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion`**。
+	# ★★ "覆盖全部来源"说的是**钩子**,不是**归因写端** —— 写端有一处缺口:子弹直击的
+	#   `attribute` 写在**各模式的覆写**里(`RoyaleHost`/`TeamHost`),基类
+	#   `_on_bullet_hit` **不写** ⇒ **1v1 的子弹不计入 `dealt`**(其余来源各自写归因、
+	#   照常计入)。今天无害(1v1 还不投递 `stats`),接投递时它会表现为**系统性偏低 ACS
+	#   且没有任何探针会红**。二选一的修法见 CLAUDE.md 的那条登记。
 	# ★ `dealt` 与 `taken` **口径对称**(spec §3.1):都只算**敌人** ——
 	#   队友爆炸炸到我不进 `taken`、自己炸自己也不进(那两类的代价走**惩罚**,记在肇事者行上)。
 	# ★ 三档都不记:自伤(写端静默跳过 ⇒ 由新鲜度挡掉)/ 队友伤害(按队过滤)/

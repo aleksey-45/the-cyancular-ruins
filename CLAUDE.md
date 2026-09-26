@@ -407,8 +407,30 @@ A 册 = **服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game
 - **★ 换边后客户端也走"补态口径"**:3v3 每局**整队对调出生点**(`TeamHost._start_next_round` 互换 `_round_spawns`/`_swap_spawns` 并清 `_spawned_once`),客户端在**新一轮 COUNTDOWN** 那一拍(与"清本地子弹 + `reset_destructibles()`"同一处)重拉一次 `match_sync`,并**先置 `_resync_pull_pending = true` 再发**。★ 不置位的话:那条应答按**进场口径**处理 → 换边后载荷里的 `spawns` 是**新一侧**、而 `PvpSession.spawn` 手里是旧一侧,**两者必然不一致** ⇒ 每局边界刷一条**假告警** + 一次多余瞬移(位置本来就归 C2 权威)。★ 闸门与"重连补态"**共用**同一个 `_resync_pull_pending`(读一次即清),**不要新立一个标志** —— 问的是同一个问题。★ 为什么不把第二份出生点塞进 `round_state`:那是给同一份数据开**第二条投递路径**(自检 B2 那类事故的形状);`server_main._on_match_sync` 里有一段注释专门钉着"这里**不补发**"。
 - **★ `TeamHost._on_bullet_hit` 的补齐是"行为从无到有",不是回归**:覆写里先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`(与 `RoyaleHost` 那份逐字同构;基类对玩家直击**不写归因**)。接上之前,**枪杀**这条路上 `_attributed_killer` 恒 0 ⇒ ① 逐人 `dmg` 漏掉最主要的伤害来源、ACS 直接失真;② `kill_event` 的射手恒 0(逐人 `kills` 也全漏)。★ 这里**原先还有第 ③ 条**「A 册'只复位击杀者'在枪杀上一直没生效」与紧随其后那句"后人若看到'枪杀现在会复位击杀者了'这类探针读数变化,**那是补齐,不是回归**" —— 那条规则已按用户要求删除(2026-09-21,见上条),这两句一并作废:**别再照旧读**。①② 两条与它无关、照旧成立。
 - **★ 逐人数据 / ACS / MVP(B 册 Task 10)的两条已知口径边界**(登记,不改行为):① **`_left_round` 记的是"宽限期到点"的局号,不是"断线"的局号** —— `mark_disconnected` 只在宽限期(30s)到期时被调,这 30s 若跨了一次换局,离开者的分母就**多算一局** ⇒ 他的 ACS 被**压低**,与"已离开者分母更小 ⇒ 更容易胜出"(用户裁定的取向)恰好**相反**;探针 ⑬h 覆盖的是**意图口径**,照不到这条边界,别当它已覆盖。② **MATCH_OVER 之后的倒地仍进 `_stats`** —— 倒下边沿的检测在 `_match_round_tick` 的 `match _round_state:` **之前**、且不看状态(这是 A 册 `_scores` 的**同款既有时序**,不是本批引入):收场后残留的爆炸致死会再 `deaths + 1`,并可能**再广播一次带新 `mvp` 的终局载荷**。
-- **★★ `round_state` 的 `stats` / `mvp` 两个键 —— 消费者已到位(2026-09-26 订正)**：本条原文写的是"**今天没有任何消费者** … 客户端一行都没消费"(2026-09-20 记录)。**那句话在写下时成立,已于 2026-09-21 的结算页批次失效** —— 现在的消费者是 `ui/match_result_payload.gd::for_team`(`:74-75` 读 `round.get("stats")` / `round.get("mvp")`,`:83-85` 把 kills/deaths/dmg/acs 与 mvp 的行号画上结算页),生产调用链 = `scenes/team_game.gd:452-456` → `scenes/pvp_match_client.gd:388-400` 的 `_show_result()`;`tests/team_host_probe.gd` ⑬g 的**文本级**断言是第二处读数。★ **两个键仍然保留、别顺手删** —— 裁定不变,只是理由从"预定的消费者是赛后结算面板"变成"**消费者已经在**":`acs` 是服务端算好的,客户端不必重算计分公式,删了就拿不回那份口径。★ 本条原先引的"设计 §6 末尾那段删掉顶层 `deaths` 键的更正"(协议字段要**随消费者一起加**,不留没有读者的键)**依然有效**,而且今天这两个键**已经不违反它** —— 别再照那句把键删掉。★ 载荷字段集随后续计划会从 `{kills, deaths, dmg, kscore, acs}` 变成 `{kills, deaths, assists, dealt, taken, kscore, acs}`(`dmg`→`dealt`);**改之前先看那批计划与 `.superpowers/sdd/stats-spec-verify.md`**。
-- **★ `ATTRIB_FRESH_MS = 8ms` 的成立前提是"归因与伤害在**同一调用栈**"**:将来新增**延迟扣血**型伤害(如激光缝 2 预留的持续/灼烧)时,**写端必须自己每帧重写归因** —— 那种实现是"命中时写一次、后续帧扣血",扣血那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人 `dmg` 恒少且不报错(没有断言、没有日志,只是 ACS 偏低)。该提示写在 `team_host.gd` 的 `ATTRIB_FRESH_MS` 上方。
+- **★★ `round_state` 的 `stats` / `mvp` 两个键 —— 消费者已到位(2026-09-26 订正)**：本条原文写的是"**今天没有任何消费者** … 客户端一行都没消费"(2026-09-20 记录)。**那句话在写下时成立,已于 2026-09-21 的结算页批次失效** —— 现在的消费者是 `ui/match_result_payload.gd::for_team`(`:74-75` 读 `round.get("stats")` / `round.get("mvp")`,`:83-85` 把 kills/deaths/dealt/acs 与 mvp 的行号画上结算页),生产调用链 = `scenes/team_game.gd:452-456` → `scenes/pvp_match_client.gd:388-400` 的 `_show_result()`;`tests/team_host_probe.gd` ⑬g 的**文本级**断言是第二处读数。★ **两个键仍然保留、别顺手删** —— 裁定不变,只是理由从"预定的消费者是赛后结算面板"变成"**消费者已经在**":`acs` 是服务端算好的,客户端不必重算计分公式,删了就拿不回那份口径。★ 本条原先引的"设计 §6 末尾那段删掉顶层 `deaths` 键的更正"(协议字段要**随消费者一起加**,不留没有读者的键)**依然有效**,而且今天这两个键**已经不违反它** —— 别再照那句把键删掉。★ 载荷字段集随 2026-09-26 那批**已经变了**（不是"将要变"）：从 `{kills, deaths, dmg, kscore, acs}`
+变成 **`{kills, deaths, assists, dealt, taken, kscore, acs}`**（`dmg`→`dealt`，新增 `assists`/`taken`；
+★ `assists` 的**写入口**归后续助攻计划，今天恒 0）。★ **逐人统计面同时从 `TeamHost` 上提到了
+`MatchState`**（`_stat_entry` / `_record_down` / `_rounds_for` / `_roster` / `stats_payload` /
+`mvp_role` / `_kscore_of` / `_acs_of`），计分口径收在 **`core/sim/score_rules.gd`**（`ScoreRules`，
+纯静态、无 autoload、`-s` 可测）：`kscore = 击杀×100 + 助攻×50 + 伤害÷5 − 死亡×50 − 惩罚`，
+**`acs = kscore ÷ 局数`，读端不得再加伤害**（伤害只在 `kscore` 里出现一次）。★ 旧的 `_acs_of` 写成
+`(kscore + dmg)/局数` 之所以成立，**仅仅因为旧 `kscore` 不含伤害**；双计**不报错**，只是所有排名
+静默偏移。旧口径的 `kill_bonus_score(敌方存活人数)` 加权、`MULTI_KILL_BONUS` 多杀加成、
+`_round_kills` 与 `_enemy_alive_including_victim` **已整体删除**（生产目录零命中，只剩注释与探针
+里的墓碑）。★ **五个权重是平衡参数**：守卫钉的是**性质**（`tests/score_rules_smoke.gd`：死亡多 ⇒
+ACS 低…），**调数不该让任何探针红**。★ 1v1 / 大乱斗今天**只在底座接得住**：`dealt`/`taken` 的写入
+（`MatchCombat._on_player_hit`）是三模式**共用且已生效**的；而 `kills`/`deaths` 的写入
+（`_record_down`）**只有 3v3 调**，两个模式的 `stats` **投递**见后续计划。
+- **★ 1v1 里**子弹**伤害不进 `dealt`(登记,不修;接投递时一并处理)**:`dealt`/`taken` 的累计读的是
+  `CombatFeedback.attribute` 写下的归因 meta,而**子弹直击的归因写在各模式的覆写里** ——
+  `RoyaleHost._on_bullet_hit` 与 `TeamHost._on_bullet_hit` 都是先 `attribute` 再 `super`,而
+  **基类 `MatchCombat._on_bullet_hit` 自己不写**(`server/match_combat.gd`,原地有注释)。1v1 走
+  `MatchBootstrap` **直接建 `MatchHost`**、没有那层覆写 ⇒ **1v1 的子弹(主要伤害来源)不计入
+  `dealt`**;爆炸 AoE / 榴弹直击 / 激光各自写归因,照常计入。★ 今天**无害**(1v1 还不投递 `stats`),
+  但那天接上投递,表现就是**系统性偏低 ACS 且没有任何探针会红** —— 与 `team_host.gd` 当年为 3v3
+  记过的同一失效模式(枪杀那条路上逐人数字全漏)。修法二选一:**让基类也写归因**,或给 1v1 加一层
+  覆写(与另两个模式逐字同构)。
+- **★ `ATTRIB_FRESH_MS = 8ms` 的成立前提是"归因与伤害在**同一调用栈**"**:将来新增**延迟扣血**型伤害(如激光缝 2 预留的持续/灼烧)时,**写端必须自己每帧重写归因** —— 那种实现是"命中时写一次、后续帧扣血",扣血那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人 `dealt` 恒少且不报错(没有断言、没有日志,只是 ACS 偏低)。该提示写在 `server/match_state.gd` 的 `ATTRIB_FRESH_MS` 上方(2026-09-25 随常量从 `team_host.gd` 上提到基类)。
 
 #### 结算页(2026-09-21:三个模式的 MATCH_OVER 都从「等 N 秒自动回菜单」改成「弹结算页 + 玩家自己退」)
 
