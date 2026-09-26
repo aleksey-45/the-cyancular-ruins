@@ -13,15 +13,50 @@ extends RefCounted
 # 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态。
 
 const PVP_MAP := "res://maps/factory1v1.cyrm"
+const FAR_CELLS := 15   # role2 的自动出生点离 role1 至少这么远(格;环面距离)
+
+
+## 给"只有一个出生点的图"挑 role2 的出生格:地板格(空 + 正下方实心),优先环面距离 ≥ FAR_CELLS,
+## 全不满足就取最远的那个;网格为空返回 (-1,-1)(调用方那套兜底照旧)。
+static func far_spawn_from(anchor: Vector2i, grid: Array) -> Vector2i:
+	if grid.is_empty():
+		return Vector2i(-1, -1)
+	TileDefs.load_defs()   # 幂等;worker 建局早于建世界,这里不加载的话 is_blocked 全是默认值
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	var best := Vector2i(-1, -1)
+	var best_d := -1
+	for r in rows:
+		var line: Array = grid[r]
+		for c in min(cols, line.size()):
+			if int(line[c]) != MapFormat.EMPTY:
+				continue
+			if not TileDefs.is_blocked(int(grid[(r + 1) % rows][c])):
+				continue
+			var d := MazeGenerator.toroidal_dist(anchor, Vector2i(c, r), cols, rows)
+			if d >= FAR_CELLS:
+				return Vector2i(c, r)
+			if d > best_d:
+				best_d = d
+				best = Vector2i(c, r)
+	return best
 
 
 static func start_on(role_peers: Dictionary, map_path: String = PVP_MAP,
 		options: Dictionary = {}, ai_roles: Array = []) -> Node:
 	MazeGenerator.set_map_file(map_path)
 	GameParameters.refresh_map_size()
+	# 同一进程里换图时 SpawnPicker 的三级缓存必须清(它的注释点名过这条纪律;worker 一局一进程,
+	# 但大厅/单人若也建宿主就会踩,清一次是零成本的保险)。
+	SpawnPicker.reset_cache()
 	var spawns := MazeGenerator.load_spawns()
 	var s1: Vector2i = spawns.get("player", Vector2i(-1, -1))
 	var s2: Vector2i = spawns.get("player2", Vector2i(-1, -1))
+	# 只标了一个出生点的图(单人图,如 demo.cyrm):给 role2 现挑一个远离 role1 的地板格 ——
+	# 否则两端会落在同一个点上(或落到 (-1,-1) 的兜底格上)。
+	if s2.x < 0 and s1.x >= 0:
+		s2 = far_spawn_from(s1, MapFormat.load_map_file(map_path))
+		print("MatchBootstrap: 图 %s 无 player2 出生点 → role2 自动分配 %s" % [map_path, s2])
 	for role in role_peers:
 		var peer_id: int = role_peers[role]
 		# 判活:有客户端可能已经在「报到 → 收到 match_start」之间的窗口里断开(它自己 stop() 了),

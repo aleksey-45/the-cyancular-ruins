@@ -44,4 +44,28 @@
 `tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算)· `tests/haste_probe.tscn`(B12/B13:倍率表(含 `world_delta`)/普通敌速度×0.7/**敌方子弹位移×0.7**/主角移速×1.4(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
 
 ### 检查点分支(用户要求的逐批回退点)
-`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影) · `_B13`(敌弹随世界变慢+加色高亮规则+精英亮黄)。
+`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影) · `_B13`(敌弹随世界变慢+加色高亮规则+精英亮黄) · `_B14`(地图选择 UI:单机开局选图 + 联机建房选图)。
+
+
+## 地图选择 UI(2026-09-26,B14)
+
+**目标**:单机进图前、联机建房时都能挑地图,并给每张图一版**开局地形简略图**。
+
+### 新增文件
+| 文件 | 职责 |
+|---|---|
+| `core/sim/map_catalog.gd` | 地图目录的**单一来源**:扫 `res://maps/`(+ exe 旁的开发者地图)、判"能不能打联机"(是否 `player2` 出生点)、**画简略图**(每格 2px 的纯 `Image`,由 UI 侧包纹理)、服务器侧的路径校验 `resolve_pvp_map`。**不引任何 autoload** → `-s` 探针可直接用 |
+| `ui/map_picker.gd` | 选图控件(`MapPicker`):卡片=缩略图+地图名+尺寸+联机角标,首项"随机";三处 UI 共用,选中值由调用方接 `picked` 信号决定往哪存 |
+
+### 接入点
+- **单机**:`ui/sp_launch_panel.tscn` 的 `VBox/MapSection` + `main_menu._fill_sp_panel`(填控件)/`_enter_level0`(钉图 + **`GameParameters.refresh_map_size()`**)/`Settings.sp_map_path`。
+- **联机**:`LobbyPage._add_map_picker(vb)`(基类一节,1v1 / 大乱斗 / 3v3 三页共用)→ 各页 `_player_options()` 带 `"map"` → `server_main` 用 `MapCatalog.resolve_pvp_map` 校验后传给 `MatchBootstrap/TeamHost/RoyaleHost.start_on` → 随 `match_start` 下发,客户端 `PvpSession.map_path` 照旧。存 `Settings.mp_map_path`(三模式共用一条)。
+- `server/match_bootstrap.gd`:①`SpawnPicker.reset_cache()`(换图纪律,它的注释点名过);②`far_spawn_from(anchor, grid)` —— **只标了一个出生点的单人图**当联机图时,给 role2 现挑一个环面距离 ≥15 格的地板格(否则两端叠在同一个点上)。
+
+### 纪律
+- **联机定图只认仓内 `res://maps/*.cyrm` 且必须有双出生点**:客户端上报的路径不可信(`..`/非 .cyrm/不存在/单人图一律拒),不合规回落 `MatchBootstrap.PVP_MAP`。exe 旁的开发者地图只给单机用(别的机器上没有那个文件)。
+- **"选了别的图"必须同步重算世界尺寸**:启动时 `GameParameters` 算的是当时随机图的尺寸,选了不同尺寸的图(factory1v1 150×100 vs demo 125×75)不重算 → 环面回绕/最短路径按错边界。
+- 缩略图是**程序生成**的(不是美术资源):瓦片配色沿用 `ui/minimap.gd` 的观感,半砖压暗,出生点画成绿/蓝色块。
+
+### 探针
+`tests/map_catalog_probe.gd`(`-s`:目录/双出生点判定/显示名取注释行/简略图尺寸+多色+出生点色块+缓存/联机定图校验矩阵/单人图自动分配 role2 出生点)· `tests/menu_autotest.gd -- --autotest-sp`(**场景级**:单机面板里真的有选图控件 → 点选 factory1v1 → 进关后断言 `MazeGenerator.map_file_path()` 就是它、且 `GameParameters.MAP_WIDTH` = 150×64,少这条"摆了缩略图但进关还是随机图"的假功能照样会过)。

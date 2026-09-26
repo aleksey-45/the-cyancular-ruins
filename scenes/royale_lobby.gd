@@ -121,6 +121,8 @@ func _build_create_panel() -> void:
 	_build_max_players_row(vb)
 	_build_match_time_row(vb)
 
+	_add_map_picker(vb)
+
 	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
 	_add_weapon_grid(vb, 10, func(cell: Node, slot: int) -> void:
 		# 本页要多记一笔:建房时读 _weapon_checks 的勾选态(1v1 页不留引用,直接读 Settings)
@@ -425,6 +427,7 @@ func _player_options() -> Dictionary:
 		"round_full_heal": false,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
+		"map": Settings.mp_map_path,
 	}
 
 

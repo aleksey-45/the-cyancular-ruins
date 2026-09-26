@@ -141,6 +141,8 @@ func _build_create_panel() -> void:
 	#   ★ 更要紧的是那两个勾选框**写的是 `Settings.pvp_disabled_weapons`** —— 那是 1v1 / 大乱斗的
 	#     设置项:在 3v3 页勾一下会**连带改掉另两个模式**。那属于功能缺陷(点了没反应、又污染别人),
 	#     不是审美问题,故不留给"UI 重做那份"。
+	_add_map_picker(vb)
+
 	vb.add_child(UiFactory.label("(本页没有禁用武器与个人角色颜色这两项:\n3v3 用队色、个人色相无效;禁用武器是 1v1/大乱斗的设置项)\n(小地图/轨迹/血条等本机显示项沿用「1v1」设置;\n房主规则项首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
 
 	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
@@ -413,8 +415,10 @@ func _send_list_request() -> void:
 
 # 3v3 首版不上发房主规则项(禁用武器/回合回血都走默认,角色色相亦然);本机视觉项
 # (小地图/轨迹/血条)沿用 Settings(pvp_*),由对局场景自己读,不经服务器。
+# ★ 例外是**地图**:它是"本局建什么世界",必须经服务器中转(worker 定图 → match_start 下发),
+#   故本页照样带 map 上报。
 func _player_options() -> Dictionary:
-	return {}
+	return {"map": Settings.mp_map_path}
 
 
 func _go_match_status() -> String:

@@ -113,6 +113,9 @@ func _build_options_panel() -> void:
 		Settings.pvp_minimap_show_enemy = on
 		Settings.save()))
 
+	# 选图(房主生效):三页共用基类那一节
+	_add_map_picker(vb)
+
 	# 禁用武器(房主生效):2 列网格 + 定尺寸剪影(横排会溢出屏幕)
 	vb.add_child(UiFactory.label("禁用武器(房主生效):", 32, UiFactory.C_ACCENT))
 	_add_weapon_grid(vb, 26)   # 26:剪影是长条形,列挨太近会与邻列挤在一起(本页版式值)
@@ -313,6 +316,7 @@ func _player_options() -> Dictionary:
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": Settings.pvp_round_full_heal,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
+		"map": Settings.mp_map_path,
 	}
 
 
