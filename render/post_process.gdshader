@@ -52,10 +52,11 @@ void fragment() {
 		vec3 film = mix(inv, vec3(g), 0.25);
 		COLOR.rgb = mix(COLOR.rgb, film, amt);
 	}
-	// 加速:全图统一压暗 + 冷色偏移(不再是"只留玩家亮"的补丁式效果)
+	// 加速:全图统一压暗 + 冷色偏移(角色靠加色高亮"跳"出来 —— 见 TimeGlow)
+	// ★ 0.42 → 0.55:压得太黑时用户会读成"一切都被调暗了、谁都没被高亮",留一点环境可读性。
 	if (haste_dim > 0.0) {
 		float amt = smoothstep(0.0, 0.28, haste_dim - rt);
-		vec3 target = COLOR.rgb * 0.42 + vec3(0.02, 0.035, 0.07);
+		vec3 target = COLOR.rgb * 0.55 + vec3(0.02, 0.035, 0.07);
 		COLOR.rgb = mix(COLOR.rgb, target, amt);
 	}
 	// 贷款:整体变亮 + 红蓝色影分离(深度越深越明显)

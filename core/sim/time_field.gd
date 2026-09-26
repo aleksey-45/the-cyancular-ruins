@@ -106,6 +106,19 @@ static func bullet_delta(d: float, bullet: Node) -> float:
 		from_player = s != null and s is Node and (s as Node).is_in_group("player")
 	return d * (TimeParams.HASTE_PLAYER if from_player else TimeParams.HASTE_WORLD)
 
+
+# 其它世界物件(掉落武器等):加速时随世界变慢,回溯时冻结。语义同"除主角外一切变慢"。
+static func world_delta(d: float) -> float:
+	var f := current
+	if f == null:
+		return d
+	if f.mode == Mode.REWIND:
+		return 0.0
+	if f.mode == Mode.HASTE:
+		return d * TimeParams.HASTE_WORLD
+	return d
+
+
 # ── 速度域倍率(正确做法:move_and_slide 用引擎 delta,缩放 delta 不改变位移;
 #    "快/慢"必须落在速度上;delta 缩放只用于计时器/动画/AI 节拍)────────────
 

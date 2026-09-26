@@ -16,6 +16,7 @@
 | `ui/watch_hud.gd` | 程序化像素怀表(挂 hud,**血条/氧条下方**):白短针=总量/上限一圈、红长针=短时窗+贷款(额外1/4圈)、右侧 96px 大数字(定长 0.2s 插值动画逐点跳动)、表心短时余额(贷款深红负数);`tremble()`/`flash_locked()`/`absorb()`;入 `watch_hud` 组 |
 | `core/sim/tile_ledger.gd` | 玩家拆砖账本(B7 瓦片回溯):记录破坏格的**改前值**,回拨按 t 降序还原(最新破坏先还原=LIFO);与 WorldRewind 共用时间轴;超窗口裁剪 |
 | `scenes/effects/grain_crystal.gd` | 乌鸫击杀结晶:10 枚碎片炸开散落 0.28s → 加速飞向怀表(目标按相机会算到 WatchHud 屏幕中心)→ 先到者吸收(入账+颤抖) |
+| `scenes/effects/time_glow.gd` | 时间状态高亮(B13):在实体视觉节点下叠**加色混合**的贴图副本(1 或 2 层),`attach/on/set_color`;不依赖 HDR、不与受击白闪抢 modulate |
 | `scenes/effects/afterimage.gd` | 加速残影(B12):`spawn(host, animator, tint)` 取当前动画帧贴图做一个半透明副本,0.26s 淡出自毁;玩家每 0.045s 红/蓝交替生成 |
 | `ui/time_symbol_hud.gd` | 屏幕中心模式标志(挂 hud):回溯 `◁ ◁` 浅色快闪 / 加速 `▶ ▶` 紫色,按 `TimeField.current` 模式显隐 |
 | `render/post_process.gdshader` + `post_process.gd` | 三效果:`rewind_film`(中心向外辐射底片化,≤200ms ramp)/`haste_dim`(背景压暗,角色靠 modulate 高亮)/`loan_depth`(变亮+红蓝色差);统一入口 `PostProcess.set_time_effects(film, loan, haste)` |
@@ -33,8 +34,14 @@
 - **B12 修正(用户:感受不到加速,只觉跳跃变低)**:根因是 `move_and_slide()` 用**引擎自己的 delta**,只在 `_physics_process` 首行缩放 delta 只改了重力与计时器(所以"坠落变快、跳跃变低、移速不变、敌速无感")。改法:加速一律**作用在速度域**——玩家水平速度目标 ×`HASTE_PLAYER`(1.4)、武器 tick ×1.4、**重力/跳跃保持原样**(跳跃高度不变);普通敌 `velocity.x` ×`HASTE_WORLD`(0.7)叠加其 delta ×0.7(动画/节拍也慢)。同时按用户要求强化可见性:加速时主角与敌人 `modulate` 提亮到 `Color(1.65,1.65,1.65)`(背景被 shader 压暗 → 角色"跳"出来),主角按 0.045s 间隔生成**红/蓝交替半透明残影**(`scenes/effects/afterimage.gd`,取当前动画帧贴图,0.26s 淡出自毁)。回归守卫 = `tests/haste_probe.tscn`。
 - **B9 修正(用户 2026-09-26,六条)**:①视效改**覆盖度模型**——过渡由内而外推进、**最终全图统一**(底特律变人导航模式感;不再残留径向渐变/中心亮斑);②新增中心标志 `ui/time_symbol_hud.gd`(回溯 ◁◁ 浅色快闪 / 加速 ▶▶ 紫色,挂 hud);③怀表大数字配色:回溯红 / 加速紫 / 常态白;④加速重标为**双倍率**:玩家与精英 ×1.4、普通敌与敌弹 ×0.7(相对仍 2×,但移速/换弹/击发/冲刺全部肉眼变快、敌明显放慢——修正此前只缩放 delta 导致跳跃手感差、敌速观感无变化的问题);⑤结晶更大更黑更快(4~7.5px 块 / 黑色 / 散开 260~720 / 加速 5200);⑥回溯**补全武器弹量状态**(快照含当前武器类型与下标、背包各格残弹、手持实弹;还原时切回并写回)——"回拨除个人钟/精英/Boss 外一切"。
 
+- **B13(用户:加速=主角时间加快 ⇒ 除主角外一切变慢;精英在加速与回溯都必须是极亮黄)**:把这条**规则**补全,并修掉高亮为什么看不见。
+  - **机制**:敌人本身早已随 delta 变慢(移动/攻击间隔/AI 节拍/动画都在 `enemy_base` 首行的 delta 缩放里),但 **`EnemyBullet` 整个覆写了基类的 `_physics_process`** —— 基类首行那句 `TimeField.bullet_delta` 在这条路径上永不执行,于是"加速时敌方子弹一点没慢"(顺带:回溯期间它还在飞)。修法 = 在 `enemy_bullet.gd` 自己补上 delta 缩放 + 回溯整帧早退;另加 `TimeField.world_delta`(加速 ×0.7 / 回溯 0)给掉落武器等世界物件用。
+  - **高亮**:`modulate > 1` 在非 HDR 2D 里被夹到 1.0,而且敌人基类的**受击/死亡白闪每帧都把 modulate 写回 WHITE/3.0**,外部写的高亮当帧就被覆盖 —— 这就是"完全看不出高亮、只看到一切都变暗"的原因。改为 `TimeGlow`:在实体视觉节点下叠**加色混合**的贴图副本(角色被压暗的背景衬得更亮,色相可控)。
+  - **配色即规则**:加速 → 主角(冷白蓝)+ 场上敌人(暖白,近处 1500px 内);回溯 → **只有精英**;精英在**加速与回溯**两种状态下都是**两层亮黄**("极为亮眼");松开/回 NONE 全部卸掉。
+  - 加速压暗由 `0.42 → 0.55`(压太黑会被读成"谁都没高亮"),角色靠加色副本"跳"出来。
+
 ### 探针(`-s` 或场景模式)
-`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算)· `tests/haste_probe.tscn`(B12:倍率表/普通敌速度×0.7/主角移速×1.4(关碰撞测速度域)/跳跃高度不变/红蓝残影与自行淡出/主角与敌人高亮及复位/松开回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd`)。
+`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算)· `tests/haste_probe.tscn`(B12/B13:倍率表(含 `world_delta`)/普通敌速度×0.7/**敌方子弹位移×0.7**/主角移速×1.4(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
 
 ### 检查点分支(用户要求的逐批回退点)
-`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影)。
+`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影) · `_B13`(敌弹随世界变慢+加色高亮规则+精英亮黄)。

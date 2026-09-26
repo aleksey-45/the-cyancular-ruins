@@ -45,6 +45,8 @@ var _tile_pending: Array = []            # 本帧待入账的格(帧末合并)
 var _tile_cursor: float = -1.0           # 本次回溯的瓦片还原高水位
 var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
 var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
+# 时间状态高亮(B13):加色副本(见 scenes/effects/time_glow.gd),实体 → TimeGlow
+var _glows: Dictionary = {}
 
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
@@ -719,14 +721,61 @@ func _tick_time_visuals(delta: float) -> void:
 	elif rewinding:
 		mult -= 0.15
 	Sfx.pitch_mult = clampf(mult, 0.7, 1.8)
-	# 加速高亮:主角与敌人整体提亮(背景由 shader 压暗 → 角色自然"跳"出来)
-	var glow := Color(1.65, 1.65, 1.65) if time_field.is_hasting() else Color.WHITE
+	_sync_time_glows()
+
+
+# 时间状态高亮(B13):加速 → 主角 + 场上敌人;回溯 → **只有精英**。
+# ★ 配色是**规则**不是装饰:精英在加速与回溯两种状态下都必须是"极为亮眼的黄"(用户指定),
+#   其余实体的高亮只是"时间场生效中"的可读提示。用加色副本(TimeGlow)而不是 modulate ——
+#   后者在非 HDR 2D 里被夹到 1.0,且会被敌人每帧的受击白闪覆盖(实测完全看不出高亮)。
+const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角:冷白蓝
+const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌:暖白
+const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英:亮黄(两层叠加 → "极为亮眼")
+const GLOW_RADIUS := 1500.0                      # 只给近处敌人上副本(远处的看不见,白花销)
+
+func _sync_time_glows() -> void:
+	if time_field == null:
+		return
+	var want: Dictionary = {}
+	if time_field.is_hasting():
+		var pl := get_node_or_null("WorldViewport/Player") as Node2D
+		if pl != null:
+			want[pl] = [GLOW_PLAYER, 1]
+		for e in get_tree().get_nodes_in_group("enemies"):
+			if not (e is Node2D) or not is_instance_valid(e) or bool(e.get("is_dead")):
+				continue
+			if e.has_meta("elite"):
+				want[e] = [GLOW_ELITE, 2]      # 精英不分远近(它是时间场的"例外",要一眼看到)
+			elif _near_player(e as Node2D):
+				want[e] = [GLOW_ENEMY, 1]
+	elif time_field.is_rewinding():
+		for e in get_tree().get_nodes_in_group("enemies"):
+			if is_instance_valid(e) and e is Node2D and not bool(e.get("is_dead")) and e.has_meta("elite"):
+				want[e] = [GLOW_ELITE, 2]
+	for k in _glows.keys():
+		if not is_instance_valid(k) or not want.has(k):
+			var old: TimeGlow = _glows[k]
+			if is_instance_valid(old):
+				old.queue_free()
+			_glows.erase(k)
+	for k in want.keys():
+		var spec: Array = want[k]
+		var g: TimeGlow = _glows.get(k)
+		if g == null or not is_instance_valid(g):
+			g = TimeGlow.attach(k, spec[0], int(spec[1]))
+			if g != null:
+				_glows[k] = g
+		else:
+			g.set_color(spec[0])
+
+
+func _near_player(n: Node2D) -> bool:
 	var pl := get_node_or_null("WorldViewport/Player") as Node2D
-	if pl != null:
-		pl.modulate = glow
-	for e in get_tree().get_nodes_in_group("enemies"):
-		if is_instance_valid(e) and e is Node2D:
-			(e as Node2D).modulate = glow
+	if pl == null:
+		return false
+	var d := MazeGenerator.toroidal_delta_px(n.global_position, pl.global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	return d.length() <= GLOW_RADIUS
 
 
 ## 时间场驱动缝(探针直调;正常路径由 _process 传真实按键态)
