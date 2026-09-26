@@ -22,7 +22,13 @@ extends CanvasLayer
 
 signal leave_requested
 
-const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "dealt": "伤害", "acs": "ACS"}
+# ★ 键名 = 适配器给的列名(`MatchResultPayload.C_*`),标题才是给人看的。
+#   `dmg` 已改名 `dealt`(与载荷字段同步);`assists`/`taken` 与 §3.6 的列一一对应。
+#   ★★ 三个列常量里出现的**每一个**键都必须在这里有标题 —— 漏一个**不报错**,只是那一列的
+#      表头退化成**裸英文键名**(下面 `.get(col, col)` 的兜底),而所有数值断言照样全绿。
+#      守卫:`tests/match_result_payload_smoke.gd` 的 ⑧(键集从三个常量推,不写死清单)。
+const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "assists": "助攻",
+		"dealt": "造成", "taken": "承受", "acs": "ACS"}
 const NAME_UNITS := 12                 # 昵称定宽(半角单位);换字体要重算
 const SIZE_TITLE := 48
 const SIZE_BODY := 32

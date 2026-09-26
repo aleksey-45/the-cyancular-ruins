@@ -76,8 +76,12 @@ func _run() -> void:
 			_check(s.get_child_count() == 0, "空载荷应 0 节"))
 
 	# ② 1v1 单节两行：列数 == 2 + columns.size()
-	await _shot(MatchResultPayload.for_duel({"scores": {1: 7, 2: 3}, "rounds_won": {1: 2, 2: 1},
-			"match_winner": 1}, {1: "阿甲", 2: "bob"}, 1), func(m):
+	# ★ 夹具与 `-s` 冒烟的 ① 同款(行数据走 `stats`;`scores` 已经不是本页的数据面)。
+	await _shot(MatchResultPayload.for_duel({"stats": {
+			1: {"kills": 7, "deaths": 2, "assists": 0, "dealt": 500, "taken": 200, "kscore": 800, "acs": 400},
+			2: {"kills": 3, "deaths": 5, "assists": 0, "dealt": 300, "taken": 400, "kscore": 250, "acs": 125}},
+			"rounds_won": {1: 2, 2: 1}, "mvp": 1, "match_winner": 1},
+			{1: "阿甲", 2: "bob"}, 1), func(m):
 		# ★ 先判 null 再解引用(文件头 ②)。**实测的失败形态**(2026-09-21,把 `Rows` 改名):
 		#   直接 `get_node(...)` 取不到节点 ⇒ 引擎只 `ERROR` 一行,而**出错的那个函数当场结束、
 		#   调用方继续** —— 于是这个 lambda 里**剩下的断言被静默跳过**,`_shot`/`_run` 照常往下走。
@@ -86,17 +90,22 @@ func _run() -> void:
 		var g := m.get_node_or_null("Root/Panel/VBox/Sections/Section0/Rows") as GridContainer
 		_check(g != null, "1v1:找不到 Root/Panel/VBox/Sections/Section0/Rows(节点路径变了?)")
 		if g != null:
-			_check(g.columns == 3, "1v1 表头列数应为 2+1=3,实得 %d" % g.columns)
-			_check(g.get_child_count() == 3 + 2 * 3, "1v1 应有 3 表头 + 2 行×3 格"))
+			_check(g.columns == 2 + 5, "1v1 表头列数应为 2+5=7,实得 %d" % g.columns)
+			_check(g.get_child_count() == 7 + 2 * 7, "1v1 应有 7 表头 + 2 行×7 格"))
 
 	# ③ 3v3 两节 + MVP 标记恰好一次 + ★ 落在 MVP 行上
 	# ★ MVP 故意落在**第二节的第二个行**:每节只有一行时 `mvp.row == 0` 是**唯一可表示**的值,
 	#   行号算错一行也照样绿 —— 那正是"MVP 高亮落错行"这一类缺陷的样子。第二节两行,行号才真的
 	#   有得错(下面那条 ★ 位置断言按昵称格判,`mvp` 指向第 2 行的 `eve`、不是第 1 行的 `dave`)。
+	# ★★ 本发是**唯一被人眼读的那张图**(`user://match_result_2.png`),而它正是六列宽度的守卫
+	#   (`_check_centred` 的"面板必须装得下视口")。故六个字段**都给真值** —— 夹具里少给
+	#   `assists`/`taken` 时那两列会**整列 0**,图上看着正常,却验不出"列与数据的对位"
+	#   (两列互换、或写死在别的字段上都照样是全 0)。`acs` 保持 200/400/75:它决定栏内排序,
+	#   而上面那条 ★ 位置断言依赖"eve 排在 dave **之后**"。
 	await _shot(MatchResultPayload.for_team({"stats": {
-			1: {"kills": 5, "deaths": 3, "dealt": 400, "kscore": 600, "acs": 200},
-			4: {"kills": 8, "deaths": 1, "dealt": 900, "kscore": 1200, "acs": 400},
-			5: {"kills": 2, "deaths": 4, "dealt": 120, "kscore": 150, "acs": 75}},
+			1: {"kills": 5, "deaths": 3, "assists": 2, "dealt": 400, "taken": 250, "kscore": 600, "acs": 200},
+			4: {"kills": 8, "deaths": 1, "assists": 1, "dealt": 900, "taken": 200, "kscore": 1200, "acs": 400},
+			5: {"kills": 2, "deaths": 4, "assists": 3, "dealt": 120, "taken": 150, "kscore": 150, "acs": 75}},
 			"mvp": 5, "match_winner": 2}, {1: "阿甲", 4: "dave", 5: "eve"}, {1: 1, 4: 2, 5: 2}, 1), func(m):
 		# ★ 先判 null 再解引用(文件头 ②;失败形态的实测记录见上一条 —— 另两处 lambda 同款)。
 		var box := m.get_node_or_null("Root/Panel/VBox/Sections") as HBoxContainer
@@ -108,8 +117,8 @@ func _run() -> void:
 		_check(g != null, "3v3:找不到 Root/Panel/VBox/Sections/Section1/Rows(节点路径变了?)")
 		if g == null:
 			return
-		_check(g.columns == 6, "3v3 表头列数应为 2+4=6,实得 %d" % g.columns)
-		_check(g.get_child_count() == 6 + 2 * 6, "3v3 第二节应有 6 表头 + 2 行×6 格")
+		_check(g.columns == 2 + 6, "3v3 表头列数应为 2+6=8,实得 %d" % g.columns)
+		_check(g.get_child_count() == 8 + 2 * 8, "3v3 第二节应有 8 表头 + 2 行×8 格")
 		_check(_count_marks(m) == 1, "★ MVP 标记应恰好出现 1 次,实得 %d" % _count_marks(m))
 		# ★ 只数"★ 出现几次"是**位置盲**的:mvp 行号差一行照样只有 1 个标记 —— 那正是
 		#   "MVP 高亮落错行"这一类缺陷的样子。要钉的是**哪一行**:★ 所在的**同一个网格**里,
