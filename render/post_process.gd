@@ -8,6 +8,9 @@ const LAYER := 128  # 世界后处理层,低于 HUD(129),不遮 HUD
 
 var _mat: ShaderMaterial = null
 var _hit_red: float = 0.0   # 受击红闪当前强度(每帧衰减,见 flash_hit)
+var _film: float = 0.0             # 回溯底片化强度(Level0 每帧推)
+var _loan: float = 0.0
+var _haste: float = 0.0
 
 # 窗口尺寸 / 世界视口尺寸:把窗口映射到世界视口的中心裁剪区。
 # 枪的瞄准换算(weapon_base)与 shader 采样都用它,收敛到单一来源,改一处不偏。
@@ -66,6 +69,21 @@ func set_downed(v: bool) -> void:
 # combat.take_hit(单机)与 PvP hit_event→take_hit 都走这里,不用重复接线。
 func flash_hit(strength: float = 1.0) -> void:
 	_hit_red = maxf(_hit_red, clampf(strength, 0.0, 1.0))
+
+## 时间玩法三效果统一入口(Level0 每帧调;单机才有,常态全 0 = 无痕)
+func set_time_effects(film: float, loan: float, haste: float, player_uv: Vector2) -> void:
+	_film = clampf(film, 0.0, 1.0)
+	_loan = clampf(loan, 0.0, 1.0)
+	_haste = clampf(haste, 0.0, 1.0)
+	if _mat == null:
+		return
+	_mat.set_shader_parameter("rewind_film", _film)
+	_mat.set_shader_parameter("loan_depth", _loan)
+	_mat.set_shader_parameter("haste_dim", _haste)
+	_mat.set_shader_parameter("player_uv", player_uv)
+	if world_viewport != null:
+		_mat.set_shader_parameter("viewport_size", Vector2(world_viewport.size))
+
 
 func _process(delta: float) -> void:
 	if _hit_red > 0.0:

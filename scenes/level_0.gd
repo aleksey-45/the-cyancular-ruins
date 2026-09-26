@@ -39,6 +39,9 @@ static var grain_account: GrainAccount = null
 static var time_field: TimeField = null
 var _rewind: WorldRewind = null   # 世界快照/回放(单机;PvP 不建)
 var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退出)
+var _post_process: PostProcess = null
+var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
+var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
 
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
@@ -259,6 +262,7 @@ func _ready() -> void:
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
+	_post_process = pp
 	call_deferred("add_child", pp)
 	_build_pause_menu()
 
@@ -370,6 +374,7 @@ func _process(_delta: float) -> void:
 	if time_field != null and not pvp_mode:
 		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
 		_tick_rewind(_delta)
+		_tick_time_visuals(_delta)
 	_update_pickup_prompt()
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
@@ -630,6 +635,24 @@ func _live_self_drops() -> Array:
 #   在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
 # ★ 与 `try_pickup_for` 的选法**仍然是同一套** —— 按 F 捡的仍是最近那把,只是"能捡"的
 #   每一把都会提示(踩到其中任何一把都能捡起来)。
+## 时间玩法视效驱动:底片化 ramp ≤200ms、加速压暗 ramp 100ms、贷款深度直传
+func _tick_time_visuals(delta: float) -> void:
+	if _post_process == null or time_field == null:
+		return
+	var rewinding: bool = time_field.is_rewinding()
+	_film_t = move_toward(_film_t, 1.0 if rewinding else 0.0, delta / 0.2)
+	_haste_t = move_toward(_haste_t, 1.0 if time_field.is_hasting() else 0.0, delta / 0.1)
+	var uv := Vector2(0.5, 0.5)
+	var pl := get_node_or_null("WorldViewport/Player") as Node2D
+	if pl != null:
+		var cam := pl.get_viewport().get_camera_2d()
+		if cam != null:
+			var vp_size := Vector2(pl.get_viewport().get_visible_rect().size)
+			if vp_size.x > 0.0 and vp_size.y > 0.0:
+				uv = Vector2(0.5, 0.5) + (pl.global_position - cam.get_screen_center_position()) 						* cam.zoom / vp_size
+	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t, uv)
+
+
 ## 时间场驱动缝(探针直调;正常路径由 _process 传真实按键态)
 func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 	time_field.update(delta, want_rewind, want_haste)
