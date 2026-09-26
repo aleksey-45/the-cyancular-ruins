@@ -93,7 +93,8 @@ func _ready() -> void:
 
 # 把每个玩家的 `combat.took_hit` 接到本宿主的 `_on_player_hit`。
 # ★ 接线走**裸方法名**(`Callable(self, "_on_player_hit")`)⇒ **虚分派**:子类覆写的那份才是
-#   被调到的那个(`TeamHost._on_player_hit` 的逐人伤害累计就挂在这条上)。
+#   被调到的那个(逐人伤害累计就挂在这条上 —— 2026-09-25 起它住在 `MatchCombat._on_player_hit`
+#   本体,`TeamHost` 那份覆写已随统计面上提一起删除)。
 # ★ 为什么抽成具名函数而不是留几行在 `_ready` 里:**手工摆位路径**(探针:role_peers 传空、
 #   玩家在 `_ready` 之后才 `_place` 进来)也要调**生产那一份**接线 —— 让探针自己再抄一遍
 #   `connect(...)` 的话,验的是抄件:哪天生产的接线断了/换了信号,探针照样绿(本仓明令禁止的

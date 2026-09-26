@@ -23,7 +23,6 @@ var _hud_sync := 0.0
 var _round_spawns: Dictionary = {}    # role -> Vector2i(开局散点,_init 摆位用)
 var _spawned_once: Dictionary = {}    # role -> true(首次摆位走散点,之后动态选复活点)
 var _deaths: Dictionary = {}          # role -> 阵亡数(排行榜展示)
-var _left: Dictionary = {}            # role -> true(中途掉线,已移出对局)
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -243,15 +242,10 @@ func _match_round_tick(delta: float) -> void:
 
 
 # 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role。
-# 带时效:伤害超过 ATTRIB_WINDOW 毫秒前的射手不再归因(防止"被打一枪后溺水"误计)。
-# 击杀归因时效窗口(ms)。★ 有意与 main 的单一来源对齐(用户 2026-09-11 裁定):
-# 原 KH 值 10000ms 已弃用 —— 现读 CombatFeedback.ATTRIB_WINDOW_MS(3000ms)。
-# 背景:两处读的是同一个 last_damager_time meta,但读端对象不重叠 ——
-#   CombatFeedback 读「敌人」(决定播不播「击杀 XXX」),本文件读「玩家」(决定谁算击杀)。
-# 所以这不是"两套 bug",只是口径选择;选 3s 的理由是与单机播报口径一致。
-# 行为变更(有意):打一枪后 4~10s 内的溺水/坠落死亡,现在不再算作你的击杀。
-const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
-
+# 带时效:伤害超过 `ATTRIB_WINDOW` 毫秒前的射手不再归因(防止"被打一枪后溺水"误计)。
+# ★ 时效窗口 `ATTRIB_WINDOW`(= `CombatFeedback.ATTRIB_WINDOW_MS`,3000ms)与逐人伤害的新鲜
+#   阈值 `ATTRIB_FRESH_MS`(8ms)都**住在底座** `MatchState`(2026-09-25 上提;两个读者原先
+#   各声明一份同名常量,子类重复声明基类成员是硬 Parse Error)。这里的引用走继承,不另立常量。
 func _attributed_killer(victim: Node2D) -> int:
 	if not victim.has_meta("last_damager"):
 		return 0

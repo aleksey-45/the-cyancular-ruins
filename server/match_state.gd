@@ -107,6 +107,38 @@ var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
 var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
 
+# ── 逐人统计(三模式共用;★ 2026-09-25 从 `TeamHost` 上提,见下)──
+# ★ 为什么现在才提得上去:计分口径换成了不依赖队伍语义的 `ScoreRules`(见
+#   core/sim/score_rules.gd)。旧口径 `kill_bonus_score(敌方存活人数)` 在 1v1(两人)与
+#   大乱斗(自由混战)里**没有对应物** —— 公式与"上提"是因果关系,不是两件顺手的事。
+# ★ 条目存的是**原始计数**(下面 8 个键);`kscore` / `acs` 一律**读时推导**。存一份算好的
+#   kscore 就意味着"加了一项新惩罚却忘了同步"这种**不报错**的静默缺陷。
+# ★ 载荷才用 spec §3.1 那七个字段(kills/deaths/assists/dealt/taken/kscore/acs)。
+var _stats: Dictionary = {}          # role -> 原始计数(整场累计,不随局清零)
+var _left_round: Dictionary = {}     # role -> 离开时所处的局号(ACS 的"实际参与局数"口径)
+# role -> true(已移出对局)。★ **必须住底座**:`_roster()` / `mvp_role()` 都要读它,
+# 而 `RoyaleHost` 与 `TeamHost` 原先**各声明了一份**(上提时那两行必须一起删 —— 子类重复声明
+# 基类成员是硬 Parse Error,见 Global Constraints)。
+var _left: Dictionary = {}
+# 归因时效(3s)。★ 三个读者原先各抄一份(`RoyaleHost`/`TeamHost` 各一个同名常量 + 单机播报);
+# 收在底座,子类那两行删掉(同名遮蔽报错)。
+const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
+# "**这一下**伤害是谁打的" —— 归因必须**新鲜**的阈值(ms)。
+# ★ 与 `ATTRIB_WINDOW` 是**两个问题、两个窗口**:`ATTRIB_WINDOW`(3s)答"这次死亡算谁的击杀",
+#   本阈值答"这一下伤害是谁打的"。★ 不能与击杀口径共用:击杀读的 3s 是"打一枪后 3s 内溺水
+#   仍算你的击杀";拿它判"**这一下**伤害是谁打的"太宽(一次 0.4s 引信的榴弹自爆就会被计入)。
+# ★ 阈值怎么定:真实命中路径的 `attribute()` → `take_hit()` → `took_hit` 信号是**同一调用栈**,
+#   年龄 ≈ 0~1ms;而**上一物理帧**留下的归因至少 ~16.7ms 之前(60Hz)。8ms 落在两者之间:
+#   容得下跨一次毫秒边界,又把"上一帧那次命中"挡在外面。
+# ★★ 阈值成立的前提是"**归因与伤害同一调用栈**"(真实命中路径 ≈ 0~1ms)。**将来新增
+#   「延迟扣血」型伤害必须自己每帧重写归因** —— `LaserWeaponBase` 的**缝 2**(命中结算)明确
+#   把"持续/灼烧型"列为**预定扩展位**,而那种实现是"命中时写一次归因、后续帧再扣血":扣血
+#   那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人伤害恒少且不报错
+#   (没有断言、没有日志,只是 ACS 偏低)。写端不重写归因的话,这条阈值就是那个扩展位的唯一提示。
+#   ★ 本段随常量一起从 `team_host.gd` 搬来(`CLAUDE.md` 的 3v3 小节原先把它的权威落点
+#     指在 `team_host.gd` 的 `ATTRIB_FRESH_MS` 上方 —— 那处指针已随本批改到**这里**)。
+const ATTRIB_FRESH_MS := 8
+
 # ── 仅测试用:定时拆一格(相⑦ 用)──
 # 由 `--test-destroy-tile <col>,<row>[,<delay>]` 写入;到点拆一次,之后置回 (-1,-1) 只拆一次。
 # ★ 默认 (-1,-1) = 关:生产路径不带这个开关,行为与今天逐字一致。
@@ -152,6 +184,150 @@ func is_friendly(a: Node, b: Node) -> bool:
 	if a == null or b == null:
 		return false
 	return same_team(_role_of(a), _role_of(b))
+
+
+# ── 逐人统计的读写口(三模式共用;写入点见 MatchCombat._on_player_hit 与各模式的倒地边沿)──
+
+# role 的原始计数条目(惰性建:谁上过场谁才有条目;`stats_payload` 会把在场者补齐)。
+func _stat_entry(role: int) -> Dictionary:
+	role = int(role)
+	if not _stats.has(role):
+		_stats[role] = {"kills": 0, "deaths": 0, "assists": 0, "dealt": 0, "taken": 0,
+				"team_damage": 0, "self_damage": 0, "team_kills": 0}
+	return _stats[role]
+
+
+# 逐人总积分。★ **唯一推导点** —— 伤害只在 `ScoreRules.kscore` 里出现一次。
+func _kscore_of(role: int) -> int:
+	var s: Dictionary = _stats.get(int(role), {})
+	return ScoreRules.kscore(int(s.get("kills", 0)), int(s.get("assists", 0)),
+			int(s.get("dealt", 0)), int(s.get("deaths", 0)),
+			int(s.get("team_damage", 0)), int(s.get("self_damage", 0)),
+			int(s.get("team_kills", 0)))
+
+
+# ACS = kscore ÷ 局数。★ **不得再加伤害** —— 它已经在 kscore 里了(spec §1.4:
+# 今天 `(kscore + 伤害)/局数` 之所以成立,仅仅因为今天的 kscore **不含**伤害)。
+func _acs_of(role: int) -> float:
+	return ScoreRules.acs(_kscore_of(int(role)), _rounds_for(int(role)))
+
+
+# ACS 的"局数"口径:**全场已进行的局数**(`_round_num`);中途离开者**冻结在他离开时所处的局号**
+# = 他实际参与的局数。★ 代价(分母更小 ⇒ ACS 偏高)是**有意**的口径,不是 bug。
+# ★ 卡在 MATCH_OVER 时 `_round_num` 恰好等于"打过的局数"(`_start_next_round` 在终局分支
+#   提前 return,不推进局号)⇒ 终局那一份 ACS 的分母正是整场局数。
+func _rounds_for(role: int) -> int:
+	return int(_left_round.get(int(role), _round_num))
+
+
+# 逐人表的 role 集合:在场者 ∪ 已离开者 ∪ 有数据的。
+# ★ 在场者**哪怕一次伤害都没打过**也要出现(面板要的是"所有参战者各一行")。
+func _roster() -> Dictionary:
+	var roles := {}
+	for role in players:
+		roles[int(role)] = true
+	for role in _left:
+		roles[int(role)] = true
+	for role in _stats:
+		roles[int(role)] = true
+	return roles
+
+
+# 逐人数据载荷:`{role: {kills, deaths, assists, dealt, taken, kscore, acs}}`
+# (给 `round_state` 的 `stats` 键;三模式同一份)。
+func stats_payload() -> Dictionary:
+	var out := {}
+	for r in _roster():
+		var role := int(r)
+		var s: Dictionary = _stats.get(role, {})
+		out[role] = {
+			"kills": int(s.get("kills", 0)),
+			"deaths": int(s.get("deaths", 0)),
+			"assists": int(s.get("assists", 0)),
+			"dealt": int(s.get("dealt", 0)),
+			"taken": int(s.get("taken", 0)),
+			"kscore": _kscore_of(role),
+			"acs": _acs_of(role),
+		}
+	return out
+
+
+# MVP = **整场 ACS 最高者**;并列 → 击杀多者 → 阵亡少者 → **role 号升序**。
+# ★ 确定性:候选按 role 升序遍历 + 只在**严格更优**时替换 ⇒ 完全并列时天然胜者是最小 role,
+#   不依赖字典迭代顺序(同一份状态调多少次都是同一个答案)。
+# ★★ **已离开者照样参与评选 —— 用户裁定,不是遗漏**:取向与大乱斗"按分判胜"一致;
+#   他会因"分母 = 实际参与局数"(更小)而更容易胜出,那**也是**有意的口径。
+func mvp_role() -> int:
+	var best_role := 0
+	var best_acs := -1.0
+	var best_kills := -1
+	var best_deaths := 1 << 30
+	var roles: Array = _roster().keys()
+	roles.sort()
+	for r in roles:
+		var role := int(r)
+		var s: Dictionary = _stats.get(role, {})
+		var acs := _acs_of(role)
+		var kills := int(s.get("kills", 0))
+		var deaths := int(s.get("deaths", 0))
+		if acs > best_acs \
+				or (acs == best_acs and (kills > best_kills
+						or (kills == best_kills and deaths < best_deaths))):
+			best_role = role
+			best_acs = acs
+			best_kills = kills
+			best_deaths = deaths
+	return best_role
+
+
+# 逐人数据的唯一写入口(每次倒地边沿调一次)。
+# ★ `deaths` **一律** +1:队友误炸 / 自杀 / 溺水全算死。
+# ★ `kills` **只在"归因到且异队"**时记给杀手 —— 无归因与同队误炸不计**任何人**的击杀
+#   (与"那一分照样给对方队"是两件事)。助攻与惩罚由计划 2 在此处/在受击钩子上补。
+func _record_down(victim_role: int, killer_role: int) -> void:
+	var v := _stat_entry(victim_role)
+	v["deaths"] = int(v["deaths"]) + 1
+	if killer_role == 0 or same_team(killer_role, victim_role):
+		return
+	var k := _stat_entry(killer_role)
+	k["kills"] = int(k["kills"]) + 1
+
+
+# "**这一下**伤害是谁打的" —— 归因必须**新鲜**(`ATTRIB_FRESH_MS`)。无 → 0。
+# ★ 为什么必须有一个**紧**窗口(8ms)而不是复用 3s:写端 `CombatFeedback.attribute` 在
+#   `attacker == victim` 时**静默跳过**,于是自伤路径上 meta 会**停在上一名敌人**身上,而读端
+#   只看"有没有 meta + 在不在时效内" ⇒ "自己的榴弹炸自己"会被错记成那名敌人的伤害。
+#   真实命中路径的 `attribute()` → `take_hit()` → `took_hit` 是**同一调用栈**(年龄 ≈ 0~1ms),
+#   而上一物理帧留下的归因至少 ~16.7ms 之前 ⇒ 8ms 落在两者之间。
+# ★★ 已知边界(登记不修):同**一帧**内先被敌人打中、再被自己的爆炸炸到,meta 仍是那名敌人
+#   且年龄 ≈ 0 —— 那一下会被记到敌人账上。
+func _fresh_attacker_role(victim_role: int) -> int:
+	var victim: Node2D = players.get(int(victim_role))
+	if victim == null or not is_instance_valid(victim):
+		return 0
+	return _attributed_role_within(victim, ATTRIB_FRESH_MS)
+
+
+# "上一个打 victim 的人"的 role,且归因年龄 ≤ `window_ms`(超窗/无归因/自伤 → 0)。
+# ★ 读端有两处,问的是**两个不同的问题**,故窗口是参数而不是常量:击杀归属(子类的
+#   `ATTRIB_WINDOW` = 3s)与逐人伤害(`ATTRIB_FRESH_MS` = 8ms)。
+# ★ `shooter == victim` 的守卫不可省:写端自伤时静默跳过,但万一有人绕过写端直接 set_meta,
+#   这里不能再把自伤算成"自己杀自己"。
+# ★ 本函数**住在底座**,但**调用它的击杀归因函数住子类** ——
+#   `tests/kh_l5_probe.gd:544-549` 的反向断言把那个名字列为"不得出现在基类并集里"。
+func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
+	if not victim.has_meta("last_damager"):
+		return 0
+	var shooter: Node = victim.get_meta("last_damager")
+	if shooter == null or not is_instance_valid(shooter) or shooter == victim:
+		return 0
+	if victim.has_meta("last_damager_time"):
+		if Time.get_ticks_msec() - int(victim.get_meta("last_damager_time")) > window_ms:
+			return 0
+	for role in players:
+		if players[role] == shooter:
+			return int(role)
+	return 0
 
 
 # ── 出生点原语(阶段 5.6:**必须住在本底座**,不能在 MatchHost 里)──

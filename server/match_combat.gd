@@ -204,6 +204,22 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 # bind(role) 在 Godot 里把绑定参数追加在信号参数之后 → 实际入参顺序为 (source_pos, damage, role)。
 
 func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
+	# ── 逐人统计(三模式共用;★ 2026-09-25 从 `TeamHost._on_player_hit` 上提)──
+	# 一个钩子覆盖**全部**伤害来源(子弹 / 榴弹直击 / 爆炸 AoE / 激光):它们的共同点是
+	# "归因写入 `CombatFeedback.attribute` 都在 `take_hit` 之前"(本仓明文纪律,见
+	# core/sim/explosion.gd:54 与 scenes/weapons/laser_weapon_base.gd:233),于是
+	# `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion`**。
+	# ★ `dealt` 与 `taken` **口径对称**(spec §3.1):都只算**敌人** ——
+	#   队友爆炸炸到我不进 `taken`、自己炸自己也不进(那两类的代价走**惩罚**,记在肇事者行上)。
+	# ★ 三档都不记:自伤(写端静默跳过 ⇒ 由新鲜度挡掉)/ 队友伤害(按队过滤)/
+	#   归因不到。★ 后两档在 1v1 / 大乱斗里**天然不成立**:队伍表空 ⇒ `same_team` 恒 false
+	#   ⇒ 这两列就等于"对所有人的伤害",不需要特判(spec §5.6 的免费正确性,别去"优化"它)。
+	var stat_attacker := _fresh_attacker_role(int(role))
+	if stat_attacker != 0 and not same_team(stat_attacker, int(role)):
+		var sa := _stat_entry(stat_attacker)
+		sa["dealt"] = int(sa["dealt"]) + int(damage)
+		var sv := _stat_entry(int(role))
+		sv["taken"] = int(sv["taken"]) + int(damage)
 	for r in peer_by_role:
 		# 判活:这是**每次伤害**都发的定向包(交火时最密的一处),原先完全不判 ——
 		# 往"正在断开"的 peer 发就是那条 channel 0 错误(判据为何不能用 get_peers 见 NetBus)。
