@@ -1549,6 +1549,81 @@ func _run() -> void:
 			"★ ⑬n2 敌方伤害**不进**惩罚那两笔账(实际 %d/%d)"
 			% [_stat(_host, 1, "team_damage"), _stat(_host, 1, "self_damage")])
 
+	# ── ⑬n3 同帧两响,**自伤在前、敌方爆炸在后** ⇒ 敌方那一下不得被自伤标记吞掉 ──
+	# ★★ 被钉的缺陷:自伤标记是一个**时刻标量**且**从来没人清**(`note_self_hit` 只写、
+	#   `is_fresh_self_hit` 只读),窗口又宽达 8ms —— 而同一物理帧里两次 `apply_aoe`
+	#   (各在自己的 `bullet._physics_process` 里跑)之间隔 **0ms**。于是"自己那颗先炸、
+	#   敌人那颗后炸"时,第二下会同时看见 `stat_self == true` **与** 新鲜的 `stat_attacker`,
+	#   惩罚那一支按**自伤**记 ⇒ 玩家**因为被敌人打中而扣自己的分**。
+	# ★ 修法在**写端**(`CombatFeedback.attribute` 落地真实归因时把标记作废),读端的优先级
+	#   (`if stat_self:` 优先)一个字符都不动 —— 那一支正是 ⑬n4 要的语义。
+	# ★ 布景与 ⑬n2 逐字同款:受害者(1 号)站爆心干格、其余人 600px 外(半径 100 ⇒ 只够得到 1 号)。
+	#   两响都取 20 伤 ⇒ 合计 40 < 满血 50,**故意不打死**(只量伤害账)。
+	# ★ 两响之间**不 await**(本段整体在同一个物理帧里跑)—— 那正是"同帧"的构造本身。
+	_host._respawn_player(1)
+	var st_n3_pt := _find_dry_point()
+	if st_n3_pt.x < 0:
+		st_n3_pt = (_host.players[1] as Node2D).global_position
+	(_host.players[1] as Node2D).global_position = st_n3_pt
+	_park_all_but(_host, [1], st_n3_pt + Vector2(600.0, 0.0))
+	# ★ 先把上一段(⑬n)留在 1 号身上的自伤标记清掉:本段要量的是**本段自己**写下的那一个,
+	#   否则读数会带上 ⑬n 的残余(整段 ⑬ 都在同一个物理帧里,标记不会自然过期)。
+	(_host.players[1] as Node2D).remove_meta("last_self_hit_time")
+	var st_n3_self := _stat(_host, 1, "self_damage")
+	var st_n3_dealt := _stat(_host, 4, "dealt")
+	var st_n3_taken := _stat(_host, 1, "taken")
+	var st_n3_team := _stat(_host, 1, "team_damage")
+	var st_n3_hp: int = int(_host.players[1].hp)
+	Explosion.apply_aoe(st_n3_pt, 100.0, 20, 400.0, _host.players[1])   # ① 自己那颗,先炸
+	Explosion.apply_aoe(st_n3_pt, 100.0, 20, 400.0, _host.players[4])   # ② 敌人那颗,同帧后炸
+	_check(int(_host.players[1].hp) == st_n3_hp - 40,
+			("★ ⑬n3 [仪器] 两响**都真的炸到了**(hp %d → %d,期望 -40)"
+			+ " —— 少了这条,下面的读数可能因为「根本没打中」而恒真")
+			% [st_n3_hp, int(_host.players[1].hp)])
+	_check(_stat(_host, 4, "dealt") - st_n3_dealt == 20
+			and _stat(_host, 1, "taken") - st_n3_taken == 20,
+			"★ ⑬n3 敌方那一下(②)照常进 dealt/taken(实际 +%d/+%d,期望 +20/+20)"
+			% [_stat(_host, 4, "dealt") - st_n3_dealt, _stat(_host, 1, "taken") - st_n3_taken])
+	_check(_stat(_host, 1, "self_damage") - st_n3_self == 20,
+			("★ ⑬n3 敌方那一下(②)**不得**被①留下的自伤标记吞掉"
+			+ "(实际 +%d,期望 +20 —— 只有①那一响是自伤);"
+			+ "★ 写端不清标记时实际是 +40 = 玩家被敌人打中还扣自己的分")
+			% (_stat(_host, 1, "self_damage") - st_n3_self))
+	_check(_stat(_host, 1, "team_damage") == st_n3_team,
+			"★ ⑬n3 ②进的是**敌方**账,不是队友账(实际 %d)" % _stat(_host, 1, "team_damage"))
+
+	# ── ⑬n4 ⑬n3 的**另一半**(只差顺序:敌方先、自己后)⇒ 自伤**仍须**记进 self_damage ──
+	# ★★ 为什么非要有它:⑬n3 只证明"标记会被清",而"清"最省事的坏实现是**把它整个作废**
+	#   —— 那种实现让 ⑬n3 全绿,却把"同帧内先被敌人打中、再被自己的爆炸炸到"那一下
+	#   **从 self_damage 里抹掉**(惩罚漏记)。两条一起才钉住"标记只在**真实归因落地**时作废"。
+	# ★ 这一序是**计划明文选择的**语义(`server/match_state.gd` 的 `_fresh_attacker_role` 上方
+	#   那段"已知边界"):那时 `stat_self` 与 `stat_attacker` **同时**为真,惩罚那一支按**自伤**记。
+	#   修法(在 `attribute` 里清标记)对这个序**没有任何影响** —— `attribute(pp, pp)` 在
+	#   `attacker == victim` 时早退,标记根本走不到被清的那一行。这一条把它钉成契约。
+	# ★ 布景与 ⑬n3 逐字同款,只把两响**对调**。
+	# ★★ 顺带登记(不修,也不是本条的判据):②那一下会**同时**记进 4 号的 `dealt`(meta 还是他、
+	#   年龄 ≈ 0)与 1 号的 `self_damage` —— 两个不同的账户,`acs` 只读 kscore,不是双计。
+	#   那是 `ATTRIB_FRESH_MS` 那条既有边界的形状,见 `match_state.gd` 的登记。
+	_host._respawn_player(1)
+	var st_n4_pt := _find_dry_point()
+	if st_n4_pt.x < 0:
+		st_n4_pt = (_host.players[1] as Node2D).global_position
+	(_host.players[1] as Node2D).global_position = st_n4_pt
+	_park_all_but(_host, [1], st_n4_pt + Vector2(600.0, 0.0))
+	(_host.players[1] as Node2D).remove_meta("last_self_hit_time")
+	var st_n4_self := _stat(_host, 1, "self_damage")
+	var st_n4_hp: int = int(_host.players[1].hp)
+	Explosion.apply_aoe(st_n4_pt, 100.0, 20, 400.0, _host.players[4])   # ① 敌人先
+	Explosion.apply_aoe(st_n4_pt, 100.0, 20, 400.0, _host.players[1])   # ② 自己后(同帧)
+	_check(int(_host.players[1].hp) == st_n4_hp - 40,
+			"★ ⑬n4 [仪器] 两响**都真的炸到了**(hp %d → %d,期望 -40)"
+			% [st_n4_hp, int(_host.players[1].hp)])
+	_check(_stat(_host, 1, "self_damage") - st_n4_self == 20,
+			("★ ⑬n4 同帧内**敌方先、自己后** ⇒ 自伤照样记进 self_damage(实际 +%d,期望 +20);"
+			+ "★ 把标记的作废写进 `attribute()` 的**早退之前**(或整个作废标记)这条就变 0 "
+			+ "—— 惩罚会漏掉这一下")
+			% (_stat(_host, 1, "self_damage") - st_n4_self))
+
 	# ── ⑬l 队伍表为空(1v1 / 大乱斗的形状)⇒ **拿不到任何助攻**,而击杀照记 ──
 	# ★ 这是 spec §3.4「免费的正确性」的守卫:`same_team(0,0)` 恒 false ⇒ 助攻过滤天然不成立。
 	#   ★ 正向对照(击杀照记)不可省:只断言"assists == 0"的话,一个**什么都没接**的宿主

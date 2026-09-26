@@ -69,6 +69,21 @@ static func attribute(victim: Node, attacker: Node) -> void:
 		return
 	victim.set_meta("last_damager", attacker)
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
+	# ★★ 真实(非自伤)归因落地 ⇒ 上一响留下的自伤标记**当场作废**(2026-09-26)。
+	#   不作的后果:自伤标记是个**时刻标量**、窗口 8ms,而同一物理帧里两次 `apply_aoe`
+	#   (各在自己的 `bullet._physics_process` 里跑)之间隔 **0ms** ⇒ "自己那颗先炸、敌人那颗
+	#   后炸"时,第二下会同时看见 `stat_self` 与新鲜的 `stat_attacker`,惩罚那一支按**自伤**记
+	#   —— 玩家**因为被敌人打中而扣自己的分**(实测 `tests/team_host_probe.gd` ⑬n3:
+	#   self_damage +40 而非 +20)。
+	#   ★ 为什么必须清在**这里**而不是读端:读端那两条支路的优先级(`if stat_self:` 优先于
+	#   `same_team` 那一支)是**计划明文选择**的语义 —— "同帧内先被敌人打中、再被自己的爆炸
+	#   炸到"时按**自伤**记(`server/match_state.gd` 的 `_fresh_attacker_role` 上方那段登记,
+	#   守卫 ⑬n4)。在 `attribute()` 里清则两种顺序各自正确:自伤**在后**时标记由
+	#   `note_self_hit` 当场写下、而 `attribute(pp, pp)` 在 `attacker == victim` 处**早退**
+	#   (清不到它)⇒ 自伤照记。
+	#   ★ `remove_meta` 对不存在的键是安全的(`Object::remove_meta` = `set_meta(name, Variant())`),
+	#   不必先 `has_meta` 守卫。
+	victim.remove_meta("last_self_hit_time")
 
 
 ## 自伤标记:**爆炸的投掷者本人**在爆区里时,由 `Explosion.apply_aoe` 写一笔。

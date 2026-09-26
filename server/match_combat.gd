@@ -225,9 +225,19 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 		# 助攻表:所有**归因得到**的命中都记一笔(含队友误伤 —— 读端按 `same_team` 过滤)。
 		_note_hit(int(role), stat_attacker)
 		if not same_team(stat_attacker, int(role)):
-			# `dealt` / `taken` **口径对称**(spec §3.1):都只算**敌人**。
+			# `dealt` / `taken` **口径对称**(spec §3.1):都只算**敌人** ——
+			#   队友爆炸炸到我不进 `taken`、自己炸自己也不进 `taken`/`dealt`
+			#   (那两类的代价走**惩罚**,记在**肇事者**行上,见下面那两笔账)。
+			# ★★ **不进这两列的三档**(2026-09-26 订正:旧措辞写"三档都不记",而自伤**确实会记**
+			#   —— 只是记进 `self_damage` 那一列,不是"不记";照旧措辞读会得出相反的结论):
+			#   ① **自伤** ⇒ 记进**自己**的 `self_damage`(写端 `CombatFeedback.attribute` 在
+			#      attacker == victim 时静默跳过,读端靠 `Explosion` 那笔 `note_self_hit`
+			#      + `ATTRIB_FRESH_MS` 新鲜度认出来,见 `match_state.gd` 的 `_fresh_attacker_role`);
+			#   ② **队友伤害** ⇒ 记进**肇事者**的 `team_damage`(按 `same_team` 过滤);
+			#   ③ **归因不到**(meta 缺失或不新鲜)⇒ **哪儿都不记**,是本钩子唯一真正丢弃的一档。
 			# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ 这两列就等于"对所有人的伤害",
-			#   不需要特判(§5.6 的免费正确性,别去"优化"它)。
+			#   不需要特判(§5.6 的免费正确性,别去"优化"它)。★ 同上,②那一档在那两个模式下
+			#   天然不成立(没有队就无所谓队友),①那一路与队伍表无关、照旧走 `self_damage`。
 			var sa := _stat_entry(stat_attacker)
 			sa["dealt"] = int(sa["dealt"]) + int(damage)
 			var sv := _stat_entry(int(role))
