@@ -82,14 +82,22 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		"held": held,
 		"pressed": pressed,
 		"released": released,
-		"weapon": src.get_switch_index_pressed(),
+		# ★ 上行键 = winst,值是**目标那一把的 inst**。旧的 `"weapon"` 键**已删除** ——
+		#   它带的是背包位置(1-based),而位置的含义由**本端背包**决定(见 weapon_component
+		#   的 request_net_cycle 注释)。本函数是**编码端唯一来源**,故 inst 在这里是**空的**:
+		#   `pack_record` 只拿得到 `PlayerInput`、拿不到背包 —— 解析由组包处补上
+		#   (`pvp_match_client` 的 `weapons.take_uplink_switch(src.get_switch_index_pressed())`)。
+		#   ★ 键**必须在这里声明**(带 0 占位):解码端(apply_packet)对 0 的语义是
+		#     "本包没有切枪请求",与旧键的 0 语义逐字相同;组包处只在解析出 >0 时覆盖。
+		#     (探针 `weapon_switch_inst_probe` 相① 源码级钉着这个键在**本文件**里。)
+		"winst": 0,
 		"aim": aim,
 	}
 
 var _axis := 0.0
 var _held := 0
 var _aim := Vector2.ZERO   # 注入的瞄准方向(世界坐标系)
-var _weapon := 0
+var _switch_inst := 0      # 上行包里的权威切枪目标(**inst**);>0 = 本次有切枪请求
 var _pressed := 0          # 累积的 just_pressed 边沿(玩家读取,MatchHost 每帧末清除)
 var _released := 0         # 累积的 just_released 边沿
 
@@ -103,9 +111,10 @@ func apply_packet(pkt: Dictionary) -> void:
 	_axis = pkt.get("ax", 0.0)
 	_held = pkt.get("held", 0)
 	_aim = pkt.get("aim", Vector2.ZERO)
-	var w: int = pkt.get("weapon", 0)
-	if w > 0:
-		_weapon = w
+	# 与旧 `_weapon` 同款语义:>0 才覆盖(0 = 本包没有切枪请求),由 clear_edges() 清空。
+	var inst: int = pkt.get("winst", 0)
+	if inst > 0:
+		_switch_inst = inst
 	_pressed |= pkt.get("pressed", 0)
 	_released |= pkt.get("released", 0)
 
@@ -113,7 +122,7 @@ func apply_packet(pkt: Dictionary) -> void:
 func clear_edges() -> void:
 	_pressed = 0
 	_released = 0
-	_weapon = 0
+	_switch_inst = 0
 
 # 全量复位(COUNTDOWN/局间冻结等权威停顿时用):连 held/axis 一起清,玩家彻底静止。
 # 单清边沿不够——上一包若带着方向,倒计时里玩家会照旧漂移(服务器渲染路径被快照掩盖,
@@ -122,7 +131,7 @@ func reset_state() -> void:
 	_axis = 0.0
 	_held = 0
 	_aim = Vector2.ZERO
-	_weapon = 0
+	_switch_inst = 0
 	_pressed = 0
 	_released = 0
 
@@ -164,8 +173,14 @@ func _attack_just_pressed_raw() -> bool:
 func _attack_just_released_raw() -> bool:
 	return _released & BIT_ATTACK != 0
 
+# ★ 网络输入源**没有"背包位置"这个量**(上行传的是 inst)⇒ 位置读口恒 0。
+#   服务器取切枪目标走 `_switch_inst_raw()`(见 `PlayerInput.consume_switch_inst`)。
 func _switch_index_raw() -> int:
-	return _weapon
+	return 0
+
+
+func _switch_inst_raw() -> int:
+	return _switch_inst
 
 func _pickup_pressed_raw() -> bool:
 	return _pressed & BIT_PICKUP != 0

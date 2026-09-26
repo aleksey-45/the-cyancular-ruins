@@ -245,7 +245,7 @@ func _apply_input(held: int, pressed: int) -> void:
 		"held": held,
 		"pressed": pressed,
 		"released": 0,
-		"weapon": 0,
+		"winst": 0,
 		"aim": Vector2(1.0, 0.0),
 	})
 

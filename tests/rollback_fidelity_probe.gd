@@ -69,7 +69,7 @@ func _test_torus_compare() -> void:
 	c.bind(p)
 	for i in range(20):
 		c.advance({"seq": i + 1, "ax": 0.0, "held": 0, "pressed": 0, "released": 0,
-				"weapon": 0, "aim": Vector2(1.0, 0.0)})
+				"winst": 0, "aim": Vector2(1.0, 0.0)})
 
 	# 取两个真实 capture,把它们的位置平移**整整一幅地图宽** —— 环面上仍是同一个物理点
 	var s14: Dictionary = (c._captures[14] as Dictionary).duplicate()
@@ -111,7 +111,7 @@ func _make_contact_fixture() -> Dictionary:
 	c.map_px = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
 	for i in range(20):
 		c.advance({"seq": i + 1, "ax": 0.0, "held": 0, "pressed": 0, "released": 0,
-				"weapon": 0, "aim": Vector2(1.0, 0.0)})
+				"winst": 0, "aim": Vector2(1.0, 0.0)})
 	# 权威态 = 该帧 capture 平移 10px(> pos_tol 2px,< contact_pos_tol 24px)
 	var s: Dictionary = (c._captures[14] as Dictionary).duplicate()
 	s["pos"] = (s["pos"] as Vector2) + Vector2(10.0, 0.0)

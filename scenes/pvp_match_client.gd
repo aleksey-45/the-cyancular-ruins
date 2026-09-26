@@ -198,10 +198,12 @@ func _physics_process(_delta: float) -> void:
 	var aim: Vector2 = _local.get_current_aim_dir()
 	_input_seq += 1
 	var pkt := PacketInputSource.pack_record(src, _input_seq, aim)
-	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
-	var net_slot: int = _local.weapons.consume_net_slot()
-	if net_slot > 0:
-		pkt["weapon"] = net_slot
+	# 滚轮/数字键切枪:**本地解析成目标那把的 inst** 再随输入包上行(§4.1)。
+	# ★ 位置不能过网 —— 两端 held 的顺序可能不同(拾取/丢弃只由服务器裁决),
+	#   同一下标会解出不同的枪。数字键按背包位置解、滚轮取已本地切好的那把。
+	var switch_inst: int = _local.weapons.take_uplink_switch(src.get_switch_index_pressed())
+	if switch_inst > 0:
+		pkt["winst"] = switch_inst
 	# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 `NetBus.stop()`,
 	#   而本场景到帧末才被换掉 —— 中间这一两帧 `rpc_id` 会打引擎错误
 	#   (`Trying to call an RPC while no multiplayer peer is active`),包本来也发不出去。

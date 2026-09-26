@@ -244,32 +244,40 @@ func _phase_cycle_stress() -> void:
 	_check(is_instance_valid(_local), "60 轮后本地玩家仍有效")
 
 
-# ── ⑥ 切枪包的字段契约:两条路径产出的都必须是**背包位置**(1-based)──
-# 为什么:滚轮那条曾经上行**武器类型 id**,而消费端(`player.gd`)读的是 `equip_index(字段 - 1)`
-# —— 按**背包位置**。背包 `[步枪2, 手枪1]` 从步枪滚一下 → 发 1 → 服务器 `equip_index(0)` 切回
-# **步枪**(等于没切);`[手枪1, 重狙3]` → 发 3 → `equip_index(2)` **越界早退**,压根没切。
-# 随后权威 `wslot` 经 `sync_soft_state` 把客户端拉回原枪 = 「滚轮切不动」。
-# 选 `[3, 1]`(重狙 / 手枪)是因为**类型 id 与背包位置不同**,能把两者区分开;`[1, 2]` 那种
-# 恰好相等,测了也白测(红绿一样)。
+# ── ⑥ 切枪包的上行值 = **目标那一把的 inst**（§4.1，2026-09-25 换）──
+# ★ 这一相**整段改写了**：原先断的是"上行值 = 背包位置，且**不得**是 type id"。
+#   那条契约已被 §4.1 反证 —— 新的契约是：上行的是**目标那把的 inst**，与两端 `held` 的**顺序无关**。
+# 为什么必须换：位置的含义由**本端**背包决定，而拾取/丢弃是服务器裁决、客户端不预测
+# ——那 ≈1 RTT 的窗口里同一个下标在两端解出不同的枪。历史症状是「滚轮切不动」（见 ④c 的注释）。
+# ★ 选 `[3, 1]`（重狙 / 手枪）：**类型 id 与背包位置不同**，能把两者区分开；`[1, 2]` 那种
+#   恰好相等，测了也白测（红绿一样）。而 inst 与两者都不同，故三条量纲互相可分。
 func _phase_switch_field_contract() -> void:
-	print("[gc] ── ⑥ 切枪包字段 = 背包位置 ──")
+	print("[gc] ── ⑥ 切枪包上行值 = 目标那把的 inst ──")
 	var w: WeaponComponent = _local.weapons
 	w.set_initial_inventory([3, 1])   # 位置 0 = 重狙(类型 3)、位置 1 = 手枪(类型 1)
+	var inst1 := int(w.inventory.held[1]["inst"])
+	# ★ 前置:目标那把的 inst 必须与"位置"(1)和"类型 id"(3)**都不同**,否则下面两条
+	#   鉴别断言恒真。inst 由 WeaponInventory 的 `_next_inst` **单调分配、跨相累积**
+	#   (本文件前面的相已经把计数器顶到 ~160),不会小到撞上 1/3 —— 但**别靠"不会"**,
+	#   把前提变成一条断言,撞上了就让探针如实红。
+	_check(inst1 != 1 and inst1 != 3,
+			"前置:目标那把的 inst(%d)必须与位置(1)和类型 id(3)都不同,否则鉴别断言是空转" % inst1)
 	_check(w.inventory.held.size() == 2 and w.current_type_id() == 3,
-			"先摆成两把(实际 %d 把,手上槽 %d)" % [w.inventory.held.size(), w.current_type_id()])
+			"先摆成两把(实际 %d 把,手上类型 %d)" % [w.inventory.held.size(), w.current_type_id()])
 	# 从位置 0 往正方向滚一次 → 目标位置 1
 	w.request_net_cycle(1)
-	var sent: int = w.consume_net_slot()
-	_check(sent == 2, "滚轮上行的是**背包位置** 2(实际 %d)" % sent)
-	_check(sent != 1, "上行值不得是目标那把的**类型 id**(1)—— 消费端按位置读,发类型 id 会切错/越界")
+	var sent: int = w.consume_switch_inst()
+	_check(sent == inst1, "滚轮上行的是**目标那把的 inst** %d(实际 %d)" % [inst1, sent])
+	_check(sent != 1, "上行值**不得**是背包位置(1)—— 位置在两端可能解出不同的枪")
+	_check(sent != 3, "上行值**不得**是类型 id(3)—— 同型号两把恒等,区分不了是哪一把")
 	_check(w._current_index == 1 and w.current_type_id() == 1,
-			"本地同刻切到位置 1(实际 index=%d slot=%d)" % [w._current_index, w.current_type_id()])
-	# 再走一遍**消费端口径**(服务器 `player.gd` 的那句):同一个字段必须还原出同一个位置
+			"本地同刻切到位置 1(实际 index=%d 类型=%d)" % [w._current_index, w.current_type_id()])
+	# 再走一遍**消费端口径**(服务器 `player.gd` 的那句):同一个值必须还原出同一把
 	w.equip_index(0)
 	_check(w._current_index == 0, "先切回位置 0(实际 %d)" % w._current_index)
-	w.equip_index(sent - 1)
+	w.equip_inst(sent)
 	_check(w._current_index == 1 and w.current_type_id() == 1,
-			"按消费端口径 equip_index(字段 - 1) 落回同一把(实际 index=%d slot=%d)" % [
+			"按消费端口径 equip_inst(inst) 落回同一把(实际 index=%d 类型=%d)" % [
 					w._current_index, w.current_type_id()])
 	_check(is_instance_valid(_local), "切枪后本地玩家仍有效")
 

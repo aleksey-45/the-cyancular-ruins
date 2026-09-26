@@ -59,7 +59,7 @@ func _build_grid() -> Array[Array]:
 func _feed(held: int, pressed: int, released: int, ax: float) -> void:
 	src.clear_edges()
 	src.apply_packet({"seq": 0, "ax": ax, "held": held,
-		"pressed": pressed, "released": released, "weapon": 0, "aim": Vector2(1.0, 0.0)})
+		"pressed": pressed, "released": released, "winst": 0, "aim": Vector2(1.0, 0.0)})
 	p._physics_process(DT)
 
 func _idle(n: int) -> void:

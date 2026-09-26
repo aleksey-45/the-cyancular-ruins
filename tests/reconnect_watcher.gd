@@ -375,7 +375,7 @@ func _actor_tick(el: float) -> void:
 		for i in range(BURST_N):
 			NetBus.rpc_id(1, "send_input", {"seq": 900000 + i, "ax": 0.0,
 					"held": PacketInputSource.BIT_DOWN, "pressed": 0, "released": 0,
-					"weapon": 0, "aim": Vector2.ZERO})
+					"winst": 0, "aim": Vector2.ZERO})
 		_log("闪断前塞入 %d 条输入包(held=BIT_DOWN)作为相③的确定性装置" % BURST_N)
 	if not _drop_done and el >= T_DROP:
 		_drop_done = true

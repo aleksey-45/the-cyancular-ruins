@@ -135,7 +135,7 @@ func _physics_process(_delta: float) -> void:
 			"held": held,
 			"pressed": pressed,
 			"released": released,
-			"weapon": 0,
+			"winst": 0,
 			"aim": Vector2(1, 0),
 		}
 		NetBus.rpc_id(1, "send_input", pkt)

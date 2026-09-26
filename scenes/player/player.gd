@@ -188,14 +188,19 @@ func _physics_process(delta: float) -> void:
 	weapons.tick(delta)   # 武器帧逻辑走物理 tick(与 body 同一定时器;rollback 重放确定性)
 	combat.update_iframe_blink(delta)
 
-	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
-	var wslot := input_source.get_switch_index_pressed()
-	if wslot > 0:
-		# ★ 数字键选的是**背包第 N 把**(1-4),不是"武器类型 id"。
-		#   旧代码走 equip(str(wslot)) —— 那是按**类型**切的:按 2 会切到"步枪"这个类型,
-		#   而不管背包第 2 格是什么;更糟的是**背包里没有该类型时 equip 会凭空加一把**
-		#   (见它的"没有就加"分支)→ 按 3 白得一把重狙。这是背包化时漏改的消费点。
-		weapons.equip_index(wslot - 1)
+	# 切枪走 input_source 轮询,两条**不同量纲**的路,别合并:
+	#   ① 本地交互(本地输入源):数字键 = 本端背包的**第 N 把**(1-based)→ 就地按位置切。
+	#      网络输入源这条恒 0(它的上行值不是位置)。
+	#   ② 权威切枪(网络输入源):上一包带的目标 **inst** → 按 inst 找到那一把再切。
+	#      本地输入源这条恒 0(它那次切枪已由 ① 当场成交)。
+	# ★ 为什么上行必须是 inst:位置的含义由**本端背包**决定,而拾取/丢弃是服务器裁决、
+	#   客户端不预测 —— 那 ≈1 RTT 的窗口里同一个下标在两端解出**不同的枪**(见 spec §4.1)。
+	var idx := input_source.get_switch_index_pressed()
+	if idx > 0:
+		weapons.equip_index(idx - 1)
+	var winst := input_source.consume_switch_inst()
+	if winst > 0:
+		weapons.equip_inst(winst)
 
 	# R 换弹:同样走 input_source 轮询(2026-09-15 起 PvP 也换弹,见 weapon_base 换弹段注释)。
 	# ★ 必须是轮询,不能像原先那样在 _unhandled_input 里读原始 InputEvent —— **权威服务器

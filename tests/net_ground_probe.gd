@@ -130,19 +130,21 @@ func _ready() -> void:
 	_check(not pmc.contains("func clear_ground_weapons"),
 			"pvp_match_client 里又出现了 clear_ground_weapons —— 换局的清理只走服务器事件,别在客户端加第二条路")
 
-	# ④c 切枪包字段**两端同量纲 = 背包位置(1-based)**。
-	#     滚轮曾经上行"武器类型 id",而消费端按位置读(`equip_index(字段 - 1)`):背包
-	#     `[步枪2, 手枪1]` 从步枪滚一下发 1 → 服务器切回步枪(等于没切);`[手枪1, 重狙3]` 发 3
-	#     → 越界早退(压根没切)→ 权威 wslot 把客户端拉回 →「滚轮切不动」。
+	# ④c 切枪：上行传**目标那一把的 inst**（§4.1，2026-09-25 换）。
+	#     ★ 这条**取代**了原先那句"滚轮应上行背包位置（next + 1）" —— 位置不能过网：
+	#       拾取/丢弃是服务器裁决、客户端不预测，那 ≈1 RTT 的窗口里同一个下标在两端解出
+	#       **不同的枪**（历史症状：滚轮切不动 / 切到另一把，代码里没有任何一处会红）。
+	#     ★ 端到端守卫在 `tests/weapon_switch_inst_probe.tscn`（真两端、真解码端）；
+	#       这里只钉**源码形状**，与它分工。
 	var wc := _code_only(_read("res://scenes/player/weapon_component.gd"))
 	var rnc := _func_body(wc, "request_net_cycle")
 	_check(not rnc.is_empty(), "request_net_cycle 找得到")
-	_check(not rnc.contains("push_net_slot(int(inventory.held"),
-			"滚轮切枪又在发武器**类型 id** 了(消费端按背包位置读 → 切错/越界早退)")
-	_check(rnc.contains("push_net_slot(next + 1)"),
-			"滚轮切枪应上行背包位置(next + 1)")
-	_check(_func_body(pl, "_physics_process").contains("equip_index(wslot - 1)"),
-			"消费端不再是按背包位置切(equip_index(wslot - 1))—— 两条路径的量纲必须一致")
+	_check(rnc.contains("push_switch_inst(inst_at_index(next))"),
+			"滚轮切枪上行不是目标那把的 inst —— 传背包位置会让两端 held 顺序不同时切到不同的枪")
+	_check(_func_body(pl, "_physics_process").contains("equip_inst(winst)"),
+			"消费端没按 inst 切（equip_inst(winst)）—— 上行值没人解")
+	_check(not _func_body(pl, "_physics_process").contains("equip_index(wslot - 1)"),
+			"消费端又按**背包位置**解上行值了 —— 两端 held 顺序不同时切到不同的枪")
 
 	# ⑤ 链规矩:MatchGround 是中间层,**不得**定义生命周期钩子
 	for hook in ["func _init(", "func _ready(", "func _enter_tree(",

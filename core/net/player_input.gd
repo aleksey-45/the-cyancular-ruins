@@ -81,6 +81,18 @@ func is_drop_pressed() -> bool:
 	return not frozen and _drop_pressed_raw()
 
 
+# 本帧上行包里的**权威切枪目标**(inst)。只有 `PacketInputSource` 覆写 `_switch_inst_raw()`
+# (它读包里的 winst);本地 / AI / 机器人输入源**一律不覆写** —— 它们那次切枪由
+# `get_switch_index_pressed()` 那条**本地路径**直接成交,不经网络。
+# ★ 与 `get_aim_dir_override()` 同款:**默认空操作**的可选钩子(不是"必须覆写"那族)。
+# ★ `frozen` 短路照旧收在公开读口 —— 冻结期一切输入读口返回中性值,这条不能例外
+#   (子类覆写的是 `_*_raw()`,绕不过冻结)。
+func consume_switch_inst() -> int:
+	if frozen:
+		return 0
+	return _switch_inst_raw()
+
+
 # ── 覆写钩子:子类只改这里;本基类给会报错的兜底(纯接口,不再自带"本地"实现)──
 
 func _axis_raw(_neg: String, _pos: String) -> float:
@@ -113,6 +125,11 @@ func _attack_just_released_raw() -> bool:
 
 func _switch_index_raw() -> int:
 	push_error("PlayerInput: 子类必须覆写 _switch_index_raw()")
+	return 0
+
+
+# 可选钩子:默认 0 = "本次上行没有切枪目标"。见 `consume_switch_inst()`。
+func _switch_inst_raw() -> int:
 	return 0
 
 func _pickup_pressed_raw() -> bool:

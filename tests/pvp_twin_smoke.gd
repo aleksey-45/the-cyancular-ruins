@@ -182,7 +182,7 @@ func _apply_input(src: PacketInputSource, i: int) -> void:
 		"held": int(pk.get("h", 0)),
 		"pressed": int(pk.get("p", 0)),
 		"released": int(pk.get("r", 0)),
-		"weapon": 0,
+		"winst": 0,
 		"aim": Vector2(1.0, 0.0),
 	})
 

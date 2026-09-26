@@ -212,7 +212,7 @@ func _physics_process(_delta: float) -> void:
 # 而 _acked 初值 0 → seq 从 0 起的话第一包 ack 会被吃掉)。
 func _record(t: int) -> Dictionary:
 	return {"seq": t + 1, "ax": 1.0, "held": 0, "pressed": 0, "released": 0,
-			"weapon": 0, "aim": Vector2(1.0, 0.0)}
+			"winst": 0, "aim": Vector2(1.0, 0.0)}
 
 
 # ── 造物 ──

@@ -445,7 +445,7 @@ func _input_opp(t: int, i: int) -> float:
 
 func _packet(t: int, ax: float, seq: int) -> Dictionary:
 	return {"seq": seq, "ax": ax, "held": 0, "pressed": 0, "released": 0,
-			"weapon": 0, "aim": Vector2(1.0, 0.0)}
+			"winst": 0, "aim": Vector2(1.0, 0.0)}
 
 
 # ── 造物 ──

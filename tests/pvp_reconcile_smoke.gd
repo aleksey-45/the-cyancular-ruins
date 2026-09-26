@@ -130,7 +130,7 @@ func _record(i: int) -> Dictionary:
 	var pk: Dictionary = _plan[i]
 	return {"seq": int(pk.get("seq", i)), "ax": pk.get("ax", 0.0),
 		"held": int(pk.get("h", 0)), "pressed": int(pk.get("p", 0)),
-		"released": int(pk.get("r", 0)), "weapon": 0, "aim": Vector2(1.0, 0.0)}
+		"released": int(pk.get("r", 0)), "winst": 0, "aim": Vector2(1.0, 0.0)}
 
 func _physics_process(_delta: float) -> void:
 	if A == null or P == null:

@@ -139,34 +139,56 @@ func _peek_cycle(dir: int) -> int:
 	return order[(idx + dir + order.size() * 2) % order.size()]
 
 
-# ── PvP 滚轮切枪:本地立即切(即时反馈),目标**背包位置**打包进输入包由服务器权威同步 ──
+# ── PvP 切枪:本地立即切(即时反馈),再把**目标那一把的 inst** 打包进输入包由服务器权威同步 ──
 # (滚轮事件不在输入包协议里,只本地切会被快照的防脱同步切回旧槽位 →「只有音效」)
-# ★ 上行的是**背包位置(1-based)**,与数字键同一个量纲 —— 消费端
-#   `player.gd` 读的是 `weapons.equip_index(wslot - 1)`(按位置)。这里曾经发
-#   `inventory.held[next]["type"]`(类型 id 1-6):背包 `[步枪2, 手枪1]` 从步枪滚一下 → 发 1
-#   → 服务器 `equip_index(0)` 切回**步枪**(等于没切);`[手枪1, 重狙3]` → 发 3 →
-#   `equip_index(2)` **越界早退**,服务器压根没切。随后权威 `wslot` 经 `sync_soft_state`
-#   把客户端拉回原枪 → 「滚轮切不动」。★ 它只在背包 ≥2 把时才现形(数字键那条两边同量纲、
-#   一直是对的)—— 也就是"捡起武器之后"才看得出来。
-var _net_slot := 0   # 待发切枪的**背包位置**(1-based;>0 = 待发,打包后清零)
+# ★★ 上行的是 **inst**,不是背包位置 —— 这是本设计最要紧的一处(§4.1):
+#   "第 N 把"的含义由**本端背包**决定,而拾取/丢弃是服务器裁决、客户端**不预测**;
+#   那 ≈1 RTT 的窗口里,同一个下标在两端解出**不同的枪**(滚轮切不动 / 切到另一把的结构性来源)。
+#   `inst` 逐把唯一,与两端 `held` 的**顺序**无关。
+#   历史代价(留档):这里曾经发 `inventory.held[next]["type"]`(类型id)、而消费端按位置读 ——
+#   背包 `[步枪2, 手枪1]` 从步枪滚一下发 1 → 服务器切回步枪(等于没切);`[手枪1, 重狙3]` 发 3
+#   → 越界早退(压根没切)。两条都只表现为「滚轮切不动」,而代码里没有任何一处会红。
+var _switch_inst := 0   # 待发切枪的目标 **inst**(>0 = 待发,打包后清零)
 
 func request_net_cycle(dir: int) -> void:
 	var next := _peek_cycle(dir)
 	if next < 0 or next == _current_index:
 		return
-	push_net_slot(next + 1)
+	push_switch_inst(inst_at_index(next))
 	_equip_index(next)
 
 
-# 入参 = 背包位置(1-based);由 `pvp_match_client` 的组包处取走塞进输入包的 weapon 字段。
-func push_net_slot(slot: int) -> void:
-	_net_slot = slot
+# 入参 = 目标那一把的 **inst**;由 `pvp_match_client` 的组包处取走塞进输入包的 winst 字段。
+func push_switch_inst(inst: int) -> void:
+	_switch_inst = inst
 
 
-func consume_net_slot() -> int:
-	var v := _net_slot
-	_net_slot = 0
+func consume_switch_inst() -> int:
+	var v := _switch_inst
+	_switch_inst = 0
 	return v
+
+
+# 客户端上行前把"玩家想切到**哪一把**"解析成 inst(§4.1:上行传解析结果,不传寻址方式)。
+# 两条来源都是**本地交互**,只有客户端知道玩家点的是第几个:
+#   · 数字键 → `key_index`(1-based 背包位置)→ 查那一把的 inst
+#   · 滚轮   → `request_net_cycle` 已本地切好并 push_switch_inst(目标 inst)
+# 数字键优先;滚轮那条无论如何**都取走**(读一次即清 —— 别让它漏到下一帧变成一次迟到的切枪)。
+# 返回 0 = 本次没有切枪请求。
+func take_uplink_switch(key_index: int) -> int:
+	var wheel_inst := consume_switch_inst()
+	if key_index > 0:
+		var inst := inst_at_index(key_index - 1)
+		if inst > 0:
+			return inst
+	return wheel_inst
+
+
+# 第 index 条(0-based)的 inst;越界返回 0。数字键上行解析用。
+func inst_at_index(index: int) -> int:
+	if index < 0 or index >= inventory.held.size():
+		return 0
+	return int(inventory.held[index]["inst"])
 
 
 # 按**类型 id**切枪(网络包 / rollback 走这条)。
@@ -182,6 +204,19 @@ func equip_type(type_id: int) -> void:
 		idx = inventory.held.size()
 		inventory.add(type_id, WeaponInventory.MAG_FULL)
 		inventory_changed.emit()
+	_equip_index(idx)
+
+
+# 按 **inst** 切枪(网络上行 / 权威落点走这条)。
+# ★ 找不到那把时**静默不动** —— 语义比"下标越界"准确:`inst` 逐把唯一,服务器手里没有它
+#   只可能是那一把已经不在了(被丢/被换),此时切到别的枪是**错的**。
+#   (旧路径 `equip_index(wslot - 1)` 在那种情况下会越界早退,或更糟:切到位置上的另一把。)
+func equip_inst(inst: int) -> void:
+	if inst <= 0:
+		return
+	var idx := inventory.index_of_inst(inst)
+	if idx < 0:
+		return
 	_equip_index(idx)
 
 
@@ -438,9 +473,7 @@ func current_type_id() -> int:
 # ★ 与 `current_type_id()` 的分工:那个是**类型 id**(协议/副本按它走),同型号两把**恒等**;
 #   这个才回答"是**哪一把**"—— 权威态(`capture_state` 的 `winst`)与 UI 高亮都需要它。
 func current_inst() -> int:
-	if _current_index < 0 or _current_index >= inventory.held.size():
-		return 0
-	return int(inventory.held[_current_index]["inst"])
+	return inst_at_index(_current_index)
 
 
 func movement_multiplier() -> Vector2:

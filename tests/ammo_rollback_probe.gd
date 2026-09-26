@@ -125,7 +125,7 @@ func _apply_attack() -> void:
 		"held": PacketInputSource.BIT_ATTACK,
 		"pressed": PacketInputSource.BIT_ATTACK,
 		"released": 0,
-		"weapon": 0,
+		"winst": 0,
 		"aim": Vector2(1.0, 0.0),
 	})
 

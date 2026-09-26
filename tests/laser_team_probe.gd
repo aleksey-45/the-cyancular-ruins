@@ -166,7 +166,7 @@ func _run() -> void:
 	var src := _shooter.input_source as PacketInputSource
 	src.clear_edges()
 	src.apply_packet({"seq": 1, "ax": 0.0, "held": 0, "pressed": 0, "released": 0,
-			"weapon": 0, "aim": Vector2.RIGHT})
+			"winst": 0, "aim": Vector2.RIGHT})
 	var hp_before := int(_mate.combat.hp)
 	var foe_hp_before := int(_foe_player.combat.hp)
 	laser.try_fire()

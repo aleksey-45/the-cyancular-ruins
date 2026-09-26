@@ -384,7 +384,7 @@ func _press(role: int, bits: int) -> void:
 		_host._pending_input[role] = []
 	(_host._pending_input[role] as Array).append({
 		"seq": _seq, "ax": 0.0, "held": 0, "pressed": bits,
-		"released": 0, "weapon": 0, "aim": Vector2.RIGHT,
+		"released": 0, "winst": 0, "aim": Vector2.RIGHT,
 	})
 	var waited := 0
 	while not (_host._pending_input.get(role, []) as Array).is_empty() and waited < MAX_WAIT:

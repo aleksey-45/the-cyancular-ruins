@@ -500,7 +500,7 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 	# ② 解码端:_bit("R") 必须映射到 BIT_RELOAD(原先它恒返回 0 —— 这正是"服务器没有通路"的那一环)
 	var decoded := PacketInputSource.new()
 	decoded.apply_packet({"ax": 0.0, "held": 0, "pressed": PacketInputSource.BIT_RELOAD,
-			"released": 0, "weapon": 0, "aim": Vector2.RIGHT})
+			"released": 0, "winst": 0, "aim": Vector2.RIGHT})
 	_check(decoded.is_action_just_pressed("R"),
 			"输入包解码端漏了换弹:_bit(\"R\") 未映射到 BIT_RELOAD,pressed 位读不出来")
 
@@ -513,7 +513,7 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 		var prev_src: PlayerInput = player.input_source
 		var net_src := PacketInputSource.new()
 		net_src.apply_packet({"ax": 0.0, "held": 0, "pressed": PacketInputSource.BIT_RELOAD,
-				"released": 0, "weapon": 0, "aim": Vector2.RIGHT})
+				"released": 0, "winst": 0, "aim": Vector2.RIGHT})
 		player.set_input_source(net_src)
 		_check(player.input_is_network(), "注入 PacketInputSource 后 player.input_is_network() 仍为假")
 		real_w.mag_ammo = 3        # 不满弹,start_reload() 才有活干
@@ -534,7 +534,7 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 		real_w.mag_ammo = 3
 		net_src.clear_edges()
 		net_src.apply_packet({"ax": 0.0, "held": 0, "pressed": 0,
-				"released": 0, "weapon": 0, "aim": Vector2.RIGHT})
+				"released": 0, "winst": 0, "aim": Vector2.RIGHT})
 		player._physics_process(1.0 / 60.0)
 		_check(not real_w.is_reloading(), "负向对照失败:没有 R 边沿的包也让武器进了装填")
 		player.set_input_source(prev_src)
