@@ -8,20 +8,31 @@ extends RefCounted
 #   拖进 -s 冒烟(见 tests 里"autoload 尚未实例化"的注释)。对齐关系由
 #   enemy_logic_smoke 的 _phase_weapon_registry 钉住(漂移即红)。
 #
-# ★ 容量(8 格)与把数上限(4 把)是**两条闸门**,不是一条推另一条
+# ★ 容量(**默认** 8 格)与把数上限(**默认** 4 把)是**两条闸门**,不是一条推另一条
 #   —— 用户 2026-09-15 明确裁定「就算容量给 100 也最多四把」。
-#   但要说实话:按今天的 cost 表(最便宜 2 格),4 把 × 2 = 8 = CAPACITY,
-#   所以 MAX_WEAPONS 其实已被容量蕴含。它**不是死代码**:一旦有人把轻武器改成
-#   1 格、或把 CAPACITY 调大,"最多 4 把"这个承诺就只剩这一条在守 ——
+#   但要说实话:按今天的 cost 表(最便宜 2 格),4 把 × 2 = 8 = 默认容量,
+#   所以"把数上限"其实已被容量蕴含。它**不是死代码**:一旦有人把轻武器改成
+#   1 格、或把默认容量调大,"最多 4 把"这个承诺就只剩这一条在守 ——
 #   tests/weapon_inventory_smoke.gd 里钉了那条临界等式,它一旦不成立就该回来重看这里。
+#
+# ★ 为什么两条闸门是**实例字段**而不是类常量(2026-09-25):它们将来要按**能力/模式分叉**
+#   (例如某个 buff 把容量加到 12、某个模式只许带两把)。做成常量的话那种分叉只能靠
+#   改全局值实现,而全局值会让**同一局里的所有人**一起变。字段化之后每个背包各自持有
+#   自己的两条闸门,默认值不变 ⇒ 协议(capture_state / match_options)零改动。
 
 const TIER_LIGHT := 0
 const TIER_MEDIUM := 1
 const TIER_HEAVY := 2
 const CELL_COST: Dictionary = {TIER_LIGHT: 2, TIER_MEDIUM: 3, TIER_HEAVY: 4}
 
-const MAX_WEAPONS := 4
-const CAPACITY := 8
+# 两条闸门的**默认值**。★ 名字带 `DEFAULT_` 是刻意的:它们只在**构造**时用一次,
+# 之后每个实例各自持有 `capacity` / `max_weapons` —— 别再让调用方读这两个常量当"容量"
+# (那会得到"默认值"而不是"这个背包的容量",是**静默的错值**)。
+const DEFAULT_MAX_WEAPONS := 4
+const DEFAULT_CAPACITY := 8
+
+var max_weapons: int = DEFAULT_MAX_WEAPONS
+var capacity: int = DEFAULT_CAPACITY
 
 # 条目里的 mag == MAG_FULL 表示「满弹」:入树后不覆盖武器 _ready 设的满弹。
 const MAG_FULL := -1
@@ -35,8 +46,21 @@ var _tiers: Dictionary         # type_id -> tier
 var _next_inst: int = 1
 
 
-func _init(tiers: Dictionary) -> void:
+func _init(tiers: Dictionary, new_capacity: int = DEFAULT_CAPACITY,
+		new_max_weapons: int = DEFAULT_MAX_WEAPONS) -> void:
 	_tiers = tiers
+	# ★ 钳到 ≥ 1:0 格 / 0 把会让 `can_hold()` 恒假 ⇒ 玩家永远捡不起任何枪(死锁),
+	#   而那种配置错误在实机上表现为"拾取没反应",查起来很久。
+	capacity = maxi(1, new_capacity)
+	max_weapons = maxi(1, new_max_weapons)
+
+
+func set_capacity(n: int) -> void:
+	capacity = maxi(1, n)
+
+
+func set_max_weapons(n: int) -> void:
+	max_weapons = maxi(1, n)
 
 
 func tier_of(type_id: int) -> int:
@@ -57,9 +81,9 @@ func used_cell_count() -> int:
 # 两条闸门都在这里。调用方必须先问过它再 add() —— add() 自己不代替闸门
 # (加了就是"静默超容",出问题时看不出是哪一步放进去的)。
 func can_hold(type_id: int) -> bool:
-	if held.size() >= MAX_WEAPONS:
+	if held.size() >= max_weapons:
 		return false
-	return used_cell_count() + cost_of(type_id) <= CAPACITY
+	return used_cell_count() + cost_of(type_id) <= capacity
 
 
 func add(type_id: int, mag: int) -> int:

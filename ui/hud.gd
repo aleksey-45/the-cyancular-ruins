@@ -303,7 +303,8 @@ func _place_weapon_slots() -> void:
 	_slots.offset_left = MARGIN.x
 	_slots.offset_right = MARGIN.x + WeaponSlots.PANEL_W
 	_slots.offset_bottom = _weapon_wrap.position.y - WEAPON_SLOTS_GAP
-	_slots.offset_top = _slots.offset_bottom - WeaponSlots.PANEL_H
+	# ★ `panel_h` 是**实例**字段(由容量派生,见 WeaponSlots._derive_layout);`PANEL_W` 仍是常量。
+	_slots.offset_top = _slots.offset_bottom - _slots.panel_h
 
 
 func _on_weapon_changed(_type_id: int) -> void:

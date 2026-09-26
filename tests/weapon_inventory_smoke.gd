@@ -71,16 +71,79 @@ func _initialize() -> void:
 	#   但它**不是死代码**:用户 2026-09-15 把它定为硬规则(「就算容量给 100 也最多四把」),
 	#   而一旦有人把轻武器改成 1 格 / 把 CAPACITY 调大,"最多 4 把"这个承诺就只靠这一条守着了。
 	#   这里退而钉住常量本身 + 那个临界等式,别假装验了闸门的独立性。
-	_check(int(WI.MAX_WEAPONS) == 4, "MAX_WEAPONS 必须恰好是 4")
-	_check(int(WI.CAPACITY) == 8, "CAPACITY 必须恰好是 8")
+	# ★ 默认值一律走 `get_script_constant_map()`:常量不存在时直接取属性会抛错,而 -s 脚本
+	#   抛错走不到 quit() → **进程永久挂起**(本仓铁律,见上面 WI == null 那段)。
+	#   `.get(name, -1)` 的存在性检查让"常量还没改名"表现为**干净的红**。
+	# ★ `CELL_COST` 是计划 1 改的名(原 `SLOT_COST`)—— 写回旧名同样会抛错 ⇒ 挂起。
+	var wconsts: Dictionary = WI.get_script_constant_map()
+	var def_cap := int(wconsts.get("DEFAULT_CAPACITY", -1))
+	var def_max := int(wconsts.get("DEFAULT_MAX_WEAPONS", -1))
+	_check(def_max == 4, "DEFAULT_MAX_WEAPONS 必须恰好是 4(实际 %d)" % def_max)
+	_check(def_cap == 8, "DEFAULT_CAPACITY 必须恰好是 8(实际 %d)" % def_cap)
 	_check(int(WI.CELL_COST[int(WI.TIER_LIGHT)]) == 2, "轻武器必须恰好占 2 格")
-	_check(int(WI.CELL_COST[int(WI.TIER_LIGHT)]) * int(WI.MAX_WEAPONS) == int(WI.CAPACITY),
+	_check(int(WI.CELL_COST[int(WI.TIER_LIGHT)]) * def_max == def_cap,
 		"轻武器 cost × 4 应恰好等于容量(这条等式一旦不成立,上面那条注释就该重写)")
 	var inv_y = WI.new(tiers)
 	for i in 4:
 		inv_y.add(1, 5)     # 4 把轻武器 = 8 格,把数与容量同时到顶
 	_check(inv_y.held.size() == 4 and inv_y.used_cell_count() == 8, "4 把轻武器 = 4 把 / 8 格")
 	_check(not inv_y.can_hold(1), "4 把轻武器后不能再装")
+
+	# ══ 容量 / 把数可配(2026-09-25)══
+	# ★★ 探字段**必须**先探再调:直接写 `probe.capacity` 在改动前会抛 "Invalid get index"
+	#   → `_initialize()` 当场中断 → **走不到 quit() → 进程永久挂起**。
+	#   探不到就报 FAIL 并**用 if 包住**后续(不要 early return —— return 同样到不了 quit)。
+	var probe = WI.new(tiers)
+	var has_capacity := false
+	var has_max := false
+	for pr in probe.get_property_list():
+		# ★ 用 if/elif,不用 `match` —— GDScript 的 match 体内 `continue` 是 **fall-through**
+		#   (落到下一个 pattern、两支都跑),本仓踩过;这里虽没写 continue,但别开这个头。
+		var n := str(pr.get("name", ""))
+		if n == "capacity":
+			has_capacity = true
+		elif n == "max_weapons":
+			has_max = true
+	_check(has_capacity, "★ WeaponInventory 应有**实例字段** capacity(不再是类常量 CAPACITY)")
+	_check(has_max, "★ WeaponInventory 应有**实例字段** max_weapons(不再是类常量 MAX_WEAPONS)")
+	if has_capacity and has_max:
+		# ① 不带额外实参 ⇒ 默认值不变(协议零改动的前提)
+		var dflt = WI.new(tiers)
+		_check(dflt.capacity == 8 and dflt.max_weapons == 4,
+				"缺省构造 = 8 格 / 4 把(实际 %d / %d)" % [dflt.capacity, dflt.max_weapons])
+		# ② 构造实参生效
+		var wide = WI.new(tiers, 12, 6)
+		_check(wide.capacity == 12 and wide.max_weapons == 6,
+				"构造实参生效(实际 %d / %d)" % [wide.capacity, wide.max_weapons])
+		wide.add(5, 5)
+		wide.add(5, 5)
+		wide.add(5, 5)                      # 三把重型 = 12 格(加起来正好到顶)
+		_check(wide.used_cell_count() == 12,
+				"宽松配置下三把重型 = 12 格(实际 %d)" % wide.used_cell_count())
+		_check(not wide.can_hold(1), "★ 容量闸门读的是**字段**:12 格满了,最便宜的档也放不下")
+		# ③ 两条闸门**互相独立** —— 这是本节的核心断言,今天靠真表造不出来(见上面那段长注释)
+		var by_cap = WI.new(tiers, 4, 9)
+		by_cap.add(5, 5)                    # 重型 4 格 = 正好占满 4 格,而把数还剩 8
+		_check(by_cap.used_cell_count() == 4,
+				"容量 4 的背包放一把重型正好占满(实际 %d)" % by_cap.used_cell_count())
+		_check(not by_cap.can_hold(1), "★ 容量闸门单独生效(把数上限 9 没拦,是容量拦的)")
+		var by_max = WI.new(tiers, 100, 1)
+		by_max.add(1, 5)                    # 轻 2 格,容量还剩 98
+		_check(by_max.used_cell_count() == 2,
+				"容量 100 的背包放一把轻型只占 2 格(实际 %d)" % by_max.used_cell_count())
+		_check(not by_max.can_hold(1), "★ 把数闸门单独生效(容量剩 98 格,是把数上限拦的)")
+		# ④ setter 路径
+		by_max.set_capacity(0)
+		by_max.set_max_weapons(0)
+		_check(by_max.capacity >= 1 and by_max.max_weapons >= 1,
+				"setter 必须把容量/把数**钳到 ≥ 1**(0 会让闸门变成'永远放不下'的死锁;实际 %d / %d)"
+						% [by_max.capacity, by_max.max_weapons])
+		by_max.set_capacity(12)
+		by_max.set_max_weapons(6)
+		_check(by_max.capacity == 12 and by_max.max_weapons == 6,
+				"setter 设值生效(实际 %d / %d)" % [by_max.capacity, by_max.max_weapons])
+	else:
+		_check(false, "★ 容量/把数可配的四组行为断言被跳过(字段还没改,期望在这一步红)")
 
 	# ── 紧凑排布 ──
 	var inv3 = WI.new(tiers)

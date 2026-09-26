@@ -170,6 +170,11 @@ func _phase_slot_placement(player: Node, lvl: Node) -> void:
 				"%d 把枪时间隙恒为 %.0fpx(实测 %.1f)" % [plan.size(), gap_expect, gap])
 		_check(slots_bottom > 0.0 and slots.position.y > 0.0,
 				"%d 把枪时容量格子留在画面内(y=%.0f)" % [plan.size(), slots.position.y])
+		# ★ 默认容量(8)下格子面板的高**必须仍是 59** —— 这是"把 ROWS/PANEL_H 改成派生时
+		#   没有改动默认观感"的钉子。判据取**实测的 size.y**(= offset_bottom - offset_top),
+		#   不是去读常量:与上面那条间隙断言同一个口径(取"实际边",不取同源常量)。
+		_check(is_equal_approx(slots.size.y, 59.0),
+				"%d 把枪时容量面板高应仍是 59px(实际 %.1f)" % [plan.size(), slots.size.y])
 	# 收尾:还原一张"图里好看"的背包(下面取图那步会再摆一次,这里只是别留 4 把的乱状态)
 	player.weapons.set_initial_inventory([1])
 	for i in 6:

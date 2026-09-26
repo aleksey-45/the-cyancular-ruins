@@ -188,12 +188,14 @@ func _phase_pickup_into_free_slot() -> void:
 func _phase_pickup_replaces_when_full() -> void:
 	print("[ga] ── ② 放不下时替换手上那把 ──")
 	var p: Node2D = _players[1]
-	# 先把背包塞满:两把重型 = 4+4 = 8 格 = CAPACITY(★ 用 set_initial_inventory 是**发放**路径,
+	# ★ 容量取**这个背包自己的**字段,不再读类常量(常量已删;语义也从"默认值"变成"本实例")。
+	var cap: int = p.weapons.inventory.capacity
+	# 先把背包塞满:两把重型 = 4+4 = 8 格 = 默认容量(★ 用 set_initial_inventory 是**发放**路径,
 	# 它照 `add()` 直加、不过容量闸门;要测闸门就得自己摆成"刚好满"的合法状态,别拿它塞 4 把)
 	p.weapons.set_initial_inventory([3, 3])
 	_check(p.weapons.inventory.held.size() == 2, "塞满后是 2 把重型(实际 %d)" % p.weapons.inventory.held.size())
-	_check(p.weapons.inventory.used_cell_count() == WeaponInventory.CAPACITY,
-			"且正好占满容量(%d/%d)" % [p.weapons.inventory.used_cell_count(), WeaponInventory.CAPACITY])
+	_check(p.weapons.inventory.used_cell_count() == cap,
+			"且正好占满容量(%d/%d)" % [p.weapons.inventory.used_cell_count(), cap])
 	var before_ground: int = _host.ground_weapons.size()
 	# 挑一把**没被禁**且不在手上的:捡起它会超出容量 → 必须走"替换手上那把"这条分支
 	var e: Dictionary = _nearest_entry(p.global_position)
@@ -205,8 +207,8 @@ func _phase_pickup_replaces_when_full() -> void:
 	await _press(1, PacketInputSource.BIT_PICKUP)
 	_check(p.weapons.inventory.held.size() == 2,
 			"替换而非丢弃:背包仍是 2 把(实际 %d)" % p.weapons.inventory.held.size())
-	_check(p.weapons.inventory.used_cell_count() <= WeaponInventory.CAPACITY,
-			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_cell_count(), WeaponInventory.CAPACITY])
+	_check(p.weapons.inventory.used_cell_count() <= cap,
+			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_cell_count(), cap])
 	# 一进一出 → 地面数量不变(捡走 1、掉下 1)
 	_check(_host.ground_weapons.size() == before_ground,
 			"地面数量不变(捡 1 掉 1):%d → %d" % [before_ground, _host.ground_weapons.size()])

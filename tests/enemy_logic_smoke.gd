@@ -126,6 +126,7 @@ func _initialize() -> void:
 	await _phase_collision_aabb()   # ★ 追加在**末尾**:既有 27 节的顺序是回归基线,不插队
 	_phase_weapon_registry()        # ★ 同上,只追加在末尾
 	_phase_spread_cells()           # ★ 同上,只追加在末尾
+	_phase_weapon_capacity()        # ★ 同上,只追加在末尾
 
 	if _failures.is_empty():
 		print("SMOKE OK")
@@ -1208,10 +1209,16 @@ func _phase_weapon_registry() -> void:
 	_check(int(wi.TIER_MEDIUM) == int(wb.Tier.MEDIUM), "TIER_MEDIUM 与 WeaponBase.Tier.MEDIUM 对齐")
 	_check(int(wi.TIER_HEAVY) == int(wb.Tier.HEAVY), "TIER_HEAVY 与 WeaponBase.Tier.HEAVY 对齐")
 	# ★ 下面两条**原样保留**(旧版 `:1158-1159`)。它们是"容量 8 / 把数上限 4 是游戏规则"
-	#   的钉子,归**计划 4**(容量/把数可配)改判据 —— 那时它们会改成读
-	#   `DEFAULT_CAPACITY` / `DEFAULT_MAX_WEAPONS`。本计划**别删**它们。
-	_check(int(wi.MAX_WEAPONS) == 4, "WeaponInventory.MAX_WEAPONS == 4")
-	_check(int(wi.CAPACITY) == 8, "WeaponInventory.CAPACITY == 8")
+	#   的钉子 —— 2026-09-25 按容量/把数可配那份计划改成读默认值常量(见下)。
+	# ★ 原先是 `int(wi.MAX_WEAPONS)` / `int(wi.CAPACITY)` 直取属性 —— 常量改名成字段之后
+	#   那是运行时错,而本文件是 -s 冒烟 ⇒ 错在 helper 里"该函数当场结束、调用方继续"
+	#   ⇒ 后面断言被静默跳过、一个字都不出现,而裁决行照打(**假绿**——
+	#   只有"逐条比名字/条数"才拦得住)。故走常量表 + 哨兵默认值。
+	var wconsts: Dictionary = wi.get_script_constant_map()
+	_check(int(wconsts.get("DEFAULT_MAX_WEAPONS", -1)) == 4,
+			"WeaponInventory.DEFAULT_MAX_WEAPONS == 4(实际 %s)" % str(wconsts.get("DEFAULT_MAX_WEAPONS")))
+	_check(int(wconsts.get("DEFAULT_CAPACITY", -1)) == 8,
+			"WeaponInventory.DEFAULT_CAPACITY == 8(实际 %s)" % str(wconsts.get("DEFAULT_CAPACITY")))
 
 	# ── ⑤ 生产代码里不得再有硬编码的武器 id 列表 ──
 	# 6 个字面量 / 5 个文件(weapon_component.gd 里有两处)全部改问 all_ids() 之后,本相零命中。
@@ -1301,6 +1308,64 @@ func _phase_weapon_registry() -> void:
 				"默认启用表必须等于注册表全部 id(实际 %s、注册表 %s)" % [
 					str(comp.enabled_types), str(want_ids)])
 		comp.free()
+
+
+# ── 容量格子面板的派生(2026-09-25)──
+# 判据分两半:① 派生公式本身(纯静态,不需要实例化 Control);
+# ② **接线** —— 公式必须真的被 setup()/refresh() 用上。只有 ① 的话,把两个静态函数写出来
+#    却没人调,断言照样全绿(本仓反复在删那种"加了断言之后全绿"的假证据)。
+func _phase_weapon_capacity() -> void:
+	var ws: GDScript = load("res://ui/weapon_slots.gd")
+	_check(ws != null, "ui/weapon_slots.gd 可加载")
+	if ws == null:
+		return
+	var src := ScanUtil.read("res://ui/weapon_slots.gd")
+	_check(not src.is_empty(), "读到 ui/weapon_slots.gd(读不到就是红,不是静默跳过)")
+	# ★★ 必须先看源码文本再敢调:`ws.rows_for(...)` 在函数不存在时会**抛错**,
+	#   而 -s 冒烟里 helper 抛错 ⇒ 本函数当场结束、调用方继续 ⇒ 下面那些断言
+	#   被静默跳过(裁决行照打 —— **假绿**)。本函数是 helper(不是 _initialize),
+	#   所以这里 `return` 是安全的、不会挂进程。
+	var has_derivation := src.contains("static func rows_for") and src.contains("static func panel_h_for")
+	_check(has_derivation, "★ WeaponSlots 应导出 rows_for() / panel_h_for() 两个静态派生函数")
+	if not has_derivation:
+		return
+	# ① 派生公式
+	_check(int(ws.COLS) == 4, "COLS 恒为 4(加容量只向下长,不换行宽;实际 %s)" % str(ws.COLS))
+	_check(is_equal_approx(float(ws.PANEL_W), 109.0),
+			"PANEL_W 与行数无关,仍是 109(实际 %s)" % str(ws.PANEL_W))
+	_check(int(ws.rows_for(8)) == 2, "rows_for(8) = 2(实际 %s)" % str(ws.rows_for(8)))
+	_check(int(ws.rows_for(12)) == 3, "rows_for(12) = 3(实际 %s)" % str(ws.rows_for(12)))
+	_check(int(ws.rows_for(16)) == 4, "rows_for(16) = 4(实际 %s)" % str(ws.rows_for(16)))
+	_check(int(ws.rows_for(1)) == 1, "rows_for(1) = 1(至少一行,不能 0;实际 %s)" % str(ws.rows_for(1)))
+	_check(is_equal_approx(float(ws.panel_h_for(8)), 59.0),
+			"panel_h_for(8) = 59(默认值**一个字没变**;实际 %s)" % str(ws.panel_h_for(8)))
+	_check(is_equal_approx(float(ws.panel_h_for(12)), 84.0),
+			"panel_h_for(12) = 84(实际 %s)" % str(ws.panel_h_for(12)))
+	_check(is_equal_approx(float(ws.panel_h_for(1)), 34.0),
+			"panel_h_for(1) = 34(实际 %s)" % str(ws.panel_h_for(1)))
+	# ② 接线(按**函数体**判,不按整文件 contains —— 同一文件里别处出现 `_derive_layout()`
+	#    不能替 `setup()` 那一处背书)
+	var body_setup := ScanUtil.func_body(ScanUtil.code_only(src), "setup")
+	_check(body_setup.contains("_derive_layout()"),
+			"WeaponSlots.setup() 必须调 _derive_layout()(否则容量只活在公式里,格子阵不长)")
+	var body_refresh := ScanUtil.func_body(ScanUtil.code_only(src), "refresh")
+	_check(body_refresh.contains("_derive_layout()"),
+			"WeaponSlots.refresh() 必须重取容量(容量改了之后 UI 要能跟上)")
+	var body_derive := ScanUtil.func_body(ScanUtil.code_only(src), "_derive_layout")
+	_check(body_derive.contains("inventory.capacity"),
+			"_derive_layout() 必须从**背包**读容量(不能是另一个写死的数)")
+	# ②b **画的格数必须跟着派生的 `capacity`**(2026-09-26 补:这是"半迁移"的最后一个洞)
+	# ★ 洞的形状:把 `_draw` 里的 `WeaponInventory.CAPACITY`(常量被删 ⇒ 必须改)偷懒换成
+	#   `DEFAULT_CAPACITY` —— 于是 `_derive_layout()` 照样被调、`panel_h` 照样对,
+	#   而**格阵恒画 8 格**,容量调到 12 也不长。上面三条**全绿**。
+	# ★ 判据不能只是 `contains("capacity")`:坏写法里的 `DEFAULT_CAPACITY` 也含这个词 ⇒
+	#   必须**反面一起判**(不得出现 `DEFAULT_CAPACITY`)。
+	var body_draw := ScanUtil.func_body(ScanUtil.code_only(src), "_draw")
+	_check(body_draw.contains("capacity") and not body_draw.contains("DEFAULT_CAPACITY"),
+			"★ _draw() 必须按**本实例的 capacity** 画格子,不得读 DEFAULT_CAPACITY(那是默认值,不是本实例的容量)")
+	var body_empty := ScanUtil.func_body(ScanUtil.code_only(src), "_draw_empty_cells")
+	_check(body_empty.contains("capacity") and not body_empty.contains("DEFAULT_CAPACITY"),
+			"★ _draw_empty_cells() 同上(空背包那条路径也要跟着容量长)")
 
 
 # ── 布点工具 spread_cells(2026-09-15 从 RoyaleHost.plan_spawns 抽出)──
