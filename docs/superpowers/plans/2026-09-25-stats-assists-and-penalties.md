@@ -137,6 +137,18 @@ func _park_all_but(host, keep: Array, at: Vector2) -> void:
 
 然后是 ⑬k 本段：
 
+> ★★ **落地版与本代码块有两处已实现的差异**（评审 F6-1/F6-2 的补丁，`tests/team_host_probe.gd`
+> 是权威）：① **(k1) 放两位攻击者**（甲打 20、丁(3 号)再打 60，两位都得 +1）—— 只有一个候选的
+> 夹具里"只给一位 attacker 记账"的实现全绿；两枪的顺序不能反（先 60 会把 50 血的乙当场打倒，
+> 而 `take_hit` 在 `downed` 时早退 ⇒ 第二枪**静默不入表**）。② 末尾多一条 **(k4)**：乙(2 号,1 队)
+> 先被**敌人**(4 号)与**队友**(3 号)各打一下，再由乙的**队友**(1 号)补掉乙 ⇒ **谁都不记助攻**。
+> ★ **(k4) 的实测鉴别力矩阵**（先看这条，免得照 F6-2 的直觉去等一个不会红的变异）：**只**把助攻块
+> 挪到 `same_team(killer_role, victim_role)` 早退**之前** ⇒ **整跑仍 `ALL-OK`、156 ok、零 FAIL**
+> —— 因为"attacker 与击杀者同队"为真 ⇒ 队号 = 击杀者的队 = 受害者的队 ⇒ 后半句
+> `same_team(attacker, victim_role)` 必为真 ⇒ 照样挡掉；**早退与后半句互为保险带**，
+> 只拆一条**不可观测**。真正能红的是两条实现路径各拆一条：挪块 **且** 删后半句 ⇒ 队友那条红
+> （`实际 +1`）、挪块 **且** 删前半句 ⇒ 敌人那条红（`实际 +1`，⑬l 同时红）。
+
 ```gdscript
 	# ── ⑬k 助攻:甲打乙 60、丙补掉乙 ⇒ 丙记击杀、**甲记助攻**;窗口外不记 ──
 	# ★ spec §6.2 的三档;★ 后半档是**鉴别点** —— 只断言"甲记了助攻"的话,
@@ -216,7 +228,8 @@ func _park_all_but(host, keep: Array, at: Vector2) -> void:
 	_down(_host, 4, 1)          # 敌人(1 号,1 队)补掉乙
 	_check(_stat(_host, 5, "assists") - st_a_k4 == 0,
 			("★ ⑬k 受害者的**队友**误伤之后、敌人补刀 ⇒ 那位队友**不得**记助攻"
-			+ "(实际 +%d);去掉 same_team(attacker, killer) 过滤就会给 +1")
+			+ "(实际 +%d);删掉**整条** same_team 过滤(两个合取项都不留)这里才会变 +1 ——"
+			+ "只删前半句**不会**(实测):后半句 `same_team(attacker, victim)` 仍把他挡住")
 			% (_stat(_host, 5, "assists") - st_a_k4))
 	_check(_stat(_host, 1, "assists") - st_a_k5 == 0,
 			"★ ⑬k [仪器] 击杀者本人仍不记助攻(实际 +%d)" % (_stat(_host, 1, "assists") - st_a_k5))
@@ -370,10 +383,20 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 	var k := _stat_entry(killer_role)
 	k["kills"] = int(k["kills"]) + 1
 	# ── 助攻:表里**除击杀者之外**、且在归因窗口内、且**与击杀者同队**的 attacker ──
-	# ★★ `same_team(attacker, killer)` 那道过滤**不可省**:没有它,受害者的**队友**误伤过他
-	#   (爆炸),随后敌人把他补掉 ⇒ 那位队友**因为打死自己人而拿到助攻**(spec §3.4)。
-	# ★ `not same_team(attacker, victim)` 在本函数里**恒真**(能走到这里 ⇒ killer 与 victim
-	#   异队且都非 0)⇒ 它不是鉴别点,留着只是把那条规则**读得出来**(照 spec §3.4 的写法)。
+	# ★★ 前半句 `same_team(attacker, killer)` 是**唯一承重**的那半:没有它,受害者的**队友**
+	#   误伤过他(爆炸),随后敌人把他补掉 ⇒ 那位队友**因为打死自己人而拿到助攻**(spec §3.4)。
+	# ★★ 后半句 `same_team(attacker, victim)` 是**死代码** —— 但**不是"恒真"**(初稿写错过
+	#   这一点,评审 F1 订正):上面那道 `if same_team(killer_role, victim_role): … return`
+	#   已经保证**击杀者与受害者异队**,于是"attacker 是受害者的队友"为真 ⇒ attacker 与 killer
+	#   **必定不同队** ⇒ `not same_team(attacker, killer)` 早就为真 ⇒ 那个 `or` 的结果
+	#   **永远不受后半句影响**。而"attacker 是受害者队友"这一档**确实可达**(⑬k 的 (k3)
+	#   夹具就是:attacker 5 / victim 4 同属 2 队)⇒ 单看这一项它就是 true,挡掉它的始终是前半句。
+	# ★ 留着它是**保险带**:哪天上面那道 `same_team(killer_role, victim_role)` 守卫改了
+	#   (例如"队友击杀也算击杀"),它当场变成活的;照 spec §3.4 的写法也读得出来。
+	#   ★ 变异实测(HEAD):只删后半句 ⇒ `ALL-OK`、**没有任何断言察觉**
+	#     (ok 数不变:评审当时 150,本批 ⑬k 扩容后 156);
+	#   只留后半句(删前半句)⇒ **只有 ⑬l 红**,(k3) 仍绿 —— 即"必须与击杀者同队"这条规则
+	#   今天**只由 ⑬l 咬住**。
 	# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ **天然拿不到任何助攻**,
 	#   不需要特判(守卫:⑬l)。
 	var now := Time.get_ticks_msec()
@@ -405,16 +428,24 @@ Expected: `TEAM HOST: ALL-OK`，零 `FAIL`。
 临时把 `_record_down` 里**整行**删掉：
 `if not same_team(attacker, killer_role) or same_team(attacker, victim_role):` + 它的 `continue`
 （两行一起删；或该 `if` 改成 `if false:`），跑同样的命令。
-Expected: 红在 **`★ ⑬k 受害者的**队友**误伤之后、敌人补刀 ⇒ 那位队友**不得**记助攻(实际 +1)`**。
-确认后**改回来**。
+Expected: 红**两条** —— **`★ ⑬k 受害者的**队友**误伤之后、敌人补刀 ⇒ 那位队友**不得**记助攻(实际 +1)`**
+与 **`★ ⑬l 队伍表为空 ⇒ **没有任何助攻**(实际 1)`**。确认后**改回来**。
 
 ★★ **别用"只删前半句"当变异**：`if same_team(attacker, victim_role): continue`（= 去掉
 "与击杀者同队"那半、留着"与受害者同队"那半）**不会让 (k3) 变红** —— (k3) 的 attacker 是
 **受害者的队友**（5 号 vs 4 号同属 2 队）⇒ 后半个合取项**照样把它挡掉**。照那个变异去"验证"
-会得出"这条断言没有鉴别力"的**错误结论**，而真相是：这一档只有在**两个合取项都缺席**时才
-能显出差异 —— 也就是说两个合取项**互为冗余**（后半个在本函数里恒真，见 Implementation 里
-那条注释），真正吃劲的是前半个 + 后半个的兜底作用。★ 这与"助攻判据第二个合取项恒真"那条
-登记**不矛盾**：恒真的是"在正确的实现里它不会独自改变结果"，而不是"它永远无用"。
+会得出"这条断言没有鉴别力"的**错误结论**。实测（HEAD 逐条跑过）：**只有 ⑬l 红**（`实际 1`）、
+(k3) 仍绿、`ok` 从 150 掉到 149（⑬k 扩容后：从 156 掉到 155）—— 即"必须与击杀者同队"这条规则
+**今天只由 ⑬l 咬住**。
+
+★★ **两个合取项并不对称**（初稿写"互为冗余"、且说后半个"恒真"，**两条都错**，评审 F1 订正）：
+删**后半句** `or same_team(attacker, victim_role)` ⇒ `ALL-OK`、**没有任何断言察觉**
+(ok 数不变:评审当时 150、评测夹具扩容后 156)
+⇒ 它是**死代码** —— 给定上面那道 `same_team(killer_role, victim_role)` 早退，"attacker 与 victim
+同队"为真 ⇒ attacker 与 killer 必定不同队 ⇒ 前半句早已为真，`or` 的结果永远不由后半句决定。
+但它**不是"恒真"**：(k3) 夹具里 attacker 5 / victim 4 就是队友 ⇒ 单看这一项它是 **true**，
+只是被前半句"抢先"决定了。留着它是**保险带**：那道早退守卫哪天改了（例如"队友击杀也算击杀"），
+它当场变活；照 spec §3.4 的写法也读得出来。
 
 - [ ] **Step 8: 提交**
 
@@ -623,6 +654,18 @@ static func is_fresh_self_hit(victim: Node, window_ms: int) -> bool:
 - [ ] **Step 4: `_on_player_hit` 记两笔账**
 
 `server/match_combat.gd` 的 `_on_player_hit`：把 Task 1 Step 4 那段整体替换为：
+
+★★ **先看清边界，别顺手删掉一段登记**：下面这个代码块是按**计划 1 时代的净版**写的，而工作区里
+该函数的头注在此之后多了一段（`9ab85af` 加的登记）：
+
+> 「"覆盖全部来源"说的是**钩子**、不是**归因写端**；子弹直击的 `attribute` 写在
+> `RoyaleHost`/`TeamHost` 的覆写里、基类 `_on_bullet_hit` **不写** ⇒ **1v1 的子弹不计入
+> `dealt`**（今天无害，接投递那天表现为系统性偏低 ACS 且无探针会红；修法见 CLAUDE.md）。」
+
+**那一段要原样留住** —— 本代码块只替换它**下面的**（`# ★ `dealt` 与 `taken` 口径对称…` 起、
+到 `for r in peer_by_role:` 之前）。同理，块里把"**不必去改 `Explosion`**"改写成
+"**不必去改 `Explosion` 的伤害逻辑**"——**以块为准**：本 Task 正要往 `Explosion` 里**加一笔自伤
+标记**，旧措辞会被读成"别碰这个文件"。
 
 ```gdscript
 	# ── 逐人统计(三模式共用;★ 2026-09-25 从 `TeamHost._on_player_hit` 上提)──

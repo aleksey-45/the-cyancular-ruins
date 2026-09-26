@@ -40,8 +40,12 @@
   （真实实现是 `BASE + PER_ALIVE × clampi(...)`）。
 - **⚠️ 助攻判据的第二个合取项**：§3.4 写的
   `same_team(attacker, killer) and not same_team(attacker, victim)` —— 后半个合取项在
-  `_record_down` 里**恒真**（能记成击杀 ⇒ killer 与 victim 异队且都非 0）⇒ 它不是鉴别点，
-  留着只为把规则读得出来；真正吃劲的是 `same_team(attacker, killer)`。
+  `_record_down` 里是**死代码**（**不是"恒真"**：⑬k 的 (k3) 夹具里 attacker 5 / victim 4
+  就是队友 ⇒ 单看这一项它是 true）。给定上面那道 `same_team(killer_role, victim_role)` 早退
+  ⇒ 击杀者与受害者异队 ⇒ "attacker 是受害者队友"为真时 attacker 与 killer 必定不同队
+  ⇒ 前半个合取项早已为真，`or` 的结果永远不由后半个决定。留着的意义是**保险带**（那道早退
+  守卫哪天改了它当场变活），照 §3.4 的写法也读得出来；真正吃劲的是 `same_team(attacker, killer)`。
+  ★ 2026-09-26 订正：原文写"后半个恒真"是**错的**，出处见 `.superpowers/sdd/wstats2-task-1-review.md` F1。
 - **★ spec 没写、实现必须自己定的两处**（已由计划 1/3 定下，改动它们前先回来看）：
   ① 旧公式的剩余物 `MULTI_KILL_BONUS` / `_round_kills` / `_enemy_alive_including_victim` **随
   §3.2 一起删除**（新公式没有多杀项，留着就是死代码）；② **1v1 的 `kills` 无归因** ——
