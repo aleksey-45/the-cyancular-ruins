@@ -44,8 +44,13 @@ func _ready() -> void:
 				"开局背包里应只有那一把(实际 %d)" % player.weapons.inventory.held.size())
 
 	var all_pickups := get_tree().get_nodes_in_group("weapon_pickup")
-	# 每种 2 把 × 6 种 = 12(没有禁用武器时)
-	_check(all_pickups.size() == 12, "开局应铺 12 件地面武器(实际 %d)" % all_pickups.size())
+	# ★ 数量 = 注册表条数 × 2(每种 2 把),**不再写死 12** —— 写死的话加第 7 把枪
+	#   (每种 2 把 ⇒ 14 件)会把这条探针打红,而那正是本特性要支持的场景。
+	var want_types: Array[int] = WeaponRegistry.all_ids()
+	var expect_total := want_types.size() * 2
+	_check(all_pickups.size() == expect_total,
+			"开局应铺 %d 件地面武器(%d 种 × 2,实际 %d)" % [
+				expect_total, want_types.size(), all_pickups.size()])
 
 	# ★ 核心断言:每一件都必须挂在 WorldViewport 下(而不是 Level0 自己身上)
 	var wrong_parent := 0
@@ -70,6 +75,16 @@ func _ready() -> void:
 		if int(types[k]) != 2:
 			bad += 1
 	_check(bad == 0, "每种武器应恰好 2 把(有 %d 种数量不对:%s)" % [bad, str(types)])
+
+	# ★ 覆盖性:注册表里的每一种都必须**真的铺到了**。
+	#   这条是"加了第 7 把枪但散落表漏了它"的守卫 —— 上面那条按注册表算的**总数**
+	#   拦不住那种情况(总数 14 对得上,但其中一种 0 件、另一种 2 件)。
+	var missing: Array = []
+	for t in want_types:
+		if not types.has(int(t)):
+			missing.append(int(t))
+	_check(missing.is_empty(),
+			"每种注册武器都应铺到(缺 %s;场上实际 %s)" % [str(missing), str(types)])
 
 	await _phase_pickup_prompt(player, lvl)
 	await _phase_drop_hold(player, lvl)

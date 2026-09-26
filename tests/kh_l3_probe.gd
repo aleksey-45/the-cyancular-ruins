@@ -184,7 +184,10 @@ func _check_gate(wep: WeaponComponent) -> void:
 	_check(wep.current_type_id() == 4, "equip_type(4) 应正常切换到槽4(实际 %d)" % wep.current_type_id())
 
 	# 全禁 → 兜底非空(KH 的兜底是 [1]),否则出生即空手
-	wep.set_enabled_types([1, 2, 3, 4, 5, 6])
+	# ★ 入参是"被禁用的**类型 id** 列表" —— 必须取注册表,不能写死 [1, 2, 3, 4, 5, 6]:
+	#   漏掉第 7 把枪时,"全禁"其实没禁上它 ⇒ 下面的 `is_type_enabled(<第一把>)` 会红
+	#   (而那条红的成因看起来像"兜底坏了",查半天)。
+	wep.set_enabled_types(WeaponRegistry.all_ids())
 	await _frames(3)
 	_check(not wep.enabled_types.is_empty(), "全禁后 enabled_types 为空(兜底缺失)")
 	_check(wep.is_type_enabled(1), "全禁后兜底不是 [1](实际启用表 %s)" % str(wep.enabled_types))
