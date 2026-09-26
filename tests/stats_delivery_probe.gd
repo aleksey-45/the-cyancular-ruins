@@ -19,6 +19,14 @@ extends Node
 #    ★ 仍然保留的**源码级**守卫只剩两条(见 ③/④ 的注释):它们问的是**路由/来源**,不是
 #      "文本在不在" —— 那一类(以及 `mvp`、"只在非空时带键")现在**一律行为面**。
 #
+# ★★ 同日再修一处**判据强度**缺陷(F2,评审 Critical):③ 的旧夹具(受害者 role 3 / 归因射手
+#    role 1)里,大乱斗的正确口径(`_record_down(role, _attributed_killer(p))`)与 1v1 的错形状
+#    (`_record_down(role, _opponent_of(role))`)在那一格**算出同一个 role**(都是 1)⇒ 把生产那行
+#    换成错形状,③ **全绿**、verdict 与基线逐字相同(实测 31 ok / 0 FAIL / `ALL-OK`)。
+#    ⇒ 代码里那句"别照抄 1v1 那一份"的**注释不是守卫**。现在 ③ 把归因目标改成 role 2(两个实现
+#      给出**不同**答案 + 一条夹具自检钉住这个鉴别前提),并补上大乱斗这条链上的**无归因**档。
+#    详见 ③ 段的注释。
+#
 # ★ 宿主构造走本仓既有手法(`match_host_hygiene_probe` / `team_host_probe`):
 #   真建宿主、`role_peers` 传空、玩家手工摆位、显式补调生产的 `_wire_hit_feedback()`。
 # ★ 段数对账(本仓"假绿"纪律:`ALL-OK` 只证明"没有断言失败",不证明"该跑的断言都跑过")
@@ -128,6 +136,18 @@ func _place(host, role: int, at: Vector2i) -> Node2D:
 func _stat(host, role: int, key: String) -> int:
 	var s: Dictionary = host._stats.get(int(role), {})
 	return int(s.get(key, 0))
+
+
+# 整张逐人表里 `kills` **非零**的那些条目,形如 `["role 2=1"]`(按 `stats_payload()` 的 role 序)。
+# ★ 用**整张表**而不是写死的 `[1,2,3]`:记到一个**表外**的 role 上时(`_roster()` 会把 `_stats`
+#   里的一切都收进载荷)写死列表看不见 —— 而那正是一个更隐蔽的错形状。
+func _kills_table(host) -> Array[String]:
+	var out: Array[String] = []
+	for r in host.stats_payload():
+		var k := _stat(host, int(r), "kills")
+		if k > 0:
+			out.append("role %d=%d" % [int(r), k])
+	return out
 
 
 # 生产那条"强制倒地"入口(`CombatComponent.force_down`;K 键自杀走的也是它)。
@@ -257,6 +277,18 @@ func _check_duel_kill_rule() -> void:
 
 
 # ── ③ 大乱斗:同一个倒地边沿记 deaths/击杀,`deaths` 载荷只从逐人表来 ──
+#
+# ★★ F2(评审 Critical,2026-09-26):本段的**鉴别力**是专门为下面这一对形状设计的,动夹具
+#    里的 role 号之前先读完这段。
+#    大乱斗的计分口径 = **归因制**(`_record_down(int(role), _attributed_killer(p))`:无归因的
+#    死亡不计任何人的击杀);1v1 的是「不分死因、对方死亡都算」(`_opponent_of(role)`)。
+#    旧夹具(受害者 3 / 归因射手 1)里两者**恰好同值** ⇒ 把生产那行换成 1v1 的错形状,
+#    本段断言(含新加的 dealt/taken)**全部照旧绿**,verdict 与基线逐字相同。
+#    现在归因目标取 **role 2**,于是:
+#      正确实现(`_attributed_killer`)= 2 / 错形状(`_opponent_of(3)` = 按位置第一个非 3 的 role)= 1
+#    两者**必然不同**(夹具自检那条钉住这个前提;谁把 `_place` 的顺序或 role 号改了,自检先红)。
+#    另有 (b) 的**无归因**档:旧夹具在大乱斗这条链上**从没造过**它(只在 1v1 的 ② 里清过 meta),
+#    所以"未归因 = 不计任何人击杀"这条规则在本链上是**零覆盖**的。
 func _check_royale_phase() -> void:
 	var host = RoyaleHost.new(MAP, {}, {}, [], {})
 	host.name = "StatsRoyaleHost"
@@ -268,19 +300,60 @@ func _check_royale_phase() -> void:
 	host._wire_hit_feedback()
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame
-	CombatFeedback.attribute(host.players[3], host.players[1])
+
+	# ★ 夹具自检:本段的鉴别力**只**在"两个实现给出不同答案"时存在。写成"应当不同"而不是
+	#   钉死某个具体值(比如 `== 1`),是为了让它只在**鉴别力消失**时报红,而不去复述
+	#   `_opponent_of` 的实现细节 —— 但它确实会因 `_place` 顺序/role 号改动而红,那正是要的。
+	_check(host._opponent_of(3) != 2,
+			("★ ③ 夹具自检:1v1 的错形状(`_opponent_of(3)` = %d)必须与正确归因(role 2)"
+			+ "**给出不同答案** —— 同值则下面那条断言区分不了两种实现(本段旧版就是这么瞎的)")
+			% host._opponent_of(3))
+
+	# (a) 有归因:击杀记给**归因到的射手**(role 2),不是按位置推出的对手(role 1)
+	CombatFeedback.attribute(host.players[3], host.players[2])
 	(host.players[3] as Node2D).take_hit(Vector2.ZERO, 8)
 	_force_down(host, 3)
 	host._match_round_tick(0.016)
 	_check(_stat(host, 3, "deaths") == 1,
 			"★ ③ 大乱斗:倒地边沿记 deaths(实际 %d,期望 1)" % _stat(host, 3, "deaths"))
-	_check(_stat(host, 1, "kills") == 1,
-			"★ ③ 大乱斗:有归因的击杀记给射手(实际 %d,期望 1)" % _stat(host, 1, "kills"))
-	_check(_stat(host, 3, "taken") == 8 and _stat(host, 1, "dealt") == 8,
+	_check(_kills_table(host) == ["role 2=1"],
+			("★ ③ 大乱斗:有归因的击杀**恰好**记给归因射手(整表 kills 非零者 = %s,期望"
+			+ " ['role 2=1'])—— 三个错形状都落在这条上:按位置取对手(`_opponent_of(3)` 在这格"
+			+ "给 role 1)、『给所有人都记一笔』、以及记到一个表外 role 上")
+			% str(_kills_table(host)))
+	_check(_stat(host, 3, "taken") == 8 and _stat(host, 2, "dealt") == 8,
 			"★ ③ 大乱斗:dealt/taken 与 1v1 同源(实际 %d/%d,期望 8/8)"
-			% [_stat(host, 1, "dealt"), _stat(host, 3, "taken")])
+			% [_stat(host, 2, "dealt"), _stat(host, 3, "taken")])
 	_check(_keys_of(host, 3) == WANT_KEYS,
 			"★ ③ 大乱斗:载荷每行恰好七个字段(实际 %s)" % str(_keys_of(host, 3)))
+
+	# (b) 无归因:大乱斗**不是** 1v1 那套"不分死因都算对手的击杀" —— deaths 照记,
+	#     但**任何人**的 kills 都不许动。受害者取 role 1(从头到尾没挨过打),并照 ② 的做法
+	#     显式清一遍 meta(不依赖"没人打过他"这个隐含前提)。
+	var victim: Node2D = host.players[1]
+	for m in ["last_damager", "last_damager_time"]:
+		if victim.has_meta(m):
+			victim.remove_meta(m)
+	var before := host.stats_payload()      # 真快照:`stats_payload()` 每次现建一份
+	_force_down(host, 1)
+	host._match_round_tick(0.016)
+	# 这条同时是 (b) 的**夹具自检**:deaths 不动就说明这一 tick 根本没走到倒地边沿
+	# (下面那条"谁的 kills 都没涨"会**空转通过**)。
+	_check(_stat(host, 1, "deaths") == 1,
+			"★ ③ 大乱斗:无归因的死亡**照记** deaths(实际 %d,期望 1)"
+			% _stat(host, 1, "deaths"))
+	var gained: Array[String] = []
+	for r in host.stats_payload():      # 整表遍历:表外 role 被记了也看得见
+		var role := int(r)
+		var was: int = int((before.get(role, {}) as Dictionary).get("kills", 0))
+		var now := _stat(host, role, "kills")
+		if now != was:
+			gained.append("role %d +%d" % [role, now - was])
+	_check(gained.is_empty(),
+			("★ ③ 大乱斗:无归因的死亡**不计任何人的**击杀(各 role 的 kills 增量 = %s,期望 []"
+			+ " —— 1v1 那条『无归因也算对手的击杀』(②)是大乱斗**不该**有的形状:自由混战里"
+			+ "自杀/溺水/坠落都会白送别人一分)") % str(gained))
+
 	check_royale_deaths_source()
 	host.free()
 
