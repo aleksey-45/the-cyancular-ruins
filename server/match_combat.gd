@@ -215,8 +215,10 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	# ★★ "覆盖全部来源"说的是**钩子**,不是**归因写端** —— 写端有一处缺口:子弹直击的
 	#   `attribute` 写在**各模式的覆写**里(`RoyaleHost`/`TeamHost`),基类
 	#   `_on_bullet_hit` **不写** ⇒ **1v1 的子弹不计入 `dealt`**(其余来源各自写归因、
-	#   照常计入)。今天无害(1v1 还不投递 `stats`),接投递时它会表现为**系统性偏低 ACS
-	#   且没有任何探针会红**。二选一的修法见 CLAUDE.md 的那条登记。
+	#   照常计入)。★★ **这条已上线、今天就是玩家屏上的读数**(2026-09-26 订正:原文写"今天无害
+	#   (1v1 还不投递 `stats`)" —— 1v1 的投递在同一弧里落地了):一把手枪打完一局,结算页显示
+	#   `击杀 5 / 造成 0`(`taken` 同样为 0,两列读同一对归因),而**仍然没有任何探针会红**。
+	#   二选一的修法见 CLAUDE.md 的那条登记(用户待决,本次只订正文字、未改行为)。
 	var stat_victim: Node2D = players.get(int(role))
 	var stat_self := stat_victim != null and is_instance_valid(stat_victim) \
 			and CombatFeedback.is_fresh_self_hit(stat_victim, ATTRIB_FRESH_MS)

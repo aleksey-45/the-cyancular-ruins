@@ -1,6 +1,14 @@
 extends Node
 
-# 1v1 / 大乱斗的逐人统计**写入与投递**守卫(3v3 的那一半在 `tests/team_host_probe` ⑬g)。
+# 三个模式的逐人统计**写入与投递**守卫。
+# ★★ 2026-09-26(终审 重要 1):3v3 的那一半原先只是 `tests/team_host_probe` ⑬g 的**三条
+#   `contains` 文本断言**,本文件那句"(3v3 的那一半在 team_host_probe ⑬g)"把**两种强度不同**
+#   的守卫说成了等价 —— 而本文件头注自己刚宣布那种强度是已知假绿(F1)。实测:把
+#   `TeamHost._broadcast_round_state` 的 `_rpc_all("round_state", [data])` 提到挂载
+#   `stats`/`mvp` 之前 ⇒ `TEAM HOST: ALL-OK`(175 ok)/`STATS DELIVERY: ALL-OK`(34 ok)/
+#   `KH HUD PROBE: ALL-OK` **三条全绿**,而 3v3 客户端收到的是**两个键都没有**的终局帧
+#   (结算页两节皆空、没有 MVP 星)。现在 3v3 走 **⑥**,与 1v1/大乱斗同款(截获式);`team_host_probe`
+#   ⑬g 那三条文本断言已**删除**(该段只剩"载荷形状与数值"那一半,见那段注释)。
 #
 # 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/stats_delivery_probe.tscn
 # 判据: 文本 `STATS DELIVERY: ALL-OK`(**不看退出码** —— 探针挂住时 --quit-after 到期仍 exit 0)。
@@ -41,7 +49,7 @@ const MAP := "res://maps/factory1v1.cyrm"
 #   "包含这七个键就行")会把"载荷字段集"这条真契约拆掉 —— 所以这里必须是逐码点升序。
 const WANT_KEYS := ["acs", "assists", "dealt", "deaths", "kills", "kscore", "taken"]
 const CHECK_NAMES := ["duel_phase", "duel_kill_rule", "royale_phase", "delivery_source",
-		"delivery_payload"]
+		"delivery_payload", "team_phase"]
 
 var _fails: Array[String] = []
 var _done: Array[String] = []
@@ -79,6 +87,20 @@ class CapturingDuelHost extends MatchHost:
 
 # 大乱斗那一份(`RoyaleHost` **整体覆写**了 `_broadcast_round_state`,故要单独截获它那一份)。
 class CapturingRoyaleHost extends RoyaleHost:
+	var frames: Array = []
+
+	func _rpc_all(method: String, args: Array = [], except_role: int = -1,
+			live_only: bool = true) -> void:
+		if method == "round_state":
+			frames.append(RpcPayload.snap(args))
+		super._rpc_all(method, args, except_role, live_only)
+
+
+# 3v3 那一份(`TeamHost` 同样**整体覆写**了 `_broadcast_round_state`)。
+# ★★ 为什么必须有它:`team_host_probe` ⑬g 原先那三条文本断言(`contains('data["stats"]')` 一族)
+#   在"把 `_rpc_all` 提到挂载之前"的变异下**三条全绿**(见文件头那段实测读数)—— 那种强度
+#   只能证明"源码里出现过这串字",证明不了"真要发出去的字典里有这个键"。形状与上面两份逐字同款。
+class CapturingTeamHost extends TeamHost:
 	var frames: Array = []
 
 	func _rpc_all(method: String, args: Array = [], except_role: int = -1,
@@ -201,6 +223,7 @@ func _run() -> void:
 	await _check_royale_phase()
 	_check_delivery_source()
 	await _check_delivery_payload()
+	await _check_team_phase()
 
 
 # ── ① 1v1:伤害进 dealt/taken、倒地记 deaths、击杀记给对手、载荷七个字段 ──
@@ -518,3 +541,74 @@ func _check_delivery_payload() -> void:
 	await get_tree().process_frame
 
 	_done.append("delivery_payload")
+
+
+# ── ⑥ 3v3 的投递那一半(**行为面**):`TeamHost._broadcast_round_state`(**整体覆写**了基类那一份)──
+#
+# ★★ 本段是"3v3 投递有守卫"这句话**唯一**的落点(替代 `team_host_probe` ⑬g 那三条文本共现 ——
+#   它们的失败模式见文件头那段实测读数)。判据与 ⑤ 逐条同形:全部读**截获帧**(调用时刻深拷贝),
+#   每一条 MATCH_OVER 判据都配一条"夹具自检",否则"从没走到那里"会让它**空转通过**。
+# ★ 夹具与其它段同款:真建 3v3 宿主、`role_peers` 传空、玩家手工摆位(role 1 = 1 队 / role 4 = 2 队)。
+#   ★ 散点显式传进去(与 `team_host_probe` 同款;`spawns` 传空会让 `_init` 自己再 shuffle 一份)。
+#   ★ **本段最后跑**:建宿主会重载全局网格(`MatchHost._init` → `WorldBuilder.load_grid`),
+#     前面的段(尤其大乱斗那两份夹具的摆位)依赖它保持不动。
+func _check_team_phase() -> void:
+	var teams := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
+	var host = CapturingTeamHost.new(MAP, {}, {}, [], TeamHost.plan_team_spawns(teams), teams)
+	host.name = "StatsDeliveryTeamHost"
+	add_child(host)                    # ← `_ready` 在这里广播一次(**此刻 `players` 还是空的**)
+	GameParameters.refresh_map_size()
+	# (a) 逐人表为空时不得带 `stats` 键 —— 它同时是旧版第三条文本断言
+	#     (`if not table.is_empty():`)的**行为面等价物**(那句在"句子还在、语意没了"的写法下全绿)。
+	var tempty_n: int = host.frames.size()
+	_check(tempty_n > 0 and not _any_has(host.frames, "stats"),
+			"★ ⑥ 3v3:逐人表为空时的 round_state **不带** `stats` 键(带宽纪律;截获 "
+			+ str(tempty_n) + " 帧)")
+
+	_place(host, 1, Vector2i(17, 65))
+	_place(host, 4, Vector2i(133, 64))
+	host._wire_hit_feedback()
+	host._round_state = MatchHost.RoundState.PLAYING
+	await get_tree().physics_frame
+	_force_down(host, 4)               # 生产那条倒地边沿,它内部会 `_broadcast_round_state()`
+	host._match_round_tick(0.016)
+
+	var tplaying := _frame_at(host, MatchHost.RoundState.PLAYING)
+	_check(not tplaying.is_empty(),
+			"★ ⑥ 3v3:PLAYING 真的广播过 round_state(夹具自检 —— 少了它下面三条是空转)")
+	_check(_has(tplaying, "stats"),
+			("★ ⑥ 3v3:PLAYING 的 round_state **确实带** `stats`(截获的键集 = "
+			+ str(_keys_of_frame(tplaying)) + " —— 这是真要发出去的字典,不是源码文本;"
+			+ "把 `_rpc_all` 提到挂载 `stats` 之前时**只有这里**会红)"))
+	_check(not _has(tplaying, "mvp"),
+			("★ ⑥ 3v3:PLAYING **不带** `mvp`(它只在 MATCH_OVER 支内挂;挪出分支 = 每帧多带一个"
+			+ "没有读者的键)截获的键集 = " + str(_keys_of_frame(tplaying))))
+	# 载荷内容:每行恰好七个字段(读的是**广播件**,与 `team_host_probe` ⑬g 读 `stats_payload()`
+	# 返回值那条不是同一件事)。
+	var tsent_row: Dictionary = (tplaying.get("payload", {}) as Dictionary).get("stats", {}).get(4, {})
+	var tsent_keys: Array = tsent_row.keys()
+	tsent_keys.sort()
+	_check(tsent_keys == WANT_KEYS,
+			"★ ⑥ 3v3:广播出去的逐人表每行恰好七个字段(实际 " + str(tsent_keys) + ")")
+
+	# (b) MATCH_OVER:走生产**唯一**那条进 MATCH_OVER 的路(`_start_next_round` 的局胜分支)。
+	host._rounds_won[1] = TeamHost.TEAM_ROUNDS_TO_WIN
+	host._start_next_round()
+	var tover := _frame_at(host, MatchHost.RoundState.MATCH_OVER)
+	_check(not tover.is_empty(),
+			"★ ⑥ 3v3:MATCH_OVER 真的广播过 round_state(夹具自检)")
+	_check(_has(tover, "stats"),
+			("★ ⑥ 3v3:MATCH_OVER 的 round_state **确实带** `stats`"
+			+ "(整场打完那一份是结算页要用的;截获的键集 = " + str(_keys_of_frame(tover)) + ")"))
+	_check(_has(tover, "mvp"),
+			("★ ⑥ 3v3:MATCH_OVER 的 round_state **确实带** `mvp`(截获的键集 = "
+			+ str(_keys_of_frame(tover)) + ")"))
+	var tover_payload: Dictionary = tover.get("payload", {})
+	_check(int(tover_payload.get("mvp", -1)) == host.mvp_role(),
+			("★ ⑥ 3v3:广播出去的 `mvp` == 生产算出来的 `mvp_role()`(实际 "
+			+ str(int(tover_payload.get("mvp", -1))) + " / 期望 " + str(host.mvp_role())
+			+ ") —— 这条把「挂上了」与「挂的是对的那个值」接起来"))
+	host.free()
+	await get_tree().process_frame
+
+	_done.append("team_phase")

@@ -54,6 +54,24 @@ func _initialize() -> void:
 		fails.append("★ 1v1:role 2 应 dealt=300 / taken=400,实得 dealt=%d / taken=%d"
 				% [int(d1["dealt"]), int(d1["taken"])])
 
+	# ①d ★★ 「击杀 / 阵亡 / 助攻」三列的**值**也必须各读各的键(2026-09-26 终审 重要 2)。
+	#   ★ 为什么非要有它:`for_duel` 的 `_row(...)` 里 `int(s.get("deaths",0))` 与
+	#     `int(s.get("assists",0))` **对调**是**一行就编得过**的改动,而上面**所有**断言
+	#     (列名/列数/排序/rank/mvp/①c 的 dealt-taken)**照样全绿** —— 1v1 结算页的「阵亡」
+	#     列会整列显示成助攻数。★ 三种写法都落在这条上:对调、两列都读 `deaths`、两列都读
+	#     `assists`(夹具里 assists 恒 0 —— 1v1 拿不到助攻,故 `deaths` 那一列必然错)。
+	#   ★ 两行都判、且 kills 一起判(三列同一个调用点,漏一个就是一行改动)。
+	var d_bad: Array[String] = []
+	if int(d0["kills"]) != 7 or int(d0["deaths"]) != 2 or int(d0["assists"]) != 0:
+		d_bad.append("role 1 应 kills=7 / deaths=2 / assists=0,实得 %d/%d/%d"
+				% [int(d0["kills"]), int(d0["deaths"]), int(d0["assists"])])
+	if int(d1["kills"]) != 3 or int(d1["deaths"]) != 5 or int(d1["assists"]) != 0:
+		d_bad.append("role 2 应 kills=3 / deaths=5 / assists=0,实得 %d/%d/%d"
+				% [int(d1["kills"]), int(d1["deaths"]), int(d1["assists"])])
+	if not d_bad.is_empty():
+		fails.append(("★ 1v1:「击杀 / 阵亡 / 助攻」三列必须各读各的键(kills/deaths/assists):%s"
+				+ " —— deaths↔assists 对调、或两列读同一个键时这里红,而其它断言全绿") % str(d_bad))
+
 	# ①b ★★ 1v1:mvp **行号必须在排完序之后数**(本批唯一的新行为,此前**零断言**:
 	#     退回 `"mvp": {}`、或把数行号那段挪到 `_finish()` 之前,两支冒烟都会照旧全绿)。
 	#     ★ 夹具刻意让 **MVP 不是榜首**:role 2 的 9 杀排到第 1 行,而它在 `for_duel`
@@ -131,6 +149,18 @@ func _initialize() -> void:
 					% [int(rrows[0]["dealt"]), int(rrows[0]["taken"])])
 	if str(roy["title"]) != "游戏结束":
 		fails.append("★ 大乱斗标题应是「游戏结束」,实得 %s" % roy["title"])
+	# ③d ★ 大乱斗的「击杀 / 阵亡」同款(与 ①d 同一条理由;`for_royale` 是**第三个**
+	#   `_row(...)` 调用点,三个模式各判一次才是"整族都钉住")。榜首 role 2 的
+	#   kills/deaths 刻意取不等值(9 / 2),assists 恒 0(大乱斗拿不到助攻)。
+	if not rrows.is_empty():
+		var r_bad: Array[String] = []
+		if int(rrows[0]["kills"]) != 9 or int(rrows[0]["deaths"]) != 2 \
+				or int(rrows[0]["assists"]) != 0:
+			r_bad.append("role 2 应 kills=9 / deaths=2 / assists=0,实得 %d/%d/%d"
+					% [int(rrows[0]["kills"]), int(rrows[0]["deaths"]), int(rrows[0]["assists"])])
+		if not r_bad.is_empty():
+			fails.append(("★ 大乱斗:榜首那行必须各读各的键(kills/deaths/assists):%s"
+					+ " —— deaths↔assists 对调时这里红") % str(r_bad))
 
 	# ③b ★ 上一条的**反向对照**:同一份 `stats`,只把 `match_winner` / `my_role` 换成
 	#     "我赢"(两者相等),标题**必须一模一样**。
@@ -186,6 +216,36 @@ func _initialize() -> void:
 	if t_dealt != 400:
 		fails.append(("★ 3v3 伤害列必须读到生产端的 `dealt` 键(role 1 应 400),实得 %d —— "
 				+ "读回旧键 `dmg` 时这里恒 0,而上面所有计数断言照样全绿") % t_dealt)
+
+	# ④e ★★ 3v3 的「击杀 / 阵亡 / 助攻」三列**值**也要各读各的键(2026-09-26 终审 重要 2)。
+	#   ★ 为什么必须有:这一条与 ④d 是**同一个调用点**的另一半 —— 只钉 `dealt` 时,
+	#     `deaths` 与 `assists` 两个相邻 int 实参**对调**照样编译、冒烟全绿,而 3v3 结算页
+	#     **每一行**的「助攻」「阵亡」两列整列互换(错的是屏上数字,没有任何断言会红)。
+	#   ★ 两节都判:A 队两行的三列刻意取四个不同值(role 1 = 5/3/2、role 2 = 2/5/1),
+	#     B 队同理(role 5 = 8/1/3、role 4 = 3/4/0)⇒ 任何错配都落在这三条上。
+	#   ★ 行号依赖 `_finish` 的排序(主键降序 → 阵亡升序 → 昵称升序):A 队 role 1(acs 200)
+	#     在 role 2(acs 66)之前、B 队 role 5(acs 400)在 role 4(acs 100)之前。
+	var t_bad: Array[String] = []
+	var t_a0: Array = team["sections"][0]["rows"]
+	var t_b0: Array = team["sections"][1]["rows"]
+	if t_a0.size() != 2 or t_b0.size() != 2:
+		t_bad.append("两节各应有 2 行,实得 A 队 %d 行 / B 队 %d 行" % [t_a0.size(), t_b0.size()])
+	else:
+		if int(t_a0[0]["kills"]) != 5 or int(t_a0[0]["deaths"]) != 3 or int(t_a0[0]["assists"]) != 2:
+			t_bad.append("A 队 role 1 应 kills=5 / deaths=3 / assists=2,实得 %d/%d/%d"
+					% [int(t_a0[0]["kills"]), int(t_a0[0]["deaths"]), int(t_a0[0]["assists"])])
+		if int(t_a0[1]["kills"]) != 2 or int(t_a0[1]["deaths"]) != 5 or int(t_a0[1]["assists"]) != 1:
+			t_bad.append("A 队 role 2 应 kills=2 / deaths=5 / assists=1,实得 %d/%d/%d"
+					% [int(t_a0[1]["kills"]), int(t_a0[1]["deaths"]), int(t_a0[1]["assists"])])
+		if int(t_b0[0]["kills"]) != 8 or int(t_b0[0]["deaths"]) != 1 or int(t_b0[0]["assists"]) != 3:
+			t_bad.append("B 队 role 5 应 kills=8 / deaths=1 / assists=3,实得 %d/%d/%d"
+					% [int(t_b0[0]["kills"]), int(t_b0[0]["deaths"]), int(t_b0[0]["assists"])])
+		if int(t_b0[1]["kills"]) != 3 or int(t_b0[1]["deaths"]) != 4 or int(t_b0[1]["assists"]) != 0:
+			t_bad.append("B 队 role 4 应 kills=3 / deaths=4 / assists=0,实得 %d/%d/%d"
+					% [int(t_b0[1]["kills"]), int(t_b0[1]["deaths"]), int(t_b0[1]["assists"])])
+	if not t_bad.is_empty():
+		fails.append(("★ 3v3:「击杀 / 阵亡 / 助攻」三列必须各读各的键(kills/deaths/assists):%s"
+				+ " —— deaths↔assists 对调时这里红,而 ④d 与所有计数断言照旧全绿") % str(t_bad))
 
 	# ④b ★ 3v3 平局:match_winner == 0 必须念「平 局」—— 不许走 `ui/pvp_hud.gd` 那种兜底
 	#     (`"P%d 获胜!" % …`) 把它念成「P 某人获胜」。这条**今天可达**:TeamHost.mark_disconnected

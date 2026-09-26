@@ -33,7 +33,8 @@ extends Node
 #   能让 ⑬b2 全绿)/ ⑬c 自伤不记
 #   (**专钉归因新鲜度** `ATTRIB_FRESH_MS`)/ ⑬d 击杀分**不看敌方存活人数** /
 #   ⑬e **无多杀加成** / ⑬f MVP 与确定性 /
-#   ⑬g 载荷形状与投递(含**伤害只被计入一次**的增量断言)/ ⑬h 离开者的局数口径 /
+#   ⑬g 载荷**形状与数值**(含**伤害只被计入一次**的增量断言;★ **投递**那一半 2026-09-26 已挪到
+#      `tests/stats_delivery_probe` ⑥ —— 这里原先那三条 `contains` 文本断言已证明是假绿)/ ⑬h 离开者的局数口径 /
 #   ⑬j **已离开者仍参与 MVP**(用户裁定)。
 #   ★ 同段另有一条源码级:**受击接线必须由生产持有** —— 探针调的是 `MatchHost._wire_hit_feedback`,
 #     不是自己抄的 `connect`(抄件会让"生产的接线断了"静默通过,同 `_apply_team_layers`)。
@@ -1253,14 +1254,18 @@ func _run() -> void:
 			("★ ⑬g 伤害**只被计入一次**:dealt 100 → 200(其余全同)⇒ ACS 增量恰好 %f,实得 %f"
 			+ "(差得更大就是调用方双计:`acs(kscore + dealt, …)` 给出 6 倍增量)")
 			% [st_dc_want, st_dc1 - st_dc0])
-	# 源码级:两个新键确实挂在 `round_state` 上(载荷的"投递"这一半在 `_broadcast_round_state`
-	# 里,而它不可从探针直接读 —— 与 ⑪ 的 `teams` 同一个角度)。
-	var st_rbody := ScanUtil.func_body(
-			ScanUtil.code_only(ScanUtil.read("res://server/team_host.gd")), "_broadcast_round_state")
-	_check(st_rbody.contains('data["stats"]'), "★ ⑬g `stats` 随 round_state 下发")
-	_check(st_rbody.contains('data["mvp"]'), "★ ⑬g `mvp` 随 round_state 下发(MATCH_OVER 分支)")
-	_check(st_rbody.contains("if not table.is_empty():"),
-			"★ ⑬g `stats` **只在非空时**带该键(与 teams / destroyed 同款纪律)")
+	# ★★ 这里**原先还有三条**文本共现断言(`st_rbody.contains('data["stats"]')` /
+	#   `contains('data["mvp"]')` / `contains("if not table.is_empty():")`)—— **2026-09-26
+	#   终审后整体删除**,理由是它们**已证明是假绿**:把 `TeamHost._broadcast_round_state` 的
+	#   `_rpc_all("round_state", [data])` 提到挂载 `stats`/`mvp` **之前**(真要发出去的字典里
+	#   一个键都不带 ⇒ 3v3 结算页两节皆空、没有 MVP 星)时,那三条**照样全绿** —— 实测
+	#   `TEAM HOST: ALL-OK`(175 ok)/`STATS DELIVERY: ALL-OK`(34 ok)/`KH HUD PROBE: ALL-OK`。
+	#   ★ 它们问的"次序无关的文本在不在"**不是**投递承诺(承诺是"发出去的那份里有这个键"),
+	#     故一律改到**行为面**:`tests/stats_delivery_probe.tscn` 的 **⑥**(子类覆写 `_rpc_all`、
+	#     在**调用时刻** `duplicate(true)` 截获载荷,与 1v1/大乱斗那两半同款)。
+	#   ★ 本段保留的是它真正有牙的那一半:**载荷形状与数值**(`stats_payload()` 的键集、
+	#     kscore/acs 的手算读数、"伤害只被计入一次"的增量断言)。★ 别再按"源码里有没有那句话"
+	#     给投递加断言 —— 要加就加到 `stats_delivery_probe` ⑥。
 	# 接线归属:探针那句 `_wire_hit_feedback()` 调的必须是**生产那一份**(基类持有、`_ready` 调它)。
 	var st_mh := ScanUtil.code_only(ScanUtil.read("res://server/match_host.gd"))
 	_check(st_mh.contains("func _wire_hit_feedback(") and st_mh.contains("_wire_hit_feedback()"),
@@ -1425,9 +1430,11 @@ func _run() -> void:
 	var st_d_k4 := _stat(_host, 2, "deaths")
 	var st_a_k4a := _stat(_host, 4, "assists")     # 敌人(4 号,2 队)
 	var st_a_k4b := _stat(_host, 3, "assists")     # 队友(3 号,1 队)
-	# ★ 顺手把 `team_kills` 也钉住(评审 F2 的免费补丁):本段**恰好制造了一次队友击杀**,
-	#   而那一笔在别处**没有任何断言**(`grep team_kills tests/` 原先只有 `_set_stats` 的零初始化)
-	#   —— 计划 2 的 ⑬m 要到 Task 2 才有。取**增量**更稳(不怕前面几段的残余)。
+	# ★ 顺手把 `team_kills` 也钉住(评审 F2 的免费补丁):本段**恰好制造了一次队友击杀**。
+	#   ★ 2026-09-26 订正:旧注释写"那一笔在别处**没有任何断言**、⑬m 要到 Task 2 才有" ——
+	#     **已过期**:⑬m(`_stat(_host, 1, "team_kills")`)今天也是一条值断言 ⇒ 这条规则
+	#     现在是**两处**守卫(本段 (k4) 的队友击杀支 + ⑬m 的爆炸致死支),不是一处。
+	#   取**增量**更稳(不怕前面几段的残余)。
 	var st_tk_k4 := _stat(_host, 1, "team_kills")  # 补刀的队友(1 号,1 队)
 	CombatFeedback.attribute(_host.players[2], _host.players[4])   # 敌人打乙
 	(_host.players[2] as Node2D).take_hit(Vector2.ZERO, 10)
@@ -1442,7 +1449,7 @@ func _run() -> void:
 			+ "(deaths 没 +1 = `_record_down` 没跑,下面两条恒真)")
 	_check(_stat(_host, 1, "team_kills") - st_tk_k4 == 1,
 			("★ ⑬k 队友击杀给**肇事者**记一次 `team_kills`(实际 +%d,期望 +1)"
-			+ " —— 惩罚公式靠它,而这一笔在本段之外**没有守卫**(⑬m 要到 Task 2)")
+			+ " —— 惩罚公式靠它;另一处守卫是 ⑬m(爆炸致死那一支))")
 			% (_stat(_host, 1, "team_kills") - st_tk_k4))
 	_check(_stat(_host, 4, "assists") - st_a_k4a == 0,
 			("★ ⑬k 乙被**自己队友**补掉 ⇒ 之前打过乙的**敌人**(4 号)**不得**记助攻"
@@ -1631,12 +1638,16 @@ func _run() -> void:
 	# ★ 这是 spec §3.4「免费的正确性」的守卫:`same_team(0,0)` 恒 false ⇒ 助攻过滤天然不成立。
 	#   ★ 正向对照(击杀照记)不可省:只断言"assists == 0"的话,一个**什么都没接**的宿主
 	#   (或"助攻永远不记"的坏实现)照样全绿。
-	# ★★ 覆盖范围的口径(评审 F4 订正,别夸大):`_record_down` 的**唯一调用点**是
-	#   `team_host.gd` 的 `_match_round_tick` —— **1v1 与 royale 根本不调它**(两者的逐人表
-	#   只有 `dealt`/`taken`)⇒ 那两模式**今天无论过滤怎么写都拿不到助攻**。所以本段守的实际是
-	#   "队伍表为空的 TeamHost"这个不变式(该配置在生产里也不存在:3v3 worker 必须带非空
-	#   `--teams` 才开局)—— 它是**为将来接线预留**的性质,等 1v1/大乱斗接上统计投递
-	#   (下一份计划)才成为真正的生产守卫。
+	# ★★ 覆盖范围的口径(评审 F4 订正;★ 2026-09-26 再订正后半句,**别照旧读**):
+	#   · 旧注释写"`_record_down` 的**唯一调用点**是 `team_host.gd`、**1v1 与 royale 根本不调它**"
+	#     —— **今天三模式都调**:1v1 `match_round.gd` 的 `_match_round_tick`、大乱斗
+	#     `royale_host.gd`、3v3 `team_host.gd`(各一行,`grep -n _record_down\\( server/` 为准)。
+	#   · 那两个模式的宿主(`MatchBootstrap` 直接建的 `MatchHost` / `RoyaleHost`)**队伍表恒空**
+	#     ⇒ 本段这个夹具(队伍表为空的宿主)就是它们的**生产形状本身**,不是"生产里不存在的配置"。
+	#   · 旧注释写"它是**为将来接线预留**的性质,等 1v1/大乱斗接上统计投递(下一份计划)才成为
+	#     真正的生产守卫" —— **那份计划已落地(2026-09-26)**,故本条**今天就是**生产守卫。
+	#   ⇒ 结论(空表 ⇒ 无助攻)逐字不变,变的只是**理由**:它守的是 1v1/大乱斗那两具宿主当下的
+	#     实际行为(`same_team` 恒 false ⇒ 助攻过滤天然不成立),不是未来某天才成立的性质。
 	#   ★★ 但它**今天**仍是**唯一**咬住"必须与击杀者同队"那条规则的断言:只删前半句
 	#     `not same_team(attacker, killer_role)`(留着后半句 `same_team(attacker, victim_role)`)
 	#     时,(k1)~(k4) **全绿**,只有本段红(实测 `实际 1`)。删它之前先想清楚那条规则由谁接住。

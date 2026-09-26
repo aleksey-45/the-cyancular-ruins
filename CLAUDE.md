@@ -388,12 +388,12 @@ A 册 = **服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game
 - **助攻与惩罚(2026-09-26 补)**:逐人统计多了 `assists` 与三个惩罚原始计数(`team_damage` / `self_damage` / `team_kills`),全部只影响 `kscore`、**不进 `dealt` / `taken`**。
   · **助攻表** `MatchState._assist_times` = `victim_role -> {attacker_role: 时刻ms}`;写入口 `_note_hit`(由 `MatchCombat._on_player_hit` 调 —— 所有伤害路径的唯一汇聚点);判定在 `_record_down`:除击杀者外、窗口内、且 `same_team(attacker, killer)` 的 attacker **各** `assists += 1`;清空在 `MatchRound._respawn_player`(一处覆盖三模式)。窗口复用 `ATTRIB_WINDOW`(3s),**不新开常量**。★ 队伍表为空(1v1 / 大乱斗)⇒ `same_team` 恒 false ⇒ **那两模式天然拿不到助攻**(免费的正确性,别去"优化"`same_team(0,0)`)。
   · ★★ **那条过滤的前半句是唯一承重的**:没有 `same_team(attacker, killer)`,受害者的**队友**误伤过他、随后敌人补掉 ⇒ 那位队友**因为打死自己人拿到助攻**。★ 后半句 `same_team(attacker, victim)` 是**死代码** —— `_record_down` 上面那道 `same_team(killer_role, victim_role)` 早退已保证击杀者与受害者异队 ⇒ 后半句永不改变结果(但它**不是"恒真"**;(k3) 夹具里 attacker 与 victim 就是队友)。留着是**保险带**。★ 守卫:**"必须与击杀者同队"这条今天只由 `⑬l` 咬住**(单删前半句 ⇒ 只有 `⑬l` 红;单删后半句 ⇒ **零断言察觉**)。
-  · **惩罚** = `(team_damage + self_damage) ÷ 5 + team_kills × 100`(收在 `core/sim/score_rules.gd::penalty`),记在**肇事者**行上。`team_kills` 写在 `_record_down` 的"队友击杀"那一支(该支仍然**不记** kills/助攻);守卫 = `team_host_probe` ⑬k 的 **(k4)**。
+  · **惩罚** = `(team_damage + self_damage) ÷ 5 + team_kills × 100`(收在 `core/sim/score_rules.gd::penalty`),记在**肇事者**行上。`team_kills` 写在 `_record_down` 的"队友击杀"那一支(该支仍然**不记** kills/助攻);守卫 = `team_host_probe` ⑬k 的 **(k4)** **与 ⑬m 的爆炸致死那一支** —— **两处**都是值断言(★ 2026-09-26 订正:本节此前只写 (k4),而那句"这一笔在别处没有守卫"在同一时期已随 ⑬m 落地而失效)。
   · ★★ **自伤必须有一条专用通道**:`CombatFeedback.attribute()` 对 `attacker == victim` **静默跳过**(那是对的),于是自伤在 `_on_player_hit` 里与"归因不到"**完全不可区分** ⇒ 新增 `CombatFeedback.note_self_hit` / `is_fresh_self_hit`,由 `Explosion.apply_aoe` 在 `shooter == victim` 时写一笔(与 `attribute` 同位、同在 `take_hit` **之前**)。**自伤的唯一来源就是自己的爆炸**(子弹/榴弹直击/激光都跳过射手本人)。
   · ★★ **该标记是"只写不清"的时刻标量(窗口 8ms),所以写端必须自己作废它**:同一物理帧两次 `apply_aoe`(各在自己的 `bullet._physics_process` 里跑)间隔 **0ms** ⇒ "自己那颗先炸、敌人那颗同帧后炸"时,读端按"自伤优先"会把**敌方**那笔记进受害者的 `self_damage` —— 玩家**因为被敌人打中而扣自己的分**。修法 = 落地一笔**真实(非自伤)归因**时在 `CombatFeedback.attribute()` 里 `remove_meta("last_self_hit_time")`(读端优先级一个字符没动,故"敌方先、自己后 ⇒ 按自伤记"那条**计划明文选择**的语义原样保留)。守卫**两条只差顺序**且缺一不可:`⑬n3`(自伤在前 ⇒ 敌方那一下不得进 `self_damage`)、`⑬n4`(敌方在前 ⇒ 自伤**仍须**进;它是"**读端前置清标记**"那一族的**唯一**鉴别器)。★ 删掉 `note_self_hit` 那笔 ⇒ **4 条红**(⑬n×2 + ⑬n3 + ⑬n4),不是两条。
   · ★ **已知边界(登记不修)**:① 同一帧内"先被敌人打中、再被自己的爆炸炸到"时,那一下会**同时**进敌人的 `dealt` 与自己的 `self_damage` —— **两个不同的账户、不是双计**(`acs` 只读 kscore);
-  ② `_note_hit` 写在自伤分流**之前**,故上一条那一序里**自伤那一下也会给那位敌人写一条助攻记录并刷新时刻**(该敌人确实打过他,所以"有助攻"站得住;失真是窗口被自己的爆炸刷新);
-  ③ 该标记**不因复活/死亡被清**(复活 ≥2s ≫ 8ms ⇒ 惰性);
+  ② `_note_hit` 写在自伤分流**之前**,故上一条那一序里**自伤那一下也会给那位敌人写一条助攻记录并刷新时刻**。★ **实测口径:这一档在可达集里是一次 no-op** —— 会写归因 meta 的**每一条**真实伤害路径(`Explosion.apply_aoe` / `_grenade_direct_hit` / `TeamHost._on_bullet_hit` / 激光)都是**同一调用栈**里 `attribute()` 紧接着 `take_hit()` ⇒ 那笔 `_note_hit` 已在 0~8ms 前写过**同一个 (victim, attacker) 键**,自伤这一笔只是把同一个值重写一遍(窗口 3s,重复写无差);唯一"写了 meta 却没写助攻表"的路径要求受害者 `downed`(`combat_component.take_hit` 早退),而倒地者既不能再扔雷(无输入)**也不吃爆炸**(`apply_aoe` 显式 `continue` 掉倒地者)⇒ 路封死了。**别为此去动读端优先级**("自伤优先"是计划明文选择的语义,⑬n4 钉着);
+  ③ 该标记**不因复活/死亡被清**(复活 ≥2s ≫ 8ms)⇒ 惰性;★ 它在 `downed` 期间**也不可能被读到**(`take_hit` 对倒地者早退、`apply_aoe` 跳过倒地者)⇒ **结构上惰性,不需要"顺手补一行清标记"**;
   ④ ★ 与"1v1 子弹不计入 `dealt`"**耦合**:基类 `_on_bullet_hit` 不写归因 ⇒ `attribute()` 不跑 ⇒ **1v1 里自伤后 8ms 内的子弹命中会被记成 `self_damage`**(补上基类归因会一并闭合)。
 - **激光也穿透队友(2026-09-25 补)**:激光是**即时命中**、不走 `_adjudicate_bullets`,故 `same_team` 的既有调用点**一处都够不到它**(修前全仓 5 个调用点 = `match_combat` ×2 / `team_host` ×3,而 `match_state` 那处是**定义**;spec §1.2 ① 写的"7"是 grep 的**行数**,含定义行与一句注释)。修法 = `MatchState.is_friendly(a, b)`(`_role_of` + `same_team` 的公开包装,给只拿得到**节点**、拿不到 role 的**武器**用)+ `LaserWeaponBase._damage_path_targets` 玩家循环里一条 `continue`(**不是 `break`**:队友不挡弹道,身后的敌人照打 —— 与子弹路径 `if same_team(...): continue` 同语义)。★ **只改权威侧**:客户端那份视觉副本在 `_spawn_projectiles` 开头的 `if not _authoritative(): return` 就被挡住、到不了结算 ⇒ **不碰协议、两端无需同版本**。★ 单机 / 1v1 / 大乱斗下队伍表为空 ⇒ `is_friendly` 恒 false ⇒ 行为**逐字不变**。守卫:`tests/laser_team_probe.tscn`(队友在光束路径上不掉血 **且** 队友**身后**的敌人照常掉血 —— 后半条是**鉴别点**,少了它"把整个玩家循环删掉"也能过)。
 - **★★ 3v3 击杀后**不复位任何人**(2026-09-21 用户要求删除「击杀者复位」)**。原行为:击杀后**只把击杀者本人**送回本方出生点(保留血量/不治疗,队友不动;三条不复位档 = 无归因 / 队友误炸 / 同归于尽),实现是 `TeamHost._reset_killer_only` —— **该函数已随本次改动整体删除**(它当时只有一个调用点,`_match_round_tick` 的倒地边沿),调用点与函数都不在了。用户原话「把敌人杀死后还是会被传送」。★ **代价照实记录,不粉饰**:那条规则是**为反「反复活点蹲守」而立**的 —— 有它时击杀者会被立刻送回本方出生点,于是没法杵在对手复活点旁边连杀。删除后 3v3 **不再有**这条性质:击杀者可以守在对手出生点,等对面 2s 后落下来再补一轮。★ **将来若想找回这条性质,不要原地重建它**(把击杀者瞬移走会再次触发本条的抱怨)—— 正确形状是"**复活点选点避开存活敌人**",而那一半已经在了:`TeamHost._respawn_cell_for` 的 `RESPAWN_CLEARANCE`(8 格)。★ **只动 3v3**:1v1 的 `MatchRound._reset_survivor`(`match_round.gd`,「活方回出生点」)与大乱斗**都原样保留** —— `TeamHost._match_round_tick` 是整体覆写、不走 `super`,两条路径本来就不相干。守卫:`tests/team_host_probe.tscn` ⑤(**已整体反转为"击杀者原地不动"**,含血量/残弹/背包/速度"完全不受影响";变异:把 `_reset_killer_only` 调用加回去 → 该段红、判据变 `TEAM HOST: FAIL`)。
@@ -417,9 +417,10 @@ A 册 = **服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game
 - **★ 换边后客户端也走"补态口径"**:3v3 每局**整队对调出生点**(`TeamHost._start_next_round` 互换 `_round_spawns`/`_swap_spawns` 并清 `_spawned_once`),客户端在**新一轮 COUNTDOWN** 那一拍(与"清本地子弹 + `reset_destructibles()`"同一处)重拉一次 `match_sync`,并**先置 `_resync_pull_pending = true` 再发**。★ 不置位的话:那条应答按**进场口径**处理 → 换边后载荷里的 `spawns` 是**新一侧**、而 `PvpSession.spawn` 手里是旧一侧,**两者必然不一致** ⇒ 每局边界刷一条**假告警** + 一次多余瞬移(位置本来就归 C2 权威)。★ 闸门与"重连补态"**共用**同一个 `_resync_pull_pending`(读一次即清),**不要新立一个标志** —— 问的是同一个问题。★ 为什么不把第二份出生点塞进 `round_state`:那是给同一份数据开**第二条投递路径**(自检 B2 那类事故的形状);`server_main._on_match_sync` 里有一段注释专门钉着"这里**不补发**"。
 - **★ `TeamHost._on_bullet_hit` 的补齐是"行为从无到有",不是回归**:覆写里先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`(与 `RoyaleHost` 那份逐字同构;基类对玩家直击**不写归因**)。接上之前,**枪杀**这条路上 `_attributed_killer` 恒 0 ⇒ ① 逐人 `dmg` 漏掉最主要的伤害来源、ACS 直接失真;② `kill_event` 的射手恒 0(逐人 `kills` 也全漏)。★ 这里**原先还有第 ③ 条**「A 册'只复位击杀者'在枪杀上一直没生效」与紧随其后那句"后人若看到'枪杀现在会复位击杀者了'这类探针读数变化,**那是补齐,不是回归**" —— 那条规则已按用户要求删除(2026-09-21,见上条),这两句一并作废:**别再照旧读**。①② 两条与它无关、照旧成立。
 - **★ 逐人数据 / ACS / MVP(B 册 Task 10)的两条已知口径边界**(登记,不改行为):① **`_left_round` 记的是"宽限期到点"的局号,不是"断线"的局号** —— `mark_disconnected` 只在宽限期(30s)到期时被调,这 30s 若跨了一次换局,离开者的分母就**多算一局** ⇒ 他的 ACS 被**压低**,与"已离开者分母更小 ⇒ 更容易胜出"(用户裁定的取向)恰好**相反**;探针 ⑬h 覆盖的是**意图口径**,照不到这条边界,别当它已覆盖。② **MATCH_OVER 之后的倒地仍进 `_stats`** —— 倒下边沿的检测在 `_match_round_tick` 的 `match _round_state:` **之前**、且不看状态(这是 A 册 `_scores` 的**同款既有时序**,不是本批引入):收场后残留的爆炸致死会再 `deaths + 1`,并可能**再广播一次带新 `mvp` 的终局载荷**。
-- **★★ `round_state` 的 `stats` / `mvp` 两个键 —— 消费者已到位(2026-09-26 订正)**：本条原文写的是"**今天没有任何消费者** … 客户端一行都没消费"(2026-09-20 记录)。**那句话在写下时成立,已于 2026-09-21 的结算页批次失效** —— 现在的消费者是 `ui/match_result_payload.gd::for_team`(`:74-75` 读 `round.get("stats")` / `round.get("mvp")`,`:83-85` 把 kills/deaths/dealt/acs 与 mvp 的行号画上结算页),生产调用链 = `scenes/team_game.gd:452-456` → `scenes/pvp_match_client.gd:388-400` 的 `_show_result()`;`tests/team_host_probe.gd` ⑬g 的**文本级**断言是第二处读数。★ **两个键仍然保留、别顺手删** —— 裁定不变,只是理由从"预定的消费者是赛后结算面板"变成"**消费者已经在**":`acs` 是服务端算好的,客户端不必重算计分公式,删了就拿不回那份口径。★ 本条原先引的"设计 §6 末尾那段删掉顶层 `deaths` 键的更正"(协议字段要**随消费者一起加**,不留没有读者的键)**依然有效**,而且今天这两个键**已经不违反它** —— 别再照那句把键删掉。★ 载荷字段集随 2026-09-26 那批**已经变了**（不是"将要变"）：从 `{kills, deaths, dmg, kscore, acs}`
+- **★★ `round_state` 的 `stats` / `mvp` 两个键 —— 消费者已到位(2026-09-26 订正)**：本条原文写的是"**今天没有任何消费者** … 客户端一行都没消费"(2026-09-20 记录)。**那句话在写下时成立,已于 2026-09-21 的结算页批次失效** —— 现在的消费者是 `ui/match_result_payload.gd::for_team`(`:74-75` 读 `round.get("stats")` / `round.get("mvp")`,`:83-85` 把 kills/deaths/dealt/acs 与 mvp 的行号画上结算页),生产调用链 = `scenes/team_game.gd:452-456` → `scenes/pvp_match_client.gd:388-400` 的 `_show_result()`;3v3 那一半的守卫是 `tests/stats_delivery_probe.tscn` 的 **⑥**(**行为面**:子类覆写 `_rpc_all`、在**调用时刻**深拷贝截获真要发出去的 `round_state`,断言 PLAYING 带 `stats`、MATCH_OVER 带 `stats` + `mvp` 且 `mvp == mvp_role()`)。★★ 2026-09-26 订正:本节此前写"`tests/team_host_probe.gd` ⑬g 的**文本级**断言是第二处读数" —— 那三条 `contains` 是**次序无关的文本共现**,已被证明是**假绿**(把 `TeamHost._broadcast_round_state` 的 `_rpc_all` 提到挂载之前 ⇒ 客户端两个键都收不到,而 `TEAM HOST`/`STATS DELIVERY`/`KH HUD PROBE` **三条全绿**),现已**删除**。★ **两个键仍然保留、别顺手删** —— 裁定不变,只是理由从"预定的消费者是赛后结算面板"变成"**消费者已经在**":`acs` 是服务端算好的,客户端不必重算计分公式,删了就拿不回那份口径。★ 本条原先引的"设计 §6 末尾那段删掉顶层 `deaths` 键的更正"(协议字段要**随消费者一起加**,不留没有读者的键)**依然有效**,而且今天这两个键**已经不违反它** —— 别再照那句把键删掉。★ 载荷字段集随 2026-09-26 那批**已经变了**（不是"将要变"）：从 `{kills, deaths, dmg, kscore, acs}`
 变成 **`{kills, deaths, assists, dealt, taken, kscore, acs}`**（`dmg`→`dealt`，新增 `assists`/`taken`；
-★ `assists` 的**写入口**归后续助攻计划，今天恒 0）。★ **逐人统计面同时从 `TeamHost` 上提到了
+★ `assists` 的**写入口**也已落地（助攻与惩罚那一批，2026-09-26 —— 本节此前写"归后续助攻计划、今天恒 0"，
+**已过期**））。★ **逐人统计面同时从 `TeamHost` 上提到了
 `MatchState`**（`_stat_entry` / `_record_down` / `_rounds_for` / `_roster` / `stats_payload` /
 `mvp_role` / `_kscore_of` / `_acs_of`），计分口径收在 **`core/sim/score_rules.gd`**（`ScoreRules`，
 纯静态、无 autoload、`-s` 可测）：`kscore = 击杀×100 + 助攻×50 + 伤害÷5 − 死亡×50 − 惩罚`，
@@ -427,11 +428,18 @@ A 册 = **服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game
 `(kscore + dmg)/局数` 之所以成立，**仅仅因为旧 `kscore` 不含伤害**；双计**不报错**，只是所有排名
 静默偏移。旧口径的 `kill_bonus_score(敌方存活人数)` 加权、`MULTI_KILL_BONUS` 多杀加成、
 `_round_kills` 与 `_enemy_alive_including_victim` **已整体删除**（生产目录零命中，只剩注释与探针
-里的墓碑）。★ **五个权重是平衡参数**：守卫钉的是**性质**（`tests/score_rules_smoke.gd`：死亡多 ⇒
-ACS 低…），**调数不该让任何探针红**。★ 1v1 / 大乱斗今天**只在底座接得住**：`dealt`/`taken` 的写入
-（`MatchCombat._on_player_hit`）是三模式**共用且已生效**的；而 `kills`/`deaths` 的写入
-（`_record_down`）**只有 3v3 调**，两个模式的 `stats` **投递**见后续计划。
-  ★ **该"后续计划"已落地(2026-09-26)** —— 见下一条。
+里的墓碑)。★★ **五个权重是平衡参数,但"调数不该让任何探针红"这句话是假的(2026-09-26 订正,
+别照旧读)** —— 准确口径分两半:① `tests/score_rules_smoke.gd` 钉的是**性质**（死亡多 ⇒
+ACS 低…）,它**与权重无关**,调数确实不会让它红;② 但**测量生产路径分数**的那几条把**字面量**
+写进了期望值 —— `tests/stats_delivery_probe.tscn` ①（`100 + 7 / 5`）、`tests/team_host_probe.tscn`
+⑬d（`+100` ×2）/ ⑬e（`100` ×2）/ ⑬f（**它的 `[仪器]` 前提**按 `300/500` 配平）/ ⑬g（`310`）。**实测(HEAD)**:
+`KILL_SCORE` 100→110 ⇒ `score_rules_smoke` 与 `match_result_payload_smoke` 仍绿,而 `stats_delivery_probe`
+红 **1** 条、`team_host_probe` 红 **6** 条（⑬f 与 ⑬g 的**主**断言仍绿 —— 红的只是前置读数与派生值）。
+★ 别把那 7 条当假红去放宽 —— 它们正是"新公式真的走在生产路径上"的唯一守卫;调权重就**同步改这两处**
+（或把期望值改成从 `ScoreRules` 常量派生,二选一）。★ 1v1 / 大乱斗今天**只在底座接得住**：`dealt`/`taken` 的写入
+（`MatchCombat._on_player_hit`）是三模式**共用且已生效**的；`kills`/`deaths` 的写入（`_record_down`）
+**三模式都调**（1v1 `match_round.gd` / 大乱斗 `royale_host.gd` / 3v3 `team_host.gd` 各一行 —— ★ 本节
+原先写"**只有 3v3 调**"，那句在投递落地后**是错的**），两个模式的 `stats` **投递**见下一条。
 - **三模式投递与结算页五/六列(2026-09-26 补)**:`stats` 键从 **3v3 独有**扩成**三模式通用**;
   **1v1 另加 `mvp`**(它的结算页会画 MVP 星),**大乱斗刻意不带 `mvp`**(spec §3.6/§4 都没要求,
   加了就是没有读者的键)。投递点各自在 `_broadcast_round_state`:**1v1 `server/match_round.gd`**、
@@ -456,19 +464,38 @@ ACS 低…），**调数不该让任何探针红**。★ 1v1 / 大乱斗今天**
     **`击杀 5 / 造成 0`**。可达且照常计入的只有榴弹直击 / 爆炸 AoE / 激光。
     ★ 与"自伤标记"那条**耦合**:基类不写归因 ⇒ `attribute()` 不跑 ⇒ 1v1 里自伤后 8ms 内的
     子弹命中会被记成 `self_damage`。两条一起由"让基类也写归因"闭合(4 行 + 一条断言)。
-  · 守卫:`tests/stats_delivery_probe.tscn`(新;相 ⑤ 走**行为级** —— 子类覆写 `_rpc_all` 在
-    **调用时刻**深拷贝载荷)、`tests/match_result_payload_smoke.gd`(`-s`;含"每个列键都要有标题"
-    且键集**从常量派生**、MVP 星的位置、两模式的列**数值**)、`tests/match_result_probe.tscn`
-    (**真渲染**;六列宽度由它已有的"面板必须装得下视口"那条守着)。
-- **★ 1v1 里**子弹**伤害不进 `dealt`(登记,不修;接投递时一并处理)**:`dealt`/`taken` 的累计读的是
+  · ★★ **一条新登记的差异(2026-09-26,登记不改行为)**:3v3 的**逐人 `kills` 之和 ≠ 记分条上的队分**。
+    三模式的计分是**三种**组合,别用一句话概括(终审点名的那句"royale/3v3 是归因制"只对**逐人 `kills`** 成立):
+    ① **1v1 = 按 role 记分、`kills` 无归因**(`MatchRound._match_round_tick` 的 `_record_down(role, _opponent_of(role))` ——
+    与它的记分条**专门对齐**过,否则"5 杀取胜的局在结算页只显示 3 杀");② **大乱斗 = 按 role 记分、`kills` 有归因**
+    (`_attributed_killer`,无归因的死亡(溺水/坠落/自杀)不计**任何人**);③ **3v3 = 队分按队、无归因
+    (`TeamHost._enemy_team_of(victim)`:溺水/自杀/队友误炸一律给对方队 +1),而 `kills` 有归因**(`_attributed_killer` + 异队)
+    ⇒ 那几档**队分 +1 而没有任何人记 `kills`**。★ 两条账各有读者(队分 = 胜负判据,`kills` = 结算页那一行),
+    **不是 bug、也不要求对齐**(1v1 的同一形状是被专门对齐过的,3v3 刻意没有)—— 但**别拿结算页的击杀数去核对记分条**。
+  · 守卫:`tests/stats_delivery_probe.tscn`(**三个模式各一条行为级投递守卫**:相 ⑤ 覆盖 1v1/大乱斗、
+    **⑥ 覆盖 3v3** —— 都是子类覆写 `_rpc_all`、在**调用时刻**深拷贝截获载荷;★ 3v3 那一半原先只是
+    `team_host_probe` ⑬g 的**三条 `contains` 文本断言**,2026-09-26 证明是**假绿**后删除并升级到这里)、
+    `tests/match_result_payload_smoke.gd`(`-s`;含"每个列键都要有标题"且键集**从常量派生**、MVP 星的
+    位置、**三个模式的 K/D/A 与 dealt/taken 列数值**各读各的键 —— 只钉 dealt/taken 时
+    `deaths`↔`assists` 对调能全绿)、`tests/match_result_probe.tscn`
+    (**真渲染**;六列宽度由它已有的"面板必须装得下视口"那条守着;★ 它对**单元格数值零断言** ——
+    数值那一半全靠上面那条冒烟,别读成"渲染探针过了 ⇒ 数字对")。
+- **★ 1v1 里**子弹**伤害不进 `dealt`(登记,不修;★ 投递**已上线** —— 这就是今天玩家在屏上看到的读)**:`dealt`/`taken` 的累计读的是
   `CombatFeedback.attribute` 写下的归因 meta,而**子弹直击的归因写在各模式的覆写里** ——
   `RoyaleHost._on_bullet_hit` 与 `TeamHost._on_bullet_hit` 都是先 `attribute` 再 `super`,而
   **基类 `MatchCombat._on_bullet_hit` 自己不写**(`server/match_combat.gd`,原地有注释)。1v1 走
   `MatchBootstrap` **直接建 `MatchHost`**、没有那层覆写 ⇒ **1v1 的子弹(主要伤害来源)不计入
-  `dealt`**;爆炸 AoE / 榴弹直击 / 激光各自写归因,照常计入。★ 今天**无害**(1v1 还不投递 `stats`),
-  但那天接上投递,表现就是**系统性偏低 ACS 且没有任何探针会红** —— 与 `team_host.gd` 当年为 3v3
-  记过的同一失效模式(枪杀那条路上逐人数字全漏)。修法二选一:**让基类也写归因**,或给 1v1 加一层
-  覆写(与另两个模式逐字同构)。
+  `dealt`**;爆炸 AoE / 榴弹直击 / 激光各自写归因,照常计入。★★ **已经上线,不是将来的风险**:1v1 的
+  `stats` 投递在本弧(2026-09-26)落地 ⇒ 玩家在 1v1 结算页上看到的**就是**这一列,一把手枪打完一局显示
+  `击杀 5 / 造成 0`(★ **`承受` 同样为 0** —— 它与 `dealt` 读的是**同一对归因**,别只盯一列去找)。
+  它今天**仍然没有任何探针会红**(两条断言都只覆盖"归因写对了没有",不覆盖"1v1 的写端有没有接上")——
+  与 `team_host.gd` 当年为 3v3 记过的同一失效模式(枪杀那条路上逐人数字全漏)。修法二选一:**让基类也写归因**,
+  或给 1v1 加一层覆写(与另两个模式逐字同构)。★ 本弧**只改文字、未改行为**(用户待裁决)。
+  ★ 同一条边界的**第二半(本节此前未登记,终审 Q3(a) 补)**:1v1 的 `mvp` 由此**退化** ——
+  `_kscore_of` 里唯一反映"打得准"的项就是 `dealt ÷ 5`,而它在**子弹是唯一伤害来源**的对局里两行都 ≈0
+  ⇒ 评选只剩 `kills` 与 `deaths` 两项在起作用(spec §1.3 说"换公式后『MVP 常在败方』的偏置来源消失",
+  在 1v1 上**这句没有依据**;不必然错 —— 1v1 的 `kills` 与记分条同口径、是对称的)。**同样不要据此改代码**,
+  属同一张待决账单。
 - **★ `ATTRIB_FRESH_MS = 8ms` 的成立前提是"归因与伤害在**同一调用栈**"**:将来新增**延迟扣血**型伤害(如激光缝 2 预留的持续/灼烧)时,**写端必须自己每帧重写归因** —— 那种实现是"命中时写一次、后续帧扣血",扣血那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人 `dealt` 恒少且不报错(没有断言、没有日志,只是 ACS 偏低)。该提示写在 `server/match_state.gd` 的 `ATTRIB_FRESH_MS` 上方(2026-09-25 随常量从 `team_host.gd` 上提到基类)。
 
 #### 结算页(2026-09-21:三个模式的 MATCH_OVER 都从「等 N 秒自动回菜单」改成「弹结算页 + 玩家自己退」)
