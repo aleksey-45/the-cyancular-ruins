@@ -134,6 +134,12 @@ func start_reload() -> void:
 
 # 换弹姿态:每帧在 _recoil_recover 之后调用(换弹压枪优先级高于后坐复位)。
 func _update_reload_pose() -> void:
+	# 重建窗口:`WeaponComponent._equip_index` 用 `call_deferred("add_child")` 入树,在那之前
+	# `@onready sprite` 仍是 null。★ 这里"跳过"是安全的,与上面 `mag_ammo` 走 `pending_mag`
+	# 提前落盘不同 —— 那是权威态、会被 `_ready()` 重置;姿势只是纯表现,下一帧随 `_reloading`
+	# 再算一遍即可(该窗口跨整个回滚重放,提前算也无处可画)。
+	if sprite == null:
+		return   # 未入树(重建窗口):`@onready` 尚未解析,姿势下一帧补算
 	if _reloading:
 		_reload_pose = true
 		var p := clampf(1.0 - _reload_t / maxf(reload_time, 0.01), 0.0, 1.0)
