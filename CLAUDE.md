@@ -431,6 +431,35 @@ A 册 = **服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game
 ACS 低…），**调数不该让任何探针红**。★ 1v1 / 大乱斗今天**只在底座接得住**：`dealt`/`taken` 的写入
 （`MatchCombat._on_player_hit`）是三模式**共用且已生效**的；而 `kills`/`deaths` 的写入
 （`_record_down`）**只有 3v3 调**，两个模式的 `stats` **投递**见后续计划。
+  ★ **该"后续计划"已落地(2026-09-26)** —— 见下一条。
+- **三模式投递与结算页五/六列(2026-09-26 补)**:`stats` 键从 **3v3 独有**扩成**三模式通用**;
+  **1v1 另加 `mvp`**(它的结算页会画 MVP 星),**大乱斗刻意不带 `mvp`**(spec §3.6/§4 都没要求,
+  加了就是没有读者的键)。投递点各自在 `_broadcast_round_state`:**1v1 `server/match_round.gd`**、
+  **大乱斗 `server/royale_host.gd`**、3v3 `server/team_host.gd`(后者本来就挂着)—— 三个函数
+  **互不叠加**(另两个都整体覆写它,故基类那份是 1v1 专用)。
+  · ★★ **两处"改错了不报错"的落点**:① **1v1 的击杀记给对手且不看归因**
+    (`_record_down(int(role), _opponent_of(int(role)))` —— 口径与它的记分条"不分死因、对方死亡都算"
+    **逐字一致**;照 3v3 的'只算有归因的击杀'写会让结算页的击杀数**低于**记分条上的分数);
+    ② **大乱斗的击杀是**归因制**(`_attributed_killer(p)`,3s 窗口),无归因的死亡不计任何人的击杀**
+    —— 与 1v1 **相反**。★ 大乱斗载荷的 `deaths` 现在**从逐人表构造**(原先的 `_deaths` 是
+    同一件事的第二份计数,两份必然漂)。
+  · **结算页的列** = spec §3.6 的顺序,由 `ui/match_result_payload.gd` 的
+    `C_DUEL` / `C_ROYALE` / `C_TEAM` 定:**1v1 `[kills,deaths,dealt,taken,acs]`** /
+    **大乱斗 `[kills,deaths,dealt,taken]`**(无 ACS —— 单局死斗 `acs ≡ kscore`,恒等列零信息;
+    无助攻 —— 自由混战无归属)/ **3v3 `[kills,deaths,assists,dealt,taken,acs]`**。
+    标题在 `ui/match_result.gd::COLUMN_TITLES`(键用了 `dealt`,**`dmg` 已改名**;漏一个标题会
+    **静默**退化成裸键名,有 `.get(col,col)` 兜底 ⇒ 守卫见下)。**三个客户端一行未改**
+    (它们只把整条 `round_state` 交给适配器)。
+  · ★★ **已知边界(登记,不修;等用户裁决)**:1v1 的 `dealt`/`taken` **不含子弹直击**
+    (基类 `MatchCombat._on_bullet_hit` 不写归因;只有 `RoyaleHost`/`TeamHost` 的覆写写)。
+    ⇒ 1v1 的伤害列/`taken`/ACS/MVP **系统性偏低**,而且**上了屏**:一把手枪打完一局会显示
+    **`击杀 5 / 造成 0`**。可达且照常计入的只有榴弹直击 / 爆炸 AoE / 激光。
+    ★ 与"自伤标记"那条**耦合**:基类不写归因 ⇒ `attribute()` 不跑 ⇒ 1v1 里自伤后 8ms 内的
+    子弹命中会被记成 `self_damage`。两条一起由"让基类也写归因"闭合(4 行 + 一条断言)。
+  · 守卫:`tests/stats_delivery_probe.tscn`(新;相 ⑤ 走**行为级** —— 子类覆写 `_rpc_all` 在
+    **调用时刻**深拷贝载荷)、`tests/match_result_payload_smoke.gd`(`-s`;含"每个列键都要有标题"
+    且键集**从常量派生**、MVP 星的位置、两模式的列**数值**)、`tests/match_result_probe.tscn`
+    (**真渲染**;六列宽度由它已有的"面板必须装得下视口"那条守着)。
 - **★ 1v1 里**子弹**伤害不进 `dealt`(登记,不修;接投递时一并处理)**:`dealt`/`taken` 的累计读的是
   `CombatFeedback.attribute` 写下的归因 meta,而**子弹直击的归因写在各模式的覆写里** ——
   `RoyaleHost._on_bullet_hit` 与 `TeamHost._on_bullet_hit` 都是先 `attribute` 再 `super`,而
