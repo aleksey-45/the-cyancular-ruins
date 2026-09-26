@@ -223,11 +223,17 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	#   归因不到。★ 后两档在 1v1 / 大乱斗里**天然不成立**:队伍表空 ⇒ `same_team` 恒 false
 	#   ⇒ 这两列就等于"对所有人的伤害",不需要特判(spec §5.6 的免费正确性,别去"优化"它)。
 	var stat_attacker := _fresh_attacker_role(int(role))
-	if stat_attacker != 0 and not same_team(stat_attacker, int(role)):
-		var sa := _stat_entry(stat_attacker)
-		sa["dealt"] = int(sa["dealt"]) + int(damage)
-		var sv := _stat_entry(int(role))
-		sv["taken"] = int(sv["taken"]) + int(damage)
+	if stat_attacker != 0:
+		# 助攻表:所有**归因得到**的命中都记一笔(含队友误伤 —— 读端按 `same_team` 过滤,
+		# 见 `_record_down`;写端不过滤才能让那条规则只有一处)。
+		# ★ 与 `dealt` 的门槛**不同款**是刻意的:`dealt` 只算敌人,助攻候选人要连队友一起
+		#   收下来、再由读端判"与击杀者同队"(spec §3.4 那条荒谬助攻的堵法)。
+		_note_hit(int(role), stat_attacker)
+		if not same_team(stat_attacker, int(role)):
+			var sa := _stat_entry(stat_attacker)
+			sa["dealt"] = int(sa["dealt"]) + int(damage)
+			var sv := _stat_entry(int(role))
+			sv["taken"] = int(sv["taken"]) + int(damage)
 	for r in peer_by_role:
 		# 判活:这是**每次伤害**都发的定向包(交火时最密的一处),原先完全不判 ——
 		# 往"正在断开"的 peer 发就是那条 channel 0 错误(判据为何不能用 get_peers 见 NetBus)。

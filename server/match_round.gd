@@ -81,6 +81,12 @@ func _respawn_player(role: int) -> void:
 		p.cancel_jump_state()
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
+	# 助攻表:复活 = 新的一条命,上一次倒地之前的命中历史作废(与"助攻只算这一次倒地之前"一致)。
+	# ★ 住在这里一处覆盖三模式 —— 另两个模式的 `_respawn_player` 都 `super` 到本函数。
+	# ★ 用**复活**而不是**倒地**作为清空点:倒地后 `take_hit` 会因 `downed` 早退
+	#   (`scenes/player/combat_component.gd:43`),两者在观测上等价,但复活点与 spec §3.4 的
+	#   口径逐字一致、且是玩家"重新开始"的语义点。
+	_clear_assist_table(role)
 
 # 击杀后活方「复位」:回到本方出生点但保留血量/防水,不治疗。死者(另一 role)照常满血复活。
 

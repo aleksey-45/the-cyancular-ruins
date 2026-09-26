@@ -116,6 +116,13 @@ var _last_round_winner := 0            # 最近一局的胜者 role(客户端播
 # ★ 载荷才用 spec §3.1 那七个字段(kills/deaths/assists/dealt/taken/kscore/acs)。
 var _stats: Dictionary = {}          # role -> 原始计数(整场累计,不随局清零)
 var _left_round: Dictionary = {}     # role -> 离开时所处的局号(ACS 的"实际参与局数"口径)
+# 助攻表:**每受害者一张小表** —— `victim_role -> {attacker_role: 最后命中时刻(ms)}`。
+# ★ 为什么需要它:归因只有 `CombatFeedback.attribute` 写的单个 `last_damager` meta,只够判
+#   "谁拿的击杀",回答不了"还有谁打过他"。
+# ★ 写入口唯一(`_note_hit`,由 `MatchCombat._on_player_hit` 调):所有伤害路径
+#   (子弹 / 榴弹直击 / 爆炸 AoE / 激光)都汇到那一个钩子 —— 与 `dealt`/`taken` 同源。
+# ★ 表的时刻是**墙钟**(`Time.get_ticks_msec`),窗口复用 `ATTRIB_WINDOW`,不新开常量。
+var _assist_times: Dictionary = {}
 # role -> true(已移出对局)。★ **必须住底座**:`_roster()` / `mvp_role()` 都要读它,
 # 而 `RoyaleHost` 与 `TeamHost` 原先**各声明了一份**(上提时那两行必须一起删 —— 子类重复声明
 # 基类成员是硬 Parse Error,见 Global Constraints)。
@@ -280,17 +287,62 @@ func mvp_role() -> int:
 	return best_role
 
 
+# 记一笔"谁打过谁"。(写端**不过滤队伍** —— 过滤只有一处,在 `_record_down` 的读端;
+# 写端过滤会让"队友误伤拿助攻"这条规则散成两份判断。)
+func _note_hit(victim_role: int, attacker_role: int) -> void:
+	victim_role = int(victim_role)
+	attacker_role = int(attacker_role)
+	if not _assist_times.has(victim_role):
+		_assist_times[victim_role] = {}
+	(_assist_times[victim_role] as Dictionary)[attacker_role] = Time.get_ticks_msec()
+
+
+# 清掉某受害者的助攻表 —— 由 `MatchRound._respawn_player` 调(复活 = 新的一条命,
+# 与"助攻只算这一次倒地之前"一致)。★ 一处覆盖三模式:`RoyaleHost` / `TeamHost` 的
+# `_respawn_player` 都 `super` 到 `MatchRound` 那一份。
+func _clear_assist_table(victim_role: int) -> void:
+	_assist_times.erase(int(victim_role))
+
+
 # 逐人数据的唯一写入口(每次倒地边沿调一次)。
 # ★ `deaths` **一律** +1:队友误炸 / 自杀 / 溺水全算死。
 # ★ `kills` **只在"归因到且异队"**时记给杀手 —— 无归因与同队误炸不计**任何人**的击杀
-#   (与"那一分照样给对方队"是两件事)。助攻与惩罚由计划 2 在此处/在受击钩子上补。
+#   (与"那一分照样给对方队"是两件事)。助攻由**本函数**就地记(计划 2 的 Task 1,
+#   读端过滤见函数内的 `same_team` 那一段);惩罚由计划 2 的 Task 2 在此处补。
 func _record_down(victim_role: int, killer_role: int) -> void:
+	victim_role = int(victim_role)
+	killer_role = int(killer_role)
 	var v := _stat_entry(victim_role)
 	v["deaths"] = int(v["deaths"]) + 1
-	if killer_role == 0 or same_team(killer_role, victim_role):
+	if killer_role == 0:
+		return          # 无归因:不计任何人的击杀,**也不计任何人的助攻**
+	if same_team(killer_role, victim_role):
+		# ★ 队友击杀:不记 kills(用户裁定 ②),**也不记助攻**(没有"自己队的击杀"这回事)。
+		#   "击杀队友"的代价记在**肇事者**行上,由惩罚那一项承担(见 Task 2)。
+		var tm := _stat_entry(killer_role)
+		tm["team_kills"] = int(tm["team_kills"]) + 1
 		return
 	var k := _stat_entry(killer_role)
 	k["kills"] = int(k["kills"]) + 1
+	# ── 助攻:表里**除击杀者之外**、且在归因窗口内、且**与击杀者同队**的 attacker ──
+	# ★★ `same_team(attacker, killer)` 那道过滤**不可省**:没有它,受害者的**队友**误伤过他
+	#   (爆炸),随后敌人把他补掉 ⇒ 那位队友**因为打死自己人而拿到助攻**(spec §3.4)。
+	# ★ `not same_team(attacker, victim)` 在本函数里**恒真**(能走到这里 ⇒ killer 与 victim
+	#   异队且都非 0)⇒ 它不是鉴别点,留着只是把那条规则**读得出来**(照 spec §3.4 的写法)。
+	# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ **天然拿不到任何助攻**,
+	#   不需要特判(守卫:⑬l)。
+	var now := Time.get_ticks_msec()
+	var table: Dictionary = _assist_times.get(victim_role, {})
+	for a in table:
+		var attacker := int(a)
+		if attacker == killer_role:
+			continue
+		if now - int(table[a]) > ATTRIB_WINDOW:
+			continue
+		if not same_team(attacker, killer_role) or same_team(attacker, victim_role):
+			continue
+		var sa := _stat_entry(attacker)
+		sa["assists"] = int(sa["assists"]) + 1
 
 
 # "**这一下**伤害是谁打的" —— 归因必须**新鲜**(`ATTRIB_FRESH_MS`)。无 → 0。

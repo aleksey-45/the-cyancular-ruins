@@ -121,6 +121,50 @@ func _acs(host, role: int) -> float:
 	return float(host.stats_payload()[int(role)]["acs"])
 
 
+# 助攻表读数(表: victim_role -> {attacker_role: 时刻ms})。
+# ★★ 必须走 `host.get("_assist_times")` 而**不是** `host._assist_times`:
+#   字段在本 Task 的红阶段**还不存在**,而不存在的属性**直接取**会抛
+#   `Invalid get index '_assist_times'` ⇒ **只结束 `_run()`**、`_ready()` 的 `await` 照常恢复、
+#   `_finish()` 照打 **`TEAM HOST: ALL-OK`(假绿)**,后面所有断言被静默跳过。
+#   `Object.get()` 对不存在的属性**静默返回 null** ⇒ 那种情况退化成"表是空的" =
+#   干净的值不匹配(FAIL)。这条差别就是"探针真的会红"与"探针假绿"的差别,别"简化"它。
+func _assist_table(host, victim_role: int) -> Dictionary:
+	var t: Variant = host.get("_assist_times")
+	if not (t is Dictionary):
+		return {}
+	var sub: Variant = (t as Dictionary).get(int(victim_role))
+	return sub if sub is Dictionary else {}
+
+
+# 把表里那一笔的时刻往前挪(等 3s 不现实)。返回 false = 表/条目还不存在。
+# ★ 与 `_assist_table` 同款理由:字段不存在时**什么都不做**,由调用方的 `_check` 把它变成
+#   干净的红,而不是中断 `_run()` 的假绿。
+func _age_assist(host, victim_role: int, attacker_role: int, ago_ms: int) -> bool:
+	var t: Variant = host.get("_assist_times")
+	if not (t is Dictionary):
+		return false
+	var outer: Variant = (t as Dictionary).get(int(victim_role))
+	if not (outer is Dictionary):
+		return false
+	(outer as Dictionary)[int(attacker_role)] = Time.get_ticks_msec() - int(ago_ms)
+	return true
+
+
+# 把**除 `keep` 之外**的全部在场玩家挪到远点(⑬m/⑬n/⑬n2 的爆炸半径 100 ⇒ 只打得到爆心那一人)。
+# ★ 判据用"遍历 `players` 减掉例外"而**不是**写死 role 列表:⑬h 已经把 role 6 从 `players`
+#   摘掉(`team_host.gd:582` 的 `players.erase`),写死列表既会漏掉新 role,又会取到不存在的
+#   6 号 —— 后者是 `Invalid get index '6' on Dictionary` ⇒ `_run()` 中断(⑬j 之后的三段
+#   全在这个坑上,而探针里既有的 `[2,3,4,5,6]` 写法是**在 ⑬h 之前**跑的,照抄会踩)。
+func _park_all_but(host, keep: Array, at: Vector2) -> void:
+	for r in host.players:
+		var role := int(r)
+		if keep.has(role):
+			continue
+		var p: Node2D = host.players[r]
+		if p != null and is_instance_valid(p):
+			p.global_position = at
+
+
 # 真打倒一个人:**走生产的归因写端 + 倒地路径**(与 ⑤ 那一段同一手法),然后推一帧状态机。
 # `killer == 0` = 无归因档(先把 meta 清掉 —— 否则上一段留下的归因会让这条退化成"有归因")。
 func _down(host, victim: int, killer: int) -> void:
@@ -1242,6 +1286,115 @@ func _run() -> void:
 	_check(_host.mvp_role() == 6,
 			("★ ⑬j **已离开者仍是 MVP 候选**(用户裁定;MVP 实际 %d,期望 6 —— "
 			+ "把 `_left` 从候选里滤掉就会变成 1 号)") % _host.mvp_role())
+
+	# ── ⑬k 助攻:甲打乙 60、丙补掉乙 ⇒ 丙记击杀、**甲记助攻**;窗口外不记 ──
+	# ★ spec §6.2 的三档;★ 后半档是**鉴别点** —— 只断言"甲记了助攻"的话,
+	#   把窗口判据删掉也能过。
+	# ★ 助攻表住在 `_assist_times`(role -> role -> 时刻),写入点是生产的
+	#   `MatchCombat._on_player_hit`(所有伤害路径的唯一汇聚点),本段**不手写表** ——
+	#   甲那 60 点是走真归因写端 + 真 `take_hit` 落进去的。
+	_host._round_state = MatchHost.RoundState.PLAYING
+	_host._scores = {}
+	_host._left = {}
+	_host._left_round = {}
+	# ★ 逐人原始表也清一次:⑬k/⑬m/⑬n 有几条读数是**增量**(不怕残余),但把表清空能让
+	#   它们与 ⑬l 的绝对读数(「队伍表为空 ⇒ 助攻恒 0」)都建立在可手算的基线上。
+	_host._stats = {}
+	for st_kr in _host.players:
+		_host._respawn_player(int(st_kr))
+	# (k1) 甲(1 号,1 队)打乙(4 号,2 队)60 伤害
+	var st_a_k1 := _stat(_host, 1, "assists")
+	var st_a_k2 := _stat(_host, 2, "assists")
+	CombatFeedback.attribute(_host.players[4], _host.players[1])
+	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 60)
+	# ★★ `st_a_ks1` 必须在**那 60 伤害之后**读:这一枪本身就给甲 `dealt += 60` ⇒ kscore 已 +12
+	#   (`ScoreRules.kscore(0, 1, 60, …) == 62`,实测)。在伤害**之前**读的话,下面那条
+	#   "助攻进 kscore" 要断的就是 **+62**(助攻 50 + 伤害 12)而不是 +50 ⇒ **实现正确也不会绿**;
+	#   同理 Step 2 的红也不是表里写的 `+0` 而是 `+12`。移到伤害之后读,两处都回到干净的值。
+	var st_a_ks1 := _kscore(_host, 1)
+	_check(_assist_table(_host, 4).has(1),
+			"★ ⑬k [仪器] 甲的那一枪必须进了助攻表(否则下面两条恒真;表=%s)"
+			% str(_assist_table(_host, 4)))
+	# 丙(2 号,1 队)补掉乙 —— `_down` 会先把归因写成丙,再走倒地边沿
+	_down(_host, 4, 2)
+	_check(_stat(_host, 2, "kills") == 1, "★ ⑬k 丙(补刀的)记击杀(实际 %d)" % _stat(_host, 2, "kills"))
+	_check(_stat(_host, 1, "assists") - st_a_k1 == 1,
+			"★ ⑬k 甲**记一次助攻**(实际 +%d,期望 +1)"
+			% (_stat(_host, 1, "assists") - st_a_k1))
+	_check(_kscore(_host, 1) - st_a_ks1 == 50,
+			"★ ⑬k 助攻进 kscore(+50,实际 +%d)" % (_kscore(_host, 1) - st_a_ks1))
+	_check(_stat(_host, 2, "assists") - st_a_k2 == 0,
+			"★ ⑬k 击杀者本人**不**记助攻(实际 +%d)" % (_stat(_host, 2, "assists") - st_a_k2))
+	# ★ 清空点是**复活**而不是倒地 ⇒ 倒地之后、复活之前表**还在**。
+	#   ★ 这两条是**一对**:只断"复活后是空的"的话,"从来就没有这张表"也全绿。
+	_check(not _assist_table(_host, 4).is_empty(),
+			"★ ⑬k [仪器] 复活**之前**表还在(证下面那条清空不是恒真)")
+	_host._respawn_player(4)
+	_check(_assist_table(_host, 4).is_empty(),
+			"★ ⑬k 复活时清空该受害者的助攻表(不清的话上一条命的命中会算进下一条命)")
+
+	# (k2) 窗口外不记助攻 —— 把表里那一笔的时刻往前挪出 3s
+	# ★ 这里是**直接改表**(唯一一处手写表):等 3s 不现实,而窗口判据必须被验到。
+	#   `_age_assist` 的防御写法见它的注释(字段不存在时返回 false,由下面这条断言红出来)。
+	# ★★ 但改表**之前必须先重打一枪**:清空点是**复活**,而 (k1) 末尾刚复活过 4 号 ⇒ 此刻
+	#   `_assist_times[4]` 整张子表已被 `_clear_assist_table` 抹掉。少了这一枪,`_age_assist` 会因
+	#   "条目不存在"返回 false ⇒ 那条 [仪器] 断言在**正确实现下也会红**(它守的是"窗口判据真的
+	#   被验到",而不是"表是空的")。★ 与 (k1) 同理,必须在 (k1) 的**复活之后**、且是**新的**一枪。
+	CombatFeedback.attribute(_host.players[4], _host.players[1])
+	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 5)
+	_check(_assist_table(_host, 4).has(1), "[仪器] ⑬k 前提:重打的那一枪进了表")
+	_check(_age_assist(_host, 4, 1, TeamHost.ATTRIB_WINDOW + 1000)
+			and Time.get_ticks_msec() - int(_assist_table(_host, 4).get(1, 0)) > TeamHost.ATTRIB_WINDOW,
+			"[仪器] ⑬k 前提:表里那一笔确实**已超窗**(否则下面那条验的不是窗口判据)")
+	var st_a_k3 := _stat(_host, 1, "assists")
+	_down(_host, 4, 2)
+	_check(_stat(_host, 1, "assists") - st_a_k3 == 0,
+			("★ ⑬k 甲的最后一次命中在窗口(3s)外 ⇒ **不记助攻**(实际 +%d);"
+			+ "删掉窗口判据这里会变成 +1") % (_stat(_host, 1, "assists") - st_a_k3))
+
+	# (k3) 队友误伤 **不算**助攻:乙的队友(5 号,2 队)炸过乙,随后敌人补掉乙
+	# ★★ 这是本段最要紧的一条:没有 `same_team(attacker, killer)` 那道过滤,
+	#   5 号会**因为打死自己人**拿到一次助攻。
+	_host._respawn_player(4)
+	var st_a_k4 := _stat(_host, 5, "assists")
+	var st_a_k5 := _stat(_host, 1, "assists")
+	CombatFeedback.attribute(_host.players[4], _host.players[5])   # 队友(5 号,2 队)打乙(4 号,2 队)
+	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 10)
+	_check(_assist_table(_host, 4).has(5),
+			"[仪器] ⑬k 前提:队友那一枪**确实进了表**(没进的话下面那条是空转)")
+	_down(_host, 4, 1)          # 敌人(1 号,1 队)补掉乙
+	_check(_stat(_host, 5, "assists") - st_a_k4 == 0,
+			("★ ⑬k 受害者的**队友**误伤之后、敌人补刀 ⇒ 那位队友**不得**记助攻"
+			+ "(实际 +%d);去掉 same_team(attacker, killer) 过滤就会给 +1")
+			% (_stat(_host, 5, "assists") - st_a_k4))
+	_check(_stat(_host, 1, "assists") - st_a_k5 == 0,
+			"★ ⑬k [仪器] 击杀者本人仍不记助攻(实际 +%d)" % (_stat(_host, 1, "assists") - st_a_k5))
+
+	# ── ⑬l 队伍表为空(1v1 / 大乱斗的形状)⇒ **拿不到任何助攻**,而击杀照记 ──
+	# ★ 这是 spec §3.4「免费的正确性」的守卫:`same_team(0,0)` 恒 false ⇒ 助攻过滤天然不成立。
+	#   ★ 正向对照(击杀照记)不可省:只断言"assists == 0"的话,一个**什么都没接**的宿主
+	#   (或"助攻永远不记"的坏实现)照样全绿。
+	#   ★ 本段**最后**跑:新建宿主会重载全局网格,前面几段(尤其 ⑬b3 的 `_find_dry_point`)
+	#   依赖它保持不动。
+	#   ★ brief 原文这里多写了一个 `[]`(`TeamHost.new(MAP, {}, {}, [], [], {…}, {})` = 7 个
+	#   实参,而 `TeamHost._init` 只收 6 个)⇒ 调用当场出错、`_run()` 中断、`_finish()` 照打
+	#   `ALL-OK`(假绿)。按同文件既有的 `TeamHost.new(MAP, {}, {}, [], teams, TEAMS)` 补正。
+	var st_plain = TeamHost.new(MAP, {}, {}, [],
+			{1: Vector2i(5, 10), 2: Vector2i(9, 10), 4: Vector2i(30, 10)}, {})
+	add_child(st_plain)
+	st_plain.set_physics_process(false)
+	for st_pr in [1, 2, 4]:
+		_place(st_plain, st_pr, {1: Vector2i(5, 10), 2: Vector2i(9, 10), 4: Vector2i(30, 10)}[st_pr])
+	st_plain._wire_hit_feedback()
+	st_plain._round_state = MatchHost.RoundState.PLAYING
+	CombatFeedback.attribute(st_plain.players[4], st_plain.players[1])
+	(st_plain.players[4] as Node2D).take_hit(Vector2.ZERO, 60)
+	_down(st_plain, 4, 2)
+	_check(_stat(st_plain, 2, "kills") == 1,
+			"★ ⑬l [正向对照] 队伍表为空时**击杀照记**(实际 %d)" % _stat(st_plain, 2, "kills"))
+	_check(_stat(st_plain, 1, "assists") == 0,
+			"★ ⑬l 队伍表为空 ⇒ **没有任何助攻**(实际 %d)" % _stat(st_plain, 1, "assists"))
+	st_plain.free()
 
 	_ran_to_end = true
 
