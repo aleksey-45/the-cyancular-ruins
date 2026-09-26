@@ -22,7 +22,6 @@ var _cfg_match_time := 0.0             # 房主自定义时长(秒;0=默认 MATC
 var _hud_sync := 0.0
 var _round_spawns: Dictionary = {}    # role -> Vector2i(开局散点,_init 摆位用)
 var _spawned_once: Dictionary = {}    # role -> true(首次摆位走散点,之后动态选复活点)
-var _deaths: Dictionary = {}          # role -> 阵亡数(排行榜展示)
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -224,8 +223,15 @@ func _match_round_tick(delta: float) -> void:
 				# 见 `MatchGround._drop_all_but_one` 上方的完整理由)。共用 `_down_counted`
 				# 闩 ⇒ 每次死亡恰好一次;`_respawn_player` 那一支**不再**掉(会掉在出生点)。
 				_drop_all_but_one(p, int(role))
-				_deaths[int(role)] = int(_deaths.get(int(role), 0)) + 1   # 阵亡计数
 				var killer := _attributed_killer(p)
+				# 逐人统计(★ 2026-09-25):倒地边沿记 death(一律)与击杀(仅在归因到时)。
+				# ★ 与 1v1(`MatchRound._match_round_tick`)的**口径不同,别照抄那一份**:
+				#   那边是「不分死因、对方死亡都算」⇒ 传 `_opponent_of(role)`;大乱斗是
+				#   **自由混战 + 归因制** ⇒ 必须传 `_attributed_killer(p)`,无归因的死亡
+				#   (溺水/坠落/自杀)不计**任何人的**击杀。
+				# ★ `_deaths` 那份**独立的**阵亡计数已删 —— 它与逐人表记的是同一件事,
+				#   两份计数必然漂(载荷里的 `deaths` 改从逐人表构造,见 `_broadcast_round_state`)。
+				_record_down(int(role), killer)
 				if killer != 0:
 					_scores[killer] = int(_scores.get(killer, 0)) + 1
 					_broadcast_kill(killer, role)
@@ -312,11 +318,19 @@ func _broadcast_round_state() -> void:
 	for role in players:
 		var p: Node2D = players[role]
 		alive[int(role)] = is_instance_valid(p) and not p.is_downed()
+	# `deaths` 仍是逐 role 计数(royale_hud 的排行榜按它显示"阵亡"),但来源改成**逐人统计表**
+	# —— 原先的 `_deaths` 是同一件事的第二份计数(两份必然漂,且不会有任何断言变红)。
+	# ★ role 集合取 `_roster()`(在场 ∪ 已离开 ∪ 有数据的):离开者的阵亡数照样要下发给
+	#   排行榜(它按 role 找行),漏了会让那一行**回落到 0 且不报错**。
+	var deaths := {}
+	for role in _roster():
+		var s: Dictionary = _stats.get(int(role), {})
+		deaths[int(role)] = int(s.get("deaths", 0))
 	var data := {
 		"state": _round_state,
 		"round": 1,
 		"scores": _scores,
-		"deaths": _deaths,
+		"deaths": deaths,
 		"rounds_won": {},          # 大乱斗无局胜,占位空(客户端 HUD 兼容读取)
 		"timer": ceilf(_match_time) if _round_state == RoundState.PLAYING else _round_timer,
 		"names": names,
@@ -325,6 +339,12 @@ func _broadcast_round_state() -> void:
 	}
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
+	# 逐人数据:与 `destroyed` / `ground_weapons` / 3v3 同款纪律 —— **只在非空时带该键**。
+	# ★ 大乱斗**不带 `mvp`**(spec §3.6/§4 都没要求;结算页那一栏也不列 ACS) ——
+	#   加了它就会是一个没有读者的键。
+	var table := stats_payload()
+	if not table.is_empty():
+		data["stats"] = table
 	# 基类的广播样板,只多一个"只发在线 peer"(大乱斗里掉线者仍在 peer_by_role 里待清理,
 	# 而往正在断开的 peer 发包会打 channel 错误)。样板本身收在 MatchHost._rpc_all。
 	_rpc_all("round_state", [data], -1, true)
