@@ -100,7 +100,13 @@ extends Node
 #   —— 末尾拿 `_done` 与 `CHECK_NAMES` 对账,名单不全即红。
 
 const MAP := "res://maps/factory1v1.cyrm"
-const WANT_KEYS := ["acs", "assists", "deaths", "dealt", "kills", "kscore", "taken"]   # 升序
+# 载荷七个字段的**逐码点升序**(`_keys_of` 走 `Array.sort()`)。
+# ★★ `dealt` 排在 `deaths` **之前**,别"顺手纠正"成字母表顺序:Godot 的 `Array.sort()` 对 String
+#   走**逐码点**比较(`Variant::operator<` → `String::operator<` → `str_compare`),不是按
+#   "dealt < deaths 看着不像"的直觉 —— 第 4 个字符 `l`(0x6C) vs `t`(0x74) ⇒ `dealt < deaths`。
+#   写成 `[…, deaths, dealt, …]` 会让**生产改对了形状断言照样红**;而错误的修法(放宽成
+#   "包含这七个键就行")会把"载荷字段集"这条真契约拆掉 —— 所以这里必须是逐码点升序。
+const WANT_KEYS := ["acs", "assists", "dealt", "deaths", "kills", "kscore", "taken"]
 const CHECK_NAMES := ["duel_phase", "duel_kill_rule", "royale_phase", "delivery_source"]
 
 var _fails: Array[String] = []
@@ -345,18 +351,31 @@ Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/stats_delivery_probe.tscn 2>&1 | grep -E "STATS DELIVERY|ok  |FAIL"
 ```
-Expected（改宿主**之前**）：
-- `FAIL ★ ① 1v1:倒地边沿记 deaths(实际 0,期望 1)`（`MatchRound._match_round_tick` 从不写逐人表）
-- `FAIL ★ ① 1v1:击杀记给对手(实际 0,期望 1)`
-- `FAIL ★ ① 1v1:kscore = 击杀×100 + 伤害÷5(实际 1,期望 101)`（kills 恒 0 ⇒ 只剩 dealt 7/5 = 1）
-- `FAIL ★ ② 1v1:**无归因的死亡也算对手的击杀**(实际 0,期望 1)`
-- `FAIL ★ ③ 大乱斗:倒地边沿记 deaths(实际 0,期望 1)` / 击杀那条同款
-- `FAIL ★ ④ 1v1 的 round_state 挂上 stats` / `挂上 mvp` / 1v1 倒地边沿含 `_record_down(`
-- `FAIL ★ ③ 大乱斗载荷的 `deaths` 必须从逐人表的 role 集合构造`
-而 **① 的 dealt/taken 两条、③ 的 dealt/taken 与两处字段集、④ 的 `if not table.is_empty():`
-与"大乱斗不该带 mvp"两条应当已经绿** —— 那些是计划 1 的成果（对本计划是正向对照）。
-★ ①的 `kscore` 期望值这时的实际读数是 `7/5 = 1`（kills=0、dealt=7）—— **红是值不匹配**，
-不是"跑不起来"。
+Expected（改宿主**之前**）—— 表里左列是**会红的那一条**，右列是**夹具怎么到达那个状态**：
+
+| 红在哪 | 期望 → 实际 | 为什么夹具能到达 |
+|---|---|---|
+| ① `倒地边沿记 deaths` | 1 → **0** | `server/match_round.gd` 的 `_match_round_tick`(1v1 的倒地边沿)**从不写逐人表** ⇒ `_record_down` 一次都没被调 |
+| ① `击杀记给对手` | 1 → **0** | 同上 |
+| ① `kscore = 击杀×100 + 伤害÷5` | 101 → **1** | kills 恒 0，只剩那 7 点伤害的 `7/5 = 1`（`dealt` 由计划 1 的共用钩子记上） |
+| ② `无归因的死亡也算对手的击杀` | 1 → **0** | 同上（自杀那一步清掉 meta 后 `force_down`，而表里没人写） |
+| ③ `大乱斗:倒地边沿记 deaths` | 1 → **0** | `RoyaleHost._match_round_tick` 写的是 `_deaths`（另一份计数），没调 `_record_down` |
+| ③ `大乱斗:有归因的击杀记给射手` | 1 → **0** | 同上（它写的是 `_scores`） |
+| ③ `大乱斗载荷的 deaths 必须从逐人表构造` | `_roster()` 在位 → **不在位** | `royale_host.gd:325` 现写 `"deaths": _deaths` |
+| ④ `1v1 round_state 挂上 stats` / `挂上 mvp` / `if not table.is_empty():` | 三条 → **三条全无** | `match_round.gd:150-163` 的 payload 里没有这两行 |
+| ④ `1v1 倒地边沿必须调 _record_down` | 有 → **没有** | 同 ① 的成因，这一条是它的**源码级**表述 |
+| ④ `大乱斗 round_state 挂上 stats` | 有 → **没有** | `royale_host.gd:321-331` 的 payload 里没有 |
+
+**改宿主之前就该是绿的**（计划 1 的成果，对本计划是**正向对照** —— 少了它们，
+"什么都没接"的坏实现也能让上面的红全绿）：
+- ① 的 `dealt` / `taken` 两条、① 的字段集那条（`_on_player_hit` 与 `stats_payload` 是**三模式共用**的，
+  计划 1 已接通）；
+- ③ 的 `dealt`/`taken` 两条与字段集那条（同一钩子）；
+- ④ 的 `大乱斗**不该**带 mvp`（反向断言，与本次改动无关）。
+
+★ 红是**值不匹配**（或"函数体里没有那一行"），不是"跑不起来"：本探针读的都是计划 1 已经
+提供的口（`stats_payload` / `_stats` / `stats_payload()[r]["kscore"]`），故 Step 1 的探针能在
+**旧宿主**上正常跑完并打印 `STATS DELIVERY: FAIL —— [...]`。
 
 - [ ] **Step 4: 1v1 宿主接上**
 
@@ -399,8 +418,10 @@ Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/stats_delivery_probe.tscn 2>&1 | grep -E "STATS DELIVERY|FAIL"
 ```
-Expected: ① 与 ② 全绿、④ 里那三条 1v1 的绿；**仍红的只剩 ③ 那三条 + ④ 的"大乱斗不该带 mvp"**
-（最后一条此时是绿的：大乱斗本来就一个 `mvp` 都没有）。
+Expected: ① 与 ② 全绿；④ 里与 **1v1** 有关的三条（`data["stats"]` / `data["mvp"]` /
+`_record_down(`）**新变绿**；**仍红的只剩 ③ 那三条 + ④ 的「大乱斗的 round_state 挂上 `stats`」**。
+★ ④ 的第六条（「大乱斗**不该**带 `mvp`」）与本次改动无关、**本来就绿、改完也仍绿**
+（大乱斗至今没有任何 `mvp`）—— 它是一条**反向断言**，不是红灯，别等它变。
 
 - [ ] **Step 6: 提交（与 Task 2 合并为一次提交亦可；本计划按 Task 分开提交）**
 
@@ -430,7 +451,17 @@ Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/stats_delivery_probe.tscn 2>&1 | grep -E "STATS DELIVERY|大乱斗"
 ```
-Expected: `FAIL ★ ③ 大乱斗:倒地边沿记 deaths(实际 0,期望 1)` 等三条 + ④ 的"大乱斗挂上 stats"。
+Expected —— **四条，全在大乱斗那一侧**：
+| 红在哪 | 期望 → 实际 | 为什么夹具能到达 |
+|---|---|---|
+| ③ `大乱斗:倒地边沿记 deaths` | 1 → **0** | `royale_host.gd:228` 写的是 `_deaths`（另一份计数），没调 `_record_down` |
+| ③ `大乱斗:有归因的击杀记给射手` | 1 → **0** | 同上（击杀写的是 `_scores`） |
+| ③ `大乱斗载荷的 deaths 必须从逐人表构造` | `_roster()` 在位 → **不在位** | `royale_host.gd:325` 现写 `"deaths": _deaths` |
+| ④ `大乱斗 round_state 挂上 stats` | 有 → **没有** | `royale_host.gd:321-331` 的 payload 里没有这一行 |
+
+**此时仍是绿的**：③ 的 `dealt/taken 与 1v1 同源`（`_on_player_hit` 是三模式共用的钩子，
+计划 1 已接通 —— 它的存在是为了证明"这一相真的跑到了伤害那一步"，不是红灯）；
+④ 里 **1v1 那三条也已绿**（Task 1 改完了）。别把它们当"还没修的"去追。
 
 - [ ] **Step 2: 倒地边沿接上，删掉重复计数**
 
@@ -493,9 +524,17 @@ Expected: 全 `ok  `，末行 `STATS DELIVERY: ALL-OK`。
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/stats_delivery_probe.tscn 2>&1 | grep -E "STATS DELIVERY|FAIL"
 ```
-Expected: 红在 **`★ ① 1v1:倒地边沿记 deaths`** / **`★ ① 1v1:击杀记给对手`** /
-**`★ ② 1v1:无归因的死亡也算对手的击杀`** / **`★ ④ 1v1 的倒地边沿必须调 _record_down`**（四条），
-而**大乱斗那三条仍绿** —— 证明这四条红的成因就是那一行，不是环境。
+Expected: **五条**红，全在 1v1 那一侧：
+- `★ ① 1v1:倒地边沿记 deaths(实际 0,期望 1)`
+- `★ ① 1v1:击杀记给对手(实际 0,期望 1)`
+- `★ ① 1v1:kscore = 击杀×100 + 伤害÷5(实际 1,期望 101)` ← **这条也会红**（kills 恒 0，
+  只剩那 7 点伤害的 `7/5 = 1`）
+- `★ ② 1v1:无归因的死亡也算对手的击杀(实际 0,期望 1)`
+- `★ ④ 1v1 的倒地边沿必须调 _record_down`
+
+而 **③ 那三条与 ④ 的「大乱斗挂上 stats」保持绿** —— 大乱斗走的是它自己那个宿主的
+`_record_down` 调用点（Task 2 加的），与这一行无关 ⇒ 证明这五条红的成因就是那一行，不是环境。
+★ 顺带：① 的 dealt/taken 两条与字段集那条**也仍绿**（`_on_player_hit` 是共用钩子，没动）。
 确认后**改回来**。
 
 - [ ] **Step 6: 提交**
@@ -569,9 +608,27 @@ EOF
 			"match_winner": 2 }, names, 1)
 	if roy["columns"] != ["kills", "deaths", "dealt", "taken"]:
 		fails.append("大乱斗 columns 应为 [kills,deaths,dealt,taken],实得 %s" % [roy["columns"]])
-```
-   ③b / ③ 之后那三条**标题**断言（`"游戏结束"`，含 `my_role == match_winner` 与平局两档）
+	# ★★ 「榜首仍是 9 杀」那条(**原 :72-73**)必须**同时**改成这个形状,而且**必须先判空**:
+	#   新夹具去掉了 `scores`,而本步跑的时候 `for_royale` **还没改**(它仍读 `scores`)
+	#   ⇒ `rows` 为空 ⇒ 原来那句 `roy["sections"][0]["rows"][0]["kills"]` **越界**
+	#   ⇒ `_initialize()` 当场中断 ⇒ **不 `quit()`** ⇒ 进程**永久挂起、连一行 verdict 都没有**
+	#   (`-s` 没有 `--quit-after` 兜底;★ 挂住与真失败在输出上**不可分**,都是"看不到 FAIL")。
+	#   改完的判据见下面 ③ 的那两条。
+	③b / ③ 之后那三条**标题**断言（`"游戏结束"`，含 `my_role == match_winner` 与平局两档）
    **照旧** —— 它们只验标题与 `stats` 无关，但夹具同样要换成上面的 `stats` 形状。
+
+**(c2)** 把**原 `:72-73`** 的榜首断言换成"先判空、再判值"（顺手把 → 的期望写在同处）：
+```gdscript
+	# ★★ 先判空:见上一条说明 —— 空榜时 `rows[0]` 会越界,而越界的后果是**挂住**。
+	var rrows: Array = roy["sections"][0]["rows"]
+	if rrows.is_empty():
+		fails.append("★ 大乱斗榜为空(夹具缺 `stats` / 适配器还没改读 `stats`?)—— 不判空的话"
+				+ " `rows[0]` 会越界,整支冒烟会**挂住**而不是失败(本仓判据:挂住与失败不可分)")
+	elif int(rrows[0]["kills"]) != 9:
+		fails.append("★ 大乱斗榜首应是 9 杀(降序排错)")
+```
+★ 新夹具下排序后榜首仍是 role 2(9 杀)⇒ `rrows[0]["kills"] == 9` 这条**语义没变**,变的是
+"它现在从 `stats` 来"。
 
 **(d)** ④ 的列断言（`:104-105`）与夹具的键名：
 
@@ -604,17 +661,27 @@ EOF
 
 - [ ] **Step 2: 跑一次，确认它红**
 
-Run:
+Run（★ **必须套 `timeout`** —— `-s` 脚本没有 `--quit-after` 兜底，而本步要跑的是
+**还没改过适配器**的代码：一旦哪条断言越界，进程会**永久挂住**）:
 ```bash
-source tests/env.sh && "$GODOT" --headless --path . -s res://tests/match_result_payload_smoke.gd 2>&1 | grep -E "MATCH RESULT|★|\+"
+source tests/env.sh && timeout 120 "$GODOT" --headless --path . -s res://tests/match_result_payload_smoke.gd 2>&1 | grep -E "MATCH RESULT|★"
 ```
-Expected:
+Expected —— 四条 `★`，而且**进程必须正常退出**（看到 `MATCH RESULT PAYLOAD: FAIL` 那一行）：
 - `★ 1v1 的 columns 应为 [kills, deaths, dealt, taken, acs],实得 [kills]`
-- `★ 大乱斗 columns 应为 …`（旧实现给 `[kills, deaths]`）
-- `★ 3v3 columns 应为 …`（旧实现给 `[kills, deaths, dmg, acs]`）
-- `★ 缺 `stats` 时大乱斗应是空榜…`（旧实现在 `scores` 缺席时本来就是空榜 ⇒ 这条**此时可能绿**；
-  它真正的鉴别力在重建之后的"别顺手加回退读"上）
-★ 1v1 那两条 `rank` / `kills` 的旧断言要一并按新夹具改（`rows[0]["kills"]` 仍是 7 ⇒ 不变）。
+- `★ 大乱斗 columns 应为 [kills,deaths,dealt,taken],实得 [kills, deaths]`
+  （★ 这一条**只有在 (c2) 的判空守卫已经加好时**才会以这个形式出现 —— 否则本步会先
+  **挂住**，因为旧 `for_royale` 读不到 `scores` ⇒ `rows` 空 ⇒ 原 `:72` 的 `rows[0]` 越界
+  ⇒ `_initialize()` 中断 ⇒ 不 `quit()`）
+- `★ 3v3 columns 应为 [kills,deaths,assists,dealt,taken,acs],实得 [kills, deaths, dmg, acs]`
+- 1v1 的 `★ 榜首应是 7 杀`（旧 `for_duel` 读 `scores`，新夹具只给了 `stats` ⇒ 0 杀）
+  ＋ 1v1 的 `★ 缺 scores 条目的 role 必须仍出一行` 与 `rank` 两条**此时仍绿**
+  （旧 `for_duel` 写死遍历 `[1,2]` ⇒ 恒出两行、`_finish` 照填 rank）。
+
+★★ **挂住 ≠ 失败，而它们在本仓的输出里长得一样**（都是"看不到 FAIL 文本"）：本步若
+`timeout` 到点后**一行 verdict 都没打印**，先回去看 (c2) 的判空守卫有没有加 —— 那是本步
+**唯一**会造成挂住的已知形状，不是"探针没意见"。
+★ 「缺 `stats` ⇒ 大乱斗空榜」那一条 ⑦：旧实现（读 `scores`）在 `scores` 缺席时**也是空榜**
+⇒ **此时绿**；它真正的鉴别力在重建之后的"别顺手加回退读 `scores`"上。
 
 - [ ] **Step 3: 改适配器**
 
@@ -871,6 +938,9 @@ EOF
 逐位对应；大乱斗的 `_record_down(int(role), killer)` 里 `killer` 是 `_attributed_killer` 的返回值(int) ✅。
 
 **4. 已知边界（登记不修）**：
+- `-s` 冒烟**必须套 `timeout`**（Task 3 Step 2 已写明）：`-s` 没有 `--quit-after` 兜底，
+  一次越界就是**永久挂住**，而"挂住"与"真失败"在输出上不可分（都看不到 FAIL 文本）。
+  本计划的已知挂住形状只有一处：③ 那条读 `rows[0]` 的旧断言 —— (c2) 的判空守卫已把它堵死。
 - 1v1 的 `kills` 与记分条同口径（**无归因**：自杀/溺水也算对手的击杀）—— 这是**决定**，
   不是 spec 明文（spec 没写 1v1 的击杀口径），理由写在 Task 1 Step 4 的注释里。
 - 大乱斗不列 ACS（`acs ≡ kscore`）、不列助攻、不带 `mvp`（三条都是 §3.6/§3.3 的推论）。

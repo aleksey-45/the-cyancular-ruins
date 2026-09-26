@@ -128,9 +128,11 @@ func _initialize() -> void:
 
 	# ⑤ ★★ **伤害只被计入一次**(spec §1.4 那条必须写死的口径)
 	#   构造"只把伤害 +100、其余全同"的两个 case,断言 ACS 的增量**恰好**等于
-	#   `100 ÷ DAMAGE_PER_POINT ÷ 局数` —— 而不是它的两倍(两倍 = 读端又加了一次伤害)。
-	#   ★ 鉴别力:`acs = (kscore + dealt) / 局数` 那种双计实现给出的是 **+140**(100/5 + 100),
-	#     本断言期望 **+20** ⇒ 当场红。
+	#   `100 ÷ DAMAGE_PER_POINT ÷ 局数` —— 而不是它再加上那 100 伤害本身。
+	#   ★ 两个数(2 局):`d0 = (0 + 100/5)/2 = 10`、`d1 = (0 + 200/5)/2 = 20`
+	#     ⇒ 期望增量 = `100/5/2` = **10**。
+	#   ★ 鉴别力:`acs = (kscore + dealt) / 局数` 那种双计实现给出 `d0 = (20+100)/2 = 60`、
+	#     `d1 = (40+200)/2 = 120` ⇒ 增量 **60**(不是 10)⇒ 当场红。
 	var d0 := SR.acs(SR.kscore(0, 0, 100, 0), 2)     # 总伤害 100、2 局
 	var d1 := SR.acs(SR.kscore(0, 0, 200, 0), 2)     # 只多 100 伤害
 	var want_delta := 100.0 / float(SR.DAMAGE_PER_POINT) / 2.0
@@ -259,6 +261,11 @@ git commit -m "feat(stats): 三模式通用计分口径 ScoreRules(纯静态 + �
 
 - [ ] **Step 1: 先改探针（让它对新口径红）**
 
+★ **定位规则(本步有 (a)~(j) 十处协同编辑)**:下面给的行号是**本次读到的**行号;
+`(a)` 一执行,整份探针的行号就整体下移(本批约 +15 行)⇒ **从 (b) 起一律按代码块内容定位**
+(每处都给了可搜索的锚点字符串/原行原文),行号只用来**先扫一眼确认位置**,不要按它跳。
+收尾有一道机械兜底:`(e)` 末尾那条 `grep -n '"dmg"' tests/team_host_probe.gd` 必须零命中。
+
 **(a) 三个读数助手**（替换 `tests/team_host_probe.gd:103-107` 的 `_stat`，并在其后加两个）：
 
 ```gdscript
@@ -307,6 +314,8 @@ func _set_stats(host, rows: Array) -> void:
 `:996`、`:1006`、`:1007`、`:1016`、`:1018`、`:1019`；`_set_stats` 里的 `:150` 与 ⑬g 里的
 `:1134`/`:1152` 由上面的 (b)/(i) 整块替换，不必单独改）。
 ★ **变量名不用改**（`st_dmg0` / `st_bdmg0` 之类照旧 —— 它们是读数变量，不是字段键）。
+★ **断言的文字里也写着 "dmg"**（如 `攻击者 dmg 恰好 +7`、`不去掉异队过滤就是「朝队友扔雷刷 ACS」`
+那一条的括号里）—— 一并把那个词改成 `dealt`，免得下一个人以为这几条断言验的是另一个字段。
 ★ 收尾核对：`grep -n '"dmg"' tests/team_host_probe.gd` 必须**零命中**。
 
 **(f) ⑬d 整段替换**（`:1021-1051`）—— 静态表删掉，改成"不再按敌方存活人数加权" + 源码级负向断言：
@@ -375,14 +384,21 @@ func _set_stats(host, rows: Array) -> void:
 |---|---|
 | `_set_stats(_host, [[1, 0, 0, 300], [3, 0, 0, 100]])` | `_set_stats(_host, [[1, 0, 0, 0, 300, 0], [3, 0, 0, 0, 100, 0]])` |
 | `_set_stats(_host, [[3, 0, 0, 300], [5, 0, 0, 300]])` | `_set_stats(_host, [[3, 0, 0, 0, 300, 0], [5, 0, 0, 0, 300, 0]])` |
-| `_set_stats(_host, [[3, 2, 0, 300], [5, 5, 0, 300]])` | `_set_stats(_host, [[3, 2, 0, 0, 300, 0], [5, 5, 0, 0, 300, 0]])` |
+| `_set_stats(_host, [[3, 2, 0, 300], [5, 5, 0, 300]])` | `_set_stats(_host, [[3, 2, 0, 0, 1500, 0], [5, 5, 0, 0, 0, 0]])` |
 | `_set_stats(_host, [[3, 2, 5, 300], [5, 2, 1, 300]])` | `_set_stats(_host, [[3, 2, 5, 0, 1300, 0], [5, 2, 1, 0, 300, 0]])` |
 | `_set_stats(_host, [[5, 2, 1, 300], [3, 2, 1, 300]])` | `_set_stats(_host, [[5, 2, 1, 0, 300, 0], [3, 2, 1, 0, 300, 0]])` |
 
-★ **f4 的新夹具不是随手填的**：新公式下"ACS 并列而阵亡数不同"要**手工配平** ——
-`kscore = kills×100 + dealt/5 − deaths×50`。取 kills 同为 2：`200 + dealt/5 − deaths×50`；
-deaths 5 与 1 差 4 ⇒ 伤害项要补 `4×50 = 200` 分 ⇒ `dealt/5` 差 200 ⇒ **dealt 差 1000**
-（1300 vs 300）。配平后两边 kscore 都是 210 ⇒ 并列成立、阵亡才有得比（MVP 给 5 号）。
+★★ **f3 与 f4 的新夹具都不是随手填的** —— 新公式下"ACS 并列"必须**手工配平**，
+而配平式子是 `kscore = kills×100 + dealt/5 − deaths×50`（协助 0、惩罚 0）：
+· **f3**（ACS 并列 → 比击杀数）：kills 2 vs 5 ⇒ 只差击杀一项就有 `300` 分的缺口
+  ⇒ 伤害项要补掉它：`dealt/5` 差 300 ⇒ **dealt 差 1500**（1500 vs 0）。
+  配平后两边 kscore 都是 `200+300 = 500` ⇒ ACS 并列成立，击杀多者（5 号）胜出。
+  ★ 原先写的 `dealt 300 / 300` 在**旧**公式下才"并列"（两边都取不到 `dealt` ⇒ 都 0），
+  在新公式下是 `260 vs 560` —— 那样**该档自己的 `[仪器] 前提：两人 ACS 并列` 断言会红**，
+  即"生产改对了这一档照样红"。别照旧公式配平。
+· **f4**（ACS 与击杀都并列 → 比阵亡数）：kills 同为 2 ⇒ `200 + dealt/5 − deaths×50`；
+  deaths 5 与 1 差 4 ⇒ 伤害项要补 `4×50 = 200` 分 ⇒ `dealt/5` 差 200 ⇒ **dealt 差 1000**
+  （1300 vs 300）。配平后两边 kscore 都是 210 ⇒ 并列成立、阵亡才有得比（MVP 给 5 号）。
 ★ 同时把 `st_pay[3]["acs"]` 等**读法**统一换成 `_acs(_host, 3)`；
 把 `float(st_pay[...]["acs"])` 那一族断言里的读数替换掉（`stats_payload()` 的键名不变，故也可以
 保留 `st_pay` 只改值 —— 选一种，别两套混用）。
@@ -396,7 +412,14 @@ deaths 5 与 1 差 4 ⇒ 伤害项要补 `4×50 = 200` 分 ⇒ `dealt/5` 差 200
 	_host._round_num = 1
 	var st_pay2: Dictionary = _host.stats_payload()
 	var st_shape_bad: Array[String] = []
-	var st_want_keys := ["acs", "assists", "deaths", "dealt", "kills", "kscore", "taken"]   # 升序
+	# ★★ 顺序是 `dealt` **在 `deaths` 之前** —— 别"顺手纠正"回去:
+	#   Godot 的 `Array.sort()` 对 String 走**逐码点**比较(`Variant::operator<` →
+	#   `String::operator<` → `str_compare`),而不是按字母表直觉 —— `"dealt"` 与 `"deaths"`
+	#   第 4 个字符是 `l`(0x6C) vs `t`(0x74) ⇒ `dealt < deaths`。`String.to_lower()` 也好、
+	#   "字典序看着像错"也好,都不影响这条;写成 `[…, deaths, dealt, …]` 会让**生产改对了
+	#   形状断言照样红**,而错误的修法(放宽成"包含这七个键就行")会把"载荷字段集"这条
+	#   真契约拆掉 —— 所以这里必须是**逐码点升序**。
+	var st_want_keys := ["acs", "assists", "dealt", "deaths", "kills", "kscore", "taken"]
 	for st_k in _host.players:
 		var st_row: Dictionary = st_pay2.get(int(st_k), {})
 		if st_row.is_empty():
@@ -445,20 +468,43 @@ Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/team_host_probe.tscn 2>&1 | grep -E "TEAM HOST|FAIL"
 ```
-Expected（改生产**之前**）—— 恰好这几条红，且成因各不相同：
-- `★ ⑬d 敌方 3 人全在时击杀 → kscore +100(实际 +110)`（旧加权公式还在）
-- `★ ⑬d 旧公式残留:kill_bonus_score 命中 res://server/team_host.gd`（同一个词条 3 条）
-- `★ ⑬e 同一局内第 2 杀**同为 100**(实际 +140)`
-- `★ ⑬f 分差:MVP = ACS 最高者(1 号…)`（旧 `_acs_of` 读 `kscore`+`dmg` 两个键，
-  新夹具只写了 `dealt` ⇒ 两人 ACS 都是 0 ⇒ 并列 ⇒ 按 role 升序给出 3 号）
-- `★ ⑬g acs = … 310(实际 0.0)`（同上：旧读法取不到 `dealt`）
+Expected（改生产**之前**）—— 下面这些**逐条**应当红（这是**改过一遍的**清单：核验时原稿
+漏了 ⑬a/⑬i/⑬b3/⑬e 的第一条/⑬h/⑬j，并把⑬f 那一条写成了会红的样子 —— 实际 ⑬f 只有 (f2) 会红）：
 
-★ **为什么夹具能到达这些状态**：`_set_stats` 直接写 `host._stats`（绕过生产统计写入），
+| 红在哪 | 期望 → 实际（旧生产） | 为什么夹具能到达 |
+|---|---|---|
+| ⑬a `攻击者 dealt 恰好 +7` | 7 → **0** | 旧 `_on_player_hit` 写的是 `dmg` 键，新探针读 `dealt` |
+| ⑬i `伤害记到射手 dealt` | +11 → **+0** | 同上（子弹那一路也走同一个钩子） |
+| ⑬b3 `敌方爆炸照常计入 dealt` | +30 → **+0** | 同上（爆炸 AoE 也走同一个钩子） |
+| ⑬d `敌方 3 人全在 → +100` | 100 → **110** | 旧 `kill_bonus_score(3) = 50+20×3`（`team_host.gd:676`） |
+| ⑬d `敌方只剩 1 人 → 同为 +100` | 100 → **70** | 旧 `kill_bonus_score(1) = 70` |
+| ⑬d `旧公式残留`（3 条） | 零命中 → **命中 3 处** | 三个词条都还在 `server/team_host.gd`（`:44` / `:676` / `:746`） |
+| ⑬e `第 1 杀 = 100` | 100 → **110** | 与 ⑬d 第一条同因 |
+| ⑬e `第 2 杀同为 100` | 100 → **140** | 旧：`90 + MULTI_KILL_BONUS`（`:735-739`） |
+| ⑬f **(f2)** `ACS 并列 → 击杀多者(5 号)` | 3 → **1** | 旧 `_acs_of` 读不到 `dealt` ⇒ 六人 ACS 全 0；`_roster()` 含全部 6 个 `players`，`roles.sort()` 后**第一个是 role 1**，而 `mvp_role` 只在**严格更优**时替换 ⇒ 全 0 并列时胜者是 1 号 |
+| ⑬g 形状（键集） | 7 个 → **5 个** | 旧 `stats_payload` 给 `{kills,deaths,dmg,kscore,acs}` |
+| ⑬g `acs = 310` | 310 → **0.0** | 旧 `_acs_of` = `(kscore + dmg)/局数`，两个键都缺席 |
+| ⑬g `dealt 原样带出` | 300 → **0** | 同上 |
+| ⑬h `离开者 acs = 30` | 30 → **0.0** | 同上（分母对、分子恒 0） |
+| ⑬h `在场者 acs = 20` | 20 → **0.0** | 同上 |
+| ⑬j `已离开者仍是 MVP 候选` | 6 → **1** | 与 (f2) 同因（全 0 并列 → role 升序 → 1 号） |
+| ⑬j 的确定性那条 | 3 → **1**（也红） | 同上 |
+
+★ **⑬f 的 (f1)/(f3)/(f4)/(f5) 与 ⑬b/⑬b2/⑬c 在改生产**之前是绿的** —— 别把它们当"漏改"去追：
+- (f1) 期望 MVP=1 号，而全 0 并列时升序第一个正是 1 号 ⇒ **照旧通过**（这正是原稿写错的一条：
+  它以为会红）；
+- (f3)/(f4)/(f5)：旧读法下六人 ACS 全 0、kills/deaths 却能从新夹具读出来（旧 payload 也读
+  `kills`/`deaths` 两个键）⇒ 并列**成立**、并列判据本身给出了期望的那个人 ⇒ 通过；
+- ⑬b / ⑬b2 / ⑬c 是**纯负向**断言（"不该涨"）⇒ 恒 0 的实现下必然通过。它们的鉴别力全在
+  **改完之后**（去掉 `same_team` 过滤/新鲜度判据就会红），这正是本仓反复强调的
+  "负向断言必须配正向对照"—— 那三条的正向对照分别是 ⑬a/⑬i/⑬b3。
+
+★ **为什么红是"值不匹配"而不是"跑不起来"**：`_set_stats` 直接写 `host._stats`（绕过生产统计写入），
 而旧 `_acs_of`（`server/team_host.gd:772-775`）读的是条目里的 `kscore`/`dmg` 两个键 —— 新夹具
 按新口径写的是 `kills/deaths/assists/dealt/taken`，两个旧键都缺席 ⇒ 恒 0。
-红是**值不匹配**，不是"方法不存在"：`_kscore`/`_acs` 走的是 `stats_payload()`，它在旧生产里也在。
-（★ 这条是刻意设计的：若助手直接调 `host._kscore_of()`，旧生产里那是
-`Invalid call. Nonexistent function` ⇒ `_run()` 当场结束、`_finish()` 照打 `ALL-OK` = **假绿**。）
+助手走 `stats_payload()`（旧生产里也在）而**不是** `host._kscore_of()`：
+后者在旧生产里是 `Invalid call. Nonexistent function` ⇒ `_run()` 当场结束、`_finish()` 照打
+`ALL-OK` = **假绿**（本仓的已知陷阱；这条差别就是"探针真的会红"与"探针假绿"的差别）。
 
 - [ ] **Step 3: 底座加字段与推导口**
 
@@ -483,7 +529,18 @@ var _left: Dictionary = {}
 const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
 # "**这一下**伤害是谁打的" —— 归因必须**新鲜**的阈值(ms)。
 # ★ 与 `ATTRIB_WINDOW` 是**两个问题、两个窗口**:`ATTRIB_WINDOW`(3s)答"这次死亡算谁的击杀",
-#   本阈值答"这一下伤害是谁打的"。理由与定值推导见 `_fresh_attacker_role` 上方。
+#   本阈值答"这一下伤害是谁打的"。★ 不能与击杀口径共用:击杀读的 3s 是"打一枪后 3s 内溺水
+#   仍算你的击杀";拿它判"**这一下**伤害是谁打的"太宽(一次 0.4s 引信的榴弹自爆就会被计入)。
+# ★ 阈值怎么定:真实命中路径的 `attribute()` → `take_hit()` → `took_hit` 信号是**同一调用栈**,
+#   年龄 ≈ 0~1ms;而**上一物理帧**留下的归因至少 ~16.7ms 之前(60Hz)。8ms 落在两者之间:
+#   容得下跨一次毫秒边界,又把"上一帧那次命中"挡在外面。
+# ★★ 阈值成立的前提是"**归因与伤害同一调用栈**"(真实命中路径 ≈ 0~1ms)。**将来新增
+#   「延迟扣血」型伤害必须自己每帧重写归因** —— `LaserWeaponBase` 的**缝 2**(命中结算)明确
+#   把"持续/灼烧型"列为**预定扩展位**,而那种实现是"命中时写一次归因、后续帧再扣血":扣血
+#   那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人伤害恒少且不报错
+#   (没有断言、没有日志,只是 ACS 偏低)。写端不重写归因的话,这条阈值就是那个扩展位的唯一提示。
+#   ★ 本段随常量一起从 `team_host.gd` 搬来(`CLAUDE.md` 的 3v3 小节原先把它的权威落点
+#     指在 `team_host.gd` 的 `ATTRIB_FRESH_MS` 上方 —— 那处指针已随本批改到**这里**)。
 const ATTRIB_FRESH_MS := 8
 ```
 
@@ -713,6 +770,9 @@ source tests/env.sh
 ```
 Expected: 冒烟红在 **`★ 死亡更多 ⇒ ACS 更低 不成立`**；探针红在
 **`★ ⑬g acs = kscore / 局数 = … = 310(实际 360.0)`**。
+★ **会连带红一条**：⑬f 的 (f4) —— 那一档的 `[仪器] 前提：两人 ACS 并列` 是新公式下**手工配平**
+出来的（dealt 1300 vs 300 正是为了抵掉 `5×50` 与 `1×50` 的差），死亡项一撤，`460 vs 260`，
+**前提当场不成立**。那是同一个成因的连带，不是第二处独立缺陷（确认成因后一起还原）。
 ★ 两步缺一不可：只跑冒烟证明不了"生产真的走了 `ScoreRules`"（探针那条是生产路径的读数）。
 确认后**改回来**，再跑一次上一步确认全绿。
 
@@ -775,7 +835,25 @@ Expected: 全绿（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT
   那半句已过期、照实订正。
 ```
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 3: 同步那条"权威落点"指针（不改会变成悬空引用）**
+
+CLAUDE.md 的 3v3 小节里另有一条独立 bullet（**不是**上面那条 `stats`/`mvp` 的）以
+`team_host.gd` 的 `ATTRIB_FRESH_MS` 上方为**权威落点**：
+
+```
+- **★ `ATTRIB_FRESH_MS = 8ms` 的成立前提是"归因与伤害在**同一调用栈**":… 该提示写在 `team_host.gd` 的 `ATTRIB_FRESH_MS` 上方。
+```
+
+本计划把这个常量连同**它上方那整段契约注释**搬到了 `server/match_state.gd`（Task 2 Step 3）——
+不改这一句的话，权威落点会指向一个**已经不存在的注释**（后面的人按它去 `team_host.gd` 找，
+找不到就会以为那条契约被删了，从而把"延迟扣血要自己重写归因"这条要求一起丢掉）。
+把结尾那句改成：
+
+```markdown
+该提示写在 `server/match_state.gd` 的 `ATTRIB_FRESH_MS` 上方(2026-09-25 随常量从 `team_host.gd` 上提到基类)。
+```
+
+- [ ] **Step 4: 提交**
 
 ```bash
 git add CLAUDE.md
@@ -797,13 +875,16 @@ Task 2 Step 4 的同一分支；
 **不做**（spec §8）：实时伤害 HUD / 改爆炸友伤 / 结算页版式 / 拆归因窗口 —— 本计划一概不碰。
 
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。每个改动都给了完整代码块与确切锚点。
-⑬f 的 f4 夹具**给了配平推导**（dealt 差 1000），不是"随便填两个数"。
+★ **两处夹具是配平出来的、不是随手填的**：⑬f 的 f3（dealt 差 1500）与 f4（dealt 差 1000）；
+两处都写了配平式子与"照旧公式配平会红"的告警。
+★ Task 2 Step 1 开头已声明"行号在 (a) 之后即失效、一律按代码块内容定位"。
 
 **3. 类型一致性**：`ScoreRules.kscore(kills, assists, dealt, deaths, team_damage, self_damage,
 team_kills) -> int`（Task 1 定义）与 `_kscore_of` 的调用实参**逐位对应**（7 个）；
 `_record_down(victim_role: int, killer_role: int) -> void` 与调用点 `server/team_host.gd:362`
-的 `_record_down(int(role), _attributed_killer(p))` 一致；`stats_payload()` 的七个键名与
-Task 2 Step 1 的 `st_want_keys` 逐字一致（升序后）；
+的 `_record_down(int(role), _attributed_killer(p))` 一致；
+`stats_payload()` 的七个键名与 Task 2 Step 1 的 `st_want_keys` **逐字一致且都是逐码点升序**
+（`dealt` 在 `deaths` 之前 —— 那一处写明了理由，别按字母表直觉改回去）；
 `_stat_entry` 的八个键名与 `_set_stats` 夹具写的八个键逐字一致。
 
 **4. 明确的已知边界（登记不修）**：

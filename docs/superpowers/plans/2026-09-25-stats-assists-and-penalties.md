@@ -75,7 +75,63 @@
 
 - [ ] **Step 1: 先写 ⑬k/⑬l（会红 —— 助攻恒 0）**
 
-在 `tests/team_host_probe.gd` 的 ⑬j 之后、`_ran_to_end = true` 之前插入：
+★ **相序是硬约束**（本计划的五段 ⑬ 与 ⑬j 的相对位置**不可调换**）：
+`⑬j → ⑬k → ⑬m → ⑬n → ⑬n2 → ⑬l → `_ran_to_end = true``。
+两条理由：① **⑬l 必须最后** —— 它新建第二个宿主，`MatchHost._init` 会重载全局
+`MazeGenerator.current_grid`（`⑬b3/⑬m/⑬n/⑬n2` 都靠 `_find_dry_point()` 读它）；
+② `⑬h` 已经把 role 6 从 `players` 里摘掉（`mark_disconnected(6)`），后面任何一段都
+**不许再引用 `players[6]`**（裸取会 `Invalid get index '6'` ⇒ 探针中断）。
+
+在 `tests/team_host_probe.gd` 的 ⑬j 之后、`_ran_to_end = true` 之前插入。
+
+**先加两个助攻表读数助手**（放在既有 `_kscore` / `_acs` 旁边）：
+
+```gdscript
+# 助攻表读数(表: victim_role -> {attacker_role: 时刻ms})。
+# ★★ 必须走 `host.get("_assist_times")` 而**不是** `host._assist_times`:
+#   字段在本 Task 的红阶段**还不存在**,而不存在的属性**直接取**会抛
+#   `Invalid get index '_assist_times'` ⇒ **只结束 `_run()`**、`_ready()` 的 `await` 照常恢复、
+#   `_finish()` 照打 **`TEAM HOST: ALL-OK`(假绿)**,后面所有断言被静默跳过。
+#   `Object.get()` 对不存在的属性**静默返回 null** ⇒ 那种情况退化成"表是空的" =
+#   干净的值不匹配(FAIL)。这条差别就是"探针真的会红"与"探针假绿"的差别,别"简化"它。
+func _assist_table(host, victim_role: int) -> Dictionary:
+	var t: Variant = host.get("_assist_times")
+	if not (t is Dictionary):
+		return {}
+	var sub: Variant = (t as Dictionary).get(int(victim_role))
+	return sub if sub is Dictionary else {}
+
+
+# 把表里那一笔的时刻往前挪(等 3s 不现实)。返回 false = 表/条目还不存在。
+# ★ 与 `_assist_table` 同款理由:字段不存在时**什么都不做**,由调用方的 `_check` 把它变成
+#   干净的红,而不是中断 `_run()` 的假绿。
+func _age_assist(host, victim_role: int, attacker_role: int, ago_ms: int) -> bool:
+	var t: Variant = host.get("_assist_times")
+	if not (t is Dictionary):
+		return false
+	var outer: Variant = (t as Dictionary).get(int(victim_role))
+	if not (outer is Dictionary):
+		return false
+	(outer as Dictionary)[int(attacker_role)] = Time.get_ticks_msec() - int(ago_ms)
+	return true
+
+
+# 把**除 `keep` 之外**的全部在场玩家挪到远点(⑬m/⑬n/⑬n2 的爆炸半径 100 ⇒ 只打得到爆心那一人)。
+# ★ 判据用"遍历 `players` 减掉例外"而**不是**写死 role 列表:⑬h 已经把 role 6 从 `players`
+#   摘掉(`team_host.gd:582` 的 `players.erase`),写死列表既会漏掉新 role,又会取到不存在的
+#   6 号 —— 后者是 `Invalid get index '6' on Dictionary` ⇒ `_run()` 中断(⑬j 之后的三段
+#   全在这个坑上,而探针里既有的 `[2,3,4,5,6]` 写法是**在 ⑬h 之前**跑的,照抄会踩)。
+func _park_all_but(host, keep: Array, at: Vector2) -> void:
+	for r in host.players:
+		var role := int(r)
+		if keep.has(role):
+			continue
+		var p: Node2D = host.players[r]
+		if p != null and is_instance_valid(p):
+			p.global_position = at
+```
+
+然后是 ⑬k 本段：
 
 ```gdscript
 	# ── ⑬k 助攻:甲打乙 60、丙补掉乙 ⇒ 丙记击杀、**甲记助攻**;窗口外不记 ──
@@ -88,6 +144,9 @@
 	_host._scores = {}
 	_host._left = {}
 	_host._left_round = {}
+	# ★ 逐人原始表也清一次:⑬k/⑬m/⑬n 有几条读数是**增量**(不怕残余),但把表清空能让
+	#   它们与 ⑬l 的绝对读数(「队伍表为空 ⇒ 助攻恒 0」)都建立在可手算的基线上。
+	_host._stats = {}
 	for st_kr in _host.players:
 		_host._respawn_player(int(st_kr))
 	# (k1) 甲(1 号,1 队)打乙(4 号,2 队)60 伤害
@@ -96,9 +155,9 @@
 	var st_a_ks1 := _kscore(_host, 1)
 	CombatFeedback.attribute(_host.players[4], _host.players[1])
 	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 60)
-	_check(_host._assist_times.get(4, {}).has(1),
+	_check(_assist_table(_host, 4).has(1),
 			"★ ⑬k [仪器] 甲的那一枪必须进了助攻表(否则下面两条恒真;表=%s)"
-			% str(_host._assist_times.get(4, {})))
+			% str(_assist_table(_host, 4)))
 	# 丙(2 号,1 队)补掉乙 —— `_down` 会先把归因写成丙,再走倒地边沿
 	_down(_host, 4, 2)
 	_check(_stat(_host, 2, "kills") == 1, "★ ⑬k 丙(补刀的)记击杀(实际 %d)" % _stat(_host, 2, "kills"))
@@ -111,17 +170,17 @@
 			"★ ⑬k 击杀者本人**不**记助攻(实际 +%d)" % (_stat(_host, 2, "assists") - st_a_k2))
 	# ★ 清空点是**复活**而不是倒地 ⇒ 倒地之后、复活之前表**还在**。
 	#   ★ 这两条是**一对**:只断"复活后是空的"的话,"从来就没有这张表"也全绿。
-	_check(not _host._assist_times.get(4, {}).is_empty(),
+	_check(not _assist_table(_host, 4).is_empty(),
 			"★ ⑬k [仪器] 复活**之前**表还在(证下面那条清空不是恒真)")
 	_host._respawn_player(4)
-	_check(_host._assist_times.get(4, {}).is_empty(),
+	_check(_assist_table(_host, 4).is_empty(),
 			"★ ⑬k 复活时清空该受害者的助攻表(不清的话上一条命的命中会算进下一条命)")
 
 	# (k2) 窗口外不记助攻 —— 把表里那一笔的时刻往前挪出 3s
 	# ★ 这里是**直接改表**(唯一一处手写表):等 3s 不现实,而窗口判据必须被验到。
-	_host._assist_times[4] = {1: Time.get_ticks_msec() - TeamHost.ATTRIB_WINDOW - 1000}
-	_check(_host._assist_times.get(4, {}).has(1)
-			and Time.get_ticks_msec() - int(_host._assist_times[4][1]) > TeamHost.ATTRIB_WINDOW,
+	#   `_age_assist` 的防御写法见它的注释(字段不存在时返回 false,由下面这条断言红出来)。
+	_check(_age_assist(_host, 4, 1, TeamHost.ATTRIB_WINDOW + 1000)
+			and Time.get_ticks_msec() - int(_assist_table(_host, 4).get(1, 0)) > TeamHost.ATTRIB_WINDOW,
 			"[仪器] ⑬k 前提:表里那一笔确实**已超窗**(否则下面那条验的不是窗口判据)")
 	var st_a_k3 := _stat(_host, 1, "assists")
 	_down(_host, 4, 2)
@@ -137,6 +196,8 @@
 	var st_a_k5 := _stat(_host, 1, "assists")
 	CombatFeedback.attribute(_host.players[4], _host.players[5])   # 队友(5 号,2 队)打乙(4 号,2 队)
 	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 10)
+	_check(_assist_table(_host, 4).has(5),
+			"[仪器] ⑬k 前提:队友那一枪**确实进了表**(没进的话下面那条是空转)")
 	_down(_host, 4, 1)          # 敌人(1 号,1 队)补掉乙
 	_check(_stat(_host, 5, "assists") - st_a_k4 == 0,
 			("★ ⑬k 受害者的**队友**误伤之后、敌人补刀 ⇒ 那位队友**不得**记助攻"
@@ -181,19 +242,27 @@ Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/team_host_probe.tscn 2>&1 | grep -E "TEAM HOST|⑬k|⑬l"
 ```
-Expected（补表**之前**）：
-- `★ ⑬k [仪器] 甲的那一枪必须进了助攻表(…)` —— 表不存在/为空（`_assist_times` 还没有这个字段）
-- `★ ⑬k 甲**记一次助攻**(实际 +0,期望 +1)`
-- `★ ⑬k 助攻进 kscore(++50,实际 +0)`
-- `★ ⑬l 队伍表为空 ⇒ **没有任何助攻**` —— 这条**此时是绿的**（恒 0 的实现下它必然绿），
-  它的价值在 Task 3 的反证里：一旦助攻实现写成"不过滤队伍"，它才会红。
+Expected（补表**之前**）—— 五条，逐条对：
 
-★ **注意这一档的两个"假绿"风险，Step 3 必须处理**：
-① `_assist_times` 字段不存在时 `_host._assist_times.get(...)` 会**只结束 `_run()`**
-（Godot 4.7 的脚本错误模型），而 `_ready()` 的 `await _run()` 照常恢复、`_finish()` 照打
-**`TEAM HOST: ALL-OK`** ⇒ 后面所有断言被静默跳过。**所以 Step 3 必须先把字段建出来**
-（写端可以先留空），再看下面的红变成"值不对"而不是"跑不起来"。
-② `_place` 的第三参是 `Vector2i`（`tests/team_host_probe.gd:68`），上面 ⑬l 传的就是格坐标 ✅。
+| 红在哪 | 期望 → 实际 | 为什么夹具能到达 |
+|---|---|---|
+| ⑬k `[仪器] 甲的那一枪必须进了助攻表` | 表里有 role 1 → **空表** | `_assist_times` 这个字段还不存在 ⇒ `_assist_table()` 防御读返回 `{}` |
+| ⑬k `甲**记一次助攻**` | +1 → **+0** | 表空 ⇒ `_record_down` 循环里一个候选都没有 |
+| ⑬k `助攻进 kscore` | +50 → **+0** | 同上（`assists` 恒 0） |
+| ⑬k `[仪器] 复活**之前**表还在` | 非空 → **空** | 同上 |
+| ⑬k `[仪器] 前提：表里那一笔确实**已超窗**` | true → **false** | `_age_assist()` 对不存在的字段返回 false |
+| ⑬k `[仪器] 前提：队友那一枪确实进了表` | true → **false** | 同上 |
+| （⑬k 其余两条 + ⑬l 两条） | —— | **此时是绿的**，见下 |
+
+★ **⑬k 里"击杀者本人不记助攻"/"窗口外不记助攻"/"队友误伤不算助攻"与 ⑬l 的两条,在补表之前
+必然通过**（助攻恒 0 ⇒ 所有"不该记"的断言都成立）。别把它们当"漏改"去追 —— 它们的鉴别力
+在 Step 6 之后（各自的变异见 Step 7），⑬l 尤其如此（恒 0 的实现下它必然绿）。
+★ 本步**不会再假绿**：探针读表一律走 `_assist_table()` / `_age_assist()` 两个**防御**助手
+（`host.get("_assist_times")` 对不存在的属性静默返回 null），所以上面六条都是**干净的值不匹配**。
+★ **别把这两个助手"简化"回 `host._assist_times`** —— 直接取不存在的属性会抛
+`Invalid get index`，那**只结束 `_run()`**、`_ready()` 的 `await` 照常恢复、`_finish()` 照打
+**`TEAM HOST: ALL-OK`（假绿）**，后面的断言全被静默跳过。这就是本步 Expected 与探针写法
+必须**成对**改的原因：改一半（探针直接取字段 / Expected 照旧写一串 FAIL）必被这一步卡住。
 
 - [ ] **Step 3: 底座加表（先只加字段与写入口，读端留空）**
 
@@ -313,13 +382,21 @@ Expected: `TEAM HOST: ALL-OK`，零 `FAIL`。
 ★ 若 ⑬k (k1) 的 `[仪器]` 那条红，说明 `take_hit` 那一下没走成（多半是 4 号当时 `downed` ——
 检查上一档 `_down` 之后有没有 `_respawn_player(4)`）。
 
-- [ ] **Step 7: 反证（去掉 `same_team(attacker, killer)` 那半句，确认 ⑬k(k3) 红）**
+- [ ] **Step 7: 反证（把整条过滤拿掉，确认 ⑬k(k3) 红）**
 
-临时把 `_record_down` 里
-`if not same_team(attacker, killer_role) or same_team(attacker, victim_role):` 改成
-`if same_team(attacker, victim_role):`（= 去掉"同队于击杀者"这半），跑同样的命令。
+临时把 `_record_down` 里**整行**删掉：
+`if not same_team(attacker, killer_role) or same_team(attacker, victim_role):` + 它的 `continue`
+（两行一起删；或该 `if` 改成 `if false:`），跑同样的命令。
 Expected: 红在 **`★ ⑬k 受害者的**队友**误伤之后、敌人补刀 ⇒ 那位队友**不得**记助攻(实际 +1)`**。
 确认后**改回来**。
+
+★★ **别用"只删前半句"当变异**：`if same_team(attacker, victim_role): continue`（= 去掉
+"与击杀者同队"那半、留着"与受害者同队"那半）**不会让 (k3) 变红** —— (k3) 的 attacker 是
+**受害者的队友**（5 号 vs 4 号同属 2 队）⇒ 后半个合取项**照样把它挡掉**。照那个变异去"验证"
+会得出"这条断言没有鉴别力"的**错误结论**，而真相是：这一档只有在**两个合取项都缺席**时才
+能显出差异 —— 也就是说两个合取项**互为冗余**（后半个在本函数里恒真，见 Implementation 里
+那条注释），真正吃劲的是前半个 + 后半个的兜底作用。★ 这与"助攻判据第二个合取项恒真"那条
+登记**不矛盾**：恒真的是"在正确的实现里它不会独自改变结果"，而不是"它永远无用"。
 
 - [ ] **Step 8: 提交**
 
@@ -351,7 +428,9 @@ git commit -m "feat(stats): 助攻表(受害者->攻击者->时刻)+ 倒地边�
 
 - [ ] **Step 1: 先写 ⑬m/⑬n/⑬n2（会红）**
 
-接在 ⑬k 之后（**⑬l 之前** —— ⑬l 会新建宿主，必须留在最后）：
+接在 ⑬k 之后、**⑬l 之前**（相序硬约束：`⑬j → ⑬k → ⑬m → ⑬n → ⑬n2 → ⑬l`；⑬l 会新建宿主、
+必须留在最后 —— 见 Task 1 Step 1 那段说明。另：**三段都不许引用 `_host.players[6]`**，
+role 6 已被 ⑬h 摘掉）。
 
 ```gdscript
 	# ── ⑬m 惩罚之一:炸死队友 ──
@@ -363,23 +442,30 @@ git commit -m "feat(stats): 助攻表(受害者->攻击者->时刻)+ 倒地边�
 	if st_p_pt.x < 0:
 		st_p_pt = (_host.players[2] as Node2D).global_position
 	(_host.players[2] as Node2D).global_position = st_p_pt
-	for st_p_r in [3, 4, 5, 6]:
-		(_host.players[st_p_r] as Node2D).global_position = st_p_pt + Vector2(600.0, 0.0)
-	(_host.players[1] as Node2D).global_position = st_p_pt + Vector2(600.0, 0.0)
+	# ★ 其余人(在场的**全部**,含扔雷的 1 号)一律挪到 600px 外 ⇒ 半径 100 的爆炸只够得到 2 号。
+	#   ★ 用 `_park_all_but` 而不是写死 role 列表:⑬h 已把 6 号摘出 `players`(见助手注释)。
+	_park_all_but(_host, [2], st_p_pt + Vector2(600.0, 0.0))
 	var st_p_ks0 := _kscore(_host, 1)
 	var st_p_kills := _stat(_host, 1, "kills")
 	var st_p_deaths := _stat(_host, 1, "deaths")
 	var st_p_dealt := _stat(_host, 1, "dealt")
 	var st_p_taken := _stat(_host, 2, "taken")
+	var st_p_team := _stat(_host, 1, "team_damage")
+	var st_p_tkill := _stat(_host, 1, "team_kills")
 	var st_p_hp2: int = int(_host.players[2].hp)
 	Explosion.apply_aoe(st_p_pt, 100.0, 60, 400.0, _host.players[1])
 	_host._match_round_tick(0.016)      # 倒地边沿(60 > 满血 50 ⇒ 必然死)
 	_check(int(_host.players[2].hp) < st_p_hp2 or (_host.players[2] as Node2D).is_downed(),
 			"★ ⑬m [仪器] 那一下爆炸**真的打中了队友**(否则下面所有读数恒 0)")
-	_check(_stat(_host, 1, "team_damage") == 60,
-			"★ ⑬m 对队友造成的伤害进 team_damage(实际 %d,期望 60)" % _stat(_host, 1, "team_damage"))
-	_check(_stat(_host, 1, "team_kills") == 1,
-			"★ ⑬m 击杀队友记一次(实际 %d,期望 1)" % _stat(_host, 1, "team_kills"))
+	# ★ 读数一律取**增量**:座位表可能带着前面几段的残余(本档只关心"这一下记了什么"),
+	#   而"`dealt` 增量必须是 0"同时兼任**布景仪器** —— 若有别的队在爆区里被蹭到,
+	#   `dealt` 会涨(它按队伍分账),这条就会红。
+	_check(_stat(_host, 1, "team_damage") - st_p_team == 60,
+			"★ ⑬m 对队友造成的伤害进 team_damage(实际 +%d,期望 +60)"
+			% (_stat(_host, 1, "team_damage") - st_p_team))
+	_check(_stat(_host, 1, "team_kills") - st_p_tkill == 1,
+			"★ ⑬m 击杀队友记一次(实际 +%d,期望 +1)"
+			% (_stat(_host, 1, "team_kills") - st_p_tkill))
 	_check(_kscore(_host, 1) - st_p_ks0 == -(60 / 5 + 100),
 			("★ ⑬m 炸死队友 ⇒ kscore **减少** %d(实际 %d)—— 伤害 ÷5 与击杀队友 ×100 两项")
 			% [-(60 / 5 + 100), _kscore(_host, 1) - st_p_ks0])
@@ -401,18 +487,19 @@ git commit -m "feat(stats): 助攻表(受害者->攻击者->时刻)+ 倒地边�
 	if st_s_pt.x < 0:
 		st_s_pt = (_host.players[1] as Node2D).global_position
 	(_host.players[1] as Node2D).global_position = st_s_pt
-	for st_s_r in [2, 3, 4, 5, 6]:
-		(_host.players[st_s_r] as Node2D).global_position = st_s_pt + Vector2(600.0, 0.0)
+	_park_all_but(_host, [1], st_s_pt + Vector2(600.0, 0.0))
 	var st_s_ks0 := _kscore(_host, 1)
 	var st_s_deaths := _stat(_host, 1, "deaths")
+	var st_s_self := _stat(_host, 1, "self_damage")
 	var st_s_hp1: int = int(_host.players[1].hp)
 	Explosion.apply_aoe(st_s_pt, 100.0, 20, 400.0, _host.players[1])   # 投掷者 = 受害者本人
 	_check(int(_host.players[1].hp) == st_s_hp1 - 20,
 			"★ ⑬n [仪器] 自己那一下**真的炸到自己了**(hp %d → %d,期望 -20;`apply_aoe` 不排除投掷者)"
 			% [st_s_hp1, int(_host.players[1].hp)])
-	_check(_stat(_host, 1, "self_damage") == 20,
-			("★ ⑬n 自伤进 self_damage(实际 %d,期望 20);★ 删掉 `Explosion` 里那笔 "
-			+ "`note_self_hit` 这条就变 0") % _stat(_host, 1, "self_damage"))
+	_check(_stat(_host, 1, "self_damage") - st_s_self == 20,
+			("★ ⑬n 自伤进 self_damage(实际 +%d,期望 +20);★ 删掉 `Explosion` 里那笔 "
+			+ "`note_self_hit` 这条就变 0")
+			% (_stat(_host, 1, "self_damage") - st_s_self))
 	_check(_kscore(_host, 1) - st_s_ks0 == -(20 / 5),
 			"★ ⑬n 自伤 ⇒ kscore 减少 %d(实际 %d)" % [-(20 / 5), _kscore(_host, 1) - st_s_ks0])
 	_check(_stat(_host, 1, "deaths") == st_s_deaths,
@@ -427,9 +514,7 @@ git commit -m "feat(stats): 助攻表(受害者->攻击者->时刻)+ 倒地边�
 	if st_n2_pt.x < 0:
 		st_n2_pt = (_host.players[4] as Node2D).global_position
 	(_host.players[4] as Node2D).global_position = st_n2_pt
-	for st_n2_r in [2, 3, 5, 6]:
-		(_host.players[st_n2_r] as Node2D).global_position = st_n2_pt + Vector2(600.0, 0.0)
-	(_host.players[1] as Node2D).global_position = st_n2_pt + Vector2(600.0, 0.0)
+	_park_all_but(_host, [4], st_n2_pt + Vector2(600.0, 0.0))
 	var st_n2_dealt := _stat(_host, 1, "dealt")
 	var st_n2_taken := _stat(_host, 4, "taken")
 	var st_n2_team := _stat(_host, 1, "team_damage")
@@ -451,14 +536,23 @@ Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/team_host_probe.tscn 2>&1 | grep -E "TEAM HOST|⑬m|⑬n"
 ```
-Expected（补账**之前**）：
-- `★ ⑬m 对队友造成的伤害进 team_damage(实际 0,期望 60)`
-- `★ ⑬m 击杀队友记一次(实际 0,期望 1)`
-- `★ ⑬m 炸死队友 ⇒ kscore **减少** -112(实际 +0)`
-- `★ ⑬n 自伤进 self_damage(实际 0,期望 20)`
-- `★ ⑬n 自伤 ⇒ kscore 减少 -4(实际 +0)`
-- `★ ⑬n2 …` —— **此时应是绿的**（`dealt`/`taken` 由计划 1 已接上）：它是那五条的红之外的
-  正向对照，用来保证本 Task 实施后不是"什么都记不上"。
+Expected（补账**之前**）—— 五条红、四条绿，逐条对：
+
+| 红在哪 | 期望 → 实际（补账前） | 为什么夹具能到达 |
+|---|---|---|
+| ⑬m `对队友造成的伤害进 team_damage` | +60 → **+0** | 队友伤害那一支还没写 ⇒ 恒 0 |
+| ⑬m `击杀队友记一次` | +1 → **+0** | `_record_down` 的 same_team 分支还没记 `team_kills` |
+| ⑬m `炸死队友 ⇒ kscore 减少 -112` | -112 → **0** | 两项都缺席（伤害项 12 + 击杀队友 100） |
+| ⑬n `自伤进 self_damage` | +20 → **+0** | 自伤标记通道还没建（`Explosion` 里没有 `note_self_hit`） |
+| ⑬n `自伤 ⇒ kscore 减少 -4` | -4 → **0** | 同上 |
+| （⑬m 的 `[仪器] 真的打中了队友`） | —— | **绿**：`apply_aoe` 的 60 伤本来就会让 2 号倒地 |
+| （⑬m 的 kills/deaths 不变、惩罚不进 dealt/taken） | —— | **绿**：补账前那两项本来就是 0 ⇒ 纯负向断言必然通过 |
+| （⑬n 的 `[仪器] 真的炸到自己了`） | —— | **绿**：`apply_aoe` 不排除投掷者（既有行为） |
+| （⑬n2 全段） | —— | **绿**：`dealt`/`taken` 由计划 1 已接上，而惩罚那两笔账补账前就是 0 |
+
+★ 那四条绿的是**正向对照**（⑬n2）与**负向断言**（⑬m 的不变项）—— 它们的鉴别力在
+Step 6 之后：⑬n2 会在"惩罚口径把敌方伤害也吃进去"时红，⑬m 的不变项会在"惩罚写进了
+`dealt`/`taken`"时红。别把它们当"漏改"去追。
 
 ★ **为什么夹具能到达这些状态**：⑬m 的 `Explosion.apply_aoe(爆心, 100, 60, …, players[1])` 中
 受害者 2 号**站在爆心**（`d == 0 < radius×0.4`）⇒ `_falloff` 满值、`cover_multiplier` 免疫遮挡
@@ -578,7 +672,10 @@ Expected: 红在 **`★ ⑬n 自伤进 self_damage(实际 0,期望 20)`** 与
 ★ 这一步是本计划**最要紧**的一次反证：它就是 spec §3.5「不需要新机制」那句话的反面证据。
 
 **(b) 撤掉队友伤害那笔账**：把 `_on_player_hit` 里 `elif stat_attacker != 0 and same_team(...)`
-那一支的 `sm["team_damage"] = ...` 一行注释掉，跑同样的命令。
+那一支的 `sm["team_damage"] = ...` 一行注释掉 —— ★ **必须在原位补一句 `pass`**
+（或者连 `elif` 的条件一起注释掉）：GDScript 的空块是 **Parse Error**，而那是
+"场景根没有脚本 ⇒ 一行都不打印"的形状，与真失败在输出上**不可分**（本仓明文纪律）。
+跑同样的命令。
 Expected: 红在 **`★ ⑬m 对队友造成的伤害进 team_damage(实际 0,期望 60)`** 与
 **`★ ⑬m 炸死队友 ⇒ kscore **减少** -112(实际 -100)`**（`team_kills` 的 100 仍在 ⇒ 只剩伤害项缺席）。
 确认后**都改回来**，再跑 Step 6 的命令确认全绿。
@@ -667,7 +764,12 @@ EOF
 **不在本计划**（spec §8）：把 `ATTRIB_WINDOW` 拆成两个窗口 / 局内伤害 HUD / 结算页列（计划 3）。
 
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。五段探针都是完整可跑的代码块；
-每个反证都点名**会红哪一条**并给出**夹具为什么能到达那个状态**。
+每个反证都点名**会红哪一条**并给出**夹具为什么能到达那个状态**（Step 2 的 Expected 一律是表格）。
+★ 两个**防御式探针助手**是承重的、不是风格选择：`_assist_table()` / `_age_assist()` 走
+`host.get("_assist_times")`（不存在的属性静默返回 null），把"字段还没建"退化成**值不匹配**；
+直接写 `host._assist_times` 会抛 `Invalid get index` ⇒ `_run()` 中断 ⇒ `_finish()` 照打
+`TEAM HOST: ALL-OK` = **假绿**。同理 `_park_all_but()` 用"遍历 `players` 减掉例外"而不是写死
+role 列表（`players[6]` 已被 ⑬h 摘掉，写死会中断）。三处都写明了"别简化"。
 
 **3. 类型一致性**：`_note_hit(victim_role: int, attacker_role: int) -> void` 与
 `MatchCombat._on_player_hit` 的调用实参一致；`_clear_assist_table(victim_role: int) -> void` 与
