@@ -71,6 +71,30 @@ static func attribute(victim: Node, attacker: Node) -> void:
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
 
 
+## 自伤标记:**爆炸的投掷者本人**在爆区里时,由 `Explosion.apply_aoe` 写一笔。
+## ★ 为什么必须新增这条通道:`attribute()` 在 `attacker == victim` 时**静默跳过**(自伤不归因给
+##   自己 —— 那是对的,否则"自己炸自己"会被记成自己的击杀),但它让自伤在 `_on_player_hit` 里
+##   与"归因不到"**完全不可区分**(读端唯一的攻击者来源是那个 meta,而自伤路径上它停在
+##   **上一名敌人**身上或干脆不存在)。
+##   惩罚要扣"对自己造成的伤害",就必须有一条**只表示自伤**的通道。
+## ★ 它是一个**时刻标量**而不是"谁":自伤的攻击者恒为受害者本人,没有第二方。
+## ★ 与 `attribute` 同款:只写元数据、不做任何判定、**headless 服务器下同样安全**
+##   (不碰 `current`,不碰任何 UI 节点)。
+static func note_self_hit(victim: Node) -> void:
+	if victim == null or not is_instance_valid(victim):
+		return
+	victim.set_meta("last_self_hit_time", Time.get_ticks_msec())
+
+
+## 该受害者**这一下**是不是自伤(`window_ms` 内刚被标记过)。无标记/超窗 → false。
+static func is_fresh_self_hit(victim: Node, window_ms: int) -> bool:
+	if victim == null or not is_instance_valid(victim):
+		return false
+	if not victim.has_meta("last_self_hit_time"):
+		return false
+	return Time.get_ticks_msec() - int(victim.get_meta("last_self_hit_time")) <= window_ms
+
+
 ## 归因 + 命中标记的一体入口:武器命中**玩家**时的统一收尾(PvP 的爆炸/激光玩家分支共用)。
 ## ★归因必须在**伤害调用之前**完成 —— take_hit 可能同帧判死,大乱斗的倒地边沿当场读
 ## last_damager 的 meta(见 attribute 的注释)。散写成两行时极易漏掉先后顺序。

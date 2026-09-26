@@ -210,30 +210,40 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	# ── 逐人统计(三模式共用;★ 2026-09-25 从 `TeamHost._on_player_hit` 上提)──
 	# 一个钩子覆盖**全部**伤害来源(子弹 / 榴弹直击 / 爆炸 AoE / 激光):它们的共同点是
 	# "归因写入 `CombatFeedback.attribute` 都在 `take_hit` 之前"(本仓明文纪律,见
-	# core/sim/explosion.gd:54 与 scenes/weapons/laser_weapon_base.gd:233),于是
-	# `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion`**。
+	# core/sim/explosion.gd:62 与 scenes/weapons/laser_weapon_base.gd:233),于是
+	# `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion` 的伤害逻辑**。
 	# ★★ "覆盖全部来源"说的是**钩子**,不是**归因写端** —— 写端有一处缺口:子弹直击的
 	#   `attribute` 写在**各模式的覆写**里(`RoyaleHost`/`TeamHost`),基类
 	#   `_on_bullet_hit` **不写** ⇒ **1v1 的子弹不计入 `dealt`**(其余来源各自写归因、
 	#   照常计入)。今天无害(1v1 还不投递 `stats`),接投递时它会表现为**系统性偏低 ACS
 	#   且没有任何探针会红**。二选一的修法见 CLAUDE.md 的那条登记。
-	# ★ `dealt` 与 `taken` **口径对称**(spec §3.1):都只算**敌人** ——
-	#   队友爆炸炸到我不进 `taken`、自己炸自己也不进(那两类的代价走**惩罚**,记在肇事者行上)。
-	# ★ 三档都不记:自伤(写端静默跳过 ⇒ 由新鲜度挡掉)/ 队友伤害(按队过滤)/
-	#   归因不到。★ 后两档在 1v1 / 大乱斗里**天然不成立**:队伍表空 ⇒ `same_team` 恒 false
-	#   ⇒ 这两列就等于"对所有人的伤害",不需要特判(spec §5.6 的免费正确性,别去"优化"它)。
+	var stat_victim: Node2D = players.get(int(role))
+	var stat_self := stat_victim != null and is_instance_valid(stat_victim) \
+			and CombatFeedback.is_fresh_self_hit(stat_victim, ATTRIB_FRESH_MS)
 	var stat_attacker := _fresh_attacker_role(int(role))
 	if stat_attacker != 0:
-		# 助攻表:所有**归因得到**的命中都记一笔(含队友误伤 —— 读端按 `same_team` 过滤,
-		# 见 `_record_down`;写端不过滤才能让那条规则只有一处)。
-		# ★ 与 `dealt` 的门槛**不同款**是刻意的:`dealt` 只算敌人,助攻候选人要连队友一起
-		#   收下来、再由读端判"与击杀者同队"(spec §3.4 那条荒谬助攻的堵法)。
+		# 助攻表:所有**归因得到**的命中都记一笔(含队友误伤 —— 读端按 `same_team` 过滤)。
 		_note_hit(int(role), stat_attacker)
 		if not same_team(stat_attacker, int(role)):
+			# `dealt` / `taken` **口径对称**(spec §3.1):都只算**敌人**。
+			# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ 这两列就等于"对所有人的伤害",
+			#   不需要特判(§5.6 的免费正确性,别去"优化"它)。
 			var sa := _stat_entry(stat_attacker)
 			sa["dealt"] = int(sa["dealt"]) + int(damage)
 			var sv := _stat_entry(int(role))
 			sv["taken"] = int(sv["taken"]) + int(damage)
+	# ── 惩罚的两笔账:只减分,**不进** dealt / taken(spec §3.5)──
+	# ★ 自伤优先判定:自伤时 meta 通常还是上一名敌人(或为空),两者不同时成立;真同时成立
+	#   (同帧内先被敌人打中、再被自己的爆炸炸到)时按**自伤**记 —— 那一下的来源就是自己的爆炸。
+	#   ★★ 已知边界(登记不修,承自 `ATTRIB_FRESH_MS` 的既有边界):上面那个 `if` 若成立,
+	#     同一笔伤害会**同时**记进 `dealt`(给那位敌人)与 `self_damage`(给自己)—— 两个不同的
+	#     账户,不是双计;`acs` 只读 kscore,而 kscore 里两者各出现一次。
+	if stat_self:
+		var ss := _stat_entry(int(role))
+		ss["self_damage"] = int(ss["self_damage"]) + int(damage)
+	elif stat_attacker != 0 and same_team(stat_attacker, int(role)):
+		var sm := _stat_entry(stat_attacker)
+		sm["team_damage"] = int(sm["team_damage"]) + int(damage)
 	for r in peer_by_role:
 		# 判活:这是**每次伤害**都发的定向包(交火时最密的一处),原先完全不判 ——
 		# 往"正在断开"的 peer 发就是那条 channel 0 错误(判据为何不能用 get_peers 见 NetBus)。

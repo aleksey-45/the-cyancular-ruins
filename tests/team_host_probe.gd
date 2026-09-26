@@ -1453,6 +1453,102 @@ func _run() -> void:
 			+ "(实际 +%d);助攻块挪到早退之前**并**删掉后半句就会给 +1")
 			% (_stat(_host, 3, "assists") - st_a_k4b))
 
+	# ── ⑬m 惩罚之一:炸死队友 ──
+	# ★ spec §6.3:甲的 kscore **减少**、deaths 不变、kills 不变;
+	#   ★ 并且**不进** `dealt`(伤害那一列只算敌人)—— 与 `taken`(受害者那一侧)同样不进。
+	# 布景与 ⑬b3 同款:受害者摆在**爆心**(d == 0 ⇒ 内圈满伤、免疫遮挡),其余人摆到 600px 外。
+	_host._respawn_player(2)     # 队友乙:2 号(1 队)
+	var st_p_pt := _find_dry_point()
+	if st_p_pt.x < 0:
+		st_p_pt = (_host.players[2] as Node2D).global_position
+	(_host.players[2] as Node2D).global_position = st_p_pt
+	# ★ 其余人(在场的**全部**,含扔雷的 1 号)一律挪到 600px 外 ⇒ 半径 100 的爆炸只够得到 2 号。
+	#   ★ 用 `_park_all_but` 而不是写死 role 列表:⑬h 已把 6 号摘出 `players`(见助手注释)。
+	_park_all_but(_host, [2], st_p_pt + Vector2(600.0, 0.0))
+	var st_p_ks0 := _kscore(_host, 1)
+	var st_p_kills := _stat(_host, 1, "kills")
+	var st_p_deaths := _stat(_host, 1, "deaths")
+	var st_p_dealt := _stat(_host, 1, "dealt")
+	var st_p_taken := _stat(_host, 2, "taken")
+	var st_p_team := _stat(_host, 1, "team_damage")
+	var st_p_tkill := _stat(_host, 1, "team_kills")
+	var st_p_hp2: int = int(_host.players[2].hp)
+	Explosion.apply_aoe(st_p_pt, 100.0, 60, 400.0, _host.players[1])
+	_host._match_round_tick(0.016)      # 倒地边沿(60 > 满血 50 ⇒ 必然死)
+	_check(int(_host.players[2].hp) < st_p_hp2 or (_host.players[2] as Node2D).is_downed(),
+			"★ ⑬m [仪器] 那一下爆炸**真的打中了队友**(否则下面所有读数恒 0)")
+	# ★ 读数一律取**增量**:座位表可能带着前面几段的残余(本档只关心"这一下记了什么"),
+	#   而"`dealt` 增量必须是 0"同时兼任**布景仪器** —— 若有别的队在爆区里被蹭到,
+	#   `dealt` 会涨(它按队伍分账),这条就会红。
+	_check(_stat(_host, 1, "team_damage") - st_p_team == 60,
+			"★ ⑬m 对队友造成的伤害进 team_damage(实际 +%d,期望 +60)"
+			% (_stat(_host, 1, "team_damage") - st_p_team))
+	_check(_stat(_host, 1, "team_kills") - st_p_tkill == 1,
+			"★ ⑬m 击杀队友记一次(实际 +%d,期望 +1)"
+			% (_stat(_host, 1, "team_kills") - st_p_tkill))
+	_check(_kscore(_host, 1) - st_p_ks0 == -(60 / 5 + 100),
+			("★ ⑬m 炸死队友 ⇒ kscore **减少** %d(实际 %d)—— 伤害 ÷5 与击杀队友 ×100 两项")
+			% [-(60 / 5 + 100), _kscore(_host, 1) - st_p_ks0])
+	_check(_stat(_host, 1, "kills") == st_p_kills and _stat(_host, 1, "deaths") == st_p_deaths,
+			"★ ⑬m 肇事者的 kills / deaths **不变**(实际 %d/%d)"
+			% [_stat(_host, 1, "kills"), _stat(_host, 1, "deaths")])
+	_check(_stat(_host, 1, "dealt") == st_p_dealt and _stat(_host, 2, "taken") == st_p_taken,
+			("★ ⑬m 惩罚**不进** dealt / taken(实际 %d/%d;伤害那两列只算敌人)"
+			+ " —— 惩罚是**另一笔账**,与 dealt/taken 不共用(spec §3.5)")
+			% [_stat(_host, 1, "dealt"), _stat(_host, 2, "taken")])
+
+	# ── ⑬n 惩罚之二:**自伤**同样扣 ──
+	# ★★ 本档是"自伤标记通道"的**唯一**守卫(spec §3.5 说"不需要新机制",实测**需要**:
+	#   `attribute()` 对 attacker == victim 静默跳过 ⇒ 自伤与"归因不到"在 `_on_player_hit`
+	#   里完全不可区分)。把 `Explosion` 里那笔 `note_self_hit` 删掉,本档立刻红。
+	# ★ 20 伤 < 满血 50 ⇒ 故意**不打死**,只量伤害账。
+	_host._respawn_player(1)
+	var st_s_pt := _find_dry_point()
+	if st_s_pt.x < 0:
+		st_s_pt = (_host.players[1] as Node2D).global_position
+	(_host.players[1] as Node2D).global_position = st_s_pt
+	_park_all_but(_host, [1], st_s_pt + Vector2(600.0, 0.0))
+	var st_s_ks0 := _kscore(_host, 1)
+	var st_s_deaths := _stat(_host, 1, "deaths")
+	var st_s_self := _stat(_host, 1, "self_damage")
+	var st_s_hp1: int = int(_host.players[1].hp)
+	Explosion.apply_aoe(st_s_pt, 100.0, 20, 400.0, _host.players[1])   # 投掷者 = 受害者本人
+	_check(int(_host.players[1].hp) == st_s_hp1 - 20,
+			"★ ⑬n [仪器] 自己那一下**真的炸到自己了**(hp %d → %d,期望 -20;`apply_aoe` 不排除投掷者)"
+			% [st_s_hp1, int(_host.players[1].hp)])
+	_check(_stat(_host, 1, "self_damage") - st_s_self == 20,
+			("★ ⑬n 自伤进 self_damage(实际 +%d,期望 +20);★ 删掉 `Explosion` 里那笔 "
+			+ "`note_self_hit` 这条就变 0")
+			% (_stat(_host, 1, "self_damage") - st_s_self))
+	_check(_kscore(_host, 1) - st_s_ks0 == -(20 / 5),
+			"★ ⑬n 自伤 ⇒ kscore 减少 %d(实际 %d)" % [-(20 / 5), _kscore(_host, 1) - st_s_ks0])
+	_check(_stat(_host, 1, "deaths") == st_s_deaths,
+			"★ ⑬n 没打死 ⇒ deaths 不变(实际 %d)" % _stat(_host, 1, "deaths"))
+
+	# ── ⑬n2 正向对照:同一个爆炸打在**敌人**身上照常进 dealt / taken,且不进惩罚 ──
+	# ★ 与 ⑬m/⑬n 互为一组:少了它,"什么都记不上"的坏实现能让那两条全绿(本仓反复清的那种假绿)。
+	# ★ 布景与 ⑬m 逐字同款,只把受害者换成**敌方**(4 号,2 队),且投掷者(1 号)自己远远站着
+	#   —— 远到不在爆区内 ⇒ **不会**写出自伤标记(半径 100 < 600)。
+	_host._respawn_player(4)
+	var st_n2_pt := _find_dry_point()
+	if st_n2_pt.x < 0:
+		st_n2_pt = (_host.players[4] as Node2D).global_position
+	(_host.players[4] as Node2D).global_position = st_n2_pt
+	_park_all_but(_host, [4], st_n2_pt + Vector2(600.0, 0.0))
+	var st_n2_dealt := _stat(_host, 1, "dealt")
+	var st_n2_taken := _stat(_host, 4, "taken")
+	var st_n2_team := _stat(_host, 1, "team_damage")
+	var st_n2_self := _stat(_host, 1, "self_damage")
+	Explosion.apply_aoe(st_n2_pt, 100.0, 30, 400.0, _host.players[1])
+	_check(_stat(_host, 1, "dealt") - st_n2_dealt == 30
+			and _stat(_host, 4, "taken") - st_n2_taken == 30,
+			"★ ⑬n2 敌方爆炸照常进 dealt/taken(实际 +%d/+%d,期望 +30/+30)"
+			% [_stat(_host, 1, "dealt") - st_n2_dealt, _stat(_host, 4, "taken") - st_n2_taken])
+	_check(_stat(_host, 1, "team_damage") == st_n2_team
+			and _stat(_host, 1, "self_damage") == st_n2_self,
+			"★ ⑬n2 敌方伤害**不进**惩罚那两笔账(实际 %d/%d)"
+			% [_stat(_host, 1, "team_damage"), _stat(_host, 1, "self_damage")])
+
 	# ── ⑬l 队伍表为空(1v1 / 大乱斗的形状)⇒ **拿不到任何助攻**,而击杀照记 ──
 	# ★ 这是 spec §3.4「免费的正确性」的守卫:`same_team(0,0)` 恒 false ⇒ 助攻过滤天然不成立。
 	#   ★ 正向对照(击杀照记)不可省:只断言"assists == 0"的话,一个**什么都没接**的宿主
