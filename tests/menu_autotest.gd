@@ -16,6 +16,10 @@ extends Node
 
 var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
 
+# sp 模式用:选图控件里点的是哪张图(进关后要断言"真的建了这张图")
+const PICK_MAP := "res://maps/factory1v1.cyrm"
+var _picked_map_expected := ""
+
 func _ready() -> void:
 	_run()
 
@@ -50,6 +54,7 @@ func _run() -> void:
 	elif mode == "sp":
 		_press_by_text(tree.current_scene, "单 人 模 式")
 		await tree.create_timer(0.4).timeout
+		_verify_map_picker(tree)
 		_press_by_text(tree.current_scene, "开 始 探 索")
 	elif mode == "mp":
 		_press_by_text(tree.current_scene, "1 v 1")   # 文案 2026-09-21 起是「1 v 1」(原「多 人 对 战」)
@@ -82,11 +87,67 @@ func _run() -> void:
 	if must_reach.has(mode) and not _require_scene(tree, str(must_reach[mode])):
 		return
 	if mode == "sp":
+		await _verify_picked_map(tree)
 		await _verify_pause(tree)
 		await _verify_go_menu(tree)
 	await _shot(tree, "autotest_%s.png" % mode)
 	print("AUTOTEST[%s]: DONE" % mode)
 	tree.quit(0)
+
+
+# ── 选图控件(单机开局面板)──
+# 为什么必须在**场景级**验:数据层探针只能证明"目录/缩略图/校验函数对",证明不了
+# "面板上选中的值有没有真的走到建图"。少了这条,"摆了两张缩略图、进关还是随机图"这种
+# 假功能照样通过(末尾的场景断言只看"到了 level_0.tscn")。
+func _verify_map_picker(tree: SceneTree) -> void:
+	var picker := _find_picker(tree.current_scene)
+	if picker == null:
+		print("AUTOTEST[sp]: 单机开局面板里没有选图控件(MapPicker)")
+		tree.quit(1)
+		return
+	print("AUTOTEST[sp]: 选图控件已就位,卡片数 = %d" % picker._cards.size())
+	if picker._cards.size() < 3:
+		print("AUTOTEST[sp]: 选图卡片太少(%d,至少应有「随机」+ 2 张图)" % picker._cards.size())
+		tree.quit(1)
+		return
+	picker.select_path(PICK_MAP, false)
+	if picker.selected != PICK_MAP:
+		print("AUTOTEST[sp]: 点选后 selected 未更新(实为「%s」)" % picker.selected)
+		tree.quit(1)
+		return
+	_picked_map_expected = PICK_MAP
+	print("AUTOTEST[sp]: 已在面板里选中 %s" % PICK_MAP)
+
+
+# 进关后:钉住的图 + 世界像素尺寸都要按选中的图算
+# (后者是**真的坑**:启动时算的是随机图的尺寸,选了别的尺寸的图不重算 → 环面回绕按错边界)
+func _verify_picked_map(tree: SceneTree) -> void:
+	if _picked_map_expected == "":
+		return
+	var got := MazeGenerator.map_file_path()
+	var cells := MapFormat.map_size(_picked_map_expected)
+	var want_w := cells.x * GameParameters.TILE_SIZE
+	print("AUTOTEST[sp]: 进关地图 = %s(面板选的是 %s);世界宽度 = %d(该图应为 %d)" % [
+			got, _picked_map_expected, GameParameters.MAP_WIDTH, want_w])
+	if got != _picked_map_expected:
+		print("AUTOTEST[sp]: 面板选的图没生效!")
+		tree.quit(1)
+		return
+	if GameParameters.MAP_WIDTH != want_w:
+		print("AUTOTEST[sp]: 世界尺寸没按选中的图重算(refresh_map_size 漏了?)")
+		tree.quit(1)
+
+
+func _find_picker(n: Node) -> MapPicker:
+	if n == null or not is_instance_valid(n):
+		return null
+	if n is MapPicker:
+		return n
+	for c in n.get_children():
+		var hit := _find_picker(c)
+		if hit != null:
+			return hit
+	return null
 
 
 # ── switch 模式:两趟「进单机 → 回主菜单」,把 safe_change_scene 的两条路径都走到 ──

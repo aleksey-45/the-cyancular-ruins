@@ -60,6 +60,12 @@ func _ready() -> void:
 # change_scene 在这里只会销毁一棵 Control 树,不存在「销毁大世界 × 构建大世界」的同帧对撞。
 # 反方向(游戏世界退役回菜单)才需要挂起式切换,见 Level0.safe_change_scene 的注释。
 func _enter_level0() -> void:
+	# 选图(菜单里定的,空 = 随机):★ 必须在 change_scene **之前**钉进 MazeGenerator 的会话缓存
+	# —— 它是静态的,活过场景切换;文件被删/改名时回落随机,不让玩家卡在旧路径上。
+	MazeGenerator.set_map_file(Settings.sp_map_path if MapCatalog.is_valid_map(Settings.sp_map_path) else "")
+	# ★ 必须跟着重算世界尺寸:启动时算的是"当时随机挑的图"(如 demo 125×75 → 8000 宽),
+	#   选了别的图(如 factory1v1 150×100 → 9600 宽)不重算的话环面回绕/最短路径按错边界。
+	GameParameters.refresh_map_size()
 	Level0.pvp_mode = false            # 复位 PvP 标志,避免上次 PvP 残留
 	CombatComponent.pvp_arena = false  # 回单机恢复命中无敌帧
 	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
@@ -338,6 +344,11 @@ func _fill_version_panel(panel: PanelContainer) -> PanelContainer:
 # 武器勾选与按钮仍走工厂。★ CheckList 容器只为给勾选一个**插在 ButtonRow 之前**的位置
 # —— 直接 vb.add_child(cb) 会把勾选追加到按钮行后面。
 func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
+	# 选图:每张卡带一版**开局地形简略图**(由 MapCatalog 从 .cyrm 现画,不是美术资源)
+	var picker := MapPicker.new()
+	panel.get_node("VBox/MapSection").add_child(picker)
+	picker.setup(Settings.sp_map_path, 2, 300.0)
+
 	var checks: Array[CheckButton] = []
 	var check_list: VBoxContainer = panel.get_node("VBox/CheckList")
 	for slot in [1, 2, 3, 4, 5, 6]:
@@ -358,6 +369,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		for i in checks.size():
 			if checks[i].button_pressed:
 				Settings.sp_disabled_weapons.append(i + 1)
+		Settings.sp_map_path = picker.selected   # "" = 随机
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		_enter_level0())

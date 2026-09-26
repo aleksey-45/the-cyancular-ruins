@@ -20,6 +20,9 @@ theme_override_fonts/font = ExtResource("1")
 theme_override_font_sizes/font_size = 48
 text = "—— 单人开局 ——"
 
+[node name="MapSection" type="VBoxContainer" parent="VBox"]
+theme_override_constants/separation = 8
+
 [node name="Subtitle" type="Label" parent="VBox"]
 theme_override_fonts/font = ExtResource("1")
 theme_override_font_sizes/font_size = 32
