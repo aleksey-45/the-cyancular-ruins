@@ -8,9 +8,9 @@ extends Node2D
 
 const SHARD_COUNT := 10
 const SCATTER_TIME := 0.28          # 炸开+散落阶段时长(秒)
-const FLY_ACCEL := 2600.0           # 飞向怀表的加速度
-const SHARD_COLOR := Color8(190, 232, 236)     # 冷青白结晶
-const CORE_COLOR := Color8(240, 250, 252)
+const FLY_ACCEL := 5200.0           # 飞向怀表的加速度(提速,原先太慢)
+const SHARD_COLOR := Color8(18, 18, 22)        # 黑结晶(用户指定;衬亮背景更醒目)
+const CORE_COLOR := Color8(70, 70, 78)         # 黑结晶上的冷灰亮芯(保留体积感)
 
 var amount: int = TimeParams.ELITE_GRAIN_DROP
 var _shards: Array = []             # [{p, v, size}]
@@ -29,8 +29,8 @@ static func spawn(host: Node, world_pos: Vector2, amount_: int) -> void:
 		var ang := TAU * float(i) / float(SHARD_COUNT) + randf_range(-0.25, 0.25)
 		fx._shards.append({
 			"p": Vector2.ZERO,
-			"v": Vector2.from_angle(ang) * randf_range(140.0, 420.0),
-			"size": randf_range(2.0, 4.0),
+			"v": Vector2.from_angle(ang) * randf_range(260.0, 720.0),
+			"size": randf_range(4.0, 7.5),
 		})
 	host.add_child(fx)
 

@@ -60,7 +60,7 @@ func _test_haste_mode() -> void:
 	_chk(f.mode == TimeField.Mode.HASTE, "Ctrl 应为 HASTE")
 	_near(TimeField.player_delta(1.0), TimeParams.HASTE_PLAYER, 0.001, "HASTE 玩家×2")
 	_near(TimeField.enemy_delta(1.0, _mk_enemy(false)), TimeParams.HASTE_WORLD, 0.001, "HASTE 普通敌×1")
-	_near(TimeField.enemy_delta(1.0, _mk_enemy(true)), TimeParams.HASTE_PLAYER, 0.001, "HASTE 精英×2(与玩家同步)")
+	_near(TimeField.enemy_delta(1.0, _mk_enemy(true)), TimeParams.HASTE_PLAYER, 0.001, "HASTE 精英与玩家同步")
 	# -s 阶段 autoload 不存在,bullet_base 载不动(会引用 GameParameters)→ 用内联桩脚本,
 	# 只保留 shooter 这一个被查询的属性(真弹的发射方归属判定与此完全同形)
 	var stub := GDScript.new()
@@ -72,9 +72,9 @@ var shooter: Node = null
 	var pl := Node.new()
 	pl.add_to_group("player")
 	pb.shooter = pl
-	_near(TimeField.bullet_delta(1.0, pb), 2.0, 0.001, "HASTE 我方弹×2")
+	_near(TimeField.bullet_delta(1.0, pb), TimeParams.HASTE_PLAYER, 0.001, "HASTE 我方弹随玩家")
 	var eb = stub.new()
-	_near(TimeField.bullet_delta(1.0, eb), 1.0, 0.001, "HASTE 敌方弹×1")
+	_near(TimeField.bullet_delta(1.0, eb), TimeParams.HASTE_WORLD, 0.001, "HASTE 敌方弹放慢")
 	TimeField.current = null
 
 

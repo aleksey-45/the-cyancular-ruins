@@ -709,15 +709,8 @@ func _tick_time_visuals(delta: float) -> void:
 	var rewinding: bool = time_field.is_rewinding()
 	_film_t = move_toward(_film_t, 1.0 if rewinding else 0.0, delta / 0.2)
 	_haste_t = move_toward(_haste_t, 1.0 if time_field.is_hasting() else 0.0, delta / 0.1)
-	var uv := Vector2(0.5, 0.5)
-	var pl := get_node_or_null("WorldViewport/Player") as Node2D
-	if pl != null:
-		var cam := pl.get_viewport().get_camera_2d()
-		if cam != null:
-			var vp_size := Vector2(pl.get_viewport().get_visible_rect().size)
-			if vp_size.x > 0.0 and vp_size.y > 0.0:
-				uv = Vector2(0.5, 0.5) + (pl.global_position - cam.get_screen_center_position()) 						* cam.zoom / vp_size
-	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t, uv)
+	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t)
+
 	# 贷款/加速/回溯的音调变形(全局系数;贷款越深越尖)
 	var depth := time_field.loan_depth()
 	var mult := 1.0 + TimeParams.LOAN_PITCH_RANGE * depth

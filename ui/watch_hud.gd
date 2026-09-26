@@ -123,6 +123,14 @@ func _process(delta: float) -> void:
 	_anim_t = minf(_anim_t + delta / 0.2, 1.0)
 	_disp = lerpf(_anim_from, _anim_target, _anim_t)
 	_big.text = str(int(round(_disp)))
+	# 大数字配色:回溯=红、加速=紫、常态=白(用户 2026-09-26 指定)
+	var col := COLOR_TEXT
+	if TimeField.current != null:
+		if TimeField.current.is_rewinding():
+			col = Color8(210, 62, 62)
+		elif TimeField.current.is_hasting():
+			col = Color8(168, 96, 216)
+	_big.add_theme_color_override("font_color", col)
 	_cap.text = "上限 %d" % int(TimeParams.GRAIN_CAP)
 	# 表心:短时余额(正=浅灰;贷款=深红负数)
 	if acc.loan_used > 0.5:

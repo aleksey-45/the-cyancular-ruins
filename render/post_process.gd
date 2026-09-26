@@ -71,7 +71,7 @@ func flash_hit(strength: float = 1.0) -> void:
 	_hit_red = maxf(_hit_red, clampf(strength, 0.0, 1.0))
 
 ## 时间玩法三效果统一入口(Level0 每帧调;单机才有,常态全 0 = 无痕)
-func set_time_effects(film: float, loan: float, haste: float, player_uv: Vector2) -> void:
+func set_time_effects(film: float, loan: float, haste: float) -> void:
 	_film = clampf(film, 0.0, 1.0)
 	_loan = clampf(loan, 0.0, 1.0)
 	_haste = clampf(haste, 0.0, 1.0)
@@ -80,7 +80,6 @@ func set_time_effects(film: float, loan: float, haste: float, player_uv: Vector2
 	_mat.set_shader_parameter("rewind_film", _film)
 	_mat.set_shader_parameter("loan_depth", _loan)
 	_mat.set_shader_parameter("haste_dim", _haste)
-	_mat.set_shader_parameter("player_uv", player_uv)
 	if world_viewport != null:
 		_mat.set_shader_parameter("viewport_size", Vector2(world_viewport.size))
 

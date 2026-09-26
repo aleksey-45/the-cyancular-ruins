@@ -10,10 +10,9 @@ uniform float desat : hint_range(0.0, 1.0) = 0.0;
 // 受击红闪:0=无,1=纯红罩。由 PostProcess.flash_hit() 置峰后每帧衰减。
 uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
 // ── 个人钟·第一阶段(时间玩法)三个全屏效果 ──
-uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化(中心先变,向外辐射)
+uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化覆盖度(0→1:由内而外铺满)
 uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 贷款深度:变亮 + 红蓝色差
-uniform float haste_dim : hint_range(0.0, 1.0) = 0.0;     // 加速:背景压暗 + 玩家处保持高亮
-uniform vec2 player_uv = vec2(0.5, 0.5);                  // 玩家在屏幕上的归一化位置
+uniform float haste_dim : hint_range(0.0, 1.0) = 0.0;     // 加速压暗覆盖度(0→1:由内而外铺满)
 uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // 世界视口尺寸(色差换算像素偏移)
 uniform float loan_aberration = 5.0;                      // 色差偏移上限(像素)
 
@@ -40,13 +39,24 @@ void fragment() {
 		float g = dot(COLOR.rgb, vec3(0.299, 0.587, 0.114));
 		COLOR.rgb = mix(COLOR.rgb, vec3(g), desat);
 	}
-	// 回溯:底片色调由屏幕中心向外辐射渐变(中心最先/最深,边缘保留本色)
+	// ── 时间玩法视效:覆盖度模型 ──
+	// cov=覆盖度(0→1)。逐像素半径 t(中心0→边缘1)与 cov 比较:cov 超过 t 的区域先被覆盖,
+	// 过渡由内而外推进;cov=1 时全图覆盖 —— **最终效果是全图统一的**(底特律变人导航模式那种切换感)。
+	float rt = clamp(distance(SCREEN_UV, vec2(0.5)) / 0.75, 0.0, 1.0);
+
+	// 回溯:全图统一底片色调(反色 + 轻去饱和)
 	if (rewind_film > 0.0) {
-		float rr = distance(SCREEN_UV, vec2(0.5));
-		float m = smoothstep(0.04, 0.55, rr);
+		float amt = smoothstep(0.0, 0.28, rewind_film - rt);
 		vec3 inv = vec3(1.0) - COLOR.rgb;
-		vec3 film = mix(inv, COLOR.rgb, m * 0.85);
-		COLOR.rgb = mix(COLOR.rgb, film, rewind_film);
+		float g = dot(inv, vec3(0.299, 0.587, 0.114));
+		vec3 film = mix(inv, vec3(g), 0.25);
+		COLOR.rgb = mix(COLOR.rgb, film, amt);
+	}
+	// 加速:全图统一压暗 + 冷色偏移(不再是"只留玩家亮"的补丁式效果)
+	if (haste_dim > 0.0) {
+		float amt = smoothstep(0.0, 0.28, haste_dim - rt);
+		vec3 target = COLOR.rgb * 0.42 + vec3(0.02, 0.035, 0.07);
+		COLOR.rgb = mix(COLOR.rgb, target, amt);
 	}
 	// 贷款:整体变亮 + 红蓝色影分离(深度越深越明显)
 	if (loan_depth > 0.0) {
@@ -56,13 +66,5 @@ void fragment() {
 		float cb = texture(screen_tex, uv - vec2(off, 0.0)).b;
 		COLOR.rgb = mix(COLOR.rgb, vec3(cr, base.g, cb), 0.9);
 		COLOR.rgb += vec3(0.10, 0.095, 0.12) * loan_depth;
-	}
-	// 加速:背景大幅压暗,玩家所在小范围内保持原亮度(并轻微提亮 = 主角高亮)
-	if (haste_dim > 0.0) {
-		float pd = distance(SCREEN_UV, player_uv);
-		float keep = 1.0 - smoothstep(0.03, 0.16, pd);
-		float dim = mix(1.0 - 0.55 * haste_dim, 1.0, keep);
-		COLOR.rgb *= dim;
-		COLOR.rgb += vec3(0.05, 0.07, 0.10) * keep * haste_dim;
 	}
 }

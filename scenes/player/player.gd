@@ -911,6 +911,20 @@ func rewind_restore(d: Dictionary) -> void:
 	combat.hp = int(d["hp"])
 	facing_direction = int(d["facing"])
 	var downed_now := is_downed()
+	# 武器弹量回溯(用户要求):背包各格残弹 + 手持那件实弹;当前武器不同则切回
+	var wc = weapons
+	if wc != null and d.has("wmags"):
+		var inv = wc.get("inventory")
+		if inv != null:
+			var held: Array = inv.get("held")
+			var mags: Array = d["wmags"]
+			for i in mini(held.size(), mags.size()):
+				held[i]["mag"] = int(mags[i])
+		if int(d.get("widx", -1)) != int(wc.get("_current_index")) and int(d.get("widx", -1)) >= 0:
+			wc.call("equip_index", int(d["widx"]))
+		var live2 = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+		if live2 != null and is_instance_valid(live2) and int(d.get("wlive", -1)) >= 0:
+			live2.set("mag_ammo", int(d["wlive"]))
 	if bool(d["downed"]) and not downed_now:
 		combat.set_downed_by_rewind(true)
 	elif not bool(d["downed"]) and downed_now:

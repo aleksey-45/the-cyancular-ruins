@@ -65,13 +65,7 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 		})
 	_frames.append({
 		"t": _t,
-		"player": {
-			"p": (player as Node2D).global_position,
-			"v": player.get("velocity"),
-			"hp": int(player.get("hp")),
-			"facing": int(player.get("facing_direction")),
-			"downed": player.has_method("is_downed") and player.is_downed(),
-		},
+		"player": _snapshot_player(player),
 		"enemies": pe,
 		"bullets": pb,
 	})
@@ -83,6 +77,34 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 # ── 回放(回溯中)──────────────────────────────────────────────
 
 ## 进入回溯:清空场上活弹(状态改由快照重建),游标归零。
+## 玩家状态快照:位置/速度/HP/朝向/倒地 + **武器弹量**(当前武器类型与下标、背包各格残弹、
+## 手持那件的实弹数)——用户要求"除个人钟/精英/Boss 外一切状态都要回溯"。
+func _snapshot_player(player: Node) -> Dictionary:
+	var d := {
+		"p": (player as Node2D).global_position,
+		"v": player.get("velocity"),
+		"hp": int(player.get("hp")),
+		"facing": int(player.get("facing_direction")),
+		"downed": player.has_method("is_downed") and player.is_downed(),
+		"wslot": 0, "widx": -1, "wmags": [], "wlive": -1,
+	}
+	var wc = player.get("weapons")
+	if wc == null:
+		return d
+	d["wslot"] = int(wc.get("_current_slot"))
+	d["widx"] = int(wc.get("_current_index"))
+	var inv = wc.get("inventory")
+	if inv != null:
+		var mags: Array = []
+		for e in inv.get("held"):
+			mags.append(int(e.get("mag")))
+		d["wmags"] = mags
+	var live = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+	if live != null and is_instance_valid(live):
+		d["wlive"] = int(live.get("mag_ammo"))
+	return d
+
+
 func begin() -> void:
 	_cursor = 0.0
 	_replay_bullets.clear()
