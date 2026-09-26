@@ -325,10 +325,21 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 	var k := _stat_entry(killer_role)
 	k["kills"] = int(k["kills"]) + 1
 	# ── 助攻:表里**除击杀者之外**、且在归因窗口内、且**与击杀者同队**的 attacker ──
-	# ★★ `same_team(attacker, killer)` 那道过滤**不可省**:没有它,受害者的**队友**误伤过他
-	#   (爆炸),随后敌人把他补掉 ⇒ 那位队友**因为打死自己人而拿到助攻**(spec §3.4)。
-	# ★ `not same_team(attacker, victim)` 在本函数里**恒真**(能走到这里 ⇒ killer 与 victim
-	#   异队且都非 0)⇒ 它不是鉴别点,留着只是把那条规则**读得出来**(照 spec §3.4 的写法)。
+	# ★★ 前半句 `same_team(attacker, killer)` 是**唯一承重**的那半:没有它,受害者的**队友**
+	#   误伤过他(爆炸),随后敌人把他补掉 ⇒ 那位队友**因为打死自己人而拿到助攻**(spec §3.4)。
+	# ★★ 后半句 `same_team(attacker, victim)` 是**死代码** —— 但**不是"恒真"**(旧注释写错过
+	#   这一点):上面那道 `if same_team(killer_role, victim_role): … return` 已经保证
+	#   **击杀者与受害者异队**,于是"attacker 是受害者的队友"为真 ⇒ attacker 与 killer
+	#   **必定不同队** ⇒ `not same_team(attacker, killer)` 早就为真 ⇒ 那个 `or` 的结果
+	#   **永远不受后半句影响**。而"attacker 是受害者队友"这一档在本函数里**确实可达** ——
+	#   ⑬k 的 (k3) 夹具本身就是(attacker 5 / victim 4 同属 2 队)⇒ 单看这一项它就是 true,
+	#   挡掉那一档的始终是前半句。
+	# ★ 留着它是**保险带**:哪天上面那道 `same_team(killer_role, victim_role)` 守卫改了
+	#   (例如"队友击杀也算击杀"),它当场变成活的;照 spec §3.4 的写法也读得出来。
+	#   ★ 变异实测(HEAD):只删后半句 ⇒ `ALL-OK`、**没有任何断言察觉**
+	#     (ok 数不变:评审当时 150,本批 ⑬k 扩容后 156);
+	#   只留后半句(删前半句)⇒ **只有 ⑬l 红**,(k3) 仍绿 —— 即"必须与击杀者同队"这条规则
+	#   今天**只由 ⑬l 咬住**,别照 (k3) 的失败消息去推它的鉴别力(那条消息此后已订正)。
 	# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ **天然拿不到任何助攻**,
 	#   不需要特判(守卫:⑬l)。
 	var now := Time.get_ticks_msec()

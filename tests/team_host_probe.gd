@@ -1298,12 +1298,13 @@ func _run() -> void:
 			("★ ⑬j **已离开者仍是 MVP 候选**(用户裁定;MVP 实际 %d,期望 6 —— "
 			+ "把 `_left` 从候选里滤掉就会变成 1 号)") % _host.mvp_role())
 
-	# ── ⑬k 助攻:甲打乙 60、丙补掉乙 ⇒ 丙记击杀、**甲记助攻**;窗口外不记 ──
-	# ★ spec §6.2 的三档;★ 后半档是**鉴别点** —— 只断言"甲记了助攻"的话,
-	#   把窗口判据删掉也能过。
+	# ── ⑬k 助攻:甲打乙 20、丁再打乙 60、丙补掉乙 ⇒ 丙记击杀、**甲与丁各记一次助攻**;
+	#   窗口外不记 (k2) / 队友误伤不算 (k3) / 队友击杀谁都不算 (k4) ──
+	# ★ spec §6.2 的三档;★ (k1) 放两位攻击者是刻意的(评审 F6-1)、(k4) 是评审 F6-2 的补丁;
+	#   ★ (k2) 后半档是**鉴别点** —— 只断言"甲记了助攻"的话,把窗口判据删掉也能过。
 	# ★ 助攻表住在 `_assist_times`(role -> role -> 时刻),写入点是生产的
 	#   `MatchCombat._on_player_hit`(所有伤害路径的唯一汇聚点),本段**不手写表** ——
-	#   甲那 60 点是走真归因写端 + 真 `take_hit` 落进去的。
+	#   甲/丁那两枪(20 + 60)都是走真归因写端 + 真 `take_hit` 落进去的。
 	_host._round_state = MatchHost.RoundState.PLAYING
 	_host._scores = {}
 	_host._left = {}
@@ -1313,18 +1314,29 @@ func _run() -> void:
 	_host._stats = {}
 	for st_kr in _host.players:
 		_host._respawn_player(int(st_kr))
-	# (k1) 甲(1 号,1 队)打乙(4 号,2 队)60 伤害
+	# (k1) 甲(1 号,1 队)打乙(4 号,2 队)20,丁(3 号,1 队)再打乙 60 ⇒ **两位攻击者各记一次助攻**
+	# ★★ 放**两位**攻击者是刻意的(评审 F6-1):原夹具里受害者表**最多只有一个候选** ⇒
+	#   "只给第一个/最后一个 attacker 记一次"、"每次倒地最多记一次助攻"这类实现**全绿**。
+	# ★★ 两枪的顺序不能反:乙满血 50,而后打的那一枪是 60 ⇒ 乙**当场倒地**,而 `take_hit`
+	#   在 `downed` 时早退(`scenes/player/combat_component.gd:43`)⇒ 先打 60 再补第二枪会
+	#   **静默不入表**。故 20 点的甲必须走在 60 点的丁前面(50 → 30 → -30,两枪都进表)。
 	var st_a_k1 := _stat(_host, 1, "assists")
+	var st_a_k1b := _stat(_host, 3, "assists")
 	var st_a_k2 := _stat(_host, 2, "assists")
-	CombatFeedback.attribute(_host.players[4], _host.players[1])
-	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 60)
-	# ★★ `st_a_ks1` 必须在**那 60 伤害之后**读:这一枪本身就给甲 `dealt += 60` ⇒ kscore 已 +12
-	#   (`ScoreRules.kscore(0, 1, 60, …) == 62`,实测)。在伤害**之前**读的话,下面那条
-	#   "助攻进 kscore" 要断的就是 **+62**(助攻 50 + 伤害 12)而不是 +50 ⇒ **实现正确也不会绿**;
-	#   同理 Step 2 的红也不是表里写的 `+0` 而是 `+12`。移到伤害之后读,两处都回到干净的值。
+	CombatFeedback.attribute(_host.players[4], _host.players[1])   # 甲(1 号,1 队)
+	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 20)
+	# ★★ `st_a_ks1` 必须在**甲那一枪之后**读:这一枪本身就给甲 `dealt += 20` ⇒ kscore 已 +4
+	#   (`ScoreRules.kscore(0, 0, 20, 0) == 4`)。在伤害**之前**读的话,下面那条"助攻进 kscore"
+	#   要断的就是 **(50 + 20/5) = 54** 而不是 +50 ⇒ **实现正确也不会绿**。移到伤害之后读,
+	#   这条就只量助攻那一项(与甲这一枪打几点无关)。
 	var st_a_ks1 := _kscore(_host, 1)
+	CombatFeedback.attribute(_host.players[4], _host.players[3])   # 丁(3 号,1 队)
+	(_host.players[4] as Node2D).take_hit(Vector2.ZERO, 60)
 	_check(_assist_table(_host, 4).has(1),
 			"★ ⑬k [仪器] 甲的那一枪必须进了助攻表(否则下面两条恒真;表=%s)"
+			% str(_assist_table(_host, 4)))
+	_check(_assist_table(_host, 4).has(3),
+			"★ ⑬k [仪器] 丁的那一枪也必须进了助攻表(否则'第二位也记'那条恒真;表=%s)"
 			% str(_assist_table(_host, 4)))
 	# 丙(2 号,1 队)补掉乙 —— `_down` 会先把归因写成丙,再走倒地边沿
 	_down(_host, 4, 2)
@@ -1332,6 +1344,10 @@ func _run() -> void:
 	_check(_stat(_host, 1, "assists") - st_a_k1 == 1,
 			"★ ⑬k 甲**记一次助攻**(实际 +%d,期望 +1)"
 			% (_stat(_host, 1, "assists") - st_a_k1))
+	_check(_stat(_host, 3, "assists") - st_a_k1b == 1,
+			("★ ⑬k 丁(**第二位**攻击者)**也**各记一次助攻(实际 +%d,期望 +1;"
+			+ "整个循环只给一位候选记账的实现在这里红)")
+			% (_stat(_host, 3, "assists") - st_a_k1b))
 	_check(_kscore(_host, 1) - st_a_ks1 == 50,
 			"★ ⑬k 助攻进 kscore(+50,实际 +%d)" % (_kscore(_host, 1) - st_a_ks1))
 	_check(_stat(_host, 2, "assists") - st_a_k2 == 0,
@@ -1364,8 +1380,17 @@ func _run() -> void:
 			+ "删掉窗口判据这里会变成 +1") % (_stat(_host, 1, "assists") - st_a_k3))
 
 	# (k3) 队友误伤 **不算**助攻:乙的队友(5 号,2 队)炸过乙,随后敌人补掉乙
-	# ★★ 这是本段最要紧的一条:没有 `same_team(attacker, killer)` 那道过滤,
+	# ★★ 这是本段最要紧的一条:没有**前半句** `same_team(attacker, killer)` 那道过滤,
 	#   5 号会**因为打死自己人**拿到一次助攻。
+	# ★★ 但**后半句** `same_team(attacker, victim)` 在这条夹具里也**确实为真**
+	#   (attacker 5 与 victim 4 同属 2 队)—— 它**不是"恒真"**,只是**死代码**:
+	#   本函数上面那道 `same_team(killer_role, victim_role)` 早退已经保证击杀者与受害者异队,
+	#   于是"attacker 是受害者队友"为真 ⇒ attacker 与 killer 必定不同队 ⇒ 前半句早已为真
+	#   ⇒ 那个 `or` 的结果永远不受后半句影响。
+	#   ⇒ 变异实测:只删**后半句**没有任何断言察觉(`ALL-OK`;ok 数不变 —— 评审当时 150、
+	#     本批 ⑬k 扩容后 156);**只删前半句**则
+	#     **只有 ⑬l 红**,而**本条 (k3) 仍绿** —— 后半句照样把 5 号挡住。故"必须与击杀者同队"
+	#     这条规则今天**只由 ⑬l 咬住**,别照本条的失败消息去推它的鉴别力(消息已订正)。
 	_host._respawn_player(4)
 	var st_a_k4 := _stat(_host, 5, "assists")
 	var st_a_k5 := _stat(_host, 1, "assists")
@@ -1376,15 +1401,63 @@ func _run() -> void:
 	_down(_host, 4, 1)          # 敌人(1 号,1 队)补掉乙
 	_check(_stat(_host, 5, "assists") - st_a_k4 == 0,
 			("★ ⑬k 受害者的**队友**误伤之后、敌人补刀 ⇒ 那位队友**不得**记助攻"
-			+ "(实际 +%d);去掉 same_team(attacker, killer) 过滤就会给 +1")
+			+ "(实际 +%d);删掉**整条** same_team 过滤(两个合取项都不留)这里才会变 +1 ——"
+			+ "只删前半句**不会**(实测):后半句 `same_team(attacker, victim)` 仍把他挡住")
 			% (_stat(_host, 5, "assists") - st_a_k4))
 	_check(_stat(_host, 1, "assists") - st_a_k5 == 0,
 			"★ ⑬k [仪器] 击杀者本人仍不记助攻(实际 +%d)" % (_stat(_host, 1, "assists") - st_a_k5))
+
+	# (k4) **队友击杀不给任何人助攻**(评审 F6-2):乙(2 号,1 队)先被两人打过 —— **敌人**
+	#   (4 号,2 队)与**队友**(3 号,1 队)—— 随后乙的**队友**(1 号,1 队)补掉乙 ⇒ **谁都不记助攻**。
+	# ★ 换受害者(用 2 号而不是 4 号)是为了拿到**队友攻击者**:乙的队友只有 1/3 两个 role
+	#   (6 号已在 ⑬h 被移出 `players`),击杀者占掉一个(1 号)⇒ 另一位(3 号)才当得上攻击者。
+	# ★★ 两位攻击者**不是重复**,各钉一条实现路径(实测的鉴别力矩阵,变异逐条跑过):
+	#   · **只**把助攻块挪到 `same_team(killer_role, victim_role)` 早退**之前** ⇒ **两条都绿**
+	#     (整个探针 `ALL-OK`、156 ok,零 FAIL):"与击杀者同队"为真 ⇒ 队号 = 击杀者的队 = 受害者的队
+	#     ⇒ 后半句 `same_team(attacker, victim_role)` 必为真 ⇒ 照样挡掉。**早退与后半句
+	#     互为保险带**,只拆一条不可观测 —— 这也正是"后半句是保险带"那句的实证。
+	#   · 挪块 **且** 删后半句(只留 `not same_team(attacker, killer_role)`)⇒ **只有队友那条红**
+	#     (敌人 4 号与击杀者异队,仍被前半句挡掉)。
+	#   · 挪块 **且** 删前半句(只留 `same_team(attacker, victim_role)`)⇒ **只有敌人那条红**。
+	#   ⇒ 两条一起才把"队友击杀 ⇒ 谁都不记助攻"这条规则的两条实现路径都钉住。
+	# ★ 上面 (k3) 那条照不到这一族 —— (k3) 的击杀者与受害者异队,早退分支根本不进。
+	_host._respawn_player(2)
+	var st_d_k4 := _stat(_host, 2, "deaths")
+	var st_a_k4a := _stat(_host, 4, "assists")     # 敌人(4 号,2 队)
+	var st_a_k4b := _stat(_host, 3, "assists")     # 队友(3 号,1 队)
+	CombatFeedback.attribute(_host.players[2], _host.players[4])   # 敌人打乙
+	(_host.players[2] as Node2D).take_hit(Vector2.ZERO, 10)
+	CombatFeedback.attribute(_host.players[2], _host.players[3])   # 队友(误伤)打乙
+	(_host.players[2] as Node2D).take_hit(Vector2.ZERO, 10)
+	_check(_assist_table(_host, 2).has(4) and _assist_table(_host, 2).has(3),
+			"[仪器] ⑬k 前提:两位攻击者都进了表(没进的话下面两条恒真;表=%s)"
+			% str(_assist_table(_host, 2)))
+	_down(_host, 2, 1)          # 乙的**队友**(1 号,1 队)补掉乙 ⇒ 走队友击杀分支
+	_check(_stat(_host, 2, "deaths") - st_d_k4 == 1,
+			"[仪器] ⑬k 前提:这一下**真的走完了倒地边沿**"
+			+ "(deaths 没 +1 = `_record_down` 没跑,下面两条恒真)")
+	_check(_stat(_host, 4, "assists") - st_a_k4a == 0,
+			("★ ⑬k 乙被**自己队友**补掉 ⇒ 之前打过乙的**敌人**(4 号)**不得**记助攻"
+			+ "(实际 +%d);助攻块挪到早退之前**并**删掉前半句就会给 +1")
+			% (_stat(_host, 4, "assists") - st_a_k4a))
+	_check(_stat(_host, 3, "assists") - st_a_k4b == 0,
+			("★ ⑬k 乙被**自己队友**补掉 ⇒ 误伤过乙的**队友**(3 号)**也不得**记助攻"
+			+ "(实际 +%d);助攻块挪到早退之前**并**删掉后半句就会给 +1")
+			% (_stat(_host, 3, "assists") - st_a_k4b))
 
 	# ── ⑬l 队伍表为空(1v1 / 大乱斗的形状)⇒ **拿不到任何助攻**,而击杀照记 ──
 	# ★ 这是 spec §3.4「免费的正确性」的守卫:`same_team(0,0)` 恒 false ⇒ 助攻过滤天然不成立。
 	#   ★ 正向对照(击杀照记)不可省:只断言"assists == 0"的话,一个**什么都没接**的宿主
 	#   (或"助攻永远不记"的坏实现)照样全绿。
+	# ★★ 覆盖范围的口径(评审 F4 订正,别夸大):`_record_down` 的**唯一调用点**是
+	#   `team_host.gd` 的 `_match_round_tick` —— **1v1 与 royale 根本不调它**(两者的逐人表
+	#   只有 `dealt`/`taken`)⇒ 那两模式**今天无论过滤怎么写都拿不到助攻**。所以本段守的实际是
+	#   "队伍表为空的 TeamHost"这个不变式(该配置在生产里也不存在:3v3 worker 必须带非空
+	#   `--teams` 才开局)—— 它是**为将来接线预留**的性质,等 1v1/大乱斗接上统计投递
+	#   (下一份计划)才成为真正的生产守卫。
+	#   ★★ 但它**今天**仍是**唯一**咬住"必须与击杀者同队"那条规则的断言:只删前半句
+	#     `not same_team(attacker, killer_role)`(留着后半句 `same_team(attacker, victim_role)`)
+	#     时,(k1)~(k4) **全绿**,只有本段红(实测 `实际 1`)。删它之前先想清楚那条规则由谁接住。
 	#   ★ 本段**最后**跑:新建宿主会重载全局网格,前面几段(尤其 ⑬b3 的 `_find_dry_point`)
 	#   依赖它保持不动。
 	#   ★ 实参个数是**编译期**核的:多给一个实参(写成 7 个)当场是 Parse Error ——
