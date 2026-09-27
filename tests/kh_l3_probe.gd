@@ -26,14 +26,14 @@ const PLAYER_SRC := "res://scenes/player/player.gd"
 const LEVEL0_SRC := "res://scenes/level_0.gd"
 
 # 每把枪的期望数值(验收值;改 tscn 数值而不改本表 = 红)。
-# 激光枪(槽6)按规格**不带**弹夹数值:tscn 里没有 mag_size/reload_time → 走 WeaponBase 默认(12 / 1.2)。
+# 激光枪(类型 6)按规格**不带**弹夹数值:tscn 里没有 mag_size/reload_time → 走 WeaponBase 默认(12 / 1.2)。
 const EXPECTED := [
-	{"slot": 1, "path": "res://scenes/weapons/pistol_test.tscn", "name": "Pistol", "mag": 12, "reload": 1.0, "live": 0},
-	{"slot": 2, "path": "res://scenes/weapons/rifle_test.tscn", "name": "Rifle", "mag": 30, "reload": 1.8, "live": 0},
-	{"slot": 3, "path": "res://scenes/weapons/m82a1.tscn", "name": "M82A1", "mag": 5, "reload": 2.6, "live": 0},
-	{"slot": 4, "path": "res://scenes/weapons/s686.tscn", "name": "S686", "mag": 2, "reload": 2.2, "live": 0},
-	{"slot": 5, "path": "res://scenes/weapons/grenade_launcher.tscn", "name": "Grenade Launcher", "mag": 6, "reload": 2.8, "live": 3},
-	{"slot": 6, "path": "res://scenes/weapons/laser_gun.tscn", "name": "Laser Gun", "mag": 12, "reload": 1.2, "live": 0},
+	{"type_id": 1, "path": "res://scenes/weapons/pistol_test.tscn", "name": "Pistol", "mag": 12, "reload": 1.0, "live": 0},
+	{"type_id": 2, "path": "res://scenes/weapons/rifle_test.tscn", "name": "Rifle", "mag": 30, "reload": 1.8, "live": 0},
+	{"type_id": 3, "path": "res://scenes/weapons/m82a1.tscn", "name": "M82A1", "mag": 5, "reload": 2.6, "live": 0},
+	{"type_id": 4, "path": "res://scenes/weapons/s686.tscn", "name": "S686", "mag": 2, "reload": 2.2, "live": 0},
+	{"type_id": 5, "path": "res://scenes/weapons/grenade_launcher.tscn", "name": "Grenade Launcher", "mag": 6, "reload": 2.8, "live": 3},
+	{"type_id": 6, "path": "res://scenes/weapons/laser_gun.tscn", "name": "Laser Gun", "mag": 12, "reload": 1.2, "live": 0},
 ]
 
 
@@ -122,7 +122,7 @@ func _check_input_map() -> void:
 func _check_weapon_numbers() -> void:
 	for spec in EXPECTED:
 		var scene: PackedScene = load(spec["path"])
-		var tag := "槽%d %s" % [spec["slot"], spec["name"]]
+		var tag := "类型%d %s" % [spec["type_id"], spec["name"]]
 		if scene == null:
 			_failures.append("%s: 场景载入失败 %s" % [tag, spec["path"]])
 			continue
@@ -176,15 +176,15 @@ func _check_gate(wep: WeaponComponent) -> void:
 	var d := wep.default_type()
 	_check(d != "1" and d != "2", "默认槽位落在被禁槽位:%s" % d)
 	# 当前拿着的手枪(类型1)被禁 → 应自动切到背包里第一把没被禁的(=类型3 重狙)
-	var slot_after_gate := wep.current_type_id()
-	_check(slot_after_gate == 3,
-			"当前枪被禁后未自动切到背包里第一把启用的(实际槽位 %d,期望 3)" % slot_after_gate)
+	var type_after_gate := wep.current_type_id()
+	_check(type_after_gate == 3,
+			"当前枪被禁后未自动切到背包里第一把启用的(实际类型 %d,期望 3)" % type_after_gate)
 
 	# equip_type 被闸门拒绝:槽位不变
 	wep.equip_type(1)
 	await _frames(2)
-	_check(wep.current_type_id() == slot_after_gate,
-			"equip_type(1) 未被闸门拒绝(槽位 %d → %d)" % [slot_after_gate, wep.current_type_id()])
+	_check(wep.current_type_id() == type_after_gate,
+			"equip_type(1) 未被闸门拒绝(类型 %d → %d)" % [type_after_gate, wep.current_type_id()])
 	# 反向锚:同样调用一次**允许**的槽位,必须真的切过去(证明"不切"不是 equip_type 整体坏掉)
 	wep.equip_type(4)
 	await _frames(3)
@@ -338,7 +338,7 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 # ── 5b) ★ 同帧两次 equip_type:未入树的枪不得被记账(残弹被抹成 0)────────────
 # 竞态(修前为真 bug):equip_type() 用 call_deferred("add_child", 新枪) 入树,**_ready 要到帧末才跑**,
 # 而 mag_ammo 满弹是在 _ready 里设的 → 新枪在入树前 mag_ammo 恒为 0。若同帧再 equip_type 一次,
-# 第二次的「旧武器」正是这把未入树的枪,照记 `_mag_state[old_slot] = _weapon.mag_ammo`
+# 第二次的「旧武器」正是这把未入树的枪,照记 `_mag_state[old_slot] = _weapon.mag_ammo`(该表已于 2026-09-15 背包化时整体删除,见 :283;现在残弹存在**背包条目**里)
 # 就把**被略过的那个中间槽**记成 0;之后切回该槽 → 只拿到 0 残弹(不是回满),fire() 靠
 # start_reload() 自愈 = 交火中白交一次 1.0~2.8s 装填。它坏掉的正是 L3 要交付的「残弹记忆」。
 # 真机可达路径:滚轮走 player.gd 的 _unhandled_input(事件驱动,每个 InputEventMouseButton
