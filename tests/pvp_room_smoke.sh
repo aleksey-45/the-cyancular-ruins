@@ -5,6 +5,14 @@ set -e
 # shellcheck source=tests/env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
+# ★ 起跑前清孤儿 worker:没有活着的大厅 ⇒ 端口池里的一定是上一支(或崩掉的那支)遗留的,
+#   不清的话本支的新 worker 会撞上它、报"监听失败 20",然后**静默挂住**(理由与实测见
+#   env.sh 的 kill_port_range)。★ 有大厅在 7777 上就**不动**它 —— 那种情况下本脚本本来
+#   也 bind 不上 7777,会自己报出来,不该顺手端掉别人正在跑的对局。
+if ! lobby_alive; then
+  kill_port_range 7800 8300
+fi
+
 echo "== 启动服务器 =="
 "$GODOT" --headless --path . res://server/server_main.tscn > /tmp/pvp_server.log 2>&1 &
 SERVER_PID=$!
@@ -41,6 +49,9 @@ wait $A_PID 2>/dev/null || true
 wait $B_PID 2>/dev/null || true
 kill_procs $SERVER_PID $A_PID $B_PID
 kill_port
+# ★ 大厅已杀 ⇒ 它的 worker 现在是孤儿(它是 `OS.create_process` 起的**孙进程**,不在上面
+#   那串 PID 里)。不收就说不上"清理干净",下一支真链路测试会被它毒到。
+kill_port_range 7800 8300
 
 if [ -n "$OK" ]; then
   echo "SMOKE PASS"

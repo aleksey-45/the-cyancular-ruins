@@ -23,10 +23,17 @@ LOG="tests/team_match_probe.log"
 PROBE_LOBBY_PORT=29200
 PROBE_WORKER_PORT=29250
 
-if netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]].*LISTENING"; then
+# ★ 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列 ⇒ 带它是**结构性恒假**
+#   (2026-09-27 实测),原先这两行提示**从未打印过**。理由见 env.sh 的 lobby_alive。
+if lobby_alive; then
   echo "[team] 注意:7777 已被占用(大概是用户自己的服务端)。本探针不占 7777、也不用 7800~8299,"
   echo "[team]       所以**照跑不误,且不会动它**;这里只是把这件事说出来。"
 fi
+
+# ★ 起跑前清**本探针自己那一段**的孤儿 worker(`OS.create_process` 起的孙进程,不属于本脚本
+#   记下的 PID)。★ 区间只到 [29250, 29400):**绝不能**扫 [7800, 8300) —— 那是大厅的 worker 池,
+#   而本探针的既有承诺是"不碰 7800~8299"(那会端掉用户正在跑的对局),见文件头。
+kill_port_range "$PROBE_WORKER_PORT" 29400
 
 echo "[team] 起探针(大厅端口 $PROBE_LOBBY_PORT,worker 起投 $PROBE_WORKER_PORT;整跑 3~6 分钟)"
 echo "[team] 若长时间无输出:看 user://team_match_probe_cN.godotlog(子进程 stdout 父进程看不到)"
@@ -38,6 +45,9 @@ RC=${PIPESTATUS[0]}
 echo "[team] 清理本探针自己的两个端口(兜底;正常路径探针已按 PID 杀干净)"
 kill_port "$PROBE_LOBBY_PORT"
 kill_port "$PROBE_WORKER_PORT"
+# ★ 只杀单个端口不够:worker 的端口是 `pick_port()` 发出来的那一个(同一跑里通常等于起投点,
+#   但不是同一个概念)。区间仍**不含** 7800~8299(见文件头的既有承诺)。
+kill_port_range "$PROBE_WORKER_PORT" 29400
 
 echo
 if grep -q "TEAM MATCH PROBE: ALL-OK" "$LOG"; then

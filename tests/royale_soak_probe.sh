@@ -20,9 +20,12 @@ LOG="tests/royale_soak_probe.log"
 PYDIR="$ENV_DIR"   # 仓库根(env.sh 已算好并 cd 过去;保留别名以免动下面所有引用)
 
 echo "[soak] 检查 7777 是否空闲…"
-if netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]].*LISTENING"; then
+# ★ 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列 ⇒ 带它是**结构性恒假**
+#   (2026-09-27 实测),原先这一支的"已被占用 ⇒ 清理"**从未触发过**。理由见 env.sh 的 lobby_alive。
+if lobby_alive; then
   echo "[soak] 7777 已被占用 —— 先清理僵尸 Godot:"
   kill_port 7777
+  kill_port_range 7800 8300     # 大厅既然是被我们杀的,它拉起的 worker 现在就是孤儿
   sleep 1
 fi
 
@@ -34,9 +37,9 @@ RC=$?
 
 echo "[soak] 清理残留 headless Godot / 端口"
 kill_port 7777
-for p in 7800 7801 7802 7803 7804 7805 7806 7807 7808 7809 7810; do
-  kill_port "$p"
-done
+# ★ 原先这里只列了 7800~7810 十一个端口,而真实池是 [7800, 8300)(`WorkerLauncher`)——
+#   分配器是"唯一递增"的,一局一 worker,长跑里只要走过一次 7811 就会漏掉孤儿。
+kill_port_range 7800 8300
 
 echo
 if grep -q "SOAK: ALL-OK" "$LOG" && ! grep -qE "SCRIPT ERROR|无结果文件|Parse Error" "$LOG"; then
