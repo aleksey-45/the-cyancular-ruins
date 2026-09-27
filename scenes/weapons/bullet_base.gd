@@ -220,6 +220,48 @@ func start_player_fuse() -> void:
 	if explodes:
 		_start_fuse(hit_fuse_time)
 
+# ── 时间回溯:引信/射程状态的读写口(WorldRewind 快照用)──
+# ★ 引信是"这颗弹还剩多久炸"的**全部状态**。不把它并进快照的后果(2026-09-27 用户报的
+#   "回溯之后被之前击发的榴弹炮炸死"):重建出来的榴弹退回**未点燃** —— ① 它会在错误的
+#   时刻爆炸(不再是它所属那个世界状态的引信);② 松手那一帧 `_check_player_contact()`
+#   重新生效,只要它跟你重叠就走 0.1s 触碰引信**贴脸起爆**。traveled 同理(射程累计清零
+#   会让子弹飞过头)。
+func rewind_state() -> Dictionary:
+	return {
+		"fa": _fuse_active,
+		"fe": _fuse_elapsed,
+		"fd": _fuse_duration,
+		"tr": traveled,
+		# ★ max_range / gravity_factor / speed / size 都是**开火时由武器注入**的(scene 上不是这些值),
+		#   不进快照 → 重建出来的弹带着场景默认值:max_range 默认 0 ⇒ `traveled >= max_range`
+		#   当场成立 ⇒ 榴弹**一松手就在回溯落点爆炸**(2026-09-27 与引信并列的第二个真凶)。
+		"mr": max_range,
+		"gf": gravity_factor,
+		"sp": speed,
+		"sz": size,
+		"col": bullet_color,
+	}
+
+
+# 由快照写回(空字典 = 该帧没这份状态,保持原样 —— 老快照/无引信弹都安全)。
+func apply_rewind_state(d: Dictionary) -> void:
+	if d.is_empty():
+		return
+	_fuse_active = bool(d.get("fa", false))
+	_fuse_elapsed = float(d.get("fe", 0.0))
+	_fuse_duration = float(d.get("fd", 0.0))
+	traveled = float(d.get("tr", 0.0))
+	max_range = float(d.get("mr", max_range))
+	gravity_factor = float(d.get("gf", gravity_factor))
+	speed = float(d.get("sp", speed))
+	size = float(d.get("sz", size))
+	scale = Vector2(size, size)
+	bullet_color = d.get("col", bullet_color)
+	var sp2 := get_node_or_null("Sprite2D") as Sprite2D
+	if sp2 != null:
+		sp2.modulate = bullet_color
+
+
 # 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
 # 后续反弹不重置时长(首次碰撞决定引信时长,不因再撞墙/再撞敌人刷新)。
 func _start_fuse(duration: float) -> void:

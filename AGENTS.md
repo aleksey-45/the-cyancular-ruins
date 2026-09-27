@@ -45,11 +45,29 @@
 - **修法**(三条纪律,写在 `scenes/effects/grain_crystal.gd` 阶段二上方):①**指数收敛** `v = 到目标位移 × ARRIVE_RATE`(限速 `MAX_FLY_SPEED`)—— 任意距离都收得住、不绕圈、近目标时每帧只有几像素;②**按线段判近** `_segment_hits(prev, now, target, r)` —— 防高速隧穿;③**兜底入账**:阶段二超时(`ABSORB_TIMEOUT`)一律 `_absorb()` 再自毁 —— **颗粒是数值承诺**,绝不能因为特效没飞到就丢掉。诊断字段 `last_absorb_kind`/`last_absorb_t` 供探针断言"是飞到的,不是兜底的"。
 - **探针**:新增 `tests/elite_drop_probe.tscn`(**真击杀路径**:找到真乌鸫 → `hurt(9999)` → 断言结晶 FX 出现 → 余额 +300 → 吸收方式必须是 `fly` 而非 `timeout`)。B5 的 `grain_crystal_probe.tscn` 保留(FX 本体)。
 
+### B17 修正(2026-09-27,用户:回溯之后经常被之前击发的榴弹炮炸死)
+- **定性**:一半是设计(回溯确实会把榴弹一起倒回去,而倒放方向正是"倒向它刚出膛那一刻"——它就在你脸前;
+  松手后世界从倒退点继续,榴弹照常会炸,自伤也是既有规则),另一半是**两份状态没进快照**的真 bug。
+- **两个真凶(都在 `WorldRewind._apply_bullets` 的重建路径上,修前叠加发作)**:
+  ① **引信**没记(`_fuse_active/_fuse_elapsed/_fuse_duration`)→ 重建出来的榴弹退回"未点燃" ⇒
+     a) 在错误时刻爆炸;b) 松手那一帧 `_check_player_contact()` 重新生效,与你重叠的榴弹走 0.1s
+     **触碰引信贴脸起爆**。
+  ② **开火时由武器注入的字段**(`max_range/gravity_factor/speed/size/bullet_color`,敌方弹另有
+     `damage/water_mult`)没记 → 重建弹带着**场景默认值**:`max_range` 默认 0 ⇒ `traveled >= max_range`
+     当场成立 ⇒ 榴弹**一松手就在回溯落点触发"超射程爆炸"**。这条比①更致命(不需要挨着你也能炸)。
+  另:敌方子弹此前没打 `scene_path` meta → 重建时建不出节点 → 回溯期间直接"消失"(位置也不倒),一并补上。
+- **修法**:`BulletBase.rewind_state()/apply_rewind_state()`(状态读写口,`EnemyBullet` 覆写补自己的字段)
+  + `WorldRewind` 快照加 `fuse` 字段、实例化时与**每帧**都写回(引信要跟着倒退,不能冻结在按下那一刻)。
+  空字典 = 保持原样 → 老快照/无引信弹安全。
+- **探针**:`tests/rewind_fuse_probe.tscn`(读写口往返含 max_range/gravity_factor · 回溯重建弹带着引信 ·
+  引信与射程**随回溯倒退** · 重建弹的 max_range 必须还原(否则一松手就炸)· 松手后仍"已点燃"并从还原值继续)。
+  ★ 已验证它会红:把写回掐掉后同一探针报出 5 条失败,正是用户描述的症状。
+
 ### 探针(`-s` 或场景模式)
-`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖;★ 它只验 FX 本体,真击杀路径见下)· `tests/elite_drop_probe.tscn`(B15:真击杀乌鸫 → FX 出现 → 余额 +300 → 吸收方式必须是飞到怀表)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算)· `tests/haste_probe.tscn`(B12/B13/B16:倍率表(含 `world_delta`)/普通敌速度×`HASTE_WORLD`/**敌方子弹位移×`HASTE_WORLD`**/主角移速×`HASTE_PLAYER`(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
+`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖;★ 它只验 FX 本体,真击杀路径见下)· `tests/elite_drop_probe.tscn`(B15:真击杀乌鸫 → FX 出现 → 余额 +300 → 吸收方式必须是飞到怀表)· `tests/rewind_fuse_probe.tscn`(B17:引信/开火注入字段进快照、随回溯倒退、重建后不再贴脸起爆)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算)· `tests/haste_probe.tscn`(B12/B13/B16:倍率表(含 `world_delta`)/普通敌速度×`HASTE_WORLD`/**敌方子弹位移×`HASTE_WORLD`**/主角移速×`HASTE_PLAYER`(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
 
 ### 检查点分支(用户要求的逐批回退点)
-`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影) · `_B13`(敌弹随世界变慢+加色高亮规则+精英亮黄) · `_B14`(地图选择 UI:单机开局选图 + 联机建房选图) · `_B15`(修:击杀精英不掉颗粒 —— 结晶飞不进怀表) · `_B16`(加速拉到夸张档:主角 ×2.0 / 其余 ×0.5,并覆盖游泳与攀爬)。
+`KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影) · `_B13`(敌弹随世界变慢+加色高亮规则+精英亮黄) · `_B14`(地图选择 UI:单机开局选图 + 联机建房选图) · `_B15`(修:击杀精英不掉颗粒 —— 结晶飞不进怀表) · `_B16`(加速拉到夸张档:主角 ×2.0 / 其余 ×0.5,并覆盖游泳与攀爬) · `_B17`(修:回溯后被自己榴弹炸死 —— 子弹快照补齐引信与开火注入字段)。
 
 
 ## 地图选择 UI(2026-09-26,B14)

@@ -55,6 +55,9 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 		if not is_instance_valid(b):
 			continue
 		var sh = b.get("shooter")
+		# 引信/射程状态(爆炸弹"还剩多久炸")。不进快照 → 回溯重建的榴弹退回未点燃 →
+		# 在错误时刻爆炸 + 松手贴脸起爆(见 BulletBase.rewind_state 的注释)。
+		var fuse_state: Dictionary = b.call("rewind_state") if b.has_method("rewind_state") else {}
 		pb.append({
 			"sp": str(b.get_meta("scene_path", "")),
 			"p": (b as Node2D).global_position,
@@ -62,6 +65,7 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 			"from_player": sh != null and sh is Node and (sh as Node).is_in_group("player"),
 			"dmg": int(b.get("hit_damage")),
 			"impact": float(b.get("hit_impact")),
+			"fuse": fuse_state,
 		})
 	_frames.append({
 		"t": _t,
@@ -173,12 +177,17 @@ func _apply_bullets(list: Array, player: Node) -> void:
 			nb.set("apply_damage", true)
 			nb.set("hit_damage", int(meta.get("dmg", 0)))
 			nb.set("hit_impact", float(meta.get("impact", 0.0)))
+			if nb.has_method("apply_rewind_state"):
+				nb.call("apply_rewind_state", meta.get("fuse", {}))
 		_replay_bullets.append(nb)
 	for i in list.size():
 		var nb2 = _replay_bullets[i]
 		if is_instance_valid(nb2):
 			(nb2 as Node2D).global_position = list[i]["p"]
 			nb2.set("velocity_vec", list[i]["v"])
+			# 引信**每帧**写回:倒退时引信跟着退(否则它会冻结在按下那一刻的剩余量)
+			if nb2.has_method("apply_rewind_state"):
+				nb2.call("apply_rewind_state", list[i].get("fuse", {}))
 			(nb2 as Node2D).visible = true
 	for i in range(list.size(), _replay_bullets.size()):
 		if is_instance_valid(_replay_bullets[i]):
