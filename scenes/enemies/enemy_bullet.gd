@@ -20,6 +20,22 @@ func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -
 	scale = Vector2(size, size)
 
 
+# 时间回溯状态:除基类那些,再带上 launch() 给的本类字段(重建后伤害/水中加成不能丢)。
+func rewind_state() -> Dictionary:
+	var d := super()
+	d["emd"] = damage
+	d["ewm"] = water_mult
+	return d
+
+
+func apply_rewind_state(d: Dictionary) -> void:
+	super(d)
+	if d.is_empty():
+		return
+	damage = int(d.get("emd", damage))
+	water_mult = float(d.get("ewm", water_mult))
+
+
 func _physics_process(delta: float) -> void:
 	# 时间场(B13):加速 = 主角时间被加快 ⇒ **除主角外一切实体变慢**,敌方弹也不例外
 	# (其位移 = velocity_vec × delta,故缩放 delta 就能真的变慢);回溯整帧冻结(位置由回放器摆)。

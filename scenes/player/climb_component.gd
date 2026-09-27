@@ -70,7 +70,8 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 	if climb_input < 0.0:
 		if foot_in_channel or not _foot_at_ladder_top(foot_cell):
 			# 脚底还没跨过梯顶(在梯子里/在梯子下方)→ 上爬:climb_speed × 瓦片倍率 × 上行倍率
-			var spd := PlayerParams.climb_speed * cs * PlayerParams.climb_vertical_mult * mult.y
+			# 时间场:加速时爬梯/爬链也按主角时间加快(与陆上/水中同源)
+			var spd := PlayerParams.climb_speed * cs * PlayerParams.climb_vertical_mult * mult.y * _time_mult()
 			body.velocity.y = climb_input * spd
 			# 攀爬不锁横移:左右交给根的移动逻辑(爬的同时也能横向走)
 			return true
@@ -88,7 +89,7 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 			# 锁链(无下降倍率)= 自由落体:解除攀附交给重力,落下不再抓回
 			_latched = false
 			return false
-		body.velocity.y = climb_input * PlayerParams.climb_speed * dcs * PlayerParams.climb_vertical_mult * mult.y
+		body.velocity.y = climb_input * PlayerParams.climb_speed * dcs * PlayerParams.climb_vertical_mult * mult.y * _time_mult()
 		return true   # 攀爬不锁横移,左右由根处理
 	body.velocity.y = 0.0  # 挂住:不受重力,原地停留
 	return false
@@ -105,3 +106,9 @@ func _foot_at_ladder_top(foot_cell: Vector2i) -> bool:
 # 脚底到玩家中心的距离(攀爬姿态 FLY 碰撞箱底部,含 scale 2.5)。
 func _climb_foot_offset() -> float:
 	return 57.0
+
+
+# 时间场倍率(加速 ×2;正常 1)。回溯整帧由根早退接管,故 0 一律当 1 处理。
+func _time_mult() -> float:
+	var m := TimeField.player_speed_mult()
+	return m if m > 0.0 else 1.0
