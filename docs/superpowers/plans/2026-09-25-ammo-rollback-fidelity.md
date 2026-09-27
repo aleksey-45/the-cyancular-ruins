@@ -720,6 +720,17 @@ Task 2 定义、Task 3 两处使用)—— 三处名字一致。Task 1 定义的
 - **B2**：`_apply_weapon_state` 的「要不要重建实例」判据是 `wslot`（**类型 id**）⇒ 同型号两把
   之间换手持恒不重建。它与本计划**改同一段代码**（Task 3 Step 4 就在那几行旁边），但修法不同
   （要按 `winst` 判），**建议在本计划落地后紧接着做**，别并进来 —— 并了会让"red→green"分不清是哪一条。
+  ★★ **2026-09-27 订正:这条建议已被 `eeda162`(2026-09-23)的设计取代,不再是一个待办** —— 现行设计是
+  **按 `inst` 定手持下标、按类型决定要不要重建**,写在 `WeaponComponent.restore_inventory` 的头注里
+  (`scenes/player/weapon_component.gd` 的 `:397-416`);且"**类型还在就不重建**"是**刻意的**:
+  `restore_state` 每次 reconcile 都调它,无脑重建 = 每帧 queue_free 旧枪 + 新建 + deferred 入树,
+  而入树前那一帧的 `tick()`/`fire()` 全是空转(开火边沿直接丢)。★ 关键在于 **`WeaponBase` 不携带
+  `inst`**(grep 全文件无 `var inst`)⇒ 同型号换手时那个**节点**本来就无需换,"是哪一把"只活在
+  背包条目里;用户可见的三件事(**残弹写哪条 / 丢弃丢哪把 / 格子高亮**)由 `_current_index` 承担,
+  而它**已按 `inst` 解析**,守卫是 `ground_client_probe` ④b(三把同型号、两条独立判据分别走
+  `restore_state` 与 `sync_soft_state`)。⇒ **不改**。★ 另:`progress.md` 记过,动那条判据曾引入过
+  回归(把 `_current_type` 改成"表里那条的类型" ⇒ 判据恒假 ⇒ 实例永不重建 ⇒ 被清空过背包的一方
+  恢复后手上没枪 ⇒ `SMOKE_TWIN FAIL: 字段 facing 发散`);改动前先读那一段。
 - **推断待验**：`_equip_index` 用 `call_deferred("add_child")` ⇒ 重建那一帧里 `_weapon` 未入树，
   而 `player._physics_process` 同帧会 `weapons.tick()` → `fire()` → `_spawn_projectiles` 里
   `get_viewport().add_child(b)`；未入树的 `get_viewport()` 返回 **null**。这条**只是读代码推的，
