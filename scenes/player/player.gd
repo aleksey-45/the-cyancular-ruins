@@ -203,7 +203,7 @@ func _physics_process(delta: float) -> void:
 	if _speed_mult > 1.0:
 		_ghost_t -= delta
 		if _ghost_t <= 0.0:
-			_ghost_t = 0.045
+			_ghost_t = 0.03   # 2× 下比原先(0.045)更密,拖尾才跟得上
 			var anim := animator   # @export 引用,场景实例化即就位
 			if anim != null:
 				var tint := Color(1.0, 0.25, 0.25, 0.55) if _ghost_flip else Color(0.3, 0.4, 1.0, 0.55)

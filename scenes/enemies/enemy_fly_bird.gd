@@ -365,6 +365,9 @@ func _fire_parabolic() -> void:
 			EnemyParams.FlyBird.bullet_damage, EnemyParams.FlyBird.bullet_gravity,
 			EnemyParams.FlyBird.bullet_size)
 	b.water_mult = WATER_DAMAGE_MULT
+	# 时间回溯重建用的场景路径(与 weapon_base 出弹处同款):不写这条 meta,回溯里
+	# `WorldRewind._apply_bullets` 建不出节点 → 敌方子弹在回溯期间**直接消失**(位置也不倒)。
+	b.set_meta("scene_path", ENEMY_BULLET_SCENE.resource_path)
 	b.global_position = global_position
 	get_viewport().add_child(b)
 	# 开火后座:沿发射反方向轻推鸟(v0 符号即发射方向)。

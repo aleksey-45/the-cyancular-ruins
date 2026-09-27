@@ -19,9 +19,14 @@ func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.
 	if not in_water:
 		return false
 	var horiz := src.get_axis("left", "right")
+	# 时间场:加速是"主角的时间加快",水里/上下浮同样要快(否则一下水加速就没了)。
+	# 回溯整帧早在根里早退,到不了这里;正常态该倍率恒 1。
+	var tm := TimeField.player_speed_mult()
+	if tm <= 0.0:
+		tm = 1.0
 	# 水平游泳(吃武器移动惩罚 move_mult.x)
-	var target_vx := horiz * PlayerParams.player_swim_speed * move_mult.x
+	var target_vx := horiz * PlayerParams.player_swim_speed * move_mult.x * tm
 	parent.velocity.x = MathUtil.approach(parent.velocity.x, target_vx, PlayerParams.player_swim_accel, delta)
 	# 垂直:按上上浮,否则下沉。出水靠 in_water 判定自动切回重力,无需水面检测。
-	parent.velocity.y = PlayerParams.player_swim_up if src.is_action_pressed("up") else PlayerParams.player_swim_down
+	parent.velocity.y = (PlayerParams.player_swim_up if src.is_action_pressed("up") else PlayerParams.player_swim_down) * tm
 	return true

@@ -107,7 +107,7 @@ func _run() -> void:
 		await _wait_phys(4)
 		if en < 5.0 or eh < 0.5:
 			_note("敌速采样不足(普通 %.2f / 加速 %.2f):对比跳过" % [en, eh])
-		elif eh / en > 0.85:
+		elif eh / en > 0.65:
 			_fail("加速没放慢普通敌(普通 %.2f → 加速 %.2f,比 %.2f 期望≈%.2f)" % [en, eh, eh / en, TimeParams.HASTE_WORLD])
 
 	# ── ③ 敌方子弹:加速时必须变慢 ──
@@ -127,7 +127,7 @@ func _run() -> void:
 		else:
 			var br := d_haste / d_norm
 			_bullet_ratio = br
-			if br < 0.55 or br > 0.85:
+			if br < 0.35 or br > 0.65:
 				_fail("加速时敌方子弹没按世界慢下来(普通 %.2fpx → 加速 %.2fpx,比 %.2f 期望≈%.2f)" % [d_norm, d_haste, br, TimeParams.HASTE_WORLD])
 	else:
 		_note("找不到净空格:敌方子弹对比跳过")
@@ -190,7 +190,7 @@ func _run() -> void:
 	var ratio := v_haste / maxf(v_norm, 0.001)
 	if v_norm < 10.0:
 		_fail("普通态水平速度采样过小(%.1f):碰撞已关,不该发生" % v_norm)
-	elif ratio < 1.25 or ratio > 1.55:
+	elif ratio < 1.75 or ratio > 2.25:
 		_fail("加速没改变水平移速(普通 %.1f → 加速 %.1f,比 %.2f 期望≈%.2f; 采样 20 帧中处于加速态 %d 帧)" % [v_norm, v_haste, ratio, TimeParams.HASTE_PLAYER, _haste_frames])
 	_close(mult_seen, TimeParams.HASTE_PLAYER, "player._speed_mult 未按加速倍率设定")
 	if _ghost_total <= 0:
