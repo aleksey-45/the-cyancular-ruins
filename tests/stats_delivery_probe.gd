@@ -48,8 +48,10 @@ const MAP := "res://maps/factory1v1.cyrm"
 #   写成 `[…, deaths, dealt, …]` 会让**生产改对了形状断言照样红**;而错误的修法(放宽成
 #   "包含这七个键就行")会把"载荷字段集"这条真契约拆掉 —— 所以这里必须是逐码点升序。
 const WANT_KEYS := ["acs", "assists", "dealt", "deaths", "kills", "kscore", "taken"]
-const CHECK_NAMES := ["duel_phase", "duel_kill_rule", "royale_phase", "delivery_source",
-		"delivery_payload", "team_phase"]
+const CHECK_NAMES := ["duel_phase", "duel_kill_rule", "duel_bullet_path", "royale_phase",
+		"delivery_source", "delivery_payload", "team_phase"]
+# ⑦ 两颗子弹用的固定伤害(与 ① 的 7 同值,便于三条 1v1 段互相对照)。
+const DUEL_BULLET_DAMAGE := 7
 
 var _fails: Array[String] = []
 var _done: Array[String] = []
@@ -177,6 +179,20 @@ func _force_down(host, role: int) -> void:
 	(host.players[int(role)] as Node).get_node("Combat").force_down()
 
 
+# 造一颗**真子弹**、走生产裁决链(`_adjudicate_bullets` → `_on_bullet_hit`)—— ⑦ 专用。
+# ★ 摆在受害者**身上**(0 距离 < `HIT_RADIUS`)。
+# ★ **不 await**:一 await 子弹就按自己的 `_physics_process` 飞走了。
+# ★ 射手与伤害**照 `WeaponBase.fire()` 的注入方式**手工设(`shooter` / `hit_damage` 就是 fire 设的两个量),
+#   本函数不重造那半条链 —— ⑦ 要验的是**裁决侧**(`_on_bullet_hit` 写不写归因),不是出膛侧。
+func _fire_bullet_at(host, shooter: Node2D, victim: Node2D) -> void:
+	var bullet: CharacterBody2D = preload("res://scenes/weapons/bullet.tscn").instantiate()
+	bullet.shooter = shooter
+	bullet.hit_damage = DUEL_BULLET_DAMAGE
+	add_child(bullet)                 # `_ready` 在这里把它加进 `bullet` 组(`_adjudicate_bullets` 靠它找)
+	bullet.global_position = victim.global_position
+	host._adjudicate_bullets()
+
+
 func _kscore(host, role: int) -> int:
 	return int(host.stats_payload()[int(role)]["kscore"])
 
@@ -220,6 +236,7 @@ func _frame_at(host, s: int) -> Dictionary:
 func _run() -> void:
 	await _check_duel_phase()
 	await _check_duel_kill_rule()
+	await _check_duel_bullet_path()
 	await _check_royale_phase()
 	_check_delivery_source()
 	await _check_delivery_payload()
@@ -297,6 +314,85 @@ func _check_duel_kill_rule() -> void:
 
 	_done.append("duel_kill_rule")
 	await get_tree().process_frame
+
+
+# ── ⑦ 1v1 的**子弹链**:生产裁决函数**自己**必须写归因 ──
+#
+# ★★ 为什么单列一段、而不是并进 ①:① 走的是**手工** `CombatFeedback.attribute(...)` +
+#   `take_hit(...)` —— **整条子弹链一次都没走**。而缺口恰恰在子弹链上:基类
+#   `MatchCombat._on_bullet_hit` 原先**自己不写归因**,只有 `RoyaleHost` / `TeamHost` 的覆写写;
+#   而 1v1 走 `MatchBootstrap.start_on` **直接建 `MatchHost`**(全仓唯一实例化点)⇒ 1v1 的子弹
+#   (主要伤害来源)不计入 `dealt`/`taken`,结算页显示 `击杀 5 / 造成 0 / 承受 0`。
+#   ★ ① 长期全绿**正是因为它绕开了被破坏的那一跳** —— 它是"归因 → 统计"的守卫,
+#     本段是"**生产自己写不写归因**"的守卫,两条互不替代。
+# ★ 夹具走生产路径:`_adjudicate_bullets()` 是生产同一个函数、同一个 `HIT_RADIUS`
+#   (单一来源 `BulletBase.PLAYER_HIT_RADIUS`)。宿主用**裸 `MatchHost`** —— 那正是 1v1 的形态。
+func _check_duel_bullet_path() -> void:
+	# ── (a) 干净 1v1:子弹命中 → dealt 记给射手、taken 记给受害者 ──
+	var host = MatchHost.new(MAP, {}, {})
+	host.name = "StatsDuelBulletHost"
+	add_child(host)
+	GameParameters.refresh_map_size()
+	var shooter: Node2D = _place(host, 1, Vector2i(17, 65))
+	var victim: Node2D = _place(host, 2, Vector2i(133, 64))
+	host._wire_hit_feedback()
+	host._round_state = MatchHost.RoundState.PLAYING
+	await get_tree().physics_frame
+
+	var dealt0 := _stat(host, 1, "dealt")
+	var taken0 := _stat(host, 2, "taken")
+	# ★ 用 `get("hp")` 而不是 `victim.hp`:静态类型是 `Node2D`,编译期看不到 `Player.hp`
+	#   (Godot 4 对已标注类型的变量取未知属性是**编译错误**,不是运行期错误)。
+	var hp0 := int(victim.get("hp"))
+	_fire_bullet_at(host, shooter, victim)
+	# 夹具自检:命中必须真的发生。少了它,万一子弹没进 `bullet` 组/没走到裁决,
+	# 下面两条会因为 `dealt`/`taken` **两边都是 0** 而以"期望 +7 实得 +0"报红(不会假绿),
+	# 但报的是"没打中",不是"归因缺了" —— 自检把这两种成因分开。
+	_check(int(victim.get("hp")) < hp0,
+			("★ ⑦(a) 夹具自检:子弹必须真的命中(受害者 hp %d → %d)"
+			+ " —— 没命中时下面两条红的是『没打中』,不是『归因缺了』")
+			% [hp0, int(victim.get("hp"))])
+	_check(_stat(host, 1, "dealt") - dealt0 == DUEL_BULLET_DAMAGE,
+			("★ ⑦(a) 1v1:子弹命中必须记进**射手**的 dealt(实际 +%d,期望 +%d)"
+			+ " —— 生产 `_on_bullet_hit` 自己不写归因时这里是 0,而 ① 照旧全绿")
+			% [_stat(host, 1, "dealt") - dealt0, DUEL_BULLET_DAMAGE])
+	_check(_stat(host, 2, "taken") - taken0 == DUEL_BULLET_DAMAGE,
+			"★ ⑦(a) 1v1:同一笔进**受害者**的 taken(实际 +%d,期望 +%d)"
+			% [_stat(host, 2, "taken") - taken0, DUEL_BULLET_DAMAGE])
+	host.free()
+	await get_tree().process_frame
+
+	# ── (b) 自伤标记在场时的子弹命中:必须记进**射手**的 dealt,不得记成受害者的 self_damage ──
+	# ★ 这一半是修法**顺带闭合**的耦合症状(见 `CombatFeedback.attribute()` 末尾那句
+	#   `remove_meta("last_self_hit_time")`):1v1 没有归因写端 ⇒ 那个标记永不失效 ⇒
+	#   "自己炸自己之后 8ms 内被敌人打中"会**扣自己的分**(记成 self_damage)。
+	# ★ 受害者取**干净**的一具(另建宿主):若沿用 (a) 那具,`last_damager` 还是新鲜的
+	#   ⇒ `stat_attacker` 非 0 ⇒ 缺了修法那一半时 dealt 照样会涨,(b) 就只剩 self_damage 一条在鉴别。
+	var host2 = MatchHost.new(MAP, {}, {})
+	host2.name = "StatsDuelBulletSelfHost"
+	add_child(host2)
+	GameParameters.refresh_map_size()
+	var shooter2: Node2D = _place(host2, 1, Vector2i(17, 65))
+	var victim2: Node2D = _place(host2, 2, Vector2i(133, 64))
+	host2._wire_hit_feedback()
+	host2._round_state = MatchHost.RoundState.PLAYING
+	await get_tree().physics_frame
+
+	var dealt0b := _stat(host2, 1, "dealt")
+	var self0 := _stat(host2, 2, "self_damage")
+	CombatFeedback.note_self_hit(victim2)   # 生产写端:`Explosion.apply_aoe` 里 shooter == 自己那一支
+	_fire_bullet_at(host2, shooter2, victim2)
+	_check(_stat(host2, 2, "self_damage") - self0 == 0,
+			("★ ⑦(b) 自伤标记**不得**吃掉紧随其后的敌人子弹(实际 self_damage +%d,期望 +0"
+			+ " —— 涨了就是玩家『因为被敌人打中而扣自己的分』)")
+			% [_stat(host2, 2, "self_damage") - self0])
+	_check(_stat(host2, 1, "dealt") - dealt0b == DUEL_BULLET_DAMAGE,
+			"★ ⑦(b) 那一笔必须记进**射手**的 dealt(实际 +%d,期望 +%d)"
+			% [_stat(host2, 1, "dealt") - dealt0b, DUEL_BULLET_DAMAGE])
+	host2.free()
+	await get_tree().process_frame
+
+	_done.append("duel_bullet_path")
 
 
 # ── ③ 大乱斗:同一个倒地边沿记 deaths/击杀,`deaths` 载荷只从逐人表来 ──

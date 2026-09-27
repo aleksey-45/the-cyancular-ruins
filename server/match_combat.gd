@@ -184,14 +184,24 @@ func notify_direct_hit(shooter: Node, victim: Node) -> void:
 
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
+	# ★★ 归因**先于伤害**(全仓纪律:一击致死时倒地边沿同帧读 meta,大乱斗靠它计击杀分)。
+	#   ★ 为什么写在**基类**、而不是只写在子类覆写里(2026-09-27 用户裁定方案 A):
+	#     1v1 走 `MatchBootstrap.start_on` **直接建 `MatchHost`**(全仓唯一实例化点),
+	#     **没有**那层覆写 ⇒ 原先 1v1 的子弹(主要伤害来源)不计入 `dealt`/`taken`,
+	#     结算页显示 `击杀 5 / 造成 0 / 承受 0`(两列读同一对归因)。
+	#   ★ 顺带闭合的**第二件事**:1v1 原先既然没有写端,`attribute()` 末尾那句
+	#     `remove_meta("last_self_hit_time")` 也就永不执行 ⇒ "自己炸自己之后 8ms 内
+	#     被敌人打中"会被记成 `self_damage`(玩家**因为被敌人打中而扣自己的分**)。
+	#   ⇒ 基类补这一行,**两件事一起闭合**。守卫:`tests/stats_delivery_probe` ⑦
+	#     ((a) 干净子弹链进 dealt/taken;(b) 自伤标记被这一笔当场作废)。
+	#   ★ `RoyaleHost` / `TeamHost` 的同名覆写**仍然留着**:它们与这里现在写法重复,
+	#     而 `attribute()` 是幂等的纯元数据写入,重复调用无害;删它们会一并作废
+	#     CLAUDE.md 与 `team_host_probe` 上以那两处覆写为锚点的整段登记 —— 不值得。
+	CombatFeedback.attribute(victim, bullet.shooter)
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
-	# 命中确认(NetBusExt):告诉射手"你打中了"→ 客户端屏幕中心 X 标记。只发射手本人;
-	# RoyaleHost 覆写先写归因 meta 再 super 到这里,大乱斗同样生效。
-	# ★ 本函数**自己不写归因** —— 子弹直击的 `CombatFeedback.attribute` 写在子类覆写里
-	#   (`RoyaleHost` / `TeamHost`)。1v1 直接建 `MatchHost`、没有那层覆写 ⇒ 1v1 的子弹
-	#   **不计入逐人 `dealt`**(见 `_on_player_hit` 头注与 CLAUDE.md 的登记)。
+	# 命中确认(NetBusExt):告诉射手"你打中了" → 客户端屏幕中心 X 标记。只发射手本人。
 	var shooter_role := 0
 	for r in players:
 		if players[r] == bullet.shooter:
@@ -212,13 +222,12 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	# "归因写入 `CombatFeedback.attribute` 都在 `take_hit` 之前"(本仓明文纪律,见
 	# core/sim/explosion.gd:62 与 scenes/weapons/laser_weapon_base.gd:233),于是
 	# `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion` 的伤害逻辑**。
-	# ★★ "覆盖全部来源"说的是**钩子**,不是**归因写端** —— 写端有一处缺口:子弹直击的
-	#   `attribute` 写在**各模式的覆写**里(`RoyaleHost`/`TeamHost`),基类
-	#   `_on_bullet_hit` **不写** ⇒ **1v1 的子弹不计入 `dealt`**(其余来源各自写归因、
-	#   照常计入)。★★ **这条已上线、今天就是玩家屏上的读数**(2026-09-26 订正:原文写"今天无害
-	#   (1v1 还不投递 `stats`)" —— 1v1 的投递在同一弧里落地了):一把手枪打完一局,结算页显示
-	#   `击杀 5 / 造成 0`(`taken` 同样为 0,两列读同一对归因),而**仍然没有任何探针会红**。
-	#   二选一的修法见 CLAUDE.md 的那条登记(用户待决,本次只订正文字、未改行为)。
+	# ★ "覆盖全部来源"说的是**钩子**;**归因写端**如今也是齐的 —— 子弹直击的 `attribute`
+	#   由基类 `_on_bullet_hit` 自己写(2026-09-27 用户裁定方案 A:补齐 1v1 缺的那一层覆写),
+	#   爆炸 / 榴弹直击 / 激光各自照旧写。⇒ 四条伤害来源在**三个模式**下都进 `dealt`/`taken`。
+	#   ★ 历史(留档):在此之前基类**不写**、只有 `RoyaleHost`/`TeamHost` 的覆写写,而 1v1
+	#     直接建 `MatchHost` ⇒ 1v1 一把手枪打完一局,结算页显示 `击杀 5 / 造成 0 / 承受 0`。
+	#     守卫 `tests/stats_delivery_probe` ⑦ 钉住"生产自己写不写"这一面。
 	var stat_victim: Node2D = players.get(int(role))
 	var stat_self := stat_victim != null and is_instance_valid(stat_victim) \
 			and CombatFeedback.is_fresh_self_hit(stat_victim, ATTRIB_FRESH_MS)

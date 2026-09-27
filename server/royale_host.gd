@@ -386,9 +386,12 @@ func mark_disconnected(role: int) -> void:
 
 # 子弹直击归因:命中瞬间把射手记到受害者 meta(倒地边沿时读)
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
-	# 归因写入统一走 main 的单一入口(它同时写 last_damager + last_damager_time)。
-	# 本覆写不可省:服务器子弹撞玩家时掩码不含玩家层,只经 _adjudicate_bullets 到这里,
-	# 子弹自己的反馈路径不会跑 → 必须由本处写 meta,否则击杀归因丢失。
+	# 归因写入统一走 CombatFeedback 的单一入口(它同时写 last_damager + last_damager_time)。
+	# ★ 2026-09-27 起**基类也写同一笔**(`MatchCombat._on_bullet_hit` 第一行)⇒ 本覆写现在是
+	#   **冗余的重复写**(`attribute()` 是幂等的纯元数据写入,重复调用无害);保留只为留下写点、
+	#   不作废以本处与 `TeamHost` 那份为锚点的既有登记与注释。
+	#   ★ **别据此把基类那一行删掉** —— 1v1 走 `MatchBootstrap` 直接建 `MatchHost`,
+	#     基类那一行是它**唯一**的子弹归因写端(守卫 `tests/stats_delivery_probe` ⑦)。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
 

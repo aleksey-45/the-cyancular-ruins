@@ -596,10 +596,14 @@ func request_suicide_role(role: int) -> void:
 # ★ 只做数据面:结算面板(版式/排序/庆祝)不在这里。
 
 
-# 子弹直击的归因写入。★ **不可省**(与 `RoyaleHost._on_bullet_hit` 逐字同构):服务器上子弹
-# 撞玩家不靠物理(子弹掩码 5 = 地形+敌人,不含玩家层),只经 `_adjudicate_bullets` 到这里,
-# 而基础实现里**没有** `CombatFeedback.attribute`。
-# 不写这一步的后果(都是静默):
+# 子弹直击的归因写入(与 `RoyaleHost._on_bullet_hit` 逐字同构)。服务器上子弹撞玩家不靠物理
+# (子弹掩码 5 = 地形+敌人,不含玩家层),只经 `_adjudicate_bullets` 到这里。
+# ★ 2026-09-27 起**基类也写同一笔**(`MatchCombat._on_bullet_hit` 第一行)⇒ 本覆写现在是
+#   **冗余的重复写**(`attribute()` 幂等,重复调用无害);保留只为留下写点、不作废以本处与
+#   `RoyaleHost` 那份为锚点的既有登记与注释。
+#   ★ **别据此把基类那一行删掉** —— 1v1 走 `MatchBootstrap` 直接建 `MatchHost`,
+#     基类那一行是它**唯一**的子弹归因写端(守卫 `tests/stats_delivery_probe` ⑦)。
+# 历史(留档):在此之前基类不写。缺这一步的后果(都是静默):
 #   ① 逐人 `dealt` 漏掉**最主要的伤害来源** ⇒ ACS 直接失真;
 #   ② `_attributed_killer` 对枪杀恒 0 ⇒ `kill_event` 的射手恒 0(逐人 `kills` 也全漏),
 #      即"枪杀在客户端播报里没有击杀者"。
