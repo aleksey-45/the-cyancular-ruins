@@ -876,14 +876,22 @@ EOF
 #   (它的注释写着「要删先修 `_match_winner`」)—— 但删它不在本批范围(peer 的层 + 需要用户点头)。
 func _phase_royale_winner() -> void:
 	print("[lm] ── 大乱斗:_match_winner 的并列候选集 ──")
-	# ── ④ 全场 0 杀 + 一人离开 ⇒ 平局 ──
+	# ── ④ 全场 0 杀 + **掉到只剩一人** ⇒ 平局 ──
+	# ★★ 订正(实现期实测,2026-09-28):本相**照原稿写是修前绿的** ——
+	#   3 个 role 掉 **1** 个还剩 **2** 个幸存者,而他们**彼此**已在 0 杀上并列 ⇒ 平局照样被检出
+	#   (实测 `实得 0`)。"少一个并列候选"只在**幸存者恰好 1 人**时才翻转结果(平局要有 ≥2 个候选
+	#   共享最高分)⇒ 必须掉到只剩一人。那也正是生产里"最后一个对手离开 ⇒ `_finish_match()`"的落点
+	#   (`mark_disconnected` 的 `players.size() < 2` 分支)。
+	#   ★ 实际落地形状以 `tests/late_match_probe.gd` 为准(它对 [1,2,3] 连掉两个);本段保留原始
+	#     意图,避免把"计划里的代码块"当成已经过验证的实现读。
 	var h1: Node = _mount("royale", [1, 2, 3])
 	h1._round_state = MatchHost.RoundState.PLAYING
-	h1.mark_disconnected(3)
+	h1.mark_disconnected(2)
+	h1.mark_disconnected(3)      # 掉到只剩 role 1 ⇒ 幸存者 1 人
 	_check(h1._scores.is_empty(),
 			"[仪器] 全场 0 杀(实得 _scores=%s;若非空,下面这条测的就不是「并列」)" % str(h1._scores))
 	_check(h1._match_winner() == 0,
-			"★ 全场 0 杀 + 有人离开 ⇒ 平局 0,不是幸存者独胜(实得 %d)" % h1._match_winner())
+			"★ 全场 0 杀 + 只身幸存 ⇒ 平局 0,不是幸存者独胜(实得 %d)" % h1._match_winner())
 
 	# ── ⑤ 反向对照:有分差时仍判分高者 ──
 	# 没有它,"恒返回 0"也能让 ④ 通过。
@@ -911,8 +919,11 @@ source tests/env.sh
 timeout 180 "$GODOT" --headless --path . --quit-after 3600 res://tests/late_match_probe.tscn 2>&1 | tail -8
 ```
 
-Expected: ④ 相 FAIL,判词 `★ 全场 0 杀 + 有人离开 ⇒ 平局 0,不是幸存者独胜(实得 3)`
-(实得值可能是 1 或 3 —— 取决于 `players` 的遍历顺序)。⑤ 与 ⑤b 应已 `ok`(它们测的是既有语义)。
+Expected(★ 已订正,见 Step 5.1 的 ④ 注释):④ 相 FAIL,判词
+`★ 全场 0 杀 + 只身幸存 ⇒ 平局 0,不是幸存者独胜`,实得值 = **幸存的那个 role**(修前)。
+⑤ 与 ⑤b 应已 `ok`(它们测的是既有语义)。
+★ 原稿此处写的"实得值可能是 1 或 3、取决于遍历顺序"是**错的**:3 人掉 1 个的 fixture 修前本就是平局(绿),
+所以那一版**根本红不了**。判断此类断言时,先把"平局需要 ≥2 个候选"这条数清楚。
 
 - [ ] **Step 5.3: 实现**
 
