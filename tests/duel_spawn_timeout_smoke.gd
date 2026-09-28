@@ -32,6 +32,11 @@ const TIMEOUT_MARK := "1v1 报到超时"
 const READY_WAIT_MS := 40000             # 冷启动 headless worker + 建世界,给足
 const LADDER_WAIT_MS := 60000            # 30s 梯 + 余量
 
+# 结构封闭那两条判据的**位置锚/目标串**(见 `_check_lobby_process_off`):
+# `set_process(false)` 必须落在 `_ready` 体内、**大厅分支挂上 RoomManager 之后**,且两者之间没有早退。
+const LOBBY_ANCHOR := "add_child(RoomManager.new())"
+const PROCESS_OFF := "set_process(false)"
+
 
 func _initialize() -> void:
 	# ★ 空载守卫:load 失败立刻 quit(1),否则后面抛错走不到 quit() → 进程**永久挂起**。
@@ -92,21 +97,42 @@ func _initialize() -> void:
 	# ── 源码级门控检查(见下方长注释:本冒烟结构上照不到大厅那一面)──
 	# ★ 本冒烟起的是 **worker**,结构上永远进不了大厅模式 ⇒ 它**看不见**下面这条回归:
 	#   把那一支的条件写成 **worker-only 标志的否定**(`not _royale and not _team_mode`)时,
-	#   大厅进程里四个合取项**全成立** ⇒ `start_server.bat` 起的大厅会在 30 秒后 quit(0) 自杀
+	#   大厅进程里那些合取项**全成立** ⇒ `start_server.bat` 起的大厅会在 30 秒后 quit(0) 自杀
 	#   (实测发生过)。⇒ 唯一能自动拦住它的是**源码级**检查。
 	#
-	# ★★ 判的是**语义不变量**,不是字面行(2026-09-28 重审后改写)。旧版钉死了
-	#   `elif _worker and not _match_started and _host == null:` **整行**、并禁掉 `elif not _royale and not _team_mode`
-	#   这一个字面写法 —— 那是**过拟合**,不是"看不见":任何等价重写(抽出 helper / 给标志改名 /
-	#   调换合取项顺序)都会**假红**,连注释里逐字引用旧 bug 的形状也会红(旧版读的是**含注释**的全文)。
-	#   假红会招来错误的补救(「把守卫放松点」)—— 与探针纪律相悖。现在的三条判据:
-	#     ① `_process` 体内**不得**出现 `not _royale`(梯子不得以 worker-only 标志的否定为门);
-	#     ② 1v1 报到梯的门控必须是**正的实例标志** —— 标识符是从梯子那行**就地取**的(不钉名字,
-	#        改名照绿),且文件里确有 `var <名> := false` 声明(防它退化成 `_ready` 里的局部量:
-	#        `is_worker` 正是出不了 `_ready` 的那个);
-	#     ③ 文件里有 `set_process(false)`(大厅那半边的结构封闭,与极性无关)。
-	#   ★ **不覆盖**:把判据整个搬进别的函数、或换个变量名再取反 —— 那一类由真大厅存活兜
-	#     (A/B 手动跑,`EXIT=124`;未进常驻测试)。
+	# ★★ 判的是**语义不变量**,不是字面行。判据(全部落在**剥注释**视图上):
+	#   ① 1v1 报到梯的**整条**门控里至少有一个**正的实例 worker 标志**:门控里出现的标识符
+	#      **逐个**试(不钉第一个、也不钉名字),要求它被声明成 `var X := false`(或
+	#      `var X: bool = false`)**且**被 `X = is_worker` 赋过值 —— 后者防它退化成 `_ready`
+	#      里的局部量(`is_worker` 正是出不了函数的那个);
+	#   ② 门控**不得否定** worker-only 标志(`_royale` / `_team_mode` / `_worker`):大厅里
+	#      它们恒 false,取反恒真。★ **只禁否定式,不禁"以 `not` 开头"** —— `not _match_started`
+	#      是正常写法,必须放行(那一支还要求 `_worker` 为真,结构上进不去);
+	#   ③ `set_process(false)` 必须在 **`_ready` 体内、紧跟 `add_child(RoomManager.new())` 之后、
+	#      且两者之间没有早退**;`_run_worker` 体内**不得**有它。
+	#
+	# ★★ **上一版在注释里撒过谎,别照那句读**(2026-09-28 重审订正):它写着"对改名 / 重排合取项 /
+	#   抽 helper 免疫",实际只做到了**改名**(而且连 `var X: bool = false` 这种写法都不认)。
+	#   它取门控的办法是**切到第一个合取项**(`gate.split(" and ")[0]`)再判那一个是不是实例标志 ⇒
+	#     · `elif not _match_started and _worker and _host == null:`(**语义等价且安全**)取到
+	#       `not _match_started` ⇒ 假红「门控是否定式」;
+	#     · 把条件抽成 helper(`elif _should_timeout_1v1():`)⇒ 假红「不是实例标志」。
+	#   假红会招来错误的补救(「把守卫放松点」)—— 与探针纪律相悖。现在判**整条**条件,
+	#   且门控若只是一句裸的**零参 helper 调用**,就顺着它的那一条 `return` 再判一层(只一层)。
+	#
+	# ★ **今天真正覆盖到的 / 仍看不见的**(照实,别夸大):
+	#   覆盖 = 标志改名、合取项重排、`not _match_started` 这类**对非 worker-only 标志**的否定、
+	#          `var X: bool = false` 写法、条件抽成**一层** helper(其函数体是**唯一**一条
+	#          `return <整条条件>`)、`set_process(false)` 的挪位。
+	#   看不见 = worker-only 标志**换名之后再取反**(文本判不出"谁是 worker-only",只认那三个名字)、
+	#          两层以上的 helper 间接、helper 里有别的早退(那种 helper 体有不止一条 `return`,
+	#          本守卫报红 —— 是**保守**方向)、`set_process(false)` **之前且锚点之上**的早退
+	#          (如 `NetBus.start_server()` 失败那一支 —— 它同帧 `quit(1)`,梯子来不及点火,
+	#          见 `server_main.gd` 那处的登记注释)。
+	#   ★★ 判据**不覆盖**"门控那个标志真的被 `= is_worker` 赋过值"的**可达性**:`X = is_worker`
+	#      只按文本判在位(写进一段永远走不到的分支里、或后面又被别处改掉,文本看不见)。
+	#      这一条由本冒烟的**运行半场**兜底 —— 它等的就是那条梯在一个真 1v1 worker 上点火。
+	#   最后一层仍是**真大厅存活**(手动 A/B,未进常驻测试)。
 	var SU: GDScript = load("res://tests/lib/scan_util.gd")
 	if SU == null:
 		print("DUEL SPAWN TIMEOUT SMOKE: FAIL(读不到 tests/lib/scan_util.gd —— 源码级门控检查无法进行)")
@@ -117,42 +143,172 @@ func _initialize() -> void:
 		fails.append("读不到 server/server_main.gd —— 源码级门控检查无法进行(导出包里是二进制 token,本冒烟只在编辑器二进制下有效)")
 	else:
 		var code: String = SU.code_only(src)
-		var body: String = SU.func_body(SU.code_view(src), "_process")
+		var view: String = SU.code_view(src)
+		var body: String = SU.func_body(view, "_process")
 		if body.is_empty():
 			fails.append("★ 取不到 `server_main._process` 的函数体 —— 源码级门控检查无法进行")
-		elif body.contains("not _royale"):
-			fails.append("★ 报到梯又用回了 worker-only 标志的**否定** —— 大厅进程里它恒真,会在 30 秒后 quit(0)")
 		else:
-			var gate := _ladder_gate(body)
+			var gate := _ladder_gate(body, TIMEOUT_MARK)
 			if gate.is_empty():
-				fails.append("★ `_process` 里找不到 1v1 报到梯(判据是它打的那句 `1v1 报到超时`)")
-			elif gate.begins_with("not") or gate.contains("not "):
-				fails.append("★ 1v1 报到梯的门控是**否定式**(`%s`)—— 大厅进程里它恒真,会在 30 秒后 quit(0)" % gate)
-			elif not code.contains("var %s := false" % gate):
-				fails.append("★ 1v1 报到梯的门控 `%s` 不是实例标志(文件里没有 `var %s := false`)" % [gate, gate])
-		# 结构封闭:大厅分支必须关掉自己的 `_process`(与梯子极性无关的那一层保险)。
-		if not code.contains("set_process(false)"):
-			fails.append("★ 大厅分支缺 `set_process(false)` —— 非 worker 进程又会 tick `_process`,把「非 worker 进程进梯」这个口子重新打开")
+				fails.append("★ `_process` 里找不到 1v1 报到梯(判据是它打的那句 `%s`)" % TIMEOUT_MARK)
+			else:
+				_check_gate(gate, code, view, SU, fails)
+		# 结构封闭:大厅那半边的**最后一道动作**必须关掉自己的 `_process`(与梯子极性无关的保险)。
+		_check_lobby_process_off(SU.func_body(view, "_ready"), SU.func_body(view, "_run_worker"), fails)
 
 	launcher.kill_worker(PORT)
 	_finish(fails)
 
 
+# ────────────────────────── 源码级判据 ──────────────────────────
+
+# 判据 ①②的就地判 + **一层 helper 追索**。
+# ★ 抽 helper 是**等价重写**、安全 —— 不能因为"门控里没有标志"就假红(那正是上一版的病)。
+#   门控若只是一句裸的零参调用,就取 helper 体内**唯一**那条 `return <条件>` 再判一次。
+func _check_gate(gate: String, code: String, view: String, SU, fails: Array[String]) -> void:
+	var verdict := _gate_verdict(gate, code)
+	if verdict == "":
+		return
+	var helper := _bare_call_name(gate)
+	if helper == "":
+		fails.append("★ 1v1 报到梯的门控 `%s` 不合格:%s" % [gate, verdict])
+		return
+	var hcond := _sole_return_condition(SU.func_body(view, helper))
+	if hcond.is_empty():
+		fails.append("★ 1v1 报到梯的门控是一句 helper 调用 `%s()`,但取不到它**唯一**的那条 `return <条件>` —— 本守卫追不下去(抽 helper 可以,但请写成 `return <整条条件>` 这一种形态)" % helper)
+		return
+	var v2 := _gate_verdict(hcond, code)
+	if v2 == "":
+		return
+	fails.append("★ 1v1 报到梯的门控 `%s()` 不合格(其 `return` 条件 = `%s`):%s" % [helper, hcond, v2])
+
+
+# 判据 ①②。返回 "" = 合格;否则返回**失败理由**(文中已含"该怎么改")。
+func _gate_verdict(gate: String, code: String) -> String:
+	var flag := _negated_worker_flag(gate)
+	if flag != "":
+		return ("它**否定**了 worker-only 标志 `%s` —— 大厅进程里该标志恒 false、取反恒真,"
+				+ "大厅会开机 30 秒后打印报到超时并 quit(0) 自杀。门控要用**正的** worker 标志"
+				+ "(见 `server_main.gd` 的 `_worker` 声明处注释)") % flag
+	if not _has_instance_worker_flag(gate, code):
+		return ("门控里找不到**正的实例 worker 标志**。要求:门控里至少有一个标识符 X,文件里有 "
+				+ "`var X := false`(或 `var X: bool = false`)声明,**且**有 `X = is_worker` 赋值 "
+				+ "(`_ready` 的局部量 `is_worker` 出不了函数,不能当门)")
+	return ""
+
+
+# 判据②:门控是否**否定**了某个 worker-only 标志。返回被否定的标志名,没有则 ""。
+# ★ 只禁否定式、**不禁"以 `not` 开头"**:`not _match_started` 是正常写法,必须放行。
+# ★ 正则容忍空白与一层括号 ⇒ `not (_royale or _team_mode)` 这个**同一语义换个拼写**的洞也咬得住
+#   (旧版是靠"门控里有 `not `"抓它的,那与"否定的是 worker-only 标志"并不是一回事)。
+# ★ 剩余边界照实:只认这三个**名字**,因此"给 worker-only 标志改名之后再取反"看不见
+#   ("哪个标志是 worker-only"是语义,文本判不出来)。
+func _negated_worker_flag(gate: String) -> String:
+	for raw in ["_royale", "_team_mode", "_worker"]:
+		var flag := str(raw)
+		var re := RegEx.new()
+		if re.compile("\\bnot\\s*\\(*\\s*%s\\b" % flag) != OK:
+			continue
+		if re.search(gate) != null:
+			return flag
+	return ""
+
+
+# 判据①:门控里**至少有一个**标识符是"正的实例 worker 标志" —— 既要被声明成 false 初值的
+# **实例字段**(排除 `_ready` 里的局部量 `is_worker`:那个出不了函数,门控里根本写不到它),
+# 又要被 `= is_worker` 赋过值(光有个同名却没赋过值的死字段不算)。
+# ★ 扫**门控里出现的每一个**标识符,不只第一个 —— 上一版栽的就是"只看首合取项"。
+func _has_instance_worker_flag(gate: String, code: String) -> bool:
+	for raw in _identifiers(gate):
+		var name := str(raw)
+		if not (code.contains("var %s := false" % name) \
+				or code.contains("var %s: bool = false" % name)):
+			continue
+		if _has_assignment(code, name):
+			return true
+	return false
+
+
+# 在**标识符边界上**找 `X = is_worker`。裸 `code.find` 会踩兄弟名(`_not_worker = is_worker`
+# 里含 `_worker = is_worker` 这一子串 ⇒ 假绿;源码文本守卫最常见的失明方式之一)。
+func _has_assignment(code: String, name: String) -> bool:
+	var needle := "%s = is_worker" % name
+	var i := code.find(needle)
+	while i >= 0:
+		if i == 0 or not _is_ident_char(code[i - 1]):
+			return true
+		i = code.find(needle, i + 1)
+	return false
+
+
+# 判据③:大厅那半边必须**在自己的尾部**关掉 `_process`。
+# ★ 只判"文件里有 `set_process(false)`"是**位置不敏感**的(旧版就是这样):把那一行挪进
+#   `_run_worker`(worker 也被关掉 tick ⇒ 报到梯永不点火),或在它上面插一条早退
+#   (`return` 先于它生效 ⇒ 口子原样重开),两种改法都不会让"contains"变红。
+func _check_lobby_process_off(ready_body: String, worker_body: String, fails: Array[String]) -> void:
+	if ready_body.is_empty():
+		fails.append("★ 取不到 `server_main._ready` 的函数体 —— 无法钉 `%s` 的位置" % PROCESS_OFF)
+		return
+	var at := ready_body.find(PROCESS_OFF)
+	if at < 0:
+		fails.append("★ `%s` 不在 `_ready` 体内 —— 大厅那半边又敞开了(非 worker 进程会重新 tick `_process`,把「非 worker 进程进梯」这个口子打开)" % PROCESS_OFF)
+		return
+	var anchor := ready_body.find(LOBBY_ANCHOR)
+	if anchor < 0:
+		fails.append("★ `_ready` 体内找不到 `%s` —— 无法判 `%s` 是不是落在**大厅分支**里(顺序断言会因此退化成恒真)" % [LOBBY_ANCHOR, PROCESS_OFF])
+		return
+	if at < anchor:
+		fails.append("★ `%s` 排在 `%s` **之前** —— 它不在大厅分支的尾部" % [PROCESS_OFF, LOBBY_ANCHOR])
+		return
+	if ready_body.substr(anchor, at - anchor).contains("return"):
+		fails.append("★ `%s` 与 `%s` 之间有一条 `return` —— 那条早退会**跳过** `%s`,口子原样重开(位置钉的就是这一件事)" % [LOBBY_ANCHOR, PROCESS_OFF, PROCESS_OFF])
+		return
+	if worker_body.contains(PROCESS_OFF):
+		fails.append("★ `%s` 出现在 `_run_worker` 体内 —— worker 也被关掉了 tick,报到梯永远不会点火" % PROCESS_OFF)
+
+
+# 门控若只是"一句裸的零参调用"(`_should_timeout_1v1()`),返回函数名;否则返回 ""。
+func _bare_call_name(gate: String) -> String:
+	var re := RegEx.new()
+	if re.compile("^([A-Za-z_][A-Za-z0-9_]*)\\(\\)$") != OK:
+		return ""
+	var m := re.search(gate)
+	return m.get_string(1) if m != null else ""
+
+
+# helper 体里**唯一**那条 `return <条件>` 的条件文本(0 条或多条都返回 "" ⇒ 调用方报红)。
+func _sole_return_condition(body: String) -> String:
+	if body.is_empty():
+		return ""
+	var found := ""
+	var n := 0
+	for raw in body.split("\n"):
+		var s: String = raw.strip_edges()
+		if s.begins_with("return "):
+			n += 1
+			found = _squeeze_ws(s.substr(7))
+	return found if n == 1 else ""
+
+
 # 从 `_process` 的函数体(必须是 `ScanUtil.code_view` 的**保缩进**视图)里,取「1v1 报到梯」
-# 那支的**门控标识符**(如 `_worker`)—— 不钉名字、不钉整行,等价重写照绿。
-# 做法:定位该支体内那句 `1v1 报到超时` 的 print,再**向上找最外层的包围分支**
-# (`if `/`elif `,且缩进比当前见过的都浅),取它条件的第一个合取项。
-# 返回 "" = 没找到(调用方报红);返回以 `not` 开头 = 门控是否定式(调用方报红)。
-func _ladder_gate(body: String) -> String:
+# 那支的**整条门控表达式** —— 不是第一个合取项(旧版切 `split(" and ")[0]`,那是过拟合)。
+# 两步:
+#   ① 从打印 `mark` 的那行**向上**找**最外层**的包围分支(缩进比已经见过的都浅)—— 打印外面还套着
+#      一层 `if _understaffed_wait > 30.0:`,那层要跨过去,否则取到的是**计时阈值**而不是门控;
+#   ② 从那一行起把**整条条件**拼出来(拼到第一个以 `:` 结尾的行为止)—— 多行条件(续行)一并收进来;
+#      末尾的 `:` 是语句终止符、不属于条件。
+# 返回 "" = 没找到(调用方报红)。返回文本已做**空白归一**:拼接残留的换行/制表符会让
+# 下面那些按子串判"否定了哪个标志"的断言漏判 —— 那是源码文本守卫最常见的失明方式。
+func _ladder_gate(body: String, mark: String) -> String:
 	var lines := body.split("\n")
 	var at := -1
 	for i in range(lines.size()):
-		if lines[i].contains("1v1 报到超时"):
+		if lines[i].contains(mark):
 			at = i
 			break
 	if at < 0:
 		return ""
-	var gate := ""
+	var gate_at := -1
 	var floor_indent := _indent_of(lines[at])
 	for i in range(at - 1, -1, -1):
 		var s: String = lines[i]
@@ -160,16 +316,59 @@ func _ladder_gate(body: String) -> String:
 			break                                  # 到函数签名 = 再往上不是本函数了
 		var ci := _indent_of(s)
 		if ci >= floor_indent:
-			continue                               # 同级/更深 = 本支的内部,继续往上
+			continue                               # 同级/更深 = 本支(或更深分支)的内部,继续往上
 		var stripped := s.strip_edges()
-		if stripped.begins_with("if "):
-			gate = stripped.substr(3)
-		elif stripped.begins_with("elif "):
-			gate = stripped.substr(5)
+		if stripped.begins_with("if ") or stripped.begins_with("elif "):
+			gate_at = i
 		else:
 			continue                               # 更浅但不是分支(不该有):继续往上找
 		floor_indent = ci
-	return gate.split(" and ")[0].strip_edges()
+	if gate_at < 0:
+		return ""
+	var first: String = lines[gate_at].strip_edges()
+	var cond := first.substr(3 if first.begins_with("if ") else 5)
+	var k := gate_at
+	while not cond.strip_edges().ends_with(":"):
+		k += 1
+		if k >= lines.size():
+			break
+		cond += " " + lines[k].strip_edges()
+	cond = cond.strip_edges()
+	if cond.ends_with(":"):
+		cond = cond.substr(0, cond.length() - 1)
+	cond = cond.strip_edges()
+	if cond.ends_with("\\"):                       # 多行条件的续行符(行尾 `\`)
+		cond = cond.substr(0, cond.length() - 1)
+	return _squeeze_ws(cond)
+
+
+# 空白归一(换行/制表符/多空格 → 单个空格)。子串判据必须在归一后的文本上做。
+func _squeeze_ws(s: String) -> String:
+	var re := RegEx.new()
+	if re.compile("\\s+") != OK:
+		return s.strip_edges()
+	return re.sub(s, " ", true).strip_edges()
+
+
+# 门控文本里出现的标识符(逐字符切,不引正则:`_`/数字/字母 算标识符字符)。
+func _identifiers(s: String) -> Array[String]:
+	var out: Array[String] = []
+	var cur := ""
+	for i in range(s.length()):
+		var ch := s[i]
+		if _is_ident_char(ch):
+			cur += ch
+		else:
+			if cur != "":
+				out.append(cur)
+			cur = ""
+	if cur != "":
+		out.append(cur)
+	return out
+
+
+func _is_ident_char(ch: String) -> bool:
+	return ch == "_" or (ch >= "0" and ch <= "9") or (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z")
 
 
 func _indent_of(line: String) -> int:

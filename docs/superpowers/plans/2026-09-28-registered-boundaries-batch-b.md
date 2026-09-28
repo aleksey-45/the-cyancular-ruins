@@ -33,8 +33,16 @@
   (实际只用后者)+ 四个 `tests/` 文件。**别的 `scenes/` 文件一个都不许碰。**
 * **不许碰** `tests/team_match_*`(peer 正在复验)与 `tests/royale_c2_probe*`(peer 阶段 3 要用)。
 * **`server/server_main.gd` 的 `_expire_graces` 归 peer**(他的阶段 3 要在里面加
-  `opponent_left` 发送点,且必须排在 `quit(0)` **之前**)。本计划**只动 `_process`**,不动
-  `_expire_graces`,不动 `quit(0)` 的任何一处位置。
+  `opponent_left` 发送点,且必须排在 `quit(0)` **之前**)。本计划**在这份文件上**动的是
+  `_process` 的 1v1 报到梯那一段 **加上 `_ready()` 的两处**(`_worker = is_worker` 落进实例标志、
+  大厅分支末尾收一句 `set_process(false)`;**2026-09-28 重审订正** —— 此前这条写的是"只动
+  `_process`",在加固补丁落地后**已经不成立**)。★ 该约束的**用意**(不碰 `_expire_graces`、
+  不改 `quit(0)` 的任何一处位置)仍然**逐字成立**,变的只是它的字面。
+* ★★ **`_process` 那一段现在被源码级钉住了**(`tests/duel_spawn_timeout_smoke.gd` 的判据①②):
+  任何人在 1v1 报到梯的门控里写出 `not _royale` / `not _team_mode` / `not _worker`
+  (含 `not (_royale or _team_mode)` 这类拼写),或在 `_ready` 里把 `set_process(false)`
+  挪走/在其上插一条早退,都会**当场让那条冒烟变红**。**peer 改这一段之前先读那份冒烟的注释**,
+  别把"冒烟红了"读成"功能坏了"。
 * **跨会话次序**:本计划的 **Task 2(#10)** 必须在 peer 的阶段 3 Task 3 之前落地
   (两者都动 `server_main.gd` 的 `_process` 同段)。Task 2 完成后**立刻通知 peer**。
 * **提交纪律**:本仓全在 `main` 上开发,没有分支可并。每个 Task 一次提交,
