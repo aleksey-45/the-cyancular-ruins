@@ -21,9 +21,9 @@ extends Node
 #   判据是"**实跑条数 == EXPECTED_CHECKS** 且 ALL-OK"(不是"我猜的数是几")。
 #   本 Task 落地的条数(逐项相加,别凭印象):
 #     _check_opponent_left()  : 1(读得到 SRV_MAIN) + a/b/c/d/e 各 1 = **6**
-#     _check_cancel_wiring()  : 1(读得到 CLIENT_BASE) + 1(missing 为空) + 3(三个生产者可读) = **5**
-#   ⇒ 合计 **11**。
-const EXPECTED_CHECKS := 11
+#     _check_cancel_wiring()  : 1(读得到 CLIENT_BASE) + 1(missing 为空) + 9(三个生产者各 3) = **11**
+#   ⇒ 合计 **17**(Task 3 把 ②b 从"前瞻"提升为承重,那一圈由 3 条变 9 条)。
+const EXPECTED_CHECKS := 17
 
 const SRV_MAIN := "res://server/server_main.gd"
 const CLIENT_BASE := "res://scenes/pvp_match_client.gd"
@@ -108,12 +108,15 @@ func _check_cancel_wiring() -> void:
 			missing.append(needle)
 	_check(missing.is_empty(),
 			"`_cancel_reconnect` 少复位了这些量(循环会从某个入口继续跑):%s" % str(missing))
-	# ②b 三个生产者都必须走 `_send_round_state`(Task 3 落地后这条会一起变绿;
-	#     Task 2 阶段它只是"记录当前状态",故**不**并进 EXPECTED_CHECKS 的判据强度 ——
-	#     它是一条**前瞻**断言,红了说明 Task 3 没做完)
+	# ②b(★ Task 3 起是**承重**断言,不再是前瞻):三个 `round_state` 生产者都必须走唯一出口。
+	#    漏一个 ⇒ 那个模式的「掉线中」永远不亮,而且**不报错**。
 	for p in PRODUCERS:
 		var c := _code(p)
 		_check(not c.is_empty(), "读不到 %s" % p)
+		_check(c.contains("_send_round_state("),
+				"★ %s 没走 `_send_round_state(`(那个模式的「掉线中」不会亮)" % p)
+		_check(not c.contains("_rpc_all(\"round_state\""),
+				"★ %s 里还有绕过出口的 `_rpc_all(\"round_state\"`" % p)
 
 
 func _finish() -> void:

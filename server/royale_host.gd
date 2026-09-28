@@ -360,7 +360,8 @@ func _broadcast_round_state() -> void:
 		data["stats"] = table
 	# 基类的广播样板,只多一个"只发在线 peer"(大乱斗里掉线者仍在 peer_by_role 里待清理,
 	# 而往正在断开的 peer 发包会打 channel 错误)。样板本身收在 MatchHost._rpc_all。
-	_rpc_all("round_state", [data], -1, true)
+	# ★ 2026-09-28 起本行改走 `_send_round_state`(它内部仍调 `_rpc_all`,并多并一个 `grace` 字段)。
+	_send_round_state(data)
 
 
 # 房主昵称表(worker 开局后由 server_main 注入;排行榜展示用)

@@ -197,7 +197,7 @@ func _broadcast_round_state() -> void:
 	var table := stats_payload()
 	if not table.is_empty():
 		data["stats"] = table
-	_rpc_all("round_state", [data])
+	_send_round_state(data)
 
 
 func _match_winner() -> int:

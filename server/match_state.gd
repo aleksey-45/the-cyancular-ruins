@@ -120,6 +120,11 @@ var _left_round: Dictionary = {}     # role -> 离开时所处的局号(ACS 的"
 # 最终值,本表是掉线当场写下的原值)。★ 为什么必须分开:掉线与"宽限期到点移出"之间隔着
 # 整整一个宽限期(60s),这段时间里可能换过局 —— 离开者的 ACS 分母要的是"他实际参与了几局",
 # 即**掉线那一刻**的局号,不是宽限到点的。
+# ★ 登记(不修,2026-09-28):`_round_num` 在**新一局的 COUNTDOWN 期间**就已经 +1
+#   (`_start_next_round` 一进 COUNTDOWN 就推进局号),所以在那个约 `COUNTDOWN_TIME`(3s)
+#   的窗口里掉线的人,会被记上**一局他根本没打过**的局号 ⇒ 分母**大一** ⇒ ACS 被**压低**,
+#   方向与上面那条原 bug **相同**(只是窗口从 60s 缩到 ~3s)。不是本次引入的回归(旧代码读的
+#   本来就是同一个值),故照实登记、不改:要修得先有"本局真的开打了"的信号。
 var _leave_round: Dictionary = {}
 # 助攻表:**每受害者一张小表** —— `victim_role -> {attacker_role: 最后命中时刻(ms)}`。
 # ★ 为什么需要它:归因只有 `CombatFeedback.attribute` 写的单个 `last_damager` meta,只够判
@@ -132,6 +137,16 @@ var _assist_times: Dictionary = {}
 # 而 `RoyaleHost` 与 `TeamHost` 原先**各声明了一份**(上提时那两行必须一起删 —— 子类重复声明
 # 基类成员是硬 Parse Error,见 Global Constraints)。
 var _left: Dictionary = {}
+# ── 断线宽限期读数(阶段 3,2026-09-28)──
+# `{role(int) -> 剩余秒(float)}`;**由 worker 进程的 `server_main` 写入**(它是宽限期表的持有者),
+# 三个 `round_state` 生产者只负责把它并进载荷(见 `_send_round_state`)。
+# ★ 为什么是"推"而不是"宿主去问":宽限期住在 `server_main._grace` 里,宿主反向持有它的引用
+#   会造一条 back-reference(本仓明确避免的那类)。推的代价只是"值可能旧 ≤1 秒" ——
+#   `server_main` 每秒刷一次(见 `_expire_graces` 的调用点),客户端那两个 HUD 在两次广播
+#   之间**自己走秒**(`GraceWindow.tick_display`)。
+# ★ **每实例字段、不是 `static`**:探针会在同一个进程里建多个宿主,`static` 会让它们互相污染。
+#   空 = 此刻没人掉线(载荷里连 `grace` 键都不带)。
+var grace_snapshot: Dictionary = {}
 # 归因时效(3s)。★ 三个读者原先各抄一份(`RoyaleHost`/`TeamHost` 各一个同名常量 + 单机播报);
 # 收在底座,子类那两行删掉(同名遮蔽报错)。
 const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
@@ -175,6 +190,21 @@ func _rpc_all(method: String, args: Array = [], except_role: int = -1,
 			continue
 		# callv 展开实参:rpc_id 是变参口,而本函数要按调用方给的 args 转发。
 		NetBus.callv("rpc_id", [peer, method] + args)
+
+
+# `round_state` 的**唯一出口**:三个生产者(`MatchRound` / `RoyaleHost` / `TeamHost`)各自拼完
+# `data` 之后都必须调本函数 —— 宽限期读数只在这里并进去一次(**单一落点**)。
+#
+# ★ 为什么不并进 `_rpc_all`:那是**所有**事件(子弹/光束/拆墙/kill)的样板,往那里加
+#   `round_state` 专属的键会让每条事件都白背一个 `grace`。
+# ★ 为什么不让三个生产者各写一句 `GraceWindow.merge_into(...)`:三份必然漂,而"其中一个忘了"
+#   **不报错** —— 只是那个模式的「掉线中」永远不亮。守卫:`tests/grace_feed_probe` 的 ③
+#   (生产目录里 `_rpc_all("round_state"` **零命中**,三个文件都含 `_send_round_state(`)。
+# ★ `RoyaleHost._broadcast_round_state` 原先显式传 `-1, true`(`live_only`),那正是
+#   `_rpc_all` 的**默认值**(见它的签名)⇒ 统一走本出口后,大乱斗那条的行为**逐字不变**。
+func _send_round_state(data: Dictionary) -> void:
+	GraceWindow.merge_into(data, grace_snapshot)
+	_rpc_all("round_state", [data])
 
 
 # 反查角色号。广播要"排除射手"时,调用点手上往往只有 Node(bullet.shooter)而不是 role。

@@ -295,6 +295,15 @@ func _human_role_count() -> int:
 	return n
 
 
+# 把宽限期读数推给宿主(它是 `round_state` 的生产者;见 `MatchState.grace_snapshot`)。
+# ★ 只在 `_host` 存在时写 —— 开局前 `_host` 为 null,而那时不会有人掉线(宽限期只在
+#   `_on_peer_left` 的"已开局"分支里进)。
+# ★ 它**不广播**:广播由调用方决定(掉线那一刻、宽限到点那一刻、以及每秒一次的保鲜)。
+func _sync_grace_snapshot() -> void:
+	if _host != null:
+		_host.grace_snapshot = _grace.remaining(Time.get_ticks_msec())
+
+
 # 把一个 role 放进宽限期。★ 必须**置空它的输入源 + 清掉它的待消费输入队列**(两件缺一不可):
 # `PacketInputSource` 在队列空时沿用上一包(held,见 match_host 的每 tick 消费注释),
 # 不置空的话掉线者的身体会保持他断开前最后一帧的输入 —— 一直朝那个方向跑、或一直开枪。
@@ -317,12 +326,11 @@ func _enter_grace(role: int) -> void:
 		_host.note_disconnect_round(role)
 		_host.peer_by_role.erase(role)
 		if _host.has_method("_broadcast_round_state"):
-			# ★ 这次广播**目前不表达掉线态**:宽限期内该载荷逐字段不变(`names` 由
-			#   `peer_by_role`+`players` 兜底、`alive` 只读 `players`、`left` 只读 `_left`,
-			#   三者在宽限期内一个都没动),发出去和上一帧是同一份。
-			#   保留它只为跟住 `_broadcast_round_state` 的既有节流节奏(掉线是状态转折点,
-			#   顺带把那一刻的载荷推齐);"某人掉线中"这类**可见提示要等阶段 3** ——
-			#   届时才往 `round_state` 里加 `grace` 字段,**现在别加**。
+			# ★★ 这次广播**现在真的表达了掉线态**(阶段 3,2026-09-28):`_sync_grace_snapshot`
+			#   把"谁在宽限里、还剩多少秒"推给了宿主,`_broadcast_round_state` 经
+			#   `_send_round_state` 把它并进载荷 ⇒ 客户端那行「掉线中」由此点亮。
+			#   (阶段 1 时这条广播**逐字段什么都没表达**,当时的注释登记过这件事;现在它有意义了。)
+			_sync_grace_snapshot()
 			_host._broadcast_round_state()
 
 
@@ -330,6 +338,10 @@ func _enter_grace(role: int) -> void:
 func _expire_graces(now_ms: int) -> void:
 	for role in _grace.expired(now_ms):
 		_grace.leave(role)
+		# ★ 读数要跟着"离开宽限"一起变:下面 `mark_disconnected` 那条广播(大乱斗 / 3v3)
+		#   经 `_send_round_state` 读的就是它 —— 不在这里刷新,载荷里那一行的「掉线中」
+		#   会与同一帧刚被打上的「离开」**同时成立**(两条状态并存,读起来自相矛盾)。
+		_sync_grace_snapshot()
 		# ★ 到点做什么 = **纯分派**(`GraceWindow.expire_action`),三个模式的答案由
 		#   tests/grace_window_smoke 逐个钉住 —— 别在这里再写一遍 if/else:
 		#   原先的 `else` 把"1v1 **以及** team"一起吞了,3v3 第一个宽限到期的人会**带着整局退进程**
@@ -400,6 +412,12 @@ func _process(delta: float) -> void:
 	if _grace_check_timer >= 1.0:
 		_grace_check_timer = 0.0
 		_expire_graces(Time.get_ticks_msec())
+		# ★ 读数每秒保鲜一次(阶段 3):客户端在两次 `round_state` 之间**自己走秒**,这里刷的是
+		#   "下一次广播携带的值有多新"。不刷的话,宽限期里任何一次**别的**广播(掉血致死 /
+		#   自己淹死 → `_broadcast_round_state`)都会带上"进入宽限那一刻"的旧值 ⇒
+		#   客户端本地倒计时被**拨回**(最多 60 秒,看着像重来一轮)。
+		#   ★ 本函数**顺带**是"刷新点",不额外广播任何东西(理由见下面 3.1 的取舍说明)。
+		_sync_grace_snapshot()
 	# 3v3:人没到齐就干等没有意义(满 6 人才开)→ 超时**退出释放端口**,绝不降级开局。
 	# ★ 与 --royale 那条"20s 按已到人数开局"是**相反**的决定:那边是自由混战(N 人可打),
 	#   这边两队人数必须相等才成立。别顺手把两条统一。
