@@ -639,6 +639,20 @@ EOF
 - Modify: `server/match_state.gd`
 - Modify: `server/match_round.gd`、`server/royale_host.gd`、`server/team_host.gd`
 - Modify: `server/server_main.gd`(★ **跨会话**)
+
+★★ **本 Task 的行号锚点【全部已漂】—— 一律按内容定位,不要按行号**。
+跨会话那批落完之后(截至 `fb1bd5d`),控制者实测的对照:
+
+| 锚点 | 计划里写的 | 实际 |
+|---|---|---|
+| `_enter_grace` 尾段 | `:276-283` | **`:301` 起** |
+| `_process` 的宽限轮询块 | `:326-329` | **`:399-401`** |
+| `match_state.gd` 的 `var _left: Dictionary` | `:129` | **`:134`** |
+| 三处 `_rpc_all("round_state", …)` | `match_round:192` / `royale_host:350` / `team_host:489` | **`200` / `363` / `497`** |
+
+⇒ **每一步动手前先 `grep` 到那段代码本身、确认形状与 brief 引的逐字一致,再改**。
+★ 若某处的**内容**也对不上(不只是行号),**停下来报 BLOCKED**,不要凭"大致在那儿"下手 —— 本 Task 要改的是
+`_enter_grace` / `_expire_graces` / `_process` 三个**都被跨会话那批动过**的函数。
 - Create: `tests/grace_feed_probe.tscn`、`tests/grace_feed_probe.gd`
 - Modify: `tests/reconnect_status_probe.gd`(把相②b 从"前瞻"变成"承重")
 
