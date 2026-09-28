@@ -594,6 +594,7 @@ window.ENEMY_REGISTRY = [
   })();
   </script>
 
+  <script src="cyrm4.js"></script>
   <script src="tile_defs.js"></script>
 
   <script>
@@ -1492,34 +1493,48 @@ window.ENEMY_REGISTRY = [
       els.fileImport.value = '';
       var reader = new FileReader();
       reader.onload = function () {
-        var raw = String(reader.result).trim();
-        var imported;
+        var buf = reader.result;                       // ArrayBuffer
+        var u8 = new Uint8Array(buf);
+        var isV4 = u8.length >= 4 && u8[0] === 0x43 && u8[1] === 0x59 && u8[2] === 0x52 && u8[3] === 0x4D;
+        if (isV4) {
+          // cyrm v4 二进制:异步解压 → 解析 → 与文本导入同一出口
+          Cyrm4.parseMapV4Buffer(buf).then(function (m) {
+            applyImport(structureFromMap(m));
+          }).catch(function (err) {
+            window.alert('导入失败：' + err.message);
+          });
+          return;
+        }
+        var raw = new TextDecoder('utf-8').decode(buf).trim();
         try {
           // 自动识别:JSON 结构库 或 地图格式(.cyrm / .txt)
-          imported = (raw.charAt(0) === '{')
+          applyImport((raw.charAt(0) === '{')
             ? Core.parseLibraryJSON(raw)
-            : structureFromMap(Core.parseMap(raw));
+            : structureFromMap(Core.parseMap(raw)));
         } catch (err) {
           window.alert('导入失败：' + err.message);
-          return;
         }
-        if (!imported || imported.length === 0) {
-          window.alert('文件里没有可用的结构');
-          return;
-        }
-        var firstId = null;
-        imported.forEach(function (st) {
-          var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid,
-                    players: Core.playersOf(st).slice(), enemies: st.enemies || [] };
-          state.library.push(s);
-          if (firstId === null) firstId = s.id;
-        });
-        state.selectedId = firstId;
-        syncSizeInputs();
-        fit();
-        render();
       };
-      reader.readAsText(file, 'utf-8');
+      reader.readAsArrayBuffer(file);
+    }
+
+    // 导入的公共出口(JSON 结构库 / v3 文本 / v4 二进制 三种来源共用)
+    function applyImport(imported) {
+      if (!imported || imported.length === 0) {
+        window.alert('文件里没有可用的结构');
+        return;
+      }
+      var firstId = null;
+      imported.forEach(function (st) {
+        var s = { id: uid(), name: uniqueName(st.name, state.library), grid: st.grid,
+                  players: Core.playersOf(st).slice(), enemies: st.enemies || [] };
+        state.library.push(s);
+        if (firstId === null) firstId = s.id;
+      });
+      state.selectedId = firstId;
+      syncSizeInputs();
+      fit();
+      render();
     }
     function renderSpawnTools() {
       var box = els.spawnTools;

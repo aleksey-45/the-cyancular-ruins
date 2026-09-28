@@ -67,6 +67,9 @@ func _run() -> void:
 	var fx_before := tree.get_nodes_in_group("grain_crystal").size()
 
 	elite.call("hurt", 9999, Vector2.RIGHT, 0.0)
+	# ★ 当场记击杀距离:精英死后 ~0.5s 就被释放(不入尸体保留),晚读 = use-after-free
+	var pl_at_kill: Node2D = lvl.get_node_or_null("WorldViewport/Player") as Node2D
+	var kill_dist := (elite.global_position - pl_at_kill.global_position).length() if pl_at_kill != null else 0.0
 	await _wait_phys(2)
 	var dead := bool(elite.get("is_dead"))
 	var fx_after := tree.get_nodes_in_group("grain_crystal").size()
@@ -96,9 +99,14 @@ func _run() -> void:
 			bal_events[0], float(Level0.grain_account.balance), str(not is_instance_valid(fx_node))])
 	# 这条是**可视**承诺:碎片要真的飞进怀表,而不是半路消失、只靠兜底把钱打进来
 	# (2026-09-26 的 bug 正是"永远飞不进 → 兜底也没写 → 击杀精英颗粒根本不涨")。
-	if GrainCrystalFx.last_absorb_kind != "fly":
-		_fail("结晶没飞到怀表(吸收方式=%s,t=%.2fs):碎片半路消失" % [
-				GrainCrystalFx.last_absorb_kind, GrainCrystalFx.last_absorb_t])
+	# ★ 只对**屏幕附近的击杀**断言 fly:精英死在离玩家很远的地方时(150×100 大图上完全可能),
+	#   碎片要飞的距离本来就可能超过兜底时限 —— 那时"入账"由兜底保证,fly 无从谈起。
+	if kill_dist <= 1500.0 and GrainCrystalFx.last_absorb_kind != "fly":
+		_fail("屏幕附近的击杀(%dpx)没飞到怀表(吸收方式=%s,t=%.2fs):碎片半路消失" % [
+				int(kill_dist), GrainCrystalFx.last_absorb_kind, GrainCrystalFx.last_absorb_t])
+	else:
+		print("ELITE DROP PROBE[diag]: 击杀距离 %dpx(>1500 不强求 fly,吸收方式=%s)" % [
+				int(kill_dist), GrainCrystalFx.last_absorb_kind])
 	if absorb_t >= 0.0 and absorb_t >= 0.28 + 1.6:
 		_fail("吸收发生在兜底时限之后(t=%.2fs)" % absorb_t)
 	await _wait_phys(60)

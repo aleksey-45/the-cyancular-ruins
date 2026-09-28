@@ -205,6 +205,39 @@ eq(Core.rectFill([[0,0],[0,0]], 0, 0, 1, 1, Core.packCell(1, 15)), [[31,31],[31,
     '# cyrm-v3\n# blank\n000000000000\n000000000000\n', 'createEmptyStructure→serializeMapStructure: 空图可导出(v3)');
 })();
 
+// ---- cyrm v4(2026-09-28):读入转换后的真图 + CRC 破坏检测 ----
+// maps/*.cyrm 自 2026-09-28 起是 v4 二进制(compression=0;编辑器浏览器导出可为 compression=1,
+// 那条解压路径依赖浏览器的 DecompressionStream,node 冒烟只验同步的 body 解析 + 真图消费)。
+(function () {
+  const Cyrm4 = require('./cyrm4.js');
+  const mapBytes = fs.readFileSync(path.join(__dirname, '..', 'maps', 'demo.cyrm'));
+  const mapU8 = new Uint8Array(mapBytes);
+  const h = Cyrm4.parseHeader(mapU8);
+  ok(h.version === 4 && h.compression === 0, 'v4: demo.cyrm 是裸 body 的 v4');
+  ok(h.subCols === 500 && h.subRows === 300, 'v4: demo 子格 500×300(=125×75 格)');
+  const parsed = Cyrm4.parseBody(mapU8.subarray(20), h);
+  ok(!!parsed.scene && parsed.scene.length === 500 * 300, 'v4: 场景层描述符 150000 个');
+  const grid = Cyrm4.flattenScene(parsed.scene, parsed.subCols, parsed.subRows);
+  ok(grid.length === 75 && grid[0].length === 125, 'v4: demo 扁平化 125×75');
+  const meta = Cyrm4.parseMeta(parsed.metaLines);
+  ok(meta.players.length >= 1 && meta.players[0].x === 56 && meta.players[0].y === 47, 'v4: demo 出生点 (56,47)');
+  ok(grid[47][56] === 0, 'v4: 出生点格为空');
+  let nonZero = 0;
+  grid.forEach(function (row) { row.forEach(function (v) { if (v) nonZero++; }); });
+  ok(nonZero > 1000, 'v4: demo 非空格 ' + nonZero + ' 个(合理量级)');
+  const bad = Buffer.from(mapBytes);
+  bad[40] ^= 0xFF;
+  throws(function () { Cyrm4.parseBody(new Uint8Array(bad).subarray(20), h); }, 'v4: 破坏 body 被 CRC 拒绝');
+  const badHdr = Buffer.from(mapBytes);
+  badHdr[10] ^= 0xFF;
+  throws(function () {
+    // ★ 头也要用被改过的那份重新读:沿用原 h 的话改 CRC 字节当然不生效
+    const h2 = Cyrm4.parseHeader(new Uint8Array(badHdr));
+    Cyrm4.parseBody(new Uint8Array(badHdr).subarray(20), h2);
+  }, 'v4: 头部 CRC 不符被拒绝');
+  ok(meta.comments.length >= 1, 'v4: meta 注释行保留(' + meta.comments.length + ' 条)');
+})();
+
 console.log('');
 console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
 process.exit(fail === 0 ? 0 : 1);

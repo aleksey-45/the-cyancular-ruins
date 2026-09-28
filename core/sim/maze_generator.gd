@@ -46,6 +46,11 @@ static func _random_cyrm(dir: String) -> String:
 # 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
 static var current_grid: Array[Array] = []
 
+# 当前关卡的 **16px 子格纹理表**(cyrm v4,选项 A:逻辑读格级 current_grid,
+# 碰撞/破坏/渲染读这张子格表 —— 见 docs/2026-09-20-cyrm-v4-handover.md §3 选项 A)。
+# 由 WorldBuilder.load_grid 与 current_grid 一起装填;空 = 调用方自行从格级展开。
+static var current_subgrid: Array[Array] = []
+
 
 # ── 转发:格子值编解码(MapFormat)──
 const EMPTY: int = MapFormat.EMPTY
