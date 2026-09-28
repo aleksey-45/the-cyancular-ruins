@@ -191,8 +191,12 @@ source tests/env.sh
 timeout 180 "$GODOT" --headless --path . --quit-after 3600 res://tests/ammo_rollback_probe.tscn 2>&1 | tail -5
 ```
 
-Expected: `AMMO ROLLBACK PROBE: ALL-OK(N 条断言)`,`N` 比 Step 0.2 那次**大 4**
-(相② 新增 4 条断言)。★ 若只大了 2 条,说明有断言没跑到 —— 按 `probe_base` 的纪律查。
+Expected: `AMMO ROLLBACK PROBE: ALL-OK(N 条断言)`,`N` 比 Step 0.2 那次**大 3**
+(基准那次实测 **3** ⇒ 本步应为 **6**)。★ 不是 4:相② 的函数体里有 4 个 `_check(` 调用点,
+但其中一个在 `if scene == null: … return` 早退之后,**正常路径上永远不会跑** ——
+按"前提两截 + 结论一截"算是 3。**不要为了凑数补一条断言**(那是加一条 brief 没要求的判据);
+反而是本条的读数就该是 3+3=6。
+★ 若只大了 2 或更少,说明有断言没跑到 —— 按 `probe_base` 的纪律查。
 
 - [ ] **Step 1.5: 提交**
 
