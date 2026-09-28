@@ -208,6 +208,54 @@ func _initialize() -> void:
 			"★ tests/team_match_probe.CHILD_QUIT_AFTER = %.0f 帧(≈%.0fs)≤ FINAL_TIMEOUT %.0fs:客户端子进程先于本进程收工上限退出"
 			% [tp_child_f, tp_child_f / fps, tp_final])
 
+	# ── ⑩ 阶段 3:`remaining()`(服务端读数;进 `round_state` 的 `grace` 字段)──
+	# ★ 它是**纯函数**:时间由调用方给(同 expired 的理由 —— 本类不读时钟,否则冒烟只能靠 sleep)。
+	var w3 = G.new()
+	_check(w3.remaining(1000) == {}, "空表的 remaining 应为空字典")
+	w3.enter(3, 1000, 10.0)          # 到期 11000
+	w3.enter(1, 1000, 20.0)          # 到期 21000
+	_check(w3.remaining(1000) == {1: 20.0, 3: 10.0},
+			"remaining 应给出「还剩多少秒」并按 role 升序插入(实得 %s)" % str(w3.remaining(1000)))
+	# ★ 已到期的 role **仍在表里**(expired 不改表)⇒ 报 **0.0**,不是省略 —— 省略会让
+	#   "刚好到点、还没被 leave"那一秒里客户端闪回「无掉线」。
+	_check(w3.remaining(11000) == {1: 10.0, 3: 0.0},
+			"到点的 role 应报 0.0 而不是被省略(实得 %s)" % str(w3.remaining(11000)))
+	_check(w3.remaining(99999) == {1: 0.0, 3: 0.0},
+			"全部到点也仍报 0.0(实得 %s)" % str(w3.remaining(99999)))
+	# 键必须是 **int**(下面 merge_into 的载荷要过网;float 键会静默不命中,见 weapon_inventory 的同源注释)
+	var rk: Array = w3.remaining(1000).keys()
+	_check(typeof(rk[0]) == TYPE_INT, "remaining 的键必须是 int(实得 %d)" % typeof(rk[0]))
+
+	# ── ⑪ 阶段 3:`merge_into()`(服务端并载荷;空表**不带键**)──
+	# ★ 与 `destroyed` / `teams` / `stats` 同款纪律:**非空才带该键**。空表也带一个
+	#   `grace: {}` 会让每一条 `round_state` 白背一个键,而"漂了"**不报错** —— 故这里钉死。
+	var d1 := {"state": 1}
+	G.merge_into(d1, {})
+	_check(not d1.has("grace"), "空读数不得带 `grace` 键(实得 %s)" % str(d1))
+	G.merge_into(d1, {1: 42.5})
+	_check(d1.get("grace", {}) == {1: 42.5},
+			"非空读数必须并进载荷(实得 %s)" % str(d1.get("grace", {})))
+	# 就地改:调用方手上那份就是被改的那份(防止"返回新字典、调用方忘接")
+	var d2 := {"state": 1}
+	var r2: Variant = G.merge_into(d2, {2: 1.0})
+	_check(r2 == null and d2.has("grace"),
+			"merge_into 必须是**就地**改(返回值 %s,载荷里有键=%s)" % [str(r2), str(d2.has("grace"))])
+
+	# ── ⑫ 阶段 3:`tick_display()`(客户端本地走秒)──
+	# 服务器只在**状态转折点**广播 `grace`(1v1/3v3 平时不广播),两次之间由 HUD 自己减。
+	var disp := {1: 3.0}
+	disp = G.tick_display(disp, 1.0)
+	_check(disp == {1: 2.0}, "本地走秒应减 delta(实得 %s)" % str(disp))
+	disp = G.tick_display(disp, 5.0)
+	_check(disp == {1: 0.0}, "★ 必须钳到 0(不钳会减成负数,`ceil(-3.2)` 被念成「剩余 -3s」;实得 %s)" % str(disp))
+	# ★ 键类型原样保留 —— GDScript 的字典按类型寻键,`1.0` 与 `1` 是**两个键**
+	#   (`{1: "a"}.has(1.0)` 为假),重建时写成 `float(r)` 会让下游 `.has(role)` 静默不命中。
+	var disp2 := {7: 5.0}
+	var out2: Dictionary = G.tick_display(disp2, 0.5)
+	_check(out2.has(7) and not out2.has(7.0),
+			"★ tick_display 必须保留**原键**(int 进 int 出;实得 %s)" % str(out2.keys()))
+	_check(disp2 == {7: 5.0}, "tick_display 不得原地改入参(实得 %s)" % str(disp2))
+
 	if _fail == 0:
 		print("GRACE_WINDOW OK")
 		quit(0)

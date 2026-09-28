@@ -71,5 +71,48 @@ func expired(now_ms: int) -> Array[int]:
 	return out
 
 
+# ── 阶段 3(2026-09-28):宽限期读数 —— 服务端下发 + 客户端本地走秒 ──
+# 三个助手都是**纯函数**(不读时钟、不碰节点、不引 autoload):`-s` 冒烟直接钉
+# (tests/grace_window_smoke 的 ⑩⑪⑫)。
+
+# 服务端:当前各 role 还剩多少秒。`{role(int) -> 剩余秒(float)}`。
+# ★ 已到期的 role **仍在表里**(`expired()` 不改表,由调用方自行 `leave`)—— 这里照样报 **0.0**,
+#   而不是把它省略:省略会让"刚好到点、还没被 leave"那一秒里客户端闪回「无掉线」。
+# ★ 按 role 升序插入:字典迭代顺序虽然稳定,但本表要进网络载荷、也要被探针逐字比对,
+#   排序让两端与日志可比(同 `expired()` 的理由)。
+func remaining(now_ms: int) -> Dictionary:
+	var roles: Array[int] = []
+	for r in _until:
+		roles.append(int(r))
+	roles.sort()
+	var out := {}
+	for r in roles:
+		var left_ms := int(_until[r]) - now_ms
+		out[r] = 0.0 if left_ms <= 0 else float(left_ms) / 1000.0
+	return out
+
+
+# 服务端:把读数并进一个载荷 —— **非空才带键**(与 `destroyed` / `teams` / `stats` 同款纪律:
+# 没人掉线时一个字节都不多占,旧客户端忽略未知键)。
+# ★ 收成静态纯函数而不是散在三个 `_broadcast_round_state` 里:三个生产者各写一遍必然漂,
+#   而"空表也带上 `grace: {}`"这种漂法**不报错**,只是每局白背一个键。
+# ★ **就地**改 `data`(调用方刚拼好的那份载荷),不返回新字典 —— 免得有人忘了接返回值。
+static func merge_into(data: Dictionary, remaining_map: Dictionary) -> void:
+	if not remaining_map.is_empty():
+		data["grace"] = remaining_map
+
+
+# 客户端:本地走秒(服务器只在**状态转折**时广播 `grace`,两次之间由 HUD 自己减)。
+# ★ 与 `ui/pvp_hud.gd` 的倒计时同款口径("服务器只在状态切换时广播一次 round_state")。
+# ★ 钳到 0:不钳的话它会减成负数,而 HUD 上的 `ceil(-3.2) = -3` 会被念成「剩余 -3s」。
+# ★ 键**原样保留**(不重建键!)—— GDScript 的字典按类型寻键,`1.0` 与 `1` 是两个键
+#   (见 `weapon_inventory.gd` 那条同源注释),写成 `out[float(r)]` 会让下游 `.has(role)` 静默不命中。
+static func tick_display(display: Dictionary, delta: float) -> Dictionary:
+	var out := {}
+	for r in display.keys():
+		out[r] = maxf(0.0, float(display[r]) - delta)
+	return out
+
+
 func size() -> int:
 	return _until.size()
