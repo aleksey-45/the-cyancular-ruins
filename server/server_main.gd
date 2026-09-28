@@ -35,6 +35,15 @@ var _team_of_role: Dictionary = {}   # role(int) -> 队号(1/2);由 --teams 与 
 # --teams 的原始 token(与 `_role_set` 同序的下标配对在 `_ready` 里做;这里只收 1..2 的合法值)
 var _team_teams_raw: Array[int] = []
 var _lan_ip_text := ""          # 局域网 IP 串(写 local_ip.txt 用;公网 IP 到手后一并补写)
+# ── 本进程是不是 worker ──
+# ★★ 这是**唯一可靠**的"我是不是 worker"标志:本脚本一个入口兼两种角色(无参 = 大厅,`--worker` = 对局 worker),
+#   而 `_ready` 里那个 `is_worker` 只是**局部量**,出不了函数 ⇒ `_process` 够不着它。
+#   为什么要留个实例标志:`_process` 的报到梯**必须以正的 worker 标志为门**。写成"worker-only 标志的否定"
+#   (`not _royale and not _team_mode`)时,大厅进程里那些合取项**全部成立** ⇒ 大厅会在开机 30 秒后
+#   打印 `worker: 1v1 报到超时(0/2)` 并 `quit(0)` **自杀**,而 7777 上的建房/配对/转连全部随之死掉
+#   —— 实测发生过(2026-09-28)。前三支梯子没这个毛病**只因为**它们要求某个**正**的 worker 标志
+#   (`_team_mode` / `_royale`),别照那个形状去写否定式。
+var _worker := false
 var _match_started := false
 # ── 断线宽限期(2026-09-17,断线重连)──
 # 掉线的 role 先进 `_grace`,不立刻移出(大乱斗)/不立刻退进程(1v1);宽限内可被 reclaim_role
@@ -98,6 +107,9 @@ func _ready() -> void:
 						var r := int(tok.strip_edges())
 						if r >= 1 and r <= 8:
 							_ai_roles.append(r)
+	# ★ 解析完**立刻**落进实例标志(`_process` 的报到梯读它;见 `_worker` 声明处那条注释)。
+	#   位置紧跟循环、不进任何分支:写进某一条分支里迟早会漏掉另一种形态。
+	_worker = is_worker
 	if is_worker:
 		# ★ 模式开关**互斥**(Task 9 评审 M4):三处判据的优先级此前并不一致 —— 本函数里
 		#   `--royale` 先判、而 `_on_role_claimed` / `_begin_match` 里 `_team_mode` 先判。
@@ -389,7 +401,12 @@ func _process(delta: float) -> void:
 	# ★ 判据是 `not _match_started and _host == null`,故它同时覆盖两种子情形:一个 claim
 	#   都没有、以及只到一个(1v1 要 2 人齐才开)。AI 对战单人即可开局,不走这一支。
 	# ★ `_understaffed_wait` 是**与上面两支共享**的计时量,别在别处再写它。
-	elif not _royale and not _team_mode and not _match_started and _host == null:
+	# ★★ 门控必须是**正的** `_worker`,**不能**写成"worker-only 标志的否定"(`not _royale and not _team_mode`)
+	#   —— 本脚本一个入口兼两种角色,而大厅(无参)既不是 royale 也不是 team ⇒ 那些合取项在大厅里
+	#   **全部成立**,大厅会开机 30 秒后自己打印 `worker: 1v1 报到超时(0/2)` 并 `quit(0)`,
+	#   7777 上的建房/配对/转连全部随之死掉(2026-09-28 实测的回归)。`_worker` 只在 `--worker`
+	#   为真时置位(见声明处),大厅恒 false ⇒ 这一支在大厅里**结构上进不来**。
+	elif _worker and not _match_started and _host == null:
 		_understaffed_wait += delta
 		if _understaffed_wait > 30.0:
 			print("worker: 1v1 报到超时(%d/2),退出释放端口" % _claims.size())

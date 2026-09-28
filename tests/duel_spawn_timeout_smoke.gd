@@ -41,6 +41,13 @@ func _initialize() -> void:
 
 	if FileAccess.file_exists(log_path):
 		DirAccess.remove_absolute(log_path)          # 纪律 ②
+		# ★ 删不掉就**别往下走**:残留的旧日志里两个标记都在,会让本冒烟在 1 秒内打出 ALL-OK
+		#   而**什么都没观测**(僵尸 worker 占着日志文件的 Windows 共享冲突正是这种情形 ——
+		#   被 timeout 掐掉的上一跑从不执行 kill_worker)。
+		if FileAccess.file_exists(log_path):
+			print("DUEL SPAWN TIMEOUT SMOKE: FAIL(删不掉旧日志 %s —— 有僵尸 worker 占着它;先清进程再跑)" % log_path)
+			quit(1)
+			return
 	if not launcher.spawn_worker(PORT):              # 1v1:无 --royale / --team / --ai-roles
 		print("DUEL SPAWN TIMEOUT SMOKE: FAIL(1v1 worker 拉起失败)")
 		quit(1)
@@ -58,8 +65,31 @@ func _initialize() -> void:
 					% [LADDER_WAIT_MS / 1000.0, TIMEOUT_MARK]
 					+ "日志尾部:%s" % text.right(400))
 		else:
-			print("  [info] 报到梯在就绪后 %.1fs 点火(期望 ≥30s:必须晚于客户端 12s 转连 / 25s claim)"
-					% ((Time.get_ticks_msec() - t0) / 1000.0))
+			var elapsed := (Time.get_ticks_msec() - t0) / 1000.0
+			print("  [info] 报到梯在就绪后 %.1fs 点火" % elapsed)
+			# ★ 这是**判据**不是读数:它同时拦两种假绿 ——
+			#   ① 旧日志残留(那种情况下观测到的耗时 ~0.3s);② 将来有人把 30.0 调小到
+			#   客户端兜底(12s 转连 / 25s claim)之下,那会把"转连慢"变成"连不上"。
+			#   ★ 取 25.0 而不是 30.0:观测粒度是 250ms 轮询,而门槛是严格的 `> 30.0`
+			#   (就绪后实测 29.8s 属正常)。
+			if elapsed < 25.0:
+				fails.append("★ 报到梯点火太早(就绪后仅 %.1fs,应 >30s;>12s/>25s 是客户端兜底的余量)" % elapsed)
+
+	# ── 源码级门控检查(见下方长注释:本冒烟结构上照不到大厅那一面)──
+	# ★ 本冒烟起的是 **worker**,结构上永远进不了大厅模式 ⇒ 它**看不见**下面这条回归:
+	#   把那一支的条件写成 **worker-only 标志的否定**(`not _royale and not _team_mode`)时,
+	#   大厅进程里四个合取项**全成立** ⇒ `start_server.bat` 起的大厅会在 30 秒后 quit(0) 自杀
+	#   (实测发生过)。⇒ 唯一能自动拦住它的是**源码级**检查:那一支必须以**正的** worker 标志开头。
+	var src := FileAccess.get_file_as_string("res://server/server_main.gd")
+	if src.is_empty():
+		fails.append("读不到 server/server_main.gd —— 源码级门控检查无法进行")
+	else:
+		if not src.contains("var _worker := false"):
+			fails.append("★ 缺 `_worker` 实例标志 —— 报到梯若以 worker-only 标志的**否定**为条件,大厅会自杀")
+		elif src.contains("elif not _royale and not _team_mode"):
+			fails.append("★ 报到梯又用回了 worker-only 标志的**否定** —— 大厅进程里它恒真,会在 30 秒后 quit(0)")
+		elif not src.contains("elif _worker and not _match_started and _host == null:"):
+			fails.append("★ 1v1 报到梯的条件不是 `elif _worker and not _match_started and _host == null`")
 
 	launcher.kill_worker(PORT)
 	_finish(fails)
