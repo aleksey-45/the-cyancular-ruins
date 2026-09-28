@@ -255,15 +255,18 @@ const ROYALE_MATCH_TIME_CEILING := 1800.0
 
 ## 4. 判据落点逐个标注(与 peer 的分层对齐)
 
-| 项 | 判据文件 | 层级 | 处置 |
-|---|---|---|---|
-| #2 | `tests/ammo_rollback_probe.tscn` | peer | **先打招呼**再加相 |
-| #6a | 场景探针(真建宿主;不能走 `-s`) | peer | 新文件,本批自带并声明 |
-| #6b | `tests/team_host_probe.tscn` 或新文件 | peer | **先打招呼** |
-| #7 | `tests/royale_c2_probe` 或新文件 | peer | **先打招呼** |
-| #8 | —— | —— | **无新判据**(见 §2 #8) |
-| #10 | 新真链路冒烟(照 `team_spawn_smoke`) | peer | 新文件 + 标"用户跑" |
-| #11 | `tests/room_sweep_smoke.gd`(纯函数 + 源码接线断言) | peer | **先打招呼** |
+peer 已于 2026-09-28 放行 `tests/`(**唯一例外:`tests/team_match_*`,本批一个字不碰**)。
+为减少撞车,凡有选择的都**新建文件**;`tests/royale_c2_probe*` 留给 peer 的阶段 3(他要往那儿加相)。
+
+| 项 | 判据落点 | 处置 |
+|---|---|---|
+| #2 | `tests/ammo_rollback_probe.tscn` 加一相 | 既有文件(该 bug 的专用探针,无更合适的家) |
+| #6a | 场景探针(真建宿主;不能走 `-s`) | **新文件** |
+| #6b | `tests/team_host_probe.tscn` 加一相 | 既有文件(3v3 倒地边账住这儿) |
+| #7 | **新文件** | ★ **刻意不碰 `tests/royale_c2_probe*`**(peer 阶段 3 要用) |
+| #8 | —— | **无新判据**(见 §2 #8) |
+| #10 | 新真链路冒烟(照 `team_spawn_smoke` 先例) | **新文件** + 标"用户跑" |
+| #11 | `tests/room_sweep_smoke.gd`(纯函数 + 源码接线断言) | 既有文件 |
 
 ## 5. 已知风险
 
