@@ -163,11 +163,30 @@ func _run_pre_tree_tick_phase() -> void:
 	_check(not w.is_reloading(),
 			"★ 未入树窗口里 `tick()` 把权威 `_reloading=false` 冲成了 true(未按键的假换弹)")
 	# ★ 同一条结论的**另一半**:一帧过去后 `mag_ammo` 仍不得被写(设计里的判据原文是
-	#   "断言 is_reloading()==false **且** mag_ammo 未被写")。单帧下上面那截已经盖住了它,
-	#   但把这条写出来,将来本相若被扩成步进多帧(那时 `tick()` 的收尾会写
-	#   `mag_ammo = mag_size`)它才拦得住"白送满弹夹"那个变体。
+	#   "断言 is_reloading()==false **且** mag_ammo 未被写")。
+	#   ★ 它的**唯一**独立鉴别力是那种「`_reloading` 全程为 false、却写动了 `mag_ammo`」的形态
+	#   (评审批的变异 3b:把 `mag_ammo = mag_size` 写在 `if _mag_ready:` **之外**)—— 那一形态下
+	#   上面那条 `not is_reloading()` 是**过**的,只有本条红。
+	#   ★ **别**用"将来若扩成步进多帧"给它找理由:`tick()` 收尾那次 `mag_ammo = mag_size` 是
+	#   **挂在 `_reloading == true` 之下**的,而在多帧扩展里"错成 true 的 `_reloading`"上面那条
+	#   断言会**先**红 ⇒ 本条被遮住、不承重。它拦的是与 `_reloading` **解耦**的那类写。
 	_check(int(w.mag_ammo) == 0,
 			"★ 未入树窗口里 `tick()` 写动了 `mag_ammo`(实得 %d;应为声明初值 0)" % int(w.mag_ammo))
+	# ★ 第二拍:本拍只为证明"未入树时 `tick()` **照常跑完**"—— 钉的是设计**明文否决**的那个替代方案
+	#   (`tick()` 顶部加 `is_inside_tree()` 早退:它会丢帧、并把 `_auto_aim()` 的朝向一起冻住
+	#   ⇒ 那本身造成真分歧)。没有它,那个变体会让本相**两半都绿**(负向那半的换弹被别的理由挡下、
+	#   正向对照用的是入树武器)。
+	#   ★ 判据取冷却递减:`tick()` 里 `fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)` 排在
+	#   `_player_ok()` 之后、与树无关 ⇒ 采纳的实现必减、被否决的实现必不减。
+	#   ★★ **必须放在第二拍**:任何正冷却都会让 `try_fire()` 提前 return,于是 `fire()` 根本不会被调到
+	#   —— 而第一拍的全部意义就是**走进 `fire()`**。把冷却设在第一拍之前会让上面那条 `_reloading`
+	#   断言变成**空转**(更坏:它照样绿)。
+	w.fire_cd_timer = 0.5
+	w.tick(1.0 / 60.0)
+	_check(absf(w.fire_cd_timer - (0.5 - 1.0 / 60.0)) < 0.0001,
+			"★ 未入树窗口里 `tick()` 必须**照常跑完**(冷却 0.5 → 期望 %.4f,实得 %.4f)"
+			% [0.5 - 1.0 / 60.0, w.fire_cd_timer]
+			+ " —— 在 `tick()` 顶部加 `is_inside_tree()` 早退(设计明文否决)会让这里不变")
 	w.free()                       # 不在树上 ⇒ 必须 free(),queue_free() 不会回收它
 	# ★ 收尾复位输入源:本相按下的 attack 若留在 `_held` 里,会让紧接的 C1 相提前打光弹夹,
 	#   那一相的"期望 3、实得 4"就变成**假红**。`clear_edges()` **不清 `_held`**,必须用
