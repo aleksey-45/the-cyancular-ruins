@@ -234,10 +234,16 @@ func _build_result_payload() -> Dictionary:
 
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
+# ★ 这条路径在 2026-09-28 之前**是死的**:`NetBus.opponent_left` 全仓零调用点,而本函数一直
+#   挂在它上面。服务端那一半见 `server_main._notify_opponent_left`(1v1 宽限期到、收场之前)。
 func _on_opponent_left() -> void:
 	if _match_ended or _local == null:
 		return
 	_match_ended = true
+	# ★ **与到达顺序无关的收口**:若"服务器断开"先到(worker 收场两条消息同拍),重连循环
+	#   已经在飞 —— 这里把它停掉,否则它会继续跑满 60 秒(见 `_cancel_reconnect` 的注释)。
+	_cancel_reconnect()
+	print("[pvp] 对手已离开(2.5s 后回主菜单)")
 	if _hud != null:
 		_hud.show_notice("对手已离开", "对局结束")
 	# 同 MATCH_OVER 那条:先在起定时器前捕获引用,并让到点的 lambda 在"已经离开"时不再叠加

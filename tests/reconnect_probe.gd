@@ -338,6 +338,13 @@ func _track_grace() -> void:
 		_expiry_t = _t
 		_check(_grace_stamps.size() == 2,
 				"相④:1v1 worker 恰好两次「进宽限」(c1 闪断 + c2 永久掉线),实得 %d" % _grace_stamps.size())
+		# ★ 相④b(阶段 3,spec §4 的 3.3):收场前**真的发了** `opponent_left`。
+		#   没有它,幸存者只能等自己那条 60s 重连预算耗尽 —— 症状是"在一个静止的世界里
+		#   干等一分钟、屏幕上一个字都没有"(CLAUDE.md 里"opponent_left 不可达"那条)。
+		#   判据落在 **worker 日志**上:那条通知与收场打印是同一个函数里的相邻两行,读同一份
+		#   文件 ⇒ 只要收场那行在,通知那行必然也在(不存在"先看到收场、后看到通知"的竞争)。
+		_check(_has(_log_path("w1v1"), "1v1 收场前通知在线玩家"),
+				"相④b:1v1 worker 在收场前发了 opponent_left(否则幸存者要干等 60s 重连预算)")
 		if _grace_stamps.size() >= 1:
 			var since := _t - _grace_stamps[_grace_stamps.size() - 1]
 			_check(since >= GRACE_MIN and since <= GRACE_MAX,

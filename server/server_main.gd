@@ -299,6 +299,10 @@ func _expire_graces(now_ms: int) -> void:
 				_host.mark_disconnected(role)
 		else:
 			# 1v1:宽限内没回来 → 收场退进程(原行为,只是晚了几十秒)
+			# ★★ **先通知还连着的人**(阶段 3,3.3):见 `_notify_opponent_left` 上方的长注释。
+			#   顺序不能反 —— 反了的话先 `quit(0)`,那条可靠的定向包就永远发不出去
+			#   (ENet 的 `put_packet` 虽然会**当场 flush**,但进程已经走到退出路径)。
+			_notify_opponent_left()
 			if is_instance_valid(_host):
 				_host.queue_free()
 			print("worker: 1v1 宽限期到,对手未归,对局结束")
@@ -319,6 +323,32 @@ func _expire_graces(now_ms: int) -> void:
 	if (_royale or _team_mode) and _match_started and _claims.is_empty() and _grace.size() == 0:
 		print("worker: 全员离开,%s结束" % ("大乱斗" if _royale else "3v3"))
 		get_tree().quit(0)
+
+
+# 1v1 收场**之前**通知还连着的人:对手不会回来了(阶段 3,spec §4 的 3.3)。
+#
+# ★★ 为什么必须有:`NetBus.opponent_left` 这条 RPC 全仓**此前零调用点**,而客户端那边
+#   `scenes/pvp_game.gd` 的「对手已离开 → 2.5s 回主菜单」一直挂在它上面 ——
+#   `CLAUDE.md` 把它列为"三条离开对局世界的路径"之一,实际**不是**。不发这一条的后果:
+#   worker 收场退进程 → 幸存者只看到 `server_disconnected` → 阶段 1 的重连循环启动 →
+#   整整 `GraceWindow.DEFAULT_SECONDS`(60s)的重试预算耗尽 → `_abort_reconnect` 才回主菜单。
+#   即:玩家在一个**已死的静止世界**里干等一分钟,期间屏幕上**一个字都没有**。
+#
+# ★★ 发送走 `NetBus.reply`(本仓「答复 caller / 定向发送」的收口,体内首行判活)——
+#   这是 `tests/rpc_liveness_probe.tscn` 对每一处发送点的硬要求。
+# ★ 只发给 `_claims` 里**还在的** role:掉线那位早在 `_on_peer_left` 里就被
+#   `_claims.erase(role)`(见那一行),故这里天然不会往一个已断的 peer 发。
+# ★ 为什么只在**1v1 收场**这一处发,而不是在 `_enter_grace`(掉线那一刻)发:
+#   宽限期是给对手**回来**用的窗口,掉线时就宣告"对手已离开"会把阶段 1 的整条重连功能作废
+#   (幸存者当场走人 → 对手回来时房已经空了)。"掉线中"那半由 `round_state` 的 `grace`
+#   字段负责(3.1),不归这里 —— 别把两者合并。
+# ★ 大乱斗 / 3v3 不需要这条:单独一人到点时走的是 `mark_disconnected`(其余人继续打,
+#   排行榜上那一行变「离开」),而"全员走光"那一刻**没有幸存者**可通知。
+func _notify_opponent_left() -> void:
+	for role in _claims:
+		var peer := int(_claims[role])
+		if NetBus.reply(peer, "opponent_left"):
+			print("worker: 1v1 收场前通知在线玩家(opponent_left,role=%d peer=%d)" % [int(role), peer])
 
 
 func _process(delta: float) -> void:

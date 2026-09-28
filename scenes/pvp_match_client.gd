@@ -1005,6 +1005,26 @@ func _on_resumed() -> void:
 	print("[pvp] 重连成功")
 
 
+# 「对手已离开」是**终局**信号:把在飞的重连循环停掉(并收起状态横幅,见 Task 4)。
+#
+# ★★ 为什么必须有它 —— worker 收场是「先发 `opponent_left`、紧接着 `quit(0)`」,两条消息
+#   (可靠通知 + ENet 断开)几乎是同一拍到达客户端,**到达顺序不保证**。于是有两种时序:
+#     · 通知先到:`_on_opponent_left` 置 `_match_ended = true` ⇒ 随后那条 `服务器断开` 被
+#       `_on_server_message` 的 `if _match_ended or _reconnecting: return` 挡住,**重连循环
+#       根本不会启动**。这一半靠既有的 `_match_ended` 闸就够了。
+#     · 断开先到:`_begin_reconnect()` 已经把 `_reconnecting` 置起来、`_retry_connect` 已
+#       deferred 出去,通知才到 ⇒ **只有本函数能把那个循环叫停**。少了它,玩家会在看到
+#       「对手已离开」的同时继续重试 60 秒(两条路各回一次主菜单,第二条还会把刚建出来的
+#       主菜单当 old 退役)。
+#   ⇒ 判据:**不论谁先到,结局都是「2.5s 后回主菜单」,且不叠加一个 60 秒的重连循环。**
+# ★ 它**不重建场景、不发包、不碰协议** —— 纯本地状态收口。
+func _cancel_reconnect() -> void:
+	_reconnecting = false
+	_reconnect_started_ms = 0
+	_reclaim_sent = false
+	_attempt_started_ms = 0
+
+
 func _abort_reconnect(reason: String) -> void:
 	_reconnecting = false
 	NetBus.stop()
