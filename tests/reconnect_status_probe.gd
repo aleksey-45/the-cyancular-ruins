@@ -86,8 +86,13 @@ func _check_opponent_left() -> void:
 	_check(opp.contains("_cancel_reconnect()"),
 			"★ `pvp_game._on_opponent_left` 没调 `_cancel_reconnect()` —— "
 			+ "「断开先到」那一半时序里,重连循环会继续跑满 60s")
-	# ①e 反向:那条 `_match_ended` 闸仍在(它挡的是"通知先到"那一半)
-	_check(opp.contains("_match_ended"), "`_on_opponent_left` 的 `_match_ended` 闸还在")
+	# ①e 反向:那条 `_match_ended` 闸仍在(它挡的是"通知先到"那一半)。
+	# ★ 谓词必须咬住**闸自身的形状**,不能只找 `_match_ended` 这个标识符 —— 紧邻下一行的
+	#   `_match_ended = true` 是一条**赋值**,单凭它就足以喂饱 `contains("_match_ended")`:
+	#   删掉闸(甚至删掉整个 `if …: return` 块)时那种谓词照绿,是一条**读起来像覆盖、
+	#   实际不覆盖**的空断言(2026-09-28 复核实测)。
+	_check(opp.contains("if _match_ended"),
+			"★ `_on_opponent_left` 的 `_match_ended` 闸仍在(通知先到时靠它挡住重连)")
 
 
 # ── 相②:`_cancel_reconnect` 的行为面(它必须真的把循环停掉)──
