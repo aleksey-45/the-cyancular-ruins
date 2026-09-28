@@ -23,7 +23,10 @@ extends Node
 #     _check_opponent_left()  : 1(读得到 SRV_MAIN) + a/b/c/d/e 各 1 = **6**
 #     _check_cancel_wiring()  : 1(读得到 CLIENT_BASE) + 1(missing 为空) + 9(三个生产者各 3) = **11**
 #   ⇒ 合计 **17**(Task 3 把 ②b 从"前瞻"提升为承重,那一圈由 3 条变 9 条)。
-const EXPECTED_CHECKS := 17
+# ★ 本探针是**活的**文件:每加一相加一次这个数(见文件头),判断标准是"实跑 == 期望"。
+#   本 Task 加的两相加 **10** 条(`_check_status_banner` 5 条 + `_check_status_call_sites` 5 条)
+#   ⇒ 17 + 10 = **27**。
+const EXPECTED_CHECKS := 27
 
 const SRV_MAIN := "res://server/server_main.gd"
 const CLIENT_BASE := "res://scenes/pvp_match_client.gd"
@@ -59,6 +62,8 @@ func _body(p: String, fn: String) -> String:
 func _ready() -> void:
 	_check_opponent_left()
 	_check_cancel_wiring()
+	_check_status_banner()
+	_check_status_call_sites()
 	_finish()
 
 
@@ -117,6 +122,54 @@ func _check_cancel_wiring() -> void:
 				"★ %s 没走 `_send_round_state(`(那个模式的「掉线中」不会亮)" % p)
 		_check(not c.contains("_rpc_all(\"round_state\""),
 				"★ %s 里还有绕过出口的 `_rpc_all(\"round_state\"`" % p)
+
+
+# ── 相③:横幅的行为面(建得出来、层位对、能显能收)──
+# ★ 它**必须真建一个** PvpMatchClient 子类实例:纯源码断言拦不住"`.new()` 出来的 layer 是 1"
+#   这一类 —— 而那正是这条横幅最容易踩、且**完全静默**的坑(层位只住在 .tscn 里)。
+# ★ 用桩子而不是真 `pvp_game.tscn`:真场景会建整个世界 + 连 NetBus 发 `match_sync`,
+#   而本相要验的只是"横幅挂上去了没有、层位对不对"。桩子只提供基类的那一段接线。
+class ClientStub extends PvpMatchClient:
+	pass
+
+
+func _check_status_banner() -> void:
+	var stub := ClientStub.new()
+	add_child(stub)
+	# 生产入口:三个子类都是在 `_ready` 里调它的(Task 2 的守卫另有源码断言钉着这一点)。
+	stub._subscribe_reconnect()
+	var banner := stub.get_node_or_null("StatusBanner") as StatusBanner
+	_check(banner != null,
+			"★ `_subscribe_reconnect()` 没有把横幅挂上去(三个模式会一起静默没有提示)")
+	if banner == null:
+		stub.queue_free()
+		return
+	# ★★ 层位:这是 `.tscn` 里那个 `layer = 140` 的**行为**判据。写成 `.new()`、或者有人
+	#   从 .tscn 里删掉那一行,这里当场红 —— 而源码断言一条都照不到(值在 .tscn 里)。
+	_check(banner.layer == 140,
+			"★ 横幅层位必须是 140(实得 %d);层位只住在 ui/status_banner.tscn 里" % banner.layer)
+	# 显 / 收
+	stub._set_status("与服务器断线,正在重连…(剩余 42s)")
+	_check(banner._panel.visible and banner._label.text.contains("42s"),
+			"设了文字就应该可见且文字正确(visible=%s text=%s)"
+			% [str(banner._panel.visible), banner._label.text])
+	stub._set_status("")
+	_check(not banner._panel.visible, "空串必须收起横幅(visible=%s)" % str(banner._panel.visible))
+	# ★ 反向:文字为空但面板仍可见 = "永远挂着一块空黑板",是本类最容易出的错
+	stub._set_status("正在重连…")
+	_check(banner._panel.visible, "非空文字必须重新亮出来(否则收起之后再也回不来)")
+	stub.queue_free()
+
+
+# ── 相④:四个转折点真的驱动了横幅(源码面)──
+# 行为面只能验"设了文字会显示",验不了"状态机在四个转折点上真的调了它" ——
+# 后者是"删掉不报错"的一类,必须机械钉住。
+func _check_status_call_sites() -> void:
+	for fn in ["_begin_reconnect", "_on_reconnect_retry_tick", "_on_resumed", "_abort_reconnect",
+			"_cancel_reconnect"]:
+		var body := _body(CLIENT_BASE, fn)
+		_check(body.contains("_set_status("),
+				"★ `%s` 没调 `_set_status(`(那个转折点的提示会静默消失)" % fn)
 
 
 func _finish() -> void:

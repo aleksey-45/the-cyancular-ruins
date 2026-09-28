@@ -53,6 +53,8 @@ const PAIRS := [
 	["res://ui/combat_feedback.gd", "res://ui/combat_feedback.tscn", "CombatFeedback"],
 	["res://ui/team_hud.gd", "res://ui/team_hud.tscn", "TeamHud"],
 	["res://ui/match_result.gd", "res://ui/match_result.tscn", "MatchResult"],
+	# 阶段 3(2026-09-28):层位 140,挂在 `scenes/pvp_match_client.gd` 的 `_setup_status_banner()`。
+	["res://ui/status_banner.gd", "res://ui/status_banner.tscn", "StatusBanner"],
 ]
 
 # 参数下限:防止 PAIRS 被误删成空表 → 零循环 → 恒绿
@@ -75,6 +77,7 @@ func _ready() -> void:
 	_summary(before, "声明式契约:扫 %d 组「脚本 ↔ 场景」,零 .new()、@onready 路径全声明" % PAIRS.size())
 	_check_team_my_team_contract()
 	_check_result_scene_instantiation()
+	_check_banner_scene_instantiation()
 	_check_result_refresh_not_gated()
 	_check_result_leave_wiring()
 	_check_result_refresh_reaches_widget()
@@ -157,14 +160,39 @@ const RESULT_FORBIDDEN := "MatchResult.new("  # `.new()` 建出来的是 layer 1
 
 func _check_result_scene_instantiation() -> void:
 	var before := _failures.size()
-	var all := _collect([RESULT_SCAN_ROOT])
+	_scan_forbidden_literal(RESULT_SCAN_ROOT, RESULT_FORBIDDEN, "MatchResult",
+			"layer = 150 只写在 ui/match_result.tscn 里,用 .new() 会落到 CanvasLayer 默认的 layer 1,"
+			+ "结算页画在 HUD(130)/小地图(131)下面且压暗罩盖不住(静默,只能靠眼睛看出来)。要从场景实例化。")
+	_summary(before, "结算页实例化:%s 的零 %s 断言" % [RESULT_SCAN_ROOT, RESULT_FORBIDDEN])
+
+
+# ── ⑧ 状态横幅同理:`res://scenes/` 下零 `StatusBanner.new(`(阶段 3,2026-09-28)──────
+# ★ 与 ④ 是**同一条规则**(CanvasLayer 的层位只住在 .tscn 里,`.new()` 落到 layer 1 且静默),
+#   故共用下面那个参数化助手 —— 抄第二份扫描函数就是"第二份真相"。
+# ★ 扫描面也是**走盘**而不是手写清单:接线点在**基类** `scenes/pvp_match_client.gd`
+#   (`_setup_status_banner`),三个子类一行都不改 —— 手写清单必然写错对象(④ 的成因)。
+const BANNER_FORBIDDEN := "StatusBanner.new("
+
+
+func _check_banner_scene_instantiation() -> void:
+	var before := _failures.size()
+	_scan_forbidden_literal(RESULT_SCAN_ROOT, BANNER_FORBIDDEN, "StatusBanner",
+			"layer = 140 只写在 ui/status_banner.tscn 里,用 .new() 会落到 CanvasLayer 默认的 layer 1,"
+			+ "横幅画在三个对局 HUD(130)/小地图(131)底下、被盖住(静默,只能靠眼睛看出来)。要从场景实例化。")
+	_summary(before, "状态横幅实例化:%s 的零 %s 断言" % [RESULT_SCAN_ROOT, BANNER_FORBIDDEN])
+
+
+# 走盘扫 `root` 下全部 .gd,**剥注释后**断言 `literal` 零命中。读不到源文件一律报红
+# (contains 断言在它身上恒假 —— 那正是这类探针最典型的失明方式)。
+func _scan_forbidden_literal(root: String, literal: String, cls: String, why: String) -> void:
+	var all := _collect([root])
 	var files: Array[String] = []
 	for p in all:
 		if str(p).ends_with(".gd"):
 			files.append(p)
 	# ★ 下限守卫:走盘走空(目录改名/被排除)时下面那条 `for` 一次都不转 ⇒ 恒绿。
 	_check(files.size() >= 1,
-			"%s 下扫到 0 个 .gd(判据退化:走盘走空 ⇒ 「零 MatchResult.new(」恒真)" % RESULT_SCAN_ROOT)
+			"%s 下扫到 0 个 .gd(判据退化:走盘走空 ⇒ 「零 %s」恒真)" % [root, literal])
 	var hits: Array[String] = []
 	var unreadable: Array[String] = []
 	for p in files:
@@ -172,14 +200,11 @@ func _check_result_scene_instantiation() -> void:
 		if code.is_empty():
 			unreadable.append(p)
 			continue
-		if code.contains(RESULT_FORBIDDEN):
+		if code.contains(literal):
 			hits.append(p)
-	# ★ 读不到源文件 = 这类探针最典型的失明方式(contains 恒假),必须单独报红。
 	_check(unreadable.is_empty(), "读不到这些源文件(contains 断言在它们身上恒假):%s" % ", ".join(unreadable))
 	_check(hits.is_empty(),
-			"这些文件用了 MatchResult.new():%s —— layer = 150 只写在 ui/match_result.tscn 里,用 .new() 会落到 CanvasLayer 默认的 layer 1,结算页画在 HUD(130)/小地图(131)下面且压暗罩盖不住(静默,只能靠眼睛看出来)。要从场景实例化。" % ", ".join(hits))
-	_summary(before, "结算页实例化:扫 %s 下 %d 个 .gd,零 MatchResult.new( (已剥注释)" % [
-			RESULT_SCAN_ROOT, files.size()])
+			"这些文件用了 %s:%s —— %s" % [cls + ".new(", ", ".join(hits), why])
 
 
 # ── ⑤ `_show_result()` 不得早退(结算页"挂载一次、每次都刷新")──────────────

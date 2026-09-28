@@ -783,6 +783,14 @@ var _retry_timer: SceneTreeTimer = null   # 单一定时器(判据见 _schedule_
 #   硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。故它复用同一个闸,不另立标志。
 var _resync_pull_pending := false
 
+# ── 本地状态横幅(阶段 3,spec §4 的 3.2 + 3.4)──
+# ★ 它**只有一个数据源**:本文件的断线重连状态机。服务器侧的「谁掉线了」走 `round_state`
+#   的 `grace` 字段(那是另一条链,见 `MatchState.grace_snapshot`),两者刻意不共用同一个节点
+#   —— 一条是"我这边断了",一条是"对面断了",同时显示会互相覆盖。
+# ★ 它由 `_subscribe_reconnect()` 里建(三个子类**都已经**在各自 `_ready` 里调它)——
+#   **不加新调用点**,也就不存在"某个模式漏调 ⇒ 那个模式静默没有提示"这一档。
+var _banner: StatusBanner = null
+
 
 # 两个子类各自 `_ready` 里调一次(与 `_subscribe_ground_weapons()` 并列)。
 func _subscribe_reconnect() -> void:
@@ -793,6 +801,23 @@ func _subscribe_reconnect() -> void:
 	#   场景里**不在树上** → 这条信号到对局里是**静默 no-op**。所以"重连成功"的收尾必须在这里接
 	#   (`_on_match_start_event`)—— 不能指望既有入口。
 	NetBus.local_match_start.connect(_on_match_start_event)
+	_setup_status_banner()   # 本地状态横幅(3.2 / 3.4);建在这里 = 三个模式零新调用点
+
+
+# 建横幅(幂等)。★ 必须从**场景**实例化:层位 140 只住在 `ui/status_banner.tscn` 里,
+# `.new()` 建出来的是 CanvasLayer 默认的 **layer 1** —— 画在三个对局 HUD(130)与小地图(131)
+# **底下**,横幅被盖住且**不报错**。守卫:`tests/hud_declarative_probe.gd` 的 ⑧。
+func _setup_status_banner() -> void:
+	if _banner != null:
+		return
+	_banner = preload("res://ui/status_banner.tscn").instantiate() as StatusBanner
+	add_child(_banner)
+
+
+# 设/清横幅文字(空串 = 收起)。见 `_banner` 上方那段。
+func _set_status(text: String) -> void:
+	if _banner != null:
+		_banner.set_text(text)
 
 
 func _on_server_message(msg: String) -> void:
@@ -852,6 +877,9 @@ func _begin_reconnect() -> void:
 		_abort_reconnect("重连失败(无会话令牌)")   # 原版 worker / 老大厅 → 优雅降级
 		return
 	_reconnecting = true
+	# ★ 阶段 3(3.2 / 3.4):**断开一被侦测到就亮横幅**,而不是等某次重试失败之后。
+	#   这正是 3.4 说的"重连失败**之前**的可见反馈" —— 阶段 1 只打了 print。
+	_set_status("与服务器断线,正在重连…")
 	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.worker_port])
 	_retry_connect.call_deferred()
 
@@ -930,6 +958,11 @@ func _schedule_reconnect_retry() -> void:
 func _on_reconnect_retry_tick() -> void:
 	if not _reconnecting:
 		return
+	# 横幅上显示**还剩多少预算**(spec §4 的 3.2/3.4:失败之前就要有可见反馈)。
+	# ★ 读的是 `GraceWindow.DEFAULT_SECONDS` —— 与下面那条收场判据**同一个常量**,不会漂。
+	var left := int(GraceWindow.DEFAULT_SECONDS) \
+			- int((Time.get_ticks_msec() - _reconnect_started_ms) / 1000)
+	_set_status("与服务器断线,正在重连…(剩余 %ds)" % maxi(left, 0))
 	# ★★ 宽限期判据是**第一条**,且与"这次尝试走到哪一步"**无关** —— 两条路径(`err != OK` 与 OK)
 	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),整整一个
 	#   `GraceWindow.DEFAULT_SECONDS` 也一定到点。
@@ -975,6 +1008,7 @@ func _on_resumed() -> void:
 	_reconnect_started_ms = 0
 	_reclaim_sent = false
 	_attempt_started_ms = 0
+	_set_status("")   # 重连成功 → 收起横幅(阶段 3)
 	# ★ 必须重置:worker 在 reclaim 时把 `_ack_seq[role]` 归 0 重协商锚点,而客户端这边的 `_acked`
 	#   还停在断线前那个数 —— 不重置的话新快照的 ack 一律 `<= _acked`,`on_authoritative` 全数丢弃
 	#   (C2 静默失效,要等 seq 重新爬过断线前那个数才恢复),同时环里那些断线前的记录会被当成
@@ -1023,10 +1057,15 @@ func _cancel_reconnect() -> void:
 	_reconnect_started_ms = 0
 	_reclaim_sent = false
 	_attempt_started_ms = 0
+	_set_status("")   # 「对手已离开」是终局:横幅一并收起,让位给 HUD 的中央播报
 
 
 func _abort_reconnect(reason: String) -> void:
 	_reconnecting = false
+	# ★ 先收起横幅再换场:换场是 `await` 一帧的(`safe_change_scene` 的防重入首行),留着文字
+	#   只会在主菜单上闪一帧,读起来像 bug。原因本身仍留在下面那行 `print` 里(以及调用方
+	#   写在 `reason` 里的那句话)。
+	_set_status("")
 	NetBus.stop()
 	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
 	print("[pvp] %s" % reason)
