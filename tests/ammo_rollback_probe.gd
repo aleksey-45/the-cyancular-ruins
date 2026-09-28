@@ -59,6 +59,7 @@ func _ready() -> void:
 	host.add_child(P)
 	P.global_position = Vector2(6 * ts + ts * 0.5, 3 * ts + ts * 0.5)
 	P.weapons.set_initial_inventory([1])   # 只给手枪(type_id 1)
+	_run_pre_tree_tick_phase()   # 相②:未入树窗口的 tick()(2026-09-28)
 
 
 func _build_grid() -> Array[Array]:
@@ -128,6 +129,40 @@ func _apply_attack() -> void:
 		"winst": 0,
 		"aim": Vector2(1.0, 0.0),
 	})
+
+
+# ── 相②(2026-09-28):未入树窗口的 `tick()` 不得把权威 `_reloading=false` 冲成 true ──
+# 复现 `WeaponComponent._equip_index` 那个窗口:`equip()` 是**同步**的,而 `add_child` 是
+# **deferred** 的 ⇒ 入树前 `player` 已非空、`_player_ok()` 为真 ⇒ `tick()` 照跑,
+# 而 `mag_ammo` 还是**声明初值 0**(`_ready()` 才置 `mag_size`)⇒ `fire()` 的
+# "空弹夹自动换弹"被这个**假前提**触发 ⇒ `start_reload()` 把权威刚写下的 `_reloading = false`
+# 冲成 true,并多播一次没按键的 `Sfx.play("reload")`。
+# ★ 判据分两截:① **前提**(未入树时 `mag_ammo` 仍是 0 —— 前提不成立时下面是恒绿的空断言);
+#   ② **结论**(`_reloading` 仍为 false)。
+func _run_pre_tree_tick_phase() -> void:
+	var scene: PackedScene = load(WeaponRegistry.scene_of(1))
+	if scene == null:
+		_check(false, "相② 读不到手枪场景(WeaponRegistry.scene_of(1) 返回了空路径)")
+		return
+	var w: WeaponBase = scene.instantiate()
+	# ★ 顺序与 `_equip_index` 逐字一致:先 `equip()`(同步写好 player)——
+	#   本相**刻意不** `add_child`,就是要停在那一个窗口里。
+	w.equip(P, 0.0)
+	w._reloading = false           # 模拟 `_apply_weapon_state` 刚写下的权威值
+	_check(not w.is_inside_tree(),
+			"相② 前提:武器确实**不在**树上(否则本相验的不是那个窗口)")
+	_check(int(w.mag_ammo) == 0,
+			"相② 前提:未入树时 `mag_ammo` 仍是声明初值 0(实得 %d;若已非 0,本相恒绿)"
+			% int(w.mag_ammo))
+	_apply_attack()                # 按住开火(与 C1 相共用同一个输入源)
+	w.tick(1.0 / 60.0)
+	_check(not w.is_reloading(),
+			"★ 未入树窗口里 `tick()` 把权威 `_reloading=false` 冲成了 true(未按键的假换弹)")
+	w.free()                       # 不在树上 ⇒ 必须 free(),queue_free() 不会回收它
+	# ★ 收尾复位输入源:本相按下的 attack 若留在 `_held` 里,会让紧接的 C1 相提前打光弹夹,
+	#   那一相的"期望 3、实得 4"就变成**假红**。`clear_edges()` **不清 `_held`**,必须用
+	#   `reset_state()`。
+	(P.input_source as PacketInputSource).reset_state()
 
 
 func _check(ok: bool, msg: String) -> void:

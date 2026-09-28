@@ -109,6 +109,16 @@ var mag_ammo: int = 0                 # 弹夹内残弹
 #   写入就同步且顺序确定。
 const MAG_UNSET := -2
 var pending_mag: int = MAG_UNSET
+# 弹数是否已落定。★ 语义**只有一个**:`_ready()` 已跑过、`mag_ammo` 不再等于声明初值 0。
+# ★ 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
+#   `call_deferred("add_child")` 入树,而那里的 `equip(body, cd)` 是**同步**的 ⇒ 入树前的
+#   那个窗口里 `player` 已非空、`tick()` 会照跑,而 `mag_ammo` 仍是 0 ⇒ `fire()` 的
+#   "空弹夹自动换弹"被一个假前提触发,把权威的 `_reloading = false` 冲成 true。
+# ★ 为什么**不是** `is_inside_tree()` 守卫(那条已被明文否决):它会丢帧,并会把
+#   `_auto_aim()` 的朝向一起冻住 ⇒ 那本身造成**真分歧**,比它修掉的问题更坏。
+#   这里只让**依赖弹数的那个判断**在弹数未落定前失效,`tick()` 其余部分照跑。
+# ★ 别把它用到别的判断上 —— 它只在 `_ready()` 置真一次。
+var _mag_ready := false
 var _reloading := false
 var _reload_t := 0.0
 var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
@@ -180,6 +190,7 @@ func _ready() -> void:
 	if pending_mag != MAG_UNSET:
 		mag_ammo = clampi(pending_mag, 0, mag_size)
 		pending_mag = MAG_UNSET
+	_mag_ready = true
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
@@ -275,7 +286,10 @@ func fire() -> void:
 	if _reloading:
 		return
 	if mag_ammo <= 0:
-		start_reload()
+		# ★ 弹数未落定(未入树窗口)时这里的 0 是**声明初值**,不是"空弹夹" ——
+		#   照常起换弹会把权威刚写下的 `_reloading = false` 冲成 true(见 `_mag_ready`)。
+		if _mag_ready:
+			start_reload()
 		return
 	fire_cd_timer = fire_cooldown
 	# 同屏弹数上限:满员时这发不发(不耗弹、不烧冷却动作——冷却已计,等于"点空枪"),
