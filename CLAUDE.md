@@ -229,7 +229,8 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
   `ui/hud.gd` / `ui/weapon_slots.gd` / `ui/world_label.gd` 的 `PLATE_COLOR`、`ui/royale_hud.gd`
   的 `_plate_box()`;两个 `.tscn`(`ui/pvp_hud.tscn` / `ui/team_hud.tscn` 的 `Plate`)的 `bg_color`
   **结构上引用不到 GDScript 的 const** ⇒ 保留字面量,**由 `tests/ui_palette_single_source_smoke.gd`
-  钉住与 `C_PLATE` 逐位相等**。⇒ 改底板色**只动调色板一处**;漏改 `.tscn` 会**响亮地红**,
+  钉住与 `C_PLATE` 逐位相等**。⇒ 改底板色 = **调色板 + 两处 `.tscn` + 守卫里的 `PLATE_LITERAL`**(① 会点名"值被改");四个
+  `.gd` 落点**一个字都不用动**,而漏改 `.tscn` 会被 ④ **响亮地点名**——
   不再是静默(旧纪律是「改一处要改齐 + 手工 grep 对账」)。
   ★ **例外一:大乱斗排行榜 `royale_hud._board_bg` 单独是 0.25** —— 用户 2026-09-15 点名把那张
   「pvp 玩家栏」排除在这轮下调之外(比别处都实);别看到"统一"就把那处一起改。同一天该板底部

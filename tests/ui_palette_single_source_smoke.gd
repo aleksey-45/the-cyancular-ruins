@@ -24,6 +24,8 @@ extends SceneTree
 # ★★ **已知的判据上限(登记,别当漏洞)**:本守卫只钉这 **6 处**具名落点 + 一条"全仓再无
 #    游离字面量"的反向断言。将来新增第 7 处时,反向断言会红 —— **前提是它写成
 #    `Color(0, 0, 0, 0.1)` 字面量**;若写成第三种 `const` 名字,反向断言抓不到。
+#    **同一串字面量的等价改写也抓不到**(如 `Color(0.0, 0.0, 0.0, 0.1)`) —— `_norm` 只去空白,
+#    **不做数值形态归一**,故 ②/⑤ 是按**字面字符**比对的,不是按颜色值。
 
 const PALETTE := "res://ui/ui_factory.gd"
 # 底板色字面量的**归一化后**形态(空白在 `_norm` 里被去掉)。
@@ -100,10 +102,15 @@ func _initialize() -> void:
 		if raw.is_empty():
 			fails.append("④ 读不到 %s(读不到就是红)" % path)
 			continue
-		var got := _tscn_bg_color(raw)
-		if got == "":
+		var found := _tscn_bg_colors(raw)
+		if found.is_empty():
 			fails.append("④ %s 里找不到 `bg_color = Color(...)`(形状变了 ⇒ 本守卫失明)" % path)
 			continue
+		if found.size() > 1:
+			fails.append("④ %s 里有 **%d 处** `bg_color`(本守卫只认得出恰好一处 ⇒ 多出来的那几处没有任何断言看着)"
+					% [path, found.size()])
+			continue
+		var got := found[0]
 		if plate_rhs == "" or _norm(got) != _norm(plate_rhs):
 			fails.append("④ %s 的 `bg_color` 与 `C_PLATE` 不等(实得「%s」,期望「%s」)"
 					% [path, got, plate_rhs])
@@ -142,12 +149,24 @@ func _rhs_of(code: String, needle: String) -> String:
 	return ""
 
 
-# 取 `.tscn` 原文里 `bg_color = <Color(...)>` 的右值;找不到给 ""。
+# 取 `.tscn` 原文里**所有** `bg_color = <Color(...)>` 的右值(按出现顺序),并**剔掉 `;` 注释行**。
 # ★ 用正则而不是 `split("=")` —— 要容忍空格差异,且 `StyleBoxFlat` 段里还有别的 `=` 行。
-func _tscn_bg_color(raw: String) -> String:
+# ★★ 为什么这**两件事都不可省**:
+#    ① **剔注释** —— 属性行**正上方**就是一条说明注释(`; ... 改底板色必须同步这一行 ...`),
+#       而注释不是代码、不受任何约束:它里面一旦出现 `bg_color = ...`,只取首个匹配的实现会读
+#       **注释**、真属性漂了也报绿。那种静默漏报正是本守卫存在的理由。
+#    ② **全取** —— 两个 `.tscn` 在 ⑤ 里是**整文件白名单** ⇒ 同文件里多出来的第二处 `bg_color`
+#       ④(原先只看首个)与 ⑤ 都看不见。全取之后由调用方断言"**恰好一条**":0 条 = 形状变了、
+#       多条 = 本守卫看不懂 —— 两种都要红,而不是静默钉住其中一条。
+func _tscn_bg_colors(raw: String) -> Array[String]:
+	var out: Array[String] = []
 	var re := RegEx.create_from_string("bg_color\\s*=\\s*(Color\\([^)]*\\))")
-	var m := re.search(raw)
-	return "" if m == null else m.get_string(1)
+	for line in raw.split("\n"):
+		if line.strip_edges().begins_with(";"):
+			continue
+		for m in re.search_all(line):
+			out.append(m.get_string(1))
+	return out
 
 
 # 归一化:去掉所有空白与换行 ⇒ `Color(0,0,0,0.1)` 与 `Color(0, 0, 0, 0.1)` 相等。
