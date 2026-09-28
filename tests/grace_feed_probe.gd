@@ -9,11 +9,23 @@ extends Node
 # ═══ 为什么不能用源码断言代替 ═══
 # "三个生产者调了 `_send_round_state`"是**文本**判据(写在 tests/reconnect_status_probe 里),
 # 它拦不住"并进去的时机/条件写错了"(比如空表也带键、或者读的是别的字段)。本探针真建一个
-# `MatchHost`(**role_peers 传空** —— 同 `match_host_hygiene_probe` 的手法:不建玩家、不排
-# peer、所有 rpc_id 静默早退),用**子类覆写 `_rpc_all`** 截获真正要发出去的那份载荷
-# (同 `stats_delivery_probe` 的手法),在**调用时刻**深拷贝。
+# `MatchHost`(**role_peers 传空** —— 同 `match_host_hygiene_probe` 的手法:宿主不建玩家、不排
+# peer、所有 rpc_id 静默早退;⑥ 那相自己往 `host.players` 里摆一具,见该处注释),用
+# **子类覆写 `_rpc_all`** 截获真正要发出去的那份载荷(同 `stats_delivery_probe` 的手法),
+# 在**调用时刻**深拷贝。
+#
+# ★★ 本探针的两半(2026-09-28 二次评审后补 ⑤/⑥),别把其中一半当成另一半的替代:
+#   · ①②③ —— **载荷面**:字段进不进载荷、空表带不带键。**(下面这段"为什么不能用源码断言
+#     代替"说的就是它。)**
+#   · ④⑤ —— **源码级**:唯一出口 / 每一处广播都带**自己那一份**读数刷新。
+#   · ⑥ —— **行为面**:真驱动 `_on_reclaim` 的接受路径,读实际要发出去的那份载荷。
+#   ⇒ ⑤ 与 ⑥ **互补,不是重复**:⑤ 看不见控制流(`if cond:` 里的条件刷新它照绿),⑥ 不在乎
+#     文本(删掉那一行刷新就当场红)。哪一半缺了,那一类改法就无人拦。
 const MAP := "res://maps/factory1v1.cyrm"
-const EXPECTED_CHECKS := 6
+# ★ 计数法(逐条点**实跑**的 `_check`,不是数源码里的出现次数):① 1 + ② 1 + ③ 1 + ④ 1 + ⑤ 1
+#   + ⑥ **4**(仪器:`_enter_grace` 的载荷里这个人在宽限里 / 接受路径确实走到了 / reclaim 那一发
+#     确实广播了 + 主断言:`after` 里不得有他)= **10**。
+const EXPECTED_CHECKS := 10
 
 # 覆写 `_rpc_all` 的宿主:`_send_round_state` 内部调的就是它,故这里的截获是**生产路径上的**,
 # 不是探针自己模仿出来的第二份。
@@ -78,7 +90,11 @@ func _ready() -> void:
 			"★ `round_state` 的唯一出口被绕过:tests 的日志里有逐条读数")
 	# ── ⑤ 源码级:每一处 `_broadcast_round_state()` 之前都先刷过宽限读数 ──
 	_check(_every_broadcast_precedes_with_grace_sync(),
-			"★ 有 `_broadcast_round_state()` 的调用点没先 `_sync_grace_snapshot()`(载荷里的掉线态是旧值)")
+			"★ 有 `_broadcast_round_state()` 的调用点没带**自己那一份** `_sync_grace_snapshot()`"
+			+ "(载荷里的掉线态是旧值)")
+	# ── ⑥ **行为面**:`_on_reclaim` 接受路径的载荷里不得把刚回来的人继续列成「掉线中」──
+	# ★ ⑤ 是**文本**判据,看不见控制流(见它上方的"看不见"清单);真正关掉那个洞的是本相。
+	_phase_reclaim_payload()
 
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上 —— 要么有断言被静默跳过、"
@@ -130,9 +146,41 @@ func _funnel_is_the_only_emitter() -> bool:
 #     「掉线中(还剩 N 秒)」;而 1v1 / 3v3 的 `round_state` 只在状态跃迁时发、此后**没有任何
 #     东西会重发** ⇒ 那个错值会一直挂到下一次击杀 / 换局(2026-09-28 修的正是这一处)。
 #   · `_enter_grace`:进宽限后不刷 ⇒ 载荷里**不出现**这个人的掉线态,客户端那行「掉线中」不亮。
-# ★ 扫**所有**调用点(不是只钉已修好的那处):将来新增第三处广播同样会被这条咬住。
 # ★ 走 `code_only` 视图:注释里提到这两个名字**不算数** —— 这条断言的形状恰恰是"读起来像
 #   覆盖、实际被一句注释喂饱"的那一类。
+#
+# ★★ 判据是**「每一处广播都带**自己那一份**刷新」**,不是"函数里存在过一次刷新"。
+#   ★ 为什么不能只写"整个函数里 `sync` 在 `at` 之前":那样**第二处**广播会被第一处那次刷新
+#     喂饱(实测:`find` 出来的第一处广播恒是最靠左的那个 ⇒ "只钉第一处"与"逐处都钉、但
+#     判据仍是'函数里存在一次刷新'"**判定结果逐字等价**,迭代全部调用点**一格都多抓不到**)。
+#     故本函数的判据是:第 i 处的刷新必须落在 `(第 i-1 处的位置, 第 i 处的位置)` 这个开区间
+#     里(第一处则落在 `[0, 第一处)`)。⇒ 在同一个函数里**新增第二处广播**而没配刷新 = 红。
+#   ★ 代价照实说:紧接着第一处广播再写一处广播、中间**没有**任何刷新也会红 —— 那是**有意的
+#     保守**(今天两处调用点各自只带一处广播,不存在这种写法;真出现了,补一行刷新就不红)。
+#
+# ★★ 这条断言**能看见什么、看不见什么**(2026-09-28 二次评审后逐条写清 —— 上一版把它吹成
+#    「扫**所有**调用点 …将来新增第三处也会被咬住」,而实现只 `find` 了**第一处**、计数器还
+#    按**函数**加一,且判据本身对第二处**恒真** ⇒ 那句话是**过度承诺**,已订正):
+#   能看见:
+#     · 每个函数里的**每一处** `_broadcast_round_state()`,且**逐处**要求它**自己那一份**刷新。
+#     · 调用点被整体删光 / 接收者被改名(`sites == 0` 反向断言)。
+#   看不见(**纯文本序,没有任何控制流/数据流分析**):
+#     · **条件刷新**:`if cond: _sync_grace_snapshot()` 之后紧跟广播 —— 文本上"刷新在广播之前"
+#       成立,而 `cond` 为假的那些路径上载荷仍是旧值(这正是上一版"函数级不是块级"那句背后
+#       真正的洞,而『函数级/块级』这个说法把它**说小了** —— 它不是"块",是**控制流**本身)。
+#       ★★ 这一格**只有行为面拦得住**,见 ⑥;⑤ 与 ⑥ 是**互补**的两半,不是重复。
+#     · **死代码也算数**:`if false: _sync_grace_snapshot()` / 永不进入的分支里的刷新同样能让
+#       本断言绿 —— 它只看见"这一行在广播之前",看不见那一行会不会被执行。
+#     · 刷新与广播**不在同一个函数里**(广播搬进 helper / 经另一个方法间接调):本断言只看
+#       函数体文本,跨函数看不到。
+#     · **函数边界本身**:`_func_blocks` 按"列 0 的 `func `"切块,嵌套类/lambda 里的方法会被
+#       切出来当独立块(对本断言无害 —— 多扫到不含广播点的块而已);但函数体跨多行的续行、
+#       或把广播写在 `class` 声明块里(本文件没有这种写法)不在它的射程内。
+#     · `code_only` **保留字符串字面量**:字面量里若写着带括号的 `"_broadcast_round_state()"`,
+#       它会被当成一个调用点 ⇒ **假红**。今天 `server_main.gd` 里那两处是
+#       `has_method("_broadcast_round_state")`(**不带括号**),匹配不上,故无此风险;给这条
+#       断言写"带括号的自引用字面量"时要知道它会自己咬自己(或改成只在 `has_method(` 之后
+#       的那种字面量上放行)。
 func _every_broadcast_precedes_with_grace_sync() -> bool:
 	var c := _code("res://server/server_main.gd")
 	if c.is_empty():
@@ -142,20 +190,88 @@ func _every_broadcast_precedes_with_grace_sync() -> bool:
 	var sites := 0
 	for f in _func_blocks(c):
 		var body: String = f["body"]
+		var n := 0
+		var prev := -1      # 上一处广播的位置(-1 = 还没有);本处的刷新必须晚于它
 		var at := body.find("_broadcast_round_state()")
-		if at < 0:
-			continue
-		sites += 1
-		var sync := body.find("_sync_grace_snapshot()")
-		if sync < 0 or sync > at:
-			print("    ✗ %s() 里的 `_broadcast_round_state()` 之前没有 `_sync_grace_snapshot()`"
-					% f["name"])
-			ok = false
+		# ★ 逐**调用点**扫(不是逐函数),且逐处要求**自己那一份**刷新(见上方长注释)。
+		while at >= 0:
+			n += 1
+			sites += 1
+			var sync := body.find("_sync_grace_snapshot()", prev + 1)
+			if sync < 0 or sync > at:
+				print("    ✗ %s() 里第 %d 处 `_broadcast_round_state()` 没有**自己那一份** "
+						% [f["name"], n] + "`_sync_grace_snapshot()`(载荷里的掉线态是旧值)")
+				ok = false
+			prev = at
+			at = body.find("_broadcast_round_state()", at + 1)
 	# ★ 反向:一处都没扫到 = 扫描本身失明(比如接收者换了名字),那时上面的循环空转、恒绿。
 	if sites == 0:
 		print("    ✗ 一处 `_broadcast_round_state()` 都没扫到 —— 这条断言在空转")
 		ok = false
 	return ok
+
+
+# ── ⑥ 行为面:`_on_reclaim` 接受路径的载荷(**2026-09-28 二次评审后补**)────────────
+# ⑤ 是**文本**判据,它看不见控制流:`if cond: _sync_grace_snapshot()` 紧跟广播在文本上完全满足
+# "刷新在广播之前",而 `cond` 为假的路径上载荷仍是旧值。把那个洞真关掉的是本相 ——
+# **行为不在乎文本**:它真驱动 `_on_reclaim` 的接受路径,读**实际要发出去的那一份载荷**。
+# ★★ 本相的价值全在**反向对照**上:把 `_on_reclaim` 里那行 `_sync_grace_snapshot()` 删掉,
+#    下面那条主断言必须**红**(`after` 里那个人还在、带着正的剩余秒数 —— 正是 2026-09-28 修的
+#    那个 bug 逐字复活),加回去必须绿。没有这条对照,它就是一条恒绿的摆设。
+#
+# 手法:真宿主(`CaptureHost`,覆写 `_rpc_all` 截获)+ 真 `_on_reclaim`。
+#   ★ `server_main.gd` 的实例**不入树**:它的 `_ready` 会 `ProcUtil.kill_udp_port(7777)` 并把
+#     大厅起起来 —— 那是**用户自己的服务端**,探针不许碰(与"探针不占 7777"同一条纪律)。
+#     本相只调 `_on_reclaim` 这一个函数,而它的**接受路径**逐项核对过不碰树:
+#     `_host.players[role]` / `_host.input_sources` / `_pending_input` / `_ack_seq` / `_grace` /
+#     `MazeGenerator.map_file_path()`(静态)/ `NetBus.reply`(本进程 `multiplayer_peer` 为 null
+#     ⇒ `is_peer_live` 恒 false ⇒ 静默返回 false,**不发包**)。
+#   ★ **拒绝路径够不到** —— 它是唯一碰 `multiplayer`(`disconnect_peer`)的地方,而本相三条
+#     前置(已开局 / 在宽限里 / token 相符)都满足;真走岔了,那条调用会**当场报错**而不是静默。
+#   ★ 三条前置由 `_match_started` / `_enter_grace(role)` / `_tokens[role]` 造出来 —— 全是**生产
+#     路径上的写法**,不是给探针开的旁路。
+func _phase_reclaim_payload() -> void:
+	var sm: Node = (load("res://server/server_main.gd") as GDScript).new()
+	var host := CaptureHost.new(MAP, {})
+	add_child(host)
+	host.set_physics_process(false)
+	var role := 1
+	var p = (preload("res://scenes/player/player.tscn") as PackedScene).instantiate()
+	host.add_child(p)
+	var src := PacketInputSource.new()
+	p.set_input_source(src)
+	p.set_physics_process(false)
+	host.players[role] = p
+	host.input_sources[role] = src
+	sm._host = host
+	sm._match_started = true      # 判据①
+	sm._tokens[role] = "tok-1"    # 判据③
+	# 造出 bug 的现场:按**生产路径**进宽限(`_enter_grace` 末尾自己刷读数 + 广播)⇒
+	# 此刻载荷里这个人**在**「掉线中」,而下面 `_on_reclaim` 的接受路径要把他放出来。
+	sm._enter_grace(role)
+	var before := _grace_of(host.last_round_state)
+	_check(before.has(role),
+			"★ [仪器] `_enter_grace` 那一发载荷里这个人在「掉线中」(实得 grace=%s;若为空,"
+			% str(before) + "下面那条主断言就是恒绿的摆设)")
+	host.round_state_count = 0
+	sm._on_reclaim(1, role, "tok-1")
+	_check(not sm._grace.has(role),
+			"★ [仪器] 走的是**接受**路径(接受后宽限表里必须没这个人;实得 has=%s)"
+			% str(sm._grace.has(role)))
+	_check(host.round_state_count == 1,
+			"★ [仪器] reclaim 那一发确实广播了一次 round_state(实得 %d;若为 0,主断言读到的就还是"
+			% host.round_state_count + " `_enter_grace` 那份旧载荷 ⇒ 会**假红**)")
+	var after := _grace_of(host.last_round_state)
+	_check(not after.has(role),
+			"★★ 主断言:`_on_reclaim` 接受路径的载荷**不得**把刚回来的人列成「掉线中」(实得 grace=%s)"
+			% str(after))
+	sm.free()
+
+
+# 载荷里的 `grace` 字典(缺席 ⇒ 空字典,与 `GraceWindow.merge_into` 的"非空才带键"同口径)。
+func _grace_of(payload: Dictionary) -> Dictionary:
+	var g: Dictionary = payload.get("grace", {})
+	return g.duplicate()
 
 
 # 把剥注释后的源码切成 `[{name, body}]`。`code_only` 已 strip_edges,故"列 0 的 `func `"
