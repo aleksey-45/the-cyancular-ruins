@@ -1,5 +1,5 @@
 'use strict';
-// 从 data/enemies.json 重新生成 structure-editor.html 内嵌的敌人注册表
+// 从 data/enemies.json 重新生成 editor.html 内嵌的敌人注册表
 // (/*__ENEMY_REGISTRY_BEGIN__*/ ... /*__ENEMY_REGISTRY_END__*/ 之间)。
 // 用法:node level_editor/sync-enemies.js [--check]
 //   --check: 只校验不写盘。改了 data/enemies.json 忘跑本脚本(或在 json 里加了字段却忘了
@@ -9,7 +9,7 @@ const path = require('path');
 
 const dir = __dirname;
 const jsonPath = path.join(dir, '..', 'data', 'enemies.json');
-const htmlPath = path.join(dir, 'structure-editor.html');
+const htmlPath = path.join(dir, 'editor.html');
 
 const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 const enemies = (json.enemies || []).map(function (e) {
@@ -59,11 +59,11 @@ if (process.argv.includes('--check')) {
   const actual = norm(html.match(re)[0]);
   const expected = norm(block);
   if (actual === expected) {
-    console.log('ok: structure-editor.html 的敌人注册表与 data/enemies.json 一致(' +
+    console.log('ok: editor.html 的敌人注册表与 data/enemies.json 一致(' +
       enemies.map(function (e) { return e.id; }).join(', ') + ')');
     process.exit(0);
   }
-  console.error('FAIL: structure-editor.html 的敌人注册表已漂移 —— 跑 `node level_editor/sync-enemies.js` 重新生成');
+  console.error('FAIL: editor.html 的敌人注册表已漂移 —— 跑 `node level_editor/sync-enemies.js` 重新生成');
   const a = actual.split('\n');
   const b = expected.split('\n');
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
