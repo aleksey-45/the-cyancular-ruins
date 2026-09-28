@@ -13,7 +13,7 @@ extends Node
 # peer、所有 rpc_id 静默早退),用**子类覆写 `_rpc_all`** 截获真正要发出去的那份载荷
 # (同 `stats_delivery_probe` 的手法),在**调用时刻**深拷贝。
 const MAP := "res://maps/factory1v1.cyrm"
-const EXPECTED_CHECKS := 5
+const EXPECTED_CHECKS := 6
 
 # 覆写 `_rpc_all` 的宿主:`_send_round_state` 内部调的就是它,故这里的截获是**生产路径上的**,
 # 不是探针自己模仿出来的第二份。
@@ -76,9 +76,15 @@ func _ready() -> void:
 	# ── ④ 源码级:三个生产者都走唯一出口,且生产目录里再没有第二处 round_state 发送 ──
 	_check(_funnel_is_the_only_emitter(),
 			"★ `round_state` 的唯一出口被绕过:tests 的日志里有逐条读数")
+	# ── ⑤ 源码级:每一处 `_broadcast_round_state()` 之前都先刷过宽限读数 ──
+	_check(_every_broadcast_precedes_with_grace_sync(),
+			"★ 有 `_broadcast_round_state()` 的调用点没先 `_sync_grace_snapshot()`(载荷里的掉线态是旧值)")
 
-	if _checks < EXPECTED_CHECKS:
-		_fails.append("★ 只跑了 %d 条断言(期望 ≥ %d)" % [_checks, EXPECTED_CHECKS])
+	if _checks != EXPECTED_CHECKS:
+		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上 —— 要么有断言被静默跳过、"
+				% [_checks, EXPECTED_CHECKS]
+				+ "要么有新断言没登记进 EXPECTED_CHECKS(helper 里的脚本错误只让那个函数当场结束、"
+				+ "调用方照常往下走,`_fails` 不会非空)")
 	if _fails.is_empty():
 		print("GRACE FEED PROBE: ALL-OK(%d 条断言)" % _checks)
 		get_tree().quit(0)
@@ -113,3 +119,59 @@ func _funnel_is_the_only_emitter() -> bool:
 			print("    ✗ %s 里还有绕过出口的 `_rpc_all(\"round_state\"`" % p)
 			ok = false
 	return ok
+
+
+# ── ⑤ 的不变量 ────────────────────────────────────────────────────────────────
+# **同一个函数体内**,每一处 `_broadcast_round_state()` 之前都必须先调过
+# `_sync_grace_snapshot()`。载荷里那个 `grace` 字典是 `MatchState.grace_snapshot` 的**当前值**,
+# 而读数只在三处写:`_enter_grace`、`_expire_graces`、以及 `_process` 里每秒一次的保鲜。
+# 广播点漏刷的后果(两处都是"删掉不报错"):
+#   · `_on_reclaim`:上面刚 `_grace.leave(role)`,不刷 ⇒ 载荷把这个**刚回来的人**继续列成
+#     「掉线中(还剩 N 秒)」;而 1v1 / 3v3 的 `round_state` 只在状态跃迁时发、此后**没有任何
+#     东西会重发** ⇒ 那个错值会一直挂到下一次击杀 / 换局(2026-09-28 修的正是这一处)。
+#   · `_enter_grace`:进宽限后不刷 ⇒ 载荷里**不出现**这个人的掉线态,客户端那行「掉线中」不亮。
+# ★ 扫**所有**调用点(不是只钉已修好的那处):将来新增第三处广播同样会被这条咬住。
+# ★ 走 `code_only` 视图:注释里提到这两个名字**不算数** —— 这条断言的形状恰恰是"读起来像
+#   覆盖、实际被一句注释喂饱"的那一类。
+func _every_broadcast_precedes_with_grace_sync() -> bool:
+	var c := _code("res://server/server_main.gd")
+	if c.is_empty():
+		print("    ✗ 读不到 res://server/server_main.gd")
+		return false
+	var ok := true
+	var sites := 0
+	for f in _func_blocks(c):
+		var body: String = f["body"]
+		var at := body.find("_broadcast_round_state()")
+		if at < 0:
+			continue
+		sites += 1
+		var sync := body.find("_sync_grace_snapshot()")
+		if sync < 0 or sync > at:
+			print("    ✗ %s() 里的 `_broadcast_round_state()` 之前没有 `_sync_grace_snapshot()`"
+					% f["name"])
+			ok = false
+	# ★ 反向:一处都没扫到 = 扫描本身失明(比如接收者换了名字),那时上面的循环空转、恒绿。
+	if sites == 0:
+		print("    ✗ 一处 `_broadcast_round_state()` 都没扫到 —— 这条断言在空转")
+		ok = false
+	return ok
+
+
+# 把剥注释后的源码切成 `[{name, body}]`。`code_only` 已 strip_edges,故"列 0 的 `func `"
+# 就是函数起点(嵌套类/lambda 的方法也会被切出来,对本断言无害 —— 多扫到不含广播点的块而已)。
+func _func_blocks(code: String) -> Array:
+	var out := []
+	var name := ""
+	var buf: Array[String] = []
+	for line in code.split("\n"):
+		if line.begins_with("func "):
+			if name != "":
+				out.append({"name": name, "body": "\n".join(buf)})
+			name = line.substr(5, line.find("(") - 5)
+			buf = []
+		elif name != "":
+			buf.append(line)
+	if name != "":
+		out.append({"name": name, "body": "\n".join(buf)})
+	return out

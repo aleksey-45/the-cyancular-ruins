@@ -522,6 +522,13 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 			if _host.has_method("role_spawns") else Vector2i(-1, -1)
 	NetBus.reply(caller, "match_start", role, sp, MazeGenerator.map_file_path())
 	if _host.has_method("_broadcast_round_state"):
+		# ★★ 读数必须跟着上面那行 `_grace.leave(role)` 一起变(与 `_expire_graces` 里那一行
+		#   同一件事,理由见那里的长注释):`grace_snapshot` 此刻还是 `_enter_grace`(或每秒
+		#   保鲜)写下的**旧值**,里面这个人**还在**、且带着一个正的剩余秒数 ⇒ 不刷新的话,
+		#   这一发载荷恰好把这个刚回来的人**继续列成「掉线中」**。
+		#   ★ 这不是"最多 1 秒的陈旧":1v1 / 3v3 的 `round_state` 只在状态跃迁时才发,而这一次
+		#   之后**没有任何东西会重发** ⇒ 那个错值会一直挂到下一次击杀 / 换局。
+		_sync_grace_snapshot()
 		_host._broadcast_round_state()
 	print("worker: role %d 重连成功(peer=%d)" % [role, caller])
 

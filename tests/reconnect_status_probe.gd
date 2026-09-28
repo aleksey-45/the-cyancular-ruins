@@ -120,9 +120,13 @@ func _check_cancel_wiring() -> void:
 
 
 func _finish() -> void:
-	if _checks < EXPECTED_CHECKS:
-		_fails.append("★ 只跑了 %d 条断言(期望 ≥ %d)—— 有断言没跑到,这个 ALL-OK 不算数"
-				% [_checks, EXPECTED_CHECKS])
+	# ★★ 判据是 **`!=`** 而不是 `<`,**两个方向都要红**(与 `tests/late_match_probe.gd` 同款):
+	#    多跑一条**没登记的**断言同样是闸失守 —— 那说明 `EXPECTED_CHECKS` 已经与实况对不上,
+	#    闸对**后加的那些**断言就成了恒绿的摆设(加断言忘抬这个数时,`<` 会**静默放行**)。
+	if _checks != EXPECTED_CHECKS:
+		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上 —— 要么有断言没跑到,"
+				% [_checks, EXPECTED_CHECKS]
+				+ "要么有新断言没登记进 EXPECTED_CHECKS(加断言忘抬这个数时,`<` 会静默放行)")
 	if _fails.is_empty():
 		print("KH RECON-UI PROBE: ALL-OK(%d 条断言)" % _checks)
 		get_tree().quit(0)

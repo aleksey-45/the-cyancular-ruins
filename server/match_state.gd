@@ -198,8 +198,8 @@ func _rpc_all(method: String, args: Array = [], except_role: int = -1,
 # ★ 为什么不并进 `_rpc_all`:那是**所有**事件(子弹/光束/拆墙/kill)的样板,往那里加
 #   `round_state` 专属的键会让每条事件都白背一个 `grace`。
 # ★ 为什么不让三个生产者各写一句 `GraceWindow.merge_into(...)`:三份必然漂,而"其中一个忘了"
-#   **不报错** —— 只是那个模式的「掉线中」永远不亮。守卫:`tests/grace_feed_probe` 的 ③
-#   (生产目录里 `_rpc_all("round_state"` **零命中**,三个文件都含 `_send_round_state(`)。
+#   **不报错** —— 只是那个模式的「掉线中」永远不亮。守卫:`tests/grace_feed_probe` 的 ④
+#   (生产目录里 `_rpc_all("round_state"` **除出口自身外零命中**,三个文件都含 `_send_round_state(`)。
 # ★ `RoyaleHost._broadcast_round_state` 原先显式传 `-1, true`(`live_only`),那正是
 #   `_rpc_all` 的**默认值**(见它的签名)⇒ 统一走本出口后,大乱斗那条的行为**逐字不变**。
 func _send_round_state(data: Dictionary) -> void:
