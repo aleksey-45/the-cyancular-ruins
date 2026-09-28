@@ -731,6 +731,13 @@ func _sync_grace_snapshot() -> void:
 		_sync_grace_snapshot()
 ```
 
+★★ **跨会话约束(2026-09-28 对方通知,落这一步之前必读)**:对方的冒烟现在**源码级钉住 `_process` 的形状**——
+1. 那段 1v1 报到梯的门控**不得**是对 worker-only 标志取反:即 `_process` 里**不得出现 `not _royale` / `not _team_mode` / `not _worker`**(`not _match_started` **允许**,那是模式无关的状态位);
+2. 大厅分支必须有 `set_process(false)`,且**不得**出现在 `_run_worker` 里。
+⇒ 本步插入的代码**不得**在条件里写 worker-only 标志的否定(上面给的代码本来就没有,照抄即可)。
+★ **这条守卫的红会出现在【对方的冒烟】里、而不是本计划的任何探针里** —— 不知道的话会朝错方向查半天。
+★ 成因值得记住:对方那条梯最初写成 `not _royale and not _team_mode and …`,而 `_process` 在大厅里**照跑**(当时没人关它)⇒ **大厅开机 30 秒后自杀**。前三支之所以安全,**只因为**它们要求某个**正**的 worker 标志。对方随后的 `set_process(false)` 是**结构性**封堵,让整类不可达。
+
 **不做的事(★ 明确登记,别"顺手补上")**:不在宽限期里每秒广播一次 `round_state`。
 理由不是带宽,而是**副作用**:1v1/3v3 的 `round_state` 只在状态转折时发,而三个客户端里有两处
 `COUNTDOWN 且 round > 1` 的分支**不是幂等的** —— `pvp_game._on_round_state` 会
