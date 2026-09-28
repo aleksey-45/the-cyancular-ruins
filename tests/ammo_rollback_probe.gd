@@ -137,8 +137,12 @@ func _apply_attack() -> void:
 # 而 `mag_ammo` 还是**声明初值 0**(`_ready()` 才置 `mag_size`)⇒ `fire()` 的
 # "空弹夹自动换弹"被这个**假前提**触发 ⇒ `start_reload()` 把权威刚写下的 `_reloading = false`
 # 冲成 true,并多播一次没按键的 `Sfx.play("reload")`。
-# ★ 判据分两截:① **前提**(未入树时 `mag_ammo` 仍是 0 —— 前提不成立时下面是恒绿的空断言);
-#   ② **结论**(`_reloading` 仍为 false)。
+# ★ 判据分两半,两半缺一不可:
+#   ① **负向**(前提 + 结论):未入树时 `mag_ammo` 仍是 0(前提不成立时下面是恒绿的空断言),
+#      而 `tick()` 之后 `_reloading` 仍为 false **且** `mag_ammo` 未被写(设计里的判据原文);
+#   ② **正向对照**:入树之后空弹夹开火**仍应**自动换弹。没有这一半,本相只钉住了"不该换弹时
+#      不换" —— 把 `_mag_ready` 的置真删掉、或把那个分支改成裸 `return`,都会让一个**已上线**
+#      的功能(空弹夹自动换弹)静默消失,而全仓其余断言**一条都不会红**。这是"单向断言"形态。
 func _run_pre_tree_tick_phase() -> void:
 	var scene: PackedScene = load(WeaponRegistry.scene_of(1))
 	if scene == null:
@@ -158,11 +162,40 @@ func _run_pre_tree_tick_phase() -> void:
 	w.tick(1.0 / 60.0)
 	_check(not w.is_reloading(),
 			"★ 未入树窗口里 `tick()` 把权威 `_reloading=false` 冲成了 true(未按键的假换弹)")
+	# ★ 同一条结论的**另一半**:一帧过去后 `mag_ammo` 仍不得被写(设计里的判据原文是
+	#   "断言 is_reloading()==false **且** mag_ammo 未被写")。单帧下上面那截已经盖住了它,
+	#   但把这条写出来,将来本相若被扩成步进多帧(那时 `tick()` 的收尾会写
+	#   `mag_ammo = mag_size`)它才拦得住"白送满弹夹"那个变体。
+	_check(int(w.mag_ammo) == 0,
+			"★ 未入树窗口里 `tick()` 写动了 `mag_ammo`(实得 %d;应为声明初值 0)" % int(w.mag_ammo))
 	w.free()                       # 不在树上 ⇒ 必须 free(),queue_free() 不会回收它
 	# ★ 收尾复位输入源:本相按下的 attack 若留在 `_held` 里,会让紧接的 C1 相提前打光弹夹,
 	#   那一相的"期望 3、实得 4"就变成**假红**。`clear_edges()` **不清 `_held`**,必须用
 	#   `reset_state()`。
 	(P.input_source as PacketInputSource).reset_state()
+
+	# ── 相②的正向对照:入树之后,空弹夹**仍然**会自动换弹 ──
+	# ★ 没有这一半,本相只钉住了"不该换弹时不换" —— 而把 `_mag_ready` 从 `_ready()` 里删掉、
+	#   或把那个分支改成裸 `return`,都会让**已上线的一个功能静默消失**(空弹夹开火不再自动换弹),
+	#   而本探针与全仓其余断言**一条都不会红**(`kh_l3_probe` / `kh_l3_visual_probe` 都是直接
+	#   驱动 `start_reload()`,不走 `fire()` 这条路)。这是本仓反复强调的"单向断言"形态。
+	var w2: WeaponBase = scene.instantiate()
+	w2.equip(P, 0.0)
+	add_child(w2)                  # ★ 入树 ⇒ `_ready()` 真的跑一次(这正是 `_mag_ready` 的置真点)
+	_check(w2._mag_ready,
+			"正向对照前提:入树后 `_mag_ready` 已置真(否则下面那条测的不是「入树后仍会换弹」)")
+	w2.mag_ammo = 0                # `_ready()` 刚把它置成 `mag_size`,这里显式清空
+	_apply_attack()
+	w2.tick(1.0 / 60.0)
+	_check(w2.is_reloading(),
+			"★ 正向对照:入树之后空弹夹开火**仍应**自动换弹(把 `_mag_ready` 的置真删掉、"
+			+ "或把那个分支改成裸 return,都会让这条红 —— 而没有它,那个功能会静默消失)")
+	(P.input_source as PacketInputSource).reset_state()
+	# ★ 刻意**不** free `w2`:留在树上直到探针退出。`_ready()` 里排了
+	#   `call_deferred("add_child", _laser)` / `_explosion_marker` 两条,帧末前 free 掉本节点会
+	#   让那两颗子节点变孤儿、给输出添 leaked 警告(本仓探针要求输出干净)。而 w2 之后不会再被
+	#   任何东西 tick(只有玩家自己手上那把由 `WeaponComponent.tick()` 驱动),它就静静停在
+	#   `_reloading = true` 上,无副作用。
 
 
 func _check(ok: bool, msg: String) -> void:
