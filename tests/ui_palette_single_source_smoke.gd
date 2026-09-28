@@ -54,6 +54,13 @@ const LITERAL_ALLOWED := [PALETTE, "res://ui/pvp_hud.tscn", "res://ui/team_hud.t
 		"res://tests/ui_palette_single_source_smoke.gd"]
 # ⑤ 扫的目录(生产 + 测试)。
 const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests"]
+# `_rhs_of` 的词界判据用的标识符字符集(needle 后面紧跟其中任一个 = 命中的是兄弟常量)。
+const IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+# ⑤ 扫描到的源文件数**下限**:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
+#   (照 `tests/kh_l4_probe.gd:41-43` 的 `MIN_PROD_FILES` / `MIN_ALL_FILES` 先例)。
+#   今日实测 SCAN_DIRS 共 319 个(ui 24 / scenes 62 / core 39 / server 16 / tests 178),
+#   取 250 留健康余量,只拦"整档坏掉"那一类。
+const MIN_SCANNED := 250
 
 
 func _initialize() -> void:
@@ -118,7 +125,26 @@ func _initialize() -> void:
 			fails.append("④ %s 的 `bg_color` 不是底板色(实得「%s」)" % [path, got])
 
 	# ── ⑤ 反向:全仓再无**游离**的底板色字面量(白名单见 LITERAL_ALLOWED) ──
-	for path in ScanUtil.collect(SCAN_DIRS):
+	# ★★ 覆盖下限(两条,都是"扫描坏掉 ⇒ 零命中 = 假绿"的解药):`ScanUtil.walk` 在**根打不开时
+	#    静默返回**(`DirAccess.open` 给 null 就直接 return,一个字都不打)⇒ 根被改名/搬走会让本条
+	#    **无声收窄**:扫到的文件少了、命中自然少了,而 verdict 照打 `ALL-OK`。
+	#      ① **逐根**:每个根都必须扫到 ≥1 个文件,点名是哪个根 —— 这才是"某个根打不开"的
+	#         **精确**判据(全局下限单独一条抓不住"一个小根整个消失")。
+	#      ② **全局下限** `MIN_SCANNED`:防"扫描整体坏掉"。
+	#    ★ 两条都在**迭代之前**跑:先证明扫到了东西,再拿扫到的东西下结论。
+	#    ★ 文件表**只收一次**并复用(不重复 walk —— 那也是两个判据看到不同世界的窗口)。
+	var scanned := ScanUtil.collect(SCAN_DIRS)
+	for root in SCAN_DIRS:
+		var n := 0
+		for p in scanned:
+			# 带 "/" 才是**目录**前缀(res://ui 不得匹配到 res://ui_foo)
+			if p.begins_with(root + "/"):
+				n += 1
+		if n == 0:
+			fails.append("⑤ 扫描根 %s 一个文件都没扫到(根被改名/搬走?) —— `ScanUtil.walk` 打不开时**静默返回**,本条会无声收窄成假绿" % root)
+	if scanned.size() < MIN_SCANNED:
+		fails.append("⑤ 只扫到 %d 个源文件(下限 %d)—— 扫描坏掉时零命中是假绿" % [scanned.size(), MIN_SCANNED])
+	for path in scanned:
 		if LITERAL_ALLOWED.has(path):
 			continue
 		var raw := ScanUtil.read(path)
@@ -140,12 +166,24 @@ func _initialize() -> void:
 
 
 # 取 `code` 里含 `needle` 的那一行的**右值**(`:=` 之后的原文);找不到/没有 `:=` 给 ""。
+# ★ 匹配是**整词**的(needle 后面必须紧跟非标识符字符),不是子串 —— 否则日后若出现
+#   `const C_PLATE_DIM := ...` 这类**兄弟常量**并排在真身之前,①(以及拿 `plate_rhs` 当期望值的
+#   ④)会**静默取到兄弟的右值**:守卫照样打 ALL-OK,而它钉的那个值已经不是源的值了。
 func _rhs_of(code: String, needle: String) -> String:
 	for l in code.split("\n"):
-		if not l.contains(needle):
+		var i := l.find(needle)
+		if i < 0:
 			continue
-		var i := l.find(":=")
-		return "" if i < 0 else l.substr(i + 2).strip_edges()
+		var end := i + needle.length()
+		# 词界:紧跟其后若是标识符字符(字母/数字/下划线),说明命中的是**兄弟常量**
+		# (如 `const C_PLATE_DIM`),不是我们要的那个 —— 跳过,别把它的右值当成源的值。
+		# ★ 边界:needle 恰好落在**行尾**时 end == 行长度,取不到字符;越界取字符会打引擎错误
+		#   ⇒ 本脚本一行裁决都不打印(只能靠 timeout 看出来)⇒ 必须显式判长度。
+		#   那种行没有值可取,落到下面的 `:=` 查找 ⇒ 返回 ""(与原语义一致)。
+		if end < l.length() and l[end] in IDENT_CHARS:
+			continue
+		var j := l.find(":=")
+		return "" if j < 0 else l.substr(j + 2).strip_edges()
 	return ""
 
 
