@@ -87,28 +87,42 @@ if mag_ammo <= 0:
 
 ### #6b MATCH_OVER 之后倒地仍进 `_stats`
 
-**现状与根因**:`server/match_round.gd:7` 的 `_match_round_tick` 里,倒地边沿块(掉落 +
-`_record_down` + 击杀 + `_broadcast_round_state`)排在 `match _round_state:` **之前**、
-且**不看状态** ⇒ 终局之后残留的爆炸致死仍会:
+**现状与根因**:倒地边沿块(掉落 + `_record_down` + 击杀 + `_broadcast_round_state`)排在
+`match _round_state:` **之前**、且**不看状态** ⇒ 终局之后残留的爆炸致死仍会:
 
 1. `deaths += 1`(真的写进 `_stats`);
 2. `_drop_all_but_one` 在终局后再掉一次武器;
 3. **再广播一次终局载荷**,且带着**新算出来的 `mvp`**。
 
-**修法**:该块首行按状态早退(在 `for role in players:` 循环体最前):
+**★ 要修的是两处,不是一处**(设计期核对到,原稿只写了 1v1):
+
+| 模式 | 倒地边沿住在哪 | 现状 |
+|---|---|---|
+| 1v1 | `server/match_round.gd:8-42`,在 `match` **之前** | **有病** |
+| 3v3 | `server/team_host.gd:302-…`,在 `match` **之前** | **有病** |
+| 大乱斗 | `server/royale_host.gd:196` 起,**整支 `_match_round_tick` 就是一个 `match`**,倒地边沿住在 `RoundState.PLAYING` 分支里 | **天然免疫,不需要改** |
+
+**修法**:在两个有病的地方各加同一道闸(位置:循环体最前,`players[role]` 之前):
 
 ```gdscript
-# ★ MATCH_OVER 之后**不再产生任何记账**……
-if _round_state == RoundState.MATCH_OVER:
-    continue
+	for role in players:
+		# ★ MATCH_OVER 之后不再产生任何记账(终局后残留爆炸仍会把玩家打倒地):
+		#   没有这道闸,`deaths` 会 +1、尸体再掉一次武器、并**再广播一次带新 mvp 的终局载荷**。
+		#   大乱斗那一支**天然没有这个问题**(它的倒地边沿住在 `RoundState.PLAYING` 分支里)
+		#   —— 两处形状一致是**刻意**的(同一契约的三份落地),别把这句当成多余而删掉。
+		if _round_state == RoundState.MATCH_OVER:
+			continue
 ```
 
 **范围边界(照实登记,本批不改)**:只排除 `MATCH_OVER`。**`ROUND_OVER` 期间倒地照旧入账** ——
 那是既有行为,不在本项里。将来若要收紧,判据应改成 `!= PLAYING`,但那是另一条决定。
 
-**判据**:在真建宿主的场景探针里,MATCH_OVER 之后对某 role 制造一次倒地,断言
-`deaths` 不变**且没有第二条载荷**(子类覆写 `_rpc_all` 在调用时刻截获,照
-`tests/stats_delivery_probe.tscn` 的手法)。
+**判据**:新场景探针 `tests/late_match_probe.tscn`(见 §4),**每个模式两相**:
+
+* **反向对照(必须先有)**:`PLAYING` 里制造一次倒地 ⇒ `deaths == 1`。没有它,"把整块删掉"
+  也能让下面那条通过。
+* **本项**:`MATCH_OVER` 里制造一次倒地 ⇒ `deaths == 0`(1v1 另断言 `_scores` 未动)。
+* ★ 两相各用**一具新宿主**(`_down_counted` 闩与 `_stats` 都留在宿主上,复用会互相污染)。
 
 ### #7 `_match_winner` 的并列候选集
 
@@ -207,20 +221,40 @@ AI 局端到端),本批不覆盖。
 ⇒ **一个等了近 2h 才开局、又配了长时长的房**,其对局进行到 300s 之后的那次 tick 仍会判它超龄、
 **连 worker 一起杀掉**。缺口最大约 1500s。
 
-**修法**:把那个 300 换成一个**可证的上界**常量(放在 `server/room_manager.gd`,与
-`TEAM_MATCH_ESTIMATE` 并列):
+**修法**:在 `server/room_manager.gd` 里与 `TEAM_MATCH_ESTIMATE` 并列新立一个**可证的上界**常量,
+并**就地**把谓词里那一个常量换掉(不抽函数 —— 见下):
 
 ```gdscript
 # 大乱斗一局长度的**可证上界**:Settings.royale_match_min 在 core/config/settings.gd:147 的
 # 装载钳位是 [1.0, 30.0] 分钟 ⇒ 秒数上界 1800。(建房页滑块只到 15,但 settings.cfg 可到 30。)
+# ★ 跨文件不变量:钳位一旦放宽到这里以下,本上界**静默失效**(不再覆盖) —— 改钳位要回来一起改。
+#   守卫:`tests/room_sweep_smoke.gd` 会去读 settings.gd 的钳位行,钳位变了就红。
 const ROYALE_MATCH_TIME_CEILING := 1800.0
+```
+
+```gdscript
+		var in_match_grace := (SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING) if rr.in_match else 0.0
 ```
 
 **★ 为什么刻意不走「把 `match_time` 随 `royale_create` 存到房上」那条看起来更准的路**:
 `_player_options()` 是**报到那一刻**才读 `Settings`,`royale_create` 是**更早的另一刻**
-(实测 `server/lobby_rooms.gd:427` 的 `royale_create` **压根不转发** `match_time`)⇒ 存下来的那个
+(实测 `server/lobby_rooms.gd:427` 起的 `royale_create` **压根不转发** `match_time`)⇒ 存下来的那个
 数是**下界**,缺口照留。而硬上界是**保守**的(永不误杀活局),代价只是泄漏的房多留 ~25 分钟
 (房间数量与端口池 500 相比微不足道)。⇒ **保守 + 可证**胜过**精确但可错**。
+
+**★ 为什么也不抽成纯静态函数**(设计期改动,原稿写的是抽函数):抽了之后,行为断言只能拿
+`SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING` 去比它自己 —— 两边读同一对常量,**近乎同义反复**;
+而真正的风险(常量被改回默认值 / 钳位被放宽)两边都是**文本**面。⇒ 就地换常量 + 文本断言更小、
+更准,且不新增一个"抽了函数但生产没接"的失明面。
+
+**★ 顺带必须改的三处文案**(不改就会**说谎**,不是风格问题):
+
+1. `server/room_manager.gd:433` —— 清扫日志里的 `MAX_ROOM_AGE + SWEEP_INTERVAL + RoyaleHost.MATCH_TIME`
+   打印的是**判据用的那个界**,不改就等于日志报了个假的界。
+2. `tests/room_sweep_smoke.gd:398` —— **既有断言**要求谓词行含 `RoyaleHost.MATCH_TIME`;
+   换常量后它**当场红**。这一截改成认 `ROYALE_MATCH_TIME_CEILING`。
+3. `tests/room_sweep_smoke.gd:664` 的 OK 串与 `:5` / `:14` 的文件头描述里都写着
+   "大乱斗 RoyaleHost.MATCH_TIME",一并订正。
 
 **★ 该项名字里的「端口延迟」那半已自动闭合,不需要改常量**:房活到 worker 退出、端口只在
 `teardown_room` 里归还 ⇒ 三档 `*_PORT_REUSE_DELAY` 的计时起点是 **worker 退出**,不再是"房间拆除"。
@@ -230,17 +264,15 @@ const ROYALE_MATCH_TIME_CEILING := 1800.0
 **范围**:**3v3 不动**(它用的是 `TEAM_MATCH_ESTIMATE`,是另一条已登记的估值,不在用户清单里);
 **`ROYALE_PORT_REUSE_DELAY` 不动**(理由见上)。
 
-**判据**:两步,缺一不可(照本仓"纯函数 + 源码级接线断言"的既有抽法):
+**判据**(`tests/room_sweep_smoke.gd`,`-s`,三条都在既有的 `_check()` 体内,**不新增该文件的检查项**):
 
-1. 把这段宽限算式抽成**纯静态函数**(如 `RoomManager.royale_in_match_grace()`),在
-   `tests/room_sweep_smoke.gd`(`-s`,纯逻辑)里**直接调它**断言 ==
-   `SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING`,并断言它 **>** `RoyaleHost.MATCH_TIME`(即"确实是
-   上界,不是换了个名字的默认值")。
-2. 源码级:**`_sweep_stale_rooms` 的 royale 分支必须调那个函数**,不得再写
-   `SWEEP_INTERVAL + RoyaleHost.MATCH_TIME` 那段算式(否则抽了函数但生产没接 —— 行为探针照样绿)。
+1. `room_manager.gd` 源码里 `const ROYALE_MATCH_TIME_CEILING := 1800.0` 在位。
+2. 谓词行那一截:含 `ROYALE_MATCH_TIME_CEILING`、**不再**含 `RoyaleHost.MATCH_TIME`
+   (原断言那一截的反转),同时保留既有的 `rr.in_match` 与 `SWEEP_INTERVAL` 两截。
+3. **前提钉在它住的地方**:`core/config/settings.gd` 的装载钳位行仍含 `1.0, 30.0`
+   —— 钳位一放宽,第 1/2 条仍绿而缺口复现,这条是唯一会红的那一处。
 
-反证:把常量改回 `RoyaleHost.MATCH_TIME` ⇒ 第 1 步红;把分支改回原算式 ⇒ 第 2 步红。
-★ 第 1 步的期望值必须**从常量派生**,不许再写一个 `1800` 字面量(否则改常量时判据不同步)。
+反证:把谓词改回 `RoyaleHost.MATCH_TIME` ⇒ 第 2 条红;把钳位放宽到 60 ⇒ 第 3 条红。
 
 ## 3. 不做的事(明确排除)
 
@@ -256,17 +288,24 @@ const ROYALE_MATCH_TIME_CEILING := 1800.0
 ## 4. 判据落点逐个标注(与 peer 的分层对齐)
 
 peer 已于 2026-09-28 放行 `tests/`(**唯一例外:`tests/team_match_*`,本批一个字不碰**)。
-为减少撞车,凡有选择的都**新建文件**;`tests/royale_c2_probe*` 留给 peer 的阶段 3(他要往那儿加相)。
+为减少撞车,除两处必要落点外**一律新建文件**;`tests/royale_c2_probe*` 留给 peer 的阶段 3。
 
 | 项 | 判据落点 | 处置 |
 |---|---|---|
-| #2 | `tests/ammo_rollback_probe.tscn` 加一相 | 既有文件(该 bug 的专用探针,无更合适的家) |
-| #6a | 场景探针(真建宿主;不能走 `-s`) | **新文件** |
-| #6b | `tests/team_host_probe.tscn` 加一相 | 既有文件(3v3 倒地边账住这儿) |
-| #7 | **新文件** | ★ **刻意不碰 `tests/royale_c2_probe*`**(peer 阶段 3 要用) |
+| #2 | `tests/ammo_rollback_probe.tscn` 加一相 | **既有文件**(该 bug 的专用探针,无更合适的家) |
+| #6a | `tests/late_match_probe.tscn` ③ | **新文件** |
+| #6b | `tests/late_match_probe.tscn` ①② | **新文件**(1v1 + 3v3 各两相) |
+| #7 | `tests/late_match_probe.tscn` ④⑤ | **新文件**;★ **刻意不碰 `tests/royale_c2_probe*`** |
 | #8 | —— | **无新判据**(见 §2 #8) |
-| #10 | 新真链路冒烟(照 `team_spawn_smoke` 先例) | **新文件** + 标"用户跑" |
-| #11 | `tests/room_sweep_smoke.gd`(纯函数 + 源码接线断言) | 既有文件 |
+| #10 | `tests/duel_spawn_timeout_smoke.gd` | **新文件**(`-s`,照 `team_spawn_smoke` 先例;拉起真 worker) |
+| #11 | `tests/room_sweep_smoke.gd` 的既有 `_check()` | **既有文件**,三条断言,不新增检查项 |
+
+⇒ 实际会动的既有 `tests/` 文件**只有两个**:`ammo_rollback_probe.tscn` 与 `room_sweep_smoke.gd`;
+其余是 `tests/late_match_probe.{gd,tscn}` 与 `tests/duel_spawn_timeout_smoke.gd` 两个新文件。
+
+★ `#2` 的探针**不需要真世界**:`WeaponBase._aim_world_dir()` 在 `get_viewport() == null` 时
+早退(实测 `scenes/weapons/weapon_base.gd:508`),故入树前的 `tick()` 是安全的 —— 探针只需一个
+`WeaponBase` 实例 + `equip()` 出的 `player` 引用 + 一个受控输入源。
 
 ## 5. 已知风险
 
@@ -274,9 +313,13 @@ peer 已于 2026-09-28 放行 `tests/`(**唯一例外:`tests/team_match_*`,本�
    `PLAYING` 之外本来就不发生(`match_round.gd:15`),故早退不改变任何其他行为。判据要**同时**
    断言"MATCH_OVER 后不记账";反向对照是"PLAYING 中照常记账"(否则"整块删掉"也能过)。
 2. **#10 的 30s 一旦短于客户端兜底**,会把"转连慢"变成"连接被拒" —— 这是本批**唯一**一处
-   时间常数耦合(客户端 12s/25s)。计划里要把它写成一条**显式不变量断言**并注明三处必须同源。
+   时间常数耦合(客户端 12s/25s)。计划里要把它写成一条**显式不变量注释**并注明三处必须同源。
+   ★ 该判据是 `-s` 冒烟(只 spawn 进程 + 读日志,**不需要 autoload**)⇒ 与 `team_spawn_smoke`
+   同档:**agent 可跑**,用池外端口,收尾按端口杀。
+   ★★ **跨会话次序**:peer 的阶段 3 计划 Task 3 也要在 `server/server_main.gd` 的 `_process`
+   里插 1~2 行(`_sync_grace_snapshot()`),**与本项同段**。已约定:**本项先落**、落完通知 peer;
+   两边按名 `git add`、各自提交,不合并。
 3. **#11 的 1800 依赖 `settings.gd:147` 的钳位**。若哪天钳位放宽到 60 分钟,这个上界**静默失效**
-   (不再覆盖)。计划里要在该常量上方写明它与钳位的**跨文件不变量**,并让判据读**同一个常量**
-   (而不是再写一个 1800 字面量)。
+   (不再覆盖)。⇒ 判据第 3 条就是钉这个前提的那一处;改钳位时它会红。
 4. **#2 的 `_mag_ready` 是"弹数已落定"的标记**,不是"开火是否允许"。别把它顺手用到别的判断上 ——
    它只在 `_ready()` 置真一次,语义是"`mag_ammo` 不再是声明初值"。
