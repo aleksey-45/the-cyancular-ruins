@@ -23,6 +23,7 @@
 - **跑法分工**:`-s` 冒烟与 headless 场景探针**可由 agent 跑**;**真渲染探针不能加 `--headless`**(headless 下 `get_image()` 给 null ⇒ 直接 FAIL),由**用户**跑并读图;`tests/reconnect_probe.tscn`(真链路、起子进程、耗时长)与一切占 **7777** 的脚本也由**用户**跑。
 - ★ **两支 Godot 测试之间查一次残留**:`tasklist | grep -i godot` 应为空。本计划新增的两个探针都**不起子进程**(唯一例外是 Task 2 要改的 `reconnect_probe`,那支本来就是用户跑的),但这是本仓 2026-09-27 起的新纪律(孤儿 worker 会让下一支**静默挂住**)。
 - 提交**按名 `git add`** 单个文件,不用 `git add -A` / `git add .`;提交信息用 `git commit -F - <<'EOF'` heredoc,**不用** `-m "…"`(双引号会**静默吞掉**反引号与 `$`)。
+- ★★ **新建脚本时,它的 `.uid` 要跟着一起入库**:`git add <name>.gd <name>.gd.uid`。本仓跟踪着 **227** 个 `*.uid`(含大量 `tests/*.gd.uid`),`.gitignore` 未屏蔽它 —— Godot 4.4+ 生成的 `.uid` **应当入库**,缺了它同一个脚本在别处会被解析出**不同的 UID**。★ 这条是**实际踩过**的:本计划 Task 1/2 的两个新脚本都入了库、它们的 `.uid` 却落在工作区(已于 `2d0893e` 补上)。**`.tscn` 无此惯例**(本仓 `*.tscn.uid` 零跟踪)。
 - **字号必须是 16 的倍数**(`kh_l4`/`kh_l5` 扫 `res://ui` 与 `res://tests`)。本计划**不引入任何新字号**:新增的两处载体(`ui/status_banner.gd` 的 `const FONT_SIZE := 32`、`ui/pvp_hud.tscn` 里 `GraceLabel` 的 `theme_override_font_sizes/font_size = 32`)都沿用既有的 **32**。
 - **颜色只准在 `ui/ui_factory.gd` 定义**;新增语义色必须**同时**写清它的对比度实测值(达不到 3:1 就**如实写达不到**,见 `C_TEAM_A` 那段注释的样板)。**不要在 `.gd` 或 `.tscn` 里写 `Color(...)` 字面量**。
 - **定向发送前一律先判活**:`server_main` 里那一处新发送点必须是 `NetBus.reply(...)`(它体内首行判活),否则 `tests/rpc_liveness_probe.tscn` 会红。
