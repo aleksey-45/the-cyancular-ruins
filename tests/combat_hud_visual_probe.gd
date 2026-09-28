@@ -17,7 +17,7 @@ extends Control
 #
 # ★ 背景故意铺**地图开阔区的浅灰蓝**(#78969F),不是深色底:
 #   对局 HUD 是直接叠在地图上的,垫深底取图会把「浅底上读不出来」这类问题整个遮掉 ——
-#   单机 HUD 就是这么漏掉 1.9:1 的血条的(见 ui/hud.gd 的 PLATE_COLOR 注释)。
+#   单机 HUD 就是这么漏掉 1.9:1 的血条的(见 ui/ui_factory.gd 的 C_PLATE 注释)。
 const MAP_OPEN_COLOR := Color(0.47, 0.588, 0.624)   # ≈#78969F,实测取的地图开阔区色
 
 const OUT_DIR := "res://.superpowers/sdd"

@@ -64,7 +64,11 @@ var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载
 #   取出现次数最多的那个 RGB。
 # ★ 换 sprite 素材要重测这一行 —— 它错了不报错,只是队色会**整体偏色**(整队一起偏,所以
 #   "谁是谁"照旧分得出,更容易漏)。三个分量都非 0,故下面那句比值除法不需要额外兜底。
-const BODY_BASE_COLOR := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)   # #639BFF
+# ★ 唯一源是 `UiFactory.C_TEAM_A`(队 1 token,同值)—— 本处是**别名**,不存字面量。
+#   ★ 上面那段"实测出来的众数色"仍是**独立的一维**:`tests/hue_tint_probe.gd` 的守卫 D
+#     钉的是 `C_TEAM_A == BODY_BASE_COLOR == player.png 众数` —— 换了 sprite 素材而没改
+#     调色板时,它照样红。别因为这里变成别名就把那条守卫删了。
+const BODY_BASE_COLOR := UiFactory.C_TEAM_A   # #639BFF(本体主色 == 队 1 token)
 
 
 # 通用身体染色:只给角色本体 AnimatedSprite2D 上色(武器/预瞄线不染)。

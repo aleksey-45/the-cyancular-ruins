@@ -41,7 +41,7 @@ const ROYALE_GAME := "res://scenes/royale_game.gd"
 const TEAM_GAME := "res://scenes/team_game.gd"
 const BODY_TEXTURE := "res://assets/textures/player.png"
 
-# 头顶 ID 的底板实色(`ui/world_label.gd` 的 `黑 0.1` 压在 ui/hud.gd 注释记的地图开阔区
+# 头顶 ID 的底板实色(`ui/world_label.gd` 的 `黑 0.1` 压在 ui/ui_factory.gd 的 C_PLATE 注释记的地图开阔区
 # #78969F 上)= #6C8790。用它当探针底 ⇒ 取到的色就是实机上那一条(与队色对比度同源)。
 const BACKDROP := Color(0x6C / 255.0, 0x87 / 255.0, 0x90 / 255.0)
 const BODY_SCALE := 4.0        # 48×48 的帧 → 192px

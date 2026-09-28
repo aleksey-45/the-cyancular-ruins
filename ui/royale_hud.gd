@@ -80,14 +80,12 @@ func _ready() -> void:
 #   Mask → Center → PingWrap → HintWrap。**Mask 盖在排行榜之上是现状**,别顺手改进。
 # ★ 硬编码的 1920 屏幕坐标已换成右锚/下锚(1920×1440 视口下位置逐一等价)。
 
-# HUD 元素底板(与单机 HUD 同一套做法,见 ui/hud.gd 的 PLATE_COLOR):
-# 对局 HUD 直接压在地图上,地图开阔区是浅灰蓝 —— 不垫底时浅色小字读不出来。
-# ⚠ 这里与单机 HUD 的 `PLATE_COLOR`、`pvp_hud.tscn` 的 `Plate` 是**同一个数值**(0.1,
-#   用户 2026-09-15 统一下调);改一处就得改齐三处(场景那份是 .tscn 里的字面量,无法共享常量)。
-#   ★ 本文件的 `_board_bg`(排行榜)**不在其中** —— 那张玩家栏被用户点名排除,单独是 0.25。
+# HUD 元素底板(与单机 HUD 同一套做法)。★ 唯一源是 `UiFactory.C_PLATE` —— 本处直接引用,
+# 不再有内联字面量(本文件其它地方早就引 `UiFactory`,这里是漏网的那一处)。
+# ★ 本文件的 `_board_bg`(排行榜)**不在其中** —— 那张玩家栏被用户点名排除,单独是 0.25。
 static func _plate_box(pad_x: float, pad_y: float) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0, 0, 0, 0.1)
+	sb.bg_color = UiFactory.C_PLATE
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = pad_x
 	sb.content_margin_right = pad_x

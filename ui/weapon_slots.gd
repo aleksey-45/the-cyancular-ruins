@@ -28,9 +28,9 @@ var capacity: int = WeaponInventory.DEFAULT_CAPACITY
 var rows: int = rows_for(capacity)
 var panel_h: float = panel_h_for(capacity)
 
-# 与全局 HUD 底板同值(黑 0.1,见 CLAUDE.md 的「HUD 元素一律垫半透明深底板」)。
+# HUD 底板(黑 0.1)。★ 唯一源是 `UiFactory.C_PLATE` —— 本处是**别名**,不存字面量。
 # 单机 HUD 的那块挂在既有 PanelContainer 底板上,这个值只被联机两处用到。
-const PLATE_COLOR := Color(0, 0, 0, 0.1)
+const PLATE_COLOR := UiFactory.C_PLATE
 
 var _weapons: WeaponComponent = null
 

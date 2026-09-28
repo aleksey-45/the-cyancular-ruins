@@ -10,9 +10,9 @@ const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
 const FONT_SIZE := 32   # 16 的整数倍(像素字体锐利;全仓字号规范的最后一处违例)
 const WIDTH := 344.0
 const ALPHA := 0.85   # 文字透明度
-# 底板:黑 0.1 —— 与单机 HUD 的 `PLATE_COLOR`、`pvp_hud.tscn` 的 `Plate` 同值(见 ui/hud.gd
-# 该常量注释里的各档对比度实测)。**不乘文字 alpha**:它是垫在字下面的静态底,不是文字的一部分。
-const PLATE_COLOR := Color(0, 0, 0, 0.1)
+# 底板(黑 0.1)。★ 唯一源是 `UiFactory.C_PLATE` —— 本处是**别名**,不存字面量。
+# **不乘文字 alpha**:它是垫在字下面的静态底,不是文字的一部分。
+const PLATE_COLOR := UiFactory.C_PLATE
 const PLATE_PAD := Vector2(6, 2)   # 底板比文字每边外扩多少(横向多留一点才衬得住字形)
 
 var _text := ""
