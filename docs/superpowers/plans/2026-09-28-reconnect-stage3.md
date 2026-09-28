@@ -982,7 +982,7 @@ feat(reconnect): 3.1 服务端半 —— round_state 长出 `grace` 字段（唯
   每秒多播一次会把那些活各干 3 遍。客户端的秒数由 `GraceWindow.tick_display` 本地走。
 - 新守卫 `tests/grace_feed_probe`（真建 MatchHost + 子类覆写 `_rpc_all` 截获载荷）：
   空读数**不带键** / 非空进载荷 / 清空后键消失 / 唯一出口没被绕过。
-- `tests/reconnect_status_probe` 相②b 从"前瞻"提升为承重断言（12 条）。
+- `tests/reconnect_status_probe` 相②b 从"前瞻"提升为承重断言（`EXPECTED_CHECKS` 11 → **17**）。
 EOF
 ```
 
