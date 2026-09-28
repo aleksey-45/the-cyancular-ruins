@@ -2,7 +2,7 @@ extends SceneTree
 # 僵尸房间清理——源码级结构检查(仿 player_contract_smoke)。锁的结构横跨两个文件(2026-09-14 拆账本后):
 #  **room_manager.gd**:1) SWEEP_INTERVAL(10min)/MAX_ROOM_AGE(2h)常量;3) _process 每周期调
 #   _sweep_stale_rooms;4) _sweep_stale_rooms 对超龄房走拆除收口;5) 大乱斗在局宽限谓词同时引用
-#   RoyaleHost.MATCH_TIME 与 rr.in_match,且 1v1 仍是裸 MAX_ROOM_AGE。
+#   ROYALE_MATCH_TIME_CEILING 与 rr.in_match,且 1v1 仍是裸 MAX_ROOM_AGE。
 #  **lobby_rooms.gd**(账本/收口搬来这里):2) 建房时给 created_at 赋时间戳;收口体外不得出现
 #   端口归还/注册表删除(见 _check_teardown_funnel);杀 worker 的实现另在 worker_launcher.gd。
 #  **批次 3(3v3,2026-09-18)**:argv 契约扩到 --team/--teams(见 _check_argv_contract 的正/反向),
@@ -395,8 +395,23 @@ func _check(src: String) -> void:
 			break
 	if pred.is_empty():
 		_fail = "找不到大乱斗超龄判定(谓词行)"; return
-	if not pred.contains("RoyaleHost.MATCH_TIME"):
-		_fail = "大乱斗在局宽限缺 RoyaleHost.MATCH_TIME(宽限被删/被写死?)"; return
+	# ★ 2026-09-28 改认上界常量:原先这里认 `RoyaleHost.MATCH_TIME`,而它只是**默认值** ——
+	#   房主可在建房页把一局配到 15 分钟(装载钳位到 30),于是"等了近 2h 才开局 + 配了长时长"
+	#   的房会在**对局中途**被判超龄、连 worker 一起杀掉(缺口最大约 1500s)。
+	if not pred.contains("ROYALE_MATCH_TIME_CEILING"):
+		_fail = "大乱斗在局宽限缺 ROYALE_MATCH_TIME_CEILING(宽限被删/被改回默认时长?)"; return
+	if pred.contains("RoyaleHost.MATCH_TIME"):
+		_fail = "大乱斗在局宽限又用回了 RoyaleHost.MATCH_TIME(它只是默认值,不是上界)"; return
+	# ── 2026-09-28:上界常量本身 + **它的前提**。三条缺一不可 ──
+	if not src.contains("const ROYALE_MATCH_TIME_CEILING := 1800.0"):
+		_fail = "缺 ROYALE_MATCH_TIME_CEILING=1800(或值被改小了 —— 它必须盖得住装载钳位的上界)"; return
+	# ★★ 前提钉在**它住的地方**:上界 1800 = 30 分钟 × 60,而 30 来自 `Settings.royale_match_min`
+	#   的**装载钳位**。钳位一放宽(比如到 60 分钟),上面两条**照绿**,而缺口**复现** ——
+	#   只有这一条会红。改钳位时回来一起改。
+	var settings_src := FileAccess.get_file_as_string("res://core/config/settings.gd")
+	if not settings_src.contains("royale_match_min = clampf(float(cf.get_value(\"royale\", \"match_min\", 5.0)), 1.0, 30.0)"):
+		_fail = ("★ Settings.royale_match_min 的装载钳位变了 —— ROYALE_MATCH_TIME_CEILING "
+				+ "(=30min×60=1800)不再盖得住它,大乱斗在局宽限的缺口复现。改钳位要一起改上界常量。"); return
 	if not pred.contains("rr.in_match"):
 		_fail = "大乱斗在局宽限缺 rr.in_match 门控"; return
 	if not pred.contains("SWEEP_INTERVAL"):
@@ -661,5 +676,5 @@ func _finish() -> void:
 		print("SMOKE_ROOM_SWEEP FAIL: %s" % _fail)
 		quit(1)
 		return
-	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(三张注册表的在局宽限界逐个钉死:1v1 裸界 / 大乱斗 RoyaleHost.MATCH_TIME / 3v3 TEAM_MATCH_ESTIMATE;%d 项检查全部跑到尾)" % _done.size())
+	print("SMOKE_ROOM_SWEEP OK: 10min 扫 2h 超龄房间,杀 worker+删房 结构齐备(三张注册表的在局宽限界逐个钉死:1v1 裸界 / 大乱斗 ROYALE_MATCH_TIME_CEILING(可证上界) / 3v3 TEAM_MATCH_ESTIMATE;%d 项检查全部跑到尾)" % _done.size())
 	quit(0)

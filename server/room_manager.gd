@@ -23,9 +23,20 @@ const MAX_ROOM_AGE := 7200.0        # 房间允许存在上限(秒=2h)
 # ★ 它是**估**值,不是从任何常量读来的:TeamHost 侧没有一个"本局最多打多久"的常量可读
 #   (RoyaleHost 那边有 MATCH_TIME,3v3 是三局两胜 —— 界变成"杀掉 9 人 × 3 局",没有对应常量),
 #   故这里取粗上界:3 局 × (COUNTDOWN 3 + 打到 9 杀 + ROUND_OVER 4) 的量级。
-# ★ 与 royale 那条宽限**同根因的已知边界**(照实登记):正确的界要读**本局实际时长**,而那个值
+# ★ **已知边界**(照实登记,**3v3 独有** —— 大乱斗那一档 2026-09-28 起改用可证上界
+#   ROYALE_MATCH_TIME_CEILING,不再是这条):正确的界要读**本局实际时长**,而那个值
 #   只存在于 worker 的 TeamHost 里,sweep 手里没有 —— 真要修得先把实际时长回传/登记到房上。
 const TEAM_MATCH_ESTIMATE := 1800.0
+# 大乱斗一局长度的**可证上界**(秒)。来历:`Settings.royale_match_min` 在
+# `core/config/settings.gd` 的**装载钳位**是 [1.0, 30.0] 分钟(建房页滑块只到 15,
+# 但 settings.cfg 里可以到 30)⇒ 秒数上界 = 30 × 60 = 1800。
+# ★ 为什么用**硬上界**而不是"把房主配的时长存到房上":`_player_options()` 是**报到那一刻**
+#   才读 `Settings`,而 `royale_create` 是**更早的另一刻**(实测它压根不转发 `match_time`)
+#   ⇒ 存下来的是**下界**,缺口照留。硬上界是**保守**的(永不误杀活局),代价只是泄漏的房
+#   多留 ~25 分钟(与端口池 500 相比微不足道)。⇒ 保守 + 可证,胜过精确但可错。
+# ★★ **跨文件不变量**:钳位一旦放宽到 30 分钟以上,本上界**静默失效**(不再覆盖)。
+#   守卫在 `tests/room_sweep_smoke.gd` —— 它会去读 settings.gd 的钳位行,钳位变了就红。
+const ROYALE_MATCH_TIME_CEILING := 1800.0
 var _sweep_acc := 0.0
 
 # 对局中房间的回收梯周期(秒)。★ 比 SWEEP_INTERVAL(600s)密得多,因为判据与目的都不同:
@@ -365,7 +376,9 @@ func _process(delta: float) -> void:
 # 成员若一直连着不吭声(ENet 不会超时「连接仍在但对端沉默」的 peer),端口就被永久占用
 # (WORKER_PORT_SPAN=500 耗尽后 WorkerLauncher.pick_port 恒 -1,大厅彻底拉不起 worker)。
 # 故三表共用同一 MAX_ROOM_AGE 一并清扫。不跳过 in_match 房:在局中的房另加
-# 「一整个扫描周期 + 一局时长」的宽限,推导与**已知边界**见下方 royale / team 两个分支。
+# 「一整个扫描周期 + 一局时长」的宽限(大乱斗那一档的「一局」取**可证上界**,见
+# ROYALE_MATCH_TIME_CEILING),推导见下方 royale / team 两个分支 —— 3v3 那档仍是估值,
+# 其**已知边界**见 TEAM_MATCH_ESTIMATE 的注释。
 # ★ 加新一张注册表时**两处都要动**:各自的 stale_* 收集块,以及末尾那条
 #   「全空则提前 return」的并列判据(漏了它 = 只有那一张表的房超龄时永不清扫)。
 func _sweep_stale_rooms() -> void:
@@ -378,23 +391,17 @@ func _sweep_stale_rooms() -> void:
 	var stale_royale: Array = []
 	for rcode in lobby.royale_rooms:
 		var rr: LobbyRooms.RoyaleRoom = lobby.royale_rooms[rcode]
-		# 刻意偏离移植来源(非误改):在局中的大乱斗房宽限 = SWEEP_INTERVAL + RoyaleHost.MATCH_TIME
-		# (即「一整个扫描周期」+「一局时长,取该常量的默认值」),这条界的**推导**是可证的:
+		# 刻意偏离移植来源(非误改):在局中的大乱斗房宽限 = SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING
+		# (即「一整个扫描周期」+「一局时长的**可证上界**」,不是默认时长),这条界的**推导**是可证的:
 		# 房龄从**建房**起算,含此前在大厅等待的全部时间——一个等满 MAX_ROOM_AGE 才开局的房,在开局
 		# 那一刻就已"超龄";而清扫由 _process 的 SWEEP_INTERVAL 计时器驱动(不是每帧),房间可能已经
 		# 比阈值老上**整整一个扫描周期**才等到判它超龄的那次 tick,即最迟可在房龄 MAX_ROOM_AGE +
 		# SWEEP_INTERVAL 时开局。从 royale_start/royale_start_ai 拉起 worker 到成员转连离厅还有
 		# 0.3~1.5s 的窗口,若宽限只有一局时长,紧随其后的那次 tick 仍会杀掉一个刚起几秒的 worker
 		# 并踢掉正在转连的成员(边界竞态只是被推窄,没被关闭)。宽限覆盖「阈值 + 整个扫描周期 +
-		# 一局」后,等待期攒下的那一整个周期与默认时长的整局对局都落在界内。
-		# ★ **已知边界(照实登记,本次不修)**:上面的「一局」取 RoyaleHost.MATCH_TIME(300s),
-		#   而它是**默认值、不是上限**——房主可在建房页用「一局限时」滑块自定义,该值经
-		#   NetBusExt.player_options 的 match_time(**Settings.royale_match_min × 60**,设置里钳在
-		#   1~30 分钟)随 role1 报到进 RoyaleHost,一局最长 1800s。于是**一个等了近 2h 才开局、
-		#   又配了长时长的房**,其对局进行到 300s 之后的那次 tick 仍会判它超龄并连 worker 一起杀掉
-		#   (缺口最大约 1500s)。不在本次放宽的原因:触发它还得先满足「房龄近 2h」(正常房建房后
-		#   几分钟内就开局),而正确的修法是让宽限读**本局实际时长**——该值只存在于 worker 的
-		#   RoyaleHost 里,sweep 手里没有,要修得先把实际时长回传/登记到房上,属另行评估的范围。
+		# 最长一局」后,等待期攒下的那一整个周期与整局对局都落在界内 —— ★ 这里的「一局」取的是
+		# **可证上界** ROYALE_MATCH_TIME_CEILING(2026-09-28 之前取的是默认时长,房主配长时长时
+		# 会在对局中途被杀,理由见该常量的注释)。
 		# 等待中(in_match=false)的房不占端口、杀不到任何东西,仍按裸 MAX_ROOM_AGE 清,无需宽限。
 		# ★ 1v1 分支**刻意不享受**同样宽限。2026-09-21 订正本条的**理由**(行为一字未动):
 		#   旧理由引的是「started 房一方掉线即整房作废」(_start_match / on_peer_left 那条 started 分支)
@@ -405,7 +412,7 @@ func _sweep_stale_rooms() -> void:
 		#   建房后几分钟内就开局)。但那不等于那扇窗不存在:同一个"开局转连窗口"在 1v1 同样成立 ——
 		#   started 房在 `_start_match` 的 await 与客户端转连期间仍持有端口,一个房龄恰好 ≥2h 的房
 		#   会在那次 tick 被连 worker 一起杀掉。本批**刻意不改**(范围裁剪,而非已修好);要收紧需另行评估。
-		var in_match_grace := (SWEEP_INTERVAL + RoyaleHost.MATCH_TIME) if rr.in_match else 0.0
+		var in_match_grace := (SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING) if rr.in_match else 0.0
 		if now - rr.created_at > MAX_ROOM_AGE + in_match_grace:
 			stale_royale.append(rr)
 	var stale_team: Array = []
@@ -425,12 +432,12 @@ func _sweep_stale_rooms() -> void:
 	if stale.is_empty() and stale_royale.is_empty() and stale_team.is_empty():
 		return
 	# 日志照实报三条不同的界:1v1 与等待中的大乱斗/3v3 房都是裸 MAX_ROOM_AGE,在局的大乱斗房另加
-	# SWEEP_INTERVAL + RoyaleHost.MATCH_TIME、在局的 3v3 房另加 SWEEP_INTERVAL + TEAM_MATCH_ESTIMATE
+	# SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING、在局的 3v3 房另加 SWEEP_INTERVAL + TEAM_MATCH_ESTIMATE
 	# (见 _sweep_stale_rooms 内 royale / team 两个分支的注释 —— 后者是估值)。
 	print("[lobby] 清理 %d 个超龄房间(1v1 %d 个 >%.0f 秒;大乱斗 %d 个:等待 >%.0f 秒 / 在局 >%.0f 秒;3v3 %d 个:等待 >%.0f 秒 / 在局 >%.0f 秒)" % [
 			stale.size() + stale_royale.size() + stale_team.size(), stale.size(), MAX_ROOM_AGE,
 			stale_royale.size(), MAX_ROOM_AGE,
-			MAX_ROOM_AGE + SWEEP_INTERVAL + RoyaleHost.MATCH_TIME,
+			MAX_ROOM_AGE + SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING,
 			stale_team.size(), MAX_ROOM_AGE,
 			MAX_ROOM_AGE + SWEEP_INTERVAL + TEAM_MATCH_ESTIMATE])
 	# 三张注册表共用同一条拆除(worker 已被杀 → 端口直接回收,**不经** ROYALE/TEAM_PORT_REUSE_DELAY:
