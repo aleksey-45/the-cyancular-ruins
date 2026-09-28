@@ -289,6 +289,19 @@ func _match_winner() -> int:
 		candidates[int(role)] = true
 	for role in _scores:
 		candidates[int(role)] = true
+	# ★ 已移出但对局仍在继续的人(`_left`)也必须进候选:一个 **0 杀**离开者的分数**不在**
+	#   `_scores` 里(`mark_disconnected` 又把他从 `players` 里 erase 了)⇒ 他两边都不在。
+	#   后果**不是**"少算一个人的分"(他的分本来就是 0),而是**少了一个并列候选**:
+	#   `tie` 要成立得有 ≥2 个候选共享最高分,而幸存者只剩**一个**时他是唯一候选 ⇒ 没有第二个
+	#   候选能置 `tie` ⇒ **独胜** —— 明明全场 0 杀(包括那些离开者),却被判成他赢了。
+	#   `_left` 是这种离开者**唯一**的痕迹。
+	# ★ 只在「幸存者 ≤ 1」这一档改变结果(≥2 个幸存者时他们**彼此**已在 0 杀上并列 ⇒ 改前
+	#   改后都是平局);离开者**有分**时本来就在 `_scores` 里,照旧按分判胜 —— 两条都钉在
+	#   `tests/late_match_probe.gd` 的 ④/⑤/⑤b 上(⑤ 是必需的反向对照:没有它,"恒返回 0" 也能过)。
+	# ★ 这一条落地后,`scenes/royale_game.gd` 那道 `and not _match_ended` 门**失去了理由**
+	#   (它正是为挡这次翻转而立的)—— 但删它在 peer 的层、且需要用户点头,本批**不动**。
+	for role in _left:
+		candidates[int(role)] = true
 	for role in candidates:
 		var n: int = int(_scores.get(role, 0))
 		if n > best_n:

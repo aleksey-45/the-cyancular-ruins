@@ -47,7 +47,11 @@ const ROYALE_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23
 #       · ROUND_OVER 的 `deaths`
 #       · MATCH_OVER 的 `deaths` + MATCH_OVER 的 `rpc_calls == 0`
 #     两个模式各一遍 ⇒ 16;1v1 那遍另加 1 条 `_scores` ⇒ **17**。
-const EXPECTED_CHECKS := 17
+#   `_phase_royale_winner`(Task 5)每跑一遍 = **4** 条:
+#       · ④ 的 `_scores` 为空(仪器)+ ④ 的「全场 0 杀 + 有人离开 ⇒ 平局 0」
+#       · ⑤ 的反向对照(有分差判高者)+ ⑤b(离开者有分仍按分判胜)
+#   ⇒ 合计 **17 + 4 = 21**(与实跑打出的那行「断言计数:21 条」逐字相符)。
+const EXPECTED_CHECKS := 21
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -90,6 +94,7 @@ func _check(ok: bool, msg: String) -> void:
 func _ready() -> void:
 	_phase_down_accounting("1v1", [1, 2])
 	_phase_down_accounting("3v3", [1, 4])
+	_phase_royale_winner()
 	# ★ 断言计数闸:跑少了就是有断言被静默跳过(见 `EXPECTED_CHECKS` 上方的说明)。
 	if _checks < EXPECTED_CHECKS:
 		var short_msg := ("★ 只跑了 %d 条断言,少于 EXPECTED_CHECKS=%d —— 有断言被静默跳过"
@@ -241,3 +246,48 @@ func _host_after_down(tag: String, roles: Array, state: int, victim: int, killer
 
 func _deaths_after_down(tag: String, roles: Array, state: int, victim: int, killer: int) -> int:
 	return _deaths(_host_after_down(tag, roles, state, victim, killer), victim)
+
+
+# ── ④⑤ 大乱斗:`_match_winner` 的并列候选集 ────────────────────────────────────
+# 病根:候选 = `players ∪ _scores`。一个**0 杀**的离开者两边都不在(`mark_disconnected` 把他从
+# `players` 里 erase,`_scores` 里也没有他的条目)⇒ 少一个并列候选 ⇒ **全场 0 杀**时
+# "多人并列 ⇒ 平局"被**翻转**成幸存者独胜。
+# ★ `scenes/royale_game.gd` 那道 `and not _match_ended` 门正是为挡这次翻转而立的
+#   (它的注释写着「要删先修 `_match_winner`」)—— 但删它不在本批范围(peer 的层 + 需要用户点头)。
+func _phase_royale_winner() -> void:
+	print("[lm] ── 大乱斗:_match_winner 的并列候选集 ──")
+	# ── ④ 全场 0 杀 + 离开者 ⇒ 平局 ──
+	# ★★ 与 brief 的差异(**实测订正**,见报告):brief 写的是「3 人里走 1 人 ⇒ 平局」,但
+	#   **3 人走 1 人还剩 2 人**,那两个幸存者**彼此**就在 0 杀上并列 ⇒ `tie` 照样为真、恒返回 0
+	#   —— 实测改前就是**绿**的 ⇒ 那样 ④ 会是一条**恒绿摆设**,照不出本次要修的病。
+	#   `tie` 要成立得有 **≥2 个候选共享最高分**,故病只在「**幸存者只剩一个**」时现形:
+	#   他是唯一候选 ⇒ 没有第二个候选能置 `tie` ⇒ **独胜**,而那个 0 杀离开者本该让他无法独胜。
+	#   这正是 CLAUDE.md 记的那句「从 `0`(平局)**翻成**幸存的那个 role」。
+	#   故 ④ 让 3 人里走 2 人(第二次退出才会 `players.size() < 2` ⇒ 真走 `_finish_match`,
+	#   与生产里"最后一个对手离开触发终局"是**同一条**路径)。
+	var h1: Node = _mount("royale", [1, 2, 3])
+	h1._round_state = MatchHost.RoundState.PLAYING
+	h1.mark_disconnected(3)
+	h1.mark_disconnected(2)
+	_check(h1._scores.is_empty(),
+			"[仪器] 全场 0 杀(实得 _scores=%s;若非空,下面这条测的就不是「并列」)" % str(h1._scores))
+	_check(h1._match_winner() == 0,
+			"★ 全场 0 杀 + 有人离开 ⇒ 平局 0,不是幸存者独胜(实得 %d)" % h1._match_winner())
+
+	# ── ⑤ 反向对照:有分差时仍判分高者 ──
+	# 没有它,"恒返回 0"也能让 ④ 通过。
+	var h2: Node = _mount("royale", [1, 2, 3])
+	h2._round_state = MatchHost.RoundState.PLAYING
+	h2._scores[1] = 2
+	h2._scores[2] = 1
+	h2.mark_disconnected(3)
+	_check(h2._match_winner() == 1,
+			"★ 反向对照:有分差时判分高者(期望 1,实得 %d)" % h2._match_winner())
+
+	# ── ⑤b 得分者离开后,他的分仍参与比较(既有语义,防被本次改动破坏)──
+	var h3: Node = _mount("royale", [1, 2, 3])
+	h3._round_state = MatchHost.RoundState.PLAYING
+	h3._scores[3] = 5
+	h3.mark_disconnected(3)
+	_check(h3._match_winner() == 3,
+			"★ 离开者**有分**时仍按分判胜(期望 3,实得 %d)" % h3._match_winner())
