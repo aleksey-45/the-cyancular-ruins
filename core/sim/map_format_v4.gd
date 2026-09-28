@@ -43,6 +43,8 @@ static func read_header(data: PackedByteArray) -> Dictionary:
 ## 解析 v4。成功:{"ok": true, "meta_lines": Array, "scene": PackedInt32Array(子格描述符),
 ## "sub_cols", "sub_rows", "layer_flags"};失败:{"ok": false, "error": "..."}。
 ## 目前只保留「场景」层的内容(其余层按块大小跳过,保持游标对齐)。
+const MAX_BODY_SIZE := 64 * 1024 * 1024   # body 上限(解压后;与编辑器 core.js 同值)
+
 static func parse(data: PackedByteArray) -> Dictionary:
 	if data.size() < HEADER_SIZE:
 		return {"ok": false, "error": "文件过短(%d 字节)" % data.size()}
@@ -51,6 +53,16 @@ static func parse(data: PackedByteArray) -> Dictionary:
 	var h := read_header(data)
 	if int(h["version"]) != 4:
 		return {"ok": false, "error": "版本 %d 不支持(只支持 4)" % int(h["version"])}
+	# ── §6.2 防御(编辑器侧实测过的事故,逐条对齐)──
+	# ① 头部尺寸必须是 4 的倍数且非零 —— 子格坐标体系的前提
+	if int(h["sub_cols"]) <= 0 or int(h["sub_rows"]) <= 0 			or int(h["sub_cols"]) % SUB_PER_CELL != 0 or int(h["sub_rows"]) % SUB_PER_CELL != 0:
+		return {"ok": false, "error": "sub 尺寸非法(%dx%d,须为 4 的倍数且非零)" % [int(h["sub_cols"]), int(h["sub_rows"])]}
+	# ② body_size 上限在**解压之前**拦:声明值是攻击者可控的(实测畸形头触发 17GB 分配)
+	if int(h["body_size"]) > MAX_BODY_SIZE:
+		return {"ok": false, "error": "body_size 超上限(%d > %d)" % [int(h["body_size"]), MAX_BODY_SIZE]}
+	# ③ compression=0 时 body_size 必须恰等于文件余量(裸路径下这是恒等式)
+	if int(h["compression"]) == 0 and int(h["body_size"]) != data.size() - HEADER_SIZE:
+		return {"ok": false, "error": "裸 body 大小与文件不符"}
 	var body := data.slice(HEADER_SIZE)
 	if int(h["compression"]) == 1:
 		body = body.decompress(int(h["body_size"]), FileAccess.COMPRESSION_DEFLATE)
@@ -113,6 +125,20 @@ static func parse(data: PackedByteArray) -> Dictionary:
 			off += n * 4   # 背景层:整块 RGBA,游戏侧暂不消费
 		else:
 			return {"ok": false, "error": "未知层类型 %d" % kind}
+	return out
+
+
+## 「场景」层描述符 → **16px 子格纹理表**(Array[Array],下标 [y][x] = 纹理,0=空气)。
+## 这是选项 A 的会话态:`MazeGenerator.current_subgrid` 由它装填 —— 碰撞/破坏/渲染读它,
+## 20 个格级逻辑调用方继续读 current_grid(见交接文档 §3 选项 A)。
+static func scene_to_subgrid(scene: PackedInt32Array, sc: int, sr: int) -> Array[Array]:
+	var out: Array[Array] = []
+	for y in sr:
+		var row: Array[int] = []
+		row.resize(sc)
+		for x in sc:
+			row[x] = int((scene[y * sc + x] >> 12) & 0xFFF)
+		out.append(row)
 	return out
 
 

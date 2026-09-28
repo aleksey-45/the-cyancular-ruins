@@ -63,43 +63,39 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 # 返回 [{cell: Vector2i, pos: Vector2(格中心), tex: int, d: float(到爆心的环面距离)}]。
 # ★ 两个用途共用同一份扫描,两端表现因此同源:
 #   ① 权威侧扣血(_damage_tiles);② 表现层播受击碎片(所有端 —— 见 bullet_base._explode)。
-static func destructible_cells(center: Vector2, radius: float) -> Array:
+static func destructible_subs(center: Vector2, radius: float) -> Array:
+	# cyrm v4(选项 A):爆炸按 **16px 子格**扫描/扣血 —— 炸出的是圆洞而不是整格消失。
+	# 返回 [{sub: Vector2i, pos: Vector2(子格中心), tex: int, d: float(到爆心的环面距离)}],
+	# 扣血(_damage_tiles)与受击碎片表现(bullet_base._explode)共用同一份扫描。
 	var out: Array = []
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
+	var sgrid := MazeGenerator.current_subgrid
+	if sgrid.is_empty():
 		return out
-	var ts: int = GameParameters.TILE_SIZE
-	var rows := grid.size()
-	var cols := grid[0].size()
-	var cc := MazeGenerator.cell_of(center, ts, cols, rows)
-	var reach_cells := ceili(radius / ts) + 1
-	for dy in range(-reach_cells, reach_cells + 1):
-		for dx in range(-reach_cells, reach_cells + 1):
-			var cx := posmod(cc.x + dx, cols)
-			var cy := posmod(cc.y + dy, rows)
-			var v: int = grid[cy][cx]
-			if v == 0:
+	var sc: int = sgrid[0].size()
+	var sr: int = sgrid.size()
+	var csub := Vector2i(posmod(int(center.x) / 16, sc), posmod(int(center.y) / 16, sr))
+	var reach := ceili(radius / 16.0) + 1
+	for dy in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var sx := posmod(csub.x + dx, sc)
+			var sy := posmod(csub.y + dy, sr)
+			var tex: int = sgrid[sy][sx]
+			if tex == 0 or not TileDefs.explosion_destroyable(tex):
 				continue
-			var tex: int = MazeGenerator.texture_of(v)
-			if not TileDefs.explosion_destroyable(tex):
-				continue
-			var pos := Vector2(cx * ts + ts * 0.5, cy * ts + ts * 0.5)
+			var pos := Vector2(sx * 16.0 + 8.0, sy * 16.0 + 8.0)
 			var d := _dist(center, pos)
 			if d > radius:
 				continue
-			out.append({"cell": Vector2i(cx, cy), "pos": pos, "tex": tex, "d": d})
+			out.append({"sub": Vector2i(sx, sy), "pos": pos, "tex": tex, "d": d})
 	return out
 
-# 爆炸对可破坏瓦片(树叶/树干)扣血:按距离衰减 × tile_defs 爆炸衰减(0.75),破坏后变空气。
-# ★ 粒子**不在这里** —— core/sim 不碰 Node/表现层,播碎片是调用方的事(bullet_base._explode
-#   用同一个 destructible_cells 扫一遍,在**所有端**播,含 PvP 客户端视觉副本)。
+
 static func _damage_tiles(center: Vector2, radius: float, max_damage: int) -> void:
-	for e in destructible_cells(center, radius):
+	for e in destructible_subs(center, radius):
 		var dmg := int(_falloff(float(e["d"]), radius, max_damage) * TileDefs.explosion_decay())
 		if dmg <= 0:
 			continue
-		var cell: Vector2i = e["cell"]
-		TileDefs.damage_tile(cell, dmg, "explosion")
+		TileDefs.damage_sub(e["sub"], dmg, "explosion")
 
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。

@@ -90,6 +90,48 @@ static func is_v4(path: String) -> bool:
 	return MapFormatV4.is_v4_data(_read_bytes(path))
 
 
+## 16px 子格纹理表(选项 A 的会话态装填源):
+##   v4 → 场景层描述符直读;v3/旧格式 → 把 2×2 形状掩码展开成 4×4(每个 32px 象限 = 2×2 个
+##   同纹理 16px 子格,与 §3.6 迁移规则一致,几何逐像素等价)。
+static func load_subgrid(path: String) -> Array[Array]:
+	if is_v4(path):
+		var v := MapFormatV4.parse(_read_bytes(path))
+		if not bool(v.get("ok", false)):
+			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
+			return []
+		return MapFormatV4.scene_to_subgrid(v["scene"], int(v["sub_cols"]), int(v["sub_rows"]))
+	var grid := load_map_file(path)
+	return expand_cells_to_subgrid(grid)
+
+
+## 格级网格 → 16px 子格纹理表(2×2 形状掩码 ×2 展开;兼容旧格式与测试合成网格)。
+static func expand_cells_to_subgrid(grid: Array) -> Array[Array]:
+	var out: Array[Array] = []
+	if grid.is_empty():
+		return out
+	var cols: int = (grid[0] as Array).size()
+	var rows := grid.size()
+	for ry in rows * 4:
+		var row: Array[int] = []
+		row.resize(cols * 4)
+		out.append(row)
+	for y in rows:
+		for x in cols:
+			var v := int(grid[y][x])
+			if v == 0:
+				continue
+			var tex := texture_of(v)
+			var sh := shape_of(v)
+			for qy in 2:
+				for qx in 2:
+					if sh & (1 << (qy * 2 + qx)) == 0:
+						continue
+					for sy in 2:
+						for sx in 2:
+							out[y * 4 + qy * 2 + sy][x * 4 + qx * 2 + sx] = tex
+	return out
+
+
 ## 地图的注释/出生点行(v4 = body 里的 meta 文本;文本格式 = 原样行)。显示名等目录工具用。
 static func load_meta_lines(path: String) -> Array:
 	if is_v4(path):
