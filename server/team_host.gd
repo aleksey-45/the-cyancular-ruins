@@ -519,7 +519,10 @@ func mark_disconnected(role: int) -> void:
 		return
 	_left[role] = true
 	# ACS 的"局数"口径:离开者**冻结在他离开时所处的局号**(= 他实际参与的局数,见 `_rounds_for`)
-	_left_round[role] = _round_num
+	# ★ 取**掉线那一刻**的局号(`_leave_round`,由 `_enter_grace` 当场写下),不是宽限到点
+	#   这一刻的 —— 两者之间隔着整个宽限期,可能已经换过局。缺省回落 `_round_num`
+	#   保证没有任何调用路径会比旧行为**更差**。
+	_left_round[role] = int(_leave_round.get(role, _round_num))
 	_respawn_pending.erase(role)
 	_down_counted[role] = true
 	if players.has(role):

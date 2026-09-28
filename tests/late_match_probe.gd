@@ -47,11 +47,15 @@ const ROYALE_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23
 #       · ROUND_OVER 的 `deaths`
 #       · MATCH_OVER 的 `deaths` + MATCH_OVER 的 `rpc_calls == 0`
 #     两个模式各一遍 ⇒ 16;1v1 那遍另加 1 条 `_scores` ⇒ **17**。
+#   `_phase_disconnect_round`(Task 4)每跑一遍 = **3** 条:
+#       · 掉线时局号的 `[仪器]`(`_round_num == 1`)
+#       · 换局后局号的 `[仪器]`(`_round_num == 2`;它同时是"本相没白测"的证明)
+#       · 主断言 `_rounds_for(1) == 1`
 #   `_phase_royale_winner`(Task 5)每跑一遍 = **4** 条:
 #       · ④ 的 `_scores` 为空(仪器)+ ④ 的「全场 0 杀 + 有人离开 ⇒ 平局 0」
 #       · ⑤ 的反向对照(有分差判高者)+ ⑤b(离开者有分仍按分判胜)
-#   ⇒ 合计 **17 + 4 = 21**(与实跑打出的那行「断言计数:21 条」逐字相符)。
-const EXPECTED_CHECKS := 21
+#   ⇒ 合计 **17 + 3 + 4 = 24**(与实跑打出的那行「断言计数:24 条」逐字相符)。
+const EXPECTED_CHECKS := 24
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -94,6 +98,7 @@ func _check(ok: bool, msg: String) -> void:
 func _ready() -> void:
 	_phase_down_accounting("1v1", [1, 2])
 	_phase_down_accounting("3v3", [1, 4])
+	_phase_disconnect_round()
 	_phase_royale_winner()
 	# ★ 断言计数闸:跑少了就是有断言被静默跳过(见 `EXPECTED_CHECKS` 上方的说明)。
 	if _checks < EXPECTED_CHECKS:
@@ -246,6 +251,36 @@ func _host_after_down(tag: String, roles: Array, state: int, victim: int, killer
 
 func _deaths_after_down(tag: String, roles: Array, state: int, victim: int, killer: int) -> int:
 	return _deaths(_host_after_down(tag, roles, state, victim, killer), victim)
+
+
+# ── ③ 3v3:离场者 ACS 的分母 = **掉线那一刻**的局号 ─────────────────────────────
+# 病根:`mark_disconnected` 由 `server_main._expire_graces` 在**宽限期(60s)到点**时调,
+# 而它写的是**那一刻**的 `_round_num`。这 60s 若跨过一次换局,离开者的分母就**多算一局**
+# ⇒ ACS 被压低,与「已离开者分母更小 ⇒ 更容易胜出」(用户裁定的取向)恰好**相反**。
+func _phase_disconnect_round() -> void:
+	print("[lm] ── 3v3:离场者的局数分母 = 掉线那一刻 ──")
+	# ★ 三个人:1、2 同队、4 敌队 —— 掉 1 之后两队都还有人,不会触发"走光即弃权"那条收场。
+	var host: Node = _mount("3v3", [1, 2, 4])
+	host._round_state = MatchHost.RoundState.PLAYING
+	_check(host._round_num == 1,
+			"[仪器] 掉线时局号 == 1(实得 %d)" % host._round_num)
+
+	# 掉线**当场**记一笔 —— 生产里由 `server_main._enter_grace` 调本函数。
+	host.note_disconnect_round(1)
+
+	# 宽限期内换了一局(★ 与 team_host_probe 的 `_next_round_clean` 同款:
+	#   `_start_next_round` 见到 `_rounds_won` 达标会直接进 MATCH_OVER 并 return)。
+	host._rounds_won = {}
+	host._start_next_round()
+	_check(host._round_num == 2,
+			"[仪器] 换局后局号 == 2(实得 %d;若仍是 1,说明 `_start_next_round` 没走到换局那一支,本相白测)"
+			% host._round_num)
+
+	# 宽限到期,正式移出
+	host.mark_disconnected(1)
+	_check(host._rounds_for(1) == 1,
+			"★ 离场者的局数分母应是**掉线那一刻**的 1,不是宽限到点的 2(实得 %d)"
+			% host._rounds_for(1))
 
 
 # ── ④⑤ 大乱斗:`_match_winner` 的并列候选集 ────────────────────────────────────

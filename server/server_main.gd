@@ -311,6 +311,10 @@ func _enter_grace(role: int) -> void:
 		#   `clear_edges()` **不含 `_held`** → 掉线前按着的键被重新武装、并保持整个宽限期
 		#   (身体继续走/蹲/开火)。这一行是"掉线者的身体留在场上不动"的全部内容,别删。
 		_host._pending_input[role] = []
+		# ACS 的分母口径:离开者实际参与了几局 = **掉线这一刻**的局号。
+		# ★ 必须在这里记:宽限期有 60s,到点的 `mark_disconnected` 读到的 `_round_num`
+		#   可能已经因为换局而 +1(那会让离开者的 ACS 被**压低**,与"分母更小"的取向相反)。
+		_host.note_disconnect_round(role)
 		_host.peer_by_role.erase(role)
 		if _host.has_method("_broadcast_round_state"):
 			# ★ 这次广播**目前不表达掉线态**:宽限期内该载荷逐字段不变(`names` 由

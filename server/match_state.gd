@@ -116,6 +116,11 @@ var _last_round_winner := 0            # 最近一局的胜者 role(客户端播
 # ★ 载荷才用 spec §3.1 那七个字段(kills/deaths/assists/dealt/taken/kscore/acs)。
 var _stats: Dictionary = {}          # role -> 原始计数(整场累计,不随局清零)
 var _left_round: Dictionary = {}     # role -> 离开时所处的局号(ACS 的"实际参与局数"口径)
+# role -> **掉线那一刻**所处的局号(与 `_left_round` 是两件事:`_left_round` 是**移出**时写下的
+# 最终值,本表是掉线当场写下的原值)。★ 为什么必须分开:掉线与"宽限期到点移出"之间隔着
+# 整整一个宽限期(60s),这段时间里可能换过局 —— 离开者的 ACS 分母要的是"他实际参与了几局",
+# 即**掉线那一刻**的局号,不是宽限到点的。
+var _leave_round: Dictionary = {}
 # 助攻表:**每受害者一张小表** —— `victim_role -> {attacker_role: 最后命中时刻(ms)}`。
 # ★ 为什么需要它:归因只有 `CombatFeedback.attribute` 写的单个 `last_damager` meta,只够判
 #   "谁拿的击杀",回答不了"还有谁打过他"。
@@ -225,6 +230,13 @@ func _acs_of(role: int) -> float:
 #   提前 return,不推进局号)⇒ 终局那一份 ACS 的分母正是整场局数。
 func _rounds_for(role: int) -> int:
 	return int(_left_round.get(int(role), _round_num))
+
+
+# 记下"这个 role 是在第几局掉线的"。★ 由 `server_main._enter_grace` 在掉线**当场**调用。
+# ★ 覆盖写、**不需要**在 reclaim 时清:reclaim 之后若再次掉线,本函数会写上新局号;
+#   若不再掉线,`mark_disconnected` 根本不会被调,那条记录是惰性的。
+func note_disconnect_round(role: int) -> void:
+	_leave_round[int(role)] = _round_num
 
 
 # 逐人表的 role 集合:在场者 ∪ 已离开者 ∪ 有数据的。
