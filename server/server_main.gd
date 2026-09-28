@@ -350,6 +350,20 @@ func _process(delta: float) -> void:
 		if _understaffed_wait > 10.0:
 			print("worker: 可用玩家 %d/2,超时退出释放端口" % _claims.size())
 			get_tree().quit(0)
+	# 1v1:一个 `claim_role` 都没到就干等没有意义 —— 配对**早已在大厅完成**,报到应在秒级到达。
+	# 这是三种模式里唯一**原先没有**报到梯的一支:纯 1v1 既不是 `_royale` 也不是 `_team_mode`,
+	# 于是前两支都命中不了 ⇒ 两个客户端都在 `go_match` 后消失时 worker 永驻、端口白占到
+	# 2h 超龄兜底为止(`_reclaim_finished_matches` 按 worker 进程活性回收,而它一直活着)。
+	# ★ 30s 的来历是**承重的**:客户端侧内建兜底是 12s 转连 / 25s claim ⇒ worker 必须
+	#   **晚于**它们退,否则客户端还在重试、端口已经没了(把"转连慢"变成"连不上")。
+	# ★ 判据是 `not _match_started and _host == null`,故它同时覆盖两种子情形:一个 claim
+	#   都没有、以及只到一个(1v1 要 2 人齐才开)。AI 对战单人即可开局,不走这一支。
+	# ★ `_understaffed_wait` 是**与上面两支共享**的计时量,别在别处再写它。
+	elif not _royale and not _team_mode and not _match_started and _host == null:
+		_understaffed_wait += delta
+		if _understaffed_wait > 30.0:
+			print("worker: 1v1 报到超时(%d/2),退出释放端口" % _claims.size())
+			get_tree().quit(0)
 
 # 本端选项(颜色等)经扩展节点上报,可能先于/晚于 claim 到达,按 caller 归档
 func _on_player_options(caller: int, opts: Dictionary) -> void:
