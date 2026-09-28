@@ -10,6 +10,8 @@ extends Node
 # 收的是用户 2026-09-28 裁定要修的三条「终局/离场之后」的口径:
 #   ①② MATCH_OVER 之后倒地**不再进任何记账**(1v1 / 3v3 各一相)
 #   ③   3v3 离场者 ACS 的分母 = **掉线那一刻**的局号,不是宽限到点的局号
+#   ③b  同一条的**写入端**:`_enter_grace` 真的把局号记了下来(③ 只验读端 —— 删掉写入端那一行,
+#       原 bug 逐字复活而 ③ 照旧全绿;见 `_phase_grace_writer` 上方的长注释)
 #   ④⑤  大乱斗 `_match_winner` 的并列候选集(全场 0 杀 + 有人离开 ⇒ 平局,不是幸存者独胜)
 #
 # ★★ 为什么大乱斗那一处**没有**对应的"MATCH_OVER 后倒地"相:三个模式的倒地边沿是
@@ -51,11 +53,14 @@ const ROYALE_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23
 #       · 掉线时局号的 `[仪器]`(`_round_num == 1`)
 #       · 换局后局号的 `[仪器]`(`_round_num == 2`;它同时是"本相没白测"的证明)
 #       · 主断言 `_rounds_for(1) == 1`
+#   `_phase_grace_writer`(Task 4 补;**经真 `_enter_grace`**)每跑一遍 = **2** 条:
+#       · `[仪器]` 调用前 `_leave_round` 为空
+#       · 主断言 `_leave_round[1] == _round_num`
 #   `_phase_royale_winner`(Task 5)每跑一遍 = **4** 条:
 #       · ④ 的 `_scores` 为空(仪器)+ ④ 的「全场 0 杀 + 有人离开 ⇒ 平局 0」
 #       · ⑤ 的反向对照(有分差判高者)+ ⑤b(离开者有分仍按分判胜)
-#   ⇒ 合计 **17 + 3 + 4 = 24**(与实跑打出的那行「断言计数:24 条」逐字相符)。
-const EXPECTED_CHECKS := 24
+#   ⇒ 合计 **17 + 3 + 2 + 4 = 26**(与实跑打出的那行「断言计数:26 条」逐字相符)。
+const EXPECTED_CHECKS := 26
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -99,12 +104,18 @@ func _ready() -> void:
 	_phase_down_accounting("1v1", [1, 2])
 	_phase_down_accounting("3v3", [1, 4])
 	_phase_disconnect_round()
+	_phase_grace_writer()
 	_phase_royale_winner()
 	# ★ 断言计数闸:跑少了就是有断言被静默跳过(见 `EXPECTED_CHECKS` 上方的说明)。
-	if _checks < EXPECTED_CHECKS:
-		var short_msg := ("★ 只跑了 %d 条断言,少于 EXPECTED_CHECKS=%d —— 有断言被静默跳过"
+	# ★★ 判据是 **`!=`** 而不是 `<`,**两个方向都要红**:多跑一条**没登记的**断言同样是闸失守 ——
+	#    那说明 `EXPECTED_CHECKS` 已经与实况对不上,闸对**后加的那些**断言就是恒绿的摆设
+	#    (与 `tests/room_sweep_smoke.gd` 那条同款的反向断言同一个理由:`_finish()` 拿
+	#    `CHECK_NAMES` 对账,实跑条数 ≠ 名单长度也红 —— 防的是"加了新检查却没登记")。
+	if _checks != EXPECTED_CHECKS:
+		var short_msg := ("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上 —— 要么有断言被静默跳过、"
 				% [_checks, EXPECTED_CHECKS]
-				+ "(helper 里的脚本错误只让那个函数当场结束、调用方照常往下走,`_failures` 不会非空)")
+				+ "要么有新断言没登记进 EXPECTED_CHECKS(helper 里的脚本错误只让那个函数当场结束、"
+				+ "调用方照常往下走,`_failures` 不会非空)")
 		_failures.append(short_msg)
 		print("[lm]   FAIL %s" % short_msg)
 	print("[lm] 断言计数:%d 条(EXPECTED_CHECKS = %d)" % [_checks, EXPECTED_CHECKS])
@@ -281,6 +292,55 @@ func _phase_disconnect_round() -> void:
 	_check(host._rounds_for(1) == 1,
 			"★ 离场者的局数分母应是**掉线那一刻**的 1,不是宽限到点的 2(实得 %d)"
 			% host._rounds_for(1))
+
+
+# ── ③b 写入端:`_enter_grace` 真的把掉线局号记下来了 ───────────────────────────
+# ★★ 为什么必须单独有这一相:③ **自己注入**那一笔(`host.note_disconnect_round(1)`)⇒ 它验的是
+#    **读端 + `MatchState` 新 API + 兜底**,而生产里那一笔的**唯一写入口**是
+#    `server_main._enter_grace`。删掉那里的一行,`_leave_round` 就**永远为空**、
+#    `mark_disconnected` 静默退回 `_round_num` 兜底 ⇒ **原 bug 逐字复活,而 ③ 与全仓其它
+#    测试照旧全绿**(与本批 `duel_spawn_timeout_smoke` 钉 `set_process(false)` 位置、
+#    `room_sweep_smoke` 钉 `_expire_graces` 含 `mark_disconnected(role)` 是同一种形状)。
+#
+# ★ 手法照 `tests/team_host_probe.gd` ⑫ / ⑫d:`server_main.gd` 的实例**不进树**
+#    (`_ready` 会 `NetBus.start_server(7777)` 并拉起大厅 —— 那是真端口,探针绝不能碰),
+#    手工填它需要的字段后直接调 `_enter_grace`。该函数体不依赖树,故"不进树"不影响判据。
+#
+# ★ 夹具字段集是**读代码**确认的,不是假设。`_enter_grace` 一路读到的:`_grace`
+#    (var 声明处即 `GraceWindow.new()` ⇒ out-of-tree 实例天然有)、`_host`;进了
+#    `if _host != null` 之后读 `_host.input_sources`(`src != null` 守卫:本探针 role_peers 传空
+#    ⇒ 表是空的 ⇒ 守卫跳过)、`_host._pending_input`(字典,直接赋值)、
+#    `_host.note_disconnect_round`、`_host.peer_by_role`(空表 ⇒ erase 是 no-op)、
+#    `_host._broadcast_round_state()`(空 `peer_by_role` ⇒ `_rpc_all` 的循环一次都不跑 = no-op,
+#    本文件所有相都靠这条)。★ `_sync_grace_snapshot` / `grace_snapshot` 是**同文件内**的
+#    调用与被子类继承的字段,不需要夹具额外摆位。
+#
+# ★★ **本条的变异反证登记为"未做"**:删掉 `server_main.gd` 那一行、看本相变红 —— 那次实跑
+#    **没有做**,因为另一个会话当时正占着该文件在写(改它会让两份未提交改动互相卷入,
+#    而丢失的那一侧不会有任何报错)。⇒ "写入端没有守卫"这个判断**是靠读代码确立的**,
+#    本条断言的有效性**未经变异实测**。后来者若单独占着该文件,补跑那一次即可。
+func _phase_grace_writer() -> void:
+	print("[lm] ── 3v3:写入端(`_enter_grace`)真的记了掉线局号 ──")
+	var host: Node = _mount("3v3", [1, 2, 4])
+	host._round_state = MatchHost.RoundState.PLAYING
+	# ★ 仪器:**调用之前**必须是空的 —— 否则下面那条会被"表里先前就有的某个值"喂绿,
+	#   而写入端接没接上根本照不出来(那正是本条要防的那种失明)。
+	_check(host._leave_round.is_empty(),
+			"[仪器] 调 `_enter_grace` 之前 `_leave_round` 是空的(实得 %s;非空 ⇒ 下面那条没有区分度)"
+			% str(host._leave_round))
+	# ★ 用**无类型**变量接实例:`var srv: Node = …` 会让 `srv._host` 在编译期就报
+	#   "Node 上没有该属性"(同 team_host_probe ⑫ 的理由)。
+	var srv = load("res://server/server_main.gd").new()
+	srv._host = host
+	srv._enter_grace(1)
+	# ★ 判据用哨兵 `-1`:写成 `_leave_round.get(1, host._round_num)` 会**自我满足**
+	#   (缺省值与期望值同源 ⇒ 写入端删掉也恒绿)。
+	_check(int(host._leave_round.get(1, -1)) == int(host._round_num),
+			"★ `_enter_grace` 当场记下**掉线那一刻**的局号(期望 %d,实得 %s;"
+			% [host._round_num, str(host._leave_round)]
+			+ "删掉 server_main.gd 里 `_host.note_disconnect_round(role)` 那一行 ⇒ 本表恒空、"
+			+ "读写两半一起退回原 bug)")
+	srv.free()
 
 
 # ── ④⑤ 大乱斗:`_match_winner` 的并列候选集 ────────────────────────────────────
