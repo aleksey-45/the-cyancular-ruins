@@ -33,6 +33,25 @@
 
 ---
 
+## ⚠ 本计划的串行约束(★★ 2026-09-28 实测踩到,别再试并行)
+
+**`tests/reconnect_status_probe.gd` 被 Task 2 / 3 / 4 / 5 依次修改同一个文件,而且改的是同一批行**
+(`const EXPECTED_CHECKS` 就是其中最明显的一处:Task 2 建它 = **11**,Task 3 抬到 **17**,
+Task 4 再抬到 **27**…)。⇒ **这四个 Task 必须串行,不能并行派发。**
+
+★★ **控制者在这里连错两次,记下来免得第三次**:
+1. 第一次以为"Task 4/5 只碰 `ui/` 与 `tests/`、与 `server/` 零重叠 ⇒ 可以立刻跑" —— **错**:
+   `reconnect_status_probe.gd` 是 **Task 2 建的**,Task 4/5 改它 ⇒ 依赖 Task 2。
+2. 第二次以为"那就 2 → 4 → 5,跳过被 gate 的 3" —— **还是错**:Task 4 的验收数(27)**只有 Task 3 落完才可达**
+   (Task 3 把 11 抬到 17),而且两者**改同一行**。
+⇒ **教训:判依赖要看 `Files:` 与 `Interfaces:` 的交叉引用,不是看目录归属。**
+   "没有文件重叠" ≠ "可以独立开跑";"不碰 `server/`" ≠ "不依赖 `server/` 相关的那几个 Task"。
+
+**正确的执行顺序就是计划本身的编号:1 → 2 → 3 → 4 → 5 → 6。**
+其中 Task 2/3 因跨会话锁要等对方交还 `server/` 的那几个文件,其余**没有捷径**。
+
+---
+
 ## 跨会话协调(★★ 本计划的硬前置)
 
 另一个会话正在改 `server/**`。本计划在 `server/` 下动了 **5 个文件**,每处的 hunk 都刻意做到"**小而加性**",但**仍必须先对齐**:
@@ -80,7 +99,7 @@
 | `scenes/pvp_game.gd` | 1v1 客户端 | `_on_opponent_left` 里调 `_cancel_reconnect()` + 一行 print(3.3 客户端半) |
 | `tests/grace_window_smoke.gd` | 宽限期纯逻辑冒烟 | +⑩⑪⑫三相 |
 | `tests/grace_feed_probe.tscn` / `.gd` | **新建**:`round_state` 载荷漏斗的行为面守卫 | 全新建 |
-| `tests/reconnect_status_probe.tscn` / `.gd` | **新建**:横幅行为 + 三批接线(本地状态/3.3/HUD 消费) | 全新建 |
+| `tests/reconnect_status_probe.tscn` / `.gd` | **新建**:横幅行为 + 三批接线(本地状态/3.3/HUD 消费) | 全新建 ★★ **由 Task 2/3/4/5 依次改同一个文件**,见下方「⚠ 本计划的串行约束」 |
 | `tests/hud_declarative_probe.gd` | 声明式 HUD 契约守卫 | ④ 抽成参数化助手 + 新增 ⑧ + PAIRS 加一行 |
 | `tests/reconnect_probe.gd` | 真链路探针(用户跑) | 相④ 里 +1 条 worker 日志断言 |
 | `tests/combat_hud_visual_probe.gd` | 对局内 HUD 视觉验收(用户跑、真渲染) | +两组带 `grace` 的载荷与取图 |
