@@ -535,7 +535,13 @@ func _place(host: Node, role: int) -> Node2D:
 	p.set_input_source(PacketInputSource.new())
 	host.add_child(p)
 	host.players[role] = p
+	# ★ 出生点取**宿主自己那张表**(显式传 spawns ⇒ 首局 `_spawn_cell` 返回的就是那格;
+	#   `death_drop_probe` 的 3v3 相已证明这条路径可用)。取到无效格时退到 (1,1) ——
+	#   本文件的四条口径**都不依赖**玩家站在哪,位置只影响可读性,但 (-1,-1) 会让玩家
+	#   落在世界原点、可能压在实心格里。
 	var spawn: Vector2i = host._spawn_cell(role)
+	if spawn.x < 0 or spawn.y < 0:
+		spawn = Vector2i(1, 1)
 	var ts: int = GameParameters.TILE_SIZE
 	p.global_position = Vector2(float(spawn.x) * ts + ts * 0.5,
 			float(spawn.y) * ts + ts * 0.5)
@@ -1234,15 +1240,18 @@ RPC LIVENESS PROBE: ALL-OK
 真要跑得给 `--quit-after 30000` —— 仓库统一的 3600 对它**不够**,而它的失败形状是
 "无裁决行 + exit 0",与真失败**长得一样**。
 
-- [ ] **Step 8.2: 真链路人工验收(★ 用户跑,agent 不代跑)**
+- [ ] **Step 8.2: 复跑那条真起进程的判据**
 
 ```bash
 source tests/env.sh
 timeout 150 "$GODOT" --headless --path . -s res://tests/duel_spawn_timeout_smoke.gd 2>&1 | tail -5
 ```
 
-Expected: `DUEL SPAWN TIMEOUT SMOKE: ALL-OK`。(这一步值得复跑一次 —— 它是真起进程的那条,
-与 headless 单进程的探针在**不同的失败模式**上。)
+Expected: `DUEL SPAWN TIMEOUT SMOKE: ALL-OK`。
+★ 值得**再跑一次**(Task 2 已经跑过一次):它是唯一真起独立进程的判据,失败模式
+(孤儿 worker 占端口 ⇒ 连到僵尸 ⇒ 挂到外层 timeout、一行裁决都不打)与 headless 单进程探针
+**完全不同**,一次绿不能证明它稳。
+★ 收尾必查 `tasklist | grep -i godot` 为空 —— 这是本仓点过名的"毒下一跑"来源。
 
 - [ ] **Step 8.3: 同步 `CLAUDE.md`**
 
