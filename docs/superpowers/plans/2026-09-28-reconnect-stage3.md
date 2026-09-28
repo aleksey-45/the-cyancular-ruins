@@ -113,7 +113,7 @@
 			"remaining 应给出「还剩多少秒」并按 role 升序插入(实得 %s)" % str(w3.remaining(1000)))
 	# ★ 已到期的 role **仍在表里**(expired 不改表)⇒ 报 **0.0**,不是省略 —— 省略会让
 	#   "刚好到点、还没被 leave"那一秒里客户端闪回「无掉线」。
-	_check(w3.remaining(11000) == {1: 20.0, 3: 0.0},
+	_check(w3.remaining(11000) == {1: 10.0, 3: 0.0},
 			"到点的 role 应报 0.0 而不是被省略(实得 %s)" % str(w3.remaining(11000)))
 	_check(w3.remaining(99999) == {1: 0.0, 3: 0.0},
 			"全部到点也仍报 0.0(实得 %s)" % str(w3.remaining(99999)))
@@ -146,7 +146,7 @@
 	# ★ 键类型原样保留 —— GDScript 的字典按类型寻键,`1.0` 与 `1` 是**两个键**
 	#   (`{1: "a"}.has(1.0)` 为假),重建时写成 `float(r)` 会让下游 `.has(role)` 静默不命中。
 	var disp2 := {7: 5.0}
-	var out2 := G.tick_display(disp2, 0.5)
+	var out2: Dictionary = G.tick_display(disp2, 0.5)
 	_check(out2.has(7) and not out2.has(7.0),
 			"★ tick_display 必须保留**原键**(int 进 int 出;实得 %s)" % str(out2.keys()))
 	_check(disp2 == {7: 5.0}, "tick_display 不得原地改入参(实得 %s)" % str(disp2))
