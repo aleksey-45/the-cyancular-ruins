@@ -32,10 +32,17 @@ const TEAM_MATCH_ESTIMATE := 1800.0
 # 但 settings.cfg 里可以到 30)⇒ 秒数上界 = 30 × 60 = 1800。
 # ★ 为什么用**硬上界**而不是"把房主配的时长存到房上":`_player_options()` 是**报到那一刻**
 #   才读 `Settings`,而 `royale_create` 是**更早的另一刻**(实测它压根不转发 `match_time`)
-#   ⇒ 存下来的是**下界**,缺口照留。硬上界是**保守**的(永不误杀活局),代价只是泄漏的房
-#   多留 ~25 分钟(与端口池 500 相比微不足道)。⇒ 保守 + 可证,胜过精确但可错。
-# ★★ **跨文件不变量**:钳位一旦放宽到 30 分钟以上,本上界**静默失效**(不再覆盖)。
-#   守卫在 `tests/room_sweep_smoke.gd` —— 它会去读 settings.gd 的钳位行,钳位变了就红。
+#   ⇒ 存下来的是**下界**,缺口照留。代价只是泄漏的房多留 ~25 分钟(与端口池 500 相比
+#   微不足道)。⇒ 保守 + 可证,胜过精确但可错。
+# ★ 覆盖口径**照实写,别读成"永不误杀活局"**(2026-09-28 评审 Finding 3 订正):本上界
+#   覆盖的是**对局时钟本身**(`RoyaleHost` 的 `_round_timer` 进 PLAYING 才开始走),外加
+#   `SWEEP_INTERVAL`(600s)那一整个扫描周期的余量;而房还要先活过「报到等待 + COUNTDOWN
+#   (`MatchState.COUNTDOWN_TIME` = 3s)」⇒ **残余暴露 ~3~25s**(随那一次 tick 的相位而定),
+#   不是 0。量级上无所谓,但这句话不该被读成"本界无所不包"。
+# ★★ **跨文件不变量(链有**两环**)**:环一 = 钳位放宽到 30 分钟以上;环二 =
+#   `scenes/royale_lobby.gd` 的秒换算(`Settings.royale_match_min * 60.0`)被改。
+#   任一环断裂,本上界**静默失效**(不再覆盖)。守卫在 `tests/room_sweep_smoke.gd` ——
+#   它**读两个文件**:settings.gd 的钳位片段 + royale_lobby.gd 的换算片段,任一处变了就红。
 const ROYALE_MATCH_TIME_CEILING := 1800.0
 var _sweep_acc := 0.0
 

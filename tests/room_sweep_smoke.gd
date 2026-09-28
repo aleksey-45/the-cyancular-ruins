@@ -26,6 +26,14 @@ extends SceneTree
 #   `rejoin.drop_port(worker_port)`(三张注册表的房号空间重叠,按 code 作废会误伤同号的另一间房)。
 #   上面①②两处的判据串跟着改;`_check_reclaim_ladder` 那条**两种写法都收**(旧名留给"有人把按
 #   code 的版本加回来"这一档)。★ 这是**跟着改名**,不是放宽白名单 —— 方向别搞反。
+#  **2026-09-28 评审(大乱斗可证上界那批的收尾)** —— `_check` 里四处,都在函数体内,
+#   `CHECK_NAMES` 不变:
+#   ① 上界的链有**两环**,原实现只钉住环一(settings.gd 的钳位);补环二
+#      (`scenes/royale_lobby.gd` 的秒换算 —— **另一个会话的文件,只读不写**);
+#   ② 判决串改**片段匹配**(Finding 4:整行字面量对无害改写响亮假红;但也不退到全文件
+#      片段 —— `TEAM_MATCH_ESTIMATE` 同为 1800,那半会静默失明);
+#   ③ 两个新读的文件各补一条"读不到就说读不到"的断言(Finding 5:否则诊断会误报成
+#      "钳位/换算变了")。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -402,16 +410,55 @@ func _check(src: String) -> void:
 		_fail = "大乱斗在局宽限缺 ROYALE_MATCH_TIME_CEILING(宽限被删/被改回默认时长?)"; return
 	if pred.contains("RoyaleHost.MATCH_TIME"):
 		_fail = "大乱斗在局宽限又用回了 RoyaleHost.MATCH_TIME(它只是默认值,不是上界)"; return
-	# ── 2026-09-28:上界常量本身 + **它的前提**。三条缺一不可 ──
-	if not src.contains("const ROYALE_MATCH_TIME_CEILING := 1800.0"):
+	# ── 2026-09-28:上界常量本身 + **它的前提**。四条缺一不可 ──
+	# ★ 判据取**片段**而不是整行字面量(2026-09-28 评审 Finding 4):原先要求整行
+	#   `const ROYALE_MATCH_TIME_CEILING := 1800.0`,对无害改写**响亮地假红**。
+	#   ★ 但也不取"文件里出现过 1800"那种全文件片段 —— 那是**空话**:同一个
+	#   `room_manager.gd` 里 `TEAM_MATCH_ESTIMATE` 也是 1800.0,拿它当判据时把本常量改成
+	#   900 照样绿(**静默失明**,而这正是本条判词声称要拦的那一档)。
+	#   故取中间档:**声明那一行**必须含 `1800`。容忍空白 / `1800` vs `1800.0` / 注释缩进,
+	#   不容忍把值改小。方向:宁可响亮假红,不可静默失明。
+	var ceil_line := ""
+	for line in src.split("\n"):
+		if line.contains("const ROYALE_MATCH_TIME_CEILING"):
+			ceil_line = line
+			break
+	if ceil_line.is_empty() or not ceil_line.contains("1800"):
 		_fail = "缺 ROYALE_MATCH_TIME_CEILING=1800(或值被改小了 —— 它必须盖得住装载钳位的上界)"; return
 	# ★★ 前提钉在**它住的地方**:上界 1800 = 30 分钟 × 60,而 30 来自 `Settings.royale_match_min`
 	#   的**装载钳位**。钳位一放宽(比如到 60 分钟),上面两条**照绿**,而缺口**复现** ——
 	#   只有这一条会红。改钳位时回来一起改。
 	var settings_src := FileAccess.get_file_as_string("res://core/config/settings.gd")
-	if not settings_src.contains("royale_match_min = clampf(float(cf.get_value(\"royale\", \"match_min\", 5.0)), 1.0, 30.0)"):
+	# ★ Finding 5(2026-09-28):读不到时必须报"读不到" —— 否则下面那条会宣称**钳位变了**,
+	#   把诊断引向完全错误的方向(本文件对 room_manager.gd 早有同款判据,这里当时漏了)。
+	if settings_src.is_empty():
+		_fail = "无法读取 settings.gd(读不到源码 ≠ 钳位变了)"; return
+	if not settings_src.contains("royale_match_min = clampf(") or not settings_src.contains("1.0, 30.0"):
 		_fail = ("★ Settings.royale_match_min 的装载钳位变了 —— ROYALE_MATCH_TIME_CEILING "
 				+ "(=30min×60=1800)不再盖得住它,大乱斗在局宽限的缺口复现。改钳位要一起改上界常量。"); return
+	# ── ★★ 2026-09-28 评审 Finding 1:上界的链有**两环**,上面刚钉的是**环一**,下面是**环二** ──
+	#   链的形状:`settings.gd` 把 `royale_match_min` 钳进 [1,30] 分钟(环一) → `royale_lobby.gd`
+	#   把它**换算成秒**下发(环二,`* 60.0`)。只钉环一时,把 `* 60.0` 改成 `* 120.0`(或干脆
+	#   传分钟)⇒ 实际下发的 `match_time` 翻倍/变形,而**上面所有断言照样全绿** —— 上界静默失效,
+	#   正是"前提断言"要防的那个形状,只是**下移了一环**。
+	# ★ `scenes/royale_lobby.gd` **属于另一个会话**,本文件**只读不写**。日后它若红了:
+	#   先看是不是那位改了这一行的形状(顺手回一句),别急着改本文件。
+	# ★ 判据同款取片段(Finding 4):定位**含 `"match_time"` 的那一行**,要求它同时含
+	#   `Settings.royale_match_min` 与 `* 60.0` —— 不钉整行(容忍空白/换行/取值写法)。
+	var lobby_src := FileAccess.get_file_as_string("res://scenes/royale_lobby.gd")
+	if lobby_src.is_empty():
+		_fail = "无法读取 scenes/royale_lobby.gd(读不到源码 ≠ 上界链第二环变了)"; return
+	var conv := ""
+	for line in lobby_src.split("\n"):
+		if line.contains("\"match_time\""):
+			conv = line
+			break
+	if conv.is_empty():
+		_fail = "scenes/royale_lobby.gd 里找不到 \"match_time\" 那一行(上界链第二环消失/改名?)"; return
+	if not conv.contains("Settings.royale_match_min") or not conv.contains("* 60.0"):
+		_fail = ("★ 秒换算这一环断了 —— ROYALE_MATCH_TIME_CEILING 的链有**两环**,这是第二环:"
+				+ "royale_lobby.gd 的 \"match_time\" 必须仍由 Settings.royale_match_min × 60.0 得来,"
+				+ "否则上界静默失效(改换算要一起改上界常量)"); return
 	if not pred.contains("rr.in_match"):
 		_fail = "大乱斗在局宽限缺 rr.in_match 门控"; return
 	if not pred.contains("SWEEP_INTERVAL"):
