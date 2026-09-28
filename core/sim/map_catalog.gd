@@ -79,7 +79,9 @@ static func list_maps(refresh := false) -> Array[Dictionary]:
 ## 地图显示名:优先取文件头注释里的名字行(demo.cyrm 的 `# demo_2`),否则用文件名。
 static func display_name(path: String) -> String:
 	if FileAccess.file_exists(path):
-		for l in MapFormat.read_lines(path):
+		# ★ 用 load_meta_lines 而不是 read_lines:v4 的注释在 body 的 meta 文本里,
+		#   直接按文本行读二进制只会读到乱码头,名字会退化成文件名。
+		for l in MapFormat.load_meta_lines(path):
 			var s := String(l).strip_edges()
 			if not s.begins_with("#"):
 				break                    # 注释块结束 → 不再往下找
