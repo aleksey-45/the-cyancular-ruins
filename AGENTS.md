@@ -134,3 +134,28 @@ structure-editor.html 已退休)。
 - **探针**:`tests/subcell_probe.gd`(-s:子格表装填/HP/单子格摧毁不清格/全灭清格/还原;
   ★ `-s` 里必须显式 `TileDefs.load_defs()`,否则全走缺省表)· `tile_rewind_probe` 适配 16px
   (渲染断言查该格 16 子格)。
+
+## 一键联机 · EasyTier 虚拟局域网(2026-09-28,P1)
+
+**动机**:3Mbps 公网服扛不住联机带宽(8 人大乱斗上行 ~4Mbps);EasyTier 组虚拟网后
+玩家间 P2P 直连(家宽上行 30Mbps+),服务器进程跑在房主机器上,公网服退役。
+交互抄 MCTier(PCL-CE 同款模式):房主「一键开网」出邀请码 → 朋友粘码 → 完事。
+
+### 文件职责
+| 文件 | 职责 |
+|---|---|
+| `tools/easytier/easytier-core.exe`(+`wintun.dll`/`Packet.dll`/`WinDivert64.sys`) | 官方 EasyTier v2.6.4 内核**原样打包**(Apache-2.0)。★ 五件套缺一不可:Packet.dll/WinDivert64.sys 是加载器静态依赖,缺了**不报错、进程 exit 127 秒退**(实测踩坑);git 里 *.exe 被 ignore,提交须 `git add -f` |
+| `tools/easytier/et_elevate.ps1` | 提权垫片·未提权端:游戏 → 它 → `Start-Process -Verb RunAs`(UAC)→ helper。**纯 ASCII+CRLF**(ps1 编码纪律) |
+| `tools/easytier/et_helper.ps1` | 提权垫片·提权端:读 session.json → 防火墙规则(幂等删加:内核本体全放行;host_mode 加游戏服 UDP 7777+7800~8299)→ 隐藏窗口拉内核(stdout/stderr 重定向到会话目录)→ **守护循环**(stop.flag / 游戏进程退出 / 内核死亡,任一即杀内核收摊)。游戏本体**永不提权** |
+| `core/net/easytier_link.gd` | 内核链路(纯静态,零 autoload):解包五件套到 `user://easytier/`(尺寸比对跳过重拷)、`host_start`(随机网名+24位密码,固定 `10.126.126.1`)/`join`(粘码,`--dhcp` 取号,超时回退随机手动 IP 一次)/`stop`、邀请码 `CYR1-`+base64(json{n,s,p,h})(节点列表随码走,防跨节点组不上网)、ipconfig 网卡轮询(按 `--dev-name cyr_et` 找段,**本地化无关**:标题行冒号结尾+正则取 IP)、**网段占用预检**(别的网卡已有 10.126.126.x → 报错请先停手动开的 EasyTier GUI/MCTier) |
+| `ui/one_click_net.gd` | 一键联机面板(全屏遮罩+居中面板,三联机页共用,MapPicker 同款模式):建房/加入两态、邀请码剪贴板**自动识别预填**、一键复制、失败带内核日志尾巴;就绪发 `net_ready(虚拟IP,是否房主)` |
+| `scenes/lobby_page.gd` | 基类新增 `_add_one_click_net(pos)`/`_on_one_click_net_ready`:房主路径复用 `LocalServer.restart()` 开服 + `_request_list` 连大厅;三页各一行摆钮(1v1 x=640 / 大乱斗·3v3 x=750,y=114) |
+| `Tests/easytier_probe.tscn` | 单机双节点探针(**管理员**运行):解包→邀请码往返→两内核经局域网 IP 互联(★回环 127.0.0.1 有绑定怪癖必失败,勿用)→网卡落位→`new peer added` 组网断言→stop.flag 收摊。探针网段用 10.147.147.x 避开生产段 |
+| `Tests/lobby_parse_smoke.tscn` | 联机页解析冒烟:load() 三大厅页+新脚本不实例化。★ 存在理由:`--check-only --script` 不加载工程认不出 NetBus 等 autoload,**对联机页必然假阴性** |
+
+### 纪律与不变量
+- **导出只给客户端 preset 加了 `tools/easytier/*`**(服务器 exe 不带 25MB 内核);客户端体积 40.8→~66MB(方案 A,用户拍板)。
+- **生产网段 = EasyTier 默认 DHCP 池 `10.126.126.0/24`**(MCTier 同款):房主手动 .1 + 朋友 DHCP 天然同段;改网段须同时改 `SUBNET_PREFIX`/`HOST_IP`/预检。
+- **会合节点**:官方公共节点 `public.easytier.top` **不存在**(NXDOMAIN,别再用);默认双协议回落海波节点 `us01.225284.xyz:11010`(udp+tcp,实测可达,2026-09-28)。自建会合点:任意 VPS 跑 `easytier-core.exe -p <本机公网IP:11010>` 即可,协调流量每秒几 KB。
+- **提权**:每次开网/加入弹一次 UAC(创建 TUN 网卡必须);从管理员终端跑探针则免弹。
+- **清理**:helper 按游戏 PID 守护,游戏退出即杀内核;`EasyTierLink.stop()` 写 stop.flag 收摊。绝不按映像名全杀(会误杀用户手动开的 EasyTier GUI)。
