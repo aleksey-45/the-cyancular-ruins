@@ -300,6 +300,14 @@ func _enemy_team_of(role: int) -> int:
 #   三方都绑在 role 上,逐处插分支会让 1v1 那条路长出团队语义(1v1 的探针照样绿,但已经变了)。
 func _match_round_tick(delta: float) -> void:
 	for role in players:
+		# ★ MATCH_OVER 之后**不再产生任何记账**(终局后残留的爆炸致死仍会把玩家打倒地):
+		#   没有这道闸,`deaths` 会 +1、尸体再掉一次武器、并**再广播一次带新 mvp 的终局载荷**。
+		#   大乱斗那一支**天然没有这个问题**(它的倒地边沿住在 `RoundState.PLAYING` 分支里,
+		#   见 `RoyaleHost._match_round_tick`)—— 两处形状一致是**刻意**的
+		#   (三个模式的倒地边沿是**同一个契约的三份落地**),别把这句当成多余而删掉。
+		#   ★ 只排除 MATCH_OVER:`ROUND_OVER` 期间倒地照旧入账(既有行为,不在本项里)。
+		if _round_state == RoundState.MATCH_OVER:
+			continue
 		var p: Node2D = players[role]
 		if not p.is_downed():
 			continue
