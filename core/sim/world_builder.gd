@@ -12,6 +12,8 @@ static func load_grid() -> Array:
 		push_error("WorldBuilder: 地图加载失败")
 		return []
 	MazeGenerator.current_grid = grid
+	# cyrm v4(选项 A):子格纹理表与格级网格一起装填;v3/旧图由 MapFormat 内部展开
+	MazeGenerator.current_subgrid = MapFormat.load_subgrid(MazeGenerator.map_file_path())
 	TileDefs.load_defs()
 	GameParameters.MAP_WIDTH = grid[0].size() * GameParameters.TILE_SIZE
 	GameParameters.MAP_HEIGHT = grid.size() * GameParameters.TILE_SIZE

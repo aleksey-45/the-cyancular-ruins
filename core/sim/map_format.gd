@@ -74,6 +74,73 @@ static func read_lines(path: String) -> Array:
 	f.close()
 	return lines
 
+
+## 原样读整个文件(字节)。v4 二进制用;文本格式仍走 read_lines。
+static func _read_bytes(path: String) -> PackedByteArray:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return PackedByteArray()
+	var data := f.get_buffer(int(f.get_length()))
+	f.close()
+	return data
+
+
+## 是否 v4 二进制(头 4 字节 "CYRM")。
+static func is_v4(path: String) -> bool:
+	return MapFormatV4.is_v4_data(_read_bytes(path))
+
+
+## 16px 子格纹理表(选项 A 的会话态装填源):
+##   v4 → 场景层描述符直读;v3/旧格式 → 把 2×2 形状掩码展开成 4×4(每个 32px 象限 = 2×2 个
+##   同纹理 16px 子格,与 §3.6 迁移规则一致,几何逐像素等价)。
+static func load_subgrid(path: String) -> Array[Array]:
+	if is_v4(path):
+		var v := MapFormatV4.parse(_read_bytes(path))
+		if not bool(v.get("ok", false)):
+			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
+			return []
+		return MapFormatV4.scene_to_subgrid(v["scene"], int(v["sub_cols"]), int(v["sub_rows"]))
+	var grid := load_map_file(path)
+	return expand_cells_to_subgrid(grid)
+
+
+## 格级网格 → 16px 子格纹理表(2×2 形状掩码 ×2 展开;兼容旧格式与测试合成网格)。
+static func expand_cells_to_subgrid(grid: Array) -> Array[Array]:
+	var out: Array[Array] = []
+	if grid.is_empty():
+		return out
+	var cols: int = (grid[0] as Array).size()
+	var rows := grid.size()
+	for ry in rows * 4:
+		var row: Array[int] = []
+		row.resize(cols * 4)
+		out.append(row)
+	for y in rows:
+		for x in cols:
+			var v := int(grid[y][x])
+			if v == 0:
+				continue
+			var tex := texture_of(v)
+			var sh := shape_of(v)
+			for qy in 2:
+				for qx in 2:
+					if sh & (1 << (qy * 2 + qx)) == 0:
+						continue
+					for sy in 2:
+						for sx in 2:
+							out[y * 4 + qy * 2 + sy][x * 4 + qx * 2 + sx] = tex
+	return out
+
+
+## 地图的注释/出生点行(v4 = body 里的 meta 文本;文本格式 = 原样行)。显示名等目录工具用。
+static func load_meta_lines(path: String) -> Array:
+	if is_v4(path):
+		var v := MapFormatV4.parse(_read_bytes(path))
+		if not bool(v.get("ok", false)):
+			return []
+		return v["meta_lines"]
+	return read_lines(path)
+
 # ── 地图格式(.cyrm v3/v1)──
 # v3:首行带 `# cyrm-v3` 标记,每格 4 字符 [纹理 3 位 0xx][形状hex](纹理 000=空气,001/002/...;形状 0-F)。
 # v1(旧):单字符 0-9/A(250×150),无标记 → 加载时自动 2×2 转换并 ÷2 spawn 坐标。
@@ -177,6 +244,10 @@ static func map_size(path: String) -> Vector2i:
 	if not FileAccess.file_exists(path):
 		push_error("MapFormat: 找不到地图文件 %s" % path)
 		return Vector2i.ZERO
+	# v4 二进制优先(头部即尺寸);旧文本格式走下面的逐行统计
+	if is_v4(path):
+		var h := MapFormatV4.read_header(_read_bytes(path))
+		return Vector2i(int(h["sub_cols"]) / 4, int(h["sub_rows"]) / 4)
 	var lines := read_lines(path)
 	var grid_lines := _grid_lines(lines)
 	var cols := -1
@@ -199,6 +270,14 @@ static func load_map_file(path: String) -> Array[Array]:
 	if not FileAccess.file_exists(path):
 		push_error("MapFormat: 找不到地图文件 %s" % path)
 		return []
+	# v4 二进制(现行格式):场景层扁平化成游戏网格
+	if is_v4(path):
+		var v := MapFormatV4.parse(_read_bytes(path))
+		if not bool(v.get("ok", false)):
+			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
+			return []
+		return MapFormatV4.flatten_scene(v["scene"], int(v["sub_cols"]), int(v["sub_rows"]))
+	# v3 / 旧文本格式(只读兼容:老图、编辑器旧导出)
 	var lines := read_lines(path)
 	if has_v3_marker(lines):
 		return parse_v3_grid(lines)
@@ -261,6 +340,13 @@ static func load_spawns(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		push_error("MapFormat: 找不到地图文件 %s" % path)
 		return {}
+	# v4:spawn/注释都在 body 的 meta 文本里(仍是 "# player x y" 那几行),坐标本来就是格级
+	if is_v4(path):
+		var v := MapFormatV4.parse(_read_bytes(path))
+		if not bool(v.get("ok", false)):
+			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
+			return {}
+		return parse_spawn_metadata(v["meta_lines"])
 	var lines := read_lines(path)
 	var result := parse_spawn_metadata(lines)
 	if has_v3_marker(lines):

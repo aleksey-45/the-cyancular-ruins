@@ -9,6 +9,7 @@ static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 # 建图时的原始(未破坏)网格深拷贝:每局复位用它重铺瓦片/碰撞(不被运行时 damage_tile 污染)。
 static var _pristine_grid: Array[Array] = []
+static var _pristine_subgrid: Array[Array] = []   # cyrm v4:子格纹理表基线(复位/回溯用)
 # 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
@@ -233,14 +234,17 @@ func _ready() -> void:
 		return
 	_grid_ref = grid
 	_pristine_grid = MazeGenerator.copy_grid(grid)
+	_pristine_subgrid = []   # _ready 里随 current_subgrid 一起存基线
 	Level0.wall_layer = $WorldViewport/WallLayer
-	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
+	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
 	TileDefs.init_hp(grid)
+	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
+	_pristine_subgrid = MazeGenerator.copy_grid(MazeGenerator.current_subgrid)
 
 	var tile_set = _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = tile_set
-	_paint_maze(wl, grid)
+	_paint_maze(wl)
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = tile_set
@@ -279,64 +283,51 @@ func _ready() -> void:
 
 
 func _create_wall_tileset() -> TileSet:
-	var ts: int = GameParameters.TILE_SIZE          # 64
-	var half: int = ts / 2                          # 32 子格
 	var texture: Texture2D = load("res://assets/textures/structure.png")
 	var src_img: Image = texture.get_image()
-	# 22 块源砖(两行 32×32 + 第3行两块水)→ 最近邻 2× 放大成 64×64
-	var bricks: Array[Image] = []
-	for i in range(22):
-		var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
-		img.blit_rect(src_img, Rect2i((i % 10) * 32, (i / 10) * 32, 32, 32), Vector2i.ZERO)
-		img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
-		bricks.append(img)
-	Level0.surface_texture = ImageTexture.create_from_image(bricks[21])  # 水面单格贴图(供 Sprite)
-	# atlas:16 列(形状 0-15)× 22 行(纹理 1-22),空气象限透明
-	var atlas_img := Image.create(16 * ts, 22 * ts, false, Image.FORMAT_RGBA8)
+	# 22 块源砖(10 列 × 3 行,32×32)。cyrm v4:每个 16px 子格画源块的 8×8 象限,放大 2×。
+	# 取角映射:象限 (qx, qy) 由子格在格内的位置推出(X%4, Y%4),不是数据字段。
+	var atlas_img := Image.create(16 * 16, 22 * 16, false, Image.FORMAT_RGBA8)   # 16 列(象限)× 22 行(纹理)
 	atlas_img.fill(Color(0, 0, 0, 0))
 	for tex in range(22):
-		for shape in range(16):
-			var tile := bricks[tex].duplicate()
-			for sy in range(2):
-				for sx in range(2):
-					if (shape & (1 << (sy * 2 + sx))) == 0:
-						tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
-			atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, tex * ts))
+		var src := Rect2i((tex % 10) * 32, (tex / 10) * 32, 32, 32)
+		for qy in range(4):
+			for qx in range(4):
+				var q := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+				q.blit_rect(src_img, Rect2i(src.position.x + qx * 8, src.position.y + qy * 8, 8, 8), Vector2i.ZERO)
+				q.resize(16, 16, Image.INTERPOLATE_NEAREST)
+				atlas_img.blit_rect(q, Rect2i(0, 0, 16, 16), Vector2i((qy * 4 + qx) * 16, tex * 16))
 	var atlas_tex := ImageTexture.create_from_image(atlas_img)
 	var tile_set = TileSet.new()
-	tile_set.tile_size = Vector2i(ts, ts)
+	tile_set.tile_size = Vector2i(16, 16)
 	var atlas = TileSetAtlasSource.new()
-	atlas.texture_region_size = Vector2i(ts, ts)
+	atlas.texture_region_size = Vector2i(16, 16)
 	atlas.texture = atlas_tex
 	tile_set.add_source(atlas)
-	# 瓦片坐标 = (形状列, 纹理行);空气(shape 0)含全透明瓦片,铺图时跳过即可
-	for shape in range(16):
+	for q in range(16):
 		for tex in range(22):
-			atlas.create_tile(Vector2i(shape, tex))
-
+			atlas.create_tile(Vector2i(q, tex))
 	return tile_set
 
 
-func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
+func _paint_maze(layer: TileMapLayer) -> void:
+	# cyrm v4:铺 **16px 子格**(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,
+	# 液体由 _paint_water 分层铺)。瓦片坐标 = (象限 qy*4+qx, 纹理-1)。
 	var source_id = 0
-	var cols = grid[0].size()
-	var rows = grid.size()
-
+	var sc = MazeGenerator.current_subgrid[0].size()
+	var sr = MazeGenerator.current_subgrid.size()
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
-			var offset_x = tx * cols
-			var offset_y = ty * rows
-			for y in range(rows):
-				var row: Array = grid[y]
-				for x in range(cols):
-					var v: int = row[x]
-					if v == MazeGenerator.EMPTY:
+			var offset_x = tx * sc
+			var offset_y = ty * sr
+			for y in range(sr):
+				var row: Array = MazeGenerator.current_subgrid[y]
+				for x in range(sc):
+					var tex: int = row[x]
+					if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
 						continue
-					if Water.is_liquid(MazeGenerator.texture_of(v)):
-						continue  # 水由 _paint_water 分层铺
-					# packed → atlas 坐标(形状列, 纹理行)
 					layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
-							Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
+							Vector2i((y % 4) * 4 + (x % 4), tex - 1))
 
 
 # 水格铺图:水体格铺水体瓦片(T理纡 21,atlas 行 20);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
@@ -436,43 +427,47 @@ func _rewind_elite_hits() -> void:
 			e.call("hurt", dmg, dir, float(b.get("hit_impact")))
 
 
-func _restore_cell(cell: Vector2i, v: int) -> void:
-	if _grid_ref.is_empty() or wall_layer == null:
+func _restore_sub(e: Dictionary) -> void:
+	# 回溯还原一个 16px 子格:HP 写回 + 重铺贴图 + 碰撞子格复位 + 账本时间轴照旧。
+	# 所属 64px 格若已因"全子格死光"被清零,这里一并从基线恢复(格级逻辑重新看到它)。
+	if _grid_ref.is_empty() or wall_layer == null or MazeGenerator.current_subgrid.is_empty():
 		return
-	var cols: int = _grid_ref[0].size()
-	var rows: int = _grid_ref.size()
-	if cell.x < 0 or cell.y < 0 or cell.x >= cols or cell.y >= rows:
+	var sub: Vector2i = e["sub"]
+	var hp := int(e["hp"])
+	var sc: int = MazeGenerator.current_subgrid[0].size()
+	var sr: int = MazeGenerator.current_subgrid.size()
+	if sub.x < 0 or sub.y < 0 or sub.x >= sc or sub.y >= sr:
 		return
-	_grid_ref[cell.y][cell.x] = v
+	TileDefs.restore_sub(sub, hp)
+	var tex := int(MazeGenerator.current_subgrid[sub.y][sub.x])
+	var cell := Vector2i(sub.x / 4, sub.y / 4)
+	if tex == 0:
+		return
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
-			wall_layer.set_cell(Vector2i(cell.x + tx * cols, cell.y + ty * rows), 0,
-					Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
+			wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0,
+					Vector2i((sub.y % 4) * 4 + (sub.x % 4), tex - 1))
 	if not _destructible_sub.is_empty():
-		for qy in range(2):
-			for qx in range(2):
-				_destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = v
+		_destructible_sub[sub.y][sub.x] = MazeGenerator.SOLID
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+	if _grid_ref[cell.y][cell.x] == 0 and not _pristine_grid.is_empty():
+		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
 
 
-func _on_tile_destroyed(cell: Vector2i) -> void:
-	# 瓦片回溯捕获(**清空前**从渲染层读改前值;仅单机时间系统激活且非回放期)
-	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() 			and wall_layer != null and not _grid_ref.is_empty():
-		var atlas: Vector2i = wall_layer.get_cell_atlas_coords(cell)
-		if atlas.x >= 0:
-			_tile_pending.append({"cell": cell, "v": (atlas.y + 1) * 16 + atlas.x})
-	if wall_layer != null and not _grid_ref.is_empty():
-		var cols: int = _grid_ref[0].size()
-		var rows: int = _grid_ref.size()
+func _on_sub_destroyed(sub: Vector2i, pre_hp: int) -> void:
+	# cyrm v4 子格破坏:清一个 16px 渲染格(9 环面副本)+ 记回溯账本 + 重建所在碰撞块。
+	# 回溯捕获(**摧毁前**的 hp 由 TileDefs 传进来;仅单机时间系统激活且非回放期)
+	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
+		_tile_pending.append({"sub": sub, "hp": pre_hp})
+	if wall_layer != null:
+		var sc: int = MazeGenerator.current_subgrid[0].size()
+		var sr: int = MazeGenerator.current_subgrid.size()
 		for ty in range(-1, 2):
 			for tx in range(-1, 2):
-				wall_layer.set_cell(Vector2i(cell.x + tx * cols, cell.y + ty * rows), -1)
-	# 9 环面副本由同一子格生成,只清中心格 2×2 即可;块间互不合并 → 只重建所在块
+				wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), -1)
 	if not _destructible_sub.is_empty():
-		for qy in range(2):
-			for qx in range(2):
-				_destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
-		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+		_destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
+		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
 
 
 # PvP 换局复位:把可破坏砖/碰撞/瓦片全量还原成建图时的原始状态(当前网格重置为基线深拷贝)。
@@ -485,10 +480,13 @@ func reset_destructibles() -> void:
 	MazeGenerator.current_grid = g
 	_grid_ref = g
 	TileDefs.init_hp(g)
+	# cyrm v4:子格表/子格 HP 一并回基线
+	MazeGenerator.current_subgrid = MazeGenerator.copy_grid(_pristine_subgrid)
+	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	# 瓦片层整层重铺(清掉 -1 残留,恢复被拆砖的贴图)
 	var wl := Level0.wall_layer
 	if wl != null:
-		_paint_maze(wl, g)
+		_paint_maze(wl)
 	# 碰撞:可破坏分块 + 永久墙 + 攀爬条整体重建为基线
 	_destructible_sub = WorldBuilder.build_sim($WorldViewport, g)
 
@@ -818,7 +816,7 @@ func _tick_rewind(delta: float) -> void:
 			var target := _rewind.current_target()
 			for e in _tile_ledger.take_range(target, _tile_cursor):
 				for c in e["cells"]:
-					_restore_cell(c["cell"], int(c["v"]))
+					_restore_sub(c)
 			_tile_cursor = target
 	else:
 		WorldRewind.hold_corpses = true

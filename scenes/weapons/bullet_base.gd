@@ -156,25 +156,31 @@ func _wrap() -> void:
 # damage_tile 扣血只在权威侧(apply_damage=true)执行,破坏后变空气(Level0 刷新渲染/碰撞)。
 # 视觉副本(apply_damage=false)只播碎片、绝不拆本地 grid——拆墙渲染由服务器 tile_destroyed 事件驱动。
 func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return
-	var ts: int = GameParameters.TILE_SIZE
-	var cols := grid[0].size()
-	var rows := grid.size()
-	# 候选格:碰撞点、沿法线推入墙内 0.5/1 格 —— 处理贴边命中/边界浮点映射到墙前空格。
-	# normal 指向远离墙(朝子弹),-normal 即推入墙内。
-	var probes := [Vector2.ZERO, -normal * (ts * 0.5), -normal * ts]
-	for off in probes:
-		var cell := MazeGenerator.cell_of(pos + off, ts, cols, rows)
-		var v: int = grid[cell.y][cell.x]
-		if v != 0:
-			var tex: int = MazeGenerator.texture_of(v)
-			if TileDefs.bullet_destroyable(tex):
-				TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
-				if apply_damage:
-					TileDefs.damage_tile(cell, hit_damage, "bullet")
+	# cyrm v4(选项 A):破坏按 **16px 子格**算 —— 命中点落在哪个子格就打哪个子格。
+	# 子格表为空时(测试合成网格)回落旧格级路径。
+	if MazeGenerator.current_subgrid.is_empty():
+		var grid0 := MazeGenerator.current_grid
+		if grid0.is_empty():
 			return
+		var ts0: int = GameParameters.TILE_SIZE
+		var cell0 := MazeGenerator.cell_of(pos - normal * (ts0 * 0.5), ts0, grid0[0].size(), grid0.size())
+		var v0: int = grid0[cell0.y][cell0.x]
+		if v0 != 0 and TileDefs.bullet_destroyable(MazeGenerator.texture_of(v0)) and apply_damage:
+			TileDefs.damage_tile(cell0, hit_damage, "bullet")
+		return
+	var cols: int = MazeGenerator.current_subgrid[0].size()
+	var rows: int = MazeGenerator.current_subgrid.size()
+	# 候选子格:碰撞点、沿法线推入墙内 0.5/1 个子格 —— 处理贴边命中/边界浮点。
+	var probes := [pos, pos - normal * 8.0, pos - normal * 16.0]
+	for p in probes:
+		var sub := Vector2i(posmod(int(p.x) / 16, cols), posmod(int(p.y) / 16, rows))
+		var tex: int = MazeGenerator.current_subgrid[sub.y][sub.x]
+		if tex != 0 and TileDefs.bullet_destroyable(tex):
+			TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
+			if apply_damage:
+				TileDefs.damage_sub(sub, hit_damage, "bullet")
+		return
+
 
 func _direct_hit(hit: Node) -> void:
 	if not apply_damage:
@@ -279,8 +285,8 @@ func _explode() -> void:
 	# 被炸到的可破坏砖 → 逐格播受击碎片。**所有端都播**,与 _damage_tile_at 同口径
 	# (2026-09-15 用户要求补上;此前这条路径在 2026-09-06 的 tile-hit-fx 设计里被明文排除,
 	#  后果是炸掉一排树叶时炸点除了那张 explosion 动画什么都没有)。
-	# ★ 扫的是与权威结算**同一个** Explosion.destructible_cells —— 两端粒子落在同一批格上。
-	for e in Explosion.destructible_cells(global_position, explosion_radius):
+	# ★ 扫的是与权威结算**同一个** Explosion.destructible_subs —— 两端粒子落在同一批格上。
+	for e in Explosion.destructible_subs(global_position, explosion_radius):
 		var tile_pos: Vector2 = e["pos"]
 		TileHitFx.spawn(get_viewport(), tile_pos, int(e["tex"]))
 	if apply_damage:

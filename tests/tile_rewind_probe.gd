@@ -49,8 +49,11 @@ func _run() -> void:
 	var ledger = lvl.get("_tile_ledger")
 	var count0: int = ledger.count()
 
-	# ② 拆掉它(走玩家口径:TileDefs.damage_tile → 回调 on_destroyed → 账本捕获)
-	TileDefs.damage_tile(cell, 9999, "explosion")
+	# ② 拆掉它(cyrm v4:破坏按 **16px 子格**算 —— 把该格 16 个子格逐一拆掉;
+	#    每个子格死亡都走 on_sub_destroyed → 账本捕获;全部死光时格级网格才清零)
+	for sy in 4:
+		for sx in 4:
+			TileDefs.damage_sub(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), 9999, "explosion")
 	await _wait_ms(30)
 	if int(grid[cell.y][cell.x]) != 0:
 		_fail("拆砖未生效(网格值 %d)" % int(grid[cell.y][cell.x]))
@@ -70,9 +73,14 @@ func _run() -> void:
 		_fail("回溯后网格未复原(现 %d 期望 %d)" % [v_now, v0])
 	var wall: TileMapLayer = Level0.wall_layer
 	if wall != null:
-		var atlas: Vector2i = wall.get_cell_atlas_coords(cell)
-		if atlas.x < 0:
-			_fail("回溯后渲染层该格仍为空(atlas %s)" % str(atlas))
+		# cyrm v4:瓦片层是 **16px 子格** —— 检查该 64px 格的 16 个子格至少一个有贴图
+		var painted := 0
+		for sy in 4:
+			for sx in 4:
+				if wall.get_cell_atlas_coords(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)).x >= 0:
+					painted += 1
+		if painted == 0:
+			_fail("回溯后渲染层该格 16 个子格全空")
 
 	if _fails.is_empty():
 		print("TILE REWIND PROBE: OK(拆砖入账/回溯网格复原/渲染复原)")
