@@ -53,13 +53,17 @@ const BODY_BASE_SITE := "res://scenes/pvp_match_client.gd"
 const LITERAL_ALLOWED := [PALETTE, "res://ui/pvp_hud.tscn", "res://ui/team_hud.tscn",
 		"res://tests/ui_palette_single_source_smoke.gd"]
 # ⑤ 扫的目录(生产 + 测试)。
-const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests"]
+#   ★ `res://render` 必须在列:它是生产目录树的一部分(`camera_2d.gd` / `post_process.gd`),
+#     且全仓别的整树扫描器都扫它(`tests/kh_l4_probe.gd` 的 `PROD_DIRS` / `ALL_DIRS`)。
+#     漏了它,⑤ 的"全仓再无游离字面量"就**窄于它自称的范围** —— 第 7 处落在那里没人看着。
+const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests",
+		"res://render"]
 # `_rhs_of` 的词界判据用的标识符字符集(needle 后面紧跟其中任一个 = 命中的是兄弟常量)。
 const IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 # ⑤ 扫描到的源文件数**下限**:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
 #   (照 `tests/kh_l4_probe.gd:41-43` 的 `MIN_PROD_FILES` / `MIN_ALL_FILES` 先例)。
-#   今日实测 SCAN_DIRS 共 319 个(ui 24 / scenes 62 / core 39 / server 16 / tests 178),
-#   取 250 留健康余量,只拦"整档坏掉"那一类。
+#   今日实测 SCAN_DIRS 共 321 个(ui 24 / scenes 62 / core 39 / server 16 / tests 178 /
+#   render 2),取 250 留健康余量,只拦"整档坏掉"那一类。
 const MIN_SCANNED := 250
 
 
@@ -118,9 +122,14 @@ func _initialize() -> void:
 					% [path, found.size()])
 			continue
 		var got := found[0]
-		if plate_rhs == "" or _norm(got) != _norm(plate_rhs):
+		# ★ ① 没读出 `C_PLATE` 时**没有可比的值**,但本条仍要红(闸门照旧) —— 只是判词改成
+		#   "无法比对",别打 `期望「」`:那读起来像"期望是空串",把人往错方向引。
+		if plate_rhs == "":
+			fails.append("④ %s 无法比对:① 没读出 `C_PLATE`(见 ①)" % path)
+		elif _norm(got) != _norm(plate_rhs):
 			fails.append("④ %s 的 `bg_color` 与 `C_PLATE` 不等(实得「%s」,期望「%s」)"
 					% [path, got, plate_rhs])
+		# ★ 这一条**独立且无条件**(不并进上面的 if/elif):它比的是**字面量**,不依赖 ① 读到什么。
 		if _norm(got) != PLATE_LITERAL:
 			fails.append("④ %s 的 `bg_color` 不是底板色(实得「%s」)" % [path, got])
 
