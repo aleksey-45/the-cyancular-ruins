@@ -551,7 +551,7 @@ Run:
 source tests/env.sh
 timeout 120 "$GODOT" --headless --path . --quit-after 3600 res://tests/reconnect_status_probe.tscn 2>&1 | tail -20
 ```
-Expected: `KH RECON-UI PROBE: ALL-OK(9 条断言)`。
+Expected: `KH RECON-UI PROBE: ALL-OK(11 条断言)`。
 
 ★ 若 `EXPECTED_CHECKS` 与实际条数对不上,**先数清楚再改**那个常量 —— 它是本探针防"整组被跳过"的唯一手段。
 
