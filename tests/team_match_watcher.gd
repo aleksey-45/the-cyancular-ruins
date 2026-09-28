@@ -204,6 +204,16 @@ func _attach_lobby() -> void:
 	if cs == null:
 		return
 	lobby = load("res://scenes/team_lobby.tscn").instantiate()
+	# ★★ `_with_lobby` 的快路判据是两个**字符串**相等(`_connected_addr == 地址框`),故只预置
+	#   已连**不够**:页的地址框初值取的就是 `PvpSession.server_address`,而它的生产默认是
+	#   **云服**(`core/net/pvp_session.gd` 初值 120.53.107.140)。不拨这一行,下面两个 set 白设 ——
+	#   一帧后页发现"已连地址(127.0.0.1)≠ 地址框(云服)"⇒ `NetBus.stop()` + 按**默认端口
+	#   7777** 去连公网生产服(还会在它上面真的建房),而本探针的大厅(池外端口)被晾着。
+	#   ★ 这个坑**静默**:日志里满是本端自己的「已连接服务器」,看着像连上了(实测的症状是
+	#   探针侧"一条 `玩家连入` 都没有 + 45s 后没有 3v3 房")。回归源 `fad4759`。
+	#   范本:`tests/rejoin_watcher.gd::_on_node_added` / `tests/royale_c2_probe.gd::_run_client`。
+	#   守卫:`_tick_lobby` 首段(连错地址当场点名)。
+	PvpSession.server_address = LOBBY_ADDR
 	# ★ 本进程已经连上大厅(上面 start_client),而页的 `_ready` 会 deferred 跑一次
 	#   `_request_list` → `_with_lobby`:只有"已连同地址"那一支会复用现有连接,否则它会
 	#   `NetBus.stop()` 再按**默认端口 7777** 重连 —— 而本探针的大厅在池外端口(见探针文件头)。
@@ -304,6 +314,17 @@ func _tick_lobby() -> void:
 		if _phase_t > ENTER_TIMEOUT:
 			_fail("大厅页没挂上(%.0fs)" % ENTER_TIMEOUT)
 			_finish()
+		return
+	# ★★ 守卫(照 `royale_c2_watcher._stage_lobby`):本端连的必须是**本探针的大厅**,不能是云服。
+	#   入树后一帧,页 `_ready` 那次 deferred `_request_list` 已跑完:地址框的值被写回
+	#   `PvpSession.server_address`,而连错时 `_connected_addr` 也会跟着变成那个错地址。
+	#   (`_attach_lobby` 预置的 `_connected_addr` 是**我们自己**写的值,它单独证明不了什么 ——
+	#    真正会露馅的是 `PvpSession.server_address`。)当场点名,别让下一个人再从
+	#   "45s 后没有 3v3 房"逆推。★ 漏了 `_attach_lobby` 那行预置就是这个守卫拦的。
+	if PvpSession.server_address != LOBBY_ADDR or String(lobby.get("_connected_addr")) != LOBBY_ADDR:
+		_fail("本端连的是 %s,不是本探针大厅 %s —— 检查 _attach_lobby 里 PvpSession.server_address 的预置"
+				% [PvpSession.server_address, LOBBY_ADDR])
+		_finish()
 		return
 	# 房间列表渲染路径:页把每个房间画成**一行按钮**(空态画的是一个 Label,不算行)
 	if _list_rows == 0:
