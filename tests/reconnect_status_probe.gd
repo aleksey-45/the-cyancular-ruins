@@ -33,7 +33,14 @@ extends Node
 #     _check_subscribe_wiring()  : 0 → **3**(三个模式的 `_ready` 各 1 条 —— 原先那句
 #                                   "另有源码断言钉着这一点"是**空头支票**,这是补的那条)
 #   ⇒ 27 + 4 - 1 + 3 = **33**。
-const EXPECTED_CHECKS := 33
+# ★ 2026-09-28 Task 5(3.1 的客户端半)加第 6 相 `_check_hud_consumers()`,逐项相加:
+#     pvp_hud 本地走秒 / `_refresh_grace` 的对手 role / 它的 `has(opp)` 判据
+#     / royale_hud 引 `C_GRACE` / `_refresh_board` 收 `grace` / team_hud 的反向断言 = **6**
+#   ⇒ 33 + 6 = **39**。
+#   ⚠ 计划里写的是"由 **27** 抬到 **33**" —— 那个 27 是本相**之前**的旧数;Task 4 的复核批
+#     (Fix 1~5:横幅 5→9、调用点 5→4、新增 `_check_subscribe_wiring` 3 条)已经把 27 抬成了
+#     **33**(见上面那段)。故 Task 5 的入口数是 33 而不是 27,落点是 **39**。
+const EXPECTED_CHECKS := 39
 
 const SRV_MAIN := "res://server/server_main.gd"
 const CLIENT_BASE := "res://scenes/pvp_match_client.gd"
@@ -44,6 +51,9 @@ const TEAM_GAME := "res://scenes/team_game.gd"
 const CLIENTS := [PVP_GAME, ROYALE_GAME, TEAM_GAME]
 const PRODUCERS := ["res://server/match_round.gd", "res://server/royale_host.gd",
 		"res://server/team_host.gd"]
+const PVP_HUD := "res://ui/pvp_hud.gd"
+const ROYALE_HUD := "res://ui/royale_hud.gd"
+const TEAM_HUD := "res://ui/team_hud.gd"
 
 # ── 相④ 的推导例外(唯一一处,理由见 `_check_status_call_sites`)──
 # `_exit_tree` 是 Godot 的生命周期钩子:那一刻场景正在离开,横幅**随场景一起销毁**
@@ -82,6 +92,7 @@ func _ready() -> void:
 	_check_status_banner()
 	_check_status_call_sites()
 	_check_subscribe_wiring()
+	_check_hud_consumers()
 	_finish()
 
 
@@ -280,6 +291,35 @@ func _check_subscribe_wiring() -> void:
 	for p in CLIENTS:
 		_check(_body(p, "_ready").contains("_subscribe_reconnect("),
 				"★ %s 的 `_ready` 里没调 `_subscribe_reconnect()` —— 那个模式静默没有状态横幅" % p)
+
+
+# ── 相⑥:两个 HUD 真的消费了 `grace`(阶段 3 的 3.1 客户端半)──
+# ★ 3v3 **刻意不消费**(spec §4 的 3.1 只点了大乱斗与 1v1):6 人一队,单行"对手状态"没有意义。
+#   这是一条**有意的不对称**,故这里也断言 `team_hud` 不掉进"顺手套一份"的坑 ——
+#   它要是也消费了,说明有人把 `grace` 当成了通用字段。
+func _check_hud_consumers() -> void:
+	var pvp := _code(PVP_HUD)
+	_check(pvp.contains("GraceWindow.tick_display("),
+			"★ pvp_hud 没有本地走秒(`GraceWindow.tick_display` 是那份减法的唯一实现)")
+	var body := _body(PVP_HUD, "_refresh_grace")
+	_check(body.contains("3 - PvpSession.role"),
+			"★ `_refresh_grace` 没按「对手 role = 3 - 自己」取数(实得「%s」)" % body)
+	_check(body.contains("_grace.has(opp)"),
+			"★ `_refresh_grace` 必须是 `has(opp)` 判定,不能「取第一个键」(多一个 role 时会印错人)")
+	var roy := _code(ROYALE_HUD)
+	_check(roy.contains("UiFactory.C_GRACE"),
+			"★ royale_hud 的「掉线」那一档没有引调色板的新色")
+	# ★★ 判据**收在 `_refresh_board` 的函数体里**,不能拿 `roy.contains("grace: Dictionary")` ——
+	#   那个写法是**假绿**:本文件的成员声明 `var _grace: Dictionary = {}` 自己也含这个子串,
+	#   于是"把形参整个删掉/改名"(本相唯一要拦的那件事)时它**照样绿**(2026-09-28 变异实测:
+	#   形参改名成 `grc: Dictionary` 后那一条仍打 ok)。这正是 `tests/lib/probe_base.gd` 文件头
+	#   那一族"读起来像覆盖、实际不覆盖"的空断言,故这里按函数体判。
+	var board := _body(ROYALE_HUD, "_refresh_board")
+	_check(roy.contains("_refresh_board(") and board.contains("grace: Dictionary"),
+			"★ `_refresh_board` 没有把 `grace` 收进去")
+	_check(not _code(TEAM_HUD).contains("grace"),
+			"★ team_hud 也在消费 `grace` —— 3v3 **刻意不做**(spec §4 的 3.1 只点大乱斗与 1v1);"
+			+ "要做也是在结算/记分条上另设计,不是这条单行状态")
 
 
 # ── 本相用的扫描小工具(ScanUtil 的通用词汇之上,只服务相④)──

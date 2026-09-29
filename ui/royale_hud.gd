@@ -17,6 +17,10 @@ const COLOR_BOARD := UiFactory.C_TEXT
 const COLOR_ME := UiFactory.C_ACCENT
 const COLOR_DEAD := UiFactory.C_TEXT_DIM
 const COLOR_LEFT := UiFactory.C_DANGER
+# 「掉线中」= 还在宽限期内、**可能回来**(阶段 3,spec §4 的 3.1)。
+# ★ 与上三档是并列的第四种语义,故用调色板里新加的那一档(理由与实测对比度见
+#   `UiFactory.C_GRACE` 那段)。别为了省一个常量把它并进任何一档。
+const COLOR_GRACE := UiFactory.C_GRACE
 # (原先还有 BIG_COLOR / SUB_COLOR —— 中央广播的大字/副文案颜色。两者已随广播层迁进
 #  royale_hud.tscn,这里不再有引用,故连同常量一并删除,不留死声明。)
 
@@ -53,6 +57,11 @@ var _last_row_count := -1
 var _countdown := 0.0
 var _in_countdown := false
 var _state := ST_COUNTDOWN
+# role(int) -> 剩余秒(**只由服务器下发**)。★ 大乱斗的 `RoyaleHost` 本来就 **1Hz 广播**
+# `round_state`(HUD_SYNC_INTERVAL),而 `server_main` 也是每秒刷一次读数 ⇒ 这里的值恒新,
+# **不需要** 1v1 那样的本地走秒(`GraceWindow.tick_display`)。两侧必要性的差异是**实测**的:
+# 1v1/3v3 只在状态转折时广播,故它们那边必须本地走 —— 别为了"统一"给大乱斗也加一遍。
+var _grace: Dictionary = {}
 var _my_name := "Anon"
 
 func _ready() -> void:
@@ -148,7 +157,9 @@ func _on_round_state(data: Dictionary) -> void:
 	var left: Array = data.get("left", [])
 	var deaths: Dictionary = data.get("deaths", {})
 	var scores: Dictionary = data.get("scores", {})
-	var rows := _refresh_board(names, scores, deaths, alive, left, state)
+	# ★ **缺键 = 此刻没人掉线**(服务端空表不带上该键,见 `GraceWindow.merge_into`)。
+	_grace = data.get("grace", {})
+	var rows := _refresh_board(names, scores, deaths, alive, left, _grace, state)
 	_refresh_broadcast(state, data, names, rows, alive)
 
 
@@ -160,7 +171,7 @@ func _on_round_state(data: Dictionary) -> void:
 #   行数**只在人数变化时**才对不齐(进/退场),那时才增删。
 # 返回排好序的行数据 —— 中央广播还要用它判"我是否还在场"。
 func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
-		alive: Dictionary, left: Array, state: int) -> Array:
+		alive: Dictionary, left: Array, grace: Dictionary, state: int) -> Array:
 	var rows: Array = []
 	for role_s in names:
 		rows.append({"role": int(role_s), "name": str(names[role_s]),
@@ -195,6 +206,17 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 		if left.has(e["role"]):
 			tag = "离开"
 			col = COLOR_LEFT
+		elif grace.has(e["role"]):
+			# 「掉线」= 还在宽限期内、可能会回来(阶段 3,spec §4 的 3.1)。
+			# ★ 排在「离开」**之后**:离开是终态(`mark_disconnected` 已把它移出对局),
+			#   而两者在**同一帧**都可能成立(服务器刚 `_grace.leave` 完就 `mark_disconnected`,
+			#   载荷里的 `grace` 已不含他 —— 但万一快照旧了一拍,「离开」才是该显示的那个)。
+			# ★★ 标签**刻意取短**:这一行本来就贴着面板宽(9 字昵称实测 ≈690px / 面板 720),
+			#   「掉线 42s」(8 半角单位)比既有的「复活中」(6 单位)只多 2 单位。
+			#   **不要**改成「掉线中,等待重连…」那种长句 —— 会把末段顶出面板(`clip_text`
+			#   静默裁掉,不是崩)。
+			tag = "掉线 %ds" % int(ceilf(float(grace[e["role"]])))
+			col = COLOR_GRACE
 		elif not bool(alive.get(e["role"], true)) and state == ST_PLAYING:
 			tag = "复活中"
 			col = COLOR_DEAD if not is_me else COLOR_ME

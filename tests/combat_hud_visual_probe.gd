@@ -13,6 +13,8 @@ extends Control
 #   _hud_4_royale_over.png  大乱斗终局广播
 #   _hud_5_team_playing.png 3v3 记分条(scores/rounds_won 的键是**队号**,不是 role)
 #   _hud_6_team_tie.png     3v3 终局**平局**广播(match_winner == 0 —— 3v3 特有的可达值)
+#   _hud_7_pvp_grace.png    1v1「对手掉线中,等待重连… 剩余 42s」(阶段 3 的 3.1)
+#   _hud_8_royale_grace.png 大乱斗排行榜的「掉线 42s」那一行(阶段 3 的 3.1)
 # PNG 落 res://.superpowers/sdd/(该目录自带 .gitignore = *,不入库)。
 #
 # ★ 背景故意铺**地图开阔区的浅灰蓝**(#78969F),不是深色底:
@@ -75,6 +77,26 @@ func _run_round() -> void:
 	_check(_bright_in(img2, pvp._big) > 0, "态2:中央大字画出来了")
 	_check(pvp._mask.visible, "态2:广播遮罩可见")
 
+	# ── 态7:1v1「对手掉线中」(阶段 3 的 3.1)──
+	# `grace` 的键是**对手**的 role(1v1 恒为 `3 - 自己`);缺键 = 此刻没人掉线。
+	# ★ 与态1 **同一个 PLAYING 态、同一份比分**,唯一差别就是这一条 —— 故 `_diff(img1, img7)`
+	#   量到的差异**只可能**来自它(取图前 1v1 是可见的、大乱斗那两套都藏着,与态1 一致)。
+	pvp._on_round_state({"state": 1, "round": 2, "scores": {1: 3, 2: 5},
+			"rounds_won": {1: 1, 2: 0}, "grace": {3 - PvpSession.role: 42.0}})
+	await _frames(2)
+	var img7 := await _shot("_hud_7_pvp_grace.png")
+	_check(pvp._grace_wrap.visible and pvp._grace_label.text.contains("42"),
+			"态7:1v1 的「对手掉线中」画出来了(role %d / 「%s」)"
+			% [3 - PvpSession.role, pvp._grace_label.text])
+	print("[HUD-VISUAL] 态7 掉线条 = 「%s」 rect=%s(记分条 rect=%s)"
+			% [pvp._grace_label.text, str(pvp._grace_wrap.get_global_rect()),
+			str(pvp.get_node("ScoreWrap").get_global_rect())])
+	var d17 := _diff(img1, img7)
+	_check(d17 > 500, "态7:相对态1(同态、无 grace)的像素差异 = %d(应当只来自这一条)" % d17)
+	_check(pvp._grace_wrap.get_global_rect().position.y
+			>= pvp.get_node("ScoreWrap").get_global_rect().end.y,
+			"态7:掉线条必须落在记分条**之下**、不与它重叠")
+
 	# ── 态3:大乱斗排行榜 ──
 	pvp.visible = false    # 收起 1v1(含它的中央广播),只留大乱斗这一套
 	royale.visible = true
@@ -105,6 +127,38 @@ func _run_round() -> void:
 	await _frames(2)
 	var img4 := await _shot("_hud_4_royale_over.png")
 	_check(_bright_in(img4, royale._big) > 0, "态4:终局大字画出来了")
+
+	# ── 态8:大乱斗排行榜的「掉线 42s」(阶段 3 的 3.1)──
+	# role 2 掉线中(grace 表里有它),而它照旧 `alive = false` —— **同一个载荷去掉 `grace`
+	# 那一行会念「复活中」**,故本相同时是"grace 档压过 alive 档"的鉴别器。
+	# ★ `grace` 缺键 = 此刻没人掉线(服务端空表不带键),故上面态3 那几次载荷**不改**也合法。
+	royale._on_round_state({"state": 1, "round": 1, "scores": {1: 7, 2: 3, 3: 1},
+			"deaths": {1: 0, 2: 1, 3: 2}, "rounds_won": {}, "timer": 214.0,
+			"names": {1: "阿甲", 2: "bob", 3: "电脑玩家3-computer"},
+			"alive": {1: true, 2: false, 3: true}, "left": [], "grace": {2: 42.0}})
+	await _frames(2)
+	var img8 := await _shot("_hud_8_royale_grace.png")
+	var grace_row: Label = null
+	for r in royale._rows:
+		if r.text.contains("掉线"):
+			grace_row = r
+	_check(grace_row != null and grace_row.text.contains("掉线 42s"),
+			"态8:排行榜里掉线那行念「掉线 42s」;实得「%s」"
+			% ("(没有任何一行带「掉线」)" if grace_row == null else grace_row.text))
+	if grace_row != null:
+		# ★ 末段**真的没被裁**:`clip_text = true` 是**静默**裁的(不报错,`row.text` 也照旧是
+		#   完整的那一句 ⇒ 只判 `contains` 是**看不出**裁没裁的),故只能量文本宽与裁剪界比。
+		#   裁剪界就是 `_refresh_board` 建行时钉的那个 `BOARD_W - 8`(= 712)。
+		var gf: Font = grace_row.get_theme_font("font")
+		var tw: float = gf.get_string_size(grace_row.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				grace_row.get_theme_font_size("font_size")).x
+		var clip_w: float = RoyaleHud.BOARD_W - 8.0
+		_check(tw <= clip_w,
+				"态8:掉线那行没被 clip_text 裁掉(文本宽 %0.1f ≤ 裁剪界 %0.1f)" % [tw, clip_w])
+		print("[HUD-VISUAL] 态8 掉线行 = 「%s」 文本宽=%0.1f 裁剪界=%0.1f 行宽=%0.1f"
+				% [grace_row.text, tw, clip_w, grace_row.size.x])
+	var d48 := _diff(img4, img8)
+	_check(d48 > 500, "态8:相对态4(终局广播)的像素差异 = %d" % d48)
 
 	# ── 态5:3v3 记分条(scores/rounds_won 的键是**队号**)──
 	royale.visible = false   # 收起大乱斗那一套(含它的终局广播),只留 3v3 这套
