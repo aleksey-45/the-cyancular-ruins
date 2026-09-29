@@ -230,6 +230,12 @@ func _build_menu_buttons() -> Array:
 		Sfx.play("ui")
 		PvpSession.enter_mode(PvpSession.MODE_ROYALE)
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
+	# Beta(2026-09-28,用户指定放在大乱斗下面):以后所有实验性玩法都从这个入口进
+	# (现在是 PvP 时间玩法的两个变体)。弱化变体:实验功能不与正式模式抢注意力。
+	var beta_btn := UiFactory.button("Beta", 32, Vector2(420, 64), "quiet")
+	beta_btn.pressed.connect(func() -> void:
+		Sfx.play("ui")
+		get_tree().change_scene_to_file("res://scenes/beta_menu.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽
 	# 也不成体系(2026-09-13 视觉评析)。按钮本身 420 宽居中,标签不必再自己凑宽度。
@@ -246,7 +252,7 @@ func _build_menu_buttons() -> Array:
 		get_tree().quit())
 	# 三个联机模式按 1v1 → 3v3 → 大乱斗 排列(2026-09-21 用户指定)。★ 显示次序由
 	# add_child 的次序决定;下面返回的数组同时是**浮现动画**的次序,两处必须一起改。
-	for b in [start_btn, multi_btn, team_btn, royale_btn]:
+	for b in [start_btn, multi_btn, team_btn, royale_btn, beta_btn]:
 		play_group.add_child(b)
 	for b in [settings_btn, ver_btn]:
 		opt_group.add_child(b)

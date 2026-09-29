@@ -53,7 +53,7 @@ func suicide_request() -> void:
 # 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。
 
 signal royale_create_requested(caller: int, opts: Dictionary)
-signal royale_join_requested(caller: int, code: String, invite: String)
+signal royale_join_requested(caller: int, code: String, invite: String, beta: bool)
 signal royale_leave_requested(caller: int)
 signal royale_list_requested(caller: int)
 signal royale_start_requested(caller: int)
@@ -70,8 +70,8 @@ func royale_create(opts: Dictionary) -> void:
 
 # 客户端 → 大厅:加入(私密房须带邀请码)
 @rpc("any_peer", "reliable")
-func royale_join(code: String, invite: String) -> void:
-	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite)
+func royale_join(code: String, invite: String, beta: bool) -> void:
+	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:退出所在大乱斗房间(开局前)
 @rpc("any_peer", "reliable")
@@ -115,7 +115,7 @@ func royale_room_state(state: Dictionary) -> void:
 # ★ 选边(`team_pick`)是 3v3 独有的上行:队伍**不由服务器推导**(role 号有空洞),玩家自己点。
 
 signal team_create_requested(caller: int, opts: Dictionary)
-signal team_join_requested(caller: int, code: String, invite: String)
+signal team_join_requested(caller: int, code: String, invite: String, beta: bool)
 signal team_pick_requested(caller: int, team: int)
 signal team_leave_requested(caller: int)
 signal team_start_requested(caller: int)
@@ -130,8 +130,8 @@ func team_create(opts: Dictionary) -> void:
 
 # 客户端 → 大厅:加入(私密房须带邀请码)
 @rpc("any_peer", "reliable")
-func team_join(code: String, invite: String) -> void:
-	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite)
+func team_join(code: String, invite: String, beta: bool) -> void:
+	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:选边(team = 1 或 2)。该队已满 → 大厅回 server_message 拒绝
 @rpc("any_peer", "reliable")

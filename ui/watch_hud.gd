@@ -40,7 +40,7 @@ var _lock_flash_t := 0.0           # 贷款锁定红闪(B6 用)
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_to_group("watch_hud")   # 结晶 FX 靠它找表心(屏幕空间目标)
-	_dial_tex = _build_dial_texture()
+	_dial_tex = build_dial_texture()
 	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(DIAL + 14, -16))
 	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(DIAL + 14, BIG_FONT - 4))
 	_center = _mk_label(SMALL_FONT, COLOR_TEXT_DIM, Vector2(0, 0))
@@ -66,8 +66,9 @@ func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
 	return l
 
 
-## 98px 程序化像素表盘:方块拼圆(与瓦片同风格),冷灰三层次 + 12 刻度
-func _build_dial_texture() -> ImageTexture:
+## 98px 程序化像素表盘:方块拼圆(与瓦片同风格),冷灰三层次 + 12 刻度。
+## 静态 + 无实例依赖:Beta 入口页的卡片图标直接复用这一份(B20)。
+static func build_dial_texture() -> ImageTexture:
 	var n := int(DIAL)
 	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))

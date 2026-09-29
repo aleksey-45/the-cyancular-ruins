@@ -169,3 +169,9 @@ structure-editor.html 已退休)。
 - **实证手段**:`tests/royale_probe.gd` 的 claim 原先恒报 `hue:0.0`(非零路径从未测过);改为 c1=137/c2=246 两个可互相区分的值,并在 match_sync 应答断言 **hues 双向带值**(自己那份命中 + 对面那份在表)→ 全绿,证明 `_on_player_options 归档 → _claim_hues → match_sync → _apply_peer_hues/副本染色` 整链健康。
 - **修复**:选色行从建房面板**搬进等待室面板**(`royale_lobby._build_wait_panel`,所有成员开局前可改;即选即存 `Settings.pvp_color_hue`,开局 claim 时随 player_options 上发)。1v1 个人色相停用(P2 固定队色)、3v3 队色固定——皆设计使然,不动。
 - **验证**:解析冒烟 6/6;真链路探针双端全部通过(hues 双向回包 + 123 快照)。实战视觉效果(自己染色 + 他人副本染色)由实机联机验收。
+### B20(P2 第二批,已完成):Beta 入口 + 独立房间池 + 建房页时间参数
+- **入口**:主菜单 `Beta` 按钮(大乱斗下方,弱化样式)→ `scenes/beta_menu.tscn`:画框型卡片 = 图标(程序化怀表 `WatchHud.build_dial_texture()`(已改静态)+ 红 `Royale`/蓝 `Team` 字)+ 模式名 + 简介 + 版本(beta_0.0)。两张卡:**错乱大乱斗**→royale_lobby、**时空 3v3**→team_lobby。
+- **beta 态传递**:`PvpSession.beta_mode`(reset() 一律复位;Beta 页 `enter_mode` 后置真)。两个大厅页读它:标题加「· Beta 时间玩法」、建房面板挂 9 行时间参数(`LobbyPage._add_time_params`,值住 `time_rules: TimeRules`,建房/上报前 clamp)。
+- **独立房间池**(判据三件套,双侧):①创建载荷带 `{"beta":true,"time":{...}}`(`_beta_payload()`,普通态空合入);②`royale_join/team_join` **签名加第 4 参 beta**,服务器双向拒(普通页进 Beta 房 / Beta 页进普通房各一条文案);③列表载荷带 `beta` 字段,客户端按 `PvpSession.beta_mode` 过滤(royale 在循环内 continue,team 用 filter 后的 `visible_rooms`)。1v1(`join_room`)与普通模式行为零变化。
+- **跟随改的调用点**:`tests/lobby_visibility_probe`(royale/team join 直调补 `false`)、`tests/royale_bound_probe`(同);`kh_l1_probe` 只查方法名,不受影响。★ `royale_bound_probe` 在本机当前负载下**基线也超时**(stash 对照过),判环境问题非回归。
+- **探针**:`-- --autotest-beta`(主菜单→Beta 页:两卡/名字/版本号在→点错乱大乱斗→royale_lobby 且 beta_mode=真→时间参数 9 行滑条在→`_player_options()` 带 time)全绿;`autotest-royale/team/mp` 与 `kh_l1/lobby_visibility` 全绿;--import 零错误。

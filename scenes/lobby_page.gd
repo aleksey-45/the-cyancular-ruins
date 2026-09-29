@@ -537,6 +537,64 @@ func _player_options() -> Dictionary:
 	return {}
 
 
+# ── 时间玩法(Beta)建房参数(两个 Beta 大厅页共用;普通态不显示也不上报)──
+# 值住在 time_rules(TimeRules 实例),建房/上报前 clamp;服务器侧还会再 clamp 一次(上报不可信)。
+var time_rules := TimeRules.new()
+
+
+func _add_time_params(vb: VBoxContainer) -> void:
+	if not PvpSession.beta_mode:
+		return
+	vb.add_child(UiFactory.label("时间颗粒规则(房主可调,开局生效):", 32, UiFactory.C_ACCENT))
+	_trow(vb, "初始颗粒", 1000.0, "initial", TimeRules.R_INITIAL, 50.0, false)
+	_trow(vb, "颗粒上限", 1800.0, "cap", TimeRules.R_CAP, 100.0, false)
+	_trow(vb, "回溯燃烧/秒", 150.0, "rewind_burn", TimeRules.R_BURN, 5.0, false)
+	_trow(vb, "加速燃烧/秒", 70.0, "haste_burn", TimeRules.R_BURN, 5.0, false)
+	_trow(vb, "短时额度", 250.0, "window", TimeRules.R_WINDOW, 10.0, false)
+	_trow(vb, "回复/秒", 50.0, "regen", TimeRules.R_REGEN, 5.0, false)
+	_trow(vb, "击杀获取 %", 50.0, "kill_ratio", Vector2(0.0, 100.0), 5.0, true)
+	_trow(vb, "拆砖获取/子格", 10.0, "block_gain", TimeRules.R_BLOCK, 1.0, false)
+	_trow(vb, "伤害获取/点", 4.0, "damage_gain", TimeRules.R_DAMAGE, 1.0, false)
+
+
+# 一行参数 = 标签 + 滑条 + 当前值标签(数字必须可见:盲拖参数没法用)。
+func _trow(vb: VBoxContainer, text: String, initial: float, field: String,
+		rng: Vector2, step: float, as_percent: bool) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var l := UiFactory.label(text, 32)
+	l.custom_minimum_size = Vector2(300, 0)
+	row.add_child(l)
+	var sl := HSlider.new()
+	sl.min_value = rng.x
+	sl.max_value = rng.y
+	sl.step = step
+	sl.value = initial
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.custom_minimum_size = Vector2(220, 28)
+	UiFactory.style_slider(sl)
+	row.add_child(sl)
+	var val := UiFactory.label(_fmt_param(initial, as_percent), 32, UiFactory.C_ACCENT)
+	val.custom_minimum_size = Vector2(110, 0)
+	row.add_child(val)
+	sl.value_changed.connect(func(v: float) -> void:
+		time_rules.set(field, v / 100.0 if as_percent else v)
+		val.text = _fmt_param(v, as_percent))
+	vb.add_child(row)
+
+
+static func _fmt_param(v: float, as_percent: bool) -> String:
+	return ("%d%%" % int(round(v))) if as_percent else str(int(round(v)))
+
+
+## Beta 房创建载荷的附加字段(普通态返回空字典 → 合并无副作用)。
+func _beta_payload() -> Dictionary:
+	if not PvpSession.beta_mode:
+		return {}
+	time_rules.clamp_self()
+	return {"beta": true, "time": time_rules.to_dict()}
+
+
 # ── 建房/对战选项面板里的「选图」一节(三个联机页共用)──
 # 房主选 → 存 Settings.mp_map_path → 报到时随 player_options 上报 → worker 开局定图
 # (`server_main._on_player_options` 归档、`MapCatalog.resolve_pvp_map` 校验、`match_start` 下发)。
