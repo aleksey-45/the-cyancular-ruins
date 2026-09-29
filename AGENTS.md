@@ -190,3 +190,11 @@ structure-editor.html 已退休)。
 - **player.gd**:新增 `pvp_haste_mult`(服务器/本地预测写);`_speed_mult` 计算 = TimeField(单机)或 pvp_haste_mult(PvP)—— 单机路径零变化。
 - **客户端**:`_tick_beta_time`(物理帧):本地预测(按住+镜像可耗 ⇒ 写自己的 pvp_haste_mult;**烧颗粒只在服务器**,镜像 10Hz 校正,避免双份漂移)。视效:自己 = 冷白蓝加色高亮 + 0.03s 红蓝交替残影(单机同款);他人 = 暖白高亮 + 0.06s 红/蓝两张淡副本(重影)+ 头顶像素字 `▶▶ 3x`(倍率取自 time_state 下发)。royale/team 场景快照消费时给副本打 `haste` meta;`_all_replicas()` 由两子类覆写。
 - **已知边界**:①加速的全屏压暗(haste_dim)未在 PvP 接(单机走 Level0._tick_time_visuals,PvP 场景无该驱动;如需可在 pvp 场景直接 set_time_effects);②自己的弹速未乘 ×3(SP 里玩家弹走 bullet_delta 的 TimeField,PvP 的 TimeField 为 null)—— **PvP 里子弹常速**,与本批"只快自己(角色行动)"的语义先保持一致,弹速倍率要不要乘待用户实测后定。
+
+### B23(P2 第五批,已完成):回溯(只回溯自己)+ 免伤 + 双侧视效
+- **协议**:`BIT_REWIND(256)`(held 段)+ `rewind_held()`;与 BIT_HASTE 同款两端同版本纪律。
+- **服务器**(`MatchHost` 的 `_tick_beta_rewind`,快照前跑):每 role 环缓(**20Hz**,深度 = rules.rewind_buffer_seconds,默认 12s/240 帧)只存**自己**的状态(位置/速度/HP/朝向/弹量 wmags/widx/wlive,与单机 WorldRewind._snapshot_player 同构)+ **自己的子弹**(pos/vel/rewind_state 含引信)。按住+可耗+未倒地 ⇒ 进入:输入源 frozen、`time_rewinding` meta(免伤闸)、烧 150/s;游标 3×→1× ramp 倒放,逐帧写回自身与自己的子弹;**自己的子弹照常伤害他人**(写回位置/速度/引信,不重建已消亡弹 —— 已爆的榴弹不复活,已知边界)。颗粒烧空/松手 ⇒ 退出,世界从倒退点继续。**不能复活**:倒地即禁入。
+- **免伤闸**:`player.take_hit` 首行统一判 `TimeField 回溯态(单机) or time_rewinding meta(PvP)` —— 一处闸住子弹/榴弹/爆炸/接触全部来源,单机零变化。
+- **快照**:每 role 带 `rewind` 位 + `trail`(回溯中每 3 帧一个位置点,≤10 个)。
+- **客户端**:own = 本地预测(冻结本地输入源 + 免伤 meta;**位置不本地预测**,吃 C2 权威写回)+ **底片只作用于世界图层与自己**(`scenes/effects/time_film.gdshader`:coverage 由内而外推进,挂 wall/water/水面层与本地玩家;敌方副本不挂 —— 用户裁定)+ 中心 ◁◁ 符号。others = 回溯者副本满覆盖底片色 + 沿 trail 的**时间切片残像**(底片色,1 秒渐隐,AfterImage)。
+- **已知边界**:①倒放不重建已消亡子弹;②客户端 C2 期间倒放位置依赖权威写回(回滚手感未实测);③顶针数的 HP 广播走 combat.emit_signal(与 SP rewind_restore 同源做法)。

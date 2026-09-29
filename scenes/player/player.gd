@@ -481,8 +481,9 @@ func _wrap_position() -> void:
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
-	# 回溯中不受任何伤害(位置在被回放器搬运,接触判定可能在瞬移中误触发)
-	if TimeField.current != null and TimeField.current.is_rewinding():
+	# 回溯中不受任何伤害(位置在被回放器搬运,接触判定可能在瞬移中误触发)。
+	# 单机:TimeField 的回溯态;PvP(Beta):服务器/本地预测各自置 "time_rewinding" meta。
+	if (TimeField.current != null and TimeField.current.is_rewinding()) or has_meta("time_rewinding"):
 		return
 	# 前后比对 hp:只有**真吃到伤害**才挤压。无敌帧挡下 / 已倒地时 combat.take_hit 不改 hp,
 	# 这条判据天然把它们排除 —— 比在 combat 里回调更省事(不动组件接口)。

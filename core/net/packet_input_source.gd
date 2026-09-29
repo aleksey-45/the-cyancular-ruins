@@ -31,6 +31,8 @@ const BIT_DROP := 64
 # 服务器据此角色进入加速态(自己 ×3,不动别人);是否真加速由服务器按颗粒账户裁决。
 # ⚠ 加位 = 改协议,两端必须同版本(同 BIT_RELOAD 注释)。
 const BIT_HASTE := 128
+# ★ Beta 时间玩法:回溯按住位(held 段)。服务器据此进入该 role 的自身回溯态。
+const BIT_REWIND := 256
 
 
 # ── 编码端:组一个输入包(协议**发送侧**的唯一来源)──
@@ -57,6 +59,8 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		held |= BIT_RELOAD
 	if src.is_action_pressed("haste"):
 		held |= BIT_HASTE
+	if src.is_action_pressed("rewind"):
+		held |= BIT_REWIND
 	if src.is_action_just_pressed("up"):
 		pressed |= BIT_UP
 	if src.is_action_just_pressed("down"):
@@ -118,6 +122,10 @@ func apply_packet(pkt: Dictionary) -> void:
 # Beta 时间玩法:该 role 此刻是否按着加速(held 位直读;服务器的时间态裁决用)。
 func haste_held() -> bool:
 	return (_held & BIT_HASTE) != 0
+
+
+func rewind_held() -> bool:
+	return (_held & BIT_REWIND) != 0
 
 
 # 每帧末清除已消费边沿与切枪(玩家 _physics_process 之后)。held/axis/aim 保留(缺包沿用)。

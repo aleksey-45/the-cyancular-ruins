@@ -162,6 +162,10 @@ func _on_snapshot_own(own: Dictionary) -> void:
 # ★ 只在 PvpSession.beta_mode 挂(普通联机/单机不受影响;单机那份由 Level0._ready 建)。
 var _time_mirror: GrainAccount = null
 var _time_watch: WatchHud = null
+var _time_rewinding := false        # 本地预测的回溯态(免伤闸 + 世界底片)
+var _time_film_t := 0.0             # 底片覆盖度 ramp(≤0.2s 推满)
+var _time_mat: ShaderMaterial = null
+var _time_sym: Label = null
 var _time_haste_mult := 3.0          # 服务器下发的加速倍率(time_state 的 m;预测与视效共用)
 var _fx_self_t := 0.0                # 自己的残影节拍(0.03s)
 var _fx_other_t := 0.0               # 他人重影节拍(0.06s)
@@ -204,7 +208,67 @@ func _tick_beta_time(delta: float) -> void:
 		return
 	var on := Input.is_action_pressed("haste") 			and _time_mirror != null and _time_mirror.can_spend()
 	(_local as Node2D).set("pvp_haste_mult", _time_haste_mult if on else 1.0)
+	_tick_beta_rewind(delta)
 	_tick_time_fx(delta, on)
+
+
+# 本地回溯预测:按住 + 镜像可耗 + 未倒地 ⇒ 冻结本地输入源、置免伤闸、世界+自己上底片。
+# ★ 位置不本地预测 —— 服务器每帧权威写回(C2 的 on_authoritative 就是那条路);
+#   本地只负责"站着 + 看底片 + 免伤"。
+func _tick_beta_rewind(delta: float) -> void:
+	var downed: bool = (_local as Node).call("is_downed") if _local.has_method("is_downed") else false
+	var want := Input.is_action_pressed("rewind") 			and _time_mirror != null and _time_mirror.can_spend() and not downed
+	if want and not _time_rewinding:
+		_time_rewinding = true
+		var src = (_local as Node).get("input_source")
+		if src != null:
+			src.set("frozen", true)
+		(_local as Node).set_meta("time_rewinding", true)
+	elif not want and _time_rewinding:
+		_time_rewinding = false
+		var src2 = (_local as Node).get("input_source")
+		if src2 != null:
+			src2.set("frozen", false)
+		if (_local as Node).has_meta("time_rewinding"):
+			(_local as Node).remove_meta("time_rewinding")
+	# 底片覆盖度 ramp(推进 ≤0.2s;退出 0.1s 收)
+	_time_film_t = clampf(_time_film_t + (delta / 0.2 if _time_rewinding else -delta / 0.1), 0.0, 1.0)
+	_apply_own_film(_time_film_t)
+	if _time_sym != null:
+		_time_sym.visible = _time_film_t > 0.05
+	if _time_rewinding and _time_sym == null:
+		_time_sym = UiFactory.label("◁ ◁", 48, Color(0.85, 0.9, 0.95))
+		_time_sym.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+		_time_sym.offset_top = 60.0
+		_time_sym.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_time_sym)
+
+
+# 底片只作用于**世界图层 + 自己**(用户裁定:敌方单位颜色不变化)。
+func _apply_own_film(coverage: float) -> void:
+	var targets := _film_targets()
+	if coverage <= 0.001:
+		if _time_mat != null:
+			for n in targets:
+				if is_instance_valid(n) and (n as CanvasItem).material == _time_mat:
+					(n as CanvasItem).material = null
+			_time_mat = null
+		return
+	if _time_mat == null:
+		_time_mat = ShaderMaterial.new()
+		_time_mat.shader = load("res://scenes/effects/time_film.gdshader")
+	_time_mat.set_shader_parameter("coverage", coverage)
+	for n in targets:
+		if is_instance_valid(n):
+			(n as CanvasItem).material = _time_mat
+
+
+func _film_targets() -> Array:
+	var out: Array = []
+	for n in [Level0.wall_layer, Level0.water_layer, Level0.water_surface_layer, _local]:
+		if n != null and is_instance_valid(n):
+			out.append(n)
+	return out
 
 
 # 双侧视效(节拍与单机同源:残影 0.03s/红蓝交替;他人的红蓝重影 0.06s 一对)。
@@ -225,16 +289,21 @@ func _tick_time_fx(delta: float, self_hasting: bool) -> void:
 		var g := TimeGlow.on(_local)
 		if g != null:
 			g.queue_free()
-	# 他人:暖白高亮 + 红蓝重影(同帧红蓝两张淡副本)+ 头顶 ▶▶3x
+	# 他人:回溯优先(底片色 + 轨迹残像,不叠加速高亮);否则加速高亮 + 红蓝重影 + ▶▶3x
 	var any_hasting := false
 	for rep_node in _all_replicas():
 		if not is_instance_valid(rep_node) or not (rep_node is Node2D):
 			continue
-		if not bool((rep_node as Node2D).get_meta("haste", false)):
-			_time_fx_replica_off(rep_node as Node2D)
+		var rep := rep_node as Node2D
+		_time_fx_replica_rewind(rep, delta)
+		if bool(rep.get_meta("rewind", false)):
+			_time_fx_replica_off(rep)
+			continue
+		if not bool(rep.get_meta("haste", false)):
+			_time_fx_replica_off(rep)
 			continue
 		any_hasting = true
-		_time_fx_replica_on(rep_node as Node2D)
+		_time_fx_replica_on(rep)
 	if not any_hasting:
 		_fx_other_t = 0.0
 
@@ -267,6 +336,67 @@ func _time_fx_replica_on(rep: Node2D) -> void:
 		if anim != null:
 			AfterImage.spawn(rep.get_parent(), anim, Color(1.0, 0.25, 0.25, 0.30))
 			AfterImage.spawn(rep.get_parent(), anim, Color(0.3, 0.4, 1.0, 0.30))
+
+
+# 他人回溯视效:副本自身底片色(满覆盖度)+ 沿服务器轨迹的时间切片残像(1 秒渐隐)。
+# 轨迹点来自快照 trail(每 3 帧一个 [x,y]);本端为每个新点生成一张底片色残像并自己淡出。
+var _rw_film_mats: Dictionary = {}   # replica -> ShaderMaterial(满覆盖度)
+var _rw_ghosts: Dictionary = {}      # replica -> Array[{node, t}](生成时刻,1s 渐隐)
+
+func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
+	if not bool(rep.get_meta("rewind", false)):
+		_time_fx_replica_rewind_off(rep)
+		return
+	if not _rw_film_mats.has(rep):
+		var m := ShaderMaterial.new()
+		m.shader = load("res://scenes/effects/time_film.gdshader")
+		m.set_shader_parameter("coverage", 1.0)
+		rep.material = m
+		_rw_film_mats[rep] = m
+	# 轨迹残像:快照的 trail 里比上次多出来的点 → 每点一张淡副本(挂在副本父级,位置即轨迹点)
+	var trail: Array = rep.get_meta("trail_last", [])
+	var new_trail: Array = rep.get_meta("trail", [])
+	if new_trail.size() > trail.size():
+		var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+		if anim != null:
+			for i in range(trail.size(), new_trail.size()):
+				var pt: Array = new_trail[i]
+				var ghost_host := Node2D.new()
+				ghost_host.global_position = Vector2(float(pt[0]), float(pt[1]))
+				rep.get_parent().add_child(ghost_host)
+				var g := AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
+				var ghosts: Array = _rw_ghosts.get(rep, [])
+				ghosts.append({"node": ghost_host, "t": 0.0})
+				_rw_ghosts[rep] = ghosts
+	rep.set_meta("trail_last", new_trail.duplicate())
+	# 已有残像 1s 渐隐(改 Sprite2D 的 modulate.a)后随 AfterImage 自毁
+	var ghosts2: Array = _rw_ghosts.get(rep, [])
+	for g in ghosts2:
+		g["t"] = float(g["t"]) + delta
+		var host: Node2D = g["node"]
+		if is_instance_valid(host) and host.get_child_count() > 0:
+			var spr := host.get_child(0) as Sprite2D
+			if spr != null:
+				spr.modulate.a = clampf(0.35 * (1.0 - float(g["t"])), 0.0, 1.0)
+	var alive: Array = []
+	for g in ghosts2:
+		if float(g["t"]) < 1.0 and is_instance_valid(g["node"]):
+			alive.append(g)
+	_rw_ghosts[rep] = alive
+
+
+func _time_fx_replica_rewind_off(rep: Node2D) -> void:
+	if _rw_film_mats.has(rep):
+		if is_instance_valid(rep) and rep.material == _rw_film_mats[rep]:
+			rep.material = null
+		_rw_film_mats.erase(rep)
+	if _rw_ghosts.has(rep):
+		for g in _rw_ghosts[rep]:
+			if is_instance_valid(g["node"]):
+				(g["node"] as Node).queue_free()
+		_rw_ghosts.erase(rep)
+	if rep.has_meta("trail_last"):
+		rep.remove_meta("trail_last")
 
 
 # 本类全部对手副本(视效遍历用)。子类覆写;基类空。

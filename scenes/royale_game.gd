@@ -134,6 +134,8 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 			if r != null and r.has_method("apply_snapshot"):
 				r.apply_snapshot(data, _local.global_position, snap_tick)
 				r.set_meta("haste", bool(data.get("haste", false)))   # Beta:他人加速视效
+				r.set_meta("rewind", bool(data.get("rewind", false)))   # Beta:他人回溯视效
+				r.set_meta("trail", data.get("trail", []))
 				if _hp_bars.has(role):
 					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
 							/ float(PlayerParams.player_max_hp)
