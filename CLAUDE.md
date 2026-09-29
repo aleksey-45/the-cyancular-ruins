@@ -326,23 +326,37 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
 `current_grid` 停在 demo 的 **125×75** 而 `GameParameters` 已是 factory 的 **150×100**,
 `plan_spawns` 于是从 **demo 的地形**里取散点(实测取到 `(40,30)`/`(90,18)`,其中一格在
 factory 里是**实心格**)。
-★ **生产路径上没有复现** —— 这是**跑出来的**,不是"grep 没找到"(2026-09-29 补测:临时插桩
-`RoyaleHost.start_on` + 拉一个真 `--worker --royale` 子进程 + 一个真 ENet 客户端 claim role 1
-让它开局,读它自己的日志):
-`[c1] start_on:预载被跳过=false; 之前 current_grid=0 _picked_map=res://maps/factory1v1.cyrm`
-⇒ 进 `start_on` 时网格**是空的**、预载那一支**确实被走到**。**为什么**:全仓给
-`MazeGenerator.current_grid` 赋值的生产点只有 `WorldBuilder.load_grid()` / `level_0.gd`(单机与
-客户端,`_ready` 里**无条件**走它)/ `match_round.gd`(每局还原基线,同一张图);而 `server/` 下
-`load_grid()` 的四个调用点里,`MatchHost._init` / `RoyaleHost._init` / `TeamHost._init` 都在
-`start_on` **之后**,`_begin_match` 又有 `_match_started or _host != null` 的重入守卫。
-★★ **但"没复现"不等于"原始那次观察被解释了"** —— 它**仍然没有解释**(计划原文写的就是"疑似")。
-上面这条实测只排除了「worker 开局这一条路」,而阶段 1 那次是在**真链路探针跑批**里看到的,
-那批里还有别的动网格的代码(`tests/*_probe` 大量直接写 `current_grid`、`squash_*`/`laser_team`
-等探针自己 `_build_grid()`)。要定性就得回到那一跑的具体现场,**本轮没做**。
-★ 仍未闭合的部分:同一进程内**先后用两张不同的图**跑两次 `start_on` —— 今天没有这样的路径,
-但也没有任何东西**禁止**它。真要收紧,判据应当是"网格来自哪张图"(例如 `load_grid()` 记一个
+★★ **2026-09-29 已走完"复现 → 定性",而且把 spec 里那句归因推翻了。四层结论:**
+
+- **① 机制成立**:预载只问"网格**空不空**",不问"网格是不是**这张图**的"。复现:先 `load_grid()`
+  过 `demo.cyrm`(125×75),再 `set_map_file("factory1v1")` + `refresh_map_size()` ⇒ 预载**被跳过**,
+  `current_grid` 停在 125×75 而 `GameParameters` 已是 150×100,`plan_spawns` 从 demo 的地形取散点
+  (实测取到 `(40,30)`/`(90,18)`,其中一格在 factory 里是实心格)。
+- **② 生产路径上没复现** —— 这是**跑出来的**,不是"grep 没找到":临时插桩 `RoyaleHost.start_on`
+  + 拉一个真 `--worker --royale` 子进程 + 一个真 ENet 客户端 claim role 1 让它开局,读它自己的日志:
+  `[c1] start_on:预载被跳过=false; 之前 current_grid=0 _picked_map=res://maps/factory1v1.cyrm`
+  ⇒ 进 `start_on` 时网格**是空的**、预载那一支**确实被走到**。**为什么**:全仓给
+  `MazeGenerator.current_grid` 赋值的生产点只有 `WorldBuilder.load_grid()` / `level_0.gd`(单机与
+  客户端,`_ready` 里**无条件**走它)/ `match_round.gd`(每局还原基线,同一张图);而 `server/` 下
+  `load_grid()` 的四个调用点里,`MatchHost._init` / `RoyaleHost._init` / `TeamHost._init` 都在
+  `start_on` **之后**,`_begin_match` 又有 `_match_started or _host != null` 的重入守卫。
+- **③ ★★ spec 那句"疑似 `plan_spawns` 用到了另一张图的格"是误归因,已推翻**。判据就是它自己
+  引的那个数:`(121,28)` 在 `demo.cyrm` 里**根本不是地板格**(实测 `is_floor_cell=false`、
+  `is_floor_cell_with_headroom=false`),而 `plan_spawns` **只可能产出地板格**(主池
+  `spawn_candidates()`、兜底 `floor_cells()`,两者都是地板格的子集)⇒ 那一跑的网格**就是
+  factory1v1**。(另:`maps/` 下只有 demo 与 factory1v1 两张图,没有第三个候选。)
+- **④ ★ 真因 = 当时的出生池缺陷,且已于 2026-09-19 修掉(`fc00db7`)—— 所以这条**不再是欠账**。**
+  那一跑是 **2026-09-17 23:19**(`.superpowers/sdd/rc1-final-fix-report.md` 与 `_run1_prefix.log`
+  仍在盘上;worker 29002,r1 出生格 `(121,28)`、r2 `(79,13)`)。当时 `OPEN_AREA_MIN = 20` 是
+  **绝对**阈值,而 factory1v1 的**最大**地板连通区只有 **13 格** ⇒ `spawn_candidates()` 前两档
+  **恒空**、池子**静默退化**成全部 **843** 个地板格(其中 155 个是孤立单格区)。实测 `(121,28)`:
+  连通区规模 = **4**,而今天 `area_threshold()` = 7 ⇒ **已被排除**;修复前它**在池里** ⇒
+  玩家生在 4 格小间里 = "卡在几何里一直落着"。(今天的池子是 122 格,不再退化成一档。)
+
+★ 剩下的**纯潜伏**部分:同一进程内**先后用两张不同的图**跑两次 `start_on` —— 今天没有这样的路径,
+也没有任何东西**禁止**它。真要收紧,判据该是"网格来自哪张图"(例如 `load_grid()` 记一个
 `current_grid_map`),**不是**把预载改成无条件 —— 那会让同一张图在 `start_on` 与
-`MatchHost._init` 里各解析一次(代价要先量)。与重连无关,另立评估。
+`MatchHost._init` 里各解析一次(代价要先量)。
 
 - **token 由大厅生成,不在 worker**:`NetBusExt` 的三条新 RPC(`session_token` / `report_token` / `reclaim_role`)+ `core/net/pvp_session.gd` 的 `token`/`worker_port`。★ **必须在 `go_match` 之前发**(`server/room_manager.gd`:spawn worker 之前就 `session_token`)—— go_match 一到客户端就 `NetBus.stop()` 断大厅,之后再发就**静默丢失**;客户端侧同款(`scenes/lobby_page.gd` 先进 `_pending_token`,配对成功时再落 `PvpSession`)。客户端 claim 之后经 `report_token` 报给 worker,worker **只归档不校验**(`server_main.gd:_on_token_reported`)—— 校验发生在宽限期里的 `reclaim_role`。★ **`go_match` / `claim_role` 的签名一律没动**:原 NetBus 与原版服务端逐字节一致是硬纪律(改 RPC 方法表 = 与它的所有 RPC 失联),故三条新 RPC 全在 `NetBusExt`;对原版 worker 本节点不存在 → 静默丢弃、优雅降级成"不能重连"。
 - **宽限期唯一入口 `GraceWindow.DEFAULT_SECONDS`**(`core/net/grace_window.gd`,当前 **60s**,纯逻辑、时间由调用方传入):掉线**不立刻移出**(大乱斗)/**不立刻退进程**(1v1),到点才走既有语义(`server_main._expire_graces` 每秒轮询)。1v1 那一支到点是"收场退进程" = **对手白拿这一段**(60s 下比 30s 更久)。★ 它同时是客户端重试预算的上界(`pvp_match_client._on_reconnect_retry_tick` 第一条判据读**同一个常量**),两处同源。
