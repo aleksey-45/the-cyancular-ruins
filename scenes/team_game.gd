@@ -68,6 +68,8 @@ func _ready() -> void:
 	NetBus.local_beam_fired.connect(_on_beam_fired)
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
+	NetBusExt.local_sub_destroyed.connect(_on_remote_sub_destroyed)
+	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)

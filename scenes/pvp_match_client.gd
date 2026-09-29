@@ -156,20 +156,70 @@ func _on_snapshot_own(own: Dictionary) -> void:
 
 # silent=true 用于"重连后补破坏态":那些砖是**掉线期间**被拆的,不是刚被拆的 ——
 # 逐格播碎片会变成一屏不该有的粒子(而且几十格同时炸)。
-func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
-	if _world == null:
-		TileDefs.damage_tile(cell, 999999, "explosion")
+# ── Beta 时间玩法:怀表 HUD(显示镜像;数值权威在服务器,10Hz 下发)──
+# SP 的 WatchHud 直读静态 Level0.grain_account —— PvP 侧就往这个静态挂一份**镜像账户**:
+# 服务器 time_state 到一帧,写字段一次,怀表自己会在 _process 里滚动/重绘。
+# ★ 只在 PvpSession.beta_mode 挂(普通联机/单机不受影响;单机那份由 Level0._ready 建)。
+var _time_mirror: GrainAccount = null
+var _time_watch: WatchHud = null
+
+func _setup_beta_time_hud() -> void:
+	if not PvpSession.beta_mode:
 		return
-	# 取被拆砖原纹理(决定碎片颜色:树叶绿/树干棕),再清砖
+	_time_watch = WatchHud.new()
+	_time_watch.position = Vector2(24.0, 124.0)   # 与单机同位:左上边距 (24,24) + 血条下方 +100
+	add_child(_time_watch)
+	NetBusExt.local_time_state.connect(_on_time_state)
+
+
+func _on_time_state(payload: Dictionary) -> void:
+	var m: Dictionary = payload.get(PvpSession.role, {})
+	if m.is_empty():
+		return
+	if _time_mirror == null:
+		_time_mirror = GrainAccount.new()
+		Level0.grain_account = _time_mirror
+		# WatchHud._ready 那会儿账户还没到(挂表早于首包)→ 它把自己藏了;首包到时点亮
+		if _time_watch != null:
+			_time_watch.visible = true
+	_time_mirror.cap = float(m.get("cap", 1800.0))
+	_time_mirror.window = float(m.get("win", 250.0))
+	_time_mirror.balance = float(m.get("b", 0.0))
+	_time_mirror.short_used = float(m.get("w", 0.0))
+	_time_mirror.loan_used = float(m.get("l", 0.0))
+	_time_mirror.locked = bool(m.get("k", false))
+
+
+func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
+	# cyrm v4:破坏按 16px 子格算 —— 一个 64px 格被拆 = 它的 16 个子格全灭。
+	# (老实现走 damage_tile 格级强拆,子格渲染/碰撞不清 → 客户端留幽灵墙。)
+	for sy in 4:
+		for sx in 4:
+			_on_remote_sub_destroyed(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), silent)
+	if silent or _world == null:
+		return
+	# 取被拆砖原纹理(决定碎片颜色:树叶绿/树干棕),再播碎片(只播视觉)
 	var tex := 0
-	var grid := MazeGenerator.current_grid
-	if not grid.is_empty() and cell.y >= 0 and cell.y < grid.size():
-		var row: Array = grid[cell.y]
-		if cell.x >= 0 and cell.x < row.size():
-			tex = MazeGenerator.texture_of(int(row[cell.x]))
-	TileDefs.damage_tile(cell, 999999, "explosion")
+	var sgrid := MazeGenerator.current_subgrid
+	if not sgrid.is_empty() and cell.y * 4 < sgrid.size():
+		var srow: Array = sgrid[cell.y * 4]
+		if cell.x * 4 < srow.size():
+			tex = int(srow[cell.x * 4])
+	var ts := GameParameters.TILE_SIZE
+	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
+
+
+# 单个 16px 子格被服务器摧毁:本地 HP/渲染/碰撞一并清(Level0 的 on_sub_destroyed 链)。
+# ★ silent 语义与 tile 版相同(重连补态不播碎片)。
+func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = true) -> void:
+	if _world == null:
+		TileDefs.damage_sub(sub, 999999, "explosion")
+		return
+	TileDefs.damage_sub(sub, 999999, "explosion")
 	if silent:
 		return
+	var tex := TileDefs.sub_texture(sub)
+	TileHitFx.spawn(_world, Vector2(sub.x * 16.0 + 8.0, sub.y * 16.0 + 8.0), tex)
 	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
 	var ts := GameParameters.TILE_SIZE
 	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)

@@ -103,6 +103,26 @@ func royale_start_ai() -> void:
 func royale_rooms(rooms: Array) -> void:
 	local_royale_rooms.emit(rooms)
 
+
+# ── Beta 时间玩法(P2,2026-09-29)──
+# 16px 子格被摧毁(cyrm v4):客户端清一个 16px 渲染格与本地预测碰撞(与 tile_destroyed 同链路,
+# 只是粒度细到子格)。
+signal local_sub_destroyed(sub: Vector2i)
+
+
+@rpc("authority", "reliable")
+func sub_destroyed(sub: Vector2i) -> void:
+	local_sub_destroyed.emit(sub)
+
+
+# 每 role 的颗粒状态(余额/短时窗/贷款/锁定),约 10Hz —— HUD 怀表的显示镜像。
+signal local_time_state(payload: Dictionary)
+
+
+@rpc("authority", "reliable")
+func time_state(payload: Dictionary) -> void:
+	local_time_state.emit(payload)
+
 # 大厅 → 客户端:所在房间实时状态 {code, is_public, invite_code, max_players, host_role,
 #   players: [{role, name}], in_match}(等待室 UI 靠它刷新;仅发给房内成员)
 @rpc("authority", "reliable")

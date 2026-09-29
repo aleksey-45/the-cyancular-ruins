@@ -66,6 +66,7 @@ func _ready() -> void:
 	NetBus.local_beam_fired.connect(_on_beam_fired)   # 大乱斗非射手端激光视觉副本(与 pvp_client 同款)
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
+	NetBusExt.local_sub_destroyed.connect(_on_remote_sub_destroyed)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
@@ -89,6 +90,7 @@ func _ready() -> void:
 	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,见 tests/hud_declarative_probe)。
 	_hud = preload("res://ui/royale_hud.tscn").instantiate() as RoyaleHud
 	add_child(_hud)
+	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
 	_pause_menu = PauseMenu.new(true)
 	# 本地输入锁必须宿主接线:PvP 不暂停树,不锁就是"菜单开着还能边跑边开枪"。
 	# 这一条被 set_server_rendered 掩盖过一整个阶段 —— 服务器渲染下本地玩家本就不走输入物理,

@@ -175,3 +175,11 @@ structure-editor.html 已退休)。
 - **独立房间池**(判据三件套,双侧):①创建载荷带 `{"beta":true,"time":{...}}`(`_beta_payload()`,普通态空合入);②`royale_join/team_join` **签名加第 4 参 beta**,服务器双向拒(普通页进 Beta 房 / Beta 页进普通房各一条文案);③列表载荷带 `beta` 字段,客户端按 `PvpSession.beta_mode` 过滤(royale 在循环内 continue,team 用 filter 后的 `visible_rooms`)。1v1(`join_room`)与普通模式行为零变化。
 - **跟随改的调用点**:`tests/lobby_visibility_probe`(royale/team join 直调补 `false`)、`tests/royale_bound_probe`(同);`kh_l1_probe` 只查方法名,不受影响。★ `royale_bound_probe` 在本机当前负载下**基线也超时**(stash 对照过),判环境问题非回归。
 - **探针**:`-- --autotest-beta`(主菜单→Beta 页:两卡/名字/版本号在→点错乱大乱斗→royale_lobby 且 beta_mode=真→时间参数 9 行滑条在→`_player_options()` 带 time)全绿;`autotest-royale/team/mp` 与 `kh_l1/lobby_visibility` 全绿;--import 零错误。
+
+### B21(P2 第三批,已完成):服务器权威颗粒经济 + 拆砖事件修复
+- **`server/time_economy.gd`**(新):每 role 一份 `GrainAccount`(规则来自房主 options["time"] → `TimeRules.from_dict`)+ 四条缝 —— `award_kill`(得被击杀者余额×比例,被击杀者不减)/`award_damage`(每点×4,归因口径 = TeamHost 逐人伤害同源:meta last_damager + ATTRIB_WINDOW 新鲜度,自伤/归因不到/同队谁都不给)/`award_blocks`(每 16px 子格 ×10)/`tick`(回复)。纯逻辑,-s 可测。
+- **宿主接线**:`MatchHost._init` 建 economy(options["time"] 非空;普通局恒 null 全短路)·`_physics_process` tick + 10Hz `_rpc_all_ext("time_state")` · `MatchCombat._on_player_hit` 伤害入账(基类一处钩住三宿主;`MatchState._fresh_attacker_role` 上提)· 击杀入账挂 RoyaleHost 倒地边沿与 TeamHost._record_down 异队分支 · 拆砖入账挂 `_on_sub_destroyed`。
+- **★ 修了 B18 的 PvP 回归**:worker 此前只连格级 `on_destroyed`,而 B18 后破坏走 `damage_sub` → **子格破坏事件从不广播**(客户端幽灵墙 + 本地预测与服务端碰撞分歧)。现在 `damage_sub` 带第 4 参 `owner`(射手节点,`on_sub_destroyed(sub, pre_hp, owner)` 三参回调),worker 连子格回调(清 16px 持久子格 + 脏块 + `NetBusExt.sub_destroyed` 广播 + 拆砖入账),客户端 `pvp_match_client._on_remote_sub_destroyed` 清本地渲染/碰撞;`_on_remote_tile_destroyed`(格级,重连补态/老路径)改为拆 16 子格。
+- **协议**:新 RPC 全在 **NetBusExt**(纪律:原 NetBus 逐字节不动,防与原版大厅失联):`sub_destroyed(sub)` / `time_state(payload)`(authority,reliable)+ `_rpc_all_ext`。
+- **客户端怀表**:`PvpMatchClient._setup_beta_time_hud()`(royale/team 两对局场景在 HUD 后调用;beta_mode 自短路)——挂 WatchHud(与单机同位 24,124)到 `Level0.grain_account` 的**镜像账户**;`time_state` 每包写字段,怀表自滚动。普通联机/单机零影响。
+- **探针**:`tests/time_economy_smoke.gd`(-s:四缝公式 + 过滤口径 + 夹上限)全绿;time_rules/grain_account/subcell/map_v4 与 autotest-beta/sp 回归全绿。

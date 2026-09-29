@@ -7,6 +7,10 @@ extends MatchRound
 #   match_snapshot / match_combat / match_round / match_state 里,见基类注释。
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
+const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
+
+var _time_sync := 0.0
+
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}) -> void:
 	_options = options
@@ -16,6 +20,15 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	for v in raw_disabled:
 		_disabled_weapons.append(int(v))
 	_ai_roles = ai_roles
+	# Beta 时间玩法(B21):房主 options 带 time 规则(建房页 9 项) ⇒ 建服务器权威颗粒经济。
+	# 普通局 options["time"] 为空 → time_economy 恒 null,一切结算/广播短路,行为零变化。
+	var time_dict: Dictionary = options.get("time", {})
+	if not time_dict.is_empty():
+		time_economy = TimeEconomy.new(TimeRules.from_dict(time_dict))
+		for role in role_peers:
+			time_economy.add_role(int(role))
+		for r in ai_roles:
+			time_economy.add_role(int(r))
 	MazeGenerator.set_map_file(map_path)
 	# 建世界:碰撞 + 瓦片属性(不渲染)。服务器进程走场景模式,autoload/静态类已就绪。
 	grid = WorldBuilder.load_grid()
@@ -24,7 +37,12 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		return
 	_base_grid = MazeGenerator.copy_grid(grid)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
+	# cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连**子格**回调,否则客户端永远收不到
+	# 拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。格级 on_destroyed 保留,
+	# 供 _debug_destroy_tile / 复位那条 damage_tile 老路径。
+	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
 	TileDefs.init_hp(grid)
+	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	destructible_sub = WorldBuilder.build_sim(self, grid)
 	# PvP 权威对局:取消命中无敌帧(每发结算一次);双方玩家(层2)互相物理碰撞
 	CombatComponent.pvp_arena = true
@@ -182,6 +200,13 @@ func _physics_process(delta: float) -> void:
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0
 		_broadcast_snapshot()
+	# Beta 时间玩法:账户回复 + 10Hz 显示镜像(怀表 HUD)。可靠通道:数值承诺,丢包会自愈。
+	if time_economy != null:
+		time_economy.tick(delta)
+		_time_sync -= delta
+		if _time_sync <= 0.0:
+			_time_sync = TIME_SYNC_INTERVAL
+			_rpc_all_ext("time_state", [time_economy.state_payload()])
 	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
 	# 每 tick 每 role 恰好消费一个 FIFO 包(最早的)→ 权威模拟与客户端重放 1:1 同序;
 	# 队列空 = 缺包,沿用上一包 held/轴(PacketInputSource.clear_edges 不清 held)。
