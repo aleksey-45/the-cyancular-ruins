@@ -13,11 +13,10 @@ var _time_sync := 0.0
 # ── Beta 回溯(每 role 自身;他人不受影响)──
 const RW_SNAP_DT := 1.0 / 20.0     # 自身状态采样间隔(20Hz,与单机 WorldRewind 同款)
 var _rw_buf: Dictionary = {}       # role -> Array[帧快照](t 升序;只存**自己**的状态+自己的子弹)
-var _rw_on: Dictionary = {}        # role -> bool(回溯中)
 var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
-var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
 var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
 var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
+# _rw_on / _rw_trail 住基类 MatchState(快照域要读)
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}) -> void:
@@ -215,7 +214,7 @@ func _physics_process(delta: float) -> void:
 			if acc == null or p == null:
 				continue
 			var src: PacketInputSource = input_sources[role]
-			var on := src.haste_held() and acc.can_spend()
+			var on: bool = src.haste_held() and acc.can_spend()
 			if on:
 				var burn: float = time_economy.rules.haste_burn * delta
 				if acc.spend(delta, time_economy.rules.haste_burn) < burn * 0.999:
@@ -310,7 +309,8 @@ func _tick_beta_rewind(delta: float) -> void:
 		var acc := time_economy.accounts.get(r) as GrainAccount
 		if p == null or src == null or acc == null:
 			continue
-		var want := src.rewind_held() and acc.can_spend() and not p.is_downed()
+		# 显式类型:time_economy 无类型字段链式取值推不出;且 p 的 is_downed() 返回 Variant
+		var want: bool = src.rewind_held() and acc.can_spend() and not p.is_downed()
 		var on := bool(_rw_on.get(r, false))
 		if want and not on:
 			src.frozen = true
@@ -395,7 +395,7 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 		_rw_buf[r] = []
 	var buf: Array = _rw_buf[r]
 	buf.append(d)
-	var depth := time_economy.rules.rewind_buffer_seconds()
+	var depth: float = time_economy.rules.rewind_buffer_seconds()
 	while buf.size() > 2 and float(buf[0]["t"]) < float(buf[buf.size() - 1]["t"]) - depth:
 		buf.pop_front()
 

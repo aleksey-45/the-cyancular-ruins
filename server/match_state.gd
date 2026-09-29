@@ -35,6 +35,11 @@ var _team_of: Dictionary = {}
 # 宿主 _init 时若房主 options 带 time 规则则建(见 MatchHost._init)。
 var time_economy = null
 
+# Beta 回溯的会话态(声明在基类:快照域 MatchSnapshot 要读 _rw_on/_rw_trail,
+# 基类引用子类符号在 GDScript 编译期解析不了 —— 与 time_economy 同一住法)。
+var _rw_on: Dictionary = {}        # role -> bool(回溯中)
+var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
+
 
 # 受害者 meta 里的"最近攻击者" → role(带新鲜度窗口;超窗/自伤/不在表 → 0)。
 # 语义与 TeamHost._attributed_role_within 同源 —— 上提到基类给时间经济的伤害入账用
