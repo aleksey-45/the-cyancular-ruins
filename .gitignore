@@ -42,5 +42,3 @@ DevTools/
 gamelogs/
 .zcode/
 .mimosa/
-# 旧版本 exe 留档(2026-09-29 起;根目录只留两个固定名成品)
-history/
