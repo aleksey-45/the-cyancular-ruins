@@ -30,6 +30,15 @@ extends Node
 const ROOM_1V1 := "9001"
 const ROOM_ROYALE := "9002"
 const ROOM_TEAM := "9003"
+# 私密房那两间(相⑨;B1 甲案)。★ 房号与上面三间**不重号**是有意的:三张注册表的房号空间
+# 本来就是重叠的(见 RejoinRegistry.drop_port 的注释),本相要判的是"谁的凭据",不是房号。
+const ROOM_PRIV_ROYALE := "9004"
+const ROOM_PRIV_TEAM := "9005"
+# 相⑨ 用的假凭据(房号 = 它自己那一间的 code;`owns` 判的就是这个)
+const TK_MINE := "tk-mine"       # → 大乱斗私密房
+const TK_MINE_T := "tk-mine-t"   # → 3v3 私密房
+const TK_OTHER := "tk-other"     # → **公开**房 9002(一份合法但不属于私密房的凭据)
+const TK_STALE := "tk-stale"     # → 大乱斗私密房,但**已过期**
 const P_A := 101     # 假 peer id:本探针不开 socket,这些数字只用来占位
 const P_B := 102
 const P_C := 103
@@ -45,7 +54,8 @@ const P_C := 103
 #     的断言,而"connect 那行被删"这一档**三条都照绿**(见 `_phase_rejoin` 的函数头)。
 #   ★ ⑧ 是**一条聚合**断言(内部三页逐页核对、失败时逐页点名),**不是三条** —— 相⑧要断的是
 #     三页共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
-const EXPECTED_CHECKS := 38
+#   ★ 相⑨(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
+const EXPECTED_CHECKS := 45
 
 var _rm: Node = null
 var _checks := 0
@@ -75,6 +85,7 @@ func _ready() -> void:
 	_phase_rejoin()
 	_phase_session_flags()
 	_phase_own_row_clickable()
+	_phase_private_own_room()
 	_finish()
 
 
@@ -306,6 +317,75 @@ func _phase_session_flags() -> void:
 			and PvpSession.room_code == "" and not PvpSession.rejoin,
 			"⑦ ★ clear_rejoin() 必须把四个字段一起清(漏一个就是「那一行永远可点」)")
 	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]; PvpSession.room_code = keep[2]
+
+
+# ── ⑨ 私密房:**只对本人**列出(B1 甲案,2026-09-29)──
+# 守的是什么:私密房此前一律 `continue` ⇒ 在私密房里打到一半按 ESC 回主菜单的玩家
+# **列表里没有那一行**,回局入口整个不存在(而凭据其实还在他手里、大厅也会放行)。
+# 现在改成「不是公开房 ⇒ 再看这份 token 的凭据是不是**这一间房**的」。
+#
+# ★★ 为什么必须有本相:这一条改动**只在「私密房 + 持凭据的本人」这个组合上**与从前不同,
+#   而**既有每一相用的都是公开房与无凭据的第三人** ⇒ 判据写错时它们**全都照绿**。
+#   四种真实错法各有各的假绿:
+#     · 把门槛写成 `not is_public or not owns`(私密房永远不列)—— 相①②③ 照绿;
+#     · 干脆去掉 `is_public` 那一句(私密房对**所有人**列出 = "私密"没了)—— 相①②③ 照绿;
+#     · `owns` 恒真(谁的凭据都放行)—— 相①②③ 照绿;
+#     · 只改了大乱斗、漏了 3v3 —— 相②③ 照绿(它们各测各的)。
+#   ⇒ 下面 7 条把这几档逐个分开:无凭据 / 别人的凭据 / 本人的凭据 / 过期凭据 /
+#     **正向对照**(公开房对无凭据者照列)/ 3v3 同款。
+# ★ 正向对照那一条不是客套:没有它,一个"把两份载荷都改成 return []"的实现能过前五条。
+func _phase_private_own_room() -> void:
+	var now := Time.get_ticks_msec()
+	# 两间私密房都设成**对局中**:凭据只在开局(worker 拉起成功)那一刻才发得出来,
+	# 而"私密房 + 回局"这个组合本身就意味着这一局已经开打了。
+	var rr := LobbyRooms.RoyaleRoom.new()
+	rr.code = ROOM_PRIV_ROYALE
+	rr.is_public = false
+	rr.max_players = 8
+	rr.in_match = true
+	rr.worker_port = 29904
+	rr.roster = [{"role": 1, "name": "阿甲"}]
+	_rm.lobby.royale_rooms[rr.code] = rr
+
+	var tr := LobbyRooms.TeamRoom.new()
+	tr.code = ROOM_PRIV_TEAM
+	tr.is_public = false
+	tr.in_match = true
+	tr.worker_port = 29905
+	tr.roster = [{"role": 1, "name": "阿甲"}]
+	_rm.lobby.team_rooms[tr.code] = tr
+
+	# 凭据:`owns` 只看 TTL,故过期那一份要把 `now_ms` 推到 TTL 之外(用真常量算,不写死数字)
+	_rm.lobby.rejoin.grant(TK_MINE, ROOM_PRIV_ROYALE, 1, 29904, 12345, now)
+	_rm.lobby.rejoin.grant(TK_MINE_T, ROOM_PRIV_TEAM, 1, 29905, 12345, now)
+	_rm.lobby.rejoin.grant(TK_OTHER, ROOM_ROYALE, 1, 29902, 12345, now)
+	_rm.lobby.rejoin.grant(TK_STALE, ROOM_PRIV_ROYALE, 1, 29904, 12345,
+			now - int(RejoinRegistry.TOKEN_TTL_SECONDS * 1000.0) - 1)
+
+	_check(_find_row(_rm.lobby.royale_list_payload(), ROOM_PRIV_ROYALE).is_empty(),
+			"⑨ 私密房对**无凭据者**不列(第三人看不到 —— 「私密」这个语义本身)")
+	_check(_find_row(_rm.lobby.royale_list_payload(TK_OTHER), ROOM_PRIV_ROYALE).is_empty(),
+			"⑨ 私密房对**别人的**凭据不列(一份合法但不属于这一间的凭据;`owns` 的房号那半)")
+	var mine := _find_row(_rm.lobby.royale_list_payload(TK_MINE), ROOM_PRIV_ROYALE)
+	_check(not mine.is_empty(),
+			"⑨ ★★ 私密房对**本人的**凭据**要列出来**(就是本条欠账:B1 之前一律不列 ⇒"
+			+ " 私密房玩家按 ESC 回主菜单后没有那一行可点,回局入口整个不存在)")
+	_check(not mine.is_empty() and bool(mine.get("in_match", false))
+			and mine.get("names", []) == ["阿甲"],
+			"⑨ 本人那一行与公开房同款(in_match=true、名单取自冻结的 roster)")
+	_check(_find_row(_rm.lobby.royale_list_payload(TK_STALE), ROOM_PRIV_ROYALE).is_empty(),
+			"⑨ 过期凭据不列(owns 走 lookup ⇒ 过期当不存在;凭据表的 GC 上界是"
+			+ " RejoinRegistry.TOKEN_TTL_SECONDS)")
+	_check(not _find_row(_rm.lobby.royale_list_payload(), ROOM_ROYALE).is_empty(),
+			"⑨ 正向对照:**公开**房对无凭据者照列(没有这一条,一个『两份载荷都 return []』"
+			+ "的实现能过上面五条)")
+	_check(not _find_row(_rm.lobby.team_list_payload(TK_MINE_T), ROOM_PRIV_TEAM).is_empty()
+			and _find_row(_rm.lobby.team_list_payload(), ROOM_PRIV_TEAM).is_empty(),
+			"⑨ ★ 3v3 同款:私密房只对本人列出(只改大乱斗、漏改 3v3 = 静默半边)")
+
+	# 收尾:本相往凭据表里塞了四份,后面的相/别的探针不该看见它们(表是共享的)
+	for tk in [TK_MINE, TK_MINE_T, TK_OTHER, TK_STALE]:
+		_rm.lobby.rejoin.drop_token(tk)
 
 
 func _find_row(arr: Array, code: String) -> Dictionary:

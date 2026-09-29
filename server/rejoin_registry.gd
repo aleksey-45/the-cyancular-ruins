@@ -64,6 +64,28 @@ static func decision(entry: Dictionary, code: String, worker_alive: bool) -> Str
 	return ""
 
 
+# 这份凭据是不是**这一间房**的 —— 「只对本人列出他自己的私密房」用的判据(2026-09-29,B1 甲案)。
+# ★ 为什么身份只能靠凭据、不能靠 peer:私密房玩家按 ESC 回主菜单再进大厅页时是一条**新连接**
+#   (转连 worker 时大厅那条早就断了),而 `players` 也在 `on_peer_left` 里被摘干净
+#   (见那句 `if rr.in_match: continue` 上方的注释)—— 大厅侧**没有任何** peer → 房的记录。
+#   凭据表是唯一"这个人 = 这一局的那个人"的证据(`rejoin_request` 走的也是它)。
+# ★ **只看 TTL、不看 worker 活性**(与 `decision()` 不同):列表只是"要不要给你看那一行",
+#   而"这局还在不在"由点下去那一刻的 `decision()` 回答。这里多判一次活性的唯一效果是
+#   让那一行在房被回收(≤30s 的梯)之前提前消失,而**漏判**的效果只是短暂出现一行点下去
+#   会被拒的房 —— 后者本来就已经登记为已知边界(回局只在宽限期内真正成功)。
+# ★ `token` 为空一律 false:`PvpSession.token` 的默认值就是 `""`。
+#   ★★ **这一条今天是一根保险带,不是承重件**(照实写清楚,免得后人拿它当证据):表里
+#      **根本不会有空键**(`grant` 的 token 来自 `LobbyRooms.new_token()` 的 16 位 hex)⇒
+#      删掉这个早退,`lookup("")` 返回空字典、下面那行照样给出 false,**行为逐字不变**。
+#      它挡的是**将来**那类写法 —— 例如 `return str(lookup(...).get("code", code)) == code`
+#      (缺省值取 `code` 的那种),那时空 token 会返回 true。
+func owns(token: String, code: String, now_ms: int) -> bool:
+	if token.is_empty():
+		return false
+	var e := lookup(token, now_ms)
+	return not e.is_empty() and str(e.get("code", "")) == code
+
+
 func drop_token(token: String) -> void:
 	_by_token.erase(token)
 

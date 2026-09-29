@@ -16,7 +16,7 @@ extends SceneTree
 #   整段被删掉时上面一条 fails 都不会有,于是静默打印 ALL-OK。故每段开头 `_ran += 1`,
 #   收尾核对段数与 `_SECTIONS` 相符,并把实际段数打进裁决里。
 
-const _SECTIONS := 7     # ① ② ②b ③ ④ ⑤ ⑥
+const _SECTIONS := 8     # ① ② ②b ③ ④ ⑤ ⑥ ⑦(⑦ = owns,B1 甲案)
 
 var _ran := 0
 
@@ -145,6 +145,28 @@ func _initialize() -> void:
 		fails.append("drop_token 之后不该还查得到")
 	if r.lookup("tk_d", 0).is_empty():
 		fails.append("★ drop_token 不得误伤别的凭据")
+
+	# ── ⑦ owns:「这份凭据是不是**这一间房**的」(B1 甲案:私密房只对本人列出)──
+	# ★ 它和 `decision()` 是**两个不同的问法**,别合并:`decision` 问"能不能放他进去"
+	#   (还要 worker 活着),`owns` 只问"这份凭据属不属于这间房" —— 列表**只该问后者**
+	#   (见 owns 的注释:多判一次 worker 活性只会让那一行提前消失)。
+	# ★ 三种假绿都是静默的:恒 true(私密房对所有人列出 = "私密"没了)、恒 false
+	#   (私密房永远不列 = B1 没做)、只看 token 非空(同号房的凭据也放行)。三条各断一次。
+	_ran += 1
+	r.grant("tk_own", "1234", 1, 29005, 4246, 0)
+	if not r.owns("tk_own", "1234", 0):
+		fails.append("★ owns:属于自己的那一间房必须 true(否 = 私密房永远不列 = B1 没做)")
+	if r.owns("tk_own", "9999", 0):
+		fails.append("★ owns:房号不符必须 false(否则同号的另一间房的凭据也放行)")
+	# ★ 下面这一条**今天是一根保险带**:删掉 `owns` 里那个 `token.is_empty()` 早退,
+	#   它还照样是 false(表里根本不会有空键);它挡的是"缺省值取 code"那类将来写法。
+	#   留着是因为它便宜且描述的是契约,但**别把它读成"早退是承重的"**。
+	if r.owns("", "1234", 0):
+		fails.append("★ owns:空 token 必须 false(`PvpSession.token` 的默认值就是空串)")
+	if r.owns("tk_nonexistent", "1234", 0):
+		fails.append("owns:表里没有的 token 必须 false")
+	if r.owns("tk_own", "1234", ttl + 1):
+		fails.append("★ owns:过期凭据必须 false(它走 lookup ⇒ 过期当不存在,与 ② 同口径)")
 
 	# ── 覆盖核对 ──
 	if _ran != _SECTIONS:

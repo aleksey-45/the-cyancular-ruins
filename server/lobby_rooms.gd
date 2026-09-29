@@ -512,14 +512,23 @@ func royale_leave(caller: int) -> void:
 		if not rr.in_match:
 			_broadcast_royale_state(rr)
 
-# 公开房间列表的**纯构造**(理由同 room_list_payload:无对端时 reply 静默跳过 ⇒ 不抽出来
+# 房间列表的**纯构造**(理由同 room_list_payload:无对端时 reply 静默跳过 ⇒ 不抽出来
 # 探针观测不到)。★ 只列**公开**房;`in_match` 的房**照列**(第三人要看得见),未开局的空房
 # 仍不列(那是幽灵房)。
-func royale_list_payload() -> Array:
+#
+# ★★ `token` 是 2026-09-29 加的(未认领欠账 B1,**用户裁定甲案**):私密房**只对本人**列出。
+#   此前私密房一律 `continue` ⇒ 在私密房里打到一半按 ESC 回主菜单的玩家**列表里没有那一行**,
+#   回局入口整个不存在(而凭据其实还在他手里、大厅也会放行)。判据 = 这份 token 的凭据
+#   **正是这一间房**的(`RejoinRegistry.owns` —— 为什么身份只能靠凭据不靠 peer,见那里的注释)。
+# ★ 默认 `""` ⇒ 不传 = 与从前**逐字相同**的行为(第三人、以及所有既有探针/冒烟调用点)。
+#   留默认值不是客套:改载荷签名会连带改掉每一个调用点与探针,而"不传就是老行为"让
+#   改动面**只剩两个真实调用点**(下面那两个 handler)。
+func royale_list_payload(token: String = "") -> Array:
+	var now := Time.get_ticks_msec()
 	var arr: Array = []
 	for code in royale_rooms:
 		var rr: RoyaleRoom = royale_rooms[code]
-		if not rr.is_public:
+		if not rr.is_public and not rejoin.owns(token, code, now):
 			continue
 		if rr.in_match:
 			var dn: Array = []
@@ -538,12 +547,12 @@ func royale_list_payload() -> Array:
 	return arr
 
 
-func royale_list(caller: int) -> void:
+func royale_list(caller: int, token: String = "") -> void:
 	# 判活同 NetBus.reply:请求与断开可能挤在同一次 poll 里(见 NetBus.reply 的注释)。
 	# 本节点(NetBusExt)没有自己的 reply 助手 —— 判据是**跨节点的单一来源**(NetBus.is_peer_live),
 	# 所以这里显式判一次;大厅里其余 NetBusExt 站定走的是 `is_peer_online` 包一层。
 	if NetBus.is_peer_live(caller):
-		NetBusExt.rpc_id(caller, "royale_rooms", royale_list_payload())
+		NetBusExt.rpc_id(caller, "royale_rooms", royale_list_payload(token))
 
 #  精确且不需要任何特例函数。见 server_main.gd 文件头。)
 
@@ -695,12 +704,14 @@ func team_leave(caller: int) -> void:
 			_broadcast_team_state(tr)
 
 
-# 公开 3v3 房间列表的**纯构造**(与 royale_list_payload 逐字同款,`max_players` 取 TEAM_ROLES)
-func team_list_payload() -> Array:
+# 3v3 房间列表的**纯构造**(与 royale_list_payload 逐字同款,`max_players` 取 TEAM_ROLES;
+# `token` 那一档的来历与理由也见它 —— 私密房只对本人列出,B1 甲案)
+func team_list_payload(token: String = "") -> Array:
+	var now := Time.get_ticks_msec()
 	var arr: Array = []
 	for c in team_rooms:
 		var tr: TeamRoom = team_rooms[c]
-		if not tr.is_public:
+		if not tr.is_public and not rejoin.owns(token, c, now):
 			continue
 		if tr.in_match:
 			var dn: Array = []
@@ -719,10 +730,10 @@ func team_list_payload() -> Array:
 	return arr
 
 
-func team_list(caller: int) -> void:
+func team_list(caller: int, token: String = "") -> void:
 	# 判活同 royale_list:请求与断开可能挤在同一次 poll 里(见 NetBus.reply 的注释)。
 	if NetBus.is_peer_live(caller):
-		NetBusExt.rpc_id(caller, "team_rooms", team_list_payload())
+		NetBusExt.rpc_id(caller, "team_rooms", team_list_payload(token))
 
 
 # ── 回大厅后回局(spec §3.4 路径乙)──

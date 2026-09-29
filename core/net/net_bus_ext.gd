@@ -55,7 +55,7 @@ func suicide_request() -> void:
 signal royale_create_requested(caller: int, opts: Dictionary)
 signal royale_join_requested(caller: int, code: String, invite: String)
 signal royale_leave_requested(caller: int)
-signal royale_list_requested(caller: int)
+signal royale_list_requested(caller: int, token: String)
 signal royale_start_requested(caller: int)
 signal ai_duel_requested(caller: int)             # 1v1:房主请求与 AI 对战(实验性)
 signal royale_start_ai_requested(caller: int)     # 大乱斗:房主请求 AI 补位开局(实验性)
@@ -78,10 +78,16 @@ func royale_join(code: String, invite: String) -> void:
 func royale_leave() -> void:
 	royale_leave_requested.emit(multiplayer.get_remote_sender_id())
 
-# 客户端 → 大厅:请求公开大乱斗房间列表
+# 客户端 → 大厅:请求大乱斗房间列表
+# ★ `token`(2026-09-29,B1 甲案)= 本端手里的**回局凭据**(没有就是 "")。大厅据此把
+#   "**本人自己那间私密房**"也列给他(B1 之前私密房一律不列 ⇒ 私密房里回主菜单的玩家
+#   没有回局入口)。它**不是**身份认证 —— 列表只是一个显示面,真正的准入由
+#   `rejoin_request` 的 `RejoinRegistry.decision` 判。
+# ★ 加参数 = 改 **NetBusExt** 的方法表,**可以**:本类是本仓自己的扩展协议(对原版 worker
+#   整个节点不存在 ⇒ 扩展 RPC 静默丢弃、优雅降级)。原版 `NetBus` 的方法表**一个字没动**。
 @rpc("any_peer", "reliable")
-func royale_list() -> void:
-	royale_list_requested.emit(multiplayer.get_remote_sender_id())
+func royale_list(token: String) -> void:
+	royale_list_requested.emit(multiplayer.get_remote_sender_id(), token)
 
 # 客户端 → 大厅:房主请求开局(仅房主有效;人数 ≥2 才开)
 @rpc("any_peer", "reliable")
@@ -119,7 +125,7 @@ signal team_join_requested(caller: int, code: String, invite: String)
 signal team_pick_requested(caller: int, team: int)
 signal team_leave_requested(caller: int)
 signal team_start_requested(caller: int)
-signal team_list_requested(caller: int)           # 客户端请求公开 3v3 房间列表(照 royale_list 那一对)
+signal team_list_requested(caller: int, token: String)   # 请求 3v3 房间列表(token 同上,照 royale_list 那一对)
 signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:公开 3v3 房间列表
 signal local_team_room_state(state: Dictionary)   # 大厅 → 客户端:房间实时状态(等待室/选边)
 
@@ -148,10 +154,10 @@ func team_leave() -> void:
 func team_start() -> void:
 	team_start_requested.emit(multiplayer.get_remote_sender_id())
 
-# 客户端 → 大厅:请求公开 3v3 房间列表(大厅回 team_rooms)
+# 客户端 → 大厅:请求 3v3 房间列表(大厅回 team_rooms;`token` 的来历见 royale_list)
 @rpc("any_peer", "reliable")
-func team_list() -> void:
-	team_list_requested.emit(multiplayer.get_remote_sender_id())
+func team_list(token: String) -> void:
+	team_list_requested.emit(multiplayer.get_remote_sender_id(), token)
 
 # 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")

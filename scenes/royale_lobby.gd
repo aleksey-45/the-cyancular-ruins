@@ -415,7 +415,10 @@ func _lobby_action_allowed() -> bool:
 
 
 func _send_list_request() -> void:
-	NetBusExt.rpc_id(1, "royale_list")
+	# ★ 带上本端手里的回局凭据(B1 甲案):大厅据此把"本人自己那间**私密房**"也列出来
+	#   —— 否则私密房里按 ESC 回主菜单的玩家在列表里找不到那一行,回局入口整个不存在。
+	#   没有凭据时它就是 `""`,与从前逐字相同(PvpSession.token 的默认值)。
+	NetBusExt.rpc_id(1, "royale_list", PvpSession.token)
 
 
 # 大乱斗多一项 match_time(一局限时),回合回血恒 false(大乱斗规则里没有回合)
