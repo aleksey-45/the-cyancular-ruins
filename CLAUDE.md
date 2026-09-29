@@ -325,13 +325,22 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
 过 `demo.cyrm`、再 `set_map_file("factory1v1")` + `refresh_map_size()` ⇒ 预载**被跳过**,
 `current_grid` 停在 demo 的 **125×75** 而 `GameParameters` 已是 factory 的 **150×100**,
 `plan_spawns` 于是从 **demo 的地形**里取散点(实测取到 `(40,30)`/`(90,18)`,其中一格在
-factory 里是**实心格**)。**可达性**审计:全仓给 `MazeGenerator.current_grid` 赋值的生产点只有
-`WorldBuilder.load_grid()` / `level_0.gd`(单机+客户端,`_ready` 里**无条件**走 `load_grid()`)
-/ `match_round.gd`(每局还原基线,同一张图);而 `server/` 下 `load_grid()` 的四个调用点里,
-`MatchHost._init` / `RoyaleHost._init` / `TeamHost._init` 都在 `start_on` **之后**,
-`_begin_match` 又有 `_match_started or _host != null` 的重入守卫 ⇒ **一个 worker 一局一进程、
-`start_on` 之前没有任何东西加载过网格** ⇒ 今天不可达。⇒ 它是一条**潜伏**的不变量缺口,
-不是当前故障;真要收紧,判据应当是"网格来自哪张图"(例如 `load_grid()` 记一个
+factory 里是**实心格**)。
+★ **生产路径上没有复现** —— 这是**跑出来的**,不是"grep 没找到"(2026-09-29 补测:临时插桩
+`RoyaleHost.start_on` + 拉一个真 `--worker --royale` 子进程 + 一个真 ENet 客户端 claim role 1
+让它开局,读它自己的日志):
+`[c1] start_on:预载被跳过=false; 之前 current_grid=0 _picked_map=res://maps/factory1v1.cyrm`
+⇒ 进 `start_on` 时网格**是空的**、预载那一支**确实被走到**。**为什么**:全仓给
+`MazeGenerator.current_grid` 赋值的生产点只有 `WorldBuilder.load_grid()` / `level_0.gd`(单机与
+客户端,`_ready` 里**无条件**走它)/ `match_round.gd`(每局还原基线,同一张图);而 `server/` 下
+`load_grid()` 的四个调用点里,`MatchHost._init` / `RoyaleHost._init` / `TeamHost._init` 都在
+`start_on` **之后**,`_begin_match` 又有 `_match_started or _host != null` 的重入守卫。
+★★ **但"没复现"不等于"原始那次观察被解释了"** —— 它**仍然没有解释**(计划原文写的就是"疑似")。
+上面这条实测只排除了「worker 开局这一条路」,而阶段 1 那次是在**真链路探针跑批**里看到的,
+那批里还有别的动网格的代码(`tests/*_probe` 大量直接写 `current_grid`、`squash_*`/`laser_team`
+等探针自己 `_build_grid()`)。要定性就得回到那一跑的具体现场,**本轮没做**。
+★ 仍未闭合的部分:同一进程内**先后用两张不同的图**跑两次 `start_on` —— 今天没有这样的路径,
+但也没有任何东西**禁止**它。真要收紧,判据应当是"网格来自哪张图"(例如 `load_grid()` 记一个
 `current_grid_map`),**不是**把预载改成无条件 —— 那会让同一张图在 `start_on` 与
 `MatchHost._init` 里各解析一次(代价要先量)。与重连无关,另立评估。
 

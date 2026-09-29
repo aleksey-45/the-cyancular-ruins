@@ -146,7 +146,7 @@
 | A7 `_bright_in` 阈值 | **已做**(改成相对底板量,合成图变异实测) | `aa234cd` |
 | B1 私密房回局入口 | 用户裁定 **甲**,**已落地**(载荷带 token + `RejoinRegistry.owns` + 相⑨/段⑦) | `959d405` |
 | B2 弹数纠正路径 | 本轮不做(C 档,已登记) | (无) |
-| C1 `RoyaleHost.start_on` 网格预载 | **已复现机制、定性为"今天不可达、条件式是潜伏的"**;未改代码。见下 | (文档) |
+| C1 `RoyaleHost.start_on` 网格预载 | **机制已复现;生产路径**实测**未复现(真 worker,预载那一支被走到、网格为空);原始观察仍待解释**;未改代码。见下 | (文档) |
 | D1 引擎 `max channels: 0` | 不做(从 GDScript 够不着) | (无) |
 
 ### ★ A4 是**伪欠账**(实读后推翻)
@@ -169,14 +169,27 @@
 **demo 的地形**里取散点(实测 `(40,30)` / `(90,18)`,其中一格在 factory1v1 里是**实心格** ——
 出生即卡在几何里)。这与阶段 1 那次观察到的现象**形状一致**。
 
-**可达性(定性)**:全仓给 `MazeGenerator.current_grid` 赋值/加载的生产点只有三处 ——
-`WorldBuilder.load_grid()`(唯一写法)、`level_0.gd`(**无条件**走它)、`match_round.gd`
-(每局还原基线,同一张图)。`server/` 下 `load_grid()` 的四个调用点里,
-`MatchHost._init` / `RoyaleHost._init` / `TeamHost._init` 都在 `start_on` **之后**;
-`_begin_match` 有 `_match_started or _host != null` 的重入守卫 ⇒ **一个 worker 一局一进程,
-`start_on` 之前没有任何东西加载过网格** ⇒ **今天不可达**。
+**可达性(定性)—— 先实测、再审计**:第一版结论是**静态 grep** 得来的("四个调用点都在
+`start_on` 之后 ⇒ 不可达"),那正是本仓反复咬过的"没找到 = 不存在"。**补测(2026-09-29)**:
+临时插桩 `RoyaleHost.start_on` + 拉一个真 `--worker --royale` 子进程 + 一个真 ENet 客户端
+claim role 1 让它开局,读它自己的日志 ——
 
-**结论**:登记为**潜伏的不变量缺口**(不是当前故障)。真要收紧,判据应当是"网格来自哪张图"
+```
+[c1] start_on:预载被跳过=false; 之前 current_grid=0 _picked_map=res://maps/factory1v1.cyrm
+```
+
+⇒ **生产路径上没复现**:进 `start_on` 时网格**是空的**、预载那一支**确实被走到**。
+**为什么**(审计,现在只是对上测的解释):全仓给 `MazeGenerator.current_grid` 赋值/加载的生产点
+只有三处 —— `WorldBuilder.load_grid()`(唯一写法)、`level_0.gd`(**无条件**走它)、
+`match_round.gd`(每局还原基线,同一张图);`server/` 下 `load_grid()` 的四个调用点里三个在
+`start_on` **之后**,`_begin_match` 又有重入守卫。
+
+★★ **但"没复现"≠"原始那次观察被解释了"** —— 它**仍然没有解释**。上面只排除了「worker 开局
+这一条路」,而阶段 1 那次是在**真链路探针跑批**里看到的,那批里还有别的动网格的代码
+(`tests/*_probe` 大量直接写 `current_grid`)。要定性得回到那一跑的具体现场,**本轮没做**。
+
+**结论**:登记为**潜伏的不变量缺口**(不是当前故障),且**原始观察仍待解释**。
+真要收紧,判据应当是"网格来自哪张图"
 (例如 `load_grid()` 记一个 `current_grid_map`,条件改成 `current_grid_map != map_file_path()`),
 **不是**把预载改成无条件 —— 那会让同一张图在 `start_on` 与 `MatchHost._init` 里**各解析一次**
 (代价要先量)。已同步进 `CLAUDE.md` 的 §断线重连 那条登记。
