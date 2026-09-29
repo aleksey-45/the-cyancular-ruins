@@ -22,6 +22,20 @@ const SP_PANEL_SCENE := preload("res://ui/sp_launch_panel.tscn")
 
 
 func _ready() -> void:
+	# ── 发布产物自检:武器注册表到底从包里读到了几条 ──
+	# ★ 为什么必须在**产物侧**量:`data/weapons.json` 进不进 `.pck` **只由一次真导出回答**
+	#   —— 静态只能论证到"导出过滤器只跳 `TextFile`,而 `.json` 是 `JSON` 类型"
+	#   (`include_filter` 里的 `data/*.json` 是**保险不是机制**)。真没进包时
+	#   `WeaponRegistry._ensure_loaded()` 只打**一条** `push_error`、**只在 stderr**、
+	#   **不影响退出码** ⇒ 光看"游戏起得来"是看不出来的。
+	# ★ 开关写在 `--` 之后(与 `--netstat` / `--pickup-diag` 同款 —— 写在前面会被 Godot
+	#   当自己的参数丢掉、**静默失效**),且**默认关** ⇒ 生产行为一字不变。
+	# ★ 消费者是 `tools/build_release.py` 的产物冒烟(`check_weapon_registry`):它拿仓库里
+	#   那份 json 当期望值,与这一行对账。判据是**文本 grep**,不看退出码。
+	if OS.get_cmdline_user_args().has("--registry-report"):
+		var ids: Array[int] = WeaponRegistry.all_ids()
+		print("[registry] weapons=%d ids=%s" % [ids.size(), str(ids)])
+
 	# 复位对局相关全局(进过 PvP 回来不残留)
 	Level0.pvp_mode = false
 	CombatComponent.pvp_arena = false

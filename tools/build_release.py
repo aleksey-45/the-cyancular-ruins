@@ -5,7 +5,9 @@
 # 版本号取自 project.godot 的 `application/config/version`,与游戏内主菜单显示的**同源**。
 # 用法: python build_release.py   (可选 --stamp 202609062126 / --version v.1.2.0 覆盖默认)
 import datetime
+import json
 import os
+import re
 import subprocess
 import sys
 
@@ -60,7 +62,7 @@ def stamp_build_info(version: str, stamp: str) -> str:
 # 为什么必须做:脚本错误只在**发布版**才现形的那一类(比如 build_info.gd 被覆盖掉一段)
 # 在编辑器里完全看不出来,而"导完就发"的流程没有任何别的环节会发现它。
 # 判据只认脚本级致命错 —— WARNING/普通 ERROR 不拦(发布版有很多无害噪音)。
-def smoke_check(exe: str, extra: list, expect: str = "") -> None:
+def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
     # ★ extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
     #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
@@ -82,6 +84,62 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> None:
         sys.exit("冒烟失败:%s 起来了但**没走预期的分支**(输出里找不到「%s」)—— "
                  "命令行参数大概又被当成引擎参数丢掉了" % (os.path.basename(exe), expect))
     print("    OK(无脚本级错误%s)" % (",且在预期分支「%s」" % expect if expect else ""))
+    return out
+
+
+# ── 产物侧的武器注册表断言(A3,2026-09-29)──
+# 守的是什么:`data/weapons.json` 进不进 `.pck` **只由一次真导出回答**。真没进包时
+#   `WeaponRegistry._ensure_loaded()` 只打**一条** `push_error`(`core/sim/weapon_registry.gd`,
+#   "读不到 %s —— 导出包里没有它?" 之后**立刻 return**),**只在 stderr**、**不影响退出码**
+#   ⇒ 上面那段"无脚本级错误"的过滤**抓不到它**,光看"游戏起得来"也看不出来 ——
+#   必须看主菜单禁用武器列表里那几把枪在不在(那正是本函数自动化的东西)。
+# ★ 期望值取自**仓库里那份 json 本身**(单一来源),不是写死在脚本里的数字 ——
+#   写死的话"加第 7 把枪"要改两处,而漏改的那次会变成**假红**。
+WEAPONS_JSON = os.path.join(PROJECT, "data", "weapons.json")
+
+
+def weapon_ids_from_json() -> list:
+    """仓库里 data/weapons.json 的合格 id 列表(与 WeaponRegistry 的口径一致:**正整数、去重**)。
+    本函数自己坏掉(读不到/解析不了/一条都不合格)一律 sys.exit —— 那是脚本的错,不是产物的错,
+    不能静默退化成"期望 0 条"。"""
+    try:
+        with open(WEAPONS_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        sys.exit("读不到/解析不了 %s:%s\n(发布脚本依赖它算期望值,缺了就没法判断产物对不对)"
+                 % (WEAPONS_JSON, e))
+    if not isinstance(data, dict) or not isinstance(data.get("weapons"), list):
+        sys.exit("%s 顶层不是 {\"weapons\": [...]} —— 发布脚本无从取期望值" % WEAPONS_JSON)
+    ids, seen = [], set()
+    for e in data["weapons"]:
+        if not isinstance(e, dict):
+            continue
+        v = e.get("id")
+        if isinstance(v, bool) or not isinstance(v, int) or v <= 0 or v in seen:
+            continue          # 与 WeaponRegistry 同口径:不合格的条目那边也是跳过
+        seen.add(v)
+        ids.append(v)
+    if not ids:
+        sys.exit("%s 里没有合格条目 —— 发布包里的注册表会是空的" % WEAPONS_JSON)
+    return ids
+
+
+def check_weapon_registry(out: str) -> None:
+    """对账 `scenes/main_menu.gd` 在 `-- --registry-report` 下打的那一行。"""
+    want = weapon_ids_from_json()
+    m = re.search(r"^\[registry\] weapons=(\d+) ids=\[([^\]]*)\]$", out, re.M)
+    if not m:
+        sys.exit("冒烟失败:客户端没打 `[registry] weapons=…` 那一行 —— "
+                 "开关(`-- --registry-report`)大概又被当成引擎参数丢掉了")
+    got_ids = [int(t) for t in m.group(2).split(",") if t.strip()]
+    got = int(m.group(1))
+    if got != len(want) or got_ids != want:
+        sys.exit("冒烟失败:发布包的武器注册表有 %d 条 %s,而仓库 %s 是 %d 条 %s —— "
+                 "最可能是它没进 .pck(`.json` 是 JSON 类型、不在 `TextFile` 那条跳过规则里,"
+                 "`include_filter` 的 `data/*.json` 只是保险)。**这条只在真导出后才验得了**;"
+                 "注意它的症状是静默的:注册表空掉只打一条 push_error、只在 stderr、"
+                 "不影响退出码,玩家端表现为菜单里一把枪的勾选框都没有。"
+                 % (got, got_ids, os.path.basename(WEAPONS_JSON), len(want), want))
 
 
 def export(preset: str, out: str) -> None:
@@ -129,6 +187,10 @@ def main() -> None:
         # 导完立刻各跑一次产物(客户端直接起;服务端走 --worker 分支 —— 那条**不碰 7777**,
         # 不会把服主正在跑的大厅杀掉,见 server_main.gd 的 is_worker 早退)
         smoke_check(CLIENT_OUT, [])
+        # 第二趟专量注册表:开关在 `--` 之后,客户端打一行 `[registry] weapons=… ids=[…]`,
+        # 这里拿仓库那份 json 与它逐条对账(理由见 check_weapon_registry 上方)
+        check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
+                                          expect="[registry] weapons="))
         smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
