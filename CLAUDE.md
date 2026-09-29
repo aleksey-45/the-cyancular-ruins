@@ -351,8 +351,8 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
   `tests/grace_feed_probe` 的 ④)。★ 那**一处**就是 `_send_round_state` **自己的函数体**
   (`server/match_state.gd` 里那一行)—— 它是出口的**实现**,不是漏网的旁路,别照着"零命中"去
   把它删掉(删了 `round_state` 就一个字节都发不出去)。权威措辞与理由写在该函数**上方**
-  那段注释里(`server/match_state.gd`,「除出口自身外零命中」那句)。
-  ★ **不写行号是刻意的**:本文件多处因行号漂移而失真,一律改用符号名定位。
+  那段注释里(`server/match_state.gd`,「除出口自身外零命中」那句);★ **不写行号是刻意的**
+  (本文件多处因行号漂移而失真,一律改用符号名定位)。
   读数的**持有者是 `server_main`**(宽限期表在它手里),它经 `_sync_grace_snapshot()` 把值
   **推进**宿主的 `grace_snapshot` 字段 —— **推**而不是"宿主去问",避免一条 back-reference。
   ★ **空表不带该键**(与 `destroyed`/`teams`/`stats` 同款);三个客户端 + `match_result_payload`
