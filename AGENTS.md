@@ -161,6 +161,8 @@ structure-editor.html 已退休)。
 - **清理**:helper 按游戏 PID 守护,游戏退出即杀内核;`EasyTierLink.stop()` 写 stop.flag 收摊。绝不按映像名全杀(会误杀用户手动开的 EasyTier GUI)。
 - **P1 提权链修复(2026-09-29,用户实测"点了 UAC 仍卡在开网")**:根因=上表 et_elevate 的空格路径截断;修复后全链实测通过——点 UAC 后 **2 秒**内 `cyr_et` 网卡拿到 `10.126.126.1`、TCP+UDP 双协议连上海波会合节点、防火墙三条规则落位、stop.flag 收摊干净。诊断套路:**`s0/core.log` 的 mtime 没刷新 = helper 没跑到拉内核那一步**(先查防火墙规则存在性,再手动 `-File et_helper.ps1` 复现,最后才怀疑提权转发)。
 - **P1 ipconfig 解析修复(2026-09-29,提权通了仍报"开网失败")**:根因=段头判定只看"冒号结尾",而每段第一行字段"连接特定的 DNS 后缀 . . . . . . . :"(中英文皆然)同样冒号结尾 → 段标记当场被翻掉 → IPv4 行被跳过 → **网卡 2 秒就绪、游戏却等满 60 秒超时**(现场:网建成、内核活、双连节点,只有解析器瞎)。修法=`_is_adapter_header`:冒号结尾**且不含 ". ." 点串**(ipconfig 固定排版,语言无关);`_adapter_ips` 与 `_foreign_subnet_owner` 共用。★ 验证 ipconfig 解析必须**重放真实输出**(bash `grep -A6` 会绕过游戏解析路径,P1 两轮都栽在这)。
+- **P1 导出包 RegEx 陷阱(2026-09-30,"开网流程内部出错"真根因)**:自定义裁剪模板**没编 regex 模块** → 导出包里 `RegEx` 类未声明 → easytier_link.gd **整个脚本解析失败**(一行 Parse Error 只在启动期闪过)→ 点击时 `host_start()` 无声返回 null。编辑器是完整引擎所以全绿。修法=ipconfig 解析改纯字符串(`_ip_after_colon`:取最后一个冒号后的尾巴、前缀匹配+纯数字校验);**全仓纪律:要进导出包的脚本禁用 RegEx**(`grep -rn "RegEx" core/ ui/ scenes/ server/` 应为空)。诊断基建:`-- --auto-host-net` 命令行钩子(进主菜单即自动走 host_start 全程并打印后退出)+ `[ET]`/`[ETDIAG]` 步进日志 —— 导出环境复现命令:`The Cyancular Ruins.exe --headless -- --auto-host-net`(stderr 完整可捕获,UAC 需人点)。
+- **P1 端口分配改最小空闲(2026-09-30,用户裁定"一个大厅不需要管很多对局")**:`WorkerLauncher.pick_port` 从"唯一递增"改为**从 7800 起取最小空闲**(占用集合并发安全性不变,公共服第二局自然拿 7801)。自建服一局打完端口归还,下一局**还是 7800** —— 朋友的防火墙/转发规则只需写一个端口,也为"朋友端免 TUN 的端口转发模式"铺路。
 
 ## D1:大乱斗房间选色(2026-09-29,KH_v0.5.0_P1_D1)
 

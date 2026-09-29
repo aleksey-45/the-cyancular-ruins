@@ -46,22 +46,28 @@ static var _code := ""               # 房主邀请码(重复点「一键开网�
 
 ## 房主:建网(随机网络名+密码,固定 HOST_IP)。协程;成功返回 {ok, code, ip}。
 static func host_start() -> Dictionary:
+	print("[ET] host_start: 开始(_active=%s _my_ip=%s)" % [str(_active), _my_ip])
 	if _active and _my_ip != "":
 		return {"ok": true, "code": _code, "ip": _my_ip, "reuse": true}
 	var occupant := _foreign_subnet_owner()
+	print("[ET] host_start: 网段预检='%s'" % occupant)
 	if occupant != "":
 		return {"ok": false, "err": "本机已有其它虚拟网占用 %s\n请先停掉手动开的 EasyTier/MCTier 网络,再点一键开网" % occupant}
 	var net := "cyr-" + _rand_hex(6)
 	var secret := _rand_str(24)
 	_code = encode_code({"v": 1, "n": net, "s": secret, "p": DEFAULT_PEERS, "h": HOST_IP})
+	print("[ET] host_start: 邀请码已生成(len=%d)" % _code.length())
 	var sdir := _start_node("s0", net, secret, HOST_IP, DEFAULT_PEERS, [], true, DEV_NAME, RPC_PORT)
+	print("[ET] host_start: _start_node 返回='%s'" % sdir)
 	if sdir == "":
 		return {"ok": false, "err": "内核文件缺失(tools/easytier 未打进导出包?开发模式跑则检查 res:// 目录)"}
 	var ip := await _wait_adapter_ip(DEV_NAME, START_TIMEOUT)
+	print("[ET] host_start: 网卡等待返回='%s'" % ip)
 	if ip == "":
 		return {"ok": false, "err": _start_fail_hint(sdir)}
 	_active = true
 	_my_ip = ip
+	print("[ET] host_start: 成功 ip=%s" % ip)
 	return {"ok": true, "code": _code, "ip": ip}
 
 
@@ -145,6 +151,7 @@ static func decode_code(text: String) -> Dictionary:
 
 ## 解包内核到 user://easytier(尺寸相同则跳过,24MB 别每次都拷)。返回绝对目录,失败空串。
 static func ensure_runtime() -> String:
+	print("[ET] ensure_runtime: 开始解包检查")
 	var dir := DirAccess.open("user://")
 	if dir == null:
 		return ""
@@ -158,6 +165,7 @@ static func ensure_runtime() -> String:
 		var src_f := FileAccess.open(src, FileAccess.READ)
 		if src_f == null:
 			push_error("EasyTierLink: 缺资源 " + src)
+			print("[ET] ensure_runtime: 缺资源 ", src)
 			return ""
 		var src_size := src_f.get_length()
 		src_f.close()
@@ -176,6 +184,7 @@ static func ensure_runtime() -> String:
 			return ""
 		f.store_buffer(buf)
 		f.close()
+	print("[ET] ensure_runtime: 完成 -> %s" % et)
 	return ProjectSettings.globalize_path(et)
 
 
@@ -262,12 +271,30 @@ static func _is_adapter_header(t: String) -> bool:
 	return t.ends_with(":") and not t.contains(". .")
 
 
+## 从 ipconfig 字段行提取指定网段的 IPv4。**纯字符串解析,禁用 RegEx**——
+## 裁剪版导出模板没编 regex 模块,导出包里 `RegEx` 未声明 → 整个脚本解析失败 →
+## host_start 无声返回 null(P1 实测踩坑:编辑器全绿、exe 必炸,且日志只有
+## 启动期一行 Parse Error)。行形如 "IPv4 地址 . . . : 10.126.126.1":
+## IP 恒在**最后一个**冒号之后,是 ASCII,与语言无关。
+static func _ip_after_colon(line: String, prefix: String) -> String:
+	var idx := line.rfind(":")
+	if idx < 0:
+		return ""
+	var s := line.substr(idx + 1).strip_edges()
+	if not s.begins_with(prefix):
+		return ""
+	var rest := s.substr(prefix.length())
+	for ch in rest:   # 尾巴必须全是数字(中文"(首选)"之类的后缀在此自然落空)
+		if ch < "0" or ch > "9":
+			return ""
+	return s
+
+
 ## ipconfig 解析:标题行含 dev_name 的段内,收集 prefix 网段的 IPv4(本地化无关——
-## 标题行冒号结尾+无点串、IP 是 ASCII;中文"(首选)"后缀靠正则剥掉)。
+## 标题行冒号结尾+无点串,IP 是 ASCII)。
 static func _adapter_ips(dev_name: String, prefix: String) -> Array[String]:
 	var out: Array = []
 	var ips: Array[String] = []
-	var re := RegEx.create_from_string("(" + prefix.replace(".", "\\.") + "\\d+)")
 	OS.execute(SYS32 + "/ipconfig.exe", PackedStringArray(), out, false, false)
 	var text := "\n".join(PackedStringArray(out))
 	var in_sec := false
@@ -278,9 +305,9 @@ static func _adapter_ips(dev_name: String, prefix: String) -> Array[String]:
 			continue
 		if not in_sec:
 			continue
-		var m := re.search(t)
-		if m != null:
-			ips.append(m.get_string(1))
+		var ip := _ip_after_colon(t, prefix)
+		if ip != "":
+			ips.append(ip)
 	return ips
 
 
@@ -290,7 +317,6 @@ static func _adapter_ips(dev_name: String, prefix: String) -> Array[String]:
 ##   本类网卡的 IPv4 误认成"别人的占用",把自己刚建好的网拦在门外。
 static func _foreign_subnet_owner() -> String:
 	var out: Array = []
-	var re := RegEx.create_from_string("(" + SUBNET_PREFIX.replace(".", "\\.") + "\\d+)")
 	OS.execute(SYS32 + "/ipconfig.exe", PackedStringArray(), out, false, false)
 	var text := "\n".join(PackedStringArray(out))
 	var in_sec := false
@@ -301,9 +327,9 @@ static func _foreign_subnet_owner() -> String:
 			continue
 		if not in_sec:
 			continue
-		var m := re.search(t)
-		if m != null:
-			return m.get_string(1)
+		var ip := _ip_after_colon(t, SUBNET_PREFIX)
+		if ip != "":
+			return ip
 	return ""
 
 

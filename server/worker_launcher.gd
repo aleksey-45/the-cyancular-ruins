@@ -45,7 +45,6 @@ const ROYALE_PORT_REUSE_DELAY := 360.0
 #   所以本值只兜"worker 刚退"那一小段(与另两档同一条职责)。
 # ★ 别把它单独并回一个更小的数:三档一起动、一起复核(理由见 WORKER_PORT_REUSE_DELAY 上方)。
 const TEAM_PORT_REUSE_DELAY := 360.0
-var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
 
@@ -60,13 +59,13 @@ func release_now(port: int) -> void:
 	_worker_pids.erase(port)
 
 
-# 分配一个当前未占用的 worker 端口(唯一递增 + 占用集合;见类头注释,勿用 bind 探测)。
+# 分配一个当前未占用的 worker 端口。**从 BASE 起取最小空闲**(2026-09-30 用户裁定:
+# 一键联机的自建服"一个大厅只打一局"——前局结束端口归还后,下一局重新拿到**同一个**
+# 端口,朋友的防火墙/转发规则因此永远只需写 7800 一个;并发时占用集合保证第二局拿
+# 7801,公共服语义不变)。仍**不做 bind 探测**(类头注释的理由照旧),只改挑选顺序。
 func pick_port() -> int:
-	for _tries in range(WORKER_PORT_SPAN):
-		var p := _next_port
-		_next_port += 1
-		if _next_port >= WORKER_PORT_BASE + WORKER_PORT_SPAN:
-			_next_port = WORKER_PORT_BASE
+	for off in range(WORKER_PORT_SPAN):
+		var p := WORKER_PORT_BASE + off
 		if not _worker_ports.has(p):
 			_worker_ports[p] = true
 			return p

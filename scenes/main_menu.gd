@@ -29,6 +29,13 @@ func _ready() -> void:
 	RunOptions.reset()
 	RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 
+	# 一键联机自动开网诊断钩子(P1):`-- --auto-host-net` 时进菜单即开网,
+	# 全程 print 步进结果后退出 —— 专抓"导出环境里 host_start 无声返回 null"
+	# 而日志缺脚本错误的那类问题(正常玩家路径零开销)。
+	if "--auto-host-net" in OS.get_cmdline_user_args():
+		_auto_host_net_diag()
+		return
+
 	_build_new_ui()
 
 	# 菜单流转自动探针(规格 §6 的 L4 验收项):命令行 `-- --autotest-sp|mp|set|level` 时,
@@ -133,6 +140,15 @@ static func commit_log() -> Array:
 
 
 # ── 菜单 UI ──
+# 一键联机自动开网诊断(--auto-host-net):与 UI 面板走**同一条** host_start 路,
+# 步进打印每一步的返回类型;崩溃点会以"缺了哪条打印"暴露,且 stderr 完整可捕获。
+func _auto_host_net_diag() -> void:
+	print("[ETDIAG] menu ready,开始自动开网(等待 UAC…)")
+	var r: Dictionary = await EasyTierLink.host_start()
+	print("[ETDIAG] host_start 返回 typeof=%d val=%s" % [typeof(r), str(r)])
+	get_tree().quit(0)
+
+
 func _build_new_ui() -> void:
 	_build_ui_layer()
 	var title := _build_title()
