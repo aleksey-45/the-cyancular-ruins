@@ -1060,6 +1060,27 @@ func _phase_enemy_types_json() -> void:
 			and EnemySpawner.TYPES.has("black_bird") and EnemySpawner.TYPES.size() == 3,
 			"EnemySpawner.TYPES 从 enemies.json 加载(含 black_bird)")
 
+	# ── 反方向:scenes/enemies 下的**敌人** .tscn 必须都在 enemies.json 里(2026-09-29)──
+	# 与 §武器注册表 的 ⑧ 同款、同理由(`data/enemies.json` → `scenes/enemies/` 那一半
+	# 一直有:`_load_registry` 逐条收 `scene`,而反向靠人眼)。判据同样是**根脚本链**,
+	# 不是目录清单 —— 该目录里另有 `enemy_bullet.tscn`(根脚本 `enemy_bullet.gd` extends
+	# `BulletBase`),它不是敌人、本来就不该进 enemies.json。
+	var ebase: GDScript = load("res://scenes/enemies/enemy_base.gd")
+	_check(ebase != null, "enemy_base.gd 可加载(反方向覆盖判据依赖它)")
+	var e_registered: Dictionary = {}
+	for eid in EnemySpawner.TYPES:
+		e_registered[str(EnemySpawner.TYPES[eid])] = str(eid)
+	var e_orphans: Array = []
+	for p in ScanUtil.collect(["res://scenes/enemies"]):
+		if not p.ends_with(".tscn"):
+			continue
+		if not _script_extends(_root_script_of(p), ebase):
+			continue
+		if not e_registered.has(p):
+			e_orphans.append(p)
+	_check(e_orphans.is_empty(),
+			"scenes/enemies/ 下的敌人场景必须都在 data/enemies.json 里(漏登记的是 %s)" % str(e_orphans))
+
 
 # ── CollisionAabb:必须认出 CollisionPolygon2D(本作**所有**身体都用它)──
 # 2026-09-15:原先 `has_any`/`world_rect` 只认 `child is CollisionShape2D`,而 Godot 4 里
@@ -1101,6 +1122,46 @@ func _phase_collision_aabb() -> void:
 			"跳鸟身体 AABB 中心偏离原点 %.1f px(以原点为中心的写法会丢掉这个偏移)"
 					% absf(er.get_center().y - e.global_position.y))
 	e.free()
+
+
+# ── 「注册表 json ↔ 场景目录」双向覆盖用的两个小工具(2026-09-29)──
+# ★★ 为什么必须有**反方向**那一条:json → tscn 是覆盖到的(逐条 load 每个 json 的 scene),
+#   而 **tscn → json 零守卫** —— 往 `scenes/weapons/` 放一个新武器场景而不写 json 条目,
+#   那一把枪在菜单/散落/图标/HUD 名字里**全都不存在**,而当时三条相关测试(enemy_logic_smoke /
+#   level0_weapon_scatter_probe / kh_l3_probe)**全部全绿、一条断言都不红**。
+#
+# `scene_path` 的**根节点脚本**(读 `PackedScene.get_state()` 的节点属性,**不实例化**)。
+# 读不到(场景缺失/无根/根无 script)返回 null。
+func _root_script_of(scene_path: String) -> Script:
+	var ps: PackedScene = load(scene_path)
+	if ps == null:
+		return null
+	var st := ps.get_state()
+	if st == null or st.get_node_count() == 0:
+		return null
+	# 节点 0 = 根(引擎侧 `nodes[0]` 就是根,见 packed_scene.cpp 的 instantiate)。
+	for i in st.get_node_property_count(0):
+		if str(st.get_node_property_name(0, i)) != "script":
+			continue
+		var v: Variant = st.get_node_property_value(0, i)
+		if v is Script:
+			return v
+		if v is String:
+			return load(v) as Script
+	return null
+
+
+# 脚本 `scr` 是否**继承自** `base_scr`(沿 `get_base_script()` 链走,含自身)。
+# ★ 走脚本链而不是「读 .tscn 文本里有没有 `weapon_base.gd`」:后者认不出
+#   `extends LaserWeaponBase` 这种**间接**继承(laser_gun 就是),而它恰恰是"加新武器"的常见形状;
+#   文本法还会被注释/别处的路径字符串喂绿。
+func _script_extends(scr: Script, base_scr: Script) -> bool:
+	var s := scr
+	while s != null:
+		if s == base_scr:
+			return true
+		s = s.get_base_script()
+	return false
 
 
 const REGISTRY_SRC := "res://core/sim/weapon_registry.gd"
@@ -1308,6 +1369,28 @@ func _phase_weapon_registry() -> void:
 				"默认启用表必须等于注册表全部 id(实际 %s、注册表 %s)" % [
 					str(comp.enabled_types), str(want_ids)])
 		comp.free()
+
+	# ── ⑧ 反方向:scenes/weapons 下的**武器** .tscn 必须都有 json 条目(2026-09-29)──
+	# ★ ② 只覆盖 json → tscn 这一个方向;反方向此前**零守卫**(症状与量级见 `_root_script_of`
+	#   上方那段)。"加第 7 把枪 = 改 1 个 json + 加 1 个 tscn"这句承诺,**先放 tscn、忘了接
+	#   json**这一半今天靠人眼 —— 本条就是那半步的安全带。
+	# ★ 判据是「根脚本链上有 `weapon_base.gd`」,**不是**「scenes/weapons/ 下所有 .tscn」:
+	#   该目录同时住着 `bullet` / `grenade_bullet` / `laser_beam` / `weapon_pickup` 四个
+	#   **非武器**场景(它们本来就不该进 weapons.json),拿目录清单当判据会当场恒红。
+	var registered: Dictionary = {}
+	for rid in rows:
+		registered[str((rows[rid] as Dictionary)["scene"])] = int(rid)
+	var orphans: Array = []
+	for p in ScanUtil.collect(["res://scenes/weapons"]):
+		if not p.ends_with(".tscn"):
+			continue
+		if not _script_extends(_root_script_of(p), wb):
+			continue
+		if not registered.has(p):
+			orphans.append(p)
+	_check(orphans.is_empty(),
+			"scenes/weapons/ 下的武器场景必须都在 %s 里(漏登记 = 菜单/散落/图标/HUD 里都不存在;" % REGISTRY_JSON
+			+ " 漏登记的是 %s)" % str(orphans))
 
 
 # ── 容量格子面板的派生(2026-09-25)──
