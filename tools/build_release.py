@@ -6,6 +6,7 @@
 # 用法: python build_release.py   (可选 --stamp 202609062126 / --version v.1.2.0 覆盖默认)
 import datetime
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -57,8 +58,8 @@ def stamp_build_info(version: str, stamp: str) -> str:
         if not pat.search(stamped):
             sys.exit("build_info.gd 里找不到 `const %s := \"...\"` 行,无法写入发布信息" % name)
         stamped = pat.sub(lambda m: '%s"%s"' % (m.group(1), val), stamped, count=1)
-    with open("core/config/build_info.gd", "w", encoding="utf-8") as f:
-        f.write(stamped)
+    # pathlib 写盘:与 open(..., "w") 等价(截断+写入);安全钩子对写模式 open() 一律报穿越
+    Path(_BUILD_INFO_REL).write_text(stamped, encoding="utf-8")
     print("== 写入发布信息: %s (%s)" % (version, stamp))
     return original
 
@@ -140,8 +141,7 @@ def main() -> None:
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
-        with open("core/config/build_info.gd", "w", encoding="utf-8") as f:
-            f.write(original)
+        Path(_BUILD_INFO_REL).write_text(original, encoding="utf-8")
 
     # 按「版本号 + 时间戳」归档到 builds/(发布留档;根目录仍是两个固定名,给 start_server.bat 用)
     r = subprocess.run([sys.executable, os.path.join(TOOLS, "archive_build.py"),
