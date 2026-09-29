@@ -163,6 +163,7 @@ func _on_snapshot_own(own: Dictionary) -> void:
 var _time_mirror: GrainAccount = null
 var _time_watch: WatchHud = null
 var _time_rewinding := false        # 本地预测的回溯态(免伤闸 + 世界底片)
+var _haste_dim_t := 0.0             # 加速压暗 ramp(只在**发动者本人**的视角;他人屏幕不受影响)
 var _time_film_t := 0.0             # 底片覆盖度 ramp(≤0.2s 推满)
 var _time_mat: ShaderMaterial = null
 var _time_sym: Label = null
@@ -208,6 +209,12 @@ func _tick_beta_time(delta: float) -> void:
 		return
 	var on := Input.is_action_pressed("haste") 			and _time_mirror != null and _time_mirror.can_spend()
 	(_local as Node2D).set("pvp_haste_mult", _time_haste_mult if on else 1.0)
+	# 压暗(用户裁定:PvP 也补,但只在发动者本人视角)—— 100ms ramp 与单机同款
+	_haste_dim_t = clampf(_haste_dim_t + (delta / 0.1 if on else -delta / 0.1), 0.0, 1.0)
+	var pp := get_tree().get_first_node_in_group("post_process") as PostProcess
+	if pp != null and (_haste_dim_t > 0.001 or pp != null):
+		# 只碰三个时间 uniform 里的 haste_dim;film/loan 恒 0(PvP 未接那两个的全屏版)
+		pp.set_time_effects(0.0, 0.0, _haste_dim_t)
 	_tick_beta_rewind(delta)
 	_tick_time_fx(delta, on)
 
