@@ -1652,15 +1652,26 @@ func _check_hud_consumers() -> void:
 			"★ `_refresh_grace` 没按「对手 role = 3 - 自己」取数(实得「%s」)" % body)
 	_check(body.contains("_grace.has(opp)"),
 			"★ `_refresh_grace` 必须是 `has(opp)` 判定,不能「取第一个键」(多一个 role 时会印错人)")
-	var roy := _code(ROYALE_HUD)
-	_check(roy.contains("UiFactory.C_GRACE"),
-			"★ royale_hud 的「掉线」那一档没有引调色板的新色")
-	_check(roy.contains("_refresh_board(") and roy.contains("grace: Dictionary"),
-			"★ `_refresh_board` 没有把 `grace` 收进去")
+	# ★★ 下面两条判据**全部收在 `_refresh_board` 的函数体里**(2026-09-29 收紧)。
+	#   上一版那两条各有一半是**文件级**的,而那一半**读起来像覆盖、实际不覆盖**:
+	#   `roy.contains("UiFactory.C_GRACE")` 被文件级那句 `const COLOR_GRACE := UiFactory.C_GRACE`
+	#   喂饱;`roy.contains("_refresh_board(")` 被**它自己的定义行**喂饱 ⇒ **恒真**、零信息。
+	var board := _body(ROYALE_HUD, "_refresh_board")
+	_check(board.contains("COLOR_GRACE"),
+			"★ royale_hud 的「掉线」那一档没有引调色板的新色(判据在 `_refresh_board` 的**函数体**里)")
+	_check(board.contains("grace: Dictionary") and board.contains("grace.has(")
+			and board.contains("\"掉线 %ds\""),
+			"★ `_refresh_board` 没有把 `grace` 收进去并真的画出来(形参 / `grace.has(role)` 判据 / "
+			+ "「掉线 %%ds」标签 —— 三者缺一;实得函数体「%s」)" % board)
 	_check(not _code(TEAM_HUD).contains("grace"),
 			"★ team_hud 也在消费 `grace` —— 3v3 **刻意不做**(spec §4 的 3.1 只点大乱斗与 1v1);"
 			+ "要做也是在结算/记分条上另设计,不是这条单行状态")
 ```
+
+★★ **本代码块已于 2026-09-29 同步成落地版**(未认领欠账 A6)。它此前是**收紧前**的谓词,
+而其中 `roy.contains("_refresh_board(")` 在断言里是**恒真**的(第二个子句已经要求了那个
+函数体)⇒ 留着只会让人以为"这条验过调用点"。**权威落点是 `tests/reconnect_status_probe.gd`
+的函数体本身**;这里若再漂,以那边为准。
 
 ★ 常量区补三个路径常量:
 
