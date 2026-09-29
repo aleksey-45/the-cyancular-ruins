@@ -317,7 +317,9 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
 
 #### 断线重连(阶段 1:局内自动重连,2026-09-17)
 
-本批(分支 `feat/reconnect-stage1`)落地的只是 spec 的**阶段 1 = 路径甲**:与 worker 的连接闪断 → 客户端自己**连回同一个端口**、重新认领 role、**不切场景、不重建世界**(本地世界原样保留)。★ **阶段 2-A 已落地**(`match_sync` 带破坏态 + 地面武器全量对齐,见本节末尾那三条);★ **阶段 2-B = 路径乙「回大厅后回局」已于 2026-09-21 落地 —— 它是另一条路、另一节**(见本节的下一节「对局中的房」之后的 **§回大厅后回局(阶段 2-B)**:那条路**会重建场景**)。**仍未做**:HUD 的「掉线中/重连中」可见提示(spec §4 阶段 3)、`opponent_left` 不可达的修复 —— 两者都**不影响**回局可用性(玩家在自己那间房那一行上就能看出能不能回去)。
+本批(分支 `feat/reconnect-stage1`)落地的只是 spec 的**阶段 1 = 路径甲**:与 worker 的连接闪断 → 客户端自己**连回同一个端口**、重新认领 role、**不切场景、不重建世界**(本地世界原样保留)。★ **阶段 2-A 已落地**(`match_sync` 带破坏态 + 地面武器全量对齐,见本节末尾那三条);★ **阶段 2-B = 路径乙「回大厅后回局」已于 2026-09-21 落地 —— 它是另一条路、另一节**(见本节的下一节「对局中的房」之后的 **§回大厅后回局(阶段 2-B)**:那条路**会重建场景**)。★ **阶段 3 已落地(2026-09-28)**:HUD 的「掉线中/重连中」可见提示与 `opponent_left` 的调用点
+都补齐了,详见下面「阶段 3」那一节。仍未做的是 spec §5 的 `RoyaleHost.start_on` 网格预载
+(与重连无关的既有问题,另立评估)。
 
 - **token 由大厅生成,不在 worker**:`NetBusExt` 的三条新 RPC(`session_token` / `report_token` / `reclaim_role`)+ `core/net/pvp_session.gd` 的 `token`/`worker_port`。★ **必须在 `go_match` 之前发**(`server/room_manager.gd`:spawn worker 之前就 `session_token`)—— go_match 一到客户端就 `NetBus.stop()` 断大厅,之后再发就**静默丢失**;客户端侧同款(`scenes/lobby_page.gd` 先进 `_pending_token`,配对成功时再落 `PvpSession`)。客户端 claim 之后经 `report_token` 报给 worker,worker **只归档不校验**(`server_main.gd:_on_token_reported`)—— 校验发生在宽限期里的 `reclaim_role`。★ **`go_match` / `claim_role` 的签名一律没动**:原 NetBus 与原版服务端逐字节一致是硬纪律(改 RPC 方法表 = 与它的所有 RPC 失联),故三条新 RPC 全在 `NetBusExt`;对原版 worker 本节点不存在 → 静默丢弃、优雅降级成"不能重连"。
 - **宽限期唯一入口 `GraceWindow.DEFAULT_SECONDS`**(`core/net/grace_window.gd`,当前 **60s**,纯逻辑、时间由调用方传入):掉线**不立刻移出**(大乱斗)/**不立刻退进程**(1v1),到点才走既有语义(`server_main._expire_graces` 每秒轮询)。1v1 那一支到点是"收场退进程" = **对手白拿这一段**(60s 下比 30s 更久)。★ 它同时是客户端重试预算的上界(`pvp_match_client._on_reconnect_retry_tick` 第一条判据读**同一个常量**),两处同源。
@@ -338,6 +340,39 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
 - 守卫:`tests/reconnect_probe.tscn` 是**真链路七相**端到端探针(自当裁判、三个端口**必须落在真大厅的 worker 端口池之外**、worker 由本进程直接拉起以便读它自己的日志;触发闪断用**直接调 `_game._begin_reconnect()`** —— brief 说的"客户端主动 `NetBus.stop()`"触发不了重连,理由同上一条 ESC):①正向(闪断→自动重连被接受,**身体 instance_id 不变**;同相另判两条 C2 断言:**重连后 ack 锚点必须重新咬合**——`_acked ≤ 本端 _input_seq`,以及 spec §3.4 那条**回滚次数不持续增长**)②反向(错 token 被拒 + 踢连接)③身体冻结(掉线后该 role 的**快照 `pose` 离开 SQUAT**——★ 判据是**姿态**不是位移:撞墙/卡坑时 `global_position` 天然不变、能空转骗过,位移只作读数;钉 `_enter_grace` 那两件事)④超时移出(不回来 → 宽限期后 worker 收场退出)⑤大乱斗相(①②③ 在 `--royale` worker 上再跑一遍,**并核验 reclaim 不重新摆位**:重发的 `match_start` 必须带与首次**同一个** spawn)⑥启动等待态(空载 `--royale` worker 不得在就绪后 1~3s 窗口内退出)⑦**掉线窗口内世界变过**(拆一堵墙 + 捡走一把枪 → 重连后两端一致;含一条**反向断言**:被捡走那把在 actor 本地表里**必须没有**,专钉"先清后灌"——只 add 不 clear 的实现会在这里红)+ 一条**正向的规模断言**(本端表必须与补态载荷**同规模**:只 clear 不 add 的实现会在这里红 —— 反向那条是对 `after` 的过滤,`after == []` 时它连同"⊆"那条**一起空过**,那正是"重连后一把枪都看不见却打印 ALL-OK"的假绿)。判据是**文本 `RECONNECT PROBE: ALL-OK`**(不看退出码)。
   - ★ **相⑦ 的唯一失败模式是"假绿"**,两处专门的守卫:① 服务端侧的拆格走新加的测试开关 **`--test-destroy-tile <col>,<row>[,<delay>]`**(照 `--test-ground-teleport` 的先例:仅测试用、默认关、探针直接 spawn worker 故不必经 `worker_launcher` 转发),它经 `TileDefs.damage_tile` → 与真爆炸**同一条广播链**;② 断言里必须含 **worker 日志的 `[test] 拆格` 那一行**(日志是探针唯一能读到那个独立进程的通道)—— 少了它,若那格本来就是空气,主断言会假绿。
   - ★ **延迟取 7.5s 不是 3.0**:建局到 PLAYING 差一个 `COUNTDOWN_TIME`(3s),`3.0` 恰好落在 actor **还在线**的那一刻 —— 它会自己收到 `tile_destroyed`,相⑦ 就以"全绿"通过而**什么都没验**(实现者加了四条前置断言才把 brief 里这个错值抓出来)。`7.5` ≈ PLAYING+4.5,落在离线窗正中。改 `COUNTDOWN_TIME`/`T_DROP`/`T_RESTORE` 任一个都要重算这个值(两个方向都会报红,不会静默)。**跑前先确认无真大厅**(收尾**按 PID 杀**本进程拉起过的全部子进程 —— 客户端是从临时端口连出去的,只按端口杀根本杀不到,会留下残留进程敲下一跑与读旧日志;**按 UDP 端口杀 worker 只剩兜底**那一层)。
+
+#### 阶段 3:可见性 + 两个既有缺陷(2026-09-28)
+
+四处,三条互不重叠的链:
+
+- **3.1 「掉线中」= `round_state` 长出 `grace` 字段**(`{role(int) -> 剩余秒(float)}`)。★ 它的
+  **唯一出口是 `MatchState._send_round_state(data)`**(三个生产者 `MatchRound` / `RoyaleHost` /
+  `TeamHost` 都调它)⇒ 生产目录里 `_rpc_all("round_state"` **零命中**(守卫 `tests/grace_feed_probe`
+  的 ④)。读数的**持有者是 `server_main`**(宽限期表在它手里),它经 `_sync_grace_snapshot()` 把值
+  **推进**宿主的 `grace_snapshot` 字段 —— **推**而不是"宿主去问",避免一条 back-reference。
+  ★ **空表不带该键**(与 `destroyed`/`teams`/`stats` 同款);三个客户端 + `match_result_payload`
+  都对缺键无感(加法式扩展)。
+  ★★ **1v1/3v3 不每秒广播 `round_state`** —— 三个客户端里有两处 `COUNTDOWN 且 round > 1` 的分支
+  **不是幂等的**(`pvp_game` 会 `reset_destructibles()`、`team_game` 会重发 `match_sync`),
+  每秒多播一次 = 倒计时 3 秒里那些活各干 3 遍。秒数由客户端**本地走秒**(`GraceWindow.tick_display`),
+  与既有的倒计时同款口径。大乱斗本来就 1Hz 广播,故那边不需要本地走 —— **两侧必要性的差异是
+  实测出来的,不是不一致**。
+  ★ 3v3 **刻意不消费** `grace`(spec §4 的 3.1 只点大乱斗与 1v1;6 人一队时单行状态没有意义),
+  有反向断言钉住这个不对称是**有意**的。
+- **3.2 + 3.4 「重连中」= `ui/status_banner.tscn`(CanvasLayer layer 140)**,由**基类**
+  `PvpMatchClient` 在**已有的** `_subscribe_reconnect()` 里实例化 ⇒ 三个模式**零新调用点**。
+  四个转折点驱动:`_begin_reconnect`(断开被察觉就亮 = 3.4 要的"失败**之前**的反馈")/
+  `_on_reconnect_retry_tick`(报剩余预算)/ `_on_resumed`(收)/ `_abort_reconnect`(收)。
+  ★★ 层位 **140 只住在 `.tscn` 里** —— `.new()` 建出来是 CanvasLayer 默认的 layer 1,画在
+  HUD(130)/小地图(131)**底下**且**不报错**;守卫 `tests/hud_declarative_probe` 的 ⑧。
+- **3.3 `opponent_left` 不再是死路**:服务端调用点在 `server_main._notify_opponent_left()`,
+  由 `_expire_graces` 的 **1v1 收场分支**在 `get_tree().quit(0)` **之前**调;只发给 `_claims`
+  里还在的人,走 `NetBus.reply`(判活收口)。
+  ★ 只在**收场**发、**不在 `_enter_grace` 发** —— 掉线时就宣告"对手已离开"会把阶段 1 的整条
+  重连功能作废。
+  ★★ **两天时序都要收口**:通知先到 ⇒ 既有的 `_match_ended` 闸挡住重连循环启动;断开先到 ⇒
+  只有 `_cancel_reconnect()` 能叫停已经在飞的那个循环。⇒ 不论谁先到,结局都是「2.5s 后回主菜单」,
+  **不叠加一个 60 秒的重连循环**。守卫:`tests/reconnect_status_probe` 相①② + `reconnect_probe` 相④b。
 
 #### 对局中的房:寿命 / 回收判据 / 可见性与拒绝(2026-09-21,「看得见进不去」批)
 
