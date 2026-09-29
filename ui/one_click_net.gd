@@ -136,6 +136,13 @@ func _on_host_pressed() -> void:
 	_status.text = "正在开网(等待 Windows 管理员授权,请点「是」)…"
 	var r: Dictionary = await EasyTierLink.host_start()
 	_busy = false
+	# ★ 空结果防护(P1 实测教训):协程中途崩掉时 await 回来的是 null,
+	#   直接 .get() 会二次报错、面板永远停在"正在开网"。此处必须先验型。
+	if r == null or typeof(r) != TYPE_DICTIONARY:
+		push_error("OneClickNet: host_start 返回了空结果(见上一条脚本错误)")
+		_status.text = "开网流程内部出错(空结果)——请把「输出」面板里最后一条红色错误发给开发者"
+		refresh()
+		return
 	if not bool(r.get("ok", false)):
 		_status.text = str(r.get("err", "开网失败"))
 		refresh()
@@ -172,6 +179,11 @@ func _on_join_go_pressed() -> void:
 	_status.text = "正在加入虚拟网(等待 Windows 管理员授权,请点「是」)…"
 	var r: Dictionary = await EasyTierLink.join(code)
 	_busy = false
+	if r == null or typeof(r) != TYPE_DICTIONARY:   # 同 host 路径的空结果防护
+		push_error("OneClickNet: join 返回了空结果(见上一条脚本错误)")
+		_status.text = "加入流程内部出错(空结果)——请把「输出」面板里最后一条红色错误发给开发者"
+		refresh()
+		return
 	if not bool(r.get("ok", false)):
 		_status.text = str(r.get("err", "加入失败"))
 		refresh()

@@ -154,7 +154,7 @@ structure-editor.html 已退休)。
 | `Tests/lobby_parse_smoke.tscn` | 联机页解析冒烟:load() 三大厅页+新脚本不实例化。★ 存在理由:`--check-only --script` 不加载工程认不出 NetBus 等 autoload,**对联机页必然假阴性** |
 
 ### 纪律与不变量
-- **导出只给客户端 preset 加了 `tools/easytier/*`**(服务器 exe 不带 25MB 内核);客户端体积 40.8→~66MB(方案 A,用户拍板)。
+- **导出只给客户端 preset 加了 `tools/easytier/*`**(服务器 exe 不带 25MB 内核);客户端体积 40.8→~66MB(方案 A,用户拍板)。★ **验收标准 = 客户端 exe ≈66MB**:P1 实测踩坑——include_filter 的 `tools/easytier/*` 被并行会话的合并吞掉(编辑过但未落进提交),v.1.2.0 首个 exe 41.6MB 无内核,从 exe 点一键联机必然"内核文件缺失";而编辑器里 res:// 文件在、测试全绿——**编辑器测试证明不了导出包的完整性**。
 - **生产网段 = EasyTier 默认 DHCP 池 `10.126.126.0/24`**(MCTier 同款):房主手动 .1 + 朋友 DHCP 天然同段;改网段须同时改 `SUBNET_PREFIX`/`HOST_IP`/预检。
 - **会合节点**:官方公共节点 `public.easytier.top` **不存在**(NXDOMAIN,别再用);默认双协议回落海波节点 `us01.225284.xyz:11010`(udp+tcp,实测可达,2026-09-28)。自建会合点:任意 VPS 跑 `easytier-core.exe -p <本机公网IP:11010>` 即可,协调流量每秒几 KB。
 - **提权**:每次开网/加入弹一次 UAC(创建 TUN 网卡必须);从管理员终端跑探针则免弹。
