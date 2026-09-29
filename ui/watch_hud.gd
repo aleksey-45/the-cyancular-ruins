@@ -3,7 +3,7 @@ extends Control
 
 # 个人钟·怀表 HUD(第一阶段):怀表表盘 + 指针 + 数字。
 #   · 表盘:纯程序化像素绘制(冷灰阶色板:表壳/盘面/刻度),零美术素材(与瓦片/8bit 音效同风格)
-#   · 红长针 = 短时限额(一圈 = SHORT_WINDOW;贷款 = 额外 1/4 圈,逆时针回拨 50/s)
+#   · 红长针 = 短时限额(一圈 = 账户的 window;贷款额外圈数 = loan_max/window —— 单机 1/4 圈,PvP 1 整圈)
 #   · 白短针 = 颗粒总量(一圈 = GRAIN_CAP)
 #   · 右侧大数字 = 总余额(与主菜单标题同为 96px 像素字;扣减时 1 点 1 点快速滚动,
 #     终值确定后 ≤0.2s 内播完);其右上小字 = 上限;表心小字 = 短时余额(贷款时深红负数)
@@ -40,7 +40,7 @@ var _lock_flash_t := 0.0           # 贷款锁定红闪(B6 用)
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_to_group("watch_hud")   # 结晶 FX 靠它找表心(屏幕空间目标)
-	_dial_tex = _build_dial_texture()
+	_dial_tex = build_dial_texture()
 	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(DIAL + 14, -16))
 	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(DIAL + 14, BIG_FONT - 4))
 	_center = _mk_label(SMALL_FONT, COLOR_TEXT_DIM, Vector2(0, 0))
@@ -66,8 +66,9 @@ func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
 	return l
 
 
-## 98px 程序化像素表盘:方块拼圆(与瓦片同风格),冷灰三层次 + 12 刻度
-func _build_dial_texture() -> ImageTexture:
+## 98px 程序化像素表盘:方块拼圆(与瓦片同风格),冷灰三层次 + 12 刻度。
+## 静态 + 无实例依赖:Beta 入口页的卡片图标直接复用这一份(B20)。
+static func build_dial_texture() -> ImageTexture:
 	var n := int(DIAL)
 	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
@@ -131,13 +132,13 @@ func _process(delta: float) -> void:
 		elif TimeField.current.is_hasting():
 			col = Color8(168, 96, 216)
 	_big.add_theme_color_override("font_color", col)
-	_cap.text = "上限 %d" % int(TimeParams.GRAIN_CAP)
+	_cap.text = "上限 %d" % int(acc.cap)
 	# 表心:短时余额(正=浅灰;贷款=深红负数)
 	if acc.loan_used > 0.5:
 		_center.text = "-%d" % int(round(acc.loan_used))
 		_center.add_theme_color_override("font_color", COLOR_LOAN)
 	else:
-		_center.text = "%d" % int(round(TimeParams.SHORT_WINDOW - acc.short_used))
+		_center.text = "%d" % int(round(acc.window - acc.short_used))
 		_center.add_theme_color_override("font_color", COLOR_TEXT_DIM)
 	_tremble_t = maxf(_tremble_t - delta, 0.0)
 	_lock_flash_t = maxf(_lock_flash_t - delta, 0.0)
@@ -154,11 +155,14 @@ func _draw() -> void:
 	draw_texture(_dial_tex, shake)
 	var c := Vector2(DIAL * 0.5, DIAL * 0.5) + shake
 	# 白短针:总量 / 上限(一圈)
-	var a_short := -PI * 0.5 + TAU * clampf(acc.balance / TimeParams.GRAIN_CAP, 0.0, 1.0)
+	var a_short := -PI * 0.5 + TAU * clampf(acc.balance / maxf(acc.cap, 1.0), 0.0, 1.0)
 	draw_line(c, c + Vector2(cos(a_short), sin(a_short)) * (DIAL * 0.30), COLOR_HAND_SHORT, 4.0)
-	# 红长针:短时窗已用 + 贷款(一圈 = SHORT_WINDOW;贷款最多再加 1/4 圈)
-	var turns := (acc.short_used + acc.loan_used) / TimeParams.SHORT_WINDOW
-	var a_long := -PI * 0.5 + TAU * clampf(turns, 0.0, 1.25)
+	# 红长针:短时窗已用 + 贷款(一圈 = 账户 window;贷款最多再加 loan_max/window 圈 ——
+	# 单机 LOAN_LIMIT/SHORT_WINDOW = 1/4 圈;PvP 贷款上限=短时额度 ⇒ 1 整圈)
+	var win: float = acc.window if acc.window > 0.0 else TimeParams.SHORT_WINDOW
+	var turns := (acc.short_used + acc.loan_used) / win
+	var max_turns := 1.0 + (acc.loan_max / win)
+	var a_long := -PI * 0.5 + TAU * clampf(turns, 0.0, max_turns)
 	var long_col := COLOR_HAND_LONG
 	if _lock_flash_t > 0.0 and fmod(_lock_flash_t, 0.16) > 0.08:
 		long_col = Color8(255, 90, 90)   # 锁定红闪

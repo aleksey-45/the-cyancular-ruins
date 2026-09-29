@@ -53,7 +53,7 @@ func suicide_request() -> void:
 # 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。
 
 signal royale_create_requested(caller: int, opts: Dictionary)
-signal royale_join_requested(caller: int, code: String, invite: String)
+signal royale_join_requested(caller: int, code: String, invite: String, beta: bool)
 signal royale_leave_requested(caller: int)
 signal royale_list_requested(caller: int)
 signal royale_start_requested(caller: int)
@@ -70,8 +70,8 @@ func royale_create(opts: Dictionary) -> void:
 
 # 客户端 → 大厅:加入(私密房须带邀请码)
 @rpc("any_peer", "reliable")
-func royale_join(code: String, invite: String) -> void:
-	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite)
+func royale_join(code: String, invite: String, beta: bool) -> void:
+	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:退出所在大乱斗房间(开局前)
 @rpc("any_peer", "reliable")
@@ -103,6 +103,26 @@ func royale_start_ai() -> void:
 func royale_rooms(rooms: Array) -> void:
 	local_royale_rooms.emit(rooms)
 
+
+# ── Beta 时间玩法(P2,2026-09-29)──
+# 16px 子格被摧毁(cyrm v4):客户端清一个 16px 渲染格与本地预测碰撞(与 tile_destroyed 同链路,
+# 只是粒度细到子格)。
+signal local_sub_destroyed(sub: Vector2i)
+
+
+@rpc("authority", "reliable")
+func sub_destroyed(sub: Vector2i) -> void:
+	local_sub_destroyed.emit(sub)
+
+
+# 每 role 的颗粒状态(余额/短时窗/贷款/锁定),约 10Hz —— HUD 怀表的显示镜像。
+signal local_time_state(payload: Dictionary)
+
+
+@rpc("authority", "reliable")
+func time_state(payload: Dictionary) -> void:
+	local_time_state.emit(payload)
+
 # 大厅 → 客户端:所在房间实时状态 {code, is_public, invite_code, max_players, host_role,
 #   players: [{role, name}], in_match}(等待室 UI 靠它刷新;仅发给房内成员)
 @rpc("authority", "reliable")
@@ -115,7 +135,7 @@ func royale_room_state(state: Dictionary) -> void:
 # ★ 选边(`team_pick`)是 3v3 独有的上行:队伍**不由服务器推导**(role 号有空洞),玩家自己点。
 
 signal team_create_requested(caller: int, opts: Dictionary)
-signal team_join_requested(caller: int, code: String, invite: String)
+signal team_join_requested(caller: int, code: String, invite: String, beta: bool)
 signal team_pick_requested(caller: int, team: int)
 signal team_leave_requested(caller: int)
 signal team_start_requested(caller: int)
@@ -130,8 +150,8 @@ func team_create(opts: Dictionary) -> void:
 
 # 客户端 → 大厅:加入(私密房须带邀请码)
 @rpc("any_peer", "reliable")
-func team_join(code: String, invite: String) -> void:
-	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite)
+func team_join(code: String, invite: String, beta: bool) -> void:
+	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:选边(team = 1 或 2)。该队已满 → 大厅回 server_message 拒绝
 @rpc("any_peer", "reliable")

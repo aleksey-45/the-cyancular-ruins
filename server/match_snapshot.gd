@@ -26,6 +26,11 @@ func _broadcast_snapshot() -> void:
 			"downed": p.is_downed(),
 			"aim": p.get_current_aim_dir(),
 			"previewing": previewing,
+			# Beta 时间玩法:该 role 当前是否加速(客户端副本的视效用;倍率由规则同源推出)
+			"haste": p.pvp_haste_mult > 1.0,
+			# 回溯:该 role 是否在回溯(自身底片色 + 轨迹残像用)+ 轨迹点(每 3 帧一个)
+			"rewind": bool(_rw_on.get(int(role), false)),
+			"trail": (_rw_trail.get(int(role), []) as Array).duplicate(),
 		}
 	# ★ 一次 rpc():ENet 层单次序列化 + 广播。逐 rpc_id 循环会把 O(N²) 加回来(那正是拆包要治的)。
 	# ★★ 判据必须是「**表里每一个** peer 都能收包」(`NetBus.all_peers_sendable`),不能是老的

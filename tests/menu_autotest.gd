@@ -27,6 +27,10 @@ func _ready() -> void:
 func _run() -> void:
 	var tree := get_tree()
 	await tree.create_timer(1.2).timeout   # 等浮现动画
+	if mode == "beta":
+		await _run_beta_flow(tree)
+		tree.quit(0)
+		return
 	if mode == "switch":
 		await _run_switch_roundtrips(tree)
 		print("AUTOTEST[switch]: DONE")
@@ -148,6 +152,75 @@ func _find_picker(n: Node) -> MapPicker:
 		if hit != null:
 			return hit
 	return null
+
+
+# ── beta 模式:主菜单 → Beta 页(两张卡)→ 错乱大乱斗卡 → beta 态大乱斗大厅(时间参数面板)──
+# ★ 为什么场景级:独立房间池的客户端侧一半(beta 标的创建/过滤/上报)都长在大厅页里,
+#   不真开一次页,「beta 态建面板 + 9 行参数 + player_options 带 time」这些全是纸面推断。
+func _run_beta_flow(tree: SceneTree) -> void:
+	_press_by_text(tree.current_scene, "Beta")
+	await tree.create_timer(1.5).timeout
+	var beta := tree.current_scene
+	var path0 := str(beta.scene_file_path) if beta != null else "<null>"
+	print("AUTOTEST[beta]: Beta 页 = %s" % path0)
+	if path0.find("beta_menu.tscn") < 0:
+		print("AUTOTEST[beta]: 未进入 beta_menu(实际 %s)——按钮文案变了?" % path0)
+		tree.quit(1)
+		return
+	# 两张卡的名字与版本号都必须在
+	var texts := _collect_texts(beta)
+	for want in ["错乱大乱斗", "时空 3v3", "Royale", "Team", "beta_0.0"]:
+		if texts.find(want) < 0:
+			print("AUTOTEST[beta]: Beta 页缺「%s」" % want)
+			tree.quit(1)
+			return
+	print("AUTOTEST[beta]: 两张卡与版本号齐全")
+	# 点第一张卡(错乱大乱斗)→ 应到大乱斗大厅且 beta_mode 为真
+	(beta as Node).call("_enter_card", (beta as Node).get("CARDS")[0])
+	await tree.create_timer(1.5).timeout
+	var lobby := tree.current_scene
+	var path1 := str(lobby.scene_file_path) if lobby != null else "<null>"
+	print("AUTOTEST[beta]: 卡片后场景 = %s,beta_mode=%s" % [path1, str(PvpSession.beta_mode)])
+	if path1.find("royale_lobby.tscn") < 0 or not PvpSession.beta_mode:
+		print("AUTOTEST[beta]: 未以 beta 态进入大乱斗大厅")
+		tree.quit(1)
+		return
+	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则
+	var sliders := 0
+	for n in _walk(lobby, func(x: Node) -> bool: return x is HSlider):
+		sliders += 1
+	if sliders < 9:
+		print("AUTOTEST[beta]: 时间参数滑条不足(%d < 9)" % sliders)
+		tree.quit(1)
+		return
+	var opts: Dictionary = (lobby as Node).call("_player_options")
+	if not opts.has("time") or str(opts["time"]).length() < 10:
+		print("AUTOTEST[beta]: player_options 没带 time 规则(%s)" % str(opts))
+		tree.quit(1)
+		return
+	print("AUTOTEST[beta]: 时间参数 9 行在;player_options 带 time(默认规则)")
+	await _shot(tree, "autotest_beta.png")
+	print("AUTOTEST[beta]: DONE")
+
+
+func _collect_texts(n: Node) -> Array:
+	var out: Array = []
+	for x in _walk(n, func(x: Node) -> bool: return x is Label or x is Button):
+		var t := str((x as Control).text if x is Button else (x as Label).text)
+		if t != "":
+			out.append(t)
+	return out
+
+
+func _walk(n: Node, pred: Callable) -> Array:
+	var out: Array = []
+	if n == null or not is_instance_valid(n):
+		return out
+	if pred.call(n):
+		out.append(n)
+	for c in n.get_children():
+		out.append_array(_walk(c, pred))
+	return out
 
 
 # ── switch 模式:两趟「进单机 → 回主菜单」,把 safe_change_scene 的两条路径都走到 ──

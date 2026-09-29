@@ -15,6 +15,20 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 	# 服务器拆的墙必须由事件驱动客户端清瓦片渲染,否则建筑"看着没被炸坏"。
 	_rpc_all("tile_destroyed", [cell])
 
+
+# 16px 子格被摧毁(cyrm v4):清持久子格 + 标记分块重建 + 广播 sub_destroyed 给客户端
+# (客户端清 16px 渲染格与本地预测碰撞)。owner = 射手节点 → 映射 role,Beta 时间玩法
+# 在这里结算"拆砖得颗粒"(B21;普通局 time_economy 为空,只广播)。
+func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
+	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
+		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
+		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
+	_rpc_all_ext("sub_destroyed", [sub])
+	if time_economy != null:
+		var role := _role_of_node(owner)
+		if role != 0:
+			time_economy.award_blocks(role, 1)
+
 # 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
 # 带递增序号 tick:客户端靠它丢弃乱序到达的旧快照(unreliable 通道可能乱序)。
 
@@ -204,6 +218,13 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 # bind(role) 在 Godot 里把绑定参数追加在信号参数之后 → 实际入参顺序为 (source_pos, damage, role)。
 
 func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
+	# Beta 时间玩法:伤害入账(每点 × damage_gain)。归因口径与 TeamHost 的逐人伤害一致:
+	# attribute 都写在 take_hit 之前 ⇒ 这一刻读 meta 就是"这一下是谁打的";新鲜度窗口
+	# 用击杀同款 ATTRIB_WINDOW(自伤/归因不到/同队,谁都不给 —— 用户裁定)。
+	if time_economy != null and damage > 0:
+		var attacker := _fresh_attacker_role(int(role), CombatFeedback.ATTRIB_WINDOW_MS)
+		if attacker != 0 and attacker != int(role) and not same_team(attacker, int(role)):
+			time_economy.award_damage(attacker, int(role), damage)
 	for r in peer_by_role:
 		# 判活:这是**每次伤害**都发的定向包(交火时最密的一处),原先完全不判 ——
 		# 往"正在断开"的 peer 发就是那条 channel 0 错误(判据为何不能用 get_peers 见 NetBus)。

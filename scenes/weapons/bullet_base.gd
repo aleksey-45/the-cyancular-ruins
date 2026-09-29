@@ -178,7 +178,7 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 		if tex != 0 and TileDefs.bullet_destroyable(tex):
 			TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
 			if apply_damage:
-				TileDefs.damage_sub(sub, hit_damage, "bullet")
+				TileDefs.damage_sub(sub, hit_damage, "bullet", shooter)
 		return
 
 

@@ -57,7 +57,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 					_falloff(d, radius, max_knockback) * mult)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
 	if has_grid:
-		_damage_tiles(center, radius, max_damage)
+		_damage_tiles(center, radius, max_damage, shooter)
 
 # 爆区内的可破坏瓦片(树叶/树干)扫描 —— **纯几何查询,不改任何状态**。
 # 返回 [{cell: Vector2i, pos: Vector2(格中心), tex: int, d: float(到爆心的环面距离)}]。
@@ -90,12 +90,12 @@ static func destructible_subs(center: Vector2, radius: float) -> Array:
 	return out
 
 
-static func _damage_tiles(center: Vector2, radius: float, max_damage: int) -> void:
+static func _damage_tiles(center: Vector2, radius: float, max_damage: int, owner: Node = null) -> void:
 	for e in destructible_subs(center, radius):
 		var dmg := int(_falloff(float(e["d"]), radius, max_damage) * TileDefs.explosion_decay())
 		if dmg <= 0:
 			continue
-		TileDefs.damage_sub(e["sub"], dmg, "explosion")
+		TileDefs.damage_sub(e["sub"], dmg, "explosion", owner)
 
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。

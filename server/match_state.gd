@@ -31,6 +31,36 @@ var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复�
 # ★ 空表 = 无队伍(1v1 / 大乱斗 / 单机):`team_of` 恒 0、`same_team` 恒 false,行为与今天一致。
 var _team_of: Dictionary = {}
 
+# Beta 时间玩法(B21):服务器权威颗粒经济。普通局恒 null(一切结算/广播短路)。
+# 宿主 _init 时若房主 options 带 time 规则则建(见 MatchHost._init)。
+var time_economy = null
+
+
+# 受害者 meta 里的"最近攻击者" → role(带新鲜度窗口;超窗/自伤/不在表 → 0)。
+# 语义与 TeamHost._attributed_role_within 同源 —— 上提到基类给时间经济的伤害入账用
+# (TeamHost 自己那份继续服务逐人统计,两处口径一致)。
+func _fresh_attacker_role(victim_role: int, window_ms: int) -> int:
+	var victim: Node2D = players.get(int(victim_role))
+	if victim == null or not is_instance_valid(victim) or not victim.has_meta("last_damager"):
+		return 0
+	var shooter: Node = victim.get_meta("last_damager")
+	if shooter == null or not is_instance_valid(shooter) or shooter == victim:
+		return 0
+	if victim.has_meta("last_damager_time"):
+		if Time.get_ticks_msec() - int(victim.get_meta("last_damager_time")) > window_ms:
+			return 0
+	return _role_of_node(shooter)
+
+
+# 节点 → role(players 表反查;0 = 不在表里,调用方按"无归因"处理)。
+func _role_of_node(n: Node) -> int:
+	if n == null:
+		return 0
+	for r in players:
+		if players[r] == n:
+			return int(r)
+	return 0
+
 
 # 某 role 的队号;无队伍/不在表里 → 0(调用方按 0 处理为"不豁免、不分组",别让它变成 1)。
 func team_of(role: int) -> int:
@@ -119,6 +149,21 @@ static var test_destroy_after := 0.0     # 秒;从对局开始(_ready)起算
 
 
 func _rpc_all(method: String, args: Array = [], except_role: int = -1,
+		live_only: bool = true) -> void:
+	for role in peer_by_role:
+		if role == except_role or not players.has(role):
+			continue
+		var peer: int = peer_by_role[role]
+		# ★ 判活走 `NetBus.is_peer_live`(读 ENet peer 自己的 state),**不是** `get_peers()`:
+		#   后者比 ENet 的真实状态晚(见 NetBus 里那段注释),用它挡不住"往已拆掉的 peer 发定向包"
+		#   → 就是那句 `Unable to send packet on channel 0, max channels: 0`。
+		if live_only and not NetBus.is_peer_live(peer):
+			continue
+		# callv 展开实参:rpc_id 是变参口,而本函数要按调用方给的 args 转发。
+		NetBus.callv("rpc_id", [peer, method] + args)
+
+# Beta 时间玩法的广播走扩展节点(NetBus 纪律:原方法表不动)。
+func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
 		live_only: bool = true) -> void:
 	for role in peer_by_role:
 		if role == except_role or not players.has(role):
