@@ -101,9 +101,23 @@ func _check_opponent_left() -> void:
 	var srv := _code(SRV_MAIN)
 	_check(not srv.is_empty(), "读不到 %s" % SRV_MAIN)
 	# ①a 发送点存在,且走的是 `NetBus.reply`(定向发送的判活收口)
-	_check(srv.contains("NetBus.reply(") and srv.contains("\"opponent_left\""),
-			"★ %s 里没有 `NetBus.reply(…, opponent_left)` —— 这条 RPC 会退回「零调用点」"
-			% SRV_MAIN)
+	# ★★ 判据**收在 `_notify_opponent_left` 的函数体里**(2026-09-29 收紧)。原写法是
+	#   **两条文件级子串的合取**:`srv.contains("NetBus.reply(") and srv.contains("\"opponent_left\"")`
+	#   —— 两者**各自**都能被文件里**别处**的代码喂饱:`NetBus.reply(` 在本文件另有**一处**调用点
+	#   (`match_start` 的应答,`server_main.gd` 的 `_on_match_sync` 那一支),而带引号的字面量
+	#   `"opponent_left"` 在下面那种改法里**仍然在**(只是换了调用它的函数)。
+	#   ⇒ 把这一行改成 **`NetBus.rpc_id(peer, "opponent_left")`**(绕开判活收口,正是本条要拦的
+	#   那一件事)时,两条**同时**成立、断言**照绿**,而消息读成"我验过了那次调用"。
+	#   ★ 实测(2026-09-29):改 `rpc_id` 后 `grep -c 'NetBus.reply('` = **1**(命中另一处)、
+	#     `grep -c '"opponent_left"'` = **1**(命中被改的那一行)⇒ 旧谓词 = true and true = 绿;
+	#     而新谓词当场 FAIL。(纯粹删掉整行时旧谓词也会红 —— 它拦得住"没有",拦不住"换了".)
+	#   ★ 这是 `tests/lib/probe_base.gd` 文件头那一族「读起来像覆盖、实际不覆盖」的空断言,
+	#     ①e 已为此收紧过,本条是它当时漏掉的另一半。
+	#   现在钉的是"**接收者 + 方法名**同时出现在这个函数体里",文件里别处再怎么写都喂不饱它。
+	var notif := _body(SRV_MAIN, "_notify_opponent_left")
+	_check(notif.contains("NetBus.reply(peer, \"opponent_left\")"),
+			"★ `_notify_opponent_left` 里没有 `NetBus.reply(peer, \"opponent_left\")` —— "
+			+ "这条 RPC 会退回「零调用点」,或退回绕过判活收口的 `rpc_id`(实得函数体「%s」)" % notif)
 	# ①b 它被 1v1 收场那一支调用(**不是**只定义不调 —— 那正是本条要修的缺陷形状)
 	var exp := _body(SRV_MAIN, "_expire_graces")
 	_check(exp.contains("_notify_opponent_left()"),
@@ -310,22 +324,38 @@ func _check_hud_consumers() -> void:
 	var pvp := _code(PVP_HUD)
 	_check(pvp.contains("GraceWindow.tick_display("),
 			"★ pvp_hud 没有本地走秒(`GraceWindow.tick_display` 是那份减法的唯一实现)")
+	# (相⑥ 原先还有一句 `var roy := _code(ROYALE_HUD)` —— 它只喂那两条文件级子串,收紧后
+	#  再无读者,已删;未使用的局部量会刷 `UNUSED_VARIABLE` 警告。)
 	var body := _body(PVP_HUD, "_refresh_grace")
 	_check(body.contains("3 - PvpSession.role"),
 			"★ `_refresh_grace` 没按「对手 role = 3 - 自己」取数(实得「%s」)" % body)
 	_check(body.contains("_grace.has(opp)"),
 			"★ `_refresh_grace` 必须是 `has(opp)` 判定,不能「取第一个键」(多一个 role 时会印错人)")
-	var roy := _code(ROYALE_HUD)
-	_check(roy.contains("UiFactory.C_GRACE"),
-			"★ royale_hud 的「掉线」那一档没有引调色板的新色")
-	# ★★ 判据**收在 `_refresh_board` 的函数体里**,不能拿 `roy.contains("grace: Dictionary")` ——
-	#   那个写法是**假绿**:本文件的成员声明 `var _grace: Dictionary = {}` 自己也含这个子串,
-	#   于是"把形参整个删掉/改名"(本相唯一要拦的那件事)时它**照样绿**(2026-09-28 变异实测:
-	#   形参改名成 `grc: Dictionary` 后那一条仍打 ok)。这正是 `tests/lib/probe_base.gd` 文件头
-	#   那一族"读起来像覆盖、实际不覆盖"的空断言,故这里按函数体判。
+	# ★★ 下面两条判据**全部收在 `_refresh_board` 的函数体里**(2026-09-29 收紧)。
+	#   上一版那两条各有一半是**文件级**的,而那一半**读起来像覆盖、实际不覆盖**:
+	#     · `roy.contains("UiFactory.C_GRACE")` 被**文件级那一行** `const COLOR_GRACE := UiFactory.C_GRACE`
+	#       喂饱 ⇒ 把「掉线」那一整支(`tag`/`col` 两行)删光它也照绿;
+	#     · `roy.contains("_refresh_board(")` 被**它自己的定义行**喂饱 ⇒ **恒真**、零信息,
+	#       留着只会让人以为"这条验过调用点"。
+	#   (另一半——"形参必须叫 `grace: Dictionary`"——本来就是按函数体判的,那半是对的;
+	#    2026-09-28 变异实测:形参改名成 `grc: Dictionary` 时它确实红。)
 	var board := _body(ROYALE_HUD, "_refresh_board")
-	_check(roy.contains("_refresh_board(") and board.contains("grace: Dictionary"),
-			"★ `_refresh_board` 没有把 `grace` 收进去")
+	_check(board.contains("COLOR_GRACE"),
+			"★ royale_hud 的「掉线」那一档没有引调色板的新色(判据在 `_refresh_board` 的**函数体**里 ——"
+			+ " 文件级那句 `const COLOR_GRACE := UiFactory.C_GRACE` 不算数「用上了」)")
+	_check(board.contains("grace: Dictionary") and board.contains("grace.has(")
+			and board.contains("\"掉线 %ds\""),
+			# ★ 消息里那个 `%%ds` 是**转义**:它是 `_refresh_board` 里那句标签的**字面量**,
+			#   不转义会被本行的 `%` 运算当成第二个占位符(实测:`ERROR: String formatting error:
+			#   a number is required.`,而断言本身照打 ok —— 一条**只脏日志**的坑)。
+			"★ `_refresh_board` 没有把 `grace` 收进去并真的画出来(形参 `grace: Dictionary` / "
+			+ "`grace.has(role)` 判据 / 「掉线 %%ds」标签 —— 三者缺一;实得函数体「%s」)" % board)
+	# ★★ 这一相**仍看不见什么**(照实登记,别把它读成"「掉线」那一档已被守卫盖住"):
+	#    上面两条都是**函数体内的文本共现**,控制流一概看不见 —— 用 `if false:` 包住整支、
+	#    或把 `col` 算完再在下游整体覆写,两条**照样全绿**。
+	#    真正钉住"这一档在**画面上**真的生效"的是**用户跑的真渲染探针**
+	#    (`tests/combat_hud_visual_probe.gd` 的态8:数像素差 + 念出「掉线 42s」+ 量文本宽度)。
+	#    headless 这一侧**没有**等价物(本探针不看像素),故这条缺口是**登记的**,不是"已闭合"。
 	_check(not _code(TEAM_HUD).contains("grace"),
 			"★ team_hud 也在消费 `grace` —— 3v3 **刻意不做**(spec §4 的 3.1 只点大乱斗与 1v1);"
 			+ "要做也是在结算/记分条上另设计,不是这条单行状态")

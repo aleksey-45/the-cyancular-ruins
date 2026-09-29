@@ -85,6 +85,15 @@ func _on_round_state(data: Dictionary) -> void:
 	# ★ **缺键 = 此刻没人掉线**(服务端空表不带上该键,见 `GraceWindow.merge_into`)——
 	#   不是"未知",也不是错误。老客户端忽略未知键、新客户端拿到缺键都走同一支。
 	_grace = data.get("grace", {})
+	# ★★ **本函数的唯一一次刷新**(2026-09-29 删掉了函数尾那次重复调用)。
+	#   原先首尾各刷一次,而尾那次的注释写着「本帧的权威值覆盖本地走秒的结果」—— 那句话**属于
+	#   这一处**(赋值一完成就把权威值画上去;本地走秒发生在**两帧之间**的 `_process` 里,见上),
+	#   尾那次只是**同参重刷**:`_grace` 的唯一写点就是上面这一行,`PvpSession.role` 在本函数里
+	#   也没有第二个值,故两次调用的画面结果**逐字相同**(`_refresh_grace` 只写
+	#   `_grace_wrap.visible` 与 `_grace_label.text`,函数体里没有任何读它们的地方)。
+	#   ⇒ **别在函数尾再加一次**:它不改行为,只会让人以为"中间某处会改 `_grace`"。
+	#   (若将来真在 `match state:` 的某个分支里改了 `_grace`,那时也**不**该在尾上补一笔 ——
+	#    该在那个分支里自己刷,或者把赋值挪到分发**之前**。)
 	_refresh_grace()
 	var state: int = data.get("state", ST_PLAYING)
 	var round: int = data.get("round", 1)
@@ -126,4 +135,3 @@ func _on_round_state(data: Dictionary) -> void:
 				_set_broadcast(true, "失败", "再接再厉…")
 			else:
 				_set_broadcast(true, "P%d 获胜!" % (1 if w1 > w2 else 2), "对局结束,返回菜单…")
-	_refresh_grace()   # 本帧的权威值覆盖本地走秒的结果(服务器值恒是新的)

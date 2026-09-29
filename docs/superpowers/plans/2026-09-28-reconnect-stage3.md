@@ -1671,14 +1671,19 @@ const TEAM_HUD := "res://ui/team_hud.gd"
 ```
 
 `_ready()` 里在 `_check_status_call_sites()` **之后**加 `_check_hud_consumers()`;
-`EXPECTED_CHECKS` 由 **27** 抬到 **33**(本相加 6 条;判据是"实跑 == 期望且 ALL-OK")。
+`EXPECTED_CHECKS` 由 **33** 抬到 **39**(本相加 6 条;判据是"实跑 == 期望且 ALL-OK")。
+★★ **入口是 33 不是 27(2026-09-29 订正)**:上面那句原文写着"由 **27** 抬到 **33**",而
+Task 4 的复核批(Fix 1~5:横幅 5→9、调用点 5→4、新增 `_check_subscribe_wiring` 3 条)已经
+把 27 抬成了 **33** —— 照 27 算,期望值会写成 **33**,而实跑是 **39** ⇒ 撞上"实跑 ≠ 期望"那道闸,
+且**方向是假红**(代码是对的、计划是旧的)。`tests/reconnect_status_probe.gd` 的文件头
+逐项相加减那段是权威口径(Task 3 那处同形的错已由 `5079e9e` 订正,本处是它漏掉的姊妹处)。
 
 Run:
 ```bash
 source tests/env.sh
 timeout 120 "$GODOT" --headless --path . --quit-after 3600 res://tests/reconnect_status_probe.tscn 2>&1 | tail -40
 ```
-Expected: `KH RECON-UI PROBE: ALL-OK(33 条断言)`。
+Expected: `KH RECON-UI PROBE: ALL-OK(39 条断言)`。
 
 - [ ] **Step 7: 扩展真渲染探针(★ 用户跑、读图)**
 

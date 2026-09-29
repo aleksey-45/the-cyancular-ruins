@@ -347,8 +347,13 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
 
 - **3.1 「掉线中」= `round_state` 长出 `grace` 字段**(`{role(int) -> 剩余秒(float)}`)。★ 它的
   **唯一出口是 `MatchState._send_round_state(data)`**(三个生产者 `MatchRound` / `RoyaleHost` /
-  `TeamHost` 都调它)⇒ 生产目录里 `_rpc_all("round_state"` **零命中**(守卫 `tests/grace_feed_probe`
-  的 ④)。读数的**持有者是 `server_main`**(宽限期表在它手里),它经 `_sync_grace_snapshot()` 把值
+  `TeamHost` 都调它)⇒ 生产目录里 `_rpc_all("round_state"` **除出口自身外零命中**(守卫
+  `tests/grace_feed_probe` 的 ④)。★ 那**一处**就是 `_send_round_state` **自己的函数体**
+  (`server/match_state.gd` 里那一行)—— 它是出口的**实现**,不是漏网的旁路,别照着"零命中"去
+  把它删掉(删了 `round_state` 就一个字节都发不出去)。权威措辞与理由写在该函数**上方**
+  那段注释里(`server/match_state.gd`,「除出口自身外零命中」那句)。
+  ★ **不写行号是刻意的**:本文件多处因行号漂移而失真,一律改用符号名定位。
+  读数的**持有者是 `server_main`**(宽限期表在它手里),它经 `_sync_grace_snapshot()` 把值
   **推进**宿主的 `grace_snapshot` 字段 —— **推**而不是"宿主去问",避免一条 back-reference。
   ★ **空表不带该键**(与 `destroyed`/`teams`/`stats` 同款);三个客户端 + `match_result_payload`
   都对缺键无感(加法式扩展)。
@@ -361,8 +366,13 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
   有反向断言钉住这个不对称是**有意**的。
 - **3.2 + 3.4 「重连中」= `ui/status_banner.tscn`(CanvasLayer layer 140)**,由**基类**
   `PvpMatchClient` 在**已有的** `_subscribe_reconnect()` 里实例化 ⇒ 三个模式**零新调用点**。
-  四个转折点驱动:`_begin_reconnect`(断开被察觉就亮 = 3.4 要的"失败**之前**的反馈")/
-  `_on_reconnect_retry_tick`(报剩余预算)/ `_on_resumed`(收)/ `_abort_reconnect`(收)。
+  **五个**转折点驱动:`_begin_reconnect`(断开被察觉就亮 = 3.4 要的"失败**之前**的反馈")/
+  `_on_reconnect_retry_tick`(报剩余预算)/ `_on_resumed`(收)/ `_cancel_reconnect`(收 —— 3.3 的
+  「对手已离开」那一支,`pvp_game._on_opponent_left` 调它)/ `_abort_reconnect`(收)。
+  ★ 权威口径在 `ui/status_banner.gd` 的 `set_text` 上方(那里写的是「**五个**转折点」),
+  两个数必须同口径;`tests/reconnect_status_probe` 的相④**不手抄**这份名单,而是从
+  「给 `_reconnecting` 赋值的函数」**推导**出全集 —— 故漏一个转折点时它红的是**推导面**,
+  不是这里的散文。
   ★★ 层位 **140 只住在 `.tscn` 里** —— `.new()` 建出来是 CanvasLayer 默认的 layer 1,画在
   HUD(130)/小地图(131)**底下**且**不报错**;守卫 `tests/hud_declarative_probe` 的 ⑧。
 - **3.3 `opponent_left` 不再是死路**:服务端调用点在 `server_main._notify_opponent_left()`,
@@ -370,7 +380,7 @@ max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有�
   里还在的人,走 `NetBus.reply`(判活收口)。
   ★ 只在**收场**发、**不在 `_enter_grace` 发** —— 掉线时就宣告"对手已离开"会把阶段 1 的整条
   重连功能作废。
-  ★★ **两天时序都要收口**:通知先到 ⇒ 既有的 `_match_ended` 闸挡住重连循环启动;断开先到 ⇒
+  ★★ **两条时序都要收口**:通知先到 ⇒ 既有的 `_match_ended` 闸挡住重连循环启动;断开先到 ⇒
   只有 `_cancel_reconnect()` 能叫停已经在飞的那个循环。⇒ 不论谁先到,结局都是「2.5s 后回主菜单」,
   **不叠加一个 60 秒的重连循环**。守卫:`tests/reconnect_status_probe` 相①② + `reconnect_probe` 相④b。
 

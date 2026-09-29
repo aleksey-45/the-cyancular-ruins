@@ -63,6 +63,12 @@ horizontal_alignment = 2
 ;   ★ 大乱斗排行榜（royale_hud 的 _board_bg）是例外，单独是 0.25。
 ;   ★ 本场景是 ui/pvp_hud.tscn 的**逐字复制**(只换脚本引用与根节点名):3v3 首版版式就沿用
 ;     1v1 那条顶部记分条,联机 UI 重做那份再统一排(设计 §11)。
+;     ⚠ **一个例外(2026-09-28 起)**:`pvp_hud.tscn` 长了 `GraceWrap` + `GraceLabel`
+;     (1v1 的「对手掉线中,等待重连… 剩余 Ns」),而本场景**刻意没有**那两个节点。
+;     3v3 **不消费 `grace`**(spec §4 的 3.1 只点大乱斗与 1v1;6 人一队的单行"对手状态"
+;     没有意义)—— 这是一条**有意的不对称**,不是漏抄:少了那两个节点是**正确形状**,
+;     "补上它"才是回归(反向断言在 `tests/reconnect_status_probe` 相⑥,它扫 `ui/team_hud.gd`)。
+;     ⇒ 除这一处(以及脚本引用/根节点名)外,其余节点仍与 pvp_hud.tscn 逐字对应。
 [node name="ScoreWrap" type="PanelContainer" parent="."]
 anchor_left = 0.5
 anchor_right = 0.5
