@@ -231,7 +231,32 @@ func _frames(n: int) -> void:
 		await get_tree().process_frame
 
 
-# 控件矩形内"亮像素"(三通道均值 > 0.5)计数 —— 证明文本真的画出来了
+# 控件矩形内"比**底板**明显更亮"的像素计数 —— 证明**文本真的画出来了**,
+# 而不是"底板自己就够亮"。
+#
+# ★★ 为什么基准必须从图里量、不能用绝对阈值(2026-09-29,未认领欠账 A7):
+#   旧实现是 `(r+g+b)/3 > 0.5`,而本探针的**底板** = `C_PLATE`(黑 0.1)压在
+#   `MAP_OPEN_COLOR`(#78969F)上,合成后三通道均值 = (0.47+0.588+0.624)×0.9/3 = **0.5047**
+#   —— 只比阈值高 **0.0047**。后果不是"判得松一点",而是**判据整个空转**:
+#   只要控件矩形非空就恒 ≥1,六处 `_bright_in(...) > 0` 在"文本一个都没画出来"时**照样全绿**。
+#   反方向也脆:底板色/地图底色/取图口径任一微调,底板会被判成"亮文本"。
+#   (大乱斗排行榜那块底更暗 —— `_board_bg` 是 0.25 的例外 ⇒ 0.4205,同一族的另一个数。)
+# ⇒ 基准改为**从本矩形量**:取像素亮度的 **25 百分位**当底板(文本只占矩形一小部分,
+#   且像素字体笔画细、字形框内大片是底,故 25 百分位稳稳落在底板上;取百分位而不是最小值,
+#   是为了不被边框/描边那类少数暗像素带跑),要求像素比它亮出 `BRIGHT_MARGIN`。
+#
+# 实测两个数(2026-09-29,**按颜色算**,不是取图 —— 本探针是真渲染的,这一轮由用户跑图验收):
+#   · 底板:记分条/大字的底(黑 0.1 压 #78969F)= **0.5047**;大乱斗排行榜板底(黑 0.25)= **0.4205**;
+#   · 本探针点亮的最暗文本:排行榜首行的 `C_TEXT` = **0.9137**;其余各处更高
+#     (`_big` 的 0.95、`_score_label` 的主题默认 0.875、`C_GRACE` 0.7467、`C_ACCENT` 0.7007)。
+#   ⇒ `BRIGHT_MARGIN = 0.10` 时门限落在 **0.52~0.61**:离底板 ≥0.10、离最暗被点亮文本 ≥0.09。
+# ★ 已知边界:25 百分位当底板的前提是「文本的墨迹面积 < 矩形的 ~75%」。本探针量到的六个控件
+#   全是这种形状(像素字体笔画细、字形框内大片是底),今天是安全的;若将来去量一个
+#   **墨迹占满**的小控件,基准会落到文本上、门限随之抬高 ⇒ 那条断言会**假红**(方向是红,
+#   不是静默放行)。
+const BRIGHT_MARGIN := 0.10
+
+
 func _bright_in(img: Image, ctrl: Control) -> int:
 	if img == null or img.get_width() == 0 or ctrl == null or not is_instance_valid(ctrl):
 		return 0
@@ -241,12 +266,35 @@ func _bright_in(img: Image, ctrl: Control) -> int:
 	var y0 := clampi(int(r.position.y * s.y), 0, img.get_height())
 	var x1 := clampi(int((r.position.x + r.size.x) * s.x), 0, img.get_width())
 	var y1 := clampi(int((r.position.y + r.size.y) * s.y), 0, img.get_height())
-	var n := 0
+	return count_bright(img, Rect2i(x0, y0, x1 - x0, y1 - y0))
+
+
+# 计数本体(纯函数:图 + 像素矩形进,整数出)。
+# ★★ 抽成 `static` 的**唯一**理由是可单独验证:本探针整体是**真渲染**的(headless 下
+#   `_shot` 直接 FAIL),故"这个阈值到底分不分得开底板与文本"这件事在 headless 里没有别的判据。
+#   2026-09-29 的变异反证就是直接调它跑的(合成图:纯底板色 ⇒ 0;底板 + 一个近白像素 ⇒ 1;
+#   同一张图交给**旧阈值 0.5** ⇒ 恒 ≥1,即空转)。
+static func count_bright(img: Image, rect: Rect2i) -> int:
+	if img == null or img.get_width() == 0:
+		return 0
+	var x0 := clampi(rect.position.x, 0, img.get_width())
+	var y0 := clampi(rect.position.y, 0, img.get_height())
+	var x1 := clampi(rect.position.x + rect.size.x, 0, img.get_width())
+	var y1 := clampi(rect.position.y + rect.size.y, 0, img.get_height())
+	var lums: Array[float] = []
 	for y in range(y0, y1):
 		for x in range(x0, x1):
 			var c := img.get_pixel(x, y)
-			if (c.r + c.g + c.b) / 3.0 > 0.5:
-				n += 1
+			lums.append((c.r + c.g + c.b) / 3.0)
+	if lums.is_empty():
+		return 0
+	lums.sort()
+	var base: float = lums[int(float(lums.size() - 1) * 0.25)]
+	var thresh := base + BRIGHT_MARGIN
+	var n := 0
+	for l in lums:
+		if l > thresh:
+			n += 1
 	return n
 
 
