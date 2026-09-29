@@ -109,7 +109,15 @@ func _initialize() -> void:
 	#      它们恒 false,取反恒真。★ **只禁否定式,不禁"以 `not` 开头"** —— `not _match_started`
 	#      是正常写法,必须放行(那一支还要求 `_worker` 为真,结构上进不去);
 	#   ③ `set_process(false)` 必须在 **`_ready` 体内、紧跟 `add_child(RoomManager.new())` 之后、
-	#      且两者之间没有早退**;`_run_worker` 体内**不得**有它。
+	#      且两者之间没有早退**;`_run_worker` 体内**不得**有它(两边的函数体任一取不到 ⇒
+	#      **报红**,不静默跳过 —— 见 `_check_lobby_process_off` 里那条 `_run_worker` 空体守卫)。
+	#
+	# ★★ **哪一条是承重的:③,不是 ①②**(2026-09-28 终审订正;与其照"`var _worker := false`
+	#   在位"那句读,不如读这一条):`_worker == false` 与 `_worker or …` **两种写法都能过 ①②**
+	#   —— `_worker` 确实被声明成 `var _worker := false`、也确实被 `= is_worker` 赋过值,而
+	#   ①② 都不问"这个标志在门里是**正的**吗"。真正拦住"大厅进程进梯"的是 **③**:大厅分支
+	#   自己 `set_process(false)` ⇒ `_process` 在**结构上**不再跑,门控写得多歪都无所谓。
+	#   故 ③ 才是那条底线,①② 是 belt(它们挡的是"门写成否定式"这一**类**里最直白的那几种)。
 	#
 	# ★★ **上一版在注释里撒过谎,别照那句读**(2026-09-28 重审订正):它写着"对改名 / 重排合取项 /
 	#   抽 helper 免疫",实际只做到了**改名**(而且连 `var X: bool = false` 这种写法都不认)。
@@ -248,6 +256,13 @@ func _has_assignment(code: String, name: String) -> bool:
 func _check_lobby_process_off(ready_body: String, worker_body: String, fails: Array[String]) -> void:
 	if ready_body.is_empty():
 		fails.append("★ 取不到 `server_main._ready` 的函数体 —— 无法钉 `%s` 的位置" % PROCESS_OFF)
+		return
+	# ★★ `_run_worker` 取不到时**必须报红**,不能静默跳过下面那条否定断言:函数一改名/被内联,
+	#   `worker_body` 就是空串,而 `"".contains(x)` 恒假 ⇒ 最后那条"不得出现在 `_run_worker` 里"
+	#   会**静默放行**(把 `%s` 挪进 worker 那一支也照绿)。`_ready` 那半边一直有这条守卫,
+	#   这里原先漏了 —— 同一件事一半严一半松,松的那半读起来完全一样。
+	if worker_body.is_empty():
+		fails.append("★ 取不到 `server_main._run_worker` 的函数体 —— 无法判 `%s` 有没有被挪进 worker 那一支(改名/内联?下面那条否定断言会因此**静默放行**)" % PROCESS_OFF)
 		return
 	var at := ready_body.find(PROCESS_OFF)
 	if at < 0:

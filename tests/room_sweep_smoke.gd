@@ -34,6 +34,12 @@ extends SceneTree
 #      片段 —— `TEAM_MATCH_ESTIMATE` 同为 1800,那半会静默失明);
 #   ③ 两个新读的文件各补一条"读不到就说读不到"的断言(Finding 5:否则诊断会误报成
 #      "钳位/换算变了")。
+#  **2026-09-28 终审(整支)→ 第三环(`_check` 内再加一条,`CHECK_NAMES` 仍不变)**:
+#   ④ 前面两条钉的都是**上界**这一侧;而**真正产生下发值**的是滑块那一侧 ——
+#      `scenes/royale_lobby.gd` 的 `tslider.max_value = 15.0` 与它的 `value_changed`
+#      (`Settings.royale_match_min = v`,**不钳位**)。放宽它 ⇒ 环一环二照绿而上界失效。
+#      ★ 判据比**数值**而非子串:`contains("15")` 挡不住 `15.0 → 150.0`(实测它含子串)。
+#      ⇒ 链是**三环**;把它写进 header 是为了让下一个读到"两环"的人知道还有一环。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -456,9 +462,39 @@ func _check(src: String) -> void:
 	if conv.is_empty():
 		_fail = "scenes/royale_lobby.gd 里找不到 \"match_time\" 那一行(上界链第二环消失/改名?)"; return
 	if not conv.contains("Settings.royale_match_min") or not conv.contains("* 60.0"):
-		_fail = ("★ 秒换算这一环断了 —— ROYALE_MATCH_TIME_CEILING 的链有**两环**,这是第二环:"
+		_fail = ("★ 秒换算这一环断了 —— ROYALE_MATCH_TIME_CEILING 的链有**三环**,这是第二环:"
 				+ "royale_lobby.gd 的 \"match_time\" 必须仍由 Settings.royale_match_min × 60.0 得来,"
 				+ "否则上界静默失效(改换算要一起改上界常量)"); return
+	# ── ★★ 2026-09-28 终审(整支)→ 链其实是**三环**,这里钉的是**第三环(写入端)** ──
+	#   环一 = `settings.gd` 的**装载**钳位 [1,30](上面钉着);环二 = 秒换算(上面钉着);
+	#   **环三 = `scenes/royale_lobby.gd` 那根滑块的 `max_value`(`tslider.max_value = 15.0`)**
+	#   —— ★ 它才是**真正产生下发值**的那一环:`value_changed` 把滑块值**不钳位地**写进
+	#   `Settings.royale_match_min`(下面的 `Settings.royale_match_min = v`),而下发的
+	#   `match_time` 读的是**内存里那个值** —— 装载钳位 [1,30] 只在下一次**装载**时才生效。
+	#   ⇒ 把 `max_value` 放宽(比如到 60)之后,上面所有断言(含环一环二)**照样全绿**,
+	#   而实际下发的 `match_time` 已经能到 3600 ⇒ 1800s 的上界**静默失效**。
+	#   ★ 另一条同源的口子(更远一环、本文件不钉):server/royale_host.gd 的 `_cfg_match_time`
+	#   把客户端给的 `match_time` **原样收下**,worker 侧也不钳位 ⇒ 上界**依赖客户端行为**,
+	#   不是无条件成立的(登记见 CLAUDE.md)。
+	#   ★ 判据取**数值比较而不是子串**(与上面那两条片段判据略有不同,理由在下面):
+	#   `contains("15")` 挡不住 `15.0 → 150.0`(它含子串 "15"),而那正是本条要抓的"放宽"。
+	#   故把 `max_value = <数字>` 抽出来比数值;容忍空白/整数写法(与同族的"宁可响亮假红"同向)。
+	#   ★ `scenes/royale_lobby.gd` **属于另一个会话**,本文件**只读不写**。
+	var mt_body := ScanUtil.func_body(lobby_src, "_build_match_time_row")
+	if mt_body.is_empty():
+		_fail = "找不到 scenes/royale_lobby.gd 的 `_build_match_time_row` 函数体(读不到函数体 ≠ 第三环变了 —— 改名/内联?)"; return
+	var cap_re := RegEx.new()
+	if cap_re.compile("max_value\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)") != OK:
+		_fail = "正则编译失败(本函数自身的 bug,不是被扫文件的问题)"; return
+	var cap_m := cap_re.search(mt_body)
+	if cap_m == null:
+		_fail = "「一局限时」滑块里找不到 `max_value = <数字>`(上界链第三环消失?)"; return
+	if not is_equal_approx(float(cap_m.get_string(1)), 15.0):
+		_fail = ("★ 「一局限时」滑块的上限被改成了 %s —— ROYALE_MATCH_TIME_CEILING 的链有**三环**,"
+				% cap_m.get_string(1)
+				+ "这是第三环、也是**真正产生下发值**的那一环(`value_changed` 不钳位地把它写进 "
+				+ "Settings.royale_match_min,而下发的 match_time 读的是内存里那个值;装载钳位 "
+				+ "[1,30] 只在下一次装载才生效)⇒ 1800s 的上界静默失效。放宽上限要一起改上界常量。"); return
 	if not pred.contains("rr.in_match"):
 		_fail = "大乱斗在局宽限缺 rr.in_match 门控"; return
 	if not pred.contains("SWEEP_INTERVAL"):
