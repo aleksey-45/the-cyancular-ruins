@@ -169,3 +169,42 @@ structure-editor.html 已退休)。
 - **实证手段**:`tests/royale_probe.gd` 的 claim 原先恒报 `hue:0.0`(非零路径从未测过);改为 c1=137/c2=246 两个可互相区分的值,并在 match_sync 应答断言 **hues 双向带值**(自己那份命中 + 对面那份在表)→ 全绿,证明 `_on_player_options 归档 → _claim_hues → match_sync → _apply_peer_hues/副本染色` 整链健康。
 - **修复**:选色行从建房面板**搬进等待室面板**(`royale_lobby._build_wait_panel`,所有成员开局前可改;即选即存 `Settings.pvp_color_hue`,开局 claim 时随 player_options 上发)。1v1 个人色相停用(P2 固定队色)、3v3 队色固定——皆设计使然,不动。
 - **验证**:解析冒烟 6/6;真链路探针双端全部通过(hues 双向回包 + 123 快照)。实战视觉效果(自己染色 + 他人副本染色)由实机联机验收。
+### B20(P2 第二批,已完成):Beta 入口 + 独立房间池 + 建房页时间参数
+- **入口**:主菜单 `Beta` 按钮(大乱斗下方,弱化样式)→ `scenes/beta_menu.tscn`:画框型卡片 = 图标(程序化怀表 `WatchHud.build_dial_texture()`(已改静态)+ 红 `Royale`/蓝 `Team` 字)+ 模式名 + 简介 + 版本(beta_0.0)。两张卡:**错乱大乱斗**→royale_lobby、**时空 3v3**→team_lobby。
+- **beta 态传递**:`PvpSession.beta_mode`(reset() 一律复位;Beta 页 `enter_mode` 后置真)。两个大厅页读它:标题加「· Beta 时间玩法」、建房面板挂 9 行时间参数(`LobbyPage._add_time_params`,值住 `time_rules: TimeRules`,建房/上报前 clamp)。
+- **独立房间池**(判据三件套,双侧):①创建载荷带 `{"beta":true,"time":{...}}`(`_beta_payload()`,普通态空合入);②`royale_join/team_join` **签名加第 4 参 beta**,服务器双向拒(普通页进 Beta 房 / Beta 页进普通房各一条文案);③列表载荷带 `beta` 字段,客户端按 `PvpSession.beta_mode` 过滤(royale 在循环内 continue,team 用 filter 后的 `visible_rooms`)。1v1(`join_room`)与普通模式行为零变化。
+- **跟随改的调用点**:`tests/lobby_visibility_probe`(royale/team join 直调补 `false`)、`tests/royale_bound_probe`(同);`kh_l1_probe` 只查方法名,不受影响。★ `royale_bound_probe` 在本机当前负载下**基线也超时**(stash 对照过),判环境问题非回归。
+- **探针**:`-- --autotest-beta`(主菜单→Beta 页:两卡/名字/版本号在→点错乱大乱斗→royale_lobby 且 beta_mode=真→时间参数 9 行滑条在→`_player_options()` 带 time)全绿;`autotest-royale/team/mp` 与 `kh_l1/lobby_visibility` 全绿;--import 零错误。
+
+### B21(P2 第三批,已完成):服务器权威颗粒经济 + 拆砖事件修复
+- **`server/time_economy.gd`**(新):每 role 一份 `GrainAccount`(规则来自房主 options["time"] → `TimeRules.from_dict`)+ 四条缝 —— `award_kill`(得被击杀者余额×比例,被击杀者不减)/`award_damage`(每点×4,归因口径 = TeamHost 逐人伤害同源:meta last_damager + ATTRIB_WINDOW 新鲜度,自伤/归因不到/同队谁都不给)/`award_blocks`(每 16px 子格 ×10)/`tick`(回复)。纯逻辑,-s 可测。
+- **宿主接线**:`MatchHost._init` 建 economy(options["time"] 非空;普通局恒 null 全短路)·`_physics_process` tick + 10Hz `_rpc_all_ext("time_state")` · `MatchCombat._on_player_hit` 伤害入账(基类一处钩住三宿主;`MatchState._fresh_attacker_role` 上提)· 击杀入账挂 RoyaleHost 倒地边沿与 TeamHost._record_down 异队分支 · 拆砖入账挂 `_on_sub_destroyed`。
+- **★ 修了 B18 的 PvP 回归**:worker 此前只连格级 `on_destroyed`,而 B18 后破坏走 `damage_sub` → **子格破坏事件从不广播**(客户端幽灵墙 + 本地预测与服务端碰撞分歧)。现在 `damage_sub` 带第 4 参 `owner`(射手节点,`on_sub_destroyed(sub, pre_hp, owner)` 三参回调),worker 连子格回调(清 16px 持久子格 + 脏块 + `NetBusExt.sub_destroyed` 广播 + 拆砖入账),客户端 `pvp_match_client._on_remote_sub_destroyed` 清本地渲染/碰撞;`_on_remote_tile_destroyed`(格级,重连补态/老路径)改为拆 16 子格。
+- **协议**:新 RPC 全在 **NetBusExt**(纪律:原 NetBus 逐字节不动,防与原版大厅失联):`sub_destroyed(sub)` / `time_state(payload)`(authority,reliable)+ `_rpc_all_ext`。
+- **客户端怀表**:`PvpMatchClient._setup_beta_time_hud()`(royale/team 两对局场景在 HUD 后调用;beta_mode 自短路)——挂 WatchHud(与单机同位 24,124)到 `Level0.grain_account` 的**镜像账户**;`time_state` 每包写字段,怀表自滚动。普通联机/单机零影响。
+- **探针**:`tests/time_economy_smoke.gd`(-s:四缝公式 + 过滤口径 + 夹上限)全绿;time_rules/grain_account/subcell/map_v4 与 autotest-beta/sp 回归全绿。
+
+### B22(P2 第四批,已完成):加速 ×3(只快自己)+ 双侧视效
+- **输入协议**:`PacketInputSource` 加 `BIT_HASTE(128)`(held 段;两端同版本纪律同 BIT_RELOAD);解码端 `haste_held()` 直读。pack 编码端在唯一来源 `pack_record` 里加一位。
+- **服务器**:`MatchHost._physics_process` 在快照前定格加速态 —— 按住位 + 账户可耗 ⇒ 该 role 的 `player.pvp_haste_mult = rules.haste_mult(默认 3.0)`,烧 `haste_burn`(70/s);**只乘自己**(移动/开火/换弹/冲刺经 player 速度域,别的角色/子弹/世界一概不动)。快照 world 包每 role 带 `haste` 位。
+- **player.gd**:新增 `pvp_haste_mult`(服务器/本地预测写);`_speed_mult` 计算 = TimeField(单机)或 pvp_haste_mult(PvP)—— 单机路径零变化。
+- **客户端**:`_tick_beta_time`(物理帧):本地预测(按住+镜像可耗 ⇒ 写自己的 pvp_haste_mult;**烧颗粒只在服务器**,镜像 10Hz 校正,避免双份漂移)。视效:自己 = 冷白蓝加色高亮 + 0.03s 红蓝交替残影(单机同款);他人 = 暖白高亮 + 0.06s 红/蓝两张淡副本(重影)+ 头顶像素字 `▶▶ 3x`(倍率取自 time_state 下发)。royale/team 场景快照消费时给副本打 `haste` meta;`_all_replicas()` 由两子类覆写。
+- **已知边界**:①加速的全屏压暗(haste_dim)未在 PvP 接(单机走 Level0._tick_time_visuals,PvP 场景无该驱动;如需可在 pvp 场景直接 set_time_effects);②自己的弹速未乘 ×3(SP 里玩家弹走 bullet_delta 的 TimeField,PvP 的 TimeField 为 null)—— **PvP 里子弹常速**,与本批"只快自己(角色行动)"的语义先保持一致,弹速倍率要不要乘待用户实测后定。
+
+### B23(P2 第五批,已完成):回溯(只回溯自己)+ 免伤 + 双侧视效
+- **协议**:`BIT_REWIND(256)`(held 段)+ `rewind_held()`;与 BIT_HASTE 同款两端同版本纪律。
+- **服务器**(`MatchHost` 的 `_tick_beta_rewind`,快照前跑):每 role 环缓(**20Hz**,深度 = rules.rewind_buffer_seconds,默认 12s/240 帧)只存**自己**的状态(位置/速度/HP/朝向/弹量 wmags/widx/wlive,与单机 WorldRewind._snapshot_player 同构)+ **自己的子弹**(pos/vel/rewind_state 含引信)。按住+可耗+未倒地 ⇒ 进入:输入源 frozen、`time_rewinding` meta(免伤闸)、烧 150/s;游标 3×→1× ramp 倒放,逐帧写回自身与自己的子弹;**自己的子弹照常伤害他人**(写回位置/速度/引信,不重建已消亡弹 —— 已爆的榴弹不复活,已知边界)。颗粒烧空/松手 ⇒ 退出,世界从倒退点继续。**不能复活**:倒地即禁入。
+- **免伤闸**:`player.take_hit` 首行统一判 `TimeField 回溯态(单机) or time_rewinding meta(PvP)` —— 一处闸住子弹/榴弹/爆炸/接触全部来源,单机零变化。
+- **快照**:每 role 带 `rewind` 位 + `trail`(回溯中每 3 帧一个位置点,≤10 个)。
+- **客户端**:own = 本地预测(冻结本地输入源 + 免伤 meta;**位置不本地预测**,吃 C2 权威写回)+ **底片只作用于世界图层与自己**(`scenes/effects/time_film.gdshader`:coverage 由内而外推进,挂 wall/water/水面层与本地玩家;敌方副本不挂 —— 用户裁定)+ 中心 ◁◁ 符号。others = 回溯者副本满覆盖底片色 + 沿 trail 的**时间切片残像**(底片色,1 秒渐隐,AfterImage)。
+- **已知边界**:①倒放不重建已消亡子弹;②客户端 C2 期间倒放位置依赖权威写回(回滚手感未实测);③顶针数的 HP 广播走 combat.emit_signal(与 SP rewind_restore 同源做法)。
+
+### B24(P2 第六批,收尾):全量回归 + 导出
+- 回归(全绿):watch_hud / elite_drop / tile_rewind / rewind_fuse(场景)+ time_rules / grain_account / time_economy / subcell / map_catalog / map_format_v4(-s)+ autotest-sp / autotest-beta + pvp_room_smoke(1v1 建房/加入/开局链路未受 P2 改动破坏)+ --import 零错误。
+- exe 已重导出(2026-09-29 12:30)含全部 P2 批次;管线哨兵完好。
+- **实机待验清单**(给用户):Beta 页两卡 → 建房(9 项参数可调)→ 加入对局 → 怀表显示余额/回拨/贷款负数 → 右键加速(自己 ×3+高亮+残影;他人视角 ▶▶3x+红蓝重影)→ Shift 回溯(免伤、自己+世界底片、他人看你的底片色+轨迹残像;回溯中的子弹伤人)→ 击杀/伤害/拆砖颗粒入账 → 贷满锁定与解锁。
+
+### D1(P2 debug 线,2026-09-29 用户两项裁定):弹速随加速 ×3 + PvP 压暗(仅发动者视角)
+- **弹速**:weapon_base 出弹时读**射手**的 `pvp_haste_mult` > 1 ⇒ 该发弹速 ×同倍率(局部变量,不动 bullet_speed 成员 —— 霰弹逐弹 ×会累积、跨发会永久变快)。max_range 不动:飞得更快、射程不变(与单机 bullet_delta 的距离上限语义一致)。单机 pvp_haste_mult 恒 1,零影响(不会与 TimeField.bullet_delta 双乘)。★ 激光是即时光束,无弹速概念,不涉及。
+- **压暗**:pvp 客户端 `_haste_dim_t`(100ms ramp,与单机同款)只驱动**本地**的 PostProcess.set_time_effects(0,0,t) —— 组里取 post_process,只碰 haste_dim,film/loan 恒 0;他人屏幕完全不受影响(压暗是本人视角状态,不随快照广播)。
+- 验证:autotest-sp/beta + haste_probe 全绿;--import 零错误。

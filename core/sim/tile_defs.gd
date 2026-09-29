@@ -197,8 +197,10 @@ static func init_hp(grid: Array) -> void:
 static var sub_hp: PackedInt32Array = PackedInt32Array()
 static var sub_cols: int = 0
 static var sub_rows: int = 0
-# 子格被摧毁的回调,由 level_0 注册(清 16px 渲染格 + 记回溯账本 + 重建碰撞块)。
-# 参数 (sub: Vector2i, pre_hp: int) —— pre_hp 供回溯账本记"改前值"。
+# 子格被摧毁的回调,由 level_0(渲染/账本/碰撞)与 worker(广播/颗粒结算)分别注册。
+# 参数 (sub: Vector2i, pre_hp: int, owner: Node) —— pre_hp 供回溯账本记"改前值";
+# owner = 造成破坏的射手节点(子弹的 shooter / 爆炸的 shooter;单人模式由 Level0 忽略,
+# worker 侧用它映射 role 结算"拆砖得颗粒")。
 static var on_sub_destroyed: Callable = Callable()
 
 
@@ -239,7 +241,7 @@ static func sub_alive(sub: Vector2i) -> bool:
 ## 对单个 16px 子格扣血。source 为 "bullet"/"explosion",按对应可破坏开关判定。
 ## 扣到 ≤0 → 该子格死亡(回调 level_0 清渲染/记账本/重建碰撞块);所属 64px 格的全部
 ## 子格死光时,把格级 current_grid 该格清零(让 20 个格级逻辑调用方看到它消失)。
-static func damage_sub(sub: Vector2i, amount: int, source: String) -> bool:
+static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node = null) -> bool:
 	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 		return false
 	var tex := sub_texture(sub)
@@ -273,7 +275,7 @@ static func damage_sub(sub: Vector2i, amount: int, source: String) -> bool:
 			if not alive and grid[cell.y][cell.x] != 0:
 				grid[cell.y][cell.x] = 0
 		if on_sub_destroyed.is_valid():
-			on_sub_destroyed.call(sub, pre_hp)
+			on_sub_destroyed.call(sub, pre_hp, owner)
 		return true
 	return false
 

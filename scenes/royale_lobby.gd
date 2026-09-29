@@ -117,12 +117,13 @@ func _build_create_panel() -> void:
 	vb.add_theme_constant_override("separation", 12)
 	panel.add_child(vb)
 
-	vb.add_child(UiFactory.label("—— 创建大乱斗房间 ——", 32, UiFactory.C_ACCENT))
+	vb.add_child(UiFactory.label("—— 创建大乱斗房间%s ——" % (" · Beta 时间玩法" if PvpSession.beta_mode else ""), 32, UiFactory.C_ACCENT))
 	_build_public_room_row(vb)
 	_build_max_players_row(vb)
 	_build_match_time_row(vb)
 
 	_add_map_picker(vb)
+	_add_time_params(vb)
 
 	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
 	_add_weapon_grid(vb, 10, func(cell: Node, slot: int) -> void:
@@ -223,13 +224,15 @@ func _on_create_pressed() -> void:
 		_status.text = "建房中…"
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "royale_create", {
+		var payload := {
 			"is_public": _public_check.button_pressed,
 			"invite_code": _create_invite_edit.text.strip_edges(),
 			"max_players": int(_max_slider.value),
 			"round_full_heal": false,
 			"disabled_weapons": disabled,
-		}))
+		}
+		payload.merge(_beta_payload())   # Beta 态追加 {"beta":true,"time":{...}};普通态空合入
+		NetBusExt.rpc_id(1, "royale_create", payload))
 
 func _on_join_pressed() -> void:
 	_join_room(_code_edit.text.strip_edges(), _invite_edit.text)
@@ -242,7 +245,7 @@ func _join_room(code: String, invite: String) -> void:
 		_status.text = "加入房间 %s …" % code
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "royale_join", code, invite))
+		NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode))
 
 
 # ── 服务器回复 ──
@@ -257,6 +260,9 @@ func _on_royale_rooms(rooms: Array) -> void:
 		return
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
+			continue
+		# Beta 房与普通房互不可见(独立房间池的客户端侧;服务器侧 join 守卫是第二道)
+		if bool(r.get("beta", false)) != PvpSession.beta_mode:
 			continue
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
@@ -434,6 +440,7 @@ func _player_options() -> Dictionary:
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
 		"map": Settings.mp_map_path,
+		"time": time_rules.to_dict() if PvpSession.beta_mode else {},
 	}
 
 

@@ -730,6 +730,9 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 	v["deaths"] = int(v["deaths"]) + 1
 	if killer_role == 0 or same_team(killer_role, victim_role):
 		return
+	# Beta 时间玩法:击杀得"被击杀者余额 × 比例"(被击杀者不减;同队/无归因已被上面挡掉)
+	if time_economy != null:
+		time_economy.award_kill(killer_role, victim_role)
 	var k := _stat_entry(killer_role)
 	# 多杀:同一局内该 role 的第 2、3… 个击杀各 +50(第 1 个 +0)。计数器每局清零。
 	_round_kills[killer_role] = int(_round_kills.get(killer_role, 0)) + 1

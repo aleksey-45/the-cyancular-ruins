@@ -58,6 +58,10 @@ class RoyaleRoom:
 	var invite_code := ""                 # 私密房凭此码进入
 	var max_players := ROYALE_DEFAULT_MAX
 	var options: Dictionary = {}          # 房主对局选项(禁武器/回合回血),开局随房主生效
+	# 时间玩法(Beta,2026-09-28):beta 房与普通房**互不可进/互不可见**(创建带标,加入校验,列表过滤);
+	# time_rules = TimeRules.to_dict()(服务器开局前 from_dict+clamp 再消费,上报值不可信)
+	var beta := false
+	var time_rules: Dictionary = {}
 	var in_match := false                 # 已开局(拒绝加入;成员转连 worker 后房**仍保留**,见 on_peer_left)
 	var worker_port: int = 0              # 本房拉起的大乱斗 worker 端口(关房时归还)
 	# worker 进程的 pid(拉起成功后由 RoomManager 登记;0 = 拉起中 → 判"没结束")。理由见 Room.worker_pid
@@ -78,6 +82,8 @@ class TeamRoom:
 	var players: Array[int] = []          # peer ids(**只表示"此刻还连在大厅这个房里的人"**)
 	var player_role: Dictionary = {}      # peer id -> role(1..6,最小空闲号)
 	var team_of: Dictionary = {}          # role(int) -> 1/2(**选边前不在表里**)
+	var beta := false                     # 时间玩法(Beta):与 RoyaleRoom.beta 同义
+	var time_rules: Dictionary = {}
 	var is_public := true
 	var invite_code := ""
 	var in_match := false
@@ -453,14 +459,23 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 		"round_full_heal": bool(opts.get("round_full_heal", false)),
 		"disabled_weapons": opts.get("disabled_weapons", []),
 	}
+	rr.beta = bool(opts.get("beta", false))
+	rr.time_rules = opts.get("time", {}) if rr.beta else {}
 	royale_rooms[code] = rr
-	print("大乱斗房 %s 创建(房主 peer=%d,%s,上限 %d)" % [code, caller,
-			"公开" if rr.is_public else "私密", rr.max_players])
+	print("大乱斗房 %s 创建(房主 peer=%d,%s,上限 %d%s)" % [code, caller,
+			"公开" if rr.is_public else "私密", rr.max_players, ",Beta 时间玩法" if rr.beta else ""])
 	_broadcast_royale_state(rr)
 
-func royale_join(caller: int, code: String, invite: String) -> void:
+func royale_join(caller: int, code: String, invite: String, beta: bool) -> void:
 	if not royale_rooms.has(code):
 		NetBus.reply(caller, "server_message", "房间不存在")
+		return
+	# Beta 房与普通房互不可进(独立房间池的判据;两个方向各一条文案,别共用)
+	if royale_rooms[code].beta and not beta:
+		NetBus.reply(caller, "server_message", "这是时间玩法(Beta)房间,请从主菜单 Beta 页进入")
+		return
+	if not royale_rooms[code].beta and beta:
+		NetBus.reply(caller, "server_message", "这是普通大乱斗房间,请从主菜单「大乱斗」进入")
 		return
 	if royale_room_of(caller) != null:
 		NetBus.reply(caller, "server_message", "你已在大乱斗房间中")
@@ -526,7 +541,7 @@ func royale_list_payload() -> Array:
 			for e in rr.roster:
 				dn.append(str((e as Dictionary).get("name", "玩家")))
 			arr.append({"code": code, "players": rr.roster.size(), "max_players": rr.max_players,
-					"names": dn, "in_match": true})
+					"names": dn, "in_match": true, "beta": rr.beta})
 			continue
 		if rr.players.is_empty():
 			continue
@@ -534,7 +549,7 @@ func royale_list_payload() -> Array:
 		for peer_id in rr.players:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": code, "players": rr.players.size(),
-				"max_players": rr.max_players, "names": names, "in_match": false})
+				"max_players": rr.max_players, "names": names, "in_match": false, "beta": rr.beta})
 	return arr
 
 
@@ -614,18 +629,28 @@ func team_create(caller: int, opts: Dictionary) -> void:
 	tr.players.append(caller)
 	tr.player_role[caller] = 1
 	tr.created_at = Time.get_unix_time_from_system()
+	tr.beta = bool(opts.get("beta", false))
+	tr.time_rules = opts.get("time", {}) if tr.beta else {}
 	tr.is_public = bool(opts.get("is_public", true))
 	tr.invite_code = str(opts.get("invite_code", "")).strip_edges()
 	if not tr.is_public and tr.invite_code.is_empty():
 		tr.invite_code = _generate_code()
 	team_rooms[code] = tr
-	print("3v3 房 %s 创建(房主 peer=%d,%s)" % [code, caller, "公开" if tr.is_public else "私密"])
+	print("3v3 房 %s 创建(房主 peer=%d,%s%s)" % [code, caller, "公开" if tr.is_public else "私密",
+			",Beta 时间玩法" if tr.beta else ""])
 	_broadcast_team_state(tr)
 
 
-func team_join(caller: int, code: String, invite: String) -> void:
+func team_join(caller: int, code: String, invite: String, beta: bool) -> void:
 	if not team_rooms.has(code):
 		NetBus.reply(caller, "server_message", "房间不存在")
+		return
+	# Beta 房与普通房互不可进(独立房间池的判据,与 royale_join 同款)
+	if team_rooms[code].beta and not beta:
+		NetBus.reply(caller, "server_message", "这是时间玩法(Beta)房间,请从主菜单 Beta 页进入")
+		return
+	if not team_rooms[code].beta and beta:
+		NetBus.reply(caller, "server_message", "这是普通 3v3 房间,请从主菜单「3 v 3 团 队」进入")
 		return
 	if _in_team_room(caller):
 		NetBus.reply(caller, "server_message", "你已在 3v3 房间中")
@@ -707,7 +732,7 @@ func team_list_payload() -> Array:
 			for e in tr.roster:
 				dn.append(str((e as Dictionary).get("name", "玩家")))
 			arr.append({"code": c, "players": tr.roster.size(), "max_players": TEAM_ROLES,
-					"names": dn, "in_match": true})
+					"names": dn, "in_match": true, "beta": tr.beta})
 			continue
 		if tr.players.is_empty():
 			continue
@@ -715,7 +740,7 @@ func team_list_payload() -> Array:
 		for peer_id in tr.players:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": c, "players": tr.players.size(),
-				"max_players": TEAM_ROLES, "names": names, "in_match": false})
+				"max_players": TEAM_ROLES, "names": names, "in_match": false, "beta": tr.beta})
 	return arr
 
 

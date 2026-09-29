@@ -13,8 +13,9 @@ func _init() -> void:
 	_test_lock_release()
 	_test_balance_floor()
 	_test_deposit_cap()
+	_test_custom_params()
 	if _fails.is_empty():
-		print("GRAIN ACCOUNT OK(初始/消耗/窗恢复/贷款/锁定/解锁/余额底线/入账夹上限)")
+		print("GRAIN ACCOUNT OK(初始/消耗/窗恢复/贷款/锁定/解锁/余额底线/入账夹上限/自定义参数(PvP))")
 		quit(0)
 	else:
 		print("GRAIN ACCOUNT FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
@@ -111,3 +112,41 @@ func _test_deposit_cap() -> void:
 	var b := GrainAccount.new(1000)
 	_chk(b.deposit(300) == 300, "正常入账 300")
 	_near(b.balance, 1300.0, 0.001, "入账后余额")
+
+
+# ── 自定义参数组(PvP 语义,2026-09-28):初始/上限/短时窗/回复/贷款额全由构造参数传入 ──
+# 断言的是"参数真的生效"而不是"单机的默认值还在":
+#   · PvP 的贷款上限 = 短时额度(账户本身不透支);
+#   · 余额永不为负(透支只发生在短时窗那一档);
+#   · 贷满锁定 → 回复先还贷 → 还清解锁。
+func _test_custom_params() -> void:
+	var a := GrainAccount.new(1000.0, 1800.0, 250.0, 50.0, 250.0)
+	_near(a.balance, 1000.0, 1e-3, "自定义初始值")
+	_near(a.cap, 1800.0, 1e-3, "自定义上限")
+	_near(a.window, 250.0, 1e-3, "自定义短时窗")
+	_near(a.regen_rate, 50.0, 1e-3, "自定义回复")
+	_near(a.loan_max, 250.0, 1e-3, "贷款上限 = 短时额度")
+	# 烧满短时窗(250)→ 继续消耗进贷款;贷款上限 250 → 贷满即锁
+	a.spend(250.0 / 150.0, 150.0)          # 正好用完短时窗
+	_near(a.short_used, 250.0, 1e-3, "短时窗应正好用满")
+	_near(a.loan_used, 0.0, 1e-3, "此时不该有贷款")
+	a.spend(250.0 / 150.0, 150.0)          # 再烧一个窗的量 → 全进贷款并贷满
+	_near(a.loan_used, 250.0, 1e-3, "贷款应到上限(250)")
+	_near(a.loan_depth(), 1.0, 1e-3, "贷满时深度应为 1")
+	_chk(a.locked, "贷满应强制锁定")
+	_chk(not a.can_spend(), "锁定期间不可耗(两键空转)")
+	# 余额底线:无论如何不透支(继续 spend 只会被挡)
+	var bal_before := a.balance
+	_chk(a.spend(10.0, 150.0) == 0.0, "锁定期间 spend 应返回 0")
+	_near(a.balance, bal_before, 1e-6, "锁定期间余额不变")
+	_chk(a.balance >= 0.0, "余额永不为负")
+	# 回复先还贷:250/50 = 5s 还清 → 解锁
+	a.regen(5.0)
+	_near(a.loan_used, 0.0, 1e-3, "回补应先还清贷款")
+	_chk(not a.locked, "还清后应解锁")
+	_chk(a.can_spend(), "解锁后恢复可耗")
+	# 余额被烧到 0 时:透支只发生在短时窗那一档,余额本身不越过 0
+	var b := GrainAccount.new(10.0, 1800.0, 250.0, 50.0, 250.0)
+	b.spend(10.0 / 150.0, 150.0)
+	_near(b.balance, 0.0, 1e-3, "余额烧空应停在 0")
+	_chk(not b.can_spend(), "余额为 0 不可耗")

@@ -454,7 +454,7 @@ func _restore_sub(e: Dictionary) -> void:
 		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
 
 
-func _on_sub_destroyed(sub: Vector2i, pre_hp: int) -> void:
+func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
 	# cyrm v4 子格破坏:清一个 16px 渲染格(9 环面副本)+ 记回溯账本 + 重建所在碰撞块。
 	# 回溯捕获(**摧毁前**的 hp 由 TileDefs 传进来;仅单机时间系统激活且非回放期)
 	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:

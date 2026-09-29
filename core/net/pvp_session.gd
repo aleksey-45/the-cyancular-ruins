@@ -42,6 +42,12 @@ static var rejoin: bool = false
 #   ⇒ 判据只有一处:`enter_mode()`(主菜单那三个联机按钮调它,见 main_menu.gd)。
 #     ★ 别再"顺手把它删掉"(那句"没读者"的理由在 2026-09-22 已经不成立),`reconnect_smoke`
 #       有**正向**断言钉着它 + `enter_mode()` 的两条分支。
+# 时间玩法(Beta,2026-09-28 P2):本局是否从主菜单「Beta」页进来。语义上有两重:
+# ①大厅侧——beta 房与普通房**互不可进**(创建带 beta 标,加入按本标校验,列表按本标过滤);
+# ②对局侧——worker/宿主据此启用时间玩法(TimeRules,见 PvP 时间玩法计划)。
+# ★ 放 reset() 里复位:主菜单三个普通联机按钮走 enter_mode → reset,天然把它清掉。
+static var beta_mode := false
+
 const MODE_PVP := "pvp"
 const MODE_ROYALE := "royale"
 const MODE_TEAM := "team"
@@ -149,3 +155,4 @@ static func reset() -> void:
 	role = 1
 	map_path = ""
 	spawn = Vector2i(-1, -1)
+	beta_mode = false   # 时间玩法(Beta)来源标记:只有主菜单 Beta 页进来才置真(见 beta_menu)

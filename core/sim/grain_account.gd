@@ -21,14 +21,29 @@ signal loan_depth_changed(depth: float)
 signal loan_locked
 signal loan_unlocked
 
+# ── 参数(2026-09-28 参数化:单机用 TimeParams 默认值 → 行为逐位不变;
+#    PvP 走 TimeRules.make_account(),贷款上限 = 短时额度、每局可调)──
+var initial := TimeParams.GRAIN_INITIAL
+var cap := TimeParams.GRAIN_CAP
+var window := TimeParams.SHORT_WINDOW
+var regen_rate := TimeParams.SHORT_REGEN
+var loan_max := TimeParams.LOAN_LIMIT
+
 var balance: float = TimeParams.GRAIN_INITIAL
 var short_used: float = 0.0
 var loan_used: float = 0.0
 var locked := false
 
 
-func _init(initial := TimeParams.GRAIN_INITIAL) -> void:
-	balance = clampf(initial, 0.0, TimeParams.GRAIN_CAP)
+func _init(initial_ := TimeParams.GRAIN_INITIAL, cap_ := TimeParams.GRAIN_CAP,
+		window_ := TimeParams.SHORT_WINDOW, regen_ := TimeParams.SHORT_REGEN,
+		loan_max_ := TimeParams.LOAN_LIMIT) -> void:
+	initial = initial_
+	cap = cap_
+	window = window_
+	regen_rate = regen_
+	loan_max = loan_max_
+	balance = clampf(initial, 0.0, cap)
 
 
 func can_spend() -> bool:
@@ -36,7 +51,9 @@ func can_spend() -> bool:
 
 
 func loan_depth() -> float:
-	return loan_used / TimeParams.LOAN_LIMIT
+	if loan_max <= 0.0:
+		return 0.0
+	return loan_used / loan_max
 
 
 ## 消耗 delta 秒 × rate 颗粒/秒。返回实际扣掉的颗粒数(余额/锁定不足时 < rate·delta)。
@@ -47,12 +64,12 @@ func spend(delta: float, rate: float) -> float:
 	balance -= got
 	# 指针推进与消耗同额:短时窗满 → 溢出进贷款;贷满 → 强制锁定
 	short_used += got
-	if short_used > TimeParams.SHORT_WINDOW:
-		var over: float = short_used - TimeParams.SHORT_WINDOW
-		short_used = TimeParams.SHORT_WINDOW
+	if short_used > window:
+		var over: float = short_used - window
+		short_used = window
 		loan_used += over
-		if loan_used >= TimeParams.LOAN_LIMIT:
-			loan_used = TimeParams.LOAN_LIMIT
+		if loan_used >= loan_max:
+			loan_used = loan_max
 			_emit_window()
 			if not locked:
 				locked = true
@@ -66,7 +83,7 @@ func spend(delta: float, rate: float) -> float:
 func regen(delta: float) -> void:
 	if delta <= 0.0:
 		return
-	var pay: float = TimeParams.SHORT_REGEN * delta
+	var pay: float = regen_rate * delta
 	if loan_used > 0.0:
 		var pay_loan: float = minf(pay, loan_used)
 		loan_used -= pay_loan
@@ -89,7 +106,7 @@ func regen(delta: float) -> void:
 func deposit(amount: int) -> int:
 	if amount <= 0:
 		return 0
-	var room: int = int(TimeParams.GRAIN_CAP) - int(ceil(balance))
+	var room: int = int(cap) - int(ceil(balance))
 	var got: int = mini(amount, maxi(room, 0))
 	balance += got
 	balance_changed.emit(balance)

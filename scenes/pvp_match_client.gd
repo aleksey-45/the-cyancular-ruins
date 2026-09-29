@@ -156,25 +156,297 @@ func _on_snapshot_own(own: Dictionary) -> void:
 
 # silent=true 用于"重连后补破坏态":那些砖是**掉线期间**被拆的,不是刚被拆的 ——
 # 逐格播碎片会变成一屏不该有的粒子(而且几十格同时炸)。
-func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
-	if _world == null:
-		TileDefs.damage_tile(cell, 999999, "explosion")
+# ── Beta 时间玩法:怀表 HUD(显示镜像;数值权威在服务器,10Hz 下发)──
+# SP 的 WatchHud 直读静态 Level0.grain_account —— PvP 侧就往这个静态挂一份**镜像账户**:
+# 服务器 time_state 到一帧,写字段一次,怀表自己会在 _process 里滚动/重绘。
+# ★ 只在 PvpSession.beta_mode 挂(普通联机/单机不受影响;单机那份由 Level0._ready 建)。
+var _time_mirror: GrainAccount = null
+var _time_watch: WatchHud = null
+var _time_rewinding := false        # 本地预测的回溯态(免伤闸 + 世界底片)
+var _haste_dim_t := 0.0             # 加速压暗 ramp(只在**发动者本人**的视角;他人屏幕不受影响)
+var _time_film_t := 0.0             # 底片覆盖度 ramp(≤0.2s 推满)
+var _time_mat: ShaderMaterial = null
+var _time_sym: Label = null
+var _time_haste_mult := 3.0          # 服务器下发的加速倍率(time_state 的 m;预测与视效共用)
+var _fx_self_t := 0.0                # 自己的残影节拍(0.03s)
+var _fx_other_t := 0.0               # 他人重影节拍(0.06s)
+const TIME_GLOW_SELF := Color(0.30, 0.62, 1.0)    # 自己加速:冷白蓝(与单机主角同色)
+const TIME_GLOW_OTHER := Color(1.0, 0.94, 0.86)   # 他人加速:暖白(与单机敌人同色)
+
+func _setup_beta_time_hud() -> void:
+	if not PvpSession.beta_mode:
 		return
-	# 取被拆砖原纹理(决定碎片颜色:树叶绿/树干棕),再清砖
+	_time_watch = WatchHud.new()
+	_time_watch.position = Vector2(24.0, 124.0)   # 与单机同位:左上边距 (24,24) + 血条下方 +100
+	add_child(_time_watch)
+	NetBusExt.local_time_state.connect(_on_time_state)
+
+
+func _on_time_state(payload: Dictionary) -> void:
+	var m: Dictionary = payload.get(PvpSession.role, {})
+	if m.is_empty():
+		return
+	_time_haste_mult = float(m.get("m", 3.0))
+	if _time_mirror == null:
+		_time_mirror = GrainAccount.new()
+		Level0.grain_account = _time_mirror
+		# WatchHud._ready 那会儿账户还没到(挂表早于首包)→ 它把自己藏了;首包到时点亮
+		if _time_watch != null:
+			_time_watch.visible = true
+	_time_mirror.cap = float(m.get("cap", 1800.0))
+	_time_mirror.window = float(m.get("win", 250.0))
+	_time_mirror.balance = float(m.get("b", 0.0))
+	_time_mirror.short_used = float(m.get("w", 0.0))
+	_time_mirror.loan_used = float(m.get("l", 0.0))
+	_time_mirror.locked = bool(m.get("k", false))
+
+
+# Beta 时间玩法:本地预测加速(与服务器同一判据 —— 按住 + 镜像账户可耗)。
+# 倍率写进 pvp_haste_mult,player 的速度域/武器 tick 会吃它;烧颗粒只由服务器做
+# (镜像 10Hz 校正,本地不扣,避免双份漂移)。
+func _tick_beta_time(delta: float) -> void:
+	if not PvpSession.beta_mode or _local == null:
+		return
+	var on := Input.is_action_pressed("haste") 			and _time_mirror != null and _time_mirror.can_spend()
+	(_local as Node2D).set("pvp_haste_mult", _time_haste_mult if on else 1.0)
+	# 压暗(用户裁定:PvP 也补,但只在发动者本人视角)—— 100ms ramp 与单机同款
+	_haste_dim_t = clampf(_haste_dim_t + (delta / 0.1 if on else -delta / 0.1), 0.0, 1.0)
+	var pp := get_tree().get_first_node_in_group("post_process") as PostProcess
+	if pp != null and (_haste_dim_t > 0.001 or pp != null):
+		# 只碰三个时间 uniform 里的 haste_dim;film/loan 恒 0(PvP 未接那两个的全屏版)
+		pp.set_time_effects(0.0, 0.0, _haste_dim_t)
+	_tick_beta_rewind(delta)
+	_tick_time_fx(delta, on)
+
+
+# 本地回溯预测:按住 + 镜像可耗 + 未倒地 ⇒ 冻结本地输入源、置免伤闸、世界+自己上底片。
+# ★ 位置不本地预测 —— 服务器每帧权威写回(C2 的 on_authoritative 就是那条路);
+#   本地只负责"站着 + 看底片 + 免伤"。
+func _tick_beta_rewind(delta: float) -> void:
+	var downed: bool = (_local as Node).call("is_downed") if _local.has_method("is_downed") else false
+	var want := Input.is_action_pressed("rewind") 			and _time_mirror != null and _time_mirror.can_spend() and not downed
+	if want and not _time_rewinding:
+		_time_rewinding = true
+		var src = (_local as Node).get("input_source")
+		if src != null:
+			src.set("frozen", true)
+		(_local as Node).set_meta("time_rewinding", true)
+	elif not want and _time_rewinding:
+		_time_rewinding = false
+		var src2 = (_local as Node).get("input_source")
+		if src2 != null:
+			src2.set("frozen", false)
+		if (_local as Node).has_meta("time_rewinding"):
+			(_local as Node).remove_meta("time_rewinding")
+	# 底片覆盖度 ramp(推进 ≤0.2s;退出 0.1s 收)
+	_time_film_t = clampf(_time_film_t + (delta / 0.2 if _time_rewinding else -delta / 0.1), 0.0, 1.0)
+	_apply_own_film(_time_film_t)
+	if _time_sym != null:
+		_time_sym.visible = _time_film_t > 0.05
+	if _time_rewinding and _time_sym == null:
+		_time_sym = UiFactory.label("◁ ◁", 48, Color(0.85, 0.9, 0.95))
+		_time_sym.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+		_time_sym.offset_top = 60.0
+		_time_sym.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_time_sym)
+
+
+# 底片只作用于**世界图层 + 自己**(用户裁定:敌方单位颜色不变化)。
+func _apply_own_film(coverage: float) -> void:
+	var targets := _film_targets()
+	if coverage <= 0.001:
+		if _time_mat != null:
+			for n in targets:
+				if is_instance_valid(n) and (n as CanvasItem).material == _time_mat:
+					(n as CanvasItem).material = null
+			_time_mat = null
+		return
+	if _time_mat == null:
+		_time_mat = ShaderMaterial.new()
+		_time_mat.shader = load("res://scenes/effects/time_film.gdshader")
+	_time_mat.set_shader_parameter("coverage", coverage)
+	for n in targets:
+		if is_instance_valid(n):
+			(n as CanvasItem).material = _time_mat
+
+
+func _film_targets() -> Array:
+	var out: Array = []
+	for n in [Level0.wall_layer, Level0.water_layer, Level0.water_surface_layer, _local]:
+		if n != null and is_instance_valid(n):
+			out.append(n)
+	return out
+
+
+# 双侧视效(节拍与单机同源:残影 0.03s/红蓝交替;他人的红蓝重影 0.06s 一对)。
+func _tick_time_fx(delta: float, self_hasting: bool) -> void:
+	# 自己:加色高亮 + 红蓝交替残影(单机 B12/B16 同款节拍)
+	if self_hasting:
+		if TimeGlow.on(_local) == null:
+			TimeGlow.attach(_local, TIME_GLOW_SELF)
+		_fx_self_t -= delta
+		if _fx_self_t <= 0.0:
+			_fx_self_t = 0.03
+			var anim: AnimatedSprite2D = _local.get("animator")
+			if anim != null:
+				var red := int(Time.get_ticks_msec() / 60) % 2 == 0
+				AfterImage.spawn((_local as Node).get_parent(), anim,
+						Color(1.0, 0.25, 0.25, 0.55) if red else Color(0.3, 0.4, 1.0, 0.55))
+	else:
+		var g := TimeGlow.on(_local)
+		if g != null:
+			g.queue_free()
+	# 他人:回溯优先(底片色 + 轨迹残像,不叠加速高亮);否则加速高亮 + 红蓝重影 + ▶▶3x
+	var any_hasting := false
+	for rep_node in _all_replicas():
+		if not is_instance_valid(rep_node) or not (rep_node is Node2D):
+			continue
+		var rep := rep_node as Node2D
+		_time_fx_replica_rewind(rep, delta)
+		if bool(rep.get_meta("rewind", false)):
+			_time_fx_replica_off(rep)
+			continue
+		if not bool(rep.get_meta("haste", false)):
+			_time_fx_replica_off(rep)
+			continue
+		any_hasting = true
+		_time_fx_replica_on(rep)
+	if not any_hasting:
+		_fx_other_t = 0.0
+
+
+func _time_fx_replica_off(rep: Node2D) -> void:
+	var glow := TimeGlow.on(rep)
+	if glow != null:
+		glow.queue_free()
+	var label := rep.get_node_or_null("HasteTag") as Label
+	if label != null:
+		label.visible = false
+
+
+func _time_fx_replica_on(rep: Node2D) -> void:
+	if TimeGlow.on(rep) == null:
+		TimeGlow.attach(rep, TIME_GLOW_OTHER)
+	var label := rep.get_node_or_null("HasteTag") as Label
+	if label == null:
+		label = UiFactory.label("▶▶ 3x", 16, Color(0.78, 0.55, 1.0))
+		label.name = "HasteTag"
+		label.position = Vector2(-26, -92)
+		rep.add_child(label)
+	label.text = "▶▶ %dx" % int(round(_time_haste_mult))
+	label.visible = true
+	# 红蓝重影:同一帧贴红/蓝两张淡副本(加色叠加读作色差重影;与自己的交替残影区分)
+	_fx_other_t -= get_process_delta_time()
+	if _fx_other_t <= 0.0:
+		_fx_other_t = 0.06
+		var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+		if anim != null:
+			AfterImage.spawn(rep.get_parent(), anim, Color(1.0, 0.25, 0.25, 0.30))
+			AfterImage.spawn(rep.get_parent(), anim, Color(0.3, 0.4, 1.0, 0.30))
+
+
+# 他人回溯视效:副本自身底片色(满覆盖度)+ 沿服务器轨迹的时间切片残像(1 秒渐隐)。
+# 轨迹点来自快照 trail(每 3 帧一个 [x,y]);本端为每个新点生成一张底片色残像并自己淡出。
+var _rw_film_mats: Dictionary = {}   # replica -> ShaderMaterial(满覆盖度)
+var _rw_ghosts: Dictionary = {}      # replica -> Array[{node, t}](生成时刻,1s 渐隐)
+
+func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
+	if not bool(rep.get_meta("rewind", false)):
+		_time_fx_replica_rewind_off(rep)
+		return
+	if not _rw_film_mats.has(rep):
+		var m := ShaderMaterial.new()
+		m.shader = load("res://scenes/effects/time_film.gdshader")
+		m.set_shader_parameter("coverage", 1.0)
+		rep.material = m
+		_rw_film_mats[rep] = m
+	# 轨迹残像:快照的 trail 里比上次多出来的点 → 每点一张淡副本(挂在副本父级,位置即轨迹点)
+	var trail: Array = rep.get_meta("trail_last", [])
+	var new_trail: Array = rep.get_meta("trail", [])
+	if new_trail.size() > trail.size():
+		var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+		if anim != null:
+			for i in range(trail.size(), new_trail.size()):
+				var pt: Array = new_trail[i]
+				var ghost_host := Node2D.new()
+				ghost_host.global_position = Vector2(float(pt[0]), float(pt[1]))
+				rep.get_parent().add_child(ghost_host)
+				var g := AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
+				var ghosts: Array = _rw_ghosts.get(rep, [])
+				ghosts.append({"node": ghost_host, "t": 0.0})
+				_rw_ghosts[rep] = ghosts
+	rep.set_meta("trail_last", new_trail.duplicate())
+	# 已有残像 1s 渐隐(改 Sprite2D 的 modulate.a)后随 AfterImage 自毁
+	var ghosts2: Array = _rw_ghosts.get(rep, [])
+	for g in ghosts2:
+		g["t"] = float(g["t"]) + delta
+		var host: Node2D = g["node"]
+		if is_instance_valid(host) and host.get_child_count() > 0:
+			var spr := host.get_child(0) as Sprite2D
+			if spr != null:
+				spr.modulate.a = clampf(0.35 * (1.0 - float(g["t"])), 0.0, 1.0)
+	var alive: Array = []
+	for g in ghosts2:
+		if float(g["t"]) < 1.0 and is_instance_valid(g["node"]):
+			alive.append(g)
+	_rw_ghosts[rep] = alive
+
+
+func _time_fx_replica_rewind_off(rep: Node2D) -> void:
+	if _rw_film_mats.has(rep):
+		if is_instance_valid(rep) and rep.material == _rw_film_mats[rep]:
+			rep.material = null
+		_rw_film_mats.erase(rep)
+	if _rw_ghosts.has(rep):
+		for g in _rw_ghosts[rep]:
+			if is_instance_valid(g["node"]):
+				(g["node"] as Node).queue_free()
+		_rw_ghosts.erase(rep)
+	if rep.has_meta("trail_last"):
+		rep.remove_meta("trail_last")
+
+
+# 本类全部对手副本(视效遍历用)。子类覆写;基类空。
+func _all_replicas() -> Array:
+	return []
+
+
+func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
+	# cyrm v4:破坏按 16px 子格算 —— 一个 64px 格被拆 = 它的 16 个子格全灭。
+	# (老实现走 damage_tile 格级强拆,子格渲染/碰撞不清 → 客户端留幽灵墙。)
+	for sy in 4:
+		for sx in 4:
+			_on_remote_sub_destroyed(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), silent)
+	if silent or _world == null:
+		return
+	# 取被拆砖原纹理(决定碎片颜色:树叶绿/树干棕),再播碎片(只播视觉)
 	var tex := 0
-	var grid := MazeGenerator.current_grid
-	if not grid.is_empty() and cell.y >= 0 and cell.y < grid.size():
-		var row: Array = grid[cell.y]
-		if cell.x >= 0 and cell.x < row.size():
-			tex = MazeGenerator.texture_of(int(row[cell.x]))
-	TileDefs.damage_tile(cell, 999999, "explosion")
+	var sgrid := MazeGenerator.current_subgrid
+	if not sgrid.is_empty() and cell.y * 4 < sgrid.size():
+		var srow: Array = sgrid[cell.y * 4]
+		if cell.x * 4 < srow.size():
+			tex = int(srow[cell.x * 4])
+	var ts := GameParameters.TILE_SIZE
+	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
+
+
+# 单个 16px 子格被服务器摧毁:本地 HP/渲染/碰撞一并清(Level0 的 on_sub_destroyed 链)。
+# ★ silent 语义与 tile 版相同(重连补态不播碎片)。
+func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = true) -> void:
+	if _world == null:
+		TileDefs.damage_sub(sub, 999999, "explosion")
+		return
+	TileDefs.damage_sub(sub, 999999, "explosion")
 	if silent:
 		return
+	var tex := TileDefs.sub_texture(sub)
+	TileHitFx.spawn(_world, Vector2(sub.x * 16.0 + 8.0, sub.y * 16.0 + 8.0), tex)
 	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
 	var ts := GameParameters.TILE_SIZE
 	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
 	if _local == null:
 		return
 	# 周期测延迟(右下角 HUD)

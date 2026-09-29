@@ -178,7 +178,7 @@ func _orchestrator_step(delta: float) -> void:
 			if _created_t < 0.0 or _t - _created_t < 0.3:
 				return
 			# 假 peer(role 2)插在 c1 与 c2 之间加入 → 它退出后就留下 role 空洞 {1,3}
-			_rm().lobby.royale_join(FAKE_PEER, _code, INVITE)
+			_rm().lobby.royale_join(FAKE_PEER, _code, INVITE, false)
 			print("PROBE: 假 peer %d 加入为 role 2(房 %s),c2 将拿到 role 3" % [FAKE_PEER, _code])
 			var f := FileAccess.open(GO_FILE, FileAccess.WRITE)
 			f.store_string(_code)

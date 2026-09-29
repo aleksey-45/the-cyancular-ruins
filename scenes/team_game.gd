@@ -68,6 +68,8 @@ func _ready() -> void:
 	NetBus.local_beam_fired.connect(_on_beam_fired)
 	NetBus.local_hit_event.connect(_on_hit_event)
 	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
+	NetBusExt.local_sub_destroyed.connect(_on_remote_sub_destroyed)
+	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)
@@ -287,6 +289,9 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 			var r: Node2D = _replicas[role]
 			if r != null and r.has_method("apply_snapshot"):
 				r.apply_snapshot(data, _local.global_position, snap_tick)
+				r.set_meta("haste", bool(data.get("haste", false)))   # Beta:他人加速视效
+				r.set_meta("rewind", bool(data.get("rewind", false)))   # Beta:他人回溯视效
+				r.set_meta("trail", data.get("trail", []))
 				if _hp_bars.has(role):
 					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
 							/ float(PlayerParams.player_max_hp)
@@ -474,6 +479,10 @@ func _process(_delta: float) -> void:
 
 
 # 对手副本访问器(3v3:按 role 动态,同大乱斗)
+func _all_replicas() -> Array:
+	return _replicas.values()   # Beta 时间视效:遍历全部对手副本
+
+
 func _replica_for(role: int) -> Node2D:
 	var r = _replicas.get(int(role))
 	return r if r is Node2D else null
