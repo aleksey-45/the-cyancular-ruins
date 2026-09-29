@@ -211,8 +211,17 @@ func _check_status_banner() -> void:
 	_check(rect.position.x >= 0.0 and rect.end.x <= vw,
 			"★ 横幅必须整块落在视口里(rect=%s 视口宽=%0.1f);左缘钉在视口中心(即修复前那种"
 			% [str(rect), vw] + "四个偏移量全 0 的形状)会让它在 1920 下从 x=960 往右长出去")
-	_check(rect.position.y >= 120.0,
-			"★ 横幅顶边必须落在记分条(自 16 起、其下那条到 120 结束)之下:实得 y=%0.1f(rect=%s)"
+	# ★★ 阈值必须是**那条 GraceWrap 的真实底边**,不是"看起来差不多"的数(2026-09-29 订正)。
+	#   本相此前写 `>= 120.0` 而消息里也说"到 120 结束" —— **两个 120 都是错的**:`GraceWrap`
+	#   的 `offset_top = 72`、共用 Plate 的上下内容边距各 8、含 CJK 的标签高 36 ⇒ 实测矩形
+	#   `[P: (704.0, 72.0), S: (512.0, 52.0)]`,**底边 = 124**。错的那一版拦不住"把横幅放到
+	#   122"——那会与掉线那条重叠 2px,而断言照绿、消息还把人指向 120(阈值读起来像覆盖、
+	#   实际不覆盖,与 `tests/lib/probe_base.gd` 文件头那一族同形)。
+	#   ⇒ 方向是**抬高到真值**:这条阈值的语义是"横幅不得与掉线那条重叠",故它**至少**要等于
+	#     对方的底边(等于即恰好首尾相接、不算重叠)。今天横幅的 `TOP_OFFSET = 128`(128 > 124,
+	#     留 4px 余量),权威登记在 `ui/status_banner.gd` 的 `TOP_OFFSET` 那一段。
+	_check(rect.position.y >= 124.0,
+			"★ 横幅顶边必须落在记分条(自 16 起、其下那条 GraceWrap 到 124 结束)之下:实得 y=%0.1f(rect=%s)"
 			% [rect.position.y, str(rect)])
 	stub._set_status("")
 	_check(not banner._panel.visible, "空串必须收起横幅(visible=%s)" % str(banner._panel.visible))

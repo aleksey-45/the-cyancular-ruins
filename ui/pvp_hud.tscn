@@ -83,6 +83,11 @@ horizontal_alignment = 1
 ;   ★ 颜色**不在这里写**:由 ui/pvp_hud.gd 的 _ready 从 UiFactory.C_GRACE 取(调色板单一来源)。
 ;   ★ 位置:记分条(offset_top 16,**实测高 52**、占 y ∈ [16, 68])之下,offset_top = 72 —— 本条
 ;     自占 y ∈ [72, 124](高 52 = 标签 36 + 上面那个 Plate 的上下各 8);状态横幅(layer 140)在 128。
+;     ★★ 那个 **36 是"这一条含 CJK 的文案"量出来的,不是"本项目字体在 32 下的行高"**:
+;     `Label` 的行高 = `max(字体在该字号的 get_height, 整形 ascent+descent)`,两半都随内容变
+;     —— 纯拉丁那一行实测 **33**,所以**共用同一份 Plate 的 `PingWrap`(只有 "24ms")实得 49**
+;     而不是 52(同一张图、同一个场景里就差这 3px)。别把 36 套到纯拉丁面板上。
+;     引擎侧判据出处与逐项读数记在 `ui/status_banner.gd` 的 `TOP_OFFSET` 那一段。
 ;     ★ 那两个数是 Task 5 落地时**真量**的(headless 下 `get_global_rect()` 给的就是布局矩形),
 ;     权威登记在 `ui/status_banner.gd` 的 `TOP_OFFSET` 那一段(它要给 128 找理由)。
 [node name="GraceWrap" type="PanelContainer" parent="."]
