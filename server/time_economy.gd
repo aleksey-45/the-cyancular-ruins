@@ -62,5 +62,5 @@ func state_payload() -> Dictionary:
 	for role in accounts:
 		var a := accounts[role] as GrainAccount
 		out[int(role)] = {"b": a.balance, "w": a.short_used, "l": a.loan_used, "k": a.locked,
-				"cap": a.cap, "win": a.window}
+				"cap": a.cap, "win": a.window, "m": rules.haste_mult}
 	return out

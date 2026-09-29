@@ -162,6 +162,11 @@ func _on_snapshot_own(own: Dictionary) -> void:
 # ★ 只在 PvpSession.beta_mode 挂(普通联机/单机不受影响;单机那份由 Level0._ready 建)。
 var _time_mirror: GrainAccount = null
 var _time_watch: WatchHud = null
+var _time_haste_mult := 3.0          # 服务器下发的加速倍率(time_state 的 m;预测与视效共用)
+var _fx_self_t := 0.0                # 自己的残影节拍(0.03s)
+var _fx_other_t := 0.0               # 他人重影节拍(0.06s)
+const TIME_GLOW_SELF := Color(0.30, 0.62, 1.0)    # 自己加速:冷白蓝(与单机主角同色)
+const TIME_GLOW_OTHER := Color(1.0, 0.94, 0.86)   # 他人加速:暖白(与单机敌人同色)
 
 func _setup_beta_time_hud() -> void:
 	if not PvpSession.beta_mode:
@@ -176,6 +181,7 @@ func _on_time_state(payload: Dictionary) -> void:
 	var m: Dictionary = payload.get(PvpSession.role, {})
 	if m.is_empty():
 		return
+	_time_haste_mult = float(m.get("m", 3.0))
 	if _time_mirror == null:
 		_time_mirror = GrainAccount.new()
 		Level0.grain_account = _time_mirror
@@ -188,6 +194,84 @@ func _on_time_state(payload: Dictionary) -> void:
 	_time_mirror.short_used = float(m.get("w", 0.0))
 	_time_mirror.loan_used = float(m.get("l", 0.0))
 	_time_mirror.locked = bool(m.get("k", false))
+
+
+# Beta 时间玩法:本地预测加速(与服务器同一判据 —— 按住 + 镜像账户可耗)。
+# 倍率写进 pvp_haste_mult,player 的速度域/武器 tick 会吃它;烧颗粒只由服务器做
+# (镜像 10Hz 校正,本地不扣,避免双份漂移)。
+func _tick_beta_time(delta: float) -> void:
+	if not PvpSession.beta_mode or _local == null:
+		return
+	var on := Input.is_action_pressed("haste") 			and _time_mirror != null and _time_mirror.can_spend()
+	(_local as Node2D).set("pvp_haste_mult", _time_haste_mult if on else 1.0)
+	_tick_time_fx(delta, on)
+
+
+# 双侧视效(节拍与单机同源:残影 0.03s/红蓝交替;他人的红蓝重影 0.06s 一对)。
+func _tick_time_fx(delta: float, self_hasting: bool) -> void:
+	# 自己:加色高亮 + 红蓝交替残影(单机 B12/B16 同款节拍)
+	if self_hasting:
+		if TimeGlow.on(_local) == null:
+			TimeGlow.attach(_local, TIME_GLOW_SELF)
+		_fx_self_t -= delta
+		if _fx_self_t <= 0.0:
+			_fx_self_t = 0.03
+			var anim: AnimatedSprite2D = _local.get("animator")
+			if anim != null:
+				var red := int(Time.get_ticks_msec() / 60) % 2 == 0
+				AfterImage.spawn((_local as Node).get_parent(), anim,
+						Color(1.0, 0.25, 0.25, 0.55) if red else Color(0.3, 0.4, 1.0, 0.55))
+	else:
+		var g := TimeGlow.on(_local)
+		if g != null:
+			g.queue_free()
+	# 他人:暖白高亮 + 红蓝重影(同帧红蓝两张淡副本)+ 头顶 ▶▶3x
+	var any_hasting := false
+	for rep_node in _all_replicas():
+		if not is_instance_valid(rep_node) or not (rep_node is Node2D):
+			continue
+		if not bool((rep_node as Node2D).get_meta("haste", false)):
+			_time_fx_replica_off(rep_node as Node2D)
+			continue
+		any_hasting = true
+		_time_fx_replica_on(rep_node as Node2D)
+	if not any_hasting:
+		_fx_other_t = 0.0
+
+
+func _time_fx_replica_off(rep: Node2D) -> void:
+	var glow := TimeGlow.on(rep)
+	if glow != null:
+		glow.queue_free()
+	var label := rep.get_node_or_null("HasteTag") as Label
+	if label != null:
+		label.visible = false
+
+
+func _time_fx_replica_on(rep: Node2D) -> void:
+	if TimeGlow.on(rep) == null:
+		TimeGlow.attach(rep, TIME_GLOW_OTHER)
+	var label := rep.get_node_or_null("HasteTag") as Label
+	if label == null:
+		label = UiFactory.label("▶▶ 3x", 16, Color(0.78, 0.55, 1.0))
+		label.name = "HasteTag"
+		label.position = Vector2(-26, -92)
+		rep.add_child(label)
+	label.text = "▶▶ %dx" % int(round(_time_haste_mult))
+	label.visible = true
+	# 红蓝重影:同一帧贴红/蓝两张淡副本(加色叠加读作色差重影;与自己的交替残影区分)
+	_fx_other_t -= get_process_delta_time()
+	if _fx_other_t <= 0.0:
+		_fx_other_t = 0.06
+		var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+		if anim != null:
+			AfterImage.spawn(rep.get_parent(), anim, Color(1.0, 0.25, 0.25, 0.30))
+			AfterImage.spawn(rep.get_parent(), anim, Color(0.3, 0.4, 1.0, 0.30))
+
+
+# 本类全部对手副本(视效遍历用)。子类覆写;基类空。
+func _all_replicas() -> Array:
+	return []
 
 
 func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
@@ -224,7 +308,8 @@ func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = true) -> void:
 	var ts := GameParameters.TILE_SIZE
 	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
 	if _local == null:
 		return
 	# 周期测延迟(右下角 HUD)

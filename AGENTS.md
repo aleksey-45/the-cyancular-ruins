@@ -183,3 +183,10 @@ structure-editor.html 已退休)。
 - **协议**:新 RPC 全在 **NetBusExt**(纪律:原 NetBus 逐字节不动,防与原版大厅失联):`sub_destroyed(sub)` / `time_state(payload)`(authority,reliable)+ `_rpc_all_ext`。
 - **客户端怀表**:`PvpMatchClient._setup_beta_time_hud()`(royale/team 两对局场景在 HUD 后调用;beta_mode 自短路)——挂 WatchHud(与单机同位 24,124)到 `Level0.grain_account` 的**镜像账户**;`time_state` 每包写字段,怀表自滚动。普通联机/单机零影响。
 - **探针**:`tests/time_economy_smoke.gd`(-s:四缝公式 + 过滤口径 + 夹上限)全绿;time_rules/grain_account/subcell/map_v4 与 autotest-beta/sp 回归全绿。
+
+### B22(P2 第四批,已完成):加速 ×3(只快自己)+ 双侧视效
+- **输入协议**:`PacketInputSource` 加 `BIT_HASTE(128)`(held 段;两端同版本纪律同 BIT_RELOAD);解码端 `haste_held()` 直读。pack 编码端在唯一来源 `pack_record` 里加一位。
+- **服务器**:`MatchHost._physics_process` 在快照前定格加速态 —— 按住位 + 账户可耗 ⇒ 该 role 的 `player.pvp_haste_mult = rules.haste_mult(默认 3.0)`,烧 `haste_burn`(70/s);**只乘自己**(移动/开火/换弹/冲刺经 player 速度域,别的角色/子弹/世界一概不动)。快照 world 包每 role 带 `haste` 位。
+- **player.gd**:新增 `pvp_haste_mult`(服务器/本地预测写);`_speed_mult` 计算 = TimeField(单机)或 pvp_haste_mult(PvP)—— 单机路径零变化。
+- **客户端**:`_tick_beta_time`(物理帧):本地预测(按住+镜像可耗 ⇒ 写自己的 pvp_haste_mult;**烧颗粒只在服务器**,镜像 10Hz 校正,避免双份漂移)。视效:自己 = 冷白蓝加色高亮 + 0.03s 红蓝交替残影(单机同款);他人 = 暖白高亮 + 0.06s 红/蓝两张淡副本(重影)+ 头顶像素字 `▶▶ 3x`(倍率取自 time_state 下发)。royale/team 场景快照消费时给副本打 `haste` meta;`_all_replicas()` 由两子类覆写。
+- **已知边界**:①加速的全屏压暗(haste_dim)未在 PvP 接(单机走 Level0._tick_time_visuals,PvP 场景无该驱动;如需可在 pvp 场景直接 set_time_effects);②自己的弹速未乘 ×3(SP 里玩家弹走 bullet_delta 的 TimeField,PvP 的 TimeField 为 null)—— **PvP 里子弹常速**,与本批"只快自己(角色行动)"的语义先保持一致,弹速倍率要不要乘待用户实测后定。

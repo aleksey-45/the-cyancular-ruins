@@ -133,6 +133,7 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 			var r: Node2D = _replicas[role]
 			if r != null and r.has_method("apply_snapshot"):
 				r.apply_snapshot(data, _local.global_position, snap_tick)
+				r.set_meta("haste", bool(data.get("haste", false)))   # Beta:他人加速视效
 				if _hp_bars.has(role):
 					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
 							/ float(PlayerParams.player_max_hp)
@@ -297,6 +298,10 @@ func _process(_delta: float) -> void:
 			(_hp_bars[role] as Node2D).global_position = r.global_position + Vector2(0.0, -116.0)
 
 # 对手副本访问器(大乱斗:按 role 动态)
+func _all_replicas() -> Array:
+	return _replicas.values()   # Beta 时间视效:遍历全部对手副本
+
+
 func _replica_for(role: int) -> Node2D:
 	var r = _replicas.get(int(role))
 	return r if r is Node2D else null

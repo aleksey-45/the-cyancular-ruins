@@ -27,6 +27,10 @@ const BIT_RELOAD := 16
 # ⚠ 加位 = **改协议**:两端必须同版本(同 BIT_RELOAD 的注释)。
 const BIT_PICKUP := 32
 const BIT_DROP := 64
+# ★ Beta 时间玩法(P2,2026-09-29):加速按住位。**held 段**(按住语义,非边沿)——
+# 服务器据此角色进入加速态(自己 ×3,不动别人);是否真加速由服务器按颗粒账户裁决。
+# ⚠ 加位 = 改协议,两端必须同版本(同 BIT_RELOAD 注释)。
+const BIT_HASTE := 128
 
 
 # ── 编码端:组一个输入包(协议**发送侧**的唯一来源)──
@@ -51,6 +55,8 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		held |= BIT_ATTACK
 	if src.is_action_pressed("R"):
 		held |= BIT_RELOAD
+	if src.is_action_pressed("haste"):
+		held |= BIT_HASTE
 	if src.is_action_just_pressed("up"):
 		pressed |= BIT_UP
 	if src.is_action_just_pressed("down"):
@@ -108,6 +114,11 @@ func apply_packet(pkt: Dictionary) -> void:
 		_weapon = w
 	_pressed |= pkt.get("pressed", 0)
 	_released |= pkt.get("released", 0)
+
+# Beta 时间玩法:该 role 此刻是否按着加速(held 位直读;服务器的时间态裁决用)。
+func haste_held() -> bool:
+	return (_held & BIT_HASTE) != 0
+
 
 # 每帧末清除已消费边沿与切枪(玩家 _physics_process 之后)。held/axis/aim 保留(缺包沿用)。
 func clear_edges() -> void:

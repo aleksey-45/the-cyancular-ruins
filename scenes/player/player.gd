@@ -174,7 +174,12 @@ func _ready() -> void:
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 
 
-var _speed_mult := 1.0  # 时间场速度域倍率(加速 1.4;跨函数用,故设成员)
+var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成员)
+
+# Beta 时间玩法(PvP):**服务器/本地预测**写入的加速倍率(1 = 常速)。
+# 单机不走这里(走 TimeField.player_speed_mult);PvP 的 TimeField.current 为 null,
+# 由 worker(权威)与本端(预测)按输入位 + 颗粒余额各自写入同一个字段。
+var pvp_haste_mult := 1.0
 var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替
 
@@ -183,7 +188,7 @@ func _physics_process(delta: float) -> void:
 	# 时间场:回溯整帧冻结(位置由回放器摆);加速走**速度域**——move_and_slide() 用引擎
 	# 自己的 delta,缩放 delta 只会让重力和计时器变快(实测手感:只有坠落快、跳跃变低、
 	# 移速不变)。因此:tick 类 ×tm、水平速度目标 ×tm、重力/跳跃保持原样(跳跃高度不变)。
-	var tm := TimeField.player_speed_mult()
+	var tm := TimeField.player_speed_mult() if TimeField.current != null else pvp_haste_mult
 	_speed_mult = tm
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return

@@ -196,6 +196,21 @@ func _physics_process(delta: float) -> void:
 	_debug_keep_weapon_within_reach()
 	# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):默认关。
 	_debug_destroy_tile(delta)
+	# Beta 时间玩法:加速态(在快照**前**定格 —— 快照的 haste 位读的就是这个倍率)。
+	# 裁决在服务器:按住 + 账户可耗才生效;只乘自己(别的角色/子弹/世界一概不动)。
+	if time_economy != null:
+		for role in input_sources:
+			var acc := time_economy.accounts.get(int(role)) as GrainAccount
+			var p := players.get(int(role)) as Node2D
+			if acc == null or p == null:
+				continue
+			var src: PacketInputSource = input_sources[role]
+			var on := src.haste_held() and acc.can_spend()
+			if on:
+				var burn: float = time_economy.rules.haste_burn * delta
+				if acc.spend(delta, time_economy.rules.haste_burn) < burn * 0.999:
+					on = false   # 账户当帧烧空(余额/锁定不足)→ 立即回落,与单机同款
+			p.pvp_haste_mult = time_economy.rules.haste_mult if on else 1.0
 	_snapshot_accum += delta
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0
