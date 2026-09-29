@@ -38,7 +38,9 @@ const WORKER_PORT_REUSE_DELAY := 120.0
 #  match_time → RoyaleHost。)
 # ★ 已知边界(照实登记,本次不放宽):房主可用建房页把一局配到 30 分钟。★ 现在这条延迟
 #   **不再是**"端口会不会被提前复用"的界了(房活到 worker 退出 ⇒ 端口一直被占着)——
-#   但 `_sweep_stale_rooms` 的在局宽限**仍是**按默认时长估的,那一处的边界照旧,见该函数注释。
+#   而 `_sweep_stale_rooms` 的在局宽限**已按模式分两档**:大乱斗取**可证上界**
+#   `ROYALE_MATCH_TIME_CEILING`(2026-09-28 修,故那一处**不再是**估的),3v3 仍取
+#   `TEAM_MATCH_ESTIMATE`(**估值**,那一档的边界照旧),见该函数注释。
 const ROYALE_PORT_REUSE_DELAY := 360.0
 # 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀(比 1v1 长得多),与大乱斗同档。
 # ★ 2026-09-21 起,"计时起点"这句话不再适用:房只在**对局结束**(worker 退出)后被拆,
