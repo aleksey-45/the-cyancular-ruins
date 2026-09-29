@@ -145,7 +145,7 @@ structure-editor.html 已退休)。
 | 文件 | 职责 |
 |---|---|
 | `tools/easytier/easytier-core.exe`(+`wintun.dll`/`Packet.dll`/`WinDivert64.sys`) | 官方 EasyTier v2.6.4 内核**原样打包**(Apache-2.0)。★ 五件套缺一不可:Packet.dll/WinDivert64.sys 是加载器静态依赖,缺了**不报错、进程 exit 127 秒退**(实测踩坑);git 里 *.exe 被 ignore,提交须 `git add -f` |
-| `tools/easytier/et_elevate.ps1` | 提权垫片·未提权端:游戏 → 它 → `Start-Process -Verb RunAs`(UAC)→ helper。**纯 ASCII+CRLF**(ps1 编码纪律) |
+| `tools/easytier/et_elevate.ps1` | 提权垫片·未提权端:游戏 → 它 → `Start-Process -Verb RunAs`(UAC)→ helper。**纯 ASCII+CRLF**(ps1 编码纪律)。★ **含空格的路径必须手工内嵌双引号**(`('"{0}"' -f $path)`)——Windows PowerShell 5.1 拼接 `-ArgumentList` 数组**不加引号**,user:// 路径里的 "The Cyancular Ruins" 会在第一个空格处截断 → 提权进程静默退出、UAC 点了也白点(P1 实测踩坑,游戏→垫片那跳是 Godot 起进程、引号规范,所以只炸这一跳) |
 | `tools/easytier/et_helper.ps1` | 提权垫片·提权端:读 session.json → 防火墙规则(幂等删加:内核本体全放行;host_mode 加游戏服 UDP 7777+7800~8299)→ 隐藏窗口拉内核(stdout/stderr 重定向到会话目录)→ **守护循环**(stop.flag / 游戏进程退出 / 内核死亡,任一即杀内核收摊)。游戏本体**永不提权** |
 | `core/net/easytier_link.gd` | 内核链路(纯静态,零 autoload):解包五件套到 `user://easytier/`(尺寸比对跳过重拷)、`host_start`(随机网名+24位密码,固定 `10.126.126.1`)/`join`(粘码,`--dhcp` 取号,超时回退随机手动 IP 一次)/`stop`、邀请码 `CYR1-`+base64(json{n,s,p,h})(节点列表随码走,防跨节点组不上网)、ipconfig 网卡轮询(按 `--dev-name cyr_et` 找段,**本地化无关**:标题行冒号结尾+正则取 IP)、**网段占用预检**(别的网卡已有 10.126.126.x → 报错请先停手动开的 EasyTier GUI/MCTier) |
 | `ui/one_click_net.gd` | 一键联机面板(全屏遮罩+居中面板,三联机页共用,MapPicker 同款模式):建房/加入两态、邀请码剪贴板**自动识别预填**、一键复制、失败带内核日志尾巴;就绪发 `net_ready(虚拟IP,是否房主)` |
@@ -159,3 +159,5 @@ structure-editor.html 已退休)。
 - **会合节点**:官方公共节点 `public.easytier.top` **不存在**(NXDOMAIN,别再用);默认双协议回落海波节点 `us01.225284.xyz:11010`(udp+tcp,实测可达,2026-09-28)。自建会合点:任意 VPS 跑 `easytier-core.exe -p <本机公网IP:11010>` 即可,协调流量每秒几 KB。
 - **提权**:每次开网/加入弹一次 UAC(创建 TUN 网卡必须);从管理员终端跑探针则免弹。
 - **清理**:helper 按游戏 PID 守护,游戏退出即杀内核;`EasyTierLink.stop()` 写 stop.flag 收摊。绝不按映像名全杀(会误杀用户手动开的 EasyTier GUI)。
+- **P1 提权链修复(2026-09-29,用户实测"点了 UAC 仍卡在开网")**:根因=上表 et_elevate 的空格路径截断;修复后全链实测通过——点 UAC 后 **2 秒**内 `cyr_et` 网卡拿到 `10.126.126.1`、TCP+UDP 双协议连上海波会合节点、防火墙三条规则落位、stop.flag 收摊干净。诊断套路:**`s0/core.log` 的 mtime 没刷新 = helper 没跑到拉内核那一步**(先查防火墙规则存在性,再手动 `-File et_helper.ps1` 复现,最后才怀疑提权转发)。
+- **P1 ipconfig 解析修复(2026-09-29,提权通了仍报"开网失败")**:根因=段头判定只看"冒号结尾",而每段第一行字段"连接特定的 DNS 后缀 . . . . . . . :"(中英文皆然)同样冒号结尾 → 段标记当场被翻掉 → IPv4 行被跳过 → **网卡 2 秒就绪、游戏却等满 60 秒超时**(现场:网建成、内核活、双连节点,只有解析器瞎)。修法=`_is_adapter_header`:冒号结尾**且不含 ". ." 点串**(ipconfig 固定排版,语言无关);`_adapter_ips` 与 `_foreign_subnet_owner` 共用。★ 验证 ipconfig 解析必须**重放真实输出**(bash `grep -A6` 会绕过游戏解析路径,P1 两轮都栽在这)。

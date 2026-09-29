@@ -254,8 +254,16 @@ static func _wait_adapter_ip(dev_name: String, timeout: float, prefix := SUBNET_
 	return ""
 
 
+## ipconfig 的适配器段头判定:以冒号结尾**且不含字段行的 ". ." 点串**。
+## ★ 只看冒号不够(P1 实测踩坑):每个段的第一行字段"连接特定的 DNS 后缀 . . . . . . . :"
+##   同样以冒号结尾(中英文系统皆然),会把段标记当场翻掉 → IPv4 行被跳过 →
+##   网卡明明就绪却"等 IP 超时"。点串是 ipconfig 的固定排版,与语言无关,可作判别。
+static func _is_adapter_header(t: String) -> bool:
+	return t.ends_with(":") and not t.contains(". .")
+
+
 ## ipconfig 解析:标题行含 dev_name 的段内,收集 prefix 网段的 IPv4(本地化无关——
-## 标题行以冒号结尾、IP 是 ASCII;中文"(首选)"后缀靠正则剥掉)。
+## 标题行冒号结尾+无点串、IP 是 ASCII;中文"(首选)"后缀靠正则剥掉)。
 static func _adapter_ips(dev_name: String, prefix: String) -> Array[String]:
 	var out: Array = []
 	var ips: Array[String] = []
@@ -265,7 +273,7 @@ static func _adapter_ips(dev_name: String, prefix: String) -> Array[String]:
 	var in_sec := false
 	for line in text.split("\n"):
 		var t := line.strip_edges()
-		if t.ends_with(":"):
+		if _is_adapter_header(t):
 			in_sec = t.contains(dev_name)
 			continue
 		if not in_sec:
@@ -278,6 +286,8 @@ static func _adapter_ips(dev_name: String, prefix: String) -> Array[String]:
 
 ## 预检:**别的**网卡(不含本类 cyr_et)已占本网段 → 返回占用 IP;干净返回 ""。
 ## 撞网段的后果是两张网卡同 IP、路由混乱,必须提前拦。
+## ★ 段头判定同样走 _is_adapter_header(见其注释):冒号结尾的字段行会把
+##   本类网卡的 IPv4 误认成"别人的占用",把自己刚建好的网拦在门外。
 static func _foreign_subnet_owner() -> String:
 	var out: Array = []
 	var re := RegEx.create_from_string("(" + SUBNET_PREFIX.replace(".", "\\.") + "\\d+)")
@@ -286,7 +296,7 @@ static func _foreign_subnet_owner() -> String:
 	var in_sec := false
 	for line in text.split("\n"):
 		var t := line.strip_edges()
-		if t.ends_with(":"):
+		if _is_adapter_header(t):
 			in_sec = not t.contains(DEV_NAME)
 			continue
 		if not in_sec:

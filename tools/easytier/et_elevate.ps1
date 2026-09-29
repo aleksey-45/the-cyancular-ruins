@@ -7,9 +7,13 @@ param(
     [Parameter(Mandatory = $true)][string]$SessionDir
 )
 try {
+    # Windows PowerShell 5.1 joins -ArgumentList elements with spaces WITHOUT
+    # quoting them. Our paths contain spaces ("The Cyancular Ruins"), so they
+    # MUST be embedded in literal double quotes or the elevated powershell
+    # receives a truncated script path and exits silently.
     Start-Process -FilePath "powershell.exe" -Verb RunAs -WindowStyle Hidden -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $HelperPath,
-        "-SessionDir", $SessionDir
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"{0}"' -f $HelperPath),
+        "-SessionDir", ('"{0}"' -f $SessionDir)
     )
     exit 0
 } catch {
