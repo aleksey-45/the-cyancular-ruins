@@ -11,6 +11,7 @@ extends Control
 
 const OUT_DIR := "res://.superpowers/sdd"
 const PVP_HUD_SCENE := "res://ui/pvp_hud.tscn"
+const ROYALE_GAME := "res://scenes/royale_game.gd"   # 相⑨ 的源码级面(A 项)
 const BG := Color(1.0, 0.0, 1.0)          # 品红背景
 const WALL := Color(0.62, 0.68, 0.75)     # ui/minimap.gd 里墙的颜色(半透明 alpha 0.95)
 
@@ -201,16 +202,75 @@ func _ready() -> void:
 	#   (或干脆恒真)也能让相⑥全绿,而那会让那两模式的小地图自己那个点变成中性亮白。
 	mm_team.visible = false
 	var mm_plain := Minimap.new()
+	# ★ 2026-09-29 起 `setup_multi` 四个参数**全部必填**(B 项)——大乱斗这条"不给自己上色"
+	#   现在是**显式**的空 `Callable()`,不再是默认值。
 	mm_plain.setup_multi(
 		func() -> Vector2: return _local,
 		func() -> Array: return [],
-		func() -> Array: return [])
+		func() -> Array: return [],
+		Callable())
 	add_child(mm_plain)
 	await _frames(2)
 	_check(_near(mm_plain._dot_self.color, Minimap.SELF_COLOR, 0.001),
 			"不传自色提供器 ⇒ 自己那个点应保持 SELF_COLOR(实际 %s)" % str(mm_plain._dot_self.color))
 	_check(not mm_plain._ring_self.visible,
-			"不传自色提供器 ⇒ 白描边**不可见**(1v1 / 大乱斗没有这个问题,别给它们加标记)")
+			"传空自色提供器 ⇒ 白描边**不可见**(1v1 / 大乱斗没有这个问题,别给它们加标记)")
+
+	# ── ⑧ 他人点是**按下标**取色(大乱斗上色那条改动的地基)──
+	# ★ 为什么必须有:2026-09-29 起大乱斗的他人点不再恒红,而是按 role 取 `ROLE_COLORS`。
+	#   而 `Minimap` 的取色是 `_other_dots[i].color = cols[i]` —— **下标**对齐,不是按 role 查表。
+	#   这一条钉住"颜色数组是按提供器给的顺序、一个不差地落到对应点上";同时它也钉住
+	#   "点比颜色数组多时,多出来的点保持 ENEMY_COLOR"(不然越界会被读成 0 号色)。
+	# ★ 本相**不看像素**(读的是 `ColorRect.color`),故 headless 下也真的在跑 ——
+	#   但整个探针仍需要真渲染(前面几相要取图),所以判据仍是那一行 verdict。
+	mm_plain.visible = false
+	var mm_multi := Minimap.new()
+	var COL_A := Color(0.1, 0.9, 0.2)
+	var COL_B := Color(0.9, 0.2, 0.1)
+	mm_multi.setup_multi(
+		func() -> Vector2: return _local,
+		func() -> Array: return [_local + Vector2(64.0, 0.0), _local + Vector2(0.0, 64.0)],
+		func() -> Array: return [COL_A, COL_B],
+		Callable())
+	add_child(mm_multi)
+	await _frames(2)
+	_check(mm_multi._other_dots.size() == 2,
+			"⑧ 两个他人点应被建出来(实际 %d)" % mm_multi._other_dots.size())
+	if mm_multi._other_dots.size() == 2:
+		_check(_near(mm_multi._other_dots[0].color, COL_A, 0.001)
+				and _near(mm_multi._other_dots[1].color, COL_B, 0.001),
+				"⑧ ★ 他人点的颜色必须**按下标**一一对应(实得 [%s, %s]、期望 [%s, %s];" % [
+					str(mm_multi._other_dots[0].color), str(mm_multi._other_dots[1].color),
+					str(COL_A), str(COL_B)]
+				+ " 错位 = 某人的点画成别人的色,而不报错)")
+		_check(not _near(mm_multi._other_dots[0].color, Minimap.ENEMY_COLOR, 0.001),
+				"⑧ ★ 反向:喂了颜色提供器之后**不得**还是 ENEMY_COLOR(那就是没生效)")
+
+	# ── ⑨ 源码级:**大乱斗**两个提供器必须共用同一份 entries(2026-09-29,A 项)──
+	# ★ 为什么行为相(⑧)不够:`Minimap` 只保证"按下标落色"**,它管不到上游两个数组是否同长**。
+	#   大乱斗的副本是懒建 + 会 erase(`_remove_replica`),位置提供器自带 `is_instance_valid`
+	#   过滤 —— 颜色提供器少写一个同样的过滤就会**错位一格**。这条纪律 3v3 已经吃过一次
+	#   (`team_room_smoke` ⑨③),这里是它的**大乱斗那一半**。
+	# ★ 判据落在**函数体**里:`royale_game.gd` 里**没有 `static func`**,故 `func_body` 的
+	#   边界(`\nfunc `)是准的(那处 `static func` 盲区对本文件不成立 —— 已在落地时核过)。
+	var rg := ScanUtil.read(ROYALE_GAME)
+	_check(not rg.is_empty(), "⑨ 读到 %s(读不到就是红,不是静默跳过)" % ROYALE_GAME)
+	var rgc := ScanUtil.code_only(rg)
+	var ent := ScanUtil.func_body(rgc, "_minimap_entries")
+	_check(ent.contains("is_instance_valid("),
+			"⑨ ★ `_minimap_entries` 必须**自己**带 `is_instance_valid` 过滤(两个数组同源的唯一落点)")
+	var oth := ScanUtil.func_body(rgc, "_minimap_others")
+	var cols := ScanUtil.func_body(rgc, "_minimap_colors")
+	_check(oth.contains("_minimap_entries()") and cols.contains("_minimap_entries()"),
+			"⑨ ★★ 位置与颜色两个提供器**都**必须从 `_minimap_entries()` 取数"
+			+ "(各写一份 `for role in _replicas` = 错位一格的成因,而不报错)")
+	_check(not oth.contains("for role in _replicas") and not cols.contains("for role in _replicas"),
+			"⑨ ★ 反向:两个提供器体内**不得**再出现 `for role in _replicas`(那是第二份过滤)")
+	_check(cols.contains("ROLE_COLORS["),
+			"⑨ 他人点的颜色必须走**头顶 ID 同源**的色板 `ROLE_COLORS`(实得体内「%s」)" % cols)
+	_check(rgc.contains("Callable(self, \"_minimap_colors\")")
+			and rgc.contains("Callable(self, \"_minimap_others\")"),
+			"⑨ 两个提供器必须**真的接到** `setup_multi` 上(定义了没人用 = 点还是恒红)")
 
 	_finish()
 

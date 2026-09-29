@@ -75,14 +75,14 @@ func _ready() -> void:
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
+		# 四个提供器**全部**显式传(2026-09-29 起 `setup_multi` 不再有默认值)。
+		# ★ 最后那个空 `Callable()` 是**故意的**:大乱斗没有"队色可与自己撞"的问题,
+		#   自己那个点保持 `SELF_COLOR`、白描边不出现(与 1v1 一致)—— 别把它当漏传。
 		minimap.setup_multi(
 			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
-			func() -> Array:
-				var arr: Array = []
-				for r in _replicas:
-					if is_instance_valid(_replicas[r]):
-						arr.append((_replicas[r] as Node2D).global_position)
-				return arr)
+			Callable(self, "_minimap_others"),
+			Callable(self, "_minimap_colors"),
+			Callable())
 		add_child(minimap)
 	# HUD(左上角击杀排行榜)+ Esc 菜单
 	# ★ 声明式场景实例化,不能 RoyaleHud.new() —— 那个建出来的 CanvasLayer 没有子节点,
@@ -298,3 +298,39 @@ func _process(_delta: float) -> void:
 func _replica_for(role: int) -> Node2D:
 	var r = _replicas.get(int(role))
 	return r if r is Node2D else null
+
+
+# ── 小地图的点位与配色(大乱斗,2026-09-29 补)────────────────────────
+# ★★ 位置与颜色**必须共用同一份 entries**(纪律来自 3v3 那批,见
+#   `team_game._minimap_entries` 的注释):`Minimap` 是**按下标**取色
+#   (`_other_dots[i].color = cols[i]`),而副本是**懒建**的(`_ensure_replica`)、
+#   又会 `erase`(`_remove_replica`)—— 各写一份 `for r in _replicas` + 各自过滤时,
+#   "某个副本已 `queue_free`、尚未从 `_replicas` 摘掉"那个窗口会让两个数组**错位一格**
+#   = 某人的点画成**别人**的颜色,**不报错、只误导人**。唯一落点就是下面这一个函数。
+func _minimap_entries() -> Array:
+	var arr: Array = []
+	for role in _replicas:
+		var r = _replicas[role]
+		if is_instance_valid(r):
+			arr.append([int(role), (r as Node2D).global_position])
+	return arr
+
+
+func _minimap_others() -> Array:
+	var arr: Array = []
+	for e in _minimap_entries():
+		arr.append(e[1])
+	return arr
+
+
+# 他人点的颜色:**与头顶 ID 同源** —— 都问 `ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]`
+# (头顶那处见 `_refresh_names`)。
+# ★ 为什么跟**头顶 ID** 而不是跟**身体**:身体的颜色是各人自设的色相(`_hues`,
+#   由 `peer_hues` 下发),**可能撞色**、且**到达比小地图建立晚**;色板是固定 8 色、
+#   建点即可用。而小地图上"认得出谁是谁"靠的是能**对回头顶那个名字**,不是对回身体。
+# ★ 惰性求值(Minimap 每帧调一次),不是建点时算一次:与 3v3 的 `_minimap_colors` 同款理由。
+func _minimap_colors() -> Array:
+	var arr: Array = []
+	for e in _minimap_entries():
+		arr.append(ROLE_COLORS[(int(e[0]) - 1) % ROLE_COLORS.size()])
+	return arr

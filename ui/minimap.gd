@@ -65,11 +65,18 @@ func setup(local_provider: Callable, enemy_provider: Callable) -> void:
 
 
 # 多目标版(大乱斗 N 人 / 3v3 六人):others_provider 返回全部对手世界坐标数组。
-# ★ color_provider 是**可选**第三参(3v3 分队上色用):返回与 others **同序**的颜色数组。
-#   不传 = `Callable()` = 一律 ENEMY_COLOR —— 1v1(setup)与 大乱斗(setup_multi 两参)的
-#   调用点一个字都没改,行为逐字不变。
+# ★★ **四个参数全部必填**(2026-09-29;B 项):两个颜色提供器原先带 `:= Callable()` 默认值,
+#   于是"**谁给这些点上色**"在调用点上是**隐式**的 —— 大乱斗的答案曾经是"没人给"(恒
+#   `ENEMY_COLOR`),而那个状态与"写了新模式但忘了传"长得**一模一样**。现在每个调用点都必须
+#   把这件事说出来:真要"恒 ENEMY_COLOR",就显式传 `Callable()`(并写清理由)。
+#   ★ 第四参也一起改,不是顺手:只把第三参改必填、第四参留默认,是**不一致的一半**
+#     (它与第三参同为"模式专属",同样只在 3v3 非空)。
+# ★ color_provider 返回与 others **一一对应**的颜色数组(`_other_dots[i].color = cols[i]`)。
+#   ★★ 两个提供器**必须共用同一套过滤**,不只是"同序" —— 见 `royale_game._minimap_entries`
+#     与 `team_game._minimap_entries` 的注释:按下标取色时,"某个副本已 queue_free、尚未从
+#     表里摘掉"那个窗口会让两个数组错位一格,而**不报错**。
 func setup_multi(local_provider: Callable, others_provider: Callable,
-		color_provider := Callable(), self_color_provider := Callable()) -> void:
+		color_provider: Callable, self_color_provider: Callable) -> void:
 	_local_provider = local_provider
 	_others_provider = others_provider
 	_color_provider = color_provider
