@@ -198,3 +198,8 @@ structure-editor.html 已退休)。
 - **快照**:每 role 带 `rewind` 位 + `trail`(回溯中每 3 帧一个位置点,≤10 个)。
 - **客户端**:own = 本地预测(冻结本地输入源 + 免伤 meta;**位置不本地预测**,吃 C2 权威写回)+ **底片只作用于世界图层与自己**(`scenes/effects/time_film.gdshader`:coverage 由内而外推进,挂 wall/water/水面层与本地玩家;敌方副本不挂 —— 用户裁定)+ 中心 ◁◁ 符号。others = 回溯者副本满覆盖底片色 + 沿 trail 的**时间切片残像**(底片色,1 秒渐隐,AfterImage)。
 - **已知边界**:①倒放不重建已消亡子弹;②客户端 C2 期间倒放位置依赖权威写回(回滚手感未实测);③顶针数的 HP 广播走 combat.emit_signal(与 SP rewind_restore 同源做法)。
+
+### B24(P2 第六批,收尾):全量回归 + 导出
+- 回归(全绿):watch_hud / elite_drop / tile_rewind / rewind_fuse(场景)+ time_rules / grain_account / time_economy / subcell / map_catalog / map_format_v4(-s)+ autotest-sp / autotest-beta + pvp_room_smoke(1v1 建房/加入/开局链路未受 P2 改动破坏)+ --import 零错误。
+- exe 已重导出(2026-09-29 12:30)含全部 P2 批次;管线哨兵完好。
+- **实机待验清单**(给用户):Beta 页两卡 → 建房(9 项参数可调)→ 加入对局 → 怀表显示余额/回拨/贷款负数 → 右键加速(自己 ×3+高亮+残影;他人视角 ▶▶3x+红蓝重影)→ Shift 回溯(免伤、自己+世界底片、他人看你的底片色+轨迹残像;回溯中的子弹伤人)→ 击杀/伤害/拆砖颗粒入账 → 贷满锁定与解锁。
