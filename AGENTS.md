@@ -203,3 +203,8 @@ structure-editor.html 已退休)。
 - 回归(全绿):watch_hud / elite_drop / tile_rewind / rewind_fuse(场景)+ time_rules / grain_account / time_economy / subcell / map_catalog / map_format_v4(-s)+ autotest-sp / autotest-beta + pvp_room_smoke(1v1 建房/加入/开局链路未受 P2 改动破坏)+ --import 零错误。
 - exe 已重导出(2026-09-29 12:30)含全部 P2 批次;管线哨兵完好。
 - **实机待验清单**(给用户):Beta 页两卡 → 建房(9 项参数可调)→ 加入对局 → 怀表显示余额/回拨/贷款负数 → 右键加速(自己 ×3+高亮+残影;他人视角 ▶▶3x+红蓝重影)→ Shift 回溯(免伤、自己+世界底片、他人看你的底片色+轨迹残像;回溯中的子弹伤人)→ 击杀/伤害/拆砖颗粒入账 → 贷满锁定与解锁。
+
+### D1(P2 debug 线,2026-09-29 用户两项裁定):弹速随加速 ×3 + PvP 压暗(仅发动者视角)
+- **弹速**:weapon_base 出弹时读**射手**的 `pvp_haste_mult` > 1 ⇒ 该发弹速 ×同倍率(局部变量,不动 bullet_speed 成员 —— 霰弹逐弹 ×会累积、跨发会永久变快)。max_range 不动:飞得更快、射程不变(与单机 bullet_delta 的距离上限语义一致)。单机 pvp_haste_mult 恒 1,零影响(不会与 TimeField.bullet_delta 双乘)。★ 激光是即时光束,无弹速概念,不涉及。
+- **压暗**:pvp 客户端 `_haste_dim_t`(100ms ramp,与单机同款)只驱动**本地**的 PostProcess.set_time_effects(0,0,t) —— 组里取 post_process,只碰 haste_dim,film/loan 恒 0;他人屏幕完全不受影响(压暗是本人视角状态,不随快照广播)。
+- 验证:autotest-sp/beta + haste_probe 全绿;--import 零错误。

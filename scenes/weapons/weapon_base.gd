@@ -294,8 +294,14 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 	var spread := deg_to_rad(spread_deg)
 	for i in range(pellet_count):
 		var b: BulletBase = bullet_scene.instantiate()
+		# Beta 时间玩法(PvP):射手加速 ⇒ 出膛弹速 ×同倍率(用户裁定"子弹也要加速")。
+		# ★ 只读 pvp_haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);
+		#   max_range 不动:加速时弹飞得更快但射程不变(与单机语义一致 —— SP 的位移缩放同样
+		#   不放大 traveled 的距离上限)。
+		var hm := float(player.get("pvp_haste_mult")) if player != null and player is Node 				and "pvp_haste_mult" in player else 1.0
 		var ang := base_dir.angle() + randf_range(-spread, spread)
-		b.setup(Vector2.from_angle(ang), bullet_speed, bullet_range, bullet_size, bullet_color, self)
+		# ★ 局部变量,不动 bullet_speed 成员:多弹丸武器(霰弹)逐弹 ×会累积,跨发更会永久变快
+		b.setup(Vector2.from_angle(ang), bullet_speed * hm, bullet_range, bullet_size, bullet_color, self)
 		b.shooter = player
 		b.gravity_factor = bullet_gravity
 		b.hit_damage = damage
