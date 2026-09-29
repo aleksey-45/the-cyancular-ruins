@@ -21,6 +21,8 @@ var _snap_count := 0
 var _got_round_state := false
 var _got_display_names := false
 var _got_match_options := false
+var _got_hues := false            # D1:match_sync 的 hues 双向带值
+var _hue_problem := ""            # D1:失败时的现场(hues 全文)
 var _got_match_start := false
 var _saw_invite_reject := false
 
@@ -168,7 +170,21 @@ func _go_and_verify(who: String) -> void:
 		#   真客户端由各自场景的 `_ready` 发出请求。
 		NetBus.local_match_sync.connect(func(payload: Dictionary) -> void:
 			if not (payload.get("options", {}) as Dictionary).is_empty():
-				_got_match_options = true)
+				_got_match_options = true
+			# D1 色相断言:hues 必须含**两端**的非零值(自己那份 + 对面那份)。
+			# 自己那份错 = 本端选项没归档;对面那份缺 = 对端没送到/没汇总。
+			var hues: Dictionary = payload.get("hues", {})
+			var mine_ok := absf(float(hues.get(PvpSession.role, -1.0)) - (137.0 if who == "c1" else 246.0)) < 0.5
+			var vals := []
+			for v in hues.values():
+				vals.append(float(v))
+			var both_ok := vals.has(137.0) and vals.has(246.0)
+			if hues.is_empty() or not mine_ok or not both_ok:
+				_hue_problem = "hues=%s(应含两端 137/246 且本端命中)" % str(hues)
+				print("PROBE[%s]: %s" % [who, _hue_problem])
+			else:
+				_got_hues = true
+				print("PROBE[%s]: hues 双向带值 ✓ %s" % [who, str(hues)]))
 		NetBus.rpc_id(1, "match_sync")
 		NetBus.local_round_state.connect(func(data: Dictionary) -> void:
 			if not _got_round_state:
@@ -190,19 +206,24 @@ func _go_and_verify(who: String) -> void:
 			problems.append("昵称表未广播(round_state 载荷里 names 不足 2 项)")
 		if not _got_match_options:
 			problems.append("未收到 match_options")
+		if not _got_hues:
+			problems.append("色相未双向回包(%s)" % (_hue_problem if _hue_problem != "" else "hues 缺失"))
 		if _snap_count < 30:
 			problems.append("快照过少 %d(<30,60Hz 应≈180)" % _snap_count)
 		if problems.is_empty():
-			_finish(true, who, "match_start+round_state+昵称表+match_options+%d 快照 全部通过" % _snap_count)
+			_finish(true, who, "match_start+round_state+昵称表+match_options+hues+颜色双向回包+%d 快照 全部通过" % _snap_count)
 		else:
 			_finish(false, who, "; ".join(problems)))
 
 func _to_worker(who: String, role: int, port: int) -> void:
 	PvpSession.role = role
+	# 非零色相(D1):两客户端各报一个可互相区分的值 —— match_sync 的 hues 回包
+	# 必须把**两端**的值都带回,否则"房间里选的颜色进不了实战"就是协议层断的。
+	var my_hue := 137.0 if who == "c1" else 246.0
 	multiplayer.connected_to_server.connect(func() -> void:
 		print("PROBE[%s]: 已连 worker,claim role %d" % [who, role])
 		NetBus.rpc_id(1, "claim_role", role, who.to_upper())
-		NetBusExt.rpc_id(1, "player_options", {"hue": 0.0}), CONNECT_ONE_SHOT)
+		NetBusExt.rpc_id(1, "player_options", {"hue": my_hue}), CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
 		_finish(false, who, "连 worker 失败"), CONNECT_ONE_SHOT)
 	NetBus.stop()
