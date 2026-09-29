@@ -131,6 +131,56 @@
 3. **C1 先复现**,不要改代码。
 4. **D1 不做**,只在文档里保持那条登记。
 
+---
+
+## 本轮执行结果(2026-09-29)
+
+| 项 | 结果 | 提交 |
+|---|---|---|
+| A1 tscn → json 反方向覆盖 | **已做**(武器 + 敌人两份,判据 = 根脚本链;变异实测 3 组) | `3499dfb` |
+| A2 菜单勾选框计数 | **已做**(常驻探针 `tests/menu_weapon_grid_probe.tscn`,8 条) | `f3e3d58` |
+| A3 发布产物侧守卫 | **已做**(客户端开关 `-- --registry-report` + `build_release.py` 逐条对账) | `3ad9424` |
+| A4 `tier` 一致地填错 | **不是欠账 —— 已存在**。见下 | (无) |
+| A5 菜单编号只有人眼判据 | **已做**(与 A2 同一个探针:两处载体各断一次) | `f3e3d58` |
+| A6 计划文件代码块残留 | **已做**(同步成落地版 + 注明权威落点) | `10dd3f7` |
+| A7 `_bright_in` 阈值 | **已做**(改成相对底板量,合成图变异实测) | `aa234cd` |
+| B1 私密房回局入口 | 用户裁定 **甲**,**已落地**(载荷带 token + `RejoinRegistry.owns` + 相⑨/段⑦) | `959d405` |
+| B2 弹数纠正路径 | 本轮不做(C 档,已登记) | (无) |
+| C1 `RoyaleHost.start_on` 网格预载 | **已复现机制、定性为"今天不可达、条件式是潜伏的"**;未改代码。见下 | (文档) |
+| D1 引擎 `max channels: 0` | 不做(从 GDScript 够不着) | (无) |
+
+### ★ A4 是**伪欠账**(实读后推翻)
+
+计划照 `CLAUDE.md` 那句读成了"要在 ② 的循环里补一条 tier 比对",而 `_phase_weapon_registry`
+**的 ② 里已经有那条断言**(`60c678b` 落地的,早于本计划):
+`id N:tscn 的 tier(X) 必须等于 json 的 "<三值>"(Y)`,逐条 `load()` 每个 json 的 `scene`
+并比对 `int(inst.tier)`。变异实测(json 把 id 4 从 `light` 改成 `heavy`、tscn 不动)确认它会红。
+⇒ **没有加任何东西**,因为再加一条会是与它逐字重复的第二份。
+★ 计划里那半句"**两者一致地填错**没有守卫"是**对的,但不可执行**:json 与 tscn 是仅有的两个
+数据源,两者一致时**没有第三个真值可比** —— 那不是守卫缺口,是"定义上无从判断"。
+`CLAUDE.md` 那句原文("第三条只在『json 与 tscn 各写各的』时才红")描述的正是这个事实。
+
+### ★ C1 复现与定性(未改代码)
+
+**机制**:`RoyaleHost.start_on` 的预载是条件式的 —— 它只问"网格**空不空**",不问"网格是不是
+**这张图**的"。临时探针逐字重放那三行:先 `load_grid()` 过 `demo.cyrm`(125×75),再
+`set_map_file("res://maps/factory1v1.cyrm")` + `refresh_map_size()` ⇒ 预载**被跳过**,
+`current_grid` 停在 **125×75** 而 `GameParameters` 已是 **150×100** ⇒ `plan_spawns` 从
+**demo 的地形**里取散点(实测 `(40,30)` / `(90,18)`,其中一格在 factory1v1 里是**实心格** ——
+出生即卡在几何里)。这与阶段 1 那次观察到的现象**形状一致**。
+
+**可达性(定性)**:全仓给 `MazeGenerator.current_grid` 赋值/加载的生产点只有三处 ——
+`WorldBuilder.load_grid()`(唯一写法)、`level_0.gd`(**无条件**走它)、`match_round.gd`
+(每局还原基线,同一张图)。`server/` 下 `load_grid()` 的四个调用点里,
+`MatchHost._init` / `RoyaleHost._init` / `TeamHost._init` 都在 `start_on` **之后**;
+`_begin_match` 有 `_match_started or _host != null` 的重入守卫 ⇒ **一个 worker 一局一进程,
+`start_on` 之前没有任何东西加载过网格** ⇒ **今天不可达**。
+
+**结论**:登记为**潜伏的不变量缺口**(不是当前故障)。真要收紧,判据应当是"网格来自哪张图"
+(例如 `load_grid()` 记一个 `current_grid_map`,条件改成 `current_grid_map != map_file_path()`),
+**不是**把预载改成无条件 —— 那会让同一张图在 `start_on` 与 `MatchHost._init` 里**各解析一次**
+(代价要先量)。已同步进 `CLAUDE.md` 的 §断线重连 那条登记。
+
 **跨会话纪律(本仓 2026-09-28 实测得来,必须遵守)**:
 - **一个文件一次只有一个持有者**,换手时报「`<文件>` 已交还,commit `<sha>`」。
 - **提交前逐文件 `git diff` 认领每个 hunk** —— `git status` 只挡得住"别人的文件",
