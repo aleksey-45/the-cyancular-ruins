@@ -21,12 +21,27 @@ extends Node
 #    写在 `match` **之前**,故有病。**给没有病的那一处也写一条断言 = 写一条恒绿的摆设**。
 #
 # ★★ 那道状态闸覆盖的**不止** `deaths` 一项。写下来是为了让后来者别把下列现象读成无关的回归 ——
-#    闸写对了 ⇒ MATCH_OVER 之后倒地**不再**:① 进 `_stats`(逐人 `deaths`)、② 1v1 给对方加分
-#    (`_scores`)、③ **掉武器**(`_drop_all_but_one`)、④ **把胜方瞬移回出生点**)(`_reset_survivor`)、
+#    闸写对了 ⇒ MATCH_OVER 之后倒地**不再**:① 进 `_stats`(逐人 `deaths`)、② 给对方/对方队加分
+#    (`_scores`,三模式各有一份自己的写法)、③ **掉武器**(`_drop_all_but_one`)、
+#    ④ **把胜方瞬移回出生点** —— ★ **④ 是 1v1 独有**:`_reset_survivor` 住
+#    `server/match_round.gd`,而 3v3 那份对应的 `_reset_killer_only` 已按用户要求于
+#    **2026-09-21 整体删除**(它今天的 `_match_round_tick` 里没有"复位谁"这回事)、
 #    ⑤ **再广播一次带新 `mvp` 的终局载荷**(`_broadcast_kill` + `_broadcast_round_state`)。
 #    下面钉住的是 ①② 与 ⑤;**③④ 是同一道闸的同一批后果**,没有独立的落点
 #    (③ 由 `death_drop_probe` 在 PLAYING 侧覆盖,④ 的 MATCH_OVER 侧今天无守卫)。
 #    ⇒ 终局之后**看不到**胜方被传送、也**看不到**第二次终局播报,那是**本项要的**,不是回归。
+#
+# ★★ **两条已登记的残留(照实,别读成已覆盖)**:
+#    (i) **计数器型宿主的 `_rpc_all` 覆写把基类的缺省实参又写了一遍**
+#        (`CountingDuelHost` / `CountingTeamHost` 的 `args: Array = []` / `except_role: int = -1` /
+#        `live_only: bool = true`)。基类将来改了缺省值而这里没跟着改 ⇒ 本探针数到的是
+#        **另一个形状的广播**,与生产不是同一次调用,而断言照绿。
+#        今天无害(两个覆写与 `server/match_host.gd` 逐字一致),但它是**复制而非派生**。
+#    (ii) **3v3 那条带外链 `_on_peer_left → _enter_grace` 没有 3v3 专属的端到端覆盖。**
+#        本文件只覆盖了 `_enter_grace` **本体**(③b 手工喂 `_host`);那行共享条件
+#        (`if _royale or _team_mode:`)的**真链路**验证走的是大乱斗那一支,3v3 侧实际没有被
+#        跑过一次 —— 而唯一覆盖 3v3 真链路的 `tests/team_match_probe` 是**既有的 FAIL**
+#        (见 CLAUDE.md §测试)。⇒ 这一格今天**没有可信的守卫**。
 #
 # 手法照 `tests/death_drop_probe.gd`:真建宿主、**role_peers 传空**(不建玩家、不排 peer、
 # 广播静默早退),玩家由本探针自己摆进 `host.players`,宿主自己的物理帧关掉(只手动推状态机)。
@@ -43,12 +58,14 @@ const ROYALE_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23
 #   (权威表述见 `tests/lib/probe_base.gd` 文件头)。
 # ★ 这个数**由实跑填**,不照抄别处。数法 = 逐条点**实跑**的 `_check` 次数(**不是**数源码里的
 #   `_check` —— helper 里那条每具宿主跑一次,不在 `_phase_*` 的函数体里):
-#     `_phase_down_accounting` 每跑一遍 = **8** 条:
-#       · `_host_after_down` 的 `is_downed` 仪器 ×3(PLAYING / ROUND_OVER / MATCH_OVER 各一具新宿主)
+#     `_phase_down_accounting` 每跑一遍 = **10** 条:
+#       · `_host_after_down` 的 `is_downed` 仪器 ×4(PLAYING / ROUND_OVER / COUNTDOWN / MATCH_OVER
+#         各一具新宿主)
 #       · PLAYING 的 `deaths`(反向对照)+ PLAYING 的 `rpc_calls > 0`(计数器仪器)
-#       · ROUND_OVER 的 `deaths`
+#       · ROUND_OVER 的 `deaths` / COUNTDOWN 的 `deaths`(★ 两格合起来 = 「只排除 MATCH_OVER」
+#         这条承诺的**整个差集**,见 `_phase_down_accounting` 上方那段)
 #       · MATCH_OVER 的 `deaths` + MATCH_OVER 的 `rpc_calls == 0`
-#     两个模式各一遍 ⇒ 16;1v1 那遍另加 1 条 `_scores` ⇒ **17**。
+#     两个模式各一遍 ⇒ 20;1v1 那遍另加 1 条 `_scores` ⇒ **21**。
 #   `_phase_disconnect_round`(Task 4)每跑一遍 = **3** 条:
 #       · 掉线时局号的 `[仪器]`(`_round_num == 1`)
 #       · 换局后局号的 `[仪器]`(`_round_num == 2`;它同时是"本相没白测"的证明)
@@ -56,11 +73,12 @@ const ROYALE_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23
 #   `_phase_grace_writer`(Task 4 补;**经真 `_enter_grace`**)每跑一遍 = **2** 条:
 #       · `[仪器]` 调用前 `_leave_round` 为空
 #       · 主断言 `_leave_round[1] == _round_num`
-#   `_phase_royale_winner`(Task 5)每跑一遍 = **4** 条:
+#   `_phase_royale_winner`(Task 5)每跑一遍 = **6** 条:
 #       · ④ 的 `_scores` 为空(仪器)+ ④ 的「全场 0 杀 + 有人离开 ⇒ 平局 0」
 #       · ⑤ 的反向对照(有分差判高者)+ ⑤b(离开者有分仍按分判胜)
-#   ⇒ 合计 **17 + 3 + 2 + 4 = 26**(与实跑打出的那行「断言计数:26 条」逐字相符)。
-const EXPECTED_CHECKS := 26
+#       · ⑤c 的幸存者数仪器 + ⑤c(**只身**幸存者且有分 ⇒ 判他胜;堵住退化实现的覆盖上限)
+#   ⇒ 合计 **21 + 3 + 2 + 6 = 32**(与实跑打出的那行「断言计数:32 条」逐字相符)。
+const EXPECTED_CHECKS := 32
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -196,13 +214,13 @@ func _deaths(host: Node, role: int) -> int:
 
 
 # ── 阶段 ①② 倒地记账的状态闸(1v1 / 3v3 各一遍)──────────────────────────────
-# 三个状态各用**一具新宿主**(`_down_counted` 闩与 `_stats` 都留在宿主上,复用会让后续相恒绿):
+# 四个状态各用**一具新宿主**(`_down_counted` 闩与 `_stats` 都留在宿主上,复用会让后续相恒绿):
 #   PLAYING    → 照常记 death(反向对照:证明记账路径是活的;没有它,"不记"那条就是恒绿摆设)
-#   ROUND_OVER → **照旧**记 death(本项**只**排除 MATCH_OVER —— 这条把这个承诺钉住。
-#                ★ 它不是顺手加的:`!= PLAYING` 那种写法在 PLAYING 下**不触发**,唯一的额外抑制
-#                  正是 ROUND_OVER/COUNTDOWN,而那个变体在别处**没有任何守卫**)
+#   ROUND_OVER → **照旧**记 death
+#   COUNTDOWN  → **照旧**记 death(★ 见下面那条「差集」注释:它与 ROUND_OVER 合起来才把
+#                "**只**排除 MATCH_OVER"这条承诺钉完整)
 #   MATCH_OVER → **不得**记 death(终局后残留的爆炸致死会走到这条边沿:它会 +1 death、
-#                再掉一次武器、把胜方瞬移回出生点、并再广播一次带新 mvp 的终局载荷)
+#                再掉一次武器、并再广播一次带新 mvp 的终局载荷;★ 1v1 还会把胜方瞬移回出生点)
 func _phase_down_accounting(tag: String, roles: Array) -> void:
 	print("[lm] ── %s:倒地记账的状态闸 ──" % tag)
 	var victim: int = int(roles[0])
@@ -220,18 +238,34 @@ func _phase_down_accounting(tag: String, roles: Array) -> void:
 			% [tag, h_playing.rpc_calls]
 			+ "说明计数器根本没接上,下面那条 `== 0` 就是恒绿摆设)")
 
-	# ── ROUND_OVER:只排除 MATCH_OVER —— 这条把这个承诺钉住 ──
+	# ── ROUND_OVER / COUNTDOWN:只排除 MATCH_OVER —— 这两格合起来才把承诺钉完整 ──
+	# ★★ **差集**(本项真正的边):`== MATCH_OVER` 与 `== PLAYING` 两种写法的差别**不是** PLAYING,
+	#   而是 `{ROUND_OVER, COUNTDOWN}` —— `PLAYING` 下 `== MATCH_OVER` 为假 ⇒ `continue` 不走
+	#   ⇒ 记账照常(这正是当初把"`!= PLAYING` 会让 PLAYING 也不记账"推反的那一处)。
+	#   ⇒ 只钉 ROUND_OVER 是**半个**承诺:把闸写成 `if _round_state != PLAYING: continue`
+	#   (语义等价于"只放行 PLAYING")时,ROUND_OVER 那条**会**红、而 COUNTDOWN 那一格**没人测**。
+	#   故两格各一条断言,判词里都写明这条差集(读的人当场就知道边界在哪,**别**把它读成
+	#   "整条承诺都钉住了")。
 	var n_round_over: int = _deaths_after_down(tag, roles, MatchHost.RoundState.ROUND_OVER, victim, killer)
 	_check(n_round_over == 1,
-			"[%s] ★ ROUND_OVER 期间倒地**照旧**入账(实得 %d;本项**只**排除 MATCH_OVER ——"
-			% [tag, n_round_over] + "把闸写成 `!= PLAYING` 会让这条红,而其余断言一条都不会)")
+			"[%s] ★ ROUND_OVER 期间倒地**照旧**入账(实得 %d)。本项钉的是「**除 MATCH_OVER 与"
+			% [tag, n_round_over]
+			+ " COUNTDOWN 之外**照旧入账」;ROUND_OVER 与 COUNTDOWN 两格已各有一条断言"
+			+ "(闸写成 `!= PLAYING` 会让这两条红,而其余断言一条都不会)")
+	var n_countdown: int = _deaths_after_down(tag, roles, MatchHost.RoundState.COUNTDOWN, victim, killer)
+	_check(n_countdown == 1,
+			"[%s] ★ COUNTDOWN 期间倒地**照旧**入账(实得 %d)。本项钉的是「**除 MATCH_OVER 与"
+			% [tag, n_countdown]
+			+ " COUNTDOWN 之外**照旧入账」;ROUND_OVER 与 COUNTDOWN 两格已各有一条断言"
+			+ "(只钉 ROUND_OVER 时,这一格是那道闸唯一没人测的差)")
 
 	# ── MATCH_OVER:本项 ──
 	var h_over: Node = _host_after_down(tag, roles, MatchHost.RoundState.MATCH_OVER, victim, killer)
 	_check(_deaths(h_over, victim) == 0,
 			"[%s] ★ MATCH_OVER 之后倒地**不得**进 `_stats`(实得 deaths=%d;终局后残留的爆炸致死会走到"
 			% [tag, _deaths(h_over, victim)]
-			+ "这条边沿 —— 它会 +1 death、再掉一次武器、把胜方瞬移回出生点、并再广播一次带新 mvp 的终局载荷)")
+			+ "这条边沿 —— 它会 +1 death、再掉一次武器、并再广播一次带新 mvp 的终局载荷;"
+			+ "1v1 还会把胜方瞬移回出生点)")
 	_check(h_over.rpc_calls == 0,
 			"[%s] ★ MATCH_OVER 之后倒地**不得**再广播终局载荷(实得 _rpc_all 调了 %d 次;"
 			% [tag, h_over.rpc_calls] + "非 0 = 客户端会再收一条带新 mvp 的 round_state)")
@@ -386,3 +420,21 @@ func _phase_royale_winner() -> void:
 	h3.mark_disconnected(3)
 	_check(h3._match_winner() == 3,
 			"★ 离开者**有分**时仍按分判胜(期望 3,实得 %d)" % h3._match_winner())
+
+	# ── ⑤c **只身幸存者且他有分** ⇒ 判他胜(补住"退化实现"那条覆盖上限)──
+	# ★ 为什么必须补这一格:本相(以及 ④)原先**唯一**走到"只剩一人"的路径是**全场 0 杀** ⇒
+	#   一个假想的退化实现 `if players.size() < 2: return 0` 能全过(0 杀那格本来就期望 0)。
+	#   这里让**唯一的幸存者带着分** —— 真实现返回他的 role,退化实现返回 0,**两者当场分开**。
+	# ★ 它与 ⑤b 的区别就在这一格上:⑤b 里离开者走后**还剩两人**(`players.size() == 2`),
+	#   退化实现的那道闸根本不点火,discriminating 不了。
+	var h4: Node = _mount("royale", [1, 2, 3])
+	h4._round_state = MatchHost.RoundState.PLAYING
+	h4._scores[3] = 4
+	h4.mark_disconnected(1)
+	h4.mark_disconnected(2)
+	_check(h4.players.size() == 1,
+			"[仪器] ⑤c 的夹具确实只剩一个幸存者(实得 players=%s;若 ≥2,本格对退化实现没有鉴别力)"
+			% str(h4.players.keys()))
+	_check(h4._match_winner() == 3,
+			"★ 只身幸存者**有分**时应判他胜(期望 3,实得 %d;退化成 `players.size() < 2 ⇒ 0` 会返回 0)"
+			% h4._match_winner())
