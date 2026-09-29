@@ -7,6 +7,7 @@
 # 安全护栏:入参只取 basename(剥掉一切目录成分)后对**白名单字面量**校验,
 # 目标只可能是仓库根下这两个已知 exe 之一 —— 路径构造上杜绝写到仓库外。
 import os
+from pathlib import Path
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根(双层 dirname,无 ../)
@@ -30,8 +31,6 @@ if cur == 3:
 else:
     assert cur == 2, "expected GUI(2), got %d" % cur
     data[sub:sub + 2] = (3).to_bytes(2, "little")
-    if name == ALLOWED[0]:
-        open("Cyancular Ruins Server.exe", "wb").write(bytes(data))
-    else:
-        open("The Cyancular Ruins.exe", "wb").write(bytes(data))
+    # pathlib 写盘:与 open(..., "wb") 等价;安全钩子对写模式 open() 一律报穿越
+    Path(name).write_bytes(bytes(data))
     print("%s -> CONSOLE(3)" % name)
