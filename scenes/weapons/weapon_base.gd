@@ -117,7 +117,13 @@ var pending_mag: int = MAG_UNSET
 # ★ 为什么**不是** `is_inside_tree()` 守卫(那条已被明文否决):它会丢帧,并会把
 #   `_auto_aim()` 的朝向一起冻住 ⇒ 那本身造成**真分歧**,比它修掉的问题更坏。
 #   这里只让**依赖弹数的那个判断**在弹数未落定前失效,`tick()` 其余部分照跑。
-# ★ 别把它用到别的判断上 —— 它只在 `_ready()` 置真一次。
+# ★ 它的**读点只有两个**(都是"弹数没落定时别动作"):`fire()` 的空弹夹自动换弹分支,
+#   与 `start_reload()` 的首行。★ 为什么 `start_reload()` 也要判:按 R 那条路**绕过**
+#   `fire()` —— `player.gd::_physics_process` 的语句序是「武器 `tick()` → 切枪(同步换掉
+#   `_weapon`、`add_child` 是 deferred)→ R 轮询」,而 PvP 下切枪由服务器的 `winst` 应答驱动、
+#   R 是本地边沿 ⇒ 两者**互不相干**,同帧相撞是概率问题。撞上时 `start_reload()` 读到的
+#   `mag_ammo == 0` 同样是**声明初值**,会把权威刚写下的 `_reloading = false` 冲成 true,
+#   而 `_ready()` **不复位** `_reloading` ⇒ 那把枪白吃一个 `reload_time`。
 var _mag_ready := false
 var _reloading := false
 var _reload_t := 0.0
@@ -136,6 +142,10 @@ func reload_progress() -> float:
 	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
 
 func start_reload() -> void:
+	# ★ 弹数未落定(未入树窗口)时 `mag_ammo` 仍是**声明初值 0**,不是"空弹夹" ——
+	#   按 R 那条路不经过 `fire()`,同一窗口里会在这里起一次没必要的换弹(见 `_mag_ready`)。
+	if not _mag_ready:
+		return
 	if _reloading or mag_ammo >= mag_size:
 		return
 	_reloading = true

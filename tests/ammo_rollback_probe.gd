@@ -143,6 +143,8 @@ func _apply_attack() -> void:
 #   ② **正向对照**:入树之后空弹夹开火**仍应**自动换弹。没有这一半,本相只钉住了"不该换弹时
 #      不换" —— 把 `_mag_ready` 的置真删掉、或把那个分支改成裸 `return`,都会让一个**已上线**
 #      的功能(空弹夹自动换弹)静默消失,而全仓其余断言**一条都不会红**。这是"单向断言"形态。
+#   ★ **相②c** = 同窗口里的**第二条入口**:按 R 那条路(`player.gd` 直接调 `start_reload()`)
+#     **绕过 `fire()`** ⇒ 它的守卫必须**独立**成立,别以为 `fire()` 那条盖住了它(见该相上方注释)。
 func _run_pre_tree_tick_phase() -> void:
 	var scene: PackedScene = load(WeaponRegistry.scene_of(1))
 	if scene == null:
@@ -215,6 +217,33 @@ func _run_pre_tree_tick_phase() -> void:
 	#   让那两颗子节点变孤儿、给输出添 leaked 警告(本仓探针要求输出干净)。而 w2 之后不会再被
 	#   任何东西 tick(只有玩家自己手上那把由 `WeaponComponent.tick()` 驱动),它就静静停在
 	#   `_reloading = true` 上,无副作用。
+
+	# ── 相②c:按 R 那条路在**同一个**窗口里也要被挡住(`start_reload()` 的首行守卫)──
+	# ★ 为什么单开一条:`fire()` 的守卫**够不到**按 R 那条路 —— `scenes/player/player.gd` 的
+	#   `_physics_process` 语句序是「武器 `tick()` → 切枪(**同步**换掉 `_weapon`,`add_child`
+	#   是 deferred)→ R 轮询」,而 PvP 下切枪由服务器的 `winst` 应答驱动、R 是**本地边沿**
+	#   ⇒ 两者互不相干,同帧相撞是**概率**问题而不是手速问题。撞上时 `start_reload()` 读到的
+	#   `mag_ammo == 0` 同样是**声明初值**,会把权威刚写下的 `_reloading = false` 冲成 true;
+	#   而 `_ready()` **不复位** `_reloading` ⇒ 那把枪白吃一个 `reload_time`(期间 `fire()`
+	#   见 `_reloading` 直接 return = 打不出枪),直到下一次 `restore_state` 才回正。
+	# ★ 夹具与相② 同形:一个 `equip()` 过、**不在树上**的实例 + 权威 `_reloading = false`。
+	var w3: WeaponBase = scene.instantiate()
+	w3.equip(P, 0.0)
+	w3._reloading = false          # 模拟 `_apply_weapon_state` 刚写下的权威值
+	# ★ [仪器] 两条前提缺一不可,**两条都断言**:不在树上(否则 `_ready()` 已把 `mag_ammo`
+	#   落定成 `mag_size`);且 `mag_ammo` 仍是声明初值 0(否则 `mag_ammo >= mag_size`
+	#   会替守卫把这次换弹挡下)。任一条不成立,下面那条主断言都是**恒绿的空转**。
+	_check(not w3.is_inside_tree(),
+			"相②c 前提:武器确实**不在**树上(否则 `_ready()` 已把弹数落定,本相恒绿)")
+	_check(int(w3.mag_ammo) == 0,
+			"相②c 前提:未入树时 `mag_ammo` 仍是声明初值 0(实得 %d;若已非 0,本相恒绿)"
+			% int(w3.mag_ammo))
+	w3.start_reload()              # ← 按 R 那条路(`player.gd` 直接调它,不经过 `fire()`)
+	_check(not w3.is_reloading(),
+			"★ 未入树的武器上直接调 `start_reload()` 必须是 **no-op**(权威 `_reloading = false`"
+			+ "被冲成了 true —— 按 R 那条路**绕过** `fire()` 的守卫,而 `_ready()` 又**不复位**"
+			+ "`_reloading` ⇒ 该武器白吃一个 `reload_time`)")
+	w3.free()                      # 不在树上 ⇒ 必须 free(),`queue_free()` 不会回收它
 
 
 func _check(ok: bool, msg: String) -> void:
