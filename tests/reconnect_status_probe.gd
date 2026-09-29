@@ -26,13 +26,30 @@ extends Node
 # ★ 本探针是**活的**文件:每加一相加一次这个数(见文件头),判断标准是"实跑 == 期望"。
 #   本 Task 加的两相加 **10** 条(`_check_status_banner` 5 条 + `_check_status_call_sites` 5 条)
 #   ⇒ 17 + 10 = **27**。
-const EXPECTED_CHECKS := 27
+# ★ 2026-09-28 复核批(Fix 1~5)的增减,逐项相加减:
+#     _check_status_banner()     : 5 → **9**(+层位**次序** 1 条;+水平居中/不越界/顶边在记分条之下 3 条)
+#     _check_status_call_sites() : 5 → **4**(手抄五个函数名 ⇒ 改成推导:自检 + 赋值⇒驱动 +
+#                                   调用点⇒在状态机里 + 亮/收判据,各 1 条)
+#     _check_subscribe_wiring()  : 0 → **3**(三个模式的 `_ready` 各 1 条 —— 原先那句
+#                                   "另有源码断言钉着这一点"是**空头支票**,这是补的那条)
+#   ⇒ 27 + 4 - 1 + 3 = **33**。
+const EXPECTED_CHECKS := 33
 
 const SRV_MAIN := "res://server/server_main.gd"
 const CLIENT_BASE := "res://scenes/pvp_match_client.gd"
 const PVP_GAME := "res://scenes/pvp_game.gd"
+const ROYALE_GAME := "res://scenes/royale_game.gd"
+const TEAM_GAME := "res://scenes/team_game.gd"
+# 三个模式的**生产入口**(相⑤逐个断言它们的 `_ready` 里调了 `_subscribe_reconnect()`)。
+const CLIENTS := [PVP_GAME, ROYALE_GAME, TEAM_GAME]
 const PRODUCERS := ["res://server/match_round.gd", "res://server/royale_host.gd",
 		"res://server/team_host.gd"]
+
+# ── 相④ 的推导例外(唯一一处,理由见 `_check_status_call_sites`)──
+# `_exit_tree` 是 Godot 的生命周期钩子:那一刻场景正在离开,横幅**随场景一起销毁**
+# (`StatusBanner` 是客户端的子节点),在里面设文字是纯粹的空操作;而它上面那条
+# `_abort_reconnect` 早已收过横幅。故它只停循环、不动横幅。
+const TEARDOWN_EXEMPT := ["_exit_tree"]
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -64,6 +81,7 @@ func _ready() -> void:
 	_check_cancel_wiring()
 	_check_status_banner()
 	_check_status_call_sites()
+	_check_subscribe_wiring()
 	_finish()
 
 
@@ -136,7 +154,9 @@ class ClientStub extends PvpMatchClient:
 func _check_status_banner() -> void:
 	var stub := ClientStub.new()
 	add_child(stub)
-	# 生产入口:三个子类都是在 `_ready` 里调它的(Task 2 的守卫另有源码断言钉着这一点)。
+	# ★ 本相是**自己调** `_subscribe_reconnect()` 来验行为面的 —— 那**证明不了生产里有人调它**,
+	#   三个模式各自的 `_ready` 那一半由**相⑤**的源码断言钉着(Phase 3 复核时这里曾写着
+	#   "Task 2 的守卫另有源码断言钉着这一点",而**当时并不存在那条断言** —— 那正是相⑤补的洞)。
 	stub._subscribe_reconnect()
 	var banner := stub.get_node_or_null("StatusBanner") as StatusBanner
 	_check(banner != null,
@@ -148,11 +168,41 @@ func _check_status_banner() -> void:
 	#   从 .tscn 里删掉那一行,这里当场红 —— 而源码断言一条都照不到(值在 .tscn 里)。
 	_check(banner.layer == 140,
 			"★ 横幅层位必须是 140(实得 %d);层位只住在 ui/status_banner.tscn 里" % banner.layer)
-	# 显 / 收
-	stub._set_status("与服务器断线,正在重连…(剩余 42s)")
-	_check(banner._panel.visible and banner._label.text.contains("42s"),
+	# ★★ **次序**也要钉(不只是今天的数值):140 的意义是"高于三个对局 HUD(130)与小地图(131)、
+	#   低于暂停菜单(145)与结算页(150)"。把**那条理由本身**写成断言,而不是只钉今天的取值。
+	#   区间取 (131, 145) 的**开区间**:小地图 131 与暂停菜单 145。
+	#   ⚠ **它是 belt,不是主力(2026-09-28 复核实测)**,两点如实登记:
+	#   ① 本条的界是**字面量**,故它**测不出"别的层动了"** —— 有人把暂停菜单降到 138
+	#      (`ui/pause_menu.gd` 的 `layer = 145`)时**两条层位断言都绿**,而横幅照样会被模态画面
+	#      盖住。要测那一档得把界改成从别处**读**出来(跨 4 个文件取层位),本批不做。
+	#   ② 今天 `== 140` **蕴含**它(140 ∈ (131,145))⇒ 它红的时候上一条一定也红,**不可能单独红**。
+	#      它真正的用途是:那个确切数值将来被合法改掉(上一条随之放宽/删除)时,「为什么在
+	#      这一带」这条理由仍在场 —— 与 `tests/grace_window_smoke` ⑧ 是同一种 belt。
+	_check(banner.layer > 131 and banner.layer < 145,
+			"★ 横幅层位必须在 (131, 145) 里 —— 高于 HUD/小地图(130/131)、低于暂停菜单/结算页"
+			+ "(145/150);实得 %d" % banner.layer)
+	# 显 / 收。★ 这里刻意用**最长的那条生产文案** —— 它同时是下面那三条几何断言的量具
+	#   (`_on_reconnect_retry_tick` 刚起飞那一刻的 `GraceWindow.DEFAULT_SECONDS` = 60s)。
+	stub._set_status("与服务器断线,正在重连…(剩余 60s)")
+	_check(banner._panel.visible and banner._label.text.contains("60s"),
 			"设了文字就应该可见且文字正确(visible=%s text=%s)"
 			% [str(banner._panel.visible), banner._label.text])
+	# ★★ 几何(§Fix 1):**居中是真的能被断言的**。用**最长的那条生产文案**(倒计时到点那一句)
+	#   量,因为宽度最大的那一档才是"会不会压到别的东西"的判据。
+	#   ★ 这一相是 headless 的:层的 `layer` 与控件矩形都不需要渲染器,`get_global_rect()` 在
+	#     headless 下给的就是布局算出来的矩形(视口 = 项目设置 1920×1440)。真渲染那一半
+	#     (像素、颜色)不在本探针的射程内 —— 那类要显示器,归用户。
+	var vw := get_viewport().get_visible_rect().size.x
+	var rect := banner._panel.get_global_rect()
+	_check(absf(rect.get_center().x - vw * 0.5) <= 1.0,
+			"★ 横幅必须**水平居中**:面板中心 x 必须 = 视口半宽 %0.1f,实得 %0.1f(rect=%s)"
+			% [vw * 0.5, rect.get_center().x, str(rect)])
+	_check(rect.position.x >= 0.0 and rect.end.x <= vw,
+			"★ 横幅必须整块落在视口里(rect=%s 视口宽=%0.1f);左缘钉在视口中心(即修复前那种"
+			% [str(rect), vw] + "四个偏移量全 0 的形状)会让它在 1920 下从 x=960 往右长出去")
+	_check(rect.position.y >= 120.0,
+			"★ 横幅顶边必须落在记分条(自 16 起、其下那条到 120 结束)之下:实得 y=%0.1f(rect=%s)"
+			% [rect.position.y, str(rect)])
 	stub._set_status("")
 	_check(not banner._panel.visible, "空串必须收起横幅(visible=%s)" % str(banner._panel.visible))
 	# ★ 反向:文字为空但面板仍可见 = "永远挂着一块空黑板",是本类最容易出的错
@@ -161,15 +211,121 @@ func _check_status_banner() -> void:
 	stub.queue_free()
 
 
-# ── 相④:四个转折点真的驱动了横幅(源码面)──
-# 行为面只能验"设了文字会显示",验不了"状态机在四个转折点上真的调了它" ——
+# ── 相④:横幅的**驱动点**真的驱动了它(源码面,**全集由源码推导**)──
+# 行为面只能验"设了文字会显示",验不了"状态机在那些转折点上真的调了它" ——
 # 后者是"删掉不报错"的一类,必须机械钉住。
+# ★★ 为什么**不手抄函数名**:手抄名单漏掉**第六个**转折点时一条断言都不会红(它只会"更可能"
+#    被发现,不是"不可能漏掉")。这里改成**推导**:
+#      · 转折点全集 = 「函数体里给 `_reconnecting` 赋值的函数」 —— 那正是"进 / 出重连态"
+#        这件事的机械特征(状态机只有这一个布尔量);
+#      · 后者 = 这些函数体里都得有 `_set_status(`。
+#    反方向再钉一条:每个 `_set_status(` 调用点都必须落在**碰过 `_reconnecting`** 的函数里 ——
+#    那正是 `_banner` 上方那句「它**只有一个数据源**」的机械判据(将来有人把别的事件也接到
+#    这块横幅上,这里会红)。
 func _check_status_call_sites() -> void:
-	for fn in ["_begin_reconnect", "_on_reconnect_retry_tick", "_on_resumed", "_abort_reconnect",
-			"_cancel_reconnect"]:
-		var body := _body(CLIENT_BASE, fn)
-		_check(body.contains("_set_status("),
-				"★ `%s` 没调 `_set_status(`(那个转折点的提示会静默消失)" % fn)
+	var fns := _func_names(_code(CLIENT_BASE))
+	var transitions: Array[String] = []   # 进 / 出重连态的函数
+	var drivers: Array[String] = []       # 调过 `_set_status(` 的函数
+	for fn in fns:
+		if _body(CLIENT_BASE, fn).contains("_reconnecting ="):
+			transitions.append(fn)
+		if _call_view(fn).contains("_set_status("):
+			drivers.append(fn)
+	# ④a 扫描器自检 —— ★ **防空绿**:没有它,下面几条在"扫描词汇哪天失效"时会**恒绿地空转**
+	#     (推导集空 ⇒ 循环一次都不跑 ⇒ missing 恒空)。两个哨兵各自锚住一半:
+	#     `_begin_reconnect`(赋值那半)、`_on_reconnect_retry_tick`(只刷倒计时、**不赋**
+	#     `_reconnecting` ⇒ 推导规则够不到它,全靠 `_set_status(` 那半把它捞回来)。
+	_check(transitions.has("_begin_reconnect") and drivers.has("_on_reconnect_retry_tick"),
+			"★ 转折点推导集不对劲(transitions=%s / drivers=%s)—— 是扫描词汇失效,"
+			% [str(transitions), str(drivers)] + "不是「没有转折点」")
+	# ④b 每个"进出重连态"的函数都必须驱动横幅(唯一例外见 `TEARDOWN_EXEMPT` 及其理由)
+	var silent: Array[String] = []
+	for fn in transitions:
+		if fn in TEARDOWN_EXEMPT:
+			continue
+		if not _call_view(fn).contains("_set_status("):
+			silent.append(fn)
+	_check(silent.is_empty(),
+			"★ 这些函数改了 `_reconnecting` 却没调 `_set_status(`(那个转折点的提示会静默消失):%s"
+			% str(silent))
+	# ④c 反向:每个 `_set_status(` 调用点都必须落在重连状态机里(横幅只有一个数据源)
+	var strays: Array[String] = []
+	for fn in drivers:
+		if not _body(CLIENT_BASE, fn).contains("_reconnecting"):
+			strays.append(fn)
+	_check(strays.is_empty(),
+			"★ 这些函数调了 `_set_status(` 却完全不碰 `_reconnecting`(横幅的数据源不再唯一):%s"
+			% str(strays))
+	# ④d **亮 / 收**的判据(§Fix 3):非空**字面量** = 亮;空串 = 收起,而**只有**"离开重连态"
+	#     的那几支(`_reconnecting = false`)才允许空串。只判 `_set_status(` 在不在的话,把任一处
+	#     "亮"改写成 `_set_status("")` 是**全绿**的 —— 横幅当场变成死的,而五条断言一条都不红。
+	var bad: Array[String] = []
+	for fn in drivers:
+		var leaves := _body(CLIENT_BASE, fn).contains("_reconnecting = false")
+		for arg in _status_args(_call_view(fn)):
+			if arg == "\"\"":
+				if not leaves:
+					bad.append("%s:空串收起了横幅,但它不是「离开重连态」的那一支" % fn)
+			elif not arg.begins_with("\""):
+				bad.append("%s:实参不是字面量(%s)" % [fn, arg])
+	_check(bad.is_empty(), "★ 横幅的亮/收判据不对(亮=非空字面量;只有离开重连态才允许空串):%s"
+			% str(bad))
+
+
+# ── 相⑤:三个模式的**生产入口**(源码面)──
+# ★ 相③ 是**自己调** `_subscribe_reconnect()` 验行为 —— 它证明不了生产里有人调。三个模式各自
+#   在 `_ready` 里调一次,漏一个 ⇒ **那个模式**静默没有横幅,而相③照绿(2026-09-28 复核:
+#   这里原先只有一句"另有源码断言钉着",**那条断言当时并不存在**)。
+func _check_subscribe_wiring() -> void:
+	for p in CLIENTS:
+		_check(_body(p, "_ready").contains("_subscribe_reconnect("),
+				"★ %s 的 `_ready` 里没调 `_subscribe_reconnect()` —— 那个模式静默没有状态横幅" % p)
+
+
+# ── 本相用的扫描小工具(ScanUtil 的通用词汇之上,只服务相④)──
+# ★★ "**调用点**视图" = 函数体**剥掉签名行**。签名行不是调用点:`func _set_status(text: String)`
+#    里那一处 `_set_status(` 是**定义**,不是"谁调了它"。
+#    不剥的话 `_set_status` 自己被算成自己的调用者,而它显然不碰 `_reconnecting`、形参也不是
+#    字面量 ⇒ ④c 与 ④d **双双假红**(2026-09-28 复核批实测:那两条假红就是它)。
+# ★ 为什么是"剥签名行"而不是"把 `_set_status` 加进一张例外名单":`ScanUtil.func_body` 的返回
+#   一律**以签名行开头**,故"第一行不是调用点"对**任何**函数名都成立,与被扫的是谁无关 ——
+#   这是一条**推导**,不是一张**手抄名单**(手抄名单漏名字的失效模式正是相④改成推导要躲的那一个;
+#   本文件里唯一的手抄例外是 `TEARDOWN_EXEMPT`,它另有理由且只有一条)。
+func _call_view(fn: String) -> String:
+	var body := _body(CLIENT_BASE, fn)
+	var nl := body.find("\n")
+	return body.substr(nl + 1) if nl >= 0 else ""
+
+
+# 函数名表:只认顶层 `func xxx(`(入参已过 `code_only`,缩进与注释都剥掉了;
+# lambda 写的 `func (` 没有名字,被 `p > 0` 挡掉)。
+func _func_names(code: String) -> Array[String]:
+	var out: Array[String] = []
+	for line in code.split("\n"):
+		if not line.begins_with("func "):
+			continue
+		var rest := line.substr(5)
+		var p := rest.find("(")
+		if p > 0:
+			out.append(rest.substr(0, p).strip_edges())
+	return out
+
+
+# 取某函数体里**所有** `_set_status(` 的实参原文(按括号配对切;`match_paren` 会跳过字符串里的括号)
+func _status_args(body: String) -> Array[String]:
+	var out: Array[String] = []
+	var from := 0
+	while true:
+		var i := body.find("_set_status(", from)
+		if i < 0:
+			break
+		var open := i + "_set_status".length()
+		var close := ScanUtil.match_paren(body, open)
+		if close < 0:
+			break
+		out.append(body.substr(open + 1, close - open - 1).strip_edges())
+		from = close + 1
+	return out
 
 
 func _finish() -> void:
