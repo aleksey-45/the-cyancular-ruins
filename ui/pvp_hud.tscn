@@ -81,7 +81,10 @@ horizontal_alignment = 1
 ;   ⇒ **不新增任何 bg_color 字面量**, ui_palette_single_source_smoke 的 ④(读第一条 bg_color)
 ;   与 ⑤(零游离字面量)都不受影响。
 ;   ★ 颜色**不在这里写**:由 ui/pvp_hud.gd 的 _ready 从 UiFactory.C_GRACE 取(调色板单一来源)。
-;   ★ 位置:记分条(offset_top 16,高约 48)之下,offset_top = 72;状态横幅(layer 140)在 128。
+;   ★ 位置:记分条(offset_top 16,**实测高 52**、占 y ∈ [16, 68])之下,offset_top = 72 —— 本条
+;     自占 y ∈ [72, 124](高 52 = 标签 36 + 上面那个 Plate 的上下各 8);状态横幅(layer 140)在 128。
+;     ★ 那两个数是 Task 5 落地时**真量**的(headless 下 `get_global_rect()` 给的就是布局矩形),
+;     权威登记在 `ui/status_banner.gd` 的 `TOP_OFFSET` 那一段(它要给 128 找理由)。
 [node name="GraceWrap" type="PanelContainer" parent="."]
 visible = false
 anchor_left = 0.5
