@@ -23,6 +23,13 @@ EDITOR = os.environ.get("GODOT_EDITOR") or \
 CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins.exe")
 SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
 BUILD_INFO = os.path.join(PROJECT, "core", "config", "build_info.gd")
+# 安全护栏:本脚本的临时写盘只针对 build_info.gd 这一个**仓库内固定文件**。
+# 写入一律用「chdir 到仓库根 + 纯字面量相对路径」,路径构造上杜绝越界
+# (--version/--stamp 只作为文件**内容**写入,永不参与路径构造)。
+os.chdir(PROJECT)
+_BUILD_INFO_REL = "core/config/build_info.gd"
+if os.path.realpath(_BUILD_INFO_REL) != os.path.realpath(BUILD_INFO):
+    sys.exit("build_info path mismatch: %s" % BUILD_INFO)
 
 sys.path.insert(0, TOOLS)
 from archive_build import read_project_version, version_tag   # 版本号单一来源:project.godot
@@ -50,7 +57,7 @@ def stamp_build_info(version: str, stamp: str) -> str:
         if not pat.search(stamped):
             sys.exit("build_info.gd 里找不到 `const %s := \"...\"` 行,无法写入发布信息" % name)
         stamped = pat.sub(lambda m: '%s"%s"' % (m.group(1), val), stamped, count=1)
-    with open(BUILD_INFO, "w", encoding="utf-8") as f:
+    with open("core/config/build_info.gd", "w", encoding="utf-8") as f:
         f.write(stamped)
     print("== 写入发布信息: %s (%s)" % (version, stamp))
     return original
@@ -133,7 +140,7 @@ def main() -> None:
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
-        with open(BUILD_INFO, "w", encoding="utf-8") as f:
+        with open("core/config/build_info.gd", "w", encoding="utf-8") as f:
             f.write(original)
 
     # 按「版本号 + 时间戳」归档到 builds/(发布留档;根目录仍是两个固定名,给 start_server.bat 用)

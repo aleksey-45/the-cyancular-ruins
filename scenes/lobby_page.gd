@@ -25,6 +25,8 @@ extends Control
 # 避免新脚本未进全局类缓存时整份场景解析失败(本项目踩过同类坑)。
 # 常量可继承:两页 `_ready` 里的 LocalServer.lan_ip_hint() 直接读本常量,无需各自再声明。
 const LocalServer := preload("res://core/net/local_server.gd")
+# 一键联机面板(EasyTier 虚拟局域网,P1)。preload 同上理由。
+const OneClickNetScript := preload("res://ui/one_click_net.gd")
 
 
 # ── 共用状态(两页同名同义;子类不要再声明一次)──
@@ -473,6 +475,45 @@ func _tick_claim_timeout() -> bool:
 		_return_to_lobby(_claim_timeout_msg())
 		return true
 	return false
+
+
+# ── 一键联机(三个联机页共用;P1,2026-09-28)──
+# EasyTier 虚拟局域网:房主一键开网+开服+邀请码,朋友粘码即入,免公网服务器。
+# 面板只管虚拟网;就绪后 net_ready → 本页负责开服/连大厅(职责与「启动/重启本机服务器」同款)。
+var _one_click: Control = null
+
+
+## 摆「一键联机」按钮(子类 _ready 里调,pos 是各页版式值)。
+func _add_one_click_net(pos: Vector2) -> void:
+	var btn := _page_button("一键联机", pos, Vector2(200, 48), _on_one_click_pressed)
+	btn.tooltip_text = "虚拟局域网一键联机:房主自动建网+开服并生成邀请码;朋友粘贴邀请码即可加入,无需公网服务器\n(开网会弹一次 Windows 管理员授权——创建虚拟网卡需要)"
+
+
+func _on_one_click_pressed() -> void:
+	if _one_click == null:
+		_one_click = OneClickNetScript.new()
+		_one_click.net_ready.connect(_on_one_click_net_ready)
+		_one_click.setup()
+		add_child(_one_click)
+	_one_click.open()
+
+
+## 虚拟网就绪:拨地址框/会话地址到虚拟 IP;房主顺带重启本机服,然后自动刷房间列表。
+## 协程(await LocalServer.restart),信号回调里挂起是合法的。
+func _on_one_click_net_ready(addr: String, is_host: bool) -> void:
+	_addr_edit.text = addr
+	if not is_host:
+		_request_list("已加入虚拟局域网,正在获取房间列表…")
+		return
+	_status.text = "虚拟网就绪,正在启动本机服务器…"
+	var msg: String = await LocalServer.restart()
+	if _ip_label != null:
+		_ip_label.text = "虚拟网 IP: " + addr
+	if msg.begins_with("本机服务器"):
+		_on_local_server_ready()
+		_request_list("一键联机就绪(%s),正在获取房间列表…把邀请码发给朋友即可" % addr)
+	else:
+		_status.text = msg + "(虚拟网已就绪,服务器问题解决后可手动连 %s)" % addr
 
 
 # ── 子类钩子 ──

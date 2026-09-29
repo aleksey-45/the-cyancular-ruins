@@ -27,6 +27,7 @@ func _ready() -> void:
 	var srv_btn := _page_button("启动/重启本机服务器", Vector2(432, 114), Vector2(200, 48),
 			_on_local_server_pressed)
 	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
+	_add_one_click_net(Vector2(640, 114))
 	_ip_label = UiFactory.label(LocalServer.lan_ip_hint(), 16, UiFactory.C_ACCENT)
 	_ip_label.position = Vector2(432, 166)
 	add_child(_ip_label)
