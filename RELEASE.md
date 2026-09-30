@@ -37,14 +37,20 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 > 发布版在没有 git 的机器上也能显示准确版本与构建时间(原先那行是从 git 现读的,那种机器上只剩 `dev`)。
 > 服务端启动时会自报一行 `[server] 版本 v.1.1.4 (202609121250)  pid=…`,运维/联调看日志即可确认跑的是哪一版。
 >
-> **导出后自动冒烟**:脚本会各跑一次两个产物(客户端直接起;服务端走 `-- --worker --port 7999` —— 那条**不碰 7777**,
-> 不会把服主正在跑的大厅杀掉),只要出现 `SCRIPT ERROR` / `Parse Error` / `Failed to load script` 就中止发布。
+> **导出后自动冒烟**:脚本会各跑一次两个产物(客户端直接起;服务端走 `-- --port 7999` —— 那条**不碰 7777**,
+> 不会把服主正在跑的服务端挤掉),只要出现 `SCRIPT ERROR` / `Parse Error` / `Failed to load script` 就中止发布。
 > 这条专门拦「**只在发布版才现形**」的脚本错误(编辑器里跑的是工作区源码,看不见打包后的问题)。
-> ★ 服务端还会**断言自己走的是 worker 分支**(输出里必须出现「worker 就绪」)。**`--worker` 这类开关必须写在
+> ★ 服务端还会**断言它真的按指定端口起来了**(输出里必须出现「服务器就绪」)。**`--port` 这类开关必须写在
 > `--` 之后**:`server_main.gd` 读的是 `OS.get_cmdline_user_args()`,写在 `--` 之前会被 Godot 当自己的参数丢掉 →
-> **零脚本错误地起成大厅、还在 7777 上 bind**(2026-09-15 实测踩到:冒烟一直"通过",其实从没跑过 worker 分支)。
+> **零脚本错误地起成默认端口 7777**(2026-09-15 实测踩到:冒烟一直"通过",其实从没走到预期的分支)。
+> ★ 另有一条**可选的隧道冒烟**:**仓库根**放了 `easytier-core.exe` / `easytier-cli.exe` / `Packet.dll` /
+> `wintun.dll` 时会跑 `-- --port 7999 --tunnel --room 48213` 并断言「隧道就绪」(证明它们随包发出去了、能起来)。
+> 没放就**跳过**——EasyTier 是可选的第三方组件,不进导出产物(下载见 `tools/fetch_easytier.py`)。
+> ★ 判据只认**仓库根**、不认 `tools/easytier/`:导出产物是按**自己所在目录**找它们的,开发态那条
+> `res://tools/easytier` 在 template 构建里读不到(2026-09-29 实测:认了它就会让冒烟红、
+> 而判词还指向"命令行参数丢了"这个错方向)。
 
-> 只想手动重导出(不开一键脚本)时,按序做:**① 导客户端** → **② 导服务端** → **③ 服务端打回 CONSOLE** → **④ 归档**(见 §1.5):
+> 只想手动重导出(不开一键脚本)时,按序做:**① 导客户端** → **② 导服务端** → **③ 服务端打回 CONSOLE** → **④ 打包**(见 §1.5):
 > ```bash
 > "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
 > "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Dedicated Server" "Cyancular Ruins Server.exe"
@@ -53,16 +59,22 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 > ```
 > **⚠️ 服务端 exe 导出一出来就是 GUI 子系统(双击后台静默、无控制台)**——`make_server_console.py` 这步**不能漏**。漏了 = 双击服务端没窗口、以为没起来(2026-09-06 已踩坑)。`build_release.py` 自动做 ①②③④,不会漏。
 
-> **发布归档命名习惯**:每次导出的成品按「**版本号 + 时间戳**」归档到 `builds/`,
-> 文件名 = `<原名> <版本号> <YYYYMMDDHHMM>.exe`(如 `The Cyancular Ruins v.1.1.4 202609121250.exe`、
-> `Cyancular Ruins Server v.1.1.4 202609121250.exe`);**根目录只保留两个固定名 exe**
-> (`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`,固定名=当前最新版,给 start_server.bat / 立即测试用)。
-> `builds/` 不入库(gitignore 已配)。`build_release.py` 每次导完自动归档一份带版本号+时间戳的副本;
-> 想用别的历史名可 `python tools/build_release.py --stamp 202609062126`,想临时用别的版本号可
-> `--version 1.2.0`(默认读 `project.godot`)。手动重导出(上方命令行)只更新固定名,
-> 归档请另跑 `tools/archive_build.py`(见 §1.5)或手动复制。
+> **发布归档 = `builds/` 下唯一一个完整目录**(2026-09-29 用户裁定:不再堆历史版本):
+> 每次归档**先清空 `builds/`**,再建 `builds/The Cyancular Ruins <版本号> <YYYYMMDDHHMM>/`
+> (如 `builds/The Cyancular Ruins v.1.1.4 202609292252/`),里面是**六个文件平铺**:
+> 客户端、服务端、`easytier-core.exe`、`easytier-cli.exe`、`Packet.dll`、`wintun.dll`。
+> ★ 必须平铺在同一层:客户端是**按自己的目录**找服务端与 EasyTier 的
+> (`LocalServer.find_server_exe()` / `Tunnel.available()` 的第一顺位),散着放等于没有。
+> ★ 根目录仍留两个固定名 exe(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`),
+> 给 `start_server.bat` 与开发态用。`builds/` 不入库(gitignore 已配)。
+> `build_release.py` 每次导完自动打包;想用别的时间戳可 `--stamp 202609062126`、
+> 别的版本号可 `--version 1.2.0`(默认读 `project.godot`)。
+> 手动重导出(上方命令行)只更新固定名,打包请另跑 `tools/archive_build.py`(见 §1.5)。
 
-> **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云/防火墙需放行 **7777 与 7800~8299 的 UDP**(端口池 = 7800 起 500 个);局域网/本机不受限。
+> **PvP 服务端 = 单进程单端口**:大厅与对局**同进程**(配合完成后直接建 `MatchSession` 节点,不拉子进程、
+> 不换端口)。手动跑 `start_server.bat` 时它监听 **7777**;正式玩法里端口由**客户端**挑
+> (`core/net/local_server.gd`,20000~59999 随机 + ENet 探活重试),远程联机走 EasyTier 隧道
+> (见 `docs/netplay.md`)。**云/防火墙只需放行那一个 UDP 端口**;局域网/本机不受限。
 
 ### 1.3 验证
 - **把 exe 拷到项目目录外的干净文件夹再运行**(比如桌面/临时目录)。在项目目录里跑时,Godot 可能从本地文件系统补齐缺失文件,会**掩盖打包漏项**——这是最容易误判的地方。
@@ -72,14 +84,16 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 ### 1.4 发布
 把 `The Cyancular Ruins.exe` 这一个文件发出去即可。
 
-### 1.5 时间戳归档(手动重导出后用)
-只跑了 §1.2 的手动命令行(仅更新固定名)时,补一份时间戳副本进 `builds/`:
+### 1.5 打包(手动重导出后用)
+只跑了 §1.2 的手动命令行(仅更新固定名)时,补一个发布目录进 `builds/`:
 ```bash
-python tools/archive_build.py                      # 归档根目录两个固定名 exe,时间戳取当前时间
-python tools/archive_build.py --stamp 202609062126 # 指定归档时间戳(追溯/对齐用)
-python tools/archive_build.py --file "Some.exe"    # 只归档指定文件
+python tools/archive_build.py                       # 两个固定名 exe + EasyTier 四件套 → builds/ 下唯一一份
+python tools/archive_build.py --stamp 202609062126  # 指定时间戳(追溯/对齐用)
 ```
-`build_release.py`(§1.2 一键打包)导出后已自动调用它,无需再手动归档。
+★ 它**先清空 `builds/`**(只留最新一份),所以要留旧的请自己先复制走。
+★ EasyTier 从**仓库根**或 `tools/easytier/` 取;两边都没有时会**点名缺哪几个**,并说明
+"这个包无法远程联机" —— 缺了它不静默。
+`build_release.py`(§1.2 一键打包)导出后已自动调用它,无需再手动打包。
 
 ---
 
@@ -159,7 +173,7 @@ cp "E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64
 | exe 离开项目目录后素材/地图丢失 | 原始文件(如 `.cyrm`/`.json`,无 `.import`)没被 `all_resources` 打包 | 在导出预设 `include_filter` 加模式强制打包,如 `maps/*.cyrm`,重导出 |
 | 发布 exe 报 `Static function "X()" not found in base "res://..."` / `Identifier not found`,**编辑器里一切正常** | 导出前某步把某个脚本**整份重写**了(典型:`core/config/build_info.gd` 的版本信息生成器),把该文件里别的内容一并抹掉 —— 编辑器跑的是工作区那份,所以看不出来 | 生成器只按行替换目标行,**别整份覆写**;`build_release.py` 的产物冒烟(§1.2)现在会拦住这一类 |
 | 在项目目录里测 exe 一切正常,拷出去就缺东西 | 项目目录运行时 Godot 用本地文件补齐,掩盖了打包漏项 | 务必**拷到项目外**测试打包完整性 |
-| 服务端起了但打的是「服务器就绪…(**大厅 7777**)」而不是「worker 就绪…(port 7999)」 | `--worker` / `--port` 写在了 `--` **之前** → Godot 把它们当自己的参数丢掉,`OS.get_cmdline_user_args()` 是空的 → 起的是大厅(还在 7777 上 bind) | 开关一律放 `--` 之后:`<exe> --headless --quit-after 120 -- --worker --port 7999`。`build_release.py` 的冒烟已按此写,并会断言输出里有「worker 就绪」 |
+| 服务端起了但打的是「服务器就绪…(**端口 7777**)」而不是「…(端口 7999)」 | `--port` 写在了 `--` **之前** → Godot 把它当自己的参数丢掉,`OS.get_cmdline_user_args()` 是空的 → 起在默认端口 7777 上 | 开关一律放 `--` 之后:`<exe> --headless --quit-after 120 -- --port 7999`。`build_release.py` 的冒烟已按此写,并会断言输出里有「服务器就绪」 |
 | 发布脚本报「找不到 …\core\build_info.gd」 | `core/` 分了子目录(阶段 4.6)后,`build_release.py` 里的硬编码路径仍是旧的 `core/build_info.gd` | 改成 `core/config/build_info.gd`(2026-09-15 修)。**教训**:`check_naming.py` 的 C 检查只扫**文档**里的路径,`tools/*.py` 里的硬编码路径没人守 → 目录整改后要顺手 grep 一遍 `tools/` |
 | 用了 4.4.1 mono 编辑器导出 | 强行走 mono 模板 | 换 4.7.1 标准编辑器 |
 
@@ -195,3 +209,48 @@ cat stderr.log
 | 构建脚本 | `E:\Workspace\godot\godot-4.7.1-src\build_cyancular.bat` |
 | 编译产物 | `E:\Workspace\godot\godot-4.7.1-src\bin\godot.windows.template_release.x86_64.exe` |
 | 发布 exe | `E:\Workspace\godot\the-cyancular-ruins\The Cyancular Ruins.exe` |
+
+### 在一台没装标准编辑器的机器上导出(2026-09-29 增补)
+
+上面那张表是**原来那台机器**的路径(`E:\Workspace\...`)。换到只有 **mono 版编辑器**的机器上时,
+有这么两条**必须知道**的事:
+
+1. ★ **绝对不要用 mono 版模板导出。** mono 模板出的 exe 带 .NET 依赖(PE 里能查到
+   `hostfxr` / `coreclr` / `GodotSharp`),**双击起不来** —— 现象是"什么都没发生、也没有日志"。
+   2026-09-29 实测踩到过,浪费了很久才定位。
+2. mono 编辑器只认 `export_templates/4.7.1.stable.mono/` 这个目录名(它取编辑器自己的
+   `VERSION_FULL_CONFIG`),而标准模板包里的 `version.txt` 写的是 `4.7.1.stable`。绕法:
+   把**标准版**模板的 `windows_release_x86_64.exe` + `_console.exe` 放进
+   `4.7.1.stable.mono/`,并把该目录的 `version.txt` **改写成 `4.7.1.stable.mono`**
+   (只为骗过目录校验;模板二进制本身仍是标准版)。这样导出的产物引擎行是
+   `Godot Engine v4.7.1.stable.official`,**不带 .NET 依赖**。
+   ★ 但它是**官方标准模板**,不是你裁剪过的那份 ⇒ 体积大得多(≈107 MB vs 裁剪版),也不含裁剪特性。
+
+标准模板包:`Godot_v4.7.1-stable_export_templates.tpz`(1,280,486,955 字节;
+**不是** `..._mono_export_templates.tpz`)。
+
+★ 本机网络的一个坑:沙箱/受限环境下 Windows **Schannel 拿不到凭证**
+(`AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`),于是 `curl.exe`(含 Git 自带那份,
+它也是 Schannel)、`Invoke-WebRequest`、`git` 的 HTTPS **全部 TLS 失败**,而 TCP/代理其实是通的。
+**Python 自带 OpenSSL,不走 Schannel,是唯一能下的路。**
+
+### ★★ 在工作区里构建出来的 exe **不能就地运行**(2026-09-29 实测)
+
+DSH 的文件沙箱给工作区目录打了一条**可继承的 Low 完整性标签**,并让它一路继承下去:
+
+```
+D:\DSH                              Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)
+D:\DSH\...\The Cyancular Ruins.exe                        ...:(I)(NW)     ← 文件继承到了
+D:\  /  桌面  /  %APPDATA%          (无标签 = 默认 Medium)
+```
+
+而 Windows 有一条规则([MS 文档](https://learn.microsoft.com/en-us/previous-versions/dotnet/articles/bb625960(v=msdn.10))):
+**"把可执行文件的完整性级别设成低,它启动出来的进程就是低完整性进程"** —— 也就是说,
+**进程完整性由映像文件的标签决定,与谁启动它无关**。低完整性进程写不了用户配置文件目录
+(只有 `AppData\LocalLow` 可写),导出产物一启动就死在 `user://logs`,表现为
+**双击没窗口 + `Failed to open 'user://logs/godot<时间戳>.log'`**。
+
+**解法:用复制的方式把 exe(以及 `builds\` 里的留档)搬到 `D:\DSH` 外面再运行/分发** ——
+复制会生成新对象,继承的是目标目录的标签(外面的目录没有标签 = Medium)。已实测有效。
+★ **必须是复制,不能移动/重命名**:同卷移动保留原文件的标签。
+★ 自查一条命令:`icacls <文件> | findstr /i Mandatory` —— 出现 `Low Mandatory Level` 就是它。

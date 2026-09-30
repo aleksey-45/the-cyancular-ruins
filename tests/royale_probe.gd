@@ -13,8 +13,6 @@ extends Node
 
 const RESULT_PREFIX := "royale_probe_"
 const ROOM_FILE := "user://royale_probe_room.txt"
-const INVITE := "777"
-const WRONG_INVITE := "000"
 
 var _role := "lobby"
 var _snap_count := 0
@@ -24,7 +22,6 @@ var _got_match_options := false
 var _got_hues := false            # D1:match_sync 的 hues 双向带值
 var _hue_problem := ""            # D1:失败时的现场(hues 全文)
 var _got_match_start := false
-var _saw_invite_reject := false
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -119,12 +116,12 @@ func _run_client_1() -> void:
 				print("PROBE[c1]: 房内 %d 人,发起开局" % n)
 				NetBusExt.rpc_id(1, "royale_start"))
 		NetBusExt.rpc_id(1, "royale_create", {
-			"is_public": false, "invite_code": INVITE, "max_players": 4,
+			"max_players": 4,
 			"round_full_heal": false, "disabled_weapons": [3],
 		}))
 	_go_and_verify("c1")
 
-# ── c2:读房号 → 错码加入(应拒)→ 对码加入 → 转连 worker 验证 ──
+# ── c2:读房号 → 加入 → 验证对局广播 ──
 func _run_client_2() -> void:
 	# 等 c1 把房号写出来
 	var code := ""
@@ -141,23 +138,18 @@ func _run_client_2() -> void:
 		return
 	_connect_lobby("c2", func() -> void:
 		await get_tree().create_timer(0.5).timeout
-		NetBus.local_server_message.connect(func(t: String) -> void:
-			if t.contains("邀请码"):
-				_saw_invite_reject = true)
-		NetBusExt.rpc_id(1, "royale_join", code, WRONG_INVITE)
-		await get_tree().create_timer(0.6).timeout
-		if not _saw_invite_reject:
-			_finish(false, "c2", "错误邀请码未被拒绝(消息=%s)" % _saw_invite_reject)
-			return
-		print("PROBE[c2]: 错码被拒 ✓,用对码加入 %s" % code)
-		NetBusExt.rpc_id(1, "royale_join", code, INVITE))
+		print("PROBE[c2]: 加入 %s" % code)
+		NetBusExt.rpc_id(1, "royale_join", code))
 	_go_and_verify("c2")
 
-# ── 公共(客户端):等 go_match → 转连 worker → claim → 验证对局广播 ──
+# ── 公共(客户端):等 go_match → **在既有连接上** claim → 验证对局广播 ──
+# ★ 2026-09-29:服务端单进程单端口,`go_match` 只是"进对局场景"的信号 —— 这里**不再断开重连**
+#   (重连会换一个 peer id,服务端房里那份 `players` 立刻对不上,这个 peer 会被当掉线)。
 func _go_and_verify(who: String) -> void:
 	NetBus.local_go_match.connect(func(role: int, port: int) -> void:
-		print("PROBE[%s]: go_match role=%d port=%d → 转连 worker" % [who, role, port])
-		_to_worker.call_deferred(who, role, port))
+		print("PROBE[%s]: go_match role=%d port=%d(连接不动)" % [who, role, port])
+		NetBus.rpc_id(1, "claim_role", role, who.to_upper())
+		NetBusExt.rpc_id(1, "player_options", {"hue": 137.0 if who == "c1" else 246.0}))
 	NetBus.local_match_start.connect(func(role: int, spawn: Vector2i, map_path: String) -> void:
 		_got_match_start = true
 		print("PROBE[%s]: match_start role=%d spawn=%s map=%s" % [who, role, str(spawn), str(map_path)])
@@ -215,18 +207,8 @@ func _go_and_verify(who: String) -> void:
 		else:
 			_finish(false, who, "; ".join(problems)))
 
-func _to_worker(who: String, role: int, port: int) -> void:
-	PvpSession.role = role
-	# 非零色相(D1):两客户端各报一个可互相区分的值 —— match_sync 的 hues 回包
-	# 必须把**两端**的值都带回,否则"房间里选的颜色进不了实战"就是协议层断的。
-	var my_hue := 137.0 if who == "c1" else 246.0
-	multiplayer.connected_to_server.connect(func() -> void:
-		print("PROBE[%s]: 已连 worker,claim role %d" % [who, role])
-		NetBus.rpc_id(1, "claim_role", role, who.to_upper())
-		NetBusExt.rpc_id(1, "player_options", {"hue": my_hue}), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
-		_finish(false, who, "连 worker 失败"), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	var err := NetBus.start_client("127.0.0.1", port)
-	if err != OK:
-		_finish(false, who, "start_client(worker) 失败 %d" % err)
+# (原 `_to_worker(who, role, port)` 已删:它的全部内容是"断大厅 → 转连 worker 端口 → claim",
+#  随"每局一个 worker 子进程"的形态一起作废。claim 现在直接发在既有连接上,见 `_go_and_verify`。)
+# ★ 2026-09-30 合并两线时的一处**必须补回**:KH 的 D1 把「非零色相」塞在 `_to_worker` 里发,
+#   而那个函数整体废除 ⇒ 色相改在 `_go_and_verify` 的 go_match 回调里发(与 claim 同一拍),
+#   否则 `_go_and_verify` 里那套 hues 双向断言(137/246)会**恒红**。

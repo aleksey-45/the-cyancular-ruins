@@ -45,6 +45,7 @@ func _match_round_tick(delta: float) -> void:
 								(players[heal_role] as Node).max_hp,
 								(players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
+			_tick_countdown_sync(delta)
 		RoundState.PLAYING:
 			_handle_respawns(delta)
 			for role in players:
@@ -161,6 +162,16 @@ func _broadcast_round_state() -> void:
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
 	_rpc_all("round_state", [data])
+
+
+# 倒计时期间的周期性重播(三模式共用,见 `COUNTDOWN_SYNC_INTERVAL` 上的说明)。
+# 客户端**每次收到都重设**剩余秒数,于是两端的倒计时由服务器这一个时钟锚定,
+# 而不是各自从"收到广播那一刻"起跑。
+func _tick_countdown_sync(delta: float) -> void:
+	_countdown_sync -= delta
+	if _countdown_sync <= 0.0:
+		_countdown_sync = COUNTDOWN_SYNC_INTERVAL
+		_broadcast_round_state()
 
 
 func _match_winner() -> int:

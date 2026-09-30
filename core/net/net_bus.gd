@@ -60,13 +60,26 @@ var _ping_sent_ms := 0
 func _ready() -> void:
 	multiplayer.peer_connected.connect(func(id: int) -> void: print("NetBus: 玩家连入 peer=%d" % id))
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-	multiplayer.connected_to_server.connect(func() -> void: print("NetBus: 已连接服务器"))
+	multiplayer.connected_to_server.connect(func() -> void: print("NetBus: 已连接"))
 	multiplayer.connection_failed.connect(func() -> void: local_server_message.emit("连接失败"))
-	multiplayer.server_disconnected.connect(func() -> void: local_server_message.emit("服务器断开"))
+	# ★ 2026-09-29:文案改「连接断开」—— 界面上不再有"服务器"这个说法(它只是房主机器上
+	#   的一个进程,玩家不需要知道)。★ 它是**玩家可见的哨兵串**,`matchmaking._on_server_message`
+	#   会拿它比对,改字必须两边一起改。
+	multiplayer.server_disconnected.connect(func() -> void: local_server_message.emit("连接断开"))
 
 func _on_peer_disconnected(id: int) -> void:
 	print("NetBus: 玩家断开 peer=%d" % id)
 	peer_left.emit(id)
+
+
+# 退出游戏时收掉**本客户端拉起的**两个外部进程:本机服务端与 EasyTier 隧道。
+# ★ 它们是独立进程,父进程死了**不会**跟着死 —— 残留下来会一直占着那个 UDP 端口与虚拟网 IP,
+#   下一次建房直接失败(而且**没有任何提示**)。
+# ★ 为什么挂在这个 autoload 上:它是"整个会话结束"唯一可靠的时点(场景切换不会走到这里,
+#   而那正是我们**不想**收掉它们的场景:回主菜单再进大厅还得用同一台服务端)。
+func _exit_tree() -> void:
+	preload("res://core/net/local_server.gd").stop_owned()
+	preload("res://core/net/tunnel.gd").stop()
 
 func start_server(port: int = DEFAULT_PORT) -> Error:
 	var peer := ENetMultiplayerPeer.new()

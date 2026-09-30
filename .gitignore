@@ -25,13 +25,20 @@ editor/_build/
 
 # 构建产物与杂项
 *.exe
+*.dll
 test
+
+# 第三方二进制:EasyTier(可选的联机隧道组件,见 tools/fetch_easytier.py 与 docs/netplay.md)
+# ★ 必须连 Packet.dll / wintun.dll 一起放才有用(easytier-core.exe 静态导入 Packet.dll),
+#   而 *.exe 那条盖不住 dll ⇒ 单独忽略整个目录。
+tools/easytier/
 
 # 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/
 backup/
 
-# 服务端开服时落盘的本机 IP(ServerMain._write_ip_file;机器专属,不该入库)
+# 旧的服务端本机 IP 落盘(local_ip.txt)。★ 那份机制的写入方 `_write_ip_file` **已删**
+# (单进程改造后服务端不再写文件),这条规则留着只是防历史文件被误提交。
 local_ip.txt
 
 # Python 字节码缓存(tools/ 下的脚本被 import 时会生成)

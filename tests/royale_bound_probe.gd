@@ -31,7 +31,6 @@ extends Node
 const RESULT_PREFIX := "royale_b12_probe_"
 const GO_FILE := "user://royale_b12_probe_go.txt"
 const FAKE_PEER := 4242        # 只在大厅进程内存在的假 peer(构造 role 空洞;它从不连接)
-const INVITE := ""             # 公开房,加入不需要邀请码
 const HUE_C1 := 90.0           # 两个客户端各自的本端角色色相(经 player_options 上报)
 const HUE_C2 := 180.0
 const DISABLED_SLOT := 3       # c1 建房时勾掉的武器槽(随房选项 → match_options 下发)
@@ -178,7 +177,7 @@ func _orchestrator_step(delta: float) -> void:
 			if _created_t < 0.0 or _t - _created_t < 0.3:
 				return
 			# 假 peer(role 2)插在 c1 与 c2 之间加入 → 它退出后就留下 role 空洞 {1,3}
-			_rm().lobby.royale_join(FAKE_PEER, _code, INVITE, false)
+			_rm().lobby.royale_join(FAKE_PEER, _code, false)
 			print("PROBE: 假 peer %d 加入为 role 2(房 %s),c2 将拿到 role 3" % [FAKE_PEER, _code])
 			var f := FileAccess.open(GO_FILE, FileAccess.WRITE)
 			f.store_string(_code)

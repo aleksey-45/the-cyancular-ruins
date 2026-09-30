@@ -5,6 +5,11 @@ set -e
 # shellcheck source=tests/env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
+# ★ 本支**只有一个进程**:服务端(单进程单端口,大厅与对局同进程,不拉任何子进程)——
+#   故收尾按 PID 杀它就够,不需要按端口区间扫孤儿(那个区间是"每局一个 worker"时代的产物,
+#   已随形态一起废除,见 docs/netplay.md)。★ 有服务端在 7777 上就**不动**它 —— 那种情况下
+#   本脚本本来也 bind 不上,会自己报出来,不该顺手端掉别人正在跑的服务端。
+
 echo "== 启动服务器 =="
 "$GODOT" --headless --path . res://server/server_main.tscn > /tmp/pvp_server.log 2>&1 &
 SERVER_PID=$!

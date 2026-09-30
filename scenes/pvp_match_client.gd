@@ -26,6 +26,10 @@ var _local: Node2D = null
 var _world: Node = null   # WorldViewport(视觉子弹/TileHitFx 副本挂这里)
 var _level0: Node = null  # 世界(Level0):补态那一路要还原可破坏砖(见 _on_match_sync)
 var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
+# 已经做过"新一轮复位"(清子弹 + 还原可破坏砖)的局号。★ 倒计时期间服务器会周期性重播
+# `round_state`(见 `MatchState.COUNTDOWN_SYNC_INTERVAL`),没有这个闩就会把整张图的瓦片与
+# 碰撞重建好几遍 —— 重播只是为了对齐两端倒计时的起点,不是新事件。
+var _countdown_reset_round := 0
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md
 var _rollback = null            # PredictionRollback
@@ -224,7 +228,10 @@ func _tick_beta_time(delta: float) -> void:
 #   本地只负责"站着 + 看底片 + 免伤"。
 func _tick_beta_rewind(delta: float) -> void:
 	var downed: bool = (_local as Node).call("is_downed") if _local.has_method("is_downed") else false
-	var want := Input.is_action_pressed("rewind") 			and _time_mirror != null and _time_mirror.can_spend() and not downed
+	# ★ 2026-09-30 移植时补 `: bool`:`_time_mirror` 是无类型(`var _time_mirror = null`),
+	#   故 `_time_mirror.can_spend()` 是 Variant ⇒ `:=` 推不出类型 ⇒
+	#   `Parse Error: Cannot infer the type of "want" variable`(KH 线 HEAD 上的既有错误)。
+	var want: bool = Input.is_action_pressed("rewind") and _time_mirror != null and _time_mirror.can_spend() and not downed
 	if want and not _time_rewinding:
 		_time_rewinding = true
 		var src = (_local as Node).get("input_source")
@@ -293,7 +300,10 @@ func _tick_time_fx(delta: float, self_hasting: bool) -> void:
 				AfterImage.spawn((_local as Node).get_parent(), anim,
 						Color(1.0, 0.25, 0.25, 0.55) if red else Color(0.3, 0.4, 1.0, 0.55))
 	else:
-		var g := TimeGlow.on(_local)
+		# ★ 2026-09-30 移植时补:原为 `var g := TimeGlow.on(_local)`,而 `:=` 推不出类型
+		#   ⇒ `Parse Error: Cannot infer the type of "g" variable because the value is "null"`
+		#   (KH 线 HEAD 上的既有解析错误,不是本次移植引入)。显式标注即可。
+		var g: TimeGlow = TimeGlow.on(_local)
 		if g != null:
 			g.queue_free()
 	# 他人:回溯优先(底片色 + 轨迹残像,不叠加速高亮);否则加速高亮 + 红蓝重影 + ▶▶3x
@@ -371,7 +381,11 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 				var ghost_host := Node2D.new()
 				ghost_host.global_position = Vector2(float(pt[0]), float(pt[1]))
 				rep.get_parent().add_child(ghost_host)
-				var g := AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
+				# ★ 2026-09-30 移植时补:原为 `var g := AfterImage.spawn(...)`,而 `spawn()` 返回
+				#   void ⇒ `Parse Error: Cannot get return value of call to "spawn()"`。
+				#   `g` 从未被使用(下面的 `for g in ghosts2` / `for g in _rw_ghosts[rep]` 是
+				#   另外两处独立作用域),故直接丢掉赋值。(KH 线 HEAD 上的既有错误)
+				AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
 				var ghosts: Array = _rw_ghosts.get(rep, [])
 				ghosts.append({"node": ghost_host, "t": 0.0})
 				_rw_ghosts[rep] = ghosts
@@ -441,16 +455,22 @@ func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = true) -> void:
 		return
 	var tex := TileDefs.sub_texture(sub)
 	TileHitFx.spawn(_world, Vector2(sub.x * 16.0 + 8.0, sub.y * 16.0 + 8.0), tex)
-	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
-	var ts := GameParameters.TILE_SIZE
-	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
+	# ★ 2026-09-30 移植时**删掉**两行:原为
+	#     var ts := GameParameters.TILE_SIZE
+	#     TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
+	#   而本函数的形参是 `sub` 不是 `cell` ⇒ `Identifier "cell" not declared`(×2 之一);
+	#   且上一行已经按子格坐标播过同一份碎片粒子 —— 那两行是"格级版本"迁移到子格时的残留,
+	#   重复播一份。(KH 线 HEAD 上的既有错误)
 
 func _physics_process(delta: float) -> void:
 	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
 	if _local == null:
 		return
 	# 周期测延迟(右下角 HUD)
-	_ping_acc += _delta
+	# ★ 2026-09-30 移植时改 `_delta` → `delta`:本函数签名收的是 `delta`(KH 的 `_tick_beta_time(delta)`
+	#   也用它),而函数体里两处写成 `_delta` ⇒ `Identifier "_delta" not declared`(×2 之一)。
+	#   全文件从来没有 `_delta` 的声明,这是 KH 线 HEAD 上的既有解析错误。
+	_ping_acc += delta
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
 		if NetBus.can_send_to_server():
@@ -489,7 +509,7 @@ func _physics_process(delta: float) -> void:
 	# 本地视觉子弹撞到玩家 → 收掉(纯表现,见 _cull_bullet_contacts 的注释)
 	_cull_bullet_contacts()
 	# 网络统计读数(诊断,默认关)
-	_netstat_tick(_delta)
+	_netstat_tick(delta)
 
 
 # 网络统计读数:见 `_netstat` 的说明(2026-09-22 诊断用;`-- --netstat` 打开)。
@@ -1114,16 +1134,17 @@ func _begin_reconnect() -> void:
 	if _menu_open:
 		return
 	_pending_disconnect = false
-	if PvpSession.token == "" or PvpSession.worker_port <= 0:
-		_abort_reconnect("重连失败(无会话令牌)")   # 原版 worker / 老大厅 → 优雅降级
+	if PvpSession.token == "" or PvpSession.server_port <= 0:
+		_abort_reconnect("重连失败(无会话令牌)")   # 原版服务端 / 没有凭据 → 优雅降级
 		return
 	_reconnecting = true
-	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.worker_port])
+	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.server_port])
 	_retry_connect.call_deferred()
 
 
-# 连一轮(先把上一轮拆干净)。★ 与 `lobby_page` 转连 worker 那一处同款:
+# 连一轮(先把上一轮拆干净)。★ 与 `lobby_page._with_lobby` 那一处同款:
 # `start_client` 的地址/端口取自 `PvpSession`(大厅填好的,不重新走大厅)。
+# 单进程单端口之后,这里连的就是**那一台**服务端(大厅与对局同一个端口)。
 func _retry_connect() -> void:
 	if not _reconnecting:
 		return
@@ -1138,7 +1159,7 @@ func _retry_connect() -> void:
 		multiplayer.connected_to_server.disconnect(_try_reclaim)
 	if multiplayer.connection_failed.is_connected(_on_reconnect_failed):
 		multiplayer.connection_failed.disconnect(_on_reconnect_failed)
-	var err := NetBus.start_client(PvpSession.server_address, PvpSession.worker_port)
+	var err := NetBus.start_client(PvpSession.server_address, PvpSession.server_port)
 	if err != OK:
 		_schedule_reconnect_retry()
 		return
