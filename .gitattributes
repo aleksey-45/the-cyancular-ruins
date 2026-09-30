@@ -1,4 +1,2 @@
 # Normalize EOL for all files that Git considers text files.
 * text=auto eol=lf
-# PowerShell helpers must keep CRLF (ASCII discipline, see AGENTS.md).
-*.ps1 text eol=crlf

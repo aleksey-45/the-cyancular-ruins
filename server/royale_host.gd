@@ -202,11 +202,9 @@ func _match_round_tick(delta: float) -> void:
 			if _round_timer <= 0.0:
 				_round_state = RoundState.PLAYING
 				_broadcast_round_state()
-			# 倒计时每 0.5s 重播:客户端切场景/建 HUD 有延迟,_ready 只广播一次会漏收
-			_hud_sync -= delta
-			if _hud_sync <= 0.0:
-				_hud_sync = 0.5
-				_broadcast_round_state()
+			# 倒计时重播(共用实现,见 `COUNTDOWN_SYNC_INTERVAL`):客户端切场景/建 HUD 有延迟,
+			# 只广播一次会漏收,两端的倒计时起点就会差一整段场景加载时间。
+			_tick_countdown_sync(delta)
 		RoundState.PLAYING:
 			_match_time = maxf(_match_time - delta, 0.0)
 			# 复活调度(同父类:PLAYING 内倒地即安排 2s 复活)+ 复活执行

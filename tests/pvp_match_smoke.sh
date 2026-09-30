@@ -5,6 +5,10 @@ set -e
 # shellcheck source=tests/env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
+# ★ 本支只有一个进程(单进程单端口,服务端不再拉子进程)—— 按 PID 杀它就够,
+#   不需要扫端口区间(那个区间属"每局一个 worker"的旧形态,已废除)。有服务端在 7777 上
+#   就不动它(那时本脚本本来也 bind 不上)。
+
 echo "== 启动服务器 =="
 "$GODOT" --headless --path . res://server/server_main.tscn > /tmp/pvp2_server.log 2>&1 &
 SERVER_PID=$!

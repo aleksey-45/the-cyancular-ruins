@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 一键发布:导客户端 exe + 导服务端 exe + 把服务端打回 CONSOLE 子系统(双击即控制台窗口+服务器日志)
-# + 按时间戳归档到 builds/(历史版本留档,见 RELEASE.md §1.2,复用 tools/archive_build.py)。
+# + 跑产物冒烟 + 打包到 builds/(★ 只留最新一份,复用 tools/archive_build.py;见 RELEASE.md §1.2)。
 # 依赖 RELEASE.md 的自定义裁剪模板(4.7.1 标准编辑器)。改完游戏后跑一次即可。
 # 版本号取自 project.godot 的 `application/config/version`,与游戏内主菜单显示的**同源**。
 # 用法: python build_release.py   (可选 --stamp 202609062126 / --version v.1.2.0 覆盖默认)
@@ -58,8 +58,12 @@ def stamp_build_info(version: str, stamp: str) -> str:
         if not pat.search(stamped):
             sys.exit("build_info.gd 里找不到 `const %s := \"...\"` 行,无法写入发布信息" % name)
         stamped = pat.sub(lambda m: '%s"%s"' % (m.group(1), val), stamped, count=1)
-    # pathlib 写盘:与 open(..., "w") 等价(截断+写入);安全钩子对写模式 open() 一律报穿越
-    Path(_BUILD_INFO_REL).write_text(stamped, encoding="utf-8")
+    # pathlib 写盘:与 open(..., "w") 等价(截断+写入);安全钩子对写模式 open() 一律报穿越。
+    # ★ `newline="\n"` **不是可有可无的**(2026-09-30 合并两线时补):不传的话 Windows 上会把
+    #   `\n` 翻成 `\r\n`,而入库那份是 LF ⇒ 导出后还原出来的文件行尾与 HEAD 不同,
+    #   `git status` 立刻变脏 —— 上面"工作区不会因为这个文件而变脏"那句承诺就不成立了。
+    #   `Path.write_text` 的 `newline` 参数要 Python ≥ 3.10(本机 3.13)。
+    Path(_BUILD_INFO_REL).write_text(stamped, encoding="utf-8", newline="\n")
     print("== 写入发布信息: %s (%s)" % (version, stamp))
     return original
 
@@ -71,9 +75,9 @@ def stamp_build_info(version: str, stamp: str) -> str:
 def smoke_check(exe: str, extra: list, expect: str = "") -> None:
     print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
     # ★ extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
-    #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
-    #   **起的是大厅、还在 7777 上 bind**,既没跑到 worker 分支、又和服主正在跑的大厅抢端口
-    #   (2026-09-15 实测:日志打的是「服务器就绪…(大厅 7777)」而不是「worker 就绪…(port P)」)。
+    #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--port` 静默失效 →
+    #   **起的是默认端口 7777 上的大厅**,与服主正在跑的服务端抢端口
+    #   (2026-09-15 实测形态:日志打的是「服务器就绪…(端口 7777)」而不是「…(端口 7999)」)。
     cmd = [exe, "--headless", "--quit-after", "120"]
     if extra:
         cmd += ["--", *extra]
@@ -107,6 +111,21 @@ def export(preset: str, out: str) -> None:
     print("    OK")
 
 
+# EasyTier 是**可选**的第三方组件(见 tools/fetch_easytier.py),不进导出产物 ——
+# 有就纳入冒烟,没有就跳过。
+# ★ 判据必须**与导出产物自己查的地方一致**:`Tunnel.available()` 只看游戏目录下的
+#   `easytier/` 子目录(发布版里 = exe 同级的 `easytier/`;开发态 = 仓库根的 `easytier/`)。
+#   2026-09-29 实测踩到过不一致的代价:脚本查了另一个目录于是决定跑隧道冒烟,而导出的 exe
+#   在那儿**找不到**它们 ⇒ 冒烟红,判词却是"命令行参数大概又被丢了" —— 完全指错方向。
+# ★ 连 `Packet.dll` / `wintun.dll` 一起查:core **静态导入** Packet.dll,少了它进程根本
+#   加载不了(0xC0000135、零输出),而那种失败看起来与"打洞失败"一模一样。
+# ★ 路径名与 `core/config/app_paths.gd` 的 EASYTIER_DIR 是同一个(这里是构建期,读不到它)。
+def tunnel_available() -> bool:
+    needed = ("easytier-core.exe", "easytier-cli.exe", "Packet.dll", "wintun.dll")
+    d = os.path.join(PROJECT, "easytier")
+    return all(os.path.isfile(os.path.join(d, n)) for n in needed)
+
+
 def main() -> None:
     # 允许 --stamp <ts> / --version <v> 覆盖默认(时间戳取当前时间,版本号读 project.godot)
     stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -134,23 +153,36 @@ def main() -> None:
         r = subprocess.run([sys.executable, os.path.join(TOOLS, "make_server_console.py"), SERVER_OUT],
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         print((r.stdout or "").strip() or (r.stderr or "").strip())
-        # 导完立刻各跑一次产物(客户端直接起;服务端走 --worker 分支 —— 那条**不碰 7777**,
-        # 不会把服主正在跑的大厅杀掉,见 server_main.gd 的 is_worker 早退)
+        # 导完立刻各跑一次产物(客户端直接起;服务端走 `--port 7999` —— 那条**不碰 7777**,
+        # 不会把服主正在跑的服务端挤掉)。
         smoke_check(CLIENT_OUT, [])
-        smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
+        smoke_check(SERVER_OUT, ["--port", "7999"], expect="服务器就绪")
+        # ★ 隧道自检:起一条真的 EasyTier 房主隧道并等它应答 RPC 门户。
+        #   它验的是"两个 exe 有没有随包发出去 + 能不能起来" —— 而这两件事**都只在发布版
+        #   才可能错**(开发态有 tools/easytier 兜底、发布版只有 exe 同目录那一份)。
+        #   ★ 没装 EasyTier 时**跳过而不是失败**:它不在导出产物里(见 tools/fetch_easytier.py),
+        #     本脚本不该因为"没下载可选的第三方组件"就判发布失败。
+        if tunnel_available():
+            smoke_check(SERVER_OUT, ["--port", "7999", "--tunnel", "--room", "48213"],
+                        expect="隧道就绪")
+        else:
+            print("== 跳过隧道冒烟:没找到 easytier/ 下的 easytier-core.exe / easytier-cli.exe"
+                  "(放一份到仓库根的 easytier/ 即可纳入冒烟;见 tools/fetch_easytier.py)")
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
-        Path(_BUILD_INFO_REL).write_text(original, encoding="utf-8")
+        Path(_BUILD_INFO_REL).write_text(original, encoding="utf-8", newline="\n")
 
-    # 按「版本号 + 时间戳」归档到 builds/(发布留档;根目录仍是两个固定名,给 start_server.bat 用)
+    # 打包到 builds/(★ 只留最新一份:archive_build.py 会先清空 builds/,再建一个**完整的
+    # 发布目录** —— 两个 exe + EasyTier 四件套平铺,因为客户端是按**自己的目录**找它们俩的。
+    # 根目录仍留两个固定名 exe,给 start_server.bat 与开发态用)
     r = subprocess.run([sys.executable, os.path.join(TOOLS, "archive_build.py"),
                         "--stamp", stamp, "--version", version],
                        cwd=PROJECT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
-    print("\n发布完成(%s,构建 %s):\n  %s\n  %s (控制台版;固定名=最新,带版本号+时间戳的历史版见 builds/)"
+    print("\n发布完成(%s,构建 %s):\n  根目录固定名(开发/start_server.bat 用):\n    %s\n    %s (控制台版)"
           % (version_tag(version), stamp, CLIENT_OUT, SERVER_OUT))
 
 

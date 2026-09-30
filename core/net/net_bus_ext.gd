@@ -53,7 +53,7 @@ func suicide_request() -> void:
 # 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。
 
 signal royale_create_requested(caller: int, opts: Dictionary)
-signal royale_join_requested(caller: int, code: String, invite: String, beta: bool)
+signal royale_join_requested(caller: int, code: String, beta: bool)
 signal royale_leave_requested(caller: int)
 signal royale_list_requested(caller: int)
 signal royale_start_requested(caller: int)
@@ -62,16 +62,20 @@ signal royale_start_ai_requested(caller: int)     # 大乱斗:房主请求 AI �
 signal local_royale_rooms(rooms: Array)        # 大厅 → 客户端:公开大乱斗房间列表
 signal local_royale_room_state(state: Dictionary)  # 大厅 → 客户端:所在房间实时状态(等待室)
 
-# 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String, max_players:int,
-#   round_full_heal:bool, disabled_weapons:Array}(规则项随房存,开局随房主生效)
+# 客户端 → 大厅:建房。opts = {max_players:int, round_full_heal:bool, disabled_weapons:Array}
+#   (规则项随房存,开局随房主生效)
 @rpc("any_peer", "reliable")
 func royale_create(opts: Dictionary) -> void:
 	royale_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
 
-# 客户端 → 大厅:加入(私密房须带邀请码)
+# 客户端 → 大厅:加入。★ 2026-09-29 起**只认房间号** —— "公开/私密 + 邀请码"那套已删除
+#   (私密房只多要一个码,而房间码本身就是隧道的 network-secret:能连上这台服务器的人必然
+#   已经知道房间码 ⇒ 那道闸门挡不住任何人,只是给房主添一道"还得再传一个码"的手续)。
+# ★ `beta` 是 KH 线 B20 加的**独立房间池**判据(普通页不得进 Beta 房、反之亦然),
+#   2026-09-30 合并两线时保留 —— 与"去 invite"是两件独立的事。
 @rpc("any_peer", "reliable")
-func royale_join(code: String, invite: String, beta: bool) -> void:
-	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
+func royale_join(code: String, beta: bool) -> void:
+	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, beta)
 
 # 客户端 → 大厅:退出所在大乱斗房间(开局前)
 @rpc("any_peer", "reliable")
@@ -98,7 +102,7 @@ func ai_duel() -> void:
 func royale_start_ai() -> void:
 	royale_start_ai_requested.emit(multiplayer.get_remote_sender_id())
 
-# 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
+# 大厅 → 客户端:房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")
 func royale_rooms(rooms: Array) -> void:
 	local_royale_rooms.emit(rooms)
@@ -123,7 +127,7 @@ signal local_time_state(payload: Dictionary)
 func time_state(payload: Dictionary) -> void:
 	local_time_state.emit(payload)
 
-# 大厅 → 客户端:所在房间实时状态 {code, is_public, invite_code, max_players, host_role,
+# 大厅 → 客户端:所在房间实时状态 {code, max_players, host_role,
 #   players: [{role, name}], in_match}(等待室 UI 靠它刷新;仅发给房内成员)
 @rpc("authority", "reliable")
 func royale_room_state(state: Dictionary) -> void:
@@ -135,23 +139,23 @@ func royale_room_state(state: Dictionary) -> void:
 # ★ 选边(`team_pick`)是 3v3 独有的上行:队伍**不由服务器推导**(role 号有空洞),玩家自己点。
 
 signal team_create_requested(caller: int, opts: Dictionary)
-signal team_join_requested(caller: int, code: String, invite: String, beta: bool)
+signal team_join_requested(caller: int, code: String, beta: bool)
 signal team_pick_requested(caller: int, team: int)
 signal team_leave_requested(caller: int)
 signal team_start_requested(caller: int)
-signal team_list_requested(caller: int)           # 客户端请求公开 3v3 房间列表(照 royale_list 那一对)
-signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:公开 3v3 房间列表
+signal team_list_requested(caller: int)           # 客户端请求房间列表(照 royale_list 那一对)
+signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:房间列表
 signal local_team_room_state(state: Dictionary)   # 大厅 → 客户端:房间实时状态(等待室/选边)
 
-# 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String}
+# 客户端 → 大厅:建房。opts = {max_players:int, round_full_heal:bool, disabled_weapons:Array}
 @rpc("any_peer", "reliable")
 func team_create(opts: Dictionary) -> void:
 	team_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
 
-# 客户端 → 大厅:加入(私密房须带邀请码)
+# 客户端 → 大厅:加入。★ 同 `royale_join`:**只认房间号**("公开/私密 + 邀请码"已删),保留 `beta`
 @rpc("any_peer", "reliable")
-func team_join(code: String, invite: String, beta: bool) -> void:
-	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
+func team_join(code: String, beta: bool) -> void:
+	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, beta)
 
 # 客户端 → 大厅:选边(team = 1 或 2)。该队已满 → 大厅回 server_message 拒绝
 @rpc("any_peer", "reliable")
@@ -173,12 +177,12 @@ func team_start() -> void:
 func team_list() -> void:
 	team_list_requested.emit(multiplayer.get_remote_sender_id())
 
-# 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
+# 大厅 → 客户端:房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")
 func team_rooms(rooms: Array) -> void:
 	local_team_rooms.emit(rooms)
 
-# 大厅 → 客户端:房间实时状态 {code, is_public, invite_code, host_role, team_size,
+# 大厅 → 客户端:房间实时状态 {code, host_role, team_size,
 #   players: [{role, name, team}], in_match, your_role}(等待室靠它渲染两队名单)
 @rpc("authority", "reliable")
 func team_room_state(state: Dictionary) -> void:

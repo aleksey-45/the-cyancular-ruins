@@ -18,7 +18,7 @@ extends Node
 #        ★★ **两次进场都走生产入口** = 按主菜单上那颗「1 v 1」(`main_menu.gd` 里
 #          `PvpSession.enter_mode(MODE_PVP)` + `change_scene_to_file(matchmaking.tscn)`),
 #          再由**生产那条 `change_scene_to_file`** 建出真大厅页 —— 本端只在页 `_ready` **之前**
-#          预置"已连着本探针大厅"(`_on_node_added`;生产连的是默认端口 7777,本探针不能碰)。
+#          预置"已连着本探针大厅"(`_on_node_added`;生产页自己会按 `PvpSession.server_port` 连,本探针不能碰 7777)。
 #        ★★★ 这里**曾经**写着「主菜单那几步只是换场,不承载判据」并用 `_attach_page_in`
 #          **直接挂页** —— 那句话是**错的**,而且正好错在承重的那一步:主菜单那三个联机按钮
 #          的 `PvpSession.reset()` **就是**抹掉回局凭据的那一步(C1)。于是整条测试链
@@ -39,7 +39,7 @@ extends Node
 #
 # ★ 与 team_match_watcher 同款的两条纪律:
 #   ① **先置位再入树**:大厅页 `_ready` 会 deferred 跑一次 `_request_list`,只有"已连同地址"
-#      那一支会复用现有连接(否则它会 `NetBus.stop()` 并按默认端口 7777 重连 —— 那是**用户自己的
+#      那一支会复用现有连接(否则它会 `NetBus.stop()` 并按 `PvpSession.server_port` 重连 —— 那是**用户自己的
 #      服务端**,本探针明确规定不碰)。
 #   ② 页挂在**探针场景**下(不是本节点下):换场时它随探针场景一起被 free —— 那正是生产的形状。
 #
@@ -52,14 +52,17 @@ extends Node
 #      通常落在"房还没建 / 对局还没开"之前,之后**再也不会有列表到达** —— c2 看不到房、c3 看不到
 #      `in_match`(它只在 in_match 那一行上才动手,故早刷新不会误入房)。梯节拍沿用
 #      `team_match_watcher._tick_lobby_join` 的 1.5s,并且**只在连接活着时发**(绝不让页走到
-#      "未连 → 重连默认端口 7777"那一条)。
+#      "未连 → 按 `PvpSession.server_port` 重连"那一条)。
 #   ③ **本端自己维持与大厅(29300)的连接**,页不许自己去连(生产里那一步是"页 `_ready` →
-#      `_with_lobby` → `NetBus.start_client(addr)`,端口取**默认 7777**;本探针的大厅在池外
-#      29300,照那条走会去连用户的 7777 并且永远连不上)。手法:`_on_node_added` 在页 `_ready`
-#      **之前**预置 `_connected/_connected_addr`(**并把 `PvpSession.server_address` 拨回本探针大厅**
-#      —— 主菜单按钮里的 `enter_mode()` 会 `reset()` 成云默认,而页的地址框拿它做初值),
+#      `_with_lobby` → `NetBus.start_client(addr)`,端口取 `PvpSession.server_port`(**拨之前是
+#      默认 7777**);本探针的大厅在池外 29300,照那条走会去连用户的 7777 并且永远连不上)。
+#      手法:`_on_node_added` 在页 `_ready`
+#      **之前**预置 `_connected`(**并把 `PvpSession.server_address` 拨回本探针大厅**
+#      —— 主菜单按钮里的 `enter_mode()` 会把它 reset 掉),
 #      于是页的 `_request_list` 走**已连快路**;万一还是走了慢路(预置没赶上),`_drive_to_lobby_page`
-#      有一条兜底修复(重连 29300 + 把地址框拨回来),两条路都不碰 7777。
+#      有一条兜底修复(重连 29300 + 把地址拨回来),两条路都不碰 7777。
+#      ★ 2026-09-29:地址框与 `_connected_addr` 已随"手填地址"整条路删除,快路判据只剩
+#        `_connected and NetBus.can_send_to_server()`。
 #   ④ `_page` 一律用 `is_instance_valid` 判死活(brief 在 `_tick_c2` 里只判 `== null`):
 #      换场后 `_page` 是**已释放对象**,对已释放对象取字段会抛
 #      `Invalid access … previously freed`(本仓实测踩过,见 team_match_watcher 文件头)。
@@ -70,6 +73,12 @@ extends Node
 #   ⑦ 每条判词的断言计数(`_checks` + `MIN_CHECKS_*`):被截断的跑不许打印 OK。
 
 const LOBBY_ADDR := "127.0.0.1"
+# ★ 单进程单端口之后,**端口必须一起摆好**:页重连时读的是 `PvpSession.server_port`
+#   (拨之前是默认 7777)。本探针的大厅在池外 29300,若只置地址不置端口,页每次都会去连 7777
+#   —— 而那正是本探针明令不许发生的("页不许自己去连",见文件头偏离③)。
+#   故三处(预置钩子 / 挂页 / 重连兜底)**都必须**把端口一起摆好。
+# ★ 2026-09-29:原先这里还有一半理由是"地址框文本要带端口"(快路判据是
+#   `_connected_addr == _addr_edit.text`)—— 那个框已删除,这一半随之消失。
 const ENTER_TIMEOUT := 60.0      # 从挂页到"进 pvp_game 且到 PLAYING"
 const MENU_TIMEOUT := 25.0       # 按下主菜单那颗模式按钮 → 生产路径把大厅页建出来
 const MENU_BTN_TEXT := "1 v 1"   # 与 main_menu.gd 的文案逐字一致
@@ -138,8 +147,18 @@ var _hook_hits := 0
 var _repairs := 0
 
 
+# 本探针大厅的地址文本(带端口;理由见 `LOBBY_ADDR` 上方那段)。
+# ★ 2026-09-29:页上那个「服务器地址」框已随"手填地址"整条路一起删除,故本函数只剩
+#   **日志用**一个用途(页不再有地址文本可比)。
+func _addr_text() -> String:
+	return "%s:%d" % [LOBBY_ADDR, lobby_port]
+
+
 func _ready() -> void:
 	hold_alive = who != "c1"
+	# ★ 地址 + 端口都要在**建连接之前**落好:页的 `_with_lobby` 直连它们(页上已无地址框)。
+	PvpSession.server_address = LOBBY_ADDR
+	PvpSession.server_port = lobby_port
 	if who == "c1":
 		# ★ 生产入口那条路要靠这个钩子(理由见 `_on_node_added` / 文件头偏离③)
 		get_tree().node_added.connect(_on_node_added)
@@ -192,22 +211,24 @@ func _enter_main_menu() -> void:
 
 
 # 大厅页入树时(生产那条 `change_scene_to_file` 建出来的)**在它 `_ready` 之前**把两件事摆好:
-#   ① `PvpSession.server_address = LOBBY_ADDR` —— 页的地址框拿它做初值,而主菜单按钮里的
-#      `enter_mode()` 会 `reset()` 成云默认;
-#   ② `_connected` / `_connected_addr` —— 让页的 `_request_list` 走"已连大厅"的**快路**。
+#   ① `PvpSession.server_address` / `server_port` —— 页的 `_with_lobby` 直连它们,
+#      而主菜单按钮里的 `enter_mode()` 不再把它拨回别处(但探针自己仍要钉住);
+#   ② `_connected = true` —— 让页的 `_request_list` 走"已连大厅"的**快路**。
 # ★★ 为什么必须是 `node_added`:`_connected` 是页自己的私有变量、新建时恒 false,而页 `_ready`
 #    末尾就把 `_request_list` 排进 deferred ⇒ 晚一拍(下一帧)再补就来不及了:页已经走了慢路
-#    (`NetBus.stop()` 拆掉本端与 29300 的连接 + `start_client(addr)` **按默认端口 7777** 去连
-#    用户自己的服务端)。`node_added` 早于 `_ready`,所以这两个值在这里设是**生效的**。
+#    (`NetBus.stop()` 拆掉本端与 29300 的连接 + `start_client(PvpSession…)` 去重连)。
+#    `node_added` 早于 `_ready`,所以这个值在这里设是**生效的**。
+# ★ 2026-09-29:原先还要同时预置 `_connected_addr`(快路判据的另一半是地址框文本)。
+#   地址框删除后判据只剩 `_connected and NetBus.can_send_to_server()`,故不需要它了。
 func _on_node_added(n: Node) -> void:
 	if not (n is LobbyPage) or not n.has_method("_on_room_list"):
 		return
 	_hook_hits += 1
 	PvpSession.server_address = LOBBY_ADDR
+	PvpSession.server_port = lobby_port
 	var preset := not bool(n.get("_connected"))
 	if preset:
 		n.set("_connected", true)
-		n.set("_connected_addr", LOBBY_ADDR)
 	_rec("HOOK page#%d 预置已连=%s" % [_hook_hits, str(preset)])
 	_log("大厅页入树(生产路径)→ 预置『已连着 %s:%d』=%s" % [LOBBY_ADDR, lobby_port, str(preset)])
 
@@ -221,7 +242,7 @@ func _drive_to_lobby_page(first: bool) -> bool:
 		return true
 	if not NetBus.can_send_to_server():
 		# ★ 必须先连上再让页入树:页的 `_with_lobby` 快路判据里有 `can_send_to_server()`,
-		#   不成立时它会 `NetBus.stop()` + 按**默认端口 7777** 去连(用户自己的服务端)。
+		#   不成立时它会 `NetBus.stop()` + 按 `PvpSession.server_port` 去连(拨之前 = 7777,用户自己的服务端)。
 		_reconnect_lobby("先把大厅接回来再放页进来")
 		return false
 	var cs := get_tree().current_scene
@@ -325,21 +346,22 @@ func _sync_page() -> void:
 
 # 把一份**真**大厅页挂进当前场景(首次进场与 c1 回局前各一次,同一份实现)。
 # ★ 三行"先置位再入树"(缺一不可):
-#   ① `PvpSession.server_address = LOBBY_ADDR` —— `matchmaking.gd` 的地址框**默认值取的就是它**
-#      (`ui_factory.line_edit(..., PvpSession.server_address)`),而 `_with_lobby` 的快路判据是
-#      `_connected_addr == _addr_edit.text` ⇒ 不拨它,页 `_ready` 那次 deferred `_request_list`
-#      会判"地址变了"→ `NetBus.stop()` + 按**默认端口 7777** 重连:本进程与探针大厅(29300)的
-#      连接当场拆掉,而本探针明确规定不碰 7777(症状是"c1 从这一刻起什么都收不到")。
-#   ② 同一行对**转连 worker** 也是必需的:`_do_go_match` 用 `PvpSession.server_address` 连 worker,
-#      而 worker 就在 127.0.0.1 —— 不拨它,c1/c2 会去连**云地址**上的 29350(必失败)。
-#   ③ `_connected` / `_connected_addr`:让页走"已连"的快路(本进程已经连上大厅了)。
+#   ① `PvpSession.server_address` **与 `server_port`** —— `_with_lobby` 直连它们(页上已无地址框),
+#      不拨它们,页 `_ready` 那次 deferred `_request_list` 就会 `NetBus.stop()` + 按错的端口重连:
+#      本进程与探针大厅(29300)的连接当场拆掉(端口若不拨就是 7777 = 用户自己的服务端),
+#      症状是"c1 从这一刻起什么都收不到"。
+#      ★ 2026-09-29:原先这里还兼着给地址框拨初值 —— 那个框已删除,这一半随之消失。
+#   ② 同一行对**同一台服务端**也是必需的:`go_match` 带的端口 = 服务端端口(单进程单端口),
+#      客户端把它写进 `PvpSession.server_port`,局内重连/回局都直连它 —— 而服务端就在 127.0.0.1。
+#   ③ `_connected`:让页走"已连"的快路(本进程已经连上大厅了);判据的另一半是
+#      `NetBus.can_send_to_server()`,由真连接本身满足。
 func _attach_page_in(cs: Node, action: Callable) -> void:
 	if cs == null or _page != null:
 		return
 	_page = load("res://scenes/matchmaking.tscn").instantiate()
 	PvpSession.server_address = LOBBY_ADDR
+	PvpSession.server_port = lobby_port
 	_page.set("_connected", true)
-	_page.set("_connected_addr", LOBBY_ADDR)
 	cs.add_child(_page)
 	_log("真大厅页已挂载(%s)" % cs.name)
 	action.call()
@@ -349,15 +371,17 @@ func on_create() -> void:
 	_page.call("_on_create_pressed")
 
 
+# ★ 2026-09-30:原来调 `_on_refresh_pressed`(「刷新列表」按钮的回调)—— 那颗按钮已按用户裁定
+#   删除,故改调基类真正干活的那个口 `_request_list(msg)`。
 func on_refresh() -> void:
-	_page.call("_on_refresh_pressed")
+	_page.call("_request_list", "探针催刷新")
 
 
 # 周期性点一次「刷新列表」(**真按钮回调**)。★ 见文件头偏离②:列表是请求/响应式的,挂页那
 # 1~2 次请求常常落在"房还没建 / 对局还没开"之前;不补这一梯,c2 与 c3 会永远停在空列表上
 # (brief 里没有这条梯)。
 # ★ `can_send_to_server()` 那道闸不是可选的:页的 `_with_lobby` 在**未连**时会落到
-#   `NetBus.start_client(addr)`(**默认端口 7777**)—— 那是用户自己的服务端,本探针不碰。
+#   `NetBus.start_client(addr)`(端口取 `PvpSession.server_port`,拨之前 = 默认 7777)—— 那是用户自己的服务端,本探针不碰。
 func _tick_refresh(delta: float, done: bool) -> void:
 	if done or not is_instance_valid(_page) or not NetBus.can_send_to_server():
 		return
@@ -365,7 +389,7 @@ func _tick_refresh(delta: float, done: bool) -> void:
 	if _refresh_t > 0.0:
 		return
 	_refresh_t = REFRESH_EVERY
-	_page.call("_on_refresh_pressed")
+	_page.call("_request_list", "探针催刷新")   # 同上:按钮已删,直接催基类的那个口
 
 
 # 在房间列表里按**房号**找那一行(三页的按钮文案都是 `"房间 %s …" % code`,逐字对应)。
@@ -557,12 +581,15 @@ func _tick_c1(delta: float) -> void:
 				# ★★ 这一条就是**新入口本身**:同一个房、同一份载荷,别人(见 c3)看到的是
 				#    disabled,而**手里有凭据的本人**必须可点。它有两种成因,判词两个都点名:
 				#      ① 次序写反(先按 in_match 禁用)—— 前三页渲染那一半;
-				#      ② **凭据在半路上没了**(C1:主菜单那颗按钮把 `token/worker_port/room_code`
+				#      ② **凭据在半路上没了**(C1:主菜单那颗按钮把 `token/room_code`
 				#         一起清了)⇒ `can_rejoin_to` 恒 false。★ 这一条正是 C1 的验收断言:
 				#         把凭据清回 `reset()` 里,本行立刻红(反证实测过)。
+				#         ★ 凭据现在是「token + room_code + `PvpSession.server_port`」三个字段
+				#         (`can_rejoin()` 的判据),故诊断行照实打后者 —— 旧形态那个
+				#         `worker_port` 已随单进程单端口一起删除。
 				_fail("c1 ★ 自己那间对局中的房那一行是 disabled —— 回局入口不存在"
 						+ "(凭据还在吗?token=%s port=%d code=%s;或次序写反?)"
-						% ["有" if PvpSession.token != "" else "**空**", PvpSession.worker_port,
+						% ["有" if PvpSession.token != "" else "**空**", PvpSession.server_port,
 							PvpSession.room_code])
 			else:
 				_ok("c1 ★ 自己那间对局中的房那一行**可点**(disabled=false)")
@@ -597,12 +624,13 @@ func _tick_c1(delta: float) -> void:
 			return
 
 
-# 把大厅连接接回**本探针的大厅**(偏离③:页自己的重连路径永远按默认端口 7777 走,
+# 把大厅连接接回**本探针的大厅**(偏离③:页自己的重连路径按 `PvpSession.server_port` 走,
 # 那是用户自己的服务端,本探针不碰)。★ **可重入**:开局前要接一次;而回主菜单后若页还是
-# 走了慢路(它 `NetBus.stop()` + 按默认端口重连),还要再接一次 —— 故这里**不设一次性闸**。
+# 走了慢路(它 `NetBus.stop()` + 按 `PvpSession.server_port` 重连),还要再接一次 —— 故这里
+# **不设一次性闸**。
 # ★ 判据是**当下的连接**(`can_send_to_server()`),不是 `_lobby_back` 那个"曾经连上过"的闩:
 #   ESC 回主菜单那条路会 `NetBus.stop()`(`PauseMenu.go_menu` 对 PvP 无条件断连 —— 那正是
-#   worker 把身体送进宽限期的方式),而 `_lobby_back` 还停在 true。
+#   服务端把身体送进宽限期的方式),而 `_lobby_back` 还停在 true。
 func _reconnect_lobby(tag: String) -> void:
 	if NetBus.can_send_to_server():
 		return
@@ -611,6 +639,8 @@ func _reconnect_lobby(tag: String) -> void:
 	_lobby_back_connecting = true
 	_repairs += 1
 	NetBus.stop()
+	PvpSession.server_address = LOBBY_ADDR
+	PvpSession.server_port = lobby_port
 	var err := NetBus.start_client(LOBBY_ADDR, lobby_port)
 	if err != OK:
 		_lobby_back_connecting = false
@@ -627,16 +657,14 @@ func _reconnect_lobby(tag: String) -> void:
 			NetBus.rpc_id(1, "lobby_name", "BOT1")
 		_log("%s:已重新连上大厅(%s:%d)" % [tag, LOBBY_ADDR, lobby_port]),
 			CONNECT_ONE_SHOT)
-	# ★ 若页还活着且走了慢路,它的地址框此刻指着**别处**(云默认 / 用户的大厅)——
-	#   把地址框与 `PvpSession.server_address` 一起拨回本探针大厅,否则页下一次 `_with_lobby`
-	#   的快路判据(`_connected_addr == addr`)**永远不成立**,它会一次次拆掉我们的连接。
+	# ★ 若页还活着且走了慢路,它的 `PvpSession` 可能指向**别处**(用户自己的大厅)——
+	#   把地址/端口拨回本探针大厅,否则页下一次 `_with_lobby` 会 `NetBus.stop()` 拆掉我们的连接。
+	#   ★ 2026-09-29:原先还要同步"地址框文本 + `_connected_addr`"(快路判据的两半),
+	#     地址框删除后判据只剩 `_connected and NetBus.can_send_to_server()`,故只需拨这两项。
 	if is_instance_valid(_page):
 		PvpSession.server_address = LOBBY_ADDR
-		var box: Node = _page.get("_addr_edit")
-		if box is LineEdit:
-			(box as LineEdit).text = LOBBY_ADDR
+		PvpSession.server_port = lobby_port
 		_page.set("_connected", true)
-		_page.set("_connected_addr", LOBBY_ADDR)
 
 
 func _esc_and_menu() -> void:
@@ -801,7 +829,7 @@ func _finish(why: String) -> void:
 			f.store_line("  - %s" % e)
 		f.close()
 	# ★★ **c2 / c3 落盘后不退出**(`hold_alive`):它们的结果只是"我这边的读数",而**对局必须继续
-	#   活着** —— c2 是对手,它一退,worker 就把 role 2 送进宽限期(相② 的前提"这一局还在"就
+	#   活着** —— c2 是对手,它一退,服务端就把 role 2 送进宽限期(相② 的前提"这一局还在"就
 	#   变了味);c3 虽然不在局里,留着也不花任何代价。真正的收尾是**裁判按 PID 杀**
 	#   (`_kill_children`),子进程另有一条 `--quit-after` 兜底。
 	#   c1 是 actor:它的剧本跑完就该退,退出不改变任何结论。

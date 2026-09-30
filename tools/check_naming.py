@@ -110,10 +110,15 @@ def check_doc_paths() -> None:
         #    ★ 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 CLAUDE.md 的
         #      `kh_l1/l3/l4/l5_probe.tscn`(指 kh_l1_probe / kh_l3_probe / …),那不是路径。
         #      代价:整段目录名都写错的那种(首段也不存在)① 会漏,由 ② 的裸目录检查兜。
+        #    ★★ `.superpowers/` 是**跨会话的草稿目录**(自带 `.superpowers/sdd/.gitignore` = `*`,
+        #      见 docs/superpowers/plans/2026-09-10-kh-merge-l1-l2.md:1090),里面的报告/PNG
+        #      **本来就不入库**。CLAUDE.md 里有几处指向它做"原始读数在这"的留痕 —— 那些文件在
+        #      某台机器上存在、在另一台上不存在,拿它当仓库路径查是**假阳性**。
+        #      (2026-09-29 实测:草稿目录一旦被建出来,该条就凭空多报 4 条。)
         for tok in re.findall(r"`([A-Za-z0-9_./-]+)`", text):
             if "/" not in tok or not tok.endswith(DOC_EXTS):
                 continue
-            if tok.startswith(("http", "res://")):
+            if tok.startswith(("http", "res://", ".superpowers/")):
                 continue
             head = tok.split("/", 1)[0]
             if os.path.isdir(os.path.join(PROJECT, head)):

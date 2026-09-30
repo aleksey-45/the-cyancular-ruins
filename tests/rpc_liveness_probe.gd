@@ -67,7 +67,12 @@ const MUST_HAVE := [
 	"res://server/match_combat.gd",       # 交火时最密的一处定向发送
 	"res://server/lobby_rooms.gd",        # 大厅:答复 caller + 逐成员状态广播
 	"res://server/room_manager.gd",       # 转连前的会话令牌
-	"res://server/server_main.gd",        # match_sync 应答
+	# ★ 2026-09-30 迁移:本条原为 `res://server/server_main.gd`(注:"match_sync 应答")。
+	#   单进程化之后"一局一个 MatchSession 节点"接管了 claim/match_start/match_sync 全部应答,
+	#   那些发送点**整体搬到了 `match_session.gd`**,`server_main.gd` 只剩大厅与进程编排、
+	#   一处发送点都没有 ⇒ 旧条目会让本探针**恒红**(且红得有道理:它确实一处都扫不到)。
+	#   逐文件下限跟着落点走,不是放松守卫 —— 发送点总数下限 MIN_SITES 未动。
+	"res://server/match_session.gd",      # match_sync 应答 + match_start(单进程化后从 server_main 搬来)
 	"res://core/net/net_bus.gd",          # ping/pong + reply 收口
 ]
 
