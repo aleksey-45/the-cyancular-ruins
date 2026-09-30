@@ -94,18 +94,26 @@ func _section(text: String) -> VBoxContainer:
 
 # 本菜单是纯 UI(无世界、无大物理),普通切场景只会销毁一棵 Control 树;
 # 反方向(游戏世界 → 菜单)才需要挂起式切换,见 Level0.safe_change_scene。
+# ★★ 切场景**必须延迟到帧末**:`change_scene_to_file` 会**同步 memdelete** 当前场景,
+#   同步切等于把还在调用栈上的本节点抽掉 —— 本函数有两条调用路径(ESC 的 `_unhandled_input`
+#   与「返 回(Esc)」按钮的 `pressed` 信号),两条都在切换之后还会碰 `self`/`get_tree()`。
+#   2026-10-01 用户报"设置界面按 ESC 崩溃",根因就是这条:ESC 那条路上紧接着调
+#   `get_viewport()`(headless 实测报 `Cannot call method 'set_input_as_handled' on a null value`),
+#   真机上是悬垂指针。守卫:`tests/settings_esc_probe.gd`。
 func _go_back() -> void:
 	Sfx.play("ui")
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	get_tree().change_scene_to_file.call_deferred("res://scenes/main_menu.tscn")
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
+		# ★ 顺序不能反:**先**标记事件已处理,**再**决定去向。
+		#   `_go_back()` 之后本节点即被移出场景树,那时 `get_viewport()` 已经拿不到东西了。
+		get_viewport().set_input_as_handled()
 		if _capturing_action != "":
 			_cancel_capture()
 		else:
 			_go_back()
-		get_viewport().set_input_as_handled()
 
 
 # ── 键位捕获 ──
