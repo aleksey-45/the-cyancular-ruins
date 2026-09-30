@@ -1,0 +1,4 @@
+[gd_scene load_steps=2 format=3 uid="uid://mige2e000000001"]
+[ext_resource type="Script" path="res://tests/kh_migration_e2e_probe.gd" id="1"]
+[node name="MigE2E" type="Node"]
+script = ExtResource("1")

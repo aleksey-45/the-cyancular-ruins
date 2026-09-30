@@ -125,6 +125,12 @@ enum RoundState { COUNTDOWN, PLAYING, ROUND_OVER, MATCH_OVER }
 const KILLS_TO_WIN := 5      # 每局先到 5 击杀赢
 const ROUNDS_TO_WIN := 2     # 三局两胜
 const COUNTDOWN_TIME := 3.0
+# 倒计时期间的 `round_state` 重播间隔(秒)。★ **不是可选的**:客户端收到 `go_match` 后要先切场景、
+# 建世界(16px 子格铺贴 + 重建碰撞)、再建 HUD,那段时间里它**还没有订阅者** —— 只广播一次的话
+# 那一条会静默丢掉(或迟到),两端倒计时的**起点**就会差一整段场景加载时间,而倒计时是各自本地
+# 走秒的(`ui/pvp_hud.gd` 收到即赋值、之后 `-= delta`),差值不会再被拉回来。
+# 重播让客户端**每次收到都重设**剩余秒数 ⇒ 误差上界 = 一个重播间隔,且不累积。
+const COUNTDOWN_SYNC_INTERVAL := 0.5
 const ROUND_OVER_TIME := 4.0
 const RESPAWN_DELAY := 2.0   # 局内死亡后复活延迟
 var _round_state := RoundState.COUNTDOWN
@@ -132,6 +138,7 @@ var _round_num := 1
 var _scores: Dictionary = {}     # role -> 本局击杀
 var _rounds_won: Dictionary = {} # 局胜数(键:1v1 = role;TeamHost = **队号**)—— 下一个人别按 role 查
 var _round_timer := 0.0
+var _countdown_sync := 0.0       # 倒计时重播计时(见 COUNTDOWN_SYNC_INTERVAL)
 var _side_swap := false          # true 时 P1 用 player2 出生点(每局换边)
 var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
