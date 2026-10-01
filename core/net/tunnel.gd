@@ -351,11 +351,14 @@ static func add_udp_forward(port: int, host_ip: String) -> bool:
 
 # 挑一个本机空闲的 UDP 端口给转发绑定用(试绑成功即认定可用、随后立刻释放 —— 这个号本身没有
 # 语义,谁抢到算谁;真被抢了 `add_udp_forward` 的重试会再挑一个)。
+# ★ 试绑用 ENetMultiplayerPeer 而不是 PacketPeerUDP:裁剪版导出模板里 PacketPeerUDP 类
+#   被裁掉了(导出包里 Parse Error,整条 NetBus 编译失败——发布冒烟拦到过);ENet 是
+#   联机本体的依赖,模板必带。
 static func _pick_free_port() -> int:
 	for i in range(FORWARD_PICK_TRIES):
 		var p := randi_range(FORWARD_PORT_LO, FORWARD_PORT_HI)
-		var probe := PacketPeerUDP.new()
-		if probe.bind(p, "127.0.0.1") == OK:
+		var probe := ENetMultiplayerPeer.new()
+		if probe.create_server(p, 1) == OK:
 			probe.close()
 			return p
 	return 0

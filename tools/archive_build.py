@@ -33,6 +33,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根
 BUILDS = os.path.join(PROJECT, "builds")
+RELEASES = os.path.join(PROJECT, "releases")   # 累积式程序包档案(每次发布沉淀一份,不清理)
 PROJECT_GODOT = os.path.join(PROJECT, "project.godot")
 PKG_NAME = "The Cyancular Ruins"      # 发布目录名(与 project.godot 的 config/name 一致)
 
@@ -130,6 +131,13 @@ def main() -> None:
         print("\n⚠ 本包**不含** EasyTier:%s" % " / ".join(missing))
         print("  ⇒ 这个包**无法远程联机**(手填服务器地址那条路已删除;见 docs/netplay.md §7)。")
         print("  取一份(整包,别只拿两个 exe):python tools/fetch_easytier.py")
+
+    # ③ 累积档案:同样的包再沉淀一份进 releases/(每次发布都留,按版本+时间戳命名;
+    #    builds/ 那份仍然是"只留最新"。同名重跑覆盖,不重复堆积)
+    os.makedirs(RELEASES, exist_ok=True)
+    keep = os.path.join(RELEASES, os.path.basename(out))
+    shutil.copytree(out, keep, dirs_exist_ok=True)
+    print("\n累积档案: %s" % keep)
     print("\n发布目录: %s" % out)
 
 

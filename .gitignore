@@ -35,6 +35,8 @@ tools/easytier/
 
 # 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/
+# 累积式程序包档案(每次发布沉淀一份完整包,见 tools/archive_build.py)
+releases/
 backup/
 
 # 旧的服务端本机 IP 落盘(local_ip.txt)。★ 那份机制的写入方 `_write_ip_file` **已删**
