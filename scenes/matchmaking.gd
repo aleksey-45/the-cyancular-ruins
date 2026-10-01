@@ -97,7 +97,7 @@ func _build_options_panel() -> void:
 	vb.add_child(UiFactory.label("—— 对战选项 ——", 32, UiFactory.C_ACCENT))
 	vb.add_child(UiFactory.label("(规则项以房主设置为准)", 16, UiFactory.C_TEXT_DIM))
 
-	vb.add_child(UiFactory.check_row("显示敌方武器轨迹", Settings.pvp_show_trajectories, OPT_LABEL_W, func(on: bool) -> void:
+	vb.add_child(UiFactory.check_row("显示子弹尾迹(所有子弹)", Settings.pvp_show_trajectories, OPT_LABEL_W, func(on: bool) -> void:
 		Settings.pvp_show_trajectories = on
 		Settings.save()))
 	vb.add_child(UiFactory.check_row("每回合开始回满血(房主生效)", Settings.pvp_round_full_heal, OPT_LABEL_W, func(on: bool) -> void:

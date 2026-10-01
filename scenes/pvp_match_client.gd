@@ -575,9 +575,7 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	#   类型/分组守卫(见 `_wrap` 的 `is_in_group("player")` 与 `_check_player_contact`
 	#   的 `n == shooter`),拿副本当射手不会破坏它们。
 	b.shooter = _replica_for(int(data.get("shooter_role", 0)))
-	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
-	if Settings.pvp_show_trajectories:
-		BulletTrail.attach(b, data["color"])
+	# 尾迹不再在此挂:BulletBase._ready 统一接线(D5),副本弹与本地弹同一处
 
 
 # ── 本地视觉子弹撞到"该打的人" → 立刻消失(用户 2026-09-22:「画面效果看起来还是像穿透」)──
