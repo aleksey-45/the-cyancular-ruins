@@ -168,7 +168,7 @@ func _initialize() -> void:
 				[n, N_EXT_RPC_ANN[n], ann])
 
 	# PvpSession 字段:必须 `static var`(本类全是静态)
-	for f in ["token", "worker_port", "room_code", "rejoin"]:
+	for f in ["token", "server_port", "room_code", "rejoin"]:
 		_check(ses.contains("static var %s" % f), "PvpSession 缺 `static var %s`" % f)
 
 	_check(ses.contains("static func can_rejoin()") and ses.contains("static func can_rejoin_to(")
@@ -253,7 +253,7 @@ func _initialize() -> void:
 func _check_rejoin_lifecycle(ses: String) -> void:
 	var reset_body := _func_body(ses, "reset")
 	_check(not reset_body.is_empty(), "PvpSession 里找不到 func reset()")
-	_check(not (reset_body.contains("token = \"\"") or reset_body.contains("worker_port = 0")
+	_check(not (reset_body.contains("token = \"\"") or reset_body.contains("server_port = 0")
 			or reset_body.contains("room_code = \"\"") or reset_body.contains("rejoin = false")),
 			"★★ PvpSession.reset() 又清起回局凭据了 —— 主菜单那三个联机按钮每按一次就调它一次,"
 			+ "清了就是「回到对局后自己那间房是灰的、回不去」(C1:整条路径乙在生产里不可达)")

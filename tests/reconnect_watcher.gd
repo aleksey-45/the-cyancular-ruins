@@ -5,8 +5,15 @@ extends Node
 # 的那次换场不会把它带走,故它能在换场**之后**读真 `pvp_game` / `royale_game` 实例的状态。
 #
 # 它做三件事:
-#   ① 加入段(镜像 `lobby_page._claim_role_worker` 的三条 RPC):connect → claim_role /
-#      player_options / report_token → 等 `match_start` → 进真对局场景;
+#   ① 进场段(**单进程单端口之后必走大厅**):connect → `lobby_name` → 建房(`slot == 1`)或
+#      从公开列表加入(`slot == 2`)→ 等 `go_match` → 在**同一条连接上** claim_role /
+#      player_options / report_token(镜像 `lobby_page._claim_role` 的三条 RPC)→ 等
+#      `match_start` → 进真对局场景。
+#      ★★ **不能**像旧形态那样"连上就 claim":单进程之后所有房共用一个端口/一个服务端进程,
+#      `MatchSession._on_role_claimed` 靠**房记录的名册**(`roster`)挡串线 —— 名册外的 caller
+#      当场被判「拒绝串线连接」并踢掉(旧形态靠"端口独占 + 进程独占"隐式隔离,那个隔离没了)。
+#      ★ token 也**不再由探针自造**:它是服务端 `_open_match` 里 `LobbyRooms.new_token()`
+#      发的(`session_token`),claim 后原样 `report_token` 上报。
 #   ② 演出段(两种角色):
 #      · **actor**(c1/r1):按住 S(蹲;★ 不是"按右" —— 第一版按了右,身体蹲走着掉进坑里,
 #        姿态与位移两条读数同时被地形污染,见 `_actor_tick` 的注释)→ 闪断(调真 `_begin_reconnect()`,先塞一个**错 token**)
@@ -22,11 +29,12 @@ extends Node
 #   动机(阶段 2-A 的主缺口):actor 掉线的那 30 秒里服务器侧拆了墙、地面上的枪被捡走;
 #   重连后靠 `pvp_match_client._on_resumed` 那一拉(match_sync)补回 —— 不补的话客户端留着
 #   **幻影墙**(撞上去 → 本地预测与服务端分歧 → 可能回滚循环)与**幽灵枪**(看着在、按 F 无效)。
-#   两处变化都必须由**服务器侧**制造(探针进程拿不到 worker 的 `_host`:它是独立 OS 进程,
-#   见 reconnect_probe.gd 的「拓扑」),所以走两个测试开关 + witness 的动作:
-#     · 拆墙:worker 命令行 `--test-destroy-tile 136,64,<delay>`(见 reconnect_probe.gd)
-#     · 捡枪:worker 带 `--test-ground-teleport` 把枪喂到脚下,**本文件(c2)按 F**
-#   判据在 `_actor_assert` 尾部的 `_p7_assert`(actor 侧)+ 裁判读 worker 日志(③,防空转)。
+#   两处变化都必须由**服务器侧**制造(探针进程拿不到服务端进程里的 `_host`:大厅与对局虽在
+#   同一个进程,但那是**另一个** OS 进程,见 reconnect_probe.gd 的「拓扑」),
+#   所以走两个测试开关 + witness 的动作:
+#     · 拆墙:服务端命令行 `--test-destroy-tile 136,64,<delay>`(见 reconnect_probe.gd)
+#     · 捡枪:服务端带 `--test-ground-teleport` 把枪喂到脚下,**本文件(c2)按 F**
+#   判据在 `_actor_assert` 尾部的 `_p7_assert`(actor 侧)+ 裁判读服务端日志(③,防空转)。
 #   ★ 这一相唯一的失败模式是"看起来绿、其实什么都没验" —— 变化若落在闪断**之前**,actor
 #     自己就收到了事件、主判据照样绿。故每条主判据都配一条**前置**断言盯这件事。
 #
@@ -54,7 +62,7 @@ extends Node
 #
 # ═══ actor 收工后**不退出** ═══
 #   相④ 要的是"某个 role 永久掉线、宽限期到点收场"。若 actor 在写完成绩后退出,它的 role 也会
-#   进宽限,worker 的「进宽限」就变成 3 次、到点收场的那个 role 也换了人 —— 相④的判据(时间差)
+#   进宽限,服务端的「进宽限」就变成 3 次、到点收场的那个 role 也换了人 —— 相④的判据(时间差)
 #   立刻失去意义。故 actor 写完结果后**保持连接**待命,由裁判杀端口收尾。
 
 const BAD_TOKEN := "00000000deadbeef"   # 长度同真 token(16 hex),但值必然不匹配
@@ -122,7 +130,7 @@ const DRIFT_TOL := 80.0
 const POSE_SQUAT := 4       # = player.gd 的 Pose.SQUAT(枚举末位;改枚举要同步这里)
 
 # ── 相⑦(仅 1v1;设计见文件头)──
-# 与 reconnect_probe.gd 拉起 w1v1 时那串 `--test-destroy-tile 136,64,<delay>` **同源**:
+# 与 reconnect_probe.gd 拉起 s1v1 时那串 `--test-destroy-tile 136,64,<delay>` **同源**:
 # 改一处要改两处。★ 改错了**不会**假绿 —— 该格若不在服务器拆的名单里,① 会红;若那格本来
 # 就是空气,「①前置」会红(闪断时本端那格就已经是 EMPTY)。
 const P7_CELL := Vector2i(136, 64)
@@ -135,17 +143,42 @@ const T_W_PICKUP_END := 5.0
 const PICKUP_RETRY := 0.35  # 按 F 的重试间隔(服务器 `nearest_within` 每帧都喂枪,一次就够;
                             # 重试只是兜住"这一帧恰好没喂到"的抖动)
 
+# ── 大厅段(单进程单端口之后**进场必走**,见文件头 ①)──
+# 重问列表的节拍:列表是**请求/响应**式的,而建房与"加入者第一次问"之间必然差一拍
+# (`create_room` 要走一次 RPC 往返 + 服务端 `_defer_begin_match` 那类延后),故必须重试;
+# 0.5s 与 `rejoin_watcher`/`team_match_watcher` 的刷新梯同一量级。
+const LOBBY_RETRY := 0.5
+# 等 `session_token` 的上限。★ token 与 go_match 是两条 RPC(session_token 走 NetBusExt、
+# go_match 走 NetBus,前者由服务端**先同步发**、后者 `call_deferred` 到帧末),正常必然先到;
+# 这一档只是兜住"同一帧内顺序反了"的抖动 —— 没有它,claim 会不带 token 发出去,而
+# **服务器只认自己发的那一份** → 相① 的 reclaim 必被拒(症状是"重连永远回不来")。
+# 到点还没 token 就照发(那一刻的失败会在相① 里响亮地红,而不是静默等死)。
+const CLAIM_TOKEN_WAIT := 2.0
+
 # 脚本手柄(见 `_p7_witness_tick`:F 的读口是**边沿**,必须走本仓既有的办法上报)。
 const BotInput := preload("res://tests/ground_bot_input.gd")
 
 var who := "c1"
 var port := 0
+# 服务端真正下发的那份 token(`session_token` 信号里的原值)。★ 探针**不再自造**它:
+# 单进程之后服务端在 `_open_match` 里 `LobbyRooms.new_token()` 生成并只认自己那一份,
+# 相①/② 都靠"把真 token 换回去"来演 —— 故它必须存下来。
 var token := ""
 var slot := 1
 var scene_path := "res://scenes/pvp_game.tscn"
 var is_royale := false
 var is_actor := true
 var drop_permanently := false
+
+# ── 大厅段状态(见文件头 ①)──
+var _lobby_code := ""            # 本支那一间房的房号(房主建房时收到 / 加入者从列表里读)
+var _lobby_join_sent := false    # 加入者:加入请求已发出(别重复发)
+var _lobby_state_players := 0    # 大乱斗房:等待室状态里的人数(房主据此发 royale_start)
+var _lobby_start_sent := false   # 大乱斗房主:royale_start 已发出
+var _lobby_t := 0.0              # 下一次问列表/判开局的时刻
+var _go_role := -1               # go_match 带来的权威 role(-1 = 还没到)
+var _claim_sent := false
+var _claim_wait := 0.0           # 等 session_token 的累计时长(上限见 CLAIM_TOKEN_WAIT)
 
 var _t := 0.0
 var _stage := 0
@@ -165,7 +198,7 @@ var _before_local_id := 0
 var _before_game_id := 0
 # ── 相⑤:两次 `match_start` 的出生点必须相同 ──
 var _first_spawn := Vector2i(-1, -1)     # 首次 match_start 带的那份
-var _resumed_spawn := Vector2i(-1, -1)   # 重连后 worker 重发的那份
+var _resumed_spawn := Vector2i(-1, -1)   # 重连后服务端重发的那份
 var _resumed_spawn_seen := false
 var _saw_reconnecting := false
 var _drop_done := false
@@ -206,15 +239,26 @@ func _ready() -> void:
 		if rm != OK:
 			push_warning("PROBE[%s]: 删不掉上一跑的 %s(错误 %d)—— 本文件里会有陈旧行" % [who, lp, rm])
 	PvpSession.role = slot
-	PvpSession.token = token
-	PvpSession.worker_port = port
-	PvpSession.server_address = "127.0.0.1"
+	PvpSession.server_port = port          # ★ 单进程单端口:大厅与对局都是**这一台**,
+	PvpSession.server_address = "127.0.0.1"  #   重连(`_retry_connect`)也直连它
 	PvpSession.player_name = who.to_upper()
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_server_message.connect(_on_server_message)
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)   # 相①的 ack 读数(见 `_actor_assert`)
 	NetBus.local_round_state.connect(_on_round_state)
+	# ── 大厅段(见文件头 ①):建房/加入 → go_match → 在同一条连接上 claim ──
+	NetBus.local_room_created.connect(func(code: String) -> void:
+		_lobby_code = code
+		_log("建房成功:%s(占住 slot 1)" % code))
+	NetBus.local_room_list.connect(_on_room_list)
+	NetBus.local_go_match.connect(_on_go_match)
+	NetBusExt.local_session_token.connect(func(t: String) -> void:
+		token = t
+		PvpSession.token = t
+		_log("收到服务端下发的 session_token(%d 位 hex),claim 时原样上报" % t.length()))
+	NetBusExt.local_royale_rooms.connect(_on_royale_rooms)
+	NetBusExt.local_royale_room_state.connect(_on_royale_room_state)
 	# 相⑦:补态载荷(服务器对 match_sync 的应答)与那一格砖的广播。
 	# ★ 两处都**不消费**信号,只是旁听 —— 生产路径的消费者(`pvp_game._on_match_sync` /
 	#   `_on_remote_tile_destroyed`)照常跑,本观察者只是把同一份数据留个底。
@@ -227,22 +271,135 @@ func _ready() -> void:
 		if not is_actor:
 			NetBus.local_weapon_removed.connect(_p7_on_removed)   # 相⑦:witness 侧的交叉证据
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void: _log("连 worker 失败"), CONNECT_ONE_SHOT)
+	multiplayer.connection_failed.connect(func() -> void: _log("连服务端失败"), CONNECT_ONE_SHOT)
 	var err := NetBus.start_client("127.0.0.1", port)
 	_log("观察者就绪(role=%s port=%d scene=%s actor=%s)" % [who, port, scene_path, str(is_actor)])
 	if err != OK:
 		_finish("start_client 失败 %d" % err)
 
 
-# 加入段:与 `lobby_page._claim_role_worker` 逐条对应(claim 保持原版 2 参;选项/token 走扩展节点)
+# ── 大厅段(单进程单端口之后**进场必走**,见文件头 ①)──
+# 连上服务端只是"进了大厅",**还不是对局里的人**:服务端按房记录的名册(`roster`)接受 claim,
+# 名册外的 caller 会被 `MatchSession._on_role_claimed` 判「拒绝串线连接」当场踢掉。
+# 故先由本端驱动大厅:房主建房、加入者从公开列表里挑那一间加入;1v1 由服务端 `pairing_ready`
+# 自动开局,大乱斗由房主在两人到齐后发 `royale_start`(与生产等待室那颗「开始」逐字同路)。
 func _on_connected() -> void:
-	_log("已连 worker,claim role %d" % slot)
-	NetBus.rpc_id(1, "claim_role", slot, PvpSession.player_name)
+	_log("已连服务端 %d → 上报昵称,走大厅流程(%s)" % [port, "房主" if slot == 1 else "加入者"])
+	NetBus.rpc_id(1, "lobby_name", who.to_upper())
+	if slot == 1:
+		if is_royale:
+			# 上限 2:`royale_start` 的硬闸门是「人数 >= ROYALE_MIN_PLAYERS(2)」,
+			# 而 `_open_match` 把参战 role 集合取成房里的玩家 role ⇒ 正好 1、2 两个 role。
+			NetBusExt.rpc_id(1, "royale_create", {"max_players": 2})
+		else:
+			NetBus.rpc_id(1, "create_room")
+		return
+	_lobby_t = 0.0   # 加入者:立刻问一次列表
+	_request_lobby_list()
+
+
+func _request_lobby_list() -> void:
+	if is_royale:
+		NetBusExt.rpc_id(1, "royale_list")
+	else:
+		NetBus.rpc_id(1, "list_rooms")
+
+
+# 大厅节拍(每帧从 `_process` 调;进对局后自然停摆 —— `_claim_sent` / `_go_role` 那些闸已关上)
+func _lobby_tick(delta: float) -> void:
+	# ① 等 token(它必须早于 claim 落到本端,理由见 CLAIM_TOKEN_WAIT)
+	if _go_role >= 0 and not _claim_sent:
+		_claim_wait += delta
+		_try_claim()
+		return
+	if _claim_sent:
+		return
+	_lobby_t -= delta
+	if _lobby_t > 0.0:
+		return
+	_lobby_t = LOBBY_RETRY
+	if slot == 1:
+		# 大乱斗房主:两人到齐 → 发开局。★ 与生产的等待室按钮同一条 RPC(`royale_start`),
+		# 服务端还会再判一次"人数 >=2"与"只有房主能开";1v1 房主则什么都不用做
+		# (服务端 `pairing_ready` 自己会开局)。
+		if is_royale and not _lobby_start_sent and _lobby_state_players >= 2:
+			_lobby_start_sent = true
+			_log("等待室 2 人到齐 → 房主发起 royale_start")
+			NetBusExt.rpc_id(1, "royale_start")
+		return
+	# 加入者:列表是请求/响应式的,建房与第一次问之间必然差一拍 ⇒ 重问到看见房为止
+	# (`_on_room_list` / `_on_royale_rooms` 取到房号就把 `_lobby_join_sent` 置起,此后不再发)。
+	_request_lobby_list()
+
+
+# 1v1 房列表(公开房的**纯构造**载荷 [{code, players, names, in_match}])。
+# ★ 本探针每一支只有这一台服务端、也只该有一间房(另一支在别的端口上),故取第一行即可;
+#   仍按"有 code 才认"过滤,免得把空载荷当成房。
+func _on_room_list(rooms: Array) -> void:
+	if slot != 2 or _lobby_join_sent:
+		return
+	for r in rooms:
+		if r is Dictionary and str(r.get("code", "")) != "":
+			_lobby_code = str(r.get("code", ""))
+			_lobby_join_sent = true
+			_log("列表里看到房 %s(%s 人)→ 加入" % [_lobby_code, str(r.get("players", "?"))])
+			NetBus.rpc_id(1, "join_room", _lobby_code)
+			return
+
+
+func _on_royale_rooms(rooms: Array) -> void:
+	if slot != 2 or _lobby_join_sent:
+		return
+	for r in rooms:
+		if r is Dictionary and str(r.get("code", "")) != "":
+			_lobby_code = str(r.get("code", ""))
+			_lobby_join_sent = true
+			# 公开房:邀请码参数按大厅那一侧的判据只在私密房才校验,这里给空串即可。
+			_log("大乱斗列表里看到房 %s → 加入" % _lobby_code)
+			NetBusExt.rpc_id(1, "royale_join", _lobby_code)
+			return
+
+
+# 大乱斗等待室状态(只有房内成员收得到)。房主靠它判"人到齐了没"。
+func _on_royale_room_state(state: Dictionary) -> void:
+	_lobby_code = str(state.get("code", _lobby_code))
+	_lobby_state_players = (state.get("players", []) as Array).size()
+	_log("等待室状态:%d 人(code=%s)" % [_lobby_state_players, _lobby_code])
+
+
+# 大厅配对完成。★★ 单进程单端口之后 `go_match` **只表示"进对局场景"**:连接全程不动,
+# claim 直接发在**这条既有连接**上(与 `lobby_page._do_go_match` → `_claim_role` 逐字同路)。
+# 旧形态在这里要做的是"`NetBus.stop()` + 转连 worker 端口" —— 那一步与 worker 一起没了。
+func _on_go_match(role: int, go_port: int) -> void:
+	if _claim_sent or _go_role >= 0:
+		return
+	_go_role = role
+	PvpSession.role = role
+	if go_port > 0:
+		# 服务端端口 = 本端此刻连着的那一个(单端口)。写回去是为了让局内重连直连同一台。
+		PvpSession.server_port = go_port
+	_log("go_match role=%d port=%d → 在同一条连接上 claim(不转连)" % [role, go_port])
+	_try_claim()
+
+
+func _try_claim() -> void:
+	if _claim_sent or _go_role < 0:
+		return
+	if token == "" and _claim_wait < CLAIM_TOKEN_WAIT:
+		return   # 等服务端那份 token(理由见 CLAIM_TOKEN_WAIT)
+	_claim_sent = true
+	if token == "":
+		_log("★ 等不到 session_token(%.1fs)—— 照发 claim,但这次 reclaim 必被拒" % CLAIM_TOKEN_WAIT)
+	# 三条 RPC 的顺序与 `lobby_page._claim_role` 逐字一致:claim → player_options → report_token。
+	# ★ 顺序有意义:`MatchSession._on_token_reported` 是**按 caller 反查 role** 归档 token 的,
+	#   倒过来发会归错/归空。
+	NetBus.rpc_id(1, "claim_role", _go_role, PvpSession.player_name)
 	NetBusExt.rpc_id(1, "player_options", {})
-	NetBusExt.rpc_id(1, "report_token", token)
+	if token != "":
+		NetBusExt.rpc_id(1, "report_token", token)
 
 
-# `match_start` 有**两个**到达时机:① 首次开局进场;② worker 接受 reclaim 之后重发的那条。
+# `match_start` 有**两个**到达时机:① 首次开局进场;② 服务端接受 reclaim 之后重发的那条。
 # ② 绝不能二次换场(那条路本来就不重建世界)—— 用 `_entered` 挡住,场景内那半由
 # `pvp_game._on_match_start_event` 处理(它只在 `_reconnecting` 为真时收尾)。
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
@@ -340,6 +497,9 @@ func _process(delta: float) -> void:
 	if _done:
 		return
 	_t += delta
+	# 大厅段(建房/加入 → go_match → claim)在**进对局之前**每帧推一下;进局后它自然停摆
+	# (`_claim_sent` / `_go_role` 那些闸已经关上,`_lobby_tick` 当场早退)。
+	_lobby_tick(delta)
 	if _t > 58.0:
 		_finish("观察者超时(阶段 %d)" % _stage)
 		return
@@ -383,7 +543,7 @@ func _actor_tick(el: float) -> void:
 		_p7_sample_at_drop()
 		_before_local_id = (_game.get("_local") as Object).get_instance_id()
 		_before_game_id = _game.get_instance_id()
-		# 相②:先塞错 token —— worker 读它发生在 `_try_reclaim` **发的那一刻**
+		# 相②:先塞错 token —— 服务端读它发生在 `_try_reclaim` **发的那一刻**
 		PvpSession.token = BAD_TOKEN
 		var lv: Vector2 = (_game.get("_local") as Node2D).velocity
 		_log("闪断(调真 _begin_reconnect,错 token=%s);local_id=%d game_id=%d snap=%d 本端速度=%s 快照速度=%s" % [
@@ -437,8 +597,8 @@ func _last_input_seq() -> int:
 
 
 func _actor_assert() -> void:
-	# 相②的客户端侧一半:错 token 那一发**真的被踢了**(worker 侧另一半在裁判的日志断言里)
-	_check(_kick_count >= 1, "相②(客户端侧):错 token 被拒后收到「服务器断开」(实得 %d)" % _kick_count)
+	# 相②的客户端侧一半:错 token 那一发**真的被踢了**(服务端侧另一半在裁判的日志断言里)
+	_check(_kick_count >= 1, "相②(客户端侧):错 token 被拒后收到「连接断开」(实得 %d)" % _kick_count)
 	# 相①:重连循环真的跑起来了、且已收尾
 	_check(_saw_reconnecting, "相①:闪断后 `_reconnecting` 真的置起(重连循环在跑)")
 	_check(_game.get("_reconnecting") == false, "相①:重连已收尾(_reconnecting 归假 = _on_resumed 跑过)")
@@ -474,7 +634,7 @@ func _actor_assert() -> void:
 				"相①:重连后回滚次数不持续增长(%.1fs 内增量 %d ≤ %d)"
 				% [RB_GROWTH_WINDOW, _rb_after - _rb_at_resume, RB_GROWTH_TOL])
 	# ★★ 相⑤的核心断言(1v1 与大乱斗都判,理由在大乱斗侧):**reclaim 不应重新摆位**。
-	#   重连后 worker 重发的那条 `match_start` 必须带**与首次同一个** spawn。
+	#   重连后服务端重发的那条 `match_start` 必须带**与首次同一个** spawn。
 	#   它钉的是一条**没有任何其他断言拦得住**的回归:`RoyaleHost` 覆写的 `role_spawns()` 若被
 	#   删掉(退回基类实现 —— 基类走 `_spawn_cell`,而大乱斗那个第二次起返回**动态复活点**、
 	#   并带 `_spawned_once` 闩锁副作用),或者 `_round_spawns` 被就地改掉,reclaim 这条路径
@@ -483,7 +643,7 @@ func _actor_assert() -> void:
 	#   ★ 只把 spawn 打进日志、人眼对(旧版就是这样)等于没有防卫:这类"值悄悄变了"只有
 	#     断言拦得住,故它现在是真断言。
 	_check(_resumed_spawn_seen,
-			"相⑤:重连后收到 worker 重发的 match_start(判其 spawn 未变的前提)")
+			"相⑤:重连后收到服务端重发的 match_start(判其 spawn 未变的前提)")
 	_check(_resumed_spawn == _first_spawn,
 			("相⑤:第二次 match_start 的 spawn 不得与首次不同(reclaim 不应重新摆位);"
 			+ "首次 %s,重发 %s") % [str(_first_spawn), str(_resumed_spawn)])
@@ -506,14 +666,14 @@ func _actor_assert() -> void:
 
 
 # ── 相⑦(actor 侧):掉线窗口里服务器侧世界变过的两处,重连补态必须都补上 ──
-#   三条主判据(①拆墙 / ②幽灵枪 / ③在裁判那侧读 worker 日志)逐条见下。
+#   三条主判据(①拆墙 / ②幽灵枪 / ③在裁判那侧读服务端日志)逐条见下。
 #   ★ 每条主判据都配一条**前置**:这一相唯一的失败模式是"看起来绿、其实什么都没验"
 #     (变化若落在闪断之前,actor 自己就收到了事件,主判据照样绿)。
 
 # 闪断那一刻取样。三个读数合起来才判得了"补态生效",而不是"变化根本不在窗口里"。
 func _p7_sample_at_drop() -> void:
 	if is_royale:
-		return   # 大乱斗那套 worker 不带这两个测试开关(见 reconnect_probe.gd),采了也没人判
+		return   # 大乱斗那一支的服务端不带这两个测试开关(见 reconnect_probe.gd),采了也没人判
 	_p7_grid_before = _p7_grid()
 	_p7_gw_before = _gw_insts()
 	_p7_payloads_at_drop = _p7_payloads
@@ -628,7 +788,7 @@ func _witness_tick(el: float) -> void:
 		_p7_witness_tick(el)   # 相⑦ 的"制造变化"那半(仅 1v1)
 	if drop_permanently and not _perm_dropped and el >= T_W_DROP:
 		_perm_dropped = true
-		# 相④:永久掉线(**不 reclaim**)—— 真 ENet 断开,worker 侧进宽限、到点收场。
+		# 相④:永久掉线(**不 reclaim**)—— 真 ENet 断开,服务端侧进宽限、到点收场。
 		# ★ `NetBus.stop()` 不发 `server_disconnected`(见探针文件头),所以客户端的重连循环
 		#   不会启动 —— 这正是"掉线后不回来"该有的样子。
 		_log("永久掉线(NetBus.stop,不 reclaim)")

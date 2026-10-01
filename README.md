@@ -1,9 +1,10 @@
 # The Cyancular Ruins
 
-> 2D 横版(平台跳跃)射击 demo · Godot 4.7 · 环面(Torus)无缝世界 · 单人 + PvP
+> 2D 横版(平台跳跃)射击 demo · Godot 4.7 · 环面(Torus)无缝世界 · 单人 + 联机
 
 A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-around
-(torus) world and both single-player and 1v1 networked play.
+(torus) world. Single-player, plus networked 1v1 / 3v3 / free-for-all — joined with a
+5-digit room code.
 
 ---
 
@@ -23,33 +24,17 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 
 ## PvP 联机
 
-架构:**大厅(端口 7777)+ 每局一个独立 worker(端口 7800 起)**。
-
-```
-玩家 A ─建房─► 大厅(配对) ─拉 worker─► A、B 转连该局 worker(独占端口) → 对局
-```
-
-- 不同对局 = 不同 worker 进程 = **内存隔离**(拆墙/回合等状态不跨局互扰)。
-- 客户端默认服务器 IP:`120.53.107.140`(可在匹配界面改)。
-
-### 跑服务端
-- **本地/局域网**:双击 `start_server.bat`(自动杀旧进程、启动大厅)。
-- **导出版**:双击 `Cyancular Ruins Server.exe`(大厅,带控制台;会自动拉起每局 worker)。
-- **云/公网**:需放行 **UDP 7777 与 7800~8299**(大厅 + 每局 worker 动态端口;worker 端口池 = `WORKER_PORT_BASE`7800 起、`WORKER_PORT_SPAN`500 个)。
-
-### 连接
-1. 主菜单 →「多人」
-2. 服务器地址框填主机 IP(默认云 IP;局域网填主机局域网 IP)
-3. 「建房」开一局并把房间号告诉对手;或「刷新」看房间、手动填房间号点「加入」
-4. 对局开始:回合制——每局先到 **5 击杀**赢,三局两胜,局间换边
+通过 Easytier 实现远程联机。
+目前使用公共服务节点 dreamlife.indevs.in，详见 https://www.bilibili.com/video/BV1vsLy6ZEor
 
 ---
 
 ## 规则要点(PvP)
-- 玩家之间**物理碰撞**;**取消命中无敌帧**,每发子弹只结算一次(霰弹逐丸生效,不帧伤)
+- 玩家之间**物理碰撞**
+- 每发子弹**只结算一次**(霰弹逐丸生效)
 - 每局开赛**砖块还原 + 清空场上子弹**;COUNTDOWN **3 秒冻结**
-- 可破坏地形只由**服务器权威**拆(客户端同步显示),不会"幽灵墙"
-- 头顶显示昵称(匹配界面输入,默认 `Anon`)、延迟按阈值绿/黄/橙/红
+- 可破坏地形由**服务器权威**拆,客户端同步显示
+- 头顶显示昵称(大厅页输入,默认 `Anon`)、延迟按阈值绿/黄/橙/红
 
 ---
 
@@ -61,7 +46,9 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 python tools/build_release.py
 ```
 
-产物在仓库根(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`),历史日期构建在 `builds/`。
+产物在仓库根(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`,给开发与 `start_server.bat` 用);
+**可分发的一份**在 `builds/The Cyancular Ruins <版本号> <时间戳>/` —— 六个文件平铺
+(客户端 + 服务端 + EasyTier 四件套),拷走整个目录即可玩。`builds/` 里**只留最新那一份**。
 
 ---
 
@@ -72,7 +59,7 @@ python tools/build_release.py
 ```bash
 # 敌人/武器/环面逻辑主冒烟
 Godot_console --headless --path . -s res://tests/enemy_logic_smoke.gd
-# PvP 链路(大厅→worker→建房→开局)
+# PvP 链路(起服务端 → 建房 / 加入 → 开局)
 bash tests/pvp_room_smoke.sh
 bash tests/pvp_match_smoke.sh
 ```
@@ -86,7 +73,7 @@ bash tests/pvp_match_smoke.sh
 ```
 scenes/   场景(页面与对局场景;.tscn 与脚本一律 snake_case)
 core/     autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
-server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
+server/   服务端:入口(server_main)、大厅与房间(lobby_rooms)、对局会话与权威(match_session / match_host / royale_host / team_host)
 ui/       跨场景 UI:UiFactory(唯一调色板/工厂)、单机 HUD、对局 HUD、暂停菜单
 render/   渲染:后处理(post_process.gd + post_process.gdshader)、相机(camera_2d.gd)
 tests/    -s 冒烟/探针(分层见 tests/README.md)

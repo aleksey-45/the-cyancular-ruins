@@ -247,7 +247,7 @@ func _ready() -> void:
 	_paint_maze(wl)
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
-	Level0.water_layer.tile_set = tile_set
+	Level0.water_layer.tile_set = _create_water_tileset()
 	_paint_water(grid)
 
 
@@ -310,6 +310,39 @@ func _create_wall_tileset() -> TileSet:
 	return tile_set
 
 
+# 水体专用 64px 图集(B18 把墙体图集改成 16px 象限制后,_paint_water 的"形状列×纹理行"
+# 老格式没了着落:水体被按 16px 坐标压缩画错位,真水体看不见,还在地图 1/4 坐标处散布
+# 一堆无碰撞的"幽灵方块")。水不可破坏,永远按 64px 整格渲染——按 B18 之前的老构建
+# 逻辑原样重建,仅供 water_layer 使用;atlas 行 0 = 纹理 21(水体)。
+func _create_water_tileset() -> TileSet:
+	var ts := GameParameters.TILE_SIZE
+	var texture: Texture2D = load("res://assets/textures/structure.png")
+	var src_img: Image = texture.get_image()
+	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	img.blit_rect(src_img, Rect2i((21 % 10) * 32, (21 / 10) * 32, 32, 32), Vector2i.ZERO)
+	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
+	Level0.surface_texture = ImageTexture.create_from_image(img)   # 水面合批 shader 的采样源
+	var half: int = ts / 2
+	var atlas_img := Image.create(16 * ts, ts, false, Image.FORMAT_RGBA8)
+	atlas_img.fill(Color(0, 0, 0, 0))
+	for shape in range(16):
+		var tile := img.duplicate()
+		for sy in range(2):
+			for sx in range(2):
+				if (shape & (1 << (sy * 2 + sx))) == 0:
+					tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
+		atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, 0))
+	var tile_set = TileSet.new()
+	tile_set.tile_size = Vector2i(ts, ts)
+	var atlas = TileSetAtlasSource.new()
+	atlas.texture_region_size = Vector2i(ts, ts)
+	atlas.texture = ImageTexture.create_from_image(atlas_img)
+	tile_set.add_source(atlas)
+	for shape in range(16):
+		atlas.create_tile(Vector2i(shape, 0))
+	return tile_set
+
+
 func _paint_maze(layer: TileMapLayer) -> void:
 	# cyrm v4:铺 **16px 子格**(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,
 	# 液体由 _paint_water 分层铺)。瓦片坐标 = (象限 qy*4+qx, 纹理-1)。
@@ -330,9 +363,9 @@ func _paint_maze(layer: TileMapLayer) -> void:
 							Vector2i((y % 4) * 4 + (x % 4), tex - 1))
 
 
-# 水格铺图:水体格铺水体瓦片(T理纡 21,atlas 行 20);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
+# 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
 func _paint_water(grid: Array[Array]) -> void:
-	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
+	const BODY_ROW := 0   # 水体专用图集只有一行(纹理 21)
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
@@ -802,7 +835,9 @@ func _tick_rewind(delta: float) -> void:
 		_rewind.begin()
 		_tile_cursor = _rewind.recorded_seconds()   # 瓦片还原高水位=进入回溯时刻
 	elif not rewinding and _rewind.was_rewinding:
-		_rewind.finish()
+		var exit_t: float = _rewind.finish()
+		if _tile_ledger != null:
+			_tile_ledger.prune_after(exit_t)   # 瓦片账本与磁带同裁:被复写时段的拆砖条目一并消失
 	_rewind.was_rewinding = rewinding
 	_prev_time_mode = time_field.mode if time_field != null else 0
 	if rewinding:

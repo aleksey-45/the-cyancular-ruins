@@ -1,20 +1,23 @@
 extends Node
 
-# tests/net_lag_client.gd —— **直连 worker**(可经 UDP 延迟代理)跑**真 `pvp_game`**,
+# tests/net_lag_client.gd —— 经 UDP 延迟代理连**真服务端**跑**真 `pvp_game`**,
 # 用于在受控延迟下读 `[netstat]`。★ 测试用,不参与发布。
 #
-# 为什么绕开大厅:worker 接受任何人的 `claim_role`(token 只归档不校验),所以把
-# `lobby_page` 的那三段照抄过来就够 —— `_do_go_match` / `_claim_role_worker` / `_on_match_start`。
-# 这样也顺手绕掉了「让大厅把 worker 端口报成代理端口」那个难题(worker 绑 0.0.0.0,
-# 代理没法用"另一个环回 IP 占同一端口"的办法并存)。
+# ★★ 2026-09-29 改写:原先它**绕开大厅直连 worker**(理由是"worker 接受任何人的 `claim_role`"),
+#   而单进程单端口之后对局被**名册**scope 住了(见 `server/match_session.gd` 的 `roster`)——
+#   没有房、没有开局的对局,`claim_role` **没有收件人**,直连只会静默什么都不发生。
+#   故现在必须走大厅:`--role=1` 建房并把它打印的房间号抄给 `--role=2`。
 #
-# 跑法:
+# 跑法(两条进程,role1 先起;房间号从 role1 的 stdout 里抄):
 #   "$GODOT" --headless --path . --quit-after 7200 --log-file c1.godotlog \
-#       res://tests/net_lag_client.tscn -- "--role=1" "--port=7800" "--netstat"
+#       res://tests/net_lag_client.tscn -- "--role=1" "--port=<服务端端口>" "--netstat"
+#   "$GODOT" --headless --path . --quit-after 7200 --log-file c2.godotlog \
+#       res://tests/net_lag_client.tscn -- "--role=2" "--code=<房间号>" "--port=<服务端端口>" "--netstat"
 #
 # 参数(全在 `--` 之后):
-#   --role=N   本端 role(1 / 2)
-#   --port=P   连哪个端口(直连 worker 时 = worker 端口;插代理时 = **代理**端口)
+#   --role=N   本端 role(1 = 建房,2 = 加入)
+#   --code=S   role=2 必填:role=1 打印出来的 5 位房间号
+#   --port=P   连哪个端口(直连服务端时 = 它的 `--port`;插代理时 = **代理**端口)
 #   --addr=A   默认 127.0.0.1
 #   --name=S   昵称,默认 Anon
 #   --drive=0  关掉自动按键(默认开:headless 站着不动测不出回滚)
@@ -22,6 +25,7 @@ extends Node
 
 
 var _role := 1
+var _code := ""
 var _port := 7800
 var _addr := "127.0.0.1"
 var _name := "Anon"
@@ -35,6 +39,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--role="):
 			_role = int(a.substr(7))
+		elif a.begins_with("--code="):
+			_code = a.substr(7)
 		elif a.begins_with("--port="):
 			_port = int(a.substr(7))
 		elif a.begins_with("--addr="):
@@ -46,9 +52,14 @@ func _ready() -> void:
 		elif a.begins_with("--scene="):
 			_scene = a.substr(8)
 	PvpSession.server_address = _addr
+	PvpSession.server_port = _port
 	PvpSession.role = _role
 	PvpSession.player_name = _name
 	PvpSession.token = ""      # 直连场景用不上重连,不发 token
+	if _role == 2 and _code.is_empty():
+		print("[netlag] role=2 必须给 --code=<role1 打印的房间号>")
+		get_tree().quit(1)
+		return
 	print("[netlag] role=%d 连 %s:%d" % [_role, _addr, _port])
 	if _drive:
 		# ★ 驱动器挂 root(不是本场景):`change_scene_to_file` 会把本节点换掉,
@@ -60,6 +71,9 @@ func _ready() -> void:
 		#   而且**失败是静默的** —— 驱动器没挂上、bot 一步不走,整跑看起来却"正常完成"。
 		#   我第一版就是这么错的:所有跑次里的 bot 从头到尾没动过。
 		get_tree().root.add_child.call_deferred(d)
+	NetBus.local_room_created.connect(func(c: String) -> void:
+		print("[netlag] ROOM_CODE=%s(把它给 role=2)" % c))
+	NetBus.local_go_match.connect(_on_go_match)
 	NetBus.local_match_start.connect(_on_match_start)
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
 	var err := NetBus.start_client(_addr, _port)
@@ -69,8 +83,19 @@ func _ready() -> void:
 
 
 func _on_connected() -> void:
-	print("[netlag] 已连上 worker,claim role=%d" % _role)
-	NetBus.rpc_id(1, "claim_role", _role, PvpSession.player_name)
+	if _role == 1:
+		print("[netlag] 已连上服务端,建房")
+		NetBus.rpc_id(1, "create_room")
+	else:
+		print("[netlag] 已连上服务端,加入房间 %s" % _code)
+		NetBus.rpc_id(1, "join_room", _code)
+
+
+# 配对完成:**连接不动**,直接 claim(单进程单端口;断开重连会换 peer id,
+# 服务端房里那份 `players` 立刻对不上)。
+func _on_go_match(role: int, _port: int) -> void:
+	print("[netlag] go_match role=%d(连接不动),claim" % role)
+	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:

@@ -60,6 +60,10 @@ func _ready() -> void:
 		sp.modulate = bullet_color
 	# 服务器裁决用:所有子弹进 bullet 组,MatchHost 遍历做命中判定/广播
 	add_to_group("bullet")
+	# 子弹尾迹(D5):设置开启时所有子弹都挂——单人/自己的弹/AI 弹/对手副本弹同一处接线
+	# (副本路径原先单独挂射手色,现统一用武器弹色)
+	if Settings.pvp_show_trajectories:
+		BulletTrail.attach(self, bullet_color)
 
 func _physics_process(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)

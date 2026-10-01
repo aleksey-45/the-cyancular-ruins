@@ -197,12 +197,18 @@ func _on_round_state(data: Dictionary) -> void:
 	# COUNTDOWN(开局/换局 3 秒):锁本地武器开火(移动由服务器权威冻结,本地玩家服务器渲染自然不动)。
 	_round_locked = state == 0
 	_refresh_input_lock()   # 单一收口:菜单开着时不解锁(见 _refresh_input_lock)
-	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
-		for b in get_tree().get_nodes_in_group("bullet"):
-			if is_instance_valid(b):
-				(b as Node).queue_free()
-		if _level0 != null and _level0.has_method("reset_destructibles"):
-			_level0.reset_destructibles()
+	if state == 0:
+		# ★ 只在**局号变化**时做新一轮复位:倒计时期间服务器会周期性重播 `round_state`
+		#   (见 `MatchState.COUNTDOWN_SYNC_INTERVAL`),按"收到一条做一次"会把整张图的瓦片
+		#   与碰撞重建好几遍(重播是为了对齐两端倒计时的起点,不是新事件)。
+		var cd_round := int(data.get("round", 1))
+		if cd_round > 1 and cd_round != _countdown_reset_round:   # COUNTDOWN,新一轮
+			_countdown_reset_round = cd_round
+			for b in get_tree().get_nodes_in_group("bullet"):
+				if is_instance_valid(b):
+					(b as Node).queue_free()
+			if _level0 != null and _level0.has_method("reset_destructibles"):
+				_level0.reset_destructibles()
 		# ★ 地面武器**不要在这里清**(曾经写过一版,又把刚到手的新一轮那批一起抹掉了):
 		#   服务器换局是「先 `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再**
 		#   `_broadcast_round_state`」,两条走同一条可靠通道、保序到达 —— 于是本条 round_state
