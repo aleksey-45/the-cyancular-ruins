@@ -46,3 +46,9 @@ func take_range(target_t: float, cursor_t: float) -> Array:
 func prune(cutoff_t: float) -> void:
 	while not _entries.is_empty() and float(_entries[0]["t"]) < cutoff_t:
 		_entries.pop_front()
+
+
+## 裁掉晚于 t 的条目(回溯出口之后的"被复写未来"从账上消失;与 WorldRewind.finish 对齐)
+func prune_after(t: float) -> void:
+	while not _entries.is_empty() and float(_entries[-1]["t"]) > t:
+		_entries.pop_back()

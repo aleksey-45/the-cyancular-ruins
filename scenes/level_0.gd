@@ -802,7 +802,9 @@ func _tick_rewind(delta: float) -> void:
 		_rewind.begin()
 		_tile_cursor = _rewind.recorded_seconds()   # 瓦片还原高水位=进入回溯时刻
 	elif not rewinding and _rewind.was_rewinding:
-		_rewind.finish()
+		var exit_t: float = _rewind.finish()
+		if _tile_ledger != null:
+			_tile_ledger.prune_after(exit_t)   # 瓦片账本与磁带同裁:被复写时段的拆砖条目一并消失
 	_rewind.was_rewinding = rewinding
 	_prev_time_mode = time_field.mode if time_field != null else 0
 	if rewinding:

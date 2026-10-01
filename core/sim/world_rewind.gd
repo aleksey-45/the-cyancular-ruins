@@ -119,10 +119,24 @@ func begin() -> void:
 				(b as Node).queue_free()
 
 
-## 退出回溯:回放子弹保持在场(世界从倒退后的状态继续),游标归零。
-func finish() -> void:
+## 退出回溯(录像带模型):把"过去的将来"从磁带上裁掉。
+## 磁带钟退回到回溯出口,之后 record() 从这里续录——被回溯抹掉的时间段不复存在,
+## 两次回溯互不串带(否则第二次回溯会先倒放被抹掉的未来,再掉进更早的真历史)。
+## 返回出口时刻(磁带新末尾),Level0 用它把瓦片账本裁到同一位置。
+func finish() -> float:
+	var exit_t := _t - _cursor
+	var kept := 0
+	for i in range(_frames.size()):
+		if float(_frames[i]["t"]) <= exit_t:
+			kept = i + 1
+	if kept == 0 and not _frames.is_empty():
+		kept = 1   # 倒到了磁带最老处:世界就停在那帧上,磁带从它重新起算
+	if kept > 0:
+		_frames.resize(kept)
+		_t = maxf(exit_t, float(_frames[kept - 1]["t"]))
 	_cursor = 0.0
 	_replay_bullets.clear()
+	return _t
 
 
 func step(delta: float, player: Node) -> void:

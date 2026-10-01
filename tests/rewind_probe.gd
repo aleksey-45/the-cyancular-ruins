@@ -76,6 +76,8 @@ func _run() -> void:
 	# ③ 再录 1s(让"死亡后"的时间段进缓冲)
 	for i in 60:
 		await tree.physics_frame
+	var t_before_rewind: float = rewind.recorded_seconds()
+	var frames_before_rewind: int = rewind.frame_count()
 
 	# ④ 按住 Shift 回溯 ~3s(真实按键路径);顺带监听 hp_changed(HUD 血条的唯一刷新通道)
 	var hp_events := [0]
@@ -123,8 +125,30 @@ func _run() -> void:
 	if not WorldRewind.hold_corpses:
 		_fail("退出回溯后未恢复录制态(hold_corpses)")
 
+	# ⑦ 录像带模型(D3):磁带钟退回到回溯出口,被复写的帧被裁掉。
+	#    旧实现的磁带钟只增不减,"被抹掉的未来"留在带上,第二次回溯会先倒放它。
+	var t_after_rewind: float = rewind.recorded_seconds()
+	if t_after_rewind > t_before_rewind - 1.0:
+		_fail("磁带钟未随回溯回退(%.2f → %.2f)" % [t_before_rewind, t_after_rewind])
+	if rewind.frame_count() >= frames_before_rewind:
+		_fail("磁带未裁掉被复写的帧(%d → %d)" % [frames_before_rewind, rewind.frame_count()])
+
+	# ⑧ 二次回溯:短录一段再倒回去——磁带钟不得爬回旧刻度(两次回溯互不串带)
+	(player as Node2D).global_position += Vector2(150, 0)
+	for i in 60:
+		await tree.physics_frame
+	var t_peak: float = rewind.recorded_seconds()
+	Input.action_press("rewind")
+	for i in 120:
+		await tree.physics_frame
+	Input.action_release("rewind")
+	for i in 10:
+		await tree.physics_frame
+	if rewind.recorded_seconds() >= t_peak:
+		_fail("二次回溯后磁带钟未回退(%.2f ≥ %.2f,回溯在倒放旧带)" % [t_peak, rewind.recorded_seconds()])
+
 	if _fails.is_empty():
-		print("REWIND PROBE: OK(录制/玩家位置+HP倒退/普通怪复活可见/精英不倒/回溯免疫伤害/松开恢复)")
+		print("REWIND PROBE: OK(录制/位置+HP倒退/怪复活/精英不倒/回溯免疫/松开恢复/磁带钟回退/二次回溯不串带)")
 		tree.quit(0)
 	else:
 		print("REWIND PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
