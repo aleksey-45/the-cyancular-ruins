@@ -231,6 +231,7 @@ static func start_host(port: int, code: String) -> bool:
 		"-l", "udp://0.0.0.0:0",
 		"-l", "tcp://0.0.0.0:0",
 	])
+	_append_file_logging(args)
 	_append_relay(args)
 	var pid := OS.create_process(_core_path, args)
 	if pid <= 0:
@@ -284,6 +285,7 @@ static func start_client(code: String) -> Dictionary:
 		"-l", "udp://0.0.0.0:0",
 		"-l", "tcp://0.0.0.0:0",
 	])
+	_append_file_logging(args)
 	_append_relay(args)
 	var pid := OS.create_process(_core_path, args)
 	if pid <= 0:
@@ -507,6 +509,21 @@ static func _normalize_relay(s: String) -> String:
 static func has_initial_peers() -> bool:
 	return not relay_list().is_empty()
 
+
+# 内核自己的文件日志(落在**游戏目录**,与 exe 同级):EasyTier 是 Rust 写的,输出到管道时会缓冲,
+# 进程被杀时缓冲就丢了 —— 于是"两边为什么没遇上"在 godot.log 里一个字都看不到(2026-10-01 实测)。
+# 用内核自带的 `--file-log-dir` 而不是套一层 cmd:套 cmd 会让 `OS.kill(_pid)` 杀到 cmd 而把内核
+# 留成孤儿(残留内核会一直占着虚拟网 IP,下次建房直接失败且没有提示)。
+static func _append_file_logging(args: PackedStringArray) -> void:
+	var dir := OS.get_executable_path().get_base_dir()
+	args.append("--file-log-level")
+	args.append("info")
+	args.append("--file-log-dir")
+	args.append(dir)
+	args.append("--file-log-size")
+	args.append("5")
+	args.append("--file-log-count")
+	args.append("3")
 
 static func _append_relay(args: PackedStringArray) -> void:
 	for r in relay_list():
