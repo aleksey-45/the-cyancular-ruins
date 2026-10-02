@@ -27,6 +27,21 @@ var _join_panel: PanelContainer = null
 var _join_code_edit: LineEdit = null
 var _join_invite_edit: LineEdit = null
 
+# ── 创建房间弹层(Task 4)──
+# 压暗罩与弹层本体分开两个节点:罩子铺满整页(拦下背后的点击)、本体居中。
+var _create_panel: PanelContainer = null
+var _create_mask: ColorRect = null
+# 需要**按模式显隐**的四行 —— 键名固定,`_build_create_panel` 必须按这几个键登记,
+# `_apply_create_form` 按这几个键取。★ 键名对不上**不报错**,只是"那一行永远不隐藏"。
+var _form_rows := {}      # "max_players" / "match_time" / "weapons" / "map" -> Control
+var _create_mode := PvpSession.MODE_PVP
+var _create_mode_btns := {}   # mode -> Button(三颗分段按钮;`_apply_create_form` 用它置灰当前项)
+var _public_check: CheckButton = null
+var _invite_edit: LineEdit = null
+var _max_slider: HSlider = null
+var _time_slider: HSlider = null
+var _weapon_checks: Array[CheckButton] = []   # 建房时读勾选态(与旧大乱斗页同款)
+
 # **我当前所在那间房**的模式(转连时按它选场景)。
 # ★★ 它与 `PvpSession.room_mode` **不是一回事**:后者是**凭据**的模式(供列表里判"这一行
 #   是不是我的房"),在"建了房但 `note_room` 还没跑到"这一档上是**空串** —— 拿它去分派
@@ -472,6 +487,9 @@ func _on_room_created(code: String) -> void:
 	_ack = true
 	_sent_ms = 0
 	_claim_multi_reply()
+	# 补发地图(设计 §3.7.2):1v1 的 `create_room` 签名冻结,塞不进 payload。
+	# ★ 这里**无条件**发 —— 走到本 handler 的就是建房者,也就是房主。
+	NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 
 
@@ -499,7 +517,14 @@ func _on_room_state_royale(state: Dictionary) -> void:
 	_ack = true
 	_sent_ms = 0
 	_claim_multi_reply()
-	_status.text = "已进入大乱斗房间 %s,等待开局…" % str(state.get("code", ""))
+	# 补发地图(设计 §3.7.2)。★ 只有**房主**该发 —— 非房主发会被服务端静默拒(**不报错**,
+	#   所以必须自己判,否则每个加入者都会白发一次)。
+	# ★ 判据用服务器下发的 `host_role` / `your_role` 两条(它们按 peer 单独下发,不是按昵称
+	#   反查 —— 两人同名时会命中先出现的那个,本仓踩过)。
+	var code := str(state.get("code", ""))
+	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
+		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
+	_status.text = "已进入大乱斗房间 %s,等待开局…" % code
 
 
 func _on_room_state_team(state: Dictionary) -> void:
@@ -509,7 +534,11 @@ func _on_room_state_team(state: Dictionary) -> void:
 	_ack = true
 	_sent_ms = 0
 	_claim_multi_reply()
-	_status.text = "已进入 3v3 房间 %s,等待选边/开局…" % str(state.get("code", ""))
+	# 补发地图(与上面大乱斗那条同款同判据):只有房主该发,非房主发被服务端静默拒。
+	var code := str(state.get("code", ""))
+	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
+		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
+	_status.text = "已进入 3v3 房间 %s,等待选边/开局…" % code
 
 
 # 大厅文本播报。
@@ -646,11 +675,268 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode))
 
 
-# ── 创建房间弹层(Task 4 实现)────────────────────────────────────────
+# ── 创建房间弹层(Task 4)────────────────────────────────────────
+#
+# 点「＋ 创建房间」才展开;按模式变形(设计 §3.4 那张表 —— 差异全收在 `_apply_create_form`)。
+# 房主选项从"常驻右栏"搬进弹层:列表要占满整页,常驻右栏会把 4 列房卡挤成 3 列。
 
-# 本任务只建到"按钮点得动、不炸"这一层;弹层本体在 Task 4。
+# 全屏压暗罩(黑 0.55,与 `ui/screens/match_result.gd` 的 `MASK_COLOR` / 暂停菜单同值)。
+# ★ 它是调色板纪律的**已知例外**:全屏遮罩不属于 `C_PLATE` 那条「HUD 底板 0.1」家族
+#   (见 CLAUDE.md §UI)。沿用与本仓既有遮罩**逐字相同**的字面量,不新造调色板 token
+#   —— 新造一个只会让同一种黑在两处漂开。
+const CREATE_MASK_COLOR := Color(0, 0, 0, 0.55)
+
+
+# 点「＋ 创建房间」才建/显示。★ 只建一次、之后只改可见性(重建会把滑块拖回默认值)。
 func _open_create_dialog() -> void:
-	_status.text = "创建房间弹层尚未接线(Task 4)"
+	if _create_panel == null:
+		_build_create_panel()
+	_create_mode = _mode if _mode != "" else PvpSession.MODE_PVP
+	_apply_create_form(_create_mode)
+	_set_create_visible(true)
+
+
+# 弹层与压暗罩一起显隐(罩子单独隐藏会留下一层吃掉点击的全屏黑)。
+func _set_create_visible(v: bool) -> void:
+	_create_panel.visible = v
+	if _create_mask != null:
+		_create_mask.visible = v
+
+
+func _build_create_panel() -> void:
+	# 压暗罩:铺满整页 + STOP = 拦下背后的点击(点弹层外不会误触房卡)。
+	_create_mask = ColorRect.new()
+	_create_mask.color = CREATE_MASK_COLOR
+	_create_mask.mouse_filter = Control.MOUSE_FILTER_STOP
+	_create_mask.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_create_mask.visible = false
+	add_child(_create_mask)
+
+	_create_panel = PanelContainer.new()
+	_create_panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	_create_panel.visible = false
+	add_child(_create_panel)
+
+	var root_vb := VBoxContainer.new()
+	root_vb.add_theme_constant_override("separation", 18)
+	_create_panel.add_child(root_vb)
+
+	# 标题行:标题 + 右上角 ×(关闭)。
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 12)
+	root_vb.add_child(title_row)
+	var title := UiFactory.label("创 建 房 间", 48, UiFactory.C_ACCENT)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title)
+	var close := UiFactory.button("×", 32, Vector2(64, 48), "quiet")
+	close.pressed.connect(func() -> void: _set_create_visible(false))
+	title_row.add_child(close)
+
+	# 双列:左 = 房型与人数/限时;右 = 禁用武器 + 地图。
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 32)
+	root_vb.add_child(cols)
+	var left := VBoxContainer.new()
+	left.add_theme_constant_override("separation", 14)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cols.add_child(left)
+	var right := VBoxContainer.new()
+	right.add_theme_constant_override("separation", 14)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cols.add_child(right)
+
+	# 左列:模式分段按钮(三颗)+ 公开/私密 + 邀请码 + 人数行 + 限时行。
+	left.add_child(_build_create_mode_buttons())
+	_build_public_row(left)
+	_build_max_players_row(left)
+	_build_match_time_row(left)
+
+	# 右列:禁用武器**整块**(标题 + 网格)。整块一个容器,才能一次显隐(设计 §3.4)。
+	var wblock := VBoxContainer.new()
+	wblock.add_theme_constant_override("separation", 8)
+	wblock.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
+	# ★ 回调把 `cb` 与 `type_id` **都**收进 `_weapon_checks`(照旧大乱斗页的写法)——
+	#   少收 `type_id` 那半,`_checked_weapons()` 会永远返回 `[0]` 且**不报错**。
+	_add_weapon_grid(wblock, 20, func(cell: Node, type_id: int) -> void:
+		var cb: CheckButton = cell.get_meta("cb")
+		cb.set_meta("type_id", type_id)
+		_weapon_checks.append(cb))
+	right.add_child(wblock)
+	_form_rows["weapons"] = wblock
+
+	# 右列:地图选择(基类 `_add_map_picker` 写 Settings.mp_map_path)。整块登记,供探针查显隐。
+	var map_block := VBoxContainer.new()
+	map_block.add_theme_constant_override("separation", 8)
+	_add_map_picker(map_block)
+	right.add_child(map_block)
+	_form_rows["map"] = map_block
+
+	# 底部:取消 / 创建房间。
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 16)
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	root_vb.add_child(actions)
+	var cancel := UiFactory.button("取 消", 32, Vector2(220, 56), "quiet")
+	cancel.pressed.connect(func() -> void: _set_create_visible(false))
+	actions.add_child(cancel)
+	var create := UiFactory.button("创 建 房 间", 32, Vector2(300, 56))
+	create.pressed.connect(_on_create_pressed)
+	actions.add_child(create)
+
+	# 居中锚点必须在**入树之后**设(未入树时父级尺寸为 0,面板会飞到屏幕左上角外)——
+	# 与加入面板同款,见 `_build_join_panel`。
+	_create_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_create_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_create_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+
+
+# 三颗模式分段按钮(用 ButtonGroup 保证互斥,选中态由 Button 自己画 —— 与筛选行同款)。
+# ★ 必须登记进 `_create_mode_btns`:`_apply_create_form` 靠它把**当前项**置灰。
+func _build_create_mode_buttons() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var group := ButtonGroup.new()
+	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
+		var b := UiFactory.button(str(MODE_LABEL[m]), 32, Vector2(180, 48))
+		b.toggle_mode = true
+		b.button_group = group
+		b.pressed.connect(func() -> void: _apply_create_form(m))
+		_create_mode_btns[m] = b
+		row.add_child(b)
+	return row
+
+
+# 公开/私密开关 + 邀请码输入框(私密时才显示 —— 勾选框直接控制输入框的 visible)。
+func _build_public_row(parent: Node) -> void:
+	_public_check = CheckButton.new()
+	_public_check.text = "公开房间(不勾选 = 私密,凭邀请码进入)"
+	_public_check.button_pressed = true
+	UiFactory.style_check(_public_check, 32)
+	_public_check.toggled.connect(func(on: bool) -> void:
+		_invite_edit.visible = not on)
+	parent.add_child(_public_check)
+
+	_invite_edit = LineEdit.new()
+	_invite_edit.placeholder_text = "邀请码(留空自动生成)"
+	_invite_edit.visible = false
+	_invite_edit.custom_minimum_size = Vector2(0, 48)
+	UiFactory.style_control(_invite_edit, 32)
+	UiFactory.style_line_edit(_invite_edit)
+	parent.add_child(_invite_edit)
+
+
+# 人数上限行(仅大乱斗可见)。整行登记进 `_form_rows["max_players"]`。
+func _build_max_players_row(parent: Node) -> void:
+	var row := HBoxContainer.new()
+	# ★ HBox 只认 "separation";"h_separation" 是 GridContainer 的键(写在这里存得下、永不读)。
+	row.add_theme_constant_override("separation", 12)
+	row.add_child(UiFactory.label("人数上限:", 32))
+	_max_slider = HSlider.new()
+	_max_slider.min_value = 2
+	_max_slider.max_value = 8
+	_max_slider.step = 1
+	_max_slider.value = 4
+	_max_slider.custom_minimum_size = Vector2(300, 30)
+	UiFactory.style_slider(_max_slider)
+	row.add_child(_max_slider)
+	var lbl := UiFactory.label("4 人", 32, UiFactory.C_TEXT)
+	_max_slider.value_changed.connect(func(v: float) -> void: lbl.text = "%d 人" % int(v))
+	row.add_child(lbl)
+	parent.add_child(row)
+	_form_rows["max_players"] = row
+
+
+# 一局限时(分钟;仅大乱斗可见)。整行登记进 `_form_rows["match_time"]`。
+# ★ 滑条上界 15 与旧大乱斗页一致 —— `ROYALE_MATCH_TIME_CEILING` 那条上界链的**第三环**
+#   (`Settings.royale_match_min` 的写入端),别在这里改数值(见 CLAUDE.md §大乱斗)。
+func _build_match_time_row(parent: Node) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	row.add_child(UiFactory.label("一局限时:", 32))
+	_time_slider = HSlider.new()
+	_time_slider.min_value = 1.0
+	_time_slider.max_value = 15.0
+	_time_slider.step = 1.0
+	_time_slider.value = Settings.royale_match_min
+	_time_slider.custom_minimum_size = Vector2(300, 30)
+	UiFactory.style_slider(_time_slider)
+	row.add_child(_time_slider)
+	var lbl := UiFactory.label("%d 分钟" % int(Settings.royale_match_min), 32, UiFactory.C_TEXT)
+	_time_slider.value_changed.connect(func(v: float) -> void:
+		Settings.royale_match_min = v
+		Settings.save()
+		lbl.text = "%d 分钟" % int(v))
+	row.add_child(lbl)
+	parent.add_child(row)
+	_form_rows["match_time"] = row
+
+
+# 禁用武器网格的勾选结果 → type_id 数组。★ 与 `LobbyPage._add_weapon_grid` 的 `on_cell`
+# 回调配对:那个回调负责把 `cb` 与 `type_id` 一起收进 `_weapon_checks`(见 `_build_create_panel`)。
+func _checked_weapons() -> Array:
+	var out: Array = []
+	for cb in _weapon_checks:
+		if cb.button_pressed:
+			out.append(int(cb.get_meta("type_id", 0)))
+	return out
+
+
+# 按模式变形 —— 本弹层**唯一**的分支(设计 §3.4 的那张表)。
+# ★ 3v3 关掉禁用武器不只是"规则里没有":那两个勾选框写的是 `Settings.pvp_disabled_weapons`,
+#   在 3v3 页勾一下会**连带改掉另两个模式**。那是功能缺陷,不是审美。
+# ★★ 置灰要迭代 `_create_mode_btns` 的**值**:`for m in dict` 拿的是**键**(String)——
+#    写成 `for b in _create_mode_btns: (b as Button)…` 会在每个键上取到 null,当场报错、
+#    函数在置灰那一行断掉(可见性那三行在前,所以症状是"变形对了、按钮不置灰" + 一串报错)。
+func _apply_create_form(mode: String) -> void:
+	_create_mode = mode
+	var is_royale := mode == PvpSession.MODE_ROYALE
+	var is_team := mode == PvpSession.MODE_TEAM
+	_form_rows["max_players"].visible = is_royale
+	_form_rows["match_time"].visible = is_royale
+	_form_rows["weapons"].visible = not is_team
+	for m in _create_mode_btns:
+		(_create_mode_btns[m] as Button).disabled = false
+	(_create_mode_btns[mode] as Button).disabled = true   # 当前模式置灰(与等待室的选边同款)
+
+
+# 按模式给三套 payload 的**公共部分** + 各自的私有键。
+# ★ `map` 三个模式都上发(设计 §3.7.2):1v1 的 `create_room` 签名冻结、塞不进 payload,
+#   故地图一律走 `room_map` 那条独立的 RPC —— 建房成功后由本端补发一次(见 `_on_room_created`
+#   与两个 `room_state` handler)。
+# ★ 3v3 **不带** `disabled_weapons`:禁用武器在 3v3 由弹层那一行关掉,值从 `player_options`
+#   (报到时读 Settings)走,与建房载荷无关。
+func _create_payload(mode: String) -> Dictionary:
+	var d := {
+		"is_public": _public_check.button_pressed,
+		"invite_code": _invite_edit.text.strip_edges(),
+		"map": Settings.mp_map_path,
+	}
+	if mode == PvpSession.MODE_ROYALE:
+		d["max_players"] = int(_max_slider.value)
+		d["match_time"] = int(_time_slider.value) * 60
+		d["round_full_heal"] = false
+		d["disabled_weapons"] = _checked_weapons()
+	elif mode == PvpSession.MODE_PVP:
+		d["disabled_weapons"] = _checked_weapons()
+	return d
+
+
+# 建房:按模式分派 RPC。1v1 的 `create_room` 是原版 NetBus 的 RPC、**签名冻结**(不带 payload),
+# 它的 `map`/`disabled_weapons` 都从 `player_options`(报到时读 Settings)走。
+func _on_create_pressed() -> void:
+	var mode := _create_mode
+	_with_lobby(func() -> void:
+		_ack = false
+		_sent_ms = Time.get_ticks_msec()
+		var payload := _create_payload(mode)
+		payload.merge(_beta_payload())   # Beta 态追加 {"beta":true,"time":{…}};普通态空合入
+		if mode == PvpSession.MODE_ROYALE:
+			NetBusExt.rpc_id(1, "royale_create", payload)
+		elif mode == PvpSession.MODE_TEAM:
+			NetBusExt.rpc_id(1, "team_create", payload)
+		else:
+			NetBus.rpc_id(1, "create_room")
+		_status.text = "建房中…(拿到房间号后可叫对方刷新列表点进来)")
 
 
 # ── 转连与超时梯 ────────────────────────────────────────────────────
