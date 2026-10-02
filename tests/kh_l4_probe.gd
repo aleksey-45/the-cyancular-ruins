@@ -35,10 +35,10 @@ extends ProbeBase
 #    `tests/` 只在第 1 条里被排除(那条扫描根就不含它),3/4 两条是**全仓**扫描,含本文件。
 
 # 生产目录(第 1/2 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
-const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "res://render"]
+const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
 # 全仓扫描根(第 3/4 条:字号与退役引用要看整仓,含 tests/)
 const ALL_DIRS := ["res://core", "res://scenes", "res://server", "res://ui",
-		"res://render", "res://tests"]
+		"res://tests"]
 
 # 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
 const MIN_PROD_FILES := 40

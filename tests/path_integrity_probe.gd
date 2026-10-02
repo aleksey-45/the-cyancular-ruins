@@ -12,7 +12,7 @@ extends SceneTree
 # ★ 豁免走 tests/path_integrity_allow.txt,每行一个完整路径 + 可选 `# 原因`。
 #
 # ★★ 覆盖面边界 —— 本守卫能给的最强保证是什么、测不到什么:
-#   扫的是 SCAN_ROOTS(core/ scenes/ server/ ui/ render/ tests/)下的 .gd / .tscn
+#   扫的是 SCAN_ROOTS(core/ scenes/ server/ ui/ tests/)下的 .gd / .tscn
 #   (走 ScanUtil.collect),**外加** tests/ 下递归收的 .sh(本文件自己用 DirAccess 收,
 #   见 _collect_sh —— 刻意不动共享脚手架 ScanUtil,它另有 5 个探针依赖它"只收 .gd/.tscn"
 #   的语义)。**看不见**的载体(已知边界,不是漏扫,不打算在本 Task 补):
@@ -28,9 +28,9 @@ extends SceneTree
 #   ⇒ 改豁免表 / 删被豁免路径的生产者时,必须一并复核"它当初为什么被豁免"。
 
 # ★ 只扫这几根:ScanUtil.collect 只收 .gd / .tscn,所以放没有 GDScript 的目录
-#   (tools/ level_editor/) 进去是白扫。Task 2 搬完 render/ 后要把 "res://render" 删掉。
+#   (tools/ level_editor/) 进去是白扫。Task 2 已把 render/ 并入 core/present/ ⇒ 该根已删。
 const SCAN_ROOTS := ["res://core", "res://scenes", "res://server", "res://ui",
-	"res://render", "res://tests"]
+	"res://tests"]
 const ALLOW_PATH := "res://tests/path_integrity_allow.txt"
 const SCAN_UTIL_PATH := "res://tests/lib/scan_util.gd"
 # ★ .sh 的扫描根。tests/ 下这批脚本是 Task 5 最大的搬动对象,而 ScanUtil.collect 看不见

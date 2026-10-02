@@ -53,17 +53,16 @@ const BODY_BASE_SITE := "res://scenes/pvp_match_client.gd"
 const LITERAL_ALLOWED := [PALETTE, "res://ui/pvp_hud.tscn", "res://ui/team_hud.tscn",
 		"res://tests/ui_palette_single_source_smoke.gd"]
 # ⑤ 扫的目录(生产 + 测试)。
-#   ★ `res://render` 必须在列:它是生产目录树的一部分(`camera_2d.gd` / `post_process.gd`),
-#     且全仓别的整树扫描器都扫它(`tests/kh_l4_probe.gd` 的 `PROD_DIRS` / `ALL_DIRS`)。
-#     漏了它,⑤ 的"全仓再无游离字面量"就**窄于它自称的范围** —— 第 7 处落在那里没人看着。
-const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests",
-		"res://render"]
+#   ★ `render/` 这个根曾必须在列(`camera_2d.gd` / `post_process.gd` 原住那里);Task 2 把
+#     `render/` 并入 `core/present/` 后那两份文件由 `res://core` **递归**覆盖(`ScanUtil.walk`
+#     是递归的)⇒ 该根已删 —— 留着它只会让下面那条"逐根 ≥1 文件"的检查报"根被搬走"。
+const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests"]
 # `_rhs_of` 的词界判据用的标识符字符集(needle 后面紧跟其中任一个 = 命中的是兄弟常量)。
 const IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 # ⑤ 扫描到的源文件数**下限**:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
 #   (照 `tests/kh_l4_probe.gd:41-43` 的 `MIN_PROD_FILES` / `MIN_ALL_FILES` 先例)。
-#   今日实测 SCAN_DIRS 共 321 个(ui 24 / scenes 62 / core 39 / server 16 / tests 178 /
-#   render 2),取 250 留健康余量,只拦"整档坏掉"那一类。
+#   今日实测(Task 2 搬完 render/ 后)SCAN_DIRS 共 334 个(ui 26 / scenes 62 / core 41 /
+#   server 16 / tests 189),取 250 留健康余量,只拦"整档坏掉"那一类。
 const MIN_SCANNED := 250
 
 

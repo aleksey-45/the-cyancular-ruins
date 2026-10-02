@@ -42,7 +42,7 @@ const PEER_WAIT := 25.0
 # ── A 组:源码级(与运行时读数无关,但两支一起跑省一次进程)──
 # 判据一律取**去注释视图**(注释不是代码:一句"这里以前调过 set_server_rendered"的注释既不能
 # 让"在位"类断言变绿,也不能让"零残留"类断言变红)。
-const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "res://render"]
+const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
 const MIN_PROD_FILES := 40   # 扫到的源文件数下限:防"扫描坏了 → 零命中 = 假绿"
 # 碎片拼接(与 kh_l6_probe 同一条纪律):别让针的字面量在自扫时自伤。
 const N_SSR := "set_server" + "_rendered"

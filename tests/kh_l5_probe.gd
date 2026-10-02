@@ -42,10 +42,10 @@ extends ProbeBase
 #    第 8 条更狠:它还会把本文件里的示例当数据扫,连合成样例的数字都走 str(4*5) 生成。
 
 # 生产目录(第 4/5 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
-const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "res://render"]
+const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
 # 全仓扫描根(第 2/8 条:字号与私有残留要看整仓,含 tests/)
 const ALL_DIRS := ["res://core", "res://scenes", "res://server", "res://ui",
-		"res://render", "res://tests"]
+		"res://tests"]
 
 # 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
 const MIN_PROD_FILES := 40

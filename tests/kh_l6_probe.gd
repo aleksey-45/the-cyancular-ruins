@@ -105,7 +105,7 @@ func _read_host_union() -> String:
 
 
 # 生产目录(第 13 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
-const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui", "res://render"]
+const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
 # 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
 const MIN_PROD_FILES := 40
 
