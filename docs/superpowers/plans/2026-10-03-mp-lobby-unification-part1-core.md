@@ -1419,13 +1419,26 @@ lobby_row_probe 改为单页断言。"
 
 ```gdscript
 var _create_panel: PanelContainer = null
+# 需要**按模式显隐**的四行 —— 键名固定,`_build_create_panel` 必须按这几个键登记,
+# `_apply_create_form` 按这几个键取。★ 键名对不上**不报错**,只是"那一行永远不隐藏"。
 var _form_rows := {}      # "max_players" / "match_time" / "weapons" / "map" -> Control
 var _create_mode := PvpSession.MODE_PVP
+var _create_mode_btns := {}   # mode -> Button(三颗分段按钮;`_apply_create_form` 用它置灰当前项)
 var _public_check: CheckButton = null
 var _invite_edit: LineEdit = null
 var _max_slider: HSlider = null
 var _time_slider: HSlider = null
-var _weapon_checks: Array[CheckButton] = []
+var _weapon_checks: Array[CheckButton] = []   # 建房时读勾选态(与旧大乱斗页同款)
+
+
+# 禁用武器网格的勾选结果 → type_id 数组。★ 与 `LobbyPage._add_weapon_grid` 的 `on_cell`
+# 回调配对:那个回调负责把 `cb` 与 `type_id` 一起收进 `_weapon_checks`(照旧大乱斗页的写法)。
+func _checked_weapons() -> Array:
+	var out: Array = []
+	for cb in _weapon_checks:
+		if cb.button_pressed:
+			out.append(int(cb.get_meta("type_id", 0)))
+	return out
 
 
 # 点「＋ 创建房间」才建/显示。★ 只建一次、之后只改可见性(重建会把滑块拖回默认值)。
@@ -1438,6 +1451,13 @@ func _open_create_dialog() -> void:
 ```
 
 `_build_create_panel()`：居中 + 半透明压暗罩；标题带 `创 建 房 间` + 右上角 `×`（`Button`，`text = "×"`，`pressed` ⇒ `_create_panel.visible = false`）；左列＝模式分段按钮（三颗，`pressed` ⇒ `_apply_create_form(m)`）+ 公开/私密 + 邀请码 + 人数行 + 限时行；右列＝禁用武器网格（`_add_weapon_grid(vb, 20, on_cell)`）+ 地图选择（`_add_map_picker(vb)`）；底部 `取 消` / `创 建 房 间`。
+
+★ **三个容器必须登记进 `_form_rows`**（键名与上面声明一致），否则 `_apply_create_form` 静默什么都不隐藏：
+- `_form_rows["max_players"] = <人数上限那一行的容器>`
+- `_form_rows["match_time"] = <一局限时那一行的容器>`
+- `_form_rows["weapons"] = <禁用武器那一整块的容器>`
+★ **三颗模式按钮要登记进 `_create_mode_btns`**（`_create_mode_btns[mode] = btn`），`_apply_create_form` 靠它置灰当前项。
+★ **禁用武器网格的 `on_cell` 回调必须把 `cb` 与 `type_id` 都收进 `_weapon_checks`**（照旧大乱斗页 `royale_lobby.gd:126-130` 的写法）—— 少了 `type_id` 那半，`_checked_weapons()` 会永远返回 `[0]`。
 
 ```gdscript
 # 按模式变形 —— 本弹层**唯一**的分支(设计 §3.4 的那张表)。
