@@ -135,8 +135,8 @@ func _ready() -> void:
 
 # ── 版式 ────────────────────────────────────────────────────────────
 
-# 本页的按钮:32 号字 + 描边式。★ 不复用基类 `_page_button` —— 那个是 16 号(旧页 KH 版式),
-#   与设计稿 §3.2「输入框/按钮高 64,字号 32」不符。
+# 本页的按钮:32 号字 + 描边式(自建;设计稿 §3.2「输入框/按钮高 64,字号 32」)。
+#   旧页那套 16 号按钮工厂已随三个旧大厅页一起退役,基类不再提供。
 func _mp_button(text: String, pos: Vector2, size: Vector2, fn: Callable) -> Button:
 	var b := UiFactory.button(text, 32, size)
 	b.position = pos
@@ -608,6 +608,14 @@ func _on_server_message(t: String) -> void:
 	_sent_ms = 0
 	if _swallow_absent(t):
 		_claim_multi_reply()
+		# ★★ 闸门在**这一条**上关掉、而三张表**一张都没接受**(`_join_pending` 没被任何
+		#    success handler 清过)⇒ 这一次加入是**失败**,必须显式收尾(见 `_settle_multi_fail`)。
+		#    少了这一支,手敲房号写错 / 房间已满时三条应答全被吞、8s 兜底又被上面两行解除,
+		#    状态栏就**永远**停在「加入房间 X,等待配对…」而**一行报错都没有**。
+		# ★ `_join_pending` 是"有没有表接受"的现成判据:三个加入成功 handler
+		#    (`_on_room_joined` / 两个 `room_state`)**都**会把它清空,而吞掉的 absent 不清。
+		if not _probe_multi_join and not _join_pending.is_empty():
+			_settle_multi_fail(t)
 		return
 	if t == "房间已满" or t == "房间不存在":
 		# 服务端已明确应答 ⇒ 那间房与我无关,别留给下一次的成功信号(I1)。
@@ -632,6 +640,21 @@ func _on_server_message(t: String) -> void:
 #   顺序不能反:认领可能当场关掉闸门,那时这一句就不该再被吞。
 func _swallow_absent(t: String) -> bool:
 	return _probe_multi_join and (t == "房间不存在" or t == "房间已满")
+
+
+# 「模式未知的三连发」**一张表都没接受**时的收尾(2026-10-03 ①)。
+# ★ 与 `_on_server_message` 非多表那一支("房间已满 / 房间不存在" → 提示并**自动刷新一次**)
+#   **同款同闸门**(`_auto_refreshed` 一次性)—— 于是"手敲房号写错 / 房间已满"在两条路上
+#   表现一致;而三张表的 absent 是**预期噪音**,只有"全拒"这一档才升级成真失败。
+# ★ 只在 `_claim_multi_reply` 把闸门收到 0、且没有任何一张表接受时被调(判据在调用点)。
+func _settle_multi_fail(t: String) -> void:
+	_join_pending = ""
+	if not _auto_refreshed:
+		# ★ 推迟到帧末:与下面那条同因(server_message 在大厅 peer 的 poll 调用栈内到达)。
+		_auto_refreshed = true
+		_request_list.call_deferred("%s → 已自动刷新列表" % t)
+	else:
+		_status.text = t
 
 
 # 多表尝试期间:每收到**一条**服务端应答就认领一格,认领完即关闸。
@@ -805,6 +828,7 @@ func _build_create_panel() -> void:
 	_form_rows["privacy"] = privacy_row
 	_build_max_players_row(left)
 	_build_match_time_row(left)
+	_build_full_heal_row(left)
 
 	# Beta 时间玩法参数(设计 §3.4):基类 `_add_time_params` 现成,且**自门控** ——
 	# 非 Beta 态它往容器里什么都不加。★ 这一段与**模式**无关(只看 `PvpSession.beta_mode`),
@@ -936,6 +960,27 @@ func _build_match_time_row(parent: Node) -> void:
 	_form_rows["match_time"] = row
 
 
+# 「每回合开始回满血」房主选项(**仅 1v1 可见**;2026-10-03 ②)。
+# ★★ 为什么必须在这里补:被删掉的 1v1 旧页有这颗勾选框,而设计 §3.4 的创建弹层表与
+#    §3.6 的设置项列表**都没收它** ⇒ `Settings.pvp_round_full_heal` 失去**唯一**写入方,
+#    仍被 `_player_options()` 读取并上报,而玩家再也打不开它。
+# ★ 它是**房主 / 服务器规则**(大乱斗那边恒 false、3v3 压根不发),故归属创建房间弹层。
+# ★ 勾选态直写 Settings + save()(与 `_build_match_time_row` / `_add_hue_row` 同款)。
+func _build_full_heal_row(parent: Node) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var check := CheckButton.new()
+	check.text = "每回合开始回满血(房主生效)"
+	check.button_pressed = Settings.pvp_round_full_heal
+	UiFactory.style_check(check, 32)
+	check.toggled.connect(func(on: bool) -> void:
+		Settings.pvp_round_full_heal = on
+		Settings.save())
+	row.add_child(check)
+	parent.add_child(row)
+	_form_rows["full_heal"] = row
+
+
 # 禁用武器网格的勾选结果 → type_id 数组。★ 与 `LobbyPage._add_weapon_grid` 的 `on_cell`
 # 回调配对:那个回调负责把 `cb` 与 `type_id` 一起收进 `_weapon_checks`(见 `_build_create_panel`)。
 func _checked_weapons() -> Array:
@@ -959,6 +1004,8 @@ func _apply_create_form(mode: String) -> void:
 	var is_pvp := mode == PvpSession.MODE_PVP
 	_form_rows["max_players"].visible = is_royale
 	_form_rows["match_time"].visible = is_royale
+	# ★ 「每回合开始回满血」是 1v1 独有的房主规则(大乱斗恒 false、3v3 不发该键)⇒ 只 1v1 可见。
+	_form_rows["full_heal"].visible = is_pvp
 	_form_rows["weapons"].visible = not is_team
 	# ★ 1v1 下那一行是**骗人的控件**:`create_room(caller)` 是原版 NetBus 的**冻结签名**、
 	#   收不了 opts ⇒ 服务端永远建公开房(1v1 载荷里 `is_public` 恒 true)。让玩家取消勾选

@@ -21,9 +21,10 @@ extends Node
 #
 # ═══ 断言计数 ═══
 # ★ ALL-OK 只证明"没有一条断言失败",**不证明"该跑的断言都跑过"**(见 tests/lib/probe_base.gd
-#   文件头)。故这里比对期望条数:单页 9 条,少跑一条就红。改探针必须同步改这个数。
+#   文件头)。故这里比对期望条数:房卡 9 条 + 多表加入收尾 5 条,少跑一条就红。
+#   改探针必须同步改这个数。
 
-const EXPECTED_CHECKS := 9
+const EXPECTED_CHECKS := 14
 
 # ★ 载荷里**满房那间(5678)喂在前** —— 排序断言(第 9 条)靠它才有意义:
 #   若输入顺序本来就对,把满房排后面也能全绿(排序等于没验)。
@@ -50,7 +51,9 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _ready() -> void:
-	_check_page([ROWS_1V1, ROWS_N, ROWS_N], ["pvp", "royale", "team"])
+	_check_page([ROWS_1V1, ROWS_N, ROWS_N], [PvpSession.MODE_PVP,
+			PvpSession.MODE_ROYALE, PvpSession.MODE_TEAM])
+	_check_multi_join_dead_end()
 	_finish()
 
 
@@ -112,6 +115,62 @@ func _check_page(rows_per_mode: Array, modes: Array) -> void:
 		first_code = str((first as Button).get_meta("code", ""))
 	_check(first_code == "1234",
 			"排序:未满的卡排在满房之前(网格第一张 = 「%s」,期望 1234)" % first_code)
+	p.free()
+
+
+# ── 多表加入「三张表全拒」的收尾(2026-10-03 ①)──────────────────────────────
+# ★ 为什么必须常驻:加入弹层传的 `_mode` 默认是 ""(全部),而手敲房号正是走
+#   `_join_code(code, "", invite)` ⇒ 三张表**都问一次**。三条应答全是 absent 时,
+#   `_on_server_message` 在**吞掉检查之前**就 `_ack = true; _sent_ms = 0`(解除 8s 兜底),
+#   而 `_swallow_absent` 又同时吞「房间不存在」与「房间已满」⇒ 房号写错 / 房间已满时
+#   **一条文案都不显示、也不刷新**,状态栏永远停在「加入房间 X,等待配对…」。
+#   卡片点击那条路总是传已知模式,所以只有手敲房号这一档会撞上(统一大厅之后才出现的洞)。
+# ★ 夹具直接摆状态、调 `_on_server_message`,不建 socket(与 `_check_page` 同款,页面不入树
+#   ⇒ `_ready` 不跑 ⇒ 没有 deferred 网络;同帧 free 掉那句 `_request_list.call_deferred`)。
+func _check_multi_join_dead_end() -> void:
+	var p: Node = (load("res://scenes/mp_lobby.tscn") as PackedScene).instantiate()
+	p.set("_status", Label.new())
+	var st: Label = p.get("_status")
+	var busy := "加入房间 4321,等待配对…"
+	var absent := ["房间不存在", "房间已满", "房间不存在"]
+
+	# 相 A:第一次「三张表全拒」⇒ 必须走一次自动刷新(闸门 `_auto_refreshed` 被翻起)+ 清脏凭据。
+	p.set("_probe_multi_join", true)
+	p.set("_multi_left", 3)
+	p.set("_join_pending", "4321")
+	st.text = busy
+	for m: String in absent:
+		p.call("_on_server_message", m)
+	_check(int(p.get("_multi_left")) == 0 and bool(p.get("_probe_multi_join")) == false,
+			"①A 三张表全拒后多表闸门关闭(_multi_left=0 / _probe_multi_join=false)")
+	_check(bool(p.get("_auto_refreshed")) == true,
+			"①A 三张表全拒后走了一次自动刷新(_auto_refreshed=true)")
+	_check(str(p.get("_join_pending")) == "",
+			"①A 三张表全拒后 _join_pending 被清(失败不留脏凭据)")
+
+	# 相 B:刷新额度已花光(`_auto_refreshed=true`)时再全拒一次 ⇒ 状态栏显示**最后一条**文案。
+	p.set("_probe_multi_join", true)
+	p.set("_multi_left", 3)
+	p.set("_join_pending", "4321")
+	st.text = busy
+	for m: String in ["房间不存在", "房间不存在", "房间已满"]:
+		p.call("_on_server_message", m)
+	_check(st.text == "房间已满",
+			"①B 刷新额度用光时,状态栏显示**最后一条**服务端文案(实得「%s」)" % st.text)
+
+	# 相 C(正向对照):同样的三条 absent,但 `_join_pending` 已被清(= 有一张表**接受了**)
+	#   ⇒ 不得误判失败、不得多刷一次。★ 没有这一相,把收尾写成"闸门一关就报错"会全绿,
+	#   而那会让**成功的多表加入**(1v1 成功 + 另两张表 absent)每次都被误报一次失败。
+	p.set("_probe_multi_join", true)
+	p.set("_multi_left", 3)
+	p.set("_join_pending", "")
+	p.set("_auto_refreshed", false)
+	st.text = "已加入,等待开战……"
+	for m: String in absent:
+		p.call("_on_server_message", m)
+	_check(bool(p.get("_auto_refreshed")) == false and st.text == "已加入,等待开战……",
+			"①C 有一张表接受时不误触发刷新/文案(正向对照;实得 auto_refreshed=%s text=「%s」)"
+			% [str(p.get("_auto_refreshed")), st.text])
 	p.free()
 
 

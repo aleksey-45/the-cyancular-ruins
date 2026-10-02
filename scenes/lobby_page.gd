@@ -12,10 +12,10 @@ extends Control
 #   同款。上提的函数里 `_push_lobby_name` / `_on_lobby_connected` / `_on_lobby_connect_failed`
 #   是**逐字相同**,其余只差 1~3 行 —— 那些行全部落成下方"子类钩子"。
 #
-# ★ 刻意**不**在这里的(差的不是重复,是第二根结构轴):
-#   · `_ready`(两页版式完全不同)、`_build_options_panel` / `_build_create_panel` / `_build_wait_panel`;
-#   · `_on_room_list` vs `_on_royale_rooms`(2 人房 vs N 人房,行样式与文案都不同);
-#   · `_process` 的**派发**(见下方三条 `_tick_*` 的告警 —— 两页梯顺序不同,合并会改行为)。
+# ★ 刻意**不**在这里的(差的不是重复,是第二根结构轴;现只有 `mp_lobby` 一个子类):
+#   · `_ready`(版式与画出的东西不同)、`_build_create_panel` / `_build_wait_panel`(本页自己的弹层);
+#   · `_on_room_list` vs `_on_royale_rooms` vs `_on_team_rooms`(2 人房 vs N 人房,行样式与文案都不同);
+#   · `_process` 的**派发**(见下方三条 `_tick_*` 的告警 —— 梯顺序与页面专属梯有关,合并会改行为)。
 #   要再上提一批,先按同样的口径量一遍差异(剔注释后逐行 diff),别凭印象搬。
 #
 # ★ 本类读 `Settings` autoload(后补的两个设置区块要用),故**不**放进 `ui/ui_factory.gd` ——
@@ -23,21 +23,20 @@ extends Control
 
 # 本机服务器一键启停(同目录 Cyancular Ruins Server.exe)。preload 而非全局类名,
 # 避免新脚本未进全局类缓存时整份场景解析失败(本项目踩过同类坑)。
-# 常量可继承:两页 `_ready` 里的 LocalServer.lan_ip_hint() 直接读本常量,无需各自再声明。
+# 常量可继承:子类 `_ready` 里的 LocalServer.lan_ip_hint() 直接读本常量,无需各自再声明。
 const LocalServer := preload("res://core/net/local_server.gd")
 
 
-# ── 共用状态(两页同名同义;子类不要再声明一次)──
+# ── 共用状态(子类不要再声明一次)──
 var _addr_edit: LineEdit
 var _status: Label
-var _list_box: VBoxContainer
 var _ip_label: Label = null   # 常驻本机 IP 提示(进页/重启后即显示,不靠易被刷掉的状态栏)
 var _connected := false
 var _connected_addr := ""          # 当前连的是哪个地址(地址框改了要重连)
 var _pending_action: Callable = Callable()   # 连上后要执行的建房/加入/刷新
 # 连大厅计时(UDP 被静默丢包时 connection_failed 要等很久,8s 给明确提示)
 var _lobby_start_ms := 0
-# ── 转连对局 worker(两页同款)──
+# ── 转连对局 worker ──
 var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜底提示)
 var _go_start_ms := 0
 var _claimed_ms := 0       # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
@@ -73,30 +72,15 @@ func _finish_lobby_ready() -> void:
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
 
 
-# 按钮工厂:字体/字号纪律走 UiFactory,尺寸与位置由本页版式给(KH 原布局值)。
-# 不用 UiFactory.button():它的 420×64 是主菜单按钮列的约定,与大厅页的绝对定位小按钮不合。
-func _page_button(text: String, pos: Vector2, size: Vector2, fn: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	UiFactory.style_control(b, 16)
-	UiFactory.style_button(b)
-	b.position = pos
-	b.custom_minimum_size = size
-	b.size = size
-	b.pressed.connect(fn)
-	add_child(b)
-	return b
-
-
-# ── 两个设置区块(两页各手抄一份)──
+# ── 设置区块(子类建房/等待室用)──
 # 都读写 Settings,故留在本类而不是 `ui/ui_factory.gd` —— 那个工厂至今零 autoload 依赖。
 
 # 禁用武器网格(2 列 + 定尺寸剪影,横排会溢出屏幕)。勾选直写 Settings.pvp_disabled_weapons
-# + save():两页语义相同(房主开关,禁用项随 player_options 上发)。
-# h_sep 是各页的**版式值**(1v1 页 26 / 大乱斗页 10 —— 剪影是长条形,列距本就不同)。
-# on_cell 给需要额外记账的页面(大乱斗要把勾选框收进 _weapon_checks,建房时读勾选态)。
+# + save()(房主开关,禁用项随 player_options 上发)。
+# h_sep 是**调用方**的版式值(剪影是长条形,列距本就不同)。
+# on_cell 给需要额外记账的调用方(要把勾选框收进自己的表,建房时读勾选态)。
 # ★ 字号 32 写成**字面量**而非形参:kh_l5 的字号规范只认整数字面量实参,改成变量会让
-#   这一处**静默脱保**(两页的值本来就都是 32,没有参数化的理由)。
+#   这一处**静默脱保**(调用方本来就都传 32,没有参数化的理由)。
 func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) -> void:
 	var wgrid := GridContainer.new()
 	wgrid.columns = 2
@@ -119,12 +103,12 @@ func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) 
 
 
 # 角色色相行(滑条 + 预览色块,即选即存 Settings.pvp_color_hue)。
-# label_text 非空时在**行内**先放标签;大乱斗页的标签另起一行(该页版式),故传 "" 并在外面自己加。
-# slider/chip 尺寸也是各页版式(280×24 / 48×24 与 300×30 / 46×30),故走参数。
+# label_text 非空时在**行内**先放标签;传空串则由**调用方**在外面自己加标签行。
+# slider/chip 尺寸是**调用方**的版式值,故走参数。
 # ★ 键必须是 "separation":**HBoxContainer 只认 separation,h_separation 是 GridContainer 的键**
-#   (h_separation 写在 HBox 上会被存下来但**永不读取** = 静默无效覆盖)。两页原文正好一正一误:
-#   1v1 页写 separation(=12,生效),大乱斗页写 h_separation(死覆盖,实际是默认 4)。
-#   收口后统一走正确键 → 大乱斗页这一行的间距由 4 变 12,是本次**唯一**的有意观感变化。
+#   (h_separation 写在 HBox 上会被存下来但**永不读取** = 静默无效覆盖)。
+#   (历史:合一前的两个旧页里一份写对了 separation、另一份写错 h_separation(死覆盖,实际是默认 4);
+#   合一后本函数统一走正确键,旧页那一行的间距由 4 变 12 曾是有意的观感变化。)
 func _add_hue_row(parent: Node, label_text: String, slider_size: Vector2,
 		chip_size: Vector2) -> HBoxContainer:
 	var crow := HBoxContainer.new()
@@ -215,7 +199,7 @@ func _with_lobby(action: Callable) -> void:
 		_lobby_start_ms = Time.get_ticks_msec()
 
 
-# 请求房间列表:状态文案由调用方给(两页文案不同),RPC 由子类发(协议不同)。
+# 请求房间列表:状态文案由调用方给(各调用点文案不同),RPC 由子类发(协议不同)。
 func _request_list(msg: String) -> void:
 	_with_lobby(func() -> void:
 		_status.text = msg
@@ -244,8 +228,8 @@ func _on_local_server_pressed() -> void:
 
 
 # 服务器文本播报。重启本机服期间旧连接被杀的「服务器断开」是预期噪音,不覆盖状态 ——
-# 这条两页同款,故基类直接实现(大乱斗页就用这一份)。
-# 1v1 另有"房间已满/不存在 → 自动刷新列表""配对已取消 → 刷新恢复可操作"两段,整段覆写本函数。
+# 基类给的是"照抄到状态栏"的默认实现。
+# 子类另有"房间已满/不存在 → 自动刷新列表""配对已取消 → 刷新恢复可操作"等段,整段覆写本函数。
 func _on_server_message(t: String) -> void:
 	if LocalServer.restarting:
 		return
@@ -291,7 +275,7 @@ func _on_go_match(role: int, port: int) -> void:
 var _rejoin_sent_ms := 0
 
 
-# 房间列表里某一行被按下时,**先问这一句**(三页的 `_on_room_list` 都调它)。
+# 房间列表里某一行被按下时,**先问这一句**(子类的 `_on_room_list` 调它)。
 # 返回 true = 这一行是我的房、凭据还在、**而且是"对局中"** ⇒ 已走回局;false = 交给调用方走普通加入。
 # ★★ 它同时是**行可点性**的判据(页面渲染那一行时也要问同一句)—— 两处共用一个函数,
 #    免得"看着可点、点了没用"或反过来。
@@ -442,11 +426,12 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	_enter_match_scene()
 
 
-# ── 超时梯(两页共用的三条)──
-# ★ 本基类**不提供 `_process`**:两页的梯顺序不同(1v1 是 [worker→join→大厅→claim],
-#   大乱斗是 [worker→claim→大厅→ack]),且各有一条页面专属梯。顺序看着无所谓,实际有差:
-#   1v1 那一 tick 里「大厅-8s 先清 _pending_action、claim-25s 再 _return_to_lobby」若被并成
-#   只跑后者,_pending_action 就不再被清 —— 单看代码看不出来。故派发留在各子类,这里只给函数体。
+# ── 超时梯(共用的三条)──
+# ★ 本基类**不提供 `_process`**:梯顺序由子类定(合一前的两个旧页就不同:一份是
+#   [worker→join→大厅→claim]、另一份是 [worker→claim→大厅→ack]),且各有一条页面专属梯。
+#   顺序看着无所谓,实际有差:比如某一 tick 里「大厅-8s 先清 `_pending_action`、
+#   claim-25s 再 `_return_to_lobby`」若被并成只跑后者,`_pending_action` 就不再被清 ——
+#   单看代码看不出来。故派发留在子类(`mp_lobby` 是唯一子类),这里只给函数体。
 
 # 转连 worker 12s 无连接(死端口/worker 死了)。返回 true = 已处理,调用方应 return。
 func _tick_worker_connect_timeout() -> bool:
@@ -591,8 +576,8 @@ func _claim_timeout_msg() -> String:
 	return ""
 
 
-# 进对局场景。★ 两页**刻意不同**,别为了"统一"改掉任何一边:
-#   1v1 直切;大乱斗必须 call_deferred —— 它的 match_start 在 NetBus.poll 调用栈内到达,
+# 进对局场景。★ 各模式的切场方式**刻意不同**,别为了"统一"改掉:
+#   1v1 直切;大乱斗 / 3v3 必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,
 #   栈内切场景会在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误(曾实测)。
 func _enter_match_scene() -> void:
 	push_error("LobbyPage: 子类必须覆写 _enter_match_scene()")

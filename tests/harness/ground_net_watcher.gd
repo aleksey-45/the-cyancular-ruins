@@ -46,14 +46,14 @@ const STUCK_EPS := 6.0           # 半秒内水平位移小于它 = 卡住
 const MODES := {
 	"royale": {
 		"lobby_scene": "res://scenes/mp_lobby.tscn",
-		"mode": "royale",          # 统一大厅的筛选值(= PvpSession.MODE_ROYALE),决定建房走哪张表
+		"mode": PvpSession.MODE_ROYALE,   # 统一大厅的筛选值,决定建房走哪张表
 		"game_script": "royale_game.gd",
 		"needs_start": true,       # 房主得自按「开始游戏」
 		"has_suicide_key": true,   # K → NetBusExt.suicide_request → RoyaleHost.request_suicide_role
 	},
 	"duel": {
 		"lobby_scene": "res://scenes/mp_lobby.tscn",
-		"mode": "pvp",             # = PvpSession.MODE_PVP
+		"mode": PvpSession.MODE_PVP,
 		"game_script": "pvp_game.gd",
 		"needs_start": false,      # 配对即开局(go_match),没有开始按钮
 		"has_suicide_key": false,  # ★ pvp_game 连 _unhandled_input 都没有 —— K 在这边**没有接收端**

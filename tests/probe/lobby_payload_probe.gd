@@ -11,7 +11,7 @@ extends Node
 #   不需要 socket、不需要 worker(与 lobby_visibility_probe 同款)。
 # ★ 断言计数:ALL-OK 只证明"没有一条断言失败",不证明"该跑的都跑过"(见 tests/lib/probe_base.gd
 #   文件头)。少跑一条就红 —— 改本探针必须同步改这个数。
-const EXPECTED_CHECKS := 20
+const EXPECTED_CHECKS := 24
 
 const P_HOST := 201
 const P_OTHER := 202
@@ -97,6 +97,40 @@ func _ready() -> void:
 	var tc: Dictionary = pt.get("team_counts", {})
 	_check(int(tc.get("1", -1)) == 1 and int(tc.get("2", -1)) == 0 and int(tc.get("0", -1)) == 1,
 			"3v3 载荷 team_counts 数对了(A=1 / B=0 / 未选边=1;实得 %s)" % str(tc))
+
+	# ── 已开局(in_match)的房:host 走开局那一刻冻结的 roster(2026-10-03 ③)──
+	# ★ 为什么必须常驻:已开局的房**成员已转连 worker**,`players` 空、`_peer_names` 被擦
+	#   ⇒ `host` 只能从 `roster` 里按 role 找(`_host_name_of(_room_host_role(房), roster)`)。
+	#   此前**没有任何夹具**把 `in_match` 设成 true ⇒ 那条分支的 role 查错会**静默**
+	#   (卡片显示「房主 玩家」),而"对局中的房照列"这条也一并没被验过。
+	# ★ 房主 role **刻意非 1**、名单名**刻意与 `_peer_names` 不同**:host 若读错来源
+	#   (读 `_peer_names` / 查错 role)必得「玩家」或「房主甲」,与期望的 roster 名不同 ⇒ 红。
+	var rrm: LobbyRooms.RoyaleRoom = LobbyRooms.RoyaleRoom.new()
+	rrm.code = "9104"
+	rrm.host_peer = P_HOST
+	rrm.player_role[P_HOST] = 2          # 房主 role 非 1:逼着 host 去查 roster 里的**这个** role
+	rrm.in_match = true
+	rrm.roster.append({"role": 2, "name": "R开局名单甲"})
+	rrm.roster.append({"role": 5, "name": "R开局名单乙"})
+	lobby.royale_rooms["9104"] = rrm
+	var prm := _find(lobby.royale_list_payload(""), "9104")
+	_check(not prm.is_empty() and bool(prm.get("in_match", false)),
+			"大乱斗:已开局的房**照列**(in_match=true 不被 continue 掉)")
+	_check(str(prm.get("host", "")) == "R开局名单甲",
+			"★ 大乱斗已开局房的 host 取自 roster 里该 role 的名字(实得「%s」)" % str(prm.get("host", "")))
+
+	var trm: LobbyRooms.TeamRoom = LobbyRooms.TeamRoom.new()
+	trm.code = "9105"
+	trm.host_peer = P_HOST
+	trm.player_role[P_HOST] = 4
+	trm.in_match = true
+	trm.roster.append({"role": 4, "name": "T开局名单甲"})
+	lobby.team_rooms["9105"] = trm
+	var ptm := _find(lobby.team_list_payload(""), "9105")
+	_check(not ptm.is_empty() and bool(ptm.get("in_match", false)),
+			"3v3:已开局的房**照列**(in_match=true 不被 continue 掉)")
+	_check(str(ptm.get("host", "")) == "T开局名单甲",
+			"★ 3v3 已开局房的 host 取自 roster 里该 role 的名字(实得「%s」)" % str(ptm.get("host", "")))
 
 	# ── room_map:房主可写 ──
 	lobby.on_room_map(P_HOST, "9102", "maps/demo.cyrm")

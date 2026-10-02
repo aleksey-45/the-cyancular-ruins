@@ -26,7 +26,7 @@ extends Node
 #
 # ★ `EXPECTED_CHECKS` 是"ALL-OK 不等于全都跑过"那条纪律的落点 —— 出错只会让当前函数
 #   当场结束、调用方继续,判词照打。少跑一条即红。
-const EXPECTED_CHECKS := 26
+const EXPECTED_CHECKS := 28
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -77,6 +77,7 @@ func _phase_form(packed: PackedScene) -> void:
 	var royale_weapons: bool = page._form_rows["weapons"].visible
 	var royale_privacy: bool = page._form_rows["privacy"].visible
 	var royale_map: bool = page._form_rows["map"].visible
+	var royale_heal: bool = _row_visible(page, "full_heal")
 
 	page._apply_create_form(PvpSession.MODE_TEAM)
 	var team_max: bool = page._form_rows["max_players"].visible
@@ -84,6 +85,7 @@ func _phase_form(packed: PackedScene) -> void:
 	var team_weapons: bool = page._form_rows["weapons"].visible
 	var team_privacy: bool = page._form_rows["privacy"].visible
 	var team_map: bool = page._form_rows["map"].visible
+	var team_heal: bool = _row_visible(page, "full_heal")
 
 	page._apply_create_form(PvpSession.MODE_PVP)
 	var pvp_max: bool = page._form_rows["max_players"].visible
@@ -91,6 +93,7 @@ func _phase_form(packed: PackedScene) -> void:
 	var pvp_weapons: bool = page._form_rows["weapons"].visible
 	var pvp_privacy: bool = page._form_rows["privacy"].visible
 	var pvp_map: bool = page._form_rows["map"].visible
+	var pvp_heal: bool = _row_visible(page, "full_heal")
 
 	_check(royale_max and royale_time, "② 大乱斗:人数行 + 限时行都可见")
 	_check((not team_max) and (not team_time), "③ 3v3:人数行 + 限时行都不可见")
@@ -102,6 +105,20 @@ func _phase_form(packed: PackedScene) -> void:
 	# ⑧ 同样是"骗人的控件"那一类:1v1 收不了隐私选项,那一行必须整块收起。
 	_check((not pvp_privacy) and team_privacy and royale_privacy,
 			"⑧ 1v1:公开/私密 + 邀请码整块不可见;3v3 / 大乱斗:可见")
+
+	# ⑧b/⑧c 「每回合开始回满血」(2026-10-03 ②):被删的 1v1 旧页有这颗勾选框,统一弹层**必须**
+	#   收下它 —— 否则 `Settings.pvp_round_full_heal` 失去唯一写入方,仍被 `_player_options()`
+	#   读取上报而玩家再也打不开它。它是房主/服务器规则 ⇒ 归属创建弹层,**仅 1v1 显示**
+	#   (大乱斗恒 false、3v3 压根不发)。
+	_check(pvp_heal and (not team_heal) and (not royale_heal),
+			"⑧b 每回合回满血行:仅 1v1 可见(1v1=%s / 3v3=%s / 大乱斗=%s)"
+					% [str(pvp_heal), str(team_heal), str(royale_heal)])
+	# ★ ⑧c:那一行必须**真有一颗勾选框**且接线恰一次 —— 光登记一个空容器的话,"玩家打不开它"
+	#   这条原始缺陷原样还在,而⑧b 的可见性照样绿。
+	var heal_cb := _find_check(page._form_rows.get("full_heal"))
+	_check(heal_cb != null and heal_cb.toggled.get_connections().size() == 1,
+			"⑧c 每回合回满血行里有一颗勾选框且 toggled 恰 1 个 handler(%s)"
+					% ("缺" if heal_cb == null else str(heal_cb.toggled.get_connections().size())))
 
 	_check(_has_close_button(page), "⑨ 弹层里有一颗 × 按钮(文案就是 ×)")
 
@@ -268,6 +285,23 @@ func _phase_time_options(packed: PackedScene) -> void:
 func _has_close_button(page) -> bool:
 	var panel: PanelContainer = page._create_panel
 	return panel != null and _find_button(panel, "×") != null
+
+
+# `_form_rows` 里某个键登记的行是否可见(null 键 = 没登记 ⇒ false,而不是让探针在 Nil 上炸)。
+func _row_visible(page, key: String) -> bool:
+	var row = page._form_rows.get(key)
+	return row != null and row.visible
+
+
+# 子树里第一颗 CheckButton(用于 ⑧c:那一行里必须真有一颗勾选框)。
+func _find_check(n: Node) -> CheckButton:
+	if n is CheckButton:
+		return n
+	for c in n.get_children():
+		var r := _find_check(c)
+		if r != null:
+			return r
+	return null
 
 
 func _find_button(n: Node, text: String) -> Button:

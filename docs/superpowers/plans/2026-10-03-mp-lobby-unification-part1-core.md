@@ -186,8 +186,15 @@ func _ready() -> void:
 	# ── room_map:非房主一律不写 ──
 	lobby.on_room_map(P_OTHER, "9102", "maps/hack.cyrm")
 	_check(str(rr.map) == "maps/demo.cyrm", "★ 非房主上报被拒(房记录一字不动)")
+
+	# ── room_map:未知房号 —— 不崩、也不误写别人 ──
+	# ★ 判据**不是**"没崩":`_check(true, "不崩")` 恒真、什么也断言不了(简报原稿就是那样)。
+	#   真判据 = 这次调用前后,三间房的 `map` 逐字不变(既没崩、也没把别人写坏)。
+	#   此刻三间房的 map 互不相同 ⇒ "写错了一间"必然被这一条抓住。
+	var before := str([str(r1.map), str(rr.map), str(tr.map)])
 	lobby.on_room_map(P_HOST, "9999", "maps/x.cyrm")
-	_check(true, "未知房号不崩(静默丢弃)")
+	var after := str([str(r1.map), str(rr.map), str(tr.map)])
+	_check(before == after, "未知房号上报:不崩也不误写任何一间(前后 map 一致;实得 %s)" % after)
 
 	_finish()
 
