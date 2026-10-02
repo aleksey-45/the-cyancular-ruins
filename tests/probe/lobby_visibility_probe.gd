@@ -56,7 +56,8 @@ const P_C := 103
 #     三页共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
 #   ★ 相⑨(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
 #   ★ 相⑦c(大厅合一 Task 2:凭据自带模式,2026-10-03)加 **2** 条 → **47**。
-const EXPECTED_CHECKS := 47
+#   ★ 相⑦d(同批:`note_room()` 的**行为**断言)加 **3** 条 → **50**。
+const EXPECTED_CHECKS := 50
 
 var _rm: Node = null
 var _checks := 0
@@ -322,6 +323,37 @@ func _phase_session_flags() -> void:
 			"⑦c 模式不同 ⇒ 不可点(同号房分属两张注册表)")
 	_check(PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP),
 			"⑦c 正向对照:模式相同 ⇒ 仍可点")
+	# ⑦d `note_room()` —— ★ **行为级**，不是源码级。理由见下。
+	# ★★ 源码级的 `_check(nr.contains("clear_rejoin()"))` 只能证明**那个调用在函数里存在**,
+	#    证明不了**它在正确的分支上**:把 `if a or b:` 改成 `if a and b:`(一个 token),
+	#    换房号但模式不变时就**不再清凭据** —— 四条 `contains` 全都还在,全绿。
+	#    ⇒ 这三条直接调函数验结果:静态字段可赋值,不需要开 socket。
+	# ★ 覆盖上限:它验的是"按值调用的结果",验不到"生产里谁在什么时候调它" —— 那一半靠
+	#   `reconnect_smoke` §⑤ 的源码级断言(三处都走 `note_room`)。两半缺一不可。
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("2222", PvpSession.MODE_PVP)          # 换房号、同模式
+	_check(not PvpSession.can_rejoin(), "⑦d 换房号(同模式) ⇒ 凭据作废")
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("1111", PvpSession.MODE_TEAM)         # 同房号、换模式
+	_check(not PvpSession.can_rejoin(), "⑦d 换模式(同房号) ⇒ 凭据作废")
+	# ★★ 反向对照,**必需**:等待室每收到一次房间状态就会走一遍 `note_room`,
+	#    无条件清会把刚拿到的凭据抹掉(那正是当年 C1 那场事故的形状)。
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("1111", PvpSession.MODE_PVP)          # 同房号、同模式
+	_check(PvpSession.can_rejoin(), "⑦d 同房号同模式 ⇒ 凭据**保留**(等待室刷新不能抹凭据)")
+	PvpSession.clear_rejoin()
 	PvpSession.rejoin = true
 	PvpSession.clear_rejoin()
 	_check(PvpSession.token == "" and PvpSession.worker_port == 0 \
