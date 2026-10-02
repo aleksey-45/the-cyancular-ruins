@@ -487,7 +487,43 @@ git commit -m "feat(lobby): 列表载荷扩键(is_public/host/map/match_time/队
 			"⑦c 正向对照:模式相同 ⇒ 仍可点")
 ```
 
-同时把相⑦ 的 setup 段改成写 `PvpSession.room_mode = PvpSession.MODE_PVP`，并把 `EXPECTED_CHECKS` 从 **45** 改成 **47**（新增 2 条），同步改文件头那句「相⑨ 加 7 条 → 45」后面的计数说明。
+再加 **⑦d：`note_room()` 的**行为**断言（3 条）**：
+
+```gdscript
+	# ⑦d `note_room()` —— ★ **行为级**，不是源码级。理由见下。
+	# ★★ 源码级的 `_check(nr.contains("clear_rejoin()"))` 只能证明**那个调用在函数里存在**,
+	#    证明不了**它在正确的分支上**:把 `if a or b:` 改成 `if a and b:`(一个 token),
+	#    换房号但模式不变时就**不再清凭据** —— 四条 `contains` 全都还在,全绿。
+	#    ⇒ 这三条直接调函数验结果:静态字段可赋值,不需要开 socket。
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("2222", PvpSession.MODE_PVP)          # 换房号、同模式
+	_check(not PvpSession.can_rejoin(), "⑦d 换房号(同模式) ⇒ 凭据作废")
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("1111", PvpSession.MODE_TEAM)         # 同房号、换模式
+	_check(not PvpSession.can_rejoin(), "⑦d 换模式(同房号) ⇒ 凭据作废")
+	# ★★ 反向对照,**必需**:等待室每收到一次房间状态就会走一遍 `note_room`,
+	#    无条件清会把刚拿到的凭据抹掉(那正是当年 C1 那场事故的形状)。
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("1111", PvpSession.MODE_PVP)          # 同房号、同模式
+	_check(PvpSession.can_rejoin(), "⑦d 同房号同模式 ⇒ 凭据**保留**(等待室刷新不能抹凭据)")
+	PvpSession.clear_rejoin()
+```
+
+同时把相⑦ 的 setup 段改成写 `PvpSession.room_mode = PvpSession.MODE_PVP`，并把 `EXPECTED_CHECKS` 从 **45** 改成 **50**（⑦c 新增 2 条 + ⑦d 新增 3 条），同步改文件头那句「相⑨ 加 7 条 → 45」后面的计数说明。
+
+★ ⑦d 的**覆盖上限**（写进探针注释）：它验的是"按值调用的结果"，验不到"生产里谁在什么时候调它" —— 那一半靠 ① 的源码级断言（`_on_room_created` / `_on_room_joined` / room_state 三处都走 `note_room`）。两半缺一不可。
 
 - [ ] **Step 2: 跑探针，确认它红**
 
