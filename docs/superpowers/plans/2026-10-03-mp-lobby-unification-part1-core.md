@@ -1452,7 +1452,16 @@ func _open_create_dialog() -> void:
 	_create_panel.visible = true
 ```
 
-`_build_create_panel()`：居中 + 半透明压暗罩；标题带 `创 建 房 间` + 右上角 `×`（`Button`，`text = "×"`，`pressed` ⇒ `_create_panel.visible = false`）；左列＝模式分段按钮（三颗，`pressed` ⇒ `_apply_create_form(m)`）+ 公开/私密 + 邀请码 + 人数行 + 限时行；右列＝禁用武器网格（`_add_weapon_grid(vb, 20, on_cell)`）+ 地图选择（`_add_map_picker(vb)`）；底部 `取 消` / `创 建 房 间`。
+`_build_create_panel()`：居中 + 半透明压暗罩；标题带 `创 建 房 间` + 右上角 `×`（`Button`，`text = "×"`，`pressed` ⇒ `_set_create_visible(false)`）；左列＝模式分段按钮（三颗，`pressed` ⇒ `_apply_create_form(m)`）+ **公开/私密行** + 邀请码 + 人数行 + 限时行 + **Beta 时间参数**；右列＝禁用武器网格（`_add_weapon_grid(vb, 20, on_cell)`）+ 地图选择（`_add_map_picker(vb)`）；底部 `取 消` / `创 建 房 间`。
+
+★★ **这一段有四件事，简报初稿漏了后三件**（前两件是"控件骗人"，第三件是**Task 6 一到就会爆**）：
+
+1. **`Esc` 也能关**（设计 §3.4 明写）。`_unhandled_input` 里判 `ui_cancel`：**弹层可见时**关弹层并 `set_input_as_handled()`，否则不处理（别抢掉大厅自己的返回语义）。
+2. **1v1 必须隐藏「公开/私密 + 邀请码」整行**。★ 理由：`create_room(caller)` 是**原版 NetBus 的冻结签名**、收不了 opts，服务端永远建公开房（`lobby_rooms.gd` 的 `room_list_payload` 里 1v1 恒 `is_public: true`）。显示这一行 = **一个骗人的控件**：房主取消勾选「公开」、填了邀请码，建出来的仍是人人可见、无需邀请码就能进的房。归到 `_form_rows["privacy"]`，`_apply_create_form` 里 `visible = not is_pvp`。
+3. **Beta 时间参数行**（设计 §3.4）：`_add_time_params(vb)`（基类现成，`lobby_page.gd:504`）——**本行自己按 `PvpSession.beta_mode` 决定显不显示**，不用管模式。
+   ★★ **为什么必须现在做**：`_on_create_pressed` 已经在 merge `_beta_payload()`（它会上发 `time_rules` 的**默认值**），而弹层里今天没有任何地方能改它们。今天够不到（Beta 页还指向旧场景），但 **Task 6 把 Beta 页改指 `mp_lobby` 的那一刻就够得到了** —— 那时 Beta 房主会**静默地**带着一套改不了的默认时间规则开局。
+4. **建完之后弹层要关**（设计 §3.7「进等待室时隐藏创建面板」）—— 本任务先做到"`_on_create_pressed` 成功后 `_set_create_visible(false)`"即可；等待室本身是 Task 5。
+   ★ 顺带：`_status` 在压暗罩**底下**，不关弹层的话"点了创建房间好像没反应"。
 
 ★ **三个容器必须登记进 `_form_rows`**（键名与上面声明一致），否则 `_apply_create_form` 静默什么都不隐藏：
 - `_form_rows["max_players"] = <人数上限那一行的容器>`
