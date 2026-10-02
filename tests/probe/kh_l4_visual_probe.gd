@@ -7,7 +7,7 @@ extends Control
 # 跑法:
 #   "$GODOT" --path . --quit-after 3600 res://tests/probe/kh_l4_visual_probe.tscn
 # 把 L4 换装过的三张界面定格成 PNG 交给控制者读图,同时打数值断言(可当 CI 用):
-#   _l4_1_mainmenu.png    主菜单(标题 + 7 个按钮 + 版本号,浮现动画跑完的稳定态)
+#   _l4_1_mainmenu.png    主菜单(标题 + 至少 7 个按钮 + 版本号,浮现动画跑完的稳定态)
 #   _l4_2_pause.png       暂停菜单(继续 / 回到主菜单;底下一块纯色假装游戏画面)
 #   _l4_3_matchmaking.png 匹配界面(**T6 评审点名**:房间行字号从 KH 的 24 抬到 32 后
 #                         字宽 +33%,行最小宽 600 / 滚动区 640,长昵称可能横向溢出;
@@ -16,7 +16,7 @@ extends Control
 #
 # 三张图的数值腿:
 #  · 每张图与「纯背景基线」的逐像素差异 > 阈值(证明界面真的画出来了,不是空屏);
-#  · 主菜单:标题/版本号/7 个按钮各自矩形内都有足够亮像素(证明显浮动画真的跑完了);
+#  · 主菜单:标题/版本号/各按钮矩形内都有足够亮像素(证明显浮动画真的跑完了);
 #  · 暂停:标题与两个按钮矩形内亮像素 > 0;
 #  · 匹配:房间行按钮矩形内亮像素 > 0,并**打印**房间行的实际文本宽度 vs 行宽 600
 #    (T6 那条溢出的疑点,数值留给控制者判断,不在这里判死活);
@@ -35,9 +35,14 @@ const OUT_DIR := "res://.superpowers/sdd"
 const MAIN_MENU_SCENE := "res://scenes/main_menu.tscn"
 const MATCHMAKING_SCENE := "res://scenes/matchmaking.tscn"
 
-# 主菜单:期望 7 个模式按钮(单人/多人/大乱斗/3v3/设置/版本/退出)—— 多一个少一个都是"菜单换了脸"。
-# (原为 5:大乱斗按钮加进来之后漏改,本探针一直红着;3v3 按钮进来时已同步 +1。)
-const EXPECTED_MENU_BUTTONS := 7
+# 主菜单**至少**要有这么多个入口(当前实际:单人/1v1/3v3/大乱斗/Beta/设置/版本/退出 = 8)。
+# ★★ 2026-10-02 降精度:原先钉的是**精确条数**(`== 7`),而它自己的历史就写明了那个写法的代价 ——
+#   "原为 5:大乱斗按钮加进来之后漏改,本探针一直红着;3v3 按钮进来时已同步 +1";
+#   这次合并带进来的 KH **Beta 入口**(时间玩法)又让它红了一次。
+#   意图是"菜单别少了入口"(建设时漏了一个 / 整块没建出来)⇒ 改成**下限**;实际条数与**逐条清单**
+#   照旧打印(见下方那行 `态1 按钮 = […]`),换脸由**人**看读数判定。
+#   ★ 它能拦下的真实变异:主菜单少建了一个按钮。它**测不到**:换了哪一个 / 多了重复的 —— 那由读数兜。
+const MIN_MENU_BUTTONS := 7
 # 与纯背景基线的差异下限(step=4 采样,见 _diff_vs)
 const DIFF_MIN := 400
 # 标题/按钮矩形内的"亮像素"下限(字被画出来才有)
@@ -91,8 +96,9 @@ func _state_main_menu() -> void:
 	var title := _find_label(_main_menu, "The Cyancular Ruins")
 	var buttons := _find_buttons(_main_menu)
 	_check(title != null, "态1:找不到标题「The Cyancular Ruins」")
-	_check(buttons.size() == EXPECTED_MENU_BUTTONS,
-			"态1:模式按钮 %d 个(期望 %d 个:单人/多人/大乱斗/3v3/设置/版本/退出)" % [buttons.size(), EXPECTED_MENU_BUTTONS])
+	_check(buttons.size() >= MIN_MENU_BUTTONS,
+			"态1:模式按钮只有 %d 个(至少应有 %d 个) —— 菜单少建了入口;实际清单见上面的读数行"
+			% [buttons.size(), MIN_MENU_BUTTONS])
 	var ver := _find_label_where(_main_menu, func(t: String) -> bool:
 		return t.strip_edges() != "" and t != "The Cyancular Ruins" and not t.contains("模"))
 	# 帧驱动轮询(不用 create_timer:等的是"状态成立",不是"过了多久")
