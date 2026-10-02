@@ -70,7 +70,7 @@ func _finish(failures: Array[String]) -> void:
 
 func _mount_feedback() -> void:
 	_failures = []
-	_CF = load("res://ui/combat_feedback.gd")
+	_CF = load("res://ui/hud/combat_feedback.gd")
 	# 无实例(主菜单/服务器进程):静态入口必须全部空转
 	_CF.kill("无人")
 	_CF.hit_marker()

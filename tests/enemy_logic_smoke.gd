@@ -1398,11 +1398,11 @@ func _phase_weapon_registry() -> void:
 # ② **接线** —— 公式必须真的被 setup()/refresh() 用上。只有 ① 的话,把两个静态函数写出来
 #    却没人调,断言照样全绿(本仓反复在删那种"加了断言之后全绿"的假证据)。
 func _phase_weapon_capacity() -> void:
-	var ws: GDScript = load("res://ui/weapon_slots.gd")
+	var ws: GDScript = load("res://ui/hud/weapon_slots.gd")
 	_check(ws != null, "ui/weapon_slots.gd 可加载")
 	if ws == null:
 		return
-	var src := ScanUtil.read("res://ui/weapon_slots.gd")
+	var src := ScanUtil.read("res://ui/hud/weapon_slots.gd")
 	_check(not src.is_empty(), "读到 ui/weapon_slots.gd(读不到就是红,不是静默跳过)")
 	# ★★ 必须先看源码文本再敢调:`ws.rows_for(...)` 在函数不存在时会**抛错**,
 	#   而 -s 冒烟里 helper 抛错 ⇒ 本函数当场结束、调用方继续 ⇒ 下面那些断言

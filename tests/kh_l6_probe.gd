@@ -82,11 +82,11 @@ const RG := "res://scenes/" + "royale" + "_game.gd"
 #   `_apply_tint` / `_apply_match_options` / `_on_remote_tile_destroyed` / `_on_hit_confirm` /
 #   `_correct_local_spawn` —— 剔注释后代码逐字相同的那 7 个)。故函数体查找要跨这两个文件。
 const BASE := "res://scenes/" + "pvp_match_client.gd"
-const PM_PATH := "res://ui/" + "pause_menu.gd"
-const HUD_TSCN := "res://ui/" + "pvp_hud.tscn"
-const HUD_SCRIPT := "res://ui/" + "pvp_hud.gd"
+const PM_PATH := "res://ui/screens/" + "pause_menu.gd"
+const HUD_TSCN := "res://ui/hud/" + "pvp_hud.tscn"
+const HUD_SCRIPT := "res://ui/hud/" + "pvp_hud.gd"
 const LASER := "res://scenes/weapons/" + "laser_weapon_base.gd"
-const CF_PATH := "res://ui/" + "combat_feedback.gd"
+const CF_PATH := "res://ui/hud/" + "combat_feedback.gd"
 const RB_PATH := "res://core/net/" + "prediction_rollback.gd"
 # ★ 2026-09-15(阶段 5.6):MatchHost 按域拆成一条继承链,权威源码现在是**五份的并集**
 # (核心/回合/裁决/快照/状态)。别只读 match_host.gd —— "beam_fired" 已搬进 match_combat.gd,
@@ -132,7 +132,7 @@ const N_QUEUE_FREE := "queue" + "_free()"
 #   那两条断言守的"退场定时器必须存在"随定时器一起作废(留着就是要求把定时器加回来),
 #   故常量一并删除,不留死声明。③ 对手离开那条 2.5s 定时器仍在,但本条从不按它做断言。
 const N_INSIDE := "is_inside" + "_tree()"
-const N_PRELOAD_HUD := "preload(\"res://ui/" + "pvp_hud.tscn\")"
+const N_PRELOAD_HUD := "preload(\"res://ui/hud/" + "pvp_hud.tscn\")"
 const N_NEW_HUD := "Pvp" + "Hud.new("
 const N_HUD_CLS := "Pvp" + "Hud"
 const N_BEAM := "beam" + "_fired"

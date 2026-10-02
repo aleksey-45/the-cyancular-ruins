@@ -32,7 +32,7 @@ const EDGE_BOTTOM := 72.0
 const RING_PX := 4.0        # 圆内缘描边宽度(2026-09-17:2 → 4,用户要求"加粗")
 const RING_SELF_PX := 4.0   # "我"那个点的白描边宽度(四边各 4px ⇒ 点 8×8、描边框 16×16)
 
-const SHADER_PATH := "res://ui/minimap_circle.gdshader"
+const SHADER_PATH := "res://ui/hud/minimap_circle.gdshader"
 const SELF_COLOR := Color(0.6, 0.95, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.4, 0.35)
 

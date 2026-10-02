@@ -23,9 +23,9 @@ extends Control
 const MAP_OPEN_COLOR := Color(0.47, 0.588, 0.624)   # ≈#78969F,实测取的地图开阔区色
 
 const OUT_DIR := "res://.superpowers/sdd"
-const PVP_HUD_SCENE := "res://ui/pvp_hud.tscn"
-const ROYALE_HUD_SCENE := "res://ui/royale_hud.tscn"
-const TEAM_HUD_SCENE := "res://ui/team_hud.tscn"
+const PVP_HUD_SCENE := "res://ui/hud/pvp_hud.tscn"
+const ROYALE_HUD_SCENE := "res://ui/hud/royale_hud.tscn"
+const TEAM_HUD_SCENE := "res://ui/hud/team_hud.tscn"
 
 var _failures: Array[String] = []
 

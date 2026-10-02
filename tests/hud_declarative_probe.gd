@@ -49,12 +49,12 @@ extends ProbeBase
 
 # [脚本, 配套 tscn, 类名] —— 每搬一套加一行
 const PAIRS := [
-	["res://ui/royale_hud.gd", "res://ui/royale_hud.tscn", "RoyaleHud"],
-	["res://ui/combat_feedback.gd", "res://ui/combat_feedback.tscn", "CombatFeedback"],
-	["res://ui/team_hud.gd", "res://ui/team_hud.tscn", "TeamHud"],
-	["res://ui/match_result.gd", "res://ui/match_result.tscn", "MatchResult"],
+	["res://ui/hud/royale_hud.gd", "res://ui/hud/royale_hud.tscn", "RoyaleHud"],
+	["res://ui/hud/combat_feedback.gd", "res://ui/hud/combat_feedback.tscn", "CombatFeedback"],
+	["res://ui/hud/team_hud.gd", "res://ui/hud/team_hud.tscn", "TeamHud"],
+	["res://ui/screens/match_result.gd", "res://ui/screens/match_result.tscn", "MatchResult"],
 	# 阶段 3(2026-09-28):层位 140,挂在 `scenes/pvp_match_client.gd` 的 `_setup_status_banner()`。
-	["res://ui/status_banner.gd", "res://ui/status_banner.tscn", "StatusBanner"],
+	["res://ui/hud/status_banner.gd", "res://ui/hud/status_banner.tscn", "StatusBanner"],
 ]
 
 # 参数下限:防止 PAIRS 被误删成空表 → 零循环 → 恒绿
@@ -99,7 +99,7 @@ func _ready() -> void:
 #   ⇒ 拿它做断言会得到一条**恒绿的空断言**。
 #   生产那一半(team_game 到底调没调)另有源码级断言:`tests/team_room_smoke.gd` 的 ⑨。
 #   两半缺一不可:只钉 HUD 这一半,`team_game` 永不调用照样全绿。
-const TEAM_HUD_SCENE := "res://ui/team_hud.tscn"   # PAIRS 里那个路径的**用法**在这里,不是重复定义
+const TEAM_HUD_SCENE := "res://ui/hud/team_hud.tscn"   # PAIRS 里那个路径的**用法**在这里,不是重复定义
 
 func _check_team_my_team_contract() -> void:
 	var before := _failures.size()

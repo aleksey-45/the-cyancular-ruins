@@ -11,7 +11,7 @@ extends SceneTree
 # ★ 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() -> 进程永久挂起。
 
 func _initialize() -> void:
-	var script = load("res://ui/match_result_payload.gd")
+	var script = load("res://ui/screens/match_result_payload.gd")
 	if script == null:
 		print("MATCH RESULT PAYLOAD: FAIL(加载 match_result_payload.gd 失败)")
 		quit(1)
@@ -323,7 +323,7 @@ func _initialize() -> void:
 	#   ★ 键集**从三个常量推**,不写死清单 —— 写死的话,以后给 `C_DUEL` 加一列而忘了同步
 	#     这里,这条守卫就**静默失明**(它守的正是"新增列必须有标题")。
 	#   ★ 常量一律走 `get_script_constant_map()`(取不存在的属性会抛错 ⇒ `-s` 下挂到 timeout)。
-	var rs = load("res://ui/match_result.gd")
+	var rs = load("res://ui/screens/match_result.gd")
 	var scmap: Dictionary = script.get_script_constant_map()
 	if rs == null:
 		fails.append("★ 读不到 ui/match_result.gd(`COLUMN_TITLES` 覆盖断言无从成立)")

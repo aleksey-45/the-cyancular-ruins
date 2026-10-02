@@ -362,7 +362,7 @@ func _refresh_input_lock() -> void:
 #   小地图(131) **下面**、压暗罩盖不住它们,而计划自己的类头注释却写着「盖住一切」。
 #   ★ 这条有守卫:`tests/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,
 #     出现 `MatchResult.new(` 即红。
-const RESULT_SCENE := preload("res://ui/match_result.tscn")
+const RESULT_SCENE := preload("res://ui/screens/match_result.tscn")
 
 # 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
 # 各自只覆写 `_build_result_payload()`。
@@ -810,7 +810,7 @@ func _subscribe_reconnect() -> void:
 func _setup_status_banner() -> void:
 	if _banner != null:
 		return
-	_banner = preload("res://ui/status_banner.tscn").instantiate() as StatusBanner
+	_banner = preload("res://ui/hud/status_banner.tscn").instantiate() as StatusBanner
 	add_child(_banner)
 
 

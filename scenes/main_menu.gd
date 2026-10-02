@@ -17,8 +17,8 @@ var _ver_panel: PanelContainer = null   # 版本信息面板(弹出式)
 # 两个弹出面板的**骨架**在场景里(容器/滚动区/标签/锚点看得见);按钮与勾选框仍由
 # UiFactory 建、数据由 _fill_* 填 —— 控件进场景就得在使用处补 style_control +
 # style_button,等于把「控件工厂唯一来源」这条纪律散回各处。
-const VERSION_PANEL_SCENE := preload("res://ui/version_panel.tscn")
-const SP_PANEL_SCENE := preload("res://ui/sp_launch_panel.tscn")
+const VERSION_PANEL_SCENE := preload("res://ui/screens/version_panel.tscn")
+const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 
 
 func _ready() -> void:

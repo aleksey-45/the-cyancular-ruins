@@ -27,7 +27,7 @@ extends SceneTree
 #    **同一串字面量的等价改写也抓不到**(如 `Color(0.0, 0.0, 0.0, 0.1)`) —— `_norm` 只去空白,
 #    **不做数值形态归一**,故 ②/⑤ 是按**字面字符**比对的,不是按颜色值。
 
-const PALETTE := "res://ui/ui_factory.gd"
+const PALETTE := "res://ui/factory/ui_factory.gd"
 # 底板色字面量的**归一化后**形态(空白在 `_norm` 里被去掉)。
 const PLATE_LITERAL := "Color(0,0,0,0.1)"
 # 队 1 token 的重复字面量(改前 `BODY_BASE_COLOR` 就是这个) —— 归一化后。
@@ -35,22 +35,22 @@ const TEAM_A_LITERAL := "Color(99.0/255.0,155.0/255.0,1.0)"
 
 # 四个 `.gd` 落点:三处 `const PLATE_COLOR` + 一处内联(`royale_hud._plate_box`)。
 const GD_SITES := [
-	"res://ui/hud.gd",
-	"res://ui/weapon_slots.gd",
-	"res://ui/world_label.gd",
-	"res://ui/royale_hud.gd",
+	"res://ui/hud/hud.gd",
+	"res://ui/hud/weapon_slots.gd",
+	"res://ui/factory/world_label.gd",
+	"res://ui/hud/royale_hud.gd",
 ]
 # 两个**结构上无法派生**的落点:`.tscn` 里 StyleBoxFlat 的 bg_color。
 const TSCN_SITES := [
-	"res://ui/pvp_hud.tscn",
-	"res://ui/team_hud.tscn",
+	"res://ui/hud/pvp_hud.tscn",
+	"res://ui/hud/team_hud.tscn",
 ]
 # 队色那一半。
 const BODY_BASE_SITE := "res://scenes/pvp_match_client.gd"
 # ⑤ 反向断言的白名单 = 允许出现底板色**字面量**的文件:
 #   调色板自己(它就是源)+ 两个 `.tscn`(结构上派生不了)+ **本文件自己**
 #   (`PLATE_LITERAL` 这个常量本身就把那串字写在了源码里 —— 不白名单它,⑤ 会自己判自己红)。
-const LITERAL_ALLOWED := [PALETTE, "res://ui/pvp_hud.tscn", "res://ui/team_hud.tscn",
+const LITERAL_ALLOWED := [PALETTE, "res://ui/hud/pvp_hud.tscn", "res://ui/hud/team_hud.tscn",
 		"res://tests/ui_palette_single_source_smoke.gd"]
 # ⑤ 扫的目录(生产 + 测试)。
 #   ★ `render/` 这个根曾必须在列(`camera_2d.gd` / `post_process.gd` 原住那里);Task 2 把

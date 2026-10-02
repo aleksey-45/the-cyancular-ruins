@@ -223,7 +223,7 @@ func _check_old_escape_menu_retired() -> void:
 		if str(entry.get("class", "")) == cls:
 			_failures.append("全局类缓存里仍有 %s(来自 %s)" % [cls, str(entry.get("path", ""))])
 	# 替身必须在位
-	var pm := "res://ui/pause_menu.gd"
+	var pm := "res://ui/screens/pause_menu.gd"
 	_check(ResourceLoader.exists(pm), "替身 %s 不存在" % pm)
 	var pm_src := _read(pm)
 	_check(pm_src.contains("class_name " + "Pause" + "Menu"), "%s 缺 class_name PauseMenu" % pm)

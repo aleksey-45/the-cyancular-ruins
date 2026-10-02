@@ -14,7 +14,7 @@ extends Node
 #
 # ⚠ 判据 grep 文本 "PVP HUD LAYOUT PROBE: ALL-OK"(不只看退出码)。
 
-const HUD_SCENE := "res://ui/pvp_hud.tscn"
+const HUD_SCENE := "res://ui/hud/pvp_hud.tscn"
 const TOP_BAND := 140.0    # "顶部"的判定带:记分条顶边必须落在这之内
 
 var _failures: Array[String] = []

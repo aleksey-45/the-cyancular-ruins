@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://royalehud000001"]
 
-[ext_resource type="Script" path="res://ui/royale_hud.gd" id="1"]
+[ext_resource type="Script" path="res://ui/hud/royale_hud.gd" id="1"]
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
 
 [node name="RoyaleHud" type="CanvasLayer"]

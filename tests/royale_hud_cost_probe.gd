@@ -24,7 +24,7 @@ extends Node
 #      本探针是"归因工具",不是"逼这行代码变快"的指标。
 
 const ROWS := [4, 6, 8]
-const ROYALE_HUD_SCENE := "res://ui/royale_hud.tscn"
+const ROYALE_HUD_SCENE := "res://ui/hud/royale_hud.tscn"
 const SAMPLES := 40
 
 var _fail := false

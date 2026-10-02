@@ -16,7 +16,7 @@ extends CanvasLayer
 # ★★ **层位只住在 `ui/status_banner.tscn` 里**(`layer = 140`),脚本**不设** layer。
 #   理由与结算页逐字相同:`.new()` 建出来的 CanvasLayer 是**默认的 layer 1** —— 会画在三个
 #   对局 HUD(130)与小地图(131)**底下**,横幅被 HUD 盖住且**不报错**。
-#   故宿主必须 `preload("res://ui/status_banner.tscn").instantiate()`;
+#   故宿主必须 `preload("res://ui/hud/status_banner.tscn").instantiate()`;
 #   守卫:`tests/hud_declarative_probe.gd` 的 ⑧。
 # ★ 层位取 140 的推导:必须**高于** HUD(130)与小地图(131)(否则被盖住);必须**低于**
 #   暂停菜单(145)与结算页(150)—— 那两块是模态性质的画面,横幅不该压在它们上面。

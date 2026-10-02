@@ -64,7 +64,7 @@ const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
 # 写进 .tscn 就绕开 UiFactory 的字号纪律(16 的倍数那条闸门扫的是 .gd 与 .tscn,但
 # style_control 才是带 PixelFont.shared() 锐化+CJK 回退的那条路),且 PLATE_COLOR 会在
 # 场景里变成又一份调色板字面量。**本场景无脚本**,故 hud.gd preload 它不构成循环引用。
-const KILL_COUNTER_SCENE := preload("res://ui/kill_counter.tscn")
+const KILL_COUNTER_SCENE := preload("res://ui/hud/kill_counter.tscn")
 
 func _ready() -> void:
 	layer = LAYER

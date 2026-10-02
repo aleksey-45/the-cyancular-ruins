@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://ui/match_result.gd" id="1"]
+[ext_resource type="Script" path="res://ui/screens/match_result.gd" id="1"]
 
 [node name="MatchResult" type="CanvasLayer"]
 layer = 150

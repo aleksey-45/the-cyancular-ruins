@@ -84,7 +84,7 @@ func _ready() -> void:
 		_check(not b.contains("nearest_within"),
 				"拾取提示又回到「只提示最近那把」了 —— 用户要的是**每把能捡的**都提示")
 		_check(b.contains("set_prompt_visible"), "拾取提示没有逐把开关")
-	_check(_read("res://ui/pickup_prompt.gd").contains("const BOX"),
+	_check(_read("res://ui/hud/pickup_prompt.gd").contains("const BOX"),
 			"PickupPrompt 常量不见了(文件被换?)")
 
 	# ③d 提示的"自己刚丢下的"排除:服务器要把 by_role 告诉客户端(那条 0.5s 冷却

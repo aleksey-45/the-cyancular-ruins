@@ -10,7 +10,7 @@ extends Control
 # ★ 背景故意铺品红:与地图三色(空气深/水蓝/墙灰)都不会撞,圆外只要不是品红就说明没裁干净。
 
 const OUT_DIR := "res://.superpowers/sdd"
-const PVP_HUD_SCENE := "res://ui/pvp_hud.tscn"
+const PVP_HUD_SCENE := "res://ui/hud/pvp_hud.tscn"
 const ROYALE_GAME := "res://scenes/royale_game.gd"   # 相⑨ 的源码级面(A 项)
 const BG := Color(1.0, 0.0, 1.0)          # 品红背景
 const WALL := Color(0.62, 0.68, 0.75)     # ui/minimap.gd 里墙的颜色(半透明 alpha 0.95)

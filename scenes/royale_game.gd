@@ -87,7 +87,7 @@ func _ready() -> void:
 	# HUD(左上角击杀排行榜)+ Esc 菜单
 	# ★ 声明式场景实例化,不能 RoyaleHud.new() —— 那个建出来的 CanvasLayer 没有子节点,
 	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,见 tests/hud_declarative_probe)。
-	_hud = preload("res://ui/royale_hud.tscn").instantiate() as RoyaleHud
+	_hud = preload("res://ui/hud/royale_hud.tscn").instantiate() as RoyaleHud
 	add_child(_hud)
 	_pause_menu = PauseMenu.new(true)
 	# 本地输入锁必须宿主接线:PvP 不暂停树,不锁就是"菜单开着还能边跑边开枪"。
@@ -266,7 +266,7 @@ func _apply_peer_hues(hues: Dictionary) -> void:
 func _ensure_id_label(role: int) -> void:
 	if _world == null or _id_labels.has(role):
 		return
-	var lbl: Node2D = load("res://ui/world_label.gd").new()
+	var lbl: Node2D = load("res://ui/factory/world_label.gd").new()
 	_world.add_child(lbl)
 	_id_labels[role] = lbl
 

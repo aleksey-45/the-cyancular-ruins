@@ -38,7 +38,7 @@ const ST_MATCH_OVER := 3
 
 # 节点句柄一律从 royale_hud.tscn 取(声明式契约:见 tests/hud_declarative_probe.tscn)。
 # ★ 排行榜的**行**不在这里 —— 行数随人数变,由 _refresh_board 建/复用,见那里的说明。
-# ★ 宿主必须用 preload("res://ui/royale_hud.tscn").instantiate() 建,不能 RoyaleHud.new()
+# ★ 宿主必须用 preload("res://ui/hud/royale_hud.tscn").instantiate() 建,不能 RoyaleHud.new()
 #   —— .new() 建出来的 CanvasLayer 没有子节点,下面这些 @onready 全是 null,_ready 解引用必崩。
 @onready var _board_bg: ColorRect = $BoardBg
 @onready var _board_vbox: VBoxContainer = $BoardBox

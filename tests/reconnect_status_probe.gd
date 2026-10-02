@@ -51,9 +51,9 @@ const TEAM_GAME := "res://scenes/team_game.gd"
 const CLIENTS := [PVP_GAME, ROYALE_GAME, TEAM_GAME]
 const PRODUCERS := ["res://server/match_round.gd", "res://server/royale_host.gd",
 		"res://server/team_host.gd"]
-const PVP_HUD := "res://ui/pvp_hud.gd"
-const ROYALE_HUD := "res://ui/royale_hud.gd"
-const TEAM_HUD := "res://ui/team_hud.gd"
+const PVP_HUD := "res://ui/hud/pvp_hud.gd"
+const ROYALE_HUD := "res://ui/hud/royale_hud.gd"
+const TEAM_HUD := "res://ui/hud/team_hud.gd"
 
 # ── 相④ 的推导例外(唯一一处,理由见 `_check_status_call_sites`)──
 # `_exit_tree` 是 Godot 的生命周期钩子:那一刻场景正在离开,横幅**随场景一起销毁**

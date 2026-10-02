@@ -30,7 +30,7 @@ static var current: CombatFeedback = null   # 当前对局的反馈层;null = �
 static func spawn(host: Node) -> void:
 	if current != null and is_instance_valid(current) and host.is_ancestor_of(current):
 		return
-	var fx: CombatFeedback = load("res://ui/combat_feedback.tscn").instantiate() as CombatFeedback
+	var fx: CombatFeedback = load("res://ui/hud/combat_feedback.tscn").instantiate() as CombatFeedback
 	host.add_child.call_deferred(fx)
 
 

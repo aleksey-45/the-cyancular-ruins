@@ -98,7 +98,7 @@ func _ready() -> void:
 				return Vector2.INF)
 		add_child(_minimap)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
-	_hud = preload("res://ui/pvp_hud.tscn").instantiate() as PvpHud
+	_hud = preload("res://ui/hud/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
 	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 同样继承它 —— 见 level_0.gd 的
 	# _ready:那一挂在建图前、位于 pvp_mode 早退**之前**,而本文件也把该 Level0 挂进世界,
@@ -333,10 +333,10 @@ func _ensure_id_labels() -> void:
 	if _world == null:
 		return
 	if _id_self == null:
-		_id_self = load("res://ui/world_label.gd").new()
+		_id_self = load("res://ui/factory/world_label.gd").new()
 		_world.add_child(_id_self)
 	if _id_opp == null:
-		_id_opp = load("res://ui/world_label.gd").new()
+		_id_opp = load("res://ui/factory/world_label.gd").new()
 		_world.add_child(_id_opp)
 
 func _process(_delta: float) -> void:

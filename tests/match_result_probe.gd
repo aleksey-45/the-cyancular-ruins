@@ -31,7 +31,7 @@ extends Node
 #    故:取图先判 `img == null` 并**响亮地记一条 FAIL**,取节点一律先 `_check(x != null)`。
 #    (下面三处取节点都按这条改过,失败形态记在各自注释里。)
 
-const MATCH_RESULT_SCENE := "res://ui/match_result.tscn"
+const MATCH_RESULT_SCENE := "res://ui/screens/match_result.tscn"
 const LAYER_WANT := 150        # 只住在 .tscn 里;三个 HUD = 130、小地图 = 131、暂停菜单 = 145
 const CENTRE_TOL := 2.0        # 面板屏幕矩形中心与视口中心的最大允许偏差(px)
 const OUT := "user://match_result_%d.png"
