@@ -1303,6 +1303,12 @@ func _player_options() -> Dictionary:
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
 		"map": Settings.mp_map_path,
+		# ★★ **这一行本计划初稿漏了，是 Task 6 的实现者抓回来的。**
+		#    它是 worker 侧时间规则的**唯一权威来源** —— 建房载荷里那个 `time`
+		#    (`_beta_payload()`) **没有读者**:worker 只认 `player_options` 这一份。
+		#    漏掉的后果是**静默的**:Beta 局照常开局,但时间经济全为默认/空。
+		#    两个旧页都有它(`royale_lobby.gd:446` / `team_lobby.gd:433`)。
+		"time": time_rules.to_dict() if PvpSession.beta_mode else {},
 	}
 
 
@@ -1685,6 +1691,8 @@ git commit -m "feat(lobby): 统一等待室(按模式渲染) + 1v1 也有一间
 - Modify: `scenes/beta_menu.gd`
 - Modify: `tests/smoke/menu_autotest.gd`
 - Modify: `tests/harness/rejoin_watcher.gd`（★ **本计划初稿漏了这个跨文件依赖**，见 Step 4）
+- Modify: `tests/probe/kh_l4_probe.gd`、`tests/probe/kh_l4_visual_probe.gd`、`tests/smoke/menu_autotest.gd`（★ **初稿全漏了** —— 三处都硬编码了主菜单的形状，见 Step 4b）
+- Modify: `scenes/mp_lobby.gd`（★ **初稿漏了** —— `_player_options()` 少 `"time"` 键，见 Task 3 那段）
 
 **Interfaces:**
 - Consumes: `scenes/mp_lobby.tscn`
@@ -1773,6 +1781,19 @@ const MENU_BTN_TEXT := "1 v 1"   # 与 main_menu.gd 的文案逐字一致
 `enter_mode` 在 Task 2 就删了。顺手改成描述**现在**的入口（`PvpSession.reset()` + 切到 `mp_lobby`）。
 ★ 它在本计划的 Task 7 清单里只按「脚本名匹配」出现（把 `matchmaking.gd` 换成 `mp_lobby.gd`），
 **与"按钮文案"是两件事** —— 别以为 Task 7 会替你改这个。
+
+- [ ] **Step 4b: 改三处硬编码了主菜单形状的探针（★ 初稿全漏）**
+
+本任务把联机入口从三颗收成一颗，下列三处**各自硬编码了旧形状**，不改就红：
+
+| 文件 | 硬编码了什么 | 怎么改 |
+|---|---|---|
+| `tests/probe/kh_l4_probe.gd` | 一条「主菜单**恰 1 处**指向 `royale_lobby.tscn`」的针 | 改指 `mp_lobby.tscn` |
+| `tests/probe/kh_l4_visual_probe.gd` | `MIN_MENU_BUTTONS`（按钮数下限）7 → **6**；它另有一个 `MATCHMAKING_SCENE` 常量指 `matchmaking.tscn`（**Task 7 删该场景后会红，见 Task 7 的清单**） | 下限改 6 |
+| `tests/smoke/menu_autotest.gd` 的 `--autotest-beta` | 它是 AGENTS.md 记着的既有回归探针，原本走 Beta 页 → 旧场景 | 同步改到 `mp_lobby`（先开建房弹层再数滑条） |
+
+★ 这三处的共同点:它们**今天都是对的**,所以不会有任何东西提醒你它们会过期 —— 派发前请按
+`grep -rn "royale_lobby\|team_lobby\|matchmaking\|MIN_MENU_BUTTONS" tests/ --include=*.gd` 自己扫一遍。
 
 - [ ] **Step 5: 跑自检**
 
@@ -1872,6 +1893,14 @@ const L5_FONT_FILES := ["res://ui/hud/royale_hud.gd", "res://scenes/mp_lobby.gd"
 - `tests/probe/lobby_visibility_probe.gd`：相⑤⑥⑦⑧⑨ 挂的页换成 `mp_lobby`；`_check_page` 那类的三页循环收敛成一页；相⑧ 的**次序断言与它的正向对照必须原样保留**（那是用一次全绿事故换来的）。
 - `tests/probe/rejoin_probe.gd` / `royale_bound_probe.gd` / `royale_c2_probe.gd` / `royale_soak_probe.gd` / `team_match_probe.gd`：场景路径换成 `mp_lobby.tscn`。
 - `tests/harness/*.gd`（5 个 watcher）：按脚本名匹配的地方换成 `mp_lobby.gd`。
+  ★★ **但 `rejoin_watcher` 只换名字是不够的**（Task 6 的实现者实测报回来的）—— 它是按**旧页接口**写的，
+  换名之后还会撞三处：`_attach_page_in` 仍 `load(matchmaking.tscn)`；`_find_row_button` 读
+  `_page.get("_list_box")` 而 `mp_lobby` **从不赋值这个成员**（它用 `_grid` + 卡片 meta）；
+  `on_create()` 直接调 `_on_create_pressed` 会撞 **null 的 `_create_panel`**。
+  ⇒ 这个文件要**按 `mp_lobby` 的接口重写那几处**，不是一次改名。它是**用户跑的真链路探针**（`rejoin_probe.sh`），
+  改完请让用户跑一次。
+- `tests/probe/kh_l4_visual_probe.gd`：它的 `MATCHMAKING_SCENE` 常量指 `matchmaking.tscn`，**删场景后会红**。
+  本任务（Task 7）的文件清单里原本**没有它** —— 一并改指 `mp_lobby.tscn`。
 - `server/lobby/room_manager.gd:43-45`、`scenes/pvp_match_client.gd:1073`：注释里的文件名。
 
 - [ ] **Step 8: 全量重跑（与 Step 1 同九条）**
