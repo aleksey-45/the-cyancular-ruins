@@ -418,7 +418,14 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	_check(not wc_src.contains("var _mag_state"), "weapon_component.gd 又声明了 _mag_state 残弹表")
 	_check(not wc_src.contains("_mag_state["), "weapon_component.gd 又在下标读写 _mag_state")
 	_check(not wc_src.contains("_mag_state."), "weapon_component.gd 又在调 _mag_state 的方法")
-	_check(pl_src.contains("weapons.tick(delta)"), "player.gd 不再每物理帧驱动 weapons.tick(delta)")
+	# ★ 2026-10-02 合并订正:原断言钉的是 `weapons.tick(delta)` **逐字**。KH 的时间玩法把这一行
+	#   改成 `weapons.tick(delta * tm)`(加速时开火/换弹节拍 ×tm)—— **意图一字未变**
+	#   (每物理帧由 delta 驱动武器 tick),只是实参带上了时间倍率。
+	#   故放宽到前缀 `weapons.tick(delta`:仍然钉住"由 delta 驱动、且是本文件在驱动"
+	#   (写死常数、换别的变量、或干脆不驱动,照样红)。
+	#   ★ 纪律:重构撞红源码级守卫时**改探针认新入口**,别回退生产代码(见 CLAUDE.md 的
+	#     「源码级探针」纪律)。
+	_check(pl_src.contains("weapons.tick(delta"), "player.gd 不再每物理帧驱动 weapons.tick(delta…)(带时间倍率的实参也算)")
 
 	# 运行时口:实例上真的能调到 tick
 	var inst: WeaponBase = wep.current_weapon()
