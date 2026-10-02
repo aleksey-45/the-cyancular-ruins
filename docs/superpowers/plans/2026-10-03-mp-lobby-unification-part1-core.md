@@ -1308,7 +1308,9 @@ func _player_options() -> Dictionary:
 		#    (`_beta_payload()`) **没有读者**:worker 只认 `player_options` 这一份。
 		#    漏掉的后果是**静默的**:Beta 局照常开局,但时间经济全为默认/空。
 		#    两个旧页都有它(`royale_lobby.gd:446` / `team_lobby.gd:433`)。
-		"time": time_rules.to_dict() if PvpSession.beta_mode else {},
+		# ★★ **但 1v1 必须排除**,理由见下 —— 它是一条**统一之后才出现的新路**。
+		"time": time_rules.to_dict() if (PvpSession.beta_mode
+				and _current_mode != PvpSession.MODE_PVP) else {},
 	}
 
 
@@ -1713,7 +1715,9 @@ git commit -m "feat(lobby): 统一等待室(按模式渲染) + 1v1 也有一间
 		get_tree().change_scene_to_file("res://scenes/mp_lobby.tscn"))
 ```
 
-返回数组改成 `[start_btn, multi_btn, settings_btn, ver_btn, beta_btn, quit_btn]`（浮현动画次序同步）。
+返回数组改成 `[start_btn, multi_btn, beta_btn, settings_btn, ver_btn, quit_btn]`——**次序 = 屏幕上的视觉次序**，
+而 `play_group` 是 `[start, multi, beta]`、`opt_group` 是 `[settings, ver]`、最后 `quit`。
+★ **本计划初稿把这个数组写成了 `[start, multi, settings, ver, beta, quit]`，与它自己上面那句「返回的数组同时是浮现动画的次序，两处必须一起改」的注释矛盾** —— 按初稿改，Beta 会比「设置/版本」更晚浮现（约 0.32s 的错位）。别忘了把 `play_group.add_child` 那行的次序也一起对齐。
 
 - [ ] **Step 2: 改 `beta_menu`**
 
