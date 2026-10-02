@@ -18,6 +18,7 @@
 - 搬完必须跑一次 `--import`（刷新 `.godot/` 里的 uid 缓存）。
 - 本项目约定「测试由用户自己跑」。**例外**：Task 1 建的守卫是**迁移的验证工具**（`-s`、不占端口、秒级），实施者每搬一步都要跑它才能知道自己有没有搬坏；其余场景探针/真链路脚本仍由用户跑。
 - 本 plan 的守卫判据是**文本** `PATH INTEGRITY: ALL-OK`，**不看退出码**（本仓既有纪律）。
+- ★ **所有改写脚本必须传 `newline="\n"`**。Python 的 `write_text()` 在 Windows 上默认 `newline=None` ⇒ 会把**每个 `\n` 写成 `\r\n`**，整个文件行尾全变。本仓 `.gitattributes` 是 `* text=auto eol=lf`，所以 git 提交时**会**把它归一回去（这正是它不容易被发现的原因）—— 但工作树会被弄脏、编辑器后续保存会再翻一次。**Task 2 实测踩到**，已把 `newline="\n"` 补进下面每一处 `write_text`。
 
 ## 执行顺序（★ 与下面的 Task 编号顺序**不同**）
 
@@ -217,6 +218,22 @@ git commit -m "test: 加路径一致性守卫(目录重构的前置安全网)"
 
 ### Task 2: `render/` 并入 `core/present/`
 
+> ✅ **已完成**（提交 `e5e6a16`，评审 Approved）。基线 `PATH INTEGRITY: ALL-OK（扫描 345 个文件，其中 .sh 11 个，跳过 0 个读不到）`。
+>
+> ★★ **下面 Step 3 的改写脚本不完整 —— 已实测踩到，Task 3~5 别照抄它的形状。** 两处缺口：
+> 1. **它只替换带斜杠的 `res://render/`，漏了不带斜杠的 `"res://render"`。** 那 6 处是**扫描根常量**
+>    （5 个探针的 `SCAN_ROOTS`/`ALL_DIRS` + 守卫自己）。这类根一旦指向不存在的目录，
+>    `ScanUtil.walk` 会**静默返回空** ⇒ 那些探针的源码级断言**悄悄少扫一批文件**，
+>    **不会有任何测试变红** —— 正是本仓最忌讳的失效形态。
+>    **咬住它的是 Task 1 的守卫**（Step 4 报 6 条红）。安全网第一次实战就还本了。
+> 2. **Step 7 的 `git add` 清单漏了 `tests`** ⇒ 那个提交自相矛盾（守卫在别人检出上必红）。
+>
+> ★ **那 6 处扫描根的正确改法是「删掉」，不是改成 `res://core/present`**：`ScanUtil.walk` 递归
+> （故 `res://core` 已覆盖 `core/present/`），而 `ScanUtil.collect` **没有去重**（`out.append` 干追加）
+> ⇒ 改成新路径会**重复收**同一批文件。评审已核实：删掉之后扫描集等价、**无静默缩小**。
+>
+> ★ Step 3 的脚本在 Windows 上会把文件写成 CRLF（已在 Global Constraints 记明，并全 plan 补 `newline="\n"`）。
+
 **Files:**
 - Move: `render/camera_2d.gd`(+`.uid`) → `core/present/camera_2d.gd`(+`.uid`)
 - Move: `render/post_process.gd`(+`.uid`) → `core/present/post_process.gd`(+`.uid`)
@@ -262,7 +279,7 @@ for r in roots:
         s = f.read_text(encoding="utf-8", errors="surrogateescape")
         if "res://render/" in s:
             f.write_text(s.replace("res://render/", "res://core/present/"),
-                         encoding="utf-8", errors="surrogateescape")
+                         encoding="utf-8", errors="surrogateescape", newline="\n")
             changed.append(str(f))
 print("改写文件数:", len(changed))
 for c in changed: print("  ", c)
@@ -397,7 +414,7 @@ for r in roots:
                 hits[k] = hits.get(k, 0) + s.count(k)
                 s = s.replace(k, mapping[k])
         if s != o:
-            f.write_text(s, encoding="utf-8", errors="surrogateescape")
+            f.write_text(s, encoding="utf-8", errors="surrogateescape", newline="\n")
 for k in keys:
     print(f"{hits.get(k,0):3}  {k}  ->  {mapping[k]}")
 PY
@@ -501,7 +518,7 @@ for r in roots:
                 hits[k] = hits.get(k, 0) + s.count(k)
                 s = s.replace(k, v)
         if s != o:
-            f.write_text(s, encoding="utf-8", errors="surrogateescape")
+            f.write_text(s, encoding="utf-8", errors="surrogateescape", newline="\n")
 for k in sorted(mapping):
     print(f"{hits.get(k,0):3}  {k}  ->  {mapping[k]}")
 PY
@@ -653,7 +670,7 @@ for r in roots:
         s = f.read_text(encoding="utf-8", errors="surrogateescape")
         t = fix(s)
         if t != s:
-            f.write_text(t, encoding="utf-8", errors="surrogateescape")
+            f.write_text(t, encoding="utf-8", errors="surrogateescape", newline="\n")
             changed.append(str(f))
 
 # 反向核对:每个被搬到新 bucket 的 stem,它的新路径必须真的存在
@@ -685,7 +702,7 @@ for d in ("smoke","probe","harness"):
         s = f.read_text(encoding="utf-8")
         t = s.replace('$(dirname "$0")/env.sh', '$(dirname "$0")/../env.sh')
         if t != s:
-            f.write_text(t, encoding="utf-8"); n += 1
+            f.write_text(t, encoding="utf-8", newline="\n"); n += 1
             print("fixed:", f)
 print("改写脚本数:", n)
 PY
@@ -764,7 +781,7 @@ def sub_tests(m):
     return f"tests/{d}/{stem}.{ext}" if d else m.group(0)
 
 s = re.sub(r'(?<!/)tests/([A-Za-z0-9_]+)\.([a-z]+)', sub_tests, s)
-p.write_text(s, encoding="utf-8")
+p.write_text(s, encoding="utf-8", newline="\n")
 print("done")
 PY
 ```
