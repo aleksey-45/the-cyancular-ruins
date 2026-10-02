@@ -911,13 +911,16 @@ const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "�
 
 - [ ] **Step 6: 验证零引用（关键：本仓纪律是"删了必须能证明真的没人读"）**
 
+**做法：把 grep 限定到「会真正执行的目录」，而不是在全仓上做排除法。**
+
 ```bash
-grep -rn 'WEAPON_NAMES' . 2>/dev/null \
-  | grep -v '/\.claude/' | grep -v '/\.godot/' | grep -v '\.superpowers/' | grep -v 'claude-md-full'
-# 期望：无输出
+grep -rn 'WEAPON_NAMES' core scenes server ui render tests tools 2>/dev/null | grep -v '\.uid:'
+# 期望：无输出（exit 1）
 ```
 
-**若还有输出**：那不是死常量，退回 Step 5，改为把该处的读取改问 `WeaponRegistry.name_of(id)`。
+★ **不要**写成全仓 grep 加 `grep -v '\.superpowers/'` 这类排除链 —— 那条链**永远排不掉本计划文档自身**：模式 `\.superpowers/` 只匹配**带前导点**的路径，而计划在 `docs/superpowers/plans/`（`superpowers` 前面没有点）。于是它会在 Task 7 自己的文字里命中一堆 `WEAPON_NAMES`（本 task 通篇在讲这个常量），让人误以为"还有人读"。**实测踩过**：本 task 的实现者拿到的就是 5 行命中，全部来自计划文档。
+
+**若代码面 grep 还有输出**：那不是死常量，退回 Step 5，改为把该处的读取改问 `WeaponRegistry.name_of(id)`。
 
 - [ ] **Step 7: 生成 `.uid` 并提交**
 
