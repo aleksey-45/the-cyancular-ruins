@@ -20,6 +20,7 @@
   python tools/crashlog_capture.py selftest       自检:验证事件查询与归档管线(不启动游戏)
 """
 import argparse, ctypes, datetime, hashlib, json, os, platform, shutil, subprocess, sys, tempfile, time
+from pathlib import Path
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARCHIVE = os.path.join(REPO, "gamelogs", "archive")   # 与启动器会话同树:监看器统一浏览 gamelogs/
@@ -162,8 +163,7 @@ def query_crash_events(start_dt, end_dt, names=None):
     tmp_ps = os.path.join(tempfile.gettempdir(), "clw_query.ps1")
     tmp_out = os.path.join(tempfile.gettempdir(), "clw_query.json")
     # 必须 utf-8-sig:PowerShell 5.1 读无 BOM 的 .ps1 会按系统码页(GBK)解析,中文正则会失效
-    with open(tmp_ps, "w", encoding="utf-8-sig") as f:
-        f.write(_PS_QUERY)
+    Path(tmp_ps).write_text(_PS_QUERY, encoding="utf-8-sig")
     if os.path.exists(tmp_out):
         os.remove(tmp_out)
     env = dict(os.environ,
@@ -190,8 +190,7 @@ def query_crash_events(start_dt, end_dt, names=None):
 def _run_ps(script, extra_env=None, out_file=None, timeout=120):
     """跑一段 PowerShell(落成带 BOM 的 .ps1,避免中文被按 GBK 解析);返回输出文件内容。"""
     tmp_ps = os.path.join(tempfile.gettempdir(), "clw_%d.ps1" % abs(hash(script)))
-    with open(tmp_ps, "w", encoding="utf-8-sig") as f:
-        f.write(script)
+    Path(tmp_ps).write_text(script, encoding="utf-8-sig")
     env = dict(os.environ, **(extra_env or {}))
     r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp_ps],
                        env=env, capture_output=True, timeout=timeout)
@@ -332,8 +331,7 @@ def archive_run(run, crash_events):
     rec = {"exe": run["exes"], "started_at": run["started"].strftime("%Y-%m-%d %H:%M:%S"),
            "ended_at": now_str(), "duration_s": round(run["duration"], 1),
            "logs": copied, "crash": crash}
-    with open(os.path.join(folder, "run.json"), "w", encoding="utf-8") as f:
-        json.dump(rec, f, ensure_ascii=False, indent=2)
+    Path(folder, "run.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
     # 中文 report.txt:与启动器会话(capture_session.ps1)同格式,监看器统一展示
     dur_s = int(run["duration"])
     dur_txt = "%d小时%d分%d秒" % (dur_s // 3600, (dur_s // 60) % 60, dur_s % 60)
@@ -358,8 +356,7 @@ def archive_run(run, crash_events):
         r2 += " [OK] 正常结束:Windows 事件日志中未发现本次运行的崩溃记录。\r\n"
     r2 += "【问题清单】\r\n"
     r2 += " (后台看守无 stdout/stderr 重定向;如需原文级捕获,请用 start_game_logged.bat 启动)\r\n"
-    with open(os.path.join(folder, "report.txt"), "w", encoding="utf-8-sig", newline="") as f:
-        f.write(r2)
+    Path(folder, "report.txt").write_text(r2, encoding="utf-8-sig", newline="")
 
     tag = "崩溃" if crash else "正常"
     log("%s | %s | %.1fs | 日志 %d 份%s" % (tag, ", ".join(run["exes"]), run["duration"],
@@ -398,8 +395,7 @@ def prune_runs():
 # ---------------------------------------------------------------- watch
 def watch(interval, duration):
     os.makedirs(ARCHIVE, exist_ok=True)
-    with open(PIDFILE, "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
+    Path(PIDFILE).write_text(str(os.getpid()), encoding="utf-8")
     log("看守启动: pid=%d 匹配进程前缀 %s;每 %.1fs 轮询" % (os.getpid(), EXE_PREFIXES, interval))
     start_all = time.time()
     active = None
