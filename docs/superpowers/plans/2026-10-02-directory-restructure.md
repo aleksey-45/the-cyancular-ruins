@@ -19,6 +19,9 @@
 - 本项目约定「测试由用户自己跑」。**例外**：Task 1 建的守卫是**迁移的验证工具**（`-s`、不占端口、秒级），实施者每搬一步都要跑它才能知道自己有没有搬坏；其余场景探针/真链路脚本仍由用户跑。
 - 本 plan 的守卫判据是**文本** `PATH INTEGRITY: ALL-OK`，**不看退出码**（本仓既有纪律）。
 - ★ **所有改写脚本必须传 `newline="\n"`**。Python 的 `write_text()` 在 Windows 上默认 `newline=None` ⇒ 会把**每个 `\n` 写成 `\r\n`**，整个文件行尾全变。本仓 `.gitattributes` 是 `* text=auto eol=lf`，所以 git 提交时**会**把它归一回去（这正是它不容易被发现的原因）—— 但工作树会被弄脏、编辑器后续保存会再翻一次。**Task 2 实测踩到**，已把 `newline="\n"` 补进下面每一处 `write_text`。
+- ★★ **守卫有一个已知盲区：拆串路径它测不到。** 形如 `"res://server/" + "match_host.gd"` 的写法，守卫的正则只取第一个字面量 ⇒ 削成 `res://server/`（**目录仍然存在**）⇒ 通过；而映射表的键是完整路径 ⇒ 也匹配不到。**两个网都漏，且不会有任何测试变红。**
+  **每个搬迁 task 都必须自己扫一遍这个形态**（Task 4 的 Step 3b 有现成命令，Task 3 与 Task 5 同理）。全仓实测共 18 处，分布 5 个文件，其中**只有**引用 `res://server/` 的那 5 处会受剩余搬动影响（`res://tests/` 的拆串为 0）。
+  ⚠️ 其中部分拆串是**负向断言**（断言某字符串**不该**出现），**必须保持原样** —— 看到拆串先判它是"活的引用"还是"负向断言"。
 
 ## 执行顺序（★ 与下面的 Task 编号顺序**不同**）
 
@@ -330,6 +333,23 @@ git commit -m "refactor(dir): render/ 并入 core/present/(职责本就是一回
 
 ### Task 3: `ui/` 拆成 `factory/ hud/ screens/`
 
+> ✅ **已完成**（提交 `6e6c096`，66 文件 = 45 renames + 21 edits，评审 Approved）。守卫跑前跑后都 `ALL-OK（扫描 345 个文件）`。
+>
+> ★★ **本轮发现了守卫的一个盲区 —— 修前守卫是绿的。** `tests/kh_l6_probe.gd` 里有 5 处**拆串**路径
+> （`"res://ui/" + "pause_menu.gd"` 这种）：Step 3 的映射表键是完整路径 ⇒ 匹配不到；
+> 守卫的正则只取第一个字面量 ⇒ 削成 `res://ui/`，而**那个目录仍然存在** ⇒ 通过。
+> **两个网都漏，且不会有任何测试变红** —— 漏掉的话 `kh_l6` 约 6 条断言会在运行时 FAIL。
+> 这个形态不是偶然：`kh_l6_probe.gd:25-27` 自己写着「本探针要找的字面量一律用 `"前" + "后"` 碎片拼出来」
+> —— 那些探针**故意**绕开字面量扫描。细节见 Global Constraints 的拆串条目。
+>
+> ★ **Step 5 的"期望：无输出"写错了**（实测 7 行）。成因与 Task 7 Step 6 同款：我按**干净检出**写期望，
+> 而本机工作树有 `.superpowers/`（其 `.gitignore` 是 `*`）与 `_crashtest/`（101MB 未跟踪），
+> 两者都不被跟踪、也不在任何扫描根下 ⇒ **忽略是对的，不必去删**。
+>
+> 另记：我派活时说「9 个 `.tscn` 每个都有指向自己脚本的 `ext_resource path=`」—— **错的，实际只有 6 个**
+> （`kill_counter.tscn` 没有任何 `ext_resource`；`sp_launch_panel`/`version_panel` 只有 `FontFile`）。
+> 9 个都按各自的实际情况处理对了。
+
 **Files:**
 - Create dirs: `ui/factory/`, `ui/hud/`, `ui/screens/`
 - Move: 27 个文件（+ 各自 `.uid`）按 Step 1 的表
@@ -523,6 +543,37 @@ for k in sorted(mapping):
     print(f"{hits.get(k,0):3}  {k}  ->  {mapping[k]}")
 PY
 ```
+
+- [ ] **Step 3b: 处理**拆串**路径（★ 守卫**测不到**这一类，漏了不会有任何测试变红）**
+
+本仓有一类路径写法把字符串**拆成多段拼接**，常用于**故意绕开字面量扫描**（那些探针自己就是扫源码文本的）：
+
+```gdscript
+const MH_PATHS := ["res://server/" + "match_host.gd", …]
+```
+
+**为什么守卫抓不到它**：守卫的正则只认单个字符串字面量，于是 `"res://server/" + "match_host.gd"` 被削成 `res://server/` —— 那是个**仍然存在的目录** ⇒ `_exists_any` 通过 ⇒ **不报红**。而 Step 3 的映射表键是**完整路径**（`res://server/match_host.gd`），也匹配不到这种分段写法。**两个网都漏。**
+
+**先扫一遍**（这是本 task 必须自己做的，不要只看已知清单）：
+
+```bash
+grep -rn '"res://server/[^"]*"\s*+\s*"' --include=*.gd --include=*.tscn . 2>/dev/null \
+  | grep -v '/\.claude/' | grep -v '/\.godot/' | grep -v '_crashtest' | grep -v '\.superpowers/'
+```
+
+**已知必改的 5 处**：`tests/kh_l6_probe.gd` 的 `MH_PATHS` 常量 —— 它的 5 个条目全是 `"res://server/" + "match_*.gd"`，而这 5 个文件**全部**进 `server/match/`：
+
+```gdscript
+# 改法:把目录前缀移进第一段,拆串形状原样保留(别合并成一个字符串 —— 那些常量
+# 存在的意义就是让自查探针的字面量扫描扫不到)
+const MH_PATHS := ["res://server/match/" + "match_host.gd", "res://server/match/" + "match_round.gd",
+		"res://server/match/" + "match_combat.gd", "res://server/match/" + "match_snapshot.gd",
+		"res://server/match/" + "match_state.gd"]
+```
+
+**改完再扫一次确认零输出**，然后才进 Step 4。
+
+★ **注意区分**：有些拆串是**反向断言**（断言"这个字符串**不该**出现"），例如 `tests/kh_l4_probe.gd` 里那条关于已退役 `esc_menu` 的。那些**必须保持原样** —— 看到一个拆串先判它是"活的路径引用"还是"负向断言"，再决定动不动。
 
 - [ ] **Step 4: 跑守卫 + 确认 `server_main` 两个路径没被动**
 
