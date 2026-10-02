@@ -90,7 +90,7 @@ extends Node
 #   不需要 socket、不需要 worker(与 lobby_visibility_probe 同款)。
 # ★ 断言计数:ALL-OK 只证明"没有一条断言失败",不证明"该跑的都跑过"(见 tests/lib/probe_base.gd
 #   文件头)。少跑一条就红 —— 改本探针必须同步改这个数。
-const EXPECTED_CHECKS := 16
+const EXPECTED_CHECKS := 20
 
 const P_HOST := 201
 const P_OTHER := 202
@@ -322,7 +322,9 @@ func _host_name_of(role: int, roster: Array) -> String:
 
 
 # 3v3 的三档人数:{1: A 队, 2: B 队, 0: 未选边}。
-# ★ 键一律**字符串**(JSON/RPC 往返后 int 键会变字符串);读端用 `str(k)` 取。
+# ★ 键一律**字符串**,读端用 `str(k)` 取。它是**刻意的约定**,不是因为类型会丢 ——
+#   本仓的 RPC 走二进制 Variant 编码,int 键其实能活下来(初稿的注释写成"JSON 往返后会变
+#   字符串",那句是错的:这条链路上没有 JSON)。
 func _team_counts_of(tr: TeamRoom) -> Dictionary:
 	var counts := {"1": 0, "2": 0, "0": 0}
 	for role in tr.player_role.values():
@@ -348,8 +350,10 @@ func _team_counts_of(tr: TeamRoom) -> Dictionary:
 
 ```gdscript
 # 客户端 → 大厅:房主上报本房的地图(仅用于**列表展示**)。
-# ★ 静默丢弃的三种情况都不回话、不踢人:找不到房 / caller 不是房主 / 空房。
+# ★ 静默丢弃的**两种**情况都不回话、不踢人:找不到房 / caller 不是房主。
 #   回话没有意义(客户端无从处理),踢人更没道理(可能只是建完房还没同步完)。
+# ★ 刻意**不**判"房是空的":写一个展示字段无害,而多一个分支就多一条没人测的路径
+#   (初稿的注释曾声称这里判了空房 —— 一句与代码不符的注释,别照它读)。
 func on_room_map(caller: int, code: String, path: String) -> void:
 	var r: Variant = _room_any(code)
 	if r == null:
@@ -414,7 +418,7 @@ func room_map(code: String, path: String) -> void:
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/lobby_payload_probe.tscn
 ```
 
-期望：`LOBBY PAYLOAD PROBE: ALL-OK(16 条断言)`。
+期望：`LOBBY PAYLOAD PROBE: ALL-OK(20 条断言)`。
 
 - [ ] **Step 9: 回归既有大厅探针（必须仍绿）**
 
