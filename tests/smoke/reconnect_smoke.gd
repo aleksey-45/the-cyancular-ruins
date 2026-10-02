@@ -270,9 +270,13 @@ func _check_rejoin_lifecycle(ses: String) -> void:
 	#   原先那套(主菜单三个按钮走 `enter_mode`)随合一整体删除,别再加回来。
 	var nr := _func_body(ses, "note_room")
 	_check(not nr.is_empty(), "★ PvpSession 缺 note_room()(记房号 + 记模式的唯一入口)")
-	_check(nr.contains("code != room_code") and nr.contains("mode != room_mode"),
-			"★ note_room() 必须「换了房号**或换了模式** ⇒ 清掉凭据」——漏掉模式那一半 ="
-			+ "同号的另一模式房被当成我的房")
+	# ★ 四条缺一不可:承重的是**清凭据**那一条 —— 少了它,一个
+	#   `if code != room_code or mode != room_mode: pass` 的实现能过另外三条,而"清凭据"全仓只有这里守。
+	_check(nr.contains("code != room_code") and nr.contains("mode != room_mode")
+			and nr.contains("clear_rejoin()") and nr.contains("room_code = code"),
+			"★ note_room() 必须「换了房号**或换了模式** ⇒ **清掉凭据**、再把新房号/模式记上」——"
+			+ "漏掉模式那一半 = 同号的另一模式房被当成我的房;漏掉 clear_rejoin() = 承重的「清凭据」"
+			+ "行为无人守(`if …: pass` 的实现能过前三条)")
 	_check(nr.contains("room_mode = mode"), "★ note_room() 必须把模式记进 room_mode")
 	var crt := _func_body(ses, "can_rejoin_to")
 	_check(crt.contains("room_code == code") and crt.contains("room_mode == mode"),
@@ -284,9 +288,13 @@ func _check_rejoin_lifecycle(ses: String) -> void:
 func _check_rejoin_ui_wiring() -> void:
 	var mm := _code(_read(MAIN_MENU))
 	_check(not mm.is_empty(), "读不到 %s" % MAIN_MENU)
-	# 主菜单那颗「多 人 模 式」必须走 reset()(每次进页复位 role/spawn/地址),
+	# 主菜单那三个联机按钮必须**各按各的**走 reset()(每次进页复位 role/spawn/地址),
 	# 而 reset() **不得**碰凭据 —— 那四行 2026-09-22 删掉的纪律原样成立。
-	_check(mm.contains("PvpSession.reset()"), "★ 主菜单联机入口未走 PvpSession.reset()")
+	# ★ 判据限定在 `_build_menu_buttons` 的函数体内、且要求**至少三处**:只判整个文件(去注释后)
+	#   的 `contains("PvpSession.reset()")` 时,三个按钮里**去掉两个**的 reset() 照样全绿
+	#   —— 而判词却写着"主菜单联机入口未走 reset()"。
+	var btns := _func_body(mm, "_build_menu_buttons")
+	_check(btns.count("PvpSession.reset()") >= 3, "★ 主菜单三个联机入口未各走一次 PvpSession.reset()")
 	_check(not mm.contains("PvpSession.enter_mode("), "★ 主菜单仍在调已删除的 enter_mode()")
 
 	var lp := _code(_read(LOBBY_PAGE))

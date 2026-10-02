@@ -47,6 +47,11 @@ const MODE_TEAM := "team"
 # (`note_room(code, mode)`)。三张注册表的房号空间共用这个前提一个字没变 ⇒ 判据必须留着。
 static var room_mode: String = ""
 
+# 进大厅时预选的**筛选**模式(Beta 页写、统一大厅读)。空串 = 不预选(从主菜单直接进来)。
+# ★★ 它**不是** `room_mode` —— 那个是**凭据**的模式,`can_rejoin_to()` 拿它判"这一行是
+#   不是我的房"。两个量语义不同,别合并。
+static var entry_mode: String = ""
+
 
 # 手里还攥着**某一局**的凭据吗?(粗判据:三个字段齐。)
 static func can_rejoin() -> bool:
@@ -130,8 +135,8 @@ static func note_room(code: String, mode: String) -> void:
 #   回局直接冲突**:回局要求"回到**同一台**服务器上的原局",而每按一次主菜单按钮就把地址
 #   打回云默认 ⇒ 自建服的玩家再进大厅页时,地址框是云的、**他那间房根本不在列表里**,
 #   表现与他刚被修掉的那个 bug 一模一样。
-#   ★ 更坏的是**真链路探针在结构上看不见这一条**:`rejoin_watcher` 恰恰因为**主菜单那颗
-#     『多 人 模 式』按钮**会重置地址,才手动把它改回探针自己的 29300 ⇒ 探针全绿而自建服不可用。
+#   ★ 更坏的是**真链路探针在结构上看不见这一条**:`rejoin_watcher` 恰恰因为**主菜单那三个
+#     联机按钮**会重置地址,才手动把它改回探针自己的 29300 ⇒ 探针全绿而自建服不可用。
 #   ⇒ 现在的语义是"大厅页记得你**这次会话**上一次用的服务器"。跨会话的持久化是另一件事
 #     (`Settings` 里没有地址字段,未做)。★ 别再把这行加回来,除非同时给回局换一条路。
 static func reset() -> void:
@@ -139,3 +144,4 @@ static func reset() -> void:
 	map_path = ""
 	spawn = Vector2i(-1, -1)
 	beta_mode = false   # 时间玩法(Beta)来源标记:只有主菜单 Beta 页进来才置真(见 beta_menu)
+	entry_mode = ""     # 进大厅的**筛选**模式:每次进页预选复位(与**凭据**的 room_mode 无关)
