@@ -7,6 +7,7 @@ extends Control
 const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
 	"charge": "冲刺", "attack": "开火", "R": "重开(单机)",
+	"F": "拾取", "Q": "丢弃(长按)",
 }
 
 var _capturing_action := ""      # 正在等待捕获新键位的动作(""=不在捕获态)

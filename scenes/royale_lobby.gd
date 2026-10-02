@@ -9,8 +9,6 @@ extends LobbyPage
 # 连接状态机 / 转连 worker / 按钮工厂都在基类 `LobbyPage` 里(与 1v1 匹配页共用)——
 # 本文件只留大乱斗的差异:版式、建房与等待室两个面板、房间态渲染、超时梯顺序。
 
-const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹"}
-
 var _code_edit: LineEdit        # 房间号(加入)
 var _invite_edit: LineEdit      # 邀请码(私密房加入)
 var _royale_ack := true       # 建房/加入后是否已收到服务器 royale_room_state
