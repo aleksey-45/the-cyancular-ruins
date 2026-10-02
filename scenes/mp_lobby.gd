@@ -43,11 +43,17 @@ var _got := {"pvp": false, "royale": false, "team": false}
 # 刚发出的加入请求的房号(1v1 的 `room_joined` 载荷只有 role,拿不到房号,只能靠它暂存)。
 # ★★ 漏了给它赋值 = **两条**真缺陷:①`_current_mode` 停在空串 ⇒ `_enter_match_scene()`
 #    落进 else ⇒ 1v1 的加入者被送进错场景;②`note_room()` 从不被调用 ⇒ 自己那间房永远是灰的。
-# ★ 模式未知的加入(`_mode == ""`)会**同时问三张表**,只有一间存在 ⇒ 其余几句「房间不存在」
-#   是预期噪音,由 `_swallow_absent` 吞掉不显示。
 var _join_pending := ""
+
+# 「模式未知 ⇒ 三张表都问一次」这一次尝试还在飞。
+# ★★ 三张表里**只有一间**存在,另两张表必然回「房间不存在」(或「房间已满」)——
+#    那是**预期噪音**:既不显示、也**不花掉**那次自动刷新额度(`_auto_refreshed`)。
+# ★★ 关闸只能靠 `_multi_left` 数**应答条数**,不能靠"任一正向应答就收尾":
+#    1v1 的 `join_room` 成功是**立即**回的,而 royale/team 是 `call_deferred` + `await` ⇒
+#    正向一到就关闸,那两张表稍后到的 absent 会漏出去触发一次刷新 —— 后果不是"多一条提示",
+#    而是**那一次性额度被花掉**:之后第一张**真**陈旧卡片被拒时反而**不会**自动刷新了。
 var _probe_multi_join := false
-var _absent_hits := 0              # 这一次多表尝试还能吞掉几句「房间不存在」(用完即复位)
+var _multi_left := 0               # 这一次尝试里**还没被认领**的应答数(起手 = 3 个请求)
 
 # 「点了看起来未满却已满」后**只自动刷新一次**(手动刷新/重启本机服会放开闸门)。
 var _auto_refreshed := false
@@ -465,8 +471,7 @@ func _on_room_created(code: String) -> void:
 	PvpSession.note_room(code, _current_mode)
 	_ack = true
 	_sent_ms = 0
-	_probe_multi_join = false
-	_absent_hits = 0
+	_claim_multi_reply()
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 
 
@@ -481,8 +486,9 @@ func _on_room_joined(role: int) -> void:
 		_join_pending = ""
 	_ack = true
 	_sent_ms = 0
-	_probe_multi_join = false
-	_absent_hits = 0
+	# ★ 只是**认领一格**,不是"多表尝试到此为止" —— 另两张表的 absent 还在路上
+	#   (`join_room` 立即回,royale/team 是 call_deferred + await)。见 `_probe_multi_join`。
+	_claim_multi_reply()
 	_status.text = "已加入,等待开战……"
 
 
@@ -492,8 +498,7 @@ func _on_room_state_royale(state: Dictionary) -> void:
 	_join_pending = ""
 	_ack = true
 	_sent_ms = 0
-	_probe_multi_join = false
-	_absent_hits = 0
+	_claim_multi_reply()
 	_status.text = "已进入大乱斗房间 %s,等待开局…" % str(state.get("code", ""))
 
 
@@ -503,28 +508,31 @@ func _on_room_state_team(state: Dictionary) -> void:
 	_join_pending = ""
 	_ack = true
 	_sent_ms = 0
-	_probe_multi_join = false
-	_absent_hits = 0
+	_claim_multi_reply()
 	_status.text = "已进入 3v3 房间 %s,等待选边/开局…" % str(state.get("code", ""))
 
 
 # 大厅文本播报。
-# ★ 模式未知的加入会同时问三张表(见 `_join_code`),只有一间存在 ⇒ 另几句「房间不存在」
-#   是**预期噪音**,吞掉不显示(否则玩家会看到一句与自己那间房无关的拒绝)。
-# ★ 「房间已满 / 房间不存在」还多一层:**陈旧卡片**——列表不刷新就一直挂着那几间。
-#   提示并**自动刷新一次**(只一次;手动刷新/重启本机服会放开闸门,见 `_on_refresh_pressed`)。
+# ★★ 收到**任何**一句服务端文案,就证明"它回了" ⇒ 一律解除 8 秒兜底(`_ack` / `_sent_ms`)。
+#    兜底的语义是「服务器**一个字都没回**」;枚举白名单是替一个不需要枚举的东西枚举 ——
+#    漏一条(「邀请码错误」「你已经在房间里了」「该房间的对局已进行中,无法加入」…)就会让
+#    8 秒后 `_process` 把**真拒绝**覆盖成「地址不通/服务器不是最新版」,玩家看到的是
+#    与实情相反的解释。
+# ★ 「模式未知的三连发」里的拒绝是**预期噪音**(三张表只有一间存在):吞掉、**不显示也不刷新**
+#    —— 刷新额度是一次性的,被噪音花掉 = 之后那第一张**真**陈旧卡片被拒时反而不会自动刷新。
+# ★ 非多表尝试时「房间已满 / 房间不存在」仍走旧 1v1 的行为:提示并**自动刷新一次**
+#   (列表不刷新就一直挂着那几间;闸门由 `_auto_refreshed` 把着)。
 func _on_server_message(t: String) -> void:
 	if LocalServer.restarting:
 		return
+	_ack = true
+	_sent_ms = 0
 	if _swallow_absent(t):
+		_claim_multi_reply()
 		return
 	if t == "房间已满" or t == "房间不存在":
-		# 服务端已明确应答 ⇒ 停掉加入兜底;那间房与我无关,别留给下一次的成功信号(I1)。
+		# 服务端已明确应答 ⇒ 那间房与我无关,别留给下一次的成功信号(I1)。
 		_join_pending = ""
-		_ack = true
-		_sent_ms = 0
-		_probe_multi_join = false
-		_absent_hits = 0
 		if not _auto_refreshed:
 			# ★ 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,栈内立刻
 			#   NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误。
@@ -535,25 +543,29 @@ func _on_server_message(t: String) -> void:
 	elif t.begins_with("配对已取消"):
 		# 已入房后房主/对端掉线被大厅取消:房间已不在,直接刷新恢复可操作(不叠加闸门)。
 		_join_pending = ""
-		_ack = true
-		_sent_ms = 0
 		_request_list.call_deferred("配对已取消(对手离开)——已刷新列表,请重选")
 	else:
 		_status.text = t
 
 
-# 「模式未知的三连发」造成的「房间不存在」是预期噪音,吞掉。
-# ★ 它必须在**一次多表尝试结束后复位** —— 否则之后任何一句「房间不存在」(比如确定模式下
-#   点了张陈旧卡片)都会被误吞:玩家看不到拒绝、卡还挂着,而**一行报错都没有**。
-#   三条复位路径:①任一正向应答(建房/加入成功/房间状态);②`_absent_hits` 用完
-#   (三张表全部答不存在);③8s ack 超时(见 `_process`)。
+# 「模式未知的三连发」回来的应答是不是**预期噪音**?(三张表只有一间存在。)
+# ★ 调用方(`_on_server_message`)**吞掉它之后还要认领一格**(`_claim_multi_reply`)——
+#   顺序不能反:认领可能当场关掉闸门,那时这一句就不该再被吞。
 func _swallow_absent(t: String) -> bool:
-	if not _probe_multi_join or t != "房间不存在":
-		return false
-	_absent_hits -= 1
-	if _absent_hits <= 0:
+	return _probe_multi_join and (t == "房间不存在" or t == "房间已满")
+
+
+# 多表尝试期间:每收到**一条**服务端应答就认领一格,认领完即关闸。
+# ★★ 闸门由**应答条数**关,不由"任一正向应答"关 —— 1v1 的 `join_room` 成功是**立即**回的,
+#    而 royale/team 是 `call_deferred` + `await`:正向一到就关闸,那两张表稍后到的 absent
+#    会漏出去、误触发一次自动刷新(一次性额度被噪音花掉,之后真拒绝时反而不会刷新)。
+# ★ 另两条关闸路径:8s 一个字都没回(见 `_process`)、以及下一次加入开始时重设。
+func _claim_multi_reply() -> void:
+	if not _probe_multi_join:
+		return
+	_multi_left -= 1
+	if _multi_left <= 0:
 		_probe_multi_join = false
-	return true
 
 
 # ── 加入 ────────────────────────────────────────────────────────────
@@ -601,8 +613,10 @@ func _build_join_panel() -> void:
 
 
 # 加入某房间号。★ 模式未知(从"全部"列表点的、或手敲房号)时,三张表**都试一次**:
-#   三次请求里只有一间存在,其余两句「房间不存在」由 `_on_server_message` 吞掉不显示
-#   (见 `_swallow_absent`)。
+#   三张里只有一间存在,另外那两张表的「房间不存在 / 房间已满」是**预期噪音** ——
+#   由 `_on_server_message` 经 `_swallow_absent` 吞掉(**不显示、也不花掉自动刷新额度**),
+#   每吞一条认领一格(`_claim_multi_reply`),认领满三格才关闸。
+#   ★ 注意 1v1 那条成功应答**不会**提前关闸 —— 理由见 `_probe_multi_join` 的字段注释。
 # ★ `invite` 是**可选第三参**:私密房不在列表里,邀请码是加入它的唯一途径(设计 §3.2);
 #   卡片按下那条路只传前两参(它本来就不该带邀请码)。
 func _join_code(code: String, mode: String, invite: String = "") -> void:
@@ -617,7 +631,7 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 		#   ② 模式未知时三张表都问一次;③ invite 必须真的传下去(私密房的唯一途径)。
 		_join_pending = code
 		_probe_multi_join = mode == ""
-		_absent_hits = 3 if _probe_multi_join else 0
+		_multi_left = 3 if _probe_multi_join else 0
 		_status.text = "加入房间 %s,等待配对…" % code
 		if mode == PvpSession.MODE_ROYALE:
 			NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode)
@@ -676,9 +690,9 @@ func _process(_delta: float) -> void:
 	_tick_lobby_connect_timeout()
 	if not _ack and _sent_ms > 0 and Time.get_ticks_msec() - _sent_ms > 8000:
 		_sent_ms = 0
-		# 8s 无应答 ⇒ 这一次加入到此为止,多表吞噪音的闸门一并复位(见 `_swallow_absent`)。
+		# 8s **一个字都没回** ⇒ 这一次加入到此为止,多表闸门一并复位(见 `_claim_multi_reply`)。
 		_probe_multi_join = false
-		_absent_hits = 0
+		_multi_left = 0
 		_status.text = "8 秒无响应——地址不通,或该服务器不是最新版(开服方请用最新服务端)"
 
 
