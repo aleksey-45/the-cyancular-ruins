@@ -68,6 +68,8 @@ func _enter_tree() -> void:
 	# 3v3 的**第六条**上行归本类(其余五条 team_create/join/pick/leave/list 在 LobbyRooms)
 	# —— 与大乱斗逐字同款的分工:账本接 royale_list,编排接 royale_start。
 	NetBusExt.team_start_requested.connect(team_start)
+	# 统一大厅:房主上报地图(只写房记录的展示字段,不拉 worker、不碰对局)
+	NetBusExt.room_map_requested.connect(lobby.on_room_map)
 
 
 func _exit_tree() -> void:

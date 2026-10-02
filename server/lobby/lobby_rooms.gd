@@ -44,6 +44,10 @@ class Room:
 	# `players` 会空掉、`_peer_names` 会被擦掉 —— 对局中房间的列表渲染**只能**读这一份
 	# (否则第三人看到的是"玩家, 玩家")。冻结点在 RoomManager 的四处开局。
 	var roster: Array = []
+	# 房主上报的地图(`room_map` RPC 写；仅用于**列表展示**)。空串 = 随机/未上报。
+	# ★ 它与真正定图的 `player_options.map`(报到那一刻 worker 取 role1 那份)是**两个真值** ——
+	#   房主建房后改设置会让两者不一致(设计 §6 第 3 条,已知边界)。
+	var map := ""
 
 var rooms: Dictionary = {}   # code -> Room
 var _peer_names: Dictionary = {}   # peer id -> 昵称(客户端连上大厅时上报,列表/建房展示)
@@ -69,6 +73,10 @@ class RoyaleRoom:
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超龄清理用,与 Room.created_at 同形)
 	# 开局那一刻冻结的名单 [{role:int, name:String}](理由见 Room.roster 的注释)
 	var roster: Array = []
+	var map := ""
+	# 一局限时(秒)。由 `royale_create` 的 opts 带入(仅用于列表展示;权威仍是
+	# `player_options.match_time` —— 同一处两真值问题,见 Room.map 的注释)。
+	var match_time := 0
 
 var royale_rooms: Dictionary = {}   # code -> RoyaleRoom
 
@@ -93,6 +101,7 @@ class TeamRoom:
 	var created_at := 0.0
 	# 开局那一刻冻结的名单 [{role:int, name:string}](理由见 Room.roster 的注释)
 	var roster: Array = []
+	var map := ""
 
 var team_rooms: Dictionary = {}   # code -> TeamRoom
 
@@ -188,7 +197,15 @@ func room_list_payload() -> Array:
 			for peer_id in room.players:
 				names.append(_peer_names.get(peer_id, "玩家"))
 			count = room.players.size()
-		arr.append({"code": code, "players": count, "names": names, "in_match": room.started})
+		# host 取 `players[0]`(create_room 的 caller = 建房者);已开局 players 已空,
+		# 退回 roster 第一条。is_public 恒 true(1v1 没有私密房这条路径)。
+		var host_name := "玩家"
+		if not room.players.is_empty():
+			host_name = str(_peer_names.get(room.players[0], "玩家"))
+		elif not room.roster.is_empty():
+			host_name = str((room.roster[0] as Dictionary).get("name", "玩家"))
+		arr.append({"code": code, "players": count, "names": names, "in_match": room.started,
+				"is_public": true, "host": host_name, "map": room.map})
 	return arr
 
 
@@ -455,6 +472,9 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 		rr.invite_code = _generate_code()   # 私密未填码 → 自动生成
 	var n := int(opts.get("max_players", ROYALE_DEFAULT_MAX))
 	rr.max_players = clampi(n, ROYALE_MIN_PLAYERS, ROYALE_MAX_PLAYERS)
+	# 列表要显示限时 ⇒ 建房这一刻就得知道它。★ 与 `_player_options` 那份是**两个真值**
+	# (权威仍是报到时 role1 那份),见 Room.map 的注释。
+	rr.match_time = int(opts.get("match_time", 0))
 	rr.options = {
 		"round_full_heal": bool(opts.get("round_full_heal", false)),
 		"disabled_weapons": opts.get("disabled_weapons", []),
@@ -550,7 +570,9 @@ func royale_list_payload(token: String = "") -> Array:
 			for e in rr.roster:
 				dn.append(str((e as Dictionary).get("name", "玩家")))
 			arr.append({"code": code, "players": rr.roster.size(), "max_players": rr.max_players,
-					"names": dn, "in_match": true, "beta": rr.beta})
+					"names": dn, "in_match": true, "beta": rr.beta,
+					"is_public": rr.is_public, "host": _host_name_of(_room_host_role(rr), rr.roster),
+					"map": rr.map, "match_time": rr.match_time})
 			continue
 		if rr.players.is_empty():
 			continue
@@ -558,7 +580,9 @@ func royale_list_payload(token: String = "") -> Array:
 		for peer_id in rr.players:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": code, "players": rr.players.size(),
-				"max_players": rr.max_players, "names": names, "in_match": false, "beta": rr.beta})
+				"max_players": rr.max_players, "names": names, "in_match": false, "beta": rr.beta,
+				"is_public": rr.is_public, "host": str(_peer_names.get(rr.host_peer, "玩家")),
+				"map": rr.map, "match_time": rr.match_time})
 	return arr
 
 
@@ -729,6 +753,33 @@ func team_leave(caller: int) -> void:
 			_broadcast_team_state(tr)
 
 
+# 已开局的房:host_role 由 player_role[host_peer] 得来,再从 roster 里按 role 取名。
+# ★ roster 是 [{role, name}](开局那一刻冻结);成员转连 worker 后 players/_peer_names 都会空,
+#   对局中的房**只能**读这一份(否则第三人看到的是「玩家」)。
+func _room_host_role(rr) -> int:
+	if rr is RoyaleRoom or rr is TeamRoom:
+		return int(rr.player_role.get(rr.host_peer, 0))
+	return 0
+
+
+func _host_name_of(role: int, roster: Array) -> String:
+	for e in roster:
+		if typeof(e) == TYPE_DICTIONARY and int((e as Dictionary).get("role", 0)) == role:
+			return str((e as Dictionary).get("name", "玩家"))
+	return "玩家"
+
+
+# 3v3 的三档人数:{1: A 队, 2: B 队, 0: 未选边}。
+# ★ 键一律**字符串**(JSON/RPC 往返后 int 键会变字符串);读端用 `str(k)` 取。
+func _team_counts_of(tr: TeamRoom) -> Dictionary:
+	var counts := {"1": 0, "2": 0, "0": 0}
+	for role in tr.player_role.values():
+		var t := int(tr.team_of.get(int(role), 0))
+		var k := str(t if t == 1 or t == 2 else 0)
+		counts[k] = int(counts[k]) + 1
+	return counts
+
+
 # 3v3 房间列表的**纯构造**(与 royale_list_payload 逐字同款,`max_players` 取 TEAM_ROLES;
 # `token` 那一档的来历与理由也见它 —— 私密房只对本人列出,B1 甲案)
 func team_list_payload(token: String = "") -> Array:
@@ -743,7 +794,9 @@ func team_list_payload(token: String = "") -> Array:
 			for e in tr.roster:
 				dn.append(str((e as Dictionary).get("name", "玩家")))
 			arr.append({"code": c, "players": tr.roster.size(), "max_players": TEAM_ROLES,
-					"names": dn, "in_match": true, "beta": tr.beta})
+					"names": dn, "in_match": true, "beta": tr.beta,
+					"is_public": tr.is_public, "host": _host_name_of(_room_host_role(tr), tr.roster),
+					"map": tr.map, "team_counts": _team_counts_of(tr)})
 			continue
 		if tr.players.is_empty():
 			continue
@@ -751,7 +804,9 @@ func team_list_payload(token: String = "") -> Array:
 		for peer_id in tr.players:
 			names.append(_peer_names.get(peer_id, "玩家"))
 		arr.append({"code": c, "players": tr.players.size(),
-				"max_players": TEAM_ROLES, "names": names, "in_match": false, "beta": tr.beta})
+				"max_players": TEAM_ROLES, "names": names, "in_match": false, "beta": tr.beta,
+				"is_public": tr.is_public, "host": str(_peer_names.get(tr.host_peer, "玩家")),
+				"map": tr.map, "team_counts": _team_counts_of(tr)})
 	return arr
 
 
@@ -759,6 +814,42 @@ func team_list(caller: int, token: String = "") -> void:
 	# 判活同 royale_list:请求与断开可能挤在同一次 poll 里(见 NetBus.reply 的注释)。
 	if NetBus.is_peer_live(caller):
 		NetBusExt.rpc_id(caller, "team_rooms", team_list_payload(token))
+
+
+# 客户端 → 大厅:房主上报本房的地图(仅用于**列表展示**)。
+# ★ 静默丢弃的三种情况都不回话、不踢人:找不到房 / caller 不是房主 / 空房。
+#   回话没有意义(客户端无从处理),踢人更没道理(可能只是建完房还没同步完)。
+func on_room_map(caller: int, code: String, path: String) -> void:
+	var r: Variant = _room_any(code)
+	if r == null:
+		return
+	if not _is_room_host(r, caller):
+		return
+	r.map = path
+
+
+# 三张表按 code 找房(顺序固定:1v1 → 大乱斗 → 3v3)。
+# ★ 房号空间三张表共用 ⇒ 同号共存是允许的,故这条查法**只对"上报地图"这种幂等写入安全**;
+#   要拆房请走 `teardown_room` 的 `room is RoyaleRoom` 判定(那里错拆是静默的)。
+func _room_any(code: String) -> Variant:
+	if rooms.has(code):
+		return rooms[code]
+	if royale_rooms.has(code):
+		return royale_rooms[code]
+	if team_rooms.has(code):
+		return team_rooms[code]
+	return null
+
+
+# 这个 caller 是不是这间房的房主?
+# ★ 三张表的房主表示不同:`Room`(1v1)**没有** host 字段(建房者 = players[0],见 create_room);
+#   另两张有 `host_peer`。写成"一律读 host_peer"会让 1v1 的上报**永远被拒**且不报错。
+func _is_room_host(r: Variant, caller: int) -> bool:
+	if r is RoyaleRoom or r is TeamRoom:
+		return r.host_peer == caller
+	if r is Room:
+		return r.players.size() > 0 and r.players[0] == caller
+	return false
 
 
 # ── 回大厅后回局(spec §3.4 路径乙)──

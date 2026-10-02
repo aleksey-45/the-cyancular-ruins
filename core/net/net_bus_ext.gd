@@ -190,6 +190,18 @@ func team_rooms(rooms: Array) -> void:
 func team_room_state(state: Dictionary) -> void:
 	local_team_room_state.emit(state)
 
+# ── 统一大厅:房主上报本房地图(仅用于列表展示)──
+# ★ 为什么所有模式统一走它:1v1 的 `create_room` 是**原版 NetBus 的 RPC、签名冻结**,塞不进
+#   payload;而 royale/team 的 create 载荷虽是字典(加键免费),用两条机制会让"地图从哪来"
+#   这件事分叉 —— 同一概念只留一份实现。
+# ★ 它写的只是**列表上那张缩略图**;真正定图的仍是 `player_options.map`(报到那一刻读
+#   `Settings`、由 role1 那份生效)。两个真值,见设计 §6 第 3 条。
+signal room_map_requested(caller: int, code: String, path: String)
+
+@rpc("any_peer", "reliable")
+func room_map(code: String, path: String) -> void:
+	room_map_requested.emit(multiplayer.get_remote_sender_id(), code, path)
+
 # ── 断线重连(2026-09-17)──
 # ★ 全部进本节点,理由见文件头:原 NetBus 的方法表一律不动(改了会让与原版服务端的 RPC
 #   全部失联)。对原版 worker 本节点不存在 → 这三条静默丢弃,优雅降级成"不能重连"。
