@@ -2,7 +2,7 @@ extends SceneTree
 
 # PvP 时间规则冒烟(-s 数据级):默认值(用户 2026-09-28 裁定) / 序列化往返 / 服务器钳制 /
 # 账户映射(贷款上限 = 短时额度)/ 环缓时长。
-# 用法:godot --headless --path . -s res://tests/time_rules_smoke.gd
+# 用法:godot --headless --path . -s res://tests/smoke/time_rules_smoke.gd
 
 var _fails: Array[String] = []
 

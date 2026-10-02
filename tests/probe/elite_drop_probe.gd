@@ -3,14 +3,14 @@ extends Node
 # 精英掉落探针(场景级,真世界,走**真实击杀路径**):打死一只乌鸫 → 结晶 FX 出现 →
 # 飞向怀表 → 吸收入账 +300。
 #
-# ★ 为什么必须另有一条:B5 的 `tests/grain_crystal_probe.tscn` 是**直接 spawn FX**
+# ★ 为什么必须另有一条:B5 的 `tests/probe/grain_crystal_probe.tscn` 是**直接 spawn FX**
 #   (只验 FX 自己:散开/飞行/入账/颤抖),证明不了"击杀 → `enemy_base._begin_death` →
 #   `EnemyBlackBird._on_death` → `GrainCrystalFx.spawn`"这条**真路径**没被后来的改动碰断。
 #   用户报"击杀精英不掉颗粒"时,可疑的正是中间这段而不是 FX 本体。
 #
 # 判定:入账判据用**余额增量**而不是"有没有 FX 节点" —— 余额会自动回补(50/s),故取
 # "增量 ≥ 290" 这一档:真的入了 300 时增量必 ≥300(还叠回补),没入账则只有回补(~3s→150)。
-# 用法:godot --headless --path . res://tests/elite_drop_probe.tscn
+# 用法:godot --headless --path . res://tests/probe/elite_drop_probe.tscn
 
 var _fails: Array[String] = []
 

@@ -4,7 +4,7 @@ extends Node
 #   布置:精英(乌鸫)在玩家前方;一颗玩家子弹已**飞过**精英继续向前 → 录制。
 #   回溯:子弹倒飞 → 再次穿过精英 → 应再吃一次伤害(策划案「回退造成二次伤害」)。
 #   断言:回溯前精英 HP 不掉;回溯中/后 HP 下降;普通怪不受此判定(它们被冻结回放)。
-# 用法:godot --headless --path . res://tests/rewind_elite_damage_probe.tscn
+# 用法:godot --headless --path . res://tests/probe/rewind_elite_damage_probe.tscn
 
 var _fails: Array[String] = []
 

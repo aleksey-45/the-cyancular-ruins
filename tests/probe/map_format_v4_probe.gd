@@ -8,7 +8,7 @@ extends SceneTree
 #   ③ **compression=1 读入**(编辑器浏览器端导出的是 deflate):内嵌一份 Python-zlib 造的
 #      标准 v4 夹具,永久守卫这条链路 —— 这正是规格书交接文档列的"第一件必做的事";
 #   ④ CRC 破坏检测:改 body 一个字节必须被拒。
-# 用法:godot --headless --path . -s res://tests/map_format_v4_probe.gd
+# 用法:godot --headless --path . -s res://tests/probe/map_format_v4_probe.gd
 
 const DEMO := "res://maps/demo.cyrm"
 const PVP := "res://maps/factory1v1.cyrm"

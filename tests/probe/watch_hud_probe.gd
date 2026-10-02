@@ -6,7 +6,7 @@ extends Node
 #   ③ 回溯底片化 uniform ramp(≤200ms 到顶)/松开回落
 #   ④ 加速压暗 uniform ramp(100ms 到顶)/松开回落
 #   ⑤ 贷款深度直传(表心深红负数)
-# 用法:godot --headless --path . res://tests/watch_hud_probe.tscn
+# 用法:godot --headless --path . res://tests/probe/watch_hud_probe.tscn
 
 var _fails: Array[String] = []
 

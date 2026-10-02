@@ -2,7 +2,7 @@ extends Node
 
 # 全仓脚本加载自检:递归扫 res:// 下全部 .gd 逐个 load(),抓悬空引用/解析错误。
 # 场景模式跑(autoload 可用);对"大回退/大合并后的第一件事"特别有用。
-#   godot --headless --path . res://tests/allscript_probe.tscn
+#   godot --headless --path . res://tests/probe/allscript_probe.tscn
 
 const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gamelogs",
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build"]

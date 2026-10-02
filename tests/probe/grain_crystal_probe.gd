@@ -4,7 +4,7 @@ extends Node
 #   ① 乌鸫实例带 elite 标(免疫回溯/加速与玩家同步的依据)
 #   ② 击杀 → 结晶 FX 生成(grain_crystal 组)
 #   ③ 吸收 → 账户 +300 + 怀表颤抖
-# 用法:godot --headless --path . res://tests/grain_crystal_probe.tscn
+# 用法:godot --headless --path . res://tests/probe/grain_crystal_probe.tscn
 
 var _fails: Array[String] = []
 

@@ -1,7 +1,7 @@
 extends SceneTree
 
 # 颗粒账户冒烟(-s 数据级):余额/上限/短时窗/贷款/锁定/恢复/入账 全语义。
-# 用法:godot --headless --path . -s res://tests/grain_account_smoke.gd
+# 用法:godot --headless --path . -s res://tests/smoke/grain_account_smoke.gd
 
 var _fails: Array[String] = []
 

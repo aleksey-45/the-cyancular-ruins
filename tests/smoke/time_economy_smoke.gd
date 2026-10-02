@@ -1,7 +1,7 @@
 extends SceneTree
 
 # Beta 时间经济冒烟(-s 数据级):四条结算缝的公式与过滤口径。
-# 用法:godot --headless --path . -s res://tests/time_economy_smoke.gd
+# 用法:godot --headless --path . -s res://tests/smoke/time_economy_smoke.gd
 
 var _fails: Array[String] = []
 

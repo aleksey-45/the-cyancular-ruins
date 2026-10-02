@@ -2,7 +2,7 @@ extends SceneTree
 
 # 地图目录/选图冒烟(-s 数据级):目录扫描 · 双出生点判定 · 开局简略图内容 · 联机定图路径校验 ·
 # 单人图的 role2 出生点自动分配。
-# 用法:godot --headless --path . -s res://tests/map_catalog_probe.gd
+# 用法:godot --headless --path . -s res://tests/probe/map_catalog_probe.gd
 #
 # ★ 本探针刻意只用**数据层**(MapCatalog/MapFormat/MatchBootstrap 的静态函数)—— 选图 UI 的版式
 #   与"点了真的进对图"由场景级 `tests/menu_autotest.gd` 的 sp 分支负责(它点真按钮)。
@@ -114,7 +114,7 @@ func _test_far_spawn() -> void:
 	_chk(grid.size() > 0 and sp.has("player"), "demo 应有网格与 player 出生点")
 	if grid.is_empty() or not sp.has("player"):
 		return
-	var mb: GDScript = load("res://server/match_bootstrap.gd")
+	var mb: GDScript = load("res://server/match/match_bootstrap.gd")
 	_chk(mb != null, "加载 match_bootstrap.gd 失败")
 	if mb == null:
 		return

@@ -4,7 +4,7 @@ extends Node
 #   Input.action_press("rewind") 模拟按住 Shift → 引擎 _process 的时间场/回放状态机全自然运转。
 # 覆盖:录制 · 玩家位置与 HP 倒退 · 普通怪复活(尸体保留) · 精英不倒且不进快照 ·
 #       回溯中免疫伤害 · 松开恢复录制。
-# 用法:godot --headless --path . res://tests/rewind_probe.tscn
+# 用法:godot --headless --path . res://tests/probe/rewind_probe.tscn
 
 var _fails: Array[String] = []
 

@@ -9,7 +9,7 @@ extends Node
 #
 # 覆盖:①读写口往返 ②回溯中的重建弹带着 fa/fe/fd/traveled ③引信随回溯**倒退**(不是冻结在
 #       按下那一刻)④松手后仍是"已点燃"并从还原值继续计时(不再走触碰引信那条路)。
-# 用法:godot --headless --path . res://tests/rewind_fuse_probe.tscn
+# 用法:godot --headless --path . res://tests/probe/rewind_fuse_probe.tscn
 
 const GRENADE := "res://scenes/weapons/grenade_bullet.tscn"
 const FUSE := 5.0   # 长引信:整个用例期间都不该炸(真炸了说明引信被清掉后又重新起算)

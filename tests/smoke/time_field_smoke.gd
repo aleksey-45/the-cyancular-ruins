@@ -1,7 +1,7 @@
 extends SceneTree
 
 # 时间场冒烟(-s 数据级):模式切换/倍率/贷款敌速/账户结算 全语义。
-# 用法:godot --headless --path . -s res://tests/time_field_smoke.gd
+# 用法:godot --headless --path . -s res://tests/smoke/time_field_smoke.gd
 
 var _fails: Array[String] = []
 

@@ -4,7 +4,7 @@ extends SceneTree
 # 每张图写盘前先做"往返自证":serialize_v4 → parse_v4 → flatten 必须与原网格逐格一致,
 # spawn 解析结果也必须一致,否则**拒写**(宁可不转,不可转坏)。
 # 已是 v4(头 4 字节 CYRM)则跳过。旧文件内容都在 git 历史里,不另做备份副本。
-# 用法:godot --headless --path . -s res://tests/convert_map_v4.gd
+# 用法:godot --headless --path . -s res://tests/scripts/convert_map_v4.gd
 
 func _initialize() -> void:
 	var dir := "res://maps"

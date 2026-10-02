@@ -7,7 +7,7 @@ extends SceneTree
 #   本探针把"主菜单 → 设置 → 按 ESC"这条真实输入路径走一遍,并断言场景确实换成了主菜单。
 #
 # 跑法(必须真渲染? 不需要,headless 即可):
-#   godot --headless --path . -s res://tests/settings_esc_probe.gd
+#   godot --headless --path . -s res://tests/probe/settings_esc_probe.gd
 # 判据:最后一行 `SETTINGS ESC PROBE: ALL-OK`;崩了就没有这一行(退出码非 0)。
 
 const SETTINGS_SCENE := "res://scenes/settings_menu.tscn"

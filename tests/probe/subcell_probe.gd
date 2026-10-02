@@ -6,7 +6,7 @@ extends SceneTree
 #       所属格级网格**保持**非零);④ 全 16 子格死光 → 格级网格清零;⑤ restore_sub 写回。
 # (爆炸的子格扫描 `Explosion.destructible_subs` 引用 autoload,-s 编译不了 —— 由场景级
 #   探针与实机覆盖;它的几何就是"以爆心为圆心的 16px 子格圆扫"。)
-# 用法:godot --headless --path . -s res://tests/subcell_probe.gd
+# 用法:godot --headless --path . -s res://tests/probe/subcell_probe.gd
 
 const DEMO := "res://maps/demo.cyrm"
 

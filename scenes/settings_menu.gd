@@ -100,7 +100,7 @@ func _section(text: String) -> VBoxContainer:
 #   与「返 回(Esc)」按钮的 `pressed` 信号),两条都在切换之后还会碰 `self`/`get_tree()`。
 #   2026-10-01 用户报"设置界面按 ESC 崩溃",根因就是这条:ESC 那条路上紧接着调
 #   `get_viewport()`(headless 实测报 `Cannot call method 'set_input_as_handled' on a null value`),
-#   真机上是悬垂指针。守卫:`tests/settings_esc_probe.gd`。
+#   真机上是悬垂指针。守卫:`tests/probe/settings_esc_probe.gd`。
 func _go_back() -> void:
 	Sfx.play("ui")
 	get_tree().change_scene_to_file.call_deferred("res://scenes/main_menu.tscn")
