@@ -20,6 +20,10 @@
 - 场景探针一律 `--quit-after 3600`（帧，不是秒）—— 它是安全网，只在探针挂住时才用得上。
 - **判据是文本**（`ALL-OK` 之类），**不看退出码**。
 - 新建 `.gd` **要连 `.gd.uid` 一起 `git add`**；新建 `.tscn` **不用**（本仓不跟踪 `.tscn.uid`）。
+- ★★ **`.uid` 是引擎在导入时生成的**：新建 `.gd` 之后、`git add` 之前，**必须**先跑一次
+  `"$GODOT" --headless --path . --import`，否则 `<file>.gd.uid` **根本不存在**，
+  `git add` 会直接报 `pathspec did not match`。每个新建 `.gd` 的任务在提交前都要走这一步
+  （Task 1 / 3 / 4 / 5 各有一次）。
 - 每个新增/改动的 `-s` 冒烟脚本必须写空载守卫（`load()` 之后判 null 就 `print` + `quit(1)` + `return`），否则脚本一报错进程**永久挂起**。
 - **本计划只覆盖设计 §8.1 的第 1~3 段**：设置页/信息页是计划 ②，视觉重做是计划 ③。本计划一律用 `UiFactory` 的**既有** token，不新增颜色 —— 新增 token 是计划 ③ 的事。
 - **UI 构造类步骤的详略口径**：凡"写错了不报错"的地方（服务端键名、房主校验、`can_rejoin_to` 的判据、卡片的可点性两半、守卫改点）给**完整代码**；纯布局排布给**度量表 + 函数签名**，按设计 §3.2 执行，不逐行抄。引用外部 API（`MapCatalog` / `MapPicker` / `LocalServer`）时**以调用处为准** —— 本计划里凡引用它们的地方都已核过签名，但实现时若发现不符，改计划而不是改调用约定。
@@ -420,7 +424,14 @@ func room_map(code: String, path: String) -> void:
 
 期望：`LOBBY VISIBILITY PROBE: ALL-OK`（45 条）。**这一条不能被本任务弄红** —— 载荷只是加键，可见性语义一字未动。
 
-- [ ] **Step 10: 提交**
+- [ ] **Step 10: 刷导入缓存，再提交**
+
+新建了 `.gd` ⇒ 先让引擎生成它的 `.uid`（否则下面的 `git add` 会报 `pathspec did not match`）：
+
+```bash
+"$GODOT" --headless --path . --import
+ls tests/probe/lobby_payload_probe.gd.uid    # 必须存在
+```
 
 ```bash
 git add server/lobby/lobby_rooms.gd core/net/net_bus_ext.gd server/lobby/room_manager.gd \
@@ -716,26 +727,51 @@ func _check_page(rows_per_mode: Array, modes: Array) -> void:
 	#   会真的去连大厅。本探针只想验**画出来的卡**,不开任何 socket。
 	p.set("_grid", GridContainer.new())
 	p.set("_status", Label.new())
+	# ★ 三次 `_ingest_rooms`:第三次(三份都到齐)自己会触发一次 `_redraw_cards`。
+	#   这里**不再**补调一次 —— 同帧调两遍会考出"网格里两批卡叠着"(见 `_redraw_cards` 里
+	#   那句 remove_child 的注释);生产里三条 RPC 应答确实可能落在同一帧。
 	for i in modes.size():
 		p.call("_ingest_rooms", modes[i], rows_per_mode[i])
-	p.call("_redraw_cards")
 	var grid: Node = p.get("_grid")
-	var live := _find_card(grid, "5678")
-	var open_ := _find_card(grid, "1234")
-	...
+	var live := _find_card(grid, "5678")     # 对局中的那张
+	var open_ := _find_card(grid, "1234")    # 普通的那张(正向对照)
+	_check(live != null and open_ != null,
+			"合并后两种卡都在网格里(live=%s / 普通=%s)" % [str(live), str(open_)])
+	if live == null or open_ == null:
+		p.free()
+		return
+	_check(live.disabled, "★ 对局中的卡 disabled = true")
+	_check(live.pressed.get_connections().is_empty(),
+			"★ 对局中的卡没接任何 handler(disabled 只是观感,不接 handler 才是真的点不动)")
+	_check(live.focus_mode == Control.FOCUS_NONE,
+			"★ 对局中的卡不吃键盘焦点(焦点环落到它上面 = 邀请一次注定失败的按下)")
+	_check(live.modulate.a < 1.0, "对局中的卡整体压暗(modulate.a=%.2f)" % live.modulate.a)
+	_check(_has_label_text(live, "对局中"), "对局中的卡上有「对局中」角标")
+	_check(not open_.disabled, "普通卡不是 disabled(正向对照)")
+	_check(open_.pressed.get_connections().size() == 1,
+			"普通卡恰有一个 handler(还能加入;正向对照)")
+	p.free()
+
+
+# 卡是 Button,内容全在子节点里 —— 按 meta 找卡、递归找文案。
+# ★ 不能按 `Button.text` 找:卡的 `text` 是空串(内容自绘),那是**有意**的。
+func _find_card(grid: Node, code: String) -> Button:
+	for c in grid.get_children():
+		if c is Button and str((c as Button).get_meta("code", "")) == code:
+			return c
+	return null
+
+
+func _has_label_text(node: Node, needle: String) -> bool:
+	if node is Label and (node as Label).text.contains(needle):
+		return true
+	for c in node.get_children():
+		if _has_label_text(c, needle):
+			return true
+	return false
 ```
 
-（`_find_card` 按 `Button.text` 找不到 —— 卡是自绘的。改用 `get_meta("code")`：页面在造卡时写 `btn.set_meta("code", code)`。探针据此找卡。）
-
-完整断言清单（8 条）：
-1. 两种卡都在网格里
-2. 对局中那张 `disabled == true`
-3. 对局中那张 `pressed.get_connections().is_empty()`
-4. 对局中那张 `focus_mode == Control.FOCUS_NONE`
-5. 对局中那张 `modulate.a < 1.0`（整体压暗）
-6. 对局中那张的卡上有「对局中」文案（在子节点里找 Label）
-7. 普通那张 `not disabled`
-8. 普通那张恰有一个 handler
+断言 8 条（与上面代码逐条对应）：两卡都在 / `disabled` / 0 连接 / 不吃焦点 / `modulate.a < 1` / 「对局中」文案 / 普通卡不 disabled / 普通卡恰 1 个 handler。
 
 - [ ] **Step 2: 跑探针，确认红**
 
@@ -856,8 +892,15 @@ func _on_team_rooms(rooms: Array) -> void:
 		return typeof(r) == TYPE_DICTIONARY and bool(r.get("beta", false)) == PvpSession.beta_mode))
 
 
+# 重绘整张网格。
+# ★★ **必须先 `remove_child` 再 `queue_free`** —— 只 `queue_free` 的话旧节点要到**帧末**才没,
+#   同帧再建一次就会在网格里留下**两批卡叠着**(而且它们都还是 `_grid` 的子节点,
+#   `get_children()` 数得出来)。生产里三条 RPC 应答**确实可能落在同一帧**
+#   (`_ingest_rooms` 每收到一条就可能触发一次重绘)。本仓在"热重建视觉"那处踩过同款
+#   (`WeaponPickup.configure` 的注释)。
 func _redraw_cards() -> void:
 	for c in _grid.get_children():
+		_grid.remove_child(c)
 		c.queue_free()
 	var shown := 0
 	var total := 0
@@ -872,8 +915,18 @@ func _redraw_cards() -> void:
 		var empty := UiFactory.label("暂无房间 —— 点「＋ 创建房间」开一局吧", 32, UiFactory.C_TEXT_DIM)
 		_grid.add_child(empty)
 	_status.text = "共 %d 个房间(显示 %d 个;未满优先,对局中的照列)" % [total, shown]
-	_reorder_by_fill()
 ```
+
+**排序**：旧的 1v1 页把"未满"排在前面、对局中的排最后（它的注释说这是"在打的排最后、可加入的排前面"）。合并后**在每个模式内部**保持这条：进 `for r in ...` 之前先
+
+```gdscript
+		var rows: Array = _rooms_by_mode.get(mode, []).duplicate()
+		rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a.get("players", 0)) >= int(a.get("max_players", 2)) \
+					and int(b.get("players", 0)) < int(b.get("max_players", 2)))
+```
+
+（1v1 的载荷没有 `max_players` ⇒ 取默认 2，与卡片那一处同一个默认值。）
 
 - [ ] **Step 5: 造卡**
 
@@ -959,8 +1012,11 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	var is_public := bool(r.get("is_public", true))
 	var mine := PvpSession.can_rejoin_to(str(r.get("code", "")), mode)
 	var badge := "对局中" if in_match else ("私密 · 我的" if (not is_public and mine) else "等待中")
+	# ★ 三档取色**刻意避开 `C_WARN`** —— 它在调色板里被钉死为「弹夹见底」**单一语义**
+	#   (`ui_factory.gd` 的 `C_WARN` 注释明写"**只**用于「低弹量/耗尽」")。拿它表"私密"
+	#   会让那个金色在大厅与 HUD 里指两件事。这里用中性亮白:不抢强调色,也不借用语义色。
 	var badge_col := UiFactory.C_TEXT_DIM if in_match \
-			else (UiFactory.C_WARN if not is_public else UiFactory.C_ACCENT)
+			else (UiFactory.C_TEXT if not is_public else UiFactory.C_ACCENT)
 	row.add_child(UiFactory.label(badge, 32, badge_col))
 	return row
 
@@ -1158,7 +1214,9 @@ func _process(_delta: float) -> void:
 
 期望：`LOBBY ROW PROBE: ALL-OK(8 条断言)`。
 
-- [ ] **Step 10: 提交**
+- [ ] **Step 10: 刷导入缓存，再提交**
+
+新建了 `.gd` ⇒ 先跑 `"$GODOT" --headless --path . --import` 生成 `.uid`（见 Global Constraints）。
 
 ```bash
 git add scenes/mp_lobby.gd scenes/mp_lobby.gd.uid scenes/mp_lobby.tscn \
@@ -1277,9 +1335,19 @@ func _create_payload(mode: String) -> Dictionary:
 在 `_on_room_created(code)` 与两个模式的 `room_state` 首帧里（即 `note_room` 那一拍之后）加：
 
 ```gdscript
-	# 补发地图(设计 §3.7.2)。★ 只有**房主**该发 —— 非房主发会被服务端静默拒(不报错,
-	# 所以这里必须自己判,否则每个加入者都会白发一次)。
-	if _is_host_of_current_room():
+	# 补发地图(设计 §3.7.2)。★ 只有**房主**该发 —— 非房主发会被服务端静默拒(**不报错**,
+	# 所以必须自己判,否则每个加入者都会白发一次)。
+	NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
+```
+
+`_on_room_created(code)`（1v1）里**无条件**发这一句 —— 建房者就是房主。
+
+两个 `room_state` handler（大乱斗 / 3v3）里**要判**：
+
+```gdscript
+	# ★ 判据用服务器下发的 `host_role` / `your_role` 两条(它们按 peer 单独下发,
+	#   不是按昵称反查 —— 两人同名时会命中先出现的那个,本仓踩过)。
+	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
 		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
 ```
 
@@ -1291,7 +1359,9 @@ func _create_payload(mode: String) -> Dictionary:
 
 期望：`LOBBY CREATE FORM PROBE: ALL-OK(10 条断言)`。
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 7: 刷导入缓存，再提交**
+
+新建了 `.gd` ⇒ 先跑 `"$GODOT" --headless --path . --import` 生成 `.uid`（见 Global Constraints）。
 
 ```bash
 git add scenes/mp_lobby.gd tests/probe/lobby_create_form_probe.gd \
@@ -1347,7 +1417,9 @@ Settings.pvp_disabled_weapons,在 3v3 勾一下会连带改掉另两个模式。
 
 - [ ] **Step 4: 跑探针，确认绿**
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: 刷导入缓存，再提交**
+
+新建了 `.gd` ⇒ 先跑 `"$GODOT" --headless --path . --import` 生成 `.uid`（见 Global Constraints）。
 
 ```bash
 git add scenes/mp_lobby.gd tests/probe/lobby_wait_room_probe.gd \
