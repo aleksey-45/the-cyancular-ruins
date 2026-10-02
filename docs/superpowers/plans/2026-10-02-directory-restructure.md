@@ -467,6 +467,20 @@ git commit -m "refactor(dir): ui/ 拆成 factory/hud/screens 三组"
 
 ### Task 4: `server/` 拆成 `lobby/ match/ hosts/ ai/`
 
+> ✅ **已完成**（提交 `cda3b9c`，47 文件，61+/61−，评审 Approved）。守卫**首跑即绿**、`--import` 后复跑仍绿；`project.godot` **零 diff**。
+>
+> ★ **Step 3b 生效了**：`kh_l6_probe.gd` 的 `MH_PATHS` 5 处拆串如实改对（前缀移进第一段、拆串形状保留），
+> 全仓**确认无第 6 处**（实现者 3 组更宽正则 + 评审自己再扫一遍，双方独立得同一结论）。
+> 负向断言的拆串（`kh_l4_probe.gd` 的 `"Esc"+"Menu"`）**原样未动**。
+>
+> ★ **Step 3b 里我写错了一步**：我说「改完再扫一次确认**零输出**」—— 那条正则**到不了零**，
+> 因为 `"res://server/match/" + "match_host.gd"` 里 `[^"]*` 会把 `match/` 一起吸收，改完照样匹配。
+> 实现者指出后用「把拆串拼起来、判磁盘上是否存在」作判据 —— 那才是**有鉴别力**的判据
+> （陈旧的 `"res://server/" + "match_host.gd"` 会拼成已不存在的路径而被点名）。评审确认这个替代成立。
+>
+> ★ 评审另自验一条：**`server_main.gd`（未搬）对新位置的引用全走 `class_name`**（`RoomManager.new()`、
+> `GraceWindow`、`PacketInputSource.new()`），**没有任何路径 `load()`** ⇒ 类缓存刷新后这次搬动对它完全透明。
+
 **Files:**
 - Create dirs: `server/lobby/`, `server/match/`, `server/hosts/`, `server/ai/`
 - Move: 14 个 `.gd`（+ `.uid`）；`server_main.gd` 与 `server_main.tscn` **留在 `server/` 顶层**
@@ -624,7 +638,7 @@ git commit -m "refactor(dir): server/ 拆成 lobby/match/hosts/ai 四组"
 | `probe/` | stem 以 `_probe` 结尾（含 `kh_l*_probe`） | 73 |
 | `harness/` | `*_watcher` / `*_bot_input` / `*_client` / `net_lag_proxy.py` | 11 |
 | `scripts/` | 三个诊断工具（`convert_map` / `seam_analyze` / `seam_screenshot`） | 3 |
-| **留在 `tests/` 顶层** | `env.sh`（共享基础设施）、`README.md` | 2 |
+| **留在 `tests/` 顶层** | `env.sh`（共享基础设施）、`README.md`、`path_integrity_allow.txt`（守卫的**字面量常量**指着它，见下） | 3 |
 | **需人工定位** | 见 Step 2 的表 | 5→1 |
 
 **★ 一个 stem 的**所有**伴随文件（`.gd` + `.gd.uid` + `.tscn` + `.sh` + `.log`）必须进同一个 bucket** —— 否则 `*_probe.sh` 找不到它的 `.gd`，或 `.log` 散在别处。
@@ -655,6 +669,8 @@ cd ..
 ```
 
 ★ **`env.sh` **不搬** —— 它是所有脚本共享的基础设施，没有"伙伴文件"，留在 `tests/` 顶层。**（搬家后每个 `.sh` 都下沉了一层，`source "$(dirname "$0")/env.sh"` 会**失效**，见 Step 4b。）
+
+★ **`path_integrity_allow.txt` 也不搬。** 它不被上面任何 glob 匹配（`.txt`），所以默认就会留在原地 —— 而**守卫自己**用一个**字面量常量**指着它：`const ALLOW_PATH := "res://tests/path_integrity_allow.txt"`。守卫本身会被 `*_probe` 规则搬进 `tests/probe/`，但**那个常量**在 Step 4 的映射表里查不到（`path_integrity_allow` 不属于任何 bucket）⇒ 保持原值 ⇒ 与留在原地的 `.txt` 仍然对得上。**两边一起不动才是对的**；只动一边会让豁免表静默失效（那时守卫会开始对 `__l5_synthetic__.gd` 报红，而那正是豁免表存在的理由）。
 
 - [ ] **Step 2: 人工定位剩下 5 个 stem（必须逐个决定，不能靠规则）**
 
@@ -778,8 +794,16 @@ Expected: `PATH INTEGRITY: ALL-OK`
 
 ```bash
 "$GODOT" --headless --path . --import > /dev/null 2>&1
+
+# (a) 全仓找指向旧位置(测试文件仍在 tests/ 顶层)的引用 —— 限定到被跟踪的代码目录,
+#     别在仓库根上做排除法(本机有 .superpowers/ 与 _crashtest/ 两个不被跟踪的树,
+#     `_crashtest/` 里甚至有旧文件的副本;Task 7 与 Task 3 都在这上面栽过一次)
+grep -rn 'res://tests/[a-z0-9_]*\.\(gd\|tscn\|sh\)' core scenes server ui tests 2>/dev/null \
+  | grep -v 'res://tests/lib/' | grep -v '\.uid:'
+# 期望:无输出。有输出 = 还有引用指向 tests/ 顶层,回 Step 4 补。
+
+# (b) 抽查两个真链路脚本的路径确实指到新位置
 grep -n 'res://tests/' tests/env.sh tests/probe/reconnect_probe.sh 2>/dev/null | head -20
-# 期望:全部指向 tests/probe/ 或 tests/smoke/ 下的真实文件
 ```
 
 - [ ] **Step 7: 提交**
