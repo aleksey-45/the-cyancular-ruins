@@ -18,8 +18,8 @@ extends SceneTree
 #
 # ★★ **原来的第 ④ 条是反的,而且它把 C1 钉在了原地**:它断言 `reset()` **必须**清
 #   `room_code` / `rejoin`,理由写的是"下一局会拿着上一局的房号去问这行是不是我的房"。
-#   而 `reset()` 正是主菜单那三个联机按钮调的那个函数 ⇒ 玩家从对局回主菜单、再按同一个模式
-#   进来时,凭据**正好在那一拍**被抹掉 ⇒ 回局入口在生产里**永远不可达**
+#   而 `reset()` 正是主菜单那颗联机入口(2026-10-03 三合一后只剩一颗)调的函数 ⇒ 玩家从对局
+#   回主菜单、再从这个入口进来时,凭据**正好在那一拍**被抹掉 ⇒ 回局入口在生产里**永远不可达**
 #   (自己那间"对局中"的房恒为灰)。整支终审 2026-09-22 定性为 Critical。
 #   ⇒ 本文件现在是**反向**断言:`reset()` **不许**碰凭据(见 `_check_rejoin_lifecycle`)。
 #   ★ 教训(别再犯):一条"某函数必须清某字段"的断言,要连**那个函数被谁调**一起看 ——
@@ -242,9 +242,9 @@ func _initialize() -> void:
 # ══════════════════════════════════════════════════════════════════════════════
 # §④ 回局凭据的**生死线**(2026-09-22,按 C1 重写)
 # ══════════════════════════════════════════════════════════════════════════════
-# ★★ 本节的立场与原第 ④ 条**相反**:原断言要求 `reset()` 清凭据,而 `reset()` 正是主菜单那三个
-#    联机按钮调的那个函数 ⇒ 玩家从对局回主菜单、再按同一个模式进来时凭据正好在那一拍被抹掉
-#    ⇒ 回局入口在生产里**不可达**(C1)。现在钉的是:
+# ★★ 本节的立场与原第 ④ 条**相反**:原断言要求 `reset()` 清凭据,而 `reset()` 正是主菜单那颗
+#    联机入口(2026-10-03 三合一后只剩一颗)调的函数 ⇒ 玩家从对局回主菜单、再从这个入口进来时
+#    凭据正好在那一拍被抹掉 ⇒ 回局入口在生产里**不可达**(C1)。现在钉的是:
 #      · `reset()` **不许**碰凭据(进页复位 ≠ 下车清理);
 #      · 凭据只在**换了房号或模式**(`note_room` 的 `room_code` / `room_mode` 判别)、以及
 #        大厅拒绝/超时(`clear_rejoin` 另外两个调用点)时作废。
@@ -254,7 +254,7 @@ func _check_rejoin_lifecycle(ses: String) -> void:
 	_check(not reset_body.is_empty(), "PvpSession 里找不到 func reset()")
 	_check(not (reset_body.contains("token = \"\"") or reset_body.contains("worker_port = 0")
 			or reset_body.contains("room_code = \"\"") or reset_body.contains("rejoin = false")),
-			"★★ PvpSession.reset() 又清起回局凭据了 —— 主菜单那三个联机按钮每按一次就调它一次,"
+			"★★ PvpSession.reset() 又清起回局凭据了 —— 主菜单那颗联机入口每按一次就调它一次,"
 			+ "清了就是「回到对局后自己那间房是灰的、回不去」(C1:整条路径乙在生产里不可达)")
 	_check(not reset_body.contains("clear_rejoin()"),
 			"★ PvpSession.reset() 调了 clear_rejoin()(同上一款:进页复位 ≠ 下车清理)")
@@ -288,13 +288,14 @@ func _check_rejoin_lifecycle(ses: String) -> void:
 func _check_rejoin_ui_wiring() -> void:
 	var mm := _code(_read(MAIN_MENU))
 	_check(not mm.is_empty(), "读不到 %s" % MAIN_MENU)
-	# 主菜单那三个联机按钮必须**各按各的**走 reset()(每次进页复位 role/spawn/地址),
-	# 而 reset() **不得**碰凭据 —— 那四行 2026-09-22 删掉的纪律原样成立。
-	# ★ 判据限定在 `_build_menu_buttons` 的函数体内、且要求**至少三处**:只判整个文件(去注释后)
-	#   的 `contains("PvpSession.reset()")` 时,三个按钮里**去掉两个**的 reset() 照样全绿
+	# 主菜单的联机入口(2026-10-03 三合一后只剩一颗「多 人 模 式」)必须走 reset()
+	# (每次进页复位 role/spawn/地址),而 reset() **不得**碰凭据 —— 那四行 2026-09-22 删掉的
+	# 纪律原样成立。
+	# ★ 判据限定在 `_build_menu_buttons` 的函数体内、且要求**至少一处**:只判整个文件(去注释后)
+	#   的 `contains("PvpSession.reset()")` 时,把那一颗按钮的 reset() 去掉照样全绿
 	#   —— 而判词却写着"主菜单联机入口未走 reset()"。
 	var btns := _func_body(mm, "_build_menu_buttons")
-	_check(btns.count("PvpSession.reset()") >= 3, "★ 主菜单三个联机入口未各走一次 PvpSession.reset()")
+	_check(btns.count("PvpSession.reset()") >= 1, "★ 主菜单联机入口未走 PvpSession.reset()")
 	_check(not mm.contains("PvpSession.enter_mode("), "★ 主菜单仍在调已删除的 enter_mode()")
 
 	var lp := _code(_read(LOBBY_PAGE))

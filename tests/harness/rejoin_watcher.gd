@@ -3,7 +3,7 @@ extends Node
 # 回局真链路探针的**观察者**(每端一个,挂在 root 上;换场不会把它带走)。
 # 三端各跑一条剧本:
 #   c1 = actor:建房 → 开局 → 进 pvp_game → 到 PLAYING → **ESC + 点「回到主菜单」** →
-#        **按主菜单上那颗「1 v 1」**(生产入口)→ 在房间列表里点自己那间房那一行 → 回到**原局**。
+#        **按主菜单上那颗「多 人 模 式」**(生产入口)→ 在房间列表里点自己那间房那一行 → 回到**原局**。
 #        断言四条(见 `_tick_c1` 的相 3):
 #          ⓪ 那一行**可点**(`disabled == false`)—— ★ 这是**新入口本身**的断言:前置计划交付的行为是
 #             "对局中的房一律 disabled",而回局这一档要在**同一行**上把它翻过来。少了这一条,
@@ -15,8 +15,8 @@ extends Node
 #        ★ 不拿 instance_id 做断言:路径乙**会重建场景**,节点 ID 必然不同 —— 服务端那具身体
 #          确实没销毁,但客户端**观测不到**它,写成断言就是伪断言。服务端身体未销毁由
 #          `tests/probe/reconnect_probe` 相①(路径甲,不重建场景)钉住。
-#        ★★ **两次进场都走生产入口** = 按主菜单上那颗「1 v 1」(`main_menu.gd` 里
-#          `PvpSession.enter_mode(MODE_PVP)` + `change_scene_to_file(matchmaking.tscn)`),
+#        ★★ **两次进场都走生产入口** = 按主菜单上那颗「多 人 模 式」(`main_menu.gd` 里
+#          `PvpSession.reset()` + `change_scene_to_file(mp_lobby.tscn)`),
 #          再由**生产那条 `change_scene_to_file`** 建出真大厅页 —— 本端只在页 `_ready` **之前**
 #          预置"已连着本探针大厅"(`_on_node_added`;生产连的是默认端口 7777,本探针不能碰)。
 #        ★★★ 这里**曾经**写着「主菜单那几步只是换场,不承载判据」并用 `_attach_page_in`
@@ -57,7 +57,7 @@ extends Node
 #      `_with_lobby` → `NetBus.start_client(addr)`,端口取**默认 7777**;本探针的大厅在池外
 #      29300,照那条走会去连用户的 7777 并且永远连不上)。手法:`_on_node_added` 在页 `_ready`
 #      **之前**预置 `_connected/_connected_addr`(**并把 `PvpSession.server_address` 拨回本探针大厅**
-#      —— 主菜单按钮里的 `enter_mode()` 会 `reset()` 成云默认,而页的地址框拿它做初值),
+#      —— 主菜单那颗联机入口会走 `PvpSession.reset()`,而页的地址框拿它做初值),
 #      于是页的 `_request_list` 走**已连快路**;万一还是走了慢路(预置没赶上),`_drive_to_lobby_page`
 #      有一条兜底修复(重连 29300 + 把地址框拨回来),两条路都不碰 7777。
 #   ④ `_page` 一律用 `is_instance_valid` 判死活(brief 在 `_tick_c2` 里只判 `== null`):
@@ -72,7 +72,7 @@ extends Node
 const LOBBY_ADDR := "127.0.0.1"
 const ENTER_TIMEOUT := 60.0      # 从挂页到"进 pvp_game 且到 PLAYING"
 const MENU_TIMEOUT := 25.0       # 按下主菜单那颗模式按钮 → 生产路径把大厅页建出来
-const MENU_BTN_TEXT := "1 v 1"   # 与 main_menu.gd 的文案逐字一致
+const MENU_BTN_TEXT := "多 人 模 式"   # 与 main_menu.gd 的文案逐字一致(2026-10-03 三合一)
 const PLAY_SETTLE := 3.0         # PLAYING 后静置(让快照跑起来,身体有个明确的位置读数)
 const REJOIN_TIMEOUT := 30.0     # 点了自己那行之后等回到 pvp_game
 const RESULT_WAIT := 40.0        # c3 等"一个不会来的 room_joined"的上限
@@ -183,7 +183,7 @@ func _attach_page() -> void:
 			(on_create if who == "c1" else on_refresh))
 
 
-# ── c1:生产入口那两步(与 main_menu.gd 那颗「1 v 1」按钮逐字同路)──
+# ── c1:生产入口那两步(与 main_menu.gd 那颗「多 人 模 式」按钮逐字同路)──
 # 换到主菜单。★ 生产里玩家从对局退出来就落在这里(`Level0.safe_change_scene` →
 # `scenes/main_menu.tscn`),本端第一次进场也照这条路走(而不是把页挂进探针场景)。
 func _enter_main_menu() -> void:
@@ -192,8 +192,8 @@ func _enter_main_menu() -> void:
 
 
 # 大厅页入树时(生产那条 `change_scene_to_file` 建出来的)**在它 `_ready` 之前**把两件事摆好:
-#   ① `PvpSession.server_address = LOBBY_ADDR` —— 页的地址框拿它做初值,而主菜单按钮里的
-#      `enter_mode()` 会 `reset()` 成云默认;
+#   ① `PvpSession.server_address = LOBBY_ADDR` —— 页的地址框拿它做初值,而主菜单那颗联机
+#      入口会走 `PvpSession.reset()`;
 #   ② `_connected` / `_connected_addr` —— 让页的 `_request_list` 走"已连大厅"的**快路**。
 # ★★ 为什么必须是 `node_added`:`_connected` 是页自己的私有变量、新建时恒 false,而页 `_ready`
 #    末尾就把 `_request_list` 排进 deferred ⇒ 晚一拍(下一帧)再补就来不及了:页已经走了慢路
@@ -255,7 +255,7 @@ func _drive_to_lobby_page(first: bool) -> bool:
 	return true
 
 
-# 按主菜单上那颗「1 v 1」(真按钮回调 = `enter_mode` + `change_scene_to_file`)。
+# 按主菜单上那颗「多 人 模 式」(真按钮回调 = `PvpSession.reset()` + `change_scene_to_file`)。
 # ★ 文案与 `main_menu.gd` 里逐字一致;找不到即判红(与"回局坏了"分得开)。
 func _press_menu_mode_button() -> bool:
 	var menu := get_tree().current_scene
@@ -265,7 +265,7 @@ func _press_menu_mode_button() -> bool:
 		_finish("")
 		return false
 	_rec("MENU press «%s»" % MENU_BTN_TEXT)
-	_log("按主菜单「%s」(生产入口:PvpSession.enter_mode + change_scene_to_file)" % MENU_BTN_TEXT)
+	_log("按主菜单「%s」(生产入口:PvpSession.reset() + change_scene_to_file)" % MENU_BTN_TEXT)
 	btn.pressed.emit()
 	return true
 
@@ -534,8 +534,8 @@ func _tick_c1(delta: float) -> void:
 				_phase_t = 0.0
 			return
 		2:
-			# ★★ 回到主菜单之后**再走一次生产入口**(按那颗「1 v 1」按钮)—— 这一步就是 C1 的
-			#    现场:从前本端在这里**直接挂页**,恰好绕过了"按钮 → `enter_mode` → 凭据还在不在"
+			# ★★ 回到主菜单之后**再走一次生产入口**(按那颗「多 人 模 式」按钮)—— 这一步就是 C1 的
+			#    现场:从前本端在这里**直接挂页**,恰好绕过了"按钮 → `PvpSession.reset()` → 凭据还在不在"
 			#    这一问 ⇒ 拿着生产里根本拿不到的凭据全绿(见文件头那条纠正)。
 			if _game != null:
 				return                    # 还在对局场景里(换场还没发生)

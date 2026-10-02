@@ -35,7 +35,7 @@ static var rejoin: bool = false
 # 时间玩法(Beta,2026-09-28 P2):本局是否从主菜单「Beta」页进来。语义上有两重:
 # ①大厅侧——beta 房与普通房**互不可进**(创建带 beta 标,加入按本标校验,列表按本标过滤);
 # ②对局侧——worker/宿主据此启用时间玩法(TimeRules,见 PvP 时间玩法计划)。
-# ★ 放 reset() 里复位:主菜单三个普通联机按钮走 reset(),天然把它清掉。
+# ★ 放 reset() 里复位:主菜单那颗联机入口走 reset(),天然把它清掉。
 static var beta_mode := false
 
 const MODE_PVP := "pvp"
@@ -124,8 +124,8 @@ static func note_room(code: String, mode: String) -> void:
 # 守卫:`tests/probe/match_sync_probe` 的反向断言,全仓不得再出现这些标识符。
 
 # 「进大厅页」的复位:**不碰回局凭据**(那四行 2026-09-22 已删 —— 见 `clear_rejoin` 上面那段)。
-# ★★ 曾经它在末尾清 `token` / `worker_port` / `room_code` / `rejoin`,而主菜单那三个联机按钮
-#   每按一次就调它一次 ⇒ 玩家从对局按 ESC 回主菜单、再按「1 v 1」时,凭据**正好在那一拍**
+# ★★ 曾经它在末尾清 `token` / `worker_port` / `room_code` / `rejoin`,而主菜单那颗联机入口
+#   每按一次就调它一次 ⇒ 玩家从对局按 ESC 回主菜单、再从这个入口进来时,凭据**正好在那一拍**
 #   被抹掉 → `can_rejoin_to()` 恒 false → 自己那间"对局中"的房在列表里恒为灰、点不动
 #   (**整条路径乙在生产里不可达**,而真链路探针因为绕过了主菜单那一步,一直是绿的)。
 #   ★ 凭据该在哪里死见 `clear_rejoin` 的三处清单;**别再把这四行加回来**。

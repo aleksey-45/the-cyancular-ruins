@@ -220,39 +220,28 @@ func _build_menu_buttons() -> Array:
 
 	var start_btn := UiFactory.button("单 人 模 式", 32)
 	start_btn.pressed.connect(_on_single_pressed)
-	# 文案 2026-09-21 由「多 人 对 战」改为「1 v 1」:菜单里三个联机入口现在按
-	# 1v1 / 3v3 / 大乱斗 并列,旧的「多人」在这里读不出"到底是哪一种多人"。
-	# ★★ 三个联机按钮一律走 `PvpSession.reset()`(每次进页复位 role/spawn/map_path),
+	# ★★ 联机入口只剩这一颗(2026-10-03 三合一,统一大厅 `mp_lobby`):1v1 / 3v3 / 大乱斗
+	#   都在那一个页面里按筛选区分,菜单不再按模式分列三颗按钮。
+	#   它一律走 `PvpSession.reset()`(每次进页复位 role/spawn/map_path),
 	#   **不要**在这里写任何清凭据的东西:回局凭据要活过"回主菜单"这一步(那正是路径乙的意义),
 	#   而模式归属改由各大厅页记房号那一拍(`note_room(code, mode)`)确定(见 pvp_session.gd 的
 	#   `room_mode` 那段:三张注册表的房号空间是共用的,不判模式就会串)。往 `reset()` 里加回清凭据
-	#   那四行、或在这里直接清凭据 = 玩家从对局回主菜单、再按同一个模式进来时凭据被抹掉
+	#   那四行、或在这里直接清凭据 = 玩家从对局回主菜单、再按这个入口进来时凭据被抹掉
 	#   → 自己那间"对局中"的房恒为灰、回不去(**而一行报错都没有**) —— 这就是 C1。
-	#   `reconnect_smoke` 有源码级断言钉着这三处。
-	var multi_btn := UiFactory.button("1 v 1", 32)
+	#   `reconnect_smoke` 有源码级断言钉着它。
+	var multi_btn := UiFactory.button("多 人 模 式", 32)
 	multi_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
-		get_tree().change_scene_to_file("res://scenes/matchmaking.tscn"))
-	# 3v3 团队:与多人/大乱斗并列的第三个联机模式入口(大厅页 `team_lobby`,协议走 team_*)。
-	var team_btn := UiFactory.button("3 v 3 团 队", 32)
-	team_btn.pressed.connect(func() -> void:
-		Sfx.play("ui")
-		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
-		get_tree().change_scene_to_file("res://scenes/team_lobby.tscn"))
-	var royale_btn := UiFactory.button("大 乱 斗", 32)
-	royale_btn.pressed.connect(func() -> void:
-		Sfx.play("ui")
-		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
-		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
-	# Beta(2026-09-28,用户指定放在大乱斗下面):以后所有实验性玩法都从这个入口进
+		get_tree().change_scene_to_file("res://scenes/mp_lobby.tscn"))
+	# Beta(2026-09-28,用户指定放在联机入口下面):以后所有实验性玩法都从这个入口进
 	# (现在是 PvP 时间玩法的两个变体)。弱化变体:实验功能不与正式模式抢注意力。
 	var beta_btn := UiFactory.button("Beta", 32, Vector2(420, 64), "quiet")
 	beta_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/beta_menu.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
-	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽
+	# 结果是两座孤岛,而再短些的标签又比它们窄 —— 按钮列的文本块宽度既不等宽
 	# 也不成体系(2026-09-13 视觉评析)。按钮本身 420 宽居中,标签不必再自己凑宽度。
 	var settings_btn := UiFactory.button("设 置", 32)
 	settings_btn.pressed.connect(func() -> void:
@@ -265,14 +254,14 @@ func _build_menu_buttons() -> Array:
 	quit_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().quit())
-	# 三个联机模式按 1v1 → 3v3 → 大乱斗 排列(2026-09-21 用户指定)。★ 显示次序由
+	# 联机入口收成一颗后,「开始游戏」组按 单人 → 多人 → Beta 排列。★ 显示次序由
 	# add_child 的次序决定;下面返回的数组同时是**浮现动画**的次序,两处必须一起改。
-	for b in [start_btn, multi_btn, team_btn, royale_btn, beta_btn]:
+	for b in [start_btn, multi_btn, beta_btn]:
 		play_group.add_child(b)
 	for b in [settings_btn, ver_btn]:
 		opt_group.add_child(b)
 	box.add_child(quit_btn)
-	return [start_btn, multi_btn, team_btn, royale_btn, settings_btn, ver_btn, quit_btn]
+	return [start_btn, multi_btn, settings_btn, ver_btn, beta_btn, quit_btn]
 
 
 # 浮现动画:标题先出(淡入),按钮依次淡入

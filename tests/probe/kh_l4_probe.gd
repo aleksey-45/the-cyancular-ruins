@@ -16,8 +16,8 @@ extends ProbeBase
 #   4) 退役的 ESC 菜单零引用(类不存在、文件不存在、无代码引用)
 #   5) L4 新接口在位(Level0.safe_change_scene 必须 static / restart_single /
 #      Player.restart_at / WeaponComponent.reset_mag_state)
-#   6) 主菜单的大乱斗入口恰 1 处且指向 royale_lobby.tscn(L4 约束 2 已到期反转:
-#      L4 那版是「零 royale 字样」,L5 连场景一起加后改为正向钉「必须恰有 1 个入口」)
+#   6) 主菜单的联机入口恰 1 处且指向 mp_lobby.tscn(2026-10-03 三合一后统一大厅;
+#      更早的 L4/L5 口径与"为什么仍是恰好 1 处"见 `_check_multi_entry` 的函数头注释)
 #
 # --quit-after 是安全网:本脚本引用 Level0 等 autoload 标识符;若某个 autoload 被删掉,
 # 脚本编译失败 → 场景根节点无脚本 → 一行都不打印、命令挂死。有它最坏只是超时退出。
@@ -56,7 +56,7 @@ func _ready() -> void:
 	_check_font_size_law()
 	_check_old_escape_menu_retired()
 	_check_new_api()
-	_check_royale_entry()
+	_check_multi_entry()
 	_finish()
 
 
@@ -286,27 +286,29 @@ func _check_new_api() -> void:
 	print("[L4] 新接口:Level0.safe_change_scene(static)/restart_single、Player.restart_at、WeaponComponent.reset_mag_state 全部在位")
 
 
-# ── 6) 主菜单的大乱斗入口:L4 约束 2 的到期日已到(断言反转)───────────
-# L4 那版这条断言是「零 royale 字样」,理由写在 L4 硬约束 2 里:**那时 royale_lobby.tscn
+# ── 6) 主菜单的联机入口(L4 约束 2 已到期;2026-10-03 三合一后再改口径)───────────
+# 历史:L4 那版这条断言是「零 royale 字样」,理由写在 L4 硬约束 2 里:**那时 royale_lobby.tscn
 # 还不存在**,菜单先加按钮就是悬空引用(点了没反应的按钮 = 假入口),所以约定
-# 「L4 加了就是悬空引用,L5 连场景一起加」。L5 已把场景与按钮一起落地,断言随之反转:
-# 不再是「不许有」,而是**必须恰好有 1 处、且指向 royale_lobby.tscn**——入口漏加/被删
-# (0 处)或指向别处(路径写错、指回已退役场景)都算红。反向约束与正向约束一样是约束,
-# 删掉这条就等于把入口的存在性放空。
-# 判据取**场景路径**而不是 royale 字样:main_menu.gd 里还有 `royale_btn` 等含 royale 的
-# 标识符,数字样会连带命中、数不准;数「指向该场景的字符串」才等于数「入口个数」。
-func _check_royale_entry() -> void:
+# 「L4 加了就是悬空引用,L5 连场景一起加」。L5 把场景与按钮一起落地后,断言反转为
+# 「必须恰好有 1 处、且指向 royale_lobby.tscn」。
+# ★ 2026-10-03:三个联机入口收成主菜单上唯一一颗「多 人 模 式」⇒ 指向的场景由
+#   royale_lobby.tscn 换成**统一大厅 `mp_lobby.tscn`**。**断言强度不变**:入口漏加/被删
+#   (0 处)或指向别处/已退役场景都算红 —— 反向约束与正向约束一样是约束,删掉这条就等于
+#   把入口的存在性放空。
+# 判据取**场景路径**而不是模式字样:main_menu.gd 里还有 `multi_btn` 等标识符,数字样会连带
+# 命中、数不准;数「指向该场景的字符串」才等于数「入口个数」。
+func _check_multi_entry() -> void:
 	var src := _read("res://scenes/main_menu.gd")
 	_check(not src.is_empty(), "读不到 scenes/main_menu.gd")
-	var needle := "res://scenes/" + "roy" + "ale" + "_lobby.tscn"
+	var needle := "res://scenes/" + "mp_" + "lobby.tscn"
 	# ★ 2026-10-02 降精度:先剥注释再计数(注释里提一次该路径会被读成第 2 个入口)。
 	var n := _code_only(src).count(needle)
-	_check(n == 1, "主菜单大乱斗入口应恰好 1 处指向 %s(实际 %d 处)" % [needle, n])
-	# 悬空引用守卫:L4 那条「零 royale 字样」的动机正是**不让菜单指向不存在的场景**(按钮
-	# 点了没反应 = 假入口)。只数字符串会把「场景被删/改名」读成绿 —— 必须让路径本身可解析
+	_check(n == 1, "主菜单联机入口应恰好 1 处指向 %s(实际 %d 处)" % [needle, n])
+	# 悬空引用守卫:这条的动机正是**不让菜单指向不存在的场景**(按钮点了没反应 = 假入口)。
+	# 只数字符串会把「场景被删/改名」读成绿 —— 必须让路径本身可解析
 	# (同 _check_old_escape_menu_retired 里 ResourceLoader.exists 的用法)。
-	_check(ResourceLoader.exists(needle), "大乱斗入口指向的场景 %s 不存在(悬空引用)" % needle)
-	print("[L4] 主菜单大乱斗入口:命中 %d 处(%s)" % [n, needle])
+	_check(ResourceLoader.exists(needle), "联机入口指向的场景 %s 不存在(悬空引用)" % needle)
+	print("[L4] 主菜单联机入口:命中 %d 处(%s)" % [n, needle])
 
 
 # ── 工具 ────────────────────────────────────────────────────────────

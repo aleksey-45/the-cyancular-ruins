@@ -2,18 +2,20 @@ extends Control
 
 # Beta 入口页(2026-09-28,用户指定):以后所有实验性玩法都从这里进。
 # 页面 = 标题 + 返回 + 若干「画框型选项」卡片(画框图标 + 模式名栏 + 简介栏 + 版本栏)。
-# 当前两张卡(P2 线,PvP 时间玩法):
-#   · 错乱大乱斗(图标 = 单机怀表 + 下方红色 Royale 字样)→ 大乱斗大厅(beta 态)
-#   · 时空 3v3(图标 = 单机怀表 + 下方蓝色 Team 字样)→ 3v3 大厅(beta 态)
+# 当前两张卡(P2 线,PvP 时间玩法),2026-10-03 起都进**统一大厅** `mp_lobby`:
+#   · 错乱大乱斗(图标 = 单机怀表 + 下方红色 Royale 字样)→ mp_lobby(beta 态,预选大乱斗筛选)
+#   · 时空 3v3(图标 = 单机怀表 + 下方蓝色 Team 字样)→ mp_lobby(beta 态,预选 3v3 筛选)
 # 卡片图标是**程序化生成**的(复用 WatchHud.build_dial_texture,不引入美术资源)。
 #
 # ★ beta 态怎么传给大厅页:PvpSession.reset() 会把 beta_mode 清成 false,
 #   所以先 reset 再置 beta_mode = true,然后切场景 —— 大厅页在 _ready 里读它。
+# ★ 预选的**筛选**模式走 `entry_mode`(不是凭据的 `room_mode`):大厅页 `_ready` 末尾按它
+#   调 `_set_filter`,于是从 Beta 进来时列表已经筛在该模式上(直接进大厅时它是 "")。
 
 const CARDS := [
 	{
 		"mode": PvpSession.MODE_ROYALE,
-		"scene": "res://scenes/royale_lobby.tscn",
+		"scene": "res://scenes/mp_lobby.tscn",
 		"name": "错乱大乱斗",
 		"tag": "Royale",
 		"tag_color": Color(0.92, 0.28, 0.24),
@@ -22,7 +24,7 @@ const CARDS := [
 	},
 	{
 		"mode": PvpSession.MODE_TEAM,
-		"scene": "res://scenes/team_lobby.tscn",
+		"scene": "res://scenes/mp_lobby.tscn",
 		"name": "时空 3v3",
 		"tag": "Team",
 		"tag_color": Color(0.30, 0.55, 0.95),
@@ -117,6 +119,9 @@ func _enter_card(c: Dictionary) -> void:
 	Sfx.play("ui")
 	PvpSession.reset()
 	PvpSession.beta_mode = true
+	# ★ 预选**筛选**模式(不是凭据的模式):大厅页 `_ready` 末尾读它调 `_set_filter`。
+	#   `CARDS[i]["mode"]` 不是死字段 —— 从 2026-10-03 起它重新有读者,就是这一行。
+	PvpSession.entry_mode = str(c["mode"])
 	get_tree().change_scene_to_file(str(c["scene"]))
 
 

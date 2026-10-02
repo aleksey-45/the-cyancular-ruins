@@ -125,6 +125,13 @@ func _ready() -> void:
 
 	_finish_lobby_ready()
 
+	# Beta 页预选的**筛选**模式(从主菜单直接进来时为 "")。
+	# ★★ 它读的是 `entry_mode` 而**不是** `room_mode`:后者是**凭据**的模式,混用会让
+	#    "从 Beta 页进大乱斗"这件事把一个凭据字段写成非凭据的值 —— 而 `can_rejoin_to()`
+	#    正是拿 `room_mode` 判"这一行是不是我的房"。
+	if PvpSession.entry_mode != "":
+		_set_filter(PvpSession.entry_mode)
+
 
 # ── 版式 ────────────────────────────────────────────────────────────
 
@@ -1378,6 +1385,11 @@ func _lobby_action_allowed() -> bool:
 
 # 三个模式的权威规则项都上发,worker 各取自己认得的键(`server_main._on_player_options`
 # 与 `MatchBootstrap` 都按 role1 那份生效)。不认得的键被静默忽略 —— 这是既有行为。
+# ★ `time`(Beta 时间玩法规则)必须在这里 —— 它是**权威那一份**:worker 侧
+#   `MatchHost` 读的正是 `options.get("time")`(见 server/match/match_host.gd),
+#   而建房载荷里的 `time` 只存在房对象上、**没有任何读者**。漏了它 ⇒ Beta 局的时间经济
+#   静默为空(一切结算短路),而那**不报错**。旧的两个大厅页各自带这一行
+#   (royale_lobby.gd / team_lobby.gd),统一页不能把它丢了。
 func _player_options() -> Dictionary:
 	return {
 		"hue": Settings.pvp_color_hue,
@@ -1385,6 +1397,7 @@ func _player_options() -> Dictionary:
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
 		"map": Settings.mp_map_path,
+		"time": time_rules.to_dict() if PvpSession.beta_mode else {},
 	}
 
 

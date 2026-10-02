@@ -5,9 +5,9 @@ extends Node
 # 验证场景切换、渲染链与暂停层;带窗口运行时把玩家所见截图存到 user://。
 # 由 main_menu._ready 在命令行含 --autotest-* 时挂载,平时零开销:
 #   -- --autotest-sp     主菜单→单机面板→开始探索→(Esc 暂停/恢复验证)→回主菜单→截图
-#   -- --autotest-mp     主菜单→多人匹配页→截图
-#   -- --autotest-royale 主菜单→大乱斗大厅→截图
-#   -- --autotest-team   主菜单→3v3 团队大厅→截图
+#   -- --autotest-mp     主菜单→「多 人 模 式」→统一大厅 mp_lobby→截图
+#   -- --autotest-royale 同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
+#   -- --autotest-team   同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
 #   -- --autotest-set    主菜单→设置页→截图
 #   -- --autotest-level  直接切 Level0(只验世界加载,不经过菜单流转)
 #   -- --autotest-ver    主菜单→版本信息面板(弹层,**不切场景**,故无场景硬断言,见 _run)→截图
@@ -60,12 +60,10 @@ func _run() -> void:
 		await tree.create_timer(0.4).timeout
 		_verify_map_picker(tree)
 		_press_by_text(tree.current_scene, "开 始 探 索")
-	elif mode == "mp":
-		_press_by_text(tree.current_scene, "1 v 1")   # 文案 2026-09-21 起是「1 v 1」(原「多 人 对 战」)
-	elif mode == "royale":
-		_press_by_text(tree.current_scene, "大 乱 斗")
-	elif mode == "team":
-		_press_by_text(tree.current_scene, "3 v 3 团 队")
+	elif mode == "mp" or mode == "royale" or mode == "team":
+		# 2026-10-03:三个联机模式的入口收成主菜单上唯一一颗「多 人 模 式」,都进统一大厅
+		# `mp_lobby`。三个 mode 仍**分开**走(到达断言按各自的名字判,见 must_reach)。
+		_press_by_text(tree.current_scene, "多 人 模 式")
 	elif mode == "set":
 		_press_by_text(tree.current_scene, "设 置")
 	elif mode == "ver":
@@ -83,10 +81,10 @@ func _run() -> void:
 	# (「停在 main_menu」正是它该有的样子,连"一次都没点到按钮"也照样满足),不是硬断言。
 	var must_reach := {
 		"sp": "level_0.tscn",
-		"mp": "matchmaking.tscn",
+		"mp": "mp_lobby.tscn",
 		"set": "settings_menu.tscn",
-		"royale": "royale_lobby.tscn",
-		"team": "team_lobby.tscn",
+		"royale": "mp_lobby.tscn",
+		"team": "mp_lobby.tscn",
 	}
 	if must_reach.has(mode) and not _require_scene(tree, str(must_reach[mode])):
 		return
@@ -154,7 +152,7 @@ func _find_picker(n: Node) -> MapPicker:
 	return null
 
 
-# ── beta 模式:主菜单 → Beta 页(两张卡)→ 错乱大乱斗卡 → beta 态大乱斗大厅(时间参数面板)──
+# ── beta 模式:主菜单 → Beta 页(两张卡)→ 错乱大乱斗卡 → beta 态统一大厅 mp_lobby(时间参数面板)──
 # ★ 为什么场景级:独立房间池的客户端侧一半(beta 标的创建/过滤/上报)都长在大厅页里,
 #   不真开一次页,「beta 态建面板 + 9 行参数 + player_options 带 time」这些全是纸面推断。
 func _run_beta_flow(tree: SceneTree) -> void:
@@ -175,16 +173,25 @@ func _run_beta_flow(tree: SceneTree) -> void:
 			tree.quit(1)
 			return
 	print("AUTOTEST[beta]: 两张卡与版本号齐全")
-	# 点第一张卡(错乱大乱斗)→ 应到大乱斗大厅且 beta_mode 为真
+	# 点第一张卡(错乱大乱斗)→ 应以 beta 态进入**统一大厅** mp_lobby,且筛选预选成大乱斗
 	(beta as Node).call("_enter_card", (beta as Node).get("CARDS")[0])
 	await tree.create_timer(1.5).timeout
 	var lobby := tree.current_scene
 	var path1 := str(lobby.scene_file_path) if lobby != null else "<null>"
-	print("AUTOTEST[beta]: 卡片后场景 = %s,beta_mode=%s" % [path1, str(PvpSession.beta_mode)])
-	if path1.find("royale_lobby.tscn") < 0 or not PvpSession.beta_mode:
-		print("AUTOTEST[beta]: 未以 beta 态进入大乱斗大厅")
+	print("AUTOTEST[beta]: 卡片后场景 = %s,beta_mode=%s,entry_mode=%s" % [
+			path1, str(PvpSession.beta_mode), PvpSession.entry_mode])
+	if path1.find("mp_lobby.tscn") < 0 or not PvpSession.beta_mode:
+		print("AUTOTEST[beta]: 未以 beta 态进入统一大厅 mp_lobby")
 		tree.quit(1)
 		return
+	if PvpSession.entry_mode != PvpSession.MODE_ROYALE:
+		print("AUTOTEST[beta]: 卡片没把筛选预选成大乱斗(entry_mode=%s)" % PvpSession.entry_mode)
+		tree.quit(1)
+		return
+	# 建房弹层是**点开才建**的(mp_lobby 的 `_open_create_dialog` 里造)—— 时间参数滑条长在
+	# 那块面板里,与旧 royale_lobby 的常驻面板不同,故先开一次再数。
+	(lobby as Node).call("_open_create_dialog")
+	await tree.create_timer(0.2).timeout
 	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则
 	var sliders := 0
 	for n in _walk(lobby, func(x: Node) -> bool: return x is HSlider):
