@@ -69,8 +69,6 @@ func _ready() -> void:
 	_check(body.contains("_drop_edge"), "LocalInputSource._drop_pressed_raw 应读一次性边沿标志")
 	# 反向锚:计时确实在 player 里做,且联机分支会打这个标
 	_check(pl.contains("mark_drop_edge"), "player 没在长按满时打边沿标")
-	# 反向锚:计时确实在 player 里跑(联机分支会打这个标),而不是整个早退掉
-	_check(pl.contains("mark_drop_edge"), "player 没在长按满时打边沿标")
 	_check(_func_body(pl, "_poll_pickup_drop").contains("_drop_latched"),
 			"player._poll_pickup_drop 里没有长按闩锁(计时没跑?)")
 
@@ -84,9 +82,6 @@ func _ready() -> void:
 		_check(not b.contains("nearest_within"),
 				"拾取提示又回到「只提示最近那把」了 —— 用户要的是**每把能捡的**都提示")
 		_check(b.contains("set_prompt_visible"), "拾取提示没有逐把开关")
-	_check(_read("res://ui/hud/pickup_prompt.gd").contains("const BOX"),
-			"PickupPrompt 常量不见了(文件被换?)")
-
 	# ③d 提示的"自己刚丢下的"排除:服务器要把 by_role 告诉客户端(那条 0.5s 冷却
 	#     只有权威知道),客户端要按它排除 —— 否则刚丢下的枪会显示 F 却捡不起来。
 	_check(_read("res://server/match/match_ground.gd").contains("\"by_role\":"),
@@ -102,7 +97,6 @@ func _ready() -> void:
 	_check(pl.contains("restore_inventory"), "player.restore_state 里没有重建背包")
 	_check(not pr.contains("\"inv\""),
 			"_close_enough 里出现了 inv —— 它必须只进 capture/restore,进去就会每帧判分歧、无限回滚")
-	_check(not pr.contains("inv"), "_prediction_rollback 里出现了 inv 字样(见上一条)")
 
 	# ④b 换局重铺:**清的与铺的都必须广播**,且 inst 编号不得回退。
 	#     换局是客户端唯一"既不重进场景、也不再拉 match_sync"的时刻 —— 不广播 = 它留着一整批

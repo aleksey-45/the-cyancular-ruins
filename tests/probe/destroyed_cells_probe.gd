@@ -86,8 +86,13 @@ func _run() -> void:
 				break
 		if ey >= 0:
 			break
-	_check(ey >= 0, "地图里能找到一格基线为空的位置")
-	if ey >= 0:
+	# ★ 2026-10-02:原先这里是一条恒真的 `_check(ey >= 0, …)`(任何有效地图都有空气格)。
+	#   按"说不出真实变异就删"的判据它不该占一条断言 ⇒ 改成**早退报错**:既不占断言数,
+	#   又不让下面那条在"前置不成立"时被**静默跳过**(那正是本仓反复在删的形状)。
+	if ey < 0:
+		_fails.append("地图里找不到基线为空的位置(前置不成立 ⇒ 下面那条无从判)")
+		print("  FAIL 地图里找不到基线为空的位置(前置不成立 ⇒ 下面那条无从判)")
+	else:
 		_host.grid[ey][ex] = MazeGenerator.SOLID
 		var d4: Array = _host.destroyed_cells()
 		_check(d4.has(Vector2i(ex, ey)), "★ 与基线不同就该报(不管变空还是变实心)(实际 %s)" % str(d4))

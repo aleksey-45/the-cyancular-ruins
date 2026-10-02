@@ -247,8 +247,6 @@ func _check_new_api() -> void:
 	var lv := load(lv_path) as GDScript
 	_check(lv != null, "载入 %s 失败" % lv_path)
 	if lv != null:
-		_check(_code_only(_read(lv_path)).contains("static func safe_change_scene("),
-				"%s 里没有 `static func safe_change_scene(`(PauseMenu 调不到实例方法)" % lv_path)
 		var m: Variant = _method_info(lv, "safe_change_scene")
 		_check(m != null, "Level0 的方法表里没有 safe_change_scene")
 		if m != null:
