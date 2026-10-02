@@ -32,7 +32,7 @@ extends Node
 #   `PvpSession`,与"是否真的连在网上"无关)。同款手法见 `ground_action_probe`(真 MatchHost、
 #   role_peers 传空)与 `destroyed_cells_probe`。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 
 var _fails: Array[String] = []
 var _client: PvpMatchClient = null
@@ -172,22 +172,54 @@ func _tile_source_at(cell: Vector2i) -> int:
 	var wl: TileMapLayer = Level0.wall_layer
 	if wl == null:
 		return -1
-	return wl.get_cell_source_id(cell)
+	# ★★ 2026-10-02 合并订正:`_paint_maze` 在 cyrm v4(B18)里改成铺 **16px 子格**了
+	#   ⇒ 该层的坐标是**子格**坐标,不是 64px 格坐标。原实现直接拿格坐标去查 ⇒ 恒 -1
+	#   (② 的前置那条 `== -1` 因此**恒真**、③ 那条恒假)。这里按同样推导出来的比例展开,
+	#   任一子格有砖就返回它的 source id。
+	var per: int = CollisionBuilder.TILE_TS / CollisionBuilder.SUB_TS
+	var sx := cell.x * per
+	var sy := cell.y * per
+	for dy in per:
+		for dx in per:
+			var sid := wl.get_cell_source_id(Vector2i(sx + dx, sy + dy))
+			if sid != -1:
+				return sid
+	return -1
 
 
-# 持久可破坏层(32px 子格,每 64px 格 → 2×2)里该格左上子格的值(0 = 该子格没有碰撞)。
-# ★ 读的是**物理**那一维:`_on_tile_destroyed` 把这 4 格清零,`reset_destructibles` 靠
+# 持久可破坏层里该 64px 格覆盖的那一块子格:**任一**非零就返回它,全零返回 0
+# (-1 = 越界 / 该层还没建)。
+# ★ 读的是**物理**那一维:`_on_tile_destroyed` 把这些子格清零,`reset_destructibles` 靠
 #   `WorldBuilder.build_sim` 整层重建 —— 只改 grid 的退化实现不会让这里恢复。
+# ★★ 2026-10-02 合并订正:子格边长**从 `CollisionBuilder` 推导**,不写死乘数。
+#   原实现写的是 `cell * 2`(32px 子格 / 每格 2×2),而 cyrm v4(B18)已把破坏下沉到
+#   **16px(每格 4×4)** ⇒ 它**一直在取错格**;换 PvP 地图后 ② 的前置断言才把它显形
+#   (它读到的是别的子格,而 `_on_remote_tile_destroyed` 清的是本格那 16 个)。
+#   ★ 顺带把"只看左上那一个子格"改成"整格任一非零":4×4 下左上子格只代表 1/16,
+#   不足以支撑"这一格有碰撞"这个判据。
 func _sub_at(cell: Vector2i) -> int:
 	var sub: Array[Array] = Level0._destructible_sub
-	var sy := cell.y * 2
-	var sx := cell.x * 2
+	if sub.is_empty():
+		return -1
+	var per: int = CollisionBuilder.TILE_TS / CollisionBuilder.SUB_TS
+	var sy := cell.y * per
+	var sx := cell.x * per
 	if sy < 0 or sy >= sub.size():
 		return -1
-	var row: Array = sub[sy]
-	if sx < 0 or sx >= row.size():
+	if sx < 0 or sx >= (sub[sy] as Array).size():
 		return -1
-	return int(row[sx])
+	for dy in per:
+		var y := sy + dy
+		if y >= sub.size():
+			break
+		var row: Array = sub[y]
+		for dx in per:
+			var x := sx + dx
+			if x >= row.size():
+				break
+			if int(row[x]) != 0:
+				return int(row[x])
+	return 0
 
 
 func _finish() -> void:
