@@ -17,7 +17,7 @@ extends ProbeBase
 #      · _on_input 只把到达的包**入队**(不得就地 apply / 丢队列)——前四条只管消费侧,
 #        单独改坏生产侧能全绿(见该断言的注释)
 #   2) main 既有成果在位(server/room_manager.gd 的 sweep 族 —— 1v1 / 大乱斗 / 3v3 三张
-#      注册表都要被扫到)+ **反向**:server/worker_launcher.gd **不得复活**(每局一个子进程的形态)
+#      注册表都要被扫到 + _kill_worker)
 #   3) server_main 的 _kill_port_holder 取属主进程用修正版(不是取不到属性的 % 写法)
 #   4) ★ 零演示残留(生产目录)
 #   5) ★ CombatFeedback.spawn 全仓生产路径恰好 1 处,且在 scenes/level_0.gd
@@ -178,35 +178,30 @@ func _check_c2_contract() -> void:
 	_summary(fails_before, "C2 契约:四条在位(含快照先于消费、COUNTDOWN 早退清零、载荷带 ack_seq+c2)+ 生产侧 _on_input 入队不落地")
 
 
-# ── 2) main 既有成果在位(server/room_manager.gd 的 sweep 族)+ 反向:worker_launcher 不得复活 ──
-# L5 把大乱斗大厅并进了同一份 room_manager。main 的「超龄房清扫」族(防房间与那份会话永久泄漏)
-# 必须原样保留:少了 sweep 就泄漏。
-# ★★ 单进程单端口之后 `server/worker_launcher.gd` **整个文件已删除** —— 端口池、每局一个 `--worker`
-#   子进程、按端口杀进程都随那个形态一起消失(`WorkerLauncher` 这个 class_name 也不存在了,
-#   任何引用它的脚本都会当场编译失败)。下面那条**反向断言**就是钉住这件事:
-#   「每局一个子进程」的形态不许偷偷回来。
-# ★ 杀端口属主的那段实现(`ProcUtil.kill_udp_port`)**仍在**(core/net/proc_util.gd;单进程单端口
-#   之后它只服务探针与"手工清被占端口")。判据按**职责**留在原处:「取不到属主进程就一个都
-#   杀不掉」这个失败模式与它住哪个文件无关,必须仍然有人守。
+# ── 2) main 既有成果在位(server/room_manager.gd + server/worker_launcher.gd)──
+# L5 把大乱斗大厅并进了同一份 room_manager。main 的「超龄房清扫」族(防 worker 进程 +
+# 端口永久泄漏)必须原样保留:少了 sweep 就泄漏,少了 kill_worker 就杀不掉 worker。
+# ★ 2026-09-14:杀 worker 的实现与那段 PowerShell 随端口池搬进了 WorkerLauncher
+#   (server/worker_launcher.gd)。判据按**职责**拆到两个文件,不是删掉 ——
+#   「杀不掉 worker」这个失败模式与文件放哪无关,必须仍然有人守。
 func _check_room_manager() -> void:
 	var fails_before := _failures.size()
 	var p := "res://server/room_manager.gd"
 	var pw := "res://server/worker_launcher.gd"
 	var pp := "res://core/net/proc_util.gd"
 	var code := _code_only(_read(p))
+	var code_w := _code_only(_read(pw))
 	var code_p := _code_only(_read(pp))
 	_check(not code.is_empty(), "读不到 %s" % p)
+	_check(not code_w.is_empty(), "读不到 %s" % pw)
 	_check(not code_p.is_empty(), "读不到 %s" % pp)
-	# ★ 反向断言:那个文件**必须不存在**。两条判据都查(资源表 + 磁盘)—— 只看磁盘的话,
-	#   导出包里若还带着旧脚本就照绿;只看资源表的话,没进 import 的裸 .gd 就照绿。
-	var wl_alive := ResourceLoader.exists(pw) or FileAccess.file_exists(pw)
-	_check(not wl_alive,
-			"★ %s 又出现了 —— 「每局一个 worker 子进程」的形态不许复活(单进程单端口下它无处可用)" % pw)
-	if code.is_empty() or code_p.is_empty():
+	if code.is_empty() or code_w.is_empty() or code_p.is_empty():
 		return
 	var needles := [
 		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 / 大乱斗 / 3v3 三族都要被扫到)", p, code],
 		["created_at", "房间创建时间戳(超龄判据)", p, code],
+		["func kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)",
+				pw, code_w],
 		# ★ 2026-09-14:那段 PowerShell 与 server_main 的一份**逐字相同**,已收进 core/proc_util.gd
 		#   (ProcUtil.kill_udp_port)。判据按职责跟着搬 —— 「取不到属主进程就一个都杀不掉」这个
 		#   失败模式与它住哪个文件无关,必须仍然有人守。
@@ -225,8 +220,7 @@ func _check_room_manager() -> void:
 		if _read(f).contains("215" + "59"):
 			leak.append(f)
 	_check(leak.is_empty(), "KH 私机路径残留 %d 处: %s" % [leak.size(), ", ".join(leak)])
-	_summary(fails_before, "room_manager:sweep 族 %d 针在位,私机路径残留 %d 处,worker_launcher 已不在"
-			% [needles.size(), leak.size()])
+	_summary(fails_before, "room_manager:sweep 族 %d 针在位,私机路径残留 %d 处" % [needles.size(), leak.size()])
 
 
 # ── 3) server_main 的 _kill_port_holder 是修正版 ────────────────────────

@@ -205,19 +205,11 @@ func _attach_lobby() -> void:
 		return
 	lobby = load("res://scenes/team_lobby.tscn").instantiate()
 	# ★ 本进程已经连上大厅(上面 start_client),而页的 `_ready` 会 deferred 跑一次
-	#   `_request_list` → `_with_lobby`:只有"已连"那一支会复用现有连接,否则它会
-	#   `NetBus.stop()` 再按 `PvpSession` 里的地址重连 —— 那是**别处**(默认 127.0.0.1:7777),
-	#   本探针明令不许碰。故**先置位再入树**,让页走"已连"分支。
-	# ★★ 两处必须一起摆好(2026-09-29 修,与 `rejoin_watcher` 同一处坑):
-	#   ① `PvpSession.server_address` / `server_port` —— `_with_lobby` 直连它俩(页上已无地址框);
-	#   ② `_connected` —— 快路的另一半判据 `NetBus.can_send_to_server()` 由真连接本身满足。
-	#   ③ 而**端口必须带上**:单进程改造后端口由客户端挑(这里 = 探针自己那个池外端口)。
-	#      漏了端口 ⇒ 页每次刷新都会 `NetBus.stop()` + 连到别处(7777),探针自己那台大厅
-	#      反而一个客户端都收不到。
-	#      (实测过:不修这条时房间被建到别处,探针侧只有"玩家连入/断开"。)
-	PvpSession.server_address = LOBBY_ADDR
-	PvpSession.server_port = lobby_port
+	#   `_request_list` → `_with_lobby`:只有"已连同地址"那一支会复用现有连接,否则它会
+	#   `NetBus.stop()` 再按**默认端口 7777** 重连 —— 而本探针的大厅在池外端口(见探针文件头)。
+	#   故**先置位再入树**,让页走"已连"分支。
 	lobby.set("_connected", true)
+	lobby.set("_connected_addr", LOBBY_ADDR)
 	cs.add_child(lobby)
 	_lobby_attached = true
 	_log("真大厅页已挂载(current_scene=%s)" % cs.name)
@@ -338,8 +330,7 @@ func _tick_lobby_join() -> void:
 	_refresh_t -= 1.0 / 60.0
 	if _refresh_t <= 0.0 and _phase_t > 1.0:
 		_refresh_t = 1.5
-		# ★ 2026-09-30:「刷新列表」按钮已按用户裁定删除,改催基类真正干活的那个口。
-		lobby.call("_request_list", "探针催刷新")
+		lobby.call("_on_refresh_pressed")
 		return
 	if _rooms.is_empty():
 		return

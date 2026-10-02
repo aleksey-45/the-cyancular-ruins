@@ -11,10 +11,9 @@ extends Node
 #   而这里没有任何等待(不 await、不开 socket、不拉子进程),故 3600 是"绝不可能耗尽"的量级。
 #
 # ═══ 为什么需要它 ═══
-# ★ 本批改的是一组**闭环**:房在对局期间不再被拆(否则"看得见"无从谈起),于是"房什么时候消失"
-#   从"有人断开"变成了"**会话自己说结束**"(`MatchSession._finish` → `RoomManager._on_session_finished`)。
-#   三张注册表各一处判断,写错任何一处都是**静默**的(房不死 = 列表位与那份会话永久占用;
-#   房早死 = 谁也看不见)。
+# ★ 本批改的是一组**闭环**:房在"客户端转连 worker"那一刻不再被拆(否则"看得见"无从谈起),
+#   于是"房什么时候消失"从"有人断开"变成了"worker 退了"。三张注册表各一处判断,写错任何一处
+#   都是**静默**的(房不死 = 端口与列表位永久占用;房早死 = 谁也看不见)。
 # ★ 列表可见性与拒绝入房是**同一件事的两半**:房留着才会出现在列表里,而出现之后必须**进不去**。
 #   只断言"列表里有它"会让一个"能点进去"的实现全绿 —— 那正是把第三人放进了别人的对局里。
 #   ★★ 2026-09-21(回局入口批)把这句话**收窄**成「对局中的房**对无凭据者**一律拒绝」:
@@ -23,8 +22,7 @@ extends Node
 #   ★★ 故拒绝那一半用**非满房**造:1v1 房里 1 人 / 大乱斗 2 人(上限 8)/ 3v3 房里 2 人时,
 #   唯一的拒绝理由只剩 `started` / `in_match` —— 用满房造会被「房间已满」喂绿(等于没验)。
 # ★ 本探针建的是**真 RoomManager + 真 LobbyRooms**(与生产同一条构造路径),房记录由探针手工摆:
-#   本批的逻辑全在大厅进程内,不需要 socket、也不需要真会话 —— 相④ 只摆三个 `MatchSession`
-#   节点(三张注册表各一间;单进程之后对局就是进程内的一个节点,不再需要拉子进程/占端口)。
+#   本批的逻辑全在大厅进程内,不需要 socket、也不需要真 worker。
 # ★ `NetBus.reply` 在"没有对端"时静默跳过 ⇒ 通过 RPC 应答观测的结果**读不到**;故列表抽成
 #   `*_list_payload()` 纯构造(可直调)、拒绝看**副作用**(调用方没被 append 进 players)。
 #   发送那一半由真链路探针覆盖(见设计 §6.4)。
@@ -94,17 +92,18 @@ func _finish() -> void:
 		get_tree().quit(1)
 
 
-# ── ① 1v1:房活过"成员全部断开大厅",且第三人**看得见、进不去** ──
+# ── ① 1v1:房活过"全员转连 worker",且第三人**看得见、进不去** ──
 func _phase_1v1() -> void:
 	var r := LobbyRooms.Room.new()
 	r.code = ROOM_1V1
 	r.players = [P_A, P_B]
 	r.player_role = {P_A: 1, P_B: 2}
 	r.started = true
-	r.match_id = 911        # 局号(非 0 = 已开局);本相不涉及回收(相④才摆会话)
+	r.worker_port = 29901
+	r.worker_pid = 0        # 本相不涉及回收(相④才摆 pid)
 	_rm.lobby.rooms[r.code] = r
-	# ★ 名单必须在**开局那一刻**冻结:对局中成员会掉线(宽限期内可 reclaim、之后还能回局),
-	#   那一刻 `players` 会空、`_peer_names` 会被擦掉 —— 靠它们渲染的列表会退化成"玩家/玩家"。
+	# ★ 名单必须在**开局那一刻**冻结:成员转连 worker 后会陆续断开大厅,`players` 会空、
+	#   `_peer_names` 会被擦掉 —— 靠它们渲染的列表会退化成"玩家/玩家"。
 	_rm.lobby._peer_names[P_A] = "阿甲"
 	_rm.lobby._peer_names[P_B] = "bob"
 	_rm.lobby.freeze_roster(r)
@@ -142,7 +141,8 @@ func _phase_royale() -> void:
 	rr.player_role = {P_A: 1, P_B: 2}
 	rr.max_players = 8
 	rr.in_match = true
-	rr.match_id = 912
+	rr.worker_port = 29902
+	rr.worker_pid = 0
 	_rm.lobby.royale_rooms[rr.code] = rr
 	_rm.lobby._peer_names[P_A] = "阿甲"
 	_rm.lobby._peer_names[P_B] = "bob"
@@ -163,7 +163,7 @@ func _phase_royale() -> void:
 	# ★ 非满房:2/8 —— 唯一能拒的理由就是 in_match
 	rr.players = [P_A]
 	var before := rr.players.size()
-	_rm.lobby.royale_join(P_C, ROOM_ROYALE, false)
+	_rm.lobby.royale_join(P_C, ROOM_ROYALE, "", false)
 	_check(rr.players.size() == before and not rr.players.has(P_C),
 			"② ★ 第三人(**无凭据**)royale_join 被拒(2/8 非满房:唯一能拒它的是 in_match)")
 
@@ -177,7 +177,8 @@ func _phase_team() -> void:
 	tr.player_role = {P_A: 1, P_B: 2}
 	tr.team_of = {1: 1, 2: 2}
 	tr.in_match = true
-	tr.match_id = 913
+	tr.worker_port = 29903
+	tr.worker_pid = 0
 	_rm.lobby.team_rooms[tr.code] = tr
 	_rm.lobby._peer_names[P_A] = "阿甲"
 	_rm.lobby._peer_names[P_B] = "bob"
@@ -199,65 +200,44 @@ func _phase_team() -> void:
 	tr.players = [P_A]
 	tr.team_of = {1: 1}
 	var before := tr.players.size()
-	_rm.lobby.team_join(P_C, ROOM_TEAM, false)
+	_rm.lobby.team_join(P_C, ROOM_TEAM, "", false)
 	_check(tr.players.size() == before and not tr.players.has(P_C),
 			"③ ★ 第三人(**无凭据**)team_join 被拒(2/6 非满房:唯一能拒它的是 in_match)")
 
 
-# ── ④ 对局结束即回收:会话还在 → 房不许动;会话结束 → 房必须被回收 + 该局凭据作废 ──
-# ★ 判据是"**这一局的会话还在不在**"(`room.session`),不再是"worker 进程还活着吗":单进程单端口
-#   之后对局就是进程内的一个 `MatchSession` 节点,而它**自己**在 `_finish()` 里发 `finished`
-#   (唯一收口 = `RoomManager._on_session_finished`)—— 那才是"这一局结束了"精确的时点,
-#   不必再靠轮询 pid 去估(原先那条梯按"一局大约多久"估的界既早又晚)。
-# ★ 反向那一半(**活会话不回收**)不能省:只断言"结束的会收"会让一个"见谁收谁"的实现全绿,
-#   而那会把正在进行的对局当场端掉(单进程之后连大厅一起端掉)。
-# ★ 第三条(**作废的是该局,不是整张表**)同样不能省:凭据的生死只能由"这一局结束了"决定;
-#   判据是条目上的 `alive`,而它现在当场可问,不再由 pid 间接回答。
+# ── ④ 对局结束即回收:worker 进程还在 → 房不许动;worker 退了 → 房必须被回收 ──
+# ★ 判据是"**worker 进程还在不在**":三种模式的 worker 都在对局结束时自己退,而任何按
+#   "一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口与列表位)。
+# ★ 反向那一半(**活的 pid 不回收**)不能省:只断言"死的会收"会让一个"见谁收谁"的实现全绿,
+#   而那会把正在进行的对局连端口一起端掉。
+# ★ 第三条(pid 还没登记)**同样不能省**:`worker_pid` 的登记发生在 `create_process` 成功
+#   **之后**,把 0 判成"结束"会让开局那一瞬被自己的回收梯拆掉。
 func _phase_reclaim() -> void:
-	# 三张注册表各一间房:A(1v1)的会话**还活着**,B(大乱斗)/C(3v3)的会话**已结束**。
-	# ★ 会话是**进程内的节点**,故这里 `new` 出来摆上即可 —— 不开 socket、不拉子进程。
-	#   ★ 挂到 `_rm` 下与生产同款(`RoomManager._open_match` 就是 `add_child(session)`)。
-	var live := MatchSession.new(MatchSession.Mode.DUEL, "9011", 9111, [], [1, 2], [], {})
-	_rm.add_child(live)
-	var a := LobbyRooms.Room.new()
-	a.code = "9011"
-	a.started = true
-	a.match_id = 9111
-	a.session = live
-	_rm.lobby.rooms[a.code] = a
-	var dead_r := MatchSession.new(MatchSession.Mode.ROYALE, "9012", 9112, [], [1, 2], [], {})
-	_rm.add_child(dead_r)
-	var b := LobbyRooms.RoyaleRoom.new()
-	b.code = "9012"
-	b.in_match = true
-	b.match_id = 9112
-	b.session = dead_r
-	_rm.lobby.royale_rooms[b.code] = b
-	var dead_t := MatchSession.new(MatchSession.Mode.TEAM, "9013", 9113, [], [1, 2], [], {})
-	_rm.add_child(dead_t)
-	var c := LobbyRooms.TeamRoom.new()
-	c.code = "9013"
-	c.in_match = true
-	c.match_id = 9113
-	c.session = dead_t
-	_rm.lobby.team_rooms[c.code] = c
-	# 三局各有一份凭据(局号分别是 9111 / 9112 / 9113)
-	var now := Time.get_ticks_msec()
-	_rm.lobby.rejoin.grant("tk_live", "9011", 1, 9111, now)
-	_rm.lobby.rejoin.grant("tk_r", "9012", 1, 9112, now)
-	_rm.lobby.rejoin.grant("tk_t", "9013", 1, 9113, now)
+	# 活的 pid:用**本进程自己** —— 它一定活着,不需要拉起任何子进程
+	var live := OS.get_process_id()
+	var r := LobbyRooms.Room.new()
+	r.code = "9011"
+	r.started = true
+	r.worker_port = 29911
+	r.worker_pid = live
+	_rm.lobby.rooms[r.code] = r
+	var rr := LobbyRooms.RoyaleRoom.new()
+	rr.code = "9012"
+	rr.in_match = true
+	rr.worker_port = 29912
+	rr.worker_pid = 999999        # 本机上不该存在的 pid
+	_rm.lobby.royale_rooms[rr.code] = rr
+	var tr := LobbyRooms.TeamRoom.new()
+	tr.code = "9013"
+	tr.in_match = true
+	tr.worker_port = 29913
+	tr.worker_pid = 0             # ★ 还没登记 pid(拉起中)→ **不得**被判成结束
+	_rm.lobby.team_rooms[tr.code] = tr
 
-	# B、C 两局自己说结束(生产里由 `MatchSession._finish` 经 `finished` 信号走到这里)
-	_rm._on_session_finished(dead_r)
-	_rm._on_session_finished(dead_t)
-	_check(_rm.lobby.rooms.has("9011"),
-			"④ ★ 会话还活着的房**不许**被回收(见谁收谁会把正在进行的对局当场端掉)")
-	_check(not _rm.lobby.royale_rooms.has("9012") and not _rm.lobby.team_rooms.has("9013"),
-			"④ 会话自己说结束 → 房必须被回收(大乱斗 / 3v3 两张注册表都要被扫到)")
-	_check(not bool(_rm.lobby.rejoin.lookup("tk_r", now).get("alive", true)) \
-			and not bool(_rm.lobby.rejoin.lookup("tk_t", now).get("alive", true)) \
-			and bool(_rm.lobby.rejoin.lookup("tk_live", now).get("alive", false)),
-			"④ ★ 结束那两局的凭据 alive 翻 false、还在打的那局仍是 true(作废的是**这一局**,不是整张表)")
+	_rm._reclaim_finished_matches()
+	_check(_rm.lobby.rooms.has("9011"), "④ ★ worker pid 活着(本进程)→ 房**不许**被回收")
+	_check(not _rm.lobby.royale_rooms.has("9012"), "④ worker pid 已退 → 大乱斗房必须被回收")
+	_check(_rm.lobby.team_rooms.has("9013"), "④ ★ pid 还没登记(拉起中)→ 不得判成结束")
 
 
 # ── ⑤⑥ 回局判据在**生产 handler** 上的行为(不是只测那个纯函数)──
@@ -265,7 +245,7 @@ func _phase_reclaim() -> void:
 #   "查 → 判 → 发"这三步的**接线**没测 —— 把 `lookup` 写成 `lookup(token, now + 一个很大的数)`
 #   或把 `code` 传错,纯函数照样全绿。
 # ★ 本探针**观测不到 go_match**(没有对端 → `NetBus.reply` 静默跳过),故这里能断言的是
-#   拒绝路径的**副作用**(那一局已结束时凭据被清)。**放行路径的真实发送**由真链路探针覆盖
+#   拒绝路径的**副作用**(死 worker 时凭据被清)。**放行路径的真实发送**由真链路探针覆盖
 #   (`tests/rejoin_probe`),这条边界照实登记。
 # ★★ ④ 那一条**不是**多余的:`NetBusExt.rejoin_requested → on_rejoin_request` 这一行**接线**
 #   此前**零覆盖** —— 上面三条都是**直调 handler**,把 `_enter_tree` 里那行 connect 删掉,
@@ -273,31 +253,28 @@ func _phase_reclaim() -> void:
 #   (净的静默 no-op,与"RPC 挂错节点"同一类)。故第 ④ 条**走信号**(emit)而不直调:
 #   能观测到副作用(凭据被清)就说明那行 connect 在。同款纪律的先例:`team_room_smoke` ⑥
 #   「判据函数测对了 ≠ 生产调的是它」。
-# ★ 拆除那一侧的归键(局号而非房间号)另有一个专属守卫:`tests/rejoin_keying_probe.tscn`
-#   ——「两间同号的房」那个病态输入在**真 teardown_room / 真 end_match** 上跑,本相不重复造。
+# ★ 拆除那一侧的归键(端口而非房间号)另有一个专属守卫:`tests/rejoin_keying_probe.tscn`
+#   ——「两间同号的房」那个病态输入在**真 teardown_room** 上跑,本相不重复造。
 func _phase_rejoin() -> void:
 	var now := Time.get_ticks_msec()
-	# ① 房间号不符:拒绝,且凭据**不被**清(那一局还活着,值得让玩家重试一次)
-	_rm.lobby.rejoin.grant("tk_x", "9021", 1, 9021, now)
+	# ① 房间号不符:拒绝,且凭据**不被**清(worker 还活着,值得让玩家重试一次)
+	_rm.lobby.rejoin.grant("tk_x", "9021", 1, 29921, OS.get_process_id(), now)
 	_rm.lobby.on_rejoin_request(P_C, "9999", "tk_x")
 	_check(not _rm.lobby.rejoin.lookup("tk_x", now).is_empty(),
-			"⑤ 房间号不符:拒绝但**不清**凭据(那一局还活着,能重试)")
-	# ② 那一局已结束(凭据条目上的 `alive` 已被 end_match 翻 false):
-	#    拒绝 + **清掉**凭据(它再也不会成立,留着只会骗下一个请求)
-	_rm.lobby.rejoin.grant("tk_y", "9021", 1, 9022, now)
-	_rm.lobby.rejoin.end_match(9022)
+			"⑤ 房间号不符:拒绝但**不清**凭据(worker 还活着,能重试)")
+	# ② worker 已退:拒绝 + **清掉**凭据(它再也不会成立)
+	_rm.lobby.rejoin.grant("tk_y", "9021", 1, 29922, 999999, now)
 	_rm.lobby.on_rejoin_request(P_C, "9021", "tk_y")
 	_check(_rm.lobby.rejoin.lookup("tk_y", now).is_empty(),
-			"⑥ ★ 那一局已结束:拒绝并把这份凭据当场作废(留着只会骗下一个请求)")
+			"⑥ ★ worker 已退:拒绝并把这份凭据当场作废(留着只会骗下一个请求)")
 	# ③ 凭据根本不存在:拒绝,且不得凭空造出凭据
 	_rm.lobby.on_rejoin_request(P_C, "9021", "tk_not_exist")
 	_check(_rm.lobby.rejoin.lookup("tk_not_exist", now).is_empty(),
 			"⑥ 未知 token:拒绝且不登记任何东西")
 	# ④ 接线:同一件事**走信号**(emit)再验一次 —— 只直调 handler 时,`_enter_tree` 里那行
 	#    `NetBusExt.rejoin_requested.connect(on_rejoin_request)` 被删也全绿(见函数头)。
-	#    用"那一局已结束"那一档造可观测的副作用(与②同一手法)。
-	_rm.lobby.rejoin.grant("tk_w", "9021", 1, 9023, now)
-	_rm.lobby.rejoin.end_match(9023)
+	#    用"死 worker"那一档造可观测的副作用(与②同一手法)。
+	_rm.lobby.rejoin.grant("tk_w", "9021", 1, 29923, 999999, now)
 	NetBusExt.rejoin_requested.emit(P_C, "9021", "tk_w")
 	_check(_rm.lobby.rejoin.lookup("tk_w", now).is_empty(),
 			"⑥ ★ 信号接线在位(emit rejoin_requested 能落到生产 handler:connect 被删就红)")
@@ -312,25 +289,23 @@ func _phase_rejoin() -> void:
 # ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**自己摆过的值,
 #   否则同一进程里后面的相会读到脏值(本探针是独立进程,但同仓的纪律如此)。
 func _phase_session_flags() -> void:
-	var keep := [PvpSession.token, PvpSession.server_port, PvpSession.room_code]
-	PvpSession.token = "tk"; PvpSession.server_port = 29901; PvpSession.room_code = "9021"
+	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code]
+	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9021"
 	_check(PvpSession.can_rejoin_to("9021"), "⑦ 凭据齐 + 房号对上 → 这一行可点(回局)")
 	_check(not PvpSession.can_rejoin_to("9999"),
 			"⑦ ★ 房号不符 → 不可点(防的是「别人那间对局中的房」也变可点,点下去只会收到一句无关的拒绝)")
 	PvpSession.token = ""
 	_check(not PvpSession.can_rejoin_to("9021"), "⑦ token 缺 → 不可点")
-	PvpSession.token = "tk"; PvpSession.server_port = 0
-	_check(not PvpSession.can_rejoin_to("9021"), "⑦ server_port 缺 → 不可点(连不回那一局)")
-	PvpSession.server_port = 29901; PvpSession.room_code = ""
+	PvpSession.token = "tk"; PvpSession.worker_port = 0
+	_check(not PvpSession.can_rejoin_to("9021"), "⑦ worker_port 缺 → 不可点(连不回那一局)")
+	PvpSession.worker_port = 29901; PvpSession.room_code = ""
 	_check(not PvpSession.can_rejoin_to("9021"), "⑦ room_code 缺 → 不可点(回局请求带不上房号)")
 	PvpSession.room_code = "9021"; PvpSession.rejoin = true
 	PvpSession.clear_rejoin()
-	# ★ `clear_rejoin()` 清的是**凭据**三件(token / room_code / rejoin);`server_port` **不在其中**
-	#   —— 它记的是"我连的是哪台服务器",清它等于把玩家踢到别处(与 `reset()` 的分工见生产注释)。
-	_check(PvpSession.token == "" and PvpSession.room_code == "" \
-			and not PvpSession.rejoin and PvpSession.server_port == 29901,
-			"⑦ ★ clear_rejoin() 必须把凭据三件一起清、且**不许动** server_port(漏一个就是「那一行永远可点」)")
-	PvpSession.token = keep[0]; PvpSession.server_port = keep[1]; PvpSession.room_code = keep[2]
+	_check(PvpSession.token == "" and PvpSession.worker_port == 0 \
+			and PvpSession.room_code == "" and not PvpSession.rejoin,
+			"⑦ ★ clear_rejoin() 必须把四个字段一起清(漏一个就是「那一行永远可点」)")
+	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]; PvpSession.room_code = keep[2]
 
 
 func _find_row(arr: Array, code: String) -> Dictionary:
@@ -359,8 +334,8 @@ func _find_row(arr: Array, code: String) -> Dictionary:
 #   是**没有连任何 handler**(与 `lobby_row_probe` 同款)。
 # ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**(同相⑦)。
 func _phase_own_row_clickable() -> void:
-	var keep := [PvpSession.token, PvpSession.server_port, PvpSession.room_code, PvpSession.rejoin]
-	PvpSession.token = "tk"; PvpSession.server_port = 29901; PvpSession.room_code = "9001"
+	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.rejoin]
+	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9001"
 	# 三页各喂三行:**9001 = 我的房**(凭据里的房号就是它,载荷仍标 in_match)、
 	# **9002 = 别人的对局中的房**(同样是 in_match,凭据不是它的)、9003 = 普通未满房(正向对照)
 	var rows_1v1: Array = [
@@ -381,7 +356,7 @@ func _phase_own_row_clickable() -> void:
 	for r: String in reasons:
 		if r != "":
 			bad.append(r)
-	PvpSession.token = keep[0]; PvpSession.server_port = keep[1]
+	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]
 	PvpSession.room_code = keep[2]; PvpSession.rejoin = keep[3]
 	# ★ 一条聚合断言(三页逐页核对,失败时逐页点名)—— 条数约定见 EXPECTED_CHECKS 的注释
 	_check(bad.is_empty(),

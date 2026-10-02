@@ -9,28 +9,18 @@ extends RefCounted
 #   规则:**加字段前先 grep 确认有读者**;只写不读的字段一律不要加。
 #   (这 4 个都是"上游写了、下游其实从别处拿"的残留,与 match_sync 落地前的交接层同源。)
 
-# 要连/已经连着的那台服务端。★ 2026-09-29 起**没有"手填地址"这条路**了,写它的只有两处:
-#   `LocalServer.launch_and_connect()`(本机开服,端口随机)与 `Tunnel.start_client()`(隧道,连 127.0.0.1)。
-#   ★ 默认值因此是 127.0.0.1:原先那个云地址在手填入口删掉之后**再也没法被选中**,留着只会让
-#     "某页忘了写地址"退化成静默去连一台陌生服务器(而不是立刻失败、当场看见)。
-static var server_address: String = "127.0.0.1"
-# 服务器端口。★ 它是**客户端自己连的那一个**:单进程单端口之后,大厅与对局共用它,
-# 局内断线重连也直连它(`pvp_match_client._retry_connect`)。
-# ★ 与 `NetBus.DEFAULT_PORT` 同值:那是"手动跑一台服务端"的端口(开发时 `start_server.bat` 用它);
-#   本机开服时由客户端挑一个随机端口填进来(见 core/net/local_server.gd)。
-#   守卫:tests/netplay_probe 比对两者相等。
-const DEFAULT_PORT := 7777
-static var server_port: int = DEFAULT_PORT
+static var server_address: String = "120.53.107.140"   # 默认服务器(云)
 static var role: int = 1          # 1=P1(大乱斗里是第 N 人)。真读者多:出生点/副本/输入上报
 static var player_name: String = "Anon"   # 匹配界面输入的昵称(默认 Anon;头上显示;会话内不清)
-static var map_path: String = ""       # 服务器定图:在 match_start 里下发,对局场景加载同名文件
+static var map_path: String = ""       # 服务器定图:worker 在 match_start 里下发,对局场景加载同名文件
 static var spawn: Vector2i = Vector2i(-1, -1)   # 本端出生点(match_sync 下发,与服务器同源)
-
 
 # ── 断线重连(2026-09-17)──
 # ★ 与本文件的其他字段一样:**加之前先 grep 确认有读者**。
-#   token : 大厅生成、随 session_token 下发;claim 时报给服务端;重连时用来 reclaim
+#   token      : 大厅生成、随 session_token 下发;claim 时报给 worker;重连时用来 reclaim
+#   worker_port: 客户端重连要直连**同一个端口**,不重新走大厅(局内自动重连那条路径)
 static var token: String = ""
+static var worker_port: int = 0
 
 # ── 「回大厅后回局」(路径乙)的两个字段(2026-09-21,阶段 2-B)──
 # ★ 与上面两条同款纪律:**加字段前先 grep 确认有读者**。两个都有:
@@ -78,7 +68,7 @@ static func enter_mode(m: String) -> void:
 
 # 手里还攥着**某一局**的凭据吗?(粗判据:三个字段齐。)
 static func can_rejoin() -> bool:
-	return token != "" and server_port > 0 and room_code != ""
+	return token != "" and worker_port > 0 and room_code != ""
 
 
 # 「**这一行**是不是我的房、而且我还能回去?」—— 房间列表每一行渲染时与行被按下时**共用**
@@ -102,13 +92,14 @@ static func can_rejoin_to(code: String) -> bool:
 #     回不去"(整条路径乙在生产里不可达)。**别再往 `reset()` 里加回那四行。**
 static func clear_rejoin() -> void:
 	token = ""
+	worker_port = 0
 	room_code = ""
 	rejoin = false
 
 
 # 「我现在进的是**这一间**房」—— 三页记房号的**唯一**入口(`_on_room_created` / `_on_room_joined` /
 # `_on_room_state` 都调它;别的地方不要再写 `PvpSession.room_code = …`)。
-# ★ 换了房号 ⇒ 上一间的凭据到此为止:此刻手里那份 token 属于**上一局**,
+# ★ 换了房号 ⇒ 上一间的凭据到此为止:此刻手里那份 token/worker_port 属于**上一局**,
 #   而"这一间"还没开局(token 由大厅在开局前才发)⇒ 留着它只会让**上一局的**(甚至同号的
 #   别人的)房看起来像"我的房"(点下去必然收到一句与眼前这间房无关的拒绝)。
 # ★ 房号**没变**时不清:大乱斗/3v3 的等待室每收到一次房间状态就会走一遍本函数,而
@@ -145,7 +136,7 @@ static func note_room(code: String) -> void:
 # 守卫:`tests/match_sync_probe` 的反向断言,全仓不得再出现这些标识符。
 
 # 「进大厅页」的复位:**不碰回局凭据**(那四行 2026-09-22 已删 —— 见 `clear_rejoin` 上面那段)。
-# ★★ 曾经它在末尾清 `token` / `room_code` / `rejoin`,而主菜单那三个联机按钮
+# ★★ 曾经它在末尾清 `token` / `worker_port` / `room_code` / `rejoin`,而主菜单那三个联机按钮
 #   每按一次就调它一次 ⇒ 玩家从对局按 ESC 回主菜单、再按「1 v 1」时,凭据**正好在那一拍**
 #   被抹掉 → `can_rejoin_to()` 恒 false → 自己那间"对局中"的房在列表里恒为灰、点不动
 #   (**整条路径乙在生产里不可达**,而真链路探针因为绕过了主菜单那一步,一直是绿的)。

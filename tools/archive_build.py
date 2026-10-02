@@ -38,11 +38,7 @@ PROJECT_GODOT = os.path.join(PROJECT, "project.godot")
 PKG_NAME = "The Cyancular Ruins"      # 发布目录名(与 project.godot 的 config/name 一致)
 
 GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe"]
-# ★ 必须与 `core/config/tunnel_meta.gd` 的 CORE_EXE / CLI_EXE / CORE_DLLS 保持一致 ——
-#   那一侧是运行时判据,这里漏一个就会打出"客户端认为不齐"的包。
-EASYTIER_FILES = ["easytier-core.exe", "easytier-cli.exe", "Packet.dll", "wintun.dll"]
-# 找 EasyTier 的两个位置,与 `Tunnel.available()` 的前两个顺位对应:
-#   仓库根 = 真实发布布局(发布版只认这里)/ tools/easytier = 开发态。
+# noEztier 线:联机走大厅直连(公网服/LAN),包内不再携带 EasyTier。
 EASYTIER_DIRS = [PROJECT, os.path.join(PROJECT, "tools", "easytier")]
 
 
@@ -80,14 +76,6 @@ def wipe_builds() -> None:
             os.remove(p)
 
 
-def find_easytier(name: str) -> str:
-    for d in EASYTIER_DIRS:
-        p = os.path.join(d, name)
-        if os.path.isfile(p):
-            return p
-    return ""
-
-
 def main() -> None:
     stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
     version = read_project_version()
@@ -118,21 +106,7 @@ def main() -> None:
         shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, f))
         print("  ✓ %s" % f)
 
-    # ② EasyTier:可选,但缺了就没法联机 —— 点名,不静默
-    missing = []
-    for f in EASYTIER_FILES:
-        src = find_easytier(f)
-        if src:
-            shutil.copy2(src, os.path.join(out, f))
-            print("  ✓ %s   (来自 %s)" % (f, os.path.relpath(os.path.dirname(src), PROJECT)))
-        else:
-            missing.append(f)
-    if missing:
-        print("\n⚠ 本包**不含** EasyTier:%s" % " / ".join(missing))
-        print("  ⇒ 这个包**无法远程联机**(手填服务器地址那条路已删除;见 docs/netplay.md §7)。")
-        print("  取一份(整包,别只拿两个 exe):python tools/fetch_easytier.py")
-
-    # ③ 累积档案:同样的包再沉淀一份进 releases/(每次发布都留,按版本+时间戳命名;
+    # ② 累积档案:同样的包再沉淀一份进 releases/(每次发布都留,按版本+时间戳命名;
     #    builds/ 那份仍然是"只留最新"。同名重跑覆盖,不重复堆积)
     os.makedirs(RELEASES, exist_ok=True)
     keep = os.path.join(RELEASES, os.path.basename(out))

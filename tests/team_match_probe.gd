@@ -35,20 +35,20 @@ extends Node
 #        已被移出对局(见 watcher 文件头对 brief 那句"排行榜标离开"的照实偏离)。
 #
 # ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══
-#   本进程 = 真服务端(`NetBus.start_server(LOBBY_PORT)` + `RoomManager`),**不占 7777**。
-#            ★ 单进程单端口:大厅与**对局同一个进程**,对局是 `RoomManager.team_start` 经
-#            `_open_match` 在进程内 `add_child(MatchSession)` 出来的节点 —— **没有 worker 子进程**。
+#   本进程 = 真大厅(`NetBus.start_server(LOBBY_PORT)` + `RoomManager`),**不占 7777**
 #   c1..c6 = 6 个 headless 客户端,各自跑真 `team_lobby` → 真 `team_game`
-#   ★ 端口纪律(与 reconnect_probe 同源):**探针只用自己挑的那个端口,且不占 7777**。
-#     旧形态那条"worker 端口必须落在池(7800~8299)之外"的护栏随 `WorkerLauncher` 一起退役 ——
-#     现在连"会误杀别人 worker"的那条按端口杀都不存在了(服务端就是本进程)。
+#   worker = 由**真** `RoomManager.team_start` 经 `WorkerLauncher.spawn_team_worker` 拉起
+#            (与生产逐字同一条路径,探针只是把它的起投端口拨到池外,见下方常量)
+#   ★ 端口纪律(与 reconnect_probe 同源):大厅与 worker **都落在真大厅的 worker 端口池
+#     (7800~8299)之外、且不占 7777** —— 本机常驻一个真大厅时,池内端口可能被它发给别人
+#     的对局,而本探针收尾会按端口杀 worker,会把别人那一局一起杀掉。
 #
 # ═══ 前提 ═══
 #   **请确认没有别的 Godot 占着 7777**(本探针不占 7777,但别杀掉用户自己的服务端)。
 #   客户端子进程的 stdout 父进程看不到(Windows `CreateProcess` 不继承句柄)→ 每个子进程
 #   都带 `--log-file`;失败时本探针把**每个客户端的引擎日志尾部**一起打印出来。
 #   收尾**按 PID 杀**本进程拉起过的**全部**子进程(客户端是从临时端口连出去的,只按端口杀
-#   根本杀不到)。
+#   根本杀不到),worker 另按 UDP 端口补一刀(它才是真的 bind 端口那一侧)。
 #
 # ═══ 时间预算 ═══
 #   相①~③ 约 40~90s;相④ 打到 9 杀是**脚本机器人尽力交火 + 回退模式**的结果,是本探针最大的时间
@@ -58,10 +58,13 @@ extends Node
 #   ★ `RESULT_WAIT` 一旦超过 780 就必须同步抬 `FINAL_TIMEOUT`,否则收工上限会先于预算到点)。
 
 const RESULT_PREFIX := "team_match_probe_"
-# ★ 端口纪律(与 reconnect_probe 的常量区同源):**只用本探针自己挑的端口(29xxx),不碰 7777**。
-#   旧形态的"worker 端口池 7800~8299"随 `WorkerLauncher` 删除 —— 没有池可撞,也没有别人的
-#   worker 会被本探针的收尾误杀(服务端就是本进程,收尾只按 PID 杀子进程)。
+# ★ 端口纪律(与 reconnect_probe 的常量区同源,改这几个数之前先读文件头"端口纪律"):
+#   全仓对局 worker 的池 = `WorkerLauncher.WORKER_PORT_BASE`(7800)~ +SPAN(500)= 8300 开区间。
+#   本探针的大厅与 worker 都取池外(29xxx),同时远离 7777 与常见服务端口。
 const LOBBY_PORT := 29200
+const WORKER_PORT_OUT := 29250     # `RoomManager` 的 `pick_port` 起投点(见 _run_orchestrator)
+const POOL_LOW := 7800
+const POOL_HIGH := 8300
 const CLIENT_COUNT := 6
 const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由本进程收尾/按 PID 杀
 const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
@@ -85,6 +88,7 @@ var _t := 0.0
 var _stage := 0
 var _rm: Node = null
 var _code := ""
+var _worker_port := 0
 var _ready_seen := false
 var _start_t := -1.0
 var _child_pids: Array[int] = []
@@ -120,10 +124,14 @@ func _run_orchestrator() -> void:
 				% [err, LOBBY_PORT])
 		get_tree().quit(1)
 		return
-	# ★★ 端口**必须**传给 RoomManager(单进程单端口之后它就是发给客户端的那个端口):
-	#   传默认值会让 6 端在重连/兜底路径上被指向 7777(用户自己的服务端,本探针不碰)。
-	_rm = RoomManager.new(LOBBY_PORT)
+	_rm = RoomManager.new()
 	add_child(_rm)
+	# ★★ 把 worker 的端口起投点拨到**池外**(见文件头"端口纪律")。
+	#   `WorkerLauncher` 的分配器是"唯一递增 + 占用集合"(`_next_port` 自 WORKER_PORT_BASE 起
+	#   递增到 BASE+SPAN 再回卷),本机上可能**同时**跑着用户自己的真大厅 —— 它会往池里发端口。
+	#   本探针收尾按 UDP 端口杀 worker(兜底层)时不看属主,撞上池内端口就有误杀别人对局的
+	#   危险。拨到池外即从根上避开(pick_port 会立刻回卷 `_next_port`,故这只影响**第一发**)。
+	_rm.get("_launcher").set("_next_port", WORKER_PORT_OUT)
 	# ★ `_clean()` 失败(上一跑的进程还活着)时**必须整段收工**:只 push 一条然后继续拉起客户端
 	#   的话,6 个新客户端与那批残留进程会互相覆盖 `.result`,而且本进程退出后 `_kill_children()`
 	#   再也不跑 ⇒ 留下一堆**孤儿进程**攥着文件,把下一跑也逼进这一支(实测复现过)。
@@ -131,7 +139,7 @@ func _run_orchestrator() -> void:
 		print("PROBE: 清理失败(多半是上一跑的进程还活着)—— 不拉起客户端,直接退出")
 		get_tree().quit(1)
 		return
-	print("PROBE: 服务端就绪(大厅+对局同进程,端口 %d;不碰 7777)" % LOBBY_PORT)
+	print("PROBE: 大厅就绪(port %d,池外);worker 起投端口 %d" % [LOBBY_PORT, WORKER_PORT_OUT])
 	if OS.get_cmdline_user_args().has("--nospawn"):
 		print("PROBE: --nospawn:不拉客户端子进程,请人工另起 6 个 `-- --role=cN`")
 		print("PROBE: ★ 此模式**不会**判 ALL-OK —— 跨端断言一条都跑不到(见 _finish 的闸门),收尾必记一条 FAIL")
@@ -212,18 +220,13 @@ func _stage_wait_full() -> void:
 	for r in tr.team_of:
 		by[int(tr.team_of[r])] = int(by.get(int(tr.team_of[r]), 0)) + 1
 	print("PROBE: 6 人已到齐并选边完毕 → 队号表 %s(每队 %s)" % [str(tr.team_of), str(by)])
-	# ★ 立刻**存档**:队伍表在**相⑤**会被改动 —— c6 按 ESC 离场(真断开)后 `on_peer_left`
-	#   把它从 `player_role` 摘掉,并连带把 `team_of` 里**已无人持有的 role 逐个 erase**
-	#   (见 lobby_rooms.on_peer_left 的 3v3 那一段)⇒ 到收尾时再读 `_room()` 拿到的是**少一人的**
-	#   队伍表,而 `_assert_stage3` 要拿它跟 6 端各自的 `match_sync.teams` 逐值比对。
-	#   ★★ 本条的理由订正过两次,结论不变:
-	#     · 最初写的是「房在开局那一刻就被消费掉了(`teardown_room`)」—— 错,对局中的房刻意不拆;
-	#     · 接着写的是「成员**转连 worker** 后会陆续断开大厅」—— 单进程单端口之后**没有转连**,
-	#       客户端全程连着同一台服务端,故那一条也不再成立;
-	#     · 现在成立的是:相⑤ 的 ESC 离场会真断开(且 6 端各自的重连兜底也可能瞬断),
-	#       每一次真断开都会按上面的规则改队伍表 ⇒ "必须在这里存档"照旧成立。
-	#   ★ 别把这段读成"存档只是为了日志好看":少了它,相① 的队伍表比对会在**相⑤ 之后**读到
-	#     一份 5 人的表,于是六端全红(而产品其实是对的)。
+	# ★ 立刻**存档**:成员转连 worker 后会陆续断开大厅,`on_peer_left` 把它们从 `player_role`
+	#   摘掉,并连带把 `team_of` 里**已无人持有的 role 逐个 erase**(见 lobby_rooms.on_peer_left
+	#   的 3v3 那一段)—— 到收尾时再读 `_room()` 拿到的是**空队伍表**。
+	#   ★★ 2026-09-21 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局
+	#   消费掉了(`teardown_room`)」—— 对局中的房现在**刻意不拆**(它要活到 worker 退出,否则
+	#   "看得见 / 回局"两件事都无从谈起),所以收尾时房**还在**,只是表已经空了。故"必须在这里
+	#   存档"照旧成立,变的只是原因。
 	for r in tr.team_of:
 		_lobby_teams[int(r)] = int(tr.team_of[r])
 	_notes.append("大厅队伍表 %s" % str(tr.team_of))
@@ -240,34 +243,24 @@ func _stage_wait_start() -> void:
 			_finish("房主没有点开始(房内 %d 人,队号表 %s)\n%s"
 					% [tr.players.size(), str(tr.team_of), _dump()])
 		return
+	_worker_port = int(tr.worker_port)
 	_start_t = _t
-	# ★ 判据从"worker 端口"换成"局号 + 会话节点":单进程之后 `team_start` 只是**进程内**
-	#   `add_child(MatchSession)` —— 没有端口、没有子进程,而"这一局开起来了"由房记录直接回答。
-	_check(int(tr.match_id) > 0 and tr.session != null,
-			"相① ★ 房主开局后房记录拿到 match_id(%d)且 session 非空(会话真的建起来了)"
-			% int(tr.match_id))
-	# ★ 端口纪律(旧形态是"worker 端口必须在池外"):现在要保的是**探针只用自己挑的端口** ——
-	#   服务端端口就是 RoomManager 下发给客户端的那一个,传错就把客户端指向 7777。
-	_check(_rm.port == LOBBY_PORT and LOBBY_PORT != NetBus.DEFAULT_PORT,
-			"相① ★ 服务端端口 = 探针自己挑的 %d(不碰默认 %d)" % [_rm.port, NetBus.DEFAULT_PORT])
-	print("PROBE: 房主已开局 → 局号 %d、会话节点 %s(t=%.1fs)"
-			% [int(tr.match_id), str(tr.session != null), _t])
+	# ★ 端口纪律:worker 必须在池外(否则本探针收尾的"按端口杀 worker"可能误杀别人的对局)
+	_check(_worker_port < POOL_LOW or _worker_port >= POOL_HIGH,
+			"worker 端口 %d 落在真大厅的端口池 [%d,%d) 之外" % [_worker_port, POOL_LOW, POOL_HIGH])
+	print("PROBE: 房主已开局 → worker 端口 %d(t=%.1fs)" % [_worker_port, _t])
 	_stage = 3
 
 
 func _stage_collect() -> void:
-	# 6 端 claim 收齐 → `MatchSession._begin_match` 建宿主(旧形态这里是"等 worker 报就绪",
-	# 而 worker 是独立进程、只能读它的 `--log-file`)。单进程之后**对局就在本进程里**,判据直接取
-	# 会话自己的 `started`(它只在 6 个 claim 全到齐、`TeamHost` 建好之后才置真)。
-	# ★ 这比旧判据**更强**:旧那条只证明"worker 起来了",不证明 6 端都 claim 上了。
+	# worker 就绪(读它自己的引擎日志 —— worker 是独立进程,日志是唯一能看到它内部动作的通道)
 	if not _ready_seen:
-		var tr0 = _room()
-		var sess = tr0.session if tr0 != null else null
-		if sess != null and bool(sess.started):
+		var txt := _read(_worker_log_path())
+		if txt.contains("3v3 worker 就绪"):
 			_ready_seen = true
-			print("PROBE: 对局已在进程内开始(6 端 claim 收齐,t=%.1fs)" % _t)
+			print("PROBE: worker 已就绪(t=%.1fs)" % _t)
 		elif _t - _start_t > 30.0:
-			_finish("开局后 30s 内 6 端没 claim 齐(会话 started 仍假)\n%s" % _dump())
+			_finish("worker 30s 内没报就绪(日志尾部)\n%s" % _tail(_worker_log_path(), 25))
 			return
 	var n := _results_ready()
 	if n >= CLIENT_COUNT or _t - _start_t > RESULT_WAIT:
@@ -307,9 +300,8 @@ func _finish(why: String) -> void:
 
 
 func _assert_stage3() -> void:
-	# ★ 队伍表取**开工时存下的那份**:相⑤ 的 ESC 离场会真断开,而 `on_peer_left` 会把该 role
-	#   从 `team_of` 里 erase ⇒ 到收尾时 `_room()` 拿到的是**少一人的**表(理由详见
-	#   `_stage_wait_full` 里那段订正过的注释)。
+	# ★ 队伍表取**开工时存下的那份**:房在开局那一刻就被对局消费掉(teardown_room),
+	#   到收尾时 `_room()` 恒 null —— 早先在这里读它,结果是"收尾时读到空房 + 一条假 FAIL"。
 	var lobby_teams := _lobby_teams
 	if lobby_teams.is_empty():
 		_check(false, "大厅队伍表是空的(选边那一刻没存到)")
@@ -674,7 +666,7 @@ func _assert_stage3() -> void:
 # ════════════════════ 子进程 / 文件 ════════════════════
 
 func _kill_children() -> void:
-	# ① **按 PID 杀全部子进程**(首选):六个客户端是从**临时端口**连出去的,不占服务端端口,
+	# ① **按 PID 杀全部子进程**(首选):六个客户端是从**临时端口**连出去的,不占 worker 端口,
 	#    只按端口杀根本杀不到它们 —— 留下的残留进程会敲下一跑、并攥着自己的 `--log-file`
 	#    让下一跑的清理静默失败(reconnect_probe 的 `_kill_children` 记过这两条后果)。
 	var killed := 0
@@ -684,32 +676,15 @@ func _kill_children() -> void:
 			killed += 1
 	print("PROBE: 按 PID 收尾 %d/%d 个子进程" % [killed, _child_pids.size()])
 	_child_pids.clear()
-	# ② 旧形态这里还有一刀"按 worker 的 UDP 端口补一枪"(worker 是独立进程、pid 不在本进程
-	#    的表里)。单进程之后**对局就在本进程内**,没有 worker 可杀 —— 而按 `LOBBY_PORT`
-	#    杀会**杀掉探针自己**(大厅在本进程里,`ProcUtil.kill_udp_port` 找的就是本进程的 pid),
-	#    故那一刀整体删除,端口由 `tests/team_match_probe.sh` 在探针退出后兜底清理。
+	# ② worker 按 UDP 端口补一刀(它才是真 bind 端口那一侧;兜住"PID 记录漏了"这一档)
+	if _worker_port > 0:
+		ProcUtil.kill_udp_port(_worker_port)
 
 
-# 服务端现场(**本进程内**,没有"worker 日志"可读 —— 旧形态那条
-# `_rm.get("_launcher").call("log_path", …)` 随 `WorkerLauncher` 一起删除)。
-# 失败时它是"服务端那边到底怎么了"的唯一读数:房记录(开局/局号/会话)
-# + 队伍表 + 6 端 claim 情况(会话自己的 `claims` 才是"谁报到了"的权威)。
-func _server_dump() -> String:
-	if _rm == null:
-		return "  (RoomManager 未装配)"
-	var peers: Array = multiplayer.get_peers() if multiplayer.has_multiplayer_peer() else []
-	var out := "  端口 %d / 3v3 房 %d 间 / peers %s\n" % [_rm.port,
-			_rm.lobby.team_rooms.size(), str(peers)]
-	for c in _rm.lobby.team_rooms:
-		var tr = _rm.lobby.team_rooms[c]
-		var sess = tr.session
-		out += "  · 房 %s:in_match=%s match_id=%d session=%s started=%s players=%d team_of=%s\n" % [
-				c, str(tr.in_match), int(tr.match_id), str(sess != null),
-				str(bool(sess.started) if sess != null else false), tr.players.size(),
-				str(tr.team_of)]
-		if sess != null:
-			out += "    claims=%s\n" % str(sess.claims)
-	return out
+func _worker_log_path() -> String:
+	if _rm == null or _worker_port <= 0:
+		return ""
+	return str(_rm.get("_launcher").call("log_path", _worker_port))
 
 
 func _godot_log_path(tag: String) -> String:
@@ -768,7 +743,8 @@ func _dump() -> String:
 	for i in range(1, CLIENT_COUNT + 1):
 		var tag := "c%d" % i
 		out += "  [%s 引擎日志]\n%s\n" % [tag, _tail(_godot_log_path(tag), 25)]
-	out += "  [服务端现场:就在本进程里]\n%s\n" % _server_dump()
+	if _worker_port > 0:
+		out += "  [worker:%d 引擎日志]\n%s\n" % [_worker_port, _tail(_worker_log_path(), 25)]
 	return out
 
 

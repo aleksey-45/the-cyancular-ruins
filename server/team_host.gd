@@ -392,9 +392,6 @@ func _match_round_tick(delta: float) -> void:
 								(players[heal_role] as Node).max_hp,
 								(players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
-			# 倒计时重播(共用实现,见 `COUNTDOWN_SYNC_INTERVAL`):客户端切场景/建 HUD 有延迟,
-			# 只广播一次会漏收,两端的倒计时起点就会差一整段场景加载时间。
-			_tick_countdown_sync(delta)
 		RoundState.PLAYING:
 			_handle_respawns(delta)
 			for t in [1, 2]:
@@ -681,13 +678,13 @@ static func kill_bonus_score(enemy_alive: int) -> int:
 	return KILL_BONUS_BASE + KILL_BONUS_PER_ALIVE * n
 
 
-# ★ 2026-09-30 移植时删:`func _fresh_attacker_role(victim_role: int) -> int` 那份包装。
-#   KH 的 B21 把同名函数上提到 `MatchState`(带 `window_ms` 参数,给时间经济的伤害入账用),
-#   注释写着"TeamHost 自己那份继续服务逐人统计"—— 但**同名不同签名的子类函数就是覆写**,
-#   于是 `Parse Error: The function signature doesn't match the parent` ⇒ 整条对局链
-#   (`match_host` / `royale_host` / `team_host` / 三个对局场景)全部加载失败。
-#   两份实现**逐字等价**(基类版多了一层 `players.get` + `_role_of_node`,与这里的 for 循环同义),
-#   故合并成一份:调用点改为显式传 `ATTRIB_FRESH_MS`。行为零变化。
+# "**这一下**伤害是谁打的" —— 归因必须**新鲜**(`ATTRIB_FRESH_MS`)。无 → 0。
+# ★ 与 `_attributed_killer` 是两个问题、两个窗口(见 `_attributed_role_within`)。
+func _fresh_attacker_role(victim_role: int) -> int:
+	var victim: Node2D = players.get(int(victim_role))
+	if victim == null or not is_instance_valid(victim):
+		return 0
+	return _attributed_role_within(victim, ATTRIB_FRESH_MS)
 
 
 # 受击回调覆写(虚分派:接线在 `MatchHost._wire_hit_feedback`,实际调到的是这一份)。
@@ -703,7 +700,7 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	#     穿队友,唯一能打到队友的是**爆炸**,不过滤就等于"朝队友扔雷即可刷 ACS",而且"爆心
 	#     队友"会反过来抬高扔雷者;
 	#   · 找不到攻击者(归因不到)→ 谁都不记。
-	var attacker := _fresh_attacker_role(int(role), ATTRIB_FRESH_MS)
+	var attacker := _fresh_attacker_role(int(role))
 	if attacker != 0 and not same_team(attacker, int(role)):
 		var s := _stat_entry(attacker)
 		s["dmg"] = int(s["dmg"]) + int(damage)

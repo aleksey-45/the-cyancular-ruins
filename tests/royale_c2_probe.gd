@@ -224,15 +224,14 @@ func _run_client() -> void:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
 	# ★★ **必须把地址拨到本探针的大厅**。生产默认是**云服**(`PvpSession.server_address` 初值
 	#   120.53.107.140),而客户端这一侧是**实例化真 `royale_lobby.tscn`** 让它自己连 ——
-	#   不拨的话两端会静默连到**别处**(默认 127.0.0.1:7777),
+	#   不拨的话两端会静默连到**云上那台真服务器**(还会在它上面真的建/进房间),
 	#   而编排器(本进程的 7777 大厅)**一条 `玩家连入` 都收不到** ⇒ `royale_create_requested`
 	#   永不发射 ⇒ `go.txt` 恒空、c1 卡阶段 1、c2 卡阶段 0,最后只给一个 90 秒超时。
 	#   ★ 这个坑**静默且极难归因**:日志里满是 c1/c2 自己的「已连接服务器」,看着像连上了。
 	#   范本:`tests/rejoin_watcher.gd` 的 `_on_node_added`(那边更麻烦 —— 它连 7777 都不许碰,
-	#   故要在页 `_ready` **之前**预置 `_connected`);本探针要的正是真连接,
+	#   故要在页 `_ready` **之前**预置 `_connected/_connected_addr`);本探针要的正是真连接,
 	#   故只需在实例化**之前**拨地址即可。
-	#   ★ 守卫:`royale_c2_watcher._stage_lobby` 会核对 `PvpSession` 的地址/端口,连错就当场红。
-	#   ★ 2026-09-29:页上那个「服务器地址」框已删除,`PvpSession` 现在是**唯一**的地址来源。
+	#   ★ 守卫:`royale_c2_watcher._stage_lobby` 会核对 `_connected_addr`,连错就当场红。
 	PvpSession.server_address = LOBBY_ADDR
 	var watcher: Node = load("res://tests/royale_c2_watcher.gd").new()
 	watcher.who = _role

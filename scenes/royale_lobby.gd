@@ -11,10 +11,14 @@ extends LobbyPage
 
 const WEAPON_NAMES := {1: "手枪", 2: "步枪", 3: "重狙", 4: "霰弹", 5: "榴弹"}
 
+var _code_edit: LineEdit        # 房间号(加入)
+var _invite_edit: LineEdit      # 邀请码(私密房加入)
 var _royale_ack := true       # 建房/加入后是否已收到服务器 royale_room_state
 var _royale_sent_ms := 0
 
 # ── 建房面板控件 ──
+var _public_check: CheckButton
+var _create_invite_edit: LineEdit
 var _max_slider: HSlider
 var _max_label: Label
 var _weapon_checks: Array[CheckButton] = []
@@ -37,43 +41,55 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_add_lobby_background()
 
-	# ── 左列 = **入口区**:昵称 / 房号 / 建房 / 加入 / 状态,聚成一块(三页同坐标)──
-	# ★★ 2026-09-30 用户裁定:入口控件必须**聚在一起**;原来那套"加入沉到页面底部
-	#   (y=812)、离昵称八百像素"的散版式废弃。右列只剩**设置**(不再承担"创建"那颗按钮)。
-	#   各页右列的设置内容不同是**真差异**,保留。
-	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(320, 52), "昵称(排行榜显示)", PvpSession.player_name)
+	# ── 左列:昵称 / 服务器 / 房间列表 / 邀请码加入 ──
+	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(250, 40), "昵称(排行榜显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
-	# 房号:没房时填对手的码、有房时显示自己的码并把框设为只读(见 `_update_code_label`)
-	_code_edit = UiFactory.line_edit(self, Vector2(60, 124), Vector2(320, 52), "房间号", "")
-	# 建房 / 加入:两颗**等宽等高**,与上面两行一起构成三行等高的入口块
-	_create_btn = _page_button("建房", Vector2(60, 188), Vector2(154, 52), _on_create_pressed)
-	_join_btn = _page_button("加入", Vector2(226, 188), Vector2(154, 52), _on_join_pressed)
+	# 地址默认跟 1v1 页一致(取 `PvpSession.server_address`)。
+	# ★ 2026-09-22 用户裁定:云服**同样支持**大乱斗 —— 原先这里硬编码 "127.0.0.1"、理由是
+	#   "原作者云服不支持大乱斗",那条判断是错的,已删。
+	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(250, 40), "服务器地址", PvpSession.server_address)
+	var addr_hint := UiFactory.label("朋友加入请填开服机的 IP(端口 7777);本机开服点「启动/重启本机服务器」(同目录需有 Cyancular Ruins Server.exe)", 16, Color(0.75, 0.8, 0.85))
+	addr_hint.position = Vector2(60, 160)
+	addr_hint.size = Vector2(900, 26)
+	add_child(addr_hint)
+	var refresh := _page_button("刷新列表", Vector2(330, 114), Vector2(200, 48), _on_refresh_pressed)
+	var srv_btn := _page_button("启动/重启本机服务器", Vector2(540, 114), Vector2(200, 48), _on_local_server_pressed)
+	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
+	_ip_label = UiFactory.label("", 16, UiFactory.C_ACCENT)
+	_ip_label.position = Vector2(1250, 22)   # 页面顶部空带(左列 y160 有提示文字、右列 y60 起是建房面板)
+	add_child(_ip_label)
+	_ip_label.text = LocalServer.lan_ip_hint()   # 本机(=自建服同机)IP 常驻显示
 
-	_status = UiFactory.label("", 16, UiFactory.C_TEXT)
-	_status.position = Vector2(60, 260)
-	_status.size = Vector2(900, 110)
-	add_child(_status)
-
-	# ★ 2026-09-30 删除「刷新列表」按钮(用户裁定:没用;理由见 `LobbyPage` 同名处)、
-	#   顶部那条「房间码:——(建房后显示)」标签(房间码改在「房间号」框里显示、进房后只读)、
-	#   以及那行提示文字(它说的"填进下面点加入"已随入口区聚拢而失效)。
-	#   ★ 同日再改:标题与空态文案**字号互换**(标题 32、空态 16),标题改叫「房间列表」。
-	var cap := UiFactory.label("房间列表", 32, UiFactory.C_TEXT_DIM)
-	cap.position = Vector2(60, 376)
-	cap.size = Vector2(700, 42)
+	var cap := UiFactory.label("公开房间列表(点击直接加入)", 32, UiFactory.C_ACCENT)
+	cap.position = Vector2(60, 186)
 	add_child(cap)
 
 	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(60, 426)
-	scroll.size = Vector2(680, 430)
+	scroll.position = Vector2(60, 228)
+	scroll.size = Vector2(680, 560)
 	add_child(scroll)
 	var vb := VBoxContainer.new()
 	vb.custom_minimum_size = Vector2(640, 0)
 	scroll.add_child(vb)
 	_list_box = vb
+
+	_code_edit = UiFactory.line_edit(self, Vector2(60, 812), Vector2(250, 40), "房间号", "")
+	_invite_edit = UiFactory.line_edit(self, Vector2(330, 812), Vector2(250, 40), "邀请码(私密房)", "")
+	# 「加 入」:所需尺寸走 UiFactory.button 的 min_size(KH 是事后覆写 custom_minimum_size);
+	# 显式 size 保留 KH 原尺寸,140×48 是可收缩下限。
+	var join_btn := UiFactory.button("加 入", 16, Vector2(140, 48))
+	join_btn.position = Vector2(600, 806)
+	join_btn.size = Vector2(200, 48)
+	join_btn.pressed.connect(_on_join_pressed)
+	add_child(join_btn)
+
+	_status = UiFactory.label("", 32, UiFactory.C_TEXT)
+	_status.position = Vector2(60, 880)
+	_status.size = Vector2(900, 120)
+	add_child(_status)
 
 	var back := _page_button("返回主菜单", Vector2(60, 1000), Vector2(200, 48), func() -> void:
 		NetBus.stop()
@@ -101,6 +117,7 @@ func _build_create_panel() -> void:
 	panel.add_child(vb)
 
 	vb.add_child(UiFactory.label("—— 创建大乱斗房间%s ——" % (" · Beta 时间玩法" if PvpSession.beta_mode else ""), 32, UiFactory.C_ACCENT))
+	_build_public_room_row(vb)
 	_build_max_players_row(vb)
 	_build_match_time_row(vb)
 
@@ -120,14 +137,30 @@ func _build_create_panel() -> void:
 
 	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「1v1」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, UiFactory.C_TEXT_DIM))
 
-	# ★ 2026-09-30:这一面板现在**只是设置**(「建房」已搬到左列入口区)——
-	#   与另两页同构:左列管"开一局/加入",右列管"这一局怎么打"。
+	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
+	create.pressed.connect(_on_create_pressed)
+	vb.add_child(create)
 
 
-# ── 建房面版的设置行(阶段 5.5:原先 _build_create_panel 是 69 净行的"一屏控件清单")──
-# ★ 2026-09-29:原先这里还有一行「公开房间(不勾选 = 私密,凭邀请码进入)」+ 一个邀请码输入框,
-#   已整体删除 —— 房间码本身就是隧道的 network-secret,能连上这台服务器的人必然已经知道它,
-#   私密房那道"再对一个码"挡不住任何人,只给房主添一道手续。
+# ── 建房面版的三个设置行(阶段 5.5:原先 _build_create_panel 是 69 净行的"一屏控件清单")──
+
+# 公开/私密开关 + 邀请码输入框(私密时才显示 —— 勾选框直接控制输入框的 visible)。
+func _build_public_room_row(vb: VBoxContainer) -> void:
+	_public_check = CheckButton.new()
+	_public_check.text = "公开房间(不勾选 = 私密,凭邀请码进入)"
+	_public_check.button_pressed = true
+	UiFactory.style_check(_public_check, 32)
+	_public_check.toggled.connect(func(on: bool) -> void:
+		_create_invite_edit.visible = not on)
+	vb.add_child(_public_check)
+
+	_create_invite_edit = LineEdit.new()
+	_create_invite_edit.placeholder_text = "邀请码(留空自动生成)"
+	_create_invite_edit.visible = false
+	_create_invite_edit.custom_minimum_size = Vector2(0, 40)
+	UiFactory.style_control(_create_invite_edit, 16)   # 同 UiFactory.line_edit:显式字号=引擎默认,不靠事后递归补字体
+	UiFactory.style_line_edit(_create_invite_edit)
+	vb.add_child(_create_invite_edit)
 
 
 func _build_max_players_row(vb: VBoxContainer) -> void:
@@ -173,20 +206,15 @@ func _build_match_time_row(vb: VBoxContainer) -> void:
 		tlabel.text = "%d 分钟" % int(v))
 
 
+# worker 端口段文案(提示串用;单一来源 = WorkerLauncher 的常量,勿手写数字——
+# 曾写 "7800~7999" 与实际池(7800~8299)不符,照它放行防火墙会漏掉半个池子,自检 D2)
+func _worker_port_span() -> String:
+	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
+			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
+
+
 # ── 动作 ──
-# 建房 = **在自己这台机器上开服 + 建房**(没有"在别人电脑上建房"这回事)。
-# ★ 2026-09-30:前置判据换成"连着的是不是我那台"(`LobbyPage._ensure_own_server`)——
-#   原判据是"有没有连着",于是客机点建房会把建房 RPC 发给房主的服务器。
 func _on_create_pressed() -> void:
-	# ★★ 顺序不能反:**先**过"能不能操作"这一关,**再**动服务端与隧道。
-	#   `_ensure_own_server()` 是无条件"拆旧起新"(建房 = 整套全新),在房里按建房会先把
-	#   **当前这局**的服务端与隧道拆掉,而随后 `_with_lobby` 才拿 `_lobby_action_allowed()`
-	#   拒绝 ⇒ 房间没了、新房间也没建出来(2026-10-01 用户实测:日志里"服务端/隧道被拆"
-	#   之后就没有任何建房动静了)。守卫:`tests/netplay_probe.gd` 的建房顺序断言。
-	if not _lobby_action_allowed():
-		return
-	if not await _ensure_own_server():
-		return
 	var disabled: Array = []
 	for cb in _weapon_checks:
 		if cb.button_pressed:
@@ -196,6 +224,8 @@ func _on_create_pressed() -> void:
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
 		var payload := {
+			"is_public": _public_check.button_pressed,
+			"invite_code": _create_invite_edit.text.strip_edges(),
 			"max_players": int(_max_slider.value),
 			"round_full_heal": false,
 			"disabled_weapons": disabled,
@@ -204,38 +234,28 @@ func _on_create_pressed() -> void:
 		NetBusExt.rpc_id(1, "royale_create", payload))
 
 func _on_join_pressed() -> void:
-	_join_room(_code_edit.text.strip_edges())
+	_join_room(_code_edit.text.strip_edges(), _invite_edit.text)
 
-func _join_room(code: String) -> void:
-	# 没连着服务端时把房间码当**远程**入口(起隧道 → 找到房主 → 连上去),见
-	# `LobbyPage._join_with_code` 的两条路。
-	_join_with_code(code, func() -> void:
+func _join_room(code: String, invite: String) -> void:
+	if code.is_empty():
+		_status.text = "请填房间号"
+		return
+	_with_lobby(func() -> void:
 		_status.text = "加入房间 %s …" % code
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "royale_join", code, PvpSession.beta_mode))
+		NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode))
 
 
 # ── 服务器回复 ──
-# 列表区的空态(**基类 `_show_empty_list` 的实现**):清空 + 放一条说明。
-# ★ 与 `_on_royale_rooms` 的空分支**同一份文案**:那条走"大厅答了但一间都没有",
-#   这条走"根本没连上、不去拉"(首屏最常见的那一屏 —— 以前这里是一片空白)。
-func _show_empty_list() -> void:
-	for c in _list_box.get_children():
-		c.queue_free()
-	var empty := UiFactory.label("还没有房间 —— 点「建房」开一局", 16, UiFactory.C_TEXT_DIM)
-	empty.custom_minimum_size = Vector2(620, 40)
-	_list_box.add_child(empty)
-
-
 func _on_royale_rooms(rooms: Array) -> void:
 	for c in _list_box.get_children():
 		c.queue_free()
 	if rooms.is_empty():
-		var empty := UiFactory.label("还没有房间 —— 点「建房」开一局", 16, UiFactory.C_TEXT_DIM)
+		var empty := UiFactory.label("暂无公开房间 —— 右侧「创建房间」开一把大乱斗", 32, Color(0.8, 0.85, 0.9))
 		empty.custom_minimum_size = Vector2(620, 40)
 		_list_box.add_child(empty)
-		_status.text = "共 0 个房间(对局中的照列:自己的房可点(回局),别人的点不动)"
+		_status.text = "共 0 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)"
 		return
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
@@ -271,9 +291,9 @@ func _on_royale_rooms(rooms: Array) -> void:
 				# 我的房**且对局中** ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
 				# ★ `in_match` 必须传进去(I2):自己那间**还没开局**的等待室要走普通加入。
 				if not try_rejoin_row(code, in_match):
-					_join_room(code))
+					_join_room(code, ""))
 		_list_box.add_child(btn)
-	_status.text = "共 %d 个房间(对局中的照列:自己的房可点(回局),别人的点不动)" % rooms.size()
+	_status.text = "共 %d 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)" % rooms.size()
 
 # 房间实时状态 → 等待室面板
 func _on_room_state(state: Dictionary) -> void:
@@ -288,30 +308,15 @@ func _on_room_state(state: Dictionary) -> void:
 	#   等待室每收到一次房间状态都会走一遍本函数,同号时它是 no-op(见 `note_room` 的注释)。
 	var code := str(state.get("code", ""))
 	PvpSession.note_room(code)
-	_room_code = code
-	_update_code_label()
 	var my_role := _my_role_in(state)
 	_host = int(state.get("host_role", 0)) == my_role
-	# ★ 房主建房后把隧道拉起来(房主的第三步,见 docs/netplay.md 的总览):房间码就是隧道网络名
-	#   的输入,而客机要靠隧道才找得到这台机器。
-	# ★★ 2026-09-30 修:闸门原为 `not Tunnel.is_running()` —— 本函数**每收到一次房间状态就会跑一遍**,
-	#   原注释的理由("重起会把已经连进来的客人一起踢掉")对**同一间房的状态刷新**是对的,
-	#   对**换了房号**是错的:房主退出房间再建一间时,`is_running()` 仍为真 ⇒ 网名**留在旧码上**
-	#   ⇒ 房主手里的新码对外**完全失效**(朋友拿新码进的是 `cyr-<新码>`,那网上没人)。
-	#   闸门改成"本端已经在**这串码对应的网**上了吗"(`on_network`):同码不重起、换码才重起。
-	if _host and not Tunnel.on_network(code) and Tunnel.available() and PvpSession.server_port > 0:
-		Tunnel.start_host(PvpSession.server_port, code)
-		_update_code_label()
 	if _create_panel != null:
-		_create_panel.visible = false   # 进等待室:隐藏右列设置面板(与等待室并存太挤)
-	_set_entry_buttons_enabled(false)   # ★ 建房/加入置灰(不隐藏 —— 入口位置保留)
-	# ★ 状态栏换成**明确的成功反馈**:房主"已创建 + 把房号报出去",加入者"已加入"。
-	#   2026-10-01 用户实测反馈:进房后状态栏是空的,看不出这一步到底成没成。
-	_status.text = ("房间 %s 已创建 —— 把房间号报给对手" % code) if _host else ("已加入房间 %s" % code)
+		_create_panel.visible = false   # 进等待室:隐藏右列创建面板(与等待室并存太挤)
 	if _wait_panel == null:
 		_build_wait_panel()
 	_wait_panel.visible = true
-	_wait_title.text = "—— 大乱斗房间 %s ——" % code
+	var invite := str(state.get("invite_code", "")) if not bool(state.get("is_public", true)) else ""
+	_wait_title.text = "—— 大乱斗房间 %s ——%s" % [code, "  邀请码 %s" % invite if invite != "" else ""]
 	for c in _wait_players.get_children():
 		c.queue_free()
 	var plist: Array = state.get("players", [])
@@ -378,36 +383,40 @@ func _on_leave_room() -> void:
 	NetBusExt.rpc_id(1, "royale_leave")
 	_in_room = false
 	_my_room = {}
-	# ★ 2026-09-30:退房要把「房间号」框交还给玩家 —— 清了 `_room_code` 它才恢复可编辑,
-	#   否则框会一直卡在只读的旧码上(下一间房的码没处填)。
-	_room_code = ""
-	_update_code_label()
 	if _wait_panel != null:
 		_wait_panel.visible = false
 	if _create_panel != null:
-		_create_panel.visible = true   # 退房恢复设置面板
-	_set_entry_buttons_enabled(true)   # 建房/加入恢复可用
+		_create_panel.visible = true   # 退房恢复创建面板
 	_request_list.call_deferred("已退出房间")
 
 
 # 转连 worker 12s 没连上(worker 死了/端口没放行)→ 回大厅重连 + 刷新列表;
 # claim 后 25s 仍没 match_start(worker 中途死掉/对局没起来)同样回大厅。
-# ★ 本页的梯顺序是 [回局 → claim → 大厅 → ack];**别重排**。
+# ★ 本页的梯顺序是 [worker → claim → 大厅 → ack],与基类注释里登记的一致;**别重排**。
 func _process(_delta: float) -> void:
 	# 0) 回局(路径乙):请求发出后大厅 15s 无应答 —— 早于下面几条梯,因为此刻它们都还没启动
 	if _tick_rejoin_timeout():
 		return
-	# 1) claim 后 25s 仍没 match_start(对局没起来):回大厅重连刷新
+	# 1) 转连 worker 12s 没连上(worker 死了/端口没放行):**回大厅重连 + 刷新列表**,
+	#    不再只留一句提示让玩家干等在等待室里(本页原来没有任何恢复路径)。
+	if _tick_worker_connect_timeout():
+		return
+	# 2) claim 后 25s 仍没 match_start(worker 中途死掉/对局没起来):同样回大厅重连刷新
 	if _tick_claim_timeout():
 		return
 	_tick_lobby_connect_timeout()
-	# 建房/加入 8s 无应答(对端没回应 / 版本不一致)
+	# 建房/加入 8s 无应答(地址不通 / 对端不是同版本的服务器)
 	if not _royale_ack and _royale_sent_ms > 0 and Time.get_ticks_msec() - _royale_sent_ms > 8000:
 		_royale_sent_ms = 0
-		_status.text = "8 秒无响应 —— 房主那边没回应,或双方版本不一致(请都用最新版)"
+		_status.text = "8 秒无响应——地址不通,或该服务器不是最新版(开服方请用最新服务端)"
 
 
 # ── 基类钩子(本页实现)────────────────────────────────────────────
+
+# 空地址回退:与 1v1 页同款,取会话里的服务器地址(不再特判本机)
+func _lobby_fallback_addr() -> String:
+	return PvpSession.server_address
+
 
 # 已在大乱斗房间中(先退出房间再操作):_with_lobby 在 _in_room 时拒绝一切操作,
 # 不清房间态就再也刷不出列表/建不了房。
@@ -435,11 +444,19 @@ func _player_options() -> Dictionary:
 
 
 func _go_match_status() -> String:
-	return "开局!进入对局……"
+	return "开局!连接对局服务器……"
+
+
+func _on_worker_connect_failed() -> void:
+	_status.text = "连接对局服务器失败,请返回重试"
+
+
+func _worker_timeout_msg() -> String:
+	return "对局服务器无响应——请确认对局端口(%s UDP)已放行;已返回大厅并刷新" % _worker_port_span()
 
 
 func _claim_timeout_msg() -> String:
-	return "对局无响应(对局可能已结束)——已回到房间列表并刷新,请重试"
+	return "对局服务器无响应(对局可能已结束)——已返回大厅并刷新,请重试"
 
 
 # 清房间态是必须的:_with_lobby 在 _in_room 时拒绝一切操作,不清就再也刷不出列表/建不了房。
@@ -450,7 +467,6 @@ func _on_return_to_lobby() -> void:
 		_wait_panel.visible = false
 	if _create_panel != null:
 		_create_panel.visible = true
-	_set_entry_buttons_enabled(true)
 
 
 # RPC 在 NetBus.poll 调用栈内到达(worker→客户端 match_start);直接在栈内切场景会

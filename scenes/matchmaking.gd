@@ -12,7 +12,8 @@ extends LobbyPage
 # 开关行/滑条行的**标签列宽**(本页原值 440;版式调参,各页面本就不同 —— 见 UiFactory.check_row 的注释)。
 const OPT_LABEL_W := 440.0
 
-var _auto_refreshed := false   # 「点了看起来未满却已满/已失效的房」后只自动刷新一次(见 _on_server_message)
+var _code_edit: LineEdit
+var _auto_refreshed := false   # 「点了看起来未满却已满」后只自动刷新一次,手动刷新再放开
 var _join_sent_ms := 0     # 刚发出 join_room 的时间戳:服务端无任何应答(幽灵房间)时兜底回大厅刷新
 # 刚请求加入的房号,**等服务端答"成功"了才写进 `PvpSession`**(见 `_on_room_joined`;I1)
 var _join_code_pending := ""
@@ -20,54 +21,53 @@ var _join_code_pending := ""
 
 func _ready() -> void:
 	_add_lobby_background()
+	_addr_edit = UiFactory.line_edit(self, Vector2(60, 120), Vector2(240, 36), "服务器地址", PvpSession.server_address)
+	_page_button("刷新", Vector2(330, 120), Vector2(90, 36), _on_refresh_pressed)
+	# 一键本机开服:客户端各模式共用同目录的 Cyancular Ruins Server.exe
+	var srv_btn := _page_button("启动/重启本机服务器", Vector2(432, 114), Vector2(200, 48),
+			_on_local_server_pressed)
+	srv_btn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
+	_ip_label = UiFactory.label(LocalServer.lan_ip_hint(), 16, UiFactory.C_ACCENT)
+	_ip_label.position = Vector2(432, 166)
+	add_child(_ip_label)
 
-	# ── 左列 = **入口区**:昵称 / 房号 / 建房 / 加入 / 状态,聚成一块(三页同坐标)──
-	# ★★ 2026-09-30 用户裁定:入口控件必须**聚在一起**(昵称、房号、建房、加入、状态一块儿),
-	#   不要 royale/team 那套"加入沉到页面底部、离昵称八百像素"的散版式。
-	#   ⇒ 以本页原版式为基准,另两页向它对齐;**右列只剩设置**(不再承担"创建"那颗按钮)。
-	#   右列面板的内容差异是**真差异**,保留:1v1 = 对战选项开关组,
-	#   大乱斗 = 多人数上限/一局限时/时间颗粒规则,3v3 = 几乎无可调项。
-	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(320, 52), "昵称(头上显示)", PvpSession.player_name)
+	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(240, 36), "昵称(头上显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 
-	# 房号:没房时填对手的码、有房时显示自己的码并把框设为只读(见 `_update_code_label`)
-	_code_edit = UiFactory.line_edit(self, Vector2(60, 124), Vector2(320, 52), "房间号", "")
+	_code_edit = UiFactory.line_edit(self, Vector2(60, 180), Vector2(240, 36), "房间号(加入时填)", "")
 
-	# 建房 / 加入:两颗**等宽等高**,与上面两行一起构成三行等高的入口块。
-	# ★ 2026-09-30 用户裁定:三行同高 52、块宽 320;建房原 200×48、加入原 140×48(大小不一)。
-	_create_btn = _page_button("建房", Vector2(60, 188), Vector2(154, 52), _on_create_pressed)
-	_join_btn = _page_button("加入", Vector2(226, 188), Vector2(154, 52), _on_join_pressed)
-
-	_status = UiFactory.label("", 16, UiFactory.C_TEXT)
-	_status.position = Vector2(60, 260)
-	_status.size = Vector2(900, 110)
+	_status = UiFactory.label("", 16)
+	_status.position = Vector2(60, 320)
+	_status.size = Vector2(720, 60)
 	add_child(_status)
 
-	# ★ 2026-09-30 用户裁定:标题与空态文案**字号互换**(标题 32、空态 16),标题改叫「房间列表」。
-	var cap := UiFactory.label("房间列表", 32, UiFactory.C_TEXT_DIM)
-	cap.position = Vector2(60, 376)
-	cap.size = Vector2(700, 42)
+	_page_button("建房", Vector2(60, 240), Vector2(180, 48), _on_create_pressed)
+	_page_button("加入", Vector2(260, 240), Vector2(180, 48), _on_join_pressed)
+	# 返回放在整列最下方:原先在 y=400 —— 上不着天下不着地地插在状态行与房间列表之间,
+	# 既不属于上面的表单、也不属于下面的列表(2026-09-13 视觉评析)。
+	_page_button("返回", Vector2(60, 1090), Vector2(180, 48), _on_back_pressed)
+
+	var cap := UiFactory.label("房间列表(点击即加入;也可在上方填房间号)", 16, UiFactory.C_TEXT_DIM)
+	cap.position = Vector2(60, 460)
+	cap.size = Vector2(700, 30)
 	add_child(cap)
 
 	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(60, 426)
-	scroll.size = Vector2(680, 430)
+	scroll.position = Vector2(60, 500)
+	scroll.size = Vector2(640, 560)
 	add_child(scroll)
 	var vb := VBoxContainer.new()
-	vb.custom_minimum_size = Vector2(640, 0)
+	vb.custom_minimum_size = Vector2(600, 0)
 	scroll.add_child(vb)
 	_list_box = vb
-
-	_page_button("返回主菜单", Vector2(60, 1000), Vector2(200, 48), _on_back_pressed)
-
-	_build_options_panel()
 
 	NetBus.local_room_created.connect(_on_room_created)
 	NetBus.local_room_joined.connect(_on_room_joined)
 	NetBus.local_room_list.connect(_on_room_list)
 
+	_build_options_panel()
 	_finish_lobby_ready()
 
 
@@ -86,8 +86,8 @@ func _ready() -> void:
 #     只写 Settings,由 pvp_client / royale_game 在 _ready 里直接读,不上发。
 func _build_options_panel() -> void:
 	var panel := PanelContainer.new()
-	panel.position = Vector2(1000, 60)          # 与另两页同坐标
-	panel.custom_minimum_size = Vector2(620, 0)  # 同宽
+	panel.position = Vector2(980, 60)
+	panel.custom_minimum_size = Vector2(640, 0)
 	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
 	add_child(panel)
 	var vb := VBoxContainer.new()
@@ -123,57 +123,46 @@ func _build_options_panel() -> void:
 	# 角色颜色(色相 0-360,即选即用,双方各自染自己)
 	_add_hue_row(vb, "自己角色颜色:", Vector2(280, 24), Vector2(48, 24))
 
-	# ★ 2026-09-30:本面板**只是设置**(「建房」在左列入口区,与昵称/房号/加入聚在一起)——
-	#   与另两页同构:左列管"开一局/加入",右列管"这一局怎么打"。
-	#   (今天早些时候这里曾短暂放过一颗「创 建 房 间」按钮,随入口区聚拢一并撤掉。)
+
+# 本页刷新要先放开「只自动刷新一次」的闸门(手动刷新=用户明确要重来)
+func _on_refresh_pressed() -> void:
+	_auto_refreshed = false
+	_request_list("刷新房间列表…")
 
 
-# ★ 2026-09-30 删除本页的「刷新」按钮与其覆写(用户裁定:没用;理由见 `LobbyPage` 同名处)。
-#   `_auto_refreshed` **保留** —— 它服务的是另一件事:点了一间"看起来未满却已满/已失效"的房
-#   之后,只自动刷一次列表(避免连点连刷)。那道闸现在只在「建房」时放开
-#   (没有手动刷新了,而建房本来就是"用户明确要重来"的那个动作)。
-
-
-# 列表区的空态(**基类 `_show_empty_list` 的实现**):清空 + 放一条说明。
-# ★ 文案里的按钮名必须与**实际标签**逐字一致 —— 建房那颗按钮就叫「建房」
-#   (2026-09-30 起三页同名),引成「建房」就是一条悬空引用。
-func _show_empty_list() -> void:
+# 清空房间列表区(重连/换地址时旧列表是陈旧数据,点了必失败)
+func _clear_room_list() -> void:
 	for c in _list_box.get_children():
 		c.queue_free()
-	# ★ 2026-09-30 用户裁定:与页面上方「房间列表」标题**字号互换** —— 标题 32、空态 16。
-	_list_box.add_child(UiFactory.label("还没有房间 —— 点「建房」开一局", 16, UiFactory.C_TEXT_DIM))
+	_list_box.add_child(UiFactory.label("正在连接服务器获取房间列表…", 32))
 
 
-# 建房 = **在自己这台机器上开服 + 建房**(没有"在别人电脑上建房"这回事)。
-# ★ 2026-09-30:前置判据换成"连着的是不是我那台"(`LobbyPage._ensure_own_server`)——
-#   原判据是"有没有连着",于是**客机点建房会把建房 RPC 发给房主的服务器**
-#   (详见那个函数的注释:会开出一间谁也进不来的死房,并把客机自己的连接弄断)。
 func _on_create_pressed() -> void:
-	# ★★ 顺序不能反:**先**过"能不能操作"这一关,**再**动服务端与隧道(与另两页同款)。
-	#   `_ensure_own_server()` 是无条件"拆旧起新",在房里按建房会先把当前这局的
-	#   服务端与隧道拆掉,随后 `_with_lobby` 才拒绝 ⇒ 房间没了、新的也没建出来。
-	if not _lobby_action_allowed():
-		return
-	if not await _ensure_own_server():
-		return
-	_auto_refreshed = false   # 新开一局:放开「只自动刷新一次」的闸门
 	_with_lobby(func() -> void:
 		NetBus.rpc_id(1, "create_room")
-		_status.text = "建房中…(拿到房间码后告诉对手)")
+		_status.text = "建房中…(拿到房间号后可刷新让对手看到)")
 
 
 func _on_join_pressed() -> void:
 	_join_code(_code_edit.text.strip_edges())
 
 
-# 加入某房间码(手动输入或点房间列表)。
+# 加入某房间号(手动输入或点房间列表)
 func _join_code(code: String) -> void:
-	# ★★ 房号**只暂存**,等服务端答"加进去了"才写进 `PvpSession`(`_on_room_joined`)——
-	#   这就是 I1:原先在**发 RPC 之前**写,于是任何一次**失败**的加入(房间已满 /
-	#   对局已进行中 / 敲错房号)都会把 `room_code` 留成**别人的**那间房,此后
-	#   `can_rejoin_to(我自己的房)` 恒 false ⇒ **自己那间房那一行永远是灰的**,
-	#   且没有任何操作能把它恢复(要等下一次成功加入)。
-	_join_with_code(code, func() -> void:
+	if code.is_empty():
+		_status.text = "请填房间号"
+		return
+	_with_lobby(func() -> void:
+		# ★★ 房号**只暂存**,等服务端答"加进去了"才写进 `PvpSession`(`_on_room_joined`)——
+		#   这就是 I1:原先在**发 RPC 之前**写,于是任何一次**失败**的加入(房间已满 /
+		#   对局已进行中 / 敲错房号)都会把 `room_code` 留成**别人的**那间房,此后
+		#   `can_rejoin_to(我自己的房)` 恒 false ⇒ **自己那间房那一行永远是灰的**,
+		#   且没有任何操作能把它恢复(要等下一次成功加入)。
+		#   ★ 原注释的理由("应答可能先于本行的返回值到,晚一步记就会漏判一次")**不成立**:
+		#     应答到达那一刻 `PvpSession.token` 还是**空串**(它由大厅在开局前才发),
+		#     而 `can_rejoin_to()` 要求 token 非空 ⇒ 那一行那一刻本来就不可能是"我的房"。
+		#   ★ `royale_lobby` / `team_lobby` 一直是这个写法(写在成功信号 `_on_room_state` 里)
+		#     —— 同一概念别留两种实现。三页统一记房号的口子是 `PvpSession.note_room()`。
 		_join_code_pending = code
 		_status.text = "加入房间 %s,等待配对…" % code
 		_join_sent_ms = Time.get_ticks_msec()
@@ -194,7 +183,7 @@ func _on_room_list(rooms: Array) -> void:
 		(full if int(r.get("players", 2)) >= 2 else partial).append(r)
 	var order: Array = partial + full
 	if order.is_empty():
-		var empty := UiFactory.label("还没有房间 —— 点「建房」开一局", 16, UiFactory.C_TEXT_DIM)
+		var empty := UiFactory.label("暂无房间 —— 点「建房」开一局吧", 16)
 		empty.size = Vector2(600, 40)
 		_list_box.add_child(empty)
 		_status.text = "共 0 个房间"
@@ -247,7 +236,7 @@ func _on_room_list(rooms: Array) -> void:
 # 本页比大乱斗多两段:①点了失效/已满的房间 → 提示并自动刷新一次(列表常驻陈旧房间,点了必失败);
 # ②已入房后房主/对端掉线被大厅取消配对 → 直接刷新恢复可操作。其余才是"原样显示"。
 func _on_server_message(t: String) -> void:
-	if LocalServer.restarting and (t == "连接断开" or t == "连接失败"):
+	if LocalServer.restarting and (t == "服务器断开" or t == "连接失败"):
 		return   # 重启本机服期间,旧连接被杀的断连提示是预期噪音,不覆盖状态
 	if t == "房间已满" or t == "房间不存在":
 		# 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,
@@ -271,49 +260,31 @@ func _on_room_created(code: String) -> void:
 	# ★ 同 `_on_room_joined`:建房那条路也要记 —— 否则房主从列表里点**自己**那间房时,
 	#   `can_rejoin_to(code)` 因房号不符而假,那一行被当"别人的房"禁用(回局入口对房主失效)。
 	PvpSession.note_room(code)
-	_room_code = code
-	_update_code_label()
-	_set_in_room(true)   # 入房:建房按钮收起(与另两页进等待室同款)
-	# ★ 顺手把隧道拉起来(房主的第三步,见 docs/netplay.md 的总览):
-	#   房间码就是隧道网络名的输入,而客机要靠隧道才找得到这台机器。
-	# ★ 失败/未安装**不阻塞建房**(房间照样开得出来),但**这个房没人进得来** ——
-	#   手填地址那条路已删,"局域网直连"这个退路**不存在**(2026-09-29 订正:原先这里和
-	#   下面两句都写着"只有局域网能加入",那是地址框还在时的事)。
-	var note := ""
-	# ★ 2026-09-30:闸门与另两页同款 —— 本端已经在这串码的网上就不重起
-	#   (`start_host` 内部会先 `stop()`,无脑重起等于把已经连进来的客人一起踢掉)。
-	if Tunnel.available() and PvpSession.server_port > 0 and not Tunnel.on_network(code):
-		if Tunnel.start_host(PvpSession.server_port, code):
-			note = "远程可加入(隧道已启动)"
-		else:
-			note = "**隧道启动失败,别人进不来**"
-	else:
-		note = Tunnel.missing_hint() + ";别人进不来"
-	_status.text = "房间码 %s —— 告诉对手(%s)" % [code, note]
+	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 
 
 # 服务端答"加进去了" —— **本页唯一**记加入房号的地方(见 `_join_code` 的 I1 那段)。
 func _on_room_joined(role: int) -> void:
 	if not _join_code_pending.is_empty():
 		PvpSession.note_room(_join_code_pending)
-		_room_code = _join_code_pending
-		_update_code_label()
 		_join_code_pending = ""
 	# 注意:此处不清 _join_sent_ms——入房后到 go_match 之间若房主掉线、大厅关房,
 	# 客户端会收不到 go_match 也没有任何后续;保留该兜底计时(超时自动刷新回大厅)。
 	_status.text = "已加入,等待开战……"
-	_set_in_room(true)
 
 
-# 入房应答超时兜底:UDP 连不上不会立刻报失败,这里定时自动回大厅,
-# 不让「点了幽灵房间」永久停在"等待配对"。
-# ★ 本页的梯顺序是 [回局 → join → 大厅 → claim];**别重排**。
+# 转连 worker / 入房应答超时兜底:UDP 连不上不会立刻报失败,这里定时自动回大厅,
+# 不让「点了幽灵房间」永久停在"正在连接对局服务器/等待配对"。
+# ★ 本页的梯顺序是 [worker → join → 大厅 → claim],与基类注释里登记的一致;**别重排**。
 func _process(_delta: float) -> void:
 	# 0) 回局(路径乙):请求发出后大厅 15s 无应答 —— 早于下面几条梯,因为此刻它们都还没启动
 	if _tick_rejoin_timeout():
 		return
-	# 1) join_room 发出去 10s 服务端无任何应答(幽灵房间/丢包):自动刷新列表恢复可操作
-	if _claimed_ms == 0 and _join_sent_ms > 0 \
+	# 1) 转连 worker 12s 无连接(死端口):不再只是提示,直接回大厅并刷新
+	if _tick_worker_connect_timeout():
+		return
+	# 2) join_room 发出去 10s 服务端无任何应答(幽灵房间/丢包):自动刷新列表恢复可操作
+	if not _connecting_worker and _claimed_ms == 0 and _join_sent_ms > 0 \
 			and Time.get_ticks_msec() - _join_sent_ms > 10000:
 		_join_sent_ms = 0
 		_request_list("房间无响应(可能已失效)——已自动刷新列表,请重选")
@@ -328,6 +299,11 @@ func _on_back_pressed() -> void:
 
 
 # ── 基类钩子(本页实现)────────────────────────────────────────────
+
+# 空地址回退默认云大厅(写死 127.0.0.1 必失败且超时极慢)
+func _lobby_fallback_addr() -> String:
+	return PvpSession.server_address
+
 
 func _send_list_request() -> void:
 	NetBus.rpc_id(1, "list_rooms")
@@ -345,37 +321,44 @@ func _player_options() -> Dictionary:
 
 
 func _go_match_status() -> String:
-	return "配对成功,进入对局……"
+	return "配对成功,连接对局服务器……"
 
 
-# 配对成功:停 join 兜底,转由 claim 兜底接管
+# 配对成功:停 join 兜底,转由转连 worker/claim 兜底接管
 func _on_go_match_extra() -> void:
 	_join_sent_ms = 0
 
 
-# claim 后 25s 仍未 match_start:对方未就绪(房间失效 / 对端掉线)→
-# 放弃本局并自动重连,恢复列表/建房能力(原「等待配对」永久卡死)
+# 对局 worker 连不上(幽灵房间/端口已死)→ 停本段等待,自动回大厅刷新
+func _on_worker_connect_failed() -> void:
+	if _connecting_worker:
+		_return_to_lobby("对局服务器连接失败——房间可能已失效,已返回大厅并刷新")
+
+
+func _worker_timeout_msg() -> String:
+	return "对局服务器无响应(房间可能已失效)——已返回大厅并刷新,请换一个房间"
+
+
+# claim 后 25s 仍未 match_start:对方未就绪(房间失效 / 对端掉线 / worker 中途死掉)→
+# 放弃本局并自动重连大厅,恢复列表/建房能力(原「连接对局服务器」永久卡死)
+# ★ 2026-09-22 删去原文里的「云服无降级开局」——降级开局是**大乱斗**的语义(1v1 本就没有),
+#   而且「云服不支持」这条判断整体是错的(用户裁定:云服同样支持三个联机模式)。
 func _claim_timeout_msg() -> String:
-	return "对手未就绪(房间可能已失效)——已回到房间列表并刷新,请换一个房间"
+	return "对手未就绪(房间可能已失效)——已返回大厅并刷新,请换一个房间"
 
 
 func _on_return_to_lobby() -> void:
 	_join_sent_ms = 0
-	_set_in_room(false)   # 回列表:建房按钮放回来(与另两页"退房恢复创建面板"同款)
+
+
+# 重启本机服后「只自动刷新一次」的闸门要放开(否则下一次房间已满不会自动刷新)
+func _on_local_server_ready() -> void:
+	_auto_refreshed = false
 
 
 # 换服务器重连:清掉旧列表(旧房间号在新服上必然「房间不存在」)
 func _on_lobby_reconnect() -> void:
-	_show_empty_list()
-	_set_in_room(false)
-
-
-# 本页"在不在房里"的唯一开关点(`_on_room_created` / `_on_room_joined` 置真,
-# `_on_return_to_lobby` / `_on_lobby_reconnect` 置假 —— 后者是 `_return_to_lobby()` 的收口)。
-# ★ 只管**入口的可见性**,不参与任何协议判断:在房里点建房本来也会被服务端
-#   (`"你已经在房间里了"`)挡住,那一条仍然在。
-func _set_in_room(in_room: bool) -> void:
-	_set_entry_buttons_enabled(not in_room)
+	_clear_room_list()
 
 
 func _enter_match_scene() -> void:

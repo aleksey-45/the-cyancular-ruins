@@ -32,6 +32,7 @@ const BotInput := preload("res://tests/soak_bot_input.gd")
 
 const RESULT_PREFIX := "soak_"
 const ROOM_FILE := "user://royale_soak_room.txt"
+const INVITE := "927"
 const ADDR := "127.0.0.1"
 
 var _role := "lobby"
@@ -201,7 +202,7 @@ func _after_lobby_connected() -> void:
 				print("SOAK[c1]: 房内 %d 人 → 开局" % n)
 				NetBusExt.rpc_id(1, "royale_start"))
 		NetBusExt.rpc_id(1, "royale_create", {
-			"max_players": _clients,
+			"is_public": false, "invite_code": INVITE, "max_players": _clients,
 			"round_full_heal": false, "disabled_weapons": [],
 		})
 	else:
@@ -222,25 +223,30 @@ func _wait_room_code() -> void:
 	if code == "":
 		_finish(false, "没等到房号文件")
 		return
-	NetBusExt.rpc_id(1, "royale_join", code)
+	NetBusExt.rpc_id(1, "royale_join", code, INVITE)
 
 
-# 配对完成:**连接不动**,直接 claim(单进程单端口,见 docs/netplay.md)。
-# ★ RPC 在 poll 调用栈内到达,故仍推到帧末发 —— 与生产 `lobby_page._do_go_match` 同款
-#   (栈内切场景/free 世界会偶发原生段错误,这条纪律与"转不转连"无关)。
+# go_match 在大厅 peer 的 poll 调用栈内到达 → 转连必须推到帧末(与 royale_lobby 同款)
 func _on_go_match(role: int, port: int) -> void:
 	PvpSession.role = role
 	_do_go_match.call_deferred(role, port)
 
 
-func _do_go_match(role: int, _port: int) -> void:
-	NetBus.rpc_id(1, "claim_role", role, "BOT%d" % _idx)
-	NetBusExt.rpc_id(1, "player_options", {
-		"hue": float((_idx - 1) * 40),
-		"round_full_heal": false,
-		"disabled_weapons": [],
-		"match_time": _match_secs,
-	})
+func _do_go_match(role: int, port: int) -> void:
+	multiplayer.connected_to_server.connect(func() -> void:
+		NetBus.rpc_id(1, "claim_role", role, "BOT%d" % _idx)
+		NetBusExt.rpc_id(1, "player_options", {
+			"hue": float((_idx - 1) * 40),
+			"round_full_heal": false,
+			"disabled_weapons": [],
+			"match_time": _match_secs,
+		}), CONNECT_ONE_SHOT)
+	multiplayer.connection_failed.connect(func() -> void:
+		_finish(false, "连 worker 失败"), CONNECT_ONE_SHOT)
+	NetBus.stop()
+	var e := NetBus.start_client(ADDR, port)
+	if e != OK:
+		_finish(false, "start_client(worker) 失败 %d" % e)
 
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:

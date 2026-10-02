@@ -6,8 +6,7 @@
 
 ★ **一个客户端一个代理实例。** ENet 按四元组认 peer,若两个客户端共用同一个代理的
 回程 socket,服务器看到的是**同一个源地址** ⇒ 两个 peer 会被并成一个。
-故:client1 → --listen 7800,client2 → --listen 7801,两者都 --to-port 到**同一个服务端**
-(单进程单端口:那个端口就是服务端的 `--port`)。
+故:client1 → --listen 7800,client2 → --listen 7801,两者都 --to-port 到同一个 worker。
 
 用法:
     python tests/net_lag_proxy.py --listen 7800 --to-port 8811 --delay-ms 70 --jitter-ms 15
@@ -24,7 +23,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--listen", type=int, required=True, help="前端端口(客户端连这个)")
     ap.add_argument("--to-host", default="127.0.0.1")
-    ap.add_argument("--to-port", type=int, required=True, help="后端端口(服务端真实端口)")
+    ap.add_argument("--to-port", type=int, required=True, help="后端端口(worker 真实端口)")
     ap.add_argument("--delay-ms", type=float, default=0.0, help="单向基础延迟")
     ap.add_argument("--jitter-ms", type=float, default=0.0, help="单向均匀抖动半径")
     ap.add_argument("--seed", type=int, default=20260922)

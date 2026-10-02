@@ -286,14 +286,6 @@ func _snapshot_dict(vel: Vector2, pose: int, downed: bool, pos: Vector2) -> Dict
 		"downed": downed,
 		"aim": Vector2(1.0, 0.0),
 		"previewing": false,
-		# ★ 2026-09-30 迁移时补三个键:KH 线 B22/B23 往生产载荷里加了 `haste` / `rewind` / `trail`
-		#   (加速位 / 回溯位 / 回溯轨迹点),却没同步这份夹具 —— 而**相⓪ 正是设计来抓这个的**
-		#   (它拿夹具键集与 `server/match_snapshot.gd` 的字段表双向对账),于是当场报红:
-		#   「夹具 10 键 / 生产端 13 键;夹具漏喂 ["haste","rewind","trail"]」。
-		#   值取中性:本探针只关心键的**存在性**(每相真正要的值由 `_step` 的三个实参决定)。
-		"haste": false,
-		"rewind": false,
-		"trail": [],
 	}
 
 

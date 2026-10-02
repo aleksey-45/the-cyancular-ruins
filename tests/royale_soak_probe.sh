@@ -34,7 +34,9 @@ RC=$?
 
 echo "[soak] 清理残留 headless Godot / 端口"
 kill_port 7777
-# ★ 不再扫端口区间:服务端是单进程单端口(不拉 worker 子进程),按 7777 杀它就够。
+for p in 7800 7801 7802 7803 7804 7805 7806 7807 7808 7809 7810; do
+  kill_port "$p"
+done
 
 echo
 if grep -q "SOAK: ALL-OK" "$LOG" && ! grep -qE "SCRIPT ERROR|无结果文件|Parse Error" "$LOG"; then

@@ -6,12 +6,10 @@
 #        且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
 # 整跑量级:约 60~110 秒(c1 回局 ≈20s;c2 的观察窗 40s、c3 的拒绝窗口 40s 并行跑)。
 #
-# ⚠ **跑前先确认没有别的 Godot 占着 7777** —— 本探针**不占 7777**(自当服务端,池外端口 29300),
-#   可本机上可能跑着用户自己的服务端。**本脚本绝不杀 7777 的属主**(与 royale_soak_probe.sh 的
-#   "发现占用就 kill_port 7777"刻意不同)。真有一个服务端在 7777 上也不影响本探针:两边的端口
-#   集合不相交(29300 vs 7777)。
-# ★ 2026-09-29:原先这里还有第二个号段(worker 起投 29350)—— 服务端已改成**单进程单端口**
-#   (大厅与对局同进程,不拉子进程),那个号段与它的孤儿清扫一起作废。
+# ⚠ **跑前先确认没有别的 Godot 占着 7777** —— 本探针**不占 7777**(自当大厅,池外端口 29300;
+#   worker 起投也拨到池外 29350),可本机上可能跑着用户自己的服务端。**本脚本绝不杀 7777 的
+#   属主**(与 royale_soak_probe.sh 的"发现占用就 kill_port 7777"刻意不同)。
+#   真有一个大厅在 7777 上也不影响本探针:两边的端口集合不相交(29300/29350 vs 7777/7800~8299)。
 set -u
 
 # 引擎路径($GODOT,可用环境变量覆盖)+ cd 到仓库根 + kill_procs/kill_port
@@ -19,16 +17,13 @@ set -u
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 LOG="tests/rejoin_probe.log"
 PROBE_LOBBY_PORT=29300
+PROBE_WORKER_PORT=29350
 
 if netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]].*LISTENING"; then
   echo "[rejoin] 注意:7777 已被占用(大概是用户自己的服务端)。本探针不占 7777,**照跑不误、不会动它**。"
 fi
 
-# ★ 起跑前清**本探针自己那一段**的孤儿(被前台 timeout 掐掉时收尾那段不会跑,残留进程会占着
-#   29300 让下一跑 bind 失败)。区间**不含 7777**。
-kill_port_range "$PROBE_LOBBY_PORT" 29400
-
-echo "[rejoin] 起探针(服务端端口 $PROBE_LOBBY_PORT;整跑约 60~110 秒)"
+echo "[rejoin] 起探针(大厅 $PROBE_LOBBY_PORT,worker 起投 $PROBE_WORKER_PORT;整跑约 60~110 秒)"
 echo "[rejoin] 若长时间无输出:看 user://rejoin_probe_client_c{1,2,3}.godotlog(子进程 stdout 父进程看不到)"
 "$GODOT" --headless --path . --quit-after 36000 res://tests/rejoin_probe.tscn 2>&1 | tee "$LOG"
 # ★ 取**探针进程自己**的退出码,不是 tee 的(管道最后一环恒 0,照它写会打印一个结构性恒真的数)
@@ -36,7 +31,7 @@ RC=${PIPESTATUS[0]}
 
 echo "[rejoin] 清理本探针自己的端口(兜底;正常路径探针已按 PID + 端口杀干净)"
 kill_port "$PROBE_LOBBY_PORT"
-kill_port_range "$PROBE_LOBBY_PORT" 29400
+kill_port "$PROBE_WORKER_PORT"
 
 echo
 if grep -q "REJOIN PROBE: ALL-OK" "$LOG"; then

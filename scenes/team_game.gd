@@ -386,34 +386,29 @@ func _on_round_state(data: Dictionary) -> void:
 	_last_round_state = data
 	var state := int(data.get("state", 0))
 	_round_locked = state == 0
-	if state == 0:
-		# ★ 只在**局号变化**时做新一轮复位(与 1v1 同款):倒计时期间 `round_state` 会被周期性
-		#   重播(见 `MatchState.COUNTDOWN_SYNC_INTERVAL`),按"收到一条做一次"会反复重建整张图。
-		var cd_round := int(data.get("round", 1))
-		if cd_round > 1 and cd_round != _countdown_reset_round:   # COUNTDOWN,新一轮
-			_countdown_reset_round = cd_round
-			for b in get_tree().get_nodes_in_group("bullet"):
-				if is_instance_valid(b):
-					(b as Node).queue_free()
-			if _level0 != null and _level0.has_method("reset_destructibles"):
-				_level0.reset_destructibles()
-			# ★ 地面武器**不要在这里清**(与 1v1 逐字同款的理由):服务器换局是「先
-			#   `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再** `_broadcast_round_state`」,
-			#   两条走同一条可靠通道、保序到达 —— 本条 round_state 到达时新一轮那批**早已在本地建好**,
-			#   再清一次 = 第 2 局起客户端地面恒空。
-			# ★★ 重拉 `match_sync`(控制者裁定,别自己另想):3v3 每局**整队换边**,而
-			#   `TeamHost.role_spawns()` 返回的是**当下**那一份 —— 客户端只在进场/重连拉过一次,
-			#   换边后六端手里那份是**旧侧**的。不补发 second path 进 round_state(那是给同一份数据开
-			#   第二条投递路径,自检 B2 那类事故的形状),改在这里拉 —— 本来就站在"清子弹 + 还原砖"
-			#   这一拍上,语义内聚,且顺带把 `ground_weapons`(服务器刚重铺)与 `destroyed`(刚还原成
-			#   基线 → 服务器侧为空)一并对齐。
-			if NetBus.can_send_to_server():
-				# ★ 先置位再发:这条应答是**补态口径**(不是进场建态)—— 换边后 `spawns` 是**新一侧**
-				#   而 `PvpSession.spawn` 手里是旧一侧,两者**必然**不一致,照进场口径硬拉 = 每局边界
-				#   刷一条假告警 + 一次多余瞬移(位置本来就归 C2 权威)。闸门与"重连补态"共用
-				#   (`_resync_pull_pending`,读一次即清),不要新立一个标志 —— 问的是同一个问题。
-				_resync_pull_pending = true
-				NetBus.rpc_id(1, "match_sync")
+	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
+		for b in get_tree().get_nodes_in_group("bullet"):
+			if is_instance_valid(b):
+				(b as Node).queue_free()
+		if _level0 != null and _level0.has_method("reset_destructibles"):
+			_level0.reset_destructibles()
+		# ★ 地面武器**不要在这里清**(与 1v1 逐字同款的理由):服务器换局是「先
+		#   `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再** `_broadcast_round_state`」,
+		#   两条走同一条可靠通道、保序到达 —— 本条 round_state 到达时新一轮那批**早已在本地建好**,
+		#   再清一次 = 第 2 局起客户端地面恒空。
+		# ★★ 重拉 `match_sync`(控制者裁定,别自己另想):3v3 每局**整队换边**,而
+		#   `TeamHost.role_spawns()` 返回的是**当下**那一份 —— 客户端只在进场/重连拉过一次,
+		#   换边后六端手里那份是**旧侧**的。不补发 second path 进 round_state(那是给同一份数据开
+		#   第二条投递路径,自检 B2 那类事故的形状),改在这里拉 —— 本来就站在"清子弹 + 还原砖"
+		#   这一拍上,语义内聚,且顺带把 `ground_weapons`(服务器刚重铺)与 `destroyed`(刚还原成
+		#   基线 → 服务器侧为空)一并对齐。
+		if NetBus.can_send_to_server():
+			# ★ 先置位再发:这条应答是**补态口径**(不是进场建态)—— 换边后 `spawns` 是**新一侧**
+			#   而 `PvpSession.spawn` 手里是旧一侧,两者**必然**不一致,照进场口径硬拉 = 每局边界
+			#   刷一条假告警 + 一次多余瞬移(位置本来就归 C2 权威)。闸门与"重连补态"共用
+			#   (`_resync_pull_pending`,读一次即清),不要新立一个标志 —— 问的是同一个问题。
+			_resync_pull_pending = true
+			NetBus.rpc_id(1, "match_sync")
 	elif state == 3:   # TeamHost.RoundState.MATCH_OVER(胜负已判:局胜或整队走光)
 		# ★★ **刻意没有 `and not _match_ended` 这道闸**(与大乱斗不同,别照抄过来加对称):
 		#   本模式的 MATCH_OVER **会有第二条载荷**,而结算页必须跟着刷新 ——

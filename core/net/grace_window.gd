@@ -23,10 +23,10 @@ extends RefCounted
 #        的 `GRACE_MIN/MAX` 与 `FINAL_TIMEOUT`、`tests/team_match_watcher.gd` 的 `OBSERVE_MAX`、
 #        `tests/team_match_probe.gd` 的 `RESULT_WAIT`(它的头部注释要求**逐项求和**算,别凭印象)。
 #        这三处是 Task 2。
-# ★ 宽限期**只与本文件有关**了:端口归还延迟那一套(`WorkerLauncher` 的三档 `*_PORT_REUSE_DELAY`)
-#   随"每局一个子进程"的形态一起消失 —— 单进程单端口之后没有"端口还没还回来"这件事,
-#   而"这一局还在不在"由凭据条目上的 `alive`(对局结束那一刻翻)精确回答。
-#   守卫只留一条 belt 形式的宽松下界(`tests/grace_window_smoke` ⑧),口径写在那一处。
+# ★ 端口归还延迟(`WorkerLauncher` 的三个 `*_PORT_REUSE_DELAY`)**不再与本值绑定**:
+#   承重的是"worker 进程活着 ⇒ 房与它占的端口都还在"(房活到 worker 退出,见
+#   `RoomManager._reclaim_finished_matches`)。守卫只留一条 belt 形式的宽松下界
+#   (`tests/grace_window_smoke` ⑧),口径写在那一处。
 const DEFAULT_SECONDS := 60.0
 
 # ── 宽限期**到点之后**该做什么:纯分派(无 autoload、无副作用、可 `-s` 测)──
