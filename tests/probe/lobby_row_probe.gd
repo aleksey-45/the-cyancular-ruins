@@ -21,17 +21,19 @@ extends Node
 #
 # ═══ 断言计数 ═══
 # ★ ALL-OK 只证明"没有一条断言失败",**不证明"该跑的断言都跑过"**(见 tests/lib/probe_base.gd
-#   文件头)。故这里比对期望条数:单页 8 条,少跑一条就红。改探针必须同步改这个数。
+#   文件头)。故这里比对期望条数:单页 9 条,少跑一条就红。改探针必须同步改这个数。
 
-const EXPECTED_CHECKS := 8
+const EXPECTED_CHECKS := 9
 
+# ★ 载荷里**满房那间(5678)喂在前** —— 排序断言(第 9 条)靠它才有意义:
+#   若输入顺序本来就对,把满房排后面也能全绿(排序等于没验)。
 const ROWS_1V1 := [
-	{"code": "1234", "players": 1, "names": ["阿甲"], "in_match": false},
 	{"code": "5678", "players": 2, "names": ["阿甲", "bob"], "in_match": true},
+	{"code": "1234", "players": 1, "names": ["阿甲"], "in_match": false},
 ]
 const ROWS_N := [
-	{"code": "1234", "players": 1, "max_players": 4, "names": ["阿甲"], "in_match": false},
 	{"code": "5678", "players": 2, "max_players": 4, "names": ["阿甲", "bob"], "in_match": true},
+	{"code": "1234", "players": 1, "max_players": 4, "names": ["阿甲"], "in_match": false},
 ]
 
 var _checks := 0
@@ -100,6 +102,16 @@ func _check_page(rows_per_mode: Array, modes: Array) -> void:
 	_check(not open_.disabled, "普通卡不是 disabled(正向对照)")
 	_check(open_.pressed.get_connections().size() == 1,
 			"普通卡恰有一个 handler(还能加入;正向对照)")
+	# ★ 排序:载荷里**满房(1v1 的 5678 = 2/2)喂在数组前面**,排完后网格里第一张卡必须是
+	#   未满那间。★ `sort_custom` 的比较函数返回 true = a 排在 b **前面** —— 写反了满房会跑到
+	#   最前;而上面那些断言全按 meta 找卡、对**顺序完全不敏感** ⇒ 只有这一条能红。
+	#   (网格按 pvp → royale → team 画,故第一张必是 pvp 的两张之一。)
+	var first: Node = grid.get_child(0)
+	var first_code := ""
+	if first is Button:
+		first_code = str((first as Button).get_meta("code", ""))
+	_check(first_code == "1234",
+			"排序:未满的卡排在满房之前(网格第一张 = 「%s」,期望 1234)" % first_code)
 	p.free()
 
 
