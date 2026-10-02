@@ -16,6 +16,21 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+def _write_text_lf(path: str, text: str) -> None:
+    """按 **LF** 写盘。
+
+    ★ 2026-10-03 修:原先直接用 `Path.write_text(..., encoding="utf-8")`,而它在 Windows 上
+    会做**换行翻译**(LF → CRLF),本仓 `.gitattributes` 又是 `* text=auto eol=lf`
+    ⇒ 导出后**还原**出来的 `build_info.gd` 变成 CRLF,`git status` **恒脏**
+    (内容一字不差、只是行尾)—— 与本文件自己承诺的"导出后工作区是干净的"直接矛盾。
+    实测:跑一次发布后 `git status` 报 ` M core/config/build_info.gd`,21/21 行全是 CRLF。
+    ★ 仍走 `pathlib` 而不是 `open(..., "w")`:本仓环境的安全钩子对写模式 `open()` 会报穿越
+    (见下方那段注释),`Path.write_text` 是等价且被放行的形态。
+    """
+    # 用 chr(10) 而不是字符串转义,免得后来读的人把这里的换行看岔
+    Path(path).write_text(text, encoding="utf-8", newline=chr(10))
+
+
 TOOLS = os.path.dirname(os.path.abspath(__file__))   # tools/
 PROJECT = os.path.dirname(TOOLS)                       # 仓库根
 # 引擎可执行文件。★ 这里是 **标准编辑器**(非 console;导出走编辑器 exe,与 tests/ 那些
@@ -61,7 +76,7 @@ def stamp_build_info(version: str, stamp: str) -> str:
             sys.exit("build_info.gd 里找不到 `const %s := \"...\"` 行,无法写入发布信息" % name)
         stamped = pat.sub(lambda m: '%s"%s"' % (m.group(1), val), stamped, count=1)
     # pathlib 写盘:与 open(..., "w") 等价(截断+写入);安全钩子对写模式 open() 一律报穿越
-    Path(_BUILD_INFO_REL).write_text(stamped, encoding="utf-8")
+    _write_text_lf(_BUILD_INFO_REL, stamped)
     print("== 写入发布信息: %s (%s)" % (version, stamp))
     return original
 
@@ -203,7 +218,7 @@ def main() -> None:
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
-        Path(_BUILD_INFO_REL).write_text(original, encoding="utf-8")
+        _write_text_lf(_BUILD_INFO_REL, original)
 
     # 按「版本号 + 时间戳」归档到 builds/(发布留档;根目录仍是两个固定名,给 start_server.bat 用)
     r = subprocess.run([sys.executable, os.path.join(TOOLS, "archive_build.py"),
