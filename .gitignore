@@ -29,6 +29,8 @@ test
 
 # 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/
+# 累积式程序包档案(每次发布沉淀一份完整包,见 tools/archive_build.py)
+releases/
 backup/
 
 # 服务端开服时落盘的本机 IP(ServerMain._write_ip_file;机器专属,不该入库)
@@ -36,3 +38,9 @@ local_ip.txt
 
 # Python 字节码缓存(tools/ 下的脚本被 import 时会生成)
 __pycache__/
+
+# 本机残留(旧线工具/日志看守/编辑器配置;不属于上游工程)
+DevTools/
+gamelogs/
+.zcode/
+.mimosa/

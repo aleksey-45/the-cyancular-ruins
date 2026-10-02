@@ -16,6 +16,10 @@ extends Node
 
 var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
 
+# sp 模式用:选图控件里点的是哪张图(进关后要断言"真的建了这张图")
+const PICK_MAP := "res://maps/factory1v1.cyrm"
+var _picked_map_expected := ""
+
 func _ready() -> void:
 	_run()
 
@@ -23,6 +27,10 @@ func _ready() -> void:
 func _run() -> void:
 	var tree := get_tree()
 	await tree.create_timer(1.2).timeout   # 等浮现动画
+	if mode == "beta":
+		await _run_beta_flow(tree)
+		tree.quit(0)
+		return
 	if mode == "switch":
 		await _run_switch_roundtrips(tree)
 		print("AUTOTEST[switch]: DONE")
@@ -50,6 +58,7 @@ func _run() -> void:
 	elif mode == "sp":
 		_press_by_text(tree.current_scene, "单 人 模 式")
 		await tree.create_timer(0.4).timeout
+		_verify_map_picker(tree)
 		_press_by_text(tree.current_scene, "开 始 探 索")
 	elif mode == "mp":
 		_press_by_text(tree.current_scene, "1 v 1")   # 文案 2026-09-21 起是「1 v 1」(原「多 人 对 战」)
@@ -82,11 +91,136 @@ func _run() -> void:
 	if must_reach.has(mode) and not _require_scene(tree, str(must_reach[mode])):
 		return
 	if mode == "sp":
+		await _verify_picked_map(tree)
 		await _verify_pause(tree)
 		await _verify_go_menu(tree)
 	await _shot(tree, "autotest_%s.png" % mode)
 	print("AUTOTEST[%s]: DONE" % mode)
 	tree.quit(0)
+
+
+# ── 选图控件(单机开局面板)──
+# 为什么必须在**场景级**验:数据层探针只能证明"目录/缩略图/校验函数对",证明不了
+# "面板上选中的值有没有真的走到建图"。少了这条,"摆了两张缩略图、进关还是随机图"这种
+# 假功能照样通过(末尾的场景断言只看"到了 level_0.tscn")。
+func _verify_map_picker(tree: SceneTree) -> void:
+	var picker := _find_picker(tree.current_scene)
+	if picker == null:
+		print("AUTOTEST[sp]: 单机开局面板里没有选图控件(MapPicker)")
+		tree.quit(1)
+		return
+	print("AUTOTEST[sp]: 选图控件已就位,卡片数 = %d" % picker._cards.size())
+	if picker._cards.size() < 3:
+		print("AUTOTEST[sp]: 选图卡片太少(%d,至少应有「随机」+ 2 张图)" % picker._cards.size())
+		tree.quit(1)
+		return
+	picker.select_path(PICK_MAP, false)
+	if picker.selected != PICK_MAP:
+		print("AUTOTEST[sp]: 点选后 selected 未更新(实为「%s」)" % picker.selected)
+		tree.quit(1)
+		return
+	_picked_map_expected = PICK_MAP
+	print("AUTOTEST[sp]: 已在面板里选中 %s" % PICK_MAP)
+
+
+# 进关后:钉住的图 + 世界像素尺寸都要按选中的图算
+# (后者是**真的坑**:启动时算的是随机图的尺寸,选了别的尺寸的图不重算 → 环面回绕按错边界)
+func _verify_picked_map(tree: SceneTree) -> void:
+	if _picked_map_expected == "":
+		return
+	var got := MazeGenerator.map_file_path()
+	var cells := MapFormat.map_size(_picked_map_expected)
+	var want_w := cells.x * GameParameters.TILE_SIZE
+	print("AUTOTEST[sp]: 进关地图 = %s(面板选的是 %s);世界宽度 = %d(该图应为 %d)" % [
+			got, _picked_map_expected, GameParameters.MAP_WIDTH, want_w])
+	if got != _picked_map_expected:
+		print("AUTOTEST[sp]: 面板选的图没生效!")
+		tree.quit(1)
+		return
+	if GameParameters.MAP_WIDTH != want_w:
+		print("AUTOTEST[sp]: 世界尺寸没按选中的图重算(refresh_map_size 漏了?)")
+		tree.quit(1)
+
+
+func _find_picker(n: Node) -> MapPicker:
+	if n == null or not is_instance_valid(n):
+		return null
+	if n is MapPicker:
+		return n
+	for c in n.get_children():
+		var hit := _find_picker(c)
+		if hit != null:
+			return hit
+	return null
+
+
+# ── beta 模式:主菜单 → Beta 页(两张卡)→ 错乱大乱斗卡 → beta 态大乱斗大厅(时间参数面板)──
+# ★ 为什么场景级:独立房间池的客户端侧一半(beta 标的创建/过滤/上报)都长在大厅页里,
+#   不真开一次页,「beta 态建面板 + 9 行参数 + player_options 带 time」这些全是纸面推断。
+func _run_beta_flow(tree: SceneTree) -> void:
+	_press_by_text(tree.current_scene, "Beta")
+	await tree.create_timer(1.5).timeout
+	var beta := tree.current_scene
+	var path0 := str(beta.scene_file_path) if beta != null else "<null>"
+	print("AUTOTEST[beta]: Beta 页 = %s" % path0)
+	if path0.find("beta_menu.tscn") < 0:
+		print("AUTOTEST[beta]: 未进入 beta_menu(实际 %s)——按钮文案变了?" % path0)
+		tree.quit(1)
+		return
+	# 两张卡的名字与版本号都必须在
+	var texts := _collect_texts(beta)
+	for want in ["错乱大乱斗", "时空 3v3", "Royale", "Team", "beta_0.0"]:
+		if texts.find(want) < 0:
+			print("AUTOTEST[beta]: Beta 页缺「%s」" % want)
+			tree.quit(1)
+			return
+	print("AUTOTEST[beta]: 两张卡与版本号齐全")
+	# 点第一张卡(错乱大乱斗)→ 应到大乱斗大厅且 beta_mode 为真
+	(beta as Node).call("_enter_card", (beta as Node).get("CARDS")[0])
+	await tree.create_timer(1.5).timeout
+	var lobby := tree.current_scene
+	var path1 := str(lobby.scene_file_path) if lobby != null else "<null>"
+	print("AUTOTEST[beta]: 卡片后场景 = %s,beta_mode=%s" % [path1, str(PvpSession.beta_mode)])
+	if path1.find("royale_lobby.tscn") < 0 or not PvpSession.beta_mode:
+		print("AUTOTEST[beta]: 未以 beta 态进入大乱斗大厅")
+		tree.quit(1)
+		return
+	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则
+	var sliders := 0
+	for n in _walk(lobby, func(x: Node) -> bool: return x is HSlider):
+		sliders += 1
+	if sliders < 9:
+		print("AUTOTEST[beta]: 时间参数滑条不足(%d < 9)" % sliders)
+		tree.quit(1)
+		return
+	var opts: Dictionary = (lobby as Node).call("_player_options")
+	if not opts.has("time") or str(opts["time"]).length() < 10:
+		print("AUTOTEST[beta]: player_options 没带 time 规则(%s)" % str(opts))
+		tree.quit(1)
+		return
+	print("AUTOTEST[beta]: 时间参数 9 行在;player_options 带 time(默认规则)")
+	await _shot(tree, "autotest_beta.png")
+	print("AUTOTEST[beta]: DONE")
+
+
+func _collect_texts(n: Node) -> Array:
+	var out: Array = []
+	for x in _walk(n, func(x: Node) -> bool: return x is Label or x is Button):
+		var t := str((x as Control).text if x is Button else (x as Label).text)
+		if t != "":
+			out.append(t)
+	return out
+
+
+func _walk(n: Node, pred: Callable) -> Array:
+	var out: Array = []
+	if n == null or not is_instance_valid(n):
+		return out
+	if pred.call(n):
+		out.append(n)
+	for c in n.get_children():
+		out.append_array(_walk(c, pred))
+	return out
 
 
 # ── switch 模式:两趟「进单机 → 回主菜单」,把 safe_change_scene 的两条路径都走到 ──

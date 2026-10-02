@@ -9,6 +9,7 @@ static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 # 建图时的原始(未破坏)网格深拷贝:每局复位用它重铺瓦片/碰撞(不被运行时 damage_tile 污染)。
 static var _pristine_grid: Array[Array] = []
+static var _pristine_subgrid: Array[Array] = []   # cyrm v4:子格纹理表基线(复位/回溯用)
 # 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
@@ -33,6 +34,21 @@ static var pvp_mode: bool = false
 # ★ 守卫放在**这个收口点**而非各调用点:调用点每新增一条退出路径就要记得补一次守卫,漏一条
 # 就复现 —— 与「拆除逻辑散在多处」同病。此处一处覆盖全部现有与将来的调用方。
 static var _switching: bool = false
+
+## 个人钟账户与时间场(单机;PvP 不建 → 时间系统整体旁路)
+static var grain_account: GrainAccount = null
+static var time_field: TimeField = null
+var _rewind: WorldRewind = null   # 世界快照/回放(单机;PvP 不建)
+var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退出)
+var _post_process: PostProcess = null
+var _tile_ledger: TileLedger = null      # 玩家拆砖账本(瓦片回溯)
+var _tile_pending: Array = []            # 本帧待入账的格(帧末合并)
+var _tile_cursor: float = -1.0           # 本次回溯的瓦片还原高水位
+var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
+var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
+# 时间状态高亮(B13):加色副本(见 scenes/effects/time_glow.gd),实体 → TimeGlow
+var _glows: Dictionary = {}
+
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	if _switching:
@@ -218,17 +234,20 @@ func _ready() -> void:
 		return
 	_grid_ref = grid
 	_pristine_grid = MazeGenerator.copy_grid(grid)
+	_pristine_subgrid = []   # _ready 里随 current_subgrid 一起存基线
 	Level0.wall_layer = $WorldViewport/WallLayer
-	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
+	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
 	TileDefs.init_hp(grid)
+	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
+	_pristine_subgrid = MazeGenerator.copy_grid(MazeGenerator.current_subgrid)
 
 	var tile_set = _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = tile_set
-	_paint_maze(wl, grid)
+	_paint_maze(wl)
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
-	Level0.water_layer.tile_set = tile_set
+	Level0.water_layer.tile_set = _create_water_tileset()
 	_paint_water(grid)
 
 
@@ -239,6 +258,17 @@ func _ready() -> void:
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 	$WorldViewport/Player.weapons.set_enabled_types(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
+	# 个人钟(第一阶段):单机建账户与世界时间场(PvP 不建 → TimeField.current 为 null,倍率恒 1)
+	grain_account = GrainAccount.new()
+	time_field = TimeField.new(grain_account)
+	TimeField.current = time_field
+	_rewind = WorldRewind.new($WorldViewport)
+	_tile_ledger = TileLedger.new()
+	# 贷款锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
+	grain_account.loan_locked.connect(func() -> void:
+		var w = get_tree().get_first_node_in_group("watch_hud")
+		if w != null and w.has_method("flash_locked"):
+			w.flash_locked())
 	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
@@ -247,74 +277,95 @@ func _ready() -> void:
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
+	_post_process = pp
 	call_deferred("add_child", pp)
 	_build_pause_menu()
 
 
 func _create_wall_tileset() -> TileSet:
-	var ts: int = GameParameters.TILE_SIZE          # 64
-	var half: int = ts / 2                          # 32 子格
 	var texture: Texture2D = load("res://assets/textures/structure.png")
 	var src_img: Image = texture.get_image()
-	# 22 块源砖(两行 32×32 + 第3行两块水)→ 最近邻 2× 放大成 64×64
-	var bricks: Array[Image] = []
-	for i in range(22):
-		var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
-		img.blit_rect(src_img, Rect2i((i % 10) * 32, (i / 10) * 32, 32, 32), Vector2i.ZERO)
-		img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
-		bricks.append(img)
-	Level0.surface_texture = ImageTexture.create_from_image(bricks[21])  # 水面单格贴图(供 Sprite)
-	# atlas:16 列(形状 0-15)× 22 行(纹理 1-22),空气象限透明
-	var atlas_img := Image.create(16 * ts, 22 * ts, false, Image.FORMAT_RGBA8)
+	# 22 块源砖(10 列 × 3 行,32×32)。cyrm v4:每个 16px 子格画源块的 8×8 象限,放大 2×。
+	# 取角映射:象限 (qx, qy) 由子格在格内的位置推出(X%4, Y%4),不是数据字段。
+	var atlas_img := Image.create(16 * 16, 22 * 16, false, Image.FORMAT_RGBA8)   # 16 列(象限)× 22 行(纹理)
 	atlas_img.fill(Color(0, 0, 0, 0))
 	for tex in range(22):
-		for shape in range(16):
-			var tile := bricks[tex].duplicate()
-			for sy in range(2):
-				for sx in range(2):
-					if (shape & (1 << (sy * 2 + sx))) == 0:
-						tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
-			atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, tex * ts))
+		var src := Rect2i((tex % 10) * 32, (tex / 10) * 32, 32, 32)
+		for qy in range(4):
+			for qx in range(4):
+				var q := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+				q.blit_rect(src_img, Rect2i(src.position.x + qx * 8, src.position.y + qy * 8, 8, 8), Vector2i.ZERO)
+				q.resize(16, 16, Image.INTERPOLATE_NEAREST)
+				atlas_img.blit_rect(q, Rect2i(0, 0, 16, 16), Vector2i((qy * 4 + qx) * 16, tex * 16))
 	var atlas_tex := ImageTexture.create_from_image(atlas_img)
+	var tile_set = TileSet.new()
+	tile_set.tile_size = Vector2i(16, 16)
+	var atlas = TileSetAtlasSource.new()
+	atlas.texture_region_size = Vector2i(16, 16)
+	atlas.texture = atlas_tex
+	tile_set.add_source(atlas)
+	for q in range(16):
+		for tex in range(22):
+			atlas.create_tile(Vector2i(q, tex))
+	return tile_set
+
+
+# 水体专用 64px 图集(B18 把墙体图集改成 16px 象限制后,_paint_water 的"形状列×纹理行"
+# 老格式没了着落:水体被按 16px 坐标压缩画错位,真水体看不见,还在地图 1/4 坐标处散布
+# 一堆无碰撞的"幽灵方块")。水不可破坏,永远按 64px 整格渲染——按 B18 之前的老构建
+# 逻辑原样重建,仅供 water_layer 使用;atlas 行 0 = 纹理 21(水体)。
+func _create_water_tileset() -> TileSet:
+	var ts := GameParameters.TILE_SIZE
+	var texture: Texture2D = load("res://assets/textures/structure.png")
+	var src_img: Image = texture.get_image()
+	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	img.blit_rect(src_img, Rect2i((21 % 10) * 32, (21 / 10) * 32, 32, 32), Vector2i.ZERO)
+	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
+	Level0.surface_texture = ImageTexture.create_from_image(img)   # 水面合批 shader 的采样源
+	var half: int = ts / 2
+	var atlas_img := Image.create(16 * ts, ts, false, Image.FORMAT_RGBA8)
+	atlas_img.fill(Color(0, 0, 0, 0))
+	for shape in range(16):
+		var tile := img.duplicate()
+		for sy in range(2):
+			for sx in range(2):
+				if (shape & (1 << (sy * 2 + sx))) == 0:
+					tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
+		atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, 0))
 	var tile_set = TileSet.new()
 	tile_set.tile_size = Vector2i(ts, ts)
 	var atlas = TileSetAtlasSource.new()
 	atlas.texture_region_size = Vector2i(ts, ts)
-	atlas.texture = atlas_tex
+	atlas.texture = ImageTexture.create_from_image(atlas_img)
 	tile_set.add_source(atlas)
-	# 瓦片坐标 = (形状列, 纹理行);空气(shape 0)含全透明瓦片,铺图时跳过即可
 	for shape in range(16):
-		for tex in range(22):
-			atlas.create_tile(Vector2i(shape, tex))
-
+		atlas.create_tile(Vector2i(shape, 0))
 	return tile_set
 
 
-func _paint_maze(layer: TileMapLayer, grid: Array[Array]) -> void:
+func _paint_maze(layer: TileMapLayer) -> void:
+	# cyrm v4:铺 **16px 子格**(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,
+	# 液体由 _paint_water 分层铺)。瓦片坐标 = (象限 qy*4+qx, 纹理-1)。
 	var source_id = 0
-	var cols = grid[0].size()
-	var rows = grid.size()
-
+	var sc = MazeGenerator.current_subgrid[0].size()
+	var sr = MazeGenerator.current_subgrid.size()
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
-			var offset_x = tx * cols
-			var offset_y = ty * rows
-			for y in range(rows):
-				var row: Array = grid[y]
-				for x in range(cols):
-					var v: int = row[x]
-					if v == MazeGenerator.EMPTY:
+			var offset_x = tx * sc
+			var offset_y = ty * sr
+			for y in range(sr):
+				var row: Array = MazeGenerator.current_subgrid[y]
+				for x in range(sc):
+					var tex: int = row[x]
+					if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
 						continue
-					if Water.is_liquid(MazeGenerator.texture_of(v)):
-						continue  # 水由 _paint_water 分层铺
-					# packed → atlas 坐标(形状列, 纹理行)
 					layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
-							Vector2i(MazeGenerator.shape_of(v), MazeGenerator.texture_of(v) - 1))
+							Vector2i((y % 4) * 4 + (x % 4), tex - 1))
 
 
-# 水格铺图:水体格铺水体瓦片(T理纡 21,atlas 行 20);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
+# 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
 func _paint_water(grid: Array[Array]) -> void:
-	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
+	const BODY_ROW := 0   # 水体专用图集只有一行(纹理 21)
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
@@ -354,6 +405,11 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
+	if time_field != null and not pvp_mode:
+		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
+		_tick_rewind(_delta)
+		_tick_time_visuals(_delta)
 	_update_pickup_prompt()
 	if not _dirty_chunks.is_empty():
 		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
@@ -370,19 +426,81 @@ func _process(_delta: float) -> void:
 
 
 # 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。
-func _on_tile_destroyed(cell: Vector2i) -> void:
-	if wall_layer != null and not _grid_ref.is_empty():
-		var cols: int = _grid_ref[0].size()
-		var rows: int = _grid_ref.size()
+## 单格写回(瓦片回溯用):网格 + 9 环面副本渲染 + 持久子格 2×2 + 脏块重建标记。
+## 回溯期子弹对精英的二次伤害(策划案:「回退造成二次伤害」)——
+## 回溯中普通实体冻结/由快照摆位,唯有精英照常存在;倒飞的子弹再次穿过它就再吃一次伤害。
+func _rewind_elite_hits() -> void:
+	if _rewind == null:
+		return
+	var elites: Array = []
+	for e in get_tree().get_nodes_in_group("enemies"):
+		if is_instance_valid(e) and e.has_meta("elite") and not bool(e.get("is_dead")):
+			elites.append(e)
+	if elites.is_empty():
+		return
+	for b in _rewind.replay_bullets():
+		if not is_instance_valid(b):
+			continue
+		var dmg := int(b.get("hit_damage"))
+		if dmg <= 0:
+			continue
+		var bp: Vector2 = (b as Node2D).global_position
+		for e in elites:
+			var ep: Vector2 = (e as Node2D).global_position
+			var d := MazeGenerator.toroidal_delta_px(bp, ep,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+			if d.length() > 42.0:
+				continue
+			var hit_ids: Array = b.get_meta("rw_hit_ids", [])
+			if hit_ids.has(e.get_instance_id()):
+				continue
+			hit_ids.append(e.get_instance_id())
+			b.set_meta("rw_hit_ids", hit_ids)
+			var dir := d.normalized() if not d.is_zero_approx() else Vector2.RIGHT
+			e.call("hurt", dmg, dir, float(b.get("hit_impact")))
+
+
+func _restore_sub(e: Dictionary) -> void:
+	# 回溯还原一个 16px 子格:HP 写回 + 重铺贴图 + 碰撞子格复位 + 账本时间轴照旧。
+	# 所属 64px 格若已因"全子格死光"被清零,这里一并从基线恢复(格级逻辑重新看到它)。
+	if _grid_ref.is_empty() or wall_layer == null or MazeGenerator.current_subgrid.is_empty():
+		return
+	var sub: Vector2i = e["sub"]
+	var hp := int(e["hp"])
+	var sc: int = MazeGenerator.current_subgrid[0].size()
+	var sr: int = MazeGenerator.current_subgrid.size()
+	if sub.x < 0 or sub.y < 0 or sub.x >= sc or sub.y >= sr:
+		return
+	TileDefs.restore_sub(sub, hp)
+	var tex := int(MazeGenerator.current_subgrid[sub.y][sub.x])
+	var cell := Vector2i(sub.x / 4, sub.y / 4)
+	if tex == 0:
+		return
+	for ty in range(-1, 2):
+		for tx in range(-1, 2):
+			wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0,
+					Vector2i((sub.y % 4) * 4 + (sub.x % 4), tex - 1))
+	if not _destructible_sub.is_empty():
+		_destructible_sub[sub.y][sub.x] = MazeGenerator.SOLID
+		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+	if _grid_ref[cell.y][cell.x] == 0 and not _pristine_grid.is_empty():
+		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
+
+
+func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
+	# cyrm v4 子格破坏:清一个 16px 渲染格(9 环面副本)+ 记回溯账本 + 重建所在碰撞块。
+	# 回溯捕获(**摧毁前**的 hp 由 TileDefs 传进来;仅单机时间系统激活且非回放期)
+	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
+		_tile_pending.append({"sub": sub, "hp": pre_hp})
+	if wall_layer != null:
+		var sc: int = MazeGenerator.current_subgrid[0].size()
+		var sr: int = MazeGenerator.current_subgrid.size()
 		for ty in range(-1, 2):
 			for tx in range(-1, 2):
-				wall_layer.set_cell(Vector2i(cell.x + tx * cols, cell.y + ty * rows), -1)
-	# 9 环面副本由同一子格生成,只清中心格 2×2 即可;块间互不合并 → 只重建所在块
+				wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), -1)
 	if not _destructible_sub.is_empty():
-		for qy in range(2):
-			for qx in range(2):
-				_destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
-		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
+		_destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
+		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
 
 
 # PvP 换局复位:把可破坏砖/碰撞/瓦片全量还原成建图时的原始状态(当前网格重置为基线深拷贝)。
@@ -395,10 +513,13 @@ func reset_destructibles() -> void:
 	MazeGenerator.current_grid = g
 	_grid_ref = g
 	TileDefs.init_hp(g)
+	# cyrm v4:子格表/子格 HP 一并回基线
+	MazeGenerator.current_subgrid = MazeGenerator.copy_grid(_pristine_subgrid)
+	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	# 瓦片层整层重铺(清掉 -1 残留,恢复被拆砖的贴图)
 	var wl := Level0.wall_layer
 	if wl != null:
-		_paint_maze(wl, g)
+		_paint_maze(wl)
 	# 碰撞:可破坏分块 + 永久墙 + 攀爬条整体重建为基线
 	_destructible_sub = WorldBuilder.build_sim($WorldViewport, g)
 
@@ -615,6 +736,137 @@ func _live_self_drops() -> Array:
 #   在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
 # ★ 与 `try_pickup_for` 的选法**仍然是同一套** —— 按 F 捡的仍是最近那把,只是"能捡"的
 #   每一把都会提示(踩到其中任何一把都能捡起来)。
+## 时间玩法视效驱动:底片化 ramp ≤200ms、加速压暗 ramp 100ms、贷款深度直传
+func _tick_time_visuals(delta: float) -> void:
+	if _post_process == null or time_field == null:
+		return
+	var rewinding: bool = time_field.is_rewinding()
+	_film_t = move_toward(_film_t, 1.0 if rewinding else 0.0, delta / 0.2)
+	_haste_t = move_toward(_haste_t, 1.0 if time_field.is_hasting() else 0.0, delta / 0.1)
+	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t)
+
+	# 贷款/加速/回溯的音调变形(全局系数;贷款越深越尖)
+	var depth := time_field.loan_depth()
+	var mult := 1.0 + TimeParams.LOAN_PITCH_RANGE * depth
+	if time_field.is_hasting():
+		mult += 0.12
+	elif rewinding:
+		mult -= 0.15
+	Sfx.pitch_mult = clampf(mult, 0.7, 1.8)
+	_sync_time_glows()
+
+
+# 时间状态高亮(B13):加速 → 主角 + 场上敌人;回溯 → **只有精英**。
+# ★ 配色是**规则**不是装饰:精英在加速与回溯两种状态下都必须是"极为亮眼的黄"(用户指定),
+#   其余实体的高亮只是"时间场生效中"的可读提示。用加色副本(TimeGlow)而不是 modulate ——
+#   后者在非 HDR 2D 里被夹到 1.0,且会被敌人每帧的受击白闪覆盖(实测完全看不出高亮)。
+const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角:冷白蓝
+const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌:暖白
+const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英:亮黄(两层叠加 → "极为亮眼")
+const GLOW_RADIUS := 1500.0                      # 只给近处敌人上副本(远处的看不见,白花销)
+
+func _sync_time_glows() -> void:
+	if time_field == null:
+		return
+	var want: Dictionary = {}
+	if time_field.is_hasting():
+		var pl := get_node_or_null("WorldViewport/Player") as Node2D
+		if pl != null:
+			want[pl] = [GLOW_PLAYER, 1]
+		for e in get_tree().get_nodes_in_group("enemies"):
+			if not (e is Node2D) or not is_instance_valid(e) or bool(e.get("is_dead")):
+				continue
+			if e.has_meta("elite"):
+				want[e] = [GLOW_ELITE, 2]      # 精英不分远近(它是时间场的"例外",要一眼看到)
+			elif _near_player(e as Node2D):
+				want[e] = [GLOW_ENEMY, 1]
+	elif time_field.is_rewinding():
+		for e in get_tree().get_nodes_in_group("enemies"):
+			if is_instance_valid(e) and e is Node2D and not bool(e.get("is_dead")) and e.has_meta("elite"):
+				want[e] = [GLOW_ELITE, 2]
+	for k in _glows.keys():
+		if not is_instance_valid(k) or not want.has(k):
+			var old: TimeGlow = _glows[k]
+			if is_instance_valid(old):
+				old.queue_free()
+			_glows.erase(k)
+	for k in want.keys():
+		var spec: Array = want[k]
+		var g: TimeGlow = _glows.get(k)
+		if g == null or not is_instance_valid(g):
+			g = TimeGlow.attach(k, spec[0], int(spec[1]))
+			if g != null:
+				_glows[k] = g
+		else:
+			g.set_color(spec[0])
+
+
+func _near_player(n: Node2D) -> bool:
+	var pl := get_node_or_null("WorldViewport/Player") as Node2D
+	if pl == null:
+		return false
+	var d := MazeGenerator.toroidal_delta_px(n.global_position, pl.global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	return d.length() <= GLOW_RADIUS
+
+
+## 时间场驱动缝(探针直调;正常路径由 _process 传真实按键态)
+var _prev_want_rewind := false
+var _prev_want_haste := false
+
+
+func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
+	# 锁定/空账时的按键空转:按下那一下给 deny 反馈(否则玩家以为键坏了)
+	if grain_account != null and want_rewind and not _prev_want_rewind and not grain_account.can_spend():
+		Sfx.play("deny")
+	if grain_account != null and want_haste and not _prev_want_haste and not grain_account.can_spend():
+		Sfx.play("deny")
+	_prev_want_rewind = want_rewind
+	_prev_want_haste = want_haste
+	time_field.update(delta, want_rewind, want_haste)
+
+
+## 世界回放 tick:录制 ↔ 回放的状态机 + 尸体保留/过期清理(单机)
+func _tick_rewind(delta: float) -> void:
+	if _rewind == null:
+		return
+	var pl := get_node_or_null("WorldViewport/Player")
+	var rewinding: bool = time_field != null and time_field.is_rewinding()
+	if rewinding and not _rewind.was_rewinding:
+		_rewind.begin()
+		_tile_cursor = _rewind.recorded_seconds()   # 瓦片还原高水位=进入回溯时刻
+	elif not rewinding and _rewind.was_rewinding:
+		var exit_t: float = _rewind.finish()
+		if _tile_ledger != null:
+			_tile_ledger.prune_after(exit_t)   # 瓦片账本与磁带同裁:被复写时段的拆砖条目一并消失
+	_rewind.was_rewinding = rewinding
+	_prev_time_mode = time_field.mode if time_field != null else 0
+	if rewinding:
+		WorldRewind.hold_corpses = false
+		_rewind.step(delta, pl)
+		# 二次伤害:倒飞的子弹穿过**精英**(精英不受回溯,照常在场)时再结算一次伤害。
+		# 每颗回放弹对同一精英只结算一次(meta 记 id),避免逐帧反复扣血。
+		_rewind_elite_hits()
+		# 瓦片还原:跨过 target 的破坏按 t 降序写回(最新破坏先还,最早的值最后落地)
+		if _tile_ledger != null and _tile_cursor >= 0.0:
+			var target := _rewind.current_target()
+			for e in _tile_ledger.take_range(target, _tile_cursor):
+				for c in e["cells"]:
+					_restore_sub(c)
+			_tile_cursor = target
+	else:
+		WorldRewind.hold_corpses = true
+		_rewind.record(delta, pl, get_tree().get_nodes_in_group("enemies"),
+				get_tree().get_nodes_in_group("bullet"))
+		WorldRewind.expire_corpses(get_tree())
+		# 瓦片账本:帧末入账本帧拆掉的格;并裁剪超出回溯窗口的旧条目
+		if _tile_ledger != null:
+			if not _tile_pending.is_empty():
+				_tile_ledger.record(_rewind.recorded_seconds(), _tile_pending)
+				_tile_pending = []
+			_tile_ledger.prune(_rewind.recorded_seconds() - TimeParams.SNAP_SECONDS)
+
+
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
 	# ★ 先把表里的 pos 刷成**视觉中心**(可见的枪在哪),判定与提示才与玩家看到的一致。

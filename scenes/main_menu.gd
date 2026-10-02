@@ -74,6 +74,12 @@ func _ready() -> void:
 # change_scene 在这里只会销毁一棵 Control 树,不存在「销毁大世界 × 构建大世界」的同帧对撞。
 # 反方向(游戏世界退役回菜单)才需要挂起式切换,见 Level0.safe_change_scene 的注释。
 func _enter_level0() -> void:
+	# 选图(菜单里定的,空 = 随机):★ 必须在 change_scene **之前**钉进 MazeGenerator 的会话缓存
+	# —— 它是静态的,活过场景切换;文件被删/改名时回落随机,不让玩家卡在旧路径上。
+	MazeGenerator.set_map_file(Settings.sp_map_path if MapCatalog.is_valid_map(Settings.sp_map_path) else "")
+	# ★ 必须跟着重算世界尺寸:启动时算的是"当时随机挑的图"(如 demo 125×75 → 8000 宽),
+	#   选了别的图(如 factory1v1 150×100 → 9600 宽)不重算的话环面回绕/最短路径按错边界。
+	GameParameters.refresh_map_size()
 	Level0.pvp_mode = false            # 复位 PvP 标志,避免上次 PvP 残留
 	CombatComponent.pvp_arena = false  # 回单机恢复命中无敌帧
 	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
@@ -238,6 +244,12 @@ func _build_menu_buttons() -> Array:
 		Sfx.play("ui")
 		PvpSession.enter_mode(PvpSession.MODE_ROYALE)
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
+	# Beta(2026-09-28,用户指定放在大乱斗下面):以后所有实验性玩法都从这个入口进
+	# (现在是 PvP 时间玩法的两个变体)。弱化变体:实验功能不与正式模式抢注意力。
+	var beta_btn := UiFactory.button("Beta", 32, Vector2(420, 64), "quiet")
+	beta_btn.pressed.connect(func() -> void:
+		Sfx.play("ui")
+		get_tree().change_scene_to_file("res://scenes/beta_menu.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而 3 字的「大 乱 斗」又比它们窄 —— 6 行按钮的文本块宽度既不等宽
 	# 也不成体系(2026-09-13 视觉评析)。按钮本身 420 宽居中,标签不必再自己凑宽度。
@@ -254,7 +266,7 @@ func _build_menu_buttons() -> Array:
 		get_tree().quit())
 	# 三个联机模式按 1v1 → 3v3 → 大乱斗 排列(2026-09-21 用户指定)。★ 显示次序由
 	# add_child 的次序决定;下面返回的数组同时是**浮现动画**的次序,两处必须一起改。
-	for b in [start_btn, multi_btn, team_btn, royale_btn]:
+	for b in [start_btn, multi_btn, team_btn, royale_btn, beta_btn]:
 		play_group.add_child(b)
 	for b in [settings_btn, ver_btn]:
 		opt_group.add_child(b)
@@ -352,6 +364,11 @@ func _fill_version_panel(panel: PanelContainer) -> PanelContainer:
 # 武器勾选与按钮仍走工厂。★ CheckList 容器只为给勾选一个**插在 ButtonRow 之前**的位置
 # —— 直接 vb.add_child(cb) 会把勾选追加到按钮行后面。
 func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
+	# 选图:每张卡带一版**开局地形简略图**(由 MapCatalog 从 .cyrm 现画,不是美术资源)
+	var picker := MapPicker.new()
+	panel.get_node("VBox/MapSection").add_child(picker)
+	picker.setup(Settings.sp_map_path, 2, 300.0)
+
 	var checks: Array[CheckButton] = []
 	var check_list: VBoxContainer = panel.get_node("VBox/CheckList")
 	var ids: Array[int] = WeaponRegistry.all_ids()
@@ -378,6 +395,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 				#   **静默禁用错的那把枪**(而今天 ids == [1..6],两种写法同结果,正是
 				#   "改了不报错"的那一类)。
 				Settings.sp_disabled_weapons.append(int(ids[i]))
+		Settings.sp_map_path = picker.selected   # "" = 随机
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		_enter_level0())

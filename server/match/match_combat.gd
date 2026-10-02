@@ -15,6 +15,20 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 	# 服务器拆的墙必须由事件驱动客户端清瓦片渲染,否则建筑"看着没被炸坏"。
 	_rpc_all("tile_destroyed", [cell])
 
+
+# 16px 子格被摧毁(cyrm v4):清持久子格 + 标记分块重建 + 广播 sub_destroyed 给客户端
+# (客户端清 16px 渲染格与本地预测碰撞)。owner = 射手节点 → 映射 role,Beta 时间玩法
+# 在这里结算"拆砖得颗粒"(B21;普通局 time_economy 为空,只广播)。
+func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
+	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
+		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
+		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
+	_rpc_all_ext("sub_destroyed", [sub])
+	if time_economy != null:
+		var role := _role_of_node(owner)
+		if role != 0:
+			time_economy.award_blocks(role, 1)
+
 # 快照:canonical 坐标(玩家在服务器上始终 wrap_to_range 到 [0,MAP))。unreliable,30Hz。
 # 带递增序号 tick:客户端靠它丢弃乱序到达的旧快照(unreliable 通道可能乱序)。
 
@@ -270,6 +284,18 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	elif stat_attacker != 0 and same_team(stat_attacker, int(role)):
 		var sm := _stat_entry(stat_attacker)
 		sm["team_damage"] = int(sm["team_damage"]) + int(damage)
+	# Beta 时间玩法(B21):伤害入账(每点 × damage_gain)。归因口径与击杀同款窗口(3s):
+	# `attribute` 都写在 `take_hit` 之前 ⇒ 这一刻读 meta 就是"这一下是谁打的";
+	# 自伤 / 归因不到 / 同队,谁都不给(用户裁定)。
+	# ★ 窗口用 `ATTRIB_WINDOW`(3s)而**不是**上面逐人统计那个 `ATTRIB_FRESH_MS`(8ms)——
+	#   两者答的是**两个问题**,见 `match_state.gd` 里两个常量的注释。
+	# ★ 合并订正:KH 原版调用的是两参重载 `_fresh_attacker_role(role, window)`,而主线已把
+	#   该函数重构成"一参 + `_attributed_role_within(node, window)`" —— 两参版在本仓会与
+	#   主线那份构成**同文件同名重复定义**(git 自动合并看不见),故改走既有 API。
+	if time_economy != null and damage > 0 and stat_victim != null:
+		var rw_attacker := _attributed_role_within(stat_victim, ATTRIB_WINDOW)
+		if rw_attacker != 0 and rw_attacker != int(role) and not same_team(rw_attacker, int(role)):
+			time_economy.award_damage(rw_attacker, int(role), damage)
 	for r in peer_by_role:
 		# 判活:这是**每次伤害**都发的定向包(交火时最密的一处),原先完全不判 ——
 		# 往"正在断开"的 peer 发就是那条 channel 0 错误(判据为何不能用 get_peers 见 NetBus)。

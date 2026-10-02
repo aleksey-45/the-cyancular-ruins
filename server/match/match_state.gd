@@ -31,6 +31,25 @@ var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复�
 # ★ 空表 = 无队伍(1v1 / 大乱斗 / 单机):`team_of` 恒 0、`same_team` 恒 false,行为与今天一致。
 var _team_of: Dictionary = {}
 
+# Beta 时间玩法(B21):服务器权威颗粒经济。普通局恒 null(一切结算/广播短路)。
+# 宿主 _init 时若房主 options 带 time 规则则建(见 MatchHost._init)。
+var time_economy = null
+
+# Beta 回溯的会话态(声明在**根基类**:快照域 MatchSnapshot 与宿主域 MatchHost 都要读写,
+# 子类符号在导出编译期解析不了 —— 声明必须位于链上所有使用者的上游)。
+var _rw_on: Dictionary = {}        # role -> bool(回溯中)
+var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
+
+
+# 节点 → role(players 表反查;0 = 不在表里,调用方按"无归因"处理)。
+func _role_of_node(n: Node) -> int:
+	if n == null:
+		return 0
+	for r in players:
+		if players[r] == n:
+			return int(r)
+	return 0
+
 
 # 某 role 的队号;无队伍/不在表里 → 0(调用方按 0 处理为"不豁免、不分组",别让它变成 1)。
 func team_of(role: int) -> int:
@@ -178,6 +197,21 @@ static var test_destroy_after := 0.0     # 秒;从对局开始(_ready)起算
 
 
 func _rpc_all(method: String, args: Array = [], except_role: int = -1,
+		live_only: bool = true) -> void:
+	for role in peer_by_role:
+		if role == except_role or not players.has(role):
+			continue
+		var peer: int = peer_by_role[role]
+		# ★ 判活走 `NetBus.is_peer_live`(读 ENet peer 自己的 state),**不是** `get_peers()`:
+		#   后者比 ENet 的真实状态晚(见 NetBus 里那段注释),用它挡不住"往已拆掉的 peer 发定向包"
+		#   → 就是那句 `Unable to send packet on channel 0, max channels: 0`。
+		if live_only and not NetBus.is_peer_live(peer):
+			continue
+		# callv 展开实参:rpc_id 是变参口,而本函数要按调用方给的 args 转发。
+		NetBus.callv("rpc_id", [peer, method] + args)
+
+# Beta 时间玩法的广播走扩展节点(NetBus 纪律:原方法表不动)。
+func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
 		live_only: bool = true) -> void:
 	for role in peer_by_role:
 		if role == except_role or not players.has(role):
@@ -364,6 +398,11 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 		var tm := _stat_entry(killer_role)
 		tm["team_kills"] = int(tm["team_kills"]) + 1
 		return
+	# Beta 时间玩法(B21):击杀得"被击杀者余额 × 比例"(被击杀者不减)。
+	# ★ 位置跟着 KH 那份走:两道早退(无归因 / 同队)之后 —— 那两档谁都不给颗粒。
+	# ★ 本行从 `TeamHost._record_down` 搬来:合并时逐人统计面已上提到本文件,原处那份**已删**。
+	if time_economy != null:
+		time_economy.award_kill(killer_role, victim_role)
 	var k := _stat_entry(killer_role)
 	k["kills"] = int(k["kills"]) + 1
 	# ── 助攻:表里**除击杀者之外**、且在归因窗口内、且**与击杀者同队**的 attacker ──

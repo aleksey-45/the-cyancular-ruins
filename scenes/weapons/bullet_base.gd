@@ -60,8 +60,15 @@ func _ready() -> void:
 		sp.modulate = bullet_color
 	# 服务器裁决用:所有子弹进 bullet 组,MatchHost 遍历做命中判定/广播
 	add_to_group("bullet")
+	# 子弹尾迹(D5):设置开启时所有子弹都挂——单人/自己的弹/AI 弹/对手副本弹同一处接线
+	# (副本路径原先单独挂射手色,现统一用武器弹色)
+	if Settings.pvp_show_trajectories:
+		BulletTrail.attach(self, bullet_color)
 
 func _physics_process(delta: float) -> void:
+	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)
+	if TimeField.current != null and TimeField.current.is_rewinding():
+		return   # 回溯中子弹不自步进(位置由回放器摆;引信/水阻/射程都不结算)
 	if gravity_factor > 0.0:
 		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 		if not velocity_vec.is_zero_approx():
@@ -153,25 +160,31 @@ func _wrap() -> void:
 # damage_tile 扣血只在权威侧(apply_damage=true)执行,破坏后变空气(Level0 刷新渲染/碰撞)。
 # 视觉副本(apply_damage=false)只播碎片、绝不拆本地 grid——拆墙渲染由服务器 tile_destroyed 事件驱动。
 func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return
-	var ts: int = GameParameters.TILE_SIZE
-	var cols := grid[0].size()
-	var rows := grid.size()
-	# 候选格:碰撞点、沿法线推入墙内 0.5/1 格 —— 处理贴边命中/边界浮点映射到墙前空格。
-	# normal 指向远离墙(朝子弹),-normal 即推入墙内。
-	var probes := [Vector2.ZERO, -normal * (ts * 0.5), -normal * ts]
-	for off in probes:
-		var cell := MazeGenerator.cell_of(pos + off, ts, cols, rows)
-		var v: int = grid[cell.y][cell.x]
-		if v != 0:
-			var tex: int = MazeGenerator.texture_of(v)
-			if TileDefs.bullet_destroyable(tex):
-				TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
-				if apply_damage:
-					TileDefs.damage_tile(cell, hit_damage, "bullet")
+	# cyrm v4(选项 A):破坏按 **16px 子格**算 —— 命中点落在哪个子格就打哪个子格。
+	# 子格表为空时(测试合成网格)回落旧格级路径。
+	if MazeGenerator.current_subgrid.is_empty():
+		var grid0 := MazeGenerator.current_grid
+		if grid0.is_empty():
 			return
+		var ts0: int = GameParameters.TILE_SIZE
+		var cell0 := MazeGenerator.cell_of(pos - normal * (ts0 * 0.5), ts0, grid0[0].size(), grid0.size())
+		var v0: int = grid0[cell0.y][cell0.x]
+		if v0 != 0 and TileDefs.bullet_destroyable(MazeGenerator.texture_of(v0)) and apply_damage:
+			TileDefs.damage_tile(cell0, hit_damage, "bullet")
+		return
+	var cols: int = MazeGenerator.current_subgrid[0].size()
+	var rows: int = MazeGenerator.current_subgrid.size()
+	# 候选子格:碰撞点、沿法线推入墙内 0.5/1 个子格 —— 处理贴边命中/边界浮点。
+	var probes := [pos, pos - normal * 8.0, pos - normal * 16.0]
+	for p in probes:
+		var sub := Vector2i(posmod(int(p.x) / 16, cols), posmod(int(p.y) / 16, rows))
+		var tex: int = MazeGenerator.current_subgrid[sub.y][sub.x]
+		if tex != 0 and TileDefs.bullet_destroyable(tex):
+			TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
+			if apply_damage:
+				TileDefs.damage_sub(sub, hit_damage, "bullet", shooter)
+		return
+
 
 func _direct_hit(hit: Node) -> void:
 	if not apply_damage:
@@ -217,6 +230,48 @@ func start_player_fuse() -> void:
 	if explodes:
 		_start_fuse(hit_fuse_time)
 
+# ── 时间回溯:引信/射程状态的读写口(WorldRewind 快照用)──
+# ★ 引信是"这颗弹还剩多久炸"的**全部状态**。不把它并进快照的后果(2026-09-27 用户报的
+#   "回溯之后被之前击发的榴弹炮炸死"):重建出来的榴弹退回**未点燃** —— ① 它会在错误的
+#   时刻爆炸(不再是它所属那个世界状态的引信);② 松手那一帧 `_check_player_contact()`
+#   重新生效,只要它跟你重叠就走 0.1s 触碰引信**贴脸起爆**。traveled 同理(射程累计清零
+#   会让子弹飞过头)。
+func rewind_state() -> Dictionary:
+	return {
+		"fa": _fuse_active,
+		"fe": _fuse_elapsed,
+		"fd": _fuse_duration,
+		"tr": traveled,
+		# ★ max_range / gravity_factor / speed / size 都是**开火时由武器注入**的(scene 上不是这些值),
+		#   不进快照 → 重建出来的弹带着场景默认值:max_range 默认 0 ⇒ `traveled >= max_range`
+		#   当场成立 ⇒ 榴弹**一松手就在回溯落点爆炸**(2026-09-27 与引信并列的第二个真凶)。
+		"mr": max_range,
+		"gf": gravity_factor,
+		"sp": speed,
+		"sz": size,
+		"col": bullet_color,
+	}
+
+
+# 由快照写回(空字典 = 该帧没这份状态,保持原样 —— 老快照/无引信弹都安全)。
+func apply_rewind_state(d: Dictionary) -> void:
+	if d.is_empty():
+		return
+	_fuse_active = bool(d.get("fa", false))
+	_fuse_elapsed = float(d.get("fe", 0.0))
+	_fuse_duration = float(d.get("fd", 0.0))
+	traveled = float(d.get("tr", 0.0))
+	max_range = float(d.get("mr", max_range))
+	gravity_factor = float(d.get("gf", gravity_factor))
+	speed = float(d.get("sp", speed))
+	size = float(d.get("sz", size))
+	scale = Vector2(size, size)
+	bullet_color = d.get("col", bullet_color)
+	var sp2 := get_node_or_null("Sprite2D") as Sprite2D
+	if sp2 != null:
+		sp2.modulate = bullet_color
+
+
 # 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
 # 后续反弹不重置时长(首次碰撞决定引信时长,不因再撞墙/再撞敌人刷新)。
 func _start_fuse(duration: float) -> void:
@@ -234,8 +289,8 @@ func _explode() -> void:
 	# 被炸到的可破坏砖 → 逐格播受击碎片。**所有端都播**,与 _damage_tile_at 同口径
 	# (2026-09-15 用户要求补上;此前这条路径在 2026-09-06 的 tile-hit-fx 设计里被明文排除,
 	#  后果是炸掉一排树叶时炸点除了那张 explosion 动画什么都没有)。
-	# ★ 扫的是与权威结算**同一个** Explosion.destructible_cells —— 两端粒子落在同一批格上。
-	for e in Explosion.destructible_cells(global_position, explosion_radius):
+	# ★ 扫的是与权威结算**同一个** Explosion.destructible_subs —— 两端粒子落在同一批格上。
+	for e in Explosion.destructible_subs(global_position, explosion_radius):
 		var tile_pos: Vector2 = e["pos"]
 		TileHitFx.spawn(get_viewport(), tile_pos, int(e["tex"]))
 	if apply_damage:

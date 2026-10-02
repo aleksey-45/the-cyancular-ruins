@@ -126,7 +126,7 @@ func _build_create_panel() -> void:
 	vb.add_theme_constant_override("separation", 12)
 	panel.add_child(vb)
 
-	vb.add_child(UiFactory.label("—— 创建 3v3 房间 ——", 32, UiFactory.C_ACCENT))
+	vb.add_child(UiFactory.label("—— 创建 3v3 房间%s ——" % (" · Beta 时间玩法" if PvpSession.beta_mode else ""), 32, UiFactory.C_ACCENT))
 	_build_public_room_row(vb)
 	# ★ 没有「人数上限」与「一局限时」两个滑块(大乱斗页有):3v3 里这两个都不是自由度 ——
 	#   开局条件就是"两队各 3 人"(房容量恒 TEAM_ROLES),赛制是三局两胜(没有可调的整局时长)。
@@ -141,6 +141,9 @@ func _build_create_panel() -> void:
 	#   ★ 更要紧的是那两个勾选框**写的是 `Settings.pvp_disabled_weapons`** —— 那是 1v1 / 大乱斗的
 	#     设置项:在 3v3 页勾一下会**连带改掉另两个模式**。那属于功能缺陷(点了没反应、又污染别人),
 	#     不是审美问题,故不留给"UI 重做那份"。
+	_add_map_picker(vb)
+	_add_time_params(vb)
+
 	vb.add_child(UiFactory.label("(本页没有禁用武器与个人角色颜色这两项:\n3v3 用队色、个人色相无效;禁用武器是 1v1/大乱斗的设置项)\n(小地图/轨迹/血条等本机显示项沿用「1v1」设置;\n房主规则项首版不上发,对局内按默认值)", 16, UiFactory.C_TEXT_DIM))
 
 	var create := UiFactory.button("创 建 房 间", 32, Vector2(360, 54))
@@ -173,10 +176,12 @@ func _on_create_pressed() -> void:
 		_status.text = "建房中…"
 		_team_ack = false
 		_team_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "team_create", {
+		var payload := {
 			"is_public": _public_check.button_pressed,
 			"invite_code": _create_invite_edit.text.strip_edges(),
-		}))
+		}
+		payload.merge(_beta_payload())   # Beta 态追加 {"beta":true,"time":{...}};普通态空合入
+		NetBusExt.rpc_id(1, "team_create", payload))
 
 func _on_join_pressed() -> void:
 	_join_room(_code_edit.text.strip_edges(), _invite_edit.text)
@@ -189,22 +194,23 @@ func _join_room(code: String, invite: String) -> void:
 		_status.text = "加入房间 %s …" % code
 		_team_ack = false
 		_team_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "team_join", code, invite))
+		NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode))
 
 
 # ── 服务器回复 ──
 func _on_team_rooms(rooms: Array) -> void:
 	for c in _list_box.get_children():
 		c.queue_free()
-	if rooms.is_empty():
+	# Beta 房与普通房互不可见(独立房间池的客户端侧;服务器侧 join 守卫是第二道)
+	var visible_rooms: Array = rooms.filter(func(r) -> bool:
+		return typeof(r) == TYPE_DICTIONARY and bool(r.get("beta", false)) == PvpSession.beta_mode)
+	if visible_rooms.is_empty():
 		var empty := UiFactory.label("暂无公开房间 —— 右侧「创建房间」开一把 3v3", 32, UiFactory.C_TEXT)
 		empty.custom_minimum_size = Vector2(620, 40)
 		_list_box.add_child(empty)
 		_status.text = "共 0 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)"
 		return
-	for r in rooms:
-		if typeof(r) != TYPE_DICTIONARY:
-			continue
+	for r in visible_rooms:
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
 		var maxp := int(r.get("max_players", LobbyRooms.TEAM_ROLES))
@@ -416,8 +422,13 @@ func _send_list_request() -> void:
 
 # 3v3 首版不上发房主规则项(禁用武器/回合回血都走默认,角色色相亦然);本机视觉项
 # (小地图/轨迹/血条)沿用 Settings(pvp_*),由对局场景自己读,不经服务器。
+# ★ 例外是**地图**:它是"本局建什么世界",必须经服务器中转(worker 定图 → match_start 下发),
+#   故本页照样带 map 上报。
 func _player_options() -> Dictionary:
-	return {}
+	var d := {"map": Settings.mp_map_path}
+	if PvpSession.beta_mode:
+		d["time"] = time_rules.to_dict()   # 房主的时间规则随报到上行(worker 侧 B21 消费)
+	return d
 
 
 func _go_match_status() -> String:

@@ -191,6 +191,102 @@ static func init_hp(grid: Array) -> void:
 		hp_grid.append(r)
 
 
+# ── cyrm v4 子格破坏(选项 A:破坏按 16px 子格算,格级 current_grid 在整格死光时才清零)──
+# sub_hp 下标 = sub_y * sub_cols + sub_x;0 = 空气或已摧毁。纹理永远读
+# MazeGenerator.current_subgrid(它不变,摧毁改的是 hp)。
+static var sub_hp: PackedInt32Array = PackedInt32Array()
+static var sub_cols: int = 0
+static var sub_rows: int = 0
+# 子格被摧毁的回调,由 level_0(渲染/账本/碰撞)与 worker(广播/颗粒结算)分别注册。
+# 参数 (sub: Vector2i, pre_hp: int, owner: Node) —— pre_hp 供回溯账本记"改前值";
+# owner = 造成破坏的射手节点(子弹的 shooter / 爆炸的 shooter;单人模式由 Level0 忽略,
+# worker 侧用它映射 role 结算"拆砖得颗粒")。
+static var on_sub_destroyed: Callable = Callable()
+
+
+static func init_sub_hp(sgrid: Array) -> void:
+	sub_cols = 0
+	sub_rows = 0
+	sub_hp = PackedInt32Array()
+	if sgrid.is_empty():
+		return
+	sub_rows = sgrid.size()
+	sub_cols = (sgrid[0] as Array).size()
+	sub_hp.resize(sub_cols * sub_rows)
+	for y in sub_rows:
+		var row: Array = sgrid[y]
+		for x in sub_cols:
+			var tex := int(row[x])
+			sub_hp[y * sub_cols + x] = hp_of(tex) if tex != 0 else 0
+
+
+static func sub_of(pos: Vector2) -> Vector2i:
+	return Vector2i(posmod(int(pos.x) / 16, sub_cols), posmod(int(pos.y) / 16, sub_rows))
+
+
+static func sub_texture(sub: Vector2i) -> int:
+	var sgrid := MazeGenerator.current_subgrid
+	if sgrid.is_empty() or sub.y < 0 or sub.y >= sgrid.size():
+		return 0
+	var row: Array = sgrid[sub.y]
+	if sub.x < 0 or sub.x >= row.size():
+		return 0
+	return int(row[sub.x])
+
+
+static func sub_alive(sub: Vector2i) -> bool:
+	return sub_hp[sub.y * sub_cols + sub.x] > 0
+
+
+## 对单个 16px 子格扣血。source 为 "bullet"/"explosion",按对应可破坏开关判定。
+## 扣到 ≤0 → 该子格死亡(回调 level_0 清渲染/记账本/重建碰撞块);所属 64px 格的全部
+## 子格死光时,把格级 current_grid 该格清零(让 20 个格级逻辑调用方看到它消失)。
+static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node = null) -> bool:
+	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
+		return false
+	var tex := sub_texture(sub)
+	if tex == 0 or sub_hp[sub.y * sub_cols + sub.x] <= 0:
+		return false
+	if source == "bullet":
+		if not bullet_destroyable(tex):
+			return false
+	else:
+		if not explosion_destroyable(tex):
+			return false
+	var idx := sub.y * sub_cols + sub.x
+	var pre_hp := sub_hp[idx]
+	sub_hp[idx] = pre_hp - amount
+	if sub_hp[idx] <= 0:
+		sub_hp[idx] = 0
+		# 所属 64px 格全部子格死光 → 格级网格清零(选项 A:逻辑层只看格)
+		var grid := MazeGenerator.current_grid
+		if not grid.is_empty():
+			var cell := Vector2i(sub.x / 4, sub.y / 4)
+			var alive := false
+			for sy in 4:
+				for sx in 4:
+					var sx2 := cell.x * 4 + sx
+					var sy2 := cell.y * 4 + sy
+					if sx2 < sub_cols and sy2 < sub_rows and sub_hp[sy2 * sub_cols + sx2] > 0:
+						alive = true
+						break
+				if alive:
+					break
+			if not alive and grid[cell.y][cell.x] != 0:
+				grid[cell.y][cell.x] = 0
+		if on_sub_destroyed.is_valid():
+			on_sub_destroyed.call(sub, pre_hp, owner)
+		return true
+	return false
+
+
+## 回溯还原:把子格 HP 写回(渲染/碰撞由 level_0 的还原路径做)。
+static func restore_sub(sub: Vector2i, hp: int) -> void:
+	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
+		return
+	sub_hp[sub.y * sub_cols + sub.x] = hp
+
+
 # 对某格瓦片扣血。source 为 "bullet"/"explosion",按对应可破坏开关判定。
 # 扣到 ≤0 → 变空气(改 current_grid + 回调 Level0 刷新渲染/碰撞),返回是否破坏。
 static func damage_tile(cell: Vector2i, amount: int, source: String) -> bool:

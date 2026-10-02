@@ -114,10 +114,13 @@ func _build_create_panel() -> void:
 	vb.add_theme_constant_override("separation", 12)
 	panel.add_child(vb)
 
-	vb.add_child(UiFactory.label("—— 创建大乱斗房间 ——", 32, UiFactory.C_ACCENT))
+	vb.add_child(UiFactory.label("—— 创建大乱斗房间%s ——" % (" · Beta 时间玩法" if PvpSession.beta_mode else ""), 32, UiFactory.C_ACCENT))
 	_build_public_room_row(vb)
 	_build_max_players_row(vb)
 	_build_match_time_row(vb)
+
+	_add_map_picker(vb)
+	_add_time_params(vb)
 
 	vb.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
 	_add_weapon_grid(vb, 10, func(cell: Node, type_id: int) -> void:
@@ -126,11 +129,9 @@ func _build_create_panel() -> void:
 		cb.set_meta("type_id", type_id)
 		_weapon_checks.append(cb))
 
-	# 自己角色颜色(色相 0-360):本页即选即存;开局转连 worker 报到时随 player_options 上发,
-	# worker 开局广播 peer_hues → 全员按各自 hue 染色(与 1v1 匹配页同一设置项)。
-	# 标签另起一行是本页版式(1v1 页把标签放在行内),故传空 label_text 自己在外面加。
-	vb.add_child(UiFactory.label("自己角色颜色:", 32))
-	_add_hue_row(vb, "", Vector2(300, 30), Vector2(46, 30))
+	# (自己角色颜色的选色行 D1 已**搬进等待室面板** —— 原先在这里,建房面板一进等待室就
+	#  隐藏,于是"房间里没人能改颜色":房主建房后就看不到了,加入者从头到尾没见过。
+	#  选色现在对**全员**开放在等待室里,开局 claim 时随 player_options 上发生效。)
 
 	vb.add_child(UiFactory.label("(小地图/轨迹/血条等其余视觉项沿用「1v1」设置;\n复活一律满血,一局 5 分钟,击杀最多者胜)", 16, UiFactory.C_TEXT_DIM))
 
@@ -220,13 +221,15 @@ func _on_create_pressed() -> void:
 		_status.text = "建房中…"
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "royale_create", {
+		var payload := {
 			"is_public": _public_check.button_pressed,
 			"invite_code": _create_invite_edit.text.strip_edges(),
 			"max_players": int(_max_slider.value),
 			"round_full_heal": false,
 			"disabled_weapons": disabled,
-		}))
+		}
+		payload.merge(_beta_payload())   # Beta 态追加 {"beta":true,"time":{...}};普通态空合入
+		NetBusExt.rpc_id(1, "royale_create", payload))
 
 func _on_join_pressed() -> void:
 	_join_room(_code_edit.text.strip_edges(), _invite_edit.text)
@@ -239,7 +242,7 @@ func _join_room(code: String, invite: String) -> void:
 		_status.text = "加入房间 %s …" % code
 		_royale_ack = false
 		_royale_sent_ms = Time.get_ticks_msec()
-		NetBusExt.rpc_id(1, "royale_join", code, invite))
+		NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode))
 
 
 # ── 服务器回复 ──
@@ -254,6 +257,9 @@ func _on_royale_rooms(rooms: Array) -> void:
 		return
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
+			continue
+		# Beta 房与普通房互不可见(独立房间池的客户端侧;服务器侧 join 守卫是第二道)
+		if bool(r.get("beta", false)) != PvpSession.beta_mode:
 			continue
 		var code := str(r.get("code", ""))
 		var players := int(r.get("players", 1))
@@ -350,6 +356,13 @@ func _build_wait_panel() -> void:
 	vb.add_child(_wait_players)
 	_wait_count = UiFactory.label("", 32, Color(0.8, 0.85, 0.9))
 	vb.add_child(_wait_count)
+	# 自己角色颜色(D1,2026-09-29):等待室全员可改 —— 原先滑条只在建房面板,建房面板一进
+	# 等待室就隐藏 ⇒ 房主建完房改不了、加入者全程没见过,"房间里自定义颜色"形同虚设。
+	# 值即选即存 Settings.pvp_color_hue;开局转连 worker 时随 player_options 上发
+	# → 服务器 _claim_hues 汇总 → match_sync 回包 → 自己(本地直染)与所有副本(他人视角)都按它染色。
+	# (协议环路真链路探针实证双向带值,见 tests/royale_probe.gd 的 hues 断言。)
+	vb.add_child(UiFactory.label("自己角色颜色(开局生效,所有人可见):", 32))
+	_add_hue_row(vb, "", Vector2(320, 30), Vector2(46, 30))
 	_start_btn = UiFactory.button("开 始 游 戏", 32, Vector2(360, 56))
 	_start_btn.pressed.connect(func() -> void:
 		_status.text = "开局中…"
@@ -426,6 +439,8 @@ func _player_options() -> Dictionary:
 		"round_full_heal": false,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
+		"map": Settings.mp_map_path,
+		"time": time_rules.to_dict() if PvpSession.beta_mode else {},
 	}
 
 

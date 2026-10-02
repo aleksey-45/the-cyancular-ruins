@@ -10,9 +10,9 @@ extends RefCounted
 #   块间不做跨块合并 → 块边界矩形不再合并(形状数略增,但物理层可接受)。
 # - 每块矩形按 9 个环面副本偏移实例化(3×3 覆盖,玩家/子弹/敌人才能跨接缝),共享同一 shape。
 
-const SUB_TS: int = 32        # 32px 子格(64px 格 → 2×2 子格)
-const TILE_TS: int = 64       # 64px 格边长(SUB_TS×2,不引 autoload GameParameters)
-const CHUNK_CELLS: int = 12   # 块边长(64px 格)≈ √地图边长(125)
+const SUB_TS: int = 16        # 16px 子格(cyrm v4:64px 格 → 4×4 子格;交接文档 §4.2)
+const TILE_TS: int = 64       # 64px 格边长(SUB_TS×4,不引 autoload GameParameters)
+const CHUNK_CELLS: int = 12   # 块边长(64px 格)≈ √地图边长(125);换算子格 = ×4
 const LEDGE_THICKNESS: int = 6  # 攀爬结构基座薄碰撞条厚度(px)
 
 # 64px 格坐标 → 所在块(格坐标/块边长,整除)。
@@ -20,33 +20,37 @@ static func chunk_of(cell: Vector2i) -> Vector2i:
 	return Vector2i(cell.x / CHUNK_CELLS, cell.y / CHUNK_CELLS)
 
 
-# 从网格提取 250×150 的 32px 子格。only_destructible=false 只收永久墙;true 只收可破坏。
-# 通道/液体/气体无实体碰撞(可走/可爬),不进子格。
+# 从 **16px 子格纹理表**(MazeGenerator.current_subgrid)提取碰撞子格。
+# only_destructible=false 只收永久墙;true 只收可破坏。通道/液体/气体无实体碰撞(可走/可爬)。
+# ★ 子格表为空时(测试合成网格/旧路径)回落:把格级 2×2 形状掩码 ×2 展开成 4×4 ——
+#   几何与旧 32px 子格完全等价(每个 32px 象限 = 2×2 个同纹理 16px 子格)。
 static func build_sub(grid: Array[Array], only_destructible: bool) -> Array[Array]:
-	var cols = grid[0].size()   # 125
-	var rows = grid.size()      # 75
+	var sgrid: Array[Array] = MazeGenerator.current_subgrid
+	if sgrid.is_empty():
+		sgrid = MapFormat.expand_cells_to_subgrid(grid)
+	var cols = sgrid[0].size()
+	var rows = sgrid.size()
 	var sub: Array[Array] = []
-	for _r in range(rows * 2):
+	for _r in range(rows):
 		var srow: Array[int] = []
-		srow.resize(cols * 2)
+		srow.resize(cols)
 		srow.fill(MazeGenerator.EMPTY)
 		sub.append(srow)
 	for y in range(rows):
+		var srow: Array = sgrid[y]
 		for x in range(cols):
-			var v: int = grid[y][x]
-			var shape: int = MazeGenerator.shape_of(v)
-			if shape == 0:
+			var tex: int = srow[x]
+			if tex == 0:
 				continue
-			var tex: int = MazeGenerator.texture_of(v)
-			if TileDefs.type_of(tex) != "wall":
+			# 已被摧毁的子格(子格 HP 表已初始化且 hp≤0)不产生碰撞
+			if TileDefs.sub_cols != 0 and not TileDefs.sub_alive(Vector2i(x, y)):
+				continue
+			if TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
 				continue  # 通道/液体/气体无实体碰撞(可走/可爬)
 			var destr: bool = TileDefs.bullet_destroyable(tex) or TileDefs.explosion_destroyable(tex)
 			if destr != only_destructible:
 				continue
-			for qy in range(2):
-				for qx in range(2):
-					if shape & (1 << (qy * 2 + qx)):
-						sub[y * 2 + qy][x * 2 + qx] = MazeGenerator.SOLID
+			sub[y][x] = MazeGenerator.SOLID
 	return sub
 
 
@@ -130,8 +134,8 @@ static func build_permanent(sub: Array[Array], parent: Node, node_name: String) 
 # 建可破坏层所有分块节点。返回总 shape 数。
 static func build_destructible_chunks(sub: Array[Array], parent: Node) -> int:
 	var total := 0
-	for chy in range(ceili(sub.size() / float(CHUNK_CELLS * 2))):
-		for chx in range(ceili(sub[0].size() / float(CHUNK_CELLS * 2))):
+	for chy in range(ceili(sub.size() / float(CHUNK_CELLS * 4))):
+		for chx in range(ceili(sub[0].size() / float(CHUNK_CELLS * 4))):
 			total += rebuild_chunk(sub, Vector2i(chx, chy), parent)
 	return total
 
@@ -140,8 +144,8 @@ static func build_destructible_chunks(sub: Array[Array], parent: Node) -> int:
 static func rebuild_chunk(sub: Array[Array], chunk: Vector2i, parent: Node) -> int:
 	var cols = sub[0].size()
 	var rows = sub.size()
-	var srect := Rect2i(chunk.x * CHUNK_CELLS * 2, chunk.y * CHUNK_CELLS * 2,
-			CHUNK_CELLS * 2, CHUNK_CELLS * 2)
+	var srect := Rect2i(chunk.x * CHUNK_CELLS * 4, chunk.y * CHUNK_CELLS * 4,
+			CHUNK_CELLS * 4, CHUNK_CELLS * 4)
 	var rects := _greedy_region(sub, srect, SUB_TS)
 	return _instantiate(rects, parent, _chunk_node_name(chunk), cols, rows, SUB_TS)
 

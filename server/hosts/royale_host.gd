@@ -235,6 +235,9 @@ func _match_round_tick(delta: float) -> void:
 				if killer != 0:
 					_scores[killer] = int(_scores.get(killer, 0)) + 1
 					_broadcast_kill(killer, role)
+				# Beta 时间玩法:击杀得"被击杀者余额 × 比例"(被击杀者不减;归因不到不结算)
+				if time_economy != null:
+					time_economy.award_kill(killer, int(role))
 				_broadcast_round_state()
 			# 周期广播(倒计时/比分同步)
 			_hud_sync -= delta

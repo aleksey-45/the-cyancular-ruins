@@ -174,7 +174,7 @@ func _phase_royale() -> void:
 	# ★ 非满房:2/8 —— 唯一能拒的理由就是 in_match
 	rr.players = [P_A]
 	var before := rr.players.size()
-	_rm.lobby.royale_join(P_C, ROOM_ROYALE, "")
+	_rm.lobby.royale_join(P_C, ROOM_ROYALE, "", false)
 	_check(rr.players.size() == before and not rr.players.has(P_C),
 			"② ★ 第三人(**无凭据**)royale_join 被拒(2/8 非满房:唯一能拒它的是 in_match)")
 
@@ -211,7 +211,7 @@ func _phase_team() -> void:
 	tr.players = [P_A]
 	tr.team_of = {1: 1}
 	var before := tr.players.size()
-	_rm.lobby.team_join(P_C, ROOM_TEAM, "")
+	_rm.lobby.team_join(P_C, ROOM_TEAM, "", false)
 	_check(tr.players.size() == before and not tr.players.has(P_C),
 			"③ ★ 第三人(**无凭据**)team_join 被拒(2/6 非满房:唯一能拒它的是 in_match)")
 

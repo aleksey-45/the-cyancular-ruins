@@ -7,6 +7,17 @@ extends MatchRound
 #   match_snapshot / match_combat / match_round / match_state 里,见基类注释。
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
+const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
+
+var _time_sync := 0.0
+# ── Beta 回溯(每 role 自身;他人不受影响)──
+const RW_SNAP_DT := 1.0 / 20.0     # 自身状态采样间隔(20Hz,与单机 WorldRewind 同款)
+var _rw_buf: Dictionary = {}       # role -> Array[帧快照](t 升序;只存**自己**的状态+自己的子弹)
+var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
+# _rw_on / _rw_trail 声明在根基类 MatchState(本文件不重复声明,GDScript 禁止成员遮蔽)
+var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
+var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
+
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}) -> void:
 	_options = options
@@ -16,6 +27,15 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	for v in raw_disabled:
 		_disabled_weapons.append(int(v))
 	_ai_roles = ai_roles
+	# Beta 时间玩法(B21):房主 options 带 time 规则(建房页 9 项) ⇒ 建服务器权威颗粒经济。
+	# 普通局 options["time"] 为空 → time_economy 恒 null,一切结算/广播短路,行为零变化。
+	var time_dict: Dictionary = options.get("time", {})
+	if not time_dict.is_empty():
+		time_economy = TimeEconomy.new(TimeRules.from_dict(time_dict))
+		for role in role_peers:
+			time_economy.add_role(int(role))
+		for r in ai_roles:
+			time_economy.add_role(int(r))
 	MazeGenerator.set_map_file(map_path)
 	# 建世界:碰撞 + 瓦片属性(不渲染)。服务器进程走场景模式,autoload/静态类已就绪。
 	grid = WorldBuilder.load_grid()
@@ -24,7 +44,12 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		return
 	_base_grid = MazeGenerator.copy_grid(grid)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
+	# cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连**子格**回调,否则客户端永远收不到
+	# 拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。格级 on_destroyed 保留,
+	# 供 _debug_destroy_tile / 复位那条 damage_tile 老路径。
+	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
 	TileDefs.init_hp(grid)
+	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	destructible_sub = WorldBuilder.build_sim(self, grid)
 	# PvP 权威对局:取消命中无敌帧(每发结算一次);双方玩家(层2)互相物理碰撞
 	CombatComponent.pvp_arena = true
@@ -179,10 +204,34 @@ func _physics_process(delta: float) -> void:
 	_debug_keep_weapon_within_reach()
 	# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):默认关。
 	_debug_destroy_tile(delta)
+	if time_economy != null:
+		_tick_beta_rewind(delta)   # Beta 回溯机(环缓/倒放/免伤/轨迹)
+	# Beta 时间玩法:加速态(在快照**前**定格 —— 快照的 haste 位读的就是这个倍率)。
+	# 裁决在服务器:按住 + 账户可耗才生效;只乘自己(别的角色/子弹/世界一概不动)。
+	if time_economy != null:
+		for role in input_sources:
+			var acc := time_economy.accounts.get(int(role)) as GrainAccount
+			var p := players.get(int(role)) as Node2D
+			if acc == null or p == null:
+				continue
+			var src: PacketInputSource = input_sources[role]
+			var on: bool = src.haste_held() and acc.can_spend()
+			if on:
+				var burn: float = time_economy.rules.haste_burn * delta
+				if acc.spend(delta, time_economy.rules.haste_burn) < burn * 0.999:
+					on = false   # 账户当帧烧空(余额/锁定不足)→ 立即回落,与单机同款
+			p.pvp_haste_mult = time_economy.rules.haste_mult if on else 1.0
 	_snapshot_accum += delta
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0
 		_broadcast_snapshot()
+	# Beta 时间玩法:账户回复 + 10Hz 显示镜像(怀表 HUD)。可靠通道:数值承诺,丢包会自愈。
+	if time_economy != null:
+		time_economy.tick(delta)
+		_time_sync -= delta
+		if _time_sync <= 0.0:
+			_time_sync = TIME_SYNC_INTERVAL
+			_rpc_all_ext("time_state", [time_economy.state_payload()])
 	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
 	# 每 tick 每 role 恰好消费一个 FIFO 包(最早的)→ 权威模拟与客户端重放 1:1 同序;
 	# 队列空 = 缺包,沿用上一包 held/轴(PacketInputSource.clear_edges 不清 held)。
@@ -245,3 +294,159 @@ func _debug_destroy_tile(delta: float) -> void:
 	MatchState.test_destroy_cell = Vector2i(-1, -1)   # 只拆一次
 	print("worker: [test] 拆格 %s(相⑦ 用)" % str(cell))
 	TileDefs.damage_tile(cell, 999999, "explosion")
+
+# ══ Beta 回溯机(每 role 自身;他人不受影响)════════════════════════
+# 环缓只存**该 role 自己**的状态(位置/速度/HP/朝向/倒地/弹量)+ **它自己的子弹**
+# (pos/vel + rewind_state;不重建已消亡的弹 —— 已爆的榴弹不复活,已知边界)。
+# 回溯期间:输入源 frozen(状态由历史驱动)、take_hit 免伤(meta 闸)、
+# 自己的子弹随历史倒放且照常伤害他人(用户裁定)。
+
+func _tick_beta_rewind(delta: float) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	for role in players:
+		var r := int(role)
+		var p := players[role] as Node2D
+		var src: PacketInputSource = input_sources.get(role)
+		var acc := time_economy.accounts.get(r) as GrainAccount
+		if p == null or src == null or acc == null:
+			continue
+		# 显式类型:time_economy 无类型字段链式取值推不出;且 p 的 is_downed() 返回 Variant
+		var want: bool = src.rewind_held() and acc.can_spend() and not p.is_downed()
+		var on := bool(_rw_on.get(r, false))
+		if want and not on:
+			src.frozen = true
+			p.set_meta("time_rewinding", true)
+			_rw_on[r] = true
+			_rw_cursor[r] = 0.0
+			_rw_trail[r] = []
+			if not _rw_buf.has(r) or (_rw_buf[r] as Array).is_empty():
+				_rw_t0[r] = now
+			on = true
+		elif not want and on:
+			src.frozen = false
+			p.remove_meta("time_rewinding")
+			_rw_on[r] = false
+			_rw_trail[r] = []
+			continue
+		if not on:
+			_record_rw_frame(r, p, now)
+			continue
+		# 回溯中:烧颗粒(rewind_burn/s);游标 3×→1× ramp;驱动自身与自己的子弹
+		acc.spend(delta, time_economy.rules.rewind_burn)
+		if acc.balance <= 0.0:
+			src.frozen = false
+			p.remove_meta("time_rewinding")
+			_rw_on[r] = false
+			_rw_trail[r] = []
+			continue
+		var cur := float(_rw_cursor.get(r, 0.0))
+		var mult := lerpf(TimeParams.REWIND_START_MULT, 1.0,
+				clampf(cur / maxf(TimeParams.REWIND_RAMP_TIME, 0.001), 0.0, 1.0))
+		cur += delta * mult
+		_rw_cursor[r] = cur
+		_apply_rw_frame(r, p, cur)
+		# 轨迹:每 3 个物理帧一个点(他人残像;快照带下去,超过 10 个丢最旧)
+		if Engine.get_physics_frames() % 3 == 0:
+			var trail: Array = _rw_trail.get(r, [])
+			trail.append([p.global_position.x, p.global_position.y])
+			if trail.size() > 10:
+				trail.pop_front()
+			_rw_trail[r] = trail
+
+
+# 非回溯期:20Hz 采样自己的状态(超 rewind_buffer_seconds 裁剪)
+func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
+	if now < float(_rw_snap_t.get(r, 0.0)):
+		return
+	_rw_snap_t[r] = now + RW_SNAP_DT
+	if not _rw_t0.has(r):
+		_rw_t0[r] = now
+	var d := {
+		"t": now - float(_rw_t0[r]),
+		"p": p.global_position,
+		"v": p.get("velocity"),
+		"hp": int(p.get("hp")),
+		"facing": int(p.get("facing_direction")),
+		"downed": p.is_downed(),
+	}
+	var wc = p.get("weapons")
+	if wc != null:
+		d["widx"] = int(wc.get("_current_index"))
+		var inv = wc.get("inventory")
+		var mags: Array = []
+		if inv != null:
+			var held = inv.get("held")
+			if held != null:
+				for slot in held:
+					mags.append(int(slot.get("mag", 0)))
+		d["wmags"] = mags
+		var live = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+		if live != null and is_instance_valid(live):
+			d["wlive"] = int(live.get("mag_ammo"))
+	var bl: Array = []
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if not is_instance_valid(b) or not (b is Node2D):
+			continue
+		if b.get("shooter") != p:
+			continue
+		bl.append({"p": (b as Node2D).global_position, "v": b.get("velocity_vec"),
+				"fs": b.call("rewind_state") if b.has_method("rewind_state") else {}})
+	d["bullets"] = bl
+	if not _rw_buf.has(r):
+		_rw_buf[r] = []
+	var buf: Array = _rw_buf[r]
+	buf.append(d)
+	var depth: float = time_economy.rules.rewind_buffer_seconds()
+	while buf.size() > 2 and float(buf[0]["t"]) < float(buf[buf.size() - 1]["t"]) - depth:
+		buf.pop_front()
+
+
+# 回溯中:按游标找 ≤ 目标时刻的最近帧,写回自身 + 自己的子弹
+func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
+	var buf: Array = _rw_buf.get(r, [])
+	if buf.size() < 2:
+		return
+	var target := float(buf[buf.size() - 1]["t"]) - cursor
+	var f: Dictionary = buf[0]
+	for e in buf:
+		if float(e["t"]) <= target:
+			f = e
+		else:
+			break
+	p.global_position = f["p"]
+	p.set("velocity", f["v"])
+	var combat = p.get("combat")
+	if combat != null:
+		var hp1 := clampi(int(f["hp"]), 0, int(combat.get("max_hp")))
+		if hp1 != int(combat.get("hp")):
+			combat.set("hp", hp1)
+			combat.call("emit_signal", "hp_changed", hp1, int(combat.get("max_hp")))
+	p.set("facing_direction", int(f["facing"]))
+	var wc = p.get("weapons")
+	if wc != null and f.has("wmags"):
+		var inv = wc.get("inventory")
+		if inv != null:
+			var held = inv.get("held")
+			var mags: Array = f["wmags"]
+			for i in mini(held.size(), mags.size()):
+				held[i]["mag"] = int(mags[i])
+		if int(f.get("widx", -1)) >= 0 and int(f.get("widx", -1)) != int(wc.get("_current_index")):
+			wc.call("equip_index", int(f["widx"]))
+		var live = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+		if live != null and is_instance_valid(live) and int(f.get("wlive", -1)) >= 0:
+			live.set("mag_ammo", int(f["wlive"]))
+	# 自己的子弹:活弹按序写回(位置/速度/引信)—— 照常伤害他人
+	var hist: Array = f.get("bullets", [])
+	if hist.is_empty():
+		return
+	var live_own: Array = []
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if is_instance_valid(b) and b is Node2D and b.get("shooter") == p:
+			live_own.append(b)
+	for i in mini(hist.size(), live_own.size()):
+		var b: Node2D = live_own[i]
+		var h: Dictionary = hist[i]
+		b.global_position = h["p"]
+		b.set("velocity_vec", h["v"])
+		if b.has_method("apply_rewind_state") and not (h["fs"] as Dictionary).is_empty():
+			b.call("apply_rewind_state", h["fs"])

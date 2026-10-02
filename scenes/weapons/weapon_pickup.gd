@@ -141,6 +141,9 @@ func _build_collision() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	# 时间场(B13):"除主角外一切变慢"——掉落的枪也是世界物件,加速时随世界 ×0.7、回溯冻结。
+	# ★ 只作用于**未停稳**的飞行/滚动阶段;停稳后的 `_settled` 早退路径不推进物理(只是解卡 + 锚副本)。
+	delta = TimeField.world_delta(delta)
 	_age += delta
 	if _settled:
 		# 停稳后**位置**不变,但**锚点**在变(玩家在动、可能绕过接缝)——
