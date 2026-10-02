@@ -1684,6 +1684,7 @@ git commit -m "feat(lobby): 统一等待室(按模式渲染) + 1v1 也有一间
 - Modify: `scenes/main_menu.gd`
 - Modify: `scenes/beta_menu.gd`
 - Modify: `tests/smoke/menu_autotest.gd`
+- Modify: `tests/harness/rejoin_watcher.gd`（★ **本计划初稿漏了这个跨文件依赖**，见 Step 4）
 
 **Interfaces:**
 - Consumes: `scenes/mp_lobby.tscn`
@@ -1757,7 +1758,23 @@ git commit -m "feat(lobby): 统一等待室(按模式渲染) + 1v1 也有一间
 `core/net/pvp_session.gd` 里 `:39` 与 `:127-128` 附近、`scenes/main_menu.gd:223-225` 的注释、`tests/smoke/reconnect_smoke.gd:245,257,291,294`。一律改成不依赖数量的表述（如「主菜单的联机入口」/「联机入口按钮」）。
 ★ 同一批里 `reconnect_smoke:297` 那条 `count("PvpSession.reset()") >= 3` **必须一起改**（本任务后菜单只剩一颗按钮 ⇒ 它恒假、会红），改成 `>= 1` 或直接按 `_build_menu_buttons` 里的那一颗判。
 
-- [ ] **Step 4: 跑自检**
+- [ ] **Step 4: 改 `rejoin_watcher`（★ 跨文件依赖，漏了会让**用户跑的真链路脚本**挂掉）**
+
+`tests/harness/rejoin_watcher.gd:75`：
+
+```gdscript
+const MENU_BTN_TEXT := "1 v 1"   # 与 main_menu.gd 的文案逐字一致
+```
+
+任务 6 之后主菜单**没有**「1 v 1」这颗按钮了 —— 这个真链路探针是按**文案**找按钮进大厅的，
+不改它就会停在 `c1 ★ 主菜单上找不到「1 v 1」那颗按钮`。改成 `"多 人 模 式"`。
+
+★ 同文件 `:268` 那行日志还写着「(生产入口:`PvpSession.enter_mode` + `change_scene_to_file`)」——
+`enter_mode` 在 Task 2 就删了。顺手改成描述**现在**的入口（`PvpSession.reset()` + 切到 `mp_lobby`）。
+★ 它在本计划的 Task 7 清单里只按「脚本名匹配」出现（把 `matchmaking.gd` 换成 `mp_lobby.gd`），
+**与"按钮文案"是两件事** —— 别以为 Task 7 会替你改这个。
+
+- [ ] **Step 5: 跑自检**
 
 ```bash
 "$GODOT" --headless --path . --quit-after 200 -- --autotest-mp
@@ -1767,10 +1784,10 @@ git commit -m "feat(lobby): 统一等待室(按模式渲染) + 1v1 也有一间
 
 期望：三条各打 `AUTOTEST[<mode>]: DONE` 且**没有** `未抵达` 那一行。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
-git add scenes/main_menu.gd scenes/beta_menu.gd tests/smoke/menu_autotest.gd
+git add scenes/main_menu.gd scenes/beta_menu.gd tests/smoke/menu_autotest.gd         tests/harness/rejoin_watcher.gd
 git commit -m "feat(menu): 联机入口收成一颗「多 人 模 式」→ mp_lobby
 
 Beta 页两张卡改指向统一大厅 + 预选模式。menu_autotest 的
