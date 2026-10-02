@@ -49,9 +49,13 @@ extends Node
 
 const MAP := "res://maps/newfactory.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
-const TEAM_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23, 65),
-		4: Vector2i(133, 64), 5: Vector2i(136, 64), 6: Vector2i(139, 64)}
-const ROYALE_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23, 65)}
+# ★ 出生格**从地图自己的 spawn 元数据派生**(`MapFormat.load_spawns(MAP)` 的
+#   `player` / `player2`),不写死坐标:旧值 (17,65)/(133,64) 是**上一版 PvP 图**的出生点,
+#   本图的出生点是 (23,43)/(26,9)。同队内错开 3 格只是可读性 —— 本文件四条口径**都不依赖
+#   玩家站在哪**(`_place` 只把它当落点,物理帧全关)。派生收在 `_init_spawns()`:
+#   `const` 调不了函数,故这两个是 `var`,由 `_ready()` 在挂任何宿主**之前**填好。
+var TEAM_SPAWNS := {}
+var ROYALE_SPAWNS := {}
 
 # ★ 本文件是 Task 4/5 要接着扩的脚手架 ⇒ 更需要这道闸:helper 里的脚本错误**不会**让 `_failures`
 #   非空,它只让那个函数当场结束、调用方继续 ⇒ 断言被静默跳过而 verdict 照打 `ALL-OK`
@@ -118,7 +122,28 @@ func _check(ok: bool, msg: String) -> void:
 		print("[lm]   FAIL %s" % msg)
 
 
+# 两个模式的出生格:从地图自己那张 spawn 元数据派生(理由见 `TEAM_SPAWNS` 上方那段)。
+# ★ 期望值取自 `MapFormat.load_spawns(MAP)` —— 与 `MatchBootstrap` / 两个宿主读的是**同一份**
+#   meta(它们也走 `MazeGenerator.load_spawns()`)。缺出生点是**夹具坏了**,不兜底、当场红。
+# ★ 改写后仍拦得住的变异:出生格与地图脱钩(夹具摆在与断言无关的点上)—— 写死的旧坐标在
+#   **换图之后**正是这一档,而它一行报错都不会有。
+# ★ 刻意**不用** `_check` 记这一条:它会 +1 到 `_checks` 上,把 `EXPECTED_CHECKS` 那道
+#   计数闸顶掉(那条闸的判词会指向"有断言没登记",与真成因无关)。
+func _init_spawns() -> void:
+	var sp := MapFormat.load_spawns(MAP)
+	var p1: Vector2i = sp.get("player", Vector2i(-1, -1))
+	var p2: Vector2i = sp.get("player2", Vector2i(-1, -1))
+	if p1.x < 0 or p2.x < 0:
+		var why := "地图 %s 需同时有 `# player` 与 `# player2`(本文件的出生格取自它们)" % MAP
+		_failures.append(why)
+		print("[lm]   FAIL %s" % why)
+	TEAM_SPAWNS = {1: p1, 2: p1 + Vector2i(3, 0), 3: p1 + Vector2i(6, 0),
+			4: p2, 5: p2 + Vector2i(3, 0), 6: p2 + Vector2i(6, 0)}
+	ROYALE_SPAWNS = {1: p1, 2: p1 + Vector2i(3, 0), 3: p1 + Vector2i(6, 0)}
+
+
 func _ready() -> void:
+	_init_spawns()
 	_phase_down_accounting("1v1", [1, 2])
 	_phase_down_accounting("3v3", [1, 4])
 	_phase_disconnect_round()

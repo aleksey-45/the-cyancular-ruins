@@ -35,17 +35,26 @@ func _test_real_subgrid() -> void:
 	_chk(not sgrid.is_empty(), "demo 的子格表不应为空")
 	if sgrid.is_empty():
 		return
-	_chk(sgrid.size() == 300 and (sgrid[0] as Array).size() == 500,
-			"demo 子格表应 500×300(实为 %dx%d)" % [(sgrid[0] as Array).size(), sgrid.size()])
 	var cell_grid := MapFormat.load_map_file(DEMO)
+	# ★ 期望值 = **格级网格维度 × 每格子格数**,不写死 500×300("这张图恰好多大"换图就假红)。
+	#   每格子格数取 `CollisionBuilder` 的两个公开尺度常量(格 64px / 子格 16px ⇒ 4),
+	#   而不是魔数。期望值取自 `MapFormat.load_map_file`(整图解析)—— 与 `load_subgrid`
+	#   **是两条读法**(后者在 v4 下直接吃头部的 sub_cols/sub_rows)⇒ 头部与 body 对不上当场红。
+	var per_cell: int = CollisionBuilder.TILE_TS / CollisionBuilder.SUB_TS
+	var want := Vector2i.ZERO
+	if not cell_grid.is_empty():
+		want = Vector2i((cell_grid[0] as Array).size() * per_cell, cell_grid.size() * per_cell)
+	_chk(Vector2i((sgrid[0] as Array).size(), sgrid.size()) == want,
+			"demo 子格表应 = 格级维度 × %d(期望 %s,实为 %s)"
+			% [per_cell, str(want), str(Vector2i((sgrid[0] as Array).size(), sgrid.size()))])
 	# 子格表与格级网格必须同源:抽查三格,"格空⇔16 子格全空"
 	var ok_pair := true
 	for probe in [Vector2i(60, 40), Vector2i(10, 10), Vector2i(100, 60)]:
 		var v := int(cell_grid[probe.y][probe.x])
 		var sub_count := 0
-		for sy in 4:
-			for sx in 4:
-				if sgrid[probe.y * 4 + sy][probe.x * 4 + sx] != 0:
+		for sy in per_cell:
+			for sx in per_cell:
+				if sgrid[probe.y * per_cell + sy][probe.x * per_cell + sx] != 0:
 					sub_count += 1
 		if (v == 0) != (sub_count == 0):
 			ok_pair = false

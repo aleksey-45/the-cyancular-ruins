@@ -24,7 +24,9 @@ extends Node
 #   **幻影墙**(撞上去 → 本地预测与服务端分歧 → 可能回滚循环)与**幽灵枪**(看着在、按 F 无效)。
 #   两处变化都必须由**服务器侧**制造(探针进程拿不到 worker 的 `_host`:它是独立 OS 进程,
 #   见 reconnect_probe.gd 的「拓扑」),所以走两个测试开关 + witness 的动作:
-#     · 拆墙:worker 命令行 `--test-destroy-tile 136,64,<delay>`(见 reconnect_probe.gd)
+#     · 拆墙:worker 命令行 `--test-destroy-tile <格>,<delay>`(见 reconnect_probe.gd);
+#       ★ 那一格**不是写死的坐标**,由本文件的 `p7_destroy_cell()` 从地图自己算(行优先取
+#         第一格"实心 + 爆炸可破坏")—— 裁判拼命令行时调的就是这个函数 ⇒ 两侧天生同源
 #     · 捡枪:worker 带 `--test-ground-teleport` 把枪喂到脚下,**本文件(c2)按 F**
 #   判据在 `_actor_assert` 尾部的 `_p7_assert`(actor 侧)+ 裁判读 worker 日志(③,防空转)。
 #   ★ 这一相唯一的失败模式是"看起来绿、其实什么都没验" —— 变化若落在闪断**之前**,actor
@@ -122,10 +124,39 @@ const DRIFT_TOL := 80.0
 const POSE_SQUAT := 4       # = player.gd 的 Pose.SQUAT(枚举末位;改枚举要同步这里)
 
 # ── 相⑦(仅 1v1;设计见文件头)──
-# 与 reconnect_probe.gd 拉起 w1v1 时那串 `--test-destroy-tile 136,64,<delay>` **同源**:
-# 改一处要改两处。★ 改错了**不会**假绿 —— 该格若不在服务器拆的名单里,① 会红;若那格本来
-# 就是空气,「①前置」会红(闪断时本端那格就已经是 EMPTY)。
-const P7_CELL := Vector2i(136, 64)
+# ★ 要拆的那一格**从地图自己算**(`p7_destroy_cell()`),不再写死坐标(旧值 `136,64` 是
+#   "上一版图里 player2 旁边第 3 格")。判据 = **实心(type=wall)+ 爆炸可破坏**:
+#   `--test-destroy-tile` 那一刀走 `TileDefs.damage_tile(cell, …, "explosion")`,只有这样的格
+#   才会真的被清零、进而出现在补态载荷的 `destroyed` 里(选到空气格 = 以"服务器什么都没拆"
+#   的假绿通过)。行优先取第一格 ⇒ 确定性。
+# ★ `reconnect_probe.gd` 拼那条命令行时调的是**同一个静态函数** ⇒ 命令行与本观察者过滤的
+#   那一格天生同源(旧注释那句"改一处要改两处"已作废)。
+static var _p7_cell_cache := Vector2i(-1, -1)
+
+
+# 相⑦ 要拆的那一格:地图里**第一格**(行优先)实心且爆炸可破坏的格子。
+# ★ 地图 = `MatchBootstrap.PVP_MAP`:探针拉起 w1v1 时不带图参数,worker 走的就是它。
+# ★ 找不到 → 返回 (-1,-1):`--test-destroy-tile` 的解析会因此**静默不拆**,相⑦ 的
+#   「①前置 / ③ worker 日志」当场红 —— 但这里也先打一条 error,别让它只有间接症状。
+static func p7_destroy_cell() -> Vector2i:
+	if _p7_cell_cache.x >= 0:
+		return _p7_cell_cache
+	TileDefs.load_defs()   # 数据表要显式加载(本进程不一定跑过 level_0)
+	var grid := MapFormat.load_map_file(MatchBootstrap.PVP_MAP)
+	for r in grid.size():
+		var row: Array = grid[r]
+		for c in row.size():
+			var v := int(row[c])
+			if v == 0:
+				continue
+			if TileDefs.is_blocked(v) and TileDefs.explosion_destroyable(MapFormat.texture_of(v)):
+				_p7_cell_cache = Vector2i(c, r)
+				return _p7_cell_cache
+	push_error("reconnect_watcher: 在 %s 上找不到「实心 + 可爆炸破坏」的格子,相⑦ 的拆格夹具失效"
+			% MatchBootstrap.PVP_MAP)
+	return _p7_cell_cache
+
+
 # witness 开始/结束按 F 的时刻。★ 起点必须**晚于** actor 的闪断(T_DROP=1.6)+ 两端 `_tp` 漂移
 # (实测 ~0.7s,见文件头「时间轴」):早了的话 actor 还在线、会直接收到 weapon_removed,
 # 相⑦ ② 就退化成"空转的绿"(本文件的前置断言会红,但那时是诊断、不是结论)。
@@ -183,7 +214,8 @@ var _samples_open := true
 var _perm_dropped := false
 var _done := false
 # ── 相⑦ 观测量(actor 侧;见 `_p7_assert`)──
-var _p7_grid_before := -1               # 闪断那一刻本端 grid[P7_CELL.y][P7_CELL.x]
+var _p7_cell := Vector2i(-1, -1)        # 服务器要拆的那一格(`p7_destroy_cell()` 从地图算出)
+var _p7_grid_before := -1               # 闪断那一刻本端 grid[_p7_cell.y][_p7_cell.x]
 var _p7_gw_before: Array = []           # 闪断那一刻本端地面武器的 inst 集合
 var _p7_payloads := 0                   # 收到过几条 match_sync 载荷(进场那条 + 重连补态那条)
 var _p7_payloads_at_drop := 0
@@ -222,6 +254,9 @@ func _ready() -> void:
 	#   而这几个订阅原先对四个客户端一视同仁 —— 后果不是"多跑一点",而是大乱斗客户端的日志里
 	#   混进一串「相⑦:…」字样(它们谁也不判、只打印),读日志的人会照着一相不存在的断言归因。
 	if not is_royale:
+		# 相⑦ 那一格先算出来(见 `p7_destroy_cell()`):本进程与裁判进程调的是**同一个函数**,
+		# 故命令行里那一格与本观察者过滤的那一格必然一致。
+		_p7_cell = p7_destroy_cell()
 		NetBus.local_match_sync.connect(_on_match_sync_payload)
 		NetBus.local_tile_destroyed.connect(_on_tile_destroyed)
 		if not is_actor:
@@ -329,7 +364,7 @@ func _on_match_sync_payload(payload: Dictionary) -> void:
 #   · witness:把**收到它的时刻**(el)记进日志。拆格延迟是从建局起算的,换算到 PLAYING 口径
 #     只能靠这个读数(两边的引擎日志都不带时间戳)。
 func _on_tile_destroyed(cell: Vector2i) -> void:
-	if cell != P7_CELL:
+	if cell != _p7_cell:
 		return
 	_p7_tile_ev += 1
 	_log("相⑦:收到 tile_destroyed %s(el=%s,第 %d 次)"
@@ -519,7 +554,7 @@ func _p7_sample_at_drop() -> void:
 	_p7_payloads_at_drop = _p7_payloads
 	_p7_tile_ev_at_drop = _p7_tile_ev
 	_log("相⑦ 取样:grid%s=%d(EMPTY=%d),地面武器 %d 件 %s;已收载荷 %d 条、该格广播 %d 条"
-			% [str(P7_CELL), _p7_grid_before, MazeGenerator.EMPTY, _p7_gw_before.size(),
+			% [str(_p7_cell), _p7_grid_before, MazeGenerator.EMPTY, _p7_gw_before.size(),
 			str(_p7_gw_before), _p7_payloads, _p7_tile_ev_at_drop])
 
 
@@ -532,17 +567,17 @@ func _p7_assert() -> void:
 	#     tile_destroyed → 本端早就 EMPTY 了,① 会以"服务器什么都没补"的假绿通过。
 	_check(_p7_grid_before != MazeGenerator.EMPTY,
 			("相⑦ ①前置:闪断时本端 grid%s 仍是实心(实得 %d)—— 红在这里 = 拆格落在闪断**之前**,"
-			+ "把 reconnect_probe 的 P7_DESTROY_AFTER 往后挪") % [str(P7_CELL), _p7_grid_before])
+			+ "把 reconnect_probe 的 P7_DESTROY_AFTER 往后挪") % [str(_p7_cell), _p7_grid_before])
 	# 前置 B:闪断之后没有再收到那一格的广播(收到 = 那格是被事件修的,不是被补态修的)。
 	_check(_p7_tile_ev == _p7_tile_ev_at_drop,
 			("相⑦ ①前置:闪断之后没再收到该格的 tile_destroyed(实得 %d 条;>0 = 那格是被广播修的,"
 			+ "补态那一路等于没验)") % (_p7_tile_ev - _p7_tile_ev_at_drop))
 	var g_now := _p7_grid()
 	_check(g_now == MazeGenerator.EMPTY,
-			"相⑦ ①:重连补态后本端 grid%s == EMPTY(实得 %d)" % [str(P7_CELL), g_now])
+			"相⑦ ①:重连补态后本端 grid%s == EMPTY(实得 %d)" % [str(_p7_cell), g_now])
 	# ① 的"非空转"另一半:服务器在补态里**点名**了那一格(③ 证明它动了手,这条证明那件事
 	# 进了补态载荷 —— 两者缺一,① 都可能是"本来就没这回事")。
-	_check(_p7_sync_destroyed.has(P7_CELL),
+	_check(_p7_sync_destroyed.has(_p7_cell),
 			"相⑦ ①:补态载荷的 destroyed 里点名了该格(实得 %s)" % str(_p7_sync_destroyed))
 	# ── ② 地面武器(主判据:witness 捡走的那把不得在本端表里留下)──
 	# "witness 捡走的那把"= 闪断时本端表里有、而补态载荷(服务器权威)里没有的那个 inst。
@@ -588,19 +623,19 @@ func _p7_assert() -> void:
 			+ "清了却一件都没加回来时,上面两条断言会同时空过)") % [after.size(), _p7_sync_insts.size()])
 	# 一行读得出的汇总(进客户端日志;断言逐条的读数在上面各条 OK 行里)
 	_log("相⑦ 汇总:%s 闪断时 %d → 补态后 %d;地面武器 闪断 %d 件 → 载荷 %d 件 → 现 %d 件(被捡走 %s)"
-			% [str(P7_CELL), _p7_grid_before, g_now, _p7_gw_before.size(), _p7_sync_insts.size(),
+			% [str(_p7_cell), _p7_grid_before, g_now, _p7_gw_before.size(), _p7_sync_insts.size(),
 			after.size(), str(picked)])
 
 
 # 本端 grid 上那一格的值(-1 = 越界/网格还没建好;EMPTY=0 见 MazeGenerator)。
 func _p7_grid() -> int:
 	var grid := MazeGenerator.current_grid
-	if grid.is_empty() or P7_CELL.y < 0 or P7_CELL.y >= grid.size():
+	if grid.is_empty() or _p7_cell.y < 0 or _p7_cell.y >= grid.size():
 		return -1
-	var row: Array = grid[P7_CELL.y]
-	if P7_CELL.x < 0 or P7_CELL.x >= row.size():
+	var row: Array = grid[_p7_cell.y]
+	if _p7_cell.x < 0 or _p7_cell.x >= row.size():
 		return -1
-	return int(row[P7_CELL.x])
+	return int(row[_p7_cell.x])
 
 
 # 本端地面武器表里的 inst 集合(补态前后各取一次,见 `_p7_assert`)。

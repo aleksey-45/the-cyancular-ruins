@@ -56,6 +56,15 @@ const DUEL_BULLET_DAMAGE := 7
 var _fails: Array[String] = []
 var _done: Array[String] = []
 
+# ★ 两个摆位的期望值**取自地图自己的 spawn 元数据**(`MapFormat.load_spawns(MAP)` 的
+#   `player` / `player2`),不写死 (17,65)/(133,64)——那是上一版 PvP 图的出生点,本图上
+#   早就不在这两格了。本文件只用它们当"两个**相距很远**的点"(各条判据都不依赖具体坐标:
+#   子弹夹具把弹摆在受害者身上、0 距离),距离不够远时那条夹具自检会红。
+#   ★ 改写后仍拦得住的变异:夹具与地图脱钩(两个 role 摆到同一格 / 摆进与断言无关的点),
+#     —— 旧的写死值在**换图之后**恰恰就是这一档(两点仍分离,但已与地图无关,没人看得见)。
+var _p1_cell := Vector2i(-1, -1)
+var _p2_cell := Vector2i(-1, -1)
+
 
 # ═══ 载荷截获(把"投递"那一半从**源码文本**升到**真正要发出去的字典**)═══
 #
@@ -123,6 +132,13 @@ func _check(ok: bool, what: String) -> void:
 # ★ 必须 `await _run()` 再 `_finish()`:`_run()` 里有 `await get_tree().physics_frame`(协程),
 #   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(假红)。
 func _ready() -> void:
+	# ★ 摆位先派生(见 `_p1_cell` 上方):缺任一个出生点就直接红、走兜底 (-1,-1) 会让
+	#   两个玩家重合在同一个点上,几条断言随之静默变松。
+	var sp := MapFormat.load_spawns(MAP)
+	_p1_cell = sp.get("player", Vector2i(-1, -1))
+	_p2_cell = sp.get("player2", Vector2i(-1, -1))
+	_check(_p1_cell.x >= 0 and _p2_cell.x >= 0,
+			"地图 %s 同时声明了 `# player` 与 `# player2`(本文件的摆位取自它们)" % MAP)
 	await _run()
 	_finish()
 
@@ -251,8 +267,8 @@ func _check_duel_phase() -> void:
 	# ★ 合成/真图都行:本段只用「归因 + take_hit + 倒地边沿 + 逐人表」,不碰几何。
 	#   真图 `newfactory.cyrm` 有 `# player`/`# player2` 出生点,`_respawn_player` 才可用。
 	GameParameters.refresh_map_size()
-	_place(host, 1, Vector2i(17, 65))
-	_place(host, 2, Vector2i(133, 64))
+	_place(host, 1, _p1_cell)
+	_place(host, 2, _p2_cell)
 	host._wire_hit_feedback()     # ★ 手工摆位路径必须补调**生产那一份**接线(否则一条线都没有)
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame     # 让 `@onready` 的 combat/weapons 就绪
@@ -294,8 +310,8 @@ func _check_duel_kill_rule() -> void:
 	host.name = "StatsDuelSuicideHost"
 	add_child(host)
 	GameParameters.refresh_map_size()
-	_place(host, 1, Vector2i(17, 65))
-	var p2: Node2D = _place(host, 2, Vector2i(133, 64))
+	_place(host, 1, _p1_cell)
+	var p2: Node2D = _place(host, 2, _p2_cell)
 	host._wire_hit_feedback()
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame
@@ -333,8 +349,8 @@ func _check_duel_bullet_path() -> void:
 	host.name = "StatsDuelBulletHost"
 	add_child(host)
 	GameParameters.refresh_map_size()
-	var shooter: Node2D = _place(host, 1, Vector2i(17, 65))
-	var victim: Node2D = _place(host, 2, Vector2i(133, 64))
+	var shooter: Node2D = _place(host, 1, _p1_cell)
+	var victim: Node2D = _place(host, 2, _p2_cell)
 	host._wire_hit_feedback()
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame
@@ -372,8 +388,8 @@ func _check_duel_bullet_path() -> void:
 	host2.name = "StatsDuelBulletSelfHost"
 	add_child(host2)
 	GameParameters.refresh_map_size()
-	var shooter2: Node2D = _place(host2, 1, Vector2i(17, 65))
-	var victim2: Node2D = _place(host2, 2, Vector2i(133, 64))
+	var shooter2: Node2D = _place(host2, 1, _p1_cell)
+	var victim2: Node2D = _place(host2, 2, _p2_cell)
 	host2._wire_hit_feedback()
 	host2._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame
@@ -546,8 +562,8 @@ func _check_delivery_payload() -> void:
 			"★ ⑤ 1v1:逐人表为空时的 round_state **不带** `stats` 键(带宽纪律,与 teams/destroyed 同款;"
 			+ "截获 " + str(empty_n) + " 帧)")
 
-	_place(host, 1, Vector2i(17, 65))
-	_place(host, 2, Vector2i(133, 64))
+	_place(host, 1, _p1_cell)
+	_place(host, 2, _p2_cell)
 	host._wire_hit_feedback()
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame
@@ -661,8 +677,8 @@ func _check_team_phase() -> void:
 			"★ ⑥ 3v3:逐人表为空时的 round_state **不带** `stats` 键(带宽纪律;截获 "
 			+ str(tempty_n) + " 帧)")
 
-	_place(host, 1, Vector2i(17, 65))
-	_place(host, 4, Vector2i(133, 64))
+	_place(host, 1, _p1_cell)
+	_place(host, 4, _p2_cell)
 	host._wire_hit_feedback()
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame

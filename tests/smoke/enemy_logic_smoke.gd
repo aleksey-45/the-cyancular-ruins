@@ -259,7 +259,17 @@ func _phase_pin_map() -> void:
 
 # ── Task 9: 地图尺寸读取(map_size) ──
 func _phase_map_size() -> void:
-	_check(MazeGenerator.map_size() == Vector2i(125, 75), "map_size: 从地图文件读取列/行数(125×75)")
+	# ★ 期望值**从地图自己派生**,不写死 125×75("这张图恰好多大"换图就假红)。
+	#   取自 `MazeGenerator.load_map_file()` 的**整图解析维度** —— 刻意**不用**
+	#   `MapFormat.map_size`:`MazeGenerator.map_size()` 就是它的一行转发(同一函数 ⇒ 自证)。
+	#   两条读法各走一路(v4 头部 vs 整图解析),对不上才是真 bug。
+	#   顺带仍钉住"会话选中的是哪张图"这件事(`_phase_pin_map` 刚把它钉成 demo)。
+	var g := MazeGenerator.load_map_file()
+	var want := Vector2i.ZERO
+	if not g.is_empty():
+		want = Vector2i((g[0] as Array).size(), g.size())
+	_check(MazeGenerator.map_size() == want,
+			"map_size: 与整图解析的维度一致(实为 %s,期望 %s)" % [str(MazeGenerator.map_size()), str(want)])
 
 
 # ── v3 解析 round-trip(纹理 3 位 0xx + 形状 hex)──
@@ -1164,6 +1174,22 @@ func _script_extends(scr: Script, base_scr: Script) -> bool:
 	return false
 
 
+# 宿主函数体是否"取到了注册表的 id":直接出现 `all_ids(`;否则看它调用的**本文件内**函数里
+# 有没有一层 `all_ids(`(只追一层 —— 避免把无关的调用链拉进来、也避免自引用死循环)。
+# 判据问的是"这处被动地问了注册表",不钉调用链的形状(直接调 / 经一层 helper 都算数)。
+func _body_reaches_registry_ids(whole: String, body: String, self_name: String) -> bool:
+	if body.contains("all_ids("):
+		return true
+	var re := RegEx.create_from_string("\\b([A-Za-z_]\\w*)\\s*\\(")
+	for m in re.search_all(body):
+		var hname := m.get_string(1)
+		if hname == self_name:
+			continue
+		if ScanUtil.func_body(whole, hname).contains("all_ids("):
+			return true
+	return false
+
+
 const REGISTRY_SRC := "res://core/sim/weapon_registry.gd"
 const REGISTRY_JSON := "res://data/weapons.json"
 # json 的 tier 字符串 → 数值。★ 这是**探针自己**的一份口径,刻意不引注册表 ——
@@ -1350,12 +1376,19 @@ func _phase_weapon_registry() -> void:
 		if src.is_empty():
 			_check(false, "读到 %s(读不到就是红,不是静默跳过)" % s["path"])
 			continue
-		var body := ScanUtil.func_body(ScanUtil.code_only(src), s["func"])
+		var whole := ScanUtil.code_only(src)
+		var body := ScanUtil.func_body(whole, s["func"])
 		if body.is_empty():
 			_check(false, "在 %s 里找到函数 %s()" % [s["path"], s["func"]])
 			continue
-		_check(body.contains("WeaponRegistry.all_ids()"),
-				"%s 的 %s() 应改用 WeaponRegistry.all_ids()" % [s["path"], s["func"]])
+		# ★ 2026-10-02 降精度:原钉 `body.contains("WeaponRegistry.all_ids()")` —— 把取 id
+		#   包成一层**本文件内的 helper**(如 `_weapon_ids()` 自己调 all_ids())就**假红**,
+		#   而接线其实是通的。改判"函数体**引用了注册表派生的取 id 调用**":直接出现 `all_ids(`,
+		#   或调用了本文件里某个自己也含 `all_ids(` 的函数(只追一层)。
+		# 要拦的变异:宿主不接注册表(**硬编码 id 列表**)⇒ 加第 7 把枪时新枪在这一处静默消失。
+		_check(_body_reaches_registry_ids(whole, body, s["func"]),
+				"%s 的 %s() 应改用注册表派生的取 id 调用(WeaponRegistry.all_ids() 或其一层 helper)"
+				% [s["path"], s["func"]])
 
 	# ── ⑦ 覆盖性:默认启用表必须**等于**注册表全部 id ──
 	# 这是 spec §4.2 点名要加、而今天**没有**的那条守卫。

@@ -24,7 +24,9 @@ extends Node
 #      覆写没有 `_spawned_once` 副作用;取数点与理由见 `reconnect_watcher._actor_assert`)
 #   ⑥ 启动等待态:空载 `--royale` worker 不得在 1~3s 窗口内退出
 #   ⑦ 世界补态(仅 1v1):actor 掉线的窗口里**服务器侧**世界变过两处 —— 拆掉一格可破坏的墙
-#      (`--test-destroy-tile`,见下方 P7_DESTROY_AFTER)与 witness 捡走一把地面武器
+#      (`--test-destroy-tile <格>,<delay>`,见下方 P7_DESTROY_AFTER;★ 那一格**不写死**,
+#      由 `reconnect_watcher.p7_destroy_cell()` 从地图自己算,裁判与客户端调同一个函数)
+#      与 witness 捡走一把地面武器
 #      (`--test-ground-teleport` + witness 按 F)—— 重连后 `match_sync` 补态必须把两处都补上:
 #      不补就是**幻影墙**(撞上去 → 本地预测与服务端分歧 → 可能回滚循环)与**幽灵枪**。
 #      断言在 `reconnect_watcher._p7_assert`(actor 侧)+ 本文件 `_worker_evidence`(worker 日志)。
@@ -184,8 +186,18 @@ func _run_orchestrator() -> void:
 	_clean()
 	print("PROBE: 裁判就绪(exe=%s);拉起 1v1 worker(%d)与空载大乱斗 worker(%d)" % [
 			_exe.get_file(), W1V1, WIDLE])
+	# ★ 相⑦ 要拆的那一格**从地图自己算**,不写死坐标:调的是 watcher 的静态函数
+	#   (`reconnect_watcher.p7_destroy_cell()`),而客户端进程过滤 tile_destroyed 时用的是
+	#   同一个函数 ⇒ 命令行与那边观察的是**同一格**,不可能对不上(旧注释那句"改一处要改两处"
+	#   已作废)。夹具自检:算不出来(地图上找不到实心+可爆炸破坏的格)就当场红 ——
+	#   否则 `--test-destroy-tile` 会被 worker **静默**当成 (-1,-1) 而什么都不拆。
+	# ★ 必须写**显式类型**:经 `load()` 拿到的是 `GDScript`,静态函数的返回类型在编译期推不出来
+	#   ⇒ 写成 `var p7 := …` 会直接 `Cannot infer the type of "p7"`(整个脚本解析失败)。
+	var p7: Vector2i = (load("res://tests/harness/reconnect_watcher.gd") as GDScript).p7_destroy_cell()
+	_check(p7.x >= 0, "相⑦ 夹具:在 %s 上找出一格实心可破坏格(实得 %s)"
+			% [MatchBootstrap.PVP_MAP, str(p7)])
 	_w1v1_pid = _spawn_worker(["--worker", "--port", str(W1V1), "--test-ground-teleport",
-			"--test-destroy-tile", "136,64," + P7_DESTROY_AFTER], "w1v1")
+			"--test-destroy-tile", "%d,%d,%s" % [p7.x, p7.y, P7_DESTROY_AFTER]], "w1v1")
 	_widle_pid = _spawn_worker(["--worker", "--royale", "--port", str(WIDLE),
 			"--roles", "1,2", "--ai-roles", "2"], "widle")
 

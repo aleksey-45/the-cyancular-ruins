@@ -42,16 +42,30 @@ func _chk(cond: bool, what: String) -> void:
 		_fails.append(what)
 
 
+# 整图解析出来的格子级维度(列×行);空网格 → ZERO(断言响亮地红,不让 `[0]` 越界打断本函数)。
+func _dims(grid: Array) -> Vector2i:
+	if grid.is_empty():
+		return Vector2i.ZERO
+	return Vector2i((grid[0] as Array).size(), grid.size())
+
+
 # ── ① 真地图(现在是 v4 二进制)──
 func _test_real_maps() -> void:
 	_chk(MapFormat.is_v4(DEMO), "demo.cyrm 应已是 v4 二进制")
 	_chk(MapFormat.is_v4(PVP), "newfactory.cyrm 应已是 v4 二进制")
 	var demo := MapFormat.load_map_file(DEMO)
 	var pvp := MapFormat.load_map_file(PVP)
-	_chk(demo.size() == 75 and (demo[0] as Array).size() == 125, "demo 尺寸应 125×75(实为 %dx%d)" % [(demo[0] as Array).size(), demo.size()])
-	_chk(pvp.size() == 100 and (pvp[0] as Array).size() == 150, "factory 尺寸应 150×100(实为 %dx%d)" % [(pvp[0] as Array).size(), pvp.size()])
-	_chk(MapFormat.map_size(DEMO) == Vector2i(125, 75), "map_size(demo) 应 125×75")
-	_chk(MapFormat.map_size(PVP) == Vector2i(150, 100), "map_size(factory) 应 150×100")
+	# ★ 尺寸断言**只比两条独立读法**,不写死 125×75 —— "这张图恰好多大"是地图自己的事,
+	#   写死只会让换图/改图假红。两条读法是:
+	#     · `map_size()`   → v4 **头部**的 sub_cols/sub_rows(不解析 body)
+	#     · `load_map_file()` → **整图解析**(把 body 里的场景层展平成格)
+	#   两者对不上 = 头部与 body 不一致(真 bug);旧写法(两边各自写死数字)拦不住它。
+	_chk(MapFormat.map_size(DEMO) == _dims(demo),
+			"map_size(demo) 应与整图解析的维度一致(实为 %s vs %s)"
+			% [str(MapFormat.map_size(DEMO)), str(_dims(demo))])
+	_chk(MapFormat.map_size(PVP) == _dims(pvp),
+			"map_size(factory) 应与整图解析的维度一致(实为 %s vs %s)"
+			% [str(MapFormat.map_size(PVP)), str(_dims(pvp))])
 	var sp_demo := MapFormat.load_spawns(DEMO)
 	var sp_pvp := MapFormat.load_spawns(PVP)
 	_chk(sp_demo.has("player") and not sp_demo.has("player2"), "demo 应只有 player 出生点")
