@@ -19,7 +19,7 @@ extends Node
 # ★ 输入走**可注入桩**(tests/probe/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
 
 const StubInput := preload("res://tests/probe/haste_probe_input.gd")
-const GhostScript := preload("res://scenes/effects/afterimage.gd")
+const GhostScript := preload("res://scenes/effects/after_image.gd")
 const BulletScene := preload("res://scenes/enemies/enemy_bullet.tscn")
 
 var _fails: Array[String] = []
