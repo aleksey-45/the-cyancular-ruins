@@ -1606,6 +1606,29 @@ Settings.pvp_disabled_weapons,在 3v3 勾一下会连带改掉另两个模式。
 
 ★ **编号印行序不印 role**：role 是「最小空闲号」分配、有人退出不重排 —— 印 role 会出现 1、3。
 
+**★★ 下面这三块本计划初稿**只写了散文、没写接线 —— 而"接线没人守"正是本计划反复出事的地方，故在此写死：**
+
+**(a) 谁调 `_show_wait_room` / `_hide_wait_room`**（三个模式各一条，一条都不能漏）：
+- `_on_room_created(code)`（1v1 建房）⇒ `_show_wait_room({...}, MODE_PVP)`
+- `_on_room_joined(role)`（1v1 加入）⇒ 同上（房号从 `_join_pending` 取）
+- `_on_room_state_royale(state)` ⇒ `_show_wait_room(state, MODE_ROYALE)`
+- `_on_room_state_team(state)` ⇒ `_show_wait_room(state, MODE_TEAM)`
+- `_hide_wait_room()` 的**唯一**调用点：`_on_return_to_lobby()`（基类钩子；超时梯与回局失败都汇到这里）。
+  ⇒ 忘记在 `_on_return_to_lobby` 里调 = **退回大厅后等待室还盖在屏幕上**，且一行报错都没有。
+- 进等待室时**同时** `_set_create_visible(false)`；`_hide_wait_room()` 里不恢复创建弹层（它由玩家自己再点开）。
+
+**(b) 三个按钮在三个模式下各连什么**（照旧页逐字对齐，`scenes/royale_lobby.gd` / `team_lobby.gd` 还在，可直读）：
+
+| 按钮 | 1v1 | 大乱斗 | 3v3 |
+|---|---|---|---|
+| `退出房间` | `_return_to_lobby("已退出房间")`（★ 1v1 **没有** leave RPC：旧页是 `NetBus.stop()` 走人；这里用基类那条现成的收口，它会 `NetBus.stop()` + 重连 + 刷新） | `NetBusExt.rpc_id(1, "royale_leave")`（**不断大厅 peer**，见旧页注释） | `NetBusExt.rpc_id(1, "team_leave")` |
+| `开始游戏` | **没有这颗按钮**（1v1 两人凑齐自动开局） | `NetBusExt.rpc_id(1, "royale_start")` | `NetBusExt.rpc_id(1, "team_start")` |
+| 选边 `加入 A/B 队` | 无 | 无 | `NetBusExt.rpc_id(1, "team_pick", 1/2)` |
+
+**(c) 探针要能数"名单行"**：每加一行名单都 `label.set_meta("roster_row", true)`，
+否则断言 3（"名单行数 == 载荷 players 条数"）只能靠遍历所有 Label 猜、极易假绿。
+同理，选边/开始/退出三颗按钮都要能在探针里按文案找到（`_find_button(panel, "开 始 游 戏")` 之类）。
+
 - [ ] **Step 4: 跑探针，确认绿**
 
 - [ ] **Step 5: 刷导入缓存，再提交**
