@@ -618,6 +618,25 @@ git commit -m "refactor(dir): server/ 拆成 lobby/match/hosts/ai 四组"
 
 ### Task 5: `tests/` 拆成 `smoke/ probe/ harness/ scripts/`
 
+> ✅ **已完成**（提交 `38ade4f`，**357 文件**，411+/411−，评审 Approved）。分桶 smoke 78 / probe 216 / harness 25 / scripts 6 = **325**。
+> 守卫在新路径 `tests/probe/path_integrity_probe.gd` 上绿，计数 **345 与搬前基线逐字相同**。
+> `tests/` 顶层恰好剩那 8 项；守卫的 `ALLOW_PATH` / `SCAN_ROOTS` **未被改**。
+>
+> ★★ **本轮找到 4 处 brief 缺陷，其中两处是我的硬伤：**
+> 1. **Step 4b 的匹配模式根本不存在。** 我写的 `$(dirname "$0")/env.sh` 在真实脚本里**一个都没有** ——
+>    实际形式是 `"$(dirname "${BASH_SOURCE[0]}")/env.sh"`。照我写的跑，**匹配数 0、10 个 `.sh` 的 source 行
+>    一条都不会被改**，而搬完它们全都找不到 `env.sh`。实现者去看真实脚本才发现并改对（含 `# shellcheck source=` 注释）。
+> 2. **我的普查结论错了一半。** 我说「`res://tests/` 的拆串为 0」—— 当时的 grep 只覆盖 `"res://…" + "…"`
+>    （第二操作数是**字面量**）。实际存在 2 处活的：`menu_autotest.gd` 的 **`%`-格式化**、
+>    `grace_window_smoke.gd` 的 **变量拼接**（`"res://" + rel`，且它读不到就 `quit(1)`，会整条探针全红）。
+>    ⇒ **"我给的是已知清单"这个做法再次被证明不可靠**，这就是为什么每个 task 都要实现者自己再扫一遍。
+> 3. Step 4 的 `roots` 里含 `docs`，与 Task 6「`docs/` 历史文档不改」冲突 —— 已剔除。
+> 4. Step 6(b) 点名的 `tests/probe/reconnect_probe.sh` **从来不存在**。
+>
+> ★ **一处超 brief 的范围扩展（256 处非 `res://` 的注释路径更新）**：评审**机械核过**生产目录里
+> 除了 `scenes/main_menu.gd` 那 2 行真引用外**全是注释**，裁定 **keep 不回退**（零行为风险，
+> 且 brief 的 Files 行本来就写着「以及**全仓** `.gd`/`.tscn` 里的测试路径」）。代价是 diff 变大。
+
 > ★ **本 task 可独立停下** —— Task 1~4 已是一个完整可发布的单元。若想分批，Task 5 单独走一次。
 
 **Files:**
@@ -818,62 +837,109 @@ git commit -m "refactor(dir): tests/ 拆成 smoke/probe/harness/scripts 四组"
 ### Task 6: 更新文档里的路径引用
 
 **Files:**
-- Modify: `CLAUDE.md`（约 100 处 `tests/<名>` 与 `render/`、`ui/`、`server/` 路径）
-- Modify: `RELEASE.md`（若含路径）
-- Modify: `docs/` 下的历史文档 —— **不改**（它们是历史记录，不是活引用）
+- Modify: `CLAUDE.md` / `RELEASE.md` / `README.md`（**只有这三个** —— `tools/check_naming.py` 的 C 类只扫这三个）
+- Modify: `tests/env.sh`（第 3 行的用法注释）、`tests/README.md`（版式说明）—— 收尾项，见 Step 5
+- **不改** `docs/` 下的任何文件：`docs/superpowers/plans/*.md` 与 `docs/claude-md-full-*.md` 都是**历史记录**，不是活引用。改写脚本里**必须显式排除 `docs/`**。
 
 **Interfaces:**
 - Consumes: Task 2~5 完成后的新目录结构。
+- **Produces（本 task 的判据）：`python tools/check_naming.py` 的 C 类违规 = 0。** 本 task 之前它是 **60 条**。
 
-- [ ] **Step 1: 先量出改动面**
+- [ ] **Step 1: 拿到 C 类工作清单（这是本 task 唯一的需求来源，不要自己凭印象找）**
 
 ```bash
-grep -c 'tests/' CLAUDE.md
-grep -o 'tests/[a-z0-9_]*\.\(gd\|tscn\|sh\)' CLAUDE.md | sort -u | wc -l
-grep -n 'res://render/\|res://ui/[a-z_]*\.\|res://server/[a-z_]*\.gd' CLAUDE.md | wc -l
+python tools/check_naming.py --report 2>&1 | grep '^  C ' | sed 's/.*不存在的路径: //' | sort -u
 ```
 
-- [ ] **Step 2: 用与 Task 5 Step 4 同一份归属表批量改写 `CLAUDE.md`**
+Expected: **60 条**。其中有 **3 条不是本次重构造成的、是既有陈旧文档**，一并修掉：
+- `core/build_info.gd` → 实为 `core/config/build_info.gd`
+- `core/net/snapshot_interp.gd` → 该文件**已删除**（本次重构之前就删了），文档里应改写或加"已删除"标记
+- `scenes/weapons/weapon_pickup.tscn/.gd` → 这是文档里把两个路径挤成一个的畸形写法，改成分开写
+
+★ 其余 57 条全部由 Task 2~5 造成（`render/` 1 条、`server/*` 10 条、`ui/*` 17 条、`tests/*` 29 条）。
+
+★ **别用 `$?` 判成败** —— `check_naming.py` 的退出码会经管道被骗成 `head` 的（本仓既有纪律：判据一律看**文本**）。
+
+- [ ] **Step 2: 按"文件名唯一匹配"批量改写（判据取自**文件系统**，不用手写映射表）**
+
+思路：**新结构是唯一事实**。对每个陈旧路径，用它自己的**文件名**去全仓找同名文件 —— 找到**恰好一个**才改；0 个或 >1 个都**报出来人工定**，绝不猜。
 
 ```bash
 python - <<'PY'
-import pathlib, re
-buckets = {}
-for d in ("smoke","probe","harness","scripts"):
-    for f in pathlib.Path("tests", d).iterdir():
-        if f.is_file():
-            stem = re.sub(r'\.(gd|tscn|sh|py|log)(\.uid)?$', '', f.name)
-            buckets.setdefault(stem, d)
-buckets.update({n:"smoke" for n in ["menu_autotest"]})
-buckets.update({n:"scripts" for n in ["convert_map","seam_analyze","seam_screenshot"]})
+import pathlib, re, subprocess
 
-p = pathlib.Path("CLAUDE.md")
-s = p.read_text(encoding="utf-8")
+ROOTS = ("core","scenes","server","ui","tests","assets","data","maps","tools","level_editor")
+# 只改这三个文件(docs/ 是历史,一律不碰)
+TARGETS = [pathlib.Path("CLAUDE.md"), pathlib.Path("RELEASE.md"), pathlib.Path("README.md")]
 
-def sub_tests(m):
-    stem, ext = m.group(1), m.group(2)
-    d = buckets.get(stem)
-    return f"tests/{d}/{stem}.{ext}" if d else m.group(0)
+# 真实文件索引: basename -> [相对路径...]
+index = {}
+for r in ROOTS:
+    for f in pathlib.Path(r).rglob("*"):
+        if f.is_file() and not f.name.endswith((".uid", ".import")):
+            index.setdefault(f.name, []).append(f.as_posix())
 
-s = re.sub(r'(?<!/)tests/([A-Za-z0-9_]+)\.([a-z]+)', sub_tests, s)
-p.write_text(s, encoding="utf-8", newline="\n")
-print("done")
+out = subprocess.run(["python","tools/check_naming.py","--report"],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+stale = sorted({l.split("不存在的路径: ",1)[1].strip()
+                for l in out.splitlines() if l.startswith("  C ")})
+
+plan, unresolved = {}, []
+for old in stale:
+    base = old.rstrip("/").split("/")[-1]
+    cands = index.get(base, [])
+    if len(cands) == 1:
+        plan[old] = cands[0]
+    else:
+        unresolved.append((old, cands))
+
+print(f"可自动改写 {len(plan)} 条；需人工定 {len(unresolved)} 条")
+for old, cands in unresolved:
+    print(f"  ⚠ {old}  ->  候选 {cands}")
+
+for p in TARGETS:
+    s = p.read_text(encoding="utf-8")
+    o = s
+    for old, new in plan.items():
+        s = s.replace(old, new)
+    if s != o:
+        p.write_text(s, encoding="utf-8", newline="\n")
+        print("改写:", p)
 PY
 ```
 
-- [ ] **Step 3: 人眼核对改完的路径段落**
+- [ ] **Step 3: 跑判据 —— C 类必须清零**
 
 ```bash
-grep -n 'tests/smoke/\|tests/probe/\|tests/harness/\|tests/scripts/' CLAUDE.md | head -30
+python tools/check_naming.py --report 2>&1 | grep '^  C ' | sed 's/.*不存在的路径: //' | sort -u
+# 期望:无输出
+python tools/check_naming.py --report 2>&1 | grep -c '^  C '
+# 期望:0
 ```
 
-★ **必须抽查**：CLAUDE.md 里有大量"守卫:`tests/xxx_probe.tscn`"式的引用，批量替换的判据是 stem —— 若有同 stem 不同 bucket 的情况，会静默改错。
+**若还有残留**：每条都判断是「Step 2 没匹配上」还是「文件名不唯一」。**不要**为了清零而把路径改成别的样子 —— 那会让文档撒谎。真解决不了的，报告里列出来，别硬凑。
 
-- [ ] **Step 4: 提交**
+★ 剩余的 `A 目录名不是全小写: _crashtest/...`（3 条）**不是本 task 的事** —— `_crashtest/` 是未跟踪的本地杂物，不在任何扫描根下。
+
+- [ ] **Step 4: 人眼抽查（批量替换的判据是**文件名**，同名文件会改错）**
 
 ```bash
-git add CLAUDE.md RELEASE.md
-git commit -m "docs: 同步目录重构后的路径引用"
+grep -n 'tests/smoke/\|tests/probe/\|tests/harness/\|tests/scripts/' CLAUDE.md | head -40
+grep -n 'server/\(lobby\|match\|hosts\|ai\)/\|ui/\(factory\|hud\|screens\)/\|core/present/' CLAUDE.md | head -40
+```
+
+★ **重点看**：CLAUDE.md 里大量"守卫:`tests/xxx_probe.tscn`"式引用。同 stem 不同 bucket 的情况**不存在**（Task 5 评审已核过 121 个 stem 无碰撞），但**同名不同目录**的文件是存在的（例如 `hud.gd` 只在 `ui/hud/` 下一个）—— 抽查确认改出来的路径**读起来对**。
+
+- [ ] **Step 5: 收尾两处注释（Task 5 评审点名）**
+
+1. `tests/env.sh:3` 的用法注释仍写着 `source "$(dirname "${BASH_SOURCE[0]}")/env.sh"` —— 现在**没有任何调用方**还是这个相对深度（都下沉了一层）。改成实际的形式（`.../../env.sh`），并把第 9 行的 `tests/*.log` 一并订正。
+2. `tests/README.md` 仍按**平铺版式**描述（`*_smoke.gd——…` / `*_probe.gd——…`），改成四个 bucket 的说法。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add CLAUDE.md RELEASE.md README.md tests/env.sh tests/README.md
+git commit -m "docs: 同步目录重构后的路径引用(check_naming C 类清零)"
 ```
 
 ---
