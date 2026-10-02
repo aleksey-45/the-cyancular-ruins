@@ -1472,8 +1472,11 @@ func _apply_create_form(mode: String) -> void:
 	_form_rows["max_players"].visible = is_royale
 	_form_rows["match_time"].visible = is_royale
 	_form_rows["weapons"].visible = not is_team
-	for b in _create_mode_btns:
-		(b as Button).disabled = false
+	# ★★ 遍历 Dictionary 拿到的是**键**,不是值 —— 写成 `for b in _create_mode_btns: (b as Button)…`
+	#    时 `b` 是 String,`as Button` 得到 null,那行**当场报错**、函数在置灰之前就断掉。
+	#    (本计划初稿就是这么写的。)必须按键取值:
+	for m in _create_mode_btns:
+		(_create_mode_btns[m] as Button).disabled = false
 	(_create_mode_btns[mode] as Button).disabled = true   # 当前模式置灰(与等待室的选边同款)
 ```
 
