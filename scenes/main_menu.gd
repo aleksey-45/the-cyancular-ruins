@@ -255,13 +255,15 @@ func _build_menu_buttons() -> Array:
 		Sfx.play("ui")
 		get_tree().quit())
 	# 联机入口收成一颗后,「开始游戏」组按 单人 → 多人 → Beta 排列。★ 显示次序由
-	# add_child 的次序决定;下面返回的数组同时是**浮现动画**的次序,两处必须一起改。
+	# add_child 的次序决定;下面返回的数组同时是**浮现动画**的次序,两处必须一起改 ——
+	# 且**次序要一致**(数组里 Beta 排在设置/版本**之前**,与屏幕上的上下位置同序),
+	# 否则淡入会从下往上跳。
 	for b in [start_btn, multi_btn, beta_btn]:
 		play_group.add_child(b)
 	for b in [settings_btn, ver_btn]:
 		opt_group.add_child(b)
 	box.add_child(quit_btn)
-	return [start_btn, multi_btn, settings_btn, ver_btn, beta_btn, quit_btn]
+	return [start_btn, multi_btn, beta_btn, settings_btn, ver_btn, quit_btn]
 
 
 # 浮现动画:标题先出(淡入),按钮依次淡入

@@ -1390,6 +1390,12 @@ func _lobby_action_allowed() -> bool:
 #   而建房载荷里的 `time` 只存在房对象上、**没有任何读者**。漏了它 ⇒ Beta 局的时间经济
 #   静默为空(一切结算短路),而那**不报错**。旧的两个大厅页各自带这一行
 #   (royale_lobby.gd / team_lobby.gd),统一页不能把它丢了。
+# ★★ **1v1 必须排除 `time`** —— 这是大厅**统一之后才出现的新路**:`PvpSession.beta_mode`
+#   是**会话级**的,而统一大厅让 Beta 会话里的玩家能切到 1v1 建局。但 1v1 的
+#   `create_room(caller)` 是原版 NetBus 的**冻结签名**、载荷里没有任何 beta 标记
+#   ⇒ 那个房**没法按 beta 隔离** ⇒ 一个**没勾 Beta 的普通玩家能加进来、打上一局带时间经济
+#   的 1v1**。设计里 Beta 页只有「错乱大乱斗」「时空 3v3」两张卡、**没有 1v1 beta**,
+#   故 1v1 在 Beta 会话里退回普通局才是与"1v1 无法被隔离"这个事实一致的行为。
 func _player_options() -> Dictionary:
 	return {
 		"hue": Settings.pvp_color_hue,
@@ -1397,7 +1403,8 @@ func _player_options() -> Dictionary:
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
 		"map": Settings.mp_map_path,
-		"time": time_rules.to_dict() if PvpSession.beta_mode else {},
+		"time": time_rules.to_dict() if (PvpSession.beta_mode
+				and _current_mode != PvpSession.MODE_PVP) else {},
 	}
 
 

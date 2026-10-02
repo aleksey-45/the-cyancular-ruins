@@ -26,7 +26,7 @@ extends Node
 #
 # ★ `EXPECTED_CHECKS` 是"ALL-OK 不等于全都跑过"那条纪律的落点 —— 出错只会让当前函数
 #   当场结束、调用方继续,判词照打。少跑一条即红。
-const EXPECTED_CHECKS := 24
+const EXPECTED_CHECKS := 26
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -54,6 +54,7 @@ func _ready() -> void:
 	_phase_buttons(packed)   # ⑮-⑱ 按钮行为:换形 / 两条关闭路径(不入树)
 	_phase_beta(packed)      # ⑲-⑳ Beta 时间参数块(自门控)
 	_phase_live(packed)      # ㉑-㉔ ESC 与"按创建房间收起"(入树)
+	_phase_time_options(packed)   # ㉕-㉖ 上报的 time 键(权威那一份)
 	_finish()
 
 
@@ -231,6 +232,32 @@ func _phase_live(packed: PackedScene) -> void:
 	_check(not live._create_panel.visible, "㉔ 按 创 建 房 间 后弹层立即收起")
 
 	live.free()
+
+
+# ── ㉕-㉖:Beta 会话下上报的 `time` 键(worker 侧**唯一**权威来源)──
+# ★ 为什么必须常驻:在此之前唯一守它的是**手工跑**的 `--autotest-beta`,而这个键的失效
+#   **完全静默** —— worker 侧 `MatchHost` 读 `options.get("time")`,拿不到就 `TimeEconomy`
+#   为 null ⇒ 一切结算短路,而**一行错都不打**(建房载荷里的 `time` 只挂在房对象上、无读者)。
+# ★★ ㉖(1v1 必须为空)是**大厅统一之后才出现的新路**:`beta_mode` 是**会话级**的,而统一
+#   大厅让 Beta 会话里的玩家能切到 1v1 建局;1v1 的 `create_room` 是冻结签名、载荷里没有
+#   beta 标记 ⇒ 那间房**没法按 beta 隔离** ⇒ 一个没勾 Beta 的普通玩家能加进来打带时间经济
+#   的 1v1。设计里 Beta 页**没有 1v1** ⇒ 1v1 退回普通局才是对的。
+# ★ 两相各用一个**新实例**(避免上一相残留的弹层/连接);`beta_mode` 用完还原,别污染后面的相。
+func _phase_time_options(packed: PackedScene) -> void:
+	var page = packed.instantiate()
+	PvpSession.beta_mode = true
+	# ㉕ Beta 会话 + 大乱斗 ⇒ `time` 在、且非空(权威会上报给 worker)。
+	page._current_mode = PvpSession.MODE_ROYALE
+	var ro: Dictionary = page._player_options()
+	_check(ro.has("time") and not (ro["time"] as Dictionary).is_empty(),
+			"㉕ Beta 会话 + 大乱斗:`_player_options()[\"time\"]` 存在且非空(worker 侧唯一权威来源)")
+	# ㉖ Beta 会话 + 1v1 ⇒ `time` 必须**空**(1v1 载荷无 beta 标记、无法隔离 ⇒ 退回普通局)。
+	page._current_mode = PvpSession.MODE_PVP
+	var pv: Dictionary = page._player_options()
+	_check(pv.has("time") and (pv["time"] as Dictionary).is_empty(),
+			"㉖ Beta 会话 + 1v1:`time` 是**空字典**(1v1 无法按 beta 隔离 ⇒ 不启用时间经济)")
+	page.free()
+	PvpSession.beta_mode = false   # ★ 还原,别污染同一进程里后面的相
 
 
 # ── 小工具 ──
