@@ -518,10 +518,32 @@ git commit -m "feat(lobby): 列表载荷扩键(is_public/host/map/match_time/队
 	PvpSession.room_mode = PvpSession.MODE_PVP
 	PvpSession.note_room("1111", PvpSession.MODE_PVP)          # 同房号、同模式
 	_check(PvpSession.can_rejoin(), "⑦d 同房号同模式 ⇒ 凭据**保留**(等待室刷新不能抹凭据)")
+	# ★★ 第 4 格:**记录**那一半。上面三格只验了"该清时清了",验不到"该记时记了" ——
+	#    一个**只清不记**的 note_room(漏掉 `room_code = code` / `room_mode = mode`)
+	#    上面三格**全过**,而后果是 `can_rejoin_to()` 永远匹配不上 ⇒ 那一行恒灰
+	#    (正是 C1 那类症状)。记录那一半原先只有 `reconnect_smoke` 的源码 `contains` 守着 ——
+	#    那正是本轮要替换掉的守卫风格,只是换了个属性。这一格把它也变成行为断言。
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("3333", PvpSession.MODE_ROYALE)       # 换到另一间、另一个模式
+	_check(PvpSession.can_rejoin_to("3333", PvpSession.MODE_ROYALE),
+			"⑦d 换房之后 ⇒ 新的一对被**记下**了(只清不记的实现这里必红)")
+	_check(not PvpSession.can_rejoin_to("1111", PvpSession.MODE_PVP),
+			"⑦d 且旧的那一对不再成立(记录是**覆盖**,不是追加)")
 	PvpSession.clear_rejoin()
 ```
 
-同时把相⑦ 的 setup 段改成写 `PvpSession.room_mode = PvpSession.MODE_PVP`，并把 `EXPECTED_CHECKS` 从 **45** 改成 **50**（⑦c 新增 2 条 + ⑦d 新增 3 条），同步改文件头那句「相⑨ 加 7 条 → 45」后面的计数说明。
+★ ⑦d 的**覆盖上限**（写进探针注释）：它验的是"按值调用的结果"，验不到"生产里谁在什么时候调它" ——
+那一半靠 ① 的源码级断言（`_on_room_created` / `_on_room_joined` / room_state 三处都走 `note_room`）。
+两半缺一不可。★ 另有一格**刻意不测**：`(房号变 ∧ 模式也变)` 同时发生 —— 所有自然实现都会在那清，
+且 GDScript 没有 `xor`，构造不出自然的单 token 变异；登记为覆盖边界，不补。
+★ 反向对照那句注释里**别写"C1 事故的形状"** —— C1 的机制是 `reset()` 抹凭据（见 `pvp_session.gd`
+里 `reset()` 上方那段），与"等待室刷新"是两回事。要引就引 `note_room` 自己那段注释。
+
+同时把相⑦ 的 setup 段改成写 `PvpSession.room_mode = PvpSession.MODE_PVP`，并把 `EXPECTED_CHECKS` 从 **45** 改成 **52**（⑦c 新增 2 条 + ⑦d 新增 **5** 条），同步改文件头那句「相⑨ 加 7 条 → 45」后面的计数说明。
 
 ★ ⑦d 的**覆盖上限**（写进探针注释）：它验的是"按值调用的结果"，验不到"生产里谁在什么时候调它" —— 那一半靠 ① 的源码级断言（`_on_room_created` / `_on_room_joined` / room_state 三处都走 `note_room`）。两半缺一不可。
 
@@ -1565,6 +1587,10 @@ git commit -m "feat(lobby): 统一等待室(按模式渲染) + 1v1 也有一间
 ```
 
 文件头 `:8-10` 三行说明同步改。
+
+★★ **顺手清掉"三个联机按钮"这个写死的数量** —— 本任务把菜单收成一颗之后，下列位置的说法**全部过期**（它们今天**都是对的**，正因为对才会被漏掉）：
+`core/net/pvp_session.gd` 里 `:39` 与 `:127-128` 附近、`scenes/main_menu.gd:223-225` 的注释、`tests/smoke/reconnect_smoke.gd:245,257,291,294`。一律改成不依赖数量的表述（如「主菜单的联机入口」/「联机入口按钮」）。
+★ 同一批里 `reconnect_smoke:297` 那条 `count("PvpSession.reset()") >= 3` **必须一起改**（本任务后菜单只剩一颗按钮 ⇒ 它恒假、会红），改成 `>= 1` 或直接按 `_build_menu_buttons` 里的那一颗判。
 
 - [ ] **Step 4: 跑自检**
 
