@@ -52,7 +52,7 @@ const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
 
 # L5 新增的、带字号的 UI 文件:第 8 条要把它们的字号覆盖情况打出来(人眼可核覆盖面)
-const L5_FONT_FILES := ["res://ui/hud/royale_hud.gd", "res://scenes/royale_lobby.gd"]
+const L5_FONT_FILES := ["res://ui/hud/royale_hud.gd", "res://scenes/mp_lobby.gd"]
 
 # ── 扫描针(碎片拼接:见文件头「自伤防护」)──
 # 常量名**不得**含连写的 FONT_SIZE:第 8 条的 D 类扫描会把 "以 const 开头且含 FONT_SIZE"

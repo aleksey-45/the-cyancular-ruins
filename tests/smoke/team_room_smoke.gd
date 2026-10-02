@@ -116,28 +116,33 @@ func _initialize() -> void:
 		#   「人数 + 1」—— 判据函数仍在,但"有人退过房"的 role 分配会撞上仍在房里的高号。
 		if not ScanUtil.func_body(ScanUtil.code_only(room_src), "team_join").contains("team_next_role("):
 			fails.append("★ team_join 未调 team_next_role(...)—— 判据函数仍在,生产那一行被换成内联写法了(有人退过房的 role 分配会撞号)")
-	# ⑦ 3v3 建房页的三条源码断言(**B 册 Task 7** 收的评审尾巴;与上面 ⑥ 同款:页面脚本要
-	#    autoload,`-s` 里跑不动,故只能读源文本)。三条都是"听着无所谓、坏了不报错"的那类:
-	#   ① 建房面板**不得**摆基类的两个设置区块 —— 3v3 用队色(个人色相是无效输入)、禁用武器
-	#      不在 3v3 规则表里;而那两个勾选框**写的是 `Settings.pvp_disabled_weapons`**(1v1/大乱斗
-	#      的设置项)⇒ 在 3v3 页勾一下会**连带改掉另两个模式**。
+	# ⑦ 3v3 的形态源码断言(**统一大厅之后口径改判**:三页合一后不再是"3v3 页不摆那两块",
+	#    而是"那两块在 3v3 下被**按模式收起**")。与上面 ⑥ 同款:页面脚本要 autoload,`-s` 里跑不动,
+	#    只能读源文本。三条都是"听着无所谓、坏了不报错"的那类:
+	#   ① 建房弹层的禁用武器行由 `_apply_create_form` 按模式显隐(`is_team` 收起)、等待室角色
+	#      颜色行由 `_show_wait_room` 按模式显隐(3v3 用队色,个人色相是无效输入)。而禁用武器行
+	#      的勾选框**写的是 `Settings.pvp_disabled_weapons`**(1v1/大乱斗的设置项)⇒ 3v3 下没
+	#      收起的话,勾一下会**连带改掉另两个模式**。
 	#   ② 等待室计数行的分母必须引 `LobbyRooms.TEAM_ROLES/TEAM_SIZE` —— 写死 6/3 时
 	#      "房间容量只有一个真值来源"这句自称就不成立,TEAM_SIZE 一改这行就撒谎且不报错。
-	#   ③ 名单行配色必须**两档共用** `_row_color(...)`(一处定义 + 两处调用)——
+	#   ③ 名单行必须**两档共用**同一个行构造 `_roster_row(...)`(一处定义 + 两处调用)——
 	#      未选边档原先一律 C_TEXT,自己还没选边时那行不亮(只有 `(我)` 标记)。
-	var lobby_src := ScanUtil.read("res://scenes/team_lobby.gd")
+	var lobby_src := ScanUtil.read("res://scenes/mp_lobby.gd")
 	if lobby_src.is_empty():
-		fails.append("读不到 scenes/team_lobby.gd(建房页三条断言无从成立)")
+		fails.append("读不到 scenes/mp_lobby.gd(3v3 形态三条断言无从成立)")
 	else:
 		var lcode := ScanUtil.code_only(lobby_src)
-		for bad_call in ["_add_weapon_grid(", "_add_hue_row("]:
-			if lcode.contains(bad_call):
-				fails.append("★ 3v3 建房页又摆回了 %s —— 该区块在 3v3 不成立(色相被队色覆盖;禁用武器写 Settings.pvp_disabled_weapons,会连带改掉 1v1/大乱斗)" % bad_call)
-		var row_color_hits := lcode.count("_row_color(")
-		if row_color_hits < 3:
-			fails.append("★ 名单行配色没走公共的 _row_color(一处定义 + 两处调用,实际命中 %d 次)—— 未选边档的自己那行会不亮" % row_color_hits)
+		if not ScanUtil.func_body(lcode, "_apply_create_form").contains('"weapons"'):
+			fails.append("★ 建房弹层未按模式显隐禁用武器行(`_apply_create_form` 里找不到 \"weapons\")—— 3v3 勾一下会连带改掉 1v1/大乱斗 的 Settings.pvp_disabled_weapons")
+		if not ScanUtil.func_body(lcode, "_show_wait_room").contains("_wait_hue.visible"):
+			fails.append("★ 等待室未按模式显隐角色颜色行(3v3 用队色,个人色相是无效输入)")
+		if not lcode.contains("LobbyRooms.TEAM_ROLES"):
+			fails.append("★ 等待室计数行没引 LobbyRooms.TEAM_ROLES —— 写死 6 时 TEAM_SIZE 一改这行就撒谎")
 		if lcode.contains('"%d / 6 人'):
 			fails.append("★ 等待室计数行把容量 6 写死了(应引 LobbyRooms.TEAM_ROLES —— TEAM_SIZE 一改这行就撒谎)")
+		var roster_hits := lcode.count("_roster_row(")
+		if roster_hits < 3:
+			fails.append("★ 名单行没走公共的 _roster_row(一处定义 + 两处调用,实际命中 %d 次)—— 未选边档的自己那行会不亮" % roster_hits)
 	# ⑧ **悬空引用守卫**:`_enter_match_scene` 指向的对局场景必须真的存在(B 册 Task 6 创建)。
 	# ★ 为什么值一条:那个 `call_deferred("change_scene_to_file", …)` 是**字符串路径**,文件被删/
 	#   改名/写错时**什么都不报** —— 点了"开始"的六个客户端只会在换场那一刻静默停在原地(或更糟:
@@ -148,7 +153,7 @@ func _initialize() -> void:
 	#   才等于数"入口个数",数字样会把注释/变量名一起命中。
 	var entry := "res://scenes/" + "team" + "_game.tscn"
 	if lobby_src.is_empty():
-		fails.append("读不到 scenes/team_lobby.gd(悬空引用守卫无从成立)")
+		fails.append("读不到 scenes/mp_lobby.gd(悬空引用守卫无从成立)")
 	else:
 		var hits := ScanUtil.code_only(lobby_src).count(entry)
 		if hits != 1:

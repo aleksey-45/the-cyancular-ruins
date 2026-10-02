@@ -22,7 +22,7 @@ var who := "c1"
 # drive = 驱动真大厅走「建房/加入 → go_match → 转连 → 开局」全流程(自然时序,见 royale_bound_probe);
 # wait  = 只等换场再断言:载荷由外部在**同一次 poll** 里注入(见 royale_bound_probe 的 --payload 模式)。
 var mode := "drive"
-var lobby: Node = null     # 真 royale_lobby.tscn 实例(本进程里被驱动的那份)
+var lobby: Node = null     # 真 mp_lobby.tscn 实例(本进程里被驱动的那份)
 
 var _t := 0.0
 var _stage := 0
@@ -88,6 +88,9 @@ func _stage_wait_lobby() -> void:
 		return   # 真大厅面板自己会连 127.0.0.1(_ready 里的 _request_list)
 	if who == "c1":
 		_log("大厅已连,建房")
+		# 统一大厅:先设筛选再开弹层(弹层按 `_mode` 选默认模式),最后走真按钮回调建房。
+		lobby.call("_set_filter", PvpSession.MODE_ROYALE)
+		lobby.call("_open_create_dialog")
 		lobby.call("_on_create_pressed")   # 等价于点「创建房间」(公开房,人数上限默认 4)
 		_stage = 1
 		return
@@ -100,7 +103,7 @@ func _stage_wait_lobby() -> void:
 	if code.is_empty():
 		return
 	_log("用房间号 %s 加入" % code)
-	lobby.call("_join_room", code, "")   # 等价于点房间列表里的房间
+	lobby.call("_join_code", code, PvpSession.MODE_ROYALE)   # 等价于点房间列表里的房间
 	_stage = 1
 
 

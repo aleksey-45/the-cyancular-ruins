@@ -10,7 +10,7 @@ extends Node
 # exit 0 且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
 #
 # ═══ 五相(brief = `.superpowers/sdd/b-task-8-brief.md`;每相的存在理由见对应注释)═══
-#   相① 六人开局 —— 真大厅(池外端口)+ 6 个 headless 客户端各跑**真 team_lobby 页**:
+#   相① 六人开局 —— 真大厅(池外端口)+ 6 个 headless 客户端各跑**真 mp_lobby 页**:
 #        建房 → 点公开列表加入 → **各自选边(3 A / 3 B)** → 房主点开始 → 6 端都进 `team_game`。
 #        断言:6 端都进对局;每端的 `match_sync.teams` 与大厅的 `team_of` **逐端一致**;
 #        每端本地玩家与权威快照收敛(相① 的 C2 面)。
@@ -36,7 +36,7 @@ extends Node
 #
 # ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══
 #   本进程 = 真大厅(`NetBus.start_server(LOBBY_PORT)` + `RoomManager`),**不占 7777**
-#   c1..c6 = 6 个 headless 客户端,各自跑真 `team_lobby` → 真 `team_game`
+#   c1..c6 = 6 个 headless 客户端,各自跑真 `mp_lobby` → 真 `team_game`
 #   worker = 由**真** `RoomManager.team_start` 经 `WorkerLauncher.spawn_team_worker` 拉起
 #            (与生产逐字同一条路径,探针只是把它的起投端口拨到池外,见下方常量)
 #   ★ 端口纪律(与 reconnect_probe 同源):大厅与 worker **都落在真大厅的 worker 端口池

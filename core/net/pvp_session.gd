@@ -111,7 +111,7 @@ static func note_room(code: String, mode: String) -> void:
 #   原先还有一个 `PvpSession.disabled_weapons` 静态镜像,已删(只写不读,且让人误以为它是权威)。
 
 # ── 「是不是大乱斗局」的判据 ──
-#   靠**从哪个场景进来**(`royale_lobby` → `royale_game`),没有静态标记。
+#   靠**从哪个场景/哪个模式进来**(统一大厅 `mp_lobby` → `royale_game`),没有静态标记。
 #   原先的 `PvpSession.royale` 已删(两处赋 true、全仓无读)。
 
 # ── 「开局三载荷的跨场景交接」已删除(2026-09-12)──

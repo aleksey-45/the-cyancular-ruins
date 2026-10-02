@@ -189,7 +189,7 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		tree.quit(1)
 		return
 	# 建房弹层是**点开才建**的(mp_lobby 的 `_open_create_dialog` 里造)—— 时间参数滑条长在
-	# 那块面板里,与旧 royale_lobby 的常驻面板不同,故先开一次再数。
+	# 那块面板里,与旧大乱斗页的常驻面板不同,故先开一次再数。
 	(lobby as Node).call("_open_create_dialog")
 	await tree.create_timer(0.2).timeout
 	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则

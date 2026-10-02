@@ -1,6 +1,6 @@
 extends LobbyPage
 
-# 统一联机大厅(**取代** matchmaking / royale_lobby / team_lobby 三个页)。
+# 统一联机大厅(**取代**此前三个分立的大厅页;1v1 / 大乱斗 / 3v3 三套协议在这里合并)。
 # 顶栏(昵称/地址/启服) → 模式筛选 + 创建/加入 → 房卡网格 → 状态栏。
 # 三套服务端注册表原样保留:本页**并发调三次**现有列房 RPC,前端合并打标(设计 §3.7.3)。
 #
@@ -1389,7 +1389,7 @@ func _lobby_action_allowed() -> bool:
 #   `MatchHost` 读的正是 `options.get("time")`(见 server/match/match_host.gd),
 #   而建房载荷里的 `time` 只存在房对象上、**没有任何读者**。漏了它 ⇒ Beta 局的时间经济
 #   静默为空(一切结算短路),而那**不报错**。旧的两个大厅页各自带这一行
-#   (royale_lobby.gd / team_lobby.gd),统一页不能把它丢了。
+#   (大乱斗页 / 3v3 页),统一页不能把它丢了。
 # ★★ **1v1 必须排除 `time`** —— 这是大厅**统一之后才出现的新路**:`PvpSession.beta_mode`
 #   是**会话级**的,而统一大厅让 Beta 会话里的玩家能切到 1v1 建局。但 1v1 的
 #   `create_room(caller)` 是原版 NetBus 的**冻结签名**、载荷里没有任何 beta 标记

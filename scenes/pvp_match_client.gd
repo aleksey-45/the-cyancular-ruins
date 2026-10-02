@@ -1070,7 +1070,7 @@ func _subscribe_reconnect() -> void:
 	NetBus.local_server_message.connect(_on_server_message)
 	# ★ worker 在宽限期内接受 reclaim 后会**重发一条 match_start**(载荷与首次开局同源)。
 	#   **实读确认**:对局里 `local_match_start` 此前**零订阅者** —— 它唯一的消费者是
-	#   `lobby_page._on_match_start`(`matchmaking`/`royale_lobby` 的公共基类),而那个页面在对局
+	#   `lobby_page._on_match_start`(统一大厅 `mp_lobby` 的基类),而那个页面在对局
 	#   场景里**不在树上** → 这条信号到对局里是**静默 no-op**。所以"重连成功"的收尾必须在这里接
 	#   (`_on_match_start_event`)—— 不能指望既有入口。
 	NetBus.local_match_start.connect(_on_match_start_event)

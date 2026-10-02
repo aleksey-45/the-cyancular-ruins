@@ -287,7 +287,7 @@ func _is_main_menu(n: Node) -> bool:
 
 
 func _current_lobby_page(n: Node) -> Node:
-	# 三页共用基类;`_on_room_list` 只 1v1 页有(本探针的大厅是 1v1 那条路)
+	# 统一大厅 extends LobbyPage,自己定义 `_on_room_list`(1v1 的列房应答 handler)
 	if n is LobbyPage and n.has_method("_on_room_list"):
 		return n
 	return null
@@ -325,7 +325,7 @@ func _sync_page() -> void:
 
 # 把一份**真**大厅页挂进当前场景(首次进场与 c1 回局前各一次,同一份实现)。
 # ★ 三行"先置位再入树"(缺一不可):
-#   ① `PvpSession.server_address = LOBBY_ADDR` —— `matchmaking.gd` 的地址框**默认值取的就是它**
+#   ① `PvpSession.server_address = LOBBY_ADDR` —— 统一大厅的地址框**默认值取的就是它**
 #      (`ui_factory.line_edit(..., PvpSession.server_address)`),而 `_with_lobby` 的快路判据是
 #      `_connected_addr == _addr_edit.text` ⇒ 不拨它,页 `_ready` 那次 deferred `_request_list`
 #      会判"地址变了"→ `NetBus.stop()` + 按**默认端口 7777** 重连:本进程与探针大厅(29300)的
@@ -336,7 +336,7 @@ func _sync_page() -> void:
 func _attach_page_in(cs: Node, action: Callable) -> void:
 	if cs == null or _page != null:
 		return
-	_page = load("res://scenes/matchmaking.tscn").instantiate()
+	_page = load("res://scenes/mp_lobby.tscn").instantiate()
 	PvpSession.server_address = LOBBY_ADDR
 	_page.set("_connected", true)
 	_page.set("_connected_addr", LOBBY_ADDR)
@@ -346,6 +346,10 @@ func _attach_page_in(cs: Node, action: Callable) -> void:
 
 
 func on_create() -> void:
+	# ★ mp_lobby 的建房弹层是**点开才建**的(`_create_panel` 初值 null);直接调
+	#   `_on_create_pressed` 会在 `_set_create_visible(false)` 里对 null 取字段报错。
+	#   先开弹层:它建面板 + 选默认模式(筛选为空 ⇒ 1v1)。本探针要的正是 1v1。
+	_page.call("_open_create_dialog")
 	_page.call("_on_create_pressed")
 
 
@@ -368,23 +372,30 @@ func _tick_refresh(delta: float, done: bool) -> void:
 	_page.call("_on_refresh_pressed")
 
 
-# 在房间列表里按**房号**找那一行(三页的按钮文案都是 `"房间 %s …" % code`,逐字对应)。
+# 在房间网格里按**房号**找那一张房卡(mp_lobby 把房号记在卡的 `meta("code")` 上,卡本体
+# `text` 恒空 —— 旧页那套"按键钮文案找行"在统一页上恒找不到)。
 # ★ 找不到时调用方必须**立刻 FAIL**,不能静默等超时 —— 那种失败与"回局坏了"在输出上长得一样。
 func _find_row_button(code: String) -> Button:
-	if not is_instance_valid(_page) or _page.get("_list_box") == null or code == "":
+	if not is_instance_valid(_page) or code == "":
 		return null
-	for c in _page.get("_list_box").get_children():
-		if c is Button and (c as Button).text.begins_with("房间 %s" % code):
+	var grid: Node = _page.get("_grid")
+	if grid == null:
+		return null
+	for c in grid.get_children():
+		if c is Button and str(c.get_meta("code", "")) == code:
 			return c
 	return null
 
 
-# 列表里第一个**可点的**行(房号未知时的退路;c2 用 —— 大厅是本进程起的,只有 c1 那一间房)。
+# 网格里第一个**可点的**卡(房号未知时的退路;c2 用 —— 大厅是本进程起的,只有 c1 那一间房)。
 func _first_row_button() -> Button:
-	if not is_instance_valid(_page) or _page.get("_list_box") == null:
+	if not is_instance_valid(_page):
 		return null
-	for c in _page.get("_list_box").get_children():
-		if c is Button and not (c as Button).disabled:
+	var grid: Node = _page.get("_grid")
+	if grid == null:
+		return null
+	for c in grid.get_children():
+		if c is Button and str(c.get_meta("code", "")) != "" and not (c as Button).disabled:
 			return c
 	return null
 
@@ -421,7 +432,8 @@ func _on_room_list(rooms: Array) -> void:
 			_phase = 1
 			_phase_t = 0.0
 			_log("列表里看到对局中的房 %s → 试图加入(应当被拒)" % _room_code)
-			_page.call("_join_code", _room_code)
+			# 模式未知(空串)= 三张表都问一次 —— c3 只是想"试着进去",被谁拒都行。
+			_page.call("_join_code", _room_code, "")
 
 
 # 服务器广播的回合状态。★ PLAYING 的判据取**服务器广播的 round_state**(state==1),不是本地

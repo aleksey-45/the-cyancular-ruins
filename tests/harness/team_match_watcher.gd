@@ -1,11 +1,11 @@
 extends Node
 
 # 3v3 真链路探针(`tests/probe/team_match_probe.*`)的**观察者**(客户端子进程用)。
-# 挂在 `get_tree().root` 上:换场(真 `team_lobby` → 真 `team_game`)不会把它带走
+# 挂在 `get_tree().root` 上:换场(真 `mp_lobby` → 真 `team_game`)不会把它带走
 # → 它能在**换场之后**读真 `team_game` 实例的状态(与 royale_c2_watcher / reconnect_watcher 同款)。
 #
 # ★ 它做的四件事:
-#   ① 驱动**真大厅页**(`scenes/team_lobby.tscn`):建房 / 点房间列表加入 / 选边 / 房主开局。
+#   ① 驱动**真大厅页**(`scenes/mp_lobby.tscn`,筛选到 3v3):建房 / 点房卡加入 / 选边 / 房主开局。
 #      —— 这就是"A 册/B 册那五条从没被真跑过"里的①:等待室渲染路径(`team_room_state`)。
 #   ② 换场后接管**真 `team_game`**:注入脚本手柄(`team_bot_input.gd`),按快照驱动走位/开火。
 #   ③ 按相位采样并做**客户端侧**断言(收敛 / 队友弹穿透 / 换边 / 掉线观察窗)。
@@ -83,7 +83,7 @@ var idx := 1
 var lobby_port := 29200
 
 # ── 大厅阶段 ──
-var lobby: Node = null           # 真 team_lobby 页(探针把它挂在**探针场景**下 → 换场时被自然 free)
+var lobby: Node = null           # 真 mp_lobby 页(探针把它挂在**探针场景**下 → 换场时被自然 free)
 var _lobby_attached := false
 var _created := false
 var _joined := false
@@ -203,7 +203,7 @@ func _attach_lobby() -> void:
 	var cs := get_tree().current_scene
 	if cs == null:
 		return
-	lobby = load("res://scenes/team_lobby.tscn").instantiate()
+	lobby = load("res://scenes/mp_lobby.tscn").instantiate()
 	# ★★ `_with_lobby` 的快路判据是两个**字符串**相等(`_connected_addr == 地址框`),故只预置
 	#   已连**不够**:页的地址框初值取的就是 `PvpSession.server_address`,而它的生产默认是
 	#   **云服**(`core/net/pvp_session.gd` 初值 120.53.107.140)。不拨这一行,下面两个 set 白设 ——
@@ -221,6 +221,8 @@ func _attach_lobby() -> void:
 	lobby.set("_connected", true)
 	lobby.set("_connected_addr", LOBBY_ADDR)
 	cs.add_child(lobby)
+	# 统一大厅:筛选到 3v3(建房弹层按 `_mode` 选默认模式 ⇒ 建房走 team_create)。
+	lobby.call("_set_filter", PvpSession.MODE_TEAM)
 	_lobby_attached = true
 	_log("真大厅页已挂载(current_scene=%s)" % cs.name)
 
@@ -303,7 +305,7 @@ func _heartbeat(delta: float) -> void:
 # ★★ 本函数**只读页的 UI 状态、只按真按钮**,而页自己的信号处理(`_on_room_state` 里建等待室)
 #   与我的处理**同帧竞争**:我只在 `_ready` 里连信号(比页早 → 我的处理器先跑),所以"读页的
 #   等待室控件"这件事**不能**放在信号处理器里 —— 实测:`team_room_state` 刚到那一帧
-#   `_pick_a` 还是 null,当场 `_fail` 并**永久卡住**(选边永不发出 → 全流程停摆)。
+#   `_wait_pick_a` 还是 null,当场 `_fail` 并**永久卡住**(选边永不发出 → 全流程停摆)。
 #   故:信号处理器只登记原始数据,页的 UI 状态一律在这里(下一帧起)轮询取用。
 func _tick_lobby() -> void:
 	# ★ 换场那一刻页已被 free,而本帧的相位还没切走(先 tick 后判 `_entered`)→ 必须挡掉
@@ -336,6 +338,8 @@ func _tick_lobby() -> void:
 		if not _created and _phase_t > 0.6:
 			_created = true
 			_log("点「创 建 房 间」")
+			# 统一大厅的弹层是**点开才建**的(`_create_panel` 初值 null)⇒ 先开再按。
+			lobby.call("_open_create_dialog")
 			lobby.call("_on_create_pressed")
 	else:
 		_tick_lobby_join()
@@ -359,27 +363,27 @@ func _tick_lobby_join() -> void:
 	if code.is_empty():
 		return
 	_joined = true
-	var lb = lobby.get("_list_box")
-	if lb != null:
-		for c in lb.get_children():
-			if c is Button and str((c as Button).text).contains(code):
+	var grid: Node = lobby.get("_grid")
+	if grid != null:
+		for c in grid.get_children():
+			if c is Button and str(c.get_meta("code", "")) == code and not (c as Button).disabled:
 				(c as Button).pressed.emit()
-				_log("点房间列表行 %s(真按钮回调)" % code)
+				_log("点房卡 %s(真按钮回调)" % code)
 				return
-	_log("列表行未就绪 → 直接调 _join_room(%s)(列表行回调也是调它)" % code)
-	lobby.call("_join_room", code, "")
+	_log("房卡未就绪 → 直接调 _join_code(%s)(卡的回调也是调它)" % code)
+	lobby.call("_join_code", code, PvpSession.MODE_TEAM)
 
 
 var _refresh_t := 1.2
 
 
 func _list_button_count() -> int:
-	var lb = lobby.get("_list_box")
-	if lb == null:
+	var grid: Node = lobby.get("_grid")
+	if grid == null:
 		return 0
 	var n := 0
-	for c in lb.get_children():
-		if c is Button:
+	for c in grid.get_children():
+		if c is Button and str(c.get_meta("code", "")) != "":
 			n += 1
 	return n
 
@@ -417,14 +421,14 @@ func _tick_pick() -> void:
 		_pick_retry_t = 2.0
 	# 顺手登记等待室的渲染结果(此刻页的 `_on_room_state` 一定已经跑过了)
 	if _wait_rows == 0:
-		var wp = lobby.get("_wait_players")
+		var wp = lobby.get("_wait_body")
 		if wp != null:
 			_wait_rows = wp.get_child_count()
 		var wc = lobby.get("_wait_count")
 		if wc != null:
 			_wait_count_text = str((wc as Label).text)
 	var want := 1 if idx <= 3 else 2
-	var btn = lobby.get("_pick_a" if want == 1 else "_pick_b")
+	var btn = lobby.get("_wait_pick_a" if want == 1 else "_wait_pick_b")
 	if btn == null:
 		return     # 等待室还没建出来 → 下一帧再看(这里**不能** _fail)
 	if _wait_rows > 0 and not _pick_logged:
@@ -487,7 +491,7 @@ func _tick_start() -> void:
 		return
 	if lobby == null or not is_instance_valid(lobby):
 		return
-	var b = lobby.get("_start_btn")
+	var b = lobby.get("_wait_start")
 	if b == null or not (b as Button).visible:
 		return
 	_started = true

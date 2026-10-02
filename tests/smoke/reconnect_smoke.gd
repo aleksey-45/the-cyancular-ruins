@@ -36,9 +36,7 @@ const NETBUS_EXT := "res://core/net/net_bus_ext.gd"
 const SESSION := "res://core/net/pvp_session.gd"
 const LOBBY_PAGE := "res://scenes/lobby_page.gd"
 const MAIN_MENU := "res://scenes/main_menu.gd"
-const PAGE_1V1 := "res://scenes/matchmaking.gd"
-const PAGE_ROYALE := "res://scenes/royale_lobby.gd"
-const PAGE_TEAM := "res://scenes/team_lobby.gd"
+const PAGE_MP := "res://scenes/mp_lobby.gd"
 const GAME_ROYALE := "res://scenes/royale_game.gd"
 const GAME_TEAM := "res://scenes/team_game.gd"
 
@@ -215,16 +213,15 @@ func _initialize() -> void:
 	#   (行渲染与行按下是 Task 7,真链路是 Task 8)。于是下面这两种删法**一行报错都不会有**:
 	#     · `_finish_lobby_ready` 里那行 connect 删掉 ⇒ 大厅答的 `rejoin_denied` 没人接 ⇒
 	#       凭据永不清、那一行**永远可点**、每次点都是同一句失败;
-	#     · 三页 `_process` 里那条梯删掉 ⇒ 15s 兜底**根本不存在**,玩家停在一句"正在回到对局…"上。
+	#     · mp_lobby 的 `_process` 里那条梯删掉 ⇒ 15s 兜底**根本不存在**,玩家停在一句"正在回到对局…"上。
 	#   ★ 两条都按**函数体**判:全文件 `contains` 会被别处的同名调用喂绿(本仓的老毛病,
 	#     先例 = `team_room_smoke` ⑨②"按函数体判而不是全文件 contains")。
-	for p in [LOBBY_PAGE, "res://scenes/matchmaking.gd", "res://scenes/royale_lobby.gd",
-			"res://scenes/team_lobby.gd"]:
+	for p in [LOBBY_PAGE, PAGE_MP]:
 		_check(not _read(p).is_empty(), "读不到 %s" % p)
 	_check(_func_body(_code(_read(LOBBY_PAGE)), "_finish_lobby_ready").contains(
 			"NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)"),
 			"★ LobbyPage._finish_lobby_ready() 未接 `local_rejoin_denied` —— 大厅答「回不去」时凭据永不清、那一行永远可点")
-	for p in [PAGE_1V1, PAGE_ROYALE, PAGE_TEAM]:
+	for p in [PAGE_MP]:
 		_check(_func_body(_code(_read(p)), "_process").contains("_tick_rejoin_timeout()"),
 				"★ %s 的 _process 未接回局超时梯 —— 大厅 15s 没应答时玩家卡在「正在回到对局…」上" % p)
 
@@ -284,7 +281,7 @@ func _check_rejoin_lifecycle(ses: String) -> void:
 	_check(not ses.contains("func enter_mode"), "★ enter_mode() 已删除(合一后没有三个菜单按钮了)")
 
 
-# ── §⑤ 三页的接线(回局入口 + I2 的第二个条件)──
+# ── §⑤ mp_lobby 的接线(回局入口 + I2 的第二个条件)──
 func _check_rejoin_ui_wiring() -> void:
 	var mm := _code(_read(MAIN_MENU))
 	_check(not mm.is_empty(), "读不到 %s" % MAIN_MENU)
@@ -306,22 +303,21 @@ func _check_rejoin_ui_wiring() -> void:
 	_check(try_body.contains("can_rejoin_to(code, mode)") and try_body.contains("if not in_match"),
 			"★ LobbyPage.try_rejoin_row() 少了 in_match 那一问(I2):自己那间**还没开局**的房会走回局,"
 			+ "而大厅侧没有它的凭据 ⇒ 玩家看到一句与眼前这间房无关的「凭据失效」,普通加入还不发生")
-	for pair in [[PAGE_1V1, "_on_room_list", "1v1"], [PAGE_ROYALE, "_on_royale_rooms", "大乱斗"],
-			[PAGE_TEAM, "_on_team_rooms", "3v3"]]:
-		var body := _func_body(_code(_read(pair[0])), pair[1])
-		_check(body.contains("try_rejoin_row(code, in_match, MODE)"),
-				"★ %s 的 %s 调 try_rejoin_row 时没把 in_match 传进去(I2)" % [pair[2], pair[1]])
-		_check(body.contains("can_rejoin_to(code, MODE)"),
-				"★ %s 的 %s 不再问「这一行是不是我的房」(回局入口那一半没了)" % [pair[2], pair[1]])
-	# 三页记房号**统一**走 note_room(别再各自写 `PvpSession.room_code = …`)
-	for pair in [[PAGE_1V1, "_on_room_created"], [PAGE_1V1, "_on_room_joined"],
-			[PAGE_ROYALE, "_on_room_state"], [PAGE_TEAM, "_on_room_state"]]:
-		var t := _func_body(_code(_read(pair[0])), pair[1])
+	# mp_lobby 把三条列房应答都汇进 `_ingest_rooms` → `_redraw_cards` → `_make_card`,
+	# 「回局那一行」的两问(是不是我的房 / 把 in_match 传进去)收在 `_make_card` 一处。
+	var card := _func_body(_code(_read(PAGE_MP)), "_make_card")
+	_check(not card.is_empty(), "读不到 mp_lobby 的 _make_card 函数体(回局入口两条断言无从成立)")
+	_check(card.contains("try_rejoin_row(code, in_match, mode)"),
+			"★ mp_lobby 的 _make_card 调 try_rejoin_row 时没把 in_match 传进去(I2)")
+	_check(card.contains("can_rejoin_to(code, mode)"),
+			"★ mp_lobby 的 _make_card 不再问「这一行是不是我的房」(回局入口那一半没了)")
+	# 记房号**统一**走 note_room(别再自己写 `PvpSession.room_code = …`)
+	for fn in ["_on_room_created", "_on_room_joined", "_on_room_state_royale", "_on_room_state_team"]:
+		var t := _func_body(_code(_read(PAGE_MP)), fn)
 		_check(t.contains("PvpSession.note_room("),
-				"★ %s 的 %s 未走 PvpSession.note_room()(记房号 + 作废上一间凭据的唯一入口)"
-				% [pair[0].get_file(), pair[1]])
-	_check(_func_body(_code(_read(PAGE_1V1)), "_join_code").contains("_join_code_pending"),
-			"★ 1v1 的 _join_code 未把房号**暂存**到 _join_code_pending(I1):写在发 RPC 之前的话,"
+				"★ mp_lobby 的 %s 未走 PvpSession.note_room()(记房号 + 作废上一间凭据的唯一入口)" % fn)
+	_check(_func_body(_code(_read(PAGE_MP)), "_join_code").contains("_join_pending"),
+			"★ mp_lobby 的 _join_code 未把房号**暂存**到 _join_pending(I1):写在发 RPC 之前的话,"
 			+ "一次失败的加入会把 room_code 留成**别人的**那间房,自己那间房这一行此后永远是灰的")
 
 

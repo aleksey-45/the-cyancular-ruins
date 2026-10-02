@@ -294,7 +294,7 @@ func join_room(caller: int, code: String) -> void:
 	if room.started:
 		# 对局中(worker 已拉起):成员已转连对局,**照列在列表里但进不去**。
 		# ★ 文案不能再说"房间已满":房里可能只剩 1 人在线(对手掉线 / 自己还没转连),那是假话,
-		#   而且「房间已满」会命中大厅页 `matchmaking._on_server_message` 的**自动刷新**分支 ——
+		#   而且「房间已满」会命中大厅页 `mp_lobby._on_server_message` 的**自动刷新**分支 ——
 		#   刷新对这一个房毫无意义(它本来就该一直在列表里)。三模式文案**逐字统一**。
 		NetBus.reply(caller, "server_message", "该房间的对局已进行中,无法加入")
 		return

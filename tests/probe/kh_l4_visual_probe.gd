@@ -9,16 +9,16 @@ extends Control
 # 把 L4 换装过的三张界面定格成 PNG 交给控制者读图,同时打数值断言(可当 CI 用):
 #   _l4_1_mainmenu.png    主菜单(标题 + 至少 7 个按钮 + 版本号,浮现动画跑完的稳定态)
 #   _l4_2_pause.png       暂停菜单(继续 / 回到主菜单;底下一块纯色假装游戏画面)
-#   _l4_3_matchmaking.png 匹配界面(**T6 评审点名**:房间行字号从 KH 的 24 抬到 32 后
-#                         字宽 +33%,行最小宽 600 / 滚动区 640,长昵称可能横向溢出;
-#                         这页不拍下来,这类版式问题只能靠用户真机撞到)
+#   _l4_3_lobby.png       统一大厅(**T6 评审点名**:卡内文字字号从 KH 的 24 抬到 32 后
+#                         字宽 +33%,容器的宽度可能不够;这页不拍下来,长昵称横向溢出
+#                         这类版式问题只能靠用户真机撞到)
 # PNG 落 res://.superpowers/sdd/(该目录自带 .gitignore = *,不入库)。
 #
 # 三张图的数值腿:
 #  · 每张图与「纯背景基线」的逐像素差异 > 阈值(证明界面真的画出来了,不是空屏);
 #  · 主菜单:标题/版本号/各按钮矩形内都有足够亮像素(证明显浮动画真的跑完了);
 #  · 暂停:标题与两个按钮矩形内亮像素 > 0;
-#  · 匹配:房间行按钮矩形内亮像素 > 0,并**打印**房间行的实际文本宽度 vs 行宽 600
+#  · 匹配:房卡矩形内亮像素 > 0,并**打印**卡内最宽文本的实际宽度 vs 卡宽
 #    (T6 那条溢出的疑点,数值留给控制者判断,不在这里判死活);
 #  · 三张图两两不同(证明"切了界面"而不是"拍了三张一样的")。
 #
@@ -33,7 +33,7 @@ extends Control
 
 const OUT_DIR := "res://.superpowers/sdd"
 const MAIN_MENU_SCENE := "res://scenes/main_menu.tscn"
-const MATCHMAKING_SCENE := "res://scenes/matchmaking.tscn"
+const LOBBY_SCENE := "res://scenes/mp_lobby.tscn"
 
 # 主菜单**至少**要有这么多个入口(当前实际:单人/多人/Beta/设置/版本/退出 = 6;
 # 2026-10-03 三个联机入口收成一颗「多 人 模 式」,入口总数由 8 降到 6)。
@@ -80,7 +80,7 @@ func _ready() -> void:
 
 	await _state_main_menu()
 	await _state_pause()
-	await _state_matchmaking()
+	await _state_lobby()
 
 	_finish()
 
@@ -183,13 +183,13 @@ func _state_pause() -> void:
 	await _frames(2)
 
 
-# ── 态3:匹配界面(T6 点名的版式风险页)────────────────────────────
-func _state_matchmaking() -> void:
+# ── 态3:统一大厅(T6 点名的版式风险页)────────────────────────────
+func _state_lobby() -> void:
 	# 不进公网:改指 127.0.0.1(本机无大厅 → 快速失败);探针进程随即退出,不复原
 	PvpSession.server_address = "127.0.0.1"
-	var ps: PackedScene = load(MATCHMAKING_SCENE)
+	var ps: PackedScene = load(LOBBY_SCENE)
 	if ps == null:
-		_failures.append("%s 载入失败" % MATCHMAKING_SCENE)
+		_failures.append("%s 载入失败" % LOBBY_SCENE)
 		return
 	_match = ps.instantiate()
 	add_child(_match)
@@ -199,35 +199,47 @@ func _state_matchmaking() -> void:
 	_check(addr != null and addr.text == "127.0.0.1",
 			"态3:服务器地址框应显示 127.0.0.1(实际 %s)" % str(addr.text if addr != null else "<无控件>"))
 	# 房间列表:真实列表要等大厅应答(本机无大厅),这里直接喂一帧「服务器应答」的形状,
-	# 让房间行**真的被建出来**——它才是字号抬到 32 之后有溢出风险的那个控件。
+	# 让房卡**真的被建出来**——卡内文字才是字号抬到 32 之后有溢出风险的那个控件。
 	# 长昵称取真人会用的长度(12 字中文),不是极端值。
 	var long_name := "一个很长的昵称玩家名字"
 	_match.call("_on_room_list", [
 		{"code": "AB12", "players": 1, "names": ["Anon"]},
 		{"code": "CD34", "players": 2, "names": [long_name, "Anon"]},
 	])
+	# ★ mp_lobby 把三条列房应答汇进 `_ingest_rooms` → 三格到齐才自动重绘;本探针只喂一份
+	#   ⇒ **显式**再重绘一次,否则网格是空的(下面会红成"0 张卡")。
+	_match.call("_redraw_cards")
 	await _frames(4)
-	var rows := _find_buttons(_match)
-	var room_rows: Array[Button] = []
-	for b in rows:
-		if b.text.begins_with("房间"):
-			room_rows.append(b)
-	_check(room_rows.size() == 2, "态3:房间行 %d 行(喂了 2 个房间,期望 2 行)" % room_rows.size())
+	var cards: Array[Button] = []
+	for b in _find_buttons(_match):
+		if str(b.get_meta("code", "")) != "":
+			cards.append(b)
+	_check(cards.size() == 2, "态3:房卡 %d 张(喂了 2 个房间,期望 2 张)" % cards.size())
 
-	var img3 := await _shot("_l4_3_matchmaking.png")
-	for b in room_rows:
+	var img3 := await _shot("_l4_3_lobby.png")
+	var card_w: float = float(_match.call("_card_width"))
+	# ★ T6 评审的疑点:卡内最宽文本 vs 卡宽(数值只打印不判死,图留给控制者看)
+	for b in cards:
 		var bright := _bright_in(img3, b)
-		_check(bright >= BRIGHT_MIN, "态3:房间行矩形内亮像素 %d(<%d)" % [bright, BRIGHT_MIN])
-	# ★ T6 评审的疑点:房间行文本宽度 vs 行最小宽 600(数值只打印不判死,图留给控制者看)
-	for b in room_rows:
-		var f: Font = b.get_theme_font("font")
-		var size := b.get_theme_font_size("font_size")
-		if f != null:
-			var tw := f.get_string_size(b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-			print("[L4-VISUAL] 态3 房间行(字号 %d):文本宽 %.1f / 行最小宽 600 / 滚动区 640 → 余量 %.1f%s" % [
-					size, tw, 600.0 - tw, "  ← 溢出!" if tw > 600.0 else ""])
+		_check(bright >= BRIGHT_MIN, "态3:房卡矩形内亮像素 %d(<%d)" % [bright, BRIGHT_MIN])
+		var widest := 0.0
+		var widest_text := ""
+		var labels: Array[Label] = []
+		_collect_labels(b, labels)
+		for l in labels:
+			var f: Font = l.get_theme_font("font")
+			var size := l.get_theme_font_size("font_size")
+			if f == null or l.text.is_empty():
+				continue
+			var tw := f.get_string_size(l.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+			if tw > widest:
+				widest = tw
+				widest_text = l.text
+		print("[L4-VISUAL] 态3 房卡 %s:最宽文本「%s」宽 %.1f / 卡宽 %.1f → %s" % [
+				str(b.get_meta("code", "")), widest_text, widest, card_w,
+				"溢出!" if widest > card_w else "放得下"])
 	var d_bg3 := _diff_vs(img3, _baseline)
-	_check(d_bg3 > DIFF_MIN, "态3:匹配界面与纯背景差异只有 %d" % d_bg3)
+	_check(d_bg3 > DIFF_MIN, "态3:统一大厅与纯背景差异只有 %d" % d_bg3)
 	print("[L4-VISUAL] 态3 与背景差异 = %d(阈值 %d)" % [d_bg3, DIFF_MIN])
 
 
@@ -321,6 +333,13 @@ func _collect_buttons(n: Node, out: Array[Button]) -> void:
 		if c is Button:
 			out.append(c)
 		_collect_buttons(c, out)
+
+
+func _collect_labels(n: Node, out: Array[Label]) -> void:
+	for c in n.get_children():
+		if c is Label:
+			out.append(c)
+		_collect_labels(c, out)
 
 
 func _find_label(root: Node, text: String) -> Label:

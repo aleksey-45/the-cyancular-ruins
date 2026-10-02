@@ -29,14 +29,14 @@ extends SceneTree
 #  **2026-09-28 评审(大乱斗可证上界那批的收尾)** —— `_check` 里四处,都在函数体内,
 #   `CHECK_NAMES` 不变:
 #   ① 上界的链有**两环**,原实现只钉住环一(settings.gd 的钳位);补环二
-#      (`scenes/royale_lobby.gd` 的秒换算 —— **另一个会话的文件,只读不写**);
+#      (`scenes/mp_lobby.gd` 的秒换算);
 #   ② 判决串改**片段匹配**(Finding 4:整行字面量对无害改写响亮假红;但也不退到全文件
 #      片段 —— `TEAM_MATCH_ESTIMATE` 同为 1800,那半会静默失明);
 #   ③ 两个新读的文件各补一条"读不到就说读不到"的断言(Finding 5:否则诊断会误报成
 #      "钳位/换算变了")。
 #  **2026-09-28 终审(整支)→ 第三环(`_check` 内再加一条,`CHECK_NAMES` 仍不变)**:
 #   ④ 前面两条钉的都是**上界**这一侧;而**真正产生下发值**的是滑块那一侧 ——
-#      `scenes/royale_lobby.gd` 的 `tslider.max_value = 15.0` 与它的 `value_changed`
+#      `scenes/mp_lobby.gd` 的 `tslider.max_value = 15.0` 与它的 `value_changed`
 #      (`Settings.royale_match_min = v`,**不钳位**)。放宽它 ⇒ 环一环二照绿而上界失效。
 #      ★ 判据比**数值**而非子串:`contains("15")` 挡不住 `15.0 → 150.0`(实测它含子串)。
 #      ⇒ 链是**三环**;把它写进 header 是为了让下一个读到"两环"的人知道还有一环。
@@ -443,31 +443,41 @@ func _check(src: String) -> void:
 		_fail = ("★ Settings.royale_match_min 的装载钳位变了 —— ROYALE_MATCH_TIME_CEILING "
 				+ "(=30min×60=1800)不再盖得住它,大乱斗在局宽限的缺口复现。改钳位要一起改上界常量。"); return
 	# ── ★★ 2026-09-28 评审 Finding 1:上界的链有**两环**,上面刚钉的是**环一**,下面是**环二** ──
-	#   链的形状:`settings.gd` 把 `royale_match_min` 钳进 [1,30] 分钟(环一) → `royale_lobby.gd`
+	#   链的形状:`settings.gd` 把 `royale_match_min` 钳进 [1,30] 分钟(环一) → `mp_lobby.gd`
 	#   把它**换算成秒**下发(环二,`* 60.0`)。只钉环一时,把 `* 60.0` 改成 `* 120.0`(或干脆
 	#   传分钟)⇒ 实际下发的 `match_time` 翻倍/变形,而**上面所有断言照样全绿** —— 上界静默失效,
 	#   正是"前提断言"要防的那个形状,只是**下移了一环**。
-	# ★ `scenes/royale_lobby.gd` **属于另一个会话**,本文件**只读不写**。日后它若红了:
-	#   先看是不是那位改了这一行的形状(顺手回一句),别急着改本文件。
-	# ★ 判据同款取片段(Finding 4):定位**含 `"match_time"` 的那一行**,要求它同时含
+	# ★ 判据同款取片段(Finding 4):定位**含 `"match_time"` 且带换算**的那一行,要求它同时含
 	#   `Settings.royale_match_min` 与 `* 60.0` —— 不钉整行(容忍空白/换行/取值写法)。
-	var lobby_src := FileAccess.get_file_as_string("res://scenes/royale_lobby.gd")
+	#   ★ 2026-10-03(统一大厅):mp_lobby 里 `"match_time"` 出现**两次** —— 一次是建房弹层的
+	#     行键(`_form_rows["match_time"]`,不含换算),一次才是载荷里那一行。旧实现取**第一处**
+	#     ⇒ 会挑中行键、把这一环判成断裂(实测)。故这里改取**同时含 `Settings.royale_match_min`
+	#     的那一行**;一处都取不到才算这一环真的没了。
+	var lobby_src := FileAccess.get_file_as_string("res://scenes/mp_lobby.gd")
 	if lobby_src.is_empty():
-		_fail = "无法读取 scenes/royale_lobby.gd(读不到源码 ≠ 上界链第二环变了)"; return
+		_fail = "无法读取 scenes/mp_lobby.gd(读不到源码 ≠ 上界链第二环变了)"; return
+	var has_key := false
 	var conv := ""
 	for line in lobby_src.split("\n"):
-		if line.contains("\"match_time\""):
+		if not line.contains("\"match_time\""):
+			continue
+		has_key = true
+		if line.contains("Settings.royale_match_min"):
 			conv = line
 			break
+	if not has_key:
+		_fail = "scenes/mp_lobby.gd 里找不到 \"match_time\" 那一行(上界链第二环消失/改名?)"; return
 	if conv.is_empty():
-		_fail = "scenes/royale_lobby.gd 里找不到 \"match_time\" 那一行(上界链第二环消失/改名?)"; return
-	if not conv.contains("Settings.royale_match_min") or not conv.contains("* 60.0"):
 		_fail = ("★ 秒换算这一环断了 —— ROYALE_MATCH_TIME_CEILING 的链有**三环**,这是第二环:"
-				+ "royale_lobby.gd 的 \"match_time\" 必须仍由 Settings.royale_match_min × 60.0 得来,"
+				+ "mp_lobby.gd 的 \"match_time\" 必须仍由 Settings.royale_match_min × 60.0 得来,"
+				+ "否则上界静默失效(改换算要一起改上界常量)"); return
+	if not conv.contains("* 60.0"):
+		_fail = ("★ 秒换算这一环断了 —— ROYALE_MATCH_TIME_CEILING 的链有**三环**,这是第二环:"
+				+ "mp_lobby.gd 的 \"match_time\" 必须仍由 Settings.royale_match_min × 60.0 得来,"
 				+ "否则上界静默失效(改换算要一起改上界常量)"); return
 	# ── ★★ 2026-09-28 终审(整支)→ 链其实是**三环**,这里钉的是**第三环(写入端)** ──
 	#   环一 = `settings.gd` 的**装载**钳位 [1,30](上面钉着);环二 = 秒换算(上面钉着);
-	#   **环三 = `scenes/royale_lobby.gd` 那根滑块的 `max_value`(`tslider.max_value = 15.0`)**
+	#   **环三 = `scenes/mp_lobby.gd` 那根滑块的 `max_value`(`tslider.max_value = 15.0`)**
 	#   —— ★ 它才是**真正产生下发值**的那一环:`value_changed` 把滑块值**不钳位地**写进
 	#   `Settings.royale_match_min`(下面的 `Settings.royale_match_min = v`),而下发的
 	#   `match_time` 读的是**内存里那个值** —— 装载钳位 [1,30] 只在下一次**装载**时才生效。
@@ -479,10 +489,9 @@ func _check(src: String) -> void:
 	#   ★ 判据取**数值比较而不是子串**(与上面那两条片段判据略有不同,理由在下面):
 	#   `contains("15")` 挡不住 `15.0 → 150.0`(它含子串 "15"),而那正是本条要抓的"放宽"。
 	#   故把 `max_value = <数字>` 抽出来比数值;容忍空白/整数写法(与同族的"宁可响亮假红"同向)。
-	#   ★ `scenes/royale_lobby.gd` **属于另一个会话**,本文件**只读不写**。
 	var mt_body := ScanUtil.func_body(lobby_src, "_build_match_time_row")
 	if mt_body.is_empty():
-		_fail = "找不到 scenes/royale_lobby.gd 的 `_build_match_time_row` 函数体(读不到函数体 ≠ 第三环变了 —— 改名/内联?)"; return
+		_fail = "找不到 scenes/mp_lobby.gd 的 `_build_match_time_row` 函数体(读不到函数体 ≠ 第三环变了 —— 改名/内联?)"; return
 	var cap_re := RegEx.new()
 	if cap_re.compile("max_value\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)") != OK:
 		_fail = "正则编译失败(本函数自身的 bug,不是被扫文件的问题)"; return

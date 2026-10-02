@@ -1,7 +1,7 @@
 extends Node
 
 # 大乱斗 C2 探针的**观察者**(客户端子进程用;见 royale_c2_probe.gd 文件头)。
-# 挂在 get_tree().root 上:换场(真 royale_lobby → 真 royale_game)不会把它带走 →
+# 挂在 get_tree().root 上:换场(真 mp_lobby → 真 royale_game)不会把它带走 →
 # 它能在**换场之后**读真 royale_game 实例的 C2 状态。
 #
 # 流程:
@@ -57,7 +57,7 @@ const N_ALIVE_KEY := "\"ali" + "ve\""
 const LOBBY_ADDR := "127.0.0.1"
 
 var who := "c1"
-var lobby: Node = null           # 真 royale_lobby.tscn 实例(本进程里被驱动的那份)
+var lobby: Node = null           # 真 mp_lobby.tscn 实例(本进程里被驱动的那份)
 
 var _t := 0.0
 var _stage := 0
@@ -155,7 +155,7 @@ func _stage_lobby() -> void:
 		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
 	# ★★ 守卫:连上的必须是**本探针的大厅**,不能是云服。生产默认地址就是云
 	#   (`PvpSession.server_address` 初值 120.53.107.140),而本探针是**实例化真
-	#   `royale_lobby.tscn` 让它自己连** —— `royale_c2_probe._run_client` 漏了那句地址预置时,
+	#   `mp_lobby.tscn` 让它自己连** —— `royale_c2_probe._run_client` 漏了那句地址预置时,
 	#   两端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是 c1/c2 自己的
 	#   「已连接服务器」(它们确实连上了,只是连的是**别人**),而编排器一条 `玩家连入` 都没有
 	#   ⇒ 只剩一个 90 秒超时,看着像"大厅坏了"。当场点名,别让下一个人再从超时逆推。
@@ -165,6 +165,9 @@ func _stage_lobby() -> void:
 		return
 	if who == "c1":
 		_log("大厅已连,建房")
+		# 统一大厅:先设筛选再开弹层(弹层按 `_mode` 选默认模式),最后走真按钮回调建房。
+		lobby.call("_set_filter", PvpSession.MODE_ROYALE)
+		lobby.call("_open_create_dialog")
 		lobby.call("_on_create_pressed")   # 等价于点「创建房间」(公开房,人数上限默认 4)
 		_stage = 1
 		_stage_t = 0.0
@@ -178,7 +181,7 @@ func _stage_lobby() -> void:
 	if code.is_empty():
 		return
 	_log("用房间号 %s 加入" % code)
-	lobby.call("_join_room", code, "")   # 等价于点房间列表里的房间(公开房,邀请码空)
+	lobby.call("_join_code", code, PvpSession.MODE_ROYALE)   # 等价于点房间列表里的房间(公开房,邀请码空)
 	_stage = 1
 	_stage_t = 0.0
 

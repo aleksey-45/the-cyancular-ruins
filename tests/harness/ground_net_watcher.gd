@@ -1,7 +1,7 @@
 extends Node
 
 # 局内「捡枪 / 丢枪」探针的**观察者**(客户端子进程用;见 ground_net_probe.gd 文件头)。
-# 挂在 `get_tree().root` 上:真 royale_lobby → 真 royale_game 的那次换场不会把它带走 →
+# 挂在 `get_tree().root` 上:真 mp_lobby → 真 royale_game 的那次换场不会把它带走 →
 # 它能在换场之后直接读**真 royale_game 实例的运行时状态**(地面武器表 / 本地玩家背包)。
 #
 # 流程(每个客户端都跑;c1 建房、c2 用房间号加入):
@@ -45,13 +45,15 @@ const STUCK_EPS := 6.0           # 半秒内水平位移小于它 = 卡住
 #   别在那边再抄一份。
 const MODES := {
 	"royale": {
-		"lobby_scene": "res://scenes/royale_lobby.tscn",
+		"lobby_scene": "res://scenes/mp_lobby.tscn",
+		"mode": "royale",          # 统一大厅的筛选值(= PvpSession.MODE_ROYALE),决定建房走哪张表
 		"game_script": "royale_game.gd",
 		"needs_start": true,       # 房主得自按「开始游戏」
 		"has_suicide_key": true,   # K → NetBusExt.suicide_request → RoyaleHost.request_suicide_role
 	},
 	"duel": {
-		"lobby_scene": "res://scenes/matchmaking.tscn",
+		"lobby_scene": "res://scenes/mp_lobby.tscn",
+		"mode": "pvp",             # = PvpSession.MODE_PVP
 		"game_script": "pvp_game.gd",
 		"needs_start": false,      # 配对即开局(go_match),没有开始按钮
 		"has_suicide_key": false,  # ★ pvp_game 连 _unhandled_input 都没有 —— K 在这边**没有接收端**
@@ -176,6 +178,9 @@ func _stage_lobby() -> void:
 		return
 	if who == "c1":
 		_log("大厅已连,建房")
+		# 统一大厅:先设筛选(决定建房走哪张表),再开弹层(弹层按 `_mode` 选默认模式),最后按真按钮回调。
+		lobby.call("_set_filter", str(MODES[mode]["mode"]))
+		lobby.call("_open_create_dialog")
 		lobby.call("_on_create_pressed")
 		_stage = 1
 		_stage_t = 0.0
@@ -201,24 +206,15 @@ func _stage_lobby() -> void:
 	_stage_t = 0.0
 
 
-# 用房间号加入 —— 两页的入口不同,走各自**游戏自己的**那条路(不直接发 RPC,与"用 K 键验自杀"同款纪律)。
-#   大乱斗:royale_lobby._join_room(code, invite)
-#   1v1  :matchmaking 的入口是「加入」按钮,读的是 `_code_edit` 里的文本 → 填进去再按
+# 用房间号加入 —— 走游戏自己的**生产入口**(统一大厅 `_join_code(code, mode)`),不直接发 RPC
+# (与"用 K 键验自杀"同款纪律)。`mode` 用本模式的筛选值显式给出,避免走"模式未知三连发"。
 func _join_room_code(code: String) -> void:
-	if mode == "duel":
-		var edit: LineEdit = lobby.get("_code_edit")
-		if edit == null or not is_instance_valid(edit):
-			_log("拿不到 matchmaking._code_edit,无法加入")
-			return
-		edit.text = code
-		lobby.call("_on_join_pressed")
-		return
-	lobby.call("_join_room", code, "")
+	lobby.call("_join_code", code, str(MODES[mode]["mode"]))
 
 
-# 从大厅渲染出来的房间按钮里取第一个房号并加入。
-# ★ 读按钮**文本**而不是去 lobby 里翻内部字段:那份房间列表 lobby 只渲染不保存
-#   (`_on_royale_rooms` 里没有留存),而按钮文本是它自己的公开产物。
+# 从大厅渲染出来的房卡里取第一张可点的房号并加入。
+# ★ 读卡上的 `meta("code")` 而不是去 lobby 里翻内部字段:卡本体 `text` 恒空(内容自绘),
+#   房号只住在卡元数据上;而内部房间表 lobby 只渲染不保存(`_on_royale_rooms` 里没有留存)。
 func _join_first_public_room() -> bool:
 	# ★ 必须**主动催刷新**:大厅只在 `_ready` 与玩家点刷新时拉列表,而 c1 建房是在那之后
 	#   —— 不催的话 c2 守着开局那份空列表等到超时(实测:导出形态下就是这么卡死的)。
@@ -226,21 +222,18 @@ func _join_first_public_room() -> bool:
 	if now - _list_refresh_ms >= 1500:
 		_list_refresh_ms = now
 		lobby.call("_on_refresh_pressed")
-	var box: Node = lobby.get("_list_box")
-	if box == null or not is_instance_valid(box):
+	var grid: Node = lobby.get("_grid")
+	if grid == null or not is_instance_valid(grid):
 		return false
-	for c in box.get_children():
-		var t := ""
-		if c is Button:
-			t = (c as Button).text
-		elif c.get("text") != null:
-			t = str(c.get("text"))
-		for p in t.split(" "):
-			var s: String = p.strip_edges()
-			if s.length() >= 3 and s.is_valid_int():
-				_log("用大厅房间列表加入 %s" % s)
-				_join_room_code(s)
-				return true
+	for c in grid.get_children():
+		if not (c is Button) or (c as Button).disabled:
+			continue
+		var code := str(c.get_meta("code", ""))
+		if code.is_empty():
+			continue
+		_log("用大厅房间列表加入 %s" % code)
+		_join_room_code(code)
+		return true
 	return false
 
 
@@ -248,12 +241,12 @@ func _stage_wait_game() -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_game_scene(cs):
 		# ★ 只有大乱斗需要有人按「开始游戏」(1v1 是配对即开局,没有那个按钮 ——
-		#   去 `lobby.get("_start_btn")` 只会拿到 null,按不动)。
+		#   去 `lobby.get("_wait_start")` 只会拿到 null/不可见,按不动)。
 		#   导出形态下**没有裁判进程**替我们按 → 房主(c1)自己按,且走游戏自己的路径
 		#   (emit 那个按钮的 pressed),不直接发 RPC:与用 K 键验自杀同款纪律。
 		if bool(MODES[mode]["needs_start"]) and who == "c1" \
 				and lobby != null and is_instance_valid(lobby):
-			var btn: Button = lobby.get("_start_btn")
+			var btn: Button = lobby.get("_wait_start")
 			var now := Time.get_ticks_msec()
 			if btn != null and is_instance_valid(btn) and now - _start_ms >= 2000:
 				_start_ms = now
@@ -532,14 +525,12 @@ func _is_game_scene(n: Node) -> bool:
 	return s != null and str(s.resource_path).ends_with(str(MODES[mode]["game_script"]))
 
 
-# 本模式的大厅场景是不是这一个?按脚本路径认(两个大厅页都 extends LobbyPage,
-# 用脚本名区分 royale_lobby / matchmaking)。
+# 本模式的大厅场景是不是这一个?按脚本路径认(两个对局模式共用同一份统一大厅 mp_lobby)。
 func _is_lobby_scene(n: Node) -> bool:
 	var s = n.get_script()
 	if s == null:
 		return false
-	var p := str(s.resource_path)
-	return p.ends_with("royale_lobby.gd") or p.ends_with("matchmaking.gd")
+	return str(s.resource_path).ends_with("mp_lobby.gd")
 
 
 # ── 断言:判据一律是"这条路真的被走到了",不是"没报错" ──

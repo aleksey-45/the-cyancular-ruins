@@ -52,12 +52,15 @@ const P_C := 103
 #   阶段 2-B Task 7 加 ⑧ 共 **1** 条 → **38**)。
 #   ★ 比 brief 的 30 多一条:第 ④ 条(走信号那条**接线**断言)—— brief 只列了三条直调 handler
 #     的断言,而"connect 那行被删"这一档**三条都照绿**(见 `_phase_rejoin` 的函数头)。
-#   ★ ⑧ 是**一条聚合**断言(内部三页逐页核对、失败时逐页点名),**不是三条** —— 相⑧要断的是
-#     三页共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
+#   ★ ⑧ 是**一条聚合**断言(内部三个模式逐一核对、失败时逐项点名),**不是三条** —— 相⑧要断的是
+#     三个模式共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
 #   ★ 相⑨(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
 #   ★ 相⑦c(大厅合一 Task 2:凭据自带模式,2026-10-03)加 **2** 条 → **47**。
 #   ★ 相⑦d(同批:`note_room()` 的**行为**断言)加 **5** 条 → **52**。
 const EXPECTED_CHECKS := 52
+
+# 相⑧ 挂在**统一大厅**上(三个模式各渲染一次,同一份判据)。
+const MP_LOBBY_SCENE := "res://scenes/mp_lobby.tscn"
 
 var _rm: Node = null
 var _checks := 0
@@ -477,7 +480,7 @@ func _find_row(arr: Array, code: String) -> Dictionary:
 #     `room_sweep_smoke`、`team_room_smoke`、以及四个场景加载**全部照绿** —— 这一条是唯一咬得住的。
 # ★ 页面**不入树**(与 `lobby_row_probe` 同一手法):`_ready` 一跑就会 `_request_list(...)` 去连大厅
 #   (1v1 页默认云地址)⇒ 本探针不开任何 socket、也不碰用户的 7777。故手工摆好渲染函数要读的
-#   两个成员(`_list_box` / `_status`),再直调那三个渲染函数。
+#   两个成员(`_grid` / `_status`),再直调渲染函数(见 `_own_row_reason`)。
 # ★ 判"点不动"用的是 `Button.pressed` 上的**连接数**:`disabled` 只是观感,真正的"点了没有反应"
 #   是**没有连任何 handler**(与 `lobby_row_probe` 同款)。
 # ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**(同相⑦)。
@@ -485,7 +488,7 @@ func _phase_own_row_clickable() -> void:
 	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.rejoin,
 			PvpSession.room_mode]
 	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9001"
-	# 三页各喂三行:**9001 = 我的房**(凭据里的房号就是它,载荷仍标 in_match)、
+	# 三个模式各喂三行:**9001 = 我的房**(凭据里的房号就是它,载荷仍标 in_match)、
 	# **9002 = 别人的对局中的房**(同样是 in_match,凭据不是它的)、9003 = 普通未满房(正向对照)
 	var rows_1v1: Array = [
 		{"code": "9001", "players": 2, "names": ["阿甲", "bob"], "in_match": true},
@@ -499,38 +502,38 @@ func _phase_own_row_clickable() -> void:
 	]
 	var bad: Array[String] = []
 	var reasons: Array = [
-			_own_row_reason("res://scenes/matchmaking.tscn", "_on_room_list", "1v1", rows_1v1,
-					PvpSession.MODE_PVP),
-			_own_row_reason("res://scenes/royale_lobby.tscn", "_on_royale_rooms", "大乱斗", rows_n,
-					PvpSession.MODE_ROYALE),
-			_own_row_reason("res://scenes/team_lobby.tscn", "_on_team_rooms", "3v3", rows_n,
-					PvpSession.MODE_TEAM)]
+			_own_row_reason("1v1", rows_1v1, PvpSession.MODE_PVP),
+			_own_row_reason("大乱斗", rows_n, PvpSession.MODE_ROYALE),
+			_own_row_reason("3v3", rows_n, PvpSession.MODE_TEAM)]
 	for r: String in reasons:
 		if r != "":
 			bad.append(r)
 	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]
 	PvpSession.room_code = keep[2]; PvpSession.rejoin = keep[3]
 	PvpSession.room_mode = keep[4]
-	# ★ 一条聚合断言(三页逐页核对,失败时逐页点名)—— 条数约定见 EXPECTED_CHECKS 的注释
+	# ★ 一条聚合断言(三个模式逐次核对,失败时逐项点名)—— 条数约定见 EXPECTED_CHECKS 的注释
 	_check(bad.is_empty(),
-			"⑧ ★ 三页:持凭据者自己那间房那一行**可点**(点它走回局)、别人的对局中的房仍点不动 —— 实得:%s"
-			% ("三页全对" if bad.is_empty() else " / ".join(bad)))
+			"⑧ ★ 三个模式:持凭据者自己那间房那一行**可点**(点它走回局)、别人的对局中的房仍点不动 —— 实得:%s"
+			% ("三种模式全对" if bad.is_empty() else " / ".join(bad)))
 
 
-# 渲染一页的房间列表,只判那一行;返回 "" = 全对,否则返回"页:哪个条件不成立"
-# ★ `mode` = 本页所属模式(凭据判据 `can_rejoin_to(code, mode)` 要按页自己的模式过;
-#   三张注册表的房号空间共用,不逐页设模式的话"我的房"在三页里都判不出来)。
-func _own_row_reason(scene_path: String, fn: String, tag: String, rows: Array, mode: String) -> String:
-	var p: Node = (load(scene_path) as PackedScene).instantiate()
-	var box := VBoxContainer.new()
+# 渲染一个模式的房间网格,只判那一行;返回 "" = 全对,否则返回"模式:哪个条件不成立"
+# ★ `mode` = 本格的模式(凭据判据 `can_rejoin_to(code, mode)` 要按它过;
+#   三张注册表的房号空间共用,不逐次设模式的话"我的房"在三个模式里都判不出来)。
+func _own_row_reason(tag: String, rows: Array, mode: String) -> String:
+	var p: Node = (load(MP_LOBBY_SCENE) as PackedScene).instantiate()
+	var grid := GridContainer.new()
 	var st := Label.new()
-	p.set("_list_box", box)     # 不入树 ⇒ `_ready` 不跑 ⇒ 这两个成员还是 null,得手工摆
+	p.set("_grid", grid)        # 不入树 ⇒ `_ready` 不跑 ⇒ 这两个成员还是 null,得手工摆
 	p.set("_status", st)
 	PvpSession.room_mode = mode
-	p.call(fn, rows)
-	var mine := _row_button(box, "9001")     # 我的房(房号与凭据一致)
-	var other := _row_button(box, "9002")    # 别人的对局中的房(无凭据)
-	var open_ := _row_button(box, "9003")    # 普通未满房(正向对照)
+	# ★ mp_lobby 把三条列房应答都汇进 `_ingest_rooms` → 三格到齐才自动 `_redraw_cards`;
+	#   本探针只喂一份 ⇒ ingest 之后**显式**重绘一次,否则网格是空的(断言会读成"行没画出来")。
+	p.call("_ingest_rooms", mode, rows)
+	p.call("_redraw_cards")
+	var mine := _row_button(grid, "9001")     # 我的房(房号与凭据一致)
+	var other := _row_button(grid, "9002")    # 别人的对局中的房(无凭据)
+	var open_ := _row_button(grid, "9003")    # 普通未满房(正向对照)
 	var why := ""
 	if mine == null or other == null or open_ == null:
 		why = "行没画出来"
@@ -546,14 +549,16 @@ func _own_row_reason(scene_path: String, fn: String, tag: String, rows: Array, m
 		why = "别人那间对局中的房接上了 handler"
 	elif open_.disabled or open_.pressed.get_connections().size() != 1:
 		why = "普通未满的房变得点不动了(判据写成了 `not mine` 之类 —— 正常加入被弄坏)"
-	box.free()   # 两个成员不是 p 的子节点,p.free() 管不到它们(否则退出时报 orphan)
+	grid.free()   # 两个成员不是 p 的子节点,p.free() 管不到它们(否则退出时报 orphan)
 	st.free()
 	p.free()
 	return "" if why == "" else "%s:%s" % [tag, why]
 
 
+# 按**卡片元数据**找那一张(房号住在 `meta("code")` 上 —— 卡本体 `text` 恒空,
+# 内容全部自绘;旧页那套"按键钮文案找行"在统一页上恒找不到)。
 func _row_button(box: Node, code: String) -> Button:
 	for c in box.get_children():
-		if c is Button and (c as Button).text.contains(code):
+		if c is Button and str(c.get_meta("code", "")) == code:
 			return c
 	return null

@@ -226,7 +226,7 @@ func _wait_room_code() -> void:
 	NetBusExt.rpc_id(1, "royale_join", code, INVITE)
 
 
-# go_match 在大厅 peer 的 poll 调用栈内到达 → 转连必须推到帧末(与 royale_lobby 同款)
+# go_match 在大厅 peer 的 poll 调用栈内到达 → 转连必须推到帧末(与 mp_lobby 同款)
 func _on_go_match(role: int, port: int) -> void:
 	PvpSession.role = role
 	_do_go_match.call_deferred(role, port)
@@ -256,7 +256,7 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	if spawn.x < 0:
 		_finish(false, "match_start 出生点无效")
 		return
-	# RPC 在 poll 调用栈内到达,栈内建大物理世界会偶发原生段错误(与 royale_lobby 同款)
+	# RPC 在 poll 调用栈内到达,栈内建大物理世界会偶发原生段错误(与 mp_lobby 同款)
 	_enter_match.call_deferred()
 
 

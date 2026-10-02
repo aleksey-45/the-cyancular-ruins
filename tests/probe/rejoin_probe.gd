@@ -16,7 +16,7 @@ extends Node
 #
 # ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══
 #   本进程 = **真大厅**(`NetBus.start_server(LOBBY_PORT)` + `RoomManager`),不进 7777
-#   c1/c2/c3 = 3 个 headless 客户端,各自跑**真** `matchmaking` → **真** `pvp_game`
+#   c1/c2/c3 = 3 个 headless 客户端,各自跑**真** `mp_lobby` → **真** `pvp_game`
 #   worker = 由**真** `RoomManager._start_match` 经 `WorkerLauncher.spawn_worker` 拉起
 #            (与生产逐字同一条路径;探针只把起投端口拨到池外)
 #

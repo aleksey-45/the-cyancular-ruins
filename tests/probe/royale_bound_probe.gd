@@ -13,7 +13,7 @@ extends Node
 #     c2(role 3)→ 假 peer 退出。房内成员数 2,而 c2 手持 **role 3** —— 正是 B1 的复现条件
 #     (worker 早先用「成员数」当 role 上界,会把 c2 当串线踢掉,只剩 1 个 claim,超时梯走完
 #     退出,两名客户端永久卡在「连接对局服务器超时」且无恢复路径)。
-#   · 两个客户端进程驱动的是**真 royale_lobby.tscn**(真 `_on_match_start` 的帧末切场景、
+#   · 两个客户端进程驱动的是**真 mp_lobby.tscn**(真 `_on_match_start` 的帧末切场景、
 #     真缓存/交接),换场后消费者是**真 royale_game.tscn** —— B2 的复现条件(那三条载荷
 #     与 match_start 同一次 poll 到达时,新场景还不存在)。断言在换场**之后**读新场景的状态。
 #   观察者常驻 root、跨换场存活,见 royale_bound_watcher.gd。
@@ -74,7 +74,7 @@ func _run_payload_case() -> void:
 	w.who = "payload"
 	w.mode = "wait"
 	get_tree().root.add_child.call_deferred(w)
-	_lobby = load("res://scenes/royale_lobby.tscn").instantiate()
+	_lobby = load("res://scenes/mp_lobby.tscn").instantiate()
 	add_child.call_deferred(_lobby)
 	print("PROBE: 同一次 poll 模式:载荷注入后立刻触发真大厅换场")
 
@@ -122,7 +122,7 @@ func _run_client() -> void:
 	watcher.who = _role
 	# 本节点还在自己的 _ready 里(父级 root 正忙于装载子节点)→ 两处 add_child 都得推迟到帧末
 	get_tree().root.add_child.call_deferred(watcher)   # 挂 root:换场不会把它带走
-	watcher.lobby = load("res://scenes/royale_lobby.tscn").instantiate()
+	watcher.lobby = load("res://scenes/mp_lobby.tscn").instantiate()
 	add_child.call_deferred(watcher.lobby)   # 真大厅进树 → 它的 _ready 订阅/连接全是真路径
 	print("PROBE[%s]: 真大厅场景已挂载,等待连接 127.0.0.1" % _role)
 

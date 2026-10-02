@@ -223,7 +223,7 @@ func _run_client() -> void:
 	if FileAccess.file_exists(lp):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
 	# ★★ **必须把地址拨到本探针的大厅**。生产默认是**云服**(`PvpSession.server_address` 初值
-	#   120.53.107.140),而客户端这一侧是**实例化真 `royale_lobby.tscn`** 让它自己连 ——
+	#   120.53.107.140),而客户端这一侧是**实例化真 `mp_lobby.tscn`** 让它自己连 ——
 	#   不拨的话两端会静默连到**云上那台真服务器**(还会在它上面真的建/进房间),
 	#   而编排器(本进程的 7777 大厅)**一条 `玩家连入` 都收不到** ⇒ `royale_create_requested`
 	#   永不发射 ⇒ `go.txt` 恒空、c1 卡阶段 1、c2 卡阶段 0,最后只给一个 90 秒超时。
@@ -235,7 +235,7 @@ func _run_client() -> void:
 	PvpSession.server_address = LOBBY_ADDR
 	var watcher: Node = load("res://tests/harness/royale_c2_watcher.gd").new()
 	watcher.who = _role
-	watcher.lobby = load("res://scenes/royale_lobby.tscn").instantiate()
+	watcher.lobby = load("res://scenes/mp_lobby.tscn").instantiate()
 	# 本节点还在自己的 _ready 里(父级 root 正忙于装载子节点)→ 两处 add_child 都得推迟到帧末
 	get_tree().root.add_child.call_deferred(watcher)
 	add_child.call_deferred(watcher.lobby)
