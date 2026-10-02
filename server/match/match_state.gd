@@ -214,6 +214,17 @@ func _rpc_all(method: String, args: Array = [], except_role: int = -1,
 		NetBus.callv("rpc_id", [peer, method] + args)
 
 # Beta 时间玩法的广播走扩展节点(NetBus 纪律:原方法表不动)。
+#
+# ★★ 2026-10-03 修:下面那个 `callv` 原本发在 **NetBus** 上,而 `time_state` / `sub_destroyed`
+#   两个 RPC 声明在 **NetBusExt**(见 `net_bus_ext.gd` 那两条 `@rpc("authority","reliable")`)——
+#   `NetBus` 上根本没有这两个方法。Godot 发 RPC 前会查发送端的 RPC 配置表
+#   (`scene_rpc_interface.cpp`:`ERR_FAIL_COND_V_MSG(rpc_id == UINT16_MAX, … "Unable to get the
+#   RPC configuration for the function …")`),查不到就**直接 return,`_send_rpc` 根本走不到**
+#   ⇒ 这两个 RPC **从未发出**,且每次尝试打一条错误(`time_state` 是 10Hz,即每 100ms 一条)。
+#   本仓其它地方发 NetBusExt 的 RPC 一律写 `NetBusExt.rpc_id(...)`(大厅 / `hit_confirm` 都是)。
+#   ★ 一直没被发现:worker 子进程的 stdout **不继承进探针管道**(本仓自己登记的盲区)。
+#   ★ 影响面:`time_state` = PvP 怀表镜像;`sub_destroyed` = B18 的"PvP 拆砖广播"(防幽灵墙)。
+#   ⇒ 这两个函数**首次真正生效**;需要一次真链路复核。
 func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
 		live_only: bool = true) -> void:
 	for role in peer_by_role:
@@ -226,7 +237,7 @@ func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
 		if live_only and not NetBus.is_peer_live(peer):
 			continue
 		# callv 展开实参:rpc_id 是变参口,而本函数要按调用方给的 args 转发。
-		NetBus.callv("rpc_id", [peer, method] + args)
+		NetBusExt.callv("rpc_id", [peer, method] + args)
 
 
 # `round_state` 的**唯一出口**:三个生产者(`MatchRound` / `RoyaleHost` / `TeamHost`)各自拼完

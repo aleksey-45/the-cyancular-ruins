@@ -323,10 +323,7 @@ func _tick_beta_rewind(delta: float) -> void:
 				_rw_t0[r] = now
 			on = true
 		elif not want and on:
-			src.frozen = false
-			p.remove_meta("time_rewinding")
-			_rw_on[r] = false
-			_rw_trail[r] = []
+			_finish_rw(r, p, src)
 			continue
 		if not on:
 			_record_rw_frame(r, p, now)
@@ -334,10 +331,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		# 回溯中:烧颗粒(rewind_burn/s);游标 3×→1× ramp;驱动自身与自己的子弹
 		acc.spend(delta, time_economy.rules.rewind_burn)
 		if acc.balance <= 0.0:
-			src.frozen = false
-			p.remove_meta("time_rewinding")
-			_rw_on[r] = false
-			_rw_trail[r] = []
+			_finish_rw(r, p, src)
 			continue
 		var cur := float(_rw_cursor.get(r, 0.0))
 		var mult := lerpf(TimeParams.REWIND_START_MULT, 1.0,
@@ -352,6 +346,40 @@ func _tick_beta_rewind(delta: float) -> void:
 			if trail.size() > 10:
 				trail.pop_front()
 			_rw_trail[r] = trail
+
+
+## 退出回溯(**两条退出路径共用**:主动松开 / 颗粒耗尽)。
+##
+## ★★ 2026-10-03 修 —— **录像带模型**:把"被复写的未来"从环缓上**裁掉**。
+##   原实现只做 `frozen=false` / 摘 meta / 清 trail,**不碰 `_rw_buf`** ⇒ 那些"已经被回溯抹掉"
+##   的帧还留在环缓里,而寻帧是 `target = buf.back().t - cursor`(从**当前末尾**往回数)——
+##   于是**下一次回溯会先把那段被抹掉的未来倒放一遍**(玩家看到的就是"回溯过的时间又出现了")。
+##   单机那条线早就修过(`world_rewind.gd` 的 `finish()`,KH 的 D3「两次回溯串带」),
+##   PvP 这份是后来写的、漏了这一步。两边的语义现在对齐。
+##
+## 保留语义与单机一致:裁完若一帧不剩,至少留 1 帧(倒到了磁带最老处 ⇒ 世界停在那帧上,
+## 磁带从它重新起算)。裁完把游标归零(下次从新末尾重新起算)。
+func _finish_rw(r: int, p: Node2D, src: PacketInputSource) -> void:
+	src.frozen = false
+	p.remove_meta("time_rewinding")
+	_rw_on[r] = false
+	_rw_trail[r] = []
+	var buf: Array = _rw_buf.get(r, [])
+	if buf.is_empty():
+		_rw_cursor[r] = 0.0
+		return
+	# 出口时刻 = 当前末尾往回走了 cursor 秒。晚于它的一律是被复写的未来。
+	var exit_t := float(buf[buf.size() - 1]["t"]) - float(_rw_cursor.get(r, 0.0))
+	var kept := 0
+	for i in range(buf.size()):
+		if float(buf[i]["t"]) <= exit_t:
+			kept = i + 1
+	if kept == 0:
+		kept = 1
+	if kept < buf.size():
+		buf.resize(kept)
+		_rw_buf[r] = buf
+	_rw_cursor[r] = 0.0
 
 
 # 非回溯期:20Hz 采样自己的状态(超 rewind_buffer_seconds 裁剪)

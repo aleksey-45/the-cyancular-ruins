@@ -109,6 +109,16 @@ func _climb_foot_offset() -> float:
 
 
 # 时间场倍率(加速 ×2;正常 1)。回溯整帧由根早退接管,故 0 一律当 1 处理。
+#
+# ★★ 2026-10-03 修:**PvP 下这条原先恒返回 1** —— `TimeField.current` 只由单机 Level0 创建,
+#   PvP/菜单恒 null ⇒ `player_speed_mult()` 恒 1.0,与本文件"加速时爬梯/爬链也按主角时间加快"
+#   的注释自相矛盾(一下水/一上梯,加速就没了)。
+#   改成与根 `player.gd:191` **同一条判据**:有世界时间场就走它,否则读自己那个
+#   `pvp_haste_mult`(worker 与本端预测各自每帧写的同一字段)。
 func _time_mult() -> float:
-	var m := TimeField.player_speed_mult()
+	var m := 1.0
+	if TimeField.current != null:
+		m = TimeField.player_speed_mult()
+	elif body != null:
+		m = float(body.get("pvp_haste_mult"))
 	return m if m > 0.0 else 1.0
