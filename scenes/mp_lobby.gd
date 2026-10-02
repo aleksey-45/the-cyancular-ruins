@@ -46,6 +46,25 @@ var _max_slider: HSlider = null
 var _time_slider: HSlider = null
 var _weapon_checks: Array[CheckButton] = []   # 建房时读勾选态(与旧大乱斗页同款)
 
+# ── 等待室(Task 5)──
+# 三个模式共用**一个**面板(每次 `_show_wait_room` 清空重填),而不是每个 handler 各建一份。
+# ★ 名单行数 / 按钮显隐 / 颜色行显隐**全部**收在 `_show_wait_room` 一处 —— 那是本页
+#   "按模式分叉"的第二个(也是最后一个)落点(第一个是 `_apply_create_form`)。
+var _wait_panel: PanelContainer = null
+var _wait_box: VBoxContainer = null       # 面板根(标题/正文/尾部都挂在它下面)
+var _wait_title: Label = null
+var _wait_body: VBoxContainer = null      # 名单/分队容器:每次重填前整批清空
+var _wait_count: Label = null
+var _wait_hue: Control = null             # 角色颜色行(1v1/大乱斗可见;3v3 用队色 ⇒ 收起)
+var _wait_start: Button = null
+var _wait_pick_a: Button = null
+var _wait_pick_b: Button = null
+var _wait_leave: Button = null
+# 面板当前画的是**哪个模式** —— 「开始游戏」/「退出房间」按它分派。
+# ★ 与 `_current_mode` 分开:`_current_mode` 是"我所在那间房"的模式(转连选场景用),
+#   而这里是"面板上画的形态"。两者通常相等,但语义不同,别合并。
+var _wait_mode := ""
+
 # **我当前所在那间房**的模式(转连时按它选场景)。
 # ★★ 它与 `PvpSession.room_mode` **不是一回事**:后者是**凭据**的模式(供列表里判"这一行
 #   是不是我的房"),在"建了房但 `note_room` 还没跑到"这一档上是**空串** —— 拿它去分派
@@ -495,6 +514,9 @@ func _on_room_created(code: String) -> void:
 	# ★ 这里**无条件**发 —— 走到本 handler 的就是建房者,也就是房主。
 	NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
+	# 建房成功 ⇒ 亮起等待室(1v1 旧页建房后没有任何"我在等"的界面,状态只落状态栏)。
+	# 建房者 role 恒 1(见 `lobby_rooms.create_room` 的 `room.player_role[caller] = 1`)。
+	_show_wait_room(_pvp_wait_state(code, 1), PvpSession.MODE_PVP)
 
 
 # 服务端答"加进去了"。★ 房号从 `_join_pending` 取(`room_joined` 载荷只有 role)——
@@ -503,6 +525,8 @@ func _on_room_created(code: String) -> void:
 func _on_room_joined(role: int) -> void:
 	# ★★ 模式**直接定死**,不从别处推 —— 触发的是这条 handler,就只可能是 1v1。
 	_current_mode = PvpSession.MODE_PVP
+	# 房号先拷出来:`room_joined` 载荷只有 role,房号唯一来源是 `_join_pending`。
+	var code := _join_pending
 	if not _join_pending.is_empty():
 		PvpSession.note_room(_join_pending, _current_mode)
 		_join_pending = ""
@@ -512,6 +536,9 @@ func _on_room_joined(role: int) -> void:
 	#   (`join_room` 立即回,royale/team 是 call_deferred + await)。见 `_probe_multi_join`。
 	_claim_multi_reply()
 	_status.text = "已加入,等待开战……"
+	# 加入成功 = 「我在等」这件事该有个界面(旧 1v1 页只落状态栏)。
+	if not code.is_empty():
+		_show_wait_room(_pvp_wait_state(code, role), PvpSession.MODE_PVP)
 
 
 func _on_room_state_royale(state: Dictionary) -> void:
@@ -529,6 +556,7 @@ func _on_room_state_royale(state: Dictionary) -> void:
 	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
 		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
 	_status.text = "已进入大乱斗房间 %s,等待开局…" % code
+	_show_wait_room(state, PvpSession.MODE_ROYALE)
 
 
 func _on_room_state_team(state: Dictionary) -> void:
@@ -543,6 +571,7 @@ func _on_room_state_team(state: Dictionary) -> void:
 	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
 		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
 	_status.text = "已进入 3v3 房间 %s,等待选边/开局…" % code
+	_show_wait_room(state, PvpSession.MODE_TEAM)
 
 
 # 大厅文本播报。
@@ -977,6 +1006,272 @@ func _unhandled_input(ev: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+# ── 等待室(Task 5)─────────────────────────────────────────────────
+#
+# 三个模式共用**一个**面板:建一次,之后每次 `_show_wait_room` 清空重填(设计 §3.5)。
+#   · 1v1    : `等待对手… 1 / 2`(1v1 两人凑齐**自动**开局 ⇒ 没有「开始游戏」)
+#   · 大乱斗 : 名单 + `N / M 人` + 房主「开始游戏」
+#   · 3v3    : A 队 / B 队 / 未选边三档 + 两颗选边(自己那支置灰)+ 房主「开始游戏」(两队各满)
+#   · 共同尾巴:角色颜色行(**仅 1v1 / 大乱斗**;3v3 用队色)+「退出房间」
+#
+# ★★ 四条 `_show_wait_room` 调用点 = 1v1 建房 / 1v1 加入 / 两个 `room_state`(见各 handler);
+#    `_hide_wait_room()` 的**唯一**调用点是 `_on_return_to_lobby()`(转连与 claim 超时梯、
+#    回局失败、大乱斗/3v3 的「退出房间」全都汇到它)。漏了它 = 退回大厅后等待室还盖在屏上,
+#    而且**一行报错都没有** —— 玩家以为还卡在房里。
+
+
+func _build_wait_panel() -> void:
+	_wait_panel = PanelContainer.new()
+	_wait_panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	_wait_panel.visible = false
+	add_child(_wait_panel)
+
+	_wait_box = VBoxContainer.new()
+	_wait_box.add_theme_constant_override("separation", 14)
+	_wait_box.custom_minimum_size = Vector2(720, 0)
+	_wait_panel.add_child(_wait_box)
+
+	_wait_title = UiFactory.label("", 32, UiFactory.C_ACCENT)
+	_wait_box.add_child(_wait_title)
+
+	_wait_body = VBoxContainer.new()
+	_wait_body.add_theme_constant_override("separation", 8)
+	_wait_box.add_child(_wait_body)
+
+	_wait_count = UiFactory.label("", 32, UiFactory.C_TEXT)
+	_wait_box.add_child(_wait_count)
+
+	# 选边按钮(仅 3v3 可见)。★ 一次建、按模式显隐 —— 不重建(重建会连 handler 与
+	# `_hide_wait_room` 之外的引用一起换掉)。
+	var pick_row := HBoxContainer.new()
+	pick_row.add_theme_constant_override("separation", 16)
+	_wait_box.add_child(pick_row)
+	_wait_pick_a = UiFactory.button("加入 A 队", 32, Vector2(200, 48))
+	_wait_pick_a.pressed.connect(func() -> void: NetBusExt.rpc_id(1, "team_pick", 1))
+	pick_row.add_child(_wait_pick_a)
+	_wait_pick_b = UiFactory.button("加入 B 队", 32, Vector2(200, 48))
+	_wait_pick_b.pressed.connect(func() -> void: NetBusExt.rpc_id(1, "team_pick", 2))
+	pick_row.add_child(_wait_pick_b)
+
+	# 角色颜色行(仅 1v1 / 大乱斗)。★ 它住**等待室**而不是创建弹层里:创建弹层一进等待室
+	# 就收起,放那儿等于"房主建完房改不了、加入者全程没见过"(设计 §3.4 的既有裁定)。
+	_wait_hue = _add_hue_row(_wait_box, "自己角色颜色:", Vector2(320, 30), Vector2(46, 30))
+
+	_wait_start = UiFactory.button("开 始 游 戏", 32, Vector2(360, 56))
+	_wait_start.pressed.connect(_on_wait_start_pressed)
+	_wait_box.add_child(_wait_start)
+	_wait_leave = UiFactory.button("退出房间", 32, Vector2(360, 48))
+	_wait_leave.pressed.connect(_on_wait_leave_pressed)
+	_wait_box.add_child(_wait_leave)
+
+	# 居中锚点必须在**入树之后**设:未入树时父级尺寸为 0,面板会飞到屏幕左上角外
+	# (两个旧页都踩过;与 `_build_join_panel` / `_build_create_panel` 同款)。
+	_wait_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_wait_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_wait_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+
+
+# 亮起 / 重填等待室。★ **清空重填**而不是就地改几行:名单人数、分队、按钮显隐在三个模式下
+# 都不同,就地改必然漏一处 —— 而漏了**不报错**,只是上一个模式的行留在屏上(叠成两批名单)。
+func _show_wait_room(state: Dictionary, mode: String) -> void:
+	if _wait_panel == null:
+		_build_wait_panel()
+	_wait_mode = mode
+	# 进等待室时**同时**收起创建弹层。★ `_create_panel` 可能还没建过(玩家没点过
+	#   「＋ 创建房间」),那时没什么可收 —— 守卫即可,别在 wait 一侧凭空建一个空弹层。
+	if _create_panel != null:
+		_set_create_visible(false)
+	_wait_panel.visible = true
+	_wait_title.text = _wait_title_text(state, mode)
+
+	# ★ 必须 `remove_child` 再 `queue_free`:只 `queue_free` 的话旧行要到**帧末**才没,
+	#   同帧重填会两批名单叠着(与 `_redraw_cards` 同款纪律)。
+	for c in _wait_body.get_children():
+		_wait_body.remove_child(c)
+		c.queue_free()
+
+	var my_role := int(state.get("your_role", 0))
+	var host_role := int(state.get("host_role", 0))
+	var is_host := host_role == my_role
+	var plist: Array = state.get("players", [])
+	var is_pvp := mode == PvpSession.MODE_PVP
+	var is_team := mode == PvpSession.MODE_TEAM
+
+	if is_pvp:
+		# 1v1 的 `room_joined` 载荷只有 role ⇒ 名单不来自服务器;这句是**本侧**的事实陈述。
+		_wait_count.text = "等待对手… 1 / 2"
+	elif mode == PvpSession.MODE_ROYALE:
+		_fill_flat_roster(plist, my_role, host_role)
+		_wait_count.text = "%d / %d 人(至少 2 人可开局)" % [
+				plist.size(), int(state.get("max_players", 4))]
+	else:
+		_fill_team_roster(state, plist, my_role, host_role)
+		_wait_count.text = _team_count_text(state, plist)
+
+	# 角色颜色行:3v3 用**队色**、个人色相在本模式是无效输入 ⇒ 整行收起(设计 §0 第 12 条)。
+	_wait_hue.visible = not is_team
+	# 选边按钮(仅 3v3)。★ 自己那支的按钮**置灰**:既少一次无意义的上行,也让
+	# 「已在该队时再点该队」那条幂等 wart(服务器回"该队已满"、状态不变)不可达。
+	var my_team := _team_of_role(state, my_role) if is_team else 0
+	_wait_pick_a.visible = is_team and my_team != 1
+	_wait_pick_b.visible = is_team and my_team != 2
+	# 「开始游戏」:1v1 **没有**这颗按钮(两人凑齐自动开局);3v3 还要求两队各满。
+	if is_pvp:
+		_wait_start.visible = false
+	elif mode == PvpSession.MODE_ROYALE:
+		_wait_start.visible = is_host
+	else:
+		_wait_start.visible = is_host and _both_teams_full(
+				state, int(state.get("team_size", LobbyRooms.TEAM_SIZE)))
+
+
+# 收起等待室。★ **唯一**调用点是 `_on_return_to_lobby()`(见那一处)。
+# 不恢复创建弹层 —— 玩家要建房会自己再点「＋ 创建房间」(设计 §3.5)。
+func _hide_wait_room() -> void:
+	if _wait_panel != null:
+		_wait_panel.visible = false
+
+
+# 「开始游戏」:只有大乱斗 / 3v3 会画出这颗按钮(1v1 下它恒不可见 ⇒ 到不了那两支)。
+func _on_wait_start_pressed() -> void:
+	_status.text = "开局中…"
+	if _wait_mode == PvpSession.MODE_ROYALE:
+		NetBusExt.rpc_id(1, "royale_start")
+	elif _wait_mode == PvpSession.MODE_TEAM:
+		NetBusExt.rpc_id(1, "team_start")
+
+
+# 「退出房间」。★ 三个模式**不同款**(照两个旧页逐字对齐):
+#   · 1v1 —— **没有** leave RPC:旧页就是 `NetBus.stop()` 走人(断开即触发大厅
+#            `on_peer_left` 清房)。基类 `_return_to_lobby` 正好是那条收口
+#            (`NetBus.stop()` + 重连 + 刷新列表)。
+#   · 大乱斗 / 3v3 —— 有 leave RPC,且**不能断大厅 peer**:断开会走 `on_peer_left`
+#            那条**另一条**路径去关房,同一件事就有了两个实现(旧页的注释)。
+#            ⇒ 只发 leave,然后走共用的页面清理(`_on_return_to_lobby`)+ 重拉列表
+#            —— **不重连**,大厅 peer 还在。
+func _on_wait_leave_pressed() -> void:
+	if _wait_mode == PvpSession.MODE_ROYALE:
+		NetBusExt.rpc_id(1, "royale_leave")
+		_on_return_to_lobby()
+		_request_list.call_deferred("已退出房间")
+	elif _wait_mode == PvpSession.MODE_TEAM:
+		NetBusExt.rpc_id(1, "team_leave")
+		_on_return_to_lobby()
+		_request_list.call_deferred("已退出房间")
+	else:
+		_return_to_lobby("已退出房间")
+
+
+# 标题:`—— {模式名}房间 {code} ——`;私密房追加邀请码。
+# ★ 邀请码**只在私密时**印:公开房的载荷里 `invite_code` 可能是空串、也可能带着房主随手
+#   填的值 —— 印出来会让玩家以为"这房要码"。
+func _wait_title_text(state: Dictionary, mode: String) -> String:
+	var code := str(state.get("code", ""))
+	var invite := ""
+	if not bool(state.get("is_public", true)):
+		invite = "  邀请码 %s" % str(state.get("invite_code", ""))
+	return "—— %s房间 %s ——%s" % [str(MODE_LABEL.get(mode, mode)), code, invite]
+
+
+# 名单行(大乱斗:平铺)。返回行数。
+func _fill_flat_roster(plist: Array, my_role: int, host_role: int) -> int:
+	var shown := 0
+	for p in plist:
+		if typeof(p) != TYPE_DICTIONARY:
+			continue
+		shown += 1
+		_wait_body.add_child(_roster_row(shown, p, my_role, host_role))
+	return shown
+
+
+# 名单行(3v3:两队 + 未选边三档)。★ 两队标题**恒出**(哪怕 0 人):"这局有 A、B 两队"
+# 是规则、不是当前人数;缺了空队的标题,新来的玩家看不出该往哪边站。
+func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role: int) -> int:
+	var buckets := {0: [], 1: [], 2: []}
+	for p in plist:
+		if typeof(p) != TYPE_DICTIONARY:
+			continue
+		var t := int(p.get("team", 0))
+		if not buckets.has(t):
+			t = 0   # 未知队号归"未选边"(客户端侧口径,与服务端"先拦后分"同向)
+		(buckets[t] as Array).append(p)
+	var team_size := int(state.get("team_size", LobbyRooms.TEAM_SIZE))
+	var shown := 0
+	for t in [1, 2]:
+		var tag := "A 队" if t == 1 else "B 队"
+		_wait_body.add_child(UiFactory.label("—— %s(%d/%d) ——" % [
+				tag, (buckets[t] as Array).size(), team_size], 32, UiFactory.C_ACCENT))
+		for p in buckets[t]:
+			shown += 1
+			_wait_body.add_child(_roster_row(shown, p, my_role, host_role))
+	if not (buckets[0] as Array).is_empty():
+		_wait_body.add_child(UiFactory.label("—— 未选边 ——", 32, UiFactory.C_TEXT_DIM))
+		for p in buckets[0]:
+			shown += 1
+			_wait_body.add_child(_roster_row(shown, p, my_role, host_role))
+	return shown
+
+
+# 一行名单。★ 编号印**行序**(`n`)而不是 role —— role 是「最小空闲号」分配、有人退出后
+#   不重排,印 role 会出现 1、3(两个旧页都在这里踩过)。
+# ★★ `set_meta("roster_row", true)` 是探针**数名单行**的唯一据点:没有它,断言只能靠
+#    遍历所有 Label 猜,而标题 / 人数行 / 分队标题全是 Label —— 极易假绿。
+func _roster_row(n: int, p: Dictionary, my_role: int, host_role: int) -> Label:
+	var role := int(p.get("role", 0))
+	var l := UiFactory.label("%d. %s%s%s" % [n, str(p.get("name", "玩家")),
+			"(我)" if role == my_role else "",
+			"(房主)" if role == host_role else ""],
+			32, UiFactory.C_ACCENT if role == my_role else UiFactory.C_TEXT)
+	l.set_meta("roster_row", true)
+	return l
+
+
+# 我在这个房间里在哪一队。★ 判据来自服务器按 peer **单独**下发的 `your_role`
+# (旧页注释:按**昵称**在名单里反查,两人同名时会命中先出现的那个 → 高亮错行、
+# `_host` 判错 → 真房主看不到开局按钮)。
+func _team_of_role(state: Dictionary, role: int) -> int:
+	for p in state.get("players", []):
+		if typeof(p) == TYPE_DICTIONARY and int(p.get("role", 0)) == role:
+			return int(p.get("team", 0))
+	return 0
+
+
+# 两队各满(= 3v3 的开局闸门,与 `LobbyRooms.team_ready` 同义)。★ 分母引 `team_size`
+# 而不是写 "3":容量只有一个真值来源,写死的话 `TEAM_SIZE` 一改这行就**撒谎**且不报错。
+func _both_teams_full(state: Dictionary, size: int) -> bool:
+	var counts := {1: 0, 2: 0}
+	for p in state.get("players", []):
+		if typeof(p) != TYPE_DICTIONARY:
+			continue
+		var t := int(p.get("team", 0))
+		if counts.has(t):
+			counts[t] += 1
+	return counts[1] == size and counts[2] == size
+
+
+func _team_count_text(state: Dictionary, plist: Array) -> String:
+	var picked := 0
+	for p in plist:
+		if typeof(p) == TYPE_DICTIONARY and int(p.get("team", 0)) != 0:
+			picked += 1
+	return "%d / %d 人(已选边 %d 人;两队各 %d 人才可开局)" % [
+			plist.size(), LobbyRooms.TEAM_ROLES, picked,
+			int(state.get("team_size", LobbyRooms.TEAM_SIZE))]
+
+
+# 1v1 的等待室载荷:1v1 **没有** `room_state` 这条下行载荷(`room_created` 只给房号、
+# `room_joined` 只给 role),故在本侧拼一份最小形状 —— 与大乱斗/3v3 共用**同一个**
+# `_show_wait_room`,而不是给 1v1 单开一条渲染路径(那正是本次要消灭的重复)。
+func _pvp_wait_state(code: String, role: int) -> Dictionary:
+	return {
+		"code": code,
+		"is_public": true,   # 1v1 没有私密房这条路径
+		"players": [],       # 1v1 不画名单(设计 §3.5:`等待对手… 1 / 2`)
+		"your_role": role,
+		"host_role": role,
+	}
+
+
 # ── 转连与超时梯 ────────────────────────────────────────────────────
 
 # ★★ 判据必须是**本页的 `_current_mode`**(我当前所在那间房的模式),**不是**
@@ -1080,6 +1375,10 @@ func _on_go_match_extra() -> void:
 func _on_return_to_lobby() -> void:
 	_sent_ms = 0
 	_probe_multi_join = false
+	# ★★ 等待室在这里收起 —— 这是它**唯一**的调用点:转连/claim 超时梯、回局失败、
+	#    大乱斗/3v3 的「退出房间」全都汇到本钩子。漏了它 = 退回大厅后等待室还盖在屏幕上
+	#    (而**一行报错都没有**),玩家以为"还卡在房里"。
+	_hide_wait_room()
 
 
 # 换服务器重连:清掉旧列表(旧房间号在新服上必然「房间不存在」)。
