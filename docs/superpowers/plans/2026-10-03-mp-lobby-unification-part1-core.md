@@ -1892,7 +1892,18 @@ const L5_FONT_FILES := ["res://ui/hud/royale_hud.gd", "res://scenes/mp_lobby.gd"
 
 - [ ] **Step 7: 改其余引用**
 
-按 `grep -rn "matchmaking\|royale_lobby\|team_lobby" --include=*.gd .` 的结果逐条替换（**排除** `scenes/*.gd.uid` 与 `docs/`）：
+★★ **不要拿下面那份枚举当清单** —— 它是几轮改动之前写的，**实测已经漂了**（至少漏了
+`tests/smoke/team_room_smoke.gd` 与 `tests/probe/kh_l4_probe.gd`）。判据是**跑这条命令、逐条处理**：
+
+```bash
+grep -rn "matchmaking\|royale_lobby\|team_lobby" --include=*.gd --include=*.tscn --include=*.sh \
+  . | grep -v "^./.claude/worktrees" | grep -v "^./docs/" | grep -v "^./.superpowers/" \
+    | grep -v "^./_crashtest/"
+```
+
+（`_crashtest/` 是 gitignored 的本机草稿目录，**跳过**。）
+逐条判断是**代码引用**（必须改）还是**注释里的历史叙述**（改文案即可，但别留下会把人点错路的旧路径）。
+下面的枚举**只用于交叉核对有没有漏**，不是完备清单：
 
 - `tests/probe/lobby_visibility_probe.gd`：相⑤⑥⑦⑧⑨ 挂的页换成 `mp_lobby`；`_check_page` 那类的三页循环收敛成一页；相⑧ 的**次序断言与它的正向对照必须原样保留**（那是用一次全绿事故换来的）。
 - `tests/probe/rejoin_probe.gd` / `royale_bound_probe.gd` / `royale_c2_probe.gd` / `royale_soak_probe.gd` / `team_match_probe.gd`：场景路径换成 `mp_lobby.tscn`。
