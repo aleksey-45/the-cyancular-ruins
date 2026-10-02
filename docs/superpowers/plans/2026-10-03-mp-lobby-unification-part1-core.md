@@ -1333,9 +1333,11 @@ func _enter_match_scene() -> void:
 	elif _current_mode == PvpSession.MODE_TEAM:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/team_game.tscn")
 	else:
-		push_error("mp_lobby: match_start 到了但 _current_mode 是「%s」—— "
-				+ "建房/加入/回局三条路里有一条没记模式。**不切场景**(切错的场景比留在原地更难查)。"
-				% _current_mode)
+		# ★★ 格式化的写法有讲究:GDScript 里 `%` 的**优先级高于 `+`**,写成
+		#    `"前半" + "后半" % x` 会被解析成 `前半 + (后半 % x)` —— 而"后半"没有占位符
+		#    ⇒ 运行时 `not all arguments converted`。那条 ERROR 会**盖住真信息**
+		#    (本仓有先例:一行格式错误淹掉探针的真失败)。所以**先拼成一条**再 `%`:
+		push_error("mp_lobby: match_start 到了但 _current_mode 是「%s」—— 建房/加入/回局三条路里有一条没记模式。**不切场景**(切错的场景比留在原地更难查)。" % _current_mode)
 
 
 # 梯顺序 `[worker → claim → 大厅 → ack]`(合并后唯一的一条;见文件头)。
