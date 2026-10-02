@@ -16,8 +16,9 @@
 | 5 | 右侧房主面板 | 收进**创建房间弹层**，点 `＋创建房间` 才展开 | 用户裁定 |
 | 6 | 房卡字段 | **全都要**：扩 `is_public` / `host` / `map` / `match_time` / 队伍分布 五个键 | 用户裁定 |
 | 7 | 主菜单 | 只剩 `单 人 模 式` / `多 人 模 式`；**Beta 保留为弱化按钮** | 用户裁定 |
+| 7b | 版本信息 | 按钮改名 **`信 息`**，从**弹层**改成**整页**（新场景），内含 版本信息 / 开发团队 / 致谢 | 用户裁定 |
 | 8 | 视觉风格 | **方向 B「遗迹青铜」**：青主色 + 琥珀强调、双层压边、标题带 | 用户裁定 |
-| 9 | 风格覆盖范围 | **菜单系**（主菜单 / 设置 / 统一大厅 / 结算页 / 暂停菜单）；**对局内 HUD 一律不动** | 用户裁定 |
+| 9 | 风格覆盖范围 | **菜单系**（主菜单 / 设置 / 信息页 / 统一大厅 / Beta 页 / 结算页 / 暂停菜单）；**对局内 HUD 一律不动** | 用户裁定 |
 | 10 | 本机显示 4 项 | 移到**设置页**新开一节「联机显示」 | 用户裁定 |
 | 11 | 角色颜色 | 留在**等待室**，**不放创建弹层** | 本设计（沿用既有 D1 裁定） |
 | 12 | 统一列表要不要新 RPC | **不要**：大厅页调三次现有列房 RPC、前端合并打标 | 本设计 |
@@ -110,7 +111,7 @@ The Cyancular Ruins
   多 人 模 式
       (空档)
   设 置
-  版 本 信 息
+  信 息
       (空档)
   Beta        ← quiet
   退 出        ← quiet
@@ -368,11 +369,57 @@ static func can_rejoin_to(code: String, mode: String) -> bool:
 
 #### 3.9.3 覆盖范围与不动的东西
 
-**改**：`main_menu` / `settings_menu` / `mp_lobby` / `ui/screens/match_result` / `ui/screens/pause_menu` / `beta_menu`。
+**改**：`main_menu` / `settings_menu` / **`info_menu`** / `mp_lobby` / `ui/screens/match_result` / `ui/screens/pause_menu` / `beta_menu`。
 
 **一律不动**：`ui/hud/**`（含 `weapon_slots` / `pvp_hud` / `royale_hud` / `team_hud` / `minimap`）、`ui/factory/weapon_icons`、`ui/map_picker`（只换外框）与全部世界空间渲染。
 
 ★ `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_WARN` **一个都不动** —— 它们服务对局内 HUD，本次不碰。
+
+### 3.10 「信 息」页（取代版本信息弹层）
+
+主菜单那颗 `版 本 信 息` 改名 **`信 息`**，点击**切场景**到一个新页面（不再是在主菜单上弹面板）。
+
+**布局**（1920×1440）：标题 `信 息` → 左右两栏 → 底部 `返 回(Esc)` 居中。
+
+| 栏 | 内容 |
+|---|---|
+| 左（宽 1.25） | **版本信息**：当前版本 + 构建时间 + 提交历史（`ScrollContainer`，最多 20 条） |
+| 右（宽 1） | **开发团队** 面板 + **致谢** 面板 |
+
+**开发团队**（用户给定，**不分职责、按序一人一行**）：
+
+```
+RoFtaCD
+KikuchiH
+Lord Nahiz
+Waugh
+siri2048
+```
+
+**致谢**（用户给定，五条；前三条是软件/素材，后两条是文学灵感，**写拉丁字母全名**）：
+
+```
+Godot Engine            MIT
+GNU Unifont             SIL OFL 1.1
+Less Perfect DOS VGA    Zeh Fernando / Laemeur
+Thomas Stearns Eliot
+Jorge Luis Borges
+```
+
+★ 第三条的人员归属**不是猜的**：从 `assets/fonts/less_perfect_dos_vga.ttf` 的 `name` 表读出
+`manufacturer = "zeh;laemeur"`、版权 URL 为 `fatorcaos.com.br` 与 `laemeur.com`（族名 `Less Perfect DOS VGA`，版本 2013 v1.0）。仓里**没有**该字体的许可文件（只有 `unifont-LICENSE.txt`），故本行**只署名、不断言许可条款**。
+
+★ **后两条是作品来源，不是软件依赖** —— Borges 的 *Las ruinas circulares*（《环形废墟》，标题 *The Cyancular Ruins* 的出处）与 Eliot 的 ***Four Quartets*（《四个四重奏》）**是本作标题与气质的出处。按用户要求**写全名**（T. S. Eliot 的常用缩写形式不采用）。
+
+★ **KH 不单列一条**：用户明确 `KH` 即 `KikuchiH`，已在开发团队名单里。
+
+**保留下来的两条既有纪律**（来自被取代的 `version_panel.tscn` / `main_menu._fill_version_panel`）：
+
+1. **提交行钉死行宽 + 末尾省略号** —— `ScrollContainer` 不收缩子节点，不钉的话超长标题会在右沿被切成半个字（`main_menu.gd:343-349` 的实测记录）。
+2. **`--nover` 的收口在 `version_string()` 内部**（`main_menu.gd:118-130`），不在调用方分叉 —— 该函数随本次搬家一起走。
+
+**`version_string()` / `commit_log()` 的归处**：它们今天是 `main_menu.gd` 的静态函数（`:118` / `:134`），而搬家后**两个页面都要用**（主菜单左下角仍有版本号行）。新增一个纯静态、零 autoload 依赖的 `core/config/app_info.gd`（`class_name AppInfo`，与 `WeaponRegistry` 同形），两个页面都从它读。
+★ **不能放进 `core/config/build_info.gd`** —— 那个文件由 `tools/build_release.py` 在导出前**覆盖写入**、导出后还原，扔进去会被构建流程盖掉。
 
 ---
 
@@ -416,6 +463,7 @@ mp_lobby._ready
 | `tests/smoke/room_sweep_smoke.gd:454-469` | 读 `scenes/royale_lobby.gd` 的秒换算（上界链**环二**） | 改读 `scenes/mp_lobby.gd` 的同一行（`Settings.royale_match_min * 60.0`）。**这一条绝不能漏** —— 漏了 = `ROYALE_MATCH_TIME_CEILING` **静默失效** |
 | `tests/probe/kh_l5_probe.gd:55` | `L5_FONT_FILES` 含 `royale_lobby.gd` | 换 `mp_lobby.gd` |
 | `tests/smoke/menu_autotest.gd:63-69` | `--autotest-{mp,royale,team}` 三个模式、`must_reach` 三个场景 | 合一：`mp/royale/team` 都指向 `mp_lobby.tscn`（+ 对应的筛选态） |
+| `tests/smoke/menu_autotest.gd:71` + `:14` | `--autotest-ver` 按「**弹层，不切场景**」写：**不列进 `must_reach`**，注释明说"对它断言 scene 路径是同义反复" | **语义反转**：信息页现在**切场景** ⇒ `must_reach` 加 `"ver": "info_menu.tscn"`，`:14` 的注释同步改。★ 反过来，**主菜单的 `信 息` 按钮文案**也进了这条链（按 `_press_by_text` 找按钮），按钮改名必须与探针同时改 |
 | `tests/harness/*_watcher.gd`（4 个） | 按名找 `matchmaking.gd` / `royale_lobby.gd` | 换 `mp_lobby.gd` |
 | `tests/probe/{rejoin_probe,royale_bound_probe,royale_c2_probe,royale_soak_probe,team_match_probe}.gd` | 引用旧页场景 | 换 `mp_lobby` |
 | `server/lobby/room_manager.gd:43-45` | 注释指 `scenes/royale_lobby.gd` | 改指 `mp_lobby.gd` |
@@ -467,6 +515,10 @@ mp_lobby._ready
 ```
 scenes/mp_lobby.gd            extends LobbyPage        （新，取代三个子类）
 scenes/mp_lobby.tscn                                    （新）
+scenes/info_menu.gd / .tscn                             （新，「信 息」整页）
+core/config/app_info.gd       class_name AppInfo        （新，纯静态）
+                              version_string() / commit_log()
+                              ← 从 main_menu.gd:118 / :134 搬来
 core/config/settings.gd        无新增键（复用 4 个既有 pvp_* 显示键）
 core/net/pvp_session.gd        + room_mode
                                note_room(code, mode)     ← 签名变（加参）
@@ -479,7 +531,10 @@ ui/factory/ui_factory.gd       + C_SURFACE/C_HEADER/C_FIELD/C_BORDER/C_INNER/C_E
                                + C_MODE_1V1 / C_MODE_TEAM / C_MODE_ROYALE
                                （既有 token 一个不改）
 scenes/settings_menu.gd        + 「联机显示」一节（4 个开关）
-scenes/main_menu.gd            按钮列重排；删 3 处 enter_mode
+scenes/main_menu.gd            按钮列重排；删 3 处 enter_mode；
+                               删 _ver_panel / _fill_version_panel / _on_version_pressed
+                               + version_string / commit_log（搬去 AppInfo）
+                               「版 本 信 息」按钮改名「信 息」+ 改切场景
 scenes/beta_menu.gd            两张卡改指向 mp_lobby + 预选模式
 ```
 
@@ -489,6 +544,7 @@ scenes/beta_menu.gd            两张卡改指向 mp_lobby + 预选模式
 scenes/matchmaking.gd / .tscn / .gd.uid
 scenes/royale_lobby.gd / .tscn / .gd.uid
 scenes/team_lobby.gd / .tscn / .gd.uid
+ui/screens/version_panel.tscn（+ .uid）   ← 被 info_menu 整页取代
 core/net/pvp_session.gd 的 enter_mode() / mode
 ```
 
@@ -509,7 +565,7 @@ scenes/level_0.*
 1. **服务端扩键 + `room_map`**（§3.7）—— 纯加法，三个旧页**照旧能跑**，单独可验。
 2. **凭据模型**（§3.8）—— `PvpSession` 改签名 + 三个旧页跟着改（这一步旧页还在，改完它们仍可用）。
 3. **合一**（§3.1-3.5）—— 建 `mp_lobby`、改主菜单、改 `beta_menu`、删三个旧页、**同步改 §5.1 全部守卫**。这是最大的一段。
-4. **设置页「联机显示」**（§3.6）—— 独立、可单独做。
+4. **设置页「联机显示」**（§3.6）+ **「信 息」页**（§3.10）—— 两件独立小事，可单独做。★ 信息页依赖第 5 段的视觉 token，但不依赖它的完成：先按现有配色建页、最后一起换皮即可。
 5. **视觉重做**（§3.9）—— 放在最后：此时页面结构已定型，换皮不动布局逻辑。
 
 ★ 第 3 段与第 5 段**不要并行** —— 视觉改动会大范围重写建控件的代码，与结构改动叠在一起，回归原因会分不清。
@@ -519,5 +575,18 @@ scenes/level_0.*
 ## 9. 附：本设计的视觉稿
 
 浏览器的可视伴侣会话留下了全部迭代稿（`.superpowers/brainstorm/856-1790962513/content/`）：
-`room-cards.html` → `room-cards-v2.html` → `style-directions.html` → `style-b-draft.html` → `style-b-draft-v2.html` → `main-menu-two.html` → `final-menu-and-fields.html`。
-最终定稿是 `style-b-draft-v2.html`（大厅整页 + 创建弹层）+ `final-menu-and-fields.html`（主菜单）。
+
+```
+room-cards.html            房卡三变体（第 1 轮）
+room-cards-v2.html         房卡定形 + 创建/加入三方案
+style-directions.html      三种全局风格（A 描边 / B 遗迹青铜 / C 色块）
+style-b-draft.html         B 草案（含主菜单 + 大厅整页 + 创建弹层）
+style-b-draft-v2.html      B 定稿（真实像素：顶部两行加大 / 4 列卡 / × 关闭）★
+main-menu-two.html         主菜单改两颗 + Beta 三选一
+final-menu-and-fields.html 主菜单定稿（Beta 弱化）+ 房卡字段账 ★
+settings-and-version.html  设置页两栏 + 版本弹层
+info-page.html             「信 息」整页（版本 / 开发团队 / 致谢）
+```
+
+★ 标记的两个是**最终定稿**：`style-b-draft-v2.html`（大厅整页 + 创建弹层）、`final-menu-and-fields.html`（主菜单）。
+其余是过程稿 —— 留档是为了"当时为什么否掉那一版"有据可查，**不要照它们实现**。
