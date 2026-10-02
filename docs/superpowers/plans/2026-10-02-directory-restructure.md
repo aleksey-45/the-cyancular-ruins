@@ -42,6 +42,17 @@
 
 ### Task 1: 路径一致性守卫（先建基线，再搬任何东西）
 
+> ✅ **已完成**（提交 `8f73bf9` + `1606f58`，两轮评审 Approved）。基线：`PATH INTEGRITY: ALL-OK（扫描 344 个文件，其中 .sh 11 个，跳过 0 个读不到）`。
+>
+> ⚠️ **下面 Step 1 的代码是初稿，有 bug —— 别照抄。最终实现以 `tests/path_integrity_probe.gd` 为准。**
+> 教训集中在**同一个语义**上：`ResourceLoader.exists()` **只认已导入资源**，对普通文件恒假。它在这份代码里咬了三口：
+> 1. `_exists_any` 缺 `FileAccess.file_exists` ⇒ `maps/*.cyrm`、`tests/*.txt` 被判不存在，**28 条假红**；
+> 2. `_load_allow` 走 `ScanUtil.read`（首行也是那道闸门）⇒ 豁免文件是 `.txt`，**豁免表恒空**，放进去的路径照样报红；
+> 3. 扫描面扩到 `.sh` 后，`.sh` 同样读不出 ⇒ **11 个全落进 SKIP**（"看着扩了、其实一条没查"）。
+>
+> 引擎侧依据：`resource_loader.cpp:1247` 的 `exists()` 在 loader 不认路径时 **`:1267` 直接 `return false`，没有 `FileAccess` 兜底**。
+> 另外本轮还加了两条：读不到的文件**不静默**（有账本、印进 verdict 行）、以及**覆盖面边界与豁免无条件性写进守卫自己的注释**。
+
 **Files:**
 - Create: `tests/path_integrity_probe.gd`（`extends SceneTree`，`-s` 跑）
 - Create: `tests/path_integrity_allow.txt`（豁免清单，每行一个路径 + `#` 起的原因）
