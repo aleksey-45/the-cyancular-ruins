@@ -118,10 +118,13 @@ func _check_c2_contract() -> void:
 	if code.is_empty():
 		return
 	var needles := [
-		["q.pop" + "_front()", "每物理 tick 每 role 恰好消费一个 FIFO 输入包"],
-		["_ack_seq[role] = int(pkt.get(", "ack = 刚消费包的 seq(客户端 rollback 锚点)"],
-		["src.reset" + "_state()", "COUNTDOWN 期连 held/axis 一起清(冻结期不漂移)"],
-		["q.clear()", "COUNTDOWN 分支清空缓冲(不喂输入)"],
+		# ★ 2026-10-02 降精度:原先钉的是**局部别名** `q` / `src` / `pkt` —— 把局部变量改个名
+		#   (合法重构)就会红。意图是"这几个**动作**在不在"(消费一个 / 写 ack / 清冻结态 / 清队列)
+		#   ⇒ 锚到方法名。位置序断言那边的 `find` 仍落在正确那一处(其它 `pop_front` 在别的函数里)。
+		["pop" + "_front()", "每物理 tick 每 role 恰好消费一个 FIFO 输入包"],
+		["_ack_seq[", "ack = 刚消费包的 seq(客户端 rollback 锚点)"],
+		["reset" + "_state()", "COUNTDOWN 期连 held/axis 一起清(冻结期不漂移)"],
+		[".clear()", "COUNTDOWN 分支清空缓冲(不喂输入)"],
 		["_snapshot" + "_accum", "60Hz 快照累加器(消费前广播)"],
 	]
 	for spec in needles:
@@ -132,7 +135,7 @@ func _check_c2_contract() -> void:
 	# → ack 领先状态一拍 → 客户端移动中每次快照都误判分歧、画面被拉回。
 	var i_accum := code.find("_snapshot" + "_accum += delta")
 	var i_cast := code.find("_broadcast" + "_snapshot()")
-	var i_pop := code.find("q.pop" + "_front()")
+	var i_pop := code.find("pop" + "_front()")
 	_check(i_accum >= 0 and i_cast >= 0 and i_pop >= 0,
 			"C2 顺序断言前置不足:accum=%d broadcast=%d pop=%d(源码里找不到?)" % [i_accum, i_cast, i_pop])
 	if i_accum >= 0 and i_cast >= 0 and i_pop >= 0:
@@ -147,9 +150,9 @@ func _check_c2_contract() -> void:
 	# (比如循环外)照样绿,而冻结期又会漏喂上一包方向 → C2 分歧源。
 	var phys := _func_body(code, "_physics_process")
 	var i_cd := phys.find("RoundState." + "COUNTDOWN")
-	var i_clear := phys.find("q.clear()")
-	var i_reset := phys.find("src.reset" + "_state()")
-	var i_pop_phys := phys.find("q.pop" + "_front()")
+	var i_clear := phys.find(".clear()")
+	var i_reset := phys.find("reset" + "_state()")
+	var i_pop_phys := phys.find("pop" + "_front()")
 	_check(i_cd >= 0 and i_clear >= 0 and i_reset >= 0 and i_pop_phys >= 0,
 			"C2 COUNTDOWN 断言前置不足:countdown=%d clear=%d reset=%d pop=%d" % [i_cd, i_clear, i_reset, i_pop_phys])
 	if i_cd >= 0 and i_clear >= 0 and i_reset >= 0 and i_pop_phys >= 0:
@@ -166,10 +169,12 @@ func _check_c2_contract() -> void:
 	var on_in := _func_body(code, "_on" + "_input")
 	_check(not on_in.is_empty(), "取不到 %s 的函数体(函数改名/挪进别的文件了?)" % ("_on" + "_input"))
 	if not on_in.is_empty():
-		var queue_init := "_pending" + "_input[role] = []"
+		# ★ 降精度:原把 `role` 这个形参名也钉进去了 ⇒ 只留队列本身的名字。
+		var queue_init := "_pending" + "_input["
 		_check(on_in.contains(queue_init),
 				"%s 里没有按 role 建 FIFO 队列(%s)→ 到达的包进不了缓冲" % ["_on" + "_input", queue_init])
-		_check(on_in.contains(".append(pkt)"),
+		# ★ 降精度:原钉 `.append(pkt)` 的形参名(`pkt`);`_on_input` 体里 `.append(` 唯一 ⇒ 只留方法名。
+		_check(on_in.contains(".append("),
 				"%s 里没有把到达的包 append 进队列(每 tick 消费一个的前提没了)" % ("_on" + "_input"))
 		_check(not on_in.contains("apply_" + "packet"),
 				"%s 里出现就地 apply_packet:包不再由 _physics_process 每 tick 消费一个 → C2 1:1 同序锚点失效"
