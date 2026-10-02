@@ -44,3 +44,12 @@ DevTools/
 gamelogs/
 .zcode/
 .mimosa/
+
+# 崩溃/对比现场的临时草稿目录(反汇编 dump、旧文件备份、一次性脚本;101MB 级,不入库)
+# ★ 2026-10-03 加:它此前既没被忽略、又不会被 Godot 的 `.gdignore` 挡住(根上那个 `.gdignore`
+#   只管**编辑器导入**,而 `tests/probe/allscript_probe.gd` 走的是 `DirAccess`,不认它)
+#   ⇒ 两处中招:① `git add -A` 会把它整锅收进提交(实测卷进 27 个文件,含一个 27 万行的 dump);
+#      ② `allscript_probe` 会把里面那几份**已编译不过**的旧 `.gd` 备份当成生产脚本报红(3 条)。
+#   注:它对 `allscript_probe` 的假红是**独立问题**(那条链只认文件系统,与 git 无关),
+#   真要根治得让那个探针认 `.gdignore` 或把该目录加进它的 SKIP_DIRS —— 本次只做 ignore。
+_crashtest/
