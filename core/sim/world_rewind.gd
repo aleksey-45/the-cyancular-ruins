@@ -199,6 +199,15 @@ func _apply_bullets(list: Array, player: Node) -> void:
 			nb.set("hit_impact", float(meta.get("impact", 0.0)))
 			if nb.has_method("apply_rewind_state"):
 				nb.call("apply_rewind_state", meta.get("fuse", {}))
+			# ★★ 2026-10-03 修:重建出来的弹**必须补上 `scene_path`**,否则**第二次回溯它就没了**。
+			#   环缓存的是 `b.get_meta("scene_path")`(见 `record()` 那行),而写这份 meta 的**唯一**
+			#   地方是 `WeaponBase._spawn_projectiles`(出膛那一刻)。重建的弹绕过了那条路 ⇒ 它身上
+			#   没有 meta ⇒ 退出回溯后它作为**活弹**继续飞,再被 `record()` 时 `sp` 记成**空串**
+			#   ⇒ 下一次 `_apply_bullets` 里 `sp == ""` ⇒ 不实例化、`append(null)` ⇒ **子弹凭空消失**。
+			#   ★ 这正是用户实测的"第一次回溯正常、第二次回溯子弹直接消失"。
+			#   ★ 为什么第一次没事:那一颗是**真**出膛的,meta 齐全;坏的是**重建**出来的那一代,
+			#     所以缺陷要**回溯两次**才现形 —— 单次回溯的探针照不到。
+			nb.set_meta("scene_path", sp)
 		_replay_bullets.append(nb)
 	for i in list.size():
 		var nb2 = _replay_bullets[i]
