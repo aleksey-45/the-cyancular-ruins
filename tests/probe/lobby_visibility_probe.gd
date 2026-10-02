@@ -56,8 +56,8 @@ const P_C := 103
 #     三页共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
 #   ★ 相⑨(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
 #   ★ 相⑦c(大厅合一 Task 2:凭据自带模式,2026-10-03)加 **2** 条 → **47**。
-#   ★ 相⑦d(同批:`note_room()` 的**行为**断言)加 **3** 条 → **50**。
-const EXPECTED_CHECKS := 50
+#   ★ 相⑦d(同批:`note_room()` 的**行为**断言)加 **5** 条 → **52**。
+const EXPECTED_CHECKS := 52
 
 var _rm: Node = null
 var _checks := 0
@@ -327,9 +327,11 @@ func _phase_session_flags() -> void:
 	# ★★ 源码级的 `_check(nr.contains("clear_rejoin()"))` 只能证明**那个调用在函数里存在**,
 	#    证明不了**它在正确的分支上**:把 `if a or b:` 改成 `if a and b:`(一个 token),
 	#    换房号但模式不变时就**不再清凭据** —— 四条 `contains` 全都还在,全绿。
-	#    ⇒ 这三条直接调函数验结果:静态字段可赋值,不需要开 socket。
+	#    ⇒ 这几格直接调函数验结果:静态字段可赋值,不需要开 socket。
 	# ★ 覆盖上限:它验的是"按值调用的结果",验不到"生产里谁在什么时候调它" —— 那一半靠
 	#   `reconnect_smoke` §⑤ 的源码级断言(三处都走 `note_room`)。两半缺一不可。
+	# ★ 另有一格**刻意不测**:`(房号变 ∧ 模式也变)` 同时发生 —— 所有自然实现都会在那清,
+	#   且 GDScript 没有 `xor`,构造不出自然的单 token 变异;登记为覆盖边界,不补。
 	PvpSession.clear_rejoin()
 	PvpSession.token = "tk-7d"
 	PvpSession.worker_port = 7
@@ -344,8 +346,9 @@ func _phase_session_flags() -> void:
 	PvpSession.room_mode = PvpSession.MODE_PVP
 	PvpSession.note_room("1111", PvpSession.MODE_TEAM)         # 同房号、换模式
 	_check(not PvpSession.can_rejoin(), "⑦d 换模式(同房号) ⇒ 凭据作废")
-	# ★★ 反向对照,**必需**:等待室每收到一次房间状态就会走一遍 `note_room`,
-	#    无条件清会把刚拿到的凭据抹掉(那正是当年 C1 那场事故的形状)。
+	# ★★ 反向对照,**必需**:等待室每收到一次房间状态就会走一遍 `note_room`
+	#    (见 `note_room` 顶部那段"同一间房的状态刷新不该把刚拿到的凭据抹掉"),
+	#    无条件清会把刚拿到的凭据抹掉。
 	PvpSession.clear_rejoin()
 	PvpSession.token = "tk-7d"
 	PvpSession.worker_port = 7
@@ -353,6 +356,27 @@ func _phase_session_flags() -> void:
 	PvpSession.room_mode = PvpSession.MODE_PVP
 	PvpSession.note_room("1111", PvpSession.MODE_PVP)          # 同房号、同模式
 	_check(PvpSession.can_rejoin(), "⑦d 同房号同模式 ⇒ 凭据**保留**(等待室刷新不能抹凭据)")
+	# ★★ 第 4 格:**记录**那一半。上面三格只验了"该清时清了",验不到"该记时记了" ——
+	#    一个**只清不记**的 note_room(漏掉 `room_code = code` / `room_mode = mode`)
+	#    上面三格**全过**,而后果是 `can_rejoin_to()` 永远匹配不上 ⇒ 那一行恒灰
+	#    (正是 C1 那类症状)。记录那一半原先只有 `reconnect_smoke` 的源码 `contains` 守着 ——
+	#    那正是本轮要替换掉的守卫风格,只是换了个属性。这一格把它也变成行为断言。
+	PvpSession.clear_rejoin()
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	PvpSession.room_code = "1111"
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	PvpSession.note_room("3333", PvpSession.MODE_ROYALE)       # 换到另一间、另一个模式
+	# ★★ 换了房 ⇒ `note_room` 先 **清掉凭据**(`token` 也清了),所以这里必须**再给一份 token**
+	#    才能用 `can_rejoin_to()` 验"记下的那一对是不是新的" —— 否则它恒假(与"有没有记"无关)。
+	#    ★ 计划原稿少了这一步 ⇒ 那两条断言对**正确实现**也恒假(实测 FAIL:换房会先清 token)。
+	#      补上之后:正确实现全过;**只清不记**的实现在第一条上红。
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
+	_check(PvpSession.can_rejoin_to("3333", PvpSession.MODE_ROYALE),
+			"⑦d 换房之后 ⇒ 新的一对被**记下**了(只清不记的实现这里必红)")
+	_check(not PvpSession.can_rejoin_to("1111", PvpSession.MODE_PVP),
+			"⑦d 且旧的那一对不再成立(记录是**覆盖**,不是追加)")
 	PvpSession.clear_rejoin()
 	PvpSession.rejoin = true
 	PvpSession.clear_rejoin()
