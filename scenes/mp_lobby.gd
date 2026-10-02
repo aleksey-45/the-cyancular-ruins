@@ -31,9 +31,13 @@ var _join_invite_edit: LineEdit = null
 # 压暗罩与弹层本体分开两个节点:罩子铺满整页(拦下背后的点击)、本体居中。
 var _create_panel: PanelContainer = null
 var _create_mask: ColorRect = null
-# 需要**按模式显隐**的四行 —— 键名固定,`_build_create_panel` 必须按这几个键登记,
-# `_apply_create_form` 按这几个键取。★ 键名对不上**不报错**,只是"那一行永远不隐藏"。
-var _form_rows := {}      # "max_players" / "match_time" / "weapons" / "map" -> Control
+# 弹层里需要被外部（`_apply_create_form` / 探针）按名取到的容器 —— 键名固定,
+# `_build_create_panel` 必须按这几个键登记,`_apply_create_form` 按这几个键取。
+# ★ 键名对不上**不报错**,只是"那一行永远不隐藏"。
+# `max_players`/`match_time`/`weapons`/`privacy` 由 `_apply_create_form` **按模式**显隐;
+# `map` 三模式都可见(登记只为探针能取到);`beta` 由 `PvpSession.beta_mode` 在**建面板时**定
+#(`_add_time_params` 自己门控),与模式无关 —— 故 `_apply_create_form` 不碰它。
+var _form_rows := {}
 var _create_mode := PvpSession.MODE_PVP
 var _create_mode_btns := {}   # mode -> Button(三颗分段按钮;`_apply_create_form` 用它置灰当前项)
 var _public_check: CheckButton = null
@@ -747,7 +751,12 @@ func _build_create_panel() -> void:
 
 	# 左列:模式分段按钮(三颗)+ 公开/私密 + 邀请码 + 人数行 + 限时行。
 	left.add_child(_build_create_mode_buttons())
-	_build_public_row(left)
+	# 公开/私密 + 邀请码**整块**一个容器:1v1 下要整块隐藏(见 `_apply_create_form` 的注释)。
+	var privacy_row := VBoxContainer.new()
+	privacy_row.add_theme_constant_override("separation", 8)
+	_build_public_row(privacy_row)
+	left.add_child(privacy_row)
+	_form_rows["privacy"] = privacy_row
 	_build_max_players_row(left)
 	_build_match_time_row(left)
 
@@ -770,6 +779,16 @@ func _build_create_panel() -> void:
 	_add_map_picker(map_block)
 	right.add_child(map_block)
 	_form_rows["map"] = map_block
+
+	# Beta 时间玩法参数(设计 §3.4):基类 `_add_time_params` 现成,且**自门控** ——
+	# 非 Beta 态它往容器里什么都不加。★ 这一段与**模式**无关(只看 `PvpSession.beta_mode`),
+	# 故 `_apply_create_form` 不碰 `_form_rows["beta"]`,它的可见性在建面板这一刻定死。
+	var beta_block := VBoxContainer.new()
+	beta_block.add_theme_constant_override("separation", 8)
+	beta_block.visible = PvpSession.beta_mode
+	_add_time_params(beta_block)
+	root_vb.add_child(beta_block)
+	_form_rows["beta"] = beta_block
 
 	# 底部:取消 / 创建房间。
 	var actions := HBoxContainer.new()
@@ -891,9 +910,14 @@ func _apply_create_form(mode: String) -> void:
 	_create_mode = mode
 	var is_royale := mode == PvpSession.MODE_ROYALE
 	var is_team := mode == PvpSession.MODE_TEAM
+	var is_pvp := mode == PvpSession.MODE_PVP
 	_form_rows["max_players"].visible = is_royale
 	_form_rows["match_time"].visible = is_royale
 	_form_rows["weapons"].visible = not is_team
+	# ★ 1v1 下那一行是**骗人的控件**:`create_room(caller)` 是原版 NetBus 的**冻结签名**、
+	#   收不了 opts ⇒ 服务端永远建公开房(1v1 载荷里 `is_public` 恒 true)。让玩家取消勾选
+	#   "公开"、填了邀请码,建出来仍是人人可见、无需码就能进的房 —— 比不给这个选项更坏。
+	_form_rows["privacy"].visible = not is_pvp
 	for m in _create_mode_btns:
 		(_create_mode_btns[m] as Button).disabled = false
 	(_create_mode_btns[mode] as Button).disabled = true   # 当前模式置灰(与等待室的选边同款)
@@ -924,6 +948,10 @@ func _create_payload(mode: String) -> Dictionary:
 # 建房:按模式分派 RPC。1v1 的 `create_room` 是原版 NetBus 的 RPC、**签名冻结**(不带 payload),
 # 它的 `map`/`disabled_weapons` 都从 `player_options`(报到时读 Settings)走。
 func _on_create_pressed() -> void:
+	# ★ 按下即收起弹层(**不等应答** —— `_with_lobby` 的行动可能是异步的:没连上时它会先
+	#   建连接、连上后才跑 action)。结果一律走状态栏(成功 = 房间号;失败 = 服务端那句文案),
+	#   玩家要改选项再按「＋ 创建房间」重开即可。
+	_set_create_visible(false)
 	var mode := _create_mode
 	_with_lobby(func() -> void:
 		_ack = false
@@ -937,6 +965,16 @@ func _on_create_pressed() -> void:
 		else:
 			NetBus.rpc_id(1, "create_room")
 		_status.text = "建房中…(拿到房间号后可叫对方刷新列表点进来)")
+
+
+# ESC 关弹层(设计 §3.4)。★ **弹层不可见时一律不处理** —— 大厅页自己的返回语义
+# (回主菜单)不能被这里抢掉;只有弹层挡着页面时才吞掉这一次 ESC。
+func _unhandled_input(ev: InputEvent) -> void:
+	if _create_panel == null or not _create_panel.visible:
+		return
+	if ev.is_action_pressed("ui_cancel"):
+		_set_create_visible(false)
+		get_viewport().set_input_as_handled()
 
 
 # ── 转连与超时梯 ────────────────────────────────────────────────────
