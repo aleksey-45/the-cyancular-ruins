@@ -235,9 +235,13 @@ func _match_round_tick(delta: float) -> void:
 				if killer != 0:
 					_scores[killer] = int(_scores.get(killer, 0)) + 1
 					_broadcast_kill(killer, role)
-				# Beta 时间玩法:击杀得"被击杀者余额 × 比例"(被击杀者不减;归因不到不结算)
-				if time_economy != null:
-					time_economy.award_kill(killer, int(role))
+				# ★ 2026-10-03 删掉这里原本的第二笔 `award_kill` —— **合并时漏删的重复**。
+				#   KH 那份 `award_kill` 原先住 `TeamHost._record_down`;合并把逐人统计面上提到
+				#   `MatchState._record_down` 时,那笔随之上提到基类(见 `match_state.gd` 里那段
+				#   "从 TeamHost 搬来、原处那份已删"的注释)—— 但**本文件还有它自己的一笔**,
+				#   没人删。于是大乱斗 Beta 的击杀颗粒变成**双倍**(本行 + 基类那行),
+				#   而 3v3 只走基类 ⇒ 两个模式口径不同。
+				#   ⇒ 基类那行是唯一写端(对 TeamHost 与 RoyaleHost 同一份),此处不再重复。
 				_broadcast_round_state()
 			# 周期广播(倒计时/比分同步)
 			_hud_sync -= delta
