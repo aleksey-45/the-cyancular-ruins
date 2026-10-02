@@ -11,7 +11,7 @@ extends Node
 #   不需要 socket、不需要 worker(与 lobby_visibility_probe 同款)。
 # ★ 断言计数:ALL-OK 只证明"没有一条断言失败",不证明"该跑的都跑过"(见 tests/lib/probe_base.gd
 #   文件头)。少跑一条就红 —— 改本探针必须同步改这个数。
-const EXPECTED_CHECKS := 14
+const EXPECTED_CHECKS := 16
 
 const P_HOST := 201
 const P_OTHER := 202
