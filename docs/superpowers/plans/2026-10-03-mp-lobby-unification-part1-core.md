@@ -465,7 +465,8 @@ git commit -m "feat(lobby): 列表载荷扩键(is_public/host/map/match_time/队
 **Interfaces:**
 - Consumes: `PvpSession.MODE_PVP` / `MODE_ROYALE` / `MODE_TEAM`（已存在）
 - Produces:
-  - `PvpSession.room_mode: String`
+  - `PvpSession.room_mode: String`（**凭据**的模式）
+  - `PvpSession.entry_mode: String`（进大厅时的**初始筛选**；由 Beta 页写、`mp_lobby` 读。★ 与 `room_mode` 语义不同，**不要合并** —— 详见 Task 3 的 `_enter_match_scene`）
   - `PvpSession.note_room(code: String, mode: String) -> void`
   - `PvpSession.can_rejoin_to(code: String, mode: String) -> bool`
   - `LobbyPage.try_rejoin_row(code: String, in_match: bool, mode: String) -> bool`
@@ -510,6 +511,18 @@ static var room_mode: String = ""
 ```
 
 **删除** `enter_mode()`（`:62-66`）整段，连同它上面那段只讲它的注释。
+
+再在 `room_mode` 那一行**下面**加一个**语义不同**的字段：
+
+```gdscript
+# 进大厅时预选的**筛选**模式(Beta 页写、统一大厅读)。空串 = 不预选(从主菜单直接进来)。
+# ★★ 它**不是** `room_mode` —— 那个是**凭据**的模式,`can_rejoin_to()` 拿它判"这一行是
+#   不是我的房"。把"从 Beta 页进大乱斗"写进 `room_mode` 会让一个凭据字段被写成非凭据的值
+#   (`enter_mode` 当年那套的残留形态)。两个量语义不同,别合并。
+static var entry_mode: String = ""
+```
+
+并在 `reset()` 末尾加一行 `entry_mode = ""` —— 顺序是安全的：`beta_menu` 与主菜单都先 `reset()` 再各自决定要不要置它。
 
 把 `can_rejoin_to`（`:78-79`）改成：
 
@@ -691,9 +704,10 @@ can_rejoin_to 同时比对房号与模式;lobby_visibility_probe 相⑦ 补
 - Test: `tests/probe/lobby_row_probe.gd`（改写为单页）
 
 **Interfaces:**
-- Consumes: `LobbyPage`（基类）、`PvpSession.room_mode`、三个列房 RPC
+- Consumes: `LobbyPage`（基类）、`PvpSession.room_mode`（**只读**，判"这一行是不是我的房"）、`PvpSession.entry_mode`（初始筛选）、三个列房 RPC
 - Produces（供 Task 4/5/6 使用）：
-  - `MpLobby._mode: String`（当前筛选：`""` = 全部，否则 `MODE_*`）
+  - `MpLobby._current_mode: String`（**我当前所在那间房**的模式；`_enter_match_scene` 与 `note_room` 都用它。★ **与 `PvpSession.room_mode` 不是一回事**，别合并）
+  - `MpLobby._mode: String`（当前**筛选**：`""` = 全部，否则 `MODE_*`）
   - `MpLobby._rooms_by_mode: Dictionary`（`mode -> Array[Dictionary]`，每条已打上 `"mode"` 键）
   - `MpLobby._ingest_rooms(mode: String, rooms: Array) -> void`
   - `MpLobby._redraw_cards() -> void`
@@ -1183,13 +1197,18 @@ func _go_match_status() -> String:
 - [ ] **Step 8: 转连与超时梯**
 
 ```gdscript
-# ★ 两页**刻意不同**的那条纪律现在按 `_mode` 分派(设计 §3.1.2):
+# ★★ 判据必须是**本页的 `_current_mode`**(我当前所在那间房的模式),**不是**
+#   `PvpSession.room_mode`。后者是**凭据**的模式(供列表里判"这一行是不是我的房"),
+#   它在"建了房但 `note_room` 还没跑到"这一档上是**空串** —— 那时下面这个 else 会把
+#   1v1 的对局**静默切进 `team_game.tscn`**(不报错,只是一个场景选错了)。
+#   ⇒ 两个量语义不同,不要合并成一个字段。
+# ★ 两页**刻意不同**的那条纪律现在按 `_current_mode` 分派(设计 §3.1.2):
 #   1v1 直切;大乱斗/3v3 必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内
 #   到达,栈内切场景会在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误(曾实测)。
 func _enter_match_scene() -> void:
-	if PvpSession.room_mode == PvpSession.MODE_PVP:
+	if _current_mode == PvpSession.MODE_PVP:
 		get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
-	elif PvpSession.room_mode == PvpSession.MODE_ROYALE:
+	elif _current_mode == PvpSession.MODE_ROYALE:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/royale_game.tscn")
 	else:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/team_game.tscn")
@@ -1471,16 +1490,21 @@ git commit -m "feat(lobby): 统一等待室(按模式渲染) + 1v1 也有一间
 ```gdscript
 	PvpSession.reset()
 	PvpSession.beta_mode = true
-	PvpSession.room_mode = str(c["mode"])   # 预选模式:统一大厅按它开筛选
+	PvpSession.entry_mode = str(c["mode"])   # 预选**筛选**,不是凭据
 	get_tree().change_scene_to_file("res://scenes/mp_lobby.tscn")
 ```
+
+★ `CARDS[i]["mode"]` **不是死字段**（删掉 `enter_mode` 后它一度看着像死的）：Task 6 起它重新有读者，就是上面这一行。
 
 `mp_lobby._ready()` 末尾加：
 
 ```gdscript
-	# Beta 页预选的模式(直接进大厅时为 "")。只影响筛选初值,不碰凭据。
-	if PvpSession.room_mode != "":
-		_set_filter(PvpSession.room_mode)
+	# Beta 页预选的**筛选**模式(直接进大厅时为 "")。
+	# ★★ 它读的是 `entry_mode` 而**不是** `room_mode`:后者是**凭据**的模式,
+	#   混用会让"从 Beta 页进大乱斗"这件事把一个凭据字段写成非凭据的值 ——
+	#   而 `can_rejoin_to()` 正是拿 `room_mode` 判"这一行是不是我的房"。
+	if PvpSession.entry_mode != "":
+		_set_filter(PvpSession.entry_mode)
 ```
 
 - [ ] **Step 3: 改 `menu_autotest`**
