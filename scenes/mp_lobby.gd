@@ -760,6 +760,16 @@ func _build_create_panel() -> void:
 	_build_max_players_row(left)
 	_build_match_time_row(left)
 
+	# Beta 时间玩法参数(设计 §3.4):基类 `_add_time_params` 现成,且**自门控** ——
+	# 非 Beta 态它往容器里什么都不加。★ 这一段与**模式**无关(只看 `PvpSession.beta_mode`),
+	# 故 `_apply_create_form` 不碰 `_form_rows["beta"]`,它的可见性在建面板这一刻定死。
+	var beta_block := VBoxContainer.new()
+	beta_block.add_theme_constant_override("separation", 8)
+	beta_block.visible = PvpSession.beta_mode
+	_add_time_params(beta_block)
+	left.add_child(beta_block)
+	_form_rows["beta"] = beta_block
+
 	# 右列:禁用武器**整块**(标题 + 网格)。整块一个容器,才能一次显隐(设计 §3.4)。
 	var wblock := VBoxContainer.new()
 	wblock.add_theme_constant_override("separation", 8)
@@ -779,16 +789,6 @@ func _build_create_panel() -> void:
 	_add_map_picker(map_block)
 	right.add_child(map_block)
 	_form_rows["map"] = map_block
-
-	# Beta 时间玩法参数(设计 §3.4):基类 `_add_time_params` 现成,且**自门控** ——
-	# 非 Beta 态它往容器里什么都不加。★ 这一段与**模式**无关(只看 `PvpSession.beta_mode`),
-	# 故 `_apply_create_form` 不碰 `_form_rows["beta"]`,它的可见性在建面板这一刻定死。
-	var beta_block := VBoxContainer.new()
-	beta_block.add_theme_constant_override("separation", 8)
-	beta_block.visible = PvpSession.beta_mode
-	_add_time_params(beta_block)
-	root_vb.add_child(beta_block)
-	_form_rows["beta"] = beta_block
 
 	# 底部:取消 / 创建房间。
 	var actions := HBoxContainer.new()
