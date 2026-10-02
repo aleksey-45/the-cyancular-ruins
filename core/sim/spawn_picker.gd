@@ -273,3 +273,36 @@ static func cells_within(center: Vector2i, radius: int) -> Array:
 		if GridPathfinder.toroidal_dist(c, center, d.x, d.y) <= radius:
 			out.append(c)
 	return out if not out.is_empty() else spawn_candidates().duplicate()
+
+
+# ── 给"只有一个出生点的图"挑 role2 的出生格(2026-10-02 从 MatchBootstrap 搬来)──
+# ★ 搬家的理由是**可测性**不是整洁:`MatchBootstrap` 静态引用 autoload(`GameParameters`/`NetBus`),
+#   在 `-s` 探针里**编译失败** ⇒ `map_catalog_probe` 那几条断言被**静默跳过**而 verdict 照打 OK。
+#   本文件自述"不引任何 autoload、可被 `-s` 测试加载",正是这类选格逻辑的家。
+const FAR_CELLS := 15   # role2 的自动出生点离 role1 至少这么远(格;环面距离)
+
+
+## 地板格(空 + 正下方实心)里离 `anchor` **环面距离 ≥ FAR_CELLS** 的最近一个;
+## 全不满足就取最远的那个;网格为空返回 (-1,-1)(调用方那套兜底照旧)。
+static func far_spawn_from(anchor: Vector2i, grid: Array) -> Vector2i:
+	if grid.is_empty():
+		return Vector2i(-1, -1)
+	TileDefs.load_defs()   # 幂等;worker 建局早于建世界,这里不加载的话 is_blocked 全是默认值
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	var best := Vector2i(-1, -1)
+	var best_d := -1
+	for r in rows:
+		var line: Array = grid[r]
+		for c in min(cols, line.size()):
+			if int(line[c]) != MapFormat.EMPTY:
+				continue
+			if not TileDefs.is_blocked(int(grid[(r + 1) % rows][c])):
+				continue
+			var d := MazeGenerator.toroidal_dist(anchor, Vector2i(c, r), cols, rows)
+			if d >= FAR_CELLS:
+				return Vector2i(c, r)
+			if d > best_d:
+				best_d = d
+				best = Vector2i(c, r)
+	return best
