@@ -127,7 +127,7 @@ static func note_room(code: String) -> void:
 # pending_* 静态字段、新场景进场景时取用。
 # 现在改成**进场拉取**(`NetBus.match_sync`):新场景建好、订阅齐了才开口要,时序不敏感。
 # 于是缓存这一层连同 pending_* 一并删除 —— 只留一条投递路径,也就不存在"只改一条"的错法。
-# 守卫:`tests/match_sync_probe` 的反向断言,全仓不得再出现这些标识符。
+# 守卫:`tests/probe/match_sync_probe` 的反向断言,全仓不得再出现这些标识符。
 
 # 「进大厅页」的复位:**不碰回局凭据**(那四行 2026-09-22 已删 —— 见 `clear_rejoin` 上面那段)。
 # ★★ 曾经它在末尾清 `token` / `worker_port` / `room_code` / `rejoin`,而主菜单那三个联机按钮

@@ -30,7 +30,7 @@ const WORKER_PORT_SPAN := 500
 # ★ 那本常量现在管什么:只兜「worker 刚退出、别立刻把它的端口发给新 worker」这一小段
 #   (给进程收尾与 UDP socket 释放留时间)。30 → 120 的历史教训(30 == 30 是**相等**而不是
 #   "短于",相等同样不安全)留档在此,但那条不等式的**承重地位**已由上面那段取代
-#   —— 守卫只剩 `tests/grace_window_smoke` ⑧ 的一条 belt。
+#   —— 守卫只剩 `tests/smoke/grace_window_smoke` ⑧ 的一条 belt。
 const WORKER_PORT_REUSE_DELAY := 120.0
 # 大乱斗 worker 的端口归还延迟:按**默认**一局时长(RoyaleHost.MATCH_TIME=300)+ 收尾估,
 # 沿用 30s 会让对局中途端口被发给新 worker(串线/bind 冲突)——自检 M2。
@@ -176,7 +176,7 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 # ★ 为什么队号要显式传、不从 role 号推:role 由大厅「最小空闲号」分配,有人退出会留空洞
 #   ({1,3,5} 而 3 人),奇偶/区间推导必然出错(与 --roles 同一条纪律)。
 # ★ 本函数与 server_main.gd 的 argv 解析**逐字对应**,两边改一处必须同步改另一处
-#   (守卫见 tests/room_sweep_smoke.gd 的双向断言)。
+#   (守卫见 tests/smoke/room_sweep_smoke.gd 的双向断言)。
 func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	if roles.size() != teams.size():
 		push_error("spawn_team_worker: roles 与 teams 长度不等(%d vs %d),拒绝拉起" % [roles.size(), teams.size()])

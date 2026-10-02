@@ -36,7 +36,7 @@ const ST_PLAYING := 1
 const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
-# 节点句柄一律从 royale_hud.tscn 取(声明式契约:见 tests/hud_declarative_probe.tscn)。
+# 节点句柄一律从 royale_hud.tscn 取(声明式契约:见 tests/probe/hud_declarative_probe.tscn)。
 # ★ 排行榜的**行**不在这里 —— 行数随人数变,由 _refresh_board 建/复用,见那里的说明。
 # ★ 宿主必须用 preload("res://ui/hud/royale_hud.tscn").instantiate() 建,不能 RoyaleHud.new()
 #   —— .new() 建出来的 CanvasLayer 没有子节点,下面这些 @onready 全是 null,_ready 解引用必崩。
@@ -167,7 +167,7 @@ func _on_round_state(data: Dictionary) -> void:
 # ★ **复用行、只改文字**，不要每次 queue_free 后重建 N 个 Label。
 #   本函数每秒被调一次(round_state 的 HUD 同步),每次阵亡再加一次;重建 N 个 Label 的
 #   同步成本实测 2.6 / 3.8 / 4.7 ms(4 / 6 / 8 行),是纯粹的每秒浪费 ——
-#   见 tests/royale_hud_cost_probe.tscn 与 docs/royale-soak-2026-09-12.md §3.1。
+#   见 tests/probe/royale_hud_cost_probe.tscn 与 docs/royale-soak-2026-09-12.md §3.1。
 #   行数**只在人数变化时**才对不齐(进/退场),那时才增删。
 # 返回排好序的行数据 —— 中央广播还要用它判"我是否还在场"。
 func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,

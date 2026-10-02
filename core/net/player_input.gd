@@ -13,7 +13,7 @@ extends RefCounted
 #   · `LocalInputSource`  —— 读真实 `Input`(单机与 PvP 本地玩家;C2 下由引擎自步进读)
 #   · `PacketInputSource` —— 消费网络输入包(权威服务器唯一消费方)
 #   · `AiInputSource`     —— AI 补位(AINavigator 每帧写字段)
-#   · 另有 `tests/soak_bot_input.gd`(压力探针的脚本手柄,不在生产路径)
+#   · 另有 `tests/harness/soak_bot_input.gd`(压力探针的脚本手柄,不在生产路径)
 #
 # ★ frozen 的归属(2026-09-14 修,本类保留):
 #   此前 frozen 短路写在公开读口里、而三个子类各自覆写了全部公开读口 →
@@ -21,7 +21,7 @@ extends RefCounted
 #   现在冻结收在本类的公开读口,子类只覆写不碰 frozen 的 `_*_raw()` 钩子 —— 契约无法绕过。
 #   历史代价(记下来别再犯):客户端 COUNTDOWN 冻结曾靠"客户端恰好用默认 InputSource"侥幸成立;
 #   服务器靠 MatchHost 另调 PacketInputSource.reset_state()、AI 靠自己查 RoundState 兜住。
-#   回归守卫:`tests/ai_input_source_smoke.gd` 的 9 条 `frozen:` 断言
+#   回归守卫:`tests/smoke/ai_input_source_smoke.gd` 的 9 条 `frozen:` 断言
 #   (打在**子类实例**上 —— 基类自己的实现无法证明子类听话)。
 #
 # frozen:PvP COUNTDOWN/局间冻结。置 true 后一切输入读口返回中性值(轴 0、无按键/边沿/切枪),

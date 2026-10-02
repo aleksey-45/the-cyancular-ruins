@@ -248,7 +248,7 @@ func _physics_process(delta: float) -> void:
 	# ---------- 执行移动 ----------
 	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
 	# ★ 且必须**滤掉不是摔下来的下坠速度**(squash 的调用契约 = "地面真正吸收掉的坠落速度"):
-	#   它一并覆盖的两条路径**性质不同**,别当成同一个病(实测,见 tests/squash_host_water_probe):
+	#   它一并覆盖的两条路径**性质不同**,别当成同一个病(实测,见 tests/probe/squash_host_water_probe):
 	#   · 梯子下行(720)是**真违规**,且是**每帧**不是一帧 —— `_tick_crouch_and_dash` 攀附时首行
 	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 -10%(实测 scale = (1.1000, 0.9000))。
 	#   · 水中那条**不重叠**:Water.feet_offset 取碰撞箱底边 ⇒ 站在水下实心地面上时脚底探针

@@ -26,7 +26,7 @@ const EDGE := 24.0          # 圆的外接方框距屏幕**右**边缘
 # 实测其矩形上沿在 y=1367、左沿 x=1784。圆心 (1756, 1300-EDGE_BOTTOM),半径 140,
 # 于是"不压到"要求 28² + (1367-cy)² > 140² → **EDGE_BOTTOM > 70.17**。
 # 用户要的是 70(恰好差 0.2px 擦到),取 **72** 留 1.5px 余量;两者差 2px,肉眼无感。
-# ★ 改延迟条字号/文案/锚点,或改 RADIUS_PX,都必须重跑 tests/minimap_circle_probe
+# ★ 改延迟条字号/文案/锚点,或改 RADIUS_PX,都必须重跑 tests/probe/minimap_circle_probe
 #   那条几何断言(它就是这么算出来的),别凭感觉调这个数。
 const EDGE_BOTTOM := 72.0
 const RING_PX := 4.0        # 圆内缘描边宽度(2026-09-17:2 → 4,用户要求"加粗")

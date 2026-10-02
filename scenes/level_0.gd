@@ -194,7 +194,7 @@ static func _collect_preorder(n: Node, out: Array[Node]) -> void:
 # ── 换场耗时打点(**诊断用,默认静默**)──
 # 打开方式:`-- --perf-switch`(与 `--worker` 同规,开关必须落在 `--` 之后,
 # 见 OS.get_cmdline_user_args())。打一次换场就在 stdout 打四行。
-# 配套 `tests/menu_autotest.gd` 的 `-- --autotest-switch`(两趟往返,把第 2 次退出也走到)。
+# 配套 `tests/smoke/menu_autotest.gd` 的 `-- --autotest-switch`(两趟往返,把第 2 次退出也走到)。
 static func _perf_log(label: String, t0: int) -> int:
 	var now := Time.get_ticks_usec()
 	if OS.get_cmdline_user_args().has("--perf-switch"):

@@ -1,6 +1,0 @@
-[gd_scene format=3 uid="uid://pvpsmokec0000a1"]
-
-[ext_resource type="Script" path="res://tests/pvp_smoke_client.gd" id="1"]
-
-[node name="PvpSmokeClient" type="Node"]
-script = ExtResource("1")

@@ -808,7 +808,7 @@ const TEARDOWN_ABORT := 2     # 拉起失败:worker 根本没起来 → **立即
 # 全部拆除路径都必须走它。理由不是"整洁":本层为「端口泄漏」这**同一个**失败模式补过三次
 # (on_peer_left 空房分支 / royale_leave 空房分支 / ai_duel 摘房前的手动释放),散着写就还会漏
 # 第四次。收口后"新加一条拆除路径"这件事本身不可能漏 —— 没有第二条路可走。
-# `tests/room_sweep_smoke` 有断言钉住:端口归还与注册表删除只能出现在本函数体内。
+# `tests/smoke/room_sweep_smoke` 有断言钉住:端口归还与注册表删除只能出现在本函数体内。
 #
 # mode               三种形态,见下方 TEARDOWN_* 常量(默认 DELAYED)
 # msg                发给房内玩家的 server_message(空串=不发)

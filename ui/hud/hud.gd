@@ -420,7 +420,7 @@ func _build_kill_label() -> void:
 	#   所以文字位置不受影响。
 	#   本条**三个模式一起生效**(PvP / 大乱斗都实例化 level_0.tscn,共用这个 Hud)。
 	# 锚点/生长方向已迁进 ui/kill_counter.tscn(右上角、宽高留 0 由文本撑开、向左下生长)。
-	# ★ 刻意做成**无脚本的独立场景**而不是塞进 level_0.tscn:tests/kh_l3_visual_probe.gd
+	# ★ 刻意做成**无脚本的独立场景**而不是塞进 level_0.tscn:tests/probe/kh_l3_visual_probe.gd
 	#   用 Hud.new() 建单机 HUD 做取色断言,把节点声明进 level_0.tscn 会让 Hud.new()
 	#   建出的 HUD 没有它 → 那条探针立刻红。独立场景由本文件 load,创建方式无关。
 	var wrap := KILL_COUNTER_SCENE.instantiate() as PanelContainer

@@ -11,7 +11,7 @@ extends RefCounted
 # ⚠ 取属主进程必须用 `Select -ExpandProperty OwningProcess`:`% OwningProcess` 这种写法
 #   (ForEach-Object 后接裸名字)**取不到属性**、实测拿空 → 一个进程都杀不掉,且**不报错**。
 #   后果:旧进程继续占着 7777 → 新实例 bind 失败瞬间退出(双击服务端 exe 闪退)。
-#   守卫:`tests/kh_l5_probe.gd` 第 3 条(判据取**去注释视图** —— 解释这个坏写法的注释本身
+#   守卫:`tests/probe/kh_l5_probe.gd` 第 3 条(判据取**去注释视图** —— 解释这个坏写法的注释本身
 #   含该串,算进去会让断言永远红)。
 
 

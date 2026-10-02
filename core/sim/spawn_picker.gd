@@ -161,7 +161,7 @@ static func area_threshold() -> int:
 #       ⟺ **池 < 人数**(两图池 122 / 59,人数上限 8 ⇒ 死路)。
 #     · `TeamHost._plan_team_spawns_once`:基座、`cells_within(base, R)`、`spread_cells(…)`
 #       三处来源**都是**本函数(或它的 duplicate)⇒ 同样 ⊆ 池。
-#   ⇒ 与随机数无关(不是"抽 300 局没看见")。抽样读数只作旁证:`tests/spawn_pool_smoke`。
+#   ⇒ 与随机数无关(不是"抽 300 局没看见")。抽样读数只作旁证:`tests/smoke/spawn_pool_smoke`。
 static func spawn_candidates() -> Array:
 	if not _prefer_cache.is_empty():
 		return _prefer_cache
@@ -213,7 +213,7 @@ static func spawn_candidates() -> Array:
 #   ★ 口径:`(-1,-1)` 面与收窄前相同是**已扫布局族上的实测结论**,不是对"所有可能的敌人布局"
 #     的证明(结构化布局的空间远大于我扫的等间距网格族)。而上面 ④ 那条**与读数无关**。
 #   ★ 退化情形(登记):本图最大连通区 ≤ 2 时门槛会塌到 1,那时第 ② 档 == 全部地板格、
-#     第 ③ 档反而**更窄**(超集关系反转)—— 这种图是病态图,`tests/spawn_pool_smoke` 的
+#     第 ③ 档反而**更窄**(超集关系反转)—— 这种图是病态图,`tests/smoke/spawn_pool_smoke` 的
 #     "逐档放宽"断言会当场红。
 # ★ 两级都**不含孤立单格**(第 ③ 档是 `≥ 2`),故"兜底档不含孤立单格"对所有图成立。
 # ★ 自适应生效的图上第 ② 档 == 「连通区 ≥ 门槛(7)」;正常图上它 = 「连通区 ≥ 20」。

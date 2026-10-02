@@ -51,7 +51,7 @@ func _ready() -> void:
 	_rollback.bind(_local)
 	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
 	# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
-	# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
+	# 不报错,只是那修复不生效 —— 故 tests/probe/rollback_fidelity_probe 有源码守卫钉这一行。
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
@@ -86,7 +86,7 @@ func _ready() -> void:
 		add_child(minimap)
 	# HUD(左上角击杀排行榜)+ Esc 菜单
 	# ★ 声明式场景实例化,不能 RoyaleHud.new() —— 那个建出来的 CanvasLayer 没有子节点,
-	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,见 tests/hud_declarative_probe)。
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,见 tests/probe/hud_declarative_probe)。
 	_hud = preload("res://ui/hud/royale_hud.tscn").instantiate() as RoyaleHud
 	add_child(_hud)
 	_pause_menu = PauseMenu.new(true)
@@ -138,7 +138,7 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 		#   (见 _on_snapshot_own)。把世界包里自己那份写进玩家 = "每帧把权威位置强写进正在预测的
 		#   玩家" = 橡皮筋 —— 那正是被删掉的那条旧路径的写法。别顺手补回来。
 		#   (顺带:"你死了/你活了"这件事服务器经 round_state 的 alive 广播过,但那**不是**给
-		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 tests/royale_c2_watcher.gd 的 A②。)
+		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 tests/harness/royale_c2_watcher.gd 的 A②。)
 	# 清理已离开玩家(掉线者从快照消失):副本/头顶ID/血条一并移除(自检 M3 幽灵残留)
 	for role_str in _replicas.keys():
 		if not players_snap.has(str(role_str)):

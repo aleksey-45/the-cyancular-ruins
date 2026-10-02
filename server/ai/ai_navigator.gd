@@ -66,7 +66,7 @@ func _physics_process(delta: float) -> void:
 #   是后拉。而 `MazeGenerator.toroidal_delta_px(a, b)` 返回的是 **a → b** ——
 #   传 `(对手, 我)` 得到的是「对手→我」,**必须取负**才是本函数约定的方向。
 #   2026-09-14 修:黏滞分支漏了取负 → 锁定之后每一帧都瞄反、远则逃近则贴(只有换目标那一帧是对的)。
-#   回归守卫:`tests/ai_input_source_smoke.gd` 的「AI 目标方向」两条断言 —— 它们**真调本函数**、
+#   回归守卫:`tests/smoke/ai_input_source_smoke.gd` 的「AI 目标方向」两条断言 —— 它们**真调本函数**、
 #   断言 `dir.x` 的符号(光断言成员存在照不出符号错,这条 bug 就是这么漏掉的)。
 func _pick_target(p: Node2D) -> Dictionary:
 	var cur: Node2D = null

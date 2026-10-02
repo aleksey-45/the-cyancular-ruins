@@ -192,7 +192,7 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 	#   ★ 顺带闭合的**第二件事**:1v1 原先既然没有写端,`attribute()` 末尾那句
 	#     `remove_meta("last_self_hit_time")` 也就永不执行 ⇒ "自己炸自己之后 8ms 内
 	#     被敌人打中"会被记成 `self_damage`(玩家**因为被敌人打中而扣自己的分**)。
-	#   ⇒ 基类补这一行,**两件事一起闭合**。守卫:`tests/stats_delivery_probe` ⑦
+	#   ⇒ 基类补这一行,**两件事一起闭合**。守卫:`tests/probe/stats_delivery_probe` ⑦
 	#     ((a) 干净子弹链进 dealt/taken;(b) 自伤标记被这一笔当场作废)。
 	#   ★ `RoyaleHost` / `TeamHost` 的同名覆写**仍然留着**:它们与这里现在写法重复,
 	#     而 `attribute()` 是幂等的纯元数据写入,重复调用无害;删它们会一并作废
@@ -227,7 +227,7 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 	#   爆炸 / 榴弹直击 / 激光各自照旧写。⇒ 四条伤害来源在**三个模式**下都进 `dealt`/`taken`。
 	#   ★ 历史(留档):在此之前基类**不写**、只有 `RoyaleHost`/`TeamHost` 的覆写写,而 1v1
 	#     直接建 `MatchHost` ⇒ 1v1 一把手枪打完一局,结算页显示 `击杀 5 / 造成 0 / 承受 0`。
-	#     守卫 `tests/stats_delivery_probe` ⑦ 钉住"生产自己写不写"这一面。
+	#     守卫 `tests/probe/stats_delivery_probe` ⑦ 钉住"生产自己写不写"这一面。
 	var stat_victim: Node2D = players.get(int(role))
 	var stat_self := stat_victim != null and is_instance_valid(stat_victim) \
 			and CombatFeedback.is_fresh_self_hit(stat_victim, ATTRIB_FRESH_MS)

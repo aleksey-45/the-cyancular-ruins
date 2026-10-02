@@ -54,7 +54,7 @@ func _ready() -> void:
 	_rollback.bind(_local)
 	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
 	# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
-	# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
+	# 不报错,只是那修复不生效 —— 故 tests/probe/rollback_fidelity_probe 有源码守卫钉这一行。
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)
 	var pp := PostProcess.new()
@@ -209,7 +209,7 @@ func _on_round_state(data: Dictionary) -> void:
 		#   到达时,新一轮那批**早已在本地建好了**,再清一次 = 第 2 局起客户端地面恒为空
 		#   (服务器有 10 把、客户端一把都看不见,只能捡后来的丢弃物 —— 正是要修的那个症状)。
 		#   清旧的这件事由服务器那两条**有序**事件负责;真漏收了,对局中途掉线重进会重新拉
-		#   match_sync 兜住。守卫见 tests/net_ground_probe.gd 的反向断言。
+		#   match_sync 兜住。守卫见 tests/probe/net_ground_probe.gd 的反向断言。
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
 		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可在结算页上再弹一次
@@ -271,7 +271,7 @@ func _on_opponent_left() -> void:
 #     (大乱斗的对手色、大乱斗/3v3 里自己那把自选色),见 `_apply_tint` 的第二条分支。
 #     本文件(1v1)**不再引用它**。
 # ★ 判据链(改这个颜色时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`,
-#   由 `tests/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
+#   由 `tests/probe/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
 
 func _apply_p2_tint() -> void:
 	var body: Node = null
@@ -296,7 +296,7 @@ func _apply_p2_tint() -> void:
 # ★ 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的是 `UiFactory.C_TEAM_B`
 #   这个固定 token(2026-09-20 前是等价的 `P2_DEFAULT_HUE`)而**不是** `Settings.pvp_color_hue`
 #   (1v1 从未把自选色相染到本地玩家身上),所以这里只需保证**对手侧**别把它拉进来。判据:
-#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/hue_tint_probe` 有源码断言);
+#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/probe/hue_tint_probe` 有源码断言);
 #     · P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
 # ★ `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
 #   共享钩子(`PvpMatchClient._apply_peer_hues_or_team` / `_apply_tint`)**一字未动**。

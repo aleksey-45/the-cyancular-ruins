@@ -110,7 +110,7 @@ func _wire_hit_feedback() -> void:
 # (原 `_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**下发:
 #  那次"推"与 match_start 落在同一次客户端 poll,而那一刻新场景的订阅方还不存在 → 静默丢失
 #  (自检 B2:禁武器闸门没上)。现在 options 随 `NetBus.match_sync` 的应答一起给。
-#  消费者 `tests/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
+#  消费者 `tests/probe/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
 
 # ── 网络统计读数(2026-09-22 诊断用,★ 默认关;`-- --netstat`)────────────────
 # 每 role 的**待消费输入队列长度**。

@@ -49,7 +49,7 @@ func _check(ok: bool, msg: String) -> void:
 #   `_check` 之前**,整组被静默跳过 —— 这里打 ✓、`_finish()` 打 ALL-OK,**两行一起读成通过**。
 #   即:**✓ 汇总行 + ALL-OK 并不蕴含"这一组跑过"**。
 #   想让 ✓ 有意义:组内第一条断言要**空转不了**(先 `_check(x != null)` 再解引用;见
-#   `tests/match_result_probe.gd` 文件头 ②),或在本组**最后**补一条"确实跑到这里了"的自检
+#   `tests/probe/match_result_probe.gd` 文件头 ②),或在本组**最后**补一条"确实跑到这里了"的自检
 #   断言(它没跑 ⇒ 整组缺一条,而不是多一条 ✓)。
 func _summary(fails_before: int, msg: String) -> void:
 	print("[%s] " % probe_id() + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)

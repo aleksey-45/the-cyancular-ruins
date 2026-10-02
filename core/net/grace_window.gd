@@ -19,18 +19,18 @@ extends RefCounted
 #        读的就是本常量 —— 单一来源,不会漂;60s 下 `RECONNECT_RETRY_MS`(2s)与
 #        `RECONNECT_ATTEMPT_TIMEOUT_MS`(5s)不变,一次闪断里的重试次数由 ~15 变 ~30,
 #        是"更从容"而不是行为变化。
-#     ② **测试预算**:凡按"宽限期多久"算出来的窗口都要重算 —— `tests/reconnect_probe.gd`
-#        的 `GRACE_MIN/MAX` 与 `FINAL_TIMEOUT`、`tests/team_match_watcher.gd` 的 `OBSERVE_MAX`、
-#        `tests/team_match_probe.gd` 的 `RESULT_WAIT`(它的头部注释要求**逐项求和**算,别凭印象)。
+#     ② **测试预算**:凡按"宽限期多久"算出来的窗口都要重算 —— `tests/probe/reconnect_probe.gd`
+#        的 `GRACE_MIN/MAX` 与 `FINAL_TIMEOUT`、`tests/harness/team_match_watcher.gd` 的 `OBSERVE_MAX`、
+#        `tests/probe/team_match_probe.gd` 的 `RESULT_WAIT`(它的头部注释要求**逐项求和**算,别凭印象)。
 #        这三处是 Task 2。
 # ★ 端口归还延迟(`WorkerLauncher` 的三个 `*_PORT_REUSE_DELAY`)**不再与本值绑定**:
 #   承重的是"worker 进程活着 ⇒ 房与它占的端口都还在"(房活到 worker 退出,见
 #   `RoomManager._reclaim_finished_matches`)。守卫只留一条 belt 形式的宽松下界
-#   (`tests/grace_window_smoke` ⑧),口径写在那一处。
+#   (`tests/smoke/grace_window_smoke` ⑧),口径写在那一处。
 const DEFAULT_SECONDS := 60.0
 
 # ── 宽限期**到点之后**该做什么:纯分派(无 autoload、无副作用、可 `-s` 测)──
-# 三个模式的答案就在这里,由 tests/grace_window_smoke 逐个钉住;调用方只做一次比较,
+# 三个模式的答案就在这里,由 tests/smoke/grace_window_smoke 逐个钉住;调用方只做一次比较,
 # **不得**再抄一遍 if/else —— 那种写法出过一次真事故:原先 server_main 只有"大乱斗 / 其余"
 # 两支,`else` 把 1v1 **和 3v3** 一起吞了,于是 3v3 里第一个宽限到期的人会带着整局退进程
 # (用户裁定是"该队少人继续打"),而它当时不可达只因大厅还没有起 team worker 的入口。
@@ -73,7 +73,7 @@ func expired(now_ms: int) -> Array[int]:
 
 # ── 阶段 3(2026-09-28):宽限期读数 —— 服务端下发 + 客户端本地走秒 ──
 # 三个助手都是**纯函数**(不读时钟、不碰节点、不引 autoload):`-s` 冒烟直接钉
-# (tests/grace_window_smoke 的 ⑩⑪⑫)。
+# (tests/smoke/grace_window_smoke 的 ⑩⑪⑫)。
 
 # 服务端:当前各 role 还剩多少秒。`{role(int) -> 剩余秒(float)}`。
 # ★ 已到期的 role **仍在表里**(`expired()` 不改表,由调用方自行 `leave`)—— 这里照样报 **0.0**,

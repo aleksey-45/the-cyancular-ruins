@@ -10,14 +10,14 @@ extends CanvasLayer
 # —— 没有一个"能挂上去的东西"。本类就是补上那个东西:`ui/status_banner.tscn` 是一个
 # CanvasLayer,面板与文字由 `_ready()` 用 `UiFactory` 建 —— 与 `ui/match_result.tscn` 同一种
 # 取舍(裸骨架 tscn + 代码建面板;理由是"手写锚点是'改错了不报错'的那一类",故让它与逻辑
-# 同处一室,而不是散进 .tscn 的 offset 数字里)。见 `tests/hud_declarative_probe.gd` 文件头
+# 同处一室,而不是散进 .tscn 的 offset 数字里)。见 `tests/probe/hud_declarative_probe.gd` 文件头
 # 关于"裸骨架 tscn 的 @onready 数为 0 是**正确形状**"那一段。
 #
 # ★★ **层位只住在 `ui/status_banner.tscn` 里**(`layer = 140`),脚本**不设** layer。
 #   理由与结算页逐字相同:`.new()` 建出来的 CanvasLayer 是**默认的 layer 1** —— 会画在三个
 #   对局 HUD(130)与小地图(131)**底下**,横幅被 HUD 盖住且**不报错**。
 #   故宿主必须 `preload("res://ui/hud/status_banner.tscn").instantiate()`;
-#   守卫:`tests/hud_declarative_probe.gd` 的 ⑧。
+#   守卫:`tests/probe/hud_declarative_probe.gd` 的 ⑧。
 # ★ 层位取 140 的推导:必须**高于** HUD(130)与小地图(131)(否则被盖住);必须**低于**
 #   暂停菜单(145)与结算页(150)—— 那两块是模态性质的画面,横幅不该压在它们上面。
 #   (真掉线时若菜单正开着,`_begin_reconnect` 会推迟到关菜单才动,那一刻菜单已经消失。)
@@ -54,7 +54,7 @@ const FONT_SIZE := 32
 #   y = 96 起**向下长**(8 行时实测板底到 y ≈ 499 —— `ui/royale_hud.gd` 的
 #   `_board_bg.size.y = vbox 高 + 34`)⇒ 那一竖条盖住的是标题行下缘、计时行整条、以及第一行
 #   玩家左侧的「名次」那几格。
-#   ★ **568 这个数是两处独立算得的,互相印证**:①`tests/reconnect_status_probe.gd` 相③ 的
+#   ★ **568 这个数是两处独立算得的,互相印证**:①`tests/probe/reconnect_status_probe.gd` 相③ 的
 #   居中断言把整块矩形打在自己的消息里(实测 `rect=[P: (676.0, 128.0), S: (568.0, 76.0)]`);
 #   ②按本项目那条度量规则手算标签宽 ——「汉字 32px、半角 16px」(与 `ui/royale_hud.gd` 的
 #   `NAME_UNITS` 同一条口径):12 个汉字 + 8 个半角 = 384 + 128 = **512**,再加左右各 28 的

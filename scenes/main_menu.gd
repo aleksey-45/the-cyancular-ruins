@@ -57,9 +57,9 @@ func _ready() -> void:
 			continue
 		if get_tree().root.has_node(NodePath(PROBE_NODE_NAME)):
 			break
-		if not ResourceLoader.exists("res://tests/menu_autotest.gd"):
+		if not ResourceLoader.exists("res://tests/smoke/menu_autotest.gd"):
 			break
-		var probe_script := load("res://tests/menu_autotest.gd")
+		var probe_script := load("res://tests/smoke/menu_autotest.gd")
 		if probe_script == null:
 			break
 		var probe := Node.new()
@@ -108,7 +108,7 @@ static func _git_text(args: Array) -> String:
 # 版本号:**发布版读 core/build_info.gd**(由 tools/build_release.py 在导出前写入真实版本号与
 # 构建时间戳),开发版回落到 git(分支名 + 提交数)。
 # ★ 发布版必须走前者:发布机往往没有 git,读 git 只会得到 "dev" 且拿不到构建时间。
-# 传 --nover 时恒为 "dev"(菜单自动探针要确定性文本,见 tests/menu_autotest.gd)。
+# 传 --nover 时恒为 "dev"(菜单自动探针要确定性文本,见 tests/smoke/menu_autotest.gd)。
 static func version_string() -> String:
 	if "--nover" in OS.get_cmdline_user_args():
 		return "dev"

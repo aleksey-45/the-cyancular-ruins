@@ -5,7 +5,7 @@
 
 [sub_resource type="StyleBoxFlat" id="Plate"]
 ; ★ 这是**副本**:唯一源是 ui/ui_factory.gd 的 C_PLATE(`.tscn` 引用不到 GDScript 的 const)。
-;   改底板色必须同步这一行 —— tests/ui_palette_single_source_smoke.gd 会钉住两者相等。
+;   改底板色必须同步这一行 —— tests/smoke/ui_palette_single_source_smoke.gd 会钉住两者相等。
 bg_color = Color(0, 0, 0, 0.1)
 content_margin_left = 24.0
 content_margin_right = 24.0
@@ -55,7 +55,7 @@ horizontal_alignment = 2
 ; 底板由 PanelContainer 按内容撑开(不是把 Label 拉成一条 1240 宽的横条),故包一层 wrapper。
 ; ★ 上面那份 Plate 的 0.1 与 ui/ui_factory.gd 的 C_PLATE **同值**（用户 2026-09-15 统一下调）。
 ;   场景里是字面量 —— `.tscn` **结构上引用不到** GDScript 的 const ⇒ 派生不了。
-;   **不再靠人工对齐**：tests/ui_palette_single_source_smoke.gd 的 ④ 会读本行、断言它与
+;   **不再靠人工对齐**：tests/smoke/ui_palette_single_source_smoke.gd 的 ④ 会读本行、断言它与
 ;   C_PLATE **逐位相等**；改漏了它**响亮地红**，不是静默。
 ;   其余落点（ui/hud.gd / ui/weapon_slots.gd / ui/world_label.gd 的 PLATE_COLOR、
 ;   ui/royale_hud.gd 的 _plate_box）都是 C_PLATE 的**别名/引用**，不存字面量。
@@ -67,7 +67,7 @@ horizontal_alignment = 2
 ;     (1v1 的「对手掉线中,等待重连… 剩余 Ns」),而本场景**刻意没有**那两个节点。
 ;     3v3 **不消费 `grace`**(spec §4 的 3.1 只点大乱斗与 1v1;6 人一队的单行"对手状态"
 ;     没有意义)—— 这是一条**有意的不对称**,不是漏抄:少了那两个节点是**正确形状**,
-;     "补上它"才是回归(反向断言在 `tests/reconnect_status_probe` 相⑥,它扫 `ui/team_hud.gd`)。
+;     "补上它"才是回归(反向断言在 `tests/probe/reconnect_status_probe` 相⑥,它扫 `ui/team_hud.gd`)。
 ;     ⇒ 除这一处(以及脚本引用/根节点名)外,其余节点仍与 pvp_hud.tscn 逐字对应。
 [node name="ScoreWrap" type="PanelContainer" parent="."]
 anchor_left = 0.5

@@ -10,10 +10,10 @@ extends RefCounted
 #   `kill_bonus_score(敌方存活人数)` 在 1v1(两人)与大乱斗(自由混战)里根本没有对应物。
 #
 # ★★ 五个权重是**首版默认值,属于平衡参数、预期会被调**(spec §3.2)。守卫分**两半**,别只读前半句:
-#   ① `tests/score_rules_smoke.gd` 钉的是**性质**(死亡多 ⇒ ACS 低…),**它自己与权重取值无关** ——
+#   ① `tests/smoke/score_rules_smoke.gd` 钉的是**性质**(死亡多 ⇒ ACS 低…),**它自己与权重取值无关** ——
 #      调数确实不会让它红;
-#   ② 但**测量生产路径分数**的那几条把**字面量**写进了期望值(`tests/stats_delivery_probe.tscn` ①、
-#      `tests/team_host_probe.tscn` ⑬d/⑬e/⑬f/⑬g)。**实测(2026-09-26,HEAD)**:`KILL_SCORE` 100→110
+#   ② 但**测量生产路径分数**的那几条把**字面量**写进了期望值(`tests/probe/stats_delivery_probe.tscn` ①、
+#      `tests/probe/team_host_probe.tscn` ⑬d/⑬e/⑬f/⑬g)。**实测(2026-09-26,HEAD)**:`KILL_SCORE` 100→110
 #      ⇒ `score_rules_smoke` 与 `match_result_payload_smoke` 照旧全绿,而 `stats_delivery_probe` 红
 #      **1** 条(①)、`team_host_probe` 红 **6** 条(⑬d ×2 / ⑬e ×2 / ⑬f 的 `[仪器]` 前提 ×1 / ⑬g ×1
 #      —— ⑬f 与 ⑬g 各自的**主**断言仍绿,红的只是它们的前置/派生读数)。

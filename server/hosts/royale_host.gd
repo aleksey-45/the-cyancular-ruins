@@ -123,7 +123,7 @@ static func plan_spawns(roles: Array) -> Dictionary:
 	# ★★ 这是"出生池缺陷"(2026-09-19)在**本文件**里唯一还剩的姐妹分支:它取的仍是
 	#   `_floor_cells()`(全量、含孤立单格)。**今天不可达**,两条前提都得成立才可达:
 	#   ① `spread_cells` 恒返回 `min(n, 池大小)`(已实测);② 故本分支可达 ⟺ **首档池 < 人数**
-	#      —— 两图池 122 / 59,人数上限 8 ⇒ 死路。守卫:`tests/spawn_pool_smoke` 的 ⑦。
+	#      —— 两图池 122 / 59,人数上限 8 ⇒ 死路。守卫:`tests/smoke/spawn_pool_smoke` 的 ⑦。
 	# ★ 为什么**不**顺手把它也收窄(与用户"收掉它"的裁定不矛盾,这里情况不同):本分支恰在
 	#   "池子极小时"才可达,那时收窄会让补足**补不满** ⇒ `out[role] = (-1,-1)` ⇒ 摆到地图回卷
 	#   角落 —— 按用户已裁定的偏好((-1,-1) 更糟),**保持全量才是对的**。取舍已登记在报告里;
@@ -297,7 +297,7 @@ func _match_winner() -> int:
 	#   `_left` 是这种离开者**唯一**的痕迹。
 	# ★ 只在「幸存者 ≤ 1」这一档改变结果(≥2 个幸存者时他们**彼此**已在 0 杀上并列 ⇒ 改前
 	#   改后都是平局);离开者**有分**时本来就在 `_scores` 里,照旧按分判胜 —— 两条都钉在
-	#   `tests/late_match_probe.gd` 的 ④/⑤/⑤b 上(⑤ 是必需的反向对照:没有它,"恒返回 0" 也能过)。
+	#   `tests/probe/late_match_probe.gd` 的 ④/⑤/⑤b 上(⑤ 是必需的反向对照:没有它,"恒返回 0" 也能过)。
 	# ★ 这一条落地后,`scenes/royale_game.gd` 那道 `and not _match_ended` 门**失去了理由**
 	#   (它正是为挡这次翻转而立的)—— 但删它在 peer 的层、且需要用户点头,本批**不动**。
 	for role in _left:
@@ -405,7 +405,7 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -
 	#   **冗余的重复写**(`attribute()` 是幂等的纯元数据写入,重复调用无害);保留只为留下写点、
 	#   不作废以本处与 `TeamHost` 那份为锚点的既有登记与注释。
 	#   ★ **别据此把基类那一行删掉** —— 1v1 走 `MatchBootstrap` 直接建 `MatchHost`,
-	#     基类那一行是它**唯一**的子弹归因写端(守卫 `tests/stats_delivery_probe` ⑦)。
+	#     基类那一行是它**唯一**的子弹归因写端(守卫 `tests/probe/stats_delivery_probe` ⑦)。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
 

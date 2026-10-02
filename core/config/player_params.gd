@@ -98,7 +98,7 @@ const weapon_pickup_self_delay: float = 0.5
 # ★ 下面这组常量在 `EnemyParams.shared` 里**有一套同名同值的副本**(其中 8 个名字相同:
 #   amount / recover / land_min_vy / land_ref_vy / land / hurt / air / air_ref_vy)——
 #   两侧刻意不共享常量(两个参数类互不依赖,spec §3),故**改一侧要问另一侧是否也该改**。
-#   两份的漂移是真隐患,`tests/squash_stretch_smoke.gd` 逐名钉住这 8 个同值。
+#   两份的漂移是真隐患,`tests/smoke/squash_stretch_smoke.gd` 逐名钉住这 8 个同值。
 const squash_amount: float = 0.06          # 满冲击形变量
 const squash_recover: float = 16.0         # 冲击回归速率(指数,越大回正越快)
 const squash_jump: float = 0.75            # 起跳拉伸

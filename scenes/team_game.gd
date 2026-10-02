@@ -87,7 +87,7 @@ func _ready() -> void:
 		add_child(minimap)
 	# HUD(记分条按队号)+ Esc 菜单
 	# ★ 声明式场景实例化,不能 `TeamHud.new()` —— 那个建出来的 CanvasLayer 没有子节点,
-	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11;守卫 `tests/hud_declarative_probe`)。
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11;守卫 `tests/probe/hud_declarative_probe`)。
 	_hud = preload("res://ui/hud/team_hud.tscn").instantiate() as TeamHud
 	add_child(_hud)
 	_pause_menu = PauseMenu.new(true)

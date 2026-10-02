@@ -26,7 +26,7 @@ static var current: CombatFeedback = null   # 当前对局的反馈层;null = �
 ##
 ## ★ 用 load 而非 preload:本场景的 ext_resource 指回本脚本,preload 会构成
 ##   「脚本 → 场景 → 脚本」的循环引用,Godot 解析期直接报错。运行期 load 不参与解析,
-##   且资源只载一次(引擎缓存)。同款的 B11 见 tests/hud_declarative_probe。
+##   且资源只载一次(引擎缓存)。同款的 B11 见 tests/probe/hud_declarative_probe。
 static func spawn(host: Node) -> void:
 	if current != null and is_instance_valid(current) and host.is_ancestor_of(current):
 		return
@@ -73,7 +73,7 @@ static func attribute(victim: Node, attacker: Node) -> void:
 	#   不作的后果:自伤标记是个**时刻标量**、窗口 8ms,而同一物理帧里两次 `apply_aoe`
 	#   (各在自己的 `bullet._physics_process` 里跑)之间隔 **0ms** ⇒ "自己那颗先炸、敌人那颗
 	#   后炸"时,第二下会同时看见 `stat_self` 与新鲜的 `stat_attacker`,惩罚那一支按**自伤**记
-	#   —— 玩家**因为被敌人打中而扣自己的分**(实测 `tests/team_host_probe.gd` ⑬n3:
+	#   —— 玩家**因为被敌人打中而扣自己的分**(实测 `tests/probe/team_host_probe.gd` ⑬n3:
 	#   self_damage +40 而非 +20)。
 	#   ★ 为什么必须清在**这里**而不是读端:读端那两条支路的优先级(`if stat_self:` 优先于
 	#   `same_team` 那一支)是**计划明文选择**的语义 —— "同帧内先被敌人打中、再被自己的爆炸

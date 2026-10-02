@@ -114,7 +114,7 @@ const C_WARN        := Color(0.950, 0.850, 0.550)   # 金色:**只**用于「低
 #   ★ 大乱斗的排行榜那一行是画在 `_board_bg`(**黑 0.25**)上的,底更暗:本色 **2.24:1**,
 #     而既有那两档更低(「离开」的 `C_DANGER` 只有 **1.59:1**、「复活中」的 `C_TEXT_DIM` 更低)
 #     —— 即本档在排行榜上比既有两档都**更显眼**,这是它取这个亮度的全部理由。
-#   ★ 色值是**审美值**,以实图为准:`tests/combat_hud_visual_probe` 会连同既有几档一起取图,
+#   ★ 色值是**审美值**,以实图为准:`tests/probe/combat_hud_visual_probe` 会连同既有几档一起取图,
 #     由人眼验收("一眼能从满屏文字里挑出掉线的那一行")。要调整就调这一个数。
 const C_GRACE       := Color(0.72, 0.62, 0.90)      # #B89EE6
 
@@ -123,7 +123,7 @@ const C_GRACE       := Color(0.72, 0.62, 0.90)      # #B89EE6
 #   `ui/world_label.gd` 三处的 `PLATE_COLOR` 是它的**别名**,`ui/royale_hud.gd` 的
 #   `_plate_box()` 直接引用它 —— 别名/引用里**没有字面量** ⇒ 不构成第二个源。
 #   `ui/pvp_hud.tscn` / `ui/team_hud.tscn` 的 `bg_color` 是**结构上无法派生**的副本
-#   (`.tscn` 引用不到 GDScript 的 const),由 `tests/ui_palette_single_source_smoke.gd`
+#   (`.tscn` 引用不到 GDScript 的 const),由 `tests/smoke/ui_palette_single_source_smoke.gd`
 #   钉住与它逐位相等。
 # ★ 用户 2026-09-15 定为 0.15、同日又下调到 0.1(当天这几个元素先被去掉底板、又垫回来)。
 # ★ **例外:大乱斗排行榜 `royale_hud._board_bg` 单独是 0.25** —— 用户点名把那张玩家栏

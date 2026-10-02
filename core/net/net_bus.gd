@@ -139,7 +139,7 @@ func can_send_to_server() -> bool:
 #   所以表里只要还剩**一个**处于"队列已拆、MultiplayerAPI 还没忘掉"窗口的 peer,这一发就报错。
 #   而那个 peer 往往正是**我们自己刚踢掉的那个**:`disconnect_peer()` 当场把它的通道数清零
 #   (`enet_peer_reset_queues`),而它要从 `get_peers()` 里消失得等**下一次 poll**。
-#   实测证据(2026-09-21,`tests/reconnect_probe` 的 worker 日志,当前树、未改之前):
+#   实测证据(2026-09-21,`tests/probe/reconnect_probe` 的 worker 日志,当前树、未改之前):
 #   每拒绝一次错的 reclaim 就有一帧**同时**报 channel 0 与 channel 1,且 GDScript backtrace
 #   两行都指向 `_broadcast_snapshot (server/match_snapshot.gd:34)` → `_physics_process`。
 #   (通道号是证据:`0` = reliable、`1` = unreliable —— 一帧里两条都出现,说明那一发在

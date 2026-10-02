@@ -26,7 +26,7 @@ signal leave_requested
 #   `dmg` 已改名 `dealt`(与载荷字段同步);`assists`/`taken` 与 §3.6 的列一一对应。
 #   ★★ 三个列常量里出现的**每一个**键都必须在这里有标题 —— 漏一个**不报错**,只是那一列的
 #      表头退化成**裸英文键名**(下面 `.get(col, col)` 的兜底),而所有数值断言照样全绿。
-#      守卫:`tests/match_result_payload_smoke.gd` 的 ⑧(键集从三个常量推,不写死清单)。
+#      守卫:`tests/smoke/match_result_payload_smoke.gd` 的 ⑧(键集从三个常量推,不写死清单)。
 const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "assists": "助攻",
 		"dealt": "造成", "taken": "承受", "acs": "ACS"}
 const NAME_UNITS := 12                 # 昵称定宽(半角单位);换字体要重算
@@ -137,7 +137,7 @@ func show_result(payload: Dictionary) -> void:
 	#        `custom_minimum_size.x = 1120` 而内容最小宽只有 476(一个按钮)⇒ 偏移量按 476 算
 	#        = 面板被摆在"宽 476"的位置上,随后布局把它撑到 1120,**往右长出去 322px**。
 	#    ⇒ 唯一可靠的量就是 `get_combined_minimum_size()`(取图时打过诊断核对:此刻它 = 实收尺寸)。
-	#    实测(2026-09-20 取图,`tests/match_result_probe` 的 `user://match_result_0..2.png`):
+	#    实测(2026-09-20 取图,`tests/probe/match_result_probe` 的 `user://match_result_0..2.png`):
 	#    面板右半截切在屏幕外,3v3 两节时 **B 队的「击杀/阵亡/伤害/ACS」四列整列看不见** ——
 	#    而当时**全部数值断言都是绿的**(它们只数 `columns` 与子节点个数,位置一个都照不到)。
 	#    锚点已是 (0.5,0.5)(`_ready()` 那次),偏移量取 ±半尺寸即为居中。
