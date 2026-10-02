@@ -95,7 +95,13 @@ func _snapshot_player(player: Node) -> Dictionary:
 	var wc = player.get("weapons")
 	if wc == null:
 		return d
-	d["wslot"] = int(wc.get("_current_slot"))
+	# ★ 合并订正(2026-10-02):原写的是 `_current_slot` —— 主线已把 `slot` 一词整体退休、
+	#   改名为 `_current_type`,于是 `get()` 返回 null ⇒ `int(null)` 每帧(20Hz)抛
+	#   "Nonexistent 'int' constructor",而**快照值照旧是 0、不报红、不中断**。
+	# ★ 另注:本键当前**只写不读**(`player.rewind_restore` 还原武器用的是 `widx` + `wmags` +
+	#   `wlive`,不看类型 id)。保留它是为了与 `capture_state` 的 `wslot` 同口径,免得下次
+	#   有人想按类型还原时以为这里没有。
+	d["wslot"] = int(wc.get("_current_type"))
 	d["widx"] = int(wc.get("_current_index"))
 	var inv = wc.get("inventory")
 	if inv != null:
