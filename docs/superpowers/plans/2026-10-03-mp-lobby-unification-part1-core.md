@@ -1643,6 +1643,20 @@ func _lobby_action_allowed() -> bool:
 ★ 统一页的做法：加 `var _in_room := false`，**`_show_wait_room` 里置 true、`_hide_wait_room` 里置 false**（与面板可见性同生命周期 —— 分开写两处状态就是漂的成因）。文案按 `_current_mode` 给三种（1v1 写「已在 1v1 房间中…」）。
 ★ **探针要断言**：`_show_wait_room` 之后 `_lobby_action_allowed()` 为 false 且 `_status` 文案随模式变；`_hide_wait_room()` 之后回到 true。
 
+★★★ **只加 `_lobby_action_allowed()` 是**不够**的 —— 这一点是本计划初稿没想到的：**
+
+- `_open_create_dialog()` 是**直接**绑在「＋创建房间」按钮上的（`connect(_open_create_dialog)`），
+  **它压根不问 `_lobby_action_allowed()`**。⇒ 闸门只挡得住最后那一次建/加的 RPC，
+  **玩家照样能把创建弹层开在等待室上面，压暗罩照样落在等待室底下**（层级问题原样保留）。
+- 同理 `_toggle_join_panel()`（加入弹层）也会留在屏幕上。
+- ⇒ **修法必须包含"进等待室时把这两个入口一起收掉"**：最省事且不会漏的形状是
+  **在 `_show_wait_room` 里直接隐藏「＋创建房间」/「加入房间」两颗按钮**（`_hide_wait_room` 里恢复），
+  与 `_in_room` 同生命周期；`_lobby_action_allowed()` 那道闸门**仍然要加**（它挡的是别的路径，且旧页有）。
+- ★ **顺序坑**：大乱斗/3v3 的「退出房间」是 `rpc_id` 之后**紧接**一句 `_request_list.call_deferred(...)`。
+  `_hide_wait_room()` 必须在**那句 deferred 之前**跑完（它 `call_deferred` 到帧末才执行，故只要在同一个函数里排在前面就安全）；
+  排反了 ⇒ 那次刷新被自己的闸门拒掉，列表永远不更新且不报错。
+- ★ **探针一并要断**：进等待室后「＋创建房间」/「加入房间」两颗按钮**不可见**；退回后恢复可见。
+
 **(c) 探针要能数"名单行"**：每加一行名单都 `label.set_meta("roster_row", true)`，
 否则断言 3（"名单行数 == 载荷 players 条数"）只能靠遍历所有 Label 猜、极易假绿。
 同理，选边/开始/退出三颗按钮都要能在探针里按文案找到（`_find_button(panel, "开 始 游 戏")` 之类）。
