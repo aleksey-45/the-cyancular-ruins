@@ -13,9 +13,8 @@ var _time_sync := 0.0
 # ── Beta 回溯(每 role 自身;他人不受影响)──
 const RW_SNAP_DT := 1.0 / 20.0     # 自身状态采样间隔(20Hz,与单机 WorldRewind 同款)
 var _rw_buf: Dictionary = {}       # role -> Array[帧快照](t 升序;只存**自己**的状态+自己的子弹)
-var _rw_on: Dictionary = {}        # role -> bool(回溯中)
 var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
-var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
+# _rw_on / _rw_trail 声明在根基类 MatchState(本文件不重复声明,GDScript 禁止成员遮蔽)
 var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
 var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
 

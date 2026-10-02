@@ -34,8 +34,11 @@ var _team_of: Dictionary = {}
 # Beta 时间玩法(B21):服务器权威颗粒经济。普通局恒 null(一切结算/广播短路)。
 # 宿主 _init 时若房主 options 带 time 规则则建(见 MatchHost._init)。
 var time_economy = null
-# Beta 回溯的会话态 _rw_on/_rw_trail 声明在 match_snapshot.gd(本文件不重复声明,
-# 否则子类遮蔽出两份存储)。
+
+# Beta 回溯的会话态(声明在**根基类**:快照域 MatchSnapshot 与宿主域 MatchHost 都要读写,
+# 子类符号在导出编译期解析不了 —— 声明必须位于链上所有使用者的上游)。
+var _rw_on: Dictionary = {}        # role -> bool(回溯中)
+var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
 
 
 # 受害者 meta 里的"最近攻击者" → role(带新鲜度窗口;超窗/自伤/不在表 → 0)。
