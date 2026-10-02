@@ -86,15 +86,26 @@ func _ready() -> void:
 	#     只有权威知道),客户端要按它排除 —— 否则刚丢下的枪会显示 F 却捡不起来。
 	_check(_read("res://server/match/match_ground.gd").contains("\"by_role\":"),
 			"weapon_spawned 载荷里没有 by_role")
-	_check(_read("res://server/match/match_ground.gd").contains("_broadcast_weapon_spawned(ni, role)")
-			or _read("res://server/match/match_ground.gd").contains("_broadcast_weapon_spawned(inst, role)"),
-			"丢枪/换枪那条广播没带上角色")
+	# ★ 2026-10-02 降精度:原写法把形参名(`ni` / `inst`)钉死在 `contains` 里 —— 作者本人已经
+	#   因为 `ni`→`inst` 改名被迫加了一条 `or` 分支。意图只是"这次广播**带上了角色**" ⇒
+	#   改判"存在一处带**两个实参**的调用"(正则里有逗号即 ≥2 参),实参叫什么名字都行。
+	var _mg_src := _read("res://server/match/match_ground.gd")
+	var _mg_re := RegEx.new()
+	_mg_re.compile("_broadcast_weapon_spawned[(][^)]*,")   # 字符类代替转义:GDScript 的 "\(" 会被当非法转义
+	_check(_mg_re.search(_mg_src) != null, "丢枪/换枪那条广播没带上角色")
 	_check(pmc.contains("_self_drop_until"), "客户端没记自己刚丢下的那把")
 	_check(clbody.contains("_live_self_drops"), "客户端的提示判定没排除自己刚丢下的")
 
 	# ④ 背包进整态:capture 里有 inv,而 `_close_enough` 里**没有**
-	_check(pl.contains("\"inv\""), "player.capture_state 里没有 inv")
-	_check(pl.contains("restore_inventory"), "player.restore_state 里没有重建背包")
+	# ★ 2026-10-02 降精度:原为**文件级** `pl.contains(...)` —— 而 `restore_state` 里那句
+	#   `st.get("inv", [])` 会把 capture 侧那条喂饱 ⇒ 只删 capture 侧照样绿。收窄到各自函数体。
+	_check(_func_body(pl, "capture_state").contains("\"inv\""),
+			"player.capture_state 里没有 inv")
+	# ★ 收窄到 `restore_state` 函数体是**错的**(实测红):那句调用其实住在它调用的助手
+	#   `_apply_weapon_state` 里。改成钉**调用形状** —— `pl` 已剥注释,故带括号的
+	#   `restore_inventory(` 只可能匹配真实调用;这样对"助手之间搬家"也免疫。
+	_check(pl.contains("restore_inventory("),
+			"player 没有重建背包(weapons.restore_inventory(...) 调用不见了)")
 	_check(not pr.contains("\"inv\""),
 			"_close_enough 里出现了 inv —— 它必须只进 capture/restore,进去就会每帧判分歧、无限回滚")
 
@@ -109,7 +120,9 @@ func _ready() -> void:
 			"换局清空没广播 weapon_removed —— 客户端会留下一整批上一局的幽灵枪")
 	_check(rb.contains("_broadcast_weapon_spawned"),
 			"换局重铺没广播 weapon_spawned —— 新一轮那批在客户端一件都建不出来")
-	_check(not rb.contains("_next_ground_inst = 1"),
+	# ★ 2026-10-02 降精度:原只咬 `= 1` ⇒ `= 0` / `= START` 都逃逸。意图是"这个计数器
+	#   不许被重置",与重置成哪个数无关 ⇒ 改判"换局体里根本不出现该标识符"。
+	_check(not rb.contains("_next_ground_inst"),
 			"换局把 _next_ground_inst 重置回 1 —— 新一轮会与客户端残留节点撞号(客户端静默拒绝建档)")
 	# ★ **反向断言**:客户端那一侧**不得**在换局时自己清空地面武器。
 	#   真写过一版(以为"漏收一条事件会留幽灵枪,清一次自愈"),结果是**反向**的破坏:
@@ -133,11 +146,11 @@ func _ready() -> void:
 	var wc := _code_only(_read("res://scenes/player/weapon_component.gd"))
 	var rnc := _func_body(wc, "request_net_cycle")
 	_check(not rnc.is_empty(), "request_net_cycle 找得到")
-	_check(rnc.contains("push_switch_inst(inst_at_index(next))"),
+	_check(rnc.contains("push_switch_inst(inst_at_index("),
 			"滚轮切枪上行不是目标那把的 inst —— 传背包位置会让两端 held 顺序不同时切到不同的枪")
-	_check(_func_body(pl, "_physics_process").contains("equip_inst(winst)"),
-			"消费端没按 inst 切（equip_inst(winst)）—— 上行值没人解")
-	_check(not _func_body(pl, "_physics_process").contains("equip_index(wslot - 1)"),
+	_check(_func_body(pl, "_physics_process").contains("equip_inst("),
+			"消费端没按 inst 切（equip_inst(...)）—— 上行值没人解")
+	_check(not _func_body(pl, "_physics_process").contains("equip_index(wslot"),
 			"消费端又按**背包位置**解上行值了 —— 两端 held 顺序不同时切到不同的枪")
 
 	# ⑤ 链规矩:MatchGround 是中间层,**不得**定义生命周期钩子

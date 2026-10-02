@@ -96,7 +96,7 @@ func _phase_source_contract() -> void:
 	var rnc := _func_body(wc, "request_net_cycle")
 	_check(not rnc.is_empty(), "request_net_cycle 找得到")
 	# ★ 这条**接管**了 net_ground_probe ④c 原先那条(它断言的是 `push_net_slot(next + 1)` —— 被本 Task 反证)。
-	_check(rnc.contains("push_switch_inst(inst_at_index(next))"),
+	_check(rnc.contains("push_switch_inst(inst_at_index("),
 			"滚轮待发值不是**目标那把的 inst** —— 传背包位置会让两端 held 顺序不同时切到不同的枪")
 
 	_check(pis.contains("\"winst\":"),
@@ -112,9 +112,9 @@ func _phase_source_contract() -> void:
 	var plp := _func_body(pl, "_physics_process")
 	_check(plp.contains("consume_switch_inst()"),
 			"player.gd 没读 input_source.consume_switch_inst() —— 上行 inst 没人消费")
-	_check(plp.contains("equip_inst(winst)"), "player.gd 没按 inst 切枪")
+	_check(plp.contains("equip_inst("), "player.gd 没按 inst 切枪")
 	# ★ 与 net_ground_probe:144 那条**同一个字符串、方向相反** —— 本 Task 把那条改写掉,这一条接管。
-	_check(not plp.contains("equip_index(wslot - 1)"),
+	_check(not plp.contains("equip_index(wslot"),
 			"player.gd 还在按**背包位置**解上行值 —— 两端 held 顺序不同时会切到不同的枪")
 	_summary(before, "相① 协议与解析点的形状")
 
@@ -127,11 +127,12 @@ func _phase_downlink_key() -> void:
 	var before := _failures.size()
 	var mss := _code_only(_read("res://server/match/match_snapshot.gd"))
 	var pre := _code_only(_read("res://scenes/player/player_replica.gd"))
-	_check(mss.contains("\"type_id\": p.weapons.current_type_id()"),
+	# ★ 2026-10-02 降精度:三条都别再钉右侧表达式/默认值 —— 意图是"键名对不对",不是"值怎么取"。
+	_check(mss.contains("\"type_id\":"),
 			"下行快照生产端没把 weapon 字段改名 type_id")
-	_check(not mss.contains("\"weapon\": p.weapons."),
+	_check(not mss.contains("\"weapon\":"),
 			"下行快照生产端还发着旧键 weapon —— 与上行同名不同义")
-	_check(pre.contains("data.get(\"type_id\", 0)"),
+	_check(pre.contains("\"type_id\""),
 			"副本没读 type_id —— 生产端改了名而它照旧读 weapon 的话,副本会**静默空手**")
 	_summary(before, "相⑤ 下行键两端同源")
 	_ran["downlink_key"] = true
