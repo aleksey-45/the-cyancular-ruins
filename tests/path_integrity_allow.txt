@@ -9,5 +9,5 @@ res://crashlogs	# 同上(崩溃转储目录)
 res://map	# 同上 —— ★ 注意它与**真实存在**的 res://maps 是两个不同的串,不是笔误
 res://backup	# 同上(备份目录,见 .gitignore)
 res://editor/_build	# 同上(编辑器构建产物)
-res://maps/factory1v1.txt	# map_catalog_probe 的**负向断言**:断言"非 .cyrm 后缀应被拒" ⇒ 该文件本就不该存在
+res://maps/newfactory.txt	# map_catalog_probe 的**负向断言**:断言"非 .cyrm 后缀应被拒" ⇒ 该文件本就不该存在
 res://maps/nope.cyrm	# 同上:断言"不存在的图应被拒"
