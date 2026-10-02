@@ -386,15 +386,16 @@ static func can_rejoin_to(code: String, mode: String) -> bool:
 | 左（宽 1.25） | **版本信息**：当前版本 + 构建时间 + 提交历史（`ScrollContainer`，最多 20 条） |
 | 右（宽 1） | **开发团队** 面板 + **致谢** 面板 |
 
-**开发团队**（用户给定，**不分职责、按序一人一行**）：
+**开发团队**（用户给定，**不分职责、按序一人一行**；共 **4** 人）：
 
 ```
 RoFtaCD
 KikuchiH
-Lord Nahiz
-Waugh
+Lord Nahiz Waugh
 siri2048
 ```
+
+★ `Lord Nahiz Waugh` 是**一个人**（三段名），**不是** `Lord Nahiz` + `Waugh` 两人 —— 初稿在这里拆错过一次。
 
 **致谢**（用户给定，五条；前三条是软件/素材，后两条是文学灵感，**写拉丁字母全名**）：
 
