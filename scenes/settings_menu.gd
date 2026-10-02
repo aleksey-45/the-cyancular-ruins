@@ -8,6 +8,10 @@ const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
 	"charge": "冲刺", "attack": "开火", "R": "重开(单机)",
 	"F": "拾取", "Q": "丢弃(长按)",
+	# ★ 2026-10-02 合并补:KH 的时间玩法把这两个动作加进了 `REMAPPABLE_ACTIONS`,
+	#   而主线的 `settings_actions_smoke` 要求两表**逐条对齐**(漏一条就退化成
+	#   `ACTION_NAMES.get(action, action)` 显示英文键名)。守卫正是为此而设。
+	"rewind": "时间回溯", "haste": "时间加速",
 }
 
 var _capturing_action := ""      # 正在等待捕获新键位的动作(""=不在捕获态)
