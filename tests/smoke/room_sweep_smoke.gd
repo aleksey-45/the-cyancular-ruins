@@ -557,14 +557,24 @@ func _check(src: String) -> void:
 		_fail = "_sweep_stale_rooms 的「无超龄房则提前 return」守卫漏了某张注册表(只有那张表的房超龄时永不清扫 → 静默端口泄漏)"; return
 	if not body.contains("stale + stale_royale + stale_team"):
 		_fail = "_sweep_stale_rooms 的拆除列表未含全部三张注册表(未被扫到的那张 → 端口永久泄漏)"; return
-	# 汇总 print 也必须报第三条界(照实登记的估值界;漏了只是日志失真,但它是上面那些界的**唯一**读数)
+	# 汇总 print 必须把 3v3 那一档的**数据**报出来(照实登记的估值界;漏了只是日志失真,
+	# 但它是上面那些界的**唯一**读数)。
+	# ★ 2026-10-02 降精度:判据钉**数据**(实参 `stale_team.size()`),不钉文案里的字面量 "3v3"
+	#   —— 那句 print 里的 "3v3" 只是标签,把标签留着、把那个实参换成别的变量的变异它拦不住;
+	#   反之换个写法的文案不该红。要拦的变异:**不再把 3v3 超龄数报进汇总行**(界变了而日志读不出)。
+	#   ★ 那条 print 是**跨行**的(格式串一行、实参表在后续几行),故连同实参一起收集到 `]` 收束。
 	var summary := ""
-	for line in code_lines:
-		if line.begins_with('print("[lobby] 清理'):
-			summary = line
+	for i in range(code_lines.size()):
+		if code_lines[i].begins_with('print("[lobby] 清理'):
+			var parts: Array[String] = []
+			for j in range(i, code_lines.size()):
+				parts.append(code_lines[j])
+				if code_lines[j].strip_edges().ends_with("]"):
+					break
+			summary = "\n".join(parts)
 			break
-	if summary.is_empty() or not summary.contains("3v3"):
-		_fail = "_sweep_stale_rooms 的汇总 print 未报 3v3 那一档(界有变化而日志读不出来)"; return
+	if summary.is_empty() or not summary.contains("stale_team.size()"):
+		_fail = "_sweep_stale_rooms 的汇总 print 未报 3v3 那一档的数据(stale_team.size())—— 界有变化而日志读不出来"; return
 	# ★ 本函数**跑到尾**的凭证(判据在 _finish;理由见文件头那段)。下面的每个 _check_* 同款。
 	_done.append("_check")
 

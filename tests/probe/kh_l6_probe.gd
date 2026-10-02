@@ -810,9 +810,18 @@ func _check_name_color() -> void:
 	if i_const >= 0:
 		_check(_pc_lines[i_const].contains("Color("), "`%s` 不是 Color 字面量:「%s」" % [N_NAME_COLOR, _pc_lines[i_const].strip_edges()])
 	for spec in [["nm_self", "自己"], ["nm_opp", "对手"]]:
-		var needle := "set_" + "label(" + str(spec[0]) + ", " + N_NAME_COLOR + ")"
-		_check(_find_line(_pc_lines, needle) >= 0,
-			"%s 的头顶名没用 `%s` 上色(缺「%s」)→ 回退按角色双色?" % [spec[1], N_NAME_COLOR, needle])
+		# ★ 2026-10-02 降精度:原钉逐字 `set_label(nm_self, NAME_COLOR)` —— helper 名 / 空格 /
+		#   调用形状(改成 .modulate 等)一改就假红。改判"**那个标签上色的那一行引用了
+		#   NAME_COLOR**"(同一行的变量名 + 常量同现即可,不问用什么口上色)。
+		# 要拦的变异:把某个标签改用别的颜色(如 ROLE_COLOR)⇒ 那行不再含 NAME_COLOR → 红
+		# (U1 的"头顶名统一中性亮白"被悄悄回退)。
+		var colored := false
+		for line in _pc_lines:
+			if line.contains(str(spec[0])) and line.contains(N_NAME_COLOR):
+				colored = true
+				break
+		_check(colored,
+			"%s 的头顶名上色没引用 `%s`(回退按角色双色?)" % [spec[1], N_NAME_COLOR])
 	var role := _find_lines(_pc_lines, N_ROLE_COLOR)
 	_check(role.is_empty(), "出现 `%s` %d 处(按角色双色 = 回退 main 的有意视觉决策 U1)" % [N_ROLE_COLOR, role.size()])
 	_summary(before, "头顶名:%s 在且两个标签都用它上色,%s 零命中" % [N_NAME_COLOR, N_ROLE_COLOR])

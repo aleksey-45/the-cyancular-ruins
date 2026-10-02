@@ -16,8 +16,8 @@ extends Node
 #   ① 几何:本地玩家推进到副本处会被挡住,不穿过去;
 #   ② C2 判据:权威被障碍挡住时,预测端只要也有等价的障碍,rollback_count() 就该停在 0
 #      —— ① 只说明"有个东西挡着",② 才是"贴身回滚治好了"的证据;
-#   ③ 源码守卫:两端客户端都给本地玩家设了 mask |= 2(幽灵体做好了但本地玩家不认它,
-#      等于没做,而且不会有任何报错)。
+#   ③ 源码守卫:两个场景侧**任一入口**把本地玩家的 mask 加上玩家层位(位 2)即可(幽灵体做好了
+#      但本地玩家不认它,等于没做,而且不会有任何报错)。判据不钉具体写法/入口,只拦"接线全没了"。
 #
 # 反证(必须成立,否则本探针没有鉴别力):把幽灵体的 collision_layer 置 0(即摘掉它),
 # ① 必须变成"穿过去了"、② 必须变成"分歧 + 回滚"。本探针把这一趟**当作正式断言跑**
@@ -262,17 +262,47 @@ func _build_grid() -> Array[Array]:
 
 
 # ── 源码守卫 ──
-# 这条不是实现细节:幽灵体做好了但本地玩家 mask 不含层2,等于没做 —— 而且静默无报错。
-# 若改法换了入口(例如搬进 player.gd 按 pvp_mode 设),请把这里的匹配改成新入口,**别删掉这条断言**。
+# 这条不是实现细节:幽灵体做好了但本地玩家 mask 不含玩家层(位 2),等于没做 —— 而且静默无报错。
+# ★ 判据刻意**宽松**:不钉接收者名、不钉空格写法、不钉它挂在哪个入口 —— 两个对局场景各自的
+#   接线可以落在自己文件里、也可以落在共享基类(pvp_match_client)或 player.gd(按 pvp_mode 设)。
+#   要拦下的变异只有一个:**整条接线被删/改成别的层** ⇒ 两个场景的可达入口都取不到 → 红。
+#   ★ 它**测不到**:接线具体挂在哪个入口(任一入口都算数),以及 3v3 那种"按队改层"的形态。
 func _check_source_guard() -> void:
+	var shared := ["res://scenes/pvp_match_client.gd", "res://scenes/player/player.gd"]
 	for f in ["res://scenes/pvp_game.gd", "res://scenes/royale_game.gd"]:
-		var txt := FileAccess.get_file_as_string(f)
-		var found := false
-		for line in txt.split("\n"):
-			if line.contains("collision_mask |= 2") and not line.strip_edges().begins_with("#"):
-				found = true
-				break
-		_check(found, "③ %s 给本地玩家设了 collision_mask |= 2" % f)
+		var found := _adds_player_layer(f)
+		if not found:
+			for c in shared:
+				if _adds_player_layer(c):
+					found = true
+					break
+		_check(found, "③ %s 侧本地玩家最终会拿到玩家层位(位 2)—— 幽灵体对本地玩家可见的接线丢了" % f)
+
+
+# 该文件里有没有"把玩家层(位 2)按位**或**进某个 collision_mask"的代码行。
+# 接受等价写法:`x.collision_mask |= 2` / `= … | 2` / `set_collision_mask_value(2, true)` —
+# 不钉局部量名(local / _local / p 都行)、不钉空格。★ `& ~2`(摘掉玩家层)不算接线,故只看或算符之后。
+func _adds_player_layer(path: String) -> bool:
+	var txt := FileAccess.get_file_as_string(path)
+	if txt.is_empty():
+		return false
+	for raw in txt.split("\n"):
+		var line: String = raw
+		var hash_i := line.find("#")
+		if hash_i >= 0:
+			line = line.substr(0, hash_i)
+		if not line.contains("collision_mask"):
+			continue
+		if line.contains("set_collision_mask_value(2"):
+			return true
+		var i := line.find("|")
+		while i >= 0:
+			for tok in line.substr(i + 1).split(" "):
+				var t: String = tok.strip_edges().trim_suffix(")").trim_suffix(",")
+				if t == "2":
+					return true
+			i = line.find("|", i + 1)
+	return false
 
 
 # ★ 假绿防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的

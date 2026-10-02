@@ -121,6 +121,9 @@ func _check_feedback_mount_point() -> void:
 #   C) `const …FONT_SIZE… := N` 这类常量(世界空间文本/ HUD 走这条,没有 A/B 可查)
 #   D) UiFactory 的 label/button/style_control 的字号实参 + WeaponComponent.make_weapon_check
 #      —— 全仓菜单控件的字号**都是**从这几个口进去的,是最大的一类载体。
+# ★ 2026-10-02 降精度:四类载体的**扫描输入一律先过 `_code_only`(剥注释)** —— 注释 / 日志行
+#   里提到一个非 16 倍数的数字(如「字号曾用 20,太糊」)不该把这条判成违例:那是**说明**不是字号。
+#   只换扫描输入,扫描逻辑一字未动(要拦的变异:把某个真实字号写成非 16 倍数)。
 func _check_font_size_law() -> void:
 	var files := _collect(ALL_DIRS)
 	_check(files.size() >= MIN_ALL_FILES,
@@ -152,7 +155,8 @@ func _scan_literal_assign(files: Array[String], bad: Array[String]) -> void:
 	var re := RegEx.new()
 	re.compile("font" + "_size\\s*=\\s*([0-9]+)")
 	for f in files:
-		for m in re.search_all(_read(f)):
+		# ★ 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释),注释里的字号字面量不算违例。
+		for m in re.search_all(_code_only(_read(f))):
 			var v := int(m.get_string(1))
 			if v % 16 != 0:
 				bad.append("%s: 字号 %d(行首近处「%s」)" % [f, v, m.get_string(0).strip_edges()])
@@ -164,7 +168,8 @@ func _scan_const_decl(files: Array[String], bad: Array[String]) -> void:
 	var re := RegEx.new()
 	re.compile("^\\s*const\\s+\\w*" + needle + "\\w*\\s*:?=\\s*([0-9]+)")
 	for f in files:
-		var src := _read(f)
+		# ★ 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释)。
+		var src := _code_only(_read(f))
 		for line in src.split("\n"):
 			var l: String = line
 			if not l.strip_edges().begins_with("const") or not l.contains(needle):
@@ -184,7 +189,9 @@ func _scan_const_decl(files: Array[String], bad: Array[String]) -> void:
 func _scan_call_arg(files: Array[String], needle: String, arg_index: int,
 		bad: Array[String], label: String) -> void:
 	for f in files:
-		var src := _read(f)
+		# ★ 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释)—— 注释/日志里提到一个
+		#   非 16 倍数的数字不再被当成字号实参。
+		var src := _code_only(_read(f))
 		var from := 0
 		while true:
 			var i := src.find(needle, from)

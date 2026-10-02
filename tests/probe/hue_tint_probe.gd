@@ -286,10 +286,14 @@ func _guard_c_royale_still_consumes_hues() -> void:
 	_check(not hues_body.is_empty(), "读不到 pvp_game.gd 的 _apply_peer_hues(基类要求子类覆写它)")
 	_check(not hues_body.contains("hues.get"),
 			"★ 1v1 的 _apply_peer_hues 又在读载荷里的色相了(裁定:本模式恒为 P1 蓝 / P2 青)")
-	# 短路后它该做的是"把固定那条重铺一次" —— 钉住形状,免得日后有人把它改成空函数
-	# (空函数能让上面两条照样绿,但 `_apply_p2_tint` 那次重铺就没了)
-	_check(hues_body.contains("_apply_p2_tint()"),
-			"★ 1v1 的 _apply_peer_hues 不再重铺固定染色(它该调 _apply_p2_tint())—— 改空了就只剩「不读载荷」这个空壳")
+	# 短路后它该做的是"把固定那条重铺一次" —— 判据**不钉 helper 名**,只问有没有重铺动作:
+	# 体内必须调用某个 `_apply_*tint(` 帮手(现名 `_apply_p2_tint()`;改名 / 换等价帮手都不算回退)。
+	# 要拦的变异只有一条:把 `_apply_peer_hues` 改成**空函数/空壳** —— 那时上面两条照绿,
+	# 但"把固定染色重铺一遍"的动作没了。★ 它**测不到**重铺的是不是同一条颜色(那是守卫 B 的活)。
+	var re_tint := RegEx.new()
+	re_tint.compile("_apply_[A-Za-z0-9_]*tint\\s*\\(")
+	_check(re_tint.search(hues_body) != null,
+			"★ 1v1 的 _apply_peer_hues 不再重铺固定染色(体内没调用任何 _apply_*tint(...) 帮手)—— 改空了就只剩「不读载荷」这个空壳")
 	_summary(before, "守卫 C(反向):大乱斗仍消费 hues+pvp_color_hue / 1v1 零引用且不读载荷")
 
 

@@ -158,13 +158,16 @@ func _check_source_guard() -> void:
 			break
 	_check(found, "pvp_client 给控制器设了 map_px(不设 = 环面修复惰性且静默)")
 
-	# ② 接触提示的接线(`in_contact` 必须在 reconcile() 之前写)。
+	# ② 接触提示的接线(`in_contact` 必须在 note_post_step 之前写 —— 它是那一步的消费方)。
 	#    漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
+	#    ★ 要拦下的变异:把 `_rollback.in_contact = …` 挪到 `note_post_step(...)` **之后** ——
+	#      接触提示永远用**上一帧**的碰撞信息(差一帧),静默且没有别的守卫看得见。
+	#    ★ 位置序**就是**契约,保留;但比较范围**收在同一帧块内**(包住该赋值的那一层顶层函数):
+	#      别处无关函数里新增/删掉一条 note_post_step 不该把这条带红(那是无关行数变动)。
 	#    ★ 日后若换了入口,请把这里改成认新入口,**别删掉这条断言**。
 	var txt2 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd")
 	var lines := txt2.split("\n")
 	var hint_line := -1
-	var note_line := -1
 	var hint_count := 0
 	for i in range(lines.size()):
 		var line := lines[i]
@@ -173,9 +176,22 @@ func _check_source_guard() -> void:
 		if line.contains("_rollback.in_contact =") and line.contains("touching_player()"):
 			hint_count += 1
 			hint_line = i
-		if line.contains(".note_post_step(") and note_line < 0:
-			note_line = i
 	_check(hint_count == 1,
 			"接触提示只许有**一处**赋值(实得 %d 处 —— 0 = 漏接线,>1 = 有两处在抢)" % hint_count)
-	_check(hint_line >= 0 and note_line >= 0 and hint_line < note_line,
-			"接触提示的赋值排在 note_post_step/reconcile 之前(hint@%d, note@%d)" % [hint_line, note_line])
+	# 同一帧块 = [该赋值所在行 +1, 下一个列 0 的 `func ` 之间)
+	var note_line := -1
+	if hint_line >= 0:
+		var blk_end := lines.size()
+		for i in range(hint_line + 1, lines.size()):
+			if lines[i].begins_with("func "):
+				blk_end = i
+				break
+		for i in range(hint_line + 1, blk_end):
+			if lines[i].strip_edges().begins_with("#"):
+				continue
+			if lines[i].contains(".note_post_step("):
+				note_line = i
+				break
+	_check(note_line >= 0,
+			"接触提示的赋值排在**同一帧块内**的 note_post_step 之前(hint@%d, note@%d;顺序反了 = 静默退回 2px 容差)"
+			% [hint_line, note_line])

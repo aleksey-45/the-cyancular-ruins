@@ -70,7 +70,9 @@ const NEG_SEARCH_TRIALS := 800
 
 # 一局最多几个人(大乱斗 `--roles 1..8`;3v3 是 6)。只用于 ⑦ 那条**补足分支可达性**守卫:
 # 补足分支可达 ⟺ 干净池 < 人数,故用上界来判断"今天一定不可达"。
-const MAX_PLAYERS := 8
+# ★★ 2026-10-02 降精度:这个上界**从生产读**(`LobbyRooms.ROYALE_MAX_PLAYERS`,经
+#   `_production_max_players()`),不再在探针里写死 8 —— 生产把上限调了而这里还是 8 的话,
+#   "不可达"这个结论会**静默失真**(而它正是这条守卫的全部意义)。
 
 var _fail := 0
 var _checks := 0
@@ -83,6 +85,19 @@ func _check(ok: bool, msg: String) -> void:
 	else:
 		_fail += 1
 		print("  FAIL %s" % msg)
+
+
+# 生产的人数上限 = `LobbyRooms.ROYALE_MAX_PLAYERS`(大乱斗每房人数的钳位上界;AI 补位也按它取号)。
+# ★ 用**源码文本**读,不 `load()`:`-s` 阶段 autoload 未注册,load 会连带编译引用了 NetBus 的
+#   lobby_rooms.gd —— 那样连本脚本的 `_initialize` 都进不去(见文件头 / team_room_smoke 同款说明)。
+# 返回 -1 = 读不到 / 解析失败(调用方必须报红,别把它当 0 用)。
+func _production_max_players() -> int:
+	var src := ScanUtil.read("res://server/lobby/lobby_rooms.gd")
+	if src.is_empty():
+		return -1
+	var re := RegEx.create_from_string("const\\s+ROYALE_MAX_PLAYERS\\s*:?=\\s*([0-9]+)")
+	var m := re.search(ScanUtil.code_only(src))
+	return int(m.get_string(1)) if m != null else -1
 
 
 func _initialize() -> void:
@@ -282,10 +297,15 @@ func _run_map(path: String) -> void:
 		#   `out[role] = (-1,-1)` ⇒ 摆到地图回卷角落 —— 按用户已裁定的偏好((-1,-1) 更糟),
 		#   这个分支**保持原样才是对的**。故这里钉"不可达",而不是改它:哪天这条红,说明池缩到了
 		#   人数以下、那个取舍真的来了,该由人来裁(而不是被静默地改掉)。
-		_check(pools[0].size() >= MAX_PLAYERS,
-				("★ 补足分支仍**不可达**:干净池 %d ≥ 人数上限 %d ⇒ `plan_spawns` 里那条 "
-				+ "`_floor_cells()` 补足走不到(它一旦可达,孤立单格会被放回开局散点;而收窄它会把 "
-				+ "(-1,-1) 放进来 —— 那个取舍要人来裁)") % [(pools[0] as Array).size(), MAX_PLAYERS])
+		# 人数上限从**生产**读(不再用探针自己的字面量 8);读不到就报红,别让结论空转。
+		var cap := _production_max_players()
+		if cap <= 0:
+			_check(false, "★ 读不到生产的人数上限(server/lobby/lobby_rooms.gd 的 ROYALE_MAX_PLAYERS)—— 补足分支可达性断言无从成立")
+		else:
+			_check(pools[0].size() >= cap,
+					("★ 补足分支仍**不可达**:干净池 %d ≥ 人数上限 %d ⇒ `plan_spawns` 里那条 "
+					+ "`_floor_cells()` 补足走不到(它一旦可达,孤立单格会被放回开局散点;而收窄它会把 "
+					+ "(-1,-1) 放进来 —— 那个取舍要人来裁)") % [(pools[0] as Array).size(), cap])
 
 		# ── ⑤ 各条路各走一遍(正/负)—— 端到端跑调用方那段循环 ──
 		# ★ 池子序列取自**生产**(`respawn_pools()`);`_walk` 重放的是两个宿主共有的那段

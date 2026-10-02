@@ -109,8 +109,13 @@ func _initialize() -> void:
 	var room_src := ScanUtil.read("res://server/lobby/lobby_rooms.gd")
 	if room_src.is_empty():
 		fails.append("读不到 server/lobby_rooms.gd(接线断言无从成立)")
-	elif not ScanUtil.code_only(room_src).contains("team_next_role(tr.player_role.values())"):
-		fails.append("★ team_join 未调 team_next_role(tr.player_role.values())—— 判据函数仍在,生产那一行被换成内联写法了")
+	else:
+		# ★ 2026-10-02 降精度:原钉**整份文件**含逐字 `team_next_role(tr.player_role.values())`
+		#   —— 接收者/入参表达式换个等价写法就假红。改扫 **team_join 的函数体**、只要求它调了
+		#   `team_next_role(`(问的是同一件事:那行接线还在)。要拦的变异:把接线换成内联的
+		#   「人数 + 1」—— 判据函数仍在,但"有人退过房"的 role 分配会撞上仍在房里的高号。
+		if not ScanUtil.func_body(ScanUtil.code_only(room_src), "team_join").contains("team_next_role("):
+			fails.append("★ team_join 未调 team_next_role(...)—— 判据函数仍在,生产那一行被换成内联写法了(有人退过房的 role 分配会撞号)")
 	# ⑦ 3v3 建房页的三条源码断言(**B 册 Task 7** 收的评审尾巴;与上面 ⑥ 同款:页面脚本要
 	#    autoload,`-s` 里跑不动,故只能读源文本)。三条都是"听着无所谓、坏了不报错"的那类:
 	#   ① 建房面板**不得**摆基类的两个设置区块 —— 3v3 用队色(个人色相是无效输入)、禁用武器
@@ -177,8 +182,8 @@ func _initialize() -> void:
 			fails.append("★ team_game 里找不到 _apply_teams 的函数体(接线断言无从成立)")
 		elif not apply_body.contains("set_my_team("):
 			fails.append("★ team_game._apply_teams 没调 _hud.set_my_team(队伍表到达后必须写入我队队号;漏了不报错,赢的局会被 HUD 报成输的)")
-		elif not apply_body.contains("_team_of_role(PvpSession.role)"):
-			fails.append("★ team_game._apply_teams 的 set_my_team 入参不是 _team_of_role(PvpSession.role)(写死队号/拿 role 当队号都会在 role 与队号错开时报错胜负)")
+		elif not apply_body.contains("_team_of_role("):
+			fails.append("★ team_game._apply_teams 的 set_my_team 入参没引 _team_of_role(...)(写死队号/拿 role 当队号都会在 role 与队号错开时报错胜负)")
 		# ★ 判据收在**函数体**上而不是全文件 `contains`:全文件里"常量出现过"太容易满足 ——
 		#   把 1 队那一支换成"全员互挡"(`| 2`)、或把队 B 的层写死成 16,常量本体照旧在文件里,
 		#   全文件断言一条都不会红。契约的四个要点(见 TeamHost._apply_team_layers 那张表):
