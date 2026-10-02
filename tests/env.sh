@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # 测试脚本的共用环境。用法(脚本开头,放在 `set -u` 之后):
-#   source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+#   source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # 调用方在 tests/{smoke,probe,harness,scripts}/ 下一层
 #
 # 它做三件事,替掉此前在 8 个 .sh 里各抄一份的东西:
 #   1. 导出 $GODOT(**可用环境变量覆盖** —— 换机器 / 换引擎版本只需设一次环境变量,
 #      不必改 8 个文件;这也是 `tools/check_naming.py` 之外的「别再散落本机绝对路径」那条);
 #   2. 把工作目录切到**仓库根**(各脚本原本各自 `cd "$(dirname "$0")/.."`,而 5 个简单冒烟
-#      干脆没 cd、只能从仓库根跑 —— 现在从哪儿跑都行,`--path .` 与 `tests/*.log` 都成立);
+#      干脆没 cd、只能从仓库根跑 —— 现在从哪儿跑都行,`--path .` 与 `tests/*/*.log` 都成立);
 #   3. 提供 kill_procs / kill_port。
 #
 # ⚠ 本文件会被 `set -u` 的脚本 source,故**不得**依赖任何未定义变量(一律用 ${VAR:-默认})。

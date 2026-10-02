@@ -71,10 +71,10 @@ python tools/build_release.py
 
 ```bash
 # 敌人/武器/环面逻辑主冒烟
-Godot_console --headless --path . -s res://tests/enemy_logic_smoke.gd
+Godot_console --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
 # PvP 链路(大厅→worker→建房→开局)
-bash tests/pvp_room_smoke.sh
-bash tests/pvp_match_smoke.sh
+bash tests/smoke/pvp_room_smoke.sh
+bash tests/smoke/pvp_match_smoke.sh
 ```
 
 > 用 4.7.1 **console** 版跑;开发/冒烟约定见 `CLAUDE.md`。
@@ -85,12 +85,11 @@ bash tests/pvp_match_smoke.sh
 
 ```
 scenes/   场景(页面与对局场景;.tscn 与脚本一律 snake_case)
-core/     autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…)
-server/   服务端:大厅(server_main)+ 房间(RoomManager)+ 每局权威(MatchHost)
-ui/       跨场景 UI:UiFactory(唯一调色板/工厂)、单机 HUD、对局 HUD、暂停菜单
-render/   渲染:后处理(post_process.gd + post_process.gdshader)、相机(camera_2d.gd)
-tests/    -s 冒烟/探针(分层见 tests/README.md)
-level_editor/  浏览器地图编辑器(structure-editor.html + smoke.js + sync-*.js)
+core/     autoload + 静态工具(MazeGenerator/TileDefs/NetBus/Water…);present/ 表现层(后处理/相机/字体/音效)
+server/   服务端:大厅 + 房间(lobby/)+ 每局权威(match/ · hosts/)+ AI 补位(ai/)
+ui/       跨场景 UI(factory/ 工厂与唯一调色板、hud/ HUD、screens/ 结算页等页面)
+tests/    -s 冒烟/探针(smoke/ · probe/ · harness/ · scripts/,分层见 tests/README.md)
+level_editor/  浏览器地图编辑器(editor.html + smoke.js + sync-*.js)
 maps/     .cyrm 文本地图
 data/     tile_defs.json / enemies.json(与编辑器共享的属性表与敌人注册表)
 assets/   字体(含中文像素字体 unifont)与纹理
