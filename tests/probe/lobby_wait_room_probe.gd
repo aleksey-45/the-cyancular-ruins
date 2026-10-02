@@ -34,7 +34,7 @@ extends Node
 #
 # ★ EXPECTED_CHECKS 是"ALL-OK 不等于全都跑过"那条纪律的落点 —— 出错只会让**当前函数**
 #   当场结束、调用方继续,判词照打。少跑一条即红。
-const EXPECTED_CHECKS := 21
+const EXPECTED_CHECKS := 28
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -60,8 +60,9 @@ func _ready() -> void:
 
 	_phase_pvp(packed)       # ①-⑤ 1v1:加入/建房两条调用点 + 退出的隐藏行为
 	_phase_royale(packed)    # ⑥-⑪ 大乱斗:名单/颜色行/房主闸门/清空重填
-	_phase_team(packed)      # ⑫-⑯ 3v3:两队+未选边/编号印行序/颜色行/选边/开始
-	_phase_wiring(packed)    # ⑰-⑲ 收起创建弹层 / 大乱斗退出 / 四颗按钮各恰 1 个 handler
+	_phase_team(packed)      # ⑫-⑯c 3v3:两队+未选边/编号印行序/颜色行/选边/开始
+	_phase_wiring(packed)    # ⑰-⑳ 收起创建弹层 / 大乱斗退出 / 按钮接线 / 选边实参
+	_phase_gate(packed)      # ㉑-㉖ 「已在房间里」闸门 + 两颗入口按钮(含入树那一相)
 	_finish()
 
 
@@ -215,12 +216,17 @@ func _phase_wiring(packed: PackedScene) -> void:
 	_check(opened and p._wait_panel.visible and not p._create_panel.visible,
 			"⑰ 进等待室:创建弹层被收起(先真开一次再收)")
 
-	# ⑱ (接线 b) 按大乱斗的「退出房间」⇒ 等待室隐藏。★ 大乱斗那条**不断大厅 peer**,
-	#    所以它不走 `_return_to_lobby`(那条会 `NetBus.stop()`);隐藏由 `_on_return_to_lobby`
-	#    那条共用清理完成 —— 本断言钉的正是"那条清理真的挂在这条按钮的链上"。
-	#    ⚠ 这里会打一条 `RPC 'royale_leave' on yourself is not allowed` 的引擎 ERROR(无对端),预期噪音。
+	# ⑱ (接线 b) 按大乱斗的「退出房间」⇒ 等待室隐藏 + `_in_room` 复位。★ 大乱斗那条
+	#    **不断大厅 peer**,所以它不走 `_return_to_lobby`(那条会 `NetBus.stop()`);清理由
+	#    `_on_return_to_lobby` 那条共用钩子完成 —— 本断言钉的正是"那条清理真的挂在这条按钮的链上"。
+	#    ★ `_in_room` 那一半断的是"清理发生在**同一调用栈内**":它若被推迟(塞进那句
+	#      `_request_list.call_deferred` 的 lambda、或中间 `await`),那么那次刷新就会撞上
+	#      自己还没关的闸门 ⇒ **列表永远不更新且不报错**。本相到不了"刷新"那一步(无大厅对端),
+	#      断的只是"清理已经跑完"这个前提。
+	#    ⚠ 这里会打一条 `RPC 'royale_leave' ...` 的引擎 ERROR(无对端),预期噪音。
 	_find_button(p._wait_panel, "退出房间").pressed.emit()
-	_check(not p._wait_panel.visible, "⑱ 按大乱斗退出房间:等待室隐藏(走共用清理,不断大厅 peer)")
+	_check(not p._wait_panel.visible and not p._in_room,
+			"⑱ 按大乱斗退出房间:等待室隐藏 + 闸门复位(走共用清理,不断大厅 peer)")
 	NetBus.stop()
 	p.free()
 
@@ -238,7 +244,78 @@ func _phase_wiring(packed: PackedScene) -> void:
 			counts_ok = false
 			counts_msg += " %s=%s" % [text, "缺" if b == null else str(n)]
 	_check(counts_ok, "⑲ 四颗按钮各恰 1 个 handler%s" % counts_msg)
+
+	# ⑳ 两颗选边按钮的**绑定实参**:A → 1、B → 2。
+	#    ★ 判词只说"绑定实参":它守的是"两颗文案只差一个 A/B、行为对调"—— 对调之后
+	#      **没有任何运行时信号**,而 ⑲ 的计数断言照样绿(连接还是恰好一条)。
+	#    ★ 它**不守** RPC 真的出网(那要大厅对端);也不守两颗按钮的**显隐**(那是 ⑫/⑮)。
+	#    ★ 能读出实参的前提是连接用 `._on_wait_pick.bind(队号)` 而不是匿名 lambda —— 见
+	#      `_build_wait_panel` 的注释(匿名 lambda 的 `get_method()` 读不出任何东西)。
+	var ca := _pick_callable(p2._wait_panel, "加入 A 队")
+	var cb := _pick_callable(p2._wait_panel, "加入 B 队")
+	_check(ca.get_method() == "_on_wait_pick" and ca.get_bound_arguments() == [1]
+			and cb.get_method() == "_on_wait_pick" and cb.get_bound_arguments() == [2],
+			"⑳ 选边按钮绑定实参:A→1 / B→2(实得 A=%s,B=%s)" % [_cb_desc(ca), _cb_desc(cb)])
 	p2.free()
+
+
+# ── ㉑-㉖:「已在房间里」闸门 + 两颗入口按钮 ──────────────────────────
+# ★ 为什么必须断:两个旧页都有这道闸门(`royale_lobby.gd:424` / `team_lobby.gd:412`),
+#   统一页把它丢了 —— 而**等待室正是重新引入"在房里"这个状态的东西**。丢了之后
+#   四周的房卡与「＋ 创建房间」仍然可点(点了只被服务端拒)。
+# ★★ 光有闸门**不够**:「＋ 创建房间」是直接绑 `_open_create_dialog` 的,压根不问闸门 ——
+#   玩家照样能把创建弹层开在等待室上面,而压暗罩建得更早、落在面板**底下**。故 ㉖ 那条
+#   断的是"两颗入口按钮随等待室收放"。
+func _phase_gate(packed: PackedScene) -> void:
+	var p = _page(packed)
+	var st := _royale_state("2468", [["甲", 1]], 1, 1)
+
+	# ㉑-㉓ 进房后闸门关闭,且文案**按 `_current_mode` 点名**(本页三模式共用一张列表,
+	#    一句通用的"已在房间里"会让玩家看不出卡在哪个模式的房里)。
+	#    ★ `_show_wait_room` 自己**不**改 `_current_mode`(那是各 handler 的事)⇒ 这里显式给。
+	p.call("_show_wait_room", st, PvpSession.MODE_ROYALE)
+	var got := {}
+	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_ROYALE, PvpSession.MODE_TEAM]:
+		p._current_mode = m
+		got[m] = [bool(p.call("_lobby_action_allowed")), p._status.text]
+	_check(got[PvpSession.MODE_PVP][0] == false and str(got[PvpSession.MODE_PVP][1]).contains("1v1")
+			and str(got[PvpSession.MODE_PVP][1]).contains("先退出房间再操作"),
+			"㉑ 在房里:闸门关闭 + 文案点名「1v1」(实得「%s」)" % str(got[PvpSession.MODE_PVP][1]))
+	_check(got[PvpSession.MODE_ROYALE][0] == false and str(got[PvpSession.MODE_ROYALE][1]).contains("大乱斗"),
+			"㉒ 在房里:文案点名「大乱斗」(实得「%s」)" % str(got[PvpSession.MODE_ROYALE][1]))
+	_check(got[PvpSession.MODE_TEAM][0] == false and str(got[PvpSession.MODE_TEAM][1]).contains("3v3"),
+			"㉓ 在房里:文案点名「3v3」(实得「%s」)" % str(got[PvpSession.MODE_TEAM][1]))
+
+	# ㉔ 退回大厅 ⇒ 闸门恢复(与 `_hide_wait_room` 同生命周期)。
+	p.call("_hide_wait_room")
+	_check(bool(p.call("_lobby_action_allowed")), "㉔ 退回大厅后:`_lobby_action_allowed()` 恢复 true")
+	p.free()
+
+	# ㉕ 进等待室时**收起加入弹层**:它只有自己的「加 入」/「取 消」能关,而点房卡那条路
+	#    (`_join_code`)不关它 ⇒ 不收的话它会留在等待室背后(且此时大厅连接已切到对局)。
+	#    ★ 先**真开一次**(只调 `_show_wait_room` 的话 `_join_panel` 是 null,断言恒绿)。
+	var p2 = _page(packed)
+	p2.call("_toggle_join_panel")            # 首次点击 = 打开(不是开关翻转)
+	var opened: bool = p2._join_panel.visible
+	p2.call("_show_wait_room", st, PvpSession.MODE_ROYALE)
+	_check(opened and not p2._join_panel.visible, "㉕ 进等待室:加入弹层被收起(先真开一次再收)")
+	p2.free()
+
+	# ㉖ 两颗入口按钮随等待室**收放**(入树那一相,用**真的那两颗**)。
+	#    ★ 为什么非入树不可:`_create_btn` / `_join_btn` 由 `_ready` 里的 `_build_filter_bar`
+	#      赋值;不入树的相里它们是 null(其它相靠 `_page()` 垫桩),所以"真按钮是不是这两颗"
+	#      只有这一相验得到 —— 而"字段被赋值"正是这条接线最容易断的那一半。
+	#    ★ 入树后**同一次同步调用栈内** `free()` ⇒ `_ready` 里那句 `_request_list.call_deferred`
+	#      因对象已失效被跳过(本仓 create-form 探针 ㉔ 同款),**不发出任何包**。
+	var live = packed.instantiate()
+	add_child(live)
+	live.call("_show_wait_room", st, PvpSession.MODE_ROYALE)
+	var hidden_ok: bool = live._create_btn != null and live._join_btn != null \
+			and not live._create_btn.visible and not live._join_btn.visible
+	live.call("_hide_wait_room")
+	_check(hidden_ok and live._create_btn.visible and live._join_btn.visible,
+			"㉖ 入口按钮随等待室收放(入树,真按钮):进房都隐藏 → 退回都恢复")
+	live.free()
 
 
 # ── 夹具与小工具 ────────────────────────────────────────────────────
@@ -303,6 +380,21 @@ func _find_button(n: Node, text: String) -> Button:
 		if r != null:
 			return r
 	return null
+
+
+# 某颗按钮 `pressed` 上那条连接的 Callable(用于读**绑定实参**,见 ⑳)。
+# 找不到 / 没连 ⇒ 返回一个无效 Callable(判词里会打印「缺」)。
+func _pick_callable(panel: Node, text: String) -> Callable:
+	var b := _find_button(panel, text)
+	if b == null or b.pressed.get_connections().is_empty():
+		return Callable()
+	return b.pressed.get_connections()[0]["callable"]
+
+
+func _cb_desc(c: Callable) -> String:
+	if not c.is_valid():
+		return "缺"
+	return "%s%s" % [c.get_method(), str(c.get_bound_arguments())]
 
 
 func _title_text(p) -> String:
