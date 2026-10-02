@@ -375,7 +375,7 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 				var ghost_host := Node2D.new()
 				ghost_host.global_position = Vector2(float(pt[0]), float(pt[1]))
 				rep.get_parent().add_child(ghost_host)
-				var g := AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
+				AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
 				var ghosts: Array = _rw_ghosts.get(rep, [])
 				ghosts.append({"node": ghost_host, "t": 0.0})
 				_rw_ghosts[rep] = ghosts
@@ -444,17 +444,20 @@ func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = true) -> void:
 	if silent:
 		return
 	var tex := TileDefs.sub_texture(sub)
-	TileHitFx.spawn(_world, Vector2(sub.x * 16.0 + 8.0, sub.y * 16.0 + 8.0), tex)
 	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
-	var ts := GameParameters.TILE_SIZE
-	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
+	TileHitFx.spawn(_world, Vector2(sub.x * 16.0 + 8.0, sub.y * 16.0 + 8.0), tex)
+	# ★ 2026-10-02 合并订正:KH 分支在这里多留了一行**复制粘贴残留**
+	#   (`var ts := GameParameters.TILE_SIZE` + 又一次 `TileHitFx.spawn(… cell.x * ts …)`)。
+	#   那是上面 `_on_remote_tile_destroyed`(格级)那一份的尾巴,而本函数的参数叫 `sub`
+	#   ⇒ `cell` 未声明 ⇒ **整个脚本解析失败**(不是"多播一次粒子"那么轻)。
+	#   本函数只需要子格那一次 spawn,故删掉。
 
 func _physics_process(delta: float) -> void:
 	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
 	if _local == null:
 		return
 	# 周期测延迟(右下角 HUD)
-	_ping_acc += _delta
+	_ping_acc += delta
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
 		if NetBus.can_send_to_server():
@@ -495,7 +498,7 @@ func _physics_process(delta: float) -> void:
 	# 本地视觉子弹撞到玩家 → 收掉(纯表现,见 _cull_bullet_contacts 的注释)
 	_cull_bullet_contacts()
 	# 网络统计读数(诊断,默认关)
-	_netstat_tick(_delta)
+	_netstat_tick(delta)
 
 
 # 网络统计读数:见 `_netstat` 的说明(2026-09-22 诊断用;`-- --netstat` 打开)。
