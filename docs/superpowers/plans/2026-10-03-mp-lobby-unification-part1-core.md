@@ -529,6 +529,11 @@ git commit -m "feat(lobby): 列表载荷扩键(is_public/host/map/match_time/队
 	PvpSession.room_code = "1111"
 	PvpSession.room_mode = PvpSession.MODE_PVP
 	PvpSession.note_room("3333", PvpSession.MODE_ROYALE)       # 换到另一间、另一个模式
+	# ★★ 这里**必须再给一份 token**:换了房 ⇒ `note_room` 会先 **`clear_rejoin()`**(token 也清了),
+	#    而 `can_rejoin_to()` = `can_rejoin() and …`,少了这一步两条断言对**正确实现也恒假**
+	#    (与"有没有记"无关)。★ 本计划初稿就漏了这一步 —— 已订正。
+	PvpSession.token = "tk-7d"
+	PvpSession.worker_port = 7
 	_check(PvpSession.can_rejoin_to("3333", PvpSession.MODE_ROYALE),
 			"⑦d 换房之后 ⇒ 新的一对被**记下**了(只清不记的实现这里必红)")
 	_check(not PvpSession.can_rejoin_to("1111", PvpSession.MODE_PVP),
