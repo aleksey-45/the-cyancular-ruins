@@ -1,8 +1,9 @@
 extends SceneTree
 
 # 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)
-# + **源码级**断言 ⑥~⑨(⑥:team_join 里确实调了 team_next_role;⑦:3v3 建房页不得摆回基类那两个
-#   设置区块 / 计数行不得写死容量 / 名单行配色两档共用;⑧:大厅入口指向的对局场景真的存在且挂了
+# + **源码级**断言 ⑥~⑨(⑥:team_join 里确实调了 team_next_role;⑦:统一大厅里那两个设置区块
+#   在 3v3 下被**按模式收起**(`<行键>.visible = not is_team`)/ 计数行不得写死容量 / 名单行两档
+#   共用 `_roster_row`;⑧:大厅入口指向的对局场景真的存在且挂了
 #   脚本;⑨:set_my_team 接线 / 分队碰撞层契约 / 小地图两提供器同源 / 队色是比值 —— 见各节的
 #   盲区说明)+ **像素级**断言 ⑩(`BODY_BASE_COLOR` 仍等于 `player.png` 的不透明众数色)。
 # 跑法: "$GODOT" --headless --path . -s res://tests/smoke/team_room_smoke.gd
@@ -119,10 +120,14 @@ func _initialize() -> void:
 	# ⑦ 3v3 的形态源码断言(**统一大厅之后口径改判**:三页合一后不再是"3v3 页不摆那两块",
 	#    而是"那两块在 3v3 下被**按模式收起**")。与上面 ⑥ 同款:页面脚本要 autoload,`-s` 里跑不动,
 	#    只能读源文本。三条都是"听着无所谓、坏了不报错"的那类:
-	#   ① 建房弹层的禁用武器行由 `_apply_create_form` 按模式显隐(`is_team` 收起)、等待室角色
-	#      颜色行由 `_show_wait_room` 按模式显隐(3v3 用队色,个人色相是无效输入)。而禁用武器行
-	#      的勾选框**写的是 `Settings.pvp_disabled_weapons`**(1v1/大乱斗的设置项)⇒ 3v3 下没
-	#      收起的话,勾一下会**连带改掉另两个模式**。
+	#   ① 建房弹层的禁用武器行 / 等待室角色颜色行必须**按模式收起**:判据钉**赋值那一行的形状**
+	#      (`<行键>.visible = not is_team`)。★ 只看"函数体里出现过 `"weapons"`"是**不够**的 ——
+	#      **无条件**设置可见性(`.visible = true`)同样含那个子串,而那时这条就证明不了
+	#      "3v3 会隐藏它"(2026-10-03 评审核出:那是"守卫的声称比它实际强")。
+	#      行键的勾选框**写的是 `Settings.pvp_disabled_weapons`**(1v1/大乱斗的设置项)⇒
+	#      3v3 下没收起的话,勾一下会**连带改掉另两个模式**。
+	#      ★ 上限照实登记:这是**源码形状**判据,不证明运行时真的收起;运行那一半由
+	#      `lobby_create_form_probe` ⑤/⑥/⑩ 与 `lobby_wait_room_probe` ⑭ 的**行为级**断言保证。
 	#   ② 等待室计数行的分母必须引 `LobbyRooms.TEAM_ROLES/TEAM_SIZE` —— 写死 6/3 时
 	#      "房间容量只有一个真值来源"这句自称就不成立,TEAM_SIZE 一改这行就撒谎且不报错。
 	#   ③ 名单行必须**两档共用**同一个行构造 `_roster_row(...)`(一处定义 + 两处调用)——
@@ -132,10 +137,10 @@ func _initialize() -> void:
 		fails.append("读不到 scenes/mp_lobby.gd(3v3 形态三条断言无从成立)")
 	else:
 		var lcode := ScanUtil.code_only(lobby_src)
-		if not ScanUtil.func_body(lcode, "_apply_create_form").contains('"weapons"'):
-			fails.append("★ 建房弹层未按模式显隐禁用武器行(`_apply_create_form` 里找不到 \"weapons\")—— 3v3 勾一下会连带改掉 1v1/大乱斗 的 Settings.pvp_disabled_weapons")
-		if not ScanUtil.func_body(lcode, "_show_wait_room").contains("_wait_hue.visible"):
-			fails.append("★ 等待室未按模式显隐角色颜色行(3v3 用队色,个人色相是无效输入)")
+		if not _hide_line_present(ScanUtil.func_body(lcode, "_apply_create_form"), '"weapons"'):
+			fails.append("★ 建房弹层未按模式收起禁用武器行(`_apply_create_form` 里找不到 `<行键>.visible = not is_team` 那一行)—— 3v3 勾一下会连带改掉 1v1/大乱斗 的 Settings.pvp_disabled_weapons")
+		if not _hide_line_present(ScanUtil.func_body(lcode, "_show_wait_room"), "_wait_hue"):
+			fails.append("★ 等待室未按模式收起角色颜色行(`_show_wait_room` 里找不到 `_wait_hue.visible = not is_team` 那一行)—— 3v3 用队色,个人色相是无效输入")
 		if not lcode.contains("LobbyRooms.TEAM_ROLES"):
 			fails.append("★ 等待室计数行没引 LobbyRooms.TEAM_ROLES —— 写死 6 时 TEAM_SIZE 一改这行就撒谎")
 		if lcode.contains('"%d / 6 人'):
@@ -367,6 +372,18 @@ func _indent_of(line: String) -> int:
 	while n < line.length() and (line[n] == "\t" or line[n] == " "):
 		n += 1
 	return n
+
+
+# 某一行同时含「行键」与「`not is_team`」⇒ 那一行的可见性由模式守卫决定(而不是无条件 `= true`)。
+# ★★ 判据落在**同一行**上是有意的("函数体里出现过 `<key>`"那种写法对**无条件**设置可见性
+#    (`.visible = true`)照样为真 —— 那时这条就证明不了"3v3 会隐藏它",2026-10-03 评审核出)。
+# ★ 残余上限:这是**源码形状**判据,不证明运行时真的收起;运行那一半由
+#    `lobby_create_form_probe` ⑤/⑥/⑩ 与 `lobby_wait_room_probe` ⑭ 的**行为级**断言保证。
+func _hide_line_present(body: String, key: String) -> bool:
+	for line in body.split("\n"):
+		if line.contains(key) and line.contains("not is_team"):
+			return true
+	return false
 
 
 # 第 i 行**所属块**的正文:紧随其后、缩进严格更大的那些行(给"某分支里必须调 X"类断言用 ——
