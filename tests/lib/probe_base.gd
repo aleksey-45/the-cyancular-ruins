@@ -86,6 +86,11 @@ func _code_view(src: String) -> String:
 func _func_body(code: String, name: String) -> String:
 	return ScanUtil.func_body(code, name)
 
+# 只认**行首**的顶层函数定义(见 ScanUtil.top_func_body 上方:内部类会同名骗过 func_body)。
+# ★ 配套:传进来的 code 要用 `_code_view`(保留缩进),不能是 `_code_only`。
+func _top_func_body(code: String, name: String) -> String:
+	return ScanUtil.top_func_body(code, name)
+
 func _match_paren(src: String, open: int) -> int:
 	return ScanUtil.match_paren(src, open)
 

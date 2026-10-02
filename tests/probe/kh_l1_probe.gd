@@ -55,13 +55,15 @@ func _ready() -> void:
 	Settings.load_settings()    # 读回不崩
 
 	# 3) 源码级:难度/老版 UI 不得残留
-	var ro_src := _read("res://core/config/run_options.gd")
+	# ★ 2026-10-02 降精度:原先直接在**原始文本**上判(未剥注释)——
+	#   负向那几条会被墓碑注释**假红**,正向那条会被注释里提一句**喂绿**。改成先过 `_code_only`。
+	var ro_src := _code_only(_read("res://core/config/run_options.gd"))
 	if ro_src == "":
 		_failures.append("core/run_options.gd 读不到")
 	else:
 		_check("difficulty" not in ro_src, "core/run_options.gd 仍含 difficulty")
 		_check("disabled_weapons" in ro_src, "core/run_options.gd 缺 disabled_weapons")
-	var st_src := _read("res://core/config/settings.gd")
+	var st_src := _code_only(_read("res://core/config/settings.gd"))
 	if st_src == "":
 		_failures.append("core/settings.gd 读不到")
 	else:

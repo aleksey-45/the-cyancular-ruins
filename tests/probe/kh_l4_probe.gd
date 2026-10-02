@@ -87,7 +87,8 @@ func _check_feedback_mount_point() -> void:
 	var needle := "Combat" + "Feedback.spawn("
 	var hits: Array[String] = []
 	for f in files:
-		var n := _read(f).count(needle)
+		# ★ 2026-10-02 降精度:先剥注释再计数 —— 注释里提一句该调用会把计数顶到 2 而**假红**。
+		var n := _code_only(_read(f)).count(needle)
 		for _i in range(n):
 			hits.append(f)
 	_check(hits.size() == 1,
@@ -96,7 +97,11 @@ func _check_feedback_mount_point() -> void:
 		_check(hits[0] == "res://scenes/level_0.gd",
 				"唯一挂载点应是 res://scenes/level_0.gd(实际 %s)" % hits[0])
 	# 位置:必须在 WorldBuilder.load_grid() 之前(_ready 顶部;建图失败会 push_error 早退)
-	var lv := _read("res://scenes/level_0.gd")
+	# ★ 2026-10-02 降精度:改成在 **_ready 函数体内**比较(原本是文件级下标)——
+	#   把两行一起搬去别的函数、或前面无关行数变动,都不该改变这条判据的真值。
+	# ★ 用 `_top_func_body` + `_code_view`(不是 `_func_body(_code_only(...))`):
+	#   level_0.gd 的内部类 `_Reaper` 也有 `func _ready()`,剥缩进后会先命中它。
+	var lv := _top_func_body(_code_view(_read("res://scenes/level_0.gd")), "_ready")
 	var i_spawn := lv.find(needle)
 	var i_world := lv.find("World" + "Builder.load_grid()")
 	if i_spawn < 0 or i_world < 0:
@@ -227,8 +232,13 @@ func _check_old_escape_menu_retired() -> void:
 	_check(ResourceLoader.exists(pm), "替身 %s 不存在" % pm)
 	var pm_src := _read(pm)
 	_check(pm_src.contains("class_name " + "Pause" + "Menu"), "%s 缺 class_name PauseMenu" % pm)
-	_check(pm_src.contains("func open(") and pm_src.contains("func close(") \
-			and pm_src.contains("func go_menu("), "%s 缺 open/close/go_menu 三个口" % pm)
+	# ★ 2026-10-02 降精度:原钉 `contains("func open(")` 等**逐字文本**(写成 `func open (` 或改成从基类继承都会假红)。
+	#   改走**方法表**(含继承)—— 问的是同一个问题。
+	var pm_gs := load(pm) as GDScript
+	_check(pm_gs != null, "%s 载入失败(下面三个口无从判)" % pm)
+	if pm_gs != null:
+		for _fn in ["open", "close", "go_menu"]:
+			_check(_method_info(pm_gs, _fn) != null, "%s 缺 %s 口" % [pm, _fn])
 	print("[L4] 退役 ESC 菜单:扫 %d 个源文件,代码引用 %d 处" % [files.size(), hits.size()])
 
 
@@ -282,7 +292,8 @@ func _check_royale_entry() -> void:
 	var src := _read("res://scenes/main_menu.gd")
 	_check(not src.is_empty(), "读不到 scenes/main_menu.gd")
 	var needle := "res://scenes/" + "roy" + "ale" + "_lobby.tscn"
-	var n := src.count(needle)
+	# ★ 2026-10-02 降精度:先剥注释再计数(注释里提一次该路径会被读成第 2 个入口)。
+	var n := _code_only(src).count(needle)
 	_check(n == 1, "主菜单大乱斗入口应恰好 1 处指向 %s(实际 %d 处)" % [needle, n])
 	# 悬空引用守卫:L4 那条「零 royale 字样」的动机正是**不让菜单指向不存在的场景**(按钮
 	# 点了没反应 = 假入口)。只数字符串会把「场景被删/改名」读成绿 —— 必须让路径本身可解析

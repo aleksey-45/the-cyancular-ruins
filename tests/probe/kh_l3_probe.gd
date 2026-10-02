@@ -437,8 +437,15 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 			"player.gd 的注入输入钩子 get_aim_dir_override() 丢了(守卫点 = L3 头号不变量表 #4–10 的 player.gd 行;丢了服务器瞄准会去读宿主鼠标)")
 
 	# L3 接线:开局选项禁用的武器必须真的落到武器组件上(否则选项形同虚设)
-	_check(lv_src.contains("set_enabled_types(RunOptions.disabled_weapons)"),
-			"level_0.gd 未把 RunOptions.disabled_weapons 应用给武器组件")
+	# ★ 2026-10-02 降精度:原钉**整行逐字** `set_enabled_types(RunOptions.disabled_weapons)`
+	#   —— 先取局部量 / 加 `.duplicate()` / 换行都会假红。改判"`_ready`体内同时出现
+	#   `set_enabled_types(` 与 `RunOptions.disabled_weapons`",问的是同一个问题(接线在不在)。
+	# ★ 用 `_top_func_body` + `_code_view`,**不能**用 `_func_body(_code_only(...))`:
+	#   level_0.gd 有个内部类 `_Reaper` 也有 `func _ready()`,而 `code_only` 剥缩进后
+	#   它会先命中、取回那个 3 行体(实测踩到)。
+	var _lv_ready := _top_func_body(_code_view(_read(LEVEL0_SRC)), "_ready")
+	_check(_lv_ready.contains("set_enabled_types(") and _lv_ready.contains("RunOptions.disabled_weapons"),
+			"level_0._ready 未把 RunOptions.disabled_weapons 应用给武器组件")
 
 
 func _bullets() -> int:

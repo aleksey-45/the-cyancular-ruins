@@ -104,6 +104,21 @@ static func func_body(code: String, name: String) -> String:
 	return code.substr(i, (j - i) if j > 0 else code.length() - i)
 
 
+## 同上,但**只认行首(列 0)**的函数定义。
+## ★★ 为什么必须有它:`func_body` 是**裸子串**搜索,而 `code_only` 会剥掉缩进 ⇒
+##   文件里若有**内部类**且它也有同名方法,那个缩进的方法会被当成顶层那个先命中 ——
+##   取到的是**错的那个体,而且不报错**(实测:`scenes/level_0.gd` 的内部类 `_Reaper`
+##   也有 `func _ready()`,`func_body(…, "_ready")` 拿回的是 `_Reaper` 的 3 行体)。
+##   ★ 配套要求:`code` 必须是**保留缩进**的 `code_view`,不是 `code_only`。
+static func top_func_body(code: String, name: String) -> String:
+	var i := code.find("\nfunc " + name + "(")
+	if i < 0:
+		return ""
+	i += 1
+	var j := code.find("\nfunc ", i + 1)
+	return code.substr(i, (j - i) if j > 0 else code.length() - i)
+
+
 # 与 open 处 '(' 配对的 ')' 下标(跳过字符串内的括号;找不到返回 -1)
 static func match_paren(src: String, open: int) -> int:
 	var depth := 0
