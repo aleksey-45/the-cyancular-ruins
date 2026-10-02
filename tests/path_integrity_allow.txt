@@ -1,0 +1,4 @@
+res://__l5_synthetic__.gd	# kh_l5_probe 故意造的不存在脚本,用来验"读不到源码要报红"
+res://tests/_seam_a_old.png	# seam_screenshot 运行时 save_png 的产物、seam_analyze 的输入;不入库,扫描时不存在
+res://tests/_seam_b_fixed.png	# 同上
+res://.superpowers/sdd/level0_scatter.png	# level0_weapon_scatter_probe 运行时 save_png 的产物;.superpowers/ 整个被 gitignore ⇒ 新克隆上不存在
