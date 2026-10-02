@@ -764,6 +764,7 @@ can_rejoin_to 同时比对房号与模式;lobby_visibility_probe 相⑦ 补
 
 **Files:**
 - Create: `scenes/mp_lobby.gd` / `.tscn`
+- Modify: `ui/factory/ui_factory.gd`（加 **3** 个模式色 token，见 Step 5）
 - Test: `tests/probe/lobby_row_probe.gd`（改写为单页）
 
 **Interfaces:**
@@ -1002,12 +1003,18 @@ func _redraw_cards() -> void:
 
 ```gdscript
 		var rows: Array = _rooms_by_mode.get(mode, []).duplicate()
+		# ★★ `sort_custom` 的比较函数返回 true = **a 排在 b 前面**(不是"a 该往后挪")。
+		#    要"未满的在前、满的在后",就得在 **a 未满而 b 满** 时返回 true —— 本计划初稿把
+		#    条件写反了(返回 true 当 a 满),结果是**满房排在了前面**,与自己的注释/状态栏/
+		#    旧页(`matchmaking.gd` 的 `partial + full`)全都相反,且没有断言覆盖顺序。
 		rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return int(a.get("players", 0)) >= int(a.get("max_players", 2)) \
-					and int(b.get("players", 0)) < int(b.get("max_players", 2)))
+			var a_full := int(a.get("players", 0)) >= int(a.get("max_players", 2))
+			var b_full := int(b.get("players", 0)) >= int(b.get("max_players", 2))
+			return not a_full and b_full)
 ```
 
 （1v1 的载荷没有 `max_players` ⇒ 取默认 2，与卡片那一处同一个默认值。）
+★ **在 `for r in rows:` 里遍历 `rows`，不要再遍历 `_rooms_by_mode[mode]`** —— 排完序不遍历它等于没排。
 
 - [ ] **Step 5: 造卡**
 
@@ -1051,6 +1058,13 @@ func _make_card(r: Dictionary) -> Button:
 		btn.focus_mode = Control.FOCUS_ALL
 		btn.pressed.connect(func() -> void:
 			Sfx.play("ui")
+			# ★★ 回局那条路**也要**记下模式 —— 与"加入"那条同款。本计划初稿只让
+			#    `_join_code` 那一支记账,于是**回局**时 `_current_mode` 是空串:
+			#    ESC 回主菜单 → 多人模式(新页,`_current_mode == ""`)→ 点自己那间对局中的房
+			#    → `try_rejoin_row` → `go_match` → `match_start` → `_enter_match_scene()`
+			#    落进 else ⇒ **回局也会进 `team_game.tscn`**。
+			#    这与 Task 2 修掉的那个洞是同一个(当时只覆盖了三个入口里的一个)。
+			_current_mode = mode
 			if not try_rejoin_row(code, in_match, mode):
 				_join_code(code, mode))
 	return btn
@@ -1065,16 +1079,35 @@ func _card_width() -> float:
 # 模式色(与对局**无关**的一套,只在菜单系用)。★ 3v3 刻意**不用蓝** —— `#639BFF` 就是
 # `UiFactory.C_TEAM_A`(队 1 的队色),而队色在 3v3 里是**有玩法语义**的颜色
 # ("一眼看出谁是队友")。拿它当模式色会让大厅的「3v3」与对局的「队 1」撞色。
+# ★★ 那两个模式色**必须先落到 `ui/factory/ui_factory.gd` 里**（本 Step 稍后给了那三行），
+#    再在这里引用。**不要**在本文件写 `Color(...)` 字面量 —— 调色板单一来源是本项目的硬约束
+#    （`CLAUDE.md`：「颜色只在那里定义…不要再写 `Color(...)` 字面量」），
+#    而本计划初稿正是在这里直接写了字面量、与本计划自己的 Global Constraints 打架。
+#    漏走的后果不是报错：是计划 ③ 的调色板工作会**再定义一遍同样的颜色**，两份静默漂移。
 const MODE_COLOR := {
 	PvpSession.MODE_PVP: UiFactory.C_ACCENT,
-	PvpSession.MODE_TEAM: Color(0.627, 0.549, 1.0),      # #A08CFF
-	PvpSession.MODE_ROYALE: Color(0.910, 0.639, 0.239),  # #E8A33D
+	PvpSession.MODE_TEAM: UiFactory.C_MODE_TEAM,
+	PvpSession.MODE_ROYALE: UiFactory.C_MODE_ROYALE,
 }
 const MODE_LABEL := {
 	PvpSession.MODE_PVP: "1 v 1",
 	PvpSession.MODE_TEAM: "3 v 3",
 	PvpSession.MODE_ROYALE: "大 乱 斗",
 }
+```
+
+**同一 Step 里，先往 `ui/factory/ui_factory.gd` 的调色板区（`C_ACCENT` 附近）加三个 token**：
+
+```gdscript
+# ── 模式色(2026-10-03,大厅合一)──
+# 只在**菜单系**用(房卡标题带 / 筛选器),与对局内任何颜色无关。
+# ★ 3v3 **刻意不用蓝**:`#639BFF` 就是 `C_TEAM_A`(队 1 的队色),而队色在 3v3 里是
+#   **有玩法语义**的颜色("一眼看出谁是队友")。拿它当模式色会让大厅的「3v3」与对局的
+#   「队 1」撞色 —— 那是"认不出队友"那类问题的同一个源。
+# ★ 1v1 直接复用 `C_ACCENT`(设计 §3.9.2),不另立一个同值 token。
+const C_MODE_TEAM   := Color(0.627, 0.549, 1.0)      # #A08CFF 紫
+const C_MODE_ROYALE := Color(0.910, 0.639, 0.239)    # #E8A33D 琥珀
+```
 
 
 # 卡头一行:左 = 模式名(模式色),右 = 状态角标。
@@ -1209,25 +1242,43 @@ func _send_list_request() -> void:
 # 加入某房间号。★ 模式未知(从"全部"列表点的、或手敲房号)时,三张表**都试一次**:
 #   三次请求里只有一间存在,其余两句「房间不存在」由 `_on_server_message` 吞掉不显示
 #   (见下面的 `_swallow_absent`)。
-func _join_code(code: String, mode: String) -> void:
+# ★★ 三件事一件都不能少:
+#   ① `_join_pending = code`(**本计划初稿漏了这一半**)—— 服务端是**先**回 `room_joined`、
+#      **后**配对开局,所以 `_on_room_joined` 只有拿到这个暂存才能记下"我加的是哪一间"。
+#      漏了它的后果是**两条**:`_current_mode` 停在空串 ⇒ `_enter_match_scene()` 落进 else
+#      ⇒ **1v1 的加入者被送进 `team_game.tscn`**;以及 `note_room()` 从不被调用 ⇒
+#      自己那间房永远是灰的(C1 症状)。
+#   ② 模式未知("全部"列表里点的、或手敲房号)**三张表都问一次**(只有一间会成功)。
+#   ③ `invite` 是**必须的第三参**(设计 §3.2:邀请码是进私密房的**唯一**途径)。
+func _join_code(code: String, mode: String, invite: String = "") -> void:
 	if code.is_empty():
 		_status.text = "请填房间号"
 		return
 	_with_lobby(func() -> void:
 		_ack = false
 		_sent_ms = Time.get_ticks_msec()
+		_join_pending = code          # ★ 见上:漏了它 = 场景选错 + 凭据记不上
 		_status.text = "加入房间 %s,等待配对…" % code
 		if mode == PvpSession.MODE_ROYALE:
-			NetBusExt.rpc_id(1, "royale_join", code, "", PvpSession.beta_mode)
+			NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode)
 		elif mode == PvpSession.MODE_TEAM:
-			NetBusExt.rpc_id(1, "team_join", code, "", PvpSession.beta_mode)
+			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode)
 		elif mode == PvpSession.MODE_PVP:
 			NetBus.rpc_id(1, "join_room", code)
 		else:
 			# 模式未知:三张表都问一次(只有一间会成功)
 			NetBus.rpc_id(1, "join_room", code)
-			NetBusExt.rpc_id(1, "royale_join", code, "", PvpSession.beta_mode)
-			NetBusExt.rpc_id(1, "team_join", code, "", PvpSession.beta_mode))
+			NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode)
+			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode))
+```
+
+**加入成功时**(`_on_room_joined(role)` / 两个 `room_state` 首帧):
+
+```gdscript
+	if not _join_pending.is_empty():
+		_current_mode = mode            # ★ 与 _join_pending 配对:没有它 = 场景选错
+		PvpSession.note_room(_join_pending, mode)
+		_join_pending = ""
 ```
 
 其余基类钩子（本任务先给"能跑"的实现，Task 6 按 `_mode` 精修）：
@@ -1268,13 +1319,23 @@ func _go_match_status() -> String:
 # ★ 两页**刻意不同**的那条纪律现在按 `_current_mode` 分派(设计 §3.1.2):
 #   1v1 直切;大乱斗/3v3 必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内
 #   到达,栈内切场景会在这个栈里 free 大厅/重建大物理世界 → 偶发原生段错误(曾实测)。
+# ★★ else 那一支**刻意什么都不做、只 push_error**,不默认切任何一个场景。
+#    理由:本函数有三条进入路径(建房 / 加入 / 回局),任何一条漏记 `_current_mode` 都会
+#    落到这里 —— 那时"切一个默认场景"是**静默的错值**(玩家进了错误的对局场景,只是看起来怪),
+#    而"留在原地 + 一条红"是**响的**。本仓的取向一贯是前者不可接受。
+#    ★ 本计划初稿写的是 `else: 切 team_game` —— 那正是让"1v1 加入者进 team_game"
+#      这个洞**不报错**的原因。
 func _enter_match_scene() -> void:
 	if _current_mode == PvpSession.MODE_PVP:
 		get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
 	elif _current_mode == PvpSession.MODE_ROYALE:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/royale_game.tscn")
-	else:
+	elif _current_mode == PvpSession.MODE_TEAM:
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/team_game.tscn")
+	else:
+		push_error("mp_lobby: match_start 到了但 _current_mode 是「%s」—— "
+				+ "建房/加入/回局三条路里有一条没记模式。**不切场景**(切错的场景比留在原地更难查)。"
+				% _current_mode)
 
 
 # 梯顺序 `[worker → claim → 大厅 → ack]`(合并后唯一的一条;见文件头)。
@@ -1708,8 +1769,22 @@ grep -rn "matchmaking\|royale_lobby\|team_lobby" --include=*.gd --include=*.tscn
 
 - [ ] **Step 9: 提交**
 
+★★ **不要 `git add -A scenes tests server`**（本计划初稿就是这么写的，**是错的**）—— 我们与另一个
+Claude 会话共用这棵工作树，而它在改 `scenes/enemies/*`。按目录 add 会把**它的**改动一起带走。
+一律**逐个文件点名**，把本任务真正动过的文件列全（`git rm` 那 9 个已由上一步入索引，这里只需补其余）：
+
 ```bash
-git add -A scenes tests server
+git add tests/smoke/lobby_parse_smoke.gd tests/smoke/reconnect_smoke.gd \
+        tests/smoke/room_sweep_smoke.gd \
+        tests/probe/kh_l5_probe.gd tests/probe/lobby_visibility_probe.gd \
+        tests/probe/rejoin_probe.gd tests/probe/royale_bound_probe.gd \
+        tests/probe/royale_c2_probe.gd tests/probe/royale_soak_probe.gd \
+        tests/probe/team_match_probe.gd \
+        tests/harness/ground_net_watcher.gd tests/harness/team_match_watcher.gd \
+        tests/harness/royale_c2_watcher.gd tests/harness/royale_bound_watcher.gd \
+        tests/harness/rejoin_watcher.gd \
+        server/lobby/room_manager.gd scenes/pvp_match_client.gd
+git status --short    # ★ 提交前看一眼:凡不是你改的文件(尤其 scenes/enemies/*)一律别加
 git commit -m "refactor(lobby): 三个旧大厅页退役,守卫改指 mp_lobby
 
 删 matchmaking / royale_lobby / team_lobby(含 .uid)。
