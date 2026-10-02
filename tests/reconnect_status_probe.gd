@@ -49,8 +49,8 @@ const ROYALE_GAME := "res://scenes/royale_game.gd"
 const TEAM_GAME := "res://scenes/team_game.gd"
 # 三个模式的**生产入口**(相⑤逐个断言它们的 `_ready` 里调了 `_subscribe_reconnect()`)。
 const CLIENTS := [PVP_GAME, ROYALE_GAME, TEAM_GAME]
-const PRODUCERS := ["res://server/match_round.gd", "res://server/royale_host.gd",
-		"res://server/team_host.gd"]
+const PRODUCERS := ["res://server/match/match_round.gd", "res://server/hosts/royale_host.gd",
+		"res://server/hosts/team_host.gd"]
 const PVP_HUD := "res://ui/hud/pvp_hud.gd"
 const ROYALE_HUD := "res://ui/hud/royale_hud.gd"
 const TEAM_HUD := "res://ui/hud/team_hud.gd"

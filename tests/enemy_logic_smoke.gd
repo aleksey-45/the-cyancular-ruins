@@ -1341,7 +1341,7 @@ func _phase_weapon_registry() -> void:
 		{"path": "res://scenes/level_0.gd", "func": "_default_weapon_types"},
 		{"path": "res://scenes/lobby_page.gd", "func": "_add_weapon_grid"},
 		{"path": "res://scenes/main_menu.gd", "func": "_fill_sp_panel"},
-		{"path": "res://server/match_ground.gd", "func": "_server_weapon_types"},
+		{"path": "res://server/match/match_ground.gd", "func": "_server_weapon_types"},
 		{"path": "res://scenes/player/weapon_component.gd", "func": "_init"},
 		{"path": "res://scenes/player/weapon_component.gd", "func": "set_enabled_types"},
 	]

@@ -494,7 +494,7 @@ func _check_royale_phase() -> void:
 #   也能让值相等,而那正是要禁的东西)。
 func check_royale_deaths_source() -> void:
 	var body := ScanUtil.func_body(
-			ScanUtil.code_only(ScanUtil.read("res://server/royale_host.gd")), "_broadcast_round_state")
+			ScanUtil.code_only(ScanUtil.read("res://server/hosts/royale_host.gd")), "_broadcast_round_state")
 	_check(not body.is_empty(),
 			"★ ③ 定位到 royale_host._broadcast_round_state 的源码(取不到 = 本守卫失明,必须红)")
 	if body.is_empty():
@@ -512,7 +512,7 @@ func check_royale_deaths_source() -> void:
 #   ★ 它**不是**次序无关的文本共现(不涉及与 `_rpc_all` 的先后) —— 那一类已从本文件**删除**。
 func _check_delivery_source() -> void:
 	var tick := ScanUtil.func_body(
-			ScanUtil.code_only(ScanUtil.read("res://server/match_round.gd")), "_match_round_tick")
+			ScanUtil.code_only(ScanUtil.read("res://server/match/match_round.gd")), "_match_round_tick")
 	_check(not tick.is_empty(),
 			"★ ④ 定位到 match_round._match_round_tick 的源码(取不到 = 本守卫失明,必须红)")
 	if not tick.is_empty():

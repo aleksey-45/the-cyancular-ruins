@@ -487,15 +487,15 @@ func _check_wiring() -> void:
 	#   `ScanUtil.func_body(code, "_respawn_pools")` 取的是 `static func _respawn_pools(` 那个体,
 	#   不会被 `func _spawn_cell(` 误命中。
 	var cases := [
-		{"file": "res://server/royale_host.gd", "fn": "_spawn_cell", "want": "_respawn_pools()"},
-		{"file": "res://server/team_host.gd", "fn": "_respawn_cell_for", "want": "respawn_pools()"},
+		{"file": "res://server/hosts/royale_host.gd", "fn": "_spawn_cell", "want": "_respawn_pools()"},
+		{"file": "res://server/hosts/team_host.gd", "fn": "_respawn_cell_for", "want": "respawn_pools()"},
 	]
 	# ★ `_respawn_pools` 那一条**不能用 `ScanUtil.func_body`**:它按 `"\nfunc "` 找边界,
 	#   而**不认 `static func`** ⇒ 一个 `static func` 的"函数体"会把**后面所有 static func**
 	#   一起吞进来(`_respawn_pools` 之后就是 `plan_spawns`,那里面有一处**合法**的 `_floor_cells()`
 	#   ⇒ 反向断言会假红)。故这一条走**定长窗口**(该转发函数只有两行,窗口给足 300 字符)。
 	#   (tool 的这条限制**没有改** —— 改它会连带收紧别的探针的读数,不在本次范围。)
-	var rh_src := ScanUtil.code_only(ScanUtil.read("res://server/royale_host.gd"))
+	var rh_src := ScanUtil.code_only(ScanUtil.read("res://server/hosts/royale_host.gd"))
 	var fi := rh_src.find("static func _respawn_pools(")
 	var fwin := rh_src.substr(fi, 300) if fi >= 0 else ""
 	_check(not fwin.is_empty(),
@@ -524,7 +524,7 @@ func _check_wiring() -> void:
 	# ⑦ 的守卫**不能悬空**:它断言的是"`plan_spawns` 的补足分支走不到",而那条分支就在
 	# `RoyaleHost.plan_spawns` 里 —— 分支被删了的话那条守卫就恒真了(恒绿形状)。故钉它在位。
 	var ps_body := ScanUtil.func_body(
-			ScanUtil.code_only(ScanUtil.read("res://server/royale_host.gd")), "plan_spawns")
+			ScanUtil.code_only(ScanUtil.read("res://server/hosts/royale_host.gd")), "plan_spawns")
 	_check(not ps_body.is_empty(),
 			"[仪器] 取到 `RoyaleHost.plan_spawns` 函数体(%d 字符;空 = 下面那条恒真)" % ps_body.length())
 	_check(ps_body.contains("picked.size() < n") and ps_body.contains("_floor_cells()"),
@@ -534,7 +534,7 @@ func _check_wiring() -> void:
 	# 探针自己的 `RESPAWN_CLEARANCE` 必须与**每个**宿主同值(不同值 → ⑤ 的正/负例验的是另一条路)。
 	# ★ 逐文件各查一次:上一版扫的是**两文件拼接串**(`both.contains(...)`),于是**任一**文件有它
 	#   就绿,而措辞写的是"两个宿主与探针同值" —— 断言名与覆盖面不符(评审 重要 2)。
-	for f in ["res://server/royale_host.gd", "res://server/team_host.gd"]:
+	for f in ["res://server/hosts/royale_host.gd", "res://server/hosts/team_host.gd"]:
 		var fsrc := ScanUtil.read(f)
 		_check(not fsrc.is_empty(), "[仪器] 读得到 %s(读不到 = 下面那条恒真)" % f)
 		_check(fsrc.contains("const RESPAWN_CLEARANCE := %d" % RESPAWN_CLEARANCE),

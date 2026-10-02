@@ -86,7 +86,7 @@ const DROP_MIN_SQUASH := 0.5
 #   (它读的是生产文件本身,不是本探针自己的字面量)。
 # ★ 读不到源文件/定位不到那张表时**必须报红**而不是静默跳过 —— 源码级守卫最典型的失明方式
 #   就是"文件改了名 ⇒ 什么都没读到 ⇒ 断言恒真"。
-const SNAPSHOT_SRC := "res://server/match_snapshot.gd"
+const SNAPSHOT_SRC := "res://server/match/match_snapshot.gd"
 const SNAPSHOT_MARK := 'world["players"][str(role)] = {'
 
 const S_WATER := 0

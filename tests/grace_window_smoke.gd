@@ -113,7 +113,7 @@ func _initialize() -> void:
 	#   精确回答(`RejoinRegistry.decision` 的 worker_alive 入参),不再是定时估的。
 	#   保留这条 belt 的理由:它拦不住真正的病,但能在"有人把某个延迟改成荒谬的小数"时
 	#   当场响一声 —— ★ 它**必须**写在注释里说明自己是 belt,否则后代会把它当承重件去优化。
-	var W: GDScript = load("res://server/worker_launcher.gd")
+	var W: GDScript = load("res://server/lobby/worker_launcher.gd")
 	# ★ 空载守卫:load 失败还往下走会抛错,而 -s 抛错走不到 quit() → 进程永久挂起
 	if W == null:
 		print("GRACE_WINDOW FAILED: 找不到 server/worker_launcher.gd(归还延迟的 belt 无从校验)")

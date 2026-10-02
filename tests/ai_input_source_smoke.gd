@@ -95,7 +95,7 @@ func _initialize() -> void:
 
 	# AiNavigator:只建实例断言成员与接口(不入树 → _physics_process/_ready 都不会跑,
 	# 故读 host 的那行不会被触发;T2 的 AI 生成块按这几个成员名赋值,名错即静默失效)
-	var nav_script: GDScript = load("res://server/ai_navigator.gd")
+	var nav_script: GDScript = load("res://server/ai/ai_navigator.gd")
 	_check(nav_script != null, "server/ai_player.gd 可加载")
 	if nav_script != null:
 		var nav: Node = nav_script.new()

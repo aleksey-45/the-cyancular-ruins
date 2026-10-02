@@ -635,9 +635,9 @@ func _run() -> void:
 	#   ② `_side_swap` **一路未被翻** —— 基类那条每局必翻它,这是"走的是本类那条"的直接证据;
 	#   ③ 出生点**已对调** + 玩家**已在新一侧** —— 基类那条两样都做不到。
 	var tbody := ScanUtil.func_body(
-			ScanUtil.code_only(ScanUtil.read("res://server/team_host.gd")), "_start_next_round")
+			ScanUtil.code_only(ScanUtil.read("res://server/hosts/team_host.gd")), "_start_next_round")
 	var bbody := ScanUtil.func_body(
-			ScanUtil.code_only(ScanUtil.read("res://server/match_round.gd")), "_start_next_round")
+			ScanUtil.code_only(ScanUtil.read("res://server/match/match_round.gd")), "_start_next_round")
 	_check(not tbody.is_empty() and not bbody.is_empty(),
 			"⑨ **本类自己声明了** `_start_next_round`(覆写),且基类那份也读得到"
 			+ "(本类 %d 字符 / 基类 %d 字符;读不到 = 下面的行为断言恒真)"
@@ -805,7 +805,7 @@ func _run() -> void:
 	#   ★ 判据取 `_broadcast_round_state` 的**函数体**(不是整个文件):`teams` 这个词在本文件
 	#   别处满地都是(`plan_team_spawns(teams)` / `team_map()`),拿整文件判会恒红。
 	var rbody := ScanUtil.func_body(
-			ScanUtil.code_only(ScanUtil.read("res://server/team_host.gd")), "_broadcast_round_state")
+			ScanUtil.code_only(ScanUtil.read("res://server/hosts/team_host.gd")), "_broadcast_round_state")
 	_check(not rbody.is_empty(),
 			"⑪ 读得到 `TeamHost._broadcast_round_state` 的函数体(读不到 = 下面那条恒真)")
 	_check(not rbody.contains("teams"),
@@ -1267,7 +1267,7 @@ func _run() -> void:
 	#     kscore/acs 的手算读数、"伤害只被计入一次"的增量断言)。★ 别再按"源码里有没有那句话"
 	#     给投递加断言 —— 要加就加到 `stats_delivery_probe` ⑥。
 	# 接线归属:探针那句 `_wire_hit_feedback()` 调的必须是**生产那一份**(基类持有、`_ready` 调它)。
-	var st_mh := ScanUtil.code_only(ScanUtil.read("res://server/match_host.gd"))
+	var st_mh := ScanUtil.code_only(ScanUtil.read("res://server/match/match_host.gd"))
 	_check(st_mh.contains("func _wire_hit_feedback(") and st_mh.contains("_wire_hit_feedback()"),
 			"★ ⑬g 受击接线由生产持有(`MatchHost._ready` 调 `_wire_hit_feedback`),探针只是调它")
 

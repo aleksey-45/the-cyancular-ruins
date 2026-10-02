@@ -27,8 +27,8 @@ func _ready() -> void:
 	var pmc := _code_only(_read("res://scenes/pvp_match_client.gd"))
 	var pl := _code_only(_read("res://scenes/player/player.gd"))
 	var pr := _code_only(_read("res://core/net/prediction_rollback.gd"))
-	var mg := _code_only(_read("res://server/match_ground.gd"))
-	var mh := _code_only(_read("res://server/match_host.gd"))
+	var mg := _code_only(_read("res://server/match/match_ground.gd"))
+	var mh := _code_only(_read("res://server/match/match_host.gd"))
 
 	_check(nb != "" and nbe != "" and pmc != "", "核心文件读得到")
 	if nb == "" or nbe == "" or pmc == "":
@@ -89,10 +89,10 @@ func _ready() -> void:
 
 	# ③d 提示的"自己刚丢下的"排除:服务器要把 by_role 告诉客户端(那条 0.5s 冷却
 	#     只有权威知道),客户端要按它排除 —— 否则刚丢下的枪会显示 F 却捡不起来。
-	_check(_read("res://server/match_ground.gd").contains("\"by_role\":"),
+	_check(_read("res://server/match/match_ground.gd").contains("\"by_role\":"),
 			"weapon_spawned 载荷里没有 by_role")
-	_check(_read("res://server/match_ground.gd").contains("_broadcast_weapon_spawned(ni, role)")
-			or _read("res://server/match_ground.gd").contains("_broadcast_weapon_spawned(inst, role)"),
+	_check(_read("res://server/match/match_ground.gd").contains("_broadcast_weapon_spawned(ni, role)")
+			or _read("res://server/match/match_ground.gd").contains("_broadcast_weapon_spawned(inst, role)"),
 			"丢枪/换枪那条广播没带上角色")
 	_check(pmc.contains("_self_drop_until"), "客户端没记自己刚丢下的那把")
 	_check(clbody.contains("_live_self_drops"), "客户端的提示判定没排除自己刚丢下的")

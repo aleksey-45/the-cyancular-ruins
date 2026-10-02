@@ -65,7 +65,7 @@ const CHECK_NAMES := [
 var _done: Array[String] = []
 
 func _initialize() -> void:
-	var src := FileAccess.get_file_as_string("res://server/room_manager.gd")
+	var src := FileAccess.get_file_as_string("res://server/lobby/room_manager.gd")
 	if src.is_empty():
 		_fail = "无法读取 room_manager.gd"
 		_finish()
@@ -77,7 +77,7 @@ func _initialize() -> void:
 	#   不加载 room_manager,`--worker` 分支也不碰 RoomManager)。`load()` 会真正编译它。
 	#   注:`load()` 解析失败时**不返回 null**(给回的是那个坏掉的脚本对象),故判据用
 	#   `reload()` 的错误码 —— 它会真的重解析并如实返回 OK / ERR_PARSE_ERROR(实测过两种写法)。
-	var scr: GDScript = load("res://server/room_manager.gd")
+	var scr: GDScript = load("res://server/lobby/room_manager.gd")
 	if scr == null or scr.reload() != OK:
 		_fail = "room_manager.gd 编译失败(源码文本可能全对,但 GDScript 编不过)"
 		_finish()
@@ -132,7 +132,7 @@ func _indent_of(line: String) -> int:
 func _check_teardown_funnel() -> void:
 	# ★ 2026-09-14:账本与拆除收口搬进了 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
 	#   收口的判据跟着搬 —— 「端口归还与注册表删除只能出现在收口体内」这条纪律与它住哪个文件无关。
-	var src := FileAccess.get_file_as_string("res://server/lobby_rooms.gd")
+	var src := FileAccess.get_file_as_string("res://server/lobby/lobby_rooms.gd")
 	if src.is_empty():
 		_fail = "无法读取 lobby_rooms.gd"
 		return
@@ -194,7 +194,7 @@ func _check_argv_contract() -> void:
 	# worker_launcher.gd(spawn 族随迁)——故两处清单都要含 worker_launcher.gd。
 	# ★ 别只改正向那条:反向(旧标识符禁令)若还扫着 room_manager.gd,新生成端就没人管了,
 	#   旧协议名可以在那儿悄悄复活 —— 那正是「只改一半」的另一种形态。
-	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
+	for f in ["res://server/server_main.gd", "res://server/lobby/worker_launcher.gd"]:
 		var txt := FileAccess.get_file_as_string(f)
 		if txt.is_empty():
 			_fail = "无法读取 %s" % f
@@ -218,7 +218,7 @@ func _check_argv_contract() -> void:
 	#   刻意用 `begins_with("#")` 跳过注释行(注释里提旧协议名是**有意的**留档),正向这条
 	#   早先却是**整文件 `contains`** —— 于是"把那一行真代码删掉、只在注释里留一句 `"--roles"`
 	#   的说明"就能把正向断言喂绿,而那正是本条要防的"只接了一半"。注释不是代码。
-	for f in ["res://server/server_main.gd", "res://server/worker_launcher.gd"]:
+	for f in ["res://server/server_main.gd", "res://server/lobby/worker_launcher.gd"]:
 		var code2 := ScanUtil.code_only(ScanUtil.read(f))
 		if not code2.contains('"--roles"'):
 			_fail = "%s 未接 --roles(集合协议只接了一半?注:判据剥掉注释 —— 光在注释里提到不算)" % f
@@ -367,7 +367,7 @@ func _check(src: String) -> void:
 	if not src.contains("const MAX_ROOM_AGE := 7200.0"):
 		_fail = "缺 MAX_ROOM_AGE=7200(2h)常量"; return
 	# created_at 的赋值点随 create_room/royale_create 搬进了 lobby_rooms.gd
-	if not FileAccess.get_file_as_string("res://server/lobby_rooms.gd").contains(
+	if not FileAccess.get_file_as_string("res://server/lobby/lobby_rooms.gd").contains(
 			"created_at = Time.get_unix_time_from_system()"):
 		_fail = "create_room/royale_create 未记录 created_at(超龄判据的输入)"; return
 	if not src.contains("func _process"):
@@ -377,9 +377,9 @@ func _check(src: String) -> void:
 	# 杀 worker 的实现已随端口池搬进 WorkerLauncher(2026-09-14),这里改认新入口 ——
 	# 但**两条都要**:实现存在 + room_manager 里有人调它。只查实现会放任"实现在、收口不再杀"
 	# (清扫路径不杀 → 僵尸 worker 继续占着端口,正是本层补过三次的那个泄漏)。
-	if not FileAccess.get_file_as_string("res://server/worker_launcher.gd").contains("func kill_worker"):
+	if not FileAccess.get_file_as_string("res://server/lobby/worker_launcher.gd").contains("func kill_worker"):
 		_fail = "缺 WorkerLauncher.kill_worker(杀 worker 的实现)"; return
-	if not FileAccess.get_file_as_string("res://server/lobby_rooms.gd").contains("launcher.kill_worker("):
+	if not FileAccess.get_file_as_string("res://server/lobby/lobby_rooms.gd").contains("launcher.kill_worker("):
 		_fail = "lobby_rooms 未调 launcher.kill_worker(收口不再杀 worker → 僵尸占端口)"; return
 	# _sweep_stale_rooms 体内必须出现:超龄判断、杀 worker、erase 房间
 	var fn := src.find("func _sweep_stale_rooms")
@@ -612,7 +612,7 @@ func _check_worker_pid_tracking() -> void:
 func _check_join_refusal_guards() -> void:
 	if _fail != "":
 		return
-	var code := ScanUtil.code_only(ScanUtil.read("res://server/lobby_rooms.gd"))
+	var code := ScanUtil.code_only(ScanUtil.read("res://server/lobby/lobby_rooms.gd"))
 	var cases := [
 		["join_room", "if room.started:"],
 		["royale_join", "if rr.in_match:"],
@@ -642,7 +642,7 @@ func _check_join_refusal_guards() -> void:
 func _check_reclaim_ladder() -> void:
 	if _fail != "":
 		return
-	var src := ScanUtil.read("res://server/room_manager.gd")
+	var src := ScanUtil.read("res://server/lobby/room_manager.gd")
 	if src.is_empty():
 		_fail = "无法读取 room_manager.gd"
 		return
@@ -707,7 +707,7 @@ func _check_reclaim_ladder() -> void:
 func _check_rejoin_spawn_wiring() -> void:
 	if _fail != "":
 		return
-	var code := ScanUtil.code_only(ScanUtil.read("res://server/room_manager.gd"))
+	var code := ScanUtil.code_only(ScanUtil.read("res://server/lobby/room_manager.gd"))
 	var spawns := ["_start_match", "royale_start", "royale_start_ai", "team_start"]
 	for f in spawns:
 		var body := ScanUtil.func_body(code, f)

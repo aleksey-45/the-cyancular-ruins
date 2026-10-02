@@ -43,7 +43,7 @@ const MAX_WAIT_MS := 30000              # 冷启动 headless worker + 建世界,
 func _initialize() -> void:
 	# ★ 空载守卫:load 失败立刻 quit(1),否则后面抛错走不到 quit() → 进程**永久挂起**
 	#   (不是干净失败,是超时)。
-	var L: GDScript = load("res://server/worker_launcher.gd")
+	var L: GDScript = load("res://server/lobby/worker_launcher.gd")
 	if L == null:
 		print("TEAM SPAWN SMOKE: FAIL(读不到 worker_launcher.gd)")
 		quit(1)

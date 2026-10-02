@@ -25,7 +25,7 @@ extends SceneTree
 #   随后 `reload()` 判编译结果 —— 与 `room_sweep_smoke` 加载 room_manager.gd 同一个手法。
 
 func _initialize() -> void:
-	var script = load("res://server/lobby_rooms.gd")
+	var script = load("res://server/lobby/lobby_rooms.gd")
 	# ★ load() **解析失败时不返回 null**(给回的是那个坏掉的脚本对象)→ 判据用 reload() 的错误码
 	#   (「源码文本全对、但 GDScript 编不过」这一档只有 reload 照得出来)。
 	if script == null or script.reload() != OK:
@@ -106,7 +106,7 @@ func _initialize() -> void:
 	#   于是把 `team_next_role(tr.player_role.values())` 换成内联的「人数 + 1」,上面五条**依旧全绿**,
 	#   而 role 分配已经在"有人退过"的房里出错(撞上仍在房里的高号,同一个 role 双份占用)。
 	#   故补一条便宜的**源码级**断言,用剥注释视图(注释里出现同形文本不算数)。
-	var room_src := ScanUtil.read("res://server/lobby_rooms.gd")
+	var room_src := ScanUtil.read("res://server/lobby/lobby_rooms.gd")
 	if room_src.is_empty():
 		fails.append("读不到 server/lobby_rooms.gd(接线断言无从成立)")
 	elif not ScanUtil.code_only(room_src).contains("team_next_role(tr.player_role.values())"):

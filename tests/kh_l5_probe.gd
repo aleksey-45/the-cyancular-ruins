@@ -75,9 +75,9 @@ const N_CONST_DECL := "^const\\s+\\w*FONT" + "_SIZE\\w*\\s*:?=\\s*([0-9]+)"
 # 那些 needle 在新家找不到 → **门恒绿、静默失明**(仓内已登记过的失败模式)。
 # 这不是放水 —— 被守的东西一个字没变,只是它现在住在链上的哪一层而已;
 # 反向断言(基类不得含 RoyaleHost 的子类方法)反而更严了:五份都查。
-const HOST_SRC := ["res://server/match_host.gd", "res://server/match_round.gd",
-		"res://server/match_combat.gd", "res://server/match_snapshot.gd",
-		"res://server/match_state.gd"]
+const HOST_SRC := ["res://server/match/match_host.gd", "res://server/match/match_round.gd",
+		"res://server/match/match_combat.gd", "res://server/match/match_snapshot.gd",
+		"res://server/match/match_state.gd"]
 
 
 func _host_code() -> String:
@@ -188,8 +188,8 @@ func _check_c2_contract() -> void:
 #   「杀不掉 worker」这个失败模式与文件放哪无关,必须仍然有人守。
 func _check_room_manager() -> void:
 	var fails_before := _failures.size()
-	var p := "res://server/room_manager.gd"
-	var pw := "res://server/worker_launcher.gd"
+	var p := "res://server/lobby/room_manager.gd"
+	var pw := "res://server/lobby/worker_launcher.gd"
 	var pp := "res://core/net/proc_util.gd"
 	var code := _code_only(_read(p))
 	var code_w := _code_only(_read(pw))
@@ -528,7 +528,7 @@ func _census(census: Dictionary, path: String, carrier: String) -> void:
 func _check_new_interfaces() -> void:
 	var fails_before := _failures.size()
 	var base := "MatchHost 继承链(见 HOST_SRC)"
-	var sub := "res://server/royale_host.gd"
+	var sub := "res://server/hosts/royale_host.gd"
 	var base_code := _host_code()
 	var sub_code := _code_only(_read(sub))
 	_check(not base_code.is_empty() and not sub_code.is_empty(), "读不到 %s / %s" % [base, sub])
@@ -553,9 +553,9 @@ func _check_new_interfaces() -> void:
 			"ui/royale_hud.gd 缺 class_name RoyaleHud")
 	# ★ 2026-09-14:大乱斗房间 handler 随账本搬进 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
 	#   判据跟着搬,但**两处都查**:老家若被人再抄一份同名 handler,那正是"两份真相"的开端。
-	var rl := _code_only(_read("res://server/lobby_rooms.gd"))
+	var rl := _code_only(_read("res://server/lobby/lobby_rooms.gd"))
 	_check(rl.contains("func royale_create("), "server/lobby_rooms.gd 缺 func royale_create(")
-	_check(not _code_only(_read("res://server/room_manager.gd")).contains("func royale_create("),
+	_check(not _code_only(_read("res://server/lobby/room_manager.gd")).contains("func royale_create("),
 			"server/room_manager.gd 又出现 func royale_create(——房间 handler 应只在 lobby_rooms 一处)")
 	_summary(fails_before, "新接口:基类 1 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud 在位,royale_create 在 lobby_rooms")
 

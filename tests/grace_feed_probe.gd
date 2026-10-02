@@ -136,21 +136,21 @@ func _ready() -> void:
 #     那是出口自身所在的文件,两边不是同一张表,别把这句话读成"共用一份常量")。
 func _funnel_is_the_only_emitter() -> bool:
 	var ok := true
-	for p in ["res://server/match_state.gd", "res://server/match_round.gd",
-			"res://server/royale_host.gd", "res://server/team_host.gd"]:
+	for p in ["res://server/match/match_state.gd", "res://server/match/match_round.gd",
+			"res://server/hosts/royale_host.gd", "res://server/hosts/team_host.gd"]:
 		var c := _code(p)
 		if c.is_empty():
 			print("    ✗ 读不到 %s" % p)
 			ok = false
 			continue
-		if p != "res://server/match_state.gd" and not c.contains("_send_round_state("):
+		if p != "res://server/match/match_state.gd" and not c.contains("_send_round_state("):
 			print("    ✗ %s 没走 `_send_round_state(`" % p)
 			ok = false
-	for p in ["res://server/match_round.gd", "res://server/royale_host.gd",
-			"res://server/team_host.gd", "res://server/match_state.gd"]:
+	for p in ["res://server/match/match_round.gd", "res://server/hosts/royale_host.gd",
+			"res://server/hosts/team_host.gd", "res://server/match/match_state.gd"]:
 		var c := _code(p)
 		# match_state.gd 里那一处就是出口自身的实现,故放行
-		if p == "res://server/match_state.gd":
+		if p == "res://server/match/match_state.gd":
 			continue
 		if c.contains("_rpc_all(\"round_state\""):
 			print("    ✗ %s 里还有绕过出口的 `_rpc_all(\"round_state\"`" % p)

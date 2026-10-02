@@ -22,7 +22,7 @@ var _ran := 0
 
 
 func _initialize() -> void:
-	var S: GDScript = load("res://server/rejoin_registry.gd")
+	var S: GDScript = load("res://server/lobby/rejoin_registry.gd")
 	if S == null:
 		print("REJOIN REGISTRY: FAIL(加载 rejoin_registry.gd 失败)")
 		quit(1)

@@ -62,11 +62,11 @@ const DIRS := ["res://server", "res://core/net"]
 #   探针需要一张更长的例外表,而这轮没做。**别把"本探针全绿"读成"客户端那侧也有常驻守卫"**。
 const MIN_SITES := 20
 const MUST_HAVE := [
-	"res://server/match_snapshot.gd",     # 60Hz 世界包广播 + 本人包定向
-	"res://server/match_state.gd",        # `_rpc_all` 样板(广播的单一出口)
-	"res://server/match_combat.gd",       # 交火时最密的一处定向发送
-	"res://server/lobby_rooms.gd",        # 大厅:答复 caller + 逐成员状态广播
-	"res://server/room_manager.gd",       # 转连前的会话令牌
+	"res://server/match/match_snapshot.gd",     # 60Hz 世界包广播 + 本人包定向
+	"res://server/match/match_state.gd",        # `_rpc_all` 样板(广播的单一出口)
+	"res://server/match/match_combat.gd",       # 交火时最密的一处定向发送
+	"res://server/lobby/lobby_rooms.gd",        # 大厅:答复 caller + 逐成员状态广播
+	"res://server/lobby/room_manager.gd",       # 转连前的会话令牌
 	"res://server/server_main.gd",        # match_sync 应答
 	"res://core/net/net_bus.gd",          # ping/pong + reply 收口
 ]

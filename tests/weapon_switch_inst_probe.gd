@@ -125,7 +125,7 @@ func _phase_source_contract() -> void:
 #   "改一半完全静默"的地方,故判据是**一对**而不是一条。
 func _phase_downlink_key() -> void:
 	var before := _failures.size()
-	var mss := _code_only(_read("res://server/match_snapshot.gd"))
+	var mss := _code_only(_read("res://server/match/match_snapshot.gd"))
 	var pre := _code_only(_read("res://scenes/player/player_replica.gd"))
 	_check(mss.contains("\"type_id\": p.weapons.current_type_id()"),
 			"下行快照生产端没把 weapon 字段改名 type_id")

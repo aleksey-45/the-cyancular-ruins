@@ -91,9 +91,9 @@ const RB_PATH := "res://core/net/" + "prediction_rollback.gd"
 # ★ 2026-09-15(阶段 5.6):MatchHost 按域拆成一条继承链,权威源码现在是**五份的并集**
 # (核心/回合/裁决/快照/状态)。别只读 match_host.gd —— "beam_fired" 已搬进 match_combat.gd,
 # 只读老家会让本门报"发送端被整条迁走了",或更糟:**静默失绿**。
-const MH_PATHS := ["res://server/" + "match_host.gd", "res://server/" + "match_round.gd",
-		"res://server/" + "match_combat.gd", "res://server/" + "match_snapshot.gd",
-		"res://server/" + "match_state.gd"]
+const MH_PATHS := ["res://server/match/" + "match_host.gd", "res://server/match/" + "match_round.gd",
+		"res://server/match/" + "match_combat.gd", "res://server/match/" + "match_snapshot.gd",
+		"res://server/match/" + "match_state.gd"]
 
 # MatchHost 五份源码的并集(见 MH_PATHS 的注释)。用 += 拼接,不引入任何转义序列。
 
