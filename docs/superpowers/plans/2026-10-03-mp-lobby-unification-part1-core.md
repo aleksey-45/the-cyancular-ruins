@@ -1625,6 +1625,24 @@ Settings.pvp_disabled_weapons,在 3v3 勾一下会连带改掉另两个模式。
 | `开始游戏` | **没有这颗按钮**（1v1 两人凑齐自动开局） | `NetBusExt.rpc_id(1, "royale_start")` | `NetBusExt.rpc_id(1, "team_start")` |
 | 选边 `加入 A/B 队` | 无 | 无 | `NetBusExt.rpc_id(1, "team_pick", 1/2)` |
 
+**(b2) ★★ 补回「已在房间里」那道闸门 —— 本计划初稿漏了，而它是两个旧页都有的行为**
+
+`mp_lobby.gd` 现有 `_lobby_action_allowed()` 一律 `return true`，上挂一句注释「本任务还没有『已在房间里』这一档(Task 5 的等待室会补)」—— **那句注释是对的，Task 5 必须补上**，否则：
+- 进等待室后，四周的房卡与「＋创建房间」**仍然可点**，点了只会被服务端拒（状态栏给一句文案）；
+- 更难看的是**层级**：此时打开创建弹层，压暗罩在等待室面板**底下**（后者建得更晚）。
+
+两个旧页都有这道闸门，可直读：
+```gdscript
+# scenes/royale_lobby.gd:424  /  scenes/team_lobby.gd:412  逐字同形
+func _lobby_action_allowed() -> bool:
+	if _in_room:
+		_status.text = "已在大乱斗房间中(先退出房间再操作)"   # 3v3 版写「已在 3v3 房间中…」
+		return false
+	return true
+```
+★ 统一页的做法：加 `var _in_room := false`，**`_show_wait_room` 里置 true、`_hide_wait_room` 里置 false**（与面板可见性同生命周期 —— 分开写两处状态就是漂的成因）。文案按 `_current_mode` 给三种（1v1 写「已在 1v1 房间中…」）。
+★ **探针要断言**：`_show_wait_room` 之后 `_lobby_action_allowed()` 为 false 且 `_status` 文案随模式变；`_hide_wait_room()` 之后回到 true。
+
 **(c) 探针要能数"名单行"**：每加一行名单都 `label.set_meta("roster_row", true)`，
 否则断言 3（"名单行数 == 载荷 players 条数"）只能靠遍历所有 Label 猜、极易假绿。
 同理，选边/开始/退出三颗按钮都要能在探针里按文案找到（`_find_button(panel, "开 始 游 戏")` 之类）。
