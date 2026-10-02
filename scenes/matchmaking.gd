@@ -11,6 +11,8 @@ extends LobbyPage
 
 # 开关行/滑条行的**标签列宽**(本页原值 440;版式调参,各页面本就不同 —— 见 UiFactory.check_row 的注释)。
 const OPT_LABEL_W := 440.0
+# 本页属于哪个模式 —— 回局凭据要按模式判(`can_rejoin_to(code, MODE)`,三张注册表房号空间共用)。
+const MODE := PvpSession.MODE_PVP
 
 var _code_edit: LineEdit
 var _auto_refreshed := false   # 「点了看起来未满却已满」后只自动刷新一次,手动刷新再放开
@@ -216,7 +218,7 @@ func _on_room_list(rooms: Array) -> void:
 		#    不是我的房,才轮到「对局中 ⇒ disabled」那一档(前置计划交付的既有行为)。
 		#    反过来写(先按 in_match 禁用)= 回局这一档连点都点不到,而**一行报错都没有**
 		#    —— 表现只是"回到大厅后自己那间房是灰的,回不去"。
-		var mine := PvpSession.can_rejoin_to(code)
+		var mine := PvpSession.can_rejoin_to(code, MODE)
 		btn.disabled = in_match and not mine
 		if btn.disabled:
 			btn.focus_mode = Control.FOCUS_NONE
@@ -227,7 +229,7 @@ func _on_room_list(rooms: Array) -> void:
 				# 我的房**且对局中** ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
 				# ★ `in_match` 必须传进去(I2):自己那间**还没开局**的房要走普通加入,
 				#   拿它去回局只会收到一句"凭据失效"(见 `try_rejoin_row` 的注释)。
-				if not try_rejoin_row(code, in_match):
+				if not try_rejoin_row(code, in_match, MODE):
 					_join_code(code))
 		_list_box.add_child(btn)
 	_status.text = "共 %d 个房间(未满优先;对局中的照列:自己的房可点(回局),别人的点不动)" % order.size()
@@ -259,14 +261,14 @@ func _on_server_message(t: String) -> void:
 func _on_room_created(code: String) -> void:
 	# ★ 同 `_on_room_joined`:建房那条路也要记 —— 否则房主从列表里点**自己**那间房时,
 	#   `can_rejoin_to(code)` 因房号不符而假,那一行被当"别人的房"禁用(回局入口对房主失效)。
-	PvpSession.note_room(code)
+	PvpSession.note_room(code, MODE)
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 
 
 # 服务端答"加进去了" —— **本页唯一**记加入房号的地方(见 `_join_code` 的 I1 那段)。
 func _on_room_joined(role: int) -> void:
 	if not _join_code_pending.is_empty():
-		PvpSession.note_room(_join_code_pending)
+		PvpSession.note_room(_join_code_pending, MODE)
 		_join_code_pending = ""
 	# 注意:此处不清 _join_sent_ms——入房后到 go_match 之间若房主掉线、大厅关房,
 	# 客户端会收不到 go_match 也没有任何后续;保留该兜底计时(超时自动刷新回大厅)。

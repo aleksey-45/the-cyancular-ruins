@@ -7,8 +7,8 @@ extends Control
 #   · 时空 3v3(图标 = 单机怀表 + 下方蓝色 Team 字样)→ 3v3 大厅(beta 态)
 # 卡片图标是**程序化生成**的(复用 WatchHud.build_dial_texture,不引入美术资源)。
 #
-# ★ beta 态怎么传给大厅页:PvpSession.enter_mode(MODE_*) 会 reset(beta_mode=false),
-#   所以先 enter_mode 再置 beta_mode = true,然后切场景 —— 大厅页在 _ready 里读它。
+# ★ beta 态怎么传给大厅页:PvpSession.reset() 会把 beta_mode 清成 false,
+#   所以先 reset 再置 beta_mode = true,然后切场景 —— 大厅页在 _ready 里读它。
 
 const CARDS := [
 	{
@@ -115,7 +115,7 @@ func _make_card(c: Dictionary) -> Control:
 ## 进入某张卡的模式(点击与 autotest 共用同一入口;CARDS[i] 传整张卡的字典)。
 func _enter_card(c: Dictionary) -> void:
 	Sfx.play("ui")
-	PvpSession.enter_mode(str(c["mode"]))
+	PvpSession.reset()
 	PvpSession.beta_mode = true
 	get_tree().change_scene_to_file(str(c["scene"]))
 

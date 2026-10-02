@@ -222,27 +222,28 @@ func _build_menu_buttons() -> Array:
 	start_btn.pressed.connect(_on_single_pressed)
 	# 文案 2026-09-21 由「多 人 对 战」改为「1 v 1」:菜单里三个联机入口现在按
 	# 1v1 / 3v3 / 大乱斗 并列,旧的「多人」在这里读不出"到底是哪一种多人"。
-	# ★★ 三个联机按钮一律走 `PvpSession.enter_mode(<本模式>)`,**不要**写回裸的
-	#   `PvpSession.reset()`:回局凭据要活过"回主菜单"这一步(那正是路径乙的意义),
-	#   而 `enter_mode` 只在**换了模式**时才作废它(理由见 pvp_session.gd 的 `mode` 那段:
-	#   三张注册表的房号空间是共用的,不判模式就会串)。写回 `reset()` = 玩家从对局回主菜单、
-	#   再按同一个模式进来时凭据被抹掉 → 自己那间"对局中"的房恒为灰、回不去
-	#   (**而一行报错都没有**) —— 这就是 C1。`reconnect_smoke` 有源码级断言钉着这三处。
+	# ★★ 三个联机按钮一律走 `PvpSession.reset()`(每次进页复位 role/spawn/map_path),
+	#   **不要**在这里写任何清凭据的东西:回局凭据要活过"回主菜单"这一步(那正是路径乙的意义),
+	#   而模式归属改由各大厅页记房号那一拍(`note_room(code, mode)`)确定(见 pvp_session.gd 的
+	#   `room_mode` 那段:三张注册表的房号空间是共用的,不判模式就会串)。往 `reset()` 里加回清凭据
+	#   那四行、或在这里直接清凭据 = 玩家从对局回主菜单、再按同一个模式进来时凭据被抹掉
+	#   → 自己那间"对局中"的房恒为灰、回不去(**而一行报错都没有**) —— 这就是 C1。
+	#   `reconnect_smoke` 有源码级断言钉着这三处。
 	var multi_btn := UiFactory.button("1 v 1", 32)
 	multi_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
-		PvpSession.enter_mode(PvpSession.MODE_PVP)
+		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
 		get_tree().change_scene_to_file("res://scenes/matchmaking.tscn"))
 	# 3v3 团队:与多人/大乱斗并列的第三个联机模式入口(大厅页 `team_lobby`,协议走 team_*)。
 	var team_btn := UiFactory.button("3 v 3 团 队", 32)
 	team_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
-		PvpSession.enter_mode(PvpSession.MODE_TEAM)
+		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
 		get_tree().change_scene_to_file("res://scenes/team_lobby.tscn"))
 	var royale_btn := UiFactory.button("大 乱 斗", 32)
 	royale_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
-		PvpSession.enter_mode(PvpSession.MODE_ROYALE)
+		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
 		get_tree().change_scene_to_file("res://scenes/royale_lobby.tscn"))
 	# Beta(2026-09-28,用户指定放在大乱斗下面):以后所有实验性玩法都从这个入口进
 	# (现在是 PvP 时间玩法的两个变体)。弱化变体:实验功能不与正式模式抢注意力。

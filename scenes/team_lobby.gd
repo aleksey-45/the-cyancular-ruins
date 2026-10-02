@@ -22,6 +22,9 @@ extends LobbyPage
 #   ★ 正因如此,建房面板里**没有**「禁用武器网格」与「角色色相行」两个区块(基类提供、
 #     另两页都有)—— 原因见 _build_create_panel 里那段说明。
 
+# 本页属于哪个模式 —— 回局凭据要按模式判(`can_rejoin_to(code, MODE)`,三张注册表房号空间共用)。
+const MODE := PvpSession.MODE_TEAM
+
 var _code_edit: LineEdit        # 房间号(加入)
 var _invite_edit: LineEdit      # 邀请码(私密房加入)
 var _team_ack := true        # 建房/加入后是否已收到服务器 team_room_state(8s 无应答兜底用)
@@ -228,7 +231,7 @@ func _on_team_rooms(rooms: Array) -> void:
 		#    不是我的房,才轮到「对局中 ⇒ disabled」那一档(前置计划交付的既有行为)。
 		#    反过来写(先按 in_match 禁用)= 回局这一档连点都点不到,而**一行报错都没有**
 		#    —— 表现只是"回到大厅后自己那间房是灰的,回不去"。
-		var mine := PvpSession.can_rejoin_to(code)
+		var mine := PvpSession.can_rejoin_to(code, MODE)
 		btn.disabled = in_match and not mine
 		if btn.disabled:
 			btn.focus_mode = Control.FOCUS_NONE
@@ -238,7 +241,7 @@ func _on_team_rooms(rooms: Array) -> void:
 				Sfx.play("ui")
 				# 我的房**且对局中** ⇒ `try_rejoin_row` 自己走回局并返回 true;否则走普通加入
 				# ★ `in_match` 必须传进去(I2):自己那间**还没开局**的等待室要走普通加入。
-				if not try_rejoin_row(code, in_match):
+				if not try_rejoin_row(code, in_match, MODE):
 					_join_room(code, ""))
 		_list_box.add_child(btn)
 	_status.text = "共 %d 个公开房间(对局中的照列:自己的房可点(回局),别人的点不动)" % rooms.size()
@@ -257,7 +260,7 @@ func _on_room_state(state: Dictionary) -> void:
 	# ★ 走 `note_room()` 而不是直接赋值:它顺手把**上一间房**的凭据作废(换了房号时)——
 	#   等待室每收到一次房间状态都会走一遍本函数,同号时它是 no-op(见 `note_room` 的注释)。
 	var code := str(state.get("code", ""))
-	PvpSession.note_room(code)
+	PvpSession.note_room(code, MODE)
 	var my_role := int(state.get("your_role", 0))
 	_host = int(state.get("host_role", 0)) == my_role
 	if _create_panel != null:

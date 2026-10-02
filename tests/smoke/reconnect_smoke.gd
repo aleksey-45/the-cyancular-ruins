@@ -7,10 +7,9 @@ extends SceneTree
 #   ③ PvpSession 的凭据字段在位(重连/回局都要靠它们)
 #   ④ ★★ **回局凭据的生死线**(2026-09-22 按 C1 整条重写,**原第 ④ 条是反的**):
 #      凭据必须**活过"回主菜单 → 再进大厅页"**(那正是路径乙的意义),只在
-#        · 换模式(`enter_mode` 里 `mode` 变了)
+#        · 换了**房号或模式**(`note_room` 里 `room_code` / `room_mode` 变了)
 #        · 大厅答"回不去了" / 回局超时(`clear_rejoin` 的另外两个调用点)
-#        · 玩家进了**另一间**房(`note_room`)
-#      时作废。§「凭据的生死线」那一节逐条钉住,连"主菜单那三个按钮走 `enter_mode`"一起。
+#      时作废。§「凭据的生死线」那一节逐条钉住,连"主菜单走 `reset()`"一起。
 #   ⑤ `try_rejoin_row` 的两个条件(是我的房 + 凭据还在 + **这一行是对局中**)
 #   ⑥ **四条新判活守卫**的常驻源码断言(§6;I3:`tests/probe/rpc_liveness_probe` 的扫描面
 #      **不含 `scenes/`**,K 键那两条与 `send_ping` 此前零守卫)
@@ -247,8 +246,8 @@ func _initialize() -> void:
 #    联机按钮调的那个函数 ⇒ 玩家从对局回主菜单、再按同一个模式进来时凭据正好在那一拍被抹掉
 #    ⇒ 回局入口在生产里**不可达**(C1)。现在钉的是:
 #      · `reset()` **不许**碰凭据(进页复位 ≠ 下车清理);
-#      · 凭据只在**换模式**(`enter_mode` 的 `mode` 判别)、大厅拒绝/超时(`clear_rejoin`
-#        另外两个调用点)、以及**换了一间房**(`note_room`)时作废。
+#      · 凭据只在**换了房号或模式**(`note_room` 的 `room_code` / `room_mode` 判别)、以及
+#        大厅拒绝/超时(`clear_rejoin` 另外两个调用点)时作废。
 # ★ 全部按**函数体**判(全文件 `contains` 会被别处同名调用喂绿 —— 本仓老毛病)。
 func _check_rejoin_lifecycle(ses: String) -> void:
 	var reset_body := _func_body(ses, "reset")
@@ -262,53 +261,48 @@ func _check_rejoin_lifecycle(ses: String) -> void:
 	_check(reset_body.contains("map_path = \"\""),
 			"PvpSession.reset() 未清 map_path(换局会漏上一局的地图;进页该复位的仍是它)")
 
-	_check(ses.contains("static var mode"),
-			"★ PvpSession 缺 static var mode —— 它是「该不该因模式切换作废凭据」的判别器:"
+	_check(ses.contains("static var room_mode"),
+			"★ PvpSession 缺 static var room_mode —— 它是「该不该因模式切换作废凭据」的判别器:"
 			+ "三张注册表的房号共用同一个 4 位空间,不判模式时 1v1 的凭据会让**同号的 3v3 房**看起来像「我的房」")
-	var em := _func_body(ses, "enter_mode")
-	_check(not em.is_empty(), "★ PvpSession 缺 enter_mode()(主菜单那三个模式按钮的唯一入口)")
-	_check(em.contains("if mode != m:") and em.contains("clear_rejoin()"),
-			"★ enter_mode() 必须**只在换模式时**作废凭据 —— 少了 `if mode != m:` 那一问 = 同模式重进也清,"
-			+ "C1 当场复发(而症状只是「自己那间房是灰的」)")
-	_check(em.contains("reset()"), "★ enter_mode() 未走 reset()(role/spawn/map_path 就没人复位了)")
 
+	# ★ 凭据模型(2026-10-03,大厅合一):模式**记进凭据** —— `note_room(code, mode)` 在
+	#   换了房号**或换了模式**时作废凭据;`can_rejoin_to(code, mode)` 两个都要对上。
+	#   原先那套(主菜单三个按钮走 `enter_mode`)随合一整体删除,别再加回来。
 	var nr := _func_body(ses, "note_room")
-	_check(not nr.is_empty(), "★ PvpSession 缺 note_room()(三页记房号的唯一入口)")
-	_check(nr.contains("clear_rejoin()") and nr.contains("room_code = code"),
-			"★ note_room() 必须「换了房号 ⇒ 清掉上一间的凭据,再把新房号记上」(漏了清 ="
-			+ "上一局的 token 配着这一间的房号,点那一行只会收到一句与眼前这间房无关的拒绝)")
+	_check(not nr.is_empty(), "★ PvpSession 缺 note_room()(记房号 + 记模式的唯一入口)")
+	_check(nr.contains("code != room_code") and nr.contains("mode != room_mode"),
+			"★ note_room() 必须「换了房号**或换了模式** ⇒ 清掉凭据」——漏掉模式那一半 ="
+			+ "同号的另一模式房被当成我的房")
+	_check(nr.contains("room_mode = mode"), "★ note_room() 必须把模式记进 room_mode")
+	var crt := _func_body(ses, "can_rejoin_to")
+	_check(crt.contains("room_code == code") and crt.contains("room_mode == mode"),
+			"★ can_rejoin_to() 必须同时比对房号与模式")
+	_check(not ses.contains("func enter_mode"), "★ enter_mode() 已删除(合一后没有三个菜单按钮了)")
 
 
 # ── §⑤ 三页的接线(回局入口 + I2 的第二个条件)──
 func _check_rejoin_ui_wiring() -> void:
 	var mm := _code(_read(MAIN_MENU))
 	_check(not mm.is_empty(), "读不到 %s" % MAIN_MENU)
-	var buttons := _func_body(mm, "_build_menu_buttons")
-	# 三个按钮**各按各的模式**进页 —— 少一个/写错模式 = 换模式时凭据不清(串模式)
-	for pair in [["PvpSession.MODE_PVP", "res://scenes/matchmaking.tscn"],
-			["PvpSession.MODE_TEAM", "res://scenes/team_lobby.tscn"],
-			["PvpSession.MODE_ROYALE", "res://scenes/royale_lobby.tscn"]]:
-		_check(buttons.contains("PvpSession.enter_mode(%s)" % pair[0])
-				and buttons.contains(pair[1]),
-				"★ 主菜单缺「enter_mode(%s) → %s」那一支(模式判别器就断了)" % [pair[0], pair[1]])
-	_check(not buttons.contains("PvpSession.reset()"),
-			"★★ 主菜单又出现裸的 PvpSession.reset() —— 它就是 C1:进页时不复位凭据,"
-			+ "从对局回主菜单再按同一模式时凭据被抹掉,自己那间房恒为灰")
+	# 主菜单那颗「多 人 模 式」必须走 reset()(每次进页复位 role/spawn/地址),
+	# 而 reset() **不得**碰凭据 —— 那四行 2026-09-22 删掉的纪律原样成立。
+	_check(mm.contains("PvpSession.reset()"), "★ 主菜单联机入口未走 PvpSession.reset()")
+	_check(not mm.contains("PvpSession.enter_mode("), "★ 主菜单仍在调已删除的 enter_mode()")
 
 	var lp := _code(_read(LOBBY_PAGE))
 	var try_body := _func_body(lp, "try_rejoin_row")
 	# ★★ 判据写 `if not in_match`,**不写 `in_match`**:参数名本身就在函数签名行里,而签名行属于
 	#    `_func_body` 的返回 ⇒ 只判名字的话,把整个守卫删掉照样绿(变异实测踩到,本仓
 	#    "守卫的变异让它自己全绿"那一类)。断的必须是**那一问**。
-	_check(try_body.contains("can_rejoin_to(code)") and try_body.contains("if not in_match"),
+	_check(try_body.contains("can_rejoin_to(code, mode)") and try_body.contains("if not in_match"),
 			"★ LobbyPage.try_rejoin_row() 少了 in_match 那一问(I2):自己那间**还没开局**的房会走回局,"
 			+ "而大厅侧没有它的凭据 ⇒ 玩家看到一句与眼前这间房无关的「凭据失效」,普通加入还不发生")
 	for pair in [[PAGE_1V1, "_on_room_list", "1v1"], [PAGE_ROYALE, "_on_royale_rooms", "大乱斗"],
 			[PAGE_TEAM, "_on_team_rooms", "3v3"]]:
 		var body := _func_body(_code(_read(pair[0])), pair[1])
-		_check(body.contains("try_rejoin_row(code, in_match)"),
+		_check(body.contains("try_rejoin_row(code, in_match, MODE)"),
 				"★ %s 的 %s 调 try_rejoin_row 时没把 in_match 传进去(I2)" % [pair[2], pair[1]])
-		_check(body.contains("can_rejoin_to(code)"),
+		_check(body.contains("can_rejoin_to(code, MODE)"),
 				"★ %s 的 %s 不再问「这一行是不是我的房」(回局入口那一半没了)" % [pair[2], pair[1]])
 	# 三页记房号**统一**走 note_room(别再各自写 `PvpSession.room_code = …`)
 	for pair in [[PAGE_1V1, "_on_room_created"], [PAGE_1V1, "_on_room_joined"],

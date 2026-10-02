@@ -55,7 +55,8 @@ const P_C := 103
 #   ★ ⑧ 是**一条聚合**断言(内部三页逐页核对、失败时逐页点名),**不是三条** —— 相⑧要断的是
 #     三页共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
 #   ★ 相⑨(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
-const EXPECTED_CHECKS := 45
+#   ★ 相⑦c(大厅合一 Task 2:凭据自带模式,2026-10-03)加 **2** 条 → **47**。
+const EXPECTED_CHECKS := 47
 
 var _rm: Node = null
 var _checks := 0
@@ -300,23 +301,34 @@ func _phase_rejoin() -> void:
 # ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**自己摆过的值,
 #   否则同一进程里后面的相会读到脏值(本探针是独立进程,但同仓的纪律如此)。
 func _phase_session_flags() -> void:
-	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code]
+	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.room_mode]
 	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9021"
-	_check(PvpSession.can_rejoin_to("9021"), "⑦ 凭据齐 + 房号对上 → 这一行可点(回局)")
-	_check(not PvpSession.can_rejoin_to("9999"),
+	PvpSession.room_mode = PvpSession.MODE_PVP
+	_check(PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP), "⑦ 凭据齐 + 房号对上 → 这一行可点(回局)")
+	_check(not PvpSession.can_rejoin_to("9999", PvpSession.MODE_PVP),
 			"⑦ ★ 房号不符 → 不可点(防的是「别人那间对局中的房」也变可点,点下去只会收到一句无关的拒绝)")
 	PvpSession.token = ""
-	_check(not PvpSession.can_rejoin_to("9021"), "⑦ token 缺 → 不可点")
+	_check(not PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP), "⑦ token 缺 → 不可点")
 	PvpSession.token = "tk"; PvpSession.worker_port = 0
-	_check(not PvpSession.can_rejoin_to("9021"), "⑦ worker_port 缺 → 不可点(连不回那一局)")
+	_check(not PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP), "⑦ worker_port 缺 → 不可点(连不回那一局)")
 	PvpSession.worker_port = 29901; PvpSession.room_code = ""
-	_check(not PvpSession.can_rejoin_to("9021"), "⑦ room_code 缺 → 不可点(回局请求带不上房号)")
-	PvpSession.room_code = "9021"; PvpSession.rejoin = true
+	_check(not PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP), "⑦ room_code 缺 → 不可点(回局请求带不上房号)")
+	PvpSession.room_code = "9021"
+	# ⑦c(本批新增):**模式不同 ⇒ 不可点**。三张注册表的房号空间共用(同号共存是允许的),
+	#   只看房号会让"我在 1v1 攒的凭据"把**同号的 3v3 房**判成"我的房" —— 点下去是回局请求,
+	#   而大厅按凭据里的模式一查就知道不对,玩家收到一句与眼前那间房无关的拒绝。
+	#   ★ 反向对照就在上面两条:**模式相同**时它必须仍然是可点的。
+	_check(not PvpSession.can_rejoin_to("9021", PvpSession.MODE_TEAM),
+			"⑦c 模式不同 ⇒ 不可点(同号房分属两张注册表)")
+	_check(PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP),
+			"⑦c 正向对照:模式相同 ⇒ 仍可点")
+	PvpSession.rejoin = true
 	PvpSession.clear_rejoin()
 	_check(PvpSession.token == "" and PvpSession.worker_port == 0 \
 			and PvpSession.room_code == "" and not PvpSession.rejoin,
 			"⑦ ★ clear_rejoin() 必须把四个字段一起清(漏一个就是「那一行永远可点」)")
 	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]; PvpSession.room_code = keep[2]
+	PvpSession.room_mode = keep[3]
 
 
 # ── ⑨ 私密房:**只对本人**列出(B1 甲案,2026-09-29)──
@@ -400,7 +412,7 @@ func _find_row(arr: Array, code: String) -> Dictionary:
 #   **客户端**那一半(持凭据的本人那一行可点 ⇒ 点它走回局)。两半合起来才是本任务那句
 #   「对局中的房照列:自己的房可点(回局),别人的点不动」。
 # ★★ 它守的是本任务**唯一的硬约束** —— 两个问句的**次序**:
-#     ① 先问 `PvpSession.can_rejoin_to(code)`(这是我的房吗 + 凭据还在吗)→ 可点;
+#     ① 先问 `PvpSession.can_rejoin_to(code, mode)`(这是我的房吗 + 凭据还在吗)→ 可点;
 #     ② 不是我的房,才轮到「`in_match` ⇒ disabled」那一档。
 #   把次序写反(`btn.disabled = in_match` / `if in_match:` 先问对局中)时,自己那间房那一行被
 #   `disabled` + `FOCUS_NONE` 收拾掉 ⇒ 回局这一档**连点都点不到**,而**一行报错都没有**
@@ -414,7 +426,8 @@ func _find_row(arr: Array, code: String) -> Dictionary:
 #   是**没有连任何 handler**(与 `lobby_row_probe` 同款)。
 # ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**(同相⑦)。
 func _phase_own_row_clickable() -> void:
-	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.rejoin]
+	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.rejoin,
+			PvpSession.room_mode]
 	PvpSession.token = "tk"; PvpSession.worker_port = 29901; PvpSession.room_code = "9001"
 	# 三页各喂三行:**9001 = 我的房**(凭据里的房号就是它,载荷仍标 in_match)、
 	# **9002 = 别人的对局中的房**(同样是 in_match,凭据不是它的)、9003 = 普通未满房(正向对照)
@@ -430,14 +443,18 @@ func _phase_own_row_clickable() -> void:
 	]
 	var bad: Array[String] = []
 	var reasons: Array = [
-			_own_row_reason("res://scenes/matchmaking.tscn", "_on_room_list", "1v1", rows_1v1),
-			_own_row_reason("res://scenes/royale_lobby.tscn", "_on_royale_rooms", "大乱斗", rows_n),
-			_own_row_reason("res://scenes/team_lobby.tscn", "_on_team_rooms", "3v3", rows_n)]
+			_own_row_reason("res://scenes/matchmaking.tscn", "_on_room_list", "1v1", rows_1v1,
+					PvpSession.MODE_PVP),
+			_own_row_reason("res://scenes/royale_lobby.tscn", "_on_royale_rooms", "大乱斗", rows_n,
+					PvpSession.MODE_ROYALE),
+			_own_row_reason("res://scenes/team_lobby.tscn", "_on_team_rooms", "3v3", rows_n,
+					PvpSession.MODE_TEAM)]
 	for r: String in reasons:
 		if r != "":
 			bad.append(r)
 	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]
 	PvpSession.room_code = keep[2]; PvpSession.rejoin = keep[3]
+	PvpSession.room_mode = keep[4]
 	# ★ 一条聚合断言(三页逐页核对,失败时逐页点名)—— 条数约定见 EXPECTED_CHECKS 的注释
 	_check(bad.is_empty(),
 			"⑧ ★ 三页:持凭据者自己那间房那一行**可点**(点它走回局)、别人的对局中的房仍点不动 —— 实得:%s"
@@ -445,12 +462,15 @@ func _phase_own_row_clickable() -> void:
 
 
 # 渲染一页的房间列表,只判那一行;返回 "" = 全对,否则返回"页:哪个条件不成立"
-func _own_row_reason(scene_path: String, fn: String, tag: String, rows: Array) -> String:
+# ★ `mode` = 本页所属模式(凭据判据 `can_rejoin_to(code, mode)` 要按页自己的模式过;
+#   三张注册表的房号空间共用,不逐页设模式的话"我的房"在三页里都判不出来)。
+func _own_row_reason(scene_path: String, fn: String, tag: String, rows: Array, mode: String) -> String:
 	var p: Node = (load(scene_path) as PackedScene).instantiate()
 	var box := VBoxContainer.new()
 	var st := Label.new()
 	p.set("_list_box", box)     # 不入树 ⇒ `_ready` 不跑 ⇒ 这两个成员还是 null,得手工摆
 	p.set("_status", st)
+	PvpSession.room_mode = mode
 	p.call(fn, rows)
 	var mine := _row_button(box, "9001")     # 我的房(房号与凭据一致)
 	var other := _row_button(box, "9002")    # 别人的对局中的房(无凭据)
