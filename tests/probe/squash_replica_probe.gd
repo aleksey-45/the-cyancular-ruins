@@ -286,6 +286,13 @@ func _snapshot_dict(vel: Vector2, pose: int, downed: bool, pos: Vector2) -> Dict
 		"downed": downed,
 		"aim": Vector2(1.0, 0.0),
 		"previewing": false,
+		# ★ 2026-10-02 合并补充:KH 的时间玩法往每玩家载荷里加了这三个(B22/B23 的加速与回溯视效)。
+		#   相⓪ 立刻把这段漂移**点名**了出来("夹具漏喂 [haste, rewind, trail]")—— 正如本文件
+		#   注释所说:往快照里加字段会让本探针变红,那是**已知的维护动作**,不是误报。
+		#   本探针四相只看位置/速度/姿态 ⇒ 这三个给中性值即可(不影响任何一条断言)。
+		"haste": false,
+		"rewind": false,
+		"trail": [],
 	}
 
 

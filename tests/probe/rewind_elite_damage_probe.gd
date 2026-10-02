@@ -5,6 +5,22 @@ extends Node
 #   回溯:子弹倒飞 → 再次穿过精英 → 应再吃一次伤害(策划案「回退造成二次伤害」)。
 #   断言:回溯前精英 HP 不掉;回溯中/后 HP 下降;普通怪不受此判定(它们被冻结回放)。
 # 用法:godot --headless --path . res://tests/probe/rewind_elite_damage_probe.tscn
+#
+# ★★ 已知抖动(2026-10-02 实测登记,未修):约 1/3 的跑次会红
+#   `回溯期未发生二次伤害(HP 30→30)`,而**同一次运行的诊断行**给出的是
+#   `[诊断] 回放弹峰值=0 最近距离=99999.0` —— 即**回溯缓冲里一颗子弹都没有**
+#   (`WorldRewind.replay_bullets()` 全程为空),不是"判定没生效"。
+#   已排除的因素:①不是取图问题 —— 已按本仓惯例钉图(`MAP`,见下),抖动照旧;
+#   ②不是等得不够 —— 子弹创建后已录 1200ms(20Hz ⇒ 24 帧)。
+#   ⇒ 成因在"录制→回溯"这条链上(候选:某次 `record()` 没把子弹收进快照 / 回溯起点落在
+#     没有子弹的那一帧),**待查**。红时请先读 `[诊断]` 那一行再判 —— 峰值=0 是"没录到",
+#     峰值>0 而最近距离大才是"判定/几何"问题。
+
+# ★★ 2026-10-02:**钉图**。本探针原先不钉图 ⇒ 每进程随机选一份 `.cyrm`,而它的几何
+#   (玩家出生点、前方 300px 有没有墙、环面尺寸)与地形强耦合 ⇒ **实测 3 次里 2 次红**
+#   `回溯期未发生二次伤害(HP 30→30)` —— 红的是"这一局地形恰好不合适",不是功能坏了。
+#   本仓对"取图类探针"的既有纪律就是钉图以求跨进程可复现(见 CLAUDE.md「探针取图类脚本」)。
+const MAP := "res://maps/newfactory.cyrm"
 
 var _fails: Array[String] = []
 
@@ -22,6 +38,7 @@ func _wait_ms(ms: int) -> void:
 func _run() -> void:
 	var tree := get_tree()
 	await tree.process_frame
+	MazeGenerator.set_map_file(MAP)   # ★ 必须在实例化 level_0 之前钉图(见文件头)
 	var lvl: Node = load("res://scenes/level_0.tscn").instantiate()
 	tree.root.add_child(lvl)
 	await _wait_ms(400)
