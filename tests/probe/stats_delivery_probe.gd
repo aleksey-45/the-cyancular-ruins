@@ -40,7 +40,7 @@ extends Node
 # ★ 段数对账(本仓"假绿"纪律:`ALL-OK` 只证明"没有断言失败",不证明"该跑的断言都跑过")
 #   —— 末尾拿 `_done` 与 `CHECK_NAMES` 对账,名单不全即红。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 # 载荷七个字段的**逐码点升序**(`_keys_of` 走 `Array.sort()`)。
 # ★★ `dealt` 排在 `deaths` **之前**,别"顺手纠正"成字母表顺序:Godot 的 `Array.sort()` 对 String
 #   走**逐码点**比较(`Variant::operator<` → `String::operator<` → `str_compare`),不是按
@@ -249,7 +249,7 @@ func _check_duel_phase() -> void:
 	host.name = "StatsDuelHost"
 	add_child(host)
 	# ★ 合成/真图都行:本段只用「归因 + take_hit + 倒地边沿 + 逐人表」,不碰几何。
-	#   真图 `factory1v1.cyrm` 有 `# player`/`# player2` 出生点,`_respawn_player` 才可用。
+	#   真图 `newfactory.cyrm` 有 `# player`/`# player2` 出生点,`_respawn_player` 才可用。
 	GameParameters.refresh_map_size()
 	_place(host, 1, Vector2i(17, 65))
 	_place(host, 2, Vector2i(133, 64))

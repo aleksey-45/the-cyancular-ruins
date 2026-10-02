@@ -17,7 +17,7 @@ extends Node
 var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
 
 # sp 模式用:选图控件里点的是哪张图(进关后要断言"真的建了这张图")
-const PICK_MAP := "res://maps/factory1v1.cyrm"
+const PICK_MAP := "res://maps/newfactory.cyrm"
 var _picked_map_expected := ""
 
 func _ready() -> void:

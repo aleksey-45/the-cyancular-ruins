@@ -17,7 +17,7 @@ extends Node
 #
 # ⚠ 判据 grep 文本 "MATCH SYNC PROBE: ALL-OK"。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 
 # 大乱斗侧故意用一组不像平面地板格的值:若被重算(plan_spawns 洗牌取地板格)必然不同
 const ROYALE_GIVEN := {1: Vector2i(7, 8), 2: Vector2i(60, 70)}

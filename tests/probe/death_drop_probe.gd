@@ -22,27 +22,32 @@ extends Node
 # 玩家由本探针自己摆进 `host.players`,宿主自己的物理帧关掉(只手动推一帧状态机)。
 # ★ 三个模式各走一遍:三处倒地边沿是**同一个契约的三份落地**(基类 `_respawn_player`
 #   那一支已删),少写一处就静默退化成「该模式死亡不掉武器」。
-# ★ 地图钉死 `factory1v1.cyrm`(不钉图的探针每进程随机选一份,跨进程输出不可比);
+# ★ 地图钉死 `newfactory.cyrm`(不钉图的探针每进程随机选一份,跨进程输出不可比);
 #   出生点也**显式传**(大乱斗 / 3v3 的 spawns 参数),不依赖任何 shuffle。
 #
 # ⚠ 判据 grep 文本 "DEATH DROP PROBE: ALL-OK"(不只看退出码:场景探针在脚本报错时
 #   仍然会 --quit-after 到点 exit 0,只看退出码会把「根本没跑完」读成「通过」)。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 
-# 死亡点与出生点。地图标定的 `# player 17 65` / `# player2 133 64`:环面距离 34 格(2176px),
-# 远大于下面用的判定半径(2 格 = 128px)⇒「掉在 D」与「掉在出生点」**必然可区分**。
-const DEATH_CELL := Vector2i(133, 64)
-const HOME_CELL := Vector2i(17, 65)
-
+# ★★ 死亡点与出生点**从地图自己的 spawn 元数据推导**,不写死坐标(2026-10-02 改)。
+#   原先写死的是旧 PvP 图的 `(17,65)` / `(133,64)` —— 但 1v1 那一路
+#   (`MatchHost.new(MAP, {})`)的 role 1 家 = **地图的** `# player`,不是这个常量。
+#   旧图上两者恰好相等,换一张图就分家 ⇒ ③「复活后站到本局出生点」**假红**(实测差 1459px)。
+#   推导之后本探针与"用的是哪张图"解耦:`_death` 只需离 `_home` 足够远,
+#   而下面那条[仪器]断言会**真的量**这个距离 —— 不够远它自己会红,不用靠人记得。
 const NEAR_CELLS := 2.0        # 「就在旁边」的判定半径(格);掉落物生成在 D + (0,-12)px
 const KEEP_ONE := 3            # 倒地前塞进背包的枪数 → 应掉 KEEP_ONE - 1 把
 
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
-# 3v3 出生点:显式给死(不走 `plan_team_spawns`,那里面有 shuffle)。role 1 的家 = HOME_CELL。
-const TEAM_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23, 65),
-		4: Vector2i(133, 64), 5: Vector2i(136, 64), 6: Vector2i(139, 64)}
-const ROYALE_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65)}
+
+var _home := Vector2i(-1, -1)      # role 1 的家(1v1 来自地图;另两个模式走显式 spawns)
+var _death := Vector2i(-1, -1)     # 本探针把玩家瞬移到那里去死
+# 3v3 / 大乱斗出生点:显式给死(不走 `plan_team_spawns`,那里面有 shuffle)。
+# ★ role ≥ 2 在本探针里**没有玩家节点**(只 `players[1] = p`)⇒ 它们的格**是惰性的**,
+#   本探针只用 role 1 那一格;给相对偏移只是为了读起来像个真实布局。
+var _team_spawns := {}
+var _royale_spawns := {}
 
 var _failures: Array[String] = []
 
@@ -56,13 +61,26 @@ func _check(ok: bool, msg: String) -> void:
 
 
 func _ready() -> void:
+	# ★ 先推导出生点/死亡点(见文件头注释)。缺 `# player2` 就**直接失败、不兜底** ——
+	#   "没有第二个远隔的出生点"会让 ② 的两条断言失去区分度,那种情况下全绿毫无意义。
+	var sp := MapFormat.load_spawns(MAP)
+	_home = sp.get("player", Vector2i(-1, -1))
+	_death = sp.get("player2", Vector2i(-1, -1))
+	if _home.x < 0 or _death.x < 0:
+		print("DEATH DROP PROBE: FAIL(地图 %s 需同时有 `# player` 与 `# player2`)" % MAP)
+		get_tree().quit(1)
+		return
+	_royale_spawns = {1: _home, 2: _home + Vector2i(3, 0)}
+	_team_spawns = {1: _home, 2: _home + Vector2i(3, 0), 3: _home + Vector2i(6, 0),
+			4: _death, 5: _death + Vector2i(3, 0), 6: _death + Vector2i(6, 0)}
+
 	# 三个模式各一具宿主。构建方式照各自既有的探针:
 	#   · 1v1    = MatchHost(map, {})                       —— grenade_player_hit_probe
 	#   · 大乱斗 = RoyaleHost(map, {}, {}, [], spawns)      —— royale_disconnect_count_probe
 	#   · 3v3    = TeamHost(map, {}, {}, [], spawns, teams) —— team_host_probe
-	_run_phase("1v1", MatchHost.new(MAP, {}), HOME_CELL)
-	_run_phase("大乱斗", RoyaleHost.new(MAP, {}, {}, [], ROYALE_SPAWNS), HOME_CELL)
-	_run_phase("3v3", TeamHost.new(MAP, {}, {}, [], TEAM_SPAWNS, TEAMS), HOME_CELL)
+	_run_phase("1v1", MatchHost.new(MAP, {}), _home)
+	_run_phase("大乱斗", RoyaleHost.new(MAP, {}, {}, [], _royale_spawns), _home)
+	_run_phase("3v3", TeamHost.new(MAP, {}, {}, [], _team_spawns, TEAMS), _home)
 
 	if _failures.is_empty():
 		print("DEATH DROP PROBE: ALL-OK")
@@ -83,11 +101,11 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 	host.set_physics_process(false)
 
 	var ts: int = GameParameters.TILE_SIZE
-	var d_pos := Vector2(float(DEATH_CELL.x) * ts + ts * 0.5, float(DEATH_CELL.y) * ts + ts * 0.5)
+	var d_pos := Vector2(float(_death.x) * ts + ts * 0.5, float(_death.y) * ts + ts * 0.5)
 	var home_pos := Vector2(float(home_cell.x) * ts + ts * 0.5, float(home_cell.y) * ts + ts * 0.5)
 	var near := float(ts) * NEAR_CELLS
 	var span := Vector2i(int(GameParameters.MAP_WIDTH / ts), int(GameParameters.MAP_HEIGHT / ts))
-	var gap := GridPathfinder.toroidal_dist(DEATH_CELL, home_cell, span.x, span.y)
+	var gap := GridPathfinder.toroidal_dist(_death, home_cell, span.x, span.y)
 	_check(float(gap) * float(ts) > near * 4.0,
 			"[%s][仪器] 死亡点与出生点相距 %d 格(必须远大于判定半径 %.0fpx,否则下面两条恒真)"
 			% [tag, gap, near])

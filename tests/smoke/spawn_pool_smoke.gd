@@ -7,15 +7,20 @@ extends SceneTree
 # ═══ 为什么需要它 ═══
 # `spawn_candidates()` 的判据分三档:①三宽 + 大连通区 ②大连通区 ③**任意地板格**。
 # 而 ② 的"大"是**绝对**阈值 `OPEN_AREA_MIN = 20` —— 小图上它可以**无人达到**:
-# PvP 固定图 `factory1v1`(150×100)按 4 邻接算的**最大**地板连通区只有 13 格、而且
-# **843 个地板格里没一个**达到 20 ⇒ ①② 恒空,池子**静默退化**成全部地板格,里面有
-# **155 个孤立单格区**(走不出去)。后果:6 人 3v3 / 8 人大乱斗开局有人被关在小间里,
+# 旧 PvP 固定图 `factory1v1`(150×100,2026-10-02 已退役删除)按 4 邻接算的**最大**地板连通区
+# 只有 13 格、**843 个地板格里没一个**达到 20 ⇒ ①② 恒空,池子**静默退化**成全部地板格,
+# 里面有 **155 个孤立单格区**(走不出去)。后果:6 人 3v3 / 8 人大乱斗开局有人被关在小间里,
 # **不报错、不留日志**;而 `SpawnPicker` 是大乱斗与 3v3 **共用**的,两条线一起中招。
 # 修法 = 小图自适应门槛(`SpawnPicker.area_threshold()` —— 最大连通区 < OPEN_AREA_MIN 时
 # 按 `ADAPTIVE_RATIO` 缩放到本图比例),见该文件 ADAPTIVE_RATIO 上方那一段。
 #
+# ★★ **覆盖现状(2026-10-02 登记)**:驱动"自适应那一支"的那张缺陷图随 `factory1v1` 一起退役,
+#   而现存的图都走不到那一支(newfactory 最大连通区 48、demo 35,均 ≥ 20)⇒ 本探针**不再覆盖
+#   自适应分支**,只覆盖正常图那一支。这是**有意的收窄**,不是漏掉 —— 详见下方 MAP_NORMAL
+#   上方的登记。真要为它补覆盖,照法是加一张**合成网格**夹具(直接赋 `MazeGenerator.current_grid`)。
+#
 # ═══ 本探针钉什么 ═══
-# ① **核心不变式**(对两张图):池子里**每一个**格的连通区规模都 ≥ `area_threshold()`;
+# ① **核心不变式**:池子里**每一个**格的连通区规模都 ≥ `area_threshold()`;
 #    再用独立写的 BFS 复算一遍连通区、按同一门槛算出期望集合,断言 **pool ⊆ 期望**
 #    —— 判据不来自被测实现自己(`region_sizes()` 只用来**交叉核对**,[仪器] B)。
 # ② **反向/变异**:断言池子是全部地板格的**真子集**(排除数 > 0)。把自适应那档改回
@@ -44,7 +49,14 @@ extends SceneTree
 #   否则第二张图读到第一张图的地板格池子(静默)。[仪器] C 钉住它真的换过来了。
 # ★ 空载守卫:`load()` 失败/地图读不到就 `quit(1)` —— `-s` 里抛错走不到 `quit()` 会**永久挂起**。
 
-const MAP_BUGGY := "res://maps/factory1v1.cyrm"    # 缺陷图:最大连通区 13 < OPEN_AREA_MIN
+# ★★ 2026-10-02:原先还有一张 `MAP_BUGGY`(= 旧 PvP 定图 `factory1v1.cyrm`,最大连通区 13)
+#   专门用来驱动**自适应门槛**那一支。该图已按用户裁定退役删除,而现存的图**都走不到**那一支
+#   (实测 newfactory 最大连通区 48、demo 35,均 ≥ `OPEN_AREA_MIN` = 20)⇒ 拿一张真实地图去
+#   照它已经没有对象。
+#   ⇒ **登记为休眠覆盖**:`SpawnPicker.area_threshold()` 的自适应分支今天**没有任何生产地图
+#     能驱动**,本探针也不再覆盖它。它仍在代码里(阈值是"任何图都可能需要"的保险),
+#     真要用到它时,照法在下面补一张**合成网格**夹具即可(直接赋 `MazeGenerator.current_grid`,
+#     不必落盘成 .cyrm)。
 const MAP_NORMAL := "res://maps/demo.cyrm"         # 正常图:最大连通区 35 ≥ OPEN_AREA_MIN
 
 # 调用方那段"离敌人够远"筛选的清空距离(格)。= 两个宿主的 `RESPAWN_CLEARANCE`
@@ -75,7 +87,7 @@ func _check(ok: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	# ── 空载守卫 ──
-	for path in [MAP_BUGGY, MAP_NORMAL]:
+	for path in [MAP_NORMAL]:
 		if not FileAccess.file_exists(path):
 			print("SPAWN POOL SMOKE: FAIL(找不到地图 %s)" % path)
 			quit(1)
@@ -90,8 +102,7 @@ func _initialize() -> void:
 		quit(1)
 		return
 
-	_run_map(MAP_BUGGY, true)
-	_run_map(MAP_NORMAL, false)
+	_run_map(MAP_NORMAL)
 	_check_wiring()
 
 	if _fail == 0:
@@ -103,10 +114,10 @@ func _initialize() -> void:
 
 
 # 载图 → 复算连通区 → 与 `spawn_candidates()` 对账。
-# want_adaptive = 本图是否**应当**走自适应分支(小图 true / 正常图 false)。
-func _run_map(path: String, want_adaptive: bool) -> void:
+# ★ 只跑"正常图"这一支了(自适应的那一支已随旧 PvP 图一起休眠,见文件头 MAP_NORMAL 上方)。
+func _run_map(path: String) -> void:
 	print("")
-	print("═══ %s(期望走%s分支)═══" % [path, "自适应" if want_adaptive else "绝对阈值"])
+	print("═══ %s(期望走绝对阈值分支)═══" % path)
 	MazeGenerator.set_map_file(path)
 	var grid: Array = MazeGenerator.load_map_file()
 	if grid.is_empty():
@@ -158,27 +169,13 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 			"[仪器] reset_cache() 后池子的地板格是本图的(%d)" % floor.size())
 
 	# ── [仪器] D 本图确实落在期望的那一支 ──
-	# 这是**区分度**的前提:`want_adaptive` 为真时,旧判据(绝对阈值)下前两档必须恒空 ——
-	# 否则本图照不到这次修的东西(断言会变成恒真的摆设)。
+	# 这是**区分度**的前提:图必须真的 ≥ OPEN_AREA_MIN,否则下面"门槛恰好是 OPEN_AREA_MIN"
+	# 这条就变成恒真的摆设(而那正是自适应分支会接管的情形)。
 	var thr := SpawnPicker.area_threshold()
-	var old_big := 0
-	for c in floor:
-		if int(own[c]) >= SpawnPicker.OPEN_AREA_MIN:
-			old_big += 1
-	if want_adaptive:
-		_check(mx < SpawnPicker.OPEN_AREA_MIN,
-				"[仪器] 本图最大连通区 %d < OPEN_AREA_MIN %d(缺了这个前提,下面全是空断言)"
-				% [mx, SpawnPicker.OPEN_AREA_MIN])
-		_check(old_big < SpawnPicker.PREFER_MIN,
-				"[仪器] 旧判据下第 ② 档只有 %d 格(< PREFER_MIN %d)⇒ 池子**必然**退化成全部地板格"
-				% [old_big, SpawnPicker.PREFER_MIN])
-		_check(thr == maxi(ceili(float(mx) * SpawnPicker.ADAPTIVE_RATIO), 1),
-				"自适应门槛 = ceil(最大连通区 %d × %.2f) = %d" % [mx, SpawnPicker.ADAPTIVE_RATIO, thr])
-	else:
-		_check(mx >= SpawnPicker.OPEN_AREA_MIN,
-				"[仪器] 本图最大连通区 %d ≥ OPEN_AREA_MIN %d" % [mx, SpawnPicker.OPEN_AREA_MIN])
-		_check(thr == SpawnPicker.OPEN_AREA_MIN,
-				"★ 正常图门槛**恰好**是 OPEN_AREA_MIN(自适应一行不生效;实际 %d)" % thr)
+	_check(mx >= SpawnPicker.OPEN_AREA_MIN,
+			"[仪器] 本图最大连通区 %d ≥ OPEN_AREA_MIN %d" % [mx, SpawnPicker.OPEN_AREA_MIN])
+	_check(thr == SpawnPicker.OPEN_AREA_MIN,
+			"★ 正常图门槛**恰好**是 OPEN_AREA_MIN(自适应一行不生效;实际 %d)" % thr)
 
 	# ── 期望集合(判据来自独立 BFS + `area_threshold()` 的**契约**)──
 	var expected := {}
@@ -339,14 +336,13 @@ func _run_map(path: String, want_adaptive: bool) -> void:
 					"[读数·构造保证] 负例落点 %s(连通区 %d)—— 不含孤立单格由 ④ 已保证,这条只作读数"
 					% [str(wc), int(own.get(wc, 0))])
 
-	if not want_adaptive:
-		# ── ③ 正常图逐格锁行为:池子 == 「三宽 ∩ 连通区 ≥ OPEN_AREA_MIN」──
-		var want: Array = []
-		for c in floor:
-			if int(own[c]) >= SpawnPicker.OPEN_AREA_MIN and SpawnPicker.roomy_floor(c):
-				want.append(c)
-		_check(_same_set(pool, want),
-				"★ 正常图的池子逐格不变(期望 %d 格 / 实际 %d)" % [want.size(), pool.size()])
+	# ── ③ 正常图逐格锁行为:池子 == 「三宽 ∩ 连通区 ≥ OPEN_AREA_MIN」──
+	var want: Array = []
+	for c in floor:
+		if int(own[c]) >= SpawnPicker.OPEN_AREA_MIN and SpawnPicker.roomy_floor(c):
+			want.append(c)
+	_check(_same_set(pool, want),
+			"★ 正常图的池子逐格不变(期望 %d 格 / 实际 %d)" % [want.size(), pool.size()])
 
 	print("  [info] 地板 %d 格 / 连通区最广 %d 格 / 门槛 %d / 池子 %d 格(排除 %d)"
 			% [floor.size(), mx, thr, pool.size(), excluded])

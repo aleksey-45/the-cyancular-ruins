@@ -15,7 +15,7 @@ extends Node
 #
 # ⚠ 判据 grep 文本 "MATCH_HOST HYGIENE PROBE: ALL-OK"(不只看退出码)。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 const BASE_BULLETS := 3
 const CHURN := 60        # 反复生成/销毁的轮数:旧实现会把条目数累积到 BASE + CHURN
 

@@ -45,9 +45,9 @@ extends Node
 #
 # 手法照 `tests/probe/death_drop_probe.gd`:真建宿主、**role_peers 传空**(不建玩家、不排 peer、
 # 广播静默早退),玩家由本探针自己摆进 `host.players`,宿主自己的物理帧关掉(只手动推状态机)。
-# 地图钉死 `factory1v1.cyrm`;出生点显式传(不走任何 shuffle ⇒ 跨进程可复现)。
+# 地图钉死 `newfactory.cyrm`;出生点显式传(不走任何 shuffle ⇒ 跨进程可复现)。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 const TEAM_SPAWNS := {1: Vector2i(17, 65), 2: Vector2i(20, 65), 3: Vector2i(23, 65),
 		4: Vector2i(133, 64), 5: Vector2i(136, 64), 6: Vector2i(139, 64)}

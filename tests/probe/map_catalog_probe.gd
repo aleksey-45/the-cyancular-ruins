@@ -8,7 +8,7 @@ extends SceneTree
 #   与"点了真的进对图"由场景级 `tests/menu_autotest.gd` 的 sp 分支负责(它点真按钮)。
 
 const DEMO := "res://maps/demo.cyrm"          # 单人图:只有 # player
-const PVP := "res://maps/factory1v1.cyrm"     # 双出生点图:多一句 # player2
+const PVP := "res://maps/newfactory.cyrm"     # 双出生点图:多一句 # player2
 
 var _fails: Array[String] = []
 
@@ -48,14 +48,14 @@ func _test_list() -> void:
 	var demo := _entry(maps, DEMO)
 	var pvp := _entry(maps, PVP)
 	_chk(not demo.is_empty(), "目录缺 demo.cyrm")
-	_chk(not pvp.is_empty(), "目录缺 factory1v1.cyrm")
+	_chk(not pvp.is_empty(), "目录缺 newfactory.cyrm")
 	if demo.is_empty() or pvp.is_empty():
 		return
 	# 单人图(无 player2)不能当联机图:resolve_pvp_map 会拒,列表也要标出来
 	_chk(demo["pvp"] == false, "demo.cyrm 不该被判为双出生点图")
-	_chk(pvp["pvp"] == true, "factory1v1.cyrm 应判为双出生点图")
+	_chk(pvp["pvp"] == true, "newfactory.cyrm 应判为双出生点图")
 	_chk(demo["size"] == Vector2i(125, 75), "demo 尺寸应 125×75(实为 %s)" % str(demo["size"]))
-	_chk(pvp["size"] == Vector2i(150, 100), "factory1v1 尺寸应 150×100(实为 %s)" % str(pvp["size"]))
+	_chk(pvp["size"] == Vector2i(150, 100), "newfactory 尺寸应 150×100(实为 %s)" % str(pvp["size"]))
 	_chk(demo["external"] == false, "仓内地图 external 应为 false")
 	_chk(not (DEMO in MapCatalog._scan("res://ui")), "扫描器不该把非地图目录当地图目录")
 
@@ -65,7 +65,7 @@ func _test_names() -> void:
 	var d := MapCatalog.display_name(DEMO)
 	_chk(d != "" and d != "demo", "demo 的显示名应取注释行(实为「%s」)" % d)
 	var p := MapCatalog.display_name(PVP)
-	_chk(p != "" and p != "factory1v1", "factory1v1 的显示名应取注释行(实为「%s」)" % p)
+	_chk(p != "" and p != "newfactory", "newfactory 的显示名应取注释行(实为「%s」)" % p)
 	print("MAP CATALOG: 显示名 demo=「%s」factory=「%s」" % [d, p])
 
 
@@ -90,7 +90,7 @@ func _test_images() -> void:
 	_chk(not _has_pixel(img, MapCatalog.SPAWN_P2), "demo 不该有 P2 出生点色块")
 	var pvp := MapCatalog.build_image(PVP)
 	_chk(_has_pixel(pvp, MapCatalog.SPAWN_P1) and _has_pixel(pvp, MapCatalog.SPAWN_P2),
-			"factory1v1 应同时画出 P1/P2 出生点色块")
+			"newfactory 应同时画出 P1/P2 出生点色块")
 	_chk(is_same(MapCatalog.build_image(DEMO), img), "同一张图重复取应命中缓存(同一 Image 实例)")
 	_chk(MapCatalog.CELL_PX == 2, "每格像素数变了(UI 版式按它算,改了要同步改标注)")
 
@@ -100,8 +100,8 @@ func _test_resolve() -> void:
 	_chk(MapCatalog.resolve_pvp_map(PVP) == PVP, "合规联机图应被接受")
 	_chk(MapCatalog.resolve_pvp_map(DEMO) == "", "缺 player2 的图应被拒(联机出生点会叠一起)")
 	_chk(MapCatalog.resolve_pvp_map("") == "", "空路径应被拒")
-	_chk(MapCatalog.resolve_pvp_map("res://maps/../maps/factory1v1.cyrm") == "", "含 .. 的路径应被拒")
-	_chk(MapCatalog.resolve_pvp_map("res://maps/factory1v1.txt") == "", "非 .cyrm 后缀应被拒")
+	_chk(MapCatalog.resolve_pvp_map("res://maps/../maps/newfactory.cyrm") == "", "含 .. 的路径应被拒")
+	_chk(MapCatalog.resolve_pvp_map("res://maps/newfactory.txt") == "", "非 .cyrm 后缀应被拒")
 	_chk(MapCatalog.resolve_pvp_map("res://project.godot") == "", "maps 目录外的文件应被拒")
 	_chk(MapCatalog.resolve_pvp_map("res://maps/nope.cyrm") == "", "不存在的图应被拒")
 	_chk(MapCatalog.resolve_pvp_map("C:/tmp/custom.cyrm") == "", "exe 旁的开发者地图不该用于联机(别的机器没有)")

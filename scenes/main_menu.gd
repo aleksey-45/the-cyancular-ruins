@@ -78,7 +78,7 @@ func _enter_level0() -> void:
 	# —— 它是静态的,活过场景切换;文件被删/改名时回落随机,不让玩家卡在旧路径上。
 	MazeGenerator.set_map_file(Settings.sp_map_path if MapCatalog.is_valid_map(Settings.sp_map_path) else "")
 	# ★ 必须跟着重算世界尺寸:启动时算的是"当时随机挑的图"(如 demo 125×75 → 8000 宽),
-	#   选了别的图(如 factory1v1 150×100 → 9600 宽)不重算的话环面回绕/最短路径按错边界。
+	#   选了别的图(如 newfactory 150×100 → 9600 宽)不重算的话环面回绕/最短路径按错边界。
 	GameParameters.refresh_map_size()
 	Level0.pvp_mode = false            # 复位 PvP 标志,避免上次 PvP 残留
 	CombatComponent.pvp_arena = false  # 回单机恢复命中无敌帧

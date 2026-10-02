@@ -20,7 +20,7 @@ extends Node
 #   "$GODOT" --headless --path . res://tests/probe/royale_disconnect_count_probe.tscn
 # 通过 = `ROYALE DISCONNECT COUNT: ALL-OK` 退出 0。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 
 var _host: RoyaleHost = null
 var _fails: Array[String] = []

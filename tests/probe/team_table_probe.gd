@@ -12,7 +12,7 @@ extends Node
 # 做法同 match_host_hygiene_probe:真建宿主,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包;
 # 玩家由探针自己按 `MatchHost._init` 的建法手工摆进 `players`。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 
 var _fails: Array[String] = []

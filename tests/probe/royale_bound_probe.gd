@@ -104,7 +104,7 @@ func _payload_step(delta: float) -> void:
 	#   ⚠ 覆盖边界(照实登记):这一条只验「新场景能把收到的 match_sync 应答应用上」;
 	#     **请求那一半**(客户端确实发得出去、服务器确实应答)由 `royale_probe` 的真大厅+真 worker
 	#     全链路覆盖 —— 那条**没有**轻量化,别把本变体当成它的替代。
-	_lobby.call("_on_match_start", 1, Vector2i(70, 66), "res://maps/factory1v1.cyrm")
+	_lobby.call("_on_match_start", 1, Vector2i(70, 66), "res://maps/newfactory.cyrm")
 	# ★ 应答不在这里发:本节点**就是 current scene**,换场会把它 free 掉,协程随之而死(实测踩过:
 	#   应答一条都没发出去)。改由 watcher 发 —— 它挂在 root 上,换场带不走它(那正是它存在的理由)。
 

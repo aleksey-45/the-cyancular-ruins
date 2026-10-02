@@ -11,7 +11,7 @@ extends Node
 #   载荷无法逐字比对(联机侧要能复现)。
 # 做法同 match_host_hygiene_probe:真建 MatchHost,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 
 var _fails: Array[String] = []
 var _host = null
@@ -51,7 +51,7 @@ func _run() -> void:
 	# ── ② 拆 3 格 → 恰好 3 个,且**顺序确定**(按 y 升序、同 y 按 x 升序)──
 	# 故意逆序拆,看返回是否仍按序。
 	# ★ 三格必须**保证**在基线里是实心,否则"把空气改成空气"= 零差异,这条断言恒红
-	#   (实测:factory1v1 的 100×150 网格顶部几行是空气,原样写这三格就是 0 个差异)。
+	#   (实测:newfactory 的 100×150 网格顶部几行是空气,原样写这三格就是 0 个差异)。
 	#   故先在本探针里把基线那三格钉成实心 —— 场景不依赖具体地图内容。
 	#   挑 (7,5)/(1,5) 同行(验"同 y 按 x 升序")+ (3,2) 另一行(验"按 y 升序")。
 	for c in [Vector2i(7, 5), Vector2i(3, 2), Vector2i(1, 5)]:

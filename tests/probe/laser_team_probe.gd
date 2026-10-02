@@ -19,7 +19,7 @@ extends Node
 # ★ 与 `tests/probe/team_host_probe.gd` 同款手法:真建 `TeamHost`(`role_peers` 传空)+ 手工摆位,
 #   走的是**生产代码路径**(`_damage_path_targets` 是本特性的被改函数)。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 const COLS := 60
 const ROWS := 12
@@ -106,7 +106,7 @@ func _run() -> void:
 	# ★ 合成平地**瓦片网格**:探针要的是"一条无遮挡的水平光束",不是关卡几何。
 	#   ⚠ **只有瓦片网格(`MazeGenerator.current_grid`)是合成的**,别把这条读成"整个世界都是
 	#   合成的" —— 下面这三件事仍然来自真图:
-	#     ① 碰撞世界由 `TeamHost.new` 里的 `WorldBuilder.build_sim` 按 **factory1v1** 建出来,
+	#     ① 碰撞世界由 `TeamHost.new` 里的 `WorldBuilder.build_sim` 按 **newfactory** 建出来,
 	#        玩家脚下踩的是真图的碰撞体(所以后面那几帧里人会沉降 / 被顶出地板);
 	#     ② `MAP_WIDTH/HEIGHT` 仍是 **9600×6400**(`refresh_map_size()` 读的是**地图文件**、
 	#        不读网格;环面锚定按 9600 宽算,对本探针 x≈350~930 的点结果不变);

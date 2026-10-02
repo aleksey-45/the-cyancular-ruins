@@ -19,7 +19,7 @@ extends Node
 # ⚠ 判据 grep 文本 "GROUND ACTION PROBE: ALL-OK"(不只看退出码;场景探针在脚本报错时
 #   仍然 --quit-after 到点 exit 0,只看退出码会把"根本没跑完"读成"通过")。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 const SETTLE_FRAMES := 150     # 等开局那批落体停稳(拾取判定读的是落点)
 const MAX_WAIT := 30           # 等一个包被消费的帧数上限(超了就是服务器没在跑)
 

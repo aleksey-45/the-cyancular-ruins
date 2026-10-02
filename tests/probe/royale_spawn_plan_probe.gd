@@ -17,7 +17,7 @@ extends Node
 #
 # ⚠ 判据 grep 文本 "ROYALE SPAWN PLAN PROBE: ALL-OK"。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 
 # 故意用一组不像地板格的值(且两两分布离奇):重算就必然不同
 const GIVEN := {1: Vector2i(3, 4), 2: Vector2i(50, 60)}

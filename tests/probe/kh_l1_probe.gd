@@ -77,7 +77,7 @@ func _ready() -> void:
 	# 5) pvp_session 的 reset 清得掉(2026-09-14:原断言的两个字段 royale/disabled_weapons
 	#    已作为"只写不读"删除;改钉仍在的 map_path/spawn —— 换局时它们必须回到初值,
 	#    否则上一局的地图/出生点会漏进下一局)
-	PvpSession.map_path = "res://maps/factory1v1.cyrm"
+	PvpSession.map_path = "res://maps/newfactory.cyrm"
 	PvpSession.spawn = Vector2i(9, 9)
 	PvpSession.reset()
 	_check(PvpSession.map_path == "", "PvpSession.reset() 未清 map_path(换局会漏上一局的地图)")

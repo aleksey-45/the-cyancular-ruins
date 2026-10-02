@@ -16,7 +16,7 @@ extends Node
 #
 # ⚠ 判据 grep 文本 "GRENADE PLAYER HIT PROBE: ALL-OK"(不只看退出码)。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 
 var _failures: Array[String] = []
 var _host: Node = null

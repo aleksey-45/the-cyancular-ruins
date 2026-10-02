@@ -16,7 +16,7 @@ extends Node
 #   `mark_disconnected` 同一个 role 会被 `_left` 档掉(第二次是 no-op)—— 共用会让后一相
 #   变成前一相的复读、再也无法独立变红(Task 11 评审发现的空转断言)。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 
 var _fails: Array[String] = []

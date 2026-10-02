@@ -575,7 +575,7 @@ func _check_round_full_heal() -> void:
 
 # 起一局 MatchHost,打残双方,让倒计时走到 0 再断。返回 {ok, detail}
 func _run_heal_case(enabled: bool) -> Dictionary:
-	var host = MatchHost.new("res://maps/factory1v1.cyrm", {1: 1, 2: 2},
+	var host = MatchHost.new("res://maps/newfactory.cyrm", {1: 1, 2: 2},
 			{"round_full_heal": enabled})
 	host.name = "L5HealHost" + ("On" if enabled else "Off")
 	add_child(host)

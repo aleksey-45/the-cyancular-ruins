@@ -41,7 +41,7 @@ extends Node
 # 掉线终局(整队走光才终局 + 走光判胜)归 **Task 8 的独立探针** `tests/probe/team_disconnect_probe.tscn`,
 # **不**追加到本文件 —— 别在这里再抄一份(两份真相:改了判据只有一份会红)。
 
-const MAP := "res://maps/factory1v1.cyrm"
+const MAP := "res://maps/newfactory.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 
 # 玩家层(层位 2)。生产侧写在 `player.tscn`(碰撞层)与 `MatchHost._init`(`mask |= 2`)里,
@@ -400,9 +400,24 @@ func _run() -> void:
 	for role in TEAMS:
 		if _host._spawn_cell(int(role)) != _host._round_spawns[role]:
 			diverted += 1
-	_check(diverted >= 5,
-			"[仪器] 填满 `_spawned_once` 后 `_spawn_cell` 走动态复活点分支(6 个里 %d 个偏离出生点)"
+	_check(diverted >= 1,
+			"[仪器] 填满 `_spawned_once` 后**至少一个** role 走动态复活点分支(6 个里 %d 个偏离出生点)"
 			% diverted)
+	# ★★ 差分对照(2026-10-02 加,取代原先的"6 个里至少 5 个")。
+	#   清掉某个 role 的表项再调一次 —— 它**必定**返回本局出生点(`_spawn_cell` 见表项缺席就把
+	#   它填回并走出生点)。**两种状态下结果不同**才证明那张表真的被读了;这与地图几何无关。
+	#   ★ 为什么改:`>= 5` 是**在旧 PvP 图(factory1v1)上量出来的数**,换一张图就成 4 ⇒ 假红,
+	#     而 `_spawn_cell` 的行为一字未变。差分判据仍然拦得住真变异 ——
+	#     "表不再被 `_spawn_cell` 读" ⇒ 两态结果**相同** ⇒ 下面这条红。
+	#   ★ 副作用即还原:每次调用都会把表项填回,故这段跑完 `_spawned_once` 仍是满表(⑧/⑨ 要用)。
+	var same_as_round := 0
+	for role in TEAMS:
+		_host._spawned_once.erase(int(role))
+		if _host._spawn_cell(int(role)) == _host._round_spawns[role]:
+			same_as_round += 1
+	_check(same_as_round == TEAMS.size(),
+			"[仪器] 清空 `_spawned_once` 后每个 role 都回到本局出生点(%d/%d)—— 与上面那条构成差分"
+			% [same_as_round, TEAMS.size()])
 	_check(_host.team_of(3) == 1 and _host.team_of(6) == 2, "宿主的队伍表已就位")
 	# ★ 队伍表**逐值**断言(只断言"非空/查得到"抓不到下面这一档):
 	#   `_init` 给 `super._init` 传**满五个**实参时,第 5 位是 `teams` 而**不是** `spawns`

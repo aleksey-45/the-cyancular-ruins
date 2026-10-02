@@ -11,7 +11,7 @@ extends SceneTree
 # 用法:godot --headless --path . -s res://tests/probe/map_format_v4_probe.gd
 
 const DEMO := "res://maps/demo.cyrm"
-const PVP := "res://maps/factory1v1.cyrm"
+const PVP := "res://maps/newfactory.cyrm"
 
 # 压缩 v4 夹具(78 字节):4×4 格,格 (1,1)=纹理2 全砖,meta = "# player 2 2" + "# v4_fixture"。
 static var FIXTURE := PackedByteArray([
@@ -45,7 +45,7 @@ func _chk(cond: bool, what: String) -> void:
 # ── ① 真地图(现在是 v4 二进制)──
 func _test_real_maps() -> void:
 	_chk(MapFormat.is_v4(DEMO), "demo.cyrm 应已是 v4 二进制")
-	_chk(MapFormat.is_v4(PVP), "factory1v1.cyrm 应已是 v4 二进制")
+	_chk(MapFormat.is_v4(PVP), "newfactory.cyrm 应已是 v4 二进制")
 	var demo := MapFormat.load_map_file(DEMO)
 	var pvp := MapFormat.load_map_file(PVP)
 	_chk(demo.size() == 75 and (demo[0] as Array).size() == 125, "demo 尺寸应 125×75(实为 %dx%d)" % [(demo[0] as Array).size(), demo.size()])
@@ -57,7 +57,7 @@ func _test_real_maps() -> void:
 	_chk(sp_demo.has("player") and not sp_demo.has("player2"), "demo 应只有 player 出生点")
 	_chk(sp_pvp.has("player") and sp_pvp.has("player2"), "factory 应有 player+player2")
 	# 出生点格必须为空 —— 顺带验证扁平化没把语义弄反。
-	# ★ 只查"格为空",不查"下方实心":factory1v1 的 player 出生点下方**本来就是空气**
+	# ★ 只查"格为空",不查"下方实心":newfactory 的 player 出生点下方**本来就是空气**
 	#   (原 v3 里就是,玩家出生在平台边缘),不是转换丢块。
 	for pair in [[DEMO, sp_demo["player"]], [PVP, sp_pvp["player"]], [PVP, sp_pvp["player2"]]]:
 		var g: Array = MapFormat.load_map_file(pair[0])

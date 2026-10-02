@@ -12,7 +12,7 @@ extends RefCounted
 # ai_roles = AI 补位 role 列表(实验性):这些 role 由服务端 AI 驱动,不发 match_start。
 # 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态。
 
-const PVP_MAP := "res://maps/factory1v1.cyrm"
+const PVP_MAP := "res://maps/newfactory.cyrm"
 
 
 # ★ `far_spawn_from` / `FAR_CELLS` 已搬到 `core/sim/spawn_picker.gd`(2026-10-02 合并时)。
