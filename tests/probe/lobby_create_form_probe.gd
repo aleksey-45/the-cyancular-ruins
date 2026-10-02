@@ -15,16 +15,18 @@ extends Node
 #   · 1v1 的 `create_room(caller)` 是原版 NetBus 的冻结签名、收不了 opts ⇒ 那一行的
 #     "私密 + 邀请码"在 1v1 下**永远不生效**(服务端恒建公开房)= 骗人的控件。
 #   ⇒ 故相⑤ / ⑧ 是有真实危害的断言,不是"版式检查"。
-# ★★ 前半段用**不入树**实例(只读 `_form_rows` / payload / 信号接线 + `emit pressed` 驱动的
-#   纯 UI 行为;**永不 `NetBus.start_client`**),最后一相才 `add_child`(ESC 与"按创建房间
-#   收起"这两条都要页面自己 `_ready` 建出来的 `_addr_edit` / `_status` / `_grid` 与 viewport)。
-#   入树那一相在**同一次同步调用栈内** `free()` 掉,`_ready` 里那句
-#   `_request_list.call_deferred` 因对象已失效而被跳过 —— 所以整支探针**不碰任何 socket**
-#   (1v1 页默认地址是用户的云服,探针明令不碰)。
+# ★★ 前三段用**不入树**实例(读 `_form_rows` / payload / 信号接线,以及 `emit pressed` 驱动的
+#   纯 UI 行为),最后一相才 `add_child`(ESC 与"按创建房间收起"都要页面自己 `_ready` 建出来的
+#   `_addr_edit` / `_status` / `_grid` 与 viewport)。**该相不发任何一个包**:入树后在**同一次
+#   同步调用栈内** `free()` ⇒ `_ready` 里那句 `_request_list.call_deferred` 因对象已失效被跳过;
+#   ㉔ 里 `_with_lobby` 会**建一个 client peer**(对象连着用户配置的地址),但同一帧紧跟
+#   `NetBus.stop()` 拆掉它,而 ENet 只在 poll 里 flush ⇒ 本帧就 quit,**没有报文出网**。
+#   ★ 说清这一点的理由是:1v1 页默认地址是用户的云服,本仓对"探针去连用户服务端"有明令 ——
+#   本探针的口径是"**不发出任何包**",不是"从不建 peer"。
 #
 # ★ `EXPECTED_CHECKS` 是"ALL-OK 不等于全都跑过"那条纪律的落点 —— 出错只会让当前函数
 #   当场结束、调用方继续,判词照打。少跑一条即红。
-const EXPECTED_CHECKS := 23
+const EXPECTED_CHECKS := 24
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -51,7 +53,7 @@ func _ready() -> void:
 	_phase_form(packed)      # ①-⑭ 变形逻辑 / 三套载荷 / 信号接线(不入树)
 	_phase_buttons(packed)   # ⑮-⑱ 按钮行为:换形 / 两条关闭路径(不入树)
 	_phase_beta(packed)      # ⑲-⑳ Beta 时间参数块(自门控)
-	_phase_live(packed)      # ㉑-㉓ ESC 与"按创建房间收起"(入树)
+	_phase_live(packed)      # ㉑-㉔ ESC 与"按创建房间收起"(入树)
 	_finish()
 
 
@@ -108,12 +110,15 @@ func _phase_form(packed: PackedScene) -> void:
 	var rp: Dictionary = page._create_payload(PvpSession.MODE_ROYALE)
 	_check(rp.has("match_time") and typeof(rp["match_time"]) == TYPE_INT,
 			"⑪ _create_payload(大乱斗) 含 match_time 且为整数(秒)")
+	# ★ 这条是 **builder 的形状断言**:1v1 分支压根不传 payload(`create_room` 是冻结签名),
+	#   且隐私行在 1v1 下已整块隐藏 ⇒ 这两个键在 1v1 上**确定不会被使用**。它保护的是
+	#   `_create_payload` 的返回形状,**不是**一条真在跑的路径 —— 别读成"1v1 会用到它们"。
 	var pp: Dictionary = page._create_payload(PvpSession.MODE_PVP)
 	_check(pp.has("is_public") and pp.has("invite_code"),
-			"⑫ _create_payload(1v1) 含 is_public 与 invite_code 键")
+			"⑫ _create_payload(1v1) 含 is_public 与 invite_code 键(builder 形状断言;1v1 不传该 payload)")
 
-	# ⑬ 三颗模式按钮**各恰 1 个 handler**。★ 少了它:删掉 `b.pressed.connect(...)`、或 lambda
-	#   捕错循环变量 ⇒ 上面 ②-⑦ 全绿而弹层**永不换形**。
+	# ⑬ 三颗模式按钮**各恰 1 个 handler**。★ 它抓的是"连接被删 / 被重复添加"这一类;
+	#   **不抓**"lambda 捕错循环变量" —— 那种情况下计数仍是 1(⑯ 按真按钮看可见性才抓得到)。
 	var counts_ok := true
 	var counts_msg := ""
 	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
@@ -184,7 +189,7 @@ func _phase_beta(packed: PackedScene) -> void:
 	PvpSession.beta_mode = false   # ★ 还原,别污染同一进程里后面的相
 
 
-# ── ㉑-㉓:ESC 与"按创建房间收起"(入树;需要 viewport 与页面自己的 `_addr_edit`/`_status`/`_grid`)──
+# ── ㉑-㉔:ESC 与"按创建房间收起"(入树;需要 viewport 与页面自己的 `_addr_edit`/`_status`/`_grid`)──
 func _phase_live(packed: PackedScene) -> void:
 	var live = packed.instantiate()
 	# ★ 入树 ⇒ `_ready` 会建 `_addr_edit`/`_status`/`_grid` 并排一句
@@ -210,11 +215,20 @@ func _phase_live(packed: PackedScene) -> void:
 	_check((not live._create_panel.visible) and live.get_viewport().is_input_handled(),
 			"㉒ 弹层可见时 ESC:关弹层 + `set_input_as_handled`")
 
-	# ㉓ 按「创 建 房 间」⇒ 弹层**立即**收起(不等异步应答)。
+	# ㉓ 弹层**主行动按钮**「创 建 房 间」的接线面:恰 1 个 handler。
+	# ★ 少了它:`create.pressed.connect(_on_create_pressed)` 被删 ⇒ ⑬/⑭ 覆盖了三颗模式按钮与
+	#   两条关闭路径,**唯独漏了主行动按钮** —— 断言全绿而弹层永远提交不了(⑭ + ⑱ 的配对同形)。
+	var ok_btn := _find_button(live._create_panel, "创 建 房 间")
+	_check(ok_btn != null and ok_btn.pressed.get_connections().size() == 1,
+			"㉓ 创 建 房 间 按钮恰 1 个 handler(%s)" % (
+					"缺" if ok_btn == null else str(ok_btn.pressed.get_connections().size())))
+
+	# ㉔ **走真按钮**(`emit pressed`,与 ⑰/⑱ 同款)⇒ 弹层立即收起(不等异步应答)。
+	#   ★ 上一版这里直接调 `_on_create_pressed()`,于是"主行动按钮的接线"整条没被覆盖。
 	live._open_create_dialog()
-	live._on_create_pressed()
-	NetBus.stop()   # 拆掉 `_with_lobby` 刚建的 client:本帧就 quit,绝不发一个包出去
-	_check(not live._create_panel.visible, "㉓ 按 创 建 房 间 后弹层立即收起")
+	_find_button(live._create_panel, "创 建 房 间").pressed.emit()
+	NetBus.stop()   # 拆掉 `_with_lobby` 刚建的 client:本帧就 quit,不发一个包出去
+	_check(not live._create_panel.visible, "㉔ 按 创 建 房 间 后弹层立即收起")
 
 	live.free()
 
