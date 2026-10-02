@@ -770,7 +770,8 @@ func _host_name_of(role: int, roster: Array) -> String:
 
 
 # 3v3 的三档人数:{1: A 队, 2: B 队, 0: 未选边}。
-# ★ 键一律**字符串**(JSON/RPC 往返后 int 键会变字符串);读端用 `str(k)` 取。
+# ★ 键用字符串是**刻意的约定**,读端一律 `str(k)`;不是因为类型会丢 —— 本仓 RPC 走二进制
+#   Variant 编码,int 键能活下来(这条链路上没有 JSON)。
 func _team_counts_of(tr: TeamRoom) -> Dictionary:
 	var counts := {"1": 0, "2": 0, "0": 0}
 	for role in tr.player_role.values():
@@ -817,8 +818,9 @@ func team_list(caller: int, token: String = "") -> void:
 
 
 # 客户端 → 大厅:房主上报本房的地图(仅用于**列表展示**)。
-# ★ 静默丢弃的三种情况都不回话、不踢人:找不到房 / caller 不是房主 / 空房。
+# ★ 静默丢弃的两种情况都不回话、不踢人:找不到房 / caller 不是房主。
 #   回话没有意义(客户端无从处理),踢人更没道理(可能只是建完房还没同步完)。
+#   ★ **刻意不判空房**:写一个展示字段无害,多一个分支就多一条没人测的路径。
 func on_room_map(caller: int, code: String, path: String) -> void:
 	var r: Variant = _room_any(code)
 	if r == null:

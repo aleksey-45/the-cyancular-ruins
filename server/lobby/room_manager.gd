@@ -77,6 +77,8 @@ func _exit_tree() -> void:
 	NetBusExt.ai_duel_requested.disconnect(ai_duel)
 	NetBusExt.royale_start_ai_requested.disconnect(royale_start_ai)
 	NetBusExt.team_start_requested.disconnect(team_start)
+	# 与上面那条 connect 对称(其余四条 NetBusExt 信号都在这里成对出现)
+	NetBusExt.room_map_requested.disconnect(lobby.on_room_map)
 
 
 # 房主开局:满 2 人即可;拉起 N 人 worker → 全员 go_match 转连

@@ -11,7 +11,7 @@ extends Node
 #   不需要 socket、不需要 worker(与 lobby_visibility_probe 同款)。
 # ★ 断言计数:ALL-OK 只证明"没有一条断言失败",不证明"该跑的都跑过"(见 tests/lib/probe_base.gd
 #   文件头)。少跑一条就红 —— 改本探针必须同步改这个数。
-const EXPECTED_CHECKS := 16
+const EXPECTED_CHECKS := 20
 
 const P_HOST := 201
 const P_OTHER := 202
@@ -107,8 +107,39 @@ func _ready() -> void:
 	# ── room_map:非房主一律不写 ──
 	lobby.on_room_map(P_OTHER, "9102", "maps/hack.cyrm")
 	_check(str(rr.map) == "maps/demo.cyrm", "★ 非房主上报被拒(房记录一字不动)")
+
+	# ── room_map:1v1 与 3v3 各走一遍 ──
+	# ★ 这几条不是凑数:`_room_any` 的 `rooms` / `team_rooms` 两个分支、以及 `_is_room_host`
+	#   的 `Room`(1v1)分支**只有这里**能覆盖 —— 而把 1v1 写成"一律读 host_peer"会让它的上报
+	#   **永远被拒且不报错**(1v1 的房主是 `players[0]`,根本没有 host_peer 字段)。见 `_is_room_host`。
+	lobby.on_room_map(P_HOST, "9101", "maps/duel.cyrm")
+	var p1b := _find(lobby.room_list_payload(), "9101")
+	_check(str(r1.map) == "maps/duel.cyrm" and str(p1b.get("map", "")) == "maps/duel.cyrm",
+			"★ 1v1 房主上报 → 写进房记录且列表能看到(实得记录「%s」/列表「%s」)"
+			% [str(r1.map), str(p1b.get("map", ""))])
+	# ★ 非房主那两条用**哨兵**(调用前后自比)而不是绝对值:这样它只判"没被写"这一件事,
+	#   不依赖上面那条房主写入是否成功 —— 于是变异打在 1v1 分支上时**只红房主那一条**,
+	#   两件事不至于混在一起(绝对值写法会让它们一起红,失去单点定位)。
+	var m1 := str(r1.map)
+	lobby.on_room_map(P_OTHER, "9101", "maps/hack1.cyrm")
+	_check(str(r1.map) == m1, "★ 1v1 非房主上报被拒(房记录一字不动,仍「%s」)" % str(r1.map))
+	lobby.on_room_map(P_HOST, "9103", "maps/team.cyrm")
+	var pt2 := _find(lobby.team_list_payload(""), "9103")
+	_check(str(tr.map) == "maps/team.cyrm" and str(pt2.get("map", "")) == "maps/team.cyrm",
+			"★ 3v3 房主上报 → 写进房记录且列表能看到(实得记录「%s」/列表「%s」)"
+			% [str(tr.map), str(pt2.get("map", ""))])
+	var m3 := str(tr.map)
+	lobby.on_room_map(P_OTHER, "9103", "maps/hack3.cyrm")
+	_check(str(tr.map) == m3, "★ 3v3 非房主上报被拒(房记录一字不动,仍「%s」)" % str(tr.map))
+
+	# ── room_map:未知房号 —— 不崩、也不误写别人 ──
+	# ★ 判据**不是**"没崩":`_check(true, "不崩")` 恒真、什么也断言不了(简报原稿就是那样)。
+	#   真判据 = 这次调用前后,三间房的 `map` 逐字不变(既没崩、也没把别人写坏)。
+	#   此刻三间房的 map 互不相同 ⇒ "写错了一间"必然被这一条抓住。
+	var before := str([str(r1.map), str(rr.map), str(tr.map)])
 	lobby.on_room_map(P_HOST, "9999", "maps/x.cyrm")
-	_check(true, "未知房号不崩(静默丢弃)")
+	var after := str([str(r1.map), str(rr.map), str(tr.map)])
+	_check(before == after, "未知房号上报:不崩也不误写任何一间(前后 map 一致;实得 %s)" % after)
 
 	_finish()
 
