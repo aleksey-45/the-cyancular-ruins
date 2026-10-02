@@ -1399,7 +1399,7 @@ func _phase_weapon_registry() -> void:
 #    却没人调,断言照样全绿(本仓反复在删那种"加了断言之后全绿"的假证据)。
 func _phase_weapon_capacity() -> void:
 	var ws: GDScript = load("res://ui/hud/weapon_slots.gd")
-	_check(ws != null, "ui/weapon_slots.gd 可加载")
+	_check(ws != null, "ui/hud/weapon_slots.gd 可加载")
 	if ws == null:
 		return
 	var src := ScanUtil.read("res://ui/hud/weapon_slots.gd")

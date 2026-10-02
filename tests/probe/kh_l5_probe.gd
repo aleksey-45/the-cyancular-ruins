@@ -554,9 +554,9 @@ func _check_new_interfaces() -> void:
 	# ★ 2026-09-14:大乱斗房间 handler 随账本搬进 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
 	#   判据跟着搬,但**两处都查**:老家若被人再抄一份同名 handler,那正是"两份真相"的开端。
 	var rl := _code_only(_read("res://server/lobby/lobby_rooms.gd"))
-	_check(rl.contains("func royale_create("), "server/lobby_rooms.gd 缺 func royale_create(")
+	_check(rl.contains("func royale_create("), "server/lobby/lobby_rooms.gd 缺 func royale_create(")
 	_check(not _code_only(_read("res://server/lobby/room_manager.gd")).contains("func royale_create("),
-			"server/room_manager.gd 又出现 func royale_create(——房间 handler 应只在 lobby_rooms 一处)")
+			"server/lobby/room_manager.gd 又出现 func royale_create(——房间 handler 应只在 lobby_rooms 一处)")
 	_summary(fails_before, "新接口:基类 1 个 + 子类 4 个在位,基类零子类方法泄漏,RoyaleHud 在位,royale_create 在 lobby_rooms")
 
 

@@ -116,7 +116,7 @@ func _initialize() -> void:
 	var W: GDScript = load("res://server/lobby/worker_launcher.gd")
 	# ★ 空载守卫:load 失败还往下走会抛错,而 -s 抛错走不到 quit() → 进程永久挂起
 	if W == null:
-		print("GRACE_WINDOW FAILED: 找不到 server/worker_launcher.gd(归还延迟的 belt 无从校验)")
+		print("GRACE_WINDOW FAILED: 找不到 res://server/lobby/worker_launcher.gd(归还延迟的 belt 无从校验)")
 		quit(1)
 		return
 	var delays := {
