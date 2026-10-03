@@ -1,8 +1,149 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://scenes/info_menu.gd" id="1"]
+[ext_resource type="Script" uid="uid://wns60yierasm" path="res://scenes/info_menu.gd" id="1_info"]
 
-[node name="InfoMenu" type="Control"]
+[ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_8hcgn"]
+
+[node name="InfoMenu" type="Control" unique_id=1968103690]
+layout_mode = 3
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-script = ExtResource("1")
+theme = ExtResource("1_8hcgn")
+script = ExtResource("1_info")
+
+[node name="ColorRect1" type="ColorRect" parent="." unique_id=583983077]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0.07, 0.09, 0.13, 1)
+
+[node name="MarginContainer1" type="MarginContainer" parent="." unique_id=1249430047]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 76
+theme_override_constants/margin_top = 76
+theme_override_constants/margin_right = 76
+theme_override_constants/margin_bottom = 76
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1" unique_id=774247428]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1" unique_id=1962087923]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/PanelContainer1" unique_id=810729811]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
+theme_override_font_sizes/font_size = 48
+text = "信 息"
+
+[node name="HBoxContainer1" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=994915643]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 32
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1" unique_id=143758613]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 1.25
+theme_type_variation = &"PanelCarved"
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1" unique_id=1379963031]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1" unique_id=1328340629]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=429809505]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/PanelContainer1" unique_id=532647618]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "版 本 信 息"
+
+[node name="VersionLabel" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=1307291696]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 32
+text = "当前版本　main #1296"
+
+[node name="ScrollContainer1" type="ScrollContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=31042213]
+custom_minimum_size = Vector2(0, 300)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="CommitList" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/ScrollContainer1" unique_id=260304753]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(760, 0)
+layout_mode = 2
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1" unique_id=98184663]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 24
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1" unique_id=1635615400]
+layout_mode = 2
+theme_type_variation = &"PanelCarved"
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer1" unique_id=518831309]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="TeamBox" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer1/PanelContainer1" unique_id=1773817589]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer1/PanelContainer1/TeamBox" unique_id=1911183648]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer1/PanelContainer1/TeamBox/PanelContainer1" unique_id=1271605333]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "开 发 团 队"
+
+[node name="PanelContainer2" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1" unique_id=108048505]
+layout_mode = 2
+theme_type_variation = &"PanelCarved"
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer2" unique_id=1369546828]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="CreditsBox" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer2/PanelContainer1" unique_id=1471151000]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer2/PanelContainer1/CreditsBox" unique_id=1738315050]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer2/PanelContainer1/CreditsBox/PanelContainer1" unique_id=1736728689]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "致 谢"
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=767742654]
+layout_mode = 2
+alignment = 1
+
+[node name="BackBtn" type="Button" parent="MarginContainer1/VBoxContainer1/HBoxContainer2" unique_id=681080950]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(280, 72)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "返 回"

@@ -16,6 +16,25 @@ extends Node
 # 输出 `res://tests/_gen/<屏名>.tscn`(**不带脚本** —— 纯骨架,供"实例化它再取图"的自检用)。
 # 屏名与"要剥掉的动态子树"见 SCREENS。
 #
+# ═══ ★★ 迁移每一屏的固定动作(2026-10-03 走完两屏后补;每一步都踩过坑)═══
+#  ① **先备份这一屏的 `.tscn` 与 `.gd` 原文** —— 生成器读的**就是** `SCREENS[名].scene`,
+#     所以一旦你把它覆盖成迁移版,再跑生成器拿到的就是"已迁移的场景":
+#     实测表现为 **strip 全失败 + 换成变体 0 个**,而它**照样写出一个文件**。
+#     要重跑就 `git show HEAD:<路径> > <路径>` 把**两个文件都**还原回迁移前。
+#  ② 生成 → 在 `.superpowers/sdd/_gen/` 里那份上做两件事,再写到 `res://` 的真路径:
+#     (a) 给脚本要引用的节点起语义名 + `unique_name_in_owner = true`;
+#     (b) 根节点补 `script = ExtResource(...)`(theme 已经在了)。
+#     ★★ **(a) 改名必须连同后代的 `parent=` 路径一起改写** —— `parent="A/B/VBoxContainer1"`
+#        里的 `VBoxContainer1` 是**父节点的名字**。只改父不改子 ⇒ 实例化时
+#        `Parent path … has vanished`,**整棵子树静默消失**(信息页右栏两块面板连标题带一起没了)。
+#     ★★ **(b) 别写死主题的 ext_resource id** —— 每次生成 Godot 给的 id 会变
+#        (`1_m75q5` / `1_8hcgn`)。写死 ⇒ `str.replace` **一声不响地什么都不做** ⇒
+#        脚本没挂上、`_ready` 从未运行 ⇒ 动态行全空而**日志里一条报错都没有**。
+#        用正则取到那个 id 再拼,并且**对两处替换都加断言**。
+#  ③ 取"改前"图要在**同一时刻**:信息页的内容随每次 commit 变(提交历史),拿几小时前的
+#     基线去比,差的是**内容**不是迁移。做法:还原①的两个文件 → 取图 → 放回迁移版 → 再取图。
+#  ④ 判据:两张图**逐像素**比(阈值 0.004)。**差异必须是 0** —— 不是"看着差不多"。
+#
 # ═══ 覆盖上限(照实登记)═══
 # ① 它只保证"**同一份代码**建出来的树 == `.tscn`"。`.gd` 里那份建树代码删掉之后,
 #    两者就不再由构造绑定 —— 之后的漂移只有逐屏取图看得见。
@@ -50,7 +69,11 @@ const VARIANTS := {
 # (动态行:每个玩家的/每次开局的/随设置变的)。列表为空 = 该屏全是静态骨架。
 const SCREENS := {
 	"settings_menu": {"scene": "res://scenes/settings_menu.tscn", "strip": ["bind_grid"]},
-	"info_menu": {"scene": "res://scenes/info_menu.tscn", "strip": ["commit_list"]},
+	# 信息页:三块都得剥 —— 提交历史、开发团队、致谢。后两块虽是**常量**,但计划把
+	# "名单行留代码"定成了本屏的边界(`DEV_TEAM` / `CREDITS` 是 `info_page_probe` 的对账源),
+	# 剥空之后编辑器里那两块面板是空的 —— 这条代价照实接受。
+	"info_menu": {"scene": "res://scenes/info_menu.tscn",
+			"strip": ["commit_list", "info_team", "info_credits"]},
 	"beta_menu": {"scene": "res://scenes/beta_menu.tscn", "strip": []},
 	"match_result": {"scene": "res://ui/screens/match_result.tscn", "strip": ["result_grid"]},
 	"main_menu": {"scene": "res://scenes/main_menu.tscn", "strip": []},
@@ -114,6 +137,12 @@ func _ready() -> void:
 			_fails.append("strip「%s」定位到的容器本来就是空的 ⇒ 这条剥除是空转" % s)
 			continue
 		for c in box.get_children():
+			# ★★ **永不删标题带**:`header_strip()` 建出来的那块 PanelContainer 是**内容 VBox 的
+			#   亲儿子**(`tbox.add_child(strip)` 之后才 add 各行)⇒ "把 VBox 清空"会连标题一起抹掉,
+			#   而面板还剩着 ⇒ 右栏变成两个**没有标题的空盒子**(实测踩过,截图里一眼可见)。
+			#   标题是**常量**、属于静态骨架;动态的只有它下面那些行。
+			if c is PanelContainer and (c as PanelContainer).theme_type_variation == &"HeaderStrip":
+				continue
 			box.remove_child(c)
 			c.queue_free()
 
@@ -275,6 +304,7 @@ func _sb_eq(a, b) -> bool:
 # ── 剥动态行:按**结构**定位(不按名字 —— 代码建的节点名全是自动生成的)──
 # 每个函数返回一个**容器**,它的**子节点**被清空(容器本身留在骨架里:它带着
 # `columns` / `separation` / `custom_minimum_size` 这些静态版式参数,是骨架的一部分)。
+# ★ 清空时**跳过标题带**(`HeaderStrip`)—— 它是常量、属于骨架。见下面循环里的注释。
 # ★ 定位不到、或定位到的容器本来就空 ⇒ **算失败**(空转的剥除 = 这条 strip 已经失效而没人知道)。
 
 # 设置页:右栏那个「(动作名, 键位)」两列表。行按 `Settings.REMAPPABLE_ACTIONS` 循环建,
@@ -291,6 +321,37 @@ func _strip_commit_list(root: Node) -> Node:
 	if scroll == null:
 		return null
 	return _find(scroll, func(n: Node) -> bool: return n is VBoxContainer)
+
+
+# 信息页右栏两节(开发团队 / 致谢):按**标题带的文字**定位(比按层级稳 —— 换了嵌套也找得到),
+# 返回的是标题带所在的那个内容 VBox(要清空的就是它)。
+func _strip_info_team(root: Node) -> Node:
+	return _section_body(root, "开 发 团 队")
+
+
+func _strip_info_credits(root: Node) -> Node:
+	return _section_body(root, "致 谢")
+
+
+func _section_body(root: Node, title: String) -> Node:
+	# ★★ 判据必须要求它是**标题带本身**(`theme_type_variation == HeaderStrip`):
+	#   只判"文字等于 title"的话,外层那块 `PanelCarved` 递归下去也会命中同一条文字 ⇒
+	#   返回的是**整栏**,一清就把这一栏连标题带一起抹掉(而 `get_parent()` 恰恰是合法值,
+	#   不会报错)。
+	var strip := _find(root, func(n: Node) -> bool:
+		return n is PanelContainer and (n as PanelContainer).theme_type_variation == &"HeaderStrip" \
+				and _first_label_text(n) == title)
+	return strip.get_parent() if strip != null else null
+
+
+func _first_label_text(n: Node) -> String:
+	for c in n.get_children():
+		if c is Label:
+			return (c as Label).text
+		var deeper := _first_label_text(c)
+		if deeper != "":
+			return deeper
+	return ""
 
 
 # 结算页:结果网格。
