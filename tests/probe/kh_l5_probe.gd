@@ -24,6 +24,12 @@ extends ProbeBase
 #   6) 大乱斗非射手端激光走 NetBus(不是 NetBusExt —— 收错节点会静默 no-op)
 #   7) AI 输入源 is_network_driven() 覆写存在且返回 true
 #   8) ★ 字号规范:全仓所有字号载体都是 16 的倍数(**含经 helper 实参传递的字号**)
+#      ★ 2026-10-03 扩扫描面:**.tscn 与 .tres 也扫** —— 字号正在搬进 `.tscn`(控件的
+#        `theme_override_font_sizes/font_size = N`)与 `.tres`(Theme 的
+#        `Body/font_sizes/font_size = N`)。`ScanUtil.walk` 只收 .gd/.tscn ⇒ `.tres` 必须
+#        **显式补进扫描面**,否则「16 的倍数」这条规则会**看起来还在守、其实空了**。
+#        配套加了两条防空转的闸:① 载体**总数下限**(见 MIN_FONT_CARRIERS);
+#        ② `.tscn` 里 `theme_type_variation` 引用的变体名必须在某个 Theme 里有定义。
 #   9) 新接口在位且归属正确(+ 反向断言:基类不得含子类方法)
 #  10) ★ MatchHost 的 round_full_heal 选项真的把双方回满血(端到端 + 对照组)
 #
@@ -50,6 +56,17 @@ const ALL_DIRS := ["res://core", "res://scenes", "res://server", "res://ui",
 # 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
 const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
+
+# ── 第 8 条(字号规范)新增的两道防空转闸 ──
+# ① **载体总数下限**。文件数下限(MIN_ALL_FILES)管的是"根扫不扫得到",管不到"载体一类
+#    都匹配不上":路径/后缀/剥注释视图任一环坏掉 ⇒ 命中 0、`bad` 恒空 ⇒ verdict 照打
+#    ALL-OK —— 正是本仓登记过十次的「守卫比它读起来弱」。故把**总量**打出来并设下限。
+#    今日实测(2026-10-03,把 .tres 补进扫描面后)总量 = **97**(.gd/.tscn 90 + .tres 7),
+#    取 70 留健康余量(只拦"整体坏掉",不拦正常增删)。
+const MIN_FONT_CARRIERS := 70
+# ② Theme 资源的字号落点。第 8 条要求它**确实被扫到**(载体数 ≥1)—— 否则 `.tres` 那一支
+#    其实没生效,而"读不到 .tres"与"扫坏了"在 verdict 上长得一样(都会静默通过)。
+const THEME_FONT_FILE := "res://ui/theme/menu_theme.tres"
 
 # L5 新增的、带字号的 UI 文件:第 8 条要把它们的字号覆盖情况打出来(人眼可核覆盖面)
 const L5_FONT_FILES := ["res://ui/hud/royale_hud.gd", "res://scenes/mp_lobby.gd"]
@@ -359,16 +376,38 @@ func _check_ai_input_gate() -> void:
 #      (字号直接写在函数体内的 style_control 调用同样是载体,正是这条被单列的理由)
 func _check_font_size_law() -> void:
 	var fails_before := _failures.size()
-	var files := _collect(ALL_DIRS)
-	_check(files.size() >= MIN_ALL_FILES,
-			"字号扫描:只收到 %d 个源文件(期望 ≥%d)" % [files.size(), MIN_ALL_FILES])
+	var gd_tscn := _collect(ALL_DIRS)          # .gd + .tscn(ScanUtil.walk 只收这两种)
+	var tres := _collect_tres(ALL_DIRS)        # ★ 显式补 .tres(见文件头第 8 条)
+	_check(gd_tscn.size() >= MIN_ALL_FILES,
+			"字号扫描:只收到 %d 个源文件(期望 ≥%d)" % [gd_tscn.size(), MIN_ALL_FILES])
+	var files := gd_tscn.duplicate()
+	files.append_array(tres)
 	var bad: Array[String] = []
 	var census := {}
 	for f in files:
 		_font_scan_file(f, _read(f), bad, census)
 	_check(bad.is_empty(), "字号规范违例 %d 处(必须 16 的倍数): %s" % [bad.size(), "; ".join(bad)])
+	# 扫描量下限:把**载体总数**打出来。扫描面坏掉时它掉到 0 附近而 bad 恒空(假绿)。
+	var total := 0
+	for p in census.keys():
+		for k in (census[p] as Dictionary).keys():
+			total += int(census[p][k])
+	print("[L5] 字号载体总数:%d(下限 %d;扫 %d 个 .gd/.tscn + %d 个 .tres)"
+			% [total, MIN_FONT_CARRIERS, gd_tscn.size(), tres.size()])
+	_check(total >= MIN_FONT_CARRIERS,
+			"字号载体只扫到 %d 个(下限 %d)—— 扫描面(路径/后缀/剥注释视图)坏了时零命中是假绿"
+			% [total, MIN_FONT_CARRIERS])
+	# Theme 资源必须真的被扫到(≥1 载体)。读不到 .tres 与扫坏了在 verdict 上一样静默。
+	if not tres.is_empty():
+		_check(census.has(THEME_FONT_FILE),
+				"字号扫描没碰到 Theme %s(.tres 那一支路没生效 → Theme 里的字号没进过断言)"
+				% THEME_FONT_FILE)
 	# 扫描器自检:证明它**能红**(否则本探针就是又一台"永不失败的验收门")
 	_self_test_font_scanners()
+	# ★ 变体引用对账:.tscn 里那串「theme_type_variation 指向的变体名」必须在某个被扫到的
+	#   Theme(.tres)里**有定义**(`Name/base_type` 或 `Name/font_sizes/…`)—— 否则控件静默
+	#   回落 Godot 默认字号(不报错),而 .tscn 那一侧看不到任何字号值可查。
+	_check_variation_refs(files, tres)
 	# 覆盖面对账:L5 新文件的每个字号载体各命中几处,逐条打出来供人眼核对
 	for p in L5_FONT_FILES:
 		_check(census.has(p),
@@ -379,7 +418,76 @@ func _check_font_size_law() -> void:
 				parts.append("%s×%d" % [str(k), int(census[p][k])])
 			parts.sort()
 			print("[L5] 字号覆盖 %s: %s" % [p, ", ".join(parts)])
-	_summary(fails_before, "字号规范:扫 %d 个源文件,违例 %d 处(含经 helper 实参传递的字号)" % [files.size(), bad.size()])
+	_summary(fails_before, "字号规范:扫 %d 个 .gd/.tscn + %d 个 .tres,载体 %d 个,违例 %d 处(含经 helper 实参传递的字号)"
+			% [gd_tscn.size(), tres.size(), total, bad.size()])
+
+
+# 递归收 roots 下的 `.tres`(字号搬进 Theme 后的新落点)。与 `ScanUtil.walk` 同法,
+# 只是后缀不同 —— 不改 `ScanUtil.walk` 是为了**零blast radius**:它的调用方(kh_l4 /
+# ui_palette_smoke / enemy_logic_smoke …)对"文件表里多出 .tres"各有各的假设,别顺手扩。
+func _collect_tres(roots: Array) -> Array[String]:
+	var out: Array[String] = []
+	for r in roots:
+		_walk_tres(r, out)
+	out.sort()
+	return out
+
+
+func _walk_tres(dir_path: String, out: Array[String]) -> void:
+	var d := DirAccess.open(dir_path)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var name := d.get_next()
+	while name != "":
+		if not name.begins_with("."):
+			var p := dir_path.path_join(name)
+			if d.current_is_dir():
+				_walk_tres(p, out)
+			elif name.ends_with(".tres"):
+				out.append(p)
+		name = d.get_next()
+	d.list_dir_end()
+
+
+# `.tscn` 的 Theme 变体引用对账(见调用处注释)。
+# ⚠ 覆盖上限(照实登记):
+#    · 判据是**名字对名字** —— 它保证"引用的变体在有定义的 Theme 里存在",但不保证该变体
+#      **带字号**(一个只有 font_color 的变体照样算"有定义")。真正钉字号值的是第 8 条的
+#      分支扫描;本条只堵"引了个不存在的变体 → 静默回落默认字号"这一档。
+#    · **只扫 `.tscn`**(引用形式);运行期 `.gd` 里 `xxx.theme_type_variation = &"…"` 那种
+#      写法**不认**(迁移把变体引用放场景里,这是本设计的前提)。
+#    · 只认 ALL_DIRS 下能找到的 `.tres`;若将来 Theme 放进 `addons/` 等未扫根,本条会假红。
+func _check_variation_refs(files: Array[String], tres: Array[String]) -> void:
+	var fails_before := _failures.size()
+	# Theme 里**定义**的变体名:`Name/base_type` 或 `Name/font_sizes|styles|colors|constants/…`
+	var defined := {}
+	var re_def := RegEx.create_from_string(
+			"^([A-Za-z_]\\w*)/(?:base_type|font_sizes|styles|colors|icons|constants)\\b")
+	for f in tres:
+		for line in _read(f).split("\n"):
+			var m := re_def.search(line)
+			if m != null:
+				defined[m.get_string(1)] = true
+	# `.tscn` 里**引用**的变体名。★ 只扫 `.tscn` —— 一是语义(变体引用在场景里),二是**防自伤**:
+	#   本探针是 `.gd`,若把 `.gd` 也扫进来,上面那句示例注释里的 shape 会命中正则
+	#   (本文件头「自伤防护」记过同一类坑)。
+	var used := {}
+	var re_use := RegEx.create_from_string("theme_type_variation\\s*=\\s*&?\"([^\"]+)\"")
+	for f in files:
+		if not f.ends_with(".tscn"):
+			continue
+		for m in re_use.search_all(_read(f)):
+			used[m.get_string(1)] = true
+	var missing: Array[String] = []
+	for raw_name in used.keys():
+		if not defined.has(raw_name):
+			missing.append(str(raw_name))
+	_check(missing.is_empty(),
+			"%d 个 theme_type_variation 引用的变体名在任何 Theme 里都没有定义(控件会静默回落默认字号): %s"
+			% [missing.size(), ", ".join(missing)])
+	_summary(fails_before, "变体引用对账:.tscn 引用 %d 个名字,Theme 定义 %d 个,缺 %d 个"
+			% [used.size(), defined.size(), missing.size()])
 
 
 # 扫单个源里的全部字号载体(合成源也能喂,供自检用)

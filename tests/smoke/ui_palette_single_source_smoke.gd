@@ -1,6 +1,7 @@
 extends SceneTree
 
-# UI 调色板**单一来源**守卫(底板色 + 队色)。纯源码级、`-s` 可跑、不占端口、**不需要渲染**。
+# UI 调色板**单一来源**守卫(底板色 + 队色 + Theme .tres 的颜色字面量)。
+# 纯源码级、`-s` 可跑、不占端口、**不需要渲染**。
 #
 # 跑法:  source tests/env.sh && timeout 120 "$GODOT" --headless --path . \
 #            -s res://tests/smoke/ui_palette_single_source_smoke.gd
@@ -21,11 +22,21 @@ extends SceneTree
 # ★ 为什么另立 `-s` 而不并进 `hue_tint_probe`:后者是**真渲染**探针(headless 下
 #   `get_image()` 给 null ⇒ 直接 FAIL 并 return),源码级断言不该寄生在它里面。
 #
-# ★★ **已知的判据上限(登记,别当漏洞)**:本守卫只钉这 **6 处**具名落点 + 一条"全仓再无
-#    游离字面量"的反向断言。将来新增第 7 处时,反向断言会红 —— **前提是它写成
-#    `Color(0, 0, 0, 0.1)` 字面量**;若写成第三种 `const` 名字,反向断言抓不到。
-#    **同一串字面量的等价改写也抓不到**(如 `Color(0.0, 0.0, 0.0, 0.1)`) —— `_norm` 只去空白,
-#    **不做数值形态归一**,故 ②/⑤ 是按**字面字符**比对的,不是按颜色值。
+# ★ 2026-10-03 新增第 ⑥ 条:Theme 资源(`ui/theme/menu_theme.tres`)里的**每一个**
+#   `Color(...)` 字面量都必须**逐位等于**调色板里某个 `const C_*`。成因同 ④:`.tres` 里的
+#   StyleBoxFlat 颜色是字面量、引用不到 GDScript 的 const —— 只能读文本钉值。
+#
+# ★★ **已知的判据上限(登记,别当漏洞)**:
+#    · 前半(②/⑤):本守卫只钉那 **6 处**具名落点 + 一条"全仓再无游离字面量"的反向断言。
+#      将来新增第 7 处时,反向断言会红 —— **前提是它写成 `Color(0, 0, 0, 0.1)` 字面量**;
+#      若写成第三种 `const` 名字,反向断言抓不到。**同一串字面量的等价改写也抓不到**
+#      (如 `Color(0.0, 0.0, 0.0, 0.1)`) —— `_norm` 只去空白,**不做数值形态归一**,故 ②/⑤
+#      是按**字面字符**比对的,不是按颜色值。
+#    · ★★ 第 ⑥ 条(Theme)**钉的是值** —— 它保证"Theme 里出现的每个颜色都来自调色板",
+#      **钉不住**"某个控件忘了挂 Theme 于是用了 Godot 默认样式":那种情况下控件画出来的
+#      根本不经过这个 .tres,而本守卫只读 .tres 原文、看不到场景侧有没有引用它。
+#      那一档的拦截手段是**逐屏真实渲染取图**(设计 §4.3),不是本守卫。
+#      同理,它也不钉"某个颜色**该不该**出现在这里"(一个调色板常量用在错的控件上照样绿)。
 
 const PALETTE := "res://ui/factory/ui_factory.gd"
 # 底板色字面量的**归一化后**形态(空白在 `_norm` 里被去掉)。
@@ -47,6 +58,20 @@ const TSCN_SITES := [
 ]
 # 队色那一半。
 const BODY_BASE_SITE := "res://scenes/pvp_match_client.gd"
+
+# ⑥ Theme 资源:里面每个 `Color(...)` 必须等于调色板某个 `const C_*`。
+const THEME_SITE := "res://ui/theme/menu_theme.tres"
+# ⑥ 抽到的 `Color(...)` 个数**下限**(防空转):.tres 形状变了 / 读坏了 ⇒ 零命中 = 假绿。
+#   今日实测 2026-10-03:menu_theme.tres 共 **34** 个 Color(...)(11 个 StyleBoxFlat 21 个 +
+#   [resource] 13 个),取 20 留健康余量。
+const THEME_COLOR_MIN := 20
+# 颜色值比较的容差(逐位相等,但容忍 .tres 的浮点序列化位数):
+#   ResourceSaver 把 float32 写成十进制再解析回来,噪声只有 ~1e-8 量级(float32 的十进制
+#   表示相对误差 ~6e-8)。取 1/65536 ≈ 1.5e-5:比噪声大好几个数量级,又**远小于**
+#   改一个十进制数字的最小差(如 0.902→0.903 = 0.001)⇒ 任何"改一位"都能被逮住。
+#   ★ 起初取 1/512(≈0.00195)在变异实测里**放过**了 0.902→0.903(差 0.001)—— 那正是
+#     本守卫要抓的东西,故收紧到这个值(实测:改一位即红)。
+const COLOR_TOL := 1.0 / 65536.0
 # ⑤ 反向断言的白名单 = 允许出现底板色**字面量**的文件:
 #   调色板自己(它就是源)+ 两个 `.tscn`(结构上派生不了)+ **本文件自己**
 #   (`PLATE_LITERAL` 这个常量本身就把那串字写在了源码里 —— 不白名单它,⑤ 会自己判自己红)。
@@ -163,6 +188,9 @@ func _initialize() -> void:
 		if _norm(code).contains(PLATE_LITERAL):
 			fails.append("⑤ %s 里有游离的底板色字面量(白名单只有调色板与两个 .tscn)" % path)
 
+	# ── ⑥ Theme(.tres):每个 `Color(...)` 字面量必须逐位等于调色板某个 `const C_*` ──
+	_check_theme_colors(pal_code, fails)
+
 	if fails.is_empty():
 		print("UI PALETTE: ALL-OK")
 		quit(0)
@@ -218,3 +246,97 @@ func _tscn_bg_colors(raw: String) -> Array[String]:
 # 归一化:去掉所有空白与换行 ⇒ `Color(0,0,0,0.1)` 与 `Color(0, 0, 0, 0.1)` 相等。
 func _norm(s: String) -> String:
 	return s.replace(" ", "").replace("\t", "").replace("\n", "")
+
+
+# ── ⑥ Theme 颜色对账 ──
+# 读 THEME_SITE 原文,抽出每个 `Color(...)`,断言它**按值**等于调色板里某个 `const C_*`。
+# ★ 判据是值、不是文本:.tres 里写的是 `Color(0.105882354, 0.14117648, 0.17254902, 1)`,
+#   而调色板源里是 `Color("#1B242C")` —— 逐字比较**恒不相等**,只有解析成 Color 再比才对。
+# ★ 两条防空转(缺了它们,读不到/形状变了都会静默 ALL-OK):读不到 ⇒ 红;抽到的数量 < 下限 ⇒ 红。
+func _check_theme_colors(pal_code: String, fails: Array[String]) -> void:
+	var raw := ScanUtil.read(THEME_SITE)
+	if raw.is_empty():
+		fails.append("⑥ 读不到 %s(读不到就是红,不是静默跳过)" % THEME_SITE)
+		return
+	var palette := _palette_colors(pal_code)
+	if palette.is_empty():
+		fails.append("⑥ 从调色板 %s 解析不出任何 `const C_* := Color(...)`(解析坏了 ⇒ 本条会静默通过)" % PALETTE)
+		return
+	var re := RegEx.create_from_string("Color\\([^)]*\\)")
+	var n := 0
+	for m in re.search_all(raw):
+		var lit := m.get_string(0)
+		var c = _parse_color(lit)
+		if c == null:
+			fails.append("⑥ %s 里的 `%s` 解析不出颜色(形状变了 ⇒ 本条对这一处失明)" % [THEME_SITE, lit])
+			continue
+		n += 1
+		if not _color_in(c, palette):
+			fails.append("⑥ %s 里的 %s 不等于任何调色板常量(Theme 的颜色必须只来自 UiFactory)" % [THEME_SITE, lit])
+	if n < THEME_COLOR_MIN:
+		fails.append("⑥ %s 里只抽到 %d 个 `Color(...)`(下限 %d)—— 形状变了 / 读坏了时零命中是假绿"
+				% [THEME_SITE, n, THEME_COLOR_MIN])
+
+
+# 从调色板源码里取出所有 `const C_xxx := Color(...)` 的值。
+func _palette_colors(code: String) -> Array[Color]:
+	var out: Array[Color] = []
+	var re := RegEx.create_from_string("const\\s+C_\\w+\\s*:=\\s*(Color\\([^)]*\\))")
+	for m in re.search_all(code):
+		var c = _parse_color(m.get_string(1))
+		if c != null:
+			out.append(c)
+	return out
+
+
+# 把一处 `Color(...)` 字面量解析成 Color;解析不了返回 **null**。
+# 认两种形状(与调色板/`.tres` 实际用到的写法一致):
+#   · `Color("#RRGGBB")` / `Color("#RRGGBBAA")` —— 单实参、十六进制串;
+#   · `Color(a, b, c)` / `Color(a, b, c, d)` —— 数值实参,每个允许 `x / y` 算式。
+func _parse_color(expr: String) -> Variant:
+	var s := expr.strip_edges()
+	if not s.begins_with("Color(") or not s.ends_with(")"):
+		return null
+	var inner := s.substr(6, s.length() - 7)
+	var parts := inner.split(",")
+	if parts.size() == 1:
+		var t := (parts[0] as String).strip_edges()
+		if t.begins_with("\"") and t.ends_with("\""):
+			return Color(t.substr(1, t.length() - 2))
+		return null
+	if parts.size() < 3 or parts.size() > 4:
+		return null
+	var v0 = _eval_num((parts[0] as String).strip_edges())
+	var v1 = _eval_num((parts[1] as String).strip_edges())
+	var v2 = _eval_num((parts[2] as String).strip_edges())
+	if v0 == null or v1 == null or v2 == null:
+		return null
+	var a := 1.0
+	if parts.size() == 4:
+		var va = _eval_num((parts[3] as String).strip_edges())
+		if va == null:
+			return null
+		a = va
+	return Color(v0, v1, v2, a)
+
+
+# 求一个数值实参:`"0.1"` / `"99.0 / 255.0"` 这类;算不出返回 null。
+func _eval_num(t: String) -> Variant:
+	if t.is_valid_float():
+		return t.to_float()
+	if t.contains("/"):
+		var halves := t.split("/")
+		var lhs := (halves[0] as String).strip_edges()
+		var rhs := (halves[1] as String).strip_edges()
+		if halves.size() == 2 and lhs.is_valid_float() and rhs.is_valid_float():
+			return lhs.to_float() / rhs.to_float()
+	return null
+
+
+# c 是否按值等于 palette 里任一个(带 COLOR_TOL 容差,见常量注释)。
+func _color_in(c: Color, palette: Array[Color]) -> bool:
+	for p in palette:
+		if (absf(c.r - p.r) <= COLOR_TOL and absf(c.g - p.g) <= COLOR_TOL
+				and absf(c.b - p.b) <= COLOR_TOL and absf(c.a - p.a) <= COLOR_TOL):
+			return true
+	return false
