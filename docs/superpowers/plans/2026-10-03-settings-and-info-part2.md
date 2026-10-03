@@ -911,8 +911,10 @@ menu_autotest 的 --autotest-ver 语义反转:弹层不切场景 → 整页会�
 - [ ] **取图人眼验收**（本仓纪律：视觉类改动要有图）
 
 ```bash
-"$GODOT" --headless --path . --quit-after 200 -- --autotest-ver
-"$GODOT" --headless --path . --quit-after 200 -- --autotest-set
+# ★ 去掉 --headless(见下方说明);headless 下探针不会存图
+"$GODOT" --path . --quit-after 200 -- --autotest-ver
+# ★ 去掉 --headless(见下方说明);headless 下探针不会存图
+"$GODOT" --path . --quit-after 200 -- --autotest-set
 ```
 
 图落在 `user://autotest_ver.png` / `autotest_set.png`。**自己读图**（本仓踩过"数值全绿但画面是坏的"）。
@@ -920,6 +922,10 @@ menu_autotest 的 --autotest-ver 语义反转:弹层不切场景 → 整页会�
 - [ ] **`CLAUDE.md`**：**本计划不要动它** —— 由协调者在收尾时统一处理（另一个会话正在改它）。
 
 ---
+
+★★ **取图那一步不要带 `--headless`** —— headless 下没有视口纹理,探针会打印
+「headless 无视口纹理,跳过截图」并**静默地什么都不存**。照初稿带 `--headless` 跑,
+你会以为图在 `user://` 里、其实永远没有。**去掉 `--headless`,跑真窗口。**(计划 ② Task 4 实测踩到。)
 
 ## 已知边界（本计划**不**处理的）
 

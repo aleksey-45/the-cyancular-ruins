@@ -399,7 +399,8 @@ git commit -m "feat(ui): 菜单专属按钮与标题带工厂(不动共用的 st
 - [ ] **Step 2: 取图并自己读**
 
 ```bash
-"$GODOT" --headless --path . --quit-after 200 -- --autotest-ver
+# ★ 去掉 --headless(见下方说明);headless 下探针不会存图
+"$GODOT" --path . --quit-after 200 -- --autotest-ver
 ```
 图在 `user://autotest_ver.png`（主菜单那屏）。**打开看**：标题是青的、没有副题、按钮是凿刻描边、退出/Beta 明显弱化。
 
@@ -436,8 +437,10 @@ git commit -m "style(menu): 主菜单与 Beta 页换成方向 B"
 - [ ] **Step 1: 改 + 跑三条自检 + 取两张图自己读**
 
 ```bash
-"$GODOT" --headless --path . --quit-after 200 -- --autotest-set
-"$GODOT" --headless --path . --quit-after 200 -- --autotest-ver
+# ★ 去掉 --headless(见下方说明);headless 下探针不会存图
+"$GODOT" --path . --quit-after 200 -- --autotest-set
+# ★ 去掉 --headless(见下方说明);headless 下探针不会存图
+"$GODOT" --path . --quit-after 200 -- --autotest-ver
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/settings_display_section_probe.tscn
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/info_page_probe.tscn
 ```
@@ -547,6 +550,10 @@ git commit -m "style(ui): 结算页与暂停菜单换成方向 B"
 - [ ] **逐屏取图人眼验收**（六屏）：`--autotest-{ver,set,mp,royale,team,beta}` + `match_result_probe` + pause 的图。**自己读**。
 
 ---
+
+★★ **取图那一步不要带 `--headless`** —— headless 下没有视口纹理,探针会打印
+「headless 无视口纹理,跳过截图」并**静默地什么都不存**。照初稿带 `--headless` 跑,
+你会以为图在 `user://` 里、其实永远没有。**去掉 `--headless`,跑真窗口。**(计划 ② Task 4 实测踩到。)
 
 ## 已知边界（本计划**不**处理的）
 
