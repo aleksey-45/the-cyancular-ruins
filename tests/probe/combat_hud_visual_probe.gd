@@ -29,6 +29,26 @@ const TEAM_HUD_SCENE := "res://ui/hud/team_hud.tscn"
 
 var _failures: Array[String] = []
 
+# 断言计数闸(2026-10-04,R41 —— 与 `kh_l3_visual_probe` 同款)。
+# ★ 为什么必须有:`ALL-OK` 只证明**没有任何断言失败**,**不证明每条断言都跑过** —— 脚本错误只结束
+#   **出错的那个函数**、调用方继续 ⇒ 后面的断言静默跳过,而 verdict 照打 `ALL-OK`。
+#   本文件整段断言都在**同一个函数**(`_run_round`)里,而且它里面充满了**无守卫的属性访问**
+#   (`pvp._big` / `pvp._mask` / `royale._rows` …)—— 任何一个被改名或搬走,`_run_round` 都会中途抛错,
+#   于是**它之后的全部断言**(含本轮新加的两条几何断言)**一起静默失效**。这正是 R19 那条假绿的同款。
+const EXPECTED_CHECKS := 22
+# ★ 22 是**逐个数出来的**,不是估的(全部 18 处 `_check(` 调用点都在 `_run_round()` 里):
+#   · 函数体顶层 15 处(记分条 / 大字 / 外框 / 标题带 / 遮罩 / 掉线 / 掉线像素差 / 掉线位置 /
+#     榜行数 / 终局大字 / 掉线行文案 / 态8 像素差 / 3v3 记分条 / 3v3 大字 / 平局文案);
+#   · `if royale._rows.size() == 4:` 里 1 处(榜首行文本)—— 跑通的那条路上成立;
+#   · `if grace_row != null:` 里 1 处(掉线行没被 clip_text 裁)—— 同上;
+#   · `for pair in [ … 5 组 … ]` 里 1 处 ⇒ **跑 5 次**(态 1→2 / 2→3 / 3→4 / 4→5 / 5→6)。
+#   15 + 1 + 1 + 5 = **22**。
+#   ★ 那两个条件分支:条件不成立时**既红那条断言、又少一条计数** ⇒ 两条信号,不是漏报。
+#   ★ `_shot()` 里的两处失败是**直接** `_failures.append`(截图失败/写盘失败),不经过 `_check`
+#     ⇒ 不计入 22,与 `kh_l3_visual_probe` 同一口径。
+#   ★ 用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`tests/probe/late_match_probe.gd` 同款)。
+var _checks := 0
+
 # 态2 广播面板的两条**布局尺寸**(见 `_run_round` 里那段 R18 注释)。
 # ★★ **量具**(这一条比数字本身重要):`Control.size`,即**布局尺寸**。
 #    **不要**用 `get_global_rect().size` 做判据 —— 它把父级缩放算进去,而本面板每次弹出都会走
@@ -125,9 +145,16 @@ func _run_round() -> void:
 	#   量的 ⇒ **绝对值被脉冲污染**,已按本探针的实测值订正;两处宽度互印的 +24/+25 说明
 	#   "菜单尺度漏进 HUD"那个**结论**没变。
 	# ★ 尺寸比的是**逻辑单位**(视口 1920×1440),不是截图里的像素数:截图尺寸随窗口缩放变。
-	# ★ 节点在不在**先判**:拿不到节点时 `.size` 给 0×0,直接拿 0 去比会把"路径写错 /
-	#    节点搬走"误报成"尺寸漂了"。
-	var panel: Control = pvp._broadcast._panel
+	# ★★ 节点在不在**先判**(R41):`pvp._broadcast` / 它的 `_panel` 都是**无守卫的属性访问** ——
+	#    被改名/搬走时会**直接抛错**,`_run_round` 在那一行断掉,于是**它之后的全部断言**(含下面
+	#    这两条)静默跳过而 verdict 照打 —— R19 那条假绿的同款。故这两跳都走 `get()` 显式取,
+	#    取不到就给 null(下面的断言会红,而不是整个函数断在半路)。
+	#    ★ `pvp._big`(`:103` 与本行)是**既有**的同类暴露(R41 评审:可以留,不是本 diff 的面);
+	#      它现在也**跑不掉**了 —— 真出了事,下面那道 `_checks != EXPECTED_CHECKS` 会红。
+	# ★ 还有一层理由:拿不到节点时 `.size` 是 0×0,直接拿 0 去比会把"路径写错 / 节点搬走"
+	#    误报成"尺寸漂了"(判词会把读者往错的方向引);先判 null 才能给出正确的那句判词。
+	var bcast = pvp.get("_broadcast")
+	var panel: Control = null if bcast == null else bcast.get("_panel") as Control
 	var strip: Control = pvp._big.get_parent() as Control
 	print("[HUD-VISUAL] 态2 广播外框 size = %s rect = %s;标题带 size = %s rect = %s;panel.scale = %s"
 			% ["<无节点>" if panel == null else str(panel.size),
@@ -382,6 +409,7 @@ func _diff(a: Image, b: Image) -> int:
 
 
 func _check(ok: bool, msg: String) -> void:
+	_checks += 1
 	if ok:
 		print("[HUD-VISUAL] ✓ %s" % msg)
 	else:
@@ -390,8 +418,15 @@ func _check(ok: bool, msg: String) -> void:
 
 
 func _finish() -> void:
+	# ★ 计数闸**先于** verdict:跑少了 = 有断言被静默跳过(见文件头那条说明)⇒ 必须红,
+	#   而不是照打 ALL-OK —— 那正是本文件里"无守卫属性访问 ⇒ 中途抛错"那一族的形状。
+	if _checks != EXPECTED_CHECKS:
+		_failures.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上"
+				% [_checks, EXPECTED_CHECKS]
+				+ "(要么有断言被静默跳过 —— 脚本错误只结束出错的那个函数、调用方继续;"
+				+ "要么新加的断言没登记进 EXPECTED_CHECKS)")
 	if _failures.is_empty():
-		print("COMBAT HUD VISUAL PROBE: ALL-OK")
+		print("COMBAT HUD VISUAL PROBE: ALL-OK(%d 条断言)" % _checks)
 		get_tree().quit(0)
 	else:
 		print("COMBAT HUD VISUAL PROBE: FAIL")
