@@ -533,7 +533,7 @@ extends Node
 #   没有任何东西会红 —— 它只表现为"页面上少一个人"或"致谢写错了名"。
 #   本探针把那三块内容**逐字**钉住。
 # ★ 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
-const EXPECTED_CHECKS := 12
+const EXPECTED_CHECKS := 17
 
 const SCENE := "res://scenes/info_menu.tscn"
 const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048"]
