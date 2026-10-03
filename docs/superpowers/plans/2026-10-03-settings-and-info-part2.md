@@ -476,8 +476,11 @@ timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/app_info_smoke.gd
 
 - [ ] **Step 6: 刷导入缓存，再提交**
 
+★★ **`--import` 必须排在 Step 5 那两条命令之前**（本计划初稿放在这里，**是错的**）：
+新建的 `class_name AppInfo` 在类缓存刷新前**解析不到**，而 `main_menu.gd` 静态引用它
+⇒ Step 5 的 `--autotest-ver` 会 Parse Error。**先刷缓存，再跑自检**，最后提交。
+
 ```bash
-"$GODOT" --headless --path . --import
 git add core/config/app_info.gd core/config/app_info.gd.uid \
         scenes/main_menu.gd tests/smoke/app_info_smoke.gd tests/smoke/app_info_smoke.gd.uid
 git commit -m "refactor(core): 抽 AppInfo —— version_string/commit_log 搬出 main_menu
