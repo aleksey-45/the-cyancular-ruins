@@ -136,13 +136,38 @@ func _check_layout(root: Node) -> void:
 	var scroll_w := scroll.size.x if scroll != null else -1.0
 	_check(row != null and scroll != null and row_w <= scroll_w,
 			"钉死行宽 %.0f ≤ 滚动区宽 %.0f" % [row_w, scroll_w])
-	var left: Control = scroll.get_parent().get_parent() if scroll != null else null
-	var cols: Node = left.get_parent() if left != null else null
+	# ★ 两栏 = 含 scroll 的那条 `HBoxContainer`,它的两个直接子节点就是左右两栏。
+	#   原先写的是 `scroll.get_parent().get_parent()` —— 左栏从裸 `PanelContainer` 换成
+	#   `UiFactory.menu_panel()`(内多一层 `Body`)之后,那个表达式量到的是 `Body`,
+	#   而 `Body` 的父(外层 `PanelContainer`)只有 1 个子节点 ⇒ 右栏取不到 ⇒ **假红**。
+	#   改成"往上找含 scroll 的两子 HBox":版式再套一层也不瞎,而**删掉右栏仍会红**。
+	var cols := _find_two_col_box(root, scroll)
+	var left: Control = cols.get_child(0) if cols != null else null
 	var right: Control = cols.get_child(1) if cols != null and cols.get_child_count() >= 2 else null
 	_check(left != null and right != null and left.size.x > right.size.x,
 			"左栏 %.0f > 右栏 %.0f(设计 §3.10 左 1.25 : 右 1)" % [
 					left.size.x if left != null else -1.0,
 					right.size.x if right != null else -1.0])
+
+
+# 找含 `scroll` 的、恰有 2 个直接子节点的 HBoxContainer(= 那两栏)。
+func _find_two_col_box(root: Node, scroll: Node) -> Node:
+	if root is HBoxContainer and root.get_child_count() == 2 and _subtree_has(root, scroll):
+		return root
+	for c in root.get_children():
+		var r := _find_two_col_box(c, scroll)
+		if r != null:
+			return r
+	return null
+
+
+func _subtree_has(n: Node, target: Node) -> bool:
+	if n == target:
+		return true
+	for c in n.get_children():
+		if _subtree_has(c, target):
+			return true
+	return false
 
 
 func _find_scroll(root: Node) -> ScrollContainer:

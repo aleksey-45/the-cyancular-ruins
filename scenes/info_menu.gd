@@ -19,10 +19,20 @@ const CREDITS := [
 
 # 提交行的**钉死宽度**。★★ 它**必须小于左栏的可见内宽**,否则:
 #   ScrollContainer 照样出横向滚动条,而**省略号落在可视区之外** —— 比不钉还糟
-#   (既滚动又看不见截断提示)。实测:1:1 时左栏内宽 829、加了下面那句
-#   `size_flags_stretch_ratio` 之后是 927 ⇒ 取 760,两种布局下都留余量。
+#   (既滚动又看不见截断提示)。实测(2026-10-03,左栏换成 `menu_panel()` 后):
+#   1920 宽、页面边距 76、两栏 1.25:1 ⇒ 左栏内宽 ≈ 850 ⇒ 取 760 留余量。
 #   ★ 别照抄被取代的 `version_panel.tscn` 的 1100:那个面板本身 1180 宽,放得下。
 const ROW_W := 760.0
+
+# ── 版式常量(与 `scenes/settings_menu.gd` / `scenes/mp_lobby.gd` 同一档)──
+# 页面四周留白(与设置页 / 大厅的 PAGE_MARGIN 同一个呼吸量)。
+const PAGE_MARGIN := 76
+# 页面标题带 / 两栏 / 底部返回行之间的空档。
+const BLOCK_GAP := 24
+# 两栏之间。
+const COL_GAP := 32
+# 一块面板内:标题带与内容之间、内容行与行之间。
+const SECTION_GAP := 10
 
 
 func _ready() -> void:
@@ -38,46 +48,59 @@ func _ready() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
+	# 整页走 MarginContainer(页面留白)+ VBox —— 与设置页同一套版式骨架(不再用绝对坐标)。
+	var page := MarginContainer.new()
+	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right", "top", "bottom"]:
+		page.add_theme_constant_override("margin_" + side, PAGE_MARGIN)
+	add_child(page)
+
 	var vb := VBoxContainer.new()
-	vb.position = Vector2(60, 40)
-	vb.custom_minimum_size = Vector2(1800, 0)
-	vb.add_theme_constant_override("separation", 20)
-	add_child(vb)
-	vb.add_child(UiFactory.label("信 息", 48, UiFactory.C_ACCENT))
+	vb.add_theme_constant_override("separation", BLOCK_GAP)
+	page.add_child(vb)
+
+	# 页面标题 = 同款标题带(与「—— 设 置 ——」/「—— Beta ——」同一个味道)。
+	vb.add_child(UiFactory.header_strip("信 息", 48))
 
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 30)
+	cols.add_theme_constant_override("separation", COL_GAP)
+	# 两栏吃掉剩余高度 ⇒ 底部返回行天然贴到页面下沿(与设置页同款)。
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vb.add_child(cols)
 	_fill_version_block(cols)
 	_fill_right_blocks(cols)
 
 	var back_row := HBoxContainer.new()
 	back_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	var back := UiFactory.button("返 回", 32, Vector2(280, 48))
+	var back := UiFactory.menu_button("返 回", 32, Vector2(280, 72), "quiet")
 	back.pressed.connect(_go_back)
 	back_row.add_child(back)
 	vb.add_child(back_row)
 
 
 func _fill_version_block(parent: Node) -> void:
-	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	# 左栏 = 一块 `menu_panel()`(方向 B 的凿刻边,与设置页两栏同一形状)。
+	# ★★ 内容**必须**加在 `get_node("Body")` 里 —— 只有 `Body` 承载面板的内边距;
+	#    加在外层等于 padding 完全失效、内容直接顶到外线上(画面上只表现为"挤",**不报错**)。
+	var panel := UiFactory.menu_panel()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# ★★ 设计 §3.10 的「左 1.25 : 右 1」**只能靠 stretch_ratio 表达** ——
 	#    `ScrollContainer` 的**最小尺寸不向上传播**子节点的最小宽度,所以指望用
-	#    `ROW_W` 把左栏撑宽是徒劳的(实测:两栏会塌成 1:1 = 885/885)。
+	#    `ROW_W` 把左栏撑宽是徒劳的。
 	panel.size_flags_stretch_ratio = 1.25
-	# ★ 2026-10-03:简报的 `_fill_version_block` 漏了这一行(整块左栏从不入树)。
-	#   后果是"版本信息"这一栏**一点都看不见**,而且只有本探针会红 ——
-	#   右栏(`_fill_right_blocks`)有对应的 `parent.add_child(col)`,两栏的形状本该对称。
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	parent.add_child(panel)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 10)
-	panel.add_child(box)
-	box.add_child(UiFactory.label("版 本 信 息", 32, UiFactory.C_ACCENT))
+	box.add_theme_constant_override("separation", SECTION_GAP)
+	(panel.get_node("Body") as Container).add_child(box)
+	# 区块标题 = 同款标题带(金色,C_HEADER 底 + 只有下边一条线)。
+	box.add_child(UiFactory.header_strip("版 本 信 息", 32))
 	box.add_child(UiFactory.label("当前版本　%s" % AppInfo.version_string(), 32))
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, 900)
+	# ★ 固定 900 高会与「页面边距 76 + 标题带 + 底部返回行」一起把整页顶出 1440 ⇒ 返回行被切。
+	#   改成 EXPAND_FILL + 一个小的最小高度:滚动区吃掉左栏剩余高度,页面永远装得下。
+	scroll.custom_minimum_size = Vector2(0, 300)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(scroll)
 	var list := VBoxContainer.new()
 	list.custom_minimum_size = Vector2(ROW_W, 0)
@@ -119,26 +142,25 @@ func _fill_version_block(parent: Node) -> void:
 
 func _fill_right_blocks(parent: Node) -> void:
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 24)
+	col.add_theme_constant_override("separation", BLOCK_GAP)
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(col)
 
-	var team := PanelContainer.new()
-	team.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	# 右栏两节各一块 `menu_panel()` —— 与左栏 / 设置页同一形状(凿刻边 + 标题带)。
+	var team := UiFactory.menu_panel()
 	var tbox := VBoxContainer.new()
-	tbox.add_theme_constant_override("separation", 8)
-	team.add_child(tbox)
-	tbox.add_child(UiFactory.label("开 发 团 队", 32, UiFactory.C_ACCENT))
+	tbox.add_theme_constant_override("separation", SECTION_GAP)
+	(team.get_node("Body") as Container).add_child(tbox)
+	tbox.add_child(UiFactory.header_strip("开 发 团 队", 32))
 	for who in DEV_TEAM:
 		tbox.add_child(UiFactory.label(who, 32))
 	col.add_child(team)
 
-	var cred := PanelContainer.new()
-	cred.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	var cred := UiFactory.menu_panel()
 	var cbox := VBoxContainer.new()
-	cbox.add_theme_constant_override("separation", 8)
-	cred.add_child(cbox)
-	cbox.add_child(UiFactory.label("致 谢", 32, UiFactory.C_ACCENT))
+	cbox.add_theme_constant_override("separation", SECTION_GAP)
+	(cred.get_node("Body") as Container).add_child(cbox)
+	cbox.add_child(UiFactory.header_strip("致 谢", 32))
 	for pair in CREDITS:
 		var right := str(pair[1])
 		cbox.add_child(UiFactory.label(
