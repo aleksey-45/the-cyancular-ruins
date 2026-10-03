@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3 uid="uid://royalehud000001"]
+[gd_scene load_steps=4 format=3 uid="uid://royalehud000001"]
 
 [ext_resource type="Script" path="res://ui/hud/royale_hud.gd" id="1"]
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
+[ext_resource type="PackedScene" path="res://ui/hud/broadcast.tscn" id="3"]
 
 [node name="RoyaleHud" type="CanvasLayer"]
 layer = 130
@@ -41,36 +42,10 @@ theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
 theme_override_fonts/font = ExtResource("2")
 theme_override_font_sizes/font_size = 32
 
-[node name="Mask" type="ColorRect" parent="."]
-visible = false
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-color = Color(0, 0, 0, 0.3)
-
-[node name="Center" type="CenterContainer" parent="."]
-visible = false
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-
-[node name="VBox" type="VBoxContainer" parent="Center"]
-mouse_filter = 2
-alignment = 1
-
-[node name="BigLabel" type="Label" parent="Center/VBox"]
-theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
-theme_override_fonts/font = ExtResource("2")
-theme_override_font_sizes/font_size = 144
-
-[node name="SubLabel" type="Label" parent="Center/VBox"]
-theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
-theme_override_fonts/font = ExtResource("2")
-theme_override_font_sizes/font_size = 64
+; 中央广播(遮罩 + 居中巨字)已抽成共享组件 —— 三个对局 HUD 逐字相同的那一份。
+; ★ 位置**夹在排行榜与 PingWrap/HintWrap 之间**:Broadcast 里的 Mask 盖在排行榜之上
+;   (节点顺序 = 绘制顺序)是现状,别顺手改进。组件的层位随本 HUD(layer 130)。
+[node name="Broadcast" parent="." instance=ExtResource("3")]
 
 [node name="PingWrap" type="PanelContainer" parent="."]
 anchor_left = 1.0

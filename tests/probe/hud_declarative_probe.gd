@@ -55,6 +55,9 @@ const PAIRS := [
 	["res://ui/screens/match_result.gd", "res://ui/screens/match_result.tscn", "MatchResult"],
 	# 阶段 3(2026-09-28):层位 140,挂在 `scenes/pvp_match_client.gd` 的 `_setup_status_banner()`。
 	["res://ui/hud/status_banner.gd", "res://ui/hud/status_banner.tscn", "StatusBanner"],
+	# 2026-10-03:中央广播抽成三 HUD 共用组件(裸骨架 tscn:节点由 _ready 用 UiFactory 现建,
+	# 故 ② 对它不适用 —— 见文件头那段"裸骨架"的适用前提)。
+	["res://ui/hud/broadcast.gd", "res://ui/hud/broadcast.tscn", "Broadcast"],
 ]
 
 # 参数下限:防止 PAIRS 被误删成空表 → 零循环 → 恒绿

@@ -3,7 +3,8 @@ extends CanvasLayer
 
 # 大乱斗 HUD(CanvasLayer layer=130):
 #  - 右上角击杀排行榜(实时):名次/昵称/击杀数/存活状态,自己高亮;下方显示剩余时间
-#  - 广播层:全屏遮罩 + 居中巨字(开局倒计时/终局胜败)
+#  - 广播层:全屏遮罩 + 居中巨字(开局倒计时/终局胜败)—— **三个对局 HUD 共用**
+#    `ui/hud/broadcast.tscn`(见 broadcast.gd),本类只喂文案与时机
 #  - 延迟(右下角)
 # 数据全部来自 round_state 载荷:{state, scores(总击杀), timer, names, alive, left, match_winner}
 #
@@ -21,8 +22,8 @@ const COLOR_LEFT := UiFactory.C_DANGER
 # ★ 与上三档是并列的第四种语义,故用调色板里新加的那一档(理由与实测对比度见
 #   `UiFactory.C_GRACE` 那段)。别为了省一个常量把它并进任何一档。
 const COLOR_GRACE := UiFactory.C_GRACE
-# (原先还有 BIG_COLOR / SUB_COLOR —— 中央广播的大字/副文案颜色。两者已随广播层迁进
-#  royale_hud.tscn,这里不再有引用,故连同常量一并删除,不留死声明。)
+# (原先还有 BIG_COLOR / SUB_COLOR —— 中央广播的大字/副文案颜色。两者随广播层一起搬进了
+#  共享组件 `ui/hud/broadcast.gd`,这里不再有引用,故连同常量一并删除,不留死声明。)
 
 # 排行榜面板宽(原 480):一行要塞「名次 + 昵称 + 击杀 + 阵亡 + 状态」五段,
 # 480 时只要昵称稍长,末段的「存活/复活中/离开」就被顶出面板(2026-09-13 实测:
@@ -43,19 +44,20 @@ const ST_MATCH_OVER := 3
 @onready var _board_bg: ColorRect = $BoardBg
 @onready var _board_vbox: VBoxContainer = $BoardBox
 @onready var _timer_label: Label = $BoardBox/TimerLabel
-@onready var _mask: ColorRect = $Mask
-@onready var _center: CenterContainer = $Center
-@onready var _big: Label = $Center/VBox/BigLabel
-@onready var _sub: Label = $Center/VBox/SubLabel
+@onready var _broadcast: Broadcast = $Broadcast
 @onready var _ping_wrap: PanelContainer = $PingWrap
 @onready var _ping_label: Label = $PingWrap/PingLabel
 @onready var _hint_wrap: PanelContainer = $HintWrap
 
+# 探针兼容访问口:广播节点已搬进 Broadcast 组件,本转发保住既有读点
+# (`combat_hud_visual_probe` 读 `royale._big`)。
+var _big: Label:
+	get:
+		return _broadcast.big if _broadcast != null else null
+
 # 排行榜行 Label(不含标题/计时):**复用**而不是每次重建 —— 见 _on_round_state 里的说明
 var _rows: Array[Label] = []
 var _last_row_count := -1
-var _countdown := 0.0
-var _in_countdown := false
 var _state := ST_COUNTDOWN
 # role(int) -> 剩余秒(**只由服务器下发**)。★ 大乱斗的 `RoyaleHost` 本来就 **1Hz 广播**
 # `round_state`(HUD_SYNC_INTERVAL),而 `server_main` 也是每秒刷一次读数 ⇒ 这里的值恒新,
@@ -77,16 +79,25 @@ func _ready() -> void:
 	_hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
-	_set_broadcast(true, "大乱斗", "等待开局…")
+	# ★ 倒计时数字走完那一拍:PLAYING 态要收起广播(1v1/3v3 不接这条 —— 它们的 PLAYING
+	#   广播由服务器下发的状态切换收起)。
+	_broadcast.countdown_finished.connect(_on_countdown_finished)
+	_broadcast.set_broadcast(true, "大乱斗", "等待开局…")
+
+
+# 倒计时走完 ⇒ 若此刻已是 PLAYING,把广播收起(原来是 `_process` 里那两行的收口)。
+func _on_countdown_finished() -> void:
+	if _state == ST_PLAYING:
+		_broadcast.set_broadcast(false, "", "")
 
 
 # ── 布局说明(节点树已迁进 ui/royale_hud.tscn)────────────────────────────
 # 四个静态区块原先由 _build_board/_build_broadcast/_build_ping/_build_hint 现建
 # (阶段 5.5 前 _ready 有 90 净行)。现在场景里声明、上面 @onready 取回:
-#   BoardBg + BoardBox(排行榜底与内容,右锚) / Mask + Center(广播层)
+#   BoardBg + BoardBox(排行榜底与内容,右锚) / Broadcast(共享的广播层,含 Mask)
 #   / PingWrap(右下角延迟) / HintWrap(左下角按键提示,下锚)
 # ★ 子节点顺序 = 绘制顺序,必须与当年的 add_child 顺序一致:BoardBg → BoardBox →
-#   Mask → Center → PingWrap → HintWrap。**Mask 盖在排行榜之上是现状**,别顺手改进。
+#   Broadcast → PingWrap → HintWrap(**Broadcast 的 Mask 盖在排行榜之上是现状**,别顺手改进)。
 # ★ 硬编码的 1920 屏幕坐标已换成右锚/下锚(1920×1440 视口下位置逐一等价)。
 
 # HUD 元素底板(与单机 HUD 同一套做法)。★ 唯一源是 `UiFactory.C_PLATE` —— 本处直接引用,
@@ -116,28 +127,15 @@ func _make_label(size: int, color: Color) -> Label:
 	UiFactory.style_control(l, size)
 	return l
 
-func _set_broadcast(show: bool, big: String, sub: String) -> void:
-	_mask.visible = show
-	_center.visible = show
-	_big.text = big
-	_sub.text = sub
-
+# 外部(如断线通知)直接弹广播;倒计时由 Broadcast 自己续写(这里一并把它停掉)。
 func show_notice(big: String, sub: String = "") -> void:
-	_in_countdown = false
-	_set_broadcast(true, big, sub)
+	_broadcast.set_broadcast(true, big, sub)
 
-# 倒计时数字本地走秒(服务器只在状态切换/每秒同步时广播 round_state)
+# 倒计时数字走秒已收进 Broadcast(PLAYING 且走完时由 `_on_countdown_finished` 收起)。
 func _process(delta: float) -> void:
-	if _in_countdown:
-		_countdown -= delta
-		if _countdown > 0.0:
-			_big.text = str(maxi(ceili(_countdown), 1))
-		else:
-			_in_countdown = false
-			if _state == ST_PLAYING:
-				_set_broadcast(false, "", "")
+	_broadcast.tick(delta)
 	# 剩余时间本地走秒微调(每秒有服务器广播校正)
-	if _state == ST_PLAYING and not _in_countdown and _timer_label.has_meta("remain"):
+	if _state == ST_PLAYING and not _broadcast.is_counting() and _timer_label.has_meta("remain"):
 		var remain := float(_timer_label.get_meta("remain")) - delta
 		_timer_label.set_meta("remain", remain)
 		_timer_label.text = "剩余时间  %d:%02d" % [int(maxf(remain, 0.0)) / 60, int(maxf(remain, 0.0)) % 60]
@@ -232,28 +230,24 @@ func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: A
 		alive: Dictionary) -> void:
 	match state:
 		ST_COUNTDOWN:
-			_countdown = float(data.get("timer", 3.0))
-			_in_countdown = true
 			_timer_label.text = "准备…"
-			_set_broadcast(true, str(maxi(ceili(_countdown), 1)), "大乱斗开始")
+			_broadcast.start_countdown(float(data.get("timer", 3.0)), "大乱斗开始")
 		ST_PLAYING:
-			_in_countdown = false
-			_set_broadcast(false, "", "")
+			_broadcast.set_broadcast(false, "", "")
 			var remain := float(data.get("timer", 300.0))
 			_timer_label.set_meta("remain", remain)
 			_timer_label.text = "剩余时间  %d:%02d" % [int(remain) / 60, int(remain) % 60]
 		ST_MATCH_OVER:
-			_in_countdown = false
 			_timer_label.text = "对局结束"
 			var mw := int(data.get("match_winner", 0))
 			if mw == 0:
-				_set_broadcast(true, "平 局", "杀敌数不相上下")
+				_broadcast.set_broadcast(true, "平 局", "杀敌数不相上下")
 			elif rows.size() > 0 and mw != 0:
 				# winner 名字:names 里 role==mw
 				var wname := str(names.get(str(mw), names.get(mw, "P%d" % mw)))
 				if wname == _my_name:
-					_set_broadcast(true, "胜 利 !", "你是大乱斗之王")
+					_broadcast.set_broadcast(true, "胜 利 !", "你是大乱斗之王")
 				else:
-					_set_broadcast(true, "失 败", "%s 赢得了大乱斗" % wname)
+					_broadcast.set_broadcast(true, "失 败", "%s 赢得了大乱斗" % wname)
 		_:
 			pass

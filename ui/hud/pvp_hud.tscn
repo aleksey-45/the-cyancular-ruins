@@ -1,7 +1,8 @@
-[gd_scene load_steps=4 format=3 uid="uid://pvphud000000a1"]
+[gd_scene load_steps=5 format=3 uid="uid://pvphud000000a1"]
 
 [ext_resource type="Script" path="res://ui/hud/pvp_hud.gd" id="1"]
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
+[ext_resource type="PackedScene" path="res://ui/hud/broadcast.tscn" id="3"]
 
 [sub_resource type="StyleBoxFlat" id="Plate"]
 ; ★ 这是**副本**:唯一源是 ui/ui_factory.gd 的 C_PLATE(`.tscn` 引用不到 GDScript 的 const)。
@@ -16,40 +17,11 @@ content_margin_bottom = 8.0
 layer = 130
 script = ExtResource("1")
 
-[node name="Mask" type="ColorRect" parent="."]
-visible = false
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-color = Color(0, 0, 0, 0.3)
-
-[node name="Center" type="CenterContainer" parent="."]
-visible = false
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-
-[node name="VBox" type="VBoxContainer" parent="Center"]
-mouse_filter = 2
-alignment = 1
-
-[node name="BigLabel" type="Label" parent="Center/VBox"]
-theme_override_colors/font_color = Color(0.95, 0.95, 0.95, 0.9)
-theme_override_font_sizes/font_size = 144
-theme_override_fonts/font = ExtResource("2")
-text = ""
-horizontal_alignment = 2
-
-[node name="SubLabel" type="Label" parent="Center/VBox"]
-theme_override_colors/font_color = Color(0.82, 0.84, 0.9, 0.85)
-theme_override_font_sizes/font_size = 64
-theme_override_fonts/font = ExtResource("2")
-text = ""
-horizontal_alignment = 2
+; 中央广播(遮罩 + 居中大字/副文案)已抽成共享组件 —— 三个对局 HUD 逐字相同的那一份。
+; ★ 它**必须是第一个子节点**:Mask 要画在记分条**之下**(节点顺序 = 绘制顺序,这是现状,
+;   照搬不改)。★ `.new()` 建出来的是空 Control、什么都画不出(且不报错) ⇒ 只能实例化场景。
+;   组件的层位随本 HUD(layer 130),它**不是**独立 CanvasLayer(见 ui/hud/broadcast.gd 文件头)。
+[node name="Broadcast" parent="." instance=ExtResource("3")]
 
 ; 记分条垫深底板:它对局中直接压在地图上,地图开阔区是浅灰蓝 —— 浅色文字压上去读不清。
 ; 底板由 PanelContainer 按内容撑开(不是把 Label 拉成一条 1240 宽的横条),故包一层 wrapper。

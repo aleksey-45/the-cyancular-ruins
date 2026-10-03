@@ -2,8 +2,10 @@ class_name PvpHud
 extends CanvasLayer
 
 # PvP 对局 HUD(CanvasLayer layer=130,盖在 PostProcess/单机 HUD 之上)。
-# 布局(遮罩/居中文案/记分/延迟与像素字体、颜色)已迁进 pvp_hud.tscn,这里只留信号驱动逻辑:
-#  - 广播层:全屏 (0,0,0,0.3) 遮罩 + 屏幕正中央巨大白字——开场/倒计时/本局结果/胜利失败/断线通知统一走这里
+# 布局(遮罩/居中文案/记分/延迟与像素字体、颜色)已迁进 pvp_hud.tscn + ui/hud/broadcast.tscn,
+# 这里只留信号驱动逻辑:
+#  - 广播层:全屏 (0,0,0,0.3) 遮罩 + 屏幕正中央巨大字——开场/倒计时/本局结果/胜利失败/断线通知统一走这里。
+#    ★ 该层**三个对局 HUD 共用** `ui/hud/broadcast.tscn`(见 broadcast.gd):本类只喂文案与时机。
 #  - 记分(**顶部正中**):P1/P2 击杀、局胜、局号
 #  - 延迟(右下角):NetBus.ping_updated 平滑 RTT
 
@@ -12,20 +14,24 @@ const ST_PLAYING := 1
 const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
+@onready var _broadcast: Broadcast = $Broadcast
 @onready var _score_label: Label = $ScoreWrap/ScoreLabel
-@onready var _mask: ColorRect = $Mask
-@onready var _center: CenterContainer = $Center
-@onready var _big: Label = $Center/VBox/BigLabel
-@onready var _sub: Label = $Center/VBox/SubLabel
 @onready var _ping_label: Label = $PingWrap/PingLabel
 @onready var _grace_wrap: PanelContainer = $GraceWrap
 @onready var _grace_label: Label = $GraceWrap/GraceLabel
 
-var _countdown := 0.0
-var _in_countdown := false
+# 探针兼容访问口:广播节点已搬进 Broadcast 组件,下面三个转发保住既有读点 ——
+#   `combat_hud_visual_probe`(读 `_big` / `_mask`)、`minimap_circle_probe`(`_mask.visible = false`)。
+var _mask: ColorRect:
+	get:
+		return _broadcast.mask if _broadcast != null else null
+var _big: Label:
+	get:
+		return _broadcast.big if _broadcast != null else null
+
 # 「对手掉线中」(阶段 3,spec §4 的 3.1):role(int) -> 剩余秒。
-# ★ 服务器只在**状态转折点**广播 `grace`,两次之间由本类**自己走秒**(与下面 `_countdown`
-#   同款口径);那份减法的唯一实现是 `GraceWindow.tick_display`(别在这里手写一份)。
+# ★ 服务器只在**状态转折点**广播 `grace`,两次之间由本类**自己走秒**(与广播那边
+#   `Broadcast.tick` 同一取舍);那份减法的唯一实现是 `GraceWindow.tick_display`(别在这里手写一份)。
 var _grace: Dictionary = {}
 
 func _ready() -> void:
@@ -34,30 +40,17 @@ func _ready() -> void:
 	NetBus.ping_updated.connect(_on_ping)
 	# 颜色只从调色板取(本次新增的第四种语义色,见 UiFactory.C_GRACE 那段的对比度实测)
 	_grace_label.add_theme_color_override("font_color", UiFactory.C_GRACE)
-	_set_broadcast(true, "对战开始", "第 1 局")
+	_broadcast.set_broadcast(true, "对战开始", "第 1 局")
 
-func _set_broadcast(show: bool, big: String, sub: String) -> void:
-	_mask.visible = show
-	_center.visible = show
-	_big.text = big
-	_sub.text = sub
-
-# 外部(如断线通知)直接弹广播;countdown 计时由 _process 续写
+# 外部(如断线通知)直接弹广播;倒计时由 Broadcast 自己续写(这里一并把它停掉)。
 func show_notice(big: String, sub: String = "") -> void:
-	_in_countdown = false
-	_set_broadcast(true, big, sub)
+	_broadcast.set_broadcast(true, big, sub)
 
-# 倒计时数字本地走秒(服务器只在状态切换时广播一次 round_state);
-# 「对手掉线中」的秒数同理 —— 两者共用一个 `_process`。
+# 倒计时数字走秒已收进 Broadcast;「对手掉线中」的秒数仍在本类 —— 两者共用一个 `_process`。
+# ★ 两件事**各自独立**:掉线可能发生在倒计时里(原先那条"不受早退影响"的注释说的就是它),
+#   故这里不写早退,两段都无条件跑。
 func _process(delta: float) -> void:
-	if _in_countdown:
-		_countdown -= delta
-		if _countdown > 0.0:
-			_big.text = str(maxi(ceili(_countdown), 1))
-		else:
-			_in_countdown = false
-	# ★ 不受 `_in_countdown` 的早退影响(上面那两行是**缩进在 if 里**的,别改成早退):
-	#   掉线可能发生在倒计时里,那时这两个数字都要各自走秒。
+	_broadcast.tick(delta)
 	if not _grace.is_empty():
 		_grace = GraceWindow.tick_display(_grace, delta)
 		_refresh_grace()
@@ -110,28 +103,23 @@ func _on_round_state(data: Dictionary) -> void:
 	var me: int = PvpSession.role
 	match state:
 		ST_COUNTDOWN:
-			_countdown = float(data.get("timer", 3.0))
-			_in_countdown = true
-			# 主文案 = 巨大倒计时数字(_process 续写);副文案 = 第几局(首局用"对战开始")
+			# 主文案 = 巨大倒计时数字(Broadcast 走秒);副文案 = 第几局(首局用"对战开始")
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
-			_set_broadcast(true, str(maxi(ceili(_countdown), 1)), sub)
+			_broadcast.start_countdown(float(data.get("timer", 3.0)), sub)
 		ST_PLAYING:
-			_in_countdown = false
-			_set_broadcast(false, "", "")
+			_broadcast.set_broadcast(false, "", "")
 		ST_ROUND_OVER:
-			_in_countdown = false
 			var winner: int = int(data.get("winner", 0))
 			if winner != 0:
-				_set_broadcast(true, "本局胜利!" if winner == me else "本局落败",
+				_broadcast.set_broadcast(true, "本局胜利!" if winner == me else "本局落败",
 						"局胜 %d - %d" % [w1, w2])
 			else:
-				_set_broadcast(true, "P%d 赢得本局!" % (1 if w1 > w2 else 2), "局胜 %d - %d" % [w1, w2])
+				_broadcast.set_broadcast(true, "P%d 赢得本局!" % (1 if w1 > w2 else 2), "局胜 %d - %d" % [w1, w2])
 		ST_MATCH_OVER:
-			_in_countdown = false
 			var mwinner: int = int(data.get("match_winner", 0))
 			if mwinner == me:
-				_set_broadcast(true, "胜利!", "你赢得了整场对战")
+				_broadcast.set_broadcast(true, "胜利!", "你赢得了整场对战")
 			elif mwinner != 0:
-				_set_broadcast(true, "失败", "再接再厉…")
+				_broadcast.set_broadcast(true, "失败", "再接再厉…")
 			else:
-				_set_broadcast(true, "P%d 获胜!" % (1 if w1 > w2 else 2), "对局结束,返回菜单…")
+				_broadcast.set_broadcast(true, "P%d 获胜!" % (1 if w1 > w2 else 2), "对局结束,返回菜单…")
