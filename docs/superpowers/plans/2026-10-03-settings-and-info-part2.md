@@ -135,11 +135,13 @@ func _ready() -> void:
 		_check(cb != null, "开关「%s」建出来了" % want)
 		if cb == null:
 			continue
-		# ★ 这条是本节的核心:开关的**初值必须来自那个 Settings 键**,不是写死的。
-		#   把 `Settings.<key>` 换成 `true` 字面量 ⇒ 这条红。
-		#   但"拨动开关会写回"那一半**行为面**在下面用真信号驱动。
+		# ★★ **这条必须先构造"非默认基线"才咬得住** —— 四个键的默认值**全是 true**
+		#    (`core/config/settings.gd:36,38,42,43`),而 `cb.button_pressed == bool(Settings.get(key))`
+		#    在 `true == true` 时恒成立 ⇒ "把 `Settings.<key>` 换成 `true` 字面量"这个变异
+		#    **照样绿**,接到另一个也是 `true` 的键也绿。只有玩家恰好把那项关掉时才咬不到。
+		#    ⇒ 本探针**先把四个键全翻到非默认、重建页面、再逐行比**(见上面那段"非默认基线")。
 		_check(cb.button_pressed == bool(Settings.get(key)),
-				"「%s」的初值来自 `Settings.%s`" % [want, key])
+				"「%s」的初值来自 `Settings.%s`(已用非默认基线验)" % [want, key])
 	_check(_section_precedes_keymap(p), "「联机显示」排在「按键映射」**之前**")
 	# ★ 行为面:拨一下开关,断言 Settings 真的被写回(而不是只画了个控件)。
 	var first := _find_check_by_label(checks, "显示子弹尾迹")
