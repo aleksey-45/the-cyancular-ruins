@@ -58,6 +58,7 @@ func _initialize() -> void:
 	_inputs(F, t, C)
 	_fonts(t)
 	_icons(F, t)
+	await _no_class_chain_leak(t)
 
 	if _checks < MIN_CHECKS:
 		_fails.append("只比到 %d 条(下限 %d)—— 变体改名 / 读坏了时零失败是假绿" % [_checks, MIN_CHECKS])
@@ -71,11 +72,76 @@ func _initialize() -> void:
 		quit(1)
 
 
+# ── 类链泄漏:挂上本 Theme **不许改变** CheckButton 的最小尺寸 ──
+#
+# ★★ 为什么必须有这一条(2026-10-03 补;Task 1/2 建的 Theme 在这上面**已经错过一次**,
+#   而当时的三条守卫**一条都不红**):
+#   Godot 的主题查找是**沿类链回退**的 —— 某类型在本 Theme 里查不到条目时会落到它的**父类**。
+#   而 `CheckButton : public Button`(`CheckBox` / `OptionButton` 同)。本 Theme 原先设的是
+#   **基础类型** `Button/styles/*` ⇒ 任何挂上本 Theme 的场景里,每个 CheckButton 都**静默**
+#   穿上了按钮的皮:实测一个空 CheckButton 的最小尺寸从 `(40,22)` 涨到 **`(120,62)`**
+#   (= `_btn_box` 的 40/20 内边距 + 40 宽的图标),画面上开关外面多一圈描边,
+#   并把它**下面的行整体推走**(设置页左栏实测差 **3.5% 像素**)。
+#
+# **判据是行为不是源码**:同一个 CheckButton,挂 Theme 与不挂 Theme 的最小尺寸必须**逐位相同**。
+# **去掉什么它才会红**:把 `gen_menu_theme.gd` 的 `_button_variants()` 里 `BtnPrimary` 改回
+#   `"Button"`(即重新设基础类型)并重跑生成器 ⇒ 两条 `_cmp_size` 当场红。
+#   ★ 实测过这条变异(2026-10-03),红的是 `(40,22) vs (120,62)`。
+func _no_class_chain_leak(t: Theme) -> void:
+	# ① 数据级:本 Theme 的**基础类型** `Button` 上不许有条目(名字直接点出成因)。
+	for s in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
+		if t.has_stylebox(s, "Button"):
+			_fails.append("本 Theme 设了基础类型 Button 的 styles/%s —— `CheckButton : public Button` 会沿类链吃到它(见 gen_menu_theme.gd 的 `_button_variants()`)" % s)
+		_checks += 1
+
+	# ② 行为级:挂 Theme 前后,同一个 CheckButton 解析出来的样式盒必须同类同内边距。
+	var plain := Control.new()
+	var themed := Control.new()
+	themed.theme = t
+	root.add_child(plain)
+	root.add_child(themed)
+	var a := CheckButton.new()
+	var b := CheckButton.new()
+	plain.add_child(a)
+	themed.add_child(b)
+	# ★★ **必须等一帧**:`-s` 模式下主题沿树传播是**帧末**的事,不等就只会读到引擎默认值 ——
+	#   那样的守卫会**一动不动地绿**(实测:变异成"设基础 Button"之后它一声没吭)。
+	await process_frame
+	# ★★ 判据读的是**解析后的样式盒**,不是 `get_combined_minimum_size()`:`-s` 模式下没有帧推进,
+	#   最小尺寸是**陈旧值** ⇒ 拿它做判据的守卫会**一动不动地绿**(实测踩过:变异成"设基础
+	#   Button"之后,最小尺寸那条断言一声没吭)。
+	# ★ 不能复用 `_cmp_sb`:它只认 `StyleBoxFlat`,而引擎默认给 CheckButton 的是
+	#   `StyleBoxEmpty` —— 那会**两个方向都红**(假红)。故本处只比**类型 + 四边内边距**:
+	#   泄漏的形态正是"类型由 Empty 变成 Flat、内边距由 0 变成 40/20"。
+	_leak_cmp(a, b, "normal")
+	_leak_cmp(a, b, "focus")
+	plain.free()
+	themed.free()
+
+
+# 挂 Theme 前后,同一槽位的样式盒必须**同类同内边距**。
+func _leak_cmp(a: CheckButton, b: CheckButton, slot: String) -> void:
+	var sa := a.get_theme_stylebox(slot)
+	var sb := b.get_theme_stylebox(slot)
+	if sa == null or sb == null:
+		_fails.append("CheckButton/%s 取不到样式盒(%s / %s)" % [slot, str(sa), str(sb)])
+		return
+	if sa.get_class() != sb.get_class():
+		_fails.append("CheckButton/%s 挂 Theme 前后**类型不同**(%s vs %s)⇒ 它沿类链吃到了别的类型的样式;见 gen_menu_theme.gd 的 `_button_variants()` 注释"
+				% [slot, sa.get_class(), sb.get_class()])
+		return
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		_cmp_num(sa.get_margin(side), sb.get_margin(side), "CheckButton/%s 内边距" % slot)
+
+
 # ── 按钮:六个变体 × 五态 StyleBox + 五个字色 ──
 func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 	# (Theme 变体名, 生产入口, 生产入口的实参)
 	var cases := [
-		["Button", "menu_button", ["m", 32, Vector2(640, 88), "primary"]],
+		# ★ 主按钮自 2026-10-03 起挂**变体** `BtnPrimary`,不再是基础类型 `Button` ——
+		#   理由见 `tools/gen_menu_theme.gd` 的 `_button_variants()` 顶上那段
+		#   (设基础 `Button` 会让 `CheckButton : public Button` 沿类链静默穿上按钮的皮)。
+		["BtnPrimary", "menu_button", ["m", 32, Vector2(640, 88), "primary"]],
 		["BtnQuiet", "menu_button", ["m", 32, Vector2(640, 88), "quiet"]],
 		["BtnGold", "menu_button", ["m", 32, Vector2(640, 88), "gold"]],
 		["BtnAccent", "menu_button", ["m", 32, Vector2(640, 88), "accent"]],
@@ -111,7 +177,7 @@ func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 		_fails.append("RowButton 的 base_type 不是 Button(实得「%s」)—— 字号不会从 Button 继承"
 				% t.get_type_variation_base("RowButton"))
 	# `Button` 变体还要比一个"常被顺手忽略"的量:它必须是 `menu_button` 那一档的**字号**。
-	_cmp_size(t.get_font_size("font_size", "Button"), 32, "Button/font_size == 32")
+	_cmp_size(t.get_font_size("font_size", "BtnPrimary"), 32, "BtnPrimary/font_size == 32")
 
 
 # ── 面板:默认 `panel_box()`、凿刻两层、标题带、行底 ──

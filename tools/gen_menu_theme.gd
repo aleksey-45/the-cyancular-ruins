@@ -121,11 +121,25 @@ func _label_variants(t: Theme, C: Dictionary) -> void:
 
 
 # ── 按钮 ──
-# 默认 `Button` = `menu_button("primary")`(菜单系的新语汇,主菜单/大厅在用)。
+# `BtnPrimary` = `menu_button("primary")`(菜单系的新语汇,主菜单/大厅在用)。
 # 另四个变体覆盖 `menu_button` 的其余档;两个 `BtnLegacy*` 覆盖**旧的** `style_button()` ——
 # 暂停菜单/结算页那一族还在用它,迁移期必须能让它们在 .tscn 里落成同一个外观。
+#
+# ★★ **刻意不设基础类型 `Button`**(2026-10-03 实测,Task 3 迁移时撞到):
+#   Godot 的主题查找是**沿类链回退**的 —— 某类型在本 Theme 里查不到条目时会落到它的**父类**。
+#   而 `CheckButton : public Button`(`CheckBox` / `OptionButton` 同)。本 Theme 原先设的是
+#   基础的 `Button/styles/*`,于是**任何挂上本 Theme 的场景里,每个 CheckButton 都会静默穿上
+#   按钮的皮**:实测一个空 CheckButton 的最小尺寸从 `(40,22)` 涨到 **`(120,62)`**
+#   (= `_btn_box` 的 40/20 内边距 + 40 宽图标)⇒ 开关外面多一圈描边,并把**它下面的行整体推走**
+#   (设置页左栏那一片实测差 3.5% 像素,而**没有任何守卫会红**)。
+#   ⇒ 基础类型留空(CheckButton 于是**逐项**落回引擎默认主题的 `cb_empty` + 焦点环),
+#     主按钮改挂 `BtnPrimary` 变体。
+#   ★ 试过但**不改用**的两种修法:① 给 CheckButton 补 `StyleBoxEmpty` —— 会把焦点环一起丢掉,
+#     而"焦点环消失"**在截图里看不见**(截图里没有控件带焦点);② 把默认主题的 focus 盒照抄进来
+#     —— 它带 `Color(1,1,1,0.75)`,`ui_palette_single_source_smoke` ⑥ 当场红
+#     ("Theme 里的颜色必须只来自 UiFactory")。⇒ 唯一既逐值等价、又不违规的就是"不设基础类型"。
 func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
-	_menu_btn(t, F, C, "Button", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
+	_menu_btn(t, F, C, "BtnPrimary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
 	_menu_btn(t, F, C, "BtnQuiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
 	_menu_btn(t, F, C, "BtnGold", _c(C, "C_GOLD"), _c(C, "C_GOLD"))
 	_menu_btn(t, F, C, "BtnAccent", _c(C, "C_ACCENT"), _c(C, "C_TEXT"))
@@ -134,8 +148,7 @@ func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 
 
 func _menu_btn(t: Theme, F: GDScript, C: Dictionary, name: String, edge: Color, fg: Color) -> void:
-	if name != "Button":
-		t.set_type_variation(name, "Button")
+	t.set_type_variation(name, "Button")
 	t.set_font_size("font_size", name, 32)
 	t.set_stylebox("normal", name, F.call("_btn_box", _c(C, "C_HEADER"), edge))
 	t.set_stylebox("hover", name, F.call("_btn_box", _c(C, "C_BTN_FILL_HI"), _c(C, "C_ACCENT")))
@@ -253,6 +266,7 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_color("caret_color", "LineEdit", _c(C, "C_ACCENT"))
 
 	# CheckButton:`style_check()` 的四个字色 + 自绘胶囊图标(由 `_make_switch` 导出的 PNG)。
+	# ★★ **这里刻意一个样式盒都不设** —— 理由见 `_button_variants()` 顶上那段「不设基础类型 Button」。
 	t.set_font_size("font_size", "CheckButton", 32)
 	t.set_color("font_color", "CheckButton", _c(C, "C_TEXT"))
 	t.set_color("font_hover_color", "CheckButton", _c(C, "C_ACCENT"))
