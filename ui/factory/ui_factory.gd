@@ -110,6 +110,22 @@ const C_WARN        := Color(0.950, 0.850, 0.550)   # 金色:**只**用于「低
 const C_MODE_TEAM   := Color(0.627, 0.549, 1.0)      # #A08CFF 紫
 const C_MODE_ROYALE := Color(0.910, 0.639, 0.239)    # #E8A33D 琥珀
 
+# ── 菜单系视觉(方向 B「遗迹青铜」,2026-10-03)──
+# ★★ **只给菜单系用**(主菜单/设置/信息/统一大厅/Beta/结算页/暂停菜单)。
+#    **对局内 HUD 一律不用它们**,也不会因为它们的加入而改变一个像素。
+# ★★ **上面那批 token(`C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_DANGER` / `C_WARN` /
+#    `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*`)** 一个都不许改** ——
+#    它们被 `ui/hud/**` 读取(见 `menu_style_probe` 的冻结守卫)。
+#    设计 §3.9.1 的 token 表里 `C_ACCENT` / `C_TEXT_DIM` 给的是另一个值,那是设计文档的
+#    内部矛盾(它同时写着「HUD 一行不动」);用户 2026-10-03 裁定**以 HUD 为准**。
+# ★ 色值统一写成 hex 字符串:`Color("#RRGGBB")` 对 8bit 精确;写成浮点反算(如 0x1B/255)
+#   会与探针里的 hex 期望值差 1/255 ⇒ `menu_style_probe` 恒红。两侧必须同一写法。
+const C_HEADER     := Color("#1B242C")   # 标题带底 / 按钮填充
+const C_INNER      := Color("#1E2830")   # 面板**内**亮线(凿刻感的来源)
+const C_EDGE       := Color("#46545F")   # 按钮描边
+const C_GOLD       := Color("#E0A94F")   # 琥珀:分区标题 / 主行动按钮
+const C_TEXT_MUTE  := Color("#6C7885")   # 比 C_TEXT_DIM 更弱一档(禁用)
+
 # ── 断线「掉线中」语义色(阶段 3,2026-09-28)──
 # **只**给「某人掉线中,还在宽限期内、可能会回来」这一个语义用。
 # ★ 为什么不复用现成的三档:`C_WARN`(金)被钉死为「弹夹见底」单一语义;`C_DANGER`(红)已表
@@ -243,6 +259,44 @@ static func panel_box(border: bool = true) -> StyleBoxFlat:
 	sb.content_margin_top = 20.0
 	sb.content_margin_bottom = 20.0
 	return sb
+
+
+# 菜单系的面板底(方向 B 的凿刻感 = **外深线 + 内亮线**两条线)。
+#
+# ★ 为什么不让 `panel_box()` 直接改成这样:`ui/hud/status_banner.gd:88`(对局内的
+#   **重连横幅**)在用 `panel_box(false)` —— 改它会连带改到对局内 HUD,而本次的硬约束是
+#   "HUD 一行不动"。⇒ 菜单要的形状走**新函数**,两个函数各管各的。
+# ★ 实现用**两层嵌套的 PanelContainer**:`StyleBoxFlat` 一条边只能有一个颜色,
+#   要两条线就得两层。内容加到 `Body` 里:
+#       var p := UiFactory.menu_panel()
+#       (p.get_node("Body") as Container).add_child(<你的 VBox>)
+static func menu_panel(padding: Vector2 = Vector2(28, 20)) -> PanelContainer:
+	var outer := PanelContainer.new()
+	var osb := StyleBoxFlat.new()
+	osb.bg_color = C_SURFACE
+	osb.border_color = C_BORDER
+	osb.set_border_width_all(1)
+	osb.set_corner_radius_all(0)
+	osb.content_margin_left = 0.0
+	osb.content_margin_right = 0.0
+	osb.content_margin_top = 0.0
+	osb.content_margin_bottom = 0.0
+	outer.add_theme_stylebox_override("panel", osb)
+
+	var body := PanelContainer.new()
+	body.name = "Body"   # ★ 名字是公开契约:调用方靠 `get_node("Body")` 拿内容容器
+	var isb := StyleBoxFlat.new()
+	isb.bg_color = Color(0, 0, 0, 0)   # ★ 内层只画线、不画底(否则把外层的底盖掉)
+	isb.border_color = C_INNER
+	isb.set_border_width_all(1)
+	isb.set_corner_radius_all(0)
+	isb.content_margin_left = padding.x
+	isb.content_margin_right = padding.x
+	isb.content_margin_top = padding.y
+	isb.content_margin_bottom = padding.y
+	body.add_theme_stylebox_override("panel", isb)
+	outer.add_child(body)
+	return outer
 
 
 # 列表行底(房间行等):比页面底亮一档,让「行」这个物体存在。
