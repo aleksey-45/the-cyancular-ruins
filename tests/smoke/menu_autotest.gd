@@ -10,7 +10,7 @@ extends Node
 #   -- --autotest-team   同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
 #   -- --autotest-set    主菜单→设置页→截图
 #   -- --autotest-level  直接切 Level0(只验世界加载,不经过菜单流转)
-#   -- --autotest-ver    主菜单→版本信息面板(弹层,**不切场景**,故无场景硬断言,见 _run)→截图
+#   -- --autotest-ver    主菜单→信息页(**整页,会切场景**)→截图
 #   -- --autotest-switch 连做**两趟**「进单机 → 回主菜单」往返(量换场耗时;配合 --perf-switch)
 #   -- --autotest-play   进单机 → **打枪 + 打炮**(真的开火、引爆、拆砖)→ 回主菜单 → 退出游戏
 
@@ -67,7 +67,7 @@ func _run() -> void:
 	elif mode == "set":
 		_press_by_text(tree.current_scene, "设 置")
 	elif mode == "ver":
-		_press_by_text(tree.current_scene, "版 本 信 息")
+		_press_by_text(tree.current_scene, "信 息")
 	await tree.create_timer(1.5).timeout
 	var cur := tree.current_scene
 	print("AUTOTEST[%s]: 当前场景 = %s" % [mode, cur.scene_file_path if cur != null else "<null>"])
@@ -77,14 +77,16 @@ func _run() -> void:
 	# 而"从没离开过主菜单"(菜单文案被改 → 找不到按钮 → 一次都没点到)正好满足它 ——
 	# mp/set 原先只 print 到达情况,文案一变就静默 DONE。
 	# sp 那句原本内联在此,现与 mp/set 共用同一个函数(同形,不抄三遍)。
-	# ver **不列在此**:版本信息是弹层,全程不切场景 —— 对它断言 scene 路径是同义反复
-	# (「停在 main_menu」正是它该有的样子,连"一次都没点到按钮"也照样满足),不是硬断言。
+	# ★ ver 自 2026-10-03 起也是**整页、会切场景**(「版 本 信 息」弹层已删除):
+	#   原先"弹层不切场景 ⇒ 断言 scene 路径是同义反复"那条论证随之作废,故它与
+	#   sp/mp/set 同列 —— 留着旧论证就是留一条与代码相反的注释。
 	var must_reach := {
 		"sp": "level_0.tscn",
 		"mp": "mp_lobby.tscn",
 		"set": "settings_menu.tscn",
 		"royale": "mp_lobby.tscn",
 		"team": "mp_lobby.tscn",
+		"ver": "info_menu.tscn",
 	}
 	if must_reach.has(mode) and not _require_scene(tree, str(must_reach[mode])):
 		return

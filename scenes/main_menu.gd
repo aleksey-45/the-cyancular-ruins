@@ -1,6 +1,6 @@
 extends Control
 # 主菜单(像素 UI):粗体大标题 + 模式按钮浮现动画,场景是裸 Control,UI 全在代码里建。
-# 标题下方显示版本号(分支名 + git 提交序号);「版本信息」列出本分支提交历史。
+# 左下角显示版本号(分支名 + git 提交序号);「信 息」按钮切到独立整页(提交历史/团队/致谢)。
 # 「单人模式」弹出开局面板(勾选本局禁用武器),确认后进 Level0。
 # 控件一律走 UiFactory(像素字体与字号规范的单一来源);字号必须是 16 的倍数。
 
@@ -9,12 +9,10 @@ const PROBE_NODE_NAME := "MenuAutotestProbe"
 
 var _ui_layer: CanvasLayer = null
 var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
-var _ver_panel: PanelContainer = null   # 版本信息面板(弹出式)
 
-# 两个弹出面板的**骨架**在场景里(容器/滚动区/标签/锚点看得见);按钮与勾选框仍由
+# 弹出面板的**骨架**在场景里(容器/滚动区/标签/锚点看得见);按钮与勾选框仍由
 # UiFactory 建、数据由 _fill_* 填 —— 控件进场景就得在使用处补 style_control +
 # style_button,等于把「控件工厂唯一来源」这条纪律散回各处。
-const VERSION_PANEL_SCENE := preload("res://ui/screens/version_panel.tscn")
 const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 
 
@@ -183,8 +181,10 @@ func _build_menu_buttons() -> Array:
 	settings_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/settings_menu.tscn"))
-	var ver_btn := UiFactory.button("版 本 信 息", 32)
-	ver_btn.pressed.connect(_on_version_pressed)
+	var ver_btn := UiFactory.button("信 息", 32)
+	ver_btn.pressed.connect(func() -> void:
+		Sfx.play("ui")
+		get_tree().change_scene_to_file("res://scenes/info_menu.tscn"))
 	# 退出用弱化变体:常态描边与文字都压暗一档,不与「单人模式」抢注意力。
 	var quit_btn := UiFactory.button("退 出", 32, Vector2(420, 64), "quiet")
 	quit_btn.pressed.connect(func() -> void:
@@ -192,7 +192,7 @@ func _build_menu_buttons() -> Array:
 		get_tree().quit())
 	# 联机入口收成一颗后,「开始游戏」组按 单人 → 多人 → Beta 排列。★ 显示次序由
 	# add_child 的次序决定;下面返回的数组同时是**浮现动画**的次序,两处必须一起改 ——
-	# 且**次序要一致**(数组里 Beta 排在设置/版本**之前**,与屏幕上的上下位置同序),
+	# 且**次序要一致**(数组里 Beta 排在设置/信息**之前**,与屏幕上的上下位置同序),
 	# 否则淡入会从下往上跳。
 	for b in [start_btn, multi_btn, beta_btn]:
 		play_group.add_child(b)
@@ -236,55 +236,6 @@ func _on_single_pressed() -> void:
 		return
 	_sp_panel = _fill_sp_panel(SP_PANEL_SCENE.instantiate() as PanelContainer)
 	_ui_layer.add_child(_sp_panel)
-
-
-func _on_version_pressed() -> void:
-	Sfx.play("ui")
-	if _ver_panel != null:
-		_ver_panel.visible = not _ver_panel.visible
-		return
-	_ver_panel = _fill_version_panel(VERSION_PANEL_SCENE.instantiate() as PanelContainer)
-	_ui_layer.add_child(_ver_panel)
-
-
-# ── 版本信息面板:当前版本 + 提交历史 ──
-# 提交行的固定宽度(见 _build_ver_panel 里「钉死行宽」那段)。
-const ROW_W := 1100.0
-
-
-# 版本信息面板:场景(ui/version_panel.tscn)给骨架,这里只填数据与样式。
-# ★ StyleBox **留在代码**:调色板唯一来源是 UiFactory,抄进 .tscn 就是第二处真值。
-func _fill_version_panel(panel: PanelContainer) -> PanelContainer:
-	# 不透明底:原先走默认主题的半透明面板,主菜单的「退 出」按钮与标题下的版本号
-	# 会直接透上来压在提交行上,形成重影(2026-09-13 视觉评析)。
-	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
-	(panel.get_node("VBox/VersionLabel") as Label).text = "当前版本: %s" % AppInfo.version_string()
-
-	var list: VBoxContainer = panel.get_node("VBox/Scroll/List")
-	var log := AppInfo.commit_log()
-	if log.is_empty():
-		list.add_child(UiFactory.label("(读不到 git 历史:仓库不可用或未安装 git)", 32, Color(0.9, 0.6, 0.5)))
-	for i in range(log.size()):
-		var e: Dictionary = log[i]
-		var row := UiFactory.label("%s  %s  %s" % [str(e["hash"]), str(e["time"]), str(e["subject"])],
-				16, Color(0.92, 0.95, 1.0))
-		# 提交标题长短不一,最长的那条会把 Label 的**最小宽度**顶到面板之外 —— ScrollContainer
-		# 不收缩子节点,于是每一行都在面板右沿被切成半个字(实测最长行约 1400px vs 面板 1180)。
-		# 钉死行宽 + 末尾省略号:行宽不再由文本决定,超长标题截断而不是溢出。
-		row.custom_minimum_size = Vector2(ROW_W, 0)
-		row.size_flags_horizontal = Control.SIZE_FILL
-		row.clip_text = true
-		row.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		list.add_child(row)
-
-	# 返回键不拉满面板宽度:1180 宽的横条里居中两个字符,两侧全是死区。
-	var back_row: HBoxContainer = panel.get_node("VBox/BackRow")
-	var back := UiFactory.button("返 回", 32, Vector2(280, 48))
-	back.pressed.connect(func() -> void:
-		Sfx.play("ui")
-		panel.visible = false)
-	back_row.add_child(back)
-	return panel
 
 
 # ── 单人开局面板:禁用武器(勾选 = 本局不可用)──
