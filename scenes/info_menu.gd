@@ -17,8 +17,12 @@ const CREDITS := [
 	["Jorge Luis Borges", ""],
 ]
 
-# 提交行的固定宽度(见 `_fill_version_block` 里"钉死行宽"那段)。
-const ROW_W := 900.0
+# 提交行的**钉死宽度**。★★ 它**必须小于左栏的可见内宽**,否则:
+#   ScrollContainer 照样出横向滚动条,而**省略号落在可视区之外** —— 比不钉还糟
+#   (既滚动又看不见截断提示)。实测:1:1 时左栏内宽 829、加了下面那句
+#   `size_flags_stretch_ratio` 之后是 927 ⇒ 取 760,两种布局下都留余量。
+#   ★ 别照抄被取代的 `version_panel.tscn` 的 1100:那个面板本身 1180 宽,放得下。
+const ROW_W := 760.0
 
 
 func _ready() -> void:
@@ -54,6 +58,10 @@ func _fill_version_block(parent: Node) -> void:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# ★★ 设计 §3.10 的「左 1.25 : 右 1」**只能靠 stretch_ratio 表达** ——
+	#    `ScrollContainer` 的**最小尺寸不向上传播**子节点的最小宽度,所以指望用
+	#    `ROW_W` 把左栏撑宽是徒劳的(实测:两栏会塌成 1:1 = 885/885)。
+	panel.size_flags_stretch_ratio = 1.25
 	# ★ 2026-10-03:简报的 `_fill_version_block` 漏了这一行(整块左栏从不入树)。
 	#   后果是"版本信息"这一栏**一点都看不见**,而且只有本探针会红 ——
 	#   右栏(`_fill_right_blocks`)有对应的 `parent.add_child(col)`,两栏的形状本该对称。

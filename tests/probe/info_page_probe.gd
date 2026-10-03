@@ -15,10 +15,11 @@ extends Node
 #   + 2 个许可证(MIT / SIL OFL 1.1)
 #   + 1 个「返 回」按钮
 #   + 1 条版本号真值比对
-#   = 17
+#   + 3 条布局(找到滚动区+提交行 / 钉死行宽 ≤ 滚动区宽 / 左栏比右栏宽)
+#   = 20
 # ★ 注意这是**运行时**条数:静态 `grep -c '^\s*_check('` 只会数到 9(循环里的 9 条看不见),
 #   故别拿 grep 的数来对这里 —— 它俩本来就对不上。
-const EXPECTED_CHECKS := 17
+const EXPECTED_CHECKS := 20
 
 const SCENE := "res://scenes/info_menu.tscn"
 const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048"]
@@ -64,8 +65,63 @@ func _ready() -> void:
 	# ★ 版本号那一行必须来自 AppInfo(不是写死的占位串) —— 拿 AppInfo 的真值去比。
 	var ver := preload("res://core/config/app_info.gd").version_string()
 	_check(_has(texts, ver), "版本号那一行是 AppInfo.version_string() 的真值(「%s」)" % ver)
+	# ★ 布局断言必须在**真帧之后**量:容器排序(NOTIFICATION_SORT_CHILDREN)是下一帧的事,
+	#   加进树里就立刻读 size 会全读到 0。故先让两帧跑过再量。
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check_layout(p)
 	host.free()
 	_finish()
+
+
+# ── 布局断言(必须在真帧之后量)────────────────────────────────────────
+# ★ 为什么这三条必须有(它们是 2026-10-03 那次排版修复的**常驻护栏**):
+#   ① 「钉死行宽」若大于左栏可见内宽,ScrollContainer 会出**横向滚动条**,而
+#      `OVERRUN_TRIM_ELLIPSIS` 的省略号落在**可视区之外** —— 比不钉行宽更糟
+#      (既滚动又看不见截断提示)。写死一个数字挡不住它(实测 `ROW_W = 900` 曾
+#      大于左栏内宽 829),故拿**测量值**比:行的钉死宽度 ≤ 它的滚动区宽度。
+#   ② 设计 §3.10 要的是左 1.25 : 右 1,而 `ScrollContainer` 的最小尺寸**不向上传播**
+#      子节点宽度 ⇒ 单靠 `ROW_W` 撑不宽(实测会塌成 1:1 = 885/885),必须靠
+#      `size_flags_stretch_ratio` 并**量出来**。
+func _check_layout(root: Node) -> void:
+	var scroll := _find_scroll(root)
+	var row := _first_label_under(scroll)
+	_check(scroll != null and row != null, "左栏找得到 ScrollContainer 与至少一条提交行")
+	var row_w := row.custom_minimum_size.x if row != null else -1.0
+	var scroll_w := scroll.size.x if scroll != null else -1.0
+	_check(row != null and scroll != null and row_w <= scroll_w,
+			"钉死行宽 %.0f ≤ 滚动区宽 %.0f" % [row_w, scroll_w])
+	var left: Control = scroll.get_parent().get_parent() if scroll != null else null
+	var cols: Node = left.get_parent() if left != null else null
+	var right: Control = cols.get_child(1) if cols != null and cols.get_child_count() >= 2 else null
+	_check(left != null and right != null and left.size.x > right.size.x,
+			"左栏 %.0f > 右栏 %.0f(设计 §3.10 左 1.25 : 右 1)" % [
+					left.size.x if left != null else -1.0,
+					right.size.x if right != null else -1.0])
+
+
+func _find_scroll(root: Node) -> ScrollContainer:
+	if root == null:
+		return null
+	if root is ScrollContainer:
+		return root
+	for c in root.get_children():
+		var s := _find_scroll(c)
+		if s != null:
+			return s
+	return null
+
+
+func _first_label_under(root: Node) -> Label:
+	if root == null:
+		return null
+	for c in root.get_children():
+		if c is Label:
+			return c
+		var l := _first_label_under(c)
+		if l != null:
+			return l
+	return null
 
 
 func _collect_labels(root: Node, out: Array = []) -> Array:
