@@ -4,9 +4,6 @@ extends Control
 # 「单人模式」弹出开局面板(勾选本局禁用武器),确认后进 Level0。
 # 控件一律走 UiFactory(像素字体与字号规范的单一来源);字号必须是 16 的倍数。
 
-static var _version_cache := ""
-static var _log_cache: Array = []
-
 # 自动探针节点名:挂在树根上跨场景存活,靠这个名字做「已挂过就别再挂」的幂等判据
 const PROBE_NODE_NAME := "MenuAutotestProbe"
 
@@ -85,67 +82,6 @@ func _enter_level0() -> void:
 	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
 
 
-# ── 版本号 / 提交历史(git,结果缓存)──
-
-# 读 git 输出为 UTF-8 文本。OS.execute 在中文 Windows 上按系统码页解码 → 中文乱码;
-# execute_with_pipe 拿原始流,FileAccess.get_as_text 显式按 UTF-8 解。
-static func _git_text(args: Array) -> String:
-	var res: Variant = OS.execute_with_pipe("git", args, true)
-	if res is Dictionary and res.has("stdio"):
-		var f: FileAccess = res["stdio"]
-		if f != null:
-			# 分块读到 EOF,攒原始字节后显式按 UTF-8 解码
-			# (get_as_text/get_buffer 单次在中文 Windows 会因系统码页/时机导致乱码或截断)
-			var bytes := PackedByteArray()
-			var guard := 0
-			while not f.eof_reached() and guard < 1000:
-				guard += 1
-				var chunk := f.get_buffer(4096)
-				if chunk.size() == 0:
-					break
-				bytes.append_array(chunk)
-			if bytes.size() > 0:
-				return bytes.get_string_from_utf8()
-	var out: Array = []
-	OS.execute("git", args, out, true)
-	return str(out[0]) if out.size() > 0 else ""
-
-
-# 版本号:**发布版读 core/build_info.gd**(由 tools/build_release.py 在导出前写入真实版本号与
-# 构建时间戳),开发版回落到 git(分支名 + 提交数)。
-# ★ 发布版必须走前者:发布机往往没有 git,读 git 只会得到 "dev" 且拿不到构建时间。
-# 传 --nover 时恒为 "dev"(菜单自动探针要确定性文本,见 tests/smoke/menu_autotest.gd)。
-static func version_string() -> String:
-	if "--nover" in OS.get_cmdline_user_args():
-		return "dev"
-	if _version_cache != "":
-		return _version_cache
-	var bi := preload("res://core/config/build_info.gd")
-	if str(bi.VERSION) != "" and str(bi.VERSION) != "dev":
-		_version_cache = bi.display()
-		return _version_cache
-	var branch := _git_text(["rev-parse", "--abbrev-ref", "HEAD"]).strip_edges()
-	var n := _git_text(["rev-list", "--count", "HEAD"]).strip_edges()
-	_version_cache = ("%s #%s" % [branch, n]) if branch != "" else "dev"
-	return _version_cache
-
-
-# 提交历史(新→旧,最多 20 条):[{hash,time,subject}]
-static func commit_log() -> Array:
-	if not _log_cache.is_empty():
-		return _log_cache
-	for line in _git_text(["-c", "i18n.logOutputEncoding=UTF-8",
-			"log", "--pretty=%h|%cI|%s", "-20"]).split("\n"):
-		var parts := line.strip_edges().split("|", true, 2)
-		if parts.size() == 3:
-			_log_cache.append({
-				"hash": parts[0],
-				"time": parts[1].replace("T", " ").substr(0, 16),
-				"subject": parts[2],
-			})
-	return _log_cache
-
-
 # ── 菜单 UI ──
 func _build_new_ui() -> void:
 	_build_ui_layer()
@@ -184,11 +120,11 @@ func _build_title() -> Label:
 	return title
 
 
-# --nover 的处理收在 version_string() 里(单一收口),这里不再分叉。
+# --nover 的处理收在 AppInfo.version_string() 里(单一收口),这里不再分叉。
 # 版本号放左下角、小一号、压暗:原先居中挂在标题正下方 —— 位置与字号都让它读成
 # 标题的「副标题」,和真正的模式按钮抢视线(2026-09-13 视觉评析)。
 func _build_version_label() -> Label:
-	var ver := UiFactory.label(version_string(), 16, UiFactory.C_TEXT_DIM)
+	var ver := UiFactory.label(AppInfo.version_string(), 16, UiFactory.C_TEXT_DIM)
 	ver.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	ver.offset_left = 24.0
 	ver.offset_right = 900.0
@@ -322,10 +258,10 @@ func _fill_version_panel(panel: PanelContainer) -> PanelContainer:
 	# 不透明底:原先走默认主题的半透明面板,主菜单的「退 出」按钮与标题下的版本号
 	# 会直接透上来压在提交行上,形成重影(2026-09-13 视觉评析)。
 	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
-	(panel.get_node("VBox/VersionLabel") as Label).text = "当前版本: %s" % version_string()
+	(panel.get_node("VBox/VersionLabel") as Label).text = "当前版本: %s" % AppInfo.version_string()
 
 	var list: VBoxContainer = panel.get_node("VBox/Scroll/List")
-	var log := commit_log()
+	var log := AppInfo.commit_log()
 	if log.is_empty():
 		list.add_child(UiFactory.label("(读不到 git 历史:仓库不可用或未安装 git)", 32, Color(0.9, 0.6, 0.5)))
 	for i in range(log.size()):
