@@ -39,7 +39,9 @@
 
 `tests/probe/kh_l5_probe.gd` 现在只扫 `.gd` 源码里的字号载体（`add_theme_font_size_override(...)`、`font_size = N`、`const …FONT_SIZE`）。
 
-**字号一旦搬进 `.tscn` / `.tres`，它一个都扫不到** ⇒ 「字号必须是 16 的倍数」这条规则会**看起来还在守、其实空了** —— 这正是本仓登记过、并且**已经出过十次**的那类失效。
+**★ 实测订正(2026-10-03)**：本计划初稿说"它只扫 `.gd`"—— **那句是错的**。`ScanUtil.walk:38` 收 `.gd` **与 `.tscn`**，而 C 类正则本来就命中 `.tscn` 里的 `theme_override_font_sizes/font_size = N`。
+⇒ 真正会失明的只有 **`.tres`（Theme）** 那一支；`.tscn` 早就在覆盖内。**别照着初稿那句去重复造轮子。**
+★ 仍然成立的那半：`.tres` 里的字号（`font_sizes/<Type>/<name> = N`）**一个都扫不到** —— 而迁移正是要把字号搬进 Theme ⇒ 不补它，「字号必须是 16 的倍数」就会**看起来还在守、其实空了**（本仓已出过十次的那类失效）。
 
 **改法**：把 `.tscn` 与 `.tres` 也纳入扫描面，识别这些写法：
 - `.tscn`：`theme_override_font_sizes/font_size = N`
