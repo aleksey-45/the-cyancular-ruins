@@ -64,7 +64,7 @@
   ★ 已验证它会红:把写回掐掉后同一探针报出 5 条失败,正是用户描述的症状。
 
 ### 探针(`-s` 或场景模式)
-`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖;★ 它只验 FX 本体,真击杀路径见下)· `tests/elite_drop_probe.tscn`(B15:真击杀乌鸫 → FX 出现 → 余额 +300 → 吸收方式必须是飞到怀表)· `tests/rewind_fuse_probe.tscn`(B17:引信/开火注入字段进快照、随回溯倒退、重建后不再贴脸起爆)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_phantom_probe.tscn`(**D2**:尸体隐藏时碰撞层已摘/砖块碰撞随破坏与回溯一致/复活后层还原/全场无「不可见却带碰撞层」的节点 + 幽灵墙抽样;★ 覆盖上限:只验**碰撞**这一维,尸体在隐藏期的接触伤害/爆炸击退/漏标等**未验**——见 D2 的登记)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算;★ **本探针 2026-10-03 复跑为既有 FAIL**,见 D2 的登记)· `tests/haste_probe.tscn`(B12/B13/B16:倍率表(含 `world_delta`)/普通敌速度×`HASTE_WORLD`/**敌方子弹位移×`HASTE_WORLD`**/主角移速×`HASTE_PLAYER`(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
+`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖;★ 它只验 FX 本体,真击杀路径见下)· `tests/elite_drop_probe.tscn`(B15:真击杀乌鸫 → FX 出现 → 余额 +300 → 吸收方式必须是飞到怀表)· `tests/rewind_fuse_probe.tscn`(B17:引信/开火注入字段进快照、随回溯倒退、重建后不再贴脸起爆)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_phantom_probe.tscn`(**D2**:尸体隐藏时碰撞层已摘/砖块碰撞随破坏与回溯一致/复活后层还原/全场无「不可见却带碰撞层」的节点 + 幽灵墙抽样;★ 覆盖上限:只验**碰撞**这一维,尸体在隐藏期的接触伤害/爆炸击退/漏标等**未验**——见 D2 的登记)· `tests/tile_collision_probe.tscn`(**D3**:**建筑碰撞**逐 16px 子格 —— 渲染按 `_paint_maze`、碰撞按 `build_sub` 各自核对;部分破坏不牵连同格邻格 / 环面副本 / 回溯复原 / 脏块重建有界 / 全场抽样两次;★ 变异验证过:把 `_restore_sub` 的脏块标记换成 `pass` ⇒ 相④ 红 16 条「画=true 碰=false」)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算;★ 2026-10-03 查明旧红的根因是**试样活不过一个采样周期**、已修,见 D3)· `tests/haste_probe.tscn`(B12/B13/B16:倍率表(含 `world_delta`)/普通敌速度×`HASTE_WORLD`/**敌方子弹位移×`HASTE_WORLD`**/主角移速×`HASTE_PLAYER`(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
 
 ### 检查点分支(用户要求的逐批回退点)
 `KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影) · `_B13`(敌弹随世界变慢+加色高亮规则+精英亮黄) · `_B14`(地图选择 UI:单机开局选图 + 联机建房选图) · `_B15`(修:击杀精英不掉颗粒 —— 结晶飞不进怀表) · `_B16`(加速拉到夸张档:主角 ×2.0 / 其余 ×0.5,并覆盖游泳与攀爬) · `_B17`(修:回溯后被自己榴弹炸死 —— 子弹快照补齐引信与开火注入字段) · `_B18`(cyrm v4 游戏侧选项 A:碰撞/破坏下沉 16px 子格)。
@@ -169,14 +169,14 @@ structure-editor.html 已退休)。
 **用户报告**:"联机房间的自我角色颜色自定义没有运用到实战"。**排查结论:协议与染色链路本来就是通的,断的是 UI 入口**——色相滑条只长在「建房面板」,而建房面板**一进等待室就隐藏** ⇒ 房主建完房改不了、**加入者全程没见过选色 UI**。
 
 - **实证手段**:`tests/royale_probe.gd` 的 claim 原先恒报 `hue:0.0`(非零路径从未测过);改为 c1=137/c2=246 两个可互相区分的值,并在 match_sync 应答断言 **hues 双向带值**(自己那份命中 + 对面那份在表)→ 全绿,证明 `_on_player_options 归档 → _claim_hues → match_sync → _apply_peer_hues/副本染色` 整链健康。
-- **修复**:选色行从建房面板**搬进等待室面板**(`royale_lobby._build_wait_panel`,所有成员开局前可改;即选即存 `Settings.pvp_color_hue`,开局 claim 时随 player_options 上发)。1v1 个人色相停用(P2 固定队色)、3v3 队色固定——皆设计使然,不动。
+- **修复**:选色行从建房面板**搬进等待室面板**(`mp_lobby._build_wait_panel` —— ★ 2026-10-03 大厅合一前它在 `royale_lobby`,所有成员开局前可改;即选即存 `Settings.pvp_color_hue`,开局 claim 时随 player_options 上发)。1v1 个人色相停用(P2 固定队色)、3v3 队色固定——皆设计使然,不动。
 - **验证**:解析冒烟 6/6;真链路探针双端全部通过(hues 双向回包 + 123 快照)。实战视觉效果(自己染色 + 他人副本染色)由实机联机验收。
 ### B20(P2 第二批,已完成):Beta 入口 + 独立房间池 + 建房页时间参数
-- **入口**:主菜单 `Beta` 按钮(大乱斗下方,弱化样式)→ `scenes/beta_menu.tscn`:画框型卡片 = 图标(程序化怀表 `WatchHud.build_dial_texture()`(已改静态)+ 红 `Royale`/蓝 `Team` 字)+ 模式名 + 简介 + 版本(beta_0.0)。两张卡:**错乱大乱斗**→royale_lobby、**时空 3v3**→team_lobby。
-- **beta 态传递**:`PvpSession.beta_mode`(reset() 一律复位;Beta 页 `enter_mode` 后置真)。两个大厅页读它:标题加「· Beta 时间玩法」、建房面板挂 9 行时间参数(`LobbyPage._add_time_params`,值住 `time_rules: TimeRules`,建房/上报前 clamp)。
+- **入口**:主菜单 `Beta` 按钮(大乱斗下方,弱化样式)→ `scenes/beta_menu.tscn`:画框型卡片 = 图标(程序化怀表 `WatchHud.build_dial_texture()`(已改静态)+ 红 `Royale`/蓝 `Team` 字)+ 模式名 + 简介 + 版本(beta_0.0)。两张卡:**错乱大乱斗**→`mp_lobby`(预选大乱斗筛选)、**时空 3v3**→`mp_lobby`(预选 3v3 筛选)。★ 2026-10-03 大厅合一后两个旧大厅页已删除,两卡都进**统一大厅**。
+- **beta 态传递**:`PvpSession.beta_mode`(reset() 一律复位;Beta 页**切场景前**把它置真)。统一大厅读它:标题加「· Beta 时间玩法」、建房面板挂 9 行时间参数(`LobbyPage._add_time_params`,值住 `time_rules: TimeRules`,建房/上报前 clamp)。
 - **独立房间池**(判据三件套,双侧):①创建载荷带 `{"beta":true,"time":{...}}`(`_beta_payload()`,普通态空合入);②`royale_join/team_join` **签名加第 4 参 beta**,服务器双向拒(普通页进 Beta 房 / Beta 页进普通房各一条文案);③列表载荷带 `beta` 字段,客户端按 `PvpSession.beta_mode` 过滤(royale 在循环内 continue,team 用 filter 后的 `visible_rooms`)。1v1(`join_room`)与普通模式行为零变化。
 - **跟随改的调用点**:`tests/lobby_visibility_probe`(royale/team join 直调补 `false`)、`tests/royale_bound_probe`(同);`kh_l1_probe` 只查方法名,不受影响。★ `royale_bound_probe` 在本机当前负载下**基线也超时**(stash 对照过),判环境问题非回归。
-- **探针**:`-- --autotest-beta`(主菜单→Beta 页:两卡/名字/版本号在→点错乱大乱斗→royale_lobby 且 beta_mode=真→时间参数 9 行滑条在→`_player_options()` 带 time)全绿;`autotest-royale/team/mp` 与 `kh_l1/lobby_visibility` 全绿;--import 零错误。
+- **探针**:`-- --autotest-beta`(主菜单→Beta 页:两卡/名字/版本号在→点错乱大乱斗→mp_lobby 且 beta_mode=真→时间参数 9 行滑条在→`_player_options()` 带 time)全绿;`autotest-royale/team/mp` 与 `kh_l1/lobby_visibility` 全绿;--import 零错误。
 
 ### B21(P2 第三批,已完成):服务器权威颗粒经济 + 拆砖事件修复
 - **`server/time_economy.gd`**(新):每 role 一份 `GrainAccount`(规则来自房主 options["time"] → `TimeRules.from_dict`)+ 四条缝 —— `award_kill`(得被击杀者余额×比例,被击杀者不减)/`award_damage`(每点×4,归因口径 = TeamHost 逐人伤害同源:meta last_damager + ATTRIB_WINDOW 新鲜度,自伤/归因不到/同队谁都不给)/`award_blocks`(每 16px 子格 ×10)/`tick`(回复)。纯逻辑,-s 可测。
@@ -221,5 +221,17 @@ structure-editor.html 已退休)。
 - **★ 覆盖上限(照实登记)**:
   - 探针只验**碰撞**这一维。隐藏尸体仍参与的两处**未验、未改**:① `Explosion.apply_aoe` 按 `enemies` 组遍历,隐藏尸体照吃击退(`is_dead` → `_apply_knock_only`)⇒ 复活那一帧会带着**陈旧 `knock_velocity`** 飞出去(`rewind_restore` 不还原它);② 同一条 AoE 会对它调 `CombatFeedback.hit_marker()` ⇒ 炸一个隐形尸体会在屏幕上闪一个命中 X。两处都**先于本次改动就存在**,不是本次引入。
   - 不能靠"把尸体移出 `enemies` 组"来一并解决:组被 `record()`(要把它写进快照才可能被复活)与 `expire_corpses` 依赖。
-- **★ 相邻的既有红(非本次引入)**:`tests/rewind_elite_damage_probe.tscn` 现报 `FAIL(1): 回溯期未发生二次伤害(HP 30→30)`。已按本仓纪律在 **`git show HEAD:` 的干净树上连跑两次复核** —— 两次同为 FAIL ⇒ **与本次改动无关**,未修。
+- **★ 相邻的既有红(非本次引入)**:`tests/rewind_elite_damage_probe.tscn` 现报 `FAIL(1): 回溯期未发生二次伤害(HP 30→30)`。已按本仓纪律在 **`git show HEAD:` 的干净树上连跑两次复核** —— 两次同为 FAIL ⇒ **与本次改动无关**,未修。**→ 2026-10-03 已查明并修好,见 D3。**
 - **★ 一条守卫的覆盖比它读起来小**:`enemy_logic_smoke` 的 `_check(jdc.collision_layer == 4, "JumpBird 死亡保留碰撞层")` 在**死后 1 个物理帧**断言 —— 那时还在白闪期(且 `hold_corpses` 在冒烟里恒 false),**覆盖不到**隐藏期待复活那一段。别把它当成这条修复的守卫。
+
+### D3(P2 debug 线,2026-10-03 用户:「查一下」既有红 + 「看看建筑有没有虚空碰撞箱」):两个探针面的收口
+- **① `rewind_elite_damage_probe` 的既有红**:根因**不在判定,在试样**。旧布置把子弹放在 `bird.global_position + Vector2(20, 0)`,而黑鸟(scale 2.5)身体半径远大于 20px ⇒ 子弹**出生即在体内**,第 1 个物理帧就命中并 `queue_free`。逐物帧实测:它**只存在 1 个物理帧(≈16.7ms)**(同帧精英 HP 40→30),而录制是**按 `SNAP_HZ`=20Hz 采样**(50ms 一次)⇒ 这个试样**大概率整段不被采样** ⇒ `replay_bullets()` 全程为空 ⇒ 报「回溯期未发生二次伤害」。约 1/3 的跑次恰好撞上采样点,故时红时绿(与 2026-10-02 登记的"抖动"吻合)。
+  - **修法(只动探针)**:试样 `collision_mask = 0`(不与世界碰撞 ⇒ 稳定活过采样周期)+ **回溯前先断言"环里有子弹"**。★ 这条断言的作用是**把两种成因分开**:没录到 ≠ 判定没生效。
+  - **验证**:修后连跑 3 次全 OK(`环内子弹峰值=1`);**变异验证**把 `_rewind_elite_hits` 的 `e.call("hurt", …)` 换成 `pass` ⇒ 当场红,且 `[诊断]` 明确给出"环内峰值=1 / HP 40→40"(= 录到了、判定没结算)。
+- **★ 顺带登记的产品面缺口(未修)**:录制是**按 SNAP_HZ 的瞬时采样**,不是按实体逐个记录 ⇒ **寿命 < 1/SNAP_HZ(50ms)的实体可能整段不进快照**(贴脸命中的子弹是最常见的一例)⇒ 那次回溯不会把它带回来。★ 不修的理由:改采样率(`SNAP_HZ`)是设计/成本变更(环缓体积、快照重建成本),不是这次的缺陷;真要修应做成"逐实体按需记录",那是另一个批次。★ 症状好认:**回溯时那颗贴脸命中过的子弹不会倒飞回来**。
+- **② 建筑(可破坏砖)碰撞**:新增 `tests/tile_collision_probe.tscn`。判据取**游戏自己的两条规则**(不另写一套):渲染按 `_paint_maze`(tex≠0 且非液体且子格存活),碰撞按 `build_sub`(tex 是 wall 且子格存活);锁链顶/底的 64px 薄碰撞条不来自子格 ⇒ **3×3 子格邻域里出现链纹理 12/13/14 的采样点整点跳过**(保守)。
+  - 相:⓪ 全场抽样(每 8 个子格一点,~3600 点/张图)→ ① 选一个可破坏且存活的子格 → ② **只拆它**:同格其余 15 格零牵连 → ③ 拆光该 64px 格:**9 环面副本**(±MAP_WIDTH)也一并清 → ④ **回溯复原**:逐子格回到基线 → ⑤ **节流窗口**:一帧拆跨 3 块的砖,**碰撞追上渲染要 2 帧**(= `MAX_REBUILD_PER_FRAME` 的上限,有界) → ⑥ 再扫一遍全场。
+  - **结论(负面结果,照实记)**:`newfactory` 与 `demo` 两张图上,**相⓪/相⑥ 全场抽样均 0 处渲染不符、0 处碰撞不符** ⇒ **没查到建筑的虚空碰撞箱**。★ 覆盖上限:抽样(每 128px 一点)+ 链邻域跳过,不是逐子格全验。
+  - **变异验证**:把 `_restore_sub` 里的 `_dirty_chunks[…] = true` 换成 `pass` ⇒ 相④ 红 16 条「画=true 碰=false」(砖回来了但碰撞没回来)⇒ 这条守卫确实咬得住"重建"那一半。
+  - **★ 一张 v4 地图的常识(写探针时踩到)**:64px 格里**只有一部分子格**是砖是常态(实测选中的那格 16 个子格里只有 4 个是树干),拿"格级可破坏"当"16 子格全是那味砖"会**当场假红**。
+- **文档**:本条同时把 D2 里"相邻的既有红"那一句指向本节的结论。
