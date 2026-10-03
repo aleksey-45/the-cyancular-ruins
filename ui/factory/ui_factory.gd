@@ -239,16 +239,24 @@ const BTN_BORDER_W := 2
 
 # 描边式按钮的底:暗填充 + 亮描边(直角)。像素游戏里描边比「提亮填充」更省墨,
 # 也更容易和已有的暗色界面相处 —— 只是把「按钮存在」这件事补上。
+#
+# ★ 2026-10-03(视觉尺度调整):内容边距 14/6 → **30/14**。用户看过成品图后裁定
+#   「很多 margin 和 padding 都设计得太小」(设计稿是 1920×1440,原先这套度量按这个屏算偏小)。
+# ★★ **这一处是共用的**:`menu_button()`(菜单系)与 `style_button()`(旧那套:
+#   暂停菜单 / 设置 / 信息 / Beta / 结算页)都走本函数 ⇒ 改它 = **同时**放大那几屏的内边距。
+#   这是**有意接受**的(它们迟早一起换皮,而内边距变大不会坏任何断言);
+#   但改这一行的人必须知道影响面不止菜单系。侧写:按钮的最小高度因此变成
+#   「字号 + 28」—— 32 号字的按钮低于 60px 会被容器顶高(设置页的键位格 200×40 就是这一类)。
 static func _btn_box(fill: Color, border: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = fill
 	sb.border_color = border
 	sb.set_border_width_all(BTN_BORDER_W)
 	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 14.0
-	sb.content_margin_right = 14.0
-	sb.content_margin_top = 6.0
-	sb.content_margin_bottom = 6.0
+	sb.content_margin_left = 30.0
+	sb.content_margin_right = 30.0
+	sb.content_margin_top = 14.0
+	sb.content_margin_bottom = 14.0
 	return sb
 
 
@@ -276,7 +284,7 @@ static func panel_box(border: bool = true) -> StyleBoxFlat:
 #   要两条线就得两层。内容加到 `Body` 里:
 #       var p := UiFactory.menu_panel()
 #       (p.get_node("Body") as Container).add_child(<你的 VBox>)
-static func menu_panel(padding: Vector2 = Vector2(28, 20)) -> PanelContainer:
+static func menu_panel(padding: Vector2 = Vector2(48, 34)) -> PanelContainer:
 	var outer := PanelContainer.new()
 	var osb := StyleBoxFlat.new()
 	osb.bg_color = C_SURFACE
@@ -308,11 +316,16 @@ static func menu_panel(padding: Vector2 = Vector2(28, 20)) -> PanelContainer:
 	return outer
 
 
-# 菜单系的按钮(方向 B)。★ **不改 `_btn_box` / `style_button`** —— 它们被结算页/暂停菜单等
-# 共用,改一处动全部,没法逐屏验收。本函数是菜单系的新入口,分屏切换。
+# 菜单系的按钮(方向 B)。★ **不动 `style_button` 的 variant 分屏** —— 它被结算页/暂停菜单等
+# 共用,改它的三档配色等于一次改全部,没法逐屏验收。本函数是菜单系的新入口,分屏切换。
+# (★ 但**内边距是共用的**:两者都走 `_btn_box`,见那个函数的注释。)
 # variant 语义与 `style_button` 一致:"primary" 常态 / "quiet" 弱化(退出等)。
 # "gold" 是新增的第三档:**主行动**(创建房间 / 开始游戏)—— 琥珀描边 + 琥珀字。
-static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(420, 64),
+#
+# ★ 2026-10-03(尺度):默认 420×64 → **640×88**。没显式传 min_size 的调用点(主菜单六颗)
+#   跟着变大是**想要的**;显式传了小尺寸的调用点(大厅/弹层那批)必须自己判断 ——
+#   它们**不该**变成 640 宽,要传一个**放大后的小尺寸**(如 260×64)。
+static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640, 88),
 		variant: String = "primary") -> Button:
 	var b := Button.new()
 	b.text = text
@@ -358,10 +371,11 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = C_BORDER
-	sb.content_margin_left = 16.0
-	sb.content_margin_right = 16.0
-	sb.content_margin_top = 8.0
-	sb.content_margin_bottom = 8.0
+	# 2026-10-03(尺度):16/8 → 28/14(与 `_btn_box` 同一轮放大,标题带才不会比按钮瘦一圈)。
+	sb.content_margin_left = 28.0
+	sb.content_margin_right = 28.0
+	sb.content_margin_top = 14.0
+	sb.content_margin_bottom = 14.0
 	p.add_theme_stylebox_override("panel", sb)
 	p.add_child(label(text, size, C_GOLD))
 	return p
@@ -532,7 +546,9 @@ static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)
 	var b := Button.new()
 	b.text = text
 	style_control(b, size)
-	# 默认 420×64 是主菜单按钮列的布局度量,故意不凑 16 的倍数(见文件头第 2 条)。
+	# 默认 420×64 是**旧式**页面的按钮列度量(暂停 / 设置 / 信息 / Beta / 结算页在用),
+	# 故意不凑 16 的倍数(见文件头第 2 条)。★ 主菜单 2026-10-03 起走 `menu_button()`
+	# (默认 640×88),本函数的默认值**没有跟着变** —— 那几屏还没换皮,不该被顺手改。
 	# 尺寸不合场景的调用方(设置菜单的键位格 200×40、返回键 280×48)直接传 min_size,
 	# 不必再事后覆写 custom_minimum_size。
 	b.custom_minimum_size = min_size

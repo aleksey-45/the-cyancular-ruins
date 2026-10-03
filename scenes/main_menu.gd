@@ -138,22 +138,19 @@ func _build_version_label() -> Label:
 # 三组分开 ——「开始游戏」/「选项」/「退出」:原先 6 个按钮平铺、间距一律 18px,
 # 退出与单人模式同等分量(2026-09-13 视觉评析:这是会被误点的版式)。
 func _build_menu_buttons() -> Array:
-	# ★ 六个按钮收进一块 `menu_panel()`(方向 B 的凿刻压边:外深线 + 内亮线)。
-	#   改这一处的理由:原先它们是一列**浮在空底上**的裸按钮 —— 整屏只有标题与这列按钮,
-	#   中间一大片空的;给它们一个"器物"的外沿,菜单才立得起来。
-	#   ★ 定位沿用按钮列原来那套锚点/生长方向/偏移(位置不变),只是外面多了一层边;
-	#     按钮的**次序、间距、文案**一个字都没动(探针按文案找按钮)。
-	var panel := UiFactory.menu_panel()
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	panel.offset_top = 130.0
-	_ui_layer.add_child(panel)
-
+	# ★★ 2026-10-03:**撤掉那个「框住所有按钮的大框」**(用户看完成品图后的裁定 ——
+	#   按钮直接落在页面底上,不要外框)。同一批把整列尺度放大(设计稿 1920×1440 上原度量偏小):
+	#   按钮 640×88(工厂默认)、组内 20、组间 48、整列 `offset_top` 170。
+	#   ★ 定位/生长方向/次序/文案一个字都没动(探针按文案找按钮)。
+	#   ★ 别再加回 `menu_panel()`:撤框是**用户明确要求**,不是审美取舍。
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 34)   # 组与组之间的空档
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	box.grow_vertical = Control.GROW_DIRECTION_BOTH
+	box.offset_top = 170.0
+	box.add_theme_constant_override("separation", 48)   # 组与组之间的空档
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	(panel.get_node("Body") as Container).add_child(box)
+	_ui_layer.add_child(box)
 
 	var play_group := _btn_group()
 	var opt_group := _btn_group()
@@ -178,7 +175,10 @@ func _build_menu_buttons() -> Array:
 		get_tree().change_scene_to_file("res://scenes/mp_lobby.tscn"))
 	# Beta(2026-09-28,用户指定放在联机入口下面):以后所有实验性玩法都从这个入口进
 	# (现在是 PvP 时间玩法的两个变体)。弱化变体:实验功能不与正式模式抢注意力。
-	var beta_btn := UiFactory.menu_button("Beta", 32, Vector2(420, 64), "quiet")
+	# 尺寸与其余五颗**一致**(640×88):显式传是因为 variant 是第 4 个位置实参、GDScript
+	# 没有具名实参 —— 这里必须写出与 `menu_button` 默认值同值的尺寸,别再写回旧的 420×64
+	# (那会让 Beta / 退出两颗比同列按钮瘦一圈)。
+	var beta_btn := UiFactory.menu_button("Beta", 32, Vector2(640, 88), "quiet")
 	beta_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/beta_menu.tscn"))
@@ -194,7 +194,8 @@ func _build_menu_buttons() -> Array:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/info_menu.tscn"))
 	# 退出用弱化变体:常态描边与文字都压暗一档,不与「单人模式」抢注意力。
-	var quit_btn := UiFactory.menu_button("退 出", 32, Vector2(420, 64), "quiet")
+	# 尺寸同上(与同列按钮同尺寸,弱化只在颜色上表达)。
+	var quit_btn := UiFactory.menu_button("退 出", 32, Vector2(640, 88), "quiet")
 	quit_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().quit())
@@ -222,10 +223,11 @@ func _play_emerge(title: Label, ver: Label, buttons: Array) -> void:
 		delay += 0.16
 
 
-# 一组按钮:组内紧凑(14),组与组之间靠外层 VBox 的 separation(34)拉开。
+# 一组按钮:组内紧凑(20),组与组之间靠外层 VBox 的 separation(48)拉开。
+# ★ 2026-10-03:14/34 → 20/48(与按钮一起放大,比例关系不变)。
 func _btn_group() -> VBoxContainer:
 	var g := VBoxContainer.new()
-	g.add_theme_constant_override("separation", 14)
+	g.add_theme_constant_override("separation", 20)
 	return g
 
 
@@ -273,7 +275,11 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	var row: HBoxContainer = panel.get_node("VBox/ButtonRow")
 	# 单机开局面板(本屏的另一处按钮)同样走菜单按钮工厂 —— 它与主菜单同屏出现,
 	# 不换的话两套描边会在同一屏里并排。
-	var go := UiFactory.menu_button("开 始 探 索", 32)
+	# ★ 尺寸**必须显式传**:这两颗与主菜单那六颗不是同一处版式 —— 它们在弹层里**并排**
+	#   (HBox),而 `menu_button` 的默认值已涨到 640 ⇒ 不写就是 640+640+24 = 1304 宽,
+	#   把这块弹层从 ~900 撑到 ~1340。420 是这两个并排按钮原本的宽度(保持弹层宽度不变),
+	#   高度随新内边距抬到 72。
+	var go := UiFactory.menu_button("开 始 探 索", 32, Vector2(420, 72))
 	go.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		Settings.sp_disabled_weapons.clear()
@@ -288,7 +294,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		_enter_level0())
-	var back := UiFactory.menu_button("返回", 32)
+	var back := UiFactory.menu_button("返回", 32, Vector2(420, 72))   # 尺寸理由同上
 	back.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		panel.visible = false)

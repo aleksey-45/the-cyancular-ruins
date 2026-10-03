@@ -14,9 +14,13 @@ extends LobbyPage
 # ★ 场景是裸 Control,UI 全在代码里建(与三个旧页同款);控件一律走 UiFactory,字号 16 的倍数。
 
 # ── 版式常量(真实像素;1920×1440 设计稿)──
-const PAGE_MARGIN := 40.0
+# ★ 2026-10-03(尺度):页边距 40 → 56、卡间距 22 → 24、卡片高 400 → 440;
+#   随之重排的是各行/各按钮的绝对坐标(本页是绝对定位,改一个就得跟一串 ——
+#   漏一处就重叠)。按钮宽度那一档**不**跟 `menu_button` 的 640 默认值走:
+#   本页的按钮各有实际文本宽度(见各处注释),640 会把整行挤爆。
+const PAGE_MARGIN := 56.0
 const CARD_COLUMNS := 4
-const CARD_GAP := 22.0
+const CARD_GAP := 24.0
 const ROW_H := 64.0
 
 var _mode := ""                    # 当前**筛选**:"" = 全部;否则 PvpSession.MODE_*
@@ -154,13 +158,17 @@ func _mp_button(text: String, pos: Vector2, size: Vector2, fn: Callable,
 
 
 # 顶栏:昵称行 / 服务器地址行 / 右上本机局域网 IP。
+# ★ 各控件的 x 由「前一个的右边缘 + 间距」推出来(绝对定位;改宽度必须跟着改 x,
+#   否则按钮会叠在一起 —— 而**不会报任何错**)。行 y:56 / 136。
 func _build_top_bar() -> void:
 	var name_l := UiFactory.label("昵称", 32, UiFactory.C_TEXT)
-	name_l.position = Vector2(PAGE_MARGIN, 40)
-	name_l.size = Vector2(200, ROW_H)
+	name_l.position = Vector2(PAGE_MARGIN, 56)
+	name_l.size = Vector2(240, ROW_H)
 	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(name_l)
-	var name_le := UiFactory.line_edit(self, Vector2(240, 40), Vector2(520, ROW_H),
+	# 宽 620(不是 660):右上那条 IP 提示按文本宽(≈900)向左展开,输入框再宽 40px
+	# 就会与它**横向重叠**(两者同在 y 56~120 这一行,叠上去不报错、只是字压在框线上)。
+	var name_le := UiFactory.line_edit(self, Vector2(312, 56), Vector2(620, ROW_H),
 			"昵称(头上显示)", PvpSession.player_name)
 	UiFactory.style_control(name_le, 32)   # 本次版式统一到 32(基类 line_edit 的默认是 16)
 	name_le.text_changed.connect(func(t: String) -> void:
@@ -168,47 +176,68 @@ func _build_top_bar() -> void:
 		_push_lobby_name())
 
 	var addr_l := UiFactory.label("服务器地址", 32, UiFactory.C_TEXT)
-	addr_l.position = Vector2(PAGE_MARGIN, 120)
-	addr_l.size = Vector2(200, ROW_H)
+	addr_l.position = Vector2(PAGE_MARGIN, 136)
+	addr_l.size = Vector2(240, ROW_H)
 	addr_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(addr_l)
-	_addr_edit = UiFactory.line_edit(self, Vector2(240, 120), Vector2(520, ROW_H),
+	_addr_edit = UiFactory.line_edit(self, Vector2(312, 136), Vector2(620, ROW_H),
 			"服务器地址", PvpSession.server_address)
 	UiFactory.style_control(_addr_edit, 32)
-	_mp_button("刷新列表", Vector2(780, 120), Vector2(200, ROW_H), _on_refresh_pressed)
-	var srv := _mp_button("启动/重启本机服务器", Vector2(1000, 120), Vector2(360, ROW_H),
+	# 两颗都是**小按钮**(不该按 `menu_button` 的 640 默认值走):宽度按各自文本取
+	# 「刷新列表」4 字 ≈128px、「启动/重启本机服务器」10 字 ≈336px,加内边距(30×2)再留余量。
+	_mp_button("刷新列表", Vector2(996, 136), Vector2(260, ROW_H), _on_refresh_pressed)
+	var srv := _mp_button("启动/重启本机服务器", Vector2(1280, 136), Vector2(440, ROW_H),
 			_on_local_server_pressed)
 	srv.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
 
-	# 右上:本机局域网 IP(常驻显示,不靠易被刷掉的状态栏)
+	# 右上:本机局域网 IP(常驻显示,不靠易被刷掉的状态栏)。
+	# ★★ **右对齐必须靠锚点,不能靠 `position` + `horizontal_alignment`** —— Label 的 `size`
+	#   会被它的**最小尺寸(= 文本宽度)**顶开:提示全文约 860px 宽,写死 500 只会让矩形
+	#   从 `position` 往**右**长、被屏幕右缘裁掉(2026-10-03 之前一直如此:
+	#   后半句「(朋友在「服务器地址」里填它)」根本看不见 —— 而那是这条提示**唯一有用**的半句)。
+	#   锚到右上 + `GROW_DIRECTION_BEGIN`:右边缘钉在 1920 − PAGE_MARGIN,文本向**左**展开。
+	#   ★ 这是本次尺度调整**顺带**修的一处(不在任务清单里):它就是「内容被裁到读不出来」那类。
 	_ip_label = UiFactory.label(LocalServer.lan_ip_hint(), 32, UiFactory.C_ACCENT)
-	_ip_label.position = Vector2(1380, 40)
-	_ip_label.size = Vector2(500, ROW_H)
+	_ip_label.anchor_left = 1.0
+	_ip_label.anchor_right = 1.0
+	_ip_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_ip_label.offset_left = -1200.0     # 盒子够宽即可(文本右对齐 ⇒ 右边不留空)
+	_ip_label.offset_right = -PAGE_MARGIN
+	_ip_label.offset_top = 56.0
+	_ip_label.offset_bottom = 56.0 + ROW_H
 	_ip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	add_child(_ip_label)
 
 
 # 筛选行:四颗分段按钮(全部 / 1v1 / 3v3 / 大乱斗)+ 右侧创建/加入。
+# ★ 2026-10-03(尺度):y 230 → 252、筛选按钮 160×60 → 200×72(步进 160+12 → 200+16)、
+#   创建/加入 280×60 → 320×72 并靠右对齐(右边缘 = 1920 − PAGE_MARGIN)。
+#   ★ 必须**整行一起改**:分段按钮是绝对定位 + 定步进,只加宽不改步进 = 相邻两颗重叠;
+#     而 `_btn_box` 内边距变大(30/14)后,160 宽已装不下「大 乱 斗」三个全角字 + 两侧 30px。
 func _build_filter_bar() -> void:
 	var group := ButtonGroup.new()
 	var filters := [["", "全部"], [PvpSession.MODE_PVP, "1 v 1"],
 			[PvpSession.MODE_TEAM, "3 v 3"], [PvpSession.MODE_ROYALE, "大 乱 斗"]]
+	var fw := 200.0
 	var x := PAGE_MARGIN
 	for f in filters:
 		var m: String = f[0]
 		# 分段按钮:选中态 = **该模式的模式色**(未选中 = C_EDGE,与其余按钮同款)。
 		# ★ 选中那一档由 Button 自己的 toggle 状态画,ButtonGroup 保证互斥;颜色织在
 		#   `pressed` 主题项里(见 `UiFactory.menu_filter_button`)—— 只改常态色是**看不见**的。
-		var b := _mp_button(str(f[1]), Vector2(x, 230), Vector2(160, 60),
+		var b := _mp_button(str(f[1]), Vector2(x, 252), Vector2(fw, 72),
 				func() -> void: _set_filter(m), "primary", MODE_COLOR.get(m, UiFactory.C_ACCENT))
 		b.button_group = group
 		b.button_pressed = (m == _mode)
 		_filter_btns[m] = b
-		x += 160.0 + 12.0
-	# 「＋ 创建房间」是这一屏的主行动 ⇒ gold 档(琥珀描边 + 琥珀字)。
-	_create_btn = _mp_button("＋ 创建房间", Vector2(1300, 230), Vector2(280, 60),
-			_open_create_dialog, "gold")
-	_join_btn = _mp_button("加入房间", Vector2(1600, 230), Vector2(280, 60), _toggle_join_panel)
+		x += fw + 16.0
+	# 「＋ 创建房间」是这一屏的主行动 ⇒ gold 档(琥珀描边 + 琥珀字)。两颗靠右、间距 24,
+	# 右边缘 = 1920 − PAGE_MARGIN(与顶栏的 IP、底栏的「返回主菜单」同一条边)。
+	_create_btn = _mp_button("＋ 创建房间",
+			Vector2(1920.0 - PAGE_MARGIN - 320.0 * 2.0 - 24.0, 252),
+			Vector2(320, 72), _open_create_dialog, "gold")
+	_join_btn = _mp_button("加入房间", Vector2(1920.0 - PAGE_MARGIN - 320.0, 252),
+			Vector2(320, 72), _toggle_join_panel)
 
 
 func _build_card_grid() -> void:
@@ -216,21 +245,25 @@ func _build_card_grid() -> void:
 	_grid.columns = CARD_COLUMNS
 	_grid.add_theme_constant_override("h_separation", int(CARD_GAP))
 	_grid.add_theme_constant_override("v_separation", int(CARD_GAP))
-	_grid.position = Vector2(PAGE_MARGIN, 470)
+	# 卡片顶边:筛选行底(252+72=324)之下留一档空,与旧版的比例一致。
+	_grid.position = Vector2(PAGE_MARGIN, 500)
 	_grid.size = Vector2(1920.0 - PAGE_MARGIN * 2.0, 0)
 	add_child(_grid)
 
 
 func _build_status_bar() -> void:
 	# 一栏字浮在空底上读不出"这是个栏位" ⇒ 给它一块 `menu_panel()` 的底(方向 B 的凿刻压边)。
-	var bar := UiFactory.menu_panel(Vector2(20, 10))
-	bar.position = Vector2(PAGE_MARGIN, 1330)
+	# ★ 内边距仍显式给小值((28,12) 而不是工厂默认的 48/34):这一条只有 64 高,
+	#   34×2 会让面板被内容顶高、压到底边。y 取「1440 − 边距 − 行高」= 1320(底边留 56)。
+	var bar := UiFactory.menu_panel(Vector2(28, 12))
+	bar.position = Vector2(PAGE_MARGIN, 1440.0 - PAGE_MARGIN - ROW_H)
 	bar.size = Vector2(1500, ROW_H)
 	add_child(bar)
 	_status = UiFactory.label("", 32, UiFactory.C_TEXT)
 	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	(bar.get_node("Body") as Container).add_child(_status)
-	_mp_button("返回主菜单", Vector2(1680, 1330), Vector2(200, ROW_H), _on_back_pressed)
+	_mp_button("返回主菜单", Vector2(1920.0 - PAGE_MARGIN - 260.0, 1440.0 - PAGE_MARGIN - ROW_H),
+			Vector2(260, ROW_H), _on_back_pressed)
 
 
 func _on_back_pressed() -> void:
@@ -370,8 +403,9 @@ func _make_card(r: Dictionary) -> Button:
 
 	var btn := Button.new()
 	_style_card(btn)
-	btn.custom_minimum_size = Vector2(_card_width(), 400)
-	btn.size = Vector2(_card_width(), 400)
+	# 卡高 400 → 440(2026-10-03 尺度):卡内边距同时放大,不抬高度会把正文挤到贴边。
+	btn.custom_minimum_size = Vector2(_card_width(), 440)
+	btn.size = Vector2(_card_width(), 440)
 	btn.set_meta("code", code)
 	btn.set_meta("mode", mode)
 	btn.text = ""   # 内容全部自绘
@@ -392,16 +426,16 @@ func _make_card(r: Dictionary) -> Button:
 	fsb.border_color = UiFactory.C_INNER
 	fsb.set_border_width_all(1)
 	fsb.set_corner_radius_all(0)
-	fsb.content_margin_left = 18.0
-	fsb.content_margin_right = 18.0
-	fsb.content_margin_top = 14.0
-	fsb.content_margin_bottom = 14.0
+	fsb.content_margin_left = 26.0
+	fsb.content_margin_right = 26.0
+	fsb.content_margin_top = 20.0
+	fsb.content_margin_bottom = 20.0
 	frame.add_theme_stylebox_override("panel", fsb)
 	btn.add_child(frame)
 
 	var col := VBoxContainer.new()
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_theme_constant_override("separation", 8)
+	col.add_theme_constant_override("separation", 12)
 	frame.add_child(col)
 
 	col.add_child(_card_header(mode, r))
@@ -451,15 +485,17 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = UiFactory.C_BORDER
-	sb.content_margin_left = 12.0
-	sb.content_margin_right = 12.0
-	sb.content_margin_top = 6.0
-	sb.content_margin_bottom = 6.0
+	# 与 `UiFactory.header_strip` 同一轮放大(16/8 → 28/14 的那一档):12/6 → 20/12。
+	# ★ 这里是**第二份**字面量(工厂那条标题带不带右侧角标,故没走工厂)——两边要同步手改。
+	sb.content_margin_left = 20.0
+	sb.content_margin_right = 20.0
+	sb.content_margin_top = 12.0
+	sb.content_margin_bottom = 12.0
 	strip.add_theme_stylebox_override("panel", sb)
 
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 16)
 	strip.add_child(row)
 
 	var name_l := UiFactory.label(str(MODE_LABEL[mode]), 32, MODE_COLOR[mode])
@@ -507,14 +543,14 @@ func _card_body(r: Dictionary) -> Control:
 	var mode := str(r.get("mode", PvpSession.MODE_PVP))
 	var box := VBoxContainer.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_theme_constant_override("separation", 6)
+	box.add_theme_constant_override("separation", 10)
 
 	box.add_child(UiFactory.label(str(r.get("code", "")), 48, UiFactory.C_TEXT))
 	box.add_child(UiFactory.label(_card_subtitle(mode, r), 32, UiFactory.C_TEXT_DIM))
 
 	var mid := HBoxContainer.new()
 	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mid.add_theme_constant_override("separation", 16)
+	mid.add_theme_constant_override("separation", 20)
 	mid.add_child(_card_map_thumb(mode, str(r.get("map", ""))))
 	var meta := VBoxContainer.new()
 	meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -765,26 +801,26 @@ func _toggle_join_panel() -> void:
 func _build_join_panel() -> void:
 	_join_panel = UiFactory.menu_panel()
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 12)
-	vb.custom_minimum_size = Vector2(560, 0)
+	vb.add_theme_constant_override("separation", 16)
+	vb.custom_minimum_size = Vector2(640, 0)
 	(_join_panel.get_node("Body") as Container).add_child(vb)
 	vb.add_child(UiFactory.header_strip("加入房间", 32))
-	_join_code_edit = UiFactory.line_edit(vb, Vector2.ZERO, Vector2(500, 48), "房间号", "")
-	_join_code_edit.custom_minimum_size = Vector2(500, 48)
+	_join_code_edit = UiFactory.line_edit(vb, Vector2.ZERO, Vector2(560, 64), "房间号", "")
+	_join_code_edit.custom_minimum_size = Vector2(560, 64)
 	UiFactory.style_control(_join_code_edit, 32)
-	_join_invite_edit = UiFactory.line_edit(vb, Vector2.ZERO, Vector2(500, 48),
+	_join_invite_edit = UiFactory.line_edit(vb, Vector2.ZERO, Vector2(560, 64),
 			"邀请码(私密房,可空)", "")
-	_join_invite_edit.custom_minimum_size = Vector2(500, 48)
+	_join_invite_edit.custom_minimum_size = Vector2(560, 64)
 	UiFactory.style_control(_join_invite_edit, 32)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 16)
 	vb.add_child(row)
-	var join := UiFactory.menu_button("加 入", 32, Vector2(180, 48), "gold")
+	var join := UiFactory.menu_button("加 入", 32, Vector2(220, 64), "gold")
 	join.pressed.connect(func() -> void:
 		_join_panel.visible = false
 		_join_code(_join_code_edit.text.strip_edges(), _mode, _join_invite_edit.text))
 	row.add_child(join)
-	var cancel := UiFactory.menu_button("取 消", 32, Vector2(180, 48), "quiet")
+	var cancel := UiFactory.menu_button("取 消", 32, Vector2(220, 64), "quiet")
 	cancel.pressed.connect(func() -> void: _join_panel.visible = false)
 	row.add_child(cancel)
 	add_child(_join_panel)
@@ -870,32 +906,32 @@ func _build_create_panel() -> void:
 	add_child(_create_panel)
 
 	var root_vb := VBoxContainer.new()
-	root_vb.add_theme_constant_override("separation", 18)
+	root_vb.add_theme_constant_override("separation", 24)
 	(_create_panel.get_node("Body") as Container).add_child(root_vb)
 
 	# 标题行:标题带 + 右上角 ×(关闭)。
 	var title_row := HBoxContainer.new()
-	title_row.add_theme_constant_override("separation", 12)
+	title_row.add_theme_constant_override("separation", 16)
 	root_vb.add_child(title_row)
 	# ★ 标题换 `header_strip()`(方向 B 的标题带)——它是 Label 的**外层容器**,
 	#   所以 `title_row` 里那颗 × 仍然按文案找得到(`lobby_create_form_probe`)。
 	var title := UiFactory.header_strip("创 建 房 间", 48)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
-	var close := UiFactory.menu_button("×", 32, Vector2(64, 48), "quiet")
+	var close := UiFactory.menu_button("×", 32, Vector2(80, 56), "quiet")
 	close.pressed.connect(func() -> void: _set_create_visible(false))
 	title_row.add_child(close)
 
 	# 双列:左 = 房型与人数/限时;右 = 禁用武器 + 地图。
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 32)
+	cols.add_theme_constant_override("separation", 40)
 	root_vb.add_child(cols)
 	var left := VBoxContainer.new()
-	left.add_theme_constant_override("separation", 14)
+	left.add_theme_constant_override("separation", 20)
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(left)
 	var right := VBoxContainer.new()
-	right.add_theme_constant_override("separation", 14)
+	right.add_theme_constant_override("separation", 20)
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(right)
 
@@ -903,7 +939,7 @@ func _build_create_panel() -> void:
 	left.add_child(_build_create_mode_buttons())
 	# 公开/私密 + 邀请码**整块**一个容器:1v1 下要整块隐藏(见 `_apply_create_form` 的注释)。
 	var privacy_row := VBoxContainer.new()
-	privacy_row.add_theme_constant_override("separation", 8)
+	privacy_row.add_theme_constant_override("separation", 12)
 	_build_public_row(privacy_row)
 	left.add_child(privacy_row)
 	_form_rows["privacy"] = privacy_row
@@ -915,7 +951,7 @@ func _build_create_panel() -> void:
 	# 非 Beta 态它往容器里什么都不加。★ 这一段与**模式**无关(只看 `PvpSession.beta_mode`),
 	# 故 `_apply_create_form` 不碰 `_form_rows["beta"]`,它的可见性在建面板这一刻定死。
 	var beta_block := VBoxContainer.new()
-	beta_block.add_theme_constant_override("separation", 8)
+	beta_block.add_theme_constant_override("separation", 12)
 	beta_block.visible = PvpSession.beta_mode
 	_add_time_params(beta_block)
 	left.add_child(beta_block)
@@ -923,7 +959,7 @@ func _build_create_panel() -> void:
 
 	# 右列:禁用武器**整块**(标题 + 网格)。整块一个容器,才能一次显隐(设计 §3.4)。
 	var wblock := VBoxContainer.new()
-	wblock.add_theme_constant_override("separation", 8)
+	wblock.add_theme_constant_override("separation", 12)
 	wblock.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
 	# ★ 回调把 `cb` 与 `type_id` **都**收进 `_weapon_checks`(照旧大乱斗页的写法)——
 	#   少收 `type_id` 那半,`_checked_weapons()` 会永远返回 `[0]` 且**不报错**。
@@ -936,21 +972,21 @@ func _build_create_panel() -> void:
 
 	# 右列:地图选择(基类 `_add_map_picker` 写 Settings.mp_map_path)。整块登记,供探针查显隐。
 	var map_block := VBoxContainer.new()
-	map_block.add_theme_constant_override("separation", 8)
+	map_block.add_theme_constant_override("separation", 12)
 	_add_map_picker(map_block)
 	right.add_child(map_block)
 	_form_rows["map"] = map_block
 
 	# 底部:取消 / 创建房间。
 	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 16)
+	actions.add_theme_constant_override("separation", 20)
 	actions.alignment = BoxContainer.ALIGNMENT_END
 	root_vb.add_child(actions)
-	var cancel := UiFactory.menu_button("取 消", 32, Vector2(220, 56), "quiet")
+	var cancel := UiFactory.menu_button("取 消", 32, Vector2(260, 64), "quiet")
 	cancel.pressed.connect(func() -> void: _set_create_visible(false))
 	actions.add_child(cancel)
 	# 「创 建 房 间」= 弹层里的主行动 ⇒ gold 档(与筛选行那颗「＋ 创建房间」同色).
-	var create := UiFactory.menu_button("创 建 房 间", 32, Vector2(300, 56), "gold")
+	var create := UiFactory.menu_button("创 建 房 间", 32, Vector2(360, 64), "gold")
 	create.pressed.connect(_on_create_pressed)
 	actions.add_child(create)
 
@@ -965,11 +1001,11 @@ func _build_create_panel() -> void:
 # ★ 必须登记进 `_create_mode_btns`:`_apply_create_form` 靠它把**当前项**置灰。
 func _build_create_mode_buttons() -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 16)
 	var group := ButtonGroup.new()
 	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
 		# 与筛选行同款:选中那一段画该模式的模式色(未选 = C_EDGE)。
-		var b := UiFactory.menu_filter_button(str(MODE_LABEL[m]), 32, Vector2(180, 48), MODE_COLOR[m])
+		var b := UiFactory.menu_filter_button(str(MODE_LABEL[m]), 32, Vector2(220, 56), MODE_COLOR[m])
 		b.button_group = group
 		b.pressed.connect(func() -> void: _apply_create_form(m))
 		_create_mode_btns[m] = b
@@ -990,7 +1026,7 @@ func _build_public_row(parent: Node) -> void:
 	_invite_edit = LineEdit.new()
 	_invite_edit.placeholder_text = "邀请码(留空自动生成)"
 	_invite_edit.visible = false
-	_invite_edit.custom_minimum_size = Vector2(0, 48)
+	_invite_edit.custom_minimum_size = Vector2(0, 64)
 	UiFactory.style_control(_invite_edit, 32)
 	UiFactory.style_line_edit(_invite_edit)
 	parent.add_child(_invite_edit)
@@ -1000,7 +1036,7 @@ func _build_public_row(parent: Node) -> void:
 func _build_max_players_row(parent: Node) -> void:
 	var row := HBoxContainer.new()
 	# ★ HBox 只认 "separation";"h_separation" 是 GridContainer 的键(写在这里存得下、永不读)。
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 16)
 	row.add_child(UiFactory.label("人数上限:", 32))
 	_max_slider = HSlider.new()
 	_max_slider.min_value = 2
@@ -1022,7 +1058,7 @@ func _build_max_players_row(parent: Node) -> void:
 #   (`Settings.royale_match_min` 的写入端),别在这里改数值(见 CLAUDE.md §大乱斗)。
 func _build_match_time_row(parent: Node) -> void:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 16)
 	row.add_child(UiFactory.label("一局限时:", 32))
 	_time_slider = HSlider.new()
 	_time_slider.min_value = 1.0
@@ -1050,7 +1086,7 @@ func _build_match_time_row(parent: Node) -> void:
 # ★ 勾选态直写 Settings + save()(与 `_build_match_time_row` / `_add_hue_row` 同款)。
 func _build_full_heal_row(parent: Node) -> void:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 16)
 	var check := CheckButton.new()
 	check.text = "每回合开始回满血(房主生效)"
 	check.button_pressed = Settings.pvp_round_full_heal
@@ -1172,8 +1208,8 @@ func _build_wait_panel() -> void:
 	add_child(_wait_panel)
 
 	_wait_box = VBoxContainer.new()
-	_wait_box.add_theme_constant_override("separation", 14)
-	_wait_box.custom_minimum_size = Vector2(720, 0)
+	_wait_box.add_theme_constant_override("separation", 20)
+	_wait_box.custom_minimum_size = Vector2(800, 0)
 	(_wait_panel.get_node("Body") as Container).add_child(_wait_box)
 
 	# 标题 = 一条 `header_strip()` 标题带。★ `_wait_title` 仍是那条带**里面**的 Label
@@ -1183,7 +1219,7 @@ func _build_wait_panel() -> void:
 	_wait_box.add_child(title_strip)
 
 	_wait_body = VBoxContainer.new()
-	_wait_body.add_theme_constant_override("separation", 8)
+	_wait_body.add_theme_constant_override("separation", 12)
 	_wait_box.add_child(_wait_body)
 
 	_wait_count = UiFactory.label("", 32, UiFactory.C_TEXT)
@@ -1192,15 +1228,15 @@ func _build_wait_panel() -> void:
 	# 选边按钮(仅 3v3 可见)。★ 一次建、按模式显隐 —— 不重建(重建会连 handler 与
 	# `_hide_wait_room` 之外的引用一起换掉)。
 	var pick_row := HBoxContainer.new()
-	pick_row.add_theme_constant_override("separation", 16)
+	pick_row.add_theme_constant_override("separation", 20)
 	_wait_box.add_child(pick_row)
-	_wait_pick_a = UiFactory.menu_button("加入 A 队", 32, Vector2(200, 48))
+	_wait_pick_a = UiFactory.menu_button("加入 A 队", 32, Vector2(240, 56))
 	# ★ 用 `bind(队号)` 而不是两条匿名 lambda:绑定实参能被 `Callable.get_bound_arguments()`
 	#   读出来 —— 两颗按钮的文案只差一个 A/B 字,对调之后**行为是错的且没有任何运行时信号**,
 	#   只有"读实参"这条断言看得见(计数断言 `size() == 1` 对调后照样绿)。
 	_wait_pick_a.pressed.connect(_on_wait_pick.bind(1))
 	pick_row.add_child(_wait_pick_a)
-	_wait_pick_b = UiFactory.menu_button("加入 B 队", 32, Vector2(200, 48))
+	_wait_pick_b = UiFactory.menu_button("加入 B 队", 32, Vector2(240, 56))
 	_wait_pick_b.pressed.connect(_on_wait_pick.bind(2))
 	pick_row.add_child(_wait_pick_b)
 
@@ -1209,10 +1245,10 @@ func _build_wait_panel() -> void:
 	_wait_hue = _add_hue_row(_wait_box, "自己角色颜色:", Vector2(320, 30), Vector2(46, 30))
 
 	# 「开 始 游 戏」= 等待室的主行动 ⇒ gold 档;「退出房间」= 弱化档(与主菜单「退 出」同款).
-	_wait_start = UiFactory.menu_button("开 始 游 戏", 32, Vector2(360, 56), "gold")
+	_wait_start = UiFactory.menu_button("开 始 游 戏", 32, Vector2(440, 64), "gold")
 	_wait_start.pressed.connect(_on_wait_start_pressed)
 	_wait_box.add_child(_wait_start)
-	_wait_leave = UiFactory.menu_button("退出房间", 32, Vector2(360, 48), "quiet")
+	_wait_leave = UiFactory.menu_button("退出房间", 32, Vector2(440, 56), "quiet")
 	_wait_leave.pressed.connect(_on_wait_leave_pressed)
 	_wait_box.add_child(_wait_leave)
 
