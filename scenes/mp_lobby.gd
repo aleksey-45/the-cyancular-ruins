@@ -848,6 +848,19 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 		#   ① 暂存房号(1v1 的 `room_joined` 载荷只有 role,拿不到房号);
 		#   ② 模式未知时三张表都问一次;③ invite 必须真的传下去(私密房的唯一途径)。
 		_join_pending = code
+		# ★★ 模式已知 ⇒ **在发起加入这一刻**就把 `_current_mode` 置上(见字段声明处那段)。
+		#   卡片点击那条路**总是**知道模式,本来就该在此记;而 `mode == ""`(在"全部"筛选下
+		#   手敲房号)时**不设** —— 那种情况本来就要等应答才知道是哪张表。
+		#   ★ 为什么必须在**这里**记、而不能只靠 `_on_room_state_*`:等待室广播是
+		#     `call_deferred` + 再等一帧,且发送前 `if rr.in_match: return` ⇒ 房主若在
+		#     "有人加入"的同一两帧内开局,那次广播会被**静默吞掉**,响应式的 `_on_room_state_*`
+		#     **永远不会来** ⇒ 只靠它记的话 `_current_mode` 恒空 ⇒ `_enter_match_scene` 落进
+		#     else(push_error、不切场景)⇒ 加入者**卡在大厅**。
+		#   ★ 加入**失败**时 `_current_mode` 留着这个旧值**无害**:`_enter_match_scene` 只在
+		#     `match_start` 到达时才跑,而加入失败根本不会有 `match_start`;下一次建房/加入
+		#     会把它覆盖掉(`_lobby_action_allowed` 只读它、且另有 `_in_room` 兜底)。
+		if mode != "":
+			_current_mode = mode
 		_probe_multi_join = mode == ""
 		_multi_left = 3 if _probe_multi_join else 0
 		_status.text = "加入房间 %s,等待配对…" % code
