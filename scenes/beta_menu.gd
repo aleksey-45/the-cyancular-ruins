@@ -1,7 +1,7 @@
 extends Control
 
 # Beta 入口页(2026-09-28,用户指定):以后所有实验性玩法都从这里进。
-# 页面 = 标题 + 返回 + 若干「画框型选项」卡片(画框图标 + 模式名栏 + 简介栏 + 版本栏)。
+# 页面 = 标题带 + 返回 + 若干「画框型选项」卡片(画框图标 + 模式名栏 + 简介栏 + 版本栏)。
 # 当前两张卡(P2 线,PvP 时间玩法),2026-10-03 起都进**统一大厅** `mp_lobby`:
 #   · 错乱大乱斗(图标 = 单机怀表 + 下方红色 Royale 字样)→ mp_lobby(beta 态,预选大乱斗筛选)
 #   · 时空 3v3(图标 = 单机怀表 + 下方蓝色 Team 字样)→ mp_lobby(beta 态,预选 3v3 筛选)
@@ -11,6 +11,10 @@ extends Control
 #   所以先 reset 再置 beta_mode = true,然后切场景 —— 大厅页在 _ready 里读它。
 # ★ 预选的**筛选**模式走 `entry_mode`(不是凭据的 `room_mode`):大厅页 `_ready` 末尾按它
 #   调 `_set_filter`,于是从 Beta 进来时列表已经筛在该模式上(直接进大厅时它是 "")。
+#
+# ★ 版式语汇(2026-10-03):整页与设置页 / 信息页同一套 —— `MarginContainer` 页面边距 +
+#   标题带(`header_strip`)、卡片走 `menu_panel()`(外深线 + 内亮线,内容加在 `Body`)、
+#   卡内标题也是标题带、返回键走 `menu_button(quiet)`。
 
 const CARDS := [
 	{
@@ -33,56 +37,89 @@ const CARDS := [
 	},
 ]
 
+# ── 版式常量(与设置页 / 信息页同一档)──
+const PAGE_MARGIN := 76
+const BLOCK_GAP := 28        # 标题带 / 副题 / 卡片行 / 返回行之间
+const CARD_GAP := 36         # 两张卡之间
+const CARD_W := 440.0        # 卡片宽度(两张 + 间距远小于页面宽)
+const CARD_PAD := Vector2(28, 24)   # 卡内边距(卡比整页面板窄,故不取 64/46 那一档)
+
 
 func _ready() -> void:
 	_build_ui()
 
 
 func _build_ui() -> void:
-	var root := Control.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(root)
+	# 不透明深色底 —— **与信息页 / 设置页同一份既有字面量**(它们也各硬编码了一份)。
+	# ★ 不垫的话页面底是 Godot 默认的清屏灰 `(76,76,76)`,与另两页(18,23,33)明显不同款。
+	#   把它并进 `UiFactory` 是三页统一时的后续任务,本批沿用既有字面量、不新增颜色。
+	var bg := ColorRect.new()
+	bg.color = Color(0.07, 0.09, 0.13)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
 
-	var title := UiFactory.label("—— Beta ——", 48, UiFactory.C_ACCENT)
-	title.position = Vector2(80, 48)
-	root.add_child(title)
-	var hint := UiFactory.label("实验性玩法都在这里;规则可能与正式模式不同", 16, UiFactory.C_TEXT_DIM)
-	hint.position = Vector2(84, 108)
-	root.add_child(hint)
+	# 整页骨架与设置页 / 信息页同款:页面边距 + VBox。
+	var page := MarginContainer.new()
+	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right", "top", "bottom"]:
+		page.add_theme_constant_override("margin_" + side, PAGE_MARGIN)
+	add_child(page)
 
-	var back := UiFactory.button("返 回", 32, Vector2(240, 56))
-	back.position = Vector2(80, get_viewport_rect().size.y - 120.0)
-	back.pressed.connect(func() -> void:
-		Sfx.play("ui")
-		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
-	root.add_child(back)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", BLOCK_GAP)
+	page.add_child(vb)
+
+	# 页面标题 = 同款标题带(与「—— 设 置 ——」/「信 息」同一个味道)。
+	vb.add_child(UiFactory.header_strip("—— Beta ——", 48))
+	vb.add_child(UiFactory.label("实验性玩法都在这里;规则可能与正式模式不同", 16, UiFactory.C_TEXT_DIM))
 
 	var row := HBoxContainer.new()
-	row.position = Vector2(80, 190)
-	row.add_theme_constant_override("separation", 36)
-	root.add_child(row)
+	row.add_theme_constant_override("separation", CARD_GAP)
+	vb.add_child(row)
 	for c in CARDS:
 		row.add_child(_make_card(c))
 
+	# 弹性空档:把返回行顶到页面下沿(与设置页底部动作行的落法一致)。
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vb.add_child(spacer)
 
-# 画框型选项 = 画框(图标)+ 模式名栏 + 简介栏 + 版本栏。整卡可点,hover 提亮。
+	var back_row := HBoxContainer.new()
+	var back := UiFactory.menu_button("返 回", 32, Vector2(240, 72), "quiet")
+	back.pressed.connect(func() -> void:
+		Sfx.play("ui")
+		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
+	back_row.add_child(back)
+	vb.add_child(back_row)
+
+
+# 画框型选项 = 凿刻面板(`menu_panel`)+ 画框(图标)+ 模式名栏(标题带)+ 简介栏 + 版本栏。
+# 整卡可点,hover 时外线转金。
 func _make_card(c: Dictionary) -> Control:
-	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(400, 430)
+	# ★ `menu_panel()` 的皮与内容契约:内容一律加进 `Body`(只有它承载内边距)。
+	var card := UiFactory.menu_panel(CARD_PAD)
+	card.custom_minimum_size = Vector2(CARD_W, 0)
+	# 只有**外层卡**吃鼠标 —— 整个内容子树都设 IGNORE(否则点在内层控件上时
+	# `gui_input` 落在它那儿、卡的点击/悬停全都不触发)。
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
-	card.add_theme_stylebox_override("panel", _card_style(UiFactory.C_ACCENT))
 	card.gui_input.connect(func(ev: InputEvent) -> void:
-		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed 				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			_enter_card(c))
+	# hover:外线转金(内亮线不动 —— 凿刻感保留)。duplicate() 免得改到共享样式。
+	var outer := card.get_theme_stylebox("panel") as StyleBoxFlat
+	var hot := outer.duplicate() as StyleBoxFlat
+	hot.border_color = UiFactory.C_GOLD
 	card.mouse_entered.connect(func() -> void:
-		card.add_theme_stylebox_override("panel", _card_style(Color(1.0, 0.85, 0.3)))
+		card.add_theme_stylebox_override("panel", hot)
 		Sfx.play("ui"))
 	card.mouse_exited.connect(func() -> void:
-		card.add_theme_stylebox_override("panel", _card_style(UiFactory.C_ACCENT)))
+		card.add_theme_stylebox_override("panel", outer))
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
-	card.add_child(vb)
+	vb.add_theme_constant_override("separation", 12)
+	(card.get_node("Body") as Container).add_child(vb)
 
 	# 画框(图标):程序化怀表 + 下方模式字样(红 Royale / 蓝 Team)
 	var icon_box := VBoxContainer.new()
@@ -99,9 +136,8 @@ func _make_card(c: Dictionary) -> Control:
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	icon_box.add_child(tag)
 
-	var name_l := UiFactory.label(str(c["name"]), 48)
-	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(name_l)
+	# 卡内标题 = 同款标题带(与页面标题、区块标题同一个味道)。
+	vb.add_child(UiFactory.header_strip(str(c["name"]), 32))
 
 	var desc := UiFactory.label(str(c["desc"]), 16, UiFactory.C_TEXT_DIM)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -111,7 +147,17 @@ func _make_card(c: Dictionary) -> Control:
 	var ver := UiFactory.label(str(c["version"]), 16, Color(0.55, 0.75, 0.6))
 	ver.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(ver)
+
+	_ignore_mouse_recursive(card)
 	return card
+
+
+# 把整棵内容子树设成 MOUSE_FILTER_IGNORE(只留外层卡吃点击)—— 点击/悬停的单一落点。
+func _ignore_mouse_recursive(node: Node) -> void:
+	for ch in node.get_children():
+		if ch is Control:
+			(ch as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_ignore_mouse_recursive(ch)
 
 
 ## 进入某张卡的模式(点击与 autotest 共用同一入口;CARDS[i] 传整张卡的字典)。
@@ -123,13 +169,3 @@ func _enter_card(c: Dictionary) -> void:
 	#   `CARDS[i]["mode"]` 不是死字段 —— 从 2026-10-03 起它重新有读者,就是这一行。
 	PvpSession.entry_mode = str(c["mode"])
 	get_tree().change_scene_to_file(str(c["scene"]))
-
-
-static func _card_style(border: Color) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.07, 0.10, 0.14)
-	sb.border_color = border
-	sb.set_border_width_all(4)
-	sb.set_corner_radius_all(8)
-	sb.set_content_margin_all(18)
-	return sb
