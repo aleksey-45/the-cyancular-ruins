@@ -87,6 +87,21 @@ def stamp_build_info(version: str, stamp: str) -> str:
 # 为什么必须做:脚本错误只在**发布版**才现形的那一类(比如 build_info.gd 被覆盖掉一段)
 # 在编辑器里完全看不出来,而"导完就发"的流程没有任何别的环节会发现它。
 # 判据只认脚本级致命错 —— WARNING/普通 ERROR 不拦(发布版有很多无害噪音)。
+def _smoke_root() -> str:
+    """冒烟用的**暂存根**:`builds/`(仓库内的发布目录,`.gitignore` 已配)。
+
+    ★ 为什么不放系统临时目录(`%TEMP%`):**杀软对"从临时目录启动的新可执行"启发式最敏感** ——
+      本机的打包冒烟会反复把刚导出的 exe 拷进去跑,那是在给安全软件送信号(2026-10-04 排查)。
+    ★ 为什么放 `builds/` 而不是仓库根:**RELEASE.md §1.3 要求"拷到项目目录之外跑"** ——
+      那句话的实质是"exe 旁边不能有 `project.godot`",否则 Godot 会从本地文件系统补齐/重扫资源、
+      掩盖打包漏项(`builds/<版本> <时间戳>/` 里没有 `project.godot`,故满足)。
+    ★ 可用环境变量覆盖(CI/别的机器想换到别处):`CYR_SMOKE_DIR`。
+    """
+    root = os.environ.get("CYR_SMOKE_DIR") or os.path.join(PROJECT, "builds")
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
 def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
     # ★ extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
@@ -102,7 +117,7 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     #   ② **必须查返回码** —— 崩溃(SIGSEGV/异常退出)不会打 `SCRIPT ERROR` ⇒
     #      上面那段文本过滤把它读成"OK(无脚本级错误)",而这正是本文件反复警惕的
     #      "零脚本错误地跑错分支"的**升级版**:零脚本错误地**根本没跑起来**。
-    tmp = tempfile.mkdtemp(prefix="cyr_smoke_")
+    tmp = tempfile.mkdtemp(prefix=".smoke_", dir=_smoke_root())
     try:
         run_exe = os.path.join(tmp, os.path.basename(exe))
         shutil.copy2(exe, run_exe)
