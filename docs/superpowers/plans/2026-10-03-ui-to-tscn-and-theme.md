@@ -256,7 +256,7 @@ primary/quiet/gold/accent 四档）。**拿旧档当迁移基准 = 一挂上去�
 
 > ### ✅ 已收口(2026-10-03):本任务的前提**基本不成立**,实际可删面远小于计划设想
 >
-> 跑了一遍完整的 `UiFactory` 样式面清点(见 `.superpowers/sdd/2026-10-03-ui-to-tscn-and-theme/t6-boundary-report.md`),
+> 跑了一遍完整的 `UiFactory` 样式面清点(过程报告是 gitignored 的 scratch,结论已全部抄在本节),
 > 结论:
 > - **Step 1 的门按字面写永远不可能为真** —— 实测**没有任何 `.tscn` 含施加器名**(0 行):
 >   六屏残留**100% 在动态代码路径**(房卡/名单行/表单动态块那一族),它们**按设计留代码**,
@@ -285,12 +285,12 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
 - [x] **Step 2: 删**(2026-10-03 按 R12/R26 收口 —— 实际只删**四个零调用死构造器**
   `menu_separator` / `check_row` / `slider_row` / `menu_filter_button`(`ae5e0d1`);**`style_row_button` 刻意保留**
   —— 它是 `menu_theme_mirror_smoke` 里 `RowButton` 那条臂的**供给**(删了等于零收益砍覆盖)。详见上方 ✅ 收口块
-  与 `.superpowers/sdd/2026-10-03-ui-to-tscn-and-theme/t6-boundary-report.md`)
+  与本节的清点结论)
 
 ★ **`_btn_box` / `panel_box` / `style_button` 等可能仍被 `UiFactory` 自己的其它函数用**（如 `menu_button`）—— 删之前看清谁还在用。
 ★ **`PixelFont.shared()`**：确认没有 `.gd` 再调它之后删（`apply_font_recursive` 一并评估）。
 
-- [x] **Step 3: 全量回归 + 提交**(`ae5e0d1`;回归面见 `.superpowers/sdd/2026-10-03-ui-to-tscn-and-theme/t3a-report.md`)。
+- [x] **Step 3: 全量回归 + 提交**(`ae5e0d1`;回归面结论见本节)。
   ★ 连带清掉一条**同批发现的既有红**:`allscript_probe` 的 `SKIP_DIRS` 漏了 gitignored 的 `res://_crashtest` ⇒
   它**改前就红 3/288**、全仓没有可用的编译面闸;补上后为 `OK(283 个脚本全部加载)`(`c77a53b`)。
 
