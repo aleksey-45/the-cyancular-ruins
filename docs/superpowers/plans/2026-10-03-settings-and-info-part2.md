@@ -81,7 +81,7 @@ extends Node
 #   真的写了对应的 Settings 键"。
 # ★ 断言计数:ALL-OK 只证明"没有一条失败",不证明"该跑的都跑过"(见 tests/lib/probe_base.gd
 #   文件头)。少跑一条就红 —— 改本探针必须同步改这个数。
-const EXPECTED_CHECKS := 11
+const EXPECTED_CHECKS := 20
 
 const SCENE := "res://scenes/settings_menu.tscn"
 
@@ -268,7 +268,7 @@ script = ExtResource("1")
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/settings_display_section_probe.tscn
 ```
 
-期望：`SETTINGS DISPLAY SECTION PROBE: ALL-OK(11 条断言)`。
+期望：`SETTINGS DISPLAY SECTION PROBE: ALL-OK(20 条断言)`。
 ★ 条数是**运行时**的（`ROWS` 那个循环每轮 2 条 ⇒ 静态 `grep -c '^\s*_check('` 只得 5，别拿它当判据）。
 
 - [ ] **Step 5: 回归（必须仍绿）**
