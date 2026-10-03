@@ -62,7 +62,7 @@ func _ready() -> void:
 func _phase_form(packed: PackedScene) -> void:
 	# ★ 无类型声明(Variant):本探针按**脚本成员名**访问(`_form_rows` / `_create_payload` …),
 	#   声明成 `Control` 会让分析器在编译期报"未知成员"、整份探针加载失败。
-	var page = packed.instantiate()
+	var page = _page(packed)
 	page._open_create_dialog()
 
 	# ① 首次打开**不会**自关(与 Task 3 那个"首点把自己关掉"的形状相反:新建节点 visible=false,
@@ -161,7 +161,7 @@ func _phase_form(packed: PackedScene) -> void:
 
 # ── ⑮-⑱:按钮行为(不入树即可:emit `pressed` 走真实连接的 handler)──
 func _phase_buttons(packed: PackedScene) -> void:
-	var page = packed.instantiate()
+	var page = _page(packed)
 	page._open_create_dialog()
 
 	# ⑮ 按「大乱斗」按钮 ⇒ 可见性**真的重排**(接线 + 变形一起验,不是只读 _apply_create_form)。
@@ -191,14 +191,14 @@ func _phase_buttons(packed: PackedScene) -> void:
 # ── ⑲-⑳:Beta 时间参数块(自门控,与模式无关)──
 func _phase_beta(packed: PackedScene) -> void:
 	# ⑲ 非 Beta(本探针跑时的默认态):不可见。
-	var plain = packed.instantiate()
+	var plain = _page(packed)
 	plain._open_create_dialog()
 	_check(not plain._form_rows["beta"].visible, "⑲ 非 Beta 态:时间参数块不可见")
 	plain.free()
 
 	# ⑳ Beta 态:弹层只建一次,故用**新实例**建(重建路径 = 新页面 + `_open_create_dialog`)。
 	PvpSession.beta_mode = true
-	var beta = packed.instantiate()
+	var beta = _page(packed)
 	beta._open_create_dialog()
 	_check(beta._form_rows["beta"].visible and beta._form_rows["beta"].get_child_count() > 0,
 			"⑳ Beta 态重建:时间参数块可见且已建出行(%d 行)"
@@ -261,7 +261,7 @@ func _phase_live(packed: PackedScene) -> void:
 #   的 1v1。设计里 Beta 页**没有 1v1** ⇒ 1v1 退回普通局才是对的。
 # ★ 两相各用一个**新实例**(避免上一相残留的弹层/连接);`beta_mode` 用完还原,别污染后面的相。
 func _phase_time_options(packed: PackedScene) -> void:
-	var page = packed.instantiate()
+	var page = _page(packed)
 	PvpSession.beta_mode = true
 	# ㉕ Beta 会话 + 大乱斗 ⇒ `time` 在、且非空(权威会上报给 worker)。
 	page._current_mode = PvpSession.MODE_ROYALE
@@ -278,6 +278,21 @@ func _phase_time_options(packed: PackedScene) -> void:
 
 
 # ── 小工具 ──
+
+# 树外页面实例(T1 起弹层**启动即建**)。
+# ★★ 为什么需要:三个弹层由 `_build_ui()` 建(启动即建、默认隐藏;`_ready` 调它),而本探针
+#   前三段**故意不入树**(`_ready` 不跑 ⇒ 不建 socket、不排 deferred)。此前那几段靠
+#   `_open_create_dialog` 里的**懒建分支**拿到弹层 —— T1 删掉懒建后,树外实例上
+#   `_create_panel` / `_form_rows` 恒为 null。故夹具在此显式调一次 `_build_ui()`。
+#   ★ 走这个**生产缝**而不是逐个调 `_build_*`:T2 把建树代码整体搬进 `.tscn` 时只要重写
+#     `_build_ui()` 的方法体,本夹具不用再改;也保证隐藏态与生产一致。
+#   ★ 这是"新契约的镜像",不是绕过断言:探针验的变形/载荷/接线一条没动。
+#   ★ 同步义务:`_build_ui` 里若增删 UI,这里跟着走(见 `scenes/mp_lobby.gd`)。
+func _page(packed: PackedScene):
+	var page = packed.instantiate()
+	page.call("_build_ui")
+	return page
+
 
 # 弹层子树里有没有一颗文案是 `×` 的 Button?(右上角那颗关闭键。)
 # ★ 按**子树的任何深度**找:版式若把 × 挪进一层 HBox / 另一容器,断言不该跟着失效;

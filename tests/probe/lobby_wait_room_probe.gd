@@ -208,8 +208,8 @@ func _phase_wiring(packed: PackedScene) -> void:
 	var p = _page(packed)
 
 	# ⑰ 进等待室**同时**收起创建弹层(否则弹层留在屏上、把等待室压在下面)。
-	#    ★ 先真开一次弹层 —— 只调 `_show_wait_room` 的话 `_create_panel` 是 null,
-	#      "有没有收起"根本无从谈起(那条断言会恒绿)。
+	#    ★ 先真开一次弹层 —— T1 起弹层**启动即建、默认隐藏**,夹具建好时它是关的
+	#      ⇒ 不先开一次的话,"有没有被收起"分不出真假(那条断言会恒绿)。
 	p.call("_open_create_dialog")
 	var opened: bool = p._create_panel.visible
 	p.call("_show_wait_room", _royale_state("2468", [["甲", 1]], 1, 1), PvpSession.MODE_ROYALE)
@@ -293,9 +293,10 @@ func _phase_gate(packed: PackedScene) -> void:
 
 	# ㉕ 进等待室时**收起加入弹层**:它只有自己的「加 入」/「取 消」能关,而点房卡那条路
 	#    (`_join_code`)不关它 ⇒ 不收的话它会留在等待室背后(且此时大厅连接已切到对局)。
-	#    ★ 先**真开一次**(只调 `_show_wait_room` 的话 `_join_panel` 是 null,断言恒绿)。
+	#    ★ 先**真开一次**(T1 起弹层是**启动即建、默认隐藏**的:夹具建好但未开
+	#      ⇒ 不先开一次的话"有没有被收起"分不出真假)。
 	var p2 = _page(packed)
-	p2.call("_toggle_join_panel")            # 首次点击 = 打开(不是开关翻转)
+	p2.call("_toggle_join_panel")            # 面板启动即建(默认隐藏),这一下是「打开」
 	var opened: bool = p2._join_panel.visible
 	p2.call("_show_wait_room", st, PvpSession.MODE_ROYALE)
 	_check(opened and not p2._join_panel.visible, "㉕ 进等待室:加入弹层被收起(先真开一次再收)")
@@ -325,10 +326,19 @@ func _phase_gate(packed: PackedScene) -> void:
 #   不垫的话 `_on_room_*` 会在写 `_status` 那一行**当场报错并中断**,
 #   后面的 `_show_wait_room` 根本跑不到 —— 整个探针会变成"测一个没跑的东西"。
 #   (`lobby_row_probe` 同款垫法。)
+# ★★ 2026-10-03(T1):三个弹层改成**启动即建、默认隐藏**,不再由 `_show_wait_room` /
+#   `_toggle_join_panel` 懒建 —— 而本探针的实例**不入树**(`_ready` 不跑),拿不到它们。
+#   故夹具在此显式调一次 `_build_ui()`(= `_ready` 建 UI 的那一段;接线仍留在 `_ready`)。
+#   ★ 走这个**生产缝**而不是逐个调 `_build_*`:①建完的隐藏态与生产一致(旧 `_build_join_panel`
+#     建完是**可见**的 ⇒ 只调三个 builder 的夹具会让 ㉕ 的 `_toggle_join_panel` 变成"关上");
+#   ②T2 把建树代码整体搬进 `.tscn` 时,只要重写 `_build_ui()` 的方法体,本夹具**不用再改**。
+#   ★ 这是"新契约的镜像",不是绕过断言:探针要验的行为(清空重填、按钮接线、闸门)一条没动。
+#   ★ 同步义务:`_build_ui` 里若增删 UI,这里跟着走(见 `scenes/mp_lobby.gd`)。
 func _page(packed: PackedScene):
 	var p = packed.instantiate()
 	p.set("_status", Label.new())
 	p.set("_grid", GridContainer.new())
+	p.call("_build_ui")
 	return p
 
 

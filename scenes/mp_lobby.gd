@@ -125,11 +125,7 @@ var _auto_refreshed := false
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_add_lobby_background()
-	_build_top_bar()
-	_build_filter_bar()
-	_build_card_grid()
-	_build_status_bar()
+	_build_ui()
 
 	NetBus.local_room_list.connect(_on_room_list)
 	NetBus.local_room_created.connect(_on_room_created)
@@ -150,6 +146,35 @@ func _ready() -> void:
 
 
 # ── 版式 ────────────────────────────────────────────────────────────
+
+# 把本页的 UI 一次建齐:背景 + 常驻 chrome(顶栏/筛选条/房卡格/状态条)+ 三个弹层(默认隐藏)。
+# ★ 只做"建 UI",**不接线**:NetBus/NetBusExt 的 connect 与 `_finish_lobby_ready` 仍留在
+#   `_ready` 里。树外实例化本页的夹具(两个 `lobby_*_probe`)走这个缝拿 UI —— 它们**故意
+#   不入树**(不入树 ⇒ `_ready` 不跑 ⇒ 不建 socket、不排 deferred),别把接线并进来。
+# ★ 为什么三个弹层也在这里**启动即建**:本页的下一步是整屏搬进 `.tscn`,而生成器导出的树
+#   **就是它运行时看到的那棵树** —— 懒建 ⇒ 生成器看不到这三个弹层 ⇒ 它们在 `.tscn` 里永远
+#   不存在,编辑器里也拖不到。故三块一次建齐,可见性仍由原来的显隐函数管(建完即隐藏)。
+#   ★ 这也把"首次点击是打开、不是开关翻转"那一档消掉了:面板建好就是隐藏的,`_toggle_*`
+#     只剩翻转(旧 `_build_join_panel` 建完是**可见**的,故夹具必须走这里、不能只调三个
+#     `_build_*` —— 否则夹具拿到的初始可见性与生产不一致)。
+# ★ 顺序不能动:每一块的 `_build_*` 内部都是**先 `add_child` 再设锚点/尺寸** ——
+#   未入树时父级尺寸为 0,`PRESET_CENTER` 会把面板甩到屏幕外(两个旧页都踩过,
+#   见 `_build_join_panel` 末尾那段)。
+func _build_ui() -> void:
+	_add_lobby_background()
+	_build_top_bar()
+	_build_filter_bar()
+	_build_card_grid()
+	_build_status_bar()
+
+	_build_join_panel()
+	_join_panel.visible = false
+	_build_create_panel()
+	_create_panel.visible = false
+	_create_mask.visible = false
+	_build_wait_panel()
+	_wait_panel.visible = false
+
 
 # 本页的按钮:32 号字 + 方向 B 的描边式(设计稿 §3.2「输入框/按钮高 64,字号 32」)。
 #   旧页那套 16 号按钮工厂已随三个旧大厅页一起退役,基类不再提供。
@@ -819,12 +844,7 @@ func _claim_multi_reply() -> void:
 # ── 加入 ────────────────────────────────────────────────────────────
 
 func _toggle_join_panel() -> void:
-	if _join_panel == null:
-		_build_join_panel()
-		# ★ 首次点击是「打开」,不是「开关翻转」—— 新建的 PanelContainer 默认 visible,
-		#   若无条件 `not visible` 会把刚建好的弹层**当场关掉**(点了没反应)。
-		_join_panel.visible = true
-		return
+	# 面板在 `_build_ui()` 里就建好了(默认隐藏)—— 这里只翻可见性,不再有"首次点击是打开"那一档。
 	_join_panel.visible = not _join_panel.visible
 
 
@@ -909,20 +929,19 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 
 # ── 创建房间弹层(Task 4)────────────────────────────────────────
 #
-# 点「＋ 创建房间」才展开;按模式变形(设计 §3.4 那张表 —— 差异全收在 `_apply_create_form`)。
+# 点「＋ 创建房间」只**显示**已建好的弹层;按模式变形(设计 §3.4 那张表 —— 差异全收在 `_apply_create_form`)。
 # 房主选项从"常驻右栏"搬进弹层:列表要占满整页,常驻右栏会把 4 列房卡挤成 3 列。
 
 # 全屏压暗罩(黑 0.55,与 `ui/screens/match_result.gd` 的 `MASK_COLOR` / 暂停菜单同值)。
 # ★ 它是调色板纪律的**已知例外**:全屏遮罩不属于 `C_PLATE` 那条「HUD 底板 0.1」家族
-#   (见 CLAUDE.md §UI)。沿用与本仓既有遮罩**逐字相同**的字面量,不新造调色板 token
+#   (见 docs/eng/ui.md)。沿用与本仓既有遮罩**逐字相同**的字面量,不新造调色板 token
 #   —— 新造一个只会让同一种黑在两处漂开。
 const CREATE_MASK_COLOR := Color(0, 0, 0, 0.55)
 
 
-# 点「＋ 创建房间」才建/显示。★ 只建一次、之后只改可见性(重建会把滑块拖回默认值)。
+# 点「＋ 创建房间」只**显示**弹层。★ 每次打开都重刷模式相关行显隐(`_apply_create_form`),
+# **不**挪进 `_ready` —— 面板建好之后玩家仍可能改筛选模式,那时这条链必须再跑一次。
 func _open_create_dialog() -> void:
-	if _create_panel == null:
-		_build_create_panel()
 	_create_mode = _mode if _mode != "" else PvpSession.MODE_PVP
 	_apply_create_form(_create_mode)
 	_set_create_visible(true)
@@ -1105,7 +1124,7 @@ func _build_max_players_row(parent: Node) -> void:
 
 # 一局限时(分钟;仅大乱斗可见)。整行登记进 `_form_rows["match_time"]`。
 # ★ 滑条上界 15 与旧大乱斗页一致 —— `ROYALE_MATCH_TIME_CEILING` 那条上界链的**第三环**
-#   (`Settings.royale_match_min` 的写入端),别在这里改数值(见 CLAUDE.md §大乱斗)。
+#   (`Settings.royale_match_min` 的写入端),别在这里改数值(见 docs/eng/modes.md)。
 func _build_match_time_row(parent: Node) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
@@ -1312,13 +1331,9 @@ func _build_wait_panel() -> void:
 # 亮起 / 重填等待室。★ **清空重填**而不是就地改几行:名单人数、分队、按钮显隐在三个模式下
 # 都不同,就地改必然漏一处 —— 而漏了**不报错**,只是上一个模式的行留在屏上(叠成两批名单)。
 func _show_wait_room(state: Dictionary, mode: String) -> void:
-	if _wait_panel == null:
-		_build_wait_panel()
 	_wait_mode = mode
-	# 进等待室时**同时**收起创建弹层。★ `_create_panel` 可能还没建过(玩家没点过
-	#   「＋ 创建房间」),那时没什么可收 —— 守卫即可,别在 wait 一侧凭空建一个空弹层。
-	if _create_panel != null:
-		_set_create_visible(false)
+	# 进等待室时**同时**收起创建弹层(它在 `_build_ui()` 里就建好了)。
+	_set_create_visible(false)
 	_wait_panel.visible = true
 	# 进房 = 收起两颗入口按钮 + 关掉可能开着的加入弹层(见 `_create_btn` 上方那段:
 	# 闸门拦不住直接绑定的弹层,层级会翻过来)。与 `_hide_wait_room` 成对。
