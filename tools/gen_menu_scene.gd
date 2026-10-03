@@ -160,6 +160,13 @@ func _ready() -> void:
 			box.remove_child(c)
 			c.queue_free()
 
+	# 3b) ★★ **清掉所有 `material`** —— 材质里挂的是**运行时**资源(主菜单背景那张
+	#     `TerrainAtlas.terrain_texture()` 烘出来的 4800×3200 贴图),`PackedScene.pack` 会把它
+	#     **整张内嵌进 `.tscn`**。这类资源本来就得由代码在 `_ready` 里重建(它依赖运行时参数),
+	#     清掉只是让 `.tscn` 不背这份死重量。★ 清的是**属性**,不是节点:那个 ColorRect 还在,
+	#     位置/尺寸/底色都保留,只是 `material` 为空(编辑器里看到的是 C_BG 深底)。
+	_clear_materials(root)
+
 	# 4) 起名 + 设 owner(没 owner 的节点不会被 pack 收进去)
 	_name_nodes(root)
 	_set_owner(root, root)
@@ -383,6 +390,13 @@ func _strip_result_grid(root: Node) -> Node:
 # 大厅:动态区(房卡列表 / 名单行 / 表单行)。
 func _strip_lobby_dynamic(root: Node) -> Node:
 	return _find(root, func(n: Node) -> bool: return n is ScrollContainer)
+
+
+func _clear_materials(n: Node) -> void:
+	if n is CanvasItem and (n as CanvasItem).material != null:
+		(n as CanvasItem).material = null
+	for c in n.get_children():
+		_clear_materials(c)
 
 
 func _first_control(n: Node) -> Control:
