@@ -78,7 +78,7 @@ extends Node
 #    改了不会有任何编译错误,只表现为"打起来之后 HUD 颜色不对",而那时你早忘了。
 #    ★ 这四条钉的是**值**,不是名字:把颜色调深一点也会红。
 # ★ 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
-const EXPECTED_CHECKS := 12
+const EXPECTED_CHECKS := 15
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -120,6 +120,17 @@ func _ready() -> void:
 	#   更贴近这条视觉规则本身;把内线改成与外线同色 ⇒ 这条红。
 	var mp := UiFactory.menu_panel()
 	_check(mp != null and mp is PanelContainer, "menu_panel() 返回 PanelContainer")
+	# ★★ **光断言两层的 border_color 是看不见"重合"的** —— 初版探针就是这么写的,
+	#    而当时两层边框其实落在同一条 1px 环上(外层被完全盖住),四条断言照样全绿。
+	#    必须**量位置**:内层 `Body` 必须真的从外层**内缩**,否则"两条线"不成立。
+	#    (本探针是 Node,故要真入树才能拿到 rect。)
+	add_child(mp)
+	await get_tree().process_frame
+	var body_n := mp.get_node_or_null("Body")
+	_check(body_n != null and body_n.position.x >= 1.0 and body_n.position.y >= 1.0,
+			"★ 内亮线**真的内缩**(否则它与外线落在同一像素环上,只看得见一条)")
+	_check(body_n != null and body_n.size.x <= (mp as PanelContainer).size.x - 2.0,
+			"★ 内层宽度 < 外层 − 两侧各 1px")
 	if mp is PanelContainer:
 		var outer := (mp as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
 		var body := (mp as PanelContainer).get_node_or_null("Body")
@@ -210,10 +221,14 @@ static func menu_panel(padding: Vector2 = Vector2(28, 20)) -> PanelContainer:
 	osb.border_color = C_BORDER
 	osb.set_border_width_all(1)
 	osb.set_corner_radius_all(0)
-	osb.content_margin_left = 0.0
-	osb.content_margin_right = 0.0
-	osb.content_margin_top = 0.0
-	osb.content_margin_bottom = 0.0
+	# ★★ **不要设 `content_margin_* = 0.0`** —— 本计划初稿这么写了,**是错的**:
+	#    `StyleBox::get_margin()` 只在 `content_margin < 0` 时才回落到 border width;
+	#    显式设 0 会让子节点铺满**整个外层矩形** ⇒ 两层边框落在**同一条 1px 环**上,
+	#    内层的 `C_INNER` 把外层的 `C_BORDER` 完全盖住 —— "外深线 + 内亮线"**根本不成立**,
+	#    而画面上看着只是"一条线",很容易被当成做对了。
+	#    (实现时实测:`body.rect = (0,0,400,300)` = 外层全尺寸;引擎侧见
+	#     `panel_container.cpp` 的 `fit_child_in_rect`。)
+	#    ⇒ **留默认的 -1**,让子节点自动内缩一个 border width。
 	outer.add_theme_stylebox_override("panel", osb)
 
 	var body := PanelContainer.new()
@@ -240,7 +255,7 @@ static func menu_panel(padding: Vector2 = Vector2(28, 20)) -> PanelContainer:
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/menu_style_probe.tscn
 ```
 
-期望：`MENU STYLE PROBE: ALL-OK(12 条断言)`。
+期望：`MENU STYLE PROBE: ALL-OK(15 条断言)`。
 
 - [ ] **Step 6: 回归（必须仍绿）**
 
