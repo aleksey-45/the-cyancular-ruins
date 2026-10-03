@@ -118,6 +118,12 @@ const C_MODE_ROYALE := Color(0.910, 0.639, 0.239)    # #E8A33D 琥珀
 #    它们被 `ui/hud/**` 读取(见 `menu_style_probe` 的冻结守卫)。
 #    设计 §3.9.1 的 token 表里 `C_ACCENT` / `C_TEXT_DIM` 给的是另一个值,那是设计文档的
 #    内部矛盾(它同时写着「HUD 一行不动」);用户 2026-10-03 裁定**以 HUD 为准**。
+# ★ 设计 §3.9.1 的表还给了另一组 `C_BG` / `C_SURFACE` / `C_BORDER` / `C_FIELD` 值 —— 本任务
+#   一个都未动(它们同样不是菜单专属)。后续任务**别顺手改它们**:
+#     · `C_SURFACE` / `C_BORDER` 由 `panel_box()` 读,而 `ui/hud/status_banner.gd`(对局内的
+#       **重连横幅**)在用 `panel_box(false)`(读 `C_SURFACE`);`C_BORDER` 另被
+#       `style_button` / `style_row_button` / `style_line_edit` 读 ⇒ 这两个与对局内 HUD 共享。
+#     · `C_BG` / `C_FIELD` 只被菜单系读;若真要动,先 grep 确认没有别的调用方。
 # ★ 色值统一写成 hex 字符串:`Color("#RRGGBB")` 对 8bit 精确;写成浮点反算(如 0x1B/255)
 #   会与探针里的 hex 期望值差 1/255 ⇒ `menu_style_probe` 恒红。两侧必须同一写法。
 const C_HEADER     := Color("#1B242C")   # 标题带底 / 按钮填充
@@ -277,10 +283,13 @@ static func menu_panel(padding: Vector2 = Vector2(28, 20)) -> PanelContainer:
 	osb.border_color = C_BORDER
 	osb.set_border_width_all(1)
 	osb.set_corner_radius_all(0)
-	osb.content_margin_left = 0.0
-	osb.content_margin_right = 0.0
-	osb.content_margin_top = 0.0
-	osb.content_margin_bottom = 0.0
+	# ★★ **不设** content_margin(留默认 -1):此时 `StyleBox::get_margin()` **回落**
+	#    `get_style_margin()` = border width(1px),`get_offset()` = (1,1) ⇒ 子节点被内缩 1px,
+	#    内亮线落在与外线**不同的像素环**上(这才是"两条线")。
+	#    ⚠ 若显式写成 `content_margin_* = 0.0`,内层会**铺满外层整个矩形**(实测
+	#    `body.rect == (0,0,外层全尺寸)`)、两条 1px 线落在**同一环**上、内层盖住外层 ⇒
+	#    画面上只剩一条 —— 计划初稿就是这么写的,是错的。`menu_style_probe` 的
+	#    "位置断言"(内层真的内缩)专钉这一条:只断言两层 border_color 各自正确是**看不见**重合的。
 	outer.add_theme_stylebox_override("panel", osb)
 
 	var body := PanelContainer.new()

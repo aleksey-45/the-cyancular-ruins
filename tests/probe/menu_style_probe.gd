@@ -10,10 +10,12 @@ extends Node
 #    改了不会有任何编译错误,只表现为"打起来之后 HUD 颜色不对",而那时你早忘了。
 #    ★ 这四条钉的是**值**,不是名字:把颜色调深一点也会红。
 # ★ 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
+#   **数法** = 5(新 token)+ 4(冻结守卫)+ 1(panel_box 底不透明)+ 3(menu_panel 返回 /
+#              外线 / 内线)+ 2(★ 位置:内层真内缩 / 内层宽度 < 外层 −2px)= **15**。
 #
 # ★ 注:新 token 的期望值统一用 hex 字符串 —— `ui_factory.gd` 里也**必须**写成
 #   `Color("#RRGGBB")`,两侧同写法才逐位相等(浮点反算会差 1/255 ⇒ 恒红)。
-const EXPECTED_CHECKS := 13
+const EXPECTED_CHECKS := 15
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -65,6 +67,21 @@ func _ready() -> void:
 			inner = (body as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
 		_check(inner != null and inner.border_color == UiFactory.C_INNER,
 				"menu_panel() 的内亮线是 C_INNER(凿刻感的来源)")
+
+	# ── ★ 位置断言:两条线必须落在**不同的像素环**上 ──
+	# ★ 只断言两层 border_color 各自正确是**看不见重合**的:计划初稿把外层 content_margin
+	#   显式写成 0.0 时,内层铺满外层整个矩形(`body.rect == (0,0,外层全尺寸)`)、两条 1px
+	#   线落在同一环上、内层盖住外层 ⇒ 画面上只剩一条,而上面几条**照样全绿**。
+	#   这两条量的是"内层真的被内缩了 1px"(外层不设 content_margin ⇒ 默认 -1 ⇒
+	#   `StyleBox::get_margin()` 回落 border width ⇒ `get_offset()==(1,1)`)。
+	# ★ 探针是 `extends Node`,要**真入树 + 等一帧**才拿得到 rect。
+	add_child(mp)
+	await get_tree().process_frame
+	var body_n: Control = mp.get_node_or_null("Body") as Control
+	_check(body_n != null and body_n.position.x >= 1.0 and body_n.position.y >= 1.0,
+			"★ 内亮线**真的内缩**(否则它与外线落在同一像素环上,只看得见一条)")
+	_check(body_n != null and body_n.size.x <= (mp as PanelContainer).size.x - 2.0,
+			"★ 内层宽度 < 外层 − 两侧各 1px")
 	_finish()
 
 
