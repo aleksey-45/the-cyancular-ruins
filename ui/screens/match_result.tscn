@@ -1,7 +1,61 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://ui/screens/match_result.gd" id="1"]
+[ext_resource type="Script" uid="uid://x4jxe0030qmd" path="res://ui/screens/match_result.gd" id="1_mr"]
 
-[node name="MatchResult" type="CanvasLayer"]
+[ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_qxni3"]
+
+[node name="MatchResult" type="CanvasLayer" unique_id=1780329902]
 layer = 150
-script = ExtResource("1")
+visible = false
+script = ExtResource("1_mr")
+
+[node name="Root" type="Control" parent="." unique_id=818325890]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme = ExtResource("1_qxni3")
+
+[node name="Dim" type="ColorRect" parent="Root" unique_id=348779447]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="Root" unique_id=155354163]
+custom_minimum_size = Vector2(1120, 0)
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+theme_type_variation = &"PanelCarved"
+
+[node name="Body" type="PanelContainer" parent="Root/Panel" unique_id=470336915]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="VBox" type="VBoxContainer" parent="Root/Panel/Body" unique_id=671791596]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="TitleLabel" type="Label" parent="Root/Panel/Body/VBox" unique_id=966512333]
+layout_mode = 2
+theme_type_variation = &"H1"
+horizontal_alignment = 1
+
+[node name="SubLabel" type="Label" parent="Root/Panel/Body/VBox" unique_id=642448388]
+layout_mode = 2
+theme_type_variation = &"Dim"
+horizontal_alignment = 1
+
+[node name="Sections" type="HBoxContainer" parent="Root/Panel/Body/VBox" unique_id=2067326263]
+layout_mode = 2
+theme_override_constants/separation = 48
+alignment = 1
+
+[node name="BackButton" type="Button" parent="Root/Panel/Body/VBox" unique_id=1952318544]
+custom_minimum_size = Vector2(420, 88)
+layout_mode = 2
+theme_type_variation = &"BtnGold"
+text = "返 回 主 菜 单"

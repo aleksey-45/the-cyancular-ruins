@@ -1,11 +1,18 @@
 extends Control
 
 # Beta 入口页(2026-09-28,用户指定):以后所有实验性玩法都从这里进。
-# 页面 = 标题带 + 返回 + 若干「画框型选项」卡片(画框图标 + 模式名栏 + 简介栏 + 版本栏)。
+# 页面 = 标题带 + 副题 + 若干「画框型选项」卡片(画框图标 + 模式名栏 + 简介栏 + 版本栏)。
 # 当前两张卡(P2 线,PvP 时间玩法),2026-10-03 起都进**统一大厅** `mp_lobby`:
 #   · 错乱大乱斗(图标 = 单机怀表 + 下方红色 Royale 字样)→ mp_lobby(beta 态,预选大乱斗筛选)
 #   · 时空 3v3(图标 = 单机怀表 + 下方蓝色 Team 字样)→ mp_lobby(beta 态,预选 3v3 筛选)
 # 卡片图标是**程序化生成**的(复用 WatchHud.build_dial_texture,不引入美术资源)。
+#
+# ★★ **页面框架在 `beta_menu.tscn` 里**(2026-10-03 从代码迁出,见 `tools/gen_menu_scene.gd`)。
+#   判据是**外观不变** —— 导出骨架与改前基线逐像素比对:**差异 0 / 2764800**。
+#   ★ **卡片本身仍由代码建**(见下面 `CARDS`):它们的数据是常量数组,而图标是**运行时生成**
+#     的贴图 —— 那张贴图**进不了 `.tscn`**。代价照实登记:编辑器里那一行是**空的**。
+#     这也是 `UiFactory.menu_panel(CARD_PAD)` 唯一还用代码的地方(卡片内边距是 28/24,
+#     而 Theme 的 `PanelCarvedBody` 只有默认的 64/46 —— 带运行时参数的入口 Theme 表达不了)。
 #
 # ★ beta 态怎么传给大厅页:PvpSession.reset() 会把 beta_mode 清成 false,
 #   所以先 reset 再置 beta_mode = true,然后切场景 —— 大厅页在 _ready 里读它。
@@ -37,61 +44,18 @@ const CARDS := [
 	},
 ]
 
-# ── 版式常量(与设置页 / 信息页同一档)──
-const PAGE_MARGIN := 76
-const BLOCK_GAP := 28        # 标题带 / 副题 / 卡片行 / 返回行之间
-const CARD_GAP := 36         # 两张卡之间
 const CARD_W := 440.0        # 卡片宽度(两张 + 间距远小于页面宽)
 const CARD_PAD := Vector2(28, 24)   # 卡内边距(卡比整页面板窄,故不取 64/46 那一档)
 
+@onready var _cards_row: HBoxContainer = %CardsRow
+
 
 func _ready() -> void:
-	_build_ui()
-
-
-func _build_ui() -> void:
-	# 不透明深色底 —— **与信息页 / 设置页同一份既有字面量**(它们也各硬编码了一份)。
-	# ★ 不垫的话页面底是 Godot 默认的清屏灰 `(76,76,76)`,与另两页(18,23,33)明显不同款。
-	#   把它并进 `UiFactory` 是三页统一时的后续任务,本批沿用既有字面量、不新增颜色。
-	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.09, 0.13)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bg)
-
-	# 整页骨架与设置页 / 信息页同款:页面边距 + VBox。
-	var page := MarginContainer.new()
-	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side in ["left", "right", "top", "bottom"]:
-		page.add_theme_constant_override("margin_" + side, PAGE_MARGIN)
-	add_child(page)
-
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", BLOCK_GAP)
-	page.add_child(vb)
-
-	# 页面标题 = 同款标题带(与「—— 设 置 ——」/「信 息」同一个味道)。
-	vb.add_child(UiFactory.header_strip("—— Beta ——", 48))
-	vb.add_child(UiFactory.label("实验性玩法都在这里;规则可能与正式模式不同", 16, UiFactory.C_TEXT_DIM))
-
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", CARD_GAP)
-	vb.add_child(row)
 	for c in CARDS:
-		row.add_child(_make_card(c))
-
-	# 弹性空档:把返回行顶到页面下沿(与设置页底部动作行的落法一致)。
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vb.add_child(spacer)
-
-	var back_row := HBoxContainer.new()
-	var back := UiFactory.menu_button("返 回", 32, Vector2(240, 72), "quiet")
-	back.pressed.connect(func() -> void:
+		_cards_row.add_child(_make_card(c))
+	%BackBtn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
-	back_row.add_child(back)
-	vb.add_child(back_row)
 
 
 # 画框型选项 = 凿刻面板(`menu_panel`)+ 画框(图标)+ 模式名栏(标题带)+ 简介栏 + 版本栏。

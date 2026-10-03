@@ -1,11 +1,70 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://scenes/beta_menu.gd" id="1"]
+[ext_resource type="Script" uid="uid://d3bu156toikph" path="res://scenes/beta_menu.gd" id="1_beta"]
 
-[node name="BetaMenu" type="Control"]
+[ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_ffkj8"]
+
+[node name="BetaMenu" type="Control" unique_id=734392632]
+layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("1")
+theme = ExtResource("1_ffkj8")
+script = ExtResource("1_beta")
+
+[node name="ColorRect1" type="ColorRect" parent="." unique_id=1403510717]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0.07, 0.09, 0.13, 1)
+
+[node name="MarginContainer1" type="MarginContainer" parent="." unique_id=943781126]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 76
+theme_override_constants/margin_top = 76
+theme_override_constants/margin_right = 76
+theme_override_constants/margin_bottom = 76
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1" unique_id=42466734]
+layout_mode = 2
+theme_override_constants/separation = 28
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1" unique_id=91482252]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/PanelContainer1" unique_id=1922847989]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
+theme_override_font_sizes/font_size = 48
+text = "—— Beta ——"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1" unique_id=1944720946]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_font_sizes/font_size = 16
+text = "实验性玩法都在这里;规则可能与正式模式不同"
+
+[node name="CardsRow" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=1123706430]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 36
+
+[node name="Control1" type="Control" parent="MarginContainer1/VBoxContainer1" unique_id=249836838]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=434854939]
+layout_mode = 2
+
+[node name="BackBtn" type="Button" parent="MarginContainer1/VBoxContainer1/HBoxContainer2" unique_id=351215822]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(240, 72)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "返 回"

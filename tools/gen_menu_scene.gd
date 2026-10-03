@@ -74,8 +74,12 @@ const SCREENS := {
 	# 剥空之后编辑器里那两块面板是空的 —— 这条代价照实接受。
 	"info_menu": {"scene": "res://scenes/info_menu.tscn",
 			"strip": ["commit_list", "info_team", "info_credits"]},
-	"beta_menu": {"scene": "res://scenes/beta_menu.tscn", "strip": []},
-	"match_result": {"scene": "res://ui/screens/match_result.tscn", "strip": ["result_grid"]},
+	# Beta 页:两张卡片是**数据驱动**的(`CARDS` 常量)且图标是**运行时生成**的贴图
+	# (`WatchHud.build_dial_texture()`)⇒ 卡片留在代码里,骨架只留页面框架。
+	"beta_menu": {"scene": "res://scenes/beta_menu.tscn", "strip": ["beta_cards"]},
+	# 结算页:`_ready()` 建的**全是静态**的(压暗罩 / 面板 / 标题 / 副题 / 空的 `Sections` /
+	# 返回键);名次表是 `show_result()` 拿到载荷之后才建的 ⇒ **这一屏没有可剥的东西**。
+	"match_result": {"scene": "res://ui/screens/match_result.tscn", "strip": []},
 	"main_menu": {"scene": "res://scenes/main_menu.tscn", "strip": []},
 	"mp_lobby": {"scene": "res://scenes/mp_lobby.tscn", "strip": ["lobby_dynamic"]},
 }
@@ -112,14 +116,24 @@ func _ready() -> void:
 		return
 
 	# 1) 让**现有代码**把树建出来(等价于真跑一次这一屏)
-	var root: Control = packed.instantiate()
+	# ★ 根**不一定是 Control** —— 结算页的根是 `CanvasLayer`。用 Node,别写死。
+	var root: Node = packed.instantiate()
 	add_child(root)
 	await get_tree().process_frame
 	await get_tree().process_frame
 
 	# 2) 挂上 Theme(变体才解析得到值),再把可换的 override 换成变体
+	# ★★ Theme 只能挂在 Control/Window 上 ⇒ 根是 CanvasLayer 时挂到**第一个 Control**
+	#    (结算页就是那个 `Root`)。挂上之后它的整棵子树都解析得到变体。
 	_theme = theme
-	root.theme = theme
+	var theme_owner: Control = root as Control
+	if theme_owner == null:
+		theme_owner = _first_control(root)
+	if theme_owner == null:
+		print("GEN SCENE: FAIL 整棵树里没有 Control,Theme 无处可挂")
+		get_tree().quit(1)
+		return
+	theme_owner.theme = theme
 	_convert(root)
 
 	# 2b) `--full`:**不剥**动态行,导一份"完整骨架" —— 它是与改前截图**逐像素比对**用的
@@ -354,6 +368,13 @@ func _first_label_text(n: Node) -> String:
 	return ""
 
 
+# Beta 页:卡片行(整行剥掉 —— 卡片本身由 `CARDS` 在代码里建)。
+# 判据:**第一个孩子是 `PanelContainer` 的那个 HBox** —— 返回行也是 HBox,但它的孩子是 Button。
+func _strip_beta_cards(root: Node) -> Node:
+	return _find(root, func(n: Node) -> bool:
+		return n is HBoxContainer and n.get_child_count() > 0 and n.get_child(0) is PanelContainer)
+
+
 # 结算页:结果网格。
 func _strip_result_grid(root: Node) -> Node:
 	return _find(root, func(n: Node) -> bool: return n is GridContainer)
@@ -362,6 +383,16 @@ func _strip_result_grid(root: Node) -> Node:
 # 大厅:动态区(房卡列表 / 名单行 / 表单行)。
 func _strip_lobby_dynamic(root: Node) -> Node:
 	return _find(root, func(n: Node) -> bool: return n is ScrollContainer)
+
+
+func _first_control(n: Node) -> Control:
+	if n is Control:
+		return n as Control
+	for c in n.get_children():
+		var r := _first_control(c)
+		if r != null:
+			return r
+	return null
 
 
 func _find(root: Node, pred: Callable) -> Node:
@@ -378,22 +409,20 @@ func _find(root: Node, pred: Callable) -> Node:
 # 代码建的节点名是 `@VBoxContainer@12` 这种 —— 进 `.tscn` 之后在编辑器里没法读。
 # 按「类型 + 同类序号」重起一个稳定的名字。★ 只影响可读性,不影响任何取值。
 func _name_nodes(root: Node) -> void:
-	var used := {}
-	for c in root.get_children():
-		var base := c.get_class()
-		var n: int = int(used.get(base, 0)) + 1
-		used[base] = n
-		c.name = "%s%d" % [base, n]
-		_name_children(c)
+	_name_children(root)
 
 
 func _name_children(n: Node) -> void:
 	var used := {}
 	for c in n.get_children():
-		var base := c.get_class()
-		var k: int = int(used.get(base, 0)) + 1
-		used[base] = k
-		c.name = "%s%d" % [base, k]
+		# ★★ **只给"自动名"起名**:代码建的节点若没显式 `name = …`,Godot 给的是
+		#    `@HBoxContainer@12` 这种;而**显式起过名的**(如结算页的 `Panel` / `TitleLabel`)
+		#    本来就是语义名,再改一遍等于把作者的意思抹掉。判据就是那个 `@` 前缀。
+		if str(c.name).begins_with("@"):
+			var base := c.get_class()
+			var k: int = int(used.get(base, 0)) + 1
+			used[base] = k
+			c.name = "%s%d" % [base, k]
 		_name_children(c)
 
 

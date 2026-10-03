@@ -36,70 +36,32 @@ const MASK_COLOR := Color(0, 0, 0, 0.55)   # 全屏压暗罩 —— 与暂停菜
 const MVP_MARK := "★ "                 # ★ 取图确认它能渲染(Unifont 覆盖 U+2605);出豆腐块就改 "MVP "
 
 var _leaving := false
-var _sections_box: HBoxContainer = null
-var _title_label: Label = null
-var _sub_label: Label = null
-var _panel: PanelContainer = null
+
+# ★★ 静态骨架在 `ui/screens/match_result.tscn` 里(2026-10-03 从代码迁出,见
+#   `tools/gen_menu_scene.gd`):压暗罩 `Dim` / 面板 `Panel` / 标题 `TitleLabel` / 副题
+#   `SubLabel` / 空的 `Sections` / `BackButton`。判据是**外观不变** —— 与改前逐像素比对
+#   三个模式各 **差异 0**。
+#   ★ 那个 `.tscn` **背两条命**:① 根是 `CanvasLayer`,② `layer = 150` **只住在它里面** ——
+#     所以本控件**只能从场景实例化**,绝不 `MatchResult.new()`。
+#   ★ 代码建的节点原本就显式起了名(`Root`/`Dim`/`Panel`/`Body`/`TitleLabel`/…),
+#     导出时被逐字保留 ⇒ 下面那几条路径与旧代码里的 `name = …` 一一对应。
+@onready var _panel: PanelContainer = $Root/Panel
+@onready var _title_label: Label = $Root/Panel/Body/VBox/TitleLabel
+@onready var _sub_label: Label = $Root/Panel/Body/VBox/SubLabel
+@onready var _sections_box: HBoxContainer = $Root/Panel/Body/VBox/Sections
 
 
 func _ready() -> void:
-	var root := Control.new()
-	root.name = "Root"
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(root)
-
-	var dim := ColorRect.new()
-	dim.name = "Dim"
-	dim.color = MASK_COLOR
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_child(dim)
-
-	var panel := UiFactory.menu_panel()
-	_panel = panel
-	panel.name = "Panel"
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(1120, 0)
-	root.add_child(panel)
-
-	# ★ 内容加进 `menu_panel()` 的 `Body`(只有它承载面板内边距)。
-	var vb := VBoxContainer.new()
-	vb.name = "VBox"
-	vb.add_theme_constant_override("separation", 24)
-	(panel.get_node("Body") as Container).add_child(vb)
-
-	_title_label = UiFactory.label("", SIZE_TITLE, UiFactory.C_TEXT)
-	_title_label.name = "TitleLabel"
-	_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(_title_label)
-
-	_sub_label = UiFactory.label("", SIZE_BODY, UiFactory.C_TEXT_DIM)
-	_sub_label.name = "SubLabel"
-	_sub_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(_sub_label)
-
-	_sections_box = HBoxContainer.new()
-	_sections_box.name = "Sections"
-	_sections_box.add_theme_constant_override("separation", 48)
-	_sections_box.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_child(_sections_box)
-
-	var back := UiFactory.menu_button("返 回 主 菜 单", SIZE_BODY, Vector2(420, 88), "gold")
-	back.name = "BackButton"
-	back.pressed.connect(_request_leave)
-	vb.add_child(back)
-
-	# ★ 上面那几件(全屏压暗罩 / 面板 / 按钮)在 `_ready()` 里就建好了 ⇒ 若不隐藏,
-	#   从 `add_child` 到调用方 `show_result()` 之间会露出一块**空面板 + 按钮**的窗。
-	#   载荷要等 `show_result()` 才有 ⇒ 这里先藏起来,由它置回 true。
-	visible = false
-
-	# ★ 这一句必须排在**子节点都建好之后**。放在 `_ready()` 开头的话它走的是一棵空树
-	#   (`self` 那个时候一个子节点都没有)⇒ 等于什么也没做,却让后来读代码的人以为
-	#   "非工厂建的控件也被字体覆盖了"。今天看着没事纯粹是因为每个控件都经
-	#   `UiFactory.label`/`button`,而它们各自的 `style_control()` 已经设过字体 ——
-	#   也就是说开头那句是**在骗人**,不是在兜底。
-	UiFactory.apply_font_recursive(self)
+	# ★ 压暗罩的颜色**以本常量为准**(`.tscn` 里那份只是编辑器里的初始值)——
+	#   留一条真值来源,免得两处各写一个 0.55 谁也不知道该信哪个。
+	($Root/Dim as ColorRect).color = MASK_COLOR
+	$Root/Panel/Body/VBox/BackButton.pressed.connect(_request_leave)
+	# ★ 说明:**不再调 `UiFactory.apply_font_recursive(self)`**。旧代码里那一句是在
+	#   子节点建好之后把像素字体刷满整棵树;现在整棵树都挂在本页的 `Theme` 上
+	#   (`.tscn` 的 `Root.theme`),字体由 Theme 的 `default_font` 提供 —— 两者渲染等价
+	#   (Task 2 逐屏取图验过),而下面三个模式的逐像素比对也是 0。
+	# ★ `visible = false` 仍写在 `.tscn` 里:`show_result()` 才置回 true。
+	#   若不隐藏,从实例化到 `show_result()` 之间会露出一块**空面板 + 按钮**的窗。
 
 
 # 唯一入口。★ 缺键一律取默认:**绝不因为缺一个键就崩** —— 结算页崩了玩家就卡在对局里出不去。
