@@ -59,7 +59,7 @@ theme_type_variation = &"PanelCarvedBody"
 
 [node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1" unique_id=2113680005]
 layout_mode = 2
-theme_override_constants/separation = 20
+theme_override_constants/separation = 28
 
 [node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=603883531]
 layout_mode = 2
@@ -224,7 +224,7 @@ theme_type_variation = &"PanelCarvedBody"
 
 [node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2/PanelContainer1" unique_id=1656641926]
 layout_mode = 2
-theme_override_constants/separation = 20
+theme_override_constants/separation = 24
 
 [node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2/PanelContainer1/VBoxContainer1" unique_id=1225203487]
 layout_mode = 2
@@ -238,8 +238,8 @@ text = "按键映射(点击后按新键;Esc 取消)"
 [node name="BindGrid" type="GridContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2/PanelContainer1/VBoxContainer1" unique_id=80255559]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/h_separation = 18
-theme_override_constants/v_separation = 6
+theme_override_constants/h_separation = 24
+theme_override_constants/v_separation = 14
 columns = 2
 
 [node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=2115634731]

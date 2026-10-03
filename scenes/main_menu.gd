@@ -361,12 +361,14 @@ static func _trapezoid(u: float) -> float:
 func _play_emerge(title: Label, ver: Label, sequence: Array) -> void:
 	var tw := create_tween()
 	tw.tween_interval(0.1)
-	tw.tween_property(title, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
-	tw.parallel().tween_property(ver, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
-	var delay := 0.9
+	tw.tween_property(title, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(ver, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+	# ★ 2026-10-04 加速(用户「主页面淡入动画速度加快」):原 0.1/1.1 / 首延迟 0.9 / 步进 0.16 / 单个 0.5
+	#   ⇒ 整屏约 2.5s 才出齐;现 0.6 / 0.45 / 0.09 / 0.28 ⇒ 约 1.35s。**次序与形状一字未动**。
+	var delay := 0.45
 	for c in sequence:
-		_emerge(c, delay, 0.5)
-		delay += 0.16
+		_emerge(c, delay, 0.28)
+		delay += 0.09
 
 
 # 元素浮现:延迟后淡入。按钮由容器管理布局,只做透明度。

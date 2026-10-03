@@ -64,10 +64,15 @@ uniform vec2  view_center = vec2(75.0, 50.0);   // 视野中心(格坐标)——
 uniform float rot_angle  = 0.0;                 // 采样坐标旋转(弧度)—— 脚本每帧喂
 uniform float breathe_amp = 0.012;              // 呼吸缩放幅度(整幅轻微胀缩)
 uniform float aberration = 0.020;               // 边缘径向色差(纯粹是"怪镜头"感)
-uniform float dim        = 0.50;                // **黑色遮罩的不透明度**(0=不压、1=全黑)
+uniform float dim        = 0.60;                // **黑色遮罩的不透明度**(0=不压、1=全黑)
+//                          ★ 2026-10-04:0.50 → **0.60**(用户「黑色滤镜 dim 调整到 0.6」)。
+//                          仍是**浓度**语义:数越大越黑。
 uniform float vignette   = 0.30;                // 边缘再压暗(同样是"黑色遮罩",按半径)
 uniform float desat      = 0.20;                // 去饱和(往亮度混):背景不该比 UI 抢眼
-uniform float blur_radius = 4.0;               // 背景虚焦半径(**屏幕像素**;见文件头)
+uniform float blur_radius = 6.0;               // 背景虚焦半径(**屏幕像素**;见文件头)
+//                          ★ 2026-10-04:4.0 → **6.0**(用户「高斯模糊也再强一点」)。
+//                            它是屏幕像素半径,与取景(`view_w_cells`)**互相独立** ——
+//                            取景决定"看到多大一片",它决定"糊到什么程度",别混着调。
 
 
 vec2 rot2(vec2 v, float a) {

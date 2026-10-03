@@ -13,12 +13,17 @@ extends Control
 # ★ 名单与致谢是**用户给定、逐字照抄**的 —— 别顺手改写、别补全称、别调次序。
 #   `tests/probe/info_page_probe` 把它们逐字钉住了(它自带一份同构的表做对账)。
 
-const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048"]
+# ★ 2026-10-04 用户给定:补 ofbwyx / Lycoris Max / hsk(**顺序照抄**),标题相应改成「开发团队/特别感谢」。
+const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",
+	"ofbwyx", "Lycoris Max", "hsk"]
 # 致谢三段:软件/素材(带许可或署名)与文学来源,中间空一档。
 const CREDITS := [
 	["Godot Engine", "MIT"],
 	["GNU Unifont", "SIL OFL 1.1"],
 	["Less Perfect DOS VGA", "Zeh Fernando / Laemeur"],
+	# ★ 2026-10-04 用户要求:加 Deepseek 与 GLM(**不写版本号**),插在两位作家**前面**。
+	["Deepseek", ""],
+	["GLM", ""],
 	["Thomas Stearns Eliot", ""],
 	["Jorge Luis Borges", ""],
 ]

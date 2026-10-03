@@ -87,6 +87,7 @@ size_flags_vertical = 3
 unique_name_in_owner = true
 custom_minimum_size = Vector2(760, 0)
 layout_mode = 2
+theme_override_constants/separation = 8
 
 [node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1" unique_id=98184663]
 layout_mode = 2
@@ -104,7 +105,7 @@ theme_type_variation = &"PanelCarvedBody"
 [node name="TeamBox" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer1/PanelContainer1" unique_id=1773817589]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 20
 
 [node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer1/PanelContainer1/TeamBox" unique_id=1911183648]
 layout_mode = 2
@@ -113,7 +114,7 @@ theme_type_variation = &"HeaderStrip"
 [node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer1/PanelContainer1/TeamBox/PanelContainer1" unique_id=1271605333]
 layout_mode = 2
 theme_type_variation = &"HeaderTitle"
-text = "开 发 团 队"
+text = "开 发 团 队 / 特 别 感 谢"
 
 [node name="PanelContainer2" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1" unique_id=108048505]
 layout_mode = 2
@@ -126,7 +127,7 @@ theme_type_variation = &"PanelCarvedBody"
 [node name="CreditsBox" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer2/PanelContainer1" unique_id=1471151000]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 20
 
 [node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/VBoxContainer1/PanelContainer2/PanelContainer1/CreditsBox" unique_id=1738315050]
 layout_mode = 2

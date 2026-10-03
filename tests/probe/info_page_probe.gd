@@ -9,9 +9,9 @@ extends Node
 #   本探针把那三块内容**逐字**钉住。
 # ★ 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
 #   数法(逐行数 `_check(...)` 的**运行时**实参个数,循环里的也算):
-#     4 个分节标题(信 息 / 版 本 信 息 / 开 发 团 队 / 致 谢)
-#   + 4 个人名(DEV_TEAM 逐条一条)
-#   + 5 条致谢(CREDITS 逐条一条;**逐字**比渲染出来的那一行)
+#     4 个分节标题(信 息 / 版 本 信 息 / 开 发 团 队 / 特 别 感 谢 / 致 谢)
+#   + 7 个人名(DEV_TEAM 逐条一条;2026-10-04 加 ofbwyx / Lycoris Max / hsk)
+#   + 7 条致谢(CREDITS 逐条一条;**逐字**比渲染出来的那一行;加 Deepseek / GLM)
 #   + 1 条空历史**前置**(打断 PATH 后 `commit_log()` 真的返回空)
 #   + 1 条空历史**兜底文案**(逐字)
 #   + 1 个「返 回」按钮
@@ -24,10 +24,11 @@ extends Node
 # ★ 注意这是**运行时**条数:静态 `grep -cE '^\s*_check\('` 只数到 **13 行**(其中两行在循环体里,
 #   展开后是 4 + 5 = 9 条)⇒ 运行时 20 与静态 13 本来就对不上,别拿 grep 的数来对这里。
 #   (这一行原写"9",是错的 —— 2026-10-03 实测 grep 给 13;订正为实测值。)
-const EXPECTED_CHECKS := 20
+const EXPECTED_CHECKS := 25
 
 const SCENE := "res://scenes/info_menu.tscn"
-const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048"]
+const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",
+	"ofbwyx", "Lycoris Max", "hsk"]
 # ★ 与 `scenes/info_menu.gd` 的 `CREDITS` 同构:名 + 许可/署名;**空串 = 无许可**,那种条目
 #   渲染出来**不带**中间那个全角空格(U+3000)后缀。
 # ★ 两份都是**手抄**的(不从生产 `preload` 读):从生产读就成了"生产写什么就断言什么"的
@@ -38,6 +39,8 @@ const CREDITS := [
 	["Godot Engine", "MIT"],
 	["GNU Unifont", "SIL OFL 1.1"],
 	["Less Perfect DOS VGA", "Zeh Fernando / Laemeur"],
+	["Deepseek", ""],
+	["GLM", ""],
 	["Thomas Stearns Eliot", ""],
 	["Jorge Luis Borges", ""],
 ]
@@ -94,7 +97,7 @@ func _ready() -> void:
 	_check(title != null and title.get_theme_font_size("font_size") == 48,
 			"整页标题 Label 逐字是「信 息」且字号 48(不是「版 本 信 息」的子串命中)")
 	_check(_has(texts, "版 本 信 息"), "有「版 本 信 息」一节")
-	_check(_has(texts, "开 发 团 队"), "有「开 发 团 队」一节")
+	_check(_has(texts, "开 发 团 队 / 特 别 感 谢"), "有「开 发 团 队 / 特 别 感 谢」一节")
 	_check(_has(texts, "致 谢"), "有「致 谢」一节")
 	for who in DEV_TEAM:
 		_check(_has_exact(texts, who), "开发团队含「%s」" % who)

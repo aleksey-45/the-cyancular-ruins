@@ -103,8 +103,14 @@ def main() -> None:
 
     print("归档: %s(只留这一份;builds/ 已先清空)" % os.path.basename(out))
     for f in GAME_FILES:
-        shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, f))
-        print("  ✓ %s" % f)
+        # ★★ 2026-10-04(用户「build 里面的 exe 要加时间戳」):归档里那份**文件名带版本+时间戳**
+        #   (`The Cyancular Ruins v.1.2.0 202610041530.exe`),而**仓库根**仍是两个固定名
+        #   —— 这正是 RELEASE.md §1.2「发布归档命名习惯」写的那条,此前脚本只把时间戳放在**目录名**上,
+        #   拷进目录的文件仍是固定名 ⇒ 打开 builds/ 分不清哪份是哪次。
+        stem, ext = os.path.splitext(f)
+        named = ("%s %s%s" % (stem, tag, ext)) if tag else f
+        shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, named))
+        print("  ✓ %s" % named)
 
     # ② 累积档案:同样的包再沉淀一份进 releases/(每次发布都留,按版本+时间戳命名;
     #    builds/ 那份仍然是"只留最新"。同名重跑覆盖,不重复堆积)

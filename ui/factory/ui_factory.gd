@@ -421,7 +421,14 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	# `scenes/mp_lobby.gd` 的 `_card_header`(房卡标题带,自带右侧角标)——
 	# 它住在一张**自己带内边距的卡**里(见 `_make_card` 的 frame),外层的内边距已经够;
 	# 照搬 40/20 会让卡内文字区被挤掉一大截。那处保持 20/12,是为版式,不是漂移。
-	sb.content_margin_left = 40.0
+	# ★★ 2026-10-04(用户「正文要和标题对齐:金色标题前面有空格,看上去没对齐」):
+	#   **左内边距 40 → 0**。标题带是 PanelContainer,盒子左边与正文同一列,而 40px 的左内边距
+	#   把**金色标题的字**又推右了 40 ⇒ 读起来像「标题前面多了个空格」。
+	#   ★ 右侧不动(满宽条,右内边距看不见);上下 20 也不动(那是纵向呼吸,不是对齐问题)。
+	#   ★ 改这里必须**同步** `tools/gen_menu_theme.gd` 并**重跑**它 —— Theme 的 `HeaderStrip`
+	#     变体是这一处的镜像,`menu_theme_mirror_smoke` 逐值比对两者;只改一边那条守卫就红。
+	#   ★ 别顺手改 `_btn_box()` 里同款的 40/20(273 行)—— 那是**按钮**的底,改它全站按钮文字会左移。
+	sb.content_margin_left = 0.0
 	sb.content_margin_right = 40.0
 	sb.content_margin_top = 20.0
 	sb.content_margin_bottom = 20.0

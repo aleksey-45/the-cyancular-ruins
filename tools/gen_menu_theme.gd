@@ -231,7 +231,9 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	hs.border_width_top = 0
 	hs.border_width_bottom = 1
 	hs.border_color = _c(C, "C_BORDER")
-	hs.content_margin_left = 40.0
+	# ★ 与 `UiFactory.header_strip()` 逐值一致(那边 2026-10-04 把左内边距 40 → 0:
+	#   「金色标题的字」与正文左对齐)。**改一处必须改两处**,否则 `menu_theme_mirror_smoke` 红。
+	hs.content_margin_left = 0.0
 	hs.content_margin_right = 40.0
 	hs.content_margin_top = 20.0
 	hs.content_margin_bottom = 20.0
