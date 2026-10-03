@@ -254,7 +254,27 @@ primary/quiet/gold/accent 四档）。**拿旧档当迁移基准 = 一挂上去�
 
 **Files:** `ui/factory/ui_factory.gd`
 
-- [ ] **Step 1: 先确认零调用点**
+> ### ✅ 已收口(2026-10-03):本任务的前提**基本不成立**,实际可删面远小于计划设想
+>
+> 跑了一遍完整的 `UiFactory` 样式面清点(见 `.superpowers/sdd/2026-10-03-ui-to-tscn-and-theme/t6-boundary-report.md`),
+> 结论:
+> - **Step 1 的门按字面写永远不可能为真** —— 实测**没有任何 `.tscn` 含施加器名**(0 行):
+>   六屏残留**100% 在动态代码路径**(房卡/名单行/表单动态块那一族),它们**按设计留代码**,
+>   所以那些施加器**永远有调用点**。⇒ 门改成「**六屏静态骨架零命中 + 具名例外清单**」,今天已为真(commit `ae5e0d1` 交付)。
+> - **实际删掉的只有四个零调用死构造器**:`menu_separator` / `check_row` / `slider_row` / `menu_filter_button`
+>   (第四个由 T3a 追加实测发现)。**`style_row_button` 刻意保留** —— 它是 `menu_theme_mirror_smoke` 里
+>   `RowButton` 那条臂的**供给**(靠"调它就地覆写再把值读回来"才有比较对象),删了等于**零收益砍覆盖**;
+>   它与 `_btn_box`/`panel_box`/`row_box`/`_row_sb`/`switch_icons` 同属**生成器/守卫供给面**。
+> - **永久保留的具名例外**(每条都有机制,不许只写"保留"):`ui/factory/weapon_icons.gd:56`(共享工厂,字号传参)·
+>   `scenes/main_menu.gd:442`(该面板挂在 `%UILayer`,是 Theme 子树的**兄弟** ⇒ 删了掉回**引擎默认主题**)·
+>   `scenes/lobby_page.gd:70/125/519` · 对局内 HUD 七处(`hud.gd` ×4 / `royale_hud.gd` ×1 / `status_banner.gd` ×2)·
+>   `ui/map_picker.gd:113`。
+> - **`apply_font_recursive` 单独立项**(不并进删除批):它在 `lobby_page.gd:70` 有生产调用,
+>   而"Theme 的 `default_font` 能不能替它"是**行为断言**,要像素证据。
+> - ★ **纪律**:上面所有 grep 都**以具体目录为 root**(`scenes ui core server tests`),**绝不用 `.`** ——
+>   `.claude/worktrees/*` 与 `.superpowers/sdd/{_b2_backup,_gen}` 的旧副本会造幽灵命中(实测 `check_row` 18 条)。
+
+- [x] **Step 1: 先确认零调用点**(改为按 R12 的"六屏静态骨架零命中 + 具名例外清单")
 
 ```bash
 grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slider\|panel_box\|row_box\|style_row_button" \
@@ -267,7 +287,9 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
 ★ **`_btn_box` / `panel_box` / `style_button` 等可能仍被 `UiFactory` 自己的其它函数用**（如 `menu_button`）—— 删之前看清谁还在用。
 ★ **`PixelFont.shared()`**：确认没有 `.gd` 再调它之后删（`apply_font_recursive` 一并评估）。
 
-- [ ] **Step 3: 全量回归 + 提交**
+- [x] **Step 3: 全量回归 + 提交**(`ae5e0d1`;回归面见 `.superpowers/sdd/2026-10-03-ui-to-tscn-and-theme/t3a-report.md`)。
+  ★ 连带清掉一条**同批发现的既有红**:`allscript_probe` 的 `SKIP_DIRS` 漏了 gitignored 的 `res://_crashtest` ⇒
+  它**改前就红 3/288**、全仓没有可用的编译面闸;补上后为 `OK(283 个脚本全部加载)`(`c77a53b`)。
 
 ---
 
@@ -286,3 +308,15 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
 3. **Theme 管不到"忘了挂 Theme"** —— 那种控件会用 Godot 默认样式且**不报错**；逐屏取图是唯一拦截。
 4. **字体导入设置是全局的** —— Task 2 的前后对比图是它的唯一验收。
 5. **本计划不改任何视觉**（Task 3/4 除外 —— 那两屏的视觉本来就还没做）。
+6. ★ **"对局内 HUD 一个像素都不改"这句话不准确**(2026-10-03 实测修正):被冻结的是 **`UiFactory` 的共享 token *值***;
+   而 **`header_strip()` / `menu_panel()` 这类共享构造器的 *尺度* 不是冻结面** —— `671e610` 把 `header_strip()` 的内边距
+   28/14 → 40/20(左右各 +12),而 `ui/hud/broadcast.gd` 复用它 ⇒ 对局内广播面板**连带变宽 +24 像素**
+   (外框 841→865/866,标题带 696→720;两个量具互印)。★ **`get_global_rect()` 含 `_apply_punch()` 脉冲缩放,
+   不能做判据** —— 判据量 `Control.size`。已由 `combat_hud_visual_probe` 的显式几何断言钉住"被接受的值"(`6a4b39e`)。
+7. ★ **迁移产生了四个"孤儿页底色"**:`scenes/{beta_menu:22, info_menu:20, mp_lobby:639, settings_menu:21}.tscn`
+   的 `ColorRect1` 上是 `Color(0.07, 0.09, 0.13, 1)` —— 它原本由 `lobby_page.gd` 的 `_add_lobby_background()` 画,
+   而该 helper 被本次迁移当作"只服务被删 builder"退役(四个迁移提交各删一处 `.gd` 落点)⇒
+   **没有任何代码拥有它,也没有守卫看得见它**(调色板 smoke ⑤ 只钉底板色、只认 `bg_color =`)。**登记不修**:
+   修它要"加调色板常量 + 重生成那 4 个场景",属拥有 theme 生成器的那一批。
+8. ★ **一处覆盖缺口(登记)**:`kh_l3_visual_probe` 里那条"环画出来了"的像素断言被证明**无鉴别力**
+   (环留着差值照样 76 —— 量到的是玩家帧动画)⇒ 删掉后该性质**只剩人眼图**;要有鉴别力得先有稳定参考帧,成本不成比例。
