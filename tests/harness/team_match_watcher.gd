@@ -338,7 +338,9 @@ func _tick_lobby() -> void:
 		if not _created and _phase_t > 0.6:
 			_created = true
 			_log("点「创 建 房 间」")
-			# 统一大厅的弹层是**点开才建**的(`_create_panel` 初值 null)⇒ 先开再按。
+			# 统一大厅的弹层**启动即建、默认隐藏**(骨架里的 `%CreatePanel`;`_build_ui()` 只登记
+			# + 收起)⇒ 先开再按**不是**因为"它是 null"(T1 起没有 null 可判了),而是要让这次
+			# 「创建」走玩家那条链:`_create_mode` 只在 `_open_create_dialog` 里从当前筛选模式取。
 			lobby.call("_open_create_dialog")
 			lobby.call("_on_create_pressed")
 	else:
