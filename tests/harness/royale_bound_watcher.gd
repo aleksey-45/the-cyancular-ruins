@@ -16,7 +16,25 @@ const LOBBY_ADDR := "127.0.0.1"   # 本探针大厅的地址(真大厅页按 `Pv
 # 与 royale_bound_probe.gd 的 HUE_C1/HUE_C2、DISABLED_SLOT 保持一致(两个客户端的本端选项)
 const HUE_BY_ROLE := {1: 90.0, 3: 180.0}
 const DISABLED_SLOT := 3
-const SETTLE := 2.0        # 换场后等载荷落地的静置秒数(快照/HUD 都在建,给足余量)
+# ★★ 等待形状(2026-10-03 修):**等载荷落地 + 截止线**,不是"固定静置 N 秒后断言"。
+#   旧写法是 `const SETTLE := 2.0` + `_stage_t < SETTLE ⇒ return`,它把**两条不同的判据**
+#   混成了一条:"载荷有没有到" 与 "到得够不够快"。后者**不是本探针的断言对象** ——
+#   文件头的断言对象是「换场后那四样到底有没有进新场景」。
+#
+#   实测(2026-10-03,纯生产路径、无任何插桩,2/2 客户端):
+#     换场 → 收到 `match_sync_data` 的**墙钟**间隔 = c1 **5906ms** / c2 **3900ms**。
+#   成因(已定位,见 probe 文件头 §B2 结论):客户端换场那一刻要把整个
+#   `royale_game`(Level0 世界 + 碰撞 + HUD)建起来,主循环**卡住 ~8 秒**
+#   (探针环境里同时有大厅 + worker + 两个客户端共 4 个 Godot 抢 CPU,实测值被放大);
+#   卡顿期内客户端不排空 UDP 收缓冲 ⇒ 包被内核丢 ⇒ **可靠包靠 ENet 退避重传**,
+#   在客户端恢复后才整批涌进来(同一瞬间 `round_state` 计数从 9 跳到 20,是同一现象)。
+#   ⇒ 固定 2.0s 会**在这条载荷到达之前**就断言 ⇒ 红;而它红的原因是**探针的等待形状**,
+#     不是产品丢包。故改成等载荷。
+#
+#   ★ 鉴别力没有降低:载荷**始终不到**(= 真丢包)时,`PAYLOAD_DEADLINE` 到点照样断言 ⇒ 红。
+#   ★ 也没有变成恒真:若 `_on_match_sync` 没把 `_names/_hues/...` 应用上去,断言照样红。
+const SETTLE_AFTER_PAYLOAD := 0.5   # 应答落地后再等一拍:观察者的订阅可能排在游戏的订阅者**之前**
+const PAYLOAD_DEADLINE := 25.0      # 等应答的上限(探针时间);到点仍没到 ⇒ 照常断言(红)
 const DEADLINE := 50.0
 
 var who := "c1"
@@ -30,6 +48,7 @@ var _stage := 0
 var _stage_t := 0.0
 var _match_start_frame := -1
 var _game_added_frame := -1      # royale_game 节点入树(=_ready 运行)的帧号
+var _arrival_t := -1.0           # match_sync 应答落地的探针时刻(见 SETTLE_AFTER_PAYLOAD)
 var _arrivals: Dictionary = {}   # 信号名 -> 到达帧号(证据:三条是否与 match_start 同一次 poll)
 
 
@@ -58,7 +77,10 @@ func _log(msg: String) -> void:
 	var f := FileAccess.open(p, mode)
 	if f != null:
 		f.seek_end()
-		f.store_line("%5.1fs %s" % [_t, msg])
+		# 墙钟戳(2026-10-03 加):`_t` 是 delta 累加,而 Godot 会把超长帧的 delta 钳掉 ⇒
+		# 卡顿期它**严重低报**(实测同一事件 `_t`=12.2s 而 `get_ticks_msec()`=22.1s)。
+		# 本探针的整个诊断都建立在"晚了多久"上 ⇒ 量延迟必须用墙钟,不能只用 `_t`。
+		f.store_line("%5.1fs w=%dms %s" % [_t, Time.get_ticks_msec(), msg])
 		f.close()
 	NetBus.local_peer_info.connect(func(_names: Dictionary) -> void:
 		_arrivals["peer_info"] = Engine.get_process_frames())
@@ -161,7 +183,13 @@ func _stage_wait_game(delta: float) -> void:
 			})
 			_log("已投 match_sync 应答(新场景应按 role 应用到 _names/_hues/disabled_weapons)")
 	_stage_t += delta
-	if _stage_t < SETTLE:
+	# 等载荷(带截止线),不再用固定静置 —— 理由见文件头 `SETTLE_AFTER_PAYLOAD` 上方那段。
+	if _arrivals.has("match_sync"):
+		if _arrival_t < 0.0:
+			_arrival_t = _stage_t
+		if _stage_t < _arrival_t + SETTLE_AFTER_PAYLOAD:
+			return
+	elif _stage_t < PAYLOAD_DEADLINE:
 		return
 	_assert_on_game(cs)
 
