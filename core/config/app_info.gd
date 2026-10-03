@@ -52,7 +52,8 @@ static func commit_log() -> Array:
 
 
 # 读 git 输出为 UTF-8 文本。OS.execute 在中文 Windows 上按系统码页解码 → 中文乱码;
-# execute_with_pipe 拿原始流,FileAccess.get_as_text 显式按 UTF-8 解。
+# execute_with_pipe 拿原始流,再用 get_buffer 累积字节 + get_string_from_utf8() 显式按 UTF-8 解。
+# (本函数**不走** FileAccess.get_as_text —— 那条链读的是原始字节。)
 # ★ 逐字从 `main_menu.gd` 搬来,别"顺手优化" —— 它踩过中文乱码那个坑。
 static func _git_text(args: Array) -> String:
 	var res: Variant = OS.execute_with_pipe("git", args, true)
