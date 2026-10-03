@@ -12,6 +12,7 @@ extends Node
 
 const RESULT_PREFIX := "royale_b12_probe_"
 const GO_FILE := "user://royale_b12_probe_go.txt"
+const LOBBY_ADDR := "127.0.0.1"   # 本探针大厅的地址(真大厅页按 `PvpSession.server_address` 连)
 # 与 royale_bound_probe.gd 的 HUE_C1/HUE_C2、DISABLED_SLOT 保持一致(两个客户端的本端选项)
 const HUE_BY_ROLE := {1: 90.0, 3: 180.0}
 const DISABLED_SLOT := 3
@@ -39,6 +40,12 @@ func _ready() -> void:
 	# 只登记帧号,不消费(PvpSession 的交接仍由大厅/新场景自己走)
 	NetBus.local_match_start.connect(func(_role: int, _spawn: Vector2i, _map: String) -> void:
 		_match_start_frame = Engine.get_process_frames())
+	# 诊断:_on_match_sync 的应答是**进场拉取**那条路的关键证据(旧的三条推送信号在拉模型下
+	# 不再触发,故 `_arrivals` 里看不到它们 —— 这里把真正承载载荷的那条记下来)。
+	NetBus.local_match_sync.connect(func(p: Dictionary) -> void:
+		_arrivals["match_sync"] = Engine.get_process_frames()
+		_log("match_sync 应答: names=%s hues=%s options=%s" % [str(p.get("names", {})),
+				str(p.get("hues", {})), str(p.get("options", {}))]))
 
 
 # 子进程的 stdout 不会被父进程继承(Windows CreateProcess 不继承句柄)→ 落盘一份,
@@ -85,7 +92,17 @@ func _stage_wait_lobby() -> void:
 		return
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
-		return   # 真大厅面板自己会连 127.0.0.1(_ready 里的 _request_list)
+		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
+	# ★★ 守卫:连上的必须是**本探针的大厅**,不能是云服(与 royale_c2_watcher / team_match_watcher
+	#   同款)。生产默认地址是云(`PvpSession.server_address` 初值 120.53.107.140),而本探针是
+	#   **实例化真 mp_lobby 让它自己连** —— `royale_bound_probe._run_client` 漏了那句地址预置时,
+	#   两个客户端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是本端自己的
+	#   「已连接服务器」,而编排器一条 `玩家连入` 都没有 ⇒ 只剩 75s 超时。当场点名,
+	#   别让下一个人再从超时逆推(实测踩过:c1 连上云服并建房、c2 对云服连接失败)。
+	if String(lobby.get("_connected_addr")) != LOBBY_ADDR:
+		_finish(false, "本端连的是 %s,不是本探针大厅 %s —— 检查 royale_bound_probe._run_client 的地址预置"
+				% [lobby.get("_connected_addr"), LOBBY_ADDR])
+		return
 	if who == "c1":
 		_log("大厅已连,建房")
 		# 统一大厅:先设筛选再开弹层(弹层按 `_mode` 选默认模式),最后走真按钮回调建房。
@@ -120,7 +137,13 @@ func _log_once(msg: String) -> void:
 func _stage_wait_game(delta: float) -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_royale_game(cs):
-		_log_once("等换场(当前场景=%s)" % ("(空)" if cs == null else str(cs.name)))
+		# 诊断:换场没发生时,把真大厅的 `_current_mode` 一起打出来 —— 空串就是
+		# `_enter_match_scene` 那支 push_error(不切场景,刻意加固),那才是"等不到换场"的真因。
+		var cm := "(lobby 已 free)"
+		if lobby != null and is_instance_valid(lobby):
+			cm = str(lobby.get("_current_mode"))
+		_log_once("等换场(当前场景=%s, _current_mode=「%s」)" % [
+				("(空)" if cs == null else str(cs.name)), cm])
 		return
 	if _stage_t == 0.0:
 		_log("已换场到 royale_game(帧 %d;match_start 帧 %d)" % [Engine.get_process_frames(),

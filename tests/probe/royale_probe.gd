@@ -144,13 +144,16 @@ func _run_client_2() -> void:
 		NetBus.local_server_message.connect(func(t: String) -> void:
 			if t.contains("邀请码"):
 				_saw_invite_reject = true)
-		NetBusExt.rpc_id(1, "royale_join", code, WRONG_INVITE)
+		# ★ 第 3 参 beta:本探针建的房 opts 里没有 "beta": true(见 _run_client_1 的 royale_create)
+		#   ⇒ 普通房,传 false。签名是 (code, invite, beta) 三参;少传一个 RPC 直接失败、
+		#   服务端一条消息都不回(探针表现为"错误邀请码未被拒绝")。
+		NetBusExt.rpc_id(1, "royale_join", code, WRONG_INVITE, false)
 		await get_tree().create_timer(0.6).timeout
 		if not _saw_invite_reject:
 			_finish(false, "c2", "错误邀请码未被拒绝(消息=%s)" % _saw_invite_reject)
 			return
 		print("PROBE[c2]: 错码被拒 ✓,用对码加入 %s" % code)
-		NetBusExt.rpc_id(1, "royale_join", code, INVITE))
+		NetBusExt.rpc_id(1, "royale_join", code, INVITE, false))
 	_go_and_verify("c2")
 
 # ── 公共(客户端):等 go_match → 转连 worker → claim → 验证对局广播 ──

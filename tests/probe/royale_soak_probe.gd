@@ -223,7 +223,9 @@ func _wait_room_code() -> void:
 	if code == "":
 		_finish(false, "没等到房号文件")
 		return
-	NetBusExt.rpc_id(1, "royale_join", code, INVITE)
+	# ★ 第 3 参 beta:建房 opts 里没有 "beta": true(见 _after_lobby_connected 的 royale_create)
+	#   ⇒ 普通房,传 false。签名 (code, invite, beta) 三参,少传即 RPC 失败、服务端不回应。
+	NetBusExt.rpc_id(1, "royale_join", code, INVITE, false)
 
 
 # go_match 在大厅 peer 的 poll 调用栈内到达 → 转连必须推到帧末(与 mp_lobby 同款)

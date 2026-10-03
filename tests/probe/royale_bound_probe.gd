@@ -42,6 +42,7 @@ var _c1_peer := 0
 var _code := ""
 var _stage := 0
 var _created_t := -1.0
+var _full_t := -1.0
 var _t := 0.0
 var _room_mgr: Node = null   # 大厅进程里那份 RoomManager(直接持有:add_child 返回的实例,不按名字找)
 var _lobby: Node = null      # --payload 模式:注入载荷后要触发换场的那份真大厅
@@ -74,6 +75,9 @@ func _run_payload_case() -> void:
 	w.who = "payload"
 	w.mode = "wait"
 	get_tree().root.add_child.call_deferred(w)
+	# 同 `_run_client`:真大厅 `_ready` 会按 `PvpSession.server_address` 自动连(云服默认)——
+	# 本模式没有本地大厅,拨到 127.0.0.1 让那次连接**失败**即可,别去碰生产服务器。
+	PvpSession.server_address = "127.0.0.1"
 	_lobby = load("res://scenes/mp_lobby.tscn").instantiate()
 	add_child.call_deferred(_lobby)
 	print("PROBE: 同一次 poll 模式:载荷注入后立刻触发真大厅换场")
@@ -104,6 +108,12 @@ func _payload_step(delta: float) -> void:
 	#   ⚠ 覆盖边界(照实登记):这一条只验「新场景能把收到的 match_sync 应答应用上」;
 	#     **请求那一半**(客户端确实发得出去、服务器确实应答)由 `royale_probe` 的真大厅+真 worker
 	#     全链路覆盖 —— 那条**没有**轻量化,别把本变体当成它的替代。
+	# ★★ 为什么必须在这里设 `_current_mode`:本变体**直接调**真大厅的 `_on_match_start`,
+	#   而 `mp_lobby._enter_match_scene()` 现在**按 `_current_mode` 分派**场景
+	#   ("" 那一支只 `push_error`、**不切场景** —— 那是刻意的加固,见该函数注释)。
+	#   不设 = 模式停在空串 ⇒ 只打一条红、永远等不到换场(旧 royale_lobby 是无条件切
+	#   royale_game 的,所以这里从前不需要设)。
+	_lobby.set("_current_mode", PvpSession.MODE_ROYALE)
 	_lobby.call("_on_match_start", 1, Vector2i(70, 66), "res://maps/newfactory.cyrm")
 	# ★ 应答不在这里发:本节点**就是 current scene**,换场会把它 free 掉,协程随之而死(实测踩过:
 	#   应答一条都没发出去)。改由 watcher 发 —— 它挂在 root 上,换场带不走它(那正是它存在的理由)。
@@ -115,6 +125,12 @@ func _payload_step(delta: float) -> void:
 func _run_client() -> void:
 	Settings.pvp_disabled_weapons = [DISABLED_SLOT]
 	Settings.pvp_color_hue = HUE_C1 if _role == "c1" else HUE_C2
+	# ★★ **必须把地址拨到本探针的大厅**(与 team_match_watcher / royale_c2_probe 同款)。
+	#   生产默认是**云服**(`PvpSession.server_address` 初值 120.53.107.140),而真大厅页的
+	#   地址框初值取的就是它、`_ready` 会自动连 —— 不拨这一行,两个客户端会**静默连云**
+	#   (还在云上真建房),本进程的编排大厅一条 `玩家连入` 都收不到,只剩 75s 超时。
+	#   症状与"c2 连不上"完全一样(实测:c1 连上云服并建房,c2 对云服连接失败)。
+	PvpSession.server_address = "127.0.0.1"
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
 	if FileAccess.file_exists(lp):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
@@ -187,6 +203,19 @@ func _orchestrator_step(delta: float) -> void:
 		1:
 			if _room_players() < 3:
 				return   # 等 c2 加入(c1 + 假 peer + c2)
+			# ★★ 先等**等待室状态广播**落地,再开局 —— 否则 c2 的 `_current_mode` 永远停在空串:
+			#   `LobbyRooms._flush_royale_state` 是 `call_deferred` 且发送前 `await process_frame`,
+			#   再判 `if rr.in_match: return`。本探针原先在 c2 加入的**同一帧**就 `royale_start`
+			#   ⇒ 那次广播被 `in_match` **静默吞掉** ⇒ c2 收不到 `royale_room_state` ⇒
+			#   `_on_room_state_royale` 不跑 ⇒ `_current_mode` 恒空 ⇒ match_start 到了也**不切场景**
+			#   (`_enter_match_scene` 的 else 分支,push_error)。真人房主不可能在一帧内点「开始」,
+			#   故这是探针**把开局踩得过紧**造出来的竞态;留出让广播落地的时间即可复现真实时序。
+			#   (实测未加这段时 c2 日志:`等换场(当前场景=RoyaleBoundProbe, _current_mode=「」)`)
+			if _full_t < 0.0:
+				_full_t = _t
+				return
+			if _t - _full_t < 0.6:
+				return
 			# 中间那位(role 2)退出 → 房里是 {1,3},成员数 2 < 最高 role 3(B1 的复现条件)
 			_rm().lobby.royale_leave(FAKE_PEER)
 			print("PROBE: 假 peer 退出 → 房内 role = %s(成员数 %d,最高 role %d)" % [
