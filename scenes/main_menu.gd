@@ -138,21 +138,29 @@ func _build_version_label() -> Label:
 # 三组分开 ——「开始游戏」/「选项」/「退出」:原先 6 个按钮平铺、间距一律 18px,
 # 退出与单人模式同等分量(2026-09-13 视觉评析:这是会被误点的版式)。
 func _build_menu_buttons() -> Array:
+	# ★ 六个按钮收进一块 `menu_panel()`(方向 B 的凿刻压边:外深线 + 内亮线)。
+	#   改这一处的理由:原先它们是一列**浮在空底上**的裸按钮 —— 整屏只有标题与这列按钮,
+	#   中间一大片空的;给它们一个"器物"的外沿,菜单才立得起来。
+	#   ★ 定位沿用按钮列原来那套锚点/生长方向/偏移(位置不变),只是外面多了一层边;
+	#     按钮的**次序、间距、文案**一个字都没动(探针按文案找按钮)。
+	var panel := UiFactory.menu_panel()
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	panel.offset_top = 130.0
+	_ui_layer.add_child(panel)
+
 	var box := VBoxContainer.new()
-	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	box.grow_vertical = Control.GROW_DIRECTION_BOTH
-	box.offset_top = 130.0
 	box.add_theme_constant_override("separation", 34)   # 组与组之间的空档
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	_ui_layer.add_child(box)
+	(panel.get_node("Body") as Container).add_child(box)
 
 	var play_group := _btn_group()
 	var opt_group := _btn_group()
 	box.add_child(play_group)
 	box.add_child(opt_group)
 
-	var start_btn := UiFactory.button("单 人 模 式", 32)
+	var start_btn := UiFactory.menu_button("单 人 模 式", 32)
 	start_btn.pressed.connect(_on_single_pressed)
 	# ★★ 联机入口只剩这一颗(2026-10-03 三合一,统一大厅 `mp_lobby`):1v1 / 3v3 / 大乱斗
 	#   都在那一个页面里按筛选区分,菜单不再按模式分列三颗按钮。
@@ -163,30 +171,30 @@ func _build_menu_buttons() -> Array:
 	#   那四行、或在这里直接清凭据 = 玩家从对局回主菜单、再按这个入口进来时凭据被抹掉
 	#   → 自己那间"对局中"的房恒为灰、回不去(**而一行报错都没有**) —— 这就是 C1。
 	#   `reconnect_smoke` 有源码级断言钉着它。
-	var multi_btn := UiFactory.button("多 人 模 式", 32)
+	var multi_btn := UiFactory.menu_button("多 人 模 式", 32)
 	multi_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
 		get_tree().change_scene_to_file("res://scenes/mp_lobby.tscn"))
 	# Beta(2026-09-28,用户指定放在联机入口下面):以后所有实验性玩法都从这个入口进
 	# (现在是 PvP 时间玩法的两个变体)。弱化变体:实验功能不与正式模式抢注意力。
-	var beta_btn := UiFactory.button("Beta", 32, Vector2(420, 64), "quiet")
+	var beta_btn := UiFactory.menu_button("Beta", 32, Vector2(420, 64), "quiet")
 	beta_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/beta_menu.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而再短些的标签又比它们窄 —— 按钮列的文本块宽度既不等宽
 	# 也不成体系(2026-09-13 视觉评析)。按钮本身 420 宽居中,标签不必再自己凑宽度。
-	var settings_btn := UiFactory.button("设 置", 32)
+	var settings_btn := UiFactory.menu_button("设 置", 32)
 	settings_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/settings_menu.tscn"))
-	var ver_btn := UiFactory.button("信 息", 32)
+	var ver_btn := UiFactory.menu_button("信 息", 32)
 	ver_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/info_menu.tscn"))
 	# 退出用弱化变体:常态描边与文字都压暗一档,不与「单人模式」抢注意力。
-	var quit_btn := UiFactory.button("退 出", 32, Vector2(420, 64), "quiet")
+	var quit_btn := UiFactory.menu_button("退 出", 32, Vector2(420, 64), "quiet")
 	quit_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().quit())
@@ -263,7 +271,9 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		check_list.add_child(cb)
 
 	var row: HBoxContainer = panel.get_node("VBox/ButtonRow")
-	var go := UiFactory.button("开 始 探 索", 32)
+	# 单机开局面板(本屏的另一处按钮)同样走菜单按钮工厂 —— 它与主菜单同屏出现,
+	# 不换的话两套描边会在同一屏里并排。
+	var go := UiFactory.menu_button("开 始 探 索", 32)
 	go.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		Settings.sp_disabled_weapons.clear()
@@ -278,7 +288,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		_enter_level0())
-	var back := UiFactory.button("返回", 32)
+	var back := UiFactory.menu_button("返回", 32)
 	back.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		panel.visible = false)

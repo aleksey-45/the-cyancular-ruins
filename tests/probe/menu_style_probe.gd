@@ -11,11 +11,12 @@ extends Node
 #    ★ 这四条钉的是**值**,不是名字:把颜色调深一点也会红。
 # ★ 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
 #   **数法** = 5(新 token)+ 4(冻结守卫)+ 1(panel_box 底不透明)+ 3(menu_panel 返回 /
-#              外线 / 内线)+ 2(★ 位置:内层真内缩 / 内层宽度 < 外层 −2px)= **15**。
+#              外线 / 内线)+ 2(★ 位置:内层真内缩 / 内层宽度 < 外层 −2px)
+#              + 5(menu_button 常态/悬停/填充 3 条 + header_strip 底/下边线 2 条)= **20**。
 #
 # ★ 注:新 token 的期望值统一用 hex 字符串 —— `ui_factory.gd` 里也**必须**写成
 #   `Color("#RRGGBB")`,两侧同写法才逐位相等(浮点反算会差 1/255 ⇒ 恒红)。
-const EXPECTED_CHECKS := 15
+const EXPECTED_CHECKS := 20
 
 var _checks := 0
 var _fails: Array[String] = []
@@ -67,6 +68,25 @@ func _ready() -> void:
 			inner = (body as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
 		_check(inner != null and inner.border_color == UiFactory.C_INNER,
 				"menu_panel() 的内亮线是 C_INNER(凿刻感的来源)")
+
+	# ── 菜单按钮:常态描边 = C_EDGE、填充 = C_HEADER、悬停描边转 C_ACCENT ──
+	# ★ 断言落在这三个**主题项**上而不是"按钮建出来了":把 variant="quiet" 误当默认、
+	#   或把填充写成底色的差一档,都会在这里红。
+	var mb := UiFactory.menu_button("测试", 32, Vector2(200, 48))
+	var bn := mb.get_theme_stylebox("normal") as StyleBoxFlat
+	var bh := mb.get_theme_stylebox("hover") as StyleBoxFlat
+	_check(bn != null and bn.border_color == UiFactory.C_EDGE, "menu_button() 常态描边是 C_EDGE")
+	_check(bh != null and bh.border_color == UiFactory.C_ACCENT, "menu_button() 悬停描边转 C_ACCENT")
+	_check(bn != null and bn.bg_color == UiFactory.C_HEADER, "menu_button() 填充是 C_HEADER")
+
+	# ── 标题带:C_HEADER 底 + 只有**下边**一条 C_BORDER 线 ──
+	# ★ 那条 `border_width_bottom == 1` 是这一档的全部形状:四边都画就退化成又一个面板
+	#   (与 menu_panel 的凿刻压边打架),而只断言"有 border"是看不出来的。
+	var strip := UiFactory.header_strip("测 试", 32)
+	var ssb := (strip as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
+	_check(ssb != null and ssb.bg_color == UiFactory.C_HEADER, "header_strip() 的底是 C_HEADER")
+	_check(ssb != null and ssb.border_width_bottom == 1 and ssb.border_color == UiFactory.C_BORDER,
+			"header_strip() 只有**下边**一条 C_BORDER 线(其余三边为 0)")
 
 	# ── ★ 位置断言:两条线必须落在**不同的像素环**上 ──
 	# ★ 只断言两层 border_color 各自正确是**看不见重合**的:计划初稿把外层 content_margin

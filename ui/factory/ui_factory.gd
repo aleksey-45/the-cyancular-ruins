@@ -308,6 +308,81 @@ static func menu_panel(padding: Vector2 = Vector2(28, 20)) -> PanelContainer:
 	return outer
 
 
+# 菜单系的按钮(方向 B)。★ **不改 `_btn_box` / `style_button`** —— 它们被结算页/暂停菜单等
+# 共用,改一处动全部,没法逐屏验收。本函数是菜单系的新入口,分屏切换。
+# variant 语义与 `style_button` 一致:"primary" 常态 / "quiet" 弱化(退出等)。
+# "gold" 是新增的第三档:**主行动**(创建房间 / 开始游戏)—— 琥珀描边 + 琥珀字。
+static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(420, 64),
+		variant: String = "primary") -> Button:
+	var b := Button.new()
+	b.text = text
+	style_control(b, size)
+	b.custom_minimum_size = min_size
+	var edge := C_EDGE
+	var fg := C_TEXT
+	if variant == "quiet":
+		edge = C_BORDER_DIM
+		# ★ 弱化档的字色用 `C_TEXT_DIM`(不是更弱的 `C_TEXT_MUTE`)—— 如实登记成因:
+		#   `tests/probe/kh_l4_visual_probe` 对**每一颗**主菜单按钮都要求矩形内有 ≥120 个
+		#   "亮像素"(平均亮度 > 0.5),那是它证明"浮现动画跑完了"的判据;`C_TEXT_MUTE`
+		#   (#6C7885,平均 0.472)在整颗按钮里一个亮像素都不产生 ⇒ 那条断言当场红。
+		#   而它与 `style_button("quiet")` 的既有观感**逐字相同**(那也是这颗探针标定时用的),
+		#   ⇒ 弱化关系(C_TEXT 0.878 → 0.574)一点没变。
+		fg = C_TEXT_DIM
+	elif variant == "gold":
+		edge = C_GOLD
+		fg = C_GOLD
+	b.add_theme_stylebox_override("normal", _btn_box(C_HEADER, edge))
+	b.add_theme_stylebox_override("hover", _btn_box(C_BTN_FILL_HI, C_ACCENT))
+	b.add_theme_stylebox_override("pressed", _btn_box(C_BTN_FILL_DN, C_ACCENT))
+	b.add_theme_stylebox_override("focus", _btn_box(C_HEADER, C_ACCENT))
+	b.add_theme_stylebox_override("disabled", _btn_box(C_HEADER, C_BORDER_DIM))
+	b.add_theme_color_override("font_color", fg)
+	b.add_theme_color_override("font_hover_color", C_ACCENT)
+	b.add_theme_color_override("font_focus_color", fg)
+	b.add_theme_color_override("font_pressed_color", C_ACCENT)
+	b.add_theme_color_override("font_disabled_color", C_TEXT_MUTE)
+	return b
+
+
+# 标题带:一片 `C_HEADER` 的横条 + **只有下边**一条 `C_BORDER` 线 + 金色标题。
+# 它是方向 B"器物感"的主要来源(设计 §3.9 的"标题带")。
+# ★ 只画下边一条线是刻意的:四边都画就变成又一个面板,与 `menu_panel()` 的凿刻压边打架。
+static func header_strip(text: String, size: int = 32) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = C_HEADER
+	sb.set_corner_radius_all(0)
+	sb.border_width_left = 0
+	sb.border_width_right = 0
+	sb.border_width_top = 0
+	sb.border_width_bottom = 1
+	sb.border_color = C_BORDER
+	sb.content_margin_left = 16.0
+	sb.content_margin_right = 16.0
+	sb.content_margin_top = 8.0
+	sb.content_margin_bottom = 8.0
+	p.add_theme_stylebox_override("panel", sb)
+	p.add_child(label(text, size, C_GOLD))
+	return p
+
+
+# 分段筛选按钮(大厅的模式筛选行):**选中态用调用方给的强调色**(该模式的模式色),
+# 未选中与 `menu_button` 同款(`C_EDGE`)。
+# ★ 为什么不能让 `menu_button` 的 variant 表达:模式色是**运行时值**(每个按钮各不相同),
+#   而 variant 是三个固定档。★ `Button` 的"选中"画的是 `pressed` 主题项(**不是** `normal`),
+#   故必须把该色织进 pressed / hover_pressed / font_pressed_color —— 只改 normal 的话
+#   点下去**画面毫无变化**(而那不会报任何错)。
+static func menu_filter_button(text: String, size: int, min_size: Vector2, accent: Color) -> Button:
+	var b := menu_button(text, size, min_size)
+	b.toggle_mode = true
+	b.add_theme_stylebox_override("pressed", _btn_box(C_HEADER, accent))
+	b.add_theme_stylebox_override("hover_pressed", _btn_box(C_BTN_FILL_HI, accent))
+	b.add_theme_color_override("font_pressed_color", accent)
+	b.add_theme_color_override("font_hover_pressed_color", accent)
+	return b
+
+
 # 列表行底(房间行等):比页面底亮一档,让「行」这个物体存在。
 # (默认主题下房间行与页面底实测 1.01:1 —— 行边界不可见,列表像一排悬空文字。)
 static func row_box() -> StyleBoxFlat:

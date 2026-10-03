@@ -135,10 +135,17 @@ func _ready() -> void:
 
 # ── 版式 ────────────────────────────────────────────────────────────
 
-# 本页的按钮:32 号字 + 描边式(自建;设计稿 §3.2「输入框/按钮高 64,字号 32」)。
+# 本页的按钮:32 号字 + 方向 B 的描边式(设计稿 §3.2「输入框/按钮高 64,字号 32」)。
 #   旧页那套 16 号按钮工厂已随三个旧大厅页一起退役,基类不再提供。
-func _mp_button(text: String, pos: Vector2, size: Vector2, fn: Callable) -> Button:
-	var b := UiFactory.button(text, 32, size)
+# ★ `accent` 非 null 时走**分段筛选按钮**(选中态画该模式色),否则普通菜单按钮
+#   (由 `variant` 选 primary / quiet / gold)。
+func _mp_button(text: String, pos: Vector2, size: Vector2, fn: Callable,
+		variant: String = "primary", accent = null) -> Button:
+	var b: Button
+	if accent != null:
+		b = UiFactory.menu_filter_button(text, 32, size, accent)
+	else:
+		b = UiFactory.menu_button(text, 32, size, variant)
 	b.position = pos
 	b.size = size
 	add_child(b)
@@ -189,15 +196,18 @@ func _build_filter_bar() -> void:
 	var x := PAGE_MARGIN
 	for f in filters:
 		var m: String = f[0]
+		# 分段按钮:选中态 = **该模式的模式色**(未选中 = C_EDGE,与其余按钮同款)。
+		# ★ 选中那一档由 Button 自己的 toggle 状态画,ButtonGroup 保证互斥;颜色织在
+		#   `pressed` 主题项里(见 `UiFactory.menu_filter_button`)—— 只改常态色是**看不见**的。
 		var b := _mp_button(str(f[1]), Vector2(x, 230), Vector2(160, 60),
-				func() -> void: _set_filter(m))
-		# 分段按钮:选中态用 Button 自己的 toggle 画(免得多一份配色),ButtonGroup 保证互斥。
-		b.toggle_mode = true
+				func() -> void: _set_filter(m), "primary", MODE_COLOR.get(m, UiFactory.C_ACCENT))
 		b.button_group = group
 		b.button_pressed = (m == _mode)
 		_filter_btns[m] = b
 		x += 160.0 + 12.0
-	_create_btn = _mp_button("＋ 创建房间", Vector2(1300, 230), Vector2(280, 60), _open_create_dialog)
+	# 「＋ 创建房间」是这一屏的主行动 ⇒ gold 档(琥珀描边 + 琥珀字)。
+	_create_btn = _mp_button("＋ 创建房间", Vector2(1300, 230), Vector2(280, 60),
+			_open_create_dialog, "gold")
 	_join_btn = _mp_button("加入房间", Vector2(1600, 230), Vector2(280, 60), _toggle_join_panel)
 
 
@@ -212,10 +222,14 @@ func _build_card_grid() -> void:
 
 
 func _build_status_bar() -> void:
+	# 一栏字浮在空底上读不出"这是个栏位" ⇒ 给它一块 `menu_panel()` 的底(方向 B 的凿刻压边)。
+	var bar := UiFactory.menu_panel(Vector2(20, 10))
+	bar.position = Vector2(PAGE_MARGIN, 1330)
+	bar.size = Vector2(1500, ROW_H)
+	add_child(bar)
 	_status = UiFactory.label("", 32, UiFactory.C_TEXT)
-	_status.position = Vector2(PAGE_MARGIN, 1330)
-	_status.size = Vector2(1500, ROW_H)
-	add_child(_status)
+	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	(bar.get_node("Body") as Container).add_child(_status)
 	_mp_button("返回主菜单", Vector2(1680, 1330), Vector2(200, ROW_H), _on_back_pressed)
 
 
@@ -355,18 +369,40 @@ func _make_card(r: Dictionary) -> Button:
 	var mine := PvpSession.can_rejoin_to(code, mode)
 
 	var btn := Button.new()
-	UiFactory.style_button(btn, "primary")
+	_style_card(btn)
 	btn.custom_minimum_size = Vector2(_card_width(), 400)
 	btn.size = Vector2(_card_width(), 400)
 	btn.set_meta("code", code)
 	btn.set_meta("mode", mode)
 	btn.text = ""   # 内容全部自绘
 
+	# 卡底 = 凿刻压边:外层 `C_BORDER` 线由 Button 自己的 stylebox 画,内层 `C_INNER` 线
+	# 由这块内缩 1px 的透明底 PanelContainer 画 —— 与 `UiFactory.menu_panel()` **同一个形状**。
+	# ★ 外壳**必须**仍是 Button(卡的 `text` 恒空 + `meta("code")` 是探针找卡的唯一据点),
+	#   所以不能真的把卡换成 PanelContainer。
+	var frame := PanelContainer.new()
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	frame.offset_left = 1.0
+	frame.offset_top = 1.0
+	frame.offset_right = -1.0
+	frame.offset_bottom = -1.0
+	var fsb := StyleBoxFlat.new()
+	fsb.bg_color = Color(0, 0, 0, 0)   # 只画线、不画底(底在外层 Button 上)
+	fsb.border_color = UiFactory.C_INNER
+	fsb.set_border_width_all(1)
+	fsb.set_corner_radius_all(0)
+	fsb.content_margin_left = 18.0
+	fsb.content_margin_right = 18.0
+	fsb.content_margin_top = 14.0
+	fsb.content_margin_bottom = 14.0
+	frame.add_theme_stylebox_override("panel", fsb)
+	btn.add_child(frame)
+
 	var col := VBoxContainer.new()
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	col.add_theme_constant_override("separation", 8)
-	btn.add_child(col)
+	frame.add_child(col)
 
 	col.add_child(_card_header(mode, r))
 	col.add_child(_card_body(r))
@@ -398,16 +434,37 @@ func _card_width() -> float:
 	return floor(usable / float(CARD_COLUMNS))
 
 
-# 卡头一行:左 = 模式名(模式色),右 = 状态角标。
+# 卡头 = 一条**标题带**(方向 B):`C_HEADER` 底 + 只有下边一条 `C_BORDER` 线,
+# 左 = 模式名(模式色),右 = 状态角标。
+# ★ 与 `UiFactory.header_strip()` 同一个味道,但那条工厂版标题色固定为金、也不带右侧角标,
+#   故这里按同一套版式拼一条(色仍只从 `UiFactory` 取,不写字面量)。
 # ★ 角标三档的**次序**:`对局中` 优先于 `私密 · 我的` —— 一间对局中的私密房对**别人**
 #   根本不列出,能同时满足两条的只有"我的房且已开局",那时"对局中"是更有用的信息。
 func _card_header(mode: String, r: Dictionary) -> Control:
+	var strip := PanelContainer.new()
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UiFactory.C_HEADER
+	sb.set_corner_radius_all(0)
+	sb.border_width_left = 0
+	sb.border_width_right = 0
+	sb.border_width_top = 0
+	sb.border_width_bottom = 1
+	sb.border_color = UiFactory.C_BORDER
+	sb.content_margin_left = 12.0
+	sb.content_margin_right = 12.0
+	sb.content_margin_top = 6.0
+	sb.content_margin_bottom = 6.0
+	strip.add_theme_stylebox_override("panel", sb)
+
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_theme_constant_override("separation", 12)
+	strip.add_child(row)
 
 	var name_l := UiFactory.label(str(MODE_LABEL[mode]), 32, MODE_COLOR[mode])
 	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(name_l)
 
 	var in_match := bool(r.get("in_match", false))
@@ -419,8 +476,30 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	#   会让那个金色在大厅与 HUD 里指两件事。这里用中性亮白:不抢强调色,也不借用语义色。
 	var badge_col := UiFactory.C_TEXT_DIM if in_match \
 			else (UiFactory.C_TEXT if not is_public else UiFactory.C_ACCENT)
-	row.add_child(UiFactory.label(badge, 32, badge_col))
-	return row
+	# 角标是**次要**信息(16):正文那些行都是 32,角标小一号才读成"状态贴纸"而不是又一个字段。
+	var badge_l := UiFactory.label(badge, 16, badge_col)
+	badge_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(badge_l)
+	return strip
+
+
+# 房卡底(方向 B 的凿刻感):外层一条 `C_BORDER`(常态)/ `C_ACCENT`(悬停/焦点),
+# 填充走 `C_SURFACE`。内层那条 `C_INNER` 线由子节点那块 frame 画(见 `_make_card`)。
+func _style_card(b: Button) -> void:
+	b.add_theme_stylebox_override("normal", _card_box(UiFactory.C_BORDER))
+	b.add_theme_stylebox_override("hover", _card_box(UiFactory.C_ACCENT))
+	b.add_theme_stylebox_override("pressed", _card_box(UiFactory.C_ACCENT))
+	b.add_theme_stylebox_override("focus", _card_box(UiFactory.C_ACCENT))
+	b.add_theme_stylebox_override("disabled", _card_box(UiFactory.C_BORDER))
+
+
+func _card_box(border: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UiFactory.C_SURFACE
+	sb.border_color = border
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(0)
+	return sb
 
 
 # 卡身:房间号(48) → 副标(32) → [地图缩略图 120×120 | 人数/房主] → 名单(最多 3 行)。
@@ -497,11 +576,12 @@ func _card_names(names_raw: Variant) -> Control:
 	var shown := mini(names.size(), 3)
 	for i in shown:
 		var is_host := i == 0
+		# 名单是卡上的**次要**信息 ⇒ 16 号(房间号 48 / 正文 32 / 次要 16)。
 		box.add_child(UiFactory.label("· %s%s" % [
 				UiFactory.fit_name(str(names[i]), 14), "(房主)" if is_host else ""],
-				32, UiFactory.C_TEXT_DIM))
+				16, UiFactory.C_TEXT_DIM))
 	if names.size() > shown:
-		box.add_child(UiFactory.label("…等 %d 人" % names.size(), 32, UiFactory.C_TEXT_DIM))
+		box.add_child(UiFactory.label("…等 %d 人" % names.size(), 16, UiFactory.C_TEXT_DIM))
 	return box
 
 
@@ -683,12 +763,12 @@ func _toggle_join_panel() -> void:
 
 
 func _build_join_panel() -> void:
-	_join_panel = PanelContainer.new()
+	_join_panel = UiFactory.menu_panel()
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 12)
 	vb.custom_minimum_size = Vector2(560, 0)
-	_join_panel.add_child(vb)
-	vb.add_child(UiFactory.label("加入房间", 32, UiFactory.C_ACCENT))
+	(_join_panel.get_node("Body") as Container).add_child(vb)
+	vb.add_child(UiFactory.header_strip("加入房间", 32))
 	_join_code_edit = UiFactory.line_edit(vb, Vector2.ZERO, Vector2(500, 48), "房间号", "")
 	_join_code_edit.custom_minimum_size = Vector2(500, 48)
 	UiFactory.style_control(_join_code_edit, 32)
@@ -699,12 +779,12 @@ func _build_join_panel() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	vb.add_child(row)
-	var join := UiFactory.button("加 入", 32, Vector2(180, 48))
+	var join := UiFactory.menu_button("加 入", 32, Vector2(180, 48), "gold")
 	join.pressed.connect(func() -> void:
 		_join_panel.visible = false
 		_join_code(_join_code_edit.text.strip_edges(), _mode, _join_invite_edit.text))
 	row.add_child(join)
-	var cancel := UiFactory.button("取 消", 32, Vector2(180, 48), "quiet")
+	var cancel := UiFactory.menu_button("取 消", 32, Vector2(180, 48), "quiet")
 	cancel.pressed.connect(func() -> void: _join_panel.visible = false)
 	row.add_child(cancel)
 	add_child(_join_panel)
@@ -785,23 +865,24 @@ func _build_create_panel() -> void:
 	_create_mask.visible = false
 	add_child(_create_mask)
 
-	_create_panel = PanelContainer.new()
-	_create_panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	_create_panel = UiFactory.menu_panel()
 	_create_panel.visible = false
 	add_child(_create_panel)
 
 	var root_vb := VBoxContainer.new()
 	root_vb.add_theme_constant_override("separation", 18)
-	_create_panel.add_child(root_vb)
+	(_create_panel.get_node("Body") as Container).add_child(root_vb)
 
-	# 标题行:标题 + 右上角 ×(关闭)。
+	# 标题行:标题带 + 右上角 ×(关闭)。
 	var title_row := HBoxContainer.new()
 	title_row.add_theme_constant_override("separation", 12)
 	root_vb.add_child(title_row)
-	var title := UiFactory.label("创 建 房 间", 48, UiFactory.C_ACCENT)
+	# ★ 标题换 `header_strip()`(方向 B 的标题带)——它是 Label 的**外层容器**,
+	#   所以 `title_row` 里那颗 × 仍然按文案找得到(`lobby_create_form_probe`)。
+	var title := UiFactory.header_strip("创 建 房 间", 48)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
-	var close := UiFactory.button("×", 32, Vector2(64, 48), "quiet")
+	var close := UiFactory.menu_button("×", 32, Vector2(64, 48), "quiet")
 	close.pressed.connect(func() -> void: _set_create_visible(false))
 	title_row.add_child(close)
 
@@ -865,10 +946,11 @@ func _build_create_panel() -> void:
 	actions.add_theme_constant_override("separation", 16)
 	actions.alignment = BoxContainer.ALIGNMENT_END
 	root_vb.add_child(actions)
-	var cancel := UiFactory.button("取 消", 32, Vector2(220, 56), "quiet")
+	var cancel := UiFactory.menu_button("取 消", 32, Vector2(220, 56), "quiet")
 	cancel.pressed.connect(func() -> void: _set_create_visible(false))
 	actions.add_child(cancel)
-	var create := UiFactory.button("创 建 房 间", 32, Vector2(300, 56))
+	# 「创 建 房 间」= 弹层里的主行动 ⇒ gold 档(与筛选行那颗「＋ 创建房间」同色).
+	var create := UiFactory.menu_button("创 建 房 间", 32, Vector2(300, 56), "gold")
 	create.pressed.connect(_on_create_pressed)
 	actions.add_child(create)
 
@@ -886,8 +968,8 @@ func _build_create_mode_buttons() -> Control:
 	row.add_theme_constant_override("separation", 12)
 	var group := ButtonGroup.new()
 	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
-		var b := UiFactory.button(str(MODE_LABEL[m]), 32, Vector2(180, 48))
-		b.toggle_mode = true
+		# 与筛选行同款:选中那一段画该模式的模式色(未选 = C_EDGE)。
+		var b := UiFactory.menu_filter_button(str(MODE_LABEL[m]), 32, Vector2(180, 48), MODE_COLOR[m])
 		b.button_group = group
 		b.pressed.connect(func() -> void: _apply_create_form(m))
 		_create_mode_btns[m] = b
@@ -1085,18 +1167,20 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 
 func _build_wait_panel() -> void:
-	_wait_panel = PanelContainer.new()
-	_wait_panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	_wait_panel = UiFactory.menu_panel()
 	_wait_panel.visible = false
 	add_child(_wait_panel)
 
 	_wait_box = VBoxContainer.new()
 	_wait_box.add_theme_constant_override("separation", 14)
 	_wait_box.custom_minimum_size = Vector2(720, 0)
-	_wait_panel.add_child(_wait_box)
+	(_wait_panel.get_node("Body") as Container).add_child(_wait_box)
 
-	_wait_title = UiFactory.label("", 32, UiFactory.C_ACCENT)
-	_wait_box.add_child(_wait_title)
+	# 标题 = 一条 `header_strip()` 标题带。★ `_wait_title` 仍是那条带**里面**的 Label
+	#   (工厂的唯一子节点就是它)—— 探针按 `_wait_title.text` 读房间号,不能把它换成容器。
+	var title_strip := UiFactory.header_strip("", 32)
+	_wait_title = title_strip.get_child(0) as Label
+	_wait_box.add_child(title_strip)
 
 	_wait_body = VBoxContainer.new()
 	_wait_body.add_theme_constant_override("separation", 8)
@@ -1110,13 +1194,13 @@ func _build_wait_panel() -> void:
 	var pick_row := HBoxContainer.new()
 	pick_row.add_theme_constant_override("separation", 16)
 	_wait_box.add_child(pick_row)
-	_wait_pick_a = UiFactory.button("加入 A 队", 32, Vector2(200, 48))
+	_wait_pick_a = UiFactory.menu_button("加入 A 队", 32, Vector2(200, 48))
 	# ★ 用 `bind(队号)` 而不是两条匿名 lambda:绑定实参能被 `Callable.get_bound_arguments()`
 	#   读出来 —— 两颗按钮的文案只差一个 A/B 字,对调之后**行为是错的且没有任何运行时信号**,
 	#   只有"读实参"这条断言看得见(计数断言 `size() == 1` 对调后照样绿)。
 	_wait_pick_a.pressed.connect(_on_wait_pick.bind(1))
 	pick_row.add_child(_wait_pick_a)
-	_wait_pick_b = UiFactory.button("加入 B 队", 32, Vector2(200, 48))
+	_wait_pick_b = UiFactory.menu_button("加入 B 队", 32, Vector2(200, 48))
 	_wait_pick_b.pressed.connect(_on_wait_pick.bind(2))
 	pick_row.add_child(_wait_pick_b)
 
@@ -1124,10 +1208,11 @@ func _build_wait_panel() -> void:
 	# 就收起,放那儿等于"房主建完房改不了、加入者全程没见过"(设计 §3.4 的既有裁定)。
 	_wait_hue = _add_hue_row(_wait_box, "自己角色颜色:", Vector2(320, 30), Vector2(46, 30))
 
-	_wait_start = UiFactory.button("开 始 游 戏", 32, Vector2(360, 56))
+	# 「开 始 游 戏」= 等待室的主行动 ⇒ gold 档;「退出房间」= 弱化档(与主菜单「退 出」同款).
+	_wait_start = UiFactory.menu_button("开 始 游 戏", 32, Vector2(360, 56), "gold")
 	_wait_start.pressed.connect(_on_wait_start_pressed)
 	_wait_box.add_child(_wait_start)
-	_wait_leave = UiFactory.button("退出房间", 32, Vector2(360, 48))
+	_wait_leave = UiFactory.menu_button("退出房间", 32, Vector2(360, 48), "quiet")
 	_wait_leave.pressed.connect(_on_wait_leave_pressed)
 	_wait_box.add_child(_wait_leave)
 
