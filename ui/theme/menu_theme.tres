@@ -1,4 +1,6 @@
-[gd_resource type="Theme" format=3]
+[gd_resource type="Theme" load_steps=2 format=3]
+
+[ext_resource type="FontVariation" path="res://assets/fonts/menu_font.tres" id="1_font"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_qgg8c"]
 content_margin_left = 30.0
@@ -122,6 +124,7 @@ border_width_bottom = 2
 border_color = Color(0.361, 0.439, 0.561, 1)
 
 [resource]
+default_font = ExtResource("1_font")
 Body/base_type = &"Label"
 Body/font_sizes/font_size = 32
 Button/colors/font_color = Color(0.878, 0.914, 0.949, 1)
