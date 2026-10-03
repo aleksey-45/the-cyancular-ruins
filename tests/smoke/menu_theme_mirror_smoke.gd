@@ -27,8 +27,9 @@ extends SceneTree
 #     内层刻意留 `-1`(见 `skin_menu_panel` 的注释)⇒ 这条比的是"两边都没设",而不是渲染后的边距。
 #   · 没比 `font`(Theme 的 `default_font` 是 `menu_font.tres`,与 `PixelFont.shared()` 返回的
 #     `FontFile` 是**两个不同资源**,见 Task 2 的设计 §3.4);字号与颜色两半都在比。
-#   · 没比 `Button/…/font_*` 之外的控件态(如 `hover_pressed`,它只被 `menu_filter_button` 用,
-#     而那一条带运行时 `accent`,Theme 里刻意没有对应变体)。
+#   · 没比 `Button/…/font_*` 之外的控件态(如 `hover_pressed`:它现只被 `scenes/mp_lobby.tscn`
+#     的 7 颗模式色按钮用,那几态是**场景内联 SubResource**、带运行时模式色 ⇒ Theme 里刻意
+#     没有对应变体,本守卫没有可比对象)。
 
 const THEME_PATH := "res://ui/theme/menu_theme.tres"
 const FACTORY_PATH := "res://ui/factory/ui_factory.gd"

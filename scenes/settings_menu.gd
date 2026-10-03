@@ -42,7 +42,8 @@ var _bind_buttons: Dictionary = {}   # action -> Button
 
 
 func _ready() -> void:
-	# ── 音量 ──(滑条**不出声**:与 `UiFactory.slider_row` 的既有行为一致)
+	# ── 音量 ──(滑条**不出声**:本文件的 `_slider()` 只灌值 + 接 `value_changed`,不播 Sfx,
+	#   与键位按钮那一档不同 —— 别顺手给滑条补一个点击音)
 	_slider(_master, Settings.master_volume, func(v: float) -> void:
 		Settings.master_volume = v
 		Settings.save())
@@ -52,7 +53,7 @@ func _ready() -> void:
 
 	# ── 通用 / 联机显示 ──
 	# ★★ 先**灌值**再**接信号**:`button_pressed = x` 会发 `toggled` —— 顺序反了会在
-	#   建控件的那一刻就把值写回 Settings 并播一次开关音(`check_row` 的既有次序也是先值后连)。
+	#   建控件的那一刻就把值写回 Settings 并播一次开关音(见下面 `_check()`:它也是先值后连)。
 	_check(_wheel, Settings.wheel_switch, func(on: bool) -> void:
 		Settings.wheel_switch = on
 		Settings.save())

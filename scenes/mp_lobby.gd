@@ -311,7 +311,8 @@ func _build_ui() -> void:
 	# ★ 它住**等待室**而不是创建弹层里:创建弹层一进等待室就收起,放那儿等于
 	#   "房主建完房改不了、加入者全程没见过"(设计 §3.4 的既有裁定)。
 	# ★★ 行本身是静态骨架(标签 + 滑条 + 预览色块),这里只**灌值 + 接写回** —— 与设置页
-	#   `slider_row` 那套同款(那边也是"值由脚本灌、信号由脚本接")。
+	#   那两个音量滑条同款(`settings_menu.tscn` 的骨架 + 那边 `_slider()` 的"值由脚本灌、
+	#   信号由脚本接")。
 	var hue_slider: HSlider = %WaitHueSlider
 	var hue_chip: ColorRect = %WaitHueChip
 	hue_slider.value = Settings.pvp_color_hue

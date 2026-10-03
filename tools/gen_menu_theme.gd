@@ -26,9 +26,17 @@ extends SceneTree
 # ★ 变体的**字号一律 32**(与 `UiFactory.menu_button` / `button` 的既有调用点一致);
 #   需要别的字号的调用方自己去 `.tscn` 里写 `theme_type_variation` + 尺寸,不要在这里加档。
 # ★★ **覆盖上限(照实登记)**:本工具保证"Theme 里能表达的那些样式与工厂逐位相同";
-#   工厂里**带运行时参数**的入口(`menu_panel(padding)` / `menu_filter_button(accent)` /
-#   `slider_row` 的 label_w / `fit_name`)在 Theme 里**表达不了**,迁移时仍走代码 ——
-#   那几处没有"外观不变"的机械保证,只有逐屏取图。
+#   工厂里**带运行时参数**的入口(`menu_panel(padding)` / `fit_name`)在 Theme 里**表达不了** ——
+#   用到它们的地方只能各自表达(代码,或 `.tscn` 里的显式节点 / SubResource),没有"外观不变"的
+#   机械保证,只有逐屏取图。
+#   ★ 2026-10-03 订正(原句这里还列着两个已删的口,都属"运行时参数 ⇒ Theme 表达不了"):
+#     · `slider_row` 的 label_w —— 全仓零调用,已删。设置页那两个滑条行的"定宽标签列"现由
+#       `settings_menu.tscn` 的显式节点承担(`Label` 的 `custom_minimum_size` 写在场景里)。
+#     · `menu_filter_button(accent)` —— 全仓零调用,已删。大厅那 7 颗模式色按钮(筛选行 4 +
+#       创建弹层 3)的选中态现由 `mp_lobby.tscn` 的**内联 SubResource** 承担 —— 模式色是运行时
+#       值,本 Theme 的固定档变体表达不了 ⇒ `.tres` 里刻意**一个 Filter 变体都没有**。
+#       ⚠ 手改那几态时:`Button` 的"选中"画的是 `pressed` 主题项(**不是** `normal`),只改 normal
+#       的话点下去**画面毫无变化**、且不报任何错(那批 SubResource 必须五态都写)。
 
 const OUT_THEME := "res://ui/theme/menu_theme.tres"
 const OUT_SWITCH_OFF := "res://ui/theme/switch_off.png"

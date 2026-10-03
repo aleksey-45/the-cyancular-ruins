@@ -430,31 +430,10 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	return p
 
 
-# 分组分隔线:一条 `C_BORDER_DIM` 的细横线,把按钮列切成「开始游戏 / 选项 / 退出」三组。
-# ★ 为什么不直接在调用方 `ColorRect.new()` 里写颜色:颜色只能在本文件里定义(本工厂是
-#   UI 配色的唯一来源)。★ 只画线、不画底:它在 VBox 里会被横向拉满,即"菜单列宽度"那条线。
-static func menu_separator(height: float = 2.0) -> ColorRect:
-	var r := ColorRect.new()
-	r.color = C_BORDER_DIM
-	r.custom_minimum_size = Vector2(0, height)
-	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return r
-
-
-# 分段筛选按钮(大厅的模式筛选行):**选中态用调用方给的强调色**(该模式的模式色),
-# 未选中与 `menu_button` 同款(`C_EDGE`)。
-# ★ 为什么不能让 `menu_button` 的 variant 表达:模式色是**运行时值**(每个按钮各不相同),
-#   而 variant 是三个固定档。★ `Button` 的"选中"画的是 `pressed` 主题项(**不是** `normal`),
-#   故必须把该色织进 pressed / hover_pressed / font_pressed_color —— 只改 normal 的话
-#   点下去**画面毫无变化**(而那不会报任何错)。
-static func menu_filter_button(text: String, size: int, min_size: Vector2, accent: Color) -> Button:
-	var b := menu_button(text, size, min_size)
-	b.toggle_mode = true
-	b.add_theme_stylebox_override("pressed", _btn_box(C_HEADER, accent))
-	b.add_theme_stylebox_override("hover_pressed", _btn_box(C_BTN_FILL_HI, accent))
-	b.add_theme_color_override("font_pressed_color", accent)
-	b.add_theme_color_override("font_hover_pressed_color", accent)
-	return b
+# `menu_filter_button`(模式色分段筛选按钮那一口)2026-10-03 **已删**:全仓零调用 —— 选中态
+# 现由 `scenes/mp_lobby.tscn` 的**内联 SubResource** 承担(4 颗筛选按钮 + 创建弹层 3 颗模式按钮)。
+# ★ 为什么本 Theme 里没有对应的 Filter 变体、手写那几态要当心什么:见 `tools/gen_menu_theme.gd`
+#   开头的「覆盖上限」注。
 
 
 # 列表行底(房间行等):比页面底亮一档,让「行」这个物体存在。
@@ -618,9 +597,7 @@ static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)
 	# 是能听出来的双响。统一由状态转移出声(键盘与点击同源)。
 	return b
 
-# ── 行式控件与杂项(2026-09-14 补齐:原先三个页面各手抄一份,注释都抄了三遍)──
-# 两个"行"的口共用同一个形状:**定宽标签列 + 紧邻控件**。标签列宽由调用方给(label_w)——
-# 各页面的数值**本就不同**(设置页 320 / 多人页 440),是各自的版式调参,不为统一而统一。
+# ── 杂项(2026-09-14 补齐:原先三个页面各手抄一份,注释都抄了三遍)──
 
 # 递归给子树套像素字体(跳过容器:容器的 font 不影响子控件)。
 static func apply_font_recursive(root: Node) -> void:
@@ -635,52 +612,6 @@ static func apply_font_recursive(root: Node) -> void:
 # 色相(0-360°)→ 预览色。两个大厅页原先各一份(逐字相同):色相只作"角色色"提示用。
 static func hue_preview_color(hue_deg: float) -> Color:
 	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
-
-
-# 开关行 = **定宽标签列 + 紧邻开关**。为什么必须定宽:裸 CheckButton 被 VBox 拉到容器全宽,
-# 标签与开关隔开几百像素,两者读成不相干的元素(2026-09-13 视觉评析)。定宽列同时让同一列的
-# 多个开关纵向对齐。label_w 见上(各页面自己那组数值)。
-static func check_row(text: String, initial: bool, label_w: float,
-		on_toggle: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var lab := label(text, 32, C_TEXT)
-	lab.custom_minimum_size = Vector2(label_w, 0)
-	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(lab)
-	var cb := CheckButton.new()
-	cb.button_pressed = initial
-	cb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	style_check(cb, 32)
-	cb.toggled.connect(func(on: bool) -> void:
-		Sfx.play("switch")
-		on_toggle.call(on))
-	row.add_child(cb)
-	return row
-
-
-# 滑条行 = **定宽标签列 + 铺满剩余宽度的滑条**(与 check_row 共用同一套版式节奏,
-# 故两者的 label_w 应取同一个值 → 滑条与开关在同一页里纵向对齐成一列)。
-static func slider_row(text: String, initial: float, label_w: float,
-		on_change: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var l := label(text, 32, C_TEXT)
-	l.custom_minimum_size = Vector2(label_w, 0)
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(l)
-	var sl := HSlider.new()
-	sl.min_value = 0.0
-	sl.max_value = 1.0
-	sl.step = 0.05
-	sl.value = initial
-	# 铺满剩余宽度(原先固定 360 宽,右侧空着、拖拽命中区也偏小)。
-	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sl.custom_minimum_size = Vector2(360, 28)
-	style_slider(sl)
-	sl.value_changed.connect(func(v: float) -> void: on_change.call(v))
-	row.add_child(sl)
-	return row
 
 
 # 绝对定位的输入框(挂在 parent 下)。size 由调用方给:各页面原值不同(240×36 / 250×40),

@@ -64,8 +64,8 @@ func _ready() -> void:
 		print("SETTINGS DISPLAY SECTION PROBE: FAIL(场景加载不到)")
 		get_tree().quit(1)
 		return
-	# 探针会真的拨开关而 `check_row` 的 lambda 会 `Settings.save()` ⇒ **会写用户的 cfg**。
-	# 记下原值,收尾还原后再 save() 一次(见 _restore)。
+	# 探针会真的拨开关,而 `settings_menu.gd` 的 `_check()` 挂的 lambda 会 `Settings.save()`
+	# ⇒ **会写用户的 cfg**。记下原值,收尾还原后再 save() 一次(见 _restore)。
 	var orig := {}
 	for row in ROWS:
 		orig[str(row[1])] = bool(Settings.get(str(row[1])))
