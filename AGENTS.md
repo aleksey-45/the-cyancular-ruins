@@ -64,7 +64,7 @@
   ★ 已验证它会红:把写回掐掉后同一探针报出 5 条失败,正是用户描述的症状。
 
 ### 探针(`-s` 或场景模式)
-`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖;★ 它只验 FX 本体,真击杀路径见下)· `tests/elite_drop_probe.tscn`(B15:真击杀乌鸫 → FX 出现 → 余额 +300 → 吸收方式必须是飞到怀表)· `tests/rewind_fuse_probe.tscn`(B17:引信/开火注入字段进快照、随回溯倒退、重建后不再贴脸起爆)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算)· `tests/haste_probe.tscn`(B12/B13/B16:倍率表(含 `world_delta`)/普通敌速度×`HASTE_WORLD`/**敌方子弹位移×`HASTE_WORLD`**/主角移速×`HASTE_PLAYER`(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
+`tests/grain_account_smoke.gd`(账户八组)· `tests/time_field_smoke.gd`(倍率五组)· `tests/rewind_probe.tscn`(场景:录制/位置+HP 倒退/复活/精英不倒/免疫/松开恢复)· `tests/watch_hud_probe.tscn`(怀表读数/滚动收敛/三 ramp/贷款负数/音调/锁定红闪)· `tests/grain_crystal_probe.tscn`(elite 标/结晶/入账 300/颤抖;★ 它只验 FX 本体,真击杀路径见下)· `tests/elite_drop_probe.tscn`(B15:真击杀乌鸫 → FX 出现 → 余额 +300 → 吸收方式必须是飞到怀表)· `tests/rewind_fuse_probe.tscn`(B17:引信/开火注入字段进快照、随回溯倒退、重建后不再贴脸起爆)· `tests/tile_rewind_probe.tscn`(B7:拆砖入账/回溯后网格与渲染复原)· `tests/rewind_phantom_probe.tscn`(**D2**:尸体隐藏时碰撞层已摘/砖块碰撞随破坏与回溯一致/复活后层还原/全场无「不可见却带碰撞层」的节点 + 幽灵墙抽样;★ 覆盖上限:只验**碰撞**这一维,尸体在隐藏期的接触伤害/爆炸击退/漏标等**未验**——见 D2 的登记)· `tests/rewind_elite_damage_probe.tscn`(B8:回溯前不掉血/倒飞子弹二次伤害/普通怪不结算;★ **本探针 2026-10-03 复跑为既有 FAIL**,见 D2 的登记)· `tests/haste_probe.tscn`(B12/B13/B16:倍率表(含 `world_delta`)/普通敌速度×`HASTE_WORLD`/**敌方子弹位移×`HASTE_WORLD`**/主角移速×`HASTE_PLAYER`(关碰撞、等平台期再采,否则空气加速未收敛会偶发误判)/跳跃高度不变/红蓝残影与自行淡出/**高亮规则(加速=主角+近敌、回溯=只有精英、精英两层亮黄、副本不逐帧重建、松开全卸)**/回NONE/颗粒真被扣;走可注入桩输入 `tests/haste_probe_input.gd` —— 跳跃读的是 just_pressed 边沿,探针协程里按下的帧号永远报不到,必须走桩)。
 
 ### 检查点分支(用户要求的逐批回退点)
 `KH_v0.5.0_B1`(账户) · `_B2`(输入+时间场) · `_B3`(回溯) · `_B4`(视效+怀表) · `_B5`(乌鸫精英+结晶) · `_B6`(音调/红闪/空转+回归) · `_B7`(瓦片随回溯复原) · `_B8`(回溯期精英二次伤害) · `_B9`(视效统一化/加速重标/弹量回溯/结晶改观/中心标志) · `_B10`(加速键位改鼠标右键+存档迁移) · `_B11`(回溯血量不通 HUD:补发 hp_changed) · `_B12`(加速改速度域+高亮+红蓝残影) · `_B13`(敌弹随世界变慢+加色高亮规则+精英亮黄) · `_B14`(地图选择 UI:单机开局选图 + 联机建房选图) · `_B15`(修:击杀精英不掉颗粒 —— 结晶飞不进怀表) · `_B16`(加速拉到夸张档:主角 ×2.0 / 其余 ×0.5,并覆盖游泳与攀爬) · `_B17`(修:回溯后被自己榴弹炸死 —— 子弹快照补齐引信与开火注入字段) · `_B18`(cyrm v4 游戏侧选项 A:碰撞/破坏下沉 16px 子格)。
@@ -210,3 +210,16 @@ structure-editor.html 已退休)。
 - **弹速**:weapon_base 出弹时读**射手**的 `pvp_haste_mult` > 1 ⇒ 该发弹速 ×同倍率(局部变量,不动 bullet_speed 成员 —— 霰弹逐弹 ×会累积、跨发会永久变快)。max_range 不动:飞得更快、射程不变(与单机 bullet_delta 的距离上限语义一致)。单机 pvp_haste_mult 恒 1,零影响(不会与 TimeField.bullet_delta 双乘)。★ 激光是即时光束,无弹速概念,不涉及。
 - **压暗**:pvp 客户端 `_haste_dim_t`(100ms ramp,与单机同款)只驱动**本地**的 PostProcess.set_time_effects(0,0,t) —— 组里取 post_process,只碰 haste_dim,film/loan 恒 0;他人屏幕完全不受影响(压暗是本人视角状态,不随快照广播)。
 - 验证:autotest-sp/beta + haste_probe 全绿;--import 零错误。
+
+### D2(P2 debug 线,2026-10-03 用户报「时间回溯还是会导致有些时候有虚空碰撞箱」):保留尸体的碰撞层
+- **症状**:单机回溯玩久了,会撞在**空处** —— 看不见的墙。
+- **根因**(`scenes/enemies/enemy_base.gd`):录制期为回溯保留的尸体(`WorldRewind.hold_corpses` → `_rewind_hold`)在死亡白闪结束后走到那条"隐藏待复活"分支,原实现只做 `visible = false` + `set_physics_process(false)` —— **碰撞层没摘**。玩家 `collision_mask = 5` 含**敌人层(值 4)** ⇒ 一具看不见却仍在层 4 的 CharacterBody2D 就是一堵看不见的墙,一直挡到尸体超窗被 `expire_corpses` 释放(窗口 `SNAP_SECONDS` = **40s**)。★ 触发条件只是"在敌人死掉的位置走过" ⇒ 用户说的**有些时候**。
+- **修法**:隐藏尸体时 `_rw_held_layer = collision_layer; collision_layer = 0`;`rewind_restore` 的**复活分支**还原。★ 改**碰撞层**而非禁用碰撞多边形:飞鸟的 `_apply_flight_collision` 自己管站/飞两个多边形的 `disabled`,基类插手会和它互相打架;层与多边形启停正交。★ 白闪那 0.5s **不摘**(那时尸体还看得见、挡人合理)。
+- **同源的第二处**:`enemy_fly_base._collect_obstacles` 把附近敌人一律当寻路障碍,隐藏尸体(层已 0、物理上可穿)仍被算进去 ⇒ 飞鸟会绕一个空位置。改为**跳过 `collision_layer == 0` 的实体**(判据取"还挡不挡路",与物理同口径;白闪期照旧算障碍)。
+- **顺带的行为变化(有意)**:子弹此前会撞在隐藏尸体上被吸收(`collision_mask = 5` 含敌人层),现在会**穿过去**继续飞 —— 与"那里什么都没有"一致。
+- **验证**:新探针 `tests/probe/rewind_phantom_probe.tscn` 四相(见下)。★ **变异验证过**:把 `collision_layer = 0` 那行换成 `pass`,探针当场红 3 条(相① 层仍 4 + 物理查询命中自身 + 相④ 点出 `/root/Level0/WorldViewport/EnemyJumpBird (CharacterBody2D, layer=4)`);还原后重新绿。回归:`enemy_logic_smoke`(SMOKE OK)/ `rewind_probe` / `tile_rewind_probe` / `haste_probe` / `squash_host_enemy_probe` 全绿。
+- **★ 覆盖上限(照实登记)**:
+  - 探针只验**碰撞**这一维。隐藏尸体仍参与的两处**未验、未改**:① `Explosion.apply_aoe` 按 `enemies` 组遍历,隐藏尸体照吃击退(`is_dead` → `_apply_knock_only`)⇒ 复活那一帧会带着**陈旧 `knock_velocity`** 飞出去(`rewind_restore` 不还原它);② 同一条 AoE 会对它调 `CombatFeedback.hit_marker()` ⇒ 炸一个隐形尸体会在屏幕上闪一个命中 X。两处都**先于本次改动就存在**,不是本次引入。
+  - 不能靠"把尸体移出 `enemies` 组"来一并解决:组被 `record()`(要把它写进快照才可能被复活)与 `expire_corpses` 依赖。
+- **★ 相邻的既有红(非本次引入)**:`tests/rewind_elite_damage_probe.tscn` 现报 `FAIL(1): 回溯期未发生二次伤害(HP 30→30)`。已按本仓纪律在 **`git show HEAD:` 的干净树上连跑两次复核** —— 两次同为 FAIL ⇒ **与本次改动无关**,未修。
+- **★ 一条守卫的覆盖比它读起来小**:`enemy_logic_smoke` 的 `_check(jdc.collision_layer == 4, "JumpBird 死亡保留碰撞层")` 在**死后 1 个物理帧**断言 —— 那时还在白闪期(且 `hold_corpses` 在冒烟里恒 false),**覆盖不到**隐藏期待复活那一段。别把它当成这条修复的守卫。

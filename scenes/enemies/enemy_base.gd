@@ -27,6 +27,8 @@ const STOP_EPSILON: float = 5.0      # 水平速度低于此值直接归零,避�
 
 var is_dead: bool = false
 var _rewind_hold: bool = false   # 录制期死亡保留的尸体(隐藏待复活;非精英)
+# 隐藏期间被摘掉的碰撞层(见 _physics_process 的保留尸体分支);-1 = 层未被摘、无需还原。
+var _rw_held_layer: int = -1
 var _hit_flash_time: float = 0.0
 var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
 var _player_overlapping: bool = false
@@ -164,8 +166,17 @@ func _physics_process(delta: float) -> void:
 		if _death_timer <= 0.0:
 			if _rewind_hold:
 				# 保留尸体:隐藏 + 停物理,等回放复活;过期由 WorldRewind.expire_corpses 清理
+				# ★ 隐藏的同时**必须摘掉碰撞层**(2026-10-03 修):玩家 mask=5 里含敌人层(值 4),
+				#   故一具看不见却仍在层 4 的实体就是玩家眼里的**虚空碰撞箱** —— 撞在空气上。
+				#   改**碰撞层**而不是禁用碰撞多边形:飞鸟的 _apply_flight_collision 自己管
+				#   站/飞两个多边形的 disabled,基类插手会和它互相打架;层是纯"谁能撞我"的量,
+				#   与多边形启停正交。还原走 _rw_held_layer(见 rewind_restore 的复活分支)。
+				# ★ 时机:白闪那 0.5s **不摘**(那时尸体还看得见,挡人是合理的);
+				#   摘只发生在这条"隐藏待复活"的分支里。
 				visible = false
 				set_physics_process(false)
+				_rw_held_layer = collision_layer
+				collision_layer = 0
 				_death_timer = -1.0
 			else:
 				queue_free()
@@ -491,6 +502,11 @@ func rewind_restore(d: Dictionary) -> void:
 		# 复活:重新入世(可见 + 物理 + 取消保留;白闪与计时清零)
 		visible = true
 		set_physics_process(true)
+		# ★ 还原隐藏时摘掉的碰撞层(见 _physics_process 的保留尸体分支)。必须在**复活这一支**
+		#   还原:漏了的话复活的怪看不见地穿人 —— 与"虚空碰撞箱"是同一个量、反方向。
+		if _rw_held_layer >= 0:
+			collision_layer = _rw_held_layer
+			_rw_held_layer = -1
 		_rewind_hold = false
 		if has_meta("rw_death_ms"):
 			remove_meta("rw_death_ms")
