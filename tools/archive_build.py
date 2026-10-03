@@ -35,7 +35,22 @@ PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库�
 BUILDS = os.path.join(PROJECT, "builds")
 RELEASES = os.path.join(PROJECT, "releases")   # 累积式程序包档案(每次发布沉淀一份,不清理)
 PROJECT_GODOT = os.path.join(PROJECT, "project.godot")
-PKG_NAME = "The Cyancular Ruins"      # 发布目录名(与 project.godot 的 config/name 一致)
+PKG_NAME = "The Cyancular Ruins"      # 包名(与 project.godot 的 config/name 一致)
+# ★★ 发布标识前缀(2026-10-04 用户裁定):本线是 **RoF**(RoFtaCD);另一条线是 `KH_`
+#   (远程分支 `KH_v0.5.0_B17` / `_P2_D1` / `_P3*`)、还有 `siri_v0.5.0` —— 前缀标的就是"谁那条线"。
+#   **真相源在 `project.godot` 的 `application/config/release_prefix`**(字母只能住那儿:
+#   `config/version` 要写进 Windows 版本资源,必须是数字+点)。这里的常量只是兜底。
+RELEASE_PREFIX_FALLBACK = "RoF"
+
+
+def release_prefix() -> str:
+    """发布标识前缀,读 `project.godot` 的 `application/config/release_prefix`;读不到才回落常量。"""
+    try:
+        with open(PROJECT_GODOT, encoding="utf-8") as f:
+            m = re.search(r'^config/release_prefix="([^"]*)"', f.read(), re.M)
+    except OSError:
+        return RELEASE_PREFIX_FALLBACK
+    return (m.group(1).strip() if m else "") or RELEASE_PREFIX_FALLBACK
 
 GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe"]
 # noEztier 线:联机走大厅直连(公网服/LAN),包内不再携带 EasyTier。
@@ -51,6 +66,21 @@ def read_project_version() -> str:
         return m.group(1).strip() if m else ""
     except OSError:
         return ""
+
+
+def release_version(raw: str) -> str:
+    """发布标识的**版本段**:`RoF_v0.5.0`(前缀 + `v` + 版本 + 时间戳 = 完整标识)。
+    ★ 形如策划案的 `KH_V0.5.0_260925`(**`v` 后不带点** —— 用户 2026-10-04 选定的写法)。
+    ★ 这一段才是写进 `core/config/build_info.gd` 的 `VERSION`;时间戳由 `BUILD_STAMP` 另带,
+      两者在 `display()` 里用 `_` 连成 `RoF_v.0.5.0_202610040204`(策划案 `KH_V0.5.0_260925` 同形)。
+    """
+    v = (raw or "").strip().lstrip("vV.")      # 容错:`--version v0.5.0` / `0.5.0` 都收
+    return ("%s_v%s" % (release_prefix(), v)) if v else release_prefix()
+
+
+def release_label(raw: str, stamp: str) -> str:
+    """完整的发布标识:`RoF_v0.5.0_202610040204`(版本段 + `_` + 时间戳)。归档名用这个。"""
+    return "%s_%s" % (release_version(raw), stamp)
 
 
 def version_tag(raw: str) -> str:
@@ -96,8 +126,10 @@ def main() -> None:
         if not os.path.isfile(os.path.join(PROJECT, f)):
             sys.exit("找不到 %s —— 先导出(见 RELEASE.md §1.2)" % f)
 
-    tag = ("%s %s" % (version_tag(version), stamp)) if version else stamp
-    out = os.path.join(BUILDS, "%s %s" % (PKG_NAME, tag))
+    # ★ 归档目录名 = **发布标识本身**(`RoF_v.0.5.0_202610040204`)—— 不再拼 PKG_NAME:
+    #   用户要的就是这个标识,而 builds/ 与 releases/ 本来就只装这一款游戏。
+    tag = release_label(version, stamp) if version else stamp
+    out = os.path.join(BUILDS, tag)
     wipe_builds()
     os.makedirs(out, exist_ok=True)
 

@@ -52,7 +52,8 @@ if os.path.realpath(_BUILD_INFO_REL) != os.path.realpath(BUILD_INFO):
     sys.exit("build_info path mismatch: %s" % BUILD_INFO)
 
 sys.path.insert(0, TOOLS)
-from archive_build import read_project_version, version_tag   # 版本号单一来源:project.godot
+from archive_build import read_project_version, version_tag, release_version, release_label
+#   版本号单一来源:project.godot;发布标识(`RoF_v.0.5.0_202610040204`)的拼法也收在 archive_build。
 
 
 # 导出前把「版本号 + 构建时间戳」写进 core/build_info.gd,导出后还原 —— 这样:
@@ -236,7 +237,9 @@ def main() -> None:
         sys.exit("读不到 project.godot 的 config/version —— 版本号必须有,否则文件名与游戏内都无从标识")
 
     # 游戏内显示用带前缀的 v.1.1.4(project.godot 里只能写数字,Godot 的导出预设校验它)
-    original = stamp_build_info(version_tag(version), stamp)
+    # ★ 写进 build_info 的是**版本段**(`RoF_v.0.5.0`),时间戳另由 BUILD_STAMP 带 ⇒
+    #   `display()` 拼出 `RoF_v.0.5.0_202610040204`,不会出现时间戳写两遍。
+    original = stamp_build_info(release_version(version), stamp)
     try:
         export("Windows Desktop", CLIENT_OUT)      # 玩家端:main_menu 启动
         export("Dedicated Server", SERVER_OUT)     # 服务端:main_scene.dedicated_server 覆盖
@@ -264,8 +267,8 @@ def main() -> None:
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
-    print("\n发布完成(%s,构建 %s):\n  %s\n  %s (控制台版;固定名=最新,带版本号+时间戳的历史版见 builds/)"
-          % (version_tag(version), stamp, CLIENT_OUT, SERVER_OUT))
+    print("\n发布完成(%s):\n  %s\n  %s (控制台版;固定名=最新,带版本号+时间戳的历史版见 builds/)"
+          % (release_label(version, stamp), CLIENT_OUT, SERVER_OUT))
 
 
 if __name__ == "__main__":

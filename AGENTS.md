@@ -8,7 +8,14 @@
 Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular Ruins」:1920×1440、`rendering/mobile`、**环面世界**(左右/上下无缝回绕),单机 + PvP(1v1 / 3v3 / 大乱斗)+ 时间玩法(回溯 / 加速)。
 
 - 单人肉鸽主线正在做,目标与数值在 [`docs/CyR单人模式主策划案(1).md`](<docs/CyR单人模式主策划案(1).md>)。
-- 版本号规则 `KH_V0.5.0_YYMMDD`;**版本号唯一来源 = `project.godot` 的 `application/config/version`,只能写数字+点**(写 `v1.2.3` 会让导出预设校验失败)。
+- 发布标识 **`<前缀>_v<版本>_<YYYYMMDDHHMM>`**(如 `RoF_v0.5.0_202610040204`)—— 主菜单/信息页版本行、
+  服务端 `[server] 版本 …` 自报、归档目录与文件名都用它;前缀标"哪条线"(本线 `RoF`;另两条线是
+  `KH_`(`KH_v0.5.0_B17`/`_P3*`)与 `siri_v0.5.0`)。**前缀的真相源 = `project.godot` 的
+  `application/config/release_prefix`**;拼法在 `tools/archive_build.py` 的 `release_version()`/`release_label()`。
+- **版本号唯一来源 = `project.godot` 的 `application/config/version`,只能写数字+点**(它要写进 Windows
+  版本资源,**写 `v0.5.0`/`RoF_…` 会让导出失败**);
+  当前 **`0.5.0`**(策划案 §0:PVP 完善版 = V0.4.1,**单人肉鸽第一个版本 = V0.5.0**,之后用日期区分构建 ——
+  别跟着那个字段的陈旧值走,它历史上乱跳过)。
 - 目录分层与操作见 [`README.md`](README.md);发布/裁剪模板见 [`RELEASE.md`](RELEASE.md)。
 
 ## 1. 怎么跑

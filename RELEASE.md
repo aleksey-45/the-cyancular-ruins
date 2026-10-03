@@ -31,6 +31,12 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 ```
 
 > **版本号从哪来**:唯一来源是 `project.godot` 的 `application/config/version`。**只能写数字+点**(`0.5.0`),
+> ★★ **发布标识 = `<前缀>_v<版本>_<YYYYMMDDHHMM>`**(如 `RoF_v0.5.0_202610040204`):
+> 主菜单/信息页那行版本号与服务端启动自报都是它,归档目录名也是它。前缀标"哪条线"——
+> 本线 `RoF`(RoFtaCD);远程另两条线是 `KH_`(`KH_v0.5.0_B17`/`_P3*`)与 `siri_v0.5.0`。
+> **前缀的真相源在 `project.godot` 的 `application/config/release_prefix`**;拼法收在
+> `tools/archive_build.py` 的 `release_version()` / `release_label()`。
+> ★★ `config/version` **只能写数字+点**:它要被写进 Windows 版本资源(四段数字),写 `RoF_…` 会让导出失败。
 > ★★ **当前主线是 `0.5.0`**(策划案版本规则:「PVP 完善版 = V0.4.1;**单人肉鸽第一个版本 = V0.5.0**,
 > 之后形如 `KH_V0.5.0_<日期>`」;远程分支 `KH_v0.5.0_B17` / `_P2_D1` / `_P3*` 全挂在这一线索下 ⇒
 > **版本停在 0.5.0,每次构建用时间戳区分**)。★ 判据是**策划案 + 远程 0.5.x 分支名**,不是 `project.godot`
@@ -38,10 +44,10 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 > 2026-10-04 曾因此把 `1.2.0`/`1.2.1` 两个错版本推上远程。
 
 > 写 `v.1.1.4` 会让导出预设的 `get_version` 报警告、并让导出失败 —— `v.` 前缀由脚本在**展示与文件名**上加。
-> 导出前脚本会把 `v.0.5.0` + 构建时间戳(`YYYYMMDDHHMM`)写进 `core/config/build_info.gd`,导出后**自动还原**成
+> 导出前脚本会把 `RoF_v0.5.0` + 构建时间戳(`YYYYMMDDHHMM`)写进 `core/config/build_info.gd`,导出后**自动还原**成
 > dev 占位(所以 `git status` 不会因为这个文件而脏)。游戏内主菜单那行版本号读的就是它 ——
 > 发布版在没有 git 的机器上也能显示准确版本与构建时间(原先那行是从 git 现读的,那种机器上只剩 `dev`)。
-> 服务端启动时会自报一行 `[server] 版本 v.0.5.0 (202610040204)  pid=…`,运维/联调看日志即可确认跑的是哪一版。
+> 服务端启动时会自报一行 `[server] 版本 RoF_v0.5.0_202610040204  pid=…`,运维/联调看日志即可确认跑的是哪一版。
 >
 > **导出后自动冒烟**:脚本会各跑一次两个产物(客户端直接起;服务端走 `-- --worker --port 7999` —— 那条**不碰 7777**,
 > 不会把服主正在跑的大厅杀掉),只要出现 `SCRIPT ERROR` / `Parse Error` / `Failed to load script` 就中止发布。
