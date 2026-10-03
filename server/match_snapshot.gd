@@ -3,16 +3,6 @@ extends MatchGround
 
 # 60Hz 快照广播域(阶段 5.6 拆自 server/match_host.gd)。
 
-# ── Beta 回溯(每 role 自身;他人不受影响)──
-# ★ 2026-09-30 移植时把这两个字典**从 `match_host.gd` 上提到本类**:它们原先声明在继承链最下
-#   (`MatchState → MatchGround → MatchSnapshot → MatchCombat → MatchRound → MatchHost`),
-#   而读它们的 `_broadcast_snapshot()` 就在**本类** ⇒ 基类看不见子类成员 ⇒
-#   `Identifier "_rw_on" not declared` / `"_rw_trail"` ⇒ 整条对局链(match_host / royale_host /
-#   team_host / 三个对局场景)全部加载失败。**声明放在读取它的这一层才是对的**;
-#   写入方仍然只有 `MatchHost`(回溯状态机),没有扩散。
-var _rw_on: Dictionary = {}        # role -> bool(回溯中)
-var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
-
 func _broadcast_snapshot() -> void:
 	_snap_tick += 1
 	# ① **世界包**:全部玩家的渲染字段(副本位置/姿态/朝向/武器/血条用)。构造一次、广播一次。

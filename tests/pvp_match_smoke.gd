@@ -90,9 +90,18 @@ func _on_snapshot_own(own: Dictionary) -> void:
 		if c2pos.distance_to(_world_pos) < 0.5:
 			_full_state_ok = true
 
-# 配对完成:**连接不动**,直接在既有连接上 claim(单进程单端口;断开重连会换 peer id,
-# 服务端房里那份 `players` 立刻对不上)
-func _on_go_match(role_assign: int, _port: int) -> void:
+func _on_go_match(role_assign: int, port: int) -> void:
+	multiplayer.connected_to_server.connect(_claim_worker.bind(role_assign), CONNECT_ONE_SHOT)
+	multiplayer.connection_failed.connect(func() -> void:
+		printerr("SMOKE_MATCH FAIL: 连接对局 worker 失败")
+		get_tree().quit(1), CONNECT_ONE_SHOT)
+	NetBus.stop()
+	var err := NetBus.start_client("127.0.0.1", port)
+	if err != OK:
+		printerr("SMOKE_MATCH FAIL: start_client(worker) %d" % err)
+		get_tree().quit(1)
+
+func _claim_worker(role_assign: int) -> void:
 	NetBus.rpc_id(1, "claim_role", role_assign, PvpSession.player_name)
 
 func _physics_process(_delta: float) -> void:

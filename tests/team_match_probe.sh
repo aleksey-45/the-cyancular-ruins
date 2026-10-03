@@ -7,14 +7,13 @@
 # 整跑量级:3~10 分钟(相④ 要打到 9 杀 —— 脚本机器人尽力交火 + 回退模式,是本探针最大的
 #          时间不确定项;预算与安全网见 tests/team_match_probe.gd 文件头「时间预算」)。
 #
-# ⚠ **跑前先确认没有别的 Godot 占着 7777** —— 本探针**不占 7777**(自当服务端,但用池外端口
-#   29200),可本机上可能跑着用户自己的服务端。**本脚本绝不杀 7777 的属主**(与 royale_soak_probe.sh
-#   的"发现占用就 kill_port 7777"**刻意不同**:那条会把用户正在跑服的对局一起端掉)。真有一个
-#   服务端在 7777 上也不影响本探针 —— 它不 bind 7777,端口集合不相交。
-# ★ 2026-09-29:原先还有第二个号段(worker 起投 29250)—— 服务端已改成**单进程单端口**(大厅与
-#   对局同进程,不拉子进程),那个号段与它的孤儿清扫一起作废。
+# ⚠ **跑前先确认没有别的 Godot 占着 7777** —— 本探针**不占 7777**(自当大厅,但用池外端口
+#   29200;worker 也拨到池外 29250),可本机上可能跑着用户自己的服务端。**本脚本绝不杀 7777
+#   的属主**(与 royale_soak_probe.sh 的"发现占用就 kill_port 7777"**刻意不同**:那条会把用户
+#   正在跑服的对局一起端掉)。真有一个大厅在 7777 上也不影响本探针 —— 它既不 bind 7777、
+#   也不碰 7800~8299 那个 worker 端口池,两者的端口集合不相交。
 # ⚠ Windows 下 bash `kill` 杀不死 headless Godot,会留僵尸 —— 收尾一律 taskkill 按 PID
-#   (探针进程自己按 PID 杀它拉起过的全部子进程),本脚本再按**本探针自己的**端口兜底。
+#   (探针进程自己按 PID 杀它拉起过的全部子进程),本脚本再按**本探针自己的**两个端口兜底。
 set -u
 
 # 引擎路径($GODOT,可用环境变量覆盖)+ cd 到仓库根 + kill_procs/kill_port
@@ -22,28 +21,23 @@ set -u
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 LOG="tests/team_match_probe.log"
 PROBE_LOBBY_PORT=29200
+PROBE_WORKER_PORT=29250
 
-# ★ 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列 ⇒ 带它是**结构性恒假**
-#   (2026-09-27 实测),原先这两行提示**从未打印过**。理由见 env.sh 的 lobby_alive。
-if lobby_alive; then
-  echo "[team] 注意:7777 已被占用(大概是用户自己的服务端)。本探针不占 7777,"
+if netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]].*LISTENING"; then
+  echo "[team] 注意:7777 已被占用(大概是用户自己的服务端)。本探针不占 7777、也不用 7800~8299,"
   echo "[team]       所以**照跑不误,且不会动它**;这里只是把这件事说出来。"
 fi
 
-# ★ 起跑前清**本探针自己那一段**的孤儿(被前台 timeout 掐掉时收尾那段不会跑,残留进程会占着
-#   29200 让下一跑 bind 失败)。区间**不含 7777**。
-kill_port_range "$PROBE_LOBBY_PORT" 29400
-
-echo "[team] 起探针(服务端端口 $PROBE_LOBBY_PORT;整跑 3~6 分钟)"
+echo "[team] 起探针(大厅端口 $PROBE_LOBBY_PORT,worker 起投 $PROBE_WORKER_PORT;整跑 3~6 分钟)"
 echo "[team] 若长时间无输出:看 user://team_match_probe_cN.godotlog(子进程 stdout 父进程看不到)"
 "$GODOT" --headless --path . --quit-after 54000 res://tests/team_match_probe.tscn 2>&1 | tee "$LOG"
 # ★ 取**探针进程自己**的退出码,不是 `tee` 的:`RC=$?` 拿到的是管道最后一环(tee 恒 0),
 #   于是 FAIL 分支会打印"退出码 0"这个**结构性永远为真**的数,把人引向"退出码没问题"。
 RC=${PIPESTATUS[0]}
 
-echo "[team] 清理本探针自己的端口(兜底;正常路径探针已按 PID 杀干净)"
+echo "[team] 清理本探针自己的两个端口(兜底;正常路径探针已按 PID 杀干净)"
 kill_port "$PROBE_LOBBY_PORT"
-kill_port_range "$PROBE_LOBBY_PORT" 29400
+kill_port "$PROBE_WORKER_PORT"
 
 echo
 if grep -q "TEAM MATCH PROBE: ALL-OK" "$LOG"; then

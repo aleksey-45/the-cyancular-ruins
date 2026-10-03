@@ -34,8 +34,11 @@ var _team_of: Dictionary = {}
 # Beta 时间玩法(B21):服务器权威颗粒经济。普通局恒 null(一切结算/广播短路)。
 # 宿主 _init 时若房主 options 带 time 规则则建(见 MatchHost._init)。
 var time_economy = null
-# Beta 回溯的会话态 _rw_on/_rw_trail 声明在 match_snapshot.gd(本文件不重复声明,
-# 否则子类遮蔽出两份存储)。
+
+# Beta 回溯的会话态(声明在基类:快照域 MatchSnapshot 要读 _rw_on/_rw_trail,
+# 基类引用子类符号在 GDScript 编译期解析不了 —— 与 time_economy 同一住法)。
+var _rw_on: Dictionary = {}        # role -> bool(回溯中)
+var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
 
 
 # 受害者 meta 里的"最近攻击者" → role(带新鲜度窗口;超窗/自伤/不在表 → 0)。
@@ -127,12 +130,6 @@ enum RoundState { COUNTDOWN, PLAYING, ROUND_OVER, MATCH_OVER }
 const KILLS_TO_WIN := 5      # 每局先到 5 击杀赢
 const ROUNDS_TO_WIN := 2     # 三局两胜
 const COUNTDOWN_TIME := 3.0
-# 倒计时期间的 `round_state` 重播间隔(秒)。★ **不是可选的**:客户端收到 `go_match` 后要先切场景、
-# 建世界(16px 子格铺贴 + 重建碰撞)、再建 HUD,那段时间里它**还没有订阅者** —— 只广播一次的话
-# 那一条会静默丢掉(或迟到),两端倒计时的**起点**就会差一整段场景加载时间,而倒计时是各自本地
-# 走秒的(`ui/pvp_hud.gd` 收到即赋值、之后 `-= delta`),差值不会再被拉回来。
-# 重播让客户端**每次收到都重设**剩余秒数 ⇒ 误差上界 = 一个重播间隔,且不累积。
-const COUNTDOWN_SYNC_INTERVAL := 0.5
 const ROUND_OVER_TIME := 4.0
 const RESPAWN_DELAY := 2.0   # 局内死亡后复活延迟
 var _round_state := RoundState.COUNTDOWN
@@ -140,7 +137,6 @@ var _round_num := 1
 var _scores: Dictionary = {}     # role -> 本局击杀
 var _rounds_won: Dictionary = {} # 局胜数(键:1v1 = role;TeamHost = **队号**)—— 下一个人别按 role 查
 var _round_timer := 0.0
-var _countdown_sync := 0.0       # 倒计时重播计时(见 COUNTDOWN_SYNC_INTERVAL)
 var _side_swap := false          # true 时 P1 用 player2 出生点(每局换边)
 var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程

@@ -390,13 +390,7 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	_check(not wc_src.contains("var _mag_state"), "weapon_component.gd 又声明了 _mag_state 残弹表")
 	_check(not wc_src.contains("_mag_state["), "weapon_component.gd 又在下标读写 _mag_state")
 	_check(not wc_src.contains("_mag_state."), "weapon_component.gd 又在调 _mag_state 的方法")
-	# ★ 2026-09-30 迁移时改判据:原为 `pl_src.contains("weapons.tick(delta)")` —— 逐字钉死实参。
-	#   而 KH 线 B13(加速改速度域)把那一行改成了 `weapons.tick(delta * tm)`(武器节拍吃时间倍率)
-	#   ⇒ **他们自己的改动打破了他们自己的源码级断言**,而本探针在那之后没人跑过。
-	#   本条的**意图**是"帧逻辑必须由物理帧显式驱动、不许回到武器自己的 `_process`",
-	#   与实参长什么样无关,故判据收到调用本身;`tm` 那一层由 `haste_probe` 的倍率表管。
-	_check(pl_src.contains("weapons.tick("),
-			"player.gd 不再每物理帧驱动 weapons.tick(…)(帧逻辑必须由物理帧显式驱动)")
+	_check(pl_src.contains("weapons.tick(delta)"), "player.gd 不再每物理帧驱动 weapons.tick(delta)")
 
 	# 运行时口:实例上真的能调到 tick
 	var inst: WeaponBase = wep.current_weapon()

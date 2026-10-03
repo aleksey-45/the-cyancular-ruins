@@ -153,18 +153,15 @@ func _stage_lobby() -> void:
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
 		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
-	# ★★ 守卫:连上的必须是**本探针的大厅**,不能是别处。本探针是**实例化真
+	# ★★ 守卫:连上的必须是**本探针的大厅**,不能是云服。生产默认地址就是云
+	#   (`PvpSession.server_address` 初值 120.53.107.140),而本探针是**实例化真
 	#   `royale_lobby.tscn` 让它自己连** —— `royale_c2_probe._run_client` 漏了那句地址预置时,
-	#   两端会**静默连到 127.0.0.1:7777**(或用户自己起的大厅)并在那里真的建房:
-	#   日志里满是 c1/c2 自己的「已连接服务器」(它们确实连上了,只是连的是**别人**),
-	#   而编排器一条 `玩家连入` 都没有 ⇒ 只剩一个 90 秒超时,看着像"大厅坏了"。
-	#   当场点名,别让下一个人再从超时逆推。
-	#   ★ 2026-09-29:原先比的是页里的 `_connected_addr`(地址框文本)—— 那个框已随"手填地址"
-	#     整条路删除,故改成直接比 `PvpSession`(页现在**只**认它)。端口那半边用
-	#     `PvpSession.DEFAULT_PORT`:本探针的大厅就跑在 7777(`royale_c2_probe` 只拨地址,不拨端口)。
-	if PvpSession.server_address != LOBBY_ADDR or PvpSession.server_port != PvpSession.DEFAULT_PORT:
-		_finish(false, "本端连的是 %s:%d,不是本探针大厅 %s:%d —— 检查 royale_c2_probe._run_client 的地址预置"
-				% [PvpSession.server_address, PvpSession.server_port, LOBBY_ADDR, PvpSession.DEFAULT_PORT])
+	#   两端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是 c1/c2 自己的
+	#   「已连接服务器」(它们确实连上了,只是连的是**别人**),而编排器一条 `玩家连入` 都没有
+	#   ⇒ 只剩一个 90 秒超时,看着像"大厅坏了"。当场点名,别让下一个人再从超时逆推。
+	if String(lobby.get("_connected_addr")) != LOBBY_ADDR:
+		_finish(false, "本端连的是 %s,不是本探针大厅 %s —— 检查 royale_c2_probe._run_client 的地址预置"
+				% [lobby.get("_connected_addr"), LOBBY_ADDR])
 		return
 	if who == "c1":
 		_log("大厅已连,建房")

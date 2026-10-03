@@ -35,11 +35,9 @@ const OUT_DIR := "res://.superpowers/sdd"
 const MAIN_MENU_SCENE := "res://scenes/main_menu.tscn"
 const MATCHMAKING_SCENE := "res://scenes/matchmaking.tscn"
 
-# 主菜单:期望 8 个模式按钮(单人/多人/大乱斗/Beta/3v3/设置/版本/退出)—— 多一个少一个都是"菜单换了脸"。
-# (原为 5:大乱斗按钮加进来之后漏改,本探针一直红着;3v3 按钮进来时已同步 +1;
-#  ★ 2026-09-30 迁移时 +1:KH 线 B20 在大乱斗下方加了 `Beta` 入口按钮 ⇒ 7 → 8。
-#    这条断言**就是设计来抓"菜单换了脸"的**,它抓到了 —— 只是这次换脸是**有意的**。)
-const EXPECTED_MENU_BUTTONS := 8
+# 主菜单:期望 7 个模式按钮(单人/多人/大乱斗/3v3/设置/版本/退出)—— 多一个少一个都是"菜单换了脸"。
+# (原为 5:大乱斗按钮加进来之后漏改,本探针一直红着;3v3 按钮进来时已同步 +1。)
+const EXPECTED_MENU_BUTTONS := 7
 # 与纯背景基线的差异下限(step=4 采样,见 _diff_vs)
 const DIFF_MIN := 400
 # 标题/按钮矩形内的"亮像素"下限(字被画出来才有)
@@ -94,7 +92,7 @@ func _state_main_menu() -> void:
 	var buttons := _find_buttons(_main_menu)
 	_check(title != null, "态1:找不到标题「The Cyancular Ruins」")
 	_check(buttons.size() == EXPECTED_MENU_BUTTONS,
-			"态1:模式按钮 %d 个(期望 %d 个:单人/多人/大乱斗/Beta/3v3/设置/版本/退出)" % [buttons.size(), EXPECTED_MENU_BUTTONS])
+			"态1:模式按钮 %d 个(期望 %d 个:单人/多人/大乱斗/3v3/设置/版本/退出)" % [buttons.size(), EXPECTED_MENU_BUTTONS])
 	var ver := _find_label_where(_main_menu, func(t: String) -> bool:
 		return t.strip_edges() != "" and t != "The Cyancular Ruins" and not t.contains("模"))
 	# 帧驱动轮询(不用 create_timer:等的是"状态成立",不是"过了多久")
@@ -190,29 +188,9 @@ func _state_matchmaking() -> void:
 	add_child(_match)
 	await _frames(4)
 
-	# ★ 2026-09-30:替换它的那句话也删了(用户裁定)—— 房间码不再有独立标签,改为
-	#   **写进「房间号」输入框并且框只读**(见 `LobbyPage._update_code_label`)。
-	#   于是这里钉两件事:① 没房时那个框是**可编辑**的空框(供填对手的码);
-	#   ② 有房时码进框、框变**只读**。
-	var code_edit: LineEdit = _match.get("_code_edit")
-	_check(code_edit != null, "态3:「房间号」输入框应在")
-	if code_edit != null:
-		_check(code_edit.editable and code_edit.text.is_empty(),
-				"态3:没房时该框可编辑且为空(实际 editable=%s text=%s)"
-				% [str(code_edit.editable), code_edit.text])
-		_match.set("_room_code", "48213")
-		_match.call("_update_code_label")
-		await _frames(2)
-		_check(code_edit.text == "48213" and not code_edit.editable,
-				"态3:有房时码进框且框只读(实际 editable=%s text=%s)"
-				% [str(code_edit.editable), code_edit.text])
-		_match.set("_room_code", "")
-		_match.call("_update_code_label")
-		await _frames(2)
-		_check(code_edit.editable and code_edit.text.is_empty(),
-				"态3:退房后框交还玩家(可编辑 + 已清空)")
-	_check(_match.get("_ip_label") == null, "态3:房间码独立标签已删除")
-	_check(_match.get("_addr_edit") == null, "态3:地址框已删除(不该再被建出来)")
+	var addr: LineEdit = _match.get("_addr_edit")
+	_check(addr != null and addr.text == "127.0.0.1",
+			"态3:服务器地址框应显示 127.0.0.1(实际 %s)" % str(addr.text if addr != null else "<无控件>"))
 	# 房间列表:真实列表要等大厅应答(本机无大厅),这里直接喂一帧「服务器应答」的形状,
 	# 让房间行**真的被建出来**——它才是字号抬到 32 之后有溢出风险的那个控件。
 	# 长昵称取真人会用的长度(12 字中文),不是极端值。

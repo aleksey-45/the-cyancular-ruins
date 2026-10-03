@@ -48,36 +48,3 @@ kill_port() {
 		taskkill //F //PID "$p" >/dev/null 2>&1 || true
 	done
 }
-
-# ── 按**端口区间**强杀孤儿(2026-09-27 新增;2026-09-29 改口径)──
-# ★ 原来它治的是"每局一个 worker 子进程"的形态:worker 由大厅 `OS.create_process` 拉起,
-#   是**孙进程** —— 不属于任何脚本记下的 PID,而各脚本收尾只杀自己记下的 PID + 按端口杀大厅
-#   ⇒ worker 会一直活着占住自己的端口,紧接的下一支连到僵尸 worker、永远收不到 match_start,
-#   整支**挂到外层 timeout、一行裁决都不打**(与真失败在输出上长得一样)。
-#   ★★ 那个形态**已整体废除**(单进程单端口,见 docs/netplay.md),worker 池 [7800,8300) 不存在了。
-#   helper 保留:探针仍会自己 `OS.create_process` 拉服务端,脚本被前台 timeout 掐掉时它们同样
-#   会变成孤儿,而"哪个号段是这一支的"由调用方给 —— 各支用各自的号段,谁也不许扫别人的
-#   (扫到用户正在跑的服务端就是把人家的局端掉)。
-kill_port_range() {
-	local lo="${1:-7800}" hi="${2:-8300}"
-	local pids
-	pids=$(netstat -ano 2>/dev/null | awk -v lo="$lo" -v hi="$hi" '
-		$1 == "UDP" { n = split($2, a, ":"); p = a[n] + 0
-			if (p >= lo && p < hi) print $NF }' | sort -u)
-	for p in $pids; do
-		[ -n "$p" ] || continue
-		[ "$p" = "0" ] && continue
-		echo "  kill 孤儿(端口 $lo-$((hi - 1)) 占用)PID=$p"
-		taskkill //F //PID "$p" >/dev/null 2>&1 || true
-	done
-}
-
-# 7777 上有没有活着的大厅。
-# ★★ 判据**不能带 `LISTENING`**:ENet 走 **UDP**,而 UDP 行没有状态列
-#   (`UDP  0.0.0.0:7777   *:*   PID`)。2026-09-27 实测:7777 被 PID 28836 占着时,
-#   带 `.*LISTENING` 的判据**不命中**,去掉就命中 ⇒ 那一版是**结构性恒假**。
-#   本仓三支脚本(`royale_soak_probe` / `rejoin_probe` / `team_match_probe`)原先都用的那版
-#   ⇒ 它们的"7777 已被占用"提示与连带清理**从未触发过**(登记见 CLAUDE.md 的 §测试)。
-lobby_alive() {
-	netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]]"
-}

@@ -14,10 +14,9 @@ var _time_sync := 0.0
 const RW_SNAP_DT := 1.0 / 20.0     # 自身状态采样间隔(20Hz,与单机 WorldRewind 同款)
 var _rw_buf: Dictionary = {}       # role -> Array[帧快照](t 升序;只存**自己**的状态+自己的子弹)
 var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
-# ★ `_rw_on` / `_rw_trail` 声明在 **`match_snapshot.gd`**(读它们的 `_broadcast_snapshot()` 那一层)——
-#   基类看不见子类成员,放这里会让快照广播整份解析失败。见那边的注释。
 var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
 var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
+# _rw_on / _rw_trail 住基类 MatchState(快照域要读)
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}) -> void:

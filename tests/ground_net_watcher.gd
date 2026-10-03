@@ -202,7 +202,7 @@ func _stage_lobby() -> void:
 
 
 # 用房间号加入 —— 两页的入口不同,走各自**游戏自己的**那条路(不直接发 RPC,与"用 K 键验自杀"同款纪律)。
-#   大乱斗:royale_lobby._join_room(code)
+#   大乱斗:royale_lobby._join_room(code, invite)
 #   1v1  :matchmaking 的入口是「加入」按钮,读的是 `_code_edit` 里的文本 → 填进去再按
 func _join_room_code(code: String) -> void:
 	if mode == "duel":
@@ -225,9 +225,7 @@ func _join_first_public_room() -> bool:
 	var now := Time.get_ticks_msec()
 	if now - _list_refresh_ms >= 1500:
 		_list_refresh_ms = now
-		# ★ 2026-09-30:原来调 `_on_refresh_pressed`(「刷新列表」按钮的回调)—— 那颗按钮已按
-		#   用户裁定删除,故改调**基类真正干活的那个口** `_request_list(msg)`(它才是催列表的地方)。
-		lobby.call("_request_list", "探针催刷新")
+		lobby.call("_on_refresh_pressed")
 	var box: Node = lobby.get("_list_box")
 	if box == null or not is_instance_valid(box):
 		return false
