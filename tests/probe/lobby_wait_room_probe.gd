@@ -250,7 +250,7 @@ func _phase_wiring(packed: PackedScene) -> void:
 	#      **没有任何运行时信号**,而 ⑲ 的计数断言照样绿(连接还是恰好一条)。
 	#    ★ 它**不守** RPC 真的出网(那要大厅对端);也不守两颗按钮的**显隐**(那是 ⑫/⑮)。
 	#    ★ 能读出实参的前提是连接用 `._on_wait_pick.bind(队号)` 而不是匿名 lambda —— 见
-	#      `_build_wait_panel` 的注释(匿名 lambda 的 `get_method()` 读不出任何东西)。
+	#      `_build_ui` 里那处接线的注释(匿名 lambda 的 `get_method()` 读不出任何东西)。
 	var ca := _pick_callable(p2._wait_panel, "加入 A 队")
 	var cb := _pick_callable(p2._wait_panel, "加入 B 队")
 	_check(ca.get_method() == "_on_wait_pick" and ca.get_bound_arguments() == [1]

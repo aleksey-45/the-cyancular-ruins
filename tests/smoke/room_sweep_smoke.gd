@@ -40,6 +40,14 @@ extends SceneTree
 #      (`Settings.royale_match_min = v`,**不钳位**)。放宽它 ⇒ 环一环二照绿而上界失效。
 #      ★ 判据比**数值**而非子串:`contains("15")` 挡不住 `15.0 → 150.0`(实测它含子串)。
 #      ⇒ 链是**三环**;把它写进 header 是为了让下一个读到"两环"的人知道还有一环。
+#  **2026-10-03(T2「统一大厅整屏搬 `.tscn`」)→ 第三环的**家搬了**,判据跟着搬**:
+#   ⑤ `scenes/mp_lobby.gd` 的 `_build_match_time_row()` 已随迁移删除,上限现在住在
+#      **`scenes/mp_lobby.tscn` 的 `MatchTimeSlider.max_value`**(`_build_ui()` 只灌
+#      `value = Settings.royale_match_min` 并接 `value_changed`,不再碰上限)。
+#      ⇒ 本条改读骨架,并加三条:节点必须**恰一个**且是 `HSlider`、读不到骨架要响亮报"读不到"、
+#      `.gd` 里不许再出现 `_time_slider.max_value`(否则上限回到两个家、判据被架空)。
+#      ★ 链的**环数与语义一个字没变**(环一 settings.gd 钳位 / 环二秒换算 / 环三写入端);
+#        变的只是环三住在哪个文件 —— 改版式去编辑器里改那个节点,别回来加 `max_value`。
 # 跑法:用户自跑(room_sweep_smoke.sh)。通过 = SMOKE_ROOM_SWEEP OK。
 
 var _fail := ""
@@ -489,21 +497,58 @@ func _check(src: String) -> void:
 	#   ★ 判据取**数值比较而不是子串**(与上面那两条片段判据略有不同,理由在下面):
 	#   `contains("15")` 挡不住 `15.0 → 150.0`(它含子串 "15"),而那正是本条要抓的"放宽"。
 	#   故把 `max_value = <数字>` 抽出来比数值;容忍空白/整数写法(与同族的"宁可响亮假红"同向)。
-	var mt_body := ScanUtil.func_body(lobby_src, "_build_match_time_row")
+	# ── ★★ 2026-10-03(T2 整屏搬 `.tscn`):这一环的**家搬了**,读法跟着搬 ──
+	#   搬之前:`scenes/mp_lobby.gd` 的 `_build_match_time_row()` 里那句 `max_value = 15.0`。
+	#   搬之后:整个「创建弹层」是 `scenes/mp_lobby.tscn` 的**静态骨架**,而
+	#   `_build_ui()` 只灌 `value = Settings.royale_match_min` 并接 `value_changed`,
+	#   **不再碰上限** ⇒ 上限的唯一来源就是骨架里 `MatchTimeSlider` 节点的 `max_value`。
+	#   ★ 为什么不能就此把这一环删掉:`_set_create_visible`/`value_changed` 那条路没变 ——
+	#     放宽上限之后环一环二照绿,而下发的 `match_time` 仍能到 3600(静默失效)。
+	#   ★ 所以本条**改读 `.tscn`**,并且:
+	#     ① 读不到骨架 ⇒ 响亮报"读不到"(不伪装成"第三环变了");
+	#     ② `MatchTimeSlider` 必须**恰一个**且仍是 `HSlider`(读错一个同名节点会得到别的上限,
+	#        而数值断言看起来照绿 —— 与 `_unique()` 同一条纪律);
+	#     ③ 仍比**数值**;
+	#     ④ 另加一条**反向**断言:`.gd` 里不许再出现 `_time_slider.max_value`
+	#        (否则上限回到两个家:骨架那份被读、代码那份生效 —— 判据会被架空)。
+	var tscn_src := FileAccess.get_file_as_string("res://scenes/mp_lobby.tscn")
+	if tscn_src.is_empty():
+		_fail = "无法读取 scenes/mp_lobby.tscn(读不到骨架 ≠ 上界链第三环变了)"; return
+	var mt_body := ""
+	var mt_nodes := 0
+	var tscn_lines := tscn_src.split("\n")
+	for i in range(tscn_lines.size()):
+		if not tscn_lines[i].begins_with("[node name=\"MatchTimeSlider\""):
+			continue
+		mt_nodes += 1
+		if not tscn_lines[i].contains("type=\"HSlider\""):
+			_fail = "scenes/mp_lobby.tscn 的 MatchTimeSlider 不再是 HSlider(类型变了 ⇒ 上限读法失效)"; return
+		for j in range(i + 1, tscn_lines.size()):
+			if tscn_lines[j].begins_with("["):
+				break
+			mt_body += tscn_lines[j] + "\n"
+	if mt_nodes != 1:
+		_fail = ("scenes/mp_lobby.tscn 里 `MatchTimeSlider` 节点有 %d 个(期望恰 1 个)"
+				% mt_nodes + " —— 上界链第三环的读取点不唯一"); return
 	if mt_body.is_empty():
-		_fail = "找不到 scenes/mp_lobby.gd 的 `_build_match_time_row` 函数体(读不到函数体 ≠ 第三环变了 —— 改名/内联?)"; return
+		_fail = "scenes/mp_lobby.tscn 的 MatchTimeSlider 节点体是空的(上限读不到 ≠ 第三环变了)"; return
 	var cap_re := RegEx.new()
 	if cap_re.compile("max_value\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)") != OK:
 		_fail = "正则编译失败(本函数自身的 bug,不是被扫文件的问题)"; return
 	var cap_m := cap_re.search(mt_body)
 	if cap_m == null:
-		_fail = "「一局限时」滑块里找不到 `max_value = <数字>`(上界链第三环消失?)"; return
+		_fail = "「一局限时」滑块(MatchTimeSlider)里找不到 `max_value = <数字>`(上界链第三环消失?)"; return
 	if not is_equal_approx(float(cap_m.get_string(1)), 15.0):
 		_fail = ("★ 「一局限时」滑块的上限被改成了 %s —— ROYALE_MATCH_TIME_CEILING 的链有**三环**,"
 				% cap_m.get_string(1)
 				+ "这是第三环、也是**真正产生下发值**的那一环(`value_changed` 不钳位地把它写进 "
 				+ "Settings.royale_match_min,而下发的 match_time 读的是内存里那个值;装载钳位 "
-				+ "[1,30] 只在下一次装载才生效)⇒ 1800s 的上界静默失效。放宽上限要一起改上界常量。"); return
+				+ "[1,30] 只在下一次装载才生效)⇒ 1800s 的上界静默失效。放宽上限要一起改上界常量。"
+				+ "★ 值现在住在 scenes/mp_lobby.tscn 的 MatchTimeSlider.max_value(见本文件头);"
+				+ "改版式请去编辑器里改那个节点。"); return
+	if ScanUtil.code_only(lobby_src).contains("_time_slider.max_value"):
+		_fail = ("scenes/mp_lobby.gd 里又出现了 `_time_slider.max_value` —— 上限回到**两个家**:"
+				+ "本条读的是骨架那份,而真正生效的是代码这份 ⇒ 判据被架空(第三环必须以 .tscn 为唯一来源)"); return
 	if not pred.contains("rr.in_match"):
 		_fail = "大乱斗在局宽限缺 rr.in_match 门控"; return
 	if not pred.contains("SWEEP_INTERVAL"):

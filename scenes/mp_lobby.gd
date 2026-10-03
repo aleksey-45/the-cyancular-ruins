@@ -190,11 +190,9 @@ func _build_ui() -> void:
 	# ── 房卡格 / 状态栏 / 返回主菜单 ──
 	# ★ `_grid` 的**行**由 `_redraw_cards()` 建;容器(4 列 / 两个间距 / 位置)在骨架里。
 	_grid = %CardGrid
+	# ★ 状态栏文本是 `_redraw_cards()` 的**输出**,骨架里它**是空的**(清运行时字面量那一步
+	#   把导出那一刻写下的那句清回了中性)⇒ 这里不需要、也不该再灌一个"初值"。
 	_status = %StatusLabel
-	# ★ 状态栏文本没有静态值:它是 `_redraw_cards()` 的**输出**(骨架里那句「共 0 个房间…」
-	#   是导出那一刻那次调用写下的)。这里清回**建树时的初值** —— 与改前那句
-	#   `UiFactory.label("", …)` 逐字一致。
-	_status.text = ""
 	%BackBtn.pressed.connect(_on_back_pressed)
 
 	# ── 加入面板(启动即建、默认隐藏;`_toggle_join_panel` 只剩翻转)──

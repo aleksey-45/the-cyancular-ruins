@@ -661,7 +661,6 @@ theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
 theme_override_font_sizes/font_size = 32
 theme_override_styles/normal = SubResource("StyleBoxFlat_xsicv")
 theme_override_styles/focus = SubResource("StyleBoxFlat_7uuf6")
-text = "Anon"
 placeholder_text = "昵称(头上显示)"
 
 [node name="Label2" type="Label" parent="." unique_id=1649989153]
@@ -687,7 +686,6 @@ theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
 theme_override_font_sizes/font_size = 32
 theme_override_styles/normal = SubResource("StyleBoxFlat_tc2qv")
 theme_override_styles/focus = SubResource("StyleBoxFlat_m646j")
-text = "120.53.107.140"
 placeholder_text = "服务器地址"
 
 [node name="RefreshBtn" type="Button" parent="." unique_id=1195779952]
@@ -725,7 +723,6 @@ offset_bottom = 148.0
 grow_horizontal = 0
 theme_override_colors/font_color = Color(0.349, 0.851, 0.902, 1)
 theme_override_font_sizes/font_size = 32
-text = "本机局域网 IP: 192.168.160.1(朋友在「服务器地址」里填它)"
 horizontal_alignment = 2
 
 [node name="FilterAll" type="Button" parent="." unique_id=382391109]
@@ -750,7 +747,6 @@ theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_ltkbv")
 theme_override_styles/disabled = SubResource("StyleBoxFlat_5oars")
 theme_override_styles/focus = SubResource("StyleBoxFlat_32xl5")
 toggle_mode = true
-button_pressed = true
 button_group = SubResource("ButtonGroup_u64m4")
 text = "全部"
 
@@ -862,8 +858,7 @@ theme_override_constants/h_separation = 24
 theme_override_constants/v_separation = 24
 columns = 4
 
-[node name="StatusBar" type="PanelContainer" parent="." unique_id=2049470985]
-unique_name_in_owner = true
+[node name="PanelContainer1" type="PanelContainer" parent="." unique_id=2049470985]
 layout_mode = 0
 offset_left = 76.0
 offset_top = 1292.0
@@ -871,15 +866,14 @@ offset_right = 1576.0
 offset_bottom = 1364.0
 theme_type_variation = &"PanelCarved"
 
-[node name="Body" type="PanelContainer" parent="StatusBar" unique_id=2065931873]
+[node name="Body" type="PanelContainer" parent="PanelContainer1" unique_id=2065931873]
 layout_mode = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_c18oq")
 
-[node name="StatusLabel" type="Label" parent="StatusBar/Body" unique_id=1194364342]
+[node name="StatusLabel" type="Label" parent="PanelContainer1/Body" unique_id=1194364342]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Body"
-text = "共 0 个房间(显示 0 个;未满优先,对局中的照列)"
 vertical_alignment = 1
 
 [node name="BackBtn" type="Button" parent="." unique_id=1841391726]
@@ -1165,13 +1159,11 @@ custom_minimum_size = Vector2(300, 30)
 layout_mode = 2
 min_value = 1.0
 max_value = 15.0
-value = 6.0
 
 [node name="MatchTimeLabel" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MatchTimeRow" unique_id=1071301259]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Body"
-text = "6 分钟"
 
 [node name="FullHealRow" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=1604031362]
 unique_name_in_owner = true
@@ -1252,81 +1244,79 @@ theme_type_variation = &"PanelCarved"
 layout_mode = 2
 theme_type_variation = &"PanelCarvedBody"
 
-[node name="WaitBox" type="VBoxContainer" parent="WaitPanel/Body" unique_id=1962816802]
-unique_name_in_owner = true
+[node name="VBoxContainer1" type="VBoxContainer" parent="WaitPanel/Body" unique_id=1962816802]
 custom_minimum_size = Vector2(800, 0)
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="PanelContainer1" type="PanelContainer" parent="WaitPanel/Body/WaitBox" unique_id=205186339]
+[node name="PanelContainer1" type="PanelContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=205186339]
 layout_mode = 2
 theme_type_variation = &"HeaderStrip"
 
-[node name="WaitTitle" type="Label" parent="WaitPanel/Body/WaitBox/PanelContainer1" unique_id=327804430]
+[node name="WaitTitle" type="Label" parent="WaitPanel/Body/VBoxContainer1/PanelContainer1" unique_id=327804430]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"HeaderTitle"
 
-[node name="WaitBody" type="VBoxContainer" parent="WaitPanel/Body/WaitBox" unique_id=213424249]
+[node name="WaitBody" type="VBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=213424249]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="WaitCount" type="Label" parent="WaitPanel/Body/WaitBox" unique_id=132183890]
+[node name="WaitCount" type="Label" parent="WaitPanel/Body/VBoxContainer1" unique_id=132183890]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Body"
 
-[node name="HBoxContainer1" type="HBoxContainer" parent="WaitPanel/Body/WaitBox" unique_id=500168645]
+[node name="HBoxContainer1" type="HBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=500168645]
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="WaitPickABtn" type="Button" parent="WaitPanel/Body/WaitBox/HBoxContainer1" unique_id=235197821]
+[node name="WaitPickABtn" type="Button" parent="WaitPanel/Body/VBoxContainer1/HBoxContainer1" unique_id=235197821]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(240, 56)
 layout_mode = 2
 theme_type_variation = &"BtnPrimary"
 text = "加入 A 队"
 
-[node name="WaitPickBBtn" type="Button" parent="WaitPanel/Body/WaitBox/HBoxContainer1" unique_id=136689372]
+[node name="WaitPickBBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1/HBoxContainer1" unique_id=136689372]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(240, 56)
 layout_mode = 2
 theme_type_variation = &"BtnPrimary"
 text = "加入 B 队"
 
-[node name="WaitHueRow" type="HBoxContainer" parent="WaitPanel/Body/WaitBox" unique_id=704546570]
+[node name="WaitHueRow" type="HBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=704546570]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="Label1" type="Label" parent="WaitPanel/Body/WaitBox/WaitHueRow" unique_id=1337599008]
+[node name="Label1" type="Label" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=1337599008]
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 32
 text = "自己角色颜色:"
 
-[node name="WaitHueSlider" type="HSlider" parent="WaitPanel/Body/WaitBox/WaitHueRow" unique_id=797063207]
+[node name="WaitHueSlider" type="HSlider" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=797063207]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(320, 30)
 layout_mode = 2
 max_value = 360.0
 step = 5.0
 
-[node name="WaitHueChip" type="ColorRect" parent="WaitPanel/Body/WaitBox/WaitHueRow" unique_id=1451665341]
+[node name="WaitHueChip" type="ColorRect" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=1451665341]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(46, 30)
 layout_mode = 2
-color = Color(1, 0.25, 0.25, 1)
 
-[node name="WaitStartBtn" type="Button" parent="WaitPanel/Body/WaitBox" unique_id=1002081208]
+[node name="WaitStartBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=1002081208]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(440, 64)
 layout_mode = 2
 theme_type_variation = &"BtnGold"
 text = "开 始 游 戏"
 
-[node name="WaitLeaveBtn" type="Button" parent="WaitPanel/Body/WaitBox" unique_id=2110607890]
+[node name="WaitLeaveBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=2110607890]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(440, 56)
 layout_mode = 2
