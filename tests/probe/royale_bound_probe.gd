@@ -216,14 +216,14 @@ func _orchestrator_step(delta: float) -> void:
 		1:
 			if _room_players() < 3:
 				return   # 等 c2 加入(c1 + 假 peer + c2)
-			# ★★ 先等**等待室状态广播**落地,再开局 —— 否则 c2 的 `_current_mode` 永远停在空串:
-			#   `LobbyRooms._flush_royale_state` 是 `call_deferred` 且发送前 `await process_frame`,
-			#   再判 `if rr.in_match: return`。本探针原先在 c2 加入的**同一帧**就 `royale_start`
-			#   ⇒ 那次广播被 `in_match` **静默吞掉** ⇒ c2 收不到 `royale_room_state` ⇒
-			#   `_on_room_state_royale` 不跑 ⇒ `_current_mode` 恒空 ⇒ match_start 到了也**不切场景**
-			#   (`_enter_match_scene` 的 else 分支,push_error)。真人房主不可能在一帧内点「开始」,
-			#   故这是探针**把开局踩得过紧**造出来的竞态;留出让广播落地的时间即可复现真实时序。
-			#   (实测未加这段时 c2 日志:`等换场(当前场景=RoyaleBoundProbe, _current_mode=「」)`)
+			# ★★ 先等**等待室状态广播**落地,再开局 —— 让时序更宽裕(真人房主不会在 c2 加入的
+			#   同一帧就点「开始」):`LobbyRooms._flush_royale_state` 是 `call_deferred` 且发送前
+			#   `await process_frame`,再判 `if rr.in_match: return`。
+			#   ★ **订正(2026-10-03 实测):这条退路**不是**必需的** —— 把它改成 `wait=0`(直接开局)
+			#   时,等待室广播**仍会在加入后约 1 帧到达**,`_on_room_state_royale` 照跑、
+			#   `_current_mode` 照设。原先写的"否则 `_current_mode` 永远停在空串"是**虚的**,
+			#   不是这条 0.6s 的真实成因。保留它只是让时序更宽裕,不修任何东西。
+			#   (旧记录里"未加时 c2 日志 `_current_mode=「」`"未能复现,故按实测如实改写。)
 			if _full_t < 0.0:
 				_full_t = _t
 				return
