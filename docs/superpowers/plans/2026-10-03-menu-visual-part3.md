@@ -338,7 +338,11 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(420
 	var fg := C_TEXT
 	if variant == "quiet":
 		edge = C_BORDER_DIM
-		fg = C_TEXT_MUTE
+		# ★★ **不用 `C_TEXT_MUTE`** —— 本计划初稿这么写了,**是错的**:它平均亮度 0.472,
+		#    会让 `kh_l4_visual_probe` 的「每颗按钮矩形内 ≥120 亮像素」当场红
+		#    (那条断言是靠亮度证明"浮现动画跑完了"的)。实现时实测 Beta/退出各 0 个亮像素。
+		#    `C_TEXT_DIM` 与既有 `style_button("quiet")` 的观感逐字相同,弱化关系不变。
+		fg = C_TEXT_DIM
 	elif variant == "gold":
 		edge = C_GOLD
 		fg = C_GOLD
