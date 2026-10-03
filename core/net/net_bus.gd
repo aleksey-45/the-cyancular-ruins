@@ -254,6 +254,12 @@ func beam_fired(data: Dictionary) -> void:
 # 可靠通道:一次性、必须到(不像快照那样可以丢一帧)。
 @rpc("authority", "reliable")
 func match_sync_data(payload: Dictionary) -> void:
+	# 诊断开关(默认关):客户端侧确认这条应答**到底有没有到达**。
+	# ★ 纯诊断:开关关着时一行都不打 ⇒ 生产行为逐字不变(与 `--pickup-diag` / `--registry-report` 同款,
+	#   且同样必须写在 `--` 之后)。当初(2026-10-03)用来把
+	#   「worker 已调用 `rpc_id` 且返回 0」 与 「客户端收到/没收到」 这段链路一分为二。
+	if OS.get_cmdline_user_args().has("--matchsync-diag"):
+		print("[matchsync-diag] 客户端收到 match_sync_data: 键=%s" % str(payload.keys()))
 	local_match_sync.emit(payload)
 
 @rpc("authority", "reliable")

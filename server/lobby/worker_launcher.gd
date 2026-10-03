@@ -163,6 +163,12 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	# ★ 与 server_main.gd 的 argv 解析逐字对应 —— 两边改一处必须同步改另一处(同本函数头注释)。
 	if OS.get_cmdline_user_args().has("--test-ground-teleport"):
 		args.append("--test-ground-teleport")
+	# 诊断开关转发(默认关):`-- --matchsync-diag` —— 大厅进程自己带了才往下传,生产不带。
+	# ★ 它纯诊断(server_main._on_match_sync 里那处 print),转发与否**不改生产行为**;
+	#   纯布尔开关、无取值,故解析端不需要新增 argv 分支(与 `--registry-report` 同款:
+	#   读的时候直接 `OS.get_cmdline_user_args().has(...)`)。
+	if OS.get_cmdline_user_args().has("--matchsync-diag"):
+		args.append("--matchsync-diag")
 	var pid := OS.create_process(exe, args)
 	if pid > 0:
 		_worker_pids[port] = pid

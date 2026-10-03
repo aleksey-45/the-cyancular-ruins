@@ -161,10 +161,23 @@ func _run_orchestrator() -> void:
 	NetBusExt.royale_create_requested.connect(_on_room_created)
 	var exe := OS.get_executable_path()
 	if not OS.get_cmdline_user_args().has("--nospawn"):   # 调试用:不拉子进程,自己前台跑 role
+		# 诊断开关**转发**(与 worker_launcher 同一款):编排器带了 `--matchsync-diag` 才给
+		# 客户端子进程也带 —— 否则客户端侧那处诊断打印不会亮(默认关、生产不带)。
+		var diag := PackedStringArray()
+		if OS.get_cmdline_user_args().has("--matchsync-diag"):
+			diag.append("--matchsync-diag")
+		# 子进程 stdout 父进程看不见(Windows 不继承句柄)→ 给客户端也落一份引擎日志,
+		# 否则那条客户端侧诊断打印(`[matchsync-diag] 客户端收到…`)**无处可读**
+		# (与 worker_launcher 落 `worker_<port>.log` 同款)。
+		var logdir := ProjectSettings.globalize_path("user://logs")
+		DirAccess.make_dir_recursive_absolute(logdir)
 		for role in ["c1", "c2"]:
-			OS.create_process(exe, PackedStringArray(["--headless", "--path",
-					ProjectSettings.globalize_path("res://"), "res://tests/probe/royale_bound_probe.tscn",
-					"--", "--role=" + role]))
+			var a := PackedStringArray(["--headless",
+					"--log-file", logdir.path_join("probe_cli_%s.log" % role),
+					"--path", ProjectSettings.globalize_path("res://"),
+					"res://tests/probe/royale_bound_probe.tscn", "--", "--role=" + role])
+			a.append_array(diag)
+			OS.create_process(exe, a)
 	print("PROBE: 大厅就绪,c1/c2 已拉起")
 
 

@@ -544,6 +544,24 @@ func _on_match_sync(caller: int) -> void:
 		if _claims[r] == caller:
 			role = int(r)
 			break
+	# ── 诊断开关(默认关):`-- --matchsync-diag` ──
+	# ★ 它**只是诊断**,不在生产路径上:开关关着时本块一行都不打 ⇒ 生产行为逐字不变。
+	# ★ 开关必须写在 `--` **之后**(写在前面会被 Godot 当引擎参数丢掉、**静默失效**)。
+	#   大厅拉起大乱斗 worker 时会**转发**这一个开关(见 WorkerLauncher.spawn_royale_worker)。
+	# 当初要钉死的现象(2026-10-03,`royale_bound_probe` 自然模式):客户端进了对局场景,
+	# 却**从头到尾收不到任何一次 `match_sync` 应答**(真场景发的那次 + watcher 里另独立连发的
+	# 4 次,全无回)。当时已排除:客户端 `can_send_to_server()`=true、`rpc_id` 返回 0(OK)、
+	# worker→本端的**定向**通道活着(`snapshot_own` 60Hz)、worker 日志无 error。
+	# ⇒ 只剩本函数里的两个**静默早退**:下面 `role==0`(按 caller 查不到 role)与
+	# `is_peer_live(caller)` 为假。故这一条把两者的全部读数一次打出来。
+	# ★ `role_claimed 已连` = `NetBus.role_claimed` 是否仍连着 `_on_role_claimed`:
+	#   `_begin_match` 开局那一刻会 disconnect 它 —— 它是"迟到的 claim 没有收件人"那条已知
+	#   纪律的读数(与 match_sync 无直接关系,但同一现场一起看更省一次跑)。
+	if OS.get_cmdline_user_args().has("--matchsync-diag"):
+		print("[matchsync-diag] 收到 match_sync: caller=%d role=%d _claims.has(caller)=%s _claims 键=%s 值=%s is_peer_live(caller)=%s role_claimed 已连=%s" % [
+				caller, role, str(_claims.has(caller)), str(_claims.keys()), str(_claims.values()),
+				str(NetBus.is_peer_live(caller)),
+				str(NetBus.role_claimed.is_connected(_on_role_claimed))])
 	if role == 0:
 		return
 	var spawns := {}
@@ -601,7 +619,13 @@ func _on_match_sync(caller: int) -> void:
 	#   新客户端拿到空 → 双向兼容,不需要协商。
 	if not teams.is_empty():
 		data["teams"] = teams
-	NetBus.rpc_id(caller, "match_sync_data", data)
+	# 诊断续(同一开关):确认真的走到了发送这一步,并取回 `rpc_id` 的返回码。
+	# 前半(两个早退之前的读数)已经证明两处早退**都**没被走到 ⇒ 若这一行也打出来,
+	# 就把"没回应答"从 server_main 这一层整个排除(锅在 `rpc_id` 之后的链路上)。
+	var _rpc_err := NetBus.rpc_id(caller, "match_sync_data", data)
+	if OS.get_cmdline_user_args().has("--matchsync-diag"):
+		print("[matchsync-diag] 已发 match_sync_data → caller=%d data 键=%s rpc_id 返回=%d 在线 peers=%s" % [
+				caller, str(data.keys()), _rpc_err, str(multiplayer.get_peers())])
 
 
 # 自杀脱困(大乱斗 / 3v3):caller → role → 宿主(存活/对局中校验在那边)
