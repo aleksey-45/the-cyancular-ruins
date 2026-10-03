@@ -29,6 +29,21 @@ const TEAM_HUD_SCENE := "res://ui/hud/team_hud.tscn"
 
 var _failures: Array[String] = []
 
+# 态2 广播面板的两条**布局尺寸**(见 `_run_round` 里那段 R18 注释)。
+# ★★ 这是**本探针实测**的值(1920×1440 视口、真实渲染、`671e610` 之后),不是照抄任何二手数字:
+#   · 外框 `_panel.size` = **866×371**;标题带 `strip.size` = **720×185**;
+#   · 算式自洽:Label `get_height(144)` = 145,标题带 = 145 + 内容边距 40(20+20)= **185** ✓;
+#     外框 = 标题带 + 186(Box 间距 24 + 副文案 + `menu_panel(72,44)` 的双边距 88 + 内外各 1px 线)。
+#   · 同配置跑**两次**:这两个 size **逐位相同**;而同一瞬间的 `get_global_rect()` 两次不同
+#     (1.0299 / 1.0283 倍,差在 `_punch` 相位)⇒ **尺寸判据只能钉 `size`**。
+# ★ 与 R18 记录里那组数(外框 865×387 / 标题带 720×201)差 **+1 宽 / +16 高**;那 +16 整条落在
+#   标题带的**内容高**上(实测 Label 高 145 + 边距 40 = 185,而记录隐含 Label 高 161)。
+#   本探针复现不出 201,故按"量到什么钉什么"钉实测值;差异原文见 T3b 报告 §2,留控制者核对。
+const BROADCAST_OUTER_W := 866.0
+const BROADCAST_OUTER_H := 371.0
+const BROADCAST_STRIP_W := 720.0
+const BROADCAST_STRIP_H := 185.0
+
 
 func _ready() -> void:
 	Level0.pvp_mode = false   # 对局 HUD 与单机 HUD 会同时在场,量的是对局 HUD 自己的元素
@@ -75,6 +90,47 @@ func _run_round() -> void:
 	await _frames(2)
 	var img2 := await _shot("_hud_2_pvp_broadcast.png")
 	_check(_bright_in(img2, pvp._big) > 0, "态2:中央大字画出来了")
+	# 大字那条 Label 的字体度量(解释标题带高度从哪来;也只是印出来,不做断言)。
+	var big_f: Font = pvp._big.get_theme_font("font")
+	var big_fs: int = pvp._big.get_theme_font_size("font_size")
+	print("[HUD-VISUAL] 态2 大字度量:font_size=%d get_height=%s label.size=%s"
+			% [big_fs, "<无字体>" if big_f == null else str(big_f.get_height(big_fs)),
+			str(pvp._big.size)])
+	# ── 态2 的**显式几何断言**(R18:把漂移钉住,别让它继续无守卫) ──
+	# ★★ 钉的是 `671e610`("全局尺度再提一档")**之后被接受**的值,**不是它之前的值**:
+	#    那一提交把 `UiFactory.header_strip()` 的内容边距 28/14 → 40/20,而本面板**复用它**
+	#    (见 `broadcast.gd` 文件头那条"刻意的菜单语汇例外"登记)—— 这就是"改菜单尺度会连带改
+	#    对局内 HUD"那条耦合。R18 的裁决是**接受并钉住当前的值**(把 HUD 改回去等于再动一次
+	#    HUD 像素)⇒ 这里钉的是**本探针实测**的那组数,不是任何二手数字(见下面的常量注释)。
+	# ★ 为什么非钉不可:**三条 HUD 探针都不做基线比对** ⇒ 这条耦合**没有任何自动化守卫看得见**
+	#    (671e610 那次是靠人眼比图才发现的)。`broadcast.gd` 文件头登记的边界只写到"改这几个
+	#    菜单 **token**(颜色)会连带",没写尺度 —— 本断言把尺度的那一半也钉上。
+	# ★★ 量的是**布局尺寸**(`Control.size`),**不是** `get_global_rect().size`:广播每次弹出都会
+	#    走 `_apply_punch()` 把 `_panel.scale` 抬到 1.06 再逐帧衰减(`broadcast.gd` 的
+	#    PUNCH_SCALE/PUNCH_DECAY),而 `get_global_rect()` **把父级缩放算了进去** ⇒ 同一块面板
+	#    在弹出后第 N 帧与第 M 帧量出来不等(本探针实测:rect 891.5×381.9 而布局 866×371,
+	#    两处比值同为 ×1.029455 ⇒ 差异整个来自脉冲相位)。判据要钉的是**版式**,不是脉冲相位。
+	# ★ 尺寸比的是**逻辑单位**(视口 1920×1440),不是截图里的像素数:截图尺寸随窗口缩放变。
+	# ★ 节点在不在**先判**:拿不到节点时 `.size` 给 0×0,直接拿 0 去比会把"路径写错 /
+	#    节点搬走"误报成"尺寸漂了"。
+	var panel: Control = pvp._broadcast._panel
+	var strip: Control = pvp._big.get_parent() as Control
+	print("[HUD-VISUAL] 态2 广播外框 size = %s rect = %s;标题带 size = %s rect = %s;panel.scale = %s"
+			% ["<无节点>" if panel == null else str(panel.size),
+			"<无节点>" if panel == null else str(panel.get_global_rect()),
+			"<无节点>" if strip == null else str(strip.size),
+			"<无节点>" if strip == null else str(strip.get_global_rect()),
+			"<无节点>" if panel == null else str(panel.scale)])
+	_check(panel != null and panel.size.is_equal_approx(
+			Vector2(BROADCAST_OUTER_W, BROADCAST_OUTER_H)),
+			"态2:广播**外框**布局尺寸 = %d×%d(实得 %s;671e610 之后被接受的值)"
+			% [BROADCAST_OUTER_W, BROADCAST_OUTER_H,
+			"无节点" if panel == null else str(panel.size)])
+	_check(strip != null and strip.size.is_equal_approx(
+			Vector2(BROADCAST_STRIP_W, BROADCAST_STRIP_H)),
+			"态2:广播**标题带**布局尺寸 = %d×%d(实得 %s;菜单尺度一改它就跟着变)"
+			% [BROADCAST_STRIP_W, BROADCAST_STRIP_H,
+			"无节点" if strip == null else str(strip.size)])
 	_check(pvp._mask.visible, "态2:广播遮罩可见")
 
 	# ── 态7:1v1「对手掉线中」(阶段 3 的 3.1)──

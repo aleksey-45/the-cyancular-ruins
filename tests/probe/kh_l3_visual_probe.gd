@@ -22,6 +22,19 @@ const PLAYER_SCENE := "res://scenes/player/player.tscn"
 const RELOAD_SAMPLE_DT := 0.5          # 手动推进的换弹时长(秒):手枪 reload_time=1.0 → 进度 50%
 
 var _failures: Array[String] = []
+
+# 断言计数闸(2026-10-03,R19)。
+# ★ 为什么必须有:本文件此前**没有任何条数下限**,而 `_capture_low_ammo` 里那两行曾直接解引用
+#   `_hud._reload_bar`(一个 `_capture_full_ammo` 刚断言**不存在**的节点)⇒ 运行到那里必抛
+#   `Invalid access to property or key '_reload_bar'`,**只中断当前函数**、其后断言(含三态对照
+#   那两条)静默跳过,而 verdict 照打 `ALL-OK` ⇒ **假绿**(权威表述见 `tests/lib/probe_base.gd` 文件头)。
+# ★ 32 是**逐个数出来的**,不是估的:`_check_slot_colors` 10 + `_capture_full_ammo` 8 +
+#   `_capture_reloading` 6 + `_capture_low_ammo` 6 + `_assert_states_differ` 2 = 32;且 32 处
+#   `_check(` 的缩进都是**函数体顶层**(没有一条在 if 分支里)⇒ 跑全了恰好 32 条。
+#   (`_capture_low_ammo` 从 7 降到 6:`:382` 那条恒真/不具鉴别力的像素断言已删,见该函数里的注。)
+# ★ 用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`tests/probe/late_match_probe.gd` 同款)。
+const EXPECTED_CHECKS := 32
+var _checks := 0
 var _hud: Hud = null
 var _w: WeaponBase = null
 
@@ -102,14 +115,8 @@ func _gold_in(img: Image, ctrl: Control) -> int:
 		return c.r > 0.6 and c.g > 0.5 and c.r > c.b + 0.15)
 
 
-# 矩形内"强调青像素"(UiFactory.C_ACCENT = 0.349,0.851,0.902)计数:换弹进度条用色。
-func _accent_in(img: Image, ctrl: Control) -> int:
-	return _color_in(img, ctrl, func(c: Color) -> bool:
-		return c.g > 0.6 and c.b > 0.6 and c.b > c.r + 0.15)
-
-
 # 矩形内"中性亮文本像素"(UiFactory.C_TEXT = 0.878,0.914,0.949)计数:满弹常态色。
-# 判据排除金色(r-b≈0.4)与强调青(b-r≈0.55),故三种语义互不误计。
+# 判据排除金色(r-b≈0.4),故两种语义互不误计。
 func _bright_in(img: Image, ctrl: Control) -> int:
 	return _color_in(img, ctrl, func(c: Color) -> bool:
 		return c.r > 0.6 and c.g > 0.6 and c.b > 0.6 and absf(c.r - c.b) < 0.12)
@@ -250,14 +257,22 @@ func _frames(n: int) -> void:
 
 
 func _check(ok: bool, msg: String) -> void:
+	_checks += 1
 	if not ok:
 		_failures.append(msg)
 
 
 func _finish() -> void:
 	_aborted = true   # 见 _ready 顶部:置位后各段之间就不再往下跑
+	# ★ 计数闸**先于** verdict:跑少了 = 有断言被静默跳过(见文件头那条说明)⇒ 必须红,
+	#   而不是照打 ALL-OK —— 那正是本文件此前那一族的形状。
+	if _checks != EXPECTED_CHECKS:
+		_failures.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上"
+				% [_checks, EXPECTED_CHECKS]
+				+ "(要么有断言被静默跳过 —— 脚本错误只结束出错的那个函数、调用方继续;"
+				+ "要么新加的断言没登记进 EXPECTED_CHECKS)")
 	if _failures.is_empty():
-		print("KH L3 VISUAL: ALL-OK")
+		print("KH L3 VISUAL: ALL-OK(%d 条断言)" % _checks)
 		get_tree().quit(0)
 	else:
 		print("KH L3 VISUAL: FAIL | " + "; ".join(_failures))
@@ -375,12 +390,30 @@ func _capture_low_ammo() -> void:
 	img3 = await _shot("_l3_3_low.png")
 	_check(_hud._ammo_label.text == "1/12", "态3:文本应为「1/12」(实际「%s」)" % _hud._ammo_label.text)
 	_check(_hud._ammo_label.visible, "态3:残弹标签不可见")
-	_check(not _hud._reload_bar.visible, "态3:非换弹态进度条不应可见")
+	# ★★ 「非换弹态不该有换弹提示」这条语义**还有活目标**,但载体换了人:HUD 上那条进度条已删
+	#    (用户 2026-09-16「取消右下角的装填中…和进度条」),现在是**角色旁的圆环**
+	#    (`ui/hud/reload_ring.gd`,挂在玩家身上)。改前这两行直接解引用 `_hud._reload_bar`
+	#    (一个 :331 刚断言不存在的节点)⇒ 必抛、其后断言静默跳过、verdict 照打 ALL-OK(R19 的假绿)。
+	#    现改指**环形那条链**。
+	# ★ 探针冻了玩家物理(`set_physics_process(false)`)⇒ 可见性不会自己刷新,得与态2 同款
+	#   **显式推一拍**;不推就是拿"态2 留下的旧状态"下断言 —— 那是另一种假绿。实测:不推这一拍,
+	#   环停在可见态,下面那条当场红(变异原文见 T3b 报告 §3)。
+	p._update_reload_ring()
+	var ring3 = p.get("_reload_ring")
+	_check(ring3 != null and is_instance_valid(ring3) and not bool(ring3.visible),
+			"态3:非换弹态圆环不应可见(进度条已删;此处钉的是角色旁那个环)")
 	var gold3 := _gold_in(img3, _hud._ammo_label)
-	var accent3 := _accent_in(img3, _hud._reload_bar)
 	_check(gold3 > 0, "态3:残弹见底(1/12)却没转金 —— 「低弹量」警告没画出来")
-	_check(accent3 == 0, "态3:非换弹态进度条区不该有强调青像素(%d)" % accent3)
-	print("[L3-VISUAL] 态3 像素:残弹区金色=%d 进度条区青=%d" % [gold3, accent3])
+	# ★ 紧邻原来的那条 `_accent_in(img3, _hud._reload_bar) == 0` **删掉**(不是改指):它量的
+	#   "强调青"是**进度条的填充色**,而环的弧色是 `ReloadRing.C_ARC`(浅灰)⇒ 换成
+	#   `_accent_in(img3, ring3)` 会**恒为 0**(恒真断言,正是本文件正在修的那一族)。
+	# ★ 试过拿"环形区域在态2/态3 之间的像素差 > 0"顶替它 —— **实测不成立,已删**(2026-10-03):
+	#   把上面那一拍去掉(环停在可见态、本该红)时,那个差值**照样是 76**,与绿的那一轮逐位相同
+	#   ⇒ 它量到的其实是**玩家自身的帧动画**,不是环。留着就是一条"名字说环、实际量人"的假保证。
+	#   "环真的画出来了"的活证据现在只在态2(`ring.visible == true`)与 `_l3_2_reloading.png`
+	#   的人眼验收里。
+	print("[L3-VISUAL] 态3 像素:残弹区金色=%d 环可见=%s"
+			% [gold3, str(ring3 != null and bool(ring3.visible))])
 
 func _assert_states_differ() -> void:
 	# ── 三态必须真的画得不一样(否则"改了状态但画面没变")──────────────

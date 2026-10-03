@@ -346,9 +346,12 @@ func _attach_page_in(cs: Node, action: Callable) -> void:
 
 
 func on_create() -> void:
-	# ★ mp_lobby 的建房弹层是**点开才建**的(`_create_panel` 初值 null);直接调
-	#   `_on_create_pressed` 会在 `_set_create_visible(false)` 里对 null 取字段报错。
-	#   先开弹层:它建面板 + 选默认模式(筛选为空 ⇒ 1v1)。本探针要的正是 1v1。
+	# ★ mp_lobby 的建房弹层**启动即建、默认隐藏**(骨架里的 `%CreatePanel`;`_build_ui()` 只
+	#   **登记 + 收起**,`_set_create_visible(v)` 只翻 `visible`)⇒ T1 起这里**不再**有 null 可判,
+	#   直接调 `_on_create_pressed` 也能跑完。
+	#   仍要先开一次,是因为**模式**那一半:`_create_mode` 只在 `_open_create_dialog` 里从当前
+	#   筛选模式取(筛选为空 ⇒ 落 `MODE_PVP`,即 1v1;其余地方它保持声明初值)——
+	#   本探针要的正是"走玩家那条链",而不是绕开它自己塞一个模式。
 	_page.call("_open_create_dialog")
 	_page.call("_on_create_pressed")
 

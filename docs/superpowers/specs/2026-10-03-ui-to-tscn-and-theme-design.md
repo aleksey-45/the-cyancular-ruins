@@ -118,6 +118,7 @@ MpLobby (Control, theme = menu_theme.tres)
 **保留**：
 - **调色板常量**（单一来源不变，Theme 的值由守卫钉着 —— §4.2）
 - **动态构造用的助手**：`check_row` / `slider_row` / `line_edit` / `make_weapon_check` 一族的调用方
+  - ★ 墓碑：`check_row` / `slider_row` 已于 2026-10-03 删除（T3a 清扫零调用死构造器），相关版式改由 `.tscn` 显式节点承担。
 - `apply_font_recursive`（**仅**给 `.tscn` 里没挂 Theme 的子树兜底；迁移完成后可评估删除）
 
 **移除**（职责被 Theme 接管，且它们的存在正是"样式散在代码里"的来源）：

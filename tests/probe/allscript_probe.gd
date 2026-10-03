@@ -5,7 +5,14 @@ extends Node
 #   godot --headless --path . res://tests/probe/allscript_probe.tscn
 
 const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gamelogs",
-		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build"]
+		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
+		"res://_crashtest"]
+# ★ 为什么必须收 `res://_crashtest`(2026-10-03,与 `tools/check_naming.py` 里同名的那个根同因):
+#   它是 **gitignore 的现场草稿**,里面存着**编译不过的旧 `.gd` 备份**(`pkdbak/`:
+#   `pvp_match_client.gd` 已删的 `_delta`/`cell`、`team_game.gd` 还 preload 着搬走的
+#   `res://ui/team_hud.tscn`)。不收它 ⇒ 本探针**改前就红 3/288**,而它守的是
+#   "大回退/大合并后全仓脚本还能不能解析"这一条 —— 一条**永远红**的闸等于没有闸。
+#   ★ 它**不该**改成"把失败降级成提示":那 3 个文件确实解析不过,只是它们**不是本仓的源码**。
 
 var _fails: Array[String] = []
 var _total := 0

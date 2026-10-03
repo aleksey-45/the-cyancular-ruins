@@ -190,8 +190,11 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		print("AUTOTEST[beta]: 卡片没把筛选预选成大乱斗(entry_mode=%s)" % PvpSession.entry_mode)
 		tree.quit(1)
 		return
-	# 建房弹层是**点开才建**的(mp_lobby 的 `_open_create_dialog` 里造)—— 时间参数滑条长在
-	# 那块面板里,与旧大乱斗页的常驻面板不同,故先开一次再数。
+	# 建房弹层**启动即建、默认隐藏**(骨架里的 `%CreatePanel`;`_build_ui()` 只登记 + 收起 ——
+	# 见 `_set_create_visible` 上方那句)。★ 时间参数滑条**不是**开弹层时才造的:它们由
+	# `_build_ui()` 里的 `_add_time_params(%BetaBlock)` 当场填(`%BetaBlock.visible` 按
+	# `PvpSession.beta_mode` 定)。这里先开一次**不是**为了把滑条建出来,而是让这一相走玩家
+	# 那条路 —— 点开弹层,再数玩家能看到的那 9 行。
 	(lobby as Node).call("_open_create_dialog")
 	await tree.create_timer(0.2).timeout
 	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则
