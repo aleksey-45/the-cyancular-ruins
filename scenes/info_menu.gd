@@ -27,6 +27,11 @@ const ROW_W := 760.0
 
 func _ready() -> void:
 	# 不透明深色底:进过单机后全局清屏色是浅蓝,白字会看不清(与 settings_menu 同一形态)。
+	# ★ 下面这个 `Color(0.07, 0.09, 0.13)` 是**既有字面量**,与 `scenes/settings_menu.gd:25`
+	#   同款(两页各硬编码了一份)。★ 它**与 `UiFactory.C_BG` = (0.039, 0.059, 0.094) 并不是
+	#   同一个值** —— 所以**不能**"顺手换成 `C_BG`":换了会**静默改变这两页的底色**。
+	#   计划 ③ 统一调色板时应把这一处与 settings_menu 那处**一起**并进 `UiFactory`
+	#   (并决定要不要连带改掉底色值);本计划不新增颜色,故此处不动。
 	var bg := ColorRect.new()
 	bg.color = Color(0.07, 0.09, 0.13)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -77,10 +82,32 @@ func _fill_version_block(parent: Node) -> void:
 	var list := VBoxContainer.new()
 	list.custom_minimum_size = Vector2(ROW_W, 0)
 	scroll.add_child(list)
+	# ★★ 空历史兜底(2026-10-03,评审 Important #2):发布版 exe 常跑在**没有 git** 的机器上,
+	#   那时 `AppInfo.commit_log()` 返回 `[]` ⇒ 左栏是一个**没有任何解释的空框**,
+	#   而那恰恰是这一页存在的理由。文案**逐字沿用**被取代的
+	#   `main_menu._fill_version_panel` 那一句(别改写措辞,`info_page_probe` 逐字钉着它)。
+	# ★ 颜色:旧实现用的是字面量 `Color(0.9, 0.6, 0.5)`(暖色告警)。本计划不新增颜色字面量,
+	#   故改用既有 token —— 取 **`C_DANGER`** 而不是 `C_TEXT_DIM`,两个理由:
+	#     ① 它表的是「**读不到**」这一异常;而 `C_TEXT_DIM` 的既定语义是「占位符/说明文字」,
+	#        且在**本页**它已经被两条无许可的致谢(`Thomas Stearns Eliot` / `Jorge Luis Borges`)占用
+	#        ⇒ 用它会让这行解释与那两条正文同色,读起来仍是"内容"而不是"为什么是空的"。
+	#     ② 旧字面量本就是暖色:`C_DANGER`(0.900,0.400,0.400)与它的 RGB 距离 ≈0.22,
+	#        而 `C_TEXT_DIM`(0.510,0.573,0.639)≈0.41 —— 前者更接近被取代的那一版。
+	# ★ 它**与提交行同一套排版**(钉死行宽 + 末尾省略号):一来长文案不会顶出面板,
+	#   二来空历史时它就是左栏里的**第一条(也是唯一一条)行** —— 排版与提交行不同款的话,
+	#   `info_page_probe` 那条「钉死行宽 ≤ 滚动区宽」量的对象会悄悄变成另一类控件。
+	var entries := AppInfo.commit_log()
+	if entries.is_empty():
+		var note := UiFactory.label("(读不到 git 历史:仓库不可用或未安装 git)", 32, UiFactory.C_DANGER)
+		note.custom_minimum_size = Vector2(ROW_W, 0)
+		note.size_flags_horizontal = Control.SIZE_FILL
+		note.clip_text = true
+		note.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		list.add_child(note)
 	# ★ 提交行**钉死行宽 + 末尾省略号**:ScrollContainer 不收缩子节点,而提交标题长短不一,
 	#   最长的那条会把 Label 的最小宽度顶到面板之外 —— 每一行都在右沿被切成半个字。
 	#   (这条是从被取代的 `version_panel.tscn` / `main_menu._fill_version_panel` 继承的实测。)
-	for e in AppInfo.commit_log():
+	for e in entries:
 		var row := UiFactory.label("%s  %s  %s" % [str(e["hash"]), str(e["time"]), str(e["subject"])],
 				16, UiFactory.C_TEXT)
 		row.custom_minimum_size = Vector2(ROW_W, 0)
