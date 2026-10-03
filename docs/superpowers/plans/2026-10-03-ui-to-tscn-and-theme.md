@@ -135,6 +135,41 @@ git commit -m "feat(ui): 字体资源化(烘导入设置 + FontVariation 回退�
 
 ---
 
+## Task 0（2026-10-03 补做，计划初稿没有这一步）：把 `menu_theme.tres` 刷成**当前**语汇
+
+**为什么必须有这一步**：Task 1 建的 `.tres` 停在**旧档**（按钮内容边距 30/14、面板是单层 28/20），
+而 `UiFactory` 此后经过两轮放大（`_btn_box` 40/20、`menu_panel` 64/46、`header_strip` 40/20）
+并新增了整族菜单语汇（`C_HEADER`/`C_INNER`/`C_EDGE`/`C_GOLD`/`C_TEXT_MUTE` + `menu_button` 的
+primary/quiet/gold/accent 四档）。**拿旧档当迁移基准 = 一挂上去外观就变**，而迁移的定义是"外观不变"。
+
+**做法**：新增 `tools/gen_menu_theme.gd`（`-s`，从 `UiFactory` 的现取值**生成** `.tres`，
+不手抄 —— 手抄 float32 会撞 `ui_palette_single_source_smoke` ⑥ 的 1/65536 容差，且会漂移），
+外加把 `_make_switch()` 的胶囊导成两个 PNG（Theme 引用不到运行时生成的 `ImageTexture`）。
+
+- [x] Step 1: 调色板加 `C_TRANSPARENT`（Theme 里那层"只画线不画底"的内亮线要它；
+      `ui_palette_single_source_smoke` ⑥ 要求 Theme 里每个颜色都等于某个 `const C_*`）
+- [x] Step 2: 写 `tools/gen_menu_theme.gd` + 两趟跑法（先导 PNG → `--import` → 再生成）
+- [x] Step 3: 写 `tests/smoke/menu_theme_mirror_smoke.gd` —— **镜像守卫**。
+      ★ 判据**直接读生产产出**（`UiFactory` 的函数挂到控件上之后 `get_theme_stylebox()` 读回来），
+      **不**在守卫里重写一份构造 —— 那会与生成器共享同一个错误源（两边一起错 ⇒ 恒绿）。
+      647 条比对。
+- [x] Step 4: 两个 PNG 的 `.import` 里 `process/fix_alpha_border` 改 `false`
+      （默认 true 会改写透明边缘的 RGB，逐像素比对实测差 **100 个像素**）
+- [x] Step 5: 验证：`ui_palette_single_source_smoke` ALL-OK / `menu_style_probe` ALL-OK(20 条) /
+      `kh_l5_probe` ALL-OK(扫 401 个 `.gd`/`.tscn` + 1 个 `.tres`，载体 90) /
+      `menu_theme_mirror_smoke` ALL-OK(647 条)
+
+★ **漂移纪律（本步引入的新风险，已用守卫堵住）**：以后**改了 `UiFactory` 的菜单系样式，
+      必须重跑 `tools/gen_menu_theme.gd`**，否则 `.tres` 静默停在旧值上 —— `menu_theme_mirror_smoke`
+      就是为这条而立的（它是那类"改了 A 忘了 B、不报错"的唯一拦截）。
+
+★ 另记两条**与计划文本不符**的现状（迁移时按实际走）：
+1. **六屏全部是裸场景**（1 个 node + 脚本）—— 计划里"`match_result` 早有骨架 `.tscn`"那句是错的。
+2. **Task 3/4 的"美化"半边已经做完了**（信息页 `40082ba` / Beta 页 `f87b2dc` / 结算页 `c31b941`）
+   ⇒ 这两条任务实际是**纯迁移**，不是"迁移与美化一次做完"。
+
+---
+
 ## Task 3: 设置页 + 信息页 → `.tscn` + Theme（**迁移与美化一次做完**）
 
 **Files:** `scenes/settings_menu.tscn` / `.gd`、`scenes/info_menu.tscn` / `.gd`

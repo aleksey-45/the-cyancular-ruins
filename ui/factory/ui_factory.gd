@@ -132,6 +132,15 @@ const C_EDGE       := Color("#46545F")   # 按钮描边
 const C_GOLD       := Color("#E0A94F")   # 琥珀:分区标题 / 主行动按钮
 const C_TEXT_MUTE  := Color("#6C7885")   # 比 C_TEXT_DIM 更弱一档(禁用)
 
+# ★ 全透明(2026-10-03,`.tscn`+Theme 迁移批次)。**存在的唯一理由**:`menu_style_probe` 的
+#   凿刻面板是**两层** PanelContainer —— 内层只画一条 `C_INNER` 亮线、**不画底**(有底就会把外层的
+#   `C_SURFACE` 盖掉)。`StyleBoxFlat` 的 `bg_color` 默认是**不透明灰 (0.6,0.6,0.6,1)**,
+#   所以"不画底"必须显式写成透明 —— 而 `ui_palette_single_source_smoke` ⑥ 要求
+#   **Theme 里出现的每一个颜色都等于某个 `const C_*`** ⇒ 透明也得是一个具名 token,
+#   不能在 `.tres` 里裸写 `Color(0, 0, 0, 0)`(那样守卫会红,且红得有道理)。
+#   ⚠ 它**不是** `C_PLATE`(黑 0.1 的半透明底板,给 HUD 上的文字垫底用,语义不同)。
+const C_TRANSPARENT := Color(0, 0, 0, 0)
+
 # ── 断线「掉线中」语义色(阶段 3,2026-09-28)──
 # **只**给「某人掉线中,还在宽限期内、可能会回来」这一个语义用。
 # ★ 为什么不复用现成的三档:`C_WARN`(金)被钉死为「弹夹见底」单一语义;`C_DANGER`(红)已表
