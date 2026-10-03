@@ -28,10 +28,18 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(TOOLS)
 
 # 不参与检查的目录(引擎缓存 / 工具产物 / 归档)
+# ★ 这张表必须与 .gitignore 对齐:表里没有、而 .gitignore 有的目录(如 releases/ 的归档名
+#   形如 `The Cyancular Ruins v.1.1.4 …`、_crashtest/ 的一次性现场)会让本检查在**干净工作树**
+#   上也恒 FAIL —— 2026-10-03 实测 5 条 A 类违规全来自这两个目录,与代码无关。
 SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
-             "__pycache__", "docs", "assets"}
+             "releases", "_crashtest", "__pycache__", "docs", "assets"}
 # 文档路径检查的对象(仓库根的三份文档)
-DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"]
+# 文档路径检查的对象(仓库根的三份文档 + `CLAUDE.md` 拆出来的分域文档)
+DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"] + [
+    "docs/eng/%s.md" % n
+    for n in ("world", "enemies", "weapons", "player", "render", "ui",
+              "netplay", "modes", "tests", "tools", "registered-debt")
+]
 # 被文档引用时检查存在性的扩展名
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
@@ -99,7 +107,9 @@ def check_class_names() -> None:
 
 
 def check_doc_paths() -> None:
-    seen: set[str] = set()
+    # ★ 2026-10-03:`CLAUDE.md` 拆成索引之后,正文住 `docs/eng/*.md`。**分域文档必须继续被本检查覆盖**
+    #   —— 否则"文档引用的路径必须存在"这条会在拆分那一刻**静默失效**(最常见的那种假绿)。
+    seen: dict[str, str] = {}          # tok → 引用它的文档(报错要点名)
     for doc in DOC_FILES:
         full = os.path.join(PROJECT, doc)
         if not os.path.exists(full):
@@ -107,7 +117,7 @@ def check_doc_paths() -> None:
             continue
         text = open(full, encoding="utf-8", errors="replace").read()
         # ① 反引号里的带扩展名文件路径。
-        #    ★ 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 CLAUDE.md 的
+        #    ★ 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 docs/eng/tests.md 的
         #      `kh_l1/l3/l4/l5_probe.tscn`(指 kh_l1_probe / kh_l3_probe / …),那不是路径。
         #      代价:整段目录名都写错的那种(首段也不存在)① 会漏,由 ② 的裸目录检查兜。
         for tok in re.findall(r"`([A-Za-z0-9_./-]+)`", text):
@@ -117,13 +127,13 @@ def check_doc_paths() -> None:
                 continue
             head = tok.split("/", 1)[0]
             if os.path.isdir(os.path.join(PROJECT, head)):
-                seen.add(tok)
+                seen.setdefault(tok, doc)
         # ② 代码块里以 `dir/` 开头的裸目录名(README 的「目录」段就是这种写法)
         for tok in re.findall(r"^\s*([a-z_]+/)\s", text, re.M):
-            seen.add(tok)
+            seen.setdefault(tok, doc)
     for tok in sorted(seen):
         if not os.path.exists(os.path.join(PROJECT, tok.rstrip("/"))):
-            _fail.append("C %s 引用了不存在的路径: %s" % ("/".join(DOC_FILES), tok))
+            _fail.append("C %s 引用了不存在的路径: %s" % (seen[tok], tok))
 
 
 def check_tscn() -> None:

@@ -77,7 +77,7 @@ func _begin_case(jitter_ms: float) -> void:
 	_rep = REPLICA_SCENE.instantiate()
 	# ★ 空载守卫(与 squash_replica_probe 同款):`player_replica.gd` 一旦解析不过,
 	#   tscn 的根会退化成裸 Node2D —— 场景照样加载、一行判据都不打印、退出码还是 0,
-	#   那正是 CLAUDE.md 记的"看着像功能坏了"的形态。这里把它变成一条响亮的 FAIL。
+	#   那正是 docs/eng/tests.md 记的"看着像功能坏了"的形态。这里把它变成一条响亮的 FAIL。
 	if not _rep.has_method("apply_snapshot"):
 		_fail("PlayerReplica 脚本没加载起来(解析错?根节点是 %s)" % _rep.get_class())
 		return

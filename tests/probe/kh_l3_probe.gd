@@ -423,7 +423,7 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	#   (每物理帧由 delta 驱动武器 tick),只是实参带上了时间倍率。
 	#   故放宽到前缀 `weapons.tick(delta`:仍然钉住"由 delta 驱动、且是本文件在驱动"
 	#   (写死常数、换别的变量、或干脆不驱动,照样红)。
-	#   ★ 纪律:重构撞红源码级守卫时**改探针认新入口**,别回退生产代码(见 CLAUDE.md 的
+	#   ★ 纪律:重构撞红源码级守卫时**改探针认新入口**,别回退生产代码(见 docs/eng/tests.md 的
 	#     「源码级探针」纪律)。
 	_check(pl_src.contains("weapons.tick(delta"), "player.gd 不再每物理帧驱动 weapons.tick(delta…)(带时间倍率的实参也算)")
 

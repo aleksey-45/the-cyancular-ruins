@@ -184,7 +184,7 @@ const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
 #   把"持续/灼烧型"列为**预定扩展位**,而那种实现是"命中时写一次归因、后续帧再扣血":扣血
 #   那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人伤害恒少且不报错
 #   (没有断言、没有日志,只是 ACS 偏低)。写端不重写归因的话,这条阈值就是那个扩展位的唯一提示。
-#   ★ 本段随常量一起从 `team_host.gd` 搬来(`CLAUDE.md` 的 3v3 小节原先把它的权威落点
+#   ★ 本段随常量一起从 `team_host.gd` 搬来(`docs/eng/modes.md` 的 3v3 小节原先把它的权威落点
 #     指在 `team_host.gd` 的 `ATTRIB_FRESH_MS` 上方 —— 那处指针已随本批改到**这里**)。
 const ATTRIB_FRESH_MS := 8
 
@@ -436,7 +436,7 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 	#        与这条推理无关。今天 `same_team` 就是等价比对,故如实登记、不加断言。
 	# ★ 本条**刻意不新增断言**:再加一条"源码里不得出现 `same_team(attacker, victim_role)`"
 	#   的文本守卫,恰好是本仓点过名的**失明高发形态**(见 `tests/lib/probe_base.gd` 的**文件头**,
-	#   以及 `CLAUDE.md` §测试 里那条「`grep ALL-OK` 只证明**没有任何断言失败**、**不证明
+	#   以及 `docs/eng/tests.md` 里那条「`grep ALL-OK` 只证明**没有任何断言失败**、**不证明
 	#   每条断言都跑过**」)。★ 这里按**内容**指路而不写行号 —— 行号会漂,内容不会。
 	#   前提已被 (k4) 从**行为**面钉住。
 	# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ **天然拿不到任何助攻**,

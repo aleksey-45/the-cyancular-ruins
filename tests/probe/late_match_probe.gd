@@ -41,7 +41,7 @@ extends Node
 #        本文件只覆盖了 `_enter_grace` **本体**(③b 手工喂 `_host`);那行共享条件
 #        (`if _royale or _team_mode:`)的**真链路**验证走的是大乱斗那一支,3v3 侧实际没有被
 #        跑过一次 —— 而唯一覆盖 3v3 真链路的 `tests/probe/team_match_probe` 是**既有的 FAIL**
-#        (见 CLAUDE.md §测试)。⇒ 这一格今天**没有可信的守卫**。
+#        (见 docs/eng/tests.md)。⇒ 这一格今天**没有可信的守卫**。
 #
 # 手法照 `tests/probe/death_drop_probe.gd`:真建宿主、**role_peers 传空**(不建玩家、不排 peer、
 # 广播静默早退),玩家由本探针自己摆进 `host.players`,宿主自己的物理帧关掉(只手动推状态机)。
@@ -416,7 +416,7 @@ func _phase_royale_winner() -> void:
 	#   —— 实测改前就是**绿**的 ⇒ 那样 ④ 会是一条**恒绿摆设**,照不出本次要修的病。
 	#   `tie` 要成立得有 **≥2 个候选共享最高分**,故病只在「**幸存者只剩一个**」时现形:
 	#   他是唯一候选 ⇒ 没有第二个候选能置 `tie` ⇒ **独胜**,而那个 0 杀离开者本该让他无法独胜。
-	#   这正是 CLAUDE.md 记的那句「从 `0`(平局)**翻成**幸存的那个 role」。
+	#   这正是 docs/eng/modes.md 记的那句「从 `0`(平局)**翻成**幸存的那个 role」。
 	#   故 ④ 让 3 人里走 2 人(第二次退出才会 `players.size() < 2` ⇒ 真走 `_finish_match`,
 	#   与生产里"最后一个对手离开触发终局"是**同一条**路径)。
 	var h1: Node = _mount("royale", [1, 2, 3])

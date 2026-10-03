@@ -7,7 +7,7 @@ extends Node
 #  4) 冲刺撞水平墙:is_charge 提前清 false(未冲满 0.4s)且 velocity.x≈0。
 #  5) 空中冲刺重力削减:空中单 tick 的 vy 增量 ≈ gravity*charge_air_gravity_mult*dt,
 #     明显小于不冲刺时的 gravity*dt。
-# 跑法:用户自跑(见 move_feel_smoke.sh / CLAUDE.md)。通过 = SMOKE_MOVE_FEEL OK。
+# 跑法:见 move_feel_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。通过 = SMOKE_MOVE_FEEL OK。
 
 const BIT_UP := PacketInputSource.BIT_UP
 const BIT_DOWN := PacketInputSource.BIT_DOWN

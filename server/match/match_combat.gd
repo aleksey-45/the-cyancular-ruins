@@ -210,7 +210,7 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 	#     ((a) 干净子弹链进 dealt/taken;(b) 自伤标记被这一笔当场作废)。
 	#   ★ `RoyaleHost` / `TeamHost` 的同名覆写**仍然留着**:它们与这里现在写法重复,
 	#     而 `attribute()` 是幂等的纯元数据写入,重复调用无害;删它们会一并作废
-	#     CLAUDE.md 与 `team_host_probe` 上以那两处覆写为锚点的整段登记 —— 不值得。
+	#     docs/eng/modes.md 与 `team_host_probe` 上以那两处覆写为锚点的整段登记 —— 不值得。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)

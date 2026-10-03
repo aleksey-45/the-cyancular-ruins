@@ -455,7 +455,7 @@ func reset_mag_state() -> void:
 #   而 `_restore_mag` 这条帧末写回本身已随 `pending_mag` 一起删除(回滚不再抹掉弹数)。
 #   且全仓**没有任何生产调用点**(复活满弹由 `Level0.restart_single` 统一重置背包)。
 #   ⚠ 删掉 `_restore_mag` **不等于**弹数有了常规纠正路径:`_close_enough` 仍不比 `mag`,
-#     `sync_soft_state` 的指纹只比结构 ⇒ 非回滚来源的弹数分歧仍会静默保留(见 CLAUDE.md 武器小节)。
+#     `sync_soft_state` 的指纹只比结构 ⇒ 非回滚来源的弹数分歧仍会静默保留(见 docs/eng/weapons.md)。
 
 
 func current_weapon() -> WeaponBase:

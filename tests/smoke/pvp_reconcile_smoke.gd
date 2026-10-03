@@ -61,7 +61,7 @@ func _ready() -> void:
 	P.set_physics_process(false)
 	ctrl.bind(P)
 	# 两边给同一个起始背包:否则"事件后两边不一致"这条判据分不清是事件造成的还是开局就有的。
-	# (player.tscn 自身 _ready 给的是空背包 —— 见 CLAUDE.md「服务器玩家必须有枪」那一段)
+	# (player.tscn 自身 _ready 给的是空背包 —— 见 docs/eng/weapons.md「服务器玩家必须有枪」那一段)
 	A.weapons.set_initial_inventory([1])
 	P.weapons.set_initial_inventory([1])
 	print("[reconcile] D=%d E=%d 计划 %d tick" % [DELAY, EVENT_TICK, TOTAL])

@@ -332,7 +332,7 @@ func _match_round_tick(delta: float) -> void:
 		# ★★ 记分(**无归因**的队分)与上面那笔逐人 `kills`(**有归因**)是**两条账**:
 		#   溺水/自杀/队友误炸这几档让**队分 +1 而没有任何人记 `kills`** ⇒ 结算页的逐人
 		#   击杀之和**不等于**记分条上的队分。这是**刻意保留**的形状(三模式的三种组合见
-		#   CLAUDE.md 的「3v3 一条新登记的差异」);**别拿结算页的击杀数去核对记分条**。
+		#   docs/eng/modes.md 的「3v3 一条新登记的差异」);**别拿结算页的击杀数去核对记分条**。
 		var scorer := _enemy_team_of(int(role))
 		if scorer != 0:
 			_scores[scorer] = int(_scores.get(scorer, 0)) + 1

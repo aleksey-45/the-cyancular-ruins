@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # C2 孪生冒烟(单进程,scene 模式 headless):证明 capture_state/restore_state 完整。
 # 通过 = 打印 SMOKE_TWIN OK 退出 0;B 每 12 tick 被搞乱后 restore(A) 仍与 A 逐 tick 收敛。
-# 用户自跑:bash Tests/pvp_twin_smoke.sh(CLAUDE.md 约定测试由用户自己跑)。
+# 跑法:bash Tests/pvp_twin_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。
 set -u
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"

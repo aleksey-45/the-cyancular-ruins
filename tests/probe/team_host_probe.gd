@@ -1687,7 +1687,7 @@ func _run() -> void:
 	#      —— 多出来的那个 `[]` 顶掉了第 5 个实参的位置,是同一次写错的第二条诊断)
 	#     `ERROR: Failed to load script "res://tests/probe/team_host_probe.gd" with error "Parse error".`
 	#   ⇒ 场景根**没有脚本** ⇒ **一行都不打印**(实测整跑 **8 行**输出、`TEAM HOST:` 零命中)、
-	#   `--quit-after` 到点照常 `EXIT=0` —— 正是 CLAUDE.md 记的那档"与超时在退出码上不可分"。
+	#   `--quit-after` 到点照常 `EXIT=0` —— 正是 docs/eng/tests.md 记的那档"与超时在退出码上不可分"。
 	#   ★ 它**不是假绿**(判据是 grep `TEAM HOST: ALL-OK`,拿不到就判红),但**150 条断言一条都跑不到**;
 	#   而 `_ran_to_end` 那道闸**兜不住它** —— 那道闸只管 `_run()` 里的**运行期**中断,管不了脚本加载失败。
 	#   ★ 上面这段来自**故意写成 7 个实参**的一次试跑(不是 brief 的缺陷:brief 与计划里原文都

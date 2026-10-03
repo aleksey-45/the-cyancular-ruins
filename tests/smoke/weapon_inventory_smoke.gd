@@ -6,7 +6,7 @@ extends SceneTree
 # 通过 = `WEAPON_INVENTORY OK` 退出 0。
 #
 # ★ 在 _initialize() 里 load(),不用全局类名 —— 与 tile_query_smoke 的写法一致,
-#   且 -s 阶段类名缓存不保证已就绪(见 CLAUDE.md「测试」一节)。
+#   且 -s 阶段类名缓存不保证已就绪(见 docs/eng/tests.md)。
 #
 # ═══ 为什么需要它 ═══
 # 背包有**两条独立的闸门**:8 格容量 与 4 把上限(用户 2026-09-15 明确裁定

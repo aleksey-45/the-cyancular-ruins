@@ -245,7 +245,7 @@ func _begin(stage: int) -> void:
 	# ★ 空载守卫:`player_replica.gd` 一旦**解析不过**(语法错/被改坏),tscn 的根就退化成
 	#   一个裸 Node2D —— 场景照样加载、`_physics_process` 照样跑,但每帧刷
 	#   "Nonexistent function 'apply_snapshot'",而**一行判据都不会打印、退出码还是 0**。
-	#   那正是 CLAUDE.md 记的"看着像功能坏了"的形态(实测踩到过:变异 ③ 的锚点写歪成语法错)。
+	#   那正是 docs/eng/tests.md 记的"看着像功能坏了"的形态(实测踩到过:变异 ③ 的锚点写歪成语法错)。
 	#   这里把它变成一条响亮的失败。
 	if not _rep.has_method("apply_snapshot"):
 		_dead = true

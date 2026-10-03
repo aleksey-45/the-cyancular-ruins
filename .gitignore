@@ -20,12 +20,8 @@
 Thumbs.db
 desktop.ini
 
-# 编辑器工具产物
-editor/_build/
-
 # 构建产物与杂项
 *.exe
-test
 
 # 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/
@@ -44,6 +40,11 @@ DevTools/
 gamelogs/
 .zcode/
 .mimosa/
+
+# 会话运行账本(逐任务 brief/report/进度;入库的 spec 与 plan 在 docs/superpowers/,别混淆)
+# 原先只靠 .superpowers/.gitignore 里那行 `*` 生效 —— 规则藏在一个不入库的嵌套文件里,
+# 从根 .gitignore 上看不出来 ⇒ 挪到这里当**唯一可发现的落点**(嵌套那两份留着不影响)。
+.superpowers/
 
 # 崩溃/对比现场的临时草稿目录(反汇编 dump、旧文件备份、一次性脚本;101MB 级,不入库)
 # ★ 2026-10-03 加:它此前既没被忽略、又不会被 Godot 的 `.gdignore` 挡住(根上那个 `.gdignore`

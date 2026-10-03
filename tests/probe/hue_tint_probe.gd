@@ -23,7 +23,7 @@ extends ProbeBase
 #   · 守卫 C 是**反向**的:大乱斗必须**继续**消费 peer_hues(别被"1v1 停用"顺手删掉)。
 #   · 守卫 E(2026-09-21,用户报「3v3 青队玩家还是看见自己是蓝色的」):3v3 的**自己**那具
 #     必须也是队色 —— 它此前传的是 `Settings.pvp_color_hue`(默认 0 = 不改色 ⇒ 身体恒为本体蓝
-#     = 队 1 色)。这条同时补上 CLAUDE.md 登记过的那个**守卫缺口**(`team_game` 把颜色来源改错时
+#     = 队 1 色)。这条同时补上 docs/eng/modes.md 登记过的那个**守卫缺口**(`team_game` 把颜色来源改错时
 #     **一个探针都不会红**):① 走生产的 `_refresh_team_colors()` 看像素;② `team_game.gd` 对
 #     `pvp_color_hue` 零引用;③ 颜色钩子必须消费 `teams` 且不进 `_apply_peer_hues`。
 #

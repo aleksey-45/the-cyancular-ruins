@@ -2,7 +2,7 @@ extends Node
 # C2 孪生冒烟(scene 模式 headless,autoload 在):证明「整态捕获/恢复」完整——
 # B 每 K tick 被强行搞乱后再 restore_state(A 快照)+ 同输入继续,必须与从不被打断的 A 逐 tick 收敛。
 # 漏一个 capture_state 字段 → B 重放与 A 发散 → 冒烟失败(capture/restore 见 player.gd)。
-# 跑法:用户自跑(见 Tests/pvp_twin_smoke.sh / CLAUDE.md)。
+# 跑法:见 Tests/pvp_twin_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。
 # 注意:本冒烟驱动「移动/攀爬/游泳 + 周期开火」输入(开火让孪生覆盖到「回滚恢复期间开火」
 # 这个面,见 _build_plan),场景模式= autoload 已实例化(GameParameters 等)。
 # ★ 它**不**覆盖 C1(「restore 之后同帧打出的那一发会不会被帧末写回抹掉」)—— 那条判据

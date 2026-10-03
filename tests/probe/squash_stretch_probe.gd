@@ -31,7 +31,7 @@ const COL_DX := 500.0             # 三栏在**屏幕**上的横向间距(px)
 # 世界尺寸 = 20×2.5 × 48×2.5 = 50×120。
 # ★ 必须是 `var` 不是 `const`:`PackedVector2Array([...])` 不是 GDScript 的常量表达式,
 #   写成 const 会**解析期报错** —— 而场景探针的脚本解析失败时场景根没有脚本、
-#   一行都不打印也不退出("看着像功能坏了"的那个形态,见 CLAUDE.md 的 `--quit-after` 说明)。
+#   一行都不打印也不退出("看着像功能坏了"的那个形态,见 docs/eng/tests.md 的 `--quit-after` 说明)。
 var _probe_poly := PackedVector2Array([
 	Vector2(-10.0, -24.0), Vector2(10.0, -24.0), Vector2(10.0, 24.0), Vector2(-10.0, 24.0),
 ])
@@ -197,7 +197,7 @@ func _ready() -> void:
 	#     `player.tscn` 只设了 `texture_filter`,故 `centered = true` 生效),所以挤压时画出来的
 	#     底边会上抬 ~4~5px、拉伸时下沉 ~3.5px。用 `offset` 反向补正能让脚底钉住 —— 但那既破了
 	#     "只写 `animator.scale`"的约束,又**没有任何别的探针看得见**(偏移是精灵内部量:
-	#     `global_position` ③ 与碰撞箱 ③b 都不动)。CLAUDE.md 有这条登记(判为真现象非缺陷)。
+	#     `global_position` ③ 与碰撞箱 ③b 都不动)。docs/eng/render.md 有这条登记(判为真现象非缺陷)。
 	#     三栏一起判:参照栏也走同一条 `_apply()`,漏一栏就等于给它留了后门。
 	_ok(spr_neutral.offset == Vector2.ZERO and spr_stretch.offset == Vector2.ZERO
 			and spr.offset == Vector2.ZERO,

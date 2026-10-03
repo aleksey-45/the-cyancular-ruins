@@ -96,4 +96,4 @@ assets/   字体(含中文像素字体 unifont)与纹理
 tools/    发布/控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)
 ```
 
-技术细节(环面数学/敌人 AI/网络协议/发布)见 `CLAUDE.md` 与 `RELEASE.md`。
+技术细节见 `CLAUDE.md`(索引,**分域正文在 `docs/eng/`**)与 `RELEASE.md`。
