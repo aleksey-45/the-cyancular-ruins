@@ -1,11 +1,261 @@
-[gd_scene load_steps=2 format=3 uid="uid://settingsmenu0001"]
+[gd_scene load_steps=3 format=3 uid="uid://settingsmenu0001"]
 
 [ext_resource type="Script" uid="uid://ddfd2jie3xq7c" path="res://scenes/settings_menu.gd" id="1_settings"]
 
-[node name="SettingsMenu" type="Control"]
+[ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_m75q5"]
+
+[node name="SettingsMenu" type="Control" unique_id=1919206049]
+layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme = ExtResource("1_m75q5")
 script = ExtResource("1_settings")
+
+[node name="ColorRect1" type="ColorRect" parent="." unique_id=251367514]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.07, 0.09, 0.13, 1)
+
+[node name="MarginContainer1" type="MarginContainer" parent="." unique_id=270283666]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 76
+theme_override_constants/margin_top = 76
+theme_override_constants/margin_right = 76
+theme_override_constants/margin_bottom = 76
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1" unique_id=1517104013]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1" unique_id=2097841753]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/PanelContainer1" unique_id=1334456086]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
+theme_override_font_sizes/font_size = 48
+text = "—— 设 置 ——"
+
+[node name="HBoxContainer1" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=70617914]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 32
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1" unique_id=714412506]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"PanelCarved"
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1" unique_id=356701066]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1" unique_id=2113680005]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=603883531]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/PanelContainer1" unique_id=1032025103]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "音量"
+
+[node name="HBoxContainer1" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=1951873192]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer1" unique_id=1818860257]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "主音量"
+vertical_alignment = 1
+
+[node name="MasterSlider" type="HSlider" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer1" unique_id=481734198]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.05
+value = 0.8
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=1595841689]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer2" unique_id=1698006034]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "音效"
+vertical_alignment = 1
+
+[node name="SfxSlider" type="HSlider" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer2" unique_id=1179983555]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.05
+value = 0.7
+
+[node name="PanelContainer2" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=927921410]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/PanelContainer2" unique_id=1540562464]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "通用"
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=702510327]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer3" unique_id=605658247]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "鼠标滚轮切枪"
+vertical_alignment = 1
+
+[node name="WheelCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer3" unique_id=724459223]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+button_pressed = true
+
+[node name="PanelContainer3" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=1072665469]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/PanelContainer3" unique_id=589992333]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "联机显示"
+
+[node name="HBoxContainer4" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=760198556]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer4" unique_id=1072503615]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "显示子弹尾迹(所有子弹)"
+vertical_alignment = 1
+
+[node name="TrajCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer4" unique_id=1198323508]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+button_pressed = true
+
+[node name="HBoxContainer5" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=787802548]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer5" unique_id=1101644440]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "显示敌方血量条"
+vertical_alignment = 1
+
+[node name="EnemyHpCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer5" unique_id=80675034]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+button_pressed = true
+
+[node name="HBoxContainer6" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=183834605]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer6" unique_id=1859579056]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "打开小地图"
+vertical_alignment = 1
+
+[node name="MinimapCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer6" unique_id=282516320]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+button_pressed = true
+
+[node name="HBoxContainer7" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=1671031777]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer7" unique_id=1255667032]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "小地图显示敌方位置"
+vertical_alignment = 1
+
+[node name="MinimapEnemyCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer7" unique_id=876565614]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+button_pressed = true
+
+[node name="PanelContainer2" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1" unique_id=1543336871]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"PanelCarved"
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2" unique_id=188099777]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2/PanelContainer1" unique_id=1656641926]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2/PanelContainer1/VBoxContainer1" unique_id=1225203487]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2/PanelContainer1/VBoxContainer1/PanelContainer1" unique_id=661827179]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "按键映射(点击后按新键;Esc 取消)"
+
+[node name="BindGrid" type="GridContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer2/PanelContainer1/VBoxContainer1" unique_id=80255559]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/h_separation = 18
+theme_override_constants/v_separation = 6
+columns = 2
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=2115634731]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="ResetBtn" type="Button" parent="MarginContainer1/VBoxContainer1/HBoxContainer2" unique_id=1186116895]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 72)
+layout_mode = 2
+theme_type_variation = &"BtnLegacyQuiet"
+text = "恢复默认键位"
+
+[node name="BackBtn" type="Button" parent="MarginContainer1/VBoxContainer1/HBoxContainer2" unique_id=1241969327]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(280, 72)
+layout_mode = 2
+theme_type_variation = &"BtnLegacy"
+text = "返 回(Esc)"

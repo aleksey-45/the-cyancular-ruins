@@ -43,7 +43,7 @@ static func style_control(c: Control, size: int) -> void:
 		c.add_theme_font_override("font", pf)
 
 
-static func label(text: String, size: int, color: Color = Color.WHITE) -> Label:
+static func label(text: String, size: int, color: Color = C_WHITE) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_color_override("font_color", color)
@@ -99,6 +99,12 @@ const C_ACCENT      := Color(0.349, 0.851, 0.902)   # 强调青 #59D9E5
 const C_DANGER      := Color(0.900, 0.400, 0.400)
 const C_TEXT        := Color(0.878, 0.914, 0.949)
 const C_TEXT_DIM    := Color(0.510, 0.573, 0.639)   # 占位符/说明文字
+# 纯白:`UiFactory.label()` 的**默认**字色(未显式给色的调用点拿到的就是它)。
+# ★★ 它**不是** `C_TEXT` —— `C_TEXT` 略带蓝(0.878/0.914/0.949),纯白是 (1,1,1),
+#    单通道差 0.122。两者**别"统一"**:把某个原本走默认色的调用点换成 `C_TEXT`,
+#    在深底上肉眼几乎看不出,但迁移的判据是**逐像素**,实测当场差 9220 个像素
+#    (2026-10-03 设置页迁移踩过 —— 键位表那 11 个动作名)。
+const C_WHITE       := Color(1, 1, 1)
 const C_WARN        := Color(0.950, 0.850, 0.550)   # 金色:**只**用于「低弹量/耗尽」语义
 
 # ── 模式色(2026-10-03,大厅合一)──
