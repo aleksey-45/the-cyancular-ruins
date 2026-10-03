@@ -2,35 +2,36 @@ shader_type canvas_item;
 
 // 主菜单背景:把一张地图(新版 factory,`maps/newfactory.cyrm`)的**真实地形图**
 // (由 `TerrainAtlas.bake_map_image` 用与 Level0 同一份图集烘出来 —— 砖是 structure.png
-// 的砖、水是水、树叶是树叶)铺满全屏,叠一层 **鱼眼镜头** 透视 + 缓慢漂移 + 慢速旋转
-// + 边缘径向色差。
+// 的砖、水是水、树叶是树叶)铺满全屏,叠一层 **鱼眼镜头** 透视 + 随机路径段的平移 +
+// 同一段时间里的慢速旋转 + 边缘径向色差。
 //
 // ★ 为什么是 shader 而不是"缩略图缩放":
-//   鱼眼是**逐像素的径向重映射**,不是整体缩放;漂移/旋转必须逐帧跟时间走。两者都要求
+//   鱼眼是**逐像素的径向重映射**,不是整体缩放;平移/旋转必须逐帧跟着镜头走。两者都要求
 //   在采样阶段改 uv,纹理本身不动。
 // ★ 环面自洽:本作的世界本来就是环面(左右/上下无缝回绕),所以采样越界时用
-//   `repeat_enable` **绕到地图另一头**正好与世界观一致 —— 旋转/漂移把镜头推出图外时,
+//   `repeat_enable` **绕到地图另一头**正好与世界观一致 —— 镜头被推出图外时,
 //   露出的也是这个世界本身,不会是空白边或拉伸条纹。
 // ★ 本 shader **只服务主菜单背景**,与对局内的 `post_process.gdshader` 无关:
 //   改这里不会碰任何一局游戏的一个像素。
 //
 // ── 镜头运动:两个量由**脚本每帧喂**(main_menu.gd)──────
-//   `drift_offset` / `rot_angle` 不是在 shader 里用 TIME 算的,理由有两条:
-//     · "随意"(非周期)要的是**噪声**轨迹,而 GDShader 里没有噪声函数;用几层正弦叠加
-//       再怎么做也终究会绕回同一个圈 —— 那是用户点名的"机械感"。
-//     · 脚本侧用 `FastNoiseLite` 采样,种子固定 ⇒ 每次进菜单是**同一段**轨迹(可复现),
-//       又**永不重复**。旋转角是逐帧**积分**出来的(角速度 = 基准 + 噪声调制),
-//       所以角速度连续 ⇒ 角度 C¹ 连续,**不会跳**。
+//   `view_center`(视野中心,格坐标)/ `rot_angle` 不是在 shader 里用 TIME 算的,理由有两条:
+//     · 运动是"**随机路径段**":随机取一个目标点(地图中央 60% 那块矩形里)⇒ 缓入缓出
+//       地移过去(到点速度 → 0),同一段时间里再转 120°,到点后生成下一段。段与段的
+//       位置/角度都**连续**(段末速度也是 0,段间的角度是**累加**),不许跳。
+//     · 这类"随机 + 段 + 缓动"在 GDShader 里没有对应的东西(没有随机数、也没有"段"的概念),
+//       所以运动学住在脚本里,每帧把两个 uniform 喂进来。
 //   ⇒ shader 只管"把坐标怎么映射",运动学住在脚本里(见 main_menu.gd 的 _process)。
 //
 // ── 各量的取值与理由(都是**看实图调的**,记录在这里免得下次再猜)──
-//   · `view_w_cells = 20` —— 屏幕**横向**铺 20 格 ⇒ 1920/20 = **96 屏幕像素/格**
-//     (= 玩家镜头 48px/格 的 **200%**,用户 2026-10-03 最终口径)。
+//   · `view_w_cells = 26.6667` —— 屏幕**横向**铺 26.67 格 ⇒ 1920/26.67 = **72 屏幕像素/格**
+//     (= 玩家镜头 48px/格 的 **150%**;用户 2026-10-03 的口径链:500% → 200% → 150%)。
 //     ★ 这是**由材质每个菜单实例显式设的**(`main_menu.gd` 的 `BG_VIEW_CELLS`),
 //       这里的默认值只保证"没人设时也是个合理的值"。
-//     ★ 它必须与烘图分辨率**配套**:当前 96 / 32 = **3×** 整数倍 ⇒ 每个**源像素**
-//       (源砖是 32×32,一格即一块砖)落到 3×3 个屏幕像素上,砖缝粗细均匀(像素完美)。
-//       改成非整数倍(比如 240/32 = 7.5,或旧写法 96/64 = 1.5)会让某些砖缝粗一格、某些细一格。
+//     ★ 它与烘图分辨率**不配套了**:72 / 32 = **2.25×**(非整数)⇒ 源砖的一个像素时而
+//       占 2 个、时而占 3 个屏幕像素,砖缝**粗细略有不均**。★ 整数倍的邻近档只有
+//       64px/格(≈133%)与 96px/格(200%)—— **要不要为像素完美牺牲"150%"这个数由用户定**,
+//       改 `main_menu.gd` 的 `BG_VIEW_CELLS` 一个常量即可,shader 这边不用动。
 //   · `fisheye = 0.85` —— r' = r·(1+k·r²)。屏幕边缘(半屏宽 0.5 处)采样到的源半径约
 //     放大到 1.11 倍 ⇒ 中心的方块相对"鼓"出来;横贯画面的长条地板会**明显弯**(实图里
 //     就是靠它读出来的)。实测 0.40/0.55 在块状地形上读不太出来(方块大小本就不一,
@@ -39,32 +40,32 @@ shader_type canvas_item;
 //   · `breathe_amp = 0.012` —— 整幅轻微胀缩,让静止时也有"活着"的感觉(≈1.2%)。
 //   · `aberration = 0.02` —— 红/蓝通道各取 ±2% 的鱼眼强度 ⇒ 越靠边分色越明显(边缘约 5px)。
 //     这是"奇怪的镜头"那一点非常规;选它是因为它**不引入任何新色值**(纯通道偏移)。
-//   · `dim / desat / vignette` —— 让背景**在文字后面退下去**。★ 2026-10-03 重调:
-//     底色从"近黑深蓝"换成**对局那个清屏色 `TerrainAtlas.SKY_COLOR`**(#B0E5F6,用户点名
-//     "背景颜色要和局内一致")之后,原来的 0.50/0.30/0.45 太亮 —— 标题的强调青
-//     (`UiFactory.C_ACCENT` #59D9E5)与天空是**同一个色相**,天空一旦亮起来就压不住字了。
-//     现在整幅压到 **0.36**、去饱和 **0.25**、边缘再压 **0.55**。
-//     ★★ 这是**取舍,不是"照搬了 #B0E5F6"**:天空 #B0E5F6 的相对亮度是 0.86,乘 0.36 之后
-//     落到 ≈0.30(相对亮度),**压暗到原色的三成半** —— 换来标题在它上面仍有对比
-//     (画面正中天空处 ≈ (0.248,0.323,0.347));去饱和刻意只留 0.25,是**为了保住那点青色**
-//     (压暗已经让它变灰,再去饱和就真成"另一个世界"了)。
-//     ★ 实测取图(WIDTH 1920):天空落点亮度约 0.25,标题(C_ACCENT,亮度 0.75)对比度
-//     ≈2.6:1 —— 低于 WCAG 大字的 3:1,但标题是 96px 粗体 + 12px 同色描边(笔画本身极粗),
-//     实图上清楚可读(见 `.superpowers/sdd/_l4_1_mainmenu.png`)。★ 再往上调 `dim` 会
-//     先牺牲标题、再牺牲副信息(`C_TEXT_DIM`);再往下调则天空越来越不像"白天"。
-//     ★ 按钮不受影响 —— 它们有自己的**不透明**面板(见 §UI 的底板纪律)。
+//   · `dim` —— ★★ **黑色遮罩的"不透明度"**(`col = mix(col, black, dim)`),**不是乘数**。
+//     `0` = 完全不压、`1` = 全黑。**改语义这件事本身就是一次修复**:早先写成 `col *= dim`
+//     (即 dim = "保留多少亮度"),而**用户的心智模型一直是"黑色滤镜的浓度"** ——
+//     于是他每次说"太黑,调小一点"(0.36 → 0.25 → 0.20 → 0.15)实际都让画面**更暗**,
+//     这正是"为什么还是好黑"的答案。现在按他的模型写,数字才同向可控。
+//     当前 **0.15**(用户点名的数)⇒ 只压 15%。
+//   · `vignette` —— 同一件事的**径向**版:边缘再叠一层黑色遮罩(中心 0、外圈到 `vignette`)。
+//     ★ 它是"整体看着黑"的**第二**个贡献者(四角被压得最狠),故随 dim 一起从 0.45 收到 **0.30**。
+//   · `desat` —— 去饱和(往亮度混)。它只改"彩度",对亮度影响可忽略,故保持 **0.20**。
+//   · `blur_radius` —— 背景虚焦半径(**屏幕像素**)。0 = 关。★ 与取景(`view_w_cells`)
+//     是**两个独立量**:模糊是"镜头虚焦",取景是"看多远",别耦合。
+//   · 按钮不受影响 —— 它们有自己的**不透明**面板(见 §UI 的底板纪律)。
+
 
 uniform sampler2D map_tex : filter_nearest, repeat_enable;
 uniform vec2  map_size   = vec2(150.0, 100.0);  // 地图格数 (cols, rows)
-uniform float view_w_cells = 20.0;              // 屏幕**横向**覆盖多少格(材质侧显式设,见上)
+uniform float view_w_cells = 26.6667;              // 屏幕**横向**覆盖多少格(材质侧显式设,见上)
 uniform float fisheye    = 0.85;                // 径向重映射强度 r' = r·(1 + k·r²)
-uniform vec2  drift_offset = vec2(0.0);         // 平移(半屏宽为单位)—— 脚本每帧喂
+uniform vec2  view_center = vec2(75.0, 50.0);   // 视野中心(格坐标)—— 脚本每帧喂
 uniform float rot_angle  = 0.0;                 // 采样坐标旋转(弧度)—— 脚本每帧喂
 uniform float breathe_amp = 0.012;              // 呼吸缩放幅度(整幅轻微胀缩)
 uniform float aberration = 0.020;               // 边缘径向色差(纯粹是"怪镜头"感)
-uniform float dim        = 0.36;                // 整体压暗(见上:与 SKY_COLOR 的取舍)
-uniform float vignette   = 0.55;                // 边缘再压暗
-uniform float desat      = 0.25;                // 去饱和(往亮度混):背景不该比 UI 抢眼
+uniform float dim        = 0.15;                // **黑色遮罩的不透明度**(0=不压、1=全黑)
+uniform float vignette   = 0.30;                // 边缘再压暗(同样是"黑色遮罩",按半径)
+uniform float desat      = 0.20;                // 去饱和(往亮度混):背景不该比 UI 抢眼
+uniform float blur_radius = 4.0;               // 背景虚焦半径(**屏幕像素**;见文件头)
 
 
 vec2 rot2(vec2 v, float a) {
@@ -84,9 +85,28 @@ vec2 menu_sample_uv(vec2 cc, float strength) {
 	float r = length(c);
 	float rs = r * (1.0 + strength * r * r);
 	vec2 dir = c / max(r, 0.00001);
-	vec2 c2 = dir * rs + drift_offset;
-	vec2 cell = map_size * 0.5 + c2 * view_w_cells;   // 半屏宽单位 → 格坐标
+	vec2 c2 = dir * rs;
+	vec2 cell = view_center + c2 * view_w_cells;      // 半屏宽单位 → 格坐标(绕视野中心)
 	return cell / map_size;
+}
+
+
+// 邻居 tap 用:只做鱼眼 + 平移,**不算色差** —— 一次纹理采样。
+// ★ 色差只在**中心那一份**上算(见 fragment):否则 9 个 tap 每个都要 3 次采样、
+//   每像素 27 次;而色差本来就只影响边缘那几个像素,模糊之后差别看不出来。
+vec3 bg_sample(vec2 cc) {
+	return texture(map_tex, menu_sample_uv(cc, fisheye)).rgb;
+}
+
+
+// 中心那一份:三个颜色通道各取略微不同的鱼眼强度 ⇒ 边缘出现径向色差。
+vec3 bg_sample_ab(vec2 cc) {
+	float ab = aberration * smoothstep(0.22, 0.60, length(cc));
+	vec3 col;
+	col.r = texture(map_tex, menu_sample_uv(cc, fisheye * (1.0 + ab))).r;
+	col.g = texture(map_tex, menu_sample_uv(cc, fisheye)).g;
+	col.b = texture(map_tex, menu_sample_uv(cc, fisheye * (1.0 - ab))).b;
+	return col;
 }
 
 
@@ -97,18 +117,32 @@ void fragment() {
 	cc *= 1.0 + breathe_amp * sin(TIME * 0.113);      // 呼吸:整幅轻微胀缩
 
 	float r = length(cc);
-	float edge = smoothstep(0.22, 0.60, r);
 
-	// 三个颜色通道各取略微不同的鱼眼强度 ⇒ 边缘出现径向色差(越靠边越明显)。
-	float ab = aberration * edge;
+	// ── 背景虚焦(屏幕空间 3×3 高斯近似,权重 [1,2,1;2,4,2;1,2,1]/16)──
+	// ★ 放在**鱼眼之后、对最终颜色取邻近 tap** ⇒ 观感是"背景虚焦",不是"纹理糊了"
+	//   (对纹理本身模糊会被鱼眼二次拉伸:中心与边缘的糊法不一样)。
+	// ★ 步长是**屏幕像素**:cc 的一步 = SCREEN_PIXEL_SIZE(x)/PE(y)/aspect。
 	vec3 col;
-	col.r = texture(map_tex, menu_sample_uv(cc, fisheye * (1.0 + ab))).r;
-	col.g = texture(map_tex, menu_sample_uv(cc, fisheye)).g;
-	col.b = texture(map_tex, menu_sample_uv(cc, fisheye * (1.0 - ab))).b;
+	if (blur_radius < 0.5) {
+		col = bg_sample_ab(cc);
+	} else {
+		vec2 sp = vec2(SCREEN_PIXEL_SIZE.x, SCREEN_PIXEL_SIZE.y / aspect) * blur_radius;
+		col = bg_sample_ab(cc) * 4.0;
+		col += bg_sample(cc + vec2(sp.x, 0.0)) * 2.0;
+		col += bg_sample(cc + vec2(-sp.x, 0.0)) * 2.0;
+		col += bg_sample(cc + vec2(0.0, sp.y)) * 2.0;
+		col += bg_sample(cc + vec2(0.0, -sp.y)) * 2.0;
+		col += bg_sample(cc + vec2(sp.x, sp.y));
+		col += bg_sample(cc + vec2(-sp.x, sp.y));
+		col += bg_sample(cc + vec2(sp.x, -sp.y));
+		col += bg_sample(cc + vec2(-sp.x, -sp.y));
+		col /= 16.0;
+	}
 
-	col *= dim;                                        // 全局压暗
+	// 黑色遮罩(见文件头"dim 的语义")。
+	col = mix(col, vec3(0.0), dim);
 	// 去饱和:真实地形里有亮青的水、绿的树叶、灰蓝的砖 —— 原色直接铺在标题后面会抢视线,
-	// 往亮度混三成半,保留"这是哪张图"的色相线索,同时让它安静下来。
+	// 往亮度混一点,保留"这是哪张图"的色相线索,同时让它安静下来。
 	col = mix(col, vec3(dot(col, vec3(0.299, 0.587, 0.114))), desat);
 	col *= mix(1.0, 1.0 - vignette, smoothstep(0.28, 0.66, r));   // 边缘再压暗
 	COLOR = vec4(col, 1.0);

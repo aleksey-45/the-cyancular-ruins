@@ -57,7 +57,41 @@ func _ready() -> void:
 	_check_old_escape_menu_retired()
 	_check_new_api()
 	_check_multi_entry()
+	_check_menu_terrain()
 	_finish()
+
+
+# ── 7) 主菜单背景"真的是那个世界"────────────────────────────────────
+# 2026-10-03 起,主菜单背景 = **真实地形图**(与 Level0 同一份 `TerrainAtlas` 图集),
+# 而不是选图面板那套"每格一个平色"的示意缩略图(`MapCatalog.build_image`)。
+#
+# ★ 为什么这条必须是**源码级**的:两套实现在画面上都能出一张"铺满屏的地图" ——
+#   退化回 `MapCatalog.build_image` 时**没有任何行为断言会红**(它照样出图、照样被
+#   shader 漂移),只有"像素是不是那个世界的砖"要靠人眼;而人眼只在取图时才看。
+#   这条钉的是**接线**:菜单必须走 `TerrainAtlas.terrain_texture()`,且不许再碰缩略图入口。
+# ★ 它能给的最强保证 = "那两行调用在/不在";它**测不到** TerrainAtlas 内部烘出来的像素对不对
+#   (那由 `TerrainAtlas` 自己与 `-s` 探针管)。
+func _check_menu_terrain() -> void:
+	var menu := _code_only(_read("res://scenes/main_menu.gd"))
+	_check(not menu.is_empty(), "读不到 scenes/main_menu.gd")
+	var want := "TerrainAtlas." + "terrain_texture("
+	_check(menu.count(want) >= 1,
+			"主菜单背景必须走 %s(真实地形图);没找到 —— 怕是退回了简略色块图" % want)
+	var banned := "MapCatalog." + "build_image("
+	_check(menu.count(banned) == 0,
+			"主菜单不该再调 %s(选图面板的示意缩略图:每格一个平色,放大多少都不是那个世界)" % banned)
+	# 提取后的 Level0:图集构造必须**只剩 TerrainAtlas 一处**(回退成内联 = 又出现第二个真相源)
+	var lvl := _code_only(_read("res://scenes/level_0.gd"))
+	_check(not lvl.is_empty(), "读不到 scenes/level_0.gd")
+	_check(lvl.count("TerrainAtlas." + "make_wall_tileset()") >= 1
+			and lvl.count("TerrainAtlas." + "make_water_tileset(") >= 1,
+			"Level0 的墙体/水体图集必须来自 TerrainAtlas(构造已上提,别再内联一份)")
+	# 底色单一来源:菜单与对局的清屏色必须是**同一个常量**,不许各写一份字面量
+	_check(lvl.count("TerrainAtlas." + "SKY_COLOR") >= 1,
+			"Level0 的清屏色必须读 TerrainAtlas.SKY_COLOR(与菜单背景同源)")
+	_check(not lvl.contains("b0e5f6") and not menu.contains("b0e5f6"),
+			"底色不许再写字面量 #b0e5f6(必须走 TerrainAtlas.SKY_COLOR 单一来源)")
+	print("[L4] 菜单背景:真实地形接线在位(%s),缩略图入口 %d 处" % [want, menu.count(banned)])
 
 
 # ── 1) ★ 零演示残留(只扫生产目录)────────────────────────────────────
