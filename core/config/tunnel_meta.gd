@@ -74,6 +74,10 @@ const RELAY_FILE := "user://easytier-relay.txt"
 const RELAYS: Array[String] = [
 	"tcp://dreamlife.indevs.in:11010",
 	"udp://dreamlife.indevs.in:11010",
+	# 备用会合点(2026-10-01 加):单一第三方社区节点是隐藏的单点依赖;EasyTier 对
+	# 多条 -p 全部尝试,谁可达用谁。us01.225284.xyz 实测 tcp/udp 双可达。
+	"tcp://us01.225284.xyz:11010",
+	"udp://us01.225284.xyz:11010",
 ]
 
 # ── 本地 RPC 门户端口区间(easytier-core 的管理口,仅 127.0.0.1)──

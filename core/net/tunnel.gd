@@ -215,6 +215,7 @@ static func start_host(port: int, code: String) -> bool:
 		return false
 	if not ensure_downloaded():
 		return false
+	_reap_stale()
 	stop()
 	var creds := room_credentials(code)
 	_rpc_port = _pick_rpc_port()
@@ -239,6 +240,7 @@ static func start_host(port: int, code: String) -> bool:
 		return false
 	_pid = pid
 	_code = code
+	_write_pidfile(pid)
 	print("[tunnel] 房主隧道启动 pid=%d 端口 %d 房间码 %s(rpc %d)" % [pid, port, code, _rpc_port])
 	return true
 
@@ -269,6 +271,7 @@ static func start_client(code: String) -> Dictionary:
 		return {}
 	if not ensure_downloaded():
 		return {}
+	_reap_stale()
 	stop()
 	var creds := room_credentials(code)
 	_rpc_port = _pick_rpc_port()
@@ -292,6 +295,7 @@ static func start_client(code: String) -> Dictionary:
 		return {}
 	_pid = pid
 	_code = code
+	_write_pidfile(pid)
 	print("[tunnel] 客机隧道启动 pid=%d 房间码 %s(rpc %d)" % [pid, code, _rpc_port])
 	var found := await _await_host_peer()
 	if found.is_empty():
@@ -372,13 +376,46 @@ static func forward_port() -> int:
 
 # ── 生命周期 ──
 
-## 收掉本端隧道。★ 退出游戏时必须调:easytier-core 是独立进程,父进程死了它**不会**跟着死,
-## 残留下来会一直占着虚拟网 IP 与 RPC 门户,下一次建房直接失败(而且没有任何提示)。
+## 接管上局残留的隧道:游戏崩溃/被强杀时 _exit_tree 不会跑,easytier-core 会变成孤儿
+## (占着虚拟网 IP、旧的 5 位房号还在网上活着)。每次起隧道前先按 pidfile 收掉它。
+## ★ 按 pidfile 而不是映像名杀:玩家手动开的 EasyTier GUI/MCTier 不受影响。
+## ★ 杀之前用 tasklist 核对映像名 —— PID 会被系统复用,裸 pid 直杀可能误伤无关进程。
+const PIDFILE := "user://tunnel.pid"
+
+static func _reap_stale() -> void:
+	var f := FileAccess.open(PIDFILE, FileAccess.READ)
+	if f == null:
+		return
+	var pid := int(f.get_as_text().strip_edges())
+	f.close()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PIDFILE))
+	if pid <= 0 or not OS.is_process_running(pid):
+		return
+	var out: Array = []
+	OS.execute("C:/Windows/System32/tasklist.exe",
+			PackedStringArray(["/FI", "PID eq %d" % pid, "/FO", "CSV", "/NH"]), out, false, false)
+	var row := "\n".join(PackedStringArray(out))
+	if not row.to_lower().contains("easytier-core"):
+		return   # pid 已被系统复用给别的程序,不能碰
+	OS.kill(pid)
+	print("[tunnel] 已收掉上局残留的隧道 pid=%d" % pid)
+
+
+static func _write_pidfile(pid: int) -> void:
+	var f := FileAccess.open(PIDFILE, FileAccess.WRITE)
+	if f != null:
+		f.store_string(str(pid))
+		f.close()
+
+
+## 收掉本端隧道。★ 退出游戏时必须调(NetBus._exit_tree 已接);崩溃/强杀走不到这里
+## 的场景由 `_reap_stale` 在**下一次**起隧道时兜底。
 static func stop() -> void:
 	if _pid > 0:
 		if OS.is_process_running(_pid):
 			OS.kill(_pid)
 		print("[tunnel] 已停止隧道 pid=%d(%s)" % [_pid, _role])
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(PIDFILE))
 	_pid = 0
 	_role = ""
 	_rpc_port = 0
@@ -517,5 +554,16 @@ static func _append_relay(args: PackedStringArray) -> void:
 		args.append(r)
 
 
+## 挑本机空闲的 TCP 口给 RPC 门户。★ 必须探活:区间下沿 15888 恰是 EasyTier 系工具
+## (官方 GUI/MCTier)的默认门户,这台机器装着它们的概率不低 —— 撞上的表现是
+## easytier-core 起来了但 RPC 不可用,客机端只剩一句"port-forward 连续失败"。
+## 试绑用 TCPServer(RPC 门户本来就是 TCP);全部试绑失败则退回纯随机(老行为)。
 static func _pick_rpc_port() -> int:
-	return randi_range(Meta.RPC_PORT_LO, Meta.RPC_PORT_HI)
+	var fallback := randi_range(Meta.RPC_PORT_LO, Meta.RPC_PORT_HI)
+	for i in range(FORWARD_PICK_TRIES):
+		var p := randi_range(Meta.RPC_PORT_LO, Meta.RPC_PORT_HI)
+		var probe := TCPServer.new()
+		if probe.listen(p, "127.0.0.1") == OK:
+			probe.stop()
+			return p
+	return fallback
