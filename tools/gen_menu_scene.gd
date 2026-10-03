@@ -81,7 +81,10 @@ const SCREENS := {
 	# 返回键);名次表是 `show_result()` 拿到载荷之后才建的 ⇒ **这一屏没有可剥的东西**。
 	"match_result": {"scene": "res://ui/screens/match_result.tscn", "strip": []},
 	"main_menu": {"scene": "res://scenes/main_menu.tscn", "strip": []},
-	"mp_lobby": {"scene": "res://scenes/mp_lobby.tscn", "strip": ["lobby_dynamic"]},
+	# 大厅:T1 起三个弹层**启动即建**(默认隐藏),故这棵树里有**三处**要剥的动态容器
+	# (房卡格 / 禁用武器网格 / 地图选择器)。见下面三个 `_strip_lobby_*` 的注释。
+	"mp_lobby": {"scene": "res://scenes/mp_lobby.tscn",
+			"strip": ["lobby_dynamic", "lobby_weapon_grid", "lobby_map_picker"]},
 }
 
 var _fails: Array[String] = []
@@ -387,9 +390,64 @@ func _strip_result_grid(root: Node) -> Node:
 	return _find(root, func(n: Node) -> bool: return n is GridContainer)
 
 
-# 大厅:动态区(房卡列表 / 名单行 / 表单行)。
+# 大厅房卡格:`mp_lobby._grid`。**容器留着**(`columns` / 两个间距 / 位置都是静态版式),
+# 剥的是它的**行**(房卡由 `_make_card` 一族按载荷画;"暂无房间"那句同理)。
+#
+# ★★ 这个谓词原先写的是「**第一个** ScrollContainer」——那在 T1 之前**恰好**能命中房卡格
+#    (当时的树里只有一个 ScrollContainer 且它在正确的位置),而 T1 让三个弹层启动即建之后,
+#    弹层子树里也有 ScrollContainer(地图选择器内部的),于是它**静默**命中错了:
+#    实测命中 `…/HBoxContainer2/VBoxContainer2/VBoxContainer2/VBoxContainer1/ScrollContainer1`
+#    (地图选择器),后果是「该剥的房卡格没剥、不该剥的地图列表被剥成空盒」——
+#    两边都不报错,只有取图看得出来。故改成**结构上无歧义**的定位:
+#    根下面那个 4 列 GridContainer(唯一),且**必须在根下**(即不在任何弹层里 —— 弹层是 T1 才进树的)。
 func _strip_lobby_dynamic(root: Node) -> Node:
-	return _find(root, func(n: Node) -> bool: return n is ScrollContainer)
+	var box := _unique(root, func(n: Node) -> bool:
+		return n is GridContainer and (n as GridContainer).columns == 4,
+		"大厅房卡格(4 列 GridContainer)")
+	if box == null:
+		return null
+	# 这条断言就是上面那段说的"打到弹层里去"那道闸:根的孩子 ⇒ 必定不是三个弹层的后代。
+	# ★ 只判 `columns == 4` 不足以挡住"弹层里将来也出现一个 4 列格"这种漂移。
+	if box.get_parent() != root:
+		_fails.append("大厅房卡格定位到了非根节点之下(parent=%s)⇒ 谓词有歧义(可能是弹层子树)"
+				% str((box.get_parent() as Node).name))
+		return null
+	return box
+
+
+# 创建弹层右列的「禁用武器」块(`LobbyPage._add_weapon_grid` 在代码里 new 一个 GridContainer
+# 填进去,行 = `WeaponRegistry`,勾选态与 `type_id` 记账都要在代码里重接)⇒ 剥**块的孩子**。
+# ★ 返回父容器而不是那个 2 列 GridContainer:证据是 `_add_weapon_grid` **自己 new 网格**,
+#   所以骨架里不能留一个网格(留了就会变成两个)。
+# ★★ **只判「2 列」不够**:地图选择器内部的网格也是 2 列(`MapPicker.setup(…, columns=2, …)`)
+#    —— 实测命中 2 个候选。判据再加"不在 `ScrollContainer` 里"(地图那个网格住在选择器的
+#    滚动区里),这样与 strip 列表的**先后顺序无关**。
+# ★ 块里那条 `HeaderStrip` 标题带由调用方的循环**无条件保住**(它是常量,属于骨架)。
+func _strip_lobby_weapon_grid(root: Node) -> Node:
+	var grid := _unique(root, func(n: Node) -> bool:
+		return n is GridContainer and (n as GridContainer).columns == 2 and not _under_scroll(n),
+		"禁用武器网格(2 列 GridContainer,且不在 ScrollContainer 里)")
+	return grid.get_parent() if grid != null else null
+
+
+# 创建弹层右列的「地图选择器」整块(`LobbyPage._add_map_picker` 在代码里 new 一个 `MapPicker`
+# 并 `setup()` 出缩略图网格)⇒ 剥**宿主容器**(map_block)的孩子 = 把整块选择器从骨架拿走。
+# ★★ 返回的**不是** `ScrollContainer` 自己的父节点:那一层是 `MapPicker` 本人
+#    (`setup()` 里 `add_child(scroll)`),而代码会 `new` 一个 ⇒ 骨架里连选择器节点都不能留,
+#    否则运行时是两个选择器(实测踩过:留下时那份骨架里还挂着 `map_picker.gd` 的 ExtResource)。
+# ★ 中间那一层的形状要断一下(两个直接孩子,且第一个是标题带)—— 否则"祖父"只是碰巧对。
+func _strip_lobby_map_picker(root: Node) -> Node:
+	var scroll := _unique(root, func(n: Node) -> bool: return n is ScrollContainer,
+			"地图选择器内部的 ScrollContainer")
+	if scroll == null:
+		return null
+	var picker := scroll.get_parent()
+	if picker == null or picker.get_parent() == null or picker.get_child_count() != 2 \
+			or not (picker.get_child(0) is PanelContainer):
+		_fails.append("地图选择器:ScrollContainer 的父节点形状不像 `MapPicker`"
+				+ "(期望 2 个直接孩子、首子是标题带)⇒ 无法安全定位宿主容器")
+		return null
+	return picker.get_parent()
 
 
 func _clear_materials(n: Node) -> void:
@@ -417,6 +475,39 @@ func _find(root: Node, pred: Callable) -> Node:
 		if r != null:
 			return r
 	return null
+
+
+# 定位一个**唯一**的结构候选:0 个(结构改了)或 ≥2 个(谓词有歧义)都算失败。
+# ★★ 为什么要它,而不是直接用 `_find`:`_find` 返回**第一个**匹配 —— 谓词一旦有歧义,它会
+#    **静默**剥掉一棵本不该剥的子树,骨架里少一块而**一条日志都没有**(2026-10-03 实测:
+#    大厅那条"第一个 ScrollContainer"命中到弹层里的地图选择器)。失败计数进 `_fails`,
+#    调用方照旧报 "GEN SCENE: FAIL(n)"。
+func _unique(root: Node, pred: Callable, label: String) -> Node:
+	var hits: Array[Node] = []
+	_collect(root, pred, hits)
+	if hits.size() != 1:
+		_fails.append("定位「%s」命中 %d 个候选(期望恰 1 个)⇒ 谓词有歧义或结构改了"
+				% [label, hits.size()])
+		return null
+	return hits[0]
+
+
+func _collect(root: Node, pred: Callable, out: Array[Node]) -> void:
+	if pred.call(root):
+		out.append(root)
+	for c in root.get_children():
+		_collect(c, pred, out)
+
+
+# `n` 的**任一祖先**是不是 `ScrollContainer`?用于把"地图选择器滚动区里的那个网格"
+# 与"禁用武器网格"分开(见 `_strip_lobby_weapon_grid`)。
+func _under_scroll(n: Node) -> bool:
+	var p := n.get_parent()
+	while p != null:
+		if p is ScrollContainer:
+			return true
+		p = p.get_parent()
+	return false
 
 
 # ── 起名 + owner ──

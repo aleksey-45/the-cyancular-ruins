@@ -11,29 +11,23 @@ extends LobbyPage
 #   1v1 旧页那条 `[worker → join → 大厅 → claim]` 随三页一起退役;合并后**只有**这一条,
 #   而它必须容纳三模式 —— join 那条梯的职责由 ack 那条(建房/加入 8s 无应答)覆盖。
 #
-# ★ 场景是裸 Control,UI 全在代码里建(与三个旧页同款);控件一律走 UiFactory,字号 16 的倍数。
+# ★★ **静态骨架在 `scenes/mp_lobby.tscn` 里**(2026-10-03 从代码迁出,见 `tools/gen_menu_scene.gd`)。
+#   那次迁移的判据是**外观不变** —— 四个状态(chrome / 加入面板开 / 创建弹层开 / 等待室开)
+#   改前/改后逐像素比对:**差异 0 / 2764800**。
+#   本脚本现在做三件事:**按语义名接上骨架**(`_build_ui`)、**填动态部分**(房卡行 / 名单行 /
+#   禁用武器网格 / 地图选择器 / Beta 时间参数行)、**按模式分叉**(`_apply_create_form` 与
+#   `_show_wait_room` 两处)。版式(页面留白 / 各行坐标 / 控件尺寸 / 间距 / 固定文案)全在
+#   `.tscn` 里 —— 改版式**去编辑器里拖**,别回来加坐标常量。
 
-# ── 版式常量(真实像素;1920×1440 设计稿)──
-# ★ 2026-10-03(尺度,第一档):页边距 40 → 56、卡间距 22 → 24、卡片高 400 → 440;
-#   随之重排的是各行/各按钮的绝对坐标(本页是绝对定位,改一个就得跟一串 ——
-#   漏一处就重叠)。按钮宽度那一档**不**跟 `menu_button` 的 640 默认值走:
-#   本页的按钮各有实际文本宽度(见各处注释),640 会把整行挤爆。
-# ★★ 2026-10-03(尺度,第二档,用户:「margin 和 padding 还是不够」):页边距 56 → **76**。
-#   ★★ `ROW_H` 必须同时 64 → **72**:`UiFactory._btn_box` 的上下内边距抬到 20 之后,
-#      32 号字按钮的**最低高度 = 32 + 40 = 72**,而 `Control.size` 会被 `custom_minimum_size`
-#      **顶高** —— 行高还写 64 的话按钮会比它所在的那一行高出 8px、压到下一行上(且不报错)。
-#   ★ 每一行/每一块的 y 都从上一块的底边 + 具名空档推出来,别再写一串魔数(见下)。
+# ── `_card_width()` 还要用的版式常量 ──
+# ★ 只有这三个留在代码里:房卡的**宽度**不能从骨架里读 —— 卡片是运行时按载荷建出来的
+#   (`_make_card`),而它的宽必须与骨架里那个 4 列网格的列宽一致。于是同一件事有两个来源:
+#   **这里的公式** 与 `.tscn` 里 `CardGrid` 的 `offset_left/right` + `h_separation`;
+#   改一个就要改另一个,否则卡片与网格错位(**而不报错**)。
+# ★ 其余版式常量(各行/各块的 y 与空档、按钮尺寸)已随迁移进 `.tscn`,代码里不再有副本。
 const PAGE_MARGIN := 76.0
 const CARD_COLUMNS := 4
 const CARD_GAP := 24.0
-# 顶栏两行 / 筛选行 / 底栏那一行的行高(= 按钮的最低高度,见上)。
-const ROW_H := 72.0
-# 顶栏两行之间的空档。
-const ROW_GAP := 16.0
-# 顶栏第二行 → 筛选行。
-const FILTER_GAP := 52.0
-# 筛选行 → 房卡网格顶边。
-const GRID_GAP := 176.0
 
 var _mode := ""                    # 当前**筛选**:"" = 全部;否则 PvpSession.MODE_*
 var _rooms_by_mode := {}           # mode -> Array(载荷条目,已打 "mode" 键)
@@ -48,7 +42,7 @@ var _join_invite_edit: LineEdit = null
 var _create_panel: PanelContainer = null
 var _create_mask: ColorRect = null
 # 弹层里需要被外部（`_apply_create_form` / 探针）按名取到的容器 —— 键名固定,
-# `_build_create_panel` 必须按这几个键登记,`_apply_create_form` 按这几个键取。
+# `_build_ui` 必须按这几个键登记,`_apply_create_form` 按这几个键取。
 # ★ 键名对不上**不报错**,只是"那一行永远不隐藏"。
 # `max_players`/`match_time`/`weapons`/`privacy` 由 `_apply_create_form` **按模式**显隐;
 # `map` 三模式都可见(登记只为探针能取到);`beta` 由 `PvpSession.beta_mode` 在**建面板时**定
@@ -67,8 +61,7 @@ var _weapon_checks: Array[CheckButton] = []   # 建房时读勾选态(与旧大�
 # ★ 名单行数 / 按钮显隐 / 颜色行显隐**全部**收在 `_show_wait_room` 一处 —— 那是本页
 #   "按模式分叉"的第二个(也是最后一个)落点(第一个是 `_apply_create_form`)。
 var _wait_panel: PanelContainer = null
-var _wait_box: VBoxContainer = null       # 面板根(标题/正文/尾部都挂在它下面)
-var _wait_title: Label = null
+var _wait_title: Label = null             # 标题带**里面**那颗 Label(探针按它的 text 读房间号)
 var _wait_body: VBoxContainer = null      # 名单/分队容器:每次重填前整批清空
 var _wait_count: Label = null
 var _wait_hue: Control = null             # 角色颜色行(1v1/大乱斗可见;3v3 用队色 ⇒ 收起)
@@ -147,178 +140,188 @@ func _ready() -> void:
 
 # ── 版式 ────────────────────────────────────────────────────────────
 
-# 把本页的 UI 一次建齐:背景 + 常驻 chrome(顶栏/筛选条/房卡格/状态条)+ 三个弹层(默认隐藏)。
-# ★ 只做"建 UI",**不接线**:NetBus/NetBusExt 的 connect 与 `_finish_lobby_ready` 仍留在
-#   `_ready` 里。树外实例化本页的夹具(两个 `lobby_*_probe`)走这个缝拿 UI —— 它们**故意
-#   不入树**(不入树 ⇒ `_ready` 不跑 ⇒ 不建 socket、不排 deferred),别把接线并进来。
-# ★ 为什么三个弹层也在这里**启动即建**:本页的下一步是整屏搬进 `.tscn`,而生成器导出的树
-#   **就是它运行时看到的那棵树** —— 懒建 ⇒ 生成器看不到这三个弹层 ⇒ 它们在 `.tscn` 里永远
-#   不存在,编辑器里也拖不到。故三块一次建齐,可见性仍由原来的显隐函数管(建完即隐藏)。
-#   ★ 这也把"首次点击是打开、不是开关翻转"那一档消掉了:面板建好就是隐藏的,`_toggle_*`
-#     只剩翻转(旧 `_build_join_panel` 建完是**可见**的,故夹具必须走这里、不能只调三个
-#     `_build_*` —— 否则夹具拿到的初始可见性与生产不一致)。
-# ★ 顺序不能动:每一块的 `_build_*` 内部都是**先 `add_child` 再设锚点/尺寸** ——
-#   未入树时父级尺寸为 0,`PRESET_CENTER` 会把面板甩到屏幕外(两个旧页都踩过,
-#   见 `_build_join_panel` 末尾那段)。
+# 把**骨架**接上代码:①按语义名取到脚本要用的节点 ②把控件的信号接上 ③把动态块建起来
+# ④三个弹层建完即隐藏。
+#
+# ★★ 静态骨架在 `scenes/mp_lobby.tscn` 里(2026-10-03 从代码迁出)。**版式一律改 `.tscn`** ——
+#   本方法只剩"取节点 / 接信号 / 灌会话态的值 / 建动态块"四件事。
+# ★ 本方法**只做 UI**:`NetBus` / `NetBusExt` 的 connect 与 `_finish_lobby_ready()` 仍留在
+#   `_ready` 里(见那一段)。树外实例化本页的夹具(两个 `lobby_*_probe`)走这个缝拿 UI ——
+#   它们**故意不入树**(不入树 ⇒ `_ready` 不跑 ⇒ 不建 socket、不排 deferred),别把接线并进来。
+# ★★ **控件的信号在这里接**(不挪进 `_ready`):夹具走的就是本方法,而"按钮画在屏上、按下去
+#   毫无反应"没有任何运行时信号 —— 只有探针那几条接线/行为断言看得见(见 `lobby_*_probe`)。
+# ★ 两处**先灌值、再 connect**(改前同款,别调换):`button_pressed = x` / `value = x` 都会发
+#   信号,先连上就会在建树那一刻把值写回 `Settings` 并播一次音效。
 func _build_ui() -> void:
-	_add_lobby_background()
-	_build_top_bar()
-	_build_filter_bar()
-	_build_card_grid()
-	_build_status_bar()
-
-	_build_join_panel()
-	_join_panel.visible = false
-	_build_create_panel()
-	_create_panel.visible = false
-	_create_mask.visible = false
-	_build_wait_panel()
-	_wait_panel.visible = false
-
-
-# 本页的按钮:32 号字 + 方向 B 的描边式(设计稿 §3.2「输入框/按钮高 64,字号 32」)。
-#   旧页那套 16 号按钮工厂已随三个旧大厅页一起退役,基类不再提供。
-# ★ `accent` 非 null 时走**分段筛选按钮**(选中态画该模式色),否则普通菜单按钮
-#   (由 `variant` 选 primary / quiet / gold)。
-func _mp_button(text: String, pos: Vector2, size: Vector2, fn: Callable,
-		variant: String = "primary", accent = null) -> Button:
-	var b: Button
-	if accent != null:
-		b = UiFactory.menu_filter_button(text, 32, size, accent)
-	else:
-		b = UiFactory.menu_button(text, 32, size, variant)
-	b.position = pos
-	b.size = size
-	add_child(b)
-	b.pressed.connect(fn)
-	return b
-
-
-# 顶栏:昵称行 / 服务器地址行 / 右上本机局域网 IP。
-# ★ 各控件的 x 由「前一个的右边缘 + 间距」推出来(绝对定位;改宽度必须跟着改 x,
-#   否则按钮会叠在一起 —— 而**不会报任何错**)。行 y 由 PAGE_MARGIN / ROW_H / ROW_GAP 推。
-func _build_top_bar() -> void:
-	var y1 := PAGE_MARGIN
-	var y2 := PAGE_MARGIN + ROW_H + ROW_GAP
-	var label_w := 240.0
-	var x_edit := PAGE_MARGIN + label_w + 16.0
-	var name_l := UiFactory.label("昵称", 32, UiFactory.C_TEXT)
-	name_l.position = Vector2(PAGE_MARGIN, y1)
-	name_l.size = Vector2(label_w, ROW_H)
-	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	add_child(name_l)
-	# 宽 620(不是 660):右上那条 IP 提示按文本宽(≈860)向左展开,输入框再宽 40px
-	# 就会与它**横向重叠**(两者同在顶栏第一行,叠上去不报错、只是字压在框线上)。
-	var name_le := UiFactory.line_edit(self, Vector2(x_edit, y1), Vector2(620, ROW_H),
-			"昵称(头上显示)", PvpSession.player_name)
-	UiFactory.style_control(name_le, 32)   # 本次版式统一到 32(基类 line_edit 的默认是 16)
+	# ── 顶栏:昵称 / 服务器地址 / 刷新 / 启服 / 右上本机 IP ──
+	# ★ 昵称与地址是**会话态**,骨架里存的是导出那一刻的值 ⇒ 一律由代码灌。
+	var name_le: LineEdit = %NameEdit
+	name_le.text = PvpSession.player_name
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
+	_addr_edit = %AddrEdit
+	_addr_edit.text = PvpSession.server_address
+	%RefreshBtn.pressed.connect(_on_refresh_pressed)
+	%LocalServerBtn.pressed.connect(_on_local_server_pressed)
+	%LocalServerBtn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
+	# 右上那条 IP 提示:右对齐靠**锚点 + `GROW_DIRECTION_BEGIN`**(已在骨架里定死 ——
+	# Label 的 `size` 会被最小尺寸(= 文本宽)顶开;写死宽度只会让它向右长、被屏幕右缘裁掉,
+	# 而"后半句看不见"正是它曾经的样子)。文案随本机 LAN IP 变 ⇒ 每次建页重灌。
+	_ip_label = %IpLabel
+	_ip_label.text = LocalServer.lan_ip_hint()
 
-	var addr_l := UiFactory.label("服务器地址", 32, UiFactory.C_TEXT)
-	addr_l.position = Vector2(PAGE_MARGIN, y2)
-	addr_l.size = Vector2(label_w, ROW_H)
-	addr_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	add_child(addr_l)
-	_addr_edit = UiFactory.line_edit(self, Vector2(x_edit, y2), Vector2(620, ROW_H),
-			"服务器地址", PvpSession.server_address)
-	UiFactory.style_control(_addr_edit, 32)
-	# 两颗都是**小按钮**(不该按 `menu_button` 的 640 默认值走):宽度按各自文本取
-	# 「刷新列表」4 字 ≈128px、「启动/重启本机服务器」10 字 ≈336px,加内边距(40×2)再留余量。
-	var x_refresh := x_edit + 620.0 + 16.0
-	_mp_button("刷新列表", Vector2(x_refresh, y2), Vector2(260, ROW_H), _on_refresh_pressed)
-	var srv := _mp_button("启动/重启本机服务器", Vector2(x_refresh + 260.0 + 16.0, y2),
-			Vector2(440, ROW_H), _on_local_server_pressed)
-	srv.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
-
-	# 右上:本机局域网 IP(常驻显示,不靠易被刷掉的状态栏)。
-	# ★★ **右对齐必须靠锚点,不能靠 `position` + `horizontal_alignment`** —— Label 的 `size`
-	#   会被它的**最小尺寸(= 文本宽度)**顶开:提示全文约 860px 宽,写死 500 只会让矩形
-	#   从 `position` 往**右**长、被屏幕右缘裁掉(2026-10-03 之前一直如此:
-	#   后半句「(朋友在「服务器地址」里填它)」根本看不见 —— 而那是这条提示**唯一有用**的半句)。
-	#   锚到右上 + `GROW_DIRECTION_BEGIN`:右边缘钉在 1920 − PAGE_MARGIN,文本向**左**展开。
-	#   ★ 这是本次尺度调整**顺带**修的一处(不在任务清单里):它就是「内容被裁到读不出来」那类。
-	_ip_label = UiFactory.label(LocalServer.lan_ip_hint(), 32, UiFactory.C_ACCENT)
-	_ip_label.anchor_left = 1.0
-	_ip_label.anchor_right = 1.0
-	_ip_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_ip_label.offset_left = -1200.0     # 盒子够宽即可(文本右对齐 ⇒ 右边不留空)
-	_ip_label.offset_right = -PAGE_MARGIN
-	_ip_label.offset_top = PAGE_MARGIN
-	_ip_label.offset_bottom = PAGE_MARGIN + ROW_H
-	_ip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	add_child(_ip_label)
-
-
-# 筛选行的 y / 房卡网格的顶边:都从上面的具名常量推出来(改一处不会漏另一处)。
-func _filter_row_y() -> float:
-	return PAGE_MARGIN + ROW_H * 2.0 + ROW_GAP + FILTER_GAP
-
-
-func _grid_top_y() -> float:
-	return _filter_row_y() + ROW_H + GRID_GAP
-
-
-# 筛选行:四颗分段按钮(全部 / 1v1 / 3v3 / 大乱斗)+ 右侧创建/加入。
-# ★ 2026-10-03(尺度,第一档):y 230 → 252、筛选按钮 160×60 → 200×72(步进 160+12 → 200+16)、
-#   创建/加入 280×60 → 320×72 并靠右对齐(右边缘 = 1920 − PAGE_MARGIN)。
-# ★★ 第二档:`_btn_box` 内边距 30/14 → 40/20 之后,200 宽**装不下**「大 乱 斗」
-#   (3 个全角字 ≈96 + 4 个空格 ≈64 + 两侧 80 = 240)—— 控件会被 `custom_minimum_size`
-#   顶宽到 240,与步进 216 打架(相邻两颗**重叠**)。故 fw 200 → **220**、步进 236,
-#   并把行 y 改成推出式。
-func _build_filter_bar() -> void:
-	var y := _filter_row_y()
-	var group := ButtonGroup.new()
-	var filters := [["", "全部"], [PvpSession.MODE_PVP, "1 v 1"],
-			[PvpSession.MODE_TEAM, "3 v 3"], [PvpSession.MODE_ROYALE, "大 乱 斗"]]
-	var fw := 220.0
-	var x := PAGE_MARGIN
-	for f in filters:
+	# ── 筛选行:四颗分段按钮 + 右侧「＋ 创建房间」/「加入房间」──
+	# ★ 分段按钮的选中态色是**各模式的模式色**(织在 `pressed` 主题项里,随骨架落地),
+	#   互斥由骨架里的 `ButtonGroup` 保证。
+	_filter_btns = {}
+	for f in [["", %FilterAll], [PvpSession.MODE_PVP, %FilterPvp],
+			[PvpSession.MODE_TEAM, %FilterTeam], [PvpSession.MODE_ROYALE, %FilterRoyale]]:
 		var m: String = f[0]
-		# 分段按钮:选中态 = **该模式的模式色**(未选中 = C_EDGE,与其余按钮同款)。
-		# ★ 选中那一档由 Button 自己的 toggle 状态画,ButtonGroup 保证互斥;颜色织在
-		#   `pressed` 主题项里(见 `UiFactory.menu_filter_button`)—— 只改常态色是**看不见**的。
-		var b := _mp_button(str(f[1]), Vector2(x, y), Vector2(fw, ROW_H),
-				func() -> void: _set_filter(m), "primary", MODE_COLOR.get(m, UiFactory.C_ACCENT))
-		b.button_group = group
+		var b: Button = f[1]
 		b.button_pressed = (m == _mode)
+		b.pressed.connect(func() -> void: _set_filter(m))
 		_filter_btns[m] = b
-		x += fw + 16.0
-	# 「＋ 创建房间」是这一屏的主行动 ⇒ gold 档(琥珀描边 + 琥珀字)。两颗靠右、间距 24,
-	# 右边缘 = 1920 − PAGE_MARGIN(与顶栏的 IP、底栏的「返回主菜单」同一条边)。
-	_create_btn = _mp_button("＋ 创建房间",
-			Vector2(1920.0 - PAGE_MARGIN - 320.0 * 2.0 - 24.0, y),
-			Vector2(320, ROW_H), _open_create_dialog, "gold")
-	_join_btn = _mp_button("加入房间", Vector2(1920.0 - PAGE_MARGIN - 320.0, y),
-			Vector2(320, ROW_H), _toggle_join_panel)
+	_create_btn = %CreateBtn
+	_create_btn.pressed.connect(_open_create_dialog)
+	_join_btn = %JoinBtn
+	_join_btn.pressed.connect(_toggle_join_panel)
 
+	# ── 房卡格 / 状态栏 / 返回主菜单 ──
+	# ★ `_grid` 的**行**由 `_redraw_cards()` 建;容器(4 列 / 两个间距 / 位置)在骨架里。
+	_grid = %CardGrid
+	_status = %StatusLabel
+	# ★ 状态栏文本没有静态值:它是 `_redraw_cards()` 的**输出**(骨架里那句「共 0 个房间…」
+	#   是导出那一刻那次调用写下的)。这里清回**建树时的初值** —— 与改前那句
+	#   `UiFactory.label("", …)` 逐字一致。
+	_status.text = ""
+	%BackBtn.pressed.connect(_on_back_pressed)
 
-func _build_card_grid() -> void:
-	_grid = GridContainer.new()
-	_grid.columns = CARD_COLUMNS
-	_grid.add_theme_constant_override("h_separation", int(CARD_GAP))
-	_grid.add_theme_constant_override("v_separation", int(CARD_GAP))
-	# 卡片顶边:筛选行底之下留一档空(GRID_GAP),与旧版的比例一致。
-	_grid.position = Vector2(PAGE_MARGIN, _grid_top_y())
-	_grid.size = Vector2(1920.0 - PAGE_MARGIN * 2.0, 0)
-	add_child(_grid)
+	# ── 加入面板(启动即建、默认隐藏;`_toggle_join_panel` 只剩翻转)──
+	_join_panel = %JoinPanel
+	_join_code_edit = %JoinCodeEdit
+	_join_invite_edit = %JoinInviteEdit
+	_join_panel.visible = false
+	%JoinOkBtn.pressed.connect(func() -> void:
+		_join_panel.visible = false
+		_join_code(_join_code_edit.text.strip_edges(), _mode, _join_invite_edit.text))
+	%JoinCancelBtn.pressed.connect(func() -> void: _join_panel.visible = false)
 
+	# ── 创建弹层:压暗罩 + 面板 + 分层控件 ──
+	# 压暗罩铺满整页 + `mouse_filter = STOP`(拦下背后的点击 = 点弹层外不会误触房卡)在骨架里。
+	# ★ 它的颜色是调色板纪律的**已知例外**(全屏遮罩不属于 `C_PLATE` 那条「HUD 底板 0.1」家族,
+	#   见 `docs/eng/ui.md`):`Color(0, 0, 0, 0.55)` 与 `ui/screens/match_result.gd` 的
+	#   `MASK_COLOR`、暂停菜单**逐字同值** —— 改一处就要一起改(值现在住在 `.tscn` 里)。
+	_create_mask = %CreateMask
+	_create_mask.visible = false
+	_create_panel = %CreatePanel
+	_create_panel.visible = false
+	%CreateCloseBtn.pressed.connect(func() -> void: _set_create_visible(false))
+	%CreateCancelBtn.pressed.connect(func() -> void: _set_create_visible(false))
+	%CreateOkBtn.pressed.connect(_on_create_pressed)
 
-func _build_status_bar() -> void:
-	# 一栏字浮在空底上读不出"这是个栏位" ⇒ 给它一块 `menu_panel()` 的底(方向 B 的凿刻压边)。
-	# ★ 内边距仍显式给小值((32,16) 而不是工厂默认的 64/46):这一条只有 ROW_H 高,
-	#   46×2 会让面板被内容顶高、压到底边(而 `bar.size` 是写死的 —— 顶高只会让它与底边打架)。
-	#   y 取「1440 − 边距 − 行高」(底边留 PAGE_MARGIN)。
-	var bar := UiFactory.menu_panel(Vector2(32, 16))
-	bar.position = Vector2(PAGE_MARGIN, 1440.0 - PAGE_MARGIN - ROW_H)
-	bar.size = Vector2(1500, ROW_H)
-	add_child(bar)
-	_status = UiFactory.label("", 32, UiFactory.C_TEXT)
-	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	(bar.get_node("Body") as Container).add_child(_status)
-	_mp_button("返回主菜单", Vector2(1920.0 - PAGE_MARGIN - 260.0, 1440.0 - PAGE_MARGIN - ROW_H),
-			Vector2(260, ROW_H), _on_back_pressed)
+	# 三颗模式分段按钮(`ButtonGroup` 互斥;模式色在骨架里)。
+	# ★ 必须登记进 `_create_mode_btns`:`_apply_create_form` 靠它把**当前项**置灰。
+	_create_mode_btns = {PvpSession.MODE_PVP: %CreateModePvp,
+			PvpSession.MODE_TEAM: %CreateModeTeam, PvpSession.MODE_ROYALE: %CreateModeRoyale}
+	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
+		(_create_mode_btns[m] as Button).pressed.connect(func() -> void: _apply_create_form(m))
+
+	# 公开/私密 + 邀请码(整块 1v1 下收起 —— 理由见 `_apply_create_form` 那段)。
+	_public_check = %PublicCheck
+	_invite_edit = %InviteEdit
+	_public_check.button_pressed = true
+	_invite_edit.visible = false
+	_public_check.toggled.connect(func(on: bool) -> void:
+		_invite_edit.visible = not on)
+
+	# 人数上限行(**仅大乱斗可见**;范围 2~8 在骨架里)。
+	_max_slider = %MaxPlayersSlider
+	_max_slider.value_changed.connect(func(v: float) -> void:
+		(%MaxPlayersLabel as Label).text = "%d 人" % int(v))
+
+	# 一局限时(分钟;**仅大乱斗可见**)。★ 上界 15 与旧大乱斗页一致 ——
+	# `ROYALE_MATCH_TIME_CEILING` 那条上界链的**第三环**(`Settings.royale_match_min` 的写入端),
+	# 别在这里改数值(见 `docs/eng/modes.md`)。值从 `Settings` 灌(骨架里是导出那一刻的值)。
+	_time_slider = %MatchTimeSlider
+	_time_slider.value = Settings.royale_match_min
+	(%MatchTimeLabel as Label).text = "%d 分钟" % int(Settings.royale_match_min)
+	_time_slider.value_changed.connect(func(v: float) -> void:
+		Settings.royale_match_min = v
+		Settings.save()
+		(%MatchTimeLabel as Label).text = "%d 分钟" % int(v))
+
+	# 「每回合开始回满血」房主选项(**仅 1v1 可见**)。
+	# ★★ 为什么它必须在创建弹层里:被删掉的 1v1 旧页有这颗勾选框,而设计 §3.4 的创建弹层表
+	#   与 §3.6 的设置项列表**都没收它** ⇒ `Settings.pvp_round_full_heal` 会失去**唯一**写入方,
+	#   而它仍被 `_player_options()` 读取并上报 —— 玩家再也打不开它(2026-10-03 ②)。
+	# ★ 它是**房主 / 服务器规则**(大乱斗恒 false、3v3 压根不发),故归属创建弹层。
+	%FullHealCheck.button_pressed = Settings.pvp_round_full_heal
+	%FullHealCheck.toggled.connect(func(on: bool) -> void:
+		Settings.pvp_round_full_heal = on
+		Settings.save())
+
+	# `_apply_create_form` 按这几个键显隐。★★ **键名对不上不报错**,只是"那一行永远不隐藏"。
+	_form_rows = {
+		"privacy": %PrivacyRow, "max_players": %MaxPlayersRow, "match_time": %MatchTimeRow,
+		"full_heal": %FullHealRow, "weapons": %WeaponsBlock, "map": %MapBlock,
+		# `beta` 的可见性由 `PvpSession.beta_mode` 在**建这一刻**定(`_add_time_params` 自己门控),
+		# 与模式无关 —— 故 `_apply_create_form` 不碰它。
+		"beta": %BetaBlock,
+	}
+
+	# ── 动态块(仍由代码建)──
+	# 「禁用武器」网格:行 = `WeaponRegistry`(每台武器一颗勾选框),故留代码。
+	# ★ 回调把 `cb` 与 `type_id` **都**收进 `_weapon_checks`(照旧大乱斗页的写法)——
+	#   少收 `type_id` 那半,`_checked_weapons()` 会永远返回 `[0]` 且**不报错**。
+	# ★ 剥掉的是网格的**行**:那句「禁用武器(房主生效,开局带进对局):」标题带是常量,留在骨架里。
+	_add_weapon_grid(%WeaponsBlock, 20, func(cell: Node, type_id: int) -> void:
+		var cb: CheckButton = cell.get_meta("cb")
+		cb.set_meta("type_id", type_id)
+		_weapon_checks.append(cb))
+
+	# 地图选择器(基类 `_add_map_picker` 写 `Settings.mp_map_path`):整块在代码里建 ——
+	# 缩略图是 `MapCatalog` 现烘的,放进骨架只会是一份死重量(且运行时会变成两个选择器)。
+	_add_map_picker(%MapBlock)
+
+	# Beta 时间玩法参数(设计 §3.4):基类 `_add_time_params` 现成,且**自门控** ——
+	# 非 Beta 态它往容器里什么都不加。
+	%BetaBlock.visible = PvpSession.beta_mode
+	_add_time_params(%BetaBlock)
+
+	# ── 等待室(启动即建、默认隐藏;名单行由 `_show_wait_room` 每次清空重填)──
+	_wait_panel = %WaitPanel
+	_wait_panel.visible = false
+	_wait_title = %WaitTitle
+	_wait_body = %WaitBody
+	_wait_count = %WaitCount
+	_wait_hue = %WaitHueRow
+	_wait_pick_a = %WaitPickABtn
+	_wait_pick_b = %WaitPickBBtn
+	_wait_start = %WaitStartBtn
+	_wait_leave = %WaitLeaveBtn
+	# ★ 选边按钮用 `bind(队号)` 而不是两条匿名 lambda:绑定实参能被
+	#   `Callable.get_bound_arguments()` 读出来 —— 两颗按钮的文案只差一个 A/B 字,
+	#   对调之后**行为是错的且没有任何运行时信号**,只有"读实参"那条断言看得见
+	#   (计数断言 `size() == 1` 对调后照样绿)。
+	_wait_pick_a.pressed.connect(_on_wait_pick.bind(1))
+	_wait_pick_b.pressed.connect(_on_wait_pick.bind(2))
+	_wait_start.pressed.connect(_on_wait_start_pressed)
+	_wait_leave.pressed.connect(_on_wait_leave_pressed)
+
+	# 角色颜色行(仅 1v1 / 大乱斗可见;3v3 用队色 ⇒ `_show_wait_room` 整行收起)。
+	# ★ 它住**等待室**而不是创建弹层里:创建弹层一进等待室就收起,放那儿等于
+	#   "房主建完房改不了、加入者全程没见过"(设计 §3.4 的既有裁定)。
+	# ★★ 行本身是静态骨架(标签 + 滑条 + 预览色块),这里只**灌值 + 接写回** —— 与设置页
+	#   `slider_row` 那套同款(那边也是"值由脚本灌、信号由脚本接")。
+	var hue_slider: HSlider = %WaitHueSlider
+	var hue_chip: ColorRect = %WaitHueChip
+	hue_slider.value = Settings.pvp_color_hue
+	hue_chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
+	hue_slider.value_changed.connect(func(v: float) -> void:
+		Settings.pvp_color_hue = v
+		Settings.save()
+		hue_chip.color = UiFactory.hue_preview_color(v))
 
 
 func _on_back_pressed() -> void:
@@ -844,40 +847,9 @@ func _claim_multi_reply() -> void:
 # ── 加入 ────────────────────────────────────────────────────────────
 
 func _toggle_join_panel() -> void:
-	# 面板在 `_build_ui()` 里就建好了(默认隐藏)—— 这里只翻可见性,不再有"首次点击是打开"那一档。
+	# 面板在骨架里(**启动即建、默认隐藏**,见 `_build_ui`)—— 这里只翻可见性,
+	# 不再有"首次点击是打开"那一档。
 	_join_panel.visible = not _join_panel.visible
-
-
-func _build_join_panel() -> void:
-	_join_panel = UiFactory.menu_panel()
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 16)
-	vb.custom_minimum_size = Vector2(640, 0)
-	(_join_panel.get_node("Body") as Container).add_child(vb)
-	vb.add_child(UiFactory.header_strip("加入房间", 32))
-	_join_code_edit = UiFactory.line_edit(vb, Vector2.ZERO, Vector2(560, 64), "房间号", "")
-	_join_code_edit.custom_minimum_size = Vector2(560, 64)
-	UiFactory.style_control(_join_code_edit, 32)
-	_join_invite_edit = UiFactory.line_edit(vb, Vector2.ZERO, Vector2(560, 64),
-			"邀请码(私密房,可空)", "")
-	_join_invite_edit.custom_minimum_size = Vector2(560, 64)
-	UiFactory.style_control(_join_invite_edit, 32)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	vb.add_child(row)
-	var join := UiFactory.menu_button("加 入", 32, Vector2(220, 64), "gold")
-	join.pressed.connect(func() -> void:
-		_join_panel.visible = false
-		_join_code(_join_code_edit.text.strip_edges(), _mode, _join_invite_edit.text))
-	row.add_child(join)
-	var cancel := UiFactory.menu_button("取 消", 32, Vector2(220, 64), "quiet")
-	cancel.pressed.connect(func() -> void: _join_panel.visible = false)
-	row.add_child(cancel)
-	add_child(_join_panel)
-	# 居中锚点必须在入树之后设:未入树时父级尺寸为 0,面板会飞到屏幕左上角外(两个旧页都踩过)。
-	_join_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_join_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_join_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 
 
 # 加入某房间号。★ 模式未知(从"全部"列表点的、或手敲房号)时,三张表**都试一次**:
@@ -929,15 +901,12 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 
 # ── 创建房间弹层(Task 4)────────────────────────────────────────
 #
-# 点「＋ 创建房间」只**显示**已建好的弹层;按模式变形(设计 §3.4 那张表 —— 差异全收在 `_apply_create_form`)。
-# 房主选项从"常驻右栏"搬进弹层:列表要占满整页,常驻右栏会把 4 列房卡挤成 3 列。
-
-# 全屏压暗罩(黑 0.55,与 `ui/screens/match_result.gd` 的 `MASK_COLOR` / 暂停菜单同值)。
-# ★ 它是调色板纪律的**已知例外**:全屏遮罩不属于 `C_PLATE` 那条「HUD 底板 0.1」家族
-#   (见 docs/eng/ui.md)。沿用与本仓既有遮罩**逐字相同**的字面量,不新造调色板 token
-#   —— 新造一个只会让同一种黑在两处漂开。
-const CREATE_MASK_COLOR := Color(0, 0, 0, 0.55)
-
+# 点「＋ 创建房间」只**显示**骨架里那个弹层;按模式变形(设计 §3.4 那张表 —— 差异全收在
+# `_apply_create_form`)。房主选项从"常驻右栏"搬进弹层:列表要占满整页,常驻右栏会把
+# 4 列房卡挤成 3 列。
+# ★ 弹层本体 / 压暗罩 / 标题行 / 双列版式 / 左列那五行(模式按钮、公开私密、人数、限时、
+#   回满血)与右列两条区块标题都在 `.tscn` 里;`_build_ui` 负责登记 `_form_rows`、接信号,
+#   并把**动态的三块**(禁用武器网格 / 地图选择器 / Beta 时间参数行)建出来。
 
 # 点「＋ 创建房间」只**显示**弹层。★ 每次打开都重刷模式相关行显隐(`_apply_create_form`),
 # **不**挪进 `_ready` —— 面板建好之后玩家仍可能改筛选模式,那时这条链必须再跑一次。
@@ -948,228 +917,12 @@ func _open_create_dialog() -> void:
 
 
 # 弹层与压暗罩一起显隐(罩子单独隐藏会留下一层吃掉点击的全屏黑)。
+# ★ 两个节点都**启动即建**(骨架里就有,`_build_ui` 只是登记 + 收起)⇒ 这里没有 null 可判。
 func _set_create_visible(v: bool) -> void:
 	_create_panel.visible = v
-	if _create_mask != null:
-		_create_mask.visible = v
-
-
-func _build_create_panel() -> void:
-	# 压暗罩:铺满整页 + STOP = 拦下背后的点击(点弹层外不会误触房卡)。
-	_create_mask = ColorRect.new()
-	_create_mask.color = CREATE_MASK_COLOR
-	_create_mask.mouse_filter = Control.MOUSE_FILTER_STOP
-	_create_mask.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_create_mask.visible = false
-	add_child(_create_mask)
-
-	_create_panel = UiFactory.menu_panel()
-	_create_panel.visible = false
-	add_child(_create_panel)
-
-	# ★ 内容**必须**加在 `Body` 里 —— 只有它承载 `menu_panel()` 的内边距(加在外层 =
-	#   padding 完全失效、内容直接顶到外线上,而画面上只表现为"挤",不报错)。
-	var root_vb := VBoxContainer.new()
-	root_vb.add_theme_constant_override("separation", 32)
-	(_create_panel.get_node("Body") as Container).add_child(root_vb)
-
-	# 标题行:标题带 + 右上角 ×(关闭)。
-	var title_row := HBoxContainer.new()
-	title_row.add_theme_constant_override("separation", 16)
-	root_vb.add_child(title_row)
-	# ★ 标题换 `header_strip()`(方向 B 的标题带)——它是 Label 的**外层容器**,
-	#   所以 `title_row` 里那颗 × 仍然按文案找得到(`lobby_create_form_probe`)。
-	var title := UiFactory.header_strip("创 建 房 间", 48)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_row.add_child(title)
-	# 关闭键是**次要动作**(与「取 消」同款 quiet)。高度用 72 = 32 号字按钮的新最低高度
-	# (见 `UiFactory._btn_box` 的侧写),与左侧标题带等高。
-	var close := UiFactory.menu_button("×", 32, Vector2(80, 72), "quiet")
-	close.pressed.connect(func() -> void: _set_create_visible(false))
-	title_row.add_child(close)
-
-	# 双列:左 = 房型与人数/限时;右 = 禁用武器 + 地图。
-	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 48)
-	root_vb.add_child(cols)
-	var left := VBoxContainer.new()
-	left.add_theme_constant_override("separation", 28)
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cols.add_child(left)
-	var right := VBoxContainer.new()
-	right.add_theme_constant_override("separation", 28)
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cols.add_child(right)
-
-	# 左列:模式分段按钮(三颗)+ 公开/私密 + 邀请码 + 人数行 + 限时行。
-	left.add_child(_build_create_mode_buttons())
-	# 公开/私密 + 邀请码**整块**一个容器:1v1 下要整块隐藏(见 `_apply_create_form` 的注释)。
-	var privacy_row := VBoxContainer.new()
-	privacy_row.add_theme_constant_override("separation", 16)
-	_build_public_row(privacy_row)
-	left.add_child(privacy_row)
-	_form_rows["privacy"] = privacy_row
-	_build_max_players_row(left)
-	_build_match_time_row(left)
-	_build_full_heal_row(left)
-
-	# Beta 时间玩法参数(设计 §3.4):基类 `_add_time_params` 现成,且**自门控** ——
-	# 非 Beta 态它往容器里什么都不加。★ 这一段与**模式**无关(只看 `PvpSession.beta_mode`),
-	# 故 `_apply_create_form` 不碰 `_form_rows["beta"]`,它的可见性在建面板这一刻定死。
-	var beta_block := VBoxContainer.new()
-	beta_block.add_theme_constant_override("separation", 16)
-	beta_block.visible = PvpSession.beta_mode
-	_add_time_params(beta_block)
-	left.add_child(beta_block)
-	_form_rows["beta"] = beta_block
-
-	# 右列:禁用武器**整块**(标题 + 网格)。整块一个容器,才能一次显隐(设计 §3.4)。
-	var wblock := VBoxContainer.new()
-	wblock.add_theme_constant_override("separation", 16)
-	# 区块标题 = 同款标题带(与设置页 / 单人开局面板的区块标题同一套;字号 32 是**面板内**
-	# 分区的档,不与 48 的面板标题抢视线)。
-	wblock.add_child(UiFactory.header_strip("禁用武器(房主生效,开局带进对局):", 32))
-	# ★ 回调把 `cb` 与 `type_id` **都**收进 `_weapon_checks`(照旧大乱斗页的写法)——
-	#   少收 `type_id` 那半,`_checked_weapons()` 会永远返回 `[0]` 且**不报错**。
-	_add_weapon_grid(wblock, 20, func(cell: Node, type_id: int) -> void:
-		var cb: CheckButton = cell.get_meta("cb")
-		cb.set_meta("type_id", type_id)
-		_weapon_checks.append(cb))
-	right.add_child(wblock)
-	_form_rows["weapons"] = wblock
-
-	# 右列:地图选择(基类 `_add_map_picker` 写 Settings.mp_map_path)。整块登记,供探针查显隐。
-	var map_block := VBoxContainer.new()
-	map_block.add_theme_constant_override("separation", 16)
-	_add_map_picker(map_block)
-	right.add_child(map_block)
-	_form_rows["map"] = map_block
-
-	# 底部:取消 / 创建房间。
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 24)
-	actions.alignment = BoxContainer.ALIGNMENT_END
-	root_vb.add_child(actions)
-	# 高度 88 = 与单人开局面板那对并排按钮同档(两处都是"弹层的行动行")。
-	var cancel := UiFactory.menu_button("取 消", 32, Vector2(280, 88), "quiet")
-	cancel.pressed.connect(func() -> void: _set_create_visible(false))
-	actions.add_child(cancel)
-	# 「创 建 房 间」= 弹层里的主行动 ⇒ gold 档(与筛选行那颗「＋ 创建房间」同色).
-	var create := UiFactory.menu_button("创 建 房 间", 32, Vector2(400, 88), "gold")
-	create.pressed.connect(_on_create_pressed)
-	actions.add_child(create)
-
-	# 居中锚点必须在**入树之后**设(未入树时父级尺寸为 0,面板会飞到屏幕左上角外)——
-	# 与加入面板同款,见 `_build_join_panel`。
-	_create_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_create_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_create_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-
-
-# 三颗模式分段按钮(用 ButtonGroup 保证互斥,选中态由 Button 自己画 —— 与筛选行同款)。
-# ★ 必须登记进 `_create_mode_btns`:`_apply_create_form` 靠它把**当前项**置灰。
-func _build_create_mode_buttons() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var group := ButtonGroup.new()
-	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
-		# 与筛选行同款:选中那一段画该模式的模式色(未选 = C_EDGE)。高度 = ROW_H(新最低高度)。
-		var b := UiFactory.menu_filter_button(str(MODE_LABEL[m]), 32, Vector2(220, ROW_H), MODE_COLOR[m])
-		b.button_group = group
-		b.pressed.connect(func() -> void: _apply_create_form(m))
-		_create_mode_btns[m] = b
-		row.add_child(b)
-	return row
-
-
-# 公开/私密开关 + 邀请码输入框(私密时才显示 —— 勾选框直接控制输入框的 visible)。
-func _build_public_row(parent: Node) -> void:
-	_public_check = CheckButton.new()
-	_public_check.text = "公开房间(不勾选 = 私密,凭邀请码进入)"
-	_public_check.button_pressed = true
-	UiFactory.style_check(_public_check, 32)
-	_public_check.toggled.connect(func(on: bool) -> void:
-		_invite_edit.visible = not on)
-	parent.add_child(_public_check)
-
-	_invite_edit = LineEdit.new()
-	_invite_edit.placeholder_text = "邀请码(留空自动生成)"
-	_invite_edit.visible = false
-	_invite_edit.custom_minimum_size = Vector2(0, 64)
-	UiFactory.style_control(_invite_edit, 32)
-	UiFactory.style_line_edit(_invite_edit)
-	parent.add_child(_invite_edit)
-
-
-# 人数上限行(仅大乱斗可见)。整行登记进 `_form_rows["max_players"]`。
-func _build_max_players_row(parent: Node) -> void:
-	var row := HBoxContainer.new()
-	# ★ HBox 只认 "separation";"h_separation" 是 GridContainer 的键(写在这里存得下、永不读)。
-	row.add_theme_constant_override("separation", 16)
-	row.add_child(UiFactory.label("人数上限:", 32))
-	_max_slider = HSlider.new()
-	_max_slider.min_value = 2
-	_max_slider.max_value = 8
-	_max_slider.step = 1
-	_max_slider.value = 4
-	_max_slider.custom_minimum_size = Vector2(300, 30)
-	UiFactory.style_slider(_max_slider)
-	row.add_child(_max_slider)
-	var lbl := UiFactory.label("4 人", 32, UiFactory.C_TEXT)
-	_max_slider.value_changed.connect(func(v: float) -> void: lbl.text = "%d 人" % int(v))
-	row.add_child(lbl)
-	parent.add_child(row)
-	_form_rows["max_players"] = row
-
-
-# 一局限时(分钟;仅大乱斗可见)。整行登记进 `_form_rows["match_time"]`。
-# ★ 滑条上界 15 与旧大乱斗页一致 —— `ROYALE_MATCH_TIME_CEILING` 那条上界链的**第三环**
-#   (`Settings.royale_match_min` 的写入端),别在这里改数值(见 docs/eng/modes.md)。
-func _build_match_time_row(parent: Node) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	row.add_child(UiFactory.label("一局限时:", 32))
-	_time_slider = HSlider.new()
-	_time_slider.min_value = 1.0
-	_time_slider.max_value = 15.0
-	_time_slider.step = 1.0
-	_time_slider.value = Settings.royale_match_min
-	_time_slider.custom_minimum_size = Vector2(300, 30)
-	UiFactory.style_slider(_time_slider)
-	row.add_child(_time_slider)
-	var lbl := UiFactory.label("%d 分钟" % int(Settings.royale_match_min), 32, UiFactory.C_TEXT)
-	_time_slider.value_changed.connect(func(v: float) -> void:
-		Settings.royale_match_min = v
-		Settings.save()
-		lbl.text = "%d 分钟" % int(v))
-	row.add_child(lbl)
-	parent.add_child(row)
-	_form_rows["match_time"] = row
-
-
-# 「每回合开始回满血」房主选项(**仅 1v1 可见**;2026-10-03 ②)。
-# ★★ 为什么必须在这里补:被删掉的 1v1 旧页有这颗勾选框,而设计 §3.4 的创建弹层表与
-#    §3.6 的设置项列表**都没收它** ⇒ `Settings.pvp_round_full_heal` 失去**唯一**写入方,
-#    仍被 `_player_options()` 读取并上报,而玩家再也打不开它。
-# ★ 它是**房主 / 服务器规则**(大乱斗那边恒 false、3v3 压根不发),故归属创建房间弹层。
-# ★ 勾选态直写 Settings + save()(与 `_build_match_time_row` / `_add_hue_row` 同款)。
-func _build_full_heal_row(parent: Node) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var check := CheckButton.new()
-	check.text = "每回合开始回满血(房主生效)"
-	check.button_pressed = Settings.pvp_round_full_heal
-	UiFactory.style_check(check, 32)
-	check.toggled.connect(func(on: bool) -> void:
-		Settings.pvp_round_full_heal = on
-		Settings.save())
-	row.add_child(check)
-	parent.add_child(row)
-	_form_rows["full_heal"] = row
-
-
+	_create_mask.visible = v
 # 禁用武器网格的勾选结果 → type_id 数组。★ 与 `LobbyPage._add_weapon_grid` 的 `on_cell`
-# 回调配对:那个回调负责把 `cb` 与 `type_id` 一起收进 `_weapon_checks`(见 `_build_create_panel`)。
+# 回调配对:那个回调负责把 `cb` 与 `type_id` 一起收进 `_weapon_checks`(见 `_build_ui`)。
 func _checked_weapons() -> Array:
 	var out: Array = []
 	for cb in _weapon_checks:
@@ -1249,8 +1002,9 @@ func _on_create_pressed() -> void:
 
 # ESC 关弹层(设计 §3.4)。★ **弹层不可见时一律不处理** —— 大厅页自己的返回语义
 # (回主菜单)不能被这里抢掉;只有弹层挡着页面时才吞掉这一次 ESC。
+# ★ `_create_panel` **启动即建**(骨架里就有,`_build_ui` 登记)⇒ 没有 null 可判。
 func _unhandled_input(ev: InputEvent) -> void:
-	if _create_panel == null or not _create_panel.visible:
+	if not _create_panel.visible:
 		return
 	if ev.is_action_pressed("ui_cancel"):
 		_set_create_visible(false)
@@ -1259,7 +1013,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 # ── 等待室(Task 5)─────────────────────────────────────────────────
 #
-# 三个模式共用**一个**面板:建一次,之后每次 `_show_wait_room` 清空重填(设计 §3.5)。
+# 三个模式共用**一个**面板(骨架里那一个,启动即建、默认隐藏),每次 `_show_wait_room`
+# 清空重填(设计 §3.5)。
 #   · 1v1    : `等待对手… 1 / 2`(1v1 两人凑齐**自动**开局 ⇒ 没有「开始游戏」)
 #   · 大乱斗 : 名单 + `N / M 人` + 房主「开始游戏」
 #   · 3v3    : A 队 / B 队 / 未选边三档 + 两颗选边(自己那支置灰)+ 房主「开始游戏」(两队各满)
@@ -1269,81 +1024,25 @@ func _unhandled_input(ev: InputEvent) -> void:
 #    `_hide_wait_room()` 的**唯一**调用点是 `_on_return_to_lobby()`(转连与 claim 超时梯、
 #    回局失败、大乱斗/3v3 的「退出房间」全都汇到它)。漏了它 = 退回大厅后等待室还盖在屏上,
 #    而且**一行报错都没有** —— 玩家以为还卡在房里。
-
-
-func _build_wait_panel() -> void:
-	_wait_panel = UiFactory.menu_panel()
-	_wait_panel.visible = false
-	add_child(_wait_panel)
-
-	_wait_box = VBoxContainer.new()
-	_wait_box.add_theme_constant_override("separation", 20)
-	_wait_box.custom_minimum_size = Vector2(800, 0)
-	(_wait_panel.get_node("Body") as Container).add_child(_wait_box)
-
-	# 标题 = 一条 `header_strip()` 标题带。★ `_wait_title` 仍是那条带**里面**的 Label
-	#   (工厂的唯一子节点就是它)—— 探针按 `_wait_title.text` 读房间号,不能把它换成容器。
-	var title_strip := UiFactory.header_strip("", 32)
-	_wait_title = title_strip.get_child(0) as Label
-	_wait_box.add_child(title_strip)
-
-	_wait_body = VBoxContainer.new()
-	_wait_body.add_theme_constant_override("separation", 12)
-	_wait_box.add_child(_wait_body)
-
-	_wait_count = UiFactory.label("", 32, UiFactory.C_TEXT)
-	_wait_box.add_child(_wait_count)
-
-	# 选边按钮(仅 3v3 可见)。★ 一次建、按模式显隐 —— 不重建(重建会连 handler 与
-	# `_hide_wait_room` 之外的引用一起换掉)。
-	var pick_row := HBoxContainer.new()
-	pick_row.add_theme_constant_override("separation", 20)
-	_wait_box.add_child(pick_row)
-	_wait_pick_a = UiFactory.menu_button("加入 A 队", 32, Vector2(240, 56))
-	# ★ 用 `bind(队号)` 而不是两条匿名 lambda:绑定实参能被 `Callable.get_bound_arguments()`
-	#   读出来 —— 两颗按钮的文案只差一个 A/B 字,对调之后**行为是错的且没有任何运行时信号**,
-	#   只有"读实参"这条断言看得见(计数断言 `size() == 1` 对调后照样绿)。
-	_wait_pick_a.pressed.connect(_on_wait_pick.bind(1))
-	pick_row.add_child(_wait_pick_a)
-	_wait_pick_b = UiFactory.menu_button("加入 B 队", 32, Vector2(240, 56))
-	_wait_pick_b.pressed.connect(_on_wait_pick.bind(2))
-	pick_row.add_child(_wait_pick_b)
-
-	# 角色颜色行(仅 1v1 / 大乱斗)。★ 它住**等待室**而不是创建弹层里:创建弹层一进等待室
-	# 就收起,放那儿等于"房主建完房改不了、加入者全程没见过"(设计 §3.4 的既有裁定)。
-	_wait_hue = _add_hue_row(_wait_box, "自己角色颜色:", Vector2(320, 30), Vector2(46, 30))
-
-	# 「开 始 游 戏」= 等待室的主行动 ⇒ gold 档;「退出房间」= 弱化档(与主菜单「退 出」同款).
-	_wait_start = UiFactory.menu_button("开 始 游 戏", 32, Vector2(440, 64), "gold")
-	_wait_start.pressed.connect(_on_wait_start_pressed)
-	_wait_box.add_child(_wait_start)
-	_wait_leave = UiFactory.menu_button("退出房间", 32, Vector2(440, 56), "quiet")
-	_wait_leave.pressed.connect(_on_wait_leave_pressed)
-	_wait_box.add_child(_wait_leave)
-
-	# 居中锚点必须在**入树之后**设:未入树时父级尺寸为 0,面板会飞到屏幕左上角外
-	# (两个旧页都踩过;与 `_build_join_panel` / `_build_create_panel` 同款)。
-	_wait_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_wait_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_wait_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+# ★ 面板的**版式**在 `.tscn` 里(标题带 / 空名单容器 / 人数行 / 选边行 / 颜色行 / 两颗按钮);
+#   这里只剩"每次重填"这段逻辑。`_wait_title` 仍是那条标题带**里面**的 Label —— 探针按
+#   `_wait_title.text` 读房间号,别把它换成容器。
 
 
 # 亮起 / 重填等待室。★ **清空重填**而不是就地改几行:名单人数、分队、按钮显隐在三个模式下
 # 都不同,就地改必然漏一处 —— 而漏了**不报错**,只是上一个模式的行留在屏上(叠成两批名单)。
 func _show_wait_room(state: Dictionary, mode: String) -> void:
 	_wait_mode = mode
-	# 进等待室时**同时**收起创建弹层(它在 `_build_ui()` 里就建好了)。
+	# 进等待室时**同时**收起创建弹层(它在骨架里,`_build_ui` 只负责把它收起)。
 	_set_create_visible(false)
 	_wait_panel.visible = true
 	# 进房 = 收起两颗入口按钮 + 关掉可能开着的加入弹层(见 `_create_btn` 上方那段:
 	# 闸门拦不住直接绑定的弹层,层级会翻过来)。与 `_hide_wait_room` 成对。
+	# ★ 三颗都**启动即建**(骨架 / `_build_ui` 登记)⇒ 没有 null 可判。
 	_in_room = true
-	if _create_btn != null:
-		_create_btn.visible = false
-	if _join_btn != null:
-		_join_btn.visible = false
-	if _join_panel != null:
-		_join_panel.visible = false
+	_create_btn.visible = false
+	_join_btn.visible = false
+	_join_panel.visible = false
 	_wait_title.text = _wait_title_text(state, mode)
 
 	# ★ 必须 `remove_child` 再 `queue_free`:只 `queue_free` 的话旧行要到**帧末**才没,
@@ -1395,16 +1094,14 @@ func _show_wait_room(state: Dictionary, mode: String) -> void:
 #   自己的闸门拒掉 ⇒ 列表永远不更新且**不报错**(`call_deferred` 到帧末才执行,故同函数内
 #   "排在前面"就够)。
 func _hide_wait_room() -> void:
-	if _wait_panel != null:
-		_wait_panel.visible = false
+	# ★ 面板与两颗入口按钮都**启动即建**(骨架 / `_build_ui` 登记)⇒ 没有 null 可判。
+	_wait_panel.visible = false
 	_in_room = false
-	if _create_btn != null:
-		_create_btn.visible = true
-	if _join_btn != null:
-		_join_btn.visible = true
+	_create_btn.visible = true
+	_join_btn.visible = true
 
 
-# 选边(3v3)。★ 连接时用 `bind(队号)`(见 `_build_wait_panel`):队号是被绑死的实参,
+# 选边(3v3)。★ 连接时用 `bind(队号)`(见 `_build_ui`):队号是被绑死的实参,
 # 不是运行时从别处推的 —— 探针据此断言 A 队那颗绑的是 1、B 队那颗绑的是 2。
 func _on_wait_pick(team: int) -> void:
 	NetBusExt.rpc_id(1, "team_pick", team)

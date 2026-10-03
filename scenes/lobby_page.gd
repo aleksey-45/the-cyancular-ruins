@@ -13,13 +13,14 @@ extends Control
 #   是**逐字相同**,其余只差 1~3 行 —— 那些行全部落成下方"子类钩子"。
 #
 # ★ 刻意**不**在这里的(差的不是重复,是第二根结构轴;现只有 `mp_lobby` 一个子类):
-#   · `_ready`(版式与画出的东西不同)、`_build_create_panel` / `_build_wait_panel`(本页自己的弹层);
+#   · `_ready`(版式与画出的东西不同)与**整页 chrome / 三个弹层**(2026-10-03 起它们是
+#     `scenes/mp_lobby.tscn` 的**静态骨架** —— 连"建树"这件事都不在代码里了);
 #   · `_on_room_list` vs `_on_royale_rooms` vs `_on_team_rooms`(2 人房 vs N 人房,行样式与文案都不同);
 #   · `_process` 的**派发**(见下方三条 `_tick_*` 的告警 —— 梯顺序与页面专属梯有关,合并会改行为)。
 #   要再上提一批,先按同样的口径量一遍差异(剔注释后逐行 diff),别凭印象搬。
 #
-# ★ 本类读 `Settings` autoload(后补的两个设置区块要用),故**不**放进 `ui/ui_factory.gd` ——
-#   那个工厂至今零 autoload 依赖(3.7 把 Settings 读写全留在调用方),是它的一条不变量。
+# ★ 本类读 `Settings` autoload(禁用武器网格那个设置区块要用),故**不**放进 `ui/ui_factory.gd`
+#   —— 那个工厂至今零 autoload 依赖(3.7 把 Settings 读写全留在调用方),是它的一条不变量。
 
 # 本机服务器一键启停(同目录 Cyancular Ruins Server.exe)。preload 而非全局类名,
 # 避免新脚本未进全局类缓存时整份场景解析失败(本项目踩过同类坑)。
@@ -45,16 +46,10 @@ var _pending_go_role := -1
 var _pending_go_port := -1
 
 
-# ── 页面基建(子类在 _ready 里按各自的版式顺序调用)──
-
-# 不透明深色底:全局清屏色被 Level0 设成浅蓝后,白字界面会看不清。
-func _add_lobby_background() -> void:
-	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.09, 0.13)
-	bg.size = get_viewport_rect().size
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(bg)
-	move_child(bg, 0)   # 垫底,不挡后续控件
+# ── 页面基建(子类在 `_ready` 里调)──
+# ★ 页面底色(不透明深色)现在是**骨架里的那个 `ColorRect`**:全局清屏色被 Level0 设成浅蓝
+#   之后,白字界面会看不清 —— 所以每一页都得自带一块不透明底。`_add_lobby_background()`
+#   随 2026-10-03 那次迁移退役(底色已进 `scenes/mp_lobby.tscn`)。
 
 
 # 收尾(建完本页全部控件、接完本页自己的信号之后调):接共用信号 + 递归补像素字体 +
@@ -72,8 +67,8 @@ func _finish_lobby_ready() -> void:
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
 
 
-# ── 设置区块(子类建房/等待室用)──
-# 都读写 Settings,故留在本类而不是 `ui/ui_factory.gd` —— 那个工厂至今零 autoload 依赖。
+# ── 设置区块(子类建房用)──
+# 读写 Settings,故留在本类而不是 `ui/ui_factory.gd` —— 那个工厂至今零 autoload 依赖。
 
 # 禁用武器网格(2 列 + 定尺寸剪影,横排会溢出屏幕)。勾选直写 Settings.pvp_disabled_weapons
 # + save()(房主开关,禁用项随 player_options 上发)。
@@ -81,6 +76,9 @@ func _finish_lobby_ready() -> void:
 # on_cell 给需要额外记账的调用方(要把勾选框收进自己的表,建房时读勾选态)。
 # ★ 字号 32 写成**字面量**而非形参:kh_l5 的字号规范只认整数字面量实参,改成变量会让
 #   这一处**静默脱保**(调用方本来就都传 32,没有参数化的理由)。
+# ★★ 间距键名分两层,别混:`GridContainer` 认 `h_separation` / `v_separation`,而
+#    `HBoxContainer` / `VBoxContainer` **只认** `separation` —— 把 `h_separation` 写在 HBox 上
+#   会被存下来但**永不读取**(静默无效覆盖;合一前的两个旧大厅页里就有一份写错过)。
 func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) -> void:
 	var wgrid := GridContainer.new()
 	wgrid.columns = 2
@@ -101,38 +99,6 @@ func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) 
 			on_cell.call(cell, type_i)
 		wgrid.add_child(cell)
 
-
-# 角色色相行(滑条 + 预览色块,即选即存 Settings.pvp_color_hue)。
-# label_text 非空时在**行内**先放标签;传空串则由**调用方**在外面自己加标签行。
-# slider/chip 尺寸是**调用方**的版式值,故走参数。
-# ★ 键必须是 "separation":**HBoxContainer 只认 separation,h_separation 是 GridContainer 的键**
-#   (h_separation 写在 HBox 上会被存下来但**永不读取** = 静默无效覆盖)。
-#   (历史:合一前的两个旧页里一份写对了 separation、另一份写错 h_separation(死覆盖,实际是默认 4);
-#   合一后本函数统一走正确键,旧页那一行的间距由 4 变 12 曾是有意的观感变化。)
-func _add_hue_row(parent: Node, label_text: String, slider_size: Vector2,
-		chip_size: Vector2) -> HBoxContainer:
-	var crow := HBoxContainer.new()
-	crow.add_theme_constant_override("separation", 12)
-	parent.add_child(crow)
-	if not label_text.is_empty():
-		crow.add_child(UiFactory.label(label_text, 32))
-	var hue_slider := HSlider.new()
-	hue_slider.min_value = 0.0
-	hue_slider.max_value = 360.0
-	hue_slider.step = 5.0
-	hue_slider.value = Settings.pvp_color_hue
-	hue_slider.custom_minimum_size = slider_size
-	UiFactory.style_slider(hue_slider)
-	crow.add_child(hue_slider)
-	var chip := ColorRect.new()
-	chip.custom_minimum_size = chip_size
-	chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
-	crow.add_child(chip)
-	hue_slider.value_changed.connect(func(v: float) -> void:
-		Settings.pvp_color_hue = v
-		Settings.save()
-		chip.color = UiFactory.hue_preview_color(v))
-	return crow
 
 
 # ── 大厅连接(两个模式共用;差异全落在下方"子类钩子")──

@@ -302,10 +302,10 @@ func _phase_gate(packed: PackedScene) -> void:
 	_check(opened and not p2._join_panel.visible, "㉕ 进等待室:加入弹层被收起(先真开一次再收)")
 	p2.free()
 
-	# ㉖ 两颗入口按钮随等待室**收放**(入树那一相,用**真的那两颗**)。
-	#    ★ 为什么非入树不可:`_create_btn` / `_join_btn` 由 `_ready` 里的 `_build_filter_bar`
-	#      赋值;不入树的相里它们是 null(其它相靠 `_page()` 垫桩),所以"真按钮是不是这两颗"
-	#      只有这一相验得到 —— 而"字段被赋值"正是这条接线最容易断的那一半。
+	# ㉖ 两颗入口按钮随等待室**收放**(入树那一相:真页面、真 `_ready`、真那两颗按钮)。
+	#    ★ 这一相的价值在"用**真的那两颗**跑一遍":T2 起不入树的相里它们也非 null 了
+	#      (`_build_ui()` 按语义名从骨架取),但真正要钉的是**字段被赋上 + 显隐成对** ——
+	#      漏一处就是"进了房还能点创建房间"(见 `_create_btn` 上方那段)。
 	#    ★ 入树后**同一次同步调用栈内** `free()` ⇒ `_ready` 里那句 `_request_list.call_deferred`
 	#      因对象已失效被跳过(本仓 create-form 探针 ㉔ 同款),**不发出任何包**。
 	var live = packed.instantiate()
@@ -321,23 +321,18 @@ func _phase_gate(packed: PackedScene) -> void:
 
 # ── 夹具与小工具 ────────────────────────────────────────────────────
 
-# 一个不入树的页面实例,并把不入树时**为 null** 的几个基类成员垫上。
-# ★ 它们是 handler 的必经之路(`_status.text = …` / `_redraw_cards` 读 `_grid`):
-#   不垫的话 `_on_room_*` 会在写 `_status` 那一行**当场报错并中断**,
-#   后面的 `_show_wait_room` 根本跑不到 —— 整个探针会变成"测一个没跑的东西"。
-#   (`lobby_row_probe` 同款垫法。)
-# ★★ 2026-10-03(T1):三个弹层改成**启动即建、默认隐藏**,不再由 `_show_wait_room` /
-#   `_toggle_join_panel` 懒建 —— 而本探针的实例**不入树**(`_ready` 不跑),拿不到它们。
-#   故夹具在此显式调一次 `_build_ui()`(= `_ready` 建 UI 的那一段;接线仍留在 `_ready`)。
-#   ★ 走这个**生产缝**而不是逐个调 `_build_*`:①建完的隐藏态与生产一致(旧 `_build_join_panel`
-#     建完是**可见**的 ⇒ 只调三个 builder 的夹具会让 ㉕ 的 `_toggle_join_panel` 变成"关上");
-#   ②T2 把建树代码整体搬进 `.tscn` 时,只要重写 `_build_ui()` 的方法体,本夹具**不用再改**。
-#   ★ 这是"新契约的镜像",不是绕过断言:探针要验的行为(清空重填、按钮接线、闸门)一条没动。
+# 一个不入树的页面实例(UI 由 `_build_ui()` 按**骨架**取齐)。
+# ★★ 2026-10-03(T1 + T2):三个弹层与整页 chrome 现在是 `scenes/mp_lobby.tscn` 的**静态骨架**,
+#   由 `_build_ui()` 按语义名取回来(启动即建、默认隐藏)。本探针的实例**不入树**
+#   (`_ready` 不跑),故夹具显式调一次 `_build_ui()`(= `_ready` 里建 UI 的那一段;
+#   网络接线仍留在 `_ready`)。
+#   ★ 走这个**生产缝**而不是逐个 `%名` 取:建完的隐藏态与生产一致;而且 T1 铺的这条缝让
+#     T2 那次"整屏搬进 `.tscn`"只改 `_build_ui()` 的方法体,**本夹具一行未动**。
+#   ★ 它同时替掉了 T1 之前那两行垫桩(`p.set("_status", …)` / `p.set("_grid", …)`):
+#     `_build_ui()` 现在按名取到**真**的那两颗节点,垫桩只会被立刻覆盖。
 #   ★ 同步义务:`_build_ui` 里若增删 UI,这里跟着走(见 `scenes/mp_lobby.gd`)。
 func _page(packed: PackedScene):
 	var p = packed.instantiate()
-	p.set("_status", Label.new())
-	p.set("_grid", GridContainer.new())
 	p.call("_build_ui")
 	return p
 
