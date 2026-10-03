@@ -282,7 +282,10 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
 ```
 ★ **必须零命中**。有命中就说明那一屏还没迁完 —— **别删**。
 
-- [ ] **Step 2: 删**
+- [x] **Step 2: 删**(2026-10-03 按 R12/R26 收口 —— 实际只删**四个零调用死构造器**
+  `menu_separator` / `check_row` / `slider_row` / `menu_filter_button`(`ae5e0d1`);**`style_row_button` 刻意保留**
+  —— 它是 `menu_theme_mirror_smoke` 里 `RowButton` 那条臂的**供给**(删了等于零收益砍覆盖)。详见上方 ✅ 收口块
+  与 `.superpowers/sdd/2026-10-03-ui-to-tscn-and-theme/t6-boundary-report.md`)
 
 ★ **`_btn_box` / `panel_box` / `style_button` 等可能仍被 `UiFactory` 自己的其它函数用**（如 `menu_button`）—— 删之前看清谁还在用。
 ★ **`PixelFont.shared()`**：确认没有 `.gd` 再调它之后删（`apply_font_recursive` 一并评估）。
@@ -296,7 +299,16 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
 ## 收尾检查
 
 - [ ] **六屏逐张取图人眼验收**（主菜单 / 设置 / 信息 / 大厅 / Beta / 结算）+ 倒计时 + 暂停菜单
-- [ ] **HUD 未动的证据**：`combat_hud_visual_probe` + `kh_l3_visual_probe` + `minimap_circle_probe` 三条绿，**且与 Task 2 的基线图一致**
+- [ ] **HUD 现状的证据**(★ 2026-10-03 F1 订正:原句是「HUD **未动**的证据…**且与 Task 2 的基线图一致**」,
+  那半句**已被 R18/R20 证伪**,改成一条**今天真能跑、真能 grep** 的判据):`combat_hud_visual_probe` +
+  `kh_l3_visual_probe` + `minimap_circle_probe` 三条绿,**外加** `combat_hud_visual_probe` 里那条
+  **广播面板几何断言**(`6a4b39e` 钉住的值,量具是 `Control.size`:外框 **866×371**、标题带 **720×185**)
+  —— 它才是"**被接受的 HUD 现状**"的判据。
+  ★ 为什么"与 Task 2 的基线图一致"不成立(两条,缺一不可):① 那份基线图**只活在 gitignored 的 scratch 里**
+  (没有 pair/md5 进版本控制)⇒ 今天**已经找不回来**、无从复跑;② 更要紧的是 **"未动"这句话本身为假** ——
+  `671e610` 把共享构造器 `header_strip()` 的内边距 28/14 → 40/20,而复用它的大厅内广播面板因此
+  **连带变宽 +24 像素**(外框 841→865/866、标题带 696→720,见「已知边界」第 6 条)。⇒ 拿那份(若还在的)旧图来
+  比对**必然红**,而它红的是**已经被裁决接受**的连带改动 —— 用它会把一个已接受的变更判成回归。
 - [ ] **字号守卫真的在看 `.tscn`/`.tres`**：往任一 `.tscn` 塞 `font_size = 33` ⇒ `kh_l5_probe` 必须红
 - [ ] **调色板守卫真的在看 Theme**：改 Theme 里任一颜色一位 ⇒ 必须红
 - [ ] **用户能自己在编辑器里拖**：打开 `scenes/settings_menu.tscn`，确认控件与布局**可见可编辑**（这是整个计划的**最终目的**，必须有人真的打开看过）
@@ -320,3 +332,55 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
    修它要"加调色板常量 + 重生成那 4 个场景",属拥有 theme 生成器的那一批。
 8. ★ **一处覆盖缺口(登记)**:`kh_l3_visual_probe` 里那条"环画出来了"的像素断言被证明**无鉴别力**
    (环留着差值照样 76 —— 量到的是玩家帧动画)⇒ 删掉后该性质**只剩人眼图**;要有鉴别力得先有稳定参考帧,成本不成比例。
+9. ★ **登记收口说明(2026-10-03,最终整体评审 + F1 修复波)**:评审点的"六条登记项"全部落在这里 ——
+   其中 **R40(四处孤儿坐标)= 上面第 7 条**、**R39(环像素覆盖缺口)= 上面第 8 条**;
+   下面 10–13 是其余四条,14–15 是**本波(F1)新登记**的两条,16 是**四个验收态像素对**的持久记录。
+   ★ 为什么不写进 `docs/eng/registered-debt.md`(`AGENTS.md` 把它称作"唯一清单"):那份文件属**另一个会话**,
+   本波**不许动别人的文件** ⇒ 记录落在这里,并**交还给属主**去并进那份清单(见第 13 条同一道理)。
+10. ★ **R34 那一类:`.tscn` 里的颜色字面量还有 214 处**(108 处 `[sub_resource]` **逐位等于**某个 `C_*`;
+    106 处是**节点属性**,其中 **30 处按值不等于任何常量、且按设计就不在调色板里**:
+    modulate 10 + hack 2 + 对局内 HUD 文本色 4 + 战斗反馈 4 + 激光 3 + 压暗罩 2 + 排行榜板底 1 + 孤儿 4)。
+    ⇒ **今天不扩调色板守卫**:扩了只能靠 ~30 条豁免撑绿,而"豁免表"正是下一批假绿的温床。**登记,不修。**
+11. ★ **`MODE_COLOR`(`scenes/mp_lobby.gd:436-441`)与场景里 7 颗按钮上烙的 stylebox / `font_pressed_color`**
+    是**两份真相源、彼此无对账** —— 改一处不会红。要么将来上生成式(模式色 → 按钮态资源),要么补一条对账守卫;
+    今天**只登记**(它与第 10 条同源:Theme 表达不了的运行时参数被场景内联接管)。
+12. ★ **重新落地时用到的守卫只活在 gitignored 的 scratch `_gen/t2_land.py` 里**:`[node]` 计数相等、
+    `DYNAMIC_HOSTS` 空容器断言、`NEUTRALIZE` 属性白名单。生成器文件头只是**指向**它 ⇒
+    **将来重新落地 `.tscn` 的人必须重新实现这三条**(或者先把它们入库),否则"重新生成"这一步没有任何拦截。
+13. ★ **`docs/eng/ui.md:12` 仍写着"对局内 HUD 一个像素都不改"** —— 该句已被 R18/R20 证伪(见第 6 条,
+    连带 +24px)。**属主订正,本波不动别人的文件。**
+14. ★ **(F1 新登记 a)`create` 态的像素判据只覆盖 1v1 表单**:royale 专属的 MaxPlayers / MatchTime 行
+    **只有行为证据**(`lobby_create_form_probe` ②③④ 的"按模式显隐")、**没有像素证据**。
+    它们的差别是**显隐**而不是版式 ⇒ **登记而不补第五态**(补它要把整套改前/改后重跑一遍,成本与收益不成比例)。
+15. ★ **(F1 新登记 b)`tools/gen_menu_scene.gd` 的输出不是逐字节可复现的** —— 82 个 `unique_id` 是随机生成的
+    (把 id 掩掉之后两次输出一致)。⇒ T2 落地时用的是**外科式补丁 + 交叉验证**(而不是"重跑生成器覆盖"),
+    下一批要重新生成的人必须先知道这一条,别把"两次输出不同"当成漂移。
+16. ★ **四个验收态的像素对(入库工具可复现;此前 `wait` 那一相只能靠 gitignored 的 scratch 驱动)**。
+    ★ 取图命令**一律不带 `--headless`**;`addr=` 钉住网络时序(状态栏文案是网络驱动的),`call=` / `args=<JSON>` 是带参调用:
+    ```
+    "$GODOT" --path . res://tools/_shot_scene.tscn -- res://scenes/mp_lobby.tscn <名>.png addr=127.0.0.1
+    ...  <名>.png addr=127.0.0.1 _toggle_join_panel
+    ...  <名>.png addr=127.0.0.1 _open_create_dialog
+    ...  <名>.png addr=127.0.0.1 call=_show_wait_room \
+         'args=[{"code":"2468","is_public":true,"players":[{"role":1,"name":"甲","team":0},{"role":2,"name":"乙","team":0},{"role":3,"name":"丙","team":0}],"your_role":2,"host_role":1,"max_players":4},"royale"]'
+    ```
+    ★ **改前态 = `05bdbf1` 的 4 个 blob,注意是 4 个而不是 3 个**:`scenes/mp_lobby.gd`(`7614ab…`)、
+    `scenes/mp_lobby.tscn`(`4e636e…`)、`scenes/lobby_page.gd`(`b9c099…`)—— 外加 `ui/factory/ui_factory.gd`
+    (`167187…`):改前那份 `mp_lobby.gd` 调 `UiFactory.menu_filter_button`,而它被**更晚的** `ae5e0d1` 当死代码删了
+    ⇒ 不还原这第 4 个文件,改前态**解析不过、连图都取不到**(2026-10-03 实测)。
+    改后态 = HEAD 的同样 4 个 blob(`fc2b8b…` / `09fbc6…` / `99f9d2…` / `ee1365…`)。
+    ★ **别在主树里就地换这 4 个生产文件**(忘了换回来 = 生产代码被改):用隔离工作树
+    `git worktree add <scratch> HEAD`,拷入 `tools/_shot_scene.{gd,tscn}`,**先跑一次
+    `--headless --editor --quit` 生成 `.godot/global_script_class_cache.cfg`**(没有它会报
+    `Identifier "MazeGenerator" not declared`),取完图 `git -C <scratch> checkout -- <4 文件>` 复原。
+    ★ **16 个文件只有 4 个不同的 md5**(每态 before/before2/after/after2 逐字节相同 —— 即一个像素都没差):
+    ```
+    chrome  f1_shot_chrome_{before,before2,after,after2}.png  f44d25b78445de6b711393cf9d693553
+    join    f1_shot_join_{…}                                  b133a6c4e674d123f4b0bfcfababa04c
+    create  f1_shot_create_{…}                                c0a4f0baf59b95d92167c56dc8b8119a
+    wait    f1_shot_wait_{…}                                  3938792328e11af511664b990f5efe84
+    ```
+    ★ 判据原文:每态 `before/before2`、`after/after2`、`before/after` **三条** `pixel_diff` 全为
+    `DIFF 0 / 2764800` + `MAXDELTA 0`(共 12 条);且这 16 张与**旧权威集** `t2p_*` 逐对 `DIFF 0`
+    ⇒ 入库工具复现出来的就是当年那批图。★ PNG 本体仍住 gitignored 的 `_gen/`(**scratch,不算记录**);
+    **记录 = 上面这四行 md5 + 这段取法**。

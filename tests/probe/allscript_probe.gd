@@ -14,6 +14,26 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #   "大回退/大合并后全仓脚本还能不能解析"这一条 —— 一条**永远红**的闸等于没有闸。
 #   ★ 它**不该**改成"把失败降级成提示":那 3 个文件确实解析不过,只是它们**不是本仓的源码**。
 
+# ★★ 覆盖面下限(2026-10-03,最终整体评审 Important 1):本闸**曾经没有下限** ——
+#   一个过宽的 `SKIP_DIRS` 项、一个 `.gdignore`、一次 `DirAccess.open` 失败,都**只让
+#   `_total` 变小**,而探针照打 `OK(n)` ⇒ 它是一道 **fail-open** 的闸:自己瞎了也不知道。
+#   讽刺点(评审原文点的):同一批里我们刚给 `combat_hud_visual_probe` / `kh_l3_visual_probe`
+#   补了条数下限(R19/R41),却把这道自称"本批最大增益"的闸留在无下限状态 —— 而本批
+#   **恰好拓宽了** `SKIP_DIRS`(加了 `res://_crashtest`,见上),正是最该有下限的时候。
+#
+# `EXPECTED_SCRIPTS := 283` 的**数法**(先说 `_total` 在数什么):
+#   `_collect("res://")` 递归收 `.gd`,排除 ① 名字以 `.` 开头的目录(故 `.godot/`、
+#   `.claude/`、`.superpowers/` 里的 scratch `.gd` 一概不在数里)、② `SKIP_DIRS` 那 10 项、
+#   ③ 以 `.gd.remap` 结尾的名字。⇒ `_total` = "res:// 下**参与编译面**的 `.gd` 个数"。
+#   283 在 `57aa973` 上由两条**独立**路径对上:探针自己打的 `OK(283)`,与
+#   `git ls-files '*.gd' | wc -l` = 283(相等的前提三条:283 个已跟踪 `.gd` 全部落在非点、
+#   非 skip 目录里;工作树零个未跟踪 `.gd`;零个 `.gd.remap` —— 三条都实测过)。
+#   ⇒ 它同时钉住"没有少、也没有多",故下面用 `!=` 而不是 `<`。
+# ★ 它是**覆盖面**闸,不是质量闸:以后**故意**增删 `.gd` 时它会红并点名两个数,照着改这个
+#   常量即可 —— 那正是"覆盖变了得有人过目"的意思。**别把它降级成 `<`**(对"多扫了一条"
+#   就瞎了,而多出来的可能正是 scratch 副本)。
+const EXPECTED_SCRIPTS := 283
+
 var _fails: Array[String] = []
 var _total := 0
 
@@ -36,11 +56,21 @@ func _run() -> void:
 		if s == null or broken:
 			_fails.append(p)
 			print("LOAD[FAIL]: %s(%s)" % [p, "解析失败/不可实例化" if broken else "load() 返回 null"])
-	if _fails.is_empty():
+	# ★ 收尾两道(与 `tests/lib/probe_base.gd` 的 `_checks >= EXPECTED_CHECKS` 同一条纪律,
+	#   只是这里的"条数"是**被扫的脚本数**):① 扫到的脚本数 `!= EXPECTED_SCRIPTS` ⇒ 红
+	#   (**两侧都红**:少了是覆盖缺口,多了是覆盖变了);② 有加载失败 ⇒ 红。
+	#   判词**点名条数**,否则"闸红了"与"扫描面塌了"在输出上分不出来。
+	var count_ok := _total == EXPECTED_SCRIPTS
+	if not count_ok:
+		print("ALLSCRIPT: 条数闸 FAIL —— 实扫 %d 个脚本,期望 %d(覆盖面对不上;见本文件头部)"
+				% [_total, EXPECTED_SCRIPTS])
+	if _fails.is_empty() and count_ok:
 		print("ALLSCRIPT: OK(%d 个脚本全部加载)" % _total)
 		get_tree().quit(0)
 	else:
-		print("ALLSCRIPT: FAIL(%d/%d 失败)" % [_fails.size(), _total])
+		# 条数闸红时把原因并进裁决行 —— 否则会打出一行像"零失败"的 `FAIL(0/131 失败)`。
+		print("ALLSCRIPT: FAIL(%d/%d 失败%s)" % [_fails.size(), _total,
+				("" if count_ok else " · 条数闸红(期望 %d)" % EXPECTED_SCRIPTS)])
 		get_tree().quit(1)
 
 

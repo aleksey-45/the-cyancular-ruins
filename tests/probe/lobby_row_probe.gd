@@ -58,8 +58,10 @@ func _ready() -> void:
 
 
 func _finish() -> void:
-	if _checks < EXPECTED_CHECKS:
-		_fails.append("★ 只跑了 %d 条断言(期望 ≥ %d)—— 有断言没跑到,这个 ALL-OK 不算数"
+	# ★ 条数闸用 `!=`:少了 = 有断言没跑到,多了 = **多跑了一条没登记的断言**(2026-10-03 最终
+	#   整体评审 Minor① 把这一族从 `<` 统一过来)。两种都是账目对不上,都不算 ALL-OK。
+	if _checks != EXPECTED_CHECKS:
+		_fails.append("★ 只跑了 %d 条断言(期望恰好 %d 条,多了少了都算账目对不上)—— 这个 ALL-OK 不算数"
 				% [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
 		print("LOBBY ROW PROBE: ALL-OK(%d 条断言)" % _checks)

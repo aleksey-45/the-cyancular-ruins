@@ -412,10 +412,12 @@ func _count_text(p) -> String:
 	return "" if p._wait_count == null else p._wait_count.text
 
 
-# ★ 收尾两道:① 断言条数不足 EXPECTED_CHECKS 即红(有断言没跑到);② 有失败即红。
+# ★ 收尾两道:① 断言条数 `!= EXPECTED_CHECKS` 即红(少了 = 有断言没跑到;多了 = **多跑了一条
+#   没登记的断言**,两者都是账目对不上 —— 故用 `!=` 而不是 `<`,2026-10-03 最终整体评审 Minor①);
+#   ② 有失败即红。
 func _finish() -> void:
-	if _checks < EXPECTED_CHECKS:
-		_fails.append("★ 只跑了 %d 条断言(期望 ≥ %d)—— 有断言没跑到,这个 ALL-OK 不算数"
+	if _checks != EXPECTED_CHECKS:
+		_fails.append("★ 只跑了 %d 条断言(期望恰好 %d 条,多了少了都算账目对不上)—— 这个 ALL-OK 不算数"
 				% [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
 		print("LOBBY WAIT ROOM PROBE: ALL-OK(%d 条断言)" % _checks)
