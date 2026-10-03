@@ -48,6 +48,29 @@ func _ready() -> void:
 		Settings.wheel_switch = on
 		Settings.save()))
 
+	# ── 联机显示 ──
+	# ★ 这四个开关原先只长在 1v1 大厅页的右侧面板上,而那页在「大厅合一」里被删了 ⇒
+	#   键与读者都还在,但界面上再也改不了。这里把它们放回来。
+	# ★ 它们**只写本机 Settings、不上报服务器**(与对局的「房主规则项」不是一回事):
+	#   四个键的读者全在本机(pvp_game / royale_game / team_game / bullet_base / minimap)。
+	vb.add_child(_section("联机显示"))
+	vb.add_child(UiFactory.check_row("显示子弹尾迹(所有子弹)", Settings.pvp_show_trajectories,
+			CHECK_LABEL_W, func(on: bool) -> void:
+		Settings.pvp_show_trajectories = on
+		Settings.save()))
+	vb.add_child(UiFactory.check_row("显示敌方血量条", Settings.pvp_show_enemy_hp,
+			CHECK_LABEL_W, func(on: bool) -> void:
+		Settings.pvp_show_enemy_hp = on
+		Settings.save()))
+	vb.add_child(UiFactory.check_row("打开小地图", Settings.pvp_show_minimap,
+			CHECK_LABEL_W, func(on: bool) -> void:
+		Settings.pvp_show_minimap = on
+		Settings.save()))
+	vb.add_child(UiFactory.check_row("小地图显示敌方位置", Settings.pvp_minimap_show_enemy,
+			CHECK_LABEL_W, func(on: bool) -> void:
+		Settings.pvp_minimap_show_enemy = on
+		Settings.save()))
+
 	# ── 键位 ──
 	vb.add_child(_section("按键映射(点击后按新键;Esc 取消)"))
 	var grid := GridContainer.new()
