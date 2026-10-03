@@ -14,14 +14,26 @@ extends LobbyPage
 # ★ 场景是裸 Control,UI 全在代码里建(与三个旧页同款);控件一律走 UiFactory,字号 16 的倍数。
 
 # ── 版式常量(真实像素;1920×1440 设计稿)──
-# ★ 2026-10-03(尺度):页边距 40 → 56、卡间距 22 → 24、卡片高 400 → 440;
+# ★ 2026-10-03(尺度,第一档):页边距 40 → 56、卡间距 22 → 24、卡片高 400 → 440;
 #   随之重排的是各行/各按钮的绝对坐标(本页是绝对定位,改一个就得跟一串 ——
 #   漏一处就重叠)。按钮宽度那一档**不**跟 `menu_button` 的 640 默认值走:
 #   本页的按钮各有实际文本宽度(见各处注释),640 会把整行挤爆。
-const PAGE_MARGIN := 56.0
+# ★★ 2026-10-03(尺度,第二档,用户:「margin 和 padding 还是不够」):页边距 56 → **76**。
+#   ★★ `ROW_H` 必须同时 64 → **72**:`UiFactory._btn_box` 的上下内边距抬到 20 之后,
+#      32 号字按钮的**最低高度 = 32 + 40 = 72**,而 `Control.size` 会被 `custom_minimum_size`
+#      **顶高** —— 行高还写 64 的话按钮会比它所在的那一行高出 8px、压到下一行上(且不报错)。
+#   ★ 每一行/每一块的 y 都从上一块的底边 + 具名空档推出来,别再写一串魔数(见下)。
+const PAGE_MARGIN := 76.0
 const CARD_COLUMNS := 4
 const CARD_GAP := 24.0
-const ROW_H := 64.0
+# 顶栏两行 / 筛选行 / 底栏那一行的行高(= 按钮的最低高度,见上)。
+const ROW_H := 72.0
+# 顶栏两行之间的空档。
+const ROW_GAP := 16.0
+# 顶栏第二行 → 筛选行。
+const FILTER_GAP := 52.0
+# 筛选行 → 房卡网格顶边。
+const GRID_GAP := 176.0
 
 var _mode := ""                    # 当前**筛选**:"" = 全部;否则 PvpSession.MODE_*
 var _rooms_by_mode := {}           # mode -> Array(载荷条目,已打 "mode" 键)
@@ -159,16 +171,20 @@ func _mp_button(text: String, pos: Vector2, size: Vector2, fn: Callable,
 
 # 顶栏:昵称行 / 服务器地址行 / 右上本机局域网 IP。
 # ★ 各控件的 x 由「前一个的右边缘 + 间距」推出来(绝对定位;改宽度必须跟着改 x,
-#   否则按钮会叠在一起 —— 而**不会报任何错**)。行 y:56 / 136。
+#   否则按钮会叠在一起 —— 而**不会报任何错**)。行 y 由 PAGE_MARGIN / ROW_H / ROW_GAP 推。
 func _build_top_bar() -> void:
+	var y1 := PAGE_MARGIN
+	var y2 := PAGE_MARGIN + ROW_H + ROW_GAP
+	var label_w := 240.0
+	var x_edit := PAGE_MARGIN + label_w + 16.0
 	var name_l := UiFactory.label("昵称", 32, UiFactory.C_TEXT)
-	name_l.position = Vector2(PAGE_MARGIN, 56)
-	name_l.size = Vector2(240, ROW_H)
+	name_l.position = Vector2(PAGE_MARGIN, y1)
+	name_l.size = Vector2(label_w, ROW_H)
 	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(name_l)
-	# 宽 620(不是 660):右上那条 IP 提示按文本宽(≈900)向左展开,输入框再宽 40px
-	# 就会与它**横向重叠**(两者同在 y 56~120 这一行,叠上去不报错、只是字压在框线上)。
-	var name_le := UiFactory.line_edit(self, Vector2(312, 56), Vector2(620, ROW_H),
+	# 宽 620(不是 660):右上那条 IP 提示按文本宽(≈860)向左展开,输入框再宽 40px
+	# 就会与它**横向重叠**(两者同在顶栏第一行,叠上去不报错、只是字压在框线上)。
+	var name_le := UiFactory.line_edit(self, Vector2(x_edit, y1), Vector2(620, ROW_H),
 			"昵称(头上显示)", PvpSession.player_name)
 	UiFactory.style_control(name_le, 32)   # 本次版式统一到 32(基类 line_edit 的默认是 16)
 	name_le.text_changed.connect(func(t: String) -> void:
@@ -176,18 +192,19 @@ func _build_top_bar() -> void:
 		_push_lobby_name())
 
 	var addr_l := UiFactory.label("服务器地址", 32, UiFactory.C_TEXT)
-	addr_l.position = Vector2(PAGE_MARGIN, 136)
-	addr_l.size = Vector2(240, ROW_H)
+	addr_l.position = Vector2(PAGE_MARGIN, y2)
+	addr_l.size = Vector2(label_w, ROW_H)
 	addr_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(addr_l)
-	_addr_edit = UiFactory.line_edit(self, Vector2(312, 136), Vector2(620, ROW_H),
+	_addr_edit = UiFactory.line_edit(self, Vector2(x_edit, y2), Vector2(620, ROW_H),
 			"服务器地址", PvpSession.server_address)
 	UiFactory.style_control(_addr_edit, 32)
 	# 两颗都是**小按钮**(不该按 `menu_button` 的 640 默认值走):宽度按各自文本取
-	# 「刷新列表」4 字 ≈128px、「启动/重启本机服务器」10 字 ≈336px,加内边距(30×2)再留余量。
-	_mp_button("刷新列表", Vector2(996, 136), Vector2(260, ROW_H), _on_refresh_pressed)
-	var srv := _mp_button("启动/重启本机服务器", Vector2(1280, 136), Vector2(440, ROW_H),
-			_on_local_server_pressed)
+	# 「刷新列表」4 字 ≈128px、「启动/重启本机服务器」10 字 ≈336px,加内边距(40×2)再留余量。
+	var x_refresh := x_edit + 620.0 + 16.0
+	_mp_button("刷新列表", Vector2(x_refresh, y2), Vector2(260, ROW_H), _on_refresh_pressed)
+	var srv := _mp_button("启动/重启本机服务器", Vector2(x_refresh + 260.0 + 16.0, y2),
+			Vector2(440, ROW_H), _on_local_server_pressed)
 	srv.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
 
 	# 右上:本机局域网 IP(常驻显示,不靠易被刷掉的状态栏)。
@@ -203,29 +220,41 @@ func _build_top_bar() -> void:
 	_ip_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_ip_label.offset_left = -1200.0     # 盒子够宽即可(文本右对齐 ⇒ 右边不留空)
 	_ip_label.offset_right = -PAGE_MARGIN
-	_ip_label.offset_top = 56.0
-	_ip_label.offset_bottom = 56.0 + ROW_H
+	_ip_label.offset_top = PAGE_MARGIN
+	_ip_label.offset_bottom = PAGE_MARGIN + ROW_H
 	_ip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	add_child(_ip_label)
 
 
+# 筛选行的 y / 房卡网格的顶边:都从上面的具名常量推出来(改一处不会漏另一处)。
+func _filter_row_y() -> float:
+	return PAGE_MARGIN + ROW_H * 2.0 + ROW_GAP + FILTER_GAP
+
+
+func _grid_top_y() -> float:
+	return _filter_row_y() + ROW_H + GRID_GAP
+
+
 # 筛选行:四颗分段按钮(全部 / 1v1 / 3v3 / 大乱斗)+ 右侧创建/加入。
-# ★ 2026-10-03(尺度):y 230 → 252、筛选按钮 160×60 → 200×72(步进 160+12 → 200+16)、
+# ★ 2026-10-03(尺度,第一档):y 230 → 252、筛选按钮 160×60 → 200×72(步进 160+12 → 200+16)、
 #   创建/加入 280×60 → 320×72 并靠右对齐(右边缘 = 1920 − PAGE_MARGIN)。
-#   ★ 必须**整行一起改**:分段按钮是绝对定位 + 定步进,只加宽不改步进 = 相邻两颗重叠;
-#     而 `_btn_box` 内边距变大(30/14)后,160 宽已装不下「大 乱 斗」三个全角字 + 两侧 30px。
+# ★★ 第二档:`_btn_box` 内边距 30/14 → 40/20 之后,200 宽**装不下**「大 乱 斗」
+#   (3 个全角字 ≈96 + 4 个空格 ≈64 + 两侧 80 = 240)—— 控件会被 `custom_minimum_size`
+#   顶宽到 240,与步进 216 打架(相邻两颗**重叠**)。故 fw 200 → **220**、步进 236,
+#   并把行 y 改成推出式。
 func _build_filter_bar() -> void:
+	var y := _filter_row_y()
 	var group := ButtonGroup.new()
 	var filters := [["", "全部"], [PvpSession.MODE_PVP, "1 v 1"],
 			[PvpSession.MODE_TEAM, "3 v 3"], [PvpSession.MODE_ROYALE, "大 乱 斗"]]
-	var fw := 200.0
+	var fw := 220.0
 	var x := PAGE_MARGIN
 	for f in filters:
 		var m: String = f[0]
 		# 分段按钮:选中态 = **该模式的模式色**(未选中 = C_EDGE,与其余按钮同款)。
 		# ★ 选中那一档由 Button 自己的 toggle 状态画,ButtonGroup 保证互斥;颜色织在
 		#   `pressed` 主题项里(见 `UiFactory.menu_filter_button`)—— 只改常态色是**看不见**的。
-		var b := _mp_button(str(f[1]), Vector2(x, 252), Vector2(fw, 72),
+		var b := _mp_button(str(f[1]), Vector2(x, y), Vector2(fw, ROW_H),
 				func() -> void: _set_filter(m), "primary", MODE_COLOR.get(m, UiFactory.C_ACCENT))
 		b.button_group = group
 		b.button_pressed = (m == _mode)
@@ -234,10 +263,10 @@ func _build_filter_bar() -> void:
 	# 「＋ 创建房间」是这一屏的主行动 ⇒ gold 档(琥珀描边 + 琥珀字)。两颗靠右、间距 24,
 	# 右边缘 = 1920 − PAGE_MARGIN(与顶栏的 IP、底栏的「返回主菜单」同一条边)。
 	_create_btn = _mp_button("＋ 创建房间",
-			Vector2(1920.0 - PAGE_MARGIN - 320.0 * 2.0 - 24.0, 252),
-			Vector2(320, 72), _open_create_dialog, "gold")
-	_join_btn = _mp_button("加入房间", Vector2(1920.0 - PAGE_MARGIN - 320.0, 252),
-			Vector2(320, 72), _toggle_join_panel)
+			Vector2(1920.0 - PAGE_MARGIN - 320.0 * 2.0 - 24.0, y),
+			Vector2(320, ROW_H), _open_create_dialog, "gold")
+	_join_btn = _mp_button("加入房间", Vector2(1920.0 - PAGE_MARGIN - 320.0, y),
+			Vector2(320, ROW_H), _toggle_join_panel)
 
 
 func _build_card_grid() -> void:
@@ -245,17 +274,18 @@ func _build_card_grid() -> void:
 	_grid.columns = CARD_COLUMNS
 	_grid.add_theme_constant_override("h_separation", int(CARD_GAP))
 	_grid.add_theme_constant_override("v_separation", int(CARD_GAP))
-	# 卡片顶边:筛选行底(252+72=324)之下留一档空,与旧版的比例一致。
-	_grid.position = Vector2(PAGE_MARGIN, 500)
+	# 卡片顶边:筛选行底之下留一档空(GRID_GAP),与旧版的比例一致。
+	_grid.position = Vector2(PAGE_MARGIN, _grid_top_y())
 	_grid.size = Vector2(1920.0 - PAGE_MARGIN * 2.0, 0)
 	add_child(_grid)
 
 
 func _build_status_bar() -> void:
 	# 一栏字浮在空底上读不出"这是个栏位" ⇒ 给它一块 `menu_panel()` 的底(方向 B 的凿刻压边)。
-	# ★ 内边距仍显式给小值((28,12) 而不是工厂默认的 48/34):这一条只有 64 高,
-	#   34×2 会让面板被内容顶高、压到底边。y 取「1440 − 边距 − 行高」= 1320(底边留 56)。
-	var bar := UiFactory.menu_panel(Vector2(28, 12))
+	# ★ 内边距仍显式给小值((32,16) 而不是工厂默认的 64/46):这一条只有 ROW_H 高,
+	#   46×2 会让面板被内容顶高、压到底边(而 `bar.size` 是写死的 —— 顶高只会让它与底边打架)。
+	#   y 取「1440 − 边距 − 行高」(底边留 PAGE_MARGIN)。
+	var bar := UiFactory.menu_panel(Vector2(32, 16))
 	bar.position = Vector2(PAGE_MARGIN, 1440.0 - PAGE_MARGIN - ROW_H)
 	bar.size = Vector2(1500, ROW_H)
 	add_child(bar)
@@ -918,8 +948,10 @@ func _build_create_panel() -> void:
 	_create_panel.visible = false
 	add_child(_create_panel)
 
+	# ★ 内容**必须**加在 `Body` 里 —— 只有它承载 `menu_panel()` 的内边距(加在外层 =
+	#   padding 完全失效、内容直接顶到外线上,而画面上只表现为"挤",不报错)。
 	var root_vb := VBoxContainer.new()
-	root_vb.add_theme_constant_override("separation", 24)
+	root_vb.add_theme_constant_override("separation", 32)
 	(_create_panel.get_node("Body") as Container).add_child(root_vb)
 
 	# 标题行:标题带 + 右上角 ×(关闭)。
@@ -931,20 +963,22 @@ func _build_create_panel() -> void:
 	var title := UiFactory.header_strip("创 建 房 间", 48)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_row.add_child(title)
-	var close := UiFactory.menu_button("×", 32, Vector2(80, 56), "quiet")
+	# 关闭键是**次要动作**(与「取 消」同款 quiet)。高度用 72 = 32 号字按钮的新最低高度
+	# (见 `UiFactory._btn_box` 的侧写),与左侧标题带等高。
+	var close := UiFactory.menu_button("×", 32, Vector2(80, 72), "quiet")
 	close.pressed.connect(func() -> void: _set_create_visible(false))
 	title_row.add_child(close)
 
 	# 双列:左 = 房型与人数/限时;右 = 禁用武器 + 地图。
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 40)
+	cols.add_theme_constant_override("separation", 48)
 	root_vb.add_child(cols)
 	var left := VBoxContainer.new()
-	left.add_theme_constant_override("separation", 20)
+	left.add_theme_constant_override("separation", 28)
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(left)
 	var right := VBoxContainer.new()
-	right.add_theme_constant_override("separation", 20)
+	right.add_theme_constant_override("separation", 28)
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(right)
 
@@ -952,7 +986,7 @@ func _build_create_panel() -> void:
 	left.add_child(_build_create_mode_buttons())
 	# 公开/私密 + 邀请码**整块**一个容器:1v1 下要整块隐藏(见 `_apply_create_form` 的注释)。
 	var privacy_row := VBoxContainer.new()
-	privacy_row.add_theme_constant_override("separation", 12)
+	privacy_row.add_theme_constant_override("separation", 16)
 	_build_public_row(privacy_row)
 	left.add_child(privacy_row)
 	_form_rows["privacy"] = privacy_row
@@ -964,7 +998,7 @@ func _build_create_panel() -> void:
 	# 非 Beta 态它往容器里什么都不加。★ 这一段与**模式**无关(只看 `PvpSession.beta_mode`),
 	# 故 `_apply_create_form` 不碰 `_form_rows["beta"]`,它的可见性在建面板这一刻定死。
 	var beta_block := VBoxContainer.new()
-	beta_block.add_theme_constant_override("separation", 12)
+	beta_block.add_theme_constant_override("separation", 16)
 	beta_block.visible = PvpSession.beta_mode
 	_add_time_params(beta_block)
 	left.add_child(beta_block)
@@ -972,8 +1006,10 @@ func _build_create_panel() -> void:
 
 	# 右列:禁用武器**整块**(标题 + 网格)。整块一个容器,才能一次显隐(设计 §3.4)。
 	var wblock := VBoxContainer.new()
-	wblock.add_theme_constant_override("separation", 12)
-	wblock.add_child(UiFactory.label("禁用武器(房主生效,开局带进对局):", 32))
+	wblock.add_theme_constant_override("separation", 16)
+	# 区块标题 = 同款标题带(与设置页 / 单人开局面板的区块标题同一套;字号 32 是**面板内**
+	# 分区的档,不与 48 的面板标题抢视线)。
+	wblock.add_child(UiFactory.header_strip("禁用武器(房主生效,开局带进对局):", 32))
 	# ★ 回调把 `cb` 与 `type_id` **都**收进 `_weapon_checks`(照旧大乱斗页的写法)——
 	#   少收 `type_id` 那半,`_checked_weapons()` 会永远返回 `[0]` 且**不报错**。
 	_add_weapon_grid(wblock, 20, func(cell: Node, type_id: int) -> void:
@@ -985,21 +1021,22 @@ func _build_create_panel() -> void:
 
 	# 右列:地图选择(基类 `_add_map_picker` 写 Settings.mp_map_path)。整块登记,供探针查显隐。
 	var map_block := VBoxContainer.new()
-	map_block.add_theme_constant_override("separation", 12)
+	map_block.add_theme_constant_override("separation", 16)
 	_add_map_picker(map_block)
 	right.add_child(map_block)
 	_form_rows["map"] = map_block
 
 	# 底部:取消 / 创建房间。
 	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 20)
+	actions.add_theme_constant_override("separation", 24)
 	actions.alignment = BoxContainer.ALIGNMENT_END
 	root_vb.add_child(actions)
-	var cancel := UiFactory.menu_button("取 消", 32, Vector2(260, 64), "quiet")
+	# 高度 88 = 与单人开局面板那对并排按钮同档(两处都是"弹层的行动行")。
+	var cancel := UiFactory.menu_button("取 消", 32, Vector2(280, 88), "quiet")
 	cancel.pressed.connect(func() -> void: _set_create_visible(false))
 	actions.add_child(cancel)
 	# 「创 建 房 间」= 弹层里的主行动 ⇒ gold 档(与筛选行那颗「＋ 创建房间」同色).
-	var create := UiFactory.menu_button("创 建 房 间", 32, Vector2(360, 64), "gold")
+	var create := UiFactory.menu_button("创 建 房 间", 32, Vector2(400, 88), "gold")
 	create.pressed.connect(_on_create_pressed)
 	actions.add_child(create)
 
@@ -1017,8 +1054,8 @@ func _build_create_mode_buttons() -> Control:
 	row.add_theme_constant_override("separation", 16)
 	var group := ButtonGroup.new()
 	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
-		# 与筛选行同款:选中那一段画该模式的模式色(未选 = C_EDGE)。
-		var b := UiFactory.menu_filter_button(str(MODE_LABEL[m]), 32, Vector2(220, 56), MODE_COLOR[m])
+		# 与筛选行同款:选中那一段画该模式的模式色(未选 = C_EDGE)。高度 = ROW_H(新最低高度)。
+		var b := UiFactory.menu_filter_button(str(MODE_LABEL[m]), 32, Vector2(220, ROW_H), MODE_COLOR[m])
 		b.button_group = group
 		b.pressed.connect(func() -> void: _apply_create_form(m))
 		_create_mode_btns[m] = b

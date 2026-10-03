@@ -11,10 +11,13 @@ var _ui_layer: CanvasLayer = null
 var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
 
 # ── 背景镜头运动的状态(见 _process)──
-var _bg_mat: ShaderMaterial = null      # 背景 ColorRect 的材质(null = 没建出来)
-var _motion_noise: FastNoiseLite = null # 漂移与转速调制共用一张噪声(不同行 = 去相关)
-var _motion_t := 0.0                    # 噪声时间轴(秒,随真实时间推进)
-var _bg_angle := 0.0                    # 旋转角(逐帧积分 ⇒ 角速度连续 ⇒ 永不跳)
+var _bg_mat: ShaderMaterial = null       # 背景 ColorRect 的材质(null = 没建出来)
+var _bg_cells := Vector2(150.0, 100.0)   # 背景那张图的格数(从纹理尺寸反推;随机取点要用)
+var _rng := RandomNumberGenerator.new()  # 路径随机源(种子固定 ⇒ 可复现)
+var _seg_t := 0.0                        # 当前段已走过的秒数
+var _seg_from := Vector2.ZERO            # 当前段起点(格坐标)
+var _seg_to := Vector2.ZERO              # 当前段终点(格坐标)
+var _seg_index := 0                      # 段序号(奇偶决定角度是 0→120 还是 120→0)
 
 # 弹出面板的**骨架**在场景里(容器/滚动区/标签/锚点看得见);按钮与勾选框仍由
 # UiFactory 建、数据由 _fill_* 填 —— 控件进场景就得在使用处补 style_control +
@@ -31,11 +34,16 @@ const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 #   给 `Level0` 生成 TileSet、也在这里把地图烘成 Image ⇒ 背景与游戏是同一套像素。
 #
 # ── 取景/缩放(具名常量,方便"再放大一点")──
-# 一句话:**一格 = 96 屏幕像素 = 玩家视角(48px/格)的 200%**;按"源分辨率烘 + 整数 3× 放大"走。
-#   · `BG_VIEW_CELLS = 20.0` —— 屏幕**横向**铺 20 格 ⇒ 1920 / 20 = **96 屏幕像素/格**。
+# 一句话:**一格 = 72 屏幕像素 = 玩家视角(48px/格)的 150%**;屏幕约 27 格宽。
+#   · `BG_VIEW_CELLS = 26.6667` —— 屏幕**横向**铺 26.67 格 ⇒ 1920 / 26.67 = **72 屏幕像素/格**。
 #     ★ 参照:对局的玩家镜头 = 64px × `PlayerParams.cam_zoom`(0.75)= **48px/格、约 40 格宽**
-#     ⇒ 这里是它的 **2.0 倍**(用户 2026-10-03 的口径:先要 500%,后改成 **200%**)。
-#     ★ 与 `BG_CELL_PX` 是**配套的一对**:96 / 32 = **3×** 整数倍(见下)。
+#     ⇒ 这里是它的 **1.5 倍**(用户 2026-10-03 的口径:500% → 200% → **150%**)。
+#   · ★★ **像素完美这一档有个取舍(照实登记)**:72 / `BG_CELL_PX`(32)= **2.25×**(非整数)
+#     ⇒ 源砖的一个像素会时而占 2 个、时而占 3 个屏幕像素,砖缝**粗细略有不均**
+#     (2.25 是"2 或 3",不是随机 —— 但每隔一个砖缝宽一点是看得出来的)。
+#     ★ 整数倍的邻近档只有 **`BG_VIEW_CELLS = 30.0`(64px/格 ≈ 133%)** 与
+#       **`BG_VIEW_CELLS = 20.0`(96px/格 = 200%)**。**要不要为了像素完美牺牲"150%"这个数,
+#       留给用户定** —— 改 `BG_VIEW_CELLS` 一个常量即可。
 #   · `BG_CELL_PX = 32` —— **烘图**分辨率:游戏里 64px 的一格烘成 32 图像像素
 #     (= **源砖的分辨率**:`structure.png` 一块砖就是 32×32,游戏里按 2× 画成一格)。
 #     整张 newfactory(150×100 格)= 4800×3200 ≈ 61MB。
@@ -47,44 +55,62 @@ const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 #         ⇒ 真正的源分辨率是 **8px/子格 = 32px/格**;
 #       – 烘到 32px/格 时每个子格 = 8px,**正好等于那个 8×8 源象限本身**(放大 2× 再缩回去无损);
 #       – 屏幕再放大 **整数 3×** ⇒ 每 1 个源像素落到 3×3 个屏幕像素上。
-#     若改成从**图集层 16px 子格**直接烘 96px/格 = 每子格 24px = **1.5×**(非整数)⇒ 砖缝会
-#     一格粗一格细。**当前实现走的是源分辨率那条**(烘图缩放比 = 32/16 的整数路径)。
-#   · 想"再放大一点":只改 `BG_VIEW_CELLS`,并让它与 32 的比仍是**整数** ——
-#     例 `BG_VIEW_CELLS = 10.0`(192px/格 = 6×,= 玩家视角 400%)、`15.0`(128px/格 = 4×)
-#     都行;`13.33`(144px/格 = 4.5×)就会粗细不均。★ 改大了**不会糊**(最近邻),
-#     只是"源像素→屏幕像素"不再是整数倍时,砖缝会有粗有细。
+#     (烘图本身走的是**源分辨率**那条:32px/格 时每个子格 = 8px = 源砖那个 8×8 象限,
+#      不是从 16px 图集层再缩。)
 const BG_MAP := "res://maps/newfactory.cyrm"
 const BG_CELL_PX := 32
-const BG_VIEW_CELLS := 20.0
+const BG_VIEW_CELLS := 26.6667
 const BG_SHADER := "res://core/present/menu_fisheye.gdshader"
+# 背景**虚焦**半径(屏幕像素)。★ 与取景是两个独立量:模糊是"镜头虚焦",取景是"看多远"。
+# 4 是"看得出是虚的、又不至于把砖整块抹平"的值(150% 下一格 72px,砖面本身是平色,
+# 4px 的高斯主要糊的是砖缝/梯子横档这些高频边)。
+const BG_BLUR_RADIUS_PX := 4.0
 
-# ── 镜头运动:漂移 + 旋转(都喂给 shader;运动学住在脚本里,见 _process)──
-# ★ 为什么不用 shader 里那串 `sin(TIME·a), cos(TIME·b)` 的李萨如:它是**周期性的** ——
-#   看久一点就会发现镜头在绕同一个圈(用户 2026-10-03:"要随意一点")。改成
-#   `FastNoiseLite` 采样(固定种子)⇒ 轨迹连续、永不重复、每次进菜单还是同一段(可复现)。
-# ★ `drift_amp = 0.06`(半屏宽)与旧值同 —— 在 1920 上 ≈ 115px 的游走范围,
-#   是"一直在慢慢晃"而不是"在跑"。★ 它是**屏幕空间**量,与 `BG_VIEW_CELLS` 无关。
-const DRIFT_AMP := 0.06
-# 噪声时间轴推进速率(1/s):越大晃得越快。噪声 frequency=1 ⇒ 特征时长 ≈ 1/0.15 ≈ 7s。
-# 峰值速度 ≈ DRIFT_AMP × RATE × 960px ≈ 0.06×0.15×1.5×960 ≈ 13px/s(背景该有的量级)。
-const DRIFT_RATE := 0.15
-# 旋转:**基准**(不受噪声调制时)转一整圈的秒数。用户要"几十秒转一整圈" ⇒ 60s(=6°/s)。
-# ★ 太慢就"看不出在转",太快就成了内容而不是背景;60 是这两端之间取的。
-const ROT_PERIOD_SEC := 60.0
-# 角速度的噪声调制深度:1.0 = 速率在 0~2× 基准之间游走(时快时慢),`0.85` ⇒ 0.15~1.85×。
-# ★ 刻意**不让它穿过 0**:反向会让旋转"顿一下"(用户点名不要),而 0.85 已经足够"随意"。
-const ROT_WOBBLE := 0.85
-# 调制噪声的时间轴速率(1/s):越大,快慢切换越频繁。0.05 ⇒ 特征时长 ≈ 20s
-# (与一整圈同量级 ⇒ 一圈里速率只缓慢地变一两次,不会抖)。
-const ROT_WOBBLE_RATE := 0.05
-# 噪声种子固定 ⇒ "随意"但不"每次都不一样"(每次进菜单同一段轨迹,便于对图)。
-const MOTION_SEED := 20261003
-# 副信息(标题与按钮之间那层空档里的一行小字)。内容刻意是**静态标语**:不是版本号
-# (那会随构建漂,而左下角已有一行确定性的版本号给 `--nover` 自动探针读),也不是当前
-# 模式提示(那一行在别处)。
-const TAGLINE := "环面世界 · 像素射击"
-
-
+# ── 镜头运动:「随机路径段」循环(用户 2026-10-03 的最新口径,其余描述以本条为准)──
+#   1. 取一个随机目标点(在地图的**中央 60%** 那块矩形里,两轴都是);
+#   2. **平滑移动**过去(缓入缓出,到点速度 → 0);
+#   3. **同一段时间里**视角旋转 `SEG_TURN_DEG`;
+#   4. 到点后重新生成下一段。
+# ★ 为什么不住在 shader 里:GDShader 没有随机数、也没有"段"的概念;运动学住脚本,
+#   每帧把 `view_center`(视野中心,格坐标)与 `rot_angle` 两个 uniform 喂进去。
+# ★ 角度口径(用户 2026-10-03 订正过一次,以本版为准):
+#   ① **角度在 0° 与 120° 之间**(不是每段累加 +120°)。用户原话:"是零到 120,不是 120"。
+#      ⇒ 段 1:0°→120°、段 2:120°→0°、段 3:0°→120° …… **来回摆**。
+#      这样三条同时成立:角度**始终落在 [0,120]**、段间**连续不跳**、且与"每段重新取路径"同拍。
+#      (若让每段都从 0° 重新开始,段间会从 120° 跳回 0° —— 那正是"不许跳"禁止的。)
+#   ② **"旋转比移动缓慢很多"落在段时长与缓动曲线形状上**(两者同长,没法靠时长差表达):
+#      位移走缓入缓出(smoothstep,峰值速度 1.5 倍);旋转走**梯形速度剖面**
+#      (两端速度 0、中间匀速段最长,峰值只有 1.33 倍)⇒ **比位移更接近线性**,
+#      观感上是"移动先到位、转动还在慢慢走",而不是"两者一起加速又一起停"。
+const SEG_MIN_FRAC := 0.20     # 目标点的取值范围:地图的 20%~80%(两轴 ⇒ 中央 60% 的矩形)
+const SEG_MAX_FRAC := 0.80
+# 每段时长(秒)—— **它就是"移动速度"的单一旋钮**:位移与旋转同段,改它两者一起变。
+# ★ 2026-10-03 用户连提三次降速:15.0 → 21.4(70%)→ 32.0 → **48.0s**(再降 2/3)。
+#   最后一次刻意走**大档位**而不是再乘一次小数 —— 用户是靠"看着太快"逐步逼近的,
+#   一步一个台阶比连续微调好收敛。
+#   ★ 连带效果(照实说):旋转也同比例变慢(120°/段 ⇒ **3.75°/s**,原 5.6°/s);
+#     "旋转比移动慢很多"这个**比例**没变,只是两者绝对值一起降。**刻意只动这一个常量** ——
+#     一次一个变量,用户才好接着调。★ 要再慢就继续加这个数。
+# 当前量级(换算到 150% 取景 = 一格 72 屏幕像素):平均位移 ≈36 格 / 48s ≈ **54px/s**
+# (峰值 ≈81px/s);转角 120°/段 = **2.5°/s**;一整圈 = 3 段 ≈ **144s**。
+# ★ 中间那 36 格/段是怎么来的:目标点两轴各均匀落在 20%~80% 的矩形(newfactory 150×100 格
+#   ⇒ 列 30~120、行 20~80),两点间平均距离 ≈36 格。**最坏情况 ≈108 格/段**(≈243px/s 峰值)。
+const SEGMENT_SEC := 48.0
+# 每段**端点**的角度(度):在 0° 与 120° 之间来回摆。★ 用户点名"零到 120" ⇒ 原样实现。
+# 若嫌转太快,**先降这个**(降到 60 ⇒ 2.8°/s),不要去改段时长 —— 那会连位移一起拖慢。
+const SEG_TURN_DEG := 120.0
+# 旋转曲线的"变速段"占整段的比例(梯形速度剖面,见 _trapezoid):
+# 0.25 ⇒ 两端各 25% 用来加减速、中间 50% 匀速,峰值速度只有平均的 1/(1-0.25) ≈ **1.33 倍**。
+# ★ 它比位移的 smoothstep(峰值 1.5 倍、且峰值被 SEG_MOVE_BIAS 前移)**更接近线性** ——
+#   这正是"旋转比移动缓慢/更稳"那半句的落实处。★ 两端速度**严格为 0**:0↔120 每次反向
+#   都发生在速度为 0 的时刻,所以反向处**不会出现折角**(这是"不许跳"在角度上的落实)。
+const SEG_TURN_EDGE_FRAC := 0.25
+# 位移缓动曲线的偏置(见 _process):`s = smoothstep(u) ** SEG_MOVE_BIAS`。
+# 1.0 = 对称的缓入缓出;取 **0.8** ⇒ 速度峰值略微前移、"到得更早一点、然后慢慢蹭到点上" ——
+# 这正是"移动先到位、转动还在慢慢走"里那半句。★ 两端速度仍严格为 0(0^0.8 = 0),故不跳。
+const SEG_MOVE_BIAS := 0.8
+# 路径随机数种子固定 ⇒ "随机"但**每次进菜单是同一串路径**(可复现、可对图)。
+const SEG_PATH_SEED := 20261003
 func _ready() -> void:
 	# ── 发布产物自检:武器注册表到底从包里读到了几条 ──
 	# ★ 为什么必须在**产物侧**量:`data/weapons.json` 进不进 `.pck` **只由一次真导出回答**
@@ -154,9 +180,8 @@ func _build_new_ui() -> void:
 	_build_ui_layer()
 	var title := _build_title()
 	var ver := _build_version_label()
-	var tag := _build_tagline()
 	var buttons := _build_menu_buttons()
-	_play_emerge(title, ver, tag, buttons)
+	_play_emerge(title, ver, buttons)
 
 
 func _build_ui_layer() -> void:
@@ -194,47 +219,86 @@ func _build_background() -> void:
 		# 取景(屏幕横向多少格)由常量显式给,不从纹理尺寸反推 —— 见 BG_VIEW_CELLS 的头注:
 		# 它与 BG_CELL_PX 是配套的一对,反推会让"再放大一点"变成只改一半。
 		mat.set_shader_parameter("view_w_cells", BG_VIEW_CELLS)
+		mat.set_shader_parameter("blur_radius", BG_BLUR_RADIUS_PX)
+		_bg_cells = Vector2(tex.get_width(), tex.get_height()) / float(BG_CELL_PX)
 		_bg_mat = mat
 		bg.material = mat
-		# 运动噪声:漂移的两个轴取**不同行**、转速调制取第三行 ⇒ 三者互不相关。
-		_motion_noise = FastNoiseLite.new()
-		_motion_noise.seed = MOTION_SEED
-		_motion_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-		_motion_noise.frequency = 1.0
+		_init_motion()
 	_ui_layer.add_child(bg)
 
 
-# 背景镜头运动:每帧把 `drift_offset` 与 `rot_angle` 喂给 shader。
-# ★ 三条硬约束(用户 2026-10-03):
-#   ① 平滑 —— 任何一帧都不许跳:漂移是**噪声函数取值**(本身连续),角度是**逐帧积分**
-#      (角速度连续 ⇒ 角度 C¹)。绝不用 randf() 逐帧扰动。
-#   ② 慢 —— 见上面几个常量;它是背景,不是内容。
-#   ③ 非周期 —— 噪声不是正弦,不会绕回同一个圈(这就是"随意"的来源)。
-# ★ 不在 shader 里算的原因:GDShader 没有噪声函数,而叠正弦终究会周期。
+# ── 路径段循环 ──
+# 首段:起点也取一个随机点(而不是地图正中)—— 免得每次进菜单都从同一个位置出发,
+# 而且那一点必然落在 20%~80% 的矩形里(与后面每一段同一个分布)。
+func _init_motion() -> void:
+	_rng.seed = SEG_PATH_SEED
+	_seg_t = 0.0
+	_seg_index = 0
+	_seg_from = _random_target()
+	_seg_to = _random_target()
+	_bg_mat.set_shader_parameter("view_center", _seg_from)
+	_bg_mat.set_shader_parameter("rot_angle", 0.0)   # 段 0 从 0° 出发
+
+
+func _random_target() -> Vector2:
+	return Vector2(
+			_rng.randf_range(SEG_MIN_FRAC, SEG_MAX_FRAC) * _bg_cells.x,
+			_rng.randf_range(SEG_MIN_FRAC, SEG_MAX_FRAC) * _bg_cells.y)
+
+
+# 背景镜头运动:每帧把 `view_center`(视野中心,格坐标)与 `rot_angle` 喂给 shader。
+# ★ "不许跳"这条硬约束在两处都成立:
+#   · **位置**:段末 u→1 时位移 s→1(恰好落在 `_seg_to`),而下一段从 `_seg_from = 上一段的
+#     `_seg_to`、s→0 出发 ⇒ 位置连续;且 smoothstep 在两端导数为 0 ⇒ 速度也连续(不会"一顿")。
+#   · **角度**:0→120 与 120→0 交替,**端点角度重合**(上一段结束在 120°,下一段也从 120° 出发)
+#     ⇒ 角度连续;且梯形剖面在两端速度同样为 0 ⇒ 反向处是"停稳了再往回走",没有折角。
+# ★ 曲线形状(见常量区 ②):位移 = `smoothstep(u) ** SEG_MOVE_BIAS`(缓入缓出、峰值略前移),
+#   旋转 = **梯形速度剖面**(两端变速、中段匀速)⇒ 观感上是"移动先到位、转动还在慢慢走"。
 func _process(delta: float) -> void:
 	if _bg_mat == null:
 		return
-	_motion_t += delta
-	# 漂移:两个轴取噪声的**不同行**(0 / 137),互不相关 ⇒ 二维游走不像沿某条直线来回。
-	_bg_mat.set_shader_parameter("drift_offset", Vector2(
-			_motion_noise.get_noise_2d(_motion_t * DRIFT_RATE, 0.0),
-			_motion_noise.get_noise_2d(_motion_t * DRIFT_RATE, 137.0)) * DRIFT_AMP)
-	# 旋转:角速度 = 基准 × 噪声调制(0.15~1.85×),积分成角度。`maxf` 兜底保证不反向。
-	var wobble := 1.0 + ROT_WOBBLE * _motion_noise.get_noise_2d(_motion_t * ROT_WOBBLE_RATE, 271.0)
-	_bg_angle += (TAU / ROT_PERIOD_SEC) * maxf(0.1, wobble) * delta
-	_bg_mat.set_shader_parameter("rot_angle", _bg_angle)
+	_seg_t += delta
+	while _seg_t >= SEGMENT_SEC:
+		_seg_t -= SEGMENT_SEC        # 保留余数,不累积误差
+		_seg_index += 1
+		_seg_from = _seg_to          # 下一段从上一段的终点出发 ⇒ 位置不跳
+		_seg_to = _random_target()
+	var u := clampf(_seg_t / SEGMENT_SEC, 0.0, 1.0)
+	var s: float = pow(smoothstep(0.0, 1.0, u), SEG_MOVE_BIAS)
+	var e := _trapezoid(u)
+	# 偶数段 0→120,奇数段 120→0(见常量区 ①:角度只在 [0,120] 之间来回)
+	var turn: float = e if (_seg_index % 2) == 0 else 1.0 - e
+	_bg_mat.set_shader_parameter("view_center", _seg_from.lerp(_seg_to, s))
+	_bg_mat.set_shader_parameter("rot_angle", deg_to_rad(SEG_TURN_DEG * turn))
+
+
+# 梯形速度剖面的**位移**曲线:0 → 1,两端速度 0、中间匀速(占 1-2*edge)。
+# 面积恒为 1 ⇒ s(0)=0、s(1)=1;峰值速度 = 1/(1-edge)(edge=0.25 ⇒ 1.33 倍)。
+# ★ 用它而不是再一个 smoothstep,是因为它**更接近线性**(峰值 1.33 < 1.5),
+#   且两端速度同样为 0 —— 见常量区 ②。
+static func _trapezoid(u: float) -> float:
+	var a := SEG_TURN_EDGE_FRAC
+	var v: float = 1.0 / (1.0 - a)               # 匀速段的速度(面积归一)
+	if u < a:
+		return v * u * u / (2.0 * a)             # 加速
+	if u > 1.0 - a:
+		return 1.0 - v * (1.0 - u) * (1.0 - u) / (2.0 * a)   # 减速
+	return v * (a * 0.5 + (u - a))               # 匀速
 
 
 # 大标题:中央浮现(描边同色加粗)
+# 大标题:中央浮现。
+# ★ 2026-10-03 用户:删掉副信息行(原「环面世界 · 像素射击」)、**标题放大** 96 → **128**
+#   (16 的倍数,与全项目字号纪律一致)、并**去掉描边** —— 于是这里**一个描边/阴影 override
+#   都没有**了,标题就是纯 `C_ACCENT` 字身。★ 用户是知情取舍(更亮更干净的背景必然压不住
+#   浅色字),**别**再"为了可读性"把描边/外环/底板加回来 —— 要兜只在文字这侧、且由用户点了头才做。
 func _build_title() -> Label:
-	var title := UiFactory.label("The Cyancular Ruins", 96, UiFactory.C_ACCENT)
-	title.add_theme_constant_override("outline_size", 12)
-	title.add_theme_color_override("font_outline_color", UiFactory.C_ACCENT)
+	var title := UiFactory.label("The Cyancular Ruins", 128, UiFactory.C_ACCENT)
 	title.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	title.anchor_left = 0.5
 	title.anchor_right = 0.5
 	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	title.offset_top = 200.0
+	title.offset_top = 160.0
 	title.offset_bottom = 340.0
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.modulate.a = 0.0
@@ -258,57 +322,51 @@ func _build_version_label() -> Label:
 	return ver
 
 
-# 副信息行:填标题与按钮列之间那层空档。小字(`C_TEXT_DIM`)、字号 16、居中。
-# ★ 位置在**标题与按钮之间**(y 356~392),不是标题正下方的"副标题" —— 旧的版本号
-#   当年就因为挂在标题正下方而被读成副标题、与模式按钮抢视线(2026-09-13 评析),别重蹈。
-func _build_tagline() -> Label:
-	var tag := UiFactory.label(TAGLINE, 16, UiFactory.C_TEXT_DIM)
-	# 深色细描边:副信息压在**会漂移的地图**上,总有几帧底下是浅色的墙/箱子 ——
-	# 描边用 `C_BG`(页面底色,不是新色值),让它在任何背景上都能读出来。
-	# ★ 描边宽度 4(≈两侧各 2px)是相对 16px 字号的克制值:再厚会把 1~2px 的笔画糊在一起。
-	tag.add_theme_constant_override("outline_size", 4)
-	tag.add_theme_color_override("font_outline_color", UiFactory.C_BG)
-	tag.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	tag.anchor_left = 0.5
-	tag.anchor_right = 0.5
-	tag.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	tag.offset_top = 356.0
-	tag.offset_bottom = 392.0
-	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tag.modulate.a = 0.0
-	_ui_layer.add_child(tag)
-	return tag
-
-
 # 模式按钮:标题之后从中央依次浮现。返回按钮数组(浮现动画按这个次序排)。
 # 三组分开 ——「开始游戏」/「选项」/「退出」,且**三组之间有分隔线**(见下)。
 # ★★ 2026-10-03(按钮层级,用户已批准):六颗不再同权重 ——
 #   主行动「单 人 模 式」720×104 + `accent` 档(C_ACCENT 描边,比 primary 更前);
 #   「多 人 模 式」640×88;Beta/退出走 quiet 档;设置/信息再小一档 560×76。
 #   ★ 文案一个字都没动(四条自检 + kh_l4_visual_probe 全按文案找按钮)。
+# ── 模式按钮列的版式常量(第三批尺度,2026-10-03)──
+# 组与组之间的空档(分隔线**上下各一份**)。
+const MENU_GROUP_GAP := 48
+# 组内按钮之间的空档。
+const MENU_ITEM_GAP := 28
+# 整列顶部偏移(锚在屏幕中心 + 这个偏移,列自该处向下长)。
+const MENU_COLUMN_TOP := 170.0
+
+
 func _build_menu_buttons() -> Array:
 	# ★★ 2026-10-03:**撤掉那个「框住所有按钮的大框」**(用户看完成品图后的裁定 ——
 	#   按钮直接落在页面底上,不要外框)。同一批把整列尺度放大(设计稿 1920×1440 上原度量偏小):
-	#   按钮 640×88(工厂默认)、组内 20、组间 48、整列 `offset_top` 170。
+	#   按钮 640×88(工厂默认)、组内间距、组间间距、整列 `offset_top` 都收进下面三个具名常量。
 	#   ★ 定位/生长方向/次序/文案一个字都没动(探针按文案找按钮)。
 	#   ★ 别再加回 `menu_panel()`:撤框是**用户明确要求**,不是审美取舍。
 	# ★ 2026-10-03(第二批):三组之间插入 `menu_separator()`;外层 separation 也用它来
-	#   表达"组分隔"(36)而不是组内(20)—— 组的边界因此**看得见**。
+	#   表达"组分隔"而不是组内 —— 组的边界因此**看得见**。
+	#   ★ 第三批(用户:「还是不够」)把两档各抬约 +35%:20/36 → 28/48。
+	#     ⚠ 简报里写的 "48 / 20 → 64 / 28" 是按**加分隔线之前**那版读的(那时组间 = 48);
+	#       分隔线进来后组间实际是 36,故这里按"当前值 × 1.35"落成 **48**。
 	var box := VBoxContainer.new()
 	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
-	box.offset_top = 170.0
-	box.add_theme_constant_override("separation", 36)   # 组与组之间的空档(分隔线上下各一份)
+	box.offset_top = MENU_COLUMN_TOP
+	box.add_theme_constant_override("separation", MENU_GROUP_GAP)   # 组与组之间的空档(分隔线上下各一份)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_ui_layer.add_child(box)
 
 	var play_group := _btn_group()
 	var opt_group := _btn_group()
+	# ★★ 两条分隔线**各留一个引用**:它们要按**屏幕上的上下次序**一起参与浮现(见下方返回的序列)。
+	#    原先它们不在那个序列里 ⇒ 一进菜单就是全亮的两条线,而按钮还在一个个淡入。
+	var sep_a := UiFactory.menu_separator()
+	var sep_b := UiFactory.menu_separator()
 	box.add_child(play_group)
-	box.add_child(UiFactory.menu_separator())
+	box.add_child(sep_a)
 	box.add_child(opt_group)
-	box.add_child(UiFactory.menu_separator())
+	box.add_child(sep_b)
 
 	# 主行动:尺寸最大 + accent 档(C_ACCENT 描边)。这是整页唯一的"最前"按钮。
 	var start_btn := UiFactory.menu_button("单 人 模 式", 32, Vector2(720, 104), "accent")
@@ -363,27 +421,35 @@ func _build_menu_buttons() -> Array:
 	for b in [settings_btn, ver_btn]:
 		opt_group.add_child(b)
 	box.add_child(quit_btn)
-	return [start_btn, multi_btn, beta_btn, settings_btn, ver_btn, quit_btn]
+	# ★★ 返回的是**整列的浮现序列**,不是"按钮清单" —— 判据是**屏幕上的从上到下次序**,
+	#    分隔线**按它在列里的位置插进去**,与按钮同款(同样的 0.16 节奏)。漏掉分隔线 ⇒
+	#    一进菜单它们就全亮着,而按钮还在一个个淡入(用户 2026-10-03 报的现象)。
+	#    屏幕上从上到下:单人 → 多人 → Beta →[分隔线]→ 设置 → 信息 →[分隔线]→ 退出。
+	#    ⚠ 日后在 `box` 里插任何**静态**元素(副信息行之类),也必须按它在列里的位置补进这里。
+	return [start_btn, multi_btn, beta_btn, sep_a, settings_btn, ver_btn, sep_b, quit_btn]
 
 
-# 浮现动画:标题与副信息先出(淡入),按钮依次淡入
-func _play_emerge(title: Label, ver: Label, tag: Label, buttons: Array) -> void:
+# 浮现动画:标题与版本号先出(淡入),其余元素(按钮 **与分隔线**)按序列依次淡入。
+# ★ 参数名是 `sequence` 而不是 `buttons`:它按**屏幕次序**混装按钮与静态元素(见
+#   `_build_menu_buttons` 末尾那条)。`_emerge` 只写 `modulate.a` —— 任何 Control 都支持。
+func _play_emerge(title: Label, ver: Label, sequence: Array) -> void:
 	var tw := create_tween()
 	tw.tween_interval(0.1)
 	tw.tween_property(title, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	tw.parallel().tween_property(ver, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
-	tw.parallel().tween_property(tag, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	var delay := 0.9
-	for b in buttons:
-		_emerge(b, delay, 0.5)
+	for c in sequence:
+		_emerge(c, delay, 0.5)
 		delay += 0.16
 
 
-# 一组按钮:组内紧凑(20),组与组之间靠外层 VBox 的 separation(36)+ 分隔线拉开。
-# ★ 2026-10-03:14/34 → 20/48 → 现 20/36(第二批加了分隔线,组间空档改由线来表达)。
+# 一组按钮:组内紧凑(20 → **28**),组与组之间靠外层 VBox 的 separation(**48**)+ 分隔线拉开。
+# ★ 2026-10-03:14/34 → 20/48 → 20/36(第二批加了分隔线,组间空档改由线来表达)
+#   → **28/48**(第三批,用户:「margin 和 padding 还是不够」,两档各约 +35%)。
+#   ★ 组间那 48 是**分隔线上下各一份**(视觉空档 ≈ 48+2+48);组内 28 只在按钮之间。
 func _btn_group() -> VBoxContainer:
 	var g := VBoxContainer.new()
-	g.add_theme_constant_override("separation", 20)
+	g.add_theme_constant_override("separation", MENU_ITEM_GAP)
 	return g
 
 
@@ -404,18 +470,52 @@ func _on_single_pressed() -> void:
 	_ui_layer.add_child(_sp_panel)
 
 
-# ── 单人开局面板:禁用武器(勾选 = 本局不可用)──
-# 单人开局面板:场景(ui/sp_launch_panel.tscn)给骨架(标题/副标题/勾选列/按钮行),
-# 武器勾选与按钮仍走工厂。★ CheckList 容器只为给勾选一个**插在 ButtonRow 之前**的位置
-# —— 直接 vb.add_child(cb) 会把勾选追加到按钮行后面。
+# ── 单人开局面板(禁用武器:勾选 = 本局不可用)────────────────────────────
+# 场景(`ui/screens/sp_launch_panel.tscn`)**只给骨架**(根节点的锚点/名字/居中定位),
+# 内容与皮全在这里建:
+#   · 皮 = `UiFactory.skin_menu_panel()`(外深线 + 内亮线,方向 B 的凿刻感)。**必须先套皮
+#     再取 `Body`** —— 内容只有加进 `Body` 才吃得到面板内边距(加在外层等于 padding 失效、
+#     内容直接顶到外线上,而画面上只表现为"挤",**不报错**)。
+#   · 层级与其余两屏(创建房间弹层 / 设置页)同一套:标题 = 同款标题带、主行动 = 琥珀(gold)、
+#     次要动作 = quiet、面板 = 同款凿刻边。
+
+# 面板四周的内边距(与 `UiFactory.menu_panel()` 的默认档一致 —— 三屏同一个呼吸量)。
+const SP_PANEL_PADDING := Vector2(64, 46)
+# 面板内**大块之间**(标题带 / 选图 / 禁用武器 / 按钮行)的间距。
+const SP_BLOCK_GAP := 28
+# 禁用武器一栏里**勾选行之间**的间距(行挤在一起与贴边是两件事,两个都要治)。
+const SP_CHECK_GAP := 20
+# 按钮行里两颗并排按钮的间距。
+const SP_BUTTON_GAP := 28
+# 内容侧最小宽度(两侧内边距另计)。
+const SP_PANEL_MIN_W := 560.0
+
 func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
+	UiFactory.skin_menu_panel(panel, SP_PANEL_PADDING)
+	var body := panel.get_node("Body") as Container
+	var vb := VBoxContainer.new()
+	vb.custom_minimum_size = Vector2(SP_PANEL_MIN_W, 0)
+	vb.add_theme_constant_override("separation", SP_BLOCK_GAP)
+	body.add_child(vb)
+
+	# 面板标题 = 同款标题带(与「创 建 房 间」/「加入房间」同一个味道)。
+	vb.add_child(UiFactory.header_strip("—— 单人开局 ——", 48))
+
 	# 选图:每张卡带一版**开局地形简略图**(由 MapCatalog 从 .cyrm 现画,不是美术资源)
 	var picker := MapPicker.new()
-	panel.get_node("VBox/MapSection").add_child(picker)
+	vb.add_child(picker)
 	picker.setup(Settings.sp_map_path, 2, 300.0)
 
+	# 区块标题 = 同款标题带(小一号:它是面板**内**的分区,不与面板标题抢视线)。
+	vb.add_child(UiFactory.header_strip("禁用武器(勾选 = 本局不可用)", 32))
+
 	var checks: Array[CheckButton] = []
-	var check_list: VBoxContainer = panel.get_node("VBox/CheckList")
+	var check_list := VBoxContainer.new()
+	# ★ 名字是**公开契约**:`menu_weapon_grid_probe` 按这个名字在面板子树里找勾选列
+	#   (它不写死路径 —— 版式再挪一层也不会瞎)。改名前先看那个探针。
+	check_list.name = "CheckList"
+	check_list.add_theme_constant_override("separation", SP_CHECK_GAP)
+	vb.add_child(check_list)
 	var ids: Array[int] = WeaponRegistry.all_ids()
 	for type_id: int in ids:
 		var cb := CheckButton.new()
@@ -428,14 +528,19 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		checks.append(cb)
 		check_list.add_child(cb)
 
-	var row: HBoxContainer = panel.get_node("VBox/ButtonRow")
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", SP_BUTTON_GAP)
+	vb.add_child(row)
 	# 单机开局面板(本屏的另一处按钮)同样走菜单按钮工厂 —— 它与主菜单同屏出现,
 	# 不换的话两套描边会在同一屏里并排。
 	# ★ 尺寸**必须显式传**:这两颗与主菜单那六颗不是同一处版式 —— 它们在弹层里**并排**
-	#   (HBox),而 `menu_button` 的默认值已涨到 640 ⇒ 不写就是 640+640+24 = 1304 宽,
-	#   把这块弹层从 ~900 撑到 ~1340。420 是这两个并排按钮原本的宽度(保持弹层宽度不变),
-	#   高度随新内边距抬到 72。
-	var go := UiFactory.menu_button("开 始 探 索", 32, Vector2(420, 72))
+	#   (HBox),而 `menu_button` 的默认值已涨到 640 ⇒ 不写就是 640+640+28 = 1308 宽,
+	#   把这块弹层从 ~990 撑到 ~1400。420 是这两个并排按钮原本的宽度,高度随新内边距抬到 88
+	#   (`_btn_box` 的上下内边距现在是 20 ⇒ 32 号字按钮的最低高度 = 32 + 40 = 72;这里给 88
+	#   是**主行动那两颗**的版式取值,比最低高度再高一档)。
+	# 主行动走 gold(与「创 建 房 间」同色)、返回走 quiet。
+	var go := UiFactory.menu_button("开 始 探 索", 32, Vector2(420, 88), "gold")
 	go.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		Settings.sp_disabled_weapons.clear()
@@ -450,7 +555,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		Settings.save()
 		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 		_enter_level0())
-	var back := UiFactory.menu_button("返回", 32, Vector2(420, 72))   # 尺寸理由同上
+	var back := UiFactory.menu_button("返回", 32, Vector2(420, 88), "quiet")   # 尺寸理由同上
 	back.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		panel.visible = false)

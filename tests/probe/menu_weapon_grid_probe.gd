@@ -12,7 +12,9 @@ extends ProbeBase
 #    「单人模式」⇒ `_fill_sp_panel` 根本不被调用(实测:临时探针实例化真场景 + 调生产函数,
 #    json 7 条时得「勾选框数=7 注册表=7」)。
 #    故本探针**真实例化** `main_menu.tscn`、走**生产入口** `_on_single_pressed()`
-#    (它就是 `_fill_sp_panel` 唯一的调用点),再数 `VBox/CheckList` 下的 `CheckButton`。
+#    (它就是 `_fill_sp_panel` 唯一的调用点),再数 `CheckList` 容器下的 `CheckButton`。
+#    ★ 容器按**名字**在面板子树里找(不写死路径):2026-10-03 那轮美化给面板外层套了
+#      `Body`,写死 `VBox/CheckList` 会假红;改名仍会红(见 `_find_named` 的调用点)。
 #
 # ② A5 —— 勾选框上的文字**只有武器名,不带编号**。
 #    那个编号(1..N)**看起来**是键位,而键位是**背包位置**、与 `type_id` 毫无关系
@@ -72,9 +74,14 @@ func _ready() -> void:
 	var panel = menu._sp_panel
 	var list: VBoxContainer = null
 	if panel != null:
-		list = panel.get_node_or_null("VBox/CheckList") as VBoxContainer
+		# ★★ 按**节点名**在子树里找,不写死路径(`VBox/CheckList`):2026-10-03 那轮美化把
+		#   面板改成"骨架在 .tscn、皮与内容在代码里套 `UiFactory.skin_menu_panel()`",
+		#   路径多了一层 `Body/` —— 写死路径的探针当场红,而**主题(勾选框数/文案)一个字没变**。
+		#   按名找之后,版式再挪一层不会假红;而**改名**仍会红(下面那条 `list != null`),
+		#   不会退化成静默失明。
+		list = _find_named(panel, "CheckList") as VBoxContainer
 	_c(panel != null and list != null,
-			"`_on_single_pressed()` 建出了单人面板且 `VBox/CheckList` 在位(面板 %s、列表 %s)"
+			"`_on_single_pressed()` 建出了单人面板且其中的 `CheckList` 容器在位(面板 %s、列表 %s)"
 					% [str(panel), str(list)])
 
 	# 计数:数 **CheckButton 实例**,不数字面量 —— 多一个少一个都红。
@@ -141,3 +148,18 @@ func _ready() -> void:
 				% [_checks, EXPECTED_CHECKS])
 	_summary(0, "菜单武器网格:%d 条断言" % _checks)
 	_finish()
+
+
+# 在子树里按**节点名**找第一个节点(找不到返回 null)。
+# ★ 为什么不写死路径:单人面板 2026-10-03 起"骨架在 .tscn、皮与内容在代码里套
+#   `UiFactory.skin_menu_panel()`",内容比从前多了一层 `Body/` —— 写死路径的探针会**假红**,
+#   而它要守的东西(勾选框数 == 注册表条数、文案逐字相等)一个字都没变。
+# ★ 但**不许**退化成静默失明:调用点仍然断言 `list != null` ⇒ 改名 / 删节点照样红。
+func _find_named(root: Node, nm: String) -> Node:
+	if root.name == nm:
+		return root
+	for c in root.get_children():
+		var hit := _find_named(c, nm)
+		if hit != null:
+			return hit
+	return null

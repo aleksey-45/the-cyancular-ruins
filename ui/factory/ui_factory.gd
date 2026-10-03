@@ -240,23 +240,25 @@ const BTN_BORDER_W := 2
 # 描边式按钮的底:暗填充 + 亮描边(直角)。像素游戏里描边比「提亮填充」更省墨,
 # 也更容易和已有的暗色界面相处 —— 只是把「按钮存在」这件事补上。
 #
-# ★ 2026-10-03(视觉尺度调整):内容边距 14/6 → **30/14**。用户看过成品图后裁定
+# ★ 2026-10-03(视觉尺度调整,第一档):内容边距 14/6 → **30/14**。用户看过成品图后裁定
 #   「很多 margin 和 padding 都设计得太小」(设计稿是 1920×1440,原先这套度量按这个屏算偏小)。
+# ★★ 2026-10-03(第二档,用户:「还是不够」):30/14 → **40/20**(约 +35%)。
 # ★★ **这一处是共用的**:`menu_button()`(菜单系)与 `style_button()`(旧那套:
 #   暂停菜单 / 设置 / 信息 / Beta / 结算页)都走本函数 ⇒ 改它 = **同时**放大那几屏的内边距。
 #   这是**有意接受**的(它们迟早一起换皮,而内边距变大不会坏任何断言);
 #   但改这一行的人必须知道影响面不止菜单系。侧写:按钮的最小高度因此变成
-#   「字号 + 28」—— 32 号字的按钮低于 60px 会被容器顶高(设置页的键位格 200×40 就是这一类)。
+#   「字号 + **40**」—— 32 号字的按钮低于 **72**px 会被容器顶高,而**绝对定位**的调用方
+#   (`scenes/mp_lobby.gd` 是本仓唯一一处)必须自己把行高跟着抬到 72,否则相邻两行会被顶歪。
 static func _btn_box(fill: Color, border: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = fill
 	sb.border_color = border
 	sb.set_border_width_all(BTN_BORDER_W)
 	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 30.0
-	sb.content_margin_right = 30.0
-	sb.content_margin_top = 14.0
-	sb.content_margin_bottom = 14.0
+	sb.content_margin_left = 40.0
+	sb.content_margin_right = 40.0
+	sb.content_margin_top = 20.0
+	sb.content_margin_bottom = 20.0
 	return sb
 
 
@@ -284,8 +286,26 @@ static func panel_box(border: bool = true) -> StyleBoxFlat:
 #   要两条线就得两层。内容加到 `Body` 里:
 #       var p := UiFactory.menu_panel()
 #       (p.get_node("Body") as Container).add_child(<你的 VBox>)
-static func menu_panel(padding: Vector2 = Vector2(48, 34)) -> PanelContainer:
+# ★ 2026-10-03(第二档尺度):默认 padding 48/34 → **64/46**(用户:「还是不够」)。
+static func menu_panel(padding: Vector2 = Vector2(64, 46)) -> PanelContainer:
 	var outer := PanelContainer.new()
+	skin_menu_panel(outer, padding)
+	return outer
+
+
+# 把**已经存在的** PanelContainer 套上菜单系凿刻皮(外深线 + 内亮线),并把它的现有子节点
+# 收进新建的 `Body` —— 与 `menu_panel()` **同一个实现**(它只是本函数的一层包装),
+# 故 `menu_style_probe` 的两条位置断言(内亮线真的内缩 1px / 内层宽度 < 外层 −2px)对两条路径
+# 同样成立。
+#
+# ★ 为什么需要"就地套皮"这一条:骨架(锚点/节点名)写在 `.tscn` 里的那几屏(单人开局面板)
+#   不能直接换成 `menu_panel()` 建的新节点 —— 那会让场景文件变成死结构。而**颜色字面量
+#   不许进 `.tscn`**(调色板纪律:`ui_palette_single_source_smoke` 扫全仓)⇒ 皮只能在代码里
+#   套上去。内容一律加在 `Body` 里,与 `menu_panel()` 的契约一致。
+# ★ 幂等:已经有 `Body` 就直接返回(重复调用不会套成两层)。
+static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
+	if outer.get_node_or_null("Body") != null:
+		return
 	var osb := StyleBoxFlat.new()
 	osb.bg_color = C_SURFACE
 	osb.border_color = C_BORDER
@@ -312,8 +332,12 @@ static func menu_panel(padding: Vector2 = Vector2(48, 34)) -> PanelContainer:
 	isb.content_margin_top = padding.y
 	isb.content_margin_bottom = padding.y
 	body.add_theme_stylebox_override("panel", isb)
+	# 把外层**已有**的子节点搬进 Body(就地套皮的调用方:骨架来自 .tscn)。
+	# ★ 先 `remove_child` 再 `add_child`:同帧直接 add 会因"已有父节点"而**静默换父失败**。
+	for c in outer.get_children():
+		outer.remove_child(c)
+		body.add_child(c)
 	outer.add_child(body)
-	return outer
 
 
 # 菜单系的按钮(方向 B)。★ **不动 `style_button` 的 variant 分屏** —— 它被结算页/暂停菜单等
@@ -377,11 +401,15 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = C_BORDER
-	# 2026-10-03(尺度):16/8 → 28/14(与 `_btn_box` 同一轮放大,标题带才不会比按钮瘦一圈)。
-	sb.content_margin_left = 28.0
-	sb.content_margin_right = 28.0
-	sb.content_margin_top = 14.0
-	sb.content_margin_bottom = 14.0
+	# 2026-10-03(尺度):16/8 → 28/14 →(第二档,与 `_btn_box` 同一轮放大)**40/20**,
+	# 标题带才不会比按钮瘦一圈。★ 另有一处**刻意不跟**本函数走的同款字面量:
+	# `scenes/mp_lobby.gd` 的 `_card_header`(房卡标题带,自带右侧角标)——
+	# 它住在一张**自己带内边距的卡**里(见 `_make_card` 的 frame),外层的内边距已经够;
+	# 照搬 40/20 会让卡内文字区被挤掉一大截。那处保持 20/12,是为版式,不是漂移。
+	sb.content_margin_left = 40.0
+	sb.content_margin_right = 40.0
+	sb.content_margin_top = 20.0
+	sb.content_margin_bottom = 20.0
 	p.add_theme_stylebox_override("panel", sb)
 	p.add_child(label(text, size, C_GOLD))
 	return p

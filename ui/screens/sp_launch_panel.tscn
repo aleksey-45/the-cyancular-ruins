@@ -1,7 +1,13 @@
-[gd_scene load_steps=2 format=3 uid="uid://splaunchpanel001"]
+[gd_scene format=3 uid="uid://splaunchpanel001"]
 
-[ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="1"]
-
+; 单人开局面板的**骨架**:只有根节点(锚点 / 名字 / 定位)。
+; ★ 内容与样式一律由 `scenes/main_menu.gd` 的 `_fill_sp_panel()` 建 —— 这里是**有意**留空的:
+;   · 皮(凿刻边 + 内亮线)只能走 `UiFactory.skin_menu_panel()` —— `.tscn` 里的 StyleBoxFlat
+;     颜色是**字面量**,而本项目「颜色只许在 ui_factory.gd 定义」(调色板单一来源守卫
+;     `ui_palette_single_source_smoke` 扫全仓,含 .tscn)。
+;   · 控件一律走 UiFactory(像素字体/字号规范/按钮三档配色的单一来源),在这里写 Label/Button
+;     等于把那条纪律散回场景文件里。
+; 于是场景只负责"这块面板怎么被摆到屏幕中央"。
 [node name="SpLaunchPanel" type="PanelContainer"]
 anchor_left = 0.5
 anchor_top = 0.5
@@ -9,28 +15,3 @@ anchor_right = 0.5
 anchor_bottom = 0.5
 grow_horizontal = 2
 grow_vertical = 2
-
-[node name="VBox" type="VBoxContainer" parent="."]
-custom_minimum_size = Vector2(560, 0)
-theme_override_constants/separation = 14
-
-[node name="Title" type="Label" parent="VBox"]
-theme_override_colors/font_color = Color(0.349, 0.851, 0.902, 1)
-theme_override_fonts/font = ExtResource("1")
-theme_override_font_sizes/font_size = 48
-text = "—— 单人开局 ——"
-
-[node name="MapSection" type="VBoxContainer" parent="VBox"]
-theme_override_constants/separation = 8
-
-[node name="Subtitle" type="Label" parent="VBox"]
-theme_override_fonts/font = ExtResource("1")
-theme_override_font_sizes/font_size = 32
-text = "禁用武器(勾选 = 本局不可用)"
-
-[node name="CheckList" type="VBoxContainer" parent="VBox"]
-theme_override_constants/separation = 14
-
-[node name="ButtonRow" type="HBoxContainer" parent="VBox"]
-alignment = 1
-theme_override_constants/separation = 24
