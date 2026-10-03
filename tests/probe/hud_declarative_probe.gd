@@ -314,8 +314,8 @@ func _check_result_refresh_reaches_widget() -> void:
 		stub.queue_free()
 		_summary(before, "结算页刷新(行为):结算页没挂上,跳过")
 		return
-	var title := node.get_node_or_null("Root/Panel/VBox/TitleLabel") as Label
-	_check(title != null, "找不到 Root/Panel/VBox/TitleLabel(节点路径变了?下面两条断言无从成立)")
+	var title := node.get_node_or_null("Root/Panel/Body/VBox/TitleLabel") as Label
+	_check(title != null, "找不到 Root/Panel/Body/VBox/TitleLabel(节点路径变了?下面两条断言无从成立)")
 	if title != null:
 		_check(title.text == "第一次",
 				"第一次 `_show_result()` 后标题应为「第一次」,实得「%s」(第一次都没到 ⇒ 下面那条不是在做刷新)" % title.text)
@@ -325,8 +325,8 @@ func _check_result_refresh_reaches_widget() -> void:
 	if title != null:
 		_check(title.text == "第二次",
 				"★ 第二条 MATCH_OVER 载荷必须**画到屏幕上**:标题应为「第二次」,实得「%s」。刷新调用被包进 `if _result == null:`(哪怕只是**缩进一级**)=「挂载幂等」被顺手变成「更新也只一次」,玩家的结算页永远停在过期数据上。" % title.text)
-	var box := node.get_node_or_null("Root/Panel/VBox/Sections")
-	_check(box != null, "找不到 Root/Panel/VBox/Sections(节点路径变了?)")
+	var box := node.get_node_or_null("Root/Panel/Body/VBox/Sections")
+	_check(box != null, "找不到 Root/Panel/Body/VBox/Sections(节点路径变了?)")
 	if box != null:
 		_check(box.get_child_count() == 1,
 				"★ 第二条载荷的节没画上去:第二次的载荷带 1 节,实得 %d 节(刷新没发生;旧节清场 + 新节重建是 `show_result` 那段 remove_child→queue_free 的活,刷新不发生它一次都不跑)" % box.get_child_count())

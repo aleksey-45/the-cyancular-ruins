@@ -32,6 +32,9 @@ extends Node
 #    (下面三处取节点都按这条改过,失败形态记在各自注释里。)
 
 const MATCH_RESULT_SCENE := "res://ui/screens/match_result.tscn"
+# ★ 面板改走 `UiFactory.menu_panel()` 后,内容容器在**多出来的一层 `Body`** 里 ⇒
+#   本文件里所有取节点的路径都是 `Root/Panel/Body/VBox/...`(改版前没有 `Body` 那一层)。
+#   `Root/Panel`(居中量它)与 `Section{N}/Rows` 这两段的形状没变。
 const LAYER_WANT := 150        # 只住在 .tscn 里;三个 HUD = 130、小地图 = 131、暂停菜单 = 145
 const CENTRE_TOL := 2.0        # 面板屏幕矩形中心与视口中心的最大允许偏差(px)
 const OUT := "user://match_result_%d.png"
@@ -65,13 +68,13 @@ func _ready() -> void:
 func _run() -> void:
 	# ① 空载荷:不崩，且只画标题
 	await _shot({"title": "空"}, func(m):
-		var s: Node = m.get_node_or_null("Root/Panel/VBox/Sections")
+		var s: Node = m.get_node_or_null("Root/Panel/Body/VBox/Sections")
 		# ★ 先判 null 再解引用(模型见文件头 ②)。直接 `get_node_or_null(...).get_child_count()`
 		#   在节点缺失时**只结束这个 lambda**,而 `_shot` 在 `verify.call(m)` 之后**照常往下走**、
 		#   `_run`/`_ready` 也照常恢复 ⇒ "空载荷不崩"这条**硬要求**被**静默跳过**,verdict 仍是
 		#   **ALL-OK**(2026-09-21 实测:这一层不是"掐断 `_shot`、一行 verdict 都没有"—— 那是
 		#   本文件原先的旧说法,已在文件头 ② 更正)。
-		_check(s != null, "空载荷:找不到 Root/Panel/VBox/Sections(节点路径变了?)")
+		_check(s != null, "空载荷:找不到 Root/Panel/Body/VBox/Sections(节点路径变了?)")
 		if s != null:
 			_check(s.get_child_count() == 0, "空载荷应 0 节"))
 
@@ -91,8 +94,8 @@ func _run() -> void:
 		#   调用方继续** —— 于是这个 lambda 里**剩下的断言被静默跳过**,`_shot`/`_run` 照常往下走。
 		#   若没有别处恰好也撞到同一个改名(那次碰巧是 ③ 替它报了红),verdict 就是 **ALL-OK**:
 		#   一条**假绿**(读者会以为这两条都过了),比"探针挂住"危险得多。
-		var g := m.get_node_or_null("Root/Panel/VBox/Sections/Section0/Rows") as GridContainer
-		_check(g != null, "1v1:找不到 Root/Panel/VBox/Sections/Section0/Rows(节点路径变了?)")
+		var g := m.get_node_or_null("Root/Panel/Body/VBox/Sections/Section0/Rows") as GridContainer
+		_check(g != null, "1v1:找不到 Root/Panel/Body/VBox/Sections/Section0/Rows(节点路径变了?)")
 		if g != null:
 			_check(g.columns == 2 + 5, "1v1 表头列数应为 2+5=7,实得 %d" % g.columns)
 			_check(g.get_child_count() == 7 + 2 * 7, "1v1 应有 7 表头 + 2 行×7 格")
@@ -101,7 +104,7 @@ func _run() -> void:
 		#   那份载荷。"1v1 结算页没有 MVP 星 / 星标落在别人那一行"就是这样静默上线的。
 		#   判据与 ③ 同款:**恰好一个 ★,且它落在 MVP 行的昵称格上**;本夹具的 MVP 在
 		#   **第 1 行的 role 2**(见上文),故位置那一半对"排序前数 / 排序后数"真的有效。
-		var secs1: Node = m.get_node_or_null("Root/Panel/VBox/Sections")
+		var secs1: Node = m.get_node_or_null("Root/Panel/Body/VBox/Sections")
 		_check(secs1 != null, "1v1:Sections 取不到(MVP 星标断言无从成立)")
 		if secs1 != null:
 			_check(_count_marks(m) == 1, "★ 1v1 也必须有 MVP 星标(恰好 1 个),实得 %d 个"
@@ -130,13 +133,13 @@ func _run() -> void:
 			5: {"kills": 2, "deaths": 4, "assists": 3, "dealt": 120, "taken": 150, "kscore": 150, "acs": 75}},
 			"mvp": 5, "match_winner": 2}, {1: "阿甲", 4: "dave", 5: "eve"}, {1: 1, 4: 2, 5: 2}, 1), func(m):
 		# ★ 先判 null 再解引用(文件头 ②;失败形态的实测记录见上一条 —— 另两处 lambda 同款)。
-		var box := m.get_node_or_null("Root/Panel/VBox/Sections") as HBoxContainer
-		_check(box != null, "3v3:找不到 Root/Panel/VBox/Sections(节点路径变了?)")
+		var box := m.get_node_or_null("Root/Panel/Body/VBox/Sections") as HBoxContainer
+		_check(box != null, "3v3:找不到 Root/Panel/Body/VBox/Sections(节点路径变了?)")
 		if box == null:
 			return
 		_check(box.get_child_count() == 2, "3v3 应画 2 节,实得 %d" % box.get_child_count())
-		var g := m.get_node_or_null("Root/Panel/VBox/Sections/Section1/Rows") as GridContainer
-		_check(g != null, "3v3:找不到 Root/Panel/VBox/Sections/Section1/Rows(节点路径变了?)")
+		var g := m.get_node_or_null("Root/Panel/Body/VBox/Sections/Section1/Rows") as GridContainer
+		_check(g != null, "3v3:找不到 Root/Panel/Body/VBox/Sections/Section1/Rows(节点路径变了?)")
 		if g == null:
 			return
 		_check(g.columns == 2 + 6, "3v3 表头列数应为 2+6=8,实得 %d" % g.columns)
@@ -209,8 +212,8 @@ func _run() -> void:
 	#   而 `_ready` 的 `await _run()` 照常恢复、打印的却是 **ALL-OK**(2026-09-21 实测:把
 	#   `BackButton` 改名即复现,输出里只有一行 `ERROR: Node not found` + `ALL-OK`)。
 	#   那是**假绿**,比文件头 ② 预言的"一行都不打印"更坏:读者会把那行 ALL-OK 当成"④c 与 ⑤ 都过了"。
-	var bb := mb.get_node_or_null("Root/Panel/VBox/BackButton") as Button
-	_check(bb != null, "④c:找不到 Root/Panel/VBox/BackButton(节点路径变了?)")
+	var bb := mb.get_node_or_null("Root/Panel/Body/VBox/BackButton") as Button
+	_check(bb != null, "④c:找不到 Root/Panel/Body/VBox/BackButton(节点路径变了?)")
 	if bb != null:
 		bb.emit_signal("pressed")
 		bb.emit_signal("pressed")
@@ -236,8 +239,8 @@ func _run() -> void:
 	dup.show_result(team_payload)          # 第二次 —— 与 3v3 那条重复的 MATCH_OVER 同形
 	await get_tree().process_frame          # 让被 queue_free 的旧节真的没掉
 	await get_tree().process_frame
-	var dsec: Node = dup.get_node_or_null("Root/Panel/VBox/Sections")
-	_check(dsec != null, "连调两次后找不到 Root/Panel/VBox/Sections(节点路径变了?)")
+	var dsec: Node = dup.get_node_or_null("Root/Panel/Body/VBox/Sections")
+	_check(dsec != null, "连调两次后找不到 Root/Panel/Body/VBox/Sections(节点路径变了?)")
 	if dsec != null:
 		_check(dsec.get_child_count() == 2,
 				"连调两次 show_result 后应仍只有 2 节,实得 %d" % dsec.get_child_count())

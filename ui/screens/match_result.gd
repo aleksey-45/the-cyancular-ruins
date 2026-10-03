@@ -55,18 +55,18 @@ func _ready() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(dim)
 
-	var panel := PanelContainer.new()
+	var panel := UiFactory.menu_panel()
 	_panel = panel
 	panel.name = "Panel"
-	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.custom_minimum_size = Vector2(1120, 0)
 	root.add_child(panel)
 
+	# ★ 内容加进 `menu_panel()` 的 `Body`(只有它承载面板内边距)。
 	var vb := VBoxContainer.new()
 	vb.name = "VBox"
 	vb.add_theme_constant_override("separation", 24)
-	panel.add_child(vb)
+	(panel.get_node("Body") as Container).add_child(vb)
 
 	_title_label = UiFactory.label("", SIZE_TITLE, UiFactory.C_TEXT)
 	_title_label.name = "TitleLabel"
@@ -84,7 +84,7 @@ func _ready() -> void:
 	_sections_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	vb.add_child(_sections_box)
 
-	var back := UiFactory.button("返 回 主 菜 单", SIZE_BODY, Vector2(420, 64))
+	var back := UiFactory.menu_button("返 回 主 菜 单", SIZE_BODY, Vector2(420, 88), "gold")
 	back.name = "BackButton"
 	back.pressed.connect(_request_leave)
 	vb.add_child(back)
@@ -164,12 +164,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		_request_leave()
 
 
+# 区块标题带:复用 `UiFactory.header_strip`(C_HEADER 底 + 只有下边一条 C_BORDER 线),
+# 只把标题色换成该节自己的颜色 —— **保留 3v3 的「一眼看出 A/B 队」**(队色),
+# 而不是把两节都刷成同一个金色。这与 `scenes/mp_lobby.gd` 的 `_card_header` 同一条取法
+# (同款版式 + 自带颜色),不为"统一"丢掉队色这一条有玩法语义的信息。
+func _section_band(text: String, color: Color) -> PanelContainer:
+	var strip := UiFactory.header_strip(text, SIZE_BODY)
+	var l := strip.get_child(0) as Label
+	if l != null:
+		l.add_theme_color_override("font_color", color)
+	return strip
+
+
 func _build_section(sec: Dictionary, idx: int, columns: Array, mvp: Dictionary) -> Control:
 	var box := VBoxContainer.new()
 	box.name = "Section%d" % idx
 	box.add_theme_constant_override("separation", 12)
-	box.add_child(UiFactory.label(str(sec.get("label", "")), SIZE_BODY,
-			sec.get("color", UiFactory.C_TEXT)))
+	# 区块标题 = 同款标题带(`header_strip` 的形状),标题色取该节自己的颜色。
+	box.add_child(_section_band(str(sec.get("label", "")), sec.get("color", UiFactory.C_TEXT)))
 
 	var grid := GridContainer.new()
 	grid.name = "Rows"
