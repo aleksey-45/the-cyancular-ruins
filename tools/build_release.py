@@ -8,8 +8,10 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -91,12 +93,32 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
     #   **起的是大厅、还在 7777 上 bind**,既没跑到 worker 分支、又和服主正在跑的大厅抢端口
     #   (2026-09-15 实测:日志打的是「服务器就绪…(大厅 7777)」而不是「worker 就绪…(port P)」)。
-    cmd = [exe, "--headless", "--quit-after", "120"]
-    if extra:
-        cmd += ["--", *extra]
-    r = subprocess.run(cmd, cwd=PROJECT, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
-    out = ((r.stdout or "") + (r.stderr or ""))
+    #
+    # ★★ 两条 2026-10-04 加的(修两个**让冒烟假绿**的洞;当时段错误被判成 OK):
+    #   ① **必须拷到项目目录之外跑** —— RELEASE.md §1.3 早就写着"在项目目录里跑时 Godot 会
+    #      从本地文件系统补齐/重扫资源,会掩盖打包漏项"。实测同一份 v1.2.0 产物:
+    #      `cwd=项目目录` ⇒ **SIGSEGV(退出码 139)**;拷进干净临时目录 ⇒ 退出码 0。
+    #      而旧版 v1.1.4 在项目目录里是 0 —— 也就是说"在项目里跑"这件事**已经不可靠了**。
+    #   ② **必须查返回码** —— 崩溃(SIGSEGV/异常退出)不会打 `SCRIPT ERROR` ⇒
+    #      上面那段文本过滤把它读成"OK(无脚本级错误)",而这正是本文件反复警惕的
+    #      "零脚本错误地跑错分支"的**升级版**:零脚本错误地**根本没跑起来**。
+    tmp = tempfile.mkdtemp(prefix="cyr_smoke_")
+    try:
+        run_exe = os.path.join(tmp, os.path.basename(exe))
+        shutil.copy2(exe, run_exe)
+        cmd = [run_exe, "--headless", "--quit-after", "120"]
+        if extra:
+            cmd += ["--", *extra]
+        r = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        out = ((r.stdout or "") + (r.stderr or ""))
+        if r.returncode != 0:
+            tail = "\n  ".join(out.splitlines()[-6:])
+            sys.exit("冒烟失败:%s 在**项目目录之外**的干净目录里退出码 = %d(崩溃或异常退出?)\n"
+                     "  ★ 崩溃不打 SCRIPT ERROR,只看文本会把这一档读成 OK,故此处查返回码。\n"
+                     "  末尾输出:\n  %s" % (os.path.basename(exe), r.returncode, tail))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     bad = [ln for ln in out.splitlines()
            if "SCRIPT ERROR" in ln or "Parse Error" in ln or "Failed to load script" in ln]
     if bad:
@@ -106,7 +128,7 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     if expect and expect not in out:
         sys.exit("冒烟失败:%s 起来了但**没走预期的分支**(输出里找不到「%s」)—— "
                  "命令行参数大概又被当成引擎参数丢掉了" % (os.path.basename(exe), expect))
-    print("    OK(无脚本级错误%s)" % (",且在预期分支「%s」" % expect if expect else ""))
+    print("    OK(退出码 0,无脚本级错误%s)" % (",且在预期分支「%s」" % expect if expect else ""))
     return out
 
 
