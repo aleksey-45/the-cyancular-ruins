@@ -15,6 +15,19 @@ var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
 # style_button,等于把「控件工厂唯一来源」这条纪律散回各处。
 const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 
+# ── 背景:新版 factory 地图 + 鱼眼漂移(没有任何实体)──
+# 用户要求:背景是"世界"本身在以一种奇怪的鱼眼镜头缓慢漂移/移动,**不放任何实体**
+# (没有玩家/敌人/子弹)。取图走 MapCatalog 的现成入口,`BG_CELL_PX` 取小值 ⇒ 出来的是
+# **块状抽象地形**(块大小其实由"屏幕宽 / 地图格数"决定,cell_px 只决定采样分辨率),
+# 与像素美术同款,不会把地图细节糊成一团。
+const BG_MAP := "res://maps/newfactory.cyrm"
+const BG_CELL_PX := 3
+const BG_SHADER := "res://core/present/menu_fisheye.gdshader"
+# 副信息(标题与按钮之间那层空档里的一行小字)。内容刻意是**静态标语**:不是版本号
+# (那会随构建漂,而左下角已有一行确定性的版本号给 `--nover` 自动探针读),也不是当前
+# 模式提示(那一行在别处)。
+const TAGLINE := "环面世界 · 像素射击"
+
 
 func _ready() -> void:
 	# ── 发布产物自检:武器注册表到底从包里读到了几条 ──
@@ -85,20 +98,59 @@ func _build_new_ui() -> void:
 	_build_ui_layer()
 	var title := _build_title()
 	var ver := _build_version_label()
+	var tag := _build_tagline()
 	var buttons := _build_menu_buttons()
-	_play_emerge(title, ver, buttons)
+	_play_emerge(title, ver, tag, buttons)
 
 
 func _build_ui_layer() -> void:
 	_ui_layer = CanvasLayer.new()
 	_ui_layer.layer = 140   # 盖过 PostProcess(128)/HUD(129)
 	add_child(_ui_layer)
-	# 暗化底:菜单背景是空的,垫一层深色让像素字突出、按钮层次清楚
-	var dim := ColorRect.new()
-	dim.color = Color(0.0, 0.02, 0.05, 0.45)
-	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_ui_layer.add_child(dim)
+	_build_background()
+
+
+# 背景:地图简略图铺满全屏,由 shader 做鱼眼 + 漂移 + 压暗/暗角(见 menu_fisheye.gdshader)。
+# ★ 底 ColorRect 的原色是 `UiFactory.C_BG`(**调色板 token,不是新字面量**):shader 正常时
+#   fragment 覆写整块 COLOR,这层底不可见;万一 shader 载入失败,留下的是一块与页面底同色
+#   的深底(而不是 ColorRect 默认的**白色** —— 那会是一屏白得读不出字的菜单)。
+func _build_background() -> void:
+	var bg := ColorRect.new()
+	bg.color = UiFactory.C_BG
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh: Shader = load(BG_SHADER)
+	if sh != null:
+		var img := Image.new()
+		# ★ **复制一份**再抹出生点标记:`MapCatalog.build_image` 是**会话级缓存**的
+		#   (选图面板共用同一张 Image 实例),就地 set_pixel 会把标记从选图缩略图上一起抹掉。
+		img.copy_from(MapCatalog.build_image(BG_MAP, BG_CELL_PX))
+		_erase_spawn_marks(img)
+		var mat := ShaderMaterial.new()
+		mat.shader = sh
+		mat.set_shader_parameter("map_tex", ImageTexture.create_from_image(img))
+		# 格数由图像尺寸反推(450/3=150 列 × 300/3=100 行),免得再解析一次地图头。
+		mat.set_shader_parameter("map_size",
+				Vector2(img.get_width(), img.get_height()) / float(BG_CELL_PX))
+		bg.material = mat
+	_ui_layer.add_child(bg)
+
+
+# 「没有任何实体」:MapCatalog.build_image 会把两个出生点画成亮色块(SPAWN_P1/SPAWN_P2)。
+# 出生点必落在**地板格**,而地板格在简略图上就是背景色 ⇒ 把那一格抹回 `MapCatalog.BG`
+# 即可(不是"剪掉一个洞",是恢复它本来的样子)。
+func _erase_spawn_marks(img: Image) -> void:
+	var sp := MapFormat.load_spawns(BG_MAP)
+	for key in ["player", "player2"]:
+		if not sp.has(key):
+			continue
+		var cell: Vector2i = sp[key]
+		for dy in BG_CELL_PX:
+			for dx in BG_CELL_PX:
+				var px := cell.x * BG_CELL_PX + dx
+				var py := cell.y * BG_CELL_PX + dy
+				if px >= 0 and py >= 0 and px < img.get_width() and py < img.get_height():
+					img.set_pixel(px, py, MapCatalog.BG)
 
 
 # 大标题:中央浮现(描边同色加粗)
@@ -134,30 +186,60 @@ func _build_version_label() -> Label:
 	return ver
 
 
+# 副信息行:填标题与按钮列之间那层空档。小字(`C_TEXT_DIM`)、字号 16、居中。
+# ★ 位置在**标题与按钮之间**(y 356~392),不是标题正下方的"副标题" —— 旧的版本号
+#   当年就因为挂在标题正下方而被读成副标题、与模式按钮抢视线(2026-09-13 评析),别重蹈。
+func _build_tagline() -> Label:
+	var tag := UiFactory.label(TAGLINE, 16, UiFactory.C_TEXT_DIM)
+	# 深色细描边:副信息压在**会漂移的地图**上,总有几帧底下是浅色的墙/箱子 ——
+	# 描边用 `C_BG`(页面底色,不是新色值),让它在任何背景上都能读出来。
+	# ★ 描边宽度 4(≈两侧各 2px)是相对 16px 字号的克制值:再厚会把 1~2px 的笔画糊在一起。
+	tag.add_theme_constant_override("outline_size", 4)
+	tag.add_theme_color_override("font_outline_color", UiFactory.C_BG)
+	tag.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	tag.anchor_left = 0.5
+	tag.anchor_right = 0.5
+	tag.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	tag.offset_top = 356.0
+	tag.offset_bottom = 392.0
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tag.modulate.a = 0.0
+	_ui_layer.add_child(tag)
+	return tag
+
+
 # 模式按钮:标题之后从中央依次浮现。返回按钮数组(浮现动画按这个次序排)。
-# 三组分开 ——「开始游戏」/「选项」/「退出」:原先 6 个按钮平铺、间距一律 18px,
-# 退出与单人模式同等分量(2026-09-13 视觉评析:这是会被误点的版式)。
+# 三组分开 ——「开始游戏」/「选项」/「退出」,且**三组之间有分隔线**(见下)。
+# ★★ 2026-10-03(按钮层级,用户已批准):六颗不再同权重 ——
+#   主行动「单 人 模 式」720×104 + `accent` 档(C_ACCENT 描边,比 primary 更前);
+#   「多 人 模 式」640×88;Beta/退出走 quiet 档;设置/信息再小一档 560×76。
+#   ★ 文案一个字都没动(四条自检 + kh_l4_visual_probe 全按文案找按钮)。
 func _build_menu_buttons() -> Array:
 	# ★★ 2026-10-03:**撤掉那个「框住所有按钮的大框」**(用户看完成品图后的裁定 ——
 	#   按钮直接落在页面底上,不要外框)。同一批把整列尺度放大(设计稿 1920×1440 上原度量偏小):
 	#   按钮 640×88(工厂默认)、组内 20、组间 48、整列 `offset_top` 170。
 	#   ★ 定位/生长方向/次序/文案一个字都没动(探针按文案找按钮)。
 	#   ★ 别再加回 `menu_panel()`:撤框是**用户明确要求**,不是审美取舍。
+	# ★ 2026-10-03(第二批):三组之间插入 `menu_separator()`;外层 separation 也用它来
+	#   表达"组分隔"(36)而不是组内(20)—— 组的边界因此**看得见**。
 	var box := VBoxContainer.new()
 	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
 	box.offset_top = 170.0
-	box.add_theme_constant_override("separation", 48)   # 组与组之间的空档
+	box.add_theme_constant_override("separation", 36)   # 组与组之间的空档(分隔线上下各一份)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_ui_layer.add_child(box)
 
 	var play_group := _btn_group()
 	var opt_group := _btn_group()
 	box.add_child(play_group)
+	box.add_child(UiFactory.menu_separator())
 	box.add_child(opt_group)
+	box.add_child(UiFactory.menu_separator())
 
-	var start_btn := UiFactory.menu_button("单 人 模 式", 32)
+	# 主行动:尺寸最大 + accent 档(C_ACCENT 描边)。这是整页唯一的"最前"按钮。
+	var start_btn := UiFactory.menu_button("单 人 模 式", 32, Vector2(720, 104), "accent")
 	start_btn.pressed.connect(_on_single_pressed)
 	# ★★ 联机入口只剩这一颗(2026-10-03 三合一,统一大厅 `mp_lobby`):1v1 / 3v3 / 大乱斗
 	#   都在那一个页面里按筛选区分,菜单不再按模式分列三颗按钮。
@@ -168,33 +250,34 @@ func _build_menu_buttons() -> Array:
 	#   那四行、或在这里直接清凭据 = 玩家从对局回主菜单、再按这个入口进来时凭据被抹掉
 	#   → 自己那间"对局中"的房恒为灰、回不去(**而一行报错都没有**) —— 这就是 C1。
 	#   `reconnect_smoke` 有源码级断言钉着它。
-	var multi_btn := UiFactory.menu_button("多 人 模 式", 32)
+	var multi_btn := UiFactory.menu_button("多 人 模 式", 32, Vector2(640, 88))
 	multi_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
 		get_tree().change_scene_to_file("res://scenes/mp_lobby.tscn"))
 	# Beta(2026-09-28,用户指定放在联机入口下面):以后所有实验性玩法都从这个入口进
 	# (现在是 PvP 时间玩法的两个变体)。弱化变体:实验功能不与正式模式抢注意力。
-	# 尺寸与其余五颗**一致**(640×88):显式传是因为 variant 是第 4 个位置实参、GDScript
-	# 没有具名实参 —— 这里必须写出与 `menu_button` 默认值同值的尺寸,别再写回旧的 420×64
-	# (那会让 Beta / 退出两颗比同列按钮瘦一圈)。
+	# ★ 尺寸仍**显式**传:variant 是第 4 个位置实参、GDScript 没有具名实参 —— 这里必须写出
+	#   与 `menu_button` 默认值同值的尺寸(640×88),别再写回旧的 420×64(那会让 Beta / 退出
+	#   两颗比同列按钮瘦一圈)。
 	var beta_btn := UiFactory.menu_button("Beta", 32, Vector2(640, 88), "quiet")
 	beta_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/beta_menu.tscn"))
 	# 字间距一律单空格。原先 2 字标签(设/置、退/出)用 6 个全角空格撑到与 4 字标签等宽,
 	# 结果是两座孤岛,而再短些的标签又比它们窄 —— 按钮列的文本块宽度既不等宽
-	# 也不成体系(2026-09-13 视觉评析)。按钮本身 420 宽居中,标签不必再自己凑宽度。
-	var settings_btn := UiFactory.menu_button("设 置", 32)
+	# 也不成体系(2026-09-13 视觉评析)。按钮本身够宽,标签不必再自己凑宽度。
+	# ★ 设置/信息属「选项」组,比开始游戏组再小一档(560×76)。
+	var settings_btn := UiFactory.menu_button("设 置", 32, Vector2(560, 76))
 	settings_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/settings_menu.tscn"))
-	var ver_btn := UiFactory.menu_button("信 息", 32)
+	var ver_btn := UiFactory.menu_button("信 息", 32, Vector2(560, 76))
 	ver_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().change_scene_to_file("res://scenes/info_menu.tscn"))
 	# 退出用弱化变体:常态描边与文字都压暗一档,不与「单人模式」抢注意力。
-	# 尺寸同上(与同列按钮同尺寸,弱化只在颜色上表达)。
+	# 尺寸与 Beta 同(640×88),弱化只在颜色上表达。
 	var quit_btn := UiFactory.menu_button("退 出", 32, Vector2(640, 88), "quiet")
 	quit_btn.pressed.connect(func() -> void:
 		Sfx.play("ui")
@@ -211,20 +294,21 @@ func _build_menu_buttons() -> Array:
 	return [start_btn, multi_btn, beta_btn, settings_btn, ver_btn, quit_btn]
 
 
-# 浮现动画:标题先出(淡入),按钮依次淡入
-func _play_emerge(title: Label, ver: Label, buttons: Array) -> void:
+# 浮现动画:标题与副信息先出(淡入),按钮依次淡入
+func _play_emerge(title: Label, ver: Label, tag: Label, buttons: Array) -> void:
 	var tw := create_tween()
 	tw.tween_interval(0.1)
 	tw.tween_property(title, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	tw.parallel().tween_property(ver, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(tag, "modulate:a", 1.0, 1.1).set_trans(Tween.TRANS_SINE)
 	var delay := 0.9
 	for b in buttons:
 		_emerge(b, delay, 0.5)
 		delay += 0.16
 
 
-# 一组按钮:组内紧凑(20),组与组之间靠外层 VBox 的 separation(48)拉开。
-# ★ 2026-10-03:14/34 → 20/48(与按钮一起放大,比例关系不变)。
+# 一组按钮:组内紧凑(20),组与组之间靠外层 VBox 的 separation(36)+ 分隔线拉开。
+# ★ 2026-10-03:14/34 → 20/48 → 现 20/36(第二批加了分隔线,组间空档改由线来表达)。
 func _btn_group() -> VBoxContainer:
 	var g := VBoxContainer.new()
 	g.add_theme_constant_override("separation", 20)

@@ -345,6 +345,12 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 	elif variant == "gold":
 		edge = C_GOLD
 		fg = C_GOLD
+	elif variant == "accent":
+		# 主行动档(2026-10-03):常态描边就是 `C_ACCENT`(比 primary 的 `C_EDGE` 更前),
+		# 字色仍用 `C_TEXT` —— 悬停时字才转青(与其余档同款反馈),这样"更前"由描边表达,
+		# 文字对比度不受影响。主菜单的「单 人 模 式」用它(用户裁定"主行动要真的更大/更前")。
+		edge = C_ACCENT
+		fg = C_TEXT
 	b.add_theme_stylebox_override("normal", _btn_box(C_HEADER, edge))
 	b.add_theme_stylebox_override("hover", _btn_box(C_BTN_FILL_HI, C_ACCENT))
 	b.add_theme_stylebox_override("pressed", _btn_box(C_BTN_FILL_DN, C_ACCENT))
@@ -379,6 +385,17 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	p.add_theme_stylebox_override("panel", sb)
 	p.add_child(label(text, size, C_GOLD))
 	return p
+
+
+# 分组分隔线:一条 `C_BORDER_DIM` 的细横线,把按钮列切成「开始游戏 / 选项 / 退出」三组。
+# ★ 为什么不直接在调用方 `ColorRect.new()` 里写颜色:颜色只能在本文件里定义(本工厂是
+#   UI 配色的唯一来源)。★ 只画线、不画底:它在 VBox 里会被横向拉满,即"菜单列宽度"那条线。
+static func menu_separator(height: float = 2.0) -> ColorRect:
+	var r := ColorRect.new()
+	r.color = C_BORDER_DIM
+	r.custom_minimum_size = Vector2(0, height)
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return r
 
 
 # 分段筛选按钮(大厅的模式筛选行):**选中态用调用方给的强调色**(该模式的模式色),
