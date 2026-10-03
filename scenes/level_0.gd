@@ -224,7 +224,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
-	RenderingServer.set_default_clear_color("b0e5f6")
+	# 清屏色 = 世界的"空气"色。★ 单一来源放在 TerrainAtlas:主菜单背景的底色也读同一个
+	# 常量(用户 2026-10-03:"菜单背景颜色要和局内一致"),两处不许各写一份。
+	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
 
 	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
@@ -282,65 +284,21 @@ func _ready() -> void:
 	_build_pause_menu()
 
 
+# 墙体/所有非空气砖的图集(16px 象限制)。构造已上提到 TerrainAtlas —— 主菜单背景
+# 要"真实的那个世界",必须与这里用**同一份**映射(见 terrain_atlas.gd 文件头)。
 func _create_wall_tileset() -> TileSet:
-	var texture: Texture2D = load("res://assets/textures/structure.png")
-	var src_img: Image = texture.get_image()
-	# 22 块源砖(10 列 × 3 行,32×32)。cyrm v4:每个 16px 子格画源块的 8×8 象限,放大 2×。
-	# 取角映射:象限 (qx, qy) 由子格在格内的位置推出(X%4, Y%4),不是数据字段。
-	var atlas_img := Image.create(16 * 16, 22 * 16, false, Image.FORMAT_RGBA8)   # 16 列(象限)× 22 行(纹理)
-	atlas_img.fill(Color(0, 0, 0, 0))
-	for tex in range(22):
-		var src := Rect2i((tex % 10) * 32, (tex / 10) * 32, 32, 32)
-		for qy in range(4):
-			for qx in range(4):
-				var q := Image.create(8, 8, false, Image.FORMAT_RGBA8)
-				q.blit_rect(src_img, Rect2i(src.position.x + qx * 8, src.position.y + qy * 8, 8, 8), Vector2i.ZERO)
-				q.resize(16, 16, Image.INTERPOLATE_NEAREST)
-				atlas_img.blit_rect(q, Rect2i(0, 0, 16, 16), Vector2i((qy * 4 + qx) * 16, tex * 16))
-	var atlas_tex := ImageTexture.create_from_image(atlas_img)
-	var tile_set = TileSet.new()
-	tile_set.tile_size = Vector2i(16, 16)
-	var atlas = TileSetAtlasSource.new()
-	atlas.texture_region_size = Vector2i(16, 16)
-	atlas.texture = atlas_tex
-	tile_set.add_source(atlas)
-	for q in range(16):
-		for tex in range(22):
-			atlas.create_tile(Vector2i(q, tex))
-	return tile_set
+	return TerrainAtlas.make_wall_tileset()
 
 
 # 水体专用 64px 图集(B18 把墙体图集改成 16px 象限制后,_paint_water 的"形状列×纹理行"
 # 老格式没了着落:水体被按 16px 坐标压缩画错位,真水体看不见,还在地图 1/4 坐标处散布
 # 一堆无碰撞的"幽灵方块")。水不可破坏,永远按 64px 整格渲染——按 B18 之前的老构建
-# 逻辑原样重建,仅供 water_layer 使用;atlas 行 0 = 纹理 21(水体)。
+# 逻辑原样重建,仅供 water_layer 使用。构造同样收在 TerrainAtlas。
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
-	var texture: Texture2D = load("res://assets/textures/structure.png")
-	var src_img: Image = texture.get_image()
-	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
-	img.blit_rect(src_img, Rect2i((21 % 10) * 32, (21 / 10) * 32, 32, 32), Vector2i.ZERO)
-	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
-	Level0.surface_texture = ImageTexture.create_from_image(img)   # 水面合批 shader 的采样源
-	var half: int = ts / 2
-	var atlas_img := Image.create(16 * ts, ts, false, Image.FORMAT_RGBA8)
-	atlas_img.fill(Color(0, 0, 0, 0))
-	for shape in range(16):
-		var tile := img.duplicate()
-		for sy in range(2):
-			for sx in range(2):
-				if (shape & (1 << (sy * 2 + sx))) == 0:
-					tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
-		atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, 0))
-	var tile_set = TileSet.new()
-	tile_set.tile_size = Vector2i(ts, ts)
-	var atlas = TileSetAtlasSource.new()
-	atlas.texture_region_size = Vector2i(ts, ts)
-	atlas.texture = ImageTexture.create_from_image(atlas_img)
-	tile_set.add_source(atlas)
-	for shape in range(16):
-		atlas.create_tile(Vector2i(shape, 0))
-	return tile_set
+	# 水面合批 shader 的采样源(= 水体纹理放大到 ts×ts)
+	Level0.surface_texture = ImageTexture.create_from_image(TerrainAtlas.water_brick_image(ts))
+	return TerrainAtlas.make_water_tileset(ts)
 
 
 func _paint_maze(layer: TileMapLayer) -> void:
