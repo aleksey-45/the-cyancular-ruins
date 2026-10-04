@@ -171,12 +171,12 @@ $ grep -a -o -P 'res://[A-Za-z0-9_./-]+' … | awk -F/ '{print $1}' | sort | uni
 取决于 `all_resources` 是否收非资源文件，本轮**没有**判据，故不下结论）。
 **结论不变、换证据**：`exclude_filter` 对**资源**（脚本）也生效 —— 由 `editor_export_platform.cpp:709`
 （过滤器拿**全路径**做 `fullpath.matchn(filter)`）与 `:1371` 保证。补一行即可。
-（★ 这两条源码行由**评审读 Godot 4.7.1 源**核实；实现者侧当时网络不可达，未能独立复核。）
+（★ **这三处**源码行由**评审读 Godot 4.7.1 源**核实；实现者侧当时网络不可达，未能独立复核。）
 另有 `res://DevTools/*` **3 条**。★ **2026-10-04 订正（本条初稿写错了）**：初稿说"那是**未入库**的本机目录，
 按 `.gitignore` 只挡 git、不挡导出" —— **反了**。`DevTools/gamelog/log_viewer.{gd,gd.uid,tscn}`
 **是已入库的**（`.gitignore` 只挡未跟踪文件，挡不住已经在库里的；`.gitignore:38` 那句"本机残留…不属于
 上游工程"对这 3 个文件是错的）。⇒ 连带两条新发现：
-① **`export_presets.cfg` 的 `exclude_filter` 里从没有过 `DevTools/*`**（`:13`/`:87` 都只有 `"*.md,.superpowers/*"`），
+① **`export_presets.cfg` 的 `exclude_filter` 里从没有过 `DevTools/*`**（**裁剪前** `:13`/`:87` 都只有 `"*.md,.superpowers/*"`；现状见本节 `:154`），
 而 `docs/superpowers/plans/2026-09-21-cyrm-v4-editor-render-and-ui.md:262` 那一步
 （"排除 DevTools（两处 preset 都要改）"）**从未落地**（勾选框是 `- [ ]`，但按本仓"勾选框不可信"的教训，
 以 `grep exclude_filter` 为准）。★ **2026-10-04 结案：这条 filter 不需要加** —— 那 3 个文件已由
@@ -470,7 +470,9 @@ window/stretch/mode="viewport"
    （02:11，`build_release.py` 的产物冒烟，无 `--log-file`）刚写的轮转日志，且官方文档与上游 commit
    都说桌面端默认开启 ⇒ 实际损失**只有配额**（§1.2）。
 2. **"tests/ 是否真进 .pck 未证实"应升级为已证实。** 工程域初判留了余地；直接对 exe
-   `grep -a -o 'res://tests/…'` 得 **336** 条，且同批数据证明 `exclude_filter` 对资源有效（§1.3）。
+   `grep -a -o 'res://tests/…'` 得 **336** 条（★ 这是**裁剪前**基线），而**同批数据证明不了** `exclude_filter`
+   对资源有效 —— §1.3 已于 2026-10-04 订正：`res://.superpowers/*` **从未进过候选集**（导出遍历跳过 `.` 开头目录），
+   它对**资源**生效是由 `editor_export_platform.cpp:709`（全路径 `matchn`）与 `:1371` 保证的。
    另修正一处行号：`UiFactory.apply_font_recursive` 的调用点是 `scenes/lobby_page.gd:65`（非 :70）。
 
 ---
