@@ -38,6 +38,8 @@ var _bind_buttons: Dictionary = {}   # action -> Button
 @onready var _enemy_hp: CheckButton = %EnemyHpCheck
 @onready var _minimap: CheckButton = %MinimapCheck
 @onready var _minimap_enemy: CheckButton = %MinimapEnemyCheck
+@onready var _res: OptionButton = %ResOption
+@onready var _fullscreen: CheckButton = %FullscreenCheck
 @onready var _bind_grid: GridContainer = %BindGrid
 
 
@@ -72,6 +74,28 @@ func _ready() -> void:
 	_check(_minimap_enemy, Settings.pvp_minimap_show_enemy, func(on: bool) -> void:
 		Settings.pvp_minimap_show_enemy = on
 		Settings.save())
+
+	# ── 显示(分辨率档 + 全屏)──
+	# ★ 下拉的选项**由 `Settings.DISPLAY_RESOLUTIONS` 现场生成**,不把尺寸表抄进 `.tscn` ——
+	#   那张表是单一来源(Task 2 的契约:设置页的下拉读它),抄一份进场景就是第二个真相源。
+	# ★ 先 `clear()` 再灌:骨架里可能已经烙进导出那一刻的选项(重生成 / 取图时会发生),
+	#   不清就会变成**两份**。
+	_res.clear()
+	for size in Settings.DISPLAY_RESOLUTIONS:
+		_res.add_item("%d×%d" % [size.x, size.y])
+	# ★ 与下面 `_check()` 同一口径:**先灌值、再连信号**。`selected` 属性赋值与 `select()`
+	#   都**不**发 `item_selected`(只有玩家在弹层里真选才发)⇒ 这里不会在建控件时误写回 Settings。
+	_res.selected = Settings.display_res_index
+	_res.item_selected.connect(func(i: int) -> void:
+		Settings.display_res_index = i
+		Settings.save()
+		Settings.apply_display())
+	# ★ 全屏走既有 `_check()` 包一层 ⇒ 与其它开关同款:只在 `toggled` 里写 Settings(自带
+	#   `Sfx.play("switch")` + 先值后连),`.button_pressed` 的初值来自 Settings。
+	_check(_fullscreen, Settings.display_fullscreen, func(on: bool) -> void:
+		Settings.display_fullscreen = on
+		Settings.save()
+		Settings.apply_display())
 
 	_fill_bind_grid()
 
