@@ -45,6 +45,39 @@ func _solid_outside(cell: Vector2i) -> int:
 	return n
 
 
+# 相③ 选点用:该格 16 个子格是否"纹理非 0 + 爆炸可破坏 + `sub_alive`"。
+# ★ 三条缺一不可:纹理 0/不可爆 ⇒ `damage_tile` 首行 return(真路径根本不跑);`sub_alive` 假
+#   ⇒ 那格本来就死了,`sub_hp` 那条断言会退化成恒真。
+func _cell_pristine_destroyable(cell: Vector2i) -> bool:
+	for sy in range(4):
+		for sx in range(4):
+			var sub := Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)
+			var tex: int = TileDefs.sub_texture(sub)
+			if tex == 0 or not TileDefs.explosion_destroyable(tex) or not TileDefs.sub_alive(sub):
+				return false
+	return true
+
+
+# 相③ 用:该格 16 子格里 `sub_alive` 的个数(**碰撞的真相源**,见 collision_builder.gd:49)。
+func _alive_count(cell: Vector2i) -> int:
+	var n := 0
+	for sy in range(4):
+		for sx in range(4):
+			if TileDefs.sub_alive(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)):
+				n += 1
+	return n
+
+
+# 相③ 用:该格 16 子格在**服务器可破坏层碰撞数组**里非空的个数。
+func _solid_count(cell: Vector2i) -> int:
+	var n := 0
+	for sy in range(4):
+		for sx in range(4):
+			if _host.destructible_sub[cell.y * 4 + sy][cell.x * 4 + sx] != MazeGenerator.EMPTY:
+				n += 1
+	return n
+
+
 func _ready() -> void:
 	_host = MatchHost.new(MAP, {}, {}, [])
 	add_child(_host)
@@ -85,22 +118,45 @@ func _run() -> void:
 			"★ 顺序必须是「按 y 升序、同 y 按 x 升序」(实际 %s)" % str(d))
 
 	# ── ③ 走**真破坏路径**(worker 用的那条) → 该格 16 子格全清,且**别的格一格没动** ──
-	# ★ 与本任务 brief 的片段有三处**必要偏离**(全部实测;照抄那份连红都跑不出来):
-	#   ① `rows`/`cols` 在本函数顶部(:44-45)已声明 ⇒ 照抄直接 `Parse Error: There is already
+	# ★ 与本任务 brief 的片段有**必要偏离**(全部实测;照抄那份连红都跑不出来):
+	#   ① `rows`/`cols` 在本函数顶部(:59-60)已声明 ⇒ 照抄直接 `Parse Error: There is already
 	#      a variable named "rows"`,整个探针**加载失败**(不是"红",是根本没跑)。
-	#   ② 真路径要**先有事可做**:地图 newfactory 的 (9,6) 是空气 ⇒ `damage_tile` 首行 return,
-	#      回调根本不跑 ⇒ 那条"16 子格全清"**恒真**(实测残留 0,它一个行为都没验)。
-	#      故把那格钉成**可破坏纹理**的非空格(texture 15 = 树叶-1,`explosion_destroyable`)。
-	#      ★ 只钉 `grid`、**不钉** `_base_grid`:真路径销毁后 `grid` 回到 0 = 基线,不给相④/⑤
-	#      添假差异(照抄 brief 那句 `_base_grid[cell] = SOLID` 时实测多一个 (9,6) 差异,
-	#      既有相④ 当场 `3 != 2` 变红)。
+	#   ② 选点必须落在**真地图里整格可爆的砖**上。brief 写死 (9,6) 并只钉 `_host.grid`:
+	#      地图那格是空气 ⇒ `damage_tile` 首行 return、回调根本不跑 ⇒ "16 子格全清"**恒真**;
+	#      而 `sub_hp` 是 `init_sub_hp(current_subgrid)` 建的(`match_host.gd:52`),只钉 `grid`
+	#      不会让那 16 格"活着" ⇒ 下面那条 `sub_alive` 断言也会**恒真**(本仓最忌的假绿)。
+	#      ⇒ 改为**扫子格表**找一格"16 子格全活 + 全可爆",并要求 `cell.x/y ≥ 2`(让 `* 2` 的
+	#      越界写法落在**别的格**上,反向断言才不退化)。
 	#   ③ `destructible_sub` 是**整图**的可破坏子格表(实测非空 **7624** 个)⇒ "别的格一格没动"
 	#      只能读**前后差**,不能读"全图非空数 == 0"(照抄实测恒红 7624,Step 4 永远到不了绿)。
-	var cell := Vector2i(9, 6)
-	_host.grid[cell.y][cell.x] = MapFormat.pack(15, 15)
-	for sy in range(4):
-		for sx in range(4):
-			_host.destructible_sub[cell.y * 4 + sy][cell.x * 4 + sx] = MazeGenerator.SOLID
+	var cell := Vector2i(-1, -1)
+	for cy in range(MazeGenerator.current_subgrid.size()):
+		for cx in range((MazeGenerator.current_subgrid[0] as Array).size()):
+			var cc := Vector2i(cx / 4, cy / 4)
+			if cc.x < 2 or cc.y < 2:
+				continue
+			if _cell_pristine_destroyable(cc):
+				cell = cc
+				break
+		if cell.x >= 0:
+			break
+	if cell.x < 0:
+		# 早退:下面每一句都依赖"有这么一格",前置不成立时继续跑只会刷假绿。
+		# ★ 置 `_ran_to_end` 再 return:`_finish` 的假绿守卫若触发会打成"`_run()` 没跑完(中途
+		#   脚本错误?)" —— 那不是实情,实情就是下面这条失败。
+		_check(false, "相③ 前置不成立:图上没有「整格 16 子格全活且全可爆」的砖")
+		_ran_to_end = true
+		return
+	# ★ 前置:那 16 格**销毁前确实活着**。不写这条,选点一失效下面就退化成恒真。
+	var alive_before := _alive_count(cell)
+	_check(alive_before == 16, "相③ 前置:格 %s 销毁前 16 子格应全活(实得 %d)" % [str(cell), alive_before])
+	# ★ 前置:`destructible_sub`(服务器**可破坏层碰撞数组**)在该格也该是满的 ——
+	#   下面 `left == 0` 只有"本来有 16"才说明得了事。
+	var solid_before := _solid_count(cell)
+	_check(solid_before == 16, "相③ 前置:格 %s 在可破坏层应是实心 %d/16" % [str(cell), solid_before])
+	# ★ 基线同步:真路径会把 `grid` 那格清零,`_base_grid` 留着原值就会给相④/⑤ 添一个假差异
+	#   (方向与 brief 那句 `_base_grid[cell] = SOLID` 相反 —— 那句实测让相④ `3 != 2` 变红)。
+	_host._base_grid[cell.y][cell.x] = MazeGenerator.EMPTY
 	# ★ 变异判据的**前置**:`* 2` 的越界写法会去清格 (cell.x/2, cell.y/2) 的 sx∈{2,3}×sy∈{0,1}
 	#   象限 —— 那 4 个子格必须**先钉实**,否则越界写的是"把空气写成空气",变异跑不红。
 	var bug_cell := Vector2i(cell.x / 2, cell.y / 2)
@@ -120,6 +176,13 @@ func _run() -> void:
 	# ★ 反向断言:2×2 的越界写法会去清**别的格** ⇒ 这里是唯一能抓住"清到别处"的判据。
 	var others := others_before - _solid_outside(cell)   # 被清掉的、属于**别的格**的子格数
 	_check(others == 0, "不该有别的格被清(实际 %d 个子格)" % others)
+	# ★★ 碰撞那一维(评审 Important):服务器碰撞的真相源是 **`sub_hp`**,不是上面那个数组 ——
+	#   `CollisionBuilder.build_sub` 按 `sub_alive` 决定子格有没有碰撞(`collision_builder.gd:49`),
+	#   而 `WorldBuilder.build_sim` 在**下一局复位**时重算它(`match_round.gd:151`)⇒ 只清
+	#   `destructible_sub`、不清 `sub_hp` 的话,那 16 格"还活着"的记录会让墙在复位时**长回来**。
+	#   ★ 去掉 `_on_tile_destroyed` 里那句 `TileDefs.zero_cell_sub_hp(cell)` ⇒ 这条必红。
+	var alive_after := _alive_count(cell)
+	_check(alive_after == 0, "格 %s 的 16 子格应记为已死(sub_hp;残留 %d)" % [str(cell), alive_after])
 
 	# ── ④ 反向:只改回一格 → 只剩 2 个(证明它比的是**差异**不是"非实心")──
 	_host.grid[2][3] = _host._base_grid[2][3]

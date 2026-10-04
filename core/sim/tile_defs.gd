@@ -287,6 +287,24 @@ static func restore_sub(sub: Vector2i, hp: int) -> void:
 	sub_hp[sub.y * sub_cols + sub.x] = hp
 
 
+## **格级**销毁的"子格 HP 侧":把该格 16 个子格的 `sub_hp` 清零。**静默** —— 不触发
+## `on_sub_destroyed`(那是"逐子格被摧毁"的回调口径:单机侧靠它清渲染/碰撞/账本)。
+##
+## ★ 为什么必须有它:子格碰撞的真相源是 **`sub_hp`**,不是调用方的碰撞数组 ——
+##   `CollisionBuilder.build_sub` 按 `sub_alive` 决定子格有没有碰撞(`collision_builder.gd:49`),
+##   而 `WorldBuilder.build_sim` 在**下一局复位**时按基线重算它(`match_round.gd:151`)⇒ 只清
+##   调用方那份 `destructible_sub`、不动 `sub_hp`,那 16 格"还活着"的记录会让墙**长回来**。
+## ★ 为什么静默:服务器侧 `on_sub_destroyed` = `MatchCombat._on_sub_destroyed`,它**每格都**
+##   `_rpc_all_ext("sub_destroyed", …)` ⇒ 逐子格回调会把 1 条 `tile_destroyed` 广播变成 17 条。
+##   广播契约不动(既有协议消息);格级那条广播仍由 `_on_tile_destroyed` 自己发。
+static func zero_cell_sub_hp(cell: Vector2i) -> void:
+	if sub_cols == 0:
+		return
+	for sy in range(4):
+		for sx in range(4):
+			restore_sub(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), 0)
+
+
 # 对某格瓦片扣血。source 为 "bullet"/"explosion",按对应可破坏开关判定。
 # 扣到 ≤0 → 变空气(改 current_grid + 回调 Level0 刷新渲染/碰撞),返回是否破坏。
 static func damage_tile(cell: Vector2i, amount: int, source: String) -> bool:

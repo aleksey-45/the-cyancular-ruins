@@ -139,7 +139,7 @@ func _run() -> void:
 	#   上面两条只读 `MazeGenerator.current_grid` —— 若 `reset_destructibles()` 哪天退化成
 	#   "只改 grid、不重铺瓦片也不重建碰撞",grid 那两条**照样全绿**,而客户端画面上仍是个洞
 	#   (瓦片层)、物理上仍能穿过去(碰撞层)。也就是"客户端以为修好了、用户看见的没修"。
-	#   这里同时钉两维:`_on_tile_destroyed` 清的是 9 份环面副本的瓦片 + 该格 2×2 子格,
+	#   这里同时钉两维:`_on_tile_destroyed` 清的是 9 份环面副本的瓦片 + 该格 **4×4(16px 子格)**,
 	#   而 `reset_destructibles()` 重铺瓦片(`_paint_maze`)+ 整层重建碰撞(`build_sim`)。
 	_check(_tile_source_at(_a) != -1 and _sub_at(_a) != 0,
 			"★ A 的瓦片(cell_source_id=%d)与碰撞子格(%d)真的重铺回来了(前置已证还原前这两样是空的)" %
@@ -189,7 +189,7 @@ func _tile_source_at(cell: Vector2i) -> int:
 
 # 持久可破坏层里该 64px 格覆盖的那一块子格:**任一**非零就返回它,全零返回 0
 # (-1 = 越界 / 该层还没建)。
-# ★ 读的是**物理**那一维:`_on_tile_destroyed` 把这些子格清零,`reset_destructibles` 靠
+# ★ 读的是**物理**那一维:`_on_remote_tile_destroyed` 把这些子格清零,`reset_destructibles` 靠
 #   `WorldBuilder.build_sim` 整层重建 —— 只改 grid 的退化实现不会让这里恢复。
 # ★★ 2026-10-02 合并订正:子格边长**从 `CollisionBuilder` 推导**,不写死乘数。
 #   原实现写的是 `cell * 2`(32px 子格 / 每格 2×2),而 cyrm v4(B18)已把破坏下沉到

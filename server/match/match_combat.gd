@@ -7,9 +7,15 @@ extends MatchSnapshot
 func _on_tile_destroyed(cell: Vector2i) -> void:
 	# 服务器无瓦片渲染层,只需清持久子格 + 标记分块重建。
 	# ★ 子格是 **16px**(cyrm v4:64px 格 → 4×4 子格),这里必须按**当前格**展开。**别用 `* 2`**:
-	#   那是 v3 时代 32px/2×2 的过期口径,会把 `(x/2, y/2)` 那格的左上象限清出 4 个洞,而被拆那
-	#   一格 16 个子格**一个都没清** ⇒ 真格留幽灵墙(碰撞还在),`rebuild_chunk` 读的又是这份脏
-	#   数组 ⇒ 别处的洞**不自愈**。反向换算在同文件 `_on_sub_destroyed`:`Vector2i(sub.x / 4, sub.y / 4)`。
+	#   那是 v3 时代 32px/2×2 的过期口径,会把 `(x/2, y/2)` 那格的**右上**象限清出 4 个洞(列
+	#   `cell.x*2..+1` 落在那一格的右半、行 `cell.y*2..+1` 落在上半),而被拆那一格 16 个子格
+	#   **一个都没清** ⇒ 真格留幽灵墙。反向换算在同文件 `_on_sub_destroyed`:`Vector2i(sub.x / 4, sub.y / 4)`。
+	# ★★ 两处状态必须**一起**清(缺一不可;守卫 = `destroyed_cells_probe` 相③ 的两条):
+	#   ① `sub_hp` —— 子格碰撞的真相源(`build_sub` 按 `sub_alive` 现算),不清的话**下一局复位**
+	#      时 `WorldBuilder.build_sim` 会按它把墙**长回来**;
+	#   ② `destructible_sub` —— 当前这一局的分块碰撞数组(`rebuild_chunk` 直接读它)。
+	#   ①走静默口(`zero_cell_sub_hp` 不回调 `on_sub_destroyed`)⇒ 广播仍只有 1 条 `tile_destroyed`。
+	TileDefs.zero_cell_sub_hp(cell)
 	if not destructible_sub.is_empty():
 		for sy in range(4):
 			for sx in range(4):
