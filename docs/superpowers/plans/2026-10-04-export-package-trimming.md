@@ -129,6 +129,17 @@ Run: `grep -n "^\[preset\|^name=" export_presets.cfg | head -10`；确认导出�
 Run: `python tools/build_release.py`
 Expected: 导出成功 + **产物冒烟通过** —— 关键行是服务端那条输出里的「**worker 就绪**」；只"没报错"不算。
 
+★ **Task 2 实测补充（2026-10-04，控制器按实测订正口径）**：
+
+- 判据一律取**产物内**口径：对最终 exe 跑 `grep -aoE "res://tests/[A-Za-z0-9_/.-]+" "<exe>" | sort -u | wc -l`。
+  Task 2 已在两个预设上实测 **336→0 / 407→0 / tools 8→0 / DevTools 3→0 / tests/lib 6→0** ⇒ 本步只需**复核**这些数仍为 0。
+- ★★ **别拿磁盘 `.godot/exported/` 的计数下降当判据**：它是编辑器的导出缓存，**导出不会清它**（实测 198→198，
+  85 个陈旧探针 `.scn` 一个没删）⇒ 拿它判会**假阴性**。要用磁盘口径就得**导出前显式清该目录**
+  （`rm -rf .godot/exported/`；gitignored、可再生，但**不可逆** —— Task 2 为做干净测量就这么做过并报备）。
+- **脚本类缓存**（`global_script_class_cache.cfg`）**仍在包内且不算失败**：实测条目 105→103，少的正是
+  `ProbeBase`/`ScanUtil` 两个 test 类 —— 它是**元数据**，不是被打包的资源。
+- 反向确认也要复核：`maps/*.cyrm`、`data/*.json`、webp 模块符号**仍在**（Task 2 已确认与改前一致）。
+
 - [ ] **Step 3: 复核产物**
 
 对最终产物重复 Task 2 Step 3 的两个计数（仍应为 0）；并确认版本行/归档名与 `project.godot` 的 `version`/`release_prefix` 一致（**别另抄一份版本号**）。
