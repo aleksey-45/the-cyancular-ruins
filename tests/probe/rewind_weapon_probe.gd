@@ -34,9 +34,9 @@ extends ProbeBase
 #   S5 快照的当前武器与现持不同 ⇒ 必须切回那一把,且手持实弹等于快照的 `wlive`
 #   S6 形状:那一带的 `.get("/.call("/.set("` 计数为 0(且类型化访问确实在 —— 否则"把整段
 #      删掉"也能让计数变 0)
-#   S7 **生产端**:`WorldRewind._snapshot_player()` 产出的武器快照逐字段 == 真值,且
-#      `wslot`/`widx`/`wmags`/`wlive` **都没被静默写成 0/空**(形状 14 条 + 行为 9 条;
-#      0 与真值不可分的地方用三个互不相同的非 0 值占位)。
+#   S7 **生产端**:`WorldRewind._snapshot_player()` 产出的快照逐字段 == 真值(★ 含 `downed`,
+#      2026-10-04 Plan B Task 15 补),且 `wslot`/`widx`/`wmags`/`wlive` **都没被静默写成 0/空**
+#      (形状 14 条 + 行为 10 条;0 与真值不可分的地方用三个互不相同的非 0 值占位)。
 #
 # ── 为什么直调 `rewind_restore` 而不是按住 Shift 走真链路 ──────────────
 # 单机真链路(`WorldRewind` 每帧按 `_cursor` 挑一个快照帧)的**落点不可复现** ——
@@ -63,6 +63,20 @@ const PRODUCER_REFLECTION := [".get(\"_current_type\")", ".get(\"_current_index\
 		".get(\"mag_ammo\")"]
 const PRODUCER_TYPED := [".inventory", "._current_type", "._current_index", ".held",
 		".current_weapon()", ".mag_ammo"]
+# ★★ 玩家根(`player.gd`,**无 `class_name`**)上那 **5 处按字符串名**的访问 —— **逐条**钉住,
+# 而不是只数一个总数(2026-10-04 Plan B Task 15;来源 = Task 13 的 G-1 实测)。
+# 为什么"只数总数"没有牙:把 `has_method("is_downed")` 的**字符串**改成 `"is_downed_x"`
+# (玩家根的真方法一动不动)时,`.get("` + `has_method("` 的计数**仍是 5 ⇒ 旧的 `≤ 5` 照绿**,
+# 而生产端那一帧的 `"downed"` **静默恒 false** ⇒ 消费端 `player.gd:995-998` 的倒地/复活还原
+# 被静默跳过(实测:探针 60 条全绿)。
+# ★ 每条都写**成员名 + 访问形态**(`get("hp")` 而不是裸 `hp`):裸名会被**同一个函数里的别的出现**
+#   骗过 —— `"hp"` 同时是字典键、`is_downed` 同时是 `player.is_downed()` 那个真方法调用
+#   ⇒ 裸名判据对"字符串被改名"**恰好无牙**(G-1 咬不住就是这个原因)。
+# ★ 覆盖上限:`_has_member_token` + 这 5 条只挡"成员名被改名/后缀拼接"(如 `is_downed_x`);
+#   **换个完全不同的名字**(`is_downed` → `is_alive`)咬不住 ⇒ 那种退化只有**行为**断言兜着
+#   (S7 的 `snap["downed"] == 真值` 那一条)。
+const PRODUCER_NAMED_PLAYER_ACCESS := [".get(\"velocity\")", ".get(\"hp\")",
+		".get(\"facing_direction\")", ".get(\"weapons\")", ".has_method(\"is_downed\")"]
 # 成员名字符集(给 `_has_member_token`)
 const _IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 
@@ -89,14 +103,17 @@ const TYPE_PISTOL := 1
 const TYPE_RIFLE := 2
 
 # 断言计数闸(与 `kh_l3_visual_probe` / `combat_hud_visual_probe` 同款)。
-# ★ 60 是**逐个数出来的**(全部 `_check(` 调用点都在 `_s1.._s7` 这七个函数里):
+# ★ 61 是**逐个数出来的**(全部 `_check(` 调用点都在 `_s1.._s7` 这七个函数里):
 #   S1 7(前置 + `_check_cells` 3 + 下标 + 同实例 + 手持实弹)
 #   S2 3、S3 5(下标 + `_check_cells` 3 + 手持实弹)
 #   S4 6(前置 + 手持实弹未动 + `_check_cells` 3 + 下标)
 #   S5 7(下标 + 实例非空 + 类型 id + 手持实弹 + `_check_cells` 3)
-#   S6 9、S7 23(前置 1 + 反射逐名 6 + 类型化逐名 6 + 残值上界 1 + 行为 9)⇒ 合计 60。
+#   S6 9、S7 24(前置 1 + 反射逐名 6 + 类型化逐名 6 + 按名访问逐名 1 + 行为 10)⇒ 合计 61。
+#   ★ 2026-10-04(Plan B Task 15):S7 行为 9→10 —— 新补一条 `snap["downed"] == 真值`
+#     (来源 = Task 13 的 G-1:`snap["downed"]` 此前**一条断言都没有**,连行为带形状都没有)。
+#     60→61 这一个量的两处(本常量 + 下面 `_check()` 上方那句"60 行")必须一起改。
 #   用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`late_match_probe` 同款)。
-const EXPECTED_CHECKS := 60
+const EXPECTED_CHECKS := 61
 var _checks := 0
 
 
@@ -104,9 +121,9 @@ func probe_id() -> String:
 	return "RW-WEAPON"
 
 
-# 覆写只为**逐条留轨迹**:60 行 ✓/✗ 是"该跑的都跑过"的凭据(计数闸之外的第二道)。
+# 覆写只为**逐条留轨迹**:61 行 ✓/✗ 是"该跑的都跑过"的凭据(计数闸之外的第二道)。
 # ★ 这个数字与 `EXPECTED_CHECKS` 是**两处写着同一个量** —— 改计数闸时要一起改(R1 评审 ⑥:
-#   它曾经停在 37 而 `EXPECTED_CHECKS` 已是 60)。
+#   它曾经停在 37 而 `EXPECTED_CHECKS` 已是 60;Task 15 时两处一起 60→61)。
 func _check(ok: bool, msg: String) -> void:
 	_checks += 1
 	print("[RW-WEAPON] %s %s" % ["✓" if ok else "✗", msg])
@@ -403,6 +420,39 @@ func _s7_producer(player: Node, wc: WeaponComponent) -> void:
 	_check_cells("S7", wc, snap.get("wmags", []))
 	_check(wlive == live.mag_ammo,
 			"S7: 快照 wlive=%d 应等于真值 `mag_ammo`=%d" % [wlive, live.mag_ammo])
+	# ── ★★ 2026-10-04(Plan B Task 15):`snap["downed"]` 的**行为**断言 ─────────────────
+	# 来源 = Task 13 的 G-1 实测:只把生产端那一行的**字符串**改成 `has_method("is_downed_x")`
+	#   (玩家根的真方法**一动不动**)⇒ 本探针 **60 条全绿**,而 `"downed"` **静默恒 false**
+	#   ⇒ 消费端 `player.gd:995-998` 的倒地/复活还原被静默跳过(`if bool(d["downed"])…` 再也不进)。
+	#   `rewind_probe.gd` 里 `downed` 出现 0 次 ⇒ 这一维此前**没有任何行为守卫**。
+	# ★ 为什么必须**两相都测**(活着 + 倒地):只测一相时,"生产端恒返回同一个常量"照样能过
+	#   (恒 false 骗过"活着相"、恒 true 骗过"倒地相")。两相一起钉,"`downed` 有取值来源"才成立。
+	# ★ 真值取自 `player.call("is_downed")`(玩家根 → `combat.downed`),与生产端**同一个真值源**;
+	#   若这条**造不出倒地玩家**(`truth_downed` 不为 true),本条会**红**,而不是退化成"恒 false 也算过"。
+	# ★ 两处 `.get(键, 哨兵)` 的哨兵**故意取"会红"的那一侧**:键被删掉时 `snap_alive` 读成 true、
+	#   `snap_downed` 读成 false ⇒ 必红(空读/缺键不许恒绿)。
+	# ★ 仪器噪声(既有缺陷、不属本任务):`set_downed_by_rewind` 里那句 `animator.play("downed")` 会打
+	#   `ERROR: There is no animation with name 'downed'` —— `player.tscn` 的 SpriteFrames 只有
+	#   charge/fly/idle/move/squat,全仓也没有运行时替换。该错误发生在 `downed = v` **之后**
+	#   ⇒ 状态照样置上(实测 `truth_downed=true`),只是该函数就此中止、`went_down` 不再发。
+	#   本断言只看状态,不受影响;那处死引用记在 Task 15 报告里(不在本任务的允许改动文件内)。
+	var combat := player.get("combat") as CombatComponent
+	var truth_alive := bool(player.call("is_downed"))
+	var snap_alive := bool(WorldRewind.new()._snapshot_player(player).get("downed", true))
+	var truth_downed := false
+	var snap_downed := true
+	if combat != null:
+		combat.set_downed_by_rewind(true)
+		truth_downed = bool(player.call("is_downed"))
+		snap_downed = bool(WorldRewind.new()._snapshot_player(player).get("downed", false))
+		# 复原:本探针后面只剩形状段(读源码),但把玩家留在倒地态会给**下一次**改动埋雷。
+		combat.set_downed_by_rewind(false)
+	_check(not truth_alive and truth_downed and not snap_alive and snap_downed,
+			"S7: 快照 `downed` 必须 == 真值(两相:活着 → false、倒地 → true;"
+			+ "实得 活着 真值=%s 快照=%s、倒地 真值=%s 快照=%s" % [str(truth_alive), str(snap_alive),
+					str(truth_downed), str(snap_downed)]
+			+ ")—— 把来源写成常量、或 `has_method` 的名字对不上(恒 false)都是这条要咬的;"
+			+ "`combat` 取不到 ⇒ 倒地相造不出来,本条同样红(不许写成'恒 false 也算过')")
 
 
 # ── S7 形状:生产端武器段不许再有对象反射(逐名 + 残值上界)─────────────
@@ -433,25 +483,34 @@ func _s7_shape() -> void:
 				"S7: _snapshot_player 里找不到类型化访问 `%s`(须是**完整成员名**,后缀拼接不算)"
 				% pat + " —— 该段被删了/改名了?那上面的缺席是假的")
 	# 残值边界:`_snapshot_player` 里仍允许的**按字符串名访问玩家**只有**玩家根**(`player.gd`,
-	# **无 `class_name`**)上的 **5 处**,这里逐个点名(★ R1 订正:原先只数 `.get("`、消息里只列
+	# **无 `class_name`**)上的 **5 处**,这里**逐个点名**(★ R1 订正:原先只数 `.get("`、消息里只列
 	# 4 处,读起来像完整枚举,**漏了第 5 处** `player.has_method("is_downed")`);
 	#   ① `player.get("velocity")` ② `player.get("hp")` ③ `player.get("facing_direction")`
 	#   ④ `player.get("weapons")` ⑤ `player.has_method("is_downed")`(配 `player.is_downed()`)。
 	# ⑤ 的失败形态与其它四处同型:`is_downed` 改名 ⇒ `has_method` 恒 false ⇒ `"downed"` 静默写
-	# false ⇒ 消费端 `player.gd:987-989` **静默跳过倒地/复活还原**(故它必须计入度量)。
+	# false ⇒ 消费端 `player.gd:995-998` **静默跳过倒地/复活还原**(故它必须计入度量)。
+	#   ★★ 2026-10-04 订正:原文写的是 `player.gd:987-989` —— 已过期,按内容 `grep` 复核后改成
+	#     `995-998`(Plan B Task 15;`grep -n "set_downed_by_rewind\|combat.revive()"` 实测,
+	#     该文件共 998 行,那四行就是文件末尾)。
 	# 它们要类型化得给 player 根加 `class_name`(动类结构:全局类名 + 两个刻意造的裸宿主桩会被
-	# 打掉;已登记,不属本任务)⇒ 这里用 `<=` 而不是 `==`,免得将来有人补了 class_name 反而把守卫喂红。
+	# 打掉;已登记,不属本任务)⇒ 计数仍用 `<=` 而不是 `==`,免得将来有人补了 class_name 反而把守卫喂红。
 	# 正解是把 weapons 组件(及其余 4 处的值)**当参数注进来**(见 Task 3 报告),不是给根加类型。
-	# ★ 口径补记(2026-10-04 Plan B Task 13;评审移交的 Out-of-scope):`≤ 5` 是**计数上界、不逐名**
-	#   ⇒ ⑤ 的 `is_downed` 那个字符串过期(改成 `is_downed_x`)时计数**仍是 5 ⇒ 本条仍绿**。
-	#   逐名的正确性**本应由行为断言兜底**(把快照里的 `downed` 与真值比对);
-	#   ★★ 但本轮**实测**它并不存在(日志 `task-13-mutation-log.txt` 的 G-1:只改 `_snapshot_player`
-	#     里那个字符串、玩家根的真方法**不动** ⇒ 本探针 **60 条全绿**、producer 的 `"downed"` 静默恒 false)
-	#     ⇒ **今天**本探针对"玩家根那 5 处按名访问"的保证**只有"计数不超 5"**这一条。
-	#   ★ 要真正逐名钉有两条路(都不属本轮):① 把度量换成 `_has_member_token` 逐名核;
-	#     ② 补一条 `snap["downed"] == 真值` 的行为断言(会 +1 条 ⇒ 同时改 `EXPECTED_CHECKS`)。
+	# ★★ 2026-10-04(Plan B Task 15):把度量从**只数上界**换成**逐名核**。旧口径的病由 Task 13
+	#   的 G-1 实测钉死:`≤ 5` 之下把 `is_downed` 改成 `is_downed_x`,计数**仍是 5 ⇒ 本条照绿**,
+	#   而 producer 的 `"downed"` 静默恒 false(日志 `task-13-mutation-log.txt`)。
+	#   现在对这 5 处**各来一条 `_has_member_token`**(完整成员名 + 访问形态 + 边界,见该函数上方):
+	#   后缀拼接改名(`is_downed_x`)不再算"还在" ⇒ 5 条变异各自红在本条上(消息里点名缺哪个)。
+	#   ★ 条数**没变**:5 个谓词与原来的 `≤ 5` 合取进**同一条** `_check` —— 本任务只许净 +1 条,
+	#     那一条是上面 `_s7_producer` 里新补的 `snap["downed"] == 真值`。
+	#   ★ 覆盖上限:`_has_member_token` 只挡"后缀/前缀拼接"类改名;**换个完全不同的名字**
+	#     (`is_downed` → `is_alive`)本条咬不住 ⇒ 那由 `_s7_producer` 的行为断言兜着。
 	#   登记的原文与翻案条件:`docs/eng/registered-debt.md` §六.15。
+	var named_missing: Array[String] = []
+	for pat in PRODUCER_NAMED_PLAYER_ACCESS:
+		if not _has_member_token(body, pat):
+			named_missing.append(pat)
 	var named_accesses := body.count(".get(\"") + body.count("has_method(\"")
-	_check(named_accesses <= 5,
-			"S7: _snapshot_player 里按字符串名访问玩家的地方不得超过 5 处"
-			+ "(velocity/hp/facing_direction/weapons/is_downed),实得 ×%d" % named_accesses)
+	_check(named_missing.is_empty() and named_accesses <= 5,
+			"S7: 玩家根那 5 处按字符串名访问必须**逐名**在位(velocity/hp/facing_direction/"
+			+ "weapons/is_downed 的**访问形态**),且总数不超过 5 —— 实得 ×%d,缺 %s"
+			% [named_accesses, str(named_missing)])
