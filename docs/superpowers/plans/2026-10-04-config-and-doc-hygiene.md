@@ -215,6 +215,48 @@ git commit -m "docs(eng): §3/§4 逐条复核结论(三问 + 档位 + 归属),�
 
 ---
 
+### Task 6: 审计自净（控制器追加；来源 = Task 5 的发现）
+
+**Files:**
+- Modify: `docs/eng/audit-2026-10-04-design-conventions.md`
+- Modify: `docs/eng/conventions-review-2026-10.md`（只加指针，见 Step 2）
+- Modify: `docs/eng/registered-debt.md`（只加一条登记，见 Step 3）
+
+**Interfaces:**
+- Consumes: `.superpowers/sdd/2026-10-04-config-and-doc-hygiene/task-5-report.md` 里列出的 7 处审计自缺陷（Step 1 逐条对应）；`docs/eng/conventions-review-2026-10.md`（Task 5 的产物）。
+- Produces: 一份**不再自相矛盾**的审计报告 + 与新复核文档的双向指针。
+
+★ **纪律**：只订正**事实性错误**（条目归属 / 编号 / 行号 / 计数 / 限定语），**不要**重写结论、**不要**动 §3/§4 的判定本身（那些已由 Task 5 逐条复核并落进 `conventions-review-2026-10.md`）。★ 行号一律**按内容**复核，**不采信报告里的数字**（本仓这类数字已被推翻过多次）。
+
+- [ ] **Step 1: 逐条订正**（细节以 `task-5-report.md` 原文为准）
+
+① §10 里那两条"§3 裁定"其实在 **§4** ⇒ 改成正确的节号；
+② §4 订正块的编号错位 ⇒ 按实际顺序重排；
+③ §4-13 的理由出处挂错对象（"已知边界 2"只存在于审计自己那行）⇒ 改指真出处或删掉该出处；
+④ §4-2 的计数/行号偏差（实测 **6** 次提交、`@rpc` 在 `:282`/`:286`）⇒ 订正；
+⑤ §3-17 的订正自己**已过期一半**（`_crashtest/` 已删）⇒ 补一句现状；
+⑥ 4 处行号漂移 ⇒ 按内容复核后订正；
+⑦ §3-5 需加限定"**被兜底掩蔽**"（`match_host.gd:39` 确实漏调，靠 `load_grid` 兜住）⇒ 补上。
+
+★ 每条先 `grep` 复核再改；改完 `python tools/check_naming.py` 必须仍 OK。
+
+- [ ] **Step 2: 搭双向指针**
+
+`conventions-review-2026-10.md` 头部指向审计的 §3/§4；审计的 §3、§4 标题下各加一行「逐条复核结论见 [`conventions-review-2026-10.md`](conventions-review-2026-10.md)」。★ 链接按**所在目录**解析（`docs/eng/` 内互为同级 ⇒ 直接写文件名 ✓）—— 本仓 `check_naming.py` **不校验 markdown 链接目标**，写错没有守卫会红。
+
+- [ ] **Step 3: 登记"守卫覆盖不到的地方"**
+
+在 `docs/eng/registered-debt.md` **§五** 追加一条：`tools/check_naming.py` 的 `DOC_FILES` 白名单**不含审计报告与新的复核文档** ⇒ 这两份**最常被引用**的文档反而没有被检查反引号路径（补法：把它们加进白名单；★ 但**扩白名单不是本任务**，只登记）。
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add docs/eng/audit-2026-10-04-design-conventions.md docs/eng/conventions-review-2026-10.md docs/eng/registered-debt.md
+git commit -m "docs(eng): 审计自净 7 处(Task 5 发现) + 与复核文档双向指针 + 登记 check_naming 白名单缺口"
+```
+
+---
+
 ## 本计划**不含**
 
 - **30 个 CRLF 漂移文件的工作树归一化** —— 用户裁定制只加 `.gitattributes` 规则（Q4）。
