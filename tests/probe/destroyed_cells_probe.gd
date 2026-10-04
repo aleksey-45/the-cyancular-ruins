@@ -213,6 +213,21 @@ func _run() -> void:
 		_check(d4.has(Vector2i(ex, ey)), "★ 与基线不同就该报(不管变空还是变实心)(实际 %s)" % str(d4))
 		_host.grid[ey][ex] = MazeGenerator.EMPTY
 
+	# ── ⑥ 每局复位:服务器侧**两套表一起**回基线(与客户端对偶) ──
+	# ★ 为什么排在**最后**:复位把 `grid` 整份换成 `_base_grid` 的副本(`match_round.gd:147-149`)
+	#   ⇒ 相② 造的差异会被一并抹掉,插在相④/⑤ 之前会当场把它们打成红。
+	# ★ 为什么调**真复位函数**而不是"照抄那几行":照抄等于喂我自己写的输入,不构成对生产函数的
+	#   验证(那样这一相只能证明"我抄的这几行是对的")。夹具安全性实测:`role_peers` 传空 ⇒
+	#   `_reset_ground_weapons()` 的玩家循环零次;物理帧已在 `_ready` 关掉,复位不读物理。
+	#   代价只是输出多一行 `[CollisionBuilder] … shapes:`(整层重建的正常日志)。
+	# ★ 去掉 `match_round.gd` 复位里那句 `TileDefs.init_sub_hp(...)` ⇒ 下面两条**都会**红
+	#   (实测:sub_alive 0/16、可破坏层实心 0/16 —— 两端因此分家:客户端还了、服务器没还)。
+	_host._reset_world_and_clear_dynamics()
+	var alive_reset := _alive_count(cell)
+	_check(alive_reset == 16, "复位后格 %s 的 16 子格应回满血(sub_hp;实得 %d)" % [str(cell), alive_reset])
+	var solid_reset := _solid_count(cell)
+	_check(solid_reset == 16, "复位后格 %s 在可破坏层应回实心(实得 %d/16)" % [str(cell), solid_reset])
+
 	_ran_to_end = true   # ← 只有走到这里才算"跑完"(见 _finish 的假绿守卫)
 
 

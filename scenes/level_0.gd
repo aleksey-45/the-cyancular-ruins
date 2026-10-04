@@ -463,6 +463,9 @@ func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
 
 # PvP 换局复位:把可破坏砖/碰撞/瓦片全量还原成建图时的原始状态(当前网格重置为基线深拷贝)。
 # 服务器每局开赛也做同样复位,双方从同一基线出发 → 不存在"客户端多拆/少拆"的幽灵墙。
+# ★ 2026-10-04 订正:这句"同样复位"原先**与源码不符** —— 服务器那份
+#   (`MatchRound._reset_world_and_clear_dynamics`)漏了 `TileDefs.init_sub_hp`,只还了格级
+#   HP 表 ⇒ 下一局"客户端有墙、服务器没有"(可穿墙)。现已补上,两边还的都是**两套表**。
 # CollisionBuilder 的 build 幂等(同名节点先 free 再建),可安全整体重建。
 func reset_destructibles() -> void:
 	if _pristine_grid.is_empty():

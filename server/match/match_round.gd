@@ -148,6 +148,16 @@ func _reset_world_and_clear_dynamics() -> void:
 	grid = g
 	MazeGenerator.current_grid = g
 	TileDefs.init_hp(g)
+	# ★★ 子格 HP 表也必须回基线 —— 少了这一行,下一局就是"**客户端有墙、服务器没有**":
+	#   `build_sim` → `build_sub` 是按 `sub_alive` 筛子格的(`collision_builder.gd:49`),而
+	#   `sub_hp` 是**本局内被拆掉的格**唯一还记得"已死"的地方(`damage_sub` / 格级
+	#   `zero_cell_sub_hp` 都写它)⇒ 不还,下面那次重建就不再给这些子格生成碰撞,而 `grid`
+	#   已经回实心(可穿墙分歧)。
+	# ★ 与客户端对偶:`Level0.reset_destructibles()` 还原的是**两套表**
+	#   (`level_0.gd:474-476`:`current_subgrid` + `init_sub_hp`),这里原先只还了格级那张。
+	# ★ 顺序**不能反**:必须在 `build_sim` **之前**(它就按 `sub_hp` 筛)。服务器不需要像客户端
+	#   那样先还原 `current_subgrid` —— 破坏从不改纹理表,它一直是基线(改的只是 HP)。
+	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	destructible_sub = WorldBuilder.build_sim(self, g)
 
 
