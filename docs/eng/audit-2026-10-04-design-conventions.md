@@ -49,7 +49,7 @@
 >
 > 守卫:`tests/probe/tile_collision_probe.gd` **相③b**(格级销毁无幽灵砖)+ **相④b**(回溯含格级 HP);
 > `tests/probe/destroyed_cells_probe.gd` 相③/相⑥(服务器拆砖 + 复位两套表)。逐轮裁决与偏离追认见
-> [`plans/2026-10-04-tile-destruction-consistency.md`](superpowers/plans/2026-10-04-tile-destruction-consistency.md)。
+> [`plans/2026-10-04-tile-destruction-consistency.md`](../superpowers/plans/2026-10-04-tile-destruction-consistency.md)。
 > ★ **仍未闭环**:真链路(占 7777)端到端未跑 ⇒ "真 PvP 局可达"目前只算**静态可达 + 单进程探针覆盖**。
 
 **机制**（`✅` 全部逐字读过）：
@@ -97,6 +97,13 @@
 否则"只修单机"等于没修一半。
 
 ### 1.2 `project.godot` 的 `[debug]` 段被一次"改键位"提交毁掉 ✅
+
+> ★ **2026-10-04 已修** —— 本节描述的是**修前**状态。`b2f4134` 已把 `[debug]` 三键按 `6b5f3fb` 的原样补回
+> （`file_logging/enable_file_logging` / `enable_file_logging.pc` / `max_log_files=64`），并配了常驻守卫
+> `tests/smoke/project_settings_smoke.gd`。★ 守卫的**承重断言是"读 `project.godot` 原文判三行逐字存在"** ——
+> 实现者拿空工程实测：`has_setting(...)` 对这三个**引擎内置**键**恒真**（连本仓从未写过的 `log_path` 也返回 true），
+> 而 `.pc` 的引擎默认值本就是 `true` ⇒ 只断言"存在/为真"**拦不住** `d6d2440` 那种"键名被乱码吞掉"的事故。
+> 覆盖上限：测不到"日志**真的**落到 `user://logs/`"，也测不到**导出模板的 release 半边**（见 [`registered-debt.md`](registered-debt.md) §五）。
 
 **现状**：`project.godot:35-36` 两条键**不是合法设置名**（键里塞进了 8 行注释、中文被双重编码），
 `grep "^file_logging" project.godot` 零命中：
@@ -407,7 +414,7 @@ window/stretch/mode="viewport"
 2. ✅ **已销(2026-10-04)**:§1.1 幽灵砖**已实机复现 + 已修** —— `tile_collision_probe` 的相③b 在修复前红在
    `相③b 格级销毁后仍有 16/16 子格在画(幽灵砖)`;修复后 `TILE COLLISION PROBE: ALL-OK`(含「格级销毁无幽灵砖」)。
    服务器侧同期修了两处:4×4 清格子格坐标(`* 2` 清到了 `(x/2,y/2)` 的右上象限)、以及每局复位漏 `init_sub_hp`
-   (⇒ 下一局"客户端有墙、服务器没有")。详见 [`plans/2026-10-04-tile-destruction-consistency.md`](superpowers/plans/2026-10-04-tile-destruction-consistency.md)。
+   (⇒ 下一局"客户端有墙、服务器没有")。详见 [`plans/2026-10-04-tile-destruction-consistency.md`](../superpowers/plans/2026-10-04-tile-destruction-consistency.md)。
 3. ❓ 地形层缺 `texture_filter`：`scenes/level_0.tscn` 里 `WallLayer`/`WaterLayer`/`WaterSurfaceLayer`
    **无**该属性（该文件仅 `:21` 处有 `texture_filter = 1`，那是 **Player** 节点），
    而 `player.tscn:131`、`bullet.tscn:19` 等精灵全是 `1`(NEAREST)，`project.godot` 又没设

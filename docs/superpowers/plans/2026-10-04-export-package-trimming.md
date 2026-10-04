@@ -32,6 +32,7 @@
 
 **Files:**
 - Modify: `export_presets.cfg:13` 与 `:87`
+- Modify: `scenes/main_menu.gd:154-155`（订正会随裁剪过期的那句注释 —— 见 Step 2b）
 
 **Interfaces:**
 - Consumes: 现状逐字 `exclude_filter="*.md,.superpowers/*"`（两处）；`DevTools/*` **不需要**加 —— 那 3 个文件已由 `git rm` 出库（见本会话更早的提交）。
@@ -46,6 +47,15 @@ Run: `grep -rn "res://tests/\|res://tools/" --include=*.gd core/ scenes/ server/
 
 两处都改成 `exclude_filter="*.md,.superpowers/*,tests/*,tools/*"`。
 ★ **逐个文件认领 hunk**：该文件里 `patch_delta_exclude_filters` / `encryption_exclude_filters`（`:20`/`:22`/`:94`/`:96`）**不要**动。
+
+- [ ] **Step 2b: 顺带订正会随本步过期的那行注释**
+
+`scenes/main_menu.gd:154-155` 现在写着「**注:「发布版会裁掉 tests/」不是这条守卫的理由**——`export_presets.cfg` 是
+`export_filter="all_resources"`,`tests/` 会一起打进发布包,真实理由是文件可能不存在」。本步之后**前半句就反了**
+(裁剪落地后 `tests/` **确实**不再进包) ⇒ 改成两段实况:`tests/` 曾经一起进包(所以"缺文件"才是真守卫理由),
+**2026-10-04 起 `exclude_filter` 已含 `tests/*`** ⇒ 发布版里那条通道**没有了**(见 `registered-debt.md` §七 第 3 条,
+它同时记着"这也是在发布产物上跑 `tests/probe/*.tscn` 的唯一通道"这个代价)。
+★ 注释里**不要**再抄一份 `exclude_filter` 的值(那会变成第二处真相源);只说"已含 `tests/*`"并指向那个文件。
 
 - [ ] **Step 3: 提交**
 

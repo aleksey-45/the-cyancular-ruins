@@ -55,7 +55,7 @@
 **这些不是"红",是有守卫但保证比读起来少** —— 与 [tests.md](tests.md) 末节同一类,发现者都是审阅者不是实现者。
 
 1. **`tests/probe/tile_collision_probe.gd` 用"跑完闩"(`_ran_to_end`)而不是计数闸。** 它只覆盖
-   **`_run()` 自身**出错(那时闩为假 ⇒ `_finish()` 打 FAIL);但按 [`tests/lib/probe_base.gd`](../tests/lib/probe_base.gd)
+   **`_run()` 自身**出错(那时闩为假 ⇒ `_finish()` 打 FAIL);但按 [`tests/lib/probe_base.gd`](../../tests/lib/probe_base.gd)
    文件头的权威表述,**helper 内部**出错只结束那个 helper、`_run()` 继续跑到底 ⇒ 闩为真 ⇒ 断言被静默跳过而
    verdict 照打 `ALL-OK`。**权威形式是 `_checks >= EXPECTED_CHECKS`**(本仓对新场景探针的要求)。
    补法:给该文件加 `_checks` 计数 + `EXPECTED_CHECKS` 下限(要逐个断言点计数,这是本条一直没做的原因)。
@@ -167,6 +167,14 @@
    - **什么时候能销**:两侧都改成 `TileDefs.hp_of(MazeGenerator.texture_of(<打包基线值>))`
      (实现用 `_pristine_grid[cell]`、探针用同一份基线),并在探针里**固化**"全场混纹理格计数"(而不是靠离线测量)。
 
+11. **`tools/check_naming.py` 的路径检查只看**反引号 token**,不看 markdown 的链接目标**（`check_naming.py:123`
+   的 `re.findall` 只捞 ``` `…` ```）(2026-10-04 实测,两条独立证据)。
+   - 证据一(既有):本文件 §五 第 1 条那条链接原先写成了从 `docs/eng/` 出发**少一层**的相对路径 ⇒ **长期 404**,
+     直到 2026-10-04 才被手工扫描发现并修掉。
+   - 证据二(本轮引入):`audit-2026-10-04-design-conventions.md` 里本轮加的两条"已修"块链接也犯了同样的错
+     (`](superpowers/…)` 从 `docs/eng/` 解析成 `docs/eng/superpowers/…`)⇒ 同样 404,同日修掉。
+   ⇒ **它给的保证比读起来少**:文档改相对链接时**没有**任何机械化守卫;补法 = 让第四条也解析链接目标
+   (右括号紧跟圆括号那种)并按所在目录核存在性(约多几行);★ 在那之前,改文档链接**必须手工核**。
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 
 **本节不是欠账清单**:§一/§二 是"要还的债",这里是**已经判过、决定不还的** —— 每条都带**判决理由**与**翻案条件**。
