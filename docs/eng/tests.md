@@ -6,6 +6,24 @@
 
 ### 测试
 
+> ★★ **2026-10-05 加:聚合入口(默认批 / 真链路批)** —— 下面那些"逐支手跑"的描述是**机制**说明;
+> **"这一趟该跑哪些、判词是什么、哪些明知是红的"以 [`tests/run_all.sh`](../../tests/run_all.sh) 为准**。
+> - `bash tests/run_all.sh` = **headless 默认批**:**自动枚举** `tests/smoke/*.gd` + `tests/probe/*.tscn`
+>   + `tests/probe/*.gd`(没有同名 `.tscn` 的那些,按 `-s` 跑);**不碰 7777、不弹窗**。
+>   逐支判词分 `OK` / `OK+RC`(判词肯定但 `rc != 0` ⇒ **不算红**,单列)/ `FAIL` / `NO-VERDICT` / `TIMEOUT`
+>   (后两类**归红**:判词缺失或被外壳掐掉 = 守卫自己瞎了);全批判词
+>   `RUN_ALL OK(n runs / m gated-assertions)` · `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` ·
+>   `RUN_ALL FAIL(r new-red + k registered)`;**有新红才非 0**。
+> - **已知红基线 = [`tests/known_red.txt`](../../tests/known_red.txt)**:每行 `路径 类别 理由`,理由**必填**;
+>   修好就**删行**(过期条目也会红)。它存在的理由是 [`tests/probe/allscript_probe.gd`](../../tests/probe/allscript_probe.gd) 里那句
+>   "一条\*\*永远红\*\*的闸等于没有闸"。
+> - `bash tests/run_real.sh` = **真链路批**(5 支多进程 `.sh`;四道闸:活大厅 / 认领 / **R20 锁**+前后进程 / 清单不许烂)。
+>   ★ **默认批绿 ≠ 真链路绿**:两条链路覆盖**不相交**的东西;改到联机 / 协议 / 回滚 / 输入包的改动**必须两边都看**。
+> - `bash tests/run_all.sh --list` 打印**跑哪些 + 排除哪些 + 每条理由 + 已知红基线**;
+>   `--classify-check` 跑**分类器自检**(10 例:分项 `OK` 顶不掉 `NO-VERDICT`、CRLF、退出噪声、rc 分层……)。
+> - 日志:`tests/.run_all_logs/{smoke,probe}/*.log`(每支全文)+ `summary.log`(判词原文);
+>   ★ 它们**跨跑次混装**(同一路径会被下一趟覆盖)⇒ 读到的**不一定是这一趟的**。
+
 **源码级探针的共享脚手架 = `tests/lib/`**:`scan_util.gd`(`class_name ScanUtil`,纯静态:读文件/走目录/剥注释视图/括号与实参切分/取函数体,**无 Node 依赖**)与 `probe_base.gd`(`class_name ProbeBase extends Node`:断言账本 `_failures` + `_check`/`_summary`/`_finish` + 一层转发到 ScanUtil 的扫描词汇)。`kh_l{1,3,4,5,6}_probe` 全部 `extends ProbeBase` 并覆写 `probe_id()`(如 "L5")—— 末行 `KH <id> PROBE: ALL-OK` 就是由它拼的。★ **加新源码级探针时别再从别处抄扫描函数**:`extends ProbeBase` 即可。★ 另注意 `tests/lib/` **本身会被 kh_l4/kh_l5 的字号规范扫描覆盖**,故新加的 lib 源码里不许出现非 16 倍数的字号载体字面量。
 
 无单测框架。`tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断。★ **两种跑法,按脚本首行区分**:`extends SceneTree` → `-s res://tests/<名>.gd`(autoload 不存在);`extends Node` → `--quit-after <帧数> res://tests/<名>.tscn`(`--quit-after` 的单位是**帧**不是秒;它是安全网——脚本解析失败时场景根没脚本、一行不打印且不退出)。L1~L5 的层验收探针 `kh_l1/l3/l4/l5_probe.tscn` 都是场景模式,**判据必须是 grep 文本 `ALL-OK`**。
@@ -30,7 +48,11 @@
   - ⚠ `tests/probe/ground_net_probe.tscn` —— 既有抖动(机器人走位在**随机图**上卡死)。见 §一第 2 行。
   - ⚠ `tests/probe/brawl_rollback_probe.tscn` —— 读 N≥4 时本身在抖,变异下仍有一格假绿。见 §一第 3 行。
   - ★ **原注"未证假设与下一步见报告 §4.1b"是死指针**:那份报告在不入库的 `.superpowers/`,且 `§4.1b` 不在 [`docs/2026-09-17-duel-probe-lobby-rpc-blocker.md`](../../docs/2026-09-17-duel-probe-lobby-rpc-blocker.md) 的章节编号里。**已改指**该文档 §5「仍未解释的一处矛盾(下一个人的入口)」。
-- **★ B 档「登记边界」批(2026-09-28)的判据 + 回归清单**(判据一律是**文本**,不看退出码):
+- **★ B 档「登记边界」批(2026-09-28)的判据 + 回归清单** —— ★★ **2026-10-05 降级为历史记录**:
+  下面那份清单是**那一批**手维护的(而"能生成就别再抄一份"是本仓明文纪律)⇒
+  **它不是现行批口径**;现行口径 = `bash tests/run_all.sh`(默认批)+ `bash tests/run_real.sh`(真链路批)。
+  留着的价值是把**每一条的判据与覆盖上限**记在正文里(下面那些"覆盖上限(登记,不补相)"仍然有效)。
+  (判据一律是**文本**,不看退出码):
   - **`tests/probe/late_match_probe.tscn`**(`timeout 180 … --quit-after 3600`)→ 文本 `LATE MATCH PROBE: ALL-OK`。钉四项:① `_left_round` 分母的**读取端**;② MATCH_OVER 之后倒地**不**进 `_stats`(**含一条 ROUND_OVER 相**);③ `note_disconnect_round` 的**写入端**(经**真** `_enter_grace`);④ 大乱斗 `_match_winner` 的并列候选集(配 ⑤ 与 ⑤b;★ **⑤ 是必需的**反向对照)。★★ **覆盖上限(登记,不补相)**:④ 是**唯一**走到"只身幸存"的相 ⇒ 一个假想的退化实现能**全过**。★★ **另一处照实未钉**:MATCH_OVER 侧 ③ 的掉落与 ④ 的 `_reset_survivor` **没有断言**。
   - **`tests/smoke/duel_spawn_timeout_smoke.gd`**(`-s`,**真拉起一个独立 worker 进程**)→ 文本 `DUEL SPAWN TIMEOUT SMOKE: ALL-OK`。★ 三条纪律(与 `team_spawn_smoke` 同款):端口固定 **29015**(必须在真大厅 worker 端口池之外)/ **跑前先删日志**(否则上一次的"报到超时"行会把本跑**喂绿**)/ 断言要 `就绪` **与** `报到超时` **两条**行都在(少了前者,一个"开机即崩"的 worker 也会让后者失败,失败原因完全指错方向)。★ 它另有一层**源码级 belt**,判的是**语义不变量**(口径见该文件头),故标志改名 / 合取项重排 / 抽成一层 helper 都**不会**假绿。★ 三条已知上限 + "**承重的是 ③ 而不是 ①②**"见 §对局中的房。**别当它是证明** —— 真正的证明是那次**人工跑满 45 秒的真大厅**。
   - **★ 本批回归清单**:`ammo_rollback_probe` / `late_match_probe` / `death_drop_probe` / `team_host_probe` / `room_sweep_smoke` / `kh_l5_probe` / `rpc_liveness_probe` / `duel_spawn_timeout_smoke` / `royale_disconnect_count_probe`,加 **一次真大厅跑满 45 秒**。★ `brawl_rollback_probe` **本批不跑**;**真要跑得给 `--quit-after 30000`** —— 仓库统一的 **3600 对它不够**,而它的失败形状是"**无裁决行 + exit 0**"。
