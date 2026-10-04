@@ -24,7 +24,7 @@
 
 ### `run_all.sh` —— 默认批
 
-- `--list` 打印"跑哪些 + **排除哪些 + 每条理由** + **已知红基线**";`--only <子串>` 跑便宜的子集;`--classify-check` 跑**分类器自检**(10 例,判据核心的回归语料)。
+- `--list` 打印"跑哪些 + **排除哪些 + 每条理由** + **已知红基线**";`--only <子串>` 跑便宜的子集;`--classify-check` 跑**分类器自检**(**15 例**,判据核心的回归语料)。
 - ★★ **自动枚举,清单不写死**:**三个** glob —— `smoke/*.gd` + `probe/*.tscn` + **`probe/*.gd`(没有同名 `.tscn` 的,按 `-s` 跑)**。写死会让**新探针永不进默认批**而入口照样打 OK。落选一律走脚本里的 `EXCLUDED` 显式清单 + 每条理由。
   - ★ **2026-10-05 补(评审 C1)**:第三个 glob 是**补漏** —— 原先 18 支 `tests/probe/*.gd` **既不在批、也不在任何排除里**(而文件头却写着"落选一律显式")。现在:安全且有判词的 **9 支进批**,不打判词行的 **8 支**与 helper **1 支**逐支排除 + 理由;并有**机械闸**:每一支 `probe/*.gd` 必须(有同名 `.tscn`)或(进运行集)或(在 `EXCLUDED`/`OUT_OF_SCOPE` 里带理由),否则 `FATAL` 并点名。
 - **判词分五类**(判据仍是**文本**;`rc` 只用来把"判词肯定"那一类再分一层):
@@ -32,7 +32,8 @@
   - `OK+RC` = 判词肯定 **但** `rc != 0` —— **不算红**(退出码不是判据),但**单独成类**印出来、**绝不混进 OK**。[`probe/elite_drop_probe.tscn`](probe/elite_drop_probe.tscn) 就是这一类(判词 OK,退出时 SIGSEGV ⇒ `rc=139`);
   - `FAIL` = 判词否定(含脚本自己打的 `[FAIL]`);
   - `NO-VERDICT` / `TIMEOUT` = 判词缺失 / 被外层 `timeout` 掐掉 ⇒ **归红**(它们正是"守卫自己瞎了"的形态:安全网耗尽与真失败在输出上**长得一样**)。★ 本入口把这两类**分开报**,别处常常把它们混为一谈。
-  - ★★ **"判词肯定"要求判词形状(2026-10-05 修;评审 C2)**:`ALL-OK`,或 `OK` **紧跟行尾/一个标点**(不许"OK 后面还有空白+正文")。**为什么**:`[squash_host] OK  6 ( … )` 这种**分项行**也含独立 `OK` token(今天批里 ≥5 支有),旧判据只要求"独立 OK" ⇒ **"跑到一半崩、判词一行没打"会被读成 `OK`/`OK+RC`(不算红)**,`NO-VERDICT` 永不触发。★ **射程**:打了判词形状之后再死 ⇒ 仍是 `OK+RC`(**有意**保留,那正是 `elite_drop_probe` 的形态);判词形状不像 `OK`/`ALL-OK` 的支(例如只打 `PASS`)⇒ 落 `NO-VERDICT`(方向安全,但会假红)。★ 判据还先把 `\r` 剥掉(Godot 输出实测有 28 处 `\r\n`,而 `\r` 属于 `[:space:]`)。
+  - ★★ **"判词肯定" = 三条件同时成立(2026-10-05 两轮收紧;评审 C2 + 重审 C2 残余)**:① **形状**:`ALL-OK`,或 `OK` **紧跟行尾/一个标点**(不许"OK 后面还有空白+正文");② **位置**:命中行必须**就是最后一条非引擎噪声行**(= "判词是脚本最后打的东西";噪声 = 空行 / `at: …` / `[N] …` / `GDScript backtrace` / `WARNING|ERROR|USER ERROR|USER WARNING|SCRIPT ERROR: …` / `Godot Engine v…`,清单来自 112 份真实日志的**实测尾部形状**);③ **不是分项标记**:命中行不许是方括号标签(`[OK` / `[ALL-OK`)也不许带 `✓`/`✗`。**为什么三条都要**:只靠 ① 时 `[squash_host] OK  6 ( … )` 这类**分项行**会顶掉判词;只靠 ①② 时 `PARSE[OK]: res://scenes/mp_lobby.tscn`(`lobby_parse_smoke`)与一条**以 `ALL-OK` 结尾的中文说明行**(`rewind_weapon_probe`)仍会被当成判词 ⇒ "跑到一半崩、判词一行没打"读成 `OK`/`OK+RC`(不算红)。★ **射程**:判词**打出来之后**才死 ⇒ 仍是 `OK+RC`(**有意**保留 —— 那正是 `elite_drop_probe` 的形态,它只保证"判词被完整打出来了");判词形状不像 `OK`/`ALL-OK` 的支(例如 `aim_direction_probe` 打 `== PASS, …`)⇒ 落 `NO-VERDICT`(**方向安全,但会假红**);脚本在**真判词之后**再打非噪声行 ⇒ 也落 `NO-VERDICT`(**有意契约**:"判词是最后一句");`NOISE` 是**实测枚举**的 ⇒ 引擎换退出噪声措辞会把"判词+新噪声"误判成 `NO-VERDICT`(同样**方向安全**)。★ 判据还先把 `` 剥掉(实测 28 处 `
+`)。
 
 - ★★ **已知红基线 [`tests/known_red.txt`](known_red.txt)**:每行 `路径 类别 理由…`(理由**必填**;`#` 注释;**空行 = 违规**;类别 ∈ `OK+RC|FAIL|NO-VERDICT|TIMEOUT|*`)。基线内的红 = `KNOWN-RED` ⇒ **不**进新红计数,但**永远**印出文件名与条数 ⇒ 全批判词 `RUN_ALL OK-WITH-KNOWN-RED`、**退出码 0**;**不在基线的红 ⇒ `RUN_ALL FAIL`、退出码非 0**。
   - **为什么需要**:本仓自己的话 —— [`probe/allscript_probe.gd`](probe/allscript_probe.gd) 的"一条**永远红**的闸等于没有闸"。一建起来就永远 FAIL 的入口,后面几个工作包**没法**拿它判断"我这次改坏了没有"。
@@ -64,7 +65,7 @@
 3. **登记在册的仪器(1 支)**:`brawl_rollback_probe` —— [`../docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §一第 3 行(读 `N≥4` 时自身在抖,变异下**仍有一格假绿**),且 [`../docs/eng/tests.md`](../docs/eng/tests.md) 明写"**本批不跑**;真要跑得给 `--quit-after 30000`"(约 8 分钟,而它的失败形状是"**无裁决行 + exit 0**")。
 4. **形状不合口径(1 支)**:`smoke/menu_autotest.gd`(`extends Node` 但**没有同名 `.tscn`**;它不是独立入口 —— 由 [`../scenes/main_menu.gd`](../scenes/main_menu.gd) 按 `-- --autotest-*` 挂到树根)。
 5. **`tests/probe/*.gd` 里没有同名 `.tscn`、又不进批的(9 支)**(2026-10-05 加;评审 C1):
-   - **8 支诊断仪器,共同理由 = 它们不打判词行**(逐支核过 `print` 里没有 `OK`/`ALL-OK`)⇒ **文本判据判不了它们**;**它们从来不是守卫**(与 `registered-debt.md` §一 那三条"不算守卫"的探针同类,不是"红了被藏起来"):`aim_direction_probe` / `aim_probe` / `climb_probe`(T14 的读数修复对象,判据是人读 `latched=`) / `muzzle_probe` / `order_probe` / `perf_probe`(★ 它口径已与生产分家,见 §五.3) / `preview_probe` / `tile_destroy_probe`。想让它们进批,**先给它们加判词行**。
+   - **8 支诊断仪器,共同理由 = 现判据读不了它们的判词**(2026-10-05 修复轮3 写准;两种形态别混为一谈):① **没有判词行**(逐支核过它的 `print` 里没有 `OK`/`PASS`/`DONE` 形状的判词):`aim_probe` / `climb_probe`(T14 的读数修复对象,判据是人读 `latched=`) / `muzzle_probe` / `order_probe` / `perf_probe`(★ 只有 `[perf] DONE` + 中文 通过/失败 行;口径已与生产分家,见 §五.3) / `preview_probe` / `tile_destroy_probe`;② **有判词行、但词汇不是 `OK`/`ALL-OK`**:`aim_direction_probe` 打 `== PASS, failures=0` ⇒ 绿跑落 `NO-VERDICT`(**假红**),而它**失败**时打 `== FAIL, …`(那个词汇现判据**认** ⇒ 会被判红)⇒ 它的危险是**假红**,**不是**"红的被藏起来"。⇒ 想让它们进批:① 类**先加判词行**;② 类**先把判词换成 `OK` 形状**。**它们从来不是守卫**(与 `registered-debt.md` §一 那三条"不算守卫"的探针同类)。
    - **1 支是 helper 不是入口**:`haste_probe_input.gd`(`extends PlayerInput`,被 `haste_probe.gd` `preload()` 当输入桩;那个 `haste_probe.tscn` 已在批里)。
    - ★ **另有 9 支同类探针已进批**(它们有判词行):`explosion_falloff_probe` / `map_catalog_probe` / `map_format_v4_probe` / `path_integrity_probe` / `settings_esc_probe` / `subcell_probe` / `water_probe` / `weapon_injected_fire_probe`(★ `EXPECTED_CHECKS := 158`,进批后计入 `m`)/ `wrap_probe` —— 这是它们**第一次真的被跑**。
 6. **不在 glob 直径内的工具(4 支,`tests/scripts/*.gd`)** —— 它们是**迁移 / 诊断工具,不是测试**:`convert_map.gd` 与 `convert_map_v4.gd` **原地写盘**(★ `convert_map.gd` 今天跑**会毁图**:两张在库图已是 v4 二进制,它认不出 v2/v3 标记 ⇒ 落进"v1 单字符 250×150"那一支并覆盖写回;债单 §六.19);`seam_analyze.gd` 读的 `tests/_seam_a_old.png` / `_seam_b_fixed.png` **不在库里**(债单 §六.20);`seam_screenshot.gd` **非 headless**。★ 所以**没有**把 `tests/scripts/*.gd` 加进 glob —— 那等于让以后任何一个新工具脚本(可能原地写盘)**自动进回归批**。
