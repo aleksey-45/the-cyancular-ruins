@@ -87,10 +87,17 @@ Run: `grep -n "^\[preset\|^name=" export_presets.cfg | head -10`；确认导出�
 
 - [ ] **Step 3: 数残留（判据）**
 
-对**每个**产物：
-`grep -a -o "res://tests/" "<exe>" | wc -l` ⇒ 期望 **0**（改前实测 336）；
-`grep -a -o "res://tools/" "<exe>" | wc -l` ⇒ 期望 **0**。
-★ 若不为 0 ⇒ 按 Review Focus 1 换写法（`tests/**` 或逐个列 `tests/smoke/*,…`）后**重导重数**，直到 0。把每一步的计数写进报告。
+对**每个**产物，两个口径**都要记**（★ 评审指出 brief 原稿只写了一个口径，会让人误判"基线对不上"）：
+
+| 计数 | 命令 | 改前基线 | 期望 |
+|---|---|---|---|
+| **distinct** `res://tests/*` | `grep -aoE "res://tests/[A-Za-z0-9_/.-]+" "<exe>" \| sort -u \| wc -l` | **336** | **0** |
+| **字面**出现次数 | `grep -a -o "res://tests/" "<exe>" \| wc -l` | **407** | **0** |
+| distinct `res://tools/*` | 同型、换 `tools` | **8** | **0** |
+| distinct `res://DevTools/*` | 同型、换 `DevTools` | **3** | **0**（靠 `git rm` 归零，**不靠** filter） |
+
+★ 还要**反向确认没裁掉要用的东西**：`maps/*.cyrm`、`data/*.json`、以及 webp 相关模块仍在包内（各数一次，写进报告）。
+★ 若 distinct 不为 0 ⇒ 按 Review Focus 1 换写法（`tests/**` 或逐个列 `tests/smoke/*,…`）后**重导重数**，直到 0。把每一步的计数写进报告。
 
 - [ ] **Step 4: 回收**
 
