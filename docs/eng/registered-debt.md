@@ -316,6 +316,17 @@
    （`core/sim/maze_generator.gd:44` `maps[randi() % maps.size()]`）⇒ **同版本两次跑结论可能相反**、**不能当基线**；
    修法 = 用 `set_map_file` 钉图。
 
+12. **同族反射的两处"要动类结构"残留（候选批次，未立项）**(2026-10-04 由 Plan B Task 3 定位报告；owner 未认领)。
+   - **残留**：`scenes/player/swim_component.gd:39` 的 `parent.get("pvp_haste_mult")`、`core/sim/world_rewind.gd:95` 的 `player.get("weapons")`
+     —— 两者读的都是 **player 根**（`CharacterBody2D`）上的成员，而 **player 根没有 `class_name`** ⇒ 想类型化就得给根加全局类名。
+   - **加 `class_name Player` 的爆炸半径（实测）**：会当场打掉两个**刻意造成的裸宿主桩**
+     （`tests/probe/water_probe.gd` 的 `class SwimHost extends CharacterBody2D`、`tests/smoke/player_contract_smoke.gd` 的 `class ClimbHost`
+     —— 它们的注释写着该字段"为反射而给"），并外溢到 `scenes/player/climb_component.gd:133` / `scenes/weapons/weapon_base.gd:367`（读同一字段）；
+     且 `player.gd` 是全仓最大的文件，上全局类名还要考虑**全局类缓存 / 命名冲突 / 导出侧**。
+   - **★ 首选修法是"参数注入"而不是"给根加类型"**：让 `update(...)` / `rewind_*` 多收一个参数（`haste_mult: float` / `weapons` 组件），
+     调用方自己把它传进来 —— 这与 §2.6 的精神一致（**别伸手读宿主，让它注进来**），且**不需要动那两个测试桩**（参数类型仍是 `CharacterBody2D`）。
+   - **翻案条件**：立一个专批把这两处（连同 `climb_component.gd:133` / `weapon_base.gd:367`）改成参数注入 ⇒ 销账并附提交号。
+
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 
 **本节不是欠账清单**:§一/§二 是"要还的债",这里是**已经判过、决定不还的** —— 每条都带**判决理由**与**翻案条件**。
