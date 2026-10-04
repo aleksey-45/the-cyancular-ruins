@@ -77,6 +77,19 @@ git commit -m "fix(config): 恢复 [debug] 的文件日志三键(原键名被乱
 
 ---
 
+
+- ★★ **控制器追认（2026-10-04，实现者实测）—— 本 Step 的断言 ①② 在 Godot 4.7.1 上"部分恒真"**
+
+实现者拿空工程实测:`debug/file_logging/*` 这三个键都是**引擎内置设置** ⇒ `has_setting(...)` 与
+"文件里有没有写"**无关**(连本仓从未写过的 `log_path` 也返回 true);而 **`.pc` 的引擎默认值就是 `true`**
+⇒ 断言 ② **删掉那行也照样绿**。真正跟着 `project.godot` 走的只有 ①(`enable_file_logging` 引擎默认 **false**)
+与 ③(`max_log_files` 引擎默认 **5**)。
+
+⇒ 控制器裁定:**保留实现者另加的 ④**(读 `project.godot` **原文**判三行**逐字**存在)作为**承重断言** ——
+它才是唯一拦得住 `d6d2440` 那次事故(键名被乱码吞掉)的形状。①② 保留但**不算守卫**(它们"存在性"那半边恒真)。
+★ 踩坑记录(实现者):初版 ④ 用 `"\n" + kv + "$"` **假红过 3 条** —— Godot 的 `RegEx` 里 `$` 是**整个字符串**的
+末尾、**不按行**;改成两侧夹换行才对(已写进注释)。
+
 ### Task 2: `.bat` 的 EOL 规则（Q4 裁定：只加规则，不归一化工作树）
 
 **Files:**
@@ -147,6 +160,7 @@ git commit -m "fix(probe): aim_probe 的 SubViewport 用生产真值(原 2496×1
 
 **Files:**
 - Modify: `docs/eng/registered-debt.md`（新增 **§七**；现状是 §一…§六）
+- Modify: `docs/2026-09-17-duel-probe-lobby-rpc-blocker.md`（订正被本次修复弄过期的一句）
 
 **Interfaces:**
 - Consumes: 用户裁定（§2.7 手柄焦点、§2.8 i18n「记录而不修改」；"发布版不再有菜单自动探针"）。
@@ -158,6 +172,9 @@ git commit -m "fix(probe): aim_probe 的 SubViewport 用生产真值(原 2496×1
 ① `audit §2.7`（手柄焦点模型）—— 判不做的理由 + 翻案条件（真做手柄支持时）；
 ② `audit §2.8`（i18n / 文案表）—— 同上；
 ③ **发布版里"菜单自动探针"退化为 no-op**：`scenes/main_menu.gd` 里那条依赖被 `ResourceLoader.exists("res://tests/smoke/menu_autotest.gd")` 守着 ⇒ 导出包剔掉 `tests/*` 之后它**静默不跑**（不是坏，是**没有**）—— 写清"所以发布版没有菜单端到端守卫"，翻案条件 = 把那条探针作为运行期资源随包发布（并说明代价）。
+
+- [ ] **Step 1b: 补一条守卫覆盖上限到 §五** —— `tests/smoke/project_settings_smoke.gd` 测不到"日志**真的**落到 `user://logs/`"(只测设置值与文件原文),也测不到**导出模板的 release 半边**(本机跑的是 debug 模板)⇒ 写进 §五,并按 [`tests.md`](../eng/tests.md) 的口径写明"它测不到什么"。
+- [ ] **Step 1c: 订正被本次修复弄过期的文档** —— `docs/2026-09-17-duel-probe-lobby-rpc-blocker.md:18-21` 仍写"该键**从未生效** ⇒ 配额仍是默认 5";`[debug]` 三键恢复后这句**已经反了** ⇒ 就地订正并注明 2026-10-04 恢复。★ 这是 `AGENTS.md` §2 完成标准里的"改了 A 就会过期的 B 都要 `grep` 过并订正"。
 
 - [ ] **Step 2: 提交**
 
