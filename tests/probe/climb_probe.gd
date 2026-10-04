@@ -5,7 +5,23 @@ extends SceneTree
 
 func _initialize() -> void:
 	TileDefs.load_defs()
+	# ★★ 2026-10-04(**必须钉图**,任务 9):不钉的话 `MazeGenerator.map_file_path()` 会在
+	#   `res://maps/*.cyrm` 里**随机抽一份**(`core/sim/maze_generator.gd:44` =
+	#   `maps[randi() % maps.size()]`),而本探针把梯子位置**写死**成 demo.cyrm 的 c80 / r5-r8
+	#   (下面 `cell_of(..., 125, 75)` 那对尺寸也是 demo.cyrm 的)⇒ 抽到 newfactory.cyrm(150×100,
+	#   c76-84 / r3-12 一带**没有梯子**)时玩家脚下根本没有梯子,整份输出换一套:
+	#   实测同版本连跑 6 次 → **3 次**是 demo(4032 shapes,爬到 y=259.7 卡在梯顶 r4)、
+	#   **3 次**是 newfactory(4527 shapes,一路掉到 y=1286.9 / r20),两种结论**相反**。
+	#   ⇒ 不钉图的 `climb_probe` **不能当"改前/改后一致"的基线**。
+	# ★ 形状照抄仓内既有钉图写法(tests/probe/muzzle_probe.gd:12-18、preview_probe.gd:15-21):
+	#   set_map_file → load_map_file → 空图早退 → 赋 current_grid。
+	# ★ 覆盖上限:钉图只消掉"哪张地图"这一维;**时序类**不确定性(帧数 / 机器负载)不受影响。
+	MazeGenerator.set_map_file("res://maps/demo.cyrm")
 	var grid: Array[Array] = MazeGenerator.load_map_file()
+	if grid.is_empty():
+		printerr("地图加载失败")
+		quit(1)
+		return
 	MazeGenerator.current_grid = grid
 
 	# 真实墙体碰撞(验证 78px 宽碰撞箱爬 64px 梯子会不会卡墙)
