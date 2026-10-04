@@ -395,3 +395,16 @@ window/stretch/mode="viewport"
 - 导出工程：<https://docs.godotengine.org/en/stable/tutorials/export/exporting_projects.html>
 - 权威服务器多人实践（对照 §2.2/§2.3/§2.4）：<https://www.strayspark.studio/blog/godot-4-multiplayer-networking-authoritative-server>
 - gdUnit4 的 CI 与报告（对照 §2.9）：<https://godot-gdunit-labs.github.io/gdUnit4/latest/faq/ci/>
+
+---
+
+## 9. 附：本次磁盘清理记录（2026-10-04，用户裁定后执行）
+
+| 对象 | 体积（前） | 处置 | 说明 |
+|---|---|---|---|
+| `.claude/worktrees/{3v3-fixes,cyrm-v4-editor,kh-merge}` | **1.1 GB** | **`git worktree move` 到仓库外** | 三个 worktree 搬为 `E:/Workspace/godot/wt-*`（与既有的 `wt-base` 同处）。搬前逐个查过 `git status`：**三个都 clean、零未提交**。★ 为什么不是 `rm -rf`：它们是 git worktree，目录删掉只在 `.git/worktrees` 里留僵尸登记，得再 `git worktree prune`。搬完 `.claude/` 从 1.1 GB → **20 KB**（只剩 `settings.local.json`），也顺带解除了对 Godot 导入面的污染 |
+| `_crashtest/`（109 个文件） | **101 MB** | **删除** | 构成：两个临时导出 exe 各 41MB（可再生）+ `dis_7M.txt` 18MB（反汇编 dump）+ ~1MB 的 83 份日志/结果。★ **代价照实记**：18 份入库文档里出现过 `_crashtest/…` 的**历史跑法配方**（如 `./_crashtest/CyancularClient.exe --log-file …`），从此不可复跑；被 C1 分析点名为证据的 `_run1_prefix.log` **不在**这里（在 `.superpowers/sdd/`，未动） |
+| 仓库根 `.hud.bak` / `_k6.bak` / `_exportprobe.log` / `.round1_run1_FIXFAIL.log` | ~95 KB | **删除** | 全部 gitignore，且无任何入库文档引用（逐名 grep 过） |
+| `DevTools/` | 10 KB（3 个文件） | **未删（已恢复）** | ★ 见 §1.3 的订正：它**是已入库的**，我最初"未入库残留"的判断是错的。`git checkout -- DevTools` 已还原，去向待用户裁定（keep / `git rm` / 搬出仓库） |
+| `builds/` + `releases/` | 85 MB + 506 MB | **保留** | 归档策略：`releases/` 按设计"每次发布沉淀一份、不清理" |
+

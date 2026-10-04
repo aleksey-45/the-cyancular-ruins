@@ -51,6 +51,8 @@ gamelogs/
 .superpowers/
 
 # 崩溃/对比现场的临时草稿目录(反汇编 dump、旧文件备份、一次性脚本;101MB 级,不入库)
+# ★ 2026-10-04:该目录已按用户裁定**整个删除**(记录见 docs/eng/audit-2026-10-04-design-conventions.md §9);
+#   这条 ignore 规则**保留** —— 它是"再生成时别入库"的闸,不是"这个目录存在"的声明。
 # ★ 2026-10-03 加:它此前既没被忽略、又不会被 Godot 的 `.gdignore` 挡住(那个 `.gdignore`
 #   只管**编辑器导入**,而 `tests/probe/allscript_probe.gd` 走的是 `DirAccess`,不认它)
 #   ★ 2026-10-04 订正:上面原写"根上那个 `.gdignore`",而**仓库根没有** `.gdignore` ——
