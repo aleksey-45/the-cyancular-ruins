@@ -18,7 +18,8 @@ extends Node
 #      单机侧此前只有服务器接了 `TileDefs.on_destroyed` ⇒ 整格已碎、16 子格仍 `sub_alive`
 #      (幽灵砖),而本文件与另外三条探针**全绿**。
 # 相④ 回溯复原 → 逐子格回到基线(渲染与碰撞都对上),环面副本一并回来
-# 相④b 相③b 那一格在回溯后**连格级 `hp_grid` 一起**回满血(否则复原后下一发激光一发即碎)
+# 相④b 相③b 那一格在回溯后**连格级 `hp_grid` 一起**回满血(否则复原后下一发激光一发即碎);
+#      判据是**拆前快照**(不是 `_expect`:后者按活的 `sub_hp` 判,"没被复原"与"本来就没有"同假 ⇒ 半复原会假过)
 # 相⑤ 节流窗口:一帧内拆跨 **多块**(> MAX_REBUILD_PER_FRAME=2)的砖 → 数出碰撞追上渲染要几帧;断言有界
 # 相⓪/相⑥ 全场抽样(每 8 个子格一点):**渲染与碰撞各自与规则逐点相等** —— 这一相就是
 #      「建筑有没有虚空碰撞箱」的直接回答,破坏+回溯之后再扫一遍
@@ -258,6 +259,9 @@ func _run() -> void:
 	#   ③ 与相① 选中的格不同(别把相③ 的后果混进来)。
 	var cell3b := Vector2i(-1, -1)
 	var subs3b: Array = []
+	# ★ `base3b` 必须在**函数作用域**声明(相④b 要用它):声明在下面的 `else:` 块里的话
+	#   GDScript 的块作用域会让相④b 看不见它。
+	var base3b: Array = []
 	for y in MazeGenerator.current_subgrid.size():
 		for x in (MazeGenerator.current_subgrid[0] as Array).size():
 			var cc := Vector2i(x / 4, y / 4)
@@ -280,7 +284,6 @@ func _run() -> void:
 	if cell3b.x < 0:
 		_fail("相③b 找不到一整格全活的可爆砖(用例前置不成立)")
 	else:
-		var base3b: Array = []
 		for s in subs3b:
 			base3b.append([_painted(s), _terrain_at(world, _sub_center(s))])
 		# ★ 前置:格级那条 API 真收下了这一格。上面选点验的是**子格**纹理,而 `damage_tile`
@@ -340,22 +343,28 @@ func _run() -> void:
 					% [str(s), str(_painted(s)), str(_terrain_at(world, _sub_center(s))), str(e)])
 
 	# ── 相④b 相③b 那一格在回溯后必须连 hp_grid 一起回来 ──
-	# ★ 复用 Task 2 留下的 cell3b / subs3b,并复用相④ 的**那一次**回溯(不自己再按 rewind:
-	#   冷却与历史长度不由本探针控制)。★ 与相④ 同款:拿**游戏自己的两条规则**(`_expect`)对账,
-	#   而不是拿快照 —— 后者只能证明"回到了拆之前",前者还要求"拆之前本来就是对的"。
+	# ★ 复用 Task 2 留下的 cell3b / subs3b / base3b,并复用相④ 的**那一次**回溯(不自己再按 rewind:
+	#   冷却与历史长度不由本探针控制)。
+	# ★ 这里**必须拿拆前快照**(`base3b`)比对,**不能**改用 `_expect` 与规则对账:`_expect` 读的是
+	#   **活的 `sub_hp`**,而"没被复原的子格"在它眼里正是"本来就不该有" ⇒ 两边**同时为假** ⇒
+	#   半复原(账本只回放 k<16 条)会判过。快照才是独立基准(它记的是"拆**前**长这样")。
 	var back_wrong := 0
-	for s in subs3b:
-		var e := _expect(s)
-		if _painted(s) != bool(e[0]) or _terrain_at(world, _sub_center(s)) != bool(e[1]):
+	for i in subs3b.size():
+		var s: Vector2i = subs3b[i]
+		if _painted(s) != bool(base3b[i][0]) or _terrain_at(world, _sub_center(s)) != bool(base3b[i][1]):
 			back_wrong += 1
-	if back_wrong != 0:
-		_fail("相④b 回溯后相③b 那格有 %d 个子格与规则不符(渲染/碰撞有一样没回来)" % back_wrong)
-	# 纹理表 `current_subgrid` 从不被破坏改动 ⇒ 回溯后读它与破坏前同值,可当满血基准
-	# ★ 前提:该格 16 子格**同纹理**(格级基线取的是多数纹理)—— 两张在库图实测无混纹理格
-	var want3b := TileDefs.hp_of(_tex(subs3b[0]))
-	if TileDefs.hp_grid_at(cell3b) != want3b:
-		_fail("相④b 回溯后 hp_grid[%s] 应回到 %d(实得 %d)⇒ 下一发激光会一发即碎"
-				% [str(cell3b), want3b, TileDefs.hp_grid_at(cell3b)])
+	if cell3b.x >= 0:
+		# 纹理表 `current_subgrid` 从不被破坏改动 ⇒ 回溯后读它与破坏前同值,可当满血基准
+		# ★ 前提:该格 16 子格**同纹理**(格级基线取的是多数纹理)—— 两张在库图实测无混纹理格
+		#   (该实测是离线做的、**未随探针固化**,边界登记见 docs/eng/registered-debt.md §六)
+		var want3b := TileDefs.hp_of(_tex(subs3b[0]))
+		print("[相④b] 相③b 那格回溯后与拆前基线不符 %d/16,hp_grid=%d(应 %d)"
+				% [back_wrong, TileDefs.hp_grid_at(cell3b), want3b])
+		if back_wrong != 0:
+			_fail("相④b 回溯后相③b 那格有 %d/16 个子格与拆前基线不符(渲染/碰撞有一样没回来)" % back_wrong)
+		if TileDefs.hp_grid_at(cell3b) != want3b:
+			_fail("相④b 回溯后 hp_grid[%s] 应回到 %d(实得 %d)⇒ 下一发激光会一发即碎"
+					% [str(cell3b), want3b, TileDefs.hp_grid_at(cell3b)])
 
 	# 相⑤ 节流窗口:跨多块一帧拆光
 	var victims: Array[Vector2i] = []
