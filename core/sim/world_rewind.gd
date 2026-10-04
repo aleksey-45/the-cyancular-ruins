@@ -102,6 +102,15 @@ func _snapshot_player(player: Node) -> Dictionary:
 	#     新:`push_error` 点名 + 武器四键停在初值(`wslot` 0 / `widx` -1 / `wmags` [] / `wlive` -1)。
 	#   ★ 真机无差别:`player.tscn` 的 `$Weapons` 就是 `WeaponComponent`(`player.gd:42`),
 	#     `weapons == null` 这一支两条写法都在同一处 `return d`。
+	#   ★ 分档补记(2026-10-04 Plan B Task 13;评审 Minor:`wc == null` 那一支把**两档**吞进同一个
+	#     `push_error`,而上面只点了第 ② 档,读起来像完整枚举):
+	#       ① **取不到** —— `player.get("weapons")` 返回 `null`(宿主没有 `$Weapons` 这个子节点);
+	#       ② **类型不对** —— 拿到了节点,但它不是 `WeaponComponent`(或那个脚本没挂上)。
+	#     **今天没有宿主能触达这两档**:真机 `player.tscn` 必有 `$Weapons`
+	#     (`player.gd:42` ⇒ `WeaponComponent`);6 支 rewind 探针里"不是 `WeaponComponent`"出现 **0** 次。
+	#   ★ **将来要分档的条件**:若出现"**没有 `$Weapons` 的占位玩家**"(那是**正常态**、不是错误)
+	#     ⇒ 必须把两档分开:① 缺组件 ⇒ **静默/降级**(不作声);② 类型错 ⇒ **报错**。
+	#     届时改这一处 + 补一条守卫钉住分档。登记与翻案条件:`docs/eng/registered-debt.md` §六.14。
 	var wc := player.get("weapons") as WeaponComponent
 	if wc == null:
 		push_error("WorldRewind: player.weapons 不是 WeaponComponent —— 武器段无法回溯;本帧返回已收集的部分")

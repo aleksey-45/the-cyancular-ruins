@@ -442,6 +442,15 @@ func _s7_shape() -> void:
 	# 它们要类型化得给 player 根加 `class_name`(动类结构:全局类名 + 两个刻意造的裸宿主桩会被
 	# 打掉;已登记,不属本任务)⇒ 这里用 `<=` 而不是 `==`,免得将来有人补了 class_name 反而把守卫喂红。
 	# 正解是把 weapons 组件(及其余 4 处的值)**当参数注进来**(见 Task 3 报告),不是给根加类型。
+	# ★ 口径补记(2026-10-04 Plan B Task 13;评审移交的 Out-of-scope):`≤ 5` 是**计数上界、不逐名**
+	#   ⇒ ⑤ 的 `is_downed` 那个字符串过期(改成 `is_downed_x`)时计数**仍是 5 ⇒ 本条仍绿**。
+	#   逐名的正确性**本应由行为断言兜底**(把快照里的 `downed` 与真值比对);
+	#   ★★ 但本轮**实测**它并不存在(日志 `task-13-mutation-log.txt` 的 G-1:只改 `_snapshot_player`
+	#     里那个字符串、玩家根的真方法**不动** ⇒ 本探针 **60 条全绿**、producer 的 `"downed"` 静默恒 false)
+	#     ⇒ **今天**本探针对"玩家根那 5 处按名访问"的保证**只有"计数不超 5"**这一条。
+	#   ★ 要真正逐名钉有两条路(都不属本轮):① 把度量换成 `_has_member_token` 逐名核;
+	#     ② 补一条 `snap["downed"] == 真值` 的行为断言(会 +1 条 ⇒ 同时改 `EXPECTED_CHECKS`)。
+	#   登记的原文与翻案条件:`docs/eng/registered-debt.md` §六.15。
 	var named_accesses := body.count(".get(\"") + body.count("has_method(\"")
 	_check(named_accesses <= 5,
 			"S7: _snapshot_player 里按字符串名访问玩家的地方不得超过 5 处"
