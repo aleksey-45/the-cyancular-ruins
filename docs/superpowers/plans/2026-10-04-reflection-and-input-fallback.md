@@ -146,6 +146,8 @@ git commit -m "refactor(weapons): 去掉三处 Input.is_action_* 兜底(武器�
 
 **Files:**
 - Modify: `server/match/match_host.gd`（`:402-413` / `:455-465` —— 先 `grep` 复核）
+  ★ **并入**（Task 3 的决定输入）：`core/sim/world_rewind.gd:95` 的 `player.get("weapons")` —— 与 `match_host.gd:400`/`:453` **逐字同族**，
+  **必须一起决定**修法（独立改它会留半状态）；另有 `tests/harness/royale_bound_watcher.gd:230` 与两个探针直调点在读同一处。
 
 ★ **档 3**（「回滚与快照」在档位表里是承重面）⇒ 逐条变异 + **真链路跑批** + **逐任务评审**。
 
@@ -259,6 +261,51 @@ git commit -m "refactor(weapons): 去掉三处 Input.is_action_* 兜底(武器�
 - [ ] **Step 2: 钉图** —— 选一张**有梯子**的图（★ 既有图都不合适 ⇒ **报告**，别随手挑一张）
 - [ ] **Step 3: 证明它现在稳定** —— **同版本连跑两次**，判决与关键读数**逐字相同** → 提交
 ★ 覆盖上限：钉图只解决"地图随机"；**时序类**不确定性（帧数/负载）另论。
+
+---
+
+### Task 10: `pvp_haste_mult` 那族反射的**参数注入化**（来源 = Task 3 的决定输入）
+
+★ **三处读**：`scenes/player/swim_component.gd:39`（`parent: CharacterBody2D`）、`scenes/player/climb_component.gd:133`（`body: CharacterBody2D`）、
+`scenes/weapons/weapon_base.gd:367`（`player: Node2D`）；**一处写**：`scenes/pvp_match_client.gd:215`。属主 = `scenes/player/player.gd:182`。
+★ **player 根没有 `class_name`** ⇒ 类型化就得给全仓最大的文件上全局类名。
+
+★★ **为什么不用 `class_name Player`**（实测爆炸半径，见 `registered-debt.md` §六.12）：它会当场打掉两个**刻意造裸**的测试桩
+（`tests/probe/water_probe.gd:90-91` `class SwimHost`、`tests/smoke/player_contract_smoke.gd:189-190` `class ClimbHost`，注释写着该字段"为反射而给"）
++ 外溢 + 全局类名（缓存/命名/导出侧）。**首选修法是参数注入**。
+
+- [ ] **Step 1: 定位** —— 三读一写逐个看清：宿主类型、是"每次调用都给"还是"一次 bind 之后一直用"、各自的调用点
+- [ ] **Step 2: 分步改（★ 三处形状不同，不能一把改）**
+  - `swim.update` ⇒ **加参数** `haste_mult: float = 1.0`；半径 = `player.gd:255` **一行**；两个桩**不用改**（默认值正好覆盖 `water_probe` 的缺 src 相）；`player_contract_smoke.gd:129` 只查子串、不受影响
+  - `climb:133` / `weapon_base:367` ⇒ 宿主由 `equip` / `bind` **一次给入** ⇒ 要的是"**根每帧推倍率**"的 setter（不是构造参数）⇒ **单独一步**，各自配守卫
+- [ ] **Step 3: 守卫** —— 形状（那三处不再出现 `get("pvp_haste_mult")`）+ 行为（倍率**真的**生效：改倍率 ⇒ 位移/攀爬速度随之变）★ **先证明能红**
+- [ ] **Step 4: 先红 → 改 → 绿 + 变异 → 提交**（★ 档位按 `AGENTS.md` 的表定，别照抄本计划的档）
+
+---
+
+### Task 11: `pvp_match_client.gd` 的 7 处对象反射（来源 = Task 3 的顺带复核）
+
+★ 该文件"该模式命中 41 行"里 **34 行是字典取键（合法）**，**对象反射 7 处**全打在 `_local`（`Node2D`）上：
+`:215`（写 `pvp_haste_mult`）、`:230`（`is_downed`）、`:234`/`:240`（`input_source`）、`:236`/`:242`（`frozen`）、`:294`（`animator`）。
+★★ **不需要 `class_name` 也能改成点访问** —— 同文件 `:134` 已经在用 `_local.weapons.…`（先例就在同一文件里）。
+★★ **`:234`/`:240` 不能简单换成"注入源"**：同函数 `:236` 会把**同一个** `src.frozen = true` ⇒ 会死锁（已登记 §六.7）
+⇒ 这两处的正确做法是**保留"读宿主自己的 `input_source`"，只把反射换成点访问**。
+
+- [ ] **Step 1: 定位**（7 处逐个：读/写、类型从哪来、`:134` 的先例长什么样）
+- [ ] **Step 2: 守卫**（形状 + 行为；★ 先证明能红）
+- [ ] **Step 3: 先红 → 改 → 绿 + 变异 → 提交**
+
+---
+
+### Task 12: `world_rewind.gd` 里**敌人 / 子弹**快照段的同族反射（来源 = Task 3 的定位）
+
+★ Task 3 只清了 `_snapshot_player()` 的**武器段**（对象反射 10→4，剩的 4 处在**玩家根**）。
+同文件的**敌人 / 子弹**快照段是**同一族**（`.get("velocity")` / `.call("rewind_state")` / `.get("hit_damage")` …），
+且至少 `scenes/enemies/enemy_base.gd:1` **已有 `class_name EnemyBase`** ⇒ 同样可类型化。
+
+- [ ] **Step 1: 定位** —— 找出那两段的**函数名与行号**（Task 3 的 grep 没点名到它们）、每个被读成员**属主类有没有 `class_name`**、读写方向
+- [ ] **Step 2: 守卫** —— 优先**行为**（既有 rewind 探针里"怪复活 / 子弹回溯"那几相已覆盖一部分；补"快照逐字段==真值"）★ 先证明能红
+- [ ] **Step 3: 先红 → 类型化 → 绿 + 变异 → 提交**（★ 档位按 `AGENTS.md` 的表定 —— 回滚与快照 = 档 3）
 
 ---
 
