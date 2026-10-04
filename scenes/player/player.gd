@@ -977,21 +977,65 @@ func rewind_restore(d: Dictionary) -> void:
 	#   三样成员都在**已有 `class_name`** 的类上(`WeaponComponent` / `WeaponInventory` /
 	#   `WeaponBase`),且 `mag_ammo` 本来就是**公开字段**(`weapon_base.gd:102`;
 	#   `weapon_component.gd:287` 的 `apply_mag` 也直接写它)⇒ 反射纯属历史遗留,不是必需。
-	# ★ 行为逐字段不变:边界 `mini(held.size(), mags.size())` 与 `widx >= 0` / `wlive >= 0`
-	#   两处下标守卫**原样保留**。行为 + 形状守卫:`tests/probe/rewind_weapon_probe.gd`。
+	# ★ 行为逐字段不变这条**已被 2026-10-05 的 Task 2 取代**(原文:"边界 `mini(held.size(),
+	#   mags.size())` 与 `widx >= 0` / `wlive >= 0` 两处下标守卫**原样保留**")—— 边界与两条守卫
+	#   仍在,但**语句序**与**落弹的那个写法**都改了:见下面那一段 `2026-10-05 Task 2` 的说明。
+	# 行为 + 形状守卫:`tests/probe/rewind_weapon_probe.gd`(S1-S6 + S8)。
+	#
+	# ★★ 2026-10-05(closeout 批 Task 2)修两处**实测的**回溯保真缺陷(改前就有、本次才修;
+	#   实测仪器 = `reflection-and-input-fallback` Task 1 报告 §发现A / §发现B):
+	#   ① **发现 A(切枪帧)**:`_equip_index` 会用 `call_deferred("add_child")` 入树,并把
+	#      **背包条目**的残弹塞进 `pending_mag`,而 `WeaponBase._ready()` 消费它 ⇒ 原来"先切枪、
+	#      再同步写 `live2.mag_ammo`"那一写在**未入树窗口**里是**无效写**:`_ready` 一跑就被
+	#      条目旧值覆盖。仪器原文(切枪那一帧 index=1 mag=9 → 入树后 mag=4)。
+	#      症状:生产路径每帧调一次本函数、下一帧补上;但**最后一次回溯正落在切枪帧**(玩家恰在
+	#      那一刻松开 Shift)时没有"下一帧" ⇒ 弹量停在条目旧值,直到下一次回溯。
+	#      修法 = 走 `WeaponComponent.apply_mag()`(它按 `is_inside_tree()` 分流:未入树写
+	#      `pending_mag` 由 `_ready` 消费)—— 与 `_apply_weapon_state`(`player.gd:726`)同一条
+	#      既有口径,不是新写法。
+	#   ② **发现 B(走掉那把)**:`_equip_index` 会把**走掉那把**的出膛实弹写回条目,而它排在
+	#      "条目写回循环"**之后** ⇒ 冲掉刚恢复的快照值。仪器原文:快照 `wmags=[11,1]` / `widx=1`
+	#      ⇒ 切枪后 `held[0].mag=3`。修法 = 把**切枪排在条目写回之前**(写回落在恢复之前,
+	#      随后被快照值覆盖)。
+	#   ③ 语义口径(**别改成"以条目为准"**):回溯 = **逐字段**回到快照记录的值 —— `wlive`(手持
+	#      实弹)与 `wmags`(各槽条目)**各自照抄快照**,二者在快照时就允许不同(条目只在切枪/丢弃
+	#      时同步,开火只扣 `mag_ammo`)⇒ 任何"从条目推导当前枪 / 从当前枪写回条目"的动作都不许
+	#      在恢复**之后**把已恢复的值改掉。去掉 ①/② 任一处的修法,`rewind_weapon_probe` 的
+	#      S8-A / S8-B 各自变红(变异日志:`task-2-mutation-log.txt`)。
+	#   ④ `wlive < 0`(快照没记手持实弹)且**确实切了枪**时,新实例总得有一个值:取**快照条目值**
+	#      (`held[widx]`,已在下面写回)—— 这是"改动前的同口径"(旧语句序里 `_equip_index` 就是从
+	#      恢复后的条目取的)。去掉这条分支,`S8-C` 变红(新枪停在恢复**前**的条目值)。
+	#      ★ 与 S4 的不矛盾:S4 是"不切枪 + `wlive=-1`"⇒ 现场什么都不写(现场就是对的)。
+	#   ★ 覆盖上限:`rewind_weapon_probe` 的 S8 直调本函数、喂同形快照,**不覆盖**真回溯的帧选择
+	#     (那一条在 `rewind_probe.gd`);PvP 那一份(`MatchHost._apply_rw_frame`)行为侧无 headless
+	#     守卫 ⇒ 归真链路批 A(见 `.superpowers/sdd/.../task-2-report.md`)。
 	var wc: WeaponComponent = weapons
 	if wc != null and d.has("wmags"):
 		var inv: WeaponInventory = wc.inventory
+		# ★ 切枪必须排在下面"条目写回"**之前**(发现 B):`_equip_index` 会把走掉那把的实弹写回条目,
+		#   排在写回之后就会冲掉刚恢复的快照值。
+		var want_idx := int(d.get("widx", -1))
+		var switched := want_idx >= 0 and want_idx != wc._current_index
+		if switched:
+			wc.equip_index(want_idx)
 		if inv != null:
 			var held: Array = inv.held
 			var mags: Array = d["wmags"]
 			for i in mini(held.size(), mags.size()):
 				held[i]["mag"] = int(mags[i])
-		if int(d.get("widx", -1)) != wc._current_index and int(d.get("widx", -1)) >= 0:
-			wc.equip_index(int(d["widx"]))
 		var live2: WeaponBase = wc.current_weapon()
-		if live2 != null and is_instance_valid(live2) and int(d.get("wlive", -1)) >= 0:
-			live2.mag_ammo = int(d["wlive"])
+		if live2 != null and is_instance_valid(live2):
+			var want := int(d.get("wlive", -1))
+			if want < 0 and switched and inv != null and wc._current_index >= 0 \
+					and wc._current_index < inv.held.size():
+				# 见上面 ④:快照没记手持实弹而这次换了枪 ⇒ 用**快照条目值**(不是恢复前的旧值)。
+				want = int(inv.held[wc._current_index]["mag"])
+			if want >= 0:
+				# 见上面 ①:走 apply_mag —— 未入树窗口里写 `mag_ammo` 会被 `_ready` 覆盖。
+				# ★ 它顺带**钳位**到 `[0, mag_size]`(旧写法是裸写)。正常回溯两者等价(快照的
+				#   `wlive` 本就来自同一把枪的 `mag_ammo`);只在"快照之后那一槽换了型号"这类
+				#   不一致状态下才有差别,那时钳位是**更安全**的一侧。
+				WeaponComponent.apply_mag(live2, want)
 	if bool(d["downed"]) and not downed_now:
 		combat.set_downed_by_rewind(true)
 	elif not bool(d["downed"]) and downed_now:
