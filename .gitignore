@@ -9,6 +9,9 @@
 *.import.bak
 *.tmp
 *.log
+# 聚合入口的运行期标记(2026-10-05 加):`tests/run_all.sh` 跑批期间持它,`tests/run_real.sh` 见活锁即拒。
+# ★ 必须 ignore:它是个**运行期**文件,跑批时出现/跑完消失,不该进 `git status`(也不该被谁 commit)。
+tests/.run_all.lock
 
 # 临时文件与备份
 *.bak
