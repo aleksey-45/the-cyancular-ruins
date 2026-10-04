@@ -216,7 +216,7 @@ window/stretch/mode="viewport"
 | 2.2 | **输入包 `ax` 无界，服务端零校验** | `core/net/packet_input_source.gd:121` `_axis = pkt.get("ax", 0.0)` → `:175` `return _axis`；`scenes/player/player.gd:373` `var target_velocity_x = horizontal_input * speed_target * mult.x`；服务端接收 `server/match/match_host.gd:190` `(_pending_input[role] as Array).append(pkt)`（无边检/钳位/限速） | 主流在服务端把轴钳到 `[-1,1]`。`move_speed=700`，`ax=50` ≈ 35000px/s（全图 9600px）。★ 本仓**声明不承担反作弊**（`server/lobby/lobby_rooms.gd:233` "**不防**恶意爆破(本设计不承担反作弊)"），但 `ax` 无界同时是**协议健壮性**问题（版本不匹配/有 bug 的客户端会瞬移），与反作弊是两件事 |
 | 2.3 | **输入队列无上限 + 每 tick 只消费 1 包**，积压不可恢复 | `server/match/match_host.gd:251` `var pkt: Dictionary = q.pop_front()`（每 tick 一包）；`:190` append 无上限；同文件 `:159` 自述实测"队列在开局 1 秒内从 0 跳到 8 然后就永远停在那儿(**ρ=1,没有回复力**)" | 主流：硬上限 + 丢最旧。常驻 ~133ms 输入延迟；持续灌包则服务端内存无界。⚠ 走 reliable 是为"不丢 just_pressed 边沿"（`packet_input_source.gd:6-9`），代价来源写明 |
 | 2.4 | **60 条 `@rpc` 无一例指定 channel** | `grep transfer_mode\|transfer_channel\|call_local` 全仓 **0 命中**；`@rpc` 声明 **60** 条。例：`core/net/net_bus.gd:234` `@rpc("authority", "unreliable")`（snapshot_world）与 `:255` `@rpc("authority", "reliable")`（match_sync_data），都只有两个参数 | ENet 按通道保序：60Hz 输入与 `claim_role`/`match_sync` 共用通道 0，一次 `bullet_spawn` 重传会顶住其后所有权威事件。★ transfer_mode 的**分工本身是对的**（快照 unreliable、一次性载荷 reliable，`net_bus.gd:232-235/253-255` 注释写明），缺的只是 channel |
-| 2.5 | **玩家域靠字符串反射读写**，静态检查全失效 | `scenes/player/player.gd:961` `wc.get("_current_index")`、`:963` `wc.call("equip_index", int(d["widx"]))`、`:966` `live2.set("mag_ammo", int(d["wlive"]))`；`scenes/player/swim_component.gd:31` `tm = float(parent.get("pvp_haste_mult"))` | 根因是根节点**没有 `class_name`**（`scenes/player/player.gd:1` `extends CharacterBody2D`）。同文件别处又是静态点号（`:712` `if by_inst and weapons._current_index >= 0:`），`WeaponComponent` 也确有真方法（`weapon_component.gd:220` `func equip_index`、`:461` `func current_weapon`）⇒ 反射纯属多余，重命名只会**静默失效** |
+| 2.5 | **玩家域靠字符串反射读写**，静态检查全失效 | `scenes/player/player.gd:964` `wc.get("_current_index")`、`:965` `wc.call("equip_index", int(d["widx"]))`、`:968` `live2.set("mag_ammo", int(d["wlive"]))`；`scenes/player/swim_component.gd:31` `tm = float(parent.get("pvp_haste_mult"))` | 根因是根节点**没有 `class_name`**（`scenes/player/player.gd:1` `extends CharacterBody2D`）。同文件别处又是静态点号（`:712` `if by_inst and weapons._current_index >= 0:`），`WeaponComponent` 也确有真方法（`weapon_component.gd:220` `func equip_index`、`:461` `func current_weapon`）⇒ 反射纯属多余，重命名只会**静默失效** |
 | 2.6 | **"兜底读宿主真实输入"** 还有 4 处 | `scenes/weapons/weapon_base.gd:223/228/233`（`has_method` 不成立即 `return Input.is_action_*("attack")`）；`scenes/player/swim_component.gd:13-15` `# src=null(冒烟等直接调用)回落真实 Input` → `src = LocalInputSource.new()` | 同类坑本仓**已经踩过一次**并留下注释：`core/net/ai_input_source.gd:63-67` "AI 没有鼠标(服务器 headless),不覆写就会让它去读**宿主机的真实鼠标位置** —— 瞄准变成随服务器桌面而变的随机值"。瞄准修了，攻击/游泳这两处同形状的兜底没修 |
 | 2.7 | **菜单没有键盘/手柄焦点入口** | `grep grab_focus\|focus_neighbor` 生产代码 **0 命中**（只有 gitignore 的 `.superpowers/sdd/_gen/*` 里有）；唯一被处理的是返回：`scenes/settings_menu.gd:142` `if event.is_action_pressed("ui_cancel"):` | Godot 不自动点亮首个可聚焦控件 ⇒ 冷启动后 Tab/方向键/手柄一个按钮都到不了。而 `scenes/mp_lobby.gd:506/509` 专门改过 `focus_mode`，说明机制被用过、只是没喂初值 |
 | 2.8 | **零 i18n** | `tr("` 全仓 **0 命中**、`TranslationServer`/`tr_n(` **0 命中**、无 `.po/.csv/.translation`、`project.godot` 无 `internationalization` 段 —— 且项目文档**没有一处**把它写成有意取舍 ⇒ 标不了"有理由"。量级：子代理实测 `ui/`+`scenes/` 约 **328** 处中文串面（❓ 该计数我未复核） | 迁进 `.tscn` 后文案又多一种落点；且多条探针**按文案找控件**（`scenes/main_menu.gd:204` 自述 `kh_l4_visual_probe` 按文案找按钮）⇒ 改文案 = 改测试。真要 i18n，得先把探针判据换成 `unique_name_in_owner`/`meta` |
@@ -227,6 +227,8 @@ window/stretch/mode="viewport"
 ---
 
 ## 3. 一致性债：靠纪律而非机制
+
+> ★ **逐条复核结论见 [`conventions-review-2026-10.md`](conventions-review-2026-10.md)**（2026-10-04；43 条全覆盖，含本节每条的"理由是否仍成立 / 档位 / 归属"）。
 
 > ### ★★ 2026-10-04 复核订正（本节以下有 4 处事实错误，已由独立回源码复核发现）
 >
@@ -259,7 +261,7 @@ window/stretch/mode="viewport"
   `ui/factory/ui_factory.gd:305` `static func menu_panel(padding: Vector2 = Vector2(64, 46))`；
   而**镜像守卫**取生产值用的却是 `F.call("skin_menu_panel", outer, Vector2(64, 46))`
   （`tests/smoke/menu_theme_mirror_smoke.gd:190/200`）⇒ 同一份派生逻辑"守卫里有、生成器里没有"。
-  `registered-debt.md:24` 还把这条链记为**范本**。
+  `registered-debt.md:28` 还把这条链记为**范本**（★ 2026-10-04 订正：原写 `:24`）。
 - **数值三处不符**（`✅`）：黑鸟瞬移真值 `core/config/enemy_params.gd:95-96` = **2~6 格**，
   注释 `scenes/enemies/enemy_black_bird.gd:5` 写 **3~8**，文档 `docs/eng/enemies.md:15` 写 **2~4**；
   冲锋伤害真值 `enemy_params.gd:104` `charge_damage = 7`，注释与文档都写 **6**。
@@ -279,8 +281,11 @@ window/stretch/mode="viewport"
 - **`MAP_WIDTH/HEIGHT` 两个写者、两条推导、零断言**（`✅`）：
   `core/config/game_parameters.gd:32` `func refresh_map_size()` 读**地图文件**；
   `core/sim/world_builder.gd:18` `GameParameters.MAP_WIDTH = grid[0].size() * GameParameters.TILE_SIZE`
-  读**已加载网格**。目前靠后者兜住漏调、反而**掩盖**了前者（子代理逐点核过 10 处生产 `set_map_file`，
-  当前无漏调）—— 纯属"调用者义务"，无任何断言/编译期保证。
+  读**已加载网格**。目前靠后者兜住漏调、反而**掩盖**了前者（子代理逐点核过 10 处生产 `set_map_file`）——
+  ★ **2026-10-04 复核订正**：原写的「当前无漏调」**不成立** —— `server/match/match_host.gd:39` 的
+  `MazeGenerator.set_map_file(map_path)` 后面**没有** `refresh_map_size()`，靠 `:41` 的
+  `WorldBuilder.load_grid()` 覆写 `MAP_WIDTH/HEIGHT` 兜住 ⇒ 读作「**漏了，但被兜底掩蔽**」
+  （10 处生产点里唯一一处）。纯属"调用者义务"，无任何断言/编译期保证。
 - **碰撞层全是裸数字**（`✅`）：`project.godot` 全文 `grep layer_names\|2d_physics` **0 命中**。
   实例：`scenes/player/player.tscn:124` `collision_layer = 2` / `:125` `collision_mask = 5`；
   `scenes/enemies/enemy_base.gd:90` `area.collision_mask = 2  # 检测玩家(layer 2)`。
@@ -305,7 +310,7 @@ window/stretch/mode="viewport"
   真 PvP 局里服务器侧激光走格级 `damage_tile` 就能触发）；现已修为 `match_combat.gd:18-22` 的 4×4，
   并有 `destroyed_cells_probe` 相③ 守卫。
 - **`docs/eng/world.md:9` 与源码相反**（`✅`）：文档写"游戏侧读的只有 v3 文本与旧字母格式两种
-  （编辑器**写**的是 v4 二进制，**游戏还读不了**）"，而 `core/sim/map_format.gd:90`
+  （编辑器**写**的是 v4 二进制，**游戏还读不了**）"，而 `core/sim/map_format.gd:89`
   `static func is_v4(path: String) -> bool: return MapFormatV4.is_v4_data(_read_bytes(path))`
   与 `core/sim/world_builder.gd:16` `MapFormat.load_subgrid(...)` 明摆着在读 v4。
 - **第二份环面数学**（`✅`）：`core/sim/grid_pathfinder.gd:7` 自述"★ **改这里 = 改环面数学/寻路**"，
@@ -341,7 +346,7 @@ window/stretch/mode="viewport"
   - `scenes/enemies/enemy_fly_bird.gd:15` `var _max_hp: int = 20` 立刻被 `:48` `_max_hp = hp` 覆盖，
     场景真值 `scenes/enemies/enemy_fly_bird.tscn:174` `hp = 25`（它决定冲锋阈值 `:394`）。
   - `scenes/enemies/enemy_base.gd:93` `rect.size = Vector2(44, 40)` 被 `enemy_jump_bird.gd:33` `Vector2(44, 36)`、
-    `enemy_black_bird.gd:68` `Vector2(46, 36)` 在 `_ready` 换掉。
+    `enemy_black_bird.gd:70` `Vector2(46, 36)` 在 `_ready` 换掉。
   - `ui/factory/ui_factory.gd:626` `static func line_edit(...)` **零生产调用**（只有 gitignore 的
     `.superpowers/sdd/_b2_backup/*` 与一条过期注释 `tests/harness/rejoin_watcher.gd:329`）。
 - **调色板纪律在声明它的文件里破一次**（`✅`）：`scenes/mp_lobby.gd:482`
@@ -359,8 +364,9 @@ window/stretch/mode="viewport"
   **定义后从未被引用**（grep 确认），而同文件 `:56` 又写"不再携带 EasyTier"。
 - **枚举型文档漂移**（`✅`）：`tests/README.md:10` "三个独立诊断工具:`convert_map.gd` / `seam_analyze.gd` /
   `seam_screenshot.gd`" —— 实测 `tests/scripts/` 有 **4** 个（多 `convert_map_v4.gd`）；
-  `.gitignore:50` 提到的"根上那个 `.gdignore`"**不存在**（`find` 只找到 `.godot/.gdignore`
-  与 `_crashtest/.gdignore`）。
+  `.gitignore:58-59` 提到的"根上那个 `.gdignore`"**不存在**（`find` 只找到 `.godot/.gdignore`
+  与 `_crashtest/.gdignore`）—— ★ **2026-10-04 后记**：`_crashtest/` 已按 §9 的裁定**整个删除**（101MB 清理），
+  今天 `find . -name .gdignore` 只剩 `./.godot/.gdignore` ⇒ 这句订正自己**只剩一半成立**；`.gitignore:58-59` 同句同病，待同步。
 - **`ui/hud/royale_hud.gd:141`** 每帧重排同一串时间：
   `_timer_label.text = "剩余时间  %d:%02d" % [...]`（秒数没变也写）。
 
@@ -368,19 +374,21 @@ window/stretch/mode="viewport"
 
 ## 4. 有理由的偏离 —— **不要误改**
 
+> ★ **逐条复核结论见 [`conventions-review-2026-10.md`](conventions-review-2026-10.md)**（2026-10-04；本节多数条目的"理由"已在复核里被**降级/推翻**，别照本表直接当"有意取舍"）。
+
 > ### ★★ 2026-10-04 复核订正：本表的"理由"必须区分三种出处，原文把它们混为一谈
 >
 > **① 源码/仓内真有的理由** · **② 只活在本报告里的理由（那是我的判词，不是仓里的理由）** ·
 > **③ 已经过期的理由**。混为一谈的后果是：`§10` 的裁定要求"逐条重新考虑"，而有些条目**根本没有可考虑的仓内理由**。
 >
-> | 条目 | 出处判定 |
+> | 条目（**# = §4 表内第 N 行**；★ 原表编号错位，已按表内实际行序订正） | 出处判定 |
 > |---|---|
 > | 1 手写预测/回滚 | **②+挂错对象**：`cyancular_build_profile.gdbuild:91-92` 确实列了 `MultiplayerSpawner`/`MultiplayerSynchronizer`，但"因此用不了引擎复制节点"**只在自编译模板下成立** —— `export_presets.cfg:31 custom_template/release=""`，靠 `RELEASE.md:149-151` 覆盖全局 `%APPDATA%\…\windows_release_x86_64.exe` 生效（模板被官方盖回即失效，`RELEASE.md:168` 已记该故障）。仓内对这俩节点 **0 引用**，也 **0 处注释**写"因此手写" |
-> | 2 双 autoload | **③ 已过期**：`net_bus_ext.gd:4-6`「原 NetBus 保持与原版逐字节一致」今天为假 —— 自建 Ext 那次 `716b6fc`（2026-09-15）之后 `net_bus.gd` 改过 **7 次**、**+132/−1**，并**插进 2 条 `@rpc``（`:283 weapon_spawned`、`:288 weapon_removed`）—— 正是头注预警会"RPC 全部失联"的那种改动。分离还已生出雷：`net_bus_ext.gd:39-43` 那对 `beam_fired` 零消费者，逼出两条防呆注释（`net_bus.gd:280`、`pvp_match_client.gd:882`）。兼容对象**仍在**（`pvp_session.gd:12` 默认云服 `120.53.107.140`、`README.md:33`） |
-> | 6 `rendering/mobile` | **② 无仓内理由**：3D 节点 0、`hint_screen_texture`/`SCREEN_TEXTURE`/`BackBufferCopy` 0 命中（事实），但**没有任何一处写"为什么"** ⇒ **不满足"有理由"判据**（原文自己也这么写，与本表表头自相矛盾）。另：`gdbuild:3 disable_3d: true` ⇒ 发布模板本就摘了 3D，该设置对发布版近乎惰性 |
-> | 7 SubViewport 2208×1728 | **② 半截**：2208×1728 只出现在 `scenes/level_0.tscn:13`，仓内**无注释解释 2×144**；"裁剪后逐像素恰 1 texel"可由 `post_process.gd:17-18 crop_scale` 推出，但"**+38% 填充写明**"**全仓（含 docs）查无出处** —— 那是我的算术。唯一**写明**的放大理由是另一件事（`post_process.gdshader:27-28` 世界视口大于窗口 ⇒ 鱼眼边缘无黑边） |
-> | 13 `env.sh` 三条理由 | **③ 条数已过期**：`env.sh:13-14` 写 `set -e` 3 个 / `set -u` 5 个，实测 **2 / 8**（10 支脚本）。且"`[7800,8300)` 不扫"**只对池外两支成立**（`rejoin_probe.sh:30`、`team_match_probe.sh:35` 明文承诺），而 `pvp_match_smoke.sh:12/41`、`royale_soak_probe.sh:28/42` **照样扫该区间**（靠 `lobby_alive` 把关）⇒ **与 [`AGENTS.md`](../../AGENTS.md) §1 那句「绝不扫 `[7800,8300)`」直接矛盾** |
-> | 3 端口池 · 4 杀端口 · 5 squash 常量 · 8 61MB · 9 取景 150% · 10 绝对定位 · 11 生成器 · 12 `allscript_probe` | **① 源码/注释真有的理由，复核后仍成立**（细节与代价见本轮复核记录）。★ 但 10（绝对定位）的"无需重排"前提**已被 §10 的裁定推翻** —— 一旦 §1.4 让窗口可缩放/加全屏，这条理由当场失效 |
+> | 2 双 autoload | **③ 已过期**：`net_bus_ext.gd:4-6`「原 NetBus 保持与原版逐字节一致」今天为假 —— 自建 Ext 那次（★ 订正出处：Ext 的创建提交是 `e7b53fd`「搬入 NetBusExt 扩展协议收口节点」（2026-09-10）；原写的 `716b6fc`（2026-09-15）是 `core/` 分目录**搬家**）之后 `net_bus.gd` **一直在改** —— **保守下界**：从搬家那次 `716b6fc..HEAD` 起仍有 **6 次**（`git log --oneline 716b6fc..HEAD -- core/net/net_bus.gd`）、**+132/−1**，并**插进 2 条 `@rpc`**（`:282`→`weapon_spawned`、`:286`→`weapon_removed`；`func` 在 `:283`/`:287`）—— 正是头注预警会"RPC 全部失联"的那种改动。分离还已生出雷：`net_bus_ext.gd:39-43` 那对 `beam_fired` 零消费者，逼出两条防呆注释（`net_bus.gd:280`、`pvp_match_client.gd:882`）。兼容对象**仍在**（`pvp_session.gd:12` 默认云服 `120.53.107.140`、`README.md:33`） |
+> | 9 `rendering/mobile` | **② 无仓内理由**：3D 节点 0、`hint_screen_texture`/`SCREEN_TEXTURE`/`BackBufferCopy` 0 命中（事实），但**没有任何一处写"为什么"** ⇒ **不满足"有理由"判据**（原文自己也这么写，与本表表头自相矛盾）。另：`gdbuild:3 disable_3d: true` ⇒ 发布模板本就摘了 3D，该设置对发布版近乎惰性 |
+> | 10 SubViewport 2208×1728 | **② 半截**：2208×1728 只出现在 `scenes/level_0.tscn:13`，仓内**无注释解释 2×144**；"裁剪后逐像素恰 1 texel"可由 `post_process.gd:17-18 crop_scale` 推出，但"**+38% 填充写明**"**全仓（含 docs）查无出处** —— 那是我的算术。唯一**写明**的放大理由是另一件事（`post_process.gdshader:27-28` 世界视口大于窗口 ⇒ 鱼眼边缘无黑边） |
+> | 17 `env.sh` 三条理由 | **③ 条数已过期**：`env.sh:13-14` 写 `set -e` 3 个 / `set -u` 5 个，实测 **2 / 8**（10 支脚本）。且"`[7800,8300)` 不扫"**只对池外两支成立**（`rejoin_probe.sh:30`、`team_match_probe.sh:35` 明文承诺），而 `pvp_match_smoke.sh:12/41`、`royale_soak_probe.sh:28/42` **照样扫该区间**（靠 `lobby_alive` 把关）⇒ **与 [`AGENTS.md`](../../AGENTS.md) §1 那句「绝不扫 `[7800,8300)`」直接矛盾** |
+> | 其余各条：3 端口池 · 4 杀端口 · 8 squash 常量 · 11 61MB · 12 取景 150% · 13 绝对定位 · 14 生成器 · 15 `allscript_probe` | **① 源码/注释真有的理由，复核后仍成立**（细节与代价见本轮复核记录）。★ 但 13（绝对定位）的"无需重排"前提**已被 §10 的裁定推翻** —— 一旦 §1.4 让窗口可缩放/加全屏，这条理由当场失效 |
 
 
 这些**看着不合主流，但注释/文档写明了理由**，判定为有意取舍：
@@ -399,7 +407,7 @@ window/stretch/mode="viewport"
 | 2208×1728 的 SubViewport 尺寸 | 像素精确（1920+2×144 / 1440+2×144），裁剪后逐像素恰 1 texel、不重采样；代价 +38% 填充写明 |
 | 地形图集常驻 61MB 显存 | 已登记（`handoff-2026-10-03.md:80`、`terrain_atlas.gd:19,163-165`），缓解=只缓存纹理不缓存 Image |
 | 菜单取景 150%（2.25× 非整数） | `main_menu.gd:54-59` 与 `menu_fisheye.gdshader:31-34` **两处**写明"留给用户定"，且不涉及局内 |
-| 固定视口下的绝对定位 | `1920×1440` + `resizable=false` ⇒ 无需重排；计划「已知边界 2」已登记 |
+| 固定视口下的绝对定位 | `1920×1440` + `resizable=false` ⇒ 无需重排；★ **订正（出处挂错对象）**：原写「计划『已知边界 2』已登记」，而 `docs/` 里"已知边界 2"只存在于本行自己（UI 计划「已知边界」第 2 条是"`.tscn` 魔数不会消失"，与绝对定位无关）—— 真正的登记在 [窗口与显示设置计划](../superpowers/plans/2026-10-04-window-and-display-settings.md):5/82（"不改任何一处版式……绝对定位逐像素不变"） |
 | 生成器产出 `.tscn` 不入库、无 `--check` | `tools/gen_menu_scene.gd:54-61` 明写覆盖上限（"只保证同一份代码建出来的树 == `.tscn`"） |
 | `allscript_probe` 排除点目录 + 条数下限 | `allscript_probe.gd:24-35` 写明数法与"别降级成 `<`"的理由 |
 | 「退出码不可作判据」 | `probe_base.gd:49-53` + `room_sweep_smoke.gd:58-63` 的具体事故；★ 但这条被**过度概括**了，见 §2.9 |
@@ -499,7 +507,7 @@ window/stretch/mode="viewport"
 |---|---|---|
 | **§1（A1 幽灵砖 / A2 `[debug]` 键 / A3 发布包打进 tests / A4 不可缩放无全屏）** | **都得做** | 四条全部从"发现"升级为"待实施"；实施时按 §0 的分档走（A1 档 2、A2/A3 档 2~3 视改动面、A4 档 1） |
 | **§2.7（菜单无键盘/手柄焦点入口）**、**§2.8（零 i18n）** | **记录而不修改** | 保留原文，**不实施**、不改代码；§7 里不列为候选。★ 它们仍是"与主流冲突"的事实，只是这一轮不做 |
-| **§3（一致性债）** | **除两项外全部重新考虑** | 除 ①**cyrm v3 只读迁移入口** ②**不承担反作弊**（无 DTLS / join 无限速 / 令牌明文）保留为"有理由"外，§3 其余条目的"有理由/已完成"判定**全部作废**，按"待重新评估"处理 | 
+| **§3（一致性债）** | **全部重新考虑** | ★ **订正（条目归属）**：原表此格把 §4 表内的两条（①`cyrm v3 只读迁移入口` ②`不承担反作弊`（无 DTLS / join 无限速 / 令牌明文））误写成 §3 的例外 —— §3 里**没有**这两条 ⇒ §3 条目的"有理由/已完成"判定**全部作废**，按"待重新评估"处理（两条例外归下一行） |
 | **§4（有理由的偏离）** | **除两项外全部重新考虑** | 只有 `cyrm v3 只读入口` 与 `不承担反作弊` 两条维持"有理由"；其余各条（手写预测/回滚、双 autoload、端口池、杀端口、squash 常量重复、`rendering/mobile`、2208×1728、61MB、取景 150%、绝对定位、生成器无 `--check`、`allscript_probe` 排除项…）**都要重新评估是否仍成立**，不得再以"文档里写了理由"当作结论 |
 
 ★ **用户给出的优先级**：**先把"旧版本表述"清除与封存**（否则接手的人会绕很多路）—— 本文件的 §9 是清理记录，
