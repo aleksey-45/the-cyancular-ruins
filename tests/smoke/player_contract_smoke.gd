@@ -14,6 +14,7 @@ func _check(cond: bool, name: String) -> void:
 func _initialize() -> void:
 	var src := FileAccess.get_file_as_string("res://scenes/player/player.gd")
 	var lsrc := FileAccess.get_file_as_string("res://scenes/player/climb_component.gd")
+	var ssrc := FileAccess.get_file_as_string("res://scenes/player/swim_component.gd")
 	var csrc := FileAccess.get_file_as_string("res://scenes/player/combat_component.gd")
 	var wsrc := FileAccess.get_file_as_string("res://scenes/player/weapon_component.gd")
 	# 根公开方法(外部调用方依赖,签名必须保持)
@@ -66,8 +67,38 @@ func _initialize() -> void:
 	for k in ["WEAPONS", "DISPLAY_NAMES", "TIERS"]:
 		_check(not wcode.contains(k),
 				"weapon_component.gd 不得再有旧表 %s(半迁移守卫;与 enemy_logic_smoke ⑤b 同口径)" % k)
-	# 根每物理帧显式驱动三个组件
+
+	# ★ 2026-10-04(审计 §2.6 的**第 4 处**):游泳组件与武器那三处**同款**的兜底已收掉。
+	#   原先 `update(..., src := null)` 会在 src 缺省时**自己 new 一个**「读真实 Input」的
+	#   本地输入源 —— 于是组件能从全局输入总线偷读,而且**完全不报错**。在权威服务器 /
+	#   回放 / 预测下那是错的来源(headless 服务器读到的是**宿主机桌面**的按键状态)。
+	#   收口后:缺 src ⇒ 点名报错 + 安全返回,组件**只**读注入进来的 src。
+	#
+	# ★★ 为什么这条必须是**源码守卫**(不能只靠行为):只在探针里直接调用、不传 src 时,
+	#    旧兜底在 headless 下读到的轴恒 0、按键恒假 —— 与"安全返回"在**一部分**读数上
+	#    重合(武器那三处更极端:只返回布尔,两版逐帧恒等 = 天生无牙)。
+	#    ★ 本组件的返回值**有**鉴别力(旧兜底会返回 true 并写 parent.velocity)⇒
+	#      `tests/probe/water_probe.gd` 里另有一条**行为**守卫钉同一件事,两条互补。
+	# ★ 判据用 `code_only`(**剥注释**)视图:本仓爱留墓碑/解释性注释,里面一旦提到那个
+	#   被禁的类名,裸 contains 会把守卫**永远喂红**(假红的下场历来是"把断言改松")。
+	#   ★★ 与 `code_only` 配套的纪律(写法税):改 `swim_component.gd` 时**注释里也别写**
+	#      那个类名/`Input.` 字面量 —— 本守卫在 ScanUtil 取不到时退化成**裸视图**,
+	#      那时注释里的字样会真的把它喂红(见上方 `su` 那段)。
+	var scode: String = ssrc
+	if su != null and su.has_method("code_only"):
+		scode = su.code_only(ssrc)
+	# ★ 先钉"读得到源":读不到时 scode 为空串,下面三条**否定**断言全部恒真(静默假绿)。
+	_check(scode.length() > 0, "读得到 swim_component.gd 源码(读不到 ⇒ 下面三条否定断言恒真)")
+	_check(not scode.contains("LocalInputSource"),
+			"swim_component.gd 又长出全局输入兜底(只许读注入的 src;缺 src 要点名报错,不是自己造本地输入源)")
+	_check(not scode.contains("Input.is_action"),
+			"swim_component.gd 在直接读全局输入(is_action_*);输入只许走注入的 src")
+	_check(not scode.contains("Input.get_axis"),
+			"swim_component.gd 在直接读全局输入(get_axis);输入只许走注入的 src")
+
+	# 根每物理帧显式驱动三个组件(+ 游泳组件:它同样由根驱动,漏了就是"没人喂它输入")
 	_check(src.contains("climb.update("), "根驱动 climb.update")
+	_check(src.contains("swim.update("), "根驱动 swim.update")
 	_check(src.contains("combat.apply_knock("), "根驱动 combat.apply_knock")
 	_check(src.contains("weapons.movement_multiplier()"), "根驱动 weapons.movement_multiplier")
 

@@ -10,9 +10,17 @@ var in_water: bool = false
 
 func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.ONE,
 		src: PlayerInput = null) -> bool:
-	# src=null(冒烟等直接调用)回落真实 Input;本地玩家传入自己的 input_source,服务器传入注入源。
+	# ★★ 2026-10-04(审计 §2.6 的**第 4 处**,与武器那三处同款):这里原先缺 src 就**自己造一个
+	#   读真实输入总线的本地源**兜底。那让本组件能从全局输入总线偷读,而且**完全不报错**;
+	#   在权威服务器 / 回放 / 预测下那是错的来源(headless 服务器读到的是**宿主机桌面**的按键
+	#   状态)。现在:src **一律由调用方注入**(本地玩家 = 自己的 input_source,服务器 = 注入的
+	#   网络源),缺了就**点名报错** + 按「不在水中」安全返回,绝不静默改读全局输入。
+	#   ★ in_water 一并归 false,是为保住正常路径同款的不变式「返回 true ⇔ 在 水中」——
+	#     否则读 `swim.in_water` 的副本/渲染会看到与根逻辑矛盾的残值。
 	if src == null:
-		src = LocalInputSource.new()
+		push_error("SwimComponent.update: 缺 src(注入输入源)—— 本组件只读注入进来的输入,禁止读全局输入;本帧按「不在水中」安全返回(调用方应传 player.input_source)")
+		in_water = false
+		return false
 	var grid := MazeGenerator.current_grid
 	var feet := Vector2(parent.global_position.x, parent.global_position.y + Water.feet_offset(parent))
 	in_water = not grid.is_empty() and Water.is_in_water(feet)
