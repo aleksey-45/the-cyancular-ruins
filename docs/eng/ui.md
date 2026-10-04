@@ -42,4 +42,13 @@
 - **主菜单背景 = 真实地形 + 鱼眼 + 虚焦 + 路径段运动**(`core/present/menu_fisheye.gdshader` + `scenes/main_menu.gd`):铺一张由 **`TerrainAtlas.bake_map_image()`** 烘出的**真实地形图**(与 `Level0` **同一份图集** ⇒ 砖是砖、水是水、树叶是树叶),**不是** `MapCatalog`(那是**每格平色的选图缩略图**,放大多少都是色块,"不是那个世界")。镜头是 shader 里的**逐像素鱼眼重映射**(`repeat_enable` 让采样越界**绕到地图另一头**,与环面世界观自洽);运动学(随机路径段 + 缓入缓出 + 0°↔120° **来回摆**的慢旋转)住在脚本、每帧喂 `view_center` / `rot_angle` 两个 uniform(GDShader 没有随机数 / 没有"段"的概念)。取景 `BG_VIEW_CELLS = 26.6667`(1920 宽 ⇒ **72 屏幕像素/格 = 玩家镜头 48px/格 的 150%**;★ 72 / 32 = **2.25× 非整数** ⇒ 砖缝粗细略有不均,整数档只有 133%/200%,改一个常量即可切)。★ 本 shader **只服务主菜单背景**,改它不碰任何一局游戏的一个像素。
   - ★★ **`dim` 的语义是"压暗多少"(`col = mix(col, vec3(0.0), dim)`),不是乘数** —— `0` = 不压、`1` = 全黑。★ 它**曾经**写成 `col *= dim`(即 `dim` = 保留多少亮度),而**用户的心智模型一直是"黑色滤镜的浓度"** ⇒ 他每说一次"太黑,调小点"(0.36→0.25→0.20→0.15)实际都让画面**更暗**,这就是"为什么越调越黑"的根因。**改语义本身就是那次修复,别改回去。** 当前 `dim=0.50`(2026-10-03 用户:「又不够黑了,先改成 0.5」)/ `vignette=0.30`(边缘径向再压一层;★ 它**不跟 dim 绑定** —— 历史上有时一起动 `57e3985`、有时只动 dim `f704b77`,改之前先问)/ `desat=0.20` / `blur_radius=4.0` / `SEGMENT_SEC=48.0`。
 - **设置页「联机显示」一节 + 「信 息」整页(2026-10-03)**:`scenes/settings_menu.gd`(两栏:左栏 音量/通用/**联机显示**,右栏 按键映射)**搬回 4 个本机显示项** —— `pvp_show_trajectories` / `pvp_show_enemy_hp` / `pvp_show_minimap` / `pvp_minimap_show_enemy`。★ 这四个键**与读者一直都在**(`pvp_game` / `royale_game` / `team_game` / `bullet_base` / `minimap`),**只是界面没了**(原先只长在**被删的 1v1 大厅页**右侧面板上 ⇒ 键还在、改不了)。★ 它们**只写本机 `Settings`、不上报服务器**(与对局的「房主规则项」不是一回事)。「版本信息」从主菜单**弹层**改成**整页** `scenes/info_menu.tscn`(三块:版本 / 开发团队 / 致谢;名单**用户给定、逐字照抄**,`tests/probe/info_page_probe` 钉住);版本号与提交历史抽到 **`core/config/app_info.gd`**(`class_name AppInfo`,纯静态、零 autoload;★ **不能**放进 `core/config/build_info.gd` —— 那个被 `tools/build_release.py` 导出前覆盖写、导出后还原)。
-
+- **显示设置(2026-10-04 加)** —— 基准 **1920×1440 是逻辑空间**(`project.godot` 的 `window/size/viewport_*`),
+  `window/stretch/aspect="keep"` 让**窗口尺寸 ≠ 基准**时逻辑空间**仍是** 1920×1440(等比缩放 + 黑边)
+  ⇒ `mp_lobby.tscn` 那 21 处绝对定位、`minimap.gd` 的 `1920.0 - …`、`main_menu.gd` 的 `BG_VIEW_CELLS` **一律不用改**。
+  ★ `window/stretch/mode` 经用户裁决**保持 `"viewport"`(硬边)**:实测 4.7.1 的整块画布 blit 走**最近邻**
+  (与 NEAREST 平均绝对差 0.00004 / 与 BILINEAR 0.01362)⇒ 非整数缩放是**丢/重复源像素**,**不是**发虚;
+  且默认窗口在 2560×1600 屏上**1:1 无缩放**。玩家在设置页「显示」组选 **4:3 四档**
+  (`Settings.DISPLAY_RESOLUTIONS`:1280×960 / 1600×1200 / 1920×1440 / 2560×1920)与**全屏开关**
+  (`display_res_index` / `display_fullscreen`),由 `Settings.apply_display()` 应用(**headless 早退**);
+  `resizable=true` ⇒ 也能自由拖窗口。★ 注意:`apply_display()` 在启动时按存档设窗口 ⇒ **`--resolution` 会被它顶掉**
+  (取图/调试要指定尺寸得先改 `user://settings.cfg` 的 `display/res_index`)。
