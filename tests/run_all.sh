@@ -121,14 +121,14 @@ EXCLUDED=(
 	# ★ 这一组的共同理由 = **它们不打判词行**(逐支 grep 过 `print` 里没有 `OK`/`ALL-OK`)
 	#   ⇒ 文本判据**判不了**它们。★ 照实说清:这不是"它们红了被藏起来" —— 它们**从来不是守卫**
 	#   (与 `registered-debt.md` §一 那三条"不算守卫"的探针同类)。想让它们进批,得**先给它们加判词行**。
-	"tests/probe/aim_direction_probe.gd|E 诊断仪器:不打判词行(逐支核过 print 里无 OK/ALL-OK)⇒ 文本判据判不了;headless 安全但**不是守卫**"
-	"tests/probe/aim_probe.gd|E 诊断仪器:同上(不打判词行)"
-	'tests/probe/climb_probe.gd|E 诊断仪器:同上 —— 它是 T14 的读数修复对象,判据是人读 `latched=`;**仍不是守卫**(无断言、无条数闸)'
-	"tests/probe/muzzle_probe.gd|E 诊断仪器:同上(不打判词行)"
-	"tests/probe/order_probe.gd|E 诊断仪器:同上(不打判词行)"
-	'tests/probe/perf_probe.gd|E 诊断仪器:同上 + 口径已与生产分家(`registered-debt.md` §五.3:清格子格的第二份口径、仍是 v3 的 `*2`/`x/2`)⇒ 读数本身也不可信'
-	"tests/probe/preview_probe.gd|E 诊断仪器:同上(不打判词行)"
-	"tests/probe/tile_destroy_probe.gd|E 诊断仪器:同上(不打判词行)"
+	"tests/probe/aim_direction_probe.gd|E 判词**词汇不同**(2026-10-05 修复轮2 写准):它**有**判词行但打的是 `== PASS, failures=0`(`:61`)—— 现判据只认 `OK`/`ALL-OK` ⇒ 绿跑会落 `NO-VERDICT`(假红);★ 失败时它打 `== FAIL, …`,现判据**认**(会被判红)。⇒ 要它进批,得先把判词换成 `OK` 形状。headless 安全但**不是守卫**(无条数闸)"
+	"tests/probe/aim_probe.gd|E **无判词行**:逐支核过 `print` 里没有任何 `OK`/`PASS`/`DONE` 形状的判词 ⇒ 文本判据判不了它;headless 安全但**不是守卫**"
+	'tests/probe/climb_probe.gd|E **无判词行**;它是 T14 的读数修复对象,判据是人读 `latched=` ⇒ **仍不是守卫**(无断言、无条数闸)'
+	"tests/probe/muzzle_probe.gd|E **无判词行**(同 aim_probe 的核法)"
+	"tests/probe/order_probe.gd|E **无判词行**(同 aim_probe 的核法)"
+	'tests/probe/perf_probe.gd|E **无判词行**(只有 `[perf] DONE`(`:41`)与中文 通过/失败 行)+ 口径已与生产分家(`registered-debt.md` §五.3:清格子格的第二份口径、仍是 v3 的 `*2`/`x/2`)⇒ 读数本身也不可信'
+	"tests/probe/preview_probe.gd|E **无判词行**(同 aim_probe 的核法)"
+	"tests/probe/tile_destroy_probe.gd|E **无判词行**(同 aim_probe 的核法)"
 	'tests/probe/haste_probe_input.gd|E **helper 不是入口**:`extends PlayerInput`,由 tests/probe/haste_probe.gd:21 `preload()` 当输入桩用(那个 haste_probe.tscn 已在默认批里)'
 )
 
@@ -228,28 +228,47 @@ load_known_red() {
 #     会被判成 NO-VERDICT(network_input_smoke 首跑实测就是这么假红的)。
 #   · FAIL 侧放宽到 `FAIL[A-Z]{0,4}` —— 覆盖仓库现网出现过的 FAIL / FAILED / FAILURES /
 #     `[FAIL]` / `FAIL(` 形状(`enemy_logic_smoke` 失败时打的是 `FAILURES: ...`,只认裸 FAIL 会漏)。
-#   · ★★ **OK 侧要求"判词形状",不是"任意独立 OK 单词"(2026-10-05 修;评审 C2)**:
-#     `ALL-OK`,或 `OK` **紧跟行尾或一个标点/括号** —— 也就是"OK 后面不许再跟空白+正文"。
-#     为什么:像 `[squash_host] OK     6 ( _pre_move_vy = 0.0) max dev 0.0000` 这种**分项行**也含
-#     独立 `OK` token(今天批里 ≥5 支有:`squash_host_enemy_probe` 21 处 / `squash_host_water_probe` 16 /
-#     `squash_replica_probe` 13 / `lobby_parse_smoke` 2 / `rewind_weapon_probe` 2)。旧判据只要求"独立 OK"
-#     ⇒ **"跑到一半崩、判词一行都没打"会被读成 `OK`/`OK+RC`(不算红)**,而 `NO-VERDICT`(归红)**永不触发**。
-#     收紧后:把真实日志 `probe/squash_host_water_probe.log` 截到判词行之前 ⇒ `NO-VERDICT`(实测)。
-#   · ★ **射程与盲区(落纸)**:
-#     - 覆盖:`NO-VERDICT` 现在真的可达 —— "判词前就死/挂"归红。
-#     - **有意保留**:打了判词形状**之后**才死 ⇒ 仍是 `OK+RC`(不算红)。那正是 `elite_drop_probe` 的形态
-#       (判词 OK、退出时 SIGSEGV),它能给的保证止于"**判词被完整打出来了**"。
-#     - 够不到:一支**只**打 `[tag] OK <正文>` 分项行、**从不打判词行**的探针 ⇒ `NO-VERDICT`(归红,方向安全)。
-#     - 够不到:判词形状**不像** `ALL-OK`/`OK` 的支(例如只打 `PASS`)⇒ 也会落 `NO-VERDICT`(方向安全,但会假红)。
-#   · ★ log 里 CRLF 存在(实测 Godot 输出有 28 处 `\r\n`)⇒ 判据先把 `\r` 剥掉再 grep:
+#   · ★★ **OK 侧 = "判词三条件"(2026-10-05 两轮收紧;评审 C2 + 重审 C2 残余)**。三条**同时**满足才算判词肯定:
+#     ① **形状**:`ALL-OK`,或 `OK` 紧跟行尾/一个标点(即"OK 后面不许再跟空白+正文");
+#     ② **位置**:命中行必须**就是最后一条非引擎噪声行**(= "判词是脚本最后打的东西");
+#     ③ **不是分项标记**:命中行**不许**是方括号标签(`[OK` / `[ALL-OK`)也**不许**带 `✓`/`✗`。
+#     **为什么必须三条**(每一轮都是被真实反例逼出来的):
+#       - 只有 ① 时,`[squash_host] OK     6 ( … )` 这类**分项行**会顶掉判词 ⇒ "判词前就崩"被读成 `OK`;
+#       - 只有 ①② 时,`PARSE[OK]: res://scenes/mp_lobby.tscn`(`lobby_parse_smoke.log:3`)与
+#         `…verdict 照打 ALL-OK`(`rewind_weapon_probe.log:11`,一条**中文说明行**以 ALL-OK 结尾)
+#         仍算判词 ⇒ 截断到真判词之前照样读成 `OK`;
+#       - 加上 ③ 之后,上面两个反例都落 `NO-VERDICT`(已并进 `--classify-check`)。
+#     ★ **第三种真实形态要点名**:判词**带标点**不只有 `SMOKE OK`/`ALL-OK` 两种 ——
+#       `lobby_parse_smoke` 的真判词是 `PARSE: 1 项,0 失败 → ALL-OK`(带 `:`、`,`、`→`),
+#       `WRAP-OK: …`(带 `-`)、`GRACE_WINDOW OK`(方块名 + 空格)也都是判词形状。
+#   · ★ **引擎退出噪声的定义**(②里"非噪声"的判据;清单来自 112 份真实日志的**实测尾部形状**):
+#     空行 / `at: …` / `[N] …`(backtrace 帧)/ `GDScript backtrace …` /
+#     `WARNING: …` / `ERROR: …` / `USER ERROR: …` / `USER WARNING: …` / `SCRIPT ERROR: …` / `Godot Engine v…`。
+#     实测:112 份里 30 份的判词后面就跟着这类行(`… leaked at exit` / `at: clear (core/io/resource.cpp:822)`)。
+#   · ★ **射程与盲区(落纸;这一节 2026-10-05 重写成真话)**:
+#     - **能给的最强保证** = "**脚本最后打的是一条判词形状的行**"。三条件合起来才排除了
+#       "崩在判词前"(分项行/标签行/说明行顶替)与"根本没打判词"。
+#     - **有意保留**:判词**打出来之后**才死 ⇒ `OK+RC`(不算红)。那是 `elite_drop_probe` 的形态
+#       (判词 OK、退出时 SIGSEGV);这条保证止于"判词被完整打出来了",**不**证明退出干净。
+#     - **够不到**:判词形状不像 `OK`/`ALL-OK` 的支(例如只打 `PASS` 或 `✓ 全部通过`)⇒ 落 `NO-VERDICT`
+#       (**方向安全,但会假红**;真要为它开口子,得给该支换成 `OK` 形状)。
+#     - **够不到**:脚本在**真判词之后**又打了别的**非噪声**行(例如一句多余的 `print`)⇒ 也落
+#       `NO-VERDICT`。这是**有意的契约**("判词是最后一句"),已写进 `tests/README.md`。
+#     - **够不到**:`NOISE` 清单是**实测枚举**的(不是引擎规范)⇒ 将来引擎换一种退出噪声措辞,
+#       会把"判词 + 新噪声"的支误判成 `NO-VERDICT`(**方向安全**:假红可查,不会把红读成绿)。
+#   · ★ log 里 CRLF 存在(实测 Godot 输出有 28 处 `\r\n`)⇒ 判据先把 `\r` 剥掉再处理:
 #     `$` 在 grep 里不把 `\r` 当行尾,而 `\r` 又属于 `[:space:]` ⇒ 不剥的话 `SMOKE OK\r` 会被**误判 NO-VERDICT**。
 FAIL_RE='(^|[^A-Za-z0-9])FAIL[A-Z]{0,4}([^A-Za-z0-9]|$)'
 OK_RE='(^|[^A-Za-z0-9])ALL-OK|(^|[^A-Za-z0-9])OK($|[^A-Za-z0-9[:space:]])'
+# ②的"引擎噪声"判据(见上「引擎退出噪声的定义」)
+NOISE_RE='^[[:space:]]*$|^[[:space:]]*(at:|\[[0-9]+\]|GDScript backtrace|WARNING|ERROR|USER ERROR|USER WARNING|SCRIPT ERROR|Godot Engine)'
+# ③的"分项标记"判据
+ITEM_RE='\[[[:space:]]*(ALL-)?OK|✓|✗'
 
 # 单支分类:$1 = 日志路径,$2 = 退出码 ⇒ 设置 VERDICT / VLINE / VLINE_N
 # VERDICT ∈ {OK, OK+RC, FAIL, NO-VERDICT, TIMEOUT};见文件头「判据分层」。
 classify() {
-	local log="$1" rc="$2" hit=""
+	local log="$1" rc="$2" hit="" last_noise ok_n ok_line
 	VLINE_N="-"
 	if [ "$rc" -eq 124 ]; then
 		VERDICT="TIMEOUT"; VLINE="(killed by outer timeout)"
@@ -258,11 +277,20 @@ classify() {
 	# FAIL 优先(fail-closed):一个跑出过 FAIL 的支即使后面又打了 OK 也不算绿。
 	hit=$(tr -d '\r' <"$log" 2>/dev/null | grep -nE "$FAIL_RE" | head -1)
 	if [ -n "$hit" ]; then VERDICT="FAIL"; VLINE_N="${hit%%:*}"; VLINE="${hit#*:}"; return; fi
+	# ② 位置:最后一条**非空、非引擎噪声**的行号
+	# ★ 用 grep 而不是 awk:同一个 `$NOISE_RE`(grep ERE 里 `\[`/`\]` 是正解),
+	#   而 awk 会把 `\[` 报成 "escape sequence treated as plain" —— **警告到 stderr**(实测)。
+	last_noise=$(tr -d '\r' <"$log" 2>/dev/null | grep -nvE "$NOISE_RE" | tail -1)
+	last_noise="${last_noise%%:*}"
 	hit=$(tr -d '\r' <"$log" 2>/dev/null | grep -nE "$OK_RE" | tail -1)
 	if [ -n "$hit" ]; then
-		VLINE_N="${hit%%:*}"; VLINE="${hit#*:}"
-		if [ "$rc" -eq 0 ]; then VERDICT="OK"; else VERDICT="OK+RC"; VLINE="(rc=$rc) $VLINE"; fi
-		return
+		ok_n="${hit%%:*}"; ok_line="${hit#*:}"
+		# ② 必须在最后一条非噪声行上;③ 不许是分项标记
+		if [ "$ok_n" = "$last_noise" ] && ! printf '%s' "$ok_line" | grep -qE "$ITEM_RE"; then
+			VLINE_N="$ok_n"; VLINE="$ok_line"
+			if [ "$rc" -eq 0 ]; then VERDICT="OK"; else VERDICT="OK+RC"; VLINE="(rc=$rc) $VLINE"; fi
+			return
+		fi
 	fi
 	VERDICT="NO-VERDICT"; VLINE=""
 }
@@ -299,6 +327,23 @@ classify_selfcheck() {
 	check_case "percheck-only-crash" 139 NO-VERDICT \
 		'[squash_host] OK     6 ( _pre_move_vy = 0.0)  max dev 0.0000'
 
+	# ★★ ①b/①c:重审 C2 **残余**的两个真实反例(2026-10-05 第二轮加;行逐字抄自真实日志):
+	#   去掉"③ 不是分项标记"或"② 必须在最后一条非噪声行上"⇒ 这两条会变 OK / OK+RC ⇒ 红。
+	#   ①b 出处 `tests/.run_all_logs/smoke/lobby_parse_smoke.log:3`(真判词是**下一行**
+	#        `PARSE: 1 项,0 失败 → ALL-OK` —— 判词**带标点**的第三种形态)。
+	check_case "bracket-tag-before-verdict" 0 NO-VERDICT \
+		'PARSE[OK]: res://scenes/mp_lobby.tscn'
+	check_case "bracket-tag-before-verdict-crash" 139 NO-VERDICT \
+		'PARSE[OK]: res://scenes/mp_lobby.tscn'
+	#   ①c 出处 `tests/.run_all_logs/probe/rewind_weapon_probe.log:11`(**中文说明行**以 `ALL-OK` 结尾;
+	#        真判词是同文件的 `KH RW-WEAPON PROBE: ALL-OK`,后面还跟着引擎退出噪声)。
+	check_case "prose-line-ends-with-ALL-OK" 0 NO-VERDICT \
+		'[RW-WEAPON] ✓ S2: 越界错误只结束那个函数、verdict 照打 ALL-OK'
+	# ★ ①d:真判词**带标点**那条形态本身必须**能**判绿(别把真的也挡了)。
+	check_case "verdict-with-punctuation" 0 OK 'PARSE: 1 项,0 失败 → ALL-OK'
+	# ★ ①e:"判词之后**只有引擎退出噪声**"必须仍判绿(实测 30 份日志如此)。
+	check_case "verdict-shaped-then-dash-verdict" 0 OK 'WRAP-OK: 鸟跟随玩家回绕,不再跳远副本'
+
 	# ② 判词是最后一行(最常见形态)→ OK。去掉 OK 侧判据 ⇒ 红。
 	check_case "verdict-last" 0 OK 'SQUASH HOST PROBE: ALL-OK'
 	check_case "verdict-smoke" 0 OK 'SMOKE OK'
@@ -328,7 +373,7 @@ classify_selfcheck() {
 		echo "RUN_ALL CLASSIFY-CHECK FAIL($fails cases)"
 		return 1
 	fi
-	echo "RUN_ALL CLASSIFY-CHECK OK(10 cases)"
+	echo "RUN_ALL CLASSIFY-CHECK OK(15 cases)"
 	return 0
 }
 
@@ -744,7 +789,9 @@ if [ "$N_KNOWN" -gt 0 ]; then
 else
 	# ★ I2 修(2026-10-05):"可能已修好,请删行"这句**只在"这趟真的跑过它、而它没红"时**才成立。
 	#   旧写法在 `--only <子集>` 下会打出这句 ⇒ 照做就删掉唯一那条基线 ⇒ 入口回到"永远 FAIL"。
-	#   ★ 去掉什么才会红:把下面这个 `STALE_BASELINE -gt 0` 条件去掉,`--only elite_drop_probe` 又会打出那句。
+	#   ★ 去掉什么才会红(2026-10-05 修复轮2 订正 —— 原句指向的"请删行"提示已随 I2 删除,那句话已不存在):
+	#     把下面循环里的 `STALE_BASELINE=$((STALE_BASELINE + 1))` 删掉 ⇒ 一条**已修好却没删行**
+	#     的基线条目(或指向一支已转绿的支)就**不再报红** ⇒ 登记簿可以永久说谎。
 	echo "[known-red] 0 this run (baseline has $( [ "$KNOWN_RED_N" -eq 0 ] && echo 0 || echo "$KNOWN_RED_N" ) row(s))"
 fi
 if [ "$N_NEWRED" -gt 0 ]; then
