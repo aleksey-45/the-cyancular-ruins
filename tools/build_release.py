@@ -3,7 +3,7 @@
 # + 按时间戳归档到 builds/(历史版本留档,见 RELEASE.md §1.2,复用 tools/archive_build.py)。
 # 依赖 RELEASE.md 的自定义裁剪模板(4.7.1 标准编辑器)。改完游戏后跑一次即可。
 # 版本号取自 project.godot 的 `application/config/version`,与游戏内主菜单显示的**同源**。
-# 用法: python build_release.py   (可选 --stamp 202609062126 / --version v.1.2.0 覆盖默认)
+# 用法: python build_release.py   (可选 --stamp 202610041200 / --version 0.6.0 覆盖默认)
 import datetime
 import json
 import os

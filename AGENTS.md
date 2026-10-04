@@ -13,9 +13,8 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
   `KH_`(`KH_v0.5.0_B17`/`_P3*`)与 `siri_v0.5.0`)。**前缀的真相源 = `project.godot` 的
   `application/config/release_prefix`**;拼法在 `tools/archive_build.py` 的 `release_version()`/`release_label()`。
 - **版本号唯一来源 = `project.godot` 的 `application/config/version`,只能写数字+点**(它要写进 Windows
-  版本资源,**写 `v0.5.0`/`RoF_…` 会让导出失败**);
-  当前 **`0.5.0`**(策划案 §0:PVP 完善版 = V0.4.1,**单人肉鸽第一个版本 = V0.5.0**,之后用日期区分构建 ——
-  别跟着那个字段的陈旧值走,它历史上乱跳过)。
+  版本资源,**写 `v0.5.0`/`RoF_…` 会让导出失败**)。当前 **`0.5.0`**;发布标识 = 前缀(`release_prefix`)
+  + 版本 + 时间戳,**每次构建用时间戳区分**。★ **别在任何文档里另抄一份版本号** —— 抄过的地方都过期过。
 - 目录分层与操作见 [`README.md`](README.md);发布/裁剪模板见 [`RELEASE.md`](RELEASE.md)。
 
 ## 1. 怎么跑
@@ -117,7 +116,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 | 历史设计与实施计划(每批一份 spec + plan) | `docs/superpowers/specs/`、`docs/superpowers/plans/` |
 | 上一个会话的交接(欠账 + 纪律) | [`docs/superpowers/handoff-2026-10-03.md`](docs/superpowers/handoff-2026-10-03.md) |
 | 本机运行账本(逐任务评审判决、全部登记项) | `.superpowers/sdd/progress.md`(**gitignore,不入库,但是恢复地图**) |
-| KH 线(v0.5.0 时间玩法)历史日志 | [`docs/kh-line-log.md`](docs/kh-line-log.md)(原 `AGENTS.md`) |
+| KH 线(v0.5.0 时间玩法)历史日志 —— **已封存,勿当现行规范** | [`docs/archive/kh-line-log.md`](docs/archive/kh-line-log.md)(原 `AGENTS.md`;封存纪律见 [`docs/archive/README.md`](docs/archive/README.md)) |
 
 ## 5. 接手点(核对于 2026-10-03)
 

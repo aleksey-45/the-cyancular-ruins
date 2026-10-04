@@ -20,7 +20,7 @@
 # 用法:
 #   python archive_build.py                        # 归档根目录两个固定名 exe + EasyTier
 #   python archive_build.py --stamp 202609062126   # 指定归档时间戳
-#   python archive_build.py --version v.1.2.0      # 覆盖版本号(默认读 project.godot)
+#   python archive_build.py --version 0.6.0        # 覆盖版本号(默认读 project.godot)
 import datetime
 import os
 import re

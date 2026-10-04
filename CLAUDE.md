@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **本文件是索引**(2026-10-03 拆分):正文按域拆到 `docs/eng/` 下,这里只留**项目概览 + 常用命令 + 架构索引**。
 > **为什么拆**:单文件 182KB,而工作区指令预算是 64KB ⇒ 每次加载都被截断,后半本(**联机 74KB、测试 12KB**)**从来没进过上下文** —— 等于没写。
-> **全文归档**:`docs/claude-md-full-2026-10-02.md`(压缩前全文,只作查证用)。★ **任何冲突以源码为准**,读之前先 `grep` 复核。
+> **全文归档**:拆分前的全文已**封存**在 [`docs/archive/claude-md-full-2026-10-02.md`](docs/archive/claude-md-full-2026-10-02.md)（只作查证 —— ★ 里面的 `文件:行号` 与文件清单**都已过期**，见 [`docs/archive/README.md`](docs/archive/README.md)）。★ **任何冲突以源码为准**,读之前先 `grep` 复核。
 
 ## 项目概览
 
@@ -35,7 +35,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 
 约定:**测试怎么跑,先问用户** —— 进入验证阶段时把「这轮要跑哪些测试」列出来,用户认领的自己跑,**其余由 agent 跑**(先问后跑,禁止先斩后奏)。agent 自跑时必须守 [`docs/eng/tests.md`](docs/eng/tests.md) 里「真链路跑批的两条纪律」与 `tests/env.sh` 的 kill 助手;另两条硬线:① 任何**占 7777** 的步骤先查 `lobby_alive`(大厅 `_ready` 会 `kill_udp_port(7777)`,会端掉用户正在跑的对局);② **非 headless**(取图/真渲染探针)会弹窗口抢焦点,**跑前明确告知**。发布/裁剪模板细节见 `RELEASE.md`(单 exe 靠自定义裁剪模板,勿用 UPX,保留 webp 模块)。模板重编只在**改裁剪 profile(增删类/模块)**时需要,单次≈10~15 分钟近全量(RELEASE.md §2.4);平时改 GDScript 只需重导出。
 
-**版本号**:唯一来源是 `project.godot` 的 `application/config/version`,**只能写数字+点**(如 `1.1.4`;写 `v.1.1.4` 会让导出预设校验失败)。`tools/build_release.py` 导出前把 `v<版本>` + 构建时间戳写进 `core/config/build_info.gd`、导出后还原成 dev 占位(工作区不脏);发布版由**主菜单版本号行**与**服务端启动自报的 `[server] 版本 …`** 两处显示(发布机往往没有 git)。归档名 = `<原名> <版本号> <时间戳>.exe`。该脚本还会跑一次**产物冒烟**(客户端直接起;服务端走 `-- --worker --port 7999`,不碰 7777,并**断言输出里有「worker 就绪」**——光"没报错"会漏掉"零错误地跑错分支")。★ `--worker` 这类开关**必须写在 `--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`),写在前面会被 Godot 丢掉、静默起成大厅。
+**版本号**:唯一来源是 `project.godot` 的 `application/config/version`,**只能写数字+点**(如 `0.5.0`;写 `v0.5.0` 或任何字母都会让导出预设校验失败)。`tools/build_release.py` 导出前把 `v<版本>` + 构建时间戳写进 `core/config/build_info.gd`、导出后还原成 dev 占位(工作区不脏);发布版由**主菜单版本号行**与**服务端启动自报的 `[server] 版本 …`** 两处显示(发布机往往没有 git)。归档名 = `<原名> <版本号> <时间戳>.exe`。该脚本还会跑一次**产物冒烟**(客户端直接起;服务端走 `-- --worker --port 7999`,不碰 7777,并**断言输出里有「worker 就绪」**——光"没报错"会漏掉"零错误地跑错分支")。★ `--worker` 这类开关**必须写在 `--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`),写在前面会被 Godot 丢掉、静默起成大厅。
 
 ## 架构(索引)
 
