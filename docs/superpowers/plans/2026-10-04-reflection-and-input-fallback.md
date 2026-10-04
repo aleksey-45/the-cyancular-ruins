@@ -334,6 +334,22 @@ git commit -m "refactor(weapons): 去掉三处 Input.is_action_* 兜底(武器�
 
 ---
 
+### Task 14: `climb_probe` 的 `latched` 是**死读数**（来源 = Task 9 的发现）
+
+★ **事实**：`tests/probe/climb_probe.gd:57` 与 `:62` 都打印 `p.get("_latched")`，而 `_latched` **不在玩家根上**
+（它在 `scenes/player/climb_component.gd:9`；根只转发 `is_latched()`；玩家根那份命中是 `clatch` 快照键与 `_drop_latched` 丢武器）
+⇒ 实测 6 次全打 `latched=<null>`（控制器自跑两次也复现）⇒ **"是否攀附"这一维从来没有读数**。
+
+**Files:**
+- Modify: `tests/probe/climb_probe.gd`
+
+- [ ] **Step 1: 定位** —— 三处打印点；先例 `tests/probe/squash_host_water_probe.gd:285` 是怎么读同一状态的
+- [ ] **Step 2: 改** —— 读 `p.climb.is_latched()`（★ 先确认那个属性在**探针的运行形态**下可达：若探针只造了个**裸宿主**、根本没有 `climb` ⇒ **停下报告**）
+- [ ] **Step 3: 证明读数真的变了** —— 改前 `latched=<null>` → 改后 `latched=true/false`；★ **连跑两次逐字节相同** → 提交
+★ 覆盖上限：这只是**读数修复**（让那一维可观测）；探针**仍不是守卫**（无断言、无条数闸）—— 要变守卫需**另立项**。
+
+---
+
 ## 本计划**不含**
 
 - **§2.2/§2.3/§2.4（协议/权威：轴无界、队列无上限、`@rpc` 无 channel）** —— Plan A（其中 2.4 单独一份）。

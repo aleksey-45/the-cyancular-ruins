@@ -12,6 +12,7 @@
   - **`MapFormat`(core/sim/map_format.gd)= `.cyrm` 格式**,**无会话状态**(路径/行由参数传入):格值 packed 编解码(`pack/texture_of/shape_of`、`EMPTY=0`、`SOLID=31` 纹理1 全砖)、`load_map_file(path)` / `map_size(path)` / `load_spawns(path)` / `parse_spawn_metadata(lines)`、`convert_old_grid` / `serialize_v3_grid`(单一转换源;旧 v2 字母版地图用 `tests/scripts/convert_map.gd` 转 v3)。v3 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过。
   - **`GridPathfinder`(core/sim/grid_pathfinder.gd)= 环面几何与寻路**,同样**无会话状态**(网格由 `grid` 参数传入):`toroidal_dist`(格级)、`toroidal_delta_px`(像素最短向量)、`anchor_to_nearest`(实体锚到玩家最近副本)、`wrap_to_range`(取模回中间副本)、`cell_of`、`is_floor_cell(_with_headroom)`、`astar_path_nearest` / `has_line_of_sight`(Bresenham);A* 的静态暂存缓冲与 `astar_calls` 计数住这里。
   - 挡路判定走 `TileDefs.is_blocked`(非 0 且 type=wall)。探针取图类脚本(`climb_probe` / `perf_probe` 等)不钉图 → **每进程随机选一份 `.cyrm`,跨进程输出不可比**。
+    ★ **2026-10-04 订正**：`climb_probe` **已钉 `res://maps/demo.cyrm`**（`c5804f4`）—— 原先它每次随机抽一张图，实测同版本连跑 6 次得到 **3:3 两种互斥结论**，不能当基线。
 - **关键区分**:玩家每帧 `wrap_to_range`(只留中间副本);敌人/子弹用 `anchor_to_nearest`(锚定到玩家附近的副本)。墙体按 3×3 铺贴,相机跨接缝才能看到另一侧——实体若取模回 `[0,MAP)` 会在接缝处"消失"。
 
 ### 参数体系(重要约定)

@@ -327,7 +327,7 @@
    它用 `Input.action_press("up")` 驱动攀爬 ⇒ **只读别的轴 / 别的动作**的"新式兜底"它咬不住。
    ★ 同族还有一条**测试基础设施**缺陷（已立 Plan B Task 9）：`tests/probe/climb_probe.gd` 依赖**随机地图**
    （`core/sim/maze_generator.gd:44` `maps[randi() % maps.size()]`）⇒ **同版本两次跑结论可能相反**、**不能当基线**；
-   修法 = 用 `set_map_file` 钉图。
+   修法 = 用 `set_map_file` 钉图。★ **已修（2026-10-04，`c5804f4`）**：`climb_probe` 现已钉 `demo.cyrm`；钉图前连跑 6 次得 **3:3 两种互斥结论**，钉图后 md5 全等且与 demo 那一支逐字节相同。
 
 12. **同族反射的两处"要动类结构"残留（候选批次，未立项）**(2026-10-04 由 Plan B Task 3 定位报告；owner 未认领)。
    - **残留**：`scenes/player/swim_component.gd:39` 的 `parent.get("pvp_haste_mult")`、`core/sim/world_rewind.gd:95` 的 `player.get("weapons")`
