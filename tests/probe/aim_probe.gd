@@ -15,8 +15,9 @@ extends SceneTree
 #     ⇒ crop = PostProcess.crop_scale(1920×1440, 2208×1728) = 0.8696。
 #   · ★ 本探针的换算只用 WIN / ZOOM / BIAS_Y(对应生产 weapon_base.gd:548-558 里读
 #     `win.get_visible_rect().size` + `cam.zoom`;**既不读 SubViewport 尺寸、也不除 crop**,
-#     见 weapon_base.gd:556「不能 ÷crop_scale」)。`VP` 是**声明了但从未被读取**的常量,
-#     保留它只为记录口径 —— 改它**不会**移动下面任何一行读数。
+#     见 weapon_base.gd:556「不能 ÷crop_scale」)。`VP` 是**声明了但从未被读取**的常量 ⇒
+#     **2026-10-04 已删除**(口径由本节上面两行记录;留着一个从不被读取的常量,只会让头注
+#     「用真实常数」这句话看起来更真)。删它前后读数**逐字节相同**(已实测)。
 #   · 改前 / 改后读数(41 个鼠标 y × 3 个 x = 123 行,逐字节相同):
 #       全部 123 行都是 "判墙(地板)";无一行走到 "超射程"(2500px) 或 "preview_time"(3s)。
 #       最近截断 37px / 第2步(共 74 行 = 走到地板判定的第一步就撞;x=900 自 y≥840、
@@ -25,7 +26,6 @@ extends SceneTree
 #       例(改前 → 改后同一条):鼠标( 900, 640) 方向角-120.0° → 第160步 t=2.67s 距离1467px → 判墙(地板)
 
 const WIN := Vector2(1920, 1440)
-const VP := Vector2(2208, 1728)
 const ZOOM := 0.75
 const BIAS_Y := -100.0
 const SPEED := 1100.0
