@@ -6,7 +6,8 @@
 #   bash tests/run_all.sh --list          # 只列清单(跑哪些 / 排除哪些 + 每条理由),不跑
 #   bash tests/run_all.sh --only probe    # 只跑相对路径里含 "probe" 的支(便宜的子集)
 #
-# 判据(**一律 grep 文本;退出码从来不是判据**):
+# 判据(**一律 grep 文本;`rc` 不用来判红** —— 它只做两件事:把"判词肯定"那一类分 `OK`/`OK+RC`、
+#   以及识别外壳超时 `rc == 124`。**"红不红"完全由判词文本决定**):
 #   · 逐支判词分**五类**(判据仍是判词文本,`rc` 只用来把"判词肯定"的那一类再分一层):
 #       `OK`          判词肯定 **且** rc == 0;
 #       `OK+RC`       判词肯定 **但** rc != 0 —— **不算红**(退出码不是判据),但**单独成类**印出来,
@@ -60,6 +61,29 @@ set -u
 
 # shellcheck source=env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+
+# ── 自检(2026-10-05 修复轮3):**双引号里的反引号**会被 bash 当命令替换执行 ─────────
+# 由来(重审的一手证据):`EXCLUDED` 段里那两条**双引号**数组元素含反引号 ⇒ source 时打出
+#   **10 行 `command not found`**,而且其中的 `print` **真的执行了** `C:\Windows\system32\print.exe`,
+#   把它的 stdout 注进了 `--list` 的排除理由(用户可见输出被污染;每次调用还会**执行一个系统程序**)。
+# ★ 去掉什么才会红:把那两条改回**双引号** ⇒ 这里立刻点名并退出 1(它就是为这条设的)。
+# ★ 射程(别读多):只查**以 `"` 开头的行**(数组元素那种形态)—— 那是这类事故的唯一形态;
+#   `echo "…`…`…"` 那种**有意**的命令替换**不在**射程内(本脚本里没有,也不该有)。
+selflint_no_backtick_in_dq() {
+	local hits
+	hits=$(grep -nP '^[[:space:]]*"[^"]*`' "$0" 2>/dev/null || true)
+	if [ -n "$hits" ]; then
+		echo "[selflint] FATAL: a backtick sits inside a double-quoted element -- bash runs it as command substitution:"
+		printf '%s\n' "$hits"
+		echo "          Fix: use single quotes (or drop the backticks). See this function's header."
+		return 1
+	fi
+	return 0
+}
+if ! selflint_no_backtick_in_dq; then
+	echo "RUN_ALL FAIL(0 runs / selflint: backtick inside double quotes)"
+	exit 1
+fi
 
 QUIT_AFTER=3600                     # 场景探针的统一安全网(帧);理由见 docs/eng/tests.md「场景探针」
 SMOKE_BUDGET=60                     # `-s` 冒烟的外层墙钟预算(秒)
@@ -118,11 +142,16 @@ EXCLUDED=(
 	#   评审指出这正是"落选一律显式"那句保证的**反向漏洞**。现在:① 安全且有判词的按 `-s` **进批**;
 	#   ② 进不了的**逐支**写在这里带理由;③ 下面有**机械闸**(`tests/probe/*.gd` 覆盖率断言)
 	#   保证**不会有下一支静默漏掉**(去掉那道闸,新建一支 `tests/probe/foo_probe.gd` 就会静默不进批)。
-	# ★ 这一组的共同理由 = **它们不打判词行**(逐支 grep 过 `print` 里没有 `OK`/`ALL-OK`)
-	#   ⇒ 文本判据**判不了**它们。★ 照实说清:这不是"它们红了被藏起来" —— 它们**从来不是守卫**
-	#   (与 `registered-debt.md` §一 那三条"不算守卫"的探针同类)。想让它们进批,得**先给它们加判词行**。
-	"tests/probe/aim_direction_probe.gd|E 判词**词汇不同**(2026-10-05 修复轮2 写准):它**有**判词行但打的是 `== PASS, failures=0`(`:61`)—— 现判据只认 `OK`/`ALL-OK` ⇒ 绿跑会落 `NO-VERDICT`(假红);★ 失败时它打 `== FAIL, …`,现判据**认**(会被判红)。⇒ 要它进批,得先把判词换成 `OK` 形状。headless 安全但**不是守卫**(无条数闸)"
-	"tests/probe/aim_probe.gd|E **无判词行**:逐支核过 `print` 里没有任何 `OK`/`PASS`/`DONE` 形状的判词 ⇒ 文本判据判不了它;headless 安全但**不是守卫**"
+	# ★ 这一组的共同理由(2026-10-05 修复轮3 写准)= **现判据读不了它们的判词**。它有两种形态,别混为一谈:
+	#   ① **没有判词行**(`aim_probe` / `climb_probe` / `muzzle_probe` / `order_probe` / `perf_probe` /
+	#      `preview_probe` / `tile_destroy_probe`:逐支核过 `print` 里没有 `OK`/`PASS`/`DONE` 形状的判词);
+	#   ② **有判词行、但词汇不是 `OK`/`ALL-OK`**(`aim_direction_probe` 打 `== PASS, failures=0`;
+	#      ★ 注意它**失败**时打 `== FAIL, …` —— 那个词汇现判据**认**,所以它绿跑落 `NO-VERDICT`(假红)、
+	#      红跑会被正确判红。⇒ 它的危险是**假红**,不是"红的被藏起来")。
+	#   ⇒ 要让它们进批:① 类得**先加判词行**;② 类得**先把判词换成 `OK` 形状**。
+	#   ★ 照实说清:它们**从来不是守卫**(与 `registered-debt.md` §一 那三条"不算守卫"的探针同类)。
+	'tests/probe/aim_direction_probe.gd|E 判词**词汇不同**(2026-10-05 修复轮2 写准):它**有**判词行但打的是 `== PASS, failures=0`(`:61`)—— 现判据只认 `OK`/`ALL-OK` ⇒ 绿跑会落 `NO-VERDICT`(假红);★ 失败时它打 `== FAIL, …`,现判据**认**(会被判红)。⇒ 要它进批,得先把判词换成 `OK` 形状。headless 安全但**不是守卫**(无条数闸)'
+	'tests/probe/aim_probe.gd|E **无判词行**:逐支核过它的 `print` 里没有任何 `OK`/`PASS`/`DONE` 形状的判词 ⇒ 文本判据判不了它;headless 安全但**不是守卫**'
 	'tests/probe/climb_probe.gd|E **无判词行**;它是 T14 的读数修复对象,判据是人读 `latched=` ⇒ **仍不是守卫**(无断言、无条数闸)'
 	"tests/probe/muzzle_probe.gd|E **无判词行**(同 aim_probe 的核法)"
 	"tests/probe/order_probe.gd|E **无判词行**(同 aim_probe 的核法)"
@@ -400,6 +429,7 @@ gate_of() {
 # ── 枚举(glob;绝不写死清单)────────────────────────────────────────────
 load_known_red
 
+
 # ★ `--classify-check`:只跑分类器自检,不枚举、不跑测试(判据核心的回归语料)
 if [ "$CLASSIFY_CHECK" -eq 1 ]; then
 	classify_selfcheck
@@ -638,7 +668,8 @@ mkdir -p "$LOG_DIR/smoke" "$LOG_DIR/probe"
 #   锁是**状态**而不是**采样**:`run_real.sh` 见"活锁"就拒绝。★ 陈旧锁(pid 已死 / 心跳超时)
 #   判为陈旧 ⇒ `run_real.sh` **打醒目警告后放行**(否则就变成"永远拒绝的闸"那一面)。
 LOCK_FILE="tests/.run_all.lock"
-LOCK_STALE_SECS="${RUN_ALL_LOCK_STALE_SECS:-600}"   # 心跳超时(秒);pid 活着时**不看**心跳
+LOCK_STALE_SECS="${RUN_ALL_LOCK_STALE_SECS:-600}"   # 心跳超时阈值(秒);★ 活锁 = pid 活着 **且** 心跳在阈值内 ——
+                                                    # pid 活着但心跳超时 ⇒ **陈旧 ⇒ run_real 放行**(按代码写,2026-10-05 修复轮3)
 lock_write() {
 	printf 'pid=%s\nstart=%s\nheartbeat=%s\n' "$$" "$RUN_START_EPOCH" "$(date +%s)" >"$LOCK_FILE" 2>/dev/null || true
 }
@@ -681,7 +712,7 @@ for i in $(seq 0 $((N_RUN - 1))); do
 	fi
 	t1=$(date +%s)
 	sec=$((t1 - t0))
-	lock_write          # 心跳:每支一刷(见 R20;pid 活着时 run_real 不看心跳)
+	lock_write          # 心跳:每支一刷(见 R20)。★ 阈值 600s > 单支最长预算 150s ⇒ 正常跑不会因心跳被判陈旧
 
 	classify "$log" "$rc"
 	gate_of "$src"
@@ -790,7 +821,7 @@ else
 	# ★ I2 修(2026-10-05):"可能已修好,请删行"这句**只在"这趟真的跑过它、而它没红"时**才成立。
 	#   旧写法在 `--only <子集>` 下会打出这句 ⇒ 照做就删掉唯一那条基线 ⇒ 入口回到"永远 FAIL"。
 	#   ★ 去掉什么才会红(2026-10-05 修复轮2 订正 —— 原句指向的"请删行"提示已随 I2 删除,那句话已不存在):
-	#     把下面循环里的 `STALE_BASELINE=$((STALE_BASELINE + 1))` 删掉 ⇒ 一条**已修好却没删行**
+	#     把**上面那个**循环里的 `STALE_BASELINE=$((STALE_BASELINE + 1))` 删掉 ⇒ 一条**已修好却没删行**
 	#     的基线条目(或指向一支已转绿的支)就**不再报红** ⇒ 登记簿可以永久说谎。
 	echo "[known-red] 0 this run (baseline has $( [ "$KNOWN_RED_N" -eq 0 ] && echo 0 || echo "$KNOWN_RED_N" ) row(s))"
 fi
