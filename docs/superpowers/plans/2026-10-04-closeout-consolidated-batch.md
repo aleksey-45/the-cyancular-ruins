@@ -417,7 +417,7 @@
 - Modify: `tests/README.md` 与/或 `docs/eng/tests.md`(**仅当**射程口径变了 ⇒ 三处口径必须一致)
 
 **要满足的四条(实现者自选修法,但这四条不许打折):**
-1. ★★ **不许重开 C2**。Task 1 修复轮 2/3 收紧的正是"**崩在判词之前**仍被读成 OK"这条缝,两个反例(`tests/.run_all_logs/smoke/lobby_parse_smoke.log:3` 的 `PARSE[OK]: …`、`rewind_weapon_probe` 那条以 `ALL-OK` 结尾的中文说明行)**必须仍然落 `NO-VERDICT`**。它们已在 `--classify-check` 里(`RUN_ALL CLASSIFY-CHECK OK(N cases)` 是你的回归基线;★ 本任务把它从 **15 例扩到 20 例**,并已同步 `tests/README.md`/`docs/eng/tests.md` —— **这一句原本写的"15 例"是当时的基线,现行条数以 `--classify-check` 实跑为准**)。
+1. ★★ **不许重开 C2**。Task 1 修复轮 2/3 收紧的正是"**崩在判词之前**仍被读成 OK"这条缝,两个反例(`tests/.run_all_logs/smoke/lobby_parse_smoke.log:3` 的 `PARSE[OK]: …`、`rewind_weapon_probe` 那条以 `ALL-OK` 结尾的中文说明行)**必须仍然落 `NO-VERDICT`**。它们已在 `--classify-check` 里(`RUN_ALL CLASSIFY-CHECK OK(N cases)` 是你的回归基线;★ 本任务把它从 **15 例扩到 20 例**,并在**评审修复轮 1** 再加 4 例(I-1 的失败·中止词汇)→ **现行 24 例**;已同步 `tests/README.md`/`docs/eng/tests.md` —— **这一句原本写的"15 例"是当时的基线,现行条数以 `--classify-check` 实跑为准**)。
 2. **判据要写清"什么才算推翻判词"**:判词**之后**的行只有在"**本身像判词 / 像失败 / 像引擎报错**"时才推翻它;`notes:` 这类**良性尾行**必须放行。★ **别用"把 `notes:` 塞进噪声枚举"当终点**(本仓"**枚举会过期**"的病),要写清**判据**并说明"**将来出现一种新的良性尾行**会怎样"(放行 or 假红)。
 3. **证据必须能红(档 2 ⇒ 至少一条承重断言 + 变异)**:① 造"判词后跟良性尾行(`notes: …`)"的用例 ⇒ **必须判绿**(今天判红);② 造"判词后跟**新的**失败行 / 新的判词行"的用例 ⇒ **必须判红**;③ ★ **真跑 `haste_probe` 连续 ≥4 次**(`bash tests/run_all.sh --only haste_probe`,每次 20~25s)⇒ **至少抓到一次**"判词后有 `notes:`"的日志原文,并证明它现在判 `OK`(改前同一份日志判 `NO-VERDICT` —— 把两种判据的对比都贴出来)。
 4. **语料回归**:用盘上**单一年代**的那份快照(`tests/.run_all_logs/summary-20261005-022801.log` + 各支日志;★ 若被后续小跑覆盖过,就用你手上最新的**完整**一批并说明)重跑回归 ⇒ **除"预期变化"外 `changed=0`**,且**预期变化要逐条点名**(`haste_probe` 从 `NO-VERDICT` 变 `OK` 就是预期的那一类)。
