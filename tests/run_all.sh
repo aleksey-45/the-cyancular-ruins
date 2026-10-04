@@ -263,18 +263,40 @@ load_known_red() {
 #   · ★★ **OK 侧 = "判词三条件"(2026-10-05 三轮;评审 C2 + 重审 C2 残余 + Task 6 假红)**。
 #     三条**同时**满足才算判词肯定:
 #     ① **形状**:`ALL-OK`,或 `OK` 紧跟行尾/一个标点(即"OK 后面不许再跟空白+正文");
-#     ② **位置(2026-10-05 Task 6 改口径)**:命中行必须是**非引擎噪声行**,且它**之后不许再出现
-#        "判定形状"的行**(= 判词形状 / 失败 / **分项标记**);
+#     ② **位置(2026-10-05 Task 6 改口径;修复轮 1 补第四支)**:命中行必须是**非引擎噪声行**,且它
+#        **之后不许再出现"判定形状"的行**(= 判词形状 / 失败 / **分项标记** / **本仓自己的失败·中止词汇**);
 #     ③ **不是分项标记**:命中行**不许**是方括号标签(`[OK` / `[ALL-OK`)也**不许**带 `✓`/`✗`。
 #     **★ "什么才算推翻判词"(判据的权威定义;判词**之后**的行分三类)**:
-#       (a) **引擎噪声行**(定义见下)⇒ **永不推翻**。实测 112 份日志里 30 份的判词后面就跟这类行
-#           (含本支自己:`haste_probe` 判词后面是 `ERROR: PlayerInput…` + backtrace)。
+#       (a) **引擎噪声行**(定义见下)⇒ **永不推翻**。实测(2026-10-05 快照,盘上 112 份)**28 份**的判词
+#           后面就跟这类行(含本支自己:`haste_probe` 判词后面是 `ERROR: PlayerInput…` + backtrace)。
+#           ★ 这个数是**快照相关**的(语料一重跑就变;更早那份快照上是 30 ⇒ 评审 M-2),复算法见下。
 #           ★ **别读多**:这里**不是**"引擎报错被忽略",而是"判词一旦完整打出来,本入口就**不再**为
 #           它之后发生的事负责"—— 与「有意保留 `OK+RC`」(判词 OK、退出时 SIGSEGV 不算红)是**同一条**立场。
-#       (b) **判定形状的行** ⇒ **推翻**。三支各有归属:
+#       (b) **判定形状的行** ⇒ **推翻**。四支各有归属:
 #           · 判词形状(`OK_RE`)—— 由 `tail -1` 取**最后一条**命中兜住(后面又打了判词行 ⇒ 算数的是后一条);
 #           · 失败行(`FAIL_RE`)—— 由**上面的 FAIL 优先**兜住,而且**更重**(整支判 `FAIL` 而不是 `NO-VERDICT`);
-#           · 分项标记(`ITEM_RE`)—— **② 代码里唯一真正要查的一支**(前两支结构上不可能落到这里)。
+#           · 分项标记(`ITEM_RE` = `[OK`/`[ALL-OK`/`✓`/`✗`)与
+#             **本仓自己的失败·中止词汇(`SELFFAIL_RE`)** —— **② 代码里真正要查的两支**
+#             (前两支结构上不可能落到这里)。
+#     **★★ 判准(为什么这些词算"判定形状"、而不是"良性尾行";2026-10-05 修复轮 1,评审 I-1)**:
+#       **凡在表达"本支的断言/检查有失败、或没有跑完"的行,都是判定形状。**
+#       它与 (a) 类(引擎在说话)和 (c) 类(脚本补一句**说明**)的区别只有一条:**它在对本次运行下判断**。
+#       ★ 为什么必须补这一支(评审 I-1 的一手证据):本仓中文失败汇总是**现网词汇**
+#       (`grep -rn 'print.*失败\|不通过' tests/{smoke,probe}/*.gd | grep -vcE 'FAIL|✗'` = **33 行**,
+#       例 `tests/smoke/app_info_smoke.gd:43`),而 `FAIL_RE` 只认 `FAIL`/`FAILURES` 这类**大写英文** ⇒
+#       判词后再出现一句 `APP INFO SMOKE: 3 条失败`:旧口径 `NO-VERDICT`(**归红**),
+#       Task 6 初版落 `OK` / **`OK+RC`(本入口明说"不算红")** ⇒ **真红被洗白**。
+#     **★ 落地的清单(每项挡什么 / 边界在哪)**:判准是上面那句话,清单只是**今天实现它的词汇** ——
+#       · `失败` / `不通过` / `未通过` —— 挡现网的**中文**失败汇总(`N 条失败`、`断言失败`)。
+#       · `[Ff]ail` —— 挡**小写/混合大小写**英文失败词(`assertion failed`、`failures=3`);
+#         大写 `FAIL` 由上面的 `FAIL_RE` 全局兜住(到这里根本轮不上)。
+#       · `[Aa]borted` / `[Dd]id not (run|execute)` / `[Nn]ot executed` / `checks?[[:space:]]+ran`
+#         —— 挡"**没跑完 / 一条都没跑**"(`check 12/86 executed; run aborted`、`0 checks ran (early-exit)`)。
+#       · ★ **有意不收** `跳过` / `skipped`:本任务要放行的那一行 `  notes: 敌速采样不足…:对比跳过`
+#         说的正是"**某一项**因样本不足没测",不是"本支的检查没跑完";收了它就把要修的假红做回来。
+#         ⇒ **代价(照实)**:若哪天某支用"跳过"表达"整支没跑完",**本判据读不出来**(落 (c) 类放行)。
+#       · ★ **清单之外**的行一律落 (c) 类**放行**;新措辞该按**判准**并进来 —— 不是让 (c) 悄悄兜走,
+#         也不是"再加一个词就完事"(那正是本仓"枚举会过期"的病)。
 #       (c) **其它任何良性尾行**(`notes: …`、一句说明、**未见过措辞**的引擎消息)⇒ **放行**。
 #     **为什么必须三条**(每一轮都是被真实反例逼出来的;记的是**当时那一步**在挡什么):
 #       - ① 的形状收紧("OK 后面不许再跟空白+正文")挡的是 `[squash_host] OK     6 ( … )` 这类
@@ -291,22 +313,31 @@ load_known_red() {
 #     ★★ **放松了什么 / 会不会把真红读成绿(照实写,别读多)**:放松的正是 (c) 那一类 ——
 #       旧口径下"判词 + **任何**非噪声尾行"必红,现在只要尾行**不带判定形状**就算绿。
 #       残留的"红读成绿"形状 = 「**一条过 ①③ 的判词形状行、它不是这支的真判词、它之后只有非判定形状
-#       的行、且全日志没有 FAIL 字样**」。实测(Task 6:盘上 112 份日志,新老判据逐份比对)——
+#       的行、且全日志没有 FAIL 字样**」。★ 修复轮 1 后这个区已被 (b) 的第四支**收窄**:
+#       凡带"本支的断言有失败 / 没跑完"字样的尾行**不再**落进来(评审 I-1)。
+#       实测(Task 6:盘上 112 份日志,新老判据逐份比对,取**固定快照**)——
 #       **批年代内容 `changed=0`**;**冻结快照 `changed=1`,而唯一那条 = `haste_probe` 的假红翻类**
 #       (`NO-VERDICT` → `OK`,= 本任务要修的那一类,**不是**"红读成绿")⇒ **"真红读成绿"的实例 0 例**。
 #       ★ **另一种子形态不属本次放松**:"那条判词形状行**本来就是**最后一条非噪声行"(没有尾行可谈)⇒
 #       旧口径**也**判绿 —— 那是旧账、不是新开的口子(重审已实测 `residual false-green truncation points: 0`,
 #       典型形态 = `[squash_host] floor frame 44 OK` 这种**以 OK 结尾的分项行**)。
-#     ★ **将来新增一种良性尾行会怎样**:只要**不带判定形状**(`[OK`/`[ALL-OK`/`✓`/`✗`),
-#       一律**放行**(不会再假红);若哪天某支把**判词行或分项标记**打在判词**之后**,仍落 `NO-VERDICT`
+#     ★ **将来新增一种良性尾行会怎样**:只要**不带判定形状**(`[OK`/`[ALL-OK`/`✓`/`✗`,也不带上面
+#       那条"本支失败/没跑完"的判准词汇),一律**放行**(不会再假红);若哪天某支把**判词行、分项标记
+#       或失败·中止汇总**打在判词**之后**,仍落 `NO-VERDICT`
 #       (**方向是安全的**:宁可假红,不把"判词不是最后一条判定行"读成绿)。
 #     ★ **第三种真实形态要点名**:判词**带标点**不只有 `SMOKE OK`/`ALL-OK` 两种 ——
 #       `lobby_parse_smoke` 的真判词是 `PARSE: 1 项,0 失败 → ALL-OK`(带 `:`、`,`、`→`),
 #       `WRAP-OK: …`(带 `-`)、`GRACE_WINDOW OK`(方块名 + 空格)也都是判词形状。
-#   · ★ **引擎退出噪声的定义**(②里"非噪声"的判据;清单来自 112 份真实日志的**实测尾部形状**):
+#   · ★ **引擎退出噪声的定义**(②里"非噪声"的判据;清单来自真实日志的**实测尾部形状**):
 #     空行 / `at: …` / `[N] …`(backtrace 帧)/ `GDScript backtrace …` /
 #     `WARNING: …` / `ERROR: …` / `USER ERROR: …` / `USER WARNING: …` / `SCRIPT ERROR: …` / `Godot Engine v…`。
-#     实测:112 份里 30 份的判词后面就跟着这类行(`… leaked at exit` / `at: clear (core/io/resource.cpp:822)`)。
+#     实测(2026-10-05,**28/112**;★ 口径随语料批次 —— 更早那份快照上是 **30**,评审 M-2 复算过):
+#     判词后面就跟着这类行(`… leaked at exit` / `at: clear (core/io/resource.cpp:822)`)。
+#     **复算**(`$OK_RE`/`$NOISE_RE` 就是上面那两条正则;逐份跑,数"最后一条判词形状行**之后**还有噪声行"的支):
+#       n=0; for f in tests/.run_all_logs/smoke/*.log tests/.run_all_logs/probe/*.log; do
+#         v=$(tr -d '\r' <"$f" | grep -nE "$OK_RE" | tail -1 | cut -d: -f1); [ -n "$v" ] || continue
+#         tr -d '\r' <"$f" | tail -n +$((v + 1)) | grep -qE "$NOISE_RE" && n=$((n + 1)); done
+#       echo "$n / $(ls tests/.run_all_logs/*/*.log | wc -l)"
 #   · ★ **射程与盲区(落纸;2026-10-05 重写,Task 6 又改了一处)**:
 #     - **能给的最强保证(2026-10-05 Task 6 改口径后)** = "**脚本最后一条『判定形状』的行就是判词**"
 #       —— 判词之后**只允许**引擎噪声行与**非判定形状**的补充行。(旧措辞是"判词是脚本最后打的东西";
@@ -331,6 +362,12 @@ OK_RE='(^|[^A-Za-z0-9])ALL-OK|(^|[^A-Za-z0-9])OK($|[^A-Za-z0-9[:space:]])'
 NOISE_RE='^[[:space:]]*$|^[[:space:]]*(at:|\[[0-9]+\]|GDScript backtrace|WARNING|ERROR|USER ERROR|USER WARNING|SCRIPT ERROR|Godot Engine)'
 # ③的"分项标记"判据
 ITEM_RE='\[[[:space:]]*(ALL-)?OK|✓|✗'
+# ②的第四支:**本仓自己的失败·中止词汇**(2026-10-05 修复轮 1;评审 I-1)。
+# ★ 判准(权威表述在文件头「判准(为什么这些词算"判定形状")」):
+#   **凡在表达"本支的断言/检查有失败、或没有跑完"的行,都是判定形状。**
+# ★ 只用在**判词之后**那一侧(②);不加到命中行上(大写 `FAIL` 另由最上面的 `FAIL_RE` 全局兜住)。
+# ★ **有意不收** `跳过`/`skipped`:要放行的那一行 `  notes: …:对比跳过` 说的是"某一项没测"。
+SELFFAIL_RE='失败|不通过|未通过|[Ff]ail|[Aa]borted|[Dd]id not (run|execute)|[Nn]ot executed|checks?[[:space:]]+ran'
 
 # 单支分类:$1 = 日志路径,$2 = 退出码 ⇒ 设置 VERDICT / VLINE / VLINE_N
 # VERDICT ∈ {OK, OK+RC, FAIL, NO-VERDICT, TIMEOUT};见文件头「判据分层」。
@@ -351,14 +388,16 @@ classify() {
 	hit=$(tr -d '\r' <"$log" 2>/dev/null | grep -nE "$OK_RE" | tail -1)
 	if [ -n "$hit" ]; then
 		ok_n="${hit%%:*}"; ok_line="${hit#*:}"
-		# ② 位置(2026-10-05 Task 6 改口径):判词之后**还有没有"判定形状"的行**?
-		#    ★ 这里只查 `ITEM_RE`(分项标记),因为另外两支结构上落不到这里:判词形状由上面的
-		#      `tail -1` 兜住、失败由上面的 FAIL 优先兜住。良性尾行(`notes: …`)一律放行。
-		#    ★ 用 `tail -n +N` 取判词之后的**原文行**,再剔掉引擎噪声行(判词后的噪声实测 30/112 份)。
+		# ② 位置(2026-10-05 Task 6 改口径;修复轮 1 见评审 I-1):判词之后**还有没有"判定形状"的行**?
+		#    ★ 查**两支**:`ITEM_RE`(分项标记)与 `SELFFAIL_RE`(**本仓自己的失败·中止词汇** ——
+		#      中文 `N 条失败` / 小写 `assertion failed` / `0 checks ran` / `run aborted`);
+		#      另两支结构上落不到这里:判词形状由上面的 `tail -1` 兜住、失败由上面的 FAIL 优先兜住。
+		#      良性尾行(`notes: …`,含 `:对比跳过`)一律放行 —— 判准见文件头。
+		#    ★ 用 `tail -n +N` 取判词之后的**原文行**,再剔掉引擎噪声行(判词后的噪声实测约 28/112 份)。
 		#    ★ 全程用 grep 而不是 awk:同一个 `$NOISE_RE`(grep ERE 里 `\[`/`\]` 是正解),
 		#      而 awk 会把 `\[` 报成 "escape sequence treated as plain" —— **警告到 stderr**(实测)。
 		tail_judge=$(tr -d '\r' <"$log" 2>/dev/null | tail -n +$((ok_n + 1)) |
-			grep -vE "$NOISE_RE" | grep -E "$ITEM_RE" | head -1)
+			grep -vE "$NOISE_RE" | grep -E "$ITEM_RE|$SELFFAIL_RE" | head -1)
 		# ② 命中行自己也不能是**引擎噪声行**(判词是脚本打的,不是引擎打的);③ 不许是分项标记
 		if [ -z "$tail_judge" ] &&
 			! printf '%s' "$ok_line" | grep -qE "$NOISE_RE" &&
@@ -419,13 +458,13 @@ classify_selfcheck() {
 		'[RW-WEAPON] ✓ S2: 越界错误只结束那个函数、verdict 照打 ALL-OK'
 	# ★ ①d:真判词**带标点**那条形态本身必须**能**判绿(别把真的也挡了)。
 	check_case "verdict-with-punctuation" 0 OK 'PARSE: 1 项,0 失败 → ALL-OK'
-	# ★ ①e:"判词之后**只有引擎退出噪声**"必须仍判绿(实测 30 份日志如此)。
+	# ★ ①e:"判词之后**只有引擎退出噪声**"必须仍判绿(实测 28 份日志如此;口径随语料批次,见上)。
 	check_case "verdict-shaped-then-dash-verdict" 0 OK 'WRAP-OK: 鸟跟随玩家回绕,不再跳远副本'
 
 	# ② 判词是最后一行(最常见形态)→ OK。去掉 OK 侧判据 ⇒ 红。
 	check_case "verdict-last" 0 OK 'SQUASH HOST PROBE: ALL-OK'
 	check_case "verdict-smoke" 0 OK 'SMOKE OK'
-	# ③ 判词**后面**跟着引擎退出噪声(实测 30 份日志如此:`at: clear (core/io/resource.cpp:822)` 等)
+	# ③ 判词**后面**跟着引擎退出噪声(实测 28 份日志如此:`at: clear (core/io/resource.cpp:822)` 等)
 	#    ⇒ 仍须 OK(这条守的是"别把逐支表全判成 NO-VERDICT")。
 	check_case "verdict-then-exit-noise" 0 OK \
 		'LOBBY ROW PROBE: ALL-OK(14 条断言)' \
@@ -468,7 +507,7 @@ classify_selfcheck() {
 	# ⑨c **判词之后又打了一条"判定形状"的行(分项标记 `✓`)⇒ 必须判红**。
 	#     形状出处:`tests/lib/probe_base.gd` 的 `_summary` 在没有新增失败时打 ✓ 汇总行(真实存在的形状)。
 	#     ★ 去掉什么才会红:**删掉 ② 里那段 `tail_judge=` 查询** ⇒ 这条会变 `OK+RC` ⇒ 红。
-	#     ★ 这是 ② 的**位置**那一支改口径后**唯一**还活着的内容,方向 = fail-closed(宁可假红)。
+	#     ★ 这一支与 ⑨f/⑨g/⑨h 一起构成 ② 的**位置**那一支(方向 = fail-closed:宁可假红)。
 	check_case "item-marker-tail-after-verdict" 139 NO-VERDICT \
 		'KH RW-WEAPON PROBE: ALL-OK' \
 		'✓ 全部通过'
@@ -484,12 +523,35 @@ classify_selfcheck() {
 		'FOO PROBE: OK(1 项)' \
 		'FOO PROBE: FAILURES: 1'
 
+	# ── ⑨f–⑨h 组(2026-10-05 **修复轮 1**;评审 I-1):**本仓自己的失败·中止词汇**也必须推翻判词 ────
+	# ★ 判准(文件头):**凡在表达"本支的断言/检查有失败、或没有跑完"的行,都是判定形状。**
+	# ★ 这三条的"去掉什么才会红":把 `SELFFAIL_RE` 从 ② 的 grep 里拿掉
+	#   (即回到只查 `ITEM_RE` 的那一版)⇒ 三条全部变绿(⑨f rc=1 那条变 **`OK+RC` = 明确"不算红"**)。
+	# ⑨f 中文失败汇总(**现网词汇**:`grep -rn 'print.*失败\|不通过' tests/{smoke,probe}/*.gd | grep -vcE 'FAIL|✗'`
+	#     = 33 行;行形状抄自 `tests/smoke/app_info_smoke.gd:43` 那一族)。rc=1 ⇒ 初版会落 `OK+RC`(**不算红**)。
+	check_case "repo-failure-words-tail-after-verdict" 1 NO-VERDICT \
+		'APP INFO SMOKE: ALL-OK(version=「main #1431」, commits=20)' \
+		'APP INFO SMOKE: 3 条失败'
+	# ⑨g "**一条都没跑**"的形状(判词之后自称空转 ⇒ 这支其实没验过任何东西)。
+	check_case "none-ran-tail-after-verdict" 0 NO-VERDICT \
+		'FOO PROBE: ALL-OK' \
+		'  notes: 0 checks ran (early-exit before assertions)'
+	# ⑨h **小写**英文失败 + 未跑完(`FAIL_RE` 只认大写 ⇒ 初版读不到它)。
+	check_case "lowercase-assertion-failed-tail" 0 NO-VERDICT \
+		'FOO PROBE: ALL-OK' \
+		'check 12/86 executed; run aborted (assertion failed: 3 of 86 checks did not run)'
+	# ★ ⑨i **边界**:要放行的那一行里就含"某一项跳过"(`:对比跳过`)⇒ 必须**仍然判绿**
+	#   (若把 `跳过`/`skipped` 也收进 `SELFFAIL_RE`,这条立刻变红 = 把本任务要修的假红做回来)。
+	check_case "skip-note-tail-still-benign" 0 OK \
+		'HASTE PROBE: OK(倍率表/敌速×0.50/敌弹×0.50/玩家移速×2.00/跳跃高度不变/红蓝残影/高亮规则/精英亮黄/松开全卸/回NONE/扣颗粒)' \
+		'  notes: 敌速采样不足(普通 128.63 / 加速 0.00):对比跳过'
+
 	rm -rf "$d"
 	if [ "$fails" -gt 0 ]; then
 		echo "RUN_ALL CLASSIFY-CHECK FAIL($fails cases)"
 		return 1
 	fi
-	echo "RUN_ALL CLASSIFY-CHECK OK(20 cases)"
+	echo "RUN_ALL CLASSIFY-CHECK OK(24 cases)"
 	return 0
 }
 
