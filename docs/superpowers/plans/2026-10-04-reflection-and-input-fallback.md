@@ -132,7 +132,11 @@ git commit -m "refactor(weapons): 去掉三处 Input.is_action_* 兜底(武器�
 
 **Interfaces:**
 - Consumes: `world_rewind.gd:98-103` 的注释**自己记着这族反射引发的真事故** —— `_current_slot` 改名成
-  `_current_type` 之后 `get` 返回 null ⇒ **快照值静默恒为 0**（不报错、不中断）；`:104-114` 是同一族。
+  `_current_type` 之后 `get` 返回 null ⇒ 旧注释说"**快照值照旧是 0、不报错、不中断**"。
+  ★★ **2026-10-04 实测订正（后果比原话重）**：那次事故**不是"wslot 静默 0"**，而是**那一帧的玩家快照整体退化成空字典**
+  （`snap.size()=0 keys=[] is_empty=true`）⇒ `rewind_restore({})` 在第一个键上就早退 ⇒ **位置/HP/武器全都不还原**
+  （端到端 `rewind_probe` 7 条红：位置差 276px、HP 30≠50、HUD 血量通知未触发）。★ 机制由补审在**隔离工程**复现：
+  `-> Dictionary` 的函数内运行期报错会**中止该函数并返回空字典**（`typeof=27, size=0`）。`:104-114` 是同一族。
 - Produces: 类型化访问；★ `swim_component.gd:31` 若要类型化得**给 player 根加 `class_name`** ⇒ 那是**动类结构**，**先报告再动**。
 
 - [ ] **Step 1: 定位** —— `grep -n 'get("\|set("\|call("' core/sim/world_rewind.gd scenes/player/swim_component.gd` + 弄清每个成员属主与有没有 `class_name`
