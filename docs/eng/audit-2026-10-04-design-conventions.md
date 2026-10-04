@@ -386,7 +386,10 @@ window/stretch/mode="viewport"
 
 1. ❓ §1.4：1920×1440 窗口在 1080p 屏上走"超出屏幕"还是"被 OS 钳制成 0.75× 非整数放大"——
    未运行引擎。
-2. ❓ §1.1：幽灵砖是**由调用链推出**（格级回调只有服务器接线、激光在单机必走格级），**未实机复现**。
+2. ✅ **已销(2026-10-04)**:§1.1 幽灵砖**已实机复现 + 已修** —— `tile_collision_probe` 的相③b 在修复前红在
+   `相③b 格级销毁后仍有 16/16 子格在画(幽灵砖)`;修复后 `TILE COLLISION PROBE: ALL-OK`(含「格级销毁无幽灵砖」)。
+   服务器侧同期修了两处:4×4 清格子格坐标(`* 2` 清到了 `(x/2,y/2)` 的右上象限)、以及每局复位漏 `init_sub_hp`
+   (⇒ 下一局"客户端有墙、服务器没有")。详见 [`plans/2026-10-04-tile-destruction-consistency.md`](superpowers/plans/2026-10-04-tile-destruction-consistency.md)。
 3. ❓ 地形层缺 `texture_filter`：`scenes/level_0.tscn` 里 `WallLayer`/`WaterLayer`/`WaterSurfaceLayer`
    **无**该属性（该文件仅 `:21` 处有 `texture_filter = 1`，那是 **Player** 节点），
    而 `player.tscn:131`、`bullet.tscn:19` 等精灵全是 `1`(NEAREST)，`project.godot` 又没设

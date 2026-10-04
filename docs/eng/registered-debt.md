@@ -49,3 +49,21 @@
 | 代码内契约与残留 | 源码注释里的「★ 已知」「★ 待修」 |
 | 逐任务评审判决与恢复地图 | `.superpowers/sdd/progress.md`(**gitignore**) |
 | 2026-10-04 全仓审计发现的 20 条(含 `[debug]` 键失效、发布包打进 tests、`ax` 无界等) | [`docs/eng/audit-2026-10-04-design-conventions.md`](audit-2026-10-04-design-conventions.md) §7 的批次清单,等人工挑入本表 |
+
+## 五、守卫强度已知缺口(2026-10-04 加)
+
+**这些不是"红",是有守卫但保证比读起来少** —— 与 [tests.md](tests.md) 末节同一类,发现者都是审阅者不是实现者。
+
+1. **`tests/probe/tile_collision_probe.gd` 用"跑完闩"(`_ran_to_end`)而不是计数闸。** 它只覆盖
+   **`_run()` 自身**出错(那时闩为假 ⇒ `_finish()` 打 FAIL);但按 [`tests/lib/probe_base.gd`](../tests/lib/probe_base.gd)
+   文件头的权威表述,**helper 内部**出错只结束那个 helper、`_run()` 继续跑到底 ⇒ 闩为真 ⇒ 断言被静默跳过而
+   verdict 照打 `ALL-OK`。**权威形式是 `_checks >= EXPECTED_CHECKS`**(本仓对新场景探针的要求)。
+   补法:给该文件加 `_checks` 计数 + `EXPECTED_CHECKS` 下限(要逐个断言点计数,这是本条一直没做的原因)。
+2. **客户端 `Level0` 也注册了格级 `on_destroyed`**(`scenes/level_0.gd:246`,在 `pvp_mode` 早退**之前**),
+   它的"惰性"依赖"客户端不调 `damage_tile`"这个事实,而**这条事实没有守卫**:`tests/smoke/laser_weapon_smoke.gd:64-67`
+   只要求文件里**提到** `Level0.pvp_mode`(没绑到 `_damage_tiles` 那条闸);子弹那半有
+   `tests/smoke/bullet_tile_fx_smoke.gd:63-68` 兜住。★ 风险:那条闸哪天一回归,客户端会**本地**清掉 16 个 `sub_hp`
+   ⇒ 与服务器分歧;本轮新增的接线把这条的爆炸半径放大了。
+3. **`tests/probe/perf_probe.gd:179/205-211` 是"服务器清格子格"算法的第二份口径**(仍是 v3 的 `*2` / `x/2`)。
+   ★ 准确说法是"**口径已分家的合成消融**",**别**登记成"重复真相源待合并" —— 它清 4/16 个子格、`:179` 选块也用的旧换算,
+   所以它的 timing 与覆盖率跟生产实现不是一回事。

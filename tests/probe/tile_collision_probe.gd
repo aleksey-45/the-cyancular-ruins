@@ -22,7 +22,7 @@ extends Node
 # 相⓪/相⑥ 全场抽样(每 8 个子格一点):**渲染与碰撞各自与规则逐点相等** —— 这一相就是
 #      「建筑有没有虚空碰撞箱」的直接回答,破坏+回溯之后再扫一遍
 #
-# 用法:godot --headless --path . res://tests/probe/tile_collision_probe.tscn
+# 用法:godot --headless --path . --quit-after 3600 res://tests/probe/tile_collision_probe.tscn
 
 const STRIDE := 8   # 全场抽样步长(子格);8 子格 = 128px = 2 格
 
