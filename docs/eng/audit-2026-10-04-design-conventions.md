@@ -398,7 +398,7 @@ window/stretch/mode="viewport"
 > | 2 双 autoload | **③ 已过期**：`net_bus_ext.gd:4-6`「原 NetBus 保持与原版逐字节一致」今天为假 —— 自建 Ext 那次（★ 订正出处：Ext 的创建提交是 `e7b53fd`「搬入 NetBusExt 扩展协议收口节点」（2026-09-10）；原写的 `716b6fc`（2026-09-15）是 `core/` 分目录**搬家**）之后 `net_bus.gd` **一直在改** —— **保守下界**：从搬家那次 `716b6fc..HEAD` 起仍有 **6 次**（`git log --oneline 716b6fc..HEAD -- core/net/net_bus.gd`）、**+132/−1**，并**插进 2 条 `@rpc`**（`:282`→`weapon_spawned`、`:286`→`weapon_removed`；`func` 在 `:283`/`:287`）—— 正是头注预警会"RPC 全部失联"的那种改动。分离还已生出雷：`net_bus_ext.gd:39-43` 那对 `beam_fired` 零消费者，逼出两条防呆注释（`net_bus.gd:280`、`pvp_match_client.gd:882`）。兼容对象**仍在**（`pvp_session.gd:12` 默认云服 `120.53.107.140`、`README.md:33`） |
 > | 9 `rendering/mobile` | **② 无仓内理由**：3D 节点 0、`hint_screen_texture`/`SCREEN_TEXTURE`/`BackBufferCopy` 0 命中（事实），但**没有任何一处写"为什么"** ⇒ **不满足"有理由"判据**（原文自己也这么写，与本表表头自相矛盾）。另：`gdbuild:3 disable_3d: true` ⇒ 发布模板本就摘了 3D，该设置对发布版近乎惰性 |
 > | 10 SubViewport 2208×1728 | **② 半截**：2208×1728 只出现在 `scenes/level_0.tscn:13`，仓内**无注释解释 2×144**；"裁剪后逐像素恰 1 texel"可由 `post_process.gd:17-18 crop_scale` 推出，但"**+38% 填充写明**"**全仓（含 docs）查无出处** —— 那是我的算术。唯一**写明**的放大理由是另一件事（`post_process.gdshader:27-28` 世界视口大于窗口 ⇒ 鱼眼边缘无黑边） |
-> | 17 `env.sh` 三条理由 | **③ 条数已过期**：`env.sh:13-14` 写 `set -e` 3 个 / `set -u` 5 个，实测 **2 / 8**（10 支脚本）。且"`[7800,8300)` 不扫"**只对池外两支成立**（`rejoin_probe.sh:30`、`team_match_probe.sh:35` 明文承诺），而 `pvp_match_smoke.sh:12/41`、`royale_soak_probe.sh:28/42` **照样扫该区间**（靠 `lobby_alive` 把关）⇒ **与 [`AGENTS.md`](../../AGENTS.md) §1 那句「绝不扫 `[7800,8300)`」直接矛盾** |
+> | 17 `env.sh` 三条理由 | **③ 条数已过期**：`env.sh` 的 ⚠ 段原写「`set -e` 的 **3** 个 / `set -u` 的 **5** 个」，实测 **2 / 8**（10 支脚本）（★ 2026-10-04 订正：原文引 `:13-14`；同日 `9e4ccbe` 已把这两处**硬计数删掉**、把实测值记在 `:15-16`）。且"`[7800,8300)` 不扫"**只对池外两支成立**（`rejoin_probe.sh:30`、`team_match_probe.sh:35` 明文承诺），而 `pvp_match_smoke.sh:12/41`、`royale_soak_probe.sh:28/42` **照样扫该区间**（靠 `lobby_alive` 把关）⇒ **与 [`AGENTS.md`](../../AGENTS.md) §1 那句「绝不扫 `[7800,8300)`」直接矛盾** |
 > | 其余各条：3 端口池 · 4 杀端口 · 8 squash 常量 · 11 61MB · 12 取景 150% · 13 绝对定位 · 14 生成器 · 15 `allscript_probe` | **① 源码/注释真有的理由，复核后仍成立**（细节与代价见本轮复核记录）。★ 但 13（绝对定位）的"无需重排"前提**已被 §10 的裁定推翻** —— 一旦 §1.4 让窗口可缩放/加全屏，这条理由当场失效 |
 
 
@@ -422,7 +422,7 @@ window/stretch/mode="viewport"
 | 生成器产出 `.tscn` 不入库、无 `--check` | `tools/gen_menu_scene.gd:54-61` 明写覆盖上限（"只保证同一份代码建出来的树 == `.tscn`"） |
 | `allscript_probe` 排除点目录 + 条数下限 | `allscript_probe.gd:24-35` 写明数法与"别降级成 `<`"的理由 |
 | 「退出码不可作判据」 | `probe_base.gd:49-53` + `room_sweep_smoke.gd:58-63` 的具体事故；★ 但这条被**过度概括**了，见 §2.9 |
-| `env.sh` 不设 `set -e/-u`、按端口杀、`[7800,8300)` 不扫 | `env.sh:12-14/39-40/52-63` 三条都写明理由 |
+| `env.sh` 不设 `set -e/-u`、按端口杀、`[7800,8300)` 不扫 | `env.sh:12-14/42-43/55-66` 三条都写明理由（★ 2026-10-04 订正行号：原文写 `:39-40/52-63` —— `9e4ccbe` 在本文件上方插了 3 行，整段随之下移） |
 
 ---
 
