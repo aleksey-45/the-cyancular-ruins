@@ -12,6 +12,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 - **引擎**:Godot **4.7.1 标准(非 mono)**编辑器打开 `project.godot` 直接跑(F5)。
 - **单人**:主菜单 →「单人」。
 - 视口 1920×1440,`rendering/mobile`。
+- 设置页「显示」组可选 **4:3 四档分辨率**(1280×960 / 1600×1200 / 1920×1440 / 2560×1920)与**全屏**;默认窗口仍是 1920×1440(逻辑基准),`stretch/aspect=keep` ⇒ 窗口任意大小时**版式不变**(等比缩放 + 黑边)。
 
 ### 控制(以 `project.godot` 输入映射为准)
 - 左右移动、上=跳跃/爬梯、下=下蹲/下落/下潜;水中上浮下潜
