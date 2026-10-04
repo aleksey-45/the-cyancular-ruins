@@ -183,12 +183,15 @@
 **合并自:** `reflection-and-input-fallback` T5(两处实测缺陷)+ T4(PvP 生产端/写回端反射 + `world_rewind.gd:95`)。
 ★ **档 3**(「回滚与快照」在档位表里是承重面)⇒ 逐条变异 + 真链路跑批 + 逐任务评审。
 
-**Files:**
-- Modify: `scenes/player/player.gd`(`_equip_index` 一带 —— 先 `grep` 复核)
-- Modify(必要时): `scenes/player/weapon_component.gd`(★ **不是** `scenes/weapons/…` —— 控制器派发前实测该文件在 `scenes/player/` 下,原计划那处路径是错的)
-- Modify: `core/sim/world_rewind.gd`(`:95` 的 `player.get("weapons")` + 该文件里所有 `get(`/`set(`/`call(` 的**玩家武器段**)
-- Modify: `server/match/match_host.gd`(`:402-413` / `:455-465` 一带 —— 先 `grep` 复核)
-- Modify: `tests/probe/rewind_weapon_probe.gd`(断言所在;现 `EXPECTED_CHECKS = 61`,加断言要同步四处计数口径)
+**Files:**(★ 下面的**文件归属与行号是 2026-10-05 控制器实测**;`grep` 为准,别再照抄原计划的归属)
+- Modify(★ **主战场**): `scenes/player/weapon_component.gd` —— `_equip_index()` 在 **`:224`**(**不在 `player.gd` 里**,原计划归属写错了);
+  残弹写回条目在 **`:236-237`**;把条目残弹塞进 `pending_mag` 在 **`:254-257`**。★ 文件在 `scenes/player/` 下(`class_name WeaponComponent` 在 `:1`)。
+- Modify: `scenes/weapons/weapon_base.gd` —— **`pending_mag` 的消费端** = `_ready()` 里 **`:200-202`**(`if pending_mag != MAG_UNSET: mag_ammo = clampi(...)`)。
+  ★ **这一行就是"发现 A"里冲掉回溯值的那个机制**;`var pending_mag` 声明在 `:111`。
+- Modify: `scenes/player/player.gd` —— **回溯写回路径 `:985-998`**,其中 **`:991` `wc.equip_index(int(d["widx"]))`** 正是"发现 B"的现场(`player.gd:42-43` 是两个类型化成员 `weapons`/`combat`)。
+- Modify: `core/sim/world_rewind.gd`(`:114` 的 `player.get("weapons")` + 该文件里所有 `get(`/`set(`/`call(` 的**玩家武器段**)
+- Modify: `server/match/match_host.gd`(`:400-413` / `:453-465` 一带 —— 先 `grep` 复核)
+- Modify: `tests/probe/rewind_weapon_probe.gd`(断言所在;现 `EXPECTED_CHECKS = 61`,加断言要同步**四处**计数口径)
 - **不要改语义**: `tests/harness/royale_bound_watcher.gd:230` 与两个探针直调点**在读同一处** —— 先 `grep` 找齐,只报告/适配,别顺手改它们的行为
 
 **Interfaces:**
@@ -209,6 +212,7 @@
 
 - [ ] **Step 1: 定位** —— `grep -n 'get("\|set("\|call("' core/sim/world_rewind.gd server/match/match_host.gd scenes/player/player.gd`;
   弄清每个成员**属主**与**读写方向**(谁是生产、谁是写回),并数清 `player.get("weapons")` 一族**到底有几处**(★ 别信本计划的两处:自己 grep)。
+  ★ **同时把 A / B 两条缺陷链路的每一环点出来**(控制器已实测,仍请自己复核):`weapon_component.gd:224` `_equip_index()` → `:254-257` 把条目残弹塞进 `pending_mag` → `weapon_base.gd:200-202` 的 `_ready()` 用它冲掉 `mag_ammo`(发现 A);`player.gd:991` 的回溯写回调 `wc.equip_index(...)` → `weapon_component.gd:236-237` 把走掉那把的实弹写回条目(发现 B)。
 - [ ] **Step 2: 先写"能红"的断言(档 3 ⇒ 优先行为,形状作副判据)**
   在 `tests/probe/rewind_weapon_probe.gd` 里把 **A / B 两组实测数字**变成断言(切枪帧与跨武器两种情形)。
   ★ 若现有 28 条功能断言**已覆盖**这两种情形却仍绿 ⇒ **报告**(说明它们没测到点上),别硬凑。
