@@ -17,8 +17,14 @@
   用 `get_tree().current_scene` 认大厅 —— 与导出形态（无裁判进程）同一条路。
 - ~~`project.godot` 的 `log_file_logging/max_log_files` 5 → 64（原先会把崩溃现场轮转吃掉）。~~
   **★ 2026-10-04 实测撤销这条"已交付"**:①键名两层都写错(应为 `debug/file_logging/max_log_files`);
-  ②该键在 `d6d2440`(B10 改键位那个提交)被并进乱码、**从未生效** ⇒ 配额至今仍是引擎默认 5。
-  取证见 [审计报告 §1.2](eng/audit-2026-10-04-design-conventions.md)。
+  ②该键在 `d6d2440`(B10 改键位那个提交,2026-09-26)被并进乱码 ⇒ **自那以后不再生效**,配额回落到引擎默认 5
+  (★ 别读成"从未生效":`f1a8afb`(2026-09-17,就是本篇那次"5→64")写进 64 之后到 `d6d2440` 之间,它是**真的生效过**的)。
+  **★ 2026-10-04 恢复(订正上面那半句"配额至今仍是引擎默认 5")**:`b2f4134` 把 `[debug]` 的文件日志三键
+  (`enable_file_logging` / `enable_file_logging.pc` / `max_log_files=64`)整块写回 `project.godot`,
+  并配常驻守卫 `tests/smoke/project_settings_smoke.gd` ⇒ **配额现在是 64,不是 5**;
+  于是本条"5 → 64"作为**交付**重新成立(键名按订正后的写法读)。取证见
+  [审计报告 §1.2](eng/audit-2026-10-04-design-conventions.md)
+  (★ 那份审计是当天的快照:它 §1.2 里那句"这条保障今天不存在"写于本次恢复**之前**,别当作现状)。
 
 **回归**：`--mode=royale --scene=L1 --test-ground-teleport` 仍然 `PROBE: ALL-OK`
 （两端 `丢=8 捡=10 轮=4 背包=2`，且服务端确认收到两条 `lobby_name`）。
