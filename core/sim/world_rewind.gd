@@ -155,7 +155,8 @@ func _snapshot_player(player: Node) -> Dictionary:
 	#     (`player.gd` 现在共 **1042** 行 = 那四行就是文件末尾)。
 	#   ★★ 形状守卫(`rewind_weapon_probe` 的 S7)在 Task 15 已从"`.get("` + `has_method("` **≤ 5** 的
 	#     **计数上界**"换成**逐名核那 5 处访问形态**(`_has_member_token`)+ **一条 `snap["downed"] == 真值`
-	#     的行为断言**(`EXPECTED_CHECKS` 60→**61**)。旧计数上界对第 ⑤ 处的改名**无牙**:Task 13 的 G-1
+	#     的行为断言**(`EXPECTED_CHECKS` 60→**61**;**★ 2026-10-05:现为 90** —— Task 2 加 S8/S9 到 86、
+	#     修复轮 1 再 +4 到 90)。旧计数上界对第 ⑤ 处的改名**无牙**:Task 13 的 G-1
 	#     实测 —— 只改字符串、真方法不动 ⇒ 计数**仍是 5 ⇒ 60 条全绿**,而 `"downed"` 静默恒 false。
 	#   ★ 为什么**不**顺手去掉 `has_method("is_downed")`(评审 ①(c) 的备选):`player` 的静态
 	#     类型是 `Node`,`player.is_downed()` 是**不安全动态调用** —— 方法真缺席时会**抛错中止
