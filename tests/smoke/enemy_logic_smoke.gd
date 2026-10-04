@@ -24,6 +24,16 @@ class StubPlayer:
 		return false
 	func apply_recoil(_push: float) -> void:
 		pass
+	# ★ 2026-10-04(审计 §2.6):weapon_base 已禁止兜底读全局 Input —— 本桩要驱动 `tick()`
+	#   (见 `_phase_buffered_fire`),就必须像真实 Player 一样**自己提供注入的开火三查询**。
+	#   恒 false = headless 下旧兜底的实际返回值(开火判定逐帧不变),差别只是不再每帧刷
+	#   push_error 把真断言淹掉。
+	func is_attack_pressed() -> bool:
+		return false
+	func is_attack_just_pressed() -> bool:
+		return false
+	func is_attack_just_released() -> bool:
+		return false
 
 # 带碰撞体的战斗桩玩家:入 player 组、占层2,记录 take_hit 伤害。
 class StubCombatPlayer:

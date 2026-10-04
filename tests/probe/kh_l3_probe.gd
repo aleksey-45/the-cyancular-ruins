@@ -39,13 +39,18 @@ const EXPECTED := [
 ]
 
 
-# 换弹测试用的**桩玩家**:只需要 weapon_base 关心的三个口(倒地/朝向/后坐)。
+# 换弹测试用的**桩玩家**:weapon_base 关心的口**都得给** —— 倒地/朝向/后坐,外加**开火三查询**
+# (★ 2026-10-04 审计 §2.6:武器已禁止兜底读全局 Input ⇒ 桩作为宿主必须自己提供注入接口。
+#  恒 false = headless 下旧兜底的实际返回值 ⇒ 开火判定逐帧不变,差别只是不再刷 push_error)。
 # 用桩而不用真实 Player 的原因:真实 Player 每物理帧会 weapons.tick() → 自动推进 _reload_t,
 # 换弹状态机就不可复现了;桩装备的枪只由本探针显式 tick(dt) 推进 —— 帧率无关。
 class StubPlayer extends Node2D:
 	func is_downed() -> bool: return false
 	func get_facing() -> int: return 1
 	func apply_recoil(_push: float) -> void: pass
+	func is_attack_pressed() -> bool: return false
+	func is_attack_just_pressed() -> bool: return false
+	func is_attack_just_released() -> bool: return false
 
 
 # 只回「按住 R」的输入源桩(4b 换弹链路用):验**编码端**把换弹位真的写进输入包。
@@ -406,6 +411,13 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	_check(wc_src.contains("func tick("), "weapon_component.gd 的 tick() 被删了")
 	_check(not wb_src.contains("func _process"), "weapon_base.gd 又长出 _process(帧逻辑必须走 tick,rollback 需要确定性)")
 	_check(not wc_src.contains("func _process"), "weapon_component.gd 又长出 _process")
+
+	# ★ 2026-10-04(审计 §2.6):开火查询**只**许读注入进来的输入 —— 三个查询原先各带一句
+	#   「宿主没有该接口就 return 全局 Input 的 is_action_*」兜底,即**武器能从全局输入总线偷读**。
+	#   在权威服务器 / 回放 / 预测下那是错的来源(headless 读到的是宿主机桌面按键状态),而且
+	#   完全不报错。判据用 `_code_only` 后的正文 ⇒ 上面这段注释里的字样不会把守卫喂红/喂绿。
+	_check(not wb_src.contains("Input.is_action"),
+			"weapon_base.gd 又长出全局输入兜底(开火查询只许读注入输入;缺接口要 push_error 点名宿主,不是偷读全局)")
 
 	# ★ 反向断言:_mag_state 一族不许复活(2026-09-15 背包化时删掉)。
 	#   残弹现在按**背包条目**(每条一个 inst)记 —— 复活旧的"按槽位号记账"表 = 两套残弹

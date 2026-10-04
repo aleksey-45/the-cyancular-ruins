@@ -216,21 +216,43 @@ func _ready() -> void:
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
 
-# 攻击输入查询:优先走 player 的注入输入(PacketInputSource);本地/冒烟无该方法时回退真实 Input。
+# 宿主没注入开火接口时的响亮失败:点名**是谁**违约(武器名 + 宿主节点 + 宿主脚本路径)。
+func _report_missing_attack_hook(hook: String) -> void:
+	var who := "<null>(player == null)"
+	if player != null:
+		var scr := player.get_script() as Script
+		var path := scr.resource_path if scr != null else ""
+		who = "%s(%s)" % [player.name, path if not path.is_empty() else player.get_class()]
+	push_error("武器 %s 的宿主 %s 没有注入输入接口 %s() —— 武器禁止读全局 Input" % [weapon_name, who, hook])
+
+# ── 攻击输入查询:**只**读 player 注入进来的输入(LocalInputSource / PacketInputSource)──
+# ★ 2026-10-04(审计 §2.6):这三个查询原先各带一句「宿主没有该接口就 `return` 全局 `Input`
+#   的 `is_action_*("attack")`」兜底 ——
+#   player 没有该方法时就绕过注入层**偷读全局输入总线**。那在权威服务器 / 回放 / 预测下是错的
+#   来源(headless 服务器上读到的是宿主机桌面的按键状态),并让"输入只有一个入口"这条纪律失效。
+#   同形状的坑瞄准那侧早踩过并修了:见 `core/net/ai_input_source.gd` 的"AI 没有鼠标(服务器
+#   headless),不覆写就会让它去读宿主机真实鼠标"。攻击这三处是同一件事,现在一并收掉。
+#   缺接口 = **违约**:当帧调 `_report_missing_attack_hook()` 点名宿主,查询返回 false(不开火)。
+# ★ 为什么返回 false 而不是让违约把整局带走:武器每个物理帧都会被问一次,一个坏宿主会让
+#   全局崩;而"不开火 + push_error"既不会让武器凭全局输入打出子弹,也不会静默过关。
+#   判据:本文件里「`Input` 紧接 `.is_action`」的子串命中数必须为 0(注释也算 —— 文本守卫不认语境)。
 func _attack_pressed() -> bool:
-	if player != null and player.has_method("is_attack_pressed"):
-		return player.is_attack_pressed()
-	return Input.is_action_pressed("attack")
+	if player == null or not player.has_method("is_attack_pressed"):
+		_report_missing_attack_hook("is_attack_pressed")
+		return false
+	return player.is_attack_pressed()
 
 func _attack_just_pressed() -> bool:
-	if player != null and player.has_method("is_attack_just_pressed"):
-		return player.is_attack_just_pressed()
-	return Input.is_action_just_pressed("attack")
+	if player == null or not player.has_method("is_attack_just_pressed"):
+		_report_missing_attack_hook("is_attack_just_pressed")
+		return false
+	return player.is_attack_just_pressed()
 
 func _attack_just_released() -> bool:
-	if player != null and player.has_method("is_attack_just_released"):
-		return player.is_attack_just_released()
-	return Input.is_action_just_released("attack")
+	if player == null or not player.has_method("is_attack_just_released"):
+		_report_missing_attack_hook("is_attack_just_released")
+		return false
+	return player.is_attack_just_released()
 
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
