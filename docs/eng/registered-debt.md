@@ -384,9 +384,12 @@
      (b) 那条**行为**断言兜着（它现在真的会红）。**补了 `downed` 这一维 ≠ `snap` 全维都守住了**：`snap` 的 9 个键里
      `wslot/widx/wmags/wlive` 有"生产端 == 真值"断言（`rewind_weapon_probe` S7 + `rewind_probe` ⑨），`downed` 由 Task 15 补上，
      而 **`p`/`hp` 只有端到端间接覆盖、`v`/`facing` 两键今天没有任何断言**（清点见 Task 15 报告）。
-   - ★ **本轮未碰的第三处过期行号（留给控制器定点订正）**：`core/sim/world_rewind.gd:150` 也写着 `player.gd:987-989`（同款过期）；
-     同段 `:151-152` 把本守卫描述成"度量写成 `.get("` + `has_method("` **≤ 5**"—— Task 15 之后这句**不完整**（已变逐名核 + 计数上界）。
-     两处**未改**：Task 15 的硬约束只允许碰 `tests/probe/rewind_weapon_probe.gd` 与本文件。
+   - ★ **第三处过期行号：已订正**（2026-10-04，控制器 R2 放行后定点改，提交 `dc06574`，纯注释）。原状：`core/sim/world_rewind.gd:150`
+     也写着 `player.gd:987-989`（同款过期）；同段 `:151-152` 把本守卫描述成"度量写成 `.get("` + `has_method("` **≤ 5**"。
+     现状：行号已成 `995-998`，描述已改口为"**逐名核那 5 处访问形态 + 一条 `snap["downed"] == 真值` 的行为断言
+     （`EXPECTED_CHECKS` 61）**"，并保留"旧计数上界对第 ⑤ 处改名无牙"的 G-1 实测根据。
+     ★ 教训留档：Task 15 的硬约束**只允许碰** `tests/probe/rewind_weapon_probe.gd` 与本文件 ⇒ 当时那两处**没改**、
+     只在报告里点名；**是控制器放行才补上的** —— "改了 A 就过期的 B" 若落在**改动集之外**，必须显式交回控制器，别默默留着。
    - **手工复核点（将来改这一带时）**：`rewind_weapon_probe.gd` 的 `PRODUCER_NAMED_PLAYER_ACCESS` 与 `_snapshot_player`
      里那 5 处必须**同时**改（后者改名 ⇒ 前者红，这是**设计**不是误报）。
 
