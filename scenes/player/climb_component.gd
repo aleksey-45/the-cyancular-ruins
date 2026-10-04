@@ -40,9 +40,19 @@ func is_over_climb_tile() -> bool:
 # 上爬与梯子下行再整体 × PlayerParams.climb_vertical_mult(1.2;锁链下行=自由落体不受影响)。
 func update(mult: Vector2, delta: float, is_squat: bool,
 		src: PlayerInput = null) -> bool:
-	# src=null(冒烟等直接调用)回落真实 Input;本地玩家传入自己的 input_source,服务器传入注入源。
+	# ★★ 2026-10-04(审计 §2.6 的**第 5 处**,与武器那三处 / 游泳那处**逐字同款**):这里原先
+	#   缺 src 就**自己造一个「读真实输入总线」的本地源**兜底。那让本组件能从全局输入总线偷读,
+	#   而且**完全不报错**;在权威服务器 / 回放 / 预测下那是错的来源(headless 服务器读到的是
+	#   **宿主机桌面**的按键状态)。现在:src **一律由调用方注入**(本地玩家 = 自己的 input_source,
+	#   服务器 = 注入的网络源),缺了就**点名报错** + 按「这一帧没在攀爬」安全返回,绝不静默改读
+	#   全局输入,也**不碰** body 物理(不写 velocity)。
+	#   ★ `_latched` 一并归 false:缺 src 时这一帧并没有被真正驱动,不能把上一帧的攀附态留在原地
+	#     —— 根读的是 `is_latched()`(`player.gd:261`),留着它就等于让根继续跳过重力、把玩家挂在半空。
+	#     (有 src 的正常路径压根不走这一支;且正常路径本来就允许「`_latched` 真 + 返回 false」= 到顶挂住。)
 	if src == null:
-		src = LocalInputSource.new()
+		push_error("ClimbComponent.update: 缺 src(注入输入源)—— 本组件只读注入进来的输入,禁止读全局输入;本帧按「没在攀爬」安全返回(调用方应传 player.input_source)")
+		_latched = false
+		return false
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty() or is_squat:
 		_latched = false

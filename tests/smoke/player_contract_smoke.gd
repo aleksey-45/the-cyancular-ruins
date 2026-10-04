@@ -11,6 +11,15 @@ func _check(cond: bool, name: String) -> void:
 		_failures.append(name)
 		printerr("  FAIL - " + name)
 
+# 值相等的断言：红的时候把 got/want 一起打出来（§2.6 那几处"安全返回"是**值**契约，
+# 只报"某条失败了"看不出它退化成了什么）。
+func _check_eq(a, b, name: String) -> void:
+	if a == b:
+		print("  ok  - " + name)
+	else:
+		_failures.append(name)
+		printerr("  FAIL: %s (got %s want %s)" % [name, a, b])
+
 func _initialize() -> void:
 	var src := FileAccess.get_file_as_string("res://scenes/player/player.gd")
 	var lsrc := FileAccess.get_file_as_string("res://scenes/player/climb_component.gd")
@@ -96,11 +105,74 @@ func _initialize() -> void:
 	_check(not scode.contains("Input.get_axis"),
 			"swim_component.gd 在直接读全局输入(get_axis);输入只许走注入的 src")
 
+	# ★ 2026-10-04(审计 §2.6 的**第 5 处** —— 审计那句"4 处"本身漏了它):攀爬组件里那处兜底与
+	#   武器三处 / 游泳那处**逐字同款**(连注释都是同一句),已在本次收掉。原先 `update(..., src := null)`
+	#   缺 src 时**自己 new 一个**「读真实 Input」的本地输入源 ⇒ 组件能从全局输入总线偷读,
+	#   而且**完全不报错**;权威服务器 / 回放 / 预测下那是错的来源(headless 服务器读到的是
+	#   **宿主机桌面**的按键状态)。收口后:缺 src ⇒ 点名报错 + 按「没在攀爬」安全返回,
+	#   组件**只**读注入进来的 src。
+	# ★ 判据与上面游泳那段同口径:`code_only`(剥注释)视图 + 先钉"读得到源"(读不到时
+	#   下面三条**否定**断言全部恒真 ⇒ 删掉/读不到该文件反而"变绿")。
+	var lcode: String = lsrc
+	if su != null and su.has_method("code_only"):
+		lcode = su.code_only(lsrc)
+	_check(lcode.length() > 0, "读得到 climb_component.gd 源码(读不到 ⇒ 下面三条否定断言恒真)")
+	_check(not lcode.contains("LocalInputSource"),
+			"climb_component.gd 又长出全局输入兜底(只许读注入的 src;缺 src 要点名报错,不是自己造本地输入源)")
+	_check(not lcode.contains("Input.is_action"),
+			"climb_component.gd 在直接读全局输入(is_action_*);输入只许走注入的 src")
+	_check(not lcode.contains("Input.get_axis"),
+			"climb_component.gd 在直接读全局输入(get_axis);输入只许走注入的 src")
+
 	# 根每物理帧显式驱动三个组件(+ 游泳组件:它同样由根驱动,漏了就是"没人喂它输入")
 	_check(src.contains("climb.update("), "根驱动 climb.update")
 	_check(src.contains("swim.update("), "根驱动 swim.update")
 	_check(src.contains("combat.apply_knock("), "根驱动 combat.apply_knock")
 	_check(src.contains("weapons.movement_multiplier()"), "根驱动 weapons.movement_multiplier")
+
+	# ── 攀爬组件:缺 src 的**行为**契约(2026-10-04,审计 §2.6 的**第 5 处**)────────────────
+	# ★★ 先回答"本处的行为守卫有没有牙"(动手前必须答的那个问题):**有** —— 与武器那三处不同。
+	#   · 武器那三处**无牙**:兜底只决定**返回哪个布尔**,而 headless 下全局总线读出来恒空
+	#     ⇒ "自造本地源"与"安全返回 false"逐帧恒等、行为上不可分(只能靠源码守卫)。
+	#   · 本处**有牙**,两条理由:① 旧兜底**不只决定返回值** —— 它会继续走完攀爬分支,
+	#     写 `body.velocity.y` 并置 `_latched`;② "headless 全局总线恒空"这个前提**在探针里不成立**：
+	#     探针可以 `Input.action_press("up")` 驱动全局总线(`climb_probe` 就是这么爬梯子的)
+	#     ⇒ 旧兜底会**真的抓住梯子往上爬**。所以下面三条断言**能红**(见报告里的改前原文)。
+	#   ★ 源码形状那一半在上面 `lcode` 那段;两条互补,不是替代。
+	# ⚠ 本相**故意**触发一条 push_error(缺 src 就是要点名报错)⇒ 绿灯运行时 stderr 里也会有
+	#   一行 ERROR,那是**预期输出**;本冒烟的判据是文本 `CONTRACT OK`,不是"stderr 无 ERROR"。
+	TileDefs.load_defs()
+	MazeGenerator.current_grid = _climb_grid()
+	var cl_host := ClimbHost.new()
+	cl_host.position = Vector2(96.0, 96.0)     # 合成图格 (1,1) 正中(全图都是梯子格)
+	var cl := ClimbComponent.new()
+	# ★ 这里**显式**接 body(而不是 `root.add_child` + 等 `_ready`):`-s` 阶段在 `_initialize` 里
+	#   往 `root` 挂节点**不会**立刻触发 `_ready`(实测:body 是 null ⇒ 函数在 `body.global_position`
+	#   那一行中途炸掉,于是"红"的原因变成 nil 访问 = 假红)。这一行就是 `ClimbComponent._ready` 里那一行的同款赋值。
+	cl.body = cl_host
+	Input.action_press("up")
+	var probe_src := LocalInputSource.new()
+	# ★ 前提断言**必须放最前**:全局总线上"上"没被按到时,旧兜底同样不会爬 ⇒ 下面三条恒真(静默假绿)。
+	_check(probe_src.get_axis("up", "down") < 0.0 and probe_src.is_action_just_pressed("up"),
+			"缺 src 相前提:此刻全局总线上的 up 应是「刚按下」(不然旧兜底也不会爬,下面三条恒真)")
+	# 正向对照:同一场景**给** src 时确实会攀附 ⇒ 证明本相够得着攀爬分支(它红了,下面那条"绿"就不算数)。
+	cl._latched = false
+	cl_host.velocity = Vector2.ZERO
+	_check(cl.update(Vector2.ONE, 1.0 / 60.0, false, probe_src) and cl.is_latched()
+			and cl_host.velocity.y < 0.0,
+			"正向对照:注入 src + 全局按上 ⇒ 该抓梯上爬并写负的 velocity.y(本相够得着攀爬分支)")
+	# 缺 src:点名报错 + 按「没在攀爬」返回 + `_latched` 归位 + **不碰** body 物理。
+	# ★ `_latched` 归位是**本任务新增的语义**(旧兜底那条路会把它置真):根在 `player.gd:261`
+	#   读的正是 `is_latched()`(不是返回值),留着上一帧的攀附态 = 让根继续跳过重力把玩家挂在半空。
+	cl._latched = true
+	cl_host.velocity = Vector2(0.0, 123.0)
+	var got: bool = cl.update(Vector2.ONE, 1.0 / 60.0, false)
+	_check_eq(got, false, "攀爬组件缺 src 必须安全返回 false(旧兜底自造本地输入源 ⇒ 抓梯上爬并返回 true)")
+	_check_eq(cl.is_latched(), false, "攀爬组件缺 src 时 _latched 必须归位(旧兜底会把它置真/留在真)")
+	_check_eq(cl_host.velocity, Vector2(0.0, 123.0), "攀爬组件缺 src 时不得写 body.velocity(旧兜底会写成 -576 一带)")
+	Input.action_release("up")
+	cl.free()
+	cl_host.free()
 
 	if _failures.is_empty():
 		print("\nCONTRACT OK")
@@ -108,3 +180,24 @@ func _initialize() -> void:
 	else:
 		printerr("\nCONTRACT FAIL: %d 项" % _failures.size())
 		quit(1)
+
+
+# 缺 src 相用的裸宿主:攀爬组件只碰 global_position / velocity,外加时间场那条判据要读的
+# `pvp_haste_mult`(TimeField.current 在 -s 阶段恒 null ⇒ 走 `body.get("pvp_haste_mult")`)。
+# ★ 必须给这个字段:没有它 `float(null)` 会让**旧兜底那版**在函数中途报错,
+#   于是"红"的原因变成类型转换而不是我们要钉的契约(假红,证据不可用)。
+class ClimbHost extends CharacterBody2D:
+	var pvp_haste_mult := 1.0
+
+
+# 4×4 合成图,全是梯子格(tex 11,`data/tile_defs.json` 里 climb_speed=1.6)。
+# 为什么全图都是梯子:这一相只问"缺 src 时会不会去读全局输入",不需要梯顶/锁链那类边界;
+# 全图通道保证中心格与脚底格**都在通道里** ⇒ 旧兜底若真去读全局输入,一定走"上爬"那一支。
+func _climb_grid() -> Array[Array]:
+	var grid: Array[Array] = []
+	for y in range(4):
+		var row: Array[int] = []
+		for x in range(4):
+			row.append(MazeGenerator.pack(11, 15))
+		grid.append(row)
+	return grid
