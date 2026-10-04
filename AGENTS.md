@@ -38,7 +38,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
   3. **真链路**:跑批**前后** `tasklist | grep -i godot` 必须为空(worker 是**孙进程**,孤儿会毒占端口、毒害下一支);收尾用 [`tests/env.sh`](tests/env.sh) 的 `kill_port_range`。★ **2026-10-04 订正**:"**绝不扫 `[7800,8300)`**"这句与实现**不符** —— 实测只有**池外两支**(`rejoin_probe.sh` / `team_match_probe.sh`)不扫,而 `pvp_match_smoke.sh` / `royale_soak_probe.sh` **照样扫该区间**(靠先过 `lobby_alive` 把关)。**真实规则**:任何要扫该区间的步骤,必须先过 `lobby_alive` 确认 7777 上没有活大厅;**池外那两支一律不扫**;
   4. **报告附证据**:关键行原文 + 退出码 / 日志位置 —— 只报"绿了"不算;
   5. **跑批环境要写进结论**:多进程抢 CPU 会**放大**换场卡顿、`_t` 会低报超长帧 ⇒ 时序类结论**同配置跑两次**再下。
-- 命名检查:`python tools/check_naming.py`(四条:目录名小写 / `class_name` 与文件名对齐 / 文档引用的路径必须存在 / `.tscn` 一律 snake_case)。
+- 命名检查:`python tools/check_naming.py`(五条:目录名小写 / `class_name` 与文件名对齐 / 文档引用的路径必须存在 / `.tscn` 一律 snake_case / `.ps1`·`.bat` 的 CRLF 与 `.ps1` 编码;`--self-test` 自测检查器自己)。
 
 ## 2. 怎么改(一次改动的流程)
 
@@ -99,7 +99,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 - 命令行开关(`--worker` 之类)必须写在 **`--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`);写在前面会被 Godot 丢掉并**静默跑错分支**。
 - 要进导出包的脚本**禁用 `RegEx`**(自定义裁剪模板 `module_regex_enabled: false` ⇒ 整个脚本解析失败,而编辑器里全绿)。
 - 同一个量是**乘子**还是**浓度**,把方向写进注释与派发 —— 写反了会"越调越黑"且不报错。
-- `.ps1` 保持**纯 ASCII + CRLF**(`.gitattributes` 钉着);PowerShell 起带空格的路径要**手工内嵌双引号**。
+- `.ps1` 必须 **CRLF**;编码 =「**纯 ASCII 或带 UTF-8 BOM**」(带 BOM 时非 ASCII 是安全的 —— `tools/gamelog/capture_session.ps1` 实测 49 行中文靠它跑得好;没 BOM 才会被 PowerShell 按 ANSI/GBK 解成乱码)。`.bat` 同样必须 **CRLF**,**编码不查**(cmd 对非 ASCII 注释只是乱码,现存 `.bat` 里就有中文)。两者都由 `.gitattributes` 的 `eol=crlf` + `python tools/check_naming.py` 的**规则 E**逐文件守(红了用 `rm <file> && git checkout -- <file>` 重新落盘 —— 纯 EOL、不动内容);PowerShell 起带空格的路径要**手工内嵌双引号**。
 - **噪声与信号分不清时:同配置跑两次**。
 
 ## 4. 去哪查(指针)

@@ -10,14 +10,18 @@
 #   python tools/check_naming.py -v         # 连"已接受的偏差"也列出来
 #   python tools/check_naming.py --report   # 只报告不失败(摸底用)
 #   python tools/check_naming.py --self-test # 检查器**自己**的自测(见 self_test():每条都答得出
-#                                            #   "去掉什么它才会红")—— 退出码 0 = 自测通过
+#                                            #   "去掉什么它才会红";现覆盖规则 A 与规则 E)
+#                                            #   —— 退出码 0 = 自测通过
 #
-# 检查四条:
+# 检查五条:
 #   A 目录名一律小写
 #   B `class_name` 转 snake 必须等于文件名(规范原文:「名字 = 类名转 snake」)
 #   C 文档里引用的文件/目录路径必须存在
 #   D `.tscn` 文件名一律 snake_case(阶段 4.3 反转的约定:旧写法 PascalCase 在 51/56 已是
 #     snake 的现实下从未生效过)。「有没有同名 .gd 兄弟」仍只作 -v 备注。
+#   E `.ps1` / `.bat` 的 EOL 必须 CRLF;`.ps1` 还必须「纯 ASCII 或带 UTF-8 BOM」(`.bat` 的编码
+#     **不查** —— cmd 把非 ASCII 注释显示成乱码但语义无害,而现存 .bat 里就有中文)。
+#     这条是 2026-10-04 补的:规则文字原先写「`.ps1` 保持纯 ASCII」,比现实严、且没机制守(审计 §2.11)。
 import os
 import re
 import shutil
@@ -186,14 +190,89 @@ def check_tscn() -> None:
         _notes.append("D   无同名 .gd 兄弟(仅备注): %s" % rel)
 
 
+BOM_UTF8 = b"\xef\xbb\xbf"
+# 规则 E 覆盖的扩展名 → 是否连**编码**一起核。
+#   `.ps1` 核:编码错了 PowerShell 会把中文注释解成乱码(真坏);
+#   `.bat` 不核:cmd.exe 对非 ASCII 注释只是显示成乱码,语义无害 —— 而现存 `start_server.bat`
+#   就有 7 行中文 ⇒ 去核它**当场假红**,那正是本轮要消灭的"规则比现实严"(审计 §2.11)。
+RULE_E_EXTS = {"ps1": True, "bat": False}
+
+
+def bad_eol_crlf(data: bytes):
+    """规则 E 的 EOL 判据:是否**不是**全 CRLF。返回违规原因;`None` = 合规。
+
+    ★ 判法是"**删掉所有 `\\r\\n` 之后,还剩不剩 `\\n` / `\\r`**" —— 只问"有没有 CRLF"会把
+      **混用**文件(一半 CRLF、一半裸 LF)放行,那是这个检查最典型的假绿形态。
+    """
+    lone = data.replace(b"\r\n", b"")
+    if b"\n" in lone:
+        return "含裸 LF(本类文件必须 CRLF)"
+    if b"\r" in lone:
+        return "含裸 CR(本类文件必须 CRLF)"
+    return None
+
+
+def bad_ps1_encoding(data: bytes):
+    """规则 E 的 `.ps1` 编码判据:纯 ASCII,或带 UTF-8 BOM。返回违规原因;`None` = 合规。
+
+    ★ 为什么不是「必须纯 ASCII」(原 `AGENTS.md` 的写法):那是**比现实严**的规则,而现实早就
+      把它违反了 —— `tools/gamelog/capture_session.ps1` 实测 49 行含非 ASCII,靠 UTF-8 BOM
+      跑得好好的(没有 BOM 时 Windows PowerShell 5.1 会按 ANSI/GBK 解 ⇒ 中文注释当场变乱码)
+      ⇒ 与「绝不扫 [7800,8300)」同一类病:规则文字 ≠ 现实,且没有机制守。
+    ★ 最强保证 = 「带 BOM 的非 ASCII 是安全的」这一点被逐文件核过;测不到 = BOM **之后**的字节
+      是否合法 UTF-8(只问"有没有 BOM";一个"带 BOM 的 GBK 内容"会漏 —— 现实中不存在,出现再说)。
+    """
+    if data.startswith(BOM_UTF8):
+        return None
+    try:
+        data.decode("ascii")
+    except UnicodeDecodeError:
+        return "含非 ASCII 但没有 UTF-8 BOM(无 BOM 时 PowerShell 按 ANSI/GBK 解 ⇒ 中文注释变乱码)"
+    return None
+
+
+def check_ps1_bat(base: str = PROJECT) -> None:
+    """规则 E:`.ps1` / `.bat` 逐文件核 EOL(必须 CRLF)与编码(只核 `.ps1`)。
+
+    ★ EOL 这半守的是**工作区落盘形态**:`.gitattributes` 已把 `*.ps1`/`*.bat` 钉成 `eol=crlf`
+      ⇒ checkout 出来就是 CRLF(实测 `git ls-files --eol` 是 `i/lf w/crlf`:git 在 `add` 时把
+      CRLF 归一成 LF 存库)。红了**不要**手改内容,重新落盘即可:`rm <file> && git checkout -- <file>`
+      (★ 单纯 `git checkout -- <file>` 是**空操作** —— 文件在 git 眼里是干净的,实测过)。
+    ★ 编码那半守的是**内容**:BOM 是字节,git 不会动它 ⇒ 这半才是真守住了"中文注释别被解成乱码"。
+    """
+    checked = {ext: 0 for ext in RULE_E_EXTS}
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for f in files:
+            ext = f.rsplit(".", 1)[-1].lower() if "." in f else ""
+            if ext not in RULE_E_EXTS:
+                continue
+            full = os.path.join(root, f)
+            try:
+                data = open(full, "rb").read()
+            except OSError:
+                continue
+            checked[ext] += 1
+            why = bad_eol_crlf(data)
+            if why is None and RULE_E_EXTS[ext]:
+                why = bad_ps1_encoding(data)
+            if why:
+                rel = os.path.relpath(full, base).replace("\\", "/")
+                _fail.append("E %s: %s" % (rel, why))
+    _notes.append("E .ps1 %d 个 / .bat %d 个:EOL 逐文件核 CRLF;编码只核 .ps1(纯 ASCII 或带 BOM)"
+                  % (checked["ps1"], checked["bat"]))
+
+
 def self_test() -> int:
     """本检查器**自己**的自测 —— 每条断言都答得出「去掉什么它才会红」。
 
     为什么需要:这个脚本是**全仓守卫**,而守卫最典型的失败模式是"给的保证比读起来少"
-    (恒真断言、够不到的分支……)。下面四组断言守的正是 2026-10-04 修掉的那个真盲区:
-    `walk_dirs()` 原先在 `rel == "."` 时 `continue` ⇒ **顶层目录名从不被产出** ⇒
-    规则 A 对顶层完全失效,曾经存在的大写顶层目录 `DevTools/`(9e4ccbe 才 git rm 出库)
-    **一次都没被这条规则报过**(审计 §2.10:"守卫有盲区,恰好盖住唯一的违规")。
+    (恒真断言、够不到的分支……)。下面六组断言守的正是 2026-10-04 修掉的两个真盲区:
+    - ①②③④ 规则 A:`walk_dirs()` 原先在 `rel == "."` 时 `continue` ⇒ **顶层目录名从不被产出**
+      ⇒ 规则 A 对顶层完全失效,曾经存在的大写顶层目录 `DevTools/`(9e4ccbe 才 git rm 出库)
+      **一次都没被这条规则报过**(审计 §2.10:"守卫有盲区,恰好盖住唯一的违规")。
+    - ⑤⑥ 规则 E:`.ps1`/`.bat` 的 EOL 与 `.ps1` 的编码,原先**一个字都没有**(审计 §2.11:
+      规则写着"必须纯 ASCII",而 `capture_session.ps1` 有 49 行中文,谁也没报过)。
     """
     fails: list[str] = []
 
@@ -250,13 +329,74 @@ def self_test() -> int:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # ⑤ 规则 E 的两条判据(**纯函数**形态):合成字节。判据口径 = 控制器 2026-10-04 定的那张表:
+    #    `.ps1` = 必须 CRLF + (纯 ASCII 或带 BOM);`.bat` = 必须 CRLF、编码不查。
+    want(bad_eol_crlf(b"echo hi\n") is not None,
+         "⑤-① 裸 LF、无 BOM 没被报出 —— 去掉 bad_eol_crlf() 的裸-LF 分支才会红")
+    want(bad_eol_crlf(b"echo hi\r\n") is None,
+         "⑤-① 纯 ASCII + CRLF 被误报")
+    want(bad_eol_crlf(b"a\r\nb\nc\r\n") is not None,
+         "⑤-① 混用(有 CRLF 也有裸 LF)被放行 —— 判据只问'有没有 CRLF'就会漏这条")
+    want(bad_eol_crlf(b"a\rb") is not None,
+         "⑤-① 裸 CR(旧 Mac 行尾 / 被拆开的 CRLF)没被报出 —— 去掉 bad_eol_crlf() 的裸-CR 分支才会红")
+    want(bad_ps1_encoding(BOM_UTF8 + "写一句中文".encode("utf-8")) is None,
+         "⑤-② 'BOM + 非 ASCII' 被误报 —— 那正是 capture_session.ps1 的现实形态(49 行中文)")
+    want(bad_ps1_encoding(b"echo hi") is None,
+         "⑤-③ 纯 ASCII 被误报")
+    want(bad_ps1_encoding("写一句中文".encode("utf-8")) is not None,
+         "⑤-④ 非 ASCII 且无 BOM 没被报出 —— 删掉 bad_ps1_encoding() 的编码判定才会红")
+
+    # ⑥ 再走一遍**真的文件树**(临时目录):只喂纯函数不够 —— 那样"walk 里根本没接上这条规则"
+    #    也照样全绿。这里同时覆盖扩展名过滤 + `.ps1` 查编码 / `.bat` 不查编码的分工。
+    tmp_e = tempfile.mkdtemp(prefix="_naming_selftest_e_")   # 同 ②:合成树放系统临时区,别写进仓库根
+    try:
+        samples = {
+            "a.ps1": b"echo hi\n",                                    # 裸 LF ⇒ 报
+            "b.ps1": BOM_UTF8 + "写一句中文\r\n".encode("utf-8"),       # BOM + 非 ASCII ⇒ **不**报
+            "c.ps1": b"echo hi\r\n",                                   # 纯 ASCII + CRLF ⇒ 不报
+            "d.ps1": "写一句中文\r\n".encode("utf-8"),                  # 非 ASCII 无 BOM ⇒ 报
+            "e.bat": b"@echo off\n",                                   # .bat 裸 LF ⇒ 报
+            "f.bat": "rem 中文注释\r\n".encode("utf-8"),                # .bat 非 ASCII 无 BOM ⇒ **不**报
+            "g.txt": b"echo hi\n",                                     # 别的扩展名 ⇒ 不看
+        }
+        for name, data in samples.items():
+            with open(os.path.join(tmp_e, name), "wb") as fh:
+                fh.write(data)
+        saved_e = _fail[:]
+        saved_notes = _notes[:]     # 连 _notes 一起存:自测不该往"本轮备注"里写东西
+        _fail.clear()
+        _notes.clear()
+        try:
+            check_ps1_bat(tmp_e)
+            e_fails = list(_fail)
+        finally:
+            _fail[:] = saved_e
+            _notes[:] = saved_notes
+        want(any(x.startswith("E a.ps1:") for x in e_fails),
+             "⑥ 合成树:裸 LF 的 a.ps1 没被报出(规则 E 没接进 walk): %r" % (e_fails,))
+        want(any(x.startswith("E d.ps1:") for x in e_fails),
+             "⑥ 合成树:非 ASCII 无 BOM 的 d.ps1 没被报出: %r" % (e_fails,))
+        want(any(x.startswith("E e.bat:") for x in e_fails),
+             "⑥ 合成树:裸 LF 的 e.bat 没被报出: %r" % (e_fails,))
+        want(len(e_fails) == 3,
+             "⑥ 合成树:规则 E 应恰好报 3 条(a.ps1 裸 LF / d.ps1 无 BOM / e.bat 裸 LF),"
+             "实得 %d 条: %r" % (len(e_fails), e_fails))
+        want(not any("f.bat" in x for x in e_fails),
+             "⑥ .bat 的**编码**不该查(cmd 对非 ASCII 注释只是乱码;现存 .bat 就有中文)"
+             " —— 却报了: %r" % (e_fails,))
+        want(not any("g.txt" in x for x in e_fails),
+             "⑥ 非 .ps1/.bat 的 g.txt 被规则 E 吃进来了")
+    finally:
+        shutil.rmtree(tmp_e, ignore_errors=True)
+
     if fails:
         print("— 自测失败 %d 条 —" % len(fails))
         for f in fails:
             print("  " + f)
         print("\n命名检查自测 FAIL(检查器自身有洞;修的是 tools/check_naming.py 而不是别的)")
         return 1
-    print("命名检查自测 OK(顶层目录被产出 / 大写名会被报出 / SKIP_DIRS 与点开头目录照旧跳过)")
+    print("命名检查自测 OK(规则 A:顶层目录被产出 / 大写名会被报出 / SKIP_DIRS 与点开头目录照旧跳过;"
+          "规则 E:裸 LF 与非 ASCII 无 BOM 会被报出 / BOM+非 ASCII 与纯 ASCII+CRLF 不报 / .bat 不查编码)")
     return 0
 
 
@@ -269,6 +409,7 @@ def main() -> int:
     check_class_names()
     check_doc_paths()
     check_tscn()
+    check_ps1_bat()
     if _notes and verbose:
         print("— 备注(不判失败,仅 -v 显示) —")
         for n in _notes:
@@ -280,7 +421,8 @@ def main() -> int:
         print("\n命名检查 FAIL(规范见 docs/naming-cleanup-plan.md;"
               "确属有意偏离要加进 ACCEPTED_CLASS_FILES 并写明何时销)")
         return 0 if report_only else 1
-    print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / .tscn snake_case)")
+    print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / .tscn snake_case / "
+          ".ps1·.bat 的 CRLF 与 .ps1 编码)")
     return 0
 
 
