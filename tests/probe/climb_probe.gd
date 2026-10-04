@@ -3,6 +3,21 @@ extends SceneTree
 # 攀爬诊断:把真实玩家放到 demo 地图的梯子上,模拟按上,追踪它停在哪、能否到顶。
 # 用法:godot --headless --path . -s res://tests/probe/climb_probe.gd
 
+# 读回**真实**攀附状态。
+# ★ 为什么不能写 `p.get("_latched")`:该字段住在 `ClimbComponent`(`scenes/player/climb_component.gd:9`),
+#   玩家**根**只转发 `is_latched()`(`scenes/player/player.gd:261`)⇒ 在根上 `get("_latched")` 恒返回
+#   `null`,"是否攀附"这一维**从来没有读数**(改前实测 4 处打印全是 `latched=<null>`)。
+#   形状照抄仓内既有读法:`tests/probe/squash_host_water_probe.gd:285` 的 `_p.climb.is_latched()`。
+# ★ 覆盖上限(照实写,别读多):本函数只让这一维**可观测**。`climb_probe` **仍不是守卫** ——
+#   它没有断言、也没有 `EXPECTED_CHECKS` 条数闸,判据是人读输出。钉图(`c5804f4`)只消掉
+#   "抽到哪张地图"这一维;**时序类**不确定性(帧数 / 机器负载)不受影响。
+func _latched_of(p) -> Variant:
+	if p == null:
+		return "<no player>"
+	if p.climb == null:
+		return "<no climb>"
+	return p.climb.is_latched()
+
 func _initialize() -> void:
 	TileDefs.load_defs()
 	# ★★ 2026-10-04(**必须钉图**,任务 9):不钉的话 `MazeGenerator.map_file_path()` 会在
@@ -54,12 +69,12 @@ func _initialize() -> void:
 				if absf(p.global_position.y - y) < 0.01:
 					stuck_frames += 1
 			print("[climb] 卡住 @ frame %d y=%.1f(脚距顶 %dpx) latched=%s cell=%s" % [
-				i, y, int(y + 57 - 5 * 64), p.get("_latched"),
+				i, y, int(y + 57 - 5 * 64), _latched_of(p),
 				MazeGenerator.cell_of(p.global_position, 64, 125, 75)])
 			break
 		prev_y = y
 		if i % 10 == 0:
-			print("[climb] frame %d y=%.1f latched=%s on_floor=%s" % [i, y, p.get("_latched"), p.is_on_floor()])
+			print("[climb] frame %d y=%.1f latched=%s on_floor=%s" % [i, y, _latched_of(p), p.is_on_floor()])
 	Input.action_release("up")
 	print("[climb] 结束 y=%.1f cell=%s" % [p.global_position.y,
 			MazeGenerator.cell_of(p.global_position, 64, 125, 75)])

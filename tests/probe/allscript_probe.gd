@@ -21,18 +21,34 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #   补了条数下限(R19/R41),却把这道自称"本批最大增益"的闸留在无下限状态 —— 而本批
 #   **恰好拓宽了** `SKIP_DIRS`(加了 `res://_crashtest`,见上),正是最该有下限的时候。
 #
-# `EXPECTED_SCRIPTS := 283` 的**数法**(先说 `_total` 在数什么):
-#   `_collect("res://")` 递归收 `.gd`,排除 ① 名字以 `.` 开头的目录(故 `.godot/`、
-#   `.claude/`、`.superpowers/` 里的 scratch `.gd` 一概不在数里)、② `SKIP_DIRS` 那 10 项、
-#   ③ 以 `.gd.remap` 结尾的名字。⇒ `_total` = "res:// 下**参与编译面**的 `.gd` 个数"。
+# `EXPECTED_SCRIPTS := 287` 的**数法**(先说 `_total` 在数什么):
+#   `_collect("res://")` 递归收 `.gd`(`:77-92`),排除 ① **名字以 `.` 开头的目录**
+#   (故 `.godot/`、`.git/`、`.claude/`、`.superpowers/` 里的 scratch `.gd` 一概不在数里)、
+#   ② `SKIP_DIRS` 那 10 项、③ 以 `.gd.remap` 结尾的名字。
+#   ⇒ `_total` = "res:// 下**参与编译面**的 `.gd` 个数"。
 #   283 在 `57aa973` 上由两条**独立**路径对上:探针自己打的 `OK(283)`,与
 #   `git ls-files '*.gd' | wc -l` = 283(相等的前提三条:283 个已跟踪 `.gd` 全部落在非点、
 #   非 skip 目录里;工作树零个未跟踪 `.gd`;零个 `.gd.remap` —— 三条都实测过)。
+#   ★★ **2026-10-04 重测 ⇒ 287**(同日 283 过期;下面留着**逐条可复核**的数法,供下一次照着核):
+#     · 净变化 = **+5 新增 − 1 删除**:
+#       新增(`git log --diff-filter=A --name-only --pretty=format: 57aa973..HEAD -- '*.gd'`)——
+#       `tests/probe/menu_shot_probe.gd` / `tests/probe/rewind_weapon_probe.gd` /
+#       `tests/probe/weapon_injected_fire_probe.gd` / `tests/smoke/project_settings_smoke.gd` /
+#       `tests/smoke/settings_display_smoke.gd`;
+#       删除 —— `DevTools/gamelog/log_viewer.gd`(`9e4ccbe` 把 `DevTools/` 出库;当时它**在**
+#       计数面里,因为 `DevTools` 既不点开头、也不在 `SKIP_DIRS`)。
+#     · 287 这次同样由**两条独立路径**对上:
+#       ① 探针自己打的 `ALLSCRIPT: FAIL(0/287 失败 · 条数闸红(期望 283))` —— 扫到 **287**、`LOAD[FAIL]` **0** 行;
+#       ② `git ls-files '*.gd' | wc -l` = **287**;基线可复算:`git ls-tree -r --name-only 57aa973 | grep -c '\.gd$'` = **283**。
+#     · 三条前提**逐条重测**(当天):`git ls-files '*.gd'` 里**零个**路径落在点目录或 `SKIP_DIRS`;
+#       `git ls-files --others --exclude-standard '*.gd'` = **0**;`find . -name '*.gd.remap'`(排除 `.godot/`)= **0**。
+#     · 另有**第三条**、不依赖 git 的核法:按 `_collect` 的同一套排除规则在文件系统上数 `.gd`
+#       (排除点目录与 `SKIP_DIRS`、排除 `*.remap`)= **287**。
 #   ⇒ 它同时钉住"没有少、也没有多",故下面用 `!=` 而不是 `<`。
 # ★ 它是**覆盖面**闸,不是质量闸:以后**故意**增删 `.gd` 时它会红并点名两个数,照着改这个
 #   常量即可 —— 那正是"覆盖变了得有人过目"的意思。**别把它降级成 `<`**(对"多扫了一条"
 #   就瞎了,而多出来的可能正是 scratch 副本)。
-const EXPECTED_SCRIPTS := 283
+const EXPECTED_SCRIPTS := 287
 
 var _fails: Array[String] = []
 var _total := 0

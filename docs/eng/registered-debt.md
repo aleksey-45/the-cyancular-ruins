@@ -15,8 +15,15 @@
 | [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | 用户(六人真链路只能由用户跑) | 2026-10-04 **静态复核,未跑** | **长期 FAIL,且判词与实况矛盾**:判词说"大厅队伍表是空的 / 45s 内没有 3v3 房",而**同一次跑**的客户端日志里房建成了、客户端进了等待室。★ **2026-10-04 状态订正**:根因**已修** —— `9003dae`(2026-09-28)"客户端不再被拨到生产云服 —— 预置 `PvpSession.server_address`",正是本行原先那句"客户端被某个不是探针大厅的东西服务着"。但**修复后没有留下六人整跑的判决**,而三个落点互相矛盾(`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md:11` 说"已修待验"、`.superpowers` 账本记 2026-09-20 曾 PASS 33 条、同一账本靠后段落仍称"既有的 FAIL") | 根因未钉死时的追查成本太高,且它是**唯一**"过真协议"的 3v3 覆盖 | **跑一次六人整链路**(池外 29200/29250、不碰 7777):绿 ⇒ 按上面「销掉时删行」删掉本行,并同步 `tests.md` / `handoff` / `AGENTS.md` §5 的复述;红 ⇒ 把"已修 `9003dae`、仍红"写进症状列并重新算根因 |
 | [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
 | [`tests/probe/brawl_rollback_probe.tscn`](../../tests/probe/brawl_rollback_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | 留着仍能看见趋势 | 抖动与那一格假绿都消掉 |
+| [`tests/smoke/reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd) | 未认领(由 UI→`.tscn` 迁移那条线留下) | 2026-10-04 **实测**(聚合入口 `bash tests/run_all.sh` 首跑) | **断言的锚点没了 ⇒ 该条守卫今天不守任何东西、且永远红**:判词原文 `RECONNECT SMOKE FAILED: 1` + `[FAIL] ★ 主菜单联机入口未走 PvpSession.reset()`(rc=1,日志 tests/.run_all_logs/smoke/reconnect_smoke.log)。★ **根因不是行为回归** —— [`scenes/main_menu.gd`](../../scenes/main_menu.gd):219 那行**仍在**调 `PvpSession.reset()`;是 [`reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd):294-295 把判据限定在 `_build_menu_buttons` 的函数体内,而按钮已搬进 `main_menu.tscn`、接线改到 `_wire_menu()`([`scenes/main_menu.gd`](../../scenes/main_menu.gd):207)⇒ `_func_body` 取到空串 ⇒ `count("PvpSession.reset()") >= 1` **恒假** | 它是 C1 纪律("进页复位、但**不**清回局凭据")的**唯一**源码级断言;删掉等于把那条纪律的守卫一起删掉 | 锚点从 `_build_menu_buttons` 换成 `_wire_menu`(或改成"整个文件去注释后至少一处 **且** 落在 `%MultiBtn` 那个 lambda 里")⇒ 转绿后**删掉本行**,并同步 `tests/known_red.txt` |
+| [`tests/probe/elite_drop_probe.tscn`](../../tests/probe/elite_drop_probe.tscn) | 未认领 | 2026-10-04 **实测 7/7 全崩** | **判词肯定、退出时 segfault**:`rc=139`,而日志**末行**就是 `ELITE DROP PROBE: OK(真击杀 → 结晶 FX 出现 → 吸收入账 +300 颗粒)`、`FAIL` 词 **0** 行。跑法 `timeout 180 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/elite_drop_probe.tscn`,**同配置 7 次全部 139**(3 次单跑 + 2 次跑批内 + 复跑 2 次);★ 两次复跑的**判词行** md5 相同。⇒ 断言结论**不受影响**,`run_all.sh` 把它记成 `OK+RC`(**不算红**),但它在真链路里**会**留孤儿/占端口那类麻烦 | 判词仍 OK、能继续看趋势(它是"精英掉落 → 结晶 FX → 吸收"链条上唯一的行为载体) | 找出退出时崩的那条链(先怀疑 SubViewport/贴图析构 —— `ground_net_probe` 头注记过同一类"只有真窗口/真析构才照得出来"的问题)⇒ `rc=0` 后**删掉本行** |
+| [`tests/probe/elite_drop_probe.tscn`](../../tests/probe/elite_drop_probe.tscn) | (并入上一行) | 2026-10-04 **同配置跑两次** | ★ **顺带照实记一条同族边界**:该探针**跑在随机图上**(与 `climb_probe` 修 `c5804f4` 之前同一族)⇒ **非判词读数两次不一致**:墙碰撞 shapes 4032/4527、敌人数 65/24、开阔地板格 670/889、击杀距离 2294/4159px、`FX已释放` false/true。**只有判词行**可比 | 同上(读数不删 —— 探针是扫描仪器) | 按 `c5804f4` 的写法给该探针**钉图**(`MazeGenerator.set_map_file` + `load_map_file`),让非判词读数也可比;这也是 [`ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) 那一行"给探针钉图"的同一条纪律 |
 
 ★ **影响面照实写**:第一条意味着 **3v3 真链路今天没有可信的端到端守卫** —— 改 3v3 时别把"探针绿了"当证据,要另找覆盖(或先补守卫)。
+
+★ **2026-10-04 加的两行(聚合入口首跑挖出来的)与 `tests/known_red.txt` 的关系**:后两条各自在 [tests/known_red.txt](../../tests/known_red.txt) 里有**对应基线行**——
+`reconnect_smoke` 是**真红**(进基线,让聚合入口能报"新红"而不是永远 FAIL);`elite_drop_probe` 是 `OK+RC`(**不算红**,所以**不**进基线,但 `run_all.sh` 每跑一次都会单列出来)。
+★ 这里只登记**不修**:`reconnect_smoke` 的锚点属于别的域(UI→`.tscn` 迁移),要单独立项。
 
 ## 二、重复的真相源(该改成生成式)
 
@@ -400,6 +407,16 @@
      （状态已置，其后的 `went_down.emit()` 等未执行）⇒ 状态类断言不受影响，所以这个洞**被 guard 视线之外**。
    - **怎么修**（二选一，属**独立小批次**，与 §2 无关）：给 `SpriteFrames` 补一个 `downed` 动画（表现向，需要帧），
      或删掉这行 `play` 调用并确认后续逻辑不依赖它。★ 无论选哪个，顺手补一条"动画名存在于 SpriteFrames"的形状断言。
+
+17. **本仓没有 CI,也没有"聚合回归入口"以外的机器判据**(2026-10-04 加;owner 未认领;最后复核 2026-10-04 `bash tests/run_all.sh` 实测)。
+   - **症状(加这一条之前)**:判据靠**逐脚本自造文本行** + 靠人记得该跑哪些 ⇒ ① 没有任何东西保证"新加的探针会进批";② 没有一份便宜的"改了没有"的红/绿判据;**③ 真链路的三条纪律(7777 / 孤儿 worker / 池外不扫)全靠人记**。
+   - **现状(2026-10-04 起)**:[`tests/run_all.sh`](../../tests/run_all.sh)(headless 默认批,自动枚举 + 逐支判词 + **已知红基线** [`tests/known_red.txt`](../../tests/known_red.txt))与 [`tests/run_real.sh`](../../tests/run_real.sh)(真链路批,四道闸)已入库。★ **它已经是能被 CI 直接调用的形状**:`run_all.sh` 的退出码 = "有没有新红",判词行可以 grep。
+   - **为什么留着不补(为什么还没上 CI)**:上 CI 是**项目级决策**,至少要同时回答四件事 ——
+     ① **Windows**:`.bat` 与 `core/net/proc_util.gd` 都有 Windows-only 分支(`taskkill` / `netstat -ano` / `ping -n`),Linux runner 跑不了;
+     ② **两个 Godot 绝对路径**:`GODOT`(console 版,跑测试)与 `GODOT_EDITOR`(标准版,导出)是两个二进制且都要现装;
+     ③ **真链路批要占 7777**:CI 里没有"用户正在跑的对局"这个概念,gates 的语义要重新定;
+     ④ **发布产物那一侧的守卫今天也没有**(见 §五.10 与 §七.3 指的同一处通道问题)。
+   - **什么时候能销 / 翻案条件**:决定上 CI 时 ⇒ 先落最小一步:`run_all.sh`(headless,不碰 7777)+ `python tools/check_naming.py --self-test` 两条,配一个 Windows runner;`run_real.sh` **不进** CI(它按设计要人认领)。★ **不要**在没有用户裁决的情况下新建 `.github/`(本批明确不建)。
 
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 

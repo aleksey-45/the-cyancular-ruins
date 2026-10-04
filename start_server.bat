@@ -8,8 +8,10 @@ rem It cd's to its own directory so --path . always resolves to the project,
 rem regardless of how this window was opened.
 rem Keep this window open = lobby running. Close it = stop everything (workers随对局结束退出)。
 rem 启动前先杀掉旧残留:占 7777 的旧大厅,以及占 7800~8299 的僵尸 worker(端口池 = 7800 起 500 个)。
-rem ⚠ 已知缺口:下面那条 findstr 只覆盖 :78xx 与 :79xx,杀不到 8000~8299 的 worker(需该大厅
-rem   累计 spawn 过 200 次以上才会用到那段)。待修:把模式扩到 :8[0-2][0-9][0-9]。
+rem ★ 2026-10-04 已修(本批):下面那条 findstr 原先只覆盖 :78xx 与 :79xx,杀不到 8000~8299 的 worker
+rem   (需该大厅累计 spawn 过 200 次以上才会用到那段,而分配器是"唯一递增"的 ⇒ 长跑必到)。
+rem   现模式 = `:78[0-9][0-9] :79[0-9][0-9] :8[0-2][0-9][0-9]` ⇒ 正好覆盖整个池 [7800,8300)。
+rem   ★ 命中差实测(真实 netstat -ano -p UDP,临时占 8000 / 7801 / 8300):旧模式漏掉 :8000,新模式命中。
 chcp 65001 >nul
 cd /d "%~dp0"
 rem 引擎路径可用环境变量 GODOT 覆盖(换机器/换引擎版本只需设一次,不必改这些脚本)
@@ -34,7 +36,7 @@ rem   `:reap_port_holder`。
 rem   ★ 动机没修坏(见 core/net/proc_util.gd:5-9):旧实例**就是我们这一类** ⇒ 照样被清掉,
 rem     「占着 7777 ⇒ 新实例 bind 失败闪退」那个坑仍然堵着。
 for /f "tokens=4" %%p in ('netstat -ano -p UDP ^| findstr /r ":7777"') do call :reap_port_holder %%p
-for /f "tokens=4" %%p in ('netstat -ano -p UDP ^| findstr /r ":78[0-9][0-9] :79[0-9][0-9]"') do call :reap_port_holder %%p
+for /f "tokens=4" %%p in ('netstat -ano -p UDP ^| findstr /r ":78[0-9][0-9] :79[0-9][0-9] :8[0-2][0-9][0-9]"') do call :reap_port_holder %%p
 rem ★ 收口:清理跑完**再查一次端口**。还查得到 ⇒ 占主不是我们这一族(或名字读不出来)⇒
 rem   **不硬起**大厅 —— 硬起只会 bind 失败瞬间退出(= proc_util.gd:5-9 记的那个坑),不如把话
 rem   说明白。最多等 3 轮、每轮 1 秒:taskkill 之后内核回收 socket 要一点时间,不等就查会把
