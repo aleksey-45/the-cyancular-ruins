@@ -390,6 +390,14 @@
    - **手工复核点（将来改这一带时）**：`rewind_weapon_probe.gd` 的 `PRODUCER_NAMED_PLAYER_ACCESS` 与 `_snapshot_player`
      里那 5 处必须**同时**改（后者改名 ⇒ 前者红，这是**设计**不是误报）。
 
+16. **`scenes/player/combat_component.gd:108` 的 `animator.play("downed")` 是死引用（每次运行都报错）**(2026-10-04 由 Task 15 发现并登记；owner 未认领)。
+   - **实测**：任何运行里都报 `ERROR: There is no animation with name 'downed'` —— `player.tscn` 的 `SpriteFrames` 只有
+     `charge` / `fly` / `idle` / `move` / `squat`（控制器在 Task 15 那轮的探针输出里也看到同一行）。
+   - **两个后果**：① **"回溯到倒地帧"的动画表现从未生效**；② 该错误让 `set_downed_by_rewind` 在 `downed = v` **之后中止**
+     （状态已置，其后的 `went_down.emit()` 等未执行）⇒ 状态类断言不受影响，所以这个洞**被 guard 视线之外**。
+   - **怎么修**（二选一，属**独立小批次**，与 §2 无关）：给 `SpriteFrames` 补一个 `downed` 动画（表现向，需要帧），
+     或删掉这行 `play` 调用并确认后续逻辑不依赖它。★ 无论选哪个，顺手补一条"动画名存在于 SpriteFrames"的形状断言。
+
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 
 **本节不是欠账清单**:§一/§二 是"要还的债",这里是**已经判过、决定不还的** —— 每条都带**判决理由**与**翻案条件**。
