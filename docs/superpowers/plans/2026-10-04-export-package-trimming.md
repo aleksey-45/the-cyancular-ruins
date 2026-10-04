@@ -32,7 +32,7 @@
 
 **Files:**
 - Modify: `export_presets.cfg:13` 与 `:87`
-- Modify: `scenes/main_menu.gd:154-155`（订正会随裁剪过期的那句注释 —— 见 Step 2b）
+- Modify: `scenes/main_menu.gd:154-156`（订正会随裁剪过期的那句注释 —— 见 Step 2b）
 
 **Interfaces:**
 - Consumes: 现状逐字 `exclude_filter="*.md,.superpowers/*"`（两处）；`DevTools/*` **不需要**加 —— 那 3 个文件已由 `git rm` 出库（见本会话更早的提交）。
@@ -50,7 +50,7 @@ Run: `grep -rn "res://tests/\|res://tools/" --include=*.gd core/ scenes/ server/
 
 - [ ] **Step 2b: 顺带订正会随本步过期的那行注释**
 
-`scenes/main_menu.gd:154-155` 现在写着「**注:「发布版会裁掉 tests/」不是这条守卫的理由**——`export_presets.cfg` 是
+`scenes/main_menu.gd:154-156` 现在写着「**注:「发布版会裁掉 tests/」不是这条守卫的理由**——`export_presets.cfg` 是
 `export_filter="all_resources"`,`tests/` 会一起打进发布包,真实理由是文件可能不存在」。本步之后**前半句就反了**
 (裁剪落地后 `tests/` **确实**不再进包) ⇒ 改成两段实况:`tests/` 曾经一起进包(所以"缺文件"才是真守卫理由),
 **2026-10-04 起 `exclude_filter` 已含 `tests/*`** ⇒ 发布版里那条通道**没有了**(见 `registered-debt.md` §七 第 3 条,
@@ -95,6 +95,12 @@ Run: `grep -n "^\[preset\|^name=" export_presets.cfg | head -10`；确认导出�
 | **字面**出现次数 | `grep -a -o "res://tests/" "<exe>" \| wc -l` | **407** | **0** |
 | distinct `res://tools/*` | 同型、换 `tools` | **8** | **0** |
 | distinct `res://DevTools/*` | 同型、换 `DevTools` | **3** | **0**（靠 `git rm` 归零，**不靠** filter） |
+
+★ **两条评审补充（2026-10-04，必须先读，否则判据会读成"失败"）**：
+
+  ① `.godot/exported/` 里那 **128** 条 `export-*-<探针名>.scn`（编辑器为 `res://tests/probe|smoke/*` 生成的导出缓存）**也应一起消失** ⇒ 单独数一次（改前基线记进报告）。
+  ② ★★ **不要把"所有 `res://tests/` 归零"当成唯一合格线**：exe 里确有 `.godot/global_script_class_cache.cfg` 的结构，且**改前**每个 exe 里 `res://tests/lib/*.gd` 各出现 **3** 次。这类**脚本类缓存**是**元数据**、不是被打包的资源 ⇒ 导出后**单独记录**它还剩几处，并在报告里写明它是缓存元数据而非资源（别让报告读起来像判据失败）。
+     另：导出后 grep 一眼 stderr 有没有 `res://tests/lib/…` 噪声。
 
 ★ 还要**反向确认没裁掉要用的东西**：`maps/*.cyrm`、`data/*.json`、以及 webp 相关模块仍在包内（各数一次，写进报告）。
 ★ 若 distinct 不为 0 ⇒ 按 Review Focus 1 换写法（`tests/**` 或逐个列 `tests/smoke/*,…`）后**重导重数**，直到 0。把每一步的计数写进报告。

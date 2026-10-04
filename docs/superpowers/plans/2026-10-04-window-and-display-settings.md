@@ -26,7 +26,7 @@
 2. **`stretch/mode` 选 `disabled` / `keep_width` / `keep_height` / `expand` 都会破前提**（Task 1）⇒ 只允许 `{canvas_items, viewport} × {keep, ignore}`，且 `ignore` 会把圆压成椭圆（不推荐）⇒ 实际就两个候选。
 3. **`core/present/post_process.gd:49-50` 的 `crop_scale` 只在 `_ready` 算一次**（Task 1）。逻辑尺寸不变的档**不需要**重算；一旦选了会让逻辑尺寸变的档，就必须挂 `get_tree().root.size_changed` 重算，否则裁剪比例停在开窗那刻。
 4. **新增的 CheckButton 会被 `settings_display_section_probe._set_all_keys()` 一并翻转**（Task 3）⇒ 它必须像既有开关一样只在 `toggled` 里写 `Settings`，且 `Settings` 必须能被该探针的 `_restore(orig)` 还原（实现前先读 `:150-160` 确认口径）。
-5. **headless 下不能调 `DisplayServer.window_set_mode`**（Task 2）⇒ `apply_display()` 用仓内既有惯例 `DisplayServer.get_name() == "headless"` 早退（`tests/smoke/menu_autotest.gd:504` 是同一写法的先例）。
+5. **headless 下不能调 `DisplayServer.window_set_mode`**（Task 2）⇒ `apply_display()` 用仓内既有惯例 `DisplayServer.get_name() == "headless"` 早退（`tests/smoke/menu_autotest.gd:505` 是同一写法的先例）。
 6. **分辨率索引越界**（Task 2）⇒ 照 `core/config/settings.gd:156` 的既有权衡写法 `clampf(float(cf.get_value(...)), lo, hi)` 回落，别让坏存档把窗口设成 0×0。
 
 ---
