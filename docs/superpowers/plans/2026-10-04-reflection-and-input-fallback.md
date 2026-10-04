@@ -350,6 +350,27 @@ git commit -m "refactor(weapons): 去掉三处 Input.is_action_* 兜底(武器�
 
 ---
 
+### Task 15: 把 `snap["downed"]` 那一维**真的**守住（来源 = Task 13 的 G-1 证伪）
+
+★★ **背景（控制器写错、被实测证伪）**：`registered-debt` §六.15 原先声称"逐名的正确性**由行为断言兜底**"。
+Task 13 的 **G-1 实测：只把 `_snapshot_player` 里的字符串改成 `has_method("is_downed_x")`（真方法不动）⇒ 探针 ALL-OK 60/60**
+（`_s7_producer` 只断言 `wslot/widx/wmags/wlive`；`rewind_probe.gd` 里 `downed` 出现 **0** 次）⇒ 那条形状守卫**只有计数上界一条保证**。
+
+**Files:**
+- Modify: `tests/probe/rewind_weapon_probe.gd`（度量 + 新增 1 条行为断言 + 过期行号引用）
+- Modify: `docs/eng/registered-debt.md`（§六.15 的订正已由控制器做；若要补翻案状态再改）
+
+- [ ] **Step 1: 定位** —— `_has_member_token` 的签名（`:74`）与 S7 度量处（`:432`）；`_s7_producer` 现在断言了什么；
+  以及**过期的行号引用**：探针 `:441` 与 `§六.15` 都写 `player.gd:987-989`（倒地/复活还原），★ **先按内容 grep 复核**它现在在第几行（Task 13 报的是 `995-998`，别照抄）
+- [ ] **Step 2 (a)：把 S7 的度量换成逐名核** —— 对那 **5** 个成员名（`velocity`/`hp`/`facing_direction`/`weapons`/`is_downed` 的**访问形态**）各来一条 `_has_member_token` 断言（**不增条数**，替换原计数上界那条或与它并存都行 —— 报告里说清选了哪种、条数变化）
+- [ ] **Step 3 (b)：补一条 `snap["downed"]` 的行为断言** —— 让"生产端快照里的 `downed` 等于真值"这件事**真的**被钉住（构造/复用既有相；★ 若造不出"倒地玩家"的测例 ⇒ **停下报告**，别写成恒真断言）；★ 因增 1 条，`EXPECTED_CHECKS` 60→**61**
+- [ ] **Step 4：先红后绿** —— (a) 的每条：把对应字符串改成"后缀拼接"⇒ **必红**；(b)：把 `"downed"` 那行的来源改成常量 `false`（或反过来）⇒ **必红**
+- [ ] **Step 5：订正那两处过期行号**（探针注释 + `§六.15`；按内容核准后再改）
+- [ ] **Step 6：提交**（逐个文件点名 `git add`）
+★ 覆盖上限照实写：`downed` 这一维钉住之后，**`snap` 其余键**是否也有行为断言，自己数一遍并写进报告（别让"补了一维"读成"全维都守住了"）。
+
+---
+
 ## 本计划**不含**
 
 - **§2.2/§2.3/§2.4（协议/权威：轴无界、队列无上限、`@rpc` 无 channel）** —— Plan A（其中 2.4 单独一份）。
