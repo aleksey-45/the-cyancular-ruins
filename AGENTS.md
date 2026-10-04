@@ -115,7 +115,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 | 地图格式(cyrm v3/v4)交接 | [`docs/2026-09-20-cyrm-v4-handover.md`](docs/2026-09-20-cyrm-v4-handover.md) |
 | 历史设计与实施计划(每批一份 spec + plan) | `docs/superpowers/specs/`、`docs/superpowers/plans/` |
 | 上一个会话的交接(欠账 + 纪律) | [`docs/superpowers/handoff-2026-10-03.md`](docs/superpowers/handoff-2026-10-03.md) |
-| 本机运行账本(逐任务评审判决、全部登记项) | `.superpowers/sdd/progress.md`(**gitignore,不入库,但是恢复地图**) |
+| 本机运行账本(逐任务评审判决、全部登记项) | `.superpowers/sdd/`(**gitignore,不入库,但是恢复地图**):**按计划分子目录** —— 每批在 `.superpowers/sdd/<计划名>/` 下有 `progress.md`(逐轮裁决与 Ruling)、`task-N-brief.md` / `task-N-report.md`、`review-*.diff`(评审包);更早的批次是根下那个扁平的 `progress.md` |
 | KH 线(v0.5.0 时间玩法)历史日志 —— **已封存,勿当现行规范** | [`docs/archive/kh-line-log.md`](docs/archive/kh-line-log.md)(原 `AGENTS.md`;封存纪律见 [`docs/archive/README.md`](docs/archive/README.md)) |
 
 ## 5. 接手点(核对于 2026-10-03)
