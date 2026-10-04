@@ -40,8 +40,9 @@ file_logging/max_log_files=64
 
 window/size/viewport_width=1920
 window/size/viewport_height=1440
-window/size/resizable=false
+window/size/resizable=true
 window/stretch/mode="viewport"
+window/stretch/aspect="keep"
 
 [dotnet]
 
