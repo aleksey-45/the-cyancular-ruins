@@ -263,11 +263,17 @@ window/stretch/mode="viewport"
   （`tests/smoke/menu_theme_mirror_smoke.gd:190/200`）⇒ 同一份派生逻辑"守卫里有、生成器里没有"。
   `registered-debt.md:28` 还把这条链记为**范本**（★ 2026-10-04 订正：原写 `:24`）。
 - **数值三处不符**（`✅`）：黑鸟瞬移真值 `core/config/enemy_params.gd:95-96` = **2~6 格**，
-  注释 `scenes/enemies/enemy_black_bird.gd:5` 写 **3~8**，文档 `docs/eng/enemies.md:15` 写 **2~4**；
+  注释 `scenes/enemies/enemy_black_bird.gd:249` 写 **3~8**（★ 2026-10-04 订正：原写 `:5`），
+  文档 `docs/eng/enemies.md:15` 写 **2~4**；
   冲锋伤害真值 `enemy_params.gd:104` `charge_damage = 7`，注释与文档都写 **6**。
   武器侧同款：`core/config/player_params.gd:78` = **0.6s**，`docs/eng/weapons.md:35` 写 `(2s)`，
   `scenes/player/player.gd:846` 写"没有反馈的**两秒**长按是不可用的"；`scenes/weapons/s686.tscn:11/14`
   = 射程 **1100** / 散布 **3.0**，而 `weapons.md:14` 写 `±5°、射程700`。
+  ★ **2026-10-04 现状（Task 6 补）**：上面**除 `enemy_black_bird.gd:249` 那处 `3~8` 外**的各条
+  （`enemies.md:15` 的 `2~4`、冲锋 `6` 伤、`weapons.md:35` 的 `(2s)`、`player.gd` 的"两秒"、
+  `weapons.md:14` 的 `±5°/700`）**已由同日 `9b4dcf5` 逐条订正**（提交信息逐条点名），那几处的行号
+  也随之漂了（例：`player.gd` 的"两秒"现记在 `:848`）⇒ 引用前重新 `grep`。本节要修的真残留只剩
+  `enemy_black_bird.gd:249`（逐条复核见 [`conventions-review-2026-10.md`](conventions-review-2026-10.md) §3-2）。
 - **武器槽位三方不一致**（`✅`）：`README.md:19` 说"`1`~`6` 切枪"，
   `core/net/local_input_source.gd:42` 注释说"5/6 的 InputMap 动作**保留不删**"，
   而 `project.godot` 的 `[input]` 段只定义了 `left/right/up/down/charge/rewind/haste/toggle_barrel/attack/R/F/Q/1/2/3/4`
@@ -381,7 +387,12 @@ window/stretch/mode="viewport"
 > **① 源码/仓内真有的理由** · **② 只活在本报告里的理由（那是我的判词，不是仓里的理由）** ·
 > **③ 已经过期的理由**。混为一谈的后果是：`§10` 的裁定要求"逐条重新考虑"，而有些条目**根本没有可考虑的仓内理由**。
 >
-> | 条目（**# = §4 表内第 N 行**；★ 原表编号错位，已按表内实际行序订正） | 出处判定 |
+> ★ **编号对照（2026-10-04 订正）**：本表编号已按 **§4 表内实际行序**重排（原文用的是"只数已被分类的条目"
+> 的旧编号，所以看起来像错位）。**旧 → 新**：5→8 · 6→9 · 7→10 · 8→11 · 9→12 · 10→13 · 11→14 · 12→15 ·
+> 13→17（1~4 不变）。留这条对照是因为仓内 [`tests/env.sh:17`](../../tests/env.sh) 的「§4 的第 13 条」
+> 用的仍是**旧**编号 ⇒ 它指本表的 `env.sh` 那一行（新 **17**），**不是**新 13（固定视口下的绝对定位）。
+>
+> | 条目（**# = §4 表内第 N 行**；★ 原写编号错位，对照见上） | 出处判定 |
 > |---|---|
 > | 1 手写预测/回滚 | **②+挂错对象**：`cyancular_build_profile.gdbuild:91-92` 确实列了 `MultiplayerSpawner`/`MultiplayerSynchronizer`，但"因此用不了引擎复制节点"**只在自编译模板下成立** —— `export_presets.cfg:31 custom_template/release=""`，靠 `RELEASE.md:149-151` 覆盖全局 `%APPDATA%\…\windows_release_x86_64.exe` 生效（模板被官方盖回即失效，`RELEASE.md:168` 已记该故障）。仓内对这俩节点 **0 引用**，也 **0 处注释**写"因此手写" |
 > | 2 双 autoload | **③ 已过期**：`net_bus_ext.gd:4-6`「原 NetBus 保持与原版逐字节一致」今天为假 —— 自建 Ext 那次（★ 订正出处：Ext 的创建提交是 `e7b53fd`「搬入 NetBusExt 扩展协议收口节点」（2026-09-10）；原写的 `716b6fc`（2026-09-15）是 `core/` 分目录**搬家**）之后 `net_bus.gd` **一直在改** —— **保守下界**：从搬家那次 `716b6fc..HEAD` 起仍有 **6 次**（`git log --oneline 716b6fc..HEAD -- core/net/net_bus.gd`）、**+132/−1**，并**插进 2 条 `@rpc`**（`:282`→`weapon_spawned`、`:286`→`weapon_removed`；`func` 在 `:283`/`:287`）—— 正是头注预警会"RPC 全部失联"的那种改动。分离还已生出雷：`net_bus_ext.gd:39-43` 那对 `beam_fired` 零消费者，逼出两条防呆注释（`net_bus.gd:280`、`pvp_match_client.gd:882`）。兼容对象**仍在**（`pvp_session.gd:12` 默认云服 `120.53.107.140`、`README.md:33`） |
