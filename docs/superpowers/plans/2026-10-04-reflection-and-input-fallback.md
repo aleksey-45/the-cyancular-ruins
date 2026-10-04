@@ -63,7 +63,12 @@ Run: 你选的那条 ⇒ 改前（反射版本）**(a) 必红**；(b) 应在改�
 - [ ] **Step 5: 跑它，确认绿 + 变异**
 
 Run: 同 Step 3 ⇒ 绿；再跑 Step 1 里找到的**回溯功能探针** ⇒ 仍绿。
-变异（档 2 至少一条）：把补齐的类型/方法里**任一处**故意改错名字（例：`equip_index` → `equip_indx`）⇒ 必须**编译期就报错**（这正是本任务要买到的保证）；复原。
+变异（档 2 至少一条）：把补齐的类型/方法里**任一处**故意改错名字（例：`equip_index` → `equip_indx`）
+⇒ 必须**当场报错**（★ 2026-10-04 实测订正：原稿写"**编译期**就报错"**在本平台做不到** ——
+Godot 4.7.1 对 `class_name` 脚本类型上的未知成员只按**警告级** `UNSAFE_*` 处理，`project.godot` 也没把
+`unsafe_*` 升成错误 ⇒ 类型化写法拼错**同样是运行期** SCRIPT ERROR。真正买到的是：`get`/`set` 拼错
+从"引擎一声不吭"变成"**当场点名成员 + 文件:行号**"；`call` 拼错报得更准。★ 这是控制器 brief 的第 11 次
+写错；后续任务**不要**再照"编译期"这个口径写报告）；复原。
 
 - [ ] **Step 6: 提交**
 
@@ -114,6 +119,66 @@ Run: `grep -rn "WeaponBase\|\.equip(" tests/ scenes/ | head -20`（谁在构造/
 git add scenes/weapons/weapon_base.gd <必要时其它文件>
 git commit -m "refactor(weapons): 去掉三处 Input.is_action_* 兜底(武器只读注入输入,缺接口就 push_error 而不是偷读全局)"
 ```
+
+---
+
+### Task 3: 同族反射的**生产端**（单机）—— `world_rewind.gd` + `swim_component.gd`
+
+★ **来源**：Task 1 的定位发现"审计 §2.5 只清了**消费端**"。本任务清单机的**生产端**。
+
+**Files:**
+- Modify: `core/sim/world_rewind.gd`（`:98-114` 一带 —— 先 `grep` 复核）
+- Modify: `scenes/player/swim_component.gd`（`:31` —— 先 `grep` 复核），**必要时**给类补 `class_name`
+
+**Interfaces:**
+- Consumes: `world_rewind.gd:98-103` 的注释**自己记着这族反射引发的真事故** —— `_current_slot` 改名成
+  `_current_type` 之后 `get` 返回 null ⇒ **快照值静默恒为 0**（不报错、不中断）；`:104-114` 是同一族。
+- Produces: 类型化访问；★ `swim_component.gd:31` 若要类型化得**给 player 根加 `class_name`** ⇒ 那是**动类结构**，**先报告再动**。
+
+- [ ] **Step 1: 定位** —— `grep -n 'get("\|set("\|call("' core/sim/world_rewind.gd scenes/player/swim_component.gd` + 弄清每个成员属主与有没有 `class_name`
+- [ ] **Step 2: 写"能红"的守卫** —— **优先**扩既有单机回溯探针（`rewind_probe` 已覆盖录制/位置/HP/怪复活/精英/免疫/恢复/磁带钟/二次回溯），补一条"**生产端的快照值非 0 / 逐字段等于真值**"的断言（★ 这正是当年那次事故的形态）；形状守卫（那两文件的字符串反射计数 **0**）作副判据
+- [ ] **Step 3: 先红** → **Step 4: 类型化** → **Step 5: 绿 + 变异** → **Step 6: 提交**
+★ 覆盖上限：`swim_component.gd` 那处若要给根加 `class_name`，**先报告**（动类结构的爆炸半径不同）。
+
+---
+
+### Task 4: 同族反射的 **PvP 生产端 + 写回端**（★ 档 3）
+
+**Files:**
+- Modify: `server/match/match_host.gd`（`:402-413` / `:455-465` —— 先 `grep` 复核）
+
+★ **档 3**（「回滚与快照」在档位表里是承重面）⇒ 逐条变异 + **真链路跑批** + **逐任务评审**。
+
+- [ ] **Step 1: 定位**（同上，并弄清这两段的**读写方向**：谁是生产、谁是写回）
+- [ ] **Step 2: 写"能红"的守卫** —— 优先用既有 PvP 探针扩一条"快照字段**逐字段**等于真值"（★ 先证明它有牙：把某个成员名拼错 ⇒ 必红）
+- [ ] **Step 3: 先红** → **Step 4: 类型化** → **Step 5: 绿 + 逐条变异**
+- [ ] **Step 6: 真链路**（★ 先列测试请用户认领；`lobby_alive` 检查；前后 `tasklist` 空；收尾 `kill_port_range 7800 8300`；同配置跑两次再下时序结论）
+- [ ] **Step 7: 提交**
+
+---
+
+### Task 5: 两处**实测的**回溯保真缺陷（★ 档 3；来源 = Task 1 的实测）
+
+★ **两处都是既有缺陷、不是 Task 1 引入的**；Task 1 逐位未改、只报告。
+
+**Files:**
+- Modify: `scenes/player/player.gd`（`_equip_index` 一带 —— 先 `grep` 复核）
+- Modify（必要时）: `scenes/weapons/weapon_component.gd`
+
+**Interfaces:**
+- Consumes（实测原文）：
+  - **A 切枪帧**：`_equip_index` 用 `call_deferred` 入树 + 先置 `pending_mag`（条目值）⇒ 回溯写下的
+    `live2.mag_ammo = wlive` 被 `_ready` 冲掉（仪器：切枪帧 mag=**9** → 入树后 **4** → 下一帧 **9**）。
+  - **B 走掉那把**：`_equip_index` 会把**走掉那把**的实弹出膛值写回条目，冲掉刚回溯好的快照值
+    （实测 `wmags=[11,1]` / `widx=1` ⇒ `held[0]=3` 而非 **11**）。
+- Produces: 回溯后**弹量与快照逐字段一致**（含切枪帧与跨武器两种情形）。
+
+- [ ] **Step 1: 把这两条写成断言**（在 `rewind_weapon_probe` 里；若现有 28 条功能断言已覆盖这两种情形却仍绿，说明它们没测到点上 ⇒ 报告）
+- [ ] **Step 2: 跑出红**（把两组实测数字变成断言）
+- [ ] **Step 3: 修** —— 候选：走 `WeaponComponent.apply_mag` 而不是裸写字段 / 调整语句序 / 让 `_ready` 不覆盖已回溯的值。★ **修法会改行为** ⇒ 必须写清"新行为是什么、为什么更好"，且 `rewind_weapon_probe` 的**旧断言**要继续绿（若旧断言钉的正是**错行为**，改它并说明理由）
+- [ ] **Step 4: 绿 + 逐条变异**
+- [ ] **Step 5: 真链路**（档 3）+ **逐任务评审**
+- [ ] **Step 6: 把 `registered-debt.md` §六 那两条从"未修"改口为"已修"**（附提交号）
 
 ---
 
