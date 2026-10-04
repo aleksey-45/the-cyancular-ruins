@@ -5,11 +5,15 @@ extends MatchSnapshot
 # 含拆墙广播 —— 它同样是"命中/破坏"这条线上的事件。
 
 func _on_tile_destroyed(cell: Vector2i) -> void:
-	# 服务器无瓦片渲染层,只需清持久子格 + 标记分块重建
+	# 服务器无瓦片渲染层,只需清持久子格 + 标记分块重建。
+	# ★ 子格是 **16px**(cyrm v4:64px 格 → 4×4 子格),这里必须按**当前格**展开。**别用 `* 2`**:
+	#   那是 v3 时代 32px/2×2 的过期口径,会把 `(x/2, y/2)` 那格的左上象限清出 4 个洞,而被拆那
+	#   一格 16 个子格**一个都没清** ⇒ 真格留幽灵墙(碰撞还在),`rebuild_chunk` 读的又是这份脏
+	#   数组 ⇒ 别处的洞**不自愈**。反向换算在同文件 `_on_sub_destroyed`:`Vector2i(sub.x / 4, sub.y / 4)`。
 	if not destructible_sub.is_empty():
-		for qy in range(2):
-			for qx in range(2):
-				destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
+		for sy in range(4):
+			for sx in range(4):
+				destructible_sub[cell.y * 4 + sy][cell.x * 4 + sx] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 	# 广播拆墙给双方客户端:客户端子弹是视觉副本(apply_damage=false)不判伤害,
 	# 服务器拆的墙必须由事件驱动客户端清瓦片渲染,否则建筑"看着没被炸坏"。

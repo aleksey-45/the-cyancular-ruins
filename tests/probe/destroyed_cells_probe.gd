@@ -30,6 +30,21 @@ func _check(ok: bool, what: String) -> void:
 		print("  FAIL " + what)
 
 
+# 相③ 用:`destructible_sub` 里**不属于** cell 的非空子格数。
+# ★ 为什么读"数"而不直接读"被清了哪些":`destructible_sub` 是**整图**的可破坏子格表
+#   (newfactory 实测非空 7624 个),绝对值恒 > 0 ⇒ 只有**前后两次之差**才等于"别的格被清掉几个"。
+func _solid_outside(cell: Vector2i) -> int:
+	var n := 0
+	var sub_rows: int = _host.destructible_sub.size()
+	var sub_cols: int = _host.destructible_sub[0].size()
+	for y in range(sub_rows):
+		for x in range(sub_cols):
+			if _host.destructible_sub[y][x] != MazeGenerator.EMPTY \
+					and Vector2i(x / 4, y / 4) != cell:
+				n += 1
+	return n
+
+
 func _ready() -> void:
 	_host = MatchHost.new(MAP, {}, {}, [])
 	add_child(_host)
@@ -69,11 +84,48 @@ func _run() -> void:
 	_check(d == ([Vector2i(3, 2), Vector2i(1, 5), Vector2i(7, 5)] as Array),
 			"★ 顺序必须是「按 y 升序、同 y 按 x 升序」(实际 %s)" % str(d))
 
-	# ── ③ 反向:只改回一格 → 只剩 2 个(证明它比的是**差异**不是"非实心")──
+	# ── ③ 走**真破坏路径**(worker 用的那条) → 该格 16 子格全清,且**别的格一格没动** ──
+	# ★ 与本任务 brief 的片段有三处**必要偏离**(全部实测;照抄那份连红都跑不出来):
+	#   ① `rows`/`cols` 在本函数顶部(:44-45)已声明 ⇒ 照抄直接 `Parse Error: There is already
+	#      a variable named "rows"`,整个探针**加载失败**(不是"红",是根本没跑)。
+	#   ② 真路径要**先有事可做**:地图 newfactory 的 (9,6) 是空气 ⇒ `damage_tile` 首行 return,
+	#      回调根本不跑 ⇒ 那条"16 子格全清"**恒真**(实测残留 0,它一个行为都没验)。
+	#      故把那格钉成**可破坏纹理**的非空格(texture 15 = 树叶-1,`explosion_destroyable`)。
+	#      ★ 只钉 `grid`、**不钉** `_base_grid`:真路径销毁后 `grid` 回到 0 = 基线,不给相④/⑤
+	#      添假差异(照抄 brief 那句 `_base_grid[cell] = SOLID` 时实测多一个 (9,6) 差异,
+	#      既有相④ 当场 `3 != 2` 变红)。
+	#   ③ `destructible_sub` 是**整图**的可破坏子格表(实测非空 **7624** 个)⇒ "别的格一格没动"
+	#      只能读**前后差**,不能读"全图非空数 == 0"(照抄实测恒红 7624,Step 4 永远到不了绿)。
+	var cell := Vector2i(9, 6)
+	_host.grid[cell.y][cell.x] = MapFormat.pack(15, 15)
+	for sy in range(4):
+		for sx in range(4):
+			_host.destructible_sub[cell.y * 4 + sy][cell.x * 4 + sx] = MazeGenerator.SOLID
+	# ★ 变异判据的**前置**:`* 2` 的越界写法会去清格 (cell.x/2, cell.y/2) 的 sx∈{2,3}×sy∈{0,1}
+	#   象限 —— 那 4 个子格必须**先钉实**,否则越界写的是"把空气写成空气",变异跑不红。
+	var bug_cell := Vector2i(cell.x / 2, cell.y / 2)
+	for sy in range(2):
+		for sx in range(2):
+			_host.destructible_sub[bug_cell.y * 4 + sy][bug_cell.x * 4 + 2 + sx] = MazeGenerator.SOLID
+	var others_before := _solid_outside(cell)
+	MatchState.test_destroy_cell = cell
+	MatchState.test_destroy_after = 0.0
+	_host._debug_destroy_tile(0.0)
+	var left := 0
+	for sy in range(4):
+		for sx in range(4):
+			if _host.destructible_sub[cell.y * 4 + sy][cell.x * 4 + sx] != MazeGenerator.EMPTY:
+				left += 1
+	_check(left == 0, "格 %s 的 16 子格应被清光(残留 %d)" % [str(cell), left])
+	# ★ 反向断言:2×2 的越界写法会去清**别的格** ⇒ 这里是唯一能抓住"清到别处"的判据。
+	var others := others_before - _solid_outside(cell)   # 被清掉的、属于**别的格**的子格数
+	_check(others == 0, "不该有别的格被清(实际 %d 个子格)" % others)
+
+	# ── ④ 反向:只改回一格 → 只剩 2 个(证明它比的是**差异**不是"非实心")──
 	_host.grid[2][3] = _host._base_grid[2][3]
 	_check(_host.destroyed_cells().size() == 2, "改回一格后应剩 2 个")
 
-	# ── ④ 反向:凭空**加**一格实心(基线是空的地方填实心)也要报 ──
+	# ── ⑤ 反向:凭空**加**一格实心(基线是空的地方填实心)也要报 ──
 	# ★ 不能只比"当前是不是 EMPTY" —— 服务器理论上不会加砖,但契约是"与基线不同",
 	#   写成"当前为空"会在将来加砖时静默漏报。
 	var ey := -1
