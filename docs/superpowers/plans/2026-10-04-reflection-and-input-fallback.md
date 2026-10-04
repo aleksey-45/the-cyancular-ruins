@@ -182,6 +182,36 @@ git commit -m "refactor(weapons): 去掉三处 Input.is_action_* 兜底(武器�
 
 ---
 
+### Task 6: §2.6 的**第 4 处**兜底（`swim_component.gd`）—— 控制器追加（来源 = Task 2 的发现）
+
+★ **不补它就等于"4 处修了 3 处"**：审计 §2.6 说的就是**4 处**。
+
+**Files:**
+- Modify: `scenes/player/swim_component.gd`（`:10-18` 一带 —— 先 `grep` 复核）
+
+**Interfaces:**
+- Consumes: `update(parent, delta, move_mult, src: PlayerInput = null)` 里 `if src == null: src = LocalInputSource.new()`
+  （与武器那三处**同款**兜底；生产唯一调用点 `player.gd:255` 恒传 `input_source`，注释自陈"src=null(冒烟等直接调用)回落真实 Input"）。
+- Produces: 缺 `src` 时**点名报错**，不再静默造一个 `LocalInputSource`。
+
+- [ ] **Step 1: 定位** —— `grep -rn "swim_component\|SwimComponent" tests/ scenes/ | head -20`，数清"`src=null` 的调用者"到底在**探针**里还是**生产路径**里
+  ★ 若在生产路径 ⇒ **停下报告**（那是设计问题，登记 debt，别硬改）
+- [ ] **Step 2: 守卫** —— 形状（`grep -c 'LocalInputSource.new()' scenes/player/swim_component.gd` ⇒ **0**）+ 行为（相关冒烟）
+  ★★ **Task 2 的教训**：headless 下全局 Input 恒 false ⇒ **行为守卫对这条病天生无牙** ⇒ 必须配**源码守卫**并**证明它会红**（照 Task 2 在 `kh_l3_probe` 里的做法）
+- [ ] **Step 3: 先红 → 改 → 绿 + 变异**（变异：把报错支改回 `LocalInputSource.new()` ⇒ 源码守卫必红）
+- [ ] **Step 4: 提交**
+
+★ **同时把两条覆盖上限写进 `docs/eng/registered-debt.md` §六**（照实写，别只在报告里说）：
+  · Task 2 的注入路径只实跑了 `pistol_test` × {半自动/全自动/heavy_aim}；**m82a1 / 榴弹 / 激光 / 霰弹未逐一实跑**
+    （三条查询形状对各枪一致，但那是**推断**不是实测）；
+  · 真链路里 PvP 机器人是"注入 `attack=true` 宿主"的**唯一**端到端载体，**未跑**（占 7777）。
+
+★ **顺带复核（只报告，不在本任务实现）**：同类的**非兜底**直读 —— `level_0.gd:373`、`pvp_match_client.gd:214/231`
+（rewind/haste）**直读全局输入**、没有注入 seam。形状与 §2.6 不同（不是"兜底"，是**根本没注入**）⇒
+看清它们属哪个域、能不能加 seam，**写进报告**，由控制器决定是否立项。
+
+---
+
 ## 本计划**不含**
 
 - **§2.2/§2.3/§2.4（协议/权威：轴无界、队列无上限、`@rpc` 无 channel）** —— Plan A（其中 2.4 单独一份）。
