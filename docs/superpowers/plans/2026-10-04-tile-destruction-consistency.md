@@ -355,6 +355,9 @@ git commit -m "fix(tiles): 单机格级销毁收口 —— TileDefs.destroy_cell
 	if TileDefs.hp_grid_at(cell3b) != want3b:
 		_fail("相④b 回溯后 hp_grid[%s] 应回到 %d(实得 %d)⇒ 下一发激光会一发即碎"
 				% [str(cell3b), want3b, TileDefs.hp_grid_at(cell3b)])
+
+★ 落地版把整段（含 `subs3b[0]` 的索引）包在 `if cell3b.x >= 0:` 里 —— 夹具失败时 `subs3b` 是空数组，
+索引它会抛脚本错、吞掉相③b 的夹具诊断（评审 Minor 2，已落地）。
 ```
 
 ★ 若 `back_wrong != 0` 先红，说明相④ 的回溯没覆盖到相③b 那格（多半是台账没记上）—— **先查夹具再谈结论**，别急着改 `hp_grid` 那半。
@@ -447,7 +450,9 @@ git commit -m "fix(tiles): 回溯复原时把 hp_grid 一起写回(+hp_grid_at/s
 
 ## 本计划**不含**（避免实现者顺手做）
 
-- **`server/match/match_round.gd:150` 只 `init_hp` 不 `init_sub_hp`** —— 待用户确认"是有意还是漏了"（裁定中的 Q12(b)）后再定；**未经确认不得动**。
+- **`server/match/match_round.gd` 每局复位漏 `init_sub_hp`** —— 原先"待用户确认是否有意"（Q12(b)），
+  后**用证据代答**（客户端 `reset_destructibles` 一直还两套表、服务器只还一套 = 单侧遗漏）并已**落进本批**
+  （见 Task 1 的 Step 8 与 `d581cc6`）。一行可回退。
 - **把激光改成走 `damage_sub`** —— 用户已选 (b)：**保激光的格级路径**，打整格的手感不变。改它会带来"整格耐久 ×16"的玩法变更，不在本计划内。
 - **`tests/probe/aim_probe.gd:8-9` 的陈旧数字**（2496×1872 vs 生产 2208×1728）—— 属另一批（配置/文档卫生）。
 - **`tile_collision_probe.gd` 加"逐条计数闸"** —— 本计划用**跑完闩**（照 `destroyed_cells_probe.gd:22` 先例）替代；给 286 行、五个既有相的老探针逐条补计数要改掉每一处断言调用点，收益不抵风险。

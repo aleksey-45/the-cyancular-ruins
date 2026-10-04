@@ -10,7 +10,7 @@ static var _grid_ref: Array[Array] = []
 # 建图时的原始(未破坏)网格深拷贝:每局复位用它重铺瓦片/碰撞(不被运行时 damage_tile 污染)。
 static var _pristine_grid: Array[Array] = []
 static var _pristine_subgrid: Array[Array] = []   # cyrm v4:子格纹理表基线(复位/回溯用)
-# 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
+# 持久化可破坏层 **16px 子格**(cyrm v4:64px 格 → 4×4):摧毁时清该格 16 个子格,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
 static var _dirty_chunks: Dictionary = {}
@@ -388,8 +388,8 @@ func _process(_delta: float) -> void:
 			processed += 1
 
 
-# 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。
-## 单格写回(瓦片回溯用):网格 + 9 环面副本渲染 + 持久子格 2×2 + 脏块重建标记。
+# 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 **16 个(4×4)**,标记所在块下帧重建。
+## 单格写回(瓦片回溯用):网格 + 9 环面副本渲染 + 持久子格 **16 个(4×4)** + 脏块重建标记。
 ## 回溯期子弹对精英的二次伤害(策划案:「回退造成二次伤害」)——
 ## 回溯中普通实体冻结/由快照摆位,唯有精英照常存在;倒飞的子弹再次穿过它就再吃一次伤害。
 func _rewind_elite_hits() -> void:

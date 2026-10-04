@@ -288,7 +288,8 @@ func _run() -> void:
 			base3b.append([_painted(s), _terrain_at(world, _sub_center(s))])
 		# ★ 前置:格级那条 API 真收下了这一格。上面选点验的是**子格**纹理,而 `damage_tile`
 		#   验的是**格级**纹理(`flatten_scene` 取 16 子格里出现最多的非零者)—— 两者一旦分家
-		#   (如将来给液体开可爆),`damage_tile` 首行就 return ⇒ 下面几条**全恒真**。
+		#   (如将来给液体开可爆),`damage_tile` 首行就 return ⇒ 下面几条会**变红**(fail-closed:
+		#   格没被拆 ⇒ `ghost` 涨回 16),不是"恒真";但为免一次刷出 6 条连带 FAIL 埋掉根因,这里本该 `return`。
 		if not TileDefs.damage_tile(cell3b, 999999, "explosion"):
 			_fail("相③b 格级 damage_tile 拒收格 %s(选点前置不成立 ⇒ 下面几条恒真)" % str(cell3b))
 		await _wait_ms(300)                       # 脏块分帧重建(与相② 同款等待)
@@ -302,7 +303,8 @@ func _run() -> void:
 		#   按 `sub_alive` 判定,`WorldBuilder.build_sim` 在复位时按基线重算它)—— 不是渲染层、
 		#   也不是 `_destructible_sub`。只清后两者时:`ghost`/格心碰撞/相④/相⑥ **全绿**
 		#   (相④ 回溯会把渲染与碰撞用 `pre_hp` 原样还原,相⑥ 又拿 `sub_alive` 当规则),
-		#   只有这一条照得出来。去掉 `destroy_cell` 里那句 `restore_sub(sub, 0)` ⇒ 必红。
+		#   只有这一条照得出来。去掉 `zero_cell_sub_hp` 里那句 `restore_sub(sub, 0)`(2026-10-04 起
+		#   清 `sub_hp` 的调用点在这里,不在 `destroy_cell` 体内)⇒ 必红。
 		var still_alive := 0
 		for s in subs3b:
 			if TileDefs.sub_alive(s):

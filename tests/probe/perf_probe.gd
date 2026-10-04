@@ -5,6 +5,8 @@ extends SceneTree
 #  2) N 只飞鸟:障碍收集 + A* + 死区逃逸耗时
 #  3) 全场景每帧物理基准(真实 CollisionBuilder 建的永久墙 + 可破坏块 + N 只鸟)
 # 用法:godot --headless --path . -s res://tests/probe/perf_probe.gd
+# ★ 2026-10-04:本文件里的"清子格"是 **v3 的 2×2 口径**(`:179` / `:205-211`),与生产实现(v4 4×4)
+#   已经分家 ⇒ 下面那些 timing/覆盖率是**合成消融**,别当生产算法的性能读(见 registered-debt §五.3)。
 
 
 # hoisted from locals when __initialize was split (first assignment kept in place).

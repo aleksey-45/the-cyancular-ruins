@@ -284,18 +284,19 @@ window/stretch/mode="viewport"
   但 `scenes/main_menu.gd:80` `const BG_BLUR_RADIUS_PX := 4.0` 在 `:276`
   `mat.set_shader_parameter("blur_radius", BG_BLUR_RADIUS_PX)` 每屏覆盖它；而该 shader **只被 main_menu 用**
   （grep 确认）⇒ **10-04 那次"模糊再强一点"从未生效**。
-- **`CollisionBuilder` 头部注释与自己的常量相反**（`✅`）：`core/sim/collision_builder.gd:6`
-  "# 从 125×75 网格展开成 250×150 的 **32px** 子格(每 64px 格 → **2×2**)"，
-  而 `:13` `const SUB_TS: int = 16  # 16px 子格(cyrm v4:64px 格 → 4×4 子格…)`。
-  **这个过期注释已经咬到人了**：`server/match/match_combat.gd:18-22`
+- **`CollisionBuilder` 头部注释与自己的常量相反**（`✅`）—— ★ **2026-10-04 已修**:头部注释原写
+  "从 125×75 网格展开成 250×150 的 **32px** 子格(每 64px 格 → **2×2**)"，而 `:13` 的常量是
+  `SUB_TS = 16  # 16px 子格(cyrm v4:64px 格 → 4×4)`。现已改成 16px/4×4。
+  **这条注释过期确实咬到人了（同一闭环，已一并修）**：`server/match/match_combat.gd` 修的**修前**是
   ```
   		for qy in range(2):
   			for qx in range(2):
   				destructible_sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
   ```
-  —— v4 子格表已是 4×4（同文件 `:25` 的正确写法是 `Vector2i(sub.x / 4, sub.y / 4)`），
-  清到了别处、真砖一格没清。可达性有限（仅 `--test-destroy-tile`，`match_host.gd:205` 注明默认关）
-  ⇒ 中等，但这正是"注释过期 → 复制过期算法"的完整闭环。
+  —— v4 子格表已是 4×4（同文件 `:25` 的正确写法是 `Vector2i(sub.x / 4, sub.y / 4)`），修前清到了别处、
+  真砖一格没清。★ 严重度**已在 §3 顶部订正块第 4 条改为高**（可达性**不**限于 `--test-destroy-tile`：
+  真 PvP 局里服务器侧激光走格级 `damage_tile` 就能触发）；现已修为 `match_combat.gd:18-22` 的 4×4，
+  并有 `destroyed_cells_probe` 相③ 守卫。
 - **`docs/eng/world.md:9` 与源码相反**（`✅`）：文档写"游戏侧读的只有 v3 文本与旧字母格式两种
   （编辑器**写**的是 v4 二进制，**游戏还读不了**）"，而 `core/sim/map_format.gd:90`
   `static func is_v4(path: String) -> bool: return MapFormatV4.is_v4_data(_read_bytes(path))`
