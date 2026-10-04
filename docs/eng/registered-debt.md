@@ -1,16 +1,20 @@
 # 登记欠账(既有红 / 待还的债)
 
-> 本文件是**唯一**的欠账清单:① 长期红的探针(**不算守卫**),② 重复真相源(该改生成式的地方)。
-> 纪律:每条都写清**症状 / 为什么留着 / 什么时候能销**;销掉时**删行**(历史在 git 里,不留"已修"注)。
+> 本文件是**这两类**欠账的清单:① 长期红的探针(**不算守卫**),② 重复真相源(该改生成式的地方)。
+> ★ **2026-10-04 校正口径**:此前 `AGENTS.md` 称本文件是"**唯一**清单",而实际只有这两类 ——
+> 性能/视觉/文档/工程类的债住别处,落点见 §四。**动手前先看本文件,再看 §四 那张表**。
+> 纪律:每条都写清 **owner / 最后复核 / 症状 / 为什么留着 / 什么时候能销**;销掉时**删行**
+> (历史在 git 里,不留"已修"注);**入库文档不得引用 `.superpowers/`**(那里 gitignore,别人 404,
+> 要用的上下文请摘抄进来)。
 > 相关:[`tests.md`](tests.md) §守卫边界 · [`AGENTS.md`](../../AGENTS.md) §2「反重复」· [`CLAUDE.md`](../../CLAUDE.md)
 
 ## 一、既有红 —— **这些不是守卫,别拿它们的行为当证据**
 
-| 探针 | 症状 | 为什么留着 | 销掉的条件 |
-|---|---|---|---|
-| [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | **长期 FAIL,且判词与实况矛盾**:判词说"大厅队伍表是空的 / 45s 内没有 3v3 房",而**同一次跑**的客户端日志里房建成了、客户端进了等待室。A/B 已证与任何一批改动无关 | 根因未钉死:探针是 29200 的唯一监听者、`LobbyRooms` 在位,但 6 个客户端**连上后全部断开**、探针那条信号**一次都没触发** ⇒ **客户端被某个不是探针大厅的东西服务着** | 根因定位并修好,然后转正 |
-| [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
-| [`tests/probe/brawl_rollback_probe.tscn`](../../tests/probe/brawl_rollback_probe.tscn) | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | 留着仍能看见趋势 | 抖动与那一格假绿都消掉 |
+| 探针 | owner | 最后复核 | 症状 | 为什么留着 | 销掉的条件 |
+|---|---|---|---|---|---|
+| [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | 用户(六人真链路只能由用户跑) | 2026-10-04 **静态复核,未跑** | **长期 FAIL,且判词与实况矛盾**:判词说"大厅队伍表是空的 / 45s 内没有 3v3 房",而**同一次跑**的客户端日志里房建成了、客户端进了等待室。★ **2026-10-04 状态订正**:根因**已修** —— `9003dae`(2026-09-28)"客户端不再被拨到生产云服 —— 预置 `PvpSession.server_address`",正是本行原先那句"客户端被某个不是探针大厅的东西服务着"。但**修复后没有留下六人整跑的判决**,而三个落点互相矛盾(`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md:11` 说"已修待验"、`.superpowers` 账本记 2026-09-20 曾 PASS 33 条、同一账本靠后段落仍称"既有的 FAIL") | 根因未钉死时的追查成本太高,且它是**唯一**"过真协议"的 3v3 覆盖 | **跑一次六人整链路**(池外 29200/29250、不碰 7777):绿 ⇒ 按上面「销掉时删行」删掉本行,并同步 `tests.md` / `handoff` / `AGENTS.md` §5 的复述;红 ⇒ 把"已修 `9003dae`、仍红"写进症状列并重新算根因 |
+| [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
+| [`tests/probe/brawl_rollback_probe.tscn`](../../tests/probe/brawl_rollback_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | 留着仍能看见趋势 | 抖动与那一格假绿都消掉 |
 
 ★ **影响面照实写**:第一条意味着 **3v3 真链路今天没有可信的端到端守卫** —— 改 3v3 时别把"探针绿了"当证据,要另找覆盖(或先补守卫)。
 
@@ -20,8 +24,8 @@
 
 | 重复的东西 | 现在的形态 | 打算怎么改 |
 |---|---|---|
-| HUD 底板色 `C_PLATE`(黑 0.1) | 唯一源在 `ui/factory/ui_factory.gd`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)存**字面量**,由 `tests/smoke/ui_palette_single_source_smoke.gd` 钉住逐位相等 | 仿 `tools/gen_menu_theme.gd`:由调色板**生成**这两个 stylebox,守卫改成 `--check`。★ **别碰 HUD 视觉**(用户冻结令),只改"这个值是怎么来的" |
-| 菜单 Theme `ui/theme/menu_theme.tres` | **已完成,留作范本**:`tools/gen_menu_theme.gd` 生成 + 镜像守卫 | —— |
+| HUD 底板色 `C_PLATE`(黑 0.1) | 唯一源在 `ui/factory/ui_factory.gd`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)存**字面量**,由 `tests/smoke/ui_palette_single_source_smoke.gd` 钉住逐位相等 | 仿 `tools/gen_menu_theme.gd`:由调色板**生成**这两个 stylebox,守卫改成 `--check`。★ **别碰 HUD 视觉**(用户冻结令),只改"这个值是怎么来的"。★ **2026-10-04 补**:别照 `gen_menu_theme.gd` 现在的样子抄 —— 它自己也手抄了 `UiFactory` 的 `64/46`(`tools/gen_menu_theme.gd:218-221` vs `ui_factory.gd:305`),抄它会把同一笔税再交一次;正确姿势是调**生产入口**(`F.call("skin_menu_panel", …)`)再读回 stylebox —— 镜像守卫 `menu_theme_mirror_smoke.gd:190/200` 正是这么取值的 |
+| 菜单 Theme `ui/theme/menu_theme.tres` | **生成链已建成**:`tools/gen_menu_theme.gd` 生成 + 镜像守卫(带条数下限,读**生产产出**)。★ **2026-10-04 校正**:称它"**范本**"过头了 —— 它只做到"生成物与守卫对账",没做到"**单一来源**"(上面那条手抄就是缺口) | —— |
 | 编辑器内嵌的敌人注册表 | **已完成,留作范本**:`node level_editor/sync-enemies.js`(+ `--check` 只校验不写盘) | —— |
 
 ★ 新代码遇到"同一个值要抄两处"时,**直接上生成式**,别再补一条守卫。
@@ -31,3 +35,17 @@
 1. 修好 → **同配置跑两次**(分清噪声与信号);
 2. 把这条从本文件**删掉**;
 3. 若它本来是"守卫",按 [`tests.md`](tests.md) 的要求补一句「它现在能给的最强保证是什么、测不到什么」。
+
+★ **销案记录的格式范本**(2026-10-04 补):[`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md`](../superpowers/plans/2026-09-29-unowned-debt-sweep.md)
+的「本轮执行结果」那张表 —— 逐项写 **结果 + 提交 sha**,并含两段判决:`### ★ A4 是**伪欠账**(实读后推翻)` 与
+`### ★ C1 …**不再是欠账**`。**"推翻一条欠账"和"修掉一条欠账"都要留同样详细的记录**。
+
+## 四、本文件**不收**的那些债住在哪(2026-10-04 加)
+
+| 类别 | 落点 |
+|---|---|
+| 性能 / 视觉取舍(61MB 地形显存、结算页"行底"、取景 150% 像素取舍) | [`docs/superpowers/handoff-2026-10-03.md`](../superpowers/handoff-2026-10-03.md) §2.4 |
+| 各域的「已知边界(登记不修)」 | 对应 [`docs/eng/`](.) 域文档正文里,以「★ 已知边界(登记)」开头(如 `weapons.md` 的容量分叉、`render.md` 的挤压副产物) |
+| 代码内契约与残留 | 源码注释里的「★ 已知」「★ 待修」 |
+| 逐任务评审判决与恢复地图 | `.superpowers/sdd/progress.md`(**gitignore**) |
+| 2026-10-04 全仓审计发现的 20 条(含 `[debug]` 键失效、发布包打进 tests、`ax` 无界等) | [`docs/eng/audit-2026-10-04-design-conventions.md`](audit-2026-10-04-design-conventions.md) §7 的批次清单,等人工挑入本表 |

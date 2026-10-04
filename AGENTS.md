@@ -123,5 +123,5 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 
 - **在做的那条线**:[`docs/superpowers/plans/2026-10-03-ui-to-tscn-and-theme.md`](docs/superpowers/plans/2026-10-03-ui-to-tscn-and-theme.md) —— 把菜单屏从"代码建 UI"搬进 `.tscn` + `Theme`。
   ★ **进度以 `git log` 为准,别照着计划里的勾选框判断**:截至 2026-10-03,Task 0/1/2/3/4 的成果**都已在提交里**(Theme 基座、字体资源化、设置页、信息页、Beta 页 + 结算页),而勾选框**还全是空的** —— 典型的"枚举会过期"。剩下的看计划的 Task 5/6(主菜单 + 统一大厅迁移、收尾删被接管的旧样式函数)。**动手前先 `git log` / `grep` 复核。**
-- **既有红 / 重复真相源**:**唯一清单是 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)** —— 三条探针明确标注为**"不算守卫"**(其中 `team_match_probe.sh` 长期 FAIL ⇒ **3v3 真链路今天没有可信的端到端守卫**),外加两条"改生成式"的候选。**动手前先看它,别把红的当绿的。**
+- **既有红 / 重复真相源**:清单是 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)。★ **2026-10-04 校正**:"唯一清单"这个说法**只对那两类成立** —— 性能/视觉/文档类的债住在 [`handoff`](docs/superpowers/handoff-2026-10-03.md) §2.4 与各域文档的「已知边界(登记)」里,落点表见该文件 §四。三条探针标注为**"不算守卫"**(其中 `team_match_probe.sh` 的**根因已于 2026-09-28 由 `9003dae` 修掉,但修复后没有留下六人整跑的判决** ⇒ **3v3 真链路今天仍没有可信的端到端守卫**),外加两条"改生成式"的候选。**动手前先看它,别把红的当绿的。**
 - **其它登记项**(地形图常驻 61MB 显存、结算页"行底"、取景 150% 的像素完美取舍等)在 [handoff](docs/superpowers/handoff-2026-10-03.md) §2.4 —— **先查那里,别当新问题重查一遍**。

@@ -25,9 +25,11 @@
 - **★ 真链路跑批的两条纪律**:
   - ★★ **两支真链路测试之间必须确认 `tasklist | grep -i godot` 为空。** worker 由大厅 `OS.create_process` 拉起,是**孙进程** —— 不在任何脚本记下的 PID 里;而下一支新大厅的端口分配集合是**进程内内存** ⇒ **再次选中同一端口** ⇒ 新 worker 报 `监听失败 20` ⇒ 客户端连到的是**上一支的僵尸 worker** ⇒ 整支**挂到外层 timeout、一行裁决都不打**(与真失败**长得一样**)。★ 前台 `timeout` 掐掉某支脚本时,它收尾那段**不会跑** ⇒ 必留孤儿 ⇒ **下一支**被毒。守卫 = `tests/env.sh` 的 **`kill_port_range LO HI`**。★★ `rejoin_probe` / `team_match_probe` **绝不能**扫 `[7800,8300)`(那会端掉用户正在跑的对局)。
   - ★ **`lobby_alive` 原先那版判据是结构性恒假(已修)**:`netstat … grep -E "[:.]7777[[:space:]].*LISTENING"` —— 而 **ENet 走 UDP、UDP 行没有状态列** ⇒ `.*LISTENING` **永不命中**。现收在 `tests/env.sh` 的 `lobby_alive()`。
-- **⚠ 两条既有红(已登记,未修)**:
-  - ❌ **`tests/probe/team_match_probe.sh` 是既有的 FAIL,且判词与实况矛盾**(判词说"大厅队伍表是空的""45s 内没有 3v3 房",而**同一跑的客户端日志**里房建成了、客户端进了等待室)。★ **A/B 已证**与任何一批改动无关。**影响**:这是**唯一**「过真协议」的 3v3 覆盖,而它红着 ⇒ 3v3 真链路目前**没有**可信的端到端守卫。★ 追查已做到可交接处(根因未钉死):探针是 29200 的唯一监听者、`LobbyRooms` 在位,但 6 个客户端**连上后全部断开**、探针那条信号 **一次都没触发** ⇒ **客户端被某个不是探针大厅的东西服务着**。未证假设与下一步见报告 §4.1b。
-  - ⚠ **`tests/probe/ground_net_probe.tscn` 是既有的抖动**(机器人走位在随机图上卡死,探针自己的头注也写了这一点)。
+- **⚠ 既有红(已登记)** —— ★ **2026-10-04 收敛**:唯一清单是 [`registered-debt.md`](registered-debt.md) §一(带 **owner / 最后复核 / 销掉条件**),此处不再复述症状,只留索引:
+  - ❌ `tests/probe/team_match_probe.sh` —— **根因已于 2026-09-28 由 `9003dae` 修掉**(客户端被拨到生产云服 `120.53.107.140`),但**修复后没有留下六人整跑的判决** ⇒ 今天仍**不可**当作 3v3 的端到端守卫。跑法与销案条件见 [`registered-debt.md`](registered-debt.md) §一第 1 行。
+  - ⚠ `tests/probe/ground_net_probe.tscn` —— 既有抖动(机器人走位在**随机图**上卡死)。见 §一第 2 行。
+  - ⚠ `tests/probe/brawl_rollback_probe.tscn` —— 读 N≥4 时本身在抖,变异下仍有一格假绿。见 §一第 3 行。
+  - ★ **原注"未证假设与下一步见报告 §4.1b"是死指针**:那份报告在不入库的 `.superpowers/`,且 `§4.1b` 不在 [`docs/2026-09-17-duel-probe-lobby-rpc-blocker.md`](../../docs/2026-09-17-duel-probe-lobby-rpc-blocker.md) 的章节编号里。**已改指**该文档 §5「仍未解释的一处矛盾(下一个人的入口)」。
 - **★ B 档「登记边界」批(2026-09-28)的判据 + 回归清单**(判据一律是**文本**,不看退出码):
   - **`tests/probe/late_match_probe.tscn`**(`timeout 180 … --quit-after 3600`)→ 文本 `LATE MATCH PROBE: ALL-OK`。钉四项:① `_left_round` 分母的**读取端**;② MATCH_OVER 之后倒地**不**进 `_stats`(**含一条 ROUND_OVER 相**);③ `note_disconnect_round` 的**写入端**(经**真** `_enter_grace`);④ 大乱斗 `_match_winner` 的并列候选集(配 ⑤ 与 ⑤b;★ **⑤ 是必需的**反向对照)。★★ **覆盖上限(登记,不补相)**:④ 是**唯一**走到"只身幸存"的相 ⇒ 一个假想的退化实现能**全过**。★★ **另一处照实未钉**:MATCH_OVER 侧 ③ 的掉落与 ④ 的 `_reset_survivor` **没有断言**。
   - **`tests/smoke/duel_spawn_timeout_smoke.gd`**(`-s`,**真拉起一个独立 worker 进程**)→ 文本 `DUEL SPAWN TIMEOUT SMOKE: ALL-OK`。★ 三条纪律(与 `team_spawn_smoke` 同款):端口固定 **29015**(必须在真大厅 worker 端口池之外)/ **跑前先删日志**(否则上一次的"报到超时"行会把本跑**喂绿**)/ 断言要 `就绪` **与** `报到超时` **两条**行都在(少了前者,一个"开机即崩"的 worker 也会让后者失败,失败原因完全指错方向)。★ 它另有一层**源码级 belt**,判的是**语义不变量**(口径见该文件头),故标志改名 / 合取项重排 / 抽成一层 helper 都**不会**假绿。★ 三条已知上限 + "**承重的是 ③ 而不是 ①②**"见 §对局中的房。**别当它是证明** —— 真正的证明是那次**人工跑满 45 秒的真大厅**。
