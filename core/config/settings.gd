@@ -42,9 +42,38 @@ var royale_match_min: float = 5.0       # 大乱斗一局限时(分钟,建房页
 var pvp_show_minimap: bool = true       # 小地图
 var pvp_minimap_show_enemy: bool = true # 小地图显示敌方位置
 
+# ── 显示(分辨率档 + 全屏)──
+# ★ 四档**全是 4:3** —— 与 project.godot 的 display/window/size/viewport_*(1920×1440)同比例,
+#   于是 `stretch/aspect="keep"` 下窗口任意大小时都是**等比缩放、无黑边**(非 4:3 档必有黑边)。
+# ★ 这张表是**单一来源**:设置页的下拉读它,`apply_display()` 按它开窗,别再各抄一份尺寸表。
+const DEFAULT_DISPLAY_RESOLUTION := Vector2i(1920, 1440)   # 基准 = project.godot 的 viewport 尺寸
+const DISPLAY_RESOLUTIONS: Array[Vector2i] = [
+	Vector2i(1280, 960),
+	Vector2i(1600, 1200),
+	Vector2i(1920, 1440),
+	Vector2i(2560, 1920),
+]
+
+# 分辨率档下标。★ 越界回落写进 setter(与下面 `royale_match_min` 装载时那条 clamp 同一惯例):
+#   坏存档 / 手改 cfg / 将来删档位都会喂进非法值,直接拿去索引 DISPLAY_RESOLUTIONS 会越界。
+# ★ 默认值由 DEFAULT_DISPLAY_RESOLUTION **反查**而来,不另抄一个字面量下标 —— 抄下标 = 第二个
+#   真相源(档位顺序一改,默认档就静默漂走)。
+# ★★ 反查**必须写在 `_init()` 里,不能写成成员初始值**:GDScript 的成员初始值**不走 setter**
+#   (实测:把档表里的 1920×1440 改掉、`.find()` 得 -1,成员初始值会把 **-1** 原样漏进字段 ⇒
+#   窗口化时 `DISPLAY_RESOLUTIONS[-1]` 直接报错)。`_init()` 里的赋值是普通赋值 ⇒ 过 setter ⇒ 压回 0。
+var display_res_index: int = 0:
+	set(v):
+		display_res_index = clampi(v, 0, DISPLAY_RESOLUTIONS.size() - 1)
+
+var display_fullscreen: bool = false
+
+func _init() -> void:
+	display_res_index = DISPLAY_RESOLUTIONS.find(DEFAULT_DISPLAY_RESOLUTION)
+
 func _ready() -> void:
 	_ensure_buses()
 	load_settings()
+	apply_display()   # 开窗即用存档里的档位(headless 下 apply_display 自己早退)
 
 # ── 音频总线 ──
 # SFX 总线挂在 Master 下;Music 预留给将来 BGM。音量统一 linear→db。
@@ -68,6 +97,23 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 		return
 	AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(linear, 0.0001)))
 	AudioServer.set_bus_mute(idx, linear <= 0.001)
+
+# ── 显示:把内存里的档位落到真窗口 ──
+# 两个调用方:autoload `_ready()`(开窗即用存档档)、设置页(玩家改完即时生效)。
+# ★ headless 早退:无窗口后端(服务器 / `-s` 冒烟)上不该碰窗口 API —— 仓内既有惯例,
+#   先例 tests/smoke/menu_autotest.gd:504(`DisplayServer.get_name() == "headless"`)。
+# ★ 本函数体内的注释**刻意不写** window_set_size / window_set_mode 这两个字面量:冒烟
+#   tests/smoke/settings_display_smoke.gd 的源码半边按"早退必须排在这两个调用之前"判,
+#   注释里先出现会把那条判红。
+func apply_display() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	# 先摆窗口尺寸、再切模式:窗口化时设下的尺寸会被系统记住,玩家从全屏切回来仍是这一档。
+	DisplayServer.window_set_size(DISPLAY_RESOLUTIONS[display_res_index])
+	if display_fullscreen:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 
 # ── 键位重映射 ──
 # 每动作支持**多个**键位(原作默认:up=W+空格、down=S+Shift),存取都保序完整往返。
@@ -110,7 +156,10 @@ func _event_display_name(ev: InputEvent) -> String:
 	return "?"
 
 # ── 持久化 ──
-func save() -> void:
+# ★ 两个函数的 `path` 参数**只为可测**:默认值 = 真存档路径 ⇒ 所有既有调用点行为完全不变;
+#   冒烟 tests/smoke/settings_display_smoke.gd 用临时路径验"档位真的落盘 / 真的读回",
+#   从而**不必去读写玩家真的 user://settings.cfg**(冒烟不该有"写坏玩家存档"的副作用)。
+func save(path: String = SAVE_PATH) -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("audio", "master_volume", master_volume)
 	cf.set_value("audio", "sfx_volume", sfx_volume)
@@ -126,6 +175,8 @@ func save() -> void:
 	cf.set_value("royale", "match_min", royale_match_min)
 	cf.set_value("pvp", "show_minimap", pvp_show_minimap)
 	cf.set_value("pvp", "minimap_show_enemy", pvp_minimap_show_enemy)
+	cf.set_value("display", "res_index", display_res_index)
+	cf.set_value("display", "fullscreen", display_fullscreen)
 	for action in REMAPPABLE_ACTIONS:
 		var arr: Array = []
 		for ev in InputMap.action_get_events(action):
@@ -135,12 +186,12 @@ func save() -> void:
 				arr.append({"m": (ev as InputEventMouseButton).button_index})
 		if not arr.is_empty():
 			cf.set_value("bindings", action, arr)
-	cf.save(SAVE_PATH)
+	cf.save(path)
 
-func load_settings() -> void:
+func load_settings(path: String = SAVE_PATH) -> void:
 	var cf := ConfigFile.new()
-	if cf.load(SAVE_PATH) != OK:
-		save()   # 首次运行:把当前值(=代码默认)写下去
+	if cf.load(path) != OK:
+		save(path)   # 首次运行(该路径上没有存档):把当前值(=代码默认)写下去
 		return
 	master_volume = float(cf.get_value("audio", "master_volume", 0.8))
 	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
@@ -156,6 +207,10 @@ func load_settings() -> void:
 	royale_match_min = clampf(float(cf.get_value("royale", "match_min", 5.0)), 1.0, 30.0)
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
+	# 越界值由 `display_res_index` 的 setter 压回合法档(见字段区的注释)。
+	display_res_index = int(cf.get_value("display", "res_index",
+			DISPLAY_RESOLUTIONS.find(DEFAULT_DISPLAY_RESOLUTION)))
+	display_fullscreen = bool(cf.get_value("display", "fullscreen", false))
 	for action in REMAPPABLE_ACTIONS:
 		# ★ 默认值必须是**真的值**而不是 null:Godot 的 ConfigFile.get_value 把 null 当作
 		#   "调用方没给默认值",键不存在时直接报错(Couldn't find ... and no default was given)。
