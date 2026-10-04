@@ -25,7 +25,7 @@
 1. **逻辑空间必须仍是 1920×1440**（Task 1）。破了它，这些会一起漂：`scenes/mp_lobby.tscn` 的 21 处绝对 `offset_*`、`scenes/mp_lobby.gd:524` 的 `1920.0 - PAGE_MARGIN * 2.0`、`ui/hud/minimap.gd:107` 的 `Vector2(1920.0 - EDGE - …, 1440.0 - …)`、`scenes/main_menu.gd:74-75` 的 `BG_VIEW_CELLS := 26.6667`（横向铺 26.67 格 ⇒ 72 屏幕像素/格，只对逻辑宽 1920 成立）。
 2. **`stretch/mode` 选 `disabled` / `keep_width` / `keep_height` / `expand` 都会破前提**（Task 1）⇒ 只允许 `{canvas_items, viewport} × {keep, ignore}`，且 `ignore` 会把圆压成椭圆（不推荐）⇒ 实际就两个候选。
 3. **`core/present/post_process.gd:49-50` 的 `crop_scale` 只在 `_ready` 算一次**（Task 1）。逻辑尺寸不变的档**不需要**重算；一旦选了会让逻辑尺寸变的档，就必须挂 `get_tree().root.size_changed` 重算，否则裁剪比例停在开窗那刻。
-4. **新增的 CheckButton 会被 `settings_display_section_probe._set_all_keys()` 一并翻转**（Task 3）⇒ 它必须像既有开关一样只在 `toggled` 里写 `Settings`，且 `Settings` 必须能被该探针的 `_restore(orig)` 还原（实现前先读 `:150-160` 确认口径）。
+4. **~~新增的 CheckButton 会被 `settings_display_section_probe._set_all_keys()` 一并翻转~~** ★ **2026-10-04 订正（Task 3 实测，控制器写错了）**：该探针的 `_set_all_keys()`（`:150-152`）是**直接写内存里那四个 PvP 键**（`pvp_show_*`），**不碰任何控件、也不 `save`**；唯一碰控件的是 `:125` 那一行，`_restore` 也只还原那四键 ⇒ 它**从不碰** `display_fullscreen`，所以"新开关必须能被它还原"这条义务**是空的**。真要求仍然成立且更简单：**新控件只准在 `toggled` 里写 `Settings`（并 `save()` + `apply_display()`）**，与既有开关同形。★ 这也是"计划对现成守卫的行为描述过宽"的又一例（本次会话第 7 次）。
 5. **headless 下不能调 `DisplayServer.window_set_mode`**（Task 2）⇒ `apply_display()` 用仓内既有惯例 `DisplayServer.get_name() == "headless"` 早退（`tests/smoke/menu_autotest.gd:505` 是同一写法的先例）。
 6. **分辨率索引越界**（Task 2）⇒ 照 `core/config/settings.gd:156` 的既有权衡写法 `clampf(float(cf.get_value(...)), lo, hi)` 回落，别让坏存档把窗口设成 0×0。
 
@@ -181,7 +181,7 @@ git commit -m "feat(settings): 加显示档(4:3 四档 + 全屏开关)+ apply_di
 
 - [ ] **Step 1: 先读两处既有实现再动手**
 
-① `settings_display_section_probe.gd:150-160`（`_set_all_keys` / `_restore`）—— 确认新开关会被一并翻转、且 `Settings` 能被还原（Review Focus 4）；
+① `settings_display_section_probe.gd:150-160`（`_set_all_keys` / `_restore`）—— ★ **按实况**：它只直写那四个 PvP 键、**不碰控件**（`display_fullscreen` 不在它的范围里）⇒ 你的义务只是"与既有开关同形：只在 `toggled` 里写 `Settings` + `save()` + `apply_display()`"，**不必**为它做额外适配；
 ② `settings_menu.tscn:139-146` 那组的节点结构（`theme_type_variation` = `HeaderStrip` / `HeaderTitle`、行的 `HBoxContainer` + `Label` 的 `custom_minimum_size`），照抄形状。
 ★ **按实况**再定：本计划给的行号是写作当时的，先 `grep` 复核。
 
@@ -221,6 +221,11 @@ git commit -m "feat(ui): 设置页新增「显示」组(分辨率下拉 + 全屏
 `docs/eng/ui.md`：说明"基准 1920×1440 是**逻辑空间**、`stretch/aspect=keep` 让窗口任意大小时逻辑空间不变"这条**为什么**；列出四档分辨率与全屏开关落在 `Settings` 的哪两个字段。
 
 - [ ] **Step 2: 登记未验证的边界**
+
+★ **2026-10-04 追加三条（Task 3 实测发现）**：
+- **取图探针 `menu_shot_probe` 的"取屏自证"是绊线、不是保证**：16×16 粗比在深色 UI 上会被摊薄 —— 实测 4 次取屏里 3 次抓到遮挡、**1 次放过**（设置页粗差 **0.0677 < 0.08** 判过，而那张图被开始菜单盖住一大块）。⇒ 用它取图时**必须人看图**，别把自证通过当"没被遮挡"。
+- **`tools/` 主题里没有 `OptionButton`**（`gen_menu_scene` 的 VARIANTS 也没有）⇒ 新增的分辨率下拉只能在场景里挂 `theme_type_variation = &"BtnLegacy"`（合法：`OptionButton < Button`，实测生效）；**弹出列表**仍是引擎默认皮 —— 本轮受"只碰 2 文件"约束**明确不修**，要统一得先给 Theme 加 `OptionButton` 变体。
+- **新接线没有常驻守卫**：`settings_menu.gd` 的分辨率下拉/全屏开关"真落盘 + 真 apply"只有**一次性 scratch 探针**（gitignored，13 条断言）证明过；要常驻得新建探针文件（超出本轮范围）。
 
 写进 [`registered-debt.md`](../eng/registered-debt.md)：**真窗口/真全屏在 OS 层的行为未测**（多显示器、Windows 缩放非 100%、Alt+Enter 与 `WINDOW_MODE_FULLSCREEN` 的交互、2560×1920 在 1080p 屏上超出后 OS 的钳制方式）—— 本次只验了"逻辑空间不变 + 取图无变形"。★ 这条与 audit §5 第 1 条是同一件事，销账时一起销。
 
