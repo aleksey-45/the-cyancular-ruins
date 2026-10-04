@@ -292,6 +292,24 @@
    - **什么时候能销**:按该探针自己的口径跑一次(池外 29200/29250、**不动 7777**、收尾只扫它自己那段、前后 `tasklist` 无 Godot),
      加一条"机器人宿主在真对局里确实出了弹"的断言 —— 顺带把 §一 第一条那笔"修复后无整跑判决"一起结掉。
 
+7. **「回溯退出必须读未被冻结的输入」这条不变量没有落纸**(2026-10-04 由 Plan B Task 6 复核发现；owner 未认领)。
+   - **陷阱**：`scenes/pvp_match_client.gd:231` 读全局 `Input.is_action_pressed("rewind")`；**看着像** §2.6 的同类，
+     但同一函数 `:236` 会把**同一个** `src`（`_local.input_source`）置 `frozen = true` ⇒ 若照 §2.6 改成
+     `src.is_action_pressed("rewind")`，`want` 会**恒 false** ⇒ 每帧冻/解冻抖动、**回溯永远出不来**。
+   - **现状**：权威侧干净（客户端 `pack_record(_local.input_source)` → 服务器读包里那位 `src.haste_held()`，
+     见 `server/match/match_host.gd:214-215`）⇒ **不改行为**。
+   - **该做的**：把这条不变量写进代码注释，或补一条守卫钉"回溯退出读的口**不是**被冻的那个 src"。
+8. **工作区 EOL 漂移：`.gd` 也有**(2026-10-04 实测；benign)。
+   - `player_contract_smoke.gd` 的工作区是 CRLF，仓内另有若干 `.gd` 同样（**入库 blob 都是 LF**；`git status` 看不见）。
+   - **为什么无害**：`* text=auto eol=lf` 在 `add` 时归一 ⇒ 入库形态正确；Godot 两种都读。
+   - **为什么登记**：`check_naming.py` 的**规则 E 只覆盖 `.ps1`/`.bat`** ⇒ 这类漂移**没有守卫**；谁拿工作区形态当判据会得到怪结论。
+9. **`water_probe` 绿灯时 stderr 仍有一行 ERROR**(2026-10-04；**有意为之**)。
+   那一相**故意**触发 `push_error`（为验证"缺 src 点名报错"这支能红）⇒ 判据只能是文本 `WATER OK`；
+   若哪条 CI/脚本扫 stderr 的 `ERROR` 会**假阳**。
+10. **`SwimComponent` 缺 `src` 时把 `in_water` 归 false 是新增语义**(2026-10-04 Plan B Task 6 引入)。
+   理由是保住不变式「返回 true ⇔ 在水中」（否则读 `swim.in_water` 的副本/渲染会看到与根逻辑矛盾的残值）；
+   **但没有守卫钉住这条不变式本身** ⇒ 若将来有人改掉这行，读 `in_water` 的那两处会静默看到残值。
+
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 
 **本节不是欠账清单**:§一/§二 是"要还的债",这里是**已经判过、决定不还的** —— 每条都带**判决理由**与**翻案条件**。
