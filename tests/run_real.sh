@@ -28,7 +28,12 @@
 #     ② Godot 进程必须**连续** `GODOT_QUIET_SAMPLES` 次采样为空才放行。
 #     ★ 去掉①或②:同一场景仍可能放行(单点采样骗得过)。
 #     ★★ **它们都不替代人工纪律**:"别在另一批跑着的时候开这一批" —— 两道加强只把窗口收窄,
-#     不把竞态消除;真要硬保证得上锁文件(run_all 起锁 / run_real 查锁),本批未做(见 tests/README.md)。
+#     ★★ **2026-10-05 起:主判据是 R20 锁** —— `run_all.sh` 运行期持 `tests/.run_all.lock`
+#     (pid / start / heartbeat),本脚本见活锁即拒;**陈旧锁(pid 已死 / 心跳超时)打醒目警告后放行**。
+#     下面 ②③ 两条降为**副保险**(锁被 SIGKILL 之后它们才起作用)。
+#     ★ 覆盖上限:心跳只在**每支之间**刷新,所以"一支挂住 120~150s"期间心跳会旧 ——
+#     判活的**主判据因此是 pid 而不是心跳**(心跳只兜"pid 被复用/被强杀后没人清")。
+#     三条都在 `tests/README.md` 的「聚合入口 → run_real.sh」一节里落纸(评审 I4 指出原先指向失效)。
 #   · **闸四(清单不许烂)**:`tests/{smoke,probe}/*.sh` 里每一支**必须**出现在 `ENTRIES`
 #     (跑)或 `WRAPPERS`(不跑 + 理由)之一,且两边每条都必须匹配到真实文件 ⇒ 否则**红**。
 #     去掉这条:新加一支真链路 `.sh` 会**静默不进批**(而入口照样打 OK)。
@@ -54,13 +59,21 @@ GODOT_SETTLE_TRIES=10          # 判"Godot 真的没了"最多等几秒(见文�
 #   在 `tests/run_all.sh` 正跑着的时候调用 `run_real.sh --yes`,那一次**单点采样** `tasklist`
 #   恰好落在两个 headless 测试之间的空档 ⇒ 计数为 0 ⇒ 闸放行 ⇒ **真链路脚本真的跑了起来**
 #   (它短暂占了 7777)。两批交错既污染"Godot 进程必须为空"这条纪律,也污染真链路的时序结论。
-#   ⇒ 现在要求:① `run_all` 的 summary 在 RUNALL_QUIET_SECS 秒内被写过就**拒绝**;
-#             ② Godot 进程必须**连续** GODOT_QUIET_SAMPLES 次采样都为空才放行。
-#   ★ 去掉①:run_all 跑着时 gate 仍可能放行(单点采样骗得过)。
-#   ★ 去掉②:同上。两者都不替代"别在跑批时开另一批"这条人工纪律(见文件头「测不到什么」)。
+#   ⇒ 现在要求:① 见下 **R20 锁**(主判据,"在飞"是**状态**不是**采样**);
+#             ② `run_all` 的 summary 在 RUNALL_QUIET_SECS 秒内被写过 ⇒ 拒绝(副保险);
+#             ③ Godot 进程必须**连续** GODOT_QUIET_SAMPLES 次采样都为空才放行(副保险)。
+#   ★ 去掉①:窗口最大的时刻(有一支挂住/正在 TIMEOUT)恰好是"summary 很久没动"的时刻
+#     ⇒ ②③ 都可能放行 —— 这正是 2026-10-04 那次事故的形状(评审 I4)。
+#   ★ 去掉②③:锁文件被 SIGKILL 掉之后没有兜底。
+#   ★ 三者都**不**替代"别在跑批时开另一批"这条人工纪律:它们只让"没注意到"变成"拒绝"。
 GODOT_QUIET_SAMPLES=3
 RUNALL_SUMMARY="tests/.run_all_logs/summary.log"
-RUNALL_QUIET_SECS=90
+# ★ I4 修(2026-10-05):原值 90s **小于**单支最长静默(场景默认 120s / `duel_spawn_timeout_smoke` 150s)
+#   ⇒ "有支挂住时"这条判据会**放行**。现在取 **> 单支最大预算 + 余量**(150 + 90 = 240)。
+RUNALL_QUIET_SECS="${RUN_REAL_QUIET_SECS:-240}"
+# R20 锁:由 `tests/run_all.sh` 运行期持有(内容 = pid / start / heartbeat)。
+RUN_ALL_LOCK="tests/.run_all.lock"
+LOCK_STALE_SECS="${RUN_REAL_LOCK_STALE_SECS:-600}"
 # 判词判据(与 run_all.sh 同一套):边界类含 `_`(否则 `NET_INPUT_OK` 这种判词会被读漏);
 # FAIL 侧放宽到 FAIL[A-Z]{0,4},覆盖现网的 FAIL / FAILED / FAILURES 形状。
 FAIL_RE='(^|[^A-Za-z0-9])FAIL[A-Z]{0,4}([^A-Za-z0-9]|$)'
@@ -116,8 +129,43 @@ wait_no_godot() {
 }
 
 # 闸三(跑前)的两道加强 —— 由来见文件头那段的真事故。返回 0 = 可以跑。
+# R20 锁的状态:设置 LOCK_STATE=absent|live|stale 与 LOCK_INFO(供打印/拒绝)
+lock_state() {
+	local pid start hb now age
+	LOCK_STATE=absent; LOCK_INFO=""
+	[ -f "$RUN_ALL_LOCK" ] || return 0
+	pid=$(sed -n 's/^pid=//p' "$RUN_ALL_LOCK" 2>/dev/null | head -1)
+	start=$(sed -n 's/^start=//p' "$RUN_ALL_LOCK" 2>/dev/null | head -1)
+	hb=$(sed -n 's/^heartbeat=//p' "$RUN_ALL_LOCK" 2>/dev/null | head -1)
+	now=$(date +%s)
+	age=$(( now - ${hb:-0} ))
+	LOCK_INFO="pid=$pid start=$(date -d "@${start:-0}" '+%F %T' 2>/dev/null || echo "${start:-?}") heartbeat_age=${age}s"
+	# 主判据 = **pid 还活着**(心跳只是"pid 被复用/被强杀后没人清"的兜底)
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$age" -lt "$LOCK_STALE_SECS" ]; then
+		LOCK_STATE=live
+	else
+		LOCK_STATE=stale
+	fi
+}
+
 gate3_precheck() {
 	local age=0 i n
+	# ── ① R20 锁(主判据)──────────────────────────────────────────────
+	lock_state
+	if [ "$LOCK_STATE" = live ]; then
+		echo "[gate3] REFUSED: tests/run_all.sh is running (lock $RUN_ALL_LOCK: $LOCK_INFO)."
+		echo "        This is the R20 lock, not a sample: a headless batch is in flight right now."
+		echo "        Wait for it to finish (the lock is removed on exit / Ctrl-C)."
+		return 1
+	fi
+	if [ "$LOCK_STATE" = stale ]; then
+		echo "[gate3] WARNING: STALE lock $RUN_ALL_LOCK ($LOCK_INFO) --"
+		echo "        the owning pid is gone or the heartbeat timed out. Treating it as stale and"
+		echo "        PROCEEDING (an always-refusing gate would be as useless as an always-red one)."
+		echo "        If you know a batch is actually running, Ctrl-C now. Remove the file to silence this:"
+		echo "          rm -f $RUN_ALL_LOCK"
+	fi
+	# ── ② summary mtime(副保险)────────────────────────────────────────
 	if [ -f "$RUNALL_SUMMARY" ]; then
 		age=$(( $(date +%s) - $(stat -c %Y "$RUNALL_SUMMARY" 2>/dev/null || echo 0) ))
 		if [ "$age" -lt "$RUNALL_QUIET_SECS" ]; then
@@ -127,6 +175,7 @@ gate3_precheck() {
 			return 1
 		fi
 	fi
+	# ── ③ 连续空采样(副保险)──────────────────────────────────────────
 	for i in $(seq 1 "$GODOT_QUIET_SAMPLES"); do
 		n=$(godot_proc_count)
 		if [ "$n" -ne 0 ]; then
@@ -188,7 +237,7 @@ echo "[plan] pool range swept for in-pool entries only: [$POOL_LO,$POOL_HI) ; re
 #   (那正是这道闸要防的形状:一支真链路 `.sh` 静默不进批,而入口照样绿)。
 if [ "$LIST_BAD" -gt 0 ]; then
 	echo
-	echo "RUN_REAL FAIL($LIST_BAD 条清单问题;一条真链路都没跑)"
+	echo "RUN_REAL FAIL($LIST_BAD list-problems ; nothing was run)"
 	exit 1
 fi
 
@@ -233,7 +282,7 @@ for line in "${ENTRIES[@]}"; do
 done
 if [ "${#SEL[@]}" -eq 0 ]; then
 	echo "[gate] REFUSED: the filter matched 0 entries (--only '$ONLY')."
-	echo "RUN_REAL FAIL(0 支)"
+	echo "RUN_REAL FAIL(0 entries)"
 	exit 1
 fi
 
@@ -318,7 +367,7 @@ if [ "$N_BAD" -gt 0 ]; then
 	exit 1
 fi
 echo
-echo "RUN_REAL OK($N_OK 支)"
+echo "RUN_REAL OK($N_OK entries)"
 echo "[note] team_match_probe is registered in docs/eng/registered-debt.md sec.1 as NOT yet a trustworthy"
 echo "       3v3 end-to-end guard (root cause fixed, no 6-player verdict since) -- a green here does not change that."
 exit 0
