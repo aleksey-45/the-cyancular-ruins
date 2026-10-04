@@ -21,7 +21,9 @@ extends ProbeBase
 # `rewind_elite_damage` / `tile_rewind`)对**弹量一条断言都没有** ——
 # `grep -c 'wmags\|mag_ammo' tests/probe/rewind_*.gd` = 0(2026-10-04 实测)⇒ 那段代码此前
 # **没有行为守卫**,改名只会静默失效(同族真事故就写在生成端 `core/sim/world_rewind.gd:98-103`:
-# `_current_slot` 改名成 `_current_type` 后 `get()` 返回 null,快照值静默恒为 0)。
+# `_current_slot` 改名成 `_current_type` 后 `get()` 返回 null,快照值静默退化)。
+# ★ 2026-10-04 实测订正那句"快照值静默恒为 0":那一帧 `_snapshot_player()` 返回的是**空字典**
+#   (`snap.size()=0 keys=[]`)⇒ 消费端在第一个键上就早退 ⇒ 位置/HP/武器全不还原。详见 S7 段。
 #
 # ── 覆盖什么(逐条)──────────────────────────────────────────────
 #   S1 不切枪时:各格残弹写回(**逐字段**) + 不动当前下标 + 不重建武器实例 + 手持那件实弹写回
@@ -31,6 +33,9 @@ extends ProbeBase
 #   S5 快照的当前武器与现持不同 ⇒ 必须切回那一把,且手持实弹等于快照的 `wlive`
 #   S6 形状:那一带的 `.get("/.call("/.set("` 计数为 0(且类型化访问确实在 —— 否则"把整段
 #      删掉"也能让计数变 0)
+#   S7 **生产端**:`WorldRewind._snapshot_player()` 产出的武器快照逐字段 == 真值,且
+#      `wslot`/`widx`/`wmags`/`wlive` **都没被静默写成 0/空**(形状 14 条 + 行为 9 条;
+#      0 与真值不可分的地方用三个互不相同的非 0 值占位)。
 #
 # ── 为什么直调 `rewind_restore` 而不是按住 Shift 走真链路 ──────────────
 # 单机真链路(`WorldRewind` 每帧按 `_cursor` 挑一个快照帧)的**落点不可复现** ——
@@ -38,15 +43,25 @@ extends ProbeBase
 # 而"逐字段等于快照"恰恰是本任务唯一的验收口径。本探针改为**喂与
 # `WorldRewind._snapshot_player()` 逐字同形的快照字典**(键名/类型都对得上,见 `_snap()`)、
 # 直调那**同一个生产函数** ⇒ 同一条代码路径,但输入确定 ⇒ 能逐字段断言。
-# ★ 覆盖上限(照实):它**不覆盖**生成端 `WorldRewind._snapshot_player()` 的反射
-#   (在 `core/sim/world_rewind.gd`,不属本任务范围),也不覆盖真实回溯的帧选择;
-#   端到端(真按键、真世界)的那一份覆盖在 `tests/probe/rewind_probe.gd`。
+# ★ 覆盖上限(照实):S1-S6 **不覆盖**生成端 `WorldRewind._snapshot_player()`(在
+#   `core/sim/world_rewind.gd`)—— 那一半由 S7 补上(2026-10-04,Plan B Task 3)。
+#   S7 直调生产函数取样,**不覆盖**真实回溯的帧选择;端到端(真按键、真世界)的那一份
+#   覆盖在 `tests/probe/rewind_probe.gd`,它末尾也加了一条同形的生产端契约。
 # ★ 另一条边界:本探针所有场景都以**同一次调用**喂快照。生产路径**每帧**调一次 ⇒
 #   S5 的"切枪那一帧"在生产里会被下一帧的同一次调用补齐(见 `_s5_switch_back` 里的长注释)。
 #   本探针按生产口径(连续两帧)断言,并把那一帧的实测值打出来留档。
 
 const PLAYER_SCENE := "res://scenes/player/player.tscn"
 const PLAYER_SRC := "res://scenes/player/player.gd"
+const WREWIND_SRC := "res://core/sim/world_rewind.gd"
+
+# S7 形状用的两个词表(逐名钉住,而不是只数一个总数 —— 见 `_s7_shape()`)。
+# 前一条是**已经清掉**的六处对象反射的字面形状;后一条是替上去的类型化访问。
+const PRODUCER_REFLECTION := [".get(\"_current_type\")", ".get(\"_current_index\")",
+		".get(\"inventory\")", ".get(\"held\")", ".call(\"current_weapon\")",
+		".get(\"mag_ammo\")"]
+const PRODUCER_TYPED := [".inventory", "._current_type", "._current_index", ".held",
+		".current_weapon()", ".mag_ammo"]
 
 # 注册表里的 1 = 手枪(12 发)、2 = 步枪(30 发)。数值只在 `data/weapons.json`,
 # 本探针只借这两个 id 造"两把不同的枪"。
@@ -54,13 +69,14 @@ const TYPE_PISTOL := 1
 const TYPE_RIFLE := 2
 
 # 断言计数闸(与 `kh_l3_visual_probe` / `combat_hud_visual_probe` 同款)。
-# ★ 37 是**逐个数出来的**(全部 `_check(` 调用点都在 `_s1.._s6` 这六个函数里):
+# ★ 60 是**逐个数出来的**(全部 `_check(` 调用点都在 `_s1.._s7` 这七个函数里):
 #   S1 7(前置 + `_check_cells` 3 + 下标 + 同实例 + 手持实弹)
 #   S2 3、S3 5(下标 + `_check_cells` 3 + 手持实弹)
 #   S4 6(前置 + 手持实弹未动 + `_check_cells` 3 + 下标)
-#   S5 7(下标 + 实例非空 + 类型 id + 手持实弹 + `_check_cells` 3)、S6 9 ⇒ 合计 37。
+#   S5 7(下标 + 实例非空 + 类型 id + 手持实弹 + `_check_cells` 3)
+#   S6 9、S7 23(前置 1 + 反射逐名 6 + 类型化逐名 6 + 残值上界 1 + 行为 9)⇒ 合计 60。
 #   用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`late_match_probe` 同款)。
-const EXPECTED_CHECKS := 37
+const EXPECTED_CHECKS := 60
 var _checks := 0
 
 
@@ -119,6 +135,8 @@ func _run() -> void:
 	await _s4_no_live(player, wc)
 	await _s5_switch_back(player, wc)
 	_s6_shape()
+	await _s7_producer(player, wc)
+	_s7_shape()
 
 	_finish()
 
@@ -301,3 +319,78 @@ func _s6_shape() -> void:
 	for pat in [".inventory", "._current_index", ".equip_index(", ".current_weapon()", ".mag_ammo"]:
 		_check(body.contains(pat),
 				"S6: rewind_restore 里找不到类型化访问 `%s` —— 该段被删了?那反射计数为 0 是假的" % pat)
+
+
+# ── S7 生产端:产出的快照逐字段 == 真值(★ 当年那次事故的形态)──────────────
+# 上面 S1-S6 钉的是**消费端**(`Player.rewind_restore` 把快照写回武器域)。快照字典本身由
+# **生产端** `WorldRewind._snapshot_player()` 产出,而它的武器段此前同样是字符串反射:
+# `wc.get("_current_type")` 那类写法一旦成员名对不上,`get` **静默返回 null** ⇒ 快照值
+# 静默退化,**没有任何断言会红**(引擎只在 stderr 每帧报 "Nonexistent 'int' constructor")。
+# ★★ 2026-10-04 实测订正事故的**后果**(原注释只说"快照值照旧是 0",说轻了):那一帧
+#   `_snapshot_player()` 返回的是**空字典**(仪器原文 `snap.size()=0 keys=[] is_empty=true`)
+#   ⇒ 消费端 `rewind_restore({})` 在第一个键上就早退 ⇒ **位置/HP/武器全不还原**。
+#   故本节的断言形状是"**逐字段 == 真值**"(而非只看某一个键),并额外钉住 `wslot != 0`。
+# 本节直调**那个生产函数**,把产出的字典与真值逐字段比 —— 这是唯一能咬住"静默退化"的形状。
+# ★ 为什么用三个**互不相同**的非 0 值(格 0=5 / 格 1=7 / 手持实弹=9):全 0 或全同值时
+#   "读错了"与"读对了"在断言上不可分(恒绿)。
+# ★ 为什么直调生产函数而不是等 `record()` 落一帧:落点由帧选择决定、不可复现(见文件头);
+#   而生产函数**只读不写** ⇒ 真值可以在它返回后**同一瞬间**读,不必担心漂移。
+func _s7_producer(player: Node, wc: WeaponComponent) -> void:
+	wc.set_initial_inventory([TYPE_PISTOL, TYPE_RIFLE])
+	await _frames(3)
+	var held: Array = wc.inventory.held
+	_check(held.size() == 2, "S7 前置:背包应有 2 格(实得 %d)" % held.size())
+	var live := wc.current_weapon()
+	_check(live != null, "S7 前置:取样前应装着枪(current_weapon() 非空)")
+	if held.size() != 2 or live == null:
+		return
+	held[0]["mag"] = 5
+	held[1]["mag"] = 7
+	live.mag_ammo = 9
+	var snap: Dictionary = WorldRewind.new()._snapshot_player(player)
+	var wslot := int(snap.get("wslot", -99))
+	var widx := int(snap.get("widx", -99))
+	var wlive := int(snap.get("wlive", -99))
+	_check(wslot == wc._current_type,
+			"S7: 快照 wslot=%d 应等于真值 `_current_type`=%d(成员名对不上 ⇒ 反射 `get` 返回 null ⇒ 整帧快照退化)"
+			% [wslot, wc._current_type])
+	_check(wslot != 0,
+			("S7: 快照 wslot **必须非 0**(实得 %d)—— 0 是 2026-10-02 那次" % wslot)
+			+ "`_current_slot` 改名成 `_current_type` 之后 `get` 返回 null 的事故形态;"
+			+ "而实测那次更重:整帧快照退化成空字典(这里会读成 -99)")
+	_check(widx == wc._current_index,
+			"S7: 快照 widx=%d 应等于真值 `_current_index`=%d" % [widx, wc._current_index])
+	# 逐格:产出的 `wmags` 必须与真值逐格相等(格数 + 每格各一条),不是"总数对得上"。
+	_check_cells("S7", wc, snap.get("wmags", []))
+	_check(wlive == live.mag_ammo,
+			"S7: 快照 wlive=%d 应等于真值 `mag_ammo`=%d" % [wlive, live.mag_ammo])
+
+
+# ── S7 形状:生产端武器段不许再有对象反射(逐名 + 残值上界)─────────────
+func _s7_shape() -> void:
+	# 与 S6 同法:`code_view` 剥注释(否则解释这条病的注释会把断言喂红)、
+	# `top_func_body` 只认行首 `func `。
+	var body := _top_func_body(_code_view(_read(WREWIND_SRC)), "_snapshot_player")
+	# ★ 前置必须自己是一条**会红**的断言,而不是 `if ...: return`:空读时下面那些 `not contains`
+	#   恒真(否定断言的空读恒真),只看后面几条会把"读不到源"读成通过。
+	_check(not body.is_empty(),
+			"S7 前置:world_rewind.gd 里抽不到 _snapshot_player 的函数体(改名了?那下面几条全是空转)")
+	if body.is_empty():
+		return
+	for pat in PRODUCER_REFLECTION:
+		_check(not body.contains(pat),
+				"S7: _snapshot_player 里不许再出现对象反射 `%s` —— 成员名对不上时它静默返回 null,"
+				% pat + "快照值静默变 0/空")
+	# ★ 反向六条:计数/缺席只证明"没有反射",**不证明"类型化访问还在"** —— 把整段删掉也满足。
+	for pat in PRODUCER_TYPED:
+		_check(body.contains(pat),
+				"S7: _snapshot_player 里找不到类型化访问 `%s` —— 该段被删了?那上面的缺席是假的" % pat)
+	# 残值边界:`_snapshot_player` 里仍允许的**对象反射**只有**玩家根**(`player.gd`,**无
+	# `class_name`**)上的四读:velocity / hp / facing_direction / weapons。它们要类型化得给
+	# player 根加 `class_name`(动类结构:全局类名 + 两个刻意造的裸宿主桩会被打掉;已登记,
+	# 不属本任务)⇒ 这里用 `<=` 而不是 `==`,免得将来有人补了 class_name 反而把守卫喂红。
+	# 正解是把 weapons 组件**当参数注进来**(见 Task 3 报告),不是给根加类型。
+	var gets := body.count(".get(\"")
+	_check(gets <= 4,
+			"S7: _snapshot_player 的对象反射不得超过玩家根那 4 处(velocity/hp/facing_direction/weapons),实得 ×%d"
+			% gets)

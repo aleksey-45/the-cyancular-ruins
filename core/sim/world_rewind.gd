@@ -92,26 +92,48 @@ func _snapshot_player(player: Node) -> Dictionary:
 		"downed": player.has_method("is_downed") and player.is_downed(),
 		"wslot": 0, "widx": -1, "wmags": [], "wlive": -1,
 	}
-	var wc = player.get("weapons")
+	var wc: WeaponComponent = player.get("weapons")
 	if wc == null:
 		return d
 	# ★ 合并订正(2026-10-02):原写的是 `_current_slot` —— 主线已把 `slot` 一词整体退休、
 	#   改名为 `_current_type`,于是 `get()` 返回 null ⇒ `int(null)` 每帧(20Hz)抛
 	#   "Nonexistent 'int' constructor",而**快照值照旧是 0、不报红、不中断**。
+	#   ★★ 2026-10-04 实测订正上面那句的**后果**(原文只说"快照值照旧是 0",说轻了):那条赋值
+	#   抛错的**当帧**,本函数返回的是**空字典**,不是"wslot=0、别的键还在"。
+	#   仪器原文(与 stderr 里那 83 行 "Nonexistent 'int' constructor" 同一跑):
+	#   `snap.size()=0 keys=[] is_empty=true`。后果是**整帧玩家快照全丢** ⇒ 消费端
+	#   `rewind_restore({})` 在第一个键上就早退 ⇒ **位置/HP/武器全不还原**
+	#   (端到端实测 `rewind_probe` 7 条红:位置差 276px、HP 30≠50、HUD 血量通知未触发)。
+	#   即:反射拼错的名字**不止**弄丢一个字段,它把整帧快照弄空,而引擎每帧照报不误。
 	# ★ 另注:本键当前**只写不读**(`player.rewind_restore` 还原武器用的是 `widx` + `wmags` +
 	#   `wlive`,不看类型 id)。保留它是为了与 `capture_state` 的 `wslot` 同口径,免得下次
 	#   有人想按类型还原时以为这里没有。
-	d["wslot"] = int(wc.get("_current_type"))
-	d["widx"] = int(wc.get("_current_index"))
-	var inv = wc.get("inventory")
+	# ★ 类型化(2026-10-04,audit §2.5 的**生产端**):下面六处成员访问原先都走**字符串反射**
+	#   (按名取值 / 按名调方法)。反射把"成员名拼错"变成**静默 null**,正是上一条注释记的那次
+	#   真事故。现改成真类型访问:拼错时**当场、点名成员、带文件:行号**地炸。
+	#   ★ 买到的**不是**"编译期红":4.7.1 对 `class_name` 类型上的未知成员只按警告级
+	#     `UNSAFE_*` 处理(`project.godot` 也没把它升成错误)⇒ 拼错同样是**运行期** SCRIPT ERROR。
+	#     与 `player.gd` 里那段同款说明(实测原文见 `tests/probe/rewind_weapon_probe.gd` 文件头)。
+	#   ★ 六个成员都在**已有 `class_name`** 的类上(`WeaponComponent` / `WeaponInventory` /
+	#     `WeaponBase`)⇒ **未动类结构**,反射纯属历史遗留。
+	# ★ 行为逐字段不变:键名/键序/初值(`wslot` 0、`widx` -1、`wmags` []、`wlive` -1)与两个
+	#   `!= null` 守卫都原样保留;`wc.has_method("current_weapon")` 那层探测去掉,是因为 `wc`
+	#   现在是 `WeaponComponent`,该方法必然存在(见 `weapon_component.gd:461`)。
+	# ★ 覆盖上限:`player` 上按名取 `weapons` 那**一处仍是对象反射** —— 玩家根(`player.gd`)
+	#   没有 `class_name`,类型化它要动类结构(全局类名 + 打掉两个刻意造的裸宿主桩,已登记)。
+	#   正解是把 weapons 组件**当参数注进来**,不属本任务。
+	#   守卫:`tests/probe/rewind_weapon_probe.gd` 的 S7(行为 + 形状)+ `rewind_probe.gd` 的 ⑨。
+	d["wslot"] = wc._current_type
+	d["widx"] = wc._current_index
+	var inv: WeaponInventory = wc.inventory
 	if inv != null:
 		var mags: Array = []
-		for e in inv.get("held"):
-			mags.append(int(e.get("mag")))
+		for e in inv.held:
+			mags.append(int(e["mag"]))
 		d["wmags"] = mags
-	var live = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+	var live: WeaponBase = wc.current_weapon()
 	if live != null and is_instance_valid(live):
-		d["wlive"] = int(live.get("mag_ammo"))
+		d["wlive"] = live.mag_ammo
 	return d
 
 

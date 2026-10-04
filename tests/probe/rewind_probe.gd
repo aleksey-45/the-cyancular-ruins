@@ -147,8 +147,54 @@ func _run() -> void:
 	if rewind.recorded_seconds() >= t_peak:
 		_fail("二次回溯后磁带钟未回退(%.2f ≥ %.2f,回溯在倒放旧带)" % [t_peak, rewind.recorded_seconds()])
 
+	# ⑨ 生产端契约:`WorldRewind._snapshot_player()` 产出的**武器快照逐字段 == 真值**,且
+	#    **不许静默退化**。快照字典由这个函数产出,它此前用字符串反射读武器域 —— 成员名对不上
+	#    时 `get` **静默返回 null** ⇒ 那次真事故里那一帧的玩家快照整体退化成**空字典**
+	#    (2026-10-04 实测 `snap.size()=0 keys=[]`),而**任何断言都不会红**:引擎只在 stderr
+	#    每帧报 "Nonexistent 'int' constructor"(同一跑 83 行)。事故原文与实测订正写在
+	#    `core/sim/world_rewind.gd` 那段的注释里。
+	#    ★ 放在**最后一步**:不扰动 ①-⑧ 的世界(本段会真装上两把枪)。
+	#    ★ 开局空手时 `_current_type`=0 / `_current_index`=-1 都是**真值** ⇒ 不装枪的话
+	#      "静默退化"与"真的空手"不可分,这一条就没有牙。
+	var wc: WeaponComponent = player.get("weapons")
+	if wc == null:
+		_fail("玩家根上没有 weapons 组件(改名/被删?)—— 生产端契约无从验证")
+	else:
+		wc.set_initial_inventory([1, 2])
+		for i in 6:
+			await tree.physics_frame
+		var held: Array = wc.inventory.held
+		var live_w: WeaponBase = wc.current_weapon()
+		if held.size() != 2 or live_w == null:
+			_fail("生产端契约前置不成立(背包 %d 格 / current_weapon=%s)"
+					% [held.size(), str(live_w)])
+		else:
+			# 三个互不相同的非 0 值:格 0=5、格 1=7、手持实弹=9 ⇒ 任一处读空/读 0 必被看出来。
+			held[0]["mag"] = 5
+			held[1]["mag"] = 7
+			live_w.mag_ammo = 9
+			var snap: Dictionary = rewind._snapshot_player(player)
+			var d_wslot := int(snap.get("wslot", -99))
+			var d_widx := int(snap.get("widx", -99))
+			var d_wlive := int(snap.get("wlive", -99))
+			var d_wmags: Array = snap.get("wmags", [])
+			if d_wslot != wc._current_type or d_wslot == 0:
+				_fail("生产端 wslot=%d 应等于真值 %d 且非 0(=0 即静默 null 那次事故的形态)"
+						% [d_wslot, wc._current_type])
+			if d_widx != wc._current_index:
+				_fail("生产端 widx=%d 应等于真值 %d" % [d_widx, wc._current_index])
+			if d_wlive != live_w.mag_ammo:
+				_fail("生产端 wlive=%d 应等于真值 %d" % [d_wlive, live_w.mag_ammo])
+			if d_wmags.size() != held.size():
+				_fail("生产端 wmags 格数 %d 应等于真值 %d" % [d_wmags.size(), held.size()])
+			else:
+				for i in mini(held.size(), d_wmags.size()):
+					if int(d_wmags[i]) != int(held[i]["mag"]):
+						_fail("生产端 wmags[%d]=%d 应等于真值 %d"
+								% [i, int(d_wmags[i]), int(held[i]["mag"])])
+
 	if _fails.is_empty():
-		print("REWIND PROBE: OK(录制/位置+HP倒退/怪复活/精英不倒/回溯免疫/松开恢复/磁带钟回退/二次回溯不串带)")
+		print("REWIND PROBE: OK(录制/位置+HP倒退/怪复活/精英不倒/回溯免疫/松开恢复/磁带钟回退/二次回溯不串带/生产端快照逐字段==真值)")
 		tree.quit(0)
 	else:
 		print("REWIND PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
