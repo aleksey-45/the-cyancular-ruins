@@ -295,6 +295,16 @@ git commit -m "docs(display): 补显示设置说明 + 登记 OS 层窗口行为�
 - [ ] **Step 3: 跑 `kh_l4_probe` / `kh_l5_probe`**（★ **非 headless**，会弹窗；字号全仓扫描必须仍 OK —— Task 3 新增控件用的是 32，不破它）。
 - [ ] **Step 4: 把两次结果（图路径 + 两个探针的 OK 文本）写进本批账本**；探针的 `--size` 改动值得留就提交那个 `.gd`。
 
+- [ ] **Step 5: 闭环 §五.13 的"真窗口 / 真居中"**（Task 5 交回的缺口 —— ★ 原 brief **没有**这条，别当已覆盖）
+
+非 headless 跑一次，**读几何并断言**（不是看图）：
+
+  · 用 `user://settings.cfg` 的 `display/res_index` 分别设成 ① 基准档（1920×1440）② **放不下**的档（本机可用区实测 **2560×1528** ⇒ 设 `2560×1920` 那档即造出"放不下"）；
+  · 打印 `window_get_size()` / `window_get_position()` / `screen_get_usable_rect()`（写法照 `menu_shot_probe` 里那几行）；
+  · 断言：**尺寸** == 所选档 ∨（放不下时）== `fit_resolution(可用区)`；**位置** == `usable.position + (usable.size - size) / 2`（给 **±2px 容差** —— 窗口管理器可能微调）。
+  · ★ 把两次的输出写进报告：这是 `registered-debt.md` §五.13 的**唯一**闭环证据。
+  · ★ **多屏 / 可用区原点非零在本机造不出来** ⇒ 如实登记为边界（§五.13 一带），别假装覆盖了。
+
 ---
 
 ## 本计划**不含**
