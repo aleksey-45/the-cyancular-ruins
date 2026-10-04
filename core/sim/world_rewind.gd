@@ -147,9 +147,12 @@ func _snapshot_player(player: Node) -> Dictionary:
 	#        + `player.is_downed()`(本函数开头那个字典字面量里的 `"downed"` 键)。
 	#   ★ 第 ⑤ 处的失败形态与前四处**同型但更阴**:`is_downed` 一改名 ⇒ `has_method` 恒 false
 	#     ⇒ `downed` **静默写成 false**(不报错、不中断,`d` 照常返回)⇒ 消费端
-	#     `player.gd:995-998` 的 `if bool(d["downed"]) and not downed_now` **静默跳过倒地/复活
+	#     `player.gd:1039-1042` 的 `if bool(d["downed"]) and not downed_now` **静默跳过倒地/复活
 	#     还原**。★ 原文写的是 `player.gd:987-989` —— 行号**已过期**,2026-10-04(Plan B Task 15)
 	#     按内容复核后订正(`grep -n "set_downed_by_rewind\|combat.revive()"`;`player.gd` 共 998 行)。
+	#     ★★ 2026-10-05(Task 2)**二次订正**:Task 15 时是 `995-998`,而本轮在同一条链路的
+	#     `player.gd::rewind_restore` 里插了 44 行 ⇒ 又移了;复核法同上,实测 `1039-1042`
+	#     (`player.gd` 现在共 **1042** 行 = 那四行就是文件末尾)。
 	#   ★★ 形状守卫(`rewind_weapon_probe` 的 S7)在 Task 15 已从"`.get("` + `has_method("` **≤ 5** 的
 	#     **计数上界**"换成**逐名核那 5 处访问形态**(`_has_member_token`)+ **一条 `snap["downed"] == 真值`
 	#     的行为断言**(`EXPECTED_CHECKS` 60→**61**)。旧计数上界对第 ⑤ 处的改名**无牙**:Task 13 的 G-1

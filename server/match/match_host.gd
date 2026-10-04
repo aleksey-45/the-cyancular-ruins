@@ -397,20 +397,27 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 		"facing": int(p.get("facing_direction")),
 		"downed": p.is_downed(),
 	}
-	var wc = p.get("weapons")
+	# ★★ 2026-10-05(Task 2)类型化:原来这四行隔着 `wc` / `inv` / `slot` 三个句柄做
+	#   **字符串反射**(`wc.get("_current_index")` / `inv.get("held")` / `slot.get("mag", 0)`),
+	#   同族的病与单机那一份逐字相同(见 `core/sim/world_rewind.gd:131-141` 的长注释):
+	#   成员名一改名 ⇒ `get` 静默返回 null ⇒ **快照值静默退化**,而没有任何断言会红。
+	#   拿到句柄之后每一层都能点访问(`WeaponComponent` / `WeaponInventory` / `WeaponBase`
+	#   三个类都已有 `class_name`)。★ 逐字行为差只有一处:`slot.get("mag", 0)` → `slot["mag"`
+	#   —— 条目缺 `mag` 键时旧写法给 0、新写法当场报错;而 `WeaponInventory.add/restore/pick_up`
+	#   三处写入口都必写 `mag`(条目形状见 `core/sim/weapon_inventory.gd:40`)= 「缺键」不是正常态。
+	#   ★ 形状守卫:`tests/probe/rewind_weapon_probe.gd` 的 S9(逐条钉住隔着句柄的反射为 0)。
+	var wc := p.get("weapons") as WeaponComponent
 	if wc != null:
-		d["widx"] = int(wc.get("_current_index"))
-		var inv = wc.get("inventory")
+		d["widx"] = wc._current_index
+		var inv: WeaponInventory = wc.inventory
 		var mags: Array = []
 		if inv != null:
-			var held = inv.get("held")
-			if held != null:
-				for slot in held:
-					mags.append(int(slot.get("mag", 0)))
+			for slot in inv.held:
+				mags.append(int(slot["mag"]))
 		d["wmags"] = mags
-		var live = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+		var live: WeaponBase = wc.current_weapon()
 		if live != null and is_instance_valid(live):
-			d["wlive"] = int(live.get("mag_ammo"))
+			d["wlive"] = live.mag_ammo
 	var bl: Array = []
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if not is_instance_valid(b) or not (b is Node2D):
@@ -443,26 +450,49 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 			break
 	p.global_position = f["p"]
 	p.set("velocity", f["v"])
-	var combat = p.get("combat")
+	# ★ 战斗段(2026-10-05 Task 2):拿到 `combat` 句柄后点访问。原来三处 `combat.get("max_hp")`
+	#   / `combat.set("hp")` / `combat.call("emit_signal", "hp_changed", …)` 是隔着句柄的反射 ——
+	#   其中 `call("emit_signal", …)` 那处最阴:名字对不上时 `call` 当场报错并**中止整段**
+	#   (连后面的武器段一起跳过)。`hp_changed` 是 `CombatComponent` 自己声明的信号
+	#   (`scenes/player/combat_component.gd:12`)⇒ 直接 emit 是同一件事的类型化写法。
+	var combat := p.get("combat") as CombatComponent
 	if combat != null:
-		var hp1 := clampi(int(f["hp"]), 0, int(combat.get("max_hp")))
-		if hp1 != int(combat.get("hp")):
-			combat.set("hp", hp1)
-			combat.call("emit_signal", "hp_changed", hp1, int(combat.get("max_hp")))
+		var hp1 := clampi(int(f["hp"]), 0, combat.max_hp)
+		if hp1 != combat.hp:
+			combat.hp = hp1
+			combat.hp_changed.emit(hp1, combat.max_hp)
 	p.set("facing_direction", int(f["facing"]))
-	var wc = p.get("weapons")
+	var wc := p.get("weapons") as WeaponComponent
 	if wc != null and f.has("wmags"):
-		var inv = wc.get("inventory")
+		var inv: WeaponInventory = wc.inventory
+		# ★★ 2026-10-05(Task 2)与单机 `Player.rewind_restore` **同一处修法,逐字对齐**:
+		#   ① **发现 B**:切枪必须排在"条目写回"**之前** —— `_equip_index` 会把走掉那把的出膛实弹
+		#      写回条目,排在写回之后就会冲掉刚恢复的快照值(仪器:快照 `wmags=[11,1]`/`widx=1`
+		#      ⇒ 切枪后 `held[0].mag=3`)。
+		#   ② **发现 A**:手持实弹走 `WeaponComponent.apply_mag()`(未入树窗口写 `pending_mag`,
+		#      由 `WeaponBase._ready()` 消费)而不是直接写 `mag_ammo` —— 后者会被 `_ready` 用
+		#      **条目旧值**覆盖。
+		#   ③ `wlive < 0`(快照没记手持实弹)且确实切了枪 ⇒ 新实例取**快照条目值**(改动前同口径)。
+		#   ★ 语义口径:`wlive` 与 `wmags` **各自照抄快照**,不许"以条目为准"把 `wlive` 丢掉。
+		#   ★ 覆盖上限(照实):本函数**没有** headless 行为守卫(全仓 `grep '_apply_rw_frame'`
+		#     只命中生产自己)⇒ 这里只有**源码形状**守卫(探针 S9);行为侧归**真链路批 A**。
+		var want_idx := int(f.get("widx", -1))
+		var switched := want_idx >= 0 and want_idx != wc._current_index
+		if switched:
+			wc.equip_index(want_idx)
 		if inv != null:
-			var held = inv.get("held")
+			var held: Array = inv.held
 			var mags: Array = f["wmags"]
 			for i in mini(held.size(), mags.size()):
 				held[i]["mag"] = int(mags[i])
-		if int(f.get("widx", -1)) >= 0 and int(f.get("widx", -1)) != int(wc.get("_current_index")):
-			wc.call("equip_index", int(f["widx"]))
-		var live = wc.call("current_weapon") if wc.has_method("current_weapon") else null
-		if live != null and is_instance_valid(live) and int(f.get("wlive", -1)) >= 0:
-			live.set("mag_ammo", int(f["wlive"]))
+		var live: WeaponBase = wc.current_weapon()
+		if live != null and is_instance_valid(live):
+			var want := int(f.get("wlive", -1))
+			if want < 0 and switched and inv != null and wc._current_index >= 0 \
+					and wc._current_index < inv.held.size():
+				want = int(inv.held[wc._current_index]["mag"])
+			if want >= 0:
+				WeaponComponent.apply_mag(live, want)
 	# 自己的子弹:活弹按序写回(位置/速度/引信)—— 照常伤害他人
 	var hist: Array = f.get("bullets", [])
 	if hist.is_empty():
