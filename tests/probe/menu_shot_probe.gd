@@ -5,8 +5,11 @@ extends Control
 # 跑法(★★ 必须**不带** `--headless`:`tests/probe/hue_tint_probe.gd:4` 记着 headless 下
 # `get_viewport().get_texture().get_image()` 返回 null ⇒ 量不到像素):
 #
-#   "$GODOT" --path . --quit-after 3600 --resolution 1280x960 \
-#       res://tests/probe/menu_shot_probe.tscn \
+#   ★★ 2026-10-04 起 **`--resolution` 已失效**:autoload `Settings.apply_display()` 会在启动时按存档把窗口设成那档
+#      (autoload 后到先赢,命令行被它顶掉)。要按某个窗口尺寸取屏:先改 `user://settings.cfg` 的
+#      `display/res_index`;或改用仓内既有的 `tools/_shot_scene.gd` 取**视口纹理** —— 1:1 下它与屏幕像素同一,
+#      但**不覆盖**「画布 blit 到窗口」那一步(即本探针的射程)。
+#   "$GODOT" --path . --quit-after 3600 res://tests/probe/menu_shot_probe.tscn -- <主菜单图> <设置页图>
 #       -- .superpowers/sdd/<批次>/shots/<主菜单名>.png \
 #          .superpowers/sdd/<批次>/shots/<设置页名>.png
 #
@@ -29,6 +32,9 @@ extends Control
 #   ★ 覆盖上限:只在 0.667× (窗口 1280×960) 上量过;1:1 时两种 mode 逐字节相同(另见下面 1:1 对照),
 #     其他比例未实测。
 #
+# ★★ 覆盖上限(2026-10-04 实测):下面那步「取屏自证」是**绊线不是保证** —— 16×16 粗比在深色 UI 上会被摊薄,
+#   实测 4 次取屏里 3 次抓到遮挡、**1 次放过**(设置页粗差 0.0677 < 阈值 0.08,而那张图被开始菜单盖住一大块)。
+#   ⇒ 用它取图**必须人看图**。
 # ★ 为什么这里**不是**守卫:本探针不判"数值对不对",只负责"把那一刻的窗口像素落成 PNG
 #   并把环境读数打全";判据是**人看那几张图**。唯一会红的是"图没取到/没写成功/页面没就绪",
 #   那是证据链断了,不是版式判据。
