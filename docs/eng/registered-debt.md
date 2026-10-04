@@ -418,6 +418,16 @@
      ④ **发布产物那一侧的守卫今天也没有**(见 §五.10 与 §七.3 指的同一处通道问题)。
    - **什么时候能销 / 翻案条件**:决定上 CI 时 ⇒ 先落最小一步:`run_all.sh`(headless,不碰 7777)+ `python tools/check_naming.py --self-test` 两条,配一个 Windows runner;`run_real.sh` **不进** CI(它按设计要人认领)。★ **不要**在没有用户裁决的情况下新建 `.github/`(本批明确不建)。
 
+18. **`debug/gdscript/warnings/unsafe_*=2` 试跑:红的形态、解析不过的脚本、"改得掉/改不掉"粗分类**(2026-10-04 加;owner 用户 —— **开不开是产品决策**;本行只交数据;最后复核 2026-10-04 实测)。
+   - **动机**:`AGENTS.md` 记着"未知成员在 `class_name` 类型上只是 **warning**(`UNSAFE_*`)"。把它升成**错误**,反射一复发就是硬红 —— 这是"反射清完还剩多少"的**唯一量化判据**。
+   - **键组合(试跑用的那一组)**:`[debug]` 段加 `gdscript/warnings/unsafe_property_access=2` / `unsafe_method_access=2` / `unsafe_cast=2` / `unsafe_call_argument=2`;跑 `bash tests/run_all.sh`。★ 时间盒下在**第 54 支**(共 101)处停 ⇒ 下面是**下界**。
+   - **红的形态(54 支)**:**48 支 `NO-VERDICT`**(主体形态:依赖脚本解析不过 ⇒ 一行判词都不打,白等满 `--quit-after` ≈60s)· **3 支存活** `OK`(`lobby_parse_smoke` / `network_input_smoke` / `time_rules_smoke`)· **2 支 `FAIL`**(`settings_actions_smoke`:依赖 `settings.gd` 解析不过;`hud_declarative_probe`:`KH HUD PROBE: FAIL | res://ui/hud/royale_hud.gd; res://ui/hud/combat_fee…` —— **它自己点名了哪些脚本解析不过**)· **1 支 `TIMEOUT`**(`tile_query_smoke` 被 60s 外壳掐掉 ⇒ 解析错误能把一支 1 秒冒烟变成"看着像挂住")。
+   - **解析不过的脚本(从 55 份跑批日志归并)**:`4377` 行 `Parse Error: … (Warning treated as error.)`,落在 **75 个源文件**、**1531 个不同 (文件, 行)**。按引擎措辞分类:`unsafe_call_argument` **2777** · `unsafe_method_access`("The method … is not present on the inferred type …") **898** · `unsafe_property_access`("The property … is not present on the inferred type …") **419** · `unsafe_cast` **283**。位置最多的文件:`tests/smoke/enemy_logic_smoke.gd`(210 行)· `tests/probe/ground_action_probe.gd`(95)· `tests/smoke/weapon_inventory_smoke.gd`(73)· `scenes/pvp_match_client.gd`(67)· `tests/smoke/grenade_smoke.gd`(65)· `core/sim/map_format.gd` / `core/config/settings.gd` / `scenes/player/player.gd` 等。
+   - ★★ **一条必须先知道的操作事实**:该模式下**普查工具自己也解析不过** —— `Parse Error: Casting "Variant" to "GDScript" is unsafe. (Warning treated as error.) at: GDScript::reload (res://tests/probe/allscript_probe.gd:71)` ⇒ `allscript_probe` 打不出一行判词。所以上面这份普查是**从跑批日志归并**出来的,更完整的清单得**先修它自己那一处**(改成 `if s is GDScript:` 收窄)再跑。
+   - **粗分类**:**全仓零第三方代码**(`find . -maxdepth 2 -name addons` = 0 命中)⇒ **没有"引擎/第三方形状改不掉"这一类**。四档:(a) **类型化/收窄改得掉**(`Variant` 来路静态可知:`map_format.gd` 的 `int()/bool()/String()`、`grid_pathfinder.gd` 的实参);(b) **反射那一家**(`player.gd` 等,与 §六.12 的"参数注入"同批);(c) **工具自己**(`allscript_probe.gd:71`,5 行级);(d) **只能逐点压警告**(`Variant` 来路静态不可知:`ConfigFile.get_value()`、`load()` 返回的 `Resource`、`InputEvent` 一族 ⇒ 引擎的出路是 `@warning_ignore(...)`,**那是把警告关掉、不是改对**)。★ 本行**不写**"建议开启/不开启"。
+   - ★ **还原证据(R8)**:试跑后 `cp` 回原文件,`git diff project.godot` **为空**、`git status --short project.godot` **为空**、`grep -n "unsafe_" project.godot` **零命中**;那 4 行**没有**进任何提交;收尾时无残留 Godot 进程、`lobby_alive=false`、`[7800,8300)` 无占用。
+   - **翻案条件**:用户裁定"反射必须清零"时 ⇒ 先按上面四档分档(先做 (a)(b)(c)),再开 `=2`;★ 届时**必须**同时跑一次真链路批(退时 segfault 那类问题只在真链路里现形)。
+
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 
 **本节不是欠账清单**:§一/§二 是"要还的债",这里是**已经判过、决定不还的** —— 每条都带**判决理由**与**翻案条件**。
