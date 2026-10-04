@@ -9,8 +9,14 @@ extends Control
 #      (autoload 后到先赢,命令行被它顶掉)。要按某个窗口尺寸取屏:先改 `user://settings.cfg` 的
 #      `display/res_index`;或改用仓内既有的 `tools/_shot_scene.gd` 取**视口纹理** —— 1:1 下它与屏幕像素同一,
 #      但**不覆盖**「画布 blit 到窗口」那一步(即本探针的射程)。
+#   ★★ **`--size WxH`(2026-10-04 Task 6 加)= 按指定窗口尺寸取屏的正解**:启动后由探针自己
+#      `window_set_size` + 按可用区**重新居中**,存档档位顶不掉它 ⇒ Task 0 那条"两图同尺寸可并排比"
+#      的配方**恢复可用**,也是取**非 4:3**窗口图(看 `aspect="keep"` 的黑边)的唯一入口。
+#      `--size` 与两个输出路径都写在 `--` 之后、顺序随意;不写 `--size` ⇒ 一行窗口 API 都不调。
 #   "$GODOT" --path . --quit-after 3600 res://tests/probe/menu_shot_probe.tscn -- <主菜单图> <设置页图>
 #   (输出路径写在 `--` 之后:`-- <主菜单图.png> <设置页图.png>`,支持 res:// / user:// / 绝对路径)
+#   "$GODOT" --path . --quit-after 3600 res://tests/probe/menu_shot_probe.tscn \
+#       --size 1600x900 -- <主菜单图.png> <设置页图.png>
 #
 # ★ 输出路径**由调用方在 `--` 之后给**(本探针不写死文件名),支持 `res://` / `user://` /
 #   绝对原生路径三种写法,父目录不存在时会建。取图手法照仓内既有那套
@@ -62,6 +68,14 @@ var _shots := 0
 
 
 func _ready() -> void:
+	# ★ `--size` 必须在**任何取图之前**生效:apply_display() 早在 autoload 里跑完了(它按存档档
+	#   开窗),这里再按调用方要的尺寸覆盖一次。缺省 ⇒ 这段整个跳过,窗口一动不动。
+	var want := _size_arg()
+	if want != Vector2i.ZERO:
+		_apply_window_size(want)
+		await _frames(3)     # window_set_size 是异步的:不等 WM_SIZE 走完,读回的可能还是旧尺寸
+		print("[MENU-SHOT] ★ --size 读回(等 3 帧后):窗口 size=%s pos=%s" % [
+			str(DisplayServer.window_get_size()), str(DisplayServer.window_get_position())])
 	_report_env()
 	var outs := _out_paths()
 	if outs.size() < 2:
@@ -72,6 +86,46 @@ func _ready() -> void:
 	await _shot_main_menu(outs[0])
 	await _shot_settings(outs[1])
 	_finish()
+
+
+# ── `--size WxH`:启动后自己设窗口尺寸 + 按可用区重新居中 ─────────────────────
+# ★ 为什么本探针需要它(2026-10-04 Task 6):见文件头 ① —— `--resolution` 被 `apply_display()`
+#   顶掉,而"改 cfg 的 res_index"只能取到**档表里那四个 4:3 档** ⇒ **非 4:3 窗口取不出图**,
+#   于是 `aspect="keep"` 的核心承诺("窗口尺寸 ≠ 基准时加黑边、内容不变形")在 4:3 之外从没验过。
+# ★ 缺省(**不写 `--size`**)⇒ 一行窗口 API 都不调,行为与加本参数之前一致。
+# ★ 它只改**窗口尺寸/位置**,不碰 `stretch/*` 与逻辑基准:非 4:3 窗口该有的黑边由引擎的
+#   `aspect="keep"` 自己加 —— ★ 方向别搞反:**窗口比 4:3 宽**(如 1600×900)⇒ 黑边在**左右**;
+#   **窗口比 4:3 高**(如 1280×1200)⇒ 黑边在**上下**。
+func _size_arg() -> Vector2i:
+	var args := OS.get_cmdline_user_args()
+	for i in args.size():
+		if args[i] == "--size":
+			if i + 1 >= args.size():
+				_fail("`--size` 后面缺 `WxH`(例:`--size 1600x900`)")
+				return Vector2i.ZERO
+			return _parse_size(args[i + 1])
+	return Vector2i.ZERO
+
+
+func _parse_size(raw: String) -> Vector2i:
+	var parts := raw.split("x")
+	if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int():
+		_fail("`--size` 要 `宽x高` 两个整数(例:`--size 1600x900`),实得「%s」" % raw)
+		return Vector2i.ZERO
+	var v := Vector2i(int(parts[0]), int(parts[1]))
+	if v.x <= 0 or v.y <= 0:
+		_fail("`--size` 两边都要 > 0,实得「%s」" % raw)
+		return Vector2i.ZERO
+	return v
+
+
+func _apply_window_size(want: Vector2i) -> void:
+	var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
+	var pos := usable.position + (usable.size - want) / 2
+	DisplayServer.window_set_size(want)
+	DisplayServer.window_set_position(pos)
+	print("[MENU-SHOT] ★ --size 生效:请求 %s ⇒ 居中到 %s(可用区 %s)" % [
+		str(want), str(pos), str(usable)])
 
 
 # ── 环境读数:两种 mode 的图要能并排比,前提是"这次的配置"写在日志里 ─────────
@@ -288,12 +342,22 @@ func _coarse_diff(a: Image, b: Image) -> float:
 
 
 # ── 命令行:输出路径 ───────────────────────────────────────────────────────
+# ★ `--size` 的**取值**(`1600x900`)不以 `--` 开头,不特判就会被当成输出路径(⇒ 少一个路径、
+#   多一个乱路径)。故这里按"开关 + 取值"成对跳过,而不是只滤掉 `--` 开头的那种写法。
 func _out_paths() -> Array[String]:
+	var args := OS.get_cmdline_user_args()
 	var out: Array[String] = []
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--"):     # 本探针不认开关;留给将来(现在一律当路径)
+	var i := 0
+	while i < args.size():
+		var a := args[i]
+		if a == "--size":
+			i += 2
+			continue
+		if a.begins_with("--"):
+			i += 1
 			continue
 		out.append(a)
+		i += 1
 	return out
 
 
