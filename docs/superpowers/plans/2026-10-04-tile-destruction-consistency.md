@@ -324,7 +324,7 @@ git commit -m "fix(tiles): 单机格级销毁收口 —— TileDefs.destroy_cell
 - Test: `tests/probe/tile_collision_probe.gd`（在相④ 之后加"相④b 格级销毁 → 回溯"；复用 Task 2 留下的 `cell3b`/`subs3b`/`base3b` 与**那一次**回溯）
 
 **Interfaces:**
-- Consumes: **Task 2 已落地的格级链**（`Level0` 的 `on_destroyed` → `destroy_cell`）+ Task 2 在 `_run()` 里留下的三个局部量 `cell3b` / `subs3b` / `base3b`，以及**相④ 那一次回溯**（★ **不要**自己再按 rewind：冷却与历史长度不由你控制）—— 本任务的前提是 **Task 2 的相③b 已绿**；`TileDefs.hp_of(texture)`（:129）；`Level0._restore_sub(sub, hp)`（:421-445，已写 `sub_hp` / 9 副本 / `_destructible_sub` / 脏块 / `_pristine_grid` 回填）。
+- Consumes: **Task 2 已落地的格级链**（`Level0` 的 `on_destroyed` → `destroy_cell`）+ Task 2 在 `_run()` 里留下的 `cell3b` / `subs3b`（★ `base3b` **不可用**:它声明在 `else:` 块内(`tile_collision_probe.gd:282`),GDScript 有**块作用域** ⇒ 相④b 看不见它;改用探针既有的 `_expect(sub)` 与「游戏自己的规则」对账,比拿快照比对**更强**),以及**相④ 那一次回溯**（★ **不要**自己再按 rewind：冷却与历史长度不由你控制）—— 本任务的前提是 **Task 2 的相③b 已绿**；`TileDefs.hp_of(texture)`（:129）；`Level0._restore_sub(sub, hp)`（:421-445，已写 `sub_hp` / 9 副本 / `_destructible_sub` / 脏块 / `_pristine_grid` 回填）。
 - Produces: `TileDefs.hp_grid_at(cell: Vector2i) -> int`、`TileDefs.set_hp_grid(cell: Vector2i, hp: int) -> void`。
 
 - [ ] **Step 1: 写失败的断言**
@@ -334,13 +334,15 @@ git commit -m "fix(tiles): 单机格级销毁收口 —— TileDefs.destroy_cell
 ```gdscript
 	# ── 相④b 相③b 那一格在回溯后必须连 hp_grid 一起回来 ──
 	# ★ 复用 Task 2 留下的 cell3b / subs3b / base3b,并复用相④ 的**那一次**回溯。
+	# ★ 与相④ 同款:拿**游戏自己的两条规则**(`_expect`)对账,而不是拿快照 —— 后者只能证明
+	#   "回到了拆之前",前者还要求"拆之前本来就是对的"。
 	var back_wrong := 0
-	for i in subs3b.size():
-		var s: Vector2i = subs3b[i]
-		if _painted(s) != bool(base3b[i][0]) or _terrain_at(world, _sub_center(s)) != bool(base3b[i][1]):
+	for s in subs3b:
+		var e := _expect(s)
+		if _painted(s) != bool(e[0]) or _terrain_at(world, _sub_center(s)) != bool(e[1]):
 			back_wrong += 1
 	if back_wrong != 0:
-		_fail("相④b 回溯后相③b 那格有 %d 个子格没回到基线(渲染/碰撞有一样没回来)" % back_wrong)
+		_fail("相④b 回溯后相③b 那格有 %d 个子格与规则不符(渲染/碰撞有一样没回来)" % back_wrong)
 	# 纹理表 `current_subgrid` 从不被破坏改动 ⇒ 回溯后读它与破坏前同值,可当满血基准
 	var want3b := TileDefs.hp_of(_tex(subs3b[0]))
 	if TileDefs.hp_grid_at(cell3b) != want3b:
@@ -385,7 +387,7 @@ static func set_hp_grid(cell: Vector2i, hp: int) -> void:
 			TileDefs.set_hp_grid(cell, TileDefs.hp_of(pristine_tex))
 ```
 
-（`cell` = `Vector2i(sub.x / 4, sub.y / 4)`，`pristine_tex` = 该分支里已经在读的那个基线纹理变量；**照现状取名**，别新加变量。）
+★ **按实况**(已核实):`_restore_sub(e: Dictionary)` 的形参是**字典** `e`(读 `e["sub"]` / `e["hp"]`),里面**已有** `var cell := Vector2i(sub.x / 4, sub.y / 4)` 与 `var tex := int(MazeGenerator.current_subgrid[sub.y][sub.x])`(纹理表从不被破坏改动 ⇒ 它**就是**基线纹理)。所以写回用的是**既有局部量**,别新加变量;要补的那一行是 `TileDefs.set_hp_grid(cell, TileDefs.hp_of(tex))`(不是 `hp_of(_pristine_grid[...])` —— 那是**打包值**不是纹理)。
 
 - [ ] **Step 5: 跑它，确认绿**
 
