@@ -32,8 +32,9 @@ Settings="*res://core/config/settings.gd"
 
 [debug]
 
-"回到主菜单è¿ç§è¡¨è±¡åæ¨(2026-09-12çæºæµåºçå»æå´©æºå°±æ¯è¿ç§å¤å¢)ãfile_logging/enable_file_logging"=true
-"有些时候才崩çé®é¢æ¶,#æ¯å¤è·ä¸è½®æ¢éå°±å°ä¸ä»½ç°åº,èç°åºæ°æ°æ¯æç¼ºçä¸è¥¿ã#æå°64:åä»½æ¯KBéçº§,å ä¸äºå¤å°çfile_logging/max_log_files"=64
+file_logging/enable_file_logging=true
+file_logging/enable_file_logging.pc=true
+file_logging/max_log_files=64
 
 [display]
 
