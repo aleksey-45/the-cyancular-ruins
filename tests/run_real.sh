@@ -44,7 +44,9 @@
 #     ② `tests/probe/team_match_probe.sh` **今天仍不可当 3v3 的端到端守卫** ——
 #     `docs/eng/registered-debt.md` §一第 1 行:根因已修(`9003dae`),但**修复后没有留下六人整跑的判决**。
 #     本入口**照实标注**它,不会因为"跑过"就把它当绿。
-#   · 控制台输出一律 ASCII(同 run_all.sh);判词原文落在 `tests/.run_real_logs/*.log`。
+#   · ASCII 射程(**与 `run_all.sh` 同一口径,权威表述在它的文件头**,2026-10-05 修复轮2 订正 ——
+#     原句"一律 ASCII(同 run_all.sh)"两边都对不上):**全批判词行(`RUN_REAL …`)是纯 ASCII**;
+#     gate 说明行原样含中文;**判词原文**(含中文)落在 `tests/.run_real_logs/*.log`。
 set -u
 
 # shellcheck source=env.sh

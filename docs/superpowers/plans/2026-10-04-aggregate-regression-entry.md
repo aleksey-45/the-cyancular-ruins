@@ -45,7 +45,11 @@
 
 **Interfaces:**
 - Consumes: `tests/env.sh`（`$GODOT`、`kill_port_range`、`lobby_alive`）；`tests/smoke/*.gd`（`-s`，判词 `SMOKE OK`）；`tests/probe/*.tscn`（`--quit-after 3600`，判词 `ALL-OK`）。
-- Produces: `bash tests/run_all.sh` ⇒ 逐文件一行表格 + 末尾**唯一判词**（形如 `RUN_ALL OK(n 支 / m 断言)` 或 `RUN_ALL FAIL(k 支)`）+ 失败清单。
+- Produces: `bash tests/run_all.sh` ⇒ 逐文件一行表格 + 末尾**唯一判词** + 失败清单。
+  ★★ **2026-10-05 订正**:上面那个判词形状(`RUN_ALL OK(n 支 / m 断言)` / `RUN_ALL FAIL(k 支)`)**已过期** ——
+  现行形态(**纯 ASCII**)是 `RUN_ALL OK(n runs / m gated-assertions)` / `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` /
+  `RUN_ALL FAIL(r new-red + k registered)`,且多了"已知红基线"`tests/known_red.txt` 与第三类 `OK+RC`。
+  **以 `tests/run_all.sh` 文件头为准**(那里的判据分层是权威)。
 
 - [ ] **Step 1: 分桶（先取证，别照抄目录名）**
 

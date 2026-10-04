@@ -93,7 +93,11 @@
 - Consumes: `tests/env.sh`(`$GODOT` / `kill_port_range` / `lobby_alive`);`tests/smoke/*.gd`(40 支,`-s`,判词 `SMOKE OK`);`tests/probe/*.tscn`(82 支,`--quit-after 3600`,判词 `ALL-OK`);`tests/scripts/*.gd`(4 个工具脚本,**也要进分桶**);
   ★★ **真链路脚本的位置(控制器派发前实测,原计划写错)**:它们在 **`tests/smoke/*.sh`(7 支)** 与 **`tests/probe/*.sh`(3 支: `rejoin_probe.sh` / `royale_soak_probe.sh` / `team_match_probe.sh`)**;
   **`tests/scripts/` 下没有任何 `.sh`**(那里是 `convert_map.gd` / `convert_map_v4.gd` / `seam_analyze.gd` / `seam_screenshot.gd` —— 其中 `seam_screenshot.gd` 会取图 ⇒ **非 headless,不进默认批**)。
-- Produces: `bash tests/run_all.sh` ⇒ 逐文件一行表格 + **唯一判词**(形如 `RUN_ALL OK(n 支 / m 断言)` / `RUN_ALL FAIL(k 支)`)+ 失败清单 + 每支的日志路径。
+- Produces: `bash tests/run_all.sh` ⇒ 逐文件一行表格 + **唯一判词** + 失败清单 + 每支的日志路径。
+  ★★ **2026-10-05 订正**:上面那个判词形状**已过期** —— 现行形态(**纯 ASCII**)是
+  `RUN_ALL OK(n runs / m gated-assertions)` / `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` /
+  `RUN_ALL FAIL(r new-red + k registered)`,并多出"已知红基线"`tests/known_red.txt` 与第三类 `OK+RC`(判词肯定但 `rc != 0`)。
+  **以 `tests/run_all.sh` 文件头为准**。
   `bash tests/run_real.sh [--yes]` ⇒ 先打印清单/端口/预计耗时 ⇒ 交互确认后逐个跑并按纪律收尾。
 
 **Steps:**
