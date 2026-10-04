@@ -146,15 +146,15 @@ platforms"，以及上游 commit "Enable file logging by default on desktops"）
 
 ### 1.3 发布 exe 里打包了整套测试与工具（336 条 `res://tests/*`）✅
 
-**配置**：`export_presets.cfg:11-13`
+**配置**：`export_presets.cfg:11-13`（★ 2026-10-04 现状：`10da6cc` 起 `exclude_filter` 已含 `tests/*,tools/*`）
 
 ```
 export_filter="all_resources"
 include_filter="maps/*.cyrm,data/*.json"
-exclude_filter="*.md,.superpowers/*"
+exclude_filter="*.md,.superpowers/*,tests/*,tools/*"
 ```
 
-**实证**（对仓库根那两个 44MB exe 直接 grep）：
+**实证**（对仓库根那两个 44MB exe 直接 grep；★ 这是**裁剪前**基线 —— 那两个产物是 `10da6cc` 之前导出的）：
 
 ```
 $ grep -a -o -P 'res://tests/[A-Za-z0-9_./-]+' "The Cyancular Ruins.exe" | sort -u | wc -l
@@ -163,23 +163,34 @@ $ grep -a -o -P 'res://[A-Za-z0-9_./-]+' … | awk -F/ '{print $1}' | sort | uni
     407 tests    10 tools    3 DevTools    50 server   …
 ```
 
-**关键证据：这不是引擎限制。** 同一份 exe 里 `res://.superpowers/*`（同样含 51 个 `.gd`）**确实被排掉了**
-⇒ `exclude_filter` 对**资源**（脚本）也生效，只是**没写 `tests/*`**。补一行即可。
+**关键证据：这不是引擎限制。** ★ **2026-10-04 订正（原先那句证据不成立）**：初稿拿"同一份 exe 里
+`res://.superpowers/*`（同样含 51 个 `.gd`）**确实被排掉了**"当证据 —— **它证明不了 glob 生效**：
+导出遍历在 `editor_export_platform.cpp:725-727` **直接跳过 `.` 开头的目录** ⇒ `.superpowers/` 里的文件
+**从未进过候选集**，"它不在包里"与 `exclude_filter` 的 glob **无关**（`:13`/`:87` 里那半截 `.superpowers/*`
+是**死配置** —— 它排的是一个遍历根本不进的目录；★ 连带存疑但未定：`*.md` 那半截是否在干活，
+取决于 `all_resources` 是否收非资源文件，本轮**没有**判据，故不下结论）。
+**结论不变、换证据**：`exclude_filter` 对**资源**（脚本）也生效 —— 由 `editor_export_platform.cpp:709`
+（过滤器拿**全路径**做 `fullpath.matchn(filter)`）与 `:1371` 保证。补一行即可。
+（★ 这两条源码行由**评审读 Godot 4.7.1 源**核实；实现者侧当时网络不可达，未能独立复核。）
 另有 `res://DevTools/*` **3 条**。★ **2026-10-04 订正（本条初稿写错了）**：初稿说"那是**未入库**的本机目录，
 按 `.gitignore` 只挡 git、不挡导出" —— **反了**。`DevTools/gamelog/log_viewer.{gd,gd.uid,tscn}`
 **是已入库的**（`.gitignore` 只挡未跟踪文件，挡不住已经在库里的；`.gitignore:38` 那句"本机残留…不属于
 上游工程"对这 3 个文件是错的）。⇒ 连带两条新发现：
-① **`export_presets.cfg` 的 `exclude_filter` 里没有 `DevTools/*`**（`:13`/`:87` 都是 `"*.md,.superpowers/*"`），
+① **`export_presets.cfg` 的 `exclude_filter` 里从没有过 `DevTools/*`**（`:13`/`:87` 都只有 `"*.md,.superpowers/*"`），
 而 `docs/superpowers/plans/2026-09-21-cyrm-v4-editor-render-and-ui.md:262` 那一步
 （"排除 DevTools（两处 preset 都要改）"）**从未落地**（勾选框是 `- [ ]`，但按本仓"勾选框不可信"的教训，
-以 `grep exclude_filter` 为准）；
+以 `grep exclude_filter` 为准）。★ **2026-10-04 结案：这条 filter 不需要加** —— 那 3 个文件已由
+`9e4ccbe chore(devtools): DevTools/ 出库` **`git rm` 出库**（`DevTools/` 目录已不存在），没有可排除的对象；
+`10da6cc` 因此只加 `tests/*,tools/*`；
 ② 它们是 `gamelogs/`（gitignore）的**只读查看器**，即"本机工具"被跟踪、被导出、却又不该在库里 ——
 三个属性同时成立，只有 `git rm` 能解（ignore 规则办不到）。
 
 **要一并知道的两件事**：
 
-- 主菜单**故意**依赖其中一个测试文件：`scenes/main_menu.gd:163-170` 在 `-- --autotest-*` 时
-  `load("res://tests/smoke/menu_autotest.gd")`；且 `:154-155` 注释里**已知**"tests/ 会一起打进发布包"。
+- 主菜单**故意**依赖其中一个测试文件：`scenes/main_menu.gd:164-171` 在 `-- --autotest-*` 时
+  `load("res://tests/smoke/menu_autotest.gd")`；且 `:154-156` 注释里**当时已知**"tests/ 会一起打进发布包"。
+  ★ **2026-10-04 起 `exclude_filter` 已含 `tests/*,tools/*`**（`10da6cc`）⇒ 发布版里这条通道**没有了**，
+  该依赖在发布产物上退化为 no-op（判决与代价见 `registered-debt.md` §七 第 3 条）。
   所以这不是"没想到"，而是"知道但没当问题"。代价：向内泄漏实现 + 玩家侧多一个自动化后门。
   真要排 tests 就得把这一个文件挪出 `tests/`（或改成不依赖测试文件）。
 - 客户端 exe 里有 **50 条 `res://server/*`**，而客户端代码对 `res://server/` 的引用是 **0 次**
@@ -221,7 +232,7 @@ window/stretch/mode="viewport"
 | 2.7 | **菜单没有键盘/手柄焦点入口** | `grep grab_focus\|focus_neighbor` 生产代码 **0 命中**（只有 gitignore 的 `.superpowers/sdd/_gen/*` 里有）；唯一被处理的是返回：`scenes/settings_menu.gd:142` `if event.is_action_pressed("ui_cancel"):` | Godot 不自动点亮首个可聚焦控件 ⇒ 冷启动后 Tab/方向键/手柄一个按钮都到不了。而 `scenes/mp_lobby.gd:506/509` 专门改过 `focus_mode`，说明机制被用过、只是没喂初值 |
 | 2.8 | **零 i18n** | `tr("` 全仓 **0 命中**、`TranslationServer`/`tr_n(` **0 命中**、无 `.po/.csv/.translation`、`project.godot` 无 `internationalization` 段 —— 且项目文档**没有一处**把它写成有意取舍 ⇒ 标不了"有理由"。量级：子代理实测 `ui/`+`scenes/` 约 **328** 处中文串面（❓ 该计数我未复核） | 迁进 `.tscn` 后文案又多一种落点；且多条探针**按文案找控件**（`scenes/main_menu.gd:204` 自述 `kh_l4_visual_probe` 按文案找按钮）⇒ 改文案 = 改测试。真要 i18n，得先把探针判据换成 `unique_name_in_owner`/`meta` |
 | 2.9 | **无 CI、无聚合回归入口**；判据靠逐脚本自造文本行 | 无 `.github`；`tools/check_naming.py:9` 自称"检查,有违规 → exit 1(CI/本地都能用)"但没人调它。覆盖缺口：`EXPECTED_CHECKS` 只在 **18/152** 个测试脚本里（实测），`tests/lib/probe_base.gd:49-53` 自己写明盲区"**✓ 汇总行 + ALL-OK 并不蕴含'这一组跑过'**"，`tests/smoke/room_sweep_smoke.gd:61` 有实例（"而 verdict **仍是 `SMOKE_ROOM_SWEEP OK`** —— 那一组断言被静默跳过"） | 主流用 GUT/gdUnit4 + CI 拿 JUnit XML 与退出码。★ 本仓**已有**退出码通道：`probe_base.gd:61-64` 真调 `quit(0/1)`，只是文档统一要求"判据取 grep 文本"⇒ 现成通道被浪费。另：`--quit-after` 值实测有 8 种（3600×46、600×6、54000、36000、14400、10800、7200、300），"统一 3600"只活在文档里；11 个 `.sh` **无一**自己 `timeout`（`team_match_probe.sh:4` 那条只是**注释**里教人怎么包） |
-| 2.10 | **守卫有盲区，恰好盖住唯一的违规** | `tools/check_naming.py:69-73` 在项目根 `if rel == ".": continue` ⇒ 规则 A（目录名一律小写）**从不检查顶层目录**。实测 `python tools/check_naming.py` 打 `命名检查 OK` 并 exit 0，而顶层就躺着大写的 `DevTools/`（且 `SKIP_DIRS:34` 未收录它） | 正对上本仓自己的硬规则"**守卫能给的保证总是比它读起来少**"。修法：把 `continue` 改成跳过 `rel == "."` 这个**自身**而不是跳过它的子目录 |
+| 2.10 | **守卫有盲区，恰好盖住唯一的违规** | `tools/check_naming.py:69-73` 在项目根 `if rel == ".": continue` ⇒ 规则 A（目录名一律小写）**从不检查顶层目录**。实测 `python tools/check_naming.py` 打 `命名检查 OK` 并 exit 0，而当时顶层就躺着大写的 `DevTools/`（且 `SKIP_DIRS:34` 未收录它；★ 2026-10-04：`DevTools/` 已 `git rm` 出库 —— **盲区本身仍未修**） | 正对上本仓自己的硬规则"**守卫能给的保证总是比它读起来少**"。修法：把 `continue` 改成跳过 `rel == "."` 这个**自身**而不是跳过它的子目录 |
 | 2.11 | **自订规则被自己违反，且没机制守** | `AGENTS.md:103` 要求 `.ps1` 纯 ASCII+CRLF，而 `tools/gamelog/capture_session.ps1` 有 **49 行非 ASCII**（靠 UTF-8 BOM 侥幸）；`start_server.bat:4` 那句自述已被 `b815c68` 改写（现文只说 CRLF 由 `.gitattributes` 钉住、**命令**保持 ASCII，不再自称 pure ASCII）；`.gitattributes` **现已钉 `*.bat text eol=crlf`** ⇒ 本行"从未被机制覆盖"**已不再成立**（存量索引 EOL 自己查 `git ls-files --eol '*.bat'`） | 规则只存在于文档；`.bat` 那条从未被机制覆盖。cmd.exe 对角/多行 `for` 块的 LF 容忍度是出了名的差 |
 
 ---
@@ -469,11 +480,13 @@ window/stretch/mode="viewport"
 1. **§1.1 幽灵砖**：Level0 补格级回调（或激光改走 `damage_sub`）+ 一条"逻辑/子格/渲染三者一致"的探针。
    档 2。
 2. **§1.2 `[debug]` 键**：删 `:35-36`、按 `6b5f3fb` 补回三条真键 + 一条"键名必须匹配 `^[a-z_]+/`"的守卫。
-3. **§1.3 发布包瘦身**：`exclude_filter` 加 `tests/*,tools/*,DevTools/*`；同时决定
+3. **§1.3 发布包瘦身**：`exclude_filter` 加 `tests/*,tools/*`（**不加 `DevTools/*`** ——
+   那 3 个文件已 `git rm` 出库，见 §1.3 的结案；已由 `10da6cc` 落地）；同时决定
    `tests/smoke/menu_autotest.gd` 这个"生产依赖测试文件"该怎么办。
 4. **§2.10 命名检查盲区**：一行修（顶层目录也要过规则 A）+ 决定 `DevTools/` 的去向 —— 今天有三条路：
    改名小写 / 收进 `SKIP_DIRS` / **`git rm` 出库**（★ 2026-10-04 新证据：那 3 个文件**是已入库的**，
-   且会进导出包，见 §1.3 的订正）。
+   且会进导出包，见 §1.3 的订正）。★ **去向已定：第三条路** —— `9e4ccbe` 已 `git rm` 出库 ⇒
+   本项只剩"一行修（顶层目录也要过规则 A）"待做。
    （该文件的注释要求"这张表必须与 `.gitignore` 对齐"）。
 5. **§2.9 最小回归入口**：`tests/run_gate.sh`（`check_naming.py` + 纯逻辑 `-s` 批 + 聚合判词），
    把 `probe_base.gd:61` 现成的 `quit(1)` 当判据用起来。
@@ -505,7 +518,7 @@ window/stretch/mode="viewport"
 | `.claude/worktrees/{3v3-fixes,cyrm-v4-editor,kh-merge}` | **1.1 GB** | **`git worktree move` 到仓库外** | 三个 worktree 搬为 `E:/Workspace/godot/wt-*`（与既有的 `wt-base` 同处）。搬前逐个查过 `git status`：**三个都 clean、零未提交**。★ 为什么不是 `rm -rf`：它们是 git worktree，目录删掉只在 `.git/worktrees` 里留僵尸登记，得再 `git worktree prune`。搬完 `.claude/` 从 1.1 GB → **20 KB**（只剩 `settings.local.json`），也顺带解除了对 Godot 导入面的污染 |
 | `_crashtest/`（109 个文件） | **101 MB** | **删除** | 构成：两个临时导出 exe 各 41MB（可再生）+ `dis_7M.txt` 18MB（反汇编 dump）+ ~1MB 的 83 份日志/结果。★ **代价照实记**：18 份入库文档里出现过 `_crashtest/…` 的**历史跑法配方**（如 `./_crashtest/CyancularClient.exe --log-file …`），从此不可复跑；被 C1 分析点名为证据的 `_run1_prefix.log` **不在**这里（在 `.superpowers/sdd/`，未动） |
 | 仓库根 `.hud.bak` / `_k6.bak` / `_exportprobe.log` / `.round1_run1_FIXFAIL.log` | ~95 KB | **删除** | 全部 gitignore，且无任何入库文档引用（逐名 grep 过） |
-| `DevTools/` | 10 KB（3 个文件） | **未删（已恢复）** | ★ 见 §1.3 的订正：它**是已入库的**，我最初"未入库残留"的判断是错的。`git checkout -- DevTools` 已还原，去向待用户裁定（keep / `git rm` / 搬出仓库） |
+| `DevTools/` | 10 KB（3 个文件） | **未删（已恢复）** | ★ 见 §1.3 的订正：它**是已入库的**，我最初"未入库残留"的判断是错的。`git checkout -- DevTools` 已还原，去向待用户裁定（keep / `git rm` / 搬出仓库）★ **2026-10-04 后续：用户裁定 `git rm`,已由 `9e4ccbe` 出库,目录已不存在**；此行"未删（已恢复）"记录的是当次清理时的实况 |
 | `builds/` + `releases/` | 85 MB + 506 MB | **保留** | 归档策略：`releases/` 按设计"每次发布沉淀一份、不清理" |
 
 ---

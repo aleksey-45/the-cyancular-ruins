@@ -43,7 +43,8 @@ func _run() -> void:
 	# 存在的理由:导出 exe 被编译成 `disable_path_overrides=yes`,`<exe> res://x.tscn` 会被
 	# 引擎当场拒绝(实测 "compiled without support for path overrides")—— 想在**发布产物**
 	# 上跑探针,只能借主菜单这条既有的 `-- --autotest-*` 通道(它读 OS.get_cmdline_user_args,
-	# 不受 path override 限制,且 tests/ 已在 export_filter=all_resources 里)。
+	# 不受 path override 限制)。★ 2026-10-04 起 `exclude_filter` 已含 `tests/*` ⇒ 发布产物里
+	# 这条通道没有了(见 registered-debt.md §七 第 3 条),本探针只在工程目录内可用。
 	if mode.begins_with("ground/") or mode.begins_with("sceneprobe/"):
 		var scene_path := "res://tests/probe/%s.tscn" % mode.split("/", true, 1)[1]
 		if not ResourceLoader.exists(scene_path):
