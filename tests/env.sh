@@ -10,8 +10,11 @@
 #   3. 提供 kill_procs / kill_port。
 #
 # ⚠ 本文件会被 `set -u` 的脚本 source,故**不得**依赖任何未定义变量(一律用 ${VAR:-默认})。
-# ⚠ 不要在这里 `set -e`/`set -u`:各脚本自己已有(`set -e` 的 3 个多进程脚本 / `set -u` 的 5 个
-#   简单冒烟),在此强加会改变 `|| true` 那类写法的语义。
+# ⚠ 不要在这里 `set -e`/`set -u`:各脚本自己已有(多进程脚本用 `set -e`、简单冒烟用 `set -u`),
+#   在此强加会改变 `|| true` 那类写法的语义。
+#   ★ 2026-10-04:此处原写"`set -e` 的 3 个 / `set -u` 的 5 个"这类**硬计数**,实测早已漂成
+#   **2 / 8**(共 10 支脚本)⇒ 改成不带条数的写法,免得每次都过期(同类过期见
+#   `docs/eng/audit-2026-10-04-design-conventions.md` §4 的第 13 条)。
 
 # ── 引擎可执行文件:优先环境变量,回落本机默认(4.7.1 **console** 版;截图类探针要非 headless)──
 GODOT="${GODOT:-D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe}"

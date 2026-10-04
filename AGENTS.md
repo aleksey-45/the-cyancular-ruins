@@ -35,7 +35,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 - ★★ **跑测试前先问用户**:进入验证阶段时列出「这轮要跑哪些测试」,用户认领的自己跑,**其余由 agent 跑**(先问后跑,禁止先斩后奏)。agent 自跑时守这五条:
   1. **7777**:任何会占 7777 的步骤先查 `lobby_alive`,为真则**跳过并问** —— 大厅 `_ready` 会 `kill_udp_port(7777)`,会端掉用户正在跑的对局;
   2. **非 headless**(取图 / 真渲染探针)会弹窗口抢焦点,**跑前明确告知**;
-  3. **真链路**:跑批**前后** `tasklist | grep -i godot` 必须为空(worker 是**孙进程**,孤儿会毒占端口、毒害下一支);收尾用 [`tests/env.sh`](tests/env.sh) 的 `kill_port_range`;**绝不扫 `[7800,8300)`**;
+  3. **真链路**:跑批**前后** `tasklist | grep -i godot` 必须为空(worker 是**孙进程**,孤儿会毒占端口、毒害下一支);收尾用 [`tests/env.sh`](tests/env.sh) 的 `kill_port_range`。★ **2026-10-04 订正**:"**绝不扫 `[7800,8300)`**"这句与实现**不符** —— 实测只有**池外两支**(`rejoin_probe.sh` / `team_match_probe.sh`)不扫,而 `pvp_match_smoke.sh` / `royale_soak_probe.sh` **照样扫该区间**(靠先过 `lobby_alive` 把关)。**真实规则**:任何要扫该区间的步骤,必须先过 `lobby_alive` 确认 7777 上没有活大厅;**池外那两支一律不扫**;
   4. **报告附证据**:关键行原文 + 退出码 / 日志位置 —— 只报"绿了"不算;
   5. **跑批环境要写进结论**:多进程抢 CPU 会**放大**换场卡顿、`_t` 会低报超长帧 ⇒ 时序类结论**同配置跑两次**再下。
 - 命名检查:`python tools/check_naming.py`(四条:目录名小写 / `class_name` 与文件名对齐 / 文档引用的路径必须存在 / `.tscn` 一律 snake_case)。
