@@ -1,12 +1,31 @@
 extends SceneTree
 
 # 复刻 _aim_world_dir + _clamped_aim_dir + _sample_arc_points + _disk_overlaps_solid,
-# 用真实常数(窗口1920×1440 / SubViewport2496×1872 / crop=0.769 / cam_zoom=0.75 /
+# 用真实常数(窗口1920×1440 / 世界SubViewport2208×1728 / crop=0.870 / cam_zoom=0.75 /
 # cam_y_bias=-100 / 榴弹 speed1100 g=0.45×1600 pitch_clamp=60°)在纯开阔带(只有地板)里,
 # 扫不同鼠标位置,看弧线在哪截断。
+#
+# ★ 本探针**只打印、无断言 ⇒ 不是守卫**,别在文档里当守卫引。
+
+# ★ 2026-10-04 订正窗口/SubViewport 口径(原值来自**更早的裁剪边口径**):
+#   · 原头注写 "SubViewport2496×1872 / crop=0.769" —— 0.769 正是 1920/2496=0.7692,
+#     即那套旧口径的衍生物,两个数一起过期,所以一起改。
+#   · 生产真值(grep 实测,非记忆):窗口 `project.godot:41-42` viewport_width/height = 1920/1440;
+#     世界 SubViewport `scenes/level_0.tscn:13` `size = Vector2i(2208, 1728)`;
+#     ⇒ crop = PostProcess.crop_scale(1920×1440, 2208×1728) = 0.8696。
+#   · ★ 本探针的换算只用 WIN / ZOOM / BIAS_Y(对应生产 weapon_base.gd:548-558 里读
+#     `win.get_visible_rect().size` + `cam.zoom`;**既不读 SubViewport 尺寸、也不除 crop**,
+#     见 weapon_base.gd:556「不能 ÷crop_scale」)。`VP` 是**声明了但从未被读取**的常量,
+#     保留它只为记录口径 —— 改它**不会**移动下面任何一行读数。
+#   · 改前 / 改后读数(41 个鼠标 y × 3 个 x = 123 行,逐字节相同):
+#       全部 123 行都是 "判墙(地板)";无一行走到 "超射程"(2500px) 或 "preview_time"(3s)。
+#       最近截断 37px / 第2步(共 74 行 = 走到地板判定的第一步就撞;x=900 自 y≥840、
+#         x=1100 自 y≥900、x=1500 自 y≥1160 —— 枪口离地仅 27px,近水平就贴脸撞地板);
+#       最远截断 1690px / 第125步(鼠标 900,740)。
+#       例(改前 → 改后同一条):鼠标( 900, 640) 方向角-120.0° → 第160步 t=2.67s 距离1467px → 判墙(地板)
 
 const WIN := Vector2(1920, 1440)
-const VP := Vector2(2496, 1872)
+const VP := Vector2(2208, 1728)
 const ZOOM := 0.75
 const BIAS_Y := -100.0
 const SPEED := 1100.0
