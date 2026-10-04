@@ -90,7 +90,9 @@
 - Modify: `docs/eng/registered-debt.md`(§六 加"无 CI"的现状与翻案条件;加 `unsafe_*` 试跑结果)
 
 **Interfaces:**
-- Consumes: `tests/env.sh`(`$GODOT` / `kill_port_range` / `lobby_alive`);`tests/smoke/*.gd`(`-s`,判词 `SMOKE OK`);`tests/probe/*.tscn`(`--quit-after 3600`,判词 `ALL-OK`);`tests/scripts/*.sh`(真链路)。
+- Consumes: `tests/env.sh`(`$GODOT` / `kill_port_range` / `lobby_alive`);`tests/smoke/*.gd`(40 支,`-s`,判词 `SMOKE OK`);`tests/probe/*.tscn`(82 支,`--quit-after 3600`,判词 `ALL-OK`);`tests/scripts/*.gd`(4 个工具脚本,**也要进分桶**);
+  ★★ **真链路脚本的位置(控制器派发前实测,原计划写错)**:它们在 **`tests/smoke/*.sh`(7 支)** 与 **`tests/probe/*.sh`(3 支: `rejoin_probe.sh` / `royale_soak_probe.sh` / `team_match_probe.sh`)**;
+  **`tests/scripts/` 下没有任何 `.sh`**(那里是 `convert_map.gd` / `convert_map_v4.gd` / `seam_analyze.gd` / `seam_screenshot.gd` —— 其中 `seam_screenshot.gd` 会取图 ⇒ **非 headless,不进默认批**)。
 - Produces: `bash tests/run_all.sh` ⇒ 逐文件一行表格 + **唯一判词**(形如 `RUN_ALL OK(n 支 / m 断言)` / `RUN_ALL FAIL(k 支)`)+ 失败清单 + 每支的日志路径。
   `bash tests/run_real.sh [--yes]` ⇒ 先打印清单/端口/预计耗时 ⇒ 交互确认后逐个跑并按纪律收尾。
 
@@ -99,7 +101,9 @@
 - [ ] **Step 1: 分桶(先取证,别照抄目录名)**
   Run: `for f in tests/smoke/*.gd; do echo "$f: $(head -3 "$f" | tr '\n' ' ')"; done`
   Run: `ls tests/probe/*.tscn`
-  Run: `grep -rln "lobby_alive\|7777\|get_cmdline_user_args" tests/smoke tests/probe`
+  Run: `grep -rln "lobby_alive\|7777\|get_cmdline_user_args" tests/smoke tests/probe tests/scripts`
+  Run: `ls tests/smoke/*.sh tests/probe/*.sh`(真链路那 10 支;★ 见上面 Interfaces 里的位置订正)
+  Run: `grep -n "^extends\|--headless\|--quit-after\|screenshot\|get_viewport().get_texture" tests/scripts/*.gd`(★ 4 个工具脚本也要分桶:取图的排除)
   Run: `grep -rn "^extends\|--headless\|--quit-after" tests/smoke/*.gd tests/probe/*.gd | head -60`
   ★ **"headless 安全"按"该文件的跑法"分,不按目录名**(`extends SceneTree` + `-s` = 安全;`extends Node` + `.tscn` = 安全但慢;
   **非 headless 取图 / 占端口 / 多进程真链路** = 不进默认批)。
@@ -401,8 +405,8 @@
 
 **真链路批(4 处档 3 要求 → 2 批,控制器 Ruling):**
 
-- **批 A(覆盖 Task 2 + Task 3)**:在 Task 3 评审通过后跑。逐支先过 `lobby_alive`;跑前/跑后 `tasklist | grep -i godot` 为空;收尾 `kill_port_range 7800 8300`。
-- **批 B(覆盖 Task 4 + Task 5)**:在 Task 5 评审通过后跑。★ Task 4 的队列改动是**时序**类 ⇒ **同配置至少跑两遍**再下结论;两遍的关键行原文都要进报告。
+- **批 A(覆盖 Task 2 + Task 3)**:在 Task 3 评审通过后跑。候选(`tests/smoke/` 下):`pvp_match_smoke.sh`(★ **实测它的 `sleep` 偏短,需 12 秒**才会过;先怀疑 harness 时序别怀疑产品)、`pvp_reconcile_smoke.sh`(回滚/校正最相关)。逐支先过 `lobby_alive`;跑前/跑后 `tasklist | grep -i godot` 为空;收尾 `kill_port_range 7800 8300`。
+- **批 B(覆盖 Task 4 + Task 5)**:在 Task 5 评审通过后跑。候选:`pvp_match_smoke.sh` + `pvp_room_smoke.sh` + `pvp_twin_smoke.sh`。★ Task 4 的队列改动是**时序**类 ⇒ **同配置至少跑两遍**再下结论;两遍的关键行原文都要进报告。
 - **Ruling 的依据与代价:** 跑的是**包含两侧改动的合并状态**(覆盖是超集,不是子集),少的是**归属**;归属由「每包**先评审、后跑批**」的顺序兜住 —— 若批 A 红,Task 2/3 的评审已经各看过自己的 diff,定位范围是两包而不是十二个任务。
   **若错(某个缺陷只在单独一包下才现形):** 代价 = 一次额外的单包真链路跑(几分钟),不是漏检。
 - ★ 若用户在派发过程中**认领**了某几支,agent 就不跑那几支,并把"谁跑的"写进报告。
