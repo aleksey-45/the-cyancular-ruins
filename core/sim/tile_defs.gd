@@ -178,7 +178,9 @@ static func is_blocked(v: int) -> bool:
 
 # ── 运行时破坏(与 MazeGenerator.current_grid 同尺寸的当前 HP 表)──
 static var hp_grid: Array[Array] = []
-# 瓦片被破坏(变空气)后的回调,由 level_0 注册(清瓦片层 + 重建碰撞)。
+# 瓦片被破坏(变空气)后的回调。**两处注册、各管一摊**:单机 = `level_0.gd` 的
+# `_on_tile_destroyed`(→ `destroy_cell` 清 16 子格并发子格回调,渲染/碰撞/账本由此收口);
+# 服务器 = `server/match/match_host.gd` 的 `_on_tile_destroyed`(广播 + 清子格 HP)。
 # 用 Callable 而不是硬引用 Level0,避免场景脚本依赖 autoload 导致 -s 测试编译失败。
 static var on_destroyed: Callable = Callable()
 
@@ -305,8 +307,43 @@ static func zero_cell_sub_hp(cell: Vector2i) -> void:
 			restore_sub(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), 0)
 
 
+## 格级销毁的**子格侧**收口:把该格 16 个子格的 `sub_hp` 清零,并逐子格发 `on_sub_destroyed`
+## (渲染 9 环面副本 / `_destructible_sub` / 脏块 / 瓦片回溯账本一律由回调处理)。
+##
+## ★ 存在理由:格级回调(`on_destroyed`)此前**只有服务器**接了 ⇒ 单机激光走格级
+##   `damage_tile` 打光整格后,16 个子格仍 `sub_alive` ⇒ **幽灵砖**(光束穿过去了,子弹/玩家
+##   仍撞上还在的画与碰撞)。单机侧由 `level_0.gd` 的 `_on_tile_destroyed` 调本函数。
+## ★ 为什么先读 `pre_hp` 再清:`on_sub_destroyed` 的第二个参数是**改前值**,瓦片账本拿它做
+##   回溯(`level_0.gd` 的 `_tile_pending`);清完再读就只能读到 0,回溯会把砖还成空气。
+## ★ 为什么复用 `zero_cell_sub_hp` 而不是照抄一遍清零循环:那会变成同一算法的第二份真相源
+##   —— 清零口径(索引写法 / 静默与否)一改就得同步两处,漏一处才红。
+## ★ 为什么逐子格回调而不是只清 `_destructible_sub`:子格碰撞的真相源是 `sub_hp`
+##   (见 `zero_cell_sub_hp` 的注释),只清调用方那份数组 ⇒ 复位时墙会长回来。
+## ★ 无返回、单参数:Task 3(复原 hp_grid)按这个签名复用。
+static func destroy_cell(cell: Vector2i) -> void:
+	if sub_cols == 0 or sub_rows == 0:
+		return
+	var subs: Array[Vector2i] = []
+	var pre_hp: Array[int] = []
+	for sy in range(4):
+		for sx in range(4):
+			var sub := Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)
+			if sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
+				continue
+			if not sub_alive(sub):
+				continue   # 已死的子格不重复回调(否则账本会多出 pre_hp=0 的假条目)
+			subs.append(sub)
+			pre_hp.append(sub_hp[sub.y * sub_cols + sub.x])
+	zero_cell_sub_hp(cell)
+	if not on_sub_destroyed.is_valid():
+		return
+	for i in subs.size():
+		on_sub_destroyed.call(subs[i], pre_hp[i], null)
+
+
 # 对某格瓦片扣血。source 为 "bullet"/"explosion",按对应可破坏开关判定。
-# 扣到 ≤0 → 变空气(改 current_grid + 回调 Level0 刷新渲染/碰撞),返回是否破坏。
+# 扣到 ≤0 → 变空气(改 current_grid + 回调 `on_destroyed`;单机侧那条回调再走 `destroy_cell`
+# 把 16 个子格一起收口),返回是否破坏。
 static func damage_tile(cell: Vector2i, amount: int, source: String) -> bool:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():

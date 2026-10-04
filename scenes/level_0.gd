@@ -239,6 +239,11 @@ func _ready() -> void:
 	_pristine_subgrid = []   # _ready 里随 current_subgrid 一起存基线
 	Level0.wall_layer = $WorldViewport/WallLayer
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
+	# 格级销毁:激光走的是**格级** `damage_tile`(`laser_weapon_base.gd` 传 source="explosion";
+	# 子格表为空的合成网格里子弹也回落这条路)。这条回调此前**只有服务器**接了
+	# (`server/match/match_host.gd`)⇒ 单机整格被拆后 16 子格仍 sub_alive = 幽灵砖。
+	# 收口见 TileDefs.destroy_cell(它逐子格回调上面的 _on_sub_destroyed,这里不做第二遍)。
+	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 	TileDefs.init_hp(grid)
 	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	_pristine_subgrid = MazeGenerator.copy_grid(MazeGenerator.current_subgrid)
@@ -443,6 +448,13 @@ func _restore_sub(e: Dictionary) -> void:
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 	if _grid_ref[cell.y][cell.x] == 0 and not _pristine_grid.is_empty():
 		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
+
+
+## 格级销毁(单机):激光走的是格级 `damage_tile` ⇒ 把**子格侧**收口交给 `TileDefs.destroy_cell`
+## (清 16 个子格的 `sub_hp` + 逐子格回调 `_on_sub_destroyed`)。
+## 渲染/碰撞/瓦片账本由那 16 次回调完成,这里不做第二遍 —— 少清一样就是幽灵砖/幽灵墙。
+func _on_tile_destroyed(cell: Vector2i) -> void:
+	TileDefs.destroy_cell(cell)
 
 
 func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:

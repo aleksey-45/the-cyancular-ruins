@@ -13,6 +13,10 @@ extends Node
 # 相① 选中一个"可破坏且存活"的子格:它必须同时有渲染与碰撞
 # 相② 只拆它 → 两侧同时消失,同格其它子格**不受牵连**
 # 相③ 拆光该 64px 格里所有存活的可破坏子格 → 全无;并验 **9 环面副本**(±MAP 偏移)
+# 相③b 走**格级**那条链(激光真调的 `damage_tile`):打光整格后渲染/碰撞/`sub_hp` 必须一起没。
+#      ★ 与相②/③ 的区别:那两相走 `damage_sub`(逐子格),照不到"格级回调无人接"这条链 ——
+#      单机侧此前只有服务器接了 `TileDefs.on_destroyed` ⇒ 整格已碎、16 子格仍 `sub_alive`
+#      (幽灵砖),而本文件与另外三条探针**全绿**。
 # 相④ 回溯复原 → 逐子格回到基线(渲染与碰撞都对上),环面副本一并回来
 # 相⑤ 节流窗口:一帧内拆跨 **多块**(> MAX_REBUILD_PER_FRAME=2)的砖 → 数出碰撞追上渲染要几帧;断言有界
 # 相⓪/相⑥ 全场抽样(每 8 个子格一点):**渲染与碰撞各自与规则逐点相等** —— 这一相就是
@@ -25,10 +29,35 @@ const STRIDE := 8   # 全场抽样步长(子格);8 子格 = 128px = 2 格
 var _fails: Array[String] = []
 var _skipped := 0
 var _sampled := 0
+# ★ 跑完闩(`destroyed_cells_probe.gd:18-22` 的先例):`_run()` 里任何**运行期**脚本错误会让
+#   GDScript 当场从 `_run()` 返回,而 `_fails` 还是空的 ⇒ 若无此闩,裁决会把"没跑完"打成
+#   `ALL-OK`。判据是 grep 文本 `TILE COLLISION PROBE: ALL-OK`,所以 `ALL-OK` 必须真的意味着
+#   "跑完了且全过"。由 `_run()` 最后一行置真;早退(前置不成立)也置真 —— 那是**明确结论**,
+#   不是"没跑完"。
+var _ran_to_end := false
 
 
 func _ready() -> void:
-	_run.call_deferred()
+	_go.call_deferred()
+
+
+# `_run()` 有 `await`,裁决不能跟它同一层(见 `_ran_to_end` 的注释):跑完(或被错误中断)后
+# 回到这里,才判跑完闩。
+func _go() -> void:
+	await _run()
+	_finish()
+
+
+func _finish() -> void:
+	if not _ran_to_end:
+		print("TILE COLLISION PROBE: FAIL(_run() 没跑完(中途脚本错误?)—— 无失败项的 ALL-OK 在这情况下是假绿)")
+		get_tree().quit(1)
+		return
+	if _fails.is_empty():
+		print("TILE COLLISION PROBE: ALL-OK(子格粒度/部分破坏不牵连/格级销毁无幽灵砖/环面副本/回溯复原/重建有界/全场渲染与碰撞各符其规则)")
+	else:
+		print("TILE COLLISION PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
+	get_tree().quit(0 if _fails.is_empty() else 1)
 
 
 func _fail(m: String) -> void:
@@ -157,8 +186,10 @@ func _run() -> void:
 	await _wait_ms(500)
 	var player: Node2D = lvl.get_node_or_null("WorldViewport/Player") as Node2D
 	if player == null or Level0.wall_layer == null or Level0.time_field == null:
-		print("TILE COLLISION PROBE: FAIL(世界未就绪)")
-		tree.quit(1)
+		# ★ 早退也要置跑完闩:这是**明确结论**(前置不成立),不是"中途出错没跑完"。
+		#   绝不在这里自带 `quit()` —— 那会让 `_finish()` 随后照常打一条 `ALL-OK`(假绿)。
+		_fail("世界未就绪(玩家/瓦片层/时间场缺一)")
+		_ran_to_end = true
 		return
 	var world := player.get_world_2d()
 	var mx := float(GameParameters.MAP_WIDTH)
@@ -169,8 +200,8 @@ func _run() -> void:
 	# 相① 目标子格
 	var target := _find_target()
 	if target.x < 0:
-		print("TILE COLLISION PROBE: FAIL(图上没有可破坏的子格,用例前置不成立)")
-		tree.quit(1)
+		_fail("图上没有可破坏的子格,用例前置不成立")
+		_ran_to_end = true
 		return
 	var cell := Vector2i(target.x / 4, target.y / 4)
 	var subs := _cell_subs(cell)
@@ -217,6 +248,76 @@ func _run() -> void:
 	var center := Vector2(cell.x * 64 + 32, cell.y * 64 + 32)
 	if _terrain_at(world, center + Vector2(mx, 0.0)) or _terrain_at(world, center - Vector2(mx, 0.0)):
 		_fail("相③ 环面副本(±MAP_WIDTH)处仍有地形碰撞:接缝另一侧的幽灵墙")
+
+	# ── 相③b 格级路径:激光真调的 API(`damage_tile`)打光整格 ⇒ 渲染/碰撞/hp 必须一起没 ──
+	# 存在理由:该探针此前的破坏全走 `damage_sub`(相②/③/⑤),而**格级**这条链单机根本没接回调
+	# ⇒ "整格已碎、16 子格仍 sub_alive"的幽灵砖在本探针与另外三条探针下**全绿**。
+	# ★ 选点要求三条:① 该格 16 子格全 `sub_alive` 且纹理非 0;② 纹理 `explosion_destroyable`
+	#   (激光传的 source 就是 "explosion";不满足则 `damage_tile` 第一行 return = 断言恒真);
+	#   ③ 与相① 选中的格不同(别把相③ 的后果混进来)。
+	var cell3b := Vector2i(-1, -1)
+	var subs3b: Array = []
+	for y in MazeGenerator.current_subgrid.size():
+		for x in (MazeGenerator.current_subgrid[0] as Array).size():
+			var cc := Vector2i(x / 4, y / 4)
+			if cc == cell:
+				continue
+			var all_alive := true
+			var tex3b := 0
+			for s in _cell_subs(cc):
+				if not TileDefs.sub_alive(s) or _tex(s) == 0:
+					all_alive = false
+					break
+				tex3b = _tex(s)
+			if all_alive and TileDefs.explosion_destroyable(tex3b) \
+					and TileDefs.type_id_of(tex3b) == TileDefs.TYPE_WALL:
+				cell3b = cc
+				subs3b = _cell_subs(cc)
+				break
+		if cell3b.x >= 0:
+			break
+	if cell3b.x < 0:
+		_fail("相③b 找不到一整格全活的可爆砖(用例前置不成立)")
+	else:
+		var base3b: Array = []
+		for s in subs3b:
+			base3b.append([_painted(s), _terrain_at(world, _sub_center(s))])
+		# ★ 前置:格级那条 API 真收下了这一格。上面选点验的是**子格**纹理,而 `damage_tile`
+		#   验的是**格级**纹理(`flatten_scene` 取 16 子格里出现最多的非零者)—— 两者一旦分家
+		#   (如将来给液体开可爆),`damage_tile` 首行就 return ⇒ 下面几条**全恒真**。
+		if not TileDefs.damage_tile(cell3b, 999999, "explosion"):
+			_fail("相③b 格级 damage_tile 拒收格 %s(选点前置不成立 ⇒ 下面几条恒真)" % str(cell3b))
+		await _wait_ms(300)                       # 脏块分帧重建(与相② 同款等待)
+		var ghost := 0
+		for s in subs3b:
+			if _painted(s):
+				ghost += 1
+		if ghost != 0:
+			_fail("相③b 格级销毁后仍有 %d/16 子格在画(幽灵砖)" % ghost)
+		# ★ 子格碰撞与"墙会不会长回来"的**真相源**是 `sub_hp`(`CollisionBuilder.build_sub`
+		#   按 `sub_alive` 判定,`WorldBuilder.build_sim` 在复位时按基线重算它)—— 不是渲染层、
+		#   也不是 `_destructible_sub`。只清后两者时:`ghost`/格心碰撞/相④/相⑥ **全绿**
+		#   (相④ 回溯会把渲染与碰撞用 `pre_hp` 原样还原,相⑥ 又拿 `sub_alive` 当规则),
+		#   只有这一条照得出来。去掉 `destroy_cell` 里那句 `restore_sub(sub, 0)` ⇒ 必红。
+		var still_alive := 0
+		for s in subs3b:
+			if TileDefs.sub_alive(s):
+				still_alive += 1
+		if still_alive != 0:
+			_fail("相③b 格级销毁后仍有 %d/16 子格 sub_alive(sub_hp 未清 ⇒ 复位时墙会长回来)"
+					% still_alive)
+		# ★ 逐子格与"游戏自己的两条规则"对账(同相⓪/⑥ 的口径):**清了一维、漏了另一维**
+		#   (只清 `_destructible_sub` / 只清渲染,不写 `sub_hp`)必被这里的计数抓住。
+		_scan(world, subs3b, "相③b·格级销毁后")
+		var c3b := Vector2(cell3b.x * 64 + 32, cell3b.y * 64 + 32)
+		if _terrain_at(world, c3b) or _terrain_at(world, c3b + Vector2(mx, 0.0)) \
+				or _terrain_at(world, c3b - Vector2(mx, 0.0)):
+			_fail("相③b 格级销毁后格心(含 ±MAP_WIDTH 副本)仍有碰撞(看不见的墙)")
+		if TileDefs.hp_grid[cell3b.y][cell3b.x] != 0:
+			_fail("相③b 格级销毁后 hp_grid[%s] 应为 0(实得 %d)"
+					% [str(cell3b), TileDefs.hp_grid[cell3b.y][cell3b.x]])
+		print("[相③b] 格级销毁目标格 %s(基线已记 %d 项)残留画=%d 仍活=%d"
+				% [str(cell3b), base3b.size(), ghost, still_alive])
 
 	# 相④ 回溯复原
 	Input.action_press("rewind")
@@ -279,8 +380,4 @@ func _run() -> void:
 	# 相⑥ 再扫一遍全场
 	_scan(world, _all_subs(), "相⑥·破坏+回溯后全场")
 
-	if _fails.is_empty():
-		print("TILE COLLISION PROBE: ALL-OK(子格粒度/部分破坏不牵连/环面副本/回溯复原/重建有界/全场渲染与碰撞各符其规则)")
-	else:
-		print("TILE COLLISION PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
-	tree.quit(0 if _fails.is_empty() else 1)
+	_ran_to_end = true   # ← 只有走到这里才算"跑完"(裁决在 _finish,见文件头的跑完闩)
