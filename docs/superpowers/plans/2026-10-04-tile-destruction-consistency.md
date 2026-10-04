@@ -10,6 +10,8 @@
 
 **Spec:** [`docs/eng/audit-2026-10-04-design-conventions.md`](../eng/audit-2026-10-04-design-conventions.md) —— §1.1（单机幽灵砖）、§3 顶部订正块第 4 条（服务器 2×2 在真 PvP 局可达）、§10（用户裁定：§1 都得做；A1 选 (b)）。
 
+> ★ 本文件里的 `文件:行号` 是**写作当时**的;代码已按本计划落地 ⇒ 行号可能已漂,**以源码为准**(`grep`),别照抄行号。裸 `（:NNN）` 尤其如此。
+
 ## Global Constraints
 
 - **判据是文本，不是退出码**：本计划两条判词 —— `TILE COLLISION PROBE: ALL-OK`、`DESTROYED CELLS: ALL-OK`。★ 且必须**先读 `_notes`/失败清单再读 `ALL-OK`**（本仓硬规则：`ALL-OK` 只证明"没有任何断言失败"）。
@@ -141,9 +143,9 @@ git commit -m "fix(match): 服务器拆砖按 4×4 子格清当前格(原 2×2 �
 
 ★ **本步把改动面扩到 `core/sim/tile_defs.gd`**（上面 Files 行未列，以本步为准）。
 
-**缺陷**：Step 3/4 只清了 `destructible_sub`，而**服务器的碰撞最终不按它建** —— `core/sim/collision_builder.gd:47-49` 的 `build_sub()` 注释与代码都写明"已被摧毁的子格（**子格 HP 表**已初始化且 hp≤0）不产生碰撞"，筛的是 **`TileDefs.sub_alive`（即 `sub_hp`）**；`server/match/match_round.gd:151` 与 `match_host.gd:53` 都用 `WorldBuilder.build_sim(...)` 生成 `destructible_sub` ⇒ 那个数组是**可破坏层碰撞数组**、由 `sub_hp` 现算。
+**缺陷**：Step 3/4 只清了 `destructible_sub`，而**服务器的碰撞最终不按它建** —— `core/sim/collision_builder.gd:47-49` 的 `build_sub()` 注释与代码都写明"已被摧毁的子格（**子格 HP 表**已初始化且 hp≤0）不产生碰撞"，筛的是 **`TileDefs.sub_alive`（即 `sub_hp`）**；`server/match/match_round.gd:161` 与 `match_host.gd:53` 都用 `WorldBuilder.build_sim(...)` 生成 `destructible_sub` ⇒ 那个数组是**可破坏层碰撞数组**、由 `sub_hp` 现算。
 
-★ **机制订正（2026-10-04，实现者回源码订正了我，我接受）**：初稿写的是"标了脏块之后 `rebuild_chunk` 按 `build_sub` 重算 ⇒ 碰撞又长回来" —— **错**。`CollisionBuilder.rebuild_chunk(sub, chunk, parent)`（`collision_builder.gd:147-153`）用的是**传入的数组**，局内重建不会回读 `sub_hp`。真正的缺口是**每局复位**：复位路径只 `init_hp` + `build_sim`，`sub_hp` 停在上一局的死亡状态 ⇒ `build_sim` 少建那些子格 ⇒ **下一局服务器少墙**（而客户端 `level_0.gd:474-476` 是还原两套表的）。⇒ 结论不变（修 `sub_hp` 必要），但**理由换了**：不是"脏块重建"，是"**复位时现算**"。
+★ **机制订正（2026-10-04，实现者回源码订正了我，我接受）**：初稿写的是"标了脏块之后 `rebuild_chunk` 按 `build_sub` 重算 ⇒ 碰撞又长回来" —— **错**。`CollisionBuilder.rebuild_chunk(sub, chunk, parent)`（`collision_builder.gd:147-153`）用的是**传入的数组**，局内重建不会回读 `sub_hp`。真正的缺口是**每局复位**：复位路径只 `init_hp` + `build_sim`，`sub_hp` 停在上一局的死亡状态 ⇒ `build_sim` 少建那些子格 ⇒ **下一局服务器少墙**（而客户端 `level_0.gd:506-507` 是还原两套表的）。⇒ 结论不变（修 `sub_hp` 必要），但**理由换了**：不是"脏块重建"，是"**复位时现算**"。
 
 **做法（TDD）**：
 1. `destroyed_cells_probe.gd` 相③ 里：选点改为扫 `MazeGenerator.current_subgrid` 找一格 **16 子格全 `sub_alive` 且 `explosion_destroyable`**（找不到就 `_check(false, …)` 早退）；加**前置断言**"销毁前 16 子格全 `sub_alive`"与**目标断言**"走完真路径后 16 子格 `sub_alive` **全假**"（今天**必红** —— 这就是缺口的证据）。
@@ -158,14 +160,14 @@ git commit -m "fix(match): 服务器拆砖按 4×4 子格清当前格(原 2×2 �
 
 - [ ] **Step 8: §R6（2026-10-04，修复轮1 实测发现）—— 服务器复位漏了 `init_sub_hp`**
 
-**症状（实测，非推断）**：`[tmp] 服务器复位后 grid=287 sub_alive=0 solid=0`（同一格 destroy 后是 `0/0/0`）⇒ 复位只把 `grid`/`hp_grid` 拉回基线，`sub_hp` 与由此建出的可破坏碰撞**停在上一局**。客户端 `reset_destructibles`（`level_0.gd:474-476`：`current_subgrid = copy_grid(_pristine_subgrid)` → `init_sub_hp(...)`）是还原的 ⇒ **下一局"客户端有墙、服务器没有" ⇒ 可穿墙分歧**。
+**症状（实测，非推断）**：`[tmp] 服务器复位后 grid=287 sub_alive=0 solid=0`（同一格 destroy 后是 `0/0/0`）⇒ 复位只把 `grid`/`hp_grid` 拉回基线，`sub_hp` 与由此建出的可破坏碰撞**停在上一局**。客户端 `reset_destructibles`（`level_0.gd:506-507`：`current_subgrid = copy_grid(_pristine_subgrid)` → `init_sub_hp(...)`）是还原的 ⇒ **下一局"客户端有墙、服务器没有" ⇒ 可穿墙分歧**。
 
 **裁定（控制器，2026-10-04）**：**补进本轮**（不另开任务）。依据是**单侧遗漏**（客户端做了、服务器没做），且这条正是先前挂着待用户确认的 Q12(b)（"是有意还是漏了"）—— 现按"漏了"处理，**用证据代答**；判错代价 = 一行可回退。
 
 **做法（TDD）**：
 1. 先在 `destroyed_cells_probe.gd` 加一相：走完真破坏路径（该格 16 子格 `sub_alive` 全假）→ 调复位路径 → 断言 ①16 子格 `sub_alive` **恢复全真** ②`_host.destructible_sub` 该格 16 项**恢复实心**（两套表一起回基线）。今天**必红**。
 2. `server/match/match_round.gd`：在 `TileDefs.init_hp(g)` 与 `destructible_sub = WorldBuilder.build_sim(self, g)` **之间**插入 `TileDefs.init_sub_hp(MazeGenerator.current_subgrid)`（★ 顺序不能反：`build_sim` → `build_sub` 就是按 `sub_hp` 筛的；服务器**不需要**先还原 `current_subgrid` —— 破坏从不改纹理表）。
-3. 顺带订正 `scenes/level_0.gd:465` 那句过期注释。
+3. 顺带订正 `scenes/level_0.gd:493` 那句过期注释。
 4. 变异：注释掉新加的 `init_sub_hp` ⇒ 新断言必须红。
 
 ★ **覆盖上限照实写**：若探针在夹具里调不动真复位路径、退化成"手工照抄复位那几行"，那**照抄 = 我喂进去的输入，不构成对生产函数的验证** —— 这句必须写进探针注释。
@@ -180,11 +182,11 @@ git commit -m "fix(match): 服务器拆砖按 4×4 子格清当前格(原 2×2 �
 
 **Files:**
 - Modify: `core/sim/tile_defs.gd`（在 `restore_sub`（:284）附近新增 `destroy_cell`）
-- Modify: `scenes/level_0.gd:241`（接线）+ 新增 `_on_tile_destroyed`（紧邻 `_on_sub_destroyed`（:448））
+- Modify: `scenes/level_0.gd:241`（接线）+ 新增 `_on_tile_destroyed`（紧邻 `_on_sub_destroyed`（:476））
 - Test: `tests/probe/tile_collision_probe.gd`（在**相③ 与 相④ 之间**插入"相③b 格级路径"；该文件现**无**跑完闩，一并补）
 
 **Interfaces:**
-- Consumes: `TileDefs.damage_tile(cell, amount, source)`（格级；销毁时改 `current_grid` + `hp_grid` 并调 `on_destroyed`）、`TileDefs.restore_sub(sub, hp)`（:284，只写 `sub_hp`）、`TileDefs.sub_alive(sub)`（:237）、`Level0._on_sub_destroyed(sub, pre_hp, owner)`（:448，负责渲染 9 副本 + `_destructible_sub` + 脏块 + 瓦片账本 `_tile_pending`）。
+- Consumes: `TileDefs.damage_tile(cell, amount, source)`（格级；销毁时改 `current_grid` + `hp_grid` 并调 `on_destroyed`）、`TileDefs.restore_sub(sub, hp)`（:303，只写 `sub_hp`）、`TileDefs.sub_alive(sub)`（:256）、`Level0._on_sub_destroyed(sub, pre_hp, owner)`（:476，负责渲染 9 副本 + `_destructible_sub` + 脏块 + 瓦片账本 `_tile_pending`）。
 - Produces: `TileDefs.destroy_cell(cell: Vector2i) -> void`（**供 Task 3 复用**；签名固定为单参数、无返回）。
 
 - [ ] **Step 1: 写失败的断言**
@@ -288,7 +290,7 @@ static func destroy_cell(cell: Vector2i) -> void:
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 ```
 
-并在 `_on_sub_destroyed`（:448）上方新增：
+并在 `_on_sub_destroyed`（:476）上方新增：
 
 ```gdscript
 ## 格级销毁(单机):激光走的是格级 damage_tile ⇒ 把子格侧收口交给 TileDefs.destroy_cell。
@@ -319,12 +321,12 @@ git commit -m "fix(tiles): 单机格级销毁收口 —— TileDefs.destroy_cell
 
 **Files:**
 - Modify: `core/sim/tile_defs.gd`（新增 `hp_grid_at` / `set_hp_grid`）
-- Modify: `scenes/level_0.gd` 的 `_restore_sub`（:421-445）
+- Modify: `scenes/level_0.gd` 的 `_restore_sub`（:426-470）
 - Modify: `docs/eng/registered-debt.md`（§四 那类"已知边界"落点）
 - Test: `tests/probe/tile_collision_probe.gd`（在相④ 之后加"相④b 格级销毁 → 回溯"；复用 Task 2 留下的 `cell3b`/`subs3b`/`base3b` 与**那一次**回溯）
 
 **Interfaces:**
-- Consumes: **Task 2 已落地的格级链**（`Level0` 的 `on_destroyed` → `destroy_cell`）+ Task 2 在 `_run()` 里留下的 `cell3b` / `subs3b`（★ `base3b` **不可用**:它声明在 `else:` 块内(`tile_collision_probe.gd:282`),GDScript 有**块作用域** ⇒ 相④b 看不见它;改用探针既有的 `_expect(sub)` 与「游戏自己的规则」对账,比拿快照比对**更强**),以及**相④ 那一次回溯**（★ **不要**自己再按 rewind：冷却与历史长度不由你控制）—— 本任务的前提是 **Task 2 的相③b 已绿**；`TileDefs.hp_of(texture)`（:129）；`Level0._restore_sub(sub, hp)`（:421-445，已写 `sub_hp` / 9 副本 / `_destructible_sub` / 脏块 / `_pristine_grid` 回填）。
+- Consumes: **Task 2 已落地的格级链**（`Level0` 的 `on_destroyed` → `destroy_cell`）+ Task 2 在 `_run()` 里留下的 `cell3b` / `subs3b` / **`base3b`（已提到函数作用域:`tile_collision_probe.gd:264`,`else:` 里只 append）**，以及**相④ 那一次回溯**（★ **不要**自己再按 rewind：冷却与历史长度不由你控制）—— 本任务的前提是 **Task 2 的相③b 已绿**；`TileDefs.hp_of(texture)`（:129）；`Level0._restore_sub(e)`（:`426-470`，已写 `sub_hp` / 9 副本 / `_destructible_sub` / 脏块 / `_pristine_grid` 回填）。
 - Produces: `TileDefs.hp_grid_at(cell: Vector2i) -> int`、`TileDefs.set_hp_grid(cell: Vector2i, hp: int) -> void`。
 
 - [ ] **Step 1: 写失败的断言**
@@ -334,15 +336,20 @@ git commit -m "fix(tiles): 单机格级销毁收口 —— TileDefs.destroy_cell
 ```gdscript
 	# ── 相④b 相③b 那一格在回溯后必须连 hp_grid 一起回来 ──
 	# ★ 复用 Task 2 留下的 cell3b / subs3b / base3b,并复用相④ 的**那一次**回溯。
-	# ★ 与相④ 同款:拿**游戏自己的两条规则**(`_expect`)对账,而不是拿快照 —— 后者只能证明
-	#   "回到了拆之前",前者还要求"拆之前本来就是对的"。
+	# ★ 复用 Task 2 留下的 cell3b / subs3b / base3b(拆前**快照**,已在 `_run()` 作用域)与相④ 的**那一次**回溯。
+	# ★★ 必须是**快照**比对,**不能**用 `_expect(sub)` 对账 —— `_expect` 读的是**活的** `sub_hp`
+	#   (`_tex(s) != 0 and TileDefs.sub_alive(s)`)⇒ 没被复原的子格 `_painted` 与 `_expect` **同时为假**、
+	#   两边相等 ⇒ 账本只回放 k<16 条时这一相会**假绿**。评证实测:旧写法在"账本少 8/16"的变异下打印
+	#   `不符 0/16` 且整支 `ALL-OK`;换成快照后打印 `不符 8/16` 并 FAIL。(详见本节末的评审追认)
 	var back_wrong := 0
-	for s in subs3b:
-		var e := _expect(s)
-		if _painted(s) != bool(e[0]) or _terrain_at(world, _sub_center(s)) != bool(e[1]):
+	for i in subs3b.size():
+		var s: Vector2i = subs3b[i]
+		if _painted(s) != bool(base3b[i][0]) or _terrain_at(world, _sub_center(s)) != bool(base3b[i][1]):
 			back_wrong += 1
+	print("[相④b] 相③b 那格回溯后与拆前基线不符 %d/16,hp_grid=%d(应 %d)"
+			% [back_wrong, TileDefs.hp_grid_at(cell3b), TileDefs.hp_of(_tex(subs3b[0]))])
 	if back_wrong != 0:
-		_fail("相④b 回溯后相③b 那格有 %d 个子格与规则不符(渲染/碰撞有一样没回来)" % back_wrong)
+		_fail("相④b 回溯后相③b 那格有 %d/16 个子格与拆前基线不符(渲染/碰撞有一样没回来)" % back_wrong)
 	# 纹理表 `current_subgrid` 从不被破坏改动 ⇒ 回溯后读它与破坏前同值,可当满血基准
 	var want3b := TileDefs.hp_of(_tex(subs3b[0]))
 	if TileDefs.hp_grid_at(cell3b) != want3b:
@@ -380,7 +387,7 @@ static func set_hp_grid(cell: Vector2i, hp: int) -> void:
 
 - [ ] **Step 4: 在 `_restore_sub` 里补写 `hp_grid`**
 
-`scenes/level_0.gd:444-445` 已有"仅该格为 0 时回填 `_pristine_grid`"的分支——在**同一分支内**补一行：
+`scenes/level_0.gd:449-450` 已有"仅该格为 0 时回填 `_pristine_grid`"的分支——在**同一分支内**补一行：
 
 ```gdscript
 		if TileDefs.hp_grid_at(cell) <= 0:
@@ -399,7 +406,7 @@ Run: 同 Step 2。Expected: `TILE COLLISION PROBE: ALL-OK(...)`。
 
 - [ ] **Step 7: 登记"回溯不还原被打磨未碎的砖血"**
 
-在 `docs/eng/registered-debt.md` 新增一行（放在该文件 §四 指向的落点风格里，症状/为什么留着/什么时候能销三段齐全）：症状 = 瓦片账本 `_tile_pending` 只在**子格死掉**时记账（`scenes/level_0.gd:451-452`）⇒ "树干 hp30 磨到 6 时回溯"，磨掉的血**不还原**；为什么留着 = 属 rewind 保真度范围，与本轮的"格级/子格分家"是两件事；何时能销 = 把"格级 HP 的变化量"也纳入回溯账本。
+在 `docs/eng/registered-debt.md` 新增一行（放在该文件 §四 指向的落点风格里，症状/为什么留着/什么时候能销三段齐全）：症状 = 瓦片账本 `_tile_pending` 只在**子格死掉**时记账（`scenes/level_0.gd:480`）⇒ "树干 hp30 磨到 6 时回溯"，磨掉的血**不还原**；为什么留着 = 属 rewind 保真度范围，与本轮的"格级/子格分家"是两件事；何时能销 = 把"格级 HP 的变化量"也纳入回溯账本。
 
 - [ ] **Step 8: 提交**
 
@@ -409,6 +416,34 @@ git commit -m "fix(tiles): 回溯复原时把 hp_grid 一起写回(+hp_grid_at/s
 ```
 
 ---
+
+- ★★ **评审追认（Important #1，2026-10-04）—— 控制器的判断被证伪并已改回**
+
+本 Step 的**初稿**（控制器写的）判定 `base3b` "在 `else:` 块内不可用"，要求相④b 改用探针既有的
+`_expect(sub)` 与「游戏自己的规则」对账，并断言这样"**比拿快照比对更强**"。**两处都错**，评审证明：
+
+- `_expect(sub)` 读的是**活的** `sub_hp`（`_tex(s) != 0 and TileDefs.sub_alive(s)`）—— **它不是基线**。
+  于是**没被复原**的子格 `_painted` 与 `_expect` **同时为假** ⇒ 两边相等 ⇒ `back_wrong == 0` **通过**；
+  `hp_grid` 那条也照样过（**第一个** `_restore_sub` 调用就已回填 `_grid_ref` 并写过一次 hp）。
+  ⇒ **账本只回放 k<16 条时整支探针打 `ALL-OK`**，而那一格其实只复原了一半；相④ 查的是**另一格**、
+  相⑥ 也用 `_expect` ⇒ 无人兜住。这正是本仓「**守卫能给的保证总是比它读起来少**」，且**这次错在控制器**。
+- 修复（`9841c2b`）：把 `base3b` **提到 `_run()` 作用域**（`:264`，`else:` 里只 append）⇒ 相④b 改回
+  **拆前快照**比对；并加 `[相④b] …` 自证 print（此前该相什么都不打印 ⇒ GREEN 无法自证它跑过）。
+
+**关键变异证据（双向对照）** —— ★ 控制器原先建议的变异（`destroy_cell` 里 `if sx >= 2: continue`）
+**隔离不了**这条：`on_sub_destroyed` **就是**渲染/碰撞那条路径 ⇒ 它会同时打红相③b（`残留画=8` +
+`_scan` 渲染/碰撞各 8 处 + 格心碰撞），而且那时 `_painted=true / sub_hp=0`，`_expect` 恰好也能抓到
+⇒ 证不了东西。实际采用"**只少账本条目、渲染/碰撞照旧清**"的变异（临时开关 + `sub.x % 2`，只作用于
+格级那一格 ⇒ 相④ 的另一格不受牵连）：
+
+| 变异（cell3b 账本少 8/16） | 相④b 打印 | 相④b 红？ | 整支判词 |
+|---|---|---|---|
+| **旧写法**（`_expect`） | `不符 0/16` | 否 | `TILE COLLISION PROBE: ALL-OK(…)` ← **半格废墟却全绿** |
+| **新写法**（快照，已落地） | `不符 8/16` | **是** | `FAIL(1): 相④b 回溯后相③b 那格有 8/16 个子格与拆前基线不符` |
+
+★ 该变异**不否定**本次修复自身的验证：`hp_grid` 那条**没有**新写入就过不了（M1 写 0、M2 写 1 都红），
+所以 GREEN 对 `set_hp_grid` 仍是可信证据。★ 另：整段（含 `subs3b[0]` 的索引）包在 `if cell3b.x >= 0:` 里
+—— 夹具失败时 `subs3b` 是空数组，索引它会吞掉夹具诊断（评审 Minor 2）。
 
 ## 本计划**不含**（避免实现者顺手做）
 

@@ -35,9 +35,26 @@
 
 ### 1.1 单机激光磨砖 = 幽灵砖：格级拆砖回调只接了服务器 ⚠
 
+> ★★ **2026-10-04 已修** —— 本节描述的是**修前**状态,下面引用到的行号也都是修前的。三条都已落地:
+> - ① **单机补格级回调**:`scenes/level_0.gd:246` 注册 `on_destroyed` → `TileDefs.destroy_cell(cell)`
+>   (清该格 16 个子格的 `sub_hp` + 逐子格发 `on_sub_destroyed`,渲染/碰撞/瓦片账本由回调收口)。
+> - ② **PvP 孪生兄弟**:`server/match/match_combat.gd:18-22` 改按**当前格** 4×4 清 `destructible_sub`,
+>   并补静默口 `TileDefs.zero_cell_sub_hp` —— ★ 碰撞的**真相源是 `sub_hp`**(`CollisionBuilder.build_sub`
+>   按 `sub_alive` 筛),不是 `destructible_sub`;只清后者,`build_sim` 会在复位时把墙算回来。
+> - ③ **回溯保真**:`scenes/level_0.gd:426-470` 的 `_restore_sub` 已把 `hp_grid` 一并写回
+>   (此前"整格碎过再回溯 ⇒ `hp_grid[cell]` 仍 0 ⇒ 下一发激光一发即碎")。
+> - ④ **只有查源码才会发现的孪生缺陷**(本轮评审逼出来的):`MatchRound._reset_world_and_clear_dynamics`
+>   每局复位漏了 `TileDefs.init_sub_hp`(客户端 `reset_destructibles` 一直还**两套表**)⇒
+>   下一局"客户端有墙、服务器没有"⇒ **可穿墙**。已修(`server/match/match_round.gd`)。
+>
+> 守卫:`tests/probe/tile_collision_probe.gd` **相③b**(格级销毁无幽灵砖)+ **相④b**(回溯含格级 HP);
+> `tests/probe/destroyed_cells_probe.gd` 相③/相⑥(服务器拆砖 + 复位两套表)。逐轮裁决与偏离追认见
+> [`plans/2026-10-04-tile-destruction-consistency.md`](superpowers/plans/2026-10-04-tile-destruction-consistency.md)。
+> ★ **仍未闭环**:真链路(占 7777)端到端未跑 ⇒ "真 PvP 局可达"目前只算**静态可达 + 单进程探针覆盖**。
+
 **机制**（`✅` 全部逐字读过）：
 
-- 格级回调声明：`core/sim/tile_defs.gd:183` `static var on_destroyed: Callable = Callable()`
+- 格级回调声明：`core/sim/tile_defs.gd:185` `static var on_destroyed: Callable = Callable()`
 - 全仓**唯一**接线在服务器：`server/match/match_host.gd:46`
   `TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")`
 - 单机场景只接了**子格**口：`scenes/level_0.gd:241`
@@ -45,7 +62,7 @@
 - 触发点走的是**格级**：`scenes/weapons/laser_weapon_base.gd:282`
   `TileDefs.damage_tile(t["cell"], tile_chip, "explosion")`
   门控 `:75` `return not Level0.pvp_mode` ⇒ **单机必走**
-- 清格后回调打空：`core/sim/tile_defs.gd:312-315`
+- 清格后回调打空：`core/sim/tile_defs.gd:384-386`
   ```
   		grid[cell.y][cell.x] = 0
   		hp_grid[cell.y][cell.x] = 0
@@ -68,14 +85,14 @@
 - **(a) Level0 补格级回调**（`level_0.gd:241` 旁接 `TileDefs.on_destroyed`，回调内 `for sy in 4: for sx in 4:`
   读 `sub_hp` → `TileDefs.restore_sub(sub, 0)` → 复用 `_on_sub_destroyed(sub, pre_hp)`）——
   **档 2**，渲染/碰撞/脏块/账本一次到位。但**只修单机**，修不掉 PvP 那半；且有个坑：
-  `_restore_sub`（`:421-445`）不还原 `hp_grid`（`damage_tile` 已把它写成 0）⇒ **回溯复原的格会被下一发激光"一发清整格"**。
+  `_restore_sub`（`:426-465`）不还原 `hp_grid`（`damage_tile` 已把它写成 0）⇒ **回溯复原的格会被下一发激光"一发清整格"**。
 - **(b) 激光改走 `damage_sub`**（改 `laser_weapon_base.gd:281-282` 一处）—— 更小、零新状态，
   且删掉格级破坏**最后一个生产调用点**。但它是 **档 3**（权威侧破坏判定 + 广播由 `tile_destroyed`
-  变 `sub_destroyed`，坏了要真对局打树叶才发现），而且**语义不等价**：`tile_defs.gd:220`
+  变 `sub_destroyed`，坏了要真对局打树叶才发现），而且**语义不等价**：`tile_defs.gd:239`
   给每个 16px 子格发的是**格级** hp ⇒ 整格耐久 **×16**（树叶 16 发、树干 64 发），
   **"一发开大洞"的手感消失** ⇒ 这一步必须由人拍一个数值。
 
-★ **本缺陷还有一个 PvP 可达的孪生兄弟**（`server/match/match_combat.gd:10-12` 按 2×2 清子格 ⇒
+★ **本缺陷还有一个 PvP 可达的孪生兄弟**（`server/match/match_combat.gd:18-22` 按 2×2 清子格 ⇒
 服务器清错邻格、留幽灵墙），**它今天就在真对局里可达** —— 见 §3 顶部订正块第 4 条。两条得一起修，
 否则"只修单机"等于没修一半。
 
@@ -270,7 +287,7 @@ window/stretch/mode="viewport"
 - **`CollisionBuilder` 头部注释与自己的常量相反**（`✅`）：`core/sim/collision_builder.gd:6`
   "# 从 125×75 网格展开成 250×150 的 **32px** 子格(每 64px 格 → **2×2**)"，
   而 `:13` `const SUB_TS: int = 16  # 16px 子格(cyrm v4:64px 格 → 4×4 子格…)`。
-  **这个过期注释已经咬到人了**：`server/match/match_combat.gd:10-12`
+  **这个过期注释已经咬到人了**：`server/match/match_combat.gd:18-22`
   ```
   		for qy in range(2):
   			for qx in range(2):
