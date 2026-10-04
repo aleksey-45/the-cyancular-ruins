@@ -1,5 +1,9 @@
 # 服务端收口客户端输入（audit §2.2 / §2.3）实施计划
 
+> ★★ **2026-10-04 收口声明** —— 本计划的 **T1 + T2 已合并**为
+> [`2026-10-04-closeout-consolidated-batch.md`](2026-10-04-closeout-consolidated-batch.md) 的 **Task 4**（同一个文件的同一个原则的两半）。
+> ★ **别再按本文件派发** —— 那会重复执行。本文件保留作**需求原文、Review Focus 与 Global Constraints 的唯一出处**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把"**服务端无条件相信客户端输入包**"这一条收口：① 轴值 `ax` **无界**（`ax=50` 在服务端约等于 35000px/s，全图才 9600px）；② 输入队列**无上限**、且每 tick 只消费 1 包 ⇒ 积压不可恢复（服务端自述 ρ=1）。

@@ -1,5 +1,10 @@
 # 聚合回归入口（audit §2.9）实施计划
 
+> ★★ **2026-10-04 收口声明** —— 本计划的 **T1 / T2 / T3 已合并**为
+> [`2026-10-04-closeout-consolidated-batch.md`](2026-10-04-closeout-consolidated-batch.md) 的 **Task 1**（并额外并入 `climb_probe` 死读数、
+> `start_server.bat` 端口模式缺口、`unsafe_*=2` 试跑）。
+> ★ **别再按本文件派发** —— 那会重复执行。本文件保留作**需求原文、Review Focus 与 Global Constraints 的唯一出处**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 本仓**没有 CI、也没有聚合回归入口** —— 判据靠"逐脚本自造文本行"、靠人记得跑哪些。本计划加**一个入口**：一条命令跑完**所有 headless 安全的**冒烟与探针，输出**一张表**并给出**唯一判词**；真链路那批**单独一条命令**、且**必须过用户的认领闸**。

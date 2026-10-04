@@ -1,5 +1,9 @@
 # 给 RPC 分流到不同 channel（audit §2.4）实施计划
 
+> ★★ **2026-10-04 收口声明** —— 本计划的 **T1 已原样并入**
+> [`2026-10-04-closeout-consolidated-batch.md`](2026-10-04-closeout-consolidated-batch.md) 的 **Task 5**。
+> ★ **别再按本文件派发** —— 那会重复执行。本文件保留作**需求原文、Review Focus 与 Global Constraints 的唯一出处**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 全仓 **60 条 `@rpc` 无一例指定 `transfer_channel`** ⇒ 全部挤在通道 0 上按序传输：一次 `bullet_spawn` 的**重传**会顶住它后面**所有**权威事件（含 60Hz 输入与 `match_sync`）。本计划按**流量类别**给它们分流，让"一次性可靠载荷"的重传**不再堵住**"高频快照/输入"。

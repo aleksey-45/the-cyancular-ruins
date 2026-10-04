@@ -1,5 +1,10 @@
 # 去掉字符串反射与输入兜底（audit §2.5 / §2.6）实施计划
 
+> ★★ **2026-10-04 收口声明** —— 本计划的 **T1 / T2 / T3(+R1/R2) / T6 / T7 / T8 / T9 / T13 / T15 已全部完成**（账本见 `.superpowers/sdd/2026-10-04-reflection-and-input-fallback/progress.md`）。
+> **剩余 T4 / T5 / T10 / T11 / T12 / T14 已并入** [`2026-10-04-closeout-consolidated-batch.md`](2026-10-04-closeout-consolidated-batch.md)
+> （T4+T5 → 其 Task 2；T10+T11+T12 → 其 Task 3；T14 → 其 Task 1）。
+> ★ **别再按本文件派发剩余任务** —— 那会重复执行。本文件保留作**需求原文与理由**的唯一出处（合并计划里的 Task 引用它）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把审计 §2 里"**静态检查被绕过去**"的两类收口：① 时间回溯路径上对武器域的**字符串反射**（`get`/`call`/`set` 带字符串）改成**真类型访问**；② `WeaponBase` 里三处 `Input.is_action_*` **兜底读全局输入**收掉（武器永远只读**注入**进来的输入）。
