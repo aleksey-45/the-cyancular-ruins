@@ -67,7 +67,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 **「重复的真相源 + 一条盯着它的守卫」是一种永久税** —— 改的时候要同步三处,漏一处才红。首选是把重复**消掉**(单一来源 + 生成器 + `--check`),守卫留给没有更好办法的地方。本仓已有的两个范本:
 
 - `level_editor/sync-enemies.js`:真相源在 `data/enemies.json`,`--check` **只校验不写盘**(漂移退出 1 并点名首个差异行);
-- `tools/gen_menu_theme.gd` → `ui/theme/menu_theme.tres`:从 `UiFactory` 的常量生成 Theme 资源,配镜像守卫。
+- `tools/gen_menu_theme.gd` → `ui/theme/menu_theme.tres`:从 `UiFactory` 的常量生成 Theme 资源,配镜像守卫。★ **2026-10-04 校正**:[`registered-debt.md`](docs/eng/registered-debt.md) §二 已把"**已完成,留作范本**"改口 —— 它只做到"生成物与守卫对账",**没做到"单一来源"**(生成器仍手抄 `UiFactory.menu_panel()` 的 64/46,而镜像守卫传的是它**自己写死的同一对字面量** ⇒ `menu_panel()` 默认值一改,生成器与守卫**一起静默用旧值**)。要拿它当范本,先读那条。
 
 **待改的候选登记在 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)**;新代码遇到"同一个值要抄两处"时,直接上生成式,别再补一条守卫。
 

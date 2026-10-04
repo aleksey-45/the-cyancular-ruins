@@ -13,7 +13,7 @@ uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
 uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化覆盖度(0→1:由内而外铺满)
 uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 贷款深度:变亮 + 红蓝色差
 uniform float haste_dim : hint_range(0.0, 1.0) = 0.0;     // 加速压暗覆盖度(0→1:由内而外铺满)
-uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // 世界视口尺寸(色差换算像素偏移)
+uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // ★ 仅供运行时覆盖的**兜底默认值**:它写的是**窗口**尺寸,不是世界视口(2208×1728)。真值由 `post_process.gd:84` 每帧 `set_shader_parameter("viewport_size", Vector2(world_viewport.size))` 写入;本默认值只在"没人设过"时生效。用途:`:64` 色差偏移的分母。
 uniform float loan_aberration = 5.0;                      // 色差偏移上限(像素)
 
 void fragment() {

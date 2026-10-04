@@ -63,9 +63,21 @@
 （`laser_weapon_base.gd:276-278`）也假设"由 `damage_tile` 回调 **Level0** 处理"。**假设成立，
 接线没做。**
 
-**修法**（二选一）：Level0 补一个格级回调（把该格 16 个子格一次清干净），或让激光改走
-`TileDefs.damage_sub`。**按本仓定档属档 2**（一个子系统内的逻辑），需配一条能"去掉就红"的探针
-（例如：单机对可破坏砖连打，断言 `current_grid` 与瓦片层/子格表三者一致）。
+**修法**（二选一，★ **2026-10-04 复核后订正了定档与代价**，见 §3 顶部订正块第 4 条）：
+
+- **(a) Level0 补格级回调**（`level_0.gd:241` 旁接 `TileDefs.on_destroyed`，回调内 `for sy in 4: for sx in 4:`
+  读 `sub_hp` → `TileDefs.restore_sub(sub, 0)` → 复用 `_on_sub_destroyed(sub, pre_hp)`）——
+  **档 2**，渲染/碰撞/脏块/账本一次到位。但**只修单机**，修不掉 PvP 那半；且有个坑：
+  `_restore_sub`（`:421-445`）不还原 `hp_grid`（`damage_tile` 已把它写成 0）⇒ **回溯复原的格会被下一发激光"一发清整格"**。
+- **(b) 激光改走 `damage_sub`**（改 `laser_weapon_base.gd:281-282` 一处）—— 更小、零新状态，
+  且删掉格级破坏**最后一个生产调用点**。但它是 **档 3**（权威侧破坏判定 + 广播由 `tile_destroyed`
+  变 `sub_destroyed`，坏了要真对局打树叶才发现），而且**语义不等价**：`tile_defs.gd:220`
+  给每个 16px 子格发的是**格级** hp ⇒ 整格耐久 **×16**（树叶 16 发、树干 64 发），
+  **"一发开大洞"的手感消失** ⇒ 这一步必须由人拍一个数值。
+
+★ **本缺陷还有一个 PvP 可达的孪生兄弟**（`server/match/match_combat.gd:10-12` 按 2×2 清子格 ⇒
+服务器清错邻格、留幽灵墙），**它今天就在真对局里可达** —— 见 §3 顶部订正块第 4 条。两条得一起修，
+否则"只修单机"等于没修一半。
 
 ### 1.2 `project.godot` 的 `[debug]` 段被一次"改键位"提交毁掉 ✅
 
@@ -192,6 +204,32 @@ window/stretch/mode="viewport"
 
 ## 3. 一致性债：靠纪律而非机制
 
+> ### ★★ 2026-10-04 复核订正（本节以下有 4 处事实错误，已由独立回源码复核发现）
+>
+> 1. **死镜头常量是 5 个不是 3 个**：除 `cam_lookahead_x`/`cam_lookahead_y`/`cam_deadzone` 外，
+>    `core/config/player_params.gd:51-52` 的 `cam_smooth_x`(10.0)/`cam_smooth_y`(8.0) **同样零读取**
+>    —— 我先前按"名字命中"数出 3 个，是漏了这两个。（复核方法：在 `*.gd`/`*.tscn` 里排除声明文件后
+>    检索这五个名字，命中 **0**；先前看到的"6/2/6/4 次命中"**全部来自文档**，包括本节自己。）
+> 2. **`Explosion.make_circle_texture()` 不是"每帧"**：调用点只有
+>    `scenes/weapons/weapon_base.gd:211`（武器 `_ready`，即换枪时）与 `core/present/laser_visual.gd:38/42`
+>    （每次生成激光视觉）⇒ 它是"**每次调用重建** 16×16 双层 `set_pixel`"，**不属于"每帧白给"那一组**。
+>    真正的每帧项只有榴弹的组查询、`watch_hud` 的无脏标记、`enemy_bullet._wrap()` 的组人数查询。
+> 3. **"镜像守卫取的是生产值"这句是错的**：`tests/smoke/menu_theme_mirror_smoke.gd:189-190`
+>    `F.call("skin_menu_panel", outer, Vector2(64, 46))` 与 `:200` `F.call("header_strip", "标题", 32)`
+>    传的是**守卫自己写死的字面量**。它证明的只是"给定 padding 时 Theme 与生产皮逐值一致"，
+>    **不证明"生成器与生产同一个来源"**。⇒ 缺口在**入参**而非读取路径，而且**这条订正让原结论更强**：
+>    `UiFactory.menu_panel()` 的默认值若从 64/46 改成 96，生成器仍产 64/46、守卫仍传 64/46
+>    ⇒ **两处一起静默过期**（双绿而 Theme 已经不对）。
+> 4. **★★ 下面那条 `match_combat.gd` 2×2 的"可达性有限"是错的 —— 它在真 PvP 局可达**：
+>    `server/match/match_host.gd:46` 接的 `_on_tile_destroyed` 会被**服务器侧的激光**触发 ——
+>    服务器进程不实例化 `Level0` ⇒ `Level0.pvp_mode` 恒假 ⇒ `laser_weapon_base.gd:75`
+>    `return not Level0.pvp_mode` 判**真**，于是 `:282` 的格级 `damage_tile` 在服务器上也走；
+>    而激光枪 id 6 默认不禁用、`server/match/match_ground.gd:34-37` 每局各散 2 把，
+>    `_tile_contacts` 只放行 `explosion_destroyable`（树叶/树干正是）。
+>    ⇒ **严重度：中 → 高**。后果是**两端口径分裂**：服务器清掉的是**错误的邻格**（本格 16 子格一格没清），
+>    客户端按 `pvp_match_client.gd:421-423` 的 `for sy in 4: for sx in 4:` 清对 ⇒ 服务器留幽灵墙。
+>    （原文那句"仅 `--test-destroy-tile`（`match_host.gd:205` 注明默认关）"**不成立**。）
+
 - **生成式只做了一半**（`✅`）：`tools/gen_menu_theme.gd:218-221` 手抄了 `UiFactory`
   `body.content_margin_left = 64.0` / `..._top = 46.0`，生产侧唯一来源是
   `ui/factory/ui_factory.gd:305` `static func menu_panel(padding: Vector2 = Vector2(64, 46))`；
@@ -304,6 +342,21 @@ window/stretch/mode="viewport"
 ---
 
 ## 4. 有理由的偏离 —— **不要误改**
+
+> ### ★★ 2026-10-04 复核订正：本表的"理由"必须区分三种出处，原文把它们混为一谈
+>
+> **① 源码/仓内真有的理由** · **② 只活在本报告里的理由（那是我的判词，不是仓里的理由）** ·
+> **③ 已经过期的理由**。混为一谈的后果是：`§10` 的裁定要求"逐条重新考虑"，而有些条目**根本没有可考虑的仓内理由**。
+>
+> | 条目 | 出处判定 |
+> |---|---|
+> | 1 手写预测/回滚 | **②+挂错对象**：`cyancular_build_profile.gdbuild:91-92` 确实列了 `MultiplayerSpawner`/`MultiplayerSynchronizer`，但"因此用不了引擎复制节点"**只在自编译模板下成立** —— `export_presets.cfg:31 custom_template/release=""`，靠 `RELEASE.md:149-151` 覆盖全局 `%APPDATA%\…\windows_release_x86_64.exe` 生效（模板被官方盖回即失效，`RELEASE.md:168` 已记该故障）。仓内对这俩节点 **0 引用**，也 **0 处注释**写"因此手写" |
+> | 2 双 autoload | **③ 已过期**：`net_bus_ext.gd:4-6`「原 NetBus 保持与原版逐字节一致」今天为假 —— 自建 Ext 那次 `716b6fc`（2026-09-15）之后 `net_bus.gd` 改过 **7 次**、**+132/−1**，并**插进 2 条 `@rpc``（`:283 weapon_spawned`、`:288 weapon_removed`）—— 正是头注预警会"RPC 全部失联"的那种改动。分离还已生出雷：`net_bus_ext.gd:39-43` 那对 `beam_fired` 零消费者，逼出两条防呆注释（`net_bus.gd:280`、`pvp_match_client.gd:882`）。兼容对象**仍在**（`pvp_session.gd:12` 默认云服 `120.53.107.140`、`README.md:33`） |
+> | 6 `rendering/mobile` | **② 无仓内理由**：3D 节点 0、`hint_screen_texture`/`SCREEN_TEXTURE`/`BackBufferCopy` 0 命中（事实），但**没有任何一处写"为什么"** ⇒ **不满足"有理由"判据**（原文自己也这么写，与本表表头自相矛盾）。另：`gdbuild:3 disable_3d: true` ⇒ 发布模板本就摘了 3D，该设置对发布版近乎惰性 |
+> | 7 SubViewport 2208×1728 | **② 半截**：2208×1728 只出现在 `scenes/level_0.tscn:13`，仓内**无注释解释 2×144**；"裁剪后逐像素恰 1 texel"可由 `post_process.gd:17-18 crop_scale` 推出，但"**+38% 填充写明**"**全仓（含 docs）查无出处** —— 那是我的算术。唯一**写明**的放大理由是另一件事（`post_process.gdshader:27-28` 世界视口大于窗口 ⇒ 鱼眼边缘无黑边） |
+> | 13 `env.sh` 三条理由 | **③ 条数已过期**：`env.sh:13-14` 写 `set -e` 3 个 / `set -u` 5 个，实测 **2 / 8**（10 支脚本）。且"`[7800,8300)` 不扫"**只对池外两支成立**（`rejoin_probe.sh:30`、`team_match_probe.sh:35` 明文承诺），而 `pvp_match_smoke.sh:12/41`、`royale_soak_probe.sh:28/42` **照样扫该区间**（靠 `lobby_alive` 把关）⇒ **与 [`AGENTS.md`](../../AGENTS.md) §1 那句「绝不扫 `[7800,8300)`」直接矛盾** |
+> | 3 端口池 · 4 杀端口 · 5 squash 常量 · 8 61MB · 9 取景 150% · 10 绝对定位 · 11 生成器 · 12 `allscript_probe` | **① 源码/注释真有的理由，复核后仍成立**（细节与代价见本轮复核记录）。★ 但 10（绝对定位）的"无需重排"前提**已被 §10 的裁定推翻** —— 一旦 §1.4 让窗口可缩放/加全屏，这条理由当场失效 |
+
 
 这些**看着不合主流，但注释/文档写明了理由**，判定为有意取舍：
 

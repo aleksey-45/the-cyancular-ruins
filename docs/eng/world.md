@@ -17,7 +17,7 @@
 ### 参数体系(重要约定)
 
 - **autoload 四个**(project.godot):
-  - `GameParameters`(core/config/game_parameters.gd):gravity0、TILE_SIZE=64、地图像素尺寸、敌人数/出生距离。`_ready()` 里从 `MazeGenerator.map_size()` 回写 `MAP_WIDTH/HEIGHT`。
+  - `GameParameters`(core/config/game_parameters.gd):gravity0、TILE_SIZE=64、地图像素尺寸、敌人数/出生距离。`_ready()` 里从 `MazeGenerator.map_size()`(**读地图文件**)回写 `MAP_WIDTH/HEIGHT`。★ 2026-10-04 补:**还有第二个写者** —— `core/sim/world_builder.gd:18-19` 在网格加载完之后**再按已加载网格写一次**(`MAP_WIDTH = grid[0].size() * TILE_SIZE`);它才是"漏调 `refresh_map_size()` 也不会错"的那条兜底,而两者之间**没有任何一致性断言**(详见 [审计报告 §3](audit-2026-10-04-design-conventions.md))。
   - `NetBus`(core/net/net_bus.gd,PvP 网络 RPC 唯一收口):服务器/客户端共用 `/root/NetBus` 跨场景常驻,RPC 才能路由;建房/加入/断线经转交信号给大厅(`LobbyRooms`)。
   - `NetBusExt`(core/net/net_bus_ext.gd,旁路扩展协议:对局选项/角色色/`hit_confirm`/大乱斗房 RPC)。**与原版 NetBus 刻意分离**——改它的方法表会让与原版服务端的 RPC 全部失联;对原版 worker 本节点不存在 → 扩展 RPC 静默丢弃、优雅降级。★ 激光 `beam_fired` **不走这里**(KH 遗留重复,收上去静默 no-op)。
   - `Settings`(core/config/settings.gd,持久化:音量/键位重映射/滚轮切枪/血条显示,落盘 `user://settings.cfg`)。**换弹恒开、无可选项**——原 `reload_enabled` 开关已删除,设置菜单里也没有该勾选框。★ 2026-09-15 起换弹对**全模式**开放(1v1/大乱斗亦然):原先 `WeaponBase.reload_active()` 在 `pvp_mode`/网络输入源下恒 false,那道闸门已整个删除 —— **别再按"PvP 不换弹"解释任何东西**;`mag_ammo`/`_reloading`/`_reload_t` 已进 `Player.capture_state()`(与 `fire_cd` 同口径:进 capture/restore,**不进** `_close_enough` 的比对)。
@@ -46,4 +46,5 @@
 ### 碰撞层(按位)
 
 层1=地形、层2=玩家、层3=敌人、**层4=掉落物(值 8)**。玩家/玩家子弹 mask=5(1+3);敌人占层 3(值4)、mask 侦测玩家。**地面武器**(`WeaponPickup`)`layer=8`/`mask=9`(地形+其它掉落物):玩家与敌人的掩码都不含 4、子弹 mask=5 也不含 → 三者**天然不碰**,无需改它们的掩码。★ `match_host.gd` 与两端客户端给玩家补的 `|= 2` 是**玩家层**,与掉落物层无关,别顺手写成 `|= 2 | 8`。
+★ **2026-10-04 补:上面只列到层 4,而现网还有两层** —— `server/hosts/team_host.gd:31` `const TEAM_ENEMY_LAYER := 16`(**层 5 / 值 16**),3v3 里 2 队玩家互相占这一层(`scenes/team_game.gd:218/228` 注释「2 队玩家 layer = 16(`TeamHost.TEAM_ENEMY_LAYER`)」);另有 **层 6 / 值 32**,只被 `tests/probe/brawl_rollback_probe.gd:55` `const LAYER_AUTH := 32    # 层6` 当作大乱斗权威侧。★ `project.godot` 里**没有任何 `layer_names`** ⇒ 层义只活在散文与代码里,**加第 7 层时没有任何东西会提醒你来同步这一节**。
 
