@@ -1004,7 +1004,10 @@ func rewind_restore(d: Dictionary) -> void:
 	#      S8-A / S8-B 各自变红(变异日志:`task-2-mutation-log.txt`)。
 	#   ④ `wlive < 0`(快照没记手持实弹)且**确实切了枪**时,新实例总得有一个值:取**快照条目值**
 	#      (`held[widx]`,已在下面写回)—— 这是"改动前的同口径"(旧语句序里 `_equip_index` 就是从
-	#      恢复后的条目取的)。去掉这条分支,`S8-C` 变红(新枪停在恢复**前**的条目值)。
+	#      恢复后的条目取的)。★ 该条目可能是 `MAG_FULL(-1)`(**满弹**哨兵,与 `wlive` 的 -1 语义
+	#      不同),那时折成 `mag_size`;不做这一步就会让新枪停在**恢复前**的条目值(修复轮 1 的 I-1,
+	#      见下面那段行内注释与 S8-D)。去掉这条分支,`S8-C` 变红(新枪停在恢复**前**的条目值);
+	#      去掉 MAG_FULL 折算,`S8-D` 变红。
 	#      ★ 与 S4 的不矛盾:S4 是"不切枪 + `wlive=-1`"⇒ 现场什么都不写(现场就是对的)。
 	#   ★ 覆盖上限:`rewind_weapon_probe` 的 S8 直调本函数、喂同形快照,**不覆盖**真回溯的帧选择
 	#     (那一条在 `rewind_probe.gd`);PvP 那一份(`MatchHost._apply_rw_frame`)行为侧无 headless
@@ -1030,11 +1033,24 @@ func rewind_restore(d: Dictionary) -> void:
 					and wc._current_index < inv.held.size():
 				# 见上面 ④:快照没记手持实弹而这次换了枪 ⇒ 用**快照条目值**(不是恢复前的旧值)。
 				want = int(inv.held[wc._current_index]["mag"])
+				# ★★ 2026-10-05(修复轮 1,评审 I-1)**两个 `-1` 语义不同,别混**:
+				#   · `wlive == -1` = **哨兵**:快照没记手持实弹(见 ④);
+				#   · **条目** `mag == MAG_FULL(-1)` = **满弹**(`weapon_inventory.gd:38`)。
+				#   语句序换过来之后,`_equip_index` 读的是**恢复前**的条目 ⇒ 条目是满弹时它
+				#   **不设** `pending_mag`(由 `_ready` 用 `mag_size` 落满弹,这是"满弹"的既有口径);
+				#   而这里若不折算,`want` 会是 -1 ⇒ 被下面的 `want >= 0` 挡住 ⇒ **`apply_mag` 不调用**
+				#   ⇒ 新枪停在 `_equip_index` 从恢复前条目取的那个**有限旧值**(= 回溯值错,正是本任务
+				#   要消灭的症状)。折成 `live2.mag_size` 与"不设 pending_mag、`_ready` 用 mag_size"
+				#   **逐位同效**,把"满弹"这件事显式说完。
+				if want == WeaponInventory.MAG_FULL:
+					want = live2.mag_size
 			if want >= 0:
 				# 见上面 ①:走 apply_mag —— 未入树窗口里写 `mag_ammo` 会被 `_ready` 覆盖。
-				# ★ 它顺带**钳位**到 `[0, mag_size]`(旧写法是裸写)。正常回溯两者等价(快照的
-				#   `wlive` 本就来自同一把枪的 `mag_ammo`);只在"快照之后那一槽换了型号"这类
-				#   不一致状态下才有差别,那时钳位是**更安全**的一侧。
+				# ★ 它顺带**钳位**到 `[0, mag_size]`(旧写法是裸写)。**范围内逐位等价(推理,非实测)**:
+				#   正常回溯的 `wlive` 取自同一把枪的 `mag_ammo`,而 `_ready` 自己就把它钳进
+				#   `[0, mag_size]` ⇒ 范围内值过 `clampi` 不变(读 `clampi` 即证);
+				#   越界那一档("快照之后那一槽换了型号")**没有任何断言**,见
+				#   `tests/probe/rewind_weapon_probe.gd` 的覆盖上限与 `docs/eng/registered-debt.md` §六.13。
 				WeaponComponent.apply_mag(live2, want)
 	if bool(d["downed"]) and not downed_now:
 		combat.set_downed_by_rewind(true)

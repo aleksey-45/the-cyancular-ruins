@@ -36,12 +36,15 @@ extends ProbeBase
 #      删掉"也能让计数变 0)
 #   S7 **生产端**:`WorldRewind._snapshot_player()` 产出的快照逐字段 == 真值(★ 含 `downed`,
 #      2026-10-04 Plan B Task 15 补),且 `wslot`/`widx`/`wmags`/`wlive` **都没被静默写成 0/空**
-#      (形状 14 条 + 行为 10 条;0 与真值不可分的地方用三个互不相同的非 0 值占位)。
+#      (形状 14 条 + 行为 **10** 条;0 与真值不可分的地方用三个互不相同的非 0 值占位)。
 #   S8 **往返保真(2026-10-05 Plan B Task 2)**:发现 A(切枪帧 `_ready` 用条目旧值冲掉回溯写下的
 #      `wlive`)+ 发现 B(切枪把**走掉那把**的出膛实弹写回条目、冲掉刚恢复的快照值)的**实测数字**
-#      变成断言;另加 `wlive=-1` 且切枪时新实例该取快照条目值(13 条)。
+#      变成断言;另加 `wlive=-1` 且切枪时新实例该取快照条目值、以及条目为 `MAG_FULL`(满弹)时
+#      新枪必须满弹(修复轮 1 的 I-1)—— **16 条**。
 #   S9 **PvP 宿主形状(同上)**:`server/match/match_host.gd` 的武器/战斗段**逐条**钉住"隔着
-#      `wc`/`inv`/`slot`/`live`/`combat` 句柄还反射"为 0,并反向钉住类型化访问在位(12 条)。
+#      `wc`/`inv`/`slot`/`live`/`combat` 句柄还反射"为 0、反向钉住类型化访问在位,
+#      并且**单独一条顺序判据**钉住 `_apply_rw_frame` 的"切枪在条目写回之前"(修复轮 1 的 I-2)
+#      —— **13 条**。
 #
 # ── 为什么直调 `rewind_restore` 而不是按住 Shift 走真链路 ──────────────
 # 单机真链路(`WorldRewind` 每帧按 `_cursor` 挑一个快照帧)的**落点不可复现** ——
@@ -100,13 +103,24 @@ const HOST_TYPED_TOKENS := ["wc._current_index", "wc.inventory", "inv.held", "wc
 		"wc.equip_index(", "live.mag_ammo", ".apply_mag(", "combat.max_hp", "combat.hp",
 		"combat.hp_changed.emit("]
 # ★ 玩家根上的按名取组件(**唯一允许的那一层**;玩家根无 `class_name` ⇒ 只能按名取):
-#   `weapons` / `combat` 各 2 处(`_record_rw_frame` / `_apply_rw_frame` / `_wire_hit_feedback`)。
-#   本包不许把它改多 —— 类型化它要动类结构(全局类名 + 打掉两个刻意造的裸宿主桩,R11 明令禁止)。
-#   ★ 用 `<=` 而不是 `==`:将来真给玩家根加了 `class_name`,处数**下降**不该把守卫喂红
-#   (同 S7 那条的处理)。★ 覆盖上限:`<=` 对"整段被删"也成立(0 ≤ 2)⇒ 那由上面的反向
+#   `get("weapons")` 2 处(**`_record_rw_frame` + `_apply_rw_frame`**)、
+#   `get("combat")` 2 处(**`_apply_rw_frame` + `_wire_hit_feedback`**)——
+#   ★ 2026-10-05 修复轮 1(M-7):两个计数**各自 2**、但**分布不同**(`_wire_hit_feedback` 里
+#   **没有** `get("weapons")`;`_record_rw_frame` 里**没有** `get("combat")`)⇒ 别把括号读成
+#   "三函数各占一份"。本包不许把它改多 —— 类型化它要动类结构(全局类名 + 打掉两个刻意造的裸宿主桩,
+#   R11 明令禁止)。★ 用 `<=` 而不是 `==`:将来真给玩家根加了 `class_name`,处数**下降**不该把
+#   守卫喂红(同 S7 那条的处理)。★ 覆盖上限:`<=` 对"整段被删"也成立(0 ≤ 2)⇒ 那由上面的反向
 #   `HOST_TYPED_TOKENS` 与 S8 的行为断言兜着。
 const HOST_ROOT_WEAPONS_GET := "get(\"weapons\")"
 const HOST_ROOT_COMBAT_GET := "get(\"combat\")"
+# ★ S9 的**顺序**判据用的两个锚(修复轮 1 评审 I-2):`_apply_rw_frame` 的修 B 是**语句序**,
+#   而上面那 9 条计数 + 反向令牌对**顺序**天生不可见 —— 把 `if switched: wc.equip_index(...)`
+#   整段挪到条目写回**之后**(= M2 的 PvP 等价物),那些判据**一条都不红**。
+#   ⇒ 单独用 `find()` 的下标关系钉住:`equip_index` 必须出现在条目写回**之前**。
+#   ★ 两个锚都是**整条语句**级(不是裸成员名):`find` 找的是完整语句,不会被"同名的别处出现"骗过;
+#     注释已被 `_code_view` 剥掉 ⇒ 注释里写锚串不会误伤(负向对照 M17 同一机理)。
+const HOST_APPLY_EQUIP_ANCHOR := "wc.equip_index("
+const HOST_APPLY_WRITEBACK_ANCHOR := "held[i][\"mag\"] = int(mags[i])"
 # 成员名字符集(给 `_has_member_token`)
 const _IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 
@@ -133,24 +147,27 @@ const TYPE_PISTOL := 1
 const TYPE_RIFLE := 2
 
 # 断言计数闸(与 `kh_l3_visual_probe` / `combat_hud_visual_probe` 同款)。
-# ★ 86 是**逐个数出来的**(全部 `_check(` 调用点都在 `_s1.._s9` 这九个函数里):
+# ★ 90 是**逐个数出来的**(全部 `_check(` 调用点都在 `_s1.._s9` 这九个函数里):
 #   S1 7(前置 + `_check_cells` 3 + 下标 + 同实例 + 手持实弹)
 #   S2 3、S3 5(下标 + `_check_cells` 3 + 手持实弹)
 #   S4 6(前置 + 手持实弹未动 + `_check_cells` 3 + 下标)
 #   S5 7(下标 + 实例非空 + 类型 id + 手持实弹 + `_check_cells` 3)
 #   S6 9、S7 24(前置 1 + 反射逐名 6 + 类型化逐名 6 + 按名访问逐名 1 + 行为 10)
-#   S8 13(发现 A/B 往返保真:A 前置 1 + 下标 1 + 手持实弹 1 + `_check_cells` 3;
+#   S8 **16**(发现 A/B 往返保真:A 前置 1 + 下标 1 + 手持实弹 1 + `_check_cells` 3;
 #          B 前置 1 + 走掉那把条目 1 + 第 1 格 1 + 手持实弹 1;
-#          C 前置 1 + `wlive=-1` 时新实例取值 1 + 走掉那把条目 1)
-#   S9 12(PvP 宿主形状:前置 1 + 隔着句柄的反射逐条 9 + 类型化逐名反向 1 + 根句柄上界 1)
-#   ⇒ 合计 86。
+#          C 前置 1 + `wlive=-1` 时新实例取值 1 + 走掉那把条目 1;
+#          D 前置 1 + 条目 `MAG_FULL` 时新枪满弹 1 + 条目仍为 `MAG_FULL` 1)
+#   S9 **13**(PvP 宿主形状:前置 1 + 隔着句柄的反射逐条 9 + 类型化逐名反向 1 + 根句柄上界 1
+#          + **语句序 1**)
+#   ⇒ 合计 90。
 #   ★ 2026-10-04(Plan B Task 15):S7 行为 9→10 —— 新补一条 `snap["downed"] == 真值`
 #     (来源 = Task 13 的 G-1:`snap["downed"]` 此前**一条断言都没有**,连行为带形状都没有)。
 #   ★ 2026-10-05(closeout 批 Task 2):61→86 —— 新补 S8(13,发现 A/B 的往返保真)与
 #     S9(12,PvP 宿主 `match_host.gd` 的反射归零)。三个写同一个量的地方
 #     (本常量 + 上面这句分解 + 下面 `_check()` 上方那句"86 行")必须一起改。
+#   ★ 2026-10-05(修复轮 1,评审 I-1/I-2):86→**90** —— S8 +3(`MAG_FULL` 那档)、S9 +1(语句序)。
 #   用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`late_match_probe` 同款)。
-const EXPECTED_CHECKS := 86
+const EXPECTED_CHECKS := 90
 var _checks := 0
 
 
@@ -158,9 +175,10 @@ func probe_id() -> String:
 	return "RW-WEAPON"
 
 
-# 覆写只为**逐条留轨迹**:86 行 ✓/✗ 是"该跑的都跑过"的凭据(计数闸之外的第二道)。
+# 覆写只为**逐条留轨迹**:90 行 ✓/✗ 是"该跑的都跑过"的凭据(计数闸之外的第二道)。
 # ★ 这个数字与 `EXPECTED_CHECKS` 是**两处写着同一个量** —— 改计数闸时要一起改(R1 评审 ⑥:
-#   它曾经停在 37 而 `EXPECTED_CHECKS` 已是 60;Task 15 时两处一起 60→61;Task 2 时 61→86)。
+#   它曾经停在 37 而 `EXPECTED_CHECKS` 已是 60;Task 15 时两处一起 60→61;Task 2 时 61→86;
+#   修复轮 1 时 86→90)。
 func _check(ok: bool, msg: String) -> void:
 	_checks += 1
 	print("[RW-WEAPON] %s %s" % ["✓" if ok else "✗", msg])
@@ -417,7 +435,9 @@ func _s6_shape() -> void:
 	#     **被修掉的那个写法**,不改它就会把"修好了"读成红。买到的保证不变:仍是"这一段里
 	#     有一个**类型化的落弹写法**在"(而不是"整段被删")。
 	#   ★ 覆盖上限:`_has_member_token` 只挡"后缀/前缀拼接"这类改名;**换个完全不同的名字**
-	#     仍得靠行为断言(S1-S5 那 28 条 + S7 的行为 9 条 + S8 的 13 条)。
+	#     仍得靠行为断言(S1-S5 那 28 条 + S7 的行为 **10** 条 + S8 的 **16** 条)。
+	#     ★ 2026-10-05 修复轮 1(M-1):这里原写"S7 的行为 9 条"、S8 写"13 条" —— 前者与
+	#       `:39`/`:141`/`:147` 的 **10** 自相矛盾(Task 15 已 9→10),后者在修复轮 1 变 16。
 	for pat in [".inventory", "._current_index", ".equip_index(", ".current_weapon()", ".apply_mag("]:
 		var stem: String = pat.rstrip("()")
 		_check(_has_member_token(body, stem) and body.contains(pat),
@@ -654,10 +674,52 @@ func _s8_round_trip(player: Node, wc: WeaponComponent) -> void:
 			"S8-C: 同一次调用里走掉那把的条目仍 = 快照 wmags[0]=11(实得 %d)"
 			% int(wc.inventory.held[0]["mag"]))
 
+	# ── S8-D ★★ 2026-10-05 修复轮 1(评审 I-1):快照条目是 `MAG_FULL(-1)` 时新枪必须是**满弹** ──
+	# 为什么单独一条:**两个 `-1` 语义不同** —— `wlive == -1` 是"快照没记"的**哨兵**,
+	#   而**条目**的 `mag == MAG_FULL(-1)` 是"**满弹**"(`weapon_inventory.gd:38`;
+	#   `_equip_index` 对着它**不设** `pending_mag`、由 `_ready` 落 `mag_size`)。
+	#   语句序换到"切枪在前"之后,`_equip_index` 读的是**恢复前**的条目 ⇒ 条目为满弹时它什么都不设;
+	#   而 C 分支把 `want` 解成 `-1`、又被 `want >= 0` 挡住 ⇒ `apply_mag` 不被调用 ⇒ 新枪停在
+	#   `_equip_index` 从恢复前条目取的那个**有限旧值**。**改动前**(条目写回在前)那一跑给的是
+	#   **满弹** ⇒ 这是换序引入的**真行为差**,不是"够不到的边角"。
+	# ★ 可达性(照实,与评审的推演一致):生产里要同时满足"`widx >= 0 且 wlive == -1`"(= 幽灵态
+	#   `_current_index >= 0 && _weapon == null`,由 `world_rewind.gd:93` 的 `wlive: -1` 初值暴露)
+	#   与"该槽条目停在 `MAG_FULL`"(`set_initial_inventory` 就是拿 `MAG_FULL` 建的条目,
+	#   切枪/丢弃才写回实弹值)。★ 本探针**直喂快照** ⇒ 不需要真造出幽灵态就能钉住**消费端契约**
+	#   (消费端只看得见字典);"生产里那一态可不可达"是另一件事,不靠这条断言。
+	# ★ 判据写成"== `mag_size`"而不是写死 30:钉的是**语义(满弹)**,不是步枪的数字。
+	await _s8_hold_first(wc)
+	var live_d := wc.current_weapon()
+	_check(wc._current_index == 0 and live_d != null and live_d.is_inside_tree(),
+			"S8-D 前置:应从第 0 把(且已入树)出发 —— 实得 index=%d live=%s"
+			% [wc._current_index, str(live_d)])
+	if live_d == null:
+		return
+	live_d.mag_ammo = 5
+	wc.inventory.held[0]["mag"] = 5
+	wc.inventory.held[1]["mag"] = 7     # **恢复前**的条目:有限值、且 != MAG_FULL != 满弹
+	_restore(player, _snap(player, 1, [5, -1], -1))
+	await _frames(3)
+	var rifle_d := wc.current_weapon()
+	var want_full := int(rifle_d.mag_size) if rifle_d != null else -99
+	_check(rifle_d != null and _live_mag(wc) == want_full,
+			("S8-D(I-1): 快照条目 = `MAG_FULL(-1)`(满弹)+ `wlive=-1` ⇒ 新枪必须是**满弹** %d"
+			+ "(实得 %d;=7 就是 `_equip_index` 从**恢复前**条目取的旧值 —— 语句序换过来之后,")
+			% [want_full, _live_mag(wc)]
+			+ "没把条目的 `MAG_FULL` 折成 `mag_size`,于是 `apply_mag` 根本没被调用)")
+	_check(int(wc.inventory.held[1]["mag"]) == WeaponInventory.MAG_FULL,
+			"S8-D: 同一个条目仍必须是快照原值 MAG_FULL=%d(实得 %d)—— 条目照抄快照,不许被" % [
+					WeaponInventory.MAG_FULL, int(wc.inventory.held[1]["mag"])]
+			+ "那次切枪的写回或这里的折算改掉)")
+
 
 # 三个子场景的共用起点:手持第 0 把、且**已入树**。
 # ★ 为什么必须"已入树":发现 B 的那条写回自带 `is_inside_tree()` 闸门 —— 未入树时它不跑,
 #   B 就复现不出来(而那正是生产常态:切枪时旧枪早就入树了)。
+# ★ 四个前置断言(S8-A/B/C/D 各 1 条)**没有专属变异**(评审 M-8 的完整性登记):它们的作用是
+#   **防假绿**(前置坏 ⇒ 各自 `return` 早退 ⇒ `_checks != EXPECTED_CHECKS` 条数闸红),
+#   而"前置本身能红"已经由 M16 那条(改函数名 ⇒ 前置红 + 条数闸红)的**同一机理**覆盖 ——
+#   档 3 要求的"每条**承重**断言各来一次"不含这类防假绿前置。
 func _s8_hold_first(wc: WeaponComponent) -> void:
 	wc.equip_index(0)
 	await _frames(3)
@@ -669,26 +731,34 @@ func _s8_hold_first(wc: WeaponComponent) -> void:
 # ★ 判据是**逐条**的(9 条各一个 `_check`),不是数一个总数:总数对"其中一处回退了、别处少了"
 #   无牙(逐条才能各自咬住自己的回退)。
 # ★★ 覆盖上限(必须落在纸上):本节只挡**这一份源码文本的形状** —— 它证明得了"隔着一层还反射
-#   的链归零",证明不了**行为对**(PvP 那两段的行为没有被任何 headless 探针驱动:全仓
-#   `grep '_apply_rw_frame'` 只命中生产自己)⇒ 行为侧归**真链路批 A**,见报告。
+#   的链归零"、以及 `_apply_rw_frame` 的**语句序**(下面那条 `find` 下标判据),但**证明不了行为对**
+#   (PvP 那两段的行为没有被任何 headless 探针驱动:全仓 `grep '_apply_rw_frame'` 只命中生产自己)
+#   ⇒ **行为侧(值对不对)归真链路批 A**,见报告。
 # ★ 同一条谱系的既有病(G-1 实测):把成员名改成**带后缀的假名**时,`contains` 旧写法照样打 ✓
 #   ⇒ 这里一律走 `_has_member_token`(完整成员名 + 边界),与 S6/S7 同款。
+# ★★ 2026-10-05 修复轮 1(评审 I-2):上面那 9 条计数 + 反向令牌**对语句序天生无牙** ——
+#   把 `_apply_rw_frame` 的 `if switched: wc.equip_index(...)` 整段挪到条目写回**之后**,
+#   它们**一条都不红**;而"修 B"修的正是**顺序**。故本节末补 1 条**顺序**判据
+#   (`HOST_APPLY_EQUIP_ANCHOR` 的 `find` 下标必须小于 `HOST_APPLY_WRITEBACK_ANCHOR` 的)。
 func _s9_host_shape() -> void:
 	var code := _code_view(_read(MATCH_HOST_SRC))
-	var bodies: Array[String] = []
+	var body_of: Dictionary = {}
 	var missing_bodies: Array[String] = []
 	for fn in HOST_FUNCS:
 		var b := _top_func_body(code, fn)
-		bodies.append(b)
+		body_of[fn] = b
 		if b.is_empty():
 			missing_bodies.append(fn)
 	_check(missing_bodies.is_empty(),
-			("S9 前置:三个函数体都要读到(缺 %s)—— 函数改名/挪文件时下面 11 条全是空转"
+			("S9 前置:三个函数体都要读到(缺 %s)—— 函数改名/挪文件时下面 12 条全是空转"
 			% str(missing_bodies))
 			+ "(计数为 0 与「没有反射」不可分)")
 	if not missing_bodies.is_empty():
 		return
-	var joined := "\n".join(bodies)
+	var parts: Array[String] = []
+	for fn in HOST_FUNCS:
+		parts.append(str(body_of.get(fn, "")))
+	var joined := "\n".join(parts)
 	# 逐条:隔着 `wc` / `inv` / `slot` / `live` / `combat` 句柄的字符串反射各为 0。
 	# 各自会红的形态见每条消息(即"去掉什么它才会红")。
 	for pat in HOST_HANDLE_REFLECTION:
@@ -718,3 +788,23 @@ func _s9_host_shape() -> void:
 			% [root_w, root_c])
 			+ " —— 玩家根没有 class_name,类型化它要动类结构(全局类名 + 打掉两个刻意造的裸宿主桩,"
 			+ "R11 明令禁止);这一层是 S9 唯一**保留**的反射")
+	# ── ★★ 顺序判据(2026-10-05 修复轮 1,评审 I-2)────────────────────────────────
+	# "修 B"= **把切枪排在条目写回之前**(`_equip_index` 会把走掉那把的出膛实弹写回条目,
+	# 排在写回之后就冲掉刚恢复的快照值)。上面那些计数/令牌判据对**顺序**完全不可见 ⇒ 单独钉:
+	#   `_apply_rw_frame` 体内,`wc.equip_index(` 的 `find` 下标必须 **小于**
+	#   `held[i]["mag"] = int(mags[i])`(条目写回那一句)的下标。
+	# ★ 会红的形态:把那三行(`var switched … if switched: wc.equip_index(want_idx)`)整段挪到
+	#   写回循环之后 ⇒ 本条的 `i_equip > i_write` ⇒ 红(实测变异 **M20**,见 `task-2-mutation-log.txt`)。
+	# ★ 为什么用**整条语句**当下标锚(而不是裸成员名):`find` 找的是完整语句,不会被"同名成员在
+	#   别处出现"骗过;注释已被 `_code_view` 剥掉 ⇒ 在注释里写锚串不会误伤(M17 负向对照同一机理)。
+	# ★ 覆盖上限:本条只保证"**这一份源码文本里**切枪语句在下标上早于条目写回那一句" ——
+	#   它**不**保证运行时真走了这条顺序(例:有人把切枪改成一个 `call_deferred` 排到帧末,
+	#   下标仍在前、顺序已变)。那种退化只有**行为**断言能咬;PvP 的行为侧今天为零 ⇒ 归批 A。
+	var apply_body: String = body_of.get("_apply_rw_frame", "")
+	var i_equip := apply_body.find(HOST_APPLY_EQUIP_ANCHOR)
+	var i_write := apply_body.find(HOST_APPLY_WRITEBACK_ANCHOR)
+	_check(i_equip >= 0 and i_write >= 0 and i_equip < i_write,
+			("S9: `_apply_rw_frame` 里切枪必须排在**条目写回之前**(修 B 的语句序);"
+			+ "实得 `%s`@%d、`%s`@%d") % [HOST_APPLY_EQUIP_ANCHOR, i_equip,
+					HOST_APPLY_WRITEBACK_ANCHOR, i_write]
+			+ " —— 顺序反了就会被走掉那把的出膛实弹冲掉刚恢复的快照值(发现 B)")

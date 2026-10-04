@@ -402,9 +402,15 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 	#   同族的病与单机那一份逐字相同(见 `core/sim/world_rewind.gd:131-141` 的长注释):
 	#   成员名一改名 ⇒ `get` 静默返回 null ⇒ **快照值静默退化**,而没有任何断言会红。
 	#   拿到句柄之后每一层都能点访问(`WeaponComponent` / `WeaponInventory` / `WeaponBase`
-	#   三个类都已有 `class_name`)。★ 逐字行为差只有一处:`slot.get("mag", 0)` → `slot["mag"`
-	#   —— 条目缺 `mag` 键时旧写法给 0、新写法当场报错;而 `WeaponInventory.add/restore/pick_up`
-	#   三处写入口都必写 `mag`(条目形状见 `core/sim/weapon_inventory.gd:40`)= 「缺键」不是正常态。
+	#   三个类都已有 `class_name`)。★ 逐字行为差**共三处,逐条列全**(2026-10-05 修复轮 1,评审 M-6:
+	#   先前只列了第一处,读起来像完整枚举):
+	#     ① `slot.get("mag", 0)` → `slot["mag"]`:条目缺 `mag` 键时旧写法给 0、新写法当场报错;
+	#        而 `WeaponInventory.add/restore/pick_up` 三处写入口都必写 `mag`
+	#        (条目形状见 `core/sim/weapon_inventory.gd:40`)= 「缺键」不是正常态 ⇒ **无实际行为差**。
+	#     ② **去掉** `if held != null:` 这层守卫:`held` 的类型是 `Array[Dictionary]`(永不为 null)
+	#        ⇒ 恒真守卫,去掉后**无实际行为差**。
+	#     ③ **去掉** `wc.has_method("current_weapon")` 探测:`wc` 已收窄成 `WeaponComponent`,
+	#        该方法必然存在(`weapon_component.gd:461`)⇒ **无实际行为差**。
 	#   ★ 形状守卫:`tests/probe/rewind_weapon_probe.gd` 的 S9(逐条钉住隔着句柄的反射为 0)。
 	var wc := p.get("weapons") as WeaponComponent
 	if wc != null:
@@ -475,7 +481,9 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 		#   ③ `wlive < 0`(快照没记手持实弹)且确实切了枪 ⇒ 新实例取**快照条目值**(改动前同口径)。
 		#   ★ 语义口径:`wlive` 与 `wmags` **各自照抄快照**,不许"以条目为准"把 `wlive` 丢掉。
 		#   ★ 覆盖上限(照实):本函数**没有** headless 行为守卫(全仓 `grep '_apply_rw_frame'`
-		#     只命中生产自己)⇒ 这里只有**源码形状**守卫(探针 S9);行为侧归**真链路批 A**。
+		#     只命中生产自己)⇒ **写法**有源码形状守卫(探针 S9 的 9 条计数 + 反向令牌)、
+		#     **语句序**有 1 条**顺序**判据(S9 用 `find` 下标钉"`equip_index` 在条目写回之前",
+		#     2026-10-05 修复轮 1 评审 I-2 补);**行为侧**(值对不对)仍然零守卫 ⇒ 归**真链路批 A**。
 		var want_idx := int(f.get("widx", -1))
 		var switched := want_idx >= 0 and want_idx != wc._current_index
 		if switched:
@@ -491,6 +499,11 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 			if want < 0 and switched and inv != null and wc._current_index >= 0 \
 					and wc._current_index < inv.held.size():
 				want = int(inv.held[wc._current_index]["mag"])
+				# ★ 与单机 `player.gd` 逐字同款(修复轮 1 评审 I-1):`wlive` 的 -1 是**哨兵**
+				#   (没记),条目的 `MAG_FULL(-1)` 是**满弹** —— 两个 -1 语义不同。不折算就会让
+				#   新枪停在 `_equip_index` 从**恢复前**条目取的那个有限旧值。
+				if want == WeaponInventory.MAG_FULL:
+					want = live.mag_size
 			if want >= 0:
 				WeaponComponent.apply_mag(live, want)
 	# 自己的子弹:活弹按序写回(位置/速度/引信)—— 照常伤害他人
