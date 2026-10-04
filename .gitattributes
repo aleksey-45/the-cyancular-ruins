@@ -1,6 +1,8 @@
 # Normalize EOL for all files that Git considers text files.
 * text=auto eol=lf
-# PowerShell helpers must keep CRLF (ASCII discipline, see AGENTS.md).
+# PowerShell helpers must keep CRLF (EOL discipline; the encoding rule is
+# "pure ASCII or UTF-8 BOM" — see AGENTS.md). ★ 本文件只钉**入库形态**;工作区形态由
+# `python tools/check_naming.py` 的规则 E 逐文件守(库里恒 LF,add 时归一)。
 *.ps1 text eol=crlf
 # Windows batch files must keep CRLF too (same reason as .ps1).
 *.bat text eol=crlf
