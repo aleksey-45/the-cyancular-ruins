@@ -428,6 +428,18 @@
    - ★ **还原证据(R8)**:试跑后 `cp` 回原文件,`git diff project.godot` **为空**、`git status --short project.godot` **为空**、`grep -n "unsafe_" project.godot` **零命中**;那 4 行**没有**进任何提交;收尾时无残留 Godot 进程、`lobby_alive=false`、`[7800,8300)` 无占用。
    - **翻案条件**:用户裁定"反射必须清零"时 ⇒ 先按上面四档分档(先做 (a)(b)(c)),再开 `=2`;★ 届时**必须**同时跑一次真链路批(退时 segfault 那类问题只在真链路里现形)。
 
+19. **`tests/scripts/convert_map.gd` 今天跑会**原地毁掉两张在库图****(owner 未认领;最后复核 2026-10-05,静态 + 头 6 字节实测;评审 I5 要求登记)。
+   - **症状**:两张在库图 `maps/demo.cyrm` / `maps/newfactory.cyrm` 的头 6 字节都是 `C Y R M 004 \0`(= **v4 二进制**,`od -c` 实测),而 [`tests/scripts/convert_map.gd`](../../tests/scripts/convert_map.gd):3,7,8,11 判版本靠 `# cyrm-v2` / `# cyrm-v3` **文本标记**;v4 二进制里**没有**这些标记 ⇒ 它落进"**v1 单字符 250×150**"那一支 ⇒ `w.store_string(...)`(:65)**原地覆盖写回**。
+   - **为什么留着**:它是**一次性迁移工具**,历史使命(v1/v2/v3 → v3)已完成;留着是为了万一还要转旧格式。
+   - **什么时候能销(任一)**:① 加一条"**认不出格式就拒写**"的 fail-closed 守卫(最小做法:`if not (has_v2_marker or has_v3_marker): print(...); return`);② 或按"v4 已是唯一在库格式"把它的用法彻底退役(移进 `docs/archive/` 或删掉)。
+   - ★ **今天怎么防**:聚合入口的 `OUT_OF_SCOPE` 明确挡住它(不进默认批),那条理由**指向本行** —— 见 [`tests/run_all.sh`](../../tests/run_all.sh) 的 `OUT_OF_SCOPE`。
+
+20. **`tests/scripts/seam_analyze.gd` 的输入图不在库里 ⇒ 跑它必 null 解引用**(owner 未认领;最后复核 2026-10-05,`ls` 实测;评审 I5 要求登记)。
+   - **症状**:它读 `res://tests/_seam_a_old.png` / `res://tests/_seam_b_fixed.png`,而这两张图**不存在**(由 `seam_screenshot.gd` 运行时 `save_png` 生成、不入库)⇒ `Image.load_from_file` 返回 `null`,紧接着 `a.get_height()` / `get_pixel()` **null 解引用**。★ 它**没有空载守卫** ⇒ 形状是"报错 + 半截输出",不是干净失败(空载守卫纪律见 [`tests.md`](tests.md))。
+   - **为什么留着**:一次性接缝分析;两张图都不入库 ⇒ 它只在"刚跑过 `seam_screenshot.gd`"的那个窗口里有意义。
+   - **什么时候能销(任一)**:① 加空载守卫(null ⇒ 点名 + `quit(1)`);② 或把它与 `seam_screenshot.gd` 合成一条"**先拍后比**"的脚本。
+   - **交叉引用**:这两张图已在 [`tests/path_integrity_allow.txt`](../../tests/path_integrity_allow.txt) 第 2-3 行带理由豁免 —— 即"它们不存在"这件事**在别处已经登记过一次**。
+
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 
 **本节不是欠账清单**:§一/§二 是"要还的债",这里是**已经判过、决定不还的** —— 每条都带**判决理由**与**翻案条件**。
