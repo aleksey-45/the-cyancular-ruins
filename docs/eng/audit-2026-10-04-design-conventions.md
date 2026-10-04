@@ -129,7 +129,16 @@ $ grep -a -o -P 'res://[A-Za-z0-9_./-]+' … | awk -F/ '{print $1}' | sort | uni
 
 **关键证据：这不是引擎限制。** 同一份 exe 里 `res://.superpowers/*`（同样含 51 个 `.gd`）**确实被排掉了**
 ⇒ `exclude_filter` 对**资源**（脚本）也生效，只是**没写 `tests/*`**。补一行即可。
-另有 `res://DevTools/*` 3 条 —— 那是**未入库的本机目录**，按 `.gitignore` 只挡 git、不挡导出。
+另有 `res://DevTools/*` **3 条**。★ **2026-10-04 订正（本条初稿写错了）**：初稿说"那是**未入库**的本机目录，
+按 `.gitignore` 只挡 git、不挡导出" —— **反了**。`DevTools/gamelog/log_viewer.{gd,gd.uid,tscn}`
+**是已入库的**（`.gitignore` 只挡未跟踪文件，挡不住已经在库里的；`.gitignore:38` 那句"本机残留…不属于
+上游工程"对这 3 个文件是错的）。⇒ 连带两条新发现：
+① **`export_presets.cfg` 的 `exclude_filter` 里没有 `DevTools/*`**（`:13`/`:87` 都是 `"*.md,.superpowers/*"`），
+而 `docs/superpowers/plans/2026-09-21-cyrm-v4-editor-render-and-ui.md:262` 那一步
+（"排除 DevTools（两处 preset 都要改）"）**从未落地**（勾选框是 `- [ ]`，但按本仓"勾选框不可信"的教训，
+以 `grep exclude_filter` 为准）；
+② 它们是 `gamelogs/`（gitignore）的**只读查看器**，即"本机工具"被跟踪、被导出、却又不该在库里 ——
+三个属性同时成立，只有 `git rm` 能解（ignore 规则办不到）。
 
 **要一并知道的两件事**：
 
@@ -362,7 +371,9 @@ window/stretch/mode="viewport"
 2. **§1.2 `[debug]` 键**：删 `:35-36`、按 `6b5f3fb` 补回三条真键 + 一条"键名必须匹配 `^[a-z_]+/`"的守卫。
 3. **§1.3 发布包瘦身**：`exclude_filter` 加 `tests/*,tools/*,DevTools/*`；同时决定
    `tests/smoke/menu_autotest.gd` 这个"生产依赖测试文件"该怎么办。
-4. **§2.10 命名检查盲区**：一行修（顶层目录也要过规则 A）+ 决定 `DevTools/` 是改名还是进 `SKIP_DIRS`
+4. **§2.10 命名检查盲区**：一行修（顶层目录也要过规则 A）+ 决定 `DevTools/` 的去向 —— 今天有三条路：
+   改名小写 / 收进 `SKIP_DIRS` / **`git rm` 出库**（★ 2026-10-04 新证据：那 3 个文件**是已入库的**，
+   且会进导出包，见 §1.3 的订正）。
    （该文件的注释要求"这张表必须与 `.gitignore` 对齐"）。
 5. **§2.9 最小回归入口**：`tests/run_gate.sh`（`check_naming.py` + 纯逻辑 `-s` 批 + 聚合判词），
    把 `probe_base.gd:61` 现成的 `quit(1)` 当判据用起来。

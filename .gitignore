@@ -36,6 +36,10 @@ local_ip.txt
 __pycache__/
 
 # 本机残留(旧线工具/日志看守/编辑器配置;不属于上游工程)
+# ★ 2026-10-04 订正:上面这句对 `DevTools/` **不成立** —— 它里面那 3 个文件
+#   (`DevTools/gamelog/log_viewer.{gd,gd.uid,tscn}`,`gamelogs/` 的只读查看器)**是已入库的**。
+#   ignore 规则只挡**未跟踪**文件,挡不住已经在库里的 ⇒ 这条对它们无效,而且它们会**进导出包**
+#   (`res://DevTools/*` 3 条在 exe 里 grep 得到)。要移出仓库只能用 `git rm`(内容决策,不是 ignore)。
 DevTools/
 gamelogs/
 .zcode/
