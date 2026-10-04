@@ -1,7 +1,9 @@
 @echo off
 rem PvP lobby launcher (headless, listens on 7777). 大厅只做配对;每局配对完成会自动
 rem 拉起一个对局 worker 子进程(独占 UDP 7800 起的端口)。不同对局 = 不同进程 = 隔离。
-rem This bat is pure ASCII + CRLF so Windows cmd parses it in any locale.
+rem This bat keeps CRLF (pinned by .gitattributes).
+rem NOTE: the rem comments below contain UTF-8 Chinese, so they only display right after
+rem the chcp 65001 further down; the *commands* themselves stay ASCII.
 rem It cd's to its own directory so --path . always resolves to the project,
 rem regardless of how this window was opened.
 rem Keep this window open = lobby running. Close it = stop everything (workers随对局结束退出)。
