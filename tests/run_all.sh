@@ -78,6 +78,9 @@ selflint_no_backtick_in_dq() {
 		echo "          Fix: use single quotes (or drop the backticks). See this function's header."
 		return 1
 	fi
+	# ★ 通过时**也**打一行:否则"启动闸跑过且没误伤"只能靠"输出里没有 FATAL"去**推断**,
+	#   而这次全量跑的**目的**正是"证明它在真跑路径上被走过、且没误报"(控制器 2026-10-05 要求)。
+	echo "[selflint] ok: no backtick inside a double-quoted element"
 	return 0
 }
 if ! selflint_no_backtick_in_dq; then
