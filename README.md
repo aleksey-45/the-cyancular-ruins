@@ -16,7 +16,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 ### 控制(以 `project.godot` 输入映射为准)
 - 左右移动、上=跳跃/爬梯、下=下蹲/下落/下潜;水中上浮下潜
 - 鼠标瞄准,左键开火(按住=持续/蓄力重型武器)
-- `1`~`6` 切枪(手枪/步枪/重狙 M82A1/霰弹 S686/榴弹发射器/激光枪)
+- `1`~`4` 切枪(持有位上限 `WeaponInventory.DEFAULT_MAX_WEAPONS` = 4;武器共 6 把:手枪/步枪/重狙 M82A1/霰弹 S686/榴弹发射器/激光枪,滚轮可循环切换)
 - PvP 倒下后按游戏规则自动复活;单机 `R` 重载场景
 
 ---

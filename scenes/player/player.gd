@@ -843,7 +843,8 @@ func _poll_pickup_drop(delta: float) -> void:
 
 
 # 长按 Q 的进度 0..1(只读;HUD 的丢弃进度条用)。
-# ★ 没有反馈的两秒长按是不可用的 —— 玩家会以为按键没生效。
+# ★ 没有反馈的长按是不可用的 —— 玩家会以为按键没生效。
+#   (阈值现为 PlayerParams.weapon_drop_hold_time = 0.6s;★ 2026-10-04 订正,原文写"两秒")
 func drop_hold_progress() -> float:
 	if _drop_latched:
 		return 1.0

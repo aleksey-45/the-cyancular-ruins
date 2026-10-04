@@ -15,7 +15,10 @@
   对局场景名 / 要不要按「开始游戏」）。
 - 客户端大厅改为**走游戏自己的换场景栈**（`change_scene_to_file`），观察者挂 `root` 上、
   用 `get_tree().current_scene` 认大厅 —— 与导出形态（无裁判进程）同一条路。
-- `project.godot` 的 `log_file_logging/max_log_files` 5 → 64（原先会把崩溃现场轮转吃掉）。
+- ~~`project.godot` 的 `log_file_logging/max_log_files` 5 → 64（原先会把崩溃现场轮转吃掉）。~~
+  **★ 2026-10-04 实测撤销这条"已交付"**:①键名两层都写错(应为 `debug/file_logging/max_log_files`);
+  ②该键在 `d6d2440`(B10 改键位那个提交)被并进乱码、**从未生效** ⇒ 配额至今仍是引擎默认 5。
+  取证见 [审计报告 §1.2](eng/audit-2026-10-04-design-conventions.md)。
 
 **回归**：`--mode=royale --scene=L1 --test-ground-teleport` 仍然 `PROBE: ALL-OK`
 （两端 `丢=8 捡=10 轮=4 背包=2`，且服务端确认收到两条 `lobby_name`）。

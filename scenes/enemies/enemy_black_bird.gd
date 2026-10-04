@@ -1,9 +1,11 @@
 class_name EnemyBlackBird
 extends EnemyBase
 
-# 绕背瞬移刺客:睡眠 → 随机游走 → 周期性判定「玩家另一侧 × 距玩家 3~8 格(随机)」的
+# 绕背瞬移刺客:睡眠 → 随机游走 → 周期性判定「玩家另一侧 × 距玩家 2~6 格(随机)」的
 # 地板格落点(LOS 通)→ 起飞上跳 → 落地播 disappear → 白闪 → 传送 → 闪后空中播 appear
-# → 落地 → 带跳跃的地面冲锋打 6 伤 → 大后跳(命中/未命中都) → 回游走,玩家远离入睡。
+# → 落地 → 带跳跃的地面冲锋打 7 伤 → 大后跳(命中/未命中都) → 回游走,玩家远离入睡。
+# (★ 2026-10-04 按 `EnemyParams.BlackBird` 订正:原文写"3~8 格""6 伤",
+#  真值是 teleport_min_tiles=2 / teleport_max_tiles=6、charge_damage=7。)
 # 地面敌人(同 JumpBird 模式),全程受重力,不用飞行寻路。
 
 enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }

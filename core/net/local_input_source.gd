@@ -39,8 +39,9 @@ func _attack_just_released_raw() -> bool:
 
 func _switch_index_raw() -> int:
 	# ★ 只认 1-4:持有位上限的**默认值**是 4(WeaponInventory.DEFAULT_MAX_WEAPONS)。
-	#   5/6 的 InputMap 动作**保留不删**(以后想开第 5 个位时不必再动 project.godot),
-	#   但这里不读它们 —— 读了就会切到一个不存在的背包位置。
+	#   ★ 2026-10-04 按 project.godot 订正:本行原写「5/6 的 InputMap 动作**保留不删**」,
+	#   而 `[input]` 段**只有 1/2/3/4**(没有 5/6)⇒ 想开第 5 个位必须连 project.godot 一起改。
+	#   这里不读它们 —— 读了就会切到一个不存在的背包位置。
 	for i in range(1, 5):
 		if Input.is_action_just_pressed(str(i)):
 			return i

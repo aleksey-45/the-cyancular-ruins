@@ -1,6 +1,6 @@
 # 武器、子弹与背包
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
+> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,原文逐字未改)。★ **2026-10-04 已按源码订正 2 处过期事实**(S686 散布/射程、长按 Q 丢弃阈值 2s→0.6s;行内以「★ 2026-10-04 订正」标注)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
 > 本文件覆盖:武器与子弹(scenes/weapons/) · 武器背包与地面拾取 · 武器注册表(data/weapons.json)。
 > ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
 
@@ -11,7 +11,7 @@
 - ★ **上行传"解析结果",不传"寻址方式"**:输入包带 **`"winst"` = 目标那把的 `inst`**;客户端**本地解析**(数字键按 `index`、滚轮按相对位置)→ 取那一把的 `inst`;服务器 `equip_inst(inst)` = `index_of_inst` 找不到就**静默不动**。旧的 `"weapon"` 键(背包位置)**已删除** —— 它的语义是"本端背包的第 N 个",而拾取/丢弃是服务器裁决、客户端不预测,那 ≈1 RTT 窗口里同一个下标在两端解出**不同的枪**。下行世界包的"枪型"字段同时改名 **`type_id`**。★ **改这个键 = 改协议 ⇒ 两端必须同一个 build**。守卫:`tests/probe/weapon_switch_inst_probe.tscn`(两端 `held` **顺序相反**时按同一个键仍切到同一把 + 上行/下行的**源码形状**两端同源)。
 - ★ **`equip_type` 不再凭空造枪**:对"背包里没有这个类型"是 `push_error` + **不加入**。旧实现的"没有就加"会**静默改变背包长度** —— 那正是"两端 held 不同序"的另一条产生源。★ **唯一的例外是"发放"**:要让玩家/探针拿到背包里还没有的枪,走 `pick_up(type_id, MAG_FULL)`(生产路径)或 `set_initial_inventory([...])`,**不要**走 `equip_type`。守卫:`tests/probe/kh_l3_probe.gd` ⑤ + `tests/probe/preview_visibility_probe.tscn`。
 - ★ **已知残留(未清)**:① `scenes/pvp_game.gd` 的 `_apply_match_options` 头注仍按**旧的 slot 语义**描述上行(机制描述**已过期**);② `WeaponComponent.default_type()` 名字里是 `type_id`(整数),**返回的却是 `String`**;③ 注释里另有若干**裸 `equip`**,多数指的是**仍然存在**的 `WeaponBase.equip(body, cd)`,不是被改名的 `equip_type`。
-- 现有武器:手枪/步枪/m82a1(重狙,heavy_aim)/s686(霰弹 8 丸 ±5°、射程700)/grenade_launcher(重型)/laser_gun(中型即时光束)。
+- 现有武器:手枪/步枪/m82a1(重狙,heavy_aim)/s686(霰弹 8 丸 ±3°、射程 1100 —— ★ 2026-10-04 按 `scenes/weapons/s686.tscn` 订正,原文写"±5°、射程700")/grenade_launcher(重型)/laser_gun(中型即时光束)。
 - **即时光束武器(`LaserWeaponBase`,extends WeaponBase)**:不开物理子弹 —— `WeaponBase.fire()` 的出弹循环抽成虚钩 `_spawn_projectiles(base_dir)`,本基类接管为"开火瞬间几何追踪一束 + 一次性结算"。**三个可覆写缝**:缝1 光束几何 `_emit_beam(origin,dir)`(默认=直线 hitscan,第一面墙即吸收/到射程);缝2 命中结算 `_apply_beam_damage`(默认=扫路径 + 磨可破坏砖);缝3 视觉 `_spawn_beam_visual`/`_beam_style`(默认=单发瞬光;视觉统一走 **`core/present/laser_visual.gd`** 静态工具 `spawn_beam`/`spawn_muzzle_orb`)。现 **`laser_gun`** 是反射参考子类:只覆写 `_emit_beam`(`max_bounces` 次镜面反射,tscn 当前 5),其余全走基类。
   - 核心几何 `core/sim/beam_trace.gd`(纯静态、不引 autoload、可 `-s` 空跑):DDA 走 32px 子格(64px 格→2×2 形状掩码,只认 type=wall → 光穿水/梯),遇墙翻对应轴反射、超反射额度或累计 ≥ bullet_range(2000)即消失,返回折线点集 + 碰墙 64px 格 + 碰面点。
   - **命中判据**:折线线段与目标**实际身体 AABB**(启用中的碰撞多边形扫世界框,含 2.5x 缩放,走 `_body_rect`:取**整框**并锚到段起点近副本 —— **中心不在节点原点**)外扩 `beam_half_width×HIT_MULT(1.75)` 后 `_segment_rect_hit`(Liang-Barsky)相交即中,每段各结算一次(反射折返扫到同一目标可叠加)。★ 2026-09-15 修 `CollisionAabb` 之前,**这条判据从未真正生效**(身体框一直是兜底值)。
@@ -32,7 +32,7 @@
 - **`_current_type` 是武器类型 id,不是背包位置**:快照的 `type_id` 字段、`capture_state` 的 `wslot`、`PlayerReplica._swap_weapon` 全按类型 id 走;背包位置(`index`)只在**本地**用(按键/滚轮解析)。
 - **拾取规则**:按 F 一次只捡**最近的一把**(不是"范围里能捡的全捡")—— 这就是"多把武器叠在一起捡不起来某些枪"的解法:连着按 F 逐把捡走。放不下(容量或 4 把上限)时**替换手上当前那把**,被换下的掉在脚下(残弹跟着枪走)。`pick_up()` 的返回值 **`0` = 捡成功无替换 / `>0` = 被替换掉的类型 id / `PICKUP_DENIED`(-1) = 被闸门拒绝** —— ★ 三者必须分开:混在一起会让 `Level0.try_pickup_for` 把地面那把**删掉而玩家什么都没拿到**(静默丢枪)。
 - ★ **拾取诊断插桩(默认关)**:`-- --pickup-diag`(`--` 之后;写在前面会被 Godot 丢掉、**静默失效**)。★ 它存在的理由是**症状分不清成因**:「枪看得见却没有 F」的成因只有两个 —— ① 客户端压根没建出节点(`_spawn_pickup_node` 的三条早退都是**静默 return**,这是唯一能看见它的地方);② 建出来了但 `canonical_pos`(判据读的值)与**画出来的位置**分家。默认关 ⇒ 生产行为逐字不变。
-- **丢弃**:长按 **Q ≥ `PlayerParams.weapon_drop_hold_time`(2s)**。长按计时在**客户端本地**做(只有那里有确定的物理 delta),满阈值才把一次**边沿**上行(`BIT_DROP`)。HUD 有进度条(`C_DANGER`,与换弹条共用槽位)**没有反馈的两秒长按是不可用的**。
+- **丢弃**:长按 **Q ≥ `PlayerParams.weapon_drop_hold_time`(0.6s)**(★ 2026-10-04 按 `core/config/player_params.gd` 订正:原文写 2s)。长按计时在**客户端本地**做(只有那里有确定的物理 delta),满阈值才把一次**边沿**上行(`BIT_DROP`)。HUD 有进度条(`C_DANGER`,与换弹条共用槽位)**没有反馈的长按是不可用的**。
 - **`scenes/weapons/weapon_pickup.tscn` / `scenes/weapons/weapon_pickup.gd`(`class_name WeaponPickup`,`CharacterBody2D`)**:地面武器是**独立场景**。视觉 = 把 **`WeaponRegistry.scene_of(type_id)`** 的场景实例化当**哑子节点**(`WeaponBase` 没有 `_process`,`tick()` 由玩家驱动 → 不驱动即静止)。碰撞箱由 **`SpriteBounds.from_sprite`** 按像素 alpha 求包围盒 —— 参考系是 **sprite 局部原点**(centered → 贴图中心),不是左上角。★ 世界缩放 `WORLD_SCALE = 2.5` **只此一处**(漏了 = 地上的枪小 2.5 倍且不报错)。
   - ★★ **必须挂在 `$WorldViewport` 下,不能 `add_child(self)`**:世界全渲染在 Level0 的 SubViewport 里。挂到 Level0 自己身上 = 在渲染树之外 —— **节点存在、有视觉、有碰撞箱、`global_scale` 也对,但屏幕上什么都看不到**。这条只有"挂在谁下面"的断言拦得住(`level0_weapon_scatter_probe`)。
   - ★ **`configure()` 必须在 `add_child` 之前调**(否则 `_ready` 已用 `@export` 默认值(手枪)建过一次)。入树后热改也要能工作,故重建时**先 `remove_child` 再 `queue_free`** —— 只 `queue_free` 的话旧节点到帧末才没、名字仍被占着,Godot 会把新节点**自动改名**,随后 `get_node_or_null("Visual")` 抓到的是**旧的那份**。

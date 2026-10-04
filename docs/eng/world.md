@@ -1,12 +1,12 @@
 # 世界与地形(环面 / 地图格式 / 参数 / 砖块 / 水 / 碰撞层)
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
+> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,原文逐字未改)。★ **2026-10-04 已按源码订正 2 处过期事实**(「游戏还读不了 v4」、`Level0.on_tile_destroyed` 这个不存在的函数名;行内以「★ 2026-10-04 订正」标注)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
 > 本文件覆盖:环面世界与地图 · 参数体系(重要约定) · 砖块属性与破坏(data/tile_defs.json) · 水 · 碰撞层(按位)。
 > ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
 
 ### 环面世界与地图
 
-- 地图:ASCII 文本 **`.cyrm`**(如 `maps/demo.cyrm`)。**v3 格式**(带 `# cyrm-v3` 标记):125×75 格 × 64px = 8000×4800 世界像素;每格 **4 字符 = [纹理 3 位 0xx][形状hex]**(纹理 `000`=空气/`001`-`022`=1-22,structure.png 两行各 10 块 + 第3行两块水;形状 hex `0`-`F` = 2×2 子格掩码,15=全砖,0=空气占位)。**旧格式**(250×150 单字符,无标记)加载时自动 2×2 转换(packed 值 + spawn 坐标 ÷2)。`#` 开头是注释(含出生点 `# player <col> <row>`;`# player2 <col> <row>` 为双人第二出生点,PvP 用)。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `maps/*.cyrm`(**同目录多份随机读一份**,会话内固定);`maps/*.cyrm` 已在导出 include_filter 里。★ **游戏侧读的只有 v3 文本与旧字母格式两种**(编辑器**写**的是 v4 二进制,游戏还读不了,详见 §编辑器工具)。
+- 地图:ASCII 文本 **`.cyrm`**(如 `maps/demo.cyrm`)。**v3 格式**(带 `# cyrm-v3` 标记):125×75 格 × 64px = 8000×4800 世界像素;每格 **4 字符 = [纹理 3 位 0xx][形状hex]**(纹理 `000`=空气/`001`-`022`=1-22,structure.png 两行各 10 块 + 第3行两块水;形状 hex `0`-`F` = 2×2 子格掩码,15=全砖,0=空气占位)。**旧格式**(250×150 单字符,无标记)加载时自动 2×2 转换(packed 值 + spawn 坐标 ÷2)。`#` 开头是注释(含出生点 `# player <col> <row>`;`# player2 <col> <row>` 为双人第二出生点,PvP 用)。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `maps/*.cyrm`(**同目录多份随机读一份**,会话内固定);`maps/*.cyrm` 已在导出 include_filter 里。★ **游戏侧三种都读,v4 二进制是现网唯一在跑的格式**(★ 2026-10-04 按源码订正:原文写"游戏还读不了 v4",与源码相反 —— `MapFormat.is_v4()` → `MapFormatV4`,`WorldBuilder.load_grid()` 走的就是它;v3 文本是**只读迁移入口**,旧字母格式仅作兜底转换;现存两张图都是 v4)。详见 §编辑器工具。
 - **地图与环面核心 = `MazeGenerator` + 两个实现类**(阶段 5.7;三个都 `RefCounted` + `class_name`,非 autoload):
   - **`MazeGenerator`(core/sim/maze_generator.gd)只留会话状态 + 转发** —— 会话状态就两件:选中的地图文件(`_picked_map`/`set_map_file`/`map_file_path`)与 `current_grid`(静态,由 Level0 赋值,空网格一律无路)。其余全是**一行转发**,保住全仓上百处 `MazeGenerator.xxx` 调用面。**别在这里加实现**:新格式逻辑进 `MapFormat`、新几何/寻路进 `GridPathfinder`。
   - **`MapFormat`(core/sim/map_format.gd)= `.cyrm` 格式**,**无会话状态**(路径/行由参数传入):格值 packed 编解码(`pack/texture_of/shape_of`、`EMPTY=0`、`SOLID=31` 纹理1 全砖)、`load_map_file(path)` / `map_size(path)` / `load_spawns(path)` / `parse_spawn_metadata(lines)`、`convert_old_grid` / `serialize_v3_grid`(单一转换源;旧 v2 字母版地图用 `tests/scripts/convert_map.gd` 转 v3)。v3 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过。
@@ -29,7 +29,7 @@
 - **属性表** `data/tile_defs.json` 是单一来源:每块 name/type(墙/通道/液体/气体)/hp/explosion_decay/bullet_destroyable/explosion_destroyable/elastic/climb_speed/friction。编辑器副本 `level_editor/tile_defs.js` 由 `node level_editor/sync-tiles.js` 生成(`--check` 只校验不写盘)。
 - 纹理 1-10 墙(hp1,不可破坏);11 梯子、12-14 锁链上中下 = 通道(climb_speed 1.6× 最快);15-18 树叶(墙,hp8,子弹/爆炸可破,弹性弱弹玩家);19-20 树干竖/横(墙,hp30,爆炸可破);21 水、22 水面 = 液体(无碰撞,可游)。爆炸衰减统一 0.75(水 0.25)、摩擦 1.0。
 - 加载:`TileDefs.load_defs()`(level_0._ready);挡路 = `TileDefs.is_blocked`(非 0 且 type=wall),寻路/LOS/碰撞共用。
-- **破坏**:`TileDefs.damage_tile(cell, dmg, "bullet"/"explosion")` → hp≤0 变空气(改 `MazeGenerator.current_grid` + `Level0.on_tile_destroyed` 清 3×3 瓦片 + 持久可破坏子格 2×2,标记所在分块下帧重建)。子弹撞树叶扣血;爆炸对树叶/树干按距离衰减×0.75 扣血。
+- **破坏**:`TileDefs.damage_tile(cell, dmg, "bullet"/"explosion")` → hp≤0 变空气(改 `MazeGenerator.current_grid` + **格级回调 `TileDefs.on_destroyed`** + 持久可破坏子格;子格按 **16px(64px 格 → 4×4)** 计,清完标记所在分块下帧重建。★ 2026-10-04 订正:`Level0.on_tile_destroyed` 这个函数**不存在** —— `scenes/level_0.gd:241` 只接了**子格**口 `on_sub_destroyed`,而格级 `on_destroyed` 全仓唯一接线在 `server/match/match_host.gd:46` ⇒ **单机走格级销毁的路径(激光)会留下幽灵砖**,见 [审计报告 §1.1](audit-2026-10-04-design-conventions.md))。子弹撞树叶扣血;爆炸对树叶/树干按距离衰减×0.75 扣血。
 - **攀爬**:玩家中心(或脚底)在通道格(梯子/锁链)「**刚按上**」主动攀附(不受重力):上爬 ×`tile.climb_speed`(梯 1.6/锁链 2.0),下降 ×`tile.climb_descent_speed`(梯 2.0);**锁链无下降倍率 → 按下自由落体**(解除攀附交给重力);松开挂住不坠落;**到顶 = 脚底进入梯子上方一格**,再按上 = 跳离梯子;进入靠「刚按下上」而非按住;攀附空闲可水平走离;**仅锁链顶/底基座有薄碰撞条**(`CollisionBuilder.build_climb_ledges`,全宽 64×6px;梯顶不加)。上爬与梯子下行再整体 × `PlayerParams.climb_vertical_mult`(1.2)。**身在梯/链格上不能空中下冲**(`climb.is_over_climb_tile()`)。
 - **弹性**:碰树叶(elastic)被弱弹(PlayerParams.elastic_bounce=150)。
 

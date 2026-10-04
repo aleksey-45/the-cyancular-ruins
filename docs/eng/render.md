@@ -1,18 +1,18 @@
 # 渲染管线与补间形变
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
+> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,原文逐字未改)。★ **2026-10-04 已按源码订正 2 处过期事实**(相机"前瞻/死区"、碰撞子格 32px→16px;行内以「★ 2026-10-04 订正」标注,原文错值一并留在标注里便于对照)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
 > 本文件覆盖:渲染管线(Level0.tscn) · 补间形变(squash & stretch)。
 > ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
 
 ### 渲染管线(Level0.tscn)
 
-根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体/玩家/敌人)渲染进 SubViewport,`PostProcess`(post_process.gd)做像素缩放裁切 + 倒地暗角。相机 `camera_2d.gd` 带前瞻/死区。注意:冒烟测试把武器挂到根 Window 而非 SubViewport。
+根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体/玩家/敌人)渲染进 SubViewport,`PostProcess`(post_process.gd)做像素缩放裁切 + 倒地暗角。相机 `camera_2d.gd`(37 行)在 `_process` 里**直贴**目标位置 —— **无前瞻、无死区、无平滑**(★ 2026-10-04 按源码订正:原文写"带前瞻/死区";而 `PlayerParams.cam_lookahead_x`/`cam_lookahead_y`/`cam_deadzone` 三个参数**全仓无人读**,只在声明处出现 ⇒ 是死参数)。注意:冒烟测试把武器挂到根 Window 而非 SubViewport。
 
 - **墙体/水体图集构造 = `core/sim/terrain_atlas.gd`(`class_name TerrainAtlas`,2026-10-03 从 `Level0` 上提)**:「源砖 → 图集 → TileSet」那半收在本类,`Level0._create_wall_tileset()` / `_create_water_tileset()` 现在只剩**转发**(墙体就一行 `return`;水体多一行给水面 shader 赋采样源)—— 行为逐字不变。★ **上提的唯一理由**:主菜单背景要"**真实的那个世界**",必须与 `Level0` 用**同一份**像素映射 —— 复制一份 = 第二个真相源(源砖换了 / 象限映射改了,菜单里的世界与游戏里的就对不上,且**不报错**)。★ **搬的只是构造**;铺贴(`_paint_maze` / `_paint_water`,依赖 TileMapLayer 与 3×3 环面副本)仍留在 `Level0`。★ 本类**零 autoload 依赖**(TILE_SIZE 由调用方传参),可 `-s` 测。
   - **墙体 = 16px 象限制**:`make_wall_tileset()` 把每块 32px 源砖拆成 4×4 个 8×8 象限、各最近邻 2× 放大成 16×16,拼成 **16 列(4×4 象限)× 22 行(纹理 1-22)** 的 TileSet(`tile_size=16`);`_paint_maze` 铺 **16px 子格**,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), tex-1)`(**子格取哪个象限由它在格内的位置推出**,不是按形状掩码),3×3 环面。(★ 旧文档那句「墙体 64px / `Vector2i(shape, texture-1)` / 16×20 atlas」是 **cyrm v4 之前**的形态,已随 v4 子格化改掉。)
   - **水体 = 64px 整格**:`make_water_tileset(ts)` 走另一套(水砖放大到 ts×ts,按 2×2 shape 掩码挖象限 → **16 形状列 × 1 行**),`_paint_water` 按 `shape_of(v)` 取列。
   - ★ **`TerrainAtlas.SKY_COLOR`(= `b0e5f6`)是"空气格 / 清屏色"的单一来源**:`Level0` 的 `RenderingServer.set_default_clear_color()` 与主菜单背景底色**都读它**(用户 2026-10-03:"背景颜色不对,要和局内一致")。★ 它是**世界底色**,**不是** UI 调色板 token(不归 `UiFactory`),也**别**拿去改 `MapCatalog.BG`(那是选图面板缩略图的底,语义不同)。
-- **碰撞**:`core/sim/collision_builder.gd`(`class_name CollisionBuilder`,静态可测)把形状掩码展开成 250×150 的 32px 子格(每 64px 格 → 2×2),贪心合并矩形(ts=32)后按 **9 环面副本偏移**实例化(每块矩形 ×9,共享同一 shape)。**永久墙建一个整图节点、建一次不动;可破坏层按分块存节点**(块边长 12 格 ≈ √地图边长,块内一次贪心 + 9 副本),摧毁时只重建所在块 → 重建成本 O(块面积)。**只有 type=wall 产生碰撞**,通道(梯子/锁链)可走/可爬。
+- **碰撞**:`core/sim/collision_builder.gd`(`class_name CollisionBuilder`,静态可测)把形状掩码展开成 **16px 子格(每 64px 格 → 4×4)**(★ 2026-10-04 订正:原文写"250×150 的 32px 子格(每 64px 格 → 2×2)",是 cyrm v3 的旧口径),贪心合并矩形后按 **9 环面副本偏移**实例化(每块矩形 ×9,共享同一 shape)。**永久墙建一个整图节点、建一次不动;可破坏层按分块存节点**(块边长 12 格 ≈ √地图边长,块内一次贪心 + 9 副本),摧毁时只重建所在块 → 重建成本 O(块面积)。**只有 type=wall 产生碰撞**,通道(梯子/锁链)可走/可爬。
 - **`core/sim/collision_aabb.gd`(`CollisionAabb`,静态:从任意节点求**启用中**碰撞体的世界 AABB)是三个调用方的共同几何来源**——激光命中、water 脚底偏移、飞鸟避障矩形;各自自备兜底值(18px / 24px / 40×40),**只在目标真没有碰撞体时才该生效**。★ **多边形与形状必须分开判**:Godot 4 里 `CollisionPolygon2D` 与 `CollisionShape2D` 是**并列类**(编译器会拒绝 `多边形 is CollisionShape2D`),而本作**所有**身体(三敌人 + 玩家 5 个姿态箱)都只用多边形 —— 只判形状 = 三个调用方**全部静默走兜底**(2026-09-15 修:激光判定框长期是"原点周围 36×36"、与身体无关)。守卫:`enemy_logic_smoke` 末节 `_phase_collision_aabb`。
 - **`core/sim/unstick.gd`(`Unstick`,静态:把压进实心格的矩形**向上挤出去**)**:`push_up_dy(rect, ts, max_cells) -> float` 返回**刚好清空**所需的最小位移(0 = 没卡住),逐格向上找第一个整框清空的位置 —— **不是整格跳**(一格 64px,轻嵌就弹一整格很突兀,也让"落点与何时开始模拟无关"更难对)。格范围骨架走 `TileQuery.topmost_solid_row()`(住 `tile_query.gd`)。★ **探测矩形四边内缩 `PROBE_INSET`(0.5px)不是可选项**:`floori(rect.end / ts)` **含端点**,正好对齐格线的矩形会把右边那一列也算进去 —— 那一列是墙的话会每帧判成"卡住"往上弹。当前唯一调用方是 `WeaponPickup._physics_process`(两处:`move_and_slide` 之后**以及 `_settled` 的早退分支里** —— 停稳后 `move_and_slide` 再也不跑,被后盖上的可破坏砖压住会**永久钉死**)。几何走 `CollisionAabb.world_rect`。FlyBird 的"向下逃逸"是另一套,**没动**。守卫:`tests/smoke/unstick_smoke.gd`(`-s`,含"正好对齐贴墙不算卡"这条钉内缩的用例)。
 - **世界构建**:`core/sim/world_builder.gd`(`class_name WorldBuilder`,静态):`load_grid()`(地图→current_grid/TileDefs/地图像素尺寸)、`build_sim(parent, grid)`(碰撞:永久墙+可破坏分块+攀爬基座条)。单人 Level0 与 PvP 客户端/服务器共用。
