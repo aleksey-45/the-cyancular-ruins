@@ -292,7 +292,7 @@ static func restore_sub(sub: Vector2i, hp: int) -> void:
 ##
 ## ★ 为什么必须有它:子格碰撞的真相源是 **`sub_hp`**,不是调用方的碰撞数组 ——
 ##   `CollisionBuilder.build_sub` 按 `sub_alive` 决定子格有没有碰撞(`collision_builder.gd:49`),
-##   而 `WorldBuilder.build_sim` 在**下一局复位**时按基线重算它(`match_round.gd:151`)⇒ 只清
+##   而 `WorldBuilder.build_sim` 在**下一局复位**时按基线重算它(`match_round.gd:161`)⇒ 只清
 ##   调用方那份 `destructible_sub`、不动 `sub_hp`,那 16 格"还活着"的记录会让墙**长回来**。
 ## ★ 为什么静默:服务器侧 `on_sub_destroyed` = `MatchCombat._on_sub_destroyed`,它**每格都**
 ##   `_rpc_all_ext("sub_destroyed", …)` ⇒ 逐子格回调会把 1 条 `tile_destroyed` 广播变成 17 条。

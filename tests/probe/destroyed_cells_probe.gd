@@ -178,7 +178,7 @@ func _run() -> void:
 	_check(others == 0, "不该有别的格被清(实际 %d 个子格)" % others)
 	# ★★ 碰撞那一维(评审 Important):服务器碰撞的真相源是 **`sub_hp`**,不是上面那个数组 ——
 	#   `CollisionBuilder.build_sub` 按 `sub_alive` 决定子格有没有碰撞(`collision_builder.gd:49`),
-	#   而 `WorldBuilder.build_sim` 在**下一局复位**时重算它(`match_round.gd:151`)⇒ 只清
+	#   而 `WorldBuilder.build_sim` 在**下一局复位**时重算它(`match_round.gd:161`)⇒ 只清
 	#   `destructible_sub`、不清 `sub_hp` 的话,那 16 格"还活着"的记录会让墙在复位时**长回来**。
 	#   ★ 去掉 `_on_tile_destroyed` 里那句 `TileDefs.zero_cell_sub_hp(cell)` ⇒ 这条必红。
 	var alive_after := _alive_count(cell)

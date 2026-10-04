@@ -139,7 +139,7 @@ func _run() -> void:
 	#   上面两条只读 `MazeGenerator.current_grid` —— 若 `reset_destructibles()` 哪天退化成
 	#   "只改 grid、不重铺瓦片也不重建碰撞",grid 那两条**照样全绿**,而客户端画面上仍是个洞
 	#   (瓦片层)、物理上仍能穿过去(碰撞层)。也就是"客户端以为修好了、用户看见的没修"。
-	#   这里同时钉两维:`_on_tile_destroyed` 清的是 9 份环面副本的瓦片 + 该格 **4×4(16px 子格)**,
+	#   这里同时钉两维:`_on_remote_tile_destroyed` 清的是 9 份环面副本的瓦片 + 该格 **4×4(16px 子格)**,
 	#   而 `reset_destructibles()` 重铺瓦片(`_paint_maze`)+ 整层重建碰撞(`build_sim`)。
 	_check(_tile_source_at(_a) != -1 and _sub_at(_a) != 0,
 			"★ A 的瓦片(cell_source_id=%d)与碰撞子格(%d)真的重铺回来了(前置已证还原前这两样是空的)" %

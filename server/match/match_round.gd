@@ -154,7 +154,7 @@ func _reset_world_and_clear_dynamics() -> void:
 	#   `zero_cell_sub_hp` 都写它)⇒ 不还,下面那次重建就不再给这些子格生成碰撞,而 `grid`
 	#   已经回实心(可穿墙分歧)。
 	# ★ 与客户端对偶:`Level0.reset_destructibles()` 还原的是**两套表**
-	#   (`level_0.gd:474-476`:`current_subgrid` + `init_sub_hp`),这里原先只还了格级那张。
+	#   (`level_0.gd:478-479`:`current_subgrid` + `init_sub_hp`),这里原先只还了格级那张。
 	# ★ 顺序**不能反**:必须在 `build_sim` **之前**(它就按 `sub_hp` 筛)。服务器不需要像客户端
 	#   那样先还原 `current_subgrid` —— 破坏从不改纹理表,它一直是基线(改的只是 HP)。
 	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
