@@ -177,7 +177,7 @@
 
 **Files:**
 - Modify: `scenes/player/player.gd`(`_equip_index` 一带 —— 先 `grep` 复核)
-- Modify(必要时): `scenes/weapons/weapon_component.gd`
+- Modify(必要时): `scenes/player/weapon_component.gd`(★ **不是** `scenes/weapons/…` —— 控制器派发前实测该文件在 `scenes/player/` 下,原计划那处路径是错的)
 - Modify: `core/sim/world_rewind.gd`(`:95` 的 `player.get("weapons")` + 该文件里所有 `get(`/`set(`/`call(` 的**玩家武器段**)
 - Modify: `server/match/match_host.gd`(`:402-413` / `:455-465` 一带 —— 先 `grep` 复核)
 - Modify: `tests/probe/rewind_weapon_probe.gd`(断言所在;现 `EXPECTED_CHECKS = 61`,加断言要同步四处计数口径)
@@ -189,7 +189,7 @@
     (仪器:切枪帧 mag=**9** → 入树后 **4** → 下一帧 **9**;★ 若最后一次 `rewind_restore` 正落在切枪帧,错值要等下一次回溯才被再写一遍)。
   - **B 走掉那把**:`_equip_index` 会把**走掉那把**的实弹出膛值写回条目(`weapon_component.gd:236-237`),而这发生在 `rewind_restore` 的"写条目"循环**之后**
     (仪器:`wmags=[11,1]` / `widx=1` ⇒ 切枪后实得 `held[0].mag=3`,`held[1].mag=1`)。
-- Produces: 回溯后**弹量与快照逐字段一致**(含切枪帧与跨武器两种情形);该链路上**字符串反射 0 处**。
+- Produces: 回溯后**弹量与快照逐字段一致**(含切枪帧与跨武器两种情形);该链路上**「隔着句柄的反射」0 处**(根上被 `as <类>` 收口的那一处保留,理由见 Step 4)。
 
 **★ Ruling(语义,控制器定;实现者别自己另选一套):**
 > **回溯 = 逐字段回到快照记录的值**。`wlive`(当前枪的运行时弹量)与 `wmags`(各槽条目)**各自照抄快照**,
@@ -206,10 +206,17 @@
   ★ 若现有 28 条功能断言**已覆盖**这两种情形却仍绿 ⇒ **报告**(说明它们没测到点上),别硬凑。
   ★ **先证明它会红**:把两组数字写成断言后**在改代码之前**跑 ⇒ 必须红在**这两条**上。
 - [ ] **Step 3: 修 A / B**(按上面的 Ruling)⇒ 绿。★ `rewind_weapon_probe` 的**旧断言**要继续绿;若某条旧断言钉的**正是错行为** ⇒ 改它并**说明理由**(写进报告)。
-- [ ] **Step 4: 清那族反射** —— `world_rewind.gd` 的玩家武器段 + `match_host.gd` 两段,改**类型化/点访问**:
-  ★ 同文件 `world_rewind.gd:105` 已有先例(`var wc := player.get("weapons") as WeaponComponent` + `push_error` + `return d`);
-  ★ 守卫形状:该文件那几段的 `get("`/`has_method(` **计数降到 0**(★ 别用 `contains("weapons")` 这种会被字典键骗过的写法 —— `§六.15 / Task 15` 的 G-1 实测就是栽在这上面);
-  ★ **先证明它能红**:把某个成员名改成带后缀的假名 ⇒ 目标断言必红(用 `_has_member_token` 那套完整成员名 + 边界判定,别退回 `contains`)。
+- [ ] **Step 4: 清那族反射** —— `world_rewind.gd` 的玩家武器段 + `match_host.gd` 的 `_snapshot_rw_frame` / `_apply_rw_frame`,改**类型化 + 点访问**:
+  ★ 同文件 `world_rewind.gd:114` 已有先例(`var wc := player.get("weapons") as WeaponComponent`);`scenes/player/player.gd:42-43` 的 `weapons` / `combat` **本来就是类型化成员**,`WeaponComponent` / `CombatComponent` **都已有 `class_name`** ⇒ 拿到那一个句柄之后,后面每一层都能点访问。
+  ★★ **穷尽 + 逐点分类(别只改本计划点到的那几处)**:把这两个函数(以及 `world_rewind.gd` 的对应段)里**所有**字符串反射列出来,逐点写"修 / 不修 + 理由"。控制器派发前已实测到、你必须逐点表态的例子:
+  - `match_host.gd:400-413` / `:453-465` 的**武器族**(7 处 `get`/`call`)—— **本步的主体**;
+  - `match_host.gd:131` `(players[role] as Node).get("combat")` 与 `:446` `p.get("combat")` —— 同族(拿到句柄后 `combat.get("max_hp")`/`combat.set("hp")`/`combat.call("emit_signal")` 都是隔着句柄的反射);
+  - `match_host.gd:418-421` / `:472-477` 与 `world_rewind.gd:60`/`:253-260` 的**子弹族** —— ★ 那是 **Task 3(T12)** 的地盘,**本包只报告、不动**;
+  - `:395-397` / `:445` / `:452` 的**玩家根三件**(`velocity` / `hp` / `facing_direction`)—— ★ **本包不改**:player 根**没有 `class_name`**,而 **R11 明令不许加**(实测会打掉两个刻意造裸的测试桩)。这三处**保留**,并在注释里写明"为什么保留"(这才是诚实的形状守卫)。
+  ★ **形状守卫的目标(可达且精确)**:**"隔着一层还反射"的链归零** —— 拿到 `wc` / `combat` 句柄之后,`wc.get(` / `inv.get(` / `slot.get(` / `wc.call(` / `live.get(` / `combat.get(` / `combat.set(` / `combat.call(` **各为 0**;
+  同时**根上的 `get("weapons")` / `get("combat")` 处数不许增加**(它们是被 `as <类>` 收口的**唯一一处**,加 `class_name Player` 是被禁止的捷径)。
+  ★ **别用 `contains("weapons")` 这种会被字典键骗过的写法**(Task 15 的 G-1 实测:把成员名改成 `has_method("is_downed_x")` 而真方法不动,探针照样 ALL-OK 60/60)⇒ 用**完整成员名 + 边界判定**(参考 `rewind_weapon_probe.gd` 的 `_has_member_token`),并在注释里写清它只挡后缀/前缀拼接。
+  ★ **先证明它能红**:把某个成员名改成带后缀的假名 ⇒ 目标断言必红;每条承重断言各来一次(档 3)。
 - [ ] **Step 5: 绿 + 逐条变异**(档 3:每条承重断言各来一次;变异日志写清"红在哪条断言")
 - [ ] **Step 6: 真链路** —— ★ **本包与 Task 3 共用一批**(见「执行顺序与真链路批」)。先列测试请用户认领;按 §1 纪律跑;收尾 `kill_port_range 7800 8300`;关键行原文进报告。
 - [ ] **Step 7: 登记** —— `registered-debt.md` §六 里那两条(发现 A / 发现 B)从"未修"改口为"已修 + 提交号";`§六.13`(weapon 子字典端到端缺口)按实况更新。
