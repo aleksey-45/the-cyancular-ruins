@@ -953,19 +953,37 @@ func rewind_restore(d: Dictionary) -> void:
 	facing_direction = int(d["facing"])
 	var downed_now := is_downed()
 	# 武器弹量回溯(用户要求):背包各格残弹 + 手持那件实弹;当前武器不同则切回
-	var wc = weapons
+	# ★ 类型化访问(2026-10-04,audit §2.5):这一段从前用**字符串反射**读写武器域
+	#  (`wc.get` / `wc.call` / `live2.set` 带字符串参数)。反射的代价是**改名只在运行期暴露**,
+	#   实测(Godot 4.7.1;改名变异原文见 `tests/probe/rewind_weapon_probe.gd` 文件头):
+	#   · `get` 拼错 ⇒ **静默返回 null**,整段被 `if inv != null` 跳过,引擎一声不吭;
+	#   · `set` 拼错 ⇒ **静默不写**,同样一声不吭;
+	#   · `call` 拼错 ⇒ 会报一条错,但报的是"`call` 这个通用 API 失败",且**中止整个
+	#     `rewind_restore`**(连后面的手持实弹写回与倒地/复活处理一起跳过)。
+	#   ★ 说清买到的是什么:这**不是**"编译期就红" —— Godot 4.7.1 对 `class_name` 脚本类型上
+	#   的未知成员只当"不安全访问"(警告级;`project.godot` 也没把 `unsafe_*` 升成错误),
+	#   实测类型化写法拼错同样是**运行期** SCRIPT ERROR。买到的是:错**当场、点名成员、
+	#   带文件:行号**地炸,而不是静默把状态写歪。
+	#   同族的真事故:`core/sim/world_rewind.gd:98-103`(`_current_slot` 改名成 `_current_type`
+	#   之后 `get` 返回 null ⇒ 快照值静默恒为 0,不报错、不中断)。
+	#   三样成员都在**已有 `class_name`** 的类上(`WeaponComponent` / `WeaponInventory` /
+	#   `WeaponBase`),且 `mag_ammo` 本来就是**公开字段**(`weapon_base.gd:102`;
+	#   `weapon_component.gd:287` 的 `apply_mag` 也直接写它)⇒ 反射纯属历史遗留,不是必需。
+	# ★ 行为逐字段不变:边界 `mini(held.size(), mags.size())` 与 `widx >= 0` / `wlive >= 0`
+	#   两处下标守卫**原样保留**。行为 + 形状守卫:`tests/probe/rewind_weapon_probe.gd`。
+	var wc: WeaponComponent = weapons
 	if wc != null and d.has("wmags"):
-		var inv = wc.get("inventory")
+		var inv: WeaponInventory = wc.inventory
 		if inv != null:
-			var held: Array = inv.get("held")
+			var held: Array = inv.held
 			var mags: Array = d["wmags"]
 			for i in mini(held.size(), mags.size()):
 				held[i]["mag"] = int(mags[i])
-		if int(d.get("widx", -1)) != int(wc.get("_current_index")) and int(d.get("widx", -1)) >= 0:
-			wc.call("equip_index", int(d["widx"]))
-		var live2 = wc.call("current_weapon") if wc.has_method("current_weapon") else null
+		if int(d.get("widx", -1)) != wc._current_index and int(d.get("widx", -1)) >= 0:
+			wc.equip_index(int(d["widx"]))
+		var live2: WeaponBase = wc.current_weapon()
 		if live2 != null and is_instance_valid(live2) and int(d.get("wlive", -1)) >= 0:
-			live2.set("mag_ammo", int(d["wlive"]))
+			live2.mag_ammo = int(d["wlive"])
 	if bool(d["downed"]) and not downed_now:
 		combat.set_downed_by_rewind(true)
 	elif not bool(d["downed"]) and downed_now:
