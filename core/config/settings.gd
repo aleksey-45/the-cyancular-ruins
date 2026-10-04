@@ -98,6 +98,40 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 	AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(linear, 0.0001)))
 	AudioServer.set_bus_mute(idx, linear <= 0.001)
 
+# ── 显示:按可用区挑一档能放下的分辨率 ──
+# 给定**可用区**(`DisplayServer.screen_get_usable_rect()` 那种矩形的大小),返回**能放下的最大档**;
+# 四档**全放不下**时返回**最小档**(不是 0、不崩 —— 缩到最小档仍比"窗口被 OS 钳到屏幕外"好)。
+# ★ 为什么要有它(2026-10-04 用户裁定,而不是静态 `window_width_override`):基准逻辑空间是
+#   1920×1440,而**装不下它的屏**(如 1080p,高 1080 < 1440)上照存档档开窗会超出屏幕、被 OS
+#   钳位 ⇒ 玩家看到"既不全屏也不居中"。静态键无法自适应任意屏;"收进屏幕"只能在**运行时**量
+#   可用区 ⇒ 选择逻辑落在这里,开窗动作落在 `apply_display()`。
+# ★ **纯函数**:不读 `DisplayServer`、不写任何字段、无副作用 ⇒ headless 下也可**真红真绿**
+#   (冒烟 `tests/smoke/settings_display_smoke.gd` 相⑤ 直接喂可用区进来,不必开窗)。
+# ★ 逻辑空间**不动**(仍 1920×1440):窗口档只决定**窗口多大**,`stretch/aspect="keep"` 负责
+#   等比缩放 + 黑边 ⇒ `mp_lobby.tscn` 那 21 处绝对定位零改动。
+# ★ 不靠 `DISPLAY_RESOLUTIONS` 的**下标顺序**:"放得下的最大"与"最小"都按**面积**现算 ——
+#   档表重排会静默换成另一档,而**没有守卫盯着档表顺序**(冒烟的档表相只查非空 / 含基准 / 4:3),
+#   所以这里不把顺序当契约。
+# ★ 覆盖上限(与 `docs/eng/registered-debt.md` §五.13 同一条边界):本函数只保证**选出来的档**对;
+#   "真窗口真的变成这个尺寸 / 真的居中"非 headless 仍未实测(非 headless 会抢焦点)。
+#   ⚠ 另一条更细的:因为档表里**下标 0 恰好就是最小档**,"全放不下 ⇒ 最小档"这一支只能被
+#     "返回 0 / 返回可用区本身 / 返回最大档"这类变异证伪;把它写成"返回 `DISPLAY_RESOLUTIONS[0]`"
+#     在这一相上**咬不住**(两种写法给的值相同)⇒ 故这里按面积现算,不靠下标。
+func fit_resolution(available: Vector2i) -> Vector2i:
+	# 先求**最小档** —— 它同时是"四档全放不下"时的兜底答案(下一段一档都没放下 ⇒ `best` 保持它)。
+	var smallest := DISPLAY_RESOLUTIONS[0]
+	for r in DISPLAY_RESOLUTIONS:
+		if r.x * r.y < smallest.x * smallest.y:
+			smallest = r
+	# 再求**放得下的最大档**:放得下就按面积取最大的那一档,一档都放不下则原样兜底。
+	var best := smallest
+	var best_area := 0
+	for r in DISPLAY_RESOLUTIONS:
+		if r.x <= available.x and r.y <= available.y and r.x * r.y > best_area:
+			best = r
+			best_area = r.x * r.y
+	return best
+
 # ── 显示:把内存里的档位落到真窗口 ──
 # 两个调用方:autoload `_ready()`(开窗即用存档档)、设置页(玩家改完即时生效)。
 # ★ headless 早退:无窗口后端(服务器 / `-s` 冒烟)上不该碰窗口 API —— 仓内既有惯例,
@@ -105,11 +139,24 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 # ★ 本函数体内的注释**刻意不写** window_set_size / window_set_mode 这两个字面量:冒烟
 #   tests/smoke/settings_display_smoke.gd 的源码半边按"早退必须排在这两个调用之前"判,
 #   注释里先出现会把那条判红。
+# ★ 收进屏幕(2026-10-04 Task 5):存档档**放得下就照它**(用户"默认窗口保持当前数字"的裁定
+#   优先),放不下才改用 `fit_resolution()` 挑的"能放下的最大 4:3 档"。改完尺寸**必须按可用区
+#   重新居中** —— 实测过:不重居中时窗口会停在"按旧尺寸算出的位置"上,于是小屏上会偏到一边。
+# ★ 可用区取 `screen_get_usable_rect`(**不是** `screen_get_size`):任务栏占掉的那几十像素不算
+#   可用 —— 实测本机 `screen_get_size` 2560×1600 vs 可用 2560×1528。
+# ⚠ 覆盖上限:下面"存档档放得下就照它"那两行**内联在早退之后**,headless 下结构性走不到 ⇒
+#   它没有运行时守卫(冒烟相⑤ 只钉住了被它调用的 `fit_resolution()`,以及"默认档放得下时
+#   两条路给出的值相同")。要真覆盖得跑一次非 headless 并读窗口几何(见 §五.13 那条登记)。
 func apply_display() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
+	var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
+	var target := DISPLAY_RESOLUTIONS[display_res_index]
+	if target.x > usable.size.x or target.y > usable.size.y:
+		target = fit_resolution(usable.size)
 	# 先摆窗口尺寸、再切模式:窗口化时设下的尺寸会被系统记住,玩家从全屏切回来仍是这一档。
-	DisplayServer.window_set_size(DISPLAY_RESOLUTIONS[display_res_index])
+	DisplayServer.window_set_size(target)
+	DisplayServer.window_set_position(usable.position + (usable.size - target) / 2)
 	if display_fullscreen:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	else:

@@ -42,6 +42,22 @@ extends SceneTree
 #         故"早退真的存在、真的排在前面"由 ④c 的**源码半边**钉住;运行时半边只保证调用点没被挡住。
 #      ★ 另一条覆盖上限:④d 只钉**顺序与存在**,钉不住"传对了档位/开关"(那是窗口行为,headless 下不可测;
 #        OS 层真窗口/真全屏行为已登记为未验证 —— 见计划的 Task 4)。
+#   ⑤(2026-10-04 Task 5 加,= 那份 brief 的 ①②③④)`Settings.fit_resolution(可用区)` 的四条 ——
+#      **纯函数**(不读 DisplayServer、不写字段)⇒ 这四条在 headless 下**可真红真绿**:
+#      ⑤a 可用区 2560×1528(默认档 1920×1440 放得下)⇒ 返回默认档(→ brief ①);
+#      ⑤b 可用区 1920×1080(1080p 类;1600×1200 的高 1200 放不下)⇒ 1280×960(→ brief ②);
+#      ⑤c 可用区 640×480(四档全放不下)⇒ 最小档 1280×960,不是 0 也不崩(→ brief ③);
+#      ⑤d 四条可用区各验一次:返回值**永远在 `DISPLAY_RESOLUTIONS` 里**(→ brief ④),
+#          外加"可用区**恰好**等于某档时原样返回该档"(钉住 `<=` 与 `<` 之别)。
+#      红于:去掉"默认档放得下就照存档档" / 只比宽不比高 / 去掉"都放不下 ⇒ 最小档"那一支 /
+#            返回值不在档表里 / 把"恰好放得下"写成放不下。
+#      ⚠ ⑤c 的牙齿**比读起来少**一点(照实登记):档表里**下标 0 恰好就是最小档**,所以"兜底写成
+#        `DISPLAY_RESOLUTIONS[0]`"与"按面积现算最小"给的值相同 ⇒ 这一相证伪的只是"兜底返回
+#        0 / 可用区本身 / 最大档 / 越界崩",**证伪不了兜底是不是真的按最小算**。
+#      ★ 覆盖上限(与 ④ 同界,并见 docs/eng/registered-debt.md §五.13):本组只保证**选出来的档**对;
+#        "真窗口真的变成这个尺寸 / 改尺寸后真的居中"仍**只在源码层有证据**,非 headless 未实测
+#        (非 headless 会抢焦点);`apply_display()` 里"存档档放得下就照它"那两行同理。本步做的是
+#        把**选择逻辑**变成 headless 可真红真绿的纯函数。
 
 const SETTINGS_PATH := "res://core/config/settings.gd"
 const TMP_LOAD_CFG := "user://settings_display_smoke_load.cfg"
@@ -53,7 +69,8 @@ const BASE_RES := Vector2i(1920, 1440)
 
 # 本文件在**绿**路径上应跑满的 check 条数 —— 见文件头 AGENTS.md 那条:
 # "ALL-OK 只证明没有一条失败,不证明该跑的都跑过"。少跑一条就红。
-const EXPECTED_CHECKS := 16
+# ★ 本值随相的增加而变(2026-10-04 Task 5 加 ⑤a~⑤d 共 4 条:16 → **20**)。
+const EXPECTED_CHECKS := 20
 
 var _checks := 0
 var _failed := 0
@@ -216,6 +233,39 @@ func _initialize() -> void:
 				"_ready() 在 load_settings() 之后调 apply_display()(位置: load %d / apply %d;删掉这行 ⇒ 红)"
 						% [i_load, i_apply])
 
+	# ── ⑤ `fit_resolution(可用区)` —— 纯函数,四条(= brief 的 ①②③④)──
+	# ★ 为什么要这四条:装不下基准逻辑空间(1920×1440)的屏(如 1080p,高 1080 < 1440)上,
+	#   `apply_display()` 照存档档开窗 ⇒ 窗口超出屏幕被 OS 钳位 ⇒ 玩家看到"既不全屏也不居中"。
+	#   修法是把**选择逻辑**抽成纯函数(不读 DisplayServer、不写字段)⇒ 它在 headless 下
+	#   **可真红真绿** —— 而"真开窗 / 改尺寸后真居中"仍不可测(见文件头 ④/⑤ 的覆盖上限)。
+	# 每条答得出"去掉什么才红"(逐条写在文件头的 ⑤ 段里)。
+	var has_fit: bool = s3.has_method("fit_resolution")
+	_fit_check(has_fit, s3, Vector2i(2560, 1528), Vector2i(1920, 1440),
+			"⑤a 可用区 2560×1528(默认档 1920×1440 放得下)⇒ 能放下的最大档正是默认档")
+	_fit_check(has_fit, s3, Vector2i(1920, 1080), Vector2i(1280, 960),
+			"⑤b 可用区 1920×1080(1600×1200 的高 1200 放不下)⇒ 能放下的最大档 1280×960")
+	_fit_check(has_fit, s3, Vector2i(640, 480), Vector2i(1280, 960),
+			"⑤c 可用区 640×480(四档全放不下)⇒ 最小档 1280×960(不是 0、不崩)")
+	var fit_areas: Array[Vector2i] = [Vector2i(2560, 1528), Vector2i(1920, 1080),
+			Vector2i(640, 480), Vector2i(2560, 1920)]
+	var fit_bad: Array[String] = []
+	if not has_fit:
+		fit_bad.append("fit_resolution() 不存在(实现没落)")
+	else:
+		for a in fit_areas:
+			var got5: Variant = s3.call("fit_resolution", a)
+			if not (got5 is Vector2i):
+				fit_bad.append("%s → %s(不是 Vector2i)" % [str(a), str(got5)])
+			elif not res.has(got5):
+				fit_bad.append("%s → %s(不在档表里)" % [str(a), str(got5)])
+			elif res.has(a) and (got5 as Vector2i) != a:
+				fit_bad.append("%s 恰好是一档 ⇒ 实得 %s(恰好放得下必须算放得下)"
+						% [str(a), str(got5)])
+	_check(fit_bad.is_empty(),
+			"⑤d 四条可用区 %s 的返回值都在 DISPLAY_RESOLUTIONS 里,且恰好是一档时原样返回该档%s"
+					% [str(fit_areas),
+						"" if fit_bad.is_empty() else "(问题:%s)" % str(fit_bad)])
+
 	# ── 收尾:删掉自己造的两个临时 cfg(不留垃圾在 user://),并 free 掉三个 Node 实例 ──
 	# ★ `Settings` 是 Node(不是 RefCounted):`gs.new()` 出来的实例**不入树** ⇒ 不手工 free 会
 	#   在退出时刷 "ObjectDB instances were leaked at exit" 警告,淹掉真正的 FAIL 行。
@@ -237,6 +287,19 @@ static func _func_body(src: String, name: String) -> String:
 	if nxt < 0:
 		nxt = src.length()
 	return src.substr(start, nxt - start)
+
+
+# 跑一条 `fit_resolution(可用区)` 断言。
+# ★ 门卫为假时**绝不调用**:实现还没落时 `call()` 一个不存在的方法会中断 `_initialize`
+#   ⇒ 走不到 quit ⇒ 进程**永久挂起**(见文件头);这里改成**打红**,于是"实现没落"的改前跑
+#   能干净地看到四条 FAIL,且那几条照记进 `_checks`(计数闸不因缺实现而失真)。
+func _fit_check(has_fit: bool, inst: Node, area: Vector2i, want: Vector2i, what: String) -> void:
+	if not has_fit:
+		_check(false, what + " —— fit_resolution() 还不存在(实现没落)")
+		return
+	var got: Variant = inst.call("fit_resolution", area)
+	_check(got is Vector2i and (got as Vector2i) == want,
+			"%s(want %s,got %s)" % [what, str(want), str(got)])
 
 
 func _finish() -> void:
