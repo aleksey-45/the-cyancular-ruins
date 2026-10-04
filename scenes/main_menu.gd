@@ -151,8 +151,8 @@ func _ready() -> void:
 	# 菜单流转自动探针(规格 §6 的 L4 验收项):命令行 `-- --autotest-sp|mp|set|level` 时,
 	# 把探针挂到树根(而非本场景)——它要穿越 change_scene 存活。平时零开销。
 	# 缺文件守卫:探针文件可能缺失(开发分支尚未落该文件、或有人手删)时静默跳过,不让主菜单崩。
-	# 注:「发布版会裁掉 tests/」**不是**这条守卫的理由——export_presets.cfg 是
-	# export_filter="all_resources",tests/ 会一起打进发布包,真实理由是文件可能不存在。
+	# 注:「发布版会裁掉 tests/」**曾经不是**这条守卫的理由——那时 export_presets.cfg 是 all_resources、
+	# tests/ 会一起进包,真理由只是"文件可能不存在";**2026-10-04 起 `exclude_filter` 已含 `tests/*`** ⇒ 通道没了(代价见 registered-debt.md §七 第 3 条)。
 	# 幂等:sp 流程经 Level0.safe_change_scene 会**重进本场景**,不判重就会挂上第二个探针
 	# (第二个探针又会点一次「单人模式」,把干净主菜单盖成单人面板)。
 	for arg in OS.get_cmdline_user_args():
