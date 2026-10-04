@@ -21,8 +21,9 @@ extends ProbeBase
 # `rewind_elite_damage` / `tile_rewind`)对**弹量一条断言都没有** ——
 # `grep -c 'wmags\|mag_ammo' tests/probe/rewind_*.gd` = 0(2026-10-04 实测)⇒ 那段代码此前
 # **没有行为守卫**,改名只会静默失效(同族真事故就写在生成端 `core/sim/world_rewind.gd:98-103`:
-# `_current_slot` 改名成 `_current_type` 后 `get()` 返回 null,快照值静默退化)。
-# ★ 2026-10-04 实测订正那句"快照值静默恒为 0":那一帧 `_snapshot_player()` 返回的是**空字典**
+# `_current_slot` 改名成 `_current_type` 后 `get()` 返回 null,快照值静默恒为 0)。
+# ★★ 2026-10-04 实测订正**上面这句的后果**(原文只说"快照值静默恒为 0",说轻了;★ R1 评审 ⑦:
+#   原句**保留在上**,订正只作追加,不就地改写):那一帧 `_snapshot_player()` 返回的是**空字典**
 #   (`snap.size()=0 keys=[]`)⇒ 消费端在第一个键上就早退 ⇒ 位置/HP/武器全不还原。详见 S7 段。
 #
 # ── 覆盖什么(逐条)──────────────────────────────────────────────
@@ -62,6 +63,25 @@ const PRODUCER_REFLECTION := [".get(\"_current_type\")", ".get(\"_current_index\
 		".get(\"mag_ammo\")"]
 const PRODUCER_TYPED := [".inventory", "._current_type", "._current_index", ".held",
 		".current_weapon()", ".mag_ammo"]
+# 成员名字符集(给 `_has_member_token`)
+const _IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+
+
+# `pat` 必须以**完整成员名**出现:后缀拼接(如 `._current_index_x`)不算。
+# ★ 为什么需要它(R1 评审 ② 的逐条变异**实测**出来的弱点):下面那 6 条"类型化访问还在"用的是
+#   `contains` —— 而"把成员名改坏成 `原名+后缀`"**仍然包含原串** ⇒ 那 6 条会照旧打 ✓,
+#   只有行为断言(整帧快照退化)红。加上边界判定后,每条反向断言都能**各自**咬住自己的改名。
+func _has_member_token(body: String, pat: String) -> bool:
+	var from := 0
+	while true:
+		var i := body.find(pat, from)
+		if i < 0:
+			return false
+		var after := body.substr(i + pat.length(), 1)
+		if after == "" or not _IDENT_CHARS.contains(after):
+			return true
+		from = i + 1
+	return false
 
 # 注册表里的 1 = 手枪(12 发)、2 = 步枪(30 发)。数值只在 `data/weapons.json`,
 # 本探针只借这两个 id 造"两把不同的枪"。
@@ -84,7 +104,9 @@ func probe_id() -> String:
 	return "RW-WEAPON"
 
 
-# 覆写只为**逐条留轨迹**:37 行 ✓/✗ 是"该跑的都跑过"的凭据(计数闸之外的第二道)。
+# 覆写只为**逐条留轨迹**:60 行 ✓/✗ 是"该跑的都跑过"的凭据(计数闸之外的第二道)。
+# ★ 这个数字与 `EXPECTED_CHECKS` 是**两处写着同一个量** —— 改计数闸时要一起改(R1 评审 ⑥:
+#   它曾经停在 37 而 `EXPECTED_CHECKS` 已是 60)。
 func _check(ok: bool, msg: String) -> void:
 	_checks += 1
 	print("[RW-WEAPON] %s %s" % ["✓" if ok else "✗", msg])
@@ -298,8 +320,10 @@ func _s6_shape() -> void:
 	# `code_view` 保留缩进、剥掉注释(注释里提到 `.call("` 不该让本条红/绿);
 	# `top_func_body` 只认行首 `func `,免得内部类的同名方法骗过取体。
 	var body := _top_func_body(_code_view(_read(PLAYER_SRC)), "rewind_restore")
+	var player_body_lines := 0 if body.is_empty() else body.split("\n").size()
 	_check(not body.is_empty(),
-			"S6 前置:player.gd 里抽不到 rewind_restore 的函数体(改名了?那下面几条 `== 0` 全是空转)")
+			"S6 前置:读到了 player.gd 的 rewind_restore 函数体(实得 %d 行;0 行=改名/读不到源,"
+			% player_body_lines + "下面几条 `== 0` 全是空转)")
 	# `.call("/.set(" 在武器段没有别的合法用法 ⇒ 计数必须为 0。
 	_check(body.count(".call(\"") == 0,
 			"S6: rewind_restore 里不许再有 `.call(\"…\")`(实得 ×%d)—— 拼错方法名不再当场报错"
@@ -373,24 +397,37 @@ func _s7_shape() -> void:
 	var body := _top_func_body(_code_view(_read(WREWIND_SRC)), "_snapshot_player")
 	# ★ 前置必须自己是一条**会红**的断言,而不是 `if ...: return`:空读时下面那些 `not contains`
 	#   恒真(否定断言的空读恒真),只看后面几条会把"读不到源"读成通过。
+	# ★ 措辞用**正向**:绿的时候打印"抽不到…"会与 ✓ 自相矛盾,削弱本文件"逐条留轨迹"的证据力
+	#   (★ R1 评审 Minor ⑧)。红的时候看 ✗ + 括号里的实得值(0 行)即可。
+	#   ★ `"".split("\n")` 在 GDScript 里是 **1** 个元素 —— 空读若直接打 size 会报"1 行",与"空"
+	#     自相矛盾(实测),故显式折算成 0。
+	var body_lines := 0 if body.is_empty() else body.split("\n").size()
 	_check(not body.is_empty(),
-			"S7 前置:world_rewind.gd 里抽不到 _snapshot_player 的函数体(改名了?那下面几条全是空转)")
+			"S7 前置:读到了 world_rewind.gd 的 _snapshot_player 函数体(实得 %d 行;0 行=改名/读不到源,"
+			% body_lines + "下面几条计数全是空转)")
 	if body.is_empty():
 		return
 	for pat in PRODUCER_REFLECTION:
 		_check(not body.contains(pat),
 				"S7: _snapshot_player 里不许再出现对象反射 `%s` —— 成员名对不上时它静默返回 null,"
-				% pat + "快照值静默变 0/空")
+				% pat + "轻则该字段变 0/空,重则整帧快照退化成空字典(实测;见 world_rewind.gd 注释)")
 	# ★ 反向六条:计数/缺席只证明"没有反射",**不证明"类型化访问还在"** —— 把整段删掉也满足。
+	#   ★ 用 `_has_member_token` 而不是 `contains`:后缀拼接的改名不算"还在"(见该函数上方)。
 	for pat in PRODUCER_TYPED:
-		_check(body.contains(pat),
-				"S7: _snapshot_player 里找不到类型化访问 `%s` —— 该段被删了?那上面的缺席是假的" % pat)
-	# 残值边界:`_snapshot_player` 里仍允许的**对象反射**只有**玩家根**(`player.gd`,**无
-	# `class_name`**)上的四读:velocity / hp / facing_direction / weapons。它们要类型化得给
-	# player 根加 `class_name`(动类结构:全局类名 + 两个刻意造的裸宿主桩会被打掉;已登记,
-	# 不属本任务)⇒ 这里用 `<=` 而不是 `==`,免得将来有人补了 class_name 反而把守卫喂红。
-	# 正解是把 weapons 组件**当参数注进来**(见 Task 3 报告),不是给根加类型。
-	var gets := body.count(".get(\"")
-	_check(gets <= 4,
-			"S7: _snapshot_player 的对象反射不得超过玩家根那 4 处(velocity/hp/facing_direction/weapons),实得 ×%d"
-			% gets)
+		_check(_has_member_token(body, pat),
+				"S7: _snapshot_player 里找不到类型化访问 `%s`(须是**完整成员名**,后缀拼接不算)"
+				% pat + " —— 该段被删了/改名了?那上面的缺席是假的")
+	# 残值边界:`_snapshot_player` 里仍允许的**按字符串名访问玩家**只有**玩家根**(`player.gd`,
+	# **无 `class_name`**)上的 **5 处**,这里逐个点名(★ R1 订正:原先只数 `.get("`、消息里只列
+	# 4 处,读起来像完整枚举,**漏了第 5 处** `player.has_method("is_downed")`);
+	#   ① `player.get("velocity")` ② `player.get("hp")` ③ `player.get("facing_direction")`
+	#   ④ `player.get("weapons")` ⑤ `player.has_method("is_downed")`(配 `player.is_downed()`)。
+	# ⑤ 的失败形态与其它四处同型:`is_downed` 改名 ⇒ `has_method` 恒 false ⇒ `"downed"` 静默写
+	# false ⇒ 消费端 `player.gd:987-989` **静默跳过倒地/复活还原**(故它必须计入度量)。
+	# 它们要类型化得给 player 根加 `class_name`(动类结构:全局类名 + 两个刻意造的裸宿主桩会被
+	# 打掉;已登记,不属本任务)⇒ 这里用 `<=` 而不是 `==`,免得将来有人补了 class_name 反而把守卫喂红。
+	# 正解是把 weapons 组件(及其余 4 处的值)**当参数注进来**(见 Task 3 报告),不是给根加类型。
+	var named_accesses := body.count(".get(\"") + body.count("has_method(\"")
+	_check(named_accesses <= 5,
+			"S7: _snapshot_player 里按字符串名访问玩家的地方不得超过 5 处"
+			+ "(velocity/hp/facing_direction/weapons/is_downed),实得 ×%d" % named_accesses)

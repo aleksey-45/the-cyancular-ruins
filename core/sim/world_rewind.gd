@@ -92,8 +92,19 @@ func _snapshot_player(player: Node) -> Dictionary:
 		"downed": player.has_method("is_downed") and player.is_downed(),
 		"wslot": 0, "widx": -1, "wmags": [], "wlive": -1,
 	}
-	var wc: WeaponComponent = player.get("weapons")
+	# ★ R1(2026-10-04,逐任务评审 Important ④):用**显式守卫**取组件,不用带类型的赋值。
+	#   带类型的直接赋值(`var wc: WeaponComponent = player.get("weapons")`)在 `weapons` 不是
+	#   `WeaponComponent` 时会抛 "Trying to assign value of type 'Node'…" ⇒ **中止整个函数**
+	#   ⇒ 退化成**空字典**(连位置/HP 一起丢);而旧的鸭子类型写法在那种输入上只**局部**退化。
+	#   这里改成 `as` + 点名报错 + **返回已收集的部分**(位置/HP/朝向/倒地仍然还原得了)。
+	#   ★ 新行为(与旧的鸭子类型不同,照实记):`weapons` 是**非 `WeaponComponent` 的节点**时 ——
+	#     旧:接着按名读,读到什么算什么(名字恰好对得上就全对,对不上就整帧空字典);
+	#     新:`push_error` 点名 + 武器四键停在初值(`wslot` 0 / `widx` -1 / `wmags` [] / `wlive` -1)。
+	#   ★ 真机无差别:`player.tscn` 的 `$Weapons` 就是 `WeaponComponent`(`player.gd:42`),
+	#     `weapons == null` 这一支两条写法都在同一处 `return d`。
+	var wc := player.get("weapons") as WeaponComponent
 	if wc == null:
+		push_error("WorldRewind: player.weapons 不是 WeaponComponent —— 武器段无法回溯;本帧返回已收集的部分")
 		return d
 	# ★ 合并订正(2026-10-02):原写的是 `_current_slot` —— 主线已把 `slot` 一词整体退休、
 	#   改名为 `_current_type`,于是 `get()` 返回 null ⇒ `int(null)` 每帧(20Hz)抛
@@ -119,9 +130,22 @@ func _snapshot_player(player: Node) -> Dictionary:
 	# ★ 行为逐字段不变:键名/键序/初值(`wslot` 0、`widx` -1、`wmags` []、`wlive` -1)与两个
 	#   `!= null` 守卫都原样保留;`wc.has_method("current_weapon")` 那层探测去掉,是因为 `wc`
 	#   现在是 `WeaponComponent`,该方法必然存在(见 `weapon_component.gd:461`)。
-	# ★ 覆盖上限:`player` 上按名取 `weapons` 那**一处仍是对象反射** —— 玩家根(`player.gd`)
-	#   没有 `class_name`,类型化它要动类结构(全局类名 + 打掉两个刻意造的裸宿主桩,已登记)。
-	#   正解是把 weapons 组件**当参数注进来**,不属本任务。
+	# ★ 覆盖上限(★ R1 订正:原先只列了"4 处按名取值",**漏了本函数第 5 处按名访问**):本函数里
+	#   仍然**按字符串名**碰玩家的地方一共 **5 处**,全在**玩家根**(`player.gd`,**没有
+	#   `class_name`** ⇒ 类型化它要动类结构:全局类名 + 打掉两个刻意造的裸宿主桩,已登记):
+	#     ① `player.get("velocity")` ② `player.get("hp")` ③ `player.get("facing_direction")`
+	#     ④ `player.get("weapons")`(本段上面那一处)⑤ `player.has_method("is_downed")`
+	#        + `player.is_downed()`(本函数开头那个字典字面量里的 `"downed"` 键)。
+	#   ★ 第 ⑤ 处的失败形态与前四处**同型但更阴**:`is_downed` 一改名 ⇒ `has_method` 恒 false
+	#     ⇒ `downed` **静默写成 false**(不报错、不中断,`d` 照常返回)⇒ 消费端
+	#     `player.gd:987-989` 的 `if bool(d["downed"]) and not downed_now` **静默跳过倒地/复活
+	#     还原**。形状守卫(`rewind_weapon_probe` 的 S7)因此把度量写成
+	#     `.get("` + `has_method("` **≤ 5**,并在消息里把这 5 处逐个点名。
+	#   ★ 为什么**不**顺手去掉 `has_method("is_downed")`(评审 ①(c) 的备选):`player` 的静态
+	#     类型是 `Node`,`player.is_downed()` 是**不安全动态调用** —— 方法真缺席时会**抛错中止
+	#     整个函数** ⇒ 退化成**空字典**(位置/HP 一起丢)。那正是上面 R1 ④ 明确否掉的形态
+	#     ("部分还原 > 完全不还原")⇒ 保持"名字问不到就当 false"的**安全退化**,改用守卫逐名钉住。
+	#   正解是把 weapons 组件(以及其余 4 处的值)**当参数注进来**,不属本任务。
 	#   守卫:`tests/probe/rewind_weapon_probe.gd` 的 S7(行为 + 形状)+ `rewind_probe.gd` 的 ⑨。
 	d["wslot"] = wc._current_type
 	d["widx"] = wc._current_index

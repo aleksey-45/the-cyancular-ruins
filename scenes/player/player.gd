@@ -966,6 +966,14 @@ func rewind_restore(d: Dictionary) -> void:
 	#   带文件:行号**地炸,而不是静默把状态写歪。
 	#   同族的真事故:`core/sim/world_rewind.gd:98-103`(`_current_slot` 改名成 `_current_type`
 	#   之后 `get` 返回 null ⇒ 快照值静默恒为 0,不报错、不中断)。
+	#   ★★ 2026-10-04 实测订正**上面这句的后果**(原文只说"快照值静默恒为 0",说轻了;订正只作
+	#   追加、原句保留在上,与 `core/sim/world_rewind.gd:99-106` 那份同形):那一帧
+	#   `WorldRewind._snapshot_player()` 返回的是**空字典**(仪器原文 `snap.size()=0 keys=[]`)⇒
+	#   到了本函数,**第一个键**(`d["p"]`/`d["hp"]`…)就早退 ⇒ **位置/HP/武器全不还原**,
+	#   而不是"只有 `wslot` 变 0"。端到端实测:改回退役名 ⇒ `rewind_probe` 7 条红
+	#   (位置差 276px、HP 30≠50、HUD 血量通知未触发),引擎每帧照报 `Nonexistent 'int' constructor`
+	#   (同一跑 83 行)—— 只是**当时没有任何断言会红**。生产端的订正与守卫在
+	#   `core/sim/world_rewind.gd`(Plan B Task 3)与 `tests/probe/rewind_weapon_probe.gd` 的 S7 段。
 	#   三样成员都在**已有 `class_name`** 的类上(`WeaponComponent` / `WeaponInventory` /
 	#   `WeaponBase`),且 `mag_ammo` 本来就是**公开字段**(`weapon_base.gd:102`;
 	#   `weapon_component.gd:287` 的 `apply_mag` 也直接写它)⇒ 反射纯属历史遗留,不是必需。
