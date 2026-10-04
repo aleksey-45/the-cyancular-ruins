@@ -52,3 +52,18 @@
 只看到"红了"就收工，会把结论记成"B 咬住了这条断言"，而真相是 A 咬的。
 
 **规矩**：① 每个变异**前**先确认已复原上一个（`grep` 变异标记 / `git diff` 应为空）；② 红的时候**核对的不是"红了"，而是"红的理由"** —— 按**预期的断言名**核（例"⑤a 必红、⑤b 应绿"两条都要对上）；③ 报告里记"红在哪条断言"，不记"红了"。
+
+## ★ 2026-10-04 追加：`-s` 探针**可以**驱动全局输入 —— "headless 下全局 Input 恒假"只在没人按键时成立
+
+同一批任务里连着踩了同一条**错误前提**：设计守卫时以为"headless 里读全局 `Input` 与返回 `false` 不可分，
+所以行为断言对这类分支**天生无牙**"。
+
+**实测不成立**：`Input.action_press(...)` / `Input.action_release(...)` 在 `-s`（无 autoload、无渲染）里**照样有效** ——
+仓内已有 **6** 支这么用：`tests/probe/climb_probe.gd:28/47`、`tests/probe/haste_probe.gd`、
+`tests/probe/haste_probe_input.gd`、`tests/probe/level0_weapon_scatter_probe.gd`、
+`tests/harness/net_lag_client.gd`、`tests/harness/reconnect_watcher.gd`。
+
+**规矩**：判断"某条兜底/分支能不能被**行为**断言咬住"时，**别**拿"headless 全局输入恒假"当理由 ——
+要么 ① **主动按一下**（`Input.action_press`）把它驱动起来；要么 ② 老实承认"这条只能靠**源码**守卫"，
+**并证明那条源码守卫会红**。★ 两个方向的教训本批都吃到了：`weapon_base` 三处确实只能靠源码守卫（兜底只决定返回哪个布尔），
+而 `swim_component` / `climb_component` 两处**行为**就能咬住（旧兜底会写 `parent.velocity.y` / 走完状态机）。
