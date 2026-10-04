@@ -10,8 +10,7 @@ extends Control
 #      `display/res_index`;或改用仓内既有的 `tools/_shot_scene.gd` 取**视口纹理** —— 1:1 下它与屏幕像素同一,
 #      但**不覆盖**「画布 blit 到窗口」那一步(即本探针的射程)。
 #   "$GODOT" --path . --quit-after 3600 res://tests/probe/menu_shot_probe.tscn -- <主菜单图> <设置页图>
-#       -- .superpowers/sdd/<批次>/shots/<主菜单名>.png \
-#          .superpowers/sdd/<批次>/shots/<设置页名>.png
+#   (输出路径写在 `--` 之后:`-- <主菜单图.png> <设置页图.png>`,支持 res:// / user:// / 绝对路径)
 #
 # ★ 输出路径**由调用方在 `--` 之后给**(本探针不写死文件名),支持 `res://` / `user://` /
 #   绝对原生路径三种写法,父目录不存在时会建。取图手法照仓内既有那套
