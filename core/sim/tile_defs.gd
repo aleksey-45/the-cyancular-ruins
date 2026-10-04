@@ -193,6 +193,23 @@ static func init_hp(grid: Array) -> void:
 		hp_grid.append(r)
 
 
+## 格级 HP 的读取端(越界返回 0;越界口径同 `sub_texture` / `restore_sub` 那两个口)。
+## 存在理由:两张 HP 表此前只有"写"(`init_hp` 建表 / `damage_tile` 扣血)没有"读回来的口",
+## 于是"回溯复原时把格级 HP 补回满血"这件事在调用方**没有合法写法**(只能直接下标写数组)。
+static func hp_grid_at(cell: Vector2i) -> int:
+	if cell.y < 0 or cell.y >= hp_grid.size() or cell.x < 0 or cell.x >= hp_grid[cell.y].size():
+		return 0
+	return int(hp_grid[cell.y][cell.x])
+
+
+## 格级 HP 的写入口(越界静默不写)。★ 写口留在本类:两张 HP 表(格级 `hp_grid` / 子格
+## `sub_hp`)的分家正是"幽灵砖"的根因,别再让调用方直接写数组。
+static func set_hp_grid(cell: Vector2i, hp: int) -> void:
+	if cell.y < 0 or cell.y >= hp_grid.size() or cell.x < 0 or cell.x >= hp_grid[cell.y].size():
+		return
+	hp_grid[cell.y][cell.x] = hp
+
+
 # ── cyrm v4 子格破坏(选项 A:破坏按 16px 子格算,格级 current_grid 在整格死光时才清零)──
 # sub_hp 下标 = sub_y * sub_cols + sub_x;0 = 空气或已摧毁。纹理永远读
 # MazeGenerator.current_subgrid(它不变,摧毁改的是 hp)。

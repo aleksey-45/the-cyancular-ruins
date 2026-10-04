@@ -448,6 +448,17 @@ func _restore_sub(e: Dictionary) -> void:
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 	if _grid_ref[cell.y][cell.x] == 0 and not _pristine_grid.is_empty():
 		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
+		# ★ 格级 HP 也要一起还:格级销毁走的是 `damage_tile`,它把 `hp_grid[cell]` 打成 0,
+		#   而上面那句只还了 `current_grid` 基线 ⇒ 回溯复原后"整格看着回来了",下一发激光
+		#   却一发即碎(原本 4 发的树干)。基线纹理取 `tex`(`current_subgrid` 从不被破坏改动),
+		#   **不能**取 `hp_of(_pristine_grid[...])` —— 那是打包后的格值,不是纹理。
+		# ★ 只在该格已被打空时补(`<= 0`),这样同一格 16 个子格各复原一次时**幂等**;
+		#   也让"格级只是被打磨、没碎"的中间态不被这一次子格复原抹成满血。
+		# ★ 覆盖上限(实测):`tex` 是**被复原子格**的纹理,而格级基线取 16 子格的**多数纹理**
+		#   (`MapFormatV4.flatten_scene`);两张在库图(demo/newfactory)**没有**"16 子格全活且
+		#   混纹理"的格 ⇒ 两者同值。编辑器真画的 4×4 混排图会让这里还原成子格的 hp 而非基线。
+		if TileDefs.hp_grid_at(cell) <= 0:
+			TileDefs.set_hp_grid(cell, TileDefs.hp_of(tex))
 
 
 ## 格级销毁(单机):激光走的是格级 `damage_tile` ⇒ 把**子格侧**收口交给 `TileDefs.destroy_cell`

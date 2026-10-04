@@ -18,6 +18,7 @@ extends Node
 #      单机侧此前只有服务器接了 `TileDefs.on_destroyed` ⇒ 整格已碎、16 子格仍 `sub_alive`
 #      (幽灵砖),而本文件与另外三条探针**全绿**。
 # 相④ 回溯复原 → 逐子格回到基线(渲染与碰撞都对上),环面副本一并回来
+# 相④b 相③b 那一格在回溯后**连格级 `hp_grid` 一起**回满血(否则复原后下一发激光一发即碎)
 # 相⑤ 节流窗口:一帧内拆跨 **多块**(> MAX_REBUILD_PER_FRAME=2)的砖 → 数出碰撞追上渲染要几帧;断言有界
 # 相⓪/相⑥ 全场抽样(每 8 个子格一点):**渲染与碰撞各自与规则逐点相等** —— 这一相就是
 #      「建筑有没有虚空碰撞箱」的直接回答,破坏+回溯之后再扫一遍
@@ -54,7 +55,7 @@ func _finish() -> void:
 		get_tree().quit(1)
 		return
 	if _fails.is_empty():
-		print("TILE COLLISION PROBE: ALL-OK(子格粒度/部分破坏不牵连/格级销毁无幽灵砖/环面副本/回溯复原/重建有界/全场渲染与碰撞各符其规则)")
+		print("TILE COLLISION PROBE: ALL-OK(子格粒度/部分破坏不牵连/格级销毁无幽灵砖/环面副本/回溯复原(含格级 HP)/重建有界/全场渲染与碰撞各符其规则)")
 	else:
 		print("TILE COLLISION PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
 	get_tree().quit(0 if _fails.is_empty() else 1)
@@ -337,6 +338,24 @@ func _run() -> void:
 		if _painted(s) != bool(e[0]) or _terrain_at(world, _sub_center(s)) != bool(e[1]):
 			_fail("相④ 回溯后子格 %s 与规则不符(画=%s 碰=%s 规则=%s)"
 					% [str(s), str(_painted(s)), str(_terrain_at(world, _sub_center(s))), str(e)])
+
+	# ── 相④b 相③b 那一格在回溯后必须连 hp_grid 一起回来 ──
+	# ★ 复用 Task 2 留下的 cell3b / subs3b,并复用相④ 的**那一次**回溯(不自己再按 rewind:
+	#   冷却与历史长度不由本探针控制)。★ 与相④ 同款:拿**游戏自己的两条规则**(`_expect`)对账,
+	#   而不是拿快照 —— 后者只能证明"回到了拆之前",前者还要求"拆之前本来就是对的"。
+	var back_wrong := 0
+	for s in subs3b:
+		var e := _expect(s)
+		if _painted(s) != bool(e[0]) or _terrain_at(world, _sub_center(s)) != bool(e[1]):
+			back_wrong += 1
+	if back_wrong != 0:
+		_fail("相④b 回溯后相③b 那格有 %d 个子格与规则不符(渲染/碰撞有一样没回来)" % back_wrong)
+	# 纹理表 `current_subgrid` 从不被破坏改动 ⇒ 回溯后读它与破坏前同值,可当满血基准
+	# ★ 前提:该格 16 子格**同纹理**(格级基线取的是多数纹理)—— 两张在库图实测无混纹理格
+	var want3b := TileDefs.hp_of(_tex(subs3b[0]))
+	if TileDefs.hp_grid_at(cell3b) != want3b:
+		_fail("相④b 回溯后 hp_grid[%s] 应回到 %d(实得 %d)⇒ 下一发激光会一发即碎"
+				% [str(cell3b), want3b, TileDefs.hp_grid_at(cell3b)])
 
 	# 相⑤ 节流窗口:跨多块一帧拆光
 	var victims: Array[Vector2i] = []
