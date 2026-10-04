@@ -10,6 +10,9 @@
 
 **Spec:** [`docs/eng/audit-2026-10-04-design-conventions.md`](../eng/audit-2026-10-04-design-conventions.md) §1.4 + 用户裁定（「默认窗口还是当前硬编码的数字，然后设置添加分辨率/全屏之类的选项」）。
 
+> ★ **本批已完成（2026-10-04）** —— 提交区间见 `git log`。★ **下面的勾选框未逐条打勾**（实现者按 `task-N-brief.md` 工作），
+> **进度一律以 `git log` 与 `.superpowers/sdd/<计划名>/progress.md` 为准** —— 这正是本仓"勾选框不可信"那条教训的又一次实例。
+
 ## Global Constraints
 
 - **视觉验收看图判断**，不把对比度/数值当验收标准（用户明确取消过一次）；★ **取图一律不带 `--headless`**（带了就没有视口纹理、**静默不存图**），且跑前明确告知会弹窗抢焦点。
@@ -235,6 +238,62 @@ git commit -m "feat(ui): 设置页新增「显示」组(分辨率下拉 + 全屏
 git add docs/eng/ui.md README.md docs/eng/registered-debt.md
 git commit -m "docs(display): 补显示设置说明 + 登记 OS 层窗口行为未验证"
 ```
+
+---
+
+### Task 5: 首次运行把窗口收进屏幕（控制器追加；用户 2026-10-04 裁定「2 可以这么做」）
+
+**Files:**
+- Modify: `core/config/settings.gd`（`apply_display()` + 一个**纯函数**）
+- Modify: `tests/smoke/settings_display_smoke.gd`（加断言）
+
+**Interfaces:**
+- Consumes: `Settings.DISPLAY_RESOLUTIONS`（4:3 四档）、`display_res_index`、`DisplayServer.screen_get_usable_rect(screen)`、
+  `DisplayServer.window_get_current_screen()`、`DisplayServer.window_set_position(Vector2i)`。
+- Produces: `Settings.fit_resolution(available: Vector2i) -> Vector2i` —— **纯函数、headless 可真红真绿**：
+  给定可用区，返回**能放下的最大 4:3 档**；都放不下则返回**最小档**（不是 0、不崩）。
+
+★ **为什么走这条路**（而不是静态 `window_width_override`）：静态键**无法自适应任意屏**；"收进屏幕"本身要在**运行时**量可用区 ⇒ 只能落在 `apply_display()`。
+★ **逻辑空间不动**（仍 1920×1440）⇒ `mp_lobby.tscn` 那 21 处绝对定位**零改动**（`aspect="keep"` 负责等比缩放 + 黑边）。
+
+- [ ] **Step 1: 写失败断言**（`settings_display_smoke.gd` 加四条）
+
+  ① 可用区 `2560×1528` ⇒ 返回 **1920×1440**（默认档放得下就**不动** —— 用户"默认窗口保持当前数字"的裁定优先）；
+  ② 可用区 `1920×1080`（1080p 类）⇒ 返回 `1280×960`（`1600×1200` 高 1200 > 1080 放不下）；
+  ③ 可用区 `640×480`（全都放不下）⇒ 返回**最小档** `1280×960`（不是 0、不崩）；
+  ④ 四条可用区各验一次：返回值**永远在 `DISPLAY_RESOLUTIONS` 里**。
+
+- [ ] **Step 2: 跑它，确认红** — `timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/settings_display_smoke.gd`
+
+- [ ] **Step 3: 实现**
+
+  `fit_resolution(available)` 纯函数 + `apply_display()`（headless 早退**保持不动**）里：
+  取 `var fits := fit_resolution(usable.size)`；若 `DISPLAY_RESOLUTIONS[idx]` **放得下**就用它，否则用 `fits`；
+  `window_set_size(...)` **之后**按可用区**重新居中**：`window_set_position(usable.position + (usable.size - size) / 2)`
+  （★ 实测过：不重居中时窗口会停在原尺寸算出的位置）。
+
+- [ ] **Step 4: 跑它，确认绿 + 变异**（把"能放下的最大"改成"总是最小档" ⇒ 断言 ① 必红；复原）
+
+- [ ] **Step 5: 提交** — `git add core/config/settings.gd tests/smoke/settings_display_smoke.gd`
+
+★ **覆盖上限照实写进注释**：真窗口/真居中的非 headless 行为**仍未实测**（与 `registered-debt.md` §五.13 同一条边界）；
+本步做的是把**选择逻辑**变成 headless 可真红真绿的纯函数。
+
+---
+
+### Task 6: 补完 Task 1 的两个未验步骤（控制器审计发现）
+
+**Files:**
+- Modify: `tests/probe/menu_shot_probe.gd`（加一个**运行时改窗口尺寸**的参数 —— 它同时修回"`--resolution` 已被 `apply_display()` 顶掉"那条失效配方）
+
+**Interfaces:**
+- Consumes: 探针现有的 `-- <主菜单图> <设置页图>` 取参方式。
+- Produces: `-- --size 1600x900`（启动后由探针自己 `window_set_size` + 居中再取图）⇒ 能取**非 4:3** 窗口的图。
+
+- [ ] **Step 1: 给探针加 `--size WxH`**（缺省 = 不改）★ 这样 Task 0 那条"两图同尺寸可并排比"的配方**恢复可用**（不再受 `apply_display()` 影响）。
+- [ ] **Step 2: 取一张非 4:3（1600×900）的设置页图**，目视确认三件事：**上下有黑边**、内容**未被拉伸变形**、与 1920×1440 那张**逐像素同构**（只多黑边）。
+- [ ] **Step 3: 跑 `kh_l4_probe` / `kh_l5_probe`**（★ **非 headless**，会弹窗；字号全仓扫描必须仍 OK —— Task 3 新增控件用的是 32，不破它）。
+- [ ] **Step 4: 把两次结果（图路径 + 两个探针的 OK 文本）写进本批账本**；探针的 `--size` 改动值得留就提交那个 `.gd`。
 
 ---
 

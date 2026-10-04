@@ -10,6 +10,9 @@
 
 **Spec:** [`docs/eng/audit-2026-10-04-design-conventions.md`](../eng/audit-2026-10-04-design-conventions.md) —— §1.1（单机幽灵砖）、§3 顶部订正块第 4 条（服务器 2×2 在真 PvP 局可达）、§10（用户裁定：§1 都得做；A1 选 (b)）。
 
+> ★ **本批已完成（2026-10-04）** —— 提交区间见 `git log`。★ **下面的勾选框未逐条打勾**（实现者按 `task-N-brief.md` 工作），
+> **进度一律以 `git log` 与 `.superpowers/sdd/<计划名>/progress.md` 为准** —— 这正是本仓"勾选框不可信"那条教训的又一次实例。
+
 > ★ 本文件里的 `文件:行号` 是**写作当时**的;代码已按本计划落地 ⇒ 行号可能已漂,**以源码为准**(`grep`),别照抄行号。裸 `（:NNN）` 尤其如此。
 
 ## Global Constraints

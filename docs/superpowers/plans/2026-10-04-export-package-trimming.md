@@ -10,6 +10,9 @@
 
 **Spec:** [`docs/eng/audit-2026-10-04-design-conventions.md`](../eng/audit-2026-10-04-design-conventions.md) §1.3 + [`RELEASE.md`](../../RELEASE.md) + 用户裁定（"发布包裁剪要做，但真导出那步要我先点头"）。
 
+> ★ **本批已完成（2026-10-04）** —— 提交区间见 `git log`。★ **下面的勾选框未逐条打勾**（实现者按 `task-N-brief.md` 工作），
+> **进度一律以 `git log` 与 `.superpowers/sdd/<计划名>/progress.md` 为准** —— 这正是本仓"勾选框不可信"那条教训的又一次实例。
+
 ## Global Constraints
 
 - 引擎路径：导出读 **`GODOT_EDITOR`**（[`tools/build_release.py`](../../tools/build_release.py) 里那一处默认值），跑测试读 `GODOT`（[`tests/env.sh`](../../tests/env.sh)）；**两个二进制不能混用**。

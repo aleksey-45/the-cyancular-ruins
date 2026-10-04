@@ -10,6 +10,9 @@
 
 **Spec:** [`docs/eng/audit-2026-10-04-design-conventions.md`](../eng/audit-2026-10-04-design-conventions.md) §1.2/§1.3/§1.4 相关条 + §3/§4 全部条 + 用户裁定（Q1/Q4/Q5/Q7）。
 
+> ★ **本批已完成（2026-10-04）** —— 提交区间见 `git log`。★ **下面的勾选框未逐条打勾**（实现者按 `task-N-brief.md` 工作），
+> **进度一律以 `git log` 与 `.superpowers/sdd/<计划名>/progress.md` 为准** —— 这正是本仓"勾选框不可信"那条教训的又一次实例。
+
 ## Global Constraints
 
 - **判据是 grep 文本**（`SMOKE OK`），不看退出码。
