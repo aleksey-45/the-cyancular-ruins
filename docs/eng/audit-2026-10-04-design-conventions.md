@@ -424,4 +424,16 @@ window/stretch/mode="viewport"
 ★ **用户给出的优先级**：**先把"旧版本表述"清除与封存**（否则接手的人会绕很多路）—— 本文件的 §9 是清理记录，
 `docs/archive/` 是封存区（纪律见 [`docs/archive/README.md`](../archive/README.md)）。
 
+### 10.1 本轮"旧版本表述"处置的收口（2026-10-04）
+
+| 项 | 处置 | 结果 |
+|---|---|---|
+| 活文件里的旧版本号（`RELEASE.md` 6 处 / `CLAUDE.md` / 三个 tools 的用法示例 / `check_naming.py` 注释） | **清除**（去掉历史枚举与旧版示例，只留"真相源一处 + 别在文档里另抄"） | 已改 |
+| `claude-md-full-2026-10-02.md`（295 KB，拆分前 `CLAUDE.md` 全文）、`kh-line-log.md`（46 KB，原 `AGENTS.md`） | **封存**进 `docs/archive/`（`git mv`，附封存纪律，两处指针改写） | 已做 |
+| 其余 dated 交接/报告（09-17 三份、09-28 batch-b、royale-soak、c2-retrospective、naming-cleanup-plan）与 `docs/superpowers/{plans,specs}`（105 份 / 4.1 MB） | **不封存**（用户裁定"到此为止"） | 不动 |
+| `docs/2026-09-20-cyrm-v4-handover.md` | **不封存** —— 它仍是 `AGENTS.md` §4 指定的 cyrm 格式权威指针（被引 5 次） | 不动 |
+| **另两条版本线的提及**（`AGENTS.md` §0 / `RELEASE.md` / `archive_build.py` 里的 `KH_v0.5.0_B17`、`siri_v0.5.0`） | **保留** —— 用户："这些是**其他开发者的版本**，即使我们目前已经是最新版本了，我认为依然要留着" | 不动（`release_prefix` 的多线机制是现行机制，前缀真相源在 `project.godot`） |
+| §3 里点出的 **26 处 `CLAUDE.md:<行号>` 死指针** | **实测全部落在 `docs/superpowers/plans/*`（历史 plan），活文档 0 处** ⇒ 按"只修活文档"的裁定，**本轮无动作**（历史 plan 是快照，改它等于篡改记录） | 不动；★ 但"活文档禁引行号"这条**未**入纪律（用户未选该项） |
+
+
 
