@@ -22,6 +22,16 @@ var _acc := 0.0
 var _cursor := 0.0                 # 本次回溯已倒退的秒数
 var _replay_bullets: Array = []    # 回放用子弹节点(与当前应用帧的 bullets 下标对应)
 var _parent: Node = null           # 回放子弹的挂载父节点(通常 WorldViewport)
+# ── 完成度观测量(2026-10-05 修复轮 1;来源 = 逐任务评审 C-1)──────────────────
+# ★ 为什么是"完成度"而不是"freed 引用数 == 0":带子上留着 freed 实体是**改动前就存在**的条件
+#   (精英不保留尸体 `enemy_base.gd:316` + 它死前的帧留在 40s 带上,`TimeParams.SNAP_SECONDS = 40.0`),
+#   旧码靠 `and` 短路**静默跳过**它 ⇒ 断言 `invalid_ref_count() == 0` 修完仍是 30+ ⇒ **永久红**。
+#   恒红的守卫与恒绿的守卫一样没用。故断言改成:`step()` 里"应当走完 `_apply`"的次数
+#   == `_apply` 真正走到底的次数(`tests/probe/rewind_probe.gd` 的 ⑩)。
+#   freed 引用数照旧暴露,但它是**登记用的观测量**,不是"必须为 0"的断言。
+var _apply_started := 0
+var _apply_completed := 0
+var _invalid_refs := 0             # 带子上出现过的 freed / 非节点引用(观测)
 
 
 func _init(parent: Node = null) -> void:
@@ -236,7 +246,22 @@ func step(delta: float, player: Node) -> void:
 		return
 	_cursor += delta * _mult()
 	var target := _t - _cursor
+	_apply_started += 1     # 完成度分母(见 `apply_started_count()`)
 	_apply(_frame_at(target), player)
+
+
+## 完成度观测量(分子/分母)与 freed 引用计数 —— 三者的用法见字段声明处那段注释。
+## ★ 断言口径:分子 == 分母;**不是** `invalid_ref_count() == 0`(那会恒红)。
+func apply_started_count() -> int:
+	return _apply_started
+
+
+func apply_completed_count() -> int:
+	return _apply_completed
+
+
+func invalid_ref_count() -> int:
+	return _invalid_refs
 
 
 ## 起步快放 → 1×(用已倒退量做 ramp;越倒越接近 1×)
@@ -254,17 +279,35 @@ func _frame_at(target: float) -> Dictionary:
 
 func _apply(f: Dictionary, player: Node) -> void:
 	if f.is_empty():
+		_apply_completed += 1   # 空帧 = 无事可做,**不是**中止(与函数末尾那次计的是同一件事)
 		return
 	if is_instance_valid(player) and player.has_method("rewind_restore"):
 		player.rewind_restore(f["player"])
 	for d in f["enemies"]:
-		# ★ 2026-10-05(closeout 批 Task 3 / T12):原先是 `(d["n"] as Node).has_method("rewind_restore")`
-		#   + 按名调用;现在类型化(`EnemyBase` 有 `class_name`,且 `rewind_restore` 就在它身上)。
-		#   名字对不上时旧写法是"静默跳过这一件"(整只怪不还原),新写法当场报错。
-		var en := d["n"] as EnemyBase
-		if is_instance_valid(en):
-			en.rewind_restore(d)
+		# ★★ 2026-10-05(修复轮 1,**评审 C-1**):`is_instance_valid()` **必须先于**类型收窄。
+		#   实测(评审在 `E:/tmp/t3` 副本里做的,实现者复现一致):**真 freed** 实例上
+		#   `x as EnemyBase` 抛 `SCRIPT ERROR: Trying to cast a freed object.` 并**中止整个 `_apply`**
+		#   ⇒ 同帧的 `_apply_bullets()` 整段被跳过(回放弹不重建/不摆位/引信不回写)。
+		#   而**改前**的旧码是 `is_instance_valid(d["n"]) and (d["n"] as Node).has_method(…)` ——
+		#   `and` 短路 ⇒ **永不**转型 freed 实例 ⇒ 0 错误。即:首版把转型提到判定之前,是**本包新引入的
+		#   运行期中止**,而它在既有探针里每跑 30+ 次(判词照样 `OK`)。
+		#   ★ 带子上留着 freed 实体是**改动前就存在**的条件(精英不保留尸体 `enemy_base.gd:316` +
+		#     它死前的帧留在 40s 带上 `TimeParams.SNAP_SECONDS = 40.0`)⇒ 这里的正确行为是
+		#     **计数 + 跳过**,不是报错。计数是观测量(`invalid_ref_count()`),不是"必须为 0"的断言。
+		#   ★ `var raw` **故意不加类型**:给 freed 实例做带类型的赋值(`var n: Node = d["n"]`)本身就会
+		#     碰那个实例(引擎有 "Trying to assign invalid previously freed instance" 那条路);
+		#     必须像旧码那样问**未定型 Variant**。
+		var raw = d["n"]
+		if not is_instance_valid(raw):
+			_invalid_refs += 1
+			continue
+		var en := raw as EnemyBase
+		if en == null:
+			push_error("WorldRewind: enemies 里出现非 EnemyBase 节点(%s)—— 本帧不为它回放" % str(raw))
+			continue
+		en.rewind_restore(d)
 	_apply_bullets(f["bullets"], player)
+	_apply_completed += 1       # ★ 完成度分子:走到这一行 = 本帧回放没被中止
 
 
 ## 子弹:按快照帧重建(不足则实例化,多余则隐藏)。回放期间子弹由本函数摆位,
@@ -281,9 +324,15 @@ func _apply_bullets(list: Array, player: Node) -> void:
 		#     旧:按名乱写、节点照旧入树;新:点名报错 + 该帧**不重建**它(记 null)。
 		var nb: BulletBase = null
 		if sp != "" and ResourceLoader.exists(sp):
-			nb = (load(sp) as PackedScene).instantiate() as BulletBase
+			var inst := (load(sp) as PackedScene).instantiate()
+			nb = inst as BulletBase
 			if nb == null:
-				push_error("WorldRewind: %s 不是 BulletBase —— 该帧回放弹不重建" % sp)
+				# ★ 2026-10-05(修复轮 1,**评审 M-4**):两处订正 ——
+				#   ① 转型失败时这个节点**既不入树也没有被谁引用** ⇒ 必须显式 `free()`,否则泄漏;
+				#   ② 措辞:下面 `while _replay_bullets.size() < list.size()` **只按长度补建** ⇒
+				#      一个 null 槽在**本次回溯窗口内**都不会被重试(不是"该帧不重建")。
+				push_error("WorldRewind: %s 不是 BulletBase —— 该槽位本次回溯内不再重建" % sp)
+				inst.free()
 			else:
 				if _parent != null and is_instance_valid(_parent):
 					_parent.add_child(nb)
@@ -307,18 +356,41 @@ func _apply_bullets(list: Array, player: Node) -> void:
 				#     所以缺陷要**回溯两次**才现形 —— 单次回溯的探针照不到。
 				nb.set_meta("scene_path", sp)
 		_replay_bullets.append(nb)
+	# ── 循环二/三:★ 2026-10-05(修复轮 1,**评审 I-2**):**先判有效性、再类型收窄** ──────────
+	#   与 `_apply()` 的敌人循环同一个形态(评审 C-1):`x as BulletBase` 对**真 freed** 实例抛
+	#   `Trying to cast a freed object.` 并**中止整个 `_apply_bullets`**(连后面"隐藏多余弹"一起跳过)。
+	#   ★ 为什么这里取到 freed 引用**今天不可达**(依据逐条可复核,别只信这句话):
+	#     ① `_replay_bullets` 只由本函数 `instantiate()` 填入、或填 `null`(没有第三方往里塞);
+	#     ② `begin()`(`:206` 一带)与 `finish()`(`:230` 一带)都会 `clear()` 整表;
+	#     ③ `Level0` 只在 `rewinding` 为真时 `step()`(`scenes/level_0.gd:833-835`),
+	#        而 `rewinding` 转假的那一帧就 `finish()`(`scenes/level_0.gd:827-828`);
+	#     ④ 回溯全程 `scenes/weapons/bullet_base.gd:70-71` 早退 ⇒ 重建弹的 5 条自毁路径
+	#        (`:84`/`:114`/`:119`/`:129`/`:134`)**一条都走不到**。
+	#     ★ 若哪天这条前提破了(未来新增全局清理 / 换场),这两处就是"抛错 + 整段中止";
+	#       故顺序本身就是不变量,不靠注释活着。
+	#   ★ `var raw` **故意不加类型**:给 freed 实例做 `var n: Node = …` 这种**带类型的赋值**本身就会
+	#     碰那个实例(引擎有 "Trying to assign invalid previously freed instance" 那条路);
+	#     旧码能安全跳过它,靠的正是"问的是**未定型 Variant** `is_instance_valid(d["n"])`"。
 	for i in list.size():
-		var nb2 := _replay_bullets[i] as BulletBase
-		if nb2 != null and is_instance_valid(nb2):
-			nb2.global_position = list[i]["p"]
-			nb2.velocity_vec = list[i]["v"]
-			# 引信**每帧**写回:倒退时引信跟着退(否则它会冻结在按下那一刻的剩余量)
-			nb2.apply_rewind_state(list[i].get("fuse", {}))
-			nb2.visible = true
+		var raw2 = _replay_bullets[i]
+		if not is_instance_valid(raw2):
+			continue
+		var nb2 := raw2 as BulletBase
+		if nb2 == null:
+			continue
+		nb2.global_position = list[i]["p"]
+		nb2.velocity_vec = list[i]["v"]
+		# 引信**每帧**写回:倒退时引信跟着退(否则它会冻结在按下那一刻的剩余量)
+		nb2.apply_rewind_state(list[i].get("fuse", {}))
+		nb2.visible = true
 	for i in range(list.size(), _replay_bullets.size()):
-		var nb3 := _replay_bullets[i] as BulletBase
-		if nb3 != null and is_instance_valid(nb3):
-			nb3.visible = false
+		var raw3 = _replay_bullets[i]
+		if not is_instance_valid(raw3):
+			continue
+		var nb3 := raw3 as BulletBase
+		if nb3 == null:
+			continue
+		nb3.visible = false
 
 
 # ── 查询/维护 ───────────────────────────────────────────────

@@ -147,6 +147,27 @@ func _run() -> void:
 	if rewind.recorded_seconds() >= t_peak:
 		_fail("二次回溯后磁带钟未回退(%.2f ≥ %.2f,回溯在倒放旧带)" % [t_peak, rewind.recorded_seconds()])
 
+	# ⑩ **完成度**:回溯里每一次 `step()` 都必须让 `_apply` **走到底**(2026-10-05 修复轮 1;来源 = 评审 C-1)。
+	#    ★ 为什么要有这一条:①-⑨ 全是**玩家域**的断言,而"这一帧的 `_apply` 有没有被中止"没有任何断言问过 ——
+	#    本包首版把 `d["n"] as EnemyBase` 放在了 `is_instance_valid()` **之前**,真 freed 实例上
+	#    `as` 抛 `Trying to cast a freed object.` 并**中止整个 `_apply`**(同帧 `_apply_bullets()` 整段被跳过:
+	#    回放弹不重建/不摆位/引信不回写,`Level0._rewind_elite_hits()` 拿到的是陈旧位置)。
+	#    这个病在本支探针里**每跑 36 次**、而判词照样打 `OK` —— 见下面那条 `freed 引用` 观测行。
+	#    ★ 判据口径(★ 评审订正过:**不许**写成 `invalid_ref_count() == 0`):带子上留着 freed 实体是
+	#    **改动前就存在**的条件(精英不保留尸体 + 死前帧留在 40s 带上),旧码靠 `and` 短路静默跳过 ⇒
+	#    断言"必须为 0"会**永久红**(恒红的守卫与恒绿的守卫一样没用)。故断言**完成度**:
+	#      `_apply` 走到底的次数 == `step()` 应当走完的次数(中止 ⇒ 分子短一截)。
+	var started := rewind.apply_started_count()
+	var done := rewind.apply_completed_count()
+	print("[rewind] 完成度: _apply %d/%d 走完;带子上 freed 引用 %d 个(观测量,不是断言)"
+			% [done, started, rewind.invalid_ref_count()])
+	if started <= 0:
+		_fail("完成度观测量没有样本(回溯期 step() 一次都没被调到)—— 本条会空转")
+	elif done != started:
+		_fail(("回溯里 `_apply` 没走完:%d/%d 次(差 %d)—— 它在类型收窄上撞到 freed 实例,**当场抛错并中止**"
+			% [done, started, started - done])
+			+ ";同帧的 `_apply_bullets()` 整段被跳过(回放弹不重建/不摆位/引信不回写)")
+
 	# ⑨ 生产端契约:`WorldRewind._snapshot_player()` 产出的**武器快照逐字段 == 真值**,且
 	#    **不许静默退化**。快照字典由这个函数产出,它此前用字符串反射读武器域 —— 成员名对不上
 	#    时 `get` **静默返回 null** ⇒ 那次真事故里那一帧的玩家快照整体退化成**空字典**
