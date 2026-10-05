@@ -262,13 +262,47 @@ func apply_completed_count() -> int:
 	return _apply_completed
 
 
-## `_apply_bullets()` 走到底的次数(★ 与 `apply_completed_count()` 是**两条独立的分子** —— 见 N-1)。
+## 子弹段**走完或无事可做**的帧数(★ 与 `apply_completed_count()` 是**两条独立的分子** —— 见 N-1)。
+## ★ 措辞按实况(修复轮 3,评审 A):`_apply()` 的**空帧早退**那一支会在 `_apply_bullets()` **从未被调用**时
+##   也给它 +1 ⇒ 它数的是"走完**或**无事可做的帧数",不是"函数被走到底的次数"。
 func apply_bullets_completed_count() -> int:
 	return _bullets_completed
 
 
 func invalid_ref_count() -> int:
 	return _invalid_refs
+
+
+## 回放完成度的**唯一判据**(2026-10-05 修复轮 3;来源 = 范围重审 **N-2**):
+## 正常返回 `""`,否则返回**一句**可直接当探针判词的错话(第一处命中即返回)。
+## ★★ 为什么判据住在产品侧而不是"三支探针各抄一份":三支 rewind 探针都要它,而
+##   (a) `tests/lib/` 的**现有**文件不许改;(b) **新增**任何 `.gd`(含 `tests/lib/`)会让
+##   `allscript_probe` 的 `EXPECTED_SCRIPTS` 由 287 变 288(实测 287 = `git ls-files '*.gd'`);
+##   (c) 这三支 `extends Node`、**不继承 `ProbeBase`** ⇒ "往 `ProbeBase` 加助手"对它们**根本不可达**。
+##   ⇒ 判据摆在计数器旁边才是它该在的地方;探针只剩"非空就 `_fail`"一行(抄三份**一轮内就漂移**过:
+##     上一轮 Minor ⑤ 的"分子 > 分母"分档只落到了 1/3 支)。
+## ★ **只读**:不写任何计数器、无副作用(三支探针每跑调用一次)。
+## ★ 两条硬口径:① `started <= 0` 的"没有样本"也在这里报(否则三支各自留着那句会再漂移);
+##   ② `分子 > 分母` 一律说"**计数点被改坏/重复计数**" —— **不许**说"没走完(差 -N)"(那是荒谬文案)。
+func replay_completion_error() -> String:
+	if _apply_started <= 0:
+		return "完成度观测量没有样本(回溯期 step() 一次都没被调到)—— 本条会空转"
+	if _apply_completed > _apply_started:
+		return "完成度分子超出分母:`_apply` %d/%d —— 计数点被改坏或重复计数(不是『没走完』)" % [
+				_apply_completed, _apply_started]
+	if _apply_completed != _apply_started:
+		return ("回溯里 `_apply` 没走完:%d/%d 次(差 %d)—— 它在类型收窄上撞到 freed 实例,**当场抛错并中止**"
+				% [_apply_completed, _apply_started, _apply_started - _apply_completed]
+				+ "(本条范围只是 `_apply()` 自己的函数体;`_apply_bullets()` 内的中止见后一条)")
+	if _bullets_completed > _apply_started:
+		return "完成度分子超出分母:`_apply_bullets` %d/%d —— 计数点被改坏或重复计数(不是『没走完』)" % [
+				_bullets_completed, _apply_started]
+	if _bullets_completed != _apply_started:
+		return ("回溯里 `_apply_bullets` 没走完:%d/%d 次(差 %d)—— 子弹段函数体内被中止 ⇒ 回放弹不重建/"
+				% [_bullets_completed, _apply_started, _apply_started - _bullets_completed]
+				+ "不摆位/引信不回写,后面『隐藏多余弹』也一起跳过。★ 它**不会**被前一条看见:"
+				+ "脚本错误只中止出错的那个函数、`_apply()` 照常走到末尾 +1(评审 N-1 的插桩实测)")
+	return ""
 
 
 ## 起步快放 → 1×(用已倒退量做 ramp;越倒越接近 1×)
