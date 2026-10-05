@@ -83,12 +83,16 @@ func _init() -> void:
 		print("WATER OK")
 		quit(0)
 
-# 缺 src 相用的裸宿主:游泳组件只碰 global_position / velocity,外加时间场那条判据要读的
-# `pvp_haste_mult`(TimeField.current 在 -s 阶段恒 null ⇒ 走 `parent.get("pvp_haste_mult")`)。
-# ★ 必须给这个字段:没有它 `float(null)` 会让**旧兜底那版**在函数中途报错,
+# 缺 src 相用的裸宿主:游泳组件只碰 global_position / velocity。
+# ★ 本字段(`pvp_haste_mult`)**已无读者**(2026-10-05 closeout 批 Task 3 之后 —— 下面那句要用**过去时**读):
+#   那时 `swim_component.gd` 在 `TimeField.current == null` 时走 `parent.get("pvp_haste_mult")` 的**字符串反射**;
+#   现在那一路改成**调用方注入**的 `haste_mult` 调用参数(`player.gd` 每次调用都给)⇒ 组件不再按名摸宿主。
+#   ★ 删掉本字段**不会让任何断言红**(本桩的用例都在 `src == null` 上早退、走不到那一支);
+#     本包按范围纪律**只订正注释、不删字段**(Ruling 明写"两个桩不用改")。
+# ★ 当年为什么必须给这个字段:没有它 `float(null)` 会让**旧兜底那版**在函数中途报错,
 #   于是"红"的原因变成类型转换而不是我们要钉的契约(假红,证据不可用)。
 class SwimHost extends CharacterBody2D:
-	var pvp_haste_mult := 1.0
+	var pvp_haste_mult := 1.0   # ← 已无读者(见上;历史遗迹,不是"为反射而给"的活接口)
 
 
 # 10×10 合成网格:y=5 整行水(tex21 全砖),y=6 整行实体墙,其余空气。
