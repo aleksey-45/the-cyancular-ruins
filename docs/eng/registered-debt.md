@@ -358,13 +358,26 @@
    - **什么时候能销**:按该探针自己的口径跑一次(池外 29200/29250、**不动 7777**、收尾只扫它自己那段、前后 `tasklist` 无 Godot),
      加一条"机器人宿主在真对局里确实出了弹"的断言 —— 顺带把 §一 第一条那笔"修复后无整跑判决"一起结掉。
 
-7. **「回溯退出必须读未被冻结的输入」这条不变量没有落纸**(2026-10-04 由 Plan B Task 6 复核发现；owner 未认领)。
-   - **陷阱**：`scenes/pvp_match_client.gd:231` 读全局 `Input.is_action_pressed("rewind")`；**看着像** §2.6 的同类，
-     但同一函数 `:236` 会把**同一个** `src`（`_local.input_source`）置 `frozen = true` ⇒ 若照 §2.6 改成
-     `src.is_action_pressed("rewind")`，`want` 会**恒 false** ⇒ 每帧冻/解冻抖动、**回溯永远出不来**。
+7. **「回溯退出必须读未被冻结的输入」这条不变量:已落纸 + 已有形状守卫；★ 行为侧仍无 headless 守卫**
+   (2026-10-04 由 Plan B Task 6 复核发现；**2026-10-05 closeout 批 Task 3 补注释与守卫并改口**，提交 `fa5d32d`)。
+   - **不变量**：`_tick_beta_rewind` 进出两条路读的必须是**宿主自己那一个** `input_source`
+     （`_local.input_source`；实测改后在 `scenes/pvp_match_client.gd:248` 与 `:254`）—— 同一函数会把
+     **同一个**对象置 `frozen = true`（改后 `:250`）。若换成"注入的另一个源"，解冻就落不到玩家真读的那个源上
+     ⇒ `want` 恒 false / 输入永不恢复 ⇒ **回溯出不来**（每帧冻/解冻抖动）。
+     ★ 行号口径：上面那两句原文写的是 `:231`/`:236`，那是**改前**的行号；本包在同一文件里加了三段注释 ⇒
+     一律按内容 `grep` 复核（`grep -n "input_source" scenes/pvp_match_client.gd`），别再抄行号。
+   - **已做**：① 不变量写进 `_tick_beta_rewind` 的代码注释（该函数第一段，点名"冻结与解冻必须是同一个对象"
+     与 `player.set_controls_locked()` 那条写路）；
+     ② **形状守卫** = `tests/probe/rewind_weapon_probe.gd` 的 **S11**：`_local.input_source` 在
+     `_tick_beta_time`/`_tick_beta_rewind`/`_tick_time_fx` 三段里必须**恰好出现 2 次**，且
+     `src.frozen = true` / `src2.frozen = false` 两个**类型化**写法在位。
+     **实测证据（本包变异 M12）**：把出冻结那一路改成读 `null`（= "换成别的源"的等价形态）⇒ 该条**红**，
+     实得 `缺 ["_local.input_source ×2(实得 1)"]`。
+   - **仍未做的（照实）**：「松开 rewind 之后输入真的恢复」这一**行为**在 headless 里够不到 ——
+     这条链只在 `PvpSession.beta_mode` 的 PvP 局里跑（`_tick_beta_time` 首行早退）⇒ **归真链路批 A**。
+     判据：松开后 `_local.input_source.frozen` 必须回到 false、角色能动、底片卸掉。
    - **现状**：权威侧干净（客户端 `pack_record(_local.input_source)` → 服务器读包里那位 `src.haste_held()`，
      见 `server/match/match_host.gd:214-215`）⇒ **不改行为**。
-   - **该做的**：把这条不变量写进代码注释，或补一条守卫钉"回溯退出读的口**不是**被冻的那个 src"。
 8. **工作区 EOL 漂移：`.gd` 也有**(2026-10-04 实测；benign)。
    - `player_contract_smoke.gd` 的工作区是 CRLF，仓内另有若干 `.gd` 同样（**入库 blob 都是 LF**；`git status` 看不见）。
    - **为什么无害**：`* text=auto eol=lf` 在 `add` 时归一 ⇒ 入库形态正确；Godot 两种都读。
@@ -382,16 +395,31 @@
    （`core/sim/maze_generator.gd:44` `maps[randi() % maps.size()]`）⇒ **同版本两次跑结论可能相反**、**不能当基线**；
    修法 = 用 `set_map_file` 钉图。★ **已修（2026-10-04，`c5804f4`）**：`climb_probe` 现已钉 `demo.cyrm`；钉图前连跑 6 次得 **3:3 两种互斥结论**，钉图后 md5 全等且与 demo 那一支逐字节相同。
 
-12. **同族反射的两处"要动类结构"残留（候选批次，未立项）**(2026-10-04 由 Plan B Task 3 定位报告；owner 未认领)。
-   - **残留**：`scenes/player/swim_component.gd:39` 的 `parent.get("pvp_haste_mult")`、`core/sim/world_rewind.gd:95` 的 `player.get("weapons")`
-     —— 两者读的都是 **player 根**（`CharacterBody2D`）上的成员，而 **player 根没有 `class_name`** ⇒ 想类型化就得给根加全局类名。
-   - **加 `class_name Player` 的爆炸半径（实测）**：会当场打掉两个**刻意造成的裸宿主桩**
-     （`tests/probe/water_probe.gd` 的 `class SwimHost extends CharacterBody2D`、`tests/smoke/player_contract_smoke.gd` 的 `class ClimbHost`
-     —— 它们的注释写着该字段"为反射而给"），并外溢到 `scenes/player/climb_component.gd:133` / `scenes/weapons/weapon_base.gd:367`（读同一字段）；
-     且 `player.gd` 是全仓最大的文件，上全局类名还要考虑**全局类缓存 / 命名冲突 / 导出侧**。
-   - **★ 首选修法是"参数注入"而不是"给根加类型"**：让 `update(...)` / `rewind_*` 多收一个参数（`haste_mult: float` / `weapons` 组件），
-     调用方自己把它传进来 —— 这与 §2.6 的精神一致（**别伸手读宿主，让它注进来**），且**不需要动那两个测试桩**（参数类型仍是 `CharacterBody2D`）。
-   - **翻案条件**：立一个专批把这两处（连同 `climb_component.gd:133` / `weapon_base.gd:367`）改成参数注入 ⇒ 销账并附提交号。
+12. **同族反射的残留：`pvp_haste_mult` 那一半已销账；`player.get("weapons")` 改口为"已裁定保留 + 有逐名守卫"**
+   (2026-10-04 由 Plan B Task 3 定位；**2026-10-05 closeout 批 Task 3 按实况改口**，提交 `fa5d32d`)。
+   - **已销账的那一半**（原第一处残留，原文写 `scenes/player/swim_component.gd:39`）：
+     `pvp_haste_mult` 一族的**三处读**（`swim_component.gd` / `climb_component.gd` / `weapon_base.gd`）
+     与 **PvP 客户端那一处写**（`pvp_match_client.gd` 的 `_tick_beta_time`，改后 `:221`）**全部不再走字符串反射**：
+     · `swim.update` ⇒ **调用参数** `haste_mult`（根 `player.gd:277` 传 `tm`）；
+     · `climb` / `weapon_base` ⇒ **根每帧推入的注入成员** `haste_mult`
+       （根 `player.gd:201` 的 `_push_haste_mult()`，两个推送点 `:226` 在 `weapons.tick` 之前、`:257` 在切枪之后）；
+     · **没有**给 `player` 根加 `class_name` ⇒ 两个**刻意造裸**的测试桩一字节未改。
+     ★ **措辞订正**：原条目写"改成**参数注入**"，而实际两处用的是**注入成员** ——
+     理由是**宿主引用**只在 `_ready` / `equip` 里给一次、而**倍率每帧在变** ⇒ 只能每帧注。
+     更准的说法是"**把倍率注进来，别伸手读宿主**"；参数与成员只是两种载体。
+     （★ 注意：这不等于"`climb.update` 不能被加参数" —— 它本身也是每帧被根调用的；
+     差别只在**宿主引用何时给入**。原条目那句理由要按这个说法读。）
+   - **形状守卫**：`tests/probe/rewind_weapon_probe.gd` 的 **S10** —— 全仓（`res://scenes|core|server`）
+     那 4 种反射形态为 0 + 四个类型化站点（属主自读 / PvP 客户端写 / **服务端权威写** / 快照读）逐条在位
+     + 三处注入弧逐条在位。**行为守卫**：S10 的游泳/攀爬/出膛弹速三条比值 + 权威侧一条
+     （用**与 `match_host.gd:223` 逐字同款**的写法改字段，看消费点是否跟着变）。
+   - **改口的那一半**（原第二处残留，原文写 `core/sim/world_rewind.gd:95`）：
+     `player.get("weapons") as WeaponComponent` —— **保留**。理由（与 S7 同款）：玩家根**没有** `class_name`，
+     这一层是**唯一允许**按名取组件的地方；而且它已经**不是静默**的（R1 的 `as` + `push_error` 点名 +
+     返回已收集部分）。**守卫**：S7 已把它逐名收编进 `PRODUCER_NAMED_PLAYER_ACCESS`（那 5 处按名访问各一条
+     `_has_member_token`）⇒ 它**不再是"未认领的候选"**，而是"**已裁定保留 + 有逐名守卫**"。
+   - **翻案条件（不变）**：真要把它也类型化 ⇒ 给玩家根上全局类名；那要单独立项并评估爆炸半径
+     （打掉两个裸桩 + 全局类缓存 / 命名 / 导出侧）。
 
 13. **「武器子字典经 `record()` → `rewind_restore()` 的端到端写回」没有守卫**(2026-10-04 由 Plan B Task 3 的逐任务评审**收窄措辞**后登记；owner 未认领)。
    - **真实措辞（★ 比 Task 3 首次报告里写的窄）**：报告原写"`record()` 把生产端输出写进 `_frames` 这一步没有断言"——**太宽**。
