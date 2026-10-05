@@ -561,8 +561,13 @@
      `top` 回到起点后条件**仍然成立** ⇒ **永不退出**。★ 不是"整张图全水"才触发：**任何一列**全液即可。
    - **现象（实测）**：探针里给那一相造"全水"合成网格时，进程**卡死**（外层 `timeout` 才结束），
      而**日志里一行错误都没有**；`top` 无从收敛，主循环不再迭代（`--quit-after` 也不会触发）。
-   - **为什么没被现有守卫抓到**：真图（`maps/*.cyrm`）今天没有全液列 ⇒ 生产路径碰不到；
+   - **为什么没被现有守卫抓到**：真图（`maps/*.cyrm`）**实测某日（2026-10-05）没有全液列** ⇒ 生产路径碰不到；
      它只在"合成世界/未来地图"里现形，而探针后来改用"上空气 + 下水的带状网格"（与真图同形）绕开了它。
+     ★★ **2026-10-05 修复轮 2 的实测复核（答复评审"未验证"项）**：一次性 `-s` 脚本遍历 `maps/*.cyrm` 的
+     **每一列**、逐格判"是否整列液体"（无迭代上限的那个循环**不能**直接调，故用**等价的有界判据**；
+     脚本原文与输出见 `task-3-report.md` §13）⇒ **两张在库图都没有全液列**。
+     ★ 口径按实测**降级**为"**实测某日无全液列**"，**不写成"真图碰不到"**（地图会变；且这条只覆盖
+     `maps/` 里的在库图，不覆盖运行期生成的图）。
    - **本包不修产品代码**（范围纪律）⇒ 只登记。**翻案条件（具体可验）**：给那个 `while` 加 **`rows` 次上限**，
      或在 `top == c.y`（绕回起点）时 `break`；并补一条**纯逻辑 `-s` 断言**：全液列必须在**有限步**内返回
      （今天这条断言写出来就会**挂**，故必须先修再写，或写成"带步数上限的调用"）。
@@ -570,9 +575,23 @@
    (2026-10-05 由 closeout 批 Task 3 的逐任务评审 I-3 判为**过度声明**并要求登记；owner 未认领)。
    - **被订正的那句话**：Task 3 的探针与报告里有 9 处把 T10/T11 的行为判据写成"**归真链路批 A**"。实测复核
      （评审 R43 + 实现者复核）：**批 A 结构上碰不到它们** ——
-     ① `PvpSession.beta_mode` 全仓只有 [`scenes/beta_menu.gd`](../../scenes/beta_menu.gd):131（要人在主菜单点 Beta 页）
-     与 `tests/probe/lobby_create_form_probe.gd`（只建大厅面板）置真；
-     ② 10 支真链路脚本（`tests/{smoke,probe}/*.sh`）里 `beta|haste|rewind|time` **零命中**；
+     ① `PvpSession.beta_mode` 的写点全仓只有三处，**没有一处落在自动化对局里**：
+     [`scenes/beta_menu.gd`](../../scenes/beta_menu.gd):131（**要人点 Beta 页**，**或**走 `main_menu.gd` 的
+     `-- --autotest-*` 钩子 —— 见下面②之前那半条）、`tests/probe/lobby_create_form_probe.gd`（只建大厅面板，不建局）、
+     以及——★★ **2026-10-05 修复轮 2（评审 Minor ⑧）补上的那个驱动者**——
+     [`tests/smoke/menu_autotest.gd`](../../tests/smoke/menu_autotest.gd) 的 `_run_beta_flow()`（`:158` 起）：它经
+     [`scenes/main_menu.gd`](../../scenes/main_menu.gd):151-172 的 `-- --autotest-*` 钩子走**就是** `beta_menu.gd:131`
+     那条路，**headless 可达**；但今天它被 [`tests/run_all.sh`](../../tests/run_all.sh):142 的 `EXCLUDED` 挡在批外，
+     **且没有任何脚本调用它** ⇒ "无自动化路径"的**结论仍成立**，只是口径要写成"**要人点 / 或走
+     `main_menu.gd` 的 `--autotest-*` 钩子**"。★ 并且这条恰好说明**翻案条件①其实已有半成品** ——
+     那条路**只差**"最后一步真建局 + 进对局"。
+     ② 真链路脚本**零命中**（★ 2026-10-05 修复轮 2 / 评审 Minor ③：换成**可复现**的命令 —— 裸 grep 会命中
+     2 支脚本里的 `timeout` 子串，那是**反证**、不是命中）：
+     ```bash
+     grep -lwE 'beta|haste|rewind|time' tests/smoke/*.sh tests/probe/*.sh                  # 词边界 ⇒ 0 支
+     grep -lE 'beta_mode|haste|rewind|TimeField|_time_' tests/smoke/*.sh tests/probe/*.sh   # 只认关键词 ⇒ 0 支
+     grep -lE 'beta|haste|rewind|time' tests/smoke/*.sh tests/probe/*.sh                    # 反证 ⇒ 2 支(rejoin/team_match 的 timeout)
+     ```
      ③ 客户端那 7 处所在的三个函数全在同一道 `beta_mode` 闸后（[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) 的 `_tick_beta_time` 首行早退）；
      ④ 服务端那一写同理：[`server/match/match_host.gd`](../../server/match/match_host.gd) 的那三段全在
      `if time_economy != null:` 内，而 `time_economy` 只在 `options["time"]` 非空时建 ⇒ **普通真链路里
