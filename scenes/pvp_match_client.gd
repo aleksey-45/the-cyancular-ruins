@@ -212,7 +212,13 @@ func _tick_beta_time(delta: float) -> void:
 	if not PvpSession.beta_mode or _local == null:
 		return
 	var on := Input.is_action_pressed("haste") 			and _time_mirror != null and _time_mirror.can_spend()
-	(_local as Node2D).set("pvp_haste_mult", _time_haste_mult if on else 1.0)
+	# ★ 2026-10-05(closeout 批 Task 3,T10 与 T11 的**同一处重叠**):这一行既是 T10 说的
+	#   "`pvp_haste_mult` 的那一处写"、也是 T11 七处对象反射里的一处 —— **归属 T10**
+	#   (倍率注入化那一节),T11 **不再碰它**,免得同一行改两次。
+	#   ★ 原先写的是 `(_local as Node2D).set("pvp_haste_mult", …)`(字符串反射);现在点访问。
+	#   依据:R11 明令不给 player 根加 `class_name`,而同文件 `:134` 早有 `_local.weapons.…`
+	#   的先例(玩家根无类名也能点访问,`_local` 的静态类型是 `Node2D`)。
+	_local.pvp_haste_mult = _time_haste_mult if on else 1.0
 	# 压暗(用户裁定:PvP 也补,但只在发动者本人视角)—— 100ms ramp 与单机同款
 	_haste_dim_t = clampf(_haste_dim_t + (delta / 0.1 if on else -delta / 0.1), 0.0, 1.0)
 	var pp := get_tree().get_first_node_in_group("post_process") as PostProcess
@@ -227,19 +233,27 @@ func _tick_beta_time(delta: float) -> void:
 # ★ 位置不本地预测 —— 服务器每帧权威写回(C2 的 on_authoritative 就是那条路);
 #   本地只负责"站着 + 看底片 + 免伤"。
 func _tick_beta_rewind(delta: float) -> void:
-	var downed: bool = (_local as Node).call("is_downed") if _local.has_method("is_downed") else false
+	# ★ 2026-10-05(closeout 批 Task 3,T11):下面 5 处(下标 / 冻结对)原先都是**对象反射**
+	#   (`.call("is_downed")` / `.get("input_source")` / `.set("frozen")`),现全改点访问。
+	# ★★ **刻意不改成"注入源"**:进/出两条路读的必须是**宿主自己那一个** `input_source` ——
+	#   若换成另一个对象去冻结,解冻就落不到玩家真读的那个源上 ⇒ **死锁**(债单 §六.7,
+	#   同一函数 `src.frozen = true` 与 `player.set_controls_locked()` 是同一个对象的两条写路)。
+	#   ⇒ 这两处保持"读 `_local.input_source`"的**形状**(S11 那条 `×2` 的计数判据钉的就是它)。
+	# ★ 与 `:134` 的 `_local.weapons.…` 同款:玩家根没有 `class_name`,但 `_local` 是 `Node2D`
+	#   引用 ⇒ 点访问可用(拼错成员名时**当场报错**,不再静默)。
+	var downed: bool = _local.is_downed()
 	var want := Input.is_action_pressed("rewind") 			and _time_mirror != null and _time_mirror.can_spend() and not downed
 	if want and not _time_rewinding:
 		_time_rewinding = true
-		var src = (_local as Node).get("input_source")
+		var src: PlayerInput = _local.input_source
 		if src != null:
-			src.set("frozen", true)
+			src.frozen = true
 		(_local as Node).set_meta("time_rewinding", true)
 	elif not want and _time_rewinding:
 		_time_rewinding = false
-		var src2 = (_local as Node).get("input_source")
+		var src2: PlayerInput = _local.input_source
 		if src2 != null:
-			src2.set("frozen", false)
+			src2.frozen = false
 		if (_local as Node).has_meta("time_rewinding"):
 			(_local as Node).remove_meta("time_rewinding")
 	# 底片覆盖度 ramp(推进 ≤0.2s;退出 0.1s 收)
@@ -291,7 +305,9 @@ func _tick_time_fx(delta: float, self_hasting: bool) -> void:
 		_fx_self_t -= delta
 		if _fx_self_t <= 0.0:
 			_fx_self_t = 0.03
-			var anim: AnimatedSprite2D = _local.get("animator")
+			# ★ 2026-10-05(closeout 批 Task 3,T11):原先是 `_local.get("animator")`(反射);
+			#   现点访问 + 显式 `as`(玩家根没有 `class_name`,故静态类型是 Variant,须自己收窄)。
+			var anim := _local.animator as AnimatedSprite2D
 			if anim != null:
 				var red := int(Time.get_ticks_msec() / 60) % 2 == 0
 				AfterImage.spawn((_local as Node).get_parent(), anim,

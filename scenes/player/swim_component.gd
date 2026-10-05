@@ -9,7 +9,7 @@ var in_water: bool = false
 
 
 func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.ONE,
-		src: PlayerInput = null) -> bool:
+		src: PlayerInput = null, haste_mult: float = 1.0) -> bool:
 	# ★★ 2026-10-04(审计 §2.6 的**第 4 处**,与武器那三处同款):这里原先缺 src 就**自己造一个
 	#   读真实输入总线的本地源**兜底。那让本组件能从全局输入总线偷读,而且**完全不报错**;
 	#   在权威服务器 / 回放 / 预测下那是错的来源(headless 服务器读到的是**宿主机桌面**的按键
@@ -32,11 +32,18 @@ func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.
 	# ★★ 2026-10-03 修:**PvP 下这条原先恒 1** —— `TimeField.current` 只由单机 Level0 创建
 	#   ⇒ PvP 里 `player_speed_mult()` 恒 1.0,与本行上面那句注释直接矛盾。
 	#   改成与根 `player.gd:191` 同一条判据:有世界时间场走它,否则读 `pvp_haste_mult`。
-	var tm := 1.0
+	# ★★ 2026-10-05(closeout 批 Task 3 / T10,审计 §2.5 的同族):PvP 那一半原先走
+	#   `parent.get("pvp_haste_mult")` —— **字符串反射**,而 `parent` 的静态类型是
+	#   `CharacterBody2D`(玩家根没有 `class_name`,给它上类型要动类结构,R11 已否)。
+	#   现在改成**调用方注入**的 `haste_mult` 参数(根每次调用都给,见 `player.gd` 的
+	#   `swim.update(self, delta, mult, input_source, tm)`)⇒ 组件不再按字符串名摸宿主。
+	#   ★ 单机那一支**原样保留**(`TimeField.current != null` 时仍自己问世界时间场):它是
+	#     "世界时间"域,不是宿主属性,去掉会把单机水中的加速一起改掉。
+	#   ★ 覆盖上限(照实):默认值 1.0 ⇒ **调用方忘了传**就是"静止加速",静默降级(不报错)。
+	#     钉住它的是 `tests/probe/rewind_weapon_probe.gd` 的 S10(形状 + 行为两条)。
+	var tm := haste_mult
 	if TimeField.current != null:
 		tm = TimeField.player_speed_mult()
-	else:
-		tm = float(parent.get("pvp_haste_mult"))
 	if tm <= 0.0:
 		tm = 1.0
 	# 水平游泳(吃武器移动惩罚 move_mult.x)

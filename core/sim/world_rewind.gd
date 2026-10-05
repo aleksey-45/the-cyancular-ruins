@@ -39,32 +39,55 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 		return
 	_acc = 0.0
 	var pe: Array = []
-	for e in enemies:
-		if not is_instance_valid(e) or e.has_meta("elite"):
+	for node in enemies:
+		if not is_instance_valid(node) or (node as Node).has_meta("elite"):
+			continue
+		# ★★ 2026-10-05(closeout 批 Task 3 / T12):这一段原先四处都是**字符串反射**
+		#   (`e.get("velocity")` / `e.get("hp")` / `e.get("is_dead")`)。反射的失败形态实测过:
+		#   成员名对不上时 `get` **静默返回 null**,而 `int(null)` 会**当场抛错并中止整个
+		#   `record()`** ⇒ 这一帧**压根不入快照**(与 `_snapshot_player()` 那次空字典事故同族)。
+		#   现在类型化 —— `EnemyBase` 已有 `class_name`(scenes/enemies/enemy_base.gd:1),
+		#   **未动类结构**;拼错成员名变成**点名成员**的运行期错(买到的不是编译期红,理由同
+		#   `_snapshot_player()` 那段注释)。
+		# ★ 行为差(照实):`enemies` 里混进**非 EnemyBase** 的节点(只有测试桩会这么干)时 ——
+		#   旧:读到 null ⇒ `int(null)` 炸掉整帧;新:点名报错 + **跳过这一件**、本帧照常入快照。
+		#   真机不可达:全仓只有 `enemy_base.gd:69` 往 `enemies` 组里加节点。
+		var e := node as EnemyBase
+		if e == null:
+			push_error("WorldRewind: enemies 里出现非 EnemyBase 节点(%s)—— 本帧不为它入快照"
+					% str(node))
 			continue
 		pe.append({
 			"n": e,
-			"p": (e as Node2D).global_position,
-			"v": e.get("velocity"),
-			"hp": int(e.get("hp")),
-			"dead": bool(e.get("is_dead")),
-			"vis": (e as Node2D).visible,
+			"p": e.global_position,
+			"v": e.velocity,
+			"hp": e.hp,
+			"dead": e.is_dead,
+			"vis": e.visible,
 		})
 	var pb: Array = []
-	for b in bullets:
-		if not is_instance_valid(b):
+	for node in bullets:
+		if not is_instance_valid(node):
 			continue
-		var sh = b.get("shooter")
-		# 引信/射程状态(爆炸弹"还剩多久炸")。不进快照 → 回溯重建的榴弹退回未点燃 →
-		# 在错误时刻爆炸 + 松手贴脸起爆(见 BulletBase.rewind_state 的注释)。
-		var fuse_state: Dictionary = b.call("rewind_state") if b.has_method("rewind_state") else {}
+		# ★★ 2026-10-05(closeout 批 Task 3 / T12):子弹这一段同理(`b.get("velocity_vec")` /
+		#   `b.call("rewind_state")` / `b.get("hit_damage")` …)。`BulletBase` 已有 `class_name`
+		#   (scenes/weapons/bullet_base.gd:1)⇒ 未动类结构。
+		#   ★ 引信/射程状态(爆炸弹"还剩多久炸")必须逐帧带:`rewind_state()` 不再是"按名猜有没有"。
+		var b := node as BulletBase
+		if b == null:
+			push_error("WorldRewind: bullets 里出现非 BulletBase 节点(%s)—— 本帧不为它入快照"
+					% str(node))
+			continue
+		var sh := b.shooter
+		# 进快照 → 回溯重建的榴弹不会退回未点燃(见 BulletBase.rewind_state 的注释)。
+		var fuse_state: Dictionary = b.rewind_state()
 		pb.append({
 			"sp": str(b.get_meta("scene_path", "")),
-			"p": (b as Node2D).global_position,
-			"v": b.get("velocity_vec"),
-			"from_player": sh != null and sh is Node and (sh as Node).is_in_group("player"),
-			"dmg": int(b.get("hit_damage")),
-			"impact": float(b.get("hit_impact")),
+			"p": b.global_position,
+			"v": b.velocity_vec,
+			"from_player": sh != null and sh.is_in_group("player"),
+			"dmg": b.hit_damage,
+			"impact": b.hit_impact,
 			"fuse": fuse_state,
 		})
 	_frames.append({
@@ -235,8 +258,12 @@ func _apply(f: Dictionary, player: Node) -> void:
 	if is_instance_valid(player) and player.has_method("rewind_restore"):
 		player.rewind_restore(f["player"])
 	for d in f["enemies"]:
-		if is_instance_valid(d["n"]) and (d["n"] as Node).has_method("rewind_restore"):
-			(d["n"] as Node).rewind_restore(d)
+		# ★ 2026-10-05(closeout 批 Task 3 / T12):原先是 `(d["n"] as Node).has_method("rewind_restore")`
+		#   + 按名调用;现在类型化(`EnemyBase` 有 `class_name`,且 `rewind_restore` 就在它身上)。
+		#   名字对不上时旧写法是"静默跳过这一件"(整只怪不还原),新写法当场报错。
+		var en := d["n"] as EnemyBase
+		if is_instance_valid(en):
+			en.rewind_restore(d)
 	_apply_bullets(f["bullets"], player)
 
 
@@ -246,44 +273,52 @@ func _apply_bullets(list: Array, player: Node) -> void:
 	while _replay_bullets.size() < list.size():
 		var meta: Dictionary = list[_replay_bullets.size()]
 		var sp := str(meta["sp"])
-		var nb: Node = null
+		# ★★ 2026-10-05(closeout 批 Task 3 / T12):这一段的 `set(…)`/`call(…)` 原先全是**字符串
+		#   反射**。两种失败形态都实测过同族:`set` 拼错成员名**静默不写**(弹速/伤害/引信悄悄丢),
+		#   `call` 拼错方法名**当场报错并中止本函数**(连后面那些写回一起跳过)。现在类型化。
+		#   ★ 行为差(照实):`scene_path` 指向**非 BulletBase** 场景时(今天不可达:唯一写这份
+		#     meta 的地方是 `WeaponBase._spawn_projectiles`,写的都是子弹场景)——
+		#     旧:按名乱写、节点照旧入树;新:点名报错 + 该帧**不重建**它(记 null)。
+		var nb: BulletBase = null
 		if sp != "" and ResourceLoader.exists(sp):
-			nb = (load(sp) as PackedScene).instantiate()
-			if _parent != null and is_instance_valid(_parent):
-				_parent.add_child(nb)
-			elif player != null and is_instance_valid(player):
-				player.get_parent().add_child(nb)
-			(nb as Node2D).global_position = meta["p"]
-			nb.set("velocity_vec", meta["v"])
-			if bool(meta["from_player"]):
-				nb.set("shooter", player)
-			nb.set("apply_damage", true)
-			nb.set("hit_damage", int(meta.get("dmg", 0)))
-			nb.set("hit_impact", float(meta.get("impact", 0.0)))
-			if nb.has_method("apply_rewind_state"):
-				nb.call("apply_rewind_state", meta.get("fuse", {}))
-			# ★★ 2026-10-03 修:重建出来的弹**必须补上 `scene_path`**,否则**第二次回溯它就没了**。
-			#   环缓存的是 `b.get_meta("scene_path")`(见 `record()` 那行),而写这份 meta 的**唯一**
-			#   地方是 `WeaponBase._spawn_projectiles`(出膛那一刻)。重建的弹绕过了那条路 ⇒ 它身上
-			#   没有 meta ⇒ 退出回溯后它作为**活弹**继续飞,再被 `record()` 时 `sp` 记成**空串**
-			#   ⇒ 下一次 `_apply_bullets` 里 `sp == ""` ⇒ 不实例化、`append(null)` ⇒ **子弹凭空消失**。
-			#   ★ 这正是用户实测的"第一次回溯正常、第二次回溯子弹直接消失"。
-			#   ★ 为什么第一次没事:那一颗是**真**出膛的,meta 齐全;坏的是**重建**出来的那一代,
-			#     所以缺陷要**回溯两次**才现形 —— 单次回溯的探针照不到。
-			nb.set_meta("scene_path", sp)
+			nb = (load(sp) as PackedScene).instantiate() as BulletBase
+			if nb == null:
+				push_error("WorldRewind: %s 不是 BulletBase —— 该帧回放弹不重建" % sp)
+			else:
+				if _parent != null and is_instance_valid(_parent):
+					_parent.add_child(nb)
+				elif player != null and is_instance_valid(player):
+					player.get_parent().add_child(nb)
+				nb.global_position = meta["p"]
+				nb.velocity_vec = meta["v"]
+				if bool(meta["from_player"]):
+					nb.shooter = player
+				nb.apply_damage = true
+				nb.hit_damage = int(meta.get("dmg", 0))
+				nb.hit_impact = float(meta.get("impact", 0.0))
+				nb.apply_rewind_state(meta.get("fuse", {}))
+				# ★★ 2026-10-03 修:重建出来的弹**必须补上 `scene_path`**,否则**第二次回溯它就没了**。
+				#   环缓存的是 `b.get_meta("scene_path")`(见 `record()` 那行),而写这份 meta 的**唯一**
+				#   地方是 `WeaponBase._spawn_projectiles`(出膛那一刻)。重建的弹绕过了那条路 ⇒ 它身上
+				#   没有 meta ⇒ 退出回溯后它作为**活弹**继续飞,再被 `record()` 时 `sp` 记成**空串**
+				#   ⇒ 下一次 `_apply_bullets` 里 `sp == ""` ⇒ 不实例化、`append(null)` ⇒ **子弹凭空消失**。
+				#   ★ 这正是用户实测的"第一次回溯正常、第二次回溯子弹直接消失"。
+				#   ★ 为什么第一次没事:那一颗是**真**出膛的,meta 齐全;坏的是**重建**出来的那一代,
+				#     所以缺陷要**回溯两次**才现形 —— 单次回溯的探针照不到。
+				nb.set_meta("scene_path", sp)
 		_replay_bullets.append(nb)
 	for i in list.size():
-		var nb2 = _replay_bullets[i]
-		if is_instance_valid(nb2):
-			(nb2 as Node2D).global_position = list[i]["p"]
-			nb2.set("velocity_vec", list[i]["v"])
+		var nb2 := _replay_bullets[i] as BulletBase
+		if nb2 != null and is_instance_valid(nb2):
+			nb2.global_position = list[i]["p"]
+			nb2.velocity_vec = list[i]["v"]
 			# 引信**每帧**写回:倒退时引信跟着退(否则它会冻结在按下那一刻的剩余量)
-			if nb2.has_method("apply_rewind_state"):
-				nb2.call("apply_rewind_state", list[i].get("fuse", {}))
-			(nb2 as Node2D).visible = true
+			nb2.apply_rewind_state(list[i].get("fuse", {}))
+			nb2.visible = true
 	for i in range(list.size(), _replay_bullets.size()):
-		if is_instance_valid(_replay_bullets[i]):
-			(_replay_bullets[i] as Node2D).visible = false
+		var nb3 := _replay_bullets[i] as BulletBase
+		if nb3 != null and is_instance_valid(nb3):
+			nb3.visible = false
 
 
 # ── 查询/维护 ───────────────────────────────────────────────

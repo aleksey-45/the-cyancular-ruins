@@ -6,6 +6,13 @@ extends Node
 
 var body: CharacterBody2D
 
+# 加速倍率(PvP):由**根每物理帧推入**(`player.gd` 的 `_push_haste_mult`)。
+# ★ 为什么是"注入成员"而不是 `update()` 的调用参数或构造参数:宿主引用只在 `_ready` 里拿一次
+#   (`body = get_parent()`),而倍率**每帧都在变**(按住加速键才 >1)⇒ 只能每帧推。
+# ★ 覆盖上限(照实):默认 1.0 ⇒ 调用方忘推 = 静默不加速(不报错)。钉它的是
+#   `tests/probe/rewind_weapon_probe.gd` 的 S10(形状 + 行为两条:梯上 vy 随倍率变)。
+var haste_mult: float = 1.0
+
 var _latched: bool = false   # 攀附状态:中心在通道格(梯/锁链)即攀附,不受重力
 
 # (此处原有 const STOP_SNAP := 1.0 —— **死副本**:全仓零使用,注释描述的是一个从未接线的意图。
@@ -125,10 +132,11 @@ func _climb_foot_offset() -> float:
 #   的注释自相矛盾(一下水/一上梯,加速就没了)。
 #   改成与根 `player.gd:191` **同一条判据**:有世界时间场就走它,否则读自己那个
 #   `pvp_haste_mult`(worker 与本端预测各自每帧写的同一字段)。
+# ★★ 2026-10-05(closeout 批 Task 3 / T10):那一半原先走 `body.get("pvp_haste_mult")` ——
+#   **字符串反射**,而 `body` 的静态类型是 `CharacterBody2D`(玩家根没有 `class_name`)。
+#   现在读**根每帧推入**的注入成员 `haste_mult`(见该成员上方)。单机那一支**原样保留**。
 func _time_mult() -> float:
-	var m := 1.0
+	var m := haste_mult
 	if TimeField.current != null:
 		m = TimeField.player_speed_mult()
-	elif body != null:
-		m = float(body.get("pvp_haste_mult"))
 	return m if m > 0.0 else 1.0

@@ -179,9 +179,30 @@ var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成
 # Beta 时间玩法(PvP):**服务器/本地预测**写入的加速倍率(1 = 常速)。
 # 单机不走这里(走 TimeField.player_speed_mult);PvP 的 TimeField.current 为 null,
 # 由 worker(权威)与本端(预测)按输入位 + 颗粒余额各自写入同一个字段。
+# ★★ 2026-10-05(closeout 批 Task 3 / T10):本字段现在也是**分发源** —— 上面那句 `tm` 是
+#   全仓**唯一**读它的地方,再由 `_push_haste_mult()` 推给三个消费点(游泳走调用参数、
+#   攀爬与当前武器走注入成员)。★ 服务端那一写(`match_host.gd:223`)与快照那一读
+#   (`match_snapshot.gd:30`)都打在**本字段**上,故那两处**一个字都不用改**。
+# ★ 不动的理由(照实):`player.gd:191` 这句读本来就是**类型化**的(本类自己有该成员);
+#   要消掉的是"别的组件隔着字符串名来摸它"。
 var pvp_haste_mult := 1.0
 var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替
+
+
+# T10:**本帧倍率推给三个消费点**。为什么要有这个口(而不是让各组件自己来读):
+#   · 攀爬 / 武器两个宿主引用是**一次给入**的(`_ready` 的 `get_parent()` / `equip()`),
+#     而倍率每帧在变 ⇒ 只能每帧推;组件侧不再按字符串名反射本根(原先 `body.get("pvp_haste_mult")`)。
+#   · 游泳走 `swim.update` 的**调用参数**(每次调用都拿得到宿主,顺路给)。
+# ★ 调用点两处(都在 `_physics_process` 的正常态路径上,且都在 `climb.update` 之前):
+#   ① `weapons.tick` **之前** —— tick 里的轮询开火(`try_fire()`)要用**本帧**倍率出弹;
+#   ② 切枪之后 —— 本帧刚装上的那把也得拿到本帧倍率,否则下一帧输入阶段的开火会用旧值(默认 1)。
+# ★ 与报错口径一致:这三个消费点**只读注入值**,拿不到就是 1×(静默降级),不会去读全局/宿主。
+func _push_haste_mult(tm: float) -> void:
+	climb.haste_mult = tm
+	var cur_w := weapons.current_weapon()
+	if cur_w != null:
+		cur_w.haste_mult = tm
 
 
 func _physics_process(delta: float) -> void:
@@ -202,6 +223,7 @@ func _physics_process(delta: float) -> void:
 		_pre_move_vy = 0.0
 		_tick_downed(delta)
 		return
+	_push_haste_mult(tm)   # ① 见该函数注释:必须在 weapons.tick 之前(tick 里的轮询开火吃它)
 	weapons.tick(delta * tm)   # 加速时开火/换弹节拍 ×tm(武器帧逻辑走物理 tick)
 
 	# 加速残影:红/蓝交替拖尾(用户要求"很明显")
@@ -230,6 +252,9 @@ func _physics_process(delta: float) -> void:
 	var winst := input_source.consume_switch_inst()
 	if winst > 0:
 		weapons.equip_inst(winst)
+	# ② 切枪之后**再推一次**(见 `_push_haste_mult` 注释):本帧刚装上的那把也拿到本帧倍率,
+	#    否则下一帧输入阶段(`_unhandled_input` → `fire()`)会用它出生时的默认 1.0 出弹。
+	_push_haste_mult(tm)
 
 	# R 换弹:同样走 input_source 轮询(2026-09-15 起 PvP 也换弹,见 weapon_base 换弹段注释)。
 	# ★ 必须是轮询,不能像原先那样在 _unhandled_input 里读原始 InputEvent —— **权威服务器
@@ -252,7 +277,7 @@ func _physics_process(delta: float) -> void:
 	# ---------- 水中(浮水/游泳)与攀爬 ----------
 	# 这两块是**数据源**:in_water / latched 决定后面每一块跑不跑,故留在编排函数里,
 	# 只把消费它们的逻辑分出去(见下方各 _tick_*)。
-	var in_water := swim.update(self, delta, mult, input_source)
+	var in_water := swim.update(self, delta, mult, input_source, tm)
 	_update_waterproof(delta)
 	var latched := false
 	if not in_water:

@@ -176,6 +176,14 @@ func _update_reload_pose() -> void:
 @onready var muzzle: Marker2D = $Muzzle
 
 var player: Node2D
+# 加速倍率(PvP):由**宿主每物理帧推入**(`player.gd` 的 `_push_haste_mult` → 当前那把枪)。
+# ★ 为什么是"注入成员"而不是 `equip()` 的参数:宿主引用(`player`)只在 `equip()` 给一次,
+#   而倍率**每帧都在变**(按住加速键才 >1)⇒ 只能每帧推。
+# ★ 只被 `_spawn_projectiles()` 读(出膛弹速 ×它);单机它恒 1 —— 单机的弹速倍率由
+#   `TimeField.bullet_delta` 承担,不会双乘。
+# ★ 覆盖上限(照实):默认 1.0 ⇒ 宿主忘推 = 静默回到 1×(不报错)。钉它的是
+#   `tests/probe/rewind_weapon_probe.gd` 的 S10(形状 + 行为:出膛弹速随倍率变)。
+var haste_mult: float = 1.0
 var fire_cd_timer: float = 0.0
 
 var _recoil_timer: float = 0.0
@@ -361,10 +369,14 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 	for i in range(pellet_count):
 		var b: BulletBase = bullet_scene.instantiate()
 		# Beta 时间玩法(PvP):射手加速 ⇒ 出膛弹速 ×同倍率(用户裁定"子弹也要加速")。
-		# ★ 只读 pvp_haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);
-		#   max_range 不动:加速时弹飞得更快但射程不变(与单机语义一致 —— SP 的位移缩放同样
-		#   不放大 traveled 的距离上限)。
-		var hm := float(player.get("pvp_haste_mult")) if player != null and player is Node 				and "pvp_haste_mult" in player else 1.0
+		# ★ 只读注入进来的 `haste_mult` —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,
+		#   不会双乘);max_range 不动:加速时弹飞得更快但射程不变(与单机语义一致 —— SP 的
+		#   位移缩放同样不放大 traveled 的距离上限)。
+		# ★★ 2026-10-05(closeout 批 Task 3 / T10):原先这里是
+		#   `float(player.get("pvp_haste_mult")) if player != null and player is Node and
+		#   "pvp_haste_mult" in player else 1.0` —— **字符串反射 + 存在性探测**,而宿主根的
+		#   静态类型是 `Node2D`(它没有 `class_name`)。现在读宿主每帧推入的 `haste_mult`。
+		var hm := haste_mult
 		var ang := base_dir.angle() + randf_range(-spread, spread)
 		# ★ 局部变量,不动 bullet_speed 成员:多弹丸武器(霰弹)逐弹 ×会累积,跨发更会永久变快
 		b.setup(Vector2.from_angle(ang), bullet_speed * hm, bullet_range, bullet_size, bullet_color, self)
