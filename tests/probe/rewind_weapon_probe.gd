@@ -52,7 +52,7 @@ extends ProbeBase
 #      —— **21 条**(形状 12 + 行为 9)。
 #   S11 **`pvp_match_client.gd` 那 7 处对象反射(T11)**:加速/回溯/视效三段里逐成员钉"反射形态为 0
 #      + 类型化形态在位"(`_tick_beta_rewind` 进/出两处的 `input_source` 必须是**读宿主自己的、共 2 次** —— 换成注入源
-#      会死锁,债单 §六.7)—— **10 条**,★ 只有形状;**行为面**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)**
+#      会死锁,债单 §六.7)—— **10 条**,★ 只有形状;**行为面**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 Beta 页那条路置真(`beta_menu.gd:131`,或 `main_menu.gd` 的 `--autotest-*` 钩子))**
 #      (不是"归真链路批 A":批 A 结构上碰不到这一段 —— 那三个函数全在 `beta_mode` 闸后)。
 #   S12 **`world_rewind.gd` 敌人/子弹快照段(T12)**:`record()` 那 8 处 + 回放侧 7 处对象反射归零、
 #      类型化逐名在位;行为侧直调 `record()` 用**真** EnemyBase/BulletBase 标本逐字段比真值
@@ -694,7 +694,7 @@ func _s7_shape() -> void:
 #   一条没修好时另一条的断言跟着红,变异日志就说不清"红在哪条上"(档 3 的硬要求)。
 # ★ 覆盖上限:三个子场景都走**真 `player.tscn` + 直调 `rewind_restore`**,与 S1-S7 同一条
 #   边界 —— 不覆盖真回溯的帧选择、也不覆盖 PvP 宿主那一份(`MatchHost._apply_rw_frame`);
-#   后者只有**源码形状**守卫(S9);行为面**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)(见报告 §9 与债单那条覆盖上限)。
+#   后者只有**源码形状**守卫(S9);行为面**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 Beta 页那条路置真(`beta_menu.gd:131`,或 `main_menu.gd` 的 `--autotest-*` 钩子))(见报告 §9 与债单那条覆盖上限)。
 func _s8_round_trip(player: Node, wc: WeaponComponent) -> void:
 	# ── S8-A 切枪帧:`rewind_restore` **只调这一次**(= "最后一次回溯正落在切枪帧")──
 	# 现场刻意与快照不同(live=3 / 条目 3、4),否则"写了"与"没写"在断言上不可分(恒绿)。
@@ -828,7 +828,7 @@ func _s8_hold_first(wc: WeaponComponent) -> void:
 # ★★ 覆盖上限(必须落在纸上):本节只挡**这一份源码文本的形状** —— 它证明得了"隔着一层还反射
 #   的链归零"、以及 `_apply_rw_frame` 的**语句序**(下面那条 `find` 下标判据),但**证明不了行为对**
 #   (PvP 那两段的行为没有被任何 headless 探针驱动:全仓 `grep '_apply_rw_frame'` 只命中生产自己)
-#   ⇒ **行为侧(值对不对)**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)**,见报告 §9。
+#   ⇒ **行为侧(值对不对)**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 Beta 页那条路置真(`beta_menu.gd:131`,或 `main_menu.gd` 的 `--autotest-*` 钩子))**,见报告 §9。
 # ★ 同一条谱系的既有病(G-1 实测):把成员名改成**带后缀的假名**时,`contains` 旧写法照样打 ✓
 #   ⇒ 这里一律走 `_has_member_token`(完整成员名 + 边界),与 S6/S7 同款。
 # ★★ 2026-10-05 修复轮 1(评审 I-2):上面那 9 条计数 + 反向令牌**对语句序天生无牙** ——
@@ -895,7 +895,7 @@ func _s9_host_shape() -> void:
 	# ★ 覆盖上限:本条只保证"**这一份源码文本里**切枪语句在下标上早于条目写回那一句" ——
 	#   它**不**保证运行时真走了这条顺序(例:有人把切枪改成一个 `call_deferred` 排到帧末,
 	#   下标仍在前、顺序已变)。那种退化只有**行为**断言能咬;PvP 的行为侧今天为零 ⇒
-	#   **当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)。
+	#   **当前无自动化路径可达**(`PvpSession.beta_mode` 只由 Beta 页那条路置真(`beta_menu.gd:131`,或 `main_menu.gd` 的 `--autotest-*` 钩子))。
 	var apply_body: String = body_of.get("_apply_rw_frame", "")
 	var i_equip := apply_body.find(HOST_APPLY_EQUIP_ANCHOR)
 	var i_write := apply_body.find(HOST_APPLY_WRITEBACK_ANCHOR)
@@ -1156,7 +1156,7 @@ func _fill_grid(v: int, cols: int, rows: int) -> Array[Array]:
 #   —— 冻结的若不是一个对象,解冻就落不到玩家真读的那个源上 ⇒ **死锁**(债单 §六.7)⇒ 本相要求
 #   它仍然**读宿主自己的** `input_source`(下面 count == 2 那条就是钉这个的)。
 # ★ 覆盖上限:**行为侧为零** —— 这三段只在真 PvP 对局里跑(全仓 `grep` 只命中真链路),headless
-#   探针够不到"按住加速键 ⇒ `_local.pvp_haste_mult` 被写成 3.0"这条端到端 ⇒ **当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)。
+#   探针够不到"按住加速键 ⇒ `_local.pvp_haste_mult` 被写成 3.0"这条端到端 ⇒ **当前无自动化路径可达**(`PvpSession.beta_mode` 只由 Beta 页那条路置真(`beta_menu.gd:131`,或 `main_menu.gd` 的 `--autotest-*` 钩子))。
 func _s11_client_shape() -> void:
 	var src := _code_view(_read(PVPCLIENT_SRC))
 	_check(not src.is_empty(),
@@ -1188,11 +1188,23 @@ func _s11_client_shape() -> void:
 	#    统一改用 `_count_member_tokens`(**两侧**边界)。
 	#    ★ `input_source` 那一条**必须是 2 次**(进/出各读一次宿主自己的源):改成注入源、或只改一处
 	#      ⇒ 红。这是 §六.7 死锁那一条的**形状**守卫。
+	#    ★★ 覆盖上限(2026-10-05 修复轮 2,**评审 Minor ①** 实测要求写全):本组判据走的是**剥注释视图**
+	#    (`ScanUtil.strip_line_comment` 只删注释,**字符串字面量原样保留** —— 那个函数自己的注释就写着
+	#    "字符串字面量**之外**的 `#`")⇒ 把 `_local.input_source` / `_local.animator as AnimatedSprite2D`
+	#    这类锚串**写进字符串**仍会被计数(评审实测:真读换成别的源 + 塞一行
+	#    `var _decoy := "_local.input_source"` ⇒ **149✓ ALL-OK**)。这是**主动塞诱饵串**才能造出的形态,
+	#    不是自然改名会撞到的;但它是本相唯一证据面上的一根刺 —— 要连它也堵上,得让剥视图连字符串一起剥
+	#    (那会波及**全部**按文本判在位的探针,**不属本任务**,也不许改 `tests/lib/scan_util.gd`)。
 	var typed_missing: Array[String] = []
 	if _count_member_tokens(joined, "_local.pvp_haste_mult") < 1 \
 			or not joined.contains("_local.pvp_haste_mult = "):
 		typed_missing.append("_local.pvp_haste_mult = ")
-	if _count_member_tokens(joined, "_local.is_downed") < 1 or joined.contains("_local.has_method"):
+	# ★ 2026-10-05(修复轮 2,**评审 Minor ②**):这一条**必须**既判两侧边界**又留一个完整形态锚**
+	#   (`_local.is_downed()`,**带括号** = 要求它是被**调用**的)。只判 token 计数会被
+	#   `var downed: bool = _local.is_downed.call()` 这种形态骗过(评审实测:旧写法会红、削薄后 149✓ ALL-OK),
+	#   与相邻两条(`_local.pvp_haste_mult = ` / `_local.animator as AnimatedSprite2D`)同款。
+	if _count_member_tokens(joined, "_local.is_downed") < 1 \
+			or not joined.contains("_local.is_downed()") or joined.contains("_local.has_method"):
 		typed_missing.append("_local.is_downed()")
 	var src_reads := _count_member_tokens(joined, "_local.input_source")
 	if src_reads != 2:
