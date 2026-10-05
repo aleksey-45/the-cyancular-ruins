@@ -135,6 +135,28 @@ const HOST_APPLY_WRITEBACK_ANCHOR := "held[i][\"mag\"] = int(mags[i])"
 # 成员名字符集(给 `_has_member_token`)
 const _IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 
+
+# `_has_member_token` 的**计数**版:两侧都判边界,返回完整成员名出现的次数。
+# ★ 为什么需要它(closeout Task 3 的逐条变异 M1 **实测**出来的洞):S10 那条"`swim.update` 的
+#   `haste_mult` 参数有没有被函数体用到"原先写的是 `body.count("haste_mult") >= 2` —— 而把参数
+#   换回**反射**写法(`float(parent.get("pvp_haste_mult"))`)之后,那个字符串里的
+#   `pvp_haste_mult` **含有** `haste_mult` 这个子串 ⇒ 计数仍是 2、**那条断言照绿**
+#   (只有"全仓反射形态"那条红)。这正是本仓那条纪律的又一例:「守卫能给的保证总是比它读起来少」。
+func _count_member_tokens(body: String, pat: String) -> int:
+	var n := 0
+	var from := 0
+	while true:
+		var i := body.find(pat, from)
+		if i < 0:
+			return n
+		var after := body.substr(i + pat.length(), 1)
+		var before := body.substr(i - 1, 1) if i > 0 else ""
+		if (after == "" or not _IDENT_CHARS.contains(after)) \
+				and (before == "" or not _IDENT_CHARS.contains(before)):
+			n += 1
+		from = i + 1
+	return n
+
 # ── S10 / S11 / S12(2026-10-05 closeout 批 Task 3:**反射清理收口**)用的词表 ──────────
 # 三片反射各自的关键字面量。★ 与 S6/S7/S9 同款纪律:**先把注释剥掉**(`_code_view`)——
 # 讲这三条病的新注释里会写出反射字形,不剥就会把断言自己喂红(负向对照 M17 同一机理)。
@@ -163,7 +185,8 @@ const RW_APPLY_REFLECTION := [".set(\"velocity_vec\"",
 		".set(\"apply_damage\"", ".set(\"hit_damage\"", ".set(\"hit_impact\"", ".set(\"shooter\"",
 		".call(\"apply_rewind_state\""]
 const RW_APPLY_TYPED := [".rewind_restore(", ".apply_rewind_state(", ".velocity_vec = ",
-		".hit_damage = ", ".hit_impact = ", ".shooter = ", "as EnemyBase", "as BulletBase"]
+		".hit_damage = ", ".hit_impact = ", ".shooter = ", ".apply_damage = ",
+		"as EnemyBase", "as BulletBase"]
 const ENEMY_SCENE := "res://scenes/enemies/enemy_fly_bird.tscn"
 const BULLET_SCENE := "res://scenes/weapons/bullet.tscn"
 
@@ -929,19 +952,26 @@ func _s10_shape() -> void:
 			"S10: 快照那一处类型化**读**(`match_snapshot.gd:30`)必须原样在位")
 	# ③ 三处消费点的注入弧**真的接上**(不是"加个参数然后函数体不用它")。
 	var swim_update := _top_func_body(swim_src, "update")
-	_check(swim_update.count("haste_mult") >= 2,
-			"S10: `swim.update` 的 `haste_mult` 必须**被函数体用到**(实得出现 %d 次;=1 就是只写在"
-			% swim_update.count("haste_mult") + "签名上 —— 那是最典型的『加了参数但没接线』")
+	var swim_uses := _count_member_tokens(swim_update, "haste_mult")
+	_check(swim_uses >= 2,
+			"S10: `swim.update` 的 `haste_mult` 必须**被函数体用到**(实得完整成员名出现 %d 次;"
+			% swim_uses + "=1 就是只写在签名上 —— 那是最典型的『加了参数但没接线』;"
+			+ "★ 判据走 `_count_member_tokens`(两侧边界):用 `count()` 会被反射串"
+			+ "`pvp_haste_mult` 里的子串骗过 —— 变异 M1 实测)")
 	_check(player_src.contains("swim.update(self, delta, mult, input_source, tm)"),
 			"S10: 根必须把本帧倍率 `tm` 当第 5 个实参传给 `swim.update`")
 	var climb_time := _top_func_body(climb_src, "_time_mult")
-	_check(climb_src.contains("var haste_mult") and _has_member_token(climb_time, "haste_mult"),
-			"S10: `climb_component.gd` 要有注入成员 `haste_mult`,且 `_time_mult()` **读的是它**")
+	var climb_uses := _count_member_tokens(climb_time, "haste_mult")
+	_check(climb_src.contains("var haste_mult") and climb_uses >= 1,
+			"S10: `climb_component.gd` 要有注入成员 `haste_mult`,且 `_time_mult()` **读的是它**"
+			+ "(实得完整成员名出现 %d 次;★ 两侧边界 —— 反射串 `pvp_haste_mult` 不算)" % climb_uses)
 	_check(player_src.contains("climb.haste_mult = "),
 			"S10: 根必须每物理帧把倍率推给攀爬组件(`climb.haste_mult = tm`)")
 	var spawn_body := _top_func_body(wbase_src, "_spawn_projectiles")
-	_check(wbase_src.contains("var haste_mult") and _has_member_token(spawn_body, "haste_mult"),
-			"S10: `weapon_base.gd` 要有注入成员 `haste_mult`,且出弹段读的是它")
+	var wbase_uses := _count_member_tokens(spawn_body, "haste_mult")
+	_check(wbase_src.contains("var haste_mult") and wbase_uses >= 1,
+			"S10: `weapon_base.gd` 要有注入成员 `haste_mult`,且出弹段读的是它(实得完整成员名"
+			+ "出现 %d 次;★ 两侧边界 —— 反射串 `pvp_haste_mult` 不算)" % wbase_uses)
 	_check(player_src.contains("cur_w.haste_mult = "),
 			"S10: 根必须每物理帧把倍率推给**当前那把枪**(推送点见 player.gd 的 `_push_haste_mult`)")
 
@@ -1204,8 +1234,8 @@ func _s12_shape() -> void:
 			+ " —— `call(\"apply_rewind_state\")` 那种写法在方法改名时**当场报错并中止整段回放**")
 	# ③ 反向:类型化访问**逐名在位**(用 `_has_member_token`:后缀拼接改名如 `velocity_x` 不算"还在")。
 	var typed_missing: Array[String] = []
-	for stem in ["e.velocity", "e.hp", "e.is_dead", "b.shooter", "b.velocity_vec",
-			"b.hit_damage", "b.hit_impact"]:
+	for stem in ["e.global_position", "e.velocity", "e.hp", "e.is_dead", "e.visible",
+			"b.global_position", "b.shooter", "b.velocity_vec", "b.hit_damage", "b.hit_impact"]:
 		if not _has_member_token(rec, stem):
 			typed_missing.append(stem)
 	if not rec.contains("b.rewind_state()"):
