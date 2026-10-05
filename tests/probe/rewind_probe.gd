@@ -147,26 +147,45 @@ func _run() -> void:
 	if rewind.recorded_seconds() >= t_peak:
 		_fail("二次回溯后磁带钟未回退(%.2f ≥ %.2f,回溯在倒放旧带)" % [t_peak, rewind.recorded_seconds()])
 
-	# ⑩ **完成度**:回溯里每一次 `step()` 都必须让 `_apply` **走到底**(2026-10-05 修复轮 1;来源 = 评审 C-1)。
-	#    ★ 为什么要有这一条:①-⑨ 全是**玩家域**的断言,而"这一帧的 `_apply` 有没有被中止"没有任何断言问过 ——
+	# ⑩ **完成度**:回溯里每一次 `step()` 都必须让 `_apply` **与 `_apply_bullets`** 都走到底
+	#    (2026-10-05 修复轮 1 来源 = 评审 C-1;修复轮 2 来源 = 评审 **N-1**)。
+	#    ★ 为什么要有这一条:①-⑨ 全是**玩家域**的断言,而"这一帧的回放有没有被中止"没有任何断言问过 ——
 	#    本包首版把 `d["n"] as EnemyBase` 放在了 `is_instance_valid()` **之前**,真 freed 实例上
 	#    `as` 抛 `Trying to cast a freed object.` 并**中止整个 `_apply`**(同帧 `_apply_bullets()` 整段被跳过:
 	#    回放弹不重建/不摆位/引信不回写,`Level0._rewind_elite_hits()` 拿到的是陈旧位置)。
-	#    这个病在本支探针里**每跑 36 次**、而判词照样打 `OK` —— 见下面那条 `freed 引用` 观测行。
+	#    这个病在本支探针里**每跑 30+ 次**(实测区间 33~37)、而判词照样打 `OK` —— 见下面那条 `freed 引用` 观测行。
 	#    ★ 判据口径(★ 评审订正过:**不许**写成 `invalid_ref_count() == 0`):带子上留着 freed 实体是
 	#    **改动前就存在**的条件(精英不保留尸体 + 死前帧留在 40s 带上),旧码靠 `and` 短路静默跳过 ⇒
 	#    断言"必须为 0"会**永久红**(恒红的守卫与恒绿的守卫一样没用)。故断言**完成度**:
 	#      `_apply` 走到底的次数 == `step()` 应当走完的次数(中止 ⇒ 分子短一截)。
+	#    ★★ **两条分子是两件事,别读成一条**(修复轮 2 / 评审 N-1 实测):GDScript 的脚本错误只中止
+	#    "出错的那个函数"、**调用方继续** ⇒ `_apply_bullets()` 体内中止时,`_apply()` 仍会走到末尾 +1。
+	#    所以下面**必须**分两条断言:`_apply` 那条管 `_apply()` 自己的函数体;`_apply_bullets` 那条管子弹段。
+	#    (N-1 的存在证明见报告:把 `_apply_bullets` 末尾那次递增删掉 ⇒ **第二**条红、第一条仍绿。)
 	var started := rewind.apply_started_count()
 	var done := rewind.apply_completed_count()
-	print("[rewind] 完成度: _apply %d/%d 走完;带子上 freed 引用 %d 个(观测量,不是断言)"
-			% [done, started, rewind.invalid_ref_count()])
+	var bullets_done := rewind.apply_bullets_completed_count()
+	print("[rewind] 完成度: _apply %d/%d 走完、_apply_bullets %d/%d 走完;带子上 freed 引用 %d 个(观测量,不是断言)"
+			% [done, started, bullets_done, started, rewind.invalid_ref_count()])
 	if started <= 0:
 		_fail("完成度观测量没有样本(回溯期 step() 一次都没被调到)—— 本条会空转")
+	elif done > started:
+		# ★ 修复轮 2(评审 Minor ⑤):分子**超出**分母 ⇒ 说"没走完(差 -N)"是荒谬文案 —— 那说明
+		#   计数点被改动/重复计数(评审 shiftB 实测打出过 `566/300 走完`+`差 -266`)。判词照样红。
+		_fail("完成度分子超出分母:`_apply` %d/%d —— 计数点被改坏或重复计数(不是\"没走完\")"
+				% [done, started])
 	elif done != started:
 		_fail(("回溯里 `_apply` 没走完:%d/%d 次(差 %d)—— 它在类型收窄上撞到 freed 实例,**当场抛错并中止**"
 			% [done, started, started - done])
-			+ ";同帧的 `_apply_bullets()` 整段被跳过(回放弹不重建/不摆位/引信不回写)")
+			+ "(注意:本条的**范围只是 `_apply()` 自己的函数体**;`_apply_bullets()` 内的中止由下一条管)")
+	if bullets_done > started:
+		_fail("完成度分子超出分母:`_apply_bullets` %d/%d —— 计数点被改坏或重复计数(不是\"没走完\")"
+				% [bullets_done, started])
+	elif bullets_done != started:
+		_fail(("回溯里 `_apply_bullets` 没走完:%d/%d 次(差 %d)—— 子弹段函数体内被中止 ⇒ 回放弹不重建/"
+			% [bullets_done, started, started - bullets_done])
+			+ "不摆位/引信不回写,后面\"隐藏多余弹\"也一起跳过。★ 它**不会**被上一条看见:"
+			+ "脚本错误只中止出错的那个函数、`_apply()` 照常走到末尾 +1(评审 N-1 的插桩实测)")
 
 	# ⑨ 生产端契约:`WorldRewind._snapshot_player()` 产出的**武器快照逐字段 == 真值**,且
 	#    **不许静默退化**。快照字典由这个函数产出,它此前用字符串反射读武器域 —— 成员名对不上

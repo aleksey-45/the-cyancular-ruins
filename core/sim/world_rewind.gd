@@ -31,6 +31,7 @@ var _parent: Node = null           # 回放子弹的挂载父节点(通常 World
 #   freed 引用数照旧暴露,但它是**登记用的观测量**,不是"必须为 0"的断言。
 var _apply_started := 0
 var _apply_completed := 0
+var _bullets_completed := 0        # `_apply_bullets()` 自己的分子(见该函数末尾;评审 N-1)
 var _invalid_refs := 0             # 带子上出现过的 freed / 非节点引用(观测)
 
 
@@ -251,13 +252,19 @@ func step(delta: float, player: Node) -> void:
 
 
 ## 完成度观测量(分子/分母)与 freed 引用计数 —— 三者的用法见字段声明处那段注释。
-## ★ 断言口径:分子 == 分母;**不是** `invalid_ref_count() == 0`(那会恒红)。
+## ★ 断言口径:分子 == 分母(`_apply` 与 `_apply_bullets` **各一条**);
+##   **不是** `invalid_ref_count() == 0`(那会恒红)。
 func apply_started_count() -> int:
 	return _apply_started
 
 
 func apply_completed_count() -> int:
 	return _apply_completed
+
+
+## `_apply_bullets()` 走到底的次数(★ 与 `apply_completed_count()` 是**两条独立的分子** —— 见 N-1)。
+func apply_bullets_completed_count() -> int:
+	return _bullets_completed
 
 
 func invalid_ref_count() -> int:
@@ -279,7 +286,13 @@ func _frame_at(target: float) -> Dictionary:
 
 func _apply(f: Dictionary, player: Node) -> void:
 	if f.is_empty():
-		_apply_completed += 1   # 空帧 = 无事可做,**不是**中止(与函数末尾那次计的是同一件事)
+		# 空帧 = 无事可做,**不是**中止(与函数末尾那两次计的是同一件事)。
+		# ★ 这里也把 `_bullets_completed` 一起 +1,是为了保住 `bullets_completed == started` 这条
+		#   不变量的**形态**(空帧没有子弹可放)。★ 如实标注:该分支**今天不可达** —— `record()` 只
+		#   append 完整帧字典、`_frame_at()` 只可能返回 `_frames[i]`/`_frames[0]`(评审 B-4 用
+		#   `noempty` 变异反证过 `E = 0`),这一行是**死防御**,只为不留下"哪天可达就假红"的尖角。
+		_apply_completed += 1
+		_bullets_completed += 1
 		return
 	if is_instance_valid(player) and player.has_method("rewind_restore"):
 		player.rewind_restore(f["player"])
@@ -294,8 +307,15 @@ func _apply(f: Dictionary, player: Node) -> void:
 		#   ★ 带子上留着 freed 实体是**改动前就存在**的条件(精英不保留尸体 `enemy_base.gd:316` +
 		#     它死前的帧留在 40s 带上 `TimeParams.SNAP_SECONDS = 40.0`)⇒ 这里的正确行为是
 		#     **计数 + 跳过**,不是报错。计数是观测量(`invalid_ref_count()`),不是"必须为 0"的断言。
+		#   ★★ **两种失败形态别混读**(2026-10-05 修复轮 2,**评审 Minor ④** 指出这半句在改写时被丢了):
+		#     ① **freed / 非节点**(`is_instance_valid` 为假)⇒ `_invalid_refs += 1` + **静默跳过**
+		#        —— 它是**改动前就存在**的条件,不是错误;
+		#     ② **有效但不是 `EnemyBase`** ⇒ **`push_error` 点名** + 跳过**这一件**
+		#        (不中止整帧,后面的 `_apply_bullets()` 照跑)。真机今天不可达(全仓只有
+		#        `enemy_base.gd:69` 往 `enemies` 组加节点),但它**不属于"静默"那一类**。
 		#   ★ `var raw` **故意不加类型**:给 freed 实例做带类型的赋值(`var n: Node = d["n"]`)本身就会
-		#     碰那个实例(引擎有 "Trying to assign invalid previously freed instance" 那条路);
+		#     碰那个实例(引擎有 "Trying to assign invalid previously freed instance" 那条路;
+		#     评审 E1 实测:连**带类型的形参**也会炸)⇒ `is_instance_valid()` 是**唯一**安全的问法,
 		#     必须像旧码那样问**未定型 Variant**。
 		var raw = d["n"]
 		if not is_instance_valid(raw):
@@ -307,7 +327,12 @@ func _apply(f: Dictionary, player: Node) -> void:
 			continue
 		en.rewind_restore(d)
 	_apply_bullets(f["bullets"], player)
-	_apply_completed += 1       # ★ 完成度分子:走到这一行 = 本帧回放没被中止
+	# ★ 2026-10-05(修复轮 2,**评审 N-1**):**范围改准** —— 这一行只证明 `_apply()` **自己的函数体**
+	#   走到了末尾;它**看不见 `_apply_bullets()` 函数体内**的中止 —— GDScript 的脚本错误只中止
+	#   "出错的那个函数",**调用方照常继续** ⇒ 那边一中止,这一行**照样**执行。
+	#   故 `_apply_bullets()` 另记一个分子(`_bullets_completed`,见该函数末尾),两条一起才等于
+	#   "本帧回放整段没被中止"。
+	_apply_completed += 1
 
 
 ## 子弹:按快照帧重建(不足则实例化,多余则隐藏)。回放期间子弹由本函数摆位,
@@ -391,6 +416,12 @@ func _apply_bullets(list: Array, player: Node) -> void:
 		if nb3 == null:
 			continue
 		nb3.visible = false
+	# ★★ 2026-10-05(修复轮 2,**评审 N-1**):本函数的**自己的**完成度分子。
+	#   为什么必须有它:`_apply()` 末尾那次递增**看不见本函数体内的中止** —— GDScript 的脚本错误
+	#   只中止出错的那个函数、**调用方照常继续** ⇒ 本函数在中途抛错时,`_apply()` 仍会走到末尾 +1。
+	#   (评审用插桩实测:错序 + 注入真 freed 弹 ⇒ 本函数的 `[MARK]` 没打印,而 `_apply_completed` 仍 =1、
+	#    `⑩` 仍绿。)⇒ 两条分子一起才等于"本帧回放整段没被中止"。
+	_bullets_completed += 1
 
 
 # ── 查询/维护 ───────────────────────────────────────────────
