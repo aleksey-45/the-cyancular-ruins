@@ -51,8 +51,9 @@ extends ProbeBase
 #      注入成员);行为侧用**服务端那种写法**改字段,量游泳/攀爬/出膛弹速与根的速度域是否随之变
 #      —— **21 条**(形状 12 + 行为 9)。
 #   S11 **`pvp_match_client.gd` 那 7 处对象反射(T11)**:加速/回溯/视效三段里逐成员钉"反射形态为 0
-#      + 类型化形态在位"(`:234`/`:240` 的 `input_source` 必须是**读宿主自己的、2 次** —— 换成注入源
-#      会死锁,债单 §六.7)—— **10 条**,★ 只有形状,**行为归真链路批 A**。
+#      + 类型化形态在位"(`_tick_beta_rewind` 进/出两处的 `input_source` 必须是**读宿主自己的、共 2 次** —— 换成注入源
+#      会死锁,债单 §六.7)—— **10 条**,★ 只有形状;**行为面**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)**
+#      (不是"归真链路批 A":批 A 结构上碰不到这一段 —— 那三个函数全在 `beta_mode` 闸后)。
 #   S12 **`world_rewind.gd` 敌人/子弹快照段(T12)**:`record()` 那 8 处 + 回放侧 7 处对象反射归零、
 #      类型化逐名在位;行为侧直调 `record()` 用**真** EnemyBase/BulletBase 标本逐字段比真值
 #      (含 `dead`/`from_player` 两相、`fuse` 整个字典)—— **28 条**(形状 13 + 行为 15)。
@@ -142,6 +143,15 @@ const _IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234
 #   换回**反射**写法(`float(parent.get("pvp_haste_mult"))`)之后,那个字符串里的
 #   `pvp_haste_mult` **含有** `haste_mult` 这个子串 ⇒ 计数仍是 2、**那条断言照绿**
 #   (只有"全仓反射形态"那条红)。这正是本仓那条纪律的又一例:「守卫能给的保证总是比它读起来少」。
+# ★★ 覆盖上限(2026-10-05 修复轮 1,**评审 M-6** 要求写全):本函数只挡**前/后缀拼接**类改名
+#   (`haste_mult_x` / `xhaste_mult` 都不计数)。**下面四种都会被它计数**(评审已复刻实测):
+#     ① **字符串字面量**:`push_error("haste_mult …")`;
+#     ② **只写不读**:`haste_mult = 1.0`(成员名出现即算,不看读写方向);
+#     ③ **字典键**:`{"haste_mult": …}`;
+#     ④ **同名局部遮蔽**:`func _time_mult(): var haste_mult := 1.0; var m := haste_mult`。
+#   ★ 但**别把它读成"所以这条不行"**:这三处的**形状 + 行为互补确实成立** —— 参数没接线/推送断了时,
+#     S10 的游泳/攀爬/武器三条**行为**比值断言会红(实测 M4/M5/M6),故上面四种只是"形状这条读起来
+#     比实际强",不是"没有牙"。写在这里是为了让下一个人知道该配合行为断言读。
 func _count_member_tokens(body: String, pat: String) -> int:
 	var n := 0
 	var from := 0
@@ -213,7 +223,8 @@ const TYPE_PISTOL := 1
 const TYPE_RIFLE := 2
 
 # 断言计数闸(与 `kh_l3_visual_probe` / `combat_hud_visual_probe` 同款)。
-# ★ 90 是**逐个数出来的**(全部 `_check(` 调用点都在 `_s1.._s9` 这九个函数里):
+# ★ 90 是**逐个数出来的**(**截至 Task 2 时**,全部 `_check(` 调用点都在 `_s1.._s9` 这九个函数里;
+#   2026-10-05 closeout Task 3 又加了 S10-S12 五节 ⇒ 现为 149,分解见下面那几段):
 #   S1 7(前置 + `_check_cells` 3 + 下标 + 同实例 + 手持实弹)
 #   S2 3、S3 5(下标 + `_check_cells` 3 + 手持实弹)
 #   S4 6(前置 + 手持实弹未动 + `_check_cells` 3 + 下标)
@@ -683,7 +694,7 @@ func _s7_shape() -> void:
 #   一条没修好时另一条的断言跟着红,变异日志就说不清"红在哪条上"(档 3 的硬要求)。
 # ★ 覆盖上限:三个子场景都走**真 `player.tscn` + 直调 `rewind_restore`**,与 S1-S7 同一条
 #   边界 —— 不覆盖真回溯的帧选择、也不覆盖 PvP 宿主那一份(`MatchHost._apply_rw_frame`);
-#   后者只有**源码形状**守卫(S9),行为侧要真链路(批 A,见报告)。
+#   后者只有**源码形状**守卫(S9);行为面**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)(见报告 §9 与债单那条覆盖上限)。
 func _s8_round_trip(player: Node, wc: WeaponComponent) -> void:
 	# ── S8-A 切枪帧:`rewind_restore` **只调这一次**(= "最后一次回溯正落在切枪帧")──
 	# 现场刻意与快照不同(live=3 / 条目 3、4),否则"写了"与"没写"在断言上不可分(恒绿)。
@@ -817,7 +828,7 @@ func _s8_hold_first(wc: WeaponComponent) -> void:
 # ★★ 覆盖上限(必须落在纸上):本节只挡**这一份源码文本的形状** —— 它证明得了"隔着一层还反射
 #   的链归零"、以及 `_apply_rw_frame` 的**语句序**(下面那条 `find` 下标判据),但**证明不了行为对**
 #   (PvP 那两段的行为没有被任何 headless 探针驱动:全仓 `grep '_apply_rw_frame'` 只命中生产自己)
-#   ⇒ **行为侧(值对不对)归真链路批 A**,见报告。
+#   ⇒ **行为侧(值对不对)**当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)**,见报告 §9。
 # ★ 同一条谱系的既有病(G-1 实测):把成员名改成**带后缀的假名**时,`contains` 旧写法照样打 ✓
 #   ⇒ 这里一律走 `_has_member_token`(完整成员名 + 边界),与 S6/S7 同款。
 # ★★ 2026-10-05 修复轮 1(评审 I-2):上面那 9 条计数 + 反向令牌**对语句序天生无牙** ——
@@ -883,7 +894,8 @@ func _s9_host_shape() -> void:
 	#   别处出现"骗过;注释已被 `_code_view` 剥掉 ⇒ 在注释里写锚串不会误伤(M17 负向对照同一机理)。
 	# ★ 覆盖上限:本条只保证"**这一份源码文本里**切枪语句在下标上早于条目写回那一句" ——
 	#   它**不**保证运行时真走了这条顺序(例:有人把切枪改成一个 `call_deferred` 排到帧末,
-	#   下标仍在前、顺序已变)。那种退化只有**行为**断言能咬;PvP 的行为侧今天为零 ⇒ 归批 A。
+	#   下标仍在前、顺序已变)。那种退化只有**行为**断言能咬;PvP 的行为侧今天为零 ⇒
+	#   **当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)。
 	var apply_body: String = body_of.get("_apply_rw_frame", "")
 	var i_equip := apply_body.find(HOST_APPLY_EQUIP_ANCHOR)
 	var i_write := apply_body.find(HOST_APPLY_WRITEBACK_ANCHOR)
@@ -902,7 +914,7 @@ func _s9_host_shape() -> void:
 #   · 攀爬 / 武器 = **注入成员**(宿主引用只在 `_ready` / `equip` 给一次 ⇒ 倍率必须**每帧推**)
 # ★★ 为什么形状判据走**全仓**(不是只看那三个文件):本任务的目标是"这一族的反射在承重面清零" ——
 #   只看三个文件的话,"反射搬到第四个文件"会静默过关。
-# ★ 这一节**不覆盖**(照实):`player` 根那一处自己的读(`player.gd:191`)与两个**类型化**的
+# ★ 这一节**不覆盖**(照实):`player` 根那一处自己的读(`player.gd` 里那句 `tm` 判据)与两个**类型化**的
 #   服务端站点(match_host 写 / match_snapshot 读)—— 它们本来就无反射,本相只钉"还在、没被删"。
 func _s10_shape() -> void:
 	var player_src := _code_view(_read(PLAYER_SRC))
@@ -942,9 +954,9 @@ func _s10_shape() -> void:
 	#    四个站点是**四条独立的弧**(属主自读 / PvP 客户端写 / 服务端权威写 / 快照读),
 	#    清掉哪一条都该有人红 —— 尤其**服务端那一写**(R4):它变死代码时单机与探针全绿。
 	_check(player_src.contains("var pvp_haste_mult") and player_src.contains("else pvp_haste_mult"),
-			"S10: 属主 player.gd 必须仍持有 `pvp_haste_mult` 并在自己那条判据里读它(`player.gd:191`)")
+			"S10: 属主 player.gd 必须仍持有 `pvp_haste_mult` 并在自己那条判据里读它(`player.gd` 里那句 `tm` 判据)")
 	_check(client_src.contains("_local.pvp_haste_mult = "),
-			"S10: PvP 客户端那一处**写**(`pvp_match_client.gd:215`)必须换成对 `_local` 的类型化写")
+			"S10: PvP 客户端那一处**写**(`_tick_beta_time`)必须换成对 `_local` 的类型化写")
 	_check(host_src.contains("p.pvp_haste_mult = "),
 			"S10(权威侧 R4): 服务端那一写(`match_host.gd:223`)必须原样在位 —— 它是权威生产者,"
 			+ "不是反射;它变死代码时整个 headless 面全绿、只有真链路才现形")
@@ -1045,7 +1057,7 @@ func _s10_behavior(player: Node, wc: WeaponComponent) -> void:
 				("S10: 倍率 2 时的出膛弹速应 = bullet_speed×2 = %.1f(实得 %.1f)" % [want * 2.0, s2])
 				+ " —— 红在哪条:去掉『根部推 cur_w.haste_mult』,枪停在默认 1.0 ⇒ 实得 == bullet_speed")
 	# ④ 权威侧(R4):**服务端那种写法**改字段(`p.pvp_haste_mult = …`,与 match_host.gd:223 逐字同款)
-	#   必须继续到达消费点。这里看**根自己**那一处消费(`player.gd:191` → `_speed_mult`)——
+	#   必须继续到达消费点。这里看**根自己**那一处消费(那句 `tm` 判据 → `_speed_mult`)——
 	#    它是权威侧速度域的入口,也是本任务**刻意不动**的那一处(它本来就是类型化读)。
 	player.pvp_haste_mult = 3.0
 	await _phys_steps(2)
@@ -1140,11 +1152,11 @@ func _fill_grid(v: int, cols: int, rows: int) -> Array[Array]:
 # 那 7 处**全打在 `_local`(Node2D)上**,而**不需要 `class_name`** 也能点访问 —— 先例就在同文件
 # (`:134` `_local.weapons.set_enabled_types(...)`)。
 # ★ 逐成员一条(不是数一个总数):总数对"其中一处回退了、别处少了"无牙(本仓 Task 13 的 G-1 实测)。
-# ★★ `:234`/`:240` 的 `input_source` **不许**换成"注入源":同一个函数会把**同一个** `src.frozen = true`
+# ★★ **`_tick_beta_rewind` 进/出两处读的 `input_source`** **不许**换成"注入源":同一个函数会把**同一个** `src.frozen = true`
 #   —— 冻结的若不是一个对象,解冻就落不到玩家真读的那个源上 ⇒ **死锁**(债单 §六.7)⇒ 本相要求
 #   它仍然**读宿主自己的** `input_source`(下面 count == 2 那条就是钉这个的)。
 # ★ 覆盖上限:**行为侧为零** —— 这三段只在真 PvP 对局里跑(全仓 `grep` 只命中真链路),headless
-#   探针够不到"按住加速键 ⇒ `_local.pvp_haste_mult` 被写成 3.0"这条端到端 ⇒ **归真链路批 A**。
+#   探针够不到"按住加速键 ⇒ `_local.pvp_haste_mult` 被写成 3.0"这条端到端 ⇒ **当前无自动化路径可达**(`PvpSession.beta_mode` 只由 `scenes/beta_menu.gd:131` 置真)。
 func _s11_client_shape() -> void:
 	var src := _code_view(_read(PVPCLIENT_SRC))
 	_check(not src.is_empty(),
@@ -1167,23 +1179,35 @@ func _s11_client_shape() -> void:
 				"S11: 加速/回溯/视效三段里不许再有对象反射 `%s`(实得 ×%d)—— 拼错成员名时 get 静默"
 				% [pat, joined.count(pat)] + "返回 null、set 静默不写、call 当场报错并中止本段")
 	# ② 反向:类型化形态必须**逐个在位**(把整段删掉也能让上面 6 条为 0 —— 同 S6/S7 的纪律)。
+	#    ★★ 2026-10-05(修复轮 1,**评审 I-1**):这一组原先用**裸 `contains` / 子串计数** ——
+	#    违反 brief Step 2 的明文要求("别写成包含某子串,用完整成员名 + 边界判定")。
+	#    评审实测的两条反例:`_local.animator` → `_local.animator_x`、`_local.input_source` →
+	#    `_local.input_source_x`(两处)**都让本探针照旧 149✓ ALL-OK** —— 而 S11 的**行为覆盖 = 0**
+	#    ⇒ 那是 T11 唯一的证据面。★ 这正是 M1 抓到的**同一个洞**(`_has_member_token` 只判后缀 /
+	#    子串计数会被"更长标识符的前缀"骗过),当时只推广到了 S10 ⇒ 这里补齐。
+	#    统一改用 `_count_member_tokens`(**两侧**边界)。
 	#    ★ `input_source` 那一条**必须是 2 次**(进/出各读一次宿主自己的源):改成注入源、或只改一处
 	#      ⇒ 红。这是 §六.7 死锁那一条的**形状**守卫。
 	var typed_missing: Array[String] = []
-	if not joined.contains("_local.pvp_haste_mult = "):
+	if _count_member_tokens(joined, "_local.pvp_haste_mult") < 1 \
+			or not joined.contains("_local.pvp_haste_mult = "):
 		typed_missing.append("_local.pvp_haste_mult = ")
-	if not (joined.contains("_local.is_downed()") and not joined.contains("_local.has_method")):
+	if _count_member_tokens(joined, "_local.is_downed") < 1 or joined.contains("_local.has_method"):
 		typed_missing.append("_local.is_downed()")
-	var src_reads := joined.count("_local.input_source")
+	var src_reads := _count_member_tokens(joined, "_local.input_source")
 	if src_reads != 2:
 		typed_missing.append("_local.input_source ×2(实得 %d)" % src_reads)
-	if not (joined.contains("src.frozen = true") and joined.contains("src2.frozen = false")):
+	if _count_member_tokens(joined, "src.frozen") < 1 or _count_member_tokens(joined, "src2.frozen") < 1 \
+			or not joined.contains("src.frozen = true") or not joined.contains("src2.frozen = false"):
 		typed_missing.append("src.frozen / src2.frozen")
-	if not joined.contains("_local.animator"):
+	if _count_member_tokens(joined, "_local.animator") < 1 \
+			or not joined.contains("_local.animator as AnimatedSprite2D"):
 		typed_missing.append("_local.animator")
 	_check(typed_missing.is_empty(),
 			"S11: 那 7 处的**类型化**形态必须逐个在位(缺 %s)" % str(typed_missing)
-			+ " —— 全段被删/退回反射时,上面 6 条计数为 0 是假的")
+			+ " —— 全段被删/退回反射时,上面 6 条计数为 0 是假的;"
+			+ "★ 判据走 `_count_member_tokens`(两侧边界):`_local.animator_x` / `_local.input_source_x`"
+			+ " 这类改名不算『在位』(评审 I-1 的两条实测反例)")
 	# ③ 聚合:这三段里**任何**对象反射都不该留(`.set(` / `.call(` / `has_method(` / `_local.get(`)。
 	#    为什么这里能按 0 钉:本文件那些**合法**的字典取键(`own.get(` / `payload.get(` …)不在本三段。
 	var agg := joined.count(".set(\"") + joined.count(".call(\"") \
