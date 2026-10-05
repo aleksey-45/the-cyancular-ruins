@@ -369,13 +369,17 @@
    - **已做**：① 不变量写进 `_tick_beta_rewind` 的代码注释（该函数第一段，点名"冻结与解冻必须是同一个对象"
      与 `player.set_controls_locked()` 那条写路）；
      ② **形状守卫** = `tests/probe/rewind_weapon_probe.gd` 的 **S11**：`_local.input_source` 在
-     `_tick_beta_time`/`_tick_beta_rewind`/`_tick_time_fx` 三段里必须**恰好出现 2 次**，且
-     `src.frozen = true` / `src2.frozen = false` 两个**类型化**写法在位。
-     **实测证据（本包变异 M12）**：把出冻结那一路改成读 `null`（= "换成别的源"的等价形态）⇒ 该条**红**，
-     实得 `缺 ["_local.input_source ×2(实得 1)"]`。
+     `_tick_beta_time`/`_tick_beta_rewind`/`_tick_time_fx` 三段里必须**恰好出现 2 次**（★ 2026-10-05 修复轮 1
+     起用 `_count_member_tokens` **两侧边界**判，裸子串计数对 `_local.input_source_x` 无牙 —— 评审 I-1），
+     且 `src.frozen = true` / `src2.frozen = false` 两个**类型化**写法在位。
+     **实测证据（本包变异 M12 + M42）**：
+     · M12 = 把出冻结那一路改成读 `null` ⇒ **同后果、不同机制**（解冻整段不发生）；
+     · **M42 = 把那一路原样退回旧写法 `(_local as Node).get("input_source")`** ⇒
+       这才是"**换成别的源/退回反射**"的**忠实**形态（两条变异都让该条红）。
    - **仍未做的（照实）**：「松开 rewind 之后输入真的恢复」这一**行为**在 headless 里够不到 ——
-     这条链只在 `PvpSession.beta_mode` 的 PvP 局里跑（`_tick_beta_time` 首行早退）⇒ **归真链路批 A**。
-     判据：松开后 `_local.input_source.frozen` 必须回到 false、角色能动、底片卸掉。
+     这条链只在 `PvpSession.beta_mode` 的 PvP 局里跑（`_tick_beta_time` 首行早退）⇒
+     **当前无自动化路径可达**（`beta_mode` 只由 `scenes/beta_menu.gd:131` 置真；见 §六.23 那条覆盖上限）。
+     **人工复现判据**：松开后 `_local.input_source.frozen` 必须回到 false、角色能动、底片卸掉。
    - **现状**：权威侧干净（客户端 `pack_record(_local.input_source)` → 服务器读包里那位 `src.haste_held()`，
      见 `server/match/match_host.gd:214-215`）⇒ **不改行为**。
 8. **工作区 EOL 漂移：`.gd` 也有**(2026-10-04 实测；benign)。
@@ -400,7 +404,7 @@
    - **已销账的那一半**（原第一处残留，原文写 `scenes/player/swim_component.gd:39`）：
      `pvp_haste_mult` 一族的**三处读**（`swim_component.gd` / `climb_component.gd` / `weapon_base.gd`）
      与 **PvP 客户端那一处写**（`pvp_match_client.gd` 的 `_tick_beta_time`，改后 `:221`）**全部不再走字符串反射**：
-     · `swim.update` ⇒ **调用参数** `haste_mult`（根 `player.gd:277` 传 `tm`）；
+     · `swim.update` ⇒ **调用参数** `haste_mult`（根侧那一行是 `swim.update(self, delta, mult, input_source, tm)`；★ **不写行号** —— 本行原先写的 `player.gd:277` 是错的，实际在 `:280`，评审 Minor M-1 抓的就是这个；本节自己的规矩就是"按内容 grep 复核"）；
      · `climb` / `weapon_base` ⇒ **根每帧推入的注入成员** `haste_mult`
        （根 `player.gd:201` 的 `_push_haste_mult()`，两个推送点 `:226` 在 `weapons.tick` 之前、`:257` 在切枪之后）；
      · **没有**给 `player` 根加 `class_name` ⇒ 两个**刻意造裸**的测试桩一字节未改。
@@ -549,6 +553,38 @@
    - ★★ **绝对不要把它写进 `tests/known_red.txt`**:按 [`tests/README.md`](../../tests/README.md):41 的纪律，"**加行不是『让检查变绿』的手段**"；而这一条是**真守卫抓到了真问题** —— 压进基线等于**把一条真守卫压盲**，以后它再也不报。要它**继续红着被人看见**。★ 本节（§六）而不是 §一 的理由：§一 收的是"**不是守卫、别拿它们的行为当证据**"的既有红，而这一条恰恰**是**一条有效守卫的**真红**。
    - **什么时候能销**:谁能**稳定**复现出那次 FAIL 并定位"**重力被 delta 缩放带跑**"的成因（时序/采样类 ⇒ 按 §一 的纪律**同配置跑两次**再下结论）,修好之后销账并附提交号。★ 在那之前,`haste_probe` 的判决要按"**可能真红**"读,不能按"稳定绿"读。
    - **交叉引用**:本批 Task 2 的报告（`.superpowers/sdd/2026-10-04-closeout-consolidated-batch/task-2-report.md` 与 `task-2-control-batch.txt`）里的措辞与本行一致:**`haste_probe` 那两次 `NO-VERDICT` 是判据面的假红（与本批无因果）**,而**本行这次是行为面的真红** —— 两件事别混。
+
+22. **`Water.surface_y_at()` 的向上扫描**没有迭代上限 ⇒ **该列全是液体时挂死主循环**（**产品侧**既有缺陷）
+   (2026-10-05 由 closeout 批 Task 3 的实现者在写探针时**实测踩到**、逐任务评审 M-8 判为产品缺陷并要求登记；owner 未认领)。
+   - **位置与成因**：[`core/sim/water.gd`](../../core/sim/water.gd):36-43 —— `while true:` 里
+     `var above := posmod(y - 1, rows)`，只要**同一列**每一格都是液体（`posmod` 回绕会绕回来），
+     `top` 回到起点后条件**仍然成立** ⇒ **永不退出**。★ 不是"整张图全水"才触发：**任何一列**全液即可。
+   - **现象（实测）**：探针里给那一相造"全水"合成网格时，进程**卡死**（外层 `timeout` 才结束），
+     而**日志里一行错误都没有**；`top` 无从收敛，主循环不再迭代（`--quit-after` 也不会触发）。
+   - **为什么没被现有守卫抓到**：真图（`maps/*.cyrm`）今天没有全液列 ⇒ 生产路径碰不到；
+     它只在"合成世界/未来地图"里现形，而探针后来改用"上空气 + 下水的带状网格"（与真图同形）绕开了它。
+   - **本包不修产品代码**（范围纪律）⇒ 只登记。**翻案条件（具体可验）**：给那个 `while` 加 **`rows` 次上限**，
+     或在 `top == c.y`（绕回起点）时 `break`；并补一条**纯逻辑 `-s` 断言**：全液列必须在**有限步**内返回
+     （今天这条断言写出来就会**挂**，故必须先修再写，或写成"带步数上限的调用"）。
+23. **T10/T11 的行为面：当前无自动化路径可达**（★ 这是"归真链路批 A"这句话的**订正**）
+   (2026-10-05 由 closeout 批 Task 3 的逐任务评审 I-3 判为**过度声明**并要求登记；owner 未认领)。
+   - **被订正的那句话**：Task 3 的探针与报告里有 9 处把 T10/T11 的行为判据写成"**归真链路批 A**"。实测复核
+     （评审 R43 + 实现者复核）：**批 A 结构上碰不到它们** ——
+     ① `PvpSession.beta_mode` 全仓只有 [`scenes/beta_menu.gd`](../../scenes/beta_menu.gd):131（要人在主菜单点 Beta 页）
+     与 `tests/probe/lobby_create_form_probe.gd`（只建大厅面板）置真；
+     ② 10 支真链路脚本（`tests/{smoke,probe}/*.sh`）里 `beta|haste|rewind|time` **零命中**；
+     ③ 客户端那 7 处所在的三个函数全在同一道 `beta_mode` 闸后（[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) 的 `_tick_beta_time` 首行早退）；
+     ④ 服务端那一写同理：[`server/match/match_host.gd`](../../server/match/match_host.gd) 的那三段全在
+     `if time_economy != null:` 内，而 `time_economy` 只在 `options["time"]` 非空时建 ⇒ **普通真链路里
+     `match_host.gd:223` 那一行连"写 1.0"都不发生**。
+   - **覆盖上限（照实）**：T10/T11 的**形状**有守卫（`rewind_weapon_probe` 的 S10/S11，含全仓反射形态扫描），
+     **行为**没有任何自动化路径；服务端那一写"被执行到"的证明也**没有**（只有"静态链完整 + 该字段是活真相源"：
+     S10 ④ 用与 `match_host.gd:223` **逐字同款**的写法改字段，三个消费点与根速度域都跟着变）。
+   - **翻案条件（具体可验，二选一）**：① 立一个 **`beta_mode` + `options["time"]` 的 headless twin harness**
+     （在探针里直接置这两个开关、喂 `PacketInputSource` 的 haste 位、观察三个消费点与 `match_snapshot` 的
+     `haste` 位）；或 ② 给**主菜单 Beta 页那条路**加一条真链路脚本（真人/机器人从 Beta 页开局，
+     断言"按住加速键 ⇒ 三个消费点变快 + 对手端看到你的加速视效"）。★ **在那之前**，这三处的行为退化
+     只能靠**人工在 Beta 页开一局**复现；`task-3-report.md` §7 的那几条是**人工复现步骤**，不是"批 A 会给出的覆盖"。
 
 ## 七、已裁定不做(won't fix,2026-10-04 加)
 
