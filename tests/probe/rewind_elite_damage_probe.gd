@@ -132,6 +132,27 @@ func _run() -> void:
 	if int(normal.get("hp")) < nhp0:
 		_fail("普通怪在回溯期被扣血(应冻结回放,不结算伤害)")
 
+	# ④ 完成度:本支同样按真键位回溯(⇒ 会走 `WorldRewind._apply`/`_apply_bullets`),故补同一条守卫。
+	# ★★ **与 `tests/probe/rewind_probe.gd` 的 ⑩ 同源,勿单方面改一处**(2026-10-05 修复轮 2,评审 Minor ⑦)。
+	#   为什么是"照抄"而不是抽共用助手:抽助手要么改 `tests/lib/` 的**现有**文件(纪律禁止:那是别的探针的
+	#   公共基座),要么**新增**一个 `.gd` —— 那会改变 `allscript_probe` 的 `EXPECTED_SCRIPTS = 287`。
+	#   ⇒ 用"三处同源 + 交叉引用"换"不加新文件"。判据口径见 `rewind_probe.gd` ⑩ 上方那段注释
+	#   (分子 == 分母;**不是** `invalid_ref_count() == 0` —— 那会恒红)。
+	# ★ `rw0` 是**未定型**的(`var rw0 = lvl.get("_rewind")`)⇒ 这里必须显式标类型,不能用 `:=`。
+	var started: int = rw0.apply_started_count()
+	var done: int = rw0.apply_completed_count()
+	var bullets_done: int = rw0.apply_bullets_completed_count()
+	print("[elite-dmg] 完成度: _apply %d/%d 走完、_apply_bullets %d/%d 走完;带子上 freed 引用 %d 个(观测量)"
+			% [done, started, bullets_done, started, rw0.invalid_ref_count()])
+	if started <= 0:
+		_fail("完成度观测量没有样本(回溯期 step() 一次都没被调到)—— 本条会空转")
+	elif done != started:
+		_fail("回溯里 `_apply` 没走完:%d/%d 次(差 %d)—— 类型收窄撞到 freed 实例并中止"
+				% [done, started, started - done])
+	if bullets_done != started:
+		_fail("回溯里 `_apply_bullets` 没走完:%d/%d 次(差 %d)—— 子弹段函数体内被中止"
+				% [bullets_done, started, started - bullets_done])
+
 	if _fails.is_empty():
 		print("REWIND ELITE DMG PROBE: OK(回溯前不掉血/倒飞子弹二次伤害/普通怪不受判定)")
 		tree.quit(0)
