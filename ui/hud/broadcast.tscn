@@ -1,0 +1,15 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://ui/hud/broadcast.gd" id="1"]
+
+; 裸骨架:子树由 ui/hud/broadcast.gd 的 _ready() 用 UiFactory 建(理由见该文件头)。
+; ★ 这里**只**声明"它铺满宿主 CanvasLayer"这一件事 —— 一条手写锚点,而不是十来个节点。
+;   `.new()` 建出来的是默认尺寸的空 Control,会画不出任何东西(且不报错)。
+[node name="Broadcast" type="Control"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1")

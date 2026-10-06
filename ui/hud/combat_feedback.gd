@@ -26,11 +26,11 @@ static var current: CombatFeedback = null   # 当前对局的反馈层;null = �
 ##
 ## ★ 用 load 而非 preload:本场景的 ext_resource 指回本脚本,preload 会构成
 ##   「脚本 → 场景 → 脚本」的循环引用,Godot 解析期直接报错。运行期 load 不参与解析,
-##   且资源只载一次(引擎缓存)。同款的 B11 见 tests/hud_declarative_probe。
+##   且资源只载一次(引擎缓存)。同款的 B11 见 tests/probe/hud_declarative_probe。
 static func spawn(host: Node) -> void:
 	if current != null and is_instance_valid(current) and host.is_ancestor_of(current):
 		return
-	var fx: CombatFeedback = load("res://ui/combat_feedback.tscn").instantiate() as CombatFeedback
+	var fx: CombatFeedback = load("res://ui/hud/combat_feedback.tscn").instantiate() as CombatFeedback
 	host.add_child.call_deferred(fx)
 
 
@@ -57,8 +57,8 @@ static func reset_streak() -> void:
 
 ## 击杀归因(写端统一入口):记下"谁打的"与"何时打的",供 `RoyaleHost._attributed_killer`
 ## 读(大乱斗计分)。
-## 必须在**伤害结算之前写入** —— 若目标在受到该伤害后立即倒地，大乱斗计分逻辑将在倒地瞬间读取该元数据；
-## 若在 take_hit 之后写入，该元数据尚未记录，将导致击杀无法正确归因。
+## 必须写在**伤害调用之前** —— 被击者同帧倒地,大乱斗的倒地边沿当场读 meta 判分,
+## 写在 take_hit 之后则 meta 尚不存在,那一分静默丢失。
 ## 只做元数据写入,不做任何判定;victim == attacker 时不写(自伤不归因给自己)。
 ## 调用方负责传入正确的射手(玩家武器持有者 / 爆炸射手);是否算击杀由读端按 + 时效判定。
 ## ★ 敌人一侧**不再写**:那个 meta 原先的唯一读者是单机击杀播报,已随播报删除。
@@ -69,11 +69,50 @@ static func attribute(victim: Node, attacker: Node) -> void:
 		return
 	victim.set_meta("last_damager", attacker)
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
+	# ★★ 真实(非自伤)归因落地 ⇒ 上一响留下的自伤标记**当场作废**(2026-09-26)。
+	#   不作的后果:自伤标记是个**时刻标量**、窗口 8ms,而同一物理帧里两次 `apply_aoe`
+	#   (各在自己的 `bullet._physics_process` 里跑)之间隔 **0ms** ⇒ "自己那颗先炸、敌人那颗
+	#   后炸"时,第二下会同时看见 `stat_self` 与新鲜的 `stat_attacker`,惩罚那一支按**自伤**记
+	#   —— 玩家**因为被敌人打中而扣自己的分**(实测 `tests/probe/team_host_probe.gd` ⑬n3:
+	#   self_damage +40 而非 +20)。
+	#   ★ 为什么必须清在**这里**而不是读端:读端那两条支路的优先级(`if stat_self:` 优先于
+	#   `same_team` 那一支)是**计划明文选择**的语义 —— "同帧内先被敌人打中、再被自己的爆炸
+	#   炸到"时按**自伤**记(`server/match_state.gd` 的 `_fresh_attacker_role` 上方那段登记,
+	#   守卫 ⑬n4)。在 `attribute()` 里清则两种顺序各自正确:自伤**在后**时标记由
+	#   `note_self_hit` 当场写下、而 `attribute(pp, pp)` 在 `attacker == victim` 处**早退**
+	#   (清不到它)⇒ 自伤照记。
+	#   ★ `remove_meta` 对不存在的键是安全的(`Object::remove_meta` = `set_meta(name, Variant())`),
+	#   不必先 `has_meta` 守卫。
+	victim.remove_meta("last_self_hit_time")
+
+
+## 自伤标记:**爆炸的投掷者本人**在爆区里时,由 `Explosion.apply_aoe` 写一笔。
+## ★ 为什么必须新增这条通道:`attribute()` 在 `attacker == victim` 时**静默跳过**(自伤不归因给
+##   自己 —— 那是对的,否则"自己炸自己"会被记成自己的击杀),但它让自伤在 `_on_player_hit` 里
+##   与"归因不到"**完全不可区分**(读端唯一的攻击者来源是那个 meta,而自伤路径上它停在
+##   **上一名敌人**身上或干脆不存在)。
+##   惩罚要扣"对自己造成的伤害",就必须有一条**只表示自伤**的通道。
+## ★ 它是一个**时刻标量**而不是"谁":自伤的攻击者恒为受害者本人,没有第二方。
+## ★ 与 `attribute` 同款:只写元数据、不做任何判定、**headless 服务器下同样安全**
+##   (不碰 `current`,不碰任何 UI 节点)。
+static func note_self_hit(victim: Node) -> void:
+	if victim == null or not is_instance_valid(victim):
+		return
+	victim.set_meta("last_self_hit_time", Time.get_ticks_msec())
+
+
+## 该受害者**这一下**是不是自伤(`window_ms` 内刚被标记过)。无标记/超窗 → false。
+static func is_fresh_self_hit(victim: Node, window_ms: int) -> bool:
+	if victim == null or not is_instance_valid(victim):
+		return false
+	if not victim.has_meta("last_self_hit_time"):
+		return false
+	return Time.get_ticks_msec() - int(victim.get_meta("last_self_hit_time")) <= window_ms
 
 
 ## 归因 + 命中标记的一体入口:武器命中**玩家**时的统一收尾(PvP 的爆炸/激光玩家分支共用)。
-## ★归因必须在**伤害结算之前**完成 —— take_hit 可能导致角色当帧阵亡，大乱斗将在倒地瞬间读取
-## last_damager 元数据进行击杀计分(见 attribute 注释)。
+## ★归因必须在**伤害调用之前**完成 —— take_hit 可能同帧判死,大乱斗的倒地边沿当场读
+## last_damager 的 meta(见 attribute 的注释)。散写成两行时极易漏掉先后顺序。
 ## ★ 命中**敌人**不再走这里(2026-09-17):单机播报删除后敌人的 last_damager 无读者,
 ##   敌人分支直接调 `hit_marker()` 即可。
 ## headless 服务器进程无 CombatFeedback 实例 → hit_marker 空操作,无副作用。

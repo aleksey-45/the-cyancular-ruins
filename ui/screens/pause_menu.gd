@@ -30,26 +30,38 @@ func _ready() -> void:
 	_root.visible = false
 	add_child(_root)
 
+	# 全屏压暗罩(0.55):暂停比中央广播更需要挡住背景 —— 底下是**实时**的游戏世界。
+	# 颜色是本文件唯一的字面量(压暗罩是"职责",不属于调色板语义)。
+	# ★ 不设 mouse_filter:保持原状的 STOP —— 整屏吃掉鼠标事件(与改版前逐字一致)。
 	var dim := ColorRect.new()
 	dim.color = Color(0.0, 0.0, 0.0, 0.55)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(dim)
 
-	var vb := VBoxContainer.new()
-	vb.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	vb.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	vb.grow_vertical = Control.GROW_DIRECTION_BOTH
-	vb.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_theme_constant_override("separation", 22)
-	_root.add_child(vb)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(center)
 
-	# 字号一律取 16 的倍数(本项目的像素字体只在 16 倍数下像素锐利,见 ui/ui_factory.gd 文件头)
-	# 控件工厂(字体/字号/点击音纪律)已抽到 UiFactory,与其余菜单共用同一份不变量
-	vb.add_child(UiFactory.label("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64, UiFactory.C_ACCENT))
-	var resume := UiFactory.button("继 续 游 戏", 32)
+	# 凿刻面板(外深线 + 内亮线),内容加进它那个名为 `Body` 的 PanelContainer。
+	var panel := UiFactory.menu_panel(Vector2(72, 44))
+	center.add_child(panel)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 28)
+	(panel.get_node("Body") as Container).add_child(vb)
+
+	# 标题带:琥珀标题 + C_HEADER 底 + 只有下边一条线。
+	# ★ 文案**逐字未改** —— 单机「—— 已暂停 ——」/ PvP「—— 菜单 ——」,字号仍取 64
+	#   (L4 视觉守卫按这两条钉着:`tests/probe/kh_l4_visual_probe.gd` 找得到该文本、
+	#   且断言它的 font_size == 64)。改文案/字号会当场红。
+	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64))
+
+	# 两颗按钮:继续 = 主行动(gold)、回主菜单 = 弱化(quiet)。VBox 会把它们拉齐到面板宽。
+	var resume := UiFactory.menu_button("继 续 游 戏", 32, Vector2(480, 72), "gold")
 	resume.pressed.connect(close)
 	vb.add_child(resume)
-	var menu := UiFactory.button("回 到 主 菜 单", 32)
+
+	var menu := UiFactory.menu_button("回 到 主 菜 单", 32, Vector2(480, 72), "quiet")
 	menu.pressed.connect(go_menu)
 	vb.add_child(menu)
 
