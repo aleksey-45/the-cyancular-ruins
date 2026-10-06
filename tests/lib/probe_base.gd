@@ -49,7 +49,7 @@ func _check(ok: bool, msg: String) -> void:
 #   `_check` 之前**,整组被静默跳过 —— 这里打 ✓、`_finish()` 打 ALL-OK,**两行一起读成通过**。
 #   即:**✓ 汇总行 + ALL-OK 并不蕴含"这一组跑过"**。
 #   想让 ✓ 有意义:组内第一条断言要**空转不了**(先 `_check(x != null)` 再解引用;见
-#   `tests/match_result_probe.gd` 文件头 ②),或在本组**最后**补一条"确实跑到这里了"的自检
+#   `tests/probe/match_result_probe.gd` 文件头 ②),或在本组**最后**补一条"确实跑到这里了"的自检
 #   断言(它没跑 ⇒ 整组缺一条,而不是多一条 ✓)。
 func _summary(fails_before: int, msg: String) -> void:
 	print("[%s] " % probe_id() + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
@@ -85,6 +85,11 @@ func _code_view(src: String) -> String:
 
 func _func_body(code: String, name: String) -> String:
 	return ScanUtil.func_body(code, name)
+
+# 只认**行首**的顶层函数定义(见 ScanUtil.top_func_body 上方:内部类会同名骗过 func_body)。
+# ★ 配套:传进来的 code 要用 `_code_view`(保留缩进),不能是 `_code_only`。
+func _top_func_body(code: String, name: String) -> String:
+	return ScanUtil.top_func_body(code, name)
 
 func _match_paren(src: String, open: int) -> int:
 	return ScanUtil.match_paren(src, open)

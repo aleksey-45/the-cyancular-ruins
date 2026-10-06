@@ -1,4 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://laserrepro00001"]
-[ext_resource type="Script" path="res://tests/laser_pvp_repro_probe.gd" id="1"]
-[node name="LaserRepro" type="Node"]
-script = ExtResource("1")
