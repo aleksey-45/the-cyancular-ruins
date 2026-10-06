@@ -48,6 +48,14 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			var blocked := has_grid and not _has_los(center, pp, grid)
 			var mult := cover_multiplier(d, radius, blocked)
 			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
+			# ★ 自伤标记(必须在 `take_hit` **之前**,与 attribute 同一纪律):`attribute` 对
+			#   attacker == victim 静默跳过,自伤因此没有归因通道 —— 惩罚要扣"对自己造成的伤害",
+			#   靠这一笔把"自伤"与"归因不到"分开。
+			#   ★ 只有**投掷者本人**在爆区里才写 ⇒ 别人炸不到这条路径;`shooter` 为 null
+			#   (无主爆炸/敌方弹药)时 `pp == null` 恒 false,天然不写。
+			#   ★ 本函数**只写标记**,伤害与击退一个数都不动(爆炸对队友满效是用户既有裁定)。
+			if shooter == pp:
+				CombatFeedback.note_self_hit(pp)
 			# 击杀归因(大乱斗 RoyaleHost 读 last_damager 判击杀分);1v1 MatchHost 不读,无行为变化
 			# ★同敌人分支:必须在 take_hit 之前写,倒地同帧的归因读取者才看得到(Task 15)。
 			# 注:此处原缺 is_instance_valid 守卫,统一入口补上(更严,不影响原本会写的场景)

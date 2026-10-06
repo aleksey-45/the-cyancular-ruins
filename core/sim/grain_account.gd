@@ -1,19 +1,19 @@
 class_name GrainAccount
 extends RefCounted
 
-# 时间粒子账户核心逻辑：包含总余额管理、短期可用额度与透支状态机。纯逻辑实现，不依赖场景（支持 -s 独立测试）。
+# 时间颗粒账户(个人钟的记账芯):总量余额 + 短时限额 + 贷款状态机。纯逻辑零场景依赖(-s 可测)。
 #
-# 数值模型（怀表系统设计）：
-#   · balance     总余额（0..GRAIN_CAP，怀表白色短指针指示满圈；结晶充值只计入此处）
-#   · short_used  短期已用额度（0..SHORT_WINDOW，红色长指针主圈；消耗时顺时针增加，恢复时逆时针回退）
-#   · loan_used   已透支额度（0..LOAN_LIMIT，红色长指针额外 1/4 圈；短期额度耗尽后继续消耗转入透支）
-#   · loan_depth  = loan_used / LOAN_LIMIT ∈ [0,1]，驱动环境反馈（画面提亮、色差分离、敌人相对加速、音调升高）
-#   · locked      透支耗尽后的锁定状态：借满 LOAN_LIMIT 时触发，长指针随自动恢复逐步还清；
-#                 锁定期间无法使用任何时间技能。
+# 模型(主策划案·怀表设计):
+#   · balance     总余额(0..GRAIN_CAP,白短针一圈;结晶入账只进这里)
+#   · short_used  短时窗已用(0..SHORT_WINDOW,红长针主圈;消耗顺时针推进,恢复逆时针拨回)
+#   · loan_used   贷款已借(0..LOAN_LIMIT,红长针额外 1/4 圈;短时窗满后继续消耗即借入)
+#   · loan_depth  = loan_used / LOAN_LIMIT ∈ [0,1] —— 世界反馈(变亮/色差/敌加速/变调)的驱动量
+#   · locked      贷款强制结束后的锁定:借满 LOAN_LIMIT 触发,长针(贷款部分)被 50/s 回拨
+#                 还清为止;期间任何技能都取不出颗粒(按了也空转)。
 #
-# 消耗（spend）：每次扣减同步扣除总余额与短期额度；短期额度耗尽后溢出部分计入透支额度；透支达到上限后触发锁定。
-# 恢复（regen）：默认 50/s，优先偿还透支额度，还清后再恢复短期额度（还款过程中保持锁定，完全还清后解锁）。
-# 充值（deposit）：吸收结晶时直接增加总余额（不超过上限），不影响指针当前位置。
+# 消耗(spend):一笔同时扣「总余额」与「短时窗」;窗满后溢出部分进贷款;贷满即锁。
+# 恢复(regen):50/s,先还贷后回窗(还贷期间不解锁,还清瞬间解锁)。
+# 入账(deposit):结晶吸收,只加总余额(夹上限),不动指针。
 
 signal balance_changed(balance: float)
 signal window_changed(short_used: float, loan_used: float)
@@ -21,7 +21,8 @@ signal loan_depth_changed(depth: float)
 signal loan_locked
 signal loan_unlocked
 
-# ── 参数配置（单机使用 TimeParams 默认值；PvP 使用 TimeRules.make_account()，透支上限支持按局调整）──
+# ── 参数(2026-09-28 参数化:单机用 TimeParams 默认值 → 行为逐位不变;
+#    PvP 走 TimeRules.make_account(),贷款上限 = 短时额度、每局可调)──
 var initial := TimeParams.GRAIN_INITIAL
 var cap := TimeParams.GRAIN_CAP
 var window := TimeParams.SHORT_WINDOW
@@ -55,13 +56,13 @@ func loan_depth() -> float:
 	return loan_used / loan_max
 
 
-## 消耗粒子：时长 delta（秒）× rate（粒子/秒）。返回实际扣除的粒子数（余额不足或处于锁定状态时小于预期值）。
+## 消耗 delta 秒 × rate 颗粒/秒。返回实际扣掉的颗粒数(余额/锁定不足时 < rate·delta)。
 func spend(delta: float, rate: float) -> float:
 	if locked or balance <= 0.0 or delta <= 0.0 or rate <= 0.0:
 		return 0.0
 	var got: float = minf(rate * delta, balance)
 	balance -= got
-	# 短期额度耗尽后，溢出部分转入透支额度；透支达到上限触发强制锁定
+	# 指针推进与消耗同额:短时窗满 → 溢出进贷款;贷满 → 强制锁定
 	short_used += got
 	if short_used > window:
 		var over: float = short_used - window
@@ -78,7 +79,7 @@ func spend(delta: float, rate: float) -> float:
 	return got
 
 
-## 每帧自动恢复：优先偿还透支额度，还清后恢复短期额度；若处于锁定状态，还清透支瞬间触发解锁。
+## 每帧恢复(无论是否在消耗都照走):50/s,先还贷后回窗;锁定中还清贷款 → 解锁。
 func regen(delta: float) -> void:
 	if delta <= 0.0:
 		return
@@ -101,7 +102,7 @@ func regen(delta: float) -> void:
 		_emit_window()
 
 
-## 结晶充值（如击杀乌鸫获得 300 粒子）：直接增加总余额，不超过上限。返回实际充值量。
+## 结晶入账(乌鸫击杀 300 等):只进总余额,夹上限。返回实际入账量。
 func deposit(amount: int) -> int:
 	if amount <= 0:
 		return 0

@@ -12,6 +12,13 @@ const OPEN_AREA_MIN: int = 20    # 出生可走连通区最小规模(格);密封
 const PREFER_MIN: int = 8        # 优选格不足此数才回退下一级宽松判据
 
 # ── 小图自适应门槛(2026-09-19)──
+# ★★ 下面这些数字**全部是旧 PvP 定图 `factory1v1.cyrm` 上实测的**。该图已于 **2026-10-02 退役**
+#   (用户裁定,文件已删;现 PvP 定图 = `newfactory.cyrm`)—— 故本段的 `factory1v1` **不是**
+#   在指今天的生产图,别照着它去量 newfactory。
+#   ★ 顺带登记一个真实后果:**newfactory 的最大地板连通区实测 48 ≥ `OPEN_AREA_MIN`(20)**
+#   ⇒ 自适应分支在**今天的生产图集里不会被触发**;它仍由 `spawn_pool_smoke` 的**合成网格**
+#   夹具驱动(那张夹具取代了原先拿 factory1v1 当"缺陷图"的用法)。
+#   ⇒ 该分支不是死代码(阈值仍是"任何图都可能需要"的保险),但**生产路径已无图能走到它**。
 # `OPEN_AREA_MIN` 是按"正常大小"的图定的**绝对**阈值,小图上它可以**无人达到**:
 # 典型 = PvP 固定图 `factory1v1`(150×100)—— 按 4 邻接算的**最大**地板连通区只有 **13 格**。
 # 那时前两档恒空,池子**静默退化成全部地板格**(该图 843 个地板格里 155 个是**孤立单格区**),
@@ -158,10 +165,10 @@ static func area_threshold() -> int:
 #     · `RoyaleHost.plan_spawns`:`picked = spread_cells(spawn_candidates().duplicate(), …)`
 #       ⇒ `picked ⊆ spawn_candidates()`;而它那条"补足"分支(`_floor_cells()`)可达 ⟺
 #       `picked.size() < n`,而 `spread_cells` **恒返回 `min(n, 池大小)`** ⇒ 该分支可达
-#       ⟺ **池 < 人数**(两图池 122 / 59,人数上限 8 ⇒ 条件永不满足/分支不可达)。
+#       ⟺ **池 < 人数**(两图池 122 / 59,人数上限 8 ⇒ 死路)。
 #     · `TeamHost._plan_team_spawns_once`:基座、`cells_within(base, R)`、`spread_cells(…)`
 #       三处来源**都是**本函数(或它的 duplicate)⇒ 同样 ⊆ 池。
-#   ⇒ 与随机数无关(不是"抽 300 局没看见")。抽样读数只作旁证:`tests/spawn_pool_smoke`。
+#   ⇒ 与随机数无关(不是"抽 300 局没看见")。抽样读数只作旁证:`tests/smoke/spawn_pool_smoke`。
 static func spawn_candidates() -> Array:
 	if not _prefer_cache.is_empty():
 		return _prefer_cache
@@ -213,8 +220,8 @@ static func spawn_candidates() -> Array:
 #   ★ 口径:`(-1,-1)` 面与收窄前相同是**已扫布局族上的实测结论**,不是对"所有可能的敌人布局"
 #     的证明(结构化布局的空间远大于我扫的等间距网格族)。而上面 ④ 那条**与读数无关**。
 #   ★ 退化情形(登记):本图最大连通区 ≤ 2 时门槛会塌到 1,那时第 ② 档 == 全部地板格、
-#     第 ③ 档反而**更窄**(超集关系反转)—— 这种图是病态图,`tests/spawn_pool_smoke` 的
-#     "逐档放宽"断言会判定失败。
+#     第 ③ 档反而**更窄**(超集关系反转)—— 这种图是病态图,`tests/smoke/spawn_pool_smoke` 的
+#     "逐档放宽"断言会当场红。
 # ★ 两级都**不含孤立单格**(第 ③ 档是 `≥ 2`),故"兜底档不含孤立单格"对所有图成立。
 # ★ 自适应生效的图上第 ② 档 == 「连通区 ≥ 门槛(7)」;正常图上它 = 「连通区 ≥ 20」。
 #   两图都是**收窄**(相对 `floor_cells()`),任何图都不会因此变宽。
@@ -273,3 +280,36 @@ static func cells_within(center: Vector2i, radius: int) -> Array:
 		if GridPathfinder.toroidal_dist(c, center, d.x, d.y) <= radius:
 			out.append(c)
 	return out if not out.is_empty() else spawn_candidates().duplicate()
+
+
+# ── 给"只有一个出生点的图"挑 role2 的出生格(2026-10-02 从 MatchBootstrap 搬来)──
+# ★ 搬家的理由是**可测性**不是整洁:`MatchBootstrap` 静态引用 autoload(`GameParameters`/`NetBus`),
+#   在 `-s` 探针里**编译失败** ⇒ `map_catalog_probe` 那几条断言被**静默跳过**而 verdict 照打 OK。
+#   本文件自述"不引任何 autoload、可被 `-s` 测试加载",正是这类选格逻辑的家。
+const FAR_CELLS := 15   # role2 的自动出生点离 role1 至少这么远(格;环面距离)
+
+
+## 地板格(空 + 正下方实心)里离 `anchor` **环面距离 ≥ FAR_CELLS** 的最近一个;
+## 全不满足就取最远的那个;网格为空返回 (-1,-1)(调用方那套兜底照旧)。
+static func far_spawn_from(anchor: Vector2i, grid: Array) -> Vector2i:
+	if grid.is_empty():
+		return Vector2i(-1, -1)
+	TileDefs.load_defs()   # 幂等;worker 建局早于建世界,这里不加载的话 is_blocked 全是默认值
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	var best := Vector2i(-1, -1)
+	var best_d := -1
+	for r in rows:
+		var line: Array = grid[r]
+		for c in min(cols, line.size()):
+			if int(line[c]) != MapFormat.EMPTY:
+				continue
+			if not TileDefs.is_blocked(int(grid[(r + 1) % rows][c])):
+				continue
+			var d := MazeGenerator.toroidal_dist(anchor, Vector2i(c, r), cols, rows)
+			if d >= FAR_CELLS:
+				return Vector2i(c, r)
+			if d > best_d:
+				best_d = d
+				best = Vector2i(c, r)
+	return best
