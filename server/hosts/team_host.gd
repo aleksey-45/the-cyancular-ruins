@@ -25,59 +25,18 @@ const TEAMMATE_CLEARANCE := 3    # 队内三人最小间距(格):够散开,又�
 const SPAWN_BASE_RADIUS := 30    # 基座附近取点半径(格);池子不够会退回全量候选
 const SPAWN_MAX_TRIES := 12      # 散点重试次数(见 plan_team_spawns 的说明;每份只要 ~几十微秒)
 const RESPAWN_CLEARANCE := 8     # 复活点离**存活敌人**的最小环面距离(格)
-const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS   # 击杀归因时效(3s),与 RoyaleHost 同源
 # ★ 队 B 的身体层(层位 5,值 16)。全仓层位占用:1 地形 / 2 玩家 / 4 敌人 / 8 掉落物(WeaponPickup)
-#   —— 第 5 位在本批之前**无人占用**(唯一另一处用值 16 的是 `tests/replica_ghost_probe.gd` 的
+#   —— 第 5 位在本批之前**无人占用**(唯一另一处用值 16 的是 `tests/probe/replica_ghost_probe.gd` 的
 #   备用障碍层,那是探针自己世界里的东西,与生产无关)。契约由 `_init` 末段与探针 ⑩ 共同钉住。
 const TEAM_ENEMY_LAYER := 16
-
-# ── 逐人数据 / ACS(B 册 Task 10,只做数据面)──
-# 击杀分(Valorant 式"遭遇分"):按**倒下瞬间的敌方存活人数**加权,线性 +20/人:
-#   1 人 → 70 / 2 → 90 / 3 → 110 / 4 → 130 / 5 → 150(公式 = BASE + PER_ALIVE × 人数)。
-# ★★ 人数**含被击杀者本人** —— 这张表的定义是"首杀最高、收尾最低":首杀时敌方 5 人全在(150),
-#   收尾时敌方只剩他一个(70)。数"倒下**之后**还剩几个"会得到 4…0,与表对不上(且 0 无档)。
-# ★ 3v3 一队只有 3 人 ⇒ 实际只会取到 1/2/3(70/90/110);上限 5 是 Valorant 的 5v5 口径。
-const KILL_BONUS_BASE := 50         # 公式基线:50 + 20×人数
-const KILL_BONUS_PER_ALIVE := 20
-const KILL_BONUS_MIN_ALIVE := 1
-const KILL_BONUS_MAX_ALIVE := 5
-const MULTI_KILL_BONUS := 50        # 同一局内该 role 的第 2、3… 个击杀,每个再 +50
-# ★ 死亡**不扣分**:Riot 的 ACS 不含死亡惩罚,本仓不自己发明扣分(用户裁定)。
-#   `deaths` 只用于展示与 MVP 并列判据。
-#
-# ★★ 伤害归因的"新鲜度"阈值(ms)—— 本任务最容易漏的一处:
-#   `CombatFeedback.attribute()` 在 `attacker == victim` 时**静默跳过**(自伤不归因给自己),
-#   于是自伤路径上 meta 会**停在上一名敌人**身上,而读端只看"有没有 meta + 在不在时效内"
-#   ⇒ "自己的榴弹炸自己"会被错记成那名敌人的伤害。故读"这一下伤害是谁打的"必须用**紧窗口**。
-# ★ 不能与击杀口径共用:击杀读的 `ATTRIB_WINDOW`(3s)是 A 册定的——"打一枪后 3s 内溺水仍算
-#   你的击杀";拿它判"这一下伤害是谁打的"太宽(一次 0.4s 引信的榴弹自爆就会被计入)。
-# ★ 阈值怎么定:真实命中路径的 `attribute()` → `take_hit()` → `took_hit` 信号是**同一调用栈**,
-#   年龄 ≈ 0~1ms;而**上一物理帧**留下的归因至少 ~16.7ms 之前(60Hz)。8ms 落在两者之间:
-#   容得下跨一次毫秒边界,又把"上一帧那次命中"挡在外面(< 一帧,故上一帧的归因必被拒)。
-# ★ 已知边界(登记在报告里,未修):同**一帧**内先被敌人打中、再被自己的爆炸炸到,meta 仍是
-#   那名敌人且年龄 ≈ 0 —— 那一下会被记到敌人账上。根治要改写端(`CombatFeedback`/`Explosion`),
-#   不在本任务范围。
-# ★★ 阈值成立的前提是"**归因与伤害同一调用栈**"(真实命中路径 ≈ 0~1ms)。**将来新增
-#   「延迟扣血」型伤害必须自己每帧重写归因** —— `LaserWeaponBase` 的**缝 2**(命中结算)明确
-#   把"持续/灼烧型"列为**预定扩展位**,而那种实现是"命中时写一次归因、后续帧再扣血":扣血
-#   那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人 `dmg` 恒少且不报错
-#   (没有断言、没有日志,只是 ACS 数字偏低)。写端不重写归因的话,这条阈值就是那个扩展位的
-#   唯一提示。
-const ATTRIB_FRESH_MS := 8
 
 var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 match_start 广播的同一份)
 var _swap_spawns: Dictionary = {}    # role -> Vector2i(换边后的点;两队点集整体对调)
 var _spawned_once: Dictionary = {}   # role -> true(首次摆位走出生点,之后走动态复活点)
-var _left: Dictionary = {}           # role -> true(已移出对局;排行榜/比分判据用)
 # 走光(弃权)终局的胜者队:1/2 = 判胜,0 = 平局(两队都走光),ENDGAME_NONE = 未定(正常路径)。
 # ★ 它**只**由 `mark_disconnected` 写、**只**由 `_match_winner` 首行读 —— 让 `match_winner`
 #   仍然只有一个来源(`_broadcast_round_state` 照旧不碰它)。
 var _endgame_winner := ENDGAME_NONE
-
-# ── 逐人数据(整场累计;与 `_scores` 是两份不同的东西,见 `_start_next_round` 的注释)──
-var _stats: Dictionary = {}          # role -> {kills, deaths, dmg, kscore}(整场不清零)
-var _round_kills: Dictionary = {}    # role -> **本局**已击杀数(多杀加成的判据;每局清零)
-var _left_round: Dictionary = {}     # role -> 离开时所处的局号(ACS 的"实际参与局数"口径)
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -95,7 +54,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	# ★ 第 5 个实参是 `teams`,**不是** `spawns`(`RoyaleHost` 那两个参数同名易混)。
 	#   传错的后果不是崩溃而是"整局队伍判定全错":`_team_of` 被塞成 `{role: Vector2i}`,
 	#   `team_of()` 里 `int(Vector2i)` 报 `Nonexistent 'int' constructor` 并让该函数当场返回 0
-	#   → 子弹不穿队友、`team_map()` 下发空表。守卫:`tests/team_host_probe` 的 ③ 直读
+	#   → 子弹不穿队友、`team_map()` 下发空表。守卫:`tests/probe/team_host_probe` 的 ③ 直读
 	#   `_team_of` 逐值断言 `typeof(...) == TYPE_INT`(只断言"非空"抓不到这一档)。
 	super._init(map_path, role_peers, options, ai_roles, teams)
 
@@ -116,7 +75,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 # ★ 为什么单独成一个函数、而不是把这几行写在 `_init` 里:探针用「`role_peers` 传空 + 手工摆位」
 #   建宿主,那条路径下 `players` 在 `_init` 那一刻**还是空的** —— 逻辑只写在 `_init` 里的话,
 #   探针就只能**自己再抄一份**配层规则,于是它验的是抄件、不是生产代码(本仓明令禁止的
-#   "第二份真相";`tests/team_host_probe.gd` 的 `_place` 正是为这个显式补调本函数)。
+#   "第二份真相";`tests/probe/team_host_probe.gd` 的 `_place` 正是为这个显式补调本函数)。
 # ★ 幂等:重复调用没副作用(直接赋值,不叠加),故手工摆位路径可以放心再调一次。
 func _apply_team_layers() -> void:
 	for role in players:
@@ -341,6 +300,14 @@ func _enemy_team_of(role: int) -> int:
 #   三方都绑在 role 上,逐处插分支会让 1v1 那条路长出团队语义(1v1 的探针照样绿,但已经变了)。
 func _match_round_tick(delta: float) -> void:
 	for role in players:
+		# ★ MATCH_OVER 之后**不再产生任何记账**(终局后残留的爆炸致死仍会把玩家打倒地):
+		#   没有这道闸,`deaths` 会 +1、尸体再掉一次武器、并**再广播一次带新 mvp 的终局载荷**。
+		#   大乱斗那一支**天然没有这个问题**(它的倒地边沿住在 `RoundState.PLAYING` 分支里,
+		#   见 `RoyaleHost._match_round_tick`)—— 两处形状一致是**刻意**的
+		#   (三个模式的倒地边沿是**同一个契约的三份落地**),别把这句当成多余而删掉。
+		#   ★ 只排除 MATCH_OVER:`ROUND_OVER` 期间倒地照旧入账(既有行为,不在本项里)。
+		if _round_state == RoundState.MATCH_OVER:
+			continue
 		var p: Node2D = players[role]
 		if not p.is_downed():
 			continue
@@ -362,6 +329,10 @@ func _match_round_tick(delta: float) -> void:
 		_record_down(int(role), _attributed_killer(p))
 		# 击杀定义(继承 1v1 的"不分死因"):任一玩家倒地 → **对方队** +1。
 		# 队友误炸也照此(用户裁定):乱扔雷 = 给对面送分,惩罚是自带的,不必另立规则。
+		# ★★ 记分(**无归因**的队分)与上面那笔逐人 `kills`(**有归因**)是**两条账**:
+		#   溺水/自杀/队友误炸这几档让**队分 +1 而没有任何人记 `kills`** ⇒ 结算页的逐人
+		#   击杀之和**不等于**记分条上的队分。这是**刻意保留**的形状(三模式的三种组合见
+		#   docs/eng/modes.md 的「3v3 一条新登记的差异」);**别拿结算页的击杀数去核对记分条**。
 		var scorer := _enemy_team_of(int(role))
 		if scorer != 0:
 			_scores[scorer] = int(_scores.get(scorer, 0)) + 1
@@ -392,9 +363,6 @@ func _match_round_tick(delta: float) -> void:
 								(players[heal_role] as Node).max_hp,
 								(players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
-			# 倒计时重播(共用实现,见 `COUNTDOWN_SYNC_INTERVAL`):客户端切场景/建 HUD 有延迟,
-			# 只广播一次会漏收,两端的倒计时起点就会差一整段场景加载时间。
-			_tick_countdown_sync(delta)
 		RoundState.PLAYING:
 			_handle_respawns(delta)
 			for t in [1, 2]:
@@ -428,7 +396,7 @@ func _round_over(winner_team: int) -> void:
 #   在此之前 `_match_round_tick` 的 ROUND_OVER 分支虚分派到的是**基类** `MatchRound._start_next_round`,
 #   而 `_rounds_won` 的键早已是**队号** —— 队号 {1,2} 与 role 1/2 **字面撞号**,
 #   "1 队赢 2 局"被基类读成"role 1 赢 2 局":结果碰巧对,但不是语义对齐(且基类**不换边**)。
-#   守卫:`tests/team_host_probe` ⑨(源码级:本函数确实声明在这里;行为级:把状态机推过
+#   守卫:`tests/probe/team_host_probe` ⑨(源码级:本函数确实声明在这里;行为级:把状态机推过
 #   ROUND_OVER 后出生点已对调、`_side_swap` 一路未被翻 —— 基类那条两样都做不到)。
 #
 # ★ 与 `_match_winner()` 的关系(**不是重复,是互补**):本函数判的是"**要不要**进 MATCH_OVER"
@@ -453,10 +421,8 @@ func _start_next_round() -> void:
 	_spawned_once.clear()
 	_round_num += 1
 	_scores = {}
-	# 多杀加成按**局**算:每局清零该局的 per-role 击杀计数。
 	# ★ 整场累计的 `_stats` **不**清零 —— ACS 是整场口径,与 `_scores`(每局清零的**队伍比分**)
 	#   是两份不同的东西:一场三局两胜里 `_scores` 会归零两次,而逐人数据跨局累加。
-	_round_kills = {}
 	_respawn_pending = {}
 	_down_counted = {}
 	for role in players:
@@ -528,7 +494,7 @@ func _broadcast_round_state() -> void:
 	var table := stats_payload()
 	if not table.is_empty():
 		data["stats"] = table
-	_rpc_all("round_state", [data])
+	_send_round_state(data)
 
 
 # ── 击杀归因(自带一份,不从基类上提)──
@@ -536,32 +502,10 @@ func _broadcast_round_state() -> void:
 # ★ 2026-09-21:原先还有一个读端 —— 「击杀后复位击杀者」那条规则(已按用户要求删除)。
 #   现在它只服务"击杀归属"这一族(`kill_event` 的射手字段 + `_record_down` 的逐人 `kills`)。
 # ★ 为什么自带而不是把 `RoyaleHost._attributed_killer` 上提到基类:基类的归属由
-#   `tests/kh_l5_probe.gd` 的"新接口归属(基类不得含子类方法)"反向断言守着,为省 12 行去动
+#   `tests/probe/kh_l5_probe.gd` 的"新接口归属(基类不得含子类方法)"反向断言守着,为省 12 行去动
 #   那条探针不划算;两份都不足 15 行,读的还是同一个 meta(单一来源仍是 CombatFeedback)。
 func _attributed_killer(victim: Node2D) -> int:
 	return _attributed_role_within(victim, ATTRIB_WINDOW)
-
-
-# "上一个打 victim 的人"的 role,且归因年龄 ≤ `window_ms`(超窗/无归因/自伤 → 0)。
-# ★ 读端只有两处,问的是**两个不同的问题**,故窗口是参数而不是常量:
-#   · 击杀归属(`_attributed_killer`,3s)= "这次死亡算谁的击杀"(A 册口径);
-#   · 逐人伤害(`_fresh_attacker_role`,8ms)= "**这一下**伤害是谁打的"(见 `ATTRIB_FRESH_MS`)。
-#   两个问题共用"读 meta + 把节点映射回 role"这一段(单一来源),只差那个窗口。
-# ★ `shooter == victim` 的守卫不可省:写端(`CombatFeedback.attribute`)自伤时**静默跳过**,
-#   但万一有人绕过写端直接 set_meta,这里不能再把自伤算成"自己杀自己"。
-func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
-	if not victim.has_meta("last_damager"):
-		return 0
-	var shooter: Node = victim.get_meta("last_damager")
-	if shooter == null or not is_instance_valid(shooter) or shooter == victim:
-		return 0
-	if victim.has_meta("last_damager_time"):
-		if Time.get_ticks_msec() - int(victim.get_meta("last_damager_time")) > window_ms:
-			return 0
-	for role in players:
-		if players[role] == shooter:
-			return int(role)
-	return 0
 
 
 # ── 中途掉线(宽限期到点后由 server_main 调)—— 移出对局,但**整队走光才终局** ──
@@ -575,7 +519,10 @@ func mark_disconnected(role: int) -> void:
 		return
 	_left[role] = true
 	# ACS 的"局数"口径:离开者**冻结在他离开时所处的局号**(= 他实际参与的局数,见 `_rounds_for`)
-	_left_round[role] = _round_num
+	# ★ 取**掉线那一刻**的局号(`_leave_round`,由 `_enter_grace` 当场写下),不是宽限到点
+	#   这一刻的 —— 两者之间隔着整个宽限期,可能已经换过局。缺省回落 `_round_num`
+	#   保证没有任何调用路径会比旧行为**更差**。
+	_left_round[role] = int(_leave_round.get(role, _round_num))
 	_respawn_pending.erase(role)
 	_down_counted[role] = true
 	if players.has(role):
@@ -626,14 +573,14 @@ func _finish_match() -> void:
 
 
 # ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)──
-# 异常卡死(嵌墙/缝隙)时主动脱困:走正常倒地流程 → 2s 复活;先清除 `last_damager` 归因,
+# 异常卡死(嵌墙/夹缝)时主动放弃生命:走正常倒地边沿 → 2s 复活;先清 `last_damager` 归因,
 # 自杀不计入任何人击杀。
 # ★ 与 `RoyaleHost.request_suicide_role` **逐字同构**(那边 12 行,规则 7"不分死因"对两个模式
 #   同样成立)。在 3v3 下它落进**无归因**档:倒地 → **对方队 +1**、且无人被计入击杀
 #   (`_record_down` / `kill_event` 都读 `_attributed_killer` = 0)。
 #   ★ spec §10 第 ⑩ 行原本还写了一句"无归因 → **无人被复位**" —— 那条规则(以及那个三分档)
 #     已随「击杀者复位」整体删除(2026-09-21,见 `_match_round_tick`),现在**任何**归因下都无人被复位。
-# ★★ 本函数**必须留在子类**:`tests/kh_l5_probe.gd` 的"新接口归属"反向断言把
+# ★★ 本函数**必须留在子类**:`tests/probe/kh_l5_probe.gd` 的"新接口归属"反向断言把
 #    `request_suicide_role` 列进**禁入基类**名单(搬进基类 = 未定义符号)。
 # ★ 为什么值得为它单独接一条闸:三局两胜里卡死的玩家比大乱斗难受得多(不能退、只能等对局
 #   被别人打完),而 royale 那份现成 —— `server_main._on_suicide_request` 原先只认 `_royale`,
@@ -652,69 +599,23 @@ func request_suicide_role(role: int) -> void:
 		combat.force_down()
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════
-# 逐人数据 + ACS / MVP(B 册 Task 10)
-#
-# ★ **只做数据面**:服务端算好、随 `round_state` 下发。结算面板(版式/排序/庆祝)不做。
-# 用户裁定三条:
-#   ① MVP 口径 = Valorant 式**整场 ACS** = (伤害 1:1 + 击杀分) / 局数,而**死亡不扣分**;
-#   ② 逐人 `kills` **只算异队击杀**(队友误炸/无归因的自杀/溺水不计入任何人的 kills),
-#      但 `deaths` **一律** +1(谁死了都算死);
-#   ③ 只做数据面。
-# 三条规则各自落在:① `kill_bonus_score` / `_acs_of` / `mvp_role`;② `_record_down`;
-#   ③ 本段不碰任何 UI,只多 `round_state` 的两个键(`stats` / `mvp`)。
-# ══════════════════════════════════════════════════════════════════════════════════════════
+# ── 逐人数据 + ACS / MVP:整套口径已**上提到 `MatchState`**(2026-09-25)──
+# 计分公式见 `core/sim/score_rules.gd`(`ScoreRules`);读写口见 `MatchState._stat_entry` /
+# `stats_payload` / `mvp_role`;伤害累计见 `MatchCombat._on_player_hit`。
+# 本文件只留 3v3 特有的两处写入:倒地边沿调 `_record_down`(见 `_match_round_tick`)、
+# 子弹直击补归因(见 `_on_bullet_hit`)。`stats` / `mvp` 两个键仍随 `round_state` 下发。
+# ★ 只做数据面:结算面板(版式/排序/庆祝)不在这里。
 
 
-# role 的逐人条目(惰性建:谁上过场谁才有条目;`stats_payload` 会把在场者补齐)。
-func _stat_entry(role: int) -> Dictionary:
-	role = int(role)
-	if not _stats.has(role):
-		_stats[role] = {"kills": 0, "deaths": 0, "dmg": 0, "kscore": 0}
-	return _stats[role]
-
-
-# 击杀分公式(静态:探针可直接钉那张表,不必起宿主)。
-# ★ 输入 = **倒下瞬间的敌方存活人数(含被击杀者本人)**,理由见 `KILL_BONUS_BASE` 上方那段。
-static func kill_bonus_score(enemy_alive: int) -> int:
-	var n := clampi(enemy_alive, KILL_BONUS_MIN_ALIVE, KILL_BONUS_MAX_ALIVE)
-	return KILL_BONUS_BASE + KILL_BONUS_PER_ALIVE * n
-
-
-# ★ 2026-09-30 移植时删:`func _fresh_attacker_role(victim_role: int) -> int` 那份包装。
-#   KH 的 B21 把同名函数上提到 `MatchState`(带 `window_ms` 参数,给时间经济的伤害入账用),
-#   注释写着"TeamHost 自己那份继续服务逐人统计"—— 但**同名不同签名的子类函数就是覆写**,
-#   于是 `Parse Error: The function signature doesn't match the parent` ⇒ 整条对局链
-#   (`match_host` / `royale_host` / `team_host` / 三个对局场景)全部加载失败。
-#   两份实现**逐字等价**(基类版多了一层 `players.get` + `_role_of_node`,与这里的 for 循环同义),
-#   故合并成一份:调用点改为显式传 `ATTRIB_FRESH_MS`。行为零变化。
-
-
-# 受击回调覆写(虚分派:接线在 `MatchHost._wire_hit_feedback`,实际调到的是这一份)。
-# ★ 一个钩子覆盖**全部**伤害来源 —— 子弹 / 榴弹直击 / 爆炸 AoE / 激光:它们的共同点是
-#   "归因写入 `CombatFeedback.attribute` 都在 `take_hit` 之前"(本仓明文纪律),于是
-#   `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion`**(它是纯静态、不引 autoload)。
-# ★ 但**子弹那一路要先把归因补上**,见 `_on_bullet_hit` —— 基础实现对玩家直击不写归因。
-func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
-	# 记给**攻击者**。三档都不记,各管一件事:
-	#   · 自伤:写端 `attribute` 因 attacker == victim **静默跳过**、meta 停在上一名敌人身上
-	#     ⇒ 由**新鲜度**判据挡掉(见 `ATTRIB_FRESH_MS`);
-	#   · 队友伤害:**按队过滤**(用户裁定 2026-09-19,与"只算异队击杀"同口径)—— 子弹本来就
-	#     穿队友,唯一能打到队友的是**爆炸**,不过滤就等于"朝队友扔雷即可刷 ACS",而且"爆心
-	#     队友"会反过来抬高扔雷者;
-	#   · 找不到攻击者(归因不到)→ 谁都不记。
-	var attacker := _fresh_attacker_role(int(role), ATTRIB_FRESH_MS)
-	if attacker != 0 and not same_team(attacker, int(role)):
-		var s := _stat_entry(attacker)
-		s["dmg"] = int(s["dmg"]) + int(damage)
-	super._on_player_hit(source_pos, damage, role)
-
-
-# 子弹直击的归因写入。★ **不可省**(与 `RoyaleHost._on_bullet_hit` 逐字同构):服务器上子弹
-# 撞玩家不靠物理(子弹掩码 5 = 地形+敌人,不含玩家层),只经 `_adjudicate_bullets` 到这里,
-# 而基础实现里**没有** `CombatFeedback.attribute`。
-# 不写这一步的后果(都是静默):
-#   ① 逐人 `dmg` 漏掉**最主要的伤害来源** ⇒ ACS 直接失真;
+# 子弹直击的归因写入(与 `RoyaleHost._on_bullet_hit` 逐字同构)。服务器上子弹撞玩家不靠物理
+# (子弹掩码 5 = 地形+敌人,不含玩家层),只经 `_adjudicate_bullets` 到这里。
+# ★ 2026-09-27 起**基类也写同一笔**(`MatchCombat._on_bullet_hit` 第一行)⇒ 本覆写现在是
+#   **冗余的重复写**(`attribute()` 幂等,重复调用无害);保留只为留下写点、不作废以本处与
+#   `RoyaleHost` 那份为锚点的既有登记与注释。
+#   ★ **别据此把基类那一行删掉** —— 1v1 走 `MatchBootstrap` 直接建 `MatchHost`,
+#     基类那一行是它**唯一**的子弹归因写端(守卫 `tests/probe/stats_delivery_probe` ⑦)。
+# 历史(留档):在此之前基类不写。缺这一步的后果(都是静默):
+#   ① 逐人 `dealt` 漏掉**最主要的伤害来源** ⇒ ACS 直接失真;
 #   ② `_attributed_killer` 对枪杀恒 0 ⇒ `kill_event` 的射手恒 0(逐人 `kills` 也全漏),
 #      即"枪杀在客户端播报里没有击杀者"。
 # ★ 历史上这里还列过第 ③ 条:「击杀者复位在枪杀这条路上一直没生效」—— 那条规则已按用户要求
@@ -722,122 +623,3 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
-
-
-# 玩家个人统计数据的唯一写入口(每次角色倒地时调用一次,见 `_match_round_tick`)。
-# ★ `deaths` **一律** +1:队友误炸 / 自杀 / 溺水全算死(用户裁定 ②)。
-# ★ `kills` / `kscore` **只在"归因到且异队"**时记给杀手 —— 无归因与同队误炸不计**任何人**的
-#   击杀;而那一分照样给对方队(A 册的 `_scores`)"对方队涨分"与"谁拿到击杀"是两件事。
-func _record_down(victim_role: int, killer_role: int) -> void:
-	var v := _stat_entry(victim_role)
-	v["deaths"] = int(v["deaths"]) + 1
-	if killer_role == 0 or same_team(killer_role, victim_role):
-		return
-	# Beta 时间玩法:击杀得"被击杀者余额 × 比例"(被击杀者不减;同队/无归因已被上面挡掉)
-	if time_economy != null:
-		time_economy.award_kill(killer_role, victim_role)
-	var k := _stat_entry(killer_role)
-	# 多杀:同一局内该 role 的第 2、3… 个击杀各 +50(第 1 个 +0)。计数器每局清零。
-	_round_kills[killer_role] = int(_round_kills.get(killer_role, 0)) + 1
-	var bonus := kill_bonus_score(_enemy_alive_including_victim(victim_role)) \
-			+ MULTI_KILL_BONUS * (int(_round_kills[killer_role]) - 1)
-	k["kills"] = int(k["kills"]) + 1
-	k["kscore"] = int(k["kscore"]) + bonus
-
-
-# "倒下瞬间的敌方存活人数" —— 击杀加成的唯一输入。**含被击杀者本人**(见 `KILL_BONUS_BASE`)。
-# ★ 判据是**队伍**(受害者的队 = 杀手的敌方队),不是"除受害者以外的人"。
-# ★ 读 `is_downed()` 这个**真实状态**,不是 `_down_counted` 那个计分闩:同一帧里先后倒下的两人,
-#   先处理谁都不影响结果(倒地那一刻 `is_downed()` 就已经是真了)⇒ 结果**确定性**。
-func _enemy_alive_including_victim(victim_role: int) -> int:
-	var t := team_of(victim_role)
-	var n := 0
-	for role in players:
-		if int(role) == victim_role:
-			n += 1     # ★ 本人算"存活"(这张表的定义;数"倒下之后剩几个"会得到 0,而 0 无档)
-			continue
-		if team_of(int(role)) != t:
-			continue
-		if (players[role] as Node2D).is_downed():
-			continue
-		n += 1
-	return n
-
-
-# ACS 的"局数"口径:**全场已进行的局数**(`_round_num`);中途离开者**冻结在他离开时所处的局号**
-# = 他实际参与的局数(`mark_disconnected` 写 `_left_round`)。
-# ★ 为什么按"实际参与"而不是一律用全场局数:离开者没打的那几局不该稀释他(brief 明写的选择)。
-#   代价:分母比在场者小 ⇒ 同一份总分算出的 ACS 偏高。这是**有意**的口径,不是 bug。
-# ★ 卡在 MATCH_OVER 时 `_round_num` 恰好等于"打过的局数"(`_start_next_round` 在终局分支**提前
-#   return**,不推进局号)⇒ 终局那一份 ACS 的分母正是整场局数。
-func _rounds_for(role: int) -> int:
-	return int(_left_round.get(int(role), _round_num))
-
-
-# ACS = (击杀分 + 伤害) / 局数。★ **死亡不扣分**(用户裁定 ①:Riot 的 ACS 不含死亡惩罚)。
-func _acs_of(role: int) -> float:
-	var s: Dictionary = _stats.get(int(role), {})
-	var total := int(s.get("kscore", 0)) + int(s.get("dmg", 0))
-	return float(total) / float(maxi(_rounds_for(int(role)), 1))
-
-
-# 逐人表的 role 集合:在场者 ∪ 已离开者 ∪ 有数据的。
-# ★ 在场者**哪怕一次伤害都没打过**也要出现(面板要的是"所有参战者各一行"),故不能只遍历 `_stats`。
-func _roster() -> Dictionary:
-	var roles := {}
-	for role in players:
-		roles[int(role)] = true
-	for role in _left:
-		roles[int(role)] = true
-	for role in _stats:
-		roles[int(role)] = true
-	return roles
-
-
-# 逐人数据载荷:`{role: {kills, deaths, dmg, kscore, acs}}`(给 `round_state` 的 `stats` 键)。
-func stats_payload() -> Dictionary:
-	var out := {}
-	for r in _roster():
-		var role := int(r)
-		var s: Dictionary = _stats.get(role, {})
-		out[role] = {
-			"kills": int(s.get("kills", 0)),
-			"deaths": int(s.get("deaths", 0)),
-			"dmg": int(s.get("dmg", 0)),
-			"kscore": int(s.get("kscore", 0)),
-			"acs": _acs_of(role),
-		}
-	return out
-
-
-# MVP = **整场 ACS 最高者**(用户裁定 ①);并列 → 击杀多者 → 阵亡少者 → **role 号升序**。
-# ★ 确定性:候选按 role **升序**遍历 + 只在**严格更优**时替换 ⇒ 完全并列时天然的胜者是**最小
-#   role**。不依赖字典迭代顺序 —— 同一份状态调多少次都是同一个答案(探针 ⑬f 钉它)。
-# ★ 候选 = `_roster()`(与 `stats_payload` 同一个集合):MVP 是"这份逐人表里的第一名",
-#   不是另立一份名单。
-# ★★ **已离开者照样参与评选 —— 这是用户裁定(2026-09-19),不是遗漏**:取向与大乱斗
-#   `_match_winner` 的"已离开但计过分的也算"一致。他还会因为"ACS 分母 = 实际参与局数"
-#   (更小)而更容易胜出 —— 那**也是**有意的口径。
-#   ⇒ **别**因为"退了的人不该拿 MVP"把 `_left` 从候选里滤掉(那会静默改掉一条产品规则);
-#     守卫是探针 ⑬j:构造"计过分后离场、终局 MVP 指向他"那一档。
-func mvp_role() -> int:
-	var best_role := 0
-	var best_acs := -1.0
-	var best_kills := -1
-	var best_deaths := 1 << 30
-	var roles: Array = _roster().keys()
-	roles.sort()
-	for r in roles:
-		var role := int(r)
-		var s: Dictionary = _stats.get(role, {})
-		var acs := _acs_of(role)
-		var kills := int(s.get("kills", 0))
-		var deaths := int(s.get("deaths", 0))
-		if acs > best_acs \
-				or (acs == best_acs and (kills > best_kills
-						or (kills == best_kills and deaths < best_deaths))):
-			best_role = role
-			best_acs = acs
-			best_kills = kills
-			best_deaths = deaths
-	return best_role

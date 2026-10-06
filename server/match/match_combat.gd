@@ -16,9 +16,9 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 	_rpc_all("tile_destroyed", [cell])
 
 
-# 16px 子格被摧毁（cyrm v4）：清理持久化子格数据，标记对应分块需要重建碰撞，并广播 sub_destroyed 事件给各客户端
-# （客户端据此清理 16px 渲染瓦片与本地预测碰撞体）。owner 为射手实体节点，映射至玩家角色标识；Beta 时间玩法模式下
-# 在此结算瓦片破坏的时间粒子奖励（B21；常规模式下 time_economy 为空，仅同步破坏事件）。
+# 16px 子格被摧毁(cyrm v4):清持久子格 + 标记分块重建 + 广播 sub_destroyed 给客户端
+# (客户端清 16px 渲染格与本地预测碰撞)。owner = 射手节点 → 映射 role,Beta 时间玩法
+# 在这里结算"拆砖得颗粒"(B21;普通局 time_economy 为空,只广播)。
 func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
 		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
@@ -47,11 +47,11 @@ func _adjudicate_bullets() -> void:
 		if not _seen_bullets.has(bid):
 			_seen_bullets[bid] = true
 			_broadcast_bullet_spawn(bullet)
-		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉效果,不做半径二次判定。
+		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉、不做半径补刀。
 		if bullet.shooter == null:
 			continue
-		# 爆炸弹(榴弹等):不通过半径判定销毁(见 _adjudicate_grenade),但需要进行一次
-		# 「直接命中玩家」结算 —— 短引信已由 bullet_base._check_player_contact 触发(两端同源)。
+		# 爆炸弹(榴弹等):不走半径补刀**销毁**(见 _adjudicate_grenade),但要做一次
+		# 「直接命中玩家」结算 —— 短引信已由 bullet_base._check_player_contact 起(两端同源)。
 		if bullet.explodes:
 			_adjudicate_grenade(bullet)
 			continue
@@ -82,7 +82,7 @@ func _adjudicate_bullets() -> void:
 
 func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
 	if bullet.shooter == null:
-		return   # 敌方爆炸弹(理论上只有敌方弹药):同普通弹 shooter == null 分支处理,不作二次判定
+		return   # 敌方爆炸弹(理论上只有敌方弹药):同普通弹的 shooter == null 分支,不补刀
 	if bullet.has_meta("grenade_direct_hit"):
 		return   # 40px 判定圈会被榴弹连续穿过好几帧,只结算第一次
 	for role in players:
@@ -103,8 +103,8 @@ func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
 
 func _grenade_direct_hit(bullet: CharacterBody2D, victim: Node2D) -> void:
 	bullet.set_meta("grenade_direct_hit", true)
-	# ★伤害前必须先记录归因(与子弹 _on_bullet_hit / 爆炸逻辑保持一致):致命一击时倒地瞬间将立即读取
-	# last_damager 用于击杀计分。
+	# ★归因先于伤害(与子弹 _on_bullet_hit / 爆炸同纪律):一击致死时倒地边沿同帧读
+	# last_damager,大乱斗靠它计击杀分。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	if victim.has_method("take_hit"):
 		# 受击反馈统一走 combat.took_hit → MatchHost._on_player_hit 广播 hit_event(子弹/鸟/爆炸同源)
@@ -198,11 +198,24 @@ func notify_direct_hit(shooter: Node, victim: Node) -> void:
 
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
+	# ★★ 归因**先于伤害**(全仓纪律:一击致死时倒地边沿同帧读 meta,大乱斗靠它计击杀分)。
+	#   ★ 为什么写在**基类**、而不是只写在子类覆写里(2026-09-27 用户裁定方案 A):
+	#     1v1 走 `MatchBootstrap.start_on` **直接建 `MatchHost`**(全仓唯一实例化点),
+	#     **没有**那层覆写 ⇒ 原先 1v1 的子弹(主要伤害来源)不计入 `dealt`/`taken`,
+	#     结算页显示 `击杀 5 / 造成 0 / 承受 0`(两列读同一对归因)。
+	#   ★ 顺带闭合的**第二件事**:1v1 原先既然没有写端,`attribute()` 末尾那句
+	#     `remove_meta("last_self_hit_time")` 也就永不执行 ⇒ "自己炸自己之后 8ms 内
+	#     被敌人打中"会被记成 `self_damage`(玩家**因为被敌人打中而扣自己的分**)。
+	#   ⇒ 基类补这一行,**两件事一起闭合**。守卫:`tests/probe/stats_delivery_probe` ⑦
+	#     ((a) 干净子弹链进 dealt/taken;(b) 自伤标记被这一笔当场作废)。
+	#   ★ `RoyaleHost` / `TeamHost` 的同名覆写**仍然留着**:它们与这里现在写法重复,
+	#     而 `attribute()` 是幂等的纯元数据写入,重复调用无害;删它们会一并作废
+	#     docs/eng/modes.md 与 `team_host_probe` 上以那两处覆写为锚点的整段登记 —— 不值得。
+	CombatFeedback.attribute(victim, bullet.shooter)
 	if victim.has_method("take_hit"):
 		# 受击反馈广播统一走 combat.took_hit → _on_player_hit(子弹/鸟/爆炸同源,避免重复)
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
-	# 命中确认(NetBusExt):告诉射手"你打中了"→ 客户端屏幕中心 X 标记。只发射手本人;
-	# RoyaleHost 覆写先写归因 meta 再 super 到这里,大乱斗同样生效。
+	# 命中确认(NetBusExt):告诉射手"你打中了" → 客户端屏幕中心 X 标记。只发射手本人。
 	var shooter_role := 0
 	for r in players:
 		if players[r] == bullet.shooter:
@@ -218,13 +231,71 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 # bind(role) 在 Godot 里把绑定参数追加在信号参数之后 → 实际入参顺序为 (source_pos, damage, role)。
 
 func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
-	# Beta 时间玩法:伤害入账(每点 × damage_gain)。归因口径与 TeamHost 的逐人伤害一致:
-	# attribute 都写在 take_hit 之前 ⇒ 这一刻读 meta 就是"这一下是谁打的";新鲜度窗口
-	# 用击杀同款 ATTRIB_WINDOW(自伤/归因不到/同队,谁都不给 —— 用户裁定)。
-	if time_economy != null and damage > 0:
-		var attacker := _fresh_attacker_role(int(role), CombatFeedback.ATTRIB_WINDOW_MS)
-		if attacker != 0 and attacker != int(role) and not same_team(attacker, int(role)):
-			time_economy.award_damage(attacker, int(role), damage)
+	# ── 逐人统计(三模式共用;★ 2026-09-25 从 `TeamHost._on_player_hit` 上提)──
+	# 一个钩子覆盖**全部**伤害来源(子弹 / 榴弹直击 / 爆炸 AoE / 激光):它们的共同点是
+	# "归因写入 `CombatFeedback.attribute` 都在 `take_hit` 之前"(本仓明文纪律,见
+	# core/sim/explosion.gd:62 与 scenes/weapons/laser_weapon_base.gd:233),于是
+	# `took_hit` 这一刻读 meta 就拿到攻击者。**不必去改 `Explosion` 的伤害逻辑**。
+	# ★ "覆盖全部来源"说的是**钩子**;**归因写端**如今也是齐的 —— 子弹直击的 `attribute`
+	#   由基类 `_on_bullet_hit` 自己写(2026-09-27 用户裁定方案 A:补齐 1v1 缺的那一层覆写),
+	#   爆炸 / 榴弹直击 / 激光各自照旧写。⇒ 四条伤害来源在**三个模式**下都进 `dealt`/`taken`。
+	#   ★ 历史(留档):在此之前基类**不写**、只有 `RoyaleHost`/`TeamHost` 的覆写写,而 1v1
+	#     直接建 `MatchHost` ⇒ 1v1 一把手枪打完一局,结算页显示 `击杀 5 / 造成 0 / 承受 0`。
+	#     守卫 `tests/probe/stats_delivery_probe` ⑦ 钉住"生产自己写不写"这一面。
+	var stat_victim: Node2D = players.get(int(role))
+	var stat_self := stat_victim != null and is_instance_valid(stat_victim) \
+			and CombatFeedback.is_fresh_self_hit(stat_victim, ATTRIB_FRESH_MS)
+	var stat_attacker := _fresh_attacker_role(int(role))
+	if stat_attacker != 0:
+		# 助攻表:所有**归因得到**的命中都记一笔(含队友误伤 —— 读端按 `same_team` 过滤)。
+		_note_hit(int(role), stat_attacker)
+		if not same_team(stat_attacker, int(role)):
+			# `dealt` / `taken` **口径对称**(spec §3.1):都只算**敌人** ——
+			#   队友爆炸炸到我不进 `taken`、自己炸自己也不进 `taken`/`dealt`
+			#   (那两类的代价走**惩罚**,记在**肇事者**行上,见下面那两笔账)。
+			# ★★ **不进这两列的三档**(2026-09-26 订正:旧措辞写"三档都不记",而自伤**确实会记**
+			#   —— 只是记进 `self_damage` 那一列,不是"不记";照旧措辞读会得出相反的结论):
+			#   ① **自伤** ⇒ 记进**自己**的 `self_damage`(写端 `CombatFeedback.attribute` 在
+			#      attacker == victim 时静默跳过 ⇒ 自伤没有归因通道,读端靠 `Explosion` 那笔
+			#      `note_self_hit` + `ATTRIB_FRESH_MS` 新鲜度认出来 —— **读端就在本文件下面几行**
+			#      的 `CombatFeedback.is_fresh_self_hit(...)`(`:stat_self` 那一行),
+			#      ★ **不是** `match_state.gd` 的 `_fresh_attacker_role` —— 那是**攻击者**归因的
+			#      新鲜度函数,`last_self_hit_time` 它一个字节都不读;照旧指针去找会找不到这条通道);
+			#      ★ 标记的另一半:写真实(非自伤)归因时 `CombatFeedback.attribute()` 会**当场作废**
+			#      上一响留下的自伤标记,免得"自己先炸、敌人后炸"被记成自伤(守卫 ⑬n3/⑬n4);
+			#   ② **队友伤害** ⇒ 记进**肇事者**的 `team_damage`(按 `same_team` 过滤);
+			#   ③ **归因不到**(meta 缺失或不新鲜)⇒ **哪儿都不记**,是本钩子唯一真正丢弃的一档。
+			# ★ 1v1 / 大乱斗:队伍表空 ⇒ `same_team` 恒 false ⇒ 这两列就等于"对所有人的伤害",
+			#   不需要特判(§5.6 的免费正确性,别去"优化"它)。★ 同上,②那一档在那两个模式下
+			#   天然不成立(没有队就无所谓队友),①那一路与队伍表无关、照旧走 `self_damage`。
+			var sa := _stat_entry(stat_attacker)
+			sa["dealt"] = int(sa["dealt"]) + int(damage)
+			var sv := _stat_entry(int(role))
+			sv["taken"] = int(sv["taken"]) + int(damage)
+	# ── 惩罚的两笔账:只减分,**不进** dealt / taken(spec §3.5)──
+	# ★ 自伤优先判定:自伤时 meta 通常还是上一名敌人(或为空),两者不同时成立;真同时成立
+	#   (同帧内先被敌人打中、再被自己的爆炸炸到)时按**自伤**记 —— 那一下的来源就是自己的爆炸。
+	#   ★★ 已知边界(登记不修,承自 `ATTRIB_FRESH_MS` 的既有边界):上面那个 `if` 若成立,
+	#     同一笔伤害会**同时**记进 `dealt`(给那位敌人)与 `self_damage`(给自己)—— 两个不同的
+	#     账户,不是双计;`acs` 只读 kscore,而 kscore 里两者各出现一次。
+	if stat_self:
+		var ss := _stat_entry(int(role))
+		ss["self_damage"] = int(ss["self_damage"]) + int(damage)
+	elif stat_attacker != 0 and same_team(stat_attacker, int(role)):
+		var sm := _stat_entry(stat_attacker)
+		sm["team_damage"] = int(sm["team_damage"]) + int(damage)
+	# Beta 时间玩法(B21):伤害入账(每点 × damage_gain)。归因口径与击杀同款窗口(3s):
+	# `attribute` 都写在 `take_hit` 之前 ⇒ 这一刻读 meta 就是"这一下是谁打的";
+	# 自伤 / 归因不到 / 同队,谁都不给(用户裁定)。
+	# ★ 窗口用 `ATTRIB_WINDOW`(3s)而**不是**上面逐人统计那个 `ATTRIB_FRESH_MS`(8ms)——
+	#   两者答的是**两个问题**,见 `match_state.gd` 里两个常量的注释。
+	# ★ 合并订正:KH 原版调用的是两参重载 `_fresh_attacker_role(role, window)`,而主线已把
+	#   该函数重构成"一参 + `_attributed_role_within(node, window)`" —— 两参版在本仓会与
+	#   主线那份构成**同文件同名重复定义**(git 自动合并看不见),故改走既有 API。
+	if time_economy != null and damage > 0 and stat_victim != null:
+		var rw_attacker := _attributed_role_within(stat_victim, ATTRIB_WINDOW)
+		if rw_attacker != 0 and rw_attacker != int(role) and not same_team(rw_attacker, int(role)):
+			time_economy.award_damage(rw_attacker, int(role), damage)
 	for r in peer_by_role:
 		# 判活:这是**每次伤害**都发的定向包(交火时最密的一处),原先完全不判 ——
 		# 往"正在断开"的 peer 发就是那条 channel 0 错误(判据为何不能用 get_peers 见 NetBus)。

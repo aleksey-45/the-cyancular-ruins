@@ -17,8 +17,8 @@ extends MatchState
 # 按 64px 半径走的。让机器人自己走过去需要寻路(实测两轮都栽在这上面:地图是每进程
 # 随机选的一份 `.cyrm`,只会"水平走 + 卡住跳"的机器人在窄台上会永久卡死)。
 # 打开后服务器每帧保证**每个站着的玩家脚下 64px 内至少有一把枪** —— 探针就完全不用走位。
-# ★ 默认关,且只由服务端的 `--test-ground-teleport` 打开(见 server_main.gd 的 argv 解析):
-#   生产路径上这个开关**不可达**,不进任何真实对局。
+# ★ 默认关,且只由 worker 的 `--test-ground-teleport` 打开(见 server_main.gd 的 argv 解析
+#   与 worker_launcher 的转发):生产路径上这个开关**不可达**,不进任何真实对局。
 static var test_ground_teleport := false
 
 var ground_weapons := GroundWeaponField.new()
@@ -27,13 +27,14 @@ var _ground_nodes: Dictionary = {}     # inst -> WeaponPickup(服务器侧;headl
 var _self_drop_until: Dictionary = {}  # role -> {inst: 解禁时刻(ms)},防"丢完立刻捡回"
 
 
-# 本局投放的武器类型清单:每种 2 把,跳过被禁的槽位。
+# 本局投放的武器类型清单:每种 2 把,跳过被禁的类型。
+# ★ 与单机 `Level0._default_weapon_types` **同源**(都取注册表),差别只在禁用表是哪个。
 func _server_weapon_types() -> Array:
 	var out: Array = []
-	for slot in [1, 2, 3, 4, 5, 6]:
-		if not _disabled_weapons.has(slot):
-			out.append(slot)
-			out.append(slot)
+	for type_id in WeaponRegistry.all_ids():
+		if not _disabled_weapons.has(type_id):
+			out.append(type_id)
+			out.append(type_id)
 	return out
 
 
@@ -259,7 +260,7 @@ func _try_server_pickup(p: Node2D, role: int) -> void:
 
 
 func _try_server_drop(p: Node2D, role: int) -> void:
-	if p.weapons.current_slot_int() == 0:
+	if p.weapons.current_type_id() == 0:
 		return   # 空手没什么可丢
 	var e: Dictionary = p.weapons.drop_current()
 	if e.is_empty():
@@ -272,8 +273,8 @@ func _try_server_drop(p: Node2D, role: int) -> void:
 
 
 # 从背包**随机**保留一条(并 equip 它),其余在 `p` **当前所在位置**散开掉出。
-# 唯一调用时机 = **倒地转换瞬间（边沿触发）**（规则约束：掉落武器应在倒地位置原地散落），
-# 调用点对应三个模式的倒地状态转换时机：`MatchRound._match_round_tick`(1v1)、
+# 唯一调用时机 = **倒地边沿**(用户 2026-09-21 裁定「掉落的武器应该在死亡后直接原地掉落」),
+# 调用点有三处,各对应一个模式的倒地边沿: `MatchRound._match_round_tick`(1v1)、
 # `RoyaleHost._match_round_tick`(大乱斗)、`TeamHost._match_round_tick`(3v3)。
 # ★ 为什么不挂在复活流程里(旧实现的写法):`_respawn_player` **先把人瞬移到出生点**,
 #   再调本函数 —— 于是"死亡点"掉落实为"出生点掉落";而且尸体在 2s 倒地窗里继续走物理
