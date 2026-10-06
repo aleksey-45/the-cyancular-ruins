@@ -1,8 +1,150 @@
-[gd_scene format=3 uid="uid://cos8gqdkpr3pq"]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" uid="uid://c4lcaanwqhven" path="res://scenes/main_menu.gd" id="1"]
+[ext_resource type="Script" uid="uid://c4lcaanwqhven" path="res://scenes/main_menu.gd" id="1_menu"]
+
+[ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_4sv3p"]
 
 [node name="MainMenu" type="Control" unique_id=1982871453]
 layout_mode = 3
 anchors_preset = 0
-script = ExtResource("1")
+script = ExtResource("1_menu")
+
+[node name="UILayer" type="CanvasLayer" parent="."]
+unique_name_in_owner = true
+layer = 140
+
+[node name="UIRoot" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme = ExtResource("1_4sv3p")
+
+[node name="Bg" type="ColorRect" parent="UILayer/UIRoot"]
+unique_name_in_owner = true
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0.039, 0.059, 0.094, 1)
+
+[node name="Title" type="Label" parent="UILayer/UIRoot"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0.003959909)
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -78.5
+offset_top = 160.0
+offset_right = 78.5
+offset_bottom = 340.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_font_sizes/font_size = 128
+text = "The Cyancular Ruins"
+horizontal_alignment = 1
+
+[node name="Version" type="Label" parent="UILayer/UIRoot"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0.003959909)
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = -40.0
+offset_right = 900.0
+offset_bottom = -16.0
+theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_font_sizes/font_size = 16
+text = "main #1298"
+
+[node name="MenuBox" type="VBoxContainer" parent="UILayer/UIRoot"]
+unique_name_in_owner = true
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_top = 170.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 48
+alignment = 1
+
+[node name="PlayGroup" type="VBoxContainer" parent="UILayer/UIRoot/MenuBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 28
+
+[node name="StartBtn" type="Button" parent="UILayer/UIRoot/MenuBox/PlayGroup"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(720, 104)
+layout_mode = 2
+theme_type_variation = &"BtnAccent"
+text = "单 人 模 式"
+
+[node name="MultiBtn" type="Button" parent="UILayer/UIRoot/MenuBox/PlayGroup"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(640, 88)
+layout_mode = 2
+theme_type_variation = &"BtnPrimary"
+text = "多 人 模 式"
+
+[node name="BetaBtn" type="Button" parent="UILayer/UIRoot/MenuBox/PlayGroup"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(640, 88)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "Beta"
+
+[node name="SepA" type="ColorRect" parent="UILayer/UIRoot/MenuBox"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(0, 2)
+layout_mode = 2
+mouse_filter = 2
+color = Color(0.25, 0.31, 0.4, 1)
+
+[node name="OptGroup" type="VBoxContainer" parent="UILayer/UIRoot/MenuBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 28
+
+[node name="SettingsBtn" type="Button" parent="UILayer/UIRoot/MenuBox/OptGroup"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(560, 76)
+layout_mode = 2
+theme_type_variation = &"BtnPrimary"
+text = "设 置"
+
+[node name="VerBtn" type="Button" parent="UILayer/UIRoot/MenuBox/OptGroup"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(560, 76)
+layout_mode = 2
+theme_type_variation = &"BtnPrimary"
+text = "信 息"
+
+[node name="SepB" type="ColorRect" parent="UILayer/UIRoot/MenuBox"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(0, 2)
+layout_mode = 2
+mouse_filter = 2
+color = Color(0.25, 0.31, 0.4, 1)
+
+[node name="QuitBtn" type="Button" parent="UILayer/UIRoot/MenuBox"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0)
+custom_minimum_size = Vector2(640, 88)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "退 出"

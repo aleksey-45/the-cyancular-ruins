@@ -37,8 +37,8 @@ func _attack_just_pressed_raw() -> bool:
 func _attack_just_released_raw() -> bool:
 	return Input.is_action_just_released("attack")
 
-func _weapon_slot_raw() -> int:
-	# ★ 只认 1-4:持有位上限是 4(WeaponInventory.MAX_WEAPONS)。
+func _switch_index_raw() -> int:
+	# ★ 只认 1-4:持有位上限的**默认值**是 4(WeaponInventory.DEFAULT_MAX_WEAPONS)。
 	#   5/6 的 InputMap 动作**保留不删**(以后想开第 5 个位时不必再动 project.godot),
 	#   但这里不读它们 —— 读了就会切到一个不存在的背包位置。
 	for i in range(1, 5):

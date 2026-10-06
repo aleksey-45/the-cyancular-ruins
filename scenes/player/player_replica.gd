@@ -15,7 +15,7 @@ extends Node2D
 # 于是对手的平滑度 == 包的到达平滑度:到达抖动 ±8ms 时 **11.67% 的帧零位移、单帧走到 2 个包的
 # 距离**(±16ms 时 24.67% / 3 个包)—— 也就是用户报的「位置一跳一跳,看起来敌方掉帧」。
 # 指数追赶对同样的到达抖动是**连续**收敛,不把抖动原样透传到画面上。
-# 读数由 `tests/replica_smoothness_probe.tscn` 常驻钉住(改前红 / 改后绿)。
+# 读数由 `tests/probe/replica_smoothness_probe.tscn` 常驻钉住(改前红 / 改后绿)。
 # ★★ 旧方案当年那条**致命缺陷已单独修掉、且必须一直保留**:渲染位置与目标相隔整幅地图时
 # 最短向量为 0 ⇒ 副本一旦漂到远副本就**永远留在那儿**(对手被渲染到屏幕外「看不见」)。
 # 现在的解法是把**目标点**锚到本地玩家最近副本再以普通差量追赶 —— 这与"平滑 vs 插值"**无关**,
@@ -84,7 +84,7 @@ var _prev_vel_y: float = 0.0
 
 var _weapon_slot_node: Node2D        # 武器挂点(运行时加,排在 AnimatedSprite2D 后 → 画在身体上层)
 var _weapon: Node2D = null           # 当前武器场景实例(惰性:未 equip,仅外观)
-var _weapon_slot_int := 0            # 服务器权威槽位
+var _weapon_type_int := 0            # 服务器权威槽位
 # 最新快照的服务器 canonical 位置 —— 指数追赶的**目标**来源(每帧锚到本地玩家最近副本,见 _process)。
 var _opponent_canonical := Vector2.ZERO
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
@@ -195,14 +195,14 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, _tick: int) -> void
 		_aim_facing = 1 if _aim.x > 0.0 else -1
 	animator.flip_h = _facing < 0
 	# 武器:槽位变了才重建(玩家每次换枪服务器快照带新槽位)。
-	# ★ `slot == 0`(空手)必须与"换了一把"同等对待 —— 那是服务器侧玩家把**最后一把**丢出去的
-	#   那一刻。原先写成 `slot > 0 and slot != ...`,空手这一档被整个忽略 → 副本**一直举着那把
-	#   已经不存在的枪**。`_swap_weapon(0)` 本来就是写好的空手路径(`WEAPONS` 查不到 → 留空),
+	# ★ `type_id == 0`(空手)必须与"换了一把"同等对待 —— 那是服务器侧玩家把**最后一把**丢出去的
+	#   那一刻。原先写成 `type_id > 0 and type_id != ...`,空手这一档被整个忽略 → 副本**一直举着那把
+	#   已经不存在的枪**。`_swap_weapon(0)` 本来就是写好的空手路径(注册表查不到 → 留空),
 	#   原先只是进不去。开局人手一把,所以"对手把枪丢了"几乎必然命中它;握两把以上时丢一把会
-	#   自动换到另一把(slot 变了,照常重建)—— 这也正是它一直没被发现的原因。
-	var slot := int(data.get("weapon", 0))
-	if slot != _weapon_slot_int:
-		_swap_weapon(slot)
+	#   自动换到另一把(type_id 变了,照常重建)—— 这也正是它一直没被发现的原因。
+	var type_id := int(data.get("type_id", 0))
+	if type_id != _weapon_type_int:
+		_swap_weapon(type_id)
 	_previewing = bool(data.get("previewing", false))
 	_downed = bool(data.get("downed", false))
 	if _downed:
@@ -230,13 +230,13 @@ func play_hit(_source_pos: Vector2) -> void:
 	_hit_flash_t = HIT_FLASH_TIME
 
 # 按槽位换武器外观:只挂 WeaponBase 场景做静物(不 equip → 其 _process 因 player==null 早退,惰性)。
-func _swap_weapon(slot: int) -> void:
-	_weapon_slot_int = slot
+func _swap_weapon(type_id: int) -> void:
+	_weapon_type_int = type_id
 	if _weapon != null:
 		_weapon.queue_free()
 		_weapon = null
-	var scene_path: String = WeaponComponent.WEAPONS.get(str(slot), "")
-	if scene_path == "":
+	var scene_path: String = WeaponRegistry.scene_of(type_id)
+	if scene_path.is_empty():
 		return
 	var scene: PackedScene = load(scene_path)
 	if scene == null:

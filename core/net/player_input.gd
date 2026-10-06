@@ -13,7 +13,7 @@ extends RefCounted
 #   · `LocalInputSource`  —— 读真实 `Input`(单机与 PvP 本地玩家;C2 下由引擎自步进读)
 #   · `PacketInputSource` —— 消费网络输入包(权威服务器唯一消费方)
 #   · `AiInputSource`     —— AI 补位(AINavigator 每帧写字段)
-#   · 另有 `tests/soak_bot_input.gd`(压力探针的脚本手柄,不在生产路径)
+#   · 另有 `tests/harness/soak_bot_input.gd`(压力探针的脚本手柄,不在生产路径)
 #
 # ★ frozen 的归属(2026-09-14 修,本类保留):
 #   此前 frozen 短路写在公开读口里、而三个子类各自覆写了全部公开读口 →
@@ -21,7 +21,7 @@ extends RefCounted
 #   现在冻结收在本类的公开读口,子类只覆写不碰 frozen 的 `_*_raw()` 钩子 —— 契约无法绕过。
 #   历史代价(记下来别再犯):客户端 COUNTDOWN 冻结曾靠"客户端恰好用默认 InputSource"侥幸成立;
 #   服务器靠 MatchHost 另调 PacketInputSource.reset_state()、AI 靠自己查 RoundState 兜住。
-#   回归守卫:`tests/ai_input_source_smoke.gd` 的 9 条 `frozen:` 断言
+#   回归守卫:`tests/smoke/ai_input_source_smoke.gd` 的 9 条 `frozen:` 断言
 #   (打在**子类实例**上 —— 基类自己的实现无法证明子类听话)。
 #
 # frozen:PvP COUNTDOWN/局间冻结。置 true 后一切输入读口返回中性值(轴 0、无按键/边沿/切枪),
@@ -67,10 +67,10 @@ func is_attack_just_pressed() -> bool:
 func is_attack_just_released() -> bool:
 	return not frozen and _attack_just_released_raw()
 
-func get_weapon_slot_pressed() -> int:
+func get_switch_index_pressed() -> int:
 	if frozen:
 		return 0
-	return _weapon_slot_raw()
+	return _switch_index_raw()
 
 # 拾取(F 按下边沿) / 丢弃(Q 长按满阈值后的那一次边沿)。
 # ★ 与其它读口同款:冻结一律在此短路,子类**不得覆写这两个**(覆写即绕开冻结)。
@@ -79,6 +79,18 @@ func is_pickup_pressed() -> bool:
 
 func is_drop_pressed() -> bool:
 	return not frozen and _drop_pressed_raw()
+
+
+# 本帧上行包里的**权威切枪目标**(inst)。只有 `PacketInputSource` 覆写 `_switch_inst_raw()`
+# (它读包里的 winst);本地 / AI / 机器人输入源**一律不覆写** —— 它们那次切枪由
+# `get_switch_index_pressed()` 那条**本地路径**直接成交,不经网络。
+# ★ 与 `get_aim_dir_override()` 同款:**默认空操作**的可选钩子(不是"必须覆写"那族)。
+# ★ `frozen` 短路照旧收在公开读口 —— 冻结期一切输入读口返回中性值,这条不能例外
+#   (子类覆写的是 `_*_raw()`,绕不过冻结)。
+func consume_switch_inst() -> int:
+	if frozen:
+		return 0
+	return _switch_inst_raw()
 
 
 # ── 覆写钩子:子类只改这里;本基类给会报错的兜底(纯接口,不再自带"本地"实现)──
@@ -111,8 +123,13 @@ func _attack_just_released_raw() -> bool:
 	push_error("PlayerInput: 子类必须覆写 _attack_just_released_raw()")
 	return false
 
-func _weapon_slot_raw() -> int:
-	push_error("PlayerInput: 子类必须覆写 _weapon_slot_raw()")
+func _switch_index_raw() -> int:
+	push_error("PlayerInput: 子类必须覆写 _switch_index_raw()")
+	return 0
+
+
+# 可选钩子:默认 0 = "本次上行没有切枪目标"。见 `consume_switch_inst()`。
+func _switch_inst_raw() -> int:
 	return 0
 
 func _pickup_pressed_raw() -> bool:

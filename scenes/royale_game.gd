@@ -51,7 +51,7 @@ func _ready() -> void:
 	_rollback.bind(_local)
 	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
 	# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
-	# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
+	# 不报错,只是那修复不生效 —— 故 tests/probe/rollback_fidelity_probe 有源码守卫钉这一行。
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
@@ -76,19 +76,19 @@ func _ready() -> void:
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
+		# 四个提供器**全部**显式传(2026-09-29 起 `setup_multi` 不再有默认值)。
+		# ★ 最后那个空 `Callable()` 是**故意的**:大乱斗没有"队色可与自己撞"的问题,
+		#   自己那个点保持 `SELF_COLOR`、白描边不出现(与 1v1 一致)—— 别把它当漏传。
 		minimap.setup_multi(
 			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
-			func() -> Array:
-				var arr: Array = []
-				for r in _replicas:
-					if is_instance_valid(_replicas[r]):
-						arr.append((_replicas[r] as Node2D).global_position)
-				return arr)
+			Callable(self, "_minimap_others"),
+			Callable(self, "_minimap_colors"),
+			Callable())
 		add_child(minimap)
 	# HUD(左上角击杀排行榜)+ Esc 菜单
 	# ★ 声明式场景实例化,不能 RoyaleHud.new() —— 那个建出来的 CanvasLayer 没有子节点,
-	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,见 tests/hud_declarative_probe)。
-	_hud = preload("res://ui/royale_hud.tscn").instantiate() as RoyaleHud
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,见 tests/probe/hud_declarative_probe)。
+	_hud = preload("res://ui/hud/royale_hud.tscn").instantiate() as RoyaleHud
 	add_child(_hud)
 	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
 	_pause_menu = PauseMenu.new(true)
@@ -143,7 +143,7 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 		#   (见 _on_snapshot_own)。把世界包里自己那份写进玩家 = "每帧把权威位置强写进正在预测的
 		#   玩家" = 橡皮筋 —— 那正是被删掉的那条旧路径的写法。别顺手补回来。
 		#   (顺带:"你死了/你活了"这件事服务器经 round_state 的 alive 广播过,但那**不是**给
-		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 tests/royale_c2_watcher.gd 的 A②。)
+		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 tests/harness/royale_c2_watcher.gd 的 A②。)
 	# 清理已离开玩家(掉线者从快照消失):副本/头顶ID/血条一并移除(自检 M3 幽灵残留)
 	for role_str in _replicas.keys():
 		if not players_snap.has(str(role_str)):
@@ -271,7 +271,7 @@ func _apply_peer_hues(hues: Dictionary) -> void:
 func _ensure_id_label(role: int) -> void:
 	if _world == null or _id_labels.has(role):
 		return
-	var lbl: Node2D = load("res://ui/world_label.gd").new()
+	var lbl: Node2D = load("res://ui/factory/world_label.gd").new()
 	_world.add_child(lbl)
 	_id_labels[role] = lbl
 
@@ -307,3 +307,39 @@ func _all_replicas() -> Array:
 func _replica_for(role: int) -> Node2D:
 	var r = _replicas.get(int(role))
 	return r if r is Node2D else null
+
+
+# ── 小地图的点位与配色(大乱斗,2026-09-29 补)────────────────────────
+# ★★ 位置与颜色**必须共用同一份 entries**(纪律来自 3v3 那批,见
+#   `team_game._minimap_entries` 的注释):`Minimap` 是**按下标**取色
+#   (`_other_dots[i].color = cols[i]`),而副本是**懒建**的(`_ensure_replica`)、
+#   又会 `erase`(`_remove_replica`)—— 各写一份 `for r in _replicas` + 各自过滤时,
+#   "某个副本已 `queue_free`、尚未从 `_replicas` 摘掉"那个窗口会让两个数组**错位一格**
+#   = 某人的点画成**别人**的颜色,**不报错、只误导人**。唯一落点就是下面这一个函数。
+func _minimap_entries() -> Array:
+	var arr: Array = []
+	for role in _replicas:
+		var r = _replicas[role]
+		if is_instance_valid(r):
+			arr.append([int(role), (r as Node2D).global_position])
+	return arr
+
+
+func _minimap_others() -> Array:
+	var arr: Array = []
+	for e in _minimap_entries():
+		arr.append(e[1])
+	return arr
+
+
+# 他人点的颜色:**与头顶 ID 同源** —— 都问 `ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]`
+# (头顶那处见 `_refresh_names`)。
+# ★ 为什么跟**头顶 ID** 而不是跟**身体**:身体的颜色是各人自设的色相(`_hues`,
+#   由 `peer_hues` 下发),**可能撞色**、且**到达比小地图建立晚**;色板是固定 8 色、
+#   建点即可用。而小地图上"认得出谁是谁"靠的是能**对回头顶那个名字**,不是对回身体。
+# ★ 惰性求值(Minimap 每帧调一次),不是建点时算一次:与 3v3 的 `_minimap_colors` 同款理由。
+func _minimap_colors() -> Array:
+	var arr: Array = []
+	for e in _minimap_entries():
+		arr.append(ROLE_COLORS[(int(e[0]) - 1) % ROLE_COLORS.size()])
+	return arr

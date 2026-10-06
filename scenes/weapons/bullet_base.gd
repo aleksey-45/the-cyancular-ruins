@@ -60,6 +60,10 @@ func _ready() -> void:
 		sp.modulate = bullet_color
 	# 服务器裁决用:所有子弹进 bullet 组,MatchHost 遍历做命中判定/广播
 	add_to_group("bullet")
+	# 子弹尾迹(D5):设置开启时所有子弹都挂——单人/自己的弹/AI 弹/对手副本弹同一处接线
+	# (副本路径原先单独挂射手色,现统一用武器弹色)
+	if Settings.pvp_show_trajectories:
+		BulletTrail.attach(self, bullet_color)
 
 func _physics_process(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)
@@ -218,24 +222,29 @@ func _check_player_contact() -> void:
 				start_player_fuse()
 				return
 
-# 触发命中玩家的短引信（hit_fuse_time，当前榴弹为 0.15s；撞墙为 fuse_time 0.4s）。
-# 权威端由 MatchHost._adjudicate_grenade 调用；客户端视觉副本由 _check_player_contact 自行调用。
-# 判定规则与 _start_fuse 保持一致：首次碰撞确定引信时长，后续碰撞不覆盖刷新。
+# 起「命中玩家」的短引信(hit_fuse_time,grenade_bullet.tscn 现为 0.15s;撞墙走 fuse_time 0.4s)。
+# 权威侧由 MatchHost._adjudicate_grenade 调;客户端视觉副本由 _check_player_contact 自行调。
+# 纪律与 _start_fuse 一致:**首次碰撞决定时长,之后不刷新** —— 已撞墙起了长引信的榴弹再碰到人
+# 不会缩短(直接伤照常结算,那与引信是两个独立的闩)。
 func start_player_fuse() -> void:
 	if explodes:
 		_start_fuse(hit_fuse_time)
 
-# ── 时间回溯：引信与射程状态读写接口（供 WorldRewind 快照使用）──
-# 记录引信剩余时长与飞行距离。若快照未保存该状态，重建的榴弹将重置为未引燃状态，
-# 导致在错误时刻爆炸或松开回溯键时与玩家重叠而触发触碰即爆。
+# ── 时间回溯:引信/射程状态的读写口(WorldRewind 快照用)──
+# ★ 引信是"这颗弹还剩多久炸"的**全部状态**。不把它并进快照的后果(2026-09-27 用户报的
+#   "回溯之后被之前击发的榴弹炮炸死"):重建出来的榴弹退回**未点燃** —— ① 它会在错误的
+#   时刻爆炸(不再是它所属那个世界状态的引信);② 松手那一帧 `_check_player_contact()`
+#   重新生效,只要它跟你重叠就走 0.1s 触碰引信**贴脸起爆**。traveled 同理(射程累计清零
+#   会让子弹飞过头)。
 func rewind_state() -> Dictionary:
 	return {
 		"fa": _fuse_active,
 		"fe": _fuse_elapsed,
 		"fd": _fuse_duration,
 		"tr": traveled,
-		# max_range、gravity_factor、speed、size 为开火时由武器动态注入的参数，
-		# 必须随快照还原，避免重建弹使用场景默认值（如 max_range 默认 0 导致立即超出射程爆炸）。
+		# ★ max_range / gravity_factor / speed / size 都是**开火时由武器注入**的(scene 上不是这些值),
+		#   不进快照 → 重建出来的弹带着场景默认值:max_range 默认 0 ⇒ `traveled >= max_range`
+		#   当场成立 ⇒ 榴弹**一松手就在回溯落点爆炸**(2026-09-27 与引信并列的第二个真凶)。
 		"mr": max_range,
 		"gf": gravity_factor,
 		"sp": speed,

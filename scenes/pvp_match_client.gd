@@ -26,10 +26,6 @@ var _local: Node2D = null
 var _world: Node = null   # WorldViewport(视觉子弹/TileHitFx 副本挂这里)
 var _level0: Node = null  # 世界(Level0):补态那一路要还原可破坏砖(见 _on_match_sync)
 var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
-# 已经做过"新一轮复位"(清子弹 + 还原可破坏砖)的局号。★ 倒计时期间服务器会周期性重播
-# `round_state`(见 `MatchState.COUNTDOWN_SYNC_INTERVAL`),没有这个闩就会把整张图的瓦片与
-# 碰撞重建好几遍 —— 重播只是为了对齐两端倒计时的起点,不是新事件。
-var _countdown_reset_round := 0
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md
 var _rollback = null            # PredictionRollback
@@ -68,7 +64,11 @@ var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载
 #   取出现次数最多的那个 RGB。
 # ★ 换 sprite 素材要重测这一行 —— 它错了不报错,只是队色会**整体偏色**(整队一起偏,所以
 #   "谁是谁"照旧分得出,更容易漏)。三个分量都非 0,故下面那句比值除法不需要额外兜底。
-const BODY_BASE_COLOR := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)   # #639BFF
+# ★ 唯一源是 `UiFactory.C_TEAM_A`(队 1 token,同值)—— 本处是**别名**,不存字面量。
+#   ★ 上面那段"实测出来的众数色"仍是**独立的一维**:`tests/probe/hue_tint_probe.gd` 的守卫 D
+#     钉的是 `C_TEAM_A == BODY_BASE_COLOR == player.png 众数` —— 换了 sprite 素材而没改
+#     调色板时,它照样红。别因为这里变成别名就把那条守卫删了。
+const BODY_BASE_COLOR := UiFactory.C_TEAM_A   # #639BFF(本体主色 == 队 1 token)
 
 
 # 通用身体染色:只给角色本体 AnimatedSprite2D 上色(武器/预瞄线不染)。
@@ -85,7 +85,7 @@ const BODY_BASE_COLOR := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)   # #639BFF
 #   改成 **`目标色 / 本体主色`** 这个**比值**就精确了:输出 = 主色像素 × 比值 = **恰好目标色本身**
 #   (2026-09-19 复测:队 1 得到 `#639BFF` = `C_TEAM_A`,逐字节相等;当时队 2 的 token 是 `#63FFF3`,
 #    同样是逐字节相等 —— 2026-09-20 队 2 的 token 改成 `#80F4FF`,比值随之变,链子不变,
-#    渲染侧由 `tests/hue_tint_probe` 守卫 B/C 钉住)。
+#    渲染侧由 `tests/probe/hue_tint_probe` 守卫 B/C 钉住)。
 #   队色因此与头顶 ID / 小地图点位**同源同一个常量**,不存在"身体是派生色、柱子上是原色"。
 # ★ 队 2 的比值有分量 > 1(g = 244/155 ≈ 1.574、r ≈ 1.293)—— 这是**有意的**:
 #   `CanvasItem.modulate` 收 >1 的值,实测在 `rendering/mobile`(Forward Mobile)下原样生效。
@@ -131,7 +131,7 @@ func _apply_match_options(opts: Dictionary) -> void:
 	for v in opts.get("disabled_weapons", []):
 		disabled.append(int(v))
 	if _local != null:
-		_local.weapons.set_enabled_slots(disabled)
+		_local.weapons.set_enabled_types(disabled)
 
 func _on_snapshot_own(own: Dictionary) -> void:
 	if _rollback == null:
@@ -143,13 +143,13 @@ func _on_snapshot_own(own: Dictionary) -> void:
 	#   N+1 并立刻广播一条带它的快照;而那条快照(unreliable)落在 `_on_resumed` **刚重建**的
 	#   rollback 上(`_acked` 从 0 起)→ `_acked` 被抬到一个新纪元追不上的高度,
 	#   `PredictionRollback.on_authoritative` 的 `ack <= _acked` 把之后所有真实 ack(1,2,3…)全丢,
-	#   直到客户端自身的 seq 序列号赶上它 —— 导致状态同步与回滚在此期间完全失效(测试实测 ~560 帧 ≈ 9s;一局中段
-	#   可上万帧)。其表现为:无报错信息、回滚次数恒为 0、`sync_soft_state` 不再被调用,
-	#   进而导致背包与地面拾取状态不同步。
+	#   直到客户端自己的 seq 爬过它 —— **断线前活了多久就哑多久**(探针实测 ~560 帧 ≈ 9s;一局中段
+	#   可上万帧)。症状正是 `prediction_rollback.gd` 记过的那个静默退化:不报错、**回滚恒为 0**、
+	#   `sync_soft_state` 不再被调用 → 背包/拾取不同步("地上的枪没了、手上也没多、还开不了火")。
 	#   判据:**合法 ack 永不超过本端已发的 seq**(服务器只可能 ack 它消费过的包)→ 超过的一定是
-	#   上一个 seq 空间的残留,丢弃即可。
-	#   ★ 两端的重置逻辑互为前提条件(服务端归 0 适配客户端 _acked,客户端重置适配服务端 0);
-	#     守卫测试:`tests/reconnect_probe.tscn` 相①(缺少本判断将判定失败)。
+	#   上一个 seq 空间的残留,丢掉即正确(那几条本来就该被 `_on_resumed` 的重置作废)。
+	#   ★ 两侧的复位互为理由(服务端归 0 是为了客户端的 `_acked`,客户端重置是为了服务端的 0),
+	#     只改一侧会得到镜像的同一个洞;守卫:`tests/probe/reconnect_probe.tscn` 相①(去掉本行即红)。
 	var ack := int(own.get("ack_seq", 0))
 	if ack > _input_seq:
 		return
@@ -206,8 +206,8 @@ func _on_time_state(payload: Dictionary) -> void:
 
 
 # Beta 时间玩法:本地预测加速(与服务器同一判据 —— 按住 + 镜像账户可耗)。
-# 倍率写入 pvp_haste_mult，供玩家速度域与武器 tick 逻辑读取；时间粒子的实际扣除由服务端权威处理
-# （通过 10Hz 镜像状态同步校准，客户端本地不直接扣除以避免两端状态发散）。
+# 倍率写进 pvp_haste_mult,player 的速度域/武器 tick 会吃它;烧颗粒只由服务器做
+# (镜像 10Hz 校正,本地不扣,避免双份漂移)。
 func _tick_beta_time(delta: float) -> void:
 	if not PvpSession.beta_mode or _local == null:
 		return
@@ -228,10 +228,7 @@ func _tick_beta_time(delta: float) -> void:
 #   本地只负责"站着 + 看底片 + 免伤"。
 func _tick_beta_rewind(delta: float) -> void:
 	var downed: bool = (_local as Node).call("is_downed") if _local.has_method("is_downed") else false
-	# ★ 2026-09-30 移植时补 `: bool`:`_time_mirror` 是无类型(`var _time_mirror = null`),
-	#   故 `_time_mirror.can_spend()` 是 Variant ⇒ `:=` 推不出类型 ⇒
-	#   `Parse Error: Cannot infer the type of "want" variable`(KH 线 HEAD 上的既有错误)。
-	var want: bool = Input.is_action_pressed("rewind") and _time_mirror != null and _time_mirror.can_spend() and not downed
+	var want := Input.is_action_pressed("rewind") 			and _time_mirror != null and _time_mirror.can_spend() and not downed
 	if want and not _time_rewinding:
 		_time_rewinding = true
 		var src = (_local as Node).get("input_source")
@@ -300,10 +297,7 @@ func _tick_time_fx(delta: float, self_hasting: bool) -> void:
 				AfterImage.spawn((_local as Node).get_parent(), anim,
 						Color(1.0, 0.25, 0.25, 0.55) if red else Color(0.3, 0.4, 1.0, 0.55))
 	else:
-		# ★ 2026-09-30 移植时补:原为 `var g := TimeGlow.on(_local)`,而 `:=` 推不出类型
-		#   ⇒ `Parse Error: Cannot infer the type of "g" variable because the value is "null"`
-		#   (KH 线 HEAD 上的既有解析错误,不是本次移植引入)。显式标注即可。
-		var g: TimeGlow = TimeGlow.on(_local)
+		var g := TimeGlow.on(_local)
 		if g != null:
 			g.queue_free()
 	# 他人:回溯优先(底片色 + 轨迹残像,不叠加速高亮);否则加速高亮 + 红蓝重影 + ▶▶3x
@@ -381,10 +375,6 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 				var ghost_host := Node2D.new()
 				ghost_host.global_position = Vector2(float(pt[0]), float(pt[1]))
 				rep.get_parent().add_child(ghost_host)
-				# ★ 2026-09-30 移植时补:原为 `var g := AfterImage.spawn(...)`,而 `spawn()` 返回
-				#   void ⇒ `Parse Error: Cannot get return value of call to "spawn()"`。
-				#   `g` 从未被使用(下面的 `for g in ghosts2` / `for g in _rw_ghosts[rep]` 是
-				#   另外两处独立作用域),故直接丢掉赋值。(KH 线 HEAD 上的既有错误)
 				AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
 				var ghosts: Array = _rw_ghosts.get(rep, [])
 				ghosts.append({"node": ghost_host, "t": 0.0})
@@ -454,22 +444,19 @@ func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = true) -> void:
 	if silent:
 		return
 	var tex := TileDefs.sub_texture(sub)
+	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)
 	TileHitFx.spawn(_world, Vector2(sub.x * 16.0 + 8.0, sub.y * 16.0 + 8.0), tex)
-	# ★ 2026-09-30 移植时**删掉**两行:原为
-	#     var ts := GameParameters.TILE_SIZE
-	#     TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
-	#   而本函数的形参是 `sub` 不是 `cell` ⇒ `Identifier "cell" not declared`(×2 之一);
-	#   且上一行已经按子格坐标播过同一份碎片粒子 —— 那两行是"格级版本"迁移到子格时的残留,
-	#   重复播一份。(KH 线 HEAD 上的既有错误)
+	# ★ 2026-10-02 合并订正:KH 分支在这里多留了一行**复制粘贴残留**
+	#   (`var ts := GameParameters.TILE_SIZE` + 又一次 `TileHitFx.spawn(… cell.x * ts …)`)。
+	#   那是上面 `_on_remote_tile_destroyed`(格级)那一份的尾巴,而本函数的参数叫 `sub`
+	#   ⇒ `cell` 未声明 ⇒ **整个脚本解析失败**(不是"多播一次粒子"那么轻)。
+	#   本函数只需要子格那一次 spawn,故删掉。
 
 func _physics_process(delta: float) -> void:
 	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
 	if _local == null:
 		return
 	# 周期测延迟(右下角 HUD)
-	# ★ 2026-09-30 移植时改 `_delta` → `delta`:本函数签名收的是 `delta`(KH 的 `_tick_beta_time(delta)`
-	#   也用它),而函数体里两处写成 `_delta` ⇒ `Identifier "_delta" not declared`(×2 之一)。
-	#   全文件从来没有 `_delta` 的声明,这是 KH 线 HEAD 上的既有解析错误。
 	_ping_acc += delta
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
@@ -490,10 +477,12 @@ func _physics_process(delta: float) -> void:
 	var aim: Vector2 = _local.get_current_aim_dir()
 	_input_seq += 1
 	var pkt := PacketInputSource.pack_record(src, _input_seq, aim)
-	# 滚轮切枪:目标槽位随输入包上行(滚轮事件不在协议里,只本地切会被快照切回)
-	var net_slot: int = _local.weapons.consume_net_slot()
-	if net_slot > 0:
-		pkt["weapon"] = net_slot
+	# 滚轮/数字键切枪:**本地解析成目标那把的 inst** 再随输入包上行(§4.1)。
+	# ★ 位置不能过网 —— 两端 held 的顺序可能不同(拾取/丢弃只由服务器裁决),
+	#   同一下标会解出不同的枪。数字键按背包位置解、滚轮取已本地切好的那把。
+	var switch_inst: int = _local.weapons.take_uplink_switch(src.get_switch_index_pressed())
+	if switch_inst > 0:
+		pkt["winst"] = switch_inst
 	# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 `NetBus.stop()`,
 	#   而本场景到帧末才被换掉 —— 中间这一两帧 `rpc_id` 会打引擎错误
 	#   (`Trying to call an RPC while no multiplayer peer is active`),包本来也发不出去。
@@ -575,9 +564,7 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	#   类型/分组守卫(见 `_wrap` 的 `is_in_group("player")` 与 `_check_player_contact`
 	#   的 `n == shooter`),拿副本当射手不会破坏它们。
 	b.shooter = _replica_for(int(data.get("shooter_role", 0)))
-	# 敌方武器轨迹(设置开启时):轨迹线挂在视觉副本子弹上
-	if Settings.pvp_show_trajectories:
-		BulletTrail.attach(b, data["color"])
+	# 尾迹不再在此挂:BulletBase._ready 统一接线(D5),副本弹与本地弹同一处
 
 
 # ── 本地视觉子弹撞到"该打的人" → 立刻消失(用户 2026-09-22:「画面效果看起来还是像穿透」)──
@@ -646,17 +633,22 @@ func _refresh_input_lock() -> void:
 #   `ui/match_result.tscn` 里**(脚本不设 layer —— 三个现有 HUD 同款写法,层位值只有那
 #   一处来源)。用 `.new()` 会拿到 CanvasLayer 默认的 **layer 1**,结算页画在 HUD(130)/
 #   小地图(131) **下面**、压暗罩盖不住它们,而计划自己的类头注释却写着「盖住一切」。
-#   ★ 这条有守卫:`tests/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,
+#   ★ 这条有守卫:`tests/probe/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,
 #     出现 `MatchResult.new(` 即红。
-const RESULT_SCENE := preload("res://ui/match_result.tscn")
+const RESULT_SCENE := preload("res://ui/screens/match_result.tscn")
 
-# 结算页:玩家手动退出(非固定倒计时自动返回)。三个模式共用 —— 均继承自本类,
-# 各自仅需覆写 `_build_result_payload()`。
-# ★★ **挂载一次,但每次收到通知都要刷新**(`if _result == null` 仅限制初次实例化与信号连接)。
-#   若写成 `if _result != null: return`,会导致后续 MATCH_OVER 载荷无法更新到界面上;
-#   测试若直接调用 show_result 会掩盖此问题。
-#   ★ 第二条载荷在实际运行中可能出现:1v1 中重连客户端会重收状态;3v3 中结算后若有延迟伤害触发倒地,
-#     会再次广播更新后的战绩数据。
+# 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
+# 各自只覆写 `_build_result_payload()`。
+# ★★ **挂载一次、但每次都要刷新**(`if _result == null` 只包住"建 + 连线")。
+#   写成 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**":
+#   第二条 MATCH_OVER 载荷就永远到不了屏幕上,而 `MatchResult.show_result` 的清场重建
+#   (`ui/match_result.gd` 的 remove_child→queue_free 那段)在生产里**一次都不会跑** ——
+#   探针却直接调它、照绿。**探针比产品更绿**是这里最难发现的形状。
+#   ★ 第二条载荷**可达**(不是假想):1v1 —— `server_main.gd` 在每次 reclaim 成功后重播当前
+#     `round_state`,掉线重连的客户端就会收到第二条 MATCH_OVER;3v3 —— `team_host.gd` 的
+#     `_finish_match()` 在战斗进行中直接把 PLAYING→MATCH_OVER,而倒地边沿检测在
+#     `match _round_state:` **之前**且**不看状态** ⇒ MATCH_OVER 之后再死人会再广播一条
+#     带新 `stats`/`mvp` 的终局载荷;`mark_disconnected` 那条同款。
 func _show_result() -> void:
 	if _result == null:
 		_result = RESULT_SCENE.instantiate()
@@ -678,7 +670,7 @@ func _show_result() -> void:
 		#   ⇒ 关键是"亮出来"必须排在任何可能把 `show_result()` 打断的活**之前**。放进
 		#     `show_result()` 内部同样能挡住它自己那一段;放在这里则连"挂载之后、调用之前"那一小段
 		#     也一起盖住(将来谁在中间插一句会抛错的代码,也不会退化回陷阱)。
-		#   空载荷**抛不出错**:"空载荷不崩"是本页的硬要求(`tests/match_result_probe` ① 专钉),
+		#   空载荷**抛不出错**:"空载荷不崩"是本页的硬要求(`tests/probe/match_result_probe` ① 专钉),
 		#   且它只做"赋文案 + 清场建节 + `visible = true`"三件事 ⇒ 可见、ESC 生效、
 		#   "返 回 主 菜 单"按钮可用,三样退路当场到手。
 		#   ★ 正常路径**看不到这个空态**:本函数一次跑完、两句之间没有 await,布局与绘制都在帧末,
@@ -774,8 +766,8 @@ func _apply_peer_hues(_hues: Dictionary) -> void:
 #     —— 6 个人里认不出队友这个模式就没法玩,个人色相在 3v3 是无效输入。
 # ★ 签名收**整个 payload** 而不是只收 `hues`:3v3 要读的是**同一份应答里的另一个键**;
 #   只传 hues 会逼子类把 teams 先存进一个字段、再到钩子里取回来(多一条"上游写、下游读"的暗通道)。
-# ★ 两个既有子类**都不覆写它**,且默认实现与改动前逻辑一致("非空才染色")
-#   ⇒ 保持向后兼容,对既有行为零破坏(由回归测试套件保护)。
+# ★ 两个既有子类**都不覆写它**,且默认实现与改动前那两行逐字同构("非空才染色")
+#   ⇒ 对它们是零影响(回归线:kh_l4/kh_l5/hud_declarative + 真链路探针)。
 func _apply_peer_hues_or_team(payload: Dictionary) -> void:
 	var hues: Dictionary = payload.get("hues", {})
 	if not hues.is_empty():
@@ -799,9 +791,9 @@ func _on_match_sync(payload: Dictionary) -> void:
 	# ★ 重连补态那次**必然**不一致,而那不是 bug:1v1 每局换边(`match_round._start_next_round`
 	#   翻 `_side_swap` → `role_spawns()` 在 player/player2 之间对调),而 `PvpSession.spawn` 只在
 	#   进场写一次(`lobby_page` 配对时),此后无人刷新。按它硬拉 = 把玩家瞬移走,而服务器那具
-	#   身体从掉线起就未位移 → 本地预测在下一帧又将玩家拉回,此时若触发告警属于误报
-	#   且污染日志。物理位置完全由客户端预测与回滚机制负责收敛,因此重连补态路径
-	#   **无需校正坐标、不发告警,亦不回写 `PvpSession.spawn`**。
+	#   身体从掉线起就没动过 → C2 下一帧又把人拉回来,顺带刷一条假告警(告警的前提在这里不成立)
+	#   淹掉探针日志。位置本来就归 C2 权威(服务器瞬移正是它要收敛的外部事件),故这条路
+	#   **既不校正、也不告警、也不回写 `PvpSession.spawn`**(回写只会让下一次校正更歪)。
 	var sp: Dictionary = payload.get("spawns", {})
 	if not resync and sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]
@@ -996,7 +988,7 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 			continue
 		var pk := n as WeaponPickup
 		var can := false
-		if _local != null and not _live_self_drops().has(int(inst)) 				and _local.weapons.is_slot_enabled(int(pk.type_id)):
+		if _local != null and not _live_self_drops().has(int(inst)) 				and _local.weapons.is_type_enabled(int(pk.type_id)):
 			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
@@ -1010,7 +1002,7 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 				print("[pkd]   inst=%d type=%d d=%.1f can=%s | 冷却=%s 启用=%s | canon=(%.0f,%.0f) render=(%.0f,%.0f) 玩家=(%.0f,%.0f) settled=%s" % [
 						int(inst), int(pk.type_id), dd, "是" if can else "否",
 						"是" if _live_self_drops().has(int(inst)) else "否",
-						"是" if _local.weapons.is_slot_enabled(int(pk.type_id)) else "否",
+						"是" if _local.weapons.is_type_enabled(int(pk.type_id)) else "否",
 						pk.canonical_pos.x, pk.canonical_pos.y,
 						pk.global_position.x, pk.global_position.y, lp.x, lp.y,
 						"是" if pk._settled else "否"])
@@ -1064,16 +1056,41 @@ var _retry_timer: SceneTreeTimer = null   # 单一定时器(判据见 _schedule_
 #   硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。故它复用同一个闸,不另立标志。
 var _resync_pull_pending := false
 
+# ── 本地状态横幅(阶段 3,spec §4 的 3.2 + 3.4)──
+# ★ 它**只有一个数据源**:本文件的断线重连状态机。服务器侧的「谁掉线了」走 `round_state`
+#   的 `grace` 字段(那是另一条链,见 `MatchState.grace_snapshot`),两者刻意不共用同一个节点
+#   —— 一条是"我这边断了",一条是"对面断了",同时显示会互相覆盖。
+# ★ 它由 `_subscribe_reconnect()` 里建(三个子类**都已经**在各自 `_ready` 里调它)——
+#   **不加新调用点**,也就不存在"某个模式漏调 ⇒ 那个模式静默没有提示"这一档。
+var _banner: StatusBanner = null
+
 
 # 两个子类各自 `_ready` 里调一次(与 `_subscribe_ground_weapons()` 并列)。
 func _subscribe_reconnect() -> void:
 	NetBus.local_server_message.connect(_on_server_message)
 	# ★ worker 在宽限期内接受 reclaim 后会**重发一条 match_start**(载荷与首次开局同源)。
 	#   **实读确认**:对局里 `local_match_start` 此前**零订阅者** —— 它唯一的消费者是
-	#   `lobby_page._on_match_start`(`matchmaking`/`royale_lobby` 的公共基类),而那个页面在对局
+	#   `lobby_page._on_match_start`(统一大厅 `mp_lobby` 的基类),而那个页面在对局
 	#   场景里**不在树上** → 这条信号到对局里是**静默 no-op**。所以"重连成功"的收尾必须在这里接
 	#   (`_on_match_start_event`)—— 不能指望既有入口。
 	NetBus.local_match_start.connect(_on_match_start_event)
+	_setup_status_banner()   # 本地状态横幅(3.2 / 3.4);建在这里 = 三个模式零新调用点
+
+
+# 建横幅(幂等)。★ 必须从**场景**实例化:层位 140 只住在 `ui/status_banner.tscn` 里,
+# `.new()` 建出来的是 CanvasLayer 默认的 **layer 1** —— 画在三个对局 HUD(130)与小地图(131)
+# **底下**,横幅被盖住且**不报错**。守卫:`tests/probe/hud_declarative_probe.gd` 的 ⑧。
+func _setup_status_banner() -> void:
+	if _banner != null:
+		return
+	_banner = preload("res://ui/hud/status_banner.tscn").instantiate() as StatusBanner
+	add_child(_banner)
+
+
+# 设/清横幅文字(空串 = 收起)。见 `_banner` 上方那段。
+func _set_status(text: String) -> void:
+	if _banner != null:
+		_banner.set_text(text)
 
 
 func _on_server_message(msg: String) -> void:
@@ -1129,17 +1146,19 @@ func _begin_reconnect() -> void:
 	if _menu_open:
 		return
 	_pending_disconnect = false
-	if PvpSession.token == "" or PvpSession.server_port <= 0:
-		_abort_reconnect("重连失败(无会话令牌)")   # 原版服务端 / 没有凭据 → 优雅降级
+	if PvpSession.token == "" or PvpSession.worker_port <= 0:
+		_abort_reconnect("重连失败(无会话令牌)")   # 原版 worker / 老大厅 → 优雅降级
 		return
 	_reconnecting = true
-	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.server_port])
+	# ★ 阶段 3(3.2 / 3.4):**断开一被侦测到就亮横幅**,而不是等某次重试失败之后。
+	#   这正是 3.4 说的"重连失败**之前**的可见反馈" —— 阶段 1 只打了 print。
+	_set_status("与服务器断线,正在重连…")
+	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.worker_port])
 	_retry_connect.call_deferred()
 
 
-# 连一轮(先把上一轮拆干净)。★ 与 `lobby_page._with_lobby` 那一处同款:
+# 连一轮(先把上一轮拆干净)。★ 与 `lobby_page` 转连 worker 那一处同款:
 # `start_client` 的地址/端口取自 `PvpSession`(大厅填好的,不重新走大厅)。
-# 单进程单端口之后,这里连的就是**那一台**服务端(大厅与对局同一个端口)。
 func _retry_connect() -> void:
 	if not _reconnecting:
 		return
@@ -1154,7 +1173,7 @@ func _retry_connect() -> void:
 		multiplayer.connected_to_server.disconnect(_try_reclaim)
 	if multiplayer.connection_failed.is_connected(_on_reconnect_failed):
 		multiplayer.connection_failed.disconnect(_on_reconnect_failed)
-	var err := NetBus.start_client(PvpSession.server_address, PvpSession.server_port)
+	var err := NetBus.start_client(PvpSession.server_address, PvpSession.worker_port)
 	if err != OK:
 		_schedule_reconnect_retry()
 		return
@@ -1212,6 +1231,11 @@ func _schedule_reconnect_retry() -> void:
 func _on_reconnect_retry_tick() -> void:
 	if not _reconnecting:
 		return
+	# 横幅上显示**还剩多少预算**(spec §4 的 3.2/3.4:失败之前就要有可见反馈)。
+	# ★ 读的是 `GraceWindow.DEFAULT_SECONDS` —— 与下面那条收场判据**同一个常量**,不会漂。
+	var left := int(GraceWindow.DEFAULT_SECONDS) \
+			- int((Time.get_ticks_msec() - _reconnect_started_ms) / 1000)
+	_set_status("与服务器断线,正在重连…(剩余 %ds)" % maxi(left, 0))
 	# ★★ 宽限期判据是**第一条**,且与"这次尝试走到哪一步"**无关** —— 两条路径(`err != OK` 与 OK)
 	#   现在都挂了定时器,所以哪怕握手一直不落地(一次 reclaim 都没发出去),整整一个
 	#   `GraceWindow.DEFAULT_SECONDS` 也一定到点。
@@ -1257,6 +1281,7 @@ func _on_resumed() -> void:
 	_reconnect_started_ms = 0
 	_reclaim_sent = false
 	_attempt_started_ms = 0
+	_set_status("")   # 重连成功 → 收起横幅(阶段 3)
 	# ★ 必须重置:worker 在 reclaim 时把 `_ack_seq[role]` 归 0 重协商锚点,而客户端这边的 `_acked`
 	#   还停在断线前那个数 —— 不重置的话新快照的 ack 一律 `<= _acked`,`on_authoritative` 全数丢弃
 	#   (C2 静默失效,要等 seq 重新爬过断线前那个数才恢复),同时环里那些断线前的记录会被当成
@@ -1287,8 +1312,33 @@ func _on_resumed() -> void:
 	print("[pvp] 重连成功")
 
 
+# 「对手已离开」是**终局**信号:把在飞的重连循环停掉(并收起状态横幅,见 Task 4)。
+#
+# ★★ 为什么必须有它 —— worker 收场是「先发 `opponent_left`、紧接着 `quit(0)`」,两条消息
+#   (可靠通知 + ENet 断开)几乎是同一拍到达客户端,**到达顺序不保证**。于是有两种时序:
+#     · 通知先到:`_on_opponent_left` 置 `_match_ended = true` ⇒ 随后那条 `服务器断开` 被
+#       `_on_server_message` 的 `if _match_ended or _reconnecting: return` 挡住,**重连循环
+#       根本不会启动**。这一半靠既有的 `_match_ended` 闸就够了。
+#     · 断开先到:`_begin_reconnect()` 已经把 `_reconnecting` 置起来、`_retry_connect` 已
+#       deferred 出去,通知才到 ⇒ **只有本函数能把那个循环叫停**。少了它,玩家会在看到
+#       「对手已离开」的同时继续重试 60 秒(两条路各回一次主菜单,第二条还会把刚建出来的
+#       主菜单当 old 退役)。
+#   ⇒ 判据:**不论谁先到,结局都是「2.5s 后回主菜单」,且不叠加一个 60 秒的重连循环。**
+# ★ 它**不重建场景、不发包、不碰协议** —— 纯本地状态收口。
+func _cancel_reconnect() -> void:
+	_reconnecting = false
+	_reconnect_started_ms = 0
+	_reclaim_sent = false
+	_attempt_started_ms = 0
+	_set_status("")   # 「对手已离开」是终局:横幅一并收起,让位给 HUD 的中央播报
+
+
 func _abort_reconnect(reason: String) -> void:
 	_reconnecting = false
+	# ★ 先收起横幅再换场:换场是 `await` 一帧的(`safe_change_scene` 的防重入首行),留着文字
+	#   只会在主菜单上闪一帧,读起来像 bug。原因本身仍留在下面那行 `print` 里(以及调用方
+	#   写在 `reason` 里的那句话)。
+	_set_status("")
 	NetBus.stop()
 	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
 	print("[pvp] %s" % reason)

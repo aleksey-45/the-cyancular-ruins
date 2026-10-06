@@ -1,0 +1,1279 @@
+[gd_scene load_steps=58 format=3]
+
+[ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_xj1ww"]
+[ext_resource type="Script" uid="uid://bgulbpan3miyr" path="res://scenes/mp_lobby.gd" id="1_lobby"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xsicv"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7uuf6"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tc2qv"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_m646j"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_x3huw"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.27450982, 0.32941177, 0.37254903, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_re6m3"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bjxa6"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ltkbv"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5oars"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_32xl5"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="ButtonGroup" id="ButtonGroup_u64m4"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_00rrw"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.27450982, 0.32941177, 0.37254903, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_mrob1"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_by6w3"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_880b4"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_co1jw"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ygl7g"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_jx7wy"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.27450982, 0.32941177, 0.37254903, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_4i2sm"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.627, 0.549, 1, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_yhn0c"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_rbsha"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.627, 0.549, 1, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_gkue4"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ennis"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_grnny"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.27450982, 0.32941177, 0.37254903, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_jc4fq"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.91, 0.639, 0.239, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_o3i5d"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_t0ca4"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.91, 0.639, 0.239, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_m2fv5"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_58uhb"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_c18oq"]
+content_margin_left = 32.0
+content_margin_top = 16.0
+content_margin_right = 32.0
+content_margin_bottom = 16.0
+bg_color = Color(0, 0, 0, 0)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.11764706, 0.15686275, 0.1882353, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cvxo2"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_54yg2"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dyf0w"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xncon"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_kn1wx"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.27450982, 0.32941177, 0.37254903, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_a8hle"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_lmabe"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_m4pr2"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tc3lm"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_vi557"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="ButtonGroup" id="ButtonGroup_jb4lf"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ok25k"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.27450982, 0.32941177, 0.37254903, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_0m3g6"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.627, 0.549, 1, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_e7bne"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_55fcf"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.627, 0.549, 1, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_eq5qq"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hh8sm"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_kbb5m"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.27450982, 0.32941177, 0.37254903, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_fac1w"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.91, 0.639, 0.239, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hyodb"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_6fdvt"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.137, 0.165, 0.204, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.91, 0.639, 0.239, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_1u2xm"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_a638s"]
+content_margin_left = 40.0
+content_margin_top = 20.0
+content_margin_right = 40.0
+content_margin_bottom = 20.0
+bg_color = Color(0.105882354, 0.14117648, 0.17254902, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tkcv8"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.31, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_36ry5"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.106, 0.118, 0.141, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.349, 0.851, 0.902, 1)
+
+[node name="MpLobby" type="Control" unique_id=1874235467]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme = ExtResource("1_xj1ww")
+script = ExtResource("1_lobby")
+
+[node name="ColorRect1" type="ColorRect" parent="." unique_id=1511765016]
+layout_mode = 0
+offset_right = 1920.0
+offset_bottom = 1440.0
+mouse_filter = 2
+color = Color(0.07, 0.09, 0.13, 1)
+
+[node name="Label1" type="Label" parent="." unique_id=1233908261]
+layout_mode = 0
+offset_left = 76.0
+offset_top = 76.0
+offset_right = 316.0
+offset_bottom = 148.0
+theme_type_variation = &"Body"
+text = "昵称"
+vertical_alignment = 1
+
+[node name="NameEdit" type="LineEdit" parent="." unique_id=1709596309]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 332.0
+offset_top = 76.0
+offset_right = 952.0
+offset_bottom = 148.0
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_placeholder_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_xsicv")
+theme_override_styles/focus = SubResource("StyleBoxFlat_7uuf6")
+placeholder_text = "昵称(头上显示)"
+
+[node name="CodeEdit" type="LineEdit" parent="." unique_id=987654321]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 1180.0
+offset_top = 76.0
+offset_right = 1844.0
+offset_bottom = 148.0
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_placeholder_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_xsicv")
+theme_override_styles/focus = SubResource("StyleBoxFlat_7uuf6")
+placeholder_text = "房间号"
+
+
+
+[node name="FilterAll" type="Button" parent="." unique_id=382391109]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 72)
+layout_mode = 0
+offset_left = 76.0
+offset_top = 180.0
+offset_right = 296.0
+offset_bottom = 252.0
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_pressed_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_pressed_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_x3huw")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_re6m3")
+theme_override_styles/hover = SubResource("StyleBoxFlat_bjxa6")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_ltkbv")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_5oars")
+theme_override_styles/focus = SubResource("StyleBoxFlat_32xl5")
+toggle_mode = true
+button_group = SubResource("ButtonGroup_u64m4")
+text = "全部"
+
+[node name="FilterPvp" type="Button" parent="." unique_id=468320293]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 72)
+layout_mode = 0
+offset_left = 312.0
+offset_top = 180.0
+offset_right = 532.0
+offset_bottom = 252.0
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_pressed_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_pressed_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_00rrw")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_mrob1")
+theme_override_styles/hover = SubResource("StyleBoxFlat_by6w3")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_880b4")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_co1jw")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ygl7g")
+toggle_mode = true
+button_group = SubResource("ButtonGroup_u64m4")
+text = "1 v 1"
+
+[node name="FilterTeam" type="Button" parent="." unique_id=468793753]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 72)
+layout_mode = 0
+offset_left = 548.0
+offset_top = 180.0
+offset_right = 768.0
+offset_bottom = 252.0
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_pressed_color = Color(0.627, 0.549, 1, 1)
+theme_override_colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_pressed_color = Color(0.627, 0.549, 1, 1)
+theme_override_colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_jx7wy")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_4i2sm")
+theme_override_styles/hover = SubResource("StyleBoxFlat_yhn0c")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_rbsha")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_gkue4")
+theme_override_styles/focus = SubResource("StyleBoxFlat_ennis")
+toggle_mode = true
+button_group = SubResource("ButtonGroup_u64m4")
+text = "3 v 3"
+
+[node name="FilterRoyale" type="Button" parent="." unique_id=1787443688]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 72)
+layout_mode = 0
+offset_left = 784.0
+offset_top = 180.0
+offset_right = 1004.0
+offset_bottom = 252.0
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_pressed_color = Color(0.91, 0.639, 0.239, 1)
+theme_override_colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_pressed_color = Color(0.91, 0.639, 0.239, 1)
+theme_override_colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_grnny")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_jc4fq")
+theme_override_styles/hover = SubResource("StyleBoxFlat_o3i5d")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_t0ca4")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_m2fv5")
+theme_override_styles/focus = SubResource("StyleBoxFlat_58uhb")
+toggle_mode = true
+button_group = SubResource("ButtonGroup_u64m4")
+text = "大 乱 斗"
+
+[node name="CreateBtn" type="Button" parent="." unique_id=1218192058]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 72)
+layout_mode = 0
+offset_left = 1180.0
+offset_top = 180.0
+offset_right = 1500.0
+offset_bottom = 252.0
+theme_type_variation = &"BtnGold"
+text = "＋ 创建房间"
+
+[node name="JoinBtn" type="Button" parent="." unique_id=1585609715]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 72)
+layout_mode = 0
+offset_left = 1524.0
+offset_top = 180.0
+offset_right = 1844.0
+offset_bottom = 252.0
+theme_type_variation = &"BtnPrimary"
+text = "加入房间"
+
+[node name="CardGrid" type="GridContainer" parent="." unique_id=399935632]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 76.0
+offset_top = 296.0
+offset_right = 1844.0
+offset_bottom = 296.0
+theme_override_constants/h_separation = 24
+theme_override_constants/v_separation = 24
+columns = 4
+
+[node name="PanelContainer1" type="PanelContainer" parent="." unique_id=2049470985]
+layout_mode = 0
+offset_left = 76.0
+offset_top = 1292.0
+offset_right = 1576.0
+offset_bottom = 1364.0
+theme_type_variation = &"PanelCarved"
+
+[node name="Body" type="PanelContainer" parent="PanelContainer1" unique_id=2065931873]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_c18oq")
+
+[node name="StatusLabel" type="Label" parent="PanelContainer1/Body" unique_id=1194364342]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Body"
+vertical_alignment = 1
+
+[node name="BackBtn" type="Button" parent="." unique_id=1841391726]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(260, 72)
+layout_mode = 0
+offset_left = 1584.0
+offset_top = 1292.0
+offset_right = 1844.0
+offset_bottom = 1364.0
+theme_type_variation = &"BtnPrimary"
+text = "返回主菜单"
+
+[node name="JoinPanel" type="PanelContainer" parent="." unique_id=1615949062]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -385.0
+offset_top = -211.0
+offset_right = 385.0
+offset_bottom = 211.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"PanelCarved"
+
+[node name="Body" type="PanelContainer" parent="JoinPanel" unique_id=190533403]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="JoinPanel/Body" unique_id=116415932]
+custom_minimum_size = Vector2(640, 0)
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PanelContainer1" type="PanelContainer" parent="JoinPanel/Body/VBoxContainer1" unique_id=1227314776]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="JoinPanel/Body/VBoxContainer1/PanelContainer1" unique_id=1664810523]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "加入房间"
+
+[node name="JoinCodeEdit" type="LineEdit" parent="JoinPanel/Body/VBoxContainer1" unique_id=838499619]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(560, 64)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_placeholder_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_cvxo2")
+theme_override_styles/focus = SubResource("StyleBoxFlat_54yg2")
+placeholder_text = "房间号"
+
+[node name="JoinInviteEdit" type="LineEdit" parent="JoinPanel/Body/VBoxContainer1" unique_id=1916132375]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(560, 64)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_placeholder_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_dyf0w")
+theme_override_styles/focus = SubResource("StyleBoxFlat_xncon")
+placeholder_text = "邀请码(私密房,可空)"
+
+[node name="HBoxContainer1" type="HBoxContainer" parent="JoinPanel/Body/VBoxContainer1" unique_id=877699981]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="JoinOkBtn" type="Button" parent="JoinPanel/Body/VBoxContainer1/HBoxContainer1" unique_id=272584557]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 64)
+layout_mode = 2
+theme_type_variation = &"BtnGold"
+text = "加 入"
+
+[node name="JoinCancelBtn" type="Button" parent="JoinPanel/Body/VBoxContainer1/HBoxContainer1" unique_id=1800362792]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 64)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "取 消"
+
+[node name="CreateMask" type="ColorRect" parent="." unique_id=367709863]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0, 0, 0, 0.55)
+
+[node name="CreatePanel" type="PanelContainer" parent="." unique_id=1536068683]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -779.0
+offset_top = -462.0
+offset_right = 779.0
+offset_bottom = 462.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"PanelCarved"
+
+[node name="Body" type="PanelContainer" parent="CreatePanel" unique_id=315468655]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="CreatePanel/Body" unique_id=1739091661]
+layout_mode = 2
+theme_override_constants/separation = 32
+
+[node name="HBoxContainer1" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1" unique_id=655198031]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PanelContainer1" type="PanelContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1" unique_id=695460052]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1/PanelContainer1" unique_id=623289327]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
+theme_override_font_sizes/font_size = 48
+text = "创 建 房 间"
+
+[node name="CreateCloseBtn" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1" unique_id=1011064369]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(80, 72)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "×"
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1" unique_id=1953916277]
+layout_mode = 2
+theme_override_constants/separation = 48
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2" unique_id=2044923920]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 28
+
+[node name="HBoxContainer1" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=703862253]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="CreateModePvp" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/HBoxContainer1" unique_id=1805029035]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 72)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_pressed_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_pressed_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_kn1wx")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_a8hle")
+theme_override_styles/hover = SubResource("StyleBoxFlat_lmabe")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_m4pr2")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_tc3lm")
+theme_override_styles/focus = SubResource("StyleBoxFlat_vi557")
+toggle_mode = true
+button_group = SubResource("ButtonGroup_jb4lf")
+text = "1 v 1"
+
+[node name="CreateModeTeam" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/HBoxContainer1" unique_id=952505212]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 72)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_pressed_color = Color(0.627, 0.549, 1, 1)
+theme_override_colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_pressed_color = Color(0.627, 0.549, 1, 1)
+theme_override_colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_ok25k")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_0m3g6")
+theme_override_styles/hover = SubResource("StyleBoxFlat_e7bne")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_55fcf")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_eq5qq")
+theme_override_styles/focus = SubResource("StyleBoxFlat_hh8sm")
+toggle_mode = true
+button_group = SubResource("ButtonGroup_jb4lf")
+text = "3 v 3"
+
+[node name="CreateModeRoyale" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/HBoxContainer1" unique_id=2087350687]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 72)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_pressed_color = Color(0.91, 0.639, 0.239, 1)
+theme_override_colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_colors/font_hover_pressed_color = Color(0.91, 0.639, 0.239, 1)
+theme_override_colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_kbb5m")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_fac1w")
+theme_override_styles/hover = SubResource("StyleBoxFlat_hyodb")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_6fdvt")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_1u2xm")
+theme_override_styles/focus = SubResource("StyleBoxFlat_a638s")
+toggle_mode = true
+button_group = SubResource("ButtonGroup_jb4lf")
+text = "大 乱 斗"
+
+[node name="PrivacyRow" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=1972772629]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PublicCheck" type="CheckButton" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/PrivacyRow" unique_id=1067158900]
+unique_name_in_owner = true
+layout_mode = 2
+button_pressed = true
+text = "公开房间(不勾选 = 私密,凭邀请码进入)"
+
+[node name="InviteEdit" type="LineEdit" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/PrivacyRow" unique_id=194796364]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(0, 64)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_colors/font_placeholder_color = Color(0.51, 0.573, 0.639, 1)
+theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_tkcv8")
+theme_override_styles/focus = SubResource("StyleBoxFlat_36ry5")
+placeholder_text = "邀请码(留空自动生成)"
+
+[node name="MaxPlayersRow" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=903729244]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MaxPlayersRow" unique_id=472827627]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 32
+text = "人数上限:"
+
+[node name="MaxPlayersSlider" type="HSlider" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MaxPlayersRow" unique_id=112874078]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(300, 30)
+layout_mode = 2
+min_value = 2.0
+max_value = 8.0
+value = 4.0
+
+[node name="MaxPlayersLabel" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MaxPlayersRow" unique_id=565950053]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "4 人"
+
+[node name="MatchTimeRow" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=975316265]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MatchTimeRow" unique_id=800982570]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 32
+text = "一局限时:"
+
+[node name="MatchTimeSlider" type="HSlider" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MatchTimeRow" unique_id=1539420480]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(300, 30)
+layout_mode = 2
+min_value = 1.0
+max_value = 15.0
+
+[node name="MatchTimeLabel" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MatchTimeRow" unique_id=1071301259]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Body"
+
+[node name="FullHealRow" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=1604031362]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="FullHealCheck" type="CheckButton" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/FullHealRow" unique_id=1459364317]
+unique_name_in_owner = true
+layout_mode = 2
+text = "每回合开始回满血(房主生效)"
+
+[node name="BetaBlock" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=714739716]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="VBoxContainer2" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2" unique_id=2043741537]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 28
+
+[node name="WeaponsBlock" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2" unique_id=110836412]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PanelContainer1" type="PanelContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2/WeaponsBlock" unique_id=1438275867]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2/WeaponsBlock/PanelContainer1" unique_id=652968451]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "禁用武器(房主生效,开局带进对局):"
+
+[node name="MapBlock" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2" unique_id=824934333]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1" unique_id=2013132867]
+layout_mode = 2
+theme_override_constants/separation = 24
+alignment = 2
+
+[node name="CreateCancelBtn" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer3" unique_id=1907126706]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(280, 88)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "取 消"
+
+[node name="CreateOkBtn" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer3" unique_id=1597425928]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(400, 88)
+layout_mode = 2
+theme_type_variation = &"BtnGold"
+text = "创 建 房 间"
+
+[node name="WaitPanel" type="PanelContainer" parent="." unique_id=1401617370]
+unique_name_in_owner = true
+visible = false
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -465.0
+offset_top = -290.5
+offset_right = 465.0
+offset_bottom = 290.5
+grow_horizontal = 2
+grow_vertical = 2
+theme_type_variation = &"PanelCarved"
+
+[node name="Body" type="PanelContainer" parent="WaitPanel" unique_id=1436760307]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBody"
+
+[node name="VBoxContainer1" type="VBoxContainer" parent="WaitPanel/Body" unique_id=1962816802]
+custom_minimum_size = Vector2(800, 0)
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="PanelContainer1" type="PanelContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=205186339]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="WaitTitle" type="Label" parent="WaitPanel/Body/VBoxContainer1/PanelContainer1" unique_id=327804430]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+
+[node name="WaitBody" type="VBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=213424249]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="WaitCount" type="Label" parent="WaitPanel/Body/VBoxContainer1" unique_id=132183890]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Body"
+
+[node name="HBoxContainer1" type="HBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=500168645]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="WaitPickABtn" type="Button" parent="WaitPanel/Body/VBoxContainer1/HBoxContainer1" unique_id=235197821]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
+theme_type_variation = &"BtnPrimary"
+text = "加入 A 队"
+
+[node name="WaitPickBBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1/HBoxContainer1" unique_id=136689372]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(240, 56)
+layout_mode = 2
+theme_type_variation = &"BtnPrimary"
+text = "加入 B 队"
+
+[node name="WaitHueRow" type="HBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=704546570]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Label1" type="Label" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=1337599008]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 32
+text = "自己角色颜色:"
+
+[node name="WaitHueSlider" type="HSlider" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=797063207]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 30)
+layout_mode = 2
+max_value = 360.0
+step = 5.0
+
+[node name="WaitHueChip" type="ColorRect" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=1451665341]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(46, 30)
+layout_mode = 2
+
+[node name="WaitStartBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=1002081208]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(440, 64)
+layout_mode = 2
+theme_type_variation = &"BtnGold"
+text = "开 始 游 戏"
+
+[node name="WaitLeaveBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=2110607890]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(440, 56)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "退出房间"

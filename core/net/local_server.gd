@@ -20,6 +20,7 @@ static var _owned_pid := 0       # 当前客户端启动的服务端进程 PID�
 static var _owned_port := 0      # 服务端监听端口（用于日志追踪）
 
 
+
 ## 挑一个本机空闲的 UDP 端口给服务端用：直接向操作系统要（bind 127.0.0.1:0，由系统从动态口池
 ## 分配一个当前空闲的号），拿到立刻释放传给命令行。结构上不会撞任何已绑端口。
 static func _pick_free_port() -> int:
@@ -126,6 +127,11 @@ static func _probe(pid: int, port: int) -> bool:
 	return NetBus.can_send_to_server()
 
 
+## 本客户端拉起的服务端是否正在运行。
+static func is_owned_running() -> bool:
+	return _owned_pid > 0 and OS.is_process_running(_owned_pid)
+
+
 ## 收掉**本客户端拉起的**那个服务端。★ 只杀自己记过 pid 的那个:玩家可能同时在跑一个
 ## 自己双击开的服务端,按映像名杀会把别人正在用的那台一起带走。
 static func stop_owned() -> void:
@@ -134,3 +140,5 @@ static func stop_owned() -> void:
 		print("[LocalServer] 已停止本机服务端 pid=%d port=%d" % [_owned_pid, _owned_port])
 	_owned_pid = 0
 	_owned_port = 0
+
+

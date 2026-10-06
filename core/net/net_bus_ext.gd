@@ -53,39 +53,41 @@ func suicide_request() -> void:
 # 服务器侧经转交信号交给 RoomManager 的 royale 注册表;开局复用原版 go_match(role,port)。
 
 signal royale_create_requested(caller: int, opts: Dictionary)
-signal royale_join_requested(caller: int, code: String, beta: bool)
+signal royale_join_requested(caller: int, code: String, invite: String, beta: bool)
 signal royale_leave_requested(caller: int)
-signal royale_list_requested(caller: int)
+signal royale_list_requested(caller: int, token: String)
 signal royale_start_requested(caller: int)
 signal ai_duel_requested(caller: int)             # 1v1:房主请求与 AI 对战(实验性)
 signal royale_start_ai_requested(caller: int)     # 大乱斗:房主请求 AI 补位开局(实验性)
 signal local_royale_rooms(rooms: Array)        # 大厅 → 客户端:公开大乱斗房间列表
 signal local_royale_room_state(state: Dictionary)  # 大厅 → 客户端:所在房间实时状态(等待室)
 
-# 客户端 → 大厅:建房。opts = {max_players:int, round_full_heal:bool, disabled_weapons:Array}
-#   (规则项随房存,开局随房主生效)
+# 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String, max_players:int,
+#   round_full_heal:bool, disabled_weapons:Array}(规则项随房存,开局随房主生效)
 @rpc("any_peer", "reliable")
 func royale_create(opts: Dictionary) -> void:
 	royale_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
 
-# 客户端 → 大厅:加入。★ 2026-09-29 起**只认房间号** —— "公开/私密 + 邀请码"那套已删除
-#   (私密房只多要一个码,而房间码本身就是隧道的 network-secret:能连上这台服务器的人必然
-#   已经知道房间码 ⇒ 那道闸门挡不住任何人,只是给房主添一道"还得再传一个码"的手续)。
-# ★ `beta` 是 KH 线 B20 加的**独立房间池**判据(普通页不得进 Beta 房、反之亦然),
-#   2026-09-30 合并两线时保留 —— 与"去 invite"是两件独立的事。
+# 客户端 → 大厅:加入(私密房须带邀请码)
 @rpc("any_peer", "reliable")
-func royale_join(code: String, beta: bool) -> void:
-	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, beta)
+func royale_join(code: String, invite: String, beta: bool) -> void:
+	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:退出所在大乱斗房间(开局前)
 @rpc("any_peer", "reliable")
 func royale_leave() -> void:
 	royale_leave_requested.emit(multiplayer.get_remote_sender_id())
 
-# 客户端 → 大厅:请求公开大乱斗房间列表
+# 客户端 → 大厅:请求大乱斗房间列表
+# ★ `token`(2026-09-29,B1 甲案)= 本端手里的**回局凭据**(没有就是 "")。大厅据此把
+#   "**本人自己那间私密房**"也列给他(B1 之前私密房一律不列 ⇒ 私密房里回主菜单的玩家
+#   没有回局入口)。它**不是**身份认证 —— 列表只是一个显示面,真正的准入由
+#   `rejoin_request` 的 `RejoinRegistry.decision` 判。
+# ★ 加参数 = 改 **NetBusExt** 的方法表,**可以**:本类是本仓自己的扩展协议(对原版 worker
+#   整个节点不存在 ⇒ 扩展 RPC 静默丢弃、优雅降级)。原版 `NetBus` 的方法表**一个字没动**。
 @rpc("any_peer", "reliable")
-func royale_list() -> void:
-	royale_list_requested.emit(multiplayer.get_remote_sender_id())
+func royale_list(token: String) -> void:
+	royale_list_requested.emit(multiplayer.get_remote_sender_id(), token)
 
 # 客户端 → 大厅:房主请求开局(仅房主有效;人数 ≥2 才开)
 @rpc("any_peer", "reliable")
@@ -102,7 +104,7 @@ func ai_duel() -> void:
 func royale_start_ai() -> void:
 	royale_start_ai_requested.emit(multiplayer.get_remote_sender_id())
 
-# 大厅 → 客户端:房间列表 [{code, players, max_players, names}]
+# 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")
 func royale_rooms(rooms: Array) -> void:
 	local_royale_rooms.emit(rooms)
@@ -119,7 +121,7 @@ func sub_destroyed(sub: Vector2i) -> void:
 	local_sub_destroyed.emit(sub)
 
 
-# 各角色的时间粒子账户状态(余额/短期窗口/透支额度/锁定状态)，约 10Hz 同步频率 —— 供客户端怀表 HUD 镜像显示。
+# 每 role 的颗粒状态(余额/短时窗/贷款/锁定),约 10Hz —— HUD 怀表的显示镜像。
 signal local_time_state(payload: Dictionary)
 
 
@@ -127,7 +129,7 @@ signal local_time_state(payload: Dictionary)
 func time_state(payload: Dictionary) -> void:
 	local_time_state.emit(payload)
 
-# 大厅 → 客户端:所在房间实时状态 {code, max_players, host_role,
+# 大厅 → 客户端:所在房间实时状态 {code, is_public, invite_code, max_players, host_role,
 #   players: [{role, name}], in_match}(等待室 UI 靠它刷新;仅发给房内成员)
 @rpc("authority", "reliable")
 func royale_room_state(state: Dictionary) -> void:
@@ -139,23 +141,23 @@ func royale_room_state(state: Dictionary) -> void:
 # ★ 选边(`team_pick`)是 3v3 独有的上行:队伍**不由服务器推导**(role 号有空洞),玩家自己点。
 
 signal team_create_requested(caller: int, opts: Dictionary)
-signal team_join_requested(caller: int, code: String, beta: bool)
+signal team_join_requested(caller: int, code: String, invite: String, beta: bool)
 signal team_pick_requested(caller: int, team: int)
 signal team_leave_requested(caller: int)
 signal team_start_requested(caller: int)
-signal team_list_requested(caller: int)           # 客户端请求房间列表(照 royale_list 那一对)
-signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:房间列表
+signal team_list_requested(caller: int, token: String)   # 请求 3v3 房间列表(token 同上,照 royale_list 那一对)
+signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:公开 3v3 房间列表
 signal local_team_room_state(state: Dictionary)   # 大厅 → 客户端:房间实时状态(等待室/选边)
 
-# 客户端 → 大厅:建房。opts = {max_players:int, round_full_heal:bool, disabled_weapons:Array}
+# 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String}
 @rpc("any_peer", "reliable")
 func team_create(opts: Dictionary) -> void:
 	team_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
 
-# 客户端 → 大厅:加入。★ 同 `royale_join`:**只认房间号**("公开/私密 + 邀请码"已删),保留 `beta`
+# 客户端 → 大厅:加入(私密房须带邀请码)
 @rpc("any_peer", "reliable")
-func team_join(code: String, beta: bool) -> void:
-	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, beta)
+func team_join(code: String, invite: String, beta: bool) -> void:
+	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:选边(team = 1 或 2)。该队已满 → 大厅回 server_message 拒绝
 @rpc("any_peer", "reliable")
@@ -172,21 +174,33 @@ func team_leave() -> void:
 func team_start() -> void:
 	team_start_requested.emit(multiplayer.get_remote_sender_id())
 
-# 客户端 → 大厅:请求公开 3v3 房间列表(大厅回 team_rooms)
+# 客户端 → 大厅:请求 3v3 房间列表(大厅回 team_rooms;`token` 的来历见 royale_list)
 @rpc("any_peer", "reliable")
-func team_list() -> void:
-	team_list_requested.emit(multiplayer.get_remote_sender_id())
+func team_list(token: String) -> void:
+	team_list_requested.emit(multiplayer.get_remote_sender_id(), token)
 
-# 大厅 → 客户端:房间列表 [{code, players, max_players, names}]
+# 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
 @rpc("authority", "reliable")
 func team_rooms(rooms: Array) -> void:
 	local_team_rooms.emit(rooms)
 
-# 大厅 → 客户端:房间实时状态 {code, host_role, team_size,
+# 大厅 → 客户端:房间实时状态 {code, is_public, invite_code, host_role, team_size,
 #   players: [{role, name, team}], in_match, your_role}(等待室靠它渲染两队名单)
 @rpc("authority", "reliable")
 func team_room_state(state: Dictionary) -> void:
 	local_team_room_state.emit(state)
+
+# ── 统一大厅:房主上报本房地图(仅用于列表展示)──
+# ★ 为什么所有模式统一走它:1v1 的 `create_room` 是**原版 NetBus 的 RPC、签名冻结**,塞不进
+#   payload;而 royale/team 的 create 载荷虽是字典(加键免费),用两条机制会让"地图从哪来"
+#   这件事分叉 —— 同一概念只留一份实现。
+# ★ 它写的只是**列表上那张缩略图**;真正定图的仍是 `player_options.map`(报到那一刻读
+#   `Settings`、由 role1 那份生效)。两个真值,见设计 §6 第 3 条。
+signal room_map_requested(caller: int, code: String, path: String)
+
+@rpc("any_peer", "reliable")
+func room_map(code: String, path: String) -> void:
+	room_map_requested.emit(multiplayer.get_remote_sender_id(), code, path)
 
 # ── 断线重连(2026-09-17)──
 # ★ 全部进本节点,理由见文件头:原 NetBus 的方法表一律不动(改了会让与原版服务端的 RPC
