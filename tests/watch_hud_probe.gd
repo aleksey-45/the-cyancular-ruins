@@ -1,11 +1,11 @@
 extends Node
 
 # 怀表 HUD + 时间视效探针(场景级):
-#   ① 怀表挂载与读数(大数字=余额、表心=短时余额/贷款负数)
+#   ① 怀表挂载与读数（大数字显示余额，表盘中心显示短期可用额度与透支负数）
 #   ② 扣减滚动动画(1 点 1 点,≤0.2s 收敛)
 #   ③ 回溯底片化 uniform ramp(≤200ms 到顶)/松开回落
 #   ④ 加速压暗 uniform ramp(100ms 到顶)/松开回落
-#   ⑤ 贷款深度直传(表心深红负数)
+#   ⑤ 透支深度传递（表盘中心显示深红负数）
 # 用法:godot --headless --path . res://tests/watch_hud_probe.tscn
 
 var _fails: Array[String] = []
@@ -69,7 +69,7 @@ func _run() -> void:
 		_fail("大数字与余额不符(显示 %s 实际 %d)" % [big.text, int(acc.balance)])
 	var expect_center := str(int(round(TimeParams.SHORT_WINDOW - acc.short_used)))
 	if center.text != expect_center:
-		_fail("表心短时余额不符(显示 %s 期望 %s)" % [center.text, expect_center])
+		_fail("表盘中心短期余额不符(显示 %s 期望 %s)" % [center.text, expect_center])
 
 	# ② 扣减滚动:花 250 → 20 帧内应显示到位(0.2s ≈ 12 帧)
 	acc.spend(2.0, 125.0)
@@ -100,28 +100,28 @@ func _run() -> void:
 	if _mat_param(lvl, "haste_dim") > 0.2:
 		_fail("松开后压暗未回落(%.2f)" % _mat_param(lvl, "haste_dim"))
 
-	# ⑤ 贷款深度与表心负数
-	acc.spend(4.0, 100.0)   # 窗满
-	acc.spend(0.5, 100.0)   # 借 50
+	# ⑤ 透支深度与表盘中心负数显示
+	acc.spend(4.0, 100.0)   # 短期额度耗尽
+	acc.spend(0.5, 100.0)   # 透支 50
 	await _wait_ms(100)
 	var loan_param: float = _mat_param(lvl, "loan_depth")
 	if loan_param < 0.4:
-		_fail("贷款深度未直传(%.2f)" % loan_param)
+		_fail("透支深度未传递(%.2f)" % loan_param)
 	if not center.text.begins_with("-"):
-		_fail("贷款中表心应显示负数(现 %s)" % center.text)
+		_fail("透支状态下表盘中心应显示负数(现 %s)" % center.text)
 
-	# ⑥ Sfx 全局音调随贷款深度上抬;贷满锁定 → 怀表红闪
-	acc.spend(0.5, 100.0)   # 借满 100 → 锁定
+	# ⑥ 全局音效音调随透支深度提高；达到透支上限锁定触发怀表红闪
+	acc.spend(0.5, 100.0)   # 透支满 100 触发锁定
 	await _wait_ms(150)
 	if Sfx.pitch_mult <= 1.0:
-		_fail("贷款中 Sfx 音调未上抬(%.2f)" % Sfx.pitch_mult)
+		_fail("透支状态下音效音调未提高(%.2f)" % Sfx.pitch_mult)
 	if not acc.locked:
-		_fail("借满未锁定")
+		_fail("透支满额未锁定")
 	if float(watch.get("_lock_flash_t")) <= 0.0:
 		_fail("锁定后怀表未红闪")
 
 	if _fails.is_empty():
-		print("WATCH HUD PROBE: OK(挂载/读数/滚动收敛/底片ramp/压暗ramp/贷款负数与深度直传/音调上抬/锁定红闪)")
+		print("WATCH HUD PROBE: OK(挂载/读数/滚动收敛/底片ramp/压暗ramp/透支负数与深度传递/音调提高/锁定红闪)")
 		tree.quit(0)
 	else:
 		print("WATCH HUD PROBE: FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])

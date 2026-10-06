@@ -415,11 +415,11 @@ func _on_round_state(data: Dictionary) -> void:
 				_resync_pull_pending = true
 				NetBus.rpc_id(1, "match_sync")
 	elif state == 3:   # TeamHost.RoundState.MATCH_OVER(胜负已判:局胜或整队走光)
-		# ★★ **刻意没有 `and not _match_ended` 这道闸**(与大乱斗不同,别照抄过来加对称):
-		#   本模式的 MATCH_OVER **会有第二条载荷**,而结算页必须跟着刷新 ——
-		#   `TeamHost._finish_match()` 在**战斗进行中**直接把 PLAYING→MATCH_OVER,而倒地边沿
-		#   检测在 `match _round_state:` **之前**、且**不看状态** ⇒ 终局之后再死人会再广播一条
-		#   带**新 `stats`/`mvp`** 的终局载荷(见基类 `_show_result` 的注释)。
+		# ★★ **刻意不设 `and not _match_ended` 闸门**(与大乱斗不同，无需对称限制):
+		#   本模式的 MATCH_OVER **可能触发后续载荷更新**,结算页需要支持实时刷新 ——
+		#   `TeamHost._finish_match()` 在**战斗进行中**直接由 PLAYING 切换为 MATCH_OVER,而倒地状态
+		#   转换检测在 `match _round_state:` **之前**且不受状态机限制 ⇒ 终局判定后若有延迟伤亡，将再次广播
+		#   携带最新战绩与 MVP 数据的终局载荷(详见基类 `_show_result` 注释)。
 		_match_ended = true
 		# ★ ESC 菜单随即失效、退出只走结算页这一条路(与另两个客户端同款):不销毁菜单的话玩家能
 		#   在结算页上再弹一次暂停菜单 —— 本页的 ESC(返回主菜单)与菜单的 ESC 会**同时**触发

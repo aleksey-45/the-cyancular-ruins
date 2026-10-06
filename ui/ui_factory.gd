@@ -153,7 +153,7 @@ static func ping_color(ms: int) -> Color:
 #   所以三态的**明度阶梯**必须是:未占(贴近底板、后退)→ 已占(中)→ 手持(最深、最跳)。
 #   (反过来配会出现"空格最抢眼、当前武器最不显眼"的倒挂 —— 这正是这一版改掉的东西。)
 # ★ 真正的不变量是「三态两两可区分」+「手持格明度离底板最远」,色相只是表达手段。
-#   kh_l3_visual_probe 双向钉住"该是什么色 / 不该是什么色"。
+#   由 kh_l3_visual_probe 测试进行双向断言校验。
 # ★ 色值是**审美值**,以实图为准(同 KILL_COLOR 的注释);调色时先按上面那两条不变量量。
 # ★ 2026-09-15 按**浅底实图**(kh_l3_visual_probe 的 l3_slots_on_map)调过一次:
 #   初版 EMPTY 的明度几乎正好等于底板 → 空格子**看不见** → 4×2 的格阵形状读不出来,
@@ -248,7 +248,7 @@ static func style_slider(s: Slider) -> void:
 
 
 # 输入框:默认主题的 LineEdit 底几乎与页面底同色(实测 1.01:1),看不出是输入框;
-# 且占位符与真实输入同样亮,分不清「填了没填」。这里同时钉住底、边框、占位符色。
+# 且占位符与实际输入亮度相同无法明确区分输入状态。此处统一配置背景、边框及占位符颜色。
 static func style_line_edit(le: LineEdit) -> void:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_FIELD

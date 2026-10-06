@@ -1,339 +1,286 @@
-# The Cyancular Ruins — PvP 联机模块分析
+# PvP 网络架构与状态同步设计规范
 
-> 基于当前 `main` 分支代码（B2「对局互通」已完成，阶段 3 回合制未做）对联机部分的完整梳理。
-> 设计源头见 `docs/superpowers/specs/2026-08-27-pvp-mode-design.md` 与
-> `docs/superpowers/plans/2026-08-31-pvp-phase2-match-play.md`；本文是**现状代码**的落地对照。
+本文档详述游戏 PvP 联机系统的网络架构设计、权威状态同步机制、客户端预测校正算法及端到端通信协议规范。
 
 ---
 
-## 1. 总览：权威模型与一句话架构
+## 一、 系统架构总览
 
-**专用服务器权威（authoritative dedicated server）+ 客户端本地预测自己（C2，client-side prediction）。**
+### 1. 核心设计原则
+系统采用 **权威专用服务器（Authoritative Dedicated Server）结合客户端预测（Client-Side Prediction）** 架构：
+- **服务端权威模拟**：由运行在无头模式（Headless）下的专用服务器独立模拟物理世界（包含角色物理移动、弹道演算、碰撞检测、伤害裁决与场景瓦片破坏）。客户端不进行任何伤害与胜负裁决。
+- **客户端本地预测**：本地玩家在客户端运行完整的角色物理逻辑，实现零输入延迟的操作反馈；服务端以 30Hz 频率向下广播世界状态快照，客户端据此对远端对手进行插值展示，并对本地角色进行预测误差校正。
+- **环面世界拓扑规范**：
+  1. 网络协议传输的位置数据**一律采用标准基准坐标（Canonical Coordinates）**，约束在 `[0, MAP_WIDTH)` 与 `[0, MAP_HEIGHT)` 范围内。
+  2. 客户端渲染层根据本地玩家视口位置，将目标动态映射至最近的环面投影副本（`anchor_to_nearest`）。
+  3. 状态插值与预测误差计算统一使用环面最短向量增量（`toroidal_delta_px`），严禁跨地图边界直接进行欧氏线性插值，杜绝接缝处的穿透滑屏现象。
+- **统一通信总线**：双端共用全局单例 `NetBus` 作为网络 RPC 与底层连接事件的统一收口，支持跨场景路由与业务解耦。
 
-- 一台 headless 服务器进程跑全部权威模拟（世界、两个玩家、子弹、命中裁决）；客户端**不裁决任何伤害**。
-- 客户端本地玩家照常跑完整 `player.gd` 物理（C2），保证零延迟手感；服务器每 30Hz 广播快照，客户端用它**插值远端对手** + **校正自己**。
-- 环面世界纪律：**协议只传 canonical `[0,MAP)` 坐标**；渲染各端归最近副本；插值走最短路径增量（绝不 naive lerp canonical）。
-- 服务器/客户端共用同一个 autoload `NetBus` 收口 RPC，跨场景常驻。
-
-### 进程拓扑
-
-```
-┌───────────────────────── 服务器进程（--headless，场景模式）─────────────────────────┐
-│  server_main.tscn ── RoomManager（房间注册表）                                        │
-│                         └─ MatchHost × N（每房间一个权威对局模拟）                     │
-│                              ├─ WorldBuilder 建世界（只碰撞不渲染）                     │
-│                              ├─ Player.tscn ×2（完整物理，注入 NetworkInputSource）    │
-│                              └─ 子弹模拟 + 命中裁决 + 30Hz 快照广播                     │
-└────────────────────────────────────────────────────────────────────────────────────┘
-        ▲ reliable 输入包 60Hz          ▼ unreliable 快照 30Hz / reliable 事件
-┌───────────────┐          ┌───────────────┐
-│  客户端 P1      │   对称    │  客户端 P2     │    ← 完全对称，无房主优势
-│  pvp_game.tscn │          │  pvp_game.tscn │
-│  ├ Level0 世界   │          │               │
-│  ├ 本地玩家 C2   │          │               │
-│  └ RemoteReplica│          │               │
-└───────────────┘          └───────────────┘
-```
-
-### 场景流程
+### 2. 进程拓扑与通信模型
 
 ```
-main_menu.tscn（默认场景）
- ├─ 单人 → 复位 Level0.pvp_mode=false → Level0.tscn（单机路径逐字节不变）
- └─ 多人 → PvpSession.reset() → matchmaking.tscn
-       ├─ 建房：连服务器 → rpc create_room → 拿房间号展示 → 等对手
-       └─ 加入：连服务器 → 输房间号 → rpc join_room
-       └─ 2 人就绪 → 服务器发 match_start(role, spawn, map) → 客户端切到 pvp_game.tscn
+┌───────────────────────── 独立服务端进程 (--headless) ───────────────────────────┐
+│  server_main.gd ── RoomManager (房间管理与匹配注册表)                               │
+│                         └─ MatchHost × N (每个房间运行独立的对局模拟实例)              │
+│                              ├─ WorldBuilder (加载网格，构建物理碰撞，无渲染负载)       │
+│                              ├─ Player 实例 × 2 (注入 NetworkInputSource 驱动物理模拟) │
+│                              └─ 弹道演算 + 环面命中裁决 + 30Hz 状态快照广播            │
+└──────────────────────────────────────────────────────────────────────────────────┘
+        ▲ 60Hz 可靠通道 (Reliable) 客户端输入数据包    ▼ 30Hz 不可靠通道 (Unreliable) 状态快照 / 可靠事件
+┌────────────────────────┐                  ┌────────────────────────┐
+│  客户端 P1 (Host/Guest) │     完全对等     │  客户端 P2 (Host/Guest) │
+│  pvp_game.gd           │                  │  pvp_game.gd           │
+│  ├─ Level0 物理世界     │                  │  ├─ Level0 物理世界     │
+│  ├─ 本地玩家 (物理预测) │                  │  ├─ 本地玩家 (物理预测) │
+│  └─ PlayerReplica 副本 │                  │  └─ PlayerReplica 副本 │
+└────────────────────────┘                  └────────────────────────┘
+```
+
+### 3. 场景生命周期流转
+
+```
+main_menu.tscn (主菜单)
+  ├─ 单人模式 ── 复位 Level0.pvp_mode = false ── 进入单人关卡 Level0.tscn
+  └─ 多人联机 ── PvpSession.reset() ── 进入匹配界面 matchmaking.tscn
+        ├─ 创建房间：连接服务端 ── 发送 create_room RPC ── 获取房间号 ── 等待对手加入
+        └─ 加入房间：连接服务端 ── 发送 join_room RPC ── 校验通过
+        └─ 玩家就绪：服务端广播 match_start(role, spawn, map) ── 双端切换至 pvp_game.tscn 进入对局
 ```
 
 ---
 
-## 2. 文件地图
+## 二、 模块架构与职责划分
 
-| 文件 | 角色 | 关键职责 |
+| 模块路径 | 架构角色 | 核心职责说明 |
 |---|---|---|
-| `Globals/net_bus.gd` | **autoload，唯一网络收口** | ENet 建连/断开；全部 RPC 定义；信号转发 |
-| `Globals/pvp_session.gd` | 静态会话配置 | 菜单→匹配→对局间传参（role/spawn/map/地址） |
-| `server/server_main.gd` | 服务器入口 | `NetBus.start_server()` + 挂 RoomManager |
-| `server/room_manager.gd` | 房间注册表 | 建房/加入/断线清理/2 人就绪开局 |
-| `server/match_host.gd` | **服务器权威对局** | 建世界 + 双玩家权威模拟 + 快照/事件广播 + 命中裁决 |
-| `scenes/pvp_game.tscn` + `scenes/pvp_game.gd` | 客户端对局场景 | C2 本地玩家 + 输入上报 + 快照消费 + 自校正 + 视觉子弹 |
-| `Scenes/Player/player_replica.gd` | 远端副本 | 纯视觉，最短路径插值，不做物理 |
-| `Scenes/matchmaking.gd` | 匹配 UI | 建房/输房间号/状态提示 |
-| `Scenes/main_menu.gd` | 主菜单 | 单人/多人入口 |
-| `Globals/input_source.gd` | 输入抽象基类 | 默认委托真实 Input（本地现状） |
-| `Globals/network_input_source.gd` | 网络输入源 | 服务器权威模拟唯一消费方 |
-| `Tests/pvp_smoke_client.gd` / `.tscn` | B1 冒烟客户端 | 建房/加入/match_start 流程 |
-| `Tests/pvp_room_smoke.sh` | B1 冒烟脚本 | 断言房间流程 |
-| `Tests/pvp_match_smoke.gd` / `.tscn` | B2 冒烟客户端 | 输入→模拟→快照→子弹广播链路 |
-| `Tests/pvp_match_smoke.sh` | B2 冒烟脚本 | loopback 双客户端 |
+| `core/net/net_bus.gd` | **全局网络总线 (Autoload)** | ENet 实例创建与销毁、RPC 接口统一声明、底层连接事件向业务信号的转发与收口 |
+| `core/net/pvp_session.gd` | **会话数据上下文** | 跨场景持久化保存对局参数（角色分配、出生点坐标、地图路径、服务器地址与端口） |
+| `server/server_main.gd` | 服务端主入口 | 调用 `NetBus.start_server()` 初始化监听并挂载 `RoomManager` 服务节点 |
+| `server/room_manager.gd` | 房间注册与调度管理 | 维护房间字典、处理建房与加入请求、监控玩家掉线、并在对局就绪时实例化 `MatchHost` |
+| `server/match_host.gd` | **服务端对局模拟器** | 场景与碰撞构建、双端实体物理演进、弹道追踪、伤害结算与 30Hz 状态快照广播 |
+| `scenes/pvp_game.gd` | 客户端对局控制器 | 管理本地角色物理预测、60Hz 输入打包上报、接收快照执行分级误差纠偏、维护对手副本 |
+| `scenes/player/player_replica.gd` | 远端玩家副本 | 纯视觉展示节点，执行基于环面最短路径的平滑插值，不参与本地物理演算 |
+| `scenes/matchmaking.gd` | 匹配大厅 UI 控制器 | 负责建房请求、加入房间校验、房间号展示与等待状态交互 |
+| `scenes/main_menu.gd` | 主界面导航控制器 | 单人与联机模式路由分支、网络上下文与参数复位 |
+| `core/input/input_source.gd` | 输入抽象基类 | 客户端本地输入源，封装 Godot 原生 `Input` 接口 |
+| `core/input/network_input_source.gd` | 网络输入源 | 服务端专用输入源，解包网络上报的输入数据并注入实体物理模拟 |
 
 ---
 
-## 3. 传输层：NetBus（autoload）
+## 三、 网络通信层：NetBus
 
-服务器与客户端共用同一节点路径 `/root/NetBus`（autoload 常驻，RPC 才能跨场景路由）。用 `ENetMultiplayerPeer` + Godot 高层 MultiplayerAPI。端口默认 `7777`，服务器 `create_server(port, 16, ENet_CHANNELS)` 上限 16 连接、显式分配 4 条 ENet 通道（默认 0 通道会报 "Unable to send packet on channel 0, max channels: 0"）。
+`NetBus` 作为全局自动加载单例（`/root/NetBus`）运行，基于 Godot 原生 `ENetMultiplayerPeer` 封装：
+- **监听配置**：默认端口 `7777`，服务端通过 `create_server(port, 16, ENet_CHANNELS)` 初始化，支持最多 16 个连接，显式分配 4 个 ENet 传输通道（`SYSCH_RELIABLE = 0`, `SYSCH_UNRELIABLE = 1` 等）。
+- **解耦设计**：`NetBus` 仅负责通信声明、通道路由与发送方鉴权，不与具体游戏玩法强耦合；通过信号将网络事件解耦分发至 `RoomManager` 与 `MatchHost`。
+- **身份鉴权防护**：所有服务端 RPC 处理函数中均调用 `multiplayer.get_remote_sender_id()` 获取真实的对端 Peer ID，防范请求伪造与越权调用。
 
-**方法按调用方区分两端**，服务端侧自己不实现业务逻辑，而是 `emit` 信号转交（RoomManager / MatchHost 连接信号），不硬依赖类型、可独立编译。
+### 核心 RPC 接口契约
 
-### RPC 清单
-
-| RPC | 调用方 → 接收方 | 模式 | 动作 |
+| RPC 方法 | 调用方向 | 传输模式 | 业务功能说明 |
 |---|---|---|---|
-| `create_room()` | 客户端 → 服务器 | reliable | `room_create_requested` 转发给 RoomManager |
-| `join_room(code)` | 客户端 → 服务器 | reliable | `room_join_requested` 转发 |
-| `send_input(pkt)` | 客户端 → 服务器 | **reliable** | `input_received(caller, pkt)` 转发给 MatchHost |
-| `snapshot(snap)` | 服务器 → 客户端 | **unreliable** | `local_snapshot` 信号 |
-| `bullet_spawn(data)` | 服务器 → 客户端 | reliable | `local_bullet_spawn` 信号 |
-| `hit_event(victim_role, damage, source_pos)` | 服务器 → 客户端 | reliable | `local_hit_event` 信号 |
-| `room_created(code)` / `room_joined(role)` | 服务器 → 客户端 | reliable | 匹配流程反馈 |
-| `match_start(role, spawn, map_path)` | 服务器 → 客户端 | reliable | 开局通知 |
-| `server_message(text)` | 服务器 → 客户端 | reliable | 状态/错误提示 |
-
-信号分区（净区分：哪些是给客户端的、哪些是服务器内部转交的）：
-
-- **客户端侧**：`local_room_created` / `local_room_joined` / `local_match_start` / `local_server_message` / `local_snapshot` / `local_bullet_spawn` / `local_hit_event`
-- **服务器 → RoomManager**：`room_create_requested` / `room_join_requested` / `peer_left`
-- **服务器 → MatchHost**：`input_received`
-
-RPC 里用 `multiplayer.get_remote_sender_id()` 确定真实调用方（防伪造）。
+| `create_room()` | 客户端 → 服务端 | Reliable | 请求创建对战房间，服务端触发 `room_create_requested` |
+| `join_room(code)` | 客户端 → 服务端 | Reliable | 请求加入指定房间号，服务端触发 `room_join_requested` |
+| `send_input(pkt)` | 客户端 → 服务端 | **Reliable** | 客户端上报物理帧输入包，服务端触发 `input_received` |
+| `snapshot(snap)` | 服务端 → 客户端 | **Unreliable** | 下发 30Hz 世界状态快照，客户端触发 `local_snapshot` |
+| `bullet_spawn(data)` | 服务端 → 客户端 | Reliable | 广播新子弹生成事件，供非射手端生成对应的视觉弹道 |
+| `hit_event(victim, dmg, pos)` | 服务端 → 客户端 | Reliable | 广播受击与伤害事件，触发客户端受击闪白与击退动画 |
+| `room_created(code)` | 服务端 → 客户端 | Reliable | 响应建房请求，返回分配的 5 位房间号 |
+| `room_joined(role)` | 服务端 → 客户端 | Reliable | 响应加入请求，返回分配的角色编号 (1 或 2) |
+| `match_start(role, spawn, map)` | 服务端 → 客户端 | Reliable | 广播对局开始，携带出生点与地图配置 |
+| `server_message(text)` | 服务端 → 客户端 | Reliable | 下发系统级提示信息或错误通知 |
 
 ---
 
-## 4. 匹配与房间：RoomManager
+## 四、 房间管理与对局建立：RoomManager
 
-`RoomManager`（server）是服务器端房间注册表，`rooms: Dictionary(code → Room)`。
+`RoomManager` 在服务端维护全局对战房间表 `rooms: Dictionary[String, Room]`。
 
+### 房间数据结构
 ```gdscript
 class Room:
-    var code: String
-    var players: Array[int]      # peer ids
-    var player_role: Dictionary  # peer_id → 1/2
-    var match_host: Node         # 该房间的 MatchHost
+    var code: String                 # 5 位唯一房间号
+    var players: Array[int]          # 加入房间的 Peer ID 列表
+    var player_role: Dictionary      # Peer ID -> 角色编号 (1 或 2)
+    var match_host: Node             # 该房间对应的 MatchHost 模拟实例
 ```
 
-流程：
-
-1. **建房** `create_room(caller)`：生成 4 位随机房间号（防重复），房主 role=1，`rpc_id(caller, "room_created", code)`。
-2. **加入** `join_room(caller, code)`：房间不存在/已满 → `server_message` 拒绝；否则 role=2，`rpc room_joined`，**立刻 `_start_match`**（加入即开局，无需房主确认）。
-3. **开局** `_start_match(room)`：
-   - 服务器 **pin 固定地图** `res://factory_1V1(260827).cyrm`（含 `# player 17 65` 与 `# player2 133 64` 出生点）；
-   - `MazeGenerator.load_spawns()` 取两个出生点，分别 `rpc_id(peer, "match_start", role, spawn, map_path)`；
-   - 构造 `MatchHost.new(map_path, role_peers)` 挂树。
-4. **断线** `on_peer_left(peer_id)`：从房间移除；房间空了 → free MatchHost + 删房间。（当前**不通知另一端**，见 §11 遗留。）
+### 业务流转时序
+1. **创建房间**：客户端发起 `create_room`，服务端生成不冲突的 5 位随机房间号，将发起者设置为角色 1，通过 `rpc_id` 回复 `room_created`。
+2. **加入与开局**：第二个客户端发起 `join_room`，服务端校验房间状态与容量；校验通过后将其设为角色 2。当 2 名玩家就绪后，立即调用 `_start_match` 启动对局流程。
+3. **环境初始化**：读取地图数据中的出生点配置（`player` 与 `player2`），向双方发送 `match_start` RPC，并在服务端场景树动态挂载 `MatchHost.new(map_path, role_peers)` 实例。
+4. **异常离线处理**：监听 `peer_left` 信号，在玩家异常断开时移出房间；当房间内玩家全部退出后，及时释放 `MatchHost` 实例并清理房间记录。
 
 ---
 
-## 5. 服务器权威对局：MatchHost
+## 五、 服务端权威对局模拟：MatchHost
 
-每房间一个 `MatchHost`（`extends Node`），是整张地图 + 两个玩家的完整物理模拟。
+每个房间独立运行一个 `MatchHost` 节点，承载整张地图环境与双方角色的物理模拟。
 
-### 构造 `_init(map_path, role_peers)`
+### 1. 场景与物理初始化
+- 调用 `MazeGenerator` 与 `WorldBuilder` 加载地图碰撞网格与子格生命值表（`TileDefs.init_hp`），构建静态墙体、可破坏碰撞区块以及攀爬梯子。**服务端仅生成轻量物理碰撞体，不加载任何纹理与视觉节点**。
+- 实例化两个 `Player` 节点，为其装配 `NetworkInputSource` 输入源，并根据出生点坐标初始化物理状态。
 
-- `MazeGenerator.set_map_file` → `WorldBuilder.load_grid()`（碰撞网格）+ `TileDefs.init_hp` + `WorldBuilder.build_sim`（碰撞：永久墙 + 可破坏分块 + 攀爬条）。**服务器只建碰撞不渲染**。
-- 实例化两个 `Player.tscn`，各自 `set_input_source(NetworkInputSource.new())`，按出生点摆位。玩家是 `CharacterBody2D`，服务器上完整跑 `_physics_process`（重力/攀爬/游泳/武器全都有）。
+### 2. 物理帧处理时序 (`_physics_process`)
 
-### 每物理帧时序（`_physics_process`，顺序关键）
+严格按照以下顺序串行演进，保障时序确定性：
+1. **输入消费与注入**：遍历每个角色，调用 `NetworkInputSource.clear_edges()` 清空上一帧的瞬态按键边沿；随后消费输入缓冲队列，持续状态更新为最新值，瞬态边沿进行位或运算累加。
+2. **引擎物理推进**：Godot 场景树自动驱动子节点 `Player` 与子弹实体的 `_physics_process`（父节点先于子节点执行，确保角色读取到本帧注入的输入）。
+3. **弹道演进与命中裁决 (`_adjudicate_bullets`)**：计算子弹与角色的环面最短欧氏距离，命中成立时执行伤害结算并下发可靠事件广播。
+4. **状态快照广播**：依据 30Hz 定频时钟，将当前世界状态序列化后通过不可靠通道广播下发。
+5. **动态碰撞分帧重建**：处理场景破坏产生的脏区块标记（每物理帧最多分批重建 2 块，平滑 CPU 瞬时负载）。
 
-```
-1. 输入注入：对每个 role →
-     src.clear_edges()                      # 清上一帧已读边沿（pressed/released/weapon）
-     for pkt in _pending_input[role]:       # 缓冲整帧的包队列
-         src.apply_packet(pkt)              #   held/axis/aim 覆盖取最新；边沿 |累积
-     q.clear()
-2. 玩家/子弹的 _physics_process 由树自动跑（父先于子 → 读到的已是最新注入）
-3. _adjudicate_bullets()                    # 命中裁决 + 新子弹广播
-4. 30Hz 快照广播                            # _snapshot_accum 计时
-5. 分帧重建可破坏碰撞块                     # 每帧最多重建 2 块（爆炸拆墙）
-```
+### 3. 输入消费策略：队列缓冲 + 状态覆盖 / 边沿累加
+客户端物理帧输入通过 `_pending_input[role]` 队列缓冲，在服务端每物理帧开始时批量处理：
+- **持续量与方向（held / axis / aim / weapon）**：**覆盖取最新**，确保服务端姿态实时追踪客户端输入，消除操控滞后感。
+- **单帧瞬态边沿（just_pressed / just_released）**：**按位或累加（`|=`）**，防止在网络轻微抖动导致多包同批到达时丢失关键的跳跃、抓梯或开火边沿触发。
 
-### 输入消费：队列 + 覆盖/累积双策略（近期的关键修复）
-
-`_on_input(caller, pkt)` 把包**追加进 `_pending_input[role]` 队列**（不是覆盖单包），下帧开头统一应用：
-
-- `held / axis / aim / weapon`：**覆盖取最新** → 服务器紧跟客户端，几乎不滞后；
-- `just_pressed / just_released` 边沿：**`|=` 累积不覆盖** → 两包批量到达也不丢边沿。
-
-> 边沿对抓梯/跳跃/开火至关重要。早期实现"每帧覆盖单包"，批量到达时 just_pressed 边沿被后包覆盖丢失，服务器模拟与客户端脱节 → 抓梯失败/跳不起来/开火丢失，表现为"被回拉"。改队列按序消费后修复。
-> 缺包时：`held` 保持上一包（沿用），边沿被 `clear_edges()` 清空。
-
-### 快照（30Hz unreliable，canonical 坐标）
+### 4. 状态快照数据结构 (30Hz Unreliable)
 
 ```jsonc
 {
-  "tick": 123,          // 递增序号，客户端靠它丢乱序旧快照
+  "tick": 1280,             // 单调递增快照序号，用于客户端丢弃迟到或乱序快照
   "players": {
-    "1": { "pos": Vector2, "vel": Vector2, "facing": int,
-           "pose": int, "weapon": int, "hp": int,
-           "waterproof": int, "downed": bool },
+    "1": {
+      "pos": Vector2,       // 标准基准坐标 Canonical [0, MAP)
+      "vel": Vector2,       // 当前物理速度矢量
+      "facing": 1,          // 朝向 (-1: 左, 1: 右)
+      "pose": 0,            // 姿态枚举 (0:idle, 1:move, 2:fly, 3:charge, 4:squat)
+      "weapon": 1,          // 当前手持武器槽位索引
+      "hp": 100,            // 角色生命值 (由服务端权威裁决)
+      "waterproof": 100,    // 防水/氧气值
+      "downed": false       // 倒地瘫痪状态
+    },
     "2": { ... }
   }
 }
 ```
 
-- `pos` 是 canonical（服务器玩家每帧 `wrap_to_range` 到 `[0,MAP)`），**协议绝不传副本偏移坐标**。
-- 用 `rpc_id` 逐 peer 发送（unreliable，30Hz）。
-
-### 子弹裁决（`_adjudicate_bullets`）
-
-- 遍历 `bullet` 组：`_seen_bullets[instance_id]` 防重，**新子弹首次出现时广播 `bullet_spawn` 给非射手客户端**（射手本地已生成视觉子弹，不重复收）。
-- 命中判定 = 与**非射手玩家**的 `toroidal_delta_px` 距离 `< HIT_RADIUS(40px)`（环面最短距离，跨接缝也能命中）。
-- 命中 → `victim.take_hit(pos, dmg, false, impact)` + 广播 `hit_event` 给双方 + `bullet.queue_free()`。
-
-### 拆墙（`_on_tile_destroyed`）
-
-服务器无瓦片渲染层：只清 `destructible_sub` 对应子格 + 标记 `_dirty_chunks`，由 `_physics_process` 每帧重建 ≤2 块（`CollisionBuilder.rebuild_chunk`）。
+### 5. 弹道追踪与命中判定
+- **去重广播机制**：服务端维护 `_seen_bullets` 集合。当新子弹生成时，仅向**非射手客户端**广播 `bullet_spawn` 事件（射手端已在本地开火时进行了本地视觉预测生成，避免出现重复子弹）。
+- **环面命中检测**：计算子弹与目标角色在环面上的最短欧氏距离 `toroidal_delta_px(bullet.pos, player.pos).length() < HIT_RADIUS(40px)`。
+- **伤害结算**：判定命中后调用目标实体的 `take_hit`，向双方广播可靠的 `hit_event` 事件，并立即在服务端销毁对应子弹。
 
 ---
 
-## 6. 客户端对局：pvp_client
+## 六、 客户端预测与误差校正：pvp_client
 
-`pvp_game.tscn` 根脚本，加载 Level0（`pvp_mode=true`）作为世界。
+客户端入口为 `scenes/pvp_game.gd`，加载 `Level0` 并开启 `pvp_mode = true`。
 
-### `_ready`
-
-1. `MazeGenerator.set_map_file(PvpSession.map_path)` + `Level0.pvp_mode = true`（在实例化 Level0 前设，其 `_ready` 里会跳过刷敌人/单玩家放置）。
-2. 实例化 `Level0.tscn`，把世界里的 `Player` 设为本地玩家并摆到 `PvpSession.spawn`。
-3. pvp_mode 下 Level0 不建后处理，这里手动补 `PostProcess`。
-4. 创建 `RemoteReplica`（角色 = `3 - PvpSession.role`）进 WorldViewport。
-5. 连 `local_snapshot` / `local_bullet_spawn` / `local_hit_event` 信号。
-
-### 每物理帧：输入打包上报
+### 1. 物理帧输入打包上报
+客户端每物理帧采样当前输入状态，打包为结构化数据并上报服务端：
 
 ```jsonc
-{ "ax": 1.0, "held": 0b0111, "pressed": 0b0001, "released": 0,
-  "weapon": 0, "aim": Vector2 }   // → rpc_id(1, "send_input", pkt)
+{
+  "ax": 1.0,               // 水平轴输入 (-1.0 ~ 1.0)
+  "held": 0b0111,          // 持续按键位掩码
+  "pressed": 0b0001,       // 本物理帧刚按下的边沿掩码
+  "released": 0b0000,      // 本物理帧刚松开的边沿掩码
+  "weapon": 1,             // 目标武器槽位索引
+  "aim": Vector2(0.8, -0.6)// 鼠标瞄准方向单位向量
+}
 ```
 
-位常量复用 `NetworkInputSource.BIT_*`（up=1/down=2/charge=4/attack=8），`held` 与 `pressed`/`released` 用不同位——`pressed` 只含**本帧刚按下**的边沿。瞄准方向 = `_local.get_current_aim_dir()`（本地武器实际瞄准，来自鼠标）。
+### 2. 快照接收与分级误差校正策略 (`_self_correct`)
+客户端收到状态快照后，首先核验快照 `tick`；若小于已处理的最大序号，则直接丢弃乱序或迟到快照。
 
-### 快照消费与自校正（`_on_snapshot`）
+针对本地玩家的预测状态，系统采用**分级误差校正策略**，在保证操作反馈连贯性的同时抑制位置拉扯现象：
 
-- **丢弃乱序**：`tick` 比 `_last_snap_tick` 小 → 直接 return（unreliable 通道可能乱序，应用旧快照会把玩家拉回过去）。
-- 自己的 role → `_self_correct(data)`；对手 role → `_remote_replica.apply_snapshot(data, local_pos)`。
-
-`_self_correct` 分档处理（**近期把"一视同仁硬拉"改成分档**，消除"移动后卡一下又回去"）：
-
-```
-SELF_CORRECT_IGNORE = 64px    分歧 ≤ 64px：忽略   → 预测领先的正常区间，手感不打断
-SELF_CORRECT_RATE   = 0.35    中等分歧：+= d*0.35  → 每帧按比例平滑靠拢，不硬跳
-SELF_CORRECT_SNAP   = 128px   分歧 > 2 格：直接回位 → 真性大分歧（传送/卡墙），避免越积越歪
-```
-
-- **血量/防水/倒地状态**：服务器权威，直接 `apply_authoritative_state(hp, waterproof, downed)` 采纳（不做插值）。
-- **位置**：一律走 `toroidal_delta_px` 最短路径增量，绝不 set 绝对位置（跨接缝不滑屏）。
-
-### 事件消费
-
-- `_on_bullet_spawn(data)`：反序列化服务器广播 → `load(scene)` 生成**视觉子弹副本**，`apply_damage=false`（不裁决伤害），摆到 canonical 位置进 WorldViewport。
-- `_on_hit_event(victim_role, damage, source_pos)`：命中对象是本地玩家 → `take_hit` 即时白闪/击退反馈；**血量以快照为权威**（事件只做视觉反馈）。
-
----
-
-## 7. 远端副本：PlayerReplica
-
-纯视觉节点（`Node2D` + `AnimatedSprite2D`），**不做物理**（避免 set position 与物理引擎打架）。
-
-- 复用 `Player.tscn` 的内联 SpriteFrames 与动画。
-- `apply_snapshot(data, local_anchor)`：canonical 目标 → `anchor_to_nearest(canonical, local_anchor)` 锚到本地玩家最近副本 → 存 `_target`；同时更新 `flip_h`（facing）、pose→动画名（`0:idle 1:move 2:fly 3:charge 4:squat`）、downed 时停动画。
-- `_process`：每帧 `global_position += toroidal_delta_px(cur, _target) * (1 - exp(-INTERP_RATE*delta))`，`INTERP_RATE=12` 指数插值 → 平滑且最短路径，跨接缝连续。
-
----
-
-## 8. 输入抽象：InputSource / NetworkInputSource
-
-目标：`player.gd` 不直接读全局 `Input`，输入来源可注入。
-
-| 方法 | InputSource（基类=本地） | NetworkInputSource（服务器） |
+| 预测误差区间 ($\Delta$) | 处理策略 | 设计目标与手感保障 |
 |---|---|---|
-| `get_axis` / `is_action_pressed` | 委托真实 Input | 注入包字段（`_axis` / `_held` 位掩码） |
-| `is_action_just_pressed/released` | 委托真实 Input | `_pressed` / `_released` 累积边沿 |
-| `is_attack_pressed/just_pressed/just_released` | 委托 `"attack"` 动作 | `BIT_ATTACK` 位 |
-| `get_weapon_slot_pressed` | 轮询按键 1-5 | `_weapon`（包内切枪槽位） |
-| `get_aim_dir_override` | 返回 `Vector2.ZERO`（武器落回鼠标） | 返回注入的瞄准方向 |
+| **$\Delta \le 64\text{px}$ (1 格以内)** | **允许容差，不予纠偏** | 属于网络往返延迟下的合理预测领先量，完全由本地预测主导，保持操作丝滑 |
+| **$64\text{px} < \Delta \le 128\text{px}$** | **指数平滑修正 (`rate = 0.35`)** | 出现中度累积偏差，每物理帧沿环面最短向量向权威状态平滑靠近，无视觉跳跃 |
+| **$\Delta > 128\text{px}$ (2 格以上)** | **强制对齐 (Hard Snap)** | 发生严重物理分歧（如受击击退、阻挡或传送），立即重置至权威坐标，防止穿模 |
 
-**接线点**：
-
-- `player.gd`：字段 `input_source`（默认 `InputSource.new()`）+ `set_input_source()`；切枪轮询 `input_source.get_weapon_slot_pressed()`；攻击查询转发 `is_attack_*()`；`get_aim_dir_override()` 转发给武器。
-- `weapon_base.gd`：`_aim_world_dir()` 里若 player 有 `get_aim_dir_override` 且非 ZERO → 用网络瞄准方向；攻击输入走 `player.is_attack_*()`（`has_method` 守卫回退真实 Input，兼容冒烟 StubPlayer）。
-- 客户端本地玩家 = `InputSource.new()`（C2 照常读真实输入）；服务器两个玩家 = `NetworkInputSource` 注入包。
-
-**边沿生命周期**：客户端每 tick 打包 pressed/released → 服务器 `apply_packet` 累积 → `clear_edges()` 在下一帧开头清空。边沿只活一帧，但**不因包批量到达而丢**（这正是抓梯/跳跃/开火在服务器上能复现的关键）。
+- **数值属性严格同步**：生命值、氧气值与倒地状态不做插值，完全以服务端快照数据为权威基准。
+- **环面最短路径计算**：所有纠偏向量计算均严格基于 `toroidal_delta_px`，杜绝角色在跨越地图回绕边界时产生异常反向拉扯。
 
 ---
 
-## 9. 协议汇总（三套包）
+## 七、 远端玩家副本展示：PlayerReplica
 
-| 包 | 方向 | 频率/模式 | 字段 |
-|---|---|---|---|
-| **输入包** | 客户端→服务器 | 每物理帧 / **reliable** | `ax`(float) `held`(int) `pressed`(int) `released`(int) `weapon`(int) `aim`(Vector2) |
-| **快照包** | 服务器→客户端 | 30Hz / **unreliable** | `tick` + `players{role:{pos vel facing pose weapon hp waterproof downed}}` |
-| **事件包** `bullet_spawn` | 服务器→客户端 | reliable | `scene pos vel speed range size color gravity hit_damage hit_impact explodes direct_damage fuse hit_fuse radius expl_damage expl_knock visual` |
-| **事件包** `hit_event` | 服务器→客户端 | reliable | `victim_role damage source_pos` |
-| **房间/对局** | — | reliable | `create_room join_room room_created room_joined match_start server_message` |
-
-- 输入包 reliable：60Hz × ~20B ≈ 1.2KB/s/玩家，LAN/服务器模型下开销可忽略，**保边沿不丢**。
-- 快照包 unreliable + `tick` 序号：客户端丢乱序旧快照。
+远端玩家在本地表现为轻量视觉节点 `PlayerReplica`（基于 `Node2D` 与 `AnimatedSprite2D`），不挂载物理碰撞体，不执行本地物理模拟：
+- **环面坐标对齐**：收到快照基准坐标后，通过 `anchor_to_nearest(canonical, local_anchor)` 将其映射到距离本地玩家最近的投影副本位置。
+- **指数平滑插值**：在 `_process` 渲染帧中，通过指数平滑公式更新远端玩家坐标：
+  $$\text{pos} \mathrel{+}= \text{toroidal\_delta\_px}(\text{pos}, \text{target}) \times (1 - e^{-\text{INTERP\_RATE} \times \Delta t})$$
+  其中平滑系数 $\text{INTERP\_RATE} = 12.0$，在网络抖动环境下依然保持平滑自然的动作视觉呈现。
 
 ---
 
-## 10. 环面纪律（核心原则，代码处处贯彻）
+## 八、 输入源抽象解耦：InputSource
 
-1. **模拟用 canonical 真值**：服务器玩家、客户端本地玩家都 `wrap_to_range` 到 `[0,MAP)`。
-2. **协议只传 canonical**：快照 `pos`、子弹 spawn `pos` 都是 canonical；服务器广播前 `wrap_to_range` 归位（子弹可能锚在射手副本偏移上）。
-3. **渲染各端归最近副本**：自己 = 中间副本；对手/子弹 = `anchor_to_nearest(canonical, 自己)`。
-4. **插值/校正走最短路径增量** `toroidal_delta_px(上一位, 目标)`，绝不 naive lerp canonical（否则跨接缝整屏滑动）。
-5. 物理计算副本无关（9 副本地形逐像素相同），锚定是渲染层变换、在 `move_and_slide` 之后，不回喂物理。
-
----
-
-## 11. 端到端数据流（典型时序）
+为保证核心 `Player` 逻辑在单机与联网环境下无缝复用，系统通过 `InputSource` 抽象隔离底层输入差异：
 
 ```
-客户端                      服务器                         对手客户端
-每物理帧：
- 本地模拟自己（C2）
- 打包输入 ──── reliable ──→  MatchHost 队列缓冲
-                            ↓ 下帧开头注入两个 NetworkInputSource
-                            双方 Player._physics_process 权威模拟
-                            子弹命中裁决 / 拆墙 / 新子弹登记
-                            30Hz ── unreliable 快照(tick) ──→ 收快照
-                                                              ├ 自己→自校正(分档)
-                                                              └ 对手→Replica 最短路径插值
-                            新子弹 ── reliable bullet_spawn ─→ 生成视觉子弹副本(apply_damage=false)
-                            命中 ── reliable hit_event ──────→ 受害者即时白闪/击退
+                ┌──────────────────┐
+                │   InputSource    │ (抽象基类：默认对接全局 Input)
+                └────────┬─────────┘
+                         │
+          ┌───────────────┴───────────────┐
+          ▼                               ▼
+┌──────────────────┐           ┌──────────────────────┐
+│   InputSource    │           │ NetworkInputSource   │
+│ (客户端本地玩家)  │           │ (服务端注入网络输入)  │
+└──────────────────┘           └──────────────────────┘
+```
+
+- **统一接口封装**：统一抽象了 `get_axis`、`is_action_pressed`、`is_action_just_pressed`、`is_attack_pressed` 以及 `get_aim_dir_override`。
+- **逻辑完全复用**：`Player.gd` 与 `WeaponBase.gd` 仅面向 `input_source` 编程。单人模式下读取物理外设输入，服务端环境下读取解包后的网络数据，实现物理模拟的高保真还原。
+
+---
+
+## 九、 端到端数据流时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C1 as 客户端 P1 (本地预测)
+    participant S as 权威服务端 (MatchHost)
+    participant C2 as 客户端 P2 (远端副本)
+
+    loop 每一物理帧 (60Hz)
+        C1->>C1: 本地物理预测模拟
+        C1->>S: 上报输入数据包 (Reliable: axis, held, edges, aim)
+        S->>S: 缓冲输入包并按位累加边沿
+        S->>S: 双方 Player 物理模拟演进
+        S->>S: 弹道追踪与环面碰撞检测
+    end
+
+    opt 每 33.3ms (30Hz 定频)
+        S-->>C1: 广播状态快照 (Unreliable: tick, pos, hp, state)
+        S-->>C2: 广播状态快照 (Unreliable: tick, pos, hp, state)
+        C1->>C1: 执行分级误差校正 (容差 / 平滑 / 强制对齐)
+        C2->>C2: 远端副本沿环面最短路径平滑插值
+    end
+
+    opt 武器开火与受击结算
+        S-->>C2: 广播子弹生成 (Reliable: bullet_spawn)
+        C2->>C2: 实例化本地视觉子弹 (无伤害判定)
+        S->>S: 裁决子弹命中 P1
+        S-->>C1: 广播受击事件 (Reliable: hit_event)
+        S-->>C2: 广播受击事件 (Reliable: hit_event)
+        C1->>C1: 触发受击硬直与闪白特效
+    end
 ```
 
 ---
 
-## 12. 测试
+## 十、 自动化测试与验证
 
-| 脚本 | 断言 | 跑法（用户自跑） |
-|---|---|---|
-| `Tests/pvp_room_smoke.sh` | 起服务器 + A 建房拿号 + B 加入 → 双方收到 `match_start` | `bash Tests/pvp_room_smoke.sh` |
-| `Tests/pvp_match_smoke.sh` | A 建房后右移+开火，B 加入不动 → A 断言"收到快照且自己位置变了"，B 断言"收到快照 + 收到对手子弹 spawn 广播" | `bash Tests/pvp_match_smoke.sh` |
+### 1. 冒烟测试与探针套件
 
-冒烟客户端脚本：`pvp_smoke_client.gd`（B1）/ `pvp_match_smoke.gd`（B2），经 `--role create|join --code XXXX` 驱动。命中/掉血不在 B2 覆盖（出生点相距远，无法确定性命中），留手动端到端。
-
----
-
-## 13. 已知遗留与未实现（下一阶段入口）
-
-**阶段 3 未做（设计文档有、代码没有）：**
-- 回合制状态机（LOBBY→COUNTDOWN→PLAYING→ROUND_OVER→MATCH_OVER）、记分、复活、局间换边、击杀归因。现状**死亡即倒地、不复活**；PvP 下倒地按 R 不重载场景（`_unhandled_input` 有 `Level0.pvp_mode` 守卫）。
-
-**已知边界 / 遗留问题：**
-- **断线**：服务器清房间 + free MatchHost，但**不通知存活客户端**（无 `peer_left` 转给对端、无"对方退出→回菜单"）。
-- **`tile_destroyed` 事件未同步**：服务器权威拆墙只重建自己的碰撞；客户端视觉子弹撞到"服务器已拆、客户端还没拆"的墙时会短暂分歧轨迹（可接受，快照/重建自愈）。
-- **子弹散射随机量两端不同**：客户端视觉子弹散射角本地掷定，与服务器权威子弹不同 → 轨迹微差；命中由服务器裁决，可接受。
-- **本地玩家子弹也是视觉副本**：`weapon_base.fire()` 里 `b.apply_damage = not Level0.pvp_mode`，PvP 下本地生成的子弹不裁决（避免自伤），伤害全由服务器裁决。
-- **并发上限**：每房间一个完整世界模拟，进程内 2~4 局封顶（设计预留，未实测压力）。
-
-### 近期修复史（从 git log 反推的稳定性演进）
-
-| 提交 | 问题 → 修法 |
+| 测试用例脚本 | 验证范围与断言目标 |
 |---|---|
-| `5558ad1` | 移动卡顿回拉 → 快照加 `tick` 丢弃乱序 + 自校正分档平滑（小忽略/中平滑/大硬回） |
-| `e901254` | 服务器玩家溺水/回拉 → swim/climb 组件改走注入的 input_source（服务器读不到全局 Input）+ 回拉 SNAP 收窄到 2 格 |
-| `2046143` | 服务器输入覆盖式丢 just_pressed 边沿（抓梯/跳跃失效）→ 改按序队列消费 |
-| `c57fa1b` | 输入管线重设计：held/axis 每帧取最新（不滞后）+ 边沿累积不丢 + 队列缓冲整帧应用 |
+| `tests/pvp_room_smoke.sh` | 验证多客户端无头启动、连接大厅、建房、输入房间号加入并成功接收 `match_start` 流程 |
+| `tests/pvp_match_smoke.sh` | 验证回环网络下输入上报、服务端物理模拟、30Hz 快照下发与子弹生成广播的完整链路 |
+| `tests/ground_net_probe.tscn` | 验证网络环境下的地面武器生成、位置同步与交互拾取准确性 |
+| `tests/royale_probe.tscn` | 验证大乱斗模式下多客户端接入、生命周期流转与高频数据交互稳定性 |
+
+### 2. 执行指令
+
+```bash
+# 验证房间创建与匹配连接链路
+bash tests/pvp_room_smoke.sh
+
+# 验证双客户端状态同步与权威对局模拟
+bash tests/pvp_match_smoke.sh
+```

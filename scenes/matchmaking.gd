@@ -25,8 +25,8 @@ func _ready() -> void:
 	# ★★ 2026-09-30 用户裁定:入口控件必须**聚在一起**(昵称、房号、建房、加入、状态一块儿),
 	#   不要 royale/team 那套"加入沉到页面底部、离昵称八百像素"的散版式。
 	#   ⇒ 以本页原版式为基准,另两页向它对齐;**右列只剩设置**(不再承担"创建"那颗按钮)。
-	#   右列面板的内容差异是**真差异**,保留:1v1 = 对战选项开关组,
-	#   大乱斗 = 多人数上限/一局限时/时间颗粒规则,3v3 = 几乎无可调项。
+	#   右列面板的内容差异保留：1v1 为对战选项开关组，
+	#   大乱斗包含人数上限、单局限时与时间粒子规则，3v3 采用预设配置。
 	var name_le := UiFactory.line_edit(self, Vector2(60, 60), Vector2(320, 52), "昵称(头上显示)", PvpSession.player_name)
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"

@@ -9,9 +9,8 @@ extends Node
 # 可能并存多个房(1v1 一间、大乱斗一间),而它们共用**同一个 UDP 端口**、靠 peer id 区分。
 # 把 `_claims` 挂在大厅上 = 两间房的玩家互相顶掉对方的 role。故本类的所有字段都是**每局私有**。
 #
-# ── 名册(`roster`)是新增的第一道闸 ──
-# 单端口下,任何一个连上来的 peer 都能发 `claim_role`。原先靠"端口独占 + 进程独占"隐式隔离,
-# 现在没有了 ⇒ 显式判:不在本局名册里的 caller **一律当串线踢掉**(与 role 越界同款)。
+# 单端口下,任何连上来的 peer 均可能发送 `claim_role`。在单进程架构下,
+# 需进行显式校验:不在本局名册内的连接一律拒绝并断开(防止跨房间请求混淆)。
 #
 # ── 生命周期 ──
 # 建:RoomManager 在开局那一刻 `add_child`(此时才订阅 RPC —— 早订阅会收到别局的包)。
@@ -174,7 +173,7 @@ func abort() -> void:
 # ── claim / 选项 / 令牌 ──
 
 func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
-	# 防串线。四款判据一条都不能少:
+	# 会话隔离与身份合法性校验。四项判定条件缺一不可:
 	#   ① 已经开局 —— 迟到的 claim 没有收件人(下面会 disconnect 本 handler),这里兜住帧内窗口;
 	#   ② role 不在本局参战集合 —— 放进来会让"收齐"提前满足,而宿主那侧没有它的摆位;
 	#   ③ 名册外的 caller —— **单端口新增的那一款**:没有端口/进程隔离之后,别的房的玩家
@@ -383,7 +382,7 @@ func _on_peer_left(peer_id: int) -> void:
 		return
 	var is_participant := claims.values().has(peer_id)
 	if not is_participant:
-		return   # 被踢的串线连接断开不影响对局
+		return   # 非本局合法参与者的连接断开不影响正常对局
 	var role := 0
 	for r in claims:
 		if claims[r] == peer_id:
@@ -392,10 +391,10 @@ func _on_peer_left(peer_id: int) -> void:
 	if role == 0:
 		return
 	if host != null:
-		# 单个参与者掉线 = **先进宽限期**(不立刻移出,身体留在场上),宽限内可被 reclaim_role
-		# 认领回来;到点仍未回来才走 mark_disconnected / 收场。
-		# ★ 身体不销毁是本设计最省的一处:分数/阵亡/血量/背包/位置/世界破坏/地面武器全在
-		#   活着的节点与进程内存里,一条都不用恢复。
+		# 单个参与者掉线 = **进入宽限期**(不立刻移出,实体保留在场上),宽限期内可被 reclaim_role
+		# 重新认领;超时未回才执行 mark_disconnected 或终局清理。
+		# ★ 玩家实体保留在场景中:得分、伤亡、血量、背包、位置、环境破坏与地面装备均保留在运行内存中，
+		#   无需复杂的状态重建恢复流程。
 		claims.erase(role)
 		_enter_grace(role)
 		if claims.is_empty():

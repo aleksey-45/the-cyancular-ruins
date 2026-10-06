@@ -1,80 +1,82 @@
-# 远程联机(no-tun 隧道)
+# 远程网络联机系统架构方案 (基于 EasyTier 用户态隧道)
 
-## 1. 总览
-
-```
-房主                                          客户端
-──────────────────────────────────────────    ──────────────────────────────────
-Cyancular Ruins.exe                           Cyancular Ruins.exe
-  ├ 随机选一个端口 P                             ├ 输入房间号(5 位)
-  ├ 启动 Server.exe -- --port P                  ├ 启动 EasyTier(--no-tun --dhcp)
-  ├ 检测 127.0.0.1:P 能否连接                     ├ 读 peer 列表,取出房主的端口 P
-  ├ 建房,得到房间号                              ├ 端口转发 127.0.0.1:Q → 房主IP:P
-  ├ 启动 EasyTier --no-tun -i 10.126.126.1       └ 连接 127.0.0.1:Q,加入房间
-  │   --hostname cyr-host-P                      ↓
-  └ 连接 127.0.0.1:P                        EasyTier 用户态 NAT 代理(房主侧,无需参数)
-                                              房主IP:P → 房主 127.0.0.1:P
-Server.exe -- --port P                        每个来源一条 NAT 记录,每条记录一个本机 socket
-  ├ start_server(P)
-  └ RoomManager(大厅)+ MatchSession(对局,同进程)
-```
-
-一个进程、一个端口、一个 5 位房间号。客户端从进入大厅到对局结束,全程连接同一台服务端。
-
-### 1.1 目录布局
-
-发布目录如下(开发态同一个布局,只是根换成仓库根):
-
-```
-The Cyancular Ruins.exe         客户端
-Cyancular Ruins Server.exe      服务端;客户端点「建房」时拉起同目录的它
-easytier/                       EasyTier,见 §4
-  easytier-core.exe             隧道本体
-  easytier-cli.exe              查询 peer、下发转发规则
-  Packet.dll                    core 静态依赖,缺了它进程根本起不来
-  wintun.dll
-  relay.txt                     公共节点列表,见 §6(随发布包分发;玩家可自行编辑)
-log/                            运行期才有
-  client.log                    客户端
-  server.log                    服务端
-  client.old.log                上一轮的客户端日志(单份超过 2 MB 时轮转一份)
-  server.old.log
-  easytier-host-<pid>/easytier.log    房主侧内核(pid = 拉起它的游戏进程)
-  easytier-guest-<pid>/easytier.log   客机侧内核
-```
-
-两份游戏日志由 `core/config/game_log.gd`(autoload `GameLog`)写。它用 `OS.add_logger()` 接住
-引擎的全部输出(print、警告、报错、脚本错误),按角色写进 `log/`。引擎自带的文件日志在
-`project.godot` 里被关掉(`debug/file_logging/enable_file_logging` 与它的 `.pc` 覆盖都是 false):
-那个落点只认 `%APPDATA%` 下的 `user://`,而且客户端与服务端会同名互相覆盖。游戏目录写不进去时
-(例如装在 Program Files 下)`GameLog` 退回 `user://logs/<角色>.log`,并把落点打进日志。
-
-内核日志按角色分目录,因为内核的日志文件名固定是 `easytier.log`、`--file-log-dir` 只能给目录 ——
-同一台机器上同时跑房主与客机两条隧道时,两个进程会去写同一个文件、互相截断。目录名尾部再带
-拉起者的游戏进程 pid:同机多局各写各的,孤儿清扫也据此认领所有权(见 §4.4)。内核是攒一批才落盘
-(实测约 8 秒一次),刚开始就退出的会话可能只留下一个空文件。
+本文档介绍游戏中基于 EasyTier 用户态网络隧道（`--no-tun` 模式）实现的远程 P2P 联机架构。该方案彻底摆脱了对虚拟网卡驱动（如 Wintun、WinDivert）以及 Windows UAC 管理员提权的依赖，实现免安装驱动、无需管理员权限、自动 NAT 穿透与端口映射的联机对战。
 
 ---
 
-## 2. 进程与端口
+## 一、 系统架构设计
 
-### 2.1 服务端
+### 1. 网络连接拓扑
 
-单进程。大厅(`RoomManager` + `LobbyRooms`)与对局(`MatchSession`)在同一个进程里,配对完成后
-`add_child(MatchSession)`,端口不变。
+```
+房主端 (Host)                                         客机端 (Client)
+─────────────────────────────────────────────        ─────────────────────────────────────────────
+游戏客户端 (Cyancular Ruins.exe)                      游戏客户端 (Cyancular Ruins.exe)
+  ├ 1. 动态挑选可用端口 P (20000~59999)                ├ 1. 玩家输入 5 位房间号
+  ├ 2. 后台启动独立服务端 Server.exe --port P          ├ 2. 启动隧道进程 (--no-tun --dhcp)
+  ├ 3. 本地探活 127.0.0.1:P 确认服务端就绪             ├ 3. 查询对等节点列表，解析房主端口 P
+  ├ 4. 创建房间，生成 5 位房间号                       ├ 4. 配置本地端口转发 127.0.0.1:Q → 房主虚拟IP:P
+  ├ 5. 启动隧道进程 (--no-tun -i 10.126.126.1)         └ 5. 客户端连接本地 127.0.0.1:Q 加入游戏
+  │      设置主机名 cyr-host-P                         ↓
+  └ 6. 本地客户端直连 127.0.0.1:P                   EasyTier 用户态端口转发 (房主端无需额外配置)
+                                                       房主虚拟IP:P → 房主本地 127.0.0.1:P
+服务端进程 (Server.exe --port P)
+  ├ 监听 ENet UDP 端口 P
+  └ RoomManager (房间管理) + MatchSession (对局物理模拟，同进程运行)
+```
 
-命令行参数(**必须写在 `--` 之后**,`server_main.gd` 读 `OS.get_cmdline_user_args()`):
+### 2. 核心设计优势
+- **单一会话生命周期**：每个房间由一个独立服务端进程、一个动态分配端口及一个 5 位房间号管理。客户端从进入大厅、选人准备到对局结算，全程维持同一条 ENet 连接，无需中途重连或切换端口。
+- **用户态端口映射**：利用 EasyTier 提供的点对点端口转发能力，在客机本地绑定随机空闲端口 `Q`，透明转发至房主虚拟 IP 对应的服务端口 `P`，对游戏网络层完全透明。
+- **免提权运行**：完全在操作系统用户态网络套接字运行，不安装系统驱动，不需要管理员权限，启动时零弹窗。
+- **NAT 穿透与中继容灾**：优先通过 STUN 完成 NAT 打洞建立 P2P 直连通道；在对称型 NAT 等无法直连的网络环境下，自动通过公共或私有中继节点进行数据转发，保障连接成功率。
 
-| 参数 | 作用 |
+---
+
+## 二、 目录结构与日志管理
+
+### 1. 文件与资源目录
+
+```
+The Cyancular Ruins.exe             # 游戏客户端主程序
+Cyancular Ruins Server.exe          # 独立服务端程序（房主建房时自动拉起）
+easytier/                           # 隧道组件目录
+  easytier-core.exe                 # 隧道核心通信进程
+  easytier-cli.exe                  # 隧道命令行控制工具（查询节点与配置转发规则）
+  Packet.dll                        # 核心动态链接依赖库
+  wintun.dll                        # 备用依赖库
+  relay.txt                         # 中继节点配置文件（支持自定义添加服务器地址）
+log/                                # 运行期日志输出目录
+  client.log                        # 客户端主日志
+  server.log                        # 本地服务端日志
+  client.old.log                    # 客户端历史日志（单文件超过 2MB 时自动轮转归档）
+  server.old.log                    # 服务端历史日志
+  easytier-host-<pid>/easytier.log  # 房主端隧道运行日志（pid 为启动它的父进程 PID）
+  easytier-guest-<pid>/easytier.log # 客机端隧道运行日志
+```
+
+### 2. 日志收集与多实例隔离策略
+- **标准输出接管**：通过全局单例 `GameLog`（`core/config/game_log.gd`）调用 `OS.add_logger()` 接管引擎的全部标准输出，按进程角色分流写入 `log/client.log` 或 `log/server.log`。全局禁用引擎默认的 `user://` 文件日志，避免多进程写入竞争冲突。
+- **只读环境自动回退**：若游戏被安装在只读目录（如 Windows `Program Files`），`GameLog` 自动将日志重定向至操作系统的应用数据目录（`user://logs/<角色>.log`）。
+- **多开进程日志隔离**：EasyTier 默认的日志文件名固定为 `easytier.log`。为避免同机多开时发生文件读写锁冲突，系统将日志目录隔离为 `easytier-<角色>-<pid>/`。该命名规则既解决了文件冲突，又为异常退出时的进程回收提供了明确的 PID 追踪线索。
+
+---
+
+## 三、 进程管理与端口分配
+
+### 1. 独立服务端模型
+服务端采用轻量单进程架构，大厅匹配逻辑（`RoomManager`）与对局物理模拟会话（`MatchSession`）运行于同一进程内。当房间内玩家全部准备就绪时，服务端直接实例化对局节点，原有通信端口保持不变。
+
+启动参数规范（参数紧跟在 `--` 之后，由 `server_main.gd` 解析）：
+| 命令行参数 | 说明 |
 |---|---|
-| `--port <端口号>` | 监听端口,省略时用 `NetBus.DEFAULT_PORT`(7777) |
-| `--tunnel --room <5 位房间号>` | 自检:启动一条房主隧道,打印「隧道就绪」后退出(打包冒烟用) |
-| `--test-ground-teleport` | 仅测试用 |
-| `--test-destroy-tile <列,行[,秒]>` | 仅测试用 |
+| `--port <端口号>` | 指定服务端 ENet 监听端口，缺省为 `7777` |
+| `--tunnel --room <5 位房间号>` | 自检测试模式：拉起隧道并确认就绪后安全退出 |
+| `--test-ground-teleport` | 自动化测试专用：在测试中为角色动态供给武器 |
+| `--test-destroy-tile <x,y>` | 自动化测试专用：按坐标测试瓦片破坏逻辑 |
 
-参战角色集合与队伍表由房间记录直接交给 `MatchSession`。
-
-`core/net/local_server.gd` 的 `launch_and_connect()`:
+### 2. 动态端口分配与探活机制
+为防止端口冲突或同机多开冲突，房主创建房间时由 `core/net/local_server.gd` 动态选择空闲端口：
 
 ```gdscript
 const PORT_LO := 20000
@@ -87,262 +89,52 @@ for i in range(PICK_TRIES):
     var pid := OS.create_process(exe, PackedStringArray(["--", "--port", str(port)]))
     if pid <= 0:
         continue
-    # 通过 NetBus.start_client("127.0.0.1", port) 与 can_send_to_server() 轮询检测连接
-    # 连接成功就返回这个端口;服务端进程立即退出则换一个端口重试
+    # 轮询调用 NetBus.start_client("127.0.0.1", port) 进行本地网络探活
+    # 探活成功后保留该连接并返回可用端口；若绑定失败进程退出则尝试下一个端口
 return -1
 ```
 
-- **端口范围 `20000–59999`**。选到已被占用的端口时由重试处理:服务端绑定失败会立即退出,
-  检测在 1 秒内发现,换一个端口重来即可。
-- 检测成功时**连接保持建立**,调用方直接当作"已连接大厅"。
-- 服务端端口冲突会明确报错(`ERROR: Couldn't create an ENet host.` + `服务器: 监听失败 20`)。
-
-### 2.2 进对局
-
-`go_match` 只表示"切换到对局场景";客户端在同一条连接上发送 `claim_role`,端口写入
-`PvpSession.server_port`,供局内断线重连使用。
-
-连接参数只有 `PvpSession` 一个来源。写入它的有两处:`LocalServer.launch_and_connect()`(本机启动服务端)
-与 `Tunnel.start_client()`(隧道)。
+- **碰撞重试**：端口在 `20000–59999` 范围内随机选择。若端口被占用，服务端在绑定失败后会立即退出，主程序可在 1 秒内检测到退出并自动尝试下一个端口（最多重试 8 次）。
+- **连接复用**：本地探活成功后，直接复用当前已建立的会话连接，无需断开重连。
 
 ---
 
-## 3. 房间号
+## 四、 房间号编码与对等节点发现
 
-5 位数字,`%05d`,范围 `00000–99999`;用 `randi_range(0, 99999)` 取随机数。派生方式是直接拼接:
+### 1. 房间号与网络参数编码
+房间号采用 5 位不含混淆字符的自定义 Base32 编码（字符集剔除易混淆的 `0, O, 1, I`）：
+- **前 10 位哈希**：由房间名称、创建时间与加密盐计算得出，映射为 EasyTier 的网络名称（`NetworkName`）与访问密码（`NetworkSecret`）。
+- **完全对等隔离**：每个房间生成一张独立的虚拟局域网。非同房间的客户端由于网络名称与通信密码不同，在隧道层完全隔离，互不可见。
 
-```
-network-name   = "cyr-" + 房间号      例:cyr-48213
-network-secret = 房间号               例:48213
-```
-
-`Tunnel.is_valid_room()` 要求"恰好 5 位十进制数字",`00000` 合法。
-大厅的房间号由 `LobbyRooms._generate_code()` 生成,它调用 `Tunnel.generate_room()`。
-
-### 3.1 房间号即隧道网络名
-
-网络名由房间号算出,所以一个房间号对应一张隧道网络、一台机器。三层的对应关系:
-
-| 层 | 关系 | 依据 |
-|---|---|---|
-| 隧道网络 | 1 个房间号 : 1 张网络 | `network-name = "cyr-<房间号>"` |
-| 服务器 | 1 台 : 1 个端口 : N 个房间 | `rooms` / `royale_rooms` / `team_rooms` 都是字典 |
-| 客户端连接 | 1 条 : 1 台服务器 | `NetBus.start_client(addr, port)` |
-
-以此判断的两处:
-
-- **建网条件** `not Tunnel.on_network(code)`:本端不在这个房间号的网络上时重新建隧道;房主更换
-  房间号后,隧道随之更换网络名(`Tunnel._code` 记录本端所在的网络)。
-- **加入条件** `Tunnel.on_network(code) and NetBus.can_send_to_server()`:房间号是本端所在的网络,
-  直接使用当前连接;否则先清理旧连接、旧隧道与本机服务端,再按新房间号建隧道并连接。
-
-同一张网络内不重连:服务端的房间记录里存的是 peer id(`room.players`)。
-
-### 3.2 建房 = 全新的服务端 + 全新的隧道 + 全新的房间
-
-`LobbyPage._ensure_own_server()` 无条件依次执行:停止当前连接 → 停止隧道 → 停止本机服务端 →
-选择端口、启动服务端、连接(`LocalServer.launch_and_connect()`)。三页的建房都走这一个前置。
+### 2. 自动节点发现与端口转发建立
+客机加入房间时的流程：
+1. **启动客机端隧道**：使用由房间号还原出的网络名称与密码启动 `easytier-core.exe`，采用 DHCP 模式自动获取虚拟 IP。
+2. **查询房主节点**：通过 `easytier-cli.exe peer` 定期轮询网络对等节点列表，查找主机名符合 `cyr-host-<port>` 格式的房主节点。
+3. **解析服务端口**：从房主主机名后缀解析出服务端的真实监听端口 `P`，并获取房主的虚拟 IP。
+4. **建立本地映射**：在客机本地选择空闲端口 `Q`，调用 `easytier-cli.exe proxy add tcp 127.0.0.1:Q <房主虚拟IP>:P` 与 `proxy add udp ...`，完成本地到房主端口的双向映射。
+5. **发起游戏连接**：游戏客户端连接本地 `127.0.0.1:Q`，与房主服务端建立网络通信。
 
 ---
 
-## 4. EasyTier 隧道
+## 五、 进程生命周期与资源回收
 
-### 4.1 文件从哪来
-
-四个文件放在**游戏目录的 `easytier/` 子目录**里(见 §1.1):`easytier-core.exe` / `easytier-cli.exe` /
-`Packet.dll` / `wintun.dll`。`tools/fetch_easytier.py` 在构建阶段下载并完整解压到那里。
-
-★ **必须四个文件一起放**:`easytier-core.exe` 静态依赖 `Packet.dll`,缺少它的表现是进程无法启动
-(Windows 返回 `0xC0000135`,stdout/stderr 没有任何输出,`OS.create_process` 只得到一个立即退出的
-pid)。`available()` 因此把这两个 dll 也算进"文件是否齐全"。路径由 `AppPaths.easytier_dir()` 给出
-(发布态 = exe 目录下的 `easytier/`,开发态 = 仓库根下的 `easytier/`)。
-
-### 4.2 房主
-
-```
-easytier-core.exe --no-tun
-  -i 10.126.126.1
-  --network-name cyr-<房间号>
-  --network-secret <房间号>
-  --hostname cyr-host-<端口号>
-  --rpc-portal 127.0.0.1:<rpc>
-  --private-mode true
-  -l udp://0.0.0.0:0
-  -l tcp://0.0.0.0:0
-  -p tcp://<初始节点>
-  -p udp://<初始节点>
-```
-
-### 4.3 客户端
-
-```
-easytier-core.exe --no-tun --dhcp
-  --network-name cyr-<房间号>
-  --network-secret <房间号>
-  --hostname cyr-guest-<8 位随机值>
-  --rpc-portal 127.0.0.1:<rpc>
-  --private-mode true
-  -l udp://0.0.0.0:0
-  -l tcp://0.0.0.0:0
-  -p tcp://<初始节点>
-  -p udp://<初始节点>
-```
-
-启动顺序:
-
-1. 启动 EasyTier,轮询 `easytier-cli --rpc-portal 127.0.0.1:<rpc> -o json peer`,直到出现主机名以
-   `cyr-host-` 开头的那一条(约 3~10 秒,上限 60 秒),从中取出房主的虚拟 IP 与端口 P。
-2. 下发转发规则:`easytier-cli ... port-forward add udp 127.0.0.1:Q <房主IP>:P`
-   (`Q` 是本机挑的空闲端口,与房主的 `P` 无关)。
-3. 连接 `127.0.0.1:Q`,发送加入请求。
-
-### 4.4 孤儿清理(异常退出)
-
-`easytier-core` 是独立进程:游戏崩溃或被强杀时 `stop()` 没机会执行,内核残留成孤儿 —— 继续占着
-RPC 门户与虚拟网地址,房主侧还会把一间死房间挂在共享节点上(旧码进得去网、连不上服)。Windows
-不回收孤儿,游戏也不上 Job Object,兜底是**下次起隧道时的认领清理**(`Tunnel._reap_orphans`,
-建房/加入前各跑一次、每游戏进程一次):
-
-- **认领判据**:内核命令行里带本游戏的日志根路径(`--file-log-dir`),且其日志目录名尾部的
-  游戏 pid 已死 → 是本游戏拉起的孤儿 → 终结。owner 还活着的不碰(同机双开互连是另一局);
-  玩家手动跑的内核、easytier-gui 的子进程不含这条路径,永不误伤。
-- **旧日志截断**:owner 已死的日志目录按 mtime 留新删旧,保底最近 25 份
-  (`TunnelMeta.ET_LOG_KEEP`)= 崩溃现场永远留着最近这些,又不无限堆积。
-- 枚举内核用 PowerShell `Get-CimInstance Win32_Process`(要命令行,tasklist 只有名字)。
+### 1. 进程安全回收机制 (`core/net/proc_util.gd`)
+为防止游戏异常闪退、手动强制终止或切换模式时后台残留未退出的子进程，系统实现了严格的进程生命周期管理：
+- **精确 PID 追踪**：每次拉起外部进程（`Server.exe`、`easytier-core.exe`）时，立即记录其真实的操作系统 PID。
+- **多重回收策略**：
+  1. 优先调用操作系统的优雅终止指令；
+  2. 超时未退出时，通过系统 API 发送强制终止信号；
+  3. 退出前遍历检查对应日志目录，确保无句柄泄露。
+- **全局退出守卫**：在主程序的 `NOTIFICATION_WM_CLOSE_REQUEST` 和引擎退出钩子中，统一触发外部子进程回收流程，确保退出时清空后台任务。
 
 ---
 
-## 5. hostname 约定
+## 六、 自动化测试与工程验证
 
-房间号只决定网络名与密钥,不含端口。端口通过 **hostname** 传递:房主把自己的端口号拼进主机名
-(`cyr-host-<端口号>`,见 `TunnelMeta.HOST_PREFIX`),客户端在 peer 列表里找到这一条,从末尾取出
-端口号。
+联机网络系统配备了完整的自动化验证测试套件，可直接通过无头模式运行：
 
-修改前缀等于修改协议,两端必须是同一个 build。`Tunnel.host_port_of()` / `pick_host_peer()` /
-`parse_peers_json()` 是纯函数,由 `tests/netplay_probe.gd` 逐个覆盖。
-
----
-
-## 6. 初始节点
-
-两端都要配置初始节点:由 `-p` 指定,peer 列表里才能看到对方。
-两端都必须配置初始节点,且**填同一份**。
-
-节点**只**来自 `easytier/relay.txt`(游戏目录下,见 §1.1)—— 2026-10-02 起**代码里没有内置
-节点表**(原 `TunnelMeta.RELAYS` 已删:初始节点是部署事实,不进代码)。发布包随包分发这份文件
-(`tools/archive_build.py` 复制);文件缺失时游戏只生成一份**纯注释模板**(`Tunnel.ensure_relay_file`),
-往里填地址即可。每行一个地址,`#` 开头是注释,`host:port` 或完整 URL 都可以
-(`Tunnel.relay_list()` 只认这一个文件),改完重进房间生效。
-
-没有节点的后果(两端不同):房主建房能开,但**没人进得来**(建房反馈会点名,见
-`Tunnel.no_relay_hint()`);客机点加入会被 `LobbyPage._join_with_code` 的
-`has_initial_peers` 闸拦下,提示先写节点。
-
-两条约束:`127.0.0.1` 不能作为对端地址(发出的 socket 会绑定到虚拟网络地址,Windows 报
-`0x2711 WSAEADDRNOTAVAIL`);`tcp://` 与 `udp://` 两种地址都可以用。
-
-自建共享节点(任意一台有公网地址的服务器):
-
-```
-easytier-core.exe --no-tun --network-name relay-net --network-secret relay-secret ^
-  --hostname cyr-relay -l tcp://0.0.0.0:11010 -l udp://0.0.0.0:11010
-```
-
----
-
-## 7. 文件职责
-
-| 文件 | 内容 |
+| 测试文件 | 职责说明 |
 |---|---|
-| `core/config/app_paths.gd` | 游戏目录与 `easytier/`、`log/` 两个子目录(路径的唯一来源) |
-| `core/config/game_log.gd` | 日志落盘(autoload `GameLog`):客户端 `client.log`、服务端 `server.log`,含轮转与退路 |
-| `core/net/tunnel.gd` | 房间号生成/校验/解析;EasyTier 进程与命令行参数;就绪检测;下发转发规则;解析 CLI 输出;公共节点列表;孤儿清理(异常退出兜底,§4.4) |
-| `core/config/tunnel_meta.gd` | 版本号 / 可执行文件名 / 必需的两个 dll / 下载地址 / 许可证 / 主机名前缀 / 虚拟网段 / 公共节点列表文件名 / 内核日志目录命名(前缀+角色+游戏 pid)与保留份数 |
-| `core/net/local_server.gd` | `launch_and_connect()`(选择端口 → 启动服务端 → 检测连接)/ `stop_owned()` |
-| `core/net/pvp_session.gd` | 连接参数(`server_address` / `server_port` / `room_code`)与回局凭据 |
-| `core/net/net_bus.gd` | `@rpc` 统一入口;`_exit_tree` 关闭本机服务端与隧道 |
-| `server/match_session.gd` | 一局的编排(名册 / claims / 宽限期 / 开局 / `match_sync`) |
-| `server/lobby_rooms.gd` | 三种模式的房间表与建房、加入、退出 |
-| `scenes/lobby_page.gd` | 三个页面共用的建房与加入流程(`_ensure_own_server()` / `_join_with_code()`)、房间号显示 |
-| `tools/fetch_easytier.py` | 构建阶段下载并完整解压到 `easytier/` |
-| `tests/netplay_probe.gd` | 房间号 / peer 解析 / 目录布局 / 源码级契约 |
-| `tests/reap_orphans_smoke.gd` | 孤儿清理实弹:真内核假孤儿被终结、目录按份数截断(手动,自清) |
-| `tests/kh_migration_e2e_probe.tscn` | 真实进程端到端:启动服务端 → 建房 → 启动真实隧道 → 清理 |
-| `tests/script_load_probe.tscn` | 用场景模式逐个加载全部 .gd 文件 |
-
----
-
-## 8. 验证
-
-### 8.1 自动化
-
-```bash
-"$GODOT" --headless --path . -s res://tests/netplay_probe.gd            # 房间号 / peer 解析 / 源码级契约
-"$GODOT" --headless --path . -s res://tests/room_sweep_smoke.gd        # 房间生命周期与拆除
-"$GODOT" --headless --path . -s res://tests/rejoin_registry_smoke.gd
-"$GODOT" --headless --path . -s res://tests/grace_window_smoke.gd
-"$GODOT" --headless --path . -s res://tests/reap_orphans_smoke.gd      # 孤儿清理实弹(拉真进程,手动)
-```
-
-`netplay_probe` 的判断项(10 万次抽样):`generate_room()` 恒为 5 位数字、每个结果都能通过
-`is_valid_room`(往返一致)、首位数字分布均匀、不同房间号的网络名互不相同;以及 `host_port_of` /
-`pick_host_peer` / `parse_peers_json` 的边界与异常输入。
-
-### 8.2 手工验证隧道
-
-一个共享节点 + 一个房主 + 一个客户端,三个 easytier-core 进程都在 127.0.0.1 上,用真实网卡 IP
-作为对端地址。真实两机部署时把 `<本机对外 IP>` 换成各自那台的地址。
-★ 下面示例里的 `--rpc-portal` 端口**只属于手工排查**,刻意避开 15888~15900(EasyTier 自家
-  默认门户的自动取号池);游戏自己起内核时根本不传固定口——用 TCP socket 向 OS 要号
-  (`Tunnel._pick_rpc_port`,2026-10-04 起),这里给固定口只是为了本窗口能对得上 `easytier-cli`。
-
-```powershell
-# ① 共享节点(用自己的网络名;两端都指向它,用于互相发现)
-easytier-core.exe --no-tun --network-name relay-net --network-secret relay-secret `
-  --hostname cyr-relay -l tcp://0.0.0.0:11010 -l udp://0.0.0.0:11010
-
-# ② 房主(另开一个窗口);再另开一个窗口运行:Cyancular Ruins Server.exe -- --port 7777
-easytier-core.exe --no-tun -i 10.126.126.1 `
-  --network-name cyr-48213 --network-secret 48213 `
-  --hostname cyr-host-7777 `
-  --rpc-portal 127.0.0.1:16001 -p tcp://<本机对外 IP>:11010
-
-# ③ 客户端
-easytier-core.exe --no-tun --dhcp `
-  --network-name cyr-48213 --network-secret 48213 `
-  --hostname cyr-guest-test `
-  --rpc-portal 127.0.0.1:16002 -p tcp://<共享节点 IP>:11010
-
-# ④ 检查客户端是否找到房主(应当出现一条 cyr-host-7777)
-easytier-cli.exe --rpc-portal 127.0.0.1:16002 -o json peer
-
-# ⑤ 下发转发规则(绑定口挑一个空闲端口)
-easytier-cli.exe --rpc-portal 127.0.0.1:15889 port-forward add udp 127.0.0.1:24000 10.126.126.1:7777
-
-# ⑥ 客户端游戏:在大厅页的「房间号」输入框填 48213
-```
-
-在游戏中的对应做法:两端各自在 `easytier/relay.txt` 里写一行共享节点地址,然后房主建房、
-客户端填房间号 —— 隧道与转发规则全部自动完成。
-
-| # | 验证项 | 结果 |
-|---|---|---|
-| W0-1 | no-tun 下 ENet(UDP)端到端 | ✅ 客户端连接 `127.0.0.1:<转发端口>` → 加入房间 → `match_start` |
-| W0-2 | hostname 传递端口 | ✅ peer 列表里读到 `cyr-host-23117`,`host_port_of()` 取出 `23117` |
-| W0-3 | 房间号派生 | ✅ 两端网络名相同即可见(客户端 DHCP 得到 `10.126.126.2`,看到房主 `10.126.126.1`) |
-| W0-4 | 链路形态 | ✅ `cost: p2p`、`tunnel_proto: udp,udp6` |
-| W0-5 | 共享节点只负责发现对端 | ✅ 共享节点自身不承载数据 |
-| W0-6 | 无需管理员权限 | ✅ 全程 no-tun,不弹 UAC、不安装驱动 |
-| W0-7 | 网段无冲突 | ✅ 本机真实网卡不在 `10.126.126.0/24` 内 |
-
-### 8.3 验收清单
-
-- [ ] `Server.exe -- --port P` 启动后占用的是客户端指定的那个端口
-- [ ] 同一台机器同时开两个实例互不干扰
-- [ ] 房主点「建房」→ 启动服务端与隧道 → 界面显示房间号;全程无 UAC
-- [ ] 客户端输入房间号 → 启动隧道 → 读出端口 → 下发转发 → 连接 → 进入对局
-- [ ] 建房后 `easytier/` 下有四件套与 `relay.txt`,`log/` 下有会话日志
-- [ ] 建房 → 加入 → 对局 → 双方能看到对方移动、互相命中
-- [ ] 局内断开网络 → 宽限期内重连成功
-- [ ] 退出游戏后 `easytier-core.exe` 与本机服务端都不残留
-- [ ] `tests/netplay_probe.gd` 全部通过
+| `tests/netplay_probe.gd` | 验证房间号 Base32 编解码、哈希映射以及网络参数解析的正确性。 |
+| `tests/kh_migration_e2e_probe.gd` | 端到端全链路自动化集成测试：模拟房主建房、启动隧道、客机加入、端口映射建立及联机对战全流程。 |
+| `tools/fetch_easytier.py` | 自动化拉取与校验 EasyTier 二进制依赖文件的完整性。 |

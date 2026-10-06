@@ -1,6 +1,6 @@
 extends SceneTree
 
-# 颗粒账户冒烟(-s 数据级):余额/上限/短时窗/贷款/锁定/恢复/入账 全语义。
+# 时间粒子账户冒烟测试（-s 数据级）：余额、上限、短期额度、透支、锁定、恢复与入账全流程验证。
 # 用法:godot --headless --path . -s res://tests/grain_account_smoke.gd
 
 var _fails: Array[String] = []
@@ -15,7 +15,7 @@ func _init() -> void:
 	_test_deposit_cap()
 	_test_custom_params()
 	if _fails.is_empty():
-		print("GRAIN ACCOUNT OK(初始/消耗/窗恢复/贷款/锁定/解锁/余额底线/入账夹上限/自定义参数(PvP))")
+		print("GRAIN ACCOUNT OK(初始/消耗/短期额度恢复/透支/锁定/解锁/余额下限/入账限制/自定义参数)")
 		quit(0)
 	else:
 		print("GRAIN ACCOUNT FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
@@ -38,18 +38,18 @@ func _test_basic() -> void:
 	var got: float = a.spend(1.0, TimeParams.COST_REWIND)
 	_near(got, TimeParams.COST_REWIND, 0.01, "1 秒回溯应扣 120")
 	_near(a.balance, TimeParams.GRAIN_INITIAL - TimeParams.COST_REWIND, 0.01, "余额扣减")
-	_near(a.short_used, TimeParams.COST_REWIND, 0.01, "短时窗推进=消耗额")
+	_near(a.short_used, TimeParams.COST_REWIND, 0.01, "短期额度使用量应等于消耗量")
 	var a2 := GrainAccount.new(99999)
 	_chk(a2.balance == TimeParams.GRAIN_CAP, "超大初始应夹上限")
 
 
 func _test_window_regen() -> void:
 	var a := GrainAccount.new()
-	a.spend(2.0, 100.0)   # 窗用 200
-	_near(a.short_used, 200.0, 0.01, "窗=200")
-	a.regen(1.0)          # 50/s 回 50
+	a.spend(2.0, 100.0)   # 短期额度消耗 200
+	_near(a.short_used, 200.0, 0.01, "短期已使用 200")
+	a.regen(1.0)          # 50/s 回复 50
 	_near(a.short_used, 150.0, 0.01, "1 秒恢复 50")
-	a.regen(10.0)         # 回到头不越界
+	a.regen(10.0)         # 恢复至初始状态不越界
 	_near(a.short_used, 0.0, 0.01, "恢复不下穿 0")
 
 
@@ -57,19 +57,19 @@ func _test_loan_and_lock() -> void:
 	var a := GrainAccount.new()
 	var locked_fired := [0]   # 数组承载:lambda 按值捕获局部 int,直接 += 外部看不到
 	a.loan_locked.connect(func() -> void: locked_fired[0] += 1)
-	a.spend(4.0, 100.0)   # 窗满 400
-	_near(a.short_used, TimeParams.SHORT_WINDOW, 0.01, "窗满")
-	_near(a.loan_used, 0.0, 0.01, "未借入")
-	a.spend(0.5, 100.0)   # 借 50
-	_near(a.loan_used, 50.0, 0.01, "借入 50")
-	_near(a.loan_depth(), 0.5, 0.001, "贷款深度 0.5")
-	_chk(a.can_spend(), "贷中仍可耗(未满)")
-	_chk(locked_fired[0] == 0, "未贷满不应锁")
-	a.spend(1.0, 100.0)   # 借满 100 → 锁
-	_near(a.loan_used, TimeParams.LOAN_LIMIT, 0.01, "借满 100")
-	_chk(locked_fired[0] == 1, "贷满应发 loan_locked")
-	_chk(a.locked, "贷满应 locked")
-	_chk(not a.can_spend(), "锁定不可耗")
+	a.spend(4.0, 100.0)   # 耗尽短期额度 400
+	_near(a.short_used, TimeParams.SHORT_WINDOW, 0.01, "短期额度耗尽")
+	_near(a.loan_used, 0.0, 0.01, "未产生透支")
+	a.spend(0.5, 100.0)   # 透支 50
+	_near(a.loan_used, 50.0, 0.01, "透支额度累计 50")
+	_near(a.loan_depth(), 0.5, 0.001, "透支深度 0.5")
+	_chk(a.can_spend(), "透支状态下未达上限时仍可消耗")
+	_chk(locked_fired[0] == 0, "未达透支上限时不应触发锁定")
+	a.spend(1.0, 100.0)   # 透支达上限 100 触发锁定
+	_near(a.loan_used, TimeParams.LOAN_LIMIT, 0.01, "透支达上限 100")
+	_chk(locked_fired[0] == 1, "达到透支上限应触发 loan_locked 信号")
+	_chk(a.locked, "达到透支上限应进入锁定状态")
+	_chk(not a.can_spend(), "锁定状态下禁止消耗")
 	var got: float = a.spend(1.0, 100.0)
 	_near(got, 0.0, 0.001, "锁定消耗返回 0")
 	_near(a.balance, TimeParams.GRAIN_INITIAL - 550.0, 0.01, "锁定不再扣余额")
@@ -79,20 +79,20 @@ func _test_lock_release() -> void:
 	var a := GrainAccount.new()
 	var unlocked := [0]   # 同上:数组承载可变计数
 	a.loan_unlocked.connect(func() -> void: unlocked[0] += 1)
-	a.spend(4.0, 100.0)      # 窗满
-	a.spend(0.3, 100.0)      # 借 30
-	a.spend(1.0, 100.0)      # 借满锁
-	a.regen(1.0)             # 还贷 50 → 贷 80... 不对:先还贷 50,贷 100-50=50
-	_near(a.loan_used, 50.0, 0.01, "1 秒先还贷 50")
-	_chk(a.locked, "贷未清仍锁")
-	a.regen(1.0)             # 再还 50 → 贷清 → 解锁;窗也开始回
-	_near(a.loan_used, 0.0, 0.01, "贷款还清")
-	_chk(unlocked[0] == 1, "还清应解锁一次")
+	a.spend(4.0, 100.0)      # 短期额度耗尽
+	a.spend(0.3, 100.0)      # 透支 30
+	a.spend(1.0, 100.0)      # 透支满额触发锁定
+	a.regen(1.0)             # 优先偿还透支：1.0 秒恢复 50 单位透支额度
+	_near(a.loan_used, 50.0, 0.01, "1 秒优先偿还透支 50")
+	_chk(a.locked, "透支未完全偿还时保持锁定")
+	a.regen(1.0)             # 再次恢复 50，透支还清并解除锁定，短期额度开始恢复
+	_near(a.loan_used, 0.0, 0.01, "透支额度已还清")
+	_chk(unlocked[0] == 1, "透支还清应触发解除锁定信号")
 	_chk(not a.locked, "解锁后 locked=false")
-	_chk(a.can_spend(), "解锁后可耗")
-	_near(a.short_used, 400.0, 0.5, "解锁瞬间窗应仍在满位附近(还贷优先)")
+	_chk(a.can_spend(), "解锁后恢复可消耗状态")
+	_near(a.short_used, 400.0, 0.5, "解除锁定瞬间短期额度仍处于满位状态（优先偿还透支）")
 	a.regen(2.0)
-	_near(a.short_used, 300.0, 0.6, "解锁后窗继续 50/s 回拨")
+	_near(a.short_used, 300.0, 0.6, "解除锁定后短期额度以 50/s 速率继续恢复")
 
 
 func _test_balance_floor() -> void:
@@ -114,39 +114,39 @@ func _test_deposit_cap() -> void:
 	_near(b.balance, 1300.0, 0.001, "入账后余额")
 
 
-# ── 自定义参数组(PvP 语义,2026-09-28):初始/上限/短时窗/回复/贷款额全由构造参数传入 ──
-# 断言的是"参数真的生效"而不是"单机的默认值还在":
-#   · PvP 的贷款上限 = 短时额度(账户本身不透支);
-#   · 余额永不为负(透支只发生在短时窗那一档);
-#   · 贷满锁定 → 回复先还贷 → 还清解锁。
+# ── 自定义参数组（PvP 时间规则，2026-09-28）：初始值、上限、短期额度、恢复率、透支额度全由构造参数传入 ──
+# 验证自定义参数正确生效：
+#   · PvP 模式透支上限等于短期额度（账户总余额不透支至负数）；
+#   · 余额永不为负（透支仅发生在短期额度层级）；
+#   · 达到透支上限锁定 → 恢复时优先偿还透支 → 还清后解除锁定。
 func _test_custom_params() -> void:
 	var a := GrainAccount.new(1000.0, 1800.0, 250.0, 50.0, 250.0)
 	_near(a.balance, 1000.0, 1e-3, "自定义初始值")
 	_near(a.cap, 1800.0, 1e-3, "自定义上限")
-	_near(a.window, 250.0, 1e-3, "自定义短时窗")
-	_near(a.regen_rate, 50.0, 1e-3, "自定义回复")
-	_near(a.loan_max, 250.0, 1e-3, "贷款上限 = 短时额度")
-	# 烧满短时窗(250)→ 继续消耗进贷款;贷款上限 250 → 贷满即锁
-	a.spend(250.0 / 150.0, 150.0)          # 正好用完短时窗
-	_near(a.short_used, 250.0, 1e-3, "短时窗应正好用满")
-	_near(a.loan_used, 0.0, 1e-3, "此时不该有贷款")
-	a.spend(250.0 / 150.0, 150.0)          # 再烧一个窗的量 → 全进贷款并贷满
-	_near(a.loan_used, 250.0, 1e-3, "贷款应到上限(250)")
-	_near(a.loan_depth(), 1.0, 1e-3, "贷满时深度应为 1")
-	_chk(a.locked, "贷满应强制锁定")
-	_chk(not a.can_spend(), "锁定期间不可耗(两键空转)")
-	# 余额底线:无论如何不透支(继续 spend 只会被挡)
+	_near(a.window, 250.0, 1e-3, "自定义短期额度")
+	_near(a.regen_rate, 50.0, 1e-3, "自定义恢复速率")
+	_near(a.loan_max, 250.0, 1e-3, "透支上限应等于短期额度")
+	# 消耗完短期额度（250）→ 继续消耗进入透支；透支达到上限 250 → 触发锁定
+	a.spend(250.0 / 150.0, 150.0)          # 正好耗尽短期额度
+	_near(a.short_used, 250.0, 1e-3, "短期额度应正好用满")
+	_near(a.loan_used, 0.0, 1e-3, "此时尚未产生透支")
+	a.spend(250.0 / 150.0, 150.0)          # 再次消耗相应额度 → 全部进入透支并达到上限
+	_near(a.loan_used, 250.0, 1e-3, "透支应达到上限(250)")
+	_near(a.loan_depth(), 1.0, 1e-3, "达到透支上限时深度应为 1.0")
+	_chk(a.locked, "达到透支上限应强制锁定")
+	_chk(not a.can_spend(), "锁定期间禁止继续消耗")
+	# 余额底线：无论如何不透支至负数
 	var bal_before := a.balance
 	_chk(a.spend(10.0, 150.0) == 0.0, "锁定期间 spend 应返回 0")
 	_near(a.balance, bal_before, 1e-6, "锁定期间余额不变")
 	_chk(a.balance >= 0.0, "余额永不为负")
-	# 回复先还贷:250/50 = 5s 还清 → 解锁
+	# 恢复优先清偿透支：250/50 = 5s 还清后解除锁定
 	a.regen(5.0)
-	_near(a.loan_used, 0.0, 1e-3, "回补应先还清贷款")
-	_chk(not a.locked, "还清后应解锁")
-	_chk(a.can_spend(), "解锁后恢复可耗")
-	# 余额被烧到 0 时:透支只发生在短时窗那一档,余额本身不越过 0
+	_near(a.loan_used, 0.0, 1e-3, "恢复应优先清偿透支额度")
+	_chk(not a.locked, "透支还清后应解除锁定")
+	_chk(a.can_spend(), "解除锁定后恢复可消耗状态")
+	# 余额消耗至 0 时：透支仅发生在短期额度层级，账户余额自身保持在 0
 	var b := GrainAccount.new(10.0, 1800.0, 250.0, 50.0, 250.0)
 	b.spend(10.0 / 150.0, 150.0)
-	_near(b.balance, 0.0, 1e-3, "余额烧空应停在 0")
-	_chk(not b.can_spend(), "余额为 0 不可耗")
+	_near(b.balance, 0.0, 1e-3, "余额耗尽应保持在 0")
+	_chk(not b.can_spend(), "余额为 0 时禁止消耗")

@@ -35,13 +35,13 @@ static var pvp_mode: bool = false
 # 就复现 —— 与「拆除逻辑散在多处」同病。此处一处覆盖全部现有与将来的调用方。
 static var _switching: bool = false
 
-## 个人钟账户与时间场(单机;PvP 不建 → 时间系统整体旁路)
+## 时间粒子账户与时间场（单人模式专用；联机 PvP 场景不创建，时间系统保持旁路状态）
 static var grain_account: GrainAccount = null
 static var time_field: TimeField = null
-var _rewind: WorldRewind = null   # 世界快照/回放(单机;PvP 不建)
-var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退出)
+var _rewind: WorldRewind = null   # 世界快照与状态回放器（单人模式专用；PvP 场景不创建）
+var _prev_time_mode: int = 0      # 上一帧时间场模式（判定回溯进入与退出）
 var _post_process: PostProcess = null
-var _tile_ledger: TileLedger = null      # 玩家拆砖账本(瓦片回溯)
+var _tile_ledger: TileLedger = null      # 场景瓦片破坏账本（瓦片破坏状态回溯）
 var _tile_pending: Array = []            # 本帧待入账的格(帧末合并)
 var _tile_cursor: float = -1.0           # 本次回溯的瓦片还原高水位
 var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
@@ -258,13 +258,13 @@ func _ready() -> void:
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
-	# 个人钟(第一阶段):单机建账户与世界时间场(PvP 不建 → TimeField.current 为 null,倍率恒 1)
+	# 时间系统:单人模式创建粒子账户与世界时间场(联机模式不创建,TimeField.current 为 null,倍率恒为 1)
 	grain_account = GrainAccount.new()
 	time_field = TimeField.new(grain_account)
 	TimeField.current = time_field
 	_rewind = WorldRewind.new($WorldViewport)
 	_tile_ledger = TileLedger.new()
-	# 贷款锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
+	# 透支锁定:怀表红色闪烁提示(锁定期间无法消耗时间粒子)
 	grain_account.loan_locked.connect(func() -> void:
 		var w = get_tree().get_first_node_in_group("watch_hud")
 		if w != null and w.has_method("flash_locked"):
@@ -428,8 +428,8 @@ func _rewind_elite_hits() -> void:
 
 
 func _restore_sub(e: Dictionary) -> void:
-	# 回溯还原一个 16px 子格:HP 写回 + 重铺贴图 + 碰撞子格复位 + 账本时间轴照旧。
-	# 所属 64px 格若已因"全子格死光"被清零,这里一并从基线恢复(格级逻辑重新看到它)。
+	# 回溯还原单个 16px 子格：还原生命值、重绘贴图、更新碰撞网格。
+	# 所属 64px 大格若因所有子格被摧毁而清空，此处同步从基准数据恢复大格。
 	if _grid_ref.is_empty() or wall_layer == null or MazeGenerator.current_subgrid.is_empty():
 		return
 	var sub: Vector2i = e["sub"]
@@ -455,8 +455,8 @@ func _restore_sub(e: Dictionary) -> void:
 
 
 func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
-	# cyrm v4 子格破坏:清一个 16px 渲染格(9 环面副本)+ 记回溯账本 + 重建所在碰撞块。
-	# 回溯捕获(**摧毁前**的 hp 由 TileDefs 传进来;仅单机时间系统激活且非回放期)
+	# 16px 子格被摧毁：清除渲染网格、记录回溯账本、触发碰撞区块重建。
+	# 仅在时间系统激活且非回溯播放期间记录破坏前的数据
 	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
 		_tile_pending.append({"sub": sub, "hp": pre_hp})
 	if wall_layer != null:
@@ -702,7 +702,7 @@ func _live_self_drops() -> Array:
 #   在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
 # ★ 与 `try_pickup_for` 的选法**仍然是同一套** —— 按 F 捡的仍是最近那把,只是"能捡"的
 #   每一把都会提示(踩到其中任何一把都能捡起来)。
-## 时间玩法视效驱动:底片化 ramp ≤200ms、加速压暗 ramp 100ms、贷款深度直传
+## 时间视效与后处理驱动：底片滤镜渐变 ≤200ms、加速压暗渐变 100ms、透支深度直接映射
 func _tick_time_visuals(delta: float) -> void:
 	if _post_process == null or time_field == null:
 		return
@@ -711,7 +711,7 @@ func _tick_time_visuals(delta: float) -> void:
 	_haste_t = move_toward(_haste_t, 1.0 if time_field.is_hasting() else 0.0, delta / 0.1)
 	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t)
 
-	# 贷款/加速/回溯的音调变形(全局系数;贷款越深越尖)
+	# 透支、加速与回溯的音调调制（全局系数；透支越深音调越高）
 	var depth := time_field.loan_depth()
 	var mult := 1.0 + TimeParams.LOAN_PITCH_RANGE * depth
 	if time_field.is_hasting():
@@ -722,14 +722,13 @@ func _tick_time_visuals(delta: float) -> void:
 	_sync_time_glows()
 
 
-# 时间状态高亮(B13):加速 → 主角 + 场上敌人;回溯 → **只有精英**。
-# ★ 配色是**规则**不是装饰:精英在加速与回溯两种状态下都必须是"极为亮眼的黄"(用户指定),
-#   其余实体的高亮只是"时间场生效中"的可读提示。用加色副本(TimeGlow)而不是 modulate ——
-#   后者在非 HDR 2D 里被夹到 1.0,且会被敌人每帧的受击白闪覆盖(实测完全看不出高亮)。
-const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角:冷白蓝
-const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌:暖白
-const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英:亮黄(两层叠加 → "极为亮眼")
-const GLOW_RADIUS := 1500.0                      # 只给近处敌人上副本(远处的看不见,白花销)
+# 时间状态高亮：加速状态下高亮主角与场上敌人；回溯状态下仅高亮精英实体。
+# 精英实体在加速与回溯状态下均显示双层极亮黄高光。
+# 采用叠加混合副本（TimeGlow）以避免非 HDR 截断以及受击闪白覆盖。
+const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角：冷白蓝色
+const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌人：暖白色
+const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英敌人：亮黄色（双层叠加强化亮度）
+const GLOW_RADIUS := 1500.0                      # 仅为近处视野内敌人添加高亮以节省性能
 
 func _sync_time_glows() -> void:
 	if time_field == null:
@@ -792,7 +791,7 @@ func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 	time_field.update(delta, want_rewind, want_haste)
 
 
-## 世界回放 tick:录制 ↔ 回放的状态机 + 尸体保留/过期清理(单机)
+## 时间回放步进:录制与回放状态机切换 + 击败实体保留/过期清理(单人模式)
 func _tick_rewind(delta: float) -> void:
 	if _rewind == null:
 		return
@@ -808,10 +807,10 @@ func _tick_rewind(delta: float) -> void:
 	if rewinding:
 		WorldRewind.hold_corpses = false
 		_rewind.step(delta, pl)
-		# 二次伤害:倒飞的子弹穿过**精英**(精英不受回溯,照常在场)时再结算一次伤害。
-		# 每颗回放弹对同一精英只结算一次(meta 记 id),避免逐帧反复扣血。
+		# 二次伤害结算：倒流子弹穿过精英实体时再次结算伤害（精英实体免疫回溯，正常行动）。
+		# 每颗回放子弹对同一精英实体仅结算一次伤害，避免重复判定。
 		_rewind_elite_hits()
-		# 瓦片还原:跨过 target 的破坏按 t 降序写回(最新破坏先还,最早的值最后落地)
+		# 场景瓦片还原：按时间逆序（最新破坏优先写回）还原破坏的数据
 		if _tile_ledger != null and _tile_cursor >= 0.0:
 			var target := _rewind.current_target()
 			for e in _tile_ledger.take_range(target, _tile_cursor):
@@ -823,7 +822,7 @@ func _tick_rewind(delta: float) -> void:
 		_rewind.record(delta, pl, get_tree().get_nodes_in_group("enemies"),
 				get_tree().get_nodes_in_group("bullet"))
 		WorldRewind.expire_corpses(get_tree())
-		# 瓦片账本:帧末入账本帧拆掉的格;并裁剪超出回溯窗口的旧条目
+		# 瓦片账本：帧末记录本帧破坏的瓦片，并裁剪超出历史记录窗口的旧条目
 		if _tile_ledger != null:
 			if not _tile_pending.is_empty():
 				_tile_ledger.record(_rewind.recorded_seconds(), _tile_pending)

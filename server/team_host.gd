@@ -626,7 +626,7 @@ func _finish_match() -> void:
 
 
 # ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)──
-# 异常卡死(嵌墙/夹缝)时主动放弃生命:走正常倒地边沿 → 2s 复活;先清 `last_damager` 归因,
+# 异常卡死(嵌墙/缝隙)时主动脱困:走正常倒地流程 → 2s 复活;先清除 `last_damager` 归因,
 # 自杀不计入任何人击杀。
 # ★ 与 `RoyaleHost.request_suicide_role` **逐字同构**(那边 12 行,规则 7"不分死因"对两个模式
 #   同样成立)。在 3v3 下它落进**无归因**档:倒地 → **对方队 +1**、且无人被计入击杀
@@ -724,7 +724,7 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -
 	super._on_bullet_hit(bullet, victim, victim_role)
 
 
-# 逐人数据的唯一写入口(每次倒地边沿调一次,见 `_match_round_tick`)。
+# 玩家个人统计数据的唯一写入口(每次角色倒地时调用一次,见 `_match_round_tick`)。
 # ★ `deaths` **一律** +1:队友误炸 / 自杀 / 溺水全算死(用户裁定 ②)。
 # ★ `kills` / `kscore` **只在"归因到且异队"**时记给杀手 —— 无归因与同队误炸不计**任何人**的
 #   击杀;而那一分照样给对方队(A 册的 `_scores`)"对方队涨分"与"谁拿到击杀"是两件事。

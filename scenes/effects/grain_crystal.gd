@@ -1,26 +1,24 @@
 class_name GrainCrystalFx
 extends Node2D
 
-# 乌鸫精英击杀结晶(第一阶段):身体碎裂 → 结晶炸开散落 → 飞向怀表 → 被吸收。
-# 世界空间节点(挂 WorldViewport 侧),但目标点每帧按**相机会算**到屏幕上的怀表中心
-# ——怀表是 HUD 控件(屏幕空间),这样不需要跨 canvas 层搬节点。
-# 吸收完成:入账(Level0.grain_account.deposit)+ 怀表颤抖(WatchHud.tremble)。
+# 精英乌鸫击杀掉落结晶特效：击杀碎裂 → 结晶碎片散开 → 飞向怀表 UI → 触发吸收。
+# 本节点位于世界空间（挂载于 WorldViewport 树下），目标点每帧通过相机反投影计算屏幕上怀表的中心坐标。
+# 吸收完成后：增加粒子余额（Level0.grain_account.deposit）并触发怀表微震（WatchHud.tremble）。
 
 const SHARD_COUNT := 10
-const SCATTER_TIME := 0.28          # 炸开+散落阶段时长(秒)
-# 阶段二改成**指数收敛**(v = 到目标的位移 × ARRIVE_RATE,再限速):任意距离都在 ~0.3s 内到位,
-# 且近目标时每帧步长只有几像素 —— 既不会绕着目标转圈,也不会一帧跨过去(隧穿)。
-# 上一版是"纯加速度 + 阻尼",实测在真实世界里 1.9s 都到不了(只能靠兜底入账,碎片会半路消失)。
-const ARRIVE_RATE := 16.0           # 收敛速率(1/s):时间常数 ≈ 1/16 ≈ 0.06s
-const MAX_FLY_SPEED := 4200.0       # 限速(px/s):跨一整屏 ~0.46s;远距击杀也大概率赶在兜底线前到
-const ABSORB_RADIUS := 16.0         # 吸收半径(按线段判近,见 _segment_hits)
-const ABSORB_TIMEOUT := 1.6         # 阶段二超时即强制吸收(颗粒是数值承诺,不许因特效丢掉)
-const ABSORB_TAIL := 0.8            # 吸收后再留一点尾巴让其余碎片飞完,然后自毁
-const SHARD_COLOR := Color8(18, 18, 22)        # 黑结晶(用户指定;衬亮背景更醒目)
-const CORE_COLOR := Color8(70, 70, 78)         # 黑结晶上的冷灰亮芯(保留体积感)
+const SCATTER_TIME := 0.28          # 炸开与散落阶段持续时间（秒）
+# 阶段二采用指数收敛算法（速度 v = 目标向量 × ARRIVE_RATE 并设置速度上限）：
+# 保证在各种距离下平稳飞向目标，近目标时自动平滑减速，防止围绕目标振荡或高速穿透判定范围。
+const ARRIVE_RATE := 16.0           # 收敛速率（1/s），时间常数 ≈ 0.06s
+const MAX_FLY_SPEED := 4200.0       # 飞行最大速率限制（px/s）
+const ABSORB_RADIUS := 16.0         # 吸收判定半径（基于线段连续检测）
+const ABSORB_TIMEOUT := 1.6         # 阶段二超时兜底：若超时则强制触发吸收，确保数值绝对不丢失
+const ABSORB_TAIL := 0.8            # 触发吸收后保留短暂残影时间，等待其余碎片全部飞抵后自毁
+const SHARD_COLOR := Color8(18, 18, 22)        # 结晶主颜色（深黑像素风格）
+const CORE_COLOR := Color8(70, 70, 78)         # 结晶内部冷灰高光
 
-static var last_absorb_kind: String = ""   # 诊断:"fly"=真飞到怀表 | "timeout"=兜底路径(不应成为常态)
-static var last_absorb_t: float = 0.0      # 诊断:吸收发生在阶段二开始后多久(秒)
+static var last_absorb_kind: String = ""   # 诊断标记："fly"=正常飞抵怀表 | "timeout"=超时兜底吸收
+static var last_absorb_t: float = 0.0      # 诊断数据：记录从阶段二开始至完成吸收所用时间（秒）
 
 var amount: int = TimeParams.ELITE_GRAIN_DROP
 var _shards: Array = []             # [{p, v, size}]
@@ -48,16 +46,16 @@ static func spawn(host: Node, world_pos: Vector2, amount_: int) -> void:
 func _process(delta: float) -> void:
 	_t += delta
 	if _t < SCATTER_TIME:
-		# 阶段一:炸开散落(强阻尼,像碎片四散)
+		# 阶段一：碎片向四周炸开散落（带指数衰减阻尼）
 		for s in _shards:
 			s["v"] = (s["v"] as Vector2) * exp(-4.5 * delta)
 			s["p"] = (s["p"] as Vector2) + (s["v"] as Vector2) * delta
 	else:
-		# 阶段二:全体飞向怀表。三条纪律,缺一条都会"看着飞到了、颗粒没入账":
-		#  ① **指数收敛而不是纯加速** —— 纯加速追踪会绕着目标来回冲(过冲后速度越来越大),
-		#  ② **按线段判近** —— 高速下一帧能跨过目标几十像素,只判"当前点是否在半径内"会**穿过去**
-		#     (FLY_ACCEL 提到 5200 之后实测就是这样:FX 一直飞、_absorbed 永远 false、余额零变化);
-		#  ③ **兜底入账** —— 颗粒是**数值承诺**,特效再怎么飞丢也必须入账。超时即吸收。
+		# 阶段二：所有碎片飞向怀表目标点。
+		# 核心机制：
+		#   1. 指数收敛：避免纯加速度模式产生过冲和环绕振荡；
+		#   2. 线段连续碰撞检测：针对高速运动防止单帧位移过大穿透吸收半径；
+		#   3. 超时保底机制：保证时间粒子最终必定成功结算，不因特效表现异常而丢失。
 		var target := _watch_world_target()
 		var all_done := true
 		for s in _shards:
@@ -78,12 +76,12 @@ func _process(delta: float) -> void:
 				or (_absorbed and _t >= SCATTER_TIME + ABSORB_TAIL):
 			if not _absorbed:
 				last_absorb_kind = "fly" if all_done else "timeout"
-				_absorb()   # 兜底:特效没飞到也入账(上面那条"绝不丢颗粒")
+				_absorb()   # 超时保底结算，确保粒子正常增加
 			queue_free()
 	queue_redraw()
 
 
-## 线段 a→b 上离 p 最近的点是否落在 r 内(防"一帧跨过目标"的隧穿)。
+## 连续碰撞检测：检测线段 a→b 上距离点 p 最近的点是否在半径 r 内（防止高速运动穿透）。
 static func _segment_hits(a: Vector2, b: Vector2, p: Vector2, r: float) -> bool:
 	var ab := b - a
 	var len2 := ab.length_squared()
@@ -93,7 +91,7 @@ static func _segment_hits(a: Vector2, b: Vector2, p: Vector2, r: float) -> bool:
 	return (a + ab * t).distance_to(p) <= r
 
 
-## 怀表中心的世界坐标:取 WatchHud 的屏幕矩形中心,经相机逆换算(表心随镜头移动也准)。
+## 计算怀表中心在当前世界坐标系下的位置：根据 WatchHud 屏幕矩形中心结合相机变换进行逆向计算。
 func _watch_world_target() -> Vector2:
 	var tree := get_tree()
 	if tree == null:

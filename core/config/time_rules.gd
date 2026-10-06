@@ -10,17 +10,17 @@ extends RefCounted
 # ★ 本类零 autoload / 零场景依赖:服务器与客户端共用,-s 探针可直接测。
 # ★ 客户端上报的数值**不可信** —— 一切以服务器 clamp 后的那份为准。
 
-# ── 默认值(用户 2026-09-28 裁定原文)──
+# ── 默认配置（PvP 时间玩法基准数值）──
 const DEF_INITIAL := 1000.0
 const DEF_CAP := 1800.0
-const DEF_REWIND_BURN := 150.0     # 回溯:颗粒/秒
-const DEF_HASTE_BURN := 70.0       # 加速:颗粒/秒
-const DEF_WINDOW := 250.0          # 短时额度
-const DEF_REGEN := 50.0            # 短时回复:颗粒/秒
-const DEF_KILL_RATIO := 0.5        # 击杀获取 = 被击杀者账户总额度 × 此比例(被击杀者不减少)
-const DEF_BLOCK_GAIN := 10         # 每摧毁一个 16px 子格
-const DEF_DAMAGE_GAIN := 4         # 每造成 1 点伤害(仅对敌方;自杀/自伤不产颗粒)
-const DEF_HASTE_MULT := 3.0        # 加速倍率(用户裁定固定 ×3,不进建房页)
+const DEF_REWIND_BURN := 150.0     # 时空回溯消耗速率（粒子/秒）
+const DEF_HASTE_BURN := 70.0       # 时间加速消耗速率（粒子/秒）
+const DEF_WINDOW := 250.0          # 短期使用额度
+const DEF_REGEN := 50.0            # 短期额度恢复速率（粒子/秒）
+const DEF_KILL_RATIO := 0.5        # 击杀获取比例 = 目标账户总额度 × 此比例（目标自身余额不扣除）
+const DEF_BLOCK_GAIN := 10         # 瓦片破坏奖励：每摧毁一个 16px 子格获取的粒子数
+const DEF_DAMAGE_GAIN := 4         # 伤害奖励：每造成 1 点伤害获取的粒子数（仅限敌方，自伤/友伤不奖励粒子）
+const DEF_HASTE_MULT := 3.0        # 加速倍率（固定为 3.0×，不在房间创建面板开放调节）
 
 # ── 钳制范围(服务器侧防越界;建房页滑条也用同一套)──
 const R_INITIAL := Vector2(0.0, 5000.0)
@@ -45,12 +45,12 @@ var damage_gain := DEF_DAMAGE_GAIN
 var haste_mult := DEF_HASTE_MULT
 
 
-## 贷款上限:**= 短时额度**(用户 2026-09-28 裁定:启用贷款,但仅限短时限额,账户本身不透支)。
+## 透支上限：等于短期额度（启用透支机制，但透支仅限短期额度内，账户总余额不为负）。
 func loan_limit() -> float:
 	return window
 
 
-## 服务器/建房页共用的钳制。★ 顺序有讲究:先钳 window(贷款上限由它推出),再钳 cap ≥ initial。
+## 服务端与房间设置共用的数值钳制范围。限制顺序：先钳制 window（透支上限由此推导），再钳制 cap ≥ initial。
 func clamp_self() -> void:
 	window = clampf(window, R_WINDOW.x, R_WINDOW.y)
 	initial = clampf(initial, R_INITIAL.x, R_INITIAL.y)
@@ -95,12 +95,12 @@ func to_dict() -> Dictionary:
 	}
 
 
-## 本规则下的颗粒账户(初始/上限/短时窗/回复/贷款额全部按规则走)。
+## 构建本规则对应的时间粒子账户（初始值、上限、短期窗口、恢复率、透支额度均按此规则配置）。
 func make_account() -> GrainAccount:
 	return GrainAccount.new(initial, cap, window, regen, loan_limit())
 
 
-## 回溯环缓需要覆盖的秒数 = 从满额烧到空(上限 / 回溯速率),上限 15s。
+## 状态回溯环形缓冲区所需覆盖的秒数 = 从满额消耗至空所需时间（上限 / 回溯消耗速率），上限为 15s。
 func rewind_buffer_seconds() -> float:
 	if rewind_burn <= 0.0:
 		return 0.0

@@ -143,13 +143,13 @@ func _on_snapshot_own(own: Dictionary) -> void:
 	#   N+1 并立刻广播一条带它的快照;而那条快照(unreliable)落在 `_on_resumed` **刚重建**的
 	#   rollback 上(`_acked` 从 0 起)→ `_acked` 被抬到一个新纪元追不上的高度,
 	#   `PredictionRollback.on_authoritative` 的 `ack <= _acked` 把之后所有真实 ack(1,2,3…)全丢,
-	#   直到客户端自己的 seq 爬过它 —— **断线前活了多久就哑多久**(探针实测 ~560 帧 ≈ 9s;一局中段
-	#   可上万帧)。症状正是 `prediction_rollback.gd` 记过的那个静默退化:不报错、**回滚恒为 0**、
-	#   `sync_soft_state` 不再被调用 → 背包/拾取不同步("地上的枪没了、手上也没多、还开不了火")。
+	#   直到客户端自身的 seq 序列号赶上它 —— 导致状态同步与回滚在此期间完全失效(测试实测 ~560 帧 ≈ 9s;一局中段
+	#   可上万帧)。其表现为:无报错信息、回滚次数恒为 0、`sync_soft_state` 不再被调用,
+	#   进而导致背包与地面拾取状态不同步。
 	#   判据:**合法 ack 永不超过本端已发的 seq**(服务器只可能 ack 它消费过的包)→ 超过的一定是
-	#   上一个 seq 空间的残留,丢掉即正确(那几条本来就该被 `_on_resumed` 的重置作废)。
-	#   ★ 两侧的复位互为理由(服务端归 0 是为了客户端的 `_acked`,客户端重置是为了服务端的 0),
-	#     只改一侧会得到镜像的同一个洞;守卫:`tests/reconnect_probe.tscn` 相①(去掉本行即红)。
+	#   上一个 seq 空间的残留,丢弃即可。
+	#   ★ 两端的重置逻辑互为前提条件(服务端归 0 适配客户端 _acked,客户端重置适配服务端 0);
+	#     守卫测试:`tests/reconnect_probe.tscn` 相①(缺少本判断将判定失败)。
 	var ack := int(own.get("ack_seq", 0))
 	if ack > _input_seq:
 		return
@@ -206,8 +206,8 @@ func _on_time_state(payload: Dictionary) -> void:
 
 
 # Beta 时间玩法:本地预测加速(与服务器同一判据 —— 按住 + 镜像账户可耗)。
-# 倍率写进 pvp_haste_mult,player 的速度域/武器 tick 会吃它;烧颗粒只由服务器做
-# (镜像 10Hz 校正,本地不扣,避免双份漂移)。
+# 倍率写入 pvp_haste_mult，供玩家速度域与武器 tick 逻辑读取；时间粒子的实际扣除由服务端权威处理
+# （通过 10Hz 镜像状态同步校准，客户端本地不直接扣除以避免两端状态发散）。
 func _tick_beta_time(delta: float) -> void:
 	if not PvpSession.beta_mode or _local == null:
 		return
@@ -650,18 +650,13 @@ func _refresh_input_lock() -> void:
 #     出现 `MatchResult.new(` 即红。
 const RESULT_SCENE := preload("res://ui/match_result.tscn")
 
-# 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。三个模式共用 —— 它们都 extends 本类,
-# 各自只覆写 `_build_result_payload()`。
-# ★★ **挂载一次、但每次都要刷新**(`if _result == null` 只包住"建 + 连线")。
-#   写成 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**":
-#   第二条 MATCH_OVER 载荷就永远到不了屏幕上,而 `MatchResult.show_result` 的清场重建
-#   (`ui/match_result.gd` 的 remove_child→queue_free 那段)在生产里**一次都不会跑** ——
-#   探针却直接调它、照绿。**探针比产品更绿**是这里最难发现的形状。
-#   ★ 第二条载荷**可达**(不是假想):1v1 —— `server_main.gd` 在每次 reclaim 成功后重播当前
-#     `round_state`,掉线重连的客户端就会收到第二条 MATCH_OVER;3v3 —— `team_host.gd` 的
-#     `_finish_match()` 在战斗进行中直接把 PLAYING→MATCH_OVER,而倒地边沿检测在
-#     `match _round_state:` **之前**且**不看状态** ⇒ MATCH_OVER 之后再死人会再广播一条
-#     带新 `stats`/`mvp` 的终局载荷;`mark_disconnected` 那条同款。
+# 结算页:玩家手动退出(非固定倒计时自动返回)。三个模式共用 —— 均继承自本类,
+# 各自仅需覆写 `_build_result_payload()`。
+# ★★ **挂载一次,但每次收到通知都要刷新**(`if _result == null` 仅限制初次实例化与信号连接)。
+#   若写成 `if _result != null: return`,会导致后续 MATCH_OVER 载荷无法更新到界面上;
+#   测试若直接调用 show_result 会掩盖此问题。
+#   ★ 第二条载荷在实际运行中可能出现:1v1 中重连客户端会重收状态;3v3 中结算后若有延迟伤害触发倒地,
+#     会再次广播更新后的战绩数据。
 func _show_result() -> void:
 	if _result == null:
 		_result = RESULT_SCENE.instantiate()
@@ -779,8 +774,8 @@ func _apply_peer_hues(_hues: Dictionary) -> void:
 #     —— 6 个人里认不出队友这个模式就没法玩,个人色相在 3v3 是无效输入。
 # ★ 签名收**整个 payload** 而不是只收 `hues`:3v3 要读的是**同一份应答里的另一个键**;
 #   只传 hues 会逼子类把 teams 先存进一个字段、再到钩子里取回来(多一条"上游写、下游读"的暗通道)。
-# ★ 两个既有子类**都不覆写它**,且默认实现与改动前那两行逐字同构("非空才染色")
-#   ⇒ 对它们是零影响(回归线:kh_l4/kh_l5/hud_declarative + 真链路探针)。
+# ★ 两个既有子类**都不覆写它**,且默认实现与改动前逻辑一致("非空才染色")
+#   ⇒ 保持向后兼容,对既有行为零破坏(由回归测试套件保护)。
 func _apply_peer_hues_or_team(payload: Dictionary) -> void:
 	var hues: Dictionary = payload.get("hues", {})
 	if not hues.is_empty():
@@ -804,9 +799,9 @@ func _on_match_sync(payload: Dictionary) -> void:
 	# ★ 重连补态那次**必然**不一致,而那不是 bug:1v1 每局换边(`match_round._start_next_round`
 	#   翻 `_side_swap` → `role_spawns()` 在 player/player2 之间对调),而 `PvpSession.spawn` 只在
 	#   进场写一次(`lobby_page` 配对时),此后无人刷新。按它硬拉 = 把玩家瞬移走,而服务器那具
-	#   身体从掉线起就没动过 → C2 下一帧又把人拉回来,顺带刷一条假告警(告警的前提在这里不成立)
-	#   淹掉探针日志。位置本来就归 C2 权威(服务器瞬移正是它要收敛的外部事件),故这条路
-	#   **既不校正、也不告警、也不回写 `PvpSession.spawn`**(回写只会让下一次校正更歪)。
+	#   身体从掉线起就未位移 → 本地预测在下一帧又将玩家拉回,此时若触发告警属于误报
+	#   且污染日志。物理位置完全由客户端预测与回滚机制负责收敛,因此重连补态路径
+	#   **无需校正坐标、不发告警,亦不回写 `PvpSession.spawn`**。
 	var sp: Dictionary = payload.get("spawns", {})
 	if not resync and sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]

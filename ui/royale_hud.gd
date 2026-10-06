@@ -176,7 +176,7 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 		(_rows.pop_back() as Label).queue_free()
 	while _rows.size() < rows.size():
 		var nl := _make_label(32, COLOR_BOARD)
-		# 钉死行宽 + 兜底裁剪:文本宽度不再由内容决定(昵称长短不一把整行撑出面板)。
+		# 固定行宽并开启文本裁剪:防止过长昵称撑破面板容器。
 		nl.custom_minimum_size = Vector2(BOARD_W - 8.0, 0)
 		nl.size_flags_horizontal = Control.SIZE_FILL
 		nl.clip_text = true
