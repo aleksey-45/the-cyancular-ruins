@@ -6,6 +6,14 @@ extends MatchCombat
 
 func _match_round_tick(delta: float) -> void:
 	for role in players:
+		# ★ MATCH_OVER 之后**不再产生任何记账**(终局后残留的爆炸致死仍会把玩家打倒地):
+		#   没有这道闸,`deaths` 会 +1、尸体再掉一次武器、并**再广播一次带新 mvp 的终局载荷**。
+		#   大乱斗那一支**天然没有这个问题**(它的倒地边沿住在 `RoundState.PLAYING` 分支里,
+		#   见 `RoyaleHost._match_round_tick`)—— 两处形状一致是**刻意**的
+		#   (三个模式的倒地边沿是**同一个契约的三份落地**),别把这句当成多余而删掉。
+		#   ★ 只排除 MATCH_OVER:`ROUND_OVER` 期间倒地照旧入账(既有行为,不在本项里)。
+		if _round_state == RoundState.MATCH_OVER:
+			continue
 		var p: Node2D = players[role]
 		if not p.is_downed():
 			continue
@@ -17,12 +25,19 @@ func _match_round_tick(delta: float) -> void:
 		if _down_counted.get(role, false):
 			continue
 		_down_counted[role] = true
-		# 掉落:倒地瞬间在原地散落保留武器之外的全部装备。
-		# ★ 必须在**倒地状态转换时(边沿触发)**执行，不能延后至复活流程:旧实现中 `_respawn_player`
-		#   先将角色瞬移至出生点再执行掉落，导致装备错误掉落在出生点；且实体在 2s 倒地倒计时内
-		#   仍在进行物理模拟(重力与滑动)，复活时已偏离实际阵亡位置。
+		# 掉落:倒地**这一刻**在原地丢下"除随机保留一把"外的全部武器(用户 2026-09-21 裁定)。
+		# ★ 必须在**倒地边沿**、不能在复活流程里(旧实现):`_respawn_player` 是先把人瞬移到
+		#   出生点再调掉落 ⇒ 掉在出生点;而且尸体在 2s 倒地窗里继续走物理(重力/击退衰减/
+		#   滑行),等到复活那一刻它早已不在死亡的那一格了。
 		# ★ 复用计分那个 `_down_counted` 闩 ⇒ 每次死亡恰好丢一次(与复活那一支互不重复)。
 		_drop_all_but_one(p, role)
+		# 逐人统计(★ 2026-09-25):倒地边沿记 death(一律)与击杀。
+		# ★ 击杀记给**对手**,口径与下面的 `scorer` 逐字一致 —— 1v1 的计分规则是
+		#   「不分死因、对方死亡都算」(用户裁定),它**没有归因**:自杀/溺水也让对方 +1 分。
+		#   结算页的 kills 必须与记分条同口径,否则"5 杀取胜"的局在结算页上只显示 3 杀(不报错)。
+		# ★ **不能**在这里用击杀归因那个具名函数:它住子类,而基类并集里出现它的名字会让
+		#   `tests/probe/kh_l5_probe.gd:544-549` 的反向断言变红(子类方法不得泄漏进基类)。
+		_record_down(int(role), _opponent_of(int(role)))
 		# 击杀定义:对方死亡都算 —— 不分死因(枪杀/爆炸/溺水/自伤/无射手)一律记给对方 +1。
 		# (旧实现靠 pvp_killer 射手归因、无射手不计分,已废弃。)
 		var scorer := _opponent_of(role)
@@ -45,7 +60,6 @@ func _match_round_tick(delta: float) -> void:
 								(players[heal_role] as Node).max_hp,
 								(players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
-			_tick_countdown_sync(delta)
 		RoundState.PLAYING:
 			_handle_respawns(delta)
 			for role in players:
@@ -82,6 +96,16 @@ func _respawn_player(role: int) -> void:
 		p.cancel_jump_state()
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
+	# 助攻表:复活 = 新的一条命,上一次倒地之前的命中历史作废(与"助攻只算这一次倒地之前"一致)。
+	# ★ 住在这里一处覆盖三模式 —— 另两个模式的 `_respawn_player` 都 `super` 到本函数。
+	# ★ "复活点清空 ≡ 倒地点清空"这个**等价**成立,但**理由不是** `take_hit` 在 `downed` 时
+	#   早退(`scenes/player/combat_component.gd:43`)—— 那道早退只挡住**新写入**,倒地窗里
+	#   **旧条目仍留在表里**(它没被抹掉,只是没人再读)。真正让两者等价的是 **`_down_counted` 闩**:
+	#   `_match_round_tick` 在倒地边沿置位、**只在本函数**复位 ⇒ 同一个受害者在复活之前
+	#   **不可能**再进一次 `_record_down`,于是"倒地清空"没有任何"复活清空"做不到的事。
+	#   ★ 将来若把 `_down_counted` 的复位挪走、或加一条绕开闩的倒地边沿,这个等价会**静默失效**。
+	# ★ 选复活点还与 spec §3.4 的口径逐字一致,且它才是玩家"重新开始"的语义点。
+	_clear_assist_table(role)
 
 # 击杀后活方「复位」:回到本方出生点但保留血量/防水,不治疗。死者(另一 role)照常满血复活。
 
@@ -161,17 +185,19 @@ func _broadcast_round_state() -> void:
 		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
-	_rpc_all("round_state", [data])
-
-
-# 倒计时期间的周期性重播(三模式共用,见 `COUNTDOWN_SYNC_INTERVAL` 上的说明)。
-# 客户端**每次收到都重设**剩余秒数,于是两端的倒计时由服务器这一个时钟锚定,
-# 而不是各自从"收到广播那一刻"起跑。
-func _tick_countdown_sync(delta: float) -> void:
-	_countdown_sync -= delta
-	if _countdown_sync <= 0.0:
-		_countdown_sync = COUNTDOWN_SYNC_INTERVAL
-		_broadcast_round_state()
+		# MVP:整场 ACS 最高者(并列 → 击杀多者 → 阵亡少者 → role 升序,见底座 `mvp_role`)。
+		# ★ 与 `match_winner` **同款时机**:只在 MATCH_OVER 带(局中还没有"整场"可言)。
+		# ★ 1v1 也给 —— spec §4 明说"1v1 也可给";口径与 3v3 **逐字相同**,不限制在胜方
+		#   (换公式之后"MVP 常在败方"的那个结构性来源已经没了,见 spec §1.3)。
+		data["mvp"] = mvp_role()
+	# 逐人数据:与 `destroyed` / `ground_weapons` / 3v3 同款纪律 —— **只在非空时带该键**
+	# (1v1 只有两个 role,一次广播多几十字节;空表不占带宽,旧客户端忽略未知键)。
+	# ★ 本函数是 **1v1 专用**:`RoyaleHost` 与 `TeamHost` 都整体覆写了 `_broadcast_round_state`,
+	#   不会与本段叠加(同一份数据只投递一次)。
+	var table := stats_payload()
+	if not table.is_empty():
+		data["stats"] = table
+	_send_round_state(data)
 
 
 func _match_winner() -> int:

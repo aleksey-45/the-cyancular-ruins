@@ -7,17 +7,16 @@ extends MatchRound
 #   match_snapshot / match_combat / match_round / match_state 里,见基类注释。
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
-const TIME_SYNC_INTERVAL := 0.1   # Beta 时间模式：时间粒子状态同步下发周期（10Hz，满足客户端怀表读数平滑插值需求）
+const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
 
 var _time_sync := 0.0
 # ── Beta 回溯(每 role 自身;他人不受影响)──
 const RW_SNAP_DT := 1.0 / 20.0     # 自身状态采样间隔(20Hz,与单机 WorldRewind 同款)
 var _rw_buf: Dictionary = {}       # role -> Array[帧快照](t 升序;只存**自己**的状态+自己的子弹)
 var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
-# ★ `_rw_on` / `_rw_trail` 声明在 **`match_snapshot.gd`**(读它们的 `_broadcast_snapshot()` 那一层)——
-#   基类看不见子类成员,放这里会让快照广播整份解析失败。见那边的注释。
+# _rw_on / _rw_trail 声明在根基类 MatchState(本文件不重复声明,GDScript 禁止成员遮蔽)
 var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
-var _rw_t0: Dictionary = {}        # role -> float（环形缓冲区基准时间戳；回放时按相对时间寻帧）
+var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}) -> void:
@@ -28,8 +27,8 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	for v in raw_disabled:
 		_disabled_weapons.append(int(v))
 	_ai_roles = ai_roles
-	# Beta 时间玩法（B21）：房主 options 包含 time 规则配置项（房间设置 9 项参数）⇒ 构建服务端统一判定的时间粒子经济系统。
-	# 常规模式 options["time"] 为空 → time_economy 恒为 null，所有相关结算与广播直接旁路，逻辑行为保持不变。
+	# Beta 时间玩法(B21):房主 options 带 time 规则(建房页 9 项) ⇒ 建服务器权威颗粒经济。
+	# 普通局 options["time"] 为空 → time_economy 恒 null,一切结算/广播短路,行为零变化。
 	var time_dict: Dictionary = options.get("time", {})
 	if not time_dict.is_empty():
 		time_economy = TimeEconomy.new(TimeRules.from_dict(time_dict))
@@ -105,9 +104,9 @@ func _ready() -> void:
 	_round_timer = COUNTDOWN_TIME
 	# 禁用武器槽位:_init 时玩家 @onready 未就绪(不能碰 weapons),进树后应用
 	for role in players:
-		(players[role] as Node).weapons.set_enabled_slots(_disabled_weapons)
+		(players[role] as Node).weapons.set_enabled_types(_disabled_weapons)
 	# 地面武器:铺 12 把 + 每个玩家随机拿 1 把。
-	# ★ 必须排在 set_enabled_slots **之后** —— 与单机 `_give_starting_weapon` 同款理由:
+	# ★ 必须排在 set_enabled_types **之后** —— 与单机 `_give_starting_weapon` 同款理由:
 	#   先给再禁的话,手上一旦是禁用武器会被判成空手。
 	# ★ 这同时是**服务器玩家有枪的唯一来源**:player.tscn 自身的 _ready 给的是空背包,
 	#   不发的话服务器上的玩家开不了火(PvP 直接哑火,且不会有任何报错)。
@@ -119,7 +118,8 @@ func _ready() -> void:
 
 # 把每个玩家的 `combat.took_hit` 接到本宿主的 `_on_player_hit`。
 # ★ 接线走**裸方法名**(`Callable(self, "_on_player_hit")`)⇒ **虚分派**:子类覆写的那份才是
-#   被调到的那个(`TeamHost._on_player_hit` 的逐人伤害累计就挂在这条上)。
+#   被调到的那个(逐人伤害累计就挂在这条上 —— 2026-09-25 起它住在 `MatchCombat._on_player_hit`
+#   本体,`TeamHost` 那份覆写已随统计面上提一起删除)。
 # ★ 为什么抽成具名函数而不是留几行在 `_ready` 里:**手工摆位路径**(探针:role_peers 传空、
 #   玩家在 `_ready` 之后才 `_place` 进来)也要调**生产那一份**接线 —— 让探针自己再抄一遍
 #   `connect(...)` 的话,验的是抄件:哪天生产的接线断了/换了信号,探针照样绿(本仓明令禁止的
@@ -135,7 +135,7 @@ func _wire_hit_feedback() -> void:
 # (原 `_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**下发:
 #  那次"推"与 match_start 落在同一次客户端 poll,而那一刻新场景的订阅方还不存在 → 静默丢失
 #  (自检 B2:禁武器闸门没上)。现在 options 随 `NetBus.match_sync` 的应答一起给。
-#  消费者 `tests/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
+#  消费者 `tests/probe/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
 
 # ── 网络统计读数(2026-09-22 诊断用,★ 默认关;`-- --netstat`)────────────────
 # 每 role 的**待消费输入队列长度**。
@@ -205,7 +205,7 @@ func _physics_process(delta: float) -> void:
 	# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):默认关。
 	_debug_destroy_tile(delta)
 	if time_economy != null:
-		_tick_beta_rewind(delta)   # Beta 时空回溯控制器（环形缓冲区采样、状态回溯、免伤判定与轨迹记录）
+		_tick_beta_rewind(delta)   # Beta 回溯机(环缓/倒放/免伤/轨迹)
 	# Beta 时间玩法:加速态(在快照**前**定格 —— 快照的 haste 位读的就是这个倍率)。
 	# 裁决在服务器:按住 + 账户可耗才生效;只乘自己(别的角色/子弹/世界一概不动)。
 	if time_economy != null:
@@ -215,7 +215,7 @@ func _physics_process(delta: float) -> void:
 			if acc == null or p == null:
 				continue
 			var src: PacketInputSource = input_sources[role]
-			var on := src.haste_held() and acc.can_spend()
+			var on: bool = src.haste_held() and acc.can_spend()
 			if on:
 				var burn: float = time_economy.rules.haste_burn * delta
 				if acc.spend(delta, time_economy.rules.haste_burn) < burn * 0.999:
@@ -295,10 +295,11 @@ func _debug_destroy_tile(delta: float) -> void:
 	print("worker: [test] 拆格 %s(相⑦ 用)" % str(cell))
 	TileDefs.damage_tile(cell, 999999, "explosion")
 
-# ══ PvP 时空回溯逻辑（仅影响发动角色自身，其他玩家不受影响）════════════════════════
-# 环形缓冲区仅记录该角色自身的状态（位置、速度、生命值、朝向、倒地状态、弹药）及其自身的子弹。
-# 回溯期间：输入源冻结（由历史快照驱动）、伤害判定免疫（time_rewinding 元数据隔离），
-# 自身发出的子弹沿历史轨迹回流并在接触敌方时正常结算伤害。
+# ══ Beta 回溯机(每 role 自身;他人不受影响)════════════════════════
+# 环缓只存**该 role 自己**的状态(位置/速度/HP/朝向/倒地/弹量)+ **它自己的子弹**
+# (pos/vel + rewind_state;不重建已消亡的弹 —— 已爆的榴弹不复活,已知边界)。
+# 回溯期间:输入源 frozen(状态由历史驱动)、take_hit 免伤(meta 闸)、
+# 自己的子弹随历史倒放且照常伤害他人(用户裁定)。
 
 func _tick_beta_rewind(delta: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
@@ -309,6 +310,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		var acc := time_economy.accounts.get(r) as GrainAccount
 		if p == null or src == null or acc == null:
 			continue
+		# 显式类型:time_economy 无类型字段链式取值推不出;且 p 的 is_downed() 返回 Variant
 		var want: bool = src.rewind_held() and acc.can_spend() and not p.is_downed()
 		var on := bool(_rw_on.get(r, false))
 		if want and not on:
@@ -321,21 +323,15 @@ func _tick_beta_rewind(delta: float) -> void:
 				_rw_t0[r] = now
 			on = true
 		elif not want and on:
-			src.frozen = false
-			p.remove_meta("time_rewinding")
-			_rw_on[r] = false
-			_rw_trail[r] = []
+			_finish_rw(r, p, src)
 			continue
 		if not on:
 			_record_rw_frame(r, p, now)
 			continue
-		# 回溯中：按消耗速率扣除粒子；回放倍率平滑过渡；驱动自身与自身子弹的历史状态
+		# 回溯中:烧颗粒(rewind_burn/s);游标 3×→1× ramp;驱动自身与自己的子弹
 		acc.spend(delta, time_economy.rules.rewind_burn)
 		if acc.balance <= 0.0:
-			src.frozen = false
-			p.remove_meta("time_rewinding")
-			_rw_on[r] = false
-			_rw_trail[r] = []
+			_finish_rw(r, p, src)
 			continue
 		var cur := float(_rw_cursor.get(r, 0.0))
 		var mult := lerpf(TimeParams.REWIND_START_MULT, 1.0,
@@ -343,7 +339,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		cur += delta * mult
 		_rw_cursor[r] = cur
 		_apply_rw_frame(r, p, cur)
-		# 轨迹记录：每 3 个物理帧记录一个位置点（供其他客户端渲染残像，保留最新 10 个点）
+		# 轨迹:每 3 个物理帧一个点(他人残像;快照带下去,超过 10 个丢最旧)
 		if Engine.get_physics_frames() % 3 == 0:
 			var trail: Array = _rw_trail.get(r, [])
 			trail.append([p.global_position.x, p.global_position.y])
@@ -352,7 +348,41 @@ func _tick_beta_rewind(delta: float) -> void:
 			_rw_trail[r] = trail
 
 
-# 非回溯期：以 20Hz 频率采样记录自身状态（超出 rewind_buffer_seconds 时长自动裁剪）
+## 退出回溯(**两条退出路径共用**:主动松开 / 颗粒耗尽)。
+##
+## ★★ 2026-10-03 修 —— **录像带模型**:把"被复写的未来"从环缓上**裁掉**。
+##   原实现只做 `frozen=false` / 摘 meta / 清 trail,**不碰 `_rw_buf`** ⇒ 那些"已经被回溯抹掉"
+##   的帧还留在环缓里,而寻帧是 `target = buf.back().t - cursor`(从**当前末尾**往回数)——
+##   于是**下一次回溯会先把那段被抹掉的未来倒放一遍**(玩家看到的就是"回溯过的时间又出现了")。
+##   单机那条线早就修过(`world_rewind.gd` 的 `finish()`,KH 的 D3「两次回溯串带」),
+##   PvP 这份是后来写的、漏了这一步。两边的语义现在对齐。
+##
+## 保留语义与单机一致:裁完若一帧不剩,至少留 1 帧(倒到了磁带最老处 ⇒ 世界停在那帧上,
+## 磁带从它重新起算)。裁完把游标归零(下次从新末尾重新起算)。
+func _finish_rw(r: int, p: Node2D, src: PacketInputSource) -> void:
+	src.frozen = false
+	p.remove_meta("time_rewinding")
+	_rw_on[r] = false
+	_rw_trail[r] = []
+	var buf: Array = _rw_buf.get(r, [])
+	if buf.is_empty():
+		_rw_cursor[r] = 0.0
+		return
+	# 出口时刻 = 当前末尾往回走了 cursor 秒。晚于它的一律是被复写的未来。
+	var exit_t := float(buf[buf.size() - 1]["t"]) - float(_rw_cursor.get(r, 0.0))
+	var kept := 0
+	for i in range(buf.size()):
+		if float(buf[i]["t"]) <= exit_t:
+			kept = i + 1
+	if kept == 0:
+		kept = 1
+	if kept < buf.size():
+		buf.resize(kept)
+		_rw_buf[r] = buf
+	_rw_cursor[r] = 0.0
+
+
+# 非回溯期:20Hz 采样自己的状态(超 rewind_buffer_seconds 裁剪)
 func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 	if now < float(_rw_snap_t.get(r, 0.0)):
 		return
@@ -394,8 +424,6 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 		_rw_buf[r] = []
 	var buf: Array = _rw_buf[r]
 	buf.append(d)
-	# ★ 2026-09-30 移植时补 `: float`:`time_economy` 在 MatchState 里声明为无类型(`= null`),
-	#   故 `time_economy.rules.rewind_buffer_seconds()` 整条是 Variant ⇒ `:=` 推不出类型。行为不变。
 	var depth: float = time_economy.rules.rewind_buffer_seconds()
 	while buf.size() > 2 and float(buf[0]["t"]) < float(buf[buf.size() - 1]["t"]) - depth:
 		buf.pop_front()

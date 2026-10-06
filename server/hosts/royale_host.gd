@@ -5,8 +5,8 @@ extends MatchHost
 #  - N 个玩家(roles 1..N)散点出生;死亡 2s 复活(复用 MatchHost._handle_respawns),
 #    复活点动态选"离所有存活敌人 ≥ 若干格"的地板格,出生分散。
 #  - 限时 MATCH_TIME:倒计时归零 → MATCH_OVER,击杀最多者胜(平局=0)。
-#  - 击杀归因:子弹/爆炸命中时将射手记录到受害者 meta("last_damager"),
-#    倒地瞬间读取 meta 计分;无攻击源死亡(溺水/环境伤害)不计分。
+#  - 击杀归因:子弹/爆炸命中时把射手记到受害者 meta("last_damager"),
+#    倒地边沿读 meta 计分;无源死亡(溺水/环境)不计分。
 #  - 排行榜数据经 round_state 载荷下发:{scores(总击杀), names, timer(剩余秒), match_winner}。
 #  - 中途掉线 = 移出对局(节点释放,排行榜标"离开"),剩余 <2 人时终局。
 #  - 出生点静态几何(地板格/连通区规模/开阔优选格,含常量 OPEN_AREA_MIN / PREFER_MIN)
@@ -22,8 +22,6 @@ var _cfg_match_time := 0.0             # 房主自定义时长(秒;0=默认 MATC
 var _hud_sync := 0.0
 var _round_spawns: Dictionary = {}    # role -> Vector2i(开局散点,_init 摆位用)
 var _spawned_once: Dictionary = {}    # role -> true(首次摆位走散点,之后动态选复活点)
-var _deaths: Dictionary = {}          # role -> 阵亡数(排行榜展示)
-var _left: Dictionary = {}            # role -> true(中途掉线,已移出对局)
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -125,7 +123,7 @@ static func plan_spawns(roles: Array) -> Dictionary:
 	# ★★ 这是"出生池缺陷"(2026-09-19)在**本文件**里唯一还剩的姐妹分支:它取的仍是
 	#   `_floor_cells()`(全量、含孤立单格)。**今天不可达**,两条前提都得成立才可达:
 	#   ① `spread_cells` 恒返回 `min(n, 池大小)`(已实测);② 故本分支可达 ⟺ **首档池 < 人数**
-	#      —— 两图池 122 / 59,人数上限 8 ⇒ 死路。守卫:`tests/spawn_pool_smoke` 的 ⑦。
+	#      —— 两图池 122 / 59,人数上限 8 ⇒ 死路。守卫:`tests/smoke/spawn_pool_smoke` 的 ⑦。
 	# ★ 为什么**不**顺手把它也收窄(与用户"收掉它"的裁定不矛盾,这里情况不同):本分支恰在
 	#   "池子极小时"才可达,那时收窄会让补足**补不满** ⇒ `out[role] = (-1,-1)` ⇒ 摆到地图回卷
 	#   角落 —— 按用户已裁定的偏好((-1,-1) 更糟),**保持全量才是对的**。取舍已登记在报告里;
@@ -202,9 +200,11 @@ func _match_round_tick(delta: float) -> void:
 			if _round_timer <= 0.0:
 				_round_state = RoundState.PLAYING
 				_broadcast_round_state()
-			# 倒计时重播(共用实现,见 `COUNTDOWN_SYNC_INTERVAL`):客户端切场景/建 HUD 有延迟,
-			# 只广播一次会漏收,两端的倒计时起点就会差一整段场景加载时间。
-			_tick_countdown_sync(delta)
+			# 倒计时每 0.5s 重播:客户端切场景/建 HUD 有延迟,_ready 只广播一次会漏收
+			_hud_sync -= delta
+			if _hud_sync <= 0.0:
+				_hud_sync = 0.5
+				_broadcast_round_state()
 		RoundState.PLAYING:
 			_match_time = maxf(_match_time - delta, 0.0)
 			# 复活调度(同父类:PLAYING 内倒地即安排 2s 复活)+ 复活执行
@@ -213,7 +213,7 @@ func _match_round_tick(delta: float) -> void:
 				if p.is_downed() and not _respawn_pending.has(role):
 					_respawn_pending[role] = RESPAWN_DELAY
 			_handle_respawns(delta)
-			# 击杀计分:倒地瞬间状态判断 + 射手归因(meta)
+			# 击杀计分:倒地边沿 + 射手归因(meta)
 			for role in players:
 				var p: Node2D = players[role]
 				if not p.is_downed() or _down_counted.get(role, false):
@@ -223,14 +223,25 @@ func _match_round_tick(delta: float) -> void:
 				# 见 `MatchGround._drop_all_but_one` 上方的完整理由)。共用 `_down_counted`
 				# 闩 ⇒ 每次死亡恰好一次;`_respawn_player` 那一支**不再**掉(会掉在出生点)。
 				_drop_all_but_one(p, int(role))
-				_deaths[int(role)] = int(_deaths.get(int(role), 0)) + 1   # 阵亡计数
 				var killer := _attributed_killer(p)
+				# 逐人统计(★ 2026-09-25):倒地边沿记 death(一律)与击杀(仅在归因到时)。
+				# ★ 与 1v1(`MatchRound._match_round_tick`)的**口径不同,别照抄那一份**:
+				#   那边是「不分死因、对方死亡都算」⇒ 传 `_opponent_of(role)`;大乱斗是
+				#   **自由混战 + 归因制** ⇒ 必须传 `_attributed_killer(p)`,无归因的死亡
+				#   (溺水/坠落/自杀)不计**任何人的**击杀。
+				# ★ `_deaths` 那份**独立的**阵亡计数已删 —— 它与逐人表记的是同一件事,
+				#   两份计数必然漂(载荷里的 `deaths` 改从逐人表构造,见 `_broadcast_round_state`)。
+				_record_down(int(role), killer)
 				if killer != 0:
 					_scores[killer] = int(_scores.get(killer, 0)) + 1
 					_broadcast_kill(killer, role)
-				# Beta 时间玩法:击杀得"被击杀者余额 × 比例"(被击杀者不减;归因不到不结算)
-				if time_economy != null:
-					time_economy.award_kill(killer, int(role))
+				# ★ 2026-10-03 删掉这里原本的第二笔 `award_kill` —— **合并时漏删的重复**。
+				#   KH 那份 `award_kill` 原先住 `TeamHost._record_down`;合并把逐人统计面上提到
+				#   `MatchState._record_down` 时,那笔随之上提到基类(见 `match_state.gd` 里那段
+				#   "从 TeamHost 搬来、原处那份已删"的注释)—— 但**本文件还有它自己的一笔**,
+				#   没人删。于是大乱斗 Beta 的击杀颗粒变成**双倍**(本行 + 基类那行),
+				#   而 3v3 只走基类 ⇒ 两个模式口径不同。
+				#   ⇒ 基类那行是唯一写端(对 TeamHost 与 RoyaleHost 同一份),此处不再重复。
 				_broadcast_round_state()
 			# 周期广播(倒计时/比分同步)
 			_hud_sync -= delta
@@ -244,15 +255,10 @@ func _match_round_tick(delta: float) -> void:
 
 
 # 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role。
-# 带时效:伤害超过 ATTRIB_WINDOW 毫秒前的射手不再归因(防止"被打一枪后溺水"误计)。
-# 击杀归因时效窗口(ms)。★ 有意与 main 的单一来源对齐(用户 2026-09-11 裁定):
-# 原 KH 值 10000ms 已弃用 —— 现读 CombatFeedback.ATTRIB_WINDOW_MS(3000ms)。
-# 背景:两处读的是同一个 last_damager_time meta,但读端对象不重叠 ——
-#   CombatFeedback 读「敌人」(决定播不播「击杀 XXX」),本文件读「玩家」(决定谁算击杀)。
-# 所以这不是"两套 bug",只是口径选择;选 3s 的理由是与单机播报口径一致。
-# 行为变更(有意):打一枪后 4~10s 内的溺水/坠落死亡,现在不再算作你的击杀。
-const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
-
+# 带时效:伤害超过 `ATTRIB_WINDOW` 毫秒前的射手不再归因(防止"被打一枪后溺水"误计)。
+# ★ 时效窗口 `ATTRIB_WINDOW`(= `CombatFeedback.ATTRIB_WINDOW_MS`,3000ms)与逐人伤害的新鲜
+#   阈值 `ATTRIB_FRESH_MS`(8ms)都**住在底座** `MatchState`(2026-09-25 上提;两个读者原先
+#   各声明一份同名常量,子类重复声明基类成员是硬 Parse Error)。这里的引用走继承,不另立常量。
 func _attributed_killer(victim: Node2D) -> int:
 	if not victim.has_meta("last_damager"):
 		return 0
@@ -290,6 +296,19 @@ func _match_winner() -> int:
 		candidates[int(role)] = true
 	for role in _scores:
 		candidates[int(role)] = true
+	# ★ 已移出但对局仍在继续的人(`_left`)也必须进候选:一个 **0 杀**离开者的分数**不在**
+	#   `_scores` 里(`mark_disconnected` 又把他从 `players` 里 erase 了)⇒ 他两边都不在。
+	#   后果**不是**"少算一个人的分"(他的分本来就是 0),而是**少了一个并列候选**:
+	#   `tie` 要成立得有 ≥2 个候选共享最高分,而幸存者只剩**一个**时他是唯一候选 ⇒ 没有第二个
+	#   候选能置 `tie` ⇒ **独胜** —— 明明全场 0 杀(包括那些离开者),却被判成他赢了。
+	#   `_left` 是这种离开者**唯一**的痕迹。
+	# ★ 只在「幸存者 ≤ 1」这一档改变结果(≥2 个幸存者时他们**彼此**已在 0 杀上并列 ⇒ 改前
+	#   改后都是平局);离开者**有分**时本来就在 `_scores` 里,照旧按分判胜 —— 两条都钉在
+	#   `tests/probe/late_match_probe.gd` 的 ④/⑤/⑤b 上(⑤ 是必需的反向对照:没有它,"恒返回 0" 也能过)。
+	# ★ 这一条落地后,`scenes/royale_game.gd` 那道 `and not _match_ended` 门**失去了理由**
+	#   (它正是为挡这次翻转而立的)—— 但删它在 peer 的层、且需要用户点头,本批**不动**。
+	for role in _left:
+		candidates[int(role)] = true
 	for role in candidates:
 		var n: int = int(_scores.get(role, 0))
 		if n > best_n:
@@ -319,11 +338,19 @@ func _broadcast_round_state() -> void:
 	for role in players:
 		var p: Node2D = players[role]
 		alive[int(role)] = is_instance_valid(p) and not p.is_downed()
+	# `deaths` 仍是逐 role 计数(royale_hud 的排行榜按它显示"阵亡"),但来源改成**逐人统计表**
+	# —— 原先的 `_deaths` 是同一件事的第二份计数(两份必然漂,且不会有任何断言变红)。
+	# ★ role 集合取 `_roster()`(在场 ∪ 已离开 ∪ 有数据的):离开者的阵亡数照样要下发给
+	#   排行榜(它按 role 找行),漏了会让那一行**回落到 0 且不报错**。
+	var deaths := {}
+	for role in _roster():
+		var s: Dictionary = _stats.get(int(role), {})
+		deaths[int(role)] = int(s.get("deaths", 0))
 	var data := {
 		"state": _round_state,
 		"round": 1,
 		"scores": _scores,
-		"deaths": _deaths,
+		"deaths": deaths,
 		"rounds_won": {},          # 大乱斗无局胜,占位空(客户端 HUD 兼容读取)
 		"timer": ceilf(_match_time) if _round_state == RoundState.PLAYING else _round_timer,
 		"names": names,
@@ -332,9 +359,16 @@ func _broadcast_round_state() -> void:
 	}
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
+	# 逐人数据:与 `destroyed` / `ground_weapons` / 3v3 同款纪律 —— **只在非空时带该键**。
+	# ★ 大乱斗**不带 `mvp`**(spec §3.6/§4 都没要求;结算页那一栏也不列 ACS) ——
+	#   加了它就会是一个没有读者的键。
+	var table := stats_payload()
+	if not table.is_empty():
+		data["stats"] = table
 	# 基类的广播样板,只多一个"只发在线 peer"(大乱斗里掉线者仍在 peer_by_role 里待清理,
 	# 而往正在断开的 peer 发包会打 channel 错误)。样板本身收在 MatchHost._rpc_all。
-	_rpc_all("round_state", [data], -1, true)
+	# ★ 2026-09-28 起本行改走 `_send_round_state`(它内部仍调 `_rpc_all`,并多并一个 `grace` 字段)。
+	_send_round_state(data)
 
 
 # 房主昵称表(worker 开局后由 server_main 注入;排行榜展示用)
@@ -371,11 +405,14 @@ func mark_disconnected(role: int) -> void:
 		_finish_match()
 
 
-# 子弹直击归因:命中瞬间记录射手到受害者 meta(在判定倒地时读取)
+# 子弹直击归因:命中瞬间把射手记到受害者 meta(倒地边沿时读)
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
-	# 归因写入统一走 main 的单一入口(它同时写 last_damager + last_damager_time)。
-	# 本覆写不可省:服务器子弹撞玩家时掩码不含玩家层,只经 _adjudicate_bullets 到这里,
-	# 子弹自己的反馈路径不会跑 → 必须由本处写 meta,否则击杀归因丢失。
+	# 归因写入统一走 CombatFeedback 的单一入口(它同时写 last_damager + last_damager_time)。
+	# ★ 2026-09-27 起**基类也写同一笔**(`MatchCombat._on_bullet_hit` 第一行)⇒ 本覆写现在是
+	#   **冗余的重复写**(`attribute()` 是幂等的纯元数据写入,重复调用无害);保留只为留下写点、
+	#   不作废以本处与 `TeamHost` 那份为锚点的既有登记与注释。
+	#   ★ **别据此把基类那一行删掉** —— 1v1 走 `MatchBootstrap` 直接建 `MatchHost`,
+	#     基类那一行是它**唯一**的子弹归因写端(守卫 `tests/probe/stats_delivery_probe` ⑦)。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
 
@@ -389,7 +426,7 @@ func _respawn_player(role: int) -> void:
 		p.remove_meta("last_damager_time")
 
 # ── 自杀脱困(K 键:royale_game 客户端 → NetBusExt.suicide_request → server_main 转发)──
-# 异常卡死(嵌墙/缝隙)时脱困:触发角色倒地流程后 2s 复活;先清除 last_damager 归因,
+# 异常卡死(嵌墙/夹缝)时主动放弃生命:走正常倒地边沿 → 2s 复活;先清 last_damager 归因,
 # 自杀不计入任何人击杀(哪怕刚被人打过),只累积自己的阵亡数。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:
