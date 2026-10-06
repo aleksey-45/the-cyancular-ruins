@@ -159,6 +159,13 @@ func _collect_obstacles() -> void:
 	for e in get_tree().get_nodes_in_group("enemies"):
 		if e == self or not (e is Node2D):
 			continue
+		# ★ 已经**不挡路**的实体不当障碍(2026-10-03):录制期保留的隐藏尸体被摘掉了碰撞层
+		#   (见 enemy_base 的 _physics_process),物理上已经可以穿过 —— 若这里仍把它算作障碍,
+		#   飞鸟会在一个空位置上绕路,是同一个"虚空"缺陷的 AI 侧面。判据取**碰撞层**而不是
+		#   `visible`:它问的正是"这东西还挡不挡路",与物理世界同一口径;白闪期(仍可见、
+		#   仍实心)照旧算障碍。
+		if int((e as CollisionObject2D).collision_layer) == 0:
+			continue
 		var epos := (e as Node2D).global_position
 		if _toroidal_dist_to(epos) <= 600.0:
 			_obstacle_boxes.append(_collision_rect_of(e))
