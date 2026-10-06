@@ -13,8 +13,8 @@ static var _cache: Dictionary = {}
 # 轻微随机音高的音效(开枪类,避免每次一模一样的机械感)
 const PITCH_VARIATION := ["shoot", "shoot_heavy", "shotgun", "hit"]
 
-## 全局音效音调系数（由时间系统驱动：透支深度增加时升高、加速状态略微升高、回溯状态略微降低；1.0 表示正常音调）。
-## 只影响播放瞬间的 pitch_scale，不修改音频资源与总线配置；后续背景音乐接入时共享该系数。
+## 全局音调系数(时间玩法驱动:贷款深度→升高、加速→略升、回溯→略降;1.0=无效果)。
+## 只影响播放瞬间的 pitch_scale,不改资源/总线;BGM 接入后同源使用。
 static var pitch_mult: float = 1.0
 
 

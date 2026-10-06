@@ -16,52 +16,70 @@ extends RefCounted
 #   ③ `match_winner == 0` 是**平局**。1v1 那条别照抄 `ui/pvp_hud.gd` 的兜底
 #      (`"P%d 获胜!" % (1 if w1 > w2 else 2)`)—— 那会把平局念成「P1 获胜」。
 
-const C_KILLS := ["kills"]
+# 各模式的列 —— **顺序就是显示顺序**,由 spec §3.6 定;"模式没有的列不进"是既有口径:
+#   · 大乱斗无 ACS(单局死斗 ⇒ `acs ≡ kscore`,恒等列零信息)、无助攻(自由混战无归属);
+#   · 1v1 无助攻(`same_team` 恒 false ⇒ 那模式拿不到助攻,见 spec §3.4)。
+# ★ 新增列必须同时在 `ui/match_result.gd` 的 `COLUMN_TITLES` 里有标题,否则表头退化成
+#   裸英文键名(`.get(col, col)` 兜底、不报错)—— `match_result_payload_smoke` 的 ⑧ 守着。
+const C_DUEL := ["kills", "deaths", "dealt", "taken", "acs"]
+const C_ROYALE := ["kills", "deaths", "dealt", "taken"]
+const C_TEAM := ["kills", "deaths", "assists", "dealt", "taken", "acs"]
 
 
-# 1v1。`scores` 是 role -> **击杀数**(局胜在 `rounds_won`);**没有逐人阵亡** ⇒ 只列 kills。
+# 1v1。行数据一律读 `stats`(服务端算好的七字段),**不再读 `scores`** ——
+# `scores` 是"本局击杀"(每局清零),它不是结算页要的整场口径。
+# ★ 遍历仍写死 `[1, 2]`:1v1 只有这两个 role,**缺条目 = 0**(不是"没有这个人的数据")——
+#   写成 `if not stats.has(role): continue` 会在一局 5-0 时画出**只有一行**的榜,
+#   输的那位从**自己的**结算页上消失(他正是要看到自己那一行的人)。
+# 列 = K/D/造成/承受/ACS(spec §3.6)。
+# ★ MVP 的落点与 `for_team` 同一形状:`_row` 的第 8 个实参就是"这一行是不是 MVP",
+#   排序之后再去找那个 `mvp == true` 的行 —— **别**想着"按 role 反查行"
+#   (`_row` 只承载展示字段,没有 role 键;要靠 role 找行就得另开一个临时结构)。
 static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary:
-	var scores: Dictionary = round.get("scores", {})
+	var stats: Dictionary = round.get("stats", {})
+	var mvp_role: int = int(round.get("mvp", 0))
 	var rows: Array = []
 	for role in [1, 2]:
-		# ★ `scores` 是 role -> **本局击杀**,1v1 只有这两个 role ⇒ 缺条目 = **本局 0 杀**,
-		#   不是"没有这个人的数据"(与 `for_team` 的 `stats` 那条**规则不同**,别照抄:
-		#   那边缺条目真的是"掉线/中途加入" ⇒ 刻意跳过那一行)。
-		#   ★ 写成 `if not scores.has(role): continue` 会在一局 5-0 时画出**只有一行**的
-		#     1v1 榜 —— 输的那位从自己的结算页上**消失**,且不报错。
-		rows.append(_row(_name_of(names, role), int(scores.get(role, 0)), 0, 0, 0))
+		var s: Dictionary = stats.get(role, {})
+		rows.append(_row(_name_of(names, role), int(s.get("kills", 0)), int(s.get("deaths", 0)),
+				int(s.get("assists", 0)), int(s.get("dealt", 0)), int(s.get("taken", 0)),
+				int(s.get("acs", 0)), int(role) == mvp_role))
 	_finish(rows, "kills")
+	# mvp 的行号必须在**排完序之后**数,否则高亮会落在错的那一行(与 `for_team` 同款)
+	var mvp_pos := {}
+	for ri in rows.size():
+		if bool(rows[ri]["mvp"]):
+			mvp_pos = {"section": 0, "row": ri}
 	var won: Dictionary = round.get("rounds_won", {})
 	return {
 		"title": _verdict(int(round.get("match_winner", 0)), my_role),
 		"subtitle": "局胜 %d - %d" % [int(won.get(1, 0)), int(won.get(2, 0))],
-		"columns": C_KILLS,
+		"columns": C_DUEL,
 		"sections": [{"label": "对局", "color": UiFactory.C_TEXT, "rows": rows}],
-		"mvp": {},
+		"mvp": mvp_pos,
 	}
 
 
-# 大乱斗。自由混战:`scores` / `deaths` 都是 role -> 计数。**没有 dmg/acs** ⇒ 不列。
-#
+# 大乱斗。自由混战:行数据读 `stats`(`scores`/`deaths` 那两条键**留给局内 HUD** ——
+# `ui/royale_hud.gd` 的排行榜按它们显示实时比分,与本页是两回事)。
+# 列 = K/D/造成/承受(spec §3.6):**无 ACS**(单局死斗 ⇒ `acs ≡ kscore`)、**无助攻**。
 # ★★ 标题恒为「游戏结束」,**与 `match_winner` 无关**(用户 2026-09-21 裁定:
-#    「大乱斗结算榜单不应该有任何胜利/失败,而是游戏结束」)。
-#    大乱斗是自由混战:N 个人里只有榜首算"赢",把 N-1 个人判成「失败」既不准确也没意义
-#    —— 榜本身就说明了名次。故**刻意不调 `_verdict`**:那个函数只服务 1v1(与 3v3 的
-#    `_verdict_team`),它们的胜利/失败语义**一个字都没动**。
-# ★ `my_role` 仍是本函数的第 3 个形参(调用方 `royale_game._build_result_payload` 传
-#    `PvpSession.role`,签名不动 —— `kh_l6_probe` 的 ⑯ 按位置钉着那个实参);
-#   本函数现在用不到它,但**不要**删:签名是三模式适配器的公共形状,删了要改调用点与探针。
+#    「大乱斗结算榜单不应该有任何胜利/失败,而是游戏结束」)。故**刻意不调 `_verdict`**。
+# ★ `my_role` 仍是第 3 个形参(调用方 `royale_game._build_result_payload` 传 `PvpSession.role`,
+#   签名不动 —— `kh_l6_probe` ⑯ 按位置钉着那个实参);本函数用不到它,但**不要**删。
 static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary:
-	var scores: Dictionary = round.get("scores", {})
-	var deaths: Dictionary = round.get("deaths", {})
+	var stats: Dictionary = round.get("stats", {})
 	var rows: Array = []
-	for role in scores:
-		rows.append(_row(_name_of(names, int(role)), int(scores[role]), int(deaths.get(role, 0)), 0, 0))
+	for role in stats:
+		var s: Dictionary = stats[role]
+		rows.append(_row(_name_of(names, int(role)), int(s.get("kills", 0)),
+				int(s.get("deaths", 0)), int(s.get("assists", 0)),
+				int(s.get("dealt", 0)), int(s.get("taken", 0)), int(s.get("acs", 0))))
 	_finish(rows, "kills")
 	return {
 		"title": "游戏结束",
 		"subtitle": "",
-		"columns": ["kills", "deaths"],
+		"columns": C_ROYALE,
 		"sections": [{"label": "击杀排行榜", "color": UiFactory.C_TEXT, "rows": rows}],
 		"mvp": {},
 	}
@@ -81,8 +99,9 @@ static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my
 				continue
 			var s: Dictionary = stats[role]
 			rows.append(_row(_name_of(names, int(role)), int(s.get("kills", 0)),
-					int(s.get("deaths", 0)), int(s.get("dmg", 0)), int(s.get("acs", 0)),
-					int(role) == mvp_role))
+					int(s.get("deaths", 0)), int(s.get("assists", 0)),
+					int(s.get("dealt", 0)), int(s.get("taken", 0)),
+					int(s.get("acs", 0)), int(role) == mvp_role))
 		_finish(rows, "acs")
 		sections.append({
 			"label": "A 队" if t == 1 else "B 队",
@@ -100,15 +119,16 @@ static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my
 	return {
 		"title": _verdict_team(int(round.get("match_winner", 0)), my_team),
 		"subtitle": "局胜 %d - %d" % [int(won.get(1, 0)), int(won.get(2, 0))],
-		"columns": ["kills", "deaths", "dmg", "acs"],
+		"columns": C_TEAM,
 		"sections": sections,
 		"mvp": pos,
 	}
 
 
-static func _row(nm: String, kills: int, deaths: int, dmg: int, acs: int, mvp: bool = false) -> Dictionary:
-	return {"rank": 0, "name": nm, "kills": kills, "deaths": deaths,
-			"dmg": dmg, "acs": acs, "mvp": mvp}
+static func _row(nm: String, kills: int, deaths: int, assists: int, dealt: int, taken: int,
+		acs: int, mvp: bool = false) -> Dictionary:
+	return {"rank": 0, "name": nm, "kills": kills, "deaths": deaths, "assists": assists,
+			"dealt": dealt, "taken": taken, "acs": acs, "mvp": mvp}
 
 
 # 确定性排序 + 填名次:主键降序 → 阵亡升序 → 昵称升序。

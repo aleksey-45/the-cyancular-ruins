@@ -25,7 +25,10 @@ var _box_on: StyleBoxFlat
 func setup(initial: String = "", columns := 2, max_h := 320.0,
 		title := "地　图(点选;缩略图 = 开局地形简略图)") -> void:
 	add_theme_constant_override("separation", 8)
-	add_child(UiFactory.label(title, 32, UiFactory.C_ACCENT))
+	# 标题 = 同款标题带(与各页面 / 面板里的区块标题同一个味道)。
+	# ★ 原先是一条裸的 `C_ACCENT` Label ⇒ 三处用到它的面板(单人开局/1v1/大乱斗/3v3 建房)
+	#   里,别的区块标题都是金色标题带、只有它是青色裸字,一屏里两套标题风格。
+	add_child(UiFactory.header_strip(title, 32))
 
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(0, max_h)

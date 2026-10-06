@@ -26,12 +26,13 @@ const EDGE := 24.0          # 圆的外接方框距屏幕**右**边缘
 # 实测其矩形上沿在 y=1367、左沿 x=1784。圆心 (1756, 1300-EDGE_BOTTOM),半径 140,
 # 于是"不压到"要求 28² + (1367-cy)² > 140² → **EDGE_BOTTOM > 70.17**。
 # 用户要的是 70(恰好差 0.2px 擦到),取 **72** 留 1.5px 余量;两者差 2px,肉眼无感。
-# ★ 改延迟条字号/文案/锚点,或改 RADIUS_PX,都必须重跑 tests/minimap_circle_probe
+# ★ 改延迟条字号/文案/锚点,或改 RADIUS_PX,都必须重跑 tests/probe/minimap_circle_probe
 #   那条几何断言(它就是这么算出来的),别凭感觉调这个数。
 const EDGE_BOTTOM := 72.0
 const RING_PX := 4.0        # 圆内缘描边宽度(2026-09-17:2 → 4,用户要求"加粗")
+const RING_SELF_PX := 4.0   # "我"那个点的白描边宽度(四边各 4px ⇒ 点 8×8、描边框 16×16)
 
-const SHADER_PATH := "res://ui/minimap_circle.gdshader"
+const SHADER_PATH := "res://ui/hud/minimap_circle.gdshader"
 const SELF_COLOR := Color(0.6, 0.95, 1.0)
 const ENEMY_COLOR := Color(1.0, 0.4, 0.35)
 
@@ -43,6 +44,14 @@ var _others_provider: Callable = Callable()
 # ★ 可选:1v1 / 大乱斗不传它 → 默认 Callable() = 不回填颜色,点位保持 ENEMY_COLOR,
 #   两者的行为**逐字不变**(见 setup_multi 的第三参默认值)。
 var _color_provider: Callable = Callable()
+# 3v3 的"我"那个点:队色提供器 `() -> Color`。**可选**第四参(见 setup_multi)。
+# ★ 为什么必须是**每帧求值**的 Callable、而不是建点时定下的 `Color`:队色由 `match_sync`
+#   下发,比小地图建立晚 —— 与 `_other_dots` 那条"队色每帧回填"是**同一条理由**。
+# ★ 不传 ⇒ 自己那个点走 `SELF_COLOR`,1v1 / 大乱斗的行为逐字不变。
+var _self_color_provider: Callable = Callable()
+# 自己那个点的**白描边**。★ 同队同色时颜色本身分不出"我"与队友,故需要一个与颜色**正交**
+# 的维度 —— 去掉它就等于没修(这不是表现细节,spec §3.2)。1v1 / 大乱斗不显示它。
+var _ring_self: ColorRect
 var _mat: ShaderMaterial = null
 var _rect_pos := Vector2.ZERO
 var _dot_self: ColorRect
@@ -56,14 +65,22 @@ func setup(local_provider: Callable, enemy_provider: Callable) -> void:
 
 
 # 多目标版(大乱斗 N 人 / 3v3 六人):others_provider 返回全部对手世界坐标数组。
-# ★ color_provider 是**可选**第三参(3v3 分队上色用):返回与 others **同序**的颜色数组。
-#   不传 = `Callable()` = 一律 ENEMY_COLOR —— 1v1(setup)与 大乱斗(setup_multi 两参)的
-#   调用点一个字都没改,行为逐字不变。
+# ★★ **四个参数全部必填**(2026-09-29;B 项):两个颜色提供器原先带 `:= Callable()` 默认值,
+#   于是"**谁给这些点上色**"在调用点上是**隐式**的 —— 大乱斗的答案曾经是"没人给"(恒
+#   `ENEMY_COLOR`),而那个状态与"写了新模式但忘了传"长得**一模一样**。现在每个调用点都必须
+#   把这件事说出来:真要"恒 ENEMY_COLOR",就显式传 `Callable()`(并写清理由)。
+#   ★ 第四参也一起改,不是顺手:只把第三参改必填、第四参留默认,是**不一致的一半**
+#     (它与第三参同为"模式专属",同样只在 3v3 非空)。
+# ★ color_provider 返回与 others **一一对应**的颜色数组(`_other_dots[i].color = cols[i]`)。
+#   ★★ 两个提供器**必须共用同一套过滤**,不只是"同序" —— 见 `royale_game._minimap_entries`
+#     与 `team_game._minimap_entries` 的注释:按下标取色时,"某个副本已 queue_free、尚未从
+#     表里摘掉"那个窗口会让两个数组错位一格,而**不报错**。
 func setup_multi(local_provider: Callable, others_provider: Callable,
-		color_provider := Callable()) -> void:
+		color_provider: Callable, self_color_provider: Callable) -> void:
 	_local_provider = local_provider
 	_others_provider = others_provider
 	_color_provider = color_provider
+	_self_color_provider = self_color_provider
 
 
 func _ready() -> void:
@@ -105,6 +122,9 @@ func _ready() -> void:
 	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(view)
 
+	# ★ 描边先建、点后建:Godot 的绘制顺序 = 子节点顺序,后建的在上层 ⇒ 点压在框上。
+	_ring_self = _make_dot(Color(1.0, 1.0, 1.0, 1.0))
+	_ring_self.size = Vector2(8, 8) + Vector2(RING_SELF_PX, RING_SELF_PX) * 2.0
 	_dot_self = _make_dot(SELF_COLOR)
 	_dot_enemy = _make_dot(ENEMY_COLOR)
 
@@ -130,6 +150,7 @@ func _process(_delta: float) -> void:
 	if not p.is_finite() or w <= 0.0 or h <= 0.0:
 		# 玩家位置未知:藏掉全部点(地形仍按上一次的中心画)
 		_dot_self.visible = false
+		_ring_self.visible = false
 		_dot_enemy.visible = false
 		for d in _other_dots:
 			d.visible = false
@@ -140,6 +161,15 @@ func _process(_delta: float) -> void:
 	# 自己:恒在圆心
 	_dot_self.visible = true
 	_dot_self.position = _circle_center() - _dot_self.size * 0.5
+	# ★ 3v3(有自色提供器):自己的点 = **队色**(与身体 / 头顶 ID 同源)+ 一圈白描边。
+	#   1v1 / 大乱斗不传它 ⇒ `use_team_self` 为假 ⇒ 走 SELF_COLOR,行为逐字不变。
+	var use_team_self := _self_color_provider.is_valid()
+	if use_team_self:
+		_dot_self.color = _self_color_provider.call()
+		_ring_self.visible = true
+		_ring_self.position = _circle_center() - _ring_self.size * 0.5
+	else:
+		_ring_self.visible = false
 
 	if _others_provider.is_valid():
 		# 多目标(大乱斗 / 3v3):按需扩池,显隐随设置 + 范围

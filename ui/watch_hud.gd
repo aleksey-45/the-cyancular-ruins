@@ -1,45 +1,45 @@
 class_name WatchHud
 extends Control
 
-# 怀表时间 HUD 界面：怀表表盘 + 双指针 + 粒子余额数字。
-#   · 表盘：纯程序化像素绘制（冷灰阶配色：表壳、盘面、刻度），与像素美术风格保持一致；
-#   · 红色长指针：指示短期额度消耗与透支进度（一圈对应短期额度 window；透支额外圈数 = loan_max/window）；
-#   · 白色短指针：指示粒子总余额与上限比例（一整圈对应 GRAIN_CAP）；
-#   · 右侧大数字：显示当前总余额（96px 像素字，扣减时逐点平滑插值滚动，0.2s 内过渡完成）；右上角显示上限数值；
-#     表盘中心显示短期可用额度（透支状态下显示深红负数）。
-# 布局位置：挂载于 HUD 层，位于生命条/氧气条下方。
-# 数据源：引用 Level0.grain_account（单人模式有效；未启用时整体隐藏）。
+# 个人钟·怀表 HUD(第一阶段):怀表表盘 + 指针 + 数字。
+#   · 表盘:纯程序化像素绘制(冷灰阶色板:表壳/盘面/刻度),零美术素材(与瓦片/8bit 音效同风格)
+#   · 红长针 = 短时限额(一圈 = 账户的 window;贷款额外圈数 = loan_max/window —— 单机 1/4 圈,PvP 1 整圈)
+#   · 白短针 = 颗粒总量(一圈 = GRAIN_CAP)
+#   · 右侧大数字 = 总余额(与主菜单标题同为 96px 像素字;扣减时 1 点 1 点快速滚动,
+#     终值确定后 ≤0.2s 内播完);其右上小字 = 上限;表心小字 = 短时余额(贷款时深红负数)
+# 位置:挂 hud,摆在血条/氧条**下方**(2026-09-26 用户指定)。
+# 数据源:Level0.grain_account(静态;PvP/菜单为 null → 整体隐藏)。
 
-const DIAL := 84.0                 # 表盘直径（像素）
-const BIG_FONT := 96               # 大数字字号（与主菜单标题一致）
+const DIAL := 84.0                 # 表盘直径(像素)
+const BIG_FONT := 96               # 大数字字号(与主菜单标题一致)
 const SMALL_FONT := 32
 const CAP_FONT := 16
-const COLOR_RIM := Color8(20, 23, 28)        # 表壳外圈（最深色）
-const COLOR_CASE := Color8(58, 64, 72)       # 表壳（冷灰）
-const COLOR_FACE := Color8(96, 103, 112)     # 盘面（浅冷灰）
-const COLOR_TICK := Color8(70, 76, 84)       # 刻度颜色
-const COLOR_HAND_LONG := Color8(196, 62, 62)   # 红色长指针
-const COLOR_HAND_SHORT := Color8(235, 238, 242)  # 白色短指针
+const COLOR_RIM := Color8(20, 23, 28)        # 表壳外圈(最深)
+const COLOR_CASE := Color8(58, 64, 72)       # 表壳(冷灰)
+const COLOR_FACE := Color8(96, 103, 112)     # 盘面(冷灰浅)
+const COLOR_TICK := Color8(70, 76, 84)       # 刻度
+const COLOR_HAND_LONG := Color8(196, 62, 62)   # 红长针
+const COLOR_HAND_SHORT := Color8(235, 238, 242)  # 白短针
 const COLOR_TEXT := Color8(232, 236, 242)
 const COLOR_TEXT_DIM := Color8(150, 158, 168)
-const COLOR_LOAN := Color8(158, 40, 48)      # 透支状态深红色
+const COLOR_LOAN := Color8(158, 40, 48)      # 贷款深红
 
 var _dial_tex: ImageTexture = null
 var _big: Label = null
 var _cap: Label = null
 var _center: Label = null
-var _disp: float = 0.0             # 大数字平滑插值显示值
-var _anim_from: float = 0.0        # 插值动画起始值
+var _disp: float = 0.0             # 大数字的滚动显示值(逐点逼近真值)
+var _anim_from: float = 0.0        # 本次滚动起点(余额变化瞬间捕获)
 var _anim_target: float = 0.0
-var _anim_t: float = 1.0           # 插值进度（0→1，固定持续 0.2s）
+var _anim_t: float = 1.0           # 0→1;duration 固定 0.2s → "终值确定后 0.2 秒播完"
 var _initialized := false
-var _tremble_t := 0.0              # 吸收结晶时的表盘震动倒计时
-var _lock_flash_t := 0.0           # 透支锁定状态下的红闪警示倒计时
+var _tremble_t := 0.0              # 吸收结晶时的颤抖(B5 用)
+var _lock_flash_t := 0.0           # 贷款锁定红闪(B6 用)
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_to_group("watch_hud")   # 结晶特效根据该节点组确定吸收目标位置
+	add_to_group("watch_hud")   # 结晶 FX 靠它找表心(屏幕空间目标)
 	_dial_tex = build_dial_texture()
 	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(DIAL + 14, -16))
 	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(DIAL + 14, BIG_FONT - 4))
@@ -66,8 +66,8 @@ func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
 	return l
 
 
-## 绘制程序化像素表盘：基于方块组合圆盘（冷灰三层阶梯色板与 12 个时钟刻度）。
-## 静态无状态接口：Beta 模式入口卡片图标可直接复用此纹理。
+## 98px 程序化像素表盘:方块拼圆(与瓦片同风格),冷灰三层次 + 12 刻度。
+## 静态 + 无实例依赖:Beta 入口页的卡片图标直接复用这一份(B20)。
 static func build_dial_texture() -> ImageTexture:
 	var n := int(DIAL)
 	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
@@ -93,7 +93,7 @@ static func build_dial_texture() -> ImageTexture:
 				for by in range(int(block)):
 					for bx in range(int(block)):
 						img.set_pixel(x + bx, y + by, col)
-	# 12 个时钟刻度
+	# 12 刻度
 	for i in 12:
 		var ang := -PI * 0.5 + TAU * float(i) / 12.0
 		for t in range(3):
@@ -109,7 +109,8 @@ func _process(delta: float) -> void:
 	visible = acc != null
 	if acc == null:
 		return
-	# 余额数字滚动：数值变化时触发定长 0.2s 的平滑插值动画，按整数逐点过渡到位
+	# 大数字滚动:余额一变就起一段**定长 0.2s 的插值动画**,显示层按整数逐点跳动,
+	# 终值确定后 ≤0.2s 必到位(不用指数逼近——那只会"越走越慢"永不到位)。
 	if not _initialized:
 		_disp = acc.balance
 		_anim_from = acc.balance
@@ -123,7 +124,7 @@ func _process(delta: float) -> void:
 	_anim_t = minf(_anim_t + delta / 0.2, 1.0)
 	_disp = lerpf(_anim_from, _anim_target, _anim_t)
 	_big.text = str(int(round(_disp)))
-	# 余额颜色联动：回溯显示红色、加速显示紫色、常规状态显示白色
+	# 大数字配色:回溯=红、加速=紫、常态=白(用户 2026-09-26 指定)
 	var col := COLOR_TEXT
 	if TimeField.current != null:
 		if TimeField.current.is_rewinding():
@@ -132,7 +133,7 @@ func _process(delta: float) -> void:
 			col = Color8(168, 96, 216)
 	_big.add_theme_color_override("font_color", col)
 	_cap.text = "上限 %d" % int(acc.cap)
-	# 表盘中心：显示短期剩余可用额度（正常为浅灰正数，透支为深红负数）
+	# 表心:短时余额(正=浅灰;贷款=深红负数)
 	if acc.loan_used > 0.5:
 		_center.text = "-%d" % int(round(acc.loan_used))
 		_center.add_theme_color_override("font_color", COLOR_LOAN)
@@ -153,34 +154,33 @@ func _draw() -> void:
 		shake = Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5)) * (_tremble_t / 0.4)
 	draw_texture(_dial_tex, shake)
 	var c := Vector2(DIAL * 0.5, DIAL * 0.5) + shake
-	# 白色短指针：总余额 / 上限（指示一圈）
+	# 白短针:总量 / 上限(一圈)
 	var a_short := -PI * 0.5 + TAU * clampf(acc.balance / maxf(acc.cap, 1.0), 0.0, 1.0)
 	draw_line(c, c + Vector2(cos(a_short), sin(a_short)) * (DIAL * 0.30), COLOR_HAND_SHORT, 4.0)
-	# 红色长指针：短期已用额度 + 透支额度（一圈对应短期额度 window，透支额外占用相应比例圈数）
+	# 红长针:短时窗已用 + 贷款(一圈 = 账户 window;贷款最多再加 loan_max/window 圈 ——
+	# 单机 LOAN_LIMIT/SHORT_WINDOW = 1/4 圈;PvP 贷款上限=短时额度 ⇒ 1 整圈)
 	var win: float = acc.window if acc.window > 0.0 else TimeParams.SHORT_WINDOW
 	var turns := (acc.short_used + acc.loan_used) / win
 	var max_turns := 1.0 + (acc.loan_max / win)
 	var a_long := -PI * 0.5 + TAU * clampf(turns, 0.0, max_turns)
 	var long_col := COLOR_HAND_LONG
 	if _lock_flash_t > 0.0 and fmod(_lock_flash_t, 0.16) > 0.08:
-		long_col = Color8(255, 90, 90)   # 锁定状态警示红闪
+		long_col = Color8(255, 90, 90)   # 锁定红闪
 	draw_line(c, c + Vector2(cos(a_long), sin(a_long)) * (DIAL * 0.42), long_col, 3.0)
 	draw_circle(c, 3.0, COLOR_RIM)
 
 
-## 触发吸收结晶时的表盘微震效果
+## 吸收结晶时的颤抖(B5 调用)
 func tremble() -> void:
 	_tremble_t = 0.4
 
 
-## 触发透支锁定时的指针红闪警示效果
+## 贷款锁定红闪(B6 调用)
 func flash_locked() -> void:
 	_lock_flash_t = 1.2
 
-
-## 吸收结晶：增加粒子余额并触发微震反馈
+## 吸收结晶:入账 + 颤抖(结晶 FX 到达时调用;数值动画由 _process 自动追随)
 func absorb(amount: int) -> void:
 	if Level0.grain_account != null:
 		Level0.grain_account.deposit(amount)
 	tremble()
-

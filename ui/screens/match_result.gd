@@ -22,7 +22,13 @@ extends CanvasLayer
 
 signal leave_requested
 
-const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "dmg": "伤害", "acs": "ACS"}
+# ★ 键名 = 适配器给的列名(`MatchResultPayload.C_*`),标题才是给人看的。
+#   `dmg` 已改名 `dealt`(与载荷字段同步);`assists`/`taken` 与 §3.6 的列一一对应。
+#   ★★ 三个列常量里出现的**每一个**键都必须在这里有标题 —— 漏一个**不报错**,只是那一列的
+#      表头退化成**裸英文键名**(下面 `.get(col, col)` 的兜底),而所有数值断言照样全绿。
+#      守卫:`tests/smoke/match_result_payload_smoke.gd` 的 ⑧(键集从三个常量推,不写死清单)。
+const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "assists": "助攻",
+		"dealt": "造成", "taken": "承受", "acs": "ACS"}
 const NAME_UNITS := 12                 # 昵称定宽(半角单位);换字体要重算
 const SIZE_TITLE := 48
 const SIZE_BODY := 32
@@ -30,70 +36,32 @@ const MASK_COLOR := Color(0, 0, 0, 0.55)   # 全屏压暗罩 —— 与暂停菜
 const MVP_MARK := "★ "                 # ★ 取图确认它能渲染(Unifont 覆盖 U+2605);出豆腐块就改 "MVP "
 
 var _leaving := false
-var _sections_box: HBoxContainer = null
-var _title_label: Label = null
-var _sub_label: Label = null
-var _panel: PanelContainer = null
+
+# ★★ 静态骨架在 `ui/screens/match_result.tscn` 里(2026-10-03 从代码迁出,见
+#   `tools/gen_menu_scene.gd`):压暗罩 `Dim` / 面板 `Panel` / 标题 `TitleLabel` / 副题
+#   `SubLabel` / 空的 `Sections` / `BackButton`。判据是**外观不变** —— 与改前逐像素比对
+#   三个模式各 **差异 0**。
+#   ★ 那个 `.tscn` **背两条命**:① 根是 `CanvasLayer`,② `layer = 150` **只住在它里面** ——
+#     所以本控件**只能从场景实例化**,绝不 `MatchResult.new()`。
+#   ★ 代码建的节点原本就显式起了名(`Root`/`Dim`/`Panel`/`Body`/`TitleLabel`/…),
+#     导出时被逐字保留 ⇒ 下面那几条路径与旧代码里的 `name = …` 一一对应。
+@onready var _panel: PanelContainer = $Root/Panel
+@onready var _title_label: Label = $Root/Panel/Body/VBox/TitleLabel
+@onready var _sub_label: Label = $Root/Panel/Body/VBox/SubLabel
+@onready var _sections_box: HBoxContainer = $Root/Panel/Body/VBox/Sections
 
 
 func _ready() -> void:
-	var root := Control.new()
-	root.name = "Root"
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(root)
-
-	var dim := ColorRect.new()
-	dim.name = "Dim"
-	dim.color = MASK_COLOR
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_child(dim)
-
-	var panel := PanelContainer.new()
-	_panel = panel
-	panel.name = "Panel"
-	panel.add_theme_stylebox_override("panel", UiFactory.panel_box())
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(1120, 0)
-	root.add_child(panel)
-
-	var vb := VBoxContainer.new()
-	vb.name = "VBox"
-	vb.add_theme_constant_override("separation", 24)
-	panel.add_child(vb)
-
-	_title_label = UiFactory.label("", SIZE_TITLE, UiFactory.C_TEXT)
-	_title_label.name = "TitleLabel"
-	_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(_title_label)
-
-	_sub_label = UiFactory.label("", SIZE_BODY, UiFactory.C_TEXT_DIM)
-	_sub_label.name = "SubLabel"
-	_sub_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(_sub_label)
-
-	_sections_box = HBoxContainer.new()
-	_sections_box.name = "Sections"
-	_sections_box.add_theme_constant_override("separation", 48)
-	_sections_box.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_child(_sections_box)
-
-	var back := UiFactory.button("返 回 主 菜 单", SIZE_BODY, Vector2(420, 64))
-	back.name = "BackButton"
-	back.pressed.connect(_request_leave)
-	vb.add_child(back)
-
-	# ★ 上面那几件(全屏压暗罩 / 面板 / 按钮)在 `_ready()` 里就建好了 ⇒ 若不隐藏,
-	#   从 `add_child` 到调用方 `show_result()` 之间会露出一块**空面板 + 按钮**的窗。
-	#   载荷要等 `show_result()` 才有 ⇒ 这里先藏起来,由它置回 true。
-	visible = false
-
-	# ★ 这一句必须排在**子节点都建好之后**。放在 `_ready()` 开头的话它走的是一棵空树
-	#   (`self` 那个时候一个子节点都没有)⇒ 等于什么也没做,却让后来读代码的人以为
-	#   "非工厂建的控件也被字体覆盖了"。今天看着没事纯粹是因为每个控件都经
-	#   `UiFactory.label`/`button`,而它们各自的 `style_control()` 已经设过字体 ——
-	#   也就是说开头那句是**在骗人**,不是在兜底。
-	UiFactory.apply_font_recursive(self)
+	# ★ 压暗罩的颜色**以本常量为准**(`.tscn` 里那份只是编辑器里的初始值)——
+	#   留一条真值来源,免得两处各写一个 0.55 谁也不知道该信哪个。
+	($Root/Dim as ColorRect).color = MASK_COLOR
+	$Root/Panel/Body/VBox/BackButton.pressed.connect(_request_leave)
+	# ★ 说明:**不再调 `UiFactory.apply_font_recursive(self)`**。旧代码里那一句是在
+	#   子节点建好之后把像素字体刷满整棵树;现在整棵树都挂在本页的 `Theme` 上
+	#   (`.tscn` 的 `Root.theme`),字体由 Theme 的 `default_font` 提供 —— 两者渲染等价
+	#   (Task 2 逐屏取图验过),而下面三个模式的逐像素比对也是 0。
+	# ★ `visible = false` 仍写在 `.tscn` 里:`show_result()` 才置回 true。
+	#   若不隐藏,从实例化到 `show_result()` 之间会露出一块**空面板 + 按钮**的窗。
 
 
 # 唯一入口。★ 缺键一律取默认:**绝不因为缺一个键就崩** —— 结算页崩了玩家就卡在对局里出不去。
@@ -131,7 +99,7 @@ func show_result(payload: Dictionary) -> void:
 	#        `custom_minimum_size.x = 1120` 而内容最小宽只有 476(一个按钮)⇒ 偏移量按 476 算
 	#        = 面板被摆在"宽 476"的位置上,随后布局把它撑到 1120,**往右长出去 322px**。
 	#    ⇒ 唯一可靠的量就是 `get_combined_minimum_size()`(取图时打过诊断核对:此刻它 = 实收尺寸)。
-	#    实测(2026-09-20 取图,`tests/match_result_probe` 的 `user://match_result_0..2.png`):
+	#    实测(2026-09-20 取图,`tests/probe/match_result_probe` 的 `user://match_result_0..2.png`):
 	#    面板右半截切在屏幕外,3v3 两节时 **B 队的「击杀/阵亡/伤害/ACS」四列整列看不见** ——
 	#    而当时**全部数值断言都是绿的**(它们只数 `columns` 与子节点个数,位置一个都照不到)。
 	#    锚点已是 (0.5,0.5)(`_ready()` 那次),偏移量取 ±半尺寸即为居中。
@@ -158,12 +126,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		_request_leave()
 
 
+# 区块标题带:复用 `UiFactory.header_strip`(C_HEADER 底 + 只有下边一条 C_BORDER 线),
+# 只把标题色换成该节自己的颜色 —— **保留 3v3 的「一眼看出 A/B 队」**(队色),
+# 而不是把两节都刷成同一个金色。这与 `scenes/mp_lobby.gd` 的 `_card_header` 同一条取法
+# (同款版式 + 自带颜色),不为"统一"丢掉队色这一条有玩法语义的信息。
+func _section_band(text: String, color: Color) -> PanelContainer:
+	var strip := UiFactory.header_strip(text, SIZE_BODY)
+	var l := strip.get_child(0) as Label
+	if l != null:
+		l.add_theme_color_override("font_color", color)
+	return strip
+
+
 func _build_section(sec: Dictionary, idx: int, columns: Array, mvp: Dictionary) -> Control:
 	var box := VBoxContainer.new()
 	box.name = "Section%d" % idx
 	box.add_theme_constant_override("separation", 12)
-	box.add_child(UiFactory.label(str(sec.get("label", "")), SIZE_BODY,
-			sec.get("color", UiFactory.C_TEXT)))
+	# 区块标题 = 同款标题带(`header_strip` 的形状),标题色取该节自己的颜色。
+	box.add_child(_section_band(str(sec.get("label", "")), sec.get("color", UiFactory.C_TEXT)))
 
 	var grid := GridContainer.new()
 	grid.name = "Rows"

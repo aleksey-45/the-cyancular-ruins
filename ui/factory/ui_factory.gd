@@ -43,7 +43,7 @@ static func style_control(c: Control, size: int) -> void:
 		c.add_theme_font_override("font", pf)
 
 
-static func label(text: String, size: int, color: Color = Color.WHITE) -> Label:
+static func label(text: String, size: int, color: Color = C_WHITE) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_color_override("font_color", color)
@@ -99,7 +99,90 @@ const C_ACCENT      := Color(0.349, 0.851, 0.902)   # 强调青 #59D9E5
 const C_DANGER      := Color(0.900, 0.400, 0.400)
 const C_TEXT        := Color(0.878, 0.914, 0.949)
 const C_TEXT_DIM    := Color(0.510, 0.573, 0.639)   # 占位符/说明文字
+# 纯白:`UiFactory.label()` 的**默认**字色(未显式给色的调用点拿到的就是它)。
+# ★★ 它**不是** `C_TEXT` —— `C_TEXT` 略带蓝(0.878/0.914/0.949),纯白是 (1,1,1),
+#    单通道差 0.122。两者**别"统一"**:把某个原本走默认色的调用点换成 `C_TEXT`,
+#    在深底上肉眼几乎看不出,但迁移的判据是**逐像素**,实测当场差 9220 个像素
+#    (2026-10-03 设置页迁移踩过 —— 键位表那 11 个动作名)。
+const C_WHITE       := Color(1, 1, 1)
 const C_WARN        := Color(0.950, 0.850, 0.550)   # 金色:**只**用于「低弹量/耗尽」语义
+
+# ── 模式色(2026-10-03,大厅合一)──
+# 只在**菜单系**用(房卡标题带 / 筛选器),与对局内任何颜色无关。
+# ★ 3v3 **刻意不用蓝**:`#639BFF` 就是 `C_TEAM_A`(队 1 的队色),而队色在 3v3 里是
+#   **有玩法语义**的颜色("一眼看出谁是队友")。拿它当模式色会让大厅的「3v3」与对局的
+#   「队 1」撞色 —— 那是"认不出队友"那类问题的同一个源。
+# ★ 1v1 直接复用 `C_ACCENT`(设计 §3.9.2),不另立一个同值 token。
+const C_MODE_TEAM   := Color(0.627, 0.549, 1.0)      # #A08CFF 紫
+const C_MODE_ROYALE := Color(0.910, 0.639, 0.239)    # #E8A33D 琥珀
+
+# ── 菜单系视觉(方向 B「遗迹青铜」,2026-10-03)──
+# ★★ **只给菜单系用**(主菜单/设置/信息/统一大厅/Beta/结算页/暂停菜单)。
+#    **对局内 HUD 一律不用它们**,也不会因为它们的加入而改变一个像素。
+# ★★ **上面那批 token(`C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_DANGER` / `C_WARN` /
+#    `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*`)** 一个都不许改** ——
+#    它们被 `ui/hud/**` 读取(见 `menu_style_probe` 的冻结守卫)。
+#    设计 §3.9.1 的 token 表里 `C_ACCENT` / `C_TEXT_DIM` 给的是另一个值,那是设计文档的
+#    内部矛盾(它同时写着「HUD 一行不动」);用户 2026-10-03 裁定**以 HUD 为准**。
+# ★ 设计 §3.9.1 的表还给了另一组 `C_BG` / `C_SURFACE` / `C_BORDER` / `C_FIELD` 值 —— 本任务
+#   一个都未动(它们同样不是菜单专属)。后续任务**别顺手改它们**:
+#     · `C_SURFACE` / `C_BORDER` 由 `panel_box()` 读,而 `ui/hud/status_banner.gd`(对局内的
+#       **重连横幅**)在用 `panel_box(false)`(读 `C_SURFACE`);`C_BORDER` 另被
+#       `style_button` / `style_row_button` / `style_line_edit` 读 ⇒ 这两个与对局内 HUD 共享。
+#     · `C_BG` / `C_FIELD` 只被菜单系读;若真要动,先 grep 确认没有别的调用方。
+# ★ 色值统一写成 hex 字符串:`Color("#RRGGBB")` 对 8bit 精确;写成浮点反算(如 0x1B/255)
+#   会与探针里的 hex 期望值差 1/255 ⇒ `menu_style_probe` 恒红。两侧必须同一写法。
+const C_HEADER     := Color("#1B242C")   # 标题带底 / 按钮填充
+const C_INNER      := Color("#1E2830")   # 面板**内**亮线(凿刻感的来源)
+const C_EDGE       := Color("#46545F")   # 按钮描边
+const C_GOLD       := Color("#E0A94F")   # 琥珀:分区标题 / 主行动按钮
+const C_TEXT_MUTE  := Color("#6C7885")   # 比 C_TEXT_DIM 更弱一档(禁用)
+
+# ★ 全透明(2026-10-03,`.tscn`+Theme 迁移批次)。**存在的唯一理由**:`menu_style_probe` 的
+#   凿刻面板是**两层** PanelContainer —— 内层只画一条 `C_INNER` 亮线、**不画底**(有底就会把外层的
+#   `C_SURFACE` 盖掉)。`StyleBoxFlat` 的 `bg_color` 默认是**不透明灰 (0.6,0.6,0.6,1)**,
+#   所以"不画底"必须显式写成透明 —— 而 `ui_palette_single_source_smoke` ⑥ 要求
+#   **Theme 里出现的每一个颜色都等于某个 `const C_*`** ⇒ 透明也得是一个具名 token,
+#   不能在 `.tres` 里裸写 `Color(0, 0, 0, 0)`(那样守卫会红,且红得有道理)。
+#   ⚠ 它**不是** `C_PLATE`(黑 0.1 的半透明底板,给 HUD 上的文字垫底用,语义不同)。
+const C_TRANSPARENT := Color(0, 0, 0, 0)
+
+# ── 断线「掉线中」语义色(阶段 3,2026-09-28)──
+# **只**给「某人掉线中,还在宽限期内、可能会回来」这一个语义用。
+# ★ 为什么不复用现成的三档:`C_WARN`(金)被钉死为「弹夹见底」单一语义;`C_DANGER`(红)已表
+#   「离开」(**不可逆**的终态);`C_TEXT_DIM` 已表「复活中」(对局内的正常状态)。
+#   「掉线中」是第四种:可能回来、也可能不回来 —— 单独一档,免得被读成上面任何一种。
+# ★★ **如实记对比度,不声称达标**(口径与 `C_TEAM_A` 那段同一套:WCAG 相对亮度)。
+#   底板 = `C_PLATE` 压在地图开阔区 #78969F 上 ≈ **#6C8790**(L=0.2253):
+#     本色 `#B89EE6` → **1.65:1**      ← 达不到大字下限 3:1
+#   ★ 达不到**不是这一档的问题**:L=0.2253 的底上要凑够 3:1,文字亮度得 ≥0.775(近白)或
+#     ≤0.042(近黑)—— 本项目自己的标准文本色 `C_TEXT` 也只有 3.11:1。
+#   ★ 大乱斗的排行榜那一行是画在 `_board_bg`(**黑 0.25**)上的,底更暗:本色 **2.24:1**,
+#     而既有那两档更低(「离开」的 `C_DANGER` 只有 **1.59:1**、「复活中」的 `C_TEXT_DIM` 更低)
+#     —— 即本档在排行榜上比既有两档都**更显眼**,这是它取这个亮度的全部理由。
+#   ★ 色值是**审美值**,以实图为准:`tests/probe/combat_hud_visual_probe` 会连同既有几档一起取图,
+#     由人眼验收("一眼能从满屏文字里挑出掉线的那一行")。要调整就调这一个数。
+const C_GRACE       := Color(0.72, 0.62, 0.90)      # #B89EE6
+
+# ── 底板色(唯一源;2026-09-28)──
+# HUD 元素一律垫它。★★ **唯一的数值源**:`ui/hud.gd` / `ui/weapon_slots.gd` /
+#   `ui/world_label.gd` 三处的 `PLATE_COLOR` 是它的**别名**,`ui/royale_hud.gd` 的
+#   `_plate_box()` 直接引用它 —— 别名/引用里**没有字面量** ⇒ 不构成第二个源。
+#   `ui/pvp_hud.tscn` / `ui/team_hud.tscn` 的 `bg_color` 是**结构上无法派生**的副本
+#   (`.tscn` 引用不到 GDScript 的 const),由 `tests/smoke/ui_palette_single_source_smoke.gd`
+#   钉住与它逐位相等。
+# ★ 用户 2026-09-15 定为 0.15、同日又下调到 0.1(当天这几个元素先被去掉底板、又垫回来)。
+# ★ **例外:大乱斗排行榜 `royale_hud._board_bg` 单独是 0.25** —— 用户点名把那张玩家栏
+#   排除在这轮下调之外(玩家名次表要更实的底);别看到"统一"就把那处也一起改了。
+#   (`pvp_hud` 的 `Mask` 与 royale 的 `_mask` 是**全屏压暗罩**,不是底板,别顺手一起改。)
+# ⚠ 0.1 是**薄薄压一层**,不是当年那套底板。按 WCAG 相对亮度算(底色取地图开阔区 #78969F):
+#     alpha 0(不垫)→ 底色 L=0.283,青血条 1.87:1、金残弹 2.26:1、白字 2.57:1
+#     alpha 0.10   → 底色 L=0.225,青血条 2.27:1、金残弹 2.74:1、白字 3.11:1   ← 现在
+#     alpha 0.15   → 底色 L=0.199,青血条 2.50:1、金残弹 3.03:1、白字 3.44:1   ← 上一版
+#     alpha 0.45   → 底色 L=0.080,青血条 4.81:1、金残弹 5.81:1、白字 6.60:1   ← 当年那套(≥4.5:1)
+#   即现在只是把这几样从「勉强」提到「稍好」,血条仍低于大字下限 3:1。这是用户看过实图后的
+#   选择,别拿对比度理由把它调回去;真要提对比度得动元素自身的颜色(血条青/金色残弹),另一件事。
+const C_PLATE       := Color(0, 0, 0, 0.1)
 
 # ── 队伍色(3v3)──
 # ★ 口径由用户 2026-09-19 定:**队 1 = 蓝、队 2 = 青**,与 1v1 的 P1/P2 同一套 —— 而 2026-09-20 起
@@ -111,8 +194,8 @@ const C_WARN        := Color(0.950, 0.850, 0.550)   # 金色:**只**用于「低
 #   小地图点位色、**身体染色**。三者画出来是**同一个色**(身体那一处走
 #   `PvpMatchClient._apply_tint` 的第三参,内部把它换算成 modulate 比值让主体像素恰好等于本色)。
 #
-# ⚠ **原本写的「与底板对比 ≥3:1」当年就没量过,实测不成立 ⇒ 在此订正**(算法与
-#   `ui/hud.gd` 的 `PLATE_COLOR` 注释同一套:WCAG 相对亮度;底板 = 头顶 ID 的 `黑 0.1`
+# ⚠ **原本写的「与底板对比 ≥3:1」当年就没量过,实测不成立 ⇒ 在此订正**(算法与本文件
+#   `C_PLATE` 那段同一套(见上):WCAG 相对亮度;底板 = 头顶 ID 的 `黑 0.1`
 #   压在地图开阔区 #78969F 上 ≈ **#6C8790**,L=0.2253):
 #     队 A `#639BFF` → **1.39:1**(裸地图 1.15:1)← 达不到
 #     队 B `#80F4FF` → **2.96:1**(裸地图 2.45:1)← 也达不到
@@ -153,7 +236,7 @@ static func ping_color(ms: int) -> Color:
 #   所以三态的**明度阶梯**必须是:未占(贴近底板、后退)→ 已占(中)→ 手持(最深、最跳)。
 #   (反过来配会出现"空格最抢眼、当前武器最不显眼"的倒挂 —— 这正是这一版改掉的东西。)
 # ★ 真正的不变量是「三态两两可区分」+「手持格明度离底板最远」,色相只是表达手段。
-#   由 kh_l3_visual_probe 测试进行双向断言校验。
+#   kh_l3_visual_probe 双向钉住"该是什么色 / 不该是什么色"。
 # ★ 色值是**审美值**,以实图为准(同 KILL_COLOR 的注释);调色时先按上面那两条不变量量。
 # ★ 2026-09-15 按**浅底实图**(kh_l3_visual_probe 的 l3_slots_on_map)调过一次:
 #   初版 EMPTY 的明度几乎正好等于底板 → 空格子**看不见** → 4×2 的格阵形状读不出来,
@@ -171,16 +254,26 @@ const BTN_BORDER_W := 2
 
 # 描边式按钮的底:暗填充 + 亮描边(直角)。像素游戏里描边比「提亮填充」更省墨,
 # 也更容易和已有的暗色界面相处 —— 只是把「按钮存在」这件事补上。
+#
+# ★ 2026-10-03(视觉尺度调整,第一档):内容边距 14/6 → **30/14**。用户看过成品图后裁定
+#   「很多 margin 和 padding 都设计得太小」(设计稿是 1920×1440,原先这套度量按这个屏算偏小)。
+# ★★ 2026-10-03(第二档,用户:「还是不够」):30/14 → **40/20**(约 +35%)。
+# ★★ **这一处是共用的**:`menu_button()`(菜单系)与 `style_button()`(旧那套:
+#   暂停菜单 / 设置 / 信息 / Beta / 结算页)都走本函数 ⇒ 改它 = **同时**放大那几屏的内边距。
+#   这是**有意接受**的(它们迟早一起换皮,而内边距变大不会坏任何断言);
+#   但改这一行的人必须知道影响面不止菜单系。侧写:按钮的最小高度因此变成
+#   「字号 + **40**」—— 32 号字的按钮低于 **72**px 会被容器顶高,而**绝对定位**的调用方
+#   (`scenes/mp_lobby.gd` 是本仓唯一一处)必须自己把行高跟着抬到 72,否则相邻两行会被顶歪。
 static func _btn_box(fill: Color, border: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = fill
 	sb.border_color = border
 	sb.set_border_width_all(BTN_BORDER_W)
 	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 14.0
-	sb.content_margin_right = 14.0
-	sb.content_margin_top = 6.0
-	sb.content_margin_bottom = 6.0
+	sb.content_margin_left = 40.0
+	sb.content_margin_right = 40.0
+	sb.content_margin_top = 20.0
+	sb.content_margin_bottom = 20.0
 	return sb
 
 
@@ -197,6 +290,157 @@ static func panel_box(border: bool = true) -> StyleBoxFlat:
 	sb.content_margin_top = 20.0
 	sb.content_margin_bottom = 20.0
 	return sb
+
+
+# 菜单系的面板底(方向 B 的凿刻感 = **外深线 + 内亮线**两条线)。
+#
+# ★ 为什么不让 `panel_box()` 直接改成这样:`ui/hud/status_banner.gd:88`(对局内的
+#   **重连横幅**)在用 `panel_box(false)` —— 改它会连带改到对局内 HUD,而本次的硬约束是
+#   "HUD 一行不动"。⇒ 菜单要的形状走**新函数**,两个函数各管各的。
+# ★ 实现用**两层嵌套的 PanelContainer**:`StyleBoxFlat` 一条边只能有一个颜色,
+#   要两条线就得两层。内容加到 `Body` 里:
+#       var p := UiFactory.menu_panel()
+#       (p.get_node("Body") as Container).add_child(<你的 VBox>)
+# ★ 2026-10-03(第二档尺度):默认 padding 48/34 → **64/46**(用户:「还是不够」)。
+static func menu_panel(padding: Vector2 = Vector2(64, 46)) -> PanelContainer:
+	var outer := PanelContainer.new()
+	skin_menu_panel(outer, padding)
+	return outer
+
+
+# 把**已经存在的** PanelContainer 套上菜单系凿刻皮(外深线 + 内亮线),并把它的现有子节点
+# 收进新建的 `Body` —— 与 `menu_panel()` **同一个实现**(它只是本函数的一层包装),
+# 故 `menu_style_probe` 的两条位置断言(内亮线真的内缩 1px / 内层宽度 < 外层 −2px)对两条路径
+# 同样成立。
+#
+# ★ 为什么需要"就地套皮"这一条:骨架(锚点/节点名)写在 `.tscn` 里的那几屏(单人开局面板)
+#   不能直接换成 `menu_panel()` 建的新节点 —— 那会让场景文件变成死结构。而**颜色字面量
+#   不许进 `.tscn`**(调色板纪律:`ui_palette_single_source_smoke` 扫全仓)⇒ 皮只能在代码里
+#   套上去。内容一律加在 `Body` 里,与 `menu_panel()` 的契约一致。
+# ★ 幂等:已经有 `Body` 就直接返回(重复调用不会套成两层)。
+static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
+	if outer.get_node_or_null("Body") != null:
+		return
+	var osb := StyleBoxFlat.new()
+	osb.bg_color = C_SURFACE
+	osb.border_color = C_BORDER
+	osb.set_border_width_all(1)
+	osb.set_corner_radius_all(0)
+	# ★★ **不设** content_margin(留默认 -1):此时 `StyleBox::get_margin()` **回落**
+	#    `get_style_margin()` = border width(1px),`get_offset()` = (1,1) ⇒ 子节点被内缩 1px,
+	#    内亮线落在与外线**不同的像素环**上(这才是"两条线")。
+	#    ⚠ 若显式写成 `content_margin_* = 0.0`,内层会**铺满外层整个矩形**(实测
+	#    `body.rect == (0,0,外层全尺寸)`)、两条 1px 线落在**同一环**上、内层盖住外层 ⇒
+	#    画面上只剩一条 —— 计划初稿就是这么写的,是错的。`menu_style_probe` 的
+	#    "位置断言"(内层真的内缩)专钉这一条:只断言两层 border_color 各自正确是**看不见**重合的。
+	outer.add_theme_stylebox_override("panel", osb)
+
+	var body := PanelContainer.new()
+	body.name = "Body"   # ★ 名字是公开契约:调用方靠 `get_node("Body")` 拿内容容器
+	var isb := StyleBoxFlat.new()
+	isb.bg_color = Color(0, 0, 0, 0)   # ★ 内层只画线、不画底(否则把外层的底盖掉)
+	isb.border_color = C_INNER
+	isb.set_border_width_all(1)
+	isb.set_corner_radius_all(0)
+	isb.content_margin_left = padding.x
+	isb.content_margin_right = padding.x
+	isb.content_margin_top = padding.y
+	isb.content_margin_bottom = padding.y
+	body.add_theme_stylebox_override("panel", isb)
+	# 把外层**已有**的子节点搬进 Body(就地套皮的调用方:骨架来自 .tscn)。
+	# ★ 先 `remove_child` 再 `add_child`:同帧直接 add 会因"已有父节点"而**静默换父失败**。
+	for c in outer.get_children():
+		outer.remove_child(c)
+		body.add_child(c)
+	outer.add_child(body)
+
+
+# 菜单系的按钮(方向 B)。★ **不动 `style_button` 的 variant 分屏** —— 它被结算页/暂停菜单等
+# 共用,改它的三档配色等于一次改全部,没法逐屏验收。本函数是菜单系的新入口,分屏切换。
+# (★ 但**内边距是共用的**:两者都走 `_btn_box`,见那个函数的注释。)
+# variant 语义与 `style_button` 一致:"primary" 常态 / "quiet" 弱化(退出等)。
+# "gold" 是新增的第三档:**主行动**(创建房间 / 开始游戏)—— 琥珀描边 + 琥珀字。
+#
+# ★ 2026-10-03(尺度):默认 420×64 → **640×88**。没显式传 min_size 的调用点(主菜单六颗)
+#   跟着变大是**想要的**;显式传了小尺寸的调用点(大厅/弹层那批)必须自己判断 ——
+#   它们**不该**变成 640 宽,要传一个**放大后的小尺寸**(如 260×64)。
+static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640, 88),
+		variant: String = "primary") -> Button:
+	var b := Button.new()
+	b.text = text
+	style_control(b, size)
+	b.custom_minimum_size = min_size
+	var edge := C_EDGE
+	var fg := C_TEXT
+	if variant == "quiet":
+		edge = C_BORDER_DIM
+		# ★ 弱化档的字色用 `C_TEXT_DIM`(不是更弱的 `C_TEXT_MUTE`)—— 如实登记成因:
+		#   `tests/probe/kh_l4_visual_probe` 对**每一颗**主菜单按钮都要求矩形内有 ≥120 个
+		#   "亮像素"(平均亮度 > 0.5),那是它证明"浮现动画跑完了"的判据;`C_TEXT_MUTE`
+		#   (#6C7885,平均 0.472)在整颗按钮里一个亮像素都不产生 ⇒ 那条断言当场红。
+		#   而它与 `style_button("quiet")` 的既有观感**逐字相同**(那也是这颗探针标定时用的),
+		#   ⇒ 弱化关系(C_TEXT 0.878 → 0.574)一点没变。
+		fg = C_TEXT_DIM
+	elif variant == "gold":
+		edge = C_GOLD
+		fg = C_GOLD
+	elif variant == "accent":
+		# 主行动档(2026-10-03):常态描边就是 `C_ACCENT`(比 primary 的 `C_EDGE` 更前),
+		# 字色仍用 `C_TEXT` —— 悬停时字才转青(与其余档同款反馈),这样"更前"由描边表达,
+		# 文字对比度不受影响。主菜单的「单 人 模 式」用它(用户裁定"主行动要真的更大/更前")。
+		edge = C_ACCENT
+		fg = C_TEXT
+	b.add_theme_stylebox_override("normal", _btn_box(C_HEADER, edge))
+	b.add_theme_stylebox_override("hover", _btn_box(C_BTN_FILL_HI, C_ACCENT))
+	b.add_theme_stylebox_override("pressed", _btn_box(C_BTN_FILL_DN, C_ACCENT))
+	b.add_theme_stylebox_override("focus", _btn_box(C_HEADER, C_ACCENT))
+	b.add_theme_stylebox_override("disabled", _btn_box(C_HEADER, C_BORDER_DIM))
+	b.add_theme_color_override("font_color", fg)
+	b.add_theme_color_override("font_hover_color", C_ACCENT)
+	b.add_theme_color_override("font_focus_color", fg)
+	b.add_theme_color_override("font_pressed_color", C_ACCENT)
+	b.add_theme_color_override("font_disabled_color", C_TEXT_MUTE)
+	return b
+
+
+# 标题带:一片 `C_HEADER` 的横条 + **只有下边**一条 `C_BORDER` 线 + 金色标题。
+# 它是方向 B"器物感"的主要来源(设计 §3.9 的"标题带")。
+# ★ 只画下边一条线是刻意的:四边都画就变成又一个面板,与 `menu_panel()` 的凿刻压边打架。
+static func header_strip(text: String, size: int = 32) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = C_HEADER
+	sb.set_corner_radius_all(0)
+	sb.border_width_left = 0
+	sb.border_width_right = 0
+	sb.border_width_top = 0
+	sb.border_width_bottom = 1
+	sb.border_color = C_BORDER
+	# 2026-10-03(尺度):16/8 → 28/14 →(第二档,与 `_btn_box` 同一轮放大)**40/20**,
+	# 标题带才不会比按钮瘦一圈。★ 另有一处**刻意不跟**本函数走的同款字面量:
+	# `scenes/mp_lobby.gd` 的 `_card_header`(房卡标题带,自带右侧角标)——
+	# 它住在一张**自己带内边距的卡**里(见 `_make_card` 的 frame),外层的内边距已经够;
+	# 照搬 40/20 会让卡内文字区被挤掉一大截。那处保持 20/12,是为版式,不是漂移。
+	# ★★ 2026-10-04(用户「正文要和标题对齐:金色标题前面有空格,看上去没对齐」):
+	#   **左内边距 40 → 0**。标题带是 PanelContainer,盒子左边与正文同一列,而 40px 的左内边距
+	#   把**金色标题的字**又推右了 40 ⇒ 读起来像「标题前面多了个空格」。
+	#   ★ 右侧不动(满宽条,右内边距看不见);上下 20 也不动(那是纵向呼吸,不是对齐问题)。
+	#   ★ 改这里必须**同步** `tools/gen_menu_theme.gd` 并**重跑**它 —— Theme 的 `HeaderStrip`
+	#     变体是这一处的镜像,`menu_theme_mirror_smoke` 逐值比对两者;只改一边那条守卫就红。
+	#   ★ 别顺手改 `_btn_box()` 里同款的 40/20(273 行)—— 那是**按钮**的底,改它全站按钮文字会左移。
+	sb.content_margin_left = 0.0
+	sb.content_margin_right = 40.0
+	sb.content_margin_top = 20.0
+	sb.content_margin_bottom = 20.0
+	p.add_theme_stylebox_override("panel", sb)
+	p.add_child(label(text, size, C_GOLD))
+	return p
+
+
+# `menu_filter_button`(模式色分段筛选按钮那一口)2026-10-03 **已删**:全仓零调用 —— 选中态
+# 现由 `scenes/mp_lobby.tscn` 的**内联 SubResource** 承担(4 颗筛选按钮 + 创建弹层 3 颗模式按钮)。
+# ★ 为什么本 Theme 里没有对应的 Filter 变体、手写那几态要当心什么:见 `tools/gen_menu_theme.gd`
+#   开头的「覆盖上限」注。
 
 
 # 列表行底(房间行等):比页面底亮一档,让「行」这个物体存在。
@@ -248,7 +492,7 @@ static func style_slider(s: Slider) -> void:
 
 
 # 输入框:默认主题的 LineEdit 底几乎与页面底同色(实测 1.01:1),看不出是输入框;
-# 且占位符与实际输入亮度相同无法明确区分输入状态。此处统一配置背景、边框及占位符颜色。
+# 且占位符与真实输入同样亮,分不清「填了没填」。这里同时钉住底、边框、占位符色。
 static func style_line_edit(le: LineEdit) -> void:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_FIELD
@@ -348,7 +592,9 @@ static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)
 	var b := Button.new()
 	b.text = text
 	style_control(b, size)
-	# 默认 420×64 是主菜单按钮列的布局度量,故意不凑 16 的倍数(见文件头第 2 条)。
+	# 默认 420×64 是**旧式**页面的按钮列度量(暂停 / 设置 / 信息 / Beta / 结算页在用),
+	# 故意不凑 16 的倍数(见文件头第 2 条)。★ 主菜单 2026-10-03 起走 `menu_button()`
+	# (默认 640×88),本函数的默认值**没有跟着变** —— 那几屏还没换皮,不该被顺手改。
 	# 尺寸不合场景的调用方(设置菜单的键位格 200×40、返回键 280×48)直接传 min_size,
 	# 不必再事后覆写 custom_minimum_size。
 	b.custom_minimum_size = min_size
@@ -358,9 +604,7 @@ static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)
 	# 是能听出来的双响。统一由状态转移出声(键盘与点击同源)。
 	return b
 
-# ── 行式控件与杂项(2026-09-14 补齐:原先三个页面各手抄一份,注释都抄了三遍)──
-# 两个"行"的口共用同一个形状:**定宽标签列 + 紧邻控件**。标签列宽由调用方给(label_w)——
-# 各页面的数值**本就不同**(设置页 320 / 多人页 440),是各自的版式调参,不为统一而统一。
+# ── 杂项(2026-09-14 补齐:原先三个页面各手抄一份,注释都抄了三遍)──
 
 # 递归给子树套像素字体(跳过容器:容器的 font 不影响子控件)。
 static func apply_font_recursive(root: Node) -> void:
@@ -375,52 +619,6 @@ static func apply_font_recursive(root: Node) -> void:
 # 色相(0-360°)→ 预览色。两个大厅页原先各一份(逐字相同):色相只作"角色色"提示用。
 static func hue_preview_color(hue_deg: float) -> Color:
 	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
-
-
-# 开关行 = **定宽标签列 + 紧邻开关**。为什么必须定宽:裸 CheckButton 被 VBox 拉到容器全宽,
-# 标签与开关隔开几百像素,两者读成不相干的元素(2026-09-13 视觉评析)。定宽列同时让同一列的
-# 多个开关纵向对齐。label_w 见上(各页面自己那组数值)。
-static func check_row(text: String, initial: bool, label_w: float,
-		on_toggle: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var lab := label(text, 32, C_TEXT)
-	lab.custom_minimum_size = Vector2(label_w, 0)
-	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(lab)
-	var cb := CheckButton.new()
-	cb.button_pressed = initial
-	cb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	style_check(cb, 32)
-	cb.toggled.connect(func(on: bool) -> void:
-		Sfx.play("switch")
-		on_toggle.call(on))
-	row.add_child(cb)
-	return row
-
-
-# 滑条行 = **定宽标签列 + 铺满剩余宽度的滑条**(与 check_row 共用同一套版式节奏,
-# 故两者的 label_w 应取同一个值 → 滑条与开关在同一页里纵向对齐成一列)。
-static func slider_row(text: String, initial: float, label_w: float,
-		on_change: Callable) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
-	var l := label(text, 32, C_TEXT)
-	l.custom_minimum_size = Vector2(label_w, 0)
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(l)
-	var sl := HSlider.new()
-	sl.min_value = 0.0
-	sl.max_value = 1.0
-	sl.step = 0.05
-	sl.value = initial
-	# 铺满剩余宽度(原先固定 360 宽,右侧空着、拖拽命中区也偏小)。
-	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sl.custom_minimum_size = Vector2(360, 28)
-	style_slider(sl)
-	sl.value_changed.connect(func(v: float) -> void: on_change.call(v))
-	row.add_child(sl)
-	return row
 
 
 # 绝对定位的输入框(挂在 parent 下)。size 由调用方给:各页面原值不同(240×36 / 250×40),
