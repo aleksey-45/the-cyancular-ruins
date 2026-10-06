@@ -139,7 +139,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 当前服务端采用**单进程、单端口架构**（2026-09-29 重构）：
 - 大厅与对局在同一进程内运行，每场对局由 `server/match_session.gd`（`MatchSession`）实例化驱动并挂载为节点。客户端全程连接同一服务端，`go_match` 表示进入对局场景，`claim_role` 在既有连接上发送，无需断开转连。
-- 服务端端口由客户端动态分配（`core/net/local_server.gd::launch_and_connect()`，范围 20000~59999），通过 `--port P` 传参启动 `Server.exe`；远程联机基于 EasyTier 虚拟局域网隧道（`core/net/tunnel.gd` 与 `core/config/tunnel_meta.gd`，房间码为 5 位数字）。
+- 服务端端口由客户端向操作系统动态申请空闲端口（`core/net/local_server.gd::launch_and_connect()`，通过 `bind(0)` 由系统发号），并通过 `--port P` 传参启动 `Server.exe`；远程联机基于 EasyTier 虚拟局域网隧道（`core/net/tunnel.gd` 与 `core/config/tunnel_meta.gd`，房间码为 5 位数字）。
 - 连接参数统一由 `PvpSession` 维护，来源仅包含本地自建房与隧道加入。详细网络架构与日志规范参见 `docs/netplay.md`。
 
 **远程联机 (EasyTier 隧道) 核心约束**：
