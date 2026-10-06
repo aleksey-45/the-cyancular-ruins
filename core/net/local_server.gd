@@ -11,8 +11,6 @@ extends RefCounted
 #   3. 探活检测服务就绪状态，若失败则自动重试选择其他端口。
 
 const SERVER_EXE := "Cyancular Ruins Server.exe"
-const PORT_LO := 20000
-const PORT_HI := 59999
 const PICK_TRIES := 8
 ## 探活超时时限（秒）：成功连入后立即返回，子进程异常退出亦会立即判定失败。
 const PROBE_TIMEOUT := 10.0
@@ -21,6 +19,16 @@ static var restarting := false   # 标记是否处于重启启动中（避免此
 static var _owned_pid := 0       # 当前客户端启动的服务端进程 PID（退出时仅回收本实例启动的进程）
 static var _owned_port := 0      # 服务端监听端口（用于日志追踪）
 
+
+## 挑一个本机空闲的 UDP 端口给服务端用：直接向操作系统要（bind 127.0.0.1:0，由系统从动态口池
+## 分配一个当前空闲的号），拿到立刻释放传给命令行。结构上不会撞任何已绑端口。
+static func _pick_free_port() -> int:
+	var probe := PacketPeerUDP.new()
+	if probe.bind(0, "127.0.0.1") != OK:
+		return 0
+	var p := probe.get_local_port()
+	probe.close()
+	return p
 
 
 ## 与客户端同目录的 `Cyancular Ruins Server.exe`(导出产物)。找不到返回 ""。
@@ -50,7 +58,11 @@ static func launch_and_connect() -> int:
 	restarting = true
 	stop_owned()
 	for i in range(PICK_TRIES):
-		var port := randi_range(PORT_LO, PORT_HI)
+		var port := _pick_free_port()
+		if port <= 0:
+			push_error("LocalServer: 操作系统分配空闲端口失败")
+			restarting = false
+			return -1
 		var pid := OS.create_process(exe, PackedStringArray(["--", "--port", str(port)]))
 		if pid <= 0:
 			# ★ 立即返回,**不能 `break`**:break 会掉到循环后面那句"N 次随机端口全被占用",
