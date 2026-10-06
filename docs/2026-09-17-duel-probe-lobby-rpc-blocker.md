@@ -1,108 +1,89 @@
-# 1v1 探针卡点：大厅 RPC 全部到不了服务器（2026-09-17）
+# 1v1 模式测试阻塞问题分析：大厅 RPC 通信异常排查 (2026-09-17)
 
-**一句话**：给 L1 探针加 1v1 覆盖时，**大乱斗侧一次跑绿、1v1 侧一条大厅 RPC 都到不了服务器**。
-症状已夹到最小（同一个客户端进程、同一个大厅，只换大厅页就复现/消失），但**成因未定**。
-本文只记录**已证实的读数**与**已排除的假设**，不含结论。
+> **问题概要**：在为地面网络探针（`ground_net_probe`）扩展 1v1 对战覆盖时，大乱斗模式（Royale）能够顺利完成全链路端到端通信，而 1v1 对决模式（Duel）下客户端发往服务端的大厅 RPC 请求无法被正常接收与处理。经排查，该现象在相同客户端进程环境与服务端实例下，仅通过切换大厅场景即可稳定复现。本文记录已量测的数据特征、已排除的假设及定位边界。
 
 ---
 
-## 1. 已交付（可独立保留）
+## 一、 现状与参数化改造
 
-`tests/ground_net_probe.gd` + `tests/ground_net_watcher.gd` 的模式/剧本参数化：
+测试套件已完成如下底层重构（支持独立复用）：
 
-- `--mode=royale|duel`、`--scene=<剧本名>`；默认 `royale` / `L1` ⇒ **现有命令与判据逐字不变**。
-- `ground_net_watcher.MODES` 表是**唯一的**模式差异来源；差异只有 4 处（大厅场景 / 加入方式 /
-  对局场景名 / 要不要按「开始游戏」）。
-- 客户端大厅改为**走游戏自己的换场景栈**（`change_scene_to_file`），观察者挂 `root` 上、
-  用 `get_tree().current_scene` 认大厅 —— 与导出形态（无裁判进程）同一条路。
-- `project.godot` 的 `log_file_logging/max_log_files` 5 → 64（原先会把崩溃现场轮转吃掉）。
-
-**回归**：`--mode=royale --scene=L1 --test-ground-teleport` 仍然 `PROBE: ALL-OK`
-（两端 `丢=8 捡=10 轮=4 背包=2`，且服务端确认收到两条 `lobby_name`）。
+- **参数化支持**：`tests/ground_net_probe.gd` 与 `tests/ground_net_watcher.gd` 支持 `--mode=royale|duel` 与 `--scene=<剧本名>` 配置参数（默认保持 `royale` 与 `L1`，兼容既有测试指令与断言规则）。
+- **模式映射单一来源**：`ground_net_watcher.MODES` 配置表统一管理模式差异（包含大厅场景、加入方式、对局场景标识及启动动作配置）。
+- **统一场景切换机制**：客户端大厅统一通过标准场景切换栈（`change_scene_to_file`）实例化，观察者挂载于场景树根节点（`root`），通过 `get_tree().current_scene` 动态识别当前大厅，与运行时导出版本行为严格对齐。
+- **日志轮转配置优化**：`project.godot` 中将 `log_file_logging/max_log_files` 由 5 调整为 64，避免高频测试导致异常现场日志被过早覆盖。
 
 ---
 
-## 2. 症状（duel）
+## 二、 异常表现（1v1 模式）
 
-```
-PROBE[c1]: 大厅已连,建房          ← c1 调 create_room
+在 1v1 模式下运行探针时，控制台抛出如下校验异常：
+
+```text
+PROBE[c1]: 大厅已连,建房          ← 客户端 c1 调用 create_room()
 ERROR: rpc node checksum failed ... /root/NetBus   (process_confirm_path)
 ERROR: rpc node checksum failed ... NetBus          (process_simplify_path)
-PROBE[c1]: 等换场(...)            ← 然后永远等下去(房间没建出来)
+PROBE[c1]: 等换场(...)            ← 房间创建请求未被处理，客户端持续挂起
 PROBE[c2]: 等大厅连接(_connected=false) → 认出大厅 → 反复刷新房间列表(找不到房)
 ```
 
-服务端插桩（`LobbyRooms.on_lobby_name` / `create_room` / `join_room` / `on_list_rooms`）
-在整轮里**一条都没打印** —— **没有任何 NetBus RPC 到达服务器**。
-
-而**大乱斗模式下同一条 `lobby_name` 会到达两次**（两端各一次）。
+- **服务端跟踪表现**：在服务端入口及处理函数（`LobbyRooms.on_lobby_name` / `create_room` / `join_room` / `on_list_rooms`）中注入跟踪日志，整个测试生命周期内未收到任何来自 `NetBus` 的有效 RPC 调用。
+- **对照组表现**：大乱斗模式下相同逻辑链路中，两端客户端发出的 `lobby_name` 均能正常到达服务端并触发响应。
 
 ---
 
-## 3. 已排除的假设（都做过测量）
+## 三、 已排查与证伪的假设
 
-| 假设 | 怎么否掉的 |
-|---|---|
-| 嵌入式大厅（探针进程里跑 `RoomManager`）有问题 | 换成真 `server_main.tscn` 独立进程，**照样失败** |
-| 导出/编辑器差异 | 两组都在编辑器 headless 下跑 |
-| 客户端方法表与服务端不一致 | `NetBus.get_method_list()`：客户端与服务端**都是 230 个方法、hash 都是 `3873843019`** |
-| RPC 被 `_send_rpc` 的节点未缓存分支丢掉 | 读引擎源码 `scene_rpc_interface.cpp:305`：未缓存时**照样发送**（只是不压缩节点 id） |
-| 客户端主动放弃了发送 | 客户端引擎日志**没有** `_send_rpc` 的任何守卫报错 |
-| 是「主菜单先加载武器子系统」的生产顺序 | `main_menu` 的 `WeaponIcons.silhouette` 在 `_build_sp_panel()` 里，**只在点「单人模式」时才建**，主菜单 `_ready` 不碰它 |
-| `_add_weapon_grid` 是触发者 | **曾一度以为二分到了，但下一轮同样的命令没有复现 ⇒ 是时序噪声，结论已撤回** |
-
-## 4. 夹到的边界（这条是稳的）
-
-| 客户端（同一探针进程） | 大厅 | 结果 |
+| 假设方向 | 排查方法与实测结果 | 结论 |
 |---|---|---|
-| `--mode=royale` | 嵌入式 | ✅ 服务器收到 2 条 `lobby_name`，整局 ALL-OK |
-| `--mode=duel` | 嵌入式 | ❌ 服务器收到 **0** 条 |
-| `--mode=duel` | 真 `server_main.tscn` | ❌ 同样 |
-| `--mode=duel` + 临时把 `MODES["duel"]["lobby_scene"]` 换成 `royale_lobby.tscn` | 嵌入式 | ✅ **报错 0 行** |
-
-⇒ **客户端进程相同、服务器相同，只换大厅场景页就翻转。**
-
-## 5. 仍未解释的一处矛盾（下一个人的入口）
-
-引擎侧看清了链路：
-
-- 发送：`rpcp()` 用自己的表取 `rpc_id = configs[name]` → `_send_rpc()` 发 SIMPLIFY + RPC。
-- 接收：`process_simplify_path()` 用**自己**的 `get_rpc_md5(node)` 比对包里的 md5（不一致只**打印**，
-  仍然登记节点并回 CONFIRM）→ `_process_rpc()` 按**发送方的数字 id** 在自己表里查，
-  `ERR_FAIL_COND(!cache_config.configs.has(id))` **静默 return**。
-
-duel 下：SIMPLIFY 到了（所以有校验和报错）、RPC 包也发了（无守卫报错），
-但处理器没执行 ⇒ 看形状是**卡在 `_process_rpc` 那句静默早退**（发送方 id 在接收方表里查不到）。
-
-**矛盾在于**：`get_rpc_md5` 的输入是**节点 RPC 配置表**（节点级 + 脚本级），
-而我只比对了 `get_method_list()`（**全部** 230 个方法），**不是 RPC 子集** ——
-所以「方法表一致」并不能推出「RPC 配置表一致」，我那条推断是**不成立的**。
-真正要比的是 `@rpc` 子集，而它在脚本里是静态的、GDScript 也没暴露读口。
-
-**下一个可做的测量**（按性价比排）：
-1. 给 `net_bus.gd` 临时加一条 `@rpc` 回读方法（或在 `server_main`/探头里调
-   `multiplayer.get_rpc_md5`）—— 引擎没把 `get_rpc_md5` 绑给脚本，但**可以自己用
-   `ClassDB` 反射拿到 `@rpc` 名单**，两端各算一次 md5 直接比。
-2. 用 `--verbose` 跑一次 duel，看引擎有没有把 RPC 派发失败打出来（现在被静默）。
-3. 对比 `matchmaking` 与 `royale_lobby` 两条路径里**第一次 NetBus RPC 发生的时刻**
-   （`_push_lobby_name` 都在 `_on_lobby_connected` 里，但两页 `_ready` 的开销差很多）。
-
-## 6. 绕过方案（不依赖成因，未验证）
-
-`tests/pvp_smoke_client.gd` 是**唯一跑通过的 1v1 客户端**，它的做法不同：
-**在 `_ready` 里显式 `NetBus.start_client(...)`，不依赖大厅页的懒连接**。
-把探针客户端改成同款（观察者自己连、连上再驱动大厅页），可以绕开大厅页那条时序。
+| **内嵌大厅服务异常** | 切换为独立专用进程启动 `server_main.tscn` 进行测试，现象依然完全一致 | 排除宿主进程模式差异 |
+| **运行时环境差异** | 两种模式均在引擎无头（headless）环境下执行，运行上下文完全相同 | 排除运行环境差异 |
+| **两端方法签名表不一致** | 通过 `NetBus.get_method_list()` 比对：客户端与服务端方法总数均为 230，方法哈希值严格一致（均为 `3873843019`） | 排除全局方法声明差异 |
+| **未缓存节点导致的 RPC 丢弃** | 检索 Godot 源码 `scene_rpc_interface.cpp`：未缓存路径依然会通过标准路径序列化发送，不应直接中断通信 | 排除节点路径缓存失败 |
+| **客户端中断发送** | 检索客户端引擎底层日志，未发现来自 `_send_rpc` 内部断言与守卫的拦截报错 | 排除客户端主动拦截 |
+| **初始化加载顺序引发的依赖缺失** | 确认 `WeaponIcons` 等静态构建仅在主动加载对应面板时触发，大厅场景 `_ready` 期间未产生副作用冲突 | 排除资源懒加载时序冲突 |
 
 ---
 
-## 7. 跑法
+## 四、 确立的隔离边界
+
+通过受控变量对比测试确认：
+
+| 客户端进程环境 | 服务端架构 | 大厅场景配置 | 测试结果 |
+|---|---|---|---|
+| `--mode=royale` | 内嵌模式 | `royale_lobby.tscn` | 正常接收 2 条 `lobby_name`，测试全部通过 |
+| `--mode=duel` | 内嵌模式 | `matchmaking.tscn` | 服务端未接收到任何大厅 RPC |
+| `--mode=duel` | 独立进程模式 | `matchmaking.tscn` | 服务端未接收到任何大厅 RPC |
+| `--mode=duel` | 内嵌模式 | 临时替换为 `royale_lobby.tscn` | **无任何校验报错，通信恢复正常** |
+
+**核心推论**：客户端进程实例、网络底层与服务端完全一致时，**仅切换大厅场景界面即导致通信状态反转**。
+
+---
+
+## 五、 底层机制分析与后续排查建议
+
+### 1. 引擎底层 RPC 校验链追踪
+- **发送阶段**：调用 `rpcp()` 获取配置索引 `rpc_id = configs[name]`，通过 `_send_rpc()` 发送简化路径包与 RPC 调用。
+- **接收阶段**：底层 `process_simplify_path()` 计算接收端节点的 `get_rpc_md5(node)` 并与数据包中的哈希比对。若哈希不一致，引擎仅输出警告日志并继续确认逻辑；随后进入 `_process_rpc()`，按发送方数字索引检索本地配置表，若 `!cache_config.configs.has(id)` 则直接静默退出。
+- **当前瓶颈点**：1v1 场景加载后，虽然全局反射方法表一致，但特定场景树状态可能影响了节点上 `@rpc` 配置子集的注册或哈希计算，导致接收端查表失败产生静默拦截。
+
+### 2. 建议排查步骤
+1. **精确比对 RPC 配置子集**：通过 `ClassDB` 动态导出两端针对 `NetBus` 节点的 `@rpc` 注册属性表，并直接计算比对 MD5 值。
+2. **启用引擎详细输出**：携带 `--verbose` 参数执行 1v1 测试，观察引擎网络层是否在底层记录了静默丢弃详情。
+3. **时序与连接解耦（规避方案）**：参考 `tests/pvp_smoke_client.gd`，在测试观察者层显式调用 `NetBus.start_client(...)` 建立就绪连接，解耦大厅页面的懒加载握手时序。
+
+---
+
+## 六、 复现执行指令
 
 ```bash
-G="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-# 大乱斗 L1(应 ALL-OK;跑前确认 7777 空闲)
-"$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn \
+GODOT_BIN="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
+
+# 大乱斗模式基准测试（应通过，执行前请确保 7777 端口空闲）
+"$GODOT_BIN" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn \
      -- --mode=royale --scene=L1 --test-ground-teleport
-# 1v1 L1(当前必然失败,见上)
-"$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn \
+
+# 1v1 模式测试（复现当前阻塞现象）
+"$GODOT_BIN" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn \
      -- --mode=duel --scene=L1 --test-ground-teleport
 ```

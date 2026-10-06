@@ -5,8 +5,8 @@ extends MatchHost
 #  - N 个玩家(roles 1..N)散点出生;死亡 2s 复活(复用 MatchHost._handle_respawns),
 #    复活点动态选"离所有存活敌人 ≥ 若干格"的地板格,出生分散。
 #  - 限时 MATCH_TIME:倒计时归零 → MATCH_OVER,击杀最多者胜(平局=0)。
-#  - 击杀归因:子弹/爆炸命中时把射手记到受害者 meta("last_damager"),
-#    倒地边沿读 meta 计分;无源死亡(溺水/环境)不计分。
+#  - 击杀归因:子弹/爆炸命中时将射手记录到受害者 meta("last_damager"),
+#    倒地瞬间读取 meta 计分;无攻击源死亡(溺水/环境伤害)不计分。
 #  - 排行榜数据经 round_state 载荷下发:{scores(总击杀), names, timer(剩余秒), match_winner}。
 #  - 中途掉线 = 移出对局(节点释放,排行榜标"离开"),剩余 <2 人时终局。
 #  - 出生点静态几何(地板格/连通区规模/开阔优选格,含常量 OPEN_AREA_MIN / PREFER_MIN)
@@ -213,7 +213,7 @@ func _match_round_tick(delta: float) -> void:
 				if p.is_downed() and not _respawn_pending.has(role):
 					_respawn_pending[role] = RESPAWN_DELAY
 			_handle_respawns(delta)
-			# 击杀计分:倒地边沿 + 射手归因(meta)
+			# 击杀计分:倒地瞬间状态判断 + 射手归因(meta)
 			for role in players:
 				var p: Node2D = players[role]
 				if not p.is_downed() or _down_counted.get(role, false):
@@ -371,7 +371,7 @@ func mark_disconnected(role: int) -> void:
 		_finish_match()
 
 
-# 子弹直击归因:命中瞬间把射手记到受害者 meta(倒地边沿时读)
+# 子弹直击归因:命中瞬间记录射手到受害者 meta(在判定倒地时读取)
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	# 归因写入统一走 main 的单一入口(它同时写 last_damager + last_damager_time)。
 	# 本覆写不可省:服务器子弹撞玩家时掩码不含玩家层,只经 _adjudicate_bullets 到这里,
@@ -389,7 +389,7 @@ func _respawn_player(role: int) -> void:
 		p.remove_meta("last_damager_time")
 
 # ── 自杀脱困(K 键:royale_game 客户端 → NetBusExt.suicide_request → server_main 转发)──
-# 异常卡死(嵌墙/夹缝)时主动放弃生命:走正常倒地边沿 → 2s 复活;先清 last_damager 归因,
+# 异常卡死(嵌墙/缝隙)时脱困:触发角色倒地流程后 2s 复活;先清除 last_damager 归因,
 # 自杀不计入任何人击杀(哪怕刚被人打过),只累积自己的阵亡数。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:

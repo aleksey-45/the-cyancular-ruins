@@ -191,16 +191,13 @@ static func init_hp(grid: Array) -> void:
 		hp_grid.append(r)
 
 
-# ── cyrm v4 子格破坏(选项 A:破坏按 16px 子格算,格级 current_grid 在整格死光时才清零)──
-# sub_hp 下标 = sub_y * sub_cols + sub_x;0 = 空气或已摧毁。纹理永远读
-# MazeGenerator.current_subgrid(它不变,摧毁改的是 hp)。
+# ── cyrm v4 子格破坏逻辑（破坏判定精确到 16px 子格，大格 current_grid 在所有子格均被破坏后清空）──
+# sub_hp 下标 = sub_y * sub_cols + sub_x; 0 表示空气或已完全摧毁。纹理读取 MazeGenerator.current_subgrid。
 static var sub_hp: PackedInt32Array = PackedInt32Array()
 static var sub_cols: int = 0
 static var sub_rows: int = 0
-# 子格被摧毁的回调,由 level_0(渲染/账本/碰撞)与 worker(广播/颗粒结算)分别注册。
-# 参数 (sub: Vector2i, pre_hp: int, owner: Node) —— pre_hp 供回溯账本记"改前值";
-# owner = 造成破坏的射手节点(子弹的 shooter / 爆炸的 shooter;单人模式由 Level0 忽略,
-# worker 侧用它映射 role 结算"拆砖得颗粒")。
+# 子格被摧毁时的事件回调，供 level_0（渲染清理、回溯记录、碰撞更新）与服务端（网络广播与粒子结算）监听。
+# 回调参数：(sub: Vector2i, pre_hp: int, owner: Node)
 static var on_sub_destroyed: Callable = Callable()
 
 
@@ -238,9 +235,8 @@ static func sub_alive(sub: Vector2i) -> bool:
 	return sub_hp[sub.y * sub_cols + sub.x] > 0
 
 
-## 对单个 16px 子格扣血。source 为 "bullet"/"explosion",按对应可破坏开关判定。
-## 扣到 ≤0 → 该子格死亡(回调 level_0 清渲染/记账本/重建碰撞块);所属 64px 格的全部
-## 子格死光时,把格级 current_grid 该格清零(让 20 个格级逻辑调用方看到它消失)。
+## 对单个 16px 子格结算破坏伤害。source 为 "bullet" 或 "explosion"，分别判定对应破坏规则。
+## 生命值归零时判定该子格被摧毁；当所属 64px 大格内的全部 16 个子格均被完全破坏时，同步清空大格 current_grid 数据。
 static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node = null) -> bool:
 	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 		return false
@@ -258,7 +254,7 @@ static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node =
 	sub_hp[idx] = pre_hp - amount
 	if sub_hp[idx] <= 0:
 		sub_hp[idx] = 0
-		# 所属 64px 格全部子格死光 → 格级网格清零(选项 A:逻辑层只看格)
+		# 当所属 64px 大格内的全部子格均被破坏后，清空上层网格数据
 		var grid := MazeGenerator.current_grid
 		if not grid.is_empty():
 			var cell := Vector2i(sub.x / 4, sub.y / 4)

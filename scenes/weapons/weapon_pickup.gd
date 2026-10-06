@@ -123,11 +123,8 @@ func _build_collision() -> void:
 	var r: Rect2 = SpriteBounds.from_sprite(spr)
 	if r.size == Vector2.ZERO:
 		return
-	# ★ 把"画出来的枪中心"挪到 body 原点:渲染位置 / 碰撞箱 / 拾取判定圆心从此**天然重合**,
-	#   不需要任何补偿(原先靠 visual_offset 把判定圆心搬回视觉中心)。
-	#   gun_center 必须带上**武器根节点自己**的 position —— 漏它正是 m82a1 判定圆心
-	#   偏 (6,3)×WORLD_SCALE 世界像素的成因(拾取半径才 64px)。
-	#   本函数在 _build_visual 之后跑,故 vis.position 此刻还是 tscn 里那份(重建也成立)。
+	# 将视觉中心平移对齐至 body 原点，使渲染位置、碰撞体与拾取判定圆心保持一致。
+	# gun_center 需计入武器根节点自身的 position，确保各类型武器拾取判定圆心均准确对齐。
 	var gun_center := vis.position + spr.position + r.position + r.size * 0.5
 	vis.position -= gun_center
 	var cs := CollisionShape2D.new()
@@ -135,21 +132,18 @@ func _build_collision() -> void:
 	var rect := RectangleShape2D.new()
 	rect.size = r.size
 	cs.shape = rect
-	cs.position = Vector2.ZERO      # 视觉中心已在原点
+	cs.position = Vector2.ZERO      # 视觉中心已对齐在原点
 	add_child(cs)
 
 
 func _physics_process(delta: float) -> void:
-	# 时间场(B13):"除主角外一切变慢"——掉落的枪也是世界物件,加速时随世界 ×0.7、回溯冻结。
-	# ★ 只作用于**未停稳**的飞行/滚动阶段;停稳后的 `_settled` 早退路径不推进物理(只是解卡 + 锚副本)。
+	# 时间场倍率适配：掉落物属于世界物体，加速时随环境减速，回溯时保持冻结。
+	# 仅作用于未静止阶段；静止后跳过常规物理移动计算。
 	delta = TimeField.world_delta(delta)
 	_age += delta
 	if _settled:
-		# 停稳后**位置**不变,但**锚点**在变(玩家在动、可能绕过接缝)——
-		# 不在这儿补一次的话,跨接缝时停稳的枪会留在旧副本上"消失"。
-		# ★ 解卡也必须在早退**之前**:停稳后 move_and_slide 再也不跑,可破坏砖被重铺
-		#   盖在它身上时会**永久钉死**在墙里(连 Godot 内建的 penetration recovery
-		#   都不会触发),所以这条路径是解卡唯一能救回它的地方。
+		# 静止后位置不变，但跟随玩家移动动态调整最近环面副本锚点；
+		# 同时进行防嵌入检测，防止可破坏砖块恢复时将掉落物嵌入墙体。
 		_unstick_up()
 		sync_render_from_canonical()
 		return
@@ -162,9 +156,7 @@ func _physics_process(delta: float) -> void:
 	_recompute_canonical()
 	_unstick_up()
 	sync_render_from_canonical()
-	# ★ 停止必须是"速度阈值置零"而不是"滑固定时长":前者让**落点与何时开始模拟无关** ——
-	#   这是联机端"客户端晚一个 RTT 才收到事件、却要落在同一位置"的前提。
-	#   改成按时间停 → 两端落点发散 → 出现"看着够不着/看着够得着"。
+	# 停止判定基于速度阈值（速度低于阈值时置零），确保不同步启动时间下的最终落点保持严格确定性。
 	if is_on_floor() and absf(velocity.x) < PlayerParams.weapon_stop_eps:
 		velocity = Vector2.ZERO
 		_settled = true

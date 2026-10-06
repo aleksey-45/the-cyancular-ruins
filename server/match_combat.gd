@@ -16,9 +16,9 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 	_rpc_all("tile_destroyed", [cell])
 
 
-# 16px 子格被摧毁(cyrm v4):清持久子格 + 标记分块重建 + 广播 sub_destroyed 给客户端
-# (客户端清 16px 渲染格与本地预测碰撞)。owner = 射手节点 → 映射 role,Beta 时间玩法
-# 在这里结算"拆砖得颗粒"(B21;普通局 time_economy 为空,只广播)。
+# 16px 子格被摧毁（cyrm v4）：清理持久化子格数据，标记对应分块需要重建碰撞，并广播 sub_destroyed 事件给各客户端
+# （客户端据此清理 16px 渲染瓦片与本地预测碰撞体）。owner 为射手实体节点，映射至玩家角色标识；Beta 时间玩法模式下
+# 在此结算瓦片破坏的时间粒子奖励（B21；常规模式下 time_economy 为空，仅同步破坏事件）。
 func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
 		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
@@ -47,11 +47,11 @@ func _adjudicate_bullets() -> void:
 		if not _seen_bullets.has(bid):
 			_seen_bullets[bid] = true
 			_broadcast_bullet_spawn(bullet)
-		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉、不做半径补刀。
+		# 敌方子弹(无射手):服务器物理已裁决(撞玩家→take_hit),只广播视觉效果,不做半径二次判定。
 		if bullet.shooter == null:
 			continue
-		# 爆炸弹(榴弹等):不走半径补刀**销毁**(见 _adjudicate_grenade),但要做一次
-		# 「直接命中玩家」结算 —— 短引信已由 bullet_base._check_player_contact 起(两端同源)。
+		# 爆炸弹(榴弹等):不通过半径判定销毁(见 _adjudicate_grenade),但需要进行一次
+		# 「直接命中玩家」结算 —— 短引信已由 bullet_base._check_player_contact 触发(两端同源)。
 		if bullet.explodes:
 			_adjudicate_grenade(bullet)
 			continue
@@ -82,7 +82,7 @@ func _adjudicate_bullets() -> void:
 
 func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
 	if bullet.shooter == null:
-		return   # 敌方爆炸弹(理论上只有敌方弹药):同普通弹的 shooter == null 分支,不补刀
+		return   # 敌方爆炸弹(理论上只有敌方弹药):同普通弹 shooter == null 分支处理,不作二次判定
 	if bullet.has_meta("grenade_direct_hit"):
 		return   # 40px 判定圈会被榴弹连续穿过好几帧,只结算第一次
 	for role in players:
@@ -103,8 +103,8 @@ func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
 
 func _grenade_direct_hit(bullet: CharacterBody2D, victim: Node2D) -> void:
 	bullet.set_meta("grenade_direct_hit", true)
-	# ★归因先于伤害(与子弹 _on_bullet_hit / 爆炸同纪律):一击致死时倒地边沿同帧读
-	# last_damager,大乱斗靠它计击杀分。
+	# ★伤害前必须先记录归因(与子弹 _on_bullet_hit / 爆炸逻辑保持一致):致命一击时倒地瞬间将立即读取
+	# last_damager 用于击杀计分。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	if victim.has_method("take_hit"):
 		# 受击反馈统一走 combat.took_hit → MatchHost._on_player_hit 广播 hit_event(子弹/鸟/爆炸同源)

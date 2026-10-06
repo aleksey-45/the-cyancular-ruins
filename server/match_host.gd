@@ -7,7 +7,7 @@ extends MatchRound
 #   match_snapshot / match_combat / match_round / match_state 里,见基类注释。
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
-const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
+const TIME_SYNC_INTERVAL := 0.1   # Beta 时间模式：时间粒子状态同步下发周期（10Hz，满足客户端怀表读数平滑插值需求）
 
 var _time_sync := 0.0
 # ── Beta 回溯(每 role 自身;他人不受影响)──
@@ -17,7 +17,7 @@ var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
 # ★ `_rw_on` / `_rw_trail` 声明在 **`match_snapshot.gd`**(读它们的 `_broadcast_snapshot()` 那一层)——
 #   基类看不见子类成员,放这里会让快照广播整份解析失败。见那边的注释。
 var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
-var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
+var _rw_t0: Dictionary = {}        # role -> float（环形缓冲区基准时间戳；回放时按相对时间寻帧）
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}) -> void:
@@ -28,8 +28,8 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	for v in raw_disabled:
 		_disabled_weapons.append(int(v))
 	_ai_roles = ai_roles
-	# Beta 时间玩法(B21):房主 options 带 time 规则(建房页 9 项) ⇒ 建服务器权威颗粒经济。
-	# 普通局 options["time"] 为空 → time_economy 恒 null,一切结算/广播短路,行为零变化。
+	# Beta 时间玩法（B21）：房主 options 包含 time 规则配置项（房间设置 9 项参数）⇒ 构建服务端统一判定的时间粒子经济系统。
+	# 常规模式 options["time"] 为空 → time_economy 恒为 null，所有相关结算与广播直接旁路，逻辑行为保持不变。
 	var time_dict: Dictionary = options.get("time", {})
 	if not time_dict.is_empty():
 		time_economy = TimeEconomy.new(TimeRules.from_dict(time_dict))
@@ -205,7 +205,7 @@ func _physics_process(delta: float) -> void:
 	# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):默认关。
 	_debug_destroy_tile(delta)
 	if time_economy != null:
-		_tick_beta_rewind(delta)   # Beta 回溯机(环缓/倒放/免伤/轨迹)
+		_tick_beta_rewind(delta)   # Beta 时空回溯控制器（环形缓冲区采样、状态回溯、免伤判定与轨迹记录）
 	# Beta 时间玩法:加速态(在快照**前**定格 —— 快照的 haste 位读的就是这个倍率)。
 	# 裁决在服务器:按住 + 账户可耗才生效;只乘自己(别的角色/子弹/世界一概不动)。
 	if time_economy != null:
@@ -295,11 +295,10 @@ func _debug_destroy_tile(delta: float) -> void:
 	print("worker: [test] 拆格 %s(相⑦ 用)" % str(cell))
 	TileDefs.damage_tile(cell, 999999, "explosion")
 
-# ══ Beta 回溯机(每 role 自身;他人不受影响)════════════════════════
-# 环缓只存**该 role 自己**的状态(位置/速度/HP/朝向/倒地/弹量)+ **它自己的子弹**
-# (pos/vel + rewind_state;不重建已消亡的弹 —— 已爆的榴弹不复活,已知边界)。
-# 回溯期间:输入源 frozen(状态由历史驱动)、take_hit 免伤(meta 闸)、
-# 自己的子弹随历史倒放且照常伤害他人(用户裁定)。
+# ══ PvP 时空回溯逻辑（仅影响发动角色自身，其他玩家不受影响）════════════════════════
+# 环形缓冲区仅记录该角色自身的状态（位置、速度、生命值、朝向、倒地状态、弹药）及其自身的子弹。
+# 回溯期间：输入源冻结（由历史快照驱动）、伤害判定免疫（time_rewinding 元数据隔离），
+# 自身发出的子弹沿历史轨迹回流并在接触敌方时正常结算伤害。
 
 func _tick_beta_rewind(delta: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
@@ -310,8 +309,6 @@ func _tick_beta_rewind(delta: float) -> void:
 		var acc := time_economy.accounts.get(r) as GrainAccount
 		if p == null or src == null or acc == null:
 			continue
-		# ★ 2026-09-30 移植时补 `: bool`:右值里 `p` 是 `Node2D`(`is_downed()` 不在基类上),
-		#   整个 `and` 表达式在解析期是 Variant ⇒ `:=` 推不出类型。行为不变。
 		var want: bool = src.rewind_held() and acc.can_spend() and not p.is_downed()
 		var on := bool(_rw_on.get(r, false))
 		if want and not on:
@@ -332,7 +329,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		if not on:
 			_record_rw_frame(r, p, now)
 			continue
-		# 回溯中:烧颗粒(rewind_burn/s);游标 3×→1× ramp;驱动自身与自己的子弹
+		# 回溯中：按消耗速率扣除粒子；回放倍率平滑过渡；驱动自身与自身子弹的历史状态
 		acc.spend(delta, time_economy.rules.rewind_burn)
 		if acc.balance <= 0.0:
 			src.frozen = false
@@ -346,7 +343,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		cur += delta * mult
 		_rw_cursor[r] = cur
 		_apply_rw_frame(r, p, cur)
-		# 轨迹:每 3 个物理帧一个点(他人残像;快照带下去,超过 10 个丢最旧)
+		# 轨迹记录：每 3 个物理帧记录一个位置点（供其他客户端渲染残像，保留最新 10 个点）
 		if Engine.get_physics_frames() % 3 == 0:
 			var trail: Array = _rw_trail.get(r, [])
 			trail.append([p.global_position.x, p.global_position.y])
@@ -355,7 +352,7 @@ func _tick_beta_rewind(delta: float) -> void:
 			_rw_trail[r] = trail
 
 
-# 非回溯期:20Hz 采样自己的状态(超 rewind_buffer_seconds 裁剪)
+# 非回溯期：以 20Hz 频率采样记录自身状态（超出 rewind_buffer_seconds 时长自动裁剪）
 func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 	if now < float(_rw_snap_t.get(r, 0.0)):
 		return

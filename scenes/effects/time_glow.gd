@@ -1,19 +1,17 @@
 class_name TimeGlow
 extends Node2D
 
-# 时间状态高亮(B13):在实体身上叠一层**加色混合**的贴图副本。
+# 时间状态角色高亮特效：在实体视觉节点下叠加层混合模式为 Additive（叠加）的贴图副本。
 #
-# ★ 为什么不用 modulate>1(B9/B12 的第一版做法 —— 用户实测"完全看不出高亮,只看到一切被调暗"):
-#   ① 2D 非 HDR 管线里 modulate 在写帧缓冲时被夹到 1.0,1.65 提不亮多少;
-#   ② 更要命的是**敌人基类的受击/死亡白闪 `_flash_update()` 每帧都把 modulate 写回
-#      WHITE / 3.0** —— 外部写进去的高亮当帧就被覆盖,敌人那边等于完全没生效。
-#   加色副本不依赖 HDR、不与白闪抢 modulate,而且色相可控(精英的黄能真"亮眼")。
+# 实现原理：
+#   1. 在 2D 非 HDR 渲染管线下，直接将 modulate 设置大于 1.0 会被截断至 1.0，无法产生明显的提亮效果；
+#   2. 敌人基类在受击闪白与死亡闪白时，每帧会将 modulate 覆盖为白色，导致外部设置的色彩会被立即覆盖；
+#   3. 使用叠加混合模式（BLEND_MODE_ADD）的子节点贴图副本，独立于 modulate，且色相可精确控制（如精英实体的亮黄高光）。
 #
-# 挂法:副本挂成**视觉节点(AnimatedSprite2D/Sprite2D)的子节点** —— 父的 position/rotation/
-# scale(挤压拉伸)/可见性全部自动继承,只需同步 offset/flip/当前帧。`passes=2` 叠两层
-# (精英用"极为亮眼"的黄)。
+# 节点挂载结构：作为视觉节点（AnimatedSprite2D 或 Sprite2D）的子节点挂载，自动继承父节点的位置、旋转、
+# 缩放（包含拉伸挤压）与可见性，每帧仅需同步当前帧、翻转状态与偏移；passes 支持设置多层叠加（精英实体使用 2 层强化亮度）。
 
-static var total_created := 0   # 累计创建数(探针用:检测"每帧 free+attach"的抖动)
+static var total_created := 0   # 累计创建次数（测试用：用于检测频繁创建与释放抖动）
 
 var color := Color.WHITE
 var src: Node2D = null
@@ -24,7 +22,7 @@ var _ov_anim: Array[AnimatedSprite2D] = []
 var _ov_spr: Array[Sprite2D] = []
 
 
-## 给 target 挂上高亮(已有视觉节点才挂得上;找不到返回 null,调用方当"这帧没高亮"处理)。
+## 为目标实体挂载时间高亮效果（要求目标包含有效的视觉节点，未找到则返回 null）。
 static func attach(target: Node2D, c: Color, passes: int = 1) -> TimeGlow:
 	var vis := find_visual(target)
 	if vis == null:
@@ -62,7 +60,7 @@ static func attach(target: Node2D, c: Color, passes: int = 1) -> TimeGlow:
 	return g
 
 
-## 找 target 身上的视觉节点(敌人/玩家的 .tscn 里都叫 AnimatedSprite2D;找不到再递归找 Sprite2D)。
+## 查找目标节点上的主要视觉精灵节点（优先获取 AnimatedSprite2D，其次递归查找 Sprite2D）。
 static func find_visual(target: Node) -> Node2D:
 	if target == null:
 		return null
@@ -81,7 +79,7 @@ static func find_visual(target: Node) -> Node2D:
 	return null
 
 
-## 探针用:取 target 身上已挂的高亮(没有则 null)。
+## 获取目标身上已挂载的 TimeGlow 实例（若未挂载则返回 null）。
 static func on(target: Node) -> TimeGlow:
 	var vis := find_visual(target)
 	if vis == null:
@@ -115,7 +113,7 @@ func _sync() -> void:
 			o.animation = _anim.animation
 			o.frame = _anim.frame
 			o.position = Vector2.ZERO
-			o.scale = Vector2.ONE        # 父的 scale(挤压/镜像)已经继承下来了
+			o.scale = Vector2.ONE        # 自动继承父节点的缩放与形变
 			o.offset = _anim.offset
 			o.centered = _anim.centered
 			o.flip_h = _anim.flip_h

@@ -107,8 +107,8 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
-	delta = TimeField.enemy_delta(delta, self)   # 时间场:回溯冻结/加速/贷款(精英例外)
-	# 回溯中普通敌人整帧跳过(位置由回放器摆;接触伤害/白闪/AI 全不结算);精英照常
+	delta = TimeField.enemy_delta(delta, self)   # 时间场倍率：回溯状态冻结/加速/透支加速（精英实体除外）
+	# 时空回溯中普通敌人跳过整帧物理逻辑（位置由回溯系统驱动；碰撞伤害、受击闪白与 AI 均不结算）；精英实体不受影响
 	if TimeField.current != null and TimeField.current.is_rewinding() and not has_meta("elite"):
 		return
 	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick → 回中性,

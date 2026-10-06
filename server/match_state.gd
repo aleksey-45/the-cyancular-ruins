@@ -31,7 +31,7 @@ var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复�
 # ★ 空表 = 无队伍(1v1 / 大乱斗 / 单机):`team_of` 恒 0、`same_team` 恒 false,行为与今天一致。
 var _team_of: Dictionary = {}
 
-# Beta 时间玩法(B21):服务器权威颗粒经济。普通局恒 null(一切结算/广播短路)。
+# Beta 时间玩法（B21）：由服务端统一管理与判定的时间粒子经济系统。常规模式下恒为 null（所有结算与广播直接旁路）。
 # 宿主 _init 时若房主 options 带 time 规则则建(见 MatchHost._init)。
 var time_economy = null
 

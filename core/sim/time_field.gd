@@ -1,20 +1,19 @@
 class_name TimeField
 extends RefCounted
 
-# 世界时间场(第一阶段):把"回溯/加速/贷款"翻译成各实体每帧的 delta 倍率。
-# 集中一处、纯静态查询,实体脚本只加一行 `delta = TimeField.xxx_delta(delta, self)`。
+# 世界时间场控制器：将“时空回溯 / 时间加速 / 透支状态”映射为各实体物理帧的 Delta 与速度倍率。
+# 纯静态接口查询，实体逻辑仅需调用 `delta = TimeField.xxx_delta(delta, self)`。
 #
-# 设计要点:
-#   · current 只由**单机 Level0** 创建;PvP/菜单/探针为 null → 所有倍率恒 1(零影响)。
-#   · HASTE(加速):玩家与精英 ×HASTE_PLAYER(2),普通敌人与敌方子弹 ×HASTE_WORLD(1)
-#     ——"玩家相对普通敌人两倍"由**相对差**达成,不动 Engine.time_scale(物理/tween/网络不受扰)。
-#   · REWIND(回溯):普通敌人/子弹/玩家 ×0(冻结,由回放器接管位置);**精英与玩家无关照常行动**
-#     (策划案:精英怪不受回溯影响,依旧保持原本行为)。
-#   · 贷款深度:普通敌人表现加速 ×(1 + LOAN_ENEMY_SPEED_BONUS·depth)(实为自身时间变慢的错觉)。
+# 设计要点：
+#   · current 仅在单人模式关卡 Level0 中初始化；联机 PvP/菜单/测试环境中为 null，倍率恒定为 1.0（无影响）。
+#   · HASTE（加速）：玩家与精英实体倍率 ×HASTE_PLAYER (2.0)，普通敌人与敌方子弹倍率 ×HASTE_WORLD (0.5)，
+#     通过相对倍率差实现感知加速，不修改全局 Engine.time_scale（确保物理模拟、补间动画与网络同步不受干扰）。
+#   · REWIND（回溯）：普通敌人、子弹及玩家倍率 ×0（冻结，由回溯回放器接管位置）；精英实体不受影响，照常行动。
+#   · 透支状态：根据透支深度增加普通敌人的相对行动速度 ×(1 + LOAN_ENEMY_SPEED_BONUS * depth)。
 
 enum Mode { NONE, REWIND, HASTE }
 
-static var current: TimeField = null   # 单机世界场实例;null = 全域恒 1
+static var current: TimeField = null   # 单人模式世界时间场实例；null 时倍率恒定为 1.0
 
 var mode: int = Mode.NONE
 var account: GrainAccount = null
@@ -25,12 +24,12 @@ func _init(acc: GrainAccount) -> void:
 	account = acc
 
 
-## 由 Level0 每帧调用:want_* = 按键按住状态。结算恢复/消耗,定模式。
+## 由 Level0 每帧调用：want_* 传入按键状态。结算粒子恢复与消耗，更新当前生效模式。
 func update(delta: float, want_rewind: bool, want_haste: bool) -> void:
 	if account == null:
 		mode = Mode.NONE
 		return
-	account.regen(delta)   # 短时窗 50/s 常驻回拨(含还贷)
+	account.regen(delta)   # 自动恢复短期额度与偿还透支
 	var want := Mode.NONE
 	if account.can_spend():
 		if want_rewind and not want_haste:
@@ -44,7 +43,7 @@ func update(delta: float, want_rewind: bool, want_haste: bool) -> void:
 		rewind_time = 0.0
 		if want == Mode.HASTE:
 			account.spend(delta, TimeParams.COST_HASTE)
-	# 余额当帧耗尽 → 立即停(否则会出现"空账还在回溯"的一帧)
+	# 余额当帧耗尽时立即终止效果，防止出现无余额继续生效的异常帧
 	if want != Mode.NONE and account.balance <= 0.0:
 		want = Mode.NONE
 		rewind_time = 0.0
@@ -63,7 +62,7 @@ func is_hasting() -> bool:
 	return mode == Mode.HASTE
 
 
-# ── 纯静态倍率查询(实体脚本调用;current 为 null 时恒 1)────────────
+# ── 静态 Delta 倍率查询接口（供实体脚本调用；current 为 null 时返回原始 delta）──────
 
 static func player_delta(d: float) -> float:
 	var f := current
@@ -107,7 +106,7 @@ static func bullet_delta(d: float, bullet: Node) -> float:
 	return d * (TimeParams.HASTE_PLAYER if from_player else TimeParams.HASTE_WORLD)
 
 
-# 其它世界物件(掉落武器等):加速时随世界变慢,回溯时冻结。语义同"除主角外一切变慢"。
+# 其他世界物体（如掉落武器等）：加速时随世界减速，回溯时冻结。保证除主角外世界物体感知一致。
 static func world_delta(d: float) -> float:
 	var f := current
 	if f == null:
@@ -119,8 +118,8 @@ static func world_delta(d: float) -> float:
 	return d
 
 
-# ── 速度域倍率(正确做法:move_and_slide 用引擎 delta,缩放 delta 不改变位移;
-#    "快/慢"必须落在速度上;delta 缩放只用于计时器/动画/AI 节拍)────────────
+# ── 速度域倍率接口（move_and_slide 使用引擎内部 delta，位移速度需直接乘以速度倍率；
+#    delta 缩放主要用于重力、计时器、动画与 AI 节拍）──────────────────────
 
 static func player_speed_mult() -> float:
 	var f := current

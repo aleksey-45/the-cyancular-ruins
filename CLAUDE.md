@@ -2,497 +2,324 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 项目概览
+### 项目概览
 
-Godot 4.7(标准版,非 mono)做的 2D 横版(平台跳跃)射击 demo「The Cyancular Ruins」。1920×1440 视口、`rendering/mobile`。核心特色:
+基于 Godot 4.7（标准版）开发的 2D 横版平台跳跃射击演示项目「The Cyancular Ruins」。视口分辨率 1920×1440，渲染后端使用 `rendering/mobile`。核心机制：
 
-- **环面世界**:地图左右/上下无缝回绕,敌人/子弹/镜头跨接缝连续。
-- 单关卡(Level0)从 ASCII 地图文件加载,无运行时随机生成(生成逻辑已注释)。
+- **环面世界**：地图水平与垂直方向无缝回绕，敌人、弹丸与镜头平滑跨越地图接缝。
+- 单关卡（Level0）通过 ASCII 文本地图文件加载，运行时不执行随机地图生成。
 
 ## 常用命令
 
-Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版本(详见 `RELEASE.md`;4.4.1 mono 已弃用,仅在需要兼容旧脚本时用其 console 版)。
+若 Godot 未加入系统 PATH，需使用绝对路径调用。当前主用版本为 **Godot 4.7.1 标准编辑器**（详见 `RELEASE.md`）。
 
-**引擎路径可覆盖**(换机器/换版本不必改脚本):`tests/*.sh` 与 `start_server.bat` 读环境变量 **`GODOT`**(console 版),`tools/build_release.py` 读 **`GODOT_EDITOR`**(标准编辑器版——导出与 headless 跑测试是**两个不同的二进制**);未设时回落本机默认路径,且**每个入口只留一处默认值**(`tests/env.sh` / `start_server.bat` / `build_release.py`)。`tests/*.sh` 一律 `source "$(dirname "$0")/env.sh"` 取 `$GODOT` 与 kill 助手,别再把绝对路径抄进脚本。下面是**默认路径**下的命令:
+**引擎路径配置**：`tests/*.sh` 与 `start_server.bat` 读取环境变量 `GODOT`（控制台版），`tools/build_release.py` 读取 `GODOT_EDITOR`（标准编辑器版，用于导出与自动化构建）。未设置时回退至本地默认路径，各脚本入口统一定义默认值（`tests/env.sh`、`start_server.bat`、`build_release.py`）。Shell 脚本统一通过 `source "$(dirname "$0")/env.sh"` 引入 `$GODOT` 与进程管理辅助函数。默认路径下的常用命令如下：
 
 ```bash
-# 冒烟测试(唯一的"测试",SceneTree 脚本;成功打印 SMOKE OK 退出 0)
+# 冒烟测试（SceneTree 脚本执行，通过时输出 SMOKE OK 并以代码 0 退出）
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd
 
-# headless 启动游戏 90 帧后退出(看脚本报错)
+# 无头模式启动游戏并在 90 帧后退出（用于捕获脚本运行时异常）
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90
 
-# PvP 服务端(headless,监听 7777;保持终端开着=运行中)。更省事:双击仓库根 start_server.bat。
+# PvP 服务端（无头模式监听 7777 端口，终端保持开启代表运行中；亦可直接运行仓库根目录的 start_server.bat）
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . res://server/server_main.tscn
 
-# 导出单 exe 发布版
+# 导出单可执行文件发布版本
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
 ```
 
-约定:**测试由用户自己跑,不要代跑**。发布/裁剪模板细节见 `RELEASE.md`(单 exe 靠自定义裁剪模板,勿用 UPX,保留 webp 模块)。模板重编只在**改裁剪 profile(增删类/模块)**时需要,单次≈10~15 分钟近全量(RELEASE.md §2.4);平时改 GDScript 只需重导出,别去重编模板。
+说明：测试与发布构建由开发者按需执行。发布与导出模板裁剪细节参见 `RELEASE.md`（采用自定义模板单文件导出，保留 WebP 模块）。常规 GDScript 代码修改仅需重新导出可执行文件，无需重新编译引擎模板。
 
-**版本号**:唯一来源是 `project.godot` 的 `application/config/version`,**只能写数字+点**(如 `1.1.4`;写 `v.1.1.4` 会让导出预设校验失败)。`tools/build_release.py` 导出前把 `v.1.1.4` + 构建时间戳 `YYYYMMDDHHMM` 写进 `core/config/build_info.gd`、导出后自动还原成 dev 占位(工作区不脏),发布版由**主菜单那行版本号**与**服务端启动自报的 `[server] 版本 …`** 两处显示 —— 发布机往往没有 git,原先从 git 现读的那行在那只会退化成 `dev` 且没有构建时间。**打包产物 = `builds/` 下唯一一个目录** `The Cyancular Ruins <版本号> <时间戳>/`,里面两个 exe 平铺 + 一个 `easytier/` 子目录(客户端 + 服务端 + `easytier/easytier-core.exe` / `easytier-cli.exe` / `Packet.dll` / `wintun.dll`);每次打包**先清空 `builds/`**(★ 2026-09-29 用户裁定:不堆历史版本)。两个 exe 平铺是硬要求 —— 客户端按**自己的目录**找服务端;EasyTier 则必须在 `easytier/` 子目录里(客户端按 `AppPaths.easytier_dir()` 找)。该脚本还会**跑一次产物冒烟**(客户端直接起;服务端走 `-- --port 7999`,不碰 7777,并**断言输出里有「服务器就绪」**—— 光"没报错"会漏掉"零错误地跑错分支";**仓库根的 `easytier/`** 放了四件套的话另跑一条 `-- --port 7999 --tunnel --room 48213` 并断言「隧道就绪」,没放就跳过),专拦"只在发布版才现形"的脚本错。★ `--port` 这类开关**必须写在 `--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`),写在前面会被 Godot 丢掉、静默起在默认端口 7777 上。★ 目录布局与三方日志(客户端 `log/client.log`、服务端 `log/server.log`、内核 `log/easytier-<角色>/easytier.log`,公共节点列表 `easytier/relay.txt`)见 `docs/netplay.md` §1.1;路径的唯一来源是 `core/config/app_paths.gd`,日志落盘是 autoload `GameLog`(`core/config/game_log.gd`)。
+**版本号管理**：版本号单一来源为 `project.godot` 中的 `application/config/version`，格式遵循数字与点分规范（如 `1.1.4`）。`tools/build_release.py` 在导出前会将版本号与构建时间戳写入 `core/config/build_info.gd`，导出完成后恢复为开发占位符以保持工作区整洁。版本信息展示于主菜单与服务端启动日志。构建产物输出至 `builds/` 下独立版本目录（包含客户端与服务端可执行文件以及 `easytier/` 运行依赖组件）。构建脚本包含产物冒烟测试，验证服务端端口监听与隧道建立，确保发布包逻辑完整性。服务端口参数需置于 `--` 之后传递（`server_main.gd` 读取 `OS.get_cmdline_user_args()`）。日志路径规范与详细配置参见 `docs/netplay.md`，由全局单例 `GameLog` (`core/config/game_log.gd`) 统一落盘。
 
 ## 架构
 
 ### 环面世界与地图
-- 地图:ASCII 文本 **`.cyrm`**(如 `maps/demo.cyrm`)。**v3 格式**(带 `# cyrm-v3` 标记):125×75 格 × 64px 瓦片 = 8000×4800 世界像素;每格 **4 字符 = [纹理 3 位 0xx][形状hex]**(纹理 `000`=空气/`001`-`022`=1-22,structure.png 两行各 10 块 + 第3行两块水;形状 hex `0`-`F` = 2×2 子格掩码,15=全砖,0=空气占位)。纹理用 3 位数字、不用字母。**旧格式**(250×150 单字符,无标记)加载时自动 2×2 转换(packed 值 + spawn 坐标 ÷2)。`#` 开头的行是注释(含出生点 `# player <col> <row>`;`# player2 <col> <row>` 为双人第二出生点,PvP 用)。加载:`MazeGenerator.map_file_path()` 优先随机取 exe 旁 `.cyrm`,否则随机取 `maps/*.cyrm`(**同目录多份随机读一份**,会话内固定);`maps/*.cyrm` 已在导出 include_filter 里。编辑器输出 `.cyrm`、可导入 `.cyrm`/`.txt`。
-- **地图与环面核心 = `MazeGenerator` + 两个实现类**(阶段 5.7;**三个都 `RefCounted` + `class_name`,非 autoload**):
-  - **`MazeGenerator`(core/sim/maze_generator.gd)只留会话状态 + 转发** —— 会话状态就两件:选中的地图文件(`_picked_map`/`set_map_file`/`map_file_path`,会话内固定随机读一份)与 `current_grid`(静态,由 Level0 赋值,空网格一律无路)。其余全是**一行转发**,保住全仓上百处 `MazeGenerator.xxx` 调用面。**别在这里加实现**:新格式逻辑进 `MapFormat`、新几何/寻路进 `GridPathfinder`;新代码若只碰其中一头,直接引那个类。
-  - **`MapFormat`(core/sim/map_format.gd)= `.cyrm` 格式**,**无会话状态**(路径/行由参数传入):格值 packed 编解码(`pack/texture_of/shape_of`、`EMPTY=0`、`SOLID=31` 纹理1 全砖)、`load_map_file(path)` / `map_size(path)` / `load_spawns(path)` / `parse_spawn_metadata(lines)`、`convert_old_grid` / `serialize_v3_grid`(单一转换源;旧 v2 字母版地图用 `tests/convert_map.gd` 转 v3)。v3 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过。
-  - **`GridPathfinder`(core/sim/grid_pathfinder.gd)= 环面几何与寻路**,同样**无会话状态**(网格由 `grid` 参数传入):`toroidal_dist`(格级)、`toroidal_delta_px`(像素最短向量)、`anchor_to_nearest`(实体锚到玩家最近副本)、`wrap_to_range`(取模回中间副本)、`cell_of`、`is_floor_cell(_with_headroom)`、`astar_path_nearest` / `has_line_of_sight`(Bresenham);A* 的静态暂存缓冲与 `astar_calls` 计数住这里。
-  - 挡路判定走 `TileDefs.is_blocked`(非 0 且 type=wall)。探针取图类脚本(`climb_probe` / `perf_probe` 等)不钉图 → **每进程随机选一份 `.cyrm`,跨进程输出不可比**。
-- **关键区分**:玩家每帧 `wrap_to_range`(只留中间副本);敌人/子弹用 `anchor_to_nearest`(锚定到玩家附近的副本)。墙体按 3×3 铺贴,相机跨接缝才能看到另一侧——实体若取模回 `[0,MAP)` 会在接缝处"消失"。
+- 地图格式：文本格式 `.cyrm`（如 `maps/demo.cyrm`）。v3 格式包含 `# cyrm-v3` 标识：125×75 瓦片网格 × 64px = 8000×4800 像素世界空间；每个单元格由 4 字符组成：`[3位纹理编码][十六进制形状掩码]`（纹理 `000` 为空气，`001`-`022` 对应各材质；形状掩码 `0`-`F` 对应 2×2 子格状态）。旧格式在加载时自动进行 2×2 坐标转换。注释行以 `#` 开头，包含出生点元数据（`# player <col> <row>` 及 PvP 模式的 `# player2 <col> <row>`）。加载逻辑：`MazeGenerator.map_file_path()` 优先读取可执行文件同级目录的 `.cyrm` 文件，其次从 `maps/` 目录中选择。
+- **地图与环面核心架构**（均为 `RefCounted` 实现，非单例）：
+  - `MazeGenerator` (`core/sim/maze_generator.gd`)：维护对局会话状态（当前选中的地图路径与静态 `current_grid`），并向底层组件提供统一的调用转发接口。新地图格式由 `MapFormat` 处理，几何运算与寻路由 `GridPathfinder` 负责。
+  - `MapFormat` (`core/sim/map_format.gd`)：无状态纯逻辑，负责 `.cyrm` 格式的编解码、瓦片数据打包与解包、地图尺寸查询与出生点解析。
+  - `GridPathfinder` (`core/sim/grid_pathfinder.gd`)：无状态纯逻辑，提供环面拓扑距离计算、最短位移向量、坐标回绕、实体就近锚定、地板格检测以及基于 Bresenham 算法的视线与 A* 寻路计算。
+  - 阻挡检测统一调用 `TileDefs.is_blocked`。测试脚本若未固定指定地图，每次运行会随机选择地图，导致跨进程测试输出不具备可比性。
+- **坐标回绕与就近锚定原则**：玩家每帧通过 `wrap_to_range` 将坐标限制在主副本区间；敌人与子弹等实体则通过 `anchor_to_nearest` 锚定至相对玩家最近的环面副本，配合 3×3 瓦片渲染确保跨接缝视野连续。
 
-### 参数体系(重要约定)
-- **autoload 五个**(project.godot):`GameLog`(core/config/game_log.gd,日志落盘:用 `OS.add_logger()` 接住引擎全部输出,按角色写进游戏目录的 `log/client.log` 或 `log/server.log`;引擎自带的文件日志已在 project.godot 里关掉,见 `docs/netplay.md` §1.1);`GameParameters`(core/config/game_parameters.gd):gravity0、TILE_SIZE=64、地图像素尺寸、敌人数/出生距离。`_ready()` 里从 `MazeGenerator.map_size()` 回写 `MAP_WIDTH/HEIGHT`;`NetBus`(core/net/net_bus.gd,PvP 网络 RPC 唯一收口):服务器/客户端共用 `/root/NetBus` 跨场景常驻,RPC 才能路由;建房/加入/断线经转交信号给大厅(`LobbyRooms`);`NetBusExt`(core/net/net_bus_ext.gd,旁路扩展协议:对局选项/角色色/`hit_confirm`/大乱斗房 RPC。**与原版 NetBus 刻意分离**——原 NetBus 保持与原版服务端逐字节一致,改它的方法表会让与之的 RPC 全部失联;对原版 worker 本节点不存在 → 扩展 RPC 静默丢弃、优雅降级。★ 激光 `beam_fired` **不走这里**:它是 KH 遗留重复,收上去静默 no-op);`Settings`(core/config/settings.gd,持久化设置:音量/键位重映射/滚轮切枪/血条显示,落盘 `user://settings.cfg`。**换弹恒开、无可选项**——原 `reload_enabled` 开关已删除,设置菜单里也没有该勾选框。★ 2026-09-15 起换弹对**全模式**开放(1v1/大乱斗亦然):原先 `WeaponBase.reload_active()` 在 `pvp_mode`/网络输入源下恒 false(= PvP 无限弹),那道闸门已整个删除 —— 所以**别再按"PvP 不换弹"解释任何东西**;`mag_ammo`/`_reloading`/`_reload_t` 已进 `Player.capture_state()`(与 `fire_cd` 同口径:进 capture/restore,**不进** `_close_enough` 的比对,否则每帧判分歧))。
-- 玩家/敌人参数**不是** autoload:`PlayerParams`、`EnemyParams` 是 `RefCounted` + `const`,静态访问(如 `EnemyParams.FlyBird.wake_radius`)。加新敌人 = 在 `EnemyParams` 加一个嵌套类。
+### 参数体系（重要约定）
+- **Autoload 全局单例**（共五个）：
+  - `GameLog` (`core/config/game_log.gd`)：接管引擎全部输出日志并写入 `log/client.log` 或 `log/server.log`。
+  - `GameParameters` (`core/config/game_parameters.gd`)：维护重力、瓦片尺寸、地图尺寸等全局常量与配置，在 `_ready()` 中根据地图尺寸更新 `MAP_WIDTH/HEIGHT`。
+  - `NetBus` (`core/net/net_bus.gd`)：PvP RPC 网络通信统一接口，保持服务端与客户端接口定义严格一致。
+  - `NetBusExt` (`core/net/net_bus_ext.gd`)：扩展协议路由，支持对局选项同步、角色染色等附加功能，在旧版服务端上优雅降级。
+  - `Settings` (`core/config/settings.gd`)：本地设置持久化（音量、按键映射、换弹与界面选项等，存储于 `user://settings.cfg`）。换弹机制对全部模式默认启用，弹药与装填状态已纳入玩家状态快照管理。
+- 玩家与敌人参数配置采用无状态常量类 `PlayerParams` 与 `EnemyParams` 统一管理。
 
-### 敌人(scenes/enemies/)
-继承链 `EnemyBase → EnemyFlyBase → EnemyFlyBird`;JumpBird 直接继承 `EnemyBase`:
-- `EnemyBase`(CharacterBody2D):`hp/contact_damage/knockback_strength/knock_decay_rate` 导出参数;统一状态机 `state`(int,各子类自带 `enum State`);子类覆写 `_ai(delta)`/`_anim_update()`;受击白闪+击退在 `_apply_hit`(枪击击退叠加原速度;爆炸 `set_velocity=true` 设独立 `knock_velocity` 向量,每帧叠加 `move_and_slide` 后指数衰减 `knock_decay_rate`,不覆盖移动速度);**受击/死亡白闪统一在基类**:`_hit_flash_time`(0.1s)与 `_begin_death()`(死亡白闪 `shared.death_flash_time`=0.5s 后销毁)统一计时,渲染走 `_flash_update()`(默认 modulate 纯白;黑鸟因 silhouette shader 覆写 COLOR 而 modulate 失效,覆写本方法改走 shader 参数);`_set_facing()` 锁转向频率(两次翻转至少间隔 `shared.turn_min_interval`=0.5s,防来回抖);**死亡物理与生前完全一致**——尸体继续走同一套 `_physics_process`(重力/摩擦/击退衰减/碰撞),只是 AI 不行动;尸体被后续命中只吃击退不吃伤(`hurt` 的 `is_dead` 分支走 `_apply_knock_only`),基础速度也按 `knock_decay_rate` 指数衰减(滑行逐渐停住);每帧 `move_and_slide()` 后 `_wrap()`;接触伤害走 ContactArea + 环面距离兜底。入 `enemies` 组。
-- `EnemyFlyBase`:飞行寻路。A* 按**鸟自身飞行碰撞箱 + 场上实体碰撞箱**判可走(`_bird_can_pass`);空路径直线兜底;被悬挑墙压到(死区)时水平逃逸;站/飞碰撞箱切换(`_apply_flight_collision`)。寻路参数耦合 `EnemyParams.FlyBird`(当前唯一飞行敌人,接受该耦合)。
-- `EnemyFlyBird`:状态机 SLEEP/TAKE_OFF/FLY/SHOOT/CHARGE/RETURN。平抛投弹(玩家速度预测);HP<25% 单向切 CHARGE 冲撞(穿透无敌帧、撞后自毁);死亡白闪后销毁(物理与生前一致,保留碰撞);返程回家落地入睡。
-- `EnemyJumpBird`:近战跳跃怪(跳/后跳/扑击);死亡物理与生前一致、保留碰撞(与飞鸟统一,不再清碰撞箱)。
-- `EnemyBlackBird`:绕背瞬移刺客(睡眠→随机游走→周期性判定玩家另一侧、距玩家 2~4 格(随机)的地板格落点(地板格 + LOS)→起飞上跳→落地播 disappear→白闪→传送→闪后空中播 appear→落地→带跳跃冲锋打 6 伤(穿透无敌帧)→大后跳(命中/未命中都)→回游走,玩家远离入睡);死亡白闪后销毁。数值在 `EnemyParams.BlackBird`。
-- **加新敌人** = 一个 .tscn + 在 **`data/enemies.json`** 的 `enemies` 数组加一条(`id`/`name`/`scene`/`color` 四个字段;`EnemySpawner.TYPES` 是它的运行时加载结果,**不手改**)。spawner 随机取"地板格"(EMPTY 且正下方 SOLID)布点。编辑器侧内嵌的敌人注册表由 `node level_editor/sync-enemies.js` 从 `data/enemies.json` 重新生成(改了 json 忘跑 → 内嵌那份**静默漂移**;`node level_editor/sync-enemies.js --check` 只校验不写盘,漂移退出 1 并点名首个差异行/漏抄字段;那个脚本带**键覆盖守卫**,json 里加了字段没抄进 map 会直接 FAIL)。★ **中文显示名那条链已整体删除**(2026-09-17):`display_name` 字段 / `EnemySpawner.DISPLAY_NAMES` / `display_name_of()` / `CombatFeedback.notify_enemy_killed`+`enemy_display_name` 全没了 —— 它们的唯一用途是**单机击杀播报**(用户裁定单机不要),PvP 的播报走 `kill_event` 载荷自带名字,与敌人表无关。
+### 敌人系统 (scenes/enemies/)
+继承关系：`EnemyBase` → `EnemyFlyBase` → `EnemyFlyBird`；`EnemyJumpBird` 直接继承 `EnemyBase`：
+- `EnemyBase` (`CharacterBody2D`)：导出基础属性（生命值、接触伤害、击退强度与衰减率）；统一状态机管理；受击与死亡闪白统一由基类实现；限制转向翻转频率以避免视觉抖动；敌人阵亡后保留物理实体与碰撞，仅禁用 AI 行为，后续受击仅计算击退，移速自然衰减并最终停止。
+- `EnemyFlyBase`：飞行敌人寻路基类，基于实体碰撞箱执行 A* 寻路，处理死区逃逸及飞行/站立碰撞箱切换。
+- `EnemyFlyBird`：飞行敌人状态机实现（睡眠、起飞、巡逻飞行、平抛射击、蓄力冲撞、返航落地）。
+- `EnemyJumpBird`：地面跳跃近战敌人，包含跳跃、后撤与扑击动作。
+- `EnemyBlackBird`：瞬移突袭刺客，包含随机游走、视线检测、跃起瞬移、突进冲锋与大后撤逻辑。
+- 敌人配置由 `data/enemies.json` 集中维护，包含标识、名称、对应场景与代表色。地图生成时通过 `EnemySpawner` 随机选择地板格生成。网页端编辑器注册表由 `node level_editor/sync-enemies.js` 同步生成。中文显示名称链已完整移除（2026-09-17），PvP 播报直接使用 `kill_event` 载荷中携带的玩家名称。
 
-### 武器与子弹(scenes/weapons/)
-- `WeaponBase`(Node2D):数值全是 `@export`(fire_cooldown、bullet_speed/range/size/color、pellet_count/spread、damage/impact、recoil_push/kick、cam_shake、move/jump_penalty、heavy_aim 激光、pitch_clamp_deg)。`fire()` 按 pellet_count 从 `bullet_scene`(@export,默认 bullet.tscn)出弹并注入 `bullet_gravity`;`apply_hit()` 调敌人 `hurt()`;heavy_aim 按住预瞄、松开发射;`preview_arc=true` 时预瞄画**抛物线弧线 + 末端爆点标记**(参考,用 `preview_time`,与子弹 fuse 解耦)。**弹道方向与走路朝向解耦**:`_auto_aim` 用鼠标推导瞄准侧(近垂直瞄沿用上次明确侧,`_aim_facing`/`_current_aim_facing`),`fire()` 开火瞬间先 `_auto_aim()` 再出弹——所有开火路径(直接/缓冲/连发/重武器)都取本帧鼠标方向,不再读被走路输入覆盖的 `get_facing()`(否则后退时朝反方向开枪,`clamp_pitch` 把子弹折到走路侧)。
-- 现有武器:手枪/步枪/m82a1(重狙,heavy_aim)/s686(霰弹 8 丸 ±5°、射程700)/grenade_launcher(第5槽,重型)/laser_gun(第6槽,中型即时光束)。
-- **即时光束武器(`LaserWeaponBase`,scenes/weapons/laser_weapon_base.gd,extends WeaponBase)**:不开物理子弹——`WeaponBase.fire()` 内衬的出弹循环抽成虚钩 `_spawn_projectiles(base_dir)`,本基类整体接管为"开火瞬间几何追踪一束 + 一次性结算"。**三个可覆写缝**(后续其他行为模式的激光据此扩展,见下方 `laser_gun`):缝1 光束几何 `_emit_beam(origin,dir)`(基类默认=直线 hitscan,`BeamTrace.trace(...,0)` 第一面墙即吸收/到射程);缝2 命中结算 `_apply_beam_damage`(默认=`_damage_path_targets` 扫路径 + `_damage_tiles` 磨可破坏砖;持续/灼烧型覆写);缝3 视觉 `_spawn_beam_visual`/`_beam_style`(默认=单发瞬光;视觉节点统一走 **`core/present/laser_visual.gd`** 静态工具 `spawn_beam`/`spawn_muzzle_orb`,本地开火与 PvP 远端共用同一"光束语言")。现 **`laser_gun`**(第6槽,中型)是反射参考子类:只覆写 `_emit_beam`(`max_bounces` 次镜面反射,tscn 当前 5),开火编排/伤害/磨砖/PvP 全走基类。核心几何 `core/sim/beam_trace.gd`(纯静态、preload 引用、不引 autoload、可 -s 空跑):DDA 走 32px 子格(64px 格→2×2 形状掩码,语义同 CollisionBuilder.build_sub,只认 type=wall → 光穿水/梯),遇墙翻对应轴反射、超反射额度或累计 ≥ bullet_range(2000)即消失,返回世界折线点集 + 碰墙 64px 格(可破坏砖) + 碰面点。**命中判据**:折线线段与目标**实际身体 AABB**(启用中的碰撞多边形扫世界框,含 2.5x 缩放,走 `_body_rect`:取**整框**并锚到段起点近副本 —— **中心不在节点原点**,只取 size 再以原点为中心会整体错位)外扩 `beam_half_width×HIT_MULT(1.75)` 后 `_segment_rect_hit`(Liang-Barsky)相交即中,每段各结算一次(反射折返扫到同一目标可叠加);★ 2026-09-15 修 `CollisionAabb` 之前,**这条判据从未真正生效**(身体框一直是兜底值,见 §碰撞);敌人 `hurt(damage,dir,impact)`、玩家 `take_hit`(激光可被无敌帧挡);环面把目标 AABB 中心锚到段起点近副本量距。**PvP**:`_authoritative()` 与出弹同 gate(`not Level0.pvp_mode`,客户端视觉副本不裁决);权威开火记入 `pending_beam_report` → 服务器 MatchHost 每帧轮询 `collect_pending_beam_report()`(读到即清)经 `beam_fired` 广播给**非射手端**画光束视觉副本(射手自己客户端已本地预测画自己的光束,再收会双光束),见 §网络。`laser_color` 复用为光束色,`laser_beam.tscn`(双层 Line2D:Glow 光晕 + Core 亮芯,round 关节)淡出自毁。
-- 子弹:玩家 `BulletBase`(伤害由 WeaponBase 管;`fire()` 注入 `hit_damage/hit_impact`,切枪后旧武器已 free 时子弹自带参数兜底直接结算);**爆炸弹**(如 `grenade_bullet.tscn`)在 BulletBase 加 @export `explodes/direct_hit_damage/fuse_time/explosion_radius/damage/knockback/visual` —— `explodes=true` 时撞墙/命中敌人一律反弹(衰减0.6),首次碰撞后 `fuse_time`(撞墙)/`hit_fuse_time`(命中敌人)引信爆炸(命中敌人另加 10 直接伤立即结算)、超射程兜底爆炸。**命中玩家(PvP)**:`BulletBase._check_player_contact` 按 `PLAYER_HIT_RADIUS`(=40,单一来源,`MatchHost.HIT_RADIUS` 直接引用它)对 `player` 组 + `player_replica` 组(排除射手)判接触 → 起短引信 `hit_fuse_time`(榴弹 0.4→**0.15s**);**只起引信不改轨迹**(不反弹 —— 轨迹两端一致,视觉副本才不会发散)。权威的直接伤由 `MatchHost._adjudicate_grenade` 结算(5 伤 + `CombatFeedback.attribute` 归因 + `notify_direct_hit` X 标记,**不销毁子弹**——销毁会把引信吞掉、爆炸永不触发),子弹 meta `grenade_direct_hit` 闩一次;纪律仍是**首次碰撞决定引信时长、不刷新**(已因撞墙起 0.4s 的再碰到人不缩短,直接伤不受此限)。AoE 判定在 `core/sim/explosion.gd`(`Explosion.apply_aoe`:内圈 40% 满伤+二次方平缓衰减/LOS遮挡(墙后保留 75%,走纯函数 `Explosion.cover_multiplier(d, radius, blocked)`;**内圈免疫遮挡**——否则贴脸目标被墙棱角判"无视线"扣 25%,出现"爆心比开阔边缘伤害低"的倒挂;不变量:任意距离伤害随距离不增,`tests/explosion_falloff_probe` 钉住)/友伤/击退独立向量纯径向——敌人走 `set_velocity=true`、玩家经 `take_hit` 传击退,爆炸穿透无敌帧 + 爆心越近相机震得越猛),爆炸特效 = `explosion.tscn`(AnimatedSprite2D 多帧,`_explode` 按 `explosion_radius/帧宽` 缩放,`explosion_fx.gd` 播完自毁)。敌人子弹 `enemy_bullet.gd` 是带重力抛物线弹(`launch()`)。
-- 碰撞层:子弹 mask=5(地形+敌人),榴弹不含玩家 → 友伤只来自爆炸。
-- **★ 客户端视觉子弹撞到玩家「立刻消失」(2026-09-22,用户报「伤害算到了、画面却像穿透」)**:根因是**客户端那颗子弹永远撞不到对手** —— 子弹 `collision_mask=5`(地形 1 + 敌人层 4),而**对手在客户端只是一具层 2 的幽灵体**(`player_replica._ghost`)⇒ 它从对手身上穿过去、一直飞到撞墙或超射程,而服务器早已按半径裁决、扣血、销毁了自己那颗。修法是 `PvpMatchClient` 每物理帧的 `_cull_bullet_contacts()`:对 `apply_damage == false`(本地视觉副本)**且非榴弹**的子弹,用 **`BulletBase.PLAYER_HIT_RADIUS`(= 服务器 `HIT_RADIUS` 引用的同一个值)+ 同一套环面最短距离** 判接触,命中即 `queue_free()`(立刻,不留一帧)。**判据与服务器裁决同源**是刻意的:凑一个"看起来差不多"的半径迟早会漂。★ **榴弹不走这条**(`explodes` 跳过):它的引信/反弹由 `BulletBase._check_player_contact` 管,在这里收掉节点会把爆炸一起吞掉。★ 子弹的 `shooter` 因此有了新来源:接收端的视觉副本由 `bullet_spawn` 的**新增键 `shooter_role`** 指向**射手副本**(`b.shooter = _replica_for(role)`)—— 顺带修掉一个真 bug:此前 `shooter` 恒 null ⇒ `_check_player_contact` 不排除射手,**敌方榴弹在我方客户端上"刚出膛就起短引信"**。★ 3v3 队友穿透由基类钩子 `_bullet_hits_entity(b, ent)` 保证(默认"除射手外谁都能挡";`team_game` 覆写成"与射手同队的不挡",靠 `_role_of_node` + `_team_of_role`)—— 不覆写的话队友副本会吃掉自己的子弹,而服务器那边是穿过去的(**不报错**)。★ **已知取舍**:客户端用的是**它看到的**对手位置(副本,滞后约一个 RTT),服务器用权威位置 ⇒ 快速横向拉扯时偶尔会"子弹停住了却没造成伤害";这是把「看起来穿透」换成「看起来打中了」的取舍,伤害永远仍由服务器说了算。
+### 武器与子弹系统 (scenes/weapons/)
+- `WeaponBase` (`Node2D`)：通过导出参数配置射速、弹速、射程、伤害、冲击力、后坐力及镜头震动等；开火逻辑将鼠标瞄准方向与角色移动朝向解耦，统一取开火瞬间的鼠标朝向生成弹丸。
+- 现有武器：手枪、步枪、M82A1（重型狙击）、S686（霰弹枪）、榴弹发射器（重型爆炸武器）、激光枪（即时光束反射武器）。
+- `LaserWeaponBase` (`scenes/weapons/laser_weapon_base.gd`，继承 `WeaponBase`)：即时光束武器抽象基类，将传统弹丸循环重构为瞬时光束追踪与单次判定结算。提供光束几何追踪（`_emit_beam`）、伤害结算（`_apply_beam_damage`）与视觉表现（`_spawn_beam_visual`）三个扩展接口。衍生类 `laser_gun` 实现镜面反射光束（DDA 子格扫描，支持多次反射与瓦片破坏）。PvP 模式下服务端统一裁决并广播光束数据，远端客户端渲染对应的视觉光线。
+- 弹丸类 `BulletBase`：支持常规物理弹丸与投掷爆炸弹（如榴弹）。爆炸弹撞击反弹，到达引信时间或射程上限时触发范围爆炸；命中玩家时通过 `PLAYER_HIT_RADIUS` 检测触发接触引信；服务端由 `MatchHost._adjudicate_grenade` 裁决直接伤害与爆炸伤害；爆炸范围伤害与遮挡衰减计算由 `core/sim/explosion.gd` 负责。
+- 客户端视觉弹丸碰撞优化：本地客户端通过 `_cull_bullet_contacts` 检测非榴弹视觉弹丸与远端玩家幽灵体的接触，并在命中时立即销毁本地弹丸副本，消除视觉穿透感，权威伤害判定仍由服务端执行。
 
-#### 武器背包与地面拾取(2026-09-15)
+#### 武器背包与地面拾取
+- 背包容量规则：支持 8 格容量预算与最多 4 把武器上限（轻型 2 格 / 中型 3 格 / 重型 4 格）。
+- `WeaponInventory` (`core/sim/weapon_inventory.gd`)：无状态背包逻辑，持有项维护武器类型、实例 ID（`inst`）与弹夹剩余弹药，支持同类型多把武器的独立状态跟踪。
+- 拾取与丢弃：按键拾取优先选取最近的武器实体；容量不足时替换当前手持武器；长按 Q 键触发丢弃并更新 HUD 进度条。
+- 地面武器实体 `WeaponPickup`：独立实体场景，包围盒基于精灵像素生成；统一对齐局部中心，使渲染位置、碰撞体与拾取判定圆心保持一致；模拟落体采用速度指数衰减与阈值清零，保证客户端与服务端在不同网络时延下模拟落点收敛一致。必须挂载于 `$WorldViewport` 节点下以确保渲染正常。
+- 服务端权威管理（`MatchGround`）：地面武器生成与移除通过 `NetBus` 广播事件；开局及重连时通过 `match_sync` 全量下发；回合切换时重置并重新下发全场地面武器。掉落判定在角色进入倒地状态瞬间触发。
+- 键位映射：数字键 1-4 对应背包槽位，支持滚轮循环切换手持武器。输入数据包中的 `weapon` 字段统一为 1-based 的背包索引。
 
-**背包 = 8 格容量预算 + 4 把上限两条并行闸门**(轻 2 / 中 3 / 重 4;用户裁定「就算容量给 100 也最多四把」)。★ 按今天的 cost 表,4 把上限其实**已被容量蕴含**(最便宜 2 格 × 4 = 8)—— 它不是死代码,而是"改档位时唯一还守着 4 把承诺"的那条;`weapon_inventory_smoke` 钉住了那条临界等式。
+### 玩家系统 (scenes/player/player.gd)
+- `CharacterBody2D` 实现：平滑移动曲线、土狼时间（Coyote time）、跳跃输入缓冲、可变跳跃高度、冲刺（继承最近水平朝向，支持空中冲刺重力缩放与打断机制）、逐帧推导下蹲状态与下蹲移动、多姿态动态碰撞多边形切换、受击无敌帧与击退位移结算。
+- 倒地状态：保留重力与击退等基础物理模拟，仅禁用玩家输入操作。单人模式下按 R 键调用 `Level0.restart_single()` 进行就地状态重置，将瓦片网格与碰撞重置为初始基线，清理弹丸与敌人后重新生成，玩家恢复满状态返回出生点，避免重复加载场景产生底层异常。PvP 与大乱斗模式下由服务端权威仲裁复活逻辑。
+- 武器槽位注册：在 `weapon_component.gd` 中统一维护 `WEAPONS`、`DISPLAY_NAMES` 与 `TIERS` 常量表。
+- **模块架构解耦**：根节点 `player.gd` 维护移动、姿态与物理帧调度编排；攀爬、战斗与武器管理分别拆分为独立组件（`ClimbComponent`、`CombatComponent`、`WeaponComponent`）。组件不单独注册 `_physics_process`，由根节点按序显式调度，保证调度顺序稳定与接口兼容。
+- **输入抽象**：输入读取依赖 `core/net/player_input.gd` 的 `PlayerInput` 接口，支持本地输入（`LocalInputSource`）、网络数据包输入（`PacketInputSource`）与 AI 输入源（`AiInputSource`）无缝替换。PvP 服务端通过数据包注入驱动远端玩家。
 
-- **`core/sim/weapon_inventory.gd`(`class_name WeaponInventory`,纯逻辑、无 autoload、可 `-s` 测)** —— 持有表是 `Array[Dictionary]`,每条 `{type, inst, mag}`。★ **残弹按 `inst` 记而不是按类型**:允许持有同类型多把,按类型记会让「丢一把空弹手枪、捡一把满地手枪」变成免费换弹且不报错。`_mag_state` 一族**已整体删除**(残弹直接存在条目里),`kh_l3_probe` 有反向断言。★ 它刻意**不 import `weapon_base.gd`**(那会连带 preload `bullet.tscn` 把 autoload 拖进 `-s` 冒烟),tier 常量与 `WeaponBase.Tier` 的对齐由 `enemy_logic_smoke` 钉住。
-- **`_current_slot` 仍是武器类型 id(1-6)不是背包位置**:快照 `weapon` 字段、`capture_state` 的 `wslot`、`PlayerReplica._swap_weapon` 全按类型 id 走 —— **协议与副本零改动**。背包位置只用于本地按键/滚轮。
-- **拾取规则**:按 F 一次只捡**最近的一把**(不是"范围里能捡的全捡")—— 这就是"多把武器叠在一起捡不起来某些枪"的解法:连着按 F 逐把捡走。放不下(容量或 4 把上限)时**替换手上当前那把**,被换下的掉在脚下(残弹跟着枪走)。`pick_up()` 的返回值 **`0` = 捡成功无替换 / `>0` = 被替换掉的类型 id / `PICKUP_DENIED`(-1) = 被闸门拒绝** —— ★ 三者必须分开:混在一起会让 `Level0.try_pickup_for` 把地面那把**删掉而玩家什么都没拿到**(静默丢枪)。
-- **★ 拾取诊断插桩(2026-09-22,默认关)**:`-- --pickup-diag`(`--` 之后,与 `--netstat` 同款口径;写在前面会被 Godot 丢掉、**静默失效**)。开着一局会打两种行:`[pkd] ← spawned/removed inst=…`(**证明客户端到底有没有建出这把枪** —— `_spawn_pickup_node` 的三条早退都是**静默 return**,这是唯一能看见它的地方)+ `[pkd]   inst=… d=… can=… 冷却=… 启用=… canon=… render=… 玩家=…`(玩家 400px 内的枪每 30 物理帧一行,把三条闸门分开打)。★ 它存在的理由是**症状分不清成因**:「枪看得见却没有 F」在画面上长得一模一样,而可能的成因只有两个 —— ① 客户端压根没建出节点;② 建出来了但 `canonical_pos`(判据读的值)与**画出来的位置**分家。默认关 ⇒ 生产行为逐字不变。
-- **丢弃**:长按 **Q ≥ `PlayerParams.weapon_drop_hold_time`(2s)**。长按计时在**客户端本地**做(只有那里有确定的物理 delta),满阈值才把一次**边沿**上行(`BIT_DROP`)—— 上行的是"完成信号"不是"按住"。HUD 有进度条(`C_DANGER`,与换弹条共用槽位、互斥显示)**没有反馈的两秒长按是不可用的**。
-- **`scenes/weapons/weapon_pickup.tscn/.gd`(`class_name WeaponPickup`,`CharacterBody2D`)**:地面武器是**独立场景**,不是"武器场景的落地模式"。视觉 = 把 `WEAPONS[type]` 实例化当**哑子节点**(`WeaponBase` 没有 `_process`,`tick()` 由玩家驱动 → 不驱动即静止,白捡的便宜)。碰撞箱由 **`core/present/sprite_bounds.gd`(`SpriteBounds.from_sprite`)** 按 sprite 像素 alpha 求包围盒生成 —— 参考系是 **sprite 局部原点(centered → 贴图/region 中心)**,不是左上角。★ 世界缩放 `WORLD_SCALE = 2.5` **只此一处**:武器挂 Player 下时继承根的 `scale=2.5`,落地得自己补(漏了 = 地上的枪小 2.5 倍且不报错,`weapon_pickup_probe` 钉住)。
-  - ★★ **必须挂在 `$WorldViewport` 下,不能 `add_child(self)`**:世界(瓦片/玩家/敌人)全渲染在 Level0 的 SubViewport 里、由相机+PostProcess 呈现。挂到 Level0 自己身上 = 在渲染树之外 —— **节点存在、有视觉、有碰撞箱、`global_scale` 也对,但屏幕上什么都看不到**。这条只有"挂在谁下面"的断言拦得住(`level0_weapon_scatter_probe`)。
-  - ★ **`configure()` 必须在 `add_child` 之前调**:`_ready` 一入树就按当时的 `type_id` 建视觉与碰撞箱,先入树的话它已经用 `@export` 默认值(手枪)建过一次。入树后热改也要能工作,故重建时**先 `remove_child` 再 `queue_free`** —— 只 `queue_free` 的话旧节点到帧末才没、名字仍被占着,Godot 会把新节点**自动改名**,随后 `_build_collision` 的 `get_node_or_null("Visual")` 抓到的是**旧的那份**(碰撞箱按错的枪算)。
-- **落体的"停止位置与起始时刻无关"是联机端的地基**:摩擦必须是**速度衰减 + 阈值置零**,不能改成"滑固定时长" —— 后者会让客户端(晚一个 RTT 才开始模拟)与服务器落点发散,表现为"看着够不着"。`weapon_pickup_probe` 用"同初速、延迟 20 帧启动"实测钉住(★ 写这条测试时两个坑:**两把必须同型号**(不同精灵碰撞箱高度 → 空中时长不同 → 空气阻力衰减不同)、**两把必须拉开距离**(掉落物掩码含层 8,同 x 起滑会互相顶))。
-- **`core/sim/ground_weapon_field.gd`(`GroundWeaponField`)**:场上地面武器的纯逻辑表(增删查 + `nearest_within`)。距离与半径判定都走**环面最短**(接缝另一侧的枪贴脸也捡得到),并列时按 `inst` 升序保证确定性。
-- **布点**:散点几何收在 **`GridPathfinder.spread_cells(cells, count, clearance, cols, rows)`**(洗牌 + 环面距离贪心 + clearance 逐级 -5 放宽 + 兜底补足),`RoyaleHost.plan_spawns` 与单机铺武器共用一份。★ 宽高传 `cols/rows` 两个 int 而非 Vector2,且不引 `GameParameters`(autoload)—— 保持本文件可 `-s` 测。★ 它**内部有 shuffle()**,沿用 RoyaleHost 的既有纪律:不得在广播之后再调一次。开阔地板格扫描在 `EnemySpawner.open_floor_cells`(判据本体仍是 `MazeGenerator.is_floor_cell_with_headroom`,不抄第二份)。
-- **联机(2026-09-15 落地)**:权威在服务器 `server/match_ground.gd`(`class_name MatchGround`,**继承链中间层**:`…MatchSnapshot → MatchGround → MatchState`,故**不得定义生命周期钩子**,编排由 `MatchHost._physics_process` 每帧显式调 `_sync_ground_positions()` + 消费输入包后紧跟 `_handle_ground_actions(role, src)`)。
-  - **两条事件 `weapon_spawned`/`weapon_removed` 只走 `NetBus`**(`@rpc authority reliable`)。★ **绝不在 `NetBusExt` 里加同名** —— 那两者已有 `beam_fired` 重名(`net_bus.gd:148` / `net_bus_ext.gd:41`),接收端挂错节点是**静默 no-op**(对手的枪凭空消失且不报错)。`tests/net_ground_probe` 有双向断言(缺了要红、多了也要红)。
-  - **开局那批走 `match_sync` 进场拉取**(`server_main._on_match_sync` 的 `ground_weapons` 字段),**不走 `weapon_spawned` 推送** —— 推送会撞上"客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失"(当年三载荷就是这么丢的)。之后才用事件。
-  - ★ **地面武器只有一个中心**(2026-09-17 合并,此前有两个):`WeaponPickup._build_collision` 会把 Visual **反向平移**,让"画出来的枪中心"落在 **body 原点**上 —— 于是渲染位置 / 碰撞箱 / 拾取判定圆心三者天然重合,`visual_offset` 与 `visual_center()` **整套已删**(连同 `level_0` / `match_ground` / `pvp_match_client` / 三个探针里的补偿)。所以 `entries[].pos`(每帧被 `_sync_ground_positions` 刷成 `canonical_pos`)= 客户端据以渲染/重放落体的那个 `pos` = 服务器拾取判定的圆心,是**同一个值**,不存在"发错中心"这个坑了。两条投递路径(`ground_weapons_payload()` 与 `_broadcast_weapon_spawned()`)仍走 `_canonical_of(inst)`(拿活节点的权威值 + 对陈旧条目留痕)。★ 顺手修掉一个真 bug:`_build_collision` 原先只把 `spr.position` 算进判定圆心、**漏了武器根节点自己的 position**,m82a1 的判定圆心比画出来的枪偏 (15, 7.5) 世界像素(拾取半径才 64px,且不报错)—— 同批已把 m82a1 的根节点偏移折进 `Sprite2D`/`Muzzle`,六把枪根节点全归零。守卫:`tests/ground_action_probe` 的 ⓪ 相(载荷 `pos` == 判定圆心)+ `weapon_pickup_probe` 的 ①b(六把枪逐个:碰撞箱必须在节点原点)。★ `vel` **必须保持"生成时那一份"**(客户端靠它重放落体,刷新它 = 两端落点发散)。
-  - ★ **换局(`_reset_ground_weapons`)清的与铺的都必须广播**,且 `_next_ground_inst` **不得重置**:换局是客户端唯一"既不重进场景、也不再拉 match_sync"的时刻(它只收新一轮 COUNTDOWN),不广播就留下一整批**上一局的幽灵枪**(按 F 无效),而新一轮那批在客户端一件都不存在;inst 重置会让新一轮与客户端残留节点**撞号**,而 `_spawn_pickup_node` 对已有 inst 是**静默 return**。★ **客户端不要**在 round_state 里自己清空地面武器(真写过一版,见 `pvp_game._on_round_state` 的注释):服务器是「先重铺广播、**再** `_broadcast_round_state`」,后到的清空会把刚建好的新一轮那批一起抹掉 → 第 2 局起客户端地面恒空。守卫:`tests/net_ground_probe` 的两条反向断言 + `ground_action_probe` ⑦。
-  - **不做客户端预测**:按 F/Q 只上行(`BIT_PICKUP`=32/`BIT_DROP`=64,已在包协议里),服务器裁决后广播,客户端等事件。落体视觉由客户端用事件带的 `pos`+`vel` **本地模拟** —— 这依赖单机那条"落点与何时开始模拟无关"的不变量(见上)。
-  - **背包进 `capture_state`(`"inv"`)**:`restore_state` 必须**先读 wslot、再 `restore_inventory`、最后 equip**(顺序反了会凭空造枪/丢枪)。★ `inv` **不进** `_close_enough`(后者是显式白名单,只要不主动加进去就自动满足)。`pvp_twin_smoke` 有 `inv` 指纹断言(已反证)。
-  - **服务器玩家必须有枪**:`player.tscn` 自身 `_ready` 给的是空背包,`MatchHost._ready` 的 `_setup_ground_weapons()`(铺 12 把 + 每人随机拿 1)是**唯一**来源 —— 不发的话服务器上玩家开不了火,PvP **静默哑火**。
-  - **掉落发生在「倒地边沿」,不是复活流程**(2026-09-21 用户裁定,`ef681d6`) = 除背包里随机一把外全丢在**倒地那一刻的位置**(`_drop_all_but_one`,不补满弹)。★ 三处边沿各一条(基类 `MatchRound` / `RoyaleHost` / `TeamHost` 的 `_match_round_tick`),`_respawn_player` 里**不再**掉(两支都留会掉两次,第二次在出生点);★ 旧实现挂在 `_respawn_player` 里 —— 那里**先把人瞬移到出生点**再调它(它读 `p.global_position`)⇒ 全掉在出生点,而尸体在 2s 倒地窗里还继续走物理,到复活时早已不在死亡那格。**换局** = 清空重铺 + 各人背包重置为随机一把(`_reset_ground_weapons`,与"还原砖 + 清子弹"同一纪律)。大乱斗覆写的 `_respawn_player` 自动继承;它不调 `_reset_world_and_clear_dynamics`(单局 5 分钟死斗),故换局重置对它无影响。
-  - **地面武器的权威位置与渲染位置是两回事**:`WeaponPickup.canonical_pos` 永远在 `[0,MAP)`(物理写它、拾取判定读它),`global_position` 是**渲染位置**,每帧由 `set_anchor(玩家位置)` + `sync_render_from_canonical()` 锚到最近副本。★ 单机侧同款(否则玩家在接缝附近时,地图另一头的枪画在屏幕外)。
-  - **对局内 HUD 的武器槽位格子不用另挂**:`ui/hud.gd`(单机 HUD)就在 `level_0.tscn` 里,而 PvP/大乱斗的场景**都实例化 `level_0.tscn`**,它按 `"player"` 组找到本地玩家后无条件 `_build_weapon_slots` —— 三个模式共用同一块。再加一块就是叠两层。
-- **初始状态**:单机开局**玩家携带手枪**(`Level0._give_starting_weapon`;★ 必须排在 `set_enabled_slots` **之后**,且用 `default_slot()` 而非写死 `"1"` —— 先给再禁会把手上那把判成空手,写死则在禁用手枪时发一把本局不让用的枪)、12 把(每种 2 把)随机散落;按 R 重启 = **完全重开**(背包重置为开局那把 + 武器重新散落,与"还原砖 + 清敌人重刷"同一语义)。★ `player.restart_at()` **刻意不动背包** —— 它被单机与联机共用,而两种模式的武器规则不同(联机复活是"除随机一把外全丢",见联机计划);单机的重置收在 `Level0.restart_single`。★ `player.tscn` 本身的 `_ready` 仍是**空背包**(无模式默认),发什么枪由各模式自己决定。禁用武器(`RunOptions.disabled_weapons`)不出现在分布里。
-- ★ **武器精灵必须显式设 `texture_filter = 1`(nearest)**:项目默认是线性插值,而武器精灵要放大 2.5 倍显示(手持继承 Player 的 scale,地面补 `WORLD_SCALE`),插值会把它糊掉。`pistol_test`/`rifle_test`/`m82a1`/`s686`/`laser_gun` 这 5 个曾漏设,2026-09-15 补齐(写法与 `player.tscn`/敌人/`grenade_launcher` 一致:设在 `Sprite2D` 节点上)。加新武器时照抄。
-- **键位**:数字键 1-4 = 背包位置(5/6 动作**保留不删**,只是不再被读);滚轮在背包位置间循环,`Settings.wheel_switch` **默认已改为 true**(此前默认 false = 该功能形同虚设)。`F`/`Q` 是新动作,已进 `Settings.REMAPPABLE_ACTIONS`。★ **输入包的 `weapon` 字段 = 背包位置(1-based)** —— 两条生产路径必须同量纲(数字键经 `LocalInputSource._weapon_slot_raw` 返回 1-4;滚轮经 `WeaponComponent.request_net_cycle` 的 `push_net_slot(next + 1)`),消费点只有 `player.gd` 的 `equip_index(wslot - 1)`。滚轮曾经发**武器类型 id**(`2643cfb` 改数字键语义时漏的半个)→ 服务器切到错的那把、或位置越界**早退**(`_equip_index` 越界直接 return)→ 权威 `wslot` 经 `sync_soft_state` 把客户端**拉回**原枪 →「滚轮切不动」。它只在**背包 ≥2 把**时现形(数字键那条两边自洽、一直是对的)—— 也就是"捡起武器之后"。守卫:`tests/net_ground_probe` ④c + `ground_client_probe` ⑥。★ `settings.gd` 读键位时 `get_value(..., null)` 会被 Godot 当作"没给默认值"并在老存档上**每加一个新动作就报错**,故默认值一律用真值(空数组)。
+### 渲染管线 (Level0.tscn)
+根节点将未处理输入转发至 `WorldViewport`（SubViewport）；游戏世界渲染进 SubViewport，通过 `PostProcess` 执行像素缩放裁切与倒地暗角特效。相机使用 `camera_2d.gd`，支持前瞻与死区平滑。
+- **瓦片渲染**：`_create_wall_tileset()` 运行时将 32px 材质最近邻放大为 64px 瓦片，生成 16×20 图集并铺设 3×3 环面网格。
+- **碰撞构建**：`CollisionBuilder` 将形状掩码展开为 32px 子格，执行贪心矩形合并后按 9 环面副本实例化。永久墙构建单一静态节点，可破坏瓦片按区块分块维护，瓦片破坏时仅局部重建对应区块。
+- **包围盒计算**：`CollisionAabb` 静态提供启用中碰撞体的世界坐标 AABB 计算，为激光判定、水体检测与避障提供统一几何来源。
+- **重叠脱困检测**：`Unstick` 静态计算嵌入实心格矩形的向上最小修正位移，探测矩形四边设置 0.5px 内缩，避免边界重合误判。
+- **世界构建**：`WorldBuilder` 统一负责地图网格数据加载与碰撞实体构建，单人模式与联机端共用。
 
-### 玩家(scenes/player/player.gd)
-CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高度、冲刺(沿用最近移动方向;0.4s,空中冲刺重力×`charge_air_gravity_mult`=0.35,跳跃/撞水平墙可提前打断、收尾平滑)、下蹲(**逐帧推导**:在地面且按住 S 才蹲,非 just_pressed/released 边沿——空中松开不卡蹲;蹲态可蹲走 `crouch_walk_speed`≈245;空中按 S=下冲)、姿态碰撞箱(Pose→CollisionPolygon2D,运行时只启用当前姿态的箱子)、iframes/击退(爆炸=独立 `knock_velocity` 向量,衰减率 `player_knock_decay_rate`)/倒地(倒地**不取消物理**,仍受重力/击退,只是不吃输入;**单机**按 R 调 `Level0.restart_single()`——**原地复位,不是场景重载**:可破坏砖/瓦片/碰撞整层还原为建图基线 + 清子弹/敌人后重刷 + 玩家满血满氧回出生点;旧实现走场景重载(第二份完整世界 + 退役拆旧世界),在引擎原生层偶发段错误(表象:重启后蓝屏/地图未加载),故从机制上绕开「新建/拆毁大世界」。PvP/大乱斗**不走这条**——服务器权威管复活)。移动/跳跃/冲刺/镜头/战斗数值全在 `PlayerParams`。**加新武器 = 三条注册表各加一行**(`weapon_component.gd` 的 `WEAPONS` / `DISPLAY_NAMES` / **`TIERS`**;键对应输入动作,project.godot 已注册 1~0)。三条漏填的表现各不相同:`WEAPONS` 漏 → 切枪 `load("")` 报错(响);`DISPLAY_NAMES` 漏 → HUD 显示 "?"(看得见);**`TIERS` 漏 → 容量算错**(轻武器被当成重武器、8 格只能带两把),**完全不报错** —— 三条一起由 `enemy_logic_smoke._phase_weapon_registry` 钉住。
-- **结构(轻量拆分)**:根 `player.gd` 只留移动/姿态/物理帧编排;攀爬(梯/锁链)、战斗(生命/无敌/击退/倒地)、武器(注册表/换枪/后坐)分别抽成 `ClimbComponent`/`CombatComponent`/`WeaponComponent`(Player.tscn 子节点)。组件**不写自己的 `_physics_process`**,由根每帧显式按顺序调用(`climb.update → 移动 → combat.apply_knock → move_and_slide`),避免调度乱序。跨组件状态经根传参;根公开接口 `take_hit/get_facing/set_facing/is_downed/apply_recoil`、信号 `hp_changed`、只读 `hp/max_hp` 原样保留(HUD/敌人/武器零改动)。契约守卫 `tests/player_contract_smoke.gd`(源码级)保接口不漂。
-- **输入可注入**:根读输入走 `core/net/player_input.gd` 的 `PlayerInput`(**纯接口**;阶段 5.9 起本地那份实现独立成 `local_input_source.gd` 的 `LocalInputSource`,网络包那份是 `packet_input_source.gd` 的 `PacketInputSource`)。三种实现以 `source_kind()` 的枚举(`LOCAL`/`PACKET`/`AI`)自报家门;`frozen` 短路与 `_*_raw()` 覆写钩子的契约见该文件头。PvP 服务器注入包驱动远端玩家;瞄准有 `get_aim_dir_override()` 覆盖钩子(本地返回 ZERO → 武器落回鼠标,网络返回注入方向)。
+### 挤压与拉伸补间形变 (squash & stretch)
+组件 `SquashStretch` (`scenes/effects/squash_stretch.gd`) 为纯表现层实现，挂载于玩家、敌方实体及远端副本上，仅修改动画节点的 `scale` 属性：
+- 计算模型：由垂直速度推导的连续项 `_air` 与事件触发的瞬时冲量 `_impulse` 叠加计算，并通过指数衰减回归中性状态。
+- 参数设定：最大形变量 `squash_amount` 设定为 0.06，恢复速度 `squash_recover` 为 16，形变标量严格钳制在 `[-1, 1]` 区间。
+- 落地检测：基于 `vel_y > _land_min_vy` 阈值（默认 220.0）进行无状态推导。宿主在调用 `move_and_slide()` 之前缓存 `_pre_move_vy`，并过滤非自由落体产生的下落速度（如水中移动或梯子攀爬），避免持续产生形变异常。
+- 倒地表现：倒地状态下禁用形变（`suppressed = true`），避免身体旋转与缩放叠加产生异常变形。
+- 副本同步：远端副本基于快照数据推导垂直速度与落地状态，结合客户端本地网格水体检测，在表现层平滑推进形变动画。
+- 宿主水域过滤策略：玩家侧过滤 `in_water` 与攀附状态以避免非下落速度触发落地形变；敌人侧直接使用 `velocity.y`，确保真实落水挤压表现正常触发。配套测试包含纯逻辑测试 `tests/squash_stretch_smoke.gd` 及相关场景验证用例。
 
-### 渲染管线(Level0.tscn)
-根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体/玩家/敌人)渲染进 SubViewport,`PostProcess`(post_process.gd)做像素缩放裁切 + 倒地暗角。相机 `camera_2d.gd` 带前瞻/死区。注意:冒烟测试把武器挂到根 Window 而非 SubViewport(见 weapon_base 的鼠标坐标注释)。
-- **墙体 64px 砖块渲染**:`_create_wall_tileset()` 运行时把 structure.png 两行 20 块 32px 砖最近邻 2× 放大成 64px,对每(纹理×形状)生成 16×20 atlas(空气象限透明),TileSet tile_size=64,`_paint_maze` 按 `Vector2i(shape, texture-1)` 铺 125×75 ×3×3 环面。
-- **碰撞**:`core/sim/collision_builder.gd`(`class_name CollisionBuilder`,静态可测)把形状掩码展开成 250×150 的 32px 子格(每 64px 格 → 2×2),贪心合并矩形(ts=32)后按 **9 环面副本偏移**实例化(每块矩形 ×9,共享同一 shape)。**永久墙(不可破坏)建一个整图节点、建一次不动;可破坏层按分块存节点**(块边长 12 格 ≈ √地图边长,块内一次贪心 + 9 副本),摧毁时只重建所在块 → 重建成本 O(块面积)。**只有 type=wall 产生碰撞**,通道(梯子/锁链)可走/可爬。
-- **`core/sim/collision_aabb.gd`(`CollisionAabb`,静态:从任意节点求**启用中**碰撞体的世界 AABB)是三个调用方的共同几何来源**——激光命中半身/整框、water 脚底偏移、飞鸟避障矩形;各自自备兜底值(18px / 24px / 40×40),**只在目标真没有碰撞体时才该生效**。★ **多边形与形状必须分开判**:Godot 4 里 `CollisionPolygon2D` 与 `CollisionShape2D` 是**并列类**(都直接继承 Node2D,编译器会拒绝 `多边形 is CollisionShape2D`),而本作**所有**身体(三敌人 + 玩家 5 个姿态箱)都只用多边形 —— 只判形状 = 三个调用方**全部静默走兜底**(2026-09-15 修:`has_any` 恒 false、`world_rect` 恒零矩形,激光判定框长期是"原点周围 36×36"、与身体无关)。守卫:`enemy_logic_smoke` 末节 `_phase_collision_aabb`。
-- **`core/sim/unstick.gd`(`Unstick`,静态:把压进实心格的矩形**向上挤出去**)**:`push_up_dy(rect, ts, max_cells) -> float` 返回**刚好清空**所需的最小位移(0 = 没卡住),逐格向上找第一个整框清空的位置 —— **不是整格跳**(一格 64px,轻嵌就弹一整格很突兀,也让"落点与何时开始模拟无关"更难对)。格范围骨架仍走 `TileQuery.topmost_solid_row()`(新加,住在 `tile_query.gd` —— 那套"floori 两端 + 逐格 posmod"全项目只此一份)。★ **探测矩形四边内缩 `PROBE_INSET`(0.5px)不是可选项**:`floori(rect.end / ts)` **含端点**,一个正好 64 宽、正好对齐格线的矩形会把右边那一列也算进去 —— 那一列是墙的话会每帧判成"卡住"往上弹。当前唯一调用方是 `WeaponPickup._physics_process`(两处:`move_and_slide` 之后**以及 `_settled` 的早退分支里** —— 停稳后 `move_and_slide` 再也不跑,被后盖上的可破坏砖压住会**永久钉死**,那是解卡唯一能救回它的地方)。几何走 `CollisionAabb.world_rect`。飞鸟的"向下逃逸"是另一套(方向相反、且只在 A* 空路径时触发),本次**没动**。守卫:`tests/unstick_smoke.gd`(`-s`,含"正好对齐贴墙不算卡"这条钉内缩的用例)。
-- **世界构建**:`core/sim/world_builder.gd`(`class_name WorldBuilder`,静态):`load_grid()`(地图→current_grid/TileDefs/地图像素尺寸)、`build_sim(parent, grid)`(碰撞:永久墙+可破坏分块+攀爬基座条)。单人 Level0 与 PvP 客户端/服务器共用。
+### 界面系统 (UI)
 
-### 补间形变(squash & stretch)
-`scenes/effects/squash_stretch.gd`(`class_name SquashStretch extends Node`)—— 纯表现层组件,
-挂到玩家 / 三只敌鸟 / 对手副本上,**只写 `animator.scale`**。计算模型是两个标量相加:
-`_air`(每帧由 `vel_y` 重算,无状态)+ `_impulse`(事件累加 + `MathUtil.approach` 指数回归)。
-**单标量**是刻意的 —— "冲刺中落地""起跳瞬间被击中"这类同时事件天然叠加,不需要优先级状态机。
-幅度上限 `squash_amount` = **0.06**(用户 2026-09-21 实测后从 0.10 收到 0.06,原话「玩家有点太果冻了」;
-同批 `squash_recover` 9→16、`squash_air` 0.30→0.10),`v` 钳在 `[-1,1]` 故永不越界。
-★ **落地挤压由 `vel_y` 无状态推导**,不需要 `_was_on_floor`:判据是
-`if on_floor and vel_y > _land_min_vy`(`scenes/effects/squash_stretch.gd`),阈值**不是字面量** ——
-玩家侧 = `PlayerParams.squash_land_min_vy`、敌人侧 = `EnemyParams.squash_land_min_vy`
-(当前**同值 220.0**;★ 本节 2026-09-20 订正过 —— 此前误写作 `> 200`,照那个数编会差 20 px/s)。
-与之配套,宿主必须在 `move_and_slide()` **之前**缓存 `_pre_move_vy`(它与帧首的
-`is_on_floor()` 配对,二者描述同一时刻),且**必须自己把"不是摔下来的"下坠速度滤掉**。
-★★ **"只在落地那一帧成立"是过滤之后的结论,不是判据本身的性质**(spec §2.4):"宿主在
-`is_on_floor()` 时不施重力 ⇒ 地面上 `vel_y` 恒 0"这个前提**只对重力路径成立** —— 水中下沉
-(`player_swim_down` = 320)与梯子下行(720)都是"站在地面/水里仍然写正 `velocity.y`",
-不滤就会持续/每帧重触发落地项(梯底按住 S 是整个对局里真正的每帧违规)。故**宿主的契约**是:
-传进 `tick()` 的 `vel_y` 必须是"地面真正吸收掉的"那个下坠速度,否则传 0 —— 玩家侧即
-`_pre_move_vy = 0.0 if (in_water or latched) else velocity.y`(敌人侧**刻意不过滤**,见下)。
-敌人侧状态事件走 `_on_state_entered(s)` 虚钩 —— 三只鸟各有自己的
-`enum State`(JumpBird 没有 TAKE_OFF),基类不能硬编码状态名。
-★ **纯视觉:不进 `capture_state()`/`restore_state()`、不碰碰撞箱。** 玩家侧 `tick` 放
-`_physics_process` **最首行**(倒地早退之前),否则倒地后 scale 会卡在最后一个形变值上;
-敌人侧同理(放 `_is_far_sleeping()` 早退之前)。
-★★ **已知表现副产物(登记不修,2026-09-20 裁定)**:缩放绕精灵**中心** —— `AnimatedSprite2D`
-没有 pivot,`player.tscn` 只设了 `texture_filter`,故 `centered = true` 生效 ⇒ 挤压时**画出来的
-底边会上抬 ~4~5px**、拉伸时下沉 ~3.5px(约体高的 4%,包络 ~0.15s)。**这是真现象、不是缺陷**:
-脚底锚定要么得给 `animator.offset`/`position` 补一个反向平移(**破了"只写 `animator.scale`"
-这条约束**,且见下),要么得在四个场景里重摆精灵并复核武器/枪口挂点 —— 为 ±6% 的观赏性
-特征不值得。★ 这两个数**每次跑都被打印出来**(`tests/squash_stretch_probe.tscn` 的三栏像素
-包围盒:中性 y 670 / 拉伸 667 / 挤压 674;底边 = 顶边 + 高 ⇒ 挤压上抬 5px、拉伸下沉 4px,
-与上面那组区间一致,不必再手量)。**别把它当 bug"修"**:用 `offset` 补正是**没有任何探针看得见**的那种改法(偏移是
-精灵内部量,`global_position` 与碰撞箱都不动),`tests/squash_stretch_probe.tscn` 专门加了一条
-`offset == Vector2.ZERO` 的断言堵它。
-★ **倒地必须 `suppressed = true`**:副本给根节点设了 `rotation = -90°`,而 animator 是其
-**子节点** → 此时写 `scale` 会沿**转过的轴**挤压,尸体横着变宽。本地玩家虽不旋转,但两端
-行为要一致、且尸体不该有弹性。
-★ **已知边界(登记不修)**:`prediction_rollback.gd:114` 的重放是**直接调 `_physics_process`**,
-而 `_impulse` 不在 `capture_state()` 里 → 回滚时挤压包络会**重播一次**。纯视觉、幅度 ±6%,
-表现是"弹一下";要修就得把纯视觉状态塞进权威态,那是更坏的选择。`_air` 项无状态,不受影响。
-★ **`_impulse` 有两个写入口,各自钳一次 `[-1,1]`**:`impulse()` 的加法,以及 `tick()` 里那句
-`_impulse -= _land_gain * k` **之后紧跟的一行 `clampf`**(2026-09-20 终审补)。`_apply()` 里钳
-`final` 只保住**画面**不越 `0.94/1.06`,保不住内部量 —— 宿主违约(每帧喂同一个"不是摔下来的"
-下坠速度,梯底按住 S 就是)时那一次减法每帧重来,而指数恢复每帧只回 ~14% ⇒ 无钳位时会收敛到
-定点 `-k·d/(1-d)`(睡眠鸟那处 ≈ `-6.19k`)⇒ 之后任意一次 `impulse()` 的**正**增益都加在更负的
-基数上,起跳/冲刺的拉伸被压低、显形推后(~0.1s 量级)。守卫:`tests/squash_stretch_smoke.gd` ⑦e。
-守卫:`tests/squash_stretch_smoke.gd`(`-s`,纯逻辑:参数镜像 / 九相 / 上下行饱和 ⑦c⑦d / ⑦e 写入口钳位)
-+ **四条场景探针** —— `tests/squash_stretch_probe.tscn`
-(真渲染,含"形变不得改变全局位置"与"形变不碰碰撞箱"两条硬约束断言 + **像素级方向断言**,
-并取图供人眼验收 —— 图**自己读**,别推回给用户)、
-`tests/squash_host_water_probe.tscn`(玩家侧过滤谓词 + 倒地两件事)、
-**`tests/squash_host_enemy_probe.tscn`**(★ 敌鸟侧:三只鸟的状态映射 / SLEEP 不挂钩 /
-`_apply_hit` 的 HURT / **睡眠缓存归零与醒来首帧**。这一面是本特性**唯一真出过 bug**的地方,
-而它的守卫一度只是实现期的一支临时探针、跑完即删 ⇒ 删或误映射任何一处都**不会有测试变红**;
-现在的断言清单是照那支探针的留存输出逐条恢复的)、
-`tests/squash_replica_probe.tscn`(副本:水查询 / 落地判据两半 / 倒地中性,另加**相⓪**)。
-★ **对手副本**复用同一个组件,数据从快照的 `vel`/`pose` 本地推导 —— `vel` 本来就在载荷里
-(`server/match_snapshot.gd` 的 `world["players"][str(role)]` 那张表),只是副本此前没读,
-**协议零改动**;★ 副本探针的**相⓪**就钉在这张表的字段清单上(见下),故这里**不写行号** ——
-表一漂,行号就先失效。副本**不做受击挤压**
-(快照里没有受击事件,从 `hp` 下降推会在 AoE 多段伤害时误触发)。tick 放副本的 `_process`
-而非 `apply_snapshot`:后者没有 `delta`,而 `_process` 是副本的表现层时钟(插值推进与受击
-闪烁衰减都在那儿),挂快照回调会与插值产生拍频。
-★★ **副本的落地判据是「两半」,`pose != FLY` 那一半单独不够**:副本没有物理,`on_floor` 是
-**推导**出来的(`(not _downed) and _pose != POSE_FLY and absf(_vel.y) < LAND_VEL_EPS`)。`pose`
-只是"站在地上"的**代理**,它在**水中下沉**(姿态被强制成 MOVE/STAND,而 `vel.y` 恒为
-`player_swim_down` = 320)与**空中冲刺**(本体把 `is_charge` 判在 `not is_on_floor()` **之前**,
-故下落途中起步的冲刺给出的姿态就非 FLY)两种状态下**同样为真、而 `vel.y` 并不趋于 0** ——
-只看代理会让落地项每帧重触发,把对手压成持续/反向的形变(本体在那两种状态里都是中性的)。
-★ 水项用**客户端本地网格查询**(`_in_water()`,`Water.is_in_water(脚底)`,脚底偏移一次性从
-幽灵体量出)**而不是协议字段**:本体的 `in_water` 本身就是纯位置网格查询,客户端有同一张图。
-注:爬梯那一半**刻意不补**(客户端手里只有无状态的位置代理,对"路过梯子"会误触发,那是
-引入本体从不显示的新形变),残留如实登记为 2.5~3.0% / ~6.3%。
-守卫:**`tests/squash_replica_probe.tscn`**(四相,断言全落在 `animator.scale` 上:水中下沉
-全程中性 / 干地真落地仍挤压(反例)/ 落地判据两半都在 / 倒地强制中性)。四相各配一条**具名
-变异**且已验证"只打红自己那一相":删 `_in_water()` → 相①(复现 `scale = 0.986286`)、
-值来源换回当前 `_vel.y` → 相②(`scale.x == 1.000000`)、删 `absf(_vel.y) < LAND_VEL_EPS` → 相③、
-`suppressed` 传 false → 相④。★ 相④ 的前提态**刻意取空中连续项而非落地冲击** —— 后者正是相②
-那处变异动的东西,拿它当前提会让两相被同一个变异一起打红。★ 相④ 的判据窗口是**倒地后 8 帧**的
-max dev(单帧窗口会漏掉"要两帧才收敛"的那类回归)。★ 另有一条**相⓪**:把夹具字典的**键集**与
-`server/match_snapshot.gd` 里那张玩家载荷字段表**双向对账** —— 夹具键是手写的、头注声称"逐字
-一致"却**无人校验**,而删掉生产端的 `"vel": p.velocity` 会让**四相全绿**、对局里对手的形变
-**静默消失**(副本 `_prev_vel_y` 恒 0 ⇒ 空中项恒 0、落地项永不触发)。读不到源文件/定位不到那张
-表时报**红**,不静默跳过。另一层守卫 `tests/squash_host_water_probe.tscn` 驱动**玩家本体**
-(合成网格 + 真 player.tscn + 真物理),钉 `_pre_move_vy = 0.0 if (in_water or latched) else velocity.y`
-那个谓词。
-⚠ **两侧的水过滤刻意不同款,别去"统一"**:玩家侧滤 `in_water or latched`,**敌人侧刻意用裸
-`velocity.y`**(`enemy_base.gd`,原地有登记注释)。实测敌人侧 `_in_water ∧ is_on_floor()` 的重叠
-**真实存在**(239/1350 帧 —— 敌人停在池底上方 0.02~0.18px,`Water.feet_offset` 把探针放进它
-**上面那个水格**;玩家侧那个偏移落在支撑格里故为 0),但水的写入被钳在 −260/+160、**下沉侧
-160 < 阈值 220** ⇒ "幽灵挤压"结构上不可达,而过滤**会吃掉 13 次真实的落水挤压**(入水那一下
-变哑)。两侧结论不同是**实测差异**,不是不一致 —— 完整 A/B 表见 spec §2.4。
+界面开发遵循统一规范：
 
-### UI(界面)
+- **控件工厂与调色板**：`ui/ui_factory.gd` 是界面样式的统一入口与全局调色板。颜色定义集中于常量（`C_BG`, `C_SURFACE`, `C_ROW`, `C_FIELD`, `C_BTN_FILL`, `C_BORDER`, `C_ACCENT`, `C_DANGER`, `C_TEXT`, `C_WARN` 等），严禁在业务界面中散落 `Color(...)` 字面量。字号必须为 16 的倍数以保持硬边缘像素对齐。
+- **控件样式规范**：
+  - 按钮统一采用描边样式（`style_button`），确保描边对比度达标；
+  - 面板底色使用不透明填充（`panel_box`），防止下层菜单内容穿透重影；
+  - 开关控件（`style_check`）采用自绘状态图标，并在布局上使用固定宽度的标签列与开关并排（`HBoxContainer`），避免开关被容器拉伸分离。
+- **字体规范**：西文字体使用 `assets/fonts/less_perfect_dos_vga.ttf`（8×16 DOS 位图字体）；中文字体使用开源 GNU Unifont (`assets/fonts/unifont-17.0.05.otf`)，统一通过 `PixelFont.shared()` 禁用抗锯齿与微调，保证 16 像素网格硬边缘对齐。
+- **HUD 视觉层级**：HUD 信息面板统一采用半透明深色底板（默认 `Color(0, 0, 0, 0.1)`，大乱斗排行榜因对比度需要设为 `0.25`）。右上角击杀计数器不使用底板（通过 `draw_center = false` 实现完全透明）。低弹量警示色统一采用金色（`C_WARN`），装填进度条使用主强调色，长按丢弃进度条使用危险警示色（`C_DANGER`）。
+- **武器槽位控件**：`ui/weapon_slots.gd` (`WeaponSlots`) 为自包含控件，挂载于单人、1v1 及大乱斗 HUD，分为未占用、已占用与手持三种透明度层级表现。
+- **圆形小地图**：`ui/minimap.gd` 采用以玩家为中心的圆形雷达视野（`CanvasLayer` 层级 131），覆盖 50 格探测半径。利用着色器纹理重复采样实现环面无缝回绕，通过 `GridPathfinder.toroidal_delta_px` 计算最短位移向量。3v3 模式下根据队伍颜色渲染全部实体，且所有数据源统一通过 `team_game._minimap_entries()` 过滤，防止跨帧销毁引起下标错位。
+- **大厅基类抽象**：`scenes/lobby_page.gd` (`LobbyPage`) 提供 1v1、大乱斗与 3v3 房间列表、连接状态机与通用配置组件的统一抽象，子类仅保留特定模式的布局与协议差异。
 
-2026-09-13 做过一轮视觉评析并落地,以下几条是**现在的约定**,改界面前先看这里。
+### 瓦片属性与地图破坏 (data/tile_defs.json)
+- **数据驱动定义**：`data/tile_defs.json` 为瓦片属性的单一数据源，配置材质类型（墙体、通道、液体、气体）、耐久度（HP）、爆炸衰减、破坏条件、弹力与摩擦系数等。网页编辑器通过同步脚本生成副本。
+- **材质特性**：纹理 1-10 为不可破坏墙体；11 为梯子、12-14 为锁链通道（提升攀爬速度）；15-18 为树叶（可破坏墙体，受击微弹）；19-20 为树干（爆炸可破坏）；21 与 22 分别为水体与水面（液体无碰撞）。
+- **破坏结算**：`TileDefs.damage_tile` 结算伤害，瓦片耐久耗尽后置为空白，同步通知 `Level0.on_tile_destroyed` 清除渲染层与子格数据，标记所在区块在下一帧重建碰撞体。
+- **攀爬机制**：角色中心或脚底进入通道瓦片时，按上键进入攀附状态（不受重力影响），梯子与锁链分别应用独立的移动速度倍率；锁链下行直接解除攀附自由落体；脚底移出通道顶端后按上键跳离；锁链顶底基座生成薄碰撞边缘防止穿透。
 
-- **`ui/ui_factory.gd` 是 UI 的唯一工厂与唯一调色板**。颜色只在那里定义(`C_BG`/`C_SURFACE`/`C_ROW`/`C_FIELD`/`C_BTN_FILL(HI/DN)`/`C_BORDER(DIM)`/`C_ACCENT`/`C_DANGER`/`C_TEXT(DIM)`/`C_WARN`),各页面一律引用,**不要再写 `Color(...)` 字面量**。字号仍必须是 16 的倍数(见文件头两条硬约定)。
-- **按钮 = 描边式**(`style_button(b, variant)`):暗填充 + 2px 亮描边、直角。标定目标是**描边对页面底 ≥3:1、对填充 ≥3:1** —— 改 `C_BORDER` 前先按这个量(第一版 #3D4A5A 只有 2.13:1,是实测后上调到 #5C708F 的)。`variant="quiet"` 是弱化项(退出),常态就压暗。
-- **其余控件各有工厂方法**,新页面直接调:`panel_box()`(面板底,**不透明** —— 半透明面板会让下层菜单文字透上来重影)、`row_box()`/`style_row_button()`(列表行)、`style_line_edit()`(输入框底 + 占位符色,默认主题下输入框与页面底只差 1.01:1)、`style_check()`(**自绘开关图标**:默认主题的 CheckButton 在「关」态没有可见轨道,只剩一个小灰点)、`style_slider()`。
-- **开关/勾选框行 = 定宽标签列 + 紧邻开关**(`HBoxContainer`,标签 `custom_minimum_size.x` 固定)。别再把裸 `CheckButton` 直接塞进宽容器 —— Godot 会把它拉到容器全宽,开关被推到几百像素之外,和标签读成两个不相干的元素。
-- **字体**:拉丁走 `assets/fonts/less_perfect_dos_vga.ttf`(8×16 DOS 位图);**汉字走仓内 `assets/fonts/unifont-17.0.05.otf`**(GNU Unifont,SIL OFL 1.1 可商用,授权全文与选型理由见 `assets/fonts/unifont-LICENSE.txt`)。两者都套 `PixelFont.shared()` 的「关抗锯齿/关微调/关子像素」。**为什么必须是 16 像素网格**:本项目字号只用 16 的倍数,只有设计像素能整除设备像素时边缘才是硬的;主流开源像素中文字体(Ark Pixel / Fusion Pixel)只做到 12px,在 16/32 下是 1.33x/2.67x 非整数缩放,笔画会粗细不均。换字体只改 `core/present/pixel_font.gd` 的 `CJK_FONT_PATH`。
-- **HUD 元素一律垫半透明深底板,全项目同一个数值 `黑 0.1`**(2026-09-15 用户统一,先前是 0.45 → 0.15 → 0.1)。★ **例外:大乱斗排行榜 `royale_hud.gd` 的 `_board_bg` 单独是 0.25** —— 2026-09-15 用户点名把那张「pvp 玩家栏」(玩家名次表)排除在这轮下调之外,随后指定它用 0.25(比别处都实);别看到"统一"就把那处一起改。同一天该板底部留白也从 14 加到 34(用户要求"底部多留 20px")。**改一处要改齐(下列是已知落点,不是完备枚举)**:单机 `ui/hud.gd` 的 `PLATE_COLOR`(武器区/血条/氧条)、大乱斗 ping/提示条 `_plate_box`、1v1 记分条与延迟条 `pvp_hud.tscn` 的 `Plate` StyleBox、3v3 记分条与延迟条 **`ui/team_hud.tscn` 的 `Plate`**(后两者是 `.tscn` 里的**字面量**,**无法共享常量**,只能人工对齐;各自的 Plate 都由 ScoreWrap 与 PingWrap 共用 —— 改一个要改两个节点);另有两处同值常量常驻在 **`ui/weapon_slots.gd`** 与 **`ui/world_label.gd`**,两者的注释都以本句当权威来源,漏改就把 HUD 底板分裂成两个值。★★ **本条刻意不写"共 N 处"**(这个数**漂过**:2026-09-18 加 `team_hud.tscn` 后本句一度把它写小,评审时才照出来 —— 所以下面那句里**也不许出现任何计数**):**以 grep 为准,且 grep 一律"排除文档/副本目录"、不写扩展名白名单** —— `--include=*.gd --include=*.tscn` 是**扩展名限定**的,将来这个值挪进 `.tres`/`.theme` 之类就**静默漏掉**。命令(三行是一条,反斜杠续行):`grep -rn "Color(0, 0, 0, 0.1)" --exclude-dir=.git --exclude-dir=.godot --exclude-dir=.claude --exclude-dir=_crashtest --exclude-dir=.superpowers --exclude-dir=docs --exclude=CLAUDE.md --exclude='*.bak' .` —— `--exclude*` 挡掉的是**文档与副本**(本文件自己、`.superpowers/` 的计划与报告、`docs/` 里的计划、worktree 副本、`_crashtest/`),不是"按后缀挑代码"。★ **右上角击杀计数器(青色 `000`)是唯一的例外,它不垫底板**(2026-09-17 用户要求删,三个模式一起生效 —— PvP/大乱斗都实例化 `level_0.tscn`,共用 `ui/hud.gd`)。⚠ 去掉它**只能靠 `draw_center = false`**,不能只删 `bg_color` 那行 —— `StyleBoxFlat` 默认底色是**不透明灰 (0.6,0.6,0.6,1)**、`draw_center` 默认 true,只删颜色等于把半透明黑板换成实心灰板(09-15 实测踩过,用户当场看出「右上角怎么还有框」;这个底板上下来回改过三次,别再凭印象动它)。氧条那组底板与条/空槽同一 tween 淡入淡出,满氧时整组不出现。地图开阔区是浅灰蓝,**不垫底**时青色血条压上去只有 ≈1.9:1、金色残弹 ≈2.3:1。★ 0.1 是用户看实图后定的**审美值**,不是按对比度算出来的:它只把底色 L 从 0.283 压到 0.225(青血条 2.27:1、金残弹 2.74:1、白字 3.11:1),血条**达不到**大字下限 3:1;上一版 0.15 是 2.50 / 3.03 / 3.44,当年那套 0.45 才是算出来的下限(4.81:1 / 5.81:1 / 6.60:1)。各档数字钉在 `ui/hud.gd` 该常量的注释里。**全屏压暗罩不在此列**(`pvp_hud` 的 `Mask` / royale 的 `_mask` = 0.3、暂停菜单 0.55、敌人血条底 `enemy_hp_bar.gd` 的 0.45),它们不是底板。**金色(`C_WARN`)只表「弹夹见底」**这一个语义 —— 满弹用中性色,装填进度条用强调青;丢弃进度条用 `C_DANGER`。
-- **武器槽位格子 = `ui/weapon_slots.gd`(`class_name WeaponSlots`)**,左下角 4×2,三态配色在 `UiFactory`(`C_SLOT_EMPTY`/`C_SLOT_FILLED`/`C_SLOT_ACTIVE`,用户指定"未占淡灰 / 已占淡青 / 手持深青")。★ 该控件**自包含**、可挂任意节点:三处 HUD(单机/1v1/大乱斗)各 `WeaponSlots.attach_to(...)` 一个,**不靠继承关系** —— `PvpHud` 与 `RoyaleHud` 是并列的两个 `extends CanvasLayer`,没有"复用基类那块"这条路。★ **配色前先看底板**:格子的底是 HUD 那块 `黑 0.1` 压在**地图开阔区的浅灰蓝**上(≈#6C8790,**浅底不是深底**)→ 浅底上"越暗越醒目",三态明度阶梯必须是 未占(贴近底板、后退)→ 已占(中)→ 手持(离底板最远、最跳);反过来配会出现"空格最抢眼、当前武器最不显眼"的倒挂(初版就这么错过)。★ 空格**看得见但后退**,不能"看不见" —— 初版把 EMPTY 配成与底板同明度,结果 4×2 的格阵形状读不出来、容量指示器等于失效(这属于"内容读不出来",不是审美问题)。★ 取色判据在 `kh_l3_visual_probe`,但**它默认的底是深色**,故只断言"每格是不是该有的颜色 + 三态两两可区分",**不断言"谁更醒目"**(两种底上答案是相反的,拿深底判会把实机上正确的配色判成错的);该探针另存一张 `l3_slots_on_map`(**浅底**,照 `combat_hud_visual_probe` 的先例)供**人眼**验收。★ 三档都是**半透明**(2026-09-15 用户:「格子透明度全部改到 0.5」),于是**画面上的像素 ≠ 常量本身** —— 它是格子色按 alpha 混到"底板再叠探针底色"上的结果,取色断言必须先做那步合成(`_slot_screen_color`),否则恒红;探针底色收在 `PROBE_BG` 常量里,别在两处各写一份字面量。
-- **对局内 HUD(`ui/pvp_hud.tscn` + `ui/royale_hud.gd`)同样一律垫深底板** —— 它们**直接压在地图上**,而地图开阔区是浅灰蓝,不垫底时浅色小字读不出来。记分条用 `ScoreWrap`(PanelContainer)按内容撑开,不是把 Label 拉成一条 1240 宽的横条。
-- **大乱斗排行榜一行五段必须定宽**:昵称走 `UiFactory.fit_name(名字, 14)`(★ 权威实现在 `UiFactory` —— 2026-09-21 起结算页共用同一份口径;`RoyaleHud._fit_name` 只剩一行委托),按**显示宽度**(汉字/全角算 2 个半角单位)**截断 + 补满**。不截,长昵称会把末段的「存活/复活中/离开」顶出面板(实测 9 字昵称那行 ≈690px vs 面板 480);不补,短昵称的行与行的列是错开的。单位宽度的前提是「拉丁 8×16 位图(半角 8px)+ 汉字 16px 网格 Unifont」——**换字体要重算** `BOARD_W` / `NAME_UNITS`。
-- **`royale_lobby` 也有截图探针了**:`-- --autotest-royale`(menu_autotest 的 mode 表 + `must_reach` 都加了 royale)。改那页版式后跑它读图。
-- **退场耗时**:`-- --autotest-switch`(menu_autotest 新增)连做**两趟**「进单机 → 回主菜单」,把 `safe_change_scene` 的两条路径都走到 —— 第 1 趟只付 `remove_child`,**第 2 趟才付**退役世界那笔(正是用户报的"有些时候卡")。配 `-- --perf-switch` 出数字(`level_0.gd` 的 `_perf_log`)。实测(headless,负载重):同步 free 265~375ms → 分帧拆除 128~160ms;剩下一大截是 `remove_child`(每次退出都付,**尚未处理**)。`-- --perf-reap-sync` 可切回旧行为做 A/B(同一负载下交替跑才可比 —— 这台机器的 `remove_child` 单值能漂 20~100ms,跨轮比较无意义)。
-- **小地图(`ui/minimap.gd` + `ui/minimap_circle.gdshader`,2026-09-17 改成圆形)**:以玩家为中心的**圆形视野**(不再是"整图缩略贴右下角"),`CanvasLayer` layer 131;挂载点**只有三个** —— `scenes/pvp_game.gd`(1v1,`setup` 两参)、`scenes/royale_game.gd`(大乱斗,`setup_multi` 两参)、**`scenes/team_game.gd`(3v3,`setup_multi` 三参)**,**单机 `level_0` 没有小地图**。★ `setup_multi` 的**第三参 = 颜色提供器**(3v3 分队上色用,返回与点数组**同序**的颜色),**默认 `Callable()`**:不传 → 一律 `ENEMY_COLOR`,故 1v1 与大乱斗那两处调用点**一个字都没改、行为逐字不变**。★ **"圆形范围"的唯一入口是 `RANGE_CELLS`(当前 50 格)**;它和屏幕半径 `RADIUS_PX`(140px)分开算成 `PX_PER_CELL`(= 140/50 = 2.8px/格),单独改 `RANGE_CELLS` 只换缩放、圆在屏幕上的大小不变。标定参照:**屏幕能看到 46×36 格**(世界视口 2208×1728 ÷ `cam_zoom` 0.75 ÷ `TILE_SIZE` 64),**1v1 两出生点环面最短距离 34 格** —— 所以 50 是"雷达"语义(开局就能看到对手),不是"屏幕缩略图"(那会是 ≈23)。地形想要更清楚就调 `RADIUS_PX`(同时放大圆),别调小 `RANGE_CELLS`。★ **环面是免费的**:地形贴图正好是 cols×rows、四周无留白,着色器采样器开 `repeat_enable` 就能让 uv 越过 1.0 时绕到地图另一头,**不需要铺 3×3 副本**。★ 点位走 **`GridPathfinder.toroidal_delta_px(玩家, 目标, W, H)`**(注意 **a→b** 的参数顺序)求最短向量,长度超过 `RADIUS_PX` 就不显示 —— **"只在范围内才提示"这条对每个点都成立**;1v1/大乱斗画的是"对手点",而 **3v3 画的是全部 5 个他人(= 队友 + 敌人)**,颜色由 `team_game._minimap_colors()` 按**队**给(与**副本身体 / 头顶 ID 同源**,都问 `_team_color(role)`;自己的那一处是例外 —— 见下方 `#### 3v3 团队模式` 里「队色覆盖个人色相」那条的"登记给 UI 重做那份")。★ 无论哪种,**跨接缝的点都不会被误判成很远**(直接相减就会)。开关仍是 `Settings.pvp_show_minimap`(是否挂载)与 `pvp_minimap_show_enemy`(**是否显示"他人点"** —— 3v3 下它把**队友点**一起关,别照 1v1 的"敌人点"读)。★★ **两个提供器必须共用同一套过滤(`team_game._minimap_entries()`),不只是"同序"**:`ui/minimap.gd` 是**按下标**取色(`_other_dots[i].color = cols[i]`),所以各写一份 `for` 时"某个副本已 `queue_free`、尚未从 `_replicas` 摘掉"那个窗口会让两数组**错位一格**(= 队友点画成敌人色,**不报错、只误导人**)—— 这条纪律的**唯一落点是 `_minimap_entries()`**,别在两处各过滤一遍;守卫 `tests/team_room_smoke.gd` ⑨③(按**函数体**断言两处都只从 `_minimap_entries()` 取数)。★ **左右与下方留白不同**(`EDGE` 24 / `EDGE_BOTTOM` **72**——见 `minimap.gd` 该常量上那段推导:延迟条字号 32 时的几何下限是 70.17,取 72 留余量):右下角是**延迟条**,而小地图 layer 131 画在 PvpHud(130) **之上** —— 旧的整图缩略只有 200px 高、碰不到它,换成 280×280 的圆就**盖住了延迟数字**(2026-09-17 用户报)。描边 `RING_PX` 4px、中灰(`minimap_circle.gdshader` 的 `ring_color`,同一天用户要求"加粗、改灰一点")。已知脆弱点(未修):`_ready` 时 `current_grid` 为空会 `set_process(false)` 且**没有重建路径**,挂早了就静默失效。守卫:`tests/minimap_circle_probe.tscn`(**必须真实渲染**;断言圆外仍是背景色/圆内有地形/范围内外与跨接缝的显隐/**圆不得压到延迟条矩形**(圆心到矩形最近点的距离 > 半径,几何断言),取图要人眼读)。
-- **两个大厅页共用 `scenes/lobby_page.gd` 基类**(`class_name LobbyPage`,`matchmaking` / `royale_lobby` 都 extends 它):「连大厅 → 列房间 → 配对了转连 worker」的状态机、共用的 13 个字段、按钮工厂(`_page_button`)、禁用武器网格与色相行两个设置区块都在基类;子类只留差异(版式、房间列表渲染、`_on_server_message`、`_process` 的**超时梯顺序**)。★ 改法口径与 `scenes/pvp_match_client.gd` 同款:**剔注释后逐字相同**的才上提,只差 1~3 行的落成具名钩子(8 个必需项,基类 `push_error` 兜底 —— 漏覆写当场可见);要再上提先按同口径量一遍差异,别凭印象搬。★ **超时梯顺序不能合并**:1v1 是 `[worker→join→大厅→claim]`、大乱斗是 `[worker→claim→大厅→ack]`,合并会静默改行为。★ 两个设置区块**不**放 `ui/ui_factory.gd` —— 它们读 `Settings`,而那个工厂至今零 autoload 依赖。
+### 水体环境与物理模拟
+- **瓦片配置**：水体（21）与水面（22）属于 `type=liquid`，不产生物理阻挡。水面起伏通过 `water_surface.gdshader` 实现逐格正弦波动。
+- **水体工具类**：`Water` (`core/sim/water.gd`) 静态提供水体浸入检测、水面高度计算、淹没状态判定、水体阻力系数与爆炸衰减系数。
+- **角色游泳与呼吸**：主角进入水体后由 `swim_component.gd` 接管物理逻辑，禁用跳跃、下蹲与冲刺，转换为水平游动、上浮与下沉控制。水下呼吸检测参考线设于胸口下方，进入深度超过该线时持续消耗氧气。
+- **敌人与弹丸影响**：敌人在水中根据重力与浮力平衡移动，沉没超时后持续扣除溺水伤害；水体中爆炸伤害与击退强度按衰减系数结算（0.25）；水下弹丸受指数级流体阻力衰减速度。
 
-### 砖块属性与破坏(data/tile_defs.json)
-- **属性表** `data/tile_defs.json` 是单一来源:每块 name/type(墙/通道/液体/气体)/hp/explosion_decay/bullet_destroyable/explosion_destroyable/elastic/climb_speed/friction。编辑器副本 `level_editor/tile_defs.js` 由 `node level_editor/sync-tiles.js` 生成(file:// 下可靠;`--check` 同上,只校验不写盘)。
-- 纹理 1-10 墙(hp1,不可破坏);11 梯子、12-14 锁链上中下 = 通道(climb_speed 1.6× 最快);15-18 树叶(墙,hp8,子弹/爆炸可破,弹性弱弹玩家);19-20 树干竖/横(墙,hp30,爆炸可破);21 水、22 水面 = 液体(无碰撞,可游)。爆炸衰减统一 0.75(水 0.25)、摩擦 1.0(现状不变)。
-- 加载:`TileDefs.load_defs()`(level_0._ready);挡路 = `TileDefs.is_blocked`(非 0 且 type=wall),寻路/LOS/碰撞共用。
-- **破坏**:`TileDefs.damage_tile(cell, dmg, "bullet"/"explosion")` → hp≤0 变空气(改 `MazeGenerator.current_grid` + `Level0.on_tile_destroyed` 清 3×3 瓦片 + 持久可破坏子格 2×2,标记所在分块下帧重建)。子弹撞树叶扣血;爆炸对树叶/树干按距离衰减×0.75 扣血。
-- **攀爬**:玩家中心(或脚底)在通道格(梯子/锁链)「**刚按上**」主动攀附(不受重力):上爬 ×`tile.climb_speed`(梯 1.6/锁链 2.0),下降 ×`tile.climb_descent_speed`(梯 2.0);**锁链无下降倍率 → 按下自由落体**(解除攀附交给重力,不被空中抓回);松开挂住不坠落;**到顶 = 脚底进入梯子上方一格**(以脚底为参考格),再按上 = 跳离梯子;进入靠「刚按下上」而非按住 → 跳离后按着上也抓不回;攀附空闲可水平走离梯子;**仅锁链顶/底基座有薄碰撞条**(`CollisionBuilder.build_climb_ledges`,全宽 64×6px;梯顶不加,避免挡爬升)。上爬与梯子下行再整体 × `PlayerParams.climb_vertical_mult`(1.2;锁链下行=自由落体不受影响);**身在梯/链格上不能空中下冲**(`climb.is_over_climb_tile()`:中心或脚底在通道格即判,按↓只能下移/下落,不能 charge_down 快速下坠穿过梯/链)。
-- **弹性**:碰树叶(elastic)被弱弹(PlayerParams.elastic_bounce=150)。
-
-### 水
-- **瓦片**:纹理 21 水 / 22 水面,`type=liquid`(无碰撞,`is_blocked`=false)。地图只画 21;水面(22)由 `Level0._paint_water` 自动派生(该格上方非 liquid → 水面层)。`WaterLayer`(水体)与 `WaterSurfaceLayer`(水面)两个 TileMapLayer;**水面起伏**由 `water_surface.gdshader` 做逐格正弦上下拉伸(锚底无缝、相位逐格错开,`amp/speed` 沿用 `GameParameters.water_sway_amp/speed`),水体层不挂 shader(水不流动)。
-- **`Water` 助手**(core/sim/water.gd,静态,不引 autoload,-s 可测):`is_in_water` / `surface_y_at`(所在列向上扫到最顶液体格的顶边) / `submerged`(中心低于水面线=没顶) / `feet_offset` / `water_mult`(爆炸×水格 decay) / `bullet_drag_factor`(子弹阻力系数)。约定:脚底(中心+半身)在水格 = 在水中。
-- **主角**(`scenes/player/swim_component.gd`):水中跳过攀爬/重力/跳跃/下蹲/冲刺;左右=水平游(×`player_swim_speed`),按上=上浮(`player_swim_up`)、不按=下沉(`player_swim_down`);不做水面悬停/浮力弹簧——出水(脚底离开水格)由 `in_water` 判回 false 自动恢复普通物理(重力)。水下扣血未做。**呼吸(氧气)按「大部分没入」扣**:判定参考线比中心低 `PlayerParams.water_breath_line_offset`(10px,≈胸口下沿)——水面到胸口(约 2/3 没入、头能露出)就开始扣,要浮到水面低于此线才回气(比原"中心没入"更早扣、更难回气;可调)。
-- **敌人**(`EnemyBase._apply_water`):落水浮力回水面;水平朝 `_water_swim_dir()` 游(JumpBird/BlackBird 覆写为朝玩家,基类=漂着);**溺水**:没顶累计,`drown_delay`(5s)后每 `drown_interval`(1s)扣 `drown_damage`(5),浮在水面不算。FlyBird 寻路把水当障碍(`_bird_can_pass` 遇 liquid 不可走),但正下方是水仍可飞越。
-- **爆炸衰减**:目标所在格是水 → 爆炸伤害/击退 × 该水格 `explosion_decay`(0.25,`Water.water_mult`)。LOS 遮挡 75% 不变(仅墙后掩体;梯/链是 passage 不挡也不减,玩家站梯/链上吃爆炸 = 满伤,与空气一致)。
-- **子弹阻力**:子弹在水里 `velocity_vec *= exp(-water_bullet_drag·Δt)`(`Water.bullet_drag_factor`),玩家 + 敌人子弹共用。
-- **水粒子**(`scenes/effects/water_fx.gd`,运行期挂主角 + 敌人):水中**移动**才喷;中心贴水面 → 溅水花,没入深 → 上浮气泡。
-
-### 碰撞层(按位)
-层1=地形、层2=玩家、层3=敌人、**层4=掉落物(值 8)**。玩家/玩家子弹 mask=5(1+3);敌人占层 3(值4)、mask 侦测玩家。**地面武器**(`WeaponPickup`)`layer=8`/`mask=9`(地形+其它掉落物):玩家与敌人的掩码都不含 4、子弹 mask=5 也不含 → 三者**天然不碰**(不会被枪挡住、子弹穿过地上的枪),无需改它们的掩码。★ `match_host.gd` 与两端客户端给玩家补的 `|= 2` 是**玩家层**,与掉落物层无关,别顺手写成 `|= 2 | 8`。
+### 碰撞分层设计（位掩码）
+- 层位定义：层 1 = 地形环境、层 2 = 玩家实体、层 3 = 敌人实体、层 4 = 地面掉落物（值 8）。
+- 掩码规划：玩家与子弹检测掩码为 5（地形 1 + 敌人 4）；敌人位于层 3 且掩码检测玩家；地面掉落物位于层 4（值 8），掩码设为 9（地形 1 + 其他掉落物 8），与玩家及子弹自然穿透，无需额外动态开关。
 
 ### 编辑器工具
-`level_editor/structure-editor.html` + `level_editor/smoke.js` 是独立浏览器地图编辑器(大图缩放/画笔),与 Godot 引擎无关。编辑 125×75 网格,**砖块纹理调色板(0-22)+ 2×2 砖形面板**(点四象限翻转或选预设 1/4/半/3/4/全砖);导入旧格式自动 2×2 转换,导出写 v3(`# cyrm-v3` + 每格 4 字符 [纹理 3 位 0xx][形状hex])。工具栏含 画笔/矩形/油漆桶/橡皮/选框/直线(直线跟随画笔大小);选框支持框选后整体移动、Del/Backspace 删除、油漆桶点在选区内=填整个选区(点外清选区+正常连通填充)、Esc 取消。`node level_editor/smoke.js` 跑 Core 测试。
+`level_editor/structure-editor.html` 为独立网页地图编辑器，支持 125×75 网格绘制、瓦片调色板与 2×2 子格形状掩码编辑，导出标准的 v3 格式 `.cyrm` 文件。测试验证通过 `node level_editor/smoke.js` 执行。
 
-### 网络与 PvP(阶段 1 + 2 + 4:匹配进图 + 对局互通 + 回合制)
-> **⚠️ 2026-09-29:每局一个 `--worker` 子进程的形态已整体废除。** 现在服务端是**单进程、单端口**:
-> 大厅与对局同进程,对局 = `server/match_session.gd`(`class_name MatchSession extends Node`,
-> 由 `RoomManager._open_match` 物化并 `add_child`)。客户端**全程连着同一台服务端** ——
-> `go_match` 只表示"进对局场景",`claim_role` 发在既有连接上,不再断开/转连。
-> 服务器端口由**客户端**挑(`core/net/local_server.gd::launch_and_connect()`,20000~59999 随机 +
-> ENet 探活 + 换端口重试),经 `--port P` 交给 `Server.exe`;远程联机走 EasyTier 隧道
-> (`core/net/tunnel.gd` + `core/config/tunnel_meta.gd`,房间码 = 5 位数字)。
-> ★★ **手填服务器地址那条路已整体删除**(2026-09-29):大厅页上那个「服务器地址」输入框、
-> `PvpSession.split_addr()` / `join_addr()`、`LocalServer.lan_ip_hint()`、以及 `_with_lobby` 里
-> "比对地址决定重连还是新连"那套逻辑全没了。**连接参数只有 `PvpSession` 一处来源**,
-> 写它的只有两处:本机开服与隧道。
-> ⇒ 两处后果,别当成 bug:① **手动起的服务端没人连得上**(`start_server.bat` 现在只是开发自测);
-> ② 发布**必须**带 EasyTier 四件套 + 会合节点,否则这个游戏没有任何联机方式。
-> ★ 另:`find_server_exe()` **只认导出产物**,不做"开发态用 Godot 本体起一个"的回退 ——
-> 从源码跑时要先把 `Cyancular Ruins Server.exe` 放到仓库根(跑一次 `tools/build_release.py`),
-> 否则「建房」只会得到一句"未找到"。
-> **本节里凡是提到下列东西的段落,一律是旧形态的留档,别照它写代码**:
-> `--worker` / `--royale` / `--team` / `--roles` / `--teams` 命令行、`worker_launcher.gd`(原在 `server/` 下,**已删除**)
-> (`WorkerLauncher` 已删除)、三档 `*_PORT_REUSE_DELAY`、`worker_port` / `worker_pid`、
-> "客户端转连 worker"、`_reclaim_finished_matches` 的 pid 轮询梯、4 位房间号。
-> **新形态的权威描述 = `docs/netplay.md`** + 下面两条改写过的段落 + `tests/netplay_probe.gd`
-> (它钉着房间码往返、地址解析、peer 输出解析,以及"不得转连/必须查名册/必须作废凭据"三条源码契约)。
->
-> **★★ 远程联机(EasyTier 隧道)的四条实测硬事实(2026-09-29 本机端到端跑通,详见 `docs/netplay.md` §4.1/§6/§8.2):**
-> ① 二进制要**整包**放 —— `easytier-core.exe` + `easytier-cli.exe` + **`Packet.dll`** + `wintun.dll`,
-> 四个都在**游戏目录的 `easytier/` 子目录**里(路径见 `AppPaths.easytier_dir()`;发布包与
-> `tools/fetch_easytier.py` 都按这个摆)。
-> core **静态导入** `Packet.dll`,少了它的表现是进程 `0xC0000135`、stdout/stderr **零字节**地起不来,
-> 而那在客户端侧看起来与"打洞失败"**一模一样**(`Tunnel.available()` 因此把两个 dll 也算进"齐不齐")。
-> ② **会合节点是必需的,不是兜底**:EasyTier **既没有默认对等节点、也没有局域网自动发现**
-> (`--help` 里只有 `--enable-udp-broadcast-relay`,那是把游戏自己的 UDP 广播喂进隧道、且要管理员权限),
-> 两端都不带 `-p` 时 `peer` 里**永远只有本机一条** ⇒ 只填同一个房间码的两台机器**永远见不到对方**。
-> 会合点**内置**在 `TunnelMeta.RELAYS`(`dreamlife.indevs.in` 的 tcp + udp 两条,已实测会合成功);
-> 要换就改 `easytier/relay.txt`(游戏目录下,首次建房/加入时按内置表生成),每行一个端点
-> (`Tunnel.relay_list()` 读到文件就不再看内置表),**房主与客机必须同一份**。
-> 两处都给不出可用节点时大厅页**直接说明**,不退化成"找不到房间"。
-> ③ `127.0.0.1` **不能**当对端地址(发出去的 socket 会绑到虚拟网地址 → `0x2711 WSAEADDRNOTAVAIL`)。
-> ★ 订正:本节早先写过"`-p` 只认 `tcp://`(`udp://` 每次 `AnyhowError`)" —— **那句是错的**,
-> 2026-09-29 对公网节点实测 `-p udp://…` 正常建连(`tunnel_type: "udp"`);旧结论来自一次**本机对打**,
-> 不该推广到公网节点。故 `RELAYS` 两条都给。
-> ④ 会合之后数据面**尽量走 P2P**:实测 `peer` 里是 `cost: p2p` + `tunnel_proto: udp,udp6`,
-> 共享节点自己显示为 `PublicServer_<hostname>`(打洞失败才经它转发,那时它的带宽就是延迟上限)。
-- 服务器:`server/server_main.tscn` 入口(headless)。**单进程、单端口**:监听端口由客户端经
-  `--port <n>` 传入(缺省 `NetBus.DEFAULT_PORT` = 7777,便于开发手跑),起来后
-  `add_child(RoomManager.new(_port))` 就同时具备了大厅与对局两种能力。
-  **房间账本**在 `server/lobby_rooms.gd`(`LobbyRooms extends Node`:三张注册表 + 房间侧 RPC handler +
-  拆除收口 `teardown_room`;**做成 Node 是因为要用 `multiplayer`**),**编排与清扫**在
-  `server/room_manager.gd`(`RoomManager`:持有 `lobby`、四个开局入口统一汇到 `_open_match`、
-  接 `MatchSession.finished` 收局、每 10min 清扫超龄房)。两者**单向依赖**:`lobby` 不知道
-  RoomManager;1v1 凑齐两人由 `pairing_ready` **信号**上去(`lobby` 是公开字段,探针要读注册表)。
-  开局 = `_open_match` 做四件事:冻名单 → `add_child(MatchSession)` → 登记 `match_id` 与回局凭据 →
-  帧末发 `go_match(role, port)`(**端口就是本服务端端口**)。房记录上表示"这一局"的是
-  `match_id`(局号,唯一递增不复用;**凭据表的键**)与 `session`(会话节点引用)——
-  `worker_port` / `worker_pid` 与端口池、三档复用延迟、按端口杀进程**一并消失**。
-  `server_main.gd` 只保留 `--port`、`--tunnel --room <码>`(产物自检)与两个 `--test-*` 开关。
-- **★ 单端口带来的新隔离问题(必须知道)**:以前"一台 worker 一个端口"隐式把每一局隔开了;
-  现在同一个服务端进程里可能并存多间房、**所有 peer 都连在同一个端口上**。于是
-  `MatchSession` 多了一道原实现没有的闸:**名册**(构造时传入的 `roster` = 开局那一刻房里的人),
-  `_on_role_claimed` 对不在名册里的 caller **一律当串线踢掉**。漏了它 = 另一间房的玩家能被写进
-  这一局的 role 表(两间房互相顶掉,而且**一行报错都没有**)。守卫:`tests/netplay_probe.gd` ⑦②。
-- 服务器:`server/server_main.tscn` 入口(headless)。**双模式**:无参=大厅(默认 7777),`--worker --port P`=对局 worker。**一服多局**:大厅的**房间账本**在 `server/lobby_rooms.gd`(`LobbyRooms extends Node`:房间注册表 + 房间侧 RPC handler + 拆除收口 `teardown_room`;**做成 Node 是因为要用 `multiplayer` 与 `get_tree()`**——这正是它当年搬不出 room_manager 的原因),**进程编排与清扫**在 `server/room_manager.gd`(`RoomManager`:持有 `launcher` 与 `lobby`,拉 worker、让玩家转连、每 10min 清扫超龄房)。两者**单向依赖**:`lobby` 不知道 RoomManager;1v1 凑齐两人由 `pairing_ready` **信号**上去(避免 back-reference;`lobby` 是公开字段,探针/观察者要读注册表)。建房/配对(2 人就绪)→ 给每局拉起一个独立 worker 子进程(`OS.create_process`,同 exe `--headless --worker --port P`;开发=editor 带 `--path`+场景,导出 exe 靠 `main_scene.dedicated_server`)→ 发 `go_match(role,port)` 让两端转连。**worker 内跑 `server/server_main.gd`(worker 分支)**:独占 UDP 端口,等两客户端 `claim_role` 收齐 role1/2 → `MatchBootstrap.start_on`(`server/match_bootstrap.gd`,static:重算地图尺寸、给两端 `match_start`、建 `server/match_host.gd`)→ `MatchHost` 权威对局;任一方离开 → **先进宽限期**(见下「断线重连」:不再当场拆局),到点仍未回来才拆局退出释放端口。各局=独立进程 → **内存隔离**,共享全局(current_grid/TileDefs)不跨局互踩。端口分配用「唯一递增 + 占用集合」(`WorkerLauncher.pick_port`,基准 7800;实现与两档归还延迟的完整理由见 `worker_launcher.gd`(原在 `server/` 下,**已删除**))——**不要**在本进程 bind 探测空闲(worker 是独立进程,大厅探测看不到别的进程已占端口,并发会把同端口发给两个 worker)。大厅在玩家转连后断开即关房归还端口。
-- **`MatchHost`(每房间一个)**:建世界(WorldBuilder 只碰撞不渲染)+ 两个 `Player.tscn` 实例注入 `NetworkInputSource` 权威模拟;**每物理 tick 每 role 恰好消费 1 个 FIFO 输入包**(按 seq 序,1:1 同序 = C2 rollback 锚点;队列空=缺包沿用上一包 held)并回带 `ack_seq`、60Hz 广播快照(带 `tick` 序 + `ack_seq` + `c2` 权威整态 `capture_state()`)、裁决子弹命中并广播 `bullet_spawn`/`hit_event`;**爆炸弹(榴弹)不走玩家半径补刀销毁**(子弹碰撞掩码不含玩家层、伤全靠落地引信爆炸 AoE——若按普通弹半径补刀结算+销毁会吞掉引信致无爆炸;故 `_adjudicate_bullets` 对 `explodes` 弹改走 `_adjudicate_grenade`:**只结算一次直接命中、不销毁**,见 §武器与子弹);即时光束武器(激光)权威开火经 `_broadcast_pending_beams()`(紧挨 `_adjudicate_bullets`)轮询各角色当前武器的 `collect_pending_beam_report()` → `beam_fired` 广播给**非射手端**(射手自己客户端已本地预测画自己的光束)。开局 pin PvP 地图后要调 `GameParameters.refresh_map_size()` 重算世界尺寸(_ready 启动时算的是随机 demo 图,工厂图 9600 宽不同,不重算则环面回绕按错边界出现空气墙)。**回合制**:`_match_round_tick` 状态机 COUNTDOWN→PLAYING→ROUND_OVER→MATCH_OVER;**击杀定义:对方死亡都算**——每物理帧倒地转换检测(`is_downed` 边沿)不分死因(枪杀/爆炸/溺水/自伤/无射手)一律给对方 +1(弃用旧 pvp_killer 射手归因);局内死亡 2s 复活(`_respawn_player`:死者回本方出生点、满血/防水、武器回 1);**每次击杀后活着的胜方也立刻回本方出生点但保留当前血量、不回血**(`_reset_survivor`,防复活点连杀);每局先到 5 击杀赢、三局两胜、局间 `_side_swap` 换边。**换局纪律**:进新局前 `_reset_world_and_clear_dynamics()` 把可破坏砖/碰撞整层还原为建局基线(`_base_grid` 深拷贝)+ 清光场上子弹(`bullet` 组)+ 重置 `_seen_bullets`;客户端收到新一轮 COUNTDOWN 同刻 `Level0.reset_destructibles()`(用 `_pristine_grid` 重铺)+ 清本地视觉子弹 → 两端每局从同一基线出发,无幽灵墙/跨局残留。**COUNTDOWN 3 秒双端禁移动/开火**:服务器不喂输入(清空缓冲 + `NetworkInputSource.reset_state()` 连 held/axis 一起清,防上一包方向让冻结期漂移);客户端 `player.set_controls_locked` 现在**连带冻结整个 input_source**(`InputSource.frozen`),锁住移动+开火——C2 下本地预测倒计时里不自走(C2 关时本地玩家本就服务器渲染、自然不动);进 PLAYING 解锁。局内击杀→复活/活方复位不动砖。
-- 客户端流程:`main_menu`(默认场景)→ `matchmaking`(建房/输房间号;配对完成收到大厅 `go_match` 后**断开大厅、`start_client(server_address, worker_port)` 转连该局 worker 并 `claim_role`**,再等 worker 的 `match_start`)→ `pvp_game`(`pvp_game.gd`:Level0 pvp_mode 世界 + 补后处理 + 每 tick 上报输入 + 快照消费)。**本地玩家 = C2 客户端预测(rollback)**:玩家由引擎自步进读真实 Input(aim/手感=单机);`pvp_game` 每帧在玩家步进前 `note_post_step(prev_seq)` + `reconcile()`(见 `core/net/prediction_rollback.gd`),输入包带单调 `seq`,服务器每物理 tick FIFO 消费 1 包并回带 `ack_seq` + 权威整态 `capture_state()`;分歧 → `restore_state` 权威态 + 重放未确认输入(错在哪补哪,非橡皮筋拉拢)。复盘见 `docs/pvp-c2-retrospective.md`(P1–P7,2026-09-06 P1/P2/P5 冒烟钉死、其余按实现落实)。**★ 2026-09-12(批次 5):旧的 `server_rendered` 保底一族(`set_server_rendered`/`apply_server_snapshot`/`_update_server_rendered`)与 `LOCAL_PREDICTION_ENABLED` 开关已整体删除** —— 全项目只剩这一条联机链路,大乱斗客户端走同一套(见下条)。守卫:`tests/royale_c2_probe` 的 A①「生产目录零残留」。远端对手 = `PlayerReplica` 视觉副本(显示对手当前武器并按快照 `aim` 摆枪,经 `weapon_base.drive_remote_visual` 驱动朝向/枪口仰角,不开火不读鼠标)。★ 快照的 `weapon` 是**武器类型 id**、**`0` = 空手**(服务器侧把**最后一把**丢出去的那一刻是唯一成因):副本必须认这个 0 —— `apply_snapshot` 的守卫是 `if slot != _weapon_slot_int`,**别写成 `slot > 0 and …`**(写了的话对手丢光枪后我方视角里他**一直举着那把已经不存在的枪**;握两把以上时丢一把会自动换另一把、slot 变了照常重建,所以看不出来)。守卫 `tests/ground_client_probe` ⑦。**★ 它不是"纯视觉"**:副本还挂一个**幽灵碰撞体**(`StaticBody2D`,`collision_layer=2`/`mask=0`,5 份姿态 `CollisionPolygon2D` 从 `Player.tscn` 现抄 → 与玩家碰撞箱同源;按快照 `pose` 切换,`downed` 时不切与服务器一致;副本入 `player_replica` 组供上一条的榴弹接触判定用)。**为什么必须有**:C2 只步进自己的玩家,客户端世界里没有对手身体 = "对手挡住我"这条信息在预测侧不存在 → 本地预测穿过去、服务器挡住 → 每帧分歧每帧回滚(**无限回滚循环,不是调参能缓解的**)。配套两端客户端 `_ready` 各补一行 `_local.collision_mask |= 2`(服务器侧 `match_host` 早就给每个玩家设了;**不能改 `Player.tscn` 的场景常量**——`enemy_logic_smoke` 有 `player mask == 5` 断言)。**只减小分歧不消除**(副本位置比权威平滑落后一点),验收按"回滚次数下降多少"量:`tests/replica_ghost_probe.tscn` 给对照读数(在位 0 回滚/摘掉 277 回滚)。**★ 对手的预瞄红线看不到**(用户裁定 2026-09-11):heavy_aim 预瞄线**只有使用者本人可见**,`drive_remote_visual` 显式把副本武器的 `_aiming` 压回 false;服务端快照仍带 `previewing` 字段但客户端刻意不消费(留作日后换成音效/轮廓等提示形式的接点)。回归钉在 `tests/preview_visibility_probe.tscn`(双向:本人必须看得到 + 副本必须看不到)。**副本位置平滑(重要)**:`player_replica` 位置走**自身差分指数追赶** —— 每帧把目标(`_opponent_canonical` 锚到本地玩家最近副本)与当前渲染位置**各锚进同一副本空间**,再按 `1 - exp(-INTERP_RATE·Δ)`(`INTERP_RATE = 12.0`,取自 2026-09-03 的 `aa1d8f0^`,刻意复用旧值不新调参)收敛;首次定位由 `_placed` **直落**(副本创建在世界原点,开场就追赶会让幽灵体十几帧停在错位置 → 白回滚一次,`replica_ghost_probe` 实测 rb=0→1)。姿态/朝向/aim/倒地/武器仍按最新快照即时,只有位置平滑。★★ **两个 `anchor_to_nearest` 是承重的** —— 旧方案当年有致命缺陷:渲染位置与目标相隔整幅地图时最短向量=0,副本一旦落远副本就永远留在那 → 对手渲染到屏幕外「看不见」;解法是把**目标**锚到最近副本再以普通差量追赶,与「平滑 vs 插值」无关,**别顺手简化掉**。★ 2026-09-22 用户裁定**从「双快照 tick 域 alpha 插值」改回本方案**:插值那条路在 60fps 渲染 + 60Hz 快照下渲染时钟恰好落在 `latest`、`sample()` 走冻结支 ⇒ 画的就是最新包原值,到达抖动 ±8ms 时 **11.67% 的帧零位移、单帧走到 2 个包的距离**(±16ms 时 24.67% / 3 个包)—— 用户报「位置一跳一跳,看起来敌方掉帧」。`core/net/snapshot_interp.gd` 与 `tests/snapshot_interp_smoke.gd` 已随之删除。守卫 `tests/replica_smoothness_probe.tscn`(零位移占比 / 单帧最大位移 / 跨接缝不卡远副本)。★★ **幽灵体**不跟着平滑走**(2026-09-22 同批)**:幽灵体跟的是**未经平滑的原始权威位置**(每帧重算的 `target`),只有**渲染位置**才走指数追赶。幽灵体的唯一职责是让「预测所依据的世界」与权威世界一致(见文件头),它要的是**最小陈旧**,不是好看;而指数追赶是个低通滤波器 —— 目标以 300px/s 移动时它额外落后 `v / INTERP_RATE ≈ 25px`,那 25px 会直接变成「本地预测撞在一个位置不对的对手身上」⇒ 白白多出分歧。★ 这条还顺带保证了一件更要紧的事:**预测路径与「改回指数追赶」之前逐位相同** —— 那时的 alpha 插值在 60fps 下退化成「直落最新包」,幽灵体跟的就是这个原始值。⇒「画面变平滑」与「回滚面零回归」不必二选一。探针相C 实测:幽灵体距权威位置 **0.000 px**,渲染位置距同一目标 22.6 / 29.7 / 37.2 px(±0 / ±8 / ±16ms 三档)。
-  - **★ 接触期自适应容差(2026-09-22 落地;spec `docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md`)**:贴身缠斗的每帧回滚由 `PredictionRollback._close_enough` 的**位置容差**决定,故容差分两档 —— 非接触期恒 `pos_tol`(2.0,那里的分歧是真的),**接触期**用 `contact_pos_tol`(=`DEFAULT_CONTACT_POS_TOL` = **8.0**,只有体宽 80px 的 1/10)。**接触判据**是 `Player.touching_player()`:扫本步滑动碰撞里有没有**非地形层**(`(co.collision_layer & ~1) != 0` —— 地形恒层 1,故 `& ~1` 就是"非地形";★ **本地 mask 里并不只有地形**:场景常量是 **5** = 地形(值 1)+ **敌人层(值 4)**(`enemy_logic_smoke` 钉住「玩家 mask=5(地形+敌人)」),PvP 客户端再补 `|= 2` 把对手幽灵体那一层收进来(3v3 另由 `_apply_team_collision` 按队改写)⇒ 判据对**敌人层**的身体也会报"接触",今天无害**只因为 PvP 模式没有敌人**(spec §6 ①);★ 而队友仍天然不算接触 —— 两队 mask 都不含**队友**幽灵体那一层(见本节 ③);判**层**不判组名/节点名,是为了不把 `player_replica` 或 `server/` 拖进核心玩家类)。**接线只有一处** —— `scenes/pvp_match_client.gd` 在 `note_post_step()`/`reconcile()` **之前**写 `_rollback.in_contact`(三个客户端共用这一个 `_physics_process`);`in_contact` **不进 `capture_state()`、不上行**,服务端零感知。**★ 已实测的结论:贴身回滚次数由容差决定、不由幽灵体精度决定**(摘除 75px / 准确 2px / 推歪 77px 都是 ~220 次;1px→2px 在 N=2 上 221→9)⇒ 接触期那点偏差回滚**本来就纠正不动**,放宽容差近似纯赚。守卫:`tests/rollback_fidelity_probe.tscn`(接触真/假两个方向各断言一次 + 源码级:**`scenes/pvp_game.gd`** 的 `map_px` 在位、**`scenes/pvp_match_client.gd`** 的 `_rollback.in_contact = …touching_player()` 唯一一处赋值且排在 `note_post_step()` 之前;两者读的不是同一个文件)、`tests/replica_ghost_probe.tscn` ⑤⑥、`tests/brawl_rollback_probe.gd` 的 CONTACT 族(见 §测试)。**★ 2026-09-23 用户裁定**:CONTACT 族的第三条判据「确实买到了东西」**只在已采纳的 `Variant.CONTACT8` 上打分**,16px/32px 两档照旧打印读数、只是不判 —— 它比的两个量各自都在抖(2px 档的分母自己在 13~17 之间跳);读数**不删**是因为**探针是扫描仪器**,日后重调容差要拿这三档比,收窄的只是「判据」不是「仪器」。**★ 已知边界(spec §6,登记不修)**:① PvP 模式没有敌人,故"非地形层"在**单机**里也会命中敌人层(4)—— 今天无害;② 接触提示在玩家步进**之前**读,反映的是**上一个**物理步的滑动碰撞,差一帧、无害;③ 3v3 队友:本地 mask 里**没有队友身体那个层**(队 1 是"玩家层 2 被清掉"、队 2 是"队友占的敌方层 16 不在 mask 里")⇒ 队友永不判接触(与"队友不互挡"一致);`player.gd` 的注释只对**队 1** 展开了这条,结论对两队都成立但**理由不同**。
-  - **PvP 客户端的 KH 加成(L6)**:对手头顶血条(`Settings.pvp_show_enemy_hp`)/小地图(`pvp_show_minimap`)/子弹拖尾(`pvp_show_trajectories`)/击杀播报(`kill_event`)/命中 X 标记(`hit_confirm`)/对局生效选项(`match_sync` 的 `options` → `weapons.set_enabled_slots`;权威是服务器 MatchHost,按 role1 的 `player_options` 生效)/对手身体色相(`peer_hues`,**只染身体、头顶名保持中性亮白 `NAME_COLOR`**)。
-    - ★ **节点分工是故意不对称的,别"统一"**:`hit_confirm`/`match_options`/`peer_hues` 走 **`NetBusExt`**(KH 的扩展协议),而 **`beam_fired` 走 `NetBus`** —— 发送端 `MatchHost._broadcast_beam_fired` 用的是 `NetBus.rpc_id`,接收端也必须 `NetBus.local_beam_fired`;把接收端改到 `NetBusExt` 会**静默 no-op**(对手激光视觉消失且不报错)。`core/net/net_bus_ext.gd` 里的同名 `beam_fired` 是 KH 遗留重复。
-    - **开局载荷改为「客户端进场主动拉取」**(2026-09-12 换,见下条「大乱斗」§:三载荷 + 出生点统一走 `match_sync`)。★ 本行原先写的「直接订阅 + `PvpSession.pending_*` 交接两条投递路径」是**已被取代的旧方案**,`PvpSession.pending_*` 与两个 `_consume_pending_payloads`、两个大厅的 `_cache_*` 都已删除。**不要照那段旧描述去加第二条投递路径** —— 方向反转(客户端拉)之后就不存在「推给正在切场景的客户端」这个竞态类了;守卫 `tests/match_sync_probe.tscn` 带反向断言:那些交接标识符一个都不许复活。
-    - **三条离开对局世界的路径全部走 `Level0.safe_change_scene`**(ESC/暂停菜单、MATCH_OVER 5s、对手离开 2.5s)。两条定时器在**起定时器前**捕获 `tree`/`netbus`(lambda 里现取 `get_tree()` 是到点求值,那时已被摘树→null),并在 `not is_inside_tree()` 时早退(玩家可能已从别的路径离开,不再叠加第二次换场)。`safe_change_scene` 自身带**防重入**(`_switching`):它首行 `await` 一帧,两次调用可同时在飞,无守卫时第二次会把**刚建出来的新场景**当 old 摘掉、并 free 掉 `_retired` 里原本那具游戏世界。★ 2026-09-15:**`_retired`(退役挂起、永不释放)已整个删除**,改为摘树后**立刻分帧拆除**(`Level0.start_reap` + 挂在 root 的 `WorldReaper` 驱动节点,逆前序、按时间预算每帧拆一批;实测一具世界 ~5050 节点摊到 ~60 帧)。★ 为什么要删:挂起的那具世界**退出时从不释放** → SubViewport 的 RID 全泄漏(实测 6264 个 CanvasItem + 3 个 shader)→ 渲染器析构**段错误**(exit 139),进程拖 ~1.5s 才死 —— 这就是用户报的"玩好一局后点退出/叉号要等 1s"。修后导出 exe 实测:退出码 0、零泄漏、点退出到进程结束 ≈0.4s(局内按叉号 ≈0.5s)。**只在导出 exe 上才复现**(编辑器二进制跑同一流程是最坏帧 77ms 但不崩)—— 这类"只在发布版现形"的问题,量的必须是发布产物。
-- 协议(经 `NetBus` autoload RPC;对局权威=该局 **worker**,非 7777 大厅):握手——大厅→客户端 `go_match(role,port)`(配对完转连),客户端→worker `claim_role(role)`(报到,worker 据此建 role→peer 映射);输入包(60Hz reliable,`send_input`:轴/held/pressed/released 位掩码(**含 `BIT_RELOAD`=16 换弹位**,2026-09-15 加;PvP 换弹开放后 R 的按下边沿必须上行 —— 服务器没有别的通路知道客户端按了 R)+切枪+瞄准方向)、快照包(60Hz unreliable,`snapshot`:每玩家 pos/vel/facing/pose/weapon/hp/waterproof/downed/aim/previewing)、事件包(reliable,`bullet_spawn`/`beam_fired`(即时光束权威开火,带折线 pts/origin/canonical/color/half_width/lifetime/style/shooter_role;接收端把 pts **逐点锚到对手副本渲染位置**再画,见 §武器)/`hit_event`/**`tile_destroyed`**——服务器拆墙广播,客户端 `TileDefs.damage_tile(cell,大伤,"explosion")` 触发 Level0 清瓦片渲染,否则建筑"看着没被炸坏"、**`round_state`**/`kill_event`——回合制状态/击杀广播)。**环面纪律**:协议只传 canonical 坐标、渲染各端归最近副本、插值走 `toroidal_delta_px` 最短路径。★ **定向发送前一律先判活:`NetBus.is_peer_live(id)`**(2026-09-17;`_rpc_all` 的 `live_only` 默认已从 false 改成 **true** —— 原先八个调用点里只有大乱斗那处判在线)。判据是 **ENet peer 自己**的 state + **通道数**(`get_peer(id).get_state() == STATE_CONNECTED and .get_channels() > 0`,后者正是引擎 `ENetPacketPeer::send` 会检查的那个量);**别用 `multiplayer.get_peers()`** —— 它随连接/断开信号更新、比 ENet 真实状态**晚**,挡不住"往 ENet 已拆掉、API 还没忘掉的 peer 发定向包" → 那条 `ERROR: Unable to send packet on channel 0, max channels: 0`(报文里的通道号是证据:`0` = **reliable** 定向包、`1` = unreliable)。★ 2026-09-21 **订正"广播打不出这条"**:`reconnect_probe` 的 worker 日志里**广播那一行自己**报出成对的 channel 0 + channel 1(GDScript backtrace 两行都指向 `_broadcast_snapshot`)—— 广播在 ENet 层是**逐 peer** 发包,表里只要还剩**一个**处于"队列已拆、API 还没忘掉"窗口的 peer(典型:本帧刚被 `disconnect_peer` 踢掉的那个)就会报,故广播前的判据是 **`NetBus.all_peers_sendable()`**(表里**每一个** peer 都能收包;空表 = false),唯一调用点在 `server/match_snapshot.gd`。`ENet_CHANNELS=4` 那条老注释解释不了它(通道数配好之后仍会报)。★ **常驻守卫 `tests/rpc_liveness_probe.tscn`**(源码级,`--headless` 即可):扫 `server/` + `core/net/` 的每一处发送点 —— 定向要求判据**包围着**它(`if` 的块体包着站点,或块体里有早退),广播只认 `all_peers_sendable()`;例外表是空的(今天没有一处需要例外),且**陈旧例外会红**。★ **大厅侧"答复 caller"的发送一律走 `NetBus.reply(id, method, …)`**(`server/lobby_rooms.gd` + `room_manager.gd`,33 处):请求与断开常挤在**同一次 poll** 里 —— ENet 处理 DISCONNECT 命令时**当场**把通道数清零,而同批排在它前面的 RECEIVE 要等 dispatch 才派发 → 不判活的话这一整条处理路径的应答都打在 channel 0 错误上(实机 1v1 日志的顺序正是 ERROR → `玩家断开`)。**已知残留**:改掉广播那半边之后 `reconnect_probe` 的 worker 日志从 8+7 条降到 3+3 条,剩下的是**引擎自己**的定向发送(**无 GDScript backtrace**,每踢一次连接约 1 条:最像是路径确认应答 `SYS_CONFIRM_PATH` 回给一个刚被踢、队列已拆的 peer)—— 从 GDScript 够不着 ⇒ **不修,照实登记**;别把它读成"功能坏了",见 `docs/2026-09-17-pvp-weapon-net-fixes.md` §1.5 与 `.superpowers/sdd/tint-and-channel-report.md`。**击退方向走 toroidal 最短向量**:命中源(服务器子弹/爆心)锚在射手副本、可能与该玩家 canonical 相差整幅地图,`combat.take_hit` 里绝对相减会得出**反向击退**(跨接缝对枪被打向射手)——统一用 `toroidal_delta_px(source_pos, body)` 求推离方向(直击/爆炸/本地反馈同源)。
-- 输入抽象:`InputSource` 基类(本地委托真实 Input;`frozen`=PvP 冻结时所有读口返回中性值)+ `NetworkInputSource`(消费输入包,服务器唯一消费方;`reset_state()` 连 held/axis 一起清)。`NetworkInputSource.get_axis` **垂直轴由 held 位推导、水平轴返回 `ax`**(输入包只传水平轴,`climb_component` 用 `get_axis("up","down")` 读垂直——曾一律返回水平轴致服务器挂梯不动)。`weapon_base` 攻击经 player 查询(`is_attack_pressed` 等,has_method 守卫回退 Input);`BulletBase.apply_damage=false` = 客户端视觉副本(不裁决,伤害由服务器裁决)。
-- PvP 固定地图 `maps/factory1v1.cyrm`(150×100,`# player 17 65` + `# player2 133 64`;两出生点相距约 2200px 超视野,走近才互见)。★ 早先文档里写的 `factory_1V1(260827).cyrm` 是**历史别名**,`maps/` 下只有这一个文件(`MatchBootstrap.PVP_MAP` 指的就是它)—— 别再去找那个名字。
-- PvP HUD:`ui/pvp_hud.tscn`(`class_name PvpHud`,CanvasLayer layer=130 盖在 PostProcess 128 / 单机 HUD 129 之上)显示双方击杀/局胜/局号(**记分条在顶部正中**,用户 2026-09-12 指定;原先在左下角)+ 中央状态(准备倒计时/胜局/获胜),MATCH_OVER 后 `pvp_game` 延时回主菜单。摆放位置由 `tests/pvp_hud_layout_probe.tscn` 钉住(锚点/偏移是那种被顺手改掉也不报错的东西)。复活视觉:`combat.revive()` 已补 `post_process.set_downed(false)`(复活后屏幕不再变灰)。
-- 测试:`tests/pvp_room_smoke.sh` 断言建房/加入/开局;`tests/pvp_match_smoke.sh` 断言输入→模拟→快照→子弹广播链路 + **round_state 广播** + **ack_seq 推进 + 快照 c2 全态与散字段一致**(loopback);`tests/pvp_reconcile_smoke.sh` = rollback 控制器 in-process 冒烟(权威/预测双 sim + 人工 ack 延迟 + 外部传送事件,断言一次性 rollback 收敛、常态无橡皮筋);`tests/pvp_twin_smoke.sh` = capture/restore 完整性冒烟;断线重连那批另有 `tests/grace_window_smoke.gd`(宽限期表纯逻辑:进入/到期/续期/离开/排序,时间由调用方传**不读时钟**)、`tests/reconnect_smoke.gd`(源码级:三条 RPC 的**节点归属双向**断言 + `@rpc` 注解逐字 —— 放错节点/注解写错都是静默 no-op)与 `tests/reconnect_probe.tscn`(真链路七相,见下「断线重连」)。脚本收尾用 `taskkill` 按 PID + `kill_port`(netstat 找 7777 持有者)强杀——**Windows 下 bash `kill` 杀不死 headless Godot,会留僵尸占 7777**。
+#### 网络通信与 PvP 机制 (阶段 1 + 2 + 4: 匹配进图、对局互通与回合制)
 
-#### 断线重连(阶段 1:局内自动重连,2026-09-17)
+当前服务端采用**单进程、单端口架构**（2026-09-29 重构）：
+- 大厅与对局在同一进程内运行，每场对局由 `server/match_session.gd`（`MatchSession`）实例化驱动并挂载为节点。客户端全程连接同一服务端，`go_match` 表示进入对局场景，`claim_role` 在既有连接上发送，无需断开转连。
+- 服务端端口由客户端动态分配（`core/net/local_server.gd::launch_and_connect()`，范围 20000~59999），通过 `--port P` 传参启动 `Server.exe`；远程联机基于 EasyTier 虚拟局域网隧道（`core/net/tunnel.gd` 与 `core/config/tunnel_meta.gd`，房间码为 5 位数字）。
+- 连接参数统一由 `PvpSession` 维护，来源仅包含本地自建房与隧道加入。详细网络架构与日志规范参见 `docs/netplay.md`。
 
-本批(分支 `feat/reconnect-stage1`)落地的只是 spec 的**阶段 1 = 路径甲**:与 worker 的连接闪断 → 客户端自己**连回同一个端口**、重新认领 role、**不切场景、不重建世界**(本地世界原样保留)。★ **阶段 2-A 已落地**(`match_sync` 带破坏态 + 地面武器全量对齐,见本节末尾那三条);★ **阶段 2-B = 路径乙「回大厅后回局」已于 2026-09-21 落地 —— 它是另一条路、另一节**(见本节的下一节「对局中的房」之后的 **§回大厅后回局(阶段 2-B)**:那条路**会重建场景**)。**仍未做**:HUD 的「掉线中/重连中」可见提示(spec §4 阶段 3)、`opponent_left` 不可达的修复 —— 两者都**不影响**回局可用性(玩家在自己那间房那一行上就能看出能不能回去)。
+**远程联机 (EasyTier 隧道) 核心约束**：
+1. 依赖完整性：必须完整包含 `easytier-core.exe`、`easytier-cli.exe`、`Packet.dll` 与 `wintun.dll`（位于游戏目录下 `easytier/` 目录）。缺少依赖库会导致进程异常退出。
+2. 会合节点：依赖公网中继节点建立初始会合（`TunnelMeta.RELAYS`），支持通过游戏目录下的 `easytier/relay.txt` 统一配置自定义中继。
+3. 地址规范：回环地址 `127.0.0.1` 无法作为隧道对端绑定地址。
+4. P2P 直连：中继节点协助完成 NAT 打洞后，数据平面优先通过 P2P（UDP）直连传输，打洞失败时由公共中继转发保底。
 
-- **token 由大厅生成,不在 worker**:`NetBusExt` 的三条新 RPC(`session_token` / `report_token` / `reclaim_role`)+ `core/net/pvp_session.gd` 的 `token`/`worker_port`。★ **必须在 `go_match` 之前发**(`server/room_manager.gd`:spawn worker 之前就 `session_token`)—— go_match 一到客户端就 `NetBus.stop()` 断大厅,之后再发就**静默丢失**;客户端侧同款(`scenes/lobby_page.gd` 先进 `_pending_token`,配对成功时再落 `PvpSession`)。客户端 claim 之后经 `report_token` 报给 worker,worker **只归档不校验**(`server_main.gd:_on_token_reported`)—— 校验发生在宽限期里的 `reclaim_role`。★ **`go_match` / `claim_role` 的签名一律没动**:原 NetBus 与原版服务端逐字节一致是硬纪律(改 RPC 方法表 = 与它的所有 RPC 失联),故三条新 RPC 全在 `NetBusExt`;对原版 worker 本节点不存在 → 静默丢弃、优雅降级成"不能重连"。
-- **宽限期唯一入口 `GraceWindow.DEFAULT_SECONDS`**(`core/net/grace_window.gd`,当前 **60s**,纯逻辑、时间由调用方传入):掉线**不立刻移出**(大乱斗)/**不立刻退进程**(1v1),到点才走既有语义(`server_main._expire_graces` 每秒轮询)。1v1 那一支到点是"收场退进程" = **对手白拿这一段**(60s 下比 30s 更久)。★ 它同时是客户端重试预算的上界(`pvp_match_client._on_reconnect_retry_tick` 第一条判据读**同一个常量**),两处同源。
-  - ★★ **2026-09-21:30 → 60,三模式统一**(用户为「回大厅后回局」裁定)。**原先那句「别再把时长放大」已作废** —— 它出自 30s 那一版的取舍(当时没有回局路径,等待纯属浪费);有了回局之后,宽限期就是"玩家有多少时间走回来",拉长是**功能需要**而不是浪费。别再引那句旧裁定去把它改回去。
-  - ★ **改这个数要同时看三处**:① `pvp_match_client` 的重试预算(同一个常量,自动跟随);② **三个 `*_PORT_REUSE_DELAY` 必须严格大于它**(`worker_launcher.gd`(原在 `server/` 下,**已删除**),守卫 `tests/grace_window_smoke` ⑧ 逐档断言);③ **按宽限期算出来的测试预算**(`tests/reconnect_probe.gd` 的 `GRACE_MIN/MAX`+`FINAL_TIMEOUT`、`tests/team_match_watcher.gd` 的 `OBSERVE_MAX`、`tests/team_match_probe.gd` 的 `RESULT_WAIT`)—— 漏改第三处会让**真链路探针先耗尽安全网、不打印任何 verdict**,按本仓判据读成红。
-- **★ 掉线者的身体不销毁 → 服务端对局状态一条都不用恢复**(这是本设计最省的一处):`server_main._on_peer_left` 只 `_claims.erase(role)` + `_enter_grace(role)`,**不碰 `players`**。分数/阵亡/血量/背包/位置/世界破坏/地面武器全在活着的节点与进程内存里。它同时是 1v1 能做重连的**前提** —— 原实现 `_host.queue_free()` + `quit(0)` 让进程当场消失、对局状态随之蒸发。
-- **★★ `_enter_grace` 必须同时做两件事:`input_sources[role].reset_state()` 和 `_host._pending_input[role] = []`**(`server_main.gd:200`)。**只做前者不够**:掉线瞬间队列里可能还压着一条**已经到达**的包,而 `MatchHost` 每 tick 消费一包、`PacketInputSource.apply_packet()` 是**整体覆盖** `_held`/`_axis` → 那条包会在复位**之后**把 `_held` 原样写回;之后队列空了,而 `clear_edges()` **不含 `_held`** → 掉线前按着的键被**重新武装并保持整个宽限期**(身体继续走/蹲/开火)。★ 这个 bug 真发生过,**前 7 个任务的单元式验证全都没照出来,是真链路探针抓的**(修复 `7c95d68`;守卫 `tests/reconnect_probe.tscn` 相③:去掉那一行 → 相③ 红)。"宽限期内身体留在场上不动"就是这条设计的全部内容。`_on_reclaim` 的接受路径有同一行,两处对齐。
-- **worker 侧 `reclaim_role`(`server_main._on_reclaim`)三条拒绝条件一条都不能少**:①未开局 ②该 role **不在宽限期**里(没掉线 / 已超时移出 → 不允许"提前占坑"或"死后回归") ③token 不匹配 —— 任何一条不满足都**踢连接**(与 `_on_role_claimed` 的防串线同款,**不能让它静默留在局里收快照**)。接受后:重绑 `peer_by_role`、**把新 `PacketInputSource` 挂回那个还活着的玩家节点**(换表里的引用不够,玩家手里仍攥着旧源)、清 `_pending_input`、`_ack_seq[role]` 归 0(C2 锚点重协商,客户端 rollback ring 已失),然后 `NetBus.reply(caller, "match_start", …)` ★ 走 `reply` 不走 `rpc_id`("答复 caller"的收口,内部先判活 —— 硬纪律「定向发送前一律先判活」)。
-- **★ 客户端同名纪律:同一个 role 只许发一次 `reclaim_role`**(`scenes/pvp_match_client.gd:_try_reclaim`,本功能最易写错且症状最怪的一处)—— worker 接受第一次时就 `_grace.leave(role)` 了,同一条连接上再发一次必进拒绝条件② → **它踢连接**,表现是"刚重连上几秒又断",看着像网络抖动;且因为 token 是对的,查 token 查不出问题。发出去之后是**等**它的 `match_start`(可靠的定向应答),只在 `can_send_to_server()` 转 false 时才重开一轮。★ **两条时间尺度别合并**:`RECONNECT_RETRY_MS`(2s)= 节拍"多久看一眼",`RECONNECT_ATTEMPT_TIMEOUT_MS`(5s)= 一次握手自己的寿命 —— 合并会反复掐掉正在握手的尝试;而**只**看节拍不掐尝试时,ENet 自己的连接超时实测 **~31.8s**(长于 30s 宽限期)→ 整段期间一次 tick 都没有,最坏卡在冻结世界 ~33s。重连成功(`_on_resumed`)必须重置本地 C2:`_input_seq`/`_have_prev_seq`/`_prev_sent_seq` 清零 + **重建 `PredictionRollback` 并重新 bind + 设 `map_px`**(漏了**都不报错**:没 bind → `_p == null` 直接 `_trim` 返回、C2 静默失效;没设 map_px → 跨接缝那一帧按裸距离比、白跑一次回滚)。★★ **重连后跨纪元的旧 ack 必须丢掉**(`_on_snapshot_own` 里 `ack > _input_seq` 即 return;2026-09-17 整支审查的 C 项):握手落地到 `match_start` 到达之间客户端仍在用**断线前那个 seq 空间**发包,服务器下一 tick 消费到它就把 `_ack_seq[role]` 从 0 写回那个大数、并立刻广播一条带它的快照;那条快照落在 `_on_resumed` **刚重建**的 rollback 上 → `_acked` 被抬到新纪元追不上的高度,`on_authoritative` 的 `ack <= _acked` 把之后所有真实 ack(1,2,3…)全丢,**断线前活了多久就哑多久**(一局中段可上万帧;症状是 `prediction_rollback.gd` 记过的那个静默退化:不报错、**回滚恒为 0**、`sync_soft_state` 不再被调、背包/拾取不同步)。★ **两侧的复位互为理由**(服务端归 0 是为了客户端的 `_acked`,客户端重置是为了服务端的 0),只改一侧会得到镜像的同一个洞;守卫 = 探针相① 的 `_acked ≤ _input_seq` 断言(去掉那两行即红)。
-- **触发点只有"服务器断开"一条,而对局场景此前没人订阅它** —— `NetBus.local_server_message` 的消费者原先只有 `lobby_page`,所以服务器一断客户端**毫无反应**:快照停更、输入自停,玩家卡在一个静止的世界里只能按 ESC 自救(这正是 spec §1.3 记的既有缺陷)。本批在 `pvp_match_client._subscribe_reconnect()` 里接上它,顺带接 `NetBus.local_match_start`(★ 那一条在对局里**此前零订阅者** —— 唯一消费者是 `lobby_page._on_match_start`,而那个页面在对局场景里不在树上 → 静默 no-op,故"重连成功"的收尾**必须**在这里接)。菜单开着时收到的断开**先不动、但不是放弃**:账记 `_pending_disconnect`,关菜单时 `_recheck_disconnect()` 补 —— 先接回 worker 再让玩家点「回到主菜单」会留下"人已走、role 仍被占"的幽灵。★ 按 ESC 回主菜单**不会**触发重连(`NetBus.stop()` 把 `multiplayer_peer` 置空,引擎在 `set_multiplayer_peer` 里先 `clear()`、状态当场复位 → CONNECTED→DISCONNECTED 那一跃**从未被观测到** → `server_disconnected` 根本不发)。
-- **三档端口归还延迟**(`worker_launcher.gd`(原在 `server/` 下,**已删除**):`WORKER_PORT_REUSE_DELAY` 1v1 = **120s** / `ROYALE_PORT_REUSE_DELAY` = 360s / `TEAM_PORT_REUSE_DELAY` = 360s)—— ★★ **它们今天都不再是"端口会不会被提前复用"的界**(2026-09-21 订正,别再引旧说法):房**活到 worker 退出**(见下节「对局中的房」的回收梯),而端口只在 `teardown_room` 里归还 ⇒ 归还是**从 worker 退出起算**的,不再是"从房间拆除(≈开局瞬间)"。于是"重连的客户端手里那个端口还在不在"由**凭据里的 `worker_pid`** 精确回答(§回大厅后回局),与这三个常量取多少**无关**。★ **30 → 120 那段历史教训留档**(原 30s **等于**(**不晚于**)宽限期 —— 30 == 30 是相等而不是"短于",而**相等同样不安全**:宽限期到点那一刻端口就可以被复用,`pick_port` 会把它发给新 worker,而重连的客户端手里攥着**旧端口** → 连到**别的局**),但那条不等式的**承重地位已被取代**,只剩 `tests/grace_window_smoke` ⑧ 的一条 **belt**(三档必须**严格大于** `GraceWindow.DEFAULT_SECONDS`;该探针的注释里写明它自己是 belt —— 后代会把它当承重件去优化正是留这条注释要防的事)。
-- **★ 阶段 1 的「历史」缺口(阶段 2-A 已闭合):宽限期(30s)内发出的可靠事件只推给当时在线的 peer** —— `weapon_spawned`/`weapon_removed`/`tile_destroyed` 掉线者当场收不到、不补就是 **幽灵/缺失的地面武器**,以及**未同步的墙**(客户端可能撞上"幻影墙" → 预测分歧)。`round_state` 那一支**已被覆盖**(worker 在 `_on_reclaim` 重绑 peer 后补发一次),所以只有这两样 —— 而这两样**阶段 2-A 已补上**:重连成功后客户端自己拉一次 `match_sync`,拿全量 `ground_weapons` + `destroyed` 覆盖掉(见下三条)。★ **「只删不还」那半个缺口也已闭合(2026-09-18,同一批)** —— `ground_weapons` 是全量,那一类本来就彻底闭合;`destroyed` 却只表达「与基线**不同**」的格 → 被服务器换局还原掉的格等于 `_base_grid`、**永不进载荷**,而客户端唯一的还原路径一度只有新一轮 COUNTDOWN 里的 `Level0.reset_destructibles()`(`scenes/pvp_game.gd:196`)。于是**1v1 换局那一刻整段落在宽限期内、而重连晚于该轮 COUNTDOWN 结束**时(大乱斗是单局死斗、不换局,无此档),`_on_reclaim` 补发的 `round_state` 已是 PLAYING round 2(不进那条分支)、服务器却已还原了砖 → 客户端留下**幻影洞**。**现在闭合**:补态那一路(`_on_match_sync`,闸门是与抑制出生点校正**同一个**、读一次即清的局部 `resync`)**先 `reset_destructibles()` 再应用 `destroyed`** —— `destroyed` 是相对基线表达的,**二者合起来恰好等于服务器的 grid**,不上线任何新字节,代价只是客户端一次墙层重绘(与它在每个回合边界本来就要做的那次活逐字相同)。★ **顺序不可换**(先应用后还原会把刚补好的洞又填回去,症状与"根本没还原"一样);★ **只在补态那一路做** —— 进场那次世界刚从 pristine 地图建出来,还原是多余动作(`_clear_ground_weapons` 那条"进场那次本就是 no-op"的同款纪律)。★ **仍剩的边界(照实)**:服务器今天**只拆不加砖**;若将来出现"服务器加砖/复原"类改动,`destroyed_cells()` 照样会报那些格(它比的是"与基线不同"),但客户端应用侧只有"拆"那一半(`_on_remote_tile_destroyed`)→ 会留下**幻影墙** —— 那个方向本来就未闭合。守卫:`tests/resync_world_probe.tscn`(真 `Level0` + 真 `_on_match_sync` 的**行为**断言:洞填回、载荷格仍拆、进场那一路不还原;★ 还原那一条**另跨两维**(墙体瓦片层 + `Level0._destructible_sub` 子格),不只读 `current_grid` —— 只断 grid 时,`reset_destructibles()` 哪天退化成"只改 grid、不重铺瓦片也不重建碰撞"会**照样全绿**,而客户端画面上仍是个洞、物理上仍能穿过去("客户端以为修好了、用户看见的没修");用真链路造"换局落在宽限期内"要先到 5 杀,现成手段造不出,故走真对象而非源码级 grep)。
-- **★★ 阶段 2-A(2026-09-18):重连成功后**也**要拉一次 `match_sync`**(`pvp_match_client._on_resumed` 末尾,包在 `if NetBus.can_send_to_server():` 里)—— 这是本节**最反直觉**的一处。路径甲**不切场景、不重建世界**,本地那具世界看着"还在原地",于是很自然认定"没什么要补的"(`_begin_reconnect` 上那条旧注释当年就是这么写的,`957ac69` 已订正):但**世界在掉线那段时间里变过** —— 对面把墙拆了、地面上的枪被捡走/丢出/换局重铺。★ **不拉不报错**,只是世界悄悄不一致:客户端留着服务器已摧毁的墙 = **幻影墙**(撞上去 → 本地预测与服务端分歧 → 可能滚回滚),或者本地凭空多/少几把枪 = **幽灵枪**(看着在、按 F 无效)。★ **顺序**:它排在 C2 重置(`_input_seq = 0` + 重建 `PredictionRollback` 并重新 bind + 设 `map_px`)**之后**,**形状保持不变 —— 但已不再是硬约束**:原先那条理由("提前的话,应答里的出生点校正(`_correct_local_spawn`)会与重置打架")随 `957ac69` 一起作废。★ **新的承重事实:补态这一次应答既不校正出生点、也不告警** —— 发送前置 `_resync_pull_pending`(由 `_on_resumed` 置位),被 `_on_match_sync` 首行读一次即清,出生点那一支的闸门因此是 `if not resync and sp.has(PvpSession.role):`。★ **本节引 `pvp_match_client` 一律用函数名/符号名、不写行号**(2-A 期间 `_level0` 上提 + 探针/告警几次插入已让行号漂过两轮 —— 行号在密集改动的文件里是**负资产**)。★ 这个局部量**今天有两个用途**(都要求"只在补态那一路"):①抑制出生点校正(上面那条);②**决定要不要先把世界还原成基线**(见上一条的幻影洞闭合)—— ★ 它**读一次即清**,第二遍必为 false,"再读一次来决定还原"会让还原被**静默跳过**。**没有它,1v1 每局换边(`_side_swap` 对调 `role_spawns()`)会让不一致必然发生** → 一条假告警 + 把玩家瞬移走(服务器那具身体从掉线起没动过,C2 下一帧又拉回来)。★ 大乱斗那一端走的是**同一个函数**(`royale_game extends PvpMatchClient`),不存在"只补了 1v1"这种分叉。
-- **`match_sync` 的数据面因此长出两块**(都在 `server_main._on_match_sync` 的应答里):
-  - **`destroyed`** = `MatchHost.destroyed_cells()`(`server/match_state.gd`)—— `grid` 与建局基线 `_base_grid` **不同**的那些格(y 升序、同 y 按 x 升序,**顺序确定**,因为载荷要能在两端逐字比对)。★ 判据刻意取"**与基线不同**"而**不是**"当前为空":后者在将来出现"加砖/复原"类改动时会**静默漏报**。★ **空数组连键都不带**(有键即代表"这一轮真有墙被拆过"),省掉每局固定那几 KB;客户端用 `payload.get("destroyed", [])` 兜住缺席。规模上限 = **841** 条 `Vector2i`(≈8~10 KB):定图 `factory1v1.cyrm` 虽是 150×100 = 15000 格,但 `TileDefs.damage_tile` 只认**可破坏纹理**(15~20 且形状掩码非 0)、其余一律当场拒收,实测这样的格**恰好 841 个** —— 旧注释按"地图格数 = 15k 条"写,松了约 18 倍。★ 投递时机只有一处:**`match_sync` 应答**(进场一次 + 每次重连一次),不是每帧、也不是每局。守卫:`tests/destroyed_cells_probe`(刚建局为空 / 拆 3 格报 3 个且**顺序固定** / 复原一格后剩 2 个 / ★ 基线为空的位置被填实心也照样报)。
-  - 客户端应用走 **`_on_remote_tile_destroyed(cell, true)` 的静默形态**(本批新加的 `silent` 形参):那些砖是**掉线期间**被拆的、不是刚被拆的 —— 不静默就会逐格播碎片粒子(几十格同时炸一屏)。★ 复用它而**不另写一套**"清瓦片 + 清碰撞"的逻辑:那套顺序(先 `TileDefs.damage_tile`、再据 `_world` 决定清渲染)全仓只有一份。进场那次该字段本就为空(刚建的世界与基线一致),同一条路径白跑一遍,无副作用。
-- **地面武器一律「先清后灌」**(`_on_match_sync` 里 `_clear_ground_weapons()` 紧跟载荷解析、再逐个 `_spawn_pickup_node`):`match_sync` 的 `ground_weapons` 是**全量**,而重连时本地三张表(`ground_weapons` / `_pickup_nodes` / `_self_drop_until`)里还留着掉线前的条目 —— ★ **不清就直接 add,掉线期间已被服务器移除的那些会变成永久幽灵枪**(看着在、按 F 无效,而且再也不会有事件来收走它们)。★ 进场那次本地本来就是空的,清一遍是 **no-op**,故不为"重连/进场"两种情况分叉。同一纪律的另一处是换局:`MatchGround._reset_ground_weapons` 清的与铺的**都必须广播**(见 §武器背包与地面拾取)。
-- 守卫:`tests/reconnect_probe.tscn` 是**真链路七相**端到端探针(自当裁判、三个端口**必须落在真大厅的 worker 端口池之外**、worker 由本进程直接拉起以便读它自己的日志;触发闪断用**直接调 `_game._begin_reconnect()`** —— brief 说的"客户端主动 `NetBus.stop()`"触发不了重连,理由同上一条 ESC):①正向(闪断→自动重连被接受,**身体 instance_id 不变**;同相另判两条 C2 断言:**重连后 ack 锚点必须重新咬合**——`_acked ≤ 本端 _input_seq`,以及 spec §3.4 那条**回滚次数不持续增长**)②反向(错 token 被拒 + 踢连接)③身体冻结(掉线后该 role 的**快照 `pose` 离开 SQUAT**——★ 判据是**姿态**不是位移:撞墙/卡坑时 `global_position` 天然不变、能空转骗过,位移只作读数;钉 `_enter_grace` 那两件事)④超时移出(不回来 → 宽限期后 worker 收场退出)⑤大乱斗相(①②③ 在 `--royale` worker 上再跑一遍,**并核验 reclaim 不重新摆位**:重发的 `match_start` 必须带与首次**同一个** spawn)⑥启动等待态(空载 `--royale` worker 不得在就绪后 1~3s 窗口内退出)⑦**掉线窗口内世界变过**(拆一堵墙 + 捡走一把枪 → 重连后两端一致;含一条**反向断言**:被捡走那把在 actor 本地表里**必须没有**,专钉"先清后灌"——只 add 不 clear 的实现会在这里红)+ 一条**正向的规模断言**(本端表必须与补态载荷**同规模**:只 clear 不 add 的实现会在这里红 —— 反向那条是对 `after` 的过滤,`after == []` 时它连同"⊆"那条**一起空过**,那正是"重连后一把枪都看不见却打印 ALL-OK"的假绿)。判据是**文本 `RECONNECT PROBE: ALL-OK`**(不看退出码)。
-  - ★ **相⑦ 的唯一失败模式是"假绿"**,两处专门的守卫:① 服务端侧的拆格走新加的测试开关 **`--test-destroy-tile <col>,<row>[,<delay>]`**(照 `--test-ground-teleport` 的先例:仅测试用、默认关、探针直接 spawn worker 故不必经 `worker_launcher` 转发),它经 `TileDefs.damage_tile` → 与真爆炸**同一条广播链**;② 断言里必须含 **worker 日志的 `[test] 拆格` 那一行**(日志是探针唯一能读到那个独立进程的通道)—— 少了它,若那格本来就是空气,主断言会假绿。
-  - ★ **延迟取 7.5s 不是 3.0**:建局到 PLAYING 差一个 `COUNTDOWN_TIME`(3s),`3.0` 恰好落在 actor **还在线**的那一刻 —— 它会自己收到 `tile_destroyed`,相⑦ 就以"全绿"通过而**什么都没验**(实现者加了四条前置断言才把 brief 里这个错值抓出来)。`7.5` ≈ PLAYING+4.5,落在离线窗正中。改 `COUNTDOWN_TIME`/`T_DROP`/`T_RESTORE` 任一个都要重算这个值(两个方向都会报红,不会静默)。**跑前先确认无真大厅**(收尾**按 PID 杀**本进程拉起过的全部子进程 —— 客户端是从临时端口连出去的,只按端口杀根本杀不到,会留下残留进程敲下一跑与读旧日志;**按 UDP 端口杀 worker 只剩兜底**那一层)。
+**服务端架构与会话隔离**：
+- 服务端入口为 `server/server_main.tscn`（无头模式运行），通过 `RoomManager` 编排大厅（`LobbyRooms`）与各对局（`MatchSession`）。
+- 单端口会话隔离：为防止同端口下不同房间请求冲突，`MatchSession` 在开局时冻结玩家名册（`roster`），在 `_on_role_claimed` 中校验身份，非名册调用者直接拒绝连接并断开该非法 peer，保障会话隔离安全。
 
-#### 对局中的房:寿命 / 回收判据 / 可见性与拒绝(2026-09-21,「看得见进不去」批)
+**权威对局仲裁 (`MatchHost`)**：
+- 负责世界碰撞构建与各角色权威物理模拟，每物理帧严格按 FIFO 顺序消费 1 个输入包并回传确认序号（`ack_seq`），以 60Hz 频率广播状态快照。
+- 爆炸弹丸（如榴弹）命中玩家时不执行接触判定销毁，确保延时引信与范围爆炸正常触发；即时光束武器权威开火结果经 `beam_fired` 广播至非射手端。
+- 回合制状态机（COUNTDOWN → PLAYING → ROUND_OVER → MATCH_OVER）管理比分与胜负。换局时通过 `_reset_world_and_clear_dynamics` 重置可破坏瓦片与碰撞体，清理遗留弹丸，双端同步回到初始基线。
+- 倒计时阶段（COUNTDOWN 3秒）双端冻结输入与开火，避免状态漂移。
 
-本批改的是**房间寿命**:房不再在"客户端转连 worker"那一刻被拆(1v1 的三处拆房判据各改一处,另两个模式原本就留房)。另半张是「看得见 ⟹ 进不去」。以下每条都是"改错了不报错"的那一类。
+**客户端预测 (C2 Rollback) 与视觉表现**：
+- 本地玩家基于 `PredictionRollback` 进行输入预测与权威快照回滚校正。
+- 远端对手通过 `PlayerReplica` 渲染视觉表现，挂载幽灵碰撞体（层 2）参与本地滑动碰撞，消除贴身时的预测分歧振荡。
+- 对手预瞄线仅使用者本人可见。远端副本渲染位置基于差分指数追赶进行平滑表现插值，而幽灵碰撞体始终追踪未平滑的原始权威位置，保证物理判定精确。
+- **接触期自适应容差**：`Player.touching_player()` 检测当前物理帧是否与远端实体接触；接触期位置容差放宽至 8.0px（非接触期为 2.0px），有效抑制贴身缠斗时的高频预测回滚。
+- 场景退出保护：所有离开对局世界的路径统一通过 `Level0.safe_change_scene` 执行分帧节点拆除，防止批量析构引起底层异常。
 
-- **★ 对局中的房(`started` / `in_match`)寿命改到「worker 进程退出」**;回收由 **`RoomManager._reclaim_finished_matches`**(30s 梯,`MATCH_SWEEP_INTERVAL`)按 **worker 进程还在不在**判 —— 那是三种模式**唯一的精确界**(三模式的 worker 都在对局结束时自己退:1v1 宽限到点收场退进程、大乱斗与 3v3 全员走光)。★★ **兜底仍是既有的 2h 超龄清扫**(`_sweep_stale_rooms`,连 worker 一起杀),**两条路径并存、不是二选一**。判据落在 `RoomManager._match_over(port, pid)` + `WorkerLauncher.pid_alive(pid)`。
-  - ★ **为什么不按宽限期收**:宽限期是 **worker 侧**状态,**大厅看不见**;照"开局后宽限期到点就收"做会把房在开打 60 秒后拆掉,而**一局打到中段掉线的玩家再也回不去**(回局要的正是那个房)。故判据**刻意不读**宽限期,`MATCH_SWEEP_INTERVAL` 的取值也与宽限期无关。
-  - ★ **代价照实登记(不粉饰)**:双方都在 `go_match` 后立刻消失时,那一个 worker 与那一个端口会白占到 **2h 兜底**为止(玩家侧有 12s 转连 / 25s claim 兜底,不会卡住)。1v1 worker 的报到超时梯本批**不修**(设计 §2.4 风险 3)。
-  - ★★ **pid 复用是这套判据的已知边界**(照实登记,**本批不修**):`WorkerLauncher.pid_alive` 就是 `OS.is_process_running(pid)`,而 **pid 复用在本机实测过「几分钟内」就发生** —— worker 退出后系统把同一个 pid 发给别的进程时,回收梯会判"还在",一条记录(与一个端口)最多挂到 2h 兜底。**误判方向是"多留"而非"错杀"**(降级成 2h 兜底,不会拆掉正在打的局),但实测的复用率让这条降级**是常态而不是罕见**。Task 4 的实现者建议换成「这个 UDP 端口还有没有主」型判据 —— ★ **那是一条未决的设计问题,不属于本批**;别把它读成"已经改好了"。
-  - ★ **1v1 与另两个模式的房间寿命因此已经同款,而 2h 在局宽限仍然只有 1v1 没有**(既有不对称,本批保持)。★ `_sweep_stale_rooms` 里 1v1 那段注释的**理由已于本批订正**:旧理由引的「started 房一方掉线即整房作废」那条分支**已删除**,现在的不加只是**范围裁剪**(触发要房龄 ≥2h,而一局只有几分钟)。详见该函数内注释。
-- **列表可见性与拒绝入房是同一件事的两半**:列表载荷各加 **`in_match` 键**(三模式同名同义、加法式扩展,老客户端忽略未知键),列表构造抽成 **`LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()` 纯函数** —— ★ 因为 `NetBus.reply` 在无对端时**静默跳过**,不抽成纯函数,探针就**观测不到列表内容**。三模式拒绝文案统一成「**该房间的对局已进行中,无法加入**」;★ **`matchmaking._on_server_message` 的自动刷新分支只认旧文案**(`房间已满` / `房间不存在`),新文案落进 `else` **只显示不刷新** —— **改文案 = 静默改行为**,`room_sweep_smoke` 有源码级断言钉住三条文案与三条守卫(`if room.started:` / `if rr.in_match:` / `if tr.in_match:`)。
-  - ★ 拒绝那一半的探针用**非满房**造(1v1 房里 1 人 / 大乱斗 2 人上限 8 / 3v3 房里 2 人):用满房造会被「房间已满」喂绿,等于没验。
-- **房记录上多了两个字段**:
-  - **`worker_pid`** —— spawn **成功之后**由 `RoomManager` 登记(四处:`_start_match` / `royale_start` / `royale_start_ai` / `team_start`),**`0` = 拉起中,一律判"没结束"**。★ 位置不能挪到 spawn 之前:拉起失败那一刻 pid 还是 0,登记一个 0 只会让回收梯晚一个周期才发现(不致命,但没有理由)。
-  - **`roster`** —— **开局那一刻**由 **`LobbyRooms.freeze_roster(room)`** 冻结的 `[{role, name}]`。★ **名单必须冻结**:成员转连后 `players` 会空、`_peer_names` 会被擦掉,读它们只会渲染出「玩家, 玩家」。列表行的**人数与名字都取自 `roster`**,不是 `players`。
-- **`WorkerLauncher` 多了端口→pid 表**:`pid_of(port)`(未登记 / 已归还 ⇒ 0)与 `static pid_alive(pid)`(`pid <= 0` ⇒ false)。★ `release_now` **必须同时清 pid** —— 只清一半会让一个已经结束(甚至端口已被复用给别的局)的对局被判成"还在",房永不出现在回收名单里。
-- **三张注册表仍然各管各的**(房号空间重叠是既有事实),房记录**只住在自己那张表里** —— ★ 别为"看得见"去合并三张表,那正是「按 code 撞库会拆错房」那个老坑(判据只能是 `room is RoyaleRoom` / `room is TeamRoom`,见 `teardown_room`)。回收梯与超龄清扫**各自都扫三张表**。
-- **★ 守缺口照实登记**:本批**没有**真链路探针覆盖「线上投递的 `in_match` 行 + 真的拒绝」(探针只覆盖载荷构造与页面渲染)。那一半由**后继的回局计划**的 `tests/rejoin_probe.tscn` 相 c3 覆盖(同一个机制、一条探针)。
-- ★★ **本批的两个「假绿」陷阱**(都已堵死;记下来是因为它们**不是**本批独有的形状):
-  - **`tests/room_sweep_smoke` 的 `_check_*` 出错不会让它变红**(2026-09-21 修):GDScript 的脚本错误(`Invalid call. Nonexistent function …` 这类)**不给 `_fail` 赋值**,只让**出错的那个函数当场结束**,调用方 `_initialize` 照常往下走 ⇒ **verdict 仍是 `SMOKE_ROOM_SWEEP OK`**,那一组断言被静默跳过、读起来像"全过"。**已堵**:每个 `_check_*` 末行把**本函数名**记进 `_done`,`_finish()` 拿 `CHECK_NAMES` 对账,名单不全即红(另加一条反向:实跑条数 ≠ 名单长度也红 —— 防止"加了新检查却没登记、新检查不受对账保护")。**变异实测**:把 `WorkerLauncher.pid_of` 连名带 4 处调用一起改名(只改定义的话 `room_manager.gd` 先编不过、走另一条红路)⇒ 改动前 = `SCRIPT ERROR: Invalid call. Nonexistent function 'pid_of' …` + `SMOKE_ROOM_SWEEP OK`(7 项检查,静默少一组);改动后 = `SMOKE_ROOM_SWEEP FAIL: ★★ 这些检查**没跑到尾**…["_check_worker_pid_tracking"]` + exit 1。★ 同源的完整表述在 `tests/lib/probe_base.gd` 文件头:**`ALL-OK` 只证明"没有任何断言失败",不证明"该跑的断言都跑过"**(两个新场景探针用 `_checks >= EXPECTED_CHECKS` 堵同一件事)。
-  - **`tests/lobby_visibility_probe` 相④ 是「手工调」`_rm._reclaim_finished_matches()` 的**(2026-09-21 验证):把 `_process` 里那次**接线**删掉,行为探针**照样 `ALL-OK`**,而生产里房永远不会被回收(端口与列表位白占)。**已堵**:`room_sweep_smoke._check_reclaim_ladder` 的**源码级**接线断言(`_process` 必须调 `_reclaim_finished_matches()`,且必须走 `teardown_room` 收口、必须扫三张表)+ 一条反向(回收不许绕道直接删注册表 —— 既有的 `_check_teardown_funnel` **只扫 `lobby_rooms.gd`**,扫不到写在 `room_manager` 里的绕道)。**变异实测**:把 `_process` 里那行换成 `pass` ⇒ 行为探针仍 `ALL-OK(27 条断言)`,房扫冒烟 `FAIL: ★ _process 没调 _reclaim_finished_matches —— 对局结束后房与端口永不被回收`。
-- **用户自跑的真协议回归**(本批唯一的"过真协议"两条,agent 不代跑):`tests/pvp_room_smoke.sh`(建房→配对→`go_match`,走的正是被本批改过的 `on_peer_left` / `_start_match` 路径;**红了先看 `on_peer_left` 的 `if room.started: continue`** —— 它现在是"1v1 房不拆"的唯一开关)与 `tests/room_sweep_smoke.sh`(期望 `SMOKE_ROOM_SWEEP OK: …` 后跟 `[room_sweep] PASS`)。★ **只有前者碰 7777**;`room_sweep_smoke.sh` 只是那段 `-s` 源码扫描的薄包装,**不碰任何端口**,agent 可直接跑(本批实测过)。
+#### 断线重连机制（阶段 1：局内快速重连）
 
-#### 回大厅后回局(阶段 2-B:凭据表 / 「列表里自己那间房」/ 2026-09-21)
+- **网络闪断恢复**：客户端检测到底层连接中断后，自动尝试在原端口重新建立连接并认领角色席位，无需重新加载场景或重建世界实体。
+- **内存状态保留**：断线期间服务端保留玩家实体对象与内存状态，仅将输入源重置并清空待处理队列，玩家在场上处于宽限冻结状态。
+- **宽限期管理**：默认宽限期为 60 秒（`GraceWindow.DEFAULT_SECONDS`）。超时未恢复则判定离场。
+- **状态重新咬合**：重连成功后，客户端重置预测序列号与回滚控制器，丢弃跨越断线周期的陈旧 ack，并通过 `match_sync` 全量补发掉线期间被破坏的瓦片（`destroyed`）与地面武器列表（`ground_weapons`）。
+- **地面武器与瓦片同步**：客户端收到 `match_sync` 补态数据后，先重置基线再应用破坏瓦片，地面武器先清空本地表再重新实例化，确保本地与服务端世界完全对齐。配套测试包括真链路验证 `tests/reconnect_probe.tscn`。
 
-**路径乙**:在局内按 ESC 回主菜单之后,玩家凭一份**凭据**回到**原来那一局**。★ 它与阶段 1(路径甲)**不是同一条路**:路径甲是闪断后自己连回**同一个端口**、**不切场景**;这条路**会重建场景**(`go_match` → `match_start` → 进对局场景)。它成立的前提是**服务器那具身体从未销毁**(见 §断线重连)。★ 本批**不新增任何场景/RPC 路径** —— 转连、认领、进对局场景复用首次进场那一条,大厅的应答复用的是 `go_match`(**`NetBus` 的方法表一个字没动**)。
+#### 对局房间的生命周期、资源回收与准入控制
 
-- **★ 入口不是按钮,是房间列表里「自己那间房」那一行**(用户裁定:「不能有回到对局按钮」「玩家必须自己找到对应的房间」—— **别再把它做成主菜单按钮**)。三个大厅页的行渲染(`_on_room_list` / `_on_royale_rooms` / `_on_team_rooms`)**与行被按下共用同一个判据** `PvpSession.can_rejoin_to(code)`("这一行是不是我的房 **且** 凭据还在");对局中的房那一行**对持凭据的本人可点(点了走回局)、对别人照旧 `disabled`**。
-  - ★★ **问这两问的次序是承重的**:"是不是我的房 + 凭据还在"必须**先于**"`in_match` ⇒ disabled"被问到。写反 = **回局入口连点都点不到,而一行报错都没有**(表现只是"回到大厅后自己那间房是灰的")。
-  - ★★ **Task 7 实测过这条次序反转的可见度:当时全部既有测试面一条都没红** —— 五个探针/冒烟(`lobby_visibility_probe` 37 条 / `lobby_row_probe` / `room_sweep_smoke` / `team_room_smoke` / `rpc_liveness_probe`)+ 四个场景加载,逐条 `ALL-OK` / `EXIT=0`,界面照画、日志一个字不打。**唯一咬得住这一档的是新加的相⑧**(`lobby_visibility_probe`,现 `EXPECTED_CHECKS` = 38;它同时断"别人的对局中的房仍点不动"与"普通未满的房仍可点"—— 后者是一条**独立**的正向对照,缺了它,把判据写成 `not mine` 一类会让**正常加入整个坏掉**而全绿,这条是自审发现后补的第二个提交)。
-  - ★ **交换同一个布尔的左右操作数(`not mine and in_match`)**不是**次序反转**(真值表逐行相同;`and` 短路在纯函数上无可观察差异)。真正会翻车的唯一写法是把它拆成前置守卫(`btn.disabled = in_match` + `if in_match:` 那一支)。
-  - `PvpSession` 的 `room_code` / `rejoin` 两个字段(都有读者)+ `can_rejoin()` / `can_rejoin_to()` / `clear_rejoin()`。★ `clear_rejoin()` 与 `reset()` **分开**(后者会把 `server_address` 也拨回云默认 = 把人踢到另一台机器)。
-  - ★★ **凭据必须活过"回主菜单 → 再进大厅页"那一拍,别再往 `reset()` 里加清凭据的行**(2026-09-22,C1 的整条修复)。原稿曾让 `reset()` 一并清 `token`/`worker_port`/`room_code`/`rejoin`,而**主菜单那三个联机按钮每按一次就调它一次** ⇒ 玩家从对局按 ESC 回主菜单、再按「1 v 1」时凭据**正好在那一拍**被抹掉 ⇒ `can_rejoin_to()` 恒 false ⇒ 自己那间"对局中"的房在列表里**恒为灰、点不动**(表现就是"回不去",一行报错都没有)。**凭据真正的死处只有四类,全部落在 `clear_rejoin()` 的调用点上**:① **换模式**(`enter_mode`)/ ② 大厅答"回不去了"(`_on_rejoin_denied`)/ ③ 回局 15s 无应答(`_tick_rejoin_timeout`)/ ④ 玩家进了**另一间**房(`note_room`,三页记房号的唯一入口 —— 大乱斗/3v3 的等待室每刷一次房间状态都会走它,同号时是 no-op)。守卫:`tests/reconnect_smoke.gd` 的 §④(**反向**断言 `reset()` 不许碰凭据 + `enter_mode` 只在 `mode` 变时清)。
-  - ★★ **`PvpSession.mode` 曾经被删掉,2026-09-22 加回来了**(原理由"没读者"已不成立):它是"**该不该因模式切换作废凭据**"的判别器,而且非它不可 —— 三张注册表的房号**共用同一个 4 位空间**,不判模式时你在 1v1 攒下的 `room_code = "9021"` 会让**同号的 3v3 房**看起来像"我的房"。读者是 `PvpSession.enter_mode(m)`(主菜单那三个按钮的**唯一**入口):**换了模式才 `clear_rejoin()`,同一个模式重进必须留着**。★ `mode` 的取值是 `MODE_PVP` / `MODE_ROYALE` / `MODE_TEAM` 三个常量。
-  - ★ **服务端那一半不是判据**:三条 join 守卫保持"对局中即拒绝"(`room_sweep_smoke` 三个源码断言钉着),**刻意不含凭据分支** —— "是不是我的房 + 凭据还在"只存在于客户端渲染与 `try_rejoin_row`。
+- **对局中房间的生命周期管理**：处于进行中状态（`started` / `in_match`）的房间不再在客户端转连 Worker 进程时被销毁，其生命周期与 Worker 进程的实际存活性严格绑定。
+- **双重回收机制**：
+  - **主动进程轮询回收**：`RoomManager._reclaim_finished_matches()` 每 30 秒执行一次周期性扫描（`MATCH_SWEEP_INTERVAL`），通过 `WorkerLauncher.pid_alive(pid)` 检查 Worker 进程的存活状态。当 Worker 进程由于对局正常结算、断线宽限期超时或全员离线等原因自主退出时，大厅层即可通过 `RoomManager._match_over(port, pid)` 精确判定对局结束并回收房间资源。
+  - **超龄超时安全兜底**：系统保留原有的 2 小时超龄清扫机制（`_sweep_stale_rooms`），以强行终止僵尸 Worker 进程并回收端口，形成双重防泄漏屏障。
+  - **解耦断线宽限期**：断线宽限期属于 Worker 进程内部会话状态，大厅服务不直接感知。大厅层不依据固定宽限时间注销房间，确保中途断线的玩家能够持续基于原有房间信息完成重连。
+- **已知边界与系统代价**：
+  - 若对局双方在接收 `go_match` 指令后立即全部断开连接，Worker 进程及分配端口将被保留直至 2 小时超时兜底（客户端具有 12 秒连接超时及 25 秒席位认领超时，不会发生永久阻塞）。
+  - PID 复用边界：`WorkerLauncher.pid_alive` 依赖 `OS.is_process_running(pid)`。在操作系统较短时间内发生 PID 复用的情况下，判定逻辑会误认为 Worker 依然存活，从而延迟至 2 小时兜底回收。该异常仅导致资源回收滞后，不会误销毁正在进行的对局。
+- **列表可见性与准入控制**：
+  - 房间列表载荷统一扩展 `in_match` 字段，通过 `LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()` 纯函数集中构造。
+  - 对于已开局的房间，未持有该局凭证的玩家尝试加入时将被统一拒绝，反馈标准化提示文案：“该房间的对局已进行中,无法加入”。
+  - 客户端界面响应：`matchmaking._on_server_message` 仅将特定旧文案（如“房间已满”、“房间不存在”）映射为自动刷新列表行为，新文案落入常规提示分支，避免产生异常刷新抖动。
+- **房间元数据扩展**：
+  - `worker_pid`：Worker 进程成功拉起后由 `RoomManager` 注册（覆盖 `_start_match`、`royale_start`、`royale_start_ai`、`team_start`），初始为 `0`（表示正在拉起）。
+  - `roster`：开局时刻由 `LobbyRooms.freeze_roster(room)` 冻结的成员快照 `[{role, name}]`。由于成员转连后大厅连接断开，列表展示的人数与玩家名称一律取自冻结的 `roster`，确保信息展示稳定。
+- **Worker 端口与进程映射表**：`WorkerLauncher` 维护端口与 PID 映射关系，提供 `pid_of(port)` 与 `static pid_alive(pid)`。在 `release_now` 释放端口时同步清理 PID 记录，防止端口复用后产生状态脏读。
+- **模式隔离与多表维护**：1v1、大乱斗与 3v3 各自维护独立的房间注册表。由于不同模式的 4 位房间号可能碰撞，房间销毁判定严格依赖类型断言（`room is RoyaleRoom` / `room is TeamRoom`），严禁跨表按 code 检索销毁。
+- **测试断言与假阳性防护**：
+  - 脚本执行异常导致的假阳性防范：GDScript 运行时异常不会赋予失败标记，可能导致断言被跳过仍输出通过。在 `tests/room_sweep_smoke` 中，各检查函数通过注册执行状态 `_done`，由 `_finish()` 与 `CHECK_NAMES` 严格核对，避免检查函数中途跳出造成漏检。
+  - 源码级接线断言：在 `tests/room_sweep_smoke._check_reclaim_ladder` 中通过源码解析，强制校验 `_process` 必须调用 `_reclaim_finished_matches()`，且统一通过 `teardown_room` 遍历三张注册表执行回收。
 
-- **回局路径 = 复用 `go_match`**:点行 → `LobbyPage.try_rejoin_row(code, in_match)`(返回 true = 已走回局,调用方**不再**走普通加入)→ `rejoin_request(room_code, token)` → 大厅 `LobbyRooms.on_rejoin_request` 查凭据表 → `NetBus.reply(caller, "go_match", role, port)` → 客户端与首次进场**逐字同一条路**。★ 第二个入参 `in_match` 是 2026-09-22 加的:**只有"我的房 **且** 对局中"才走回局**——只看凭据的话,**自己那间还没开局的等待中的房**也会走回局,而那种房在大厅侧没有凭据表条目 ⇒ 必收一句与眼前这间房无关的"凭据失效",**普通加入那一半还不发生**(调用方已经 return true 了)。等待中的房本来就该走普通加入。
-  - **唯一分叉在认领那一步**:`_claim_role_worker` 看 `PvpSession.rejoin`,发 `reclaim_role` 而不是 `claim_role`。★ **走错那一条的失败是"静默"、不是"被踢"**(2026-09-21 实测订正,旧说法"会被 `_on_role_claimed` 当串线踢掉"**是错的**):`server_main._begin_match` 在开局那一刻就 `NetBus.role_claimed.disconnect(_on_role_claimed)` ⇒ 迟到的 `claim_role` **根本没有收件人**,既不踢也不打印(它那款 `_match_started` 判据因此**不可达**);可观察的后果是"**这个客户端再也回不来**"(卡在大厅页,靠 claim 兜底梯 `_return_to_lobby` 收场)。
-  - ★★ **`_do_go_match` 里"只在真收到新 token 时才覆盖"那一行是承重的**:回局路上大厅**不重发** `session_token`(客户端手里那份**就是**凭据本身),无条件覆盖会把唯一能证明"我是原来那个人"的串抹成空 → `reclaim_role` 必被 worker 按"令牌不匹配"拒**并踢连接**,现场一个字都没有。真链路反证实测(删掉那行 → worker 打印 `令牌不匹配`)。
-  - 客户端三条兜底:`_request_rejoin` 发前判活(`NetBus.can_send_to_server()` —— 回局入口**刻意不走 `_with_lobby`**,那条路会 `NetBus.stop()` 重连一次,把刚拿到的列表连同自己那一行一起丢掉,故这一判必须自带)/ 大厅 15s 无应答(`_tick_rejoin_timeout`)/ 大厅答"回不去了"(`_on_rejoin_denied`:清凭据 + **重拉列表** —— 不重拉的话那一行会停在"可点"的样子上,每次点都是同一句失败)。
+#### 断线重连机制（阶段 2-B：退回大厅后的房间断线重连）
 
-- **凭据表 `server/rejoin_registry.gd`(`RejoinRegistry`)**:token → `(code, role, worker_port, worker_pid, expires_at)`。★ 它**独立于房对象**(回局的查询要在大厅侧**活过拆除**);三个房类原先各有一份 `tokens` 字段**已随本批删除**(同一件事只留一处记录)。★ 纯逻辑、**不读时钟**(`now` 由调用方传)⇒ `-s` 可测。
-  - **判据是纯函数 `RejoinRegistry.decision(entry, code, worker_alive)`**:返回 `""` = 放行,否则是给玩家看的拒绝理由。★ 三种拒绝**顺序有意义**("凭据根本不存在"必须先于"房间号不符" —— 后者会把玩家引向"房间号填错了"这个错方向)。
-  - **`TOKEN_TTL_SECONDS`(1h)只是表的 GC 上界,"这一局还在不在"由 `worker_pid` 的活性回答**(`WorkerLauncher.pid_alive`)。★ 分工的理由:"一局打多久"三模式各不同、且**没有可读常量**,而"worker 退了吗"精确且与模式无关。★ TTL **不得短于宽限期**(跨文件不变量,`rejoin_registry_smoke` ②b 钉住:宽限期内玩家手里那份凭据必须有效)。
-  - ★★ **作废该房凭据走 `rejoin.drop_port(worker_port)` —— 键是 worker 端口,不是房间号**:三张注册表(1v1 / 大乱斗 / 3v3)的房号**共用同一个 4 位空间**(`_generate_code()`,各查各的 `has(code)` ⇒ 同号共存是**允许**的),按 `room.code` 反查会**误伤同号的另一间房**。实测(两间同号房 + 真 `teardown_room`):按 code 作废一次清掉 **2** 份凭据、按端口只清 **1** 份 —— 而失效那间的玩家只是"回不去",**一行日志都没有**。★ 这与 `teardown_room` 自己那句"别拿 `room.code` 去三张表里撞库"(它用 `is` 判房型正是为了躲这个坑)是**同一条纪律**;端口**每间房独占**(`pick_port` 的唯一递增 + 占用集合)⇒ 它是那张表上唯一可用的键。★ `drop_port` 对 `port <= 0` **一律什么都不清**(0 不可能是任何一条凭据的键,当成"通配"会一次清光整张表)。守卫 `tests/rejoin_keying_probe.tscn`(`KH REJOIN-KEY PROBE: ALL-OK`):**两个方向都断** —— 拆掉那间**自己的**凭据必须清(只断"没误伤"会让"什么都不清"全绿)、同号的**另一间**必须还在(只断前者会让"按 code 键"全绿),外加条数合计读数与一条"确实跑到了这里"的自检。
-  - **表的 GC 搭 30s 回收梯**(`RoomManager._reclaim_finished_matches` 首行 `lobby.rejoin.prune(...)`),**不另立定时器** —— 这是本批对**前置计划交付的函数**做的唯一一处改动。
+- **机制与恢复路径**：
+  - **路径对比**：阶段 1（局内快速恢复）适用于底层网络短时闪断，客户端直接在原端口重新握手，不切换客户端场景；阶段 2-B（跨场景会话恢复）适用于玩家在局内按 ESC 返回主菜单后，凭借客户端保留的会话凭据（Token）重新进入原对局房间。
+  - **流程重建**：跨场景恢复会重新经历完整的场景加载与初始化生命周期（`go_match` → `match_start` → 加载对局场景）。其前提是服务端保留的玩家实体与内存会话未被销毁。
+  - **协议复用**：该恢复路径完全复用既有的 RPC 管道（`go_match`、`claim_role`/`reclaim_role`），无需新增专门的方法定义。
+- **交互入口与准入逻辑**：
+  - 入口复用房间列表中的所属房间行。
+  - 列表行渲染（`_on_room_list`、`_on_royale_rooms`、`_on_team_rooms`）与行点击处理共享统一判定：`PvpSession.can_rejoin_to(code)`（校验是否为所属房间且凭证有效）。对于正在对局中的房间，持有效凭据的本人允许交互并触发重连，其他玩家保持禁用状态（`disabled`）。
+  - **判定顺序约束**：必须先判定“是否为本人所属房间且凭据有效”，再判定“是否处于对局中禁用”。若逻辑顺序颠倒，会导致合法重连入口被对局状态直接禁用。
+- **会话凭据生命周期**：
+  - `PvpSession` 维护 `room_code` 与 `rejoin` 凭证字段，提供 `can_rejoin()`、`can_rejoin_to()` 与 `clear_rejoin()`。凭据清理与常规连接重置 `reset()` 解耦，防止玩家从对局返回主菜单并重新进入大厅页面时凭据被意外抹除。
+  - 凭据作废触发时机严格收敛于 `clear_rejoin()` 的四个显式调用点：
+    1. 切换对局模式（`enter_mode`）；
+    2. 大厅明确拒绝重连请求（`_on_rejoin_denied`）；
+    3. 重连请求响应超时（15 秒未响应，`_tick_rejoin_timeout`）；
+    4. 玩家主动创建或加入其他房间（`note_room`）。
+  - `PvpSession.mode` 记录当前模式常量（`MODE_PVP`、`MODE_ROYALE`、`MODE_TEAM`）。由于不同模式的房间号空间独立且可能重叠，模式变更时必须作废凭据，同模式重进则予以保留。
+- **重连协议流转与认领机制**：
+  - 点击房间行触发 `LobbyPage.try_rejoin_row(code, in_match)`。仅当“所属房间且处于对局中”时执行重连流程（返回 `true`，拦截常规加入）。
+  - 客户端向大厅发送 `rejoin_request(room_code, token)`，大厅通过 `LobbyRooms.on_rejoin_request` 查询凭据注册表，校验通过后回复 `go_match(role, port)`。
+  - 客户端连接 Worker 进程后，依据 `PvpSession.rejoin` 发送 `reclaim_role`（而非初始加入的 `claim_role`）。开局后服务端已断开常规认领监听，迟到的 `claim_role` 不会被响应。
+  - 客户端在重连的 `_do_go_match` 处理中，仅在接收到非空新 Token 时才更新，防止大厅未下发新 Token 时覆写原有凭证，导致 Worker 校验失败。
+- **凭据注册表 `server/rejoin_registry.gd` (`RejoinRegistry`)**：
+  - 映射结构：Token 映射至 `(code, role, worker_port, worker_pid, expires_at)`。注册表脱离房间对象独立存活，确保房间在大厅注销后凭据查询依然可完成。
+  - 纯函数判定 `RejoinRegistry.decision(entry, code, worker_alive)`：返回空字符串表示放行，非空则为标准化拒绝原因。
+  - 凭据过期与垃圾回收：默认过期上限为 1 小时（`TOKEN_TTL_SECONDS`），对局存续以 Worker 进程活跃度（`WorkerLauncher.pid_alive`）为准。垃圾回收复用 `RoomManager._reclaim_finished_matches` 的 30 秒轮询梯次，无额外定时器开销。
+  - 凭据作废键：作废特定房间凭据通过 `rejoin.drop_port(worker_port)` 按 Worker 端口执行清理。严禁按房间号反查作废，避免多模式 4 位房间号碰撞导致误伤其他模式的同号房间。
+- **已知边界与系统约束**：
+  - 重连仅在 Worker 的断线宽限期（默认 60 秒）内有效。若宽限期超时导致席位标记离线，即使凭据尚在大厅 TTL 内，Worker 仍会拒绝席位认领。
+  - 私密房间不进入大厅公开列表，因此当前阶段私密房间玩家退出至主菜单后无法通过列表卡片重连。
+  - AI 对战（`ai_duel`）拉起 Worker 时不登记凭据，开局后房间即注销，不开放重连机制。
+- **测试与验证套件**：
+  - `tests/rejoin_registry_smoke.gd`：验证凭据注册、校验与超时垃圾回收逻辑。
+  - `tests/rejoin_keying_probe.tscn`：验证以端口为键清理凭据的精确性，防止多模式同号房间凭据被误伤。
+  - `tests/rejoin_probe.tscn`：全链路跨端验证（包含客户端离场重连、对局见证端与外部观察端）。
+  - 执行规范：Agent 可执行 `-s` 纯逻辑冒烟及静态扫描；涉及全链路拉起子进程及独占端口的测试由开发者本地运行。
 
-- ★ **本批依赖上一节「对局中的房」先落地**(房活过转连、`worker_pid`/`roster`、`WorkerLauncher.pid_of/pid_alive`、30s 回收梯、以及"对局中的房照列但点不动"那一行的既有渲染)。本批对它的改动**只有两处**:① 上面那句凭据 GC;② **客户端**那一行的 `disabled` 判据多了"是我的房则例外"这一档 —— **服务端三条 join 守卫一个字没动**。
+#### 3v3 团队对抗模式架构与规则规范
 
-- **★★ 已知边界与守缺口(照实登记,别读成"已修好")**:
-  - **回局只在宽限期内真正成功**:宽限到期后 worker 会 `mark_disconnected`(大乱斗/3v3)或收场退进程(1v1),而届时大厅**仍可能放行**(凭据还在、worker 还活着),客户端连过去会被 `_on_reclaim` 的判据②("该 role 不在宽限期")**踢连接**,表现为回到大厅页 + 一条失败提示。要在客户端侧提前拦(比如凭据带"断开时刻")属**另行评估** —— 本批不做。
-  - **pid 复用**:放行判据里的 `worker_alive` 与回收梯**共用同一个 `WorkerLauncher.pid_alive`**(= `OS.is_process_running(pid)`,**不校验身份**)⇒ **与上一节登记的是同一条已知边界**(死 worker 会被判成"还在"、房活到 2h 兜底;误判方向是"多留"而非"错杀";建议的端口属主判据**未实现**)。**别在两处各写一份**。
-  - ★ **`_request_rejoin` 的判活守卫没有任何行为面证据**:它那条**假分支**只有"点那一行的那一刻大厅连接已经断了"才进得去,而那一刻它会经 `_request_list` → `_with_lobby` → `NetBus.start_client(addr)` **真的开一次大厅连接**(1v1 页默认还是云地址、端口取 `NetBus.DEFAULT_PORT` = **7777**)⇒ 拿它做断言等于让探针去连**用户自己的服务端**,故**探针明令不碰**;它的真分支与"根本没有这条守卫"**行为不可区分**(让连接保持活着也测不出它)。登记为**环境缺口,不是探针缺口**。
-  - **引擎自己那条 `max channels: 0`**:回局那条路同样会踢连接(`_on_reclaim` 拒绝),故每踢一次仍约 **1 条无 backtrace 的 `ERROR: Unable to send packet on channel 0, max channels: 0`**(引擎的定向发送,从 GDScript 够不着)—— **已登记、不修**,见 §网络与 PvP 的协议那一条。
-  - **`ai_duel`(1v1 与 AI 对战)那条 spawn 路径不登记凭据**:`RoomManager.ai_duel` 既不发 `session_token` 也不调 `_grant_rejoin`,且它**开局即把房从注册表摘除**(`teardown_room(host_room)`)⇒ **AI 对战局没有回局入口**(列表里也没有那一行)。照实登记,本批不修。
-  - 另两条在上一节登记过、本批**不放宽**:`_sweep_stale_rooms` 的在局宽限仍是**估**的;1v1 worker 在"一个 claim 都没有"时会一直挂着(泄漏由 2h 超龄清扫兜住)。
+- **服务端与规则层（A 册）**：
+  - **启动契约**：`server_main.gd` 接收启动参数 `--headless ... -- --worker --team --port P --roles r,... --teams t,...`。`roles` 与 `teams` 同序等长，满员方可启动，不支持降级开局；同时传入 `--royale` 与 `--team` 时直接拒绝启动。队伍表经 `match_sync` 的 `teams` 字段（`TeamHost.team_map()` 只读副本）下发，仅在非空时携带，不重复混入高频的 `round_state`。
+  - **队伍映射单一数据源**：队伍归属严格来自 `--teams` 参数映射，严禁从角色 ID 推导。满员判定基准为去重后的队伍表大小 `_team_of_role.size()`，而非可能存在重复项的参数列表长度。
+  - **队伍判定边界**：`same_team(a, b)` 遵循严格防御逻辑，当任一方为 `0` 时均返回 `false`（`0` 表示非团队模式或未分配队伍），防止 1v1 或无队伍实体互判为友方导致攻击穿透。
+  - **友军伤害与直击判定**：子弹物理穿透队友，爆炸范围伤害（AOE）对全员（包含队友）满效生效。子弹与直击伤害的友方校验集中在 `server/match_combat.gd` 的 `_adjudicate_bullets` 与 `_adjudicate_grenade`。
+  - **击杀后位置保持**：废除击杀者强制回传己方出生点的旧规则，击杀后全员保持当前站位与战斗状态。为防止出生点压制，复活选点机制 `TeamHost._respawn_cell_for` 严格校验开阔连通区与敌方避让半径（`RESPAWN_CLEARANCE = 8` 格）。
+  - **终局判定与断线管理**：整队全员离线方判定终局。单人断线进入会话宽限期，若整队离线则判定对方获胜；若双队均全员离线则判定为平局（胜者为 0）。宽限到期处理由 `GraceWindow.expire_action` 统一路由。
+  - **友军物理穿透（分队碰撞层）**：
+    - 1 队：`layer = 2`, `mask = 1 | 4 | 16`（地形 1、环境敌方 4、2 队 16）。
+    - 2 队：`layer = 16`, `mask = 1 | 2 | 4`（地形 1、1 队 2、环境敌方 4）。
+    - 双方掩码中必须严格保留地形（1）与环境敌方（4），防止实体穿墙；远端副本幽灵碰撞体掩码置 0，层级按对应队伍设置。
+  - **自毁机制（K 键）**：支持 `TeamHost.request_suicide_role`，触发后对方队伍得分 +1，击杀归因元数据清空，无击杀者复位。
+- **大厅选边与客户端实现（B 册）**：
+  - **多协议互斥隔离**：1v1（`rooms`）、大乱斗（`royale_rooms`）与 3v3（`team_rooms`）大厅注册表共存且双向互斥，所有创建与加入接口均相互校验，防止多重绑定与幽灵房间泄漏。
+  - **房间生命周期**：进行中的 3v3 房间持续存活直至 Worker 进程退出，延迟回收时间配置为 `TEAM_PORT_REUSE_DELAY = 360s`（匹配长局时需求），房间销毁严格依据类型断言（`room is TeamRoom`），严禁跨表按房间码检索。
+  - **队伍着色机制**：3v3 模式中队伍颜色覆盖个人色相。着色公式规范为 `modulate = 队色 / 本体主色`（基准颜色 `BODY_BASE_COLOR = #639BFF`），避免直接相乘导致纹理发灰暗沉；`player_p2_hue.gdshader` 仅用于个人自定义色相，不干涉队伍着色。
+  - **局间换边同步**：每小局结束后两队对调出生点（`TeamHost._start_next_round`），客户端在新一轮倒计时（`COUNTDOWN`）阶段通过 `match_sync` 重新拉取对局状态，并通过 `_resync_pull_pending` 标记区分常规进场与局间换边同步，避免触发瞬移告警。
+  - **赛后结算数据载荷**：服务端在 `round_state` 中附带 `stats` 与 `mvp` 数据，客户端在进入结算页时消费展示。
 
-- **★ 私密房玩家没有回局入口**(用户裁定 **乙:接受"回不去"**,2026-09-21,**不写代码**):私密房**不进列表**(`royale_list_payload` / `team_list_payload` 跳过非公开房;1v1 无此概念)⇒ **没有那一行可点**。私密房玩家按 ESC 回主菜单后只能**重新建房 / 让房主重开**。★ **别在文档里把它写成"已支持"**;甲候选(只对本人列出他自己的私密房)留档在计划的 Task 7 末尾,以后可能改。
+#### 结算页面设计与交互流程
 
-- **★ 这一批反复撞上的「假绿」**(逐条已堵死;这里只记**形状**):`ALL-OK` 只证明"**没有任何断言失败**",**不证明"该跑的断言都跑过"** —— 权威表述在 **`tests/lib/probe_base.gd` 文件头**(它还记了更尖的一层:`_summary()` 的 ✓ 汇总行与最终 verdict 会**一起**读成通过)。本批实测到四种形态:① **冒烟脚本自己编不过**(计划给的 `rejoin_registry_smoke` 有两行 `:=` 从无类型变量推类型 → Parse Error,**一条断言都跑不到**,且只有真跑才看得见);② **守卫拦不住它自己要拦的错**(计划给的那条 `.contains("凭据")`,在"两种拒绝理由对调"下照样绿 —— 两条理由都含「凭据」);③ **常驻守卫看不见对自己那条纪律的违反**(`room_sweep_smoke._check_teardown_funnel` 只扫 `lobby_rooms.gd`,写在 `room_manager` 里的绕道它扫不到);④ **整套既有测试对"入口次序写反"全盲**(见上)。⇒ 加断言时**先证明它会红**(逐条看着变红再还原),别拿"加了断言之后全绿"当证据。
+- **交互模式**：对局结束（`MATCH_OVER`）统一呈现结算界面，由玩家主动点击“返回主菜单”或按 ESC 键退出，取消倒计时自动跳转机制。
+- **解耦架构**：`ui/match_result.gd` (`class_name MatchResult`, extends `CanvasLayer`) 为模式无关的通用容器，负责视图渲染与输入处理；数据转换由 `ui/match_result_payload.gd` 的适配器函数（`for_duel` / `for_royale` / `for_team`）将各模式状态统一转换为结算载荷字典。
+- **视图层级**：UI 场景层级设定为 150，高于常规 HUD（130）与暂停菜单（145）。必须通过场景实例化（`load(...).instantiate()`）挂载，禁止直接 `MatchResult.new()` 以免丢失层级配置。
+- **退出与场景安全**：退出请求通过 `Level0.safe_change_scene` 异步分帧销毁物理与渲染实体，防止场景硬切引发底层异常。
+- **客户端基类封装**：结算页挂载与退出流程收敛于基类 `PvpMatchClient`（`_show_result` / `_leave_to_main_menu`），子类仅覆写 `_build_result_payload()`。
 
-- **守卫与判词**(判据一律是**文本**,`grep` 那行;不看退出码 —— 探针挂住时 `--quit-after` 到期仍 exit 0 且一行裁决都不打印):
-  - `tests/rejoin_registry_smoke.gd`(`-s`)→ `REJOIN REGISTRY: ALL-OK`(另有段数对账 7/7)。
-  - `tests/rejoin_keying_probe.tscn` → `KH REJOIN-KEY PROBE: ALL-OK`。
-  - `tests/rejoin_probe.tscn`(+ `rejoin_watcher.gd` + `rejoin_probe.sh`)→ **`REJOIN PROBE: ALL-OK`** —— 真链路**三端**(c1 = actor 离场再回局、c2 = 见证端、c3 = 第三人看得见进不去),自当大厅与裁判(**池外端口 29300;worker 起投 29350**),★ **不占也不杀 7777**(真有个大厅在跑也照跑)。
-    - ★★★ **c1 的两次进场都走生产入口**(2026-09-22):`_enter_main_menu()` → **按主菜单上那颗「1 v 1」**(`PvpSession.enter_mode` + `change_scene_to_file`),页由生产那条 `change_scene_to_file` 建出来;本端只用 `get_tree().node_added` 钩子在页 `_ready` **之前**预置"已连着本探针大厅"(生产连的是默认端口 7777,探针不能碰)。**曾经它绕过主菜单直接挂页**,而主菜单那一步**正是** C1 抹掉凭据的那一步 ⇒ 唯一会红的观测者刚好绕过了唯一会红的那一步(那句"主菜单那几步只是换场、不承载判据"的旧注释**是错的**,已在文件头订正)。守卫是**反证**:把 `reset()` 清凭据那四行放回去(即 pre-fix 世界)⇒ 探针红,判词逐字给出 `ROW code=… disabled=true` + `token=**空** port=0 code=`;还原 ⇒ `ALL-OK(5 条断言)`。
-    - ★ 两个**探针自身的**坑(都只在真跑时才现形,记下来省下一次):① **`freed_node == null` 在 Godot 4.7 是 `true`** —— 判"页还在不在"只能用 `is_instance_valid()`,写成 `_page != null` 会让"页被换场带走"永远判不出来(症状:第二次按不下按钮);② **相 0 的推进条件只能是"真进了对局"**,把"页还不存在"也当成不能推进会让那一相卡死(页恰在进对局那一刻被换场带走)。五条断言 = 相① 端口落在真大厅池外 + 相② 四条(开局后房仍在列表 / 带 `in_match` / 名单取自冻结的那份 / 已登记 `worker_pid`);三端结果不合格走 `_check(false, …)`。★ **用户跑**(整跑约 60~110 秒;收尾**按 PID** 杀子进程 —— 客户端是从临时端口连出去的,只按端口杀根本杀不到)。反证覆盖见 `.superpowers/sdd/task-8p3-finish-report.md`(5 条:入口次序 / 认领分叉 / token 守卫 / 放行路径真的发了 `go_match` / 凭据真的登记了 —— 后两条是额外补的,把"按构造成立"变成实测)。
-  - 既有探针被本批**加相**:`tests/lobby_visibility_probe`(相⑤⑥⑦⑧;`EXPECTED_CHECKS` = 38)、`tests/grace_window_smoke`(⑧ 钉 `DEFAULT_SECONDS` + 三档延迟的 belt;⑨ **按宽限期算出来的跑批预算逐条钉住** —— `reconnect_probe` 的 `GRACE_MIN`/`GRACE_MAX`/`FINAL_TIMEOUT`/`CHILD_QUIT_AFTER`、`team_match_watcher.OBSERVE_MAX`、`team_match_probe` 的 `RESULT_WAIT`/`FINAL_TIMEOUT`/`CHILD_QUIT_AFTER`。★ 落伍的症状不是"红一条断言",而是**探针自己先到点:安全网/收工上限先耗尽 ⇒ 一行裁决都不打印**,与真失败**长得一模一样**;这个坑**已烂过两次**,所以消息里逐条点名是哪一条预算)。
-  - ★ **跑法分工**:agent 可跑 = `--import`、全部 `-s` 冒烟、`tests/lobby_visibility_probe.tscn`、各页面的 `--quit-after 120` 启动自检;**用户跑** = `tests/rejoin_probe.sh`、`tests/reconnect_probe.tscn`(池外端口,但耗时长且按 PID 杀子进程)、以及一切占 **7777** 的既有脚本(`tests/pvp_room_smoke.sh` / `tests/room_sweep_smoke.sh` 等)。★ **加新断言时留意 `EXPECTED_CHECKS` 那类计数**:它按设计会在"少跑一条"时变红,所以改探针必须同步改数。
+### 大乱斗模式架构与规则规范 (Royale)
 
-#### 3v3 团队模式(A 册:服务端与规则 + B 册:大厅选边与客户端)
+- **场景与导航流**：
+  - 入口：主菜单“大乱斗”按钮（`main_menu.gd`）导航至 `scenes/royale_lobby.tscn`（`royale_lobby.gd`：支持公开/私密房间、邀请码复制、人数与时限配置、禁用武器、角色颜色自选、房间列表自动拉取与一键启动本地服）。
+  - 路由判定由场景加载上下文决定（`royale_lobby` → `royale_game`），无需静态全局标记。UI 排版遵循 `UiFactory` 规范（字号严格为 16 的倍数）。
+- **对局启动与生命周期流程**：
+  1. 大厅注册表管理：大厅服务（`server/server_main.tscn` 默认端口 7777）中的 `LobbyRooms` 维护独立的 `RoyaleRoom` 注册表，与 1v1 的 `rooms` 及 3v3 的 `team_rooms` 保持互斥。房间生命周期 RPC 统一经由 `NetBusExt` 的 `royale_*` 接口派发。
+  2. 独立 Worker 进程拉起：房主触发开局后，大厅通过 `_spawn_royale_worker(port, roles, ai_roles)` 使用 `OS.create_process` 拉起独立的无头 Worker 进程：
+     - 命令行格式：`--headless [--path . res://server/server_main.tscn] -- --worker --royale --port P --roles 1,3 [--ai-roles r,r]`。
+     - 进程隔离保证各对局内存完全独立，跨房间共享的静态网格与瓦片定义互不干扰。
+     - 角色白名单集合传递：大厅显式传入角色 ID 集合（如 `--roles 1,3`），彻底避免基于总人数推导在出现空洞时（中途退房）导致高位角色被误判定为非法会话。AI 补位角色通过 `_royale_free_roles` 获取未被人类占用的空闲 ID 并统一下发。
+  3. Worker 席位认领与降级启动：
+     - 开局门禁：`_on_role_claimed` 收齐预期人类席位（`_human_role_count()`）后开局，其余席位由 AI 补位。
+     - 超时降级策略：实到人数 ≥ 2 且等待超时 20 秒时，按实到人数降级开局（缺席角色不进入对局，出生点生成器按实到键值分布）；开局前可用玩家 < 2 人时，宽限 10 秒后退出并释放端口。
+     - 会话隔离保护：对局已开始、角色不在白名单或角色已被占用时，直接执行 `disconnect_peer`，避免端口复用竞态引起的脏连接。
+     - 帧末延迟启动：开局逻辑通过 `_defer_begin_match()` 延迟至物理帧末尾执行，确保首轮网络轮询中包含的角色选项（`player_options`，如颜色配置、禁用武器等）全部归档后再启动对局。
+  4. 端口复用延迟与超时回收：
+     - 端口复用安全间隔设定为 `ROYALE_PORT_REUSE_DELAY = 360s`（与断线宽限期错开，防止旧端口重连冲突）。
+     - 超龄回收机制：`_sweep_stale_rooms` 覆盖大乱斗房间，在局房间配置 `SWEEP_INTERVAL + RoyaleHost.MATCH_TIME` 宽限时间，空房间未开局按 `MAX_ROOM_AGE` 清理。
+- **服务端权威规则 (`server/royale_host.gd`: `RoyaleHost extends MatchHost`)**：
+  - 构造时序规范：必须先执行 `plan_spawns` 完成出生点预计算，再调用 `super._init`。父类在 `_init` 中会调用 `_spawn_cell(role)`，若时序颠倒将导致坐标初始化异常。
+  - 死斗规则体系：限时 300 秒（`MATCH_TIME`），击杀数最高者胜（并列第 1 时为平局，胜者返回 0）；死亡后 2 秒动态复活。
+  - 出生点与复活点选点算法：
+    - 开局出生点：两两环面距离保持 ≥ `SPAWN_CLEARANCE = 15` 格。
+    - 动态复活点：基于 `SpawnPicker.respawn_pools()` 三级动态候选池（开阔候选池、降级备用池、极限连通池），要求连通区域大于自适应门槛 `SpawnPicker.area_threshold()`（根据地图最大连通块动态缩放，防止出生在封闭空间），且与所有存活对手保持避让半径（`RESPAWN_CLEARANCE = 8` 格）。
+  - 击杀归因机制：子弹命中记录 `last_damager` 与时间戳（有效窗口 3 秒，`ATTRIB_WINDOW_MS`）。玩家倒地瞬间触发 `_attributed_killer` 计分，环境死亡（坠落、溺水）不计分，K 键自毁清空归因且无人得分。
+  - 会话同步：`round_state` 全局广播包含积分榜、死亡数、玩家名称、存活状态与比赛倒计时。
+- **客户端架构 (`scenes/royale_game.gd`)**：
+  - 场景构成：包含基础对局环境（`pvp_mode`）、后处理效果、动态实例化的远端玩家副本（`PlayerReplica`）、大乱斗专用 HUD（`RoyaleHud`）与小地图。
+  - 客户端预测：本地玩家完全接入 C2 权威预测与 `PredictionRollback` 回滚系统，与 1v1 预测模型保持一致。
+  - 主动拉取同步（Pull 模式）：客户端场景加载就绪（`_ready`）末尾主动发起 `NetBus.rpc_id(1, "match_sync")` 拉取对局配置，服务端统一回复 `match_sync_data`（包含玩家名册、色相表、选项与出生点），消除切场景阶段推式同步产生的异步竞态丢失。
 
-A 册 = **服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game`/`TeamHud`,见本节后半)。启动契约见 `server_main.gd` 文件头:`--worker --team --port P --roles r,… --teams t,…` —— `roles` 与 `teams` **同序等长**(第 i 个 role 的队号 = `teams[i]`),**满员才开、不降级**(与 `--royale` 方向相反:那边人少可打,这边两队人数必须相等);解析到 `--royale --team` 同时为真直接拒启动。队伍表经 **`match_sync` 的 `teams`**(`TeamHost.team_map()` 的只读副本)下发,**只在非空时带该键**、**不进 `round_state`**(开局载荷只留一条投递路径;消费在 B 册)。
+#### 已知边界与架构风险
 
-- **队伍表来自 `--teams`,不得从 role 号推导**:`MatchState._team_of` 就是那张表。role 由大厅「最小空闲号」分配、有人退出后会留空洞,奇偶/区间推导必然出错 —— 与当年 `--roles` 那条协议同一个教训。同理,3v3 的「满员」判据取 `_team_of_role.size()`(去重后的队伍表,与 `TeamHost` 出生点表出键的那个集合同源),**不是** `_role_set.size()`(`--roles` 的逐 token 列表可以带重复项,拿它当分母会永远到不了满员 → 干等超时退出)。
-- **`same_team()` 的 0 语义:任一方 0 → false**。0 = 「查不到队伍」(表外 role / 1v1 / 大乱斗),`same_team(0, 0)` 同样必须是 false —— 否则 1v1 的两人会被判成队友、**子弹全部穿过对手**。
-- **子弹穿透队友、爆炸对队友满效** —— 后者是**现状行为**:爆炸走 `scenes/weapons/bullet_base.gd` 的 `_explode()` 里 `apply_damage` 门 → `Explosion.apply_aoe(...)`,玩家分支**不看任何队伍关系**(故队友满效),**`same_team` 不在那条路径上**。★ 别把那文件里的 `_check_player_contact` 当队伍判断读:它只排除射手、**不看队伍**(唯一的职责是给榴弹起短引信),照它读会得出"爆炸已经判过队"的相反结论。在**子弹/爆炸这条路径上**,`same_team` 的调用在 **`server/match_combat.gd`** 的 `_adjudicate_bullets` / `_adjudicate_grenade`(榴弹直击)两处 —— **改一处忘一处时普通弹那条照样绿**,守卫是 `tests/team_table_probe.tscn` 的 ③/④。★ 全仓另有若干处 `same_team` 调用(`team_host.gd` 的 `_respawn_cell_for`(复活点不必躲队友)/ `_on_player_hit`(队友伤害不记 dmg)/ `_record_down`(队友误炸不计 kills))—— ★ **本条刻意不写"共 N 处"**:原文那个数(4)**漂过**(其中 `_reset_killer_only` 那处已随「击杀者复位」规则一起删除,见下条;而新增的两个读端从未回填),**以 grep 为准**。
-- **★★ 3v3 击杀后**不复位任何人**(2026-09-21 用户要求删除「击杀者复位」)**。原行为:击杀后**只把击杀者本人**送回本方出生点(保留血量/不治疗,队友不动;三条不复位档 = 无归因 / 队友误炸 / 同归于尽),实现是 `TeamHost._reset_killer_only` —— **该函数已随本次改动整体删除**(它当时只有一个调用点,`_match_round_tick` 的倒地边沿),调用点与函数都不在了。用户原话「把敌人杀死后还是会被传送」。★ **代价照实记录,不粉饰**:那条规则是**为反「反复活点蹲守」而立**的 —— 有它时击杀者会被立刻送回本方出生点,于是没法杵在对手复活点旁边连杀。删除后 3v3 **不再有**这条性质:击杀者可以守在对手出生点,等对面 2s 后落下来再补一轮。★ **将来若想找回这条性质,不要原地重建它**(把击杀者瞬移走会再次触发本条的抱怨)—— 正确形状是"**复活点选点避开存活敌人**",而那一半已经在了:`TeamHost._respawn_cell_for` 的 `RESPAWN_CLEARANCE`(8 格)。★ **只动 3v3**:1v1 的 `MatchRound._reset_survivor`(`match_round.gd`,「活方回出生点」)与大乱斗**都原样保留** —— `TeamHost._match_round_tick` 是整体覆写、不走 `super`,两条路径本来就不相干。守卫:`tests/team_host_probe.tscn` ⑤(**已整体反转为"击杀者原地不动"**,含血量/残弹/背包/速度"完全不受影响";变异:把 `_reset_killer_only` 调用加回去 → 该段红、判据变 `TEAM HOST: FAIL`)。
-- **掉线判据是「整队走光才终局」**(不是 royale 那条 `players.size() < 2`):`TeamHost.mark_disconnected` 覆写判「每队还剩几个**在场上**的人」,且**走光即弃权**(胜者 = 存活的对方队,两队都走光 = 平局 0 —— 那条优先于 `_match_winner` 的"局胜高者、并列偏 1 队"兜底,否则走光那队会被报成胜者)。★ `server_main._expire_graces` 有**两处**判据都必须把 `_team_mode` 收进去:①宽限到点的分派走纯函数 `GraceWindow.expire_action(_royale, _team_mode)`(**必须有 `== ACTION_REMOVE` 的比较**,退回手写 `if _royale:` 优先级会让 3v3 第一个宽限到期的人带着整局退进程);②末尾「全员走光才退出」的 `(_royale or _team_mode) and _match_started and …`(漏了 = 3v3 全员走光后 worker 永驻占端口)。两处只改一处都是"能用但漏一半"。
-- **队友不互挡(规则 12)走分队碰撞层**:1 队 `layer=2` / `mask=1|4|16`,2 队 `layer=16` / `mask=1|2|4`(`TeamHost._apply_team_layers`)。两队掩码都必须**保留**地形(1)与敌人(4)—— 用整体覆盖式实现抹掉玩家位时会连它们一起丢,该队**穿墙**(静默,玩到才发现)。★ 队号在 `_apply_team_layers` 里**先拦后分**:`if t != 1 and t != 2: push_error(...)` + `continue`,再 `match t:` 只列 1/2 —— 写成 `if t == 1 … else …` 会把"队号 0/表外 role"静默划进 2 队的身体层 = **非对称碰撞**(与 1 队互挡、与 2 队互穿)且不报错。客户端那一半归 B 册。
-- **3v3 有 K 键自杀(与 royale 同语义)**:`TeamHost.request_suicide_role` 照 `RoyaleHost` 那份逐字同构(非 PLAYING 早退 → 清 `last_damager`/`last_damager_time` meta → `combat.force_down()`),落「无归因」档 —— 倒地 → **对方队 +1**、**无人被复位**。★ 闸在 `server_main._on_suicide_request` 的首行,必须是 `if not (_royale or _team_mode) or _host == null: return` —— 这是设计 §4.5「三态化清单」**漏掉的第五处**(清单只列了四处),只认 `_royale` 时 3v3 worker 把 `suicide_request` **静默丢掉**(K 键毫无反应、一个字都不打),而卡死的玩家在三局两胜里只能干等。★ `request_suicide_role` 在 `kh_l5_probe.gd` 的**禁入基类**名单上 → 覆写必须留在 `TeamHost`(子类)。守卫:`team_host_probe` ⑫(真起一个 `server_main` 实例调那条闸;变异:闸改回 `not _royale` → 红)+ ⑫b(复活清归因 meta 与 `RoyaleHost._respawn_player` 对等)。
+1. **快照广播体积随人数线性增长**：大乱斗快照每物理帧包含全员的权威整态数据（`capture_state()`），在高人数（如 8 人）与 60Hz 不可靠广播下对上行带宽要求较高，需在局域网或低延迟高带宽网络下运行。
+2. **输入队列积压与消费时序**：每个物理帧按单包速率消费输入队列。若网络抖动导致接收速率短时激增，`_pending_input` 队列可能产生暂态积压，表现为输入延迟上升。
 
-**B 册 = 大厅选边 + 客户端**:`scenes/team_lobby.gd`(建房 / 公开列表 / **选边等待室**)→ `scenes/team_game.gd`(5 个远端副本 + 队色 + 分队碰撞的**客户端一半**)+ `ui/team_hud.gd`(记分条按**队号**,不是 role)。以下每条都是"改错了不报错"的那一类。
+### 测试体系与测试套件规范
 
-- **三套大厅协议并存且互斥(1v1 `rooms` / 大乱斗 `royale_rooms` / 3v3 `team_rooms`),互斥判定必须双向**:六个建/加入入口(`create_room`/`join_room`/`royale_create`/`royale_join`/`team_create`/`team_join`)每一个都要判另外**两种** —— 新入口查旧的、旧入口也查新的。★ 只加一头就是"从 1v1 房直接开 3v3 房":同一个客户端同时挂两张表 → 收到**双重 `go_match`**(互相覆盖),而旧房无人认领 = **幽灵房**(端口从此无人归还)。★ 最容易漏的是 **join 那半边**(create 加了、join 没加),所以守卫按入口逐个点:`tests/team_room_smoke` ④ 是**双向**的(房内命中 + **房外不得命中** —— 恒 true 会让**所有**玩家建 1v1/大乱斗房都被拒,恒 false 则互斥形同虚设)。
-- **对局中的 3v3 房活到「worker 进程退出」**(不再在"客户端转连 worker"那一刻被拆):列表里**照旧可见**、`team_join` **一律拒**(文案「该房间的对局已进行中,无法加入」)、名单取**开局那一刻冻结的 `roster`**。★ **这条纪律三个模式共用一份** —— 完整口径(回收梯 / `worker_pid` / `in_match` 键 / 两个「假绿」陷阱)见 §网络与 PvP 的「**对局中的房**」小节,别只照本节读。★ 「线上投递的 `in_match` 行 + 真的拒绝」那一半**本册不覆盖**,归后继回局计划的 `tests/rejoin_probe.tscn` 相 c3。
-- **`teardown_room` 是三态(原先是 `is_royale` 二分)**:房型判定走 **`room is RoyaleRoom` / `room is TeamRoom`**,端口归还分三档 —— 1v1=`WORKER_PORT_REUSE_DELAY`(**120s**)、大乱斗=`ROYALE_PORT_REUSE_DELAY`(**360s**)、3v3=`TEAM_PORT_REUSE_DELAY`(**360s**;三局两胜 × 9 杀比一局 1v1 长得多,与大乱斗同档),注册表 `erase` 按同一个 `is` 判定。★★ **判据必须是 `is`,不能拿 `room.code` 去三张表里撞库** —— 三张表的房号空间**重叠**(都是 `_generate_code()` 的 4 位号),按号码反查是"同一个号在三张表里各有一份"的**静默错拆**(拆了别的那间,端口也跟着还错)。★ 别把 3v3 并回 120s:那条线是"**短于或等于**断线宽限期 ⇒ 重连的客户端连到**别的局**"的老坑(1v1 从 30s 提到 120s 的教训)。守卫:`tests/room_sweep_smoke` 钉「端口归还与注册表删除**只能出现在 `teardown_room` 与 `_release_port_later` 两个函数体内**」(`_check_teardown_funnel` 的白名单就这两条 —— 别写成"只有 `teardown_room`":后者是延迟归还的实现本身,体内那行 `launcher.release_now(port)` 是合法的)。
-- **队色覆盖个人色相是 3v3 的规则,不是审美**:`team_game._apply_peer_hues_or_team` **覆写基类那个钩子**、只消费载荷里的 `teams` —— `hues` 在 3v3 是**无效输入**,`_apply_peer_hues` **根本不会被调用**;身体 / 头顶 ID / 小地图点位三处的颜色一律问 `_team_color(role)`(单一来源)。★ 改这一条前先想"六个人认不出队友" —— 与 1v1「双方都用默认色相时两个身体同为蓝」(用户 2026-09-19 裁定;2026-09-20 起 1v1 的 P2 与队 2 **同 token 同机制** —— `UiFactory.C_TEAM_B`)是**同一条硬需求**。★ 个人色相在 3v3 **整体停用**(2026-09-21 用户裁定「3v3 青队玩家还是看见自己是蓝色的」):**自己那具也走队色**,与副本逐字同一条路(`_refresh_team_colors` 的第三参传 `_team_color(PvpSession.role)`;`team_game.gd` 对 `Settings.pvp_color_hue` 零引用)。★ 形状是**覆写钩子**(根本不进 `_apply_peer_hues`),不是"染完再盖";★ **守卫缺口已补一半**(2026-09-21):`hue_tint_probe` 守卫 C 只管 1v1/大乱斗两侧,3v3 那一段原先**一个探针都不会红** —— 现由**守卫 E** 覆盖:① 走生产的 `_refresh_team_colors()` 看像素("自己 == 队 2 token");② `team_game.gd` 零引用 `pvp_color_hue`;③ 覆写的钩子必须消费 `teams` 且不调 `_apply_peer_hues`。★★ **登记给 UI 重做那份**(评审 Task 6-⑤ —— 本条此前**零登记**,`SELF_COLOR` 在整个 `CLAUDE.md` 里 grep 不到,故在这里立一个锚点):★ 上句"身体 / 头顶 ID / 小地图点位**一律**问 `_team_color(role)`"说的是**看别人**;**"自己"这三处的口径其实互不一致** —— ① **头顶 ID** 按**队色**(`team_game._refresh_names()` 对**包括自己在内**的每个 role 都调 `_team_color(role)`);② **身体**按**队色**(2026-09-21 起**包括自己那具** —— 此前是自选色相,即用户报的"青队看见自己是蓝的");③ **小地图上自己那个点**恒用 `ui/minimap.gd` 的 `SELF_COLOR := Color(0.6, 0.95, 1.0)`(`#99F2FF`,固定值,**既不随队也不随色相**;而队色是 `C_TEAM_A #639BFF` / `C_TEAM_B #80F4FF` —— 三者同属蓝-青系 ⇒ **自己那个点在颜色上不带队伍信息**,唯一身份线索是"恒在圆心")。三处指的是同一个"我"。★ 这是**可读性缺口不是审美**;改法(以及要不要让队色统一管"自己")**归 UI 重做那份定稿**,动它之前先看这两个 grep 锚点:`SELF_COLOR`、`_minimap_colors`。
-- **3v3 满 6 人才开、没有降级开局**(用户裁定):`server_main._process` 的 3v3 超时梯是 `_understaffed_wait > 30s` → 打印 `worker: 3v3 报到超时(%d/%d),退出释放端口` → `quit(0)`。★ 这与 `--royale` 那条「已到 ≥2 人、20s 仍收不齐 → 按已到人数开局」**方向相反**,别顺手统一:大乱斗是自由混战(N 人可打),这边**两队人数必须相等**才成立。★ 满员判据是 `_claims.size() >= _team_of_role.size()`(与上面 A 册那条"判据取 `_team_of_role`、不取 `_role_set`"同源),大厅侧的"两队各 3 人"闸门在 `LobbyRooms.team_ready` / `team_room_ready`(`team_start` 只调后者,判据只有一份)。
-- **★ 队友不互挡的**分队碰撞层契约**(设计 §4.7,服务端 `TeamHost._apply_team_layers` + 客户端 `team_game._apply_team_collision` 两半,逐值对齐)**:队 B 的身体层 = **`TeamHost.TEAM_ENEMY_LAYER` := 16**(层位 5,`16` 这个字面量**不许写死** —— 层位是全局资源,将来可能挪);1 队 `layer=2` / `mask=1|4|16(=21)`,2 队 `layer=16` / `mask=1|2|4(=7)`;**副本幽灵体 `mask` 恒 0、`layer` 按"它代表的那名玩家"的队**(`team_game._ghost_layer_of`)。三条"改错不报错"的后果:① **整体覆盖式实现**(`mask = TEAM_ENEMY_LAYER`)会**连地形(1)与敌人(4)一起抹掉** ⇒ 该队**穿墙**(而且不再被敌人挡住;静默,要玩到才发现 —— `team_host_probe` ⑩ 里"位对了"那五条**对它全绿**,所以另有一条专钉"两队掩码都保留 1|4"的断言);② 写成 `if t == 1 … else …` 会把"队号 0 / 表外 role"静默划进 **2 队** = **非对称碰撞**(该人与 1 队互挡、与 2 队互穿)且不报错 —— 故服务端**先拦后分**(`if t != 1 and t != 2: push_error + continue`)再 `match`,客户端 `_ghost_layer_of` 则**不写特例**(队号 0 走 else = 层 16,与 brief 逐字一致);③ **客户端漏设** ⇒ **队友副本挡我** ⇒ C2 每帧回滚(与"幽灵碰撞体缺失"同款,不是崩溃那种显眼法)。★ 客户端还有一处**必须补第二次**的地方:副本是**懒建**的(`_ensure_replica`,按快照里出现的 role 建),而队伍表/染色的那次刷新发生在 `_apply_teams` —— 那一刻 `_replicas` **可能一个都还没有、也可能只建了一部分**;不在 `_ensure_replica` 里再刷一遍的话,晚建的副本会停在**无人色(默认蓝)+ 幽灵体恒在层 2**(= 队友也挡我),**两处都不报错**。★ 判据:服务端 `team_host_probe` ⑩(位断言 + 那条"整体覆盖式实现五条全绿"的补充断言 + `test_move` 的**真行为**对照),客户端 `team_room_smoke` ⑨②(源码级,按**函数体**判而不是全文件 `contains` —— 全文件断言下"把 1 队那支换成 `| 2`、或把队 B 的层写死成 16"照样全绿)。
-- **★ 平局播报:`match_winner == 0` 在 3v3 有一条**新的成因**** —— `TeamHost.mark_disconnected` 判"两队都走光"时写 `_endgame_winner = 0`(走光即弃权、双方都没了 = 平局)。大乱斗那边 0 也有(`RoyaleHost._match_winner` 的比分并列分支),但 **1v1 那边 0 不可达**:基类 `MatchRound._match_winner` 返回的是 **role 号**(`players` 非空则必为 1 或 2)。`ui/team_hud.gd` 对 0 念「平 局」(与 royale 同口径)。★★ **`ui/pvp_hud.gd` 对 0 用的是 1v1 兜底**(`"P%d 获胜!" % (1 if w1 > w2 else 2)`)—— 那个分支在 1v1 里**从不执行**,照抄到 3v3 就会把平局念成「**P2 获胜**」。这条留给"以后加 HUD 的人":`team_hud.tscn` 的版式/`Plate` 是 `pvp_hud.tscn` 的复制,但**这段语义不能一起抄**。
-- **★ 输赢文案由 `set_my_team()` 驱动**:`team_game._apply_teams` 在队伍表到达后**必须**调 `_hud.set_my_team(_team_of_role(PvpSession.role))`。漏了**不报错**:`_my_team` 恒 0 ⇒ `mwinner == _my_team and _my_team != 0` 恒假 ⇒ 「本局胜利!」/「胜利!」两条文案**一次都不会出现**,一律落进 else 念「本局落败」/「失败」—— **赢的局报成输的**。(★ 平局那一支**不受影响**,它走 `else`:`_my_team` 取什么值都念「平 局」—— 别把这条契约写成"平局分支不可达"。)队号**只能**从队伍表读,不是 role。守卫:`hud_declarative_probe` ③(行为面:喂 `{winner: 我的队号}` 断言念「本局胜利!」+ 不写入时的反向对照)+ `team_room_smoke` ⑨①(接线面:`_apply_teams` 到底调没调、入参是不是 `_team_of_role(PvpSession.role)`)—— **两半缺一不可**:只钉 HUD 那一半,`team_game` 永不调用照样全绿。
-- **★ 队色的机制是 `modulate = 队色 / 本体主色`,不是"直接乘队色"**:`PvpMatchClient._apply_tint` 的第二条入参 `color_override` 非透明时走这条;**`BODY_BASE_COLOR` = `player.png` 的不透明众数色 `#639BFF`**(占 12987 个不透明像素里的 10875,即 83.6%;复测办法 = 按 `alpha > 200` 过滤全图像素取众数 RGB)。★ 为什么不用另外两条路(**brief 给的两条都实测不成立**):直接乘 `modulate` 是**乘**,只能把身体压暗、改不了色相 —— 蓝身体 `#639BFF` 乘上那版队色(橙)实测是 `#636073` **一坨灰紫**(`.superpowers/sdd/_t6_tint2.png` 第②列),"一眼看出谁是队友"当场落空;hue shader 反解要**先知道队色的色相、再反推该转多少度**,而"输出 == 队色这个 token"只是数值逼近。比值法则**结构性**成立:输出 = 主色像素 × (目标色/主色) = **恰好目标色本身**(实测逐字节相等)。★ 2026-09-20 起 **1v1 的 P2 也走这条**(`pvp_game._apply_p2_tint` 传的**就是队 2 那个 token** ⇒ "1v1 的 P2 与 3v3 队 2 同色"从"两套算法凑出近色"变成**结构性**成立;它此前走 hue shader,换掉是因为 hue 旋转**保持饱和度/亮度不变**、表达不了用户新选的 S50 青)。★ 队 2 的比值有分量 > 1(g = 244/155 ≈ 1.574)—— 这是**有意的**,`CanvasItem.modulate` 收 >1 的值,`rendering/mobile` 下原样生效;队 1 的比值恰为 (1,1,1)(`C_TEAM_A` **就是** `BODY_BASE_COLOR`)⇒ 队 1 的身体就是默认蓝。★ **换 sprite 素材要重测 `BODY_BASE_COLOR`**:它错了不报错,只是**整队一起偏色** —— 而六个人一起偏仍然分得出谁是谁,**更容易漏**。守卫:`hue_tint_probe` 守卫 D(真渲染:钉 `player.png 众数 == BODY_BASE_COLOR == C_TEAM_A`)+ `team_room_smoke` ⑩(headless 半边:同一个众数断言,用 `FileAccess` + `load_png_from_buffer` 读原始 PNG,不依赖渲染)。
-- **★ `player_p2_hue.gdshader` 的 `COLOR` 入参**已含**纹理** —— 这是**已修**的坑,别再当"待修的既有 bug"读:Godot 4 的 `canvas_item` fragment 里 `COLOR` = 顶点色(modulate)× 纹理采样,而旧实现写的 `COLOR = tex * COLOR` 是把纹理乘了**两次**(输出 = rotate(tex) × tex × modulate),逐通道乘积把颜色压灰(蓝 → 青会被拉回暗蓝)、alpha 也被平方。★ **2026-09-19 已修**(`a887016`,与"1v1 个人色相整体停用"同批):现在只覆写 `COLOR.rgb`,`COLOR.a` **一字不动**;修完大乱斗/3v3 的**个人色相**跟着变了色(队色那条链**不受影响** —— 它走 `modulate` 比值,与 shader 无关;1v1 的 P2 当时还走本 shader,2026-09-20 起也改走 ratio 那条、与队 2 同 token)。★ 本 shader 2026-09-20 起**只服务个人色相**(大乱斗对手色 / 大乱斗+3v3 自己的自选色),它的 uniform 默认值也从 `-43.0`(当年 P2 的角度)改成 `0.0`(不改色)。★ 守卫是 `hue_tint_probe` 守卫 A(**逐像素**:`hue_shift = 0` 必须与"不挂 shader"完全相同 —— 退回 `tex * COLOR` 或 Godot 改了 `COLOR` 语义,两条路都会红)。⚠ 早期的计划/评审清单里曾把它登记成"**刻意没修**"的独立事项 —— 那是**过期信息**,照那条写会得出"shader 现在还是错的"的相反结论。
-- **★ 换边后客户端也走"补态口径"**:3v3 每局**整队对调出生点**(`TeamHost._start_next_round` 互换 `_round_spawns`/`_swap_spawns` 并清 `_spawned_once`),客户端在**新一轮 COUNTDOWN** 那一拍(与"清本地子弹 + `reset_destructibles()`"同一处)重拉一次 `match_sync`,并**先置 `_resync_pull_pending = true` 再发**。★ 不置位的话:那条应答按**进场口径**处理 → 换边后载荷里的 `spawns` 是**新一侧**、而 `PvpSession.spawn` 手里是旧一侧,**两者必然不一致** ⇒ 每局边界刷一条**假告警** + 一次多余瞬移(位置本来就归 C2 权威)。★ 闸门与"重连补态"**共用**同一个 `_resync_pull_pending`(读一次即清),**不要新立一个标志** —— 问的是同一个问题。★ 为什么不把第二份出生点塞进 `round_state`:那是给同一份数据开**第二条投递路径**(自检 B2 那类事故的形状);`server_main._on_match_sync` 里有一段注释专门钉着"这里**不补发**"。
-- **★ `TeamHost._on_bullet_hit` 的补齐是"行为从无到有",不是回归**:覆写里先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`(与 `RoyaleHost` 那份逐字同构;基类对玩家直击**不写归因**)。接上之前,**枪杀**这条路上 `_attributed_killer` 恒 0 ⇒ ① 逐人 `dmg` 漏掉最主要的伤害来源、ACS 直接失真;② `kill_event` 的射手恒 0(逐人 `kills` 也全漏)。★ 这里**原先还有第 ③ 条**「A 册'只复位击杀者'在枪杀上一直没生效」与紧随其后那句"后人若看到'枪杀现在会复位击杀者了'这类探针读数变化,**那是补齐,不是回归**" —— 那条规则已按用户要求删除(2026-09-21,见上条),这两句一并作废:**别再照旧读**。①② 两条与它无关、照旧成立。
-- **★ 逐人数据 / ACS / MVP(B 册 Task 10)的两条已知口径边界**(登记,不改行为):① **`_left_round` 记的是"宽限期到点"的局号,不是"断线"的局号** —— `mark_disconnected` 只在宽限期(30s)到期时被调,这 30s 若跨了一次换局,离开者的分母就**多算一局** ⇒ 他的 ACS 被**压低**,与"已离开者分母更小 ⇒ 更容易胜出"(用户裁定的取向)恰好**相反**;探针 ⑬h 覆盖的是**意图口径**,照不到这条边界,别当它已覆盖。② **MATCH_OVER 之后的倒地仍进 `_stats`** —— 倒下边沿的检测在 `_match_round_tick` 的 `match _round_state:` **之前**、且不看状态(这是 A 册 `_scores` 的**同款既有时序**,不是本批引入):收场后残留的爆炸致死会再 `deaths + 1`,并可能**再广播一次带新 `mvp` 的终局载荷**。
-- **★★ `round_state` 的 `stats` / `mvp` 两个键**今天没有任何消费者** —— 这是**用户裁定的例外**,不是漏接线**(2026-09-20 记录):`TeamHost._broadcast_round_state` 里 `data["stats"] = stats_payload()`(=`{role: {kills, deaths, dmg, kscore, acs}}`,**只在非空时带该键**,与 `destroyed` / `ground_weapons` 同款纪律)与 `data["mvp"] = mvp_role()`(**只在 `MATCH_OVER` 带**,与 `match_winner` 同款时机)。全仓唯一的读者是 `tests/team_host_probe.gd` ⑬g 的**文本级**断言(那两条只验"键确实在载荷里"),客户端一行都没消费 —— 预定的消费者是**赛后结算面板**,而设计 §11(「给第二份规划 = 联机 UI 重排的契约交付」)把面板与版式整体留给那一份,故本册只做数据面。★ 为什么这条必须显式记下:**设计 §6 末尾有一段删掉顶层 `deaths` 键的更正**,理由正是"协议字段要**随消费者一起加**,不留没有读者的键";本册却**先加了两个**。两者并存时,只读到 §6 的人会把这条规则读成"`stats` / `mvp` 本就不该存在" → 顺手删掉,把结算面板要用的数据面拆了(而 `acs` 是服务端算好的,客户端不必重算 `kill_bonus_score`,删了就再也拿不回那份口径)。**裁定:两个键保留**,做面板时是现成接点 —— 要动它们先回来看这一条,别只读 §6。
-- **★ `ATTRIB_FRESH_MS = 8ms` 的成立前提是"归因与伤害在**同一调用栈**"**:将来新增**延迟扣血**型伤害(如激光缝 2 预留的持续/灼烧)时,**写端必须自己每帧重写归因** —— 那种实现是"命中时写一次、后续帧扣血",扣血那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者",逐人 `dmg` 恒少且不报错(没有断言、没有日志,只是 ACS 偏低)。该提示写在 `team_host.gd` 的 `ATTRIB_FRESH_MS` 上方。
-
-#### 结算页(2026-09-21:三个模式的 MATCH_OVER 都从「等 N 秒自动回菜单」改成「弹结算页 + 玩家自己退」)
-
-统一前:MATCH_OVER → 等 N 秒(1v1 5s;大乱斗/3v3 各一条 6s 定时器)→ 自动回主菜单。现在:**MATCH_OVER → 弹结算页 → 玩家点「返 回 主 菜 单」或按 ESC 才走**。三个模式**同一套**,没有"哪个模式还是旧的"这回事。
-
-- **结算页是模式无关的**:`ui/match_result.gd`(`class_name MatchResult`,extends CanvasLayer)**不知道任何模式规则** —— 不读 NetBus / Settings、不 import 任何 `*Host`;**模式差异全部由 `ui/match_result_payload.gd` 的三个适配器**(`for_duel` / `for_royale` / `for_team`)折成一个载荷字典。★ `columns` **由数据决定**(某模式没有的统计**不进** columns,而不是补一列恒 0 —— 恒 0 读起来像"这人打了但什么都没干",而事实是他根本没这项统计);`match_winner == 0` 是**平局**(1v1 那条**别照抄** `ui/pvp_hud.gd` 的 `"P%d 获胜!"` 兜底,那会把平局念成「P1 获胜」)。
-- **`leave_requested` 只发一次**(`ui/match_result.gd` 的 `_leaving` 防重入),下游仍走 **`Level0.safe_change_scene`** —— 游戏世界含全量碰撞,裸 `change_scene_to_file` 会同步析构 → 偶发原生段错误。
-- ★★ **ESC 的双重语义依赖「MATCH_OVER 时销毁暂停菜单」**:对局中 ESC = 暂停菜单,结算页上 ESC = 返回主菜单。三个客户端的 MATCH_OVER 块都 `_pause_menu.queue_free()`;**谁把这两行删掉,ESC 就会在结算页上同时触发两件事**(弹菜单 + 回主菜单)。`ui/match_result.gd` 类头把这条依赖写成了硬约束。
-- **`ui/match_result.tscn` 层位 = 150**(三个 HUD 130、小地图 131、暂停菜单 145)。★ 层位**只住在 `.tscn` 里** ⇒ 结算页**只能从场景实例化**,绝不 `MatchResult.new()`(那是 CanvasLayer 默认的 **layer 1**,画在 HUD/小地图**底下**、压暗罩也盖不住它们)。守卫:`tests/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,出现 `MatchResult.new(` 即红。
-- ★★ **挂载/离场收在基类 `PvpMatchClient`**(`_show_result` / `_leave_to_main_menu`),三个客户端(`pvp_game` / `royale_game` / `team_game`)**只各覆写 `_build_result_payload()`** —— 它们本就都 `extends PvpMatchClient`,不存在"抽基类要动继承链"这件事。**加新模式的结算 = 写一个覆写**,别在子类里再抄一份挂载。★ `_show_result` 的形状是"**挂载一次、但每次都要刷新**"(`if _result == null` 只包住"建 + 连线"):写成 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**",第二条 MATCH_OVER 载荷就永远到不了屏幕上 —— 而 `MatchResult.show_result` 的清场重建在生产里**一次都不会跑**,探针却直接调它、照绿(**探针比产品更绿**,这里最难发现的形状)。★ 第二条载荷**可达**:1v1 每次 reclaim 成功后重播 `round_state`;3v3 的 `_finish_match()` 在战斗进行中直接 PLAYING→MATCH_OVER(所以 `team_game` 那一支**刻意没有** `and not _match_ended` 那道闸)。
-- **★ 三条接线有常驻守卫,别只改一处**:`tests/kh_l6_probe.gd` 第 9)(1v1)/ 9b)(大乱斗)钉「MATCH_OVER 块里调了 `_show_result()`」,第 **16)** 钉 `_build_result_payload()` 的**实参顺序**;3v3 的两条在 `tests/team_room_smoke` ⑨⑤。★★ 为什么"实参顺序"必须机械断言:`for_duel` / `for_royale` 的前两个实参**都是 Dictionary**、`for_team` 的前三个都是 ⇒ 把 `_names` 与 `_teams` 写反**照样编译、所有常驻测试照样绿**,只有榜渲染成**乱码 / 空表** —— 本批最安静的错法。★ 大乱斗那侧的常驻覆盖只有 kh_l6 一处:`royale_soak_probe` **验不到**它(该探针的客户端在 MATCH_OVER 当场就自己退了,走不到结算页那一段)。
-- ★★ **`scenes/royale_game.gd` 的 `and not _match_ended` 门是承重的,不是"跟别处不一致"**(2026-09-21 登记,**绝对不要"顺手对齐")**:`RoyaleHost._match_winner()` 迭代的是 `players ∪ _scores`,移除一个**没有 `_scores` 条目**(0 杀)的玩家会少一个并列候选 ⇒ **全场都是 0 杀**时 `match_winner` 会从 `0`(平局)**翻成**幸存的那个 role。今天这道门挡住了那次翻转;谁为了"和基类契约对齐"删掉它,大乱斗就会把该念「平 局」的场面念成「胜利! / 失败」。**要删先修 `_match_winner`。**
-- **登记(不改)**:`scenes/royale_game.gd` 有两处**不支撑任何断言**的陈旧注释,留着是"半年后让人白花一小时"那类 —— ① 那句「退出只走结算页这一条路(与 `pvp_client` / `team_game` 同款)」在 Task 6 之前对 `team_game` 是**前瞻**(那时它还走自己的定时器),现在三个模式都已成事实(该句本身无需改);② 紧接着是一条**孤儿注释**:它描述 `_refresh_input_lock`,而那个函数**根本不在本文件里**(在基类 `PvpMatchClient`),且结尾那句「pvp_client 的 MATCH_OVER 不锁」与基类注释**正好相反**(合并后 1v1 也带 `_match_ended`)。本批按计划**只登记不改**(它们不影响行为)。
-- **★ 已知的文档残留(2026-09-21 登记,未处理)**:§测试 那条"`grep ALL-OK` 只证明没失败、不证明跑过"的订正**只落在** `tests/lib/probe_base.gd` 文件头与本节引用的那句 CLAUDE.md 上;`tests/kh_l3_probe.gd`、`kh_l4_probe.gd`、`kh_l5_probe.gd`、`kh_l6_probe.gd`、`weapon_pickup_probe.gd`、`replica_ghost_probe.gd`、`brawl_rollback_probe.gd` 的文件头**仍写着旧说法**("中途报错就不会打印 ALL-OK"),与权威落点不一致。属既定欠账,另行清理。
-
-### 大乱斗(Royale,L5 层搬入)
-
-- **入口与场景**:主菜单「大乱斗」按钮(`main_menu.gd`)→ `scenes/royale_lobby.tscn`(`royale_lobby.gd`:公开/私密房、邀请码、人数与限时、禁用武器与角色色、房间列表自动拉取、「一键起本服」)。分支靠**从哪个场景进来**判定(`royale_lobby` → `royale_game`),没有静态标记——原先的 `PvpSession.royale` 已删(两处赋 true、全仓无读)。UI 一律走 `UiFactory`,字号 16 倍数。
-- **一局是怎么起来的(大厅 → worker 子进程 → `RoyaleHost`)**:
-  1. 大厅(`server/server_main.tscn` 无参 = 7777)的 `LobbyRooms`(`server/lobby_rooms.gd`)多出一张 **`RoyaleRoom` 注册表**,与 1v1 的 `rooms` 并存且互斥(两条 Start 路径互相拒斥)。建房/加入/状态广播经 `NetBusExt` 的 `royale_*` RPC。
-  2. 房主发 `royale_start`(或 `royale_start_ai`)→ `_spawn_royale_worker(port, roles, ai_roles)` 用 `OS.create_process` 拉起**独立 worker 子进程**,命令行 = `--headless [--path . res://server/server_main.tscn] -- --worker --royale --port P --roles 1,3 [--ai-roles r,r]`(**每个开关一个独立 argv 项**,`--roles`/`--ai-roles` 的值都是逗号串;editor/template_debug 下必须带 `--path`+场景,仅导出 exe 可省。与 `server_main.gd` `_ready` 里的 argv 解析**逐字对应**——`--roles`/`--ai-roles` 逐 token 取 1..8;两边改一处必须同步改另一处,`tests/room_sweep_smoke` 有反向断言钉住"旧协议标识符一个都不许复活")。进程隔离 = 各局内存隔离,共享全局 `current_grid`/`TileDefs` 不跨局互踩。
-     - **★ role 集合由大厅显式传(`--roles 1,3`),不从人数推导**(2026-09-12 换协议)。历史协议传「人数 N + role 上界 R」两个整数:两者量纲不同,且都得从人数**推**出来;而 role 由 `royale_join` 的「最小空闲号」分配且**有人退出后不重排** → 编号会留空洞(3 人房里中间那位退出 → 房里是 `{1,3}`,成员数 2 < 最高 role 3),推导必然出错。当时代价是拿人数当上界,把**手持 3 号的真客户端**当串线踢掉(自检 B1:只剩 1 个 claim → 超时梯走完 worker 退出 → 两名客户端卡在「连接对局服务器超时」)。即时修法是补了个 `_royale_role_bound`(取实际最高 role)兜住,但**那个特例函数的存在本身就是协议缺陷的症状** —— 现在把集合直接传过去,worker 侧判据就是「在集合内」,精确,且 `_royale_role_bound` 已整个删除。AI 补位号由 `_royale_free_roles` 取 `1..max_players` 内**人类未占用**的空闲号(不能按人数推 —— 空洞时会撞上仍在房里的高号真人),并入同一个集合下发。
-  3. worker 的 `--royale` 分支:`_on_role_claimed` 收齐 **`_human_role_count()`**(= `--roles` 集合 − AI 补位号)个人类 `claim_role` 即开局(其余角色由 AI 补位);`_process` 另有两条超时梯——**已到 ≥2 人但 20s 仍收不齐** → 按已到人数降级开局(缺席 role 不入局,`RoyaleHost.plan_spawns` 按实际键返回散点以容忍不连续 role);**可用玩家 <2 人**(开局前全掉线)→ **10s 宽限后退出释放端口**(否则 worker 僵死占端口、大厅回收后撞车新对局)。`_on_role_claimed` 另有**报到串线防护**:对局已开始/role **不在 `--roles` 集合内**/该 role 已被别的 peer 占用 → 直接 `disconnect_peer`(端口复用竞态下迟到的客户端会连到旧 worker,不能让它静默留在局里收快照)。`_begin_match` 是抽出来的函数,1v1 走 `MatchBootstrap.start_on`(`server/match_bootstrap.gd`)、大乱斗走 **`RoyaleHost.start_on`**。
-     - **开局经 `_defer_begin_match()` 延到帧末**:每个客户端都是「`claim_role` 紧接 `player_options`」两条包(同一次 poll 到达),而收齐判据由**最后一个** claim 满足 → 同步开局会在同一次 poll 里抢先建局,那个客户端的 `player_options`(角色颜色)还没归档;它恰是 role1(2 人局常态)时整局规则项(禁武器)也拿不到。延到帧末 = 同一次 poll 的选项先全部归档再建局(重入由 `_begin_match` 自身的守卫兜住)。
-  4. 端口归还延迟:`ROYALE_PORT_REUSE_DELAY`=**360s**(1v1 的 `WORKER_PORT_REUSE_DELAY` 是 **120s** —— 原值 30s 既不够一局、又**等于(不晚于)断线宽限期**,沿用会让对局中途端口被发给新 worker → 串线/bind 冲突;改一处要改齐两处,见下「断线重连」);`royale_rooms` 已纳入 **`_sweep_stale_rooms`**(大乱斗 `worker_port` 只在开局时分配,归还路径 = `on_peer_left` 空房分支 + `royale_leave` 空房分支(「退出房间」按钮**不断开大厅 peer**,不会触发前者 → 原先这条路径直接把房摘掉,端口从此无人归还)+ sweep;在局中的大乱斗房另加 **`SWEEP_INTERVAL + RoyaleHost.MATCH_TIME`** 宽限(推导见 `_sweep_stale_rooms` 的 royale 分支注释;**已知边界**:宽限与端口延迟里的「一局」都取 `RoyaleHost.MATCH_TIME` 的**默认值** 300s,而 `royale_lobby.gd` 建房页的「一局限时」滑块会把 `Settings.royale_match_min`(钳在 1~30 分钟)经 `player_options` 的 `match_time` 送进 `RoyaleHost._cfg_match_time`,一局最长 1800s —— 于是**一个等了近 2h 才开局、又配了长时长的房**,其对局进行到 300s 之后的那次 tick 仍会判超龄并连 worker 一起杀掉(缺口最大约 1500s),端口延迟也同样短于一局。本次**不放宽**:触发它还需房龄近 2h(正常房建房后几分钟内就开局),而正确的界要读**本局实际时长**(该值只在 worker 的 `RoyaleHost` 里,sweep 手里没有),属另行评估。等待中的房不占端口,仍按裸 `MAX_ROOM_AGE` 清)。
-- **权威:`server/royale_host.gd`(`RoyaleHost extends MatchHost`)**——**覆写** `_init` / `_spawn_cell` / `_ready` / `_match_round_tick` / `_match_winner` / `_broadcast_round_state` / `_on_bullet_hit` / `_respawn_player`;**自有**(不在基类,不属「`match_host` 扩展点」)`set_display_names` / `mark_disconnected` / `request_suicide_role` / `_finish_match` / `_attributed_killer`。`MatchHost` 这一侧只**追加**了 `_broadcast_match_options` 与 `notify_direct_hit` 两个方法,外加 `_init` 签名(`options`/`ai_roles`)、`_ready` 应用禁用槽、`_on_bullet_hit` 追加 hit_confirm、`_round_full_heal`、`_respawn_player` 的 `equip(default_slot())` 五处就地改动——**C2 四条一行未动**(见下「已知风险」与 `tests/kh_l5_probe.gd` 第 1 条)。
-  - **`_init` 顺序不可"整理"**:必须先 `plan_spawns` 再 `super._init`——父类 `_init` 摆位会**虚调** `_spawn_cell(role)`,反了则首次摆位拿到 `(-1,-1)` 且被 `_spawned_once` 闩锁,全体挤到地图回卷角落。
-  - 规则:限时 **`MATCH_TIME`=300s** 死斗,击杀最多者胜(榜首并列返回 0 = 平局);死亡 **2s 复活**;**开局散点**两两环面距 ≥ `SPAWN_CLEARANCE`=15 格、**复活点**动态选「离所有存活敌人 ≥ `RESPAWN_CLEARANCE`=8 格」的开阔格;出生候选要求头顶 2 格净空 + 左右邻格空 + 同层连通区 ≥ **`SpawnPicker.area_threshold()`**(防出生在走不出去的密封小间,不足逐级回退)。★ **该门槛是自适应的**(2026-09-19):正常图 = `OPEN_AREA_MIN`=20,但本图**最大**连通区都 < 20 时按 `ADAPTIVE_RATIO`=0.5 缩到「最大连通区 × 0.5」—— 固定图 `factory1v1` 按 4 邻接算最大连通区只有 **13 格**,旧判据下前两档**恒空**、池子静默退化成**全部地板格**(843 格里 155 格是孤立单格区)⇒ 开局有人被关在小间里。★ 该判据**不含跳跃/梯子**(纯 4 邻接),是「纯步行可达」的下界近似。★ 池子 = `SpawnPicker.spawn_candidates()`,**大乱斗与 3v3 共用**。★ **复活/复位选格的池序列也只有一处来源** = `SpawnPicker.respawn_pools()` = **三档** `[spawn_candidates(), respawn_fallback(), respawn_last_resort()]`(第 ② 档 = 连通区 ≥ `area_threshold()`;第 ③ 档 = 连通区 ≥ 2,**只**排除孤立单格)。**每一档都不含孤立单格,且对**所有图**生效**(2026-09-19 用户裁定:"兜底档还是全部地板格"是明知在船上的 bug)。★ 第 ③ 档**不是保险起见**:只收到"≥ 门槛"会把兜底档窄一个量级(843→130),筛空即 `(-1,-1)` ⇒ 消费端照算 `spawn.x*ts` 把人摆到地图回卷角落(**比"在小间里复活"更糟**);实测 4036 布局 ×2 图,只收一档会新增 1 / 5 个这样的布局,加第 ③ 档后**新增为 0**(= 三档的 `(-1,-1)` 面与收窄前相同)。两处调用方(`RoyaleHost._spawn_cell` / `TeamHost._respawn_cell_for`)**必须读这一份**,别再自己拼 `[.., floor_cells()]`(两处各抄一遍正是这个病的成因,`spawn_pool_smoke` ⑥ 按函数体扫着)。中途掉线**先进宽限期**(见 §网络与 PvP「断线重连」——**身体不销毁**,宽限内可被 `reclaim_role` 认领回来),到点仍未回来才 `mark_disconnected` = 节点释放 + 排行榜标「离开」,剩余 <2 人即终局。
-  - **击杀归因**:`_on_bullet_hit` 覆写先 `CombatFeedback.attribute(victim, bullet.shooter)`(写 `last_damager` + `last_damager_time` meta)**再** `super`;倒地边沿 `_attributed_killer` 读 meta 计分,时效 `ATTRIB_WINDOW = CombatFeedback.ATTRIB_WINDOW_MS`(**3s**,用户 2026-09-11 裁定;原 KH 值 10000ms 已弃用)。无源死亡(溺水/坠落)不计分;自杀 `request_suicide_role` 先清 meta,不算任何人的击杀。★ 归因写端如今**只**服务这里:单机播报删除后,敌人分支不再写 `last_damager`(见 `core/sim/explosion.gd` 的说明),**玩家的** meta 仍是本节的唯一读者。
-  - `round_state` 载荷(大乱斗版)= `scores`/`deaths`/`names`/`alive`/`left`/`timer`/`match_winner`,昵称行覆盖真人 + 已离开者 + **AI 补位**。
-- **客户端:`scenes/royale_game.gd/tscn`**——Level0(`pvp_mode`)+ PostProcess + **N-1 个 `PlayerReplica`(按快照 roles 动态建)** + `RoyaleHud` + Minimap + 血条 + 拖尾。**本地玩家走与 1v1 **同一套** C2 客户端预测 + `PredictionRollback`**(2026-09-12 批次 5 接上;旧的 `server_rendered` 临时方案已整体删除)。与 1v1 的差别只有"对手是 N-1 个"与"服务器外部事件更多(2s 复活瞬移、每次击杀后活方复位)"——都靠 `reconcile()` 收敛。** 消费 `NetBus.local_*`(snapshot/bullet_spawn/**beam_fired**/hit_event/tile_destroyed/round_state/peer_info/kill_event)与 `NetBusExt.local_*`(match_options/peer_hues/hit_confirm)。
-  - **开局三载荷 = 进场拉取(2026-09-12 换,取代原「推 + 大厅缓存交接」)**:昵称表/角色色相/生效选项原先由 worker 在 `match_start` 同一批 flush 里**推**,而客户端那一刻正在帧末切场景(栈内切会段错误,不能改)→ 订阅方一个都不存在 → **静默丢失**(自检 B2:对手颜色不生效 / 昵称表空到连自己头顶 ID 都建不出 / 禁武器闸门没上)。当时的解法是大厅先接住、缓存进 `PvpSession.pending_*`、新场景取用。**现在改为对局场景 `_ready` 末尾主动 `NetBus.rpc_id(1,"match_sync")` 拉一次**,worker 的 `_on_match_sync` 按 role 回 `match_sync_data({names,hues,options,roles,spawns})`。好处:①方向反转,不再有"推给正在切场景的客户端"这个竞态类;②出生点随之下发,**两端同源**(§3G);③`PvpSession.pending_*` 与两个 `_consume_pending_payloads`、两个大厅的 `_cache_*` 全部删除 —— 只留一条投递路径,也就不存在"只改一条"。`MatchHost.role_spawns()` 提供只读取法,**`RoyaleHost` 必须覆写**(基类走 `_spawn_cell`,大乱斗那个第二次起返回动态复活点)。守卫:`tests/match_sync_probe.tscn`(含反向断言:那些交接标识符一个都不许复活)。
-  - **`--ai-roles` 首次实跑待用户验收**(`AINavigator` 用 `host.RoundState.PLAYING` 动态查表,未经真机跑过)。
-
-#### ★ 本层新引入的已知风险(实测观察,未压测)
-
-1. **快照体积随人数线性增长**:大乱斗快照每个玩家都带一份**权威整态 `c2`**(`capture_state()`)+ 散字段,60Hz `unreliable` 广播,N 人 = **N 份整态 × 60Hz**。8 人时的带宽/丢包表现(以及 unreliable 通道被撑爆后快照乱序/丢弃的次生影响)未实测。
-2. **输入队列积压(每 tick 恰好消费 1 包的下游代价)**:每个物理 tick 每 role **只消费一个** FIFO 输入包(C2 rollback 的锚点,不可改)。客户端 60Hz 上行 + 网络抖动时,**到达速度可能短时超过消费速度**,而 `_pending_input[role]` **无长度上限、无丢弃策略** → 理论上积压会表现为延迟单调增长(不丢包,只是越玩越滞后)。N 人(8 人 × 60Hz)时未压测;若真机出现"越玩越卡",这里是第一嫌疑点。
-
-### 测试
-**源码级探针的共享脚手架 = `tests/lib/`**(阶段 6.1):`scan_util.gd`(`class_name ScanUtil`,纯静态:读文件/走目录/剥注释视图/括号与实参切分/取函数体,**无 Node 依赖**)与 `probe_base.gd`(`class_name ProbeBase extends Node`:断言账本 `_failures` + `_check`/`_summary`/`_finish` + 一层转发到 ScanUtil 的扫描词汇)。`kh_l{1,3,4,5,6}_probe` 全部 `extends ProbeBase` 并覆写 `probe_id()`(如 "L5")—— 末行 `KH <id> PROBE: ALL-OK` 就是由它拼的。★ **加新源码级探针时别再从别处抄扫描函数**:`extends ProbeBase` 即可;这些函数此前在 6 个文件里各有一份手抄(第 6 处在 `tests/royale_c2_watcher.gd`,它只搬了那三个纯函数 —— 它的 `_finish(ok, msg)` 签名与 ProbeBase 不同,是观察者子进程的判成败协议,别硬并)。★ 另注意 `tests/lib/` **本身会被 kh_l4/kh_l5 的字号规范扫描覆盖**(它们的 `ALL_DIRS` 含 `res://tests`),故新加的 lib 源码里不许出现非 16 倍数的字号载体字面量。
-
-无单测框架。`tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑:`enemy_logic_smoke.gd` 为主(覆盖敌人 AI、环面数学、武器参数/命中、碰撞层、寻路/LOS、多弹丸),其余 seam_analyze/seam_screenshot/wrap_probe 是环面接缝诊断;`laser_weapon_smoke.gd` 验 LaserWeaponBase 三缝/默认直线几何/反射子类可解析/权威门控(源码)/上报 round-trip/跨接缝粘副本公式;`weapon_inventory_smoke.gd`(容量两条闸门/紧凑排布/允许重复/按 inst 记残弹)、`ground_weapon_field_smoke.gd`(环面最近拾取/并列确定性)、`sprite_bounds_smoke.gd`(像素包围盒三态)是 2026-09-15 武器槽位那批的纯逻辑冒烟。场景探针 `weapon_pickup_probe.tscn` 钉地面武器的碰撞层归属/像素碰撞箱/视觉缩放/落点与起始时刻无关/背包拾取替换往返/视觉两条配置路径;`level0_weapon_scatter_probe.tscn` 钉单机开局 12 件、每种 2 把、**每件都挂在 WorldViewport 下**、开局**携带手枪**(有真实渲染时另存一张图供人眼验收)。★ 这两个探针的存在理由:地面武器那批改动里有两个 bug **所有数值断言都是绿的** —— 挂错父节点(在渲染树外)与热重建视觉被顶掉名字,两者都只有取图人眼确认 + "挂在谁下面"这类断言才抓得到。写新测试注意: `-s` 阶段 autoload 尚未实例化,避免静态引用会连带预加载引用 autoload 的脚本(见 smoke 内注释);laser 脚本链须在 `_initialize()` 内 `load()`。★ **场景探针的 `--quit-after` 是安全网,给足(统一 3600 帧)** —— 探针跑完会自己 `quit()`,这个值**只在探针挂住时**才用得上,放宽**不花任何代价**;给少了会在机器负载重时**先耗尽**,表现为"一行 ALL-OK 都没有"、看着像功能坏了(2026-09-16 实际踩到;原先是 600/900/120,已统一)。★ 但**别拿"批量里红、单跑绿"断定就是超时** —— 安全网耗尽与探针真失败在输出上**长得一样**,要先按真失败查一遍。
-★ **`-s` 冒烟必须写空载守卫**:`_initialize()` 里一旦抛错就走不到 `quit()`,进程**永久挂起**(不是干净失败,是超时)—— `load()` 之后立刻 `if X == null: print(...); quit(1); return`,且跑新冒烟**一律套 `timeout`**。★ 同理,查"某常量在不在"用 `get_script_constant_map()` 而不是直接取属性(取不存在的属性会抛错 → 挂起)。
-**两种跑法,按脚本首行区分**:`extends SceneTree` → `-s res://tests/<名>.gd`(autoload 不存在);`extends Node` → `--quit-after <帧数> res://tests/<名>.tscn`(`--quit-after` 的单位是**帧**不是秒;它是安全网——脚本解析失败时场景根没脚本、一行不打印且不退出)。L1~L5 的层验收探针 `kh_l1/l3/l4/l5_probe.tscn` 都是场景模式,判据必须是 **grep 文本 `ALL-OK`**。★★ **但"grep 到 ALL-OK"只证明「没有任何断言失败」,不证明「每条断言都跑过」**(2026-09-21 Task 3 实测定案;**完整表述与三层实测在 `tests/lib/probe_base.gd` 的文件头,那里是这条纪律的权威落点**,本句只是与它一致的简短版):脚本错误(如 `get_node("nope").some_method()`)只让**出错的那个函数当场结束、调用方继续** —— 出错在 lambda/helper 里如此,出错在 `_run()` 自己里也一样(它的 `await` 照常恢复)⇒ 后面那些断言被**静默跳过**,而 verdict **照打 `ALL-OK`**;更尖的一层是 `ProbeBase._summary` 在**没有新增失败**时打 ✓,所以**整组一条都没跑**时那个 ✓ 汇总行**也会打** ⇒ 汇总行与最终 verdict **一起读成通过**。★ **保留不变的那半**:退出码从来不是判据(出错时照样 exit 0,与"跑通了"在退出码上**不可分**)。`tests/royale_probe.tscn` 是大乱斗全链路端到端探针(自当大厅/裁判 + 拉两个 headless 客户端走完整建房→转连→开局链路;**跑前先确认 7777 空闲**)。`tests/royale_bound_probe.tscn` 是 B1(role 空洞)/B2(开局三载荷跨场景)的守卫:无参跑真大厅+真 worker 全链路(构造 role 空洞 `{1,3}` 验高号 claim 不被踢、换场后真 `royale_game` 收到三条载荷);`-- --payload` 跑**确定性**的「同一次 poll」变体(载荷在触发换场前注入 → 只能靠 `PvpSession` 交接过去,关掉交接即红)。`tests/replica_ghost_probe.tscn` 钉「幽灵碰撞体治好了 C2 贴身回滚」:同一世界里权威被备用层替身挡、预测被副本幽灵体挡(同几何同坐标)= 对照组,断言 `rollback_count()==0`;**负向对照跑的是同一趟但把幽灵体层清零**(穿过去 + 回滚飙升),两条一起才说明不是空转断言;还扫两端客户端 `collision_mask |= 2` 在位。★ 2026-09-22 同批补 ⑤ 与 ⑥:⑤ 幽灵体在位时 `touching_player()` **命中过**(证判据不是在空转),⑥ **摘掉幽灵体后全程不得命中** —— 这条同时钉住"**地形不算接触**":判据若写成 `co != null`(忘了 `& ~1`)会**恒真**,这里当场红。`tests/rollback_fidelity_probe.tscn` 钉 `PredictionRollback` 的容差本身:A 组是环面 `map_px`,**C 组**是接触期容差(同一份形状的载荷,`in_contact` 假 ⇒ 必须回滚、真 ⇒ 必须**不**回滚),外加**源码级守卫**(★ **两条读的不是同一个文件**,见 `_check_source_guard()`):**`scenes/pvp_game.gd`** 里 `map_px` 必须在位(不设 = 环面修复惰性且静默)、**`scenes/pvp_match_client.gd`** 里 `_rollback.in_contact = …touching_player()` 只许有**一处**赋值且排在 `note_post_step()` 之前(**漏接线 = 静默退回 2px**:不报错、探针全绿、真机行为与改动前逐帧一致)。`tests/brawl_rollback_probe.tscn` 是贴身缠斗的**扫描仪器**(权威侧与客户端侧活在同一个物理空间、靠层分开,量的是 C2 控制器本身):既有 TOL 族(1/2/4/8px)与既有对照(对手不动 = 0、摘掉幽灵体 = 75px 修正),2026-09-22 加 **CONTACT 族**(`Variant.CONTACT8/16/32` —— 接触期容差 8/16/32 而 `pos_tol` 恒 2)与**三条判据**:①接触提示确实命中过(恒 0 = 本档等同 2px 档 = 空转)②放宽后接触期偏差没有变大(中位 ≤3 / p95 ≤35)③确实买到了东西(`rb < 2px 档` 的**严格更少** —— ★ 不是"不超过一半":GDScript 的 `/` 是**整除**(`9 / 2 == 4`)而 N=2 的可达下界是 5,**那条旧 bar 在 N=2 上先红后也红、没有鉴别力**)。★ 第三条**只在已采纳档 `Variant.CONTACT8` 上打分**(16/32 只打读数,见 §网络与 PvP 那条 2026-09-23 裁定);★ 照实登记:它读 N≥4 时本身在抖(同一进程内四趟**同配置**能跑出 `153/153/85/153`),故变异下**仍有一格假绿**(`N=4 接触期 8px` 打出 `85 < 153`)—— 这条分辨率只够挡「整档没生效」,消除它要给回滚打"是否发生在接触期"的标记(分桶读数),**超出该批范围**。`tests/royale_soak_probe.tscn` 是大乱斗**压力**探针(自当大厅/裁判 + N 个跑真 `royale_game` 的 headless 客户端 + 脚本机器人把局内行为踩一遍,含追着对手打/K 自杀/最后一端在 45% 处**按 ESC 离场**——那条是唯一走 `safe_change_scene` 的局内退出路径,顺带压 `mark_disconnected` 与其余端的 `left`/副本拆除),收尾用 `tests/royale_soak_probe.sh`(taskkill + kill_port);**它答不了渲染卡顿**(headless 无渲染),且 worker 子进程的 stdout 不随 `OS.create_process` 继承到管道 → worker 侧打印是盲区(健康与否只能从客户端连续性反推:快照间隔与是否跑到 MATCH_OVER)。`tests/royale_c2_probe.tscn` 是大乱斗 **C2 真链路**探针(真大厅 + 真 worker + 两个跑真 `royale_game` 的客户端;**跑前先确认 7777 空闲**):用「c1 按 K 自杀 → 服务器 2s 复活并瞬移回出生点」这次**必然发生**的服务器外部事件确定性地制造分歧,断言 `reconcile()` 把它收敛掉(c1 `rollback_count() ≥ 1`、本地玩家与权威快照收敛、倒地态一致)+ 源码级 A①「生产目录零残留」/A②「`royale_game` 不得消费 `round_state` 的 `alive`」。判据 `PROBE: ALL-OK`;**反证实跑**:拿掉 `reconcile()` → `rollback=0` 且本地玩家与权威差 3623px(停在倒地处没被拉回)。★ 客户端子进程的 stdout 父进程看不到(Windows `CreateProcess` 不继承句柄),故 spawn 时带 `--log-file`,失败时连同观察者日志一起打印(`-- --nospawn` 可人工前台另起客户端)。`tests/pvp_hud_layout_probe.tscn` 钉 1v1 记分条**在顶部正中**(用户明确要求过的版式;锚点/偏移被顺手改掉不会有任何报错,故把"位置"本身变成断言)。`tests/match_host_hygiene_probe.tscn` 钉服务器侧**记账卫生**(`_seen_bullets` 每帧按在场子弹剪枝,不再整局只增不减)——真建 `MatchHost`(role_peers 传空)+ 60 轮生成/销毁子弹,旧实现会累积到 63 条。`tests/royale_disconnect_count_probe.tscn` 钉大乱斗**掉线终局判据用哪个集合**(真建 `RoyaleHost`、role_peers 传空——同 hygiene 探针的手法;再手工把 `players`/`peer_by_role` 摆成「2 真人 + 2 AI」):断言掉 1 个真人后剩 3 人**不得**终局(旧实现数 `peer_by_role`,而 AI 补位 role 由服务端驱动、**没有 peer** → 会当场判终局、把剩 1 真人 + 2 AI 强行收场);★ 另配一条**反向**断言(掉到只剩 1 个玩家时**必须**终局)——没有它,上一条可以靠「永不终局」作弊通过。判据 `ROYALE DISCONNECT COUNT: ALL-OK`。★ 该探针 `_ready` 里要 `_host.set_physics_process(false)`:探针手工驱动,不关的话 `quit(0)` 帧末生效、中间还会跑一帧 `_physics_process` → 快照广播去读桩对象上不存在的字段,在断言全过之后刷一屏 SCRIPT ERROR。`tests/spawn_pool_smoke.gd`(`-s`,两图对账)钉 `SpawnPicker.spawn_candidates()` 的池子里**没有落在小连通区的格**(判据来自探针自己的 BFS + `area_threshold()`,**变异**:把门槛改回恒 `OPEN_AREA_MIN` 即红;并锁 `demo.cyrm` 这类正常图的池子**逐格不变**)。★ 它另钉**复活池序列**三档都不含孤立格 + 逐档放宽(正例/中间档/**负例**各走一遍,负例是**真搜一个"首档筛空"的布局再端到端跑完整个序列** —— 该图的这种布局是**稠密网格**,随机撒点到不了)+ **⑥ 源码级**断言两个宿主的选格函数体真的接了 `respawn_pools()` 且不再自己拼 `floor_cells()`(只测 `SpawnPicker` 的话,宿主里那句原样留着**照样全绿**),★ 含 royale 的**转发函数 `_respawn_pools` 本身**(只钉 `_spawn_cell` 会**差一跳**:改那一行 ⇒ 病原样复活而行为断言全绿)+ `RESPAWN_CLEARANCE` **逐文件**与探针同值;⑦ **补足分支可达性守卫**(`plan_spawns` 的 `_floor_cells()` 补足今天**不可达** —— 可达 ⟺ 干净池 < 人数;它**不**收窄,因为收窄会让补足补不满 → `(-1,-1)`),并源码级钉住那条分支还在(否则 ⑦ 成空断言)。`tests/combat_hud_visual_probe.tscn` 是对局内 HUD(PvpHud / RoyaleHud)的视觉验收探针(场景模式、**必须真实渲染**):喂假 `round_state` 把 1v1 记分条/中央广播、大乱斗排行榜/终局定格成 PNG。★ 它的底**故意铺地图开阔区的浅灰蓝**(#78969F)而不是深色 —— 垫深底取图会把「浅底上读不出来」整类问题遮掉,单机 HUD 就是这么漏掉 1.9:1 的血条的。两块 HUD 分时在场(取图时把另一块 `visible=false`),否则 PvP 的中央广播会串进大乱斗那张。
-`tests/kh_l3_visual_probe.gd` 的取色判据随 2026-09-13 的 HUD 改色一并改写:它现在按**语义**断言三种颜色 —— `_bright_in`(满弹=中性亮文本)/`_gold_in`(低弹量=金)/`_accent_in`(装填进度=强调青),且都是**双向**的(该金的要金、不该金的一个都不能有)。别再只判「金色像素 > 0」:那会把满弹与进度条同色这种坏实现放过去。
-`tests/kh_l6_probe.gd` 的**第 9b 条不变量**守 `royale_game` 的 MATCH_OVER 退场块(菜单失效 + 调 `_show_result()`)——第 9 条是 `pvp_game` 上的同款,9b 是它漏掉的第三个对象。★ 2026-09-21 结算页批次后:原先两条断言里的"必须有 `create_timer(`"已**整个删除**(退场定时器没了,留着就是要求把定时器加回来),`is_inside_tree()` 早退那条**改扫基类 `_leave_to_main_menu` 的函数体**(早退随退出路径搬进了基类),③ 对手离开那条一字未动。`tests/grenade_player_hit_probe.tscn` 钉榴弹**权威直接伤**(`MatchHost._adjudicate_grenade`)——`-s` 的 `grenade_smoke` 只能测引信那一侧,权威那半要整局服务器环境,故本探针真建一个 `MatchHost`(**role_peers 传空** → 不建玩家/不排 peer,玩家自己摆进 `host.players`)。`tests/royale_hud_cost_probe.tscn` 量 `RoyaleHud._on_round_state` 的重建耗时(4/6/8 行),用于归因"每秒卡一下"(实测 2.6/3.8/4.7ms)。`tests/kh_l5_probe.gd` 是源码级机械扫描仪:C2 四条在位 / main 的 sweep 族在位 / 无演示残留 / 字号规范 / 新接口归属(含反向断言:基类不得含子类方法)。
-
-**3v3 那批(B 册)的探针**:`tests/team_room_smoke.gd`(`-s`,3v3 房间的**纯逻辑** —— 满员判据 / 选边闸门 / 最小空闲号 / **三协议互斥的双向判定** —— 外加 ⑥⑦⑧⑨ 四组**源码级**接线断言(handler 要 autoload,`-s` 里跑不动)与 ⑩ 的**像素级** `BODY_BASE_COLOR` 众数断言;判据 `TEAM ROOM SMOKE: ALL-OK`)。场景探针三个,全 `--headless`:`tests/team_host_probe.tscn`(A 册权威 —— 按队散点/换边/**击杀后不复位任何人**/分队碰撞层/逐人数据与 ACS/MVP,判据 `TEAM HOST: ALL-OK`)、`tests/team_table_probe.tscn`(队伍表进底座 + 子弹穿透队友,`TEAM TABLE: ALL-OK`)、`tests/team_disconnect_probe.tscn`(**整队走光才终局**,双向断言 + 走光即弃权,`TEAM DISCONNECT: ALL-OK`);这三个都**真建宿主但 `role_peers` 传空**(不建玩家/不排 peer/不发包,玩家由探针手工摆进 `players`)—— 同 `match_host_hygiene_probe` 的手法。★ 原 `tests/` 下的 team_spawn_smoke 已**随 `--roles`/`--teams` 那套 argv 契约一起删除**(单进程化后 3v3 的参战集合与队伍表由房记录直接交给 `MatchSession`,没有"生成端拼命令行 / 解析端认命令行"这一对可断言的接缝了);对应的反向断言改由 `room_sweep_smoke` 的 `_check_argv_contract` 承担(旧标识符一个都不许复活 + `worker_launcher.gd` 必须不存在)。`tests/team_match_probe.tscn` + `tests/team_match_probe.sh` 是**六人真链路**端到端探针(自当大厅/裁判 + 6 个 headless 客户端各跑**真 `team_lobby` 页**:建房 → 点列表加入 → 各自选边 → 房主开始 → 六端都进 `team_game`;五相 = 开局 / 按队散点 / 子弹穿队友(负)+ 爆炸满效(正)/ 打满一局换边 / 少人继续):**它自己不占 7777**(自当大厅在池外 29200,worker 也从池外 29250 起投;跑前仍要确认本机没有别的 Godot 占着 7777 —— 那是用户自己的服务端,收尾脚本**刻意不杀它**),收尾**按 PID 杀** —— 客户端是从**临时端口**连出去的,只按端口杀根本杀不到,会留下残留进程敲下一跑与读旧日志。★ 另有两块与 3v3 直接相关的常驻守卫:`tests/hud_declarative_probe.tscn` 的 ③ 钉 `TeamHud._my_team` 的**语义契约**(`is 0` 就静默判错胜负,结构断言照不到它),`tests/hue_tint_probe.tscn` 钉色相/队色整条链(P1 恒蓝 / P2 恒青 —— **等于队 2 的 token**,且守卫是**真调生产的 `_apply_p2_tint()`** / 队色 token / `player.png` 众数)—— 后者**必须真渲染** —— 它的截图走 `get_viewport().get_texture().get_image()`(判空判在 **`.get_image()`** 的返回值上),headless 下这条链给 null,于是那里 `_check(false, "截图失败 —— 是不是误加了 --headless?(真渲染是本探针的前提)")` **FAIL 并 return**(失败记账后走 `_finish()` 打 `KH HUE-TINT PROBE: FAIL | …` —— ★ 前缀 `KH ` 是 `tests/lib/probe_base.gd` 的 `_finish()` 拼的,别照旧文档写成裸 `HUE-TINT PROBE`);是**失败**不是静默早退(别把"守卫 D 跑不到"读成"这条探针没意见")。正因如此 `BODY_BASE_COLOR` 另有一条 `-s` 的 headless 半边,在 `team_room_smoke` ⑩。`tests/resync_world_probe.tscn` 是重连阶段 2-A 的守卫(补态那一路"先还原基线、再应用 `destroyed`"),见 §网络与 PvP 的断线重连一节。
-
-**★ 真链路跑批的两条纪律 + 两条既有红(2026-09-27 实测登记)** —— 原始读数、A/B 与复现命令全在 `.superpowers/sdd/2026-09-27-link-probe-run-report.md`:
-
-- **★★ 两支真链路测试之间必须确认 `tasklist | grep -i godot` 为空。** worker 由大厅 `OS.create_process` 拉起,是**孙进程** —— 不在任何脚本记下的 PID 里,只按 PID 收尾会把它留下、继续占着 7800 段;而下一支的新大厅那套端口分配是「唯一递增 + 占用集合」,那个**集合是进程内内存**(新进程里空的)⇒ **再次选中同一端口** ⇒ 新 worker 报 `监听失败 20` ⇒ 客户端连到的是**上一支的僵尸 worker** ⇒ 永远收不到 `match_start` ⇒ 而客户端的内建超时**只在 `match_start` 之后才计帧** ⇒ 整支**挂到外层 timeout、一行裁决都不打**(与真失败在输出上**长得一样**)。实测先后打红 `pvp_match_smoke` 与 `royale_probe`,清掉孤儿后重跑**都绿**。★ 前台 `timeout` 掐掉某支脚本时,它收尾那段**不会跑** ⇒ 必留孤儿 ⇒ **下一支**被毒 —— 这就是下面"起跑前也扫一次"的理由。
-  守卫 = `tests/env.sh` 的 **`kill_port_range LO HI`**(按 UDP 端口区间找属主 taskkill)。调用点与区间:`pvp_room_smoke` / `pvp_match_smoke` 起跑前(**仅当 7777 上没有活着的大厅** —— 那时池里的一定是孤儿)+ 收尾扫 `[7800,8300)`(= `WorkerLauncher.WORKER_PORT_BASE` ~ `+WORKER_PORT_SPAN`);`royale_soak_probe` 收尾由手写的 `7800..7810` **换成** `[7800,8300)`(★ 原列表漏 7811 及以上);`rejoin_probe` / `team_match_probe` **只**扫各自池外那一段 `[29350,29400)` / `[29250,29400)`。★★ 那两支**绝不能**扫 `[7800,8300)` —— 它们文件头明文承诺「不碰 7800~8299」(那会端掉用户正在跑的对局);区间边界已**单测**(占着 7800 时调池外区间它活着、调 `[7800,8300)` 才被清)。
-- **★ `lobby_alive` 原先那版判据是结构性恒假(已修)。** 三支脚本都用 `netstat … grep -E "[:.]7777[[:space:]].*LISTENING"`,而 **ENet 走 UDP、UDP 行没有状态列**(`UDP  0.0.0.0:7777   *:*   PID`)⇒ `.*LISTENING` **永不命中**。实测:7777 被 PID 28836 占着时带 `LISTENING` 不命中、去掉就命中。⇒ 那三处「7777 已被占用」提示与 `royale_soak_probe` 的连带清理**从未触发过**。现收在 `tests/env.sh` 的 `lobby_alive()`。
-- **❌ `tests/team_match_probe.sh` 是既有的 FAIL,且判词与实况矛盾(未修,归用户)。** 判词 = `大厅队伍表是空的(选边那一刻没存到)` + `45s 内没有 3v3 房(客户端 c1 没建成?)`;而**同一跑的客户端日志**里 c1 已经 `等待室已渲染(名单行 4,计数 1 / 6 人(已选边 0 人))`、c2–c6 在 `点房间列表行 1003(真按钮回调)` ⇒ **房建成了、客户端进了等待室**,是探针自己那侧读 `team_lobby.team_rooms` 得到空。★ **A/B 已证**(`git worktree add <仓外> ee5fd32` 跑同一条 ⇒ 复现**完全相同**的两条 FAIL)⇒ 与 1v1 子弹归因那批无关。**影响**:这是**唯一**「过真协议」的 3v3 覆盖,而它红着 ⇒ 3v3 真链路目前**没有**可信的端到端守卫。★ **追查已做到可交接处(根因未钉死)**:探针是 29200 的唯一监听者、它的 `LobbyRooms` 在位且信号接线数 = 1,但 6 个客户端**连上后全部断开**(`peers` 由 1 归 0 并保持),探针在同一条信号上挂的 tap **一次都没触发**、`team_rooms` 全程 0 —— 而客户端那侧真的在办事(c1 `等待室:收到 team_room_state(your_role=1 players=1)`、c2 加入 7422 房 `players=4`)。⇒ **客户端被某个不是探针大厅的东西服务着**,且它们在探针上的连接瞬断。未证假设与下一步(看 `scenes/lobby_page.gd::_with_lobby` 与 `PvpSession.server_address` 默认值 + 让客户端打印**实际连上的地址**)见报告 §4.1b。
-- **⚠ `tests/ground_net_probe.tscn` 是既有的抖动(未修)。** c2 `FAIL 超时(阶段 3;当前场景=RoyaleGame)` + 持续 `走到目标超时(…px;拉黑 inst 换目标)`。★ **A/B 本人复证**:同一棵 `ee5fd32` worktree 第 1 次红在**更早**的阶段(`阶段 1 / RoyaleLobby` —— 该测法在这台机器上本身不稳)、第 2 次复现**与主树逐字同形**的阶段 3 ⇒ 既有抖动(机器人走位在随机图上卡死,探针自己的头注也写了这一点)。
+- **测试脚手架与共享工具 (`tests/lib/`)**：
+  - `scan_util.gd` (`class_name ScanUtil`)：纯静态语法解析与代码审查工具，提供文件遍历、注释剥离、AST 结构提取与函数体截取功能，无 Node 运行时依赖。
+  - `probe_base.gd` (`class_name ProbeBase extends Node`)：测试基类，统一封装断言账本（`_failures`）、自动化检查点上报（`_check`）、执行汇总（`_summary`）与标准化退出裁决（`_finish`，格式为 `KH <id> PROBE: ALL-OK`）。
+  - 约束规范：新增源码级探针统一继承 `ProbeBase`，禁止重复手写扫描与断言逻辑；测试库代码严禁包含非 16 倍数的 UI 字号常量。
+- **测试运行模式分类**：
+  - **纯逻辑无头冒烟测试 (`extends SceneTree`)**：
+    - 运行指令：`godot -s res://tests/<name>.gd`。
+    - 运行特征：Autoload 单例未加载。禁止在顶层变量静态预加载依赖 Autoload 的脚本，必须在 `_initialize()` 内部动态 `load()`。
+    - 安全防御：脚本必须包含加载空值校验与异常退出守卫，避免初始化崩溃导致进程永久挂起。
+  - **场景级端到端探针 (`extends Node`)**：
+    - 运行指令：`godot --headless --quit-after <帧数> res://tests/<name>.tscn`。
+    - 帧数安全网：场景探针必须配置充足的最大运行帧数安全网（统一建议 `--quit-after 3600` 帧）。探针正常运行完成后主动调用 `quit()`，安全网仅用于防止测试挂起，避免因机器负载波动导致提前截断。
+- **断言完整性与假阳性防护**：
+  - **断言覆盖率约束**：`ALL-OK` 仅证明“未记录到失败断言”，不能证明“预期断言已全部执行”。为防止 GDScript 运行时错误导致函数提前跳出并产生假阳性，所有探针必须引入计数核对机制（如 `_checks >= EXPECTED_CHECKS` 或 `_done` 函数名对账），未达标一律判定失败。
+  - **测试结果判定**：自动化脚本统一基于控制台输出文本进行模式匹配，严禁单独依赖进程退出码作为判据。
+- **网络测试运行环境卫生纪律**：
+  - **残留子进程清理**：多实例真链路测试启动前与结束时，必须确保环境清理干净（通过 `kill_port_range` 按 UDP 端口检索并终止残留的孤儿 Godot 进程），防止端口被旧进程持续占用导致新 Worker 绑定失败并引发客户端超时。
+  - **UDP 端口监听检测**：ENet 运行在 UDP 协议栈，系统网络工具（如 netstat）中不呈现 TCP 的 `LISTENING` 状态。端口检测统一基于无状态筛选与 PID 精确匹配（参考 `tests/env.sh` 的 `lobby_alive()`）。
+  - **已知待修复测试边界记录**：
+    - `tests/team_match_probe.sh`：3v3 六人真链路测试中，偶发存在客户端握手瞬断导致房间状态未被探针捕获的问题，归档待进一步跟进。
+    - `tests/ground_net_probe.tscn`：寻路机器人在特定随机地图连通区上存在偶发走位超时抖动。

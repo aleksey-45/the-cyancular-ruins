@@ -13,7 +13,7 @@ extends Node
 # 覆盖:倍率表(玩家/普通敌/精英 × NONE/HASTE/REWIND) · 普通敌速度 ×HASTE_WORLD ·
 #       主角水平移速 ×HASTE_PLAYER(关碰撞,纯速度域) · 跳跃高度不变(重力没被带跑) ·
 #       敌方子弹位移 ×HASTE_WORLD · 红蓝残影生成并自行淡出 ·
-#       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣颗粒。
+#       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣除时间粒子。
 # 用法:godot --headless --path . res://tests/haste_probe.tscn
 #
 # ★ 输入走**可注入桩**(tests/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
@@ -301,16 +301,16 @@ func _run() -> void:
 	if re_normal:
 		_fail("回溯时普通敌不该有高亮(它们的位移由回放器摆)")
 
-	# ── ⑦ 松开回 NONE + 颗粒真被扣 ──
+	# ── ⑦ 松开按键恢复 NONE 模式并确认时间粒子已扣除 ──
 	if tf.is_hasting() or tf.is_rewinding():
 		_fail("松开后时间场未回 NONE(mode=%d)" % tf.mode)
 	var bal := float(Level0.grain_account.balance)
 	if bal >= float(TimeParams.GRAIN_INITIAL):
-		_fail("加速没扣颗粒(余额 %.1f ≥ 初始 %d)" % [bal, TimeParams.GRAIN_INITIAL])
+		_fail("加速未扣除时间粒子(余额 %.1f ≥ 初始 %d)" % [bal, TimeParams.GRAIN_INITIAL])
 
 	var head := "HASTE PROBE: "
 	if _fails.is_empty():
-		print(head + "OK(倍率表/敌速×%.2f/敌弹×%.2f/玩家移速×%.2f/跳跃高度不变/红蓝残影/高亮规则/精英亮黄/松开全卸/回NONE/扣颗粒)" % [TimeParams.HASTE_WORLD, _bullet_ratio, ratio])
+		print(head + "OK(倍率表/敌速×%.2f/敌弹×%.2f/玩家移速×%.2f/跳跃高度不变/红蓝残影/高亮规则/精英亮黄/松开全卸/回NONE/扣除粒子)" % [TimeParams.HASTE_WORLD, _bullet_ratio, ratio])
 		if not _notes.is_empty():
 			print("  notes: " + " | ".join(_notes))
 		tree.quit(0)

@@ -1,25 +1,14 @@
 class_name ProcUtil
 extends RefCounted
 
-# 进程 / 端口相关的平台工具(**仅 Windows 有效**:taskkill 与 PowerShell)。纯静态、不引 autoload。
+# 进程与端口管理工具（适用于 Windows 环境：基于 PowerShell 与 taskkill）。纯静态实现，不依赖 Autoload。
 #
-# ★ 为什么收这里:同一段「按 UDP 端口找属主进程并强杀」的 PowerShell 串原先在两个**现已删除**
-#   的位置各写一遍(`server/` 下那份 worker_launcher 的"按端口杀 worker"与 `server_main.gd` 的
-#   "大厅启动前清残留"),**逐字相同** —— 而其中一条写法是踩过坑才修对的(见下),抄第二份时
-#   没有任何提示。
-#   ★ 那两处生产调用点**已随单进程改造删除**(端口由客户端挑空闲号,而"按端口杀进程"在
-#   单机可以同时开两个实例的世界里是**主动破坏**:它会把另一台正在跑的服务端打死)。
-#   本文件保留给**探针**用(它们要清掉自己起的服务端),以及作为那段正确写法的唯一留档。
-#
-# ⚠ 取属主进程必须用 `Select -ExpandProperty OwningProcess`:`% OwningProcess` 这种写法
-#   (ForEach-Object 后接裸名字)**取不到属性**、实测拿空 → 一个进程都杀不掉,且**不报错**。
-#   后果:旧进程继续占着 7777 → 新实例 bind 失败瞬间退出(双击服务端 exe 闪退)。
-#   守卫:`tests/kh_l5_probe.gd` 第 3 条(判据取**去注释视图** —— 解释这个坏写法的注释本身
-#   含该串,算进去会让断言永远红)。
+# 设计说明：
+#   提供按 UDP 端口查找占用进程并安全终止的功能，主要供自动化测试脚本清理自身启动的服务端实例。
+#   注意：获取拥有者进程 PID 需使用 `Select -ExpandProperty OwningProcess`，确保正确解析进程 ID。
 
 
-# 杀掉持有该 UDP 端口的进程(若有)。找不到属主 / 无权限 / 非 Windows → 静默返回
-# (`-ErrorAction SilentlyContinue` + 入口处的 OS 检查,与"杀不掉也别炸"的调用方预期一致)。
+# 终止占用指定 UDP 端口的进程（若存在）。未找到进程、无权限或非 Windows 平台时静默返回。
 static func kill_udp_port(port: int) -> void:
 	if OS.get_name() != "Windows":
 		return   # PowerShell 串只在 Windows 有意义;别在其它平台白起一个进程

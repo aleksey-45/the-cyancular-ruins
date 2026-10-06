@@ -272,8 +272,8 @@ func _try_server_drop(p: Node2D, role: int) -> void:
 
 
 # 从背包**随机**保留一条(并 equip 它),其余在 `p` **当前所在位置**散开掉出。
-# 唯一调用时机 = **倒地边沿**(用户 2026-09-21 裁定「掉落的武器应该在死亡后直接原地掉落」),
-# 调用点有三处,各对应一个模式的倒地边沿: `MatchRound._match_round_tick`(1v1)、
+# 唯一调用时机 = **倒地转换瞬间（边沿触发）**（规则约束：掉落武器应在倒地位置原地散落），
+# 调用点对应三个模式的倒地状态转换时机：`MatchRound._match_round_tick`(1v1)、
 # `RoyaleHost._match_round_tick`(大乱斗)、`TeamHost._match_round_tick`(3v3)。
 # ★ 为什么不挂在复活流程里(旧实现的写法):`_respawn_player` **先把人瞬移到出生点**,
 #   再调本函数 —— 于是"死亡点"掉落实为"出生点掉落";而且尸体在 2s 倒地窗里继续走物理

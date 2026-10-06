@@ -119,7 +119,7 @@ func sub_destroyed(sub: Vector2i) -> void:
 	local_sub_destroyed.emit(sub)
 
 
-# 每 role 的颗粒状态(余额/短时窗/贷款/锁定),约 10Hz —— HUD 怀表的显示镜像。
+# 各角色的时间粒子账户状态(余额/短期窗口/透支额度/锁定状态)，约 10Hz 同步频率 —— 供客户端怀表 HUD 镜像显示。
 signal local_time_state(payload: Dictionary)
 
 

@@ -47,10 +47,9 @@ extends RefCounted
 #   复用它就不必自己造一条带外的交换协议(造了就得解决"客机怎么知道去哪问"这个先有鸡还是先有蛋)。
 # ★ 改前缀 = 改协议,两端必须同一个 build。
 #
-# ── 本文件的可测面 ──
-# 纯字符串/列表处理(`generate_room` / `is_valid_room` / `room_credentials` / `host_port_of` /
-# `pick_host_peer`)全做成**静态无副作用**函数,`-s` 探针逐个钉死;起进程与跑 CLI 的部分
-# 才碰 `OS`。
+# ── 本模块纯逻辑接口 ──
+# 字符串与列表处理函数（如 generate_room、is_valid_room、room_credentials、host_port_of、
+# pick_host_peer）均为纯函数实现，便于独立进行单元测试；进程与系统调用逻辑集中在运行期方法中。
 
 const Meta := preload("res://core/config/tunnel_meta.gd")
 
@@ -71,17 +70,12 @@ static var _rpc_port := 0       # 本端 RPC 门户端口
 static var _role := ""          # "host" / "guest"(排错用)
 # 本端转发绑在本机的哪个端口(0 = 没有转发 = 本端是房主)。见 `forward_port()`。
 static var _forward_port := 0
-# ★★ 本端内核**正在跑的那张网**是哪个房号的(2026-09-30 加)。空 = 没起网。
-#   ★ 必须记它,不能靠"有没有在跑"来判断 —— **网名是从房号派生的**(`cyr-<码>`)⇒
-#     "换了一间房"就等于"要换一张网",而 `is_running()` 分不出"同一个码"和"另一个码"。
-#     两个真 bug 都出在这个区分上:
-#       ① 房主退出房间再建一间 → 旧闸 `not is_running()` 为假 ⇒ 网名**留在旧码上**
-#          ⇒ 房主手里的新码对外**完全失效**(朋友拿新码进的是 `cyr-<新码>`,那网上没人);
-#       ② 客户端已连着 A 时输 B 的码 → 见 `LobbyPage._join_with_code` 的判据。
+# 本端内核当前运行的网络房间号。空表示未启动网络。
+# 网络名称由房间号派生（cyr-<码>），切换房间需重启网络。
 static var _code := ""          # 本端内核当前所在的网名来源(5 位房号)
 static var _core_path := ""     # 缓存的可执行文件绝对路径
 static var _cli_path := ""
-static var _reaped := false     # 本进程跑过孤儿清扫没有(每个游戏进程只跑一次)
+static var _reaped := false     # 标记当前进程是否已执行残留进程清理（单进程只执行一次）
 
 
 # ── 房间码 ──
@@ -390,9 +384,8 @@ static func forward_port() -> int:
 
 # ── 生命周期 ──
 
-## 收掉本端隧道。★ 退出游戏时必须调:easytier-core 是独立进程,父进程死了它**不会**跟着死,
-## 残留的孤儿会一直占着虚拟网 IP、把一间死房间挂在共享节点上(朋友拿旧码进得去网、连不上服)。
-## ★ 崩溃/强杀时这里没机会跑 ⇒ 兜底在 `_reap_orphans`:下次起隧道时认领并终结孤儿。
+## 停止当前对等隧道。退出游戏时调用以确保后台独立进程被正常关闭；
+## 若遇异常退出，则由 _reap_orphans 在下次启动时自动兜底清理。
 static func stop() -> void:
 	if _pid > 0:
 		if OS.is_process_running(_pid):
@@ -421,21 +414,17 @@ static func is_running() -> bool:
 	return _pid > 0 and OS.is_process_running(_pid)
 
 
-# ── 孤儿清扫(异常退出的兜底)──
+# ── 残留后台进程清理（异常退出的保底处理）──
 
-## 起隧道前跑一次(start_host / start_client 各调,每个游戏进程只执行一次)。
-## easytier-core 是独立进程,游戏崩溃/被强杀时 `stop()` 没机会执行,它拉起的内核就成了孤儿:
-## 继续占着 RPC 门户与虚拟网地址,房主侧还会把一间死房间一直挂在共享节点上(朋友拿旧码
-## 进得去网、连不上服)。Windows 不回收孤儿,Godot 也给不了 Job Object,所以在这里做
-## **下次起隧道时的认领清理**:
-##   · 终结残留内核:凡命令行里带着**本游戏日志根路径**的 easytier-core 都是本游戏拉起的;
-##     从它的日志目录名解出拉起者(游戏进程 pid),那个 pid 已死 ⇒ 孤儿 ⇒ 终结。
-##     owner 还活着的不碰(同机双开互连时那是另一局的内核);命令行里没有这个路径的
-##     (玩家手动跑的内核、easytier-gui 的子进程)更不碰。
-##   · 截断旧日志目录:owner 已死的目录按 mtime 留新删旧,保底 `Meta.ET_LOG_KEEP` 份 ——
-##     崩溃现场要留给排查(2026-10-04 用户裁定保留 25 份)。
-## 判活只用 `OS.is_process_running`,纯 GDScript;PID 被系统复用只会让孤儿被错当活物而
-## **漏收**,不会误杀 —— 错误方向永远偏安全。
+## 启动隧道前执行（start_host / start_client 均会调用，每个游戏进程仅执行一次）。
+## 由于 easytier-core 是独立系统进程，在游戏异常崩溃或被强制结束时无法正常执行 stop()，
+## 残留的后台进程会持续占用本地端口与虚拟网地址。在此处进行残留进程的检测与回收：
+##   · 清理残留内核：根据命令行中包含的本游戏日志路径识别由本游戏启动的进程；
+##     从日志目录名称中解析父进程 PID，若该游戏进程已不存在，则终止该残留进程。
+##     若父进程仍在运行（如本地双开互连）则保持原样，不干扰其他实例；外部手动启动的进程亦不作处理。
+##   · 清理旧日志目录：对于父进程已退出的日志目录，按修改时间倒序保留最新的 Meta.ET_LOG_KEEP 份，
+##     清理超期日志，既保留现场供排查又避免占用过多磁盘空间。
+## 进程活跃检测使用 OS.is_process_running。
 static func _reap_orphans() -> void:
 	if _reaped:
 		return
@@ -454,15 +443,9 @@ static func _et_log_marker() -> String:
 	return AppPaths.log_dir().path_join(Meta.ET_LOG_DIR_PREFIX)
 
 
-## 终结"日志目录名指向已死游戏进程"的残留内核,返回个数。
-## ★ 枚举走 PowerShell 的 Win32_Process:唯一能同时拿到 pid 与**命令行**的现成口子
-##   (tasklist 只有名字,wmic 在新 Windows 上已移除)。冷启动约 0.5~2s,起隧道前可接受。
-## ★ 命令串里**一个引号都不能有**(单双都不行):Godot 拼进程命令行只包引号、不转义内层引号
-##   (os_windows.cpp `_quote_command_line_argument`),内层 `"` 会把整条命令劈碎;而裸词里的
-##   单引号会被 PowerShell 的 argument-mode 剥掉 —— `-Filter Name='easytier-core.exe'` 到 WQL
-##   手里就成了 `Name=easytier-core.exe` → 「无效查询」(2026-10-04 实测)。故过滤走
-##   `Where-Object`(值是裸词,不需要引号),tab 用 `[char]9` 拼而不用 `` `t ``。
-##   查询失败按"没看到孤儿"处理:只漏收,不误杀。
+## 终止归属进程已退出的残留后台核心进程，返回成功终止的数量。
+## 通过 PowerShell Win32_Process 查询进程命令行，准确提取所属父进程 PID 进行判定。
+## 查询失败时不作处理，确保安全性（只允许漏删，严禁误杀其他正常进程）。
 static func _reap_orphan_cores() -> int:
 	var ps := "Get-CimInstance Win32_Process | Where-Object Name -eq easytier-core.exe" \
 			+ " | ForEach-Object { Write-Output ($_.ProcessId.ToString() + [char]9 + $_.CommandLine) }"
@@ -479,7 +462,7 @@ static func _reap_orphan_cores() -> int:
 			continue
 		var et_pid := int(parts[0])
 		var cmd := parts[1]
-		# 三道闸:是本游戏拉起的 → 解得出 owner → owner 已死(且不是自己)。
+		# 三重校验：确认是由本游戏启动、可正确解析父进程 PID、且对应父进程已不存在（且非当前进程）。
 		if et_pid <= 0 or not cmd.contains(marker):
 			continue
 		var owner := _owner_pid_of(cmd)
@@ -753,12 +736,9 @@ static func _append_relay(args: PackedStringArray) -> void:
 # RPC 门户端口:**用 TCP socket 向 OS 要一个当时空闲的口**(bind 127.0.0.1:0 → 读回 → 释放),
 # 再以具体端口号传给内核。门户是 TCP 监听,探测类型必须同为 TCP —— UDP 空闲不代表 TCP 空闲,
 # 故这里不能用 PacketPeerUDP(`_pick_free_port` 那个是 UDP 转发口,两者各用各的类型)。
-# ★ 为什么不再 15888~15999 盲选:区间与 EasyTier 自家默认门户的自动取号池(15888..15900)重叠,
-#   撞号 = 内核绑不上门户 → **整个进程秒死**(exit 1,只留一行收不到的 stderr,file log 零痕迹;
-#   2026-10-04 对 2.7.0-custom 源码+实测)。OS 发号从结构上消灭撞口;"释放→内核真绑"的启动窗口
-#   竞态是残差,由 wait_ready/CLI 轮询的失败路径暴露(PCL-CE 的 NewTcpPort 同款,用户裁定采用)。
-# ★ 需要 TCPServer:已从 cyancular_build_profile.gdbuild 的 disabled_classes 放开并重编模板。
-# 失败返回 0,调用方按致命错处理(门户没有口,隧道起不起来都没意义)。
+# 动态分配 RPC 端口：通过操作系统绑定临时端口（OS ephemeral port）获取空闲端口，
+# 避免与默认端口池重叠引起的绑定冲突。
+# 失败返回 0，调用方作异常处理。
 static func _pick_rpc_port() -> int:
 	var srv := TCPServer.new()
 	if srv.listen(0, "127.0.0.1") != OK:

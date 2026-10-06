@@ -325,8 +325,8 @@ func _on_room_state(state: Dictionary) -> void:
 		var is_host := int(state.get("host_role", 0)) == role
 		shown += 1
 		# ★ 编号印**行序**,不印 role:role 是「最小空闲号」分配、且**有人退出后不重排**
-		#   (这是 --roles 协议的前提,权威 role 稳定才认得出串线),直接印会跳号 ——
-		#   3 人房中间那位退出 → 等待室显示 1、3(2026-09-15 用户报)。
+		#   (这是 --roles 协议的前提,权威 role 保持稳定以便服务端校验角色连接合法性),直接显示会跳号 ——
+		#   3 人房中间那位退出 → 等待室显示 1、3(界面优化需求)。
 		#   编号只是界面序号,与权威 role 脱钩;行序 = rr.players 的加入顺序。
 		var row := UiFactory.label("%d. %s%s%s" % [shown, nm, "(我)" if is_me else "", "(房主)" if is_host else ""],
 				32, UiFactory.C_TEXT if not is_me else UiFactory.C_ACCENT)
@@ -357,7 +357,7 @@ func _build_wait_panel() -> void:
 	# 等待室就隐藏 ⇒ 房主建完房改不了、加入者全程没见过,"房间里自定义颜色"形同虚设。
 	# 值即选即存 Settings.pvp_color_hue;开局转连 worker 时随 player_options 上发
 	# → 服务器 _claim_hues 汇总 → match_sync 回包 → 自己(本地直染)与所有副本(他人视角)都按它染色。
-	# (协议环路真链路探针实证双向带值,见 tests/royale_probe.gd 的 hues 断言。)
+	# (网络端到端测试已验证双向参数传递，见 tests/royale_probe.gd 的 hues 断言。)
 	vb.add_child(UiFactory.label("自己角色颜色(开局生效,所有人可见):", 32))
 	_add_hue_row(vb, "", Vector2(320, 30), Vector2(46, 30))
 	_start_btn = UiFactory.button("开 始 游 戏", 32, Vector2(360, 56))

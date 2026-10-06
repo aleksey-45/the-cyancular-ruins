@@ -615,16 +615,16 @@ var time_rules := TimeRules.new()
 func _add_time_params(vb: VBoxContainer) -> void:
 	if not PvpSession.beta_mode:
 		return
-	vb.add_child(UiFactory.label("时间颗粒规则(房主可调,开局生效):", 32, UiFactory.C_ACCENT))
-	_trow(vb, "初始颗粒", 1000.0, "initial", TimeRules.R_INITIAL, 50.0, false)
-	_trow(vb, "颗粒上限", 1800.0, "cap", TimeRules.R_CAP, 100.0, false)
-	_trow(vb, "回溯燃烧/秒", 150.0, "rewind_burn", TimeRules.R_BURN, 5.0, false)
-	_trow(vb, "加速燃烧/秒", 70.0, "haste_burn", TimeRules.R_BURN, 5.0, false)
-	_trow(vb, "短时额度", 250.0, "window", TimeRules.R_WINDOW, 10.0, false)
-	_trow(vb, "回复/秒", 50.0, "regen", TimeRules.R_REGEN, 5.0, false)
-	_trow(vb, "击杀获取 %", 50.0, "kill_ratio", Vector2(0.0, 100.0), 5.0, true)
-	_trow(vb, "拆砖获取/子格", 10.0, "block_gain", TimeRules.R_BLOCK, 1.0, false)
-	_trow(vb, "伤害获取/点", 4.0, "damage_gain", TimeRules.R_DAMAGE, 1.0, false)
+	vb.add_child(UiFactory.label("时间粒子规则（房主可调，开局生效）：", 32, UiFactory.C_ACCENT))
+	_trow(vb, "初始粒子", 1000.0, "initial", TimeRules.R_INITIAL, 50.0, false)
+	_trow(vb, "粒子上限", 1800.0, "cap", TimeRules.R_CAP, 100.0, false)
+	_trow(vb, "回溯消耗/秒", 150.0, "rewind_burn", TimeRules.R_BURN, 5.0, false)
+	_trow(vb, "加速消耗/秒", 70.0, "haste_burn", TimeRules.R_BURN, 5.0, false)
+	_trow(vb, "短期额度", 250.0, "window", TimeRules.R_WINDOW, 10.0, false)
+	_trow(vb, "恢复/秒", 50.0, "regen", TimeRules.R_REGEN, 5.0, false)
+	_trow(vb, "击杀奖励 %", 50.0, "kill_ratio", Vector2(0.0, 100.0), 5.0, true)
+	_trow(vb, "破坏瓦片/子格", 10.0, "block_gain", TimeRules.R_BLOCK, 1.0, false)
+	_trow(vb, "造成伤害/点", 4.0, "damage_gain", TimeRules.R_DAMAGE, 1.0, false)
 
 
 # 一行参数 = 标签 + 滑条 + 当前值标签(数字必须可见:盲拖参数没法用)。

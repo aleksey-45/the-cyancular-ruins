@@ -1,6 +1,6 @@
 extends SceneTree
 
-# 时间场冒烟(-s 数据级):模式切换/倍率/贷款敌速/账户结算 全语义。
+# 时间场冒烟测试（-s 数据级）：模式切换、时间倍率、透支状态敌人移速与账户结算全流程验证。
 # 用法:godot --headless --path . -s res://tests/time_field_smoke.gd
 
 var _fails: Array[String] = []
@@ -14,7 +14,7 @@ func _init() -> void:
 	_test_rewind_mode()
 	_test_account_gating()
 	if _fails.is_empty():
-		print("TIME FIELD OK(空场恒1/加速相对2x/贷款敌速/回溯冻结+精英豁免/账户闸门)")
+		print("TIME FIELD OK(空场恒1/加速相对2x/透支敌人加速/回溯冻结+精英豁免/账户锁定控制)")
 		quit(0)
 	else:
 		print("TIME FIELD FAIL(%d): %s" % [_fails.size(), "; ".join(_fails)])
@@ -82,13 +82,13 @@ func _test_loan_enemy_speed() -> void:
 	var acc := GrainAccount.new()
 	var f := TimeField.new(acc)
 	TimeField.current = f
-	acc.spend(4.0, 100.0)   # 窗满
-	acc.spend(0.5, 100.0)   # 借 50 → 深度 0.5
+	acc.spend(4.0, 100.0)   # 耗尽短期额度
+	acc.spend(0.5, 100.0)   # 透支 50 → 透支深度 0.5
 	_near(f.loan_depth(), 0.5, 0.001, "深度 0.5")
 	f.update(1.0 / 60.0, false, false)
 	var want: float = 1.0 * (1.0 + TimeParams.LOAN_ENEMY_SPEED_BONUS * 0.5)
-	_near(TimeField.enemy_delta(1.0, _mk_enemy(false)), want, 0.01, "贷款 0.5:普通敌 ×1.25")
-	_near(TimeField.enemy_delta(1.0, _mk_enemy(true)), 1.0, 0.001, "贷款不影响精英")
+	_near(TimeField.enemy_delta(1.0, _mk_enemy(false)), want, 0.01, "透支深度 0.5:普通敌人 ×1.25")
+	_near(TimeField.enemy_delta(1.0, _mk_enemy(true)), 1.0, 0.001, "透支状态不影响精英实体")
 	TimeField.current = null
 
 
@@ -115,14 +115,14 @@ func _test_account_gating() -> void:
 	_chk(f.mode == TimeField.Mode.REWIND, "余额未尽仍可回溯")
 	f.update(1.0, true, false)    # 余额耗尽
 	_chk(f.mode == TimeField.Mode.NONE, "余额耗尽回溯应停")
-	# 锁定闸门:贷满后两键都按不出
+	# 锁定保护：达到透支上限后禁止触发时间技能
 	var acc2 := GrainAccount.new()
 	var f2 := TimeField.new(acc2)
 	TimeField.current = f2
 	acc2.spend(4.0, 100.0)
-	acc2.spend(1.0, 100.0)   # 贷满锁
+	acc2.spend(1.0, 100.0)   # 达到透支上限触发锁定
 	f2.update(0.1, true, false)
-	_chk(f2.mode == TimeField.Mode.NONE, "锁定中 Shift 空转")
+	_chk(f2.mode == TimeField.Mode.NONE, "锁定状态下回溯键无效")
 	f2.update(0.1, false, true)
-	_chk(f2.mode == TimeField.Mode.NONE, "锁定中 Ctrl 空转")
+	_chk(f2.mode == TimeField.Mode.NONE, "锁定状态下加速键无效")
 	TimeField.current = null
