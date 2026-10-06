@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3]
-
-[ext_resource type="Script" path="res://tests/elite_drop_probe.gd" id="1_probe"]
-
-[node name="EliteDropProbe" type="Node"]
-script = ExtResource("1_probe")

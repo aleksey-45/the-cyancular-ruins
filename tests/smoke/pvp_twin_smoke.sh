@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# C2 孪生冒烟(单进程,scene 模式 headless):证明 capture_state/restore_state 完整。
+# 通过 = 打印 SMOKE_TWIN OK 退出 0;B 每 12 tick 被搞乱后 restore(A) 仍与 A 逐 tick 收敛。
+# 跑法:bash Tests/pvp_twin_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。
+set -u
+# shellcheck source=../env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
+LOG="tests/smoke/pvp_twin_smoke.log"
+"$GODOT" --headless --path . res://tests/smoke/pvp_twin_smoke.tscn 2>&1 | tee "$LOG"
+if grep -q "SMOKE_TWIN OK" "$LOG"; then
+  echo "[pvp_twin] PASS"
+  exit 0
+else
+  echo "[pvp_twin] FAIL —— 见 $LOG(字段发散=capture_state 漏变量)"
+  exit 1
+fi
