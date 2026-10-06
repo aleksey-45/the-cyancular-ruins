@@ -54,7 +54,7 @@ func _ready() -> void:
 	_rollback.bind(_local)
 	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
 	# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
-	# 不报错,只是那修复不生效 —— 故 tests/rollback_fidelity_probe 有源码守卫钉这一行。
+	# 不报错,只是那修复不生效 —— 故 tests/probe/rollback_fidelity_probe 有源码守卫钉这一行。
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)
 	var pp := PostProcess.new()
@@ -98,7 +98,7 @@ func _ready() -> void:
 				return Vector2.INF)
 		add_child(_minimap)
 	# 回合记分 HUD(层级盖在 PostProcess/单机 HUD 之上;布局见 pvp_hud.tscn)
-	_hud = preload("res://ui/pvp_hud.tscn").instantiate() as PvpHud
+	_hud = preload("res://ui/hud/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
 	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 同样继承它 —— 见 level_0.gd 的
 	# _ready:那一挂在建图前、位于 pvp_mode 早退**之前**,而本文件也把该 Level0 挂进世界,
@@ -197,25 +197,19 @@ func _on_round_state(data: Dictionary) -> void:
 	# COUNTDOWN(开局/换局 3 秒):锁本地武器开火(移动由服务器权威冻结,本地玩家服务器渲染自然不动)。
 	_round_locked = state == 0
 	_refresh_input_lock()   # 单一收口:菜单开着时不解锁(见 _refresh_input_lock)
-	if state == 0:
-		# ★ 只在**局号变化**时做新一轮复位:倒计时期间服务器会周期性重播 `round_state`
-		#   (见 `MatchState.COUNTDOWN_SYNC_INTERVAL`),按"收到一条做一次"会把整张图的瓦片
-		#   与碰撞重建好几遍(重播是为了对齐两端倒计时的起点,不是新事件)。
-		var cd_round := int(data.get("round", 1))
-		if cd_round > 1 and cd_round != _countdown_reset_round:   # COUNTDOWN,新一轮
-			_countdown_reset_round = cd_round
-			for b in get_tree().get_nodes_in_group("bullet"):
-				if is_instance_valid(b):
-					(b as Node).queue_free()
-			if _level0 != null and _level0.has_method("reset_destructibles"):
-				_level0.reset_destructibles()
+	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
+		for b in get_tree().get_nodes_in_group("bullet"):
+			if is_instance_valid(b):
+				(b as Node).queue_free()
+		if _level0 != null and _level0.has_method("reset_destructibles"):
+			_level0.reset_destructibles()
 		# ★ 地面武器**不要在这里清**(曾经写过一版,又把刚到手的新一轮那批一起抹掉了):
 		#   服务器换局是「先 `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再**
 		#   `_broadcast_round_state`」,两条走同一条可靠通道、保序到达 —— 于是本条 round_state
 		#   到达时,新一轮那批**早已在本地建好了**,再清一次 = 第 2 局起客户端地面恒为空
 		#   (服务器有 10 把、客户端一把都看不见,只能捡后来的丢弃物 —— 正是要修的那个症状)。
 		#   清旧的这件事由服务器那两条**有序**事件负责;真漏收了,对局中途掉线重进会重新拉
-		#   match_sync 兜住。守卫见 tests/net_ground_probe.gd 的反向断言。
+		#   match_sync 兜住。守卫见 tests/probe/net_ground_probe.gd 的反向断言。
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
 		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可在结算页上再弹一次
@@ -240,10 +234,16 @@ func _build_result_payload() -> Dictionary:
 
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
+# ★ 这条路径在 2026-09-28 之前**是死的**:`NetBus.opponent_left` 全仓零调用点,而本函数一直
+#   挂在它上面。服务端那一半见 `server_main._notify_opponent_left`(1v1 宽限期到、收场之前)。
 func _on_opponent_left() -> void:
 	if _match_ended or _local == null:
 		return
 	_match_ended = true
+	# ★ **与到达顺序无关的收口**:若"服务器断开"先到(worker 收场两条消息同拍),重连循环
+	#   已经在飞 —— 这里把它停掉,否则它会继续跑满 60 秒(见 `_cancel_reconnect` 的注释)。
+	_cancel_reconnect()
+	print("[pvp] 对手已离开(2.5s 后回主菜单)")
 	if _hud != null:
 		_hud.show_notice("对手已离开", "对局结束")
 	# 同 MATCH_OVER 那条:先在起定时器前捕获引用,并让到点的 lambda 在"已经离开"时不再叠加
@@ -271,7 +271,7 @@ func _on_opponent_left() -> void:
 #     (大乱斗的对手色、大乱斗/3v3 里自己那把自选色),见 `_apply_tint` 的第二条分支。
 #     本文件(1v1)**不再引用它**。
 # ★ 判据链(改这个颜色时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`,
-#   由 `tests/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
+#   由 `tests/probe/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
 
 func _apply_p2_tint() -> void:
 	var body: Node = null
@@ -296,7 +296,7 @@ func _apply_p2_tint() -> void:
 # ★ 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的是 `UiFactory.C_TEAM_B`
 #   这个固定 token(2026-09-20 前是等价的 `P2_DEFAULT_HUE`)而**不是** `Settings.pvp_color_hue`
 #   (1v1 从未把自选色相染到本地玩家身上),所以这里只需保证**对手侧**别把它拉进来。判据:
-#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/hue_tint_probe` 有源码断言);
+#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/probe/hue_tint_probe` 有源码断言);
 #     · P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
 # ★ `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
 #   共享钩子(`PvpMatchClient._apply_peer_hues_or_team` / `_apply_tint`)**一字未动**。
@@ -333,10 +333,10 @@ func _ensure_id_labels() -> void:
 	if _world == null:
 		return
 	if _id_self == null:
-		_id_self = load("res://ui/world_label.gd").new()
+		_id_self = load("res://ui/factory/world_label.gd").new()
 		_world.add_child(_id_self)
 	if _id_opp == null:
-		_id_opp = load("res://ui/world_label.gd").new()
+		_id_opp = load("res://ui/factory/world_label.gd").new()
 		_world.add_child(_id_opp)
 
 func _process(_delta: float) -> void:

@@ -132,6 +132,11 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 	for t in get_tree().get_nodes_in_group("enemies"):
 		if t is Node2D:
 			targets.append([t, true])
+	# ★ 宿主的队伍判据:与 `:234` 的 `notify_direct_hit` 同一条形状 —— 单机下
+	#   `player.get_parent()` 是 WorldViewport、`has_method("is_friendly")` 为假 ⇒ team_aware 为假
+	#   ⇒ 行为与改动前**逐字相同**。PvP 服务器下父节点是 MatchHost(继承 MatchState)⇒ 判据可用。
+	var host := player.get_parent() if player != null else null
+	var team_aware := host != null and host.has_method("is_friendly")
 	for p in get_tree().get_nodes_in_group("player"):
 		if not (p is Node2D):
 			continue
@@ -139,6 +144,8 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 			continue
 		if p.has_method("is_downed") and p.is_downed():
 			continue
+		if team_aware and host.is_friendly(player, p):
+			continue     # ★ 队友穿透:与子弹/榴弹直击同口径(不伤害、也不挡光束)
 		targets.append([p, false])
 
 	var w := GameParameters.MAP_WIDTH

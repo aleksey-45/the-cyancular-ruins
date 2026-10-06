@@ -9,28 +9,20 @@ extends RefCounted
 #   规则:**加字段前先 grep 确认有读者**;只写不读的字段一律不要加。
 #   (这 4 个都是"上游写了、下游其实从别处拿"的残留,与 match_sync 落地前的交接层同源。)
 
-# 要连/已经连着的那台服务端。★ 2026-09-29 起**没有"手填地址"这条路**了,写它的只有两处:
-#   `LocalServer.launch_and_connect()`(本机开服,端口随机)与 `Tunnel.start_client()`(隧道,连 127.0.0.1)。
-#   ★ 默认值因此是 127.0.0.1:原先那个云地址在手填入口删掉之后**再也没法被选中**,留着只会让
-#     "某页忘了写地址"退化成静默去连一台陌生服务器(而不是立刻失败、当场看见)。
-static var server_address: String = "127.0.0.1"
-# 服务器端口。★ 它是**客户端自己连的那一个**:单进程单端口之后,大厅与对局共用它,
-# 局内断线重连也直连它(`pvp_match_client._retry_connect`)。
-# ★ 与 `NetBus.DEFAULT_PORT` 同值:那是"手动跑一台服务端"的端口(开发时 `start_server.bat` 用它);
-#   本机开服时由客户端挑一个随机端口填进来(见 core/net/local_server.gd)。
-#   守卫:tests/netplay_probe 比对两者相等。
 const DEFAULT_PORT := 7777
+static var server_address: String = "127.0.0.1"   # 本地回环(EasyTier 隧道及本地服务端)
 static var server_port: int = DEFAULT_PORT
 static var role: int = 1          # 1=P1(大乱斗里是第 N 人)。真读者多:出生点/副本/输入上报
 static var player_name: String = "Anon"   # 匹配界面输入的昵称(默认 Anon;头上显示;会话内不清)
-static var map_path: String = ""       # 服务器定图:在 match_start 里下发,对局场景加载同名文件
+static var map_path: String = ""       # 服务器定图:worker 在 match_start 里下发,对局场景加载同名文件
 static var spawn: Vector2i = Vector2i(-1, -1)   # 本端出生点(match_sync 下发,与服务器同源)
-
 
 # ── 断线重连(2026-09-17)──
 # ★ 与本文件的其他字段一样:**加之前先 grep 确认有读者**。
-#   token : 大厅生成、随 session_token 下发;claim 时报给服务端;重连时用来 reclaim
+#   token      : 大厅生成、随 session_token 下发;claim 时报给 worker;重连时用来 reclaim
+#   worker_port: 客户端重连要直连**同一个端口**,不重新走大厅(局内自动重连那条路径)
 static var token: String = ""
+static var worker_port: int = 0
 
 # ── 「回大厅后回局」(路径乙)的两个字段(2026-09-21,阶段 2-B)──
 # ★ 与上面两条同款纪律:**加字段前先 grep 确认有读者**。两个都有:
@@ -42,88 +34,77 @@ static var token: String = ""
 static var room_code: String = ""
 static var rejoin: bool = false
 
-# ── 「上次从哪个模式的大厅页进来」+ 它唯一的读者 `enter_mode()`(2026-09-22 加回来)──
-# ★★ 它**曾是**"没读者所以删掉"的样板(原稿里它只服务那颗被取消的「回到对局」按钮的路由),
-#   现在读者真的存在了 —— 而且**非它不可**:
-#     · 凭据要活过"回主菜单"这一步(那正是路径乙的全部意义),所以**不能**在进大厅页时一律清;
-#     · 但**换模式**必须清:三张注册表(1v1 / 大乱斗 / 3v3)的房号**共用同一个 4 位空间**
-#       (`_generate_code()`,各查各的 `has(code)` ⇒ 同号共存是允许的),没有这个判别器时,
-#       你在 1v1 攒下的 `room_code = "9021"` 会让**同号的 3v3 房**看起来像"我的房"。
-#   ⇒ 判据只有一处:`enter_mode()`(主菜单那三个联机按钮调它,见 main_menu.gd)。
-#     ★ 别再"顺手把它删掉"(那句"没读者"的理由在 2026-09-22 已经不成立),`reconnect_smoke`
-#       有**正向**断言钉着它 + `enter_mode()` 的两条分支。
 # 时间玩法(Beta,2026-09-28 P2):本局是否从主菜单「Beta」页进来。语义上有两重:
 # ①大厅侧——beta 房与普通房**互不可进**(创建带 beta 标,加入按本标校验,列表按本标过滤);
 # ②对局侧——worker/宿主据此启用时间玩法(TimeRules,见 PvP 时间玩法计划)。
-# ★ 放 reset() 里复位:主菜单三个普通联机按钮走 enter_mode → reset,天然把它清掉。
+# ★ 放 reset() 里复位:主菜单那颗联机入口走 reset(),天然把它清掉。
 static var beta_mode := false
 
 const MODE_PVP := "pvp"
 const MODE_ROYALE := "royale"
 const MODE_TEAM := "team"
-static var mode: String = ""
 
+# 凭据**属于哪个模式**。★ 它取代了原先的 `mode` + `enter_mode()`:那套的写入点是
+# 主菜单的联机入口,而合一后凭据的归属改由"记房号"那一拍确定
+# (`note_room(code, mode)`)。三张注册表的房号空间共用这个前提一个字没变 ⇒ 判据必须留着。
+static var room_mode: String = ""
 
-# 「玩家从主菜单按了**哪个模式**的按钮进来了」—— 主菜单那三个联机按钮的**唯一**入口。
-# ★ 换模式 ⇒ 上一模式的回局凭据到此为止(**只**换模式才清,同模式重进必须留着 —— 见
-#   `mode` 上面那段);不换模式 ⇒ 凭据原样保留,玩家回到自己那间房的那一行仍然可点。
-# ★ 它**内部**走 `reset()`:role/spawn/map_path/地址那些本来就该每次进页复位(与从前一致),
-#   变的只是"凭据不再跟着一起清"。
-static func enter_mode(m: String) -> void:
-	if mode != m:
-		clear_rejoin()
-	mode = m
-	reset()
+# 进大厅时预选的**筛选**模式(Beta 页写、统一大厅读)。空串 = 不预选(从主菜单直接进来)。
+# ★★ 它**不是** `room_mode` —— 那个是**凭据**的模式,`can_rejoin_to()` 拿它判"这一行是
+#   不是我的房"。两个量语义不同,别合并。
+static var entry_mode: String = ""
 
 
 # 手里还攥着**某一局**的凭据吗?(粗判据:三个字段齐。)
 static func can_rejoin() -> bool:
-	return token != "" and server_port > 0 and room_code != ""
+	return token != "" and worker_port > 0 and room_code != ""
 
 
 # 「**这一行**是不是我的房、而且我还能回去?」—— 房间列表每一行渲染时与行被按下时**共用**
 # 这**一个**判据(两处各写一遍是漂的成因:漏一处就是"看着可点、点了没用"或反过来)。
-# ★ 为什么必须带上房号:光判 `can_rejoin()` 会让**别人那间对局中的房**也可点 —— 点下去发出的是
-#   回局请求,而凭据里的房号对不上,玩家看到的是"回局被拒"(一句与眼前那间房无关的话)。
-static func can_rejoin_to(code: String) -> bool:
-	return can_rejoin() and room_code == code
+# ★ 为什么必须带房号:光判 `can_rejoin()` 会让**别人那间对局中的房**也可点。
+# ★ 为什么必须带**模式**:三张注册表的房号空间共用(见 `room_mode` 上方那段),只看房号会让
+#   同号的另一模式的房看起来像我的。
+static func can_rejoin_to(code: String, mode: String) -> bool:
+	return can_rejoin() and room_code == code and room_mode == mode
 
 
 # 清掉回局凭据(大厅答"回不去了" / 回局超时 / **换模式**时调)。
 # ★ 与 `reset()` **分开**:`reset()` 会把 `server_address` 也拨回云默认 —— 在人家的自建服上
 #   调它等于把玩家踢到另外一台机器去。
-# ★★ **凭据真正死掉的地方就是本函数的调用点**(2026-09-22 定案,C1 之后)。全部四处:
-#   ① `enter_mode()` —— **换模式**(房号空间三种模式共用,不清就会串模式,见 `mode` 那段);
+# ★★ **凭据真正死掉的地方就是本函数的调用点**(2026-09-22 定案,C1 之后)。全部三处:
+#   ① `note_room()` —— 换了**房号或模式**(房号空间三种模式共用,不清就会串模式,见 `room_mode` 那段);
 #   ② `LobbyPage._on_rejoin_denied()` —— 大厅答"回不去了"(凭据失效 / 房号不符 / 对局已结束);
-#   ③ `LobbyPage._tick_rejoin_timeout()` —— 大厅 15s 没应答(它已经不可用了);
-#   ④ `note_room()` —— 玩家进了**另一间**房(旧的这一局到此为止)。
+#   ③ `LobbyPage._tick_rejoin_timeout()` —— 大厅 15s 没应答(它已经不可用了)。
 #   ★ **不在这里的**:回主菜单、以及"同模式"再进大厅页 —— 那两步**刻意**保留凭据。
 #     曾经的 `reset()` 会在那里把四个字段一起清,于是"回到大厅后自己那间房是灰的、
 #     回不去"(整条路径乙在生产里不可达)。**别再往 `reset()` 里加回那四行。**
 static func clear_rejoin() -> void:
 	token = ""
+	worker_port = 0
 	room_code = ""
 	rejoin = false
 
 
 # 「我现在进的是**这一间**房」—— 三页记房号的**唯一**入口(`_on_room_created` / `_on_room_joined` /
 # `_on_room_state` 都调它;别的地方不要再写 `PvpSession.room_code = …`)。
-# ★ 换了房号 ⇒ 上一间的凭据到此为止:此刻手里那份 token 属于**上一局**,
+# ★ 换了**房号或模式** ⇒ 上一间的凭据到此为止:此刻手里那份 token/worker_port 属于**上一局**,
 #   而"这一间"还没开局(token 由大厅在开局前才发)⇒ 留着它只会让**上一局的**(甚至同号的
-#   别人的)房看起来像"我的房"(点下去必然收到一句与眼前这间房无关的拒绝)。
+#   别人的、或**同号的另一模式的**)房看起来像"我的房"(点下去必然收到一句与眼前这间房无关的拒绝)。
 # ★ 房号**没变**时不清:大乱斗/3v3 的等待室每收到一次房间状态就会走一遍本函数,而
 #   "同一间房的状态刷新"不该把刚拿到的凭据抹掉(那会把路径乙在本局开局后弄坏)。
 #   ★ 副作用(已知、可接受):若"上一局那间房"与"这一间"**恰好同号**,本函数判不出区别 ——
 #     那种情况下凭据会留到玩家点那一行时被大厅按"凭据失效"拒掉,一次点击后自愈
 #     (`_on_rejoin_denied` → `clear_rejoin`)。概率极低且只多一次点击。
-static func note_room(code: String) -> void:
-	if code != room_code:
+static func note_room(code: String, mode: String) -> void:
+	if code != room_code or mode != room_mode:
 		clear_rejoin()
 	room_code = code
+	room_mode = mode
 
 # ── 「本局禁了哪些枪」的权威在哪(2026-09-14 加,别再四处找)──
 #   · 联机对局:**服务器 MatchHost**。客户端侧的真生效点是
-#     `player.weapons.set_enabled_slots(disabled)` —— 在 `pvp_client._apply_match_options` /
+#     `player.weapons.set_enabled_types(disabled)` —— 在 `pvp_client._apply_match_options` /
 #     `royale_game._apply_match_options` 里,紧跟载荷解析那一行。载荷来自 match_sync 的 options
 #     (服务器按 role1 的 player_options 生效)。
 #   · 单机:**`RunOptions.disabled_weapons`**(菜单写入,`level_0.gd:94` 读)。
@@ -132,7 +113,7 @@ static func note_room(code: String) -> void:
 #   原先还有一个 `PvpSession.disabled_weapons` 静态镜像,已删(只写不读,且让人误以为它是权威)。
 
 # ── 「是不是大乱斗局」的判据 ──
-#   靠**从哪个场景进来**(`royale_lobby` → `royale_game`),没有静态标记。
+#   靠**从哪个场景/哪个模式进来**(统一大厅 `mp_lobby` → `royale_game`),没有静态标记。
 #   原先的 `PvpSession.royale` 已删(两处赋 true、全仓无读)。
 
 # ── 「开局三载荷的跨场景交接」已删除(2026-09-12)──
@@ -142,25 +123,27 @@ static func note_room(code: String) -> void:
 # pending_* 静态字段、新场景进场景时取用。
 # 现在改成**进场拉取**(`NetBus.match_sync`):新场景建好、订阅齐了才开口要,时序不敏感。
 # 于是缓存这一层连同 pending_* 一并删除 —— 只留一条投递路径,也就不存在"只改一条"的错法。
-# 守卫:`tests/match_sync_probe` 的反向断言,全仓不得再出现这些标识符。
+# 守卫:`tests/probe/match_sync_probe` 的反向断言,全仓不得再出现这些标识符。
 
 # 「进大厅页」的复位:**不碰回局凭据**(那四行 2026-09-22 已删 —— 见 `clear_rejoin` 上面那段)。
-# ★★ 曾经它在末尾清 `token` / `room_code` / `rejoin`,而主菜单那三个联机按钮
-#   每按一次就调它一次 ⇒ 玩家从对局按 ESC 回主菜单、再按「1 v 1」时,凭据**正好在此步骤**
-#   被清空 → `can_rejoin_to()` 恒 false → 自己那间"对局中"的房间在列表里持续置灰不可点击
-#   (导致路径乙在实际运行中不可用,而端到端测试因跳过主菜单点击步骤未能暴露出此缺陷)。
-#   ★ 凭据的正常释放时机见 `clear_rejoin` 的四处清单;请勿将此四行清理逻辑重新加回。
+# ★★ 曾经它在末尾清 `token` / `worker_port` / `room_code` / `rejoin`,而主菜单那颗联机入口
+#   每按一次就调它一次 ⇒ 玩家从对局按 ESC 回主菜单、再从这个入口进来时,凭据**正好在那一拍**
+#   被抹掉 → `can_rejoin_to()` 恒 false → 自己那间"对局中"的房在列表里恒为灰、点不动
+#   (**整条路径乙在生产里不可达**,而真链路探针因为绕过了主菜单那一步,一直是绿的)。
+#   ★ 凭据该在哪里死见 `clear_rejoin` 的三处清单;**别再把这四行加回来**。
 # ★ 它仍然要清的:role/spawn/map_path(每次进页本来就该复位)。
-# ★★ `server_address` **不再**在此处重置为默认云端地址(2026-09-22 优化项)。原先设计的
-#   考量是"选择服务器属于地址输入框的职责,由 `_with_lobby` 重新赋值"—— 其本身逻辑自洽,**但与
-#   重新回局产生冲突**:回局要求"回到**同一台**服务器上的原有对局",若每次点击主菜单按钮就将地址
-#   重置为云端默认 ⇒ 自建服玩家再次进入大厅页时,地址变为云端、**其所在房间根本不在列表中**,
-#   表现出无法回局的相同症状。
-#   ★ 且端到端集成测试脚本因在 setup 时主动覆盖了地址为测试端口,使得测试虽然通过但实际自建服功能受损。
-#   ⇒ 现在的规则为"大厅页记住本会话最近使用的服务器地址"。跨进程会话的持久化属独立规划
-#     (`Settings` 中暂无地址字段)。切勿在未重构回局路径前恢复该重置行为。
+# ★★ `server_address` **不再**在这里回云默认(2026-09-22 终审的 Important 项)。原先那行的
+#   理由是"选择服务器是地址框那一拍的事,由 `_with_lobby` 重新赋"—— 它本身没错,**但它与
+#   回局直接冲突**:回局要求"回到**同一台**服务器上的原局",而每按一次主菜单按钮就把地址
+#   打回云默认 ⇒ 自建服的玩家再进大厅页时,地址框是云的、**他那间房根本不在列表里**,
+#   表现与他刚被修掉的那个 bug 一模一样。
+#   ★ 更坏的是**真链路探针在结构上看不见这一条**:`rejoin_watcher` 恰恰因为**主菜单的
+#     联机入口**会重置地址,才手动把它改回探针自己的 29300 ⇒ 探针全绿而自建服不可用。
+#   ⇒ 现在的语义是"大厅页记得你**这次会话**上一次用的服务器"。跨会话的持久化是另一件事
+#     (`Settings` 里没有地址字段,未做)。★ 别再把这行加回来,除非同时给回局换一条路。
 static func reset() -> void:
 	role = 1
 	map_path = ""
 	spawn = Vector2i(-1, -1)
 	beta_mode = false   # 时间玩法(Beta)来源标记:只有主菜单 Beta 页进来才置真(见 beta_menu)
+	entry_mode = ""     # 进大厅的**筛选**模式:每次进页预选复位(与**凭据**的 room_mode 无关)

@@ -176,19 +176,18 @@ func _ready() -> void:
 
 var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成员)
 
-# Beta 时间玩法（PvP）：服务端（权威）与本地客户端（预测）写入的加速倍率（1.0 表示正常速度）。
-# 单人模式使用 TimeField.player_speed_mult()；PvP 模式下 TimeField.current 为 null，
-# 服务端与本地客户端根据输入状态位与时间粒子账户余额向该字段写入对应倍率。
+# Beta 时间玩法(PvP):**服务器/本地预测**写入的加速倍率(1 = 常速)。
+# 单机不走这里(走 TimeField.player_speed_mult);PvP 的 TimeField.current 为 null,
+# 由 worker(权威)与本端(预测)按输入位 + 颗粒余额各自写入同一个字段。
 var pvp_haste_mult := 1.0
 var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替
 
 
 func _physics_process(delta: float) -> void:
-	# 时间机制:回溯状态下整帧跳过物理步进(角色位移由回放器直接还原);
-	# 加速状态作用于**速度域**:因 move_and_slide() 使用引擎底层固定 delta,
-	# 仅缩放脚本 delta 会导致重力加速与跳跃高度降低,无法正确体现横向移速。
-	# 因此:逻辑 tick 频率与水平目标速度按倍率缩放,重力与跳跃初速度保持原值以维持手感。
+	# 时间场:回溯整帧冻结(位置由回放器摆);加速走**速度域**——move_and_slide() 用引擎
+	# 自己的 delta,缩放 delta 只会让重力和计时器变快(实测手感:只有坠落快、跳跃变低、
+	# 移速不变)。因此:tick 类 ×tm、水平速度目标 ×tm、重力/跳跃保持原样(跳跃高度不变)。
 	var tm := TimeField.player_speed_mult() if TimeField.current != null else pvp_haste_mult
 	_speed_mult = tm
 	if TimeField.current != null and TimeField.current.is_rewinding():
@@ -218,14 +217,19 @@ func _physics_process(delta: float) -> void:
 
 	combat.update_iframe_blink(delta)
 
-	# 切枪走 input_source 轮询(本地=Input 事件,网络=注入包)。放移动逻辑前,先装备再算移动惩罚。
-	var wslot := input_source.get_weapon_slot_pressed()
-	if wslot > 0:
-		# ★ 数字键选的是**背包第 N 把**(1-4),不是"武器类型 id"。
-		#   旧代码走 equip(str(wslot)) —— 那是按**类型**切的:按 2 会切到"步枪"这个类型,
-		#   而不管背包第 2 格是什么;更糟的是**背包里没有该类型时 equip 会凭空加一把**
-		#   (见它的"没有就加"分支)→ 按 3 白得一把重狙。这是背包化时漏改的消费点。
-		weapons.equip_index(wslot - 1)
+	# 切枪走 input_source 轮询,两条**不同量纲**的路,别合并:
+	#   ① 本地交互(本地输入源):数字键 = 本端背包的**第 N 把**(1-based)→ 就地按位置切。
+	#      网络输入源这条恒 0(它的上行值不是位置)。
+	#   ② 权威切枪(网络输入源):上一包带的目标 **inst** → 按 inst 找到那一把再切。
+	#      本地输入源这条恒 0(它那次切枪已由 ① 当场成交)。
+	# ★ 为什么上行必须是 inst:位置的含义由**本端背包**决定,而拾取/丢弃是服务器裁决、
+	#   客户端不预测 —— 那 ≈1 RTT 的窗口里同一个下标在两端解出**不同的枪**(见 spec §4.1)。
+	var idx := input_source.get_switch_index_pressed()
+	if idx > 0:
+		weapons.equip_index(idx - 1)
+	var winst := input_source.consume_switch_inst()
+	if winst > 0:
+		weapons.equip_inst(winst)
 
 	# R 换弹:同样走 input_source 轮询(2026-09-15 起 PvP 也换弹,见 weapon_base 换弹段注释)。
 	# ★ 必须是轮询,不能像原先那样在 _unhandled_input 里读原始 InputEvent —— **权威服务器
@@ -271,11 +275,20 @@ func _physics_process(delta: float) -> void:
 	combat.apply_knock(delta)
 
 	# ---------- 执行移动 ----------
-	# 必须在 move_and_slide() 之前保存下落速度：落地当帧在物理计算后会被清零。
-	# 同时需要过滤掉非自由落体产生的垂直速度（挤压拉伸动画的设计约定为“地面实际吸收的自由落体速度”）：
-	# 1. 梯子下行：攀爬状态下垂直速度固定，若参与挤压计算会导致形变异常钳制在最大振幅（测试参见 tests/squash_host_water_probe）。
-	# 2. 水中移动：过滤水下下沉速度引起的拉伸，实现“游泳状态下不触发自由落体落地弹簧形变”的设计预期。
-	#    客户端副本侧已通过本地网格查询完成对齐（player_replica._in_water，无需同步额外协议字段）。
+	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
+	# ★ 且必须**滤掉不是摔下来的下坠速度**(squash 的调用契约 = "地面真正吸收掉的坠落速度"):
+	#   它一并覆盖的两条路径**性质不同**,别当成同一个病(实测,见 tests/probe/squash_host_water_probe):
+	#   · 梯子下行(720)是**真违规**,且是**每帧**不是一帧 —— `_tick_crouch_and_dash` 攀附时首行
+	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 -10%(实测 scale = (1.1000, 0.9000))。
+	#   · 水中那条**不重叠**:Water.feet_offset 取碰撞箱底边 ⇒ 站在水下实心地面上时脚底探针
+	#     恒落在**支撑格自己**里、而支撑格是 wall 不是 liquid ⇒ in_water 恒假(实测
+	#     in_water∧on_floor 重叠 **0 帧**),"站池底永久 ~9% 挤压"并不存在。过滤它买到的是
+	#     **下沉窗口**那 30 帧的连续项 `_air`(320/700 × 0.30 ≈ 0.137 → **拉伸**;按组件的
+	#     `scale = (1−0.10v, 1+0.10v)` 读出来是 **scale = (0.9863, 1.0137)** —— 拉伸那一侧是
+	#     **y**(1.0137),x 是 0.9863;过滤后 1.0000)⇒ 这一条是**落实设计取舍**
+	#     ("游泳不该有自由落体那种弹感"),不是修 bug。
+	#     ★ 副本侧同口径的那一项已于 2026-09-20 补上(player_replica._in_water,客户端本地网格
+	#       查询,零协议字段);爬梯那一半仍是残留,见 spec §4.3。
 	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
 
@@ -500,13 +513,16 @@ func is_downed() -> bool:
 func is_charging() -> bool:
 	return is_charge
 
-# 当前物理帧滑动碰撞中是否存在非地形碰撞体（即远端玩家物理实体）。
-# 用途：供客户端预测系统（PredictionRollback）判断是否与对手发生物理接触，从而动态放宽位置回滚容差。
-# 设计说明：
-# - 校验碰撞层而非节点组或类名：避免与 player_replica 或服务端模块产生相互引用或硬编码耦合。
-# - 地形固定为碰撞层 1，通过位运算 `& ~1` 即可判定非地形实体（覆盖 1v1、大乱斗对局层 2 及 3v3 敌方层 16）。
-# - 3v3 队友位于层 2 但本地玩家碰撞掩码不包含层 2，因此不会产生滑动碰撞，符合队友穿透设计。
-# - 采用函数计算而非逐帧字段缓存，确保在各个 move_and_slide 调用点均能获取实时准确的碰撞状态。
+# 本物理步的滑动碰撞里有没有"非地形"的碰撞体(= 远端玩家身体所在的层)。
+# ★ 用途:C2 客户端预测把「是否正在贴身」喂给 PredictionRollback,让它只在贴身时放宽容差
+#   (见 docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md)。
+# ★ 判**层**不判组名/节点名:判 `player_replica` 组要在本文件写字面量,而 player_replica.gd 在
+#   `_ready` 里 preload 了 player.tscn ⇒ 两边互相引用成环;判 `TeamHost.TEAM_ENEMY_LAYER` 又会把
+#   `server/` 拖进核心玩家类。层判据零字符串耦合,且同时覆盖 1v1/大乱斗(层 2)与 3v3 敌方(层 16)。
+# ★ 地形恒为层 1 ⇒ `& ~1` 就是"非地形"。本地玩家的 mask 里除地形外只有对手幽灵体;
+#   3v3 队友的幽灵体在层 2、而本地 mask 不含 2 ⇒ 根本不产生滑动碰撞 ⇒ 队友不算接触(与"队友不互挡"一致)。
+# ★ 写成**函数**而不是每帧刷新的字段:本文件 move_and_slide() 有 3 个调用点
+#   (_physics_process / _tick_downed / restore_state),做字段必然漏刷一处,而漏了**不报错**。
 func touching_player() -> bool:
 	for i in range(get_slide_collision_count()):
 		var col := get_slide_collision(i)
@@ -560,7 +576,7 @@ func capture_state() -> Dictionary:
 		"ifr": combat.iframes,
 		"down": combat.downed,
 		"knock": combat.knock_velocity,
-		"wslot": weapons._current_slot,
+		"wslot": weapons._current_type,
 		# ★ 手持那一条的 **inst**(逐把唯一)。`wslot` 只有**类型 id**,同型号两把恒等 ——
 		#   光凭它,恢复端无法知道权威手持的是**哪一把**(会静默落回第 0 把:
 		#   残弹写错条目 / 丢弃丢错把 / 左下角武器框高亮错,用户 2026-09-23 报的即最后一条)。
@@ -569,8 +585,8 @@ func capture_state() -> Dictionary:
 		"winst": weapons.current_inst(),
 	}
 	# 背包整表(每条 {type, inst, mag})。★ 即便不做客户端预测也必须进整态:
-	#   restore_state 会 equip(wslot),若不先重建背包,重放时可能切到客户端背包里
-	#   **没有的类型** → 走到 equip() 的"没有就加"分支 → 凭空造出一把服务器没有的枪。
+	#   restore_state 会 equip_type(wslot),若不先重建背包,重放时可能切到客户端背包里
+	#   **没有的类型** → `equip_type` 只 push_error、**不再凭空造枪**(§4.5,2026-09-25)。
 	# ★ 与 mag/rld 同口径:只进 capture/restore,**不进** `_close_enough` 的比对
 	#   (后者是显式白名单,只比 down/hp/pos/vel —— 只要不主动加进去就自动满足)。
 	st["inv"] = weapons.snapshot_inventory()
@@ -642,26 +658,26 @@ func restore_state(st: Dictionary) -> void:
 	velocity = saved
 
 
-# ── 非预测状态同步（武器拾取/丢弃/复活/换局等）──
-# 与 restore_state 的职责划分：
-# - restore_state 执行完整状态覆盖并触发未确认输入重放，用于位置与速度的分歧回滚校正；
-# - sync_soft_state 仅同步权威离散字段，不触发物理重放。
-#   位置与速度由客户端本地预测，而背包与弹药由服务端权威仲裁（客户端不预测武器拾取与丢弃）。
-# 由 PredictionRollback 在预测状态经服务端确认（ack）时调用（约 60Hz）。
-# 状态变更前校验结构指纹，若无变化则跳过，避免频繁触发 inventory_changed 导致 UI 控件重建开销。
+# ── 非预测字段的"软同步"(拾取/丢弃/复活/换局改的就是这些)──
+# ★ 与 restore_state 的分工:那个是"整态覆盖 + 让调用方重放未确认输入",用在**真分歧**上;
+#   这个**只补字段、不重放** —— 位置/速度是预测出来的,拿权威覆盖它们才是橡皮筋,
+#   而背包/残弹**不是预测出来的**,它们只由服务器裁决(客户端从不预测拾取/丢弃)。
+# ★ 由 PredictionRollback 在"预测被证实"那一支调用(每个 ack 一次,~60Hz),
+#   所以**先比指纹再动手**:restore_inventory 会 emit inventory_changed →
+#   ui/hud.gd 整体重建武器框,无脑调 = 每帧新建/销毁一堆 Control。
 func sync_soft_state(st: Dictionary) -> void:
-	# 状态指纹包含武器槽位、实例 ID（winst）与背包结构：
-	# 同类型武器之间切换手持时槽位与背包结构均不改变，必须比对实例 ID 确保触发同步。
-	# 缺少 winst 字段时回退为当前值，以兼容历史协议。
-	if int(st.get("wslot", weapons._current_slot)) == weapons._current_slot \
+	# ★ 指纹必须**连 `winst` 一起比**:同型号两把之间换手时 `wslot`(类型)与背包结构**都不变**,
+	#   只看那两样会把整条软同步**跳过** ⇒ 上面 `restore_inventory` 的 inst 解析根本没机会跑。
+	#   ★ 缺键时的默认值取"当前值" ⇒ 老载荷(无 `winst`)行为与改动前逐字相同。
+	if int(st.get("wslot", weapons._current_type)) == weapons._current_type \
 			and int(st.get("winst", weapons.current_inst())) == weapons.current_inst() \
 			and _inv_structure_equal(st.get("inv", [])):
 		return
 	_apply_weapon_state(st)
 
 
-# 校验背包数据结构（武器类型与实例 ID 的有序列表）：
-# 排除弹药量等高频连续变量的比对，避免状态校验守卫频繁失效（符合分歧判定忽略连续量的原则）。
+# 只比**结构**(type/inst 的有序对):mag 是连续量、本地每帧都在变,比它等于每帧都"不一致",
+# 守卫当场失效 —— 与"不该拿连续量判分歧"是同一条纪律(见 _close_enough 的字段白名单)。
 func _inv_structure_equal(want: Array) -> bool:
 	var held: Array = weapons.inventory.held
 	if held.size() != want.size():
@@ -674,31 +690,29 @@ func _inv_structure_equal(want: Array) -> bool:
 	return true
 
 
-# 武器与弹药权威状态回写（供 restore_state 与 sync_soft_state 统一调用）。
-# 执行顺序说明：
-# 1. 读取 wslot（此时 _current_slot 仍有效，可作为默认缺省值）；
-# 2. 执行 restore_inventory 重建背包数据（此操作会将 _current_slot 重置为 0）；
-# 3. 最后调用 equip 装配目标武器。
-# 若颠倒顺序会导致默认槽位丢失或装配操作在未更新的背包结构上执行。
+# 武器/弹药的权威字段回灌(restore_state 与 sync_soft_state 共用)。
+# ★ 顺序不可反:先读 wslot(此时 _current_type 还有值,可作默认),再 restore_inventory
+#   (它会把 _current_type 清 0),最后 equip_type。反过来的话——先 restore,wslot 的默认值
+#   就丢了;先 equip_type 再 restore,则 equip_type 是在**旧背包**上工作(切错枪/切不动)。
 func _apply_weapon_state(st: Dictionary) -> void:
-	var wslot := int(st.get("wslot", weapons._current_slot))
-	# 优先通过 restore_inventory 按实例 ID（inst）解析手持武器（以区分同型号多把武器）；
-	# 随后按武器类型 equip 仅作为实例 ID 缺失或未匹配时的保底逻辑。
+	var wslot := int(st.get("wslot", weapons._current_type))
+	# ★ 把"手持的是哪一把"交给 restore_inventory 按 **inst** 解析(同型号两把只有它能区分);
+	#   下面那句按类型的 `equip_type` 只作**兜底**(老载荷无 `winst`、或权威那把不在表里时)。
 	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
-	if wslot > 0 and wslot != weapons._current_slot:
-		# 手上**实例**的类型与权威不符(`_current_slot` 由 `_equip_index`/`_unequip` 维护,
+	if wslot > 0 and wslot != weapons._current_type:
+		# 手上**实例**的类型与权威不符(`_current_type` 由 `_equip_index`/`_unequip` 维护,
 		# 即活实例的类型)→ 必须重建。这是**已有**行为,别绕开。
 		# ★★ 但重建的**落点**要分两种,`by_inst` 就是那个判别器:
-		#   · 按 `winst` 解析成功 → 走 `equip_index(下标)`。**不能**用 `equip(wslot)` ——
+		#   · 按 `winst` 解析成功 → 走 `equip_index(下标)`。**不能**用 `equip_type(wslot)` ——
 		#     后者按**类型**找第一个,同型号两把时会把刚解析对的下标**冲回第 0 把**
 		#     (本改动要修的正是这件事;实测把它写回去 ⇒ ground_client_probe ④b 当场红)。
-		#   · 按类型兜底(老载荷无 `winst`、或权威那把不在表里)→ 保**原样**走 `equip(wslot)`。
+		#   · 按类型兜底(老载荷无 `winst`、或权威那把不在表里)→ 保**原样**走 `equip_type(wslot)`。
 		#     此时手里那个下标只代表"旧类型那把",拿它重建会把权威的 wslot 顶掉
 		#     (实测:④ 那条 `切到权威的 wslot` 会红)。
 		if by_inst and weapons._current_index >= 0:
 			weapons.equip_index(weapons._current_index)
 		else:
-			weapons.equip(str(wslot))
+			weapons.equip_type(wslot)
 	var w: WeaponBase = weapons._weapon
 	if w != null:
 		w.fire_cd_timer = float(st.get("fire_cd", w.fire_cd_timer))
@@ -707,7 +721,9 @@ func _apply_weapon_state(st: Dictionary) -> void:
 		w._aim_facing = int(st.get("aim_f", w._aim_facing))
 		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
 		# 弹药/装填随权威整态回灌(见 capture_state 里那段"为什么进整态、为什么不进比对")
-		w.mag_ammo = int(st.get("mag", w.mag_ammo))
+		# ★ 走 apply_mag:本帧刚重建过实例时 `_weapon` 还没入树,同步写会被 `_ready` 冲掉。
+		#   这是个**同步**调用(不再排 deferred)—— 回滚重放期间打出的每一发因此得以保留。
+		WeaponComponent.apply_mag(w, int(st.get("mag", w.mag_ammo)))
 		w._reloading = bool(st.get("rld", w._reloading))
 		w._reload_t = float(st.get("rld_t", w._reload_t))
 
@@ -779,7 +795,7 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	_waterproof_drown_timer = 0.0
 	weapons.cancel_aim()
 	# ★ 2026-09-15(背包化):这里**不再**动背包。
-	#   原先那三行(reset_mag_state → equip(default_slot()) → refill_current_weapon)是
+	#   原先那三行(reset_mag_state → equip_type(int(default_type())) → refill_current_weapon)是
 	#   "复活即回默认枪 + 满弹"的旧语义,而背包现在是**玩家资产**:单机的重开由
 	#   `Level0.restart_single` 统一重置(清空 + 重新散落),联机的复活另有规则
 	#   (除随机一把外全丢,见联机计划)。放进本函数会让两条路径互相打架 ——
@@ -854,7 +870,7 @@ func _try_pickup() -> void:
 
 
 func _try_drop() -> void:
-	if weapons.current_slot_int() == 0:
+	if weapons.current_type_id() == 0:
 		return   # 空手没什么可丢
 	var e: Dictionary = weapons.drop_current()
 	if e.is_empty():
@@ -882,7 +898,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if Level0.pvp_mode:
 				weapons.request_net_cycle(dir)
 			else:
-				weapons.cycle_slot(dir)
+				weapons.cycle_index(dir)
 			return
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。

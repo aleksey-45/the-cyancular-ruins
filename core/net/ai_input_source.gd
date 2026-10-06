@@ -45,7 +45,7 @@ func _attack_just_pressed_raw() -> bool:
 func _attack_just_released_raw() -> bool:
 	return false
 
-func _weapon_slot_raw() -> int:
+func _switch_index_raw() -> int:
 	return 0   # 不切枪
 
 # ★ AI **不捡也不丢枪**:大乱斗补位 AI 只用开局随机发的那把,死后也只留随机一把

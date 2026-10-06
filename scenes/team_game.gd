@@ -76,20 +76,21 @@ func _ready() -> void:
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
-	# 小地图(多目标 + **队色**):三个提供器**同序**一一对应(错位 = 队友点画成敌人色,不报错只误导人)。
-	# ★ 后两个用**具名方法**而不是内联 lambda —— 三个 lambda 中间那个要以 `return arr,` 结尾,
-	#   那是本仓没写过的形状(计划里标注过的坑);具名方法直接绕开,且两个方法挨着写、同序可核。
+	# 小地图(多目标 + **队色**):四个提供器**同序**一一对应(错位 = 队友点画成敌人色,不报错只误导人)。
+	# ★ 后三个用**具名方法**而不是内联 lambda —— lambda 里要以 `return arr,` 结尾才能带出数组,
+	#   那是本仓没写过的形状(计划里标注过的坑);具名方法直接绕开,且几个方法挨着写、同序可核。
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
 		minimap.setup_multi(
 			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
 			Callable(self, "_minimap_others"),
-			Callable(self, "_minimap_colors"))
+			Callable(self, "_minimap_colors"),
+			Callable(self, "_minimap_self_color"))
 		add_child(minimap)
 	# HUD(记分条按队号)+ Esc 菜单
 	# ★ 声明式场景实例化,不能 `TeamHud.new()` —— 那个建出来的 CanvasLayer 没有子节点,
-	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11;守卫 `tests/hud_declarative_probe`)。
-	_hud = preload("res://ui/team_hud.tscn").instantiate() as TeamHud
+	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11;守卫 `tests/probe/hud_declarative_probe`)。
+	_hud = preload("res://ui/hud/team_hud.tscn").instantiate() as TeamHud
 	add_child(_hud)
 	_pause_menu = PauseMenu.new(true)
 	# 本地输入锁必须宿主接线:PvP 不暂停树,不锁就是"菜单开着还能边跑边开枪"。
@@ -203,11 +204,22 @@ func _refresh_team_colors() -> void:
 	_refresh_names()
 
 
-# 某个 role 的副本**幽灵体**该在的层(契约表见 `_apply_team_collision`)。
-# ★ 队号 0(不在队伍表里)走 else = 层 16 —— 与 brief 给的那句逐字一致,A 册服务端侧对未知队号
-#   是"什么都不配"(保持层 2)+ `push_error`;生产路径上不该出现队号 0,这里**不写特例**(登记在报告)。
+# 副本幽灵体代表的那名玩家,其队号 → 幽灵体该放的碰撞层。
+# ★ **未知队号(0 / 表外 role / 队伍表还没到)一律返回 2** —— 与服务端 `_apply_team_layers`
+#   的"什么都不配 = 保持 `_ready` 的层 2"**逐值对齐**。
+#   旧实现是 `return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER` ——
+#   它把"未知"当成了**队 2**,于是客户端与服务端对同一具身体放**不同的层**
+#   (服务端层 2 / 客户端幽灵体层 16),而两队掩码不同 ⇒ 队 2 的玩家在服务端**会**被挡住、
+#   在客户端**不会** ⇒ C2 每帧分歧。
+# ★ 今天这条在**生产路径上到不了**(3v3 worker 的 `team_map()` 恒非空),所以修它是
+#   "消除一个静默不对称",不是修一个用户可见的 bug —— 别把它写成用户报的症状。
 func _ghost_layer_of(role: int) -> int:
-	return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER
+	match _team_of_role(role):
+		1:
+			return 2
+		2:
+			return TeamHost.TEAM_ENEMY_LAYER
+	return 2   # 表外 / 表未到:与服务端"什么都不配"(保持层 2)对齐,不再落到队 2 的层
 
 
 # ── 队友不互挡:**客户端**那一半(服务端那一半在 `TeamHost._apply_team_layers`)──
@@ -268,6 +280,15 @@ func _minimap_colors() -> Array:
 	for e in _minimap_entries():
 		arr.append(_team_color(int(e[0])))
 	return arr
+
+
+# "我"那个点的颜色:与**身体 / 头顶 ID 同源** —— 三处都问 `_team_color(role)`(单一来源)。
+# ★ 惰性求值(每帧被 Minimap 调一次),不是建点时定色:队色由 `match_sync` 下发,比小地图建立晚。
+# ★ 自己那具的身体自 2026-09-21 起也走队色(用户裁定"3v3 青队玩家还是看见自己是蓝色的"被修)——
+#   本条让**小地图上那个点**跟上同一口径,此前它是恒定的 SELF_COLOR(`#99F2FF`),
+#   与队色 `C_TEAM_B`(`#80F4FF`)只差 Δ=(25,2,0) ⇒ 青队玩家分不清自己与队友。
+func _minimap_self_color() -> Color:
+	return _team_color(PvpSession.role)
 
 
 # 进场拉取的应答。★ 本文件**不覆写** `_on_match_sync`(六件事全在基类),只覆写颜色那一段的钩子。
@@ -386,40 +407,35 @@ func _on_round_state(data: Dictionary) -> void:
 	_last_round_state = data
 	var state := int(data.get("state", 0))
 	_round_locked = state == 0
-	if state == 0:
-		# ★ 只在**局号变化**时做新一轮复位(与 1v1 同款):倒计时期间 `round_state` 会被周期性
-		#   重播(见 `MatchState.COUNTDOWN_SYNC_INTERVAL`),按"收到一条做一次"会反复重建整张图。
-		var cd_round := int(data.get("round", 1))
-		if cd_round > 1 and cd_round != _countdown_reset_round:   # COUNTDOWN,新一轮
-			_countdown_reset_round = cd_round
-			for b in get_tree().get_nodes_in_group("bullet"):
-				if is_instance_valid(b):
-					(b as Node).queue_free()
-			if _level0 != null and _level0.has_method("reset_destructibles"):
-				_level0.reset_destructibles()
-			# ★ 地面武器**不要在这里清**(与 1v1 逐字同款的理由):服务器换局是「先
-			#   `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再** `_broadcast_round_state`」,
-			#   两条走同一条可靠通道、保序到达 —— 本条 round_state 到达时新一轮那批**早已在本地建好**,
-			#   再清一次 = 第 2 局起客户端地面恒空。
-			# ★★ 重拉 `match_sync`(控制者裁定,别自己另想):3v3 每局**整队换边**,而
-			#   `TeamHost.role_spawns()` 返回的是**当下**那一份 —— 客户端只在进场/重连拉过一次,
-			#   换边后六端手里那份是**旧侧**的。不补发 second path 进 round_state(那是给同一份数据开
-			#   第二条投递路径,自检 B2 那类事故的形状),改在这里拉 —— 本来就站在"清子弹 + 还原砖"
-			#   这一拍上,语义内聚,且顺带把 `ground_weapons`(服务器刚重铺)与 `destroyed`(刚还原成
-			#   基线 → 服务器侧为空)一并对齐。
-			if NetBus.can_send_to_server():
-				# ★ 先置位再发:这条应答是**补态口径**(不是进场建态)—— 换边后 `spawns` 是**新一侧**
-				#   而 `PvpSession.spawn` 手里是旧一侧,两者**必然**不一致,照进场口径硬拉 = 每局边界
-				#   刷一条假告警 + 一次多余瞬移(位置本来就归 C2 权威)。闸门与"重连补态"共用
-				#   (`_resync_pull_pending`,读一次即清),不要新立一个标志 —— 问的是同一个问题。
-				_resync_pull_pending = true
-				NetBus.rpc_id(1, "match_sync")
+	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
+		for b in get_tree().get_nodes_in_group("bullet"):
+			if is_instance_valid(b):
+				(b as Node).queue_free()
+		if _level0 != null and _level0.has_method("reset_destructibles"):
+			_level0.reset_destructibles()
+		# ★ 地面武器**不要在这里清**(与 1v1 逐字同款的理由):服务器换局是「先
+		#   `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再** `_broadcast_round_state`」,
+		#   两条走同一条可靠通道、保序到达 —— 本条 round_state 到达时新一轮那批**早已在本地建好**,
+		#   再清一次 = 第 2 局起客户端地面恒空。
+		# ★★ 重拉 `match_sync`(控制者裁定,别自己另想):3v3 每局**整队换边**,而
+		#   `TeamHost.role_spawns()` 返回的是**当下**那一份 —— 客户端只在进场/重连拉过一次,
+		#   换边后六端手里那份是**旧侧**的。不补发 second path 进 round_state(那是给同一份数据开
+		#   第二条投递路径,自检 B2 那类事故的形状),改在这里拉 —— 本来就站在"清子弹 + 还原砖"
+		#   这一拍上,语义内聚,且顺带把 `ground_weapons`(服务器刚重铺)与 `destroyed`(刚还原成
+		#   基线 → 服务器侧为空)一并对齐。
+		if NetBus.can_send_to_server():
+			# ★ 先置位再发:这条应答是**补态口径**(不是进场建态)—— 换边后 `spawns` 是**新一侧**
+			#   而 `PvpSession.spawn` 手里是旧一侧,两者**必然**不一致,照进场口径硬拉 = 每局边界
+			#   刷一条假告警 + 一次多余瞬移(位置本来就归 C2 权威)。闸门与"重连补态"共用
+			#   (`_resync_pull_pending`,读一次即清),不要新立一个标志 —— 问的是同一个问题。
+			_resync_pull_pending = true
+			NetBus.rpc_id(1, "match_sync")
 	elif state == 3:   # TeamHost.RoundState.MATCH_OVER(胜负已判:局胜或整队走光)
-		# ★★ **刻意不设 `and not _match_ended` 闸门**(与大乱斗不同，无需对称限制):
-		#   本模式的 MATCH_OVER **可能触发后续载荷更新**,结算页需要支持实时刷新 ——
-		#   `TeamHost._finish_match()` 在**战斗进行中**直接由 PLAYING 切换为 MATCH_OVER,而倒地状态
-		#   转换检测在 `match _round_state:` **之前**且不受状态机限制 ⇒ 终局判定后若有延迟伤亡，将再次广播
-		#   携带最新战绩与 MVP 数据的终局载荷(详见基类 `_show_result` 注释)。
+		# ★★ **刻意没有 `and not _match_ended` 这道闸**(与大乱斗不同,别照抄过来加对称):
+		#   本模式的 MATCH_OVER **会有第二条载荷**,而结算页必须跟着刷新 ——
+		#   `TeamHost._finish_match()` 在**战斗进行中**直接把 PLAYING→MATCH_OVER,而倒地边沿
+		#   检测在 `match _round_state:` **之前**、且**不看状态** ⇒ 终局之后再死人会再广播一条
+		#   带**新 `stats`/`mvp`** 的终局载荷(见基类 `_show_result` 的注释)。
 		_match_ended = true
 		# ★ ESC 菜单随即失效、退出只走结算页这一条路(与另两个客户端同款):不销毁菜单的话玩家能
 		#   在结算页上再弹一次暂停菜单 —— 本页的 ESC(返回主菜单)与菜单的 ESC 会**同时**触发
@@ -456,7 +472,7 @@ func _apply_peer_names(names: Dictionary) -> void:
 func _ensure_id_label(role: int) -> void:
 	if _world == null or _id_labels.has(role):
 		return
-	var lbl: Node2D = load("res://ui/world_label.gd").new()
+	var lbl: Node2D = load("res://ui/factory/world_label.gd").new()
 	_world.add_child(lbl)
 	_id_labels[role] = lbl
 

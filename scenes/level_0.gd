@@ -35,13 +35,13 @@ static var pvp_mode: bool = false
 # 就复现 —— 与「拆除逻辑散在多处」同病。此处一处覆盖全部现有与将来的调用方。
 static var _switching: bool = false
 
-## 时间粒子账户与时间场（单人模式专用；联机 PvP 场景不创建，时间系统保持旁路状态）
+## 个人钟账户与时间场(单机;PvP 不建 → 时间系统整体旁路)
 static var grain_account: GrainAccount = null
 static var time_field: TimeField = null
-var _rewind: WorldRewind = null   # 世界快照与状态回放器（单人模式专用；PvP 场景不创建）
-var _prev_time_mode: int = 0      # 上一帧时间场模式（判定回溯进入与退出）
+var _rewind: WorldRewind = null   # 世界快照/回放(单机;PvP 不建)
+var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退出)
 var _post_process: PostProcess = null
-var _tile_ledger: TileLedger = null      # 场景瓦片破坏账本（瓦片破坏状态回溯）
+var _tile_ledger: TileLedger = null      # 玩家拆砖账本(瓦片回溯)
 var _tile_pending: Array = []            # 本帧待入账的格(帧末合并)
 var _tile_cursor: float = -1.0           # 本次回溯的瓦片还原高水位
 var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
@@ -210,7 +210,7 @@ static func _collect_preorder(n: Node, out: Array[Node]) -> void:
 # ── 换场耗时打点(**诊断用,默认静默**)──
 # 打开方式:`-- --perf-switch`(与 `--worker` 同规,开关必须落在 `--` 之后,
 # 见 OS.get_cmdline_user_args())。打一次换场就在 stdout 打四行。
-# 配套 `tests/menu_autotest.gd` 的 `-- --autotest-switch`(两趟往返,把第 2 次退出也走到)。
+# 配套 `tests/smoke/menu_autotest.gd` 的 `-- --autotest-switch`(两趟往返,把第 2 次退出也走到)。
 static func _perf_log(label: String, t0: int) -> int:
 	var now := Time.get_ticks_usec()
 	if OS.get_cmdline_user_args().has("--perf-switch"):
@@ -224,7 +224,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
-	RenderingServer.set_default_clear_color("b0e5f6")
+	# 清屏色 = 世界的"空气"色。★ 单一来源放在 TerrainAtlas:主菜单背景的底色也读同一个
+	# 常量(用户 2026-10-03:"菜单背景颜色要和局内一致"),两处不许各写一份。
+	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
 
 	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
@@ -247,7 +249,7 @@ func _ready() -> void:
 	_paint_maze(wl)
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
-	Level0.water_layer.tile_set = tile_set
+	Level0.water_layer.tile_set = _create_water_tileset()
 	_paint_water(grid)
 
 
@@ -257,14 +259,14 @@ func _ready() -> void:
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
-	$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
-	# 时间系统:单人模式创建粒子账户与世界时间场(联机模式不创建,TimeField.current 为 null,倍率恒为 1)
+	$WorldViewport/Player.weapons.set_enabled_types(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
+	# 个人钟(第一阶段):单机建账户与世界时间场(PvP 不建 → TimeField.current 为 null,倍率恒 1)
 	grain_account = GrainAccount.new()
 	time_field = TimeField.new(grain_account)
 	TimeField.current = time_field
 	_rewind = WorldRewind.new($WorldViewport)
 	_tile_ledger = TileLedger.new()
-	# 透支锁定:怀表红色闪烁提示(锁定期间无法消耗时间粒子)
+	# 贷款锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
 	grain_account.loan_locked.connect(func() -> void:
 		var w = get_tree().get_first_node_in_group("watch_hud")
 		if w != null and w.has_method("flash_locked"):
@@ -282,32 +284,21 @@ func _ready() -> void:
 	_build_pause_menu()
 
 
+# 墙体/所有非空气砖的图集(16px 象限制)。构造已上提到 TerrainAtlas —— 主菜单背景
+# 要"真实的那个世界",必须与这里用**同一份**映射(见 terrain_atlas.gd 文件头)。
 func _create_wall_tileset() -> TileSet:
-	var texture: Texture2D = load("res://assets/textures/structure.png")
-	var src_img: Image = texture.get_image()
-	# 22 块源砖(10 列 × 3 行,32×32)。cyrm v4:每个 16px 子格画源块的 8×8 象限,放大 2×。
-	# 取角映射:象限 (qx, qy) 由子格在格内的位置推出(X%4, Y%4),不是数据字段。
-	var atlas_img := Image.create(16 * 16, 22 * 16, false, Image.FORMAT_RGBA8)   # 16 列(象限)× 22 行(纹理)
-	atlas_img.fill(Color(0, 0, 0, 0))
-	for tex in range(22):
-		var src := Rect2i((tex % 10) * 32, (tex / 10) * 32, 32, 32)
-		for qy in range(4):
-			for qx in range(4):
-				var q := Image.create(8, 8, false, Image.FORMAT_RGBA8)
-				q.blit_rect(src_img, Rect2i(src.position.x + qx * 8, src.position.y + qy * 8, 8, 8), Vector2i.ZERO)
-				q.resize(16, 16, Image.INTERPOLATE_NEAREST)
-				atlas_img.blit_rect(q, Rect2i(0, 0, 16, 16), Vector2i((qy * 4 + qx) * 16, tex * 16))
-	var atlas_tex := ImageTexture.create_from_image(atlas_img)
-	var tile_set = TileSet.new()
-	tile_set.tile_size = Vector2i(16, 16)
-	var atlas = TileSetAtlasSource.new()
-	atlas.texture_region_size = Vector2i(16, 16)
-	atlas.texture = atlas_tex
-	tile_set.add_source(atlas)
-	for q in range(16):
-		for tex in range(22):
-			atlas.create_tile(Vector2i(q, tex))
-	return tile_set
+	return TerrainAtlas.make_wall_tileset()
+
+
+# 水体专用 64px 图集(B18 把墙体图集改成 16px 象限制后,_paint_water 的"形状列×纹理行"
+# 老格式没了着落:水体被按 16px 坐标压缩画错位,真水体看不见,还在地图 1/4 坐标处散布
+# 一堆无碰撞的"幽灵方块")。水不可破坏,永远按 64px 整格渲染——按 B18 之前的老构建
+# 逻辑原样重建,仅供 water_layer 使用。构造同样收在 TerrainAtlas。
+func _create_water_tileset() -> TileSet:
+	var ts := GameParameters.TILE_SIZE
+	# 水面合批 shader 的采样源(= 水体纹理放大到 ts×ts)
+	Level0.surface_texture = ImageTexture.create_from_image(TerrainAtlas.water_brick_image(ts))
+	return TerrainAtlas.make_water_tileset(ts)
 
 
 func _paint_maze(layer: TileMapLayer) -> void:
@@ -330,9 +321,9 @@ func _paint_maze(layer: TileMapLayer) -> void:
 							Vector2i((y % 4) * 4 + (x % 4), tex - 1))
 
 
-# 水格铺图:水体格铺水体瓦片(T理纡 21,atlas 行 20);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
+# 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
 func _paint_water(grid: Array[Array]) -> void:
-	const BODY_ROW := 20   # 纹理 21(水体)的 atlas 行
+	const BODY_ROW := 0   # 水体专用图集只有一行(纹理 21)
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
@@ -428,8 +419,8 @@ func _rewind_elite_hits() -> void:
 
 
 func _restore_sub(e: Dictionary) -> void:
-	# 回溯还原单个 16px 子格：还原生命值、重绘贴图、更新碰撞网格。
-	# 所属 64px 大格若因所有子格被摧毁而清空，此处同步从基准数据恢复大格。
+	# 回溯还原一个 16px 子格:HP 写回 + 重铺贴图 + 碰撞子格复位 + 账本时间轴照旧。
+	# 所属 64px 格若已因"全子格死光"被清零,这里一并从基线恢复(格级逻辑重新看到它)。
 	if _grid_ref.is_empty() or wall_layer == null or MazeGenerator.current_subgrid.is_empty():
 		return
 	var sub: Vector2i = e["sub"]
@@ -455,8 +446,8 @@ func _restore_sub(e: Dictionary) -> void:
 
 
 func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
-	# 16px 子格被摧毁：清除渲染网格、记录回溯账本、触发碰撞区块重建。
-	# 仅在时间系统激活且非回溯播放期间记录破坏前的数据
+	# cyrm v4 子格破坏:清一个 16px 渲染格(9 环面副本)+ 记回溯账本 + 重建所在碰撞块。
+	# 回溯捕获(**摧毁前**的 hp 由 TileDefs 传进来;仅单机时间系统激活且非回放期)
 	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
 		_tile_pending.append({"sub": sub, "hp": pre_hp})
 	if wall_layer != null:
@@ -574,25 +565,26 @@ const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 # 单机开局武器:玩家**手里带一把**(用户 2026-09-15 要求「单机模式初始携带手枪」),
 # 其余散落在地图上。
 #
-# ★ 必须排在 `set_enabled_slots` **之后** —— 如果先给再禁,手上一旦是被禁的那把,
-#   `set_enabled_slots` 会判成"没有可用的"→ 空手;过滤顺序反了就直接白给。
-# ★ 用 `default_slot()`(最小**启用**槽位)而不是写死 "1":玩家禁用手枪时应当发下一把,
+# ★ 必须排在 `set_enabled_types` **之后** —— 如果先给再禁,手上一旦是被禁的那把,
+#   `set_enabled_types` 会判成"没有可用的"→ 空手;过滤顺序反了就直接白给。
+# ★ 用 `default_type()`(最小**启用**槽位)而不是写死 "1":玩家禁用手枪时应当发下一把,
 #   而不是发一把本局根本不让用的枪。发出来的仍是手枪,除非手枪被禁。
 # ★ 本函数只服务单机;PvP/大乱斗的初始武器由服务器 MatchHost 自己决定(见联机计划)。
 func _give_starting_weapon(p: Node) -> void:
 	if p == null or p.weapons == null:
 		return
-	p.weapons.set_initial_inventory([int(p.weapons.default_slot())])
+	p.weapons.set_initial_inventory([int(p.weapons.default_type())])
 
 
-# 单机初始武器清单:每种 2 把,跳过本局被禁的槽位。
-# (禁用武器不该出现在地图上 —— 与 set_enabled_slots 同源:RunOptions.disabled_weapons)
+# 单机初始武器清单:每种 2 把,跳过本局被禁的类型。
+# (禁用武器不该出现在地图上 —— 与 set_enabled_types 同源:RunOptions.disabled_weapons)
+# ★ 清单来自注册表(json 顺序 = 散落顺序)。加第 7 把枪只改 json,这里一个字不动。
 func _default_weapon_types() -> Array:
 	var out: Array = []
-	for slot in [1, 2, 3, 4, 5, 6]:
-		if not RunOptions.disabled_weapons.has(slot):
-			out.append(slot)
-			out.append(slot)
+	for type_id in WeaponRegistry.all_ids():
+		if not RunOptions.disabled_weapons.has(type_id):
+			out.append(type_id)
+			out.append(type_id)
 	return out
 
 
@@ -702,7 +694,7 @@ func _live_self_drops() -> Array:
 #   在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
 # ★ 与 `try_pickup_for` 的选法**仍然是同一套** —— 按 F 捡的仍是最近那把,只是"能捡"的
 #   每一把都会提示(踩到其中任何一把都能捡起来)。
-## 时间视效与后处理驱动：底片滤镜渐变 ≤200ms、加速压暗渐变 100ms、透支深度直接映射
+## 时间玩法视效驱动:底片化 ramp ≤200ms、加速压暗 ramp 100ms、贷款深度直传
 func _tick_time_visuals(delta: float) -> void:
 	if _post_process == null or time_field == null:
 		return
@@ -711,7 +703,7 @@ func _tick_time_visuals(delta: float) -> void:
 	_haste_t = move_toward(_haste_t, 1.0 if time_field.is_hasting() else 0.0, delta / 0.1)
 	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t)
 
-	# 透支、加速与回溯的音调调制（全局系数；透支越深音调越高）
+	# 贷款/加速/回溯的音调变形(全局系数;贷款越深越尖)
 	var depth := time_field.loan_depth()
 	var mult := 1.0 + TimeParams.LOAN_PITCH_RANGE * depth
 	if time_field.is_hasting():
@@ -722,13 +714,14 @@ func _tick_time_visuals(delta: float) -> void:
 	_sync_time_glows()
 
 
-# 时间状态高亮：加速状态下高亮主角与场上敌人；回溯状态下仅高亮精英实体。
-# 精英实体在加速与回溯状态下均显示双层极亮黄高光。
-# 采用叠加混合副本（TimeGlow）以避免非 HDR 截断以及受击闪白覆盖。
-const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角：冷白蓝色
-const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌人：暖白色
-const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英敌人：亮黄色（双层叠加强化亮度）
-const GLOW_RADIUS := 1500.0                      # 仅为近处视野内敌人添加高亮以节省性能
+# 时间状态高亮(B13):加速 → 主角 + 场上敌人;回溯 → **只有精英**。
+# ★ 配色是**规则**不是装饰:精英在加速与回溯两种状态下都必须是"极为亮眼的黄"(用户指定),
+#   其余实体的高亮只是"时间场生效中"的可读提示。用加色副本(TimeGlow)而不是 modulate ——
+#   后者在非 HDR 2D 里被夹到 1.0,且会被敌人每帧的受击白闪覆盖(实测完全看不出高亮)。
+const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角:冷白蓝
+const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌:暖白
+const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英:亮黄(两层叠加 → "极为亮眼")
+const GLOW_RADIUS := 1500.0                      # 只给近处敌人上副本(远处的看不见,白花销)
 
 func _sync_time_glows() -> void:
 	if time_field == null:
@@ -791,7 +784,7 @@ func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 	time_field.update(delta, want_rewind, want_haste)
 
 
-## 时间回放步进:录制与回放状态机切换 + 击败实体保留/过期清理(单人模式)
+## 世界回放 tick:录制 ↔ 回放的状态机 + 尸体保留/过期清理(单机)
 func _tick_rewind(delta: float) -> void:
 	if _rewind == null:
 		return
@@ -801,16 +794,18 @@ func _tick_rewind(delta: float) -> void:
 		_rewind.begin()
 		_tile_cursor = _rewind.recorded_seconds()   # 瓦片还原高水位=进入回溯时刻
 	elif not rewinding and _rewind.was_rewinding:
-		_rewind.finish()
+		var exit_t: float = _rewind.finish()
+		if _tile_ledger != null:
+			_tile_ledger.prune_after(exit_t)   # 瓦片账本与磁带同裁:被复写时段的拆砖条目一并消失
 	_rewind.was_rewinding = rewinding
 	_prev_time_mode = time_field.mode if time_field != null else 0
 	if rewinding:
 		WorldRewind.hold_corpses = false
 		_rewind.step(delta, pl)
-		# 二次伤害结算：倒流子弹穿过精英实体时再次结算伤害（精英实体免疫回溯，正常行动）。
-		# 每颗回放子弹对同一精英实体仅结算一次伤害，避免重复判定。
+		# 二次伤害:倒飞的子弹穿过**精英**(精英不受回溯,照常在场)时再结算一次伤害。
+		# 每颗回放弹对同一精英只结算一次(meta 记 id),避免逐帧反复扣血。
 		_rewind_elite_hits()
-		# 场景瓦片还原：按时间逆序（最新破坏优先写回）还原破坏的数据
+		# 瓦片还原:跨过 target 的破坏按 t 降序写回(最新破坏先还,最早的值最后落地)
 		if _tile_ledger != null and _tile_cursor >= 0.0:
 			var target := _rewind.current_target()
 			for e in _tile_ledger.take_range(target, _tile_cursor):
@@ -822,7 +817,7 @@ func _tick_rewind(delta: float) -> void:
 		_rewind.record(delta, pl, get_tree().get_nodes_in_group("enemies"),
 				get_tree().get_nodes_in_group("bullet"))
 		WorldRewind.expire_corpses(get_tree())
-		# 瓦片账本：帧末记录本帧破坏的瓦片，并裁剪超出历史记录窗口的旧条目
+		# 瓦片账本:帧末入账本帧拆掉的格;并裁剪超出回溯窗口的旧条目
 		if _tile_ledger != null:
 			if not _tile_pending.is_empty():
 				_tile_ledger.record(_rewind.recorded_seconds(), _tile_pending)
@@ -857,7 +852,7 @@ func _update_pickup_prompt() -> void:
 		var pk := n as WeaponPickup
 		var can := false
 		if pl != null and not self_drops.has(int(inst)):
-			if pl.weapons.is_slot_enabled(int(pk.type_id)):
+			if pl.weapons.is_type_enabled(int(pk.type_id)):
 				var d := GridPathfinder.toroidal_delta_px(
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius

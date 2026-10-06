@@ -100,6 +100,31 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
+# 入树前的"待生效残弹"。0 是合法弹数,故哨兵不能用 0;`WeaponInventory.MAG_FULL` 是 -1,
+# 故哨兵用 -2。
+# ★ 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
+#   `call_deferred("add_child")` 入树,而 `_ready()` 会把 `mag_ammo` 重置为 `mag_size`
+#   ⇒ 入树前同步写残弹会被冲掉。原先的对策是"排一个帧末 deferred 写回",但那个写回会
+#   覆盖它之后发生的一切(含回滚重放期间打出的每一发)。改成入树前设好、`_ready` 一次消费,
+#   写入就同步且顺序确定。
+const MAG_UNSET := -2
+var pending_mag: int = MAG_UNSET
+# 弹数是否已落定。★ 语义**只有一个**:`_ready()` 已跑过、`mag_ammo` 不再等于声明初值 0。
+# ★ 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
+#   `call_deferred("add_child")` 入树,而那里的 `equip(body, cd)` 是**同步**的 ⇒ 入树前的
+#   那个窗口里 `player` 已非空、`tick()` 会照跑,而 `mag_ammo` 仍是 0 ⇒ `fire()` 的
+#   "空弹夹自动换弹"被一个假前提触发,把权威的 `_reloading = false` 冲成 true。
+# ★ 为什么**不是** `is_inside_tree()` 守卫(那条已被明文否决):它会丢帧,并会把
+#   `_auto_aim()` 的朝向一起冻住 ⇒ 那本身造成**真分歧**,比它修掉的问题更坏。
+#   这里只让**依赖弹数的那个判断**在弹数未落定前失效,`tick()` 其余部分照跑。
+# ★ 它的**读点只有两个**(都是"弹数没落定时别动作"):`fire()` 的空弹夹自动换弹分支,
+#   与 `start_reload()` 的首行。★ 为什么 `start_reload()` 也要判:按 R 那条路**绕过**
+#   `fire()` —— `player.gd::_physics_process` 的语句序是「武器 `tick()` → 切枪(同步换掉
+#   `_weapon`、`add_child` 是 deferred)→ R 轮询」,而 PvP 下切枪由服务器的 `winst` 应答驱动、
+#   R 是本地边沿 ⇒ 两者**互不相干**,同帧相撞是概率问题。撞上时 `start_reload()` 读到的
+#   `mag_ammo == 0` 同样是**声明初值**,会把权威刚写下的 `_reloading = false` 冲成 true,
+#   而 `_ready()` **不复位** `_reloading` ⇒ 那把枪白吃一个 `reload_time`。
+var _mag_ready := false
 var _reloading := false
 var _reload_t := 0.0
 var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
@@ -117,6 +142,10 @@ func reload_progress() -> float:
 	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
 
 func start_reload() -> void:
+	# ★ 弹数未落定(未入树窗口)时 `mag_ammo` 仍是**声明初值 0**,不是"空弹夹" ——
+	#   按 R 那条路不经过 `fire()`,同一窗口里会在这里起一次没必要的换弹(见 `_mag_ready`)。
+	if not _mag_ready:
+		return
 	if _reloading or mag_ammo >= mag_size:
 		return
 	_reloading = true
@@ -125,6 +154,12 @@ func start_reload() -> void:
 
 # 换弹姿态:每帧在 _recoil_recover 之后调用(换弹压枪优先级高于后坐复位)。
 func _update_reload_pose() -> void:
+	# 重建窗口:`WeaponComponent._equip_index` 用 `call_deferred("add_child")` 入树,在那之前
+	# `@onready sprite` 仍是 null。★ 这里"跳过"是安全的,与上面 `mag_ammo` 走 `pending_mag`
+	# 提前落盘不同 —— 那是权威态、会被 `_ready()` 重置;姿势只是纯表现,下一帧随 `_reloading`
+	# 再算一遍即可(该窗口跨整个回滚重放,提前算也无处可画)。
+	if sprite == null:
+		return   # 未入树(重建窗口):`@onready` 尚未解析,姿势下一帧补算
 	if _reloading:
 		_reload_pose = true
 		var p := clampf(1.0 - _reload_t / maxf(reload_time, 0.01), 0.0, 1.0)
@@ -160,6 +195,12 @@ static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> f
 
 func _ready() -> void:
 	mag_ammo = mag_size
+	# ★ 入树前若有人塞了残弹,在这里一次消费掉 —— 这是"入树前写入"唯一生效的地方。
+	#   消费后复位哨兵,免得后续 `_ready`(理论上不会跑第二次)或探针误读。
+	if pending_mag != MAG_UNSET:
+		mag_ammo = clampi(pending_mag, 0, mag_size)
+		pending_mag = MAG_UNSET
+	_mag_ready = true
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
@@ -255,7 +296,10 @@ func fire() -> void:
 	if _reloading:
 		return
 	if mag_ammo <= 0:
-		start_reload()
+		# ★ 弹数未落定(未入树窗口)时这里的 0 是**声明初值**,不是"空弹夹" ——
+		#   照常起换弹会把权威刚写下的 `_reloading = false` 冲成 true(见 `_mag_ready`)。
+		if _mag_ready:
+			start_reload()
 		return
 	fire_cd_timer = fire_cooldown
 	# 同屏弹数上限:满员时这发不发(不耗弹、不烧冷却动作——冷却已计,等于"点空枪"),

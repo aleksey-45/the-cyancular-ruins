@@ -60,26 +60,13 @@ var _ping_sent_ms := 0
 func _ready() -> void:
 	multiplayer.peer_connected.connect(func(id: int) -> void: print("NetBus: 玩家连入 peer=%d" % id))
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-	multiplayer.connected_to_server.connect(func() -> void: print("NetBus: 已连接"))
+	multiplayer.connected_to_server.connect(func() -> void: print("NetBus: 已连接服务器"))
 	multiplayer.connection_failed.connect(func() -> void: local_server_message.emit("连接失败"))
-	# ★ 2026-09-29:文案改「连接断开」—— 界面上不再有"服务器"这个说法(它只是房主机器上
-	#   的一个进程,玩家不需要知道)。★ 它是**玩家可见的哨兵串**,`matchmaking._on_server_message`
-	#   会拿它比对,改字必须两边一起改。
-	multiplayer.server_disconnected.connect(func() -> void: local_server_message.emit("连接断开"))
+	multiplayer.server_disconnected.connect(func() -> void: local_server_message.emit("服务器断开"))
 
 func _on_peer_disconnected(id: int) -> void:
 	print("NetBus: 玩家断开 peer=%d" % id)
 	peer_left.emit(id)
-
-
-# 退出游戏时收掉**本客户端拉起的**两个外部进程:本机服务端与 EasyTier 隧道。
-# ★ 它们是独立进程,父进程死了**不会**跟着死 —— 残留下来会一直占着那个 UDP 端口与虚拟网 IP,
-#   下一次建房直接失败(而且**没有任何提示**)。
-# ★ 为什么挂在这个 autoload 上:它是"整个会话结束"唯一可靠的时点(场景切换不会走到这里,
-#   而那正是我们**不想**收掉它们的场景:回主菜单再进大厅还得用同一台服务端)。
-func _exit_tree() -> void:
-	preload("res://core/net/local_server.gd").stop_owned()
-	preload("res://core/net/tunnel.gd").stop()
 
 func start_server(port: int = DEFAULT_PORT) -> Error:
 	var peer := ENetMultiplayerPeer.new()
@@ -152,7 +139,7 @@ func can_send_to_server() -> bool:
 #   所以表里只要还剩**一个**处于"队列已拆、MultiplayerAPI 还没忘掉"窗口的 peer,这一发就报错。
 #   而那个 peer 往往正是**我们自己刚踢掉的那个**:`disconnect_peer()` 当场把它的通道数清零
 #   (`enet_peer_reset_queues`),而它要从 `get_peers()` 里消失得等**下一次 poll**。
-#   实测证据(2026-09-21,`tests/reconnect_probe` 的 worker 日志,当前树、未改之前):
+#   实测证据(2026-09-21,`tests/probe/reconnect_probe` 的 worker 日志,当前树、未改之前):
 #   每拒绝一次错的 reclaim 就有一帧**同时**报 channel 0 与 channel 1,且 GDScript backtrace
 #   两行都指向 `_broadcast_snapshot (server/match_snapshot.gd:34)` → `_physics_process`。
 #   (通道号是证据:`0` = reliable、`1` = unreliable —— 一帧里两条都出现,说明那一发在
@@ -267,6 +254,12 @@ func beam_fired(data: Dictionary) -> void:
 # 可靠通道:一次性、必须到(不像快照那样可以丢一帧)。
 @rpc("authority", "reliable")
 func match_sync_data(payload: Dictionary) -> void:
+	# 诊断开关(默认关):客户端侧确认这条应答**到底有没有到达**。
+	# ★ 纯诊断:开关关着时一行都不打 ⇒ 生产行为逐字不变(与 `--pickup-diag` / `--registry-report` 同款,
+	#   且同样必须写在 `--` 之后)。当初(2026-10-03)用来把
+	#   「worker 已调用 `rpc_id` 且返回 0」 与 「客户端收到/没收到」 这段链路一分为二。
+	if OS.get_cmdline_user_args().has("--matchsync-diag"):
+		print("[matchsync-diag] 客户端收到 match_sync_data: 键=%s" % str(payload.keys()))
 	local_match_sync.emit(payload)
 
 @rpc("authority", "reliable")
