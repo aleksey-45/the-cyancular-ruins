@@ -1,0 +1,10 @@
+{
+  "weapons": [
+    { "id": 1, "name": "手枪",       "tier": "light",  "scene": "res://scenes/weapons/pistol_test.tscn" },
+    { "id": 2, "name": "步枪",       "tier": "medium", "scene": "res://scenes/weapons/rifle_test.tscn" },
+    { "id": 3, "name": "重狙 M82A1", "tier": "heavy",  "scene": "res://scenes/weapons/m82a1.tscn" },
+    { "id": 4, "name": "霰弹 S686",  "tier": "light",  "scene": "res://scenes/weapons/s686.tscn" },
+    { "id": 5, "name": "榴弹发射器", "tier": "heavy",  "scene": "res://scenes/weapons/grenade_launcher.tscn" },
+    { "id": 6, "name": "激光枪",     "tier": "medium", "scene": "res://scenes/weapons/laser_gun.tscn" }
+  ]
+}
