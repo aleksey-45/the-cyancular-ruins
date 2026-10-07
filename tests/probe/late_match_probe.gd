@@ -1,11 +1,11 @@
 extends Node
 
-# 「对局尾段的记账与判胜口径」探针(场景模式;`-s` 做不了 —— 要真建宿主,autoload 在 `-s` 里不存在)。
+# 「对局尾段的记账与判胜口径」探针(场景模式;`-s` 做不了 —— 要实际创建宿主实例,autoload 在 `-s` 里不存在)。
 # 跑法:`"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/late_match_probe.tscn`
 # 判据:文本 `LATE MATCH PROBE: ALL-OK`(**不看退出码** —— 场景探针脚本报错时
 #       `--quit-after` 到点仍 exit 0,退出码与"跑通了"不可分)。
 #       - 而 `ALL-OK` 只证明"**没有任何断言失败**",**不证明"每条断言都跑过"** ——
-#       本文件用 `EXPECTED_CHECKS` 那道计数闸补上后半句(权威表述见 `tests/lib/probe_base.gd` 文件头)。
+#       本文件用 `EXPECTED_CHECKS` 那道断言计数门禁补上后半句(权威表述见 `tests/lib/probe_base.gd` 文件头)。
 #
 # 收的是用户 2026-09-28 裁定要修的三条「终局/离场之后」的口径:
 #   ①② MATCH_OVER 之后倒地**不再进任何记账**(1v1 / 3v3 各一相)
@@ -15,7 +15,7 @@ extends Node
 #   ④⑤  大乱斗 `_match_winner` 的并列候选集(全场 0 杀 + 有人离开  ->  平局,不是幸存者独胜)
 #
 # 注意： 为什么大乱斗那一处**没有**对应的"MATCH_OVER 后倒地"相:三个模式的倒地边沿是
-#    **同一个契约的三份落地**,但**大乱斗那一份的形状本来就不同** —— 它的整支
+#    **同一规范的三种具体实现**,但**大乱斗那一份的形状本来就不同** —— 它的整支
 #    `_match_round_tick` 就是一个 `match _round_state:`,倒地边沿住在 `RoundState.PLAYING`
 #    分支里  ->  终局后天然不记账。1v1(`match_round.gd`)与 3v3(`team_host.gd`)那两份把边沿
 #    写在 `match` **之前**,故有病。**给没有病的那一处也写一条断言 = 写一条恒绿的摆设**。
@@ -39,11 +39,11 @@ extends Node
 #        今天无害(两个覆写与 `server/match_host.gd` 逐字一致),但它是**复制而非派生**。
 #    (ii) **3v3 那条带外链 `_on_peer_left → _enter_grace` 没有 3v3 专属的端到端覆盖。**
 #        本文件只覆盖了 `_enter_grace` **本体**(③b 手工喂 `_host`);那行共享条件
-#        (`if _royale or _team_mode:`)的**真链路**验证走的是大乱斗那一支,3v3 侧实际没有被
-#        跑过一次 —— 而唯一覆盖 3v3 真链路的 `tests/probe/team_match_probe` 是**既有的 FAIL**
+#        (`if _royale or _team_mode:`)的**真实网络链路**验证走的是大乱斗那一支,3v3 侧实际没有被
+#        跑过一次 —— 而唯一覆盖 3v3 真实网络链路的 `tests/probe/team_match_probe` 是**既有的 FAIL**
 #        (见 docs/eng/tests.md)。 ->  这一格今天**没有可信的守卫**。
 #
-# 手法照 `tests/probe/death_drop_probe.gd`:真建宿主、**role_peers 传空**(不建玩家、不排 peer、
+# 手法照 `tests/probe/death_drop_probe.gd`:实际创建宿主实例、**role_peers 传空**(不建玩家、不排 peer、
 # 广播静默提前返回),玩家由本探针自己摆进 `host.players`,宿主自己的物理帧关掉(只手动推状态机)。
 # 地图严格约束 `newfactory.cyrm`;出生点显式传(不走任何 shuffle  ->  跨进程可复现)。
 
@@ -57,7 +57,7 @@ const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 var TEAM_SPAWNS := {}
 var ROYALE_SPAWNS := {}
 
-# - 本文件是 Task 4/5 要接着扩的脚手架  ->  更需要这道闸:helper 里的脚本错误**不会**让 `_failures`
+# - 本文件是 Task 4/5 要接着扩的脚手架  ->  更需要该校验门禁:helper 里的脚本错误**不会**让 `_failures`
 #   非空,它只让那个函数当场结束、调用方继续  ->  断言被静默跳过而 verdict 照打 `ALL-OK`
 #   (权威表述见 `tests/lib/probe_base.gd` 文件头)。
 # - 这个数**由实跑填**,不照抄别处。数法 = 逐条点**实跑**的 `_check` 次数(**不是**数源码里的
@@ -128,7 +128,7 @@ func _check(ok: bool, msg: String) -> void:
 # - 改写后仍拦得住的变异:出生格与地图脱钩(夹具摆在与断言无关的点上)—— 写死的旧坐标在
 #   **换图之后**正是这一档,而它一行报错都不会有。
 # - 刻意**不用** `_check` 记这一条:它会 +1 到 `_checks` 上,把 `EXPECTED_CHECKS` 那道
-#   计数闸覆盖(那条闸的判词会指向"有断言没登记",与真成因无关)。
+#   断言计数门禁覆盖(那条闸的判词会指向"有断言没登记",与真成因无关)。
 func _init_spawns() -> void:
 	var sp := MapFormat.load_spawns(MAP)
 	var p1: Vector2i = sp.get("player", Vector2i(-1, -1))
@@ -149,7 +149,7 @@ func _ready() -> void:
 	_phase_disconnect_round()
 	_phase_grace_writer()
 	_phase_royale_winner()
-	# - 断言计数闸:跑少了就是有断言被静默跳过(见 `EXPECTED_CHECKS` 上方的说明)。
+	# - 断言断言计数门禁:跑少了就是有断言被静默跳过(见 `EXPECTED_CHECKS` 上方的说明)。
 	# 注意： 判据是 **`!=`** 而不是 `<`,**两个方向都要红**:多跑一条**没登记的**断言同样是闸失守 ——
 	#    那说明 `EXPECTED_CHECKS` 已经与实况对不上,闸对**后加的那些**断言就是恒绿的摆设
 	#    (与 `tests/smoke/room_sweep_smoke.gd` 那条相同机制的反向断言同一个理由:`_finish()` 拿
@@ -382,7 +382,7 @@ func _phase_grace_writer() -> void:
 	print("[lm] ── 3v3:写入端(`_enter_grace`)真的记了掉线局号 ──")
 	var host: Node = _mount("3v3", [1, 2, 4])
 	host._round_state = MatchHost.RoundState.PLAYING
-	# - 仪器:**调用之前**必须是空的 —— 否则下面那条会被"表里先前就有的某个值"喂绿,
+	# - 仪器:**调用之前**必须是空的 —— 否则下面那条会被"表里先前就有的某个值"误判通过,
 	#   而写入端接没接上根本照不出来(那正是本条要防的那种失明)。
 	_check(host._leave_round.is_empty(),
 			"[仪器] 调 `_enter_grace` 之前 `_leave_round` 是空的(实得 %s;非空 ⇒ 下面那条没有区分度)"
@@ -392,7 +392,7 @@ func _phase_grace_writer() -> void:
 	var srv = load("res://server/server_main.gd").new()
 	srv._host = host
 	srv._enter_grace(1)
-	# - 判据用哨兵 `-1`:写成 `_leave_round.get(1, host._round_num)` 会**因缺省值与期望值相同而虚假通过**
+	# - 判据用哨兵 `-1`:写成 `_leave_round.get(1, host._round_num)` 会**因缺省值与期望值相同而测试漏检**
 	#   (缺省值与期望值同源  ->  写入端删掉也恒绿)。
 	_check(int(host._leave_round.get(1, -1)) == int(host._round_num),
 			"★ `_enter_grace` 当场记下**掉线那一刻**的局号(期望 %d,实得 %s;"
@@ -451,7 +451,7 @@ func _phase_royale_winner() -> void:
 	#   一个假想的退化实现 `if players.size() < 2: return 0` 能全过(0 杀那格本来就期望 0)。
 	#   这里让**唯一的幸存者带着分** —— 真实现返回他的 role,退化实现返回 0,**两者当场分开**。
 	# - 它与 ⑤b 的区别就在这一格上:⑤b 里离开者走后**还剩两人**(`players.size() == 2`),
-	#   退化实现的那道闸根本不点火,discriminating 不了。
+	#   退化实现的该校验门禁根本不点火,discriminating 不了。
 	var h4: Node = _mount("royale", [1, 2, 3])
 	h4._round_state = MatchHost.RoundState.PLAYING
 	h4._scores[3] = 4

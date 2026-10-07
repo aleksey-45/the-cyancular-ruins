@@ -1,18 +1,10 @@
 extends Node
 
-# 菜单流转自动探针(挂 root,穿越 change_scene 存活):
-# 模拟 主菜单→(单人面板→开始探索 / 多人 / 设置) 的真实按钮点击流转,
-# 验证场景切换、渲染链与暂停层;带窗口运行时把玩家所见截图存到 user://。
-# 由 main_menu._ready 在命令行含 - autotest-* 时挂载,平时零开销:
-#   --autotest-sp     主菜单→单机面板→开始探索→(Esc 暂停/恢复验证)→回主菜单→截图
-#   --autotest-mp     主菜单→「多 人 模 式」→统一大厅 mp_lobby→截图
-#   --autotest-royale 同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
-#   --autotest-team   同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
-#   --autotest-set    主菜单→设置页→截图
-#   --autotest-level  直接切 Level0(只验世界加载,不经过菜单流转)
-#   --autotest-ver    主菜单→信息页(**整页,会切场景**)→截图
-#   --autotest-switch 连做**两趟**「进单机 → 回主菜单」往返(量换场耗时;配合 --perf-switch)
-#   --autotest-play   进单机 → **打枪 + 打炮**(真的开火、引爆、破坏瓦片)→ 回主菜单 → 退出游戏
+# 主菜单流转与场景切换自动化探针：
+# 模拟用户在主菜单中的导航点击流程，验证进入单人模式、多人大厅、设置页、
+# 信息页及关卡加载的完整链路。
+# 运行方式：
+#   "$GODOT" --headless --path . -- --autotest-sp
 
 var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
 

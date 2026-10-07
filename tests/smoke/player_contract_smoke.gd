@@ -1,6 +1,9 @@
 extends SceneTree
-# 玩家公开接口契约守卫:拆分重构期间保证公开 API 不被改名/删掉。
-# 源码级检查(player.gd 在 -s 阶段因 autoload 无法实例化,见 CLAUDE.md 冒烟注释)。
+
+# 玩家对象公开接口规范守卫检查：
+# 静态源码级断言，确保 Player 核心公开 API、属性与方法签名在重构过程中未被破坏或意外遗漏。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/player_contract_smoke.gd
 
 var _failures: Array[String] = []
 
@@ -52,7 +55,7 @@ func _initialize() -> void:
 	_check(wsrc.contains("WeaponRegistry"),
 			"weapon_component.gd 的武器类型取自 WeaponRegistry(单一来源)")
 	# - 判据走 `code_only`(**剥注释**)而不是裸 `contains`:本仓爱留墓碑注释,而墓碑里很可能
-	#   提到被删标识符的名字 —— 裸 contains 会**虚假失败（测试用例误报）**,而虚假失败（测试用例误报）的下场历来是"把断言改松"
+	#   提到被删标识符的名字 —— 裸 contains 会**测试误报**,而测试误报的下场历来是"把断言改松"
 	#   (本仓明文禁忌)。与 `enemy_logic_smoke` ⑤b 同口径。
 	# - 用 `load()` 而不是静态引用 `ScanUtil`:`-s` 阶段静态引用测试库**没有先例**
 	#   (注册表那批登记过这条未验证项),`load()` 绕开它;取不到就退化成裸源码视图,

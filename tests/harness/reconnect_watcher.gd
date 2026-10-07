@@ -128,7 +128,7 @@ const POSE_SQUAT := 4       # = player.gd 的 Pose.SQUAT(枚举末位;改枚举�
 #   "上一版图里 player2 旁边第 3 格")。判据 = **实心(type=wall)+ 爆炸可破坏**:
 #   `--test-destroy-tile` 那一刀走 `TileDefs.damage_tile(cell, …, "explosion")`,只有这样的格
 #   才会真的被清零、进而出现在状态补充同步载荷的 `destroyed` 里(选到空气格 = 以"服务器什么都没拆"
-#   的虚假通过（未有效测试）通过)。行优先取第一格  ->  确定性。
+#   的测试漏检通过)。行优先取第一格  ->  确定性。
 # - `reconnect_probe.gd` 拼那条命令行时调的是**同一个静态函数**  ->  命令行与本观察者过滤的
 #   那一格天生同源(旧注释那句"改一处要改两处"已作废)。
 static var _p7_cell_cache := Vector2i(-1, -1)
@@ -564,7 +564,7 @@ func _p7_assert() -> void:
 	# ── ① 拆墙(主判据:本端那格变空气)──
 	# 前置 A:闪断那一刻本端那格还是**实心**的。
 	#   - 它同时是"拆格延迟调错"的报警器:拆格若落在闪断**之前**,actor 还在线、会自己收到
-	#     tile_destroyed → 本端早就 EMPTY 了,① 会以"服务器什么都没补"的虚假通过（未有效测试）通过。
+	#     tile_destroyed → 本端早就 EMPTY 了,① 会以"服务器什么都没补"的测试漏检通过。
 	_check(_p7_grid_before != MazeGenerator.EMPTY,
 			("相⑦ ①前置:闪断时本端 grid%s 仍是实心(实得 %d)—— 红在这里 = 拆格落在闪断**之前**,"
 			+ "把 reconnect_probe 的 P7_DESTROY_AFTER 往后挪") % [str(_p7_cell), _p7_grid_before])

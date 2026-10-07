@@ -6,7 +6,7 @@ extends SceneTree
 #   "切场景之后还碰 self" 就是 use-after-free —— 表现是整个进程崩掉(不是脚本报错)。
 #   本探针把"主菜单 → 设置 → 按 ESC"这条真实输入路径走一遍,并断言场景确实换成了主菜单。
 #
-# 跑法(必须真渲染? 不需要,headless 即可):
+# 跑法(必须真实视口渲染? 不需要,headless 即可):
 #   godot --headless --path . -s res://tests/probe/settings_esc_probe.gd
 # 判据:最后一行 `SETTINGS ESC PROBE: ALL-OK`;崩了就没有这一行(退出码非 0)。
 

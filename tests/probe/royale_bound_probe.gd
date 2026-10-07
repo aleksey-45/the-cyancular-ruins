@@ -11,7 +11,7 @@ extends Node
 # 与 tests/probe/royale_probe.gd 的差别(本探针存在的理由):
 #   - 它构造**带 role 空洞的房**:c1(role 1)→ 一个只在本进程存在的假 peer(role 2)→
 #     c2(role 3)→ 假 peer 退出。房内成员数 2,而 c2 手持 **role 3** —— 正是 B1 的复现条件
-#     (worker 早先用「成员数」当 role 上界,会把 c2 当串线剔除断开,只剩 1 个 claim,超时梯走完
+#     (worker 早先用「成员数」当 role 上界,会把 c2 当串线剔除断开,只剩 1 个 claim,分级超时机制走完
 #     退出,两名客户端永久卡在「连接对局服务器超时」且无恢复路径)。
 #   - 两个客户端进程驱动的是**真 mp_lobby.tscn**(真 `_on_match_start` 的帧末切场景、
 #     真缓存/交接),换场后消费者是**真 royale_game.tscn** —— B2 的复现条件(那三条载荷
@@ -23,7 +23,7 @@ extends Node
 #      **下一帧**(新场景已建好,它自己的订阅也收得到)→ 该跑法证明的是"链路端到端通",
 #      不能证伪"同一次 poll 会丢"。
 #   2) 同一次 poll(确定性):`--payload`。在触发换场**之前**把三条载荷写入真实大厅缓存
-#      handler,再调真大厅的 _on_match_start → 载荷只能经 PvpSession 交接过去,没有第二次机会。
+#      handler,再调实际大厅的 _on_match_start → 载荷只能经 PvpSession 交接过去,没有第二次机会。
 #      这一跑法才是 B2 的**可证伪**演示(关掉交接即红)。
 #
 # ── §B2 结论(2026-10-03 定案;此前长期记为"客户端收不到 match_sync 应答")──
@@ -37,8 +37,8 @@ extends Node
 #    ->  旧写法 `const SETTLE := 2.0`(**探针的等待形状**)会在载荷到达之前就断言  ->  红。
 #     已改成"等载荷落地 + 截止线"(见 royale_bound_watcher.gd 的 `SETTLE_AFTER_PAYLOAD`)。
 #   ⚠ **前一轮"SERVER 回了 9 次、客户端 0 次收到"那个读数不可采信**:那一跑的主进程在
-#     ~10s 就被杀了(编排器日志停在 f=539/t=9891ms),而本机上应答要 ~22s 才到  ->  读出 0 是
-#     **观测窗太短**,不是丢包。-  教训:真链路探针的被杀与"真丢包"在读数上长得一样。
+#     ~10s 就被终止了(编排器日志停在 f=539/t=9891ms),而本机上应答要 ~22s 才到  ->  读出 0 是
+#     **观测窗太短**,不是丢包。-  教训:真实网络链路探针的被终止与"真丢包"在读数上长得一样。
 #   ⚠ **未测**:单客户端(生产形态)下那次卡顿有多长。本机读数(8s)含 4 进程争抢,生产应短得多;
 #     但"换场卡顿会让可靠事件晚到数秒"这条**机制**本身是真的,别当成只存在于探针里。
 # 中间/结果文件:user://royale_b12_probe_go.txt(房号)、user://royale_b12_probe_c{1,2}/payload.result。
@@ -61,7 +61,7 @@ var _created_t := -1.0
 var _full_t := -1.0
 var _t := 0.0
 var _room_mgr: Node = null   # 大厅进程里那份 RoomManager(直接持有:add_child 返回的实例,不按名字找)
-var _lobby: Node = null      # --payload 模式:注入载荷后要触发换场的那份真大厅
+var _lobby: Node = null      # --payload 模式:注入载荷后要触发换场的那份实际大厅
 var _payload_done := false
 var _payload_t := 0.0
 
@@ -84,14 +84,14 @@ func _ready() -> void:
 # 自然时序下(默认模式)三条载荷实测落在 match_start 的**下一帧**,那时新场景已建好、
 # 它自己的订阅就收得到 —— 于是"同一次 poll 就丢"的路径在实测里不触发(见报告)。
 # 本模式把那条路径**确定性地**造出来:在触发换场**之前**(同一次 poll 内)把三条载荷传入
-# 真大厅的缓存 handler,再调用真大厅的 _on_match_start(它帧末切场景)→ 载荷只能靠
+# 实际大厅的缓存 handler,再调用实际大厅的 _on_match_start(它帧末切场景)→ 载荷只能靠
 # PvpSession 交接过去;若交接断了,消费者拿不到任何一条(无第二次机会)。
 func _run_payload_case() -> void:
 	var w: Node = load("res://tests/harness/royale_bound_watcher.gd").new()
 	w.who = "payload"
 	w.mode = "wait"
 	get_tree().root.add_child.call_deferred(w)
-	# 同 `_run_client`:真大厅 `_ready` 会按 `PvpSession.server_address` 自动连(云服默认)——
+	# 同 `_run_client`:实际大厅 `_ready` 会按 `PvpSession.server_address` 自动连(云服默认)——
 	# 本模式没有本地大厅,拨到 127.0.0.1 让那次连接**失败**即可,别去碰生产服务器。
 	PvpSession.server_address = "127.0.0.1"
 	_lobby = load("res://scenes/mp_lobby.tscn").instantiate()
@@ -122,29 +122,29 @@ func _payload_step(delta: float) -> void:
 	#   **再**把应答投给它。这正是拉与推的根本差别:推是"趁你在切场景时推过去"(订阅方还不存在),
 	#   拉是"你建好了才要"(应答只会更晚到,时序不敏感)。
 	#   ⚠ 覆盖边界(照实登记):这一条只验「新场景能把收到的 match_sync 应答应用上」;
-	#     **请求那一半**(客户端确实发得出去、服务器确实应答)由 `royale_probe` 的真大厅+真 worker
+	#     **请求那一半**(客户端确实发得出去、服务器确实应答)由 `royale_probe` 的实际大厅+真 worker
 	#     全链路覆盖 —— 那条**没有**轻量化,别把本变体当成它的替代。
-	# 注意： 为什么必须在这里设 `_current_mode`:本变体**直接调**真大厅的 `_on_match_start`,
+	# 注意： 为什么必须在这里设 `_current_mode`:本变体**直接调**实际大厅的 `_on_match_start`,
 	#   而 `mp_lobby._enter_match_scene()` 现在**按 `_current_mode` 分派**场景
 	#   ("" 那一支只 `push_error`、**不切场景** —— 那是刻意的加固,见该函数注释)。
 	#   不设 = 模式停在空串  ->  只打一条红、永远等不到换场(旧 royale_lobby 是无条件切
 	#   royale_game 的,所以这里从前不需要设)。
 	_lobby.set("_current_mode", PvpSession.MODE_ROYALE)
 	_lobby.call("_on_match_start", 1, Vector2i(70, 66), "res://maps/newfactory.cyrm")
-	# - 应答不在这里发:本节点**就是 current scene**,换场会把它 free 掉,协程随之而死(实测踩过:
+	# - 应答不在这里发:本节点**就是 current scene**,换场会把它 free 掉,协程随之而死(规避历史已知问题：
 	#   应答一条都没发出去)。改由 watcher 发 —— 它挂在 root 上,换场带不走它(那正是它存在的理由)。
 
 
-# ── 客户端子进程:挂观察者 + 挂**真大厅场景**,再把它驱动起来 ──
-# 本端选项(Settings)必须在**实例化真大厅之前**写好:建房页的武器勾选状态、role 上报的
+# ── 客户端子进程:挂观察者 + 挂**实际大厅场景**,再把它驱动起来 ──
+# 本端选项(Settings)必须在**实例化实际大厅之前**写好:建房页的武器勾选状态、role 上报的
 # player_options(match_time/色相/禁用武器)都从 Settings 读。
 func _run_client() -> void:
 	Settings.pvp_disabled_weapons = [DISABLED_SLOT]
 	Settings.pvp_color_hue = HUE_C1 if _role == "c1" else HUE_C2
 	# 注意： **必须把地址拨到本探针的大厅**(与 team_match_watcher / royale_c2_probe 相同机制)。
-	#   生产默认是**云服**(`PvpSession.server_address` 初值 120.53.107.140),而真大厅页的
+	#   生产默认是**云服**(`PvpSession.server_address` 初值 120.53.107.140),而实际大厅页的
 	#   地址框初值取的就是它、`_ready` 会自动连 —— 不拨这一行,两个客户端会**静默连云**
-	#   (还在云上真建房),本进程的编排大厅一条 `玩家连入` 都收不到,只剩 75s 超时。
+	#   (还在云上实际创建房),本进程的编排大厅一条 `玩家连入` 都收不到,只剩 75s 超时。
 	#   症状与"c2 连不上"完全一样(实测:c1 连上云服并建房,c2 对云服连接失败)。
 	PvpSession.server_address = "127.0.0.1"
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
@@ -155,7 +155,7 @@ func _run_client() -> void:
 	# 本节点还在自己的 _ready 里(父级 root 正忙于装载子节点)→ 两处 add_child 都得推迟到帧末
 	get_tree().root.add_child.call_deferred(watcher)   # 挂 root:换场不会把它带走
 	watcher.lobby = load("res://scenes/mp_lobby.tscn").instantiate()
-	add_child.call_deferred(watcher.lobby)   # 真大厅进树 → 它的 _ready 订阅/连接全是真路径
+	add_child.call_deferred(watcher.lobby)   # 实际大厅进树 → 它的 _ready 订阅/连接全是真路径
 	print("PROBE[%s]: 真大厅场景已挂载,等待连接 127.0.0.1" % _role)
 
 
@@ -198,7 +198,7 @@ func _run_orchestrator() -> void:
 
 
 func _on_room_created(caller: int, _opts: Dictionary) -> void:
-	# 真大厅建完房:记下房主 peer 与房号,稍后(帧内不做事,避免在 poll 栈里改房态)
+	# 实际大厅建完房:记下房主 peer 与房号,稍后(帧内不做事,避免在 poll 栈里改房态)
 	_c1_peer = caller
 	for code in _rm().lobby.royale_rooms:
 		var rr = _rm().lobby.royale_rooms[code]

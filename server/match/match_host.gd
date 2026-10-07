@@ -137,15 +137,13 @@ func _wire_hit_feedback() -> void:
 #  (自检 B2:禁用武器校验逻辑未生效)。现在 options 随 `NetBus.match_sync` 的应答一起给。
 #  消费者 `tests/probe/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
 
-# ── 网络统计读数(2026-09-22 诊断用,-  默认关;`--netstat`)────────────────
-# 每 role 的**待消费输入队列长度**。
-# - 为什么必须有这一格:客户端侧量到的 `gap`(已发未确认)在两种成因下**读数一样** ——
-#   ① 服务端消费不过来,包真堆在 `_pending_input` 里;② 服务端消费得动,但包在路上
-#   (ENet 可靠通道在高 RTT 下的节流/窗口)。只有这一格能把它们分开:队列小  ->  是②。
+# ── 网络性能诊断统计（通过命令行参数 --netstat 开启，默认关闭）──
+# 统计各角色待消费输入队列长度。
+# 用于区分客户端测量的未确认输入滞后来源于网络传输延迟还是服务端处理积压。
 var _netstat := false
 var _netstat_checked := false
 var _netstat_acc := 0.0
-var _netstat_trace := false     # 逐帧队列追踪(`--netstat-trace`,前 600 tick)
+var _netstat_trace := false     # 逐帧输入队列追踪（--netstat-trace，记录前 600 tick）
 var _netstat_trace_f := 0
 
 
@@ -154,9 +152,7 @@ func _netstat_tick(delta: float) -> void:
 		_netstat_checked = true
 		var ua := OS.get_cmdline_user_args()
 		_netstat = ua.has("--netstat")
-		# `--netstat-trace`:逐帧打(只在前 600 tick ≈ 10 秒),用于定位"那个固定偏置是哪一刻
-		# 被顶上去的"。-  每秒一行的采样看不见 0.13 秒的爬升 —— 实测队列在开局 1 秒内从 0
-		# 跳到 8 然后就永远停在那儿(ρ=1,没有回复力),那一下只能逐帧看。
+		# 逐物理帧记录队列深度，用于定位网络突发投递或初始积压的发生时刻
 		_netstat_trace = ua.has("--netstat-trace")
 	if not _netstat and not _netstat_trace:
 		return
@@ -182,9 +178,7 @@ func _netstat_tick(delta: float) -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-			# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个(见 _physics_process):
-			# 1 包/ tick → 服务器权威模拟与客户端"重放未确认输入"1:1 同序(C2 rollback 需要,
-			# 见 docs/pvp-c2-retrospective.md P1)。held/axis 由被消费的那包决定,边沿不丢。
+			# 缓冲接收到的输入包，按序列号进入先进先出（FIFO）队列，服务端每个物理帧消费并推进模拟
 			if not _pending_input.has(role):
 				_pending_input[role] = []
 			(_pending_input[role] as Array).append(pkt)
@@ -192,12 +186,8 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	# 快照广播必须放在「消费本帧输入」之前——Player 是子节点,父先于子,本帧玩家要到
-	# MatchHost._physics_process 返回后才步进。若在消费后广播,状态还是"上一输入模拟完(S_{F-1})",
-	# 却已把 ack 指向刚消费的 C_F → ack 领先状态一拍 → 客户端拿自己的 ring[C_F](=S_C_F)
-	# 比 S_{F-1},移动中每次快照都误判分歧、画面被拉回(server-rendered 插值吸收故旧路径不暴露;
-	# C2 rollback 一比完整状态就暴露异常)。放消费前:ack 仍指上 tick 消费的 C_{F-1},状态已是上一步进完的
-	# S_{F-1},配对一致(客户端期望 ack=C 配 S_C,见 pvp_reconcile_smoke 的建模)。
+	# 快照广播必须在消费本帧输入之前执行：
+	# 保证广播的权威状态与 ACK 序列号严格匹配，避免客户端误判预测分歧导致不必要的视觉拉回。
 	# 地面武器:先把落体的实际位置同步回表,后面的拾取判定(nearest_within)才用得上最新落点
 	_sync_ground_positions()
 	# 仅测试用(`--test-ground-teleport`,见 MatchGround.test_ground_teleport):默认关。
@@ -241,18 +231,16 @@ func _physics_process(delta: float) -> void:
 		src.clear_edges()
 		if _pending_input.has(role):
 			var q: Array = _pending_input[role]
-			# COUNTDOWN(开局/换局 3 秒):双方禁止移动/开火——只清空缓冲不注入输入,
-			# 玩家站在出生点不动(权威冻结;客户端是服务器渲染,自然跟随)。
+			# 倒计时阶段（开局或回合切换）：禁止移动与开火，清空输入缓冲并重置输入源状态
 			if _round_state == RoundState.COUNTDOWN:
 				q.clear()
-				src.reset_state()   # 连 held/axis 一起清,防上一包方向让服务器玩家在冻结期漂移(C2 分歧源)
+				src.reset_state()
 				continue
 			if not q.is_empty():
 				var pkt: Dictionary = q.pop_front()
 				src.apply_packet(pkt)
 				_ack_seq[role] = int(pkt.get("seq", _ack_seq.get(role, 0)))
-				# 地面武器:拾取/丢弃的**边沿**。-  必须紧跟 apply_packet —— 本轮开头
-				# 已经 clear_edges(),边沿就是这一包刚写进去的;晚一拍就被下一轮清掉了。
+				# 地面武器交互：紧随 apply_packet 处理拾取与丢弃边沿触发
 				_handle_ground_actions(role, src)
 	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
 	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)

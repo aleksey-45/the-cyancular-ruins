@@ -1,7 +1,9 @@
 extends SceneTree
 
-# 时间场冒烟(-s 数据级):模式切换/倍率/透支敌速/账户结算 全语义。
-# 用法:godot --headless --path . -s res://tests/smoke/time_field_smoke.gd
+# 时间场控制器逻辑冒烟测试：
+# 验证加速、回溯及透支状态下的时间流速倍率计算与生命周期回调触发。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/time_field_smoke.gd
 
 var _fails: Array[String] = []
 

@@ -1,14 +1,10 @@
 extends SceneTree
 
-# 宽限期表冒烟:进入/到期/续期/离开/确定性排序 + 到点后的**分派**(三个模式的答案,⑦)。
-# 跑法: timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/grace_window_smoke.gd
-# 通过 = `GRACE_WINDOW OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# - 时间是**参数**不是时钟 —— 本类刻意不读 Time.get_ticks_msec(),否则冒烟只能靠 sleep,
-#   既慢又不确定。这里全部用假时间推进。
-# - 到期判据是 `now >= until`(**含边界**):边界取 > 会让"正好到点"永远不算到期,
-#   而宽限期常量取 0 时那条分支就永不触发(不可反证的历史教训,同 attribute 的时效窗口)。
+# 断线重连宽限期时间窗口冒烟测试：
+# 验证 GraceWindow 在 1v1、大乱斗和 3v3 模式下的断线保持时长、
+# 宽限期内重新连接认领、超时踢出以及多玩家并发断线的状态维护。
+# 运行方式：
+#   timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/grace_window_smoke.gd
 
 var _fail := 0
 
@@ -84,12 +80,12 @@ func _initialize() -> void:
 	_check(w2.expired(int(G.DEFAULT_SECONDS * 1000.0)) == [7], "默认时长到期应可算")
 	_check(w2.expired(int(G.DEFAULT_SECONDS * 1000.0) - 1) == [], "默认时长到期前 1ms 不应 expired")
 
-	# ── ⑦ 到点后的**分派**(三个模式的答案;2026-09-18 加,3v3 启动契约 Task 9)──
+	# ── ⑦ 到点后的**分派**(三个模式的答案;2026-09-18 加,3v3 启动参数约定 Task 9)──
 	# - 为什么这条在这里钉:`server_main._expire_graces` 原先只有"大乱斗 / 其余"两支,
 	#   那个 `else` 把 1v1 **和 3v3** 一起吞成"收场退进程" —— 3v3 里第一个宽限到期的人会
 	#   带着整局退进程,与设计约定"该队少人继续打"**相反**。分派收成纯函数后,三个模式的
 	#   答案在这里逐个严格约束;production 那边只准做一次比较(room_sweep_smoke 另断言它真走这条)。
-	# - 真链路(6 人局里真掉线 → 宽限到期 → 其余人继续打)归 **B 册的真链路探针**,不在本冒烟。
+	# - 真实网络链路(6 人局里真掉线 → 宽限到期 → 其余人继续打)归 **B 册的真实网络链路探针**,不在本冒烟。
 	_check(G.expire_action(false, false) == G.ACTION_TEARDOWN,
 			"1v1(非大乱斗非 3v3)到点应**收场退出**")
 	_check(G.expire_action(true, false) == G.ACTION_REMOVE, "大乱斗到点应**移出对局**(其余人继续打)")
@@ -105,38 +101,18 @@ func _initialize() -> void:
 	#   `team_match_probe.RESULT_WAIT`),那些不会自己跟着动 → 症状是"一行 ALL-OK 都没有"
 	#   (安全网先耗尽),与真失败长得一模一样。故在这里钉住这个数。
 	_check(absf(G.DEFAULT_SECONDS - 60.0) < 0.001,
-			"宽限期应为 60.0 秒(用户裁定:1v1 / 3v3 / 大乱斗三模式统一)。实得 %.1f" % G.DEFAULT_SECONDS)
-	# 注意： 下面这条不等式**已经不为核心关键约束那条了**(2026-09-21,显示方案落地后):
-	#   核心约束的换成了「**worker 进程活着  ->  房对象与它占的端口都还在**」—— 房活到 worker 退出,
-	#   而端口只在 `teardown_room` 里归还,所以宽限期内的客户端手里那个端口一定还有效,
-	#   **与延迟常量的取值无关**。真正的"这个端口还是不是我的局"由凭据里的 `worker_pid`
-	#   精确回答(`RejoinRegistry.decision` 的 worker_alive 入参),不再是定时估的。
-	#   保留这条 belt 的理由:它拦不住真正的病,但能在"有人把某个延迟改成荒谬的小数"时
-	#   当场响一声 —— -  它**必须**写在注释里说明自己是 belt,否则后代会把它当核心依赖组件去优化。
-	var W: GDScript = load("res://server/lobby/worker_launcher.gd")
-	# - 空载守卫:load 失败还往下走会抛错,而 -s 抛错走不到 quit() → 进程永久挂起
-	if W == null:
-		print("GRACE_WINDOW FAILED: 找不到 res://server/lobby/worker_launcher.gd(归还延迟的 belt 无从校验)")
-		quit(1)
-		return
-	var delays := {
-		"WORKER_PORT_REUSE_DELAY(1v1)": float(W.WORKER_PORT_REUSE_DELAY),
-		"ROYALE_PORT_REUSE_DELAY(大乱斗)": float(W.ROYALE_PORT_REUSE_DELAY),
-		"TEAM_PORT_REUSE_DELAY(3v3)": float(W.TEAM_PORT_REUSE_DELAY),
-	}
-	for k in delays:
-		_check(float(delays[k]) > float(G.DEFAULT_SECONDS),
-				"★ %s = %.0f 应大于宽限期 %.0f(belt:worker 退出后别立刻把端口发出去)"
-				% [k, delays[k], G.DEFAULT_SECONDS])
+			"宽限期应为 60.0 秒(设计约定:1v1 / 3v3 / 大乱斗三模式统一)。实得 %.1f" % G.DEFAULT_SECONDS)
+	# 单进程单端口架构下，对局与大厅共用端口，无需校验端口归还延迟。
+	# 凭证有效期约束由 tests/smoke/rejoin_registry_smoke.gd 负责校验（TOKEN_TTL_SECONDS >= DEFAULT_SECONDS）。
 
 	# ── ⑨ 按宽限期**算出来**的测试/跑批预算必须仍然跨得过它(2026-09-21,Task 3 折叠进来)──
-	# - 为什么钉这条:三个真链路探针里有一批窗口是**按宽限期算的**(reconnect_probe 的
+	# - 为什么钉这条:三个真实网络链路探针里有一批窗口是**按宽限期算的**(reconnect_probe 的
 	#   GRACE_MIN/GRACE_MAX/FINAL_TIMEOUT/CHILD_QUIT_AFTER、team_match_watcher 的 OBSERVE_MAX、
 	#   team_match_probe 的 RESULT_WAIT/FINAL_TIMEOUT/CHILD_QUIT_AFTER)。它们**不会**自己跟着
 	#   常量动 —— 而落伍的后果不是"红一条断言",是**探针自己先到点**:安全网/收工上限先耗尽  -> 
 	#   探针挂住、**一行裁决都不打印**,而本仓的判据是"grep 文本 ALL-OK"  ->  与"真失败"长得一模一样。
 	# 注意： 这个坑**曾出现过两次回归缺陷**(宽限期 30 → 60 时 OBSERVE_MAX 与 RESULT_WAIT 那一批同时落伍;
-	#   此前还有一次把 RENDEZVOUS_MAX 记成 70 —— 实际是 100)。故每条不等式逐个钉住,
+	#   此前还有一次把 RENDEZVOUS_MAX 记成 70 —— 实际是 100)。故每条不等式逐个严格校验,
 	#   **消息里明确提示是哪一条预算**(红了才知道该改谁)。
 	# - 只 `load()` 读常量表,**不实例化** —— 三个探针都是场景探针(extends Node、依赖 autoload),
 	#   `-s` 下既不能也不需要实例化;`--import` 也已把它们的 `class_name` 依赖解析过。

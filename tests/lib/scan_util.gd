@@ -65,7 +65,7 @@ static func strip_line_comment(line: String) -> String:
 
 # 剥注释视图(整行注释与**行尾注释**都删,再 strip_edges、丢空行)。供"在位/唯一挂载点/顺序"
 # 类断言用:注释讲的是动机,不是代码。
-# ⚠ 只删**整行**注释是不够的(旧做法,实测):一句提到退役名的行尾注释能让「零引用」断言虚假失败（测试用例误报）
+# ⚠ 只删**整行**注释是不够的(旧做法,实测):一句提到退役名的行尾注释能让「零引用」断言测试误报
 #    (代码一行没改)。kh_l3 的旧版只剥整行,阶段 6.1 统一集中处理前**核过**它仅有的 2 条「零引用」断言
 #    都盯代码串(`func _process`),两种视图在它那儿等价 —— 故连它一起统一到这里。
 # ⚠ 两个方向**不单调**,别以为"剥得越干净越严":剥掉行尾注释会让「在位」类断言**更严**、
@@ -82,7 +82,7 @@ static func code_only(src: String) -> String:
 
 # 同上,但**保留行首缩进**(只 rstrip 行尾空白;丢掉只剩空白的行)。给需要按缩进做位置
 # 分析的探针用(kh_l6 的"块在哪一层"类断言靠缩进定块)。
-# 为什么不能只看裸文本:一句提到被删调用的**注释**能把"在位"类断言喂绿,反过来也能把
+# 为什么不能只看裸文本:一句提到被删调用的**注释**能把"在位"类断言误判通过,反过来也能把
 # "零引用"类断言弄红 —— 注释不是代码。
 static func code_view(src: String) -> String:
 	var out: Array[String] = []
@@ -179,7 +179,7 @@ static func split_args(s: String) -> Array[String]:
 
 
 # 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
-# 函数名出现在注释/字符串里时文本法会虚假通过（未有效测试）;而 `has_method()` 对**脚本资源**看不见它自己的
+# 函数名出现在注释/字符串里时文本法会测试漏检;而 `has_method()` 对**脚本资源**看不见它自己的
 # 实例方法(L4 撞过这个坑),故一律走 get_script_method_list()。
 static func method_info(gs: GDScript, name: String) -> Variant:
 	for m in gs.get_script_method_list():

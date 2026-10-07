@@ -1,6 +1,6 @@
 extends ProbeBase
 
-# 色相 shader / 1v1 双色 / 队色的**常驻守卫**(场景模式 + **真渲染**:
+# 色相 shader / 1v1 双色 / 队色的**常驻守卫**(场景模式 + **真实视口渲染**:
 # headless 下 get_viewport().get_texture().get_image() 返回 null,量不到像素)。
 # 跑法:
 #   "$GODOT" --path . --quit-after 3600 res://tests/probe/hue_tint_probe.tscn
@@ -14,7 +14,7 @@ extends ProbeBase
 #     - 2026-09-20 起这条守的是**个人色相**那条路(大乱斗的对手色 / 大乱斗+3v3 自己的自选色)——
 #       1v1 的 P2 已改走 modulate 比值,**不再经过本 shader**;shader 本身仍在生产里,故守卫照旧。
 #   - 1v1 的个人色相**整体停用**后,"P1 恒蓝 / P2 恒青"成了硬口径;守卫 B 从
-#     **生产的 `_apply_p2_tint()`** → 渲染像素 → 队色 token 整条链钉住。
+#     **生产的 `_apply_p2_tint()`** → 渲染像素 → 队色 token 整条链严格校验。
 #     - 2026-09-20 起 P2 与 3v3 队 2 用的是**同一个 token、同一个机制**(比值法),不再是
 #       "两个机制凑出近色";守卫 B 因此同时钉住三条:① role 1 不染本地那具(蓝)、
 #       ② role 1 染对手副本(青)、③ role 2 染本地那具(青 == 队 2 token)。

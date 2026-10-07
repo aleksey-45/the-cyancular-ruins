@@ -32,7 +32,7 @@ func _check(ok: bool, what: String) -> void:
 
 
 # - 必须 `await _run()` 再 `_finish()`:`_run()` 里有 `await get_tree().physics_frame`(协程),
-#   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(虚假失败（测试用例误报）)。
+#   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(测试误报)。
 #   (本仓 `destroyed_cells_probe` 那份没有 await,照抄那个模板就会踩这个坑。)
 func _ready() -> void:
 	await _run()
@@ -128,7 +128,7 @@ func _run() -> void:
 	_check(h2._match_winner() == 1,
 			"★ ⑥a 正常收局走**按局胜**:胜者 = 1 队(实际 %d)" % h2._match_winner())
 	# ── ⑥b 冠军队**赛后离场**:结果**不得**被改判成对方胜(否则"赢了的队走人 = 改判负")──
-	# - 这条钉的是 `_decided_by_rounds()` 那道闸:少了它,三个 role 走完 → `alive_teams` 只剩
+	# - 这条钉的是 `_decided_by_rounds()` 该校验门禁:少了它,三个 role 走完 → `alive_teams` 只剩
 	#   {2} → 弃权判据把胜者写成 2,而这一局是**按局胜打完的**。
 	# 注意： 但它**不区分**"闸(读 `_rounds_won`)"与"在 `_start_next_round` 里记闩"——那时已 MATCH_OVER,
 	#   两种实现的闩/闸都成立。真正的区分点在上面那一相 **⑥c**。

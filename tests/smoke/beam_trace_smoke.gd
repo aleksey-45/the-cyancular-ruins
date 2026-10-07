@@ -1,10 +1,9 @@
 extends SceneTree
 
-# BeamTrace 纯几何冒烟:验证即时光束追踪的反射/吸收/射程收尾(无需完整游戏)。
-# 用法:godot --headless --path . -s res://tests/smoke/beam_trace_smoke.gd
-# 注意:直接 preload BeamTrace(无 class_name,避免 -s 全局类缓存依赖);只依赖
-# MazeGenerator/TileDefs(均不引 autoload),可安全在 -s 阶段空跑。
-# 网格取 20 列宽:保证撞墙反弹后剩余射程不因环面回绕再撞同一面墙(测试收尾干净)。
+# 射线与光束判定逻辑冒烟测试：
+# 验证 BeamTrace 射线与网格碰撞交点计算的准确性。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/beam_trace_smoke.gd
 
 const BeamTrace := preload("res://core/sim/beam_trace.gd")
 

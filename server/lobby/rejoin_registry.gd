@@ -1,46 +1,37 @@
 class_name RejoinRegistry
 extends RefCounted
 
-# 大厅侧的**回局凭据表**(spec §3 第 2 条):token → 这一局是哪个 worker 的、给谁的。
+# 大厅侧断线重连凭据注册表：记录重连令牌（token）与对局局号、房间号、角色分配及生命周期状态。
 #
-# 注意： 为什么它必须独立于房对象:原先 token 存在 `Room.tokens` / `RoyaleRoom.tokens` /
-#   `TeamRoom.tokens`,而那三个字典随 `teardown_room` 一起消失。回局的查询要**在大厅侧活过拆除**
-#   —— 客户端从主菜单回来时,房可能已经因为对局结束被回收了(见 RoomManager._reclaim_finished_matches)
-#   → 查询落到一张**独立**的表上,答案才是一个明确的"这局没了",而不是"房找不到 → 什么都不知道"。
-#   - 那三处字段与 room_manager 的四处写入点**已随 Task 4(2026-09-21)整体删除**
-#   (`grep -rn "\.tokens" server/ scenes/ core/ tests/ --include=*.gd` → 0 命中)。
-#   - 由此得到的一条纪律:本表里**只留"哪一局"的键,不留"哪一间房"的键** —— 三张注册表的房号
-#   空间重叠,按 code 反查会误伤同号的另一间房(见 `drop_port` 的注释)。
-#
-# - 纯逻辑、不引 autoload、**不读时钟**(now 由调用方传入) ->  `-s` 可测(同 GraceWindow)。
-# - 键是 token 本身(16 位 hex,来自 `LobbyRooms.new_token()`);value 是一份**自足**的小字典
-#   —— 回局**不需要**再问房对象(房可能已经没了)。
-#
-# - TTL 只是**表的 GC 上界**,不是"这一局还能不能回去"的判据:真正的判据是 worker 进程还活着吗
-#   (`decision()` 的 `worker_alive` 入参)。分开的理由:"一局打多久"三种模式各不同、且没有可读
-#   常量(见 room_manager.TEAM_MATCH_ESTIMATE 的注释),而"worker 退了吗"是精确且与模式无关的。
-#   TTL 取 1h:长到覆盖任何一局 + 玩家在菜单里发呆的时间,短到表不会无限长大。
+# 架构与设计规范：
+# 1. 凭据生命周期独立于房间对象：
+#    客户端在对局结束后重连或从主菜单返回大厅时，房间对象可能已被回收清理。
+#    独立维护凭据注册表，确保客户端能获得明确的“对局已结束”判定，而非未知房间状态。
+# 2. 以对局局号（match_id）为关联主键：
+#    房间号空间在 1v1、大乱斗和 3v3 模式间可能重叠；而在单进程单端口架构下，UDP 端口不再唯一标识单场对局。
+#    因此采用全局单调递增的 match_id 进行精确索引和状态变更。
+# 3. 纯逻辑状态机：
+#    不依赖任何 Autoload 或引擎时间，时间戳由调用方传入，具备完全可测性。
+# 4. TTL 垃圾回收与对局活性解耦：
+#    TTL（默认 1 小时）仅作为注册表内存垃圾回收的上限阈值；
+#    对局是否处于进行中由条目内部的 alive 字段显式标记（对局终止时由 RoomManager._on_session_finished 置为 false）。
 const TOKEN_TTL_SECONDS := 3600.0
 
-var _by_token: Dictionary = {}   # token(String) -> {code, role, worker_port, worker_pid, expires_at}
+var _by_token: Dictionary = {}   # token(String) -> {code, role, match_id, alive, expires_at}
 
 
-# 登记一份回局凭据。-  **必须在 worker 启动成功之后调**(要它的 pid 才能判"这局还在不在")
-# —— 见 RoomManager 四个 spawn 点(它们先发 `session_token`、再 spawn、最后登记)。
-func grant(token: String, code: String, role: int, worker_port: int, worker_pid: int,
-		now_ms: int) -> void:
+# 登记客户端重连凭据。开局时登记且 alive 初始置为 true，对局终止时由 end_match 置为 false。
+func grant(token: String, code: String, role: int, match_id: int, now_ms: int) -> void:
 	_by_token[token] = {
 		"code": code,
 		"role": int(role),
-		"worker_port": int(worker_port),
-		"worker_pid": int(worker_pid),
+		"match_id": int(match_id),
+		"alive": true,
 		"expires_at": now_ms + int(TOKEN_TTL_SECONDS * 1000.0),
 	}
 
 
-# 查一份凭据。过期的**当作不存在**(返回空字典)。-  本函数**不改表**(GC 走 `prune`)——
-# "查一次随意删除一条"会让同一个查询在不同调用点有不同副作用,而这张表有两个读者(大厅的
-# 回局 handler 与回收梯的 GC)。
+# 查询指定令牌的凭据。若凭据已过期或不存在则返回空字典（本方法不产生修改副作用，清理统一走 prune）。
 func lookup(token: String, now_ms: int) -> Dictionary:
 	if not _by_token.has(token):
 		return {}
@@ -50,35 +41,18 @@ func lookup(token: String, now_ms: int) -> Dictionary:
 	return e
 
 
-# 回局请求的**纯判据**:返回 "" = 放行,否则是给玩家看的拒绝理由。
-# - 三种拒绝各有各的成因,合并不了,而且**顺序有意义**:凭据根本不存在时先报"凭据失效"
-#   (那才是玩家该知道的事;报"房间号不符"会把人引向"房间号填错了"这个错方向)。
-# - 做成静态纯函数是为了可测:`-s` 冒烟把四种组合逐个钉住,而生产侧只有一次调用、一次比较。
-static func decision(entry: Dictionary, code: String, worker_alive: bool) -> String:
+# 校验重连请求合法性。返回空字符串表示验证通过，否则返回面向用户的明确拒绝原因。
+static func decision(entry: Dictionary, code: String, alive: bool) -> String:
 	if entry.is_empty():
 		return "凭据已失效(对局可能已结束)"
 	if str(entry.get("code", "")) != code:
 		return "房间号与凭据不符"
-	if not worker_alive:
+	if not alive:
 		return "对局已结束"
 	return ""
 
 
-# 这份凭据是不是**这一间房**的 —— 「只对本人列出他自己的私密房」用的判据(2026-09-29,B1 甲案)。
-# - 为什么身份只能靠凭据、不能靠 peer:私密房玩家按 ESC 回主菜单再进大厅页时是一条**新连接**
-#   (转连 worker 时大厅那条早就断了),而 `players` 也在 `on_peer_left` 里被摘干净
-#   (见那句 `if rr.in_match: continue` 上方的注释)—— 大厅侧**没有任何** peer → 房的记录。
-#   凭据表是唯一"这个人 = 这一局的那个人"的证据(`rejoin_request` 走的也是它)。
-# - **只看 TTL、不看 worker 活性**(与 `decision()` 不同):列表只是"要不要给你看那一行",
-#   而"这局还在不在"由点下去那一刻的 `decision()` 回答。这里多判一次活性的唯一效果是
-#   让那一行在房被回收(≤30s 的梯)之前提前消失,而**漏判**的效果只是短暂出现一行点下去
-#   会被拒的房 —— 后者本来就已经登记为已知边界(回局只在宽限期内真正成功)。
-# - `token` 为空一律 false:`PvpSession.token` 的默认值就是 `""`。
-#   注意： **这一条今天是一根保险带,不是核心依赖组件**(照实写清楚,免得后人拿它当证据):表里
-#      **根本不会有空键**(`grant` 的 token 来自 `LobbyRooms.new_token()` 的 16 位 hex) -> 
-#      删掉这个提前返回,`lookup("")` 返回空字典、下面那行照样给出 false,**行为逐字不变**。
-#      它挡的是**将来**那类写法 —— 例如 `return str(lookup(...).get("code", code)) == code`
-#      (缺省值取 `code` 的那种),那时空 token 会返回 true。
+# 判断指定令牌是否归属于该房间（用于私密房间列表中仅向本人展示其重连条目）。
 func owns(token: String, code: String, now_ms: int) -> bool:
 	if token.is_empty():
 		return false
@@ -90,33 +64,21 @@ func drop_token(token: String) -> void:
 	_by_token.erase(token)
 
 
-# 某一局(某一间房)的全部凭据(房被拆除时调,见 LobbyRooms.teardown_room)。
-# 注意： 键是 **worker 端口**,不是房间号(2026-09-21 修,控制器并进来的那一项):三张注册表
-#   (`rooms` / `royale_rooms` / `team_rooms`)的房号空间是**重叠的** —— 三处都只用
-#   `LobbyRooms._generate_code()` 的 4 位号、且 `has(code)` 各查各的表,所以"1v1 的 1234"
-#   与"大乱斗的 1234"**可以同时存在**(`teardown_room` 自己的注释就明确提示了这件事,它选 `is`
-#   而不是拿 code 撞库,正是为了规避相同的边界缺陷)。按 code 作废  ->  拆掉**无关**的一间房会把另一间
-#   **同号**房的玩家的凭据一起清掉:损坏有界(那位玩家只会看到「凭据已失效」),但它是错的,
-#   而且**一行日志都没有**。
-#   - 端口**每间房独占**(`WorkerLauncher.pick_port` 的唯一递增 + 占用集合) ->  在那张表上它是
-#   唯一可用的键。-  房自己那份记录(`tokens`)已随 Task 4 删除:同一件事只留一处。
-#   - 别把按 code 的版本加回来当"另一个入口":它就是上面那个坑,而今天没有任何调用方要它。
-# 返回值是清掉的条数(调用方只在日志里用)。
-func drop_port(worker_port: int) -> int:
-	# - 端口 <= 0 一律**什么都不清**:凭据只在 spawn 成功之后登记,那时端口必然 > 0
-	#   (见 RejoinRegistry.grant 的注释),故 0 不可能是任何一条凭据的键 —— 而把它当成
-	#   "通配"就会一次清光整张表。
-	if worker_port <= 0:
+# 标记指定局号（match_id）的所有凭据为失效（alive = false）。
+# 在 RoomManager._on_session_finished 监听到会话结束时调用。返回受影响的条目数。
+func end_match(match_id: int) -> int:
+	if match_id <= 0:
 		return 0
 	var n := 0
 	for tk in _by_token.keys():
-		if int((_by_token[tk] as Dictionary).get("worker_port", 0)) == worker_port:
-			_by_token.erase(tk)
+		var e: Dictionary = _by_token[tk]
+		if int(e.get("match_id", 0)) == match_id:
+			e["alive"] = false
 			n += 1
 	return n
 
 
-# 清掉已过期的条目,返回清掉的条数(调用点 = RoomManager 的回收梯,30s 一次)。
+# 清理已超过 TTL 的过期凭据，返回清理的条目数量（由 RoomManager 定期维护定时器调用）。
 func prune(now_ms: int) -> int:
 	var n := 0
 	for tk in _by_token.keys():

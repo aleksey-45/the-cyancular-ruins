@@ -1,19 +1,9 @@
 extends SceneTree
 
-# 武器背包纯逻辑冒烟。跑法(默认引擎路径):
-#   "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" \
-#       --headless --path . -s res://tests/smoke/weapon_inventory_smoke.gd
-# 通过 = `WEAPON_INVENTORY OK` 退出 0。
-#
-# - 在 _initialize() 里 load(),不用全局类名 —— 与 tile_query_smoke 的写法一致,
-#   且 -s 阶段类名缓存不保证已就绪(见 docs/eng/tests.md)。
-#
-# ═══ 为什么需要它 ═══
-# 背包有**两条独立的门控前置校验**:8 格容量 与 4 把上限(用户 2026-09-15 明确裁定
-# 「就算容量给 100 也最多四把」)。两条都容易在改动中被写成"其中一条推另一条",
-# 而错了之后的表现是"某些组合莫名捡不起来"——日常很难复现。
-# 另一半钉的是**残弹按 inst 记账**:允许持有同类型两把,若按类型记账,
-# 「丢一把空弹手枪、捡一把满地手枪」就变成免费换弹,而且完全不报错。
+# 武器背包逻辑状态机冒烟测试：
+# 验证背包容量负荷计算、多武器槽位切换、拾取/丢弃以及同类型武器区分。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/weapon_inventory_smoke.gd
 
 var _fail := 0
 
@@ -49,7 +39,7 @@ func _initialize() -> void:
 	_check(not inv.can_hold(5), "7 格放不下 4 格的重武器(容量闸门)")
 	# 7 格只剩 1 格,而最便宜的档是 2 格 → 此时**什么都放不下**
 	# (这里原先写成"放得下轻武器",是我把 7+2=9 看成了 8 —— 测试自己算错,
-	#  实现拒绝加才是对的。留着这条是因为它正好钉住"门控前置校验按剩余格数算,不是按把数算")
+	#  实现拒绝加才是对的。留着这条是因为它正好严格校验"门控前置校验按剩余格数算,不是按把数算")
 	_check(not inv.can_hold(1), "7 格只剩 1 格,放不下 2 格的轻武器")
 	# 门控前置校验要是"卡死"就测不出上面那些了 —— 腾出格后必须重新放得下
 	var freed: Dictionary = inv.remove_at(2)

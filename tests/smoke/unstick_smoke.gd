@@ -1,14 +1,9 @@
 extends SceneTree
 
-# 解卡(向上挤)冒烟:对齐贴墙不算卡 / 最小位移 / 嵌墙 / 上方也堵 / 空网格。
-# 跑法: timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/unstick_smoke.gd
-# 通过 = `UNSTICK OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# - 最容易错的一条是**"正贴着墙/地"不得判为卡住**:TileQuery 的格范围是
-#   floori(rect.end / ts) 且**含端点**,一个正好 64 宽、正好对齐格线的矩形会多算进
-#   右边那一列 —— 若那一列是墙,它每帧都会"解卡"往上弹一下(而且不报错)。
-#   `PROBE_INSET` 内缩就是为了这条。
+# 角色嵌墙脱困算法冒烟测试：
+# 验证实体意外陷入瓦片碰撞体时的渐进向上挤出定位算法。
+# 运行方式：
+#   timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/unstick_smoke.gd
 
 const TS := 64
 

@@ -1,10 +1,9 @@
 extends Node
-# C2 rollback 控制器 in-process 冒烟(scene 模式 headless):在无真实网络的确定环境下验证
-# core/prediction_rollback.gd 的「权威锚定 + 重放」——
-#   A = 权威模拟(服务器,1 输入/ tick 消费);P = 被预测玩家 + PredictionRollback。
-#   ack/完整状态按人工 D tick 延迟投递到 P;并在 tick E 对 A 注入一个外部事件(传送=击退/换边等效),
-#   断言:常态(无事件)下 P==A 无橡皮筋;事件后 ack 到期 → P 一次性 rollback 重对齐 A,随后再收敛。
-# 跑法:用户自跑(见 Tests/pvp_reconcile_smoke.sh);通过 = SMOKE_RECONCILE OK。
+
+# 客户端预测与服务端对齐控制器冒烟测试：
+# 在确定性模拟环境中验证 PredictionRollback 的「本地输入预测 + 服务端快照比对 + 历史重放」机制。
+# 运行方式：
+#   "$GODOT" --headless --path . res://tests/smoke/pvp_reconcile_smoke.tscn
 
 const BIT_UP := PacketInputSource.BIT_UP
 const BIT_DOWN := PacketInputSource.BIT_DOWN

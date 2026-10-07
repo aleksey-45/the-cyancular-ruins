@@ -1,20 +1,9 @@
 extends SceneTree
 
-# 回局凭据表(`server/rejoin_registry.gd`)的纯逻辑冒烟。
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/rejoin_registry_smoke.gd
-# 通过 = `REJOIN REGISTRY: ALL-OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# - 这张表的错法全是**静默**的:TTL 边界取 > 会让"正好到点"永不过期(表只增不减);
-#   判据顺序写反会把"凭据根本不存在"报成"房间号不符"(玩家看到的提示是错的、排查方向也是错的);
-#   `drop_room` 按前缀匹配会把别的房的凭据一起清掉(那一局的玩家再也回不去,而没有任何日志);
-#   - 2026-09-21:归键从**房间号**改成 **worker 端口**(`drop_port`)—— 房号空间在三张注册表之间
-#     是重叠的,按 code 作废会误伤**同号**的另一间房(同一个"范围比该有的大"的错,只是换了一层)。
-# - 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() → 进程永久挂起。
-#
-# 注意： 断言段计数(2026-09-21):`ALL-OK` 只证明"没有失败",**不证明"全都跑了"**(本仓咬过四次)——
-#   整段被删掉时上面一条 fails 都不会有,于是静默打印 ALL-OK。故每段开头 `_ran += 1`,
-#   收尾核对段数与 `_SECTIONS` 相符,并把实际段数写入裁决里。
+# 断线重连凭据注册表纯逻辑冒烟测试：
+# 验证 RejoinRegistry 中基于角色与局号（match_id）的凭据签发、时效验证与注销机制。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/rejoin_registry_smoke.gd
 
 const _SECTIONS := 8     # ① ② ②b ③ ④ ⑤ ⑥ ⑦(⑦ = owns,B1 甲案)
 
@@ -37,7 +26,7 @@ func _initialize() -> void:
 
 	# ── ① 登记 → 查得到,字段逐一对上 ──
 	_ran += 1
-	r.grant("tk_a", "1234", 1, 29001, 4242, 0)
+	r.grant("tk_a", "1234", 1, 29001, 0)
 	var e: Dictionary = r.lookup("tk_a", 0)
 	if e.is_empty():
 		fails.append("★ 登记后查不到凭据")
@@ -46,10 +35,11 @@ func _initialize() -> void:
 			fails.append("凭据的 code 字段不对:%s" % str(e.get("code", "")))
 		if int(e.get("role", 0)) != 1:
 			fails.append("凭据的 role 字段不对:%s" % str(e.get("role", 0)))
-		if int(e.get("worker_port", 0)) != 29001:
-			fails.append("凭据的 worker_port 字段不对:%s" % str(e.get("worker_port", 0)))
-		if int(e.get("worker_pid", 0)) != 4242:
-			fails.append("凭据的 worker_pid 字段不对:%s" % str(e.get("worker_pid", 0)))
+		if int(e.get("match_id", 0)) != 29001:
+			fails.append("凭据的 match_id 字段不对:%s" % str(e.get("match_id", 0)))
+		# 新登记的凭证状态初始值应为 alive = true。
+		if not bool(e.get("alive", false)):
+			fails.append("★ 刚登记的凭据 alive 必须为 true(默认 false 会让回局必被拒)")
 	if r.size() != 1:
 		fails.append("登记一条后 size 应为 1,实得 %d" % r.size())
 
@@ -76,9 +66,9 @@ func _initialize() -> void:
 	_ran += 1
 	# 注意： brief 原文这里写的是 `..., 4243, 0)`(与 tk_a 同一时刻登记)—— 那样 tk_b 的到期时刻
 	#   与 tk_a 相同(都 = ttl),`prune(ttl)` 会把**两条一起**清掉,而本段下面三条断言
-	#   ("清掉 1 条" / "剩 1 条(tk_b)" / "不得动没过期的")与 ⑤("tk_b 必须是 drop_port 的目标")、⑥
+	#   ("清掉 1 条" / "剩 1 条(tk_b)" / "不得动没过期的")与 ⑤("tk_b 必须是 end_match 的目标")、⑥
 	#   都要求 tk_b 活过 `ttl`。故把登记时刻改成 `ttl`(tk_b 是**后来**登记的),本段意图不变。
-	r.grant("tk_b", "5678", 2, 29002, 4243, ttl)
+	r.grant("tk_b", "5678", 2, 29002, ttl)
 	# - `r` 是 `S.new()` 的结果(无静态类型) ->  这里**不能用 `:=`**:返回值是 Variant,
 	#   Godot 会直接 Parse Error("Cannot infer the type of n variable"),整个冒烟一行都跑不到。
 	var n: int = r.prune(ttl)
@@ -109,37 +99,37 @@ func _initialize() -> void:
 	if r.decision(live, "9999", true) == "":
 		fails.append("★ 房间号不符必须拒绝")
 	if r.decision(live, "5678", false) == "":
-		fails.append("★ worker 已退必须拒绝(否则会把客户端送到一个可能已经属于别人的端口)")
+		fails.append("★ 对局已结束必须拒绝(否则会把客户端送回一个已经没有对局的房)")
 	if r.decision(live, "5678", true) != "":
 		fails.append("★ 三者都对必须放行,实得理由:%s" % r.decision(live, "5678", true))
 
-	# ── ⑤ drop_port 只掉**那一局**的凭据(同号的另一间房、以及别的房的都必须还在)──
-	# 注意： 归键是 **worker 端口**,不是房间号(2026-09-21 改):三张注册表(`rooms` /
-	#   `royale_rooms` / `team_rooms`)的房号空间**重叠** —— 三处都只用 `_generate_code()` 的
-	#   4 位号、且各查各的 `has(code)`,所以"1v1 的 5678"与"大乱斗的 5678"可以**同时存在**。
-	#   故下面 tk_b / tk_c **故意同号不同端口**:tk_b 是"要被拆的那一局",tk_c 是"同号的另一间房"
-	#   —— 按 code 键时它会跟着 tk_b 一起消失(损坏有界但**一行日志都没有**)。
+	# ── ⑤ end_match 精确标记指定对局凭证为已结束 ──
+	# 凭证索引使用 match_id，隔离不同房间类型的房间号命名冲突。
+	# end_match 仅将 alive 字段标记为 false，不直接删除条目，以便区分“凭证失效”与“对局已结束”。
 	_ran += 1
-	r.grant("tk_c", "5678", 1, 29003, 4244, 0)   # - 与 tk_b **同号**、不同 worker 端口
-	r.grant("tk_d", "7777", 1, 29004, 4245, 0)
-	var dropped: int = r.drop_port(29002)   # 同上:不能 `:=`
-	if dropped != 1:
-		fails.append("drop_port(29002) 应清掉 1 条(tk_b),实得 %d" % dropped)
-	if r.lookup("tk_c", 0).is_empty():
-		fails.append("★ drop_port 不得动**同号的另一间房**的凭据(房号空间重叠 —— 按 code 键就是这个下场)")
-	if r.lookup("tk_d", 0).is_empty():
-		fails.append("★ drop_port 不得动别的房的凭据")
-	if r.size() != 2:
-		fails.append("drop_port 之后 size 应为 2,实得 %d" % r.size())
-	# - 反向:端口 <= 0 不许当成"通配"(凭据的 worker_port 恒 > 0,0 不可能是任何一条的键)
-	if r.drop_port(0) != 0:
-		fails.append("★ drop_port(0) 清了东西 —— 0 不是任何一条凭据的键,当成通配会一次清光整张表")
-	if r.size() != 2:
-		fails.append("drop_port(0) 不得改变表,实得 size=%d" % r.size())
+	r.grant("tk_c", "5678", 1, 29003, 0)   # 与 tk_b **同号**、不同局号
+	r.grant("tk_d", "7777", 1, 29004, 0)
+	var ended: int = r.end_match(29002)   # 同上:不能 `:=`
+	if ended != 1:
+		fails.append("end_match(29002) 应标记 1 条(tk_b),实得 %d" % ended)
+	if bool(r.lookup("tk_b", 0).get("alive", true)):
+		fails.append("★ 那一局结束了 -> tk_b 的 alive 必须翻成 false")
+	if not bool(r.lookup("tk_c", 0).get("alive", false)):
+		fails.append("★ end_match 不得动**同号的另一间房**的凭据(房号空间重叠 —— 按 code 键就是这个下场)")
+	if not bool(r.lookup("tk_d", 0).get("alive", false)):
+		fails.append("★ end_match 不得动别的局的凭据")
+	if r.size() != 3:
+		fails.append("★ end_match 只翻 alive、**不删条目**(回局要能回答「对局已结束」而不是「凭据失效」),size 应仍为 3,实得 %d" % r.size())
+	# - 反向:局号 <= 0 不许当成"通配"(凭据的 match_id 恒 > 0,0 不可能是任何一条的键)
+	if r.end_match(0) != 0:
+		fails.append("★ end_match(0) 动了东西 —— 0 不是任何一条凭据的键,当成通配会一次翻掉整张表")
+	if not bool(r.lookup("tk_c", 0).get("alive", false)) \
+			or not bool(r.lookup("tk_d", 0).get("alive", false)):
+		fails.append("end_match(0) 不得改变表")
 
 	# ── ⑥ drop_token 只掉那一个 ──
 	_ran += 1
-	r.grant("tk_e", "7777", 2, 29004, 4245, 0)
+	r.grant("tk_e", "7777", 2, 29004, 0)
 	r.drop_token("tk_e")
 	if not r.lookup("tk_e", 0).is_empty():
 		fails.append("drop_token 之后不该还查得到")
@@ -150,10 +140,10 @@ func _initialize() -> void:
 	# - 它和 `decision()` 是**两个不同的问法**,别合并:`decision` 问"能不能放他进去"
 	#   (还要 worker 活着),`owns` 只问"这份凭据属不属于这间房" —— 列表**只该问后者**
 	#   (见 owns 的注释:多判一次 worker 活性只会让那一行提前消失)。
-	# - 三种虚假通过（未有效测试）都是静默的:恒 true(私密房对所有人列出 = "私密"没了)、恒 false
+	# - 三种测试漏检都是静默的:恒 true(私密房对所有人列出 = "私密"没了)、恒 false
 	#   (私密房永远不列 = B1 没做)、只看 token 非空(同号房的凭据也放行)。三条各断一次。
 	_ran += 1
-	r.grant("tk_own", "1234", 1, 29005, 4246, 0)
+	r.grant("tk_own", "1234", 1, 29005, 0)
 	if not r.owns("tk_own", "1234", 0):
 		fails.append("★ owns:属于自己的那一间房必须 true(否 = 私密房永远不列 = B1 没做)")
 	if r.owns("tk_own", "9999", 0):

@@ -10,11 +10,11 @@ extends Node
 # 剩下 1 真人 + 2 AI 被强行收场。2026-09-14 审计发现并修掉(`server/royale_host.gd`
 # `mark_disconnected` 的终局判据)。
 # - 这个错法**只查源码文本照不出来** —— 「数 players」与「数 peer_by_role」两种写法都合法、
-#   都编译得过,只有真建宿主、真调 `mark_disconnected`、真看 `_round_state` 才照得出。
+#   都编译得过,只有实际创建宿主实例、真调 `mark_disconnected`、真看 `_round_state` 才照得出。
 #   同类的上个教训:AI 目标方向漏取负(H1)——冒烟只查成员名,照不出符号错。
 #
 # ═══ 做法 ═══
-# 同 `match_host_hygiene_probe`:真建一个 RoyaleHost,但 **role_peers 传空** —— 不建玩家、
+# 同 `match_host_hygiene_probe`:实际创建一个 RoyaleHost,但 **role_peers 传空** —— 不建玩家、
 # 不排 peer、不发包;再手工把 `players` / `peer_by_role` 摆成「2 真人 + 2 AI」的形状。
 # 跑法(场景模式,root 有 autoload/`multiplayer`):
 #   "$GODOT" --headless --path . res://tests/probe/royale_disconnect_count_probe.tscn

@@ -1,6 +1,6 @@
 extends Node
 
-# 「掉落武器留在**死亡点**」探针(场景模式,`-s` 做不了 —— 要真建宿主)。
+# 「掉落武器留在**死亡点**」探针(场景模式,`-s` 做不了 —— 要实际创建宿主实例)。
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/death_drop_probe.tscn
 # 期望:每条 [dd] ok,末行 "DEATH DROP PROBE: ALL-OK"。
@@ -17,10 +17,10 @@ extends Node
 #   「死亡后直接原地」。③ 再钉复活那一侧:不再掉第二次、且保留的那把仍在手上。
 #
 # ═══ 做法 ═══
-# 与 grenade_player_hit_probe / team_host_probe 同一手法:真建宿主,但 **role_peers 传空**
+# 与 grenade_player_hit_probe / team_host_probe 同一手法:实际创建宿主实例,但 **role_peers 传空**
 # —— 不建玩家、不排 peer、所有 `rpc_id` 无对象(广播静默提前返回,不会在无多人连接时报错)。
 # 玩家由本探针自己摆进 `host.players`,宿主自己的物理帧关掉(只手动推一帧状态机)。
-# - 三个模式各走一遍:三处倒地边沿是**同一个契约的三份落地**(基类 `_respawn_player`
+# - 三个模式各走一遍:三处倒地边沿是**同一规范的三种具体实现**(基类 `_respawn_player`
 #   那一支已删),少写一处就静默退化成「该模式死亡不掉武器」。
 # - 地图严格约束 `newfactory.cyrm`(不钉图的探针每进程随机选一份,跨进程输出不可比);
 #   出生点也**显式传**(大乱斗 / 3v3 的 spawns 参数),不依赖任何 shuffle。
@@ -33,7 +33,7 @@ const MAP := "res://maps/newfactory.cyrm"
 # 注意： 死亡点与出生点**从地图自己的 spawn 元数据推导**,不写死坐标(2026-10-02 改)。
 #   原先写死的是旧 PvP 图的 `(17,65)` / `(133,64)` —— 但 1v1 那一路
 #   (`MatchHost.new(MAP, {})`)的 role 1 家 = **地图的** `# player`,不是这个常量。
-#   旧图上两者恰好相等,换一张图就分家  ->  ③「复活后站到本局出生点」**虚假失败（测试用例误报）**(实测差 1459px)。
+#   旧图上两者恰好相等,换一张图就分家  ->  ③「复活后站到本局出生点」**测试误报**(实测差 1459px)。
 #   推导之后本探针与"用的是哪张图"解耦:`_death` 只需离 `_home` 足够远,
 #   而下面那条[仪器]断言会**真的量**这个距离 —— 不够远它自己会红,不用靠人记得。
 const NEAR_CELLS := 2.0        # 「就在旁边」的判定半径(格);掉落物生成在 D + (0,-12)px
@@ -118,7 +118,7 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 	# 跳过 COUNTDOWN:复活调度只在 PLAYING 里安排(倒计时里倒地不会被排上)。
 	host._round_state = MatchHost.RoundState.PLAYING
 	# 开局那批散布是「背景」:下面的断言必须在**新增**的那几把上做
-	# (出生点附近本来就可能躺着开局撒的一把 —— 直接查「附近有没有枪」会虚假失败（测试用例误报）)。
+	# (出生点附近本来就可能躺着开局撒的一把 —— 直接查「附近有没有枪」会测试误报)。
 	p.weapons.set_initial_inventory([1, 2, 3])
 	var before := _insts(host)
 	_check(before.size() > 0,
@@ -148,7 +148,7 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 	# 同口径的半径)而不是自己算绝对距离 —— 自算的话跨接缝那一侧会判错。
 	# - `exclude` 传「除新掉的以外全部」而不是留空:开局散点**可能**恰好落在 DEATH_CELL
 	#   那一格上(`spread_cells` 从 ~800 个地板格里挑 12 个  ->  约 1.5% 概率),那件背景武器
-	#   离 d_pos 是 0px、比新掉的(12px)更近  ->  不排除的话会**偶发虚假失败（测试用例误报）**。
+	#   离 d_pos 是 0px、比新掉的(12px)更近  ->  不排除的话会**偶发测试误报**。
 	#   排除背景后本条语义反而更准:「这批**刚掉的**武器就在 D 附近」(而不是"D 附近最近的那件")。
 	var at_d: Dictionary = host.ground_weapons.nearest_within(
 			d_pos, near, _all_but(host, dropped))

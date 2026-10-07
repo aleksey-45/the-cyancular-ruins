@@ -1,6 +1,6 @@
 extends Node
 
-# ═══ 迁移后的端到端真链路冒烟(场景模式;必须用场景模式 —— 本链路全程吃 autoload)═══
+# ═══ 迁移后的端到端真实网络链路冒烟(场景模式;必须用场景模式 —— 本链路全程吃 autoload)═══
 #
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/kh_migration_e2e_probe.tscn

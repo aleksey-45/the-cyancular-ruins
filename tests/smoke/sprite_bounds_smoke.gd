@@ -1,13 +1,9 @@
 extends SceneTree
 
-# SpriteBounds 冒烟:按 sprite 像素 alpha 求包围盒(地面武器碰撞箱的来源)。
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/sprite_bounds_smoke.gd
-# 通过 = `SPRITE_BOUNDS OK` 退出 0。
-#
-# - 用运行时生成的贴图当输入,不依赖任何美术资产 —— 断言的是"算得对不对",
-#   而不是"某张图长什么样"(后者一改素材就红)。
-# - 参考系是易错隐患点:Sprite2D 默认 centered,局部原点是**贴图/region 的中心**,
-#   不是左上角。三组用例分别压"无 region / 全透明 / 有 region"。
+# 精灵贴图不透明边界求取算法冒烟测试：
+# 验证 SpriteBounds 基于 Alpha 通道扫描计算武器贴图最小包围盒的算法准确度。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/sprite_bounds_smoke.gd
 
 var _fail := 0
 

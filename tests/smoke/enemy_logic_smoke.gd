@@ -1,17 +1,10 @@
 extends SceneTree
 
-# 主冒烟:敌人 AI / 环面数学 / 武器参数与命中 / 碰撞层 / 寻路与 LOS / 多弹丸……
-# 跑法:`"$GODOT" --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd`,成功打印 SMOKE OK。
-#
-# - 结构(2026-09-15 阶段 5.1 拆分):本文件原先是一个 **737 净行**的 `_initialize()`
-#   —— 全仓最长函数,而本文件又是全仓改动最频繁的文件。现按原有的章节注释切成 27 个
-#   `_phase_*()`,`_initialize()` 只留**顺序**。
-#
-# - **顺序是契约,不是排版**:`_initialize` 里的调用次序 = 断言输出次序,也就是本文件的
-#   回归基线(`ok - <名字>` 147 条 + `SMOKE OK`)。改顺序会让读者以为断言没跑,
-#   而 `await` 的有无同样属于顺序契约 —— 漏一个 `await`,该节从 await 之后的断言就会
-#   与后面的节**交错执行**(拆分时实测踩到过一次,靠输出序列当场发现)。
-#   - 跨节的夹具/中间量提升为了脚本级字段(见下方声明),首次赋值位置原样没动。
+# 敌人核心逻辑与基础系统冒烟测试：
+# 覆盖敌人 AI 状态机、环面世界坐标换算、武器数值与命中判定、碰撞层级过滤、
+# A* 与 LOS 寻路算法、多弹丸散布以及武器背包容量等核心逻辑。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
 
 class StubPlayer:
 	extends Node2D
@@ -94,7 +87,7 @@ func _sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 
 
 func _initialize() -> void:
-	# 本函数只留**顺序**:每节一个 _phase_*,按原有先后调用 —— 顺序本身是契约
+	# 本函数只留**顺序**:每节一个 _phase_*,按原有先后调用 —— 调用顺序属于执行时序约定
 	# (断言顺序 = 输出顺序 = 基线 oracle)。
 	_phase_pure_helpers()
 	_phase_spawn_metadata_player2()
@@ -259,11 +252,11 @@ func _phase_pin_map() -> void:
 
 # ── Task 9: 地图尺寸读取(map_size) ──
 func _phase_map_size() -> void:
-	# - 期望值**从地图自己派生**,不写死 125×75("这张图恰好多大"换图就虚假失败（测试用例误报）)。
+	# - 期望值**从地图自己派生**,不写死 125×75("这张图恰好多大"换图就测试误报)。
 	#   取自 `MazeGenerator.load_map_file()` 的**整图解析维度** —— 刻意**不用**
-	#   `MapFormat.map_size`:`MazeGenerator.map_size()` 就是它的一行转发(同一函数  ->  自证)。
+	#   `MapFormat.map_size`:`MazeGenerator.map_size()` 就是它的一行转发(同一函数  ->  同源循环验证)。
 	#   两条读法各走一路(v4 头部 vs 整图解析),对不上才是真 bug。
-	#   顺带仍钉住"会话选中的是哪张图"这件事(`_phase_pin_map` 刚把它钉成 demo)。
+	#   顺带仍严格校验"会话选中的是哪张图"这件事(`_phase_pin_map` 刚把它钉成 demo)。
 	var g := MazeGenerator.load_map_file()
 	var want := Vector2i.ZERO
 	if not g.is_empty():
@@ -352,7 +345,7 @@ func _phase_weapon_stats_and_hit() -> void:
 	_check(sg_scene != null, "霰弹枪场景加载")
 	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
 	# 2026-09-21 用户调参:散布 4.0 → 3.0、射程 700 → 1100(全中伤害仍是 5×8=40,见下一条)。
-	# - 霰弹射程仍是三把里最短的(1100 < 手枪 1400 < 步枪 1600)—— 近战性格靠这一档保住。
+	# - 霰弹射程仍是三把里最短的(1100 < 手枪 1400 < 步枪 1600)—— 保持武器的近战战斗定位。
 	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 3.0), "霰弹枪 8 丸 ±3°")
 	_check(sg.damage == 5 and is_equal_approx(sg.bullet_range, 1100.0), "霰弹枪单丸5伤/射程1100")
 	# 全中伤害 = damage × pellet_count —— 用户 2026-09-20 选的就是"全中 40"那一档
@@ -1164,7 +1157,7 @@ func _root_script_of(scene_path: String) -> Script:
 # 脚本 `scr` 是否**继承自** `base_scr`(沿 `get_base_script()` 链走,含自身)。
 # - 走脚本链而不是「读 .tscn 文本里有没有 `weapon_base.gd`」:后者认不出
 #   `extends LaserWeaponBase` 这种**间接**继承(laser_gun 就是),而它恰恰是"加新武器"的常见形状;
-#   文本法还会被注释/别处的路径字符串喂绿。
+#   文本法还会被注释/别处的路径字符串误判通过。
 func _script_extends(scr: Script, base_scr: Script) -> bool:
 	var s := scr
 	while s != null:
@@ -1194,7 +1187,7 @@ const REGISTRY_SRC := "res://core/sim/weapon_registry.gd"
 const REGISTRY_JSON := "res://data/weapons.json"
 # json 的 tier 字符串 → 数值。-  这是**探针自己**的一份口径,刻意不引注册表 ——
 #   本阶段要在"注册表文件还不存在"时也跑得出干净的断言(见下面 wr 的取法)。
-#   它与 WeaponBase.Tier 的对齐由本阶段 ③ 钉着。
+#   它与 WeaponBase.Tier 的对齐由本阶段 ③ 负责校验。
 const TIER_STRINGS := {"light": 0, "medium": 1, "heavy": 2}
 
 
@@ -1299,7 +1292,7 @@ func _phase_weapon_registry() -> void:
 	#   的钉子 —— 2026-09-25 按容量/把数可配那份计划改成读默认值常量(见下)。
 	# - 原先是 `int(wi.MAX_WEAPONS)` / `int(wi.CAPACITY)` 直取属性 —— 常量改名成字段之后
 	#   那是运行时错,而本文件是 -s 冒烟  ->  错在 helper 里"该函数当场结束、调用方继续"
-	#    ->  后面断言被静默跳过、一个字都不出现,而裁决行照打(**虚假通过（未有效测试）**——
+	#    ->  后面断言被静默跳过、一个字都不出现,而裁决行照打(**测试漏检**——
 	#   只有"逐条比名字/条数"才拦得住)。故走常量表 + 哨兵默认值。
 	var wconsts: Dictionary = wi.get_script_constant_map()
 	_check(int(wconsts.get("DEFAULT_MAX_WEAPONS", -1)) == 4,
@@ -1382,7 +1375,7 @@ func _phase_weapon_registry() -> void:
 			_check(false, "在 %s 里找到函数 %s()" % [s["path"], s["func"]])
 			continue
 		# - 2026-10-02 降精度:原钉 `body.contains("WeaponRegistry.all_ids()")` —— 把取 id
-		#   包成一层**本文件内的 helper**(如 `_weapon_ids()` 自己调 all_ids())就**虚假失败（测试用例误报）**,
+		#   包成一层**本文件内的 helper**(如 `_weapon_ids()` 自己调 all_ids())就**测试误报**,
 		#   而接线其实是通的。改判"函数体**引用了注册表派生的取 id 调用**":直接出现 `all_ids(`,
 		#   或调用了本文件里某个自己也含 `all_ids(` 的函数(只追一层)。
 		# 要拦的变异:宿主不接注册表(**硬编码 id 列表**) ->  加第 7 把枪时新枪在这一处静默消失。
@@ -1439,7 +1432,7 @@ func _phase_weapon_capacity() -> void:
 	_check(not src.is_empty(), "读到 ui/weapon_slots.gd(读不到就是红,不是静默跳过)")
 	# 注意： 必须先看源码文本再敢调:`ws.rows_for(...)` 在函数不存在时会**抛错**,
 	#   而 -s 冒烟里 helper 抛错  ->  本函数当场结束、调用方继续  ->  下面那些断言
-	#   被静默跳过(裁决行照打 —— **虚假通过（未有效测试）**)。本函数是 helper(不是 _initialize),
+	#   被静默跳过(裁决行照打 —— **测试漏检**)。本函数是 helper(不是 _initialize),
 	#   所以这里 `return` 是安全的、不会挂进程。
 	var has_derivation := src.contains("static func rows_for") and src.contains("static func panel_h_for")
 	_check(has_derivation, "★ WeaponSlots 应导出 rows_for() / panel_h_for() 两个静态派生函数")

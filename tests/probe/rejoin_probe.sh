@@ -6,10 +6,8 @@
 #        且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
 # 整跑量级:约 60~110 秒(c1 回局 ≈20s;c2 的观察窗 40s、c3 的拒绝窗口 40s 并行跑)。
 #
-# ⚠ **跑前先确认没有别的 Godot 占着 7777** —— 本探针**不占 7777**(自当大厅,池外端口 29300;
-#   worker 起投也拨到池外 29350),可本机上可能跑着用户自己的服务端。**本脚本绝不杀 7777 的
-#   属主**(与 royale_soak_probe.sh 的"发现占用就 kill_port 7777"刻意不同)。
-#   真有一个大厅在 7777 上也不影响本探针:两边的端口集合不相交(29300/29350 vs 7777/7800~8299)。
+# 注意：本探针使用独立端口 29300，且对局与大厅在同进程单端口运行，不占用默认的 7777 端口。
+# 本脚本不会清理 7777 端口上的进程，避免影响可能正在运行的其它服务端实例。
 set -u
 
 # 引擎路径($GODOT,可用环境变量覆盖)+ cd 到仓库根 + kill_procs/kill_port
@@ -17,31 +15,22 @@ set -u
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 LOG="tests/probe/rejoin_probe.log"
 PROBE_LOBBY_PORT=29300
-PROBE_WORKER_PORT=29350
 
-# - 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列  ->  带它是**结构性恒假**
-#   (2026-09-27 实测),原先这句提示**从未打印过**。理由见 env.sh 的 lobby_alive。
+# 检查默认 7777 端口状态；UDP 无 LISTENING 状态列，详见 env.sh 中的 lobby_alive 实现。
 if lobby_alive; then
-  echo "[rejoin] 注意:7777 已被占用(大概是用户自己的服务端)。本探针不占 7777,**照跑不误、不会动它**。"
+  echo "[rejoin] 注意: 7777 端口已被占用，本探针使用独立端口 29300，继续执行。"
 fi
 
-# - 起跑前清**本探针自己那一段**的孤儿 worker(`OS.create_process` 起的孙进程,不属于本脚本
-#   记下的 PID)。-  区间只到 [29350, 29400):**绝不能**扫 [7800, 8300) —— 那是大厅的 worker 池,
-#   而本探针的既有承诺是"不碰 7800~8299"(那会端掉用户正在跑的对局),见文件头。
-kill_port_range "$PROBE_WORKER_PORT" 29400
+# 单进程单端口架构下，对局运行在当前探针进程内，无多余子进程或端口范围需要提前清理。
 
-echo "[rejoin] 起探针(大厅 $PROBE_LOBBY_PORT,worker 起投 $PROBE_WORKER_PORT;整跑约 60~110 秒)"
+echo "[rejoin] 起探针(大厅 $PROBE_LOBBY_PORT,对局与它同端口;整跑约 60~110 秒)"
 echo "[rejoin] 若长时间无输出:看 user://rejoin_probe_client_c{1,2,3}.godotlog(子进程 stdout 父进程看不到)"
 "$GODOT" --headless --path . --quit-after 36000 res://tests/probe/rejoin_probe.tscn 2>&1 | tee "$LOG"
-# - 取**探针进程自己**的退出码,不是 tee 的(管道最后一环恒 0,照它写会打印一个结构性恒真的数)
+# 获取管道前段探针进程的退出码。
 RC=${PIPESTATUS[0]}
 
-echo "[rejoin] 清理本探针自己的端口(兜底;正常路径探针已按 PID + 端口杀干净)"
+echo "[rejoin] 清理本探针占用的端口"
 kill_port "$PROBE_LOBBY_PORT"
-kill_port "$PROBE_WORKER_PORT"
-# - 只杀单个端口不够:worker 的端口是 `pick_port()` 发出来的那一个(同一跑里通常等于起投点,
-#   但不是同一个概念 —— 见 tests/probe/rejoin_probe.gd 文件头)。区间仍**不含** 7800~8299。
-kill_port_range "$PROBE_WORKER_PORT" 29400
 
 echo
 if grep -q "REJOIN PROBE: ALL-OK" "$LOG"; then

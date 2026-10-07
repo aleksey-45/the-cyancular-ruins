@@ -114,7 +114,7 @@ func _check_input_map() -> void:
 			continue
 		_check(InputMap.action_get_events(a).size() > 0, "动作 %s 没有任何按键绑定" % a)
 	# - 5~0 的动作**已整体删除**(用户 2026-09-16:删掉一切原先的切换武器数字键设定,
-	#   现在数字键**只**表示"背包第 N 把")。反向钉住:它们不该再出现。
+	#   现在数字键**只**表示"背包第 N 把")。反向严格校验:它们不该再出现。
 	for a in ["5", "6", "7", "8", "9", "0"]:
 		_check(not InputMap.has_action(a),
 				"数字键动作 %s 又出现了 —— 现在只保留 1-4(背包第 N 把)" % a)
@@ -129,7 +129,7 @@ func _check_weapon_numbers() -> void:
 			_failures.append("%s: 场景载入失败 %s" % [tag, spec["path"]])
 			continue
 		# as WeaponBase 而非 `var w: WeaponBase = ...`:**根节点类型不对时**静态赋值会中断
-		# 本函数(后面的断言一条都不跑 = 静默虚假通过（未有效测试）);`as` 转换失败只返回 null,能被断言抓到。
+		# 本函数(后面的断言一条都不跑 = 静默测试漏检);`as` 转换失败只返回 null,能被断言抓到。
 		var w := scene.instantiate() as WeaponBase
 		_check(w != null, "%s: 场景根节点不是 WeaponBase(instantiate/as 转换失败,%s)" % [tag, spec["path"]])
 		if w != null:
@@ -209,7 +209,7 @@ func _check_gate(wep: WeaponComponent) -> void:
 	# - 这条在改动前是**红**的:旧实现有一条"没有就加"的分支(注释写着"这不是便利,是必需")——
 	#   它会让 held **悄悄变长**,而那正是"两端背包不同序"的另一条产生源(§4.1 要消灭的东西)。
 	# - 类型选 5(榴弹发射器):此刻它**是启用的**、且**不在**背包 [1,3,4] 里 ——
-	#   两个条件缺一不可(选一个被禁的类型会被门控前置校验先挡掉,那条分支根本走不到  ->  虚假通过（未有效测试）)。
+	#   两个条件缺一不可(选一个被禁的类型会被门控前置校验先挡掉,那条分支根本走不到  ->  测试漏检)。
 	# - 旧实现还会**静默超容**:1+3+4 = 8 格已经占满,再加一把重的 = 12 格,而 add() 不代替门控前置校验。
 	var n_before := wep.inventory.held.size()
 	var t_before := wep.current_type_id()
@@ -418,10 +418,10 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	_check(not wc_src.contains("var _mag_state"), "weapon_component.gd 又声明了 _mag_state 残弹表")
 	_check(not wc_src.contains("_mag_state["), "weapon_component.gd 又在下标读写 _mag_state")
 	_check(not wc_src.contains("_mag_state."), "weapon_component.gd 又在调 _mag_state 的方法")
-	# - 2026-10-02 合并订正:原断言钉的是 `weapons.tick(delta)` **逐字**。KH 的时间玩法把这一行
+	# - 2026-10-02 合并修订说明:原断言钉的是 `weapons.tick(delta)` **逐字**。KH 的时间玩法把这一行
 	#   改成 `weapons.tick(delta * tm)`(加速时开火/换弹节拍 ×tm)—— **意图一字未变**
 	#   (每物理帧由 delta 驱动武器 tick),只是实参带上了时间倍率。
-	#   故放宽到前缀 `weapons.tick(delta`:仍然钉住"由 delta 驱动、且是本文件在驱动"
+	#   故放宽到前缀 `weapons.tick(delta`:仍然严格校验"由 delta 驱动、且是本文件在驱动"
 	#   (写死常数、换别的变量、或干脆不驱动,照样红)。
 	#   - 纪律:重构撞红源码级守卫时**改探针认新入口**,别回退生产代码(见 docs/eng/tests.md 的
 	#     「源码级探针」纪律)。
@@ -438,7 +438,7 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 
 	# L3 接线:开局选项禁用的武器必须真的落到武器组件上(否则选项形同虚设)
 	# - 2026-10-02 降精度:原钉**整行逐字** `set_enabled_types(RunOptions.disabled_weapons)`
-	#   —— 先取局部量 / 加 `.duplicate()` / 换行都会虚假失败（测试用例误报）。改判"`_ready`体内同时出现
+	#   —— 先取局部量 / 加 `.duplicate()` / 换行都会测试误报。改判"`_ready`体内同时出现
 	#   `set_enabled_types(` 与 `RunOptions.disabled_weapons`",问的是同一个问题(接线在不在)。
 	# - 用 `_top_func_body` + `_code_view`,**不能**用 `_func_body(_code_only(...))`:
 	#   level_0.gd 有个内部类 `_Reaper` 也有 `func _ready()`,而 `code_only` 剥缩进后
@@ -545,7 +545,7 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 	_check(decoded.is_action_just_pressed("R"),
 			"输入包解码端漏了换弹:_bit(\"R\") 未映射到 BIT_RELOAD,pressed 位读不出来")
 
-	# ③ 真链路:真 player.tscn 注入 PacketInputSource + 带 R 边沿的包 → 权威物理帧必须进装填。
+	# ③ 真实网络链路:真 player.tscn 注入 PacketInputSource + 带 R 边沿的包 → 权威物理帧必须进装填。
 	#    这是"权威服务器会换弹"的唯一实证 —— 服务器没有输入事件,全靠这条路径。
 	var real_w: WeaponBase = wep.current_weapon()
 	if real_w == null:
@@ -570,7 +570,7 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 		# ⑤ (负向对照)非边沿不触发:没有 R 边沿的包不得让武器进装填。
 		# - 必须先 clear_edges():PacketInputSource 的边沿是**累积**的(|=),靠 MatchHost
 		#   每 tick 末 clear_edges() 清空 —— 生产里"上一包的边沿"活不过一个 tick,探针
-		#   不照做就会拿上一包的 R 去自身伤害的负向对照(本探针第一版就是这么虚假失败（测试用例误报）的)。
+		#   不照做就会拿上一包的 R 去自身伤害的负向对照(本探针第一版就是这么测试误报的)。
 		real_w._reloading = false
 		real_w.mag_ammo = 3
 		net_src.clear_edges()

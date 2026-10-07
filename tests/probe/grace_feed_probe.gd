@@ -8,7 +8,7 @@ extends Node
 #
 # ═══ 为什么不能用源码断言代替 ═══
 # "三个生产者调了 `_send_round_state`"是**文本**判据(写在 tests/probe/reconnect_status_probe 里),
-# 它拦不住"并进去的时机/条件写错了"(比如空表也带键、或者读的是别的字段)。本探针真建一个
+# 它拦不住"并进去的时机/条件写错了"(比如空表也带键、或者读的是别的字段)。本探针实际创建一个
 # `MatchHost`(**role_peers 传空** —— 同 `match_host_hygiene_probe` 的手法:宿主不建玩家、不排
 # peer、所有 rpc_id 静默提前返回;⑥ 那相自己往 `host.players` 里摆一具,见该处注释),用
 # **子类覆写 `_rpc_all`** 截获真正要发出去的那份载荷(同 `stats_delivery_probe` 的手法),
@@ -198,7 +198,7 @@ func _funnel_is_the_only_emitter() -> bool:
 #       切出来当独立块(对本断言无害 —— 多扫到不含广播点的块而已);但函数体跨多行的续行、
 #       或把广播写在 `class` 声明块里(本文件没有这种写法)不在它的射程内。
 #     - `code_only` **保留字符串字面量**:字面量里若写着带括号的 `"_broadcast_round_state()"`,
-#       它会被当成一个调用点  ->  **虚假失败（测试用例误报）**。今天 `server_main.gd` 里那两处是
+#       它会被当成一个调用点  ->  **测试误报**。今天 `server_main.gd` 里那两处是
 #       `has_method("_broadcast_round_state")`(**不带括号**),匹配不上,故无此风险;给这条
 #       断言写"带括号的自引用字面量"时要知道它会自己咬自己(或改成只在 `has_method(` 之后
 #       的那种字面量上放行)。

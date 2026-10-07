@@ -9,8 +9,8 @@ extends Node
 #
 # ═══ 为什么需要它(批次 5 的验收线)═══
 # 设计 §5 批次 5 的验收是「大乱斗客户端的 rollback_count() 斜率与 1v1 同量级」,而**读数必须来自
-# 真链路** —— 只有真大厅 + 真 worker + 真 `royale_game` 客户端才跑得到 reconcile 那一段。
-# 光靠源码级扫描(「royale_game.gd 里有没有那几行」)是本仓被抓过四次的「虚假通过（未有效测试）」形态:
+# 真实网络链路** —— 只有实际大厅 + 真 worker + 真 `royale_game` 客户端才跑得到 reconcile 那一段。
+# 光靠源码级扫描(「royale_game.gd 里有没有那几行」)是本仓被抓过四次的「测试漏检」形态:
 # 接线写对了但没生效时,扫描器照样绿。
 #
 # ═══ 分歧怎么**确定性**地造出来(本探针的关键设计)═══
@@ -83,7 +83,7 @@ func _run_orchestrator() -> void:
 	for role in ["c1", "c2"]:
 		# - `--log-file` 不能省:客户端子进程的 stdout/stderr 父进程**看不到**(Windows CreateProcess
 		#   不继承句柄),没有它就只能看到"进程没了、结果文件也没写"这种无法归因的现象。
-		#   实测踩过:客户端在 PLAYING 后 ~1s 没了,靠这份引擎日志才看得到真正的报错。
+		#   规避历史已知问题：客户端在 PLAYING 后 ~1s 没了,靠这份引擎日志才看得到真正的报错。
 		OS.create_process(exe, PackedStringArray(["--headless", "--path",
 				ProjectSettings.globalize_path("res://"), "--log-file", _godot_log_path(role),
 				"res://tests/probe/royale_c2_probe.tscn", "--", "--role=" + role]))
@@ -91,7 +91,7 @@ func _run_orchestrator() -> void:
 
 
 func _on_room_created(caller: int, _opts: Dictionary) -> void:
-	# 真大厅建完房:记下房主 peer 与房号,稍后(帧内不做事,避免在 poll 栈里改房态)
+	# 实际大厅建完房:记下房主 peer 与房号,稍后(帧内不做事,避免在 poll 栈里改房态)
 	_c1_peer = caller
 	for code in _rm().lobby.royale_rooms:
 		var rr = _rm().lobby.royale_rooms[code]
@@ -216,8 +216,8 @@ func _tail_lines(text: String, n: int) -> String:
 	return "…(前 %d 行省略)\n" % (lines.size() - n) + "\n".join(lines.slice(lines.size() - n))
 
 
-# ── 客户端子进程:挂观察者 + 挂**真大厅场景**,再把它驱动起来 ──
-# 观察者挂 root(不是探针场景里):真大厅 → 真 royale_game 的那次换场不会把它带走。
+# ── 客户端子进程:挂观察者 + 挂**实际大厅场景**,再把它驱动起来 ──
+# 观察者挂 root(不是探针场景里):实际大厅 → 真 royale_game 的那次换场不会把它带走。
 func _run_client() -> void:
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
 	if FileAccess.file_exists(lp):

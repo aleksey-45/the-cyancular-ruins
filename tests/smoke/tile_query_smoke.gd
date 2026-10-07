@@ -1,18 +1,9 @@
 extends SceneTree
 
-# TileQuery 行为冒烟(纯算法:`extends SceneTree` → `-s` 可跑,不引 autoload)。
-#
-# ═══ 为什么需要它 ═══
-# 这三段逐格判定原先分散在 `enemy_black_bird._body_clear_at`(瞬移落点)、
-# `enemy_fly_base._bird_can_pass`(飞行避障)、`weapon_base._disk_overlaps_solid`(预瞄判墙),
-# 2026-09-14 收进 `core/tile_query.gd`。抽取当时做过一次**新旧实现对撞**(全图 11760 次采样、
-# 0 不一致),但那是迁移期的一次性检查 —— 这条冒烟把它钉成**长期**守卫,专钉两件容易静默写错的事:
-#   ① 跨接缝:AABB 落在 x≈0 / x≈W 两端时,逐格 posmod 必须绕回去(而非算到地图那一头);
-#   ② 水:飞行敌人把**水**也算障碍(鸟不能游),而实心判定不该把水当墙。
-# 这两条都是「日常不接缝/不涉水时看起来完全正常」的形状。
-#
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/tile_query_smoke.gd
-# 通过 = `TILE_QUERY OK` 退出 0。
+# 场景瓦片碰撞与障碍物探测逻辑冒烟测试：
+# 验证 TileQuery 在 64px 网格与 16px 子格上的瓦片阻挡查询算法一致性。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/tile_query_smoke.gd
 
 const TS := 64   # = GameParameters.TILE_SIZE;-s 脚本自身不能引 autoload,故写字面量
 

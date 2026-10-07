@@ -1,12 +1,10 @@
 extends SceneTree
 
-# AiInputSource 契约冒烟:①是 PlayerInput 子类 ②is_network_driven() 必须为 true
-# ③基类所有输入读取接口均已正确重写(不会被基类默认实现悄悄接管)
-# 为什么严格约束第 ② 条(**理由是瞄准,2026-09-15 起不再是换弹**):weapon_base._aim_world_dir()
-# 对 input_is_network()==true 的玩家永不读宿主 OS 鼠标、回退使用角色朝向作为默认方向 —— AI 跑在 headless
-# 服务器上,不覆写就会去读宿主机的真实鼠标,瞄准变成随桌面而变的随机值。
-# (旧版本这条是为了让 AI 绕开换弹:当年 WeaponBase.reload_active() 的第二判据正是
-#  input_is_network()。门控限制已移除,AI 现在照常换弹 —— 与真人同规则。)
+# AI 补位输入源冒烟测试：
+# 验证 AiInputSource 的纯逻辑行为，包括随机初始武器持有规则、避开换弹逻辑、
+# 目标追踪与输入向量生成（纯数据级测试，不依赖 Autoload 与真实场景）。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/ai_input_source_smoke.gd
 
 var _fail := 0
 

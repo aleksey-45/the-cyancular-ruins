@@ -1,10 +1,9 @@
 extends SceneTree
-# SquashStretch 纯逻辑冒烟(不建场景、不渲染)。
-# 判据:SQUASH SMOKE: ALL-OK
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/squash_stretch_smoke.gd
-#
-# - 组件只静态引用 PlayerParams / EnemyParams / MathUtil(三者都是 RefCounted、非 autoload),
-#   故 `-s` 阶段(autoload 尚未实例化)可以安全静态引用本类。
+
+# 挤压拉伸形变动画纯逻辑冒烟测试：
+# 验证落地挤压与起跳拉伸的缓动插值函数输出在物理帧上的平滑性与极值限制。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/squash_stretch_smoke.gd
 
 const DT: float = 1.0 / 60.0
 
@@ -15,7 +14,7 @@ const MIRRORED_CONSTS := [
 	"squash_amount", "squash_recover", "squash_land_min_vy", "squash_land_ref_vy",
 	"squash_land", "squash_hurt", "squash_air", "squash_air_ref_vy",
 ]
-# 设计约定的幅度上限。**写死**是刻意的:这里是唯一钉住"这个数本身"的地方。
+# 设计约定的幅度上限。**写死**是刻意的:这里是唯一严格校验"这个数本身"的地方。
 # - 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」)—— 同批把
 #   `squash_recover` 9→16、`squash_air` 0.30→0.10(三项一起收,事件强度不动)。
 #   两侧参数文件必须同改:本文件上方逐名严格约束这 8 个同名常量。
@@ -188,7 +187,7 @@ func _initialize() -> void:
 	_ok(_near(s1.x, s2.x, 0.0005),
 			"叠加饱和:叠两次与叠一次同值,实测 %s" % (str(s1) + " vs " + str(s2)))
 
-	# ⑦c 下行饱和的**边界**守卫(⑦ 的镜像):⑦ 钉住 v == +1.0,这条钉住 v == -1.0。
+	# ⑦c 下行饱和的**边界**守卫(⑦ 的镜像):⑦ 严格校验 v == +1.0,这条严格校验 v == -1.0。
 	#     构造:三次 HURT(-0.50 ×3)把 `_impulse` 压到下行钳位(-1.0),再用一次满力落地
 	#     (`-1.0`,与 ⑦ 里那个 `+0.30` 的空中项相同机制"反向的满幅项")让它稳稳停在钳位处。
 	#     - `delta = 0.0` 是**刻意的**:指数恢复每帧要拦截屏蔽 14%,拿 `DT` 读到的会是

@@ -5,7 +5,7 @@ extends Node
 # 它能在**换场之后**读真 royale_game 实例的 C2 状态。
 #
 # 流程:
-#   0/1  驱动真大厅(建房 / 加入房间),等换场到真 royale_game;
+#   0/1  驱动实际大厅(建房 / 加入房间),等换场到真 royale_game;
 #   2    等对局进 PLAYING → c1 按一次 K(自杀脱困,走游戏自己的 _unhandled_input);
 #   3/4  等「自己倒地」→ 等「自己复活」(服务器 2s 后复活并瞬移回出生点 —— 这次瞬移
 #        客户端不可预测,正是要 reconcile 去收敛的那次服务器外部事件);
@@ -43,7 +43,7 @@ const PEER_WAIT := 25.0
 # 判据一律取**去注释视图**(注释不是代码:一句"这里以前调过 set_server_rendered"的注释既不能
 # 让"在位"类断言变绿,也不能让"零残留"类断言变红)。
 const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
-const MIN_PROD_FILES := 40   # 扫到的源文件数下限:防"扫描坏了 → 零命中 = 虚假通过（未有效测试）"
+const MIN_PROD_FILES := 40   # 扫到的源文件数下限:防"扫描坏了 → 零命中 = 测试漏检"
 # 碎片拼接(与 kh_l6_probe 同一条纪律):别让针的字面量在自扫时自伤。
 const N_SSR := "set_server" + "_rendered"
 const N_LOCAL_PRED := "LOCAL_PREDICTION" + "_ENABLED"
@@ -145,14 +145,14 @@ func _process(delta: float) -> void:
 				_assert()
 
 
-# ── 阶段 0:等真大厅连上大厅服 → c1 建房 / c2 等 GO 文件后加入 ──
+# ── 阶段 0:等实际大厅连上大厅服 → c1 建房 / c2 等 GO 文件后加入 ──
 func _stage_lobby() -> void:
 	if lobby == null or not is_instance_valid(lobby):
 		_log_once("等真大厅实例挂上(add_child 被推迟到帧末)")
 		return
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
-		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
+		return   # 实际大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
 	# 注意： 守卫:连上的必须是**本探针的大厅**,不能是云服。生产默认地址就是云
 	#   (`PvpSession.server_address` 初值 120.53.107.140),而本探针是**实例化真
 	#   `mp_lobby.tscn` 让它自己连** —— `royale_c2_probe._run_client` 漏了那句地址预置时,
@@ -186,7 +186,7 @@ func _stage_lobby() -> void:
 	_stage_t = 0.0
 
 
-# ── 阶段 1:等换场(真大厅 → 真 royale_game)──
+# ── 阶段 1:等换场(实际大厅 → 真 royale_game)──
 func _stage_wait_game() -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_royale_game(cs):
@@ -379,7 +379,7 @@ func _check_no_alive_consume(problems: Array) -> void:
 	for path in A2_OWNERS:
 		var code := ScanUtil.code_view(ScanUtil.read(path))
 		if code.is_empty():
-			# 读不到源文件时**不能**判绿:那正是"零命中 = 虚假通过（未有效测试）"的形状
+			# 读不到源文件时**不能**判绿:那正是"零命中 = 测试漏检"的形状
 			problems.append("读不到 %s → A② 无从判定(不判绿)" % path)
 			continue
 		if not code.contains(A2_WIRING):
@@ -443,7 +443,7 @@ func _finish(ok: bool, msg: String) -> void:
 #   (RoyaleHost.mark_disconnected → _finish_match → MATCH_OVER);而 MATCH_OVER 期间
 #   `_match_round_tick` 的 PLAYING 分支不再跑 → **另一方正在等的「2s 复活」永远不会发生**。
 #   本探针第一版实测就踩到了:spawned 模式下 c2 断言完(PLAYING+1.5s)先退 → c1 卡在"等复活"
-#   → -  2026-09-21 订正:当年那条链的最后一环是「6s 后 MATCH_OVER 的退场定时器把场景一换,
+#   → -  2026-09-21 修订说明:当年那条链的最后一环是「6s 后 MATCH_OVER 的退场定时器把场景一换,
 #     挂在 root 上的本观察者被摘出树 → `_process` 停 → 结果文件没写」。那条**自动换场已随结算页
 #     批次删除**(改成玩家自己退) ->  那一环不再存在;但下面那条纪律**仍要守**、且理由更强了:
 #     现在没有任何东西会自动换场,谁先退谁就把对方留在 MATCH_OVER 之后的静止世界里 ——

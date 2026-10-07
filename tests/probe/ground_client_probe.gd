@@ -182,8 +182,8 @@ func _phase_same_type_equip() -> void:
 	print("[gc] ── ④b 同型号两把:手持哪一把 ──")
 	var w: WeaponComponent = _local.weapons
 	# - **三把**同型号,两条断言各指一把**不同**的枪(inst=3 / inst=2)。
-	#   只用两把的话第二条会**虚假通过（未有效测试）**:前一条红时下标停在 inst=1,而第二条若也要 inst=1
-	#   就恰好"看起来对"(实测踩过 —— 一个断言必须能独立地红)。
+	#   只用两把的话第二条会**测试漏检**:前一条红时下标停在 inst=1,而第二条若也要 inst=1
+	#   就恰好"看起来对"(规避历史已知问题)。
 	var inv: Array = [
 		{"type": 1, "inst": 1, "mag": 5},
 		{"type": 1, "inst": 2, "mag": 6},

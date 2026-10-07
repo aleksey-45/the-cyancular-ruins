@@ -20,7 +20,7 @@ extends ProbeBase
 #     ② 阶段 2/③/④ 一律走 `Object.call("…")`(**动态派发,不需要符号存在**)+ `has_method` 守卫,
 #        守卫缺失时记一条**具名失败**并跳过解引用(绝不静默 return)。
 #     ③ 每个带守卫的相最后留**完成戳**(`_require_ran`,照 `tests/probe/rollback_fidelity_probe.gd` 的先例):
-#        守卫哪天被写成静默 `return`,整相消失而 verdict 照打 ALL-OK —— 那是本仓抓过的虚假通过（未有效测试）形状。
+#        守卫哪天被写成静默 `return`,整相消失而 verdict 照打 ALL-OK —— 那是本仓抓过的测试漏检形状。
 
 func probe_id() -> String:
 	return "weapon-inst"

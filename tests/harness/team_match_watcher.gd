@@ -1,12 +1,12 @@
 extends Node
 
-# 3v3 真链路探针(`tests/probe/team_match_probe.*`)的**观察者**(客户端子进程用)。
+# 3v3 真实网络链路探针(`tests/probe/team_match_probe.*`)的**观察者**(客户端子进程用)。
 # 挂在 `get_tree().root` 上:换场(真 `mp_lobby` → 真 `team_game`)不会把它带走
 # → 它能在**换场之后**读真 `team_game` 实例的状态(与 royale_c2_watcher / reconnect_watcher 相同机制)。
 #
 # - 它做的四件事:
-#   ① 驱动**真大厅页**(`scenes/mp_lobby.tscn`,筛选到 3v3):建房 / 点房卡加入 / 选边 / 房主开局。
-#      —— 这就是"A 册/B 册那五条从没被真跑过"里的①:等待室渲染路径(`team_room_state`)。
+#   ① 驱动**实际大厅页**(`scenes/mp_lobby.tscn`,筛选到 3v3):建房 / 点房卡加入 / 选边 / 房主开局。
+#      —— 这就是"A 册/B 册那五条从没被实际运行过"里的①:等待室渲染路径(`team_room_state`)。
 #   ② 换场后接管**真 `team_game`**:注入脚本手柄(`team_bot_input.gd`),按快照驱动走位/开火。
 #   ③ 按相位采样并做**客户端侧**断言(收敛 / 队友弹穿透 / 换边 / 掉线观察窗)。
 #   ④ 把带 `REC ` 前缀的结构化读数写进结果文件,交给裁判(探针进程)做跨端比对。
@@ -187,7 +187,7 @@ func _on_lobby_failed() -> void:
 	_finish()
 
 
-# 连上大厅:上报昵称 → **帧末**挂真大厅页。
+# 连上大厅:上报昵称 → **帧末**挂实际大厅页。
 # - 页挂在**探针场景**下(不是本节点下):换场时 `change_scene_to_file` 会 free 掉探针场景,
 #   页随之消失 —— 这正是生产里的形状。留在树上的话,它的 `_tick_claim_timeout` 会在 claim 后
 #   25s 调 `_return_to_lobby` → `NetBus.stop()`,把正在进行的对局从客户端这边强制中断
@@ -357,7 +357,8 @@ func _tick_lobby_join() -> void:
 	_refresh_t -= 1.0 / 60.0
 	if _refresh_t <= 0.0 and _phase_t > 1.0:
 		_refresh_t = 1.5
-		lobby.call("_on_refresh_pressed")
+		# 调用基类房间列表刷新接口 LobbyPage._request_list
+		lobby.call("_request_list", "已刷新房间列表")
 		return
 	if _rooms.is_empty():
 		return
@@ -597,7 +598,7 @@ func _tick_play() -> void:
 #   1 队 玩家 layer=2 mask=1|4|16 ;2 队 玩家 layer=16(TERM_ENEMY_LAYER) mask=1|4|2
 #   副本幽灵体 layer 按**它代表的那名玩家**的队,mask 恒 0。
 # 队色:`_apply_tint(..., color_override)` 走 **modulate 比值**  ->  有效身体色 = modulate × 主色。
-# - 为什么这条要在真链路里查:服务端与客户端**各自**实现一半(A 册服务端 / B 册客户端),两边
+# - 为什么这条要在真实网络链路里查:服务端与客户端**各自**实现一半(A 册服务端 / B 册客户端),两边
 #   数值不一致 = 可走空间不一致 = **每帧回滚**(不报错,只表现为"手感发飘");而队色错 =
 #   6 个人里认不出队友。两者都只有"拿真对象的真字段比对"才看得出来。
 func _check_team_visual_layer() -> void:
@@ -732,7 +733,7 @@ func _tick_meet_shooter(delta: float) -> void:
 				_bot.attack = false
 		MEET_SWITCH_BULLET:
 			# 注意： "子弹穿透队友"这一半**必须用出弹类武器测**:5 号榴弹(打出去的是榴弹)与
-			#   6 号激光(即时光束、不产生子弹)都会让这条断言变成**虚假失败（测试用例误报）/空绿**。手上是这两种
+			#   6 号激光(即时光束、不产生子弹)都会让这条断言变成**测试误报/空绿**。手上是这两种
 			#   就换到背包里的出弹枪(1~4);换不了就**照实标未覆盖(枪种)**,不硬判。
 			_bot.axis = 0.0
 			_bot.attack = false
@@ -771,7 +772,7 @@ func _tick_meet_shooter(delta: float) -> void:
 				_hp_after_bullet = _hp_of(_victim_role)
 				# - 记下**手上的武器类型**(1..6):6=激光枪是**即时光束、不产生子弹** ——
 				#   此时 `shots=0` 是**正确行为**而不是"枪没响",而"乙 hp 不变"也就成了空断言。
-				#   裁判据此把那一半判成**未覆盖**(而不是留一条空的绿,也不是虚假失败（测试用例误报）)。
+				#   裁判据此把那一半判成**未覆盖**(而不是留一条空的绿,也不是测试误报)。
 				_bullet_rec = "BULLET shots=%d dist=%.0f los=%d before=%d after=%d hit=%d wtype=%d" % [
 						_shots, _dist_at_fire, 1 if _los_to(vp) else 0, _hp_before, _hp_after_bullet,
 						1 if _hp_after_bullet != _hp_before else 0, _weapon_type()]

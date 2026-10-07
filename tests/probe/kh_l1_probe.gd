@@ -56,7 +56,7 @@ func _ready() -> void:
 
 	# 3) 源码级:难度/老版 UI 不得残留
 	# - 2026-10-02 降精度:原先直接在**原始文本**上判(未剥注释)——
-	#   负向那几条会被墓碑注释**虚假失败（测试用例误报）**,正向那条会被注释里提一句**喂绿**。改成先过 `_code_only`。
+	#   负向那几条会被墓碑注释**测试误报**,正向那条会被注释里提一句**误判通过**。改成先过 `_code_only`。
 	var ro_src := _code_only(_read("res://core/config/run_options.gd"))
 	if ro_src == "":
 		_failures.append("core/run_options.gd 读不到")

@@ -16,7 +16,7 @@ extends Node
 #   ② 敌方(role4,2 队)在光束路径上**照常受到伤害** —— 少了它,"跳过所有非射手玩家"的坏实现
 #      (把玩家循环整个 `continue` 掉、只留敌人那一支)照样测试全部通过。
 #
-# - 与 `tests/probe/team_host_probe.gd` 相同机制手法:真建 `TeamHost`(`role_peers` 传空)+ 手工摆位,
+# - 与 `tests/probe/team_host_probe.gd` 相同机制手法:实际创建 `TeamHost`(`role_peers` 传空)+ 手工摆位,
 #   走的是**生产代码路径**(`_damage_path_targets` 是本特性的被改函数)。
 
 const MAP := "res://maps/newfactory.cyrm"
@@ -26,7 +26,7 @@ const ROWS := 12
 const TILE_WALL := 31
 const ROW := 10          # 射手/队友/敌人桩都站这一行(同一 y  ->  水平光束必然穿过身体)
 
-# - 断言条数下限(本仓"虚假通过（未有效测试）"纪律的权威表述在 `tests/lib/probe_base.gd` 的文件头)。
+# - 断言条数下限(本仓"测试漏检"纪律的权威表述在 `tests/lib/probe_base.gd` 的文件头)。
 #   只判 `_fails.is_empty()` 有个洞:`_fails` 初值就是空的,而 `_run()` 里任何一处**运行时**
 #   脚本错误只会让**那个函数**当场结束 —— `_ready` 的 `await _run()` 照常恢复、`_finish()`
 #   照常执行  ->  打出 `ALL-OK` 而**一条断言都没跑过**。故用 `_checks` 计数堵它。
@@ -61,7 +61,7 @@ func _check(ok: bool, what: String) -> void:
 
 
 # - 必须 `await _run()` 再 `_finish()`:`_run()` 里有 `await get_tree().physics_frame`(协程),
-#   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(虚假失败（测试用例误报）)。
+#   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(测试误报)。
 func _ready() -> void:
 	await _run()
 	_finish()
@@ -143,7 +143,7 @@ func _run() -> void:
 			_foe_player = p
 	_host._apply_team_layers()
 	await get_tree().physics_frame
-	# - 清无敌帧:出生/复活可能带无敌,不清的话"队友不受到伤害"这条在**修复前也会绿**(虚假通过（未有效测试）)。
+	# - 清无敌帧:出生/复活可能带无敌,不清的话"队友不受到伤害"这条在**修复前也会绿**(测试漏检)。
 	#   修复前的红本身就是"伤害确实写入去了"的证明;这一步是双保险。
 	#   - role4(正向对照)同样要清 —— 它要是被无敌帧挡住,鉴别点 ② 就成了一条恒红的假断言。
 	_mate.combat.iframes = 0.0

@@ -1,8 +1,9 @@
 extends SceneTree
-# 网络输入源单元冒烟:验证 PacketInputSource.get_axis 的轴语义。
-# 回归覆盖:get_axis("up","down") 曾一律返回水平 ax → 服务器攀爬方向恒 0 → 梯子大量回拉。
-# 用法: godot --headless --path . -s res://tests/smoke/network_input_smoke.gd
-# (PacketInputSource 是纯 RefCounted,不依赖 autoload,-s 阶段可安全引用)
+
+# 网络输入源轴向映射单元冒烟测试：
+# 验证 PacketInputSource 输入打包与解包时的轴向逻辑（确保垂直与水平分量语义准确）。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/network_input_smoke.gd
 
 func _initialize() -> void:
 	var src := PacketInputSource.new()

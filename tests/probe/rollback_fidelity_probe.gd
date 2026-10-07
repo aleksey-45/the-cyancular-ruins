@@ -15,7 +15,7 @@ const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
 
 var _failures: Array[String] = []
 
-# - 虚假通过（未有效测试）防线(本仓被抓过四次的那一类,本探针初版就中过):
+# - 测试漏检防线(本仓被抓过四次的那一类,本探针初版就中过):
 #   Godot 的运行时错误只**中断当前函数**,调用它的 `_ready()` 会照常往下走 —— 于是
 #   「测试函数中途报错 → 一条 _check 都没跑到 → _failures 仍空 → 照样打印 ALL-OK 并 exit 0」。
 #   实测:改之前把 map_px 从 `_close_enough` 里删掉(必报错),红跑却印了 ALL-OK。

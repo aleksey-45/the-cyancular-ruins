@@ -1,7 +1,7 @@
 extends SceneTree
 
 # 一次性/可复用工具:把 maps/ 下所有 v1/v2/v3 文本地图转换成 **v4 二进制**并原地覆盖。
-# 每张图写盘前先做"往返自证":serialize_v4 → parse_v4 → flatten 必须与原网格逐格一致,
+# 每张图写盘前先做"往返同源循环验证":serialize_v4 → parse_v4 → flatten 必须与原网格逐格一致,
 # spawn 解析结果也必须一致,否则**拒写**(宁可不转,不可转坏)。
 # 已是 v4(头 4 字节 CYRM)则跳过。旧文件内容都在 git 历史里,不另做备份副本。
 # 用法:godot --headless --path . -s res://tests/scripts/convert_map_v4.gd
@@ -42,7 +42,7 @@ func _initialize() -> void:
 			if s.begins_with("#") and not s.begins_with("# cyrm-v3") and not s.begins_with("# cyrm-v2"):
 				meta.append(s)
 		var blob := MapFormatV4.serialize(grid, meta)
-		# ── 往返自证(拒写坏图)──
+		# ── 往返同源循环验证(拒写坏图)──
 		var v := MapFormatV4.parse(blob)
 		if not bool(v.get("ok", false)):
 			print("CONVERT V4: FAIL(自证解析失败:%s) %s" % [str(v.get("error")), path])

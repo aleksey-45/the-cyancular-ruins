@@ -9,7 +9,7 @@ extends Node
 #   (留下幻影墙 → 预测分歧)或多补几格(凭空拆墙)。两种都不报错,只有真比对才照得出来。
 # - 确定性:顺序必须是"按 y 升序、同 y 按 x 升序",否则同样的地图会给出不同的数组,
 #   载荷无法逐字比对(联机侧要能复现)。
-# 做法同 match_host_hygiene_probe:真建 MatchHost,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包。
+# 做法同 match_host_hygiene_probe:实际创建 MatchHost,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包。
 
 const MAP := "res://maps/newfactory.cyrm"
 
@@ -65,7 +65,7 @@ func _run() -> void:
 	#   "Invalid cast. Cannot convert from bool to Array"(整个探针脚本加载失败,连红都跑不出来)。
 	# - 期望值按 **(y 升序、同 y 按 x 升序)** 写:(3,2) 在 y=2 独行 → 最前;y=5 那行按 x 升序是
 	#   (1,5)、(7,5)。别写成按 x 升序的 `[(1,5),(3,2),(7,5)]` —— 那是 x-major,与本方法
-	#   (外围 y、内层 x 的双层循环)和契约文字都不符。
+	#   (外围 y、内层 x 的双层循环)和规范说明文档都不符。
 	_check(d == ([Vector2i(3, 2), Vector2i(1, 5), Vector2i(7, 5)] as Array),
 			"★ 顺序必须是「按 y 升序、同 y 按 x 升序」(实际 %s)" % str(d))
 
@@ -98,7 +98,7 @@ func _run() -> void:
 		_check(d4.has(Vector2i(ex, ey)), "★ 与基线不同就该报(不管变空还是变实心)(实际 %s)" % str(d4))
 		_host.grid[ey][ex] = MazeGenerator.EMPTY
 
-	_ran_to_end = true   # ← 只有走到这里才算"跑完"(见 _finish 的虚假通过（未有效测试）守卫)
+	_ran_to_end = true   # ← 只有走到这里才算"跑完"(见 _finish 的测试漏检守卫)
 
 
 func _finish() -> void:

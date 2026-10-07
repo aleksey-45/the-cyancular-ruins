@@ -1,18 +1,18 @@
 extends Node
 
 # 大乱斗 B1/B2 探针的**观察者**(客户端子进程用;见 royale_bound_probe.gd 文件头)。
-# 挂在 get_tree().root 上(不是探针场景里):切场景不会把它带走 → 它能跨「真大厅场景 →
+# 挂在 get_tree().root 上(不是探针场景里):切场景不会把它带走 → 它能跨「实际大厅场景 →
 # 真 royale_game 场景」那次换场继续待在树里,并在**换场之后**读真 royale_game 实例的状态。
 # 这正是 B2 的要害:那三条开局载荷与 match_start 落在同一次 poll,而新场景那时还不存在。
 #
 # 它只做两件事,都**不消费**载荷(订阅只为记到达帧号当证据):
-#   1. 驱动真大厅场景(创建房间 / 加入房间)—— 见 royale_bound_probe.gd 的流程说明;
+#   1. 驱动实际大厅场景(创建房间 / 加入房间)—— 见 royale_bound_probe.gd 的流程说明;
 #   2. 换场后静置一小段,断言真 royale_game 上「昵称表 / 头顶 ID / 角色色相 / 禁武器」
 #      四样都到位,然后写结果文件。
 
 const RESULT_PREFIX := "royale_b12_probe_"
 const GO_FILE := "user://royale_b12_probe_go.txt"
-const LOBBY_ADDR := "127.0.0.1"   # 本探针大厅的地址(真大厅页按 `PvpSession.server_address` 连)
+const LOBBY_ADDR := "127.0.0.1"   # 本探针大厅的地址(实际大厅页按 `PvpSession.server_address` 连)
 # 与 royale_bound_probe.gd 的 HUE_C1/HUE_C2、DISABLED_SLOT 保持一致(两个客户端的本端选项)
 const HUE_BY_ROLE := {1: 90.0, 3: 180.0}
 const DISABLED_SLOT := 3
@@ -38,7 +38,7 @@ const PAYLOAD_DEADLINE := 25.0      # 等应答的上限(探针时间);到点仍
 const DEADLINE := 50.0
 
 var who := "c1"
-# drive = 驱动真大厅走「建房/加入 → go_match → 转连 → 开局」全流程(自然时序,见 royale_bound_probe);
+# drive = 驱动实际大厅走「建房/加入 → go_match → 转连 → 开局」全流程(自然时序,见 royale_bound_probe);
 # wait  = 只等换场再断言:载荷由外部在**同一次 poll** 里注入(见 royale_bound_probe 的 --payload 模式)。
 var mode := "drive"
 var lobby: Node = null     # 真 mp_lobby.tscn 实例(本进程里被驱动的那份)
@@ -107,20 +107,20 @@ func _process(delta: float) -> void:
 			_stage_wait_game(delta)
 
 
-# ── 阶段 0:等真大厅连上大厅服 → c1 建房 / c2 等 GO 文件后加入 ──
+# ── 阶段 0:等实际大厅连上大厅服 → c1 建房 / c2 等 GO 文件后加入 ──
 func _stage_wait_lobby() -> void:
 	if lobby == null or not is_instance_valid(lobby):
 		_log_once("等真大厅实例挂上(add_child 被推迟到帧末)")
 		return
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
-		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
+		return   # 实际大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
 	# 注意： 守卫:连上的必须是**本探针的大厅**,不能是云服(与 royale_c2_watcher / team_match_watcher
 	#   相同机制)。生产默认地址是云(`PvpSession.server_address` 初值 120.53.107.140),而本探针是
 	#   **实例化真 mp_lobby 让它自己连** —— `royale_bound_probe._run_client` 漏了那句地址预置时,
 	#   两个客户端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是本端自己的
 	#   「已连接服务器」,而编排器一条 `玩家连入` 都没有  ->  只剩 75s 超时。当场明确提示,
-	#   别让下一个人再从超时逆推(实测踩过:c1 连上云服并建房、c2 对云服连接失败)。
+	#   别让下一个人再从超时逆推(规避历史已知问题)。
 	if String(lobby.get("_connected_addr")) != LOBBY_ADDR:
 		_finish(false, "本端连的是 %s,不是本探针大厅 %s —— 检查 royale_bound_probe._run_client 的地址预置"
 				% [lobby.get("_connected_addr"), LOBBY_ADDR])
@@ -155,11 +155,11 @@ func _log_once(msg: String) -> void:
 	_log(msg)
 
 
-# ── 阶段 1:等换场(真大厅 → 真 royale_game),静置后断言 ──
+# ── 阶段 1:等换场(实际大厅 → 真 royale_game),静置后断言 ──
 func _stage_wait_game(delta: float) -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_royale_game(cs):
-		# 诊断:换场没发生时,把真大厅的 `_current_mode` 一起打印输出 —— 空串就是
+		# 诊断:换场没发生时,把实际大厅的 `_current_mode` 一起打印输出 —— 空串就是
 		# `_enter_match_scene` 那支 push_error(不切场景,刻意加固),那才是"等不到换场"的真因。
 		var cm := "(lobby 已 free)"
 		if lobby != null and is_instance_valid(lobby):

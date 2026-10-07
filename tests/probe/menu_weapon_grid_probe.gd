@@ -14,7 +14,7 @@ extends ProbeBase
 #    故本探针**真实例化** `main_menu.tscn`、走**生产入口** `_on_single_pressed()`
 #    (它就是 `_fill_sp_panel` 唯一的调用点),再数 `CheckList` 容器下的 `CheckButton`。
 #    - 容器按**名字**在面板子树里找(不写死路径):2026-10-03 那轮美化给面板外层套了
-#      `Body`,写死 `VBox/CheckList` 会虚假失败（测试用例误报）;改名仍会红(见 `_find_named` 的调用点)。
+#      `Body`,写死 `VBox/CheckList` 会测试误报;改名仍会红(见 `_find_named` 的调用点)。
 #
 # ② A5 —— 勾选框上的文字**只有武器名,不带编号**。
 #    那个编号(1..N)**看起来**是键位,而键位是**背包位置**、与 `type_id` 毫无关系
@@ -25,7 +25,7 @@ extends ProbeBase
 #
 # - 判据刻意写成 `text == WeaponRegistry.name_of(id)`(**逐字相等**),不是"不含数字":
 #   武器名里本来就有数字(`重狙 M82A1` / `霰弹 S686`),而「不含 str(type_id)」那种写法
-#   对**将来**的武器名会虚假失败（测试用例误报）(给 id 5 起名 `MP5` 就当场炸),且"名字里恰好没这个数字"也
+#   对**将来**的武器名会测试误报(给 id 5 起名 `MP5` 就当场炸),且"名字里恰好没这个数字"也
 #   不是契约。真实契约就是「显示文本 == 注册表里的名字,一个字符都不多」—— 加编号也好、
 #   加"键位 N"也好,都会破坏逐字相等。
 #
@@ -61,7 +61,7 @@ func _c(ok: bool, msg: String) -> void:
 
 func _ready() -> void:
 	var ids: Array[int] = WeaponRegistry.all_ids()
-	# ① 无效操作守卫:注册表为空时下面几条全会以 `0 == 0` 通过,那是**虚假通过（未有效测试）**。
+	# ① 无效操作守卫:注册表为空时下面几条全会以 `0 == 0` 通过,那是**测试漏检**。
 	_c(ids.size() >= 1, "注册表至少有 1 把武器(实际 %d;为空则本探针其余计数条全是 0==0 假绿)"
 			% ids.size())
 
@@ -77,8 +77,8 @@ func _ready() -> void:
 		# 注意： 按**节明确提示**在子树里找,不写死路径(`VBox/CheckList`):2026-10-03 那轮美化把
 		#   面板改成"基础结构框架在 .tscn、皮与内容在代码里套 `UiFactory.skin_menu_panel()`",
 		#   路径多了一层 `Body/` —— 写死路径的探针直接断言失败,而**主题(勾选框数/文案)一个字没变**。
-		#   按名找之后,版式再挪一层不会虚假失败（测试用例误报）;而**改名**仍会红(下面那条 `list != null`),
-		#   不会退化成静默失明。
+		#   按名找之后,版式再挪一层不会测试误报;而**改名**仍会红(下面那条 `list != null`),
+		#   不会退化成失去防护校验作用。
 		list = _find_named(panel, "CheckList") as VBoxContainer
 	_c(panel != null and list != null,
 			"`_on_single_pressed()` 建出了单人面板且其中的 `CheckList` 容器在位(面板 %s、列表 %s)"
@@ -152,9 +152,9 @@ func _ready() -> void:
 
 # 在子树里按**节明确提示**找第一个节点(找不到返回 null)。
 # - 为什么不写死路径:单人面板 2026-10-03 起"基础结构框架在 .tscn、皮与内容在代码里套
-#   `UiFactory.skin_menu_panel()`",内容比从前多了一层 `Body/` —— 写死路径的探针会**虚假失败（测试用例误报）**,
+#   `UiFactory.skin_menu_panel()`",内容比从前多了一层 `Body/` —— 写死路径的探针会**测试误报**,
 #   而它要守的东西(勾选框数 == 注册表条数、文案逐字相等)一个字都没变。
-# - 但**不许**退化成静默失明:调用点仍然断言 `list != null`  ->  改名 / 删节点照样红。
+# - 但**不许**退化成失去防护校验作用:调用点仍然断言 `list != null`  ->  改名 / 删节点照样红。
 func _find_named(root: Node, nm: String) -> Node:
 	if root.name == nm:
 		return root

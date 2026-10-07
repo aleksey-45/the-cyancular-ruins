@@ -1,57 +1,9 @@
 extends SceneTree
 
-# UI 调色板**单一来源**守卫(底板色 + 队色 + Theme .tres 的颜色字面量)。
-# 纯源码级、`-s` 可跑、不占端口、**不需要渲染**。
-#
-# 跑法:  source tests/env.sh && timeout 120 "$GODOT" --headless --path . \
-#            -s res://tests/smoke/ui_palette_single_source_smoke.gd
-# 判据:  文本 `UI PALETTE: ALL-OK`(**不看退出码** —— 挂住时一行裁决都不打印)。
-#
-# ═══ 为什么需要它 ═══
-# 底板色 `Color(0, 0, 0, 0.1)` 原先有 **6 个**独立落点(3 个 `.gd` 常量 + 1 处内联 +
-# **2 个 `.tscn` 字面量**),而**一个守卫都没有** —— 漏改是**静默**的,只靠 `docs/eng/ui.md` 里
-# 一条"手工 grep 对账"的纪律维持。本守卫严格约束两件事:
-#   ① 四个 `.gd` 落点**必须引用** `UiFactory.C_PLATE`(而不是又写一个字面量);
-#   ② 两个 `.tscn` 的 `bg_color` **结构上引用不到 GDScript 的 const**(它是 StyleBoxFlat 的
-#      属性,不是资源引用) ->  只能留字面量 —— 由本守卫**读文本**断言它与 `C_PLATE` **逐位相等**。
-# 队色同理:`BODY_BASE_COLOR` 必须引用 `UiFactory.C_TEAM_A`(两份逐位相同的字面量 → 一份)。
-#
-# - 判据一律**剥注释后**匹配(`ScanUtil.code_only`) —— 否则那些"这是唯一源"的说明文字会把它
-#   自己判红。
-# - `.tscn` 不是 GDScript,`code_only` 不适用  ->  那两处读**原文**,并归一化空白后比较。
-# - 为什么另立 `-s` 而不并进 `hue_tint_probe`:后者是**真渲染**探针(headless 下
-#   `get_image()` 给 null  ->  直接 FAIL 并 return),源码级断言不该寄生在它里面。
-#
-# - 2026-10-03 新增第 ⑥ 条:Theme 资源(`ui/theme/menu_theme.tres`)里的**每一个**
-#   `Color(...)` 字面量都必须**逐位等于**调色板里某个 `const C_*`。成因同 ④:`.tres` 里的
-#   StyleBoxFlat 颜色是字面量、引用不到 GDScript 的 const —— 只能读文本钉值。
-#
-# 注意： **已知的判据上限(登记,别当漏洞)**:
-#    - 前半(②/⑤):本守卫只钉那 **6 处**具名落点 + 一条"全仓再无游离字面量"的反向断言。
-#      将来新增第 7 处时,反向断言会红 —— **前提是它写成 `Color(0, 0, 0, 0.1)` 字面量**;
-#      若写成第三种 `const` 名字,反向断言抓不到。**同一串字面量的等价改写也抓不到**
-#      (如 `Color(0.0, 0.0, 0.0, 0.1)`) —— `_norm` 只去空白,**不做数值形态归一**,故 ②/⑤
-#      是按**字面字符**比对的,不是按颜色值。
-#    - 注意： 第 ⑥ 条(Theme)**钉的是值** —— 它保证"Theme 里出现的每个颜色都来自调色板",
-#      **钉不住**"某个控件忘了挂 Theme 于是用了 Godot 默认样式":那种情况下控件画出来的
-#      根本不经过这个 .tres,而本守卫只读 .tres 原文、看不到场景侧有没有引用它。
-#      那一档的拦截手段是**逐屏真实渲染取图**(设计 §4.3),不是本守卫。
-#      同理,它也不钉"某个颜色**该不该**出现在这里"(一个调色板常量用在错的控件上照样绿)。
-#    - 注意： 第 ⑦ 类**今天不扫**(2026-10-03 实测后登记,别当没看见):`.tscn` 里**节点属性**上的
-#      颜色字面量(`color = Color(...)` / `theme_override_colors/...`)。以 `scenes/` + `ui/` 为
-#      root 实测共 **214** 处 `Color(...)`:**108** 处在 `[sub_resource]` 里(生成器产出的
-#      StyleBoxFlat,**逐位**等于某个 `C_*`),另 **106** 处是节点属性,其中 **30 处按值不等于
-#      任何常量** —— 而这 30 处**不是**待清理的漂移:`modulate` 的无染色值(10)、落地脚本的
-#      可见性 hack(2)、HUD 专属文本色(4,`pvp_hud`/`team_hud` 从未走调色板)、战斗反馈色(4)、
-#      武器激光色(3,玩法数据)、全屏压暗罩 `0,0,0,0.55`(2,`match_result.gd` 登记过的例外)、
-#      大乱斗排行榜板底 `0,0,0,0.25`(1,`combat_hud_visual_probe` 登记过的例外)、
-#      以及 4 处**孤儿页底色** `Color(0.07,0.09,0.13,1)`(`_add_lobby_background` 退役后全仓
-#      **已无活体来源**,也不是任何 `C_*`)。
-#      - 明细**必须自己加得起来**:10 + 2 + 4 + 4 + 3 + 2 + 1 + 4 = **30**(2026-10-04 订正:
-#        此前那句把 HUD 专属文本色写成 8、又漏了 `0,0,0,0.25` 那条  ->  明细加起来是 33)。
-#       ->  要把它们扫进来,只能挂一张 ~30 条的豁免表(= 让守卫的绿由豁免撑起),且那 4 处孤儿
-#        得先在生产侧有家(本轮生产冻结) ->  **登记为欠账,本轮不扩**。逐项清单见 T3b 报告 §7;
-#        正式登记应进 `docs/eng/registered-debt.md`(该文件归另一会话,本轮未动)。
+# UI 配色单一数据源完整性校验门禁：
+# 源码级静态验证主界面、HUD 及主题样式中的颜色字面量均统一定义于配色配置表，杜绝散落硬编码颜色。
+# 运行方式：
+#   source tests/env.sh && timeout 120 "$GODOT" --headless --path . -s res://tests/smoke/ui_palette_single_source_smoke.gd
 
 const PALETTE := "res://ui/factory/ui_factory.gd"
 # 底板色字面量的**归一化后**形态(空白在 `_norm` 里被去掉)。
@@ -76,7 +28,7 @@ const BODY_BASE_SITE := "res://scenes/pvp_match_client.gd"
 
 # ⑥ Theme 资源:里面每个 `Color(...)` 必须等于调色板某个 `const C_*`。
 const THEME_SITE := "res://ui/theme/menu_theme.tres"
-# ⑥ 抽到的 `Color(...)` 个数**下限**(防无效操作):.tres 形状变了 / 读坏了  ->  零命中 = 虚假通过（未有效测试）。
+# ⑥ 抽到的 `Color(...)` 个数**下限**(防无效操作):.tres 形状变了 / 读坏了  ->  零命中 = 测试漏检。
 #   今日实测 2026-10-03:menu_theme.tres 共 **34** 个 Color(...)(11 个 StyleBoxFlat 21 个 +
 #   [resource] 13 个),取 20 留健康余量。
 const THEME_COLOR_MIN := 20
@@ -99,7 +51,7 @@ const LITERAL_ALLOWED := [PALETTE, "res://ui/hud/pvp_hud.tscn", "res://ui/hud/te
 const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests"]
 # `_rhs_of` 的词界判据用的标识符字符集(needle 后面紧跟其中任一个 = 命中的是兄弟常量)。
 const IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
-# ⑤ 扫描到的源文件数**下限**:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 虚假通过（未有效测试）"
+# ⑤ 扫描到的源文件数**下限**:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 测试漏检"
 #   (照 `tests/probe/kh_l4_probe.gd:41-43` 的 `MIN_PROD_FILES` / `MIN_ALL_FILES` 先例)。
 #   今日实测(Task 2 搬完 render/ 后)SCAN_DIRS 共 334 个(ui 26 / scenes 62 / core 41 /
 #   server 16 / tests 189),取 250 留健康余量,只拦"整档坏掉"那一类。
@@ -173,7 +125,7 @@ func _initialize() -> void:
 			fails.append("④ %s 的 `bg_color` 不是底板色(实得「%s」)" % [path, got])
 
 	# ── ⑤ 反向:全仓再无**游离**的底板色字面量(白名单见 LITERAL_ALLOWED) ──
-	# 注意： 覆盖下限(两条,都是"扫描坏掉  ->  零命中 = 虚假通过（未有效测试）"的解药):`ScanUtil.walk` 在**根打不开时
+	# 注意： 覆盖下限(两条,都是"扫描坏掉  ->  零命中 = 测试漏检"的解药):`ScanUtil.walk` 在**根打不开时
 	#    静默返回**(`DirAccess.open` 给 null 就直接 return,一个字都不打) ->  根被改名/搬走会让本条
 	#    **无声收窄**:扫到的文件少了、命中自然少了,而 verdict 照打 `ALL-OK`。
 	#      ① **逐根**:每个根都必须扫到 ≥1 个文件,明确提示是哪个根 —— 这才是"某个根打不开"的

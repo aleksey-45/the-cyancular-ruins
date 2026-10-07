@@ -1,14 +1,9 @@
 extends SceneTree
 
-# 结算页**适配器**的纯逻辑冒烟(三个模式 -> 统一载荷)。
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/match_result_payload_smoke.gd
-# 通过 = `MATCH RESULT PAYLOAD: ALL-OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# - 三个适配器是**纯函数**,但它们的错法全是静默的:列多一列会画出一个恒 0 的列
-#   (读起来像"这人打了但什么都没干");排序非确定会让同一局两次跑给出不同的榜;
-#   平局走 1v1 保底处理会把「平 局」念成「P1 获胜」。这些都不会报错。
-# - 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() -> 进程永久挂起。
+# 对局结算载荷与统计数据冒烟测试：
+# 验证结算面板数据载荷结构、击杀/阵亡/伤害统计汇总、MVP 评定算法以及数据序列化往返。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/match_result_payload_smoke.gd
 
 func _initialize() -> void:
 	var script = load("res://ui/screens/match_result_payload.gd")
@@ -150,7 +145,7 @@ func _initialize() -> void:
 	if str(roy["title"]) != "游戏结束":
 		fails.append("★ 大乱斗标题应是「游戏结束」,实得 %s" % roy["title"])
 	# ③d -  大乱斗的「击杀 / 阵亡」相同机制(与 ①d 同一条理由;`for_royale` 是**第三个**
-	#   `_row(...)` 调用点,三个模式各判一次才是"整族都钉住")。榜首 role 2 的
+	#   `_row(...)` 调用点,三个模式各判一次才是"整族都严格校验")。榜首 role 2 的
 	#   kills/deaths 刻意取不等值(9 / 2),assists 恒 0(大乱斗拿不到助攻)。
 	if not rrows.is_empty():
 		var r_bad: Array[String] = []
@@ -256,7 +251,7 @@ func _initialize() -> void:
 		fails.append("★ 3v3 平局应念「平 局」,实得 %s" % team_draw["title"])
 
 	# ④c -  `my_team == 0`(队伍表还没到)必须念「失败」,不许谎报胜利。
-	#     平局那一支优先于本分支 —— 由上面 ④b 钉住(它传的就是 my_team == 1)。
+	#     平局那一支优先于本分支 —— 由上面 ④b 严格校验(它传的就是 my_team == 1)。
 	var team_no_team: Dictionary = script.for_team({ "stats": stats, "mvp": 5, "match_winner": 1 },
 			names, teams, 0)
 	if str(team_no_team["title"]) != "失败":
@@ -277,7 +272,7 @@ func _initialize() -> void:
 		fails.append("★ 同一输入两次调用给出了不同的载荷(实现不纯,而非纯静态排序)")
 
 	# ⑦ -  载荷里**没有 `stats` 键**(老服务端 / 极端路径) ->  空榜、不崩。
-	#   - 本适配器**不做**回退读 `scores`/`deaths`:那会让同一件事有两个来源(两份真相),
+	#   - 本适配器**不做**回退读 `scores`/`deaths`:那会让同一件事有两个来源(重复定义),
 	#     而两端由同一份仓库/同一个 exe 一起更新 —— 加法的性质是"老**接收端**忽略未知键",
 	#     不是"新接收端兼容老服务端"。
 	# 注意： 夹具**带 `scores`**(局内 HUD 那个数据面,形状 = `role -> 击杀数` 的 int)、
@@ -321,7 +316,7 @@ func _initialize() -> void:
 	#   **裸英文键名**(屏上打出 `dealt`),而所有列数/计数/值断言**照样测试全部通过**。这正是
 	#   `60860fd`(`dmg`→`dealt`)踩过的形状:改了列名却没同步标题表。
 	#   - 键集**从三个常量推**,不写死清单 —— 写死的话,以后给 `C_DUEL` 加一列而忘了同步
-	#     这里,这条守卫就**静默失明**(它守的正是"新增列必须有标题")。
+	#     这里,这条守卫就**失去防护校验作用**(它守的正是"新增列必须有标题")。
 	#   - 常量一律走 `get_script_constant_map()`(取不存在的属性会抛错  ->  `-s` 下挂到 timeout)。
 	var rs = load("res://ui/screens/match_result.gd")
 	var scmap: Dictionary = script.get_script_constant_map()

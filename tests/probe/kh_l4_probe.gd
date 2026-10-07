@@ -30,7 +30,7 @@ extends ProbeBase
 #
 # ⚠⚠ 自伤防护(本文件被自己扫描,务必守住):凡是本探针**要找的字面量**,一律用
 #    `"前" + "后"` 碎片拼出来,绝不整段写在源码里 —— 否则:
-#      - 演示残留/esc 这类"零命中"断言会被本文件自己命中(虚假失败（测试用例误报）);
+#      - 演示残留/esc 这类"零命中"断言会被本文件自己命中(测试误报);
 #      - 字号那类"扫字面量"的断言也会把本文件里的示例当数据。
 #    `tests/` 只在第 1 条里被排除(那条扫描根就不含它),3/4 两条是**全仓**扫描,含本文件。
 
@@ -40,7 +40,7 @@ const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
 const ALL_DIRS := ["res://core", "res://scenes", "res://server", "res://ui",
 		"res://tests"]
 
-# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 虚假通过（未有效测试）"
+# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 测试漏检"
 const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
 
@@ -121,7 +121,7 @@ func _check_feedback_mount_point() -> void:
 	var needle := "Combat" + "Feedback.spawn("
 	var hits: Array[String] = []
 	for f in files:
-		# - 2026-10-02 降精度:先剥注释再计数 —— 注释里提一句该调用会把计数顶到 2 而**虚假失败（测试用例误报）**。
+		# - 2026-10-02 降精度:先剥注释再计数 —— 注释里提一句该调用会把计数顶到 2 而**测试误报**。
 		var n := _code_only(_read(f)).count(needle)
 		for _i in range(n):
 			hits.append(f)
@@ -273,7 +273,7 @@ func _check_old_escape_menu_retired() -> void:
 	_check(ResourceLoader.exists(pm), "替身 %s 不存在" % pm)
 	var pm_src := _read(pm)
 	_check(pm_src.contains("class_name " + "Pause" + "Menu"), "%s 缺 class_name PauseMenu" % pm)
-	# - 2026-10-02 降精度:原钉 `contains("func open(")` 等**逐字文本**(写成 `func open (` 或改成从基类继承都会虚假失败（测试用例误报）)。
+	# - 2026-10-02 降精度:原钉 `contains("func open(")` 等**逐字文本**(写成 `func open (` 或改成从基类继承都会测试误报)。
 	#   改走**方法表**(含继承)—— 问的是同一个问题。
 	var pm_gs := load(pm) as GDScript
 	_check(pm_gs != null, "%s 载入失败(下面三个口无从判)" % pm)

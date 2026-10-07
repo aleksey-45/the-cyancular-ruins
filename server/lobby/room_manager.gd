@@ -1,65 +1,39 @@
 class_name RoomManager
 extends Node
 
-# 大厅的**进程编排 + 定时清扫**(端口 7777 进程内)。房间状态本身在 `server/lobby_rooms.gd`
-# (LobbyRooms),本类持有它并注入 launcher;拆除统一集中处理 `teardown_room` 随账本走,故这里一律
-# 经 `lobby.teardown_room(...)` 调用。
+# 大厅房间管理器与生命周期调度（服务端进程内）：
+# 持有 LobbyRooms 房间状态，负责协调对局开局（MatchSession）、连接复用以及过期房间的周期性回收清理。
 #
-# 本类只做两件事:
-#   - **启动对局 worker 并让玩家转连**:`royale_start` / `ai_duel` / `royale_start_ai` /
-#     `team_start`(RPC 进来)+ `_start_match`(由 `lobby.pairing_ready` 信号进来)+ `_send_go_match*`;
-#   - **定时清扫**超龄房间(三张注册表一起扫;推导与已知边界见 `_sweep_stale_rooms`)。
-#
-# - 房间 ↔ 编排 的方向是**单向**的:`lobby` 不知道本类;「1v1 凑齐两人」由 `pairing_ready`
-#   信号上来。别再往 LobbyRooms 里塞 RoomManager 引用(那会退回 back-reference 的写法)。
-var _launcher := WorkerLauncher.new()
-# 房间账本(公开字段:探针/观察者要读注册表,如 royale_bound_probe 的 _rm().lobby.royale_rooms)
-var lobby: LobbyRooms = null
+# 核心职责：
+# 1. 对局生命周期调度：接收开局请求（royale_start / ai_duel / royale_start_ai / team_start / 1v1 配对就绪），
+#    统一调用 _open_match 创建 MatchSession 子节点，并向房间成员广播 go_match 消息。
+# 2. 房间超时回收清理：定期扫描并释放超龄未活跃房间（_sweep_stale_rooms）。
+# 3. 单进程单端口限制：当前服务端进程单次仅托管一场活跃对局。
 
-# ── 僵尸房间定时清理:每 SWEEP_INTERVAL 秒扫一次,存在超 MAX_ROOM_AGE 的房间连 worker 一起杀 ──
-const SWEEP_INTERVAL := 600.0       # 清理扫描周期(秒=10min)
-const MAX_ROOM_AGE := 7200.0        # 房间允许存在上限(秒=2h)
-# 3v3 一局时长的**估**值(秒=30min),只用于 _sweep_stale_rooms 的在局宽限。
-# - 它是**估**值,不是从任何常量读来的:TeamHost 侧没有一个"本局最多打多久"的常量可读
-#   (RoyaleHost 那边有 MATCH_TIME,3v3 是三局两胜 —— 界变成"终止 9 人 × 3 局",没有对应常量),
-#   故这里取粗上界:3 局 × (COUNTDOWN 3 + 打到 9 杀 + ROUND_OVER 4) 的量级。
-# - **已知边界**(照实登记,**3v3 独有** —— 大乱斗那一档 2026-09-28 起改用可证上界
-#   ROYALE_MATCH_TIME_CEILING,不再是这条):正确的界要读**本局实际时长**,而那个值
-#   只存在于 worker 的 TeamHost 里,sweep 手里没有 —— 真要修得先把实际时长回传/登记到房上。
-const TEAM_MATCH_ESTIMATE := 1800.0
-# 大乱斗一局长度的**可证上界**(秒)。来历:`Settings.royale_match_min` 在
-# `core/config/settings.gd` 的**装载钳位**是 [1.0, 30.0] 分钟(建房页滑块只到 15,
-# 但 settings.cfg 里可以到 30) ->  秒数上界 = 30 × 60 = 1800。
-# - 为什么用**硬上界**而不是"把房主配的时长存到房上":`_player_options()` 是**报到那一刻**
-#   才读 `Settings`,而 `royale_create` 是**更早的另一刻**(实测它压根不转发 `match_time`)
-#    ->  存下来的是**下界**,缺口照留。代价只是泄漏的房多留 ~25 分钟(与端口池 500 相比
-#   微不足道)。 ->  保守 + 可证,胜过精确但可错。
-# - 覆盖口径**照实写,别读成"永不误杀活局"**(2026-09-28 评审 Finding 3 订正):本上界
-#   覆盖的是**对局时钟本身**(`RoyaleHost` 的 `_round_timer` 进 PLAYING 才开始走),外加
-#   `SWEEP_INTERVAL`(600s)那一整个扫描周期的余量;而房还要先活过「报到等待 + COUNTDOWN
-#   (`MatchState.COUNTDOWN_TIME` = 3s)」 ->  **残余暴露 ~3~25s**(随那一次 tick 的相位而定),
-#   不是 0。量级上无所谓,但这句话不该被读成"本界无所不包"。
-# 注意： **跨文件不变量(链有**两环**)**:环一 = 钳位放宽到 30 分钟以上;环二 =
-#   `scenes/mp_lobby.gd` 的秒换算(`Settings.royale_match_min * 60.0`)被改。
-#   任一环断裂,本上界**静默失效**(不再覆盖)。守卫在 `tests/smoke/room_sweep_smoke.gd` ——
-#   它**读两个文件**:settings.gd 的钳位片段 + mp_lobby.gd 的换算片段,任一处变了就红。
-const ROYALE_MATCH_TIME_CEILING := 1800.0
+var _session: Node = null
+var _next_match_id := 1               # 全局单调递增的对局局号分配器
+var lobby: LobbyRooms = null          # 房间数据与状态注册表
+
+# ── 过期房间定期清理配置 ──
+const SWEEP_INTERVAL := 600.0         # 长期未活跃房间清理扫描周期（10 分钟）
+const MAX_ROOM_AGE := 7200.0          # 房间最大存活时长（2 小时）
+const TEAM_MATCH_ESTIMATE := 1800.0   # 3v3 模式单局预估最大时长（30 分钟）
+const ROYALE_MATCH_TIME_CEILING := 1800.0 # 大乱斗模式单局最大配置时长上限（30 分钟）
 var _sweep_acc := 0.0
 
-# 对局中房间的回收梯周期(秒)。-  比 SWEEP_INTERVAL(600s)密得多,因为判据与目的都不同:
-# 那条是"房挂太久了"(超龄清扫),这条是"**这一局结束了**" —— 端口与列表位白占的代价是
-# "池子少一个 / 列表里挂着一个死房",10 分钟一轮意味着每局结束后要多占最多 10 分钟。
-# 30s 是"比端口归还延迟(120/360)小一个量级"的量级选择,与宽限期无关(判据不读宽限期)。
-const MATCH_SWEEP_INTERVAL := 30.0
+# ── 已结束对局房间回收周期 ──
+const MATCH_SWEEP_INTERVAL := 30.0    # 对局结束后房间资源回收检测周期（30 秒）
 var _match_sweep_acc := 0.0
 
 
 func _enter_tree() -> void:
-	# 房间账本:本类持有并装配(注入 launcher),两者单向依赖。
+	# 房间账本:本类持有它,两者单向依赖(账本不知道本类)。
 	lobby = LobbyRooms.new()
-	lobby.launcher = _launcher
-	# 「1v1 凑齐两人」跨了边界(房间的事 + 启动 Worker 子进程 的事)→ 由信号上来,避免反向引用。
+	# 「1v1 凑齐两人」跨了边界(房间的事 + 开局的事)→ 由信号上来,避免反向引用。
 	lobby.pairing_ready.connect(_start_match)
+	# 反向的那一条:超龄清扫要收掉一个**还在跑**的本机对局(房记录被抹掉只是一半,那一局本身
+	# 也得停 —— 否则会话节点留在进程里空转、占着 peer 与内存,而列表上再也看不见它)。
+	lobby.inproc_room_teardown.connect(_on_inproc_room_teardown)
 	add_child(lobby)
 	# 编排侧的四条 RPC(它们要启动 Worker 子进程,故不归房间账本)
 	NetBusExt.royale_start_requested.connect(royale_start)
@@ -79,9 +53,82 @@ func _exit_tree() -> void:
 	NetBusExt.team_start_requested.disconnect(team_start)
 	# 与上面那条 connect 对称(其余四条 NetBusExt 信号都在这里成对出现)
 	NetBusExt.room_map_requested.disconnect(lobby.on_room_map)
+	if lobby.inproc_room_teardown.is_connected(_on_inproc_room_teardown):
+		lobby.inproc_room_teardown.disconnect(_on_inproc_room_teardown)
 
 
-# 房主开局:满 2 人即可;启动 N 人 worker → 全员 go_match 转连
+# 房记录被拆除、而那一局还活着 → 把那一局也收掉。
+# - 唯一可达的调用点是**超龄清扫**(`_sweep_stale_rooms`,2h);正常收局是反过来的顺序
+#   (会话先 `_finish` → `_on_session_finished` 再拆房),那时本函数会走到 `_session` 已被
+#   置空或 `_finish()` 的 `_done` 幂等守卫上,不做事。
+# - 判据带 `match_id`:AI 对战那条路**先摘房、局还活着**,拆房时不该把那一局停掉。
+func _on_inproc_room_teardown(room) -> void:
+	if _session == null or not is_instance_valid(_session):
+		return
+	if int(room.match_id) <= 0 or int(room.match_id) != int(_session.match_id):
+		return
+	print("[lobby] 房间 %s 已销毁，同时终止关联对局会话(局号 %d)" % [room.code, int(room.match_id)])
+	_session._finish()
+
+
+# ── 开局流程编排：各模式统一开局入口 ──
+# 核心步骤：冻结房间成员名单 → 创建 MatchSession 会话节点并挂载 → 登记局号与重连凭据 → 向全体成员下发 go_match。
+#
+# 架构特性：
+# 1. 单进程单端口模型：
+#    对局作为当前大厅进程中的 MatchSession 子节点运行，生命周期结束时发出 finished 信号。
+# 2. 连接与端口复用：
+#    go_match 消息下发 NetBus.server_port（当前服务端监听端口），客户端在原 ENet 连接上直接切入对局场景。
+#    该方案确保客户端在局域网直连或 EasyTier 隧道映射下均可无缝通信，无需额外的端口映射。
+# 3. 参数校验统一：
+#    与 `--worker` 命令行模式共用 MatchSession.validate 校验逻辑，保证模式参数的一致性。
+func _open_match(room, mode: int, roles: Array, ai_roles: Array, teams: Dictionary) -> void:
+	var why: String = MatchSession.validate(mode, roles, teams)
+	if why != "":
+		push_error("[lobby] 开局参数不合法:%s" % why)
+		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
+		return
+	# 本机已有对局运行：单进程下单次仅托管一局对局
+	if _session != null and is_instance_valid(_session):
+		NetBus.reply(room.players[0], "server_message", "本机已有一局在进行中")
+		return
+	# 开局时将当前成员名单冻结至房间记录中
+	lobby.freeze_roster(room)
+	if room is LobbyRooms.RoyaleRoom or room is LobbyRooms.TeamRoom:
+		room.in_match = true
+	else:
+		room.started = true
+	# 开局名册：记录此时房间内的有效 peer_id，用于后续客户端准入白名单校验，防止未授权客户端连接
+	var roster: Array = room.players.duplicate()
+	var session := MatchSession.new(mode, room.code, _next_match_id, roster, roles, ai_roles, teams)
+	_next_match_id += 1
+	room.match_id = session.match_id
+	session.finished.connect(_on_session_finished)
+	_session = session
+	add_child(session)
+	# 重连令牌需在 go_match 之前下发，确保客户端在认领角色时能同步上报
+	var granted: Array = []   # [[role, token], …]
+	for pid in roster:
+		var role := int(room.player_role.get(pid, 0))
+		if role <= 0:
+			continue
+		var tk := LobbyRooms.new_token()
+		granted.append([role, tk])
+		if lobby.is_peer_online(pid):
+			NetBusExt.rpc_id(pid, "session_token", tk)
+	# 登记重连凭据：以分配的局号（match_id）作为主键存入 RejoinRegistry
+	var now := Time.get_ticks_msec()
+	for g in granted:
+		lobby.rejoin.grant(str(g[1]), room.code, int(g[0]), session.match_id, now)
+	print("[lobby] %s %s 开局(%s,roles %s)" % [_kind_of(room), room.code,
+			_mode_name(mode), str(roles)])
+	var role_of := {}
+	for pid in roster:
+		role_of[pid] = int(room.player_role.get(pid, 1))
+	_send_go_match.call_deferred(roster, role_of)
+
+
+# 大乱斗房主开局:满 `ROYALE_MIN_PLAYERS` 人即可。
 func royale_start(caller: int) -> void:
 	var rr := lobby.royale_room_of(caller)
 	if rr == null:
@@ -90,117 +137,13 @@ func royale_start(caller: int) -> void:
 		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
 		return
 	if rr.in_match:
-		return   # 已开局(重复请求防重入:不会双开 worker)
+		return   # 已开局(重复请求防重入:不会双开一局)
 	if rr.players.size() < LobbyRooms.ROYALE_MIN_PLAYERS:
 		NetBus.reply(caller, "server_message", "至少 %d 人才能开始" % LobbyRooms.ROYALE_MIN_PLAYERS)
 		return
-	var port := _launcher.pick_port()
-	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
-		return
-	rr.worker_port = port
-	rr.in_match = true
-	# - 开局那一刻把名单冻进房记录(理由见 LobbyRooms.freeze_roster 的注释)。
-	lobby.freeze_roster(rr)
-	# - `token` 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
-	#   之后再发就静默丢失(既有注释)。登记进回局表则要等 spawn 成功(要 pid)→ 先收起来。
-	var granted: Array = []   # [[role, token], …]
-	for pid in rr.players:
-		var tk := LobbyRooms.new_token()
-		granted.append([int(rr.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
-	if not _launcher.spawn_royale_worker(port, rr.player_role.values()):
-		rr.in_match = false
-		# - 必须走拆除统一集中处理入口(2026-09-14,修 M1):统一集中处理会归还端口 + 摘掉注册表 + 通知房内玩家。
-		#   原先直接 release_now 会把房间留在注册表里、且带着**已归还**的 worker_port →
-		#   后续清扫按这个陈旧端口号去终止进程,可能误杀另一个正在跑的对局 worker。
-		lobby.teardown_room(rr, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
-		return
-	# - spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
-	#   那张端口→pid 表)。-  位置不能挪到 spawn 之前:启动失败那一刻 pid 还是 0,
-	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
-	rr.worker_pid = _launcher.pid_of(port)
-	# - 凭据登记必须在 spawn 成功之后(要 pid 才判得出"这局还在不在")。
-	_grant_rejoin(rr.code, port, granted)
-	# 房主对局选项经 worker 侧 NetBusExt.player_options 以 role1 报到为准;这里随开局存档不打扰
-	print("大乱斗房 %s 开局(%d 人,roles %s)→ worker 端口 %d" % [rr.code, rr.players.size(),
-			str(rr.player_role.values()), port])
-	# 稍等 worker 完成 bind,再全员转连
-	await get_tree().create_timer(0.3).timeout
-	_send_go_match.call_deferred(rr, port)
+	var roles: Array = rr.player_role.values()
+	_open_match(rr, MatchSession.Mode.ROYALE, roles, [], {})
 
-
-# 把这一局的回局凭据登进大厅的凭据表。
-# - **必须在 spawn 成功之后调**:凭据里带 worker 的 pid,而"这一局还在不在"就是靠它判的
-#   (见 RejoinRegistry.decision 的 worker_alive 入参)。
-# - granted 的构造在 spawn **之前**(token 必须先于 go_match 发到客户端,见那两处的既有注释),
-#   故它是 `[[role, token], …]` 这份中间形态 —— 不是"发送"与"登记"两件事分家,而是同一条
-#   数据在两处各取所需。
-func _grant_rejoin(code: String, port: int, granted: Array) -> void:
-	var pid := _launcher.pid_of(port)
-	var now := Time.get_ticks_msec()
-	for g in granted:
-		lobby.rejoin.grant(str(g[1]), code, int(g[0]), port, pid, now)
-
-
-# 全员转连(延到帧末再判在线:见 _peer_online 注释 —— 转连期成员会陆续断开大厅,
-# 同步发会踩"刚断开"窗口,报 channel 错误且 go_match 丢失)
-# - `token` 由调用方在 **spawn 之前**已经发出(见 royale_start / royale_start_ai 里那段注释)。本函数
-#   只发 go_match —— 客户端收到它就 NetBus.stop() 断大厅,所以任何"跟着 go_match 一起发"的
-#   载荷都必须更早。别把 token 挪到这里。
-# - 参数**刻意不带类型标注**(2026-09-19,3v3 Task 4):大乱斗房(`RoyaleRoom`)与 3v3 房
-#   (`TeamRoom`)在本函数用到的两个字段上**同名同义** —— `players`(peer 数组)与
-#   `player_role`(peer → role)。标了 `RoyaleRoom` 就会在传 `TeamRoom` 时**运行时类型不符**,
-#   而"再抄一份 `_send_go_match_team`"是本仓明令禁止的第二份真相(见 LobbyRooms.teardown_room
-#   的三态化:同一个动作只许有一处实现)。放宽成无类型即可;真要再收窄,得先给两种房抽公共协议。
-func _send_go_match(rr, port: int) -> void:
-	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
-	for peer_id in rr.players:
-		if lobby.is_peer_online(peer_id):
-			NetBus.reply(peer_id, "go_match", rr.player_role[peer_id], port)
-
-# ── AI 补位对战(实验性):1v1 房主可请求与 AI 对战;大乱斗房主可 AI 补位开局 ──
-
-# 1v1:房主请求 AI 对战 → 单人 go_match,role2 由服务端 AI 驱动
-func ai_duel(caller: int) -> void:
-	var host_room: LobbyRooms.Room = null
-	for code in lobby.rooms:
-		var room: LobbyRooms.Room = lobby.rooms[code]
-		if room.players.has(caller) and int(room.player_role.get(caller, 0)) == 1:
-			host_room = room
-			break
-	if host_room == null:
-		NetBus.reply(caller, "server_message", "只有建房(房主)才能开 AI 对战")
-		return
-	# L5 合并补丁(刻意偏离移植来源,非误改):royale_start / royale_start_ai 都有的
-	# 「已开局即拒绝」守卫,本 handler 从另一分支原样移植时缺失。
-	# (本文件内引用一律写函数名不写行号 —— 行号会随每次编辑腐烂,而这段注释存在的意义就是
-	#  让后来者看懂偏离;引错行号比不引更坏。)
-	# 真实可达路径(不是"同房重复调用"——本函数在派 go_match 之前就把本房从 rooms 摘除了,重入会在上面的
-	# `host_room == null` 就返回):一个**已配对开局的 1v1 房**(`_start_match` 置 `started = true`)
-	# 在 `go_match` 后、`on_peer_left` 把它从 rooms 摘除前的窗口里收到 AI 对战请求 →
-	# 会**再拉一个 worker 并覆盖 worker_port**,而本房紧接着被摘除 → 首个端口从此无人归还
-	# (与下方那条泄漏同一后果)。协议可达(RPC 是 any_peer),暂无界面调用点(D13)。
-	if host_room.started:
-		return   # 已开局:拒绝(防双开 worker 覆盖 worker_port)
-	var port := _launcher.pick_port()
-	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
-		return
-	host_room.worker_port = port
-	if not _launcher.spawn_worker(port, [2]):
-		# - 走拆除统一集中处理入口(2026-09-14,修 M1;同 royale_start 的理由)
-		lobby.teardown_room(host_room, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
-		return
-	# L5 合并补丁(刻意偏离移植来源,非误改):下一行把房间从 rooms 摘除后,on_peer_left
-	# 与 _sweep_stale_rooms 都只遍历 rooms,再无任何路径能归还本端口 —— 不在此处释放就会
-	# 永久占用(500 次后 WorkerLauncher.pick_port 返回 -1,大厅彻底拉不起 worker)。
-	# _release_port_later 是协程(内含 await),fire-and-forget 不 await(与 on_peer_left 同法)。
-	lobby.teardown_room(host_room)   # 对局消费掉房间(AI 不占第二人位);端口延迟归还
-	print("房间 %s → AI 对战开局(1 人 + AI)→ worker 端口 %d" % [host_room.code, port])
-	await get_tree().create_timer(0.3).timeout
-	NetBus.reply(caller, "go_match", 1, port)
 
 # 大乱斗:房主 AI 补位开局 → 现有真人 + AI 补到 max_players
 func royale_start_ai(caller: int) -> void:
@@ -216,40 +159,11 @@ func royale_start_ai(caller: int) -> void:
 	if ai_count <= 0:
 		NetBus.reply(caller, "server_message", "房间已满,无需 AI 补位")
 		return
-	var port := _launcher.pick_port()
-	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
-		return
-	rr.worker_port = port
-	rr.in_match = true
-	# - 开局那一刻把名单冻进房记录(理由见 LobbyRooms.freeze_roster 的注释)。
-	lobby.freeze_roster(rr)
-	# AI role 号 = 1..max_players 内**人类未占用**的空闲号(见 _royale_free_roles)
+	# AI role 号 = 1..max_players 内**人类未占用**的空闲号(见 royale_free_roles)
 	var ai_roles := lobby.royale_free_roles(rr, ai_count)
-	# - `token` 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
-	#   之后再发就静默丢失(既有注释)。登记进回局表则要等 spawn 成功(要 pid)→ 先收起来。
-	#   AI 补位号没有 peer,故只给 `rr.players`(真人)发;`granted` 的构造范围与之一致。
-	var granted: Array = []   # [[role, token], …]
-	for pid in rr.players:
-		var tk := LobbyRooms.new_token()
-		granted.append([int(rr.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
 	# 参战集合 = 房里真人的已分配号 + AI 补位号(真人号可能带空洞,故不能写成 1..max_players)
-	if not _launcher.spawn_royale_worker(port, rr.player_role.values() + ai_roles, ai_roles):
-		rr.in_match = false
-		# - 走拆除统一集中处理入口(2026-09-14,修 M1;同 royale_start 的理由)
-		lobby.teardown_room(rr, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
-		return
-	# - spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
-	#   那张端口→pid 表)。-  位置不能挪到 spawn 之前:启动失败那一刻 pid 还是 0,
-	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
-	rr.worker_pid = _launcher.pid_of(port)
-	# - 凭据登记必须在 spawn 成功之后(要 pid 才判得出"这局还在不在")。
-	_grant_rejoin(rr.code, port, granted)
-	print("大乱斗房 %s AI 补位开局(%d 真人 + %d AI)→ worker 端口 %d" % [rr.code, rr.players.size(), ai_count, port])
-	await get_tree().create_timer(0.3).timeout
-	_send_go_match.call_deferred(rr, port)
+	var roles: Array = rr.player_role.values() + ai_roles
+	_open_match(rr, MatchSession.Mode.ROYALE, roles, ai_roles, {})
 
 
 # ── 3v3:房主开局(**两队各 3 人**才允许)→ 启动 --team worker → 全员 go_match 转连 ──
@@ -266,107 +180,106 @@ func team_start(caller: int) -> void:
 		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
 		return
 	if tr.in_match:
-		return   # 已开局(重复请求防重入:不会双开 worker)
+		return   # 已开局(重复请求防重入:不会双开一局)
 	if not lobby.team_room_ready(tr):
 		NetBus.reply(caller, "server_message", "两队各 3 人才能开始")
 		return
-	var port := _launcher.pick_port()
-	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
-		return
-	tr.worker_port = port
-	tr.in_match = true
-	# - 开局那一刻把名单冻进房记录(理由见 LobbyRooms.freeze_roster 的注释)。
-	lobby.freeze_roster(tr)
-	# - `token` 必须在 **go_match 之前**发(go_match 一到客户端就 NetBus.stop() 断大厅;晚发静默丢失)
-	#   登记进回局表则要等 spawn 成功(要 pid)→ 先收起来。
-	var granted: Array = []   # [[role, token], …]
-	for pid in tr.players:
-		var tk := LobbyRooms.new_token()
-		granted.append([int(tr.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
-	# --roles 与 teams **同序**:roles 按号升序取,teams 跟着同一个顺序取队号。
-	#   `team_of` 缺该 role(有人在满员判据之后、这里之前掉线/退房)时取 0 → spawn_team_worker
-	#   的取值校验当场拒绝(只收 1/2)并返回 false,走下面的拆除 —— **不会**启动一个必然 quit 的
-	#   子进程再把"启动成功"报成真(那正是 Task 9 评审 M2 的那个静默失败模式)。
+	# - roles 与 teams **同序**:roles 按号升序取,teams 跟着同一个顺序取队号。
+	#   `team_of` 缺该 role(有人在满员判据之后、这里之前掉线/退房)时取 0 →
+	#   `MatchSession.validate` 的取值校验当场拒绝(只收 1/2),走拆除 —— **不会**开出一局
+	#   队号错的对局(那正是 Task 9 评审 M2 要堵的静默失败模式)。
 	var roles: Array = tr.player_role.values()
 	roles.sort()
-	var teams: Array = []
+	var teams := {}
 	for r in roles:
-		teams.append(int(tr.team_of.get(int(r), 0)))
-	if not _launcher.spawn_team_worker(port, roles, teams):
-		tr.in_match = false
-		# - 走拆除统一集中处理入口(同 royale_start 的理由:统一集中处理会归还端口 + 摘注册表 + 通知房内玩家)
-		lobby.teardown_room(tr, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
-		return
-	# - spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
-	#   那张端口→pid 表)。-  位置不能挪到 spawn 之前:启动失败那一刻 pid 还是 0,
-	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
-	tr.worker_pid = _launcher.pid_of(port)
-	# - 凭据登记必须在 spawn 成功之后(要 pid 才判得出"这局还在不在")。
-	_grant_rejoin(tr.code, port, granted)
-	print("3v3 房 %s 开局(roles %s / teams %s)→ worker 端口 %d" % [tr.code,
-			str(roles), str(teams), port])
-	await get_tree().create_timer(0.3).timeout
-	_send_go_match.call_deferred(tr, port)
+		teams[int(r)] = int(tr.team_of.get(int(r), 0))
+	_open_match(tr, MatchSession.Mode.TEAM, roles, [], teams)
 
-# ── 配对完成 → 启动对局 worker 并让两端转连 ──
+
+# ── AI 补位对战(实验性):1v1 房主可请求与 AI 对战 ──
+
+# 1v1:房主请求 AI 对战 → 单人开局,role2 由服务端 AI 驱动
+func ai_duel(caller: int) -> void:
+	var host_room: LobbyRooms.Room = null
+	for code in lobby.rooms:
+		var room: LobbyRooms.Room = lobby.rooms[code]
+		if room.players.has(caller) and int(room.player_role.get(caller, 0)) == 1:
+			host_room = room
+			break
+	if host_room == null:
+		NetBus.reply(caller, "server_message", "只有建房(房主)才能开 AI 对战")
+		return
+	# 已开局:拒绝(防双开一局覆盖房上的会话引用)
+	if host_room.started:
+		return
+	print("房间 %s：开启人机对战对局(玩家 + AI)" % host_room.code)
+	_open_match(host_room, MatchSession.Mode.DUEL, [1, 2], [2], {})
+	# 房间开启对局后从大厅列表中移除（AI 玩家不占位，避免产生无效空房间）
+	if lobby.rooms.has(host_room.code):
+		lobby.teardown_room(host_room)
+
+
+# ── 配对完成 → 开局 ──
 func _start_match(room: LobbyRooms.Room) -> void:
-	# 先置 started:同刻挡住第三人在这 0.3s 窗口误入(`join_room` 的 started 守卫)重复启动 worker。
-	# - 2026-09-21 订正:本条原先还写着「配对瞬间任何一方掉线都走 on_peer_left 的 started 即关房
-	#   分支」—— 那条分支**已删除**(对局中的房必须活到对局结束,否则列表里再也看不见它,见
-	#   LobbyRooms.on_peer_left 的注释)。掉线不再关房;回收改由回收梯按 **worker 进程活性**判
-	#   (设计 §2.4)。-  故下面两处 `if not lobby.rooms.has(...)` 今天**实际已够不着**,保留作防御。
+	# 先置 started:同刻挡住第三人在这段窗口误入(`join_room` 的 started 守卫)重复开局。
 	room.started = true
-	# - 开局那一刻把名单冻进房记录:成员转连 worker 后会陆续断开大厅,靠 players/_peer_names
-	#   渲染的对局中列表会退化成"玩家/玩家"(见 LobbyRooms.freeze_roster 的注释)。
-	lobby.freeze_roster(room)
-	var port := _launcher.pick_port()
-	if port < 0:
-		# 起不来局:房间作废,通知双方(不再滞留)
-		room.worker_port = 0
-		NetBus.reply(room.players[0], "server_message", "无法分配对局端口")
-		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
-		return
-	room.worker_port = port
-	# - `token` 必须在 **go_match 之前**发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,
-	#   之后再发就静默丢失(既有注释)。登记进回局表则要等 spawn 成功(要 pid)→ 先收起来。
-	var granted: Array = []   # [[role, token], …]
-	for pid in room.players:
-		var tk := LobbyRooms.new_token()
-		granted.append([int(room.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
-	if not _launcher.spawn_worker(port):
-		NetBus.reply(room.players[0], "server_message", "无法启动对局")
-		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
-		return
-	# - spawn 成功后登记 pid:回收梯靠它判"这一局还在不在"(`WorkerLauncher.pid_of` 读的正是
-	#   那张端口→pid 表)。-  位置不能挪到 spawn 之前:启动失败那一刻 pid 还是 0,
-	#   登记一个 0 等于让回收梯晚一个周期才发现(不致命,但没有理由)。
-	room.worker_pid = _launcher.pid_of(port)
-	# - 凭据登记必须在 spawn 成功之后(要 pid 才判得出"这局还在不在")。
-	_grant_rejoin(room.code, port, granted)
-	# 稍等 worker 完成 bind,再通知两端转连(worker 很快,300ms 足够)
-	await get_tree().create_timer(0.3).timeout
-	if not lobby.rooms.has(room.code):   # 0.3s 内已有玩家掉线触发关房 → 别再给幽灵房发 go_match
-		return
-	_send_go_match_1v1.call_deferred(room, port)
-	print("房间 %s 配对完成 → worker 端口 %d" % [room.code, port])
+	print("房间 %s：配对完成，进入对局" % room.code)
+	_open_match(room, MatchSession.Mode.DUEL, [1, 2], [], {})
 
 
-# 1v1 全员转连(延到帧末再判在线:转连期双方会陆续断开大厅,见 _peer_online 注释)
-# - `token` 由调用方在 **spawn 之前**已经发出(见 `_start_match` 里那段注释)。本函数只发
-#   go_match —— 客户端收到它就 NetBus.stop() 断大厅,所以任何"跟着 go_match 一起发"的
-#   载荷都必须更早。别把 token 挪到这里。
-func _send_go_match_1v1(room: LobbyRooms.Room, port: int) -> void:
-	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
-	if not lobby.rooms.has(room.code):   # 帧末前已关房 → 别再给幽灵房发 go_match
-		return
-	for peer_id in room.players:
+# 向房间成员广播进入对局消息（推迟至下一帧执行，确保网络连接状态已完全稳定）。
+# 下发端口统一为当前服务端监听端口，客户端在原连接上直接切换至对局场景。
+func _send_go_match(peers: Array, role_of: Dictionary) -> void:
+	await get_tree().process_frame   # 等断开信号与网络状态稳定收敛后再判定在线
+	for peer_id in peers:
 		if lobby.is_peer_online(peer_id):
-			NetBus.reply(peer_id, "go_match", room.player_role[peer_id], port)
+			NetBus.reply(peer_id, "go_match", int(role_of.get(peer_id, 1)), NetBus.server_port)
+
+
+# 对局会话正常结束回调：注销该局重连凭据、延迟清理房间记录并释放 MatchSession 节点。
+func _on_session_finished(session) -> void:
+	lobby.rejoin.end_match(int(session.match_id))
+	var room = _room_of_session(session)
+	if room != null:
+		print("[lobby] 对局已结束，回收%s %s" % [_kind_of(room), room.code])
+		lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED, "")
+	if _session == session:
+		_session = null
+	if is_instance_valid(session) and not session.is_queued_for_deletion():
+		session.queue_free()
+
+
+# 根据局号（match_id）反查对应的房间对象（跨 1v1、大乱斗与 3v3 房间表检索）。
+func _room_of_session(session) -> Variant:
+	var mid := int(session.match_id)
+	for code in lobby.rooms:
+		if (lobby.rooms[code] as LobbyRooms.Room).match_id == mid:
+			return lobby.rooms[code]
+	for rcode in lobby.royale_rooms:
+		if (lobby.royale_rooms[rcode] as LobbyRooms.RoyaleRoom).match_id == mid:
+			return lobby.royale_rooms[rcode]
+	for tcode in lobby.team_rooms:
+		if (lobby.team_rooms[tcode] as LobbyRooms.TeamRoom).match_id == mid:
+			return lobby.team_rooms[tcode]
+	return null
+
+
+func _kind_of(room) -> String:
+	if room is LobbyRooms.RoyaleRoom:
+		return "大乱斗房"
+	if room is LobbyRooms.TeamRoom:
+		return "3v3 房"
+	return "房间"
+
+
+func _mode_name(mode: int) -> String:
+	match mode:
+		MatchSession.Mode.ROYALE:
+			return "大乱斗"
+		MatchSession.Mode.TEAM:
+			return "3v3"
+		_:
+			return "1v1"
 
 # ── 定时扫描:每 SWEEP_INTERVAL 清理存在超 MAX_ROOM_AGE 的僵尸房间(连 worker 一起杀)──
 func _process(delta: float) -> void:
@@ -445,7 +358,7 @@ func _sweep_stale_rooms() -> void:
 	# 日志照实报三条不同的界:1v1 与等待中的大乱斗/3v3 房都是裸 MAX_ROOM_AGE,在局的大乱斗房另加
 	# SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING、在局的 3v3 房另加 SWEEP_INTERVAL + TEAM_MATCH_ESTIMATE
 	# (见 _sweep_stale_rooms 内 royale / team 两个分支的注释 —— 后者是估值)。
-	print("[lobby] 清理 %d 个超龄房间(1v1 %d 个 >%.0f 秒;大乱斗 %d 个:等待 >%.0f 秒 / 在局 >%.0f 秒;3v3 %d 个:等待 >%.0f 秒 / 在局 >%.0f 秒)" % [
+	print("[lobby] 清理 %d 个超时房间(1v1 %d 个 >%.0f 秒；大乱斗 %d 个：等待 >%.0f 秒 / 对局中 >%.0f 秒；3v3 %d 个：等待 >%.0f 秒 / 对局中 >%.0f 秒)" % [
 			stale.size() + stale_royale.size() + stale_team.size(), stale.size(), MAX_ROOM_AGE,
 			stale_royale.size(), MAX_ROOM_AGE,
 			MAX_ROOM_AGE + SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING,
@@ -455,7 +368,7 @@ func _sweep_stale_rooms() -> void:
 	# 那条延迟是给「没被杀、还在跑」的 worker 的)。通知 + 立刻断开房内玩家都交给统一集中处理函数。
 	for room in stale + stale_royale + stale_team:
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "房间超时(>2h),已关闭", true)
-		print("%s %s 超时清理(存活 %.0f 秒)" % [
+		print("%s %s 超时清理完成(已存活 %.0f 秒)" % [
 				"大乱斗房" if room is LobbyRooms.RoyaleRoom else ("3v3 房" if room is LobbyRooms.TeamRoom else "房间"),
 				room.code, now - room.created_at])
 
@@ -467,42 +380,31 @@ func _sweep_stale_rooms() -> void:
 #   **精确**答案;任何按"一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口)。
 # - 保底处理仍在:2h 超龄清扫(`_sweep_stale_rooms`)会把"worker 一直不退"的僵尸房连进程一起终止
 #   —— 两条路径并存,不是二选一。
-# - 回收**必须走拆除统一集中处理入口**(端口归还/注册表删除只许出现在 `lobby_rooms.teardown_room`
-#   与 `_release_port_later` 里;`room_sweep_smoke` 的 `_check_reclaim_ladder` 钉住本函数)。
+# 定期清理已结束的对局与超龄房间，资源释放统一经由 lobby.teardown_room 处理。
 func _reclaim_finished_matches() -> void:
-	# - 凭据表的 GC 搭这条梯(30s 一次):TTL 只是表的上界,不需要独立定时器。
-	#   - 这是本计划对**显示方案交付的函数**做的唯一一处改动 —— 理由是"30s 梯只有一个合理的主人",
-	#   再立一条梯就是第二个定时器(本仓禁止的"同一件事两处实现")。
+	# 定期清理凭据注册表中的过期条目（以 TOKEN_TTL_SECONDS 为上限）
 	lobby.rejoin.prune(Time.get_ticks_msec())
+	# 单进程架构下，若当前托管的对局会话仍有效，则无需回收房间；
+	# 当会话对象已被释放或异常终止时，执行超时兜底清理。
+	if _session != null and is_instance_valid(_session) and not _session.is_queued_for_deletion():
+		return
 	var done: Array = []
 	for code in lobby.rooms:
 		var room: LobbyRooms.Room = lobby.rooms[code]
-		if room.started and _match_over(room.worker_port, room.worker_pid):
+		if room.started and room.match_id > 0:
 			done.append(room)
 	for rcode in lobby.royale_rooms:
 		var rr: LobbyRooms.RoyaleRoom = lobby.royale_rooms[rcode]
-		if rr.in_match and _match_over(rr.worker_port, rr.worker_pid):
+		if rr.in_match and rr.match_id > 0:
 			done.append(rr)
 	for tcode in lobby.team_rooms:
 		var tr: LobbyRooms.TeamRoom = lobby.team_rooms[tcode]
-		if tr.in_match and _match_over(tr.worker_port, tr.worker_pid):
+		if tr.in_match and tr.match_id > 0:
 			done.append(tr)
 	for room in done:
 		var kind := "大乱斗房" if room is LobbyRooms.RoyaleRoom \
 				else ("3v3 房" if room is LobbyRooms.TeamRoom else "房间")
-		print("[lobby] 对局结束,回收%s %s(端口 %d)" % [kind, room.code, room.worker_port])
+		print("[lobby] 对局会话资源已释放，回收%s %s" % [kind, room.code])
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED)
 
 
-# 这一局结束了吗(worker 进程已经不在)?-  `port <= 0` 或 `pid <= 0` 一律**不算**结束 ——
-# 那两种取值都只出现在"启动中"的窗口里(`worker_port` 在 `pick_port` 之后才赋值,pid 在
-# `create_process` 成功之后才登记),判成结束会让开局那一瞬被自己的回收梯拆掉。
-static func _match_over(port: int, pid: int) -> bool:
-	if port <= 0 or pid <= 0:
-		return false
-	return not WorkerLauncher.pid_alive(pid)
-
-
-# 建局引导已搬到 server/match_bootstrap.gd(MatchBootstrap.start_on)—— 那是 worker 进程内的
-# 职责,与对局宿主(MatchHost/RoyaleHost)同侧;留在大厅的房间注册表里会让 worker 因
-# class_name 连带加载整张大厅注册表(端口池/房间广播/终止进程)。调用点见 server_main.gd。

@@ -44,18 +44,10 @@ func _on_connected() -> void:
 			printerr("SMOKE_CLIENT FAIL: 非法 role %s" % role)
 			get_tree().quit(1)
 
-# 大厅配对完成:断大厅 → 转连对局 worker → claim 角色
+# 大厅配对完成：在既有连接上认领角色（无需断线重连）
 func _on_go_match(role_assign: int, port: int) -> void:
 	print("SMOKE_CLIENT OK: go_match role=%d port=%d" % [role_assign, port])
-	multiplayer.connected_to_server.connect(_claim_worker.bind(role_assign), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
-		printerr("SMOKE_CLIENT FAIL: 连接对局 worker 失败")
-		get_tree().quit(1), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	var err := NetBus.start_client("127.0.0.1", port)
-	if err != OK:
-		printerr("SMOKE_CLIENT FAIL: start_client(worker) %d" % err)
-		get_tree().quit(1)
+	_claim_worker(role_assign)
 
 func _claim_worker(role_assign: int) -> void:
 	print("SMOKE_CLIENT OK: claim role=%d" % role_assign)

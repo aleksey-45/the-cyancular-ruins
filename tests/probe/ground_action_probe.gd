@@ -5,12 +5,12 @@ extends Node
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/ground_action_probe.tscn
 # 期望:每条 [ga] … 通过,末行 "GROUND ACTION PROBE: ALL-OK"。
 #
-# 为什么单开一个:单机侧那条路(`Level0.try_pickup_for`)有 `level0_weapon_scatter_probe` 钉着,
+# 为什么单开一个:单机侧那条路(`Level0.try_pickup_for`)有 `level0_weapon_scatter_probe` 负责校验,
 # 而**联机侧**的权威路径(`MatchGround._try_server_pickup` / `_try_server_drop`)此前零覆盖 ——
 # 用户 2026-09-16 报「1v1/大乱斗里捡武器会崩溃」,这条正是两者共用的那段。
 #
 # 做法(与 grenade_player_hit_probe / match_host_hygiene_probe 同一手法):
-# 真建一个 MatchHost(真地图 + 真 WorldBuilder 碰撞),但 **role_peers 传空** ——
+# 实际创建一个 MatchHost(真地图 + 真 WorldBuilder 碰撞),但 **role_peers 传空** ——
 # 不建玩家、不排 peer,于是 `_rpc_all` 的循环体一次都不进(广播静默提前返回,
 # 不会在无多人连接时尝试发包)。玩家由本探针自己摆、输入包由本探针自己塞进
 # `_pending_input`,走的是**与生产完全同一条消费路径**(clear_edges → apply_packet →
@@ -75,7 +75,7 @@ func _run() -> void:
 		get_tree().quit(1)
 
 
-# ── ⓪(最先跑,趁地面还是开局那批)下发位置契约:`pos` 必须是 canonical ──
+# ── ⓪(最先跑,趁地面还是开局那批)下发坐标规范:`pos` 必须是 canonical ──
 # 为什么单开这一相:`ground_weapons_payload()` 曾经读"已被逐帧刷新的 entries"、发出
 # visual_center(= canonical + visual_offset),而客户端把载荷的 `pos` 直接当
 # `WeaponPickup.canonical_pos`(见 pvp_match_client 的注释:契约就是 canonical)。后果是
@@ -113,7 +113,7 @@ func _phase_payload_position_contract() -> void:
 			"载荷 pos == 服务器判定圆心(%d/%d 不符)—— 视觉中心已是节点原点,两者必须同一个值;不符 = 客户端画的枪与服务器判的位置错开,会「看着够得着却捡不起来」" % [bad_center, checked])
 
 
-# ── ⓪b 投掷落点契约:状态补充同步载荷(`match_sync` 的 `ground_weapons`)里的 `vel` 必须是
+# ── ⓪b 投掷落点坐标规范:状态补充同步载荷(`match_sync` 的 `ground_weapons`)里的 `vel` 必须是
 #        **活速度**,不是条目里那份"生成时刻的 vel" ──
 # 为什么单开这一相:`ground_weapons_payload()` 曾把**活的 pos** 与**条目里那份生成时刻的 vel**
 # 配成一对发货。客户端 `WeaponPickup.configure()` 见 vel 非零就置 `_settled = false` 并从
@@ -294,11 +294,11 @@ func _phase_drop_all_but_one() -> void:
 	_check(is_instance_valid(p), "复活后玩家仍有效")
 
 
-# ── ⑦ 换局重铺:inst 必须单调,且重铺出来那批仍要捡得动、位置契约仍成立 ──
+# ── ⑦ 换局重铺:inst 必须单调,且重铺出来那批仍要捡得动、坐标规范仍成立 ──
 # 为什么:`_reset_ground_weapons` 曾把 `_next_ground_inst` 重置回 1 —— 新一轮那批的 inst 于是与
 # 客户端**残留的上一局节点撞号**,而客户端的 `_spawn_pickup_node` 对已有 inst 是**静默 return**
 # → 新一轮那批在客户端一件都建不出来(它画的还是上一局的幽灵枪,按 F 也无效)。
-# 这条钉住"inst 单调"这个前提;换局的**广播**那一半在 net_ground_probe(源码级)里钉。
+# 这条严格校验"inst 单调"这个前提;换局的**广播**那一半在 net_ground_probe(源码级)里钉。
 func _phase_round_reset() -> void:
 	print("[ga] ── ⑦ 换局重铺:inst 单调 + 重铺后仍捡得动 ──")
 	var before_max := _max_inst()
@@ -309,7 +309,7 @@ func _phase_round_reset() -> void:
 			"重铺后 inst 继续变大(旧最大 %d → 新最大 %d)" % [before_max, _max_inst()])
 	_check(_host.ground_weapons.size() > 0,
 			"重铺后有货(实际 %d 件;旧 %d 件)" % [_host.ground_weapons.size(), before_ground])
-	# 重铺那批的位置契约(与 ⓪ 同一判据)
+	# 重铺那批的坐标规范(与 ⓪ 同一判据)
 	var bad := 0
 	for e in _host.ground_weapons_payload():
 		var n = _host._ground_nodes.get(int(e["inst"]), null)

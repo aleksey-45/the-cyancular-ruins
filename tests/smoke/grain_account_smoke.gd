@@ -1,7 +1,10 @@
 extends SceneTree
 
-# 粒子账户冒烟(-s 数据级):余额/上限/短期时间窗口/透支/锁定/恢复/入账 全语义。
-# 用法:godot --headless --path . -s res://tests/smoke/grain_account_smoke.gd
+# 时间粒子账户状态机冒烟测试：
+# 验证 GrainAccount 纯逻辑状态机：初始额度、消耗扣除、自动恢复速率、
+# 透支惩罚深度计算、强制锁定与偿还解锁，以及 PvP 自定义参数支持。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/grain_account_smoke.gd
 
 var _fails: Array[String] = []
 

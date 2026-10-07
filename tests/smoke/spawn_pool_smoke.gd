@@ -1,67 +1,15 @@
 extends SceneTree
 
-# 出生池守卫(共享组件 `SpawnPicker`):**出生池与复活池序列里都不准有"落在小连通区"的格**。
-# 跑法: timeout 120 "$GODOT" --headless --path . -s res://tests/smoke/spawn_pool_smoke.gd
-# 通过 = `SPAWN POOL SMOKE: ALL-OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# `spawn_candidates()` 的判据分三档:①三宽 + 大连通区 ②大连通区 ③**任意地板格**。
-# 而 ② 的"大"是**绝对**阈值 `OPEN_AREA_MIN = 20` —— 小图上它可以**无人达到**:
-# 旧 PvP 固定图 `factory1v1`(150×100,2026-10-02 已退役删除)按 4 邻接算的**最大**地板连通区
-# 只有 13 格、**843 个地板格里没一个**达到 20  ->  ①② 恒空,池子**静默退化**成全部地板格,
-# 里面有 **155 个孤立单格区**(走不出去)。后果:6 人 3v3 / 8 人大乱斗开局有人被关在小间里,
-# **不报错、不留日志**;而 `SpawnPicker` 是大乱斗与 3v3 **共用**的,两条线一起中招。
-# 修法 = 小图自适应门槛(`SpawnPicker.area_threshold()` —— 最大连通区 < OPEN_AREA_MIN 时
-# 按 `ADAPTIVE_RATIO` 缩放到本图比例),见该文件 ADAPTIVE_RATIO 上方那一段。
-#
-# 注意： **覆盖现状(2026-10-02 登记)**:驱动"自适应那一支"的那张缺陷图随 `factory1v1` 一起退役,
-#   而现存的图都走不到那一支(newfactory 最大连通区 48、demo 35,均 ≥ 20) ->  本探针**不再覆盖
-#   自适应分支**,只覆盖正常图那一支。这是**有意的收窄**,不是漏掉 —— 详见下方 MAP_NORMAL
-#   上方的登记。真要为它补覆盖,照法是加一张**合成网格**夹具(直接赋 `MazeGenerator.current_grid`)。
-#
-# ═══ 本探针钉什么 ═══
-# ① **核心不变式**:池子里**每一个**格的连通区规模都 ≥ `area_threshold()`;
-#    再用独立写的 BFS 复算一遍连通区、按同一门槛算出期望集合,断言 **pool ⊆ 期望**
-#    —— 判据不来自被测实现自己(`region_sizes()` 只用来**交叉核对**,[仪器] B)。
-# ② **反向/变异**:断言池子是全部地板格的**真子集**(排除数 > 0)。把自适应那档改回
-#    `_prefer_cache = floor`(或把 `area_threshold()` 改回恒 `OPEN_AREA_MIN`)→ 这条红。
-# ③ **正常图的出生池不许变样**:`demo.cyrm` 上 `area_threshold()` 必须**恰好**是 `OPEN_AREA_MIN`,
-#    且出生池与"三宽 ∩ 连通区≥20"逐格相等 —— 自适应对小图之外**一行不生效**。
-#    (-  复活池序列**不在此列**:2026-09-19 设计约定它**对所有图生效** —— "保底处理档仍是全部地板格"
-#     是"明知在船上的 bug",不是"为不改行为而放过的边界"。)
-# ④ **复活池序列**(`respawn_pools()`,三档):每一档都不含孤立单格;逐档放宽;前两个档位还不含
-#    "连通区 < 门槛"的格。-  三档是**设计约定的形状**:第 ③ 档只排除孤立单格 —— 因为把保底处理档
-#    一路收到"连通区 ≥ 门槛"会**新增** `(-1,-1)`( ->  摆到地图回卷角落,比"在小间里复活"更糟;
-#    实测 4036 布局 ×2 图:只收一档新增 1 个 / 5 个,加第 ③ 档后**新增为 0**)。
-# ⑤ **各条路各走一遍**:正例(首档够用)、中间档、负例(真搜一个"首档筛空"的布局,**端到端**
-#    跑完整个序列)。-  负例的搜索是**数据**,不是装饰:本图能筛空首档的布局是**稠密网格**
-#    (随机撒点到不了 —— 首档那 122 格散在十来个区里,8 个敌人盖不满)。
-# ⑥ **宿主接线(源码级)**:两个宿主的选格**函数体**必须走 `respawn_pools()` 且不再自己拼
-#    `floor_cells()` —— 只测 `SpawnPicker` 的话,宿主里那句原样留着**照样测试全部通过**(那正是本病的成因)。
-#
-# ═══ 三大历史关键隐患点═══
-# - `-s` 阶段 autoload 不存在  ->  **不能用 `WorldBuilder.load_grid()`**(它写
-#   `GameParameters.MAP_WIDTH`) ->  地图自己载:`set_map_file` + `load_map_file` + 赋
-#   `current_grid` + **`TileDefs.load_defs()`**。少了最后那一步,`is_blocked` 的缺省判据是
-#   "非 0 即墙"(梯子/水都算墙) ->  池子与生产**悄悄不同**、且照样测试全部通过 —— 本文件用
-#   [仪器] A 把"defs 真加载了"钉住。
-# - `SpawnPicker` 的三张缓存是**每进程**的 `static var`,换图必须 `reset_cache()`,
-#   否则第二张图读到第一张图的地板格池子(静默)。[仪器] C 钉住它真的换过来了。
-# - 空载守卫:`load()` 失败/地图读不到就 `quit(1)` —— `-s` 里抛错走不到 `quit()` 会**永久挂起**。
+# 出生点与复活点选取算法冒烟测试：
+# 验证 SpawnPicker 在多地图下的主连通区分辨率，保证所有生成的候选出生点与复活点均位于可用空间。
+# 运行方式：
+#   timeout 120 "$GODOT" --headless --path . -s res://tests/smoke/spawn_pool_smoke.gd
 
-# 注意： 2026-10-02:原先还有一张 `MAP_BUGGY`(= 旧 PvP 定图 `factory1v1.cyrm`,最大连通区 13)
-#   专门用来驱动**自适应门槛**那一支。该图已按设计约定退役删除,而现存的图**都走不到**那一支
-#   (实测 newfactory 最大连通区 48、demo 35,均 ≥ `OPEN_AREA_MIN` = 20) ->  拿一张真实地图去
-#   照它已经没有对象。
-#    ->  **登记为休眠覆盖**:`SpawnPicker.area_threshold()` 的自适应分支今天**没有任何生产地图
-#     能驱动**,本探针也不再覆盖它。它仍在代码里(阈值是"任何图都可能需要"的保险),
-#     真要用到它时,照法在下面补一张**合成网格**夹具即可(直接赋 `MazeGenerator.current_grid`,
-#     不必落盘成 .cyrm)。
 const MAP_NORMAL := "res://maps/demo.cyrm"         # 正常图:最大连通区 35 ≥ OPEN_AREA_MIN
 
 # 调用方那段"离敌人够远"筛选的清空距离(格)。= 两个宿主的 `RESPAWN_CLEARANCE`
 # (royale_host.gd / team_host.gd 各一个,值都是 8)—— 本探针只重放那段**平凡筛选**的形状,
-# 故这个数必须与生产同值。-  它由 ⑥ 的源码级断言钉着(两个文件里都得写 `:= 8`),
+# 故这个数必须与生产同值。-  它由 ⑥ 的源码级断言负责校验(两个文件里都得写 `:= 8`),
 # 以免本探针的假设与生产**悄悄漂开**(那时 ⑤ 的正/负例验的就不是生产那条路了)。
 const RESPAWN_CLEARANCE := 8
 
@@ -148,7 +96,7 @@ func _run_map(path: String) -> void:
 
 	# ── [仪器] A `TileDefs` 真加载了 ──
 	# 纹理 11 = 梯子(type=passage)。未加载 defs 时缺省是 wall  ->  梯子被当墙  ->  池子与生产
-	# **悄悄不同**(而且本探针照样能测试全部通过)。故先钉住"加载生效"。
+	# **悄悄不同**(而且本探针照样能测试全部通过)。故先严格校验"加载生效"。
 	_check(TileDefs.type_id_of(11) == TileDefs.TYPE_PASSAGE,
 			"[仪器] TileDefs.load_defs() 真生效(纹理 11 是通道;未加载时缺省判 wall)")
 
@@ -491,7 +439,7 @@ func _count_usable(pool: Array, enemies: Array, cols: int, rows: int, clear: int
 func _check_wiring() -> void:
 	print("")
 	print("═══ ⑥ 宿主接线(源码级)═══")
-	# 注意： 三条 case 里那条 `_respawn_pools` 是**评审抓到的差一跳**:royale 的池来源是
+	# 注意： 三条 case 里那条 `_respawn_pools` 是**评审抓到的单步时序偏差**:royale 的池来源是
 	#   `_spawn_cell` → `_respawn_pools()`(转发)。只钉 `_spawn_cell` 的话,把
 	#   `_respawn_pools` 那一行改回 `SpawnPicker.floor_cells()`  ->  **病原样复活、61 条断言测试全部通过**
 	#   (⑥ 存在的全部理由就是堵这个,却在它自己明确提示的位置上留了一跳;team 侧是直接命中、没这跳)。
@@ -504,7 +452,7 @@ func _check_wiring() -> void:
 	# - `_respawn_pools` 那一条**不能用 `ScanUtil.func_body`**:它按 `"\nfunc "` 找边界,
 	#   而**不认 `static func`**  ->  一个 `static func` 的"函数体"会把**后面所有 static func**
 	#   一起吞进来(`_respawn_pools` 之后就是 `plan_spawns`,那里面有一处**合法**的 `_floor_cells()`
-	#    ->  反向断言会虚假失败（测试用例误报）)。故这一条走**定长窗口**(该转发函数只有两行,窗口给足 300 字符)。
+	#    ->  反向断言会测试误报)。故这一条走**定长窗口**(该转发函数只有两行,窗口给足 300 字符)。
 	#   (tool 的这条限制**没有改** —— 改它会连带收紧别的探针的读数,不在本次范围。)
 	var rh_src := ScanUtil.code_only(ScanUtil.read("res://server/hosts/royale_host.gd"))
 	var fi := rh_src.find("static func _respawn_pools(")
