@@ -6,7 +6,7 @@ extends Node
 #
 # - 为什么需要它:这一页的内容(名单/致谢/版本)是**人手抄进去的**,而抄错一个字
 #   没有任何东西会红 —— 它只表现为"页面上少一个人"或"致谢写错了名"。
-#   本探针把那三块内容**逐字**钉住。
+#   本探针把那三块内容**逐字**严格校验。
 # - 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
 #   数法(逐行数 `_check(...)` 的**运行时**实参个数,循环里的也算):
 #     4 个分节标题(信 息 / 版 本 信 息 / 开 发 团 队 / 特 别 感 谢 / 致 谢)
@@ -34,7 +34,7 @@ const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",
 # - 两份都是**手抄**的(不从生产 `preload` 读):从生产读就成了"生产写什么就断言什么"的
 #   恒真比对,抄错一个字也就没人拦得住了。
 # - 逐字比的是**渲染出来的那一行**(如 `Godot Engine　MIT`)—— 用 `_has`(子串)时把
-#   `Godot Engine` 改成 `Godot EngineX` 照样绿,而判词写着"逐字钉住"(评审 Minor,2026-10-03)。
+#   `Godot Engine` 改成 `Godot EngineX` 照样绿,而判词写着"逐字严格校验"(评审 Minor,2026-10-03)。
 const CREDITS := [
 	["Godot Engine", "MIT"],
 	["GNU Unifont", "SIL OFL 1.1"],
@@ -77,11 +77,11 @@ func _ready() -> void:
 	# 发布版 exe 常跑在**没有 git** 的机器上  ->  `AppInfo.commit_log()` 返回 `[]`  ->  左栏会是
 	# 一个**没有任何解释的空框**,而那恰恰是这一页存在的理由。
 	# 本阶段**故意**把 PATH 指到一个不存在的目录,把"发布机无 git"这个条件**真的复现出来** ——
-	# 于是这一条是**行为级**的(页面真跑过那个分支),不是源码级扫描。
+	# 于是这一条是**行为级**的(页面实际运行过那个分支),不是源码级扫描。
 	# - 你会在输出里看到几行 `ERROR: Could not create child process: git …`:那是**本阶段要复现的
 	#   条件本身**(git 不可用),**不是**失败。判据仍是文本 `INFO PAGE PROBE: ALL-OK`。
 	# - 前置那一条不是客套:若 `commit_log()` 仍非空(例如静态缓存已被别处填过),页面走的是
-	#   正常分支,下面的保底处理断言就**测的是别的东西** —— 前置先红,免得虚假通过（未有效测试）。
+	#   正常分支,下面的保底处理断言就**测的是别的东西** —— 前置先红,免得测试漏检。
 	var saved_path := OS.get_environment("PATH")
 	OS.set_environment("PATH", "C:\\definitely\\not\\a\\real\\path")
 	_check(preload("res://core/config/app_info.gd").commit_log().is_empty(),
@@ -142,7 +142,7 @@ func _check_layout(root: Node) -> void:
 	# - 两栏 = 含 scroll 的那条 `HBoxContainer`,它的两个直接子节点就是左右两栏。
 	#   原先写的是 `scroll.get_parent().get_parent()` —— 左栏从裸 `PanelContainer` 换成
 	#   `UiFactory.menu_panel()`(内多一层 `Body`)之后,那个表达式量到的是 `Body`,
-	#   而 `Body` 的父(外层 `PanelContainer`)只有 1 个子节点  ->  右栏取不到  ->  **虚假失败（测试用例误报）**。
+	#   而 `Body` 的父(外层 `PanelContainer`)只有 1 个子节点  ->  右栏取不到  ->  **测试误报**。
 	#   改成"往上找含 scroll 的两子 HBox":版式再套一层也不瞎,而**删掉右栏仍会红**。
 	var cols := _find_two_col_box(root, scroll)
 	var left: Control = cols.get_child(0) if cols != null else null

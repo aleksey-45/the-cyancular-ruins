@@ -7,7 +7,7 @@ extends SceneTree
 # 通过 = `PATH INTEGRITY: ALL-OK` 退出 0。
 #
 # - 必须剥注释再扫:注释里的 `res://old/path` 不是代码(本仓 kh_l6 与 ui_palette 的
-#   注释里就各有一句假路径)。直接 grep 会既虚假失败（测试用例误报）又漏改。
+#   注释里就各有一句假路径)。直接 grep 会既测试误报又漏改。
 # - .tscn 只查 ext_resource 的 path=;uid= 字段不查(uid 由 .gd.uid 边车与 .tscn 头承载)。
 # - 豁免走 tests/path_integrity_allow.txt,每行一个完整路径 + 可选 `# 原因`。
 #
@@ -124,7 +124,7 @@ func _exists_any(p: String) -> bool:
 	# - 必须**先**查 FileAccess.file_exists:ResourceLoader.exists 只认**已导入**的资源,
 	#   而本仓有大量不算资源的普通文件被 GDScript 字符串引用 —— `maps/*.cyrm`(游戏用
 	#   FileAccess 读)、`tests/*.txt`,以及探针运行时 save_png 出来的 .png。只查
-	#   ResourceLoader/DirAccess 会把它们全判成"不存在"(实测 28 条虚假失败（测试用例误报）),而把真文件
+	#   ResourceLoader/DirAccess 会把它们全判成"不存在"(实测 28 条测试误报),而把真文件
 	#   塞进豁免文件正是这条守卫最该避免的事。
 	# ⚠ 已知边界:Windows 文件系统不区分大小写,大小写写错的路径在这里**会通过**
 	#   (导出成 .pck 后是区分大小写的)。本守卫只回答"有没有",不回答"大小写对不对"。

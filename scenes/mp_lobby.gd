@@ -1269,12 +1269,10 @@ func _enter_match_scene() -> void:
 		push_error(msg % _current_mode)
 
 
-# 梯顺序 `[worker → claim → 大厅 → ack]`(合并后唯一的一条;见文件头)。
-# - 别重排:1v1 旧页那条 join 梯的职责由末尾的 ack 梯覆盖(建房/加入 8s 无应答)。
+# 超时检测轮询顺序：[重连超时 → 角色认领超时 → 大厅连接超时 → 请求响应超时]。
+# 在单进程单端口架构下，客户端进入对局无需转连，因此已移除针对端口转连的超时检测。
 func _process(_delta: float) -> void:
 	if _tick_rejoin_timeout():
-		return
-	if _tick_worker_connect_timeout():
 		return
 	if _tick_claim_timeout():
 		return
@@ -1308,19 +1306,9 @@ func _lobby_action_allowed() -> bool:
 	return true
 
 
-# 三个模式的权威规则项都上发,worker 各取自己认得的键(`server_main._on_player_options`
-# 与 `MatchBootstrap` 都按 role1 那份生效)。不认得的键被静默忽略 —— 这是既有行为。
-# - `time`(Beta 时间玩法规则)必须在这里 —— 它是**权威那一份**:worker 侧
-#   `MatchHost` 读的正是 `options.get("time")`(见 server/match/match_host.gd),
-#   而建房载荷里的 `time` 只存在房对象上、**没有任何读者**。漏了它  ->  Beta 局的时间经济
-#   静默为空(一切结算短路),而那**不报错**。旧的两个大厅页各自带这一行
-#   (大乱斗页 / 3v3 页),统一页不能把它丢了。
-# 注意： **1v1 必须排除 `time`** —— 这是大厅**统一之后才出现的新路**:`PvpSession.beta_mode`
-#   是**会话级**的,而统一大厅让 Beta 会话里的玩家能切到 1v1 建局。但 1v1 的
-#   `create_room(caller)` 是原版 NetBus 的**冻结签名**、载荷里没有任何 beta 标记
-#    ->  那个房**没法按 beta 隔离**  ->  一个**没勾 Beta 的普通玩家能加进来、打上一局带时间经济
-#   的 1v1**。设计里 Beta 页只有「错乱大乱斗」「时空 3v3」两张卡、**没有 1v1 beta**,
-#   故 1v1 在 Beta 会话里退回普通局才是与"1v1 无法被隔离"这个事实一致的行为。
+# 收集当前模式的玩家配置选项（由服务端按房主 role1 配置统一生效，未识别字段静默忽略）。
+# 1. time（Beta 时间玩法参数）：在启用 Beta 模式时上报，MatchHost 服务端据此初始化时间经济模型。
+# 2. 1v1 模式排除 time 参数：1v1 协议保持标准对战规则，不启用时间玩法。
 func _player_options() -> Dictionary:
 	return {
 		"hue": Settings.pvp_color_hue,
@@ -1334,34 +1322,14 @@ func _player_options() -> Dictionary:
 
 
 func _go_match_status() -> String:
-	return "配对成功,连接对局服务器……"
-
-
-func _on_worker_connect_failed() -> void:
-	if _connecting_worker:
-		_return_to_lobby("对局服务器连接失败——房间可能已失效,已返回大厅并刷新")
-
-
-func _worker_timeout_msg() -> String:
-	# - 大乱斗 / 3v3 都是**自建服**(要自己放行 worker 端口段) ->  把端口段印出来是真信息;
-	#   1v1 走云服,那句提示对它没有意义。端口段引 WorkerLauncher 的常量,不手写数字
-	#   (旧页手写过 "7800~7999" 而实际池是 7800~8299 —— 照它放行防火墙会漏掉半个池子)。
-	if _current_mode == PvpSession.MODE_ROYALE or _current_mode == PvpSession.MODE_TEAM:
-		return "对局服务器无响应——请确认对局端口(%s UDP)已放行;已返回大厅并刷新" % _worker_port_span()
-	return "对局服务器无响应(房间可能已失效)——已返回大厅并刷新,请换一个房间"
-
-
-# worker 端口段文案(单一来源 = WorkerLauncher 的常量)。
-func _worker_port_span() -> String:
-	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
-			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
+	return "配对成功,进入对局……"
 
 
 func _claim_timeout_msg() -> String:
 	return "对手未就绪(房间可能已失效)——已返回大厅并刷新,请换一个房间"
 
 
-# 配对成功:停掉建房/加入的 ack 保底处理,转由转连 worker / claim 两条梯接管。
+# 配对成功回调：清理请求确认计时，后续转由角色认领超时检测接管。
 func _on_go_match_extra() -> void:
 	_sent_ms = 0
 
@@ -1371,9 +1339,7 @@ func _on_return_to_lobby() -> void:
 	_probe_multi_join = false
 	_room_code = ""
 	_update_code_label()
-	# 注意： 等待室在这里收起 —— 这是它**唯一**的调用点:转连/claim 超时梯、回局失败、
-	#    大乱斗/3v3 的「退出房间」全都汇到本钩子。漏了它 = 退回大厅后等待室还盖在屏幕上
-	#    (而**一行报错都没有**),玩家以为"还卡在房里"。
+	# 返回大厅时统一关闭等待室面板（包括角色认领超时、重连失败或手动退出房间等场景）
 	_hide_wait_room()
 
 

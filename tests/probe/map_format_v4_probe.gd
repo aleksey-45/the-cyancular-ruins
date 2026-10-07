@@ -56,7 +56,7 @@ func _test_real_maps() -> void:
 	var demo := MapFormat.load_map_file(DEMO)
 	var pvp := MapFormat.load_map_file(PVP)
 	# - 尺寸断言**只比两条独立读法**,不写死 125×75 —— "这张图恰好多大"是地图自己的事,
-	#   写死只会让换图/改图虚假失败（测试用例误报）。两条读法是:
+	#   写死只会让换图/改图测试误报。两条读法是:
 	#     - `map_size()`   → v4 **头部**的 sub_cols/sub_rows(不解析 body)
 	#     - `load_map_file()` → **整图解析**(把 body 里的场景层展平成格)
 	#   两者对不上 = 头部与 body 不一致(真 bug);旧写法(两边各自写死数字)拦不住它。

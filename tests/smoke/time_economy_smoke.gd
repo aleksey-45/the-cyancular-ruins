@@ -1,7 +1,9 @@
 extends SceneTree
 
-# Beta 时间经济冒烟(-s 数据级):四条结算接口的公式与过滤口径。
-# 用法:godot --headless --path . -s res://tests/smoke/time_economy_smoke.gd
+# Beta 时间经济核心规则冒烟测试：
+# 验证击杀粒子奖励、伤害粒子折算、瓦片破坏奖励及时间自动恢复等各途径结算数值。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/time_economy_smoke.gd
 
 var _fails: Array[String] = []
 

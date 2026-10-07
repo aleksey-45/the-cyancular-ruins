@@ -53,6 +53,10 @@ const DEFAULT_PORT := 7777
 const ENet_CHANNELS := 4
 
 var is_server_mode: bool = false
+# 当前服务端进程监听的 UDP 端口（单一数据源；非服务端模式下默认为 DEFAULT_PORT）。
+# 在单进程单端口架构下，大厅和对局共享该端口：进入对局消息（go_match）和重连响应均指向该端口，
+# 供大厅会话编排器与房间管理器统一读取。
+var server_port: int = DEFAULT_PORT
 
 var ping_ms := 0        # 平滑后 RTT(ms),0=尚未采样
 var _ping_sent_ms := 0
@@ -74,6 +78,7 @@ func start_server(port: int = DEFAULT_PORT) -> Error:
 	if err == OK:
 		multiplayer.multiplayer_peer = peer
 		is_server_mode = true
+		server_port = port
 	return err
 
 func start_client(addr: String, port: int = DEFAULT_PORT) -> Error:

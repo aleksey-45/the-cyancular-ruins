@@ -169,7 +169,7 @@ func _run_pass(ghost_on: bool) -> void:
 		_check(rb > 0 and _max_dev > 1.0, "④ 摘掉幽灵体后出现分歧与回滚(rb=%d, 分歧=%.2f px)" % [
 				rb, _max_dev])
 		# ⑥ 负向对照:幽灵体被摘除(层置 0)后**全程不得命中**。
-		#    - 这条同时钉住"地形不算接触":P 全程踩在地板上(层 1),判据若写成
+		#    - 这条同时严格校验"地形不算接触":P 全程踩在地板上(层 1),判据若写成
 		#      `collision_layer != 0`(忘了 `& ~1`)会**恒真**,这里直接断言失败。
 		_check(not _touched_any, "⑥ 摘掉幽灵体后 touching_player() 全程为假(地形层不算接触)")
 
@@ -231,7 +231,7 @@ func _make_player(nm: String, pos: Vector2):
 # 故两侧碰撞箱逐点一致。
 # - scale 也必须一起抄(player.tscn 根节点是 2.5):节点缩放会作用到碰撞多边形上,
 #   漏掉它替身就只有幽灵体的 1/2.5 大 —— A 会被挡在更靠右的位置,P 与 A 停不到同一点,
-#   ② 那条"轨迹一致"就永远红(实测踩过:Δx=27px,A 比 P 多走了一段)。
+#   ② 那条"轨迹一致"就持续报错失败(规避历史已知问题)。
 func _make_stand_in(layer: int, pos: Vector2) -> StaticBody2D:
 	var tmp := preload("res://scenes/player/player.tscn").instantiate()
 	var src := tmp.get_node_or_null("CollisionShape2D_stand") as CollisionPolygon2D
@@ -305,7 +305,7 @@ func _adds_player_layer(path: String) -> bool:
 	return false
 
 
-# - 虚假通过（未有效测试）防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的
+# - 测试漏检防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的
 #   `_ready()` 照常往下走 —— 测试函数中途报错 → 一条 _check 都没跑到 → _results 仍空
 #   → 照样打印 ALL-OK。故每个测试函数在**最后一行**盖完成戳,`_ready` 逐条核。
 var _ran: Dictionary = {}

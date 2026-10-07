@@ -23,11 +23,11 @@ const RELOAD_SAMPLE_DT := 0.5          # 手动推进的换弹时长(秒):手枪
 
 var _failures: Array[String] = []
 
-# 断言计数闸(2026-10-03,R19)。
+# 断言断言计数门禁(2026-10-03,R19)。
 # - 为什么必须有:本文件此前**没有任何条数下限**,而 `_capture_low_ammo` 里那两行曾直接解引用
 #   `_hud._reload_bar`(一个 `_capture_full_ammo` 刚断言**不存在**的节点) ->  运行到那里必抛
 #   `Invalid access to property or key '_reload_bar'`,**只中断当前函数**、其后断言(含三态对照
-#   那两条)静默跳过,而 verdict 照打 `ALL-OK`  ->  **虚假通过（未有效测试）**(权威表述见 `tests/lib/probe_base.gd` 文件头)。
+#   那两条)静默跳过,而 verdict 照打 `ALL-OK`  ->  **测试漏检**(权威表述见 `tests/lib/probe_base.gd` 文件头)。
 # - 32 是**逐个数出来的**,不是估的:`_check_slot_colors` 10 + `_capture_full_ammo` 8 +
 #   `_capture_reloading` 6 + `_capture_low_ammo` 6 + `_assert_states_differ` 2 = 32;且 32 处
 #   `_check(` 的缩进都是**函数体顶层**(没有一条在 if 分支里) ->  跑全了恰好 32 条。
@@ -264,7 +264,7 @@ func _check(ok: bool, msg: String) -> void:
 
 func _finish() -> void:
 	_aborted = true   # 见 _ready 顶部:置位后各段之间就不再往下跑
-	# - 计数闸**先于** verdict:跑少了 = 有断言被静默跳过(见文件头那条说明) ->  必须红,
+	# - 断言计数门禁**先于** verdict:跑少了 = 有断言被静默跳过(见文件头那条说明) ->  必须红,
 	#   而不是照打 ALL-OK —— 那正是本文件此前那一族的形状。
 	if _checks != EXPECTED_CHECKS:
 		_failures.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上"
@@ -393,10 +393,10 @@ func _capture_low_ammo() -> void:
 	# 注意： 「非换弹态不该有换弹提示」这条语义**还有活目标**,但载体换了人:HUD 上那条进度条已删
 	#    (用户 2026-09-16「取消右下角的装填中…和进度条」),现在是**角色旁的圆环**
 	#    (`ui/hud/reload_ring.gd`,挂在玩家身上)。改前这两行直接解引用 `_hud._reload_bar`
-	#    (一个 :331 刚断言不存在的节点) ->  必抛、其后断言静默跳过、verdict 照打 ALL-OK(R19 的虚假通过（未有效测试）)。
+	#    (一个 :331 刚断言不存在的节点) ->  必抛、其后断言静默跳过、verdict 照打 ALL-OK(R19 的测试漏检)。
 	#    现改指**环形那条链**。
 	# - 探针冻了玩家物理(`set_physics_process(false)`) ->  可见性不会自己刷新,得与态2 相同机制
-	#   **显式推一拍**;不推就是拿"态2 留下的旧状态"下断言 —— 那是另一种虚假通过（未有效测试）。实测:不推这一拍,
+	#   **显式推一拍**;不推就是拿"态2 留下的旧状态"下断言 —— 那是另一种测试漏检。实测:不推这一拍,
 	#   环停在可见态,下面那条直接断言失败(变异原文见 T3b 报告 §3)。
 	p._update_reload_ring()
 	var ring3 = p.get("_reload_ring")

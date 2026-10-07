@@ -10,7 +10,7 @@ extends Node
 # 另一半(碰到人掉 5 血 + 击杀归因 + 射手端 X 标记),漏测就等于"改了个没人验的路径"。
 # 大乱斗压力跑的 `受击 5 伤` 事件与它一致,但那是概率性的,不能当断言。
 #
-# 做法:真建一个 MatchHost(真地图 + 真 WorldBuilder 碰撞),但 **role_peers 传空** ——
+# 做法:实际创建一个 MatchHost(真地图 + 真 WorldBuilder 碰撞),但 **role_peers 传空** ——
 # 于是不建玩家、不排 peer、所有 rpc_id 都无对象(notify_direct_hit 因此静默提前返回,
 # 不会在无多人连接时尝试发包报错)。玩家由本探针自己摆进 host.players,可控且确定。
 #

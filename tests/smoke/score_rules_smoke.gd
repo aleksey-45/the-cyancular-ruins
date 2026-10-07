@@ -1,15 +1,9 @@
 extends SceneTree
 
-# 计分口径的**性质**冒烟(纯逻辑,无 autoload)。
-# 跑法: source tests/env.sh && "$GODOT" --headless --path . -s res://tests/smoke/score_rules_smoke.gd
-# 通过 = `SCORE RULES: ALL-OK` 退出 0。
-#
-# 注意： 本文件**刻意不钉权重数值**(100/50/5/50/100 是首版默认值、预期会被调,见 spec §3.2),
-#   钉的是**性质**:击杀更多  ->  ACS 更高 / 死亡更多  ->  ACS 更低 / 惩罚  ->  ACS 更低 /
-#   助攻  ->  ACS 更高 / **伤害只被计入一次**。
-#   调权重不该让本文件变红;把某一项从公式里删掉**必须**让它变红(见 Task 3 Step 1 的反证)。
-#
-# - 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() → 进程永久挂起。
+# 对局得分与排名计算规则冒烟测试：
+# 验证纯逻辑层面的击杀得分、团队计分规则、自伤/队友伤害过滤以及 MVP 计算逻辑。
+# 运行方式：
+#   source tests/env.sh && "$GODOT" --headless --path . -s res://tests/smoke/score_rules_smoke.gd
 
 func _initialize() -> void:
 	var script = load("res://core/sim/score_rules.gd")

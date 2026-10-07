@@ -1,6 +1,6 @@
 extends Node
 
-# 回局真链路探针的**观察者**(每端一个,挂在 root 上;换场不会把它带走)。
+# 回局真实网络链路探针的**观察者**(每端一个,挂在 root 上;换场不会把它带走)。
 # 三端各跑一条剧本:
 #   c1 = actor:建房 → 开局 → 进 pvp_game → 到 PLAYING → **ESC + 点「回到主菜单」** →
 #        **按主菜单上那颗「多 人 模 式」**(生产入口)→ 在房间列表里点自己那间房那一行 → 回到**原局**。
@@ -14,10 +14,10 @@ extends Node
 #             那一局"的唯一客观证据:离场期间客户端断着、一条广播都收不到。
 #        - 不拿 instance_id 做断言:路径乙**会重建场景**,节点 ID 必然不同 —— 服务端那具身体
 #          确实没销毁,但客户端**观测不到**它,写成断言就是伪断言。服务端身体未销毁由
-#          `tests/probe/reconnect_probe` 阶段 1(路径甲,不重建场景)钉住。
+#          `tests/probe/reconnect_probe` 阶段 1(路径甲,不重建场景)严格校验。
 #        注意： **两次进场都走生产入口** = 按主菜单上那颗「多 人 模 式」(`main_menu.gd` 里
 #          `PvpSession.reset()` + `change_scene_to_file(mp_lobby.tscn)`),
-#          再由**生产那条 `change_scene_to_file`** 建出真大厅页 —— 本端只在页 `_ready` **之前**
+#          再由**生产那条 `change_scene_to_file`** 建出实际大厅页 —— 本端只在页 `_ready` **之前**
 #          预置"已连着本探针大厅"(`_on_node_added`;生产连的是默认端口 7777,本探针不能碰)。
 #        注意：-  这里**曾经**写着「主菜单那几步只是换场,不承载判据」并用 `_attach_page_in`
 #          **直接挂页** —— 那句话是**错的**,而且正好错在核心约束的那一步:主菜单那三个联机按钮
@@ -32,7 +32,7 @@ extends Node
 #          / 快照连续。没有这几条,c1 那边"回到的是**同一局**"就没有第二个人作证。
 #   c3 = 第三人:**只连大厅**:①列表里看得见这个房(in_match=true)②加入被拒。
 #        - ② 是用户明确提示的要求("C 可以看到 A 与 B 的房间,尽管无论在对战还是掉线 C 都不应该进去")
-#          —— 服务端的 `join_room` 守卫由这一条在**真链路**上验一次。
+#          —— 服务端的 `join_room` 守卫由这一条在**真实网络链路**上验一次。
 #        - 它同时是 c1 那一行的**反向对照**:同一行、同一份载荷,c3 手里没有凭据  ->  客户端不该
 #          把它变可点(本端断言:那一行 `disabled == true`)。
 # 失败时把结果写进 `user://rejoin_probe_<who>.result`(子进程 stdout 父进程看不到)。
@@ -62,7 +62,7 @@ extends Node
 #      有一条保底处理修复(重连 29300 + 把地址框拨回来),两条路都不碰 7777。
 #   ④ `_page` 一律用 `is_instance_valid` 判死活(brief 在 `_tick_c2` 里只判 `== null`):
 #      换场后 `_page` 是**已释放对象**,对已释放对象取字段会抛
-#      `Invalid access … previously freed`(本仓实测踩过,见 team_match_watcher 文件头)。
+#      `Invalid access … previously freed`(规避历史已知问题)。
 #   ⑤ `_rec` 的读数**要活到结果文件里**(brief 的 `_finish` 用 WRITE 打开结果文件 → 之前 `_rec`
 #      写进去的行全被截掉,读日志的人拿不到任何中间读数)。
 #   ⑥ c3 那条"看到了对局中的房"原来是 `_fail(...)` 后紧跟一条**无条件** `_ok(...)` —— 同一件事
@@ -359,13 +359,14 @@ func on_create() -> void:
 
 
 func on_refresh() -> void:
-	_page.call("_on_refresh_pressed")
+	# 调用基类房间列表刷新接口 LobbyPage._request_list
+	_page.call("_request_list", "已刷新房间列表")
 
 
 # 周期性点一次「刷新列表」(**真按钮回调**)。-  见文件头偏离②:列表是请求/响应式的,挂页那
 # 1~2 次请求常常落在"房还没建 / 对局还没开"之前;不补这一梯,c2 与 c3 会永远停在空列表上
 # (brief 里没有这条梯)。
-# - `can_send_to_server()` 那道闸不是可选的:页的 `_with_lobby` 在**未连**时会落到
+# - `can_send_to_server()` 该校验门禁不是可选的:页的 `_with_lobby` 在**未连**时会落到
 #   `NetBus.start_client(addr)`(**默认端口 7777**)—— 那是用户自己的服务端,本探针不碰。
 func _tick_refresh(delta: float, done: bool) -> void:
 	if done or not is_instance_valid(_page) or not NetBus.can_send_to_server():
@@ -374,7 +375,7 @@ func _tick_refresh(delta: float, done: bool) -> void:
 	if _refresh_t > 0.0:
 		return
 	_refresh_t = REFRESH_EVERY
-	_page.call("_on_refresh_pressed")
+	_page.call("_request_list", "已刷新房间列表")
 
 
 # 在房间网格里按**房号**找那一张房卡(mp_lobby 把房号记在卡的 `meta("code")` 上,卡本体
@@ -616,7 +617,7 @@ func _tick_c1(delta: float) -> void:
 
 # 把大厅连接接回**本探针的大厅**(偏离③:页自己的重连路径永远按默认端口 7777 走,
 # 那是用户自己的服务端,本探针不碰)。-  **可重入**:开局前要接一次;而回主菜单后若页还是
-# 走了慢路(它 `NetBus.stop()` + 按默认端口重连),还要再接一次 —— 故这里**不设一次性闸**。
+# 走了慢路(它 `NetBus.stop()` + 按默认端口重连),还要再接一次 —— 故这里**不设单次判定门禁**。
 # - 判据是**当下的连接**(`can_send_to_server()`),不是 `_lobby_back` 那个"曾经连上过"的闩:
 #   ESC 回主菜单那条路会 `NetBus.stop()`(`PauseMenu.go_menu` 对 PvP 无条件断连 —— 那正是
 #   worker 把身体送进宽限期的方式),而 `_lobby_back` 还停在 true。

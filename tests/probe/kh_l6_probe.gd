@@ -18,7 +18,7 @@ extends ProbeBase
 #    注意： 2026-09-21 订正(实测,取代本行原先那句"中途报错就**不会**打印 ALL-OK" —— **那句话
 #    已被推翻**):脚本错误(解析失败/`get_node` 取不到节点/在 null 上调用方法)**只让出错的那个
 #    函数当场结束、调用方继续**  ->  出错在 helper 或 `_run()` 里时 **ALL-OK 照常打印**,后面那些
-#    断言被**静默跳过**(**虚假通过（未有效测试）**,比"没跑完"危险);"一行都不打印"只对出错在 `_ready()`
+#    断言被**静默跳过**(**测试漏检**,比"没跑完"危险);"一行都不打印"只对出错在 `_ready()`
 #    **自己身上**成立。权威表述在 `tests/lib/probe_base.gd` 的文件头(那份是全仓源码级探针的
 #    公共契约 —— 六份探针的文件头里还有同一句过期说法,留给后续统一那一趟,别在这儿各自表述)。
 #
@@ -41,7 +41,7 @@ extends ProbeBase
 #   4  note_input(seq, pkt) —— B5:删除 → restore 后无法重放重对齐
 #   5  ~~LOCAL_PREDICTION_ENABLED 常量 + _ready 两条分支~~ **已随批次 5 删除**
 #   6  ~~set_server_rendered(true) 必须受预测开关守卫~~ **已随批次 5 删除**
-#      (两条钉的是"保底路径的存在形式",而那条路径本身已删除 —— 留着就是一台要么永远红、
+#      (两条钉的是"保底路径的存在形式",而那条路径本身已删除 —— 留着就是一台要么持续报错失败、
 #       要么永远绿的门。接替它们的是 tests/probe/royale_c2_probe 的 A①「生产目录零残留」,**无条件**)
 #   7  输入锁统一集中处理入口 _round_locked or _menu_open —— B7/B9:菜单开着仍能跑动开枪
 #   8  _pause_menu 是字段且接 toggled —— B10:不持句柄不接信号 → 锁失效
@@ -106,7 +106,7 @@ func _read_host_union() -> String:
 
 # 生产目录(第 13 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
 const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
-# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 虚假通过（未有效测试）"
+# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 测试漏检"
 const MIN_PROD_FILES := 40
 
 # ── 扫描针(碎片拼接:见文件头「自伤防护」)──────────────────────────
@@ -316,7 +316,7 @@ func _self_test_snapshot_judge() -> void:
 # 故顺序锚取**本帧输入上报之前**(组包/发送)——那正是"本帧步进前"在本文件内可观测的那一半。
 # - 两处"判据取机械形式"的说明:
 #   - **组包锚点由 `var X := {` 推导**(与 #1/#4 同一个 _packet_decl),**不写死变量名 `pkt`**:
-#     重命名组包变量是后续任务的合法加法,写死字面量会让它**虚假失败（测试用例误报）**(正是本探针要避免的失败类)。
+#     重命名组包变量是后续任务的合法加法,写死字面量会让它**测试误报**(正是本探针要避免的失败类)。
 #     "发给服务器的不是带 seq 的那个字典"由 #1/#4 的实参比对判红,不靠这里写死。
 #   - **note_post_step 必须先于 reconcile**(本条注释里那句"先记预测态,reconcile 才比得上
 #     ring[C]"的**顺序**部分):只查"两个调用都在同一函数里"会让互换过的那对过关 —— 先
@@ -375,7 +375,7 @@ func _check_c2_frame_block() -> void:
 # - 组包锚点与 #1 **同源**(同一个 _packet_anchor:_packet_varname,优先 pack_record 调用行、
 #   回退承载 `"seq": _input_seq` 的旧字典行),**不取「note_input 上方最近的字典声明」**:
 #   那样锚点会被组包之后、调用之前插入的任何无关字典字面量抢走 → 重命名/重组组包这类**合法加法**
-#   会让本条虚假失败（测试用例误报）(与 #3 的组包锚点同一条理由:判红只靠"实参不是那个包变量"这条机械比对,
+#   会让本条测试误报(与 #3 的组包锚点同一条理由:判红只靠"实参不是那个包变量"这条机械比对,
 #   不靠锚点碰巧落在谁头上)。
 func _check_note_input() -> void:
 	var before := _failures.size()
@@ -537,7 +537,7 @@ func _check_royale_match_over_menu_kill() -> void:
 # 子节点 → `_ready` 里 `_set_broadcast` 解引用 null → **硬崩溃**。KH 的 pvp_hud.gd 是代码
 # 建节点的另一套,两者不可混搭。
 # 判据四层:preload(...).instantiate() as PvpHud 在位;全文无 PvpHud.new(;被 preload 的
-# **资源真的存在**(字符串在位而资源被删/改名 = 虚假通过（未有效测试）);脚本要的子节点 tscn 里都声明了
+# **资源真的存在**(字符串在位而资源被删/改名 = 测试漏检);脚本要的子节点 tscn 里都声明了
 # (证明"声明式契约"仍成立 —— 否则那句"混搭会崩"的因果就变了)。
 func _check_hud_declarative() -> void:
 	var before := _failures.size()
@@ -593,7 +593,7 @@ func _check_beam_routing() -> void:
 	# 为什么不能整文件 co-occurrence:该文件里 `NetBus.rpc_id(` 到处都有、`"beam_fired"` 只一处,
 	# 于是 `NetBusExt.rpc_id(peer_by_role[r], "beam_fired", rep)` —— 正是本断言注释里明确提示的那处
 	# **有意的不对称** —— 会**测试全部通过**通过,而收端 NetBus 订阅此时已是静默 no-op。
-	# 取"同行"而非固定实参文本:广播表达式怎么改(peer 怎么取、rep 怎么组)都不虚假失败（测试用例误报）。
+	# 取"同行"而非固定实参文本:广播表达式怎么改(peer 怎么取、rep 怎么组)都不测试误报。
 	var mh := _code_view(_read_host_union())
 	# - 必须写成 `% [MH_PATHS]`:MH_PATHS 是**数组**,直接用 `% MH_PATHS` 会被当成
 	# "实参表"展开 —— 5 个元素对 1 个 %s → `String formatting error: not all arguments
@@ -665,7 +665,7 @@ func _check_beam_routing() -> void:
 #   - 大小写/路径拼法之外的东西(例如"定时器 lambda 里到点再求 `get_tree()` 会得 null"这一
 #     U4 隐患**本身**)不作机械断言:本断言只要求换场调用与**小写**路径在场,不仲裁实参来源。
 #
-# - 路径的可接受拼法(不虚假失败（测试用例误报）后续任务的**正确**修法):内联小写字面量,或值逐字小写的
+# - 路径的可接受拼法(不测试误报后续任务的**正确**修法):内联小写字面量,或值逐字小写的
 #   **文件级常量**(见 _menu_path_needles);且**不锚 `get_tree()` 的实参位置**(见
 #   _safe_call_menu_path)——"先 `var tree := get_tree()` 再在定时器 lambda 里
 #   `safe_change_scene(tree, …)`"是兄弟场景 royale_game.gd 的推荐修法,必须绿。
@@ -687,7 +687,7 @@ func _check_exit_paths() -> void:
 		var pm_lines := pm.split("\n")
 		var pm_needles := _menu_path_needles(pm_lines)
 		# ⚠ 消息里的旧菜单名**碎片拼接**(见文件头「自伤防护」):kh_l4_probe 的「零引用」扫描
-		# 含 tests/,整段写出来会被它当成本文件对退役菜单的引用 → 那条断言虚假失败（测试用例误报）(实测过)。
+		# 含 tests/,整段写出来会被它当成本文件对退役菜单的引用 → 那条断言测试误报(实测过)。
 		# 拼接后的人读文本与该条消息原文逐字一致,只是源码层不再是整段字面量。
 		# 括号不可省:`%` 的优先级高于 `+`,不括起来格式化只会作用到后半段碎片。
 		_check(_safe_call_menu_path(pm_lines, pm_needles) != "",
@@ -700,7 +700,7 @@ func _check_exit_paths() -> void:
 	#   **基类** `_leave_to_main_menu` —— 故这一条走 `_body_anywhere`(找不到就回落到 BASE),
 	#   不再是 `_func_body(_pc_code, …)`。③ 对手离开那条**一字不动**(它 2.5s 的定时器本计划没动)。
 	# - needle 的来源仍是 `_pc_lines`:③ 那一支的 `"res://scenes/main_menu.tscn"` 还在本文件里,
-	#   且 `_menu_path_needles` 的第一项**恒为**该内联字面量  ->  needles 永不为空(不会静默失明)。
+	#   且 `_menu_path_needles` 的第一项**恒为**该内联字面量  ->  needles 永不为空(不会失去防护校验作用)。
 	var needles := _menu_path_needles(_pc_lines)
 	for spec in [[N_LEAVE_FN, "② MATCH_OVER 退场(基类;结算页 → 主菜单)"], ["_on" + "_opponent_left", "③ 对手离开定时器"]]:
 		var fn := str(spec[0])
@@ -811,7 +811,7 @@ func _check_name_color() -> void:
 		_check(_pc_lines[i_const].contains("Color("), "`%s` 不是 Color 字面量:「%s」" % [N_NAME_COLOR, _pc_lines[i_const].strip_edges()])
 	for spec in [["nm_self", "自己"], ["nm_opp", "对手"]]:
 		# - 2026-10-02 降精度:原钉逐字 `set_label(nm_self, NAME_COLOR)` —— helper 名 / 空格 /
-		#   调用形状(改成 .modulate 等)一改就虚假失败（测试用例误报）。改判"**那个标签上色的那一行引用了
+		#   调用形状(改成 .modulate 等)一改就测试误报。改判"**那个标签上色的那一行引用了
 		#   NAME_COLOR**"(同一行的变量名 + 常量同现即可,不问用什么口上色)。
 		# 要拦的变异:把某个标签改用别的颜色(如 ROLE_COLOR) ->  那行不再含 NAME_COLOR → 红
 		# (U1 的"头顶名统一中性亮白"被悄悄回退)。
@@ -978,11 +978,11 @@ func _find_line_re(lines: PackedStringArray, pattern: String) -> int:
 	return -1
 
 
-# ── "小写菜单路径"的合法拼法(Minor 8:不虚假失败（测试用例误报）后续任务的正确修法)─────────────
+# ── "小写菜单路径"的合法拼法(Minor 8:不测试误报后续任务的正确修法)─────────────
 # ① 内联小写字面量 `"res://scenes/main_menu.tscn"`;
 # ② **文件级常量**(`const X := "res://scenes/main_menu.tscn"`,值必须**逐字小写**)的**名字**。
 # 把路径抽成常量是等价正确修法(定时器 lambda 里到点再求 `get_tree()` 会得 null,兄弟场景
-# royale_game.gd 的推荐修法),不虚假失败（测试用例误报）;但常量值写成大写 `res://Scenes/…` 依然红 —— 大小写
+# royale_game.gd 的推荐修法),不测试误报;但常量值写成大写 `res://Scenes/…` 依然红 —— 大小写
 # 要求对两种拼法**一视同仁**(另有 (a) 的全文件大写零命中保底处理)。
 # ⚠ 已知边界:只认**本文件**的文件级常量;把路径挪到别的模块再 `Other.PATH` 引用不在覆盖内。
 func _menu_path_needles(lines: PackedStringArray) -> Array[String]:
@@ -1031,7 +1031,7 @@ func _safe_call_menu_path(lines: PackedStringArray, needles: Array[String]) -> S
 
 # 组包字典声明处的 {行号, 变量名}(找不到返回 {-1, ""})。
 # 与 _packet_var 同一个正则、同一套推导,故全探针的"变量名"都以 `var X := {` 为准:
-# 重命名组包变量是合法加法(**不虚假失败（测试用例误报）**),而"发出去的不是带 seq 的那个字典"由实参比对判红。
+# 重命名组包变量是合法加法(**不测试误报**),而"发出去的不是带 seq 的那个字典"由实参比对判红。
 func _packet_decl(lines: PackedStringArray, before: int) -> Dictionary:
 	var re := RegEx.new()
 	re.compile(RE_PACKET_DICT)

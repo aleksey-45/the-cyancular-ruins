@@ -8,7 +8,7 @@ extends Node
 # ═══ 为什么需要它 ═══
 # 注意： 等待室的实暴露异常状**静默无报错**:三个模式共用**一个**面板,按 `mode` 分支清空重填。
 #    - "少清一次"  ->  上一个模式的名单**叠在新名单上**(3+1 行,没人报错);
-#    - "少登记一次 meta"  ->  探针数不出名单行,只能遍历所有 Label 猜(极易虚假通过（未有效测试）);
+#    - "少登记一次 meta"  ->  探针数不出名单行,只能遍历所有 Label 猜(极易测试漏检);
 #    - "少连一颗按钮" / "少接一条 handler"  ->  那颗按钮画在屏上、按下去毫无反应。
 #    三类都没有任何运行时信号 —— 只有断言看得见。
 # - (a)(b) 两张接线表(四条 `_show_wait_room` 调用点、`_hide_wait_room` 的唯一调用点
@@ -118,7 +118,7 @@ func _phase_royale(packed: PackedScene) -> void:
 			"⑥ 大乱斗房间状态 ⇒ 等待室可见 + 标题含房号(实得「%s」)" % _title_text(p))
 
 	# ⑦ (brief 3) 名单行数 == 载荷 players 条数。-  判据是每行上的 `roster_row` meta
-	#    (brief (c))—— 靠"遍历所有 Label"会把标题/人数行一起数进来,极易虚假通过（未有效测试）。
+	#    (brief (c))—— 靠"遍历所有 Label"会把标题/人数行一起数进来,极易测试漏检。
 	_check(_roster_rows(p._wait_panel).size() == 3,
 			"⑦ 大乱斗:名单行数 == players 条数(期望 3,实得 %d)" % _roster_rows(p._wait_panel).size())
 
@@ -139,7 +139,7 @@ func _phase_royale(packed: PackedScene) -> void:
 					% _roster_rows(p._wait_panel).size())
 
 	# ⑩ (brief 5 的正向对照,大乱斗那一半) 房主(host_role == your_role) ->  开始游戏可见。
-	#    - 缺了这一条,⑨ 可以被一个"永远不可见"的实现通过 —— 两条一起才钉住"按 host_role 判"。
+	#    - 缺了这一条,⑨ 可以被一个"永远不可见"的实现通过 —— 两条一起才严格校验"按 host_role 判"。
 	_check(_find_button(p._wait_panel, "开 始 游 戏").visible, "⑩ 大乱斗房主:开始游戏可见")
 	p.free()
 
@@ -185,7 +185,7 @@ func _phase_team(packed: PackedScene) -> void:
 	p.call("_on_room_state_team", full)
 	_check(_find_button(p._wait_panel, "开 始 游 戏").visible, "⑯ 3v3 房主 + 两队各满:开始游戏可见")
 
-	# ⑯b 反向:两队各满但**不是房主**  ->  不可见(把上一条的"房主"那一半也钉住)。
+	# ⑯b 反向:两队各满但**不是房主**  ->  不可见(把上一条的"房主"那一半也严格校验)。
 	var full2 := _team_state_pick("1357", [
 			["甲", 1, 1], ["丙", 5, 1], ["戊", 6, 1],
 			["乙", 3, 2], ["丁", 4, 2], ["己", 7, 2]], 3, 1, 3)
@@ -193,7 +193,7 @@ func _phase_team(packed: PackedScene) -> void:
 	_check(not _find_button(p._wait_panel, "开 始 游 戏").visible,
 			"⑯b 3v3 两队各满但非房主:开始游戏仍不可见")
 
-	# ⑯c 反向:房主但**两队没满**  ->  不可见(把"两队各满"那一半也钉住)。
+	# ⑯c 反向:房主但**两队没满**  ->  不可见(把"两队各满"那一半也严格校验)。
 	#     - 缺了它,一个"房主恒见开始"的实现能过 ⑯ —— 那颗按钮把人送进服务端 `team_start`
 	#       的满员守卫(点了没反应),而屏上看着"可以开了";本探针也会**测试全部通过**。
 	var mid := _team_state_pick("1357", [["甲", 1, 1], ["乙", 3, 2]], 1, 1, 3)

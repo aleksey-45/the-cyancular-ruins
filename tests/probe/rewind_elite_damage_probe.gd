@@ -63,7 +63,7 @@ func _run() -> void:
 	# 子弹:从精英体内起飞、向远处飞(回溯时会倒回来穿过它)。
 	# - `collision_mask = 0`:不让它跟世界碰撞 —— 见文件头,出生在体内的子弹**一个物理帧**就没了
 	#   (16.7ms),小于 1/SNAP_HZ(50ms)的采样周期  ->  录制器大概率整段看不到它。本探针要验的是
-	#   **判定**(`_rewind_elite_hits`),不该被"试样活不过一个采样周期"搅成虚假失败（测试用例误报）。
+	#   **判定**(`_rewind_elite_hits`),不该被"试样活不过一个采样周期"搅成测试误报。
 	var b: Node2D = (load("res://scenes/weapons/bullet.tscn") as PackedScene).instantiate()
 	vp.add_child(b)
 	b.global_position = bird.global_position + Vector2(20, 0)   # 紧贴精英起飞:正向穿一次(正常命中),回溯再穿=二次伤害

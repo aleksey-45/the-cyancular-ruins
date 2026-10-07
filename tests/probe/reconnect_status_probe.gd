@@ -6,14 +6,14 @@ extends Node
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/reconnect_status_probe.tscn
 # 判据:末行 `KH RECON-UI PROBE: ALL-OK`(grep 文本,不看退出码)。
 #
-# ═══ 它守什么、为什么不能只靠真链路探针 ═══
+# ═══ 它守什么、为什么不能只靠真实网络链路探针 ═══
 # 本批四处改动的**接线**全都是"删掉不报错"的那一类:
 #   - `server_main._notify_opponent_left()` 少调一次  ->  服务端不发,客户端看不出任何异常;
 #   - `pvp_game._on_opponent_left` 少调 `_cancel_reconnect()`  ->  **只有**在"断开先到"那一半
-#     时序里才暴露异常(竞态,真链路探针跑十次未必撞上一次);
+#     时序里才暴露异常(竞态,真实网络链路探针跑十次未必撞上一次);
 #   - `pvp_match_client._subscribe_reconnect()` 少建横幅  ->  三个模式一起静默没有提示;
 #   - 三个 `round_state` 生产者漏走 `_send_round_state()`  ->  `grace` 字段时有时无。
-# 真链路探针(`reconnect_probe`)跑一次 ~72s 且要起子进程;本探针 **2 秒内跑完、不起子进程、
+# 真实网络链路探针(`reconnect_probe`)跑一次 ~72s 且要起子进程;本探针 **2 秒内跑完、不起子进程、
 # 不占端口**,把上面那些接线变成机械可查的文本断言 + 两条真行为断言。
 #
 # - 断言计数(见 tests/lib/probe_base.gd 文件头:ALL-OK 只证明"没有失败",**不证明"都跑过"**)。
@@ -168,7 +168,7 @@ func _check_cancel_wiring() -> void:
 
 
 # ── 阶段 3:横幅的行为面(建得出来、层位对、能显能收)──
-# - 它**必须真建一个** PvpMatchClient 子类实例:纯源码断言拦不住"`.new()` 出来的 layer 是 1"
+# - 它**必须实际创建一个** PvpMatchClient 子类实例:纯源码断言拦不住"`.new()` 出来的 layer 是 1"
 #   这一类 —— 而那正是这条横幅最容易踩、且**完全静默**的坑(层位只住在 .tscn 里)。
 # - 用桩子而不是真 `pvp_game.tscn`:真场景会建整个世界 + 连 NetBus 发 `match_sync`,
 #   而本阶段要验的只是"横幅挂上去了没有、层位对不对"。桩子只提供基类的那一段接线。
@@ -180,7 +180,7 @@ func _check_status_banner() -> void:
 	var stub := ClientStub.new()
 	add_child(stub)
 	# - 本阶段是**自己调** `_subscribe_reconnect()` 来验行为面的 —— 那**证明不了生产里有人调它**,
-	#   三个模式各自的 `_ready` 那一半由**阶段 5**的源码断言钉着(Phase 3 复核时这里曾写着
+	#   三个模式各自的 `_ready` 那一半由**阶段 5**的源码断言负责校验(Phase 3 复核时这里曾写着
 	#   "Task 2 的守卫另有源码断言钉着这一点",而**当时并不存在那条断言** —— 那正是阶段 5补的洞)。
 	stub._subscribe_reconnect()
 	var banner := stub.get_node_or_null("StatusBanner") as StatusBanner
@@ -215,7 +215,7 @@ func _check_status_banner() -> void:
 	# 注意： 几何(§Fix 1):**居中是真的能被断言的**。用**最长的那条生产文案**(倒计时到点那一句)
 	#   量,因为宽度最大的那一档才是"会不会压到别的东西"的判据。
 	#   - 这一相是 headless 的:层的 `layer` 与控件矩形都不需要渲染器,`get_global_rect()` 在
-	#     headless 下给的就是布局算出来的矩形(视口 = 项目设置 1920×1440)。真渲染那一半
+	#     headless 下给的就是布局算出来的矩形(视口 = 项目设置 1920×1440)。真实视口渲染那一半
 	#     (像素、颜色)不在本探针的射程内 —— 那类要显示器,归用户。
 	var vw := get_viewport().get_visible_rect().size.x
 	var rect := banner._panel.get_global_rect()
@@ -247,7 +247,7 @@ func _check_status_banner() -> void:
 
 # ── 阶段 4:横幅的**驱动点**真的驱动了它(源码面,**全集由源码推导**)──
 # 行为面只能验"设了文字会显示",验不了"状态机在那些转折点上真的调了它" ——
-# 后者是"删掉不报错"的一类,必须机械钉住。
+# 后者是"删掉不报错"的一类,必须机械严格校验。
 # 注意： 为什么**不手抄函数名**:手抄名单漏掉**第六个**转折点时一条断言都不会红(它只会"更可能"
 #    被发现,不是"不可能漏掉")。这里改成**推导**:
 #      - 转折点全集 = 「函数体里给 `_reconnecting` 赋值的函数」 —— 那正是"进 / 出重连态"
@@ -309,7 +309,7 @@ func _check_status_call_sites() -> void:
 # ── 阶段 5:三个模式的**生产入口**(源码面)──
 # - 阶段 3 是**自己调** `_subscribe_reconnect()` 验行为 —— 它证明不了生产里有人调。三个模式各自
 #   在 `_ready` 里调一次,漏一个  ->  **那个模式**静默没有横幅,而阶段 3保持测试通过(2026-09-28 复核:
-#   这里原先只有一句"另有源码断言钉着",**那条断言当时并不存在**)。
+#   这里原先只有一句"另有源码断言负责校验",**那条断言当时并不存在**)。
 func _check_subscribe_wiring() -> void:
 	for p in CLIENTS:
 		_check(_body(p, "_ready").contains("_subscribe_reconnect("),
@@ -353,7 +353,7 @@ func _check_hud_consumers() -> void:
 	# 注意： 这一相**仍看不见什么**(照实登记,别把它读成"「掉线」那一档已被守卫盖住"):
 	#    上面两条都是**函数体内的文本共现**,控制流一概看不见 —— 用 `if false:` 包住整支、
 	#    或把 `col` 算完再在下游整体覆写,两条**照样测试全部通过**。
-	#    真正钉住"这一档在**画面上**真的生效"的是**用户跑的真渲染探针**
+	#    真正严格校验"这一档在**画面上**真的生效"的是**用户跑的真实视口渲染探针**
 	#    (`tests/probe/combat_hud_visual_probe.gd` 的态8:数像素差 + 念出「掉线 42s」+ 量文本宽度)。
 	#    headless 这一侧**没有**等价物(本探针不看像素),故这条缺口是**登记的**,不是"已闭合"。
 	_check(not _code(TEAM_HUD).contains("grace"),
@@ -365,7 +365,7 @@ func _check_hud_consumers() -> void:
 # 注意： "**调用点**视图" = 函数体**剥掉签名行**。签名行不是调用点:`func _set_status(text: String)`
 #    里那一处 `_set_status(` 是**定义**,不是"谁调了它"。
 #    不剥的话 `_set_status` 自己被算成自己的调用者,而它显然不碰 `_reconnecting`、形参也不是
-#    字面量  ->  ④c 与 ④d **双双虚假失败（测试用例误报）**(2026-09-28 复核批实测:那两条虚假失败（测试用例误报）就是它)。
+#    字面量  ->  ④c 与 ④d **双双测试误报**(2026-09-28 复核批实测:那两条测试误报就是它)。
 # - 为什么是"剥签名行"而不是"把 `_set_status` 加进一张例外名单":`ScanUtil.func_body` 的返回
 #   一律**以签名行开头**,故"第一行不是调用点"对**任何**函数名都成立,与被扫的是谁无关 ——
 #   这是一条**推导**,不是一张**手抄名单**(手抄名单漏名字的失效模式正是阶段 4改成推导要躲的那一个;

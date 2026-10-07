@@ -3,7 +3,7 @@ extends Node
 # 三个模式的逐人统计**写入与投递**守卫。
 # 注意： 2026-09-26(终审 重要 1):3v3 的那一半原先只是 `tests/probe/team_host_probe` ⑬g 的**三条
 #   `contains` 文本断言**,本文件那句"(3v3 的那一半在 team_host_probe ⑬g)"把**两种强度不同**
-#   的守卫说成了等价 —— 而本文件头注自己刚宣布那种强度是已知虚假通过（未有效测试）(F1)。实测:把
+#   的守卫说成了等价 —— 而本文件头注自己刚宣布那种强度是已知测试漏检(F1)。实测:把
 #   `TeamHost._broadcast_round_state` 的 `_rpc_all("round_state", [data])` 提到挂载
 #   `stats`/`mvp` 之前  ->  `TEAM HOST: ALL-OK`(175 ok)/`STATS DELIVERY: ALL-OK`(34 ok)/
 #   `KH HUD PROBE: ALL-OK` **三条测试全部通过**,而 3v3 客户端收到的是**两个键都没有**的终局帧
@@ -14,7 +14,7 @@ extends Node
 # 判据: 文本 `STATS DELIVERY: ALL-OK`(**不看退出码** —— 探针挂住时 --quit-after 到期仍 exit 0)。
 #
 # ═══ 为什么需要它 ═══
-# "数值"那一半**真建宿主**、走生产倒地边沿后读逐人表;"投递"那一半(⑤)则把**真正要发出去的
+# "数值"那一半**实际创建宿主实例**、走生产倒地边沿后读逐人表;"投递"那一半(⑤)则把**真正要发出去的
 # `round_state` 字典**截获下来 —— 覆写 `_rpc_all`(见 `RpcPayload` 的注释)。
 # - 两半缺一不可:只断数值  ->  键没挂上去(客户端永远收不到)照样测试全部通过;只断投递  ->  数值算错也测试全部通过。
 #
@@ -36,8 +36,8 @@ extends Node
 #    详见 ③ 段的注释。
 #
 # - 宿主构造走本仓既有手法(`match_host_hygiene_probe` / `team_host_probe`):
-#   真建宿主、`role_peers` 传空、玩家手工摆位、显式补调生产的 `_wire_hit_feedback()`。
-# - 段数对账(本仓"虚假通过（未有效测试）"纪律:`ALL-OK` 只证明"没有断言失败",不证明"该跑的断言都跑过")
+#   实际创建宿主实例、`role_peers` 传空、玩家手工摆位、显式补调生产的 `_wire_hit_feedback()`。
+# - 段数对账(本仓"测试漏检"纪律:`ALL-OK` 只证明"没有断言失败",不证明"该跑的断言都跑过")
 #   —— 末尾拿 `_done` 与 `CHECK_NAMES` 对账,名单不全即红。
 
 const MAP := "res://maps/newfactory.cyrm"
@@ -75,7 +75,7 @@ var _p2_cell := Vector2i(-1, -1)
 # 注意： 唯一必须搞对的一处:**在调用时刻取快照**。`_broadcast_round_state` 先建一个 `data` 字典、
 #   再**就地**往里补 `match_winner` / `mvp` / `stats`,**最后**才 `_rpc_all("round_state", [data])`;
 #   而字典是**引用类型**  ->  覆写里只把 `args[0]` 存下来、事后再读,会看到**之后**才挂上去的键,
-#   于是"把 `_rpc_all` 提到挂载之前"那个变异下守卫**照样测试全部通过** —— 正是本次要堵的那个虚假通过（未有效测试）。
+#   于是"把 `_rpc_all` 提到挂载之前"那个变异下守卫**照样测试全部通过** —— 正是本次要堵的那个测试漏检。
 #   故 `snap()` 在**调用那一刻**就 `duplicate(true)` 一份带走。
 class RpcPayload:
 	static func snap(args: Array) -> Dictionary:
@@ -130,7 +130,7 @@ func _check(ok: bool, what: String) -> void:
 
 
 # - 必须 `await _run()` 再 `_finish()`:`_run()` 里有 `await get_tree().physics_frame`(协程),
-#   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(虚假失败（测试用例误报）)。
+#   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(测试误报)。
 func _ready() -> void:
 	# - 摆位先派生(见 `_p1_cell` 上方):缺任一个出生点就直接红、走保底处理 (-1,-1) 会让
 	#   两个玩家重合在同一个点上,几条断言随之静默变松。
@@ -362,7 +362,7 @@ func _check_duel_bullet_path() -> void:
 	var hp0 := int(victim.get("hp"))
 	_fire_bullet_at(host, shooter, victim)
 	# 夹具自检:命中必须真的发生。少了它,万一子弹没进 `bullet` 组/没走到裁决,
-	# 下面两条会因为 `dealt`/`taken` **两边都是 0** 而以"期望 +7 实得 +0"报红(不会虚假通过（未有效测试）),
+	# 下面两条会因为 `dealt`/`taken` **两边都是 0** 而以"期望 +7 实得 +0"报红(不会测试漏检),
 	# 但报的是"没打中",不是"归因缺了" —— 自检把这两种成因分开。
 	_check(int(victim.get("hp")) < hp0,
 			("★ ⑦(a) 夹具自检:子弹必须真的命中(受害者 hp %d → %d)"
@@ -457,7 +457,7 @@ func _check_royale_phase() -> void:
 	#   - 订正（评审复核实测）：初稿还举了"记到一个**表外** role 上"当理由 —— **举错了**：
 	#     那种实现下正确的 role 2 拿到 0 笔，**"role 2 == 1" 的固定断言照样会红**（隔离株 M99 实测）。
 	#   代价（登记在此，按本仓"belt 的代价记在守卫处"的惯例）：将来大乱斗若出现
-	#   **一次倒地合法地记多笔击杀**的规则，这条会**虚假失败（测试用例误报）** —— 今天没有这条规则。
+	#   **一次倒地合法地记多笔击杀**的规则，这条会**测试误报** —— 今天没有这条规则。
 	_check(_kills_table(host) == ["role 2=1"],
 			("★ ③ 大乱斗:有归因的击杀**恰好**记给归因射手(整表 kills 非零者 = %s,期望"
 			+ " ['role 2=1'])—— 两个错形状落在这条上:按位置取对手(`_opponent_of(3)` 在这格"
@@ -546,7 +546,7 @@ func _check_delivery_source() -> void:
 #   现在这三件事一律按**广播件**判:截获手段见 `RpcPayload` 的注释(**调用时刻取快照**)。
 #
 # - 三个 MATCH_OVER 的判据都配了"夹具自检"(先断言真的广播过那个状态),否则"从没走到那里"
-#   会让那几条**无效操作通过** —— 那是本仓登记过的虚假通过（未有效测试）形状。
+#   会让那几条**无效操作通过** —— 那是本仓登记过的测试漏检形状。
 func _check_delivery_payload() -> void:
 	# ── (甲)1v1:`MatchRound._broadcast_round_state` ──
 	var host = CapturingDuelHost.new(MAP, {}, {})
@@ -660,7 +660,7 @@ func _check_delivery_payload() -> void:
 # 注意： 本段是"3v3 投递有守卫"这句话**唯一**的落点(替代 `team_host_probe` ⑬g 那三条文本共现 ——
 #   它们的失败模式见文件头那段实测读数)。判据与 ⑤ 逐条同形:全部读**截获帧**(调用时刻深拷贝),
 #   每一条 MATCH_OVER 判据都配一条"夹具自检",否则"从没走到那里"会让它**无效操作通过**。
-# - 夹具与其它段相同机制:真建 3v3 宿主、`role_peers` 传空、玩家手工摆位(role 1 = 1 队 / role 4 = 2 队)。
+# - 夹具与其它段相同机制:实际创建 3v3 宿主、`role_peers` 传空、玩家手工摆位(role 1 = 1 队 / role 4 = 2 队)。
 #   - 散点显式传进去(与 `team_host_probe` 相同机制;`spawns` 传空会让 `_init` 自己再 shuffle 一份)。
 #   - **本段最后跑**:建宿主会重载全局网格(`MatchHost._init` → `WorldBuilder.load_grid`),
 #     前面的段(尤其大乱斗那两份夹具的摆位)依赖它保持不动。

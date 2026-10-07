@@ -1,16 +1,9 @@
 extends Node
-# C2 孪生冒烟(scene 模式 headless,autoload 在):证明「完整状态捕获/恢复」完整——
-# B 每 K tick 被强行搞乱后再 restore_state(A 快照)+ 同输入继续,必须与从不被打断的 A 逐 tick 收敛。
-# 漏一个 capture_state 字段 → B 重放与 A 发散 → 冒烟失败(capture/restore 见 player.gd)。
-# 跑法:见 Tests/pvp_twin_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。
-# 注意:本冒烟驱动「移动/攀爬/游泳 + 周期开火」输入(开火让孪生覆盖到「回滚恢复期间开火」
-# 这个面,见 _build_plan),场景模式= autoload 已实例化(GameParameters 等)。
-# - 它**不**覆盖 C1(「restore 之后同帧打出的那一发会不会被帧末写回抹掉」)—— 那条判据
-#   靠"开火 tick 与 restore tick 交错"碰不到,必须把那个序列**构造**出来,见
-#   `tests/probe/ammo_rollback_probe.tscn`。
-#
-# 根因背景(docs/pvp-c2-retrospective.md):v1 回拉的根因之一是两端模拟不孪生 + 校正拉拢。
-# 新 C2 把「完整状态 PlayerState」作为权威格式:本冒烟先严格约束 capture_state 无漏,才谈网络协议。
+
+# 客户端状态一致性孪生比对冒烟测试：
+# 通过并行动作模拟，验证 Player 全量状态捕获（capture_state）与还原（restore_state）的无损对齐能力。
+# 运行方式：
+#   "$GODOT" --headless --path . res://tests/smoke/pvp_twin_smoke.tscn
 
 const BIT_UP := PacketInputSource.BIT_UP
 const BIT_DOWN := PacketInputSource.BIT_DOWN
@@ -71,7 +64,7 @@ func _ready() -> void:
 			waited += 1
 		if w != null and not w.is_inside_tree():
 			# - 判据是"**仍然**不在树里",不是 `waited >= 120`:循环可能在那一帧刚好等到它加入场景树,
-			#   而 `waited` 照样等于 120  ->  边界帧虚假失败（测试用例误报）(2026-09-25 复核指出)。
+			#   而 `waited` 照样等于 120  ->  边界帧测试误报(2026-09-25 复核指出)。
 			_violation = "等待武器入树超时(120 帧,current_weapon=%s)" % str(w)
 			_fail()
 			return

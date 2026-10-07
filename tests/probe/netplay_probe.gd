@@ -13,7 +13,7 @@ extends SceneTree
 #   都必须通过 `is_valid_room`,且 `room_credentials` 的输入输出一一对应。
 #
 # - 本探针**不起任何进程、不连任何端口** —— 它只读源码与跑纯函数,故可以随时跑、跑多少次都行。
-#   真链路的隧道验收(两台机器打洞)是手工项,不在自动化里假装。
+#   真实网络链路的隧道验收(两台机器打洞)是手工项,不在自动化里假装。
 
 const Tunnel := preload("res://core/net/tunnel.gd")
 const Meta := preload("res://core/config/tunnel_meta.gd")
@@ -431,7 +431,7 @@ func _read(path: String) -> String:
 	return FileAccess.get_file_as_string(path)
 
 
-# 去注释:源码级断言必须看**代码**而不是注释(解释坏写法的注释本身含那个串,算进去会让断言永远红
+# 去注释:源码级断言必须看**代码**而不是注释(解释坏写法的注释本身含那个串,算进去会让断言持续报错失败
 # —— 本仓在 kh_l5_probe 上踩过这一脚,那里也留了同样的提醒)。
 func _strip_comments(src: String) -> String:
 	var out := ""

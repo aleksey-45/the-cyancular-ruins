@@ -1,6 +1,6 @@
 extends Node
 
-# 断线重连(rc1 Task 8)的**真链路端到端探针**。场景模式(autoload 必须已实例化)。
+# 断线重连(rc1 Task 8)的**真实网络链路端到端探针**。场景模式(autoload 必须已实例化)。
 #
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 14400 res://tests/probe/reconnect_probe.tscn
@@ -35,12 +35,12 @@ extends Node
 #   w1v1  29001  真 `server_main.gd --worker --port 29001`              → c1(role1) + c2(role2)
 #   wroy  29002  真 `--worker --royale --port 29002 --roles 1,2`        → r1 + r2
 #   widle 29090  真 `--worker --royale`(一个玩家都不连)               → 阶段 6
-#   - 这三个端口**必须落在真大厅的 worker 端口池之外**,理由见下方常量区的长注释。
+#   - 这三个端口**必须落在实际大厅的 worker 端口池之外**,理由见下方常量区的长注释。
 #
 # ═══ 跑之前的前提 ═══
-#   **请确认没有真大厅在跑**(本机若有 `Cyancular Ruins Server.exe` 占着 7777,先看它是不是
-#   你要留着的那一个 —— **不要杀它**)。本探针**不占 7777**(它不自当大厅,worker 由本进程
-#   直接启动),但它的收尾**按 PID 杀子进程 + 仍保留按 UDP 端口杀 worker 保底处理**
+#   **请确认没有实际大厅在跑**(本机若有 `Cyancular Ruins Server.exe` 占着 7777,先看它是不是
+#   你要留着的那一个 —— **不要终止该进程**)。本探针**不占 7777**(它不自当大厅,worker 由本进程
+#   直接启动),但它的收尾**按 PID 杀子进程 + 仍保留按 UDP 端口终止 worker 进程 保底处理**
 #   (`ProcUtil.kill_udp_port`,见 `_kill_children`),所以"探针用的端口与别人重不重合"是真问题
 #   —— 那正是端口挪到池外要解决的事(常量区那段注释)。
 #   - **为什么 worker 由本进程直接启动,而不是走大厅**(royale_c2_probe 走 RoomManager):
@@ -98,7 +98,7 @@ const PREFIX := "reconnect_probe_"
 # ═══ 注意： 三个 worker 端口必须落在**大厅的 worker 端口池之外** ═══
 # 池的定义在 `server/worker_launcher.gd`:`WORKER_PORT_BASE = 7800`、`WORKER_PORT_SPAN = 500`
 # → 池 = **7800~8299**。本探针原先写的是 7901/7902/7990,**三个数都在池里**,而本机上常驻
-# 一个真大厅(`Cyancular Ruins Server.exe`,占 7777)—— 只要那一刻有人建房,大厅就会把**同一个
+# 一个实际大厅(`Cyancular Ruins Server.exe`,占 7777)—— 只要那一刻有人建房,大厅就会把**同一个
 # 端口**发给那局的真 worker,后果有两层,都不是"红一条断言"这个量级:
 #   ① 真 worker bind 失败当场退出 —— 别人的对局被本探针搅掉;
 #   ② 本探针收尾的 `ProcUtil.kill_udp_port(W1V1/WROY/WIDLE)` 是"按 UDP 端口找属主并强制终止进程",
@@ -133,7 +133,7 @@ const GRACE_MAX := 68.0
 # 拆格延迟(秒)的**计时起点是建局**(`MatchHost._ready`,即 COUNTDOWN 开始),而 watcher 的时钟
 # 以 **PLAYING** 为 0,两者差一个 `COUNTDOWN_TIME`(3s)。换算后要同时满足:
 #   - 晚于 actor 的闪断(PLAYING+1.6 ≈ 建局+4.6):早了 actor 还在线,会自己收到 tile_destroyed,
-#     阶段 7 ① 就变成"服务器什么都没补"的虚假通过（未有效测试）(它由 ①前置 报红,但那是诊断、不是结论);
+#     阶段 7 ① 就变成"服务器什么都没补"的测试漏检(它由 ①前置 报红,但那是诊断、不是结论);
 #   - 早于 actor 的重连状态补充同步(PLAYING+7.6 ≈ 建局+10.6):晚了状态补充同步载荷里没有这一格,① 必红。
 # 7.5 ≈ PLAYING+4.5,两侧各余 ~3s。-  这个换算**跑一次就能核** —— witness 会把收到
 # `tile_destroyed` 的 el 记进自己的日志(引擎日志两边都不带时间戳,只能这样对时)。
@@ -235,8 +235,8 @@ func _idle_tick() -> void:
 	if age >= IDLE_HIGH and not _idle_checked_flag:
 		# ① 1~3s 窗口内进程活着(**至少看到一次**,窗口内每帧都看)
 		_check(_idle_alive_ok, "相⑥:空载 worker 在就绪后 1~3s 窗口内仍活着")
-		# ② 整个观测期都不得打「全员离开,大乱斗结束」(那正是 Task 4 的自杀路径)
-		_check(not _has(_log_path("widle"), "全员离开,大乱斗结束"),
+		# ② 整个观测期内均不得打印全员离开日志（该日志仅在已开局且所有玩家退出时触发）
+		_check(not _has(_log_path("widle"), "worker: 全员离开"),
 				"相⑥:空载 worker 未打「全员离开,大乱斗结束」")
 		_idle_checked_flag = true
 	if age >= IDLE_BONUS and not _idle_bonus_ok:
@@ -443,7 +443,7 @@ func _record_pid(pid: int) -> int:
 #        - 一直攥着自己的 `user://reconnect_probe_<who>.log` → 下一跑 `_clean()` 的删除**失败**
 #          (旧代码忽略返回值,静默),新进程随即截断该文件、残留进程按旧偏移续写 → 文件里出现
 #          空洞与陈旧行(所以 `_clean()` 现在会报出来)。
-#   ② **仍保留按 UDP 端口杀 worker**:它提供容错保障"PID 记录漏了"这一档(worker 是真 ENet 绑定端口的
+#   ② **仍保留按 UDP 端口终止 worker 进程**:它提供容错保障"PID 记录漏了"这一档(worker 是真 ENet 绑定端口的
 #      那一侧),成本是两条 PowerShell,且与本仓 `tests/*.sh` 的 `taskkill + kill_port` 双保险相同机制。
 func _kill_children() -> void:
 	var killed := 0

@@ -1,44 +1,36 @@
 class_name LobbyRooms
 extends Node
 
-# 大厅的**房间账本与生命周期**(端口 7777 进程内)。房间号 → 玩家;1v1 两人就绪、大乱斗 N 人等待。
+# 大厅房间状态管理与生命周期（服务端进程内）：
+# 维护房间号到玩家连接的映射，处理房间维度的 RPC 交互及房间回收释放。
 #
-# - 职责边界(2026-09-14 拆分,方案 a:做成 Node):
-#   - 本类 = **房间状态本身** + 房间侧 RPC handler + 房间拆除统一集中处理。它是 Node,因为要用
-#     `multiplayer`(`is_peer_online` 判 peer 真能收包)与 `get_tree()`(`_release_port_later` 等一帧)。
-#     ——当初它留在大厅房间文件里搬不出去,正是因为这两样;做成节点后不再需要 back-reference。
-#   - `RoomManager` = **进程编排**(启动 Worker 子进程 + 让玩家转连)+ 定时清扫,并**持有并注入**
-#     `launcher`(端口池/worker 进程)。依赖方向单向:本类用 `launcher`,launcher 不知道本类。
-#   - 「两人凑齐 → 开局」这一步跨了边界(房间的事 + 启动 Worker 子进程 的事),故用信号
-#     `pairing_ready` 由本类通知 RoomManager 去启动 Worker 子进程 —— 避免反向引用。
-#
-# - 拆除必须走**统一集中处理入口** `teardown_room`(理由见该函数头):本层为「端口泄漏」这同一个失败
-#   模式补过三次。随房间生命周期统一集中释放 —— 它主要是清账本 + 广播,端口归还只是借 launcher。
+# 架构与模块分工：
+# - 本类（LobbyRooms）：维护房间数据结构（1v1 / 大乱斗 / 3v3）、处理客户端房间交互 RPC，
+#   并在房间满足就绪条件时通过信号通知 RoomManager。
+# - RoomManager：协调对局会话（MatchSession）的创建与结束，处理超时清理。
+# - 配对与开局通知：1v1 房间双人就绪后通过 pairing_ready 信号通知 RoomManager 开启对局。
+# - 房间销毁统一收口：通过 teardown_room 统一清理房间记录、通知客户端并触发关联对局清理。
 
-signal pairing_ready(room)   # 1v1 房凑齐两人 → RoomManager 接住去启动 Worker 子进程 + 发 go_match
+signal pairing_ready(room)        # 1v1 房间双方就绪，通知 RoomManager 启动对局会话并下发 go_match
+signal inproc_room_teardown(room) # 本地托管的房间被清理时，通知 RoomManager 同步终结该对局会话
 
 const ROYALE_MIN_PLAYERS := 2
 const ROYALE_MAX_PLAYERS := 8
 const ROYALE_DEFAULT_MAX := 4
 
-# 3v3:**无 AI 补位、无降级** —— 满 6 人才开(设计约定)。两条门控前置校验都是硬上界:
-# `TEAM_ROLES` = 房间容量(第 7 个 join 直接拒),`TEAM_SIZE` = 每队人数(选边门控前置校验)。
+# 3v3 模式人数规则：要求满员 6 人（每队 3 人）开局，不支持 AI 补位
 const TEAM_SIZE := 3     # 每队人数
-const TEAM_ROLES := 6    # 两队合计(满员才开局,无 AI 补位、无降级)
-
-# worker 端口池/子进程(由 RoomManager 装配时注入;本类只用 release_now / kill_worker)
-var launcher: WorkerLauncher = null
+const TEAM_ROLES := 6    # 两队合计总人数
 
 
 class Room:
 	var code: String = ""
 	var players: Array[int] = []          # peer ids(**只表示"此刻还连在大厅这个房里的人"**)
 	var player_role: Dictionary = {}      # peer id -> 1/2
-	var started := false                 # 已启动 worker/已配对:拒绝再次加入
-	var worker_port: int = 0              # 本房间启动的 worker 用的 UDP 端口(关房时归还)
-	# worker 进程的 pid(启动成功后由 RoomManager 登记)。-  它是"这一局还在不在"的唯一精确判据:
-	# 三种模式的 worker 都在对局结束时自己退;0 = 还没登记(启动中)→ 一律判**没结束**。
-	var worker_pid: int = 0
+	var started := false                 # 已配对/已开局:拒绝再次加入
+	# 本局局号（开局时由 RoomManager 单调递增分配；0 表示尚未开局）。
+	# 在单进程单端口架构下，作为跨模块唯一关联键（供重连注册表按局号注销及反查对应房间）。
+	var match_id: int = 0
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超时清理用)
 	# 开局那一刻冻结的名单 [{role:int, name:String}]。-  成员转连 worker 后会陆续断开大厅:
 	# `players` 会空掉、`_peer_names` 会被擦掉 —— 对局中房间的列表渲染**只能**读这一份
@@ -66,10 +58,8 @@ class RoyaleRoom:
 	# time_rules = TimeRules.to_dict()(服务器开局前 from_dict+clamp 再消费,上报值不可信)
 	var beta := false
 	var time_rules: Dictionary = {}
-	var in_match := false                 # 已开局(拒绝加入;成员转连 worker 后房**仍保留**,见 on_peer_left)
-	var worker_port: int = 0              # 本房启动的大乱斗 worker 端口(关房时归还)
-	# worker 进程的 pid(启动成功后由 RoomManager 登记;0 = 启动中 → 判"没结束")。理由见 Room.worker_pid
-	var worker_pid: int = 0
+	var in_match := false                 # 已开局（拒绝新玩家加入；成员进入对局后房间继续保留）
+	var match_id: int = 0                 # 本局局号（全局单调递增，语义同 Room.match_id）
 	var created_at: float = 0.0           # 创建时间戳(unix 秒;超龄清理用,与 Room.created_at 同形)
 	# 开局那一刻冻结的名单 [{role:int, name:String}](理由见 Room.roster 的注释)
 	var roster: Array = []
@@ -95,9 +85,7 @@ class TeamRoom:
 	var is_public := true
 	var invite_code := ""
 	var in_match := false
-	var worker_port: int = 0
-	# worker 进程的 pid(启动成功后由 RoomManager 登记;0 = 启动中 → 判"没结束")。理由见 Room.worker_pid
-	var worker_pid: int = 0
+	var match_id: int = 0                 # 本局局号（全局单调递增，语义同 Room.match_id）
 	var created_at := 0.0
 	# 开局那一刻冻结的名单 [{role:int, name:string}](理由见 Room.roster 的注释)
 	var roster: Array = []
@@ -356,7 +344,7 @@ func on_peer_left(peer_id: int) -> void:
 		else:
 			if rr.host_peer == peer_id:
 				rr.host_peer = rr.players[0]
-				print("大乱斗房 %s 房主转移 → peer %d" % [rcode, rr.host_peer])
+				print("大乱斗房间 %s 房主移交 → peer %d" % [rcode, rr.host_peer])
 			# - 已开局的房**不广播等待室状态**(既有理由:成员正在转连 worker,发给它们必然踩
 			#   "max channels: 0" 且包丢)。这一条 `if` 现在永远为真(in_match 已在上面 continue),
 			#   但**保留**它:它是那件事的守卫,不是死代码 —— 删了会让后来者以为"开局后也可以广播"。
@@ -389,7 +377,7 @@ func on_peer_left(peer_id: int) -> void:
 		else:
 			if tr.host_peer == peer_id:
 				tr.host_peer = tr.players[0]
-				print("3v3 房 %s 房主转移 → peer %d" % [tcode, tr.host_peer])
+				print("3v3 房间 %s 房主移交 → peer %d" % [tcode, tr.host_peer])
 			# 已开局的房不广播等待室状态(与 royale 同一理由:成员正在转连 worker,发给它们
 			# 只会踩 "max channels: 0" 并丢包,等待室界面也已不存在)
 			if not tr.in_match:
@@ -483,7 +471,7 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 	rr.beta = bool(opts.get("beta", false))
 	rr.time_rules = opts.get("time", {}) if rr.beta else {}
 	royale_rooms[code] = rr
-	print("大乱斗房 %s 创建(房主 peer=%d,%s,上限 %d%s)" % [code, caller,
+	print("大乱斗房间 %s 创建(房主 peer=%d, %s, 上限 %d%s)" % [code, caller,
 			"公开" if rr.is_public else "私密", rr.max_players, ",Beta 时间玩法" if rr.beta else ""])
 	_broadcast_royale_state(rr)
 
@@ -523,7 +511,7 @@ func royale_join(caller: int, code: String, invite: String, beta: bool) -> void:
 		role += 1
 	rr.players.append(caller)
 	rr.player_role[caller] = role
-	print("大乱斗房 %s 加入(peer=%d,role=%d,%d/%d)" % [code, caller, role,
+	print("大乱斗房间 %s 加入(peer=%d, role=%d, %d/%d)" % [code, caller, role,
 			rr.players.size(), rr.max_players])
 	_broadcast_royale_state(rr)
 
@@ -670,7 +658,7 @@ func team_create(caller: int, opts: Dictionary) -> void:
 	if not tr.is_public and tr.invite_code.is_empty():
 		tr.invite_code = _generate_code()
 	team_rooms[code] = tr
-	print("3v3 房 %s 创建(房主 peer=%d,%s%s)" % [code, caller, "公开" if tr.is_public else "私密",
+	print("3v3 房间 %s 创建(房主 peer=%d, %s%s)" % [code, caller, "公开" if tr.is_public else "私密",
 			",Beta 时间玩法" if tr.beta else ""])
 	_broadcast_team_state(tr)
 
@@ -708,9 +696,8 @@ func team_join(caller: int, code: String, invite: String, beta: bool) -> void:
 	var role := team_next_role(tr.player_role.values())
 	tr.players.append(caller)
 	tr.player_role[caller] = role
-	# - 进房**不自动分队**:3v3 的规则是玩家自己选边(设计约定)。未选边 = team_of 里没有该 role,
-	#   等待室会把他列在"未选边"那一档。
-	print("3v3 房 %s 加入(peer=%d,role=%d,%d/%d)" % [code, caller, role, tr.players.size(), TEAM_ROLES])
+	# 进房不自动分队：3v3 规则由玩家自主选边，未选边时显示在未分配队伍列表
+	print("3v3 房间 %s 加入(peer=%d, role=%d, %d/%d)" % [code, caller, role, tr.players.size(), TEAM_ROLES])
 	_broadcast_team_state(tr)
 
 
@@ -869,21 +856,21 @@ func _is_room_host(r: Variant, caller: int) -> bool:
 func on_rejoin_request(caller: int, code: String, token: String) -> void:
 	var now := Time.get_ticks_msec()
 	var e := rejoin.lookup(token, now)
-	var alive := WorkerLauncher.pid_alive(int(e.get("worker_pid", 0)))
+	# 对局生命周期状态直接由凭据条目的 alive 字段提供（开局登记为 true，对局正常结束时置为 false）。
+	var alive := bool(e.get("alive", false))
 	var why := RejoinRegistry.decision(e, code, alive)
 	if why != "":
-		# --worker 已经退了 → 这份凭据再也不会成立,当场清掉:留着它只会让**下一个**请求
-		#   再走一遍同样的拒绝。
+		# 对局已结束时该凭据永久失效，立即清理避免重复无效查询
 		if not e.is_empty() and not alive:
 			rejoin.drop_token(token)
-		print("[lobby] 拒绝回局(peer=%d):%s" % [caller, why])
+		print("[lobby] 拒绝重连(peer=%d): %s" % [caller, why])
 		if NetBus.is_peer_live(caller):
 			NetBusExt.rpc_id(caller, "rejoin_denied", why)
 		return
-	print("[lobby] 回局:房间 %s role %d → worker 端口 %d" % [
-			code, int(e.get("role", 0)), int(e.get("worker_port", 0))])
-	# 复用原版 go_match:签名与首次进场完全相同(role, port)
-	NetBus.reply(caller, "go_match", int(e.get("role", 0)), int(e.get("worker_port", 0)))
+	print("[lobby] 断线重连: 房间 %s 角色 %d → 局号 %d" % [
+			code, int(e.get("role", 0)), int(e.get("match_id", 0))])
+	# 复用 go_match 消息下发进场指令：在单进程单端口架构下，下发端口恒为当前服务端监听端口。
+	NetBus.reply(caller, "go_match", int(e.get("role", 0)), NetBus.server_port)
 
 
 # 房间状态广播(等待室/选边)。与 royale 那两条相同机制:call_deferred + 帧末再等一帧 + 开局后不再发。
@@ -944,22 +931,10 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 	#   的 4 位号),按号码反查是"同一个号在三张表里各有一份"的静默错拆。
 	var is_royale: bool = room is RoyaleRoom
 	var is_team: bool = room is TeamRoom
-	var port: int = room.worker_port
 	var peers: Array = room.players.duplicate()   # 先拷:下面要删注册表/可能改动它
-	if port > 0:
-		match mode:
-			TEARDOWN_KILL:
-				launcher.kill_worker(port)      # worker 还活着占着端口 → 先杀,杀完端口可直接回收
-				launcher.release_now(port)
-			TEARDOWN_ABORT:
-				launcher.release_now(port)   # worker 根本没起来 → 立刻归还(不必延迟,也不必杀)
-			_:
-				var delay := WorkerLauncher.WORKER_PORT_REUSE_DELAY
-				if is_royale:
-					delay = WorkerLauncher.ROYALE_PORT_REUSE_DELAY
-				elif is_team:
-					delay = WorkerLauncher.TEAM_PORT_REUSE_DELAY
-				_release_port_later(port, delay)
+	# 单进程架构下对局作为子节点挂载，通知 RoomManager 终止对应的对局会话
+	if room.match_id > 0:
+		inproc_room_teardown.emit(room)
 	if not msg.is_empty():
 		for peer_id in peers:
 			if is_peer_online(peer_id):
@@ -970,35 +945,16 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 		team_rooms.erase(room.code)
 	else:
 		rooms.erase(room.code)
-	var how := "将于延迟后回收"
+	var how := "正常关闭"
 	if mode == TEARDOWN_KILL:
-		how = "已强杀并立即回收"
+		how = "超时清理"
 	elif mode == TEARDOWN_ABORT:
-		how = "立即归还(worker 未起来)"
+		how = "开局失败"
 	var kind := "大乱斗房" if is_royale else ("3v3 房" if is_team else "房间")
-	print("%s %s 拆除(端口 %d %s)" % [kind, room.code, port, how])
-	# - 这一局的凭据随房一起作废:房都拆了,worker 要么已经退了、要么马上会被杀,留着凭据
-	#   只会让回局把客户端送到一个已经不属于它的端口上(而且**没有一行报错**)。
-	# 注意： 键是 **worker 端口**(`port`,上面刚从 `room.worker_port` 取的那一份),**不是
-	#   `room.code`**(2026-09-21 修):三张注册表的房号空间重叠,按 code 作废会误伤**同号**的
-	#   另一间房里那位玩家的凭据 —— 与上面那一行 `is` 判定是**同一个已知缺陷**(同一段注释里就写着
-	#   "别拿 room.code 去三张表里撞库",这里原先自己踩的就是它)。详见 RejoinRegistry.drop_port。
-	var ntk := rejoin.drop_port(port)
-	if ntk > 0:
-		print("  同时作废 %d 份回局凭据" % ntk)
+	print("%s %s 已销毁(%s, 局号 %d)" % [kind, room.code, how, room.match_id])
+	# 凭据注销解耦：对局凭据由 RoomManager._on_session_finished 在对局终止时按局号注销，
+	# 避免在房间被清理但对局仍在运行时（如人机对战模式）误删正在使用的凭据。
 	if disconnect_peers:
 		for peer_id in peers:
 			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
 				multiplayer.disconnect_peer(peer_id)
-
-# 延迟归还 worker 端口:给旧 worker 留足退出时间,防止端口被立刻复用导致串线。
-# delay 由 `teardown_room` 按房型给,三档(与那里同一份口径,别只列两个档位):
-#   1v1=WORKER_PORT_REUSE_DELAY(120s)/ 大乱斗=ROYALE_PORT_REUSE_DELAY(360s)/
-#   3v3=TEAM_PORT_REUSE_DELAY(360s);默认值是 1v1 那一档。
-# - 本方法留在 RoomManager 是因为它要 `await get_tree()` —— RefCounted 没有树(见 WorkerLauncher
-#   类头);端口池本身在 launcher 里,这里只做"等够了再还"。
-func _release_port_later(port: int, delay: float = WorkerLauncher.WORKER_PORT_REUSE_DELAY) -> void:
-	if port <= 0:
-		return
-	await get_tree().create_timer(delay).timeout
-	launcher.release_now(port)

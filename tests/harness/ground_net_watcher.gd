@@ -5,7 +5,7 @@ extends Node
 # 它能在换场之后直接读**真 royale_game 实例的运行时状态**(地面武器表 / 本地玩家背包)。
 #
 # 流程(每个客户端都跑;c1 建房、c2 用房间号加入):
-#   0   驱动真大厅(建房 / 加入房间),等换场到真 royale_game
+#   0   驱动实际大厅(建房 / 加入房间),等换场到真 royale_game
 #   1   等对局进 PLAYING
 #   2   接管本地玩家的输入源为 `ground_bot_input`,开始「丢-捡」循环:
 #         - DROP 相:长按 Q(玩家自己的计时满 0.6s → 上行一次丢弃边沿)
@@ -19,7 +19,7 @@ extends Node
 # - 这条探针为什么必须存在:服务器权威侧(`MatchGround._try_server_pickup/_try_server_drop`)
 #   与客户端侧(`_remove_pickup_node` / 权威背包变化后的 restore)各自的**单元级**探针
 #   (tests/probe/ground_action_probe、tests/probe/ground_client_probe)都是绿的,而用户报的崩溃在
-#   **真链路**上 —— 只有真大厅 + 真 worker + 真 royale_game 才跑得到
+#   **真实网络链路**上 —— 只有实际大厅 + 真 worker + 真 royale_game 才跑得到
 #   「上行边沿 → 服务器裁决 → 事件回传 → 客户端删节点 → 快照 c2 改背包 → reconcile」这一整条。
 #
 # - 断言在"确实踩到了"上,不在"没报错"上:崩溃的表现是**结果文件根本不出现**,
@@ -63,7 +63,7 @@ const MODES := {
 var who := "c1"
 var mode := "royale"             # "royale" / "duel"(见 MODES)
 var scene := "L1"                # 剧本名(见 tests/ground_scenarios.gd 的分派表)
-var lobby: Node = null           # 真大厅场景实例(本进程里被驱动的那份;由 ground_net_probe 建)
+var lobby: Node = null           # 实际大厅场景实例(本进程里被驱动的那份;由 ground_net_probe 建)
 
 var _t := 0.0
 var _stage := 0
@@ -161,7 +161,7 @@ func _process(delta: float) -> void:
 				_log_once("%d 轮已跑完,收尾中" % TARGET_CYCLES)
 
 
-# ── 阶段 0:等真大厅连上 → c1 建房 / c2 等 GO 文件后加入 ──
+# ── 阶段 0:等实际大厅连上 → c1 建房 / c2 等 GO 文件后加入 ──
 func _stage_lobby() -> void:
 	# 大厅是**游戏自己切进来的 current_scene**(见 ground_net_probe._run_client)——
 	# 观察者挂在 root 上,所以换场不会把它带走;这里每帧认一次,直到识别解析为止。
@@ -221,7 +221,8 @@ func _join_first_public_room() -> bool:
 	var now := Time.get_ticks_msec()
 	if now - _list_refresh_ms >= 1500:
 		_list_refresh_ms = now
-		lobby.call("_on_refresh_pressed")
+		# 调用基类房间列表刷新接口 LobbyPage._request_list
+		lobby.call("_request_list", "已刷新房间列表")
 	var grid: Node = lobby.get("_grid")
 	if grid == null or not is_instance_valid(grid):
 		return false
@@ -384,7 +385,7 @@ func _step_drop(_delta: float) -> void:
 # SEEK 相:先站着按 F,再退化成走向目标;捡到就进下一轮。
 func _step_seek(_delta: float) -> void:
 	# 完成判定放最前:捡到的信号可能在任一步到达,避免被后续分支逻辑遗漏过滤。
-	# 判据只认 `by_role == 我` 那一份 —— 全场计数会把对手的拾取算进来(两人同跑会虚假通过（未有效测试）)。
+	# 判据只认 `by_role == 我` 那一份 —— 全场计数会把对手的拾取算进来(两人同跑会测试漏检)。
 	# - 基线取**本阶段开始时**的计数,不是本帧开始时的:事件在 multiplayer.poll() 里到达
 	#   (早于 _physics_process),同一帧内读两次不会变 —— 按帧比会永远不成立。
 	if _my_removed > _seek_removed0:

@@ -89,7 +89,7 @@ func _ready() -> void:
 	var pvp: CanvasLayer = (load(PVP_HUD_SCENE) as PackedScene).instantiate()
 	add_child(pvp)
 	# - 必须收掉它的全屏压暗罩:Mask 是一整块黑 0.3,会把下面④要验的"圆外=纯背景色"
-	#   压成 (0.702,0,0.702) 而虚假失败（测试用例误报）(实测踩到)。实机里小地图 layer 131 画在 Mask(130) 之上、
+	#   压成 (0.702,0,0.702) 而测试误报(实测踩到)。实机里小地图 layer 131 画在 Mask(130) 之上、
 	#   不受它影响,所以收掉它并不改变本探针要验的东西。
 	pvp._mask.visible = false
 	pvp._on_ping(24)
@@ -124,7 +124,7 @@ func _ready() -> void:
 		_check(wall_px > 500, "圆内应画出地形(墙色像素 %d,期望 > 500)" % wall_px)
 
 	# ── ⑥ 3v3:自己那个点 = **队色** + 一圈白描边(与颜色正交的维度)──
-	# - 必须真渲染:判据落在像素上(headless 下 get_image() 返回 null  ->  整段静默跳过)。
+	# - 必须真实视口渲染:判据落在像素上(headless 下 get_image() 返回 null  ->  整段静默跳过)。
 	# - 编号从 ⑥ 起 —— 上面那个 ⑤ 是"圆不得压到延迟条"(几何断言),别与它混。
 	mm.visible = false
 	var TEAM_B := UiFactory.C_TEAM_B
@@ -219,10 +219,10 @@ func _ready() -> void:
 	# ── ⑧ 他人点是**按下标**取色(大乱斗上色那条改动的地基)──
 	# - 为什么必须有:2026-09-29 起大乱斗的他人点不再恒红,而是按 role 取 `ROLE_COLORS`。
 	#   而 `Minimap` 的取色是 `_other_dots[i].color = cols[i]` —— **下标**对齐,不是按 role 查表。
-	#   这一条钉住"颜色数组是按提供器给的顺序、一个不差地落到对应点上";同时它也钉住
+	#   这一条严格校验"颜色数组是按提供器给的顺序、一个不差地落到对应点上";同时它也严格校验
 	#   "点比颜色数组多时,多出来的点保持 ENEMY_COLOR"(不然越界会被读成 0 号色)。
 	# - 本阶段**不看像素**(读的是 `ColorRect.color`),故 headless 下也真的在跑 ——
-	#   但整个探针仍需要真渲染(前面几相要取图),所以判据仍是那一行 verdict。
+	#   但整个探针仍需要真实视口渲染(前面几相要取图),所以判据仍是那一行 verdict。
 	mm_plain.visible = false
 	var mm_multi := Minimap.new()
 	var COL_A := Color(0.1, 0.9, 0.2)

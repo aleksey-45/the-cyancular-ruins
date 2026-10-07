@@ -1,8 +1,9 @@
 extends SceneTree
 
-# PvP 时间规则冒烟(-s 数据级):默认值(用户 2026-09-28 裁定) / 序列化往返 / 服务器钳制 /
-# 账户映射(透支上限 = 短期额度)/ 环缓时长。
-# 用法:godot --headless --path . -s res://tests/smoke/time_rules_smoke.gd
+# PvP 时间规则配置与校验冒烟测试：
+# 验证参数合法区间校验、客户端上报参数钳制、网络序列化及与 GrainAccount 的参数映射。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/time_rules_smoke.gd
 
 var _fails: Array[String] = []
 

@@ -1,73 +1,49 @@
 extends SceneTree
 
-# 「生成端拼出来的 3v3 worker 命令行**真的被解析端认下**」—— 真启动一个 worker,再读它自己的日志。
-# 跑法: timeout 90 "$GODOT" --headless --path . -s res://tests/smoke/team_spawn_smoke.gd
-# 通过 = `TEAM SPAWN SMOKE: ALL-OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# - `tests/smoke/room_sweep_smoke.gd` 的双向断言只能证明"两个文件里都有 `--team` / `--teams` 这两个
-#   字符串",证明不了「`WorkerLauncher.spawn_team_worker` 拼出来的那条命令行真的被
-#   `server_main._ready` 的 argv 解析认下、并按 **3v3 形态**就绪」。两处各自改对了、拼起来却错
-#   (开关顺序 / 逗号串格式 / 值域)时,那一对断言**照样测试全部通过** —— 而表象是"对局永不开始,
-#   大厅侧一行报错都没有"(worker 的 ERROR 只写在它自己的 `worker_<port>.log` 里,没人读)。
-# - 本脚本原是一次性的 scratch(`.superpowers/sdd/_t9_spawn_check.gd`,那里被 `.superpowers/`
-#   的 gitignore 挡在仓外),提升进仓是因为**它是这条链路唯一的证明**,且用户需要能复跑。
-#
-# ═══ 三条纪律 ═══
-# ① 端口必须落在**真大厅的 worker 端口池之外**(池 = `WORKER_PORT_BASE 7800` + `SPAN 500`)
-#    —— 池内端口会与真大厅启动的 worker 撞车。本脚本固定用池外的 29014。
-# ② **跑前先删日志**:`--log-file` 若沿用旧文件,上一次留下的"3v3 worker 就绪"会让本跑**虚假通过（未有效测试）**
-#    (断言读的是文件内容,不是本次进程的输出)。
-# ③ 负例那两行 `ERROR: …` 是**预期**的(`spawn_team_worker` 的两条守卫各 `push_error` 一次)。
-#    判成败只看最末那行文本,不数 ERROR、也不看退出码。
-#
-# - 保底处理:即使收尾的按端口杀失败,worker 自己也会在 30s 的"报到超时梯"上 quit(0) 释放端口
-#   (3v3 没有降级开局,收不齐 6 人就退)—— 所以本脚本不会留下永久僵尸。
+# 3v3 Worker 启动参数传递与解析验证：
+# 实际拉起一个 3v3 Worker 实例，验证大厅拼接的命令行参数能被服务端解析逻辑正确识别并应用。
+# 运行方式：
+#   timeout 90 "$GODOT" --headless --path . -s res://tests/smoke/team_spawn_smoke.gd
 
-const PORT := 29014                     # 池外(池 = 7800..8299)
+const PORT := 29014                     # 池外/空闲段
 const ROLES := [1, 2, 3, 4, 5, 6]
 const TEAMS := [1, 1, 1, 2, 2, 2]
-# - 判据串与 `server_main._run_worker` 的 `_team_mode` 分支**逐字对应**:那行改了这里要跟着改,
-#   不跟着改就**红**(这是有意的 —— 它正是"解析端认下了 `--team` 并按 3v3 形态就绪"的唯一证据)。
+# 3v3 模式就绪日志输出标记
 const READY_MARK := "3v3 worker 就绪"
-# `str(_role_set)` / `str(_team_of_role)` 的**实际打印形态**(去读日志时逐字比对)。
-# - 这两条是刻意贴住日志格式的:格式一变就红,而"变了却没人注意"正是本脚本要防的事
-#   (role 集合与队伍表**同序配对**是 3v3 最容易被改坏的一处)。
+# 预期解析出的角色集合与队伍分配日志字符串
 const WANT_ROLES := "[1, 2, 3, 4, 5, 6]"
-# - 注意 Godot 4.7 的 `str(Dictionary)` 是 `{ k: v }`(**花括号内侧各一个空格**)——
-#   实测踩到:写成 `{1: 1, …}` 时这条断言恒红(而"红"的样子与"配对错了"一模一样)。
+# 队伍映射预期格式（花括号内侧带空格）
 const WANT_TEAMS := "队伍 { 1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2 }"
-const MAX_WAIT_MS := 30000              # 冷启动 headless worker + 建世界,给足
+const MAX_WAIT_MS := 30000              # 启动超时阈值
 
 
 func _initialize() -> void:
-	# - 空载守卫:load 失败立刻 quit(1),否则后面抛错走不到 quit() → 进程**永久挂起**
-	#   (不是干净失败,是超时)。
-	var L: GDScript = load("res://server/lobby/worker_launcher.gd")
-	if L == null:
-		print("TEAM SPAWN SMOKE: FAIL(读不到 worker_launcher.gd)")
+	# 加载守卫：加载失败立即退出
+	var S: GDScript = load("res://server/match_session.gd")
+	if S == null:
+		print("TEAM SPAWN SMOKE: FAIL(读不到 match_session.gd —— 共用判据的宿主)")
 		quit(1)
 		return
-	var launcher = L.new()
 	var fails: Array[String] = []
-	var log_path: String = launcher.log_path(PORT)
+	var log_path: String = _log_path(PORT)
 
-	# ── 负例(纯逻辑,不产生子进程)──
-	# - 这两条守的是 `spawn_team_worker` 的两条 `push_error` 守卫,而 B 册大厅要从**房间数据**
-	#   拼 teams —— 最容易踩的就是"长度不等"与"队号越界"。放行的后果不是崩溃而是**静默**:
-	#   子进程开机即 quit(1),而本函数返回 `pid > 0`、大厅据此判定"启动成功"。
-	print("  [info] 下面两行 ERROR 是**预期**的(spawn_team_worker 的两条守卫各 push_error 一次)")
-	if launcher.spawn_team_worker(PORT, [1, 2, 3], [1, 1]):
-		fails.append("长度不等(roles 3 vs teams 2)应当拒绝拉起")
-	if launcher.spawn_team_worker(PORT, ROLES, [1, 1, 3, 2, 2, 2]):
-		fails.append("★ 队号越界(3)应当拒绝拉起 —— 解析端只收 1..2 且**静默丢弃**,"
-				+ "放行会让子进程开机即 quit(1) 而大厅以为成功")
+	# ── 参数校验负例（纯逻辑断言，不创建进程）──
+	# 验证 MatchSession.validate 对队伍长度不匹配与队号越界的防御性校验。
+	print("  [info] 下面这几条负例是**预期**的拒绝(不会启动任何进程)")
+	if str(S.validate(S.Mode.TEAM, [1, 2, 3], {1: 1, 2: 1})).is_empty():
+		fails.append("长度不等(roles 3 vs teams 2)应当拒绝")
+	if str(S.validate(S.Mode.TEAM, ROLES, {1: 1, 2: 1, 3: 3, 4: 2, 5: 2, 6: 2})).is_empty():
+		fails.append("★ 队号越界(3)应当拒绝 —— 解析端只收 1..2 且**静默丢弃**,"
+				+ "放行会让那一局带着错的队表开局而大厅以为成功")
+	if not str(S.validate(S.Mode.TEAM, ROLES, {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2})).is_empty():
+		fails.append("正形 roles/teams 应当放行(恒拒绝的判据和没有判据一样坏)")
 
-	# ── 正例:真启动(见文件头纪律 ②:先删日志)──
+	# ── 正例：启动实际进程并验证输出 ──
 	if FileAccess.file_exists(log_path):
 		DirAccess.remove_absolute(log_path)
-	if not launcher.spawn_team_worker(PORT, ROLES, TEAMS):
-		fails.append("正形 roles/teams 应当拉起成功")
+	var pid := _spawn(PORT, log_path)
+	if pid <= 0:
+		fails.append("正形 roles/teams 应当拉起成功(create_process 返回 <= 0)")
 		_finish(fails)
 		return
 
@@ -79,13 +55,11 @@ func _initialize() -> void:
 		text = _read(log_path)
 		if text.contains(READY_MARK):
 			break
-	print("  [info] 等待 worker 就绪用了 %.1fs(日志 %s)" % [waited / 1000.0, log_path])
+	print("  [info] 等待就绪用了 %.1fs(日志 %s)" % [waited / 1000.0, log_path])
 
-	# - 三条断言各管一件事,缺一条都留一个洞:
-	#   ① 按 3v3 形态就绪(证明 `--team` 被认下 —— 1v1 形态会打"worker 就绪,等待两名玩家")
-	#   ② `--roles` 被解析成 role 集合   ③ `--teams` 被解析成队伍表(且与 roles 同序配对)
+	# 验证 3v3 模式正常就绪，角色集合与队伍分配解析正确。
 	if not text.contains(READY_MARK):
-		fails.append("worker 日志里没有「%s」(等了 %.1fs;日志尾部:%s)"
+		fails.append("日志里没有「%s」(等了 %.1fs;日志尾部:%s)"
 				% [READY_MARK, waited / 1000.0, text.right(400)])
 	else:
 		if not text.contains(WANT_ROLES):
@@ -93,8 +67,27 @@ func _initialize() -> void:
 		if not text.contains(WANT_TEAMS):
 			fails.append("--teams 没被解析成队伍表 / 与 --roles 的配对错了(缺「%s」)" % WANT_TEAMS)
 
-	launcher.kill_worker(PORT)
+	if OS.is_process_running(pid):
+		OS.kill(pid)
 	_finish(fails)
+
+
+# 组装启动参数并拉起子进程。自定义参数置于 `--` 分隔符之后。
+func _spawn(port: int, log_path: String) -> int:
+	var args := PackedStringArray(["--headless", "--log-file", log_path])
+	if OS.has_feature("editor") or OS.has_feature("template_debug"):
+		args.append_array(PackedStringArray(["--path", ProjectSettings.globalize_path("res://"),
+				"res://server/server_main.tscn"]))
+	args.append_array(PackedStringArray(["--", "--worker", "--team", "--port", str(port),
+			"--roles", ",".join(ROLES.map(func(r): return str(int(r)))),
+			"--teams", ",".join(TEAMS.map(func(t): return str(int(t))))]))
+	return OS.create_process(OS.get_executable_path(), args)
+
+
+func _log_path(port: int) -> String:
+	var dir := ProjectSettings.globalize_path("user://logs")
+	DirAccess.make_dir_recursive_absolute(dir)
+	return dir.path_join("team_spawn_%d.log" % port)
 
 
 func _read(path: String) -> String:

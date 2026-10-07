@@ -44,7 +44,7 @@ extends ProbeBase
 #
 # ⚠⚠ 自伤防护(本文件被自己扫描,务必守住):凡是本探针**要找的字面量**,一律用
 #    `"前" + "后"` 碎片拼出来,绝不整段写在源码里 —— 第 4/5 条扫的是**目录树**、
-#    第 8 条扫的是**全仓(含 tests/)**,整段写在源码里会被自己命中(虚假通过（未有效测试）或虚假失败（测试用例误报）)。
+#    第 8 条扫的是**全仓(含 tests/)**,整段写在源码里会被自己命中(测试漏检或测试误报)。
 #    第 8 条更狠:它还会把本文件里的示例当数据扫,连合成样例的数字都走 str(4*5) 生成。
 
 # 生产目录(第 4/5 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
@@ -53,7 +53,7 @@ const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
 const ALL_DIRS := ["res://core", "res://scenes", "res://server", "res://ui",
 		"res://tests"]
 
-# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 虚假通过（未有效测试）"
+# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 测试漏检"
 const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
 
@@ -73,7 +73,7 @@ const L5_FONT_FILES := ["res://ui/hud/royale_hud.gd", "res://scenes/mp_lobby.gd"
 
 # ── 扫描针(碎片拼接:见文件头「自伤防护」)──
 # 常量名**不得**含连写的 FONT_SIZE:第 8 条的 D 类扫描会把 "以 const 开头且含 FONT_SIZE"
-# 的本探针常量当成字号声明,读不出数值 → 本探针自伤(虚假失败（测试用例误报）)。
+# 的本探针常量当成字号声明,读不出数值 → 本探针自伤(测试误报)。
 const N_STYLE_CONTROL := "style" + "_control("
 const N_STYLE_CONTROL_RE := "style" + "_control\\("
 const N_FONT_OVERRIDE := "add_theme" + "_font_size_override("
@@ -89,7 +89,7 @@ const N_CONST_DECL := "^const\\s+\\w*FONT" + "_SIZE\\w*\\s*:?=\\s*([0-9]+)"
 #   RoyaleHost → MatchHost(核心) → MatchRound(回合) → MatchCombat(裁决)
 #   → MatchSnapshot(快照) → MatchState(共享状态+RPC 助手) → Node
 # 本探针的判据是**按职责**写的,所以取源也要跟着改成并集:只读 match_host.gd 的话,
-# 那些 needle 在新家找不到 → **门恒绿、静默失明**(仓内已登记过的失败模式)。
+# 那些 needle 在新家找不到 → **门恒绿、失去防护校验作用**(仓内已登记过的失败模式)。
 # 这不是放水 —— 被守的东西一个字没变,只是它现在住在链上的哪一层而已;
 # 反向断言(基类不得含 RoyaleHost 的子类方法)反而更严了:五份都查。
 const HOST_SRC := ["res://server/match/match_host.gd", "res://server/match/match_round.gd",
@@ -182,7 +182,7 @@ func _check_c2_contract() -> void:
 	# `apply_packet`(或把队列丢掉改成直接赋值),上面四条照样测试全部通过 —— 因为它们只读
 	# 消费侧 —— 而 C2 rollback 的「1 包/tick、1:1 同序」锚点已经没了:客户端按 ack 重放
 	# 未确认输入时,服务器实际模拟的输入序列与重放序列不再同序,分歧会变成常态。
-	# 故正向钉住「按 role 建 FIFO 队列 + 到达即 append」,反向钉住「体内不得就地应用、不得清队列」。
+	# 故正向严格校验「按 role 建 FIFO 队列 + 到达即 append」,反向严格校验「体内不得就地应用、不得清队列」。
 	var on_in := _func_body(code, "_on" + "_input")
 	_check(not on_in.is_empty(), "取不到 %s 的函数体(函数改名/挪进别的文件了?)" % ("_on" + "_input"))
 	if not on_in.is_empty():
@@ -205,30 +205,23 @@ func _check_c2_contract() -> void:
 # ── 2) main 既有成果在位(server/room_manager.gd + server/worker_launcher.gd)──
 # L5 把大乱斗大厅并进了同一份 room_manager。main 的「超龄房清扫」族(防 worker 进程 +
 # 端口永久泄漏)必须原样保留:少了 sweep 就泄漏,少了 kill_worker 就杀不掉 worker。
-# - 2026-09-14:杀 worker 的实现与那段 PowerShell 随端口池搬进了 WorkerLauncher
+# - 2026-09-14:终止 worker 进程 的实现与那段 PowerShell 随端口池搬进了 WorkerLauncher
 #   (server/worker_launcher.gd)。判据按**职责**拆到两个文件,不是删掉 ——
 #   「杀不掉 worker」这个失败模式与文件放哪无关,必须仍然有人守。
 func _check_room_manager() -> void:
 	var fails_before := _failures.size()
 	var p := "res://server/lobby/room_manager.gd"
-	var pw := "res://server/lobby/worker_launcher.gd"
 	var pp := "res://core/net/proc_util.gd"
 	var code := _code_only(_read(p))
-	var code_w := _code_only(_read(pw))
 	var code_p := _code_only(_read(pp))
 	_check(not code.is_empty(), "读不到 %s" % p)
-	_check(not code_w.is_empty(), "读不到 %s" % pw)
 	_check(not code_p.is_empty(), "读不到 %s" % pp)
-	if code.is_empty() or code_w.is_empty() or code_p.is_empty():
+	if code.is_empty() or code_p.is_empty():
 		return
 	var needles := [
 		["func _sweep_stale_rooms(", "超龄房清扫入口(1v1 / 大乱斗 / 3v3 三族都要被扫到)", p, code],
 		["created_at", "房间创建时间戳(超龄判据)", p, code],
-		["func kill_worker(", "按端口杀 worker 进程(跨进程需查端口,不能只靠 create_process 的 pid)",
-				pw, code_w],
-		# - 2026-09-14:那段 PowerShell 与 server_main 的一份**逐字相同**,已收进 core/proc_util.gd
-		#   (ProcUtil.kill_udp_port)。判据按职责跟着搬 —— 「取不到属主进程就一个都杀不掉」这个
-		#   失败模式与它住哪个文件无关,必须仍然有人守。
+		# 校验 ProcUtil.kill_udp_port 逻辑完整性，确保基于端口清理进程的能力有效
 		["Select -Expand" + "Property OwningProcess -Unique", "取 UDP 端口属主进程的修正写法",
 				pp, code_p],
 	]
@@ -251,7 +244,7 @@ func _check_room_manager() -> void:
 # `% OwningProcess` 这种写法取不到属性(ForEach-Object 后接裸名字不展开 $_),实测拿空
 # → 端口属主杀不掉 → 7777 被旧进程占着、新实例 bind 失败瞬间退出(双击 exe 闪退)。
 # 判据取**去注释视图**:server_main 里那条解释这个坏写法的注释本身就含该串,算进去
-# 会让这条断言永远红(注释不是代码)。
+# 会让这条断言持续报错失败(注释不是代码)。
 func _check_kill_port_holder() -> void:
 	var fails_before := _failures.size()
 	# - 2026-09-14:实现从 server_main 搬进 core/proc_util.gd(ProcUtil.kill_udp_port)——
@@ -298,8 +291,8 @@ func _check_no_demo_residue() -> void:
 # 多一处(比如菜单又建一个)→ 两份反馈层抢 current;少一处 → 击杀播报/命中标记全哑。
 # 必须由**对局世界**创建一次,且调用点留在 _ready 顶部、建图之前。
 # 判据取**去注释视图**:计数必须数的是真调用。数裸文本的话,删掉调用、留一句"提到"它的
-# 注释就能把计数维持成 1 → 反馈层根本没挂上而断言照样绿(正是本探针要防的"字面量出现过"式虚假通过（未有效测试）);
-# 反过来,一句介绍挂载点的文档注释也会被当成第二处 → 虚假失败（测试用例误报）。
+# 注释就能把计数维持成 1 → 反馈层根本没挂上而断言照样绿(正是本探针要防的"字面量出现过"式测试漏检);
+# 反过来,一句介绍挂载点的文档注释也会被当成第二处 → 测试误报。
 func _check_feedback_mount_point() -> void:
 	var fails_before := _failures.size()
 	var files := _collect(PROD_DIRS)
@@ -387,7 +380,7 @@ func _check_font_size_law() -> void:
 	for f in files:
 		_font_scan_file(f, _read(f), bad, census)
 	_check(bad.is_empty(), "字号规范违例 %d 处(必须 16 的倍数): %s" % [bad.size(), "; ".join(bad)])
-	# 扫描量下限:把**载体总数**打印输出。扫描面坏掉时它掉到 0 附近而 bad 恒空(虚假通过（未有效测试）)。
+	# 扫描量下限:把**载体总数**打印输出。扫描面坏掉时它掉到 0 附近而 bad 恒空(测试漏检)。
 	var total := 0
 	for p in census.keys():
 		for k in (census[p] as Dictionary).keys():
@@ -457,7 +450,7 @@ func _walk_tres(dir_path: String, out: Array[String]) -> void:
 #      分支扫描;本条只堵"引了个不存在的变体 → 静默回落默认字号"这一档。
 #    - **只扫 `.tscn`**(引用形式);运行期 `.gd` 里 `xxx.theme_type_variation = &"…"` 那种
 #      写法**不认**(迁移把变体引用放场景里,这是本设计的前提)。
-#    - 只认 ALL_DIRS 下能找到的 `.tres`;若将来 Theme 放进 `addons/` 等未扫根,本条会虚假失败（测试用例误报）。
+#    - 只认 ALL_DIRS 下能找到的 `.tres`;若将来 Theme 放进 `addons/` 等未扫根,本条会测试误报。
 func _check_variation_refs(files: Array[String], tres: Array[String]) -> void:
 	var fails_before := _failures.size()
 	# Theme 里**定义**的变体名:`Name/base_type` 或 `Name/font_sizes|styles|colors|constants/…`
@@ -526,7 +519,7 @@ func _font_scan_file(path: String, src: String, bad: Array[String], census: Dict
 
 # 由函数体推导「形参即字号」的 helper:返回 [[helper 名, 字号实参下标], …]
 # 只认 `style_control(<控件>, <形参>)` 与 `add_theme_font_size_override(…, <形参>)` 两种体,
-# 形参名必须真是该函数的形参 —— 这样推导不会把普通函数误认成字号 helper(误认=虚假失败（测试用例误报）)。
+# 形参名必须真是该函数的形参 —— 这样推导不会把普通函数误认成字号 helper(误认=测试误报)。
 # ⚠ 已知边界(评审记录,**看不见**的三类,别把它当全覆盖):
 #   - 函数签名/形参表**换行**(参数跨行)的 helper:hdr 逐行匹配,匹配不上 → 该 helper
 #     整个推导不出来,它的字号实参不进断言;
@@ -665,7 +658,7 @@ func _check_new_interfaces() -> void:
 	_check(_code_only(_read("res://ui/hud/royale_hud.gd")).contains("class_name RoyaleHud"),
 			"ui/royale_hud.gd 缺 class_name RoyaleHud")
 	# - 2026-09-14:大乱斗房间 handler 随账本搬进 server/lobby_rooms.gd(LobbyRooms,见 M4c)。
-	#   判据跟着搬,但**两处都查**:老家若被人再抄一份同名 handler,那正是"两份真相"的开端。
+	#   判据跟着搬,但**两处都查**:老家若被人再抄一份同名 handler,那正是"重复定义"的开端。
 	var rl := _code_only(_read("res://server/lobby/lobby_rooms.gd"))
 	_check(rl.contains("func royale_create("), "server/lobby/lobby_rooms.gd 缺 func royale_create(")
 	_check(not _code_only(_read("res://server/lobby/room_manager.gd")).contains("func royale_create("),

@@ -1,29 +1,9 @@
 extends SceneTree
 
-# 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)
-# + **源码级**断言 ⑥~⑨(⑥:team_join 里确实调了 team_next_role;⑦:统一大厅里那两个设置区块
-#   在 3v3 下被**按模式收起**(`<行键>.visible = not is_team`)/ 计数行不得写死容量 / 名单行两个档位
-#   共用 `_roster_row`;⑧:大厅入口指向的对局场景真的存在且挂了
-#   脚本;⑨:set_my_team 接线 / 分队碰撞层契约 / 小地图两提供器同源 / 队色是比值 —— 见各节的
-#   盲区说明)+ **像素级**断言 ⑩(`BODY_BASE_COLOR` 仍等于 `player.png` 的不透明众数色)。
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/team_room_smoke.gd
-# 通过 = `TEAM ROOM SMOKE: ALL-OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# - `-s` 阶段 autoload 不存在,故这里**只测不碰 autoload 的纯函数**:把判据收成
-#   `LobbyRooms` 的静态函数,再由 RPC handler 调用(单一来源)。判据错了的表现是静默的:
-#   "两队人数不等也能开"会让 3v3 变成 4v2。
-# - 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() → 进程永久挂起。
-#   - 第二层:`-s` 下对 GDScript 对象调用**不存在**的函数是运行时报错 + 当前函数当场中止
-#     (同样走不到 quit() → 同样挂起)。故先按名字明确提示确认判据都在,缺哪个就一行 FAIL 退 1。
-#     红线阶段靠它给出干净的红,而不是"卡住到 timeout"。
-#
-# 注意： 本文件**不得出现 `LobbyRooms` 这个全局类名**(只能用 `load()` 拿到的脚本对象):
-#   写全局类名 = 本脚本对它产生**静态依赖** → 编译本脚本时会连带编译 `lobby_rooms.gd`,
-#   而那个文件在 `_enter_tree` 里引用了 autoload `NetBus` —— `-s` 阶段 autoload 未注册,
-#   于是整条链编不过:`Identifier not found: NetBus` + `Failed to compile depended scripts`,
-#   连本脚本自己的 `_initialize` 都进不去(实测:进程挂到 timeout)。`load()` 走的是动态路径,
-#   随后 `reload()` 判编译结果 —— 与 `room_sweep_smoke` 加载 room_manager.gd 同一个手法。
+# 3v3 组队房间纯逻辑冒烟测试：
+# 验证 3v3 房间的选边逻辑、队伍人数上限、最小空闲号分配以及模式互斥判定。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/team_room_smoke.gd
 
 func _initialize() -> void:
 	var script = load("res://server/lobby/lobby_rooms.gd")
@@ -112,7 +92,7 @@ func _initialize() -> void:
 		fails.append("读不到 server/lobby_rooms.gd(接线断言无从成立)")
 	else:
 		# - 2026-10-02 降精度:原钉**整份文件**含逐字 `team_next_role(tr.player_role.values())`
-		#   —— 接收者/入参表达式换个等价写法就虚假失败（测试用例误报）。改扫 **team_join 的函数体**、只要求它调了
+		#   —— 接收者/入参表达式换个等价写法就测试误报。改扫 **team_join 的函数体**、只要求它调了
 		#   `team_next_role(`(问的是同一件事:那行接线还在)。要拦的变异:把接线换成内联的
 		#   「人数 + 1」—— 判据函数仍在,但"有人退过房"的 role 分配会撞上仍在房里的高号。
 		if not ScanUtil.func_body(ScanUtil.code_only(room_src), "team_join").contains("team_next_role("):
@@ -165,17 +145,17 @@ func _initialize() -> void:
 			fails.append("★ 3v3 大厅入口应**恰好 1 处**指向 %s(实际 %d 处)—— 入口漏加/被删/指回别处" % [entry, hits])
 		if not ResourceLoader.exists(entry):
 			fails.append("★ 3v3 对局场景 %s 不存在(悬空引用:大厅那个 call_deferred 换场会静默失败)" % entry)
-		# - 顺带钉住"指向的那个场景**真的挂上了** team_game.gd"(反向:路径在但内容是空气 ——
+		# - 顺带严格校验"指向的那个场景**真的挂上了** team_game.gd"(反向:路径在但内容是空气 ——
 		#   比如只建了个空 .tscn)。读它的 ext_resource 而不是 `load()`:`-s` 阶段不该为了断言
 		#   把整个对局场景(含 Level0 那一整棵)拖进内存。
 		var tscn := FileAccess.get_file_as_string(entry) if FileAccess.file_exists(entry) else ""
 		if not tscn.contains("scenes/team_game.gd"):
 			fails.append("★ %s 没有挂 scenes/team_game.gd(空场景 = 换场成功但一行脚本都不跑)" % entry)
 	# ⑨ 3v3 客户端的**两条"漏了不报错"的接线**(B 册 Task 6;判据取源码,理由同 ⑥⑦ ——
-	#   对局场景要 autoload + 真链路,`-s` 里跑不动,真链路那份归 Task 8)。
+	#   对局场景要 autoload + 真实网络链路,`-s` 里跑不动,真实网络链路那份归 Task 8)。
 	#   - ① `_hud.set_my_team(...)`:**唯一**会把"我是哪一队"告诉 HUD 的地方。漏了不报错,
 	#     后果是 `_my_team` 恒 0  ->  「本局胜利!」/「胜利!」**一次都不会出现**,赢的局报成输的
-	#     (平局那一支不受影响 —— 它走 else)。-  行为面另由 `hud_declarative_probe` 的第二段钉住
+	#     (平局那一支不受影响 —— 它走 else)。-  行为面另由 `hud_declarative_probe` 的第二段严格校验
 	#     (喂 `{winner: 我的队号}` 断言念「本局胜利!」+ 不写入时的反向对照);这里钉的是**生产
 	#     到底调没调**,两半缺一不可:只钉 HUD 那一半,`team_game` 永不调用照样测试全部通过。
 	#   - ② 撞车队:本地玩家的 `collision_layer/mask` 与副本幽灵体的层必须按**队**设
@@ -208,7 +188,7 @@ func _initialize() -> void:
 			# 注意： 判据必须是**那一行赋值本身**(`collision_layer = TeamHost.TEAM_ENEMY_LAYER`),
 			#   不能是"常量在函数体里出现过" —— 生产里这个常量出现**两次**(2 队的身体层 + 1 队
 			#   掩码里的"挡住队 B"位),所以"把 2 队的层写死成 16"(1 队那处仍留常量)、
-			#   "删掉整个 2 队分支"、两种实现都能把"出现过"喂绿,而它们正是这句话明确提示的变异。
+			#   "删掉整个 2 队分支"、两种实现都能把"出现过"误判通过,而它们正是这句话明确提示的变异。
 			#   钉整行赋值后:写死 16 → 红;删掉 2 队分支 → 红。
 			if not coll_body.contains("collision_layer = TeamHost.TEAM_ENEMY_LAYER"):
 				fails.append("★ _apply_team_collision 没给 2 队设 `collision_layer = TeamHost.TEAM_ENEMY_LAYER`(写死 16 / 删掉 2 队分支都在这儿红;只数'常量在体内出现过'守不住 —— 它在 1 队那一行也出现)")
@@ -307,7 +287,7 @@ func _initialize() -> void:
 	# - 复测办法与 `pvp_match_client.gd` 该常量注释里的那条**逐字同源**:按 alpha > 200 过滤
 	#   `player.png` 的全部像素,取出现次数最多的那个 RGB。
 	# - 渲染侧另有一份等价断言(`hue_tint_probe` 守卫 D,那里顺带还钉了 `C_TEAM_A` 同色)。
-	#   那条**必须真渲染**(headless 下 `get_viewport().get_texture()` 返 null  ->  整条探针在
+	#   那条**必须真实视口渲染**(headless 下 `get_viewport().get_texture()` 返 null  ->  整条探针在
 	#   截图那一步提前返回,守卫 D 根本跑不到),故本档不是它的复制品,而是它的 **headless 半边**:
 	#   两种跑法各自够不到对方能跑的场景。
 	var pmc_script = load("res://scenes/pvp_match_client.gd")

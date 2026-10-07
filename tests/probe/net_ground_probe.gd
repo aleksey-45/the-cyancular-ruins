@@ -21,7 +21,7 @@ func probe_id() -> String:
 
 func _ready() -> void:
 	# - 一律用**去注释视图**:本仓的注释里大量出现这些标识符(比如这条注释本身),
-	#   裸 contains 会把注释当成代码(探针自己把自己喂绿)。
+	#   裸 contains 会把注释当成代码(探针自己把自己误判通过)。
 	var nb := _code_only(_read("res://core/net/net_bus.gd"))
 	var nbe := _code_only(_read("res://core/net/net_bus_ext.gd"))
 	var pmc := _code_only(_read("res://scenes/pvp_match_client.gd"))
@@ -158,7 +158,7 @@ func _ready() -> void:
 			"func _exit_tree(", "func _physics_process("]:
 		_check(not mg.contains(hook),
 				"MatchGround 定义了 %s —— 中间层不得有生命周期钩子(见 match_state.gd 的链规矩)" % hook)
-	# 反向锚:它确实进了链(否则上面那条会因为文件不存在而虚假通过（未有效测试）)
+	# 反向锚:它确实进了链(否则上面那条会因为文件不存在而测试漏检)
 	_check(mg.contains("extends MatchState"), "MatchGround 应 extends MatchState")
 	_check(mh.contains("_handle_ground_actions("), "MatchHost 没调 _handle_ground_actions")
 	_check(mh.contains("_setup_ground_weapons("), "MatchHost 没调 _setup_ground_weapons")

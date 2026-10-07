@@ -1,13 +1,9 @@
 extends SceneTree
 
-# LaserWeaponBase 抽取冒烟:验证基类三缝存在、默认直线几何、反射子类可解析、PvP 上报 round-trip、
-# 远端"粘副本"公式。跑 `-s res://tests/smoke/laser_weapon_smoke.gd`(需先跑过编辑器 --import 刷全局类缓存,
-# laser_gun extends LaserWeaponBase 才可解析)。
-#
-# 纪律:laser 脚本链全部在 _initialize() 内 load()(顶层不触碰会解析 autoload 名的脚本 —— -s 阶段
-# autoload 尚未实例化,类作用域 preload/静态引用会把编译期 Parse Error 拖进来,运行时 load 则安全)。
-# 不真正 fire(伤害结算走 GameParameters.MAP_WIDTH 实例访问需 autoload);几何/上报/公式这些纯逻辑面在此覆盖,
-# 伤害与视觉回归交给既有 enemy_logic_smoke + 手动。
+# 激光武器持续射击与命中判定冒烟测试：
+# 验证持续光束武器在各材质上的穿透衰减与每帧伤害结算逻辑。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/laser_weapon_smoke.gd
 
 var _failures: Array[String] = []
 

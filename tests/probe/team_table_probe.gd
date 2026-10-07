@@ -9,7 +9,7 @@ extends Node
 #   数值断言(距离/伤害)在"队友被误伤"这件事上一条都不会红。
 # - 反向那条(不传 teams → 全 0、`same_team` 恒 false)是"空参数 = 原行为"的**唯一证据**:
 #   1v1/大乱斗的探针跑的是别的路径,无法覆盖检测这里。
-# 做法同 match_host_hygiene_probe:真建宿主,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包;
+# 做法同 match_host_hygiene_probe:实际创建宿主实例,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包;
 # 玩家由探针自己按 `MatchHost._init` 的建法手工摆进 `players`。
 
 const MAP := "res://maps/newfactory.cyrm"
@@ -76,7 +76,7 @@ func _run() -> void:
 	var a := _place(_host, 4, Vector2i(20, 20))
 	var mate := _place(_host, 5, Vector2i(21, 20))
 	var foe := _place(_host, 1, Vector2i(22, 20))
-	# 注意： [仪器] 钉住 `players` 的**插入顺序** —— ③/④ 的 `continue` vs `break` 区分度**全靠它**。
+	# 注意： [仪器] 严格校验 `players` 的**插入顺序** —— ③/④ 的 `continue` vs `break` 区分度**全靠它**。
 	#   裁决循环是 `for role in players`(即字典插入序),而射手是 role4:顺序 [4,5,1] 下,
 	#   "打敌人"那次必然先遍历到**队友** role5(= 同队)→ 用 `break` 的实现会在那里**停下**,
 	#   永远走不到 role1 → `hit_foe` 红。若有人重排了上面三行的摆放顺序(比如把敌人先摆进来),

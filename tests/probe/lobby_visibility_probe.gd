@@ -20,12 +20,12 @@ extends Node
 #   阶段 1②③ 的断言本体一字不改(它们用的 `P_C` 就是那个无凭据的第三人),变的只是**它表达的那句话**;
 #   而**补集那一半**(持凭据的本人那一行可点  ->  点了回局)由阶段 8咬住。
 #   注意： 故拒绝那一半用**非满房**造:1v1 房里 1 人 / 大乱斗 2 人(上限 8)/ 3v3 房里 2 人时,
-#   唯一的拒绝理由只剩 `started` / `in_match` —— 用满房造会被「房间已满」喂绿(等于没验)。
+#   唯一的拒绝理由只剩 `started` / `in_match` —— 用满房造会被「房间已满」误判通过(等于没验)。
 # - 本探针建的是**真 RoomManager + 真 LobbyRooms**(与生产同一条构造路径),房记录由探针手工摆:
 #   本批的逻辑全在大厅进程内,不需要 socket、也不需要真 worker。
 # - `NetBus.reply` 在"没有对端"时静默跳过  ->  通过 RPC 应答观测的结果**读不到**;故列表抽成
 #   `*_list_payload()` 纯构造(可直调)、拒绝看**副作用**(调用方没被 append 进 players)。
-#   发送那一半由真链路探针覆盖(见设计 §6.4)。
+#   发送那一半由真实网络链路探针覆盖(见设计 §6.4)。
 
 const ROOM_1V1 := "9001"
 const ROOM_ROYALE := "9002"
@@ -57,7 +57,10 @@ const P_C := 103
 #   - 阶段 9(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
 #   - 阶段 7c(大厅合一 Task 2:凭据自带模式,2026-10-03)加 **2** 条 → **47**。
 #   - 阶段 7d(同批:`note_room()` 的**行为**断言)加 **5** 条 → **52**。
-const EXPECTED_CHECKS := 52
+#   - 阶段 4(2026-10-07 单进程单端口:回收判据从"worker 进程还在不在"换成"本进程还挂着会话吗")
+#     加 **3** 条(三个模式各一条"还挂着 -> 不许回收"),原三条里的一条改为"没有局号 -> 不回收")
+#     → **55**。
+const EXPECTED_CHECKS := 55
 
 # 阶段 8 挂在**统一大厅**上(三个模式各渲染一次,同一份判据)。
 const MP_LOBBY_SCENE := "res://scenes/mp_lobby.tscn"
@@ -80,7 +83,7 @@ func _ready() -> void:
 	_rm = RoomManager.new()
 	add_child(_rm)
 	# - 关掉大厅自己的两条梯:本探针手工驱动(与 `match_host_hygiene_probe` 关 `_physics_process`
-	#   相同机制)。不关的话跑到 30s 时回收梯会自动触发,把探针刚摆好的房收掉 —— 断言会在
+	#   相同机制)。不关的话跑到 30s 时资源回收阶梯机制会自动触发,把探针刚摆好的房收掉 —— 断言会在
 	#   "什么错都没有"的情况下变红。
 	_rm.set_process(false)
 	_phase_1v1()
@@ -118,8 +121,7 @@ func _phase_1v1() -> void:
 	r.players = [P_A, P_B]
 	r.player_role = {P_A: 1, P_B: 2}
 	r.started = true
-	r.worker_port = 29901
-	r.worker_pid = 0        # 本阶段不涉及回收(阶段 4才摆 pid)
+	# 局号设为 0：用于测试房间列表展示与拒绝路径，不绑定真实对局会话
 	_rm.lobby.rooms[r.code] = r
 	# - 名单必须在**开局那一刻**冻结:成员转连 worker 后会陆续断开大厅,`players` 会空、
 	#   `_peer_names` 会被擦掉 —— 靠它们渲染的列表会退化成"玩家/玩家"。
@@ -160,8 +162,7 @@ func _phase_royale() -> void:
 	rr.player_role = {P_A: 1, P_B: 2}
 	rr.max_players = 8
 	rr.in_match = true
-	rr.worker_port = 29902
-	rr.worker_pid = 0
+	# 局号设为 0：测试夹具用途
 	_rm.lobby.royale_rooms[rr.code] = rr
 	_rm.lobby._peer_names[P_A] = "阿甲"
 	_rm.lobby._peer_names[P_B] = "bob"
@@ -196,8 +197,7 @@ func _phase_team() -> void:
 	tr.player_role = {P_A: 1, P_B: 2}
 	tr.team_of = {1: 1, 2: 2}
 	tr.in_match = true
-	tr.worker_port = 29903
-	tr.worker_pid = 0
+	# 局号设为 0：测试夹具用途
 	_rm.lobby.team_rooms[tr.code] = tr
 	_rm.lobby._peer_names[P_A] = "阿甲"
 	_rm.lobby._peer_names[P_B] = "bob"
@@ -227,73 +227,65 @@ func _phase_team() -> void:
 # ── ④ 对局结束即回收:worker 进程还在 → 房不许动;worker 退了 → 房必须被回收 ──
 # - 判据是"**worker 进程还在不在**":三种模式的 worker 都在对局结束时自己退,而任何按
 #   "一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口与列表位)。
-# - 反向那一半(**活的 pid 不回收**)不能省:只断言"死的会收"会让一个"见谁收谁"的实现测试全部通过,
-#   而那会把正在进行的对局连端口一起端掉。
-# - 第三条(pid 还没登记)**同样不能省**:`worker_pid` 的登记发生在 `create_process` 成功
-#   **之后**,把 0 判成"结束"会让开局那一瞬被自己的回收梯拆掉。
+# ── ④ 对局结束后的房间回收逻辑验证 ──
+# 校验会话状态与房间记录回收的对应关系：
+# 当会话对象有效时，对应房间保留；当会话对象已被释放或置空时，已开局房间应被正常回收。
 func _phase_reclaim() -> void:
-	# 活的 pid:用**本进程自己** —— 它一定活着,不需要启动任何子进程
-	var live := OS.get_process_id()
+	# 构造虚拟会话节点供 RoomManager 判定托管状态
+	var live := Node.new()
+	_rm.add_child(live)
+	_rm._session = live
 	var r := LobbyRooms.Room.new()
 	r.code = "9011"
 	r.started = true
-	r.worker_port = 29911
-	r.worker_pid = live
+	r.match_id = 11
 	_rm.lobby.rooms[r.code] = r
 	var rr := LobbyRooms.RoyaleRoom.new()
 	rr.code = "9012"
 	rr.in_match = true
-	rr.worker_port = 29912
-	rr.worker_pid = 999999        # 本机上不该存在的 pid
+	rr.match_id = 12
 	_rm.lobby.royale_rooms[rr.code] = rr
 	var tr := LobbyRooms.TeamRoom.new()
 	tr.code = "9013"
 	tr.in_match = true
-	tr.worker_port = 29913
-	tr.worker_pid = 0             # - 还没登记 pid(启动中)→ **不得**被判成结束
+	tr.match_id = 0               # 尚未分配有效局号，不判定为需要回收的已开局房间
 	_rm.lobby.team_rooms[tr.code] = tr
 
 	_rm._reclaim_finished_matches()
-	_check(_rm.lobby.rooms.has("9011"), "④ ★ worker pid 活着(本进程)→ 房**不许**被回收")
-	_check(not _rm.lobby.royale_rooms.has("9012"), "④ worker pid 已退 → 大乱斗房必须被回收")
-	_check(_rm.lobby.team_rooms.has("9013"), "④ ★ pid 还没登记(拉起中)→ 不得判成结束")
+	_check(_rm.lobby.rooms.has("9011"), "④ ★ 本进程还托管着一局 → 那间房**不许**被回收")
+	_check(_rm.lobby.royale_rooms.has("9012"), "④ ★ 同上(大乱斗房)")
+	_check(_rm.lobby.team_rooms.has("9013"), "④ ★ 局号还没分配(开局那一瞬)→ 不得判成结束")
+
+	# 会话释放后，已开局的房间记录应被回收
+	_rm._session = null
+	live.queue_free()
+	_rm._reclaim_finished_matches()
+	_check(not _rm.lobby.rooms.has("9011"), "④ 会话已释放 → 1v1 房必须被回收")
+	_check(not _rm.lobby.royale_rooms.has("9012"), "④ 会话已释放 → 大乱斗房必须被回收")
+	_check(_rm.lobby.team_rooms.has("9013"), "④ ★ 没有局号的房不算「已开局」→ 不回收(它还没开局)")
 
 
-# ── ⑤⑥ 回局判据在**生产 handler** 上的行为(不是只测那个纯函数)──
-# - 为什么两半都要:纯函数测过了(`tests/smoke/rejoin_registry_smoke`),而 handler 里
-#   "查 → 判 → 发"这三步的**接线**没测 —— 把 `lookup` 写成 `lookup(token, now + 一个很大的数)`
-#   或把 `code` 传错,纯函数照样测试全部通过。
-# - 本探针**观测不到 go_match**(没有对端 → `NetBus.reply` 静默跳过),故这里能断言的是
-#   拒绝路径的**副作用**(死 worker 时凭据被清)。**放行路径的真实发送**由真链路探针覆盖
-#   (`tests/probe/rejoin_probe`),这条边界照实登记。
-# 注意： ④ 那一条**不是**多余的:`NetBusExt.rejoin_requested → on_rejoin_request` 这一行**接线**
-#   此前**零覆盖** —— 上面三条都是**直调 handler**,把 `_enter_tree` 里那行 connect 删掉,
-#   它们照样测试全部通过(handler 本体没问题),而生产里回局**永远失败且一行报错都没有**
-#   (净的静默 no-op,与"RPC 挂错节点"同一类)。故第 ④ 条**走信号**(emit)而不直调:
-#   能观测到副作用(凭据被清)就说明那行 connect 在。相同设计约束规范的先例:`team_room_smoke` ⑥
-#   「判据函数测对了 ≠ 生产调的是它」。
-# - 拆除那一侧的归键(端口而非房间号)另有一个专属守卫:`tests/probe/rejoin_keying_probe.tscn`
-#   ——「两间同号的房」那个病态输入在**真 teardown_room** 上跑,本阶段不重复造。
+# ── ⑤⑥ 断线重连请求处理逻辑与凭据时效验证 ──
 func _phase_rejoin() -> void:
 	var now := Time.get_ticks_msec()
-	# ① 房间号不符:拒绝,且凭据**不被**清(worker 还活着,值得让玩家重试一次)
-	_rm.lobby.rejoin.grant("tk_x", "9021", 1, 29921, OS.get_process_id(), now)
+	# ① 房间号不符：拒绝请求，但凭据保留以便重试
+	_rm.lobby.rejoin.grant("tk_x", "9021", 1, 21, now)
 	_rm.lobby.on_rejoin_request(P_C, "9999", "tk_x")
 	_check(not _rm.lobby.rejoin.lookup("tk_x", now).is_empty(),
-			"⑤ 房间号不符:拒绝但**不清**凭据(worker 还活着,能重试)")
-	# ② worker 已退:拒绝 + **清掉**凭据(它再也不会成立)
-	_rm.lobby.rejoin.grant("tk_y", "9021", 1, 29922, 999999, now)
+			"⑤ 房间号不符:拒绝但**不清**凭据(那一局还活着,能重试)")
+	# ② 对局已结束：请求被拒且凭据条目被清除
+	_rm.lobby.rejoin.grant("tk_y", "9021", 1, 22, now)
+	_rm.lobby.rejoin.end_match(22)
 	_rm.lobby.on_rejoin_request(P_C, "9021", "tk_y")
 	_check(_rm.lobby.rejoin.lookup("tk_y", now).is_empty(),
-			"⑥ ★ worker 已退:拒绝并把这份凭据当场作废(留着只会骗下一个请求)")
-	# ③ 凭据根本不存在:拒绝,且不得凭空造出凭据
+			"⑥ ★ 对局已结束:拒绝并把这份凭据当场作废(留着只会骗下一个请求)")
+	# ③ 凭据不存在：拒绝请求，且不新增任何条目
 	_rm.lobby.on_rejoin_request(P_C, "9021", "tk_not_exist")
 	_check(_rm.lobby.rejoin.lookup("tk_not_exist", now).is_empty(),
 			"⑥ 未知 token:拒绝且不登记任何东西")
-	# ④ 接线:同一件事**走信号**(emit)再验一次 —— 只直调 handler 时,`_enter_tree` 里那行
-	#    `NetBusExt.rejoin_requested.connect(on_rejoin_request)` 被删也测试全部通过(见函数头)。
-	#    用"死 worker"那一档造可观测的副作用(与②同一手法)。
-	_rm.lobby.rejoin.grant("tk_w", "9021", 1, 29923, 999999, now)
+	# ④ 信号通道接线验证：通过 NetBusExt.rejoin_requested 信号触发验证
+	_rm.lobby.rejoin.grant("tk_w", "9021", 1, 23, now)
+	_rm.lobby.rejoin.end_match(23)
 	NetBusExt.rejoin_requested.emit(P_C, "9021", "tk_w")
 	_check(_rm.lobby.rejoin.lookup("tk_w", now).is_empty(),
 			"⑥ ★ 信号接线在位(emit rejoin_requested 能落到生产 handler:connect 被删就红)")
@@ -400,7 +392,7 @@ func _phase_session_flags() -> void:
 #
 # 注意： 为什么必须有本阶段:这一条改动**只在「私密房 + 持凭据的本人」这个组合上**与从前不同,
 #   而**既有每一相用的都是公开房与无凭据的第三人**  ->  判据写错时它们**全都保持测试通过**。
-#   四种真实错法各有各的虚假通过（未有效测试）:
+#   四种真实错法各有各的测试漏检:
 #     - 把门槛写成 `not is_public or not owns`(私密房永远不列)—— 阶段 1②③ 保持测试通过;
 #     - 干脆去掉 `is_public` 那一句(私密房对**所有人**列出 = "私密"没了)—— 阶段 1②③ 保持测试通过;
 #     - `owns` 恒真(谁的凭据都放行)—— 阶段 1②③ 保持测试通过;
@@ -417,7 +409,7 @@ func _phase_private_own_room() -> void:
 	rr.is_public = false
 	rr.max_players = 8
 	rr.in_match = true
-	rr.worker_port = 29904
+	rr.match_id = 4
 	rr.roster = [{"role": 1, "name": "阿甲"}]
 	_rm.lobby.royale_rooms[rr.code] = rr
 
@@ -425,16 +417,16 @@ func _phase_private_own_room() -> void:
 	tr.code = ROOM_PRIV_TEAM
 	tr.is_public = false
 	tr.in_match = true
-	tr.worker_port = 29905
+	tr.match_id = 5
 	tr.roster = [{"role": 1, "name": "阿甲"}]
 	_rm.lobby.team_rooms[tr.code] = tr
 
 	# 凭据:`owns` 只看 TTL,故过期那一份要把 `now_ms` 推到 TTL 之外(用真常量算,不写死数字)
-	_rm.lobby.rejoin.grant(TK_MINE, ROOM_PRIV_ROYALE, 1, 29904, 12345, now)
-	_rm.lobby.rejoin.grant(TK_MINE_T, ROOM_PRIV_TEAM, 1, 29905, 12345, now)
-	_rm.lobby.rejoin.grant(TK_OTHER, ROOM_ROYALE, 1, 29902, 12345, now)
-	_rm.lobby.rejoin.grant(TK_STALE, ROOM_PRIV_ROYALE, 1, 29904, 12345,
-			now - int(RejoinRegistry.TOKEN_TTL_SECONDS * 1000.0) - 1)
+	_rm.lobby.rejoin.grant(TK_MINE, ROOM_PRIV_ROYALE, 1, 4, now)
+	_rm.lobby.rejoin.grant(TK_MINE_T, ROOM_PRIV_TEAM, 1, 5, now)
+	_rm.lobby.rejoin.grant(TK_OTHER, ROOM_ROYALE, 1, 2, now)
+	_rm.lobby.rejoin.grant(TK_STALE, ROOM_PRIV_ROYALE, 1, 4,
+			now - int(float(RejoinRegistry.TOKEN_TTL_SECONDS) * 1000.0) - 1)
 
 	_check(_find_row(_rm.lobby.royale_list_payload(), ROOM_PRIV_ROYALE).is_empty(),
 			"⑨ 私密房对**无凭据者**不列(第三人看不到 —— 「私密」这个语义本身)")

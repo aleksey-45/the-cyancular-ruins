@@ -21,9 +21,9 @@ extends Node
 #   只断 grid → `reset_destructibles()` 哪天退化成"只改 grid、不重铺瓦片也不重建碰撞"照样测试全部通过,
 #   而画面上仍是个洞、物理上仍能穿过去(客户端以为修好了、用户看见的没修)。
 #
-# ═══ 为什么不是真链路断言,也不是源码级断言 ═══
-# - 真链路要造出「换局正好落在宽限期内」:1v1 一局得先到 5 杀才结束,现成探针里没有便宜手段,
-#   而"不许为测试新造产品开关"是硬约束 → 真链路不可得(见报告)。
+# ═══ 为什么不是真实网络链路断言,也不是源码级断言 ═══
+# - 真实网络链路要造出「换局正好落在宽限期内」:1v1 一局得先到 5 杀才结束,现成探针里没有便宜手段,
+#   而"不许为测试新造产品开关"是硬约束 → 真实网络链路不可得(见报告)。
 # - 源码级(如 tests/smoke/reconnect_smoke.gd 那种 grep)只能判"那行字在不在",判不了**行为**:
 #   顺序写反(先应用、后还原)、或门控前置校验写错(读了两遍 `_resync_pull_pending`,第二遍必 false)
 #   这三种坏法里,后两种照样能通过任何"字符串在位"式的断言。
@@ -37,7 +37,7 @@ const MAP := "res://maps/newfactory.cyrm"
 var _fails: Array[String] = []
 var _client: PvpMatchClient = null
 var _level0: Node = null
-var _ran_to_end := false          # 防"脚本中途报错 → 无失败项的 ALL-OK"(虚假通过（未有效测试）守卫)
+var _ran_to_end := false          # 防"脚本中途报错 → 无失败项的 ALL-OK"(测试漏检守卫)
 
 var _a := Vector2i(-1, -1)        # 客户端上一局拆过、而服务器换局已还原的格(**不在**载荷里)
 var _b := Vector2i(-1, -1)        # 掉线窗口内被服务器拆的格(**在**载荷里)
@@ -73,7 +73,7 @@ func _run() -> void:
 	_check(not grid.is_empty(), "世界已建(网格非空)")
 	if grid.is_empty():
 		return
-	# 真客户端实例:两个子类都 extends PvpMatchClient 且**都没覆写 `_on_match_sync`**,
+	# 真实客户端实例实例:两个子类都 extends PvpMatchClient 且**都没覆写 `_on_match_sync`**,
 	# 故直接实例化基类跑的就是生产那一份实现(空载荷不会碰到两个"必须覆写"的虚函数)。
 	_client = PvpMatchClient.new()
 	add_child(_client)
@@ -114,7 +114,7 @@ func _run() -> void:
 			"两格在基线里都是实心(A=%d,B=%d)—— 前置:证明下面几条判的是真的差异" % [_a_pristine, _b_pristine])
 
 	# ── ② 造出"客户端与基线不一致"的现场:A、B 都在本地被拆掉 ──
-	# 走**真客户端的真路径**(`_on_remote_tile_destroyed` = 服务器拆墙事件/换局状态补充同步共用的那一个),
+	# 走**真实客户端实例的真路径**(`_on_remote_tile_destroyed` = 服务器拆墙事件/换局状态补充同步共用的那一个),
 	# 不是直接改网格。
 	_client._on_remote_tile_destroyed(_a, true)
 	_client._on_remote_tile_destroyed(_b, true)
@@ -172,7 +172,7 @@ func _tile_source_at(cell: Vector2i) -> int:
 	var wl: TileMapLayer = Level0.wall_layer
 	if wl == null:
 		return -1
-	# 注意： 2026-10-02 合并订正:`_paint_maze` 在 cyrm v4(B18)里改成铺 **16px 子格**了
+	# 注意： 2026-10-02 合并修订说明:`_paint_maze` 在 cyrm v4(B18)里改成铺 **16px 子格**了
 	#    ->  该层的坐标是**子格**坐标,不是 64px 格坐标。原实现直接拿格坐标去查  ->  恒 -1
 	#   (② 的前置那条 `== -1` 因此**恒真**、③ 那条恒假)。这里按同样推导出来的比例展开,
 	#   任一子格有砖就返回它的 source id。
@@ -191,7 +191,7 @@ func _tile_source_at(cell: Vector2i) -> int:
 # (-1 = 越界 / 该层还没建)。
 # - 读的是**物理**那一维:`_on_tile_destroyed` 把这些子格清零,`reset_destructibles` 靠
 #   `WorldBuilder.build_sim` 整层重建 —— 只改 grid 的退化实现不会让这里恢复。
-# 注意： 2026-10-02 合并订正:子格边长**从 `CollisionBuilder` 推导**,不写死乘数。
+# 注意： 2026-10-02 合并修订说明:子格边长**从 `CollisionBuilder` 推导**,不写死乘数。
 #   原实现写的是 `cell * 2`(32px 子格 / 每格 2×2),而 cyrm v4(B18)已把破坏下沉到
 #   **16px(每格 4×4)**  ->  它**一直在取错格**;换 PvP 地图后 ② 的前置断言才把它暴露异常
 #   (它读到的是别的子格,而 `_on_remote_tile_destroyed` 清的是本格那 16 个)。

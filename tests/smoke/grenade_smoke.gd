@@ -1,6 +1,10 @@
 extends SceneTree
 
-# 桩敌人:入 enemies 组,记录 hurt
+# 榴弹弹道与延迟引信冒烟测试：
+# 验证榴弹物理重力倍率、抛物线速度衰减、接触目标短引信与超时引爆逻辑。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/grenade_smoke.gd
+
 class StubEnemy:
 	extends CharacterBody2D
 	var hp: int = 50

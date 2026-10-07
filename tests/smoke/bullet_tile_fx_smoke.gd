@@ -1,10 +1,9 @@
 extends SceneTree
-# PvP 打墙命中反馈——源码级结构检查(仿 player_contract_smoke 读源码断言风格):
-# 锁住 bullet_base.gd 的关键结构不被回退——
-#  1) `_damage_tile_at` 内 TileHitFx.spawn 在 `if apply_damage:` 之前(播碎片无条件);
-#  2) `damage_tile(cell,` / `damage_sub(` 调用被 `apply_damage` 守住(damage 只在权威侧);
-#  3) 撞墙 else 分支直接调 `_damage_tile_at`,不受 `if apply_damage:` 包裹(视觉副本也走)。
-# 跑法:用户自跑(bullet_tile_fx_smoke.sh)。通过 = SMOKE_BULLET_TILE_FX OK。
+
+# 子弹撞击瓦片碎屑特效冒烟测试：
+# 验证 BulletTileFx 在各种瓦片类型（砖石、水体等）碰撞时的特效与材质匹配逻辑。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/bullet_tile_fx_smoke.gd
 
 var _fail := ""
 
@@ -29,7 +28,7 @@ func _check(src: String) -> void:
 		fn_end = src.length()
 	var body := src.substr(fn_body_start, fn_end - fn_body_start)
 	var spawn_idx := body.find("TileHitFx.spawn")
-	# - 2026-10-02 合并订正:KH 的 cyrm v4 把破坏下沉到 **16px 子格**  ->  `_damage_tile_at` 长出
+	# - 2026-10-02 合并修订说明:KH 的 cyrm v4 把破坏下沉到 **16px 子格**  ->  `_damage_tile_at` 长出
 	#   **两条**路径(子格 / 网格回落),伤害调用从单一的 `damage_tile(cell` 变成
 	#   `damage_tile(cell` 与 `damage_sub(` 两种,且两条**不在**同一个 `if apply_damage:` 之下
 	#   (子格那条是独立 `if`,网格那条是 `and apply_damage` 复合条件)。

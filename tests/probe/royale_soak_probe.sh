@@ -25,7 +25,6 @@ echo "[soak] 检查 7777 是否空闲…"
 if lobby_alive; then
   echo "[soak] 7777 已被占用 —— 先清理僵尸 Godot:"
   kill_port 7777
-  kill_port_range 7800 8300     # 大厅既然是被我们杀的,它启动的 worker 现在就是孤儿
   sleep 1
 fi
 
@@ -37,9 +36,7 @@ RC=$?
 
 echo "[soak] 清理残留 headless Godot / 端口"
 kill_port 7777
-# - 原先这里只列了 7800~7810 十一个端口,而真实池是 [7800, 8300)(`WorkerLauncher`)——
-#   分配器是"唯一递增"的,一局一 worker,长跑里只要走过一次 7811 就会漏掉孤儿。
-kill_port_range 7800 8300
+# 单进程架构下仅需清理大厅监听端口。
 
 echo
 if grep -q "SOAK: ALL-OK" "$LOG" && ! grep -qE "SCRIPT ERROR|无结果文件|Parse Error" "$LOG"; then

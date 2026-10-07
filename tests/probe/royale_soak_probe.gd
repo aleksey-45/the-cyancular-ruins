@@ -17,14 +17,14 @@ extends Node
 #
 # - 边界(报告里必须照抄,别把数字说过头):
 #   1. headless 客户端**没有渲染** → 量到的是网络 + 模拟 + 场景树成本,**不含画面**。
-#      "渲染卡不卡" 本探针答不了,得开真客户端看。
+#      "渲染卡不卡" 本探针答不了,得开真实客户端实例看。
 #   2. 大乱斗客户端上报的输入包**不带 seq**(royale_game.gd 的 pkt 无该字段),
 #      故快照里的 ack_seq 恒为 0 → 客户端无从推算 _pending_input 积压。
 #      输入积压是本机压测量不到的**代码级风险**,只在报告里给机制与触发条件。
 #   3. 崩溃判据 = 结果文件缺失 / 客户端进程消失,**不是** "没看见报错"。
 #   4. MATCH_OVER 之后 royale_game **结算页**那条出场路径(玩家自己点「返回主菜单」)不在本探针
 #      覆盖内 —— 客户端在 MATCH_OVER 当场写结果并退出,**本探针的观测窗就到这里**。
-#      - 2026-09-21 订正:原先这里写的是"否则那条 6s 自动回主菜单的换场会把探针自己摘掉" ——
+#      - 2026-09-21 修订说明:原先这里写的是"否则那条 6s 自动回主菜单的换场会把探针自己摘掉" ——
 #        **自动退场已随结算页批次删除**(改成玩家自己退),headless 探针不会去点那个按钮  -> 
 #        到 MATCH_OVER 收尾是**探针自己的选择**,不是被换场摘掉。
 
@@ -155,7 +155,7 @@ func _read_result(i: int) -> String:
 
 # ══ 客户端 ══
 func _run_client() -> void:
-	Engine.max_fps = 60     # 与真客户端同节奏;不设就变成"跑多快算多快",帧间隔读数失去意义
+	Engine.max_fps = 60     # 与真实客户端实例同节奏;不设就变成"跑多快算多快",帧间隔读数失去意义
 	_flow_us = Time.get_ticks_msec()
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)   # 快照拆两条后:世界包(数条数够用)
 	NetBus.local_round_state.connect(_on_round_state)
@@ -228,27 +228,21 @@ func _wait_room_code() -> void:
 	NetBusExt.rpc_id(1, "royale_join", code, INVITE, false)
 
 
-# go_match 在大厅 peer 的 poll 调用栈内到达 → 转连必须推到帧末(与 mp_lobby 相同机制)
-func _on_go_match(role: int, port: int) -> void:
+# go_match 在网络轮询调用栈中触发，将 claim_role 推迟至帧末执行。
+# 单进程单端口架构下，客户端与服务端维持同一连接，直接认领角色。
+func _on_go_match(role: int, _port: int) -> void:
 	PvpSession.role = role
-	_do_go_match.call_deferred(role, port)
+	_do_go_match.call_deferred(role)
 
 
-func _do_go_match(role: int, port: int) -> void:
-	multiplayer.connected_to_server.connect(func() -> void:
-		NetBus.rpc_id(1, "claim_role", role, "BOT%d" % _idx)
-		NetBusExt.rpc_id(1, "player_options", {
-			"hue": float((_idx - 1) * 40),
-			"round_full_heal": false,
-			"disabled_weapons": [],
-			"match_time": _match_secs,
-		}), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
-		_finish(false, "连 worker 失败"), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	var e := NetBus.start_client(ADDR, port)
-	if e != OK:
-		_finish(false, "start_client(worker) 失败 %d" % e)
+func _do_go_match(role: int) -> void:
+	NetBus.rpc_id(1, "claim_role", role, "BOT%d" % _idx)
+	NetBusExt.rpc_id(1, "player_options", {
+		"hue": float((_idx - 1) * 40),
+		"round_full_heal": false,
+		"disabled_weapons": [],
+		"match_time": _match_secs,
+	})
 
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:

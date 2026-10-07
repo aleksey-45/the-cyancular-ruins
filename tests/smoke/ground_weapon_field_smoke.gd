@@ -1,15 +1,9 @@
 extends SceneTree
 
-# 地面武器表冒烟:环面最近拾取 + 并列确定性 + 增删查。
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/ground_weapon_field_smoke.gd
-# 通过 = `GROUND_WEAPON_FIELD OK` 退出 0。
-#
-# ═══ 为什么需要它 ═══
-# 两条都是"单机看起来完全正常、只在接缝/多人时坏"的形状:
-#   ① 距离必须走**环面最短** —— 用绝对坐标差的话,接缝另一侧贴脸的枪会被算成
-#      "隔了整幅地图",表现是"贴脸也捡不到"。
-#   ② 并列(两把完全重合)必须按 inst **确定性**排序 —— 否则两台客户端各自挑中不同的一把,
-#      服务器裁决的和玩家看到的不是同一把。
+# 地面武器拾取范围与物理状态冒烟测试：
+# 验证地面散落武器在重力与环面边界下的物理更新、拾取判定区域计算。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/ground_weapon_field_smoke.gd
 
 var _fail := 0
 

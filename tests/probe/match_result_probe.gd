@@ -1,6 +1,6 @@
 extends Node
 
-# 结算页的**版式与信号**守卫(必须真渲染;**headless 下取不到像素**,那是留给用户的跑法)。
+# 结算页的**版式与信号**守卫(必须真实视口渲染;**headless 下取不到像素**,那是留给用户的跑法)。
 # 跑法: "$GODOT" --path . --quit-after 3600 res://tests/probe/match_result_probe.tscn
 # 判据: 文本 `MATCH RESULT PROBE: ALL-OK`。
 #
@@ -25,7 +25,7 @@ extends Node
 #        之后照常往下走;
 #      - 出错在 **`_shot` 自己**(即下面 `save_png` 那个形状)→ `_shot` 结束,`_run` 继续;
 #      - 出错在 **`_run` 里** → `_run` 结束,`_ready()` 的 `await _run()` 照常恢复。
-#    三层**都**打印 **ALL-OK**  ->  **虚假通过（未有效测试）**(读者把那行当"后面那些都过了")。唯一"一行都不打印"
+#    三层**都**打印 **ALL-OK**  ->  **测试漏检**(读者把那行当"后面那些都过了")。唯一"一行都不打印"
 #    的形状是出错在 `_ready()` **自己身上**(那时连 verdict 都到不了,只能靠 `--quit-after` 收尾
 #    —— 而它照样 exit 0,与"跑通了"在退出码上不可分)。
 #    故:取图先判 `img == null` 并**响亮地记一条 FAIL**,取节点一律先 `_check(x != null)`。
@@ -93,7 +93,7 @@ func _run() -> void:
 		#   直接 `get_node(...)` 取不到节点  ->  引擎只 `ERROR` 一行,而**出错的那个函数当场结束、
 		#   调用方继续** —— 于是这个 lambda 里**剩下的断言被静默跳过**,`_shot`/`_run` 照常往下走。
 		#   若没有别处恰好也撞到同一个改名(那次碰巧是 ③ 替它报了红),verdict 就是 **ALL-OK**:
-		#   一条**虚假通过（未有效测试）**(读者会以为这两条都过了),比"探针挂住"危险得多。
+		#   一条**测试漏检**(读者会以为这两条都过了),比"探针挂住"危险得多。
 		var g := m.get_node_or_null("Root/Panel/Body/VBox/Sections/Section0/Rows") as GridContainer
 		_check(g != null, "1v1:找不到 Root/Panel/Body/VBox/Sections/Section0/Rows(节点路径变了?)")
 		if g != null:
@@ -211,7 +211,7 @@ func _run() -> void:
 	#   (不经过 lambda),出错会**结束 `_run` 本身** —— ④c 自己的断言与**整段 ⑤** 一起被跳过,
 	#   而 `_ready` 的 `await _run()` 照常恢复、打印的却是 **ALL-OK**(2026-09-21 实测:把
 	#   `BackButton` 改名即复现,输出里只有一行 `ERROR: Node not found` + `ALL-OK`)。
-	#   那是**虚假通过（未有效测试）**,比文件头 ② 预言的"一行都不打印"更坏:读者会把那行 ALL-OK 当成"④c 与 ⑤ 都过了"。
+	#   那是**测试漏检**,比文件头 ② 预言的"一行都不打印"更坏:读者会把那行 ALL-OK 当成"④c 与 ⑤ 都过了"。
 	var bb := mb.get_node_or_null("Root/Panel/Body/VBox/BackButton") as Button
 	_check(bb != null, "④c:找不到 Root/Panel/Body/VBox/BackButton(节点路径变了?)")
 	if bb != null:
@@ -267,7 +267,7 @@ func _run() -> void:
 	#   守的却是一份**手写**的三个子类清单;且裸 `contains` 对注释是盲的(基类里那句注释原文
 	#   就写着 `MatchResult.new()`)。现在住在 `tests/probe/hud_declarative_probe.gd` 的
 	#   `_check_result_scene_instantiation()`(走盘 + 剥注释,理由写在那里)。
-	#   ⚠ 别在这儿"补回来":本文件是需要**真渲染**的窗口探针,只在有人开窗口时才跑。
+	#   ⚠ 别在这儿"补回来":本文件是需要**真实视口渲染**的窗口探针,只在有人开窗口时才跑。
 
 
 # 找「带 -  的那个 Label」所在网格与其下标;找不到返回空数组。
@@ -335,7 +335,7 @@ func _shot(payload: Dictionary, verify: Callable) -> void:
 	#   **全部照常恢复**  ->  verdict 仍打 **ALL-OK**,整段 ①~⑤ **一条都没验**却看着测试全部通过。
 	#   - 本文件原先写的是"强制中断 `_shot` 协程  ->  `_run` 再也不恢复、一行 verdict 都不打印":
 	#   2026-09-21 实测**推翻**(见文件头 ②)—— 那个说法只在出错于 `_ready()` **自己身上**
-	#   时才成立,而这里是 `_shot`。本探针的先决条件是真渲染,误加 `--headless` 必须当场
+	#   时才成立,而这里是 `_shot`。本探针的先决条件是真实视口渲染,误加 `--headless` 必须当场
 	#   说出来,不能装死。
 	if img == null:
 		_check(false, "截图失败 —— 是不是误加了 --headless?(真渲染是本探针的前提)")

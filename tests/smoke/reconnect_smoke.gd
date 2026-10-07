@@ -1,35 +1,9 @@
 extends SceneTree
 
-# 重连协议的**源码级**契约冒烟:
-#   ① 三条新 RPC + 3v3 的八条 `team_*` 必须住在 NetBusExt,**且 NetBus 里一个都不许有**
-#      (放错节点 = 静默 no-op;3v3 那八条见文件末「3v3 团队协议」一节)
-#   ② 三者的 **@rpc 注解**必须逐字正确(注解错了 = RPC 静默不通,与放错节点相同机制静默)
-#   ③ PvpSession 的凭据字段在位(重连/回局都要靠它们)
-#   ④ 注意： **回局凭据的生死线**(2026-09-22 按 C1 整条重写,**原第 ④ 条是反的**):
-#      凭据必须**活过"回主菜单 → 再进大厅页"**(那正是路径乙的意义),只在
-#        - 换了**房号或模式**(`note_room` 里 `room_code` / `room_mode` 变了)
-#        - 大厅答"回不去了" / 回局超时(`clear_rejoin` 的另外两个调用点)
-#      时作废。§「凭据的生死线」那一节逐条钉住,连"主菜单走 `reset()`"一起。
-#   ⑤ `try_rejoin_row` 的两个条件(是我的房 + 凭据还在 + **这一行是对局中**)
-#   ⑥ **四条新存活检测守卫**的常驻源码断言(§6;I3:`tests/probe/rpc_liveness_probe` 的扫描面
-#      **不含 `scenes/`**,K 键那两条与 `send_ping` 此前零守卫)
-# 跑法: timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/reconnect_smoke.gd
-# 通过 = `RECONNECT SMOKE OK` 退出 0。
-#
-# 注意： **原来的第 ④ 条是反的,而且它把 C1 钉在了原地**:它断言 `reset()` **必须**清
-#   `room_code` / `rejoin`,理由写的是"下一局会拿着上一局的房号去问这行是不是我的房"。
-#   而 `reset()` 正是主菜单那颗联机入口(2026-10-03 三合一后只剩一颗)调的函数  ->  玩家从对局
-#   回主菜单、再从这个入口进来时,凭据**正好在那一拍**被抹掉  ->  回局入口在生产里**永远不可达**
-#   (自己那间"对局中"的房恒为灰)。整支终审 2026-09-22 定性为 Critical。
-#    ->  本文件现在是**反向**断言:`reset()` **不许**碰凭据(见 `_check_rejoin_lifecycle`)。
-#   - 教训(别再犯):一条"某函数必须清某字段"的断言,要连**那个函数被谁调**一起看 ——
-#     这条守卫的错不在断言本身,而在它把一个"进页复位"函数当成了"下车清理"函数。
-#
-# ═══ 为什么是源码级 ═══
-# - RPC 放错节点**不会报错**:原 NetBus 与原版服务端逐字节一致是硬纪律,而 NetBusExt 对
-#   原版 worker 不存在 → 放错的 RPC 静默丢弃、优雅降级。症状是"重连永远失败"却一行错都不打。
-#   相同机制先例:weapon_spawned/weapon_removed 的 node 归属由 tests/probe/net_ground_probe 双向钉住
-#   (**缺了要红、多了也要红**)。这里照抄那条纪律。
+# 断线重连网络协议接口规范检查：
+# 源码级静态验证 NetBusExt 中的重连 RPC 注解完整性，确保方法注册与调用语义符合规范。
+# 运行方式：
+#   timeout 60 "$GODOT" --headless --path . -s res://tests/smoke/reconnect_smoke.gd
 
 const NETBUS := "res://core/net/net_bus.gd"
 const NETBUS_EXT := "res://core/net/net_bus_ext.gd"
@@ -60,7 +34,7 @@ const N_EXT_RPC_ANN := {
 const N_TEAM_RPCS := ["team_create", "team_join", "team_pick", "team_leave", "team_start",
 		"team_list", "team_rooms", "team_room_state"]
 
-# 注解同样逐字钉住 —— -  方向写反是**静默**的:`team_rooms` 若写成 any_peer = 任何客户端都能
+# 注解同样逐字严格校验 —— -  方向写反是**静默**的:`team_rooms` 若写成 any_peer = 任何客户端都能
 # 伪造房间列表;`team_start` 若写成 authority = 客户端的上行被直接拒("房主点了开始没反应")。
 const N_TEAM_RPC_ANN := {
 	"team_create": "@rpc(\"any_peer\", \"reliable\")",
@@ -103,7 +77,7 @@ func _read(path: String) -> String:
 	return FileAccess.get_file_as_string(path)
 
 
-# 剥掉 `#` 注释与字符串外的空白,只留代码本体 —— 否则注释里提到的方法名会虚假通过（未有效测试）
+# 剥掉 `#` 注释与字符串外的空白,只留代码本体 —— 否则注释里提到的方法名会测试漏检
 func _code(text: String) -> String:
 	var out := ""
 	for line in text.split("\n"):
@@ -210,11 +184,11 @@ func _initialize() -> void:
 	# ── 回局支路的**生产接线**(阶段 2-B Task 6)──
 	# - 为什么这几条必须在这里:回局那几件生产方式**没有任何探针走过** —— `try_rejoin_row` /
 	#   `_request_rejoin` / `_on_rejoin_denied` / `_tick_rejoin_timeout` 在今天全仓**零调用**
-	#   (行渲染与行按下是 Task 7,真链路是 Task 8)。于是下面这两种删法**一行报错都不会有**:
+	#   (行渲染与行按下是 Task 7,真实网络链路是 Task 8)。于是下面这两种删法**一行报错都不会有**:
 	#     - `_finish_lobby_ready` 里那行 connect 删掉  ->  大厅答的 `rejoin_denied` 没人接  -> 
 	#       凭据永不清、那一行**永远可点**、每次点都是同一句失败;
 	#     - mp_lobby 的 `_process` 里那条梯删掉  ->  15s 保底处理**根本不存在**,玩家停在一句"正在回到对局…"上。
-	#   - 两条都按**函数体**判:全文件 `contains` 会被别处的同名调用喂绿(本仓的老毛病,
+	#   - 两条都按**函数体**判:全文件 `contains` 会被别处的同名调用误判通过(本仓的老毛病,
 	#     先例 = `team_room_smoke` ⑨②"按函数体判而不是全文件 contains")。
 	for p in [LOBBY_PAGE, PAGE_MP]:
 		_check(not _read(p).is_empty(), "读不到 %s" % p)
@@ -245,7 +219,7 @@ func _initialize() -> void:
 #      - `reset()` **不许**碰凭据(进页复位 ≠ 下车清理);
 #      - 凭据只在**换了房号或模式**(`note_room` 的 `room_code` / `room_mode` 判别)、以及
 #        大厅拒绝/超时(`clear_rejoin` 另外两个调用点)时作废。
-# - 全部按**函数体**判(全文件 `contains` 会被别处同名调用喂绿 —— 本仓老毛病)。
+# - 全部按**函数体**判(全文件 `contains` 会被别处同名调用误判通过 —— 本仓老毛病)。
 func _check_rejoin_lifecycle(ses: String) -> void:
 	var reset_body := _func_body(ses, "reset")
 	_check(not reset_body.is_empty(), "PvpSession 里找不到 func reset()")

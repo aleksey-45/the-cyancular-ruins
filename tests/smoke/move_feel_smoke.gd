@@ -1,13 +1,10 @@
 extends Node
-# 下蹲/冲刺手感冒烟(scene 模式 headless):手动喂 PacketInputSource 逐帧驱动单个 Player,
-# 断言:
-#  1) 卡蹲修复:地面按住 S 蹲 → 被抬到空中(仍按 S)is_squat 随离地清除 → 空中松开 S 落地不再蹲。
-#  2) 蹲走:蹲态喂水平轴,速度收敛到 crouch_walk_speed 附近且远小于 move_speed。
-#  3) 冲刺按跳打断:is_charge=false 且保留水平动量(velocity.x 仍大)。
-#  4) 冲刺撞水平墙:is_charge 提前清 false(未冲满 0.4s)且 velocity.x≈0。
-#  5) 空中冲刺重力削减:空中单 tick 的 vy 增量 ≈ gravity*charge_air_gravity_mult*dt,
-#     明显小于不冲刺时的 gravity*dt。
-# 跑法:见 move_feel_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。通过 = SMOKE_MOVE_FEEL OK。
+
+# 玩家移动手感与动作状态机冒烟测试：
+# 验证下蹲、下冲、空中受力、冲刺打断、撞墙阻挡与重力衰减等物理交互细节，
+# 确保角色操作手感符合设计预期。
+# 运行方式：
+#   "$GODOT" --headless --path . res://tests/smoke/move_feel_smoke.tscn
 
 const BIT_UP := PacketInputSource.BIT_UP
 const BIT_DOWN := PacketInputSource.BIT_DOWN

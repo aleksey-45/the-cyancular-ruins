@@ -156,10 +156,11 @@ func _run_client_2() -> void:
 		NetBusExt.rpc_id(1, "royale_join", code, INVITE, false))
 	_go_and_verify("c2")
 
-# ── 公共(客户端):等 go_match → 转连 worker → claim → 验证对局广播 ──
+# ── 客户端通用逻辑：接收 go_match -> 在既有连接上发送 claim_role -> 验证对局广播 ──
+# 单进程单端口架构下，客户端与服务端维持同一连接，直接认领角色。
 func _go_and_verify(who: String) -> void:
 	NetBus.local_go_match.connect(func(role: int, port: int) -> void:
-		print("PROBE[%s]: go_match role=%d port=%d → 转连 worker" % [who, role, port])
+		print("PROBE[%s]: go_match role=%d port=%d → 进对局(连接不动)" % [who, role, port])
 		_to_worker.call_deferred(who, role, port))
 	NetBus.local_match_start.connect(func(role: int, spawn: Vector2i, map_path: String) -> void:
 		_got_match_start = true
@@ -170,7 +171,7 @@ func _go_and_verify(who: String) -> void:
 		# - 批次 3:生效选项改由**进场拉取**下发(服务器那次"推"已删 —— 它与 match_start 落在同一次
 		#   poll,而那一刻新场景订阅方还不存在,会静默丢,自检 B2)。
 		#   本探针是**轻量监听客户端**(不起真 royale_game),故这里自己发一次 match_sync 并消费应答;
-		#   真客户端由各自场景的 `_ready` 发出请求。
+		#   真实客户端实例由各自场景的 `_ready` 发出请求。
 		NetBus.local_match_sync.connect(func(payload: Dictionary) -> void:
 			if not (payload.get("options", {}) as Dictionary).is_empty():
 				_got_match_options = true
@@ -218,18 +219,11 @@ func _go_and_verify(who: String) -> void:
 		else:
 			_finish(false, who, "; ".join(problems)))
 
-func _to_worker(who: String, role: int, port: int) -> void:
+func _to_worker(who: String, role: int, _port: int) -> void:
 	PvpSession.role = role
 	# 非零色相(D1):两客户端各报一个可互相区分的值 —— match_sync 的 hues 回包
 	# 必须把**两端**的值都带回,否则"房间里选的颜色进不了实战"就是协议层断的。
 	var my_hue := 137.0 if who == "c1" else 246.0
-	multiplayer.connected_to_server.connect(func() -> void:
-		print("PROBE[%s]: 已连 worker,claim role %d" % [who, role])
-		NetBus.rpc_id(1, "claim_role", role, who.to_upper())
-		NetBusExt.rpc_id(1, "player_options", {"hue": my_hue}), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
-		_finish(false, who, "连 worker 失败"), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	var err := NetBus.start_client("127.0.0.1", port)
-	if err != OK:
-		_finish(false, who, "start_client(worker) 失败 %d" % err)
+	print("PROBE[%s]: claim role %d(既有连接)" % [who, role])
+	NetBus.rpc_id(1, "claim_role", role, who.to_upper())
+	NetBusExt.rpc_id(1, "player_options", {"hue": my_hue})

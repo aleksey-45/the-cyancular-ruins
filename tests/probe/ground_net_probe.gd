@@ -1,6 +1,6 @@
 extends Node
 
-# 局内「捡枪 / 丢枪」的**真链路**探针(场景模式:真大厅 + 真 worker + 两个真 royale_game 客户端)。
+# 局内「捡枪 / 丢枪」的**真实网络链路**探针(场景模式:实际大厅 + 真 worker + 两个真 royale_game 客户端)。
 #
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 10800 res://tests/probe/ground_net_probe.tscn --test-ground-teleport
@@ -17,9 +17,9 @@ extends Node
 # 用户 2026-09-16 报「1v1 / 大乱斗里捡武器会崩溃」。把链路摊开,每一段各自都有单元级覆盖:
 #   - 服务器权威裁决 / 地面表增删 → `tests/probe/ground_action_probe.tscn`(绿)
 #   - 客户端删节点 / 权威背包变化后 restore → `tests/probe/ground_client_probe.tscn`(绿)
-# 而**崩溃发生在把这两半接起来的那条真链路上** —— 上行 F/Q 边沿 → worker 裁决 →
+# 而**崩溃发生在把这两半接起来的那条真实网络链路上** —— 上行 F/Q 边沿 → worker 裁决 →
 # `weapon_spawned`/`weapon_removed` 回传 → 客户端删/建节点 → 快照 c2 改背包 →
-# C2 reconcile 重放。这条只有真大厅 + 真 worker + 真 royale_game 跑得到。
+# C2 reconcile 重放。这条只有实际大厅 + 真 worker + 真 royale_game 跑得到。
 #
 # ═══ 「丢 → 走过去 → 捡」为什么是确定性的 ═══
 # 开局服务器给**每个玩家发一把枪**(`MatchGround._setup_ground_weapons`),所以第一个周期
@@ -84,7 +84,7 @@ func _run_orchestrator() -> void:
 	if OS.get_cmdline_user_args().has("--nospawn"):
 		print("PROBE: --nospawn:不拉子进程,请另起两个 `-- --role=c1` / `-- --role=c2`")
 		return
-	# `--render`:客户端子进程**不带 --headless**(真开窗、真渲染)。用户报的崩溃出现在
+	# `--render`:客户端子进程**不带 --headless**(实际打开窗口、真实视口渲染)。用户报的崩溃出现在
 	# **导出 exe**(有窗口)上,而 headless 跑的是"无渲染"的那半条管线 —— 渲染侧(RID/贴图/
 	# SubViewport 析构)那类问题只有这一档照得出来。默认关(CI/无显示环境用)。
 	var render := OS.get_cmdline_user_args().has("--render")
@@ -205,7 +205,7 @@ func _tail_lines(text: String, n: int) -> String:
 	return "…(前 %d 行省略)\n" % (lines.size() - n) + "\n".join(lines.slice(lines.size() - n))
 
 
-# ── 客户端子进程:挂观察者 + 挂真大厅场景,再把它驱动起来 ──
+# ── 客户端子进程:挂观察者 + 挂实际大厅场景,再把它驱动起来 ──
 func _run_client() -> void:
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
 	if FileAccess.file_exists(lp):

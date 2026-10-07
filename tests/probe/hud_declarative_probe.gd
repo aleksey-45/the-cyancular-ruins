@@ -151,12 +151,12 @@ func _check_team_my_team_contract() -> void:
 #      **一处都扫不到**,而探针照样测试全部通过。手写清单正是它当初出错的成因,所以这里**走盘**。
 #   ② **判据必须剥注释**(`_code_only`)。基类里那句注释原文就写着
 #      「必须走场景实例化,不能用 `MatchResult.new()`」—— 裸 `contains` 会把这条
-#      **完全正确**的代码判成红的(comment-blind 的虚假失败（测试用例误报）)。
-#   ③ 这条是**源码级**规则,不该住在需要真渲染的窗口探针里:那种探针**只在有人开窗口时**
+#      **完全正确**的代码判成红的(comment-blind 的测试误报)。
+#   ③ 这条是**源码级**规则,不该住在需要真实视口渲染的窗口探针里:那种探针**只在有人开窗口时**
 #      才跑,而本文件是 headless、已在例行扫描轮转里,且已经拥有「零 `<类>.new(`」这个概念
 #      —— ①②两条 `.new(` 守卫就在上面几步之外。
 #   ⚠ 别把它"简化"回「裸 contains + 固定路径清单」:①②两条会**同时**回来,而且都是静默的
-#      (虚假失败（测试用例误报）要人去查、漏扫要等缺陷上线)。
+#      (测试误报要人去查、漏扫要等缺陷上线)。
 const RESULT_SCAN_ROOT := "res://scenes"      # 目录,不是文件清单(理由见上 ①)
 const RESULT_FORBIDDEN := "MatchResult.new("  # `.new()` 建出来的是 layer 1(理由见文件头 ④)
 
@@ -222,11 +222,11 @@ func _scan_forbidden_literal(root: String, literal: String, cls: String, why: St
 #   从不经过生产入口 `_show_result()` —— 于是"探针比产品更绿"。
 # 注意： **判据必须剥注释(`_code_only`),这是本检查唯一的实现难点**:正确实现自己的注释里
 #    (该文件 `_show_result()` 上方那段,原文写着「写成 `if _result != null: return` 会…」)
-#    **就含这行字面量**  ->  裸 `contains` 会把**完全正确**的代码判成红的(comment-blind 的虚假失败（测试用例误报）,
+#    **就含这行字面量**  ->  裸 `contains` 会把**完全正确**的代码判成红的(comment-blind 的测试误报,
 #   与上面 ④ 里 `MatchResult.new()` 那条是同一个已知缺陷)。剥注释后:正确文件里该串**只出现在
 #   注释里**  ->  绿;一旦真写成提前返回  ->  落到代码里  ->  红。-  别"化简"成裸 contains。
 # - 反向断言(`show_result(` 必须在)同样不能省:没有它的话,**把整个 `_show_result()` 删掉**
-#   会让上面那条提前返回断言恒真(空文件当然"不含 `_result != null`")—— 那是虚假通过（未有效测试）不是修复。
+#   会让上面那条提前返回断言恒真(空文件当然"不含 `_result != null`")—— 那是测试漏检不是修复。
 const RESULT_HOST := "res://scenes/pvp_match_client.gd"
 const RESULT_STALE_GATE := "_result != null"   # 提前返回门控前置校验的形状(`if _result != null: return`)
 const RESULT_REFRESH_CALL := "show_result("    # 刷新调用:`_result.show_result(payload)`
@@ -260,8 +260,8 @@ func _check_result_refresh_not_gated() -> void:
 #   ⑤ 只管"刷新没被闸住"、`RESULT_FORBIDDEN` 只管"零 .new()",kh_l6 的 9/9b/12/16 只管
 #   "调没调 `_show_result()`"与"提前返回在不在",`team_room_smoke` 管的是 3v3 侧的调用点。
 # - 判据取**文件级 contains**(不锚 `_show_result` 的函数体):把它抽成一个具名助手、
-#   再在 `_show_result` 里调,是**等价正确修法** —— 锚死函数体会把它判成虚假失败（测试用例误报）(仓内纪律:
-#   不虚假失败（测试用例误报）后续任务的正确修法)。剥注释仍必需:同文件里有多段注释在讲这条信号。
+#   再在 `_show_result` 里调,是**等价正确修法** —— 锚死函数体会把它判成测试误报(仓内纪律:
+#   不测试误报后续任务的正确修法)。剥注释仍必需:同文件里有多段注释在讲这条信号。
 # - 无效操作防护:文件读不到时上面那条 `_check` 已报红,不会让"零命中"被读成"没问题"。
 const RESULT_LEAVE_WIRE := "leave_requested.connect("
 
@@ -291,7 +291,7 @@ func _check_result_leave_wiring() -> void:
 #   `_show_result()` 本体一字不动 —— 挂载、连线、刷新全走真实现。
 #   - 用**同一个实例连调两次**(与 `match_result_probe` 的 ⑤ 同口径):"每次新建实例"的写法
 #     无法覆盖检测刷新 —— 第二次永远是某个新实例的第一次。
-#   - 无需真渲染:断言读的是 Label 的 `text` 与 Sections 的子节点数,两者都在 `show_result()`
+#   - 无需真实视口渲染:断言读的是 Label 的 `text` 与 Sections 的子节点数,两者都在 `show_result()`
 #     里**同步**写好(布局在帧末,与本断言无关) ->  它住在 headless 的源码级探针里,跑得最勤。
 # - 桩的第一个载荷也要断言("第一次"):否则"两次都是空"的实现也能让第二条绿 —— 那样它证的
 #   就不是"刷新到了",而只是"有个控件在那儿"。

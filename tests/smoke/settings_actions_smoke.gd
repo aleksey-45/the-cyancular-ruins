@@ -1,14 +1,9 @@
 extends SceneTree
 
-# 设置页动作名覆盖守卫:`REMAPPABLE_ACTIONS` 里的每个动作都必须有中文显示名。
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/settings_actions_smoke.gd
-# 通过 = `SETTINGS ACTIONS OK` 退出 0。
-#
-# - 为什么需要它:`settings_menu` 用的是 ACTION_NAMES.get(action, action) —— 漏一条
-#   不报错,只是那一行显示裸的动作名(F/Q 曾经就是这样,实测)。
-# - 用 get_script_constant_map() 读常量,不直接取属性:取不存在的属性会抛错,
-#   而 -s 抛错走不到 quit() → 永久挂起。
-# - 两个方向都查:漏了要红;表里留着已经不可重映射的陈旧动作也要红。
+# 设置面板可配置动作名覆盖检查：
+# 验证 REMAPPABLE_ACTIONS 中定义的每个按键绑定动作均具有对应本地化显示文本。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/settings_actions_smoke.gd
 
 var _fail := 0
 

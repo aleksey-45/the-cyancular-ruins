@@ -1,10 +1,9 @@
 extends Node
-# B2 loopback 冒烟客户端:建房后发送固定输入(移动 + 开火),断言:
-#  create: 收到快照且自己位置发生变化(输入→服务器权威模拟→快照→客户端)
-#  join:   收到快照 + 收到对手子弹 spawn 广播(开火→服务器→broadcast→对手)
-# 命中/受到伤害不在此冒烟覆盖(出生点相距远,无法确定性命中);留用户手动端到端。
-# 用法: godot --headless --path . Tests/pvp_match_smoke.tscn --role create
-#       godot --headless --path . Tests/pvp_match_smoke.tscn --role join --code 0000
+
+# 回环对局基础流程冒烟测试：
+# 启动模拟客户端接入 Worker，验证输入上报、服务端权威物理模拟与快照下发的闭环链路。
+# 运行方式：
+#   "$GODOT" --headless --path . res://tests/smoke/pvp_match_smoke.tscn -- --role create
 
 var role: String = ""
 var code: String = ""
@@ -90,18 +89,8 @@ func _on_snapshot_own(own: Dictionary) -> void:
 		if c2pos.distance_to(_world_pos) < 0.5:
 			_full_state_ok = true
 
-func _on_go_match(role_assign: int, port: int) -> void:
-	multiplayer.connected_to_server.connect(_claim_worker.bind(role_assign), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
-		printerr("SMOKE_MATCH FAIL: 连接对局 worker 失败")
-		get_tree().quit(1), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	var err := NetBus.start_client("127.0.0.1", port)
-	if err != OK:
-		printerr("SMOKE_MATCH FAIL: start_client(worker) %d" % err)
-		get_tree().quit(1)
-
-func _claim_worker(role_assign: int) -> void:
+func _on_go_match(role_assign: int, _port: int) -> void:
+	# 单进程单端口架构：客户端与服务端保持既有连接，直接发送 claim_role 认领角色。
 	NetBus.rpc_id(1, "claim_role", role_assign, PvpSession.player_name)
 
 func _physics_process(_delta: float) -> void:

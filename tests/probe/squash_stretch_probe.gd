@@ -1,5 +1,5 @@
 extends Node
-# SquashStretch 真渲染探针。判据:SQUASH PROBE: ALL-OK
+# SquashStretch 真实视口渲染探针。判据:SQUASH PROBE: ALL-OK
 # 跑法:"$GODOT" --path . --quit-after 3600 res://tests/probe/squash_stretch_probe.tscn
 #      - 不要加 --headless —— 本探针要取图,headless 下截图链给 null。
 #
@@ -195,7 +195,7 @@ func _ready() -> void:
 	# ③d -  硬约束:形变**只**写 `animator.scale` —— 精灵的 `offset` 必须仍是零。
 	#     这条堵的是"脚底锚定"那条诱惑改法:缩放绕**中心**(`AnimatedSprite2D` 没有 pivot,
 	#     `player.tscn` 只设了 `texture_filter`,故 `centered = true` 生效),所以挤压时画出来的
-	#     底边会上抬 ~4~5px、拉伸时下沉 ~3.5px。用 `offset` 反向补正能让脚底钉住 —— 但那既破了
+	#     底边会上抬 ~4~5px、拉伸时下沉 ~3.5px。用 `offset` 反向补正能让脚底严格校验 —— 但那既破了
 	#     "只写 `animator.scale`"的约束,又**没有任何别的探针看得见**(偏移是精灵内部量:
 	#     `global_position` ③ 与碰撞箱 ③b 都不动)。docs/eng/render.md 有这条登记(判为真现象非缺陷)。
 	#     三栏一起判:参照栏也走同一条 `_apply()`,漏一栏就等于给它留了后门。

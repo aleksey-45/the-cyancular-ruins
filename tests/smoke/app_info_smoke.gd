@@ -1,12 +1,11 @@
 extends SceneTree
 
-# `AppInfo` 的 `-s` 冒烟。
-# 跑法: "$GODOT" --headless --path . -s res://tests/smoke/app_info_smoke.gd
-# 判据: 文本 `APP INFO SMOKE: ALL-OK`(不看退出码)。
-#
-# - 为什么需要它:两个函数从 `main_menu.gd` 搬到了这里,而 `version_string()` 有一个
-#   **只在这个仓里成立**的分支 —— 发布版读 `build_info.gd`、开发版回落到 git。
-#   搬错了(比如漏了 `--nover` 的统一集中处理)不会有任何编译错误,只表现为"版本号显示得不对"。
+# 应用版本号与提交信息提取冒烟测试：
+# 验证 AppInfo 纯静态方法在开发态与导出态下的行为，包括 Git 提交日志读取、
+# 版本字符串格式化，以及 --nover 开关的统一定点处理。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/app_info_smoke.gd
+
 var _fails: Array[String] = []
 
 

@@ -37,13 +37,10 @@ var _connected_addr := "127.0.0.1"   # 已连服务端的地址记账(测试探�
 var _pending_action: Callable = Callable()   # 连上后要执行的建房/加入/刷新
 # 连大厅计时(UDP 被静默丢包时 connection_failed 要等很久,8s 给明确提示)
 var _lobby_start_ms := 0
-# ── 转连对局 worker ──
-var _connecting_worker := false   # 是否在转连对局 worker(用于超时保底处理提示)
-var _go_start_ms := 0
-var _claimed_ms := 0       # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
-# 大厅配对结果:go_match 在大厅 peer 的 poll() 调用栈内到达,不能就地切连接 → 存下来帧末执行
+# ── 进对局(不再有"转连到另一个端口"这一步)──
+var _claimed_ms := 0       # 已 claim,等 match_start 的起始时间(0=未 claim)
+# 大厅配对结果:go_match 在大厅 peer 的 poll() 调用栈内到达,不能就地切场景 → 存下来帧末执行
 var _pending_go_role := -1
-var _pending_go_port := -1
 
 
 # ── 页面基建(子类在 `_ready` 里调)──
@@ -110,8 +107,6 @@ func _push_lobby_name() -> void:
 
 
 func _on_lobby_connected() -> void:
-	if _connecting_worker:
-		return   # 转连对局 worker 的连接走 _on_go_match,不在这里接管
 	_lobby_start_ms = 0
 	_connected = true
 	_connected_addr = PvpSession.server_address
@@ -125,8 +120,6 @@ func _on_lobby_connected() -> void:
 
 
 func _on_lobby_connect_failed() -> void:
-	if _connecting_worker:
-		return
 	_lobby_start_ms = 0
 	_connected = false
 	_pending_action = Callable()
@@ -184,15 +177,18 @@ func _on_session_token(token: String) -> void:
 	_pending_token = token
 
 
-# go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),
-# 正在 poll 的 peer 引用被清零、在自己的调用栈内被 free → 偶发原生段错误
-# (实测「对手连入配对完成的一瞬间」闪退)。故把整个切换推迟到帧末(deferred
-# flush 已脱离 poll 栈)执行。
+# go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻切场景,会在自己的
+# 调用栈内 free 掉大厅/重建大物理世界 → 偶发原生段错误。故把整个切换推迟到帧末执行。
 func _on_go_match(role: int, port: int) -> void:
+	# 端口就是**此刻连着的那一个**(单进程单端口):记下来给局内断线重连用。
+	#   不再有"转连到另一个端口"这回事,故这里不做任何连接动作。
+	# - **客机不能照单全收**:`go_match` 报的是**房主的**服务端端口,而客机连的是自己那条
+	#   转发的绑定口(`Tunnel.forward_port()`)。收下它,局内重连就会去连一个对客机无意义的号
+	#   —— 同一台机器上更糟:那个号连到的是**另一个实例**的服务端。
+	#   判据 = "本端有没有转发":有 = 客机(保留自己的),没有 = 房主(接受服务端报的)。
 	if port > 0 and Tunnel.forward_port() <= 0:
 		PvpSession.server_port = port
 	_pending_go_role = role
-	_pending_go_port = port
 	_on_go_match_extra()
 	_status.text = _go_match_status()
 	_do_go_match.call_deferred()
@@ -205,7 +201,7 @@ func _on_go_match(role: int, port: int) -> void:
 #      载荷里来的),故这里**不连大厅、不碰地址框、也不走 `_with_lobby`**:照原稿搬会
 #      `NetBus.stop()` + 重连一次,把刚拿到的列表连同自己那一行一起丢掉。
 #   ② 大厅复用 `go_match` 把它送回原 worker —— 之后与首次进场**逐字同一条路**。
-#   ③ 唯一的岔路在 `_claim_role_worker`(对局已经开着 → 必须发 `reclaim_role`)。
+#   ③ 唯一的岔路在 `_claim_role`(对局已经开着 → 必须发 `reclaim_role`)。
 # - 原稿那条"地址取 `PvpSession.server_address` 而不是地址框(三个页的地址框默认值不同)"的绕法
 #   随入口一起作废:它防的是"从主菜单按按钮进来时页还没连上、只能照地址框连"那一档,而现在
 #   玩家**就站在已经连上的那一页**上。
@@ -247,7 +243,7 @@ func _request_rejoin() -> void:
 	#    `Unable to send packet on channel 0, max channels: 0`。
 	#    走 `_request_list` 顺带把重连启动来(它内部会存活检测并落到重连路径),而不是把玩家
 	#    留在一句"正在回到对局…"上;**`rejoin` 也要清掉** —— 否则下一次 `go_match` 会错走
-	#    `reclaim_role` 分支(`_claim_role_worker` 只看这个开关)。
+	#    `reclaim_role` 分支(`_claim_role` 只看这个开关)。
 	if not NetBus.can_send_to_server():
 		PvpSession.rejoin = false
 		_request_list("与大厅的连接已断开——正在重连并刷新房间列表…")
@@ -285,31 +281,22 @@ func _do_go_match() -> void:
 	if _pending_go_role < 0:
 		return
 	var role := _pending_go_role
-	var port := _pending_go_port
 	_pending_go_role = -1
-	_pending_go_port = -1
 	PvpSession.role = role
 	# - 只在**真收到新 token** 时才覆盖:回局那条路大厅**不重发** `session_token`(客户端那
 	#   一份就是凭据本身),无条件写会把手里唯一能证明"我是原来那个人"的串抹成空
-	#   → `reclaim_role` 必被 worker 拒(理由"令牌不匹配")并**踢连接**,而现场一个字都没有。
+	#   → `reclaim_role` 必被拒(理由"令牌不匹配")并**踢连接**,而现场一个字都没有。
 	if _pending_token != "":
 		PvpSession.token = _pending_token
-	var target_port := Tunnel.forward_port() if Tunnel.forward_port() > 0 else port
-	PvpSession.worker_port = target_port      # 局内自动重连要直连同一个端口
 	_pending_token = ""
-	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void: _on_worker_connect_failed(), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	_connecting_worker = true
-	_go_start_ms = Time.get_ticks_msec()
-	var err := NetBus.start_client("127.0.0.1", target_port)
-	if err != OK:
-		_connecting_worker = false
-		_status.text = "连接对局服务器失败(%d)" % err
+	# 局内断线自动重连统一指向当前端口：房主为服务端监听端口，客机为其本地转发端口。
+	PvpSession.worker_port = PvpSession.server_port
+	# 在单进程单端口架构下，客户端无需断开并重连到新端口，直接复用既有的 ENet 连接。
+	# 保持当前连接还能确保客户端的 peer_id 保持不变，从而通过服务端 MatchSession 的开局名册校验。
+	_claim_role(role)
 
 
-func _claim_role_worker(role: int) -> void:
-	_connecting_worker = false
+func _claim_role(role: int) -> void:
 	_claimed_ms = Time.get_ticks_msec()
 	# 注意： 回局(路径乙)与首次进场的**唯一分叉**:对局**已经开着**,`claim_role` 这条走不得,
 	#   必须改发 `reclaim_role`(宽限期内重新认领自己那个 role)。
@@ -338,20 +325,16 @@ func _claim_role_worker(role: int) -> void:
 		NetBusExt.rpc_id(1, "report_token", PvpSession.token)
 
 
-# 转连 worker 失败/无应答的保底处理:断开当前连接回大厅,连上后 _on_lobby_connected 自动刷新列表。
-# 没有它,worker 死掉时玩家会永久停在"正在连接对局服务器/等待配对",只能自己找出路。
+# 对局启动失败或对端无响应时的兜底清理：重置连接并返回大厅，连接成功后触发列表刷新。
 func _return_to_lobby(msg: String) -> void:
-	_connecting_worker = false
 	_claimed_ms = 0
-	# - 回局失败的各种保底处理都汇到这里:不清 `rejoin` 就会让页停在"回局态"反复重试(每次都失败)。
-	#   `token` **不清** —— 它可能还有效(比如只是 worker 端口没放行),玩家可以在列表里再点一次那一行。
+	# 回局失败时重置 rejoin 状态，避免页面滞留在重试状态；保留 token 以便后续重试。
 	PvpSession.rejoin = false
 	_rejoin_sent_ms = 0
 	_on_return_to_lobby()
 	NetBus.stop()
 	_connected = false
-	# 重连也要起表:否则 _process 那条「8s 没连上大厅就给明确提示」的保底处理对新连接不成立,
-	# UDP 静默丢包时状态栏会停在"已返回大厅并刷新"而实际没刷新(用户只能手点「刷新」自救)。
+	# 启动大厅连接计时，以便在连接超时时更新状态栏提示
 	_lobby_start_ms = Time.get_ticks_msec()
 	_status.text = msg
 	NetBus.start_client("127.0.0.1", PvpSession.server_port)
@@ -364,33 +347,21 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	_enter_match_scene()
 
 
-# ── 超时梯(共用的三条)──
-# - 本基类**不提供 `_process`**:梯顺序由子类定(合一前的两个旧页就不同:一份是
-#   [worker→join→大厅→claim]、另一份是 [worker→claim→大厅→ack]),且各有一条页面专属梯。
-#   顺序看着无所谓,实际有差:比如某一 tick 里「大厅-8s 先清 `_pending_action`、
-#   claim-25s 再 `_return_to_lobby`」若被并成只跑后者,`_pending_action` 就不再被清 ——
-#   单看代码看不出来。故派发留在子类(`mp_lobby` 是唯一子类),这里只给函数体。
+# ── 超时检测（基类通用逻辑）──
+# 本基类不实现 `_process`，由子类（如 mp_lobby）统一调度执行顺序。
+# 在单进程单端口架构下，客户端进入对局无需重新建立网络连接，因此移除了旧有的转连超时判定。
 
-# 转连 worker 12s 无连接(死端口/worker 死了)。返回 true = 已处理,调用方应 return。
-func _tick_worker_connect_timeout() -> bool:
-	if _connecting_worker and Time.get_ticks_msec() - _go_start_ms > 12000:
-		_return_to_lobby(_worker_timeout_msg())
-		return true
-	return false
-
-
-# 大厅连接超时保底处理:同因(UDP 静默丢包),8 秒仍没连上就给明确提示。
-# 原实现**不** return(后面还有别的梯要跑),故本函数无返回值。
+# 大厅连接超时检测：若 8 秒内未收到连接成功回调，更新状态栏提示。
 func _tick_lobby_connect_timeout() -> void:
-	if not _connecting_worker and _lobby_start_ms > 0 and not _connected \
+	if _lobby_start_ms > 0 and not _connected \
 			and Time.get_ticks_msec() - _lobby_start_ms > 8000:
 		_lobby_start_ms = 0
 		_pending_action = Callable()
 		_status.text = "未检测到本地服务器——请创建房间或输入 5 位房间号加入"
 
 
-# claim 后 25s 仍未 match_start:对方未就绪 / worker 中途死掉。
-# 返回 true = 已处理,调用方应 return。
+# 角色认领超时检测：发送 claim_role 后 25 秒仍未收到 match_start，触发回退大厅流程。
+# 返回 true 表示超时已处理，调用方应提前返回。
 func _tick_claim_timeout() -> bool:
 	if _claimed_ms > 0 and Time.get_ticks_msec() - _claimed_ms > 25000:
 		_return_to_lobby(_claim_timeout_msg())
@@ -578,17 +549,7 @@ func _go_match_status() -> String:
 	return ""
 
 
-# 转连 worker 的 connection_failed 回调
-func _on_worker_connect_failed() -> void:
-	push_error("LobbyPage: 子类必须覆写 _on_worker_connect_failed()")
-
-
-# 两条超时梯各自的文案(1v1 说"换一个房间";大乱斗要明确提示需开放端口)
-func _worker_timeout_msg() -> String:
-	push_error("LobbyPage: 子类必须覆写 _worker_timeout_msg()")
-	return ""
-
-
+# 角色认领超时提示文案（由子类根据模式定制具体提示信息）
 func _claim_timeout_msg() -> String:
 	push_error("LobbyPage: 子类必须覆写 _claim_timeout_msg()")
 	return ""

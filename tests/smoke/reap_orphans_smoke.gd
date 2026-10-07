@@ -1,22 +1,9 @@
 extends SceneTree
 
-# 孤儿清理的**实弹**冒烟(手动跑;拉真内核、动真 log/,但造出来的东西收尾全清):
-#
-#   1. 在 log/ 下造 31 份"死主"目录(easytier-guest-<假死pid>):7 份保持最老的 mtime、
-#      24 份重写成较新 mtime;另造 1 份活主目录(本进程 pid)与 1 份旧格式目录(无 pid)。
-#   2. 启动一个真 easytier-core,但日志目录名指向一个**已死的 pid** —— 复现"游戏崩溃后内核
-#      残留":启动者已死,内核就是孤儿。
-#   3. `Tunnel._reap_orphans()` 一遍,断言:
-#      - 假孤儿被终结;
-#      - 恰好删掉 7 份最老的死主目录(死主共 7+24+1(孤儿的)=32 份,保底 25  ->  删最老 7 份),
-#        24 份较新的全在;
-#      - 活主目录与旧格式目录原样(前者是双开互连的另一局,后者不是本游戏命名的)。
-#
-#   跑法:`"$GODOT" --headless --path . -s res://tests/reap_orphans_smoke.gd`
-#
-# - 与 netplay_probe 的分工:那个纯静态、不起进程;这个动真格 —— 清扫的两半(终止进程、删目录)
-#   都依赖 OS 行为(命令行枚举、mtime、文件锁),只有实弹测得了。
-# - 中途崩了也不怕:没清掉的假目录 owner 都是死 pid,会被下一次真清扫当过期日志收走。
+# 孤儿进程与残留日志清理端到端冒烟测试：
+# 模拟游戏异常退出后后台残留内核进程的场景，验证 Tunnel._reap_orphans() 的进程精准回收与日志轮转策略。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/smoke/reap_orphans_smoke.gd
 
 const Tunnel := preload("res://core/net/tunnel.gd")
 
@@ -52,7 +39,7 @@ func _initialize() -> void:
 		fake_pids.append(p)
 	for i in range(fake_pids.size()):
 		_touch_fake_dir(log_root, "easytier-guest-%d" % fake_pids[i])
-	_touch_fake_dir(log_root, "easytier-guest-%d" % OS.get_process_id())   # 活主:不许被清
+	_touch_fake_dir(log_root, "easytier-guest-%d" % OS.get_process_id())   # 当前活跃进程:不许被清
 	var old_fmt := "easytier-host"
 	var old_fmt_mine := not DirAccess.dir_exists_absolute(log_root.path_join(old_fmt))
 	if old_fmt_mine:
@@ -60,7 +47,7 @@ func _initialize() -> void:
 	OS.delay_msec(1200)
 	for i in range(7, 31):                 # 后 24 份重写 → mtime 变新;前 7 份保持最老
 		_touch_fake_dir(log_root, "easytier-guest-%d" % fake_pids[i])
-	# ── ② 假孤儿:真内核 + 指向死 pid 的日志目录 ──
+	# ── ② 孤儿进程残留:真内核 + 指向死 pid 的日志目录 ──
 	var orphan_owner := _dead_pid(3910000)
 	var orphan_name := "easytier-host-%d" % orphan_owner
 	var orphan_dir := log_root.path_join(orphan_name)
@@ -133,7 +120,7 @@ func _touch_fake_dir(log_root: String, dir_name: String) -> void:
 		_made.append(dir_name)
 
 
-## 从 start 起找一个当前不存在的进程 pid(假死主的目录名用)。
+## 从 start 起找一个当前不存在的进程 pid(假已退出进程的目录名用)。
 func _dead_pid(start: int) -> int:
 	var p := start
 	while OS.is_process_running(p):

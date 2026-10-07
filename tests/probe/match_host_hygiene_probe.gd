@@ -10,7 +10,7 @@ extends Node
 # → 整局只增不减(每颗子弹一条 int→bool)。量不大,但那是"记住了一个再也不会读的 id";
 # 现在的实现每帧按在场子弹剪枝(见 `_adjudicate_bullets` 的 `_seen_bullets = live`)。
 #
-# 做法:真建一个 MatchHost(真地图 + 真碰撞),但 **role_peers 传空** —— 不建玩家、不排 peer,
+# 做法:实际创建一个 MatchHost(真地图 + 真碰撞),但 **role_peers 传空** —— 不建玩家、不排 peer,
 # 所有 `rpc_id` 都无对象(广播静默提前返回,不会在无多人连接时尝试发包)。子弹自己摆。
 #
 # ⚠ 判据 grep 文本 "MATCH_HOST HYGIENE PROBE: ALL-OK"(不只看退出码)。

@@ -1,39 +1,13 @@
 extends SceneTree
 
-# Theme 镜像守卫:`ui/theme/menu_theme.tres` 必须与 **`UiFactory` 现在的产出**逐项相同。
-# 纯逻辑、`-s` 可跑、不占端口、**不需要渲染**。
-#
-# 跑法:  source tests/env.sh && timeout 120 "$GODOT" --headless --path . \
-#            -s res://tests/smoke/menu_theme_mirror_smoke.gd
-# 判据:  文本 `THEME MIRROR: ALL-OK`(**不看退出码** —— 挂住时一行裁决都不打印)。
-#
-# ═══ 为什么需要它(它防的是**本批次自己引入的**一个漂移源)═══
-# `menu_theme.tres` 是 `tools/gen_menu_theme.gd` **生成**的。改了 `UiFactory` 的样式而忘了重跑
-# 生成器  ->  Theme 悄悄停在旧值上:菜单里"编辑器拖出来的"与"代码建的"长得不一样,
-# **不报错、不红、没人看得见**(而 `.tscn` 迁移的全部价值就是这两者一致)。
-#
-# ═══ 判据怎么取(-  这条决定它值不值钱)═══
-# **不**在守卫里重写一份 StyleBox 构造 —— 那会与生成器共享同一个错误源(两边一起错  ->  恒绿)。
-# 改为:**调用生产函数本身**,再把它挂到控件上的那份 stylebox 读回来:
-#   `F.call("style_button", b, "primary")` → `b.get_theme_stylebox("normal")`
-# 这样比的是"生产线真正会画出来的那一份",而不是守卫对它的想象。
-# - 同类先例:`ui_palette_single_source_smoke` ④ 读的是 `.tscn` 原文(结构上取不到 const);
-#   本条能取到生产产出,就**必须**取生产产出。
-#
-# 注意： **覆盖上限(照实登记)**:
-#   - 只比**样式**。比不出"某个控件忘了挂 Theme"(那种控件用 Godot 默认样式,根本不经过 .tres);
-#     那一档的唯一拦截是逐屏真实渲染取图。
-#   - 比的是 `content_margin_*` 的**原始值**(`-1` = 未设、由 border width 回落)。`PanelCarved`
-#     内层刻意留 `-1`(见 `skin_menu_panel` 的注释) ->  这条比的是"两边都没设",而不是渲染后的边距。
-#   - 没比 `font`(Theme 的 `default_font` 是 `menu_font.tres`,与 `PixelFont.shared()` 返回的
-#     `FontFile` 是**两个不同资源**,见 Task 2 的设计 §3.4);字号与颜色两半都在比。
-#   - 没比 `Button/…/font_*` 之外的控件态(如 `hover_pressed`:它现只被 `scenes/mp_lobby.tscn`
-#     的 7 颗模式色按钮用,那几态是**场景内联 SubResource**、带运行时模式色  ->  Theme 里刻意
-#     没有对应变体,本守卫没有可比对象)。
+# 菜单 UI 主题一致性校验门禁：
+# 验证导出的 `ui/theme/menu_theme.tres` 主题资源与 `UiFactory` 工厂方法动态生成的样式保持逐项对齐。
+# 运行方式：
+#   source tests/env.sh && timeout 120 "$GODOT" --headless --path . -s res://tests/smoke/menu_theme_mirror_smoke.gd
 
 const THEME_PATH := "res://ui/theme/menu_theme.tres"
 const FACTORY_PATH := "res://ui/factory/ui_factory.gd"
-# 抽到的检查条数下限:防止"读坏了 / 变体名写错了  ->  一条都没比到  ->  零失败 = 虚假通过（未有效测试）"。
+# 抽到的检查条数下限:防止"读坏了 / 变体名写错了  ->  一条都没比到  ->  零失败 = 测试漏检"。
 # 今日实测(2026-10-03 建此守卫时):**92** 条。取 60 留健康余量。
 const MIN_CHECKS := 60
 
@@ -109,10 +83,10 @@ func _no_class_chain_leak(t: Theme) -> void:
 	#   那样的守卫会**一动不动地绿**(实测:变异成"设基础 Button"之后它一声没吭)。
 	await process_frame
 	# 注意： 判据读的是**解析后的样式盒**,不是 `get_combined_minimum_size()`:`-s` 模式下没有帧推进,
-	#   最小尺寸是**陈旧值**  ->  拿它做判据的守卫会**一动不动地绿**(实测踩过:变异成"设基础
+	#   最小尺寸是**陈旧值**  ->  拿它做判据的守卫会**一动不动地绿**(规避历史已知问题：变异成"设基础
 	#   Button"之后,最小尺寸那条断言一声没吭)。
 	# - 不能复用 `_cmp_sb`:它只认 `StyleBoxFlat`,而引擎默认给 CheckButton 的是
-	#   `StyleBoxEmpty` —— 那会**两个方向都红**(虚假失败（测试用例误报）)。故本处只比**类型 + 四边内边距**:
+	#   `StyleBoxEmpty` —— 那会**两个方向都红**(测试误报)。故本处只比**类型 + 四边内边距**:
 	#   泄漏的形态正是"类型由 Empty 变成 Flat、内边距由 0 变成 40/20"。
 	_leak_cmp(a, b, "normal")
 	_leak_cmp(a, b, "focus")

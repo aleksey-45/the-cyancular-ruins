@@ -40,7 +40,7 @@ func _find(arr: Array, code: String) -> Dictionary:
 func _ready() -> void:
 	_rm = RoomManager.new()
 	add_child(_rm)
-	_rm.set_process(false)   # 关掉回收梯:不关的话跑到 30s 它会收掉探针刚摆好的房
+	_rm.set_process(false)   # 关掉资源回收阶梯机制:不关的话跑到 30s 它会收掉探针刚摆好的房
 	var lobby = _rm.lobby
 
 	# 昵称只有经 `_peer_names` 才有 —— 探针直接塞(生产里由 on_lobby_name 写)
@@ -72,9 +72,9 @@ func _ready() -> void:
 	lobby.royale_rooms["9102"] = rr
 	var pr := _find(lobby.royale_list_payload(""), "9102")
 	_check(pr.is_empty(), "私密房对无凭据者不列出(既有语义没被破坏)")
-	# - 签名是 grant(token, code, role, worker_port, worker_pid, now_ms) —— 六个参数。
-	#   worker_pid 传 0 = "启动中",与 `owns()` 无关(它只看 TTL,不看 worker 活性)。
-	lobby.rejoin.grant("tk-probe", "9102", 1, 0, 0, Time.get_ticks_msec())
+	# 签名: grant(token, code, role, match_id, now_ms)
+	# 局号传 0 与 owns() 无关（owns 仅按 TTL 校验凭据有效性）
+	lobby.rejoin.grant("tk-probe", "9102", 1, 0, Time.get_ticks_msec())
 	var pr2 := _find(lobby.royale_list_payload("tk-probe"), "9102")
 	_check(not pr2.is_empty(), "私密房对持凭据者列出")
 	_check(pr2.get("is_public", null) == false, "大乱斗载荷 is_public 透出 false")

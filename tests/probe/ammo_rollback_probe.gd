@@ -27,10 +27,10 @@ const ROWS := 10
 const TILE_WALL := 31      # 纹理 1 全砖(墙)
 const WARMUP := 30         # 无输入:落地 + 等武器加入场景树
 # 非满弹。-  必须 ≠ `WeaponInventory.MAG_FULL`(-1):条目是满弹时 `restore_inventory` 那一支
-# 根本不排 deferred,C1 就走不到  ->  探针**在修复前也是绿的**(虚假通过（未有效测试）)。
+# 根本不排 deferred,C1 就走不到  ->  探针**在修复前也是绿的**(测试漏检)。
 # - 它与手枪(`pistol_test.tscn`)的 `mag_size` **耦合**:那个值被改到 ≤ 4 时,下面那次
 # `w.mag_ammo = MAG_START` 仍会"成功"(裸写不钳位),但 `_ready`/`apply_mag` 那条路会钳到
-# `mag_size`  ->  期望值 3 变成**虚假失败（测试用例误报）**。改手枪弹夹容量时回来一起看这个数。
+# `mag_size`  ->  期望值 3 变成**测试误报**。改手枪弹夹容量时回来一起看这个数。
 const MAG_START := 4
 const SETTLE := 3          # 打出那一发之后等几帧再读(帧末 flush 至少要一帧)
 
@@ -191,7 +191,7 @@ func _run_pre_tree_tick_phase() -> void:
 			+ " —— 在 `tick()` 顶部加 `is_inside_tree()` 早退(设计明文否决)会让这里不变")
 	w.free()                       # 不在树上  ->  必须 free(),queue_free() 不会回收它
 	# - 收尾复位输入源:本阶段按下的 attack 若留在 `_held` 里,会让紧接的 C1 相提前打光弹夹,
-	#   那一相的"期望 3、实得 4"就变成**虚假失败（测试用例误报）**。`clear_edges()` **不清 `_held`**,必须用
+	#   那一相的"期望 3、实得 4"就变成**测试误报**。`clear_edges()` **不清 `_held`**,必须用
 	#   `reset_state()`。
 	(P.input_source as PacketInputSource).reset_state()
 

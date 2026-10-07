@@ -1,6 +1,6 @@
 extends PlayerInput
 
-# 3v3 真链路探针(`tests/probe/team_match_probe.*`)的脚本手柄:**一根哑手柄**。
+# 3v3 真实网络链路探针(`tests/probe/team_match_probe.*`)的脚本手柄:**一根哑手柄**。
 # 它自己不做任何决策 —— 只把观察者(`team_match_watcher.gd`)每物理帧写进来的
 # `axis` / `aim` / `attack` / 一次性边沿(jump / switch_index / F)报给输入接口。
 #
