@@ -43,18 +43,18 @@ func _initialize() -> void:
 		_check(str(pair[0]).length() > 0 and str(pair[0]).contains(str(pair[2])),
 				"含 " + str(pair[1]) + " 的 " + str(pair[2]))
 	# 武器类型来自**注册表的单一来源**(2026-09-26 改写)。
-	# ★ 旧断言查的是 `weapon_component.gd` 里 `"1"`..`"5"` 这几个**字符串键** —— 那是当年
+	# - 旧断言查的是 `weapon_component.gd` 里 `"1"`..`"5"` 这几个**字符串键** —— 那是当年
 	#   那份硬编码表(`WEAPONS`/`DISPLAY_NAMES`/`TIERS`)的形状。注册表那批**把那三张表整体删除**
 	#   (见 docs/eng/weapons.md),于是这条断言**恒红**(`"1"` 还碰巧在别处出现,`"2"`..`"5"` 不在)
 	#   —— 而它现在**断言的是新不变量的反面**:`enemy_logic_smoke` 的 ⑤b **反向**要求那三个标识符
-	#   在生产目录里**零命中**(防半途迁移)。⇒ 按本仓纪律"探针因重构变红时改探针认新入口":
+	#   在生产目录里**零命中**(防半途迁移)。 ->  按本仓纪律"探针因重构变红时改探针认新入口":
 	#   契约改成当前形态 —— 组件的武器类型必须**取自注册表**,而不是自己再抄一份清单。
 	_check(wsrc.contains("WeaponRegistry"),
 			"weapon_component.gd 的武器类型取自 WeaponRegistry(单一来源)")
-	# ★ 判据走 `code_only`(**剥注释**)而不是裸 `contains`:本仓爱留墓碑注释,而墓碑里很可能
-	#   提到被删标识符的名字 —— 裸 contains 会**假红**,而假红的下场历来是"把断言改松"
+	# - 判据走 `code_only`(**剥注释**)而不是裸 `contains`:本仓爱留墓碑注释,而墓碑里很可能
+	#   提到被删标识符的名字 —— 裸 contains 会**虚假失败（测试用例误报）**,而虚假失败（测试用例误报）的下场历来是"把断言改松"
 	#   (本仓明文禁忌)。与 `enemy_logic_smoke` ⑤b 同口径。
-	# ★ 用 `load()` 而不是静态引用 `ScanUtil`:`-s` 阶段静态引用测试库**没有先例**
+	# - 用 `load()` 而不是静态引用 `ScanUtil`:`-s` 阶段静态引用测试库**没有先例**
 	#   (注册表那批登记过这条未验证项),`load()` 绕开它;取不到就退化成裸源码视图,
 	#   并在报告里说明(不静默弱化)。
 	var su: Variant = load("res://tests/lib/scan_util.gd")

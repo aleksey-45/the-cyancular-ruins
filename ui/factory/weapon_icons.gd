@@ -7,12 +7,12 @@ extends RefCounted
 # 后坐/残弹记忆),与渲染毫无关系;而这两个函数的消费者**全是 UI**:lobby_page 的禁用武器网格、
 # main_menu 的选枪栏、ui/hud 的左下角武器显示。2026-09-15 阶段 4.1 拆出来。
 #
-# ★ 数据来自 `WeaponRegistry`(唯一来源 `data/weapons.json`):场景路径与中文名都在那里,
+# - 数据来自 `WeaponRegistry`(唯一来源 `data/weapons.json`):场景路径与中文名都在那里,
 #   本文件**不复制一份**(复制了就会出现「加了新武器只有一边知道」)。
 
 
 # 纯白像素剪影缓存(type_id → Texture2D):从武器场景的 Sprite2D 图集切片,
-# 全像素刷白保留 alpha,3× 最近邻放大(与瓦片/8bit 音效同风格,零美术素材)。
+# 全像素刷白保留 alpha,3× 最近邻放大(与瓦片/8bit 音效同风格,无外部美术资源依赖（纯程序化绘制）)。
 static var _silhouette_cache: Dictionary = {}
 
 static func silhouette(type_id: int) -> Texture2D:
@@ -66,7 +66,7 @@ static func make_weapon_check(type_id: int, checked: bool, font_size: int, on_to
 	cell.add_child(icon)
 	# 走 UiFactory:它同时写 font 与 font_size 两个 override。原先只写字号 → 本行文字
 	# 落回默认主题字体,与同页面其它 Label(像素字体)不一致。
-	# ★ 不带编号(理由同上)。`font_size` 的**实参位置不动** —— kh_l4_probe 按下标 1 取它。
+	# - 不带编号(理由同上)。`font_size` 的**实参位置不动** —— kh_l4_probe 按下标 1 取它。
 	var l := UiFactory.label(WeaponRegistry.name_of(type_id), font_size)
 	cell.add_child(l)
 	return cell

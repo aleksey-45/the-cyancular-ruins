@@ -5,15 +5,15 @@ extends PvpMatchClient
 # ── C2 客户端预测 ──
 # 本地玩家跑全量本地 sim 预测 + PredictionRollback 权威锚定重放(见 core/prediction_rollback.gd)。
 # 引擎照常自步进(读真实 Input,aim/手感=单机);本客户端每帧在玩家步进前 reconcile,
-# 并把每 tick 的预测整态/输入记录喂给控制器。复盘见 docs/pvp-c2-retrospective.md(P1-P7)。
+# 并把每 tick 的预测完整状态/输入记录传入控制器。复盘见 docs/pvp-c2-retrospective.md(P1-P7)。
 #
-# ★ 2026-09-12(批次 5):原来那个 LOCAL_PREDICTION_ENABLED 开关与它的 server_rendered 保底分支
+# - 2026-09-12(批次 5):原来那个 LOCAL_PREDICTION_ENABLED 开关与它的 server_rendered 保底分支
 #   **已整体删除** —— 全项目只剩这一条联机链路,没有第二套代码路径可回退。大乱斗客户端走同一套。
 var _last_snap_tick := 0
 
 var _remote_replica: Node2D = null
-# ★ `_level0`(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明):换局复位砖
-#   (`_on_round_state` 的 COUNTDOWN 分支)与重连补态复位砖(基类 `_on_match_sync`)共用同一个字段。
+# - `_level0`(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明):换局复位砖
+#   (`_on_round_state` 的 COUNTDOWN 分支)与重连状态补充同步复位砖(基类 `_on_match_sync`)共用同一个字段。
 var _hud: PvpHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)
 
@@ -23,9 +23,9 @@ const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,�
 const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
-var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
+var _hp_bar: EnemyHpBar = null    # 对手头顶生命条(设置开启时创建)
 var _minimap: Minimap = null      # 小地图(设置开启时创建)
-# ★ 这里本来有一个 `_opp_hues`(扩展 peer_hues 下发的 {role -> 色相})—— 2026-09-19 用户裁定
+# - 这里本来有一个 `_opp_hues`(扩展 peer_hues 下发的 {role -> 色相})—— 2026-09-19 设计约定
 #   **个人色相在 1v1 整体停用**后它已无读者,连带 `_apply_opp_hue()` 一并删除(不留死声明)。
 var _names: Dictionary = {}       # role(int) -> 昵称(peer_info 下发;击杀播报取名字用)
 
@@ -49,7 +49,7 @@ func _ready() -> void:
 	# enemy_logic_smoke 的「player mask == 5」断言变红,且单机不需要这一位。
 	local.collision_mask |= 2
 	_local = local
-	# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从本人包的 ack_seq/c2 喂入。
+	# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从本人包的 ack_seq/c2 传入。
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)
 	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
@@ -65,12 +65,12 @@ func _ready() -> void:
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)
 	_remote_replica = replica
-	# 对手头顶血条(设置开启时;挂 WorldViewport 走世界坐标,每帧贴到头顶)
+	# 对手头顶生命条(设置开启时;挂 WorldViewport 走世界坐标,每帧贴到头顶)
 	if Settings.pvp_show_enemy_hp:
 		_hp_bar = EnemyHpBar.new()
 		_world.add_child(_hp_bar)
 	# 快照/事件消费
-	# 快照**拆两条**(2026-09-12):①世界包=全部玩家的渲染字段(副本/血条/服务器渲染下的本端);
+	# 快照**拆两条**(2026-09-12):①世界包=全部玩家的渲染字段(副本/生命条/服务器渲染下的本端);
 	# ②本人包=自己的 ack_seq + c2(**只有本人需要**,C2 rollback 拿它锚定/重放)。
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)
@@ -82,7 +82,7 @@ func _ready() -> void:
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	NetBus.local_kill_event.connect(_on_kill_event)
 	# 扩展节点(NetBusExt)三载荷:生效选项/角色色相/命中确认。与 beam_fired 不同节点是**有意的**
-	# (发送端 match_host 的 beam_fired 走 NetBus),别顺手把上面那行也统一到 NetBusExt。
+	# (发送端 match_host 的 beam_fired 走 NetBus),切勿随意把上面那行也统一到 NetBusExt。
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
@@ -101,8 +101,8 @@ func _ready() -> void:
 	_hud = preload("res://ui/hud/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
 	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 同样继承它 —— 见 level_0.gd 的
-	# _ready:那一挂在建图前、位于 pvp_mode 早退**之前**,而本文件也把该 Level0 挂进世界,
-	# 故进 PvP 世界时反馈层已在。**本行有意不写第二次挂载**(不是漏写):CombatFeedback 的早退
+	# _ready:那一挂在建图前、位于 pvp_mode 提前退出**之前**,而本文件也把该 Level0 挂进世界,
+	# 故进 PvP 世界时反馈层已在。**本行有意不写第二次挂载**(不是漏写):CombatFeedback 的提前返回
 	# 要求 current 已非空,而 current 只在 deferred 实例的 _ready 里赋值,同帧第二次调用看到的
 	# 还是 null → 真会建出第二份(实测 2 份),并打破「生产路径恰好 1 处挂载点」这条既有断言。
 	# 后来者不要照别的分支把这一行补回来。
@@ -118,9 +118,9 @@ func _ready() -> void:
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
 	add_child(_pause_menu)
-	# ★ 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已经建好、订阅齐了才开口要,
+	# - 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已经建好、订阅齐了才开口要,
 	#   所以不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
-	# ★ 判活再发(全仓纪律「定向发送前一律先判活」):这是**定向可靠包**,而"进场景 → 请求"之间
+	# - 存活检测再发(全仓纪律「定向发送前一律先存活检测」):这是**定向可靠包**,而"进场景 → 请求"之间
 	#   连接完全可能已经不可用(worker 中途死掉 / 被踢)→ 往 ENet 已拆掉的 peer 发就是那条
 	#   `Unable to send packet on channel 0`。客户端侧的判据是 `can_send_to_server()`
 	#   (它比 `is_peer_live(1)` 多要求"本端已 CONNECTED")。
@@ -131,7 +131,7 @@ func _ready() -> void:
 
 # 进场拉取的应答。三个 handler 本身幂等(重建禁用表/重设标签/重铺染色),重复应用无害。
 # 请求发在 `_ready` 末尾,应答只会更晚到 —— 下面的 handler 都按"晚到也能用"写。
-# ★ 色相那一条(`_apply_peer_hues`)在 1v1 是**短路**的,见该函数的注释(个人色相在本模式停用)。
+# - 色相那一条(`_apply_peer_hues`)在 1v1 是**短路**的,见该函数的注释(个人色相在本模式停用)。
 
 
 # 把本地玩家摆到权威出生点。**只在开局倒计时里做** —— 已经打起来还硬拉,等于把玩家从对局里
@@ -148,7 +148,7 @@ func _on_snapshot_world(world: Dictionary) -> void:
 		return
 	_last_snap_tick = tier
 	var players_snap: Dictionary = world["players"]
-	# ★ 自己那一份**刻意不消费**:C2 下本地玩家自步进,权威整态走**本人包**(见 _on_snapshot_own)。
+	# - 自己那一份**刻意不消费**:C2 下本地玩家自步进,权威完整状态走**本人包**(见 _on_snapshot_own)。
 	#   把世界包里自己那份写进玩家 = 每帧把权威位置强写进正在预测的玩家 = 橡皮筋。
 	var opp_role := 3 - PvpSession.role
 	if _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
@@ -158,7 +158,7 @@ func _on_snapshot_world(world: Dictionary) -> void:
 			if _hp_bar != null:
 				_hp_bar.ratio = float(opp.get("hp", PlayerParams.player_max_hp)) 						/ float(PlayerParams.player_max_hp)
 
-# 本人包:只有自己需要的 ack_seq + 权威整态 c2。C2 下喂 rollback 控制器。
+# 本人包:只有自己需要的 ack_seq + 权威完整状态（c2）。C2 下喂 rollback 控制器。
 # 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
 # 世界包丢只让副本插值冻结一帧。
 
@@ -196,20 +196,20 @@ func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
 	# COUNTDOWN(开局/换局 3 秒):锁本地武器开火(移动由服务器权威冻结,本地玩家服务器渲染自然不动)。
 	_round_locked = state == 0
-	_refresh_input_lock()   # 单一收口:菜单开着时不解锁(见 _refresh_input_lock)
+	_refresh_input_lock()   # 统一集中处理入口:菜单开着时不解锁(见 _refresh_input_lock)
 	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
 		for b in get_tree().get_nodes_in_group("bullet"):
 			if is_instance_valid(b):
 				(b as Node).queue_free()
 		if _level0 != null and _level0.has_method("reset_destructibles"):
 			_level0.reset_destructibles()
-		# ★ 地面武器**不要在这里清**(曾经写过一版,又把刚到手的新一轮那批一起抹掉了):
+		# - 地面武器**不要在这里清**(曾经写过一版,又把刚到手的新一轮那批一起抹掉了):
 		#   服务器换局是「先 `_reset_ground_weapons`(广播 removed×旧 + spawned×新)、**再**
 		#   `_broadcast_round_state`」,两条走同一条可靠通道、保序到达 —— 于是本条 round_state
 		#   到达时,新一轮那批**早已在本地建好了**,再清一次 = 第 2 局起客户端地面恒为空
 		#   (服务器有 10 把、客户端一把都看不见,只能捡后来的丢弃物 —— 正是要修的那个症状)。
 		#   清旧的这件事由服务器那两条**有序**事件负责;真漏收了,对局中途掉线重进会重新拉
-		#   match_sync 兜住。守卫见 tests/probe/net_ground_probe.gd 的反向断言。
+		#   match_sync 提供容错保障。守卫见 tests/probe/net_ground_probe.gd 的反向断言。
 	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
 		_match_ended = true
 		# ESC 菜单随即失效(旧 EscMenu 靠 can_toggle=false 挡):否则玩家可在结算页上再弹一次
@@ -217,7 +217,7 @@ func _on_round_state(data: Dictionary) -> void:
 		# 类头那条硬依赖)。直接销毁菜单 —— 退出只走结算页这一条路。
 		if _pause_menu != null and is_instance_valid(_pause_menu):
 			_pause_menu.queue_free()
-			# ★ 与 royale_game / team_game **逐字对齐**(三处同款,别只改两处):留着句柄 = 留着一具
+			# - 与 royale_game / team_game **逐字对齐**(三处相同机制,别只改两处):留着句柄 = 留着一具
 			#   已 free 的尸体 —— `is_instance_valid()` 在帧末之后转 false 而字段仍非 null,
 			#   谁都可能顺手拿它去调方法(那时才崩)。
 			_pause_menu = null
@@ -227,20 +227,20 @@ func _on_round_state(data: Dictionary) -> void:
 		# 结算页:玩家自己退(不再是 5 秒后自动回主菜单)。
 		_show_result()
 
-# 结算页载荷的唯一来源。★ 本函数只读状态、不碰节点树(适配器是纯函数)。
+# 结算页载荷的唯一来源。-  本函数只读状态、不碰节点树(适配器是纯函数)。
 # `_last_round_state` 是**基类**成员(记录在同名函数开头),本文件不再声明。
 func _build_result_payload() -> Dictionary:
 	return MatchResultPayload.for_duel(_last_round_state, _names, PvpSession.role)
 
 
 # 对手中途断线:播报 + 短暂停留后回主菜单(1v1 无法继续)。
-# ★ 这条路径在 2026-09-28 之前**是死的**:`NetBus.opponent_left` 全仓零调用点,而本函数一直
+# - 这条路径在 2026-09-28 之前**是死的**:`NetBus.opponent_left` 全仓零调用点,而本函数一直
 #   挂在它上面。服务端那一半见 `server_main._notify_opponent_left`(1v1 宽限期到、收场之前)。
 func _on_opponent_left() -> void:
 	if _match_ended or _local == null:
 		return
 	_match_ended = true
-	# ★ **与到达顺序无关的收口**:若"服务器断开"先到(worker 收场两条消息同拍),重连循环
+	# - **与到达顺序无关的统一集中处理**:若"服务器断开"先到(worker 收场两条消息同拍),重连循环
 	#   已经在飞 —— 这里把它停掉,否则它会继续跑满 60 秒(见 `_cancel_reconnect` 的注释)。
 	_cancel_reconnect()
 	print("[pvp] 对手已离开(2.5s 后回主菜单)")
@@ -259,18 +259,18 @@ func _on_opponent_left() -> void:
 # P2(role 2)的本体颜色 —— 1v1 里**唯一的**染色规则:自己控 P2 → 染本地玩家;自己控 P1 → 染对手副本。
 # 只染角色 AnimatedSprite2D 本体(受击白闪/无敌半透明仍正常),武器不染。
 #
-# ★ 口径(用户 2026-09-19 裁定):**P1 恒为蓝、P2 恒为青**。P2 用的**就是** 3v3 队 2 那个 token
+# - 口径(用户 2026-09-19 裁定):**P1 恒为蓝、P2 恒为青**。P2 用的**就是** 3v3 队 2 那个 token
 #   (`UiFactory.C_TEAM_B`)—— 同一个常量、同一个机制,不是两套算法凑出近似色。
-# ★ 机制(2026-09-20 换)收在 `PvpMatchClient._apply_tint` 的**第三参**那条路:
+# - 机制(2026-09-20 换)收在 `PvpMatchClient._apply_tint` 的**第三参**那条路:
 #   modulate **比值** = 目标色 / 本体主色(`PvpMatchClient.BODY_BASE_COLOR` = `#639BFF`)。
 #   输出**恒等于**目标 token 本身(比值法在结构上就成立)。
-#   ★ 换掉色相旋转的原因是**数学上做不到**,不是审美:色相旋转保持饱和度与亮度不变,而本体主色
-#     `#639BFF` 是 **S61 V100** ⇒ 那条路永远只能产出 S61 的色;用户 2026-09-20 新选的是
-#     **H185 S50 V100**(`#80F4FF`,S50)⇒ 只有比值法能表达。
-#   ★ `player_p2_hue.gdshader` **没有删、也还在用** —— 它现在是**个人色相**那条路
+#   - 换掉色相旋转的原因是**数学上做不到**,不是审美:色相旋转保持饱和度与亮度不变,而本体主色
+#     `#639BFF` 是 **S61 V100**  ->  那条路永远只能产出 S61 的色;用户 2026-09-20 新选的是
+#     **H185 S50 V100**(`#80F4FF`,S50) ->  只有比值法能表达。
+#   - `player_p2_hue.gdshader` **没有删、也还在用** —— 它现在是**个人色相**那条路
 #     (大乱斗的对手色、大乱斗/3v3 里自己那把自选色),见 `_apply_tint` 的第二条分支。
 #     本文件(1v1)**不再引用它**。
-# ★ 判据链(改这个颜色时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`,
+# - 判据链(改这个颜色时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`,
 #   由 `tests/probe/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
 
 func _apply_p2_tint() -> void:
@@ -281,7 +281,7 @@ func _apply_p2_tint() -> void:
 		body = _remote_replica.get_node_or_null("AnimatedSprite2D")
 	if body == null:
 		return
-	# 第二参(色相)在这条路上**不被读**:第三参非透明 ⇒ `_apply_tint` 直接走比值分支并 return。
+	# 第二参(色相)在这条路上**不被读**:第三参非透明  ->  `_apply_tint` 直接走比值分支并 return。
 	# 写 0.0 而不是留一个"看着像参数"的角度值,免得日后有人以为它决定什么
 	# (2026-09-20 之前这里传的是 `P2_DEFAULT_HUE = -43.0`,那个常量已随机制一起删除)。
 	_apply_tint(body, 0.0, UiFactory.C_TEAM_B)
@@ -290,33 +290,33 @@ func _apply_p2_tint() -> void:
 # 载荷照旧到达(`match_sync` 的 `hues`),但本模式**不消费它**:这里只把「P2 = 青」那条
 # 固定规则重铺一次,`hues` 的内容一律忽略。
 #
-# ★ 为什么停用(而不是"只在两人撞色时兜底"):双方都用默认 `Settings.pvp_color_hue = 0.0` 时
+# - 为什么停用(而不是"只在两人撞色时保底处理"):双方都用默认 `Settings.pvp_color_hue = 0.0` 时
 #   两个身体**同为默认蓝**,1v1 就没有"谁是谁"了 —— 而"分得出"是这个模式的硬需求,
 #   不是审美。停用后 P1 恒蓝、P2 恒青,与两人各自的设置无关。
-# ★ 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的是 `UiFactory.C_TEAM_B`
+# - 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的是 `UiFactory.C_TEAM_B`
 #   这个固定 token(2026-09-20 前是等价的 `P2_DEFAULT_HUE`)而**不是** `Settings.pvp_color_hue`
 #   (1v1 从未把自选色相染到本地玩家身上),所以这里只需保证**对手侧**别把它拉进来。判据:
-#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/probe/hue_tint_probe` 有源码断言);
-#     · P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
-# ★ `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
+#     - 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/probe/hue_tint_probe` 有源码断言);
+#     - P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
+# - `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
 #   共享钩子(`PvpMatchClient._apply_peer_hues_or_team` / `_apply_tint`)**一字未动**。
-# ★ 不要连回 NetBusExt.local_peer_hues —— 那条**推送**路径在本项目已不存在(worker 不再广播),
+# - 不要连回 NetBusExt.local_peer_hues —— 那条**推送**路径在本项目已不存在(worker 不再广播),
 #   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
 # 应用函数(不是信号回调):唯一入口 = `_on_match_sync`(进场拉取)。
 func _apply_peer_hues(_hues: Dictionary) -> void:
 	_apply_p2_tint()   # 幂等:重铺 P2 那道固定染色(载荷内容一律忽略)
 
 # 服务器下发的生效选项:同步禁用武器(本地数字键/滚轮同样被挡,出生枪自动改首个启用槽)。
-# ★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是**无条件**上行的 ——
+# - 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是**无条件**上行的 ——
 #   服务器若无同一张表就会 equip 成功,两端槽位错位,且权威槽位每帧把我们拉回去 ——
 #   每帧重试、永久错位(静默,不报错)。服务器端(MatchHost)已落地,这里补的是客户端这一端。
 # 信号可能早于/晚于本场景 _ready 到达,故 _local 判空。
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
-# ★ 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_hues 的告警。
+# - 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_hues 的告警。
 
 # ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
-# ★ 不要连回 NetBus.local_peer_info —— 同 _apply_peer_hues 的告警。
+# - 不要连回 NetBus.local_peer_info —— 同 _apply_peer_hues 的告警。
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
 	_ensure_id_labels()
@@ -345,7 +345,7 @@ func _process(_delta: float) -> void:
 		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET
 	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
-	# 对手血条贴在 ID 上方(倒地转体不影响,世界空间独立节点)
+	# 对手生命条贴在 ID 上方(倒地转体不影响,世界空间独立节点)
 	if _hp_bar != null and _remote_replica != null and is_instance_valid(_remote_replica):
 		_hp_bar.global_position = (_remote_replica as Node2D).global_position + Vector2(0.0, -116.0)
 

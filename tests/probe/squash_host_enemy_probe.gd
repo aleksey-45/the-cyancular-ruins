@@ -6,26 +6,26 @@ extends Node
 #
 # 为什么必须有:`tests/` 下引用 `squash` 的只有四个 squash 文件,而它们**全都不碰敌人** ——
 #   于是 `enemy_base.gd` 这一整面接线"删得掉、且删了不会有任何测试变红":
-#     · `_physics_process` 最首行的 `squash.tick(...)`
-#       ★ 位置也是契约:必须在 `_is_far_sleeping()` 早退**之前**,否则睡眠中的鸟卡住形变
-#     · 睡眠分支里的 `_pre_move_vy = 0.0`(醒来首帧满幅重触发的**唯一**修法)
-#     · `_pre_move_vy = velocity.y`(裸值,敌人侧**刻意不过滤**,见 spec §2.4)
-#     · `_apply_hit` 里的 `SquashStretch.Impulse.HURT`
-#     · `_set_state` → `_on_state_entered(s)` 派发本身 + 三只鸟各自的 5 处状态映射
-#   —— 而**这恰恰是本特性唯一真出过 bug 的面**(2026-09-20,`b89420c`:睡眠早退让鸟永久变形、
+#     - `_physics_process` 最首行的 `squash.tick(...)`
+#       - 位置也是契约:必须在 `_is_far_sleeping()` 提前返回**之前**,否则睡眠中的鸟卡住形变
+#     - 睡眠分支里的 `_pre_move_vy = 0.0`(醒来首帧满幅重触发的**唯一**修法)
+#     - `_pre_move_vy = velocity.y`(裸值,敌人侧**刻意不过滤**,见 spec §2.4)
+#     - `_apply_hit` 里的 `SquashStretch.Impulse.HURT`
+#     - `_set_state` → `_on_state_entered(s)` 派发本身 + 三只鸟各自的 5 处状态映射
+#   —— 而**这恰恰是本特性唯一真出过 bug 的面**(2026-09-20,`b89420c`:睡眠提前返回让鸟永久变形、
 #   醒来首帧的满幅挤压把起飞拉伸抵消成压扁)。断言清单照
 #   `.superpowers/sdd/task-3-report.md` 第 3 节里那份临时探针的输出**逐条恢复** ——
 #   那份探针已删,它的输出是这些断言的唯一留存。
 #
-# ★ 极性照**现在**的组件读:正 v = 拉伸 = **窄高**(scale.x < 1)、负 v = 挤压 = 宽矮(scale.x > 1)。
+# - 极性照**现在**的组件读:正 v = 拉伸 = **窄高**(scale.x < 1)、负 v = 挤压 = 宽矮(scale.x > 1)。
 #   task-3 报告里那几行 `拉伸(scale.x > 1)` 是 `b89420c` **之前**那份反转公式下的读数,别照抄。
-# ★ 状态号**不写死**:从每个子类脚本的 `enum State` 现取(见 `_state_of`)。写死枚举号会让
+# - 状态号**不写死**:从每个子类脚本的 `enum State` 现取(见 `_state_of`)。写死枚举号会让
 #   "有人往枚举中间插了一个状态"变成静默测错状态;取不到名字则**报红**,不静默跳过。
-# ★ 变量一律**不静态定型**(`var b = …` 而不是 `:=`):本探针按名字摸 `squash` / `_pre_move_vy`
+# - 变量一律**不静态定型**(`var b = …` 而不是 `:=`):本探针按名字摸 `squash` / `_pre_move_vy`
 #   这类成员,而它们不在 `Node2D` 的类签名上 —— 静态定型会让这些行**解析期**就报错。
-# ★ 相①②③ 一律 `_set_state(...)` / `_apply_hit(...)` 之后**手动** `squash.tick(...)`,并把鸟的
+# - 阶段 1②③ 一律 `_set_state(...)` / `_apply_hit(...)` 之后**手动** `squash.tick(...)`,并把鸟的
 #   自驱物理关掉:宿主真帧里 tick 就在最首行、参数由宿主给,这里要的是**事件映射**本身,
-#   不是重跑一遍 AI。相④ 相反 —— 它必须走**真的 `_physics_process`**,因为要验的正是
+#   不是重跑一遍 AI。阶段 4 相反 —— 它必须走**真的 `_physics_process`**,因为要验的正是
 #   "tick 的调用位置 + 缓存清零 + 醒来首帧"这三件事的**协作**,单看任何一个都测不出来。
 
 const FLY := preload("res://scenes/enemies/enemy_fly_bird.tscn")
@@ -34,26 +34,26 @@ const JUMP := preload("res://scenes/enemies/enemy_jump_bird.tscn")
 
 const DT: float = 1.0 / 60.0
 
-# ── 相④ 的合成网格(确定性):只有底行是墙,其余全空(不抄另两个探针的梯/水池,用不上)──
+# ── 阶段 4 的合成网格(确定性):只有底行是墙,其余全空(不抄另两个探针的梯/水池,用不上)──
 const COLS := 60
 const ROWS := 14
 const FLOOR_TOP_Y := float((ROWS - 1) * 64)   # 832:底行墙的顶面
-const DROP_X := 40 * 64 + 32                  # 落点列(离相①②③ 那些鸟很远,互不打扰)
+const DROP_X := 40 * 64 + 32                  # 落点列(离阶段 1②③ 那些鸟很远,互不打扰)
 const DROP_SPAWN_Y := FLOOR_TOP_Y - 200.0     # 空中,靠重力自己落地
 const DROP_VY := 900.0                        # 落地前先给它一个真落速
 
-# 健康态的容差。相④ 的"中性"是**浮点精确**的 1.0(`1.0 - amount*0.0`),故只需容下指数尾巴;
+# 健康态的容差。阶段 4 的"中性"是**浮点精确**的 1.0(`1.0 - amount*0.0`),故只需容下指数尾巴;
 # 而鉴别信号(睡着的鸟每帧重触发落地项)是**满幅 10%**,是本容差的 1000 倍。
 const EPS := 1e-4
 # 落地那一刻 `_pre_move_vy` 的下限(前提断言):低于它这条相就退化成"什么都没灌进去"。
 const MIN_LANDING_VY := 500.0
-# 睡眠窗口帧数:指数尾巴要 `exp(-9·n/60) < EPS` ⇒ n ≥ 62;取 100 留一倍余量。
+# 睡眠窗口帧数:指数尾巴要 `exp(-9·n/60) < EPS`  ->  n ≥ 62;取 100 留一倍余量。
 const SLEEP_FRAMES := 100
 
 const S_FINDING_B := 0
 const S_DONE := 1
 
-# ── 相① 的断言表(数据驱动,加新敌人照抄一行)──
+# ── 阶段 1 的断言表(数据驱动,加新敌人照抄一行)──
 const STATE_CASES := [
 	["FlyBird", FLY, "TAKE_OFF"],
 	["FlyBird", FLY, "CHARGE"],
@@ -69,10 +69,10 @@ var _total := 0
 var _fails: Array[String] = []
 var _lines: Array[String] = []
 
-# 相④ 的读数(变量不静态定型,理由见文件头)
+# 阶段 4 的读数(变量不静态定型,理由见文件头)
 var _bird = null                    # 被测鸟(真物理)
 var _landing_vy := 0.0              # 落地那一刻缓存里的 `_pre_move_vy`(前提读数)
-var _first_sleep_x := 1.0           # 第一个睡眠帧的 scale.x(应 > 1:吃掉了陈旧落速)
+var _first_sleep_x := 1.0           # 第一个睡眠帧的 scale.x(应 > 1:吸收清除了历史下坠速度)
 var _last_sleep_x := 1.0            # 睡眠窗口末尾的 scale.x(应 == 1.0)
 var _sleep_frames := 0
 
@@ -104,7 +104,7 @@ func _build_grid() -> Array[Array]:
 
 
 # 造一只**真场景**的鸟,挂进树(`_ready` 走完整条链:真 animator、真 ContactArea、真姿态碰撞箱),
-# 然后关掉它自己的物理 —— 相①②③ 手动 tick,不让 AI 掺进来。
+# 然后关掉它自己的物理 —— 阶段 1②③ 手动 tick,不让 AI 掺进来。
 func _mk_enemy(scene: PackedScene):
 	var b = scene.instantiate()
 	add_child(b)
@@ -131,9 +131,9 @@ func _begin(stage: int) -> void:
 	_f = 0
 
 
-# ── 相①②③:状态映射 / 睡眠不挂钩 / 受击挤压(全部手动 tick,确定性)──
+# ── 阶段 1②③:状态映射 / 睡眠不挂钩 / 受击挤压(全部手动 tick,确定性)──
 func _probe_events() -> void:
-	# 相① 五处状态映射 → 拉伸(窄高,scale.x < 1)
+	# 阶段 1 五处状态映射 → 拉伸(窄高,scale.x < 1)
 	for c in STATE_CASES:
 		var b = _mk_enemy(c[1])
 		var label: String = c[0]
@@ -151,7 +151,7 @@ func _probe_events() -> void:
 			"scale.x %.4f(需 < 1.0;== 1.0 说明这条映射根本没挂上钩子)" % sx)
 		b.queue_free()
 
-	# 相① 附:SLEEP **不挂钩** —— 三只鸟都不该在状态 0 上产生事件。
+	# 阶段 1 附:SLEEP **不挂钩** —— 三只鸟都不该在状态 0 上产生事件。
 	# (挂了的话睡眠中的鸟会一直顶着形变,而那正是 `b89420c` 修掉的那类问题。)
 	for c in [["FlyBird", FLY], ["BlackBird", BLACK], ["JumpBird", JUMP]]:
 		var b = _mk_enemy(c[1])
@@ -167,7 +167,7 @@ func _probe_events() -> void:
 			"scale.x %.6f(需 == 1.0)" % sx)
 		b.queue_free()
 
-	# 相③ 受击 → 挤压(宽矮,scale.x > 1);且钩子在 `_apply_hit` 而不是 `hurt` ——
+	# 阶段 3 受击 → 挤压(宽矮,scale.x > 1);且钩子在 `_apply_hit` 而不是 `hurt` ——
 	# 尸体走 `_apply_knock_only`,不该再吃一次形变(唯一会重复触发的挂法)。
 	for c in [["FlyBird", FLY], ["BlackBird", BLACK], ["JumpBird", JUMP]]:
 		var b = _mk_enemy(c[1])
@@ -196,25 +196,25 @@ func _scale_x(b) -> float:
 	return spr.scale.x
 
 
-# ── 相④ Finding-B:真物理的"睡→醒"整条链 ──
+# ── 阶段 4 Finding-B:真物理的"睡→醒"整条链 ──
 # 复现路径就是代码注释里那条**自然**路径(不需要人工灌值):
 #   鸟带着一个真落速落地(落地帧把 900+ 写进 `_pre_move_vy`)→ 玩家不可达(dist = INF)
-#   ⇒ 下一帧起 `_is_far_sleeping()` 为真、走睡眠分支。
+#    ->  下一帧起 `_is_far_sleeping()` 为真、走睡眠分支。
 # 三条断言把"缓存清零"那行前后夹住:
 #   ① 第一个睡眠帧**必须**被压一次(scale.x > 1)—— 证明 tick 真跑了、且吃的是那个陈旧落速
-#      (★ 删掉 `squash.tick(...)` 就地变红:scale 恒 1.0,连"没跑"都看得见)
-#   ② 睡眠窗口末尾必须**回到中性** —— ★ 删掉睡眠分支里的 `_pre_move_vy = 0.0` 即变红:
-#      陈旧的 900+ 每帧重触发落地项,而指数恢复每帧只回 14% ⇒ 定点 ≈ -6.19k ⇒ 永久 (1.10, 0.90)
+#      (-  删掉 `squash.tick(...)` 就地变红:scale 恒 1.0,连"没跑"都看得见)
+#   ② 睡眠窗口末尾必须**回到中性** —— -  删掉睡眠分支里的 `_pre_move_vy = 0.0` 即变红:
+#      陈旧的 900+ 每帧重触发落地项,而指数恢复每帧只回 14%  ->  定点 ≈ -6.19k  ->  永久 (1.10, 0.90)
 #   ③ 醒来首帧(挂上 TAKE_OFF)必须落在**拉伸**侧(scale.x < 1)—— 这是 Finding-B 的正身:
-#      缓存没清的话那一帧的 -1.0 会把 TAKE_OFF 的 +0.80 吃掉,拉伸被抵消甚至反向成压扁
+#      缓存没清的话那一帧的 -1.0 会把 TAKE_OFF 的 +0.80 拦截屏蔽,拉伸被抵消甚至反向成压扁
 func _begin_finding_b() -> void:
-	# ★ 用 **BlackBird** 而不是 FlyBird —— 这不是随手挑的:
+	# - 用 **BlackBird** 而不是 FlyBird —— 这不是随手挑的:
 	#   `enemy_fly_bird.tscn` 的根是 `motion_mode = 1`(**floating**),而 floating 模式下
 	#   `CharacterBody2D.is_on_floor()` **恒为 false**(引擎语义:浮空体没有地板概念)。
-	#   于是 `_is_far_sleeping()` 对 FlyBird **永远为 false** ⇒ 睡眠早退那一支对 FlyBird
+	#   于是 `_is_far_sleeping()` 对 FlyBird **永远为 false**  ->  睡眠提前返回那一支对 FlyBird
 	#   **根本不可达**(实测:落在地面上、位置冻住、velocity.y 一路涨到 9 万多,
 	#   `is_on_floor()` 仍是 false)。这是**本特性之前就存在**的既有事实(与 squash 无关,
-	#   也没人要求改),但 Finding-B 必须在**真的会睡**的鸟身上复现 ⇒ 换 BlackBird
+	#   也没人要求改),但 Finding-B 必须在**真的会睡**的鸟身上复现  ->  换 BlackBird
 	#   (默认 grounded、同样有 SLEEP 与 TAKE_OFF)。
 	_bird = _mk_enemy(BLACK)
 	_bird.global_position = Vector2(DROP_X, DROP_SPAWN_Y)
@@ -235,7 +235,7 @@ func _begin_finding_b() -> void:
 func _tick_finding_b() -> void:
 	if _bird == null or not is_instance_valid(_bird):
 		return
-	# 固定 DT 逐帧驱动(与另两个 squash 探针同款:delta 必须确定性)
+	# 固定 DT 逐帧驱动(与另两个 squash 探针相同机制:delta 必须确定性)
 	_bird._physics_process(DT)
 	_f += 1
 	if _landing_vy == 0.0:

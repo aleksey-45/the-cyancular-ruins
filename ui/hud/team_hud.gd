@@ -6,7 +6,7 @@ extends CanvasLayer
 # **只改记分与播报的语义**:
 #  - 记分条:scores/rounds_won 的键是**队号**,不是 role
 #  - 播报:按"我方队伍"判胜负,不按 role
-# ★ 本页是**最小可用**版式:联机 UI/排版重做那份会把它一起重做(设计 §11)。
+# - 本页是**最小可用**版式:联机 UI/排版重做那份会把它一起重做(设计 §11)。
 
 const ST_COUNTDOWN := 0
 const ST_PLAYING := 1
@@ -45,7 +45,7 @@ func show_notice(big: String, sub: String = "") -> void:
 	_broadcast.set_broadcast(true, big, sub)
 
 
-# 倒计时数字走秒已收进 Broadcast。
+# 倒计时数字倒计时更新已收进 Broadcast。
 func _process(delta: float) -> void:
 	_broadcast.tick(delta)
 
@@ -64,7 +64,7 @@ func _on_round_state(data: Dictionary) -> void:
 	var s2: int = int(scores.get(2, 0))
 	var w1: int = int(rounds_won.get(1, 0))
 	var w2: int = int(rounds_won.get(2, 0))
-	# ★ 文案用"队"不用"P":键是队号(见 A 册 TeamHost._broadcast_round_state)
+	# - 文案用"队"不用"P":键是队号(见 A 册 TeamHost._broadcast_round_state)
 	_score_label.text = "A 队击杀 %d        B 队击杀 %d        局胜 %d - %d        第 %d 局" % [
 			s1, s2, w1, w2, round]
 	match state:
@@ -77,7 +77,7 @@ func _on_round_state(data: Dictionary) -> void:
 			var winner: int = int(data.get("winner", 0))
 			if winner != 0:
 				var mine := winner == _my_team
-				# ★ 下面那个 `9` 是**字面量**,权威在 `TeamHost.TEAM_KILLS_TO_WIN`(= 9,`const`)。
+				# - 下面那个 `9` 是**字面量**,权威在 `TeamHost.TEAM_KILLS_TO_WIN`(= 9,`const`)。
 				#   本 HUD **不能**引 `TeamHost` 去取它 —— 那会把 `MatchHost` 整条链拖进客户端
 				#   (计划与 task brief 都明令禁止),所以这里**只能人工对齐**:改
 				#   `TeamHost.TEAM_KILLS_TO_WIN` 时必须**同步改这个字符串**。HUD 底板那种「场景/文案里是
@@ -91,9 +91,9 @@ func _on_round_state(data: Dictionary) -> void:
 				_broadcast.set_broadcast(true, "本局结束", "局胜 %d - %d" % [w1, w2])
 		ST_MATCH_OVER:
 			var mwinner: int = int(data.get("match_winner", 0))
-			# ★★ `mwinner == 0` 在 3v3 里是**新可达值**（两队都走光 → 平局），而
-			#   `ui/pvp_hud.gd` 对 0 用的是 **1v1 口径的兜底**：`"P%d 获胜!" % (1 if w1 > w2 else 2)`
-			#   ⇒ 照抄那一段会把平局念成「P2 获胜」。正确样板是 `ui/royale_hud.gd` 的 `mw == 0 → "平 局"`。
+			# 注意： `mwinner == 0` 在 3v3 里是**新可达值**（两队都走光 → 平局），而
+			#   `ui/pvp_hud.gd` 对 0 用的是 **1v1 口径的保底处理**：`"P%d 获胜!" % (1 if w1 > w2 else 2)`
+			#    ->  照抄那一段会把平局念成「P2 获胜」。正确样板是 `ui/royale_hud.gd` 的 `mw == 0 → "平 局"`。
 			if mwinner == _my_team and _my_team != 0:
 				_broadcast.set_broadcast(true, "胜利!", "你们赢下了整场对战")
 			elif mwinner != 0:

@@ -22,7 +22,7 @@ static func chunk_of(cell: Vector2i) -> Vector2i:
 
 # 从 **16px 子格纹理表**(MazeGenerator.current_subgrid)提取碰撞子格。
 # only_destructible=false 只收永久墙;true 只收可破坏。通道/液体/气体无实体碰撞(可走/可爬)。
-# ★ 子格表为空时(测试合成网格/旧路径)回落:把格级 2×2 形状掩码 ×2 展开成 4×4 ——
+# - 子格表为空时(测试合成网格/旧路径)回落:把格级 2×2 形状掩码 ×2 展开成 4×4 ——
 #   几何与旧 32px 子格完全等价(每个 32px 象限 = 2×2 个同纹理 16px 子格)。
 static func build_sub(grid: Array[Array], only_destructible: bool) -> Array[Array]:
 	var sgrid: Array[Array] = MazeGenerator.current_subgrid
@@ -158,7 +158,7 @@ static func _chunk_node_name(chunk: Vector2i) -> String:
 # 梯顶"停留"由玩家攀附机制解决,见 player._update_climb)。
 # - 锁链顶端:纹理 12 → 顶边薄条(全宽 × LEDGE_THICKNESS)。
 # - 锁链底端:纹理 14 → 底边薄条。
-# 复用 _instantiate 做 9 环面副本偏移,节点名 "ClimbLedges"。返回 shape 数。
+# 复用 _instantiate 做 9 环面副本偏移,节明确提示 "ClimbLedges"。返回 shape 数。
 static func build_climb_ledges(grid: Array[Array], parent: Node) -> int:
 	var cols = grid[0].size()
 	var rows = grid.size()

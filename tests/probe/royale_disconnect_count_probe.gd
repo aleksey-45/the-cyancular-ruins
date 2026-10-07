@@ -9,7 +9,7 @@ extends Node
 # 按 `peer_by_role` 计数时,「2 真人 + 2 AI 掉 1 真人」会看到 online=1 → 当场判 MATCH_OVER,
 # 剩下 1 真人 + 2 AI 被强行收场。2026-09-14 审计发现并修掉(`server/royale_host.gd`
 # `mark_disconnected` 的终局判据)。
-# ★ 这个错法**只查源码文本照不出来** —— 「数 players」与「数 peer_by_role」两种写法都合法、
+# - 这个错法**只查源码文本照不出来** —— 「数 players」与「数 peer_by_role」两种写法都合法、
 #   都编译得过,只有真建宿主、真调 `mark_disconnected`、真看 `_round_state` 才照得出。
 #   同类的上个教训:AI 目标方向漏取负(H1)——冒烟只查成员名,照不出符号错。
 #
@@ -38,7 +38,7 @@ func _ready() -> void:
 	var spawns := {1: Vector2i(10, 10), 2: Vector2i(20, 20), 3: Vector2i(30, 30), 4: Vector2i(40, 40)}
 	_host = RoyaleHost.new(MAP, {}, {}, [], spawns)
 	add_child(_host)
-	# ★ 关掉宿主自己的物理帧:本探针**手工**调 mark_disconnected,不需要它自跑。
+	# - 关掉宿主自己的物理帧:本探针**手工**调 mark_disconnected,不需要它自跑。
 	#   不关的话 `quit(0)` 是帧末生效,中间还会跑一帧 `_physics_process` → 快照/光束广播去读
 	#   桩对象上不存在的 `weapons` 等字段 → 在断言全过之后刷一屏 SCRIPT ERROR(实测)。
 	#   探针只需要它在树上:`_broadcast_*` 要用 Node 的 `multiplayer`。
@@ -74,7 +74,7 @@ func _run() -> void:
 	_check(_host._round_state == _host.RoundState.MATCH_OVER,
 			"★ 只剩 1 个玩家时必须终局(否则上面那条就成了「永不终局」的假绿)")
 
-	# ── ③ 按分判胜:已离开者仍在候选里(2026-09-17 用户裁定)──
+	# ── ③ 按分判胜:已离开者仍在候选里(2026-09-17 设计约定)──
 	# 为什么单开这一相:原实现 `_match_winner()` 只遍历 `players`,而 `mark_disconnected` 会
 	# **先**把退出者 `erase` 掉 → 剩 1 人时**独行者必胜、与比分无关**(B 击杀再多,一退出就是
 	# A 胜;`_scores[B]` 还在表里却没人读)。现在候选 = 还在场 ∪ 计过分的。

@@ -10,7 +10,7 @@ extends Node
 # 所以两份是**不同的随机散点**。实际摆位用的是 `_init` 那份(`super._init` 虚调 `_spawn_cell`
 # 时读的就是它),而 `start_on` 事后那句 `host._round_spawns = spawns` 因为 `_spawned_once`
 # 已经闩上,**改不回任何人的位置**。
-# ⇒ 后果:客户端拿着广播那份出生点,服务器却把玩家摆在另一处 —— 两端开局位置不一致,静默。
+#  ->  后果:客户端拿着广播那份出生点,服务器却把玩家摆在另一处 —— 两端开局位置不一致,静默。
 #
 # 本探针钉:**传进去的散点必须被原样采用,不得被重算**。做法是递一组**故意不像**平面地板格的值:
 # 一旦 `_init` 重算,`plan_spawns` 只会从地图的地板格里洗牌取,几乎必然与给定值不同。
@@ -60,7 +60,7 @@ func _ready() -> void:
 
 
 func _test_given_spawns_are_used() -> void:
-	# 喂进去一份显式散点;宿主必须**原样**采用(start_on 广播给客户端的就是这一份)
+	# 传入去一份显式散点;宿主必须**原样**采用(start_on 广播给客户端的就是这一份)
 	var host: Node = RoyaleHost.new(MAP, {1: 1, 2: 2}, {}, [], GIVEN)
 	var got: Dictionary = host._round_spawns
 	var bad: Array = []
@@ -71,7 +71,7 @@ func _test_given_spawns_are_used() -> void:
 			"宿主原样采用传入的散点(得 %s;重算 = 广播那份从不生效)" % [
 					str(got) if bad.is_empty() else str(bad)])
 
-	# 不传散点时仍要能自己算一份(手工/测试路径的兜底)——但那是**兜底**,不是常规路径
+	# 不传散点时仍要能自己算一份(手工/测试路径的保底处理)——但那是**保底处理**,不是常规路径
 	var host2: Node = RoyaleHost.new(MAP, {1: 1, 2: 2}, {}, [])
 	_check(host2._round_spawns.size() == 2 and
 			host2._round_spawns.get(1, Vector2i(-1, -1)) != Vector2i(-1, -1),
@@ -79,4 +79,4 @@ func _test_given_spawns_are_used() -> void:
 
 	host.queue_free()
 	host2.queue_free()
-	_ran["given"] = true   # ★ 完成戳必须在最后一行(见上方说明)
+	_ran["given"] = true   # - 完成戳必须在最后一行(见上方说明)

@@ -1,8 +1,8 @@
 class_name WaterFx
 extends Node2D
 
-# 水粒子:实体在水里移动时,水面溅水花 / 水体上浮气泡。运行期挂到主角与敌人。
-# 自驱动 _process,读父实体(CharacterBody2D)速度+位置;粒子播进父实体所在视图。
+# 水体粒子特效控制器：实体在水中移动时生成水面水花与水下气泡特效。运行时动态挂载于玩家与敌人实体。
+# 在 _process 中读取父级 CharacterBody2D 节点的速度与坐标，将生成的粒子节点添加至其父级视图中。
 
 static var _tex: Texture2D = null
 
@@ -29,9 +29,9 @@ func _process(delta: float) -> void:
 	if not Water.is_in_water(feet):
 		return
 	if parent.velocity.length() < GameParameters.water_fx_move_threshold:
-		return  # 静止漂着不喷
+		return  # 静止漂浮状态下不发射粒子
 	var surface_y := Water.surface_y_at(parent.global_position)
-	# 按「中心相对水面线」分模式:中心贴水面(半没入/浮着)→ 溅水花;中心没入深 → 上浮气泡
+	# 根据实体中心相对水面的深度切换效果：中心贴近水面（半浸入/漂浮状态）生成水花；深入水下则生成上升气泡
 	var depth := parent.global_position.y - surface_y
 	_next_emit -= delta
 	if _next_emit > 0.0:

@@ -1,6 +1,6 @@
 extends SceneTree
 
-# Beta 时间经济冒烟(-s 数据级):四条结算缝的公式与过滤口径。
+# Beta 时间经济冒烟(-s 数据级):四条结算接口的公式与过滤口径。
 # 用法:godot --headless --path . -s res://tests/smoke/time_economy_smoke.gd
 
 var _fails: Array[String] = []
@@ -45,7 +45,7 @@ func _test_kill() -> void:
 	e.award_kill(1, 2)
 	_near((e.accounts[1] as GrainAccount).balance, 1000.0 + 1600.0 * 0.5, "击杀得受害者余额一半")
 	_near((e.accounts[2] as GrainAccount).balance, 1600.0, "被击杀者余额不减")
-	# 归因不到 / 自杀:谁都不给
+	# 未识别攻击来源 / 自杀:谁都不给
 	var b0 := (e.accounts[1] as GrainAccount).balance
 	e.award_kill(0, 2)
 	e.award_kill(2, 2)
@@ -58,8 +58,8 @@ func _test_damage() -> void:
 	e.award_damage(1, 2, 10)
 	_near((e.accounts[1] as GrainAccount).balance, 1040.0, "10 点伤害 ×4 = +40")
 	var b0 := (e.accounts[1] as GrainAccount).balance
-	e.award_damage(0, 2, 10)      # 归因不到
-	e.award_damage(2, 2, 10)      # 打自己
+	e.award_damage(0, 2, 10)      # 未识别攻击来源
+	e.award_damage(2, 2, 10)      # 自身伤害
 	e.award_damage(1, 2, 0)       # 0 伤害
 	_near((e.accounts[1] as GrainAccount).balance, b0, "无归因/自伤/零伤不结算")
 

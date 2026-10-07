@@ -8,44 +8,44 @@ extends RefCounted
 # 装 TUN 虚拟网卡要管理员权限(WinTun 驱动),而本项目的硬约束是**双击即玩、不弹 UAC**。
 # EasyTier 的 `--no-tun` 走内嵌 smoltcp,在用户态把虚拟网段的包接进本机 socket,
 # 于是"虚拟网 IP:端口 ↔ 127.0.0.1:端口"的映射不需要任何驱动。代价是没有 ICMP/广播。
-# ★ 入站那一侧**不需要**任何参数:EasyTier 自带用户态 NAT 代理,按 NAT 条目把虚拟网上发往
+# - 入站那一侧**不需要**任何参数:EasyTier 自带用户态 NAT 代理,按 NAT 条目把虚拟网上发往
 #   本机虚拟 IP 的包交给本机对应端口(细节与出处见下面「端口方向」一节)。
 #
 # ── 端口方向(极易写反,故写在这里)──
-#   · 房主**不需要任何转发参数**:无 TUN 模式下 EasyTier 自带用户态 NAT 代理
+#   - 房主**不需要任何转发参数**:无 TUN 模式下 EasyTier 自带用户态 NAT 代理
 #     (`easytier-core/src/gateway/proxy/udp_proxy_engine.rs` 的 `UdpNatEntry`),把虚拟网上
 #     发往本机虚拟 IP 的包按 NAT 条目代收给本机对应端口,回包原路改写送回。
-#     ★ 每个来源 socket 一条 NAT 条目、**每条目一个本机 socket**
+#     - 每个来源 socket 一条 NAT 条目、**每条目一个本机 socket**
 #       (源码里的测试名:`reuses_one_host_socket_per_nat_entry_and_recreates_after_close`)
-#       ⇒ N 个客机在服务端看来是 N 个不同的本机来源,不会混淆。
-#     ★ 主机头的 P 必须是**客户端挑的那个随机端口**(服务端绑的那个),不是别的数。
-#   · `port-forward add udp 127.0.0.1:Q <房主IP>:P`(客机)= **出站**代理:本机 `127.0.0.1:Q`
+#        ->  N 个客机在服务端看来是 N 个不同的本机来源,不会混淆。
+#     - 主机头的 P 必须是**客户端挑的那个随机端口**(服务端绑的那个),不是别的数。
+#   - `port-forward add udp 127.0.0.1:Q <房主IP>:P`(客机)= **出站**代理:本机 `127.0.0.1:Q`
 #     → 虚拟网 `<房主IP>:P`。故客机的游戏客户端连的是 `127.0.0.1:Q`,不需要认识虚拟网。
-#     ★ Q 与 P **不是一个数**:Q 是本机临时挑的空闲口(见 `_pick_free_port`)。曾经让 Q=P,
-#       结果同一台机器上开两个游戏互连时,房主的服务端正占着 `127.0.0.1:P` ⇒ 客机的转发
+#     - Q 与 P **不是一个数**:Q 是本机临时挑的空闲口(见 `_pick_free_port`)。曾经让 Q=P,
+#       结果同一台机器上开两个游戏互连时,房主的服务端正占着 `127.0.0.1:P`  ->  客机的转发
 #       绑定冲突、起不来(2026-10-01 用户实测)。
-#     ★ 绑回环而不是全接口:只有**本机**的游戏客户端会拨它(手填地址那条路已整体删除),
+#     - 绑回环而不是全接口:只有**本机**的游戏客户端会拨它(手填地址那条路已整体删除),
 #       而绑 `0.0.0.0` 会让同局域网的人绕过隧道直接灌房主服务端。
-#   · 房主原先带过一个 `--udp-whitelist P`、客机带过 `--udp-whitelist 0 --tcp-whitelist 0`。
-#     ★★ 查源码后确认**都要删**(2026-09-30 用户裁定):
-#       · 它们生成的是一条**入站 ACL**(`config/peers.rs::generate_acl_from_whitelists`:
+#   - 房主原先带过一个 `--udp-whitelist P`、客机带过 `--udp-whitelist 0 --tcp-whitelist 0`。
+#     注意： 查源码后确认**都要删**(2026-09-30 设计约定):
+#       - 它们生成的是一条**入站 ACL**(`config/peers.rs::generate_acl_from_whitelists`:
 #         放行列出的端口 + 其余 Drop;不配时入站默认就是放行,见 `acl/processor.rs` 的
 #         `unwrap_or(Action::Allow)`);
-#       · 而这条 ACL **只被 TCP 那条代理路径消费**(`gateway/proxy/proxy_acl.rs` 只出现在
+#       - 而这条 ACL **只被 TCP 那条代理路径消费**(`gateway/proxy/proxy_acl.rs` 只出现在
 #         `wrapped_tcp_proxy.rs` 与 `wrapped_transport_destination.rs`);
-#       · **UDP 数据面完全不查 ACL** —— `udp_proxy_engine.rs` / `udp_socket_runtime.rs`
+#       - **UDP 数据面完全不查 ACL** —— `udp_proxy_engine.rs` / `udp_socket_runtime.rs`
 #         里没有任何 ACL 代码,唯一的拒绝判据是 `should_deny_udp_proxy`(只拦"目标端口上
 #         正好有 EasyTier 自己的监听器",防自我回环)。
-#       ⇒ **我们这套的报文全是 UDP,`--udp-whitelist` 从来没起过作用**(房主那条也白写);
+#        ->  **我们这套的报文全是 UDP,`--udp-whitelist` 从来没起过作用**(房主那条也白写);
 #         客机的 `--tcp-whitelist 0` 倒是真的在拒 TCP 入站,现已一并删除。
-#       ★ 代价如实记:删掉后,同网络里的人可以通过虚拟 IP 访问到两台机器本机的 UDP 端口。
+#       - 代价如实记:删掉后,同网络里的人可以通过虚拟 IP 访问到两台机器本机的 UDP 端口。
 #
 # ── 端口是怎么从房主传到客机的 ──
 # 房间码只决定网络名/密钥,**不含端口**。端口走 **hostname**:房主把自己那个 P 拼进主机名
 # (`cyr-host-<P>`,见 TunnelMeta.HOST_PREFIX),客机在 peer 列表里找这条、从尾部切出 P。
-# ★ 这条通道不是"顺手用一下":EasyTier 的 peer 列表本来就是**对端可读的元数据**,
+# - 这条通道不是"顺手用一下":EasyTier 的 peer 列表本来就是**对端可读的元数据**,
 #   复用它就不必自己造一条带外的交换协议(造了就得解决"客机怎么知道去哪问"这个先有鸡还是先有蛋)。
-# ★ 改前缀 = 改协议,两端必须同一个 build。
+# - 改前缀 = 改协议,两端必须同一个 build。
 #
 # ── 本模块纯逻辑接口 ──
 # 字符串与列表处理函数（如 generate_room、is_valid_room、room_credentials、host_port_of、
@@ -80,15 +80,15 @@ static var _reaped := false     # 标记当前进程是否已执行残留进程�
 
 # ── 房间码 ──
 
-## 5 位房间码。★ 用 `randi_range` 而不是 `randi() % 100000`:后者在 2^32 不是 10 万的整数倍时
+## 5 位房间码。-  用 `randi_range` 而不是 `randi() % 100000`:后者在 2^32 不是 10 万的整数倍时
 ## 有约 2e-5 的偏置(`randi_range` 内部走拒绝采样,无偏)。
-## ★ 格式串必须**写死位数**(`%05d`):GDScript 的 `%` 不支持 C 那样的 `*` 动态宽度,
+## - 格式串必须**写死位数**(`%05d`):GDScript 的 `%` 不支持 C 那样的 `*` 动态宽度,
 ##   写成 `"%0*d"` 只会得到字面量输出或报错 —— 而"房间码变成 %0*d"这种事不会崩,只会静默错。
 static func generate_room() -> String:
 	return "%05d" % randi_range(0, ROOM_MAX)
 
 
-## 恰好 5 位十进制数字才算合法。★ `00000` 合法(前导 0 是**格式**不是"没填")。
+## 恰好 5 位十进制数字才算合法。-  `00000` 合法(前导 0 是**格式**不是"没填")。
 static func is_valid_room(s: String) -> bool:
 	if s.length() != ROOM_DIGITS:
 		return false
@@ -119,7 +119,7 @@ static func host_port_of(hostname: String) -> int:
 
 
 ## 从 `easytier-cli -o json peer` 的解析结果里挑出房主那一条:{ipv4, hostname, port}。
-## 找不到 → 空字典。★ 本机那条(`cost == "Local"`)的 ipv4 是房主自己,客机必须**跳过**它 ——
+## 找不到 → 空字典。-  本机那条(`cost == "Local"`)的 ipv4 是房主自己,客机必须**跳过**它 ——
 ## 客机上本机条目不会以 `cyr-host-` 开头,故前缀判据天然把它排除,这里只显式挡一次。
 static func pick_host_peer(peers: Array) -> Dictionary:
 	for e in peers:
@@ -150,14 +150,14 @@ static func ensure_downloaded() -> bool:
 
 ## 可执行文件齐了吗?**不报错、不打印** —— 给"要不要走这条路"的调用方问路用。
 ## 与 `ensure_downloaded()` 的分工:那个是"我要用了,没有就吵",这个是"有吗?"。
-## ★ 未安装**不阻塞建房**(房间照样开得出来),但它意味着**这个房谁也进不来** ——
+## - 未安装**不阻塞建房**(房间照样开得出来),但它意味着**这个房谁也进不来** ——
 ##   2026-09-29 起手填地址那条路已删,没有"退回局域网直连"这一说。故调用方要在界面上
-##   把话说清楚(见 `matchmaking._on_room_created` 的 note),而不是只弹一条无害的红字。
-## ★★ **必须连 `Packet.dll` 一起查**(见 TunnelMeta.CORE_DLLS):少了它的表现不是"隧道起不来"
+##   给出明确错误提示楚(见 `matchmaking._on_room_created` 的 note),而不是只弹一条无害的红字。
+## 注意： **必须连 `Packet.dll` 一起查**(见 TunnelMeta.CORE_DLLS):少了它的表现不是"隧道起不来"
 ##   而是 `easytier-core.exe` **根本加载不了**(0xC0000135、零输出),而那种失败在客户端侧看起来
 ##   与"打洞失败"一模一样 —— 一个字的区别都没有。把它算进"齐不齐"是唯一能在**动手之前**
 ##   分辨这两件事的地方。
-## ★ 只看**一个**目录:`<游戏目录>/easytier/`(见 AppPaths)。四件套只有这一个家 ——
+## - 只看**一个**目录:`<游戏目录>/easytier/`(见 AppPaths)。四件套只有这一个家 ——
 ##   发布包里这样摆,`tools/fetch_easytier.py` 也下到这里,开发态相同(仓库根 + `/easytier`)。
 static func available() -> bool:
 	var dir := AppPaths.easytier_dir()
@@ -178,7 +178,7 @@ static func core_exe() -> String:
 
 
 ## 未安装时给玩家看的一句话(界面文案的唯一来源:别在 UI 里再拼一遍文件名与脚本名)。
-## ★ 文案里点明"**整包**"是有来历的:只挑两个 exe 复制过去会得到一个**加载不了的** easytier-core
+## - 文案里点明"**整包**"是有来历的:只挑两个 exe 复制过去会得到一个**加载不了的** easytier-core
 ##   (缺 `Packet.dll`),而那看起来和"打洞失败"一模一样。见 TunnelMeta.CORE_DLLS。
 static func missing_hint() -> String:
 	return "未找到 EasyTier(%s / %s / %s)—— 运行 tools/fetch_easytier.py 下载,或把**整包**里的文件放进 %s" % [
@@ -216,11 +216,11 @@ static func start_host(port: int, code: String) -> bool:
 		"-i", Meta.VIP_HOST,
 		"--network-name", str(creds["network_name"]),
 		"--network-secret", str(creds["network_secret"]),
-		# ★ 端口传给客机的**唯一**通道(见文件头)
+		# - 端口传给客机的**唯一**通道(见文件头)
 		"--hostname", Meta.HOST_PREFIX + str(port),
 		"--rpc-portal", "127.0.0.1:%d" % _rpc_port,
 		"--private-mode", "true",
-		# ★ 2026-10-03 全走 UDP:监听**只留 UDP**(随机端口),删掉 tcp 监听 ⇒ 对端之间
+		# - 2026-10-03 全走 UDP:监听**只留 UDP**(随机端口),删掉 tcp 监听  ->  对端之间
 		#   物理上无法建立 TCP 直连。依据:ENet 数据报被塞进 TCP mesh 会队头阻塞
 		#   (实测 511ms 尖峰 + 本机 TCP-only 复现实验,字节计数器逐字节穿过)。
 		#   --default-protocol udp:出站默认 UDP;--disable-tcp-hole-punching:不做 TCP 打洞;
@@ -328,17 +328,17 @@ static func guest_suffix() -> String:
 
 
 ## 下发 UDP 出站转发:本机 `127.0.0.1:P` → 虚拟网 `<host_ip>:P`。
-## ★ 2026-09-30 由 `0.0.0.0` 收成 `127.0.0.1`:原注释写的理由是"游戏客户端要连的地址
+## - 2026-09-30 由 `0.0.0.0` 收成 `127.0.0.1`:原注释写的理由是"游戏客户端要连的地址
 ##   由玩家/大厅页给(可能是局域网里另一台跑着同一套隧道的机器)"—— 而**那个手填地址的
 ##   功能早已整体删除**(见 `LobbyPage._join_with_code`:客机路径恒把 `server_address`
-##   设成 `127.0.0.1`,房主路径本来就是本机),⇒ 没有任何调用方会去拨局域网地址,
+##   设成 `127.0.0.1`,房主路径本来就是本机), ->  没有任何调用方会去拨局域网地址,
 ##   那条理由随之消失。绑全接口的两个坏处还在:同局域网的人可以**直接往这个口灌包**
 ##   (等于绕过隧道直连房主的服务端),以及更容易撞上本机别的程序占用的端口。
-##   ★ 服务端的回包沿同一条映射回来,客机**不需要**接受任何入站 ⇒ 收窄没有副作用。
+##   - 服务端的回包沿同一条映射回来,客机**不需要**接受任何入站  ->  收窄没有副作用。
 static func add_udp_forward(port: int, host_ip: String) -> bool:
-	# ★★ 本机绑一个**自己挑的**空闲口 Q,不复用房主那个端口号(2026-10-01 用户裁定)。
+	# 注意： 本机绑一个**自己挑的**空闲口 Q,不复用房主那个端口号(2026-10-01 设计约定)。
 	#   复用时"一台机器开两个游戏互连"必失败:房主那台服务端正占着 `127.0.0.1:P`,
-	#   客机的转发再要绑同一个地址 ⇒ EasyTier 绑定冲突,转发根本起不来。
+	#   客机的转发再要绑同一个地址  ->  EasyTier 绑定冲突,转发根本起不来。
 	#   解耦之后跨机行为不变(房主看不见 Q),同机也能自测。
 	var bind_port := _pick_free_port()
 	if bind_port <= 0:
@@ -364,9 +364,9 @@ static func add_udp_forward(port: int, host_ip: String) -> bool:
 
 
 # 挑一个本机空闲的 UDP 端口给转发绑定用:直接向 OS 要(bind 127.0.0.1:0,由系统从动态口池
-# 发一个**当前空闲**的号),拿到立刻释放 —— 号本身没有语义。此前在 20000~59999 里盲选再逐个
+# 发一个**当前空闲**的号),拿到立刻释放 —— 号本身没有语义。此前在 20000~59999 里随机选取再逐个
 # 试绑,探测与真绑之间整段都是竞态;OS 发号结构上不会撞任何已绑端口,只剩"释放→内核真绑"
-# 的启动窗口(PCL-CE `NewTcpPort` 同款写法,2026-10-04 用户裁定)。失败返回 0,调用方按致命错处理。
+# 的启动窗口(PCL-CE `NewTcpPort` 相同实现方式,2026-10-04 设计约定)。失败返回 0,调用方按致命错处理。
 static func _pick_free_port() -> int:
 	var probe := PacketPeerUDP.new()
 	if probe.bind(0, "127.0.0.1") != OK:
@@ -376,8 +376,8 @@ static func _pick_free_port() -> int:
 	return p
 
 
-## 本端转发绑在本机的哪个端口(0 = 没有转发 ⇒ 本端是房主)。
-## ★ 客机的游戏客户端连的**就是它**(不再是房主那个端口号)。
+## 本端转发绑在本机的哪个端口(0 = 没有转发  ->  本端是房主)。
+## - 客机的游戏客户端连的**就是它**(不再是房主那个端口号)。
 static func forward_port() -> int:
 	return _forward_port
 
@@ -385,7 +385,7 @@ static func forward_port() -> int:
 # ── 生命周期 ──
 
 ## 停止当前对等隧道。退出游戏时调用以确保后台独立进程被正常关闭；
-## 若遇异常退出，则由 _reap_orphans 在下次启动时自动兜底清理。
+## 若遇异常退出，则由 _reap_orphans 在下次启动时自动保底处理清理。
 static func stop() -> void:
 	if _pid > 0:
 		if OS.is_process_running(_pid):
@@ -419,10 +419,10 @@ static func is_running() -> bool:
 ## 启动隧道前执行（start_host / start_client 均会调用，每个游戏进程仅执行一次）。
 ## 由于 easytier-core 是独立系统进程，在游戏异常崩溃或被强制结束时无法正常执行 stop()，
 ## 残留的后台进程会持续占用本地端口与虚拟网地址。在此处进行残留进程的检测与回收：
-##   · 清理残留内核：根据命令行中包含的本游戏日志路径识别由本游戏启动的进程；
+##   - 清理残留内核：根据命令行中包含的本游戏日志路径识别由本游戏启动的进程；
 ##     从日志目录名称中解析父进程 PID，若该游戏进程已不存在，则终止该残留进程。
 ##     若父进程仍在运行（如本地双开互连）则保持原样，不干扰其他实例；外部手动启动的进程亦不作处理。
-##   · 清理旧日志目录：对于父进程已退出的日志目录，按修改时间倒序保留最新的 Meta.ET_LOG_KEEP 份，
+##   - 清理旧日志目录：对于父进程已退出的日志目录，按修改时间倒序保留最新的 Meta.ET_LOG_KEEP 份，
 ##     清理超期日志，既保留现场供排查又避免占用过多磁盘空间。
 ## 进程活跃检测使用 OS.is_process_running。
 static func _reap_orphans() -> void:
@@ -436,9 +436,9 @@ static func _reap_orphans() -> void:
 				% [killed, pruned, Meta.ET_LOG_KEEP])
 
 
-## 本游戏拉起过的 easytier-core 在命令行里的共同特征:`--file-log-dir` 落在本游戏的 log/ 下、
+## 本游戏启动过的 easytier-core 在命令行里的共同特征:`--file-log-dir` 落在本游戏的 log/ 下、
 ## 以 `easytier-` 开头(见 `_append_file_logging`);别的 easytier 进程都没有这段路径。
-## ★ 两处必须用同一套 path_join 拼法,这个前缀(含分隔符)才逐字一致。
+## - 两处必须用同一套 path_join 拼法,这个前缀(含分隔符)才逐字一致。
 static func _et_log_marker() -> String:
 	return AppPaths.log_dir().path_join(Meta.ET_LOG_DIR_PREFIX)
 
@@ -474,7 +474,7 @@ static func _reap_orphan_cores() -> int:
 	return killed
 
 
-## 从 easytier-core 的命令行里解出拉起它的游戏 pid(日志目录名的尾段),0 = 解不出。
+## 从 easytier-core 的命令行里解出启动它的游戏 pid(日志目录名的尾段),0 = 解不出。
 ## 命令行里 `easytier-` 会先撞上内核自己的名字(easytier-core.exe),所以要逐处扫、
 ## 只认 `easytier-(host|guest)-<数字>` 这一种形状。
 static func _owner_pid_of(cmd: String) -> int:
@@ -504,7 +504,7 @@ static func _owner_pid_of(cmd: String) -> int:
 
 ## 旧日志目录截断:只动 `easytier-(host|guest)-<pid>` 形状、且 owner 已死的目录;
 ## 按 mtime 从旧到新删,保底最近 `Meta.ET_LOG_KEEP` 份。返回删除个数。
-## ★ 目录的 owner pid 就写在名字里,判活纯 GDScript,**不依赖**上面那次 PowerShell 查询。
+## - 目录的 owner pid 就写在名字里,基于纯 GDScript 实现存活检测,**不依赖**上面那次 PowerShell 查询。
 static func _prune_log_dirs() -> int:
 	var root := AppPaths.log_dir()
 	var da := DirAccess.open(root)
@@ -569,9 +569,9 @@ static func _await_host_peer() -> Dictionary:
 	return {}
 
 
-## `-o json peer` 的 stdout → Array。★ 解析失败一律返回**空数组**而不是报错:
-## 轮询期间 CLI 可能因为 RPC 门户还没起来而打出半截 JSON,那是正常的中间态。
-## ★ 用 `JSON.new().parse()` 而不是静态的 `JSON.parse_string()`:后者会把解析失败**打进控制台**
+## `-o json peer` 的 stdout → Array。-  解析失败一律返回**空数组**而不是报错:
+## 轮询期间 CLI 可能因为 RPC 门户还没起来而输出不完整的 JSON 数据,那是正常的中间态。
+## - 用 `JSON.new().parse()` 而不是静态的 `JSON.parse_string()`:后者会把解析失败**输出至控制台**
 ##   (`Parse JSON failed...`),而"轮询期间打了几十条这种红字"会让真问题淹没在里面。
 static func parse_peers_json(text: String) -> Array:
 	var s := text.strip_edges()
@@ -583,7 +583,7 @@ static func parse_peers_json(text: String) -> Array:
 	var parsed = j.data
 	if typeof(parsed) == TYPE_ARRAY:
 		return parsed
-	# 某些版本会把结果包一层(旧版/多实例输出)→ 认一下再放弃
+	# 某些版本会把结果包一层(旧版/多实例输出)→ 尝试兼容解析，若仍失败则放弃
 	if typeof(parsed) == TYPE_DICTIONARY:
 		for k in ["peers", "peer_routes", "data"]:
 			var v = (parsed as Dictionary).get(k, null)
@@ -593,7 +593,7 @@ static func parse_peers_json(text: String) -> Array:
 
 
 ## 跑一次 easytier-cli,返回 `[exit_code, stdout]`。
-## ★ 走线程:`OS.execute` 是**阻塞**的,而客机要轮询最多 60s —— 同步跑会让大厅页整个冻住
+## - 走线程:`OS.execute` 是**阻塞**的,而客机要轮询最多 60s —— 同步跑会让大厅页整个冻住
 ##   (每次 0.1~1s,看起来像卡死)。线程起不来时退回同步(宁可卡也不能不出结果)。
 static func _cli_async(args: PackedStringArray) -> Array:
 	if _cli_path.is_empty():
@@ -623,10 +623,10 @@ static func _sleep(sec: float) -> void:
 # ── 内部:命令行拼装 ──
 
 ## 初始节点列表(每个都变成一条 `-p`)。**只读 `easytier/relay.txt`**(游戏目录下,
-## 每行一个,`#` 注释)—— 代码里没有内置表(2026-10-02 用户裁定):初始节点是部署事实,
+## 每行一个,`#` 注释)—— 代码里没有内置表(2026-10-02 设计约定):初始节点是部署事实,
 ## 随发布包分发(`tools/archive_build.py`)+ 玩家可编辑,不进代码。
-## ★ 文件缺失或全是注释 → 空列表 ⇒ `has_initial_peers()` 为假:客机侧 `_join_with_code`
-##   的闸门会拦下来把话说清,房主侧由 `no_relay_hint()` 在建房反馈里点名 ——
+## - 文件缺失或全是注释 → 空列表  ->  `has_initial_peers()` 为假:客机侧 `_join_with_code`
+##   的门控前置校验会拦下来给出明确错误提示,房主侧由 `no_relay_hint()` 在建房反馈里明确提示 ——
 ##   别让它退化成「找不到房间」那种把人引向错误方向的话。
 static func relay_list() -> Array[String]:
 	var f := FileAccess.open(relay_file(), FileAccess.READ)
@@ -638,7 +638,7 @@ static func relay_list() -> Array[String]:
 
 
 ## relay 行解析(纯函数,`-s` 可测):跳过空行与 `#` 注释,裸 `host:port` 自动补 `tcp://`。
-## ★ 单独抽出来就是为了钉死它 —— 节点表是两端各读一次的共享契约,解析错了的表现只是
+## - 单独抽出来就是为了严格约束它 —— 节点表是两端各读一次的共享契约,解析错了的表现只是
 ##   "连不上",不会有任何报错(与 `pick_host_peer` 同一待遇)。
 static func parse_relay_lines(text: String) -> Array[String]:
 	var out: Array[String] = []
@@ -657,10 +657,10 @@ static func relay_file() -> String:
 
 
 ## 列表文件不存在时,生成一份**空文件**(占位,一个节点都没有)。
-## ★ 节点从哪来是部署事实:发布包随包分发一份带节点的 `relay.txt`(`tools/archive_build.py`);
+## - 节点从哪来是部署事实:发布包随包分发一份带节点的 `relay.txt`(`tools/archive_build.py`);
 ##   开发态缺它就把地址写进这份文件再建房。
-## ★ 已经存在就一个字都不动 —— 它是玩家的文件,不是我们的。**不写任何注释**:
-##   玩家的文件保持素颜,说明性文字归文档(2026-10-03 用户裁定)。
+## - 已经存在就一个字都不动 —— 它是玩家的文件,不是我们的。**不写任何注释**:
+##   玩家的文件保持保持原始格式，不追加额外注释,说明性文字归文档(2026-10-03 设计约定)。
 static func ensure_relay_file() -> void:
 	var path := relay_file()
 	if FileAccess.file_exists(path):
@@ -674,7 +674,7 @@ static func ensure_relay_file() -> void:
 
 
 ## `host:port` → `tcp://host:port`;已经是 URL 的原样返回。
-## ★ 裸地址只自动补 tcp(2026-10-02 旧实测,当时 `udp://` 形式连不上;2026-10-03 换
+## - 裸地址只自动补 tcp(2026-10-02 旧实测,当时 `udp://` 形式连不上;2026-10-03 换
 ##   2.7.0-custom 后 `udp://` 实测可用 —— relay.txt 已全量 udp://,真机日志确认连接成功)。
 static func _normalize_relay(s: String) -> String:
 	var t := s.strip_edges()
@@ -691,8 +691,8 @@ static func has_initial_peers() -> bool:
 
 ## relay.txt 里一个节点都没有时给玩家看的一句话(与 `missing_hint()` 相同分工:界面文案的
 ## 唯一来源,别在 UI 里再拼一遍);返回空 = 有节点,界面不用多说。
-## ★ 内置表删除(2026-10-02)之后,"隧道起来了但别人进不来"成了建房成功路径上**真实存在**
-##   的一档 —— 三页都必须把它说出口,否则房主把码发出去,两个人对着「找不到房间」干瞪眼。
+## - 内置表删除(2026-10-02)之后,"隧道起来了但别人进不来"成了建房成功路径上**真实存在**
+##   的一档 —— 三页都必须把它说出口,否则房主把码发出去,避免因缺少中继配置而直接报错“找不到房间”，导致用户无法排查具体原因。
 static func no_relay_hint() -> String:
 	if has_initial_peers():
 		return ""
@@ -704,9 +704,9 @@ static func no_relay_hint() -> String:
 # (2026-10-01 实测)。
 # 用内核自带的 `--file-log-dir` 而不是套一层 cmd:套 cmd 会让 `OS.kill(_pid)` 杀到 cmd 而把内核
 # 留成孤儿(残留内核会一直占着虚拟网 IP、把死房间挂在共享节点上,见 `_reap_orphans`)。
-# ★ 目录名 = 角色 + 游戏进程 pid(`Meta.et_log_dir_name`):同机两条隧道(用户就是这么测同机
-#   互联的)不会写同一个文件;尾部 pid 同时是**所有权标记** —— 孤儿清扫据此把"本游戏拉起过的
-#   内核"从命令行里认出来。命名与解析是 TunnelMeta 里的一对函数,改必须两边同改。
+# - 目录名 = 角色 + 游戏进程 pid(`Meta.et_log_dir_name`):同机两条隧道(用户就是这么测同机
+#   互联的)不会写同一个文件;尾部 pid 同时是**所有权标记** —— 孤儿清扫据此把"本游戏启动过的
+#   内核"从命令行里识别解析。命名与解析是 TunnelMeta 里的一对函数,改必须两边同改。
 static func _append_file_logging(args: PackedStringArray, role: String) -> void:
 	var dir := AppPaths.log_dir().path_join(Meta.et_log_dir_name(role))
 	DirAccess.make_dir_recursive_absolute(dir)
@@ -722,8 +722,8 @@ static func _append_file_logging(args: PackedStringArray, role: String) -> void:
 static func _append_relay(args: PackedStringArray) -> void:
 	var relays := relay_list()
 	if relays.is_empty():
-		# ★ 内置表已删(2026-10-02):文件里没有节点就不带 `-p`。EasyTier 没有默认对等节点、
-		#   也没有局域网发现 ⇒ 这条内核在虚拟网上永远只有本机一条(后果按角色:房主=客机
+		# - 内置表已删(2026-10-02):文件里没有节点就不带 `-p`。EasyTier 没有默认对等节点、
+		#   也没有局域网发现  ->  这条内核在虚拟网上永远只有本机一条(后果按角色:房主=客机
 		#   找不到你;客机=等满 60 秒也找不到房主)。真正拦人的话在 UI(`LobbyPage._join_with_code`
 		#   的 `has_initial_peers` 闸 / 三页建房反馈的 `no_relay_hint`),这里是最后一道响,
 		#   防"静默地起了一条没人能到的网"。

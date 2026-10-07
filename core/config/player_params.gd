@@ -12,7 +12,7 @@ const accel_air: float = 9.0        # 空中加速
 const brake_ground: float = 16.0    # 地面松键减速(带一点滑行)
 const brake_air: float = 6.0        # 空中松键减速
 # 水平速度低于此值直接归零(避免贴地滑行 / 极慢速抖动)。
-# 原先是 scenes/player/player.gd 里的 const STOP_SNAP,climb_component 里还抄过一份死副本 ——
+# 原先是 scenes/player/player.gd 里的 const STOP_SNAP,climb_component 里还抄过一份废弃冗余定义 ——
 # 归到这里,免得再被抄第二遍(移动手感数值的唯一去处就是本文件)。
 const stop_snap: float = 1.0
 
@@ -38,7 +38,7 @@ const player_swim_up: float = -400.0      # 上浮速度
 const player_swim_down: float = 320.0     # 下沉速度
 const player_swim_accel: float = 6.0      # 水中水平缓动系数
 const player_waterproof_max: int = 10        # 防水值(氧气)上限
-const player_waterproof_damage: int = 5      # 防水值空后每秒扣血
+const player_waterproof_damage: int = 5      # 防水值空后每秒扣除生命值
 # 呼吸扣减触发线:原判定「水面没过角色原点(≈胸口)才扣」;把参考线下移该像素到胸口下沿,
 # 使「大部分(约2/3)没入、头能露出」时就开始扣呼吸,且要浮到水面低于此线才回气。
 # (可调:越大=越早扣、要浮得越高才回气)
@@ -66,7 +66,7 @@ const iframes_time: float = 0.25
 const player_hit_knockback: float = 400.0
 const player_hit_knockback_up: float = 200.0
 const player_knock_decay_rate: float = 10.0  # 爆炸击退向量指数衰减率(越大停得越快)
-const hit_cam_shake: float = 8.0        # 大伤害(一次扣血 >25% 最大血)相机震动基准幅度
+const hit_cam_shake: float = 8.0        # 大伤害(一次扣除生命值 >25% 最大血)相机震动基准幅度
 const hit_cam_shake_time: float = 0.25  # 大伤害相机震动时长(秒)
 
 # ── 爆炸镜头震动 ──
@@ -79,7 +79,7 @@ const weapon_drop_hold_time: float = 0.6      # 长按 Q 多久算丢弃(用户 
 const weapon_drop_speed: float = 400.0        # 丢弃初速(水平,朝朝向)
 const weapon_drop_up: float = 220.0           # 丢弃初速(向上)
 const weapon_drop_offset := Vector2(24.0, -8.0)   # 掉落物生成点相对玩家的偏移
-# 落地摩擦(指数衰减率)。"较大"= 很快停住。★ 与 weapon_stop_eps 一起构成
+# 落地摩擦(指数衰减率)。"较大"= 很快停住。-  与 weapon_stop_eps 一起构成
 # 「落点与何时开始模拟无关」这条不变量(联机端客户端晚一个 RTT 才开始模拟,落点必须一致):
 # 靠**速度衰减 + 阈值置零**,而不是"滑固定时长"。
 const weapon_ground_friction: float = 12.0
@@ -91,11 +91,11 @@ const weapon_pickup_self_delay: float = 0.5
 
 # ── 补间形变(squash & stretch,见 scenes/effects/squash_stretch.gd) ──
 # 上限 0.06 = 满冲击时最少 0.94 / 最多 1.06。
-# ★ 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」),同时把
+# - 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」),同时把
 #   `squash_recover` 9→16、`squash_air` 0.30→0.10 —— **三项一起收**。事件强度不动。
 #   这次改的是**两侧共有的三项**,故 `EnemyParams.shared` 必须同改(那份断言逐名钉同值)。
 # 任何一项都是**在 [-1,1] 的合成量上相乘**,叠加多少事件都不会超过这个上限。
-# ★ 下面这组常量在 `EnemyParams.shared` 里**有一套同名同值的副本**(其中 8 个名字相同:
+# - 下面这组常量在 `EnemyParams.shared` 里**有一套同名同值的副本**(其中 8 个名字相同:
 #   amount / recover / land_min_vy / land_ref_vy / land / hurt / air / air_ref_vy)——
 #   两侧刻意不共享常量(两个参数类互不依赖,spec §3),故**改一侧要问另一侧是否也该改**。
 #   两份的漂移是真隐患,`tests/smoke/squash_stretch_smoke.gd` 逐名钉住这 8 个同值。

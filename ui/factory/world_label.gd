@@ -2,7 +2,7 @@ extends Node2D
 # 玩家头上 ID 文字:世界空间 Node2D,用 draw_string 居中画(压在黑色薄底板上)。
 # 位置不由自身维护——pvp_client 每帧把它 global_position 贴到对应玩家头顶(不随倒地转体旋转)。
 #
-# ★ 底板 2026-09-15 按用户要求加上("所有模式下玩家名字加 0.1 黑底")。此前本文件**连描边都没有**
+# - 底板 2026-09-15 按用户要求加上("所有模式下玩家名字加 0.1 黑底")。此前本文件**连描边都没有**
 #   —— 旧注释写着「带黑描边」,但 _draw 里只有一行 draw_string(名不副实,本次一并改正)。
 #   名字常压在浅灰蓝开阔区上,光靠 0.85 alpha 的亮色文字读不出来。
 
@@ -10,7 +10,7 @@ const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
 const FONT_SIZE := 32   # 16 的整数倍(像素字体锐利;全仓字号规范的最后一处违例)
 const WIDTH := 344.0
 const ALPHA := 0.85   # 文字透明度
-# 底板(黑 0.1)。★ 唯一源是 `UiFactory.C_PLATE` —— 本处是**别名**,不存字面量。
+# 底板(黑 0.1)。-  唯一源是 `UiFactory.C_PLATE` —— 本处是**别名**,不存字面量。
 # **不乘文字 alpha**:它是垫在字下面的静态底,不是文字的一部分。
 const PLATE_COLOR := UiFactory.C_PLATE
 const PLATE_PAD := Vector2(6, 2)   # 底板比文字每边外扩多少(横向多留一点才衬得住字形)

@@ -3,16 +3,16 @@ extends Node
 # 菜单流转自动探针(挂 root,穿越 change_scene 存活):
 # 模拟 主菜单→(单人面板→开始探索 / 多人 / 设置) 的真实按钮点击流转,
 # 验证场景切换、渲染链与暂停层;带窗口运行时把玩家所见截图存到 user://。
-# 由 main_menu._ready 在命令行含 --autotest-* 时挂载,平时零开销:
-#   -- --autotest-sp     主菜单→单机面板→开始探索→(Esc 暂停/恢复验证)→回主菜单→截图
-#   -- --autotest-mp     主菜单→「多 人 模 式」→统一大厅 mp_lobby→截图
-#   -- --autotest-royale 同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
-#   -- --autotest-team   同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
-#   -- --autotest-set    主菜单→设置页→截图
-#   -- --autotest-level  直接切 Level0(只验世界加载,不经过菜单流转)
-#   -- --autotest-ver    主菜单→信息页(**整页,会切场景**)→截图
-#   -- --autotest-switch 连做**两趟**「进单机 → 回主菜单」往返(量换场耗时;配合 --perf-switch)
-#   -- --autotest-play   进单机 → **打枪 + 打炮**(真的开火、引爆、拆砖)→ 回主菜单 → 退出游戏
+# 由 main_menu._ready 在命令行含 - autotest-* 时挂载,平时零开销:
+#   --autotest-sp     主菜单→单机面板→开始探索→(Esc 暂停/恢复验证)→回主菜单→截图
+#   --autotest-mp     主菜单→「多 人 模 式」→统一大厅 mp_lobby→截图
+#   --autotest-royale 同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
+#   --autotest-team   同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
+#   --autotest-set    主菜单→设置页→截图
+#   --autotest-level  直接切 Level0(只验世界加载,不经过菜单流转)
+#   --autotest-ver    主菜单→信息页(**整页,会切场景**)→截图
+#   --autotest-switch 连做**两趟**「进单机 → 回主菜单」往返(量换场耗时;配合 --perf-switch)
+#   --autotest-play   进单机 → **打枪 + 打炮**(真的开火、引爆、破坏瓦片)→ 回主菜单 → 退出游戏
 
 var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
 
@@ -42,7 +42,7 @@ func _run() -> void:
 	# 直接切到某个**场景探针**(不进菜单流转):模块名 = 去掉 ground/ 前缀的探针名。
 	# 存在的理由:导出 exe 被编译成 `disable_path_overrides=yes`,`<exe> res://x.tscn` 会被
 	# 引擎当场拒绝(实测 "compiled without support for path overrides")—— 想在**发布产物**
-	# 上跑探针,只能借主菜单这条既有的 `-- --autotest-*` 通道(它读 OS.get_cmdline_user_args,
+	# 上跑探针,只能借主菜单这条既有的 `- autotest-*` 通道(它读 OS.get_cmdline_user_args,
 	# 不受 path override 限制,且 tests/ 已在 export_filter=all_resources 里)。
 	if mode.begins_with("ground/") or mode.begins_with("sceneprobe/"):
 		var scene_path := "res://tests/probe/%s.tscn" % mode.split("/", true, 1)[1]
@@ -72,13 +72,13 @@ func _run() -> void:
 	var cur := tree.current_scene
 	print("AUTOTEST[%s]: 当前场景 = %s" % [mode, cur.scene_file_path if cur != null else "<null>"])
 	_dump_render_chain(tree, cur)
-	# ★ 硬断言:每个**会切场景**的模式都必须真的抵达目标场景。
+	# - 硬断言:每个**会切场景**的模式都必须真的抵达目标场景。
 	# 少了这条,本探针会「假通过」:末尾唯一的硬断言是「回主菜单后 = main_menu.tscn」,
 	# 而"从没离开过主菜单"(菜单文案被改 → 找不到按钮 → 一次都没点到)正好满足它 ——
 	# mp/set 原先只 print 到达情况,文案一变就静默 DONE。
 	# sp 那句原本内联在此,现与 mp/set 共用同一个函数(同形,不抄三遍)。
-	# ★ ver 自 2026-10-03 起也是**整页、会切场景**(「版 本 信 息」弹层已删除):
-	#   原先"弹层不切场景 ⇒ 断言 scene 路径是同义反复"那条论证随之作废,故它与
+	# - ver 自 2026-10-03 起也是**整页、会切场景**(「版 本 信 息」弹层已删除):
+	#   原先"弹层不切场景  ->  断言 scene 路径是同义反复"那条论证随之作废,故它与
 	#   sp/mp/set 同列 —— 留着旧论证就是留一条与代码相反的注释。
 	var must_reach := {
 		"sp": "level_0.tscn",
@@ -155,7 +155,7 @@ func _find_picker(n: Node) -> MapPicker:
 
 
 # ── beta 模式:主菜单 → Beta 页(两张卡)→ 错乱大乱斗卡 → beta 态统一大厅 mp_lobby(时间参数面板)──
-# ★ 为什么场景级:独立房间池的客户端侧一半(beta 标的创建/过滤/上报)都长在大厅页里,
+# - 为什么场景级:独立房间池的客户端侧一半(beta 标的创建/过滤/上报)都长在大厅页里,
 #   不真开一次页,「beta 态建面板 + 9 行参数 + player_options 带 time」这些全是纸面推断。
 func _run_beta_flow(tree: SceneTree) -> void:
 	_press_by_text(tree.current_scene, "Beta")
@@ -190,8 +190,8 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		print("AUTOTEST[beta]: 卡片没把筛选预选成大乱斗(entry_mode=%s)" % PvpSession.entry_mode)
 		tree.quit(1)
 		return
-	# 建房弹层**启动即建、默认隐藏**(骨架里的 `%CreatePanel`;`_build_ui()` 只登记 + 收起 ——
-	# 见 `_set_create_visible` 上方那句)。★ 时间参数滑条**不是**开弹层时才造的:它们由
+	# 建房弹层**启动即建、默认隐藏**(基础结构框架里的 `%CreatePanel`;`_build_ui()` 只登记 + 收起 ——
+	# 见 `_set_create_visible` 上方那句)。-  时间参数滑条**不是**开弹层时才造的:它们由
 	# `_build_ui()` 里的 `_add_time_params(%BetaBlock)` 当场填(`%BetaBlock.visible` 按
 	# `PvpSession.beta_mode` 定)。这里先开一次**不是**为了把滑条建出来,而是让这一相走玩家
 	# 那条路 —— 点开弹层,再数玩家能看到的那 9 行。
@@ -237,11 +237,11 @@ func _walk(n: Node, pred: Callable) -> Array:
 
 # ── switch 模式:两趟「进单机 → 回主菜单」,把 safe_change_scene 的两条路径都走到 ──
 # 为什么要两趟:`Level0.safe_change_scene` 的收尾有两个动作,付账时机不同 ——
-#   · `remove_child(old)`(整棵旧世界递归摘树):**每趟都付**,第 1 趟也付;
-#   · `_retired.free()`(同步销毁上一整具世界):**第 2 趟起才付**(第 1 趟 _retired 还是空)。
+#   - `remove_child(old)`(整棵旧世界递归从场景树中移除):**每趟都付**,第 1 趟也付;
+#   - `_retired.free()`(同步销毁上一整具世界):**第 2 趟起才付**(第 1 趟 _retired 还是空)。
 # 用户报的"有些时候才卡"正指向后者,而项目自己的 recon 把这条列为**从未实测**(见
 # .superpowers/sdd/l4-recon.md 的"第 2 次及以后退出")。本模式就是把它变成可测的。
-# 数字由 level_0.gd 的 `_perf_log` 打,需同带 `-- --perf-switch`(不带则只有流程、没有数字)。
+# 数字由 level_0.gd 的 `_perf_log` 打,需同带 `--perf-switch`(不带则只有流程、没有数字)。
 func _run_switch_roundtrips(tree: SceneTree) -> void:
 	for i in range(2):
 		_press_by_text(tree.current_scene, "单 人 模 式")
@@ -258,7 +258,7 @@ func _run_switch_roundtrips(tree: SceneTree) -> void:
 		_press_esc()
 		await tree.create_timer(0.4).timeout
 		_press_by_text(tree.current_scene, "回到主菜单")
-		# ★ 量**用户看得见的东西**:换场后 90 帧的**帧间隔**,而不是 safe_change_scene 内部
+		# - 量**用户看得见的东西**:换场后 90 帧的**帧间隔**,而不是 safe_change_scene 内部
 		#   各步骤的耗时 —— 内部步骤加起来只有几十毫秒,而"卡不卡"取决于有没有一帧被拖长。
 		#   逐帧打点还顺带回答"分帧拆除器本身会不会把卡顿摊成一串小顿"(预算 3ms/帧)。
 		var worst := 0.0
@@ -311,7 +311,7 @@ func _run_play_session(tree: SceneTree) -> void:
 		_fire_once(player)
 		await tree.create_timer(0.12).timeout
 	# 打炮:拿到第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定
-	# ★ 必须走**发放路径**(pick_up),不能走 equip_type —— 后者自 2026-09-25 起对
+	# - 必须走**发放路径**(pick_up),不能走 equip_type —— 后者自 2026-09-25 起对
 	#   "背包里没有这个类型"是 push_error + 不加入(§4.5),照旧调它会**静默拿到手枪**
 	#   (打炮那段变成打手枪,榴弹自杀那一段直接不倒地),而那只是个 ERROR 日志。
 	player.weapons.pick_up(5, WeaponInventory.MAG_FULL)
@@ -359,7 +359,7 @@ func _run_play_session(tree: SceneTree) -> void:
 		await tree.create_timer(0.12).timeout
 	await tree.create_timer(0.5).timeout
 	print("AUTOTEST[play]: 复位后两枪已开,准备回主菜单")
-	# ★ `-- --perf-quit-ingame`:走到这里**直接在局内退**(等价于按窗口叉号)—— 这一条
+	# - `--perf-quit-ingame`:走到这里**直接在局内退**(等价于按窗口叉号)—— 这一条
 	#   和"回主菜单"是完全不同的成本:引擎同步销毁**整棵在树场景**(整具世界 +
 	#   2208×1728 的 SubViewport),而回主菜单那条是把世界退役挂起、不付这笔。
 	#   用户报的"玩好一局以后点退出/叉号卡"极可能就是这条,此前从没量过。
@@ -421,7 +421,7 @@ func _measure_frames(tree: SceneTree, tag: String, n: int) -> void:
 			tag, n, worst, worst_at, total / float(n)])
 
 
-# ★ 硬断言:点了按钮必须**真的换了场景**(sp=「开始探索」→Level0、mp/set=直接跳页)。
+# - 硬断言:点了按钮必须**真的换了场景**(sp=「开始探索」→Level0、mp/set=直接跳页)。
 # 返回 false 时本函数已 quit(1),调用方只需 return —— 不能继续走到末尾的「DONE」。
 func _require_scene(tree: SceneTree, want: String) -> bool:
 	var cur := tree.current_scene
@@ -478,7 +478,7 @@ func _press_esc() -> void:
 	_press_key("ui_cancel")
 
 
-# 注入一次按键动作(与 _press_esc 同款,供倒地后的 R 复位等用)
+# 注入一次按键动作(与 _press_esc 相同机制,供倒地后的 R 复位等用)
 func _press_key(action: String) -> void:
 	var ev := InputEventAction.new()
 	ev.action = action

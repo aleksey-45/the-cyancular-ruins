@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = "Continue"
 # repo root = two levels up from this script (tools/gamelog)
 $repo = (Get-Item (Join-Path $PSScriptRoot "..\..")).FullName
-# ---- resolve Godot (portable): env GODOT_EXE -> common paths -> PATH ----
+# ── resolve Godot (portable): env GODOT_EXE -> common paths -> PATH - 
 $godot = $env:GODOT_EXE
 if (-not $godot -or -not (Test-Path $godot)) {
     $godot = @(
@@ -36,7 +36,7 @@ if (-not $godot) {
     Write-Host "[ERROR] Godot not found. Set environment variable GODOT_EXE to your Godot exe."
 }
 
-# ---- resolve exe + args -----------------------------------------------------
+# ── resolve exe + args - - - - - - - - - - - - - -
 $exe = ""
 $argList = ""
 $label = "game"
@@ -73,7 +73,7 @@ if ($ExeOverride -ne "") {
     }
 }
 
-# ---- session directory ------------------------------------------------------
+# ── session directory - - - - - - - - - - - - - - 
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $dir = Join-Path $repo ("gamelogs\" + $stamp + "_" + $label)
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -88,7 +88,7 @@ Write-Host " 启动: $exe $argList"
 Write-Host " (关闭游戏窗口后,自动生成中文报告 report.txt)" 
 Write-Host "==============================================" 
 
-# ---- run --------------------------------------------------------------------
+# ── run ---------------- - 
 $start = Get-Date
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $exitCode = $null
@@ -114,7 +114,7 @@ try {
 $sw.Stop()
 $end = Get-Date
 
-# ---- classify exit ----------------------------------------------------------
+# ── classify exit - - - - - - - - - - - - - - - 
 $verdict = ""
 $verdictKind = "ok"   # ok / warn / crash
 if ($launchError -ne "") {
@@ -156,7 +156,7 @@ if ($launchError -ne "") {
     } catch { }
 }
 
-# ---- error line extraction ---------------------------------------------------
+# ── error line extraction - - - - - - - - - - - - - 
 $script:issues = New-Object System.Collections.Generic.List[string]
 function Add-Issues([string]$file, [string]$tagName) {
     if (-not (Test-Path $file)) { return }
@@ -187,7 +187,7 @@ function Add-Issues([string]$file, [string]$tagName) {
 Add-Issues $errLog "stderr"
 Add-Issues $outLog "stdout"
 
-# ---- report ------------------------------------------------------------------
+# ── report ---------------- - 
 $FMT = "{0:yyyy-MM-dd HH:mm:ss}"
 $durationTxt = "{0}小时{1}分{2}秒" -f [int][math]::Floor($sw.Elapsed.TotalHours), $sw.Elapsed.Minutes, $sw.Elapsed.Seconds
 $sr = ""

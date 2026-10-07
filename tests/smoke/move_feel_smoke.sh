@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 下蹲/冲刺手感冒烟。通过 = SMOKE_MOVE_FEEL OK 退出 0。用户自跑。
+# 下蹲与冲刺移动手感冒烟测试：验证角色下蹲、冲刺加速度与摩擦力逻辑。判定标准：输出 SMOKE_MOVE_FEEL OK 且退出码为 0。
 set -u
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"

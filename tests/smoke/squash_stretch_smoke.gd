@@ -3,7 +3,7 @@ extends SceneTree
 # 判据:SQUASH SMOKE: ALL-OK
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/squash_stretch_smoke.gd
 #
-# ★ 组件只静态引用 PlayerParams / EnemyParams / MathUtil(三者都是 RefCounted、非 autoload),
+# - 组件只静态引用 PlayerParams / EnemyParams / MathUtil(三者都是 RefCounted、非 autoload),
 #   故 `-s` 阶段(autoload 尚未实例化)可以安全静态引用本类。
 
 const DT: float = 1.0 / 60.0
@@ -15,14 +15,14 @@ const MIRRORED_CONSTS := [
 	"squash_amount", "squash_recover", "squash_land_min_vy", "squash_land_ref_vy",
 	"squash_land", "squash_hurt", "squash_air", "squash_air_ref_vy",
 ]
-# 用户裁定的幅度上限。**写死**是刻意的:这里是唯一钉住"这个数本身"的地方。
-# ★ 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」)—— 同批把
+# 设计约定的幅度上限。**写死**是刻意的:这里是唯一钉住"这个数本身"的地方。
+# - 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」)—— 同批把
 #   `squash_recover` 9→16、`squash_air` 0.30→0.10(三项一起收,事件强度不动)。
-#   两侧参数文件必须同改:本文件上方逐名钉死这 8 个同名常量。
+#   两侧参数文件必须同改:本文件上方逐名严格约束这 8 个同名常量。
 const RULED_AMOUNT := 0.06
 
 var _fail: int = 0
-# 本冒烟建的所有节点(`_mk()` 与 ⑨ 的手搭实例)。不入树 ⇒ 不 free 就是 ObjectDB 泄漏,
+# 本冒烟建的所有节点(`_mk()` 与 ⑨ 的手搭实例)。不加入场景树  ->  不 free 就是 ObjectDB 泄漏,
 # 退出时刷一屏 `leaked` 警告把真正的失败淹掉(另两个场景探针都 free 了,这里对齐)。
 var _owned: Array[Node] = []
 
@@ -40,7 +40,7 @@ func _near(a: float, b: float, eps: float) -> bool:
 
 
 func _mk() -> Array:
-	# 返回 [组件, 精灵]。精灵不入树 —— scale 是 Node2D 属性,不入树也能读写。
+	# 返回 [组件, 精灵]。精灵不加入场景树 —— scale 是 Node2D 属性,不加入场景树也能读写。
 	# 两者都记进 `_owned`,退出前统一 free(见该字段的注释)。
 	var spr := AnimatedSprite2D.new()
 	var s := SquashStretch.new()
@@ -60,10 +60,10 @@ func _free_owned() -> void:
 func _initialize() -> void:
 	print("== SquashStretch 纯逻辑冒烟 ==")
 
-	# ⓪ 参数镜像:两侧那 8 个同名 `squash_*` 常量必须同值 + 幅度必须还是用户裁定的那个数。
-	#    ★ 为什么必须有:四处测试的阈值**全部**相对 `PlayerParams.squash_amount` 表达,
-	#    把 0.10 抬到 0.20(单侧或双侧)**一条都不会红** —— 而"不要太夸张"是用户裁定。
-	#    ★ 用 `get_script_constant_map()` 而不是直接取属性:后者在名字被改名时会抛错,
+	# ⓪ 参数镜像:两侧那 8 个同名 `squash_*` 常量必须同值 + 幅度必须还是设计约定的那个数。
+	#    - 为什么必须有:四处测试的阈值**全部**相对 `PlayerParams.squash_amount` 表达,
+	#    把 0.10 抬到 0.20(单侧或双侧)**一条都不会红** —— 而"不要太夸张"是设计约定。
+	#    - 用 `get_script_constant_map()` 而不是直接取属性:后者在名字被改名时会抛错,
 	#    而改名恰恰是这条守卫最该产出"响亮的红"的场景(取不到 = 少一个常量,必须报出来)。
 	var pp_script = load("res://core/config/player_params.gd")
 	var ep_script = load("res://core/config/enemy_params.gd")
@@ -130,7 +130,7 @@ func _initialize() -> void:
 
 	# ⑥ 指数回归:30 帧后 < 0.01,60 帧后 < 0.001
 	#    按 squash_recover=16.0 + squash_amount=0.06 推(2026-09-21 更新):
-	#    exp(-8)*0.06≈2.0e-5、exp(-16)*0.06≈6.8e-9 —— 两条阈值都远宽于实测,故本相不受
+	#    exp(-8)*0.06≈2.0e-5、exp(-16)*0.06≈6.8e-9 —— 两条阈值都远宽于实测,故本阶段不受
 	#    recover 上调的影响(它只会让回归更快)。
 	var f: Array = _mk()
 	(f[0] as SquashStretch).tick(DT, 1200.0, true, false)   # 先制造一个大冲击
@@ -144,21 +144,21 @@ func _initialize() -> void:
 			"60 帧后回归到 <0.001,实测 %.6f" % absf((f[1] as AnimatedSprite2D).scale.x - 1.0))
 
 	# ⑦ 多事件叠加不爆:同时起跳 + 冲刺,再叠空中项 —— 三条正项叠加必须被**钳在 +1.0 上限**
-	#    ★ 这里刻意**不走满力落地那一拍**(on_floor=false):落地项是 `-1.0`,会把饱和的
+	#    - 这里刻意**不走满力落地那一拍**(on_floor=false):落地项是 `-1.0`,会把饱和的
 	#    `+1.0` 原样抵消 → v 落到 0,断言就退化成"读一个 0",删掉组件里两处 clampf 也照样绿。
 	#    改成"停在钳位处"之后,删 clampf 才会真红(下面两条互补)。
-	#    ★★ `delta = 0.0` 是**承重的**(与 ⑦c 同款、理由同):本相的过冲余量**只等于
+	#    注意： `delta = 0.0` 是**核心约束的**(与 ⑦c 相同机制、理由同):本阶段的过冲余量**只等于
 	#    `squash_air`**,而指数恢复每帧要吃 `1-exp(-recover/60)`。2026-09-21 把 `squash_air`
 	#    0.30→0.10、`squash_recover` 9→16 之后,恢复吃的(0.234)压过了空中项给的(0.10)
-	#    ⇒ **过冲消失**,本相读到的成了 0.9480 而不是边界值 0.94 —— 断言失败,而组件是对的。
+	#     ->  **过冲消失**,本阶段读到的成了 0.9480 而不是边界值 0.94 —— 断言失败,而组件是对的。
 	#    冻掉恢复项后过冲恒为 `squash_air`,与 `squash_recover` 解耦。
 	var g: Array = _mk()
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)   # +0.75
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)   # +0.80 → 饱和到 +1.0
 	(g[0] as SquashStretch).tick(0.0, -700.0, false, false)       # 空中项再叠 squash_air(未钳位时 v = 1 + air)
-	#    ★★ 前提断言:本相的判别力 == `amount × squash_air`。把"余量被调到看不见"变成**红**,
-	#    而不是让本相静默退化成一个恒真断言(`squash_air` 降到 0.02 时余量只剩 0.0012,
-	#    与下面的 0.001 epsilon 同量级 ⇒ 会悄悄失去判别力)。这是本文件反复用到的同一手法。
+	#    注意： 前提断言:本阶段的有效判定能力 == `amount × squash_air`。把"余量被调到看不见"变成**红**,
+	#    而不是让本阶段静默退化成一个恒真断言(`squash_air` 降到 0.02 时余量只剩 0.0012,
+	#    与下面的 0.001 epsilon 同量级  ->  会悄悄失去判定有效性)。这是本文件反复用到的同一手法。
 	_ok(PlayerParams.squash_amount * PlayerParams.squash_air > 0.002,
 			"本相过冲余量足够(== amount × squash_air = %.4f);不够就调回 squash_air 或改本相构造"
 			% (PlayerParams.squash_amount * PlayerParams.squash_air))
@@ -167,7 +167,7 @@ func _initialize() -> void:
 			and absf(gs.y - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"多事件叠加不越上限,实测 %s" % str(gs))
 	# 且必须是"顶在上限上"而不是"被抵消回中性" —— 上一条若退化回抵消,这里立刻红
-	# (v=+1.0 是**拉伸** ⇒ x 顶在 1.0 - amount)
+	# (v=+1.0 是**拉伸**  ->  x 顶在 1.0 - amount)
 	_ok(_near(gs.x, 1.0 - PlayerParams.squash_amount, 0.001),
 			"叠加确实停在钳位处(v=+1.0,窄高),实测 %.4f" % gs.x)
 
@@ -190,11 +190,11 @@ func _initialize() -> void:
 
 	# ⑦c 下行饱和的**边界**守卫(⑦ 的镜像):⑦ 钉住 v == +1.0,这条钉住 v == -1.0。
 	#     构造:三次 HURT(-0.50 ×3)把 `_impulse` 压到下行钳位(-1.0),再用一次满力落地
-	#     (`-1.0`,与 ⑦ 里那个 `+0.30` 的空中项同款"反向的满幅项")让它稳稳停在钳位处。
-	#     ★ `delta = 0.0` 是**刻意的**:指数恢复每帧要吃掉 14%,拿 `DT` 读到的会是
-	#     `-0.8607`(scale.x 1.0861)而不是**边界值本身**。本相要钉的正是"v 到底钳在哪",
+	#     (`-1.0`,与 ⑦ 里那个 `+0.30` 的空中项相同机制"反向的满幅项")让它稳稳停在钳位处。
+	#     - `delta = 0.0` 是**刻意的**:指数恢复每帧要拦截屏蔽 14%,拿 `DT` 读到的会是
+	#     `-0.8607`(scale.x 1.0861)而不是**边界值本身**。本阶段要钉的正是"v 到底钳在哪",
 	#     故把恢复项冻掉(`approach(x, 0, r, 0) == x`,浮点精确);帧内其余部分照常。
-	#     ★ 它**不**鉴别 `impulse()` 的下钳位(那里无论钳不钳都被 `_apply` 收进 -1.0),
+	#     - 它**不**鉴别 `impulse()` 的下钳位(那里无论钳不钳都被 `_apply` 收进 -1.0),
 	#     鉴别的是 `_apply()` 的下钳位 —— 去掉它 → v = -2.5 → scale.x = 1.25,红。
 	var n: Array = _mk()
 	(n[0] as SquashStretch).impulse(SquashStretch.Impulse.HURT)
@@ -205,14 +205,14 @@ func _initialize() -> void:
 	_ok(absf(ns.x - 1.0) <= PlayerParams.squash_amount + 0.0001
 			and absf(ns.y - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"下行叠加不越下限,实测 %s" % str(ns))
-	# 且必须"顶在下限上"而不是收缩回中性:v == -1.0 是**挤压** ⇒ x 顶在 1.0 + amount
+	# 且必须"顶在下限上"而不是收缩回中性:v == -1.0 是**挤压**  ->  x 顶在 1.0 + amount
 	_ok(_near(ns.x, 1.0 + PlayerParams.squash_amount, 0.0005),
 			"下行叠加停在钳位处(v=-1.0,宽矮),实测 %.4f(需 %.4f)" % [
 				ns.x, 1.0 + PlayerParams.squash_amount])
 	# ⑦d 下行饱和的**语义**守卫(⑦b 的镜像):叠的组数翻倍,结果必须完全相同 ——
 	#     `impulse()` 的下钳位让第二组落在同一个饱和点。
-	#     ★ 这里**不能**照抄 ⑦b 的"再叠一次满力落地":落地项会把两组一起压到 `_apply` 的
-	#       钳位上(都是 -1.0),分叉被抹平、判据变成空转。去掉那个附加项才看得见
+	#     - 这里**不能**照抄 ⑦b 的"再叠一次满力落地":落地项会把两组一起压到 `_apply` 的
+	#       钳位上(都是 -1.0),分叉被消除差异、判据变成无效操作。去掉那个附加项才看得见
 	#       "未钳位时四组是 -2.0(−1.72 被 `_apply` 收成 -1.0)vs 两组 -0.8607"。
 	var n1: Array = _mk()
 	for i in 2:
@@ -228,11 +228,11 @@ func _initialize() -> void:
 			"下行饱和:叠四组与叠两组同值,实测 %s" % (str(sn1) + " vs " + str(sn2)))
 
 	# ⑦e 减法之后的**写入口钳位**(§3 末那条补记的唯一守卫)。它**只在违约宿主连喂两帧**时
-	#     才显形,单帧是看不出来的 —— 单帧下 `_impulse` 只到 -1,`_apply()` 的钳位就把画面
-	#     兜住了;第二帧再减一次才会掉到 -1 以下(无钳位时 -1.86 → 恢复后 -1.60)。
-	#     ★ 判据:第二帧必须仍停在**钳位处那一条指数尾巴**上(`-1.0` 经一帧恢复 = -0.8607),
-	#       而不是 -1.60 被 `_apply()` 兜成 -1 ⇒ 两者读出来分别是 **1.0861** 与 **1.1000**。
-	#     ★ 违约宿主不是假想:`ClimbComponent` 在梯底按住 S 时**每帧**喂 720(见 spec §2.4)。
+	#     才暴露异常,单帧是看不出来的 —— 单帧下 `_impulse` 只到 -1,`_apply()` 的钳位就把画面
+	#     提供容错保障了;第二帧再减一次才会掉到 -1 以下(无钳位时 -1.86 → 恢复后 -1.60)。
+	#     - 判据:第二帧必须仍停在**钳位处那一条指数尾巴**上(`-1.0` 经一帧恢复 = -0.8607),
+	#       而不是 -1.60 被 `_apply()` 兜成 -1  ->  两者读出来分别是 **1.0861** 与 **1.1000**。
+	#     - 违约宿主不是假想:`ClimbComponent` 在梯底按住 S 时**每帧**喂 720(见 spec §2.4)。
 	var p: Array = _mk()
 	(p[0] as SquashStretch).tick(DT, 2000.0, true, false)   # 第一帧满幅落地
 	(p[0] as SquashStretch).tick(DT, 2000.0, true, false)   # 第二帧照喂:减法会被重来一次

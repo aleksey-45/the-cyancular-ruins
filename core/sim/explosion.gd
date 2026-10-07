@@ -22,7 +22,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		var dmg := _falloff(d, radius, max_damage) * cover * wmult
 		if dmg <= 0:
 			continue
-		# 命中标记(屏幕中心 X)。★ 敌人侧**不写** last_damager 归因 —— 那个 meta 原先的
+		# 命中标记(屏幕中心 X)。-  敌人侧**不写** last_damager 归因 —— 那个 meta 原先的
 		# 唯一读者是单机击杀播报(notify_enemy_killed),播报 2026-09-17 删除后写入即死数据。
 		# 玩家分支的 attribute() 保留:大乱斗 RoyaleHost 靠它判击杀分。
 		CombatFeedback.hit_marker()
@@ -48,33 +48,33 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			var blocked := has_grid and not _has_los(center, pp, grid)
 			var mult := cover_multiplier(d, radius, blocked)
 			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
-			# ★ 自伤标记(必须在 `take_hit` **之前**,与 attribute 同一纪律):`attribute` 对
+			# - 自伤标记(必须在 `take_hit` **之前**,与 attribute 同一纪律):`attribute` 对
 			#   attacker == victim 静默跳过,自伤因此没有归因通道 —— 惩罚要扣"对自己造成的伤害",
-			#   靠这一笔把"自伤"与"归因不到"分开。
-			#   ★ 只有**投掷者本人**在爆区里才写 ⇒ 别人炸不到这条路径;`shooter` 为 null
+			#   靠这一笔把"自伤"与"未识别攻击来源"分开。
+			#   - 只有**投掷者本人**在爆区里才写  ->  别人炸不到这条路径;`shooter` 为 null
 			#   (无主爆炸/敌方弹药)时 `pp == null` 恒 false,天然不写。
-			#   ★ 本函数**只写标记**,伤害与击退一个数都不动(爆炸对队友满效是用户既有裁定)。
+			#   - 本函数**只写标记**,伤害与击退一个数都不动(爆炸对队友满效是用户既有裁定)。
 			if shooter == pp:
 				CombatFeedback.note_self_hit(pp)
 			# 击杀归因(大乱斗 RoyaleHost 读 last_damager 判击杀分);1v1 MatchHost 不读,无行为变化
-			# ★同敌人分支:必须在 take_hit 之前写,倒地同帧的归因读取者才看得到(Task 15)。
+			# - 同敌人分支:必须在 take_hit 之前写,倒地同帧的归因读取者才看得到(Task 15)。
 			# 注:此处原缺 is_instance_valid 守卫,统一入口补上(更严,不影响原本会写的场景)
 			CombatFeedback.attribute(pp, shooter)   # 归因写端统一入口
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
-	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
+	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣除生命值,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, shooter)
 
 # 爆区内的可破坏瓦片(树叶/树干)扫描 —— **纯几何查询,不改任何状态**。
 # 返回 [{cell: Vector2i, pos: Vector2(格中心), tex: int, d: float(到爆心的环面距离)}]。
-# ★ 两个用途共用同一份扫描,两端表现因此同源:
-#   ① 权威侧扣血(_damage_tiles);② 表现层播受击碎片(所有端 —— 见 bullet_base._explode)。
+# - 两个用途共用同一份扫描,两端表现因此同源:
+#   ① 权威侧扣除生命值(_damage_tiles);② 表现层播受击碎片(所有端 —— 见 bullet_base._explode)。
 static func destructible_subs(center: Vector2, radius: float) -> Array:
-	# cyrm v4(选项 A):爆炸按 **16px 子格**扫描/扣血 —— 炸出的是圆洞而不是整格消失。
+	# cyrm v4(选项 A):爆炸按 **16px 子格**扫描/扣除生命值 —— 炸出的是圆洞而不是整格消失。
 	# 返回 [{sub: Vector2i, pos: Vector2(子格中心), tex: int, d: float(到爆心的环面距离)}],
-	# 扣血(_damage_tiles)与受击碎片表现(bullet_base._explode)共用同一份扫描。
+	# 扣除生命值(_damage_tiles)与受击碎片表现(bullet_base._explode)共用同一份扫描。
 	var out: Array = []
 	var sgrid := MazeGenerator.current_subgrid
 	if sgrid.is_empty():

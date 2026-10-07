@@ -39,7 +39,7 @@
 
 1. **队伍维度是全仓新的**：`server/`、`core/`、`scenes/` 下 `team|ally|friendly` 零命中。role 只有编号语义，唯一的 role→值 映射是昵称（`names`）与色相（`hues`）。
 2. **role 号会有空洞、不能推导**：`lobby_rooms.gd:319-323` 取"最小空闲号"且**有人退出不重排**；`RoyaleHost.plan_spawns` 已按"容忍不连续 role"写。→ **队伍必须显式下发**。
-3. **两人假设散落 6 处**：`_opponent_of`（`match_combat.gd:200-204` —— "非我即敌"的本体）、`_spawn_cell` 的 `player/player2` 二选一（`match_state.gd:119-122`）、`_reset_survivor`（`match_round.gd:81-94`）、`MatchBootstrap` 的 `role==1 ? s1 : s2`（`match_bootstrap.gd:31`）、`_side_swap`、`scenes/pvp_game.gd` 的 `3 - role`。
+3. **两人假设散落 6 处**：`_opponent_of`（`match_combat.gd:200-204` —— "非我即敌"的本体）、`_spawn_cell` 的 `player/player2` 二选一（`match_state.gd:119-122`）、`_reset_survivor`（`match_round.gd:81-94`）、`MatchBootstrap` 的 `role==1 ? s1 : s2`（`match_bootstrap.gd:31`）、`_side_swap`、`scenes/pvp_game.gd` 的 `3 --role`。
 4. **友伤钩子为零**：玩家层不在子弹 mask 里（`bullet.tscn:10-11`，mask=5 = 地形+敌人）→ 玩家本来就**不挡子弹**；命中全靠半径裁决（`match_combat.gd:45-53`，只过滤"不是射手"）。爆炸只把 shooter 用于归因、伤害照吃（`explosion.gd:34-57`）。
 5. **协议有省事路**：`match_sync` 加字段即可（旧端忽略未知键）；新 RPC 只能进 `NetBusExt`（`net_bus_ext.gd:3-8`），且**不得与 `NetBus` 同名**（`beam_fired` 的重名是"静默 no-op"的先例）。
 6. **大厅/worker 的模式开关是二分的**：`teardown_room` 的 `is_royale`（`lobby_rooms.gd:404/415/421-430`）、两个端口延迟常量（`worker_launcher.gd:31/:38`）、`_sweep_stale_rooms` 的 royale 分支、`server_main.gd:259-270` 的两条超时梯（20s 降级开局 / 10s 退出）。

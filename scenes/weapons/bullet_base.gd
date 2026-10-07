@@ -5,7 +5,7 @@ const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 
 # 子弹/爆炸弹对玩家的命中判定半径(px,玩家缩放 2.5 的碰撞箱量级)。
-# ★ 单一来源:服务器权威侧(server/match_host.gd 的 HIT_RADIUS 直接引用本常量)与客户端
+# - 单一来源:服务器权威侧(server/match_host.gd 的 HIT_RADIUS 直接引用本常量)与客户端
 #   视觉副本的「榴弹碰到玩家 → 短引信」判定共用它,两处各写一个数迟早会漂。
 const PLAYER_HIT_RADIUS: float = 40.0
 # 判定候选所在的组:player = 玩家实体(服务器上全部玩家;客户端上只有本地玩家);
@@ -24,7 +24,7 @@ var max_range: float = 0.0
 var traveled: float = 0.0
 var source: Node = null
 var shooter: Node = null  # 射手玩家(击杀归因用):本地=武器持有者;服务器=权威模拟里的玩家
-var hit_damage: int = 0    # 命中伤害(武器 fire 注入;切枪后 source 失效时兜底直接结算)
+var hit_damage: int = 0    # 命中伤害(武器 fire 注入;切枪后 source 失效时保底处理直接结算)
 var hit_impact: float = 0.0  # 命中击退(同上)
 var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨迹,不裁决伤害(伤害由服务器裁决)
 
@@ -103,7 +103,7 @@ func _physics_process(delta: float) -> void:
 			if not velocity_vec.is_zero_approx():
 				rotation = velocity_vec.angle()
 			return
-		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时,用子弹自带 damage/impact 兜底直接结算。
+		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时,用子弹自带 damage/impact 保底处理直接结算。
 		# 视觉副本(apply_damage=false)不裁决伤害,直接消失。
 		if apply_damage and hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
 			# 命中标记(屏幕中心 X)。敌人侧不写归因 —— 那个 meta 的唯一读者是单机击杀播报,
@@ -118,7 +118,7 @@ func _physics_process(delta: float) -> void:
 			Sfx.play("hit")
 			queue_free()
 		else:
-			# 撞墙:可破坏(树叶/树干)→ 播受击碎片 + (权威侧)扣血;不可破坏墙 → 子弹消失。
+			# 撞墙:可破坏(树叶/树干)→ 播受击碎片 + (权威侧)扣除生命值;不可破坏墙 → 子弹消失。
 			# 延迟销毁确保破坏回调跑完。
 			# PvP 视觉子弹副本(apply_damage=false)也走这里——只播碎片(即时命中反馈),
 			# 但 damage_tile 只在 apply_damage(权威侧)执行,客户端绝不自拆本地瓦片(幽灵墙纪律,
@@ -156,8 +156,8 @@ func _wrap() -> void:
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
-# 撞墙处理:命中可子弹破坏的格(树叶/树干)→ 播受击碎片(无条件,单机/PvP 视觉副本同款即时反馈);
-# damage_tile 扣血只在权威侧(apply_damage=true)执行,破坏后变空气(Level0 刷新渲染/碰撞)。
+# 撞墙处理:命中可子弹破坏的格(树叶/树干)→ 播受击碎片(无条件,单机/PvP 视觉副本阶段同机制即时反馈);
+# damage_tile 扣除生命值只在权威侧(apply_damage=true)执行,破坏后变空气(Level0 刷新渲染/碰撞)。
 # 视觉副本(apply_damage=false)只播碎片、绝不拆本地 grid——拆墙渲染由服务器 tile_destroyed 事件驱动。
 func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 	# cyrm v4(选项 A):破坏按 **16px 子格**算 —— 命中点落在哪个子格就打哪个子格。
@@ -195,7 +195,7 @@ func _direct_hit(hit: Node) -> void:
 		hit.hurt(direct_hit_damage, dir)
 
 
-# ★ 2026-09-17 删除了 `_register_player_hit()`:它是"击杀归因 meta + 命中标记"的一体入口,
+# - 2026-09-17 删除了 `_register_player_hit()`:它是"击杀归因 meta + 命中标记"的一体入口,
 #   而其中**归因那一半**的唯一读者是单机击杀播报(EnemyBase._begin_death → notify_enemy_killed)。
 #   播报删除后敌人身上写 last_damager 即死数据,故三处调用点(:104/:109/:181,目标全是
 #   `enemies` 分组)一律降级为纯 `CombatFeedback.hit_marker()`。
@@ -230,8 +230,8 @@ func start_player_fuse() -> void:
 	if explodes:
 		_start_fuse(hit_fuse_time)
 
-# ── 时间回溯:引信/射程状态的读写口(WorldRewind 快照用)──
-# ★ 引信是"这颗弹还剩多久炸"的**全部状态**。不把它并进快照的后果(2026-09-27 用户报的
+# ── 时间回溯:引信/射程状态的读写入接口(WorldRewind 快照用)──
+# - 引信是"这颗弹还剩多久炸"的**全部状态**。不把它并进快照的后果(2026-09-27 用户报的
 #   "回溯之后被之前击发的榴弹炮炸死"):重建出来的榴弹退回**未点燃** —— ① 它会在错误的
 #   时刻爆炸(不再是它所属那个世界状态的引信);② 松手那一帧 `_check_player_contact()`
 #   重新生效,只要它跟你重叠就走 0.1s 触碰引信**贴脸起爆**。traveled 同理(射程累计清零
@@ -242,9 +242,9 @@ func rewind_state() -> Dictionary:
 		"fe": _fuse_elapsed,
 		"fd": _fuse_duration,
 		"tr": traveled,
-		# ★ max_range / gravity_factor / speed / size 都是**开火时由武器注入**的(scene 上不是这些值),
-		#   不进快照 → 重建出来的弹带着场景默认值:max_range 默认 0 ⇒ `traveled >= max_range`
-		#   当场成立 ⇒ 榴弹**一松手就在回溯落点爆炸**(2026-09-27 与引信并列的第二个真凶)。
+		# - max_range / gravity_factor / speed / size 都是**开火时由武器注入**的(scene 上不是这些值),
+		#   不进快照 → 重建出来的弹带着场景默认值:max_range 默认 0  ->  `traveled >= max_range`
+		#   当场成立  ->  榴弹**一松手就在回溯落点爆炸**(2026-09-27 与引信并列的第二个真凶)。
 		"mr": max_range,
 		"gf": gravity_factor,
 		"sp": speed,
@@ -289,7 +289,7 @@ func _explode() -> void:
 	# 被炸到的可破坏砖 → 逐格播受击碎片。**所有端都播**,与 _damage_tile_at 同口径
 	# (2026-09-15 用户要求补上;此前这条路径在 2026-09-06 的 tile-hit-fx 设计里被明文排除,
 	#  后果是炸掉一排树叶时炸点除了那张 explosion 动画什么都没有)。
-	# ★ 扫的是与权威结算**同一个** Explosion.destructible_subs —— 两端粒子落在同一批格上。
+	# - 扫的是与权威结算**同一个** Explosion.destructible_subs —— 两端粒子落在同一批格上。
 	for e in Explosion.destructible_subs(global_position, explosion_radius):
 		var tile_pos: Vector2 = e["pos"]
 		TileHitFx.spawn(get_viewport(), tile_pos, int(e["tex"]))

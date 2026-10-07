@@ -1,13 +1,13 @@
 class_name WatchHud
 extends Control
 
-# 个人钟·怀表 HUD(第一阶段):怀表表盘 + 指针 + 数字。
-#   · 表盘:纯程序化像素绘制(冷灰阶色板:表壳/盘面/刻度),零美术素材(与瓦片/8bit 音效同风格)
-#   · 红长针 = 短时限额(一圈 = 账户的 window;贷款额外圈数 = loan_max/window —— 单机 1/4 圈,PvP 1 整圈)
-#   · 白短针 = 颗粒总量(一圈 = GRAIN_CAP)
-#   · 右侧大数字 = 总余额(与主菜单标题同为 96px 像素字;扣减时 1 点 1 点快速滚动,
-#     终值确定后 ≤0.2s 内播完);其右上小字 = 上限;表心小字 = 短时余额(贷款时深红负数)
-# 位置:挂 hud,摆在血条/氧条**下方**(2026-09-26 用户指定)。
+# 怀表 HUD 界面组件（阶段一）:怀表表盘 + 指针 + 数字。
+#   - 表盘:纯程序化像素绘制(冷灰阶色板:表壳/盘面/刻度),无外部美术资源依赖（纯程序化绘制）(与瓦片/8bit 音效同风格)
+#   - 红长针 = 短期额度(一圈 = 账户的 window;透支刻度圈数 = loan_max/window —— 单机 1/4 圈,PvP 1 整圈)
+#   - 白短针 = 粒子总量(一圈 = GRAIN_CAP)
+#   - 右侧大数字 = 总余额(与主菜单标题同为 96px 像素字;扣减时 1 点 1 点快速滚动,
+#     终值确定后 ≤0.2s 内播完);其右上小字 = 上限;表心小字 = 短期余额(透支时显示深红负数)
+# 位置:挂 hud,摆在生命条/氧气条**下方**(2026-09-26 用户指定)。
 # 数据源:Level0.grain_account(静态;PvP/菜单为 null → 整体隐藏)。
 
 const DIAL := 84.0                 # 表盘直径(像素)
@@ -22,7 +22,7 @@ const COLOR_HAND_LONG := Color8(196, 62, 62)   # 红长针
 const COLOR_HAND_SHORT := Color8(235, 238, 242)  # 白短针
 const COLOR_TEXT := Color8(232, 236, 242)
 const COLOR_TEXT_DIM := Color8(150, 158, 168)
-const COLOR_LOAN := Color8(158, 40, 48)      # 贷款深红
+const COLOR_LOAN := Color8(158, 40, 48)      # 透支深红
 
 var _dial_tex: ImageTexture = null
 var _big: Label = null
@@ -34,7 +34,7 @@ var _anim_target: float = 0.0
 var _anim_t: float = 1.0           # 0→1;duration 固定 0.2s → "终值确定后 0.2 秒播完"
 var _initialized := false
 var _tremble_t := 0.0              # 吸收结晶时的颤抖(B5 用)
-var _lock_flash_t := 0.0           # 贷款锁定红闪(B6 用)
+var _lock_flash_t := 0.0           # 透支锁定红闪(B6 用)
 
 
 func _ready() -> void:
@@ -133,7 +133,7 @@ func _process(delta: float) -> void:
 			col = Color8(168, 96, 216)
 	_big.add_theme_color_override("font_color", col)
 	_cap.text = "上限 %d" % int(acc.cap)
-	# 表心:短时余额(正=浅灰;贷款=深红负数)
+	# 表心:短期余额(正=浅灰;透支=深红负数)
 	if acc.loan_used > 0.5:
 		_center.text = "-%d" % int(round(acc.loan_used))
 		_center.add_theme_color_override("font_color", COLOR_LOAN)
@@ -157,8 +157,8 @@ func _draw() -> void:
 	# 白短针:总量 / 上限(一圈)
 	var a_short := -PI * 0.5 + TAU * clampf(acc.balance / maxf(acc.cap, 1.0), 0.0, 1.0)
 	draw_line(c, c + Vector2(cos(a_short), sin(a_short)) * (DIAL * 0.30), COLOR_HAND_SHORT, 4.0)
-	# 红长针:短时窗已用 + 贷款(一圈 = 账户 window;贷款最多再加 loan_max/window 圈 ——
-	# 单机 LOAN_LIMIT/SHORT_WINDOW = 1/4 圈;PvP 贷款上限=短时额度 ⇒ 1 整圈)
+	# 红长针:短期窗口已消耗额度 + 透支(一圈 = 账户 window;透支最多再加 loan_max/window 圈 ——
+	# 单机 LOAN_LIMIT/SHORT_WINDOW = 1/4 圈;PvP 透支上限=短期额度  ->  1 整圈)
 	var win: float = acc.window if acc.window > 0.0 else TimeParams.SHORT_WINDOW
 	var turns := (acc.short_used + acc.loan_used) / win
 	var max_turns := 1.0 + (acc.loan_max / win)
@@ -175,7 +175,7 @@ func tremble() -> void:
 	_tremble_t = 0.4
 
 
-## 贷款锁定红闪(B6 调用)
+## 透支锁定红闪(B6 调用)
 func flash_locked() -> void:
 	_lock_flash_t = 1.2
 

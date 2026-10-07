@@ -4,9 +4,9 @@ extends Node
 #
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 14400 res://tests/probe/reconnect_probe.tscn
-#   ★ 用 **14400**(=240s 安全网)而不是别处的 3600:本探针要跑满一个 60s 宽限期,整跑 ~72s 墙钟,
+#   - 用 **14400**(=240s 安全网)而不是别处的 3600:本探针要跑满一个 60s 宽限期,整跑 ~72s 墙钟,
 #     3600(=60s)连整跑都盖不住,机器一忙就会先耗尽安全网(表现是"一行 ALL-OK 都没有",看着像坏了)。
-#   ★ `--quit-after` 的单位是**帧**,本工程 `run/max_fps=60`(project.godot)⇒ 1 帧 = 1/60s
+#   - `--quit-after` 的单位是**帧**,本工程 `run/max_fps=60`(project.godot) ->  1 帧 = 1/60s
 #     (实测 600 帧 = 10.0s + ~1.2s 启动开销)。下面每个预算都是按这个换算写的。
 # 判据:文本 `RECONNECT PROBE: ALL-OK`(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0
 #       且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
@@ -16,42 +16,42 @@ extends Node
 #      **C2 断言**:**重连后 ack 锚点必须重新咬合**(`_acked ≤ 本端 _input_seq`)与**回滚次数不持续增长**
 #      (后者是 spec §3.4 的明文要求) —— 取数点与理由见 `reconnect_watcher._actor_assert`
 #   ② 反向:错 token 的 reclaim 被拒(worker 打「拒绝 reclaim …令牌不匹配」+ 踢连接)
-#   ③ 身体冻结:掉线后该 role 的**快照 `pose` 离开 SQUAT**(★ 判据是**姿态**,不是位移 ——
-#      撞墙/卡坑时位移天然为 0、能空转骗过;位移仍打出来,只作读数。钉 `_enter_grace` 里那两件事)
+#   ③ 身体冻结:掉线后该 role 的**快照 `pose` 离开 SQUAT**(-  判据是**姿态**,不是位移 ——
+#      撞墙/卡坑时位移天然为 0、能无效操作骗过;位移仍打印输出,只作读数。钉 `_enter_grace` 里那两件事)
 #   ④ 超时移出:掉线不回来 → GraceWindow.DEFAULT_SECONDS 之后 worker 收场退出
 #   ⑤ 大乱斗相:①②③ 在 `--royale` worker 上再跑一遍,**并核验"reclaim 不重新摆位"** ——
 #      重连后重发的那条 `match_start` 必须带与首次**同一个** spawn(钉 `RoyaleHost.role_spawns()`
 #      覆写没有 `_spawned_once` 副作用;取数点与理由见 `reconnect_watcher._actor_assert`)
 #   ⑥ 启动等待态:空载 `--royale` worker 不得在 1~3s 窗口内退出
-#   ⑦ 世界补态(仅 1v1):actor 掉线的窗口里**服务器侧**世界变过两处 —— 拆掉一格可破坏的墙
-#      (`--test-destroy-tile <格>,<delay>`,见下方 P7_DESTROY_AFTER;★ 那一格**不写死**,
+#   ⑦ 世界状态补充同步(仅 1v1):actor 掉线的窗口里**服务器侧**世界变过两处 —— 拆掉一格可破坏的墙
+#      (`--test-destroy-tile <格>,<delay>`,见下方 P7_DESTROY_AFTER;-  那一格**不写死**,
 #      由 `reconnect_watcher.p7_destroy_cell()` 从地图自己算,裁判与客户端调同一个函数)
 #      与 witness 捡走一把地面武器
-#      (`--test-ground-teleport` + witness 按 F)—— 重连后 `match_sync` 补态必须把两处都补上:
+#      (`--test-ground-teleport` + witness 按 F)—— 重连后 `match_sync` 状态补充同步必须把两处都补上:
 #      不补就是**幻影墙**(撞上去 → 本地预测与服务端分歧 → 可能回滚循环)与**幽灵枪**。
 #      断言在 `reconnect_watcher._p7_assert`(actor 侧)+ 本文件 `_worker_evidence`(worker 日志)。
 #
-# ═══ 拓扑(自当裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══
+# ═══ 拓扑(自当裁判;全部子进程由本进程 `OS.create_process` 直接启动)═══
 #   w1v1  29001  真 `server_main.gd --worker --port 29001`              → c1(role1) + c2(role2)
 #   wroy  29002  真 `--worker --royale --port 29002 --roles 1,2`        → r1 + r2
-#   widle 29090  真 `--worker --royale`(一个玩家都不连)               → 相⑥
-#   ★ 这三个端口**必须落在真大厅的 worker 端口池之外**,理由见下方常量区的长注释。
+#   widle 29090  真 `--worker --royale`(一个玩家都不连)               → 阶段 6
+#   - 这三个端口**必须落在真大厅的 worker 端口池之外**,理由见下方常量区的长注释。
 #
 # ═══ 跑之前的前提 ═══
 #   **请确认没有真大厅在跑**(本机若有 `Cyancular Ruins Server.exe` 占着 7777,先看它是不是
 #   你要留着的那一个 —— **不要杀它**)。本探针**不占 7777**(它不自当大厅,worker 由本进程
-#   直接拉起),但它的收尾**按 PID 杀子进程 + 仍保留按 UDP 端口杀 worker 兜底**
+#   直接启动),但它的收尾**按 PID 杀子进程 + 仍保留按 UDP 端口杀 worker 保底处理**
 #   (`ProcUtil.kill_udp_port`,见 `_kill_children`),所以"探针用的端口与别人重不重合"是真问题
 #   —— 那正是端口挪到池外要解决的事(常量区那段注释)。
-#   ★ **为什么 worker 由本进程直接拉起,而不是走大厅**(royale_c2_probe 走 RoomManager):
+#   - **为什么 worker 由本进程直接启动,而不是走大厅**(royale_c2_probe 走 RoomManager):
 #     本探针的判据有一半落在 **worker 自己的日志**上(「拒绝 reclaim」/「进宽限」/「宽限期到」),
 #     而 Windows 下 `OS.create_process` 的子进程 stdout **不被父进程继承**(仓内既有结论,
-#     royale_soak_probe 的注释也记了同一件事)—— 由大厅拉起的 worker,其日志是盲区,只有
-#     `--log-file` 能救,而 argv 只有本进程能改。argv 形状与 WorkerLauncher 的逐字同款,
+#     royale_soak_probe 的注释也记了同一件事)—— 由大厅启动的 worker,其日志是盲区,只有
+#     `--log-file` 能救,而 argv 只有本进程能改。argv 形状与 WorkerLauncher 的逐字相同机制,
 #     差别只有多一个 `--log-file`。
 #     **断线重连这条链路不经过大厅**(token 由大厅发,但重连本身只走 worker),故大厅不入环
 #     不影响覆盖;token 仍由真 `LobbyRooms.new_token()` 生成、经真 RPC(`report_token`)上报。
-#   ★ 客户端的**加入段**(claim/player_options/report_token)是探针镜像 `lobby_page._claim_role_worker`
+#   - 客户端的**加入段**(claim/player_options/report_token)是探针镜像 `lobby_page._claim_role_worker`
 #     的三条 RPC —— 与 royale_probe 的「轻量客户端」同一手法;**进入对局后的每一帧都是真场景**
 #     (`pvp_game.tscn` / `royale_game.tscn`),重连段(断开→重连→reclaim→match_start→_on_resumed)
 #     走的是 100% 生产代码。
@@ -65,9 +65,9 @@ extends Node
 #   它与生产路径上 `_on_server_message` 收到「服务器断开」后调的是**同一个函数**,
 #   其内部 `NetBus.stop()` → `start_client` 是**真 ENet 断开 + 真重连**,worker 侧看到的
 #   `peer_left` 与真闪断完全一致。另一半用的是**真** `server_disconnected`:
-#   错 token 被 worker `disconnect_peer` 踢掉那一次,客户端是真收到 `服务器断开` 的。
+#   错 token 被 worker `disconnect_peer` 剔除断开那一次,客户端是真收到 `服务器断开` 的。
 #
-# ═══ 相③ 的历史:它**当年恒红**(本探针抓出的第一个 bug,修复在 `7c95d68`)═══
+# ═══ 阶段 3 的历史:它**当年恒红**(本探针抓出的第一个 bug,修复在 `7c95d68`)═══
 # 症状(修复**前**):掉线后该 role 的身体**保持掉线前按着的键**整个宽限期(当年实测:掉线前蹲着 →
 #       窗口内 162/162 个快照样本的 `pose` 仍是 SQUAT;掉线前蹲走着 → 掉线后还能再走 230px)。
 # 根因(读码 + 逐项排除 + 反证,**不是**地形/倒地/水中/攀附):
@@ -77,65 +77,65 @@ extends Node
 #   掉线瞬间**已经排在队列里**的包,会在复位**之后**把 `_held` 整个写回。之后队列空了、
 #   `clear_edges()` 又**不清 `_held`**(`:113-116`)→ 于是"掉线前按着的那几个键"被**重新武装
 #   并保持到宽限期结束**(乃至宽限期到点、`mark_disconnected` 之前)。
-#   · 对比:`_on_reclaim()` 的接受路径**一直有**清队列(`server_main.gd:316`)—— 当年只差那一处。
-# 排除法(都用快照字段,见 reconnect_watcher 的相③诊断行):
-#   `downed=false`(倒地时 `_physics_process` 走 `_tick_downed` 早退、姿态不更新)、`hp=50`(满血)、
+#   - 对比:`_on_reclaim()` 的接受路径**一直有**清队列(`server_main.gd:316`)—— 当年只差那一处。
+# 排除法(都用快照字段,见 reconnect_watcher 的阶段 3诊断行):
+#   `downed=false`(倒地时 `_physics_process` 走 `_tick_downed` 提前返回、姿态不更新)、`hp=50`(满血)、
 #   `waterproof=10`(满氧,不在水里)、身体所在格的**中心与脚底**都不是通道格(梯/锁链,读地图确认)
 #   → `is_squat` 只可能来自 `input_source.is_action_pressed("down")` → 输入源里确实还按着 S。
 # 反证(证明它是**竞态**而不是"某条链路坏了"):去掉确定性装置连跑两趟,卡住的是 1v1 还是大乱斗
 #   **会互换** —— 取决于掉线那一刻服务器的输入队列是不是恰好空(客户端 60Hz 上行 vs 服务器
 #   每 tick 只消费一包 → 队列长度在 0~2 抖动)。
-# ★ 修复 = 在 `_enter_grace` 里补上清队列(与 `_on_reclaim` 同款),`7c95d68` 落地,相③ 当场转绿。
+# - 修复 = 在 `_enter_grace` 里补上清队列(与 `_on_reclaim` 相同机制),`7c95d68` 落地,阶段 3 当场转绿。
 #   **本探针就是抓出它的那一件工具**;那个确定性装置留着不删 —— 它保证"谁删掉
 #   `_pending_input[role] = []` 那一行谁红"(没有装置时这个竞态只有 ~50% 命中,见 watcher 的注释)。
 # ═══ 时间预算(为什么必须并行)═══
-#   整跑约 **72s 墙钟**(相④要等满一个 60s 宽限期:前半段"开机→进局→闪断→重连→相⑦"≈12s),
+#   整跑约 **72s 墙钟**(阶段 4要等满一个 60s 宽限期:前半段"开机→进局→闪断→重连→阶段 7"≈12s),
 #   安全网是 `--quit-after 14400`(240s)——
 #   早先用 3600(=60s)时连整跑都盖不住,已按 289cd86 提到 14400(见文件头跑法那两条) ——
-#   故三组 worker/客户端**全部并行**跑,且每个子进程自带 `--quit-after`(18000 帧 ≈ 300s)兜底。
+#   故三组 worker/客户端**全部并行**跑,且每个子进程自带 `--quit-after`(18000 帧 ≈ 300s)保底处理。
 
 const PREFIX := "reconnect_probe_"
-# ═══ ★★ 三个 worker 端口必须落在**大厅的 worker 端口池之外** ═══
+# ═══ 注意： 三个 worker 端口必须落在**大厅的 worker 端口池之外** ═══
 # 池的定义在 `server/worker_launcher.gd`:`WORKER_PORT_BASE = 7800`、`WORKER_PORT_SPAN = 500`
 # → 池 = **7800~8299**。本探针原先写的是 7901/7902/7990,**三个数都在池里**,而本机上常驻
 # 一个真大厅(`Cyancular Ruins Server.exe`,占 7777)—— 只要那一刻有人建房,大厅就会把**同一个
 # 端口**发给那局的真 worker,后果有两层,都不是"红一条断言"这个量级:
 #   ① 真 worker bind 失败当场退出 —— 别人的对局被本探针搅掉;
-#   ② 本探针收尾的 `ProcUtil.kill_udp_port(W1V1/WROY/WIDLE)` 是"按 UDP 端口找属主并强杀",
-#      **不看那是谁的进程** → 会把那个真 worker 一起杀掉。
-# 故一律取池外(29xxx,同时远离常见服务端口)。★ 改这三个数之前先读这段;改完顺手核对
+#   ② 本探针收尾的 `ProcUtil.kill_udp_port(W1V1/WROY/WIDLE)` 是"按 UDP 端口找属主并强制终止进程",
+#      **不看那是谁的进程** → 会把那个真 worker 一起终止。
+# 故一律取池外(29xxx,同时远离常见服务端口)。-  改这三个数之前先读这段;改完顺手核对
 # `worker_launcher.gd` 的池上界没被调大。
 const W1V1 := 29001       # 1v1 worker 端口(池外)
 const WROY := 29002       # 大乱斗 worker 端口(池外)
 const WIDLE := 29090      # 空载大乱斗 worker 端口(池外)
-# 子进程兜底(18000 帧 ≈ 300s)。★ 这个"一直在跑"本身是**承重**的:actor 写完结果后要**保持连接**待命
+# 子进程保底处理(18000 帧 ≈ 300s)。-  这个"一直在跑"本身是**核心约束**的:actor 写完结果后要**保持连接**待命
 # (见 reconnect_watcher 文件头「actor 收工后不退出」),它若自己先退,相位④ 的落点就换了人。
 # 故它必须大于本进程的收工上限 `FINAL_TIMEOUT`(118s)与整跑长度(~72s)。
-# ★ **照实登记**:旧值 9000(150s)按 60fps 换算**仍然满足**上面那两条(150 > 118 > 72)——
+# - **照实登记**:旧值 9000(150s)按 60fps 换算**仍然满足**上面那两条(150 > 118 > 72)——
 #   所以这次翻倍是**留余量**(与 FINAL_TIMEOUT 的 58 → 118 同一个"翻倍"形状),不是不等式要求。
 #   别把它当成"旧值已失效"来引述;真要动它,上面那两条不等式的方向仍必须成立。
 const CHILD_QUIT_AFTER := "18000"
 const BOOT_TIMEOUT := 30.0         # 等 worker/客户端就绪的上限
-# 本进程的收工上限。★ 推导:整跑 ≈ **60**(相④要等满的宽限期)+ **~12**(前半段:开机/进局/
-#   闪断/重连/相⑦)≈ 72s ⇒ 上限必须**大于 72**。取 118 = 2 × `GRACE_MIN`(旧的 58 正是 2 × 29,
+# 本进程的收工上限。-  推导:整跑 ≈ **60**(阶段 4要等满的宽限期)+ **~12**(前半段:开机/进局/
+#   闪断/重连/阶段 7)≈ 72s  ->  上限必须**大于 72**。取 118 = 2 × `GRACE_MIN`(旧的 58 正是 2 × 29,
 #   同一个形状),比下限多留 ~46s 给负载抖动;仍远小于 `--quit-after 14400`(=240s)那道安全网。
 const FINAL_TIMEOUT := 118.0
-# 相⑥的窗口:worker 打完「就绪」后的 [1,3] 秒内不得退出、不得打「全员离开,大乱斗结束」
+# 阶段 6的窗口:worker 打完「就绪」后的 [1,3] 秒内不得退出、不得打「全员离开,大乱斗结束」
 const IDLE_LOW := 1.0
 const IDLE_HIGH := 3.0
 const IDLE_BONUS := 14.0           # 之后按既有 M1 守卫正当退出(10s);这一相**必须有它**
-# 相④的时间判据(宽限期 60s ± 两种粒度;★ 改 `GraceWindow.DEFAULT_SECONDS` 必须重算这三个数)。
+# 阶段 4的时间判据(宽限期 60s ± 两种粒度;-  改 `GraceWindow.DEFAULT_SECONDS` 必须重算这三个数)。
 # 下界 59 = 60 − 1(本进程记「进宽限」那一刻与服务器真正 `enter` 之间有 ~0.3s 的采样粒度,取整);
 # 上界 68 = 60 + 1(`_expire_graces` 每秒轮询一次的粒度)+ 7(负载余量;旧值 30/36 同形)。
 const GRACE_MIN := 59.0
 const GRACE_MAX := 68.0
-# ── 相⑦:w1v1 worker 的两个测试开关(生产路径都不带;argv 解析见 server/server_main.gd)──
+# ── 阶段 7:w1v1 worker 的两个测试开关(生产路径都不带;argv 解析见 server/server_main.gd)──
 # 拆格延迟(秒)的**计时起点是建局**(`MatchHost._ready`,即 COUNTDOWN 开始),而 watcher 的时钟
 # 以 **PLAYING** 为 0,两者差一个 `COUNTDOWN_TIME`(3s)。换算后要同时满足:
-#   · 晚于 actor 的闪断(PLAYING+1.6 ≈ 建局+4.6):早了 actor 还在线,会自己收到 tile_destroyed,
-#     相⑦ ① 就变成"服务器什么都没补"的假绿(它由 ①前置 报红,但那是诊断、不是结论);
-#   · 早于 actor 的重连补态(PLAYING+7.6 ≈ 建局+10.6):晚了补态载荷里没有这一格,① 必红。
-# 7.5 ≈ PLAYING+4.5,两侧各余 ~3s。★ 这个换算**跑一次就能核** —— witness 会把收到
+#   - 晚于 actor 的闪断(PLAYING+1.6 ≈ 建局+4.6):早了 actor 还在线,会自己收到 tile_destroyed,
+#     阶段 7 ① 就变成"服务器什么都没补"的虚假通过（未有效测试）(它由 ①前置 报红,但那是诊断、不是结论);
+#   - 早于 actor 的重连状态补充同步(PLAYING+7.6 ≈ 建局+10.6):晚了状态补充同步载荷里没有这一格,① 必红。
+# 7.5 ≈ PLAYING+4.5,两侧各余 ~3s。-  这个换算**跑一次就能核** —— witness 会把收到
 # `tile_destroyed` 的 el 记进自己的日志(引擎日志两边都不带时间戳,只能这样对时)。
 const P7_DESTROY_AFTER := "7.5"
 
@@ -150,7 +150,7 @@ var _notes: Array[String] = []
 var _w1v1_pid := 0
 var _wroy_pid := 0
 var _widle_pid := 0
-# 本进程拉起过的**全部**子进程的 PID(worker + 4 个客户端)。收尾按它杀 —— 只按端口杀会漏掉
+# 本进程启动过的**全部**子进程的 PID(worker + 4 个客户端)。收尾按它杀 —— 只按端口杀会漏掉
 # 客户端(它们是从**临时端口**连出去的),见 `_kill_children`。
 var _child_pids: Array[int] = []
 var _idle_ready_t := -1.0
@@ -163,9 +163,9 @@ var _done := false
 
 
 func _ready() -> void:
-	# 角色:无参 = 裁判;子进程由本进程用 `--who=<c1|c2|r1|r2>` 拉起(`--role=` 一并认,
-	# 方便人工前台单起某一个客户端)。★ 两处**必须都认**:漏认 `--who=` 会让子进程回落成
-	# "裁判"→ 它自己也去拉起 worker 与客户端(端口冲突 + 递归),而表现只是几条
+	# 角色:无参 = 裁判;子进程由本进程用 `--who=<c1|c2|r1|r2>` 启动(`--role=` 一并认,
+	# 方便人工前台单起某一个客户端)。-  两处**必须都认**:漏认 `--who=` 会让子进程回落成
+	# "裁判"→ 它自己也去启动 worker 与客户端(端口冲突 + 递归),而表现只是几条
 	# "Couldn't create an ENet host" —— 第一版实测踩到。
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--role="):
@@ -186,13 +186,13 @@ func _run_orchestrator() -> void:
 	_clean()
 	print("PROBE: 裁判就绪(exe=%s);拉起 1v1 worker(%d)与空载大乱斗 worker(%d)" % [
 			_exe.get_file(), W1V1, WIDLE])
-	# ★ 相⑦ 要拆的那一格**从地图自己算**,不写死坐标:调的是 watcher 的静态函数
+	# - 阶段 7 要拆的那一格**从地图自己算**,不写死坐标:调的是 watcher 的静态函数
 	#   (`reconnect_watcher.p7_destroy_cell()`),而客户端进程过滤 tile_destroyed 时用的是
-	#   同一个函数 ⇒ 命令行与那边观察的是**同一格**,不可能对不上(旧注释那句"改一处要改两处"
-	#   已作废)。夹具自检:算不出来(地图上找不到实心+可爆炸破坏的格)就当场红 ——
+	#   同一个函数  ->  命令行与那边观察的是**同一格**,不可能对不上(旧注释那句"改一处要改两处"
+	#   已作废)。夹具自检:算不出来(地图上找不到实心+可爆炸破坏的格)则直接断言失败 ——
 	#   否则 `--test-destroy-tile` 会被 worker **静默**当成 (-1,-1) 而什么都不拆。
-	# ★ 必须写**显式类型**:经 `load()` 拿到的是 `GDScript`,静态函数的返回类型在编译期推不出来
-	#   ⇒ 写成 `var p7 := …` 会直接 `Cannot infer the type of "p7"`(整个脚本解析失败)。
+	# - 必须写**显式类型**:经 `load()` 拿到的是 `GDScript`,静态函数的返回类型在编译期推不出来
+	#    ->  写成 `var p7 := …` 会直接 `Cannot infer the type of "p7"`(整个脚本解析失败)。
 	var p7: Vector2i = (load("res://tests/harness/reconnect_watcher.gd") as GDScript).p7_destroy_cell()
 	_check(p7.x >= 0, "相⑦ 夹具:在 %s 上找出一格实心可破坏格(实得 %s)"
 			% [MatchBootstrap.PVP_MAP, str(p7)])
@@ -219,9 +219,9 @@ func _process(delta: float) -> void:
 			_stage_collect()
 
 
-# 相⑥:空载大乱斗 worker 的启动等待态。**必须让真帧跑过开机态** —— Task 4 的 Critical 正是
+# 阶段 6:空载大乱斗 worker 的启动等待态。**必须让真帧跑过开机态** —— Task 4 的 Critical 正是
 # "开机约 1s 自杀",而当时那个临时探针只调 `_on_peer_left`/`_expire_graces` 断言其返回状态、
-# 没让 `_process` 跑过,18 条断言全绿仍漏掉它。
+# 没让 `_process` 跑过,18 条断言测试全部通过仍漏掉它。
 func _idle_tick() -> void:
 	if _idle_ready_t < 0.0:
 		if _has(_log_path("widle"), "大乱斗 worker 就绪"):
@@ -240,7 +240,7 @@ func _idle_tick() -> void:
 				"相⑥:空载 worker 未打「全员离开,大乱斗结束」")
 		_idle_checked_flag = true
 	if age >= IDLE_BONUS and not _idle_bonus_ok:
-		# ★ 反向断言:这条**不能省** —— 没有它,"1~3s 内没退出"可以靠"永不退出"作弊通过。
+		# - 反向断言:这条**不能省** —— 没有它,"1~3s 内没退出"可以靠"永不退出"作弊通过。
 		#   空载 worker 按既有的 M1 守卫(`可用玩家 <2 人` 持续 10s)正当地退出并释放端口。
 		_idle_bonus_ok = true
 		var exited := not OS.is_process_running(_widle_pid)
@@ -257,7 +257,7 @@ func _idle_checked() -> bool:
 	return _idle_checked_flag
 
 
-# 相 0:等两个 worker 报「就绪」→ 拉起 1v1 的两个客户端
+# 相 0:等两个 worker 报「就绪」→ 启动 1v1 的两个客户端
 func _stage_boot() -> void:
 	if _t > BOOT_TIMEOUT:
 		_finish("worker 未在 %.0fs 内就绪(1v1 日志=%s)" % [BOOT_TIMEOUT, _tail(_log_path("w1v1"))])
@@ -272,7 +272,7 @@ func _stage_boot() -> void:
 	_stage = 1
 
 
-# 相 1:等 1v1 两个客户端进对局并到 PLAYING → 这时才拉起大乱斗那一组(把启动 CPU 尖峰错开)
+# 相 1:等 1v1 两个客户端进对局并到 PLAYING → 这时才启动大乱斗那一组(把启动 CPU 尖峰错开)
 func _stage_clients_playing() -> void:
 	if not _has(_log_path("c1"), "PLAYING"):
 		if _t > BOOT_TIMEOUT:
@@ -283,9 +283,9 @@ func _stage_clients_playing() -> void:
 	_stage = 2
 
 
-# 相 2:收 4 份客户端结果 + 相④(1v1 宽限期到点)+ 相⑥ 的收尾
+# 相 2:收 4 份客户端结果 + 阶段 4(1v1 宽限期到点)+ 阶段 6 的收尾
 func _stage_collect() -> void:
-	# 大乱斗 worker 就绪后拉起 r1/r2
+	# 大乱斗 worker 就绪后启动 r1/r2
 	if _r1_launched == false and _has(_log_path("wroy"), "大乱斗 worker 就绪"):
 		_r1_launched = true
 		print("PROBE: 大乱斗 worker 就绪(t=%.1fs),拉起 r1/r2" % _t)
@@ -306,12 +306,12 @@ var _r1_launched := false
 var _evidence_checked := false
 
 
-# worker 侧证据:相②(拒绝)与相①(接受)的**另一半**在 worker 自己的日志里。
-# ★ 这一节正是 brief 点名的那条:「worker 日志里要盯『拒绝 reclaim』(Task 5 审查预警的 M35:
+# worker 侧证据:阶段 2(拒绝)与阶段 1(接受)的**另一半**在 worker 自己的日志里。
+# - 这一节正是 brief 明确提示的那条:「worker 日志里要盯『拒绝 reclaim』(Task 5 审查预警的 M35:
 #   客户端按『连接』记账、worker 按『role 是否还在宽限期』判,非对称断线那一档会被拒+踢)——
 #   探针应以断言的形式盯住它,而不是只人工看日志」。
 #   判据落在 worker 日志上而不是只说"客户端被踢了":被踢也可能是别的原因(比如判据②),而
-#   **只有 worker 自己打出来的理由**能区分"令牌不匹配"与"该 role 不在宽限期"。
+#   **只有 worker 自己打印输出的理由**能区分"令牌不匹配"与"该 role 不在宽限期"。
 func _worker_evidence() -> void:
 	for tag in ["w1v1", "wroy"]:
 		var txt := _read(_log_path(tag))
@@ -322,18 +322,18 @@ func _worker_evidence() -> void:
 		_check(txt.contains("玩家掉线进宽限"),
 				"相③(%s):worker 走了宽限期(身体留在场上,不是当场移出)" % tag)
 		_check(txt.count("对局开始") == 1, "相①(%s):对局只开了一次(重连没有重开一局)" % tag)
-	# 相⑦ ③:**防空转**。相⑦ 的其余判据都在"客户端世界 = 服务器世界"这个等式上,而那个等式
+	# 阶段 7 ③:**防无效操作**。阶段 7 的其余判据都在"客户端世界 = 服务器世界"这个等式上,而那个等式
 	# 在"服务器其实什么都没拆"时**照样成立**(actor 那格本来就是空气 → grid==EMPTY 恒真)。
 	# 这一条证明"服务器真的动了手":它由 `MatchHost._debug_destroy_tile` 打出,那一行同时也是
 	# 探针能读到 worker 内部动作的**唯一**通道(worker 是独立进程,见文件头「拓扑」)。
-	# ★ worker 日志是本进程写、本进程读的,故这里直接取 `_log_path("w1v1")` 而不进上面的循环。
+	# --worker 日志是本进程写、本进程读的,故这里直接取 `_log_path("w1v1")` 而不进上面的循环。
 	_check(_has(_log_path("w1v1"), "[test] 拆格"),
 			"相⑦ ③:w1v1 worker 日志里有「[test] 拆格」(--test-destroy-tile 真的触发了)"
 			+ "—— 没有它,相⑦ ① 可能是「服务器什么都没做」的假绿")
 
 
-# 相④:1v1 worker 的宽限期到点收场。
-# ★ 判据是**时间差**不只是"打了那行字":宽限期(`GraceWindow.DEFAULT_SECONDS`)是 spec 的硬承诺,
+# 阶段 4:1v1 worker 的宽限期到点收场。
+# - 判据是**时间差**不只是"打了那行字":宽限期(`GraceWindow.DEFAULT_SECONDS`)是 spec 的硬承诺,
 #   只断言"最终会退出"会把"10s 就判超时"这种坏实现放过去。`_expire_graces` 每秒轮询一次 →
 #   实测落在 [60,61]s,本进程的采样粒度再加 ~0.3s。起点取**第二次**「进宽限」(第一次是 c1 的闪断、
 #   被 reclaim 救回;第二次是 c2 的永久掉线 —— 它就是该到点的那一个),两行都在 worker 日志里带序号校验。
@@ -350,11 +350,11 @@ func _track_grace() -> void:
 		_expiry_t = _t
 		_check(_grace_stamps.size() == 2,
 				"相④:1v1 worker 恰好两次「进宽限」(c1 闪断 + c2 永久掉线),实得 %d" % _grace_stamps.size())
-		# ★ 相④b(阶段 3,spec §4 的 3.3):收场前**真的发了** `opponent_left`。
+		# - 阶段 4b(阶段 3,spec §4 的 3.3):收场前**真的发了** `opponent_left`。
 		#   没有它,幸存者只能等自己那条 60s 重连预算耗尽 —— 症状是"在一个静止的世界里
 		#   干等一分钟、屏幕上一个字都没有"(docs/eng/netplay.md 里"opponent_left 不可达"那条)。
 		#   判据落在 **worker 日志**上:那条通知与收场打印是同一个函数里的相邻两行,读同一份
-		#   文件 ⇒ 只要收场那行在,通知那行必然也在(不存在"先看到收场、后看到通知"的竞争)。
+		#   文件  ->  只要收场那行在,通知那行必然也在(不存在"先看到收场、后看到通知"的竞争)。
 		_check(_has(_log_path("w1v1"), "1v1 收场前通知在线玩家"),
 				"相④b:1v1 worker 在收场前发了 opponent_left(否则幸存者要干等 60s 重连预算)")
 		if _grace_stamps.size() >= 1:
@@ -439,12 +439,12 @@ func _record_pid(pid: int) -> int:
 #   ① **按 PID 杀全部子进程**(本仓既有先例:`tests/*.sh` 用 `taskkill /PID`;GDScript 侧是
 #      `OS.kill`)。为什么非有这一条:四个**客户端**是从临时端口连出去的,不占 W1V1/WROY/WIDLE
 #      任何一个,**只按端口杀根本杀不到它们** —— 于是上一跑的 c1/r1 会留下来,后果实测过两条:
-#        · 持续敲下一次运行的 W1V1/WROY(上一次审查观察到 3 条「该 role 不在宽限期」);
-#        · 一直攥着自己的 `user://reconnect_probe_<who>.log` → 下一跑 `_clean()` 的删除**失败**
+#        - 持续敲下一次运行的 W1V1/WROY(上一次审查观察到 3 条「该 role 不在宽限期」);
+#        - 一直攥着自己的 `user://reconnect_probe_<who>.log` → 下一跑 `_clean()` 的删除**失败**
 #          (旧代码忽略返回值,静默),新进程随即截断该文件、残留进程按旧偏移续写 → 文件里出现
 #          空洞与陈旧行(所以 `_clean()` 现在会报出来)。
-#   ② **仍保留按 UDP 端口杀 worker**:它兜住"PID 记录漏了"这一档(worker 是真 ENet 绑定端口的
-#      那一侧),成本是两条 PowerShell,且与本仓 `tests/*.sh` 的 `taskkill + kill_port` 双保险同款。
+#   ② **仍保留按 UDP 端口杀 worker**:它提供容错保障"PID 记录漏了"这一档(worker 是真 ENet 绑定端口的
+#      那一侧),成本是两条 PowerShell,且与本仓 `tests/*.sh` 的 `taskkill + kill_port` 双保险相同机制。
 func _kill_children() -> void:
 	var killed := 0
 	for pid in _child_pids:
@@ -489,7 +489,7 @@ func _tail(path: String) -> String:
 	return "…(前 %d 行省略)\n" % (lines.size() - 20) + "\n".join(lines.slice(lines.size() - 20))
 
 
-# 开工前清掉上一跑的产物。★ 删除**必须看返回值**:上一跑的客户端若还活着(它攥着自己的
+# 开工前清掉上一跑的产物。-  删除**必须看返回值**:上一跑的客户端若还活着(它攥着自己的
 # `.log`),删除会失败,而失败被忽略的后果不是"少删一个文件" —— 本跑的新进程会截断同一个文件、
 # 残留进程按它自己的旧偏移继续写 → 日志里出现空洞与陈旧行,人会照着这些行做出错误归因。
 func _clean() -> void:
@@ -529,7 +529,7 @@ func _run_client() -> void:
 			w.is_royale = a.trim_prefix("--scene=") == "royale"
 			w.scene_path = "res://scenes/royale_game.tscn" if w.is_royale \
 					else "res://scenes/pvp_game.tscn"
-	# 谁是闪断者、谁是见证者、谁在最后**永久**掉线(相④):按 role 名定,写死不猜
+	# 谁是闪断者、谁是见证者、谁在最后**永久**掉线(阶段 4):按 role 名定,写死不猜
 	w.is_actor = w.who == "c1" or w.who == "r1"
 	w.drop_permanently = w.who == "c2"
 	print("PROBE[%s]: 观察者就绪(port=%d slot=%d scene=%s)" % [w.who, w.port, w.slot, w.scene_path])

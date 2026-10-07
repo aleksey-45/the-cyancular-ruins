@@ -11,7 +11,7 @@ extends Node
 # 现在的实现每帧按在场子弹剪枝(见 `_adjudicate_bullets` 的 `_seen_bullets = live`)。
 #
 # 做法:真建一个 MatchHost(真地图 + 真碰撞),但 **role_peers 传空** —— 不建玩家、不排 peer,
-# 所有 `rpc_id` 都无对象(广播静默早退,不会在无多人连接时尝试发包)。子弹自己摆。
+# 所有 `rpc_id` 都无对象(广播静默提前返回,不会在无多人连接时尝试发包)。子弹自己摆。
 #
 # ⚠ 判据 grep 文本 "MATCH_HOST HYGIENE PROBE: ALL-OK"(不只看退出码)。
 
@@ -82,7 +82,7 @@ func _test_prunes_after_free() -> void:
 			"条目数跟着在场数走(%d == %d)" % [_host._seen_bullets.size(), _bullets.size()])
 
 
-# ③ ★ 真正的回归判据:反复生成/销毁不会累积(旧实现会线性涨到 BASE + CHURN)
+# ③ -  真正的回归判据:反复生成/销毁不会累积(旧实现会线性涨到 BASE + CHURN)
 func _test_bounded_under_churn() -> void:
 	for i in range(CHURN):
 		var t = _make_bullet(Vector2(400.0 + (i % 20) * 30.0, 300.0))
@@ -94,7 +94,7 @@ func _test_bounded_under_churn() -> void:
 					CHURN, _host._seen_bullets.size(), _bullets.size() + CHURN])
 
 
-# 真子弹场景(真 BulletBase),关掉它自己的物理:只手动喂给裁决函数。
+# 真子弹场景(真 BulletBase),关掉它自己的物理:只手动传入仲裁判定函数。
 # shooter 留空 → _adjudicate_bullets 走"广播视觉后 continue"那条,不参与命中判定。
 func _make_bullet(pos: Vector2):
 	var b = (load("res://scenes/weapons/bullet.tscn") as PackedScene).instantiate()

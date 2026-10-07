@@ -55,10 +55,10 @@ func _test_real_maps() -> void:
 	_chk(MapFormat.is_v4(PVP), "newfactory.cyrm 应已是 v4 二进制")
 	var demo := MapFormat.load_map_file(DEMO)
 	var pvp := MapFormat.load_map_file(PVP)
-	# ★ 尺寸断言**只比两条独立读法**,不写死 125×75 —— "这张图恰好多大"是地图自己的事,
-	#   写死只会让换图/改图假红。两条读法是:
-	#     · `map_size()`   → v4 **头部**的 sub_cols/sub_rows(不解析 body)
-	#     · `load_map_file()` → **整图解析**(把 body 里的场景层展平成格)
+	# - 尺寸断言**只比两条独立读法**,不写死 125×75 —— "这张图恰好多大"是地图自己的事,
+	#   写死只会让换图/改图虚假失败（测试用例误报）。两条读法是:
+	#     - `map_size()`   → v4 **头部**的 sub_cols/sub_rows(不解析 body)
+	#     - `load_map_file()` → **整图解析**(把 body 里的场景层展平成格)
 	#   两者对不上 = 头部与 body 不一致(真 bug);旧写法(两边各自写死数字)拦不住它。
 	_chk(MapFormat.map_size(DEMO) == _dims(demo),
 			"map_size(demo) 应与整图解析的维度一致(实为 %s vs %s)"
@@ -71,7 +71,7 @@ func _test_real_maps() -> void:
 	_chk(sp_demo.has("player") and not sp_demo.has("player2"), "demo 应只有 player 出生点")
 	_chk(sp_pvp.has("player") and sp_pvp.has("player2"), "factory 应有 player+player2")
 	# 出生点格必须为空 —— 顺带验证扁平化没把语义弄反。
-	# ★ 只查"格为空",不查"下方实心":newfactory 的 player 出生点下方**本来就是空气**
+	# - 只查"格为空",不查"下方实心":newfactory 的 player 出生点下方**本来就是空气**
 	#   (原 v3 里就是,玩家出生在平台边缘),不是转换丢块。
 	for pair in [[DEMO, sp_demo["player"]], [PVP, sp_pvp["player"]], [PVP, sp_pvp["player2"]]]:
 		var g: Array = MapFormat.load_map_file(pair[0])

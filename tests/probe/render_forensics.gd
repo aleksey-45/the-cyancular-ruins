@@ -1,7 +1,7 @@
 extends Node
 
 # 渲染取证(窗口模式跑,非 headless —— 要真实画面):
-#   godot --path . res://tests/probe/render_forensics.tscn -- --map=newfactory.cyrm
+#   godot --path . res://tests/probe/render_forensics.tscn --map=newfactory.cyrm
 # 加载指定地图的 Level0,2s/5s/8s 各拍一张全屏截图到 user://,供逐帧比对
 # "前景时有时无 / 水面发白" 这类纯视觉问题。头less 模式无画面,勿加 --headless。
 

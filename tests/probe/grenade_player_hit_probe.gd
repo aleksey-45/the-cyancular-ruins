@@ -11,7 +11,7 @@ extends Node
 # 大乱斗压力跑的 `受击 5 伤` 事件与它一致,但那是概率性的,不能当断言。
 #
 # 做法:真建一个 MatchHost(真地图 + 真 WorldBuilder 碰撞),但 **role_peers 传空** ——
-# 于是不建玩家、不排 peer、所有 rpc_id 都无对象(notify_direct_hit 因此静默早退,
+# 于是不建玩家、不排 peer、所有 rpc_id 都无对象(notify_direct_hit 因此静默提前返回,
 # 不会在无多人连接时尝试发包报错)。玩家由本探针自己摆进 host.players,可控且确定。
 #
 # ⚠ 判据 grep 文本 "GRENADE PLAYER HIT PROBE: ALL-OK"(不只看退出码)。
@@ -37,11 +37,11 @@ func _ready() -> void:
 	add_child(_host)
 	# 关掉服务器每帧编排,只手动调被测函数(否则 COUNTDOWN/复活/快照会来搅局)
 	_host.set_physics_process(false)
-	# ★ 两个摆位**从地图自己的 spawn 派生**,不写死 (17,65)/(133,64)(那是上一版 PvP 图的
+	# - 两个摆位**从地图自己的 spawn 派生**,不写死 (17,65)/(133,64)(那是上一版 PvP 图的
 	#   出生点,今天这两格在这张图上一个是空气、一个离新出生点 1900+px —— 写死就只是"碰巧
 	#   还能用")。期望值取自 `MapFormat.load_spawns(MAP)` = 地图 meta 里那两行。
 	#   本探针只要求二者**相距 > HIT_RADIUS**(否则四条断言会互相污染,`_test_out_of_range`
-	#   的 +HIT_RADIUS+5 那一格尤其会被射手吃掉),而地图的 player/player2 天然隔着半张图。
+	#   的 +HIT_RADIUS+5 那一格尤其会被射手自身阻挡),而地图的 player/player2 天然隔着半张图。
 	var sp := MapFormat.load_spawns(MAP)
 	_p1 = _make_player(1, sp.get("player", Vector2i(-1, -1)))
 	_p2 = _make_player(2, sp.get("player2", Vector2i(-1, -1)))
@@ -49,7 +49,7 @@ func _ready() -> void:
 	# "射手/受害者" 重合在同一个点上 —— 四条断言里有一条会因此失去区分度(静默变松)。
 	_check(sp.has("player") and sp.has("player2"),
 			"地图 %s 同时声明了 `# player` 与 `# player2`(本探针的摆位取自它们)" % MAP)
-	# ★ 夹具自检:那条前提"两者相距 > HIT_RADIUS"要**真的量**,别让它成为一句注释
+	# - 夹具自检:那条前提"两者相距 > HIT_RADIUS"要**真的量**,别让它成为一句注释
 	#   (照 `death_drop_probe` 的做法:前提不够,断言自己会红)。
 	var dist: float = _p1.global_position.distance_to(_p2.global_position)
 	_check(dist > MatchHost.HIT_RADIUS,
@@ -126,7 +126,7 @@ func _make_player(role: int, cell: Vector2i) -> Node2D:
 	return p
 
 
-# 真榴弹场景(真 direct_hit_damage=5),但关掉它自己的物理:只手动喂给裁决函数。
+# 真榴弹场景(真 direct_hit_damage=5),但关掉它自己的物理:只手动传入仲裁判定函数。
 func _make_grenade(shooter: Node2D):
 	var b = (load("res://scenes/weapons/grenade_bullet.tscn") as PackedScene).instantiate()
 	_host.add_child(b)

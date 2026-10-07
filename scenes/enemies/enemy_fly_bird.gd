@@ -87,7 +87,7 @@ func _ai(delta: float) -> void:
 
 
 # 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 124 行的单 match)。
-# ★ 各段里的 `return` **语义不变**:match 是 `_ai` 的最后一条语句,所以在 _tick_* 里 return
+# - 各段里的 `return` **语义不变**:match 是 `_ai` 的最后一条语句,所以在 _tick_* 里 return
 #   等于原来在 _ai 里 return(都是"本帧到此为止")。
 
 func _tick_sleep(delta: float, dist: float) -> void:
@@ -235,7 +235,7 @@ func _on_death() -> void:
 # ── 射击 ──
 
 # 斜上射击位(与 SHOOT 锚点同一逻辑):玩家侧向 + 上方,鸟不穿越玩家头顶。
-# 世界坐标与格坐标共用同一侧,保证寻路目标可到、直线兜底同向。
+# 世界坐标与格坐标共用同一侧,保证寻路目标可到、直线保底处理同向。
 # 侧向优先取 LOS 通的一侧:几何侧对玩家无视线(被墙挡,如玩家站高平台一侧有墙)时,
 # 鸟会一直停在射击位进不了 SHOOT——换另一侧绕过去攻击。两侧都堵才退回几何侧。
 # 结果按(玩家格,几何侧)缓存,TTL 物理帧内复用(几何/位置变化最迟 ~150ms 反映)。
@@ -336,7 +336,7 @@ func _start_strafe() -> void:
 
 
 # 弹道无遮挡:鸟与玩家格子之间无墙(平抛子弹会被地形挡住)。
-# 结果按(鸟格,玩家格)缓存 SHOT_CLEAR_TTL_FRAMES,墙被拆/堵或任一方换格(超时兜底)才重算。
+# 结果按(鸟格,玩家格)缓存 SHOT_CLEAR_TTL_FRAMES,墙被拆/堵或任一方换格(超时保底处理)才重算。
 func _shot_clear() -> bool:
 	var from := _cell_of(global_position)
 	var to := _cell_of(_player_pos())
@@ -365,7 +365,7 @@ func _fire_parabolic() -> void:
 			EnemyParams.FlyBird.bullet_damage, EnemyParams.FlyBird.bullet_gravity,
 			EnemyParams.FlyBird.bullet_size)
 	b.water_mult = WATER_DAMAGE_MULT
-	# 时间回溯重建用的场景路径(与 weapon_base 出弹处同款):不写这条 meta,回溯里
+	# 时间回溯重建用的场景路径(与 weapon_base 出弹处相同机制):不写这条 meta,回溯里
 	# `WorldRewind._apply_bullets` 建不出节点 → 敌方子弹在回溯期间**直接消失**(位置也不倒)。
 	b.set_meta("scene_path", ENEMY_BULLET_SCENE.resource_path)
 	b.global_position = global_position
@@ -419,7 +419,7 @@ func _on_charge_impact() -> void:
 	for i in range(get_slide_collision_count()):
 		var collider := get_slide_collision(i).get_collider()
 		if collider != null and collider.is_in_group("player") and collider.has_method("take_hit"):
-			# 冲撞穿透无敌帧,命中必掉血(自杀攻击的威慑)
+			# 冲撞穿透无敌帧,命中必受到伤害(自杀攻击的威慑)
 			collider.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
 			_apply_charge_impact(collider)
 			break
@@ -432,7 +432,7 @@ func _on_charge_hit_player() -> void:
 		return
 	var p := _nearest_player()
 	if p != null and p.has_method("take_hit"):
-		# 冲撞穿透无敌帧,命中必掉血(自杀攻击的威慑)
+		# 冲撞穿透无敌帧,命中必受到伤害(自杀攻击的威慑)
 		p.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
 		_apply_charge_impact(p)
 	_die_self()
@@ -449,7 +449,7 @@ func _start_return() -> void:
 	_set_state(State.RETURN)
 	_landing = false
 	_anim.play("flying")
-	# 玩家太远时不启动任何搜索,清空路径交给 RETURN 的直线兜底飞回家。
+	# 玩家太远时不启动任何搜索,清空路径交给 RETURN 的直线保底处理飞回家。
 	if toroidal_dist_to_player() <= EnemyParams.FlyBird.max_chase_distance:
 		_repath_to(_home_cell)
 	else:
@@ -494,7 +494,7 @@ func _update_facing() -> void:
 			_set_facing(vx < 0.0)
 
 
-# 睡眠态判定(基类 _is_far_sleeping 用)。★ 显式写出来而不是靠"SLEEP 恰好是枚举第一个":
+# 睡眠态判定(基类 _is_far_sleeping 用)。-  显式写出来而不是靠"SLEEP 恰好是枚举第一个":
 # 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
 func _is_asleep() -> bool:
 	return state == State.SLEEP

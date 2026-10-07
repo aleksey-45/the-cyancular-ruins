@@ -3,23 +3,23 @@ extends SceneTree
 # 远程联机的**纯逻辑**冒烟:房间码 / 地址解析 / 隧道输出解析 + 本次改造的三条核心契约。
 # 跑法:`"$GODOT" --headless --path . -s res://tests/netplay_probe.gd`,成功打印 NETPLAY PROBE OK。
 #
-# ★ 为什么要有它:房间码的生成与派生是**两端各算一次**的东西(房主的网络名 = 客机要加入的网络名),
+# - 为什么要有它:房间码的生成与派生是**两端各算一次**的东西(房主的网络名 = 客机要加入的网络名),
 #   算错不会有任何运行时报错 —— 表现只是"客机一直找不到房主"。同理,客机从 `easytier-cli`
-#   的输出里抠端口,抠错也只是"连不上"。这两处都是纯字符串函数,故在这里逐个钉死。
+#   的输出里抠端口,抠错也只是"连不上"。这两处都是纯字符串函数,故在这里逐个严格约束。
 #
-# ★ 反面教材(2026-09 参考 PCL-CE 的联机码实现时实测到的):它的 `Generate()` 算了
+# - 反面教材(2026-09 参考 PCL-CE 的联机码实现时实测到的):它的 `Generate()` 算了
 #   `validValue = randomValue - remainder` 却去编码 `randomValue` 本身,于是自己生成的码
 #   **有 6/7 过不了自己的 TryParse**。所以本探针不测"看起来对",只测**往返**:生成的每一个码
 #   都必须通过 `is_valid_room`,且 `room_credentials` 的输入输出一一对应。
 #
-# ★ 本探针**不起任何进程、不连任何端口** —— 它只读源码与跑纯函数,故可以随时跑、跑多少次都行。
+# - 本探针**不起任何进程、不连任何端口** —— 它只读源码与跑纯函数,故可以随时跑、跑多少次都行。
 #   真链路的隧道验收(两台机器打洞)是手工项,不在自动化里假装。
 
 const Tunnel := preload("res://core/net/tunnel.gd")
 const Meta := preload("res://core/config/tunnel_meta.gd")
 const PvpSessionScript := preload("res://core/net/pvp_session.gd")
 
-# 房间码均匀性抽样次数。10 万 = 每个首位数字期望 1 万次,足够把"前导 0 被吃掉"照出来。
+# 房间码均匀性抽样次数。10 万 = 每个首位数字期望 1 万次,足够把"前导 0 被截断丢失"检测暴露。
 const SAMPLES := 100000
 
 var _fails: Array = []
@@ -54,7 +54,7 @@ func _initialize() -> void:
 		quit(1)
 
 
-# ── ① 房间码:恒 5 位数字,前导 0 不被吃掉 ──
+# ── ① 房间码:恒 5 位数字,前导 0 不被截断丢失 ──
 func _phase_room_code() -> void:
 	var first_digit := {}
 	var distinct := {}
@@ -97,7 +97,7 @@ func _phase_room_code() -> void:
 	_check(distinct.size() > 60000, "10 万次抽样得到 %d 个不同的码(期望 ~63200,>60000)"
 			% distinct.size())
 
-	# 合法/非法判据(逐条点名,失败时能一眼看出是哪一条)
+	# 合法/非法判据(逐条明确提示,失败时能一眼看出是哪一条)
 	for bad in ["", "1234", "123456", "12a45", " 1234", "1234 ", "-1234", "１２３４５", "1234\n"]:
 		_check(not Tunnel.is_valid_room(bad), "is_valid_room 拒绝 %s" % JSON.stringify(bad))
 	for good in ["00731", "00000", "99999", "48213"]:
@@ -176,7 +176,7 @@ func _phase_peer_parse() -> void:
 	# 房主条目缺 ipv4 → 同样不算找到(否则会去连一个空地址)
 	_check(Tunnel.pick_host_peer([{"hostname": "cyr-host-23117", "ipv4": ""}]).is_empty(),
 			"房主条目缺 ipv4 时返回空")
-	# 坏输入一律空数组,不炸:轮询期间 CLI 可能打出半截 JSON,那是正常中间态
+	# 坏输入一律空数组,不炸:轮询期间 CLI 可能输出不完整的 JSON 数据,那是正常中间态
 	for bad in ["", "   ", "not json", "{}", "[]", "[1,2,3]"]:
 		var r := Tunnel.parse_peers_json(bad)
 		_check(typeof(r) == TYPE_ARRAY, "parse_peers_json(%s) 返回数组而不是 null"
@@ -185,14 +185,14 @@ func _phase_peer_parse() -> void:
 
 
 # ── ⑤ 连接参数只剩 `PvpSession` 一处 ──
-# ★ 2026-09-29:原先这里验的是"地址框 `host[:port]` 的切分/拼装"(`split_addr` / `join_addr`)。
-#   手填地址那条路已整体删除 ⇒ 那两个函数也没了,本相改成钉**剩下的那条约束**:
+# - 2026-09-29:原先这里验的是"地址框 `host[:port]` 的切分/拼装"(`split_addr` / `join_addr`)。
+#   手填地址那条路已整体删除  ->  那两个函数也没了,本阶段改成钉**剩下的那条约束**:
 #   ① 默认端口仍与 `NetBus.DEFAULT_PORT` 同值;② 全仓不得再出现那两个函数名
 #   (反向断言,防止有人"顺手"把地址框加回来)。
 func _phase_addr() -> void:
 	# 与 NetBus 的默认端口同值:两个常量分居两个文件,漂了会让"手跑服务端(7777)"连不上。
-	# ★ `-s` 探针里**没有 autoload**(这是本仓明文:见 CLAUDE.md §测试),故不能读 `NetBus.DEFAULT_PORT`;
-	#   改成从**源码**里抠出那个字面量比对 —— 判据一样硬,且不依赖运行环境。
+	# - `-s` 探针里**没有 autoload**(这是本仓明文:见 CLAUDE.md §测试),故不能读 `NetBus.DEFAULT_PORT`;
+	#   改成从**源码**里提取出那个字面量比对 —— 判据一样硬,且不依赖运行环境。
 	var nb := _read("res://core/net/net_bus.gd")
 	var m := RegEx.create_from_string("const\\s+DEFAULT_PORT\\s*:=\\s*(\\d+)").search(nb)
 	_check(m != null, "能从 net_bus.gd 里读到 DEFAULT_PORT(判据本身的前置)")
@@ -227,12 +227,12 @@ func _phase_meta() -> void:
 
 
 # ── ⑦ 网络身份:`current_code()` / `on_network()` 的语义(2026-09-30 加)──
-# ★ 这两个口是为修两个真 bug 加的,而它们**都是纯语义**、错了不会崩,只会静默串网:
+# - 这两个口是为修两个真 bug 加的,而它们**都是纯语义**、错了不会崩,只会静默串网:
 #   ① 房主退出房间再建一间 —— 旧闸 `not is_running()` 分不出"同一个码"与"另一个码"
-#      ⇒ 网名留在旧码上 ⇒ **新码对外完全失效**(朋友拿新码进的是 `cyr-<新码>`,那网上没人);
+#       ->  网名留在旧码上  ->  **新码对外完全失效**(朋友拿新码进的是 `cyr-<新码>`,那网上没人);
 #   ② 客户端已连着 A 时输 B 的码 —— 旧判据 `_connected and can_send_to_server()` 同样分不出
-#      ⇒ B 的码被发去 **A 的服务器**,回一句把人引向"码敲错了"的「房间不存在」。
-#   两处都靠"这串码是不是我当前所在的网"来判 ⇒ 那个判据本身必须有守卫。
+#       ->  B 的码被发去 **A 的服务器**,回一句把人引向"码敲错了"的「房间不存在」。
+#   两处都靠"这串码是不是我当前所在的网"来判  ->  那个判据本身必须有守卫。
 func _phase_network_identity() -> void:
 	# 没起网时:码为空、`on_network(任何码)` 一律假(含空串)。
 	_check(Tunnel.current_code() == "", "未起网时 current_code() 为空")
@@ -242,16 +242,16 @@ func _phase_network_identity() -> void:
 	var tn := _strip_comments(_read("res://core/net/tunnel.gd"))
 	_check(tn.contains("_code = \"\""), "Tunnel.stop() 清掉 _code")
 	# 客机那跳转发只许绑本机回环(绑 0.0.0.0 = 同局域网可绕过隧道直连房主服务端);
-	# ★ 且绑的是**自己挑的空闲口**(`_pick_free_port`),不复用房主端口号 —— 复用时同机两个
+	# - 且绑的是**自己挑的空闲口**(`_pick_free_port`),不复用房主端口号 —— 复用时同机两个
 	#   实例必然绑定冲突(房主服务端占着那个号),这正是"一台机器开两个游戏互连"失败的原因。
 	_check(tn.contains("\"127.0.0.1:%d\" % bind_port"), "客机转发绑 127.0.0.1 且用自选端口")
 	_check(tn.contains("static func _pick_free_port()"), "自选端口来自 _pick_free_port()")
 	_check(tn.contains("static func forward_port()"), "对外暴露 forward_port()(客机连它)")
 	_check(not tn.contains("\"0.0.0.0:%d\" % port"), "客机转发不再绑 0.0.0.0")
 	# 挑号写法(2026-10-04 裁定):两个本机口都由 **OS 发号**(bind :0 → 读回 → 释放),
-	# 不再区间盲选 —— 盲选与 EasyTier 自家默认门户池(15888..15900)重叠,撞上即内核秒死
+	# 不再区间随机选取 —— 随机选取与 EasyTier 自家默认门户池(15888..15900)重叠,撞上即内核秒死
 	# (exit 1、file log 零痕迹,2026-10-04 实测)。锁的是**写法**:探测类型必须与用途同族
-	# (门户是 TCP ⇒ TCPServer;转发绑定是 UDP ⇒ PacketPeerUDP),以及不许回到区间盲选。
+	# (门户是 TCP  ->  TCPServer;转发绑定是 UDP  ->  PacketPeerUDP),以及不许回到区间随机选取。
 	_check(tn.contains("TCPServer.new()") and tn.contains("srv.listen(0, \"127.0.0.1\")"),
 			"RPC 口 = TCP socket 向 OS 要(bind :0)")
 	_check(tn.contains("probe.bind(0, \"127.0.0.1\")"), "转发绑定口 = UDP socket 向 OS 要(bind :0)")
@@ -259,7 +259,7 @@ func _phase_network_identity() -> void:
 			"两个挑号都不再回到区间盲选")
 	# 孤儿清扫(2026-10-04):游戏异常退出时 stop() 没机会跑,easytier-core 残留成孤儿。
 	# 认领判据必须足够窄:命令行带本游戏日志根 + 目录名尾部的游戏 pid 已死,二者缺一不可 ——
-	# 宽了会误杀同机另一局(双开互连)与玩家手动跑的内核,窄得只剩"杀进程"也会漏掉 ghost 房间。
+	# 宽了会误杀同机另一局(双开互连)与玩家手动跑的内核,窄得只剩"终止进程"也会漏掉 ghost 房间。
 	_check(tn.count("_reap_orphans()") >= 3, "start_host / start_client 起进程前各调一次孤儿清扫")
 	_check(tn.contains("cmd.contains(marker)"), "内核认领只认命令行里的本游戏日志根路径")
 	_check(tn.contains("OS.is_process_running(owner)"), "只终结 owner 已死的内核(双开互连不误杀)")
@@ -284,18 +284,18 @@ func _phase_network_identity() -> void:
 			"_join_with_code 里不再有\"已连着就直接用当前连接\"那条旧判据")
 	_check(jb.contains("LocalServer.stop_owned()"),
 			"_join_with_code 换网时收掉本机服务端(否则留下一台别人看得见、却开不了局的服务器)")
-	# 房主起网闸门:统一大厅 mp_lobby 必须按码判(换了房号要重起、同码不重起)
+	# 房主起网门控前置校验:统一大厅 mp_lobby 必须按码判(换了房号要重起、同码不重起)
 	var mp := _strip_comments(_read("res://scenes/mp_lobby.gd"))
 	_check(mp.contains("not Tunnel.on_network(code)"), "mp_lobby 的房主起网闸门按码判")
 	var mm := _func_body(mp, "_on_room_created")
 	_check(mm.contains("not Tunnel.on_network(code)"), "mp_lobby 1v1建房后起网闸门按码判")
 
-	# ── 建房 = 在自己这台机器上开服(2026-09-30 用户裁定:"根本没有在别人电脑上建房的说法")──
-	# ★ 判据必须是"连着的是不是我那台",不是"有没有连着"。后者会让**客机点建房**把建房 RPC
+	# ── 建房 = 在自己这台机器上开服(2026-09-30 设计约定:"根本没有在别人电脑上建房的说法")──
+	# - 判据必须是"连着的是不是我那台",不是"有没有连着"。后者会让**客机点建房**把建房 RPC
 	#   发给房主的服务器,开出一间"房主是访客"的死房(外面进不来),而且客户端随后会去
 	#   `Tunnel.start_host(…, 新房号)` —— 它此刻跑的是客机内核,`start_host` 开头就 `stop()`,
-	#   于是**把自己到房主服务器的转发杀掉**、连接断掉,新起的房主隧道又指向本机
-	#   那个端口(而服务端在房主那边)⇒ 白丢一条连接 + 一间谁也进不来的死房。
+	#   于是**把自己到房主服务器的转发终止**、连接断掉,新起的房主隧道又指向本机
+	#   那个端口(而服务端在房主那边) ->  白丢一条连接 + 一间谁也进不来的死房。
 	var ls := _strip_comments(_read("res://core/net/local_server.gd"))
 	_check(not ls.contains("owns_running"),
 			"LocalServer 不再有 owns_running()(建房不再复用已有服务端)")
@@ -314,7 +314,7 @@ func _phase_network_identity() -> void:
 	# 统一大厅的建房走共用前置,且不得再自己抄一份"拉服务端"的逻辑
 	var cb := _func_body(mp, "_on_create_pressed")
 	_check(cb.contains("await _ensure_own_server()"), "mp_lobby 的建房走共用前置")
-	# ★ 顺序:准入检查必须在 `_ensure_own_server()` **之前** —— 后者是无条件"拆旧起新",
+	# - 顺序:准入检查必须在 `_ensure_own_server()` **之前** —— 后者是无条件"拆旧起新",
 	#   在房里按建房会先把当前那局的服务端/隧道拆掉,随后才被 `_with_lobby` 拒绝。
 	var gate := cb.find("_lobby_action_allowed()")
 	_check(gate != -1 and gate < cb.find("_ensure_own_server()"),
@@ -355,13 +355,13 @@ func _phase_source_contracts() -> void:
 
 # ── ⑧ 目录布局:EasyTier 与三方日志各自的家(2026-10-02 加)──
 # 布局是**游戏与发布包之间的口头契约**:包按这个摆、游戏按这个找。漂了不会报错,只会
-# "文件明明在,游戏却说找不到"(或日志静静写到别处去),所以在这里钉死。
+# "文件明明在,游戏却说找不到"(或日志静静写到别处去),所以在这里严格约束。
 #   <游戏目录>/easytier/   easytier-core.exe / easytier-cli.exe / Packet.dll / wintun.dll
 #                          + relay.txt(公共节点列表;代码里没有内置表,2026-10-02 起)
 #   <游戏目录>/log/        client.log / server.log / easytier-{host,guest}/easytier.log
 func _phase_paths() -> void:
 	# 「游戏目录」在开发态 = 仓库根(`-s` 探针跑不到导出产物,故这里必然走 dev 分支)。
-	# ★ 结尾斜杠必须去掉:开发态取自 `globalize_path("res://")`(带斜杠)、发布态取自 exe 目录
+	# - 结尾斜杠必须去掉:开发态取自 `globalize_path("res://")`(带斜杠)、发布态取自 exe 目录
 	#   (不带)—— 两种形态并存时"拿它俩判等"的地方会莫名其妙地失败。
 	_check(not AppPaths.base_dir().ends_with("/"), "游戏目录不带结尾斜杠(两种来源形态一致)")
 	_check(FileAccess.file_exists(AppPaths.base_dir().path_join("project.godot")),
@@ -378,7 +378,7 @@ func _phase_paths() -> void:
 	_check(Tunnel.cli_exe().get_base_dir() == et, "cli 路径取自 easytier/")
 	for dll in Meta.CORE_DLLS:
 		_check(FileAccess.file_exists(et.path_join(dll)), "%s 在 easytier/ 下" % dll)
-	# 公共节点列表:同一目录。★ 节点**只**来自文件 —— 本机 relay.txt 里有没有节点是环境事实
+	# 公共节点列表:同一目录。-  节点**只**来自文件 —— 本机 relay.txt 里有没有节点是环境事实
 	# (它不在 git 里),不钉"非空";代码级契约(不许有内置表/节点字面量)在下面 tn/tm 两段。
 	_check(Tunnel.relay_file() == et.path_join(Meta.RELAY_FILE_NAME),
 			"公共节点列表 = easytier/%s" % Meta.RELAY_FILE_NAME)
@@ -394,7 +394,7 @@ func _phase_paths() -> void:
 	# 内核日志按角色分目录(内核的日志文件名固定,同机两条隧道共用一个目录会互相截断)
 	var tn := _strip_comments(_read("res://core/net/tunnel.gd"))
 	_check(tn.contains("Meta.et_log_dir_name(role)"), "内核日志目录 = 前缀 + 角色 + 游戏 pid")
-	# ★ 2026-10-02:内置初始节点表 RELAYS 已删,节点只来自 relay.txt。
+	# - 2026-10-02:内置初始节点表 RELAYS 已删,节点只来自 relay.txt。
 	#   正向 = relay_list 只读文件(parse_relay_lines 行为断言在上面);反向 = 内置表不许复活,
 	#   节点地址也不许再进代码 —— 把初始节点写死回代码里的每一次都会在这里红。
 	_check(not tn.contains("RELAYS"), "tunnel.gd 不再引用内置节点表 RELAYS")

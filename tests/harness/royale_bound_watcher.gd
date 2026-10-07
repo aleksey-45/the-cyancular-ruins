@@ -16,8 +16,8 @@ const LOBBY_ADDR := "127.0.0.1"   # 本探针大厅的地址(真大厅页按 `Pv
 # 与 royale_bound_probe.gd 的 HUE_C1/HUE_C2、DISABLED_SLOT 保持一致(两个客户端的本端选项)
 const HUE_BY_ROLE := {1: 90.0, 3: 180.0}
 const DISABLED_SLOT := 3
-# ★★ 等待形状(2026-10-03 修):**等载荷落地 + 截止线**,不是"固定静置 N 秒后断言"。
-#   旧写法是 `const SETTLE := 2.0` + `_stage_t < SETTLE ⇒ return`,它把**两条不同的判据**
+# 注意： 等待形状(2026-10-03 修):**等载荷落地 + 截止线**,不是"固定静置 N 秒后断言"。
+#   旧写法是 `const SETTLE := 2.0` + `_stage_t < SETTLE  ->  return`,它把**两条不同的判据**
 #   混成了一条:"载荷有没有到" 与 "到得够不够快"。后者**不是本探针的断言对象** ——
 #   文件头的断言对象是「换场后那四样到底有没有进新场景」。
 #
@@ -26,15 +26,15 @@ const DISABLED_SLOT := 3
 #   成因(已定位,见 probe 文件头 §B2 结论):客户端换场那一刻要把整个
 #   `royale_game`(Level0 世界 + 碰撞 + HUD)建起来,主循环**卡住 ~8 秒**
 #   (探针环境里同时有大厅 + worker + 两个客户端共 4 个 Godot 抢 CPU,实测值被放大);
-#   卡顿期内客户端不排空 UDP 收缓冲 ⇒ 包被内核丢 ⇒ **可靠包靠 ENet 退避重传**,
+#   卡顿期内客户端不排空 UDP 收缓冲  ->  包被内核丢  ->  **可靠包靠 ENet 退避重传**,
 #   在客户端恢复后才整批涌进来(同一瞬间 `round_state` 计数从 9 跳到 20,是同一现象)。
-#   ⇒ 固定 2.0s 会**在这条载荷到达之前**就断言 ⇒ 红;而它红的原因是**探针的等待形状**,
+#    ->  固定 2.0s 会**在这条载荷到达之前**就断言  ->  红;而它红的原因是**探针的等待形状**,
 #     不是产品丢包。故改成等载荷。
 #
-#   ★ 鉴别力没有降低:载荷**始终不到**(= 真丢包)时,`PAYLOAD_DEADLINE` 到点照样断言 ⇒ 红。
-#   ★ 也没有变成恒真:若 `_on_match_sync` 没把 `_names/_hues/...` 应用上去,断言照样红。
+#   - 测试有效性没有降低:载荷**始终不到**(= 真丢包)时,`PAYLOAD_DEADLINE` 到点照样断言  ->  红。
+#   - 也没有变成恒真:若 `_on_match_sync` 没把 `_names/_hues/...` 应用上去,断言照样红。
 const SETTLE_AFTER_PAYLOAD := 0.5   # 应答落地后再等一拍:观察者的订阅可能排在游戏的订阅者**之前**
-const PAYLOAD_DEADLINE := 25.0      # 等应答的上限(探针时间);到点仍没到 ⇒ 照常断言(红)
+const PAYLOAD_DEADLINE := 25.0      # 等应答的上限(探针时间);到点仍没到  ->  照常断言(红)
 const DEADLINE := 50.0
 
 var who := "c1"
@@ -47,7 +47,7 @@ var _t := 0.0
 var _stage := 0
 var _stage_t := 0.0
 var _match_start_frame := -1
-var _game_added_frame := -1      # royale_game 节点入树(=_ready 运行)的帧号
+var _game_added_frame := -1      # royale_game 节点加入场景树(=_ready 运行)的帧号
 var _arrival_t := -1.0           # match_sync 应答落地的探针时刻(见 SETTLE_AFTER_PAYLOAD)
 var _arrivals: Dictionary = {}   # 信号名 -> 到达帧号(证据:三条是否与 match_start 同一次 poll)
 
@@ -68,7 +68,7 @@ func _ready() -> void:
 
 
 # 子进程的 stdout 不会被父进程继承(Windows CreateProcess 不继承句柄)→ 落盘一份,
-# 父进程在失败/超时时把它打出来,否则客户端子进程里发生了什么完全看不见。
+# 父进程在失败/超时时把它打印输出,否则客户端子进程里发生了什么完全看不见。
 func _log(msg: String) -> void:
 	print("PROBE[%s]: %s" % [who, msg])
 	var p := "user://%s%s.log" % [RESULT_PREFIX, who]
@@ -77,9 +77,9 @@ func _log(msg: String) -> void:
 	var f := FileAccess.open(p, mode)
 	if f != null:
 		f.seek_end()
-		# 墙钟戳(2026-10-03 加):`_t` 是 delta 累加,而 Godot 会把超长帧的 delta 钳掉 ⇒
+		# 墙钟戳(2026-10-03 加):`_t` 是 delta 累加,而 Godot 会把超长帧的 delta 钳掉  -> 
 		# 卡顿期它**严重低报**(实测同一事件 `_t`=12.2s 而 `get_ticks_msec()`=22.1s)。
-		# 本探针的整个诊断都建立在"晚了多久"上 ⇒ 量延迟必须用墙钟,不能只用 `_t`。
+		# 本探针的整个诊断都建立在"晚了多久"上  ->  量延迟必须用墙钟,不能只用 `_t`。
 		f.store_line("%5.1fs w=%dms %s" % [_t, Time.get_ticks_msec(), msg])
 		f.close()
 	NetBus.local_peer_info.connect(func(_names: Dictionary) -> void:
@@ -115,11 +115,11 @@ func _stage_wait_lobby() -> void:
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
 		return   # 真大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
-	# ★★ 守卫:连上的必须是**本探针的大厅**,不能是云服(与 royale_c2_watcher / team_match_watcher
-	#   同款)。生产默认地址是云(`PvpSession.server_address` 初值 120.53.107.140),而本探针是
+	# 注意： 守卫:连上的必须是**本探针的大厅**,不能是云服(与 royale_c2_watcher / team_match_watcher
+	#   相同机制)。生产默认地址是云(`PvpSession.server_address` 初值 120.53.107.140),而本探针是
 	#   **实例化真 mp_lobby 让它自己连** —— `royale_bound_probe._run_client` 漏了那句地址预置时,
 	#   两个客户端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是本端自己的
-	#   「已连接服务器」,而编排器一条 `玩家连入` 都没有 ⇒ 只剩 75s 超时。当场点名,
+	#   「已连接服务器」,而编排器一条 `玩家连入` 都没有  ->  只剩 75s 超时。当场明确提示,
 	#   别让下一个人再从超时逆推(实测踩过:c1 连上云服并建房、c2 对云服连接失败)。
 	if String(lobby.get("_connected_addr")) != LOBBY_ADDR:
 		_finish(false, "本端连的是 %s,不是本探针大厅 %s —— 检查 royale_bound_probe._run_client 的地址预置"
@@ -159,7 +159,7 @@ func _log_once(msg: String) -> void:
 func _stage_wait_game(delta: float) -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_royale_game(cs):
-		# 诊断:换场没发生时,把真大厅的 `_current_mode` 一起打出来 —— 空串就是
+		# 诊断:换场没发生时,把真大厅的 `_current_mode` 一起打印输出 —— 空串就是
 		# `_enter_match_scene` 那支 push_error(不切场景,刻意加固),那才是"等不到换场"的真因。
 		var cm := "(lobby 已 free)"
 		if lobby != null and is_instance_valid(lobby):
@@ -171,7 +171,7 @@ func _stage_wait_game(delta: float) -> void:
 		_log("已换场到 royale_game(帧 %d;match_start 帧 %d)" % [Engine.get_process_frames(),
 				_match_start_frame])
 		if mode == "wait":
-			# ★ 批次 3:本模式由"载荷在切场景的**同一次 poll** 里被推过去"改成"**拉**"。
+			# - 批次 3:本模式由"载荷在切场景的**同一次 poll** 里被推过去"改成"**拉**"。
 			#   应答必须由**换场后仍活着**的节点发 —— 探针节点自己是 current scene,换场会 free 它
 			#   (实测:那条协程一条应答都没发出去)。本观察者挂在 root 上,正是为此。
 			NetBus.local_match_sync.emit({
@@ -219,7 +219,7 @@ func _assert_on_game(game: Node) -> void:
 		if not hues.has(r) or not is_equal_approx(float(hues[r]), want):
 			problems.append("role %d 色相 %s ≠ %s → peer_hues 没进新场景" % [r, str(hues.get(r)),
 					str(want)])
-	# 3) 禁武器闸门(match_options):判据是**真玩家的武器槽位**(下面那段 local.weapons.enabled_types)。
+	# 3) 禁武器门控前置校验(match_options):判据是**真玩家的武器槽位**(下面那段 local.weapons.enabled_types)。
 	#    2026-09-14:PvpSession.disabled_weapons 已作为"只写不读"删除;原先对它的那条断言是
 	#    冗余见证(同一条链路上已经有下面那条权威断言),按仓内惯例改探针认新入口,
 	#    不为探针保留死字段。

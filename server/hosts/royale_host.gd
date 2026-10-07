@@ -32,12 +32,12 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
 		MazeGenerator.set_map_file(map_path)
 		WorldBuilder.load_grid()
-	# ★ 出生点**单一来源**:常规路径由 `start_on` 算好传进来(它同时把**同一份**经 match_start
+	# - 出生点**单一来源**:常规路径由 `start_on` 算好传进来(它同时把**同一份**经 match_start
 	#   广播给客户端)。这里**不得**再调一次 `plan_spawns` —— 那函数内部 `cells.shuffle()`,
 	#   重算出的是**另一份**随机散点;而实际摆位读的是这一份,事后覆盖 `_round_spawns` 也改不回
 	#   任何人的位置(`_spawned_once` 已闩)→ 广播给客户端的那份**从不生效**,两端开局位置不一致
 	#   且完全不报错。
-	#   传空 = 手工/测试路径,才走"自己算一份"的兜底。
+	#   传空 = 手工/测试路径,才走"自己算一份"的保底处理。
 	_round_spawns = spawns if not spawns.is_empty() else plan_spawns(role_peers.keys() + ai_roles)
 	_cfg_match_time = float(options.get("match_time", 0.0))
 	super._init(map_path, role_peers, options, ai_roles)
@@ -54,7 +54,7 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 		WorldBuilder.load_grid()
 	var spawns := plan_spawns(role_peers.keys() + ai_roles)
 	for role in role_peers:
-		# 判活:与 MatchBootstrap.start_on 同款 —— 报到与开局之间客户端可能已经断开,
+		# 存活检测:与 MatchBootstrap.start_on 相同机制 —— 报到与开局之间客户端可能已经断开,
 		# 而定向可靠包发往正在断开的 peer 就是那条 channel 0 错误(判据见 NetBus.is_peer_live)。
 		if not NetBus.is_peer_live(role_peers[role]):
 			continue
@@ -74,7 +74,7 @@ static func _grid_dims() -> Vector2i:
 	return SpawnPicker.grid_dims()
 
 # 环面格距(current_grid 尺寸版,MazeGenerator.toroidal_dist 的便捷封装)
-# ★ 未随上一条搬走:`_tdist` 只服务本文件的 `_spawn_cell`(复活点选格),3v3 那一侧用
+# - 未随上一条搬走:`_tdist` 只服务本文件的 `_spawn_cell`(复活点选格),3v3 那一侧用
 #   `SpawnPicker.cells_within`(内部走 `GridPathfinder.toroidal_dist`)—— 没有第二个调用方。
 static func _tdist(a: Vector2i, b: Vector2i) -> int:
 	var d := _grid_dims()
@@ -100,7 +100,7 @@ static func _spawn_candidates() -> Array:
 	return SpawnPicker.spawn_candidates()
 
 
-# 复活选格的池子序列(优选 → 兜底)。★ 与 `_spawn_candidates` 同款:**只是转发**,判据在
+# 复活选格的池子序列(优选 → 保底处理)。-  与 `_spawn_candidates` 相同机制:**只是转发**,判据在
 # `SpawnPicker.respawn_pools` 一处(见那边的说明:两处调用方各写一遍 = 本次修的那个病)。
 static func _respawn_pools() -> Array:
 	return SpawnPicker.respawn_pools()
@@ -112,20 +112,20 @@ static func _respawn_pools() -> Array:
 static func plan_spawns(roles: Array) -> Dictionary:
 	var n := roles.size()
 	var d := _grid_dims()
-	# ★ 散点几何已抽到 `GridPathfinder.spread_cells`(2026-09-15):单机铺地面武器也用它,
+	# - 散点几何已抽到 `GridPathfinder.spread_cells`(2026-09-15):单机铺地面武器也用它,
 	#   两处"尽量均匀地撒点"从此是同一份实现,改一处即改两处。
-	#   ★ 它内部有 shuffle() —— 本函数的既有纪律不变:**不得在广播之后再调一次**。
+	#   - 它内部有 shuffle() —— 本函数的既有纪律不变:**不得在广播之后再调一次**。
 	var picked: Array = GridPathfinder.spread_cells(
 		_spawn_candidates().duplicate(), n, SPAWN_CLEARANCE, d.x, d.y)
 	# 候选不够散点(极小图 / 密封图):回退任意地板格补足,避免塞 (-1,-1) 出生到墙角。
-	# ★ 这层回退与候选层的**优先级**必须留在本函数里:spread_cells 的兜底只在"传给它的池子"
+	# - 这层回退与候选层的**优先级**必须留在本函数里:spread_cells 的保底处理只在"传给它的池子"
 	#   里补,把两层并成一个池子就等于取消优先级(会优先选到死角格)。
-	# ★★ 这是"出生池缺陷"(2026-09-19)在**本文件**里唯一还剩的姐妹分支:它取的仍是
+	# 注意： 这是"出生池缺陷"(2026-09-19)在**本文件**里唯一还剩的姐妹分支:它取的仍是
 	#   `_floor_cells()`(全量、含孤立单格)。**今天不可达**,两条前提都得成立才可达:
 	#   ① `spread_cells` 恒返回 `min(n, 池大小)`(已实测);② 故本分支可达 ⟺ **首档池 < 人数**
-	#      —— 两图池 122 / 59,人数上限 8 ⇒ 死路。守卫:`tests/smoke/spawn_pool_smoke` 的 ⑦。
-	# ★ 为什么**不**顺手把它也收窄(与用户"收掉它"的裁定不矛盾,这里情况不同):本分支恰在
-	#   "池子极小时"才可达,那时收窄会让补足**补不满** ⇒ `out[role] = (-1,-1)` ⇒ 摆到地图回卷
+	#      —— 两图池 122 / 59,人数上限 8  ->  死路。守卫:`tests/smoke/spawn_pool_smoke` 的 ⑦。
+	# - 为什么**不**随意将它也收窄(与用户"收掉它"的裁定不矛盾,这里情况不同):本分支恰在
+	#   "池子极小时"才可达,那时收窄会让补足**补不满**  ->  `out[role] = (-1,-1)`  ->  摆到地图回卷
 	#   角落 —— 按用户已裁定的偏好((-1,-1) 更糟),**保持全量才是对的**。取舍已登记在报告里;
 	#   ⑦ 那条守卫红了(池缩到人数以下)时由人来裁,别静默改掉。
 	if picked.size() < n:
@@ -144,8 +144,8 @@ static func plan_spawns(roles: Array) -> Dictionary:
 
 
 # 出生点:首次 = 开局散点;复活 = 优选开阔格中离所有存活敌人 ≥ RESPAWN_CLEARANCE 的随机格
-# (优选池不够 → 走**兜底池**,同样先保证离敌人远)。
-# ★ 池子序列改为读 `SpawnPicker.respawn_pools()`(2026-09-19):原来是 `[_spawn_candidates(),
+# (优选池不够 → 走**保底处理池**,同样先保证离敌人远)。
+# - 池子序列改为读 `SpawnPicker.respawn_pools()`(2026-09-19):原来是 `[_spawn_candidates(),
 #   _floor_cells()]` —— 第二档是**全部地板格**,于是在干净池子筛空时会把人放进**孤立单格区**
 #   的复活点里(与"开局被关住"同一个病)。池序列现在只有一处来源。
 # 覆写(不可省):基类 `role_spawns()` 走 `_spawn_cell`,而本类的 `_spawn_cell` 第二次起返回
@@ -219,29 +219,29 @@ func _match_round_tick(delta: float) -> void:
 				if not p.is_downed() or _down_counted.get(role, false):
 					continue
 				_down_counted[role] = true
-				# 掉落:倒地**这一刻**在原地丢下除随机保留一把外的全部武器(与基类同款 ——
+				# 掉落:倒地**这一刻**在原地丢下除随机保留一把外的全部武器(与基类相同机制 ——
 				# 见 `MatchGround._drop_all_but_one` 上方的完整理由)。共用 `_down_counted`
-				# 闩 ⇒ 每次死亡恰好一次;`_respawn_player` 那一支**不再**掉(会掉在出生点)。
+				# 闩  ->  每次死亡恰好一次;`_respawn_player` 那一支**不再**掉(会掉在出生点)。
 				_drop_all_but_one(p, int(role))
 				var killer := _attributed_killer(p)
-				# 逐人统计(★ 2026-09-25):倒地边沿记 death(一律)与击杀(仅在归因到时)。
-				# ★ 与 1v1(`MatchRound._match_round_tick`)的**口径不同,别照抄那一份**:
-				#   那边是「不分死因、对方死亡都算」⇒ 传 `_opponent_of(role)`;大乱斗是
-				#   **自由混战 + 归因制** ⇒ 必须传 `_attributed_killer(p)`,无归因的死亡
+				# 逐人统计(-  2026-09-25):倒地边沿记 death(一律)与击杀(仅在归因到时)。
+				# - 与 1v1(`MatchRound._match_round_tick`)的**口径不同,别照抄那一份**:
+				#   那边是「不分死因、对方死亡都算」 ->  传 `_opponent_of(role)`;大乱斗是
+				#   **自由混战 + 归因制**  ->  必须传 `_attributed_killer(p)`,无归因的死亡
 				#   (溺水/坠落/自杀)不计**任何人的**击杀。
-				# ★ `_deaths` 那份**独立的**阵亡计数已删 —— 它与逐人表记的是同一件事,
+				# - `_deaths` 那份**独立的**阵亡计数已删 —— 它与逐人表记的是同一件事,
 				#   两份计数必然漂(载荷里的 `deaths` 改从逐人表构造,见 `_broadcast_round_state`)。
 				_record_down(int(role), killer)
 				if killer != 0:
 					_scores[killer] = int(_scores.get(killer, 0)) + 1
 					_broadcast_kill(killer, role)
-				# ★ 2026-10-03 删掉这里原本的第二笔 `award_kill` —— **合并时漏删的重复**。
+				# - 2026-10-03 删掉这里原本的第二笔 `award_kill` —— **合并时漏删的重复**。
 				#   KH 那份 `award_kill` 原先住 `TeamHost._record_down`;合并把逐人统计面上提到
 				#   `MatchState._record_down` 时,那笔随之上提到基类(见 `match_state.gd` 里那段
 				#   "从 TeamHost 搬来、原处那份已删"的注释)—— 但**本文件还有它自己的一笔**,
-				#   没人删。于是大乱斗 Beta 的击杀颗粒变成**双倍**(本行 + 基类那行),
-				#   而 3v3 只走基类 ⇒ 两个模式口径不同。
-				#   ⇒ 基类那行是唯一写端(对 TeamHost 与 RoyaleHost 同一份),此处不再重复。
+				#   没人删。于是大乱斗 Beta 的击杀粒子变成**双倍**(本行 + 基类那行),
+				#   而 3v3 只走基类  ->  两个模式口径不同。
+				#    ->  基类那行是唯一写端(对 TeamHost 与 RoyaleHost 同一份),此处不再重复。
 				_broadcast_round_state()
 			# 周期广播(倒计时/比分同步)
 			_hud_sync -= delta
@@ -256,7 +256,7 @@ func _match_round_tick(delta: float) -> void:
 
 # 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role。
 # 带时效:伤害超过 `ATTRIB_WINDOW` 毫秒前的射手不再归因(防止"被打一枪后溺水"误计)。
-# ★ 时效窗口 `ATTRIB_WINDOW`(= `CombatFeedback.ATTRIB_WINDOW_MS`,3000ms)与逐人伤害的新鲜
+# - 时效窗口 `ATTRIB_WINDOW`(= `CombatFeedback.ATTRIB_WINDOW_MS`,3000ms)与逐人伤害的新鲜
 #   阈值 `ATTRIB_FRESH_MS`(8ms)都**住在底座** `MatchState`(2026-09-25 上提;两个读者原先
 #   各声明一份同名常量,子类重复声明基类成员是硬 Parse Error)。这里的引用走继承,不另立常量。
 func _attributed_killer(victim: Node2D) -> int:
@@ -286,7 +286,7 @@ func _match_winner() -> int:
 	var best_role := 0
 	var best_n := -1
 	var tie := false
-	# ★ 候选 = **还在场的 ∪ 计过分的**(含已离开者)—— 2026-09-17 按用户要求改成"按分判胜"。
+	# - 候选 = **还在场的 ∪ 计过分的**(含已离开者)—— 2026-09-17 按用户要求改成"按分判胜"。
 	#   原实现只遍历 `players`,而 `mark_disconnected` 会先把退出者 `erase` 掉 → 剩 1 人时
 	#   **独行者必胜、与比分无关**(B 击杀再多,一退出就是 A 胜;`_scores[B]` 还在却没人读)。
 	#   现在把已离开但计过分的 role 一起纳入比较:分高者胜,分平(含全场 0 杀)则平局。
@@ -296,16 +296,16 @@ func _match_winner() -> int:
 		candidates[int(role)] = true
 	for role in _scores:
 		candidates[int(role)] = true
-	# ★ 已移出但对局仍在继续的人(`_left`)也必须进候选:一个 **0 杀**离开者的分数**不在**
-	#   `_scores` 里(`mark_disconnected` 又把他从 `players` 里 erase 了)⇒ 他两边都不在。
+	# - 已移出但对局仍在继续的人(`_left`)也必须进候选:一个 **0 杀**离开者的分数**不在**
+	#   `_scores` 里(`mark_disconnected` 又把他从 `players` 里 erase 了) ->  他两边都不在。
 	#   后果**不是**"少算一个人的分"(他的分本来就是 0),而是**少了一个并列候选**:
-	#   `tie` 要成立得有 ≥2 个候选共享最高分,而幸存者只剩**一个**时他是唯一候选 ⇒ 没有第二个
-	#   候选能置 `tie` ⇒ **独胜** —— 明明全场 0 杀(包括那些离开者),却被判成他赢了。
+	#   `tie` 要成立得有 ≥2 个候选共享最高分,而幸存者只剩**一个**时他是唯一候选  ->  没有第二个
+	#   候选能置 `tie`  ->  **独胜** —— 明明全场 0 杀(包括那些离开者),却被判成他赢了。
 	#   `_left` 是这种离开者**唯一**的痕迹。
-	# ★ 只在「幸存者 ≤ 1」这一档改变结果(≥2 个幸存者时他们**彼此**已在 0 杀上并列 ⇒ 改前
+	# - 只在「幸存者 ≤ 1」这一档改变结果(≥2 个幸存者时他们**彼此**已在 0 杀上并列  ->  改前
 	#   改后都是平局);离开者**有分**时本来就在 `_scores` 里,照旧按分判胜 —— 两条都钉在
 	#   `tests/probe/late_match_probe.gd` 的 ④/⑤/⑤b 上(⑤ 是必需的反向对照:没有它,"恒返回 0" 也能过)。
-	# ★ 这一条落地后,`scenes/royale_game.gd` 那道 `and not _match_ended` 门**失去了理由**
+	# - 这一条落地后,`scenes/royale_game.gd` 那道 `and not _match_ended` 门**失去了理由**
 	#   (它正是为挡这次翻转而立的)—— 但删它在 peer 的层、且需要用户点头,本批**不动**。
 	for role in _left:
 		candidates[int(role)] = true
@@ -340,7 +340,7 @@ func _broadcast_round_state() -> void:
 		alive[int(role)] = is_instance_valid(p) and not p.is_downed()
 	# `deaths` 仍是逐 role 计数(royale_hud 的排行榜按它显示"阵亡"),但来源改成**逐人统计表**
 	# —— 原先的 `_deaths` 是同一件事的第二份计数(两份必然漂,且不会有任何断言变红)。
-	# ★ role 集合取 `_roster()`(在场 ∪ 已离开 ∪ 有数据的):离开者的阵亡数照样要下发给
+	# --role 集合取 `_roster()`(在场 ∪ 已离开 ∪ 有数据的):离开者的阵亡数照样要下发给
 	#   排行榜(它按 role 找行),漏了会让那一行**回落到 0 且不报错**。
 	var deaths := {}
 	for role in _roster():
@@ -359,15 +359,15 @@ func _broadcast_round_state() -> void:
 	}
 	if _round_state == RoundState.MATCH_OVER:
 		data["match_winner"] = _match_winner()
-	# 逐人数据:与 `destroyed` / `ground_weapons` / 3v3 同款纪律 —— **只在非空时带该键**。
-	# ★ 大乱斗**不带 `mvp`**(spec §3.6/§4 都没要求;结算页那一栏也不列 ACS) ——
+	# 逐人数据:与 `destroyed` / `ground_weapons` / 3v3 相同设计约束规范 —— **只在非空时带该键**。
+	# - 大乱斗**不带 `mvp`**(spec §3.6/§4 都没要求;结算页那一栏也不列 ACS) ——
 	#   加了它就会是一个没有读者的键。
 	var table := stats_payload()
 	if not table.is_empty():
 		data["stats"] = table
 	# 基类的广播样板,只多一个"只发在线 peer"(大乱斗里掉线者仍在 peer_by_role 里待清理,
 	# 而往正在断开的 peer 发包会打 channel 错误)。样板本身收在 MatchHost._rpc_all。
-	# ★ 2026-09-28 起本行改走 `_send_round_state`(它内部仍调 `_rpc_all`,并多并一个 `grace` 字段)。
+	# - 2026-09-28 起本行改走 `_send_round_state`(它内部仍调 `_rpc_all`,并多并一个 `grace` 字段)。
 	_send_round_state(data)
 
 
@@ -397,10 +397,10 @@ func mark_disconnected(role: int) -> void:
 	peer_by_role.erase(role)
 	_broadcast_round_state()
 	# 剩余**玩家** <2 → 直接终局(独行者判胜)。
-	# ★ 判据必须是 `players`(真人 + AI 补位)而不是 `peer_by_role`:AI 补位 role 由服务端驱动、
+	# - 判据必须是 `players`(真人 + AI 补位)而不是 `peer_by_role`:AI 补位 role 由服务端驱动、
 	#   没有 peer,压根不在 `peer_by_role` 里 —— 按 peer 数会在「2 真人 + 2 AI 掉 1 真人」时
 	#   把剩下 1 真人 + 2 AI 当场判终局(实测于 2026-09-14 审计)。最后一个真人离开时
-	#   server_main._on_peer_left 的 `_claims.is_empty() → quit(0)` 已兜住,不会僵持。
+	#   server_main._on_peer_left 的 `_claims.is_empty() → quit(0)` 已提供容错保障,不会僵持。
 	if players.size() < 2 and _round_state != RoundState.MATCH_OVER:
 		_finish_match()
 
@@ -408,10 +408,10 @@ func mark_disconnected(role: int) -> void:
 # 子弹直击归因:命中瞬间把射手记到受害者 meta(倒地边沿时读)
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
 	# 归因写入统一走 CombatFeedback 的单一入口(它同时写 last_damager + last_damager_time)。
-	# ★ 2026-09-27 起**基类也写同一笔**(`MatchCombat._on_bullet_hit` 第一行)⇒ 本覆写现在是
+	# - 2026-09-27 起**基类也写同一笔**(`MatchCombat._on_bullet_hit` 第一行) ->  本覆写现在是
 	#   **冗余的重复写**(`attribute()` 是幂等的纯元数据写入,重复调用无害);保留只为留下写点、
 	#   不作废以本处与 `TeamHost` 那份为锚点的既有登记与注释。
-	#   ★ **别据此把基类那一行删掉** —— 1v1 走 `MatchBootstrap` 直接建 `MatchHost`,
+	#   - **别据此把基类那一行删掉** —— 1v1 走 `MatchBootstrap` 直接建 `MatchHost`,
 	#     基类那一行是它**唯一**的子弹归因写端(守卫 `tests/probe/stats_delivery_probe` ⑦)。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)

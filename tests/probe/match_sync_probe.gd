@@ -77,7 +77,7 @@ func _test_1v1_spawns() -> void:
 	_check(got == want, "1v1: 两个出生点就是地图标定的 player/player2(得 %s,应为 %s)" % [
 			str(got), str(want)])
 	host.queue_free()
-	_ran["duel"] = true   # ★ 完成戳必须在最后一行(见上方说明)
+	_ran["duel"] = true   # - 完成戳必须在最后一行(见上方说明)
 
 
 # ── 大乱斗:必须是 start_on 算好传进来的**那一份**(不得重算 —— 见 royale_spawn_plan_probe)──
@@ -88,12 +88,12 @@ func _test_royale_spawns() -> void:
 			sp.get(1, Vector2i(-9, -9)) == ROYALE_GIVEN[1] and
 			sp.get(2, Vector2i(-9, -9)) == ROYALE_GIVEN[2]),
 			"大乱斗: role_spawns 就是传入的开局散点(得 %s,应为 %s)" % [str(sp), str(ROYALE_GIVEN)])
-	# ★ 还要证明它**不是** respawn 路径:再次调用必须给同一份(基类 _spawn_cell 第二次会返回
+	# - 还要证明它**不是** respawn 路径:再次调用必须给同一份(基类 _spawn_cell 第二次会返回
 	#   动态复活点,那正是必须覆写本方法的原因 —— 覆写漏了这里就会红)
 	_check(host.role_spawns() == sp,
 			"大乱斗: 重复取用返回同一份(未走动态复活点路径)")
 	host.queue_free()
-	_ran["royale"] = true   # ★ 完成戳必须在最后一行
+	_ran["royale"] = true   # - 完成戳必须在最后一行
 
 
 # ── 反向守卫:交接机制必须彻底消失 ──

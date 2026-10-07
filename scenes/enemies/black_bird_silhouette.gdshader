@@ -1,7 +1,7 @@
 shader_type canvas_item;
-// 黑鸟纯白剪影 shader:silhouette=1 时输出纯白剪影(保留贴图 alpha),否则正常渲染。
-// 受击/死亡/瞬移白闪统一走本参数(不走 modulate——Godot 4 自定义 canvas shader 覆写
-// COLOR 时,节点 modulate 不生效,所以黑鸟白闪不能靠 modulate)。
+// 纯白剪影着色器：当 silhouette = 1.0 时输出纯白剪影（保留原纹理 Alpha 通道），否则正常渲染。
+// 受击、死亡闪白以及传送特效统一通过此参数控制。在 Godot 4 中，自定义 CanvasItem 着色器重写
+// COLOR 顶点颜色后节点的 modulate 属性将被覆盖，因此黑鸟的高亮闪白通过着色器参数实现。
 uniform float silhouette : hint_range(0.0, 1.0) = 0.0;
 
 void fragment() {

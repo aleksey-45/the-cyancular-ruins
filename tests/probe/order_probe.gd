@@ -1,6 +1,7 @@
 extends SceneTree
-# 探针:实测一帧内 _unhandled_input / _physics_process / _process 的调用先后,
-# 用于确认"开火时向反方向行走弹道出问题"是否源于直接开火路径读到被移动覆盖的旧 facing。
+# 帧周期生命周期回调顺序验证探针：
+# 测量同一帧内 _unhandled_input / _physics_process / _process 的调用执行先后顺序，
+# 用于排查开火输入响应与物理更新之间的朝向状态同步时序。
 
 class Probe extends Node:
 	var tree: SceneTree

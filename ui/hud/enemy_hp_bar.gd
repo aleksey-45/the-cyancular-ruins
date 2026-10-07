@@ -1,7 +1,7 @@
 class_name EnemyHpBar
 extends Node2D
 
-# 对手头顶血条(可选视觉,实验分支 KikuchiHeinr):两段矩形,ratio 由快照 hp 驱动。
+# 对手头顶生命条(可选视觉,实验分支 KikuchiHeinr):两段矩形,ratio 由快照 hp 驱动。
 # 挂在 pvp_client 的 UI 层(不随副本旋转/翻转),位置每帧贴到对手头顶。
 
 const SIZE := Vector2(84, 9)

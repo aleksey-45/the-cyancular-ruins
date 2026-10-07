@@ -4,21 +4,21 @@ extends Node
 #
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 7200 res://tests/probe/royale_c2_probe.tscn
-#   (无参 = 大厅/裁判进程;它自己拉起两个客户端子进程。**跑前先确认 7777 空闲**。)
+#   (无参 = 大厅/裁判进程;它自己启动两个客户端子进程。**跑前先确认 7777 空闲**。)
 # 判据:裁判进程末行 `PROBE: ALL-OK` + 两个结果文件都是 OK(不能只看退出码)。
 #
 # ═══ 为什么需要它(批次 5 的验收线)═══
 # 设计 §5 批次 5 的验收是「大乱斗客户端的 rollback_count() 斜率与 1v1 同量级」,而**读数必须来自
 # 真链路** —— 只有真大厅 + 真 worker + 真 `royale_game` 客户端才跑得到 reconcile 那一段。
-# 光靠源码级扫描(「royale_game.gd 里有没有那几行」)是本仓被抓过四次的「假绿」形态:
+# 光靠源码级扫描(「royale_game.gd 里有没有那几行」)是本仓被抓过四次的「虚假通过（未有效测试）」形态:
 # 接线写对了但没生效时,扫描器照样绿。
 #
 # ═══ 分歧怎么**确定性**地造出来(本探针的关键设计)═══
 # C2 的分歧来自「服务器外部事件」——客户端不可预测的那一类。大乱斗里**必然发生**的一次是:
 #   c1 按 K 自杀 → 服务器校验通过后执行 force_down → 2s 后**复活并瞬移回出生点**。
 # 这次瞬移客户端不可预测,于是:
-#   · reconcile 正常 → 本地玩家被 restore+重放拉回出生点,与权威快照收敛(断言绿);
-#   · reconcile 被删/没接 → 本地玩家永远停在倒地处、永远 downed(断言红)。
+#   - reconcile 正常 → 本地玩家被 restore+重放拉回出生点,与权威快照收敛(断言绿);
+#   - reconcile 被删/没接 → 本地玩家永远停在倒地处、永远 downed(断言红)。
 # 这就是设计里那条反证「删掉 reconcile() → 分歧不收敛,读数可见」的可执行形式。
 #
 # ⚠ 关于「K 自杀是不是广播的」(本探针设计的前提,见 royale_c2_watcher.gd 的 A②):
@@ -32,7 +32,7 @@ const RESULT_PREFIX := "royale_c2_probe_"
 const GO_FILE := "user://royale_c2_probe_go.txt"
 const ORCH_DEADLINE := 90.0
 
-# 本探针自当大厅时客户端要连的地址。★ 与 `tests/harness/royale_c2_watcher.gd` 的同名常量**必须同值**
+# 本探针自当大厅时客户端要连的地址。-  与 `tests/harness/royale_c2_watcher.gd` 的同名常量**必须同值**
 # (那边用它核对"确实连的是本探针的大厅",见其 `_stage_lobby` 的守卫)。
 const LOBBY_ADDR := "127.0.0.1"
 
@@ -55,7 +55,7 @@ func _ready() -> void:
 		_run_client()
 
 
-# ── 裁判:起大厅 + 拉起 c1/c2 子进程 + 等两人进房后开局 + 收结果 ──
+# ── 裁判:起大厅 + 启动 c1/c2 子进程 + 等两人进房后开局 + 收结果 ──
 func _run_orchestrator() -> void:
 	var err := NetBus.start_server()
 	if err != OK:
@@ -64,7 +64,7 @@ func _run_orchestrator() -> void:
 		return
 	_room_mgr = RoomManager.new()
 	add_child(_room_mgr)
-	# 清掉上一趟的产物(结果 + 引擎日志)。★ 引擎日志只能在这里清:子进程启动时
+	# 清掉上一趟的产物(结果 + 引擎日志)。-  引擎日志只能在这里清:子进程启动时
 	# `--log-file` 就把文件打开了,客户端自己再去删会把正在写的文件删掉。
 	for f in ["c1", "c2"]:
 		for suffix in ["result", "godotlog"]:
@@ -75,13 +75,13 @@ func _run_orchestrator() -> void:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(GO_FILE))
 	NetBusExt.royale_create_requested.connect(_on_room_created)
 	var exe := OS.get_executable_path()
-	# 调试口(与 royale_bound_probe 同款):`-- --nospawn` 时只当大厅,客户端由人工在前台另起 ——
+	# 调试口(与 royale_bound_probe 相同机制):`--nospawn` 时只当大厅,客户端由人工在前台另起 ——
 	# 子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄),要读客户端的报错只能这样。
 	if OS.get_cmdline_user_args().has("--nospawn"):
 		print("PROBE: --nospawn:不拉子进程,请另起两个 `-- --role=c1` / `-- --role=c2`")
 		return
 	for role in ["c1", "c2"]:
-		# ★ `--log-file` 不能省:客户端子进程的 stdout/stderr 父进程**看不到**(Windows CreateProcess
+		# - `--log-file` 不能省:客户端子进程的 stdout/stderr 父进程**看不到**(Windows CreateProcess
 		#   不继承句柄),没有它就只能看到"进程没了、结果文件也没写"这种无法归因的现象。
 		#   实测踩过:客户端在 PLAYING 后 ~1s 没了,靠这份引擎日志才看得到真正的报错。
 		OS.create_process(exe, PackedStringArray(["--headless", "--path",
@@ -110,10 +110,10 @@ func _process(delta: float) -> void:
 				_read_result("c2"), _client_logs()])
 		get_tree().quit(1)
 		return
-	# ★ 两边都出结果 = 两个客户端都收工了 ⇒ 立刻收尾,**不必等到 stage 2**。
+	# - 两边都出结果 = 两个客户端都收工了  ->  立刻收尾,**不必等到 stage 2**。
 	#   早失败那类(如 watcher 的"连错服务器"守卫)在 0.3s 就写完结果,而 stage 0/1 原先不读结果
-	#   ⇒ 裁判干等满 90s 才把同一份 FAIL 打出来(实测:那 90s 里它什么都没做)。
-	#   判据与下面 stage 2 的**完全同款** —— 仍要求**两边都**出结果,理由见 `_finish_from_results`。
+	#    ->  裁判干等满 90s 才把同一份 FAIL 打印输出(实测:那 90s 里它什么都没做)。
+	#   判据与下面 stage 2 的**完全相同机制** —— 仍要求**两边都**出结果,理由见 `_finish_from_results`。
 	if _both_clients_done():
 		return
 	match _stage:
@@ -128,7 +128,7 @@ func _process(delta: float) -> void:
 		1:
 			if _room_players() < 2:
 				return   # 等 c2 加入(ROYALE_MIN_PLAYERS=2)
-			_rm().royale_start(_c1_peer)   # 等价于房主点「开始游戏」→ 拉起 worker
+			_rm().royale_start(_c1_peer)   # 等价于房主点「开始游戏」→ 启动 worker
 			print("PROBE: 房内 2 人,已发起开局(拉起 worker 子进程)")
 			_stage = 2
 		2:
@@ -162,13 +162,13 @@ func _has_result(r: String) -> bool:
 	return r.begins_with("OK") or r.begins_with("FAIL")
 
 
-# ★ 两个客户端**都**出结果了吗?这是收工的**唯一**判据。
-#   ★★ **绝不能一见到 FAIL 就 quit**:两个客户端是**并发**的,任何一个先退都会改变另一个的
-#   处境(大乱斗「剩余 <2 人即终局」,另一方的复活会被当场掐掉)。一见到 FAIL 就走 = 让"先失败的
+# - 两个客户端**都**出结果了吗?这是收工的**唯一**判据。
+#   注意： **绝不能一见到 FAIL 就 quit**:两个客户端是**并发**的,任何一个先退都会改变另一个的
+#   处境(大乱斗「剩余 <2 人即终局」,另一方的复活会被当场超时中断)。一见到 FAIL 就走 = 让"先失败的
 #   那个"把"还没跑完的那个"带下水,报告里只留一个 `(未完成)` 且看不出为什么。本探针第一版实测
 #   踩到的正是这个:c2 断言完(必然带 A① 残留 → FAIL)先出结果,裁判当场退出,c1 死在"等复活"里。
-#   ★ 提在 `_process` 顶部(而不是只放 stage 2)是为了**早失败**那类:它们在 0.3s 就写完结果,
-#   那时裁判还在 stage 0/1,原先不读结果 ⇒ 干等满 90s 才把同一份 FAIL 打出来。
+#   - 提在 `_process` 顶部(而不是只放 stage 2)是为了**早失败**那类:它们在 0.3s 就写完结果,
+#   那时裁判还在 stage 0/1,原先不读结果  ->  干等满 90s 才把同一份 FAIL 打印输出。
 func _both_clients_done() -> bool:
 	var r1: String = _read_result("c1")
 	var r2: String = _read_result("c2")
@@ -179,7 +179,7 @@ func _both_clients_done() -> bool:
 
 
 # 两端都有结果了 → 打印合并判词并按成败退出。结果文件只在客户端**收工**时才写,
-# 故「两边都有」⇒ 这一趟已经结束,任何阶段都能收尾。
+# 故「两边都有」 ->  这一趟已经结束,任何阶段都能收尾。
 func _finish_from_results(r1: String, r2: String) -> void:
 	var ok := r1.begins_with("OK") and r2.begins_with("OK")
 	print(("PROBE: ALL-OK" if ok else "PROBE: FAIL") + "\n  c1: %s\n  c2: %s" % [r1, r2])
@@ -188,7 +188,7 @@ func _finish_from_results(r1: String, r2: String) -> void:
 	get_tree().quit(0 if ok else 1)
 
 
-# 客户端子进程的 stdout 父进程看不到(Windows 不继承句柄)→ 读两样落盘的东西并打出来:
+# 客户端子进程的 stdout 父进程看不到(Windows 不继承句柄)→ 读两样落盘的东西并打印输出:
 #   ① 观察者自己写的 .log(阶段轨迹 —— 能看出卡在哪一步);
 #   ② 引擎的 .godotlog(`--log-file` 落的:print + 所有 ERROR/SCRIPT ERROR,崩溃原因在这里)。
 func _client_logs() -> String:
@@ -222,16 +222,16 @@ func _run_client() -> void:
 	var lp := "user://%s%s.log" % [RESULT_PREFIX, _role]
 	if FileAccess.file_exists(lp):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(lp))
-	# ★★ **必须把地址拨到本探针的大厅**。生产默认是**云服**(`PvpSession.server_address` 初值
+	# 注意： **必须把地址拨到本探针的大厅**。生产默认是**云服**(`PvpSession.server_address` 初值
 	#   120.53.107.140),而客户端这一侧是**实例化真 `mp_lobby.tscn`** 让它自己连 ——
 	#   不拨的话两端会静默连到**云上那台真服务器**(还会在它上面真的建/进房间),
-	#   而编排器(本进程的 7777 大厅)**一条 `玩家连入` 都收不到** ⇒ `royale_create_requested`
-	#   永不发射 ⇒ `go.txt` 恒空、c1 卡阶段 1、c2 卡阶段 0,最后只给一个 90 秒超时。
-	#   ★ 这个坑**静默且极难归因**:日志里满是 c1/c2 自己的「已连接服务器」,看着像连上了。
+	#   而编排器(本进程的 7777 大厅)**一条 `玩家连入` 都收不到**  ->  `royale_create_requested`
+	#   永不发射  ->  `go.txt` 恒空、c1 卡阶段 1、c2 卡阶段 0,最后只给一个 90 秒超时。
+	#   - 这个坑**静默且极难归因**:日志里满是 c1/c2 自己的「已连接服务器」,看着像连上了。
 	#   范本:`tests/harness/rejoin_watcher.gd` 的 `_on_node_added`(那边更麻烦 —— 它连 7777 都不许碰,
 	#   故要在页 `_ready` **之前**预置 `_connected/_connected_addr`);本探针要的正是真连接,
 	#   故只需在实例化**之前**拨地址即可。
-	#   ★ 守卫:`royale_c2_watcher._stage_lobby` 会核对 `_connected_addr`,连错就当场红。
+	#   - 守卫:`royale_c2_watcher._stage_lobby` 会核对 `_connected_addr`,连错则直接断言失败。
 	PvpSession.server_address = LOBBY_ADDR
 	var watcher: Node = load("res://tests/harness/royale_c2_watcher.gd").new()
 	watcher.who = _role

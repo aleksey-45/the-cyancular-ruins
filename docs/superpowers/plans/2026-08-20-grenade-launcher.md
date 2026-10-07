@@ -12,7 +12,7 @@
 
 - Godot 二进制（不在 PATH）：
   - 编辑器：`D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64.exe`
-  - headless console（冒烟/import）：`D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe`
+  --headless console（冒烟/import）：`D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe`
 - **测试由用户自己运行**（项目记忆约定）：执行者写完测试/实现后**不要自己跑**，把运行命令交给用户执行并回报结果。
 - 现有冒烟 `res://tests/enemy_logic_smoke.gd` 必须保持 `SMOKE OK`（回归门禁）。
 - 新建含 `class_name` 的 `.gd` 后，必须跑一次 `--headless --import` 注册全局类缓存，否则 `Explosion` 等类名解析失败。

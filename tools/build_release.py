@@ -35,7 +35,7 @@ def _write_text_lf(path: str, text: str) -> None:
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))   # tools/
 PROJECT = os.path.dirname(TOOLS)                       # 仓库根
-# 引擎可执行文件。★ 这里是 **标准编辑器**(非 console;导出走编辑器 exe,与 tests/ 那些
+# 引擎可执行文件。-  这里是 **标准编辑器**(非 console;导出走编辑器 exe,与 tests/ 那些
 # 跑 headless 用的 console 版是**两个不同的二进制**)。换机器/换版本可用环境变量覆盖,
 # 不必改本文件 —— 同类散落的本机绝对路径一并收进 tests/env.sh 的 $GODOT(那里是 console 版)。
 EDITOR = os.environ.get("GODOT_EDITOR") or \
@@ -57,8 +57,8 @@ from archive_build import read_project_version, version_tag, release_version, re
 
 
 # 导出前把「版本号 + 构建时间戳」写进 core/build_info.gd,导出后还原 —— 这样:
-#   · 发布 exe 在**没有 git 的机器**上也能显示准确版本与构建时间(main_menu 原先从 git 读);
-#   · 工作区不会因为这个文件而变脏(`git status` 干净),日常开发仍显示 dev 占位。
+#   - 发布 exe 在**没有 git 的机器**上也能显示准确版本与构建时间(main_menu 原先从 git 读);
+#   - 工作区不会因为这个文件而变脏(`git status` 干净),日常开发仍显示 dev 占位。
 # 返回原文,交给调用方在 finally 里还原。
 def stamp_build_info(version: str, stamp: str) -> str:
     try:
@@ -66,7 +66,7 @@ def stamp_build_info(version: str, stamp: str) -> str:
             original = f.read()
     except OSError:
         sys.exit("找不到 %s" % BUILD_INFO)
-    # ★ 只替换那两行 const,**绝不整份重写**:
+    # - 只替换那两行 const,**绝不整份重写**:
     #   整份重写等于把 build_info.gd 里除这两个常量之外的内容(如 display())从**发布版**里抹掉,
     #   而编辑器里跑的是入库那份 → 开发时一切正常、导出后 `Static function "display()" not
     #   found in base "res://core/config/build_info.gd"` 直接解析失败(2026-09-12 实测踩到,客户端/
@@ -85,7 +85,7 @@ def stamp_build_info(version: str, stamp: str) -> str:
 
 
 # 导出后**自己跑一下产物**:至少确认它起得来、没有脚本解析错误。
-# 为什么必须做:脚本错误只在**发布版**才现形的那一类(比如 build_info.gd 被覆盖掉一段)
+# 为什么必须做:脚本错误只在**发布版**才暴露异常的那一类(比如 build_info.gd 被覆盖掉一段)
 # 在编辑器里完全看不出来,而"导完就发"的流程没有任何别的环节会发现它。
 # 判据只认脚本级致命错 —— WARNING/普通 ERROR 不拦(发布版有很多无害噪音)。
 def _smoke_root() -> str:
@@ -105,17 +105,17 @@ def _smoke_root() -> str:
 
 def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
-    # ★ extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
+    # - extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
     #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
     #   **起的是大厅、还在 7777 上 bind**,既没跑到 worker 分支、又和服主正在跑的大厅抢端口
     #   (2026-09-15 实测:日志打的是「服务器就绪…(大厅 7777)」而不是「worker 就绪…(port P)」)。
     #
-    # ★★ 两条 2026-10-04 加的(修两个**让冒烟假绿**的洞;当时段错误被判成 OK):
+    # 注意： 两条 2026-10-04 加的(修两个**让冒烟虚假通过（未有效测试）**的洞;当时段错误被判成 OK):
     #   ① **必须拷到项目目录之外跑** —— RELEASE.md §1.3 早就写着"在项目目录里跑时 Godot 会
     #      从本地文件系统补齐/重扫资源,会掩盖打包漏项"。实测同一份 v1.2.0 产物:
-    #      `cwd=项目目录` ⇒ **SIGSEGV(退出码 139)**;拷进干净临时目录 ⇒ 退出码 0。
+    #      `cwd=项目目录`  ->  **SIGSEGV(退出码 139)**;拷进干净临时目录  ->  退出码 0。
     #      而旧版 v1.1.4 在项目目录里是 0 —— 也就是说"在项目里跑"这件事**已经不可靠了**。
-    #   ② **必须查返回码** —— 崩溃(SIGSEGV/异常退出)不会打 `SCRIPT ERROR` ⇒
+    #   ② **必须查返回码** —— 崩溃(SIGSEGV/异常退出)不会打 `SCRIPT ERROR`  -> 
     #      上面那段文本过滤把它读成"OK(无脚本级错误)",而这正是本文件反复警惕的
     #      "零脚本错误地跑错分支"的**升级版**:零脚本错误地**根本没跑起来**。
     tmp = tempfile.mkdtemp(prefix=".smoke_", dir=_smoke_root())
@@ -139,7 +139,7 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
            if "SCRIPT ERROR" in ln or "Parse Error" in ln or "Failed to load script" in ln]
     if bad:
         sys.exit("冒烟失败:%s 起不来(脚本级错误)\n  %s" % (os.path.basename(exe), "\n  ".join(bad[:6])))
-    # ★ 光"没报错"是不够的:上面那个 `--` 坑正是**零脚本错误地跑错分支**,门照样绿。
+    # - 光"没报错"是不够的:上面那个 `--` 坑正是**零脚本错误地跑错分支**,门照样绿。
     #   故调用方传 expect 时,那段文本必须真的出现(如服务端必须打「worker 就绪」)。
     if expect and expect not in out:
         sys.exit("冒烟失败:%s 起来了但**没走预期的分支**(输出里找不到「%s」)—— "
@@ -152,10 +152,10 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
 # 守的是什么:`data/weapons.json` 进不进 `.pck` **只由一次真导出回答**。真没进包时
 #   `WeaponRegistry._ensure_loaded()` 只打**一条** `push_error`(`core/sim/weapon_registry.gd`,
 #   "读不到 %s —— 导出包里没有它?" 之后**立刻 return**),**只在 stderr**、**不影响退出码**
-#   ⇒ 上面那段"无脚本级错误"的过滤**抓不到它**,光看"游戏起得来"也看不出来 ——
+#    ->  上面那段"无脚本级错误"的过滤**抓不到它**,光看"游戏起得来"也看不出来 ——
 #   必须看主菜单禁用武器列表里那几把枪在不在(那正是本函数自动化的东西)。
-# ★ 期望值取自**仓库里那份 json 本身**(单一来源),不是写死在脚本里的数字 ——
-#   写死的话"加第 7 把枪"要改两处,而漏改的那次会变成**假红**。
+# - 期望值取自**仓库里那份 json 本身**(单一来源),不是写死在脚本里的数字 ——
+#   写死的话"加第 7 把枪"要改两处,而漏改的那次会变成**虚假失败（测试用例误报）**。
 WEAPONS_JSON = os.path.join(PROJECT, "data", "weapons.json")
 
 
@@ -206,7 +206,7 @@ def check_weapon_registry(out: str) -> None:
 def export(preset: str, out: str) -> None:
     print("== 导出 [%s] -> %s" % (preset, os.path.basename(out)))
     # Godot 控制台输出是 UTF-8(含中文进度行);按 locale(gbk)解码会在 reader 线程炸
-    # UnicodeDecodeError → 显式 utf-8 + replace,坏字节以替换符兜底、不中断导出
+    # UnicodeDecodeError → 显式 utf-8 + replace,坏字节以替换符保底处理、不中断导出
     r = subprocess.run([EDITOR, "--headless", "--export-release", preset, out],
                        cwd=PROJECT, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
@@ -237,7 +237,7 @@ def main() -> None:
         sys.exit("读不到 project.godot 的 config/version —— 版本号必须有,否则文件名与游戏内都无从标识")
 
     # 游戏内显示用带前缀的 v.1.1.4(project.godot 里只能写数字,Godot 的导出预设校验它)
-    # ★ 写进 build_info 的是**版本段**(`RoF_v.0.5.0`),时间戳另由 BUILD_STAMP 带 ⇒
+    # - 写进 build_info 的是**版本段**(`RoF_v.0.5.0`),时间戳另由 BUILD_STAMP 带  -> 
     #   `display()` 拼出 `RoF_v.0.5.0_202610040204`,不会出现时间戳写两遍。
     original = stamp_build_info(release_version(version), stamp)
     try:
@@ -248,7 +248,7 @@ def main() -> None:
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         print((r.stdout or "").strip() or (r.stderr or "").strip())
         # 导完立刻各跑一次产物(客户端直接起;服务端走 --worker 分支 —— 那条**不碰 7777**,
-        # 不会把服主正在跑的大厅杀掉,见 server_main.gd 的 is_worker 早退)
+        # 不会把服主正在跑的大厅终止,见 server_main.gd 的 is_worker 提前返回)
         smoke_check(CLIENT_OUT, [])
         # 第二趟专量注册表:开关在 `--` 之后,客户端打一行 `[registry] weapons=… ids=[…]`,
         # 这里拿仓库那份 json 与它逐条对账(理由见 check_weapon_registry 上方)
@@ -256,7 +256,7 @@ def main() -> None:
                                           expect="[registry] weapons="))
         smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
     finally:
-        # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
+        # - 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
         _write_text_lf(_BUILD_INFO_REL, original)
 

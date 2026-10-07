@@ -1,5 +1,5 @@
 @echo off
-rem Cyancular Ruins - stripped template build
+rem Cyancular Ruins - 轻量裁剪导出模板编译脚本
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64 >nul
 if errorlevel 1 (
   echo VCVARSALL_FAILED

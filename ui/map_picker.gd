@@ -4,9 +4,9 @@ extends VBoxContainer
 # 选图控件(单机开局面板 / 三个联机建房面板**共用**):每个地图一张卡 —— 开局地形简略图 +
 # 地图名 + 尺寸 + 联机可用性角标;首项是"随机"(=保留上游行为:进图时从目录里现挑一份)。
 #
-# ★ 为什么做成控件而不是各页各写一遍:三处 UI(单机/1v1/大乱斗/3v3)要的是同一件事,
+# - 为什么做成控件而不是各页各写一遍:三处 UI(单机/1v1/大乱斗/3v3)要的是同一件事,
 #   差在"选中的值往哪存" —— 那由调用方接 `picked` 信号决定,本控件只管选。
-# ★ 缩略图来自 `MapCatalog.build_image`(纯 Image,可 `-s` 验内容),这里只负责包纹理与版式。
+# - 缩略图来自 `MapCatalog.build_image`(纯 Image,可 `-s` 验内容),这里只负责包纹理与版式。
 
 signal picked(path: String)
 
@@ -25,8 +25,8 @@ var _box_on: StyleBoxFlat
 func setup(initial: String = "", columns := 2, max_h := 320.0,
 		title := "地　图(点选;缩略图 = 开局地形简略图)") -> void:
 	add_theme_constant_override("separation", 8)
-	# 标题 = 同款标题带(与各页面 / 面板里的区块标题同一个味道)。
-	# ★ 原先是一条裸的 `C_ACCENT` Label ⇒ 三处用到它的面板(单人开局/1v1/大乱斗/3v3 建房)
+	# 标题 = 相同标题栏(与各页面 / 面板里的区块标题保持统一视觉风格)。
+	# - 原先是一条裸的 `C_ACCENT` Label  ->  三处用到它的面板(单人开局/1v1/大乱斗/3v3 建房)
 	#   里,别的区块标题都是金色标题带、只有它是青色裸字,一屏里两套标题风格。
 	add_child(UiFactory.header_strip(title, 32))
 

@@ -6,32 +6,32 @@ extends ProbeBase
 #   "$GODOT" --path . --quit-after 3600 res://tests/probe/hue_tint_probe.tscn
 # 判据:grep 文本 `KH HUE-TINT PROBE: ALL-OK`(不看退出码;探针挂住时一行都不打印)。
 #
-# 存在理由(2026-09-19 用户裁定那一批 + 2026-09-20 的机制统一):
-#   · `player_p2_hue.gdshader` 曾有 `COLOR = tex * COLOR` 的**重复乘纹理** bug —— 而当时
+# 存在理由(2026-09-19 设计约定那一批 + 2026-09-20 的机制统一):
+#   - `player_p2_hue.gdshader` 曾有 `COLOR = tex * COLOR` 的**重复乘纹理** bug —— 而当时
 #     **全仓没有一个探针会因它复活而变红**(改回去一切照旧绿,只有人眼看图才发现)。
 #     守卫 A 把"入参 COLOR 已含纹理"这条**语义**钉成像素级断言:shader 一旦退回 tex*COLOR、
 #     或 Godot 改了 COLOR 的语义,它都会红。
-#     ★ 2026-09-20 起这条守的是**个人色相**那条路(大乱斗的对手色 / 大乱斗+3v3 自己的自选色)——
+#     - 2026-09-20 起这条守的是**个人色相**那条路(大乱斗的对手色 / 大乱斗+3v3 自己的自选色)——
 #       1v1 的 P2 已改走 modulate 比值,**不再经过本 shader**;shader 本身仍在生产里,故守卫照旧。
-#   · 1v1 的个人色相**整体停用**后,"P1 恒蓝 / P2 恒青"成了硬口径;守卫 B 从
+#   - 1v1 的个人色相**整体停用**后,"P1 恒蓝 / P2 恒青"成了硬口径;守卫 B 从
 #     **生产的 `_apply_p2_tint()`** → 渲染像素 → 队色 token 整条链钉住。
-#     ★ 2026-09-20 起 P2 与 3v3 队 2 用的是**同一个 token、同一个机制**(比值法),不再是
+#     - 2026-09-20 起 P2 与 3v3 队 2 用的是**同一个 token、同一个机制**(比值法),不再是
 #       "两个机制凑出近色";守卫 B 因此同时钉住三条:① role 1 不染本地那具(蓝)、
 #       ② role 1 染对手副本(青)、③ role 2 染本地那具(青 == 队 2 token)。
-#   · 守卫 D 钉 `C_TEAM_A == BODY_BASE_COLOR == player.png 众数`:改了本体主色却没改队色 ⇒
+#   - 守卫 D 钉 `C_TEAM_A == BODY_BASE_COLOR == player.png 众数`:改了本体主色却没改队色  -> 
 #     两队一起偏,但**仍分得出谁是谁**,所以最容易漏(team_room_smoke 登记过这条局限)。
-#   · 守卫 C 是**反向**的:大乱斗必须**继续**消费 peer_hues(别被"1v1 停用"顺手删掉)。
-#   · 守卫 E(2026-09-21,用户报「3v3 青队玩家还是看见自己是蓝色的」):3v3 的**自己**那具
-#     必须也是队色 —— 它此前传的是 `Settings.pvp_color_hue`(默认 0 = 不改色 ⇒ 身体恒为本体蓝
+#   - 守卫 C 是**反向**的:大乱斗必须**继续**消费 peer_hues(别被"1v1 停用"随意删除掉)。
+#   - 守卫 E(2026-09-21,用户报「3v3 青队玩家还是看见自己是蓝色的」):3v3 的**自己**那具
+#     必须也是队色 —— 它此前传的是 `Settings.pvp_color_hue`(默认 0 = 不改色  ->  身体恒为本体蓝
 #     = 队 1 色)。这条同时补上 docs/eng/modes.md 登记过的那个**守卫缺口**(`team_game` 把颜色来源改错时
 #     **一个探针都不会红**):① 走生产的 `_refresh_team_colors()` 看像素;② `team_game.gd` 对
 #     `pvp_color_hue` 零引用;③ 颜色钩子必须消费 `teams` 且不进 `_apply_peer_hues`。
 #
-# ★ 染色一律走**生产那份代码**:
-#   · 1v1 那三具调用 `pvp_game._apply_p2_tint()` 本体(离线 `.new()`,把 `PvpSession.role` /
+# - 染色一律走**生产那份代码**:
+#   - 1v1 那三具调用 `pvp_game._apply_p2_tint()` 本体(离线 `.new()`,把 `PvpSession.role` /
 #     `_local` / `_remote_replica` 摆好即可)—— 探针**不抄**"染哪一具、染成什么"。
-#   · 3v3 那两具走 `PvpMatchClient._apply_tint`(与生产同一个入口)。
-#   只抄公式的话会出现"探针和生产各自漂移、仍全绿"。
+#   - 3v3 那两具走 `PvpMatchClient._apply_tint`(与生产同一个入口)。
+#   只抄公式的话会出现"探针和生产各自漂移、仍测试全部通过"。
 
 const OUT_DIR := "res://.superpowers/sdd"
 const PLAYER_SCENE := "res://scenes/player/player.tscn"
@@ -42,7 +42,7 @@ const TEAM_GAME := "res://scenes/team_game.gd"
 const BODY_TEXTURE := "res://assets/textures/player.png"
 
 # 头顶 ID 的底板实色(`ui/world_label.gd` 的 `黑 0.1` 压在 ui/ui_factory.gd 的 C_PLATE 注释记的地图开阔区
-# #78969F 上)= #6C8790。用它当探针底 ⇒ 取到的色就是实机上那一条(与队色对比度同源)。
+# #78969F 上)= #6C8790。用它当探针底  ->  取到的色就是实机上那一条(与队色对比度同源)。
 const BACKDROP := Color(0x6C / 255.0, 0x87 / 255.0, 0x90 / 255.0)
 const BODY_SCALE := 4.0        # 48×48 的帧 → 192px
 const ROW1_Y := 340.0          # 1v1:P1 本地 / P2 本地 / 控制组
@@ -51,13 +51,13 @@ const ROW3_Y := 1240.0         # 3v3:**自己**(队 2)那具 —— 守卫 E 用
 const XS := [280.0, 960.0, 1640.0]
 
 # 守卫 E 的**确定性**前提:探针把自选色相临时摆成 120°(绿)。
-# 旧实现(`_apply_tint(sprite, Settings.pvp_color_hue)`,即"自己仍是自选色")会把身体染成绿 ⇒
-# 与队 2 的青**不同** ⇒ 守卫 E ① 红;而若自选色相停在默认 0(不改色),旧实现留下的身体是本体蓝
+# 旧实现(`_apply_tint(sprite, Settings.pvp_color_hue)`,即"自己仍是自选色")会把身体染成绿  -> 
+# 与队 2 的青**不同**  ->  守卫 E ① 红;而若自选色相停在默认 0(不改色),旧实现留下的身体是本体蓝
 # —— 那**同样**不等于队 2 的 token,故两种情况都红。摆 120° 只是让"红"更显眼、不依赖存档值。
 const FALSIFY_HUE_DEG := 120.0
 
 # 「青」区间(用户 2026-09-19 裁定:青绿区间 165~185 的偏绿侧;2026-09-20 把队 2 / P2 的色相
-# 定到 185 整)。★ 上界那 +0.5° 是 **8bit 量化余量**,不是放宽口径:`#80F4FF` 是 H185 S50 V100
+# 定到 185 整)。-  上界那 +0.5° 是 **8bit 量化余量**,不是放宽口径:`#80F4FF` 是 H185 S50 V100
 # 量化到 8bit 的结果,把它读回 HSV 得到 **185.20°**(量化前恰是 185.00)——
 # 上界卡死在 185.0 会把**用户指定的那个色**判成越界。真正硬的那条是守卫 B ③(逐字节等于 token),
 # 这条只管"它还在青色区间里"(token 漂到绿 / 漂到浅蓝时它才该红)。
@@ -79,7 +79,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
-	# ── 前置:两样都要在(缺一个就早退,别让后面 deref 崩成"没跑完")──
+	# ── 前置:两样都要在(缺一个就提前返回,别让后面 deref 崩成"没跑完")──
 	var ps: PackedScene = load(PLAYER_SCENE)
 	if ps == null:
 		_check(false, "player.tscn 载入失败(守卫无从成立)")
@@ -101,7 +101,7 @@ func _run() -> void:
 	# ② P2:role 2 的**本地玩家** —— 生产染它(实测色须 == `C_TEAM_B`)
 	_spr["P2"] = _spawn(ps, "P2", Vector2(XS[1], ROW1_Y))
 	# ③ 控制组:同一个 shader 但 `hue_shift = 0` —— **语义探针**专用配置
-	#    (它要与 P1 逐像素相同;生产路径在 0 时早退、不挂 shader,故 P1 就是"不挂 shader"那一份)
+	#    (它要与 P1 逐像素相同;生产路径在 0 时提前返回、不挂 shader,故 P1 就是"不挂 shader"那一份)
 	_spr["控制组"] = _spawn(ps, "控制组", Vector2(XS[2], ROW1_Y))
 	var mat := ShaderMaterial.new()
 	mat.shader = load(SHADER_PATH)
@@ -118,9 +118,9 @@ func _run() -> void:
 	# ⑦ 3v3 的**自己**(守卫 E):队 2 的人看自己那具 —— 生产该把它染成队 2 色
 	_spr["3v3自己"] = _spawn(ps, "3v3自己", Vector2(XS[2], ROW3_Y))
 
-	# ★★ 1v1 那三具的染色**由生产自己做**(见 `_apply_production_p2_tint`)。
+	# 注意： 1v1 那三具的染色**由生产自己做**(见 `_apply_production_p2_tint`)。
 	_apply_production_p2_tint(pvp_script)
-	# ★★ 3v3「自己」那具同样由**生产**做(见 `_apply_production_team_self_tint`)。
+	# 注意： 3v3「自己」那具同样由**生产**做(见 `_apply_production_team_self_tint`)。
 	_apply_production_team_self_tint()
 
 	await _frames(6)
@@ -136,10 +136,10 @@ func _run() -> void:
 	_guard_e_team_self_tint()
 
 
-# ── ★★ 染色**不抄**:把 `pvp_game._apply_p2_tint()` 本体的两个分支各走一遍 ──
+# ── 注意： 染色**不抄**:把 `pvp_game._apply_p2_tint()` 本体的两个分支各走一遍 ──
 # 离线 `.new()`(不进树;该函数只读 `PvpSession.role` / `_local` / `_remote_replica` 三个输入,
-# 不读别的成员状态)⇒ 测的就是生产那份代码:改坏"染哪一具 / 染成什么 / 用什么机制"都会红。
-# ★ 为什么不能由探针自己调 `_apply_tint(..., C_TEAM_B)`:那样③就退化成"把 token 传进去、
+# 不读别的成员状态) ->  测的就是生产那份代码:改坏"染哪一具 / 染成什么 / 用什么机制"都会红。
+# - 为什么不能由探针自己调 `_apply_tint(..., C_TEAM_B)`:那样③就退化成"把 token 传进去、
 #   再把 token 读出来"(恒真),**验不到生产到底有没有这么染**。
 func _apply_production_p2_tint(pvp_script: GDScript) -> void:
 	var game: Node2D = pvp_script.new()
@@ -159,15 +159,15 @@ func _apply_production_p2_tint(pvp_script: GDScript) -> void:
 	game.call("_apply_p2_tint")
 	PvpSession.role = saved_role
 	game.free()
-	# 早退守卫:三具根都在,否则上面 `game.set(..., null)` 会让生产静默什么都不染
+	# 提前返回守卫:三具根都在,否则上面 `game.set(..., null)` 会让生产静默什么都不染
 	_check(_roots.has("P1") and _roots.has("P2") and _roots.has("P2副本"),
 			"探针自己没备齐三具身体根(生产染色断言无从成立)")
 
 
-# ── ★★ 3v3「自己」那具的染色也**不抄**:把 `team_game._refresh_team_colors()` 本体走一遍 ──
+# ── 注意： 3v3「自己」那具的染色也**不抄**:把 `team_game._refresh_team_colors()` 本体走一遍 ──
 # 只摆好它要读的四个输入(`_local` / `_replicas` / `_teams` / `PvpSession.role`),其余不碰
 # —— 该函数只读这些(`_refresh_names` 里那张 `_id_labels` 表默认是空的,不触任何节点)。
-# ★ 为什么必须走生产函数而不是探针自己调 `_apply_tint(..., C_TEAM_B)`:后者恒真,
+# - 为什么必须走生产函数而不是探针自己调 `_apply_tint(..., C_TEAM_B)`:后者恒真,
 #   **验不到"生产到底有没有这么染"** —— 而本守卫要守的正是那一处(2026-09-21 用户报的
 #   「3v3 青队玩家还是看见自己是蓝色的」就是那里传错了来源)。
 func _apply_production_team_self_tint() -> void:
@@ -195,11 +195,11 @@ func _apply_production_team_self_tint() -> void:
 
 # ── 守卫 A:shader 的 `COLOR` 语义(入参已含纹理)──
 # 判据:`hue_shift = 0` 的 shader 必须与"不挂 shader"**逐像素相同**。
-#   · 若入参 COLOR.rgb 里没有纹理(只有白 modulate),shift 0 会输出**纯白** ⇒ 红;
-#   · 若 shader 退回 `COLOR = tex * COLOR`,输出是 `tex²`(更暗) ⇒ 红。
+#   - 若入参 COLOR.rgb 里没有纹理(只有白 modulate),shift 0 会输出**纯白**  ->  红;
+#   - 若 shader 退回 `COLOR = tex * COLOR`,输出是 `tex²`(更暗)  ->  红。
 # 基线(2026-09-19 实测):修复后 36864 点 0 差异 / 旧实现 17424 点不同(47.3%)。
-# ★ 本 shader 2026-09-20 起只服务**个人色相**(大乱斗对手色 / 大乱斗+3v3 自己的自选色),
-#   1v1 的 P2 已改走 modulate 比值 ⇒ 对照用的"不挂 shader"那一份就是 P1(生产不染它)。
+# - 本 shader 2026-09-20 起只服务**个人色相**(大乱斗对手色 / 大乱斗+3v3 自己的自选色),
+#   1v1 的 P2 已改走 modulate 比值  ->  对照用的"不挂 shader"那一份就是 P1(生产不染它)。
 func _guard_a_semantics() -> void:
 	var before := _failures.size()
 	var ra := _rect_px(_spr["P1"])
@@ -223,7 +223,7 @@ func _guard_a_semantics() -> void:
 
 
 # ── 守卫 B:1v1 的**两条**分支 + 队色(生产函数 → 像素 → token)──
-# ★ 三具体身体都是被 `pvp_game._apply_p2_tint()` 染的(或**没**被染的),不是探针自己摆的姿势:
+# - 三具体身体都是被 `pvp_game._apply_p2_tint()` 染的(或**没**被染的),不是探针自己摆的姿势:
 #   ① P1(role 1 的本地玩家)**必须没被染**,② `_remote_replica`(role 1 眼里的对手)必须被染,
 #   ③ role 2 的本地玩家必须被染 —— 三条一起才说明"role → 染哪一具"这条分支是对的。
 func _guard_b_two_colors() -> void:
@@ -288,8 +288,8 @@ func _guard_c_royale_still_consumes_hues() -> void:
 			"★ 1v1 的 _apply_peer_hues 又在读载荷里的色相了(裁定:本模式恒为 P1 蓝 / P2 青)")
 	# 短路后它该做的是"把固定那条重铺一次" —— 判据**不钉 helper 名**,只问有没有重铺动作:
 	# 体内必须调用某个 `_apply_*tint(` 帮手(现名 `_apply_p2_tint()`;改名 / 换等价帮手都不算回退)。
-	# 要拦的变异只有一条:把 `_apply_peer_hues` 改成**空函数/空壳** —— 那时上面两条照绿,
-	# 但"把固定染色重铺一遍"的动作没了。★ 它**测不到**重铺的是不是同一条颜色(那是守卫 B 的活)。
+	# 要拦的变异只有一条:把 `_apply_peer_hues` 改成**空函数/空壳** —— 那时上面两条保持测试通过,
+	# 但"把固定染色重铺一遍"的动作没了。-  它**测不到**重铺的是不是同一条颜色(那是守卫 B 的活)。
 	var re_tint := RegEx.new()
 	re_tint.compile("_apply_[A-Za-z0-9_]*tint\\s*\\(")
 	_check(re_tint.search(hues_body) != null,
@@ -323,21 +323,21 @@ func _guard_d_token_sources() -> void:
 		_check(_same_rgb(mode, PvpMatchClient.BODY_BASE_COLOR),
 				("★ player.png 的不透明众数色 %s ≠ BODY_BASE_COLOR %s —— 换素材后没重测本体主色,"
 				+ "队色(比值 = 队色 / 主色)会**整体偏**而没人发现") % [_hex(mode), _hex(PvpMatchClient.BODY_BASE_COLOR)])
-	# 常量 → 队色 token:队 1 取的就是本体主色(比值恰为 1 ⇒ 队 1 就是默认蓝)
+	# 常量 → 队色 token:队 1 取的就是本体主色(比值恰为 1  ->  队 1 就是默认蓝)
 	_check(_same_rgb(UiFactory.C_TEAM_A, PvpMatchClient.BODY_BASE_COLOR),
 			("★ C_TEAM_A %s ≠ PvpMatchClient.BODY_BASE_COLOR %s —— 队 1 不再等于本体那种蓝"
 			+ "(队色与本体主色是同一条链,要一起改)") % [_hex(UiFactory.C_TEAM_A), _hex(PvpMatchClient.BODY_BASE_COLOR)])
 	_summary(before, "守卫 D:player.png 众数 == BODY_BASE_COLOR == C_TEAM_A")
 
 
-# ── 守卫 E:3v3 的**自己**也是队色(2026-09-21 用户裁定「青队玩家还是看见自己是蓝色的」)──
+# ── 守卫 E:3v3 的**自己**也是队色(2026-09-21 设计约定「青队玩家还是看见自己是蓝色的」)──
 # 这条补的是一个**登记在案**的守卫缺口:`team_game` 把「自己那具用哪个来源」改错时,原先
 # **一个探针都不会红**(guard C 只管 1v1 与大乱斗两侧,3v3 那一段当时没有断言)。
 #   ① **行为**(像素):生产的 `_refresh_team_colors()` → 自己那具的众数色**逐字节等于**
-#      `C_TEAM_B`(队 2)。旧实现传的是 `Settings.pvp_color_hue` ⇒ 要么绿(摆的 120°)、
-#      要么本体蓝(默认 0)—— 两种都不等于 token ⇒ 红。
+#      `C_TEAM_B`(队 2)。旧实现传的是 `Settings.pvp_color_hue`  ->  要么绿(摆的 120°)、
+#      要么本体蓝(默认 0)—— 两种都不等于 token  ->  红。
 #   ② **源码**:`team_game.gd` 对 `Settings.pvp_color_hue` **零引用**(与 guard C ② 对
-#      `pvp_game.gd` 的同款口径:个人色相在 3v3 整体停用,它在本模式不再有任何落点)。
+#      `pvp_game.gd` 的相同判定标准:个人色相在 3v3 整体停用,它在本模式不再有任何落点)。
 #   ③ **源码**:基类钩子 `_apply_peer_hues_or_team` 的覆写**必须消费 `teams`**、且**不得**
 #      调 `_apply_peer_hues`(那正是缺口描述里"改回基类默认也不会红"的那一处)。
 func _guard_e_team_self_tint() -> void:
@@ -365,8 +365,8 @@ func _guard_e_team_self_tint() -> void:
 
 
 # ── 生产路径的染色助手:直接调 `PvpMatchClient._apply_tint`(不实例化进树;
-#    该函数只碰它的三个入参、不读成员状态 ⇒ 离线调用安全,且**测的就是生产那份代码**)──
-# ★ 只用于 3v3 那两具(队色)。1v1 那三具走 `_apply_production_p2_tint`(调的是
+#    该函数只碰它的三个入参、不读成员状态  ->  离线调用安全,且**测的就是生产那份代码**)──
+# - 只用于 3v3 那两具(队色)。1v1 那三具走 `_apply_production_p2_tint`(调的是
 #   `pvp_game._apply_p2_tint` 本体)—— 别把 1v1 也改成这里直接传 token,那会让守卫 B ③ 恒真。
 func _tint(spr: AnimatedSprite2D, hue_deg: float, override: Color = Color(0, 0, 0, 0)) -> void:
 	if spr == null:
@@ -448,7 +448,7 @@ func _frames(n: int) -> void:
 		await get_tree().process_frame
 
 
-# ★ PNG 只是**给人看**的那一份,断言全在像素上 ⇒ 落盘失败**不算探针失败**(否则
+# - PNG 只是**给人看**的那一份,断言全在像素上  ->  落盘失败**不算探针失败**(否则
 #   `.superpowers/sdd/`(gitignore 目录)在别的机器上不存在就会把守卫染红,理由还与本
 #   guard 无关)。目录不存在就自己建。
 func _shot(png_name: String) -> Image:

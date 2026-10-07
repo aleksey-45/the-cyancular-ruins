@@ -3,7 +3,7 @@ extends Node
 # 加速(B13)探针 —— 用户两次反馈"感受不到加速/看不出高亮",故把两条**规则**钉成机器可验断言。
 #
 # 规则(用户 2026-09-26 明确):
-#   ① "加速 = 主角的时间被加快" ⇒ **除主角外一切实体变慢**:移动、攻击间隔、子弹都算。
+#   ① "加速 = 主角的时间被加快"  ->  **除主角外一切实体变慢**:移动、攻击间隔、子弹都算。
 #   ② 加速时主角与敌人要**高亮**;精英怪在**加速与回溯两种状态下都是极为亮眼的黄色**。
 #
 # 核心物理事实:`move_and_slide()` 用**引擎自己的 delta**,缩放传入的 delta 只改变重力/计时器,
@@ -13,10 +13,10 @@ extends Node
 # 覆盖:倍率表(玩家/普通敌/精英 × NONE/HASTE/REWIND) · 普通敌速度 ×HASTE_WORLD ·
 #       主角水平移速 ×HASTE_PLAYER(关碰撞,纯速度域) · 跳跃高度不变(重力没被带跑) ·
 #       敌方子弹位移 ×HASTE_WORLD · 红蓝残影生成并自行淡出 ·
-#       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣颗粒。
+#       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣粒子。
 # 用法:godot --headless --path . res://tests/probe/haste_probe.tscn
 #
-# ★ 输入走**可注入桩**(tests/probe/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
+# - 输入走**可注入桩**(tests/probe/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
 
 const StubInput := preload("res://tests/probe/haste_probe_input.gd")
 const GhostScript := preload("res://scenes/effects/after_image.gd")
@@ -111,7 +111,7 @@ func _run() -> void:
 			_fail("加速没放慢普通敌(普通 %.2f → 加速 %.2f,比 %.2f 期望≈%.2f)" % [en, eh, eh / en, TimeParams.HASTE_WORLD])
 
 	# ── ③ 敌方子弹:加速时必须变慢 ──
-	# ★ EnemyBullet **整个覆写了** 基类的 _physics_process ⇒ 基类首行的 bullet_delta 在这条
+	# - EnemyBullet **整个覆写了** 基类的 _physics_process  ->  基类首行的 bullet_delta 在这条
 	#   路径上永不执行,这就是"加速时子弹没变慢"的根因(修在 scenes/enemies/enemy_bullet.gd)。
 	var spot := _find_open_spot(player.global_position)
 	if spot.x >= 0:
@@ -173,7 +173,7 @@ func _run() -> void:
 	_ghost_blue = false
 	_haste_frames = 0
 	Input.action_press("haste")
-	# ★ 必须等速度**真正进入平台期**再采样:空中加速很温和(`accel_air`),固定等 45 帧可能还在
+	# - 必须等速度**真正进入平台期**再采样:空中加速很温和(`accel_air`),固定等 45 帧可能还在
 	#   爬坡 —— 实测同一份代码在不同地图/落点下分别量到 1.17 / 1.21 / 1.40(偶发误判"加速无效")。
 	await _settle_vx(player)
 	var v_haste := await _mean_vx(player, 20, true)
@@ -203,7 +203,7 @@ func _run() -> void:
 		_fail("残影未自行淡出释放(仍剩 %d 个)" % left)
 
 	# ── ⑥ 高亮规则:加速=主角+近敌;回溯=只有精英;精英一律"两层亮黄" ──
-	# ★ 用加色副本(TimeGlow)而不是 modulate:后者在非 HDR 2D 里被夹到 1.0,且敌人每帧的
+	# - 用加色副本(TimeGlow)而不是 modulate:后者在非 HDR 2D 里被夹到 1.0,且敌人每帧的
 	#   受击白闪会把 modulate 写回 WHITE/3.0 —— 用户实测"完全看不出高亮"就是这么来的。
 	var probe_elite: Node2D = null
 	for e in tree.get_nodes_in_group("enemies"):
@@ -245,7 +245,7 @@ func _run() -> void:
 		_fail("松开加速后仍有 %d 个高亮副本未卸" % leftover)
 
 	# 回溯:只有精英亮黄,主角与普通敌都不该有高亮
-	# ★ 精英**当场重挑**:上一段高亮检查期间那个标本可能已经被打死了(它是活物)。
+	# - 精英**当场重挑**:上一段高亮检查期间那个标本可能已经被打死了(它是活物)。
 	var re_elite: Node2D = null
 	for e in tree.get_nodes_in_group("enemies"):
 		if is_instance_valid(e) and e is Node2D and not bool(e.get("is_dead")):
@@ -254,14 +254,14 @@ func _run() -> void:
 	if re_elite != null:
 		re_elite.set_meta("elite", true)
 	Input.action_press("rewind")
-	# ★ 高亮挂在 `_process` 里(视效驱动),只等 `physics_frame` 会读到"还没跑 _process"的中间态
+	# - 高亮挂在 `_process` 里(视效驱动),只等 `physics_frame` 会读到"还没跑 _process"的中间态
 	#   —— 实测:紧接第二次读就有副本了(同一个协程切片内,中间只可能插进一帧 _process)。
 	for i in 5:
 		await tree.process_frame
 	await _wait_phys(6)
 	var re_mode := tf.mode
 	# 规则断言走**集合**:回溯中每个存活精英都必须挂着"两层亮黄"副本。
-	# ★ 单点断言(只看某个标本)会被"管理器这一帧刚 free、下一帧又 attach"的抖动骗过 ——
+	# - 单点断言(只看某个标本)会被"管理器这一帧刚 free、下一帧又 attach"的抖动骗过 ——
 	#   所以再配一条**抖动检测**(3 帧内新建数),两者一起才代表规则真的成立。
 	var elites: Array[Node2D] = []
 	var missing := 0
@@ -301,7 +301,7 @@ func _run() -> void:
 	if re_normal:
 		_fail("回溯时普通敌不该有高亮(它们的位移由回放器摆)")
 
-	# ── ⑦ 松开回 NONE + 颗粒真被扣 ──
+	# ── ⑦ 松开回 NONE + 粒子真被扣 ──
 	if tf.is_hasting() or tf.is_rewinding():
 		_fail("松开后时间场未回 NONE(mode=%d)" % tf.mode)
 	var bal := float(Level0.grain_account.balance)
@@ -410,9 +410,9 @@ func _pick_moving_enemy(tree: SceneTree) -> Node2D:
 
 
 # 打一颗**无重力、向上**的敌方弹,量它每帧位移的**中位数**(px)。
-# 向上 + 只有地形碰撞(mask=1)+ 放在净空格 ⇒ 不会撞墙/不会打到玩家,
-# 位移 = velocity_vec × delta ⇒ 加速时应当恰好 ×HASTE_WORLD(比值 ~0.7)。
-# ★ 取中位数而不是总和:撞墙/被锚副本瞬移只会让**帧数**变少,不改变单帧步长,
+# 向上 + 只有地形碰撞(mask=1)+ 放在净空格  ->  不会撞墙/不会打到玩家,
+# 位移 = velocity_vec × delta  ->  加速时应当恰好 ×HASTE_WORLD(比值 ~0.7)。
+# - 取中位数而不是总和:撞墙/被锚副本瞬移只会让**帧数**变少,不改变单帧步长,
 #   总和会被"提前死掉"污染成假失败。
 func _bullet_step(tree: SceneTree, player: Node2D, at: Vector2) -> float:
 	var b := BulletScene.instantiate() as EnemyBullet
@@ -464,7 +464,7 @@ func _jump_apex(player: CharacterBody2D, stub, tree: SceneTree) -> float:
 
 # 找一格"上方 4 格净空(跳跃/弹道要空间)+ 下方实心(有地板)"的格子,并取**离玩家环面最近**的那一格:
 # ① 地形无关的确定性几何 —— 否则两次测量在不同位置,高度/弹道不可比;
-# ② 离玩家近 ⇒ 子弹不会被 `anchor_to_nearest` 锚到别的副本上瞬移。
+# ② 离玩家近  ->  子弹不会被 `anchor_to_nearest` 锚到别的副本上瞬移。
 func _find_open_spot(from: Vector2) -> Vector2i:
 	var grid: Array = MazeGenerator.current_grid
 	if grid.is_empty():

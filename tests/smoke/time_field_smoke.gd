@@ -1,6 +1,6 @@
 extends SceneTree
 
-# 时间场冒烟(-s 数据级):模式切换/倍率/贷款敌速/账户结算 全语义。
+# 时间场冒烟(-s 数据级):模式切换/倍率/透支敌速/账户结算 全语义。
 # 用法:godot --headless --path . -s res://tests/smoke/time_field_smoke.gd
 
 var _fails: Array[String] = []
@@ -115,12 +115,12 @@ func _test_account_gating() -> void:
 	_chk(f.mode == TimeField.Mode.REWIND, "余额未尽仍可回溯")
 	f.update(1.0, true, false)    # 余额耗尽
 	_chk(f.mode == TimeField.Mode.NONE, "余额耗尽回溯应停")
-	# 锁定闸门:贷满后两键都按不出
+	# 锁定门控前置校验:透支达到上限后两键都按不出
 	var acc2 := GrainAccount.new()
 	var f2 := TimeField.new(acc2)
 	TimeField.current = f2
 	acc2.spend(4.0, 100.0)
-	acc2.spend(1.0, 100.0)   # 贷满锁
+	acc2.spend(1.0, 100.0)   # 透支达到上限锁
 	f2.update(0.1, true, false)
 	_chk(f2.mode == TimeField.Mode.NONE, "锁定中 Shift 空转")
 	f2.update(0.1, false, true)

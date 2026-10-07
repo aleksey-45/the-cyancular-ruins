@@ -1,5 +1,5 @@
 extends Node
-# 网络总线(autoload,PvP 唯一网络收口):服务器与客户端共用同一节点路径 /root/NetBus,
+# 网络总线(autoload,PvP 网络通信统一入口):服务器与客户端共用同一节点路径 /root/NetBus,
 # RPC 才能跨场景路由(autoload 常驻,不随场景切换销毁)。方法按"调用方"区分两端。
 # 服务器侧经转交信号把建房/加入/断线交给 RoomManager(不硬依赖其类型,任务可独立编译)。
 
@@ -21,8 +21,8 @@ signal input_received(caller: int, pkt: Dictionary)
 signal role_claimed(caller: int, role: int, player_name: String)
 # 服务器 → 客户端
 # 快照拆两条(2026-09-12,取代原单条 `local_snapshot`)
-signal local_snapshot_world(world: Dictionary)   # 全部玩家的渲染字段(副本/血条用)
-signal local_snapshot_own(own: Dictionary)       # 只有本人需要的 ack_seq + 权威整态 c2
+signal local_snapshot_world(world: Dictionary)   # 全部玩家的渲染字段(副本/生命条用)
+signal local_snapshot_own(own: Dictionary)       # 只有本人需要的 ack_seq + 权威完整状态（c2）
 signal local_bullet_spawn(data: Dictionary)
 signal local_beam_fired(data: Dictionary)   # 即时光束武器(激光)权威开火:对手端据此画光束视觉副本
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
@@ -45,11 +45,11 @@ const DEFAULT_PORT := 7777
 # ENet 通道数。create_server/create_client 的通道参数默认 0 → 发包报
 # "Unable to send packet on channel 0, max channels: 0"(引擎把 0 当"无通道可用")。
 # 显式分配若干条通道即可根治;两端数值保持一致(握手按较小者协商)。
-# ★ 2026-09-17 订正:**这条常量治不了那个报错的全部**。引擎源码里能打出这条消息的只有
+# - 2026-09-17 订正:**这条常量治不了那个报错的全部**。引擎源码里能打出这条消息的只有
 #   `enet_packet_peer.cpp` 的 `p_channel >= peer->channelCount`,即**目标 peer 的通道数为 0** ——
 #   而 ENet 只在 `enet_peer_reset_queues()`(**断开/超时/被 reset**)里把它置 0。
 #   所以通道数配好之后,剩下的来源是「**往一个 ENet 已拆掉、但 MultiplayerAPI 还没忘掉的
-#   peer 发包**」—— 判活请用下面的 `is_peer_live()`(它读 ENet 自己的 state,不滞后)。
+#   peer 发包**」—— 存活检测请使用下面的 `is_peer_live()`(它读 ENet 自己的 state,不滞后)。
 const ENet_CHANNELS := 4
 
 var is_server_mode: bool = false
@@ -89,11 +89,11 @@ func stop() -> void:
 	is_server_mode = false
 
 
-# ── 发包前的存活判据(2026-09-17)──
+# ── 发包前对等节点存活状态检测──
 # 为什么不能用 `multiplayer.get_peers()`:它随 MultiplayerAPI 的连接/断开**信号**更新,比 ENet
 # 的真实状态**晚**(本仓 lobby_rooms.gd 的注释里已实测记过"滞后超过一帧")。
 #
-# 真身(2026-09-17 读引擎源码确认):`enet_peer_disconnect()` 在**发起断开的当场**就调
+# 底层原理说明（查阅 Godot 引擎源码确认）：`enet_peer_disconnect()` 在**发起断开的当场**就调
 # `enet_peer_reset_queues()` → `peer->channelCount = 0`(thirdparty/enet/peer.c:349),而
 # DISCONNECT 事件要等对方 ACK 或 5s 超时才产生 —— 于是**整个断开握手期间**(可达秒级)
 # 这个 peer 的 ENet 状态已不是 CONNECTED、`channelCount` 已是 0,而 `get_peers()` 仍报在线。
@@ -108,7 +108,7 @@ func is_peer_live(id: int) -> bool:
 	# 非 ENet 后端(理论上没有,探针里可能有桩)退回原判据,别在这里报错。
 	if not (multiplayer.multiplayer_peer is ENetMultiplayerPeer):
 		return multiplayer.get_peers().has(id)
-	# ★ 先问 get_peers():它虽然**滞后**(可能把已拆的 peer 仍报在线),但"它说没有"这句是**可信**的
+	# - 先问 get_peers():它虽然**滞后**(可能把已拆的 peer 仍报在线),但"它说没有"这句是**可信**的
 	#   —— 而且 `get_peer()` 对不在表里的 id 会打一条 `ERR_FAIL_COND`(等于换一条噪音)。
 	if not multiplayer.get_peers().has(id):
 		return false
@@ -116,7 +116,7 @@ func is_peer_live(id: int) -> bool:
 	if p == null:
 		return false
 	# 判据 = 「这条定向发送会成功吗」的全部前置条件:ENet 状态是 CONNECTED,**且通道数 > 0**
-	# (后者正是引擎 `ENetPacketPeer::send` 会检查的那个量 —— 它同时兜住"ENet 已把这次连接
+	# (后者正是引擎 `ENetPacketPeer::send` 会检查的那个量 —— 它同时提供容错保障"ENet 已把这次连接
 	#  的通道拆掉、但状态位还没翻过去"这种更窄的窗口)。
 	return p.get_state() == ENetPacketPeer.STATE_CONNECTED and p.get_channels() > 0
 
@@ -133,19 +133,19 @@ func can_send_to_server() -> bool:
 
 # **广播**前的判据:表里**每一个** peer 现在都能收包吗?(空表 = false:没人可发)
 #
-# ★★ 为什么广播也要判活、而且判据必须是"**全部**都行" —— 这是 2026-09-21 定位到的那条
+# 注意： 为什么广播也要存活检测、而且判据必须是"**全部**都行" —— 这是 2026-09-21 定位到的那条
 #   `Unable to send packet on channel 0/1, max channels: 0` 的主来源:
 #   `rpc()`(广播)在 ENet 层是**逐 peer 发包**(不是"一次发出、由 ENet 跳过坏 peer"),
 #   所以表里只要还剩**一个**处于"队列已拆、MultiplayerAPI 还没忘掉"窗口的 peer,这一发就报错。
-#   而那个 peer 往往正是**我们自己刚踢掉的那个**:`disconnect_peer()` 当场把它的通道数清零
+#   而那个 peer 往往正是**我们自己刚剔除断开的那个**:`disconnect_peer()` 当场把它的通道数清零
 #   (`enet_peer_reset_queues`),而它要从 `get_peers()` 里消失得等**下一次 poll**。
 #   实测证据(2026-09-21,`tests/probe/reconnect_probe` 的 worker 日志,当前树、未改之前):
 #   每拒绝一次错的 reclaim 就有一帧**同时**报 channel 0 与 channel 1,且 GDScript backtrace
 #   两行都指向 `_broadcast_snapshot (server/match_snapshot.gd:34)` → `_physics_process`。
 #   (通道号是证据:`0` = reliable、`1` = unreliable —— 一帧里两条都出现,说明那一发在
 #    ENet 层逐 peer 走了两条通道。)
-# ★ 返回 false 的代价只是"这一帧先别广播":快照走 unreliable,少一帧没有任何后果。
-# ★ 别把它写成 `not multiplayer.get_peers().is_empty()`(那是老判据,也是这条错误的成因):
+# - 返回 false 的代价只是"这一帧先别广播":快照走 unreliable,少一帧没有任何后果。
+# - 别把它写成 `not multiplayer.get_peers().is_empty()`(那是老判据,也是这条错误的成因):
 #   `get_peers()` 滞后,它把正在断开的 peer 仍报为"在"。
 func all_peers_sendable() -> bool:
 	var ids := multiplayer.get_peers()
@@ -159,7 +159,7 @@ func all_peers_sendable() -> bool:
 
 # 定向回一条 RPC(答复某个 caller)。**对端已经不活着就静默跳过**(返回 false),不报错、不发。
 #
-# ★ 为什么必须收口到一个口:请求与"对端断开"经常挤在**同一次 poll** 里 —— ENet 按到达顺序处理
+# - 为什么必须统一集中处理到一个口:请求与"对端断开"经常挤在**同一次 poll** 里 —— ENet 按到达顺序处理
 #   收到的命令,**处理 DISCONNECT 命令时当场就把那个 peer 的通道数清零**,而同批里排在它前面的
 #   RECEIVE 事件要等到 dispatch 阶段才派发 → 于是"客户端发完请求就 `stop()`"这一拍,
 #   服务端是在**通道已清零**的状态下处理那个请求、并发它的应答 → 应答必然打
@@ -168,7 +168,7 @@ func all_peers_sendable() -> bool:
 #   判据同 `is_peer_live`(它读 ENet 自己的 state + 通道数,不滞后)。
 #
 # 实参形状与 `rpc_id` 一致(最多 4 个),故所有调用点只需把方法名换成 `reply` ——
-# ★ 因此**实参不得传 null**(null 表示"到此为止");要传更多实参请直接用 `callv("rpc_id", …)`。
+# - 因此**实参不得传 null**(null 表示"到此为止");要传更多实参请直接用 `callv("rpc_id", …)`。
 # 审计:`grep -rn "NetBus\.reply(" server/` 就是"所有答复 caller 的定向发送"的完整清单。
 func reply(id: int, method: String, a = null, b = null, c = null, d = null) -> bool:
 	if not is_peer_live(id):
@@ -211,9 +211,9 @@ func claim_role(role: int, player_name: String) -> void:
 	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name)
 
 # 客户端→worker:**进场拉取**。对局场景建好之后主动要一次(昵称/色相/生效选项/出生点/role 集合)。
-# ★ 它**取代**原来"服务器推三载荷"那条路径。推的根因问题是「推给一个正在切场景的客户端」:
+# - 它**取代**原来"服务器推三载荷"那条路径。推的根因问题是「推给一个正在切场景的客户端」:
 #   服务器在**同一次 poll** 里推 4 条,而那一刻新场景的订阅方一个都不存在 → 静默丢失(自检 B2,
-#   后果是对手颜色不生效、昵称表空、禁武器闸门没上)。拉的方向反过来:客户端建好之后才开口,
+#   后果是对手颜色不生效、昵称表空、禁用武器校验逻辑未生效)。拉的方向反过来:客户端建好之后才开口,
 #   晚到也无所谓 —— 应答按 role 回,不依赖任何时序。
 @rpc("any_peer", "reliable")
 func match_sync() -> void:
@@ -221,12 +221,12 @@ func match_sync() -> void:
 
 # ── 服务器 → 客户端(权威方=peer1 可调)──
 # ── 快照:**拆两条**(2026-09-12)──
-# 旧实现把**含全部 N 人 c2 整态**的同一份 dict 逐 peer 各 `rpc_id` 一次 → 服务器序列化量 O(N²)
+# 旧实现把**含全部 N 人 c2 完整状态**的同一份 dict 逐 peer 各 `rpc_id` 一次 → 服务器序列化量 O(N²)
 # (实测:单人条目 948B,其中 c2 占 664B(70%);8 人局服务器上行 ≈29 Mbps)。而 C2 下每个
 # 客户端其实**只用得到自己那一份 c2** —— 70% 的体积花在只有本人需要的数据上,却每人各发一遍。
 # 拆开后:
 #   ① 世界包 = 全部玩家的渲染字段,构造一次、**广播一次** → O(N)
-#      ★ 必须用 `rpc()` 而不是逐 `rpc_id` 循环:前者在 ENet 层是单次序列化 + enet_host_broadcast,
+#      - 必须用 `rpc()` 而不是逐 `rpc_id` 循环:前者在 ENet 层是单次序列化 + enet_host_broadcast,
 #        后者会把 O(N²) 加回来。
 #   ② 本人包 = 自己的 ack_seq + c2,定向发给本人
 # 顺带好处:两者**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补),世界包丢只冻结一帧副本插值。
@@ -255,7 +255,7 @@ func beam_fired(data: Dictionary) -> void:
 @rpc("authority", "reliable")
 func match_sync_data(payload: Dictionary) -> void:
 	# 诊断开关(默认关):客户端侧确认这条应答**到底有没有到达**。
-	# ★ 纯诊断:开关关着时一行都不打 ⇒ 生产行为逐字不变(与 `--pickup-diag` / `--registry-report` 同款,
+	# - 纯诊断:开关关着时一行都不打  ->  生产行为逐字不变(与 `--pickup-diag` / `--registry-report` 相同机制,
 	#   且同样必须写在 `--` 之后)。当初(2026-10-03)用来把
 	#   「worker 已调用 `rpc_id` 且返回 0」 与 「客户端收到/没收到」 这段链路一分为二。
 	if OS.get_cmdline_user_args().has("--matchsync-diag"):
@@ -277,7 +277,7 @@ func round_state(data: Dictionary) -> void:
 # ── 地面武器事件(2026-09-15)──
 # 服务器权威的"场上多了一件/少了一件"广播。**低频**(掉落/捡起,一局几十次),
 # 所以走事件而不是塞进 60Hz 快照(大乱斗的快照体积随人数线性增长,再加 12 把会雪上加霜)。
-# ★ 只进 NetBus,**不要**在 NetBusExt 里也加一份:那两者已有 beam_fired 重名
+# - 只进 NetBus,**不要**在 NetBusExt 里也加一份:那两者已有 beam_fired 重名
 #   (net_bus.gd / net_bus_ext.gd),接收端挂错节点会**静默 no-op**(对手的枪凭空消失且不报错)。
 @rpc("authority", "reliable")
 func weapon_spawned(data: Dictionary) -> void:
@@ -292,7 +292,7 @@ func kill_event(killer: int, victim: int) -> void:
 	local_kill_event.emit(killer, victim)
 
 # (原 enemy_spawn / enemy_died 两条 @rpc 已删 —— 只服务 PvPvE 中立鸟,特性 2026-09-14 定案不开。
-#  ★ 它们**不是**原版服务端的协议面:由本项目提交 aa1d8f0「feat: PvPvE 中立鸟入竞技场」加入,
+#  - 它们**不是**原版服务端的协议面:由本项目提交 aa1d8f0「feat: PvPvE 中立鸟入竞技场」加入,
 #    故删除不影响「原 NetBus 逐字节一致」那条不变量。)
 
 @rpc("authority", "reliable")
@@ -327,7 +327,7 @@ func server_message(text: String) -> void:
 	local_server_message.emit(text)
 
 # ── 延迟测量:客户端周期 ping → 服务器原样回 pong → 客户端算 RTT(EWMA 平滑)──
-# ★ 判活**收在本函数里**(不是只靠调用点):`pvp_match_client` 那处已带 `can_send_to_server()`,
+# - 存活检测**收在本函数里**(不是只靠调用点):`pvp_match_client` 那处已带 `can_send_to_server()`,
 #   但这是"每 0.5s 一次"的周期发送 —— 多一个调用点就多一条往死 peer 发包的路,而这个函数
 #   自己知道该问谁。2026-09-21 审计时它是 `rpc_id(` 里**唯一**没在函数体自带判据的一条。
 func send_ping() -> void:
@@ -339,9 +339,9 @@ func send_ping() -> void:
 @rpc("any_peer", "reliable")
 func ping() -> void:
 	var from := multiplayer.get_remote_sender_id()
-	# ★ 判活再回:发 ping 的客户端可能**在同一帧里断开**(它最后那次 ping 与它自己的 `stop()`
+	# - 存活检测再次确认:发 ping 的客户端可能**在同一帧里断开**(它最后那次 ping 与它自己的 `stop()`
 	#   挤在一起),而回复是定向可靠包 → 往 ENet 已拆掉的 peer 发就是那条 channel 0 错误。
-	#   (同类站点已一并接上判据;本轮定位到"来源确实在被守卫的站点上"但没能钉死具体哪一处
+	#   (同类站点已一并接上判据;本轮定位到"来源确实在被守卫的站点上"但没能严格约束具体哪一处
 	#    —— 见 docs/2026-09-17-pvp-weapon-net-fixes.md §1.5。)
 	if not is_peer_live(from):
 		return

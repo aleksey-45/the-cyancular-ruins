@@ -1,6 +1,6 @@
 extends Node
 
-# 大乱斗全链路探针(RoyaleServer 分支,场景模式):一个进程当大厅/裁判,再拉起两个
+# 大乱斗全链路探针(RoyaleServer 分支,场景模式):一个进程当大厅/裁判,再启动两个
 # headless 客户端子进程,走完整流程:
 #   c1 建私密房(邀请码 777,房号写中间文件) → c2 读房号 → 错码加入(应被拒)
 #   → 对码加入 → c1 见房内 2 人开局 → 双方收 go_match 转连 worker → claim
@@ -8,7 +8,7 @@ extends Node
 # 断言(进 _finish 判定,不只打印):match_start 出生点有效 + round_state 到达 +
 # **round_state 载荷里的昵称表 names ≥2 项** + match_options 到达 + 快照数 ≥30。
 # 中间文件 user://royale_probe_room.txt = 房号;结果 user://royale_probe_c{1,2}.result。
-# 用法: Godot_console --headless --path . res://tests/probe/royale_probe.tscn [-- --role=lobby|c1|c2]
+# 用法: Godot_console --headless --path . res://tests/probe/royale_probe.tscn [--role=lobby|c1|c2]
 # (无参 = lobby/裁判。)
 
 const RESULT_PREFIX := "royale_probe_"
@@ -38,7 +38,7 @@ func _ready() -> void:
 		"c2":
 			_run_client_2()
 
-# ── 裁判:起大厅 + 拉起 c1/c2 子进程 + 收结果文件 ──
+# ── 裁判:起大厅 + 启动 c1/c2 子进程 + 收结果文件 ──
 func _run_orchestrator() -> void:
 	var err := NetBus.start_server()
 	if err != OK:
@@ -144,8 +144,8 @@ func _run_client_2() -> void:
 		NetBus.local_server_message.connect(func(t: String) -> void:
 			if t.contains("邀请码"):
 				_saw_invite_reject = true)
-		# ★ 第 3 参 beta:本探针建的房 opts 里没有 "beta": true(见 _run_client_1 的 royale_create)
-		#   ⇒ 普通房,传 false。签名是 (code, invite, beta) 三参;少传一个 RPC 直接失败、
+		# - 第 3 参 beta:本探针建的房 opts 里没有 "beta": true(见 _run_client_1 的 royale_create)
+		#    ->  普通房,传 false。签名是 (code, invite, beta) 三参;少传一个 RPC 直接失败、
 		#   服务端一条消息都不回(探针表现为"错误邀请码未被拒绝")。
 		NetBusExt.rpc_id(1, "royale_join", code, WRONG_INVITE, false)
 		await get_tree().create_timer(0.6).timeout
@@ -167,7 +167,7 @@ func _go_and_verify(who: String) -> void:
 		if spawn.x < 0:
 			_finish(false, who, "match_start 出生点无效")
 			return
-		# ★ 批次 3:生效选项改由**进场拉取**下发(服务器那次"推"已删 —— 它与 match_start 落在同一次
+		# - 批次 3:生效选项改由**进场拉取**下发(服务器那次"推"已删 —— 它与 match_start 落在同一次
 		#   poll,而那一刻新场景订阅方还不存在,会静默丢,自检 B2)。
 		#   本探针是**轻量监听客户端**(不起真 royale_game),故这里自己发一次 match_sync 并消费应答;
 		#   真客户端由各自场景的 `_ready` 发出请求。

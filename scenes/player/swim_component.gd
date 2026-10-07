@@ -20,9 +20,9 @@ func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.
 		return false
 	var horiz := src.get_axis("left", "right")
 	# 时间场:加速是"主角的时间加快",水里/上下浮同样要快(否则一下水加速就没了)。
-	# 回溯整帧早在根里早退,到不了这里;正常态该倍率恒 1。
-	# ★★ 2026-10-03 修:**PvP 下这条原先恒 1** —— `TimeField.current` 只由单机 Level0 创建
-	#   ⇒ PvP 里 `player_speed_mult()` 恒 1.0,与本行上面那句注释直接矛盾。
+	# 回溯整帧早在根里提前返回,到不了这里;正常态该倍率恒 1。
+	# 注意： 2026-10-03 修:**PvP 下这条原先恒 1** —— `TimeField.current` 只由单机 Level0 创建
+	#    ->  PvP 里 `player_speed_mult()` 恒 1.0,与本行上面那句注释直接矛盾。
 	#   改成与根 `player.gd:191` 同一条判据:有世界时间场走它,否则读 `pvp_haste_mult`。
 	var tm := 1.0
 	if TimeField.current != null:

@@ -7,11 +7,11 @@ extends Node
 # 机制:若副本位置**直接跟随快照到达**(渲染的就是最新包原值),对手的平滑度就等于网络的
 #   到达平滑度 —— 抖动下会出现"这一帧没包(零位移)/ 下一帧来两个(走两步)"。
 #
-# ★ 本探针只量**结果**(渲染位置每帧有没有动),不关心走的是哪套实现 ——
+# - 本探针只量**结果**(渲染位置每帧有没有动),不关心走的是哪套实现 ——
 #   故改前改后都能跑,且不会随实现被删而失效。
 #
-# ★★ 为什么跑三档抖动而不是一档:零位移占比**只取决于到达抖动**,不取决于实现。
-#   跑三档能把"灵敏度"一起打出来,而不是拿一个调出来的数当结论。
+# 注意： 为什么跑三档抖动而不是一档:零位移占比**只取决于到达抖动**,不取决于实现。
+#   跑三档能把"灵敏度"一起打印输出,而不是拿一个调出来的数当结论。
 #   JITTER_MS = 0 是下界(规律到达,任何实现都平滑);越大越像跨网络。
 #
 # 跑法:"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/replica_smoothness_probe.tscn
@@ -26,7 +26,7 @@ const DT: float = 1.0 / 60.0            # 渲染帧(项目固定 60fps)
 const FRAMES := 300                     # 每档帧数(5 秒)
 const STEP_PX := 5.0                    # 每包前进的世界像素(60Hz × 5px = 300px/s,普通移速)
 const NOMINAL_GAP_MS := 1000.0 / 60.0   # 名义到达间隔 16.667ms(服务器恒定 60Hz)
-# 均匀抖动半径(ms)。到达间隔 = 名义间隔 + U(-J, +J) ⇒ 均值恒为 60Hz。
+# 均匀抖动半径(ms)。到达间隔 = 名义间隔 + U(-J, +J)  ->  均值恒为 60Hz。
 # 8.0 是 `6e2ef6d` 引用的那档(它记的旧法读数 49.6% 零位移)。
 const JITTER_CASES := [0.0, 8.0, 16.0]
 const ASSERT_CASE := 1                  # 断言压在 8.0ms 那一档
@@ -75,7 +75,7 @@ func _begin_case(jitter_ms: float) -> void:
 	if _rep != null and is_instance_valid(_rep):
 		_rep.queue_free()      # 它已 set_process(false),本探针不再驱动它
 	_rep = REPLICA_SCENE.instantiate()
-	# ★ 空载守卫(与 squash_replica_probe 同款):`player_replica.gd` 一旦解析不过,
+	# - 空载守卫(与 squash_replica_probe 相同机制):`player_replica.gd` 一旦解析不过,
 	#   tscn 的根会退化成裸 Node2D —— 场景照样加载、一行判据都不打印、退出码还是 0,
 	#   那正是 docs/eng/tests.md 记的"看着像功能坏了"的形态。这里把它变成一条响亮的 FAIL。
 	if not _rep.has_method("apply_snapshot"):
@@ -84,7 +84,7 @@ func _begin_case(jitter_ms: float) -> void:
 	add_child(_rep)
 	_canon = Vector2(CANON_X, CANON_Y0)
 	_rep.global_position = _canon
-	# 逐帧显式调 `_process(DT)`,不交给引擎(与 squash_replica_probe 同款)
+	# 逐帧显式调 `_process(DT)`,不交给引擎(与 squash_replica_probe 相同机制)
 	_rep.set_process(false)
 	_anchor = _canon
 	_rep.apply_snapshot(_snapshot_dict(_canon), _anchor, _tick)
@@ -103,7 +103,7 @@ func _start_case() -> void:
 	_begin_case(float(JITTER_CASES[_case]))
 
 
-# 下一次到达的间隔(ms):名义值 + U(-J, +J),均值恒为名义值 ⇒ 平均仍是 60Hz。
+# 下一次到达的间隔(ms):名义值 + U(-J, +J),均值恒为名义值  ->  平均仍是 60Hz。
 func _next_gap(jitter_ms: float) -> float:
 	if jitter_ms <= 0.0:
 		return NOMINAL_GAP_MS
@@ -187,9 +187,9 @@ func _finish_a() -> void:
 		return
 	# 进相 B —— 复现旧方案那条**致命缺陷**:把副本**强行摆到一个"远副本"**上(与锚点相隔
 	# 整幅地图宽、但环面坐标相同),再看它能不能自己回到锚点所在的那一份。
-	# ★ 为什么必须"强行摆"而不是"把锚点放到地图另一头":环面距离是**对称**的 —— 锚到最近副本
+	# - 为什么必须"强行摆"而不是"把锚点放到地图另一头":环面距离是**对称**的 —— 锚到最近副本
 	#   与留在原地量出来**相同**,那种写法两边都会通过,是条空断言。缺陷只在"渲染位置与目标
-	#   相隔整幅地图"时现形。
+	#   相隔整幅地图"时暴露异常。
 	var w := float(GameParameters.MAP_WIDTH)
 	_begin_case(0.0)
 	_rep.apply_snapshot(_snapshot_dict(_canon), _anchor, _tick)

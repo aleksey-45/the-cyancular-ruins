@@ -102,7 +102,7 @@ func _test_aoe() -> void:
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
 	_check(e4.hits.size() == 1 and e4.hits[0][1].y > 0.0, "冲击波方向向外(+y)")
 	e4.free()
-	# 友伤:玩家在范围内掉血
+	# 友伤:玩家在范围内受到伤害
 	var p := StubPlayer.new()
 	p.global_position = Vector2(200, 200) + Vector2(20, 0)
 	root.add_child(p)
@@ -121,7 +121,7 @@ func _test_aoe() -> void:
 	for y in range(25):
 		g[y][4] = MazeGenerator.SOLID
 	MazeGenerator.current_grid = g
-	# ⚠ 分格单位坑:遮挡判定按 TILE_SIZE=64 分格(Explosion._has_los → MazeGenerator.cell_of),
+	# ⚠ 分格单位坐标映射隐患:遮挡判定按 TILE_SIZE=64 分格(Explosion._has_los → MazeGenerator.cell_of),
 	# 而本文件其它几何是按「16px 一格」写的。x=4 那根整列墙的世界范围其实是 [256,320)。
 	# 所以爆心放第 5 格(x=5*64+32=352)、目标放第 3 格(x=3*64=192):墙**真的**夹在两者之间,
 	# 环面最短路径 5→4(墙列)→3 被挡。d=160px 也在 radius×INNER_FRACTION=120px 内圈之外 ——
@@ -230,7 +230,7 @@ func _test_fuse() -> void:
 # 它要整局 MatchHost;这里钉的是引信侧)。
 func _test_player_contact() -> void:
 	MazeGenerator.current_grid = []
-	# 场景值兜底:本冒烟全程手写 0.4/0.15,若 grenade_bullet.tscn 被改成别的数,这里先报
+	# 场景值保底处理:本冒烟全程手写 0.4/0.15,若 grenade_bullet.tscn 被改成别的数,这里先报
 	var scene = (load("res://scenes/weapons/grenade_bullet.tscn") as PackedScene).instantiate()
 	_check(is_equal_approx(float(scene.fuse_time), 0.4) \
 			and is_equal_approx(float(scene.hit_fuse_time), 0.15),
@@ -263,7 +263,7 @@ func _test_player_contact() -> void:
 	_check(exploded, "短引信在 0.25s 内爆炸(明显早于撞墙的 0.4s)")
 	p.free()
 
-	# ② 视觉副本(apply_damage=false,对手端那份)按同款判定同样起短引信
+	# ② 视觉副本(apply_damage=false,对手端那份)按相同机制判定同样起短引信
 	var p2 := StubPlayer.new()
 	p2.global_position = Vector2(300, 200)
 	root.add_child(p2)
@@ -331,7 +331,7 @@ func _test_non_explosive_default() -> void:
 			break
 	_check(enemy.hp == 50 - 5, "非爆炸弹直击走 apply_hit(武器 damage=5)")
 	enemy.free()
-	# 切枪后 source 失效:在途子弹用自带 damage/impact 兜底仍造成伤害(回归)
+	# 切枪后 source 失效:在途子弹用自带 damage/impact 保底处理仍造成伤害(回归)
 	var b3 = _make_bullet()
 	b3.set("explodes", false)
 	root.add_child(b3)

@@ -4,10 +4,10 @@ extends PlayerInput
 # 走动 / 跳 / 冲刺 / 下蹲 / 上下爬 / 各武器开火 / 切枪 / 静默,而不是只连上收快照。
 # 探针每物理帧调 step();探针直接把本对象塞进本地玩家的 input_source。
 #
-# 无 class_name(新建全局类要刷 --import 全局类缓存,本仓踩过这个坑),由探针 preload 引用。
+# 无 class_name(新建全局类要刷 --import 全局类缓存,本仓曾遇到过该兼容隐患),由探针 preload 引用。
 #
-# frozen:PvP 的 COUNTDOWN/结算冻结会置它(set_controls_locked)。基类把**公开读口**对 frozen 短路,
-# 本类只覆写不碰 frozen 的 _*_raw() 钩子 → 无需自己认(2026-09-14 前本类覆写了全部公开读口,
+# frozen:PvP 的 COUNTDOWN/结算冻结会置它(set_controls_locked)。基类把**公开输入读取接口**对 frozen 短路,
+# 本类只覆写不碰 frozen 的 _*_raw() 钩子 → 无需自己认(2026-09-14 前本类覆写了全部公开输入读取接口,
 # 基类短路被绕过、只能自己手抄 frozen 判断)。下方 step() 里那个 `if frozen` 是**本类自己的**
 # 「冻结期不推进脚本」逻辑(清 held/边沿),与基类短路是两件事,勿删。
 
@@ -86,7 +86,7 @@ func _apply_phase(a: String) -> void:
 			pass
 
 
-# ── 覆写钩子(公开读口由基类持有并对 frozen 短路;本类不再自己认 frozen)──
+# ── 覆写钩子(公开输入读取接口由基类持有并对 frozen 短路;本类不再自己认 frozen)──
 func _axis_raw(neg: String, _pos: String) -> float:
 	if neg == "left":
 		return axis
@@ -117,7 +117,7 @@ func _switch_index_raw() -> int:
 	_slot = 0        # 读一次即清,与真实 Input 的"本轮刚按下"语义一致
 	return s
 
-# 压力机器人不捡也不丢枪(与 AiInputSource 同口径)。基类对这两个钩子有 push_error 兜底,
+# 压力机器人不捡也不丢枪(与 AiInputSource 同口径)。基类对这两个钩子有 push_error 保底处理,
 # 不覆写的话脚本机器人的每个 tick 都会刷一屏假报错,把真断言淹掉。
 func _pickup_pressed_raw() -> bool:
 	return false
@@ -129,6 +129,6 @@ func get_aim_dir_override() -> Vector2:
 	return aim
 
 # 必须 true:否则 WeaponBase 的瞄准会回落到读宿主 OS 鼠标(headless 下是 0,0 之类的垃圾值),
-# 开火方向会乱。与 AiInputSource 覆写它的理由同款(那条注释里还记着 reload_active 的第二个判据)。
+# 开火方向会乱。与 AiInputSource 覆写它的理由相同机制(那条注释里还记着 reload_active 的第二个判据)。
 func is_network_driven() -> bool:
 	return true

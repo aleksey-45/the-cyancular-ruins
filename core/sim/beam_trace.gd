@@ -14,7 +14,7 @@ const SUB_TS: float = 32.0  # 子格边长(px)
 
 # origin: 枪口世界坐标;dir: 单位方向;max_len: 总射程(px);max_bounces: 反射次数上限。
 # 返回 {"points": PackedVector2Array 世界坐标折线(含起点/拐点/终点),
-#       "contacts": Array[Vector2i] 每次碰墙的 64px 格(规范坐标,可破坏砖扣血用),
+#       "contacts": Array[Vector2i] 每次碰墙的 64px 格(规范坐标,可破坏砖扣除生命值用),
 #       "hit_points": PackedVector2Array 与 contacts 平行的碰墙表面世界坐标(播粒子落点)}。
 static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: int) -> Dictionary:
 	var grid := MazeGenerator.current_grid
@@ -59,7 +59,7 @@ static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: in
 			pts.append(p + d * remaining)
 			break
 		if t <= 1e-9:
-			# 起点恰在某 32px 子格线上:正对边界 t=0 会原地空转,朝行进方向推一点再判
+			# 起点恰在某 32px 子格线上:正对边界 t=0 会陷入无效循环,朝行进方向推一点再判
 			p += d * 0.25
 			continue
 		if t > remaining:

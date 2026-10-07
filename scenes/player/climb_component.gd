@@ -8,9 +8,9 @@ var body: CharacterBody2D
 
 var _latched: bool = false   # 攀附状态:中心在通道格(梯/锁链)即攀附,不受重力
 
-# (此处原有 const STOP_SNAP := 1.0 —— **死副本**:全仓零使用,注释描述的是一个从未接线的意图。
+# (此处原有 const STOP_SNAP := 1.0 —— **废弃冗余定义**:全仓零使用,注释描述的是一个从未接线的意图。
 #  2026-09-14 删除;水平速度归零的阈值现由 PlayerParams.stop_snap 单一持有。本文件此前也有过
-#  一份零调用的 _approach 死副本(批次 1 已删),抄常量前先 grep 一下还有没有别的使用者。)
+#  一份零调用的 _approach 废弃冗余定义(批次 1 已删),抄常量前先 grep 一下还有没有别的使用者。)
 
 func _ready() -> void:
 	body = get_parent() as CharacterBody2D
@@ -108,10 +108,10 @@ func _climb_foot_offset() -> float:
 	return 57.0
 
 
-# 时间场倍率(加速 ×2;正常 1)。回溯整帧由根早退接管,故 0 一律当 1 处理。
+# 时间场倍率(加速 ×2;正常 1)。回溯整帧由根提前返回接管,故 0 一律当 1 处理。
 #
-# ★★ 2026-10-03 修:**PvP 下这条原先恒返回 1** —— `TimeField.current` 只由单机 Level0 创建,
-#   PvP/菜单恒 null ⇒ `player_speed_mult()` 恒 1.0,与本文件"加速时爬梯/爬链也按主角时间加快"
+# 注意： 2026-10-03 修:**PvP 下这条原先恒返回 1** —— `TimeField.current` 只由单机 Level0 创建,
+#   PvP/菜单恒 null  ->  `player_speed_mult()` 恒 1.0,与本文件"加速时爬梯/爬链也按主角时间加快"
 #   的注释自相矛盾(一下水/一上梯,加速就没了)。
 #   改成与根 `player.gd:191` **同一条判据**:有世界时间场就走它,否则读自己那个
 #   `pvp_haste_mult`(worker 与本端预测各自每帧写的同一字段)。

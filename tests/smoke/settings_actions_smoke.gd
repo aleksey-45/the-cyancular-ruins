@@ -4,11 +4,11 @@ extends SceneTree
 # 跑法: "$GODOT" --headless --path . -s res://tests/smoke/settings_actions_smoke.gd
 # 通过 = `SETTINGS ACTIONS OK` 退出 0。
 #
-# ★ 为什么需要它:`settings_menu` 用的是 ACTION_NAMES.get(action, action) —— 漏一条
+# - 为什么需要它:`settings_menu` 用的是 ACTION_NAMES.get(action, action) —— 漏一条
 #   不报错,只是那一行显示裸的动作名(F/Q 曾经就是这样,实测)。
-# ★ 用 get_script_constant_map() 读常量,不直接取属性:取不存在的属性会抛错,
+# - 用 get_script_constant_map() 读常量,不直接取属性:取不存在的属性会抛错,
 #   而 -s 抛错走不到 quit() → 永久挂起。
-# ★ 两个方向都查:漏了要红;表里留着已经不可重映射的陈旧动作也要红。
+# - 两个方向都查:漏了要红;表里留着已经不可重映射的陈旧动作也要红。
 
 var _fail := 0
 
@@ -25,7 +25,7 @@ func _const_map(path: String) -> Dictionary:
 func _initialize() -> void:
 	var st := _const_map("res://core/config/settings.gd")
 	var sm := _const_map("res://scenes/settings_menu.gd")
-	# ★ 空载守卫:读不到就 quit,免得在空表上把"零条"当成"全过"
+	# - 空载守卫:读不到就 quit,免得在空表上把"零条"当成"全过"
 	if st.is_empty() or sm.is_empty():
 		print("SETTINGS ACTIONS FAILED: 读不到 settings.gd / settings_menu.gd 的常量表")
 		quit(1)

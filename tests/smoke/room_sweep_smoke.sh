@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 僵尸房间清理——源码级结构检查。通过 = SMOKE_ROOM_SWEEP OK 退出 0。用户自跑。
+# 失效房间清理逻辑冒烟测试：源码级结构校验。判定标准：输出 SMOKE_ROOM_SWEEP OK 且退出码为 0。
 set -u
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"

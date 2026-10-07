@@ -1,12 +1,13 @@
 class_name MathUtil
 extends RefCounted
 
-# 通用数学助手。纯静态、无实例状态、不引 autoload:可被任何场景/工具直接调用,
-# 也能在 `-s` 冒烟阶段安全引用(同 core/collision_builder.gd / core/water.gd 的风格)。
+# 通用数学工具类。纯静态函数，无实例状态，不依赖任何 Autoload，
+# 支持在任何场景、工具脚本或独立命令行测试（-s）中安全调用。
 
 
-# 指数缓动:朝目标值逼近。rate 越大越跟手;
-# 起步快后渐缓、松键带滑行、转身平滑穿过 0,避免线性 move_toward 的生硬。
-# 原本在 enemy_base / player / swim_component 各抄一份(逐字相同),此处收为单一来源。
+# 指数平滑逼近函数：朝目标值平滑插值过渡。
+# rate 越大响应越迅速；具有起步迅速、接近目标平缓渐变的特性，松开按键时带有自然滑行，
+# 转向时平滑穿过零点，比线性 move_toward 具有更自然的运动手感。
+# 作为全局通用计算方法，供角色移动、敌人 AI 与游泳组件统一调用。
 static func approach(current: float, target: float, rate: float, delta: float) -> float:
 	return lerp(current, target, 1.0 - exp(-rate * delta))

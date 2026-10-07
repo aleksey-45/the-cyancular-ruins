@@ -39,7 +39,7 @@ func _initialize() -> void:
 	e.global_position = Vector2(100, 200)
 
 	await process_frame
-	cam.make_current()          # 入树后再设为当前相机
+	cam.make_current()          # 加入场景树后再设为当前相机
 	cam.global_position = Vector2(W - 100, 200)
 
 	# ── A: 旧行为(无玩家组 → 绝对取模,停在 100,屏外) ──

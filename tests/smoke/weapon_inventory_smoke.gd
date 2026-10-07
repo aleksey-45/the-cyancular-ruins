@@ -5,11 +5,11 @@ extends SceneTree
 #       --headless --path . -s res://tests/smoke/weapon_inventory_smoke.gd
 # 通过 = `WEAPON_INVENTORY OK` 退出 0。
 #
-# ★ 在 _initialize() 里 load(),不用全局类名 —— 与 tile_query_smoke 的写法一致,
+# - 在 _initialize() 里 load(),不用全局类名 —— 与 tile_query_smoke 的写法一致,
 #   且 -s 阶段类名缓存不保证已就绪(见 docs/eng/tests.md)。
 #
 # ═══ 为什么需要它 ═══
-# 背包有**两条独立的闸门**:8 格容量 与 4 把上限(用户 2026-09-15 明确裁定
+# 背包有**两条独立的门控前置校验**:8 格容量 与 4 把上限(用户 2026-09-15 明确裁定
 # 「就算容量给 100 也最多四把」)。两条都容易在改动中被写成"其中一条推另一条",
 # 而错了之后的表现是"某些组合莫名捡不起来"——日常很难复现。
 # 另一半钉的是**残弹按 inst 记账**:允许持有同类型两把,若按类型记账,
@@ -27,7 +27,7 @@ func _check(ok: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	var WI: GDScript = load("res://core/sim/weapon_inventory.gd")
-	# ★ 空载守卫:load() 失败时若继续往下走,_initialize() 会在 WI.new() 处抛错,
+	# - 空载守卫:load() 失败时若继续往下走,_initialize() 会在 WI.new() 处抛错,
 	#   而 **-s 脚本抛错就走不到 quit() → 进程永久挂起**(本仓踩过,见 tile_query_smoke 的注释)。
 	#   这里显式退 1,让"文件不存在"表现为干净的红,而不是超时。
 	if WI == null:
@@ -38,7 +38,7 @@ func _initialize() -> void:
 	# 假 tier 表:1/2 = 轻(2格),3/4 = 中(3格),5/6 = 重(4格)
 	var tiers := {1: 0, 2: 0, 3: 1, 4: 1, 5: 2, 6: 2}
 
-	# ── 容量与把数上限是两条**独立**闸门 ──
+	# ── 容量与把数上限是两条**独立**门控前置校验 ──
 	var inv = WI.new(tiers)
 	_check(inv.used_cell_count() == 0, "空背包占 0 格")
 	_check(inv.can_hold(5), "空背包放得下重武器")
@@ -49,9 +49,9 @@ func _initialize() -> void:
 	_check(not inv.can_hold(5), "7 格放不下 4 格的重武器(容量闸门)")
 	# 7 格只剩 1 格,而最便宜的档是 2 格 → 此时**什么都放不下**
 	# (这里原先写成"放得下轻武器",是我把 7+2=9 看成了 8 —— 测试自己算错,
-	#  实现拒绝加才是对的。留着这条是因为它正好钉住"闸门按剩余格数算,不是按把数算")
+	#  实现拒绝加才是对的。留着这条是因为它正好钉住"门控前置校验按剩余格数算,不是按把数算")
 	_check(not inv.can_hold(1), "7 格只剩 1 格,放不下 2 格的轻武器")
-	# 闸门要是"卡死"就测不出上面那些了 —— 腾出格后必须重新放得下
+	# 门控前置校验要是"卡死"就测不出上面那些了 —— 腾出格后必须重新放得下
 	var freed: Dictionary = inv.remove_at(2)
 	_check(int(freed["type"]) == 3, "腾出的是中武器")
 	_check(inv.used_cell_count() == 4 and inv.held.size() == 2, "腾出后 4 格 / 2 把")
@@ -65,16 +65,16 @@ func _initialize() -> void:
 	_check(inv_b.used_cell_count() == 8 and inv_b.held.size() == 3, "恰好 8 格 / 3 把")
 	_check(not inv_b.can_hold(1), "满容量后最便宜的档也放不下")
 
-	# ★ 关于"把数闸门独立于容量闸门"的实话:**按今天的 cost 表,它其实是被容量蕴含的** ——
+	# - 关于"把数门控前置校验独立于容量门控前置校验"的实话:**按今天的 cost 表,它其实是被容量蕴含的** ——
 	#   最便宜的轻武器 2 格,4 把 × 2 = 8 = CAPACITY,所以 used_cell_count() ≤ 8 已经蕴含 size ≤ 4。
 	#   没法用真表造出"容量还有余、但已满 4 把"的局面(要造就得有 cost=1 的档)。
 	#   但它**不是死代码**:用户 2026-09-15 把它定为硬规则(「就算容量给 100 也最多四把」),
 	#   而一旦有人把轻武器改成 1 格 / 把 CAPACITY 调大,"最多 4 把"这个承诺就只靠这一条守着了。
-	#   这里退而钉住常量本身 + 那个临界等式,别假装验了闸门的独立性。
-	# ★ 默认值一律走 `get_script_constant_map()`:常量不存在时直接取属性会抛错,而 -s 脚本
+	#   这里退而钉住常量本身 + 那个临界等式,别假装验了门控前置校验的独立性。
+	# - 默认值一律走 `get_script_constant_map()`:常量不存在时直接取属性会抛错,而 -s 脚本
 	#   抛错走不到 quit() → **进程永久挂起**(本仓铁律,见上面 WI == null 那段)。
 	#   `.get(name, -1)` 的存在性检查让"常量还没改名"表现为**干净的红**。
-	# ★ `CELL_COST` 是计划 1 改的名(原 `SLOT_COST`)—— 写回旧名同样会抛错 ⇒ 挂起。
+	# - `CELL_COST` 是计划 1 改的名(原 `SLOT_COST`)—— 写回旧名同样会抛错  ->  挂起。
 	var wconsts: Dictionary = WI.get_script_constant_map()
 	var def_cap := int(wconsts.get("DEFAULT_CAPACITY", -1))
 	var def_max := int(wconsts.get("DEFAULT_MAX_WEAPONS", -1))
@@ -90,14 +90,14 @@ func _initialize() -> void:
 	_check(not inv_y.can_hold(1), "4 把轻武器后不能再装")
 
 	# ══ 容量 / 把数可配(2026-09-25)══
-	# ★★ 探字段**必须**先探再调:直接写 `probe.capacity` 在改动前会抛 "Invalid get index"
+	# 注意： 探字段**必须**先探再调:直接写 `probe.capacity` 在改动前会抛 "Invalid get index"
 	#   → `_initialize()` 当场中断 → **走不到 quit() → 进程永久挂起**。
 	#   探不到就报 FAIL 并**用 if 包住**后续(不要 early return —— return 同样到不了 quit)。
 	var probe = WI.new(tiers)
 	var has_capacity := false
 	var has_max := false
 	for pr in probe.get_property_list():
-		# ★ 用 if/elif,不用 `match` —— GDScript 的 match 体内 `continue` 是 **fall-through**
+		# - 用 if/elif,不用 `match` —— GDScript 的 match 体内 `continue` 是 **fall-through**
 		#   (落到下一个 pattern、两支都跑),本仓踩过;这里虽没写 continue,但别开这个头。
 		var n := str(pr.get("name", ""))
 		if n == "capacity":
@@ -107,7 +107,7 @@ func _initialize() -> void:
 	_check(has_capacity, "★ WeaponInventory 应有**实例字段** capacity(不再是类常量 CAPACITY)")
 	_check(has_max, "★ WeaponInventory 应有**实例字段** max_weapons(不再是类常量 MAX_WEAPONS)")
 	if has_capacity and has_max:
-		# ① 不带额外实参 ⇒ 默认值不变(协议零改动的前提)
+		# ① 不带额外实参  ->  默认值不变(协议零改动的前提)
 		var dflt = WI.new(tiers)
 		_check(dflt.capacity == 8 and dflt.max_weapons == 4,
 				"缺省构造 = 8 格 / 4 把(实际 %d / %d)" % [dflt.capacity, dflt.max_weapons])
@@ -121,7 +121,7 @@ func _initialize() -> void:
 		_check(wide.used_cell_count() == 12,
 				"宽松配置下三把重型 = 12 格(实际 %d)" % wide.used_cell_count())
 		_check(not wide.can_hold(1), "★ 容量闸门读的是**字段**:12 格满了,最便宜的档也放不下")
-		# ③ 两条闸门**互相独立** —— 这是本节的核心断言,今天靠真表造不出来(见上面那段长注释)
+		# ③ 两条门控前置校验**互相独立** —— 这是本节的核心断言,今天靠真表造不出来(见上面那段长注释)
 		var by_cap = WI.new(tiers, 4, 9)
 		by_cap.add(5, 5)                    # 重型 4 格 = 正好占满 4 格,而把数还剩 8
 		_check(by_cap.used_cell_count() == 4,

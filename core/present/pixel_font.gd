@@ -23,7 +23,7 @@ const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
 # 作者废弃,其官方推荐的 16px 替代品正是 Unifont。代价是字形比手绘像素字朴素。
 # 若日后拿到 16px 网格的像素中文字体,换掉 CJK_FONT_PATH 即可,其余不用动。
 const CJK_FONT_PATH := "res://assets/fonts/unifont-17.0.05.otf"
-# 兜底:Unifont 覆盖不到的生僻字/符号(它基本全覆盖,这层只是保险),再退到系统字体。
+# 保底处理:Unifont 覆盖不到的生僻字/符号(它基本全覆盖,这层只是保险),再退到系统字体。
 const CJK_BACKSTOP_NAMES := ["SimSun", "宋体", "Microsoft YaHei"]
 
 static var _font: FontFile = null

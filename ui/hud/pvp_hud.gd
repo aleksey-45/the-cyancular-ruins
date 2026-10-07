@@ -5,7 +5,7 @@ extends CanvasLayer
 # 布局(遮罩/居中文案/记分/延迟与像素字体、颜色)已迁进 pvp_hud.tscn + ui/hud/broadcast.tscn,
 # 这里只留信号驱动逻辑:
 #  - 广播层:全屏 (0,0,0,0.3) 遮罩 + 屏幕正中央巨大字——开场/倒计时/本局结果/胜利失败/断线通知统一走这里。
-#    ★ 该层**三个对局 HUD 共用** `ui/hud/broadcast.tscn`(见 broadcast.gd):本类只喂文案与时机。
+#    - 该层**三个对局 HUD 共用** `ui/hud/broadcast.tscn`(见 broadcast.gd):本类只喂文案与时机。
 #  - 记分(**顶部正中**):P1/P2 击杀、局胜、局号
 #  - 延迟(右下角):NetBus.ping_updated 平滑 RTT
 
@@ -30,7 +30,7 @@ var _big: Label:
 		return _broadcast.big if _broadcast != null else null
 
 # 「对手掉线中」(阶段 3,spec §4 的 3.1):role(int) -> 剩余秒。
-# ★ 服务器只在**状态转折点**广播 `grace`,两次之间由本类**自己走秒**(与广播那边
+# - 服务器只在**状态转折点**广播 `grace`,两次之间由本类**自己倒计时更新**(与广播那边
 #   `Broadcast.tick` 同一取舍);那份减法的唯一实现是 `GraceWindow.tick_display`(别在这里手写一份)。
 var _grace: Dictionary = {}
 
@@ -46,9 +46,9 @@ func _ready() -> void:
 func show_notice(big: String, sub: String = "") -> void:
 	_broadcast.set_broadcast(true, big, sub)
 
-# 倒计时数字走秒已收进 Broadcast;「对手掉线中」的秒数仍在本类 —— 两者共用一个 `_process`。
-# ★ 两件事**各自独立**:掉线可能发生在倒计时里(原先那条"不受早退影响"的注释说的就是它),
-#   故这里不写早退,两段都无条件跑。
+# 倒计时数字倒计时更新已收进 Broadcast;「对手掉线中」的秒数仍在本类 —— 两者共用一个 `_process`。
+# - 两件事**各自独立**:掉线可能发生在倒计时里(原先那条"不受提前返回影响"的注释说的就是它),
+#   故这里不写提前返回,两段都无条件跑。
 func _process(delta: float) -> void:
 	_broadcast.tick(delta)
 	if not _grace.is_empty():
@@ -56,8 +56,8 @@ func _process(delta: float) -> void:
 		_refresh_grace()
 
 # 「对手掉线中,等待重连… 剩余 Ns」。
-# ★ 1v1 的对手 role 恒为 `3 - 自己`(与副本、击杀播报、P2 染色同源)。
-# ★ 判据写 `has(opp)` 而**不是**"取 `_grace` 的第一个键":后者在将来多出一个 role 时
+# - 1v1 的对手 role 恒为 `3 - 自己`(与副本、击杀播报、P2 染色同源)。
+# - 判据写 `has(opp)` 而**不是**"取 `_grace` 的第一个键":后者在将来多出一个 role 时
 #   (比如观战位)会印错人,而且**不报错**。
 func _refresh_grace() -> void:
 	var opp := 3 - PvpSession.role
@@ -67,7 +67,7 @@ func _refresh_grace() -> void:
 		_grace_label.text = "对手掉线中,等待重连… 剩余 %ds" % int(ceilf(float(_grace[opp])))
 
 func _on_ping(ms: int) -> void:
-	# ★ 不带「延迟」二字,直接 "24ms"(2026-09-17 用户要求)。字数少一半 → 右下角占位更小,
+	# - 不带「延迟」二字,直接 "24ms"(2026-09-17 用户要求)。字数少一半 → 右下角占位更小,
 	#   小地图能更贴近下边(见 ui/minimap.gd 的 EDGE_BOTTOM)。
 	_ping_label.text = "%dms" % ms
 	# 阈值配色已抽到 UiFactory(单一来源,大乱斗那条也走它 —— 见 UiFactory.ping_color)
@@ -75,16 +75,16 @@ func _on_ping(ms: int) -> void:
 
 func _on_round_state(data: Dictionary) -> void:
 	# 「对手掉线中」(阶段 3,spec §4 的 3.1):载荷里 `grace` = {role -> 剩余秒}。
-	# ★ **缺键 = 此刻没人掉线**(服务端空表不带上该键,见 `GraceWindow.merge_into`)——
+	# - **缺键 = 此刻没人掉线**(服务端空表不带上该键,见 `GraceWindow.merge_into`)——
 	#   不是"未知",也不是错误。老客户端忽略未知键、新客户端拿到缺键都走同一支。
 	_grace = data.get("grace", {})
-	# ★★ **本函数的唯一一次刷新**(2026-09-29 删掉了函数尾那次重复调用)。
-	#   原先首尾各刷一次,而尾那次的注释写着「本帧的权威值覆盖本地走秒的结果」—— 那句话**属于
-	#   这一处**(赋值一完成就把权威值画上去;本地走秒发生在**两帧之间**的 `_process` 里,见上),
+	# 注意： **本函数的唯一一次刷新**(2026-09-29 删掉了函数尾那次重复调用)。
+	#   原先首尾各刷一次,而尾那次的注释写着「本帧的权威值覆盖本地倒计时更新的结果」—— 那句话**属于
+	#   这一处**(赋值一完成就把权威值画上去;本地倒计时更新发生在**两帧之间**的 `_process` 里,见上),
 	#   尾那次只是**同参重刷**:`_grace` 的唯一写点就是上面这一行,`PvpSession.role` 在本函数里
 	#   也没有第二个值,故两次调用的画面结果**逐字相同**(`_refresh_grace` 只写
 	#   `_grace_wrap.visible` 与 `_grace_label.text`,函数体里没有任何读它们的地方)。
-	#   ⇒ **别在函数尾再加一次**:它不改行为,只会让人以为"中间某处会改 `_grace`"。
+	#    ->  **别在函数尾再加一次**:它不改行为,只会让人以为"中间某处会改 `_grace`"。
 	#   (若将来真在 `match state:` 的某个分支里改了 `_grace`,那时也**不**该在尾上补一笔 ——
 	#    该在那个分支里自己刷,或者把赋值挪到分发**之前**。)
 	_refresh_grace()
@@ -103,7 +103,7 @@ func _on_round_state(data: Dictionary) -> void:
 	var me: int = PvpSession.role
 	match state:
 		ST_COUNTDOWN:
-			# 主文案 = 巨大倒计时数字(Broadcast 走秒);副文案 = 第几局(首局用"对战开始")
+			# 主文案 = 巨大倒计时数字(Broadcast 倒计时更新);副文案 = 第几局(首局用"对战开始")
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
 			_broadcast.start_countdown(float(data.get("timer", 3.0)), sub)
 		ST_PLAYING:

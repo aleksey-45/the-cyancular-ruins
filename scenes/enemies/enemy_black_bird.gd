@@ -1,42 +1,41 @@
 class_name EnemyBlackBird
 extends EnemyBase
 
-# 绕背瞬移刺客:睡眠 → 随机游走 → 周期性判定「玩家另一侧 × 距玩家 3~8 格(随机)」的
-# 地板格落点(LOS 通)→ 起飞上跳 → 落地播 disappear → 白闪 → 传送 → 闪后空中播 appear
-# → 落地 → 带跳跃的地面冲锋打 6 伤 → 大后跳(命中/未命中都) → 回游走,玩家远离入睡。
-# 地面敌人(同 JumpBird 模式),全程受重力,不用飞行寻路。
+# 精英刺客敌人（乌鸫）：
+# 行为状态循环：睡眠 -> 随机游走 -> 周期性寻找玩家侧后方 3~8 格通视落点 -> 起飞上挑 -> 落地播放隐去动画 -> 白闪传送 ->
+# 空中显现 -> 落地冲锋造成伤害 -> 大幅度后跳 -> 恢复游走；玩家远离时重新进入休眠。
+# 全程受重力影响的地面实体，不使用飞行寻路。
 
 enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }
 
-var _wake_timer: float = -1.0        # wake_up 动画剩余;>=0 表示在播
-var _sleep_anim_timer: float = -1.0  # fall_asleep 动画剩余
-var _wander_timer: float = 0.0       # 当前这段行走剩余
-var _wander_dir: float = 1.0         # 游走方向(±1)
-var _wander_idle_timer: float = 0.0  # 游走停顿剩余(>0 = 站着不动)
-var _flank_check_timer: float = 0.0  # 瞬移判定周期剩余
-var _flank_cell: Vector2i = Vector2i(-1, -1)  # 选定落点格
-var _landing_timer: float = 0.0      # 瞬移后落地兜底
-var _prep_timer: float = 0.0         # 起飞落地后/传送落地后停顿剩余
-var _wait_land: bool = false         # 起飞/传送后是否还在空中(等落地)
-var _left_ground: bool = false       # 起飞/传送跳是否已离地(排除进状态帧 is_on_floor 的旧值)
-var _teleport_cooldown: float = 0.0  # 冲锋结束后瞬移冷却剩余
-var _charge_timer: float = 0.0       # 冲锋超时
-var _back_hop_cd: float = 0.0        # 后跳落地冷却
-var _body_min: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最小角(按 scale 换算)
-var _body_max: Vector2 = Vector2.ZERO   # 碰撞箱 AABB 最大角(按 scale 换算)
-var _teleport_flash_timer: float = 0.0  # 瞬移前后白闪剩余(纯白剪影,结束恢复)
+var _wake_timer: float = -1.0        # wake_up 动画剩余时长（>=0 表示正在播放）
+var _sleep_anim_timer: float = -1.0  # fall_asleep 动画剩余时长
+var _wander_timer: float = 0.0       # 当前游走剩余时间
+var _wander_dir: float = 1.0         # 游走方向（±1）
+var _wander_idle_timer: float = 0.0  # 游走停顿剩余时间（>0 表示原地待机）
+var _flank_check_timer: float = 0.0  # 瞬移落点检测周期计时
+var _flank_cell: Vector2i = Vector2i(-1, -1)  # 选定的传送目标网格
+var _landing_timer: float = 0.0      # 传送后着地超时保护计时器
+var _prep_timer: float = 0.0         # 起飞/传送着地后的准备停顿剩余时长
+var _wait_land: bool = false         # 传送后是否仍处于空中（等待着地）
+var _left_ground: bool = false       # 起飞跳跃是否已离地（排除起跳初始帧的地面状态）
+var _teleport_cooldown: float = 0.0  # 冲锋结束后的瞬移冷却计时器
+var _charge_timer: float = 0.0       # 冲锋超时计时器
+var _back_hop_cd: float = 0.0        # 后跳落地后的冷却时间
+var _body_min: Vector2 = Vector2.ZERO   # 碰撞盒 AABB 最小顶点（经 scale 变换后）
+var _body_max: Vector2 = Vector2.ZERO   # 碰撞盒 AABB 最大顶点（经 scale 变换后）
+var _teleport_flash_timer: float = 0.0  # 传送闪白特效计时器（纯白剪影着色，结束后复原）
 var _silhouette_mat: ShaderMaterial = null  # 纯白剪影着色器材质
-var _appear_timer: float = 0.0         # 传送后 appear 播完剩余(期间空中滞留,不落地)
+var _appear_timer: float = 0.0         # 传送后显现动画播放剩余时长（期间空中悬停）
 
 
 func _ready() -> void:
-	# 精英标(第一阶段):免疫回溯(WorldRewind 不入快照)、加速与玩家同步、击杀掉 300 颗粒
+	# 精英实体标记（阶段一）：免疫时空回溯（不计入快照）、时间加速倍率与玩家同步、被击杀后掉落 300 单位时间粒子
 	set_meta("elite", true)
 	super._ready()
 	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.BlackBird.wake_radius
-	# 纯白剪影材质:每实例独立创建——tscn 里共享 sub_resource 材质会导致一只鸟白闪
-	# 全屏鸟跟着白闪(跨实例),且编辑器重存 tscn 会把场景材质冲掉;代码挂最稳。
+	# 纯白剪影材质：每个实例独立创建，避免跨实例共享材质导致闪白表现相互干扰
 	var bb_shader := load("res://scenes/enemies/black_bird_silhouette.gdshader") as Shader
 	var bb_mat := ShaderMaterial.new()
 	bb_mat.shader = bb_shader
@@ -94,7 +93,7 @@ func _ai(delta: float) -> void:
 # 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 146 行的单 match)。
 # 绕背瞬移那条链(TAKE_OFF → CHARGE 的 appear 滞留 → 落地 → 停顿 → 冲锋)原本横跨两个
 # match 分支、靠 _wait_land/_left_ground/_prep_timer 一串标志位串起来,现在各自归位。
-# ★ 各段里的 `return` 语义不变:match 是 `_ai` 的最后一条语句。
+# - 各段里的 `return` 语义不变:match 是 `_ai` 的最后一条语句。
 
 func _tick_sleep(delta: float, dist: float) -> void:
 	if _wake_timer > 0.0:
@@ -149,7 +148,7 @@ func _tick_wander(delta: float, dist: float) -> void:
 			_anim.stop()
 		else:
 			velocity.x = _wander_dir * EnemyParams.BlackBird.wander_speed
-			# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳同款判定)
+			# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳相同机制判定)
 			if is_on_wall():
 				velocity.y = EnemyParams.BlackBird.wander_jump_velocity
 	_teleport_cooldown = maxf(_teleport_cooldown - delta, 0.0)
@@ -183,7 +182,7 @@ func _tick_take_off(delta: float) -> void:
 		_anim.play("disappear")
 	else:
 		if _flank_cell == Vector2i(-1, -1):
-			_set_state(State.WANDER)  # 兜底:无落点不该进 TAKE_OFF
+			_set_state(State.WANDER)  # 保底处理:无落点不该进 TAKE_OFF
 			return
 		_teleport_to_flank()  # 白闪在 _teleport_to_flank 内触发(传送瞬间)
 		_set_state(State.CHARGE)
@@ -215,7 +214,7 @@ func _tick_charge(delta: float) -> void:
 		_landing_timer -= delta
 		if _landing_timer <= 0.0:
 			_wait_land = false
-			_prep_timer = EnemyParams.BlackBird.charge_prep_time  # 兜底:超时也进停顿
+			_prep_timer = EnemyParams.BlackBird.charge_prep_time  # 保底处理:超时也进停顿
 		velocity.x = 0.0
 		return
 	elif _prep_timer > 0.0:
@@ -309,7 +308,7 @@ func _find_flank_cell() -> bool:
 # 用于瞬移落点清空判定:落点/下落路径不能穿墙。
 # 逐格环面判定收在 core/tile_query.gd(与飞鸟避障/预瞄判墙同源)。
 # 空网格视为"全清":TileQuery 在空网格返回 false(= 没压到东西),`not` 之后正是 true ——
-# 与旧实现的显式 is_empty 早退同义(探针会清空 current_grid,真实地图不会)。
+# 与旧实现的显式 is_empty 提前返回同义(探针会清空 current_grid,真实地图不会)。
 func _body_clear_at(pos: Vector2) -> bool:
 	var ts := GameParameters.TILE_SIZE
 	var rect := Rect2(pos + _body_min, _body_max - _body_min)
@@ -386,7 +385,7 @@ func _water_swim_dir() -> Vector2:
 	return toroidal_dir_to_player()
 
 
-# 睡眠态判定(基类 _is_far_sleeping 用)。★ 显式写出来而不是靠"SLEEP 恰好是枚举第一个":
+# 睡眠态判定(基类 _is_far_sleeping 用)。-  显式写出来而不是靠"SLEEP 恰好是枚举第一个":
 # 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
 func _is_asleep() -> bool:
 	return state == State.SLEEP
@@ -400,7 +399,7 @@ func _on_state_entered(s: int) -> void:
 		State.CHARGE:
 			squash.impulse(SquashStretch.Impulse.CHARGE)
 
-## 死亡:掉 300 颗粒结晶(碎裂→飞向怀表→吸收时入账+表体颤抖)。基类虚钩覆写。
+## 死亡:掉 300 粒子结晶(碎裂→飞向怀表→吸收时入账+表体颤抖)。基类虚钩覆写。
 func _on_death() -> void:
 	super()
 	GrainCrystalFx.spawn(get_parent(), global_position, TimeParams.ELITE_GRAIN_DROP)

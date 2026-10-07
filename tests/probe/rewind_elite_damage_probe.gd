@@ -6,21 +6,21 @@ extends Node
 #   断言:回溯前精英 HP 不掉;回溯中/后 HP 下降;普通怪不受此判定(它们被冻结回放)。
 # 用法:godot --headless --path . res://tests/probe/rewind_elite_damage_probe.tscn
 #
-# ★★ 2026-10-02 登记的抖动「回放弹峰值=0」**已查明(2026-10-03)**,不是判定坏了,是**试样没进快照**:
-#   · 旧布置把子弹放在 `bird.global_position + Vector2(20, 0)`,而精英身体(scale 2.5)半径远大于
-#     20px ⇒ 子弹**出生即在体内**,第一个物理帧 `move_and_collide` 就命中 → `queue_free`。
-#     ★ 逐物帧实测:子弹只在**创建后第 0 个物帧**存在,第 1 个物帧已消失(同时精英 HP 40→30)。
-#   · 它总共只活 **1 个物理帧 ≈ 16.7ms**,而录制是**按 `TimeParams.SNAP_HZ`=20Hz 采样**(50ms 一次,
-#     在 `_process` 里)—— 一个只活 16.7ms 的实体**大概率整个采样不到** ⇒ 环里 0 颗 ⇒
-#     `replay_bullets()` 全程为空 ⇒ 报「回溯期未发生二次伤害」。约 1/3 的跑次能撞上采样点,故时红时绿。
-#   ⇒ 修法:让试样**稳定活过采样周期**(`collision_mask = 0`,不与世界碰撞),并在回溯前**先断言
+# 注意： 2026-10-02 登记的抖动「回放弹峰值=0」**已查明(2026-10-03)**,不是判定坏了,是**试样没进快照**:
+#   - 旧布置把子弹放在 `bird.global_position + Vector2(20, 0)`,而精英身体(scale 2.5)半径远大于
+#     20px  ->  子弹**出生即在体内**,第一个物理帧 `move_and_collide` 就命中 → `queue_free`。
+#     - 逐物帧实测:子弹只在**创建后第 0 个物帧**存在,第 1 个物帧已消失(同时精英 HP 40→30)。
+#   - 它总共只活 **1 个物理帧 ≈ 16.7ms**,而录制是**按 `TimeParams.SNAP_HZ`=20Hz 采样**(50ms 一次,
+#     在 `_process` 里)—— 一个只活 16.7ms 的实体**大概率整个采样不到**  ->  环里 0 颗  -> 
+#     `replay_bullets()` 全程为空  ->  报「回溯期未发生二次伤害」。约 1/3 的跑次能撞上采样点,故时红时绿。
+#    ->  修法:让试样**稳定活过采样周期**(`collision_mask = 0`,不与世界碰撞),并在回溯前**先断言
 #     `环里有子弹`** —— 否则后面的红说的是"录制",会把判定冤枉掉。
-#   ★ 顺带登记的产品面缺口(未修,见 AGENTS.md D3):录制是按 SNAP_HZ 的**瞬时采样**,不是按实体
-#     逐个记录 ⇒ **寿命 < 1/SNAP_HZ 的实体可能整段不进快照**(贴脸命中的子弹是最常见的一例),
+#   - 顺带登记的产品面缺口(未修,见 AGENTS.md D3):录制是按 SNAP_HZ 的**瞬时采样**,不是按实体
+#     逐个记录  ->  **寿命 < 1/SNAP_HZ 的实体可能整段不进快照**(贴脸命中的子弹是最常见的一例),
 #     那次回溯就不会把它带回来。
 #
-# ★★ 2026-10-02:**钉图**。本探针原先不钉图 ⇒ 每进程随机选一份 `.cyrm`,而它的几何
-#   (玩家出生点、前方 300px 有没有墙、环面尺寸)与地形强耦合 ⇒ **实测 3 次里 2 次红**
+# 注意： 2026-10-02:**钉图**。本探针原先不钉图  ->  每进程随机选一份 `.cyrm`,而它的几何
+#   (玩家出生点、前方 300px 有没有墙、环面尺寸)与地形强耦合  ->  **实测 3 次里 2 次红**
 #   `回溯期未发生二次伤害(HP 30→30)` —— 红的是"这一局地形恰好不合适",不是功能坏了。
 #   本仓对"取图类探针"的既有纪律就是钉图以求跨进程可复现(见 docs/eng/world.md「探针取图类脚本」)。
 const MAP := "res://maps/newfactory.cyrm"
@@ -41,7 +41,7 @@ func _wait_ms(ms: int) -> void:
 func _run() -> void:
 	var tree := get_tree()
 	await tree.process_frame
-	MazeGenerator.set_map_file(MAP)   # ★ 必须在实例化 level_0 之前钉图(见文件头)
+	MazeGenerator.set_map_file(MAP)   # - 必须在实例化 level_0 之前钉图(见文件头)
 	var lvl: Node = load("res://scenes/level_0.tscn").instantiate()
 	tree.root.add_child(lvl)
 	await _wait_ms(400)
@@ -61,9 +61,9 @@ func _run() -> void:
 		_fail("乌鸫缺 elite 标")
 
 	# 子弹:从精英体内起飞、向远处飞(回溯时会倒回来穿过它)。
-	# ★ `collision_mask = 0`:不让它跟世界碰撞 —— 见文件头,出生在体内的子弹**一个物理帧**就没了
-	#   (16.7ms),小于 1/SNAP_HZ(50ms)的采样周期 ⇒ 录制器大概率整段看不到它。本探针要验的是
-	#   **判定**(`_rewind_elite_hits`),不该被"试样活不过一个采样周期"搅成假红。
+	# - `collision_mask = 0`:不让它跟世界碰撞 —— 见文件头,出生在体内的子弹**一个物理帧**就没了
+	#   (16.7ms),小于 1/SNAP_HZ(50ms)的采样周期  ->  录制器大概率整段看不到它。本探针要验的是
+	#   **判定**(`_rewind_elite_hits`),不该被"试样活不过一个采样周期"搅成虚假失败（测试用例误报）。
 	var b: Node2D = (load("res://scenes/weapons/bullet.tscn") as PackedScene).instantiate()
 	vp.add_child(b)
 	b.global_position = bird.global_position + Vector2(20, 0)   # 紧贴精英起飞:正向穿一次(正常命中),回溯再穿=二次伤害
@@ -77,7 +77,7 @@ func _run() -> void:
 
 	# ① 录制 2.5s(慢弹已飞离精英 ~300px;这段历史足够回溯走回来)
 	await _wait_ms(1200)
-	# ★ 先确认试样**真进了快照**:环里 0 颗时后面的红是"没录到",不是"判定没生效" ——
+	# - 先确认试样**真进了快照**:环里 0 颗时后面的红是"没录到",不是"判定没生效" ——
 	#   这条断言存在的唯一目的就是别把这两种成因混成同一句话。
 	var rw0 = lvl.get("_rewind")
 	var recorded_bullets := 0

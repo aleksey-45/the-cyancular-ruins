@@ -9,7 +9,7 @@ extends Node
 # ═══ 为什么单独写一支(与 netplay_probe 的分工)═══
 # `tests/netplay_probe.gd` 是 `-s`,只覆盖**纯逻辑**(房间码生成/凭据派生/hostname 切端口/peer JSON 解析)。
 # 本支补的是**真进程**那一段 —— 也就是"移植到 KH 基线之后还走不走得通"这个问题的真正答案:
-#   ① 房主:拉起真 `Cyancular Ruins Server.exe -- --port P` → 探活连上
+#   ① 房主:启动真 `Cyancular Ruins Server.exe --port P` → 存活探测连上
 #   ② 房主:在同一连接上 `create_room` → 拿到 5 位房间码
 #   ③ 房主:按房间码起真 EasyTier 隧道(`--no-tun`)→ 等自己的 RPC 门户就绪
 #   ④ 收摊:停隧道 + 停本机服务端(不留残留进程)
@@ -45,7 +45,7 @@ func _ready() -> void:
 		_finish()
 		return
 
-	# ① 拉起真服务端 + 探活(这一步内部就建好了连接)
+	# ① 启动真服务端 + 存活探测(这一步内部就建好了连接)
 	_port = await LocalServer.launch_and_connect()
 	_check(_port > 0, "launch_and_connect() 拿到端口(实得 %d)" % _port)
 	_check(NetBus.can_send_to_server(), "探活之后 ENet 连接真的可用")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# C2 孪生冒烟(单进程,scene 模式 headless):证明 capture_state/restore_state 完整。
-# 通过 = 打印 SMOKE_TWIN OK 退出 0;B 每 12 tick 被搞乱后 restore(A) 仍与 A 逐 tick 收敛。
-# 跑法:bash Tests/pvp_twin_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。
+# C2 客户端预测与状态同步冒烟测试（单进程，headless 场景模式）：验证 capture_state 与 restore_state 的完整性。
+# 判定标准：输出 SMOKE_TWIN OK 且退出码为 0；验证客户端 B 在被注入扰动数据后，通过状态恢复（restore）依然能够与权威端 A 逐物理帧同步收敛。
+# 运行方式：bash tests/smoke/pvp_twin_smoke.sh
 set -u
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"

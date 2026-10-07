@@ -9,9 +9,9 @@ uniform vec2 crop_scale = vec2(1.0);
 uniform float desat : hint_range(0.0, 1.0) = 0.0;
 // 受击红闪:0=无,1=纯红罩。由 PostProcess.flash_hit() 置峰后每帧衰减。
 uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
-// ── 个人钟·第一阶段(时间玩法)三个全屏效果 ──
+// ── 怀表时间系统·第一阶段(时间玩法)三个全屏效果 ──
 uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化覆盖度(0→1:由内而外铺满)
-uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 贷款深度:变亮 + 红蓝色差
+uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 透支深度:变亮 + 红蓝色差
 uniform float haste_dim : hint_range(0.0, 1.0) = 0.0;     // 加速压暗覆盖度(0→1:由内而外铺满)
 uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // 世界视口尺寸(色差换算像素偏移)
 uniform float loan_aberration = 5.0;                      // 色差偏移上限(像素)
@@ -53,13 +53,13 @@ void fragment() {
 		COLOR.rgb = mix(COLOR.rgb, film, amt);
 	}
 	// 加速:全图统一压暗 + 冷色偏移(角色靠加色高亮"跳"出来 —— 见 TimeGlow)
-	// ★ 0.42 → 0.55:压得太黑时用户会读成"一切都被调暗了、谁都没被高亮",留一点环境可读性。
+	// -  0.42 → 0.55:压得太黑时用户会读成"一切都被调暗了、谁都没被高亮",留一点环境可读性。
 	if (haste_dim > 0.0) {
 		float amt = smoothstep(0.0, 0.28, haste_dim - rt);
 		vec3 target = COLOR.rgb * 0.55 + vec3(0.02, 0.035, 0.07);
 		COLOR.rgb = mix(COLOR.rgb, target, amt);
 	}
-	// 贷款:整体变亮 + 红蓝色影分离(深度越深越明显)
+	// 透支:整体变亮 + 红蓝色影分离(深度越深越明显)
 	if (loan_depth > 0.0) {
 		float off = loan_depth * loan_aberration / max(viewport_size.x, 1.0);
 		vec3 base = texture(screen_tex, uv).rgb;

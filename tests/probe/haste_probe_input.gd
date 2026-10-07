@@ -1,14 +1,14 @@
 extends PlayerInput
 
-# 加速探针的**哑手柄**(无 class_name;由 haste_probe.gd preload 引用 —— 新建全局类要刷全局类缓存,本仓踩过坑)。
-# 只把 axis(水平)与 jump("up" 的按下边沿)报给玩家;其余读口恒中性。
+# 加速探针的**哑手柄**(无 class_name;由 haste_probe.gd preload 引用 —— 新建全局类要刷全局类缓存,本仓曾遇到过此类隐患)。
+# 只把 axis(水平)与 jump("up" 的按下边沿)报给玩家;其余读取接口恒中性。
 #
-# ★ 为什么不用 Input.action_press:跳跃读的是 `is_action_just_pressed("up")` 边沿,而 Godot 的
+# - 为什么不用 Input.action_press:跳跃读的是 `is_action_just_pressed("up")` 边沿,而 Godot 的
 #   just_pressed 判定是 `pressed_physics_frame == get_physics_frames()`。探针协程在 physics_frame
 #   信号里按下时记的是**当前**帧号,下一帧处理时帧号已经 +1 → 永远报不到,跳不起来。
 #   (回溯探针能用 action_press,是因为它读 is_action_pressed,不吃帧号。)
 #
-# 冻结(frozen)由基类的公开读口短路,本桩不碰 —— 与生产实现同款契约。
+# 冻结(frozen)由基类的公开输入读取接口短路,本桩不碰 —— 与生产实现相同机制契约。
 
 var axis := 0.0
 var jump := false

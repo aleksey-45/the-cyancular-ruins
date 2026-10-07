@@ -1,9 +1,8 @@
 class_name AfterImage
 extends Node2D
 
-# 加速残影(第一阶段):复制主角当前帧贴图,红/蓝双色交替、短促淡出。
-# 关键教训:move_and_slide() 用引擎自己的 delta,缩放 delta 不改变位移 —— 加速的"快"必须
-# 落在速度域;残影则是让"快"被眼睛看见的表现层。
+# 时间加速移动残影特效（阶段一）：截取主角当前动画帧纹理生成半透明副本，红/蓝双色交替生成并在 0.26s 内淡出销毁。
+# 加速效果作用于水平速度域，残影组件在表现层强化高速移动与时间加速的视觉冲击感。
 
 static func spawn(host: Node, animator: AnimatedSprite2D, tint: Color) -> void:
 	if host == null or animator == null or animator.sprite_frames == null:

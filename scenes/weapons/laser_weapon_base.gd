@@ -30,15 +30,15 @@ const LaserVisual := preload("res://core/present/laser_visual.gd")
 @export var beam_half_width: float = 18.0
 # 光束视觉存续秒数(tscn 当前 0.25)。
 @export var beam_lifetime: float = 0.2
-# 对可破坏砖单次扣血量(树叶/树干用 "explosion" 语义,不穿墙只磨)。
+# 对可破坏砖单次扣除生命值量(树叶/树干用 "explosion" 语义,不穿墙只磨)。
 @export var tile_chip: int = 8
 
 # 命中判据(每段):折线线段与目标**实际身体 AABB**(由启用中的碰撞多边形算出,含 2.5x 缩放,
 # 见 _body_rect)外扩 beam_half_width×HIT_MULT 后相交即中 —— 激光线穿过身体任一部分都算,
 # 不再要求中心点贴线。
 # (早前用"中心点到线距离 ≤ 半径+半身",身体大而激光细 → 线扫过身体上半但中心离得远就整只漏判。)
-# ★ 2026-09-15:上面这条判据**此前从未真正生效** —— CollisionAabb 认不出多边形,身体框一直
-#   是"原点周围 36×36"的兜底值。修好后判定才第一次落在身体上。
+# - 2026-09-15:上面这条判据**此前从未真正生效** —— CollisionAabb 认不出多边形,身体框一直
+#   是"原点周围 36×36"的保底处理值。修好后判定才第一次落在身体上。
 const HIT_MULT: float = 1.75
 
 enum BeamStyle { FLASH = 0 }   # 预留视觉风格;目前只有"单发瞬光"
@@ -132,9 +132,9 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 	for t in get_tree().get_nodes_in_group("enemies"):
 		if t is Node2D:
 			targets.append([t, true])
-	# ★ 宿主的队伍判据:与 `:234` 的 `notify_direct_hit` 同一条形状 —— 单机下
-	#   `player.get_parent()` 是 WorldViewport、`has_method("is_friendly")` 为假 ⇒ team_aware 为假
-	#   ⇒ 行为与改动前**逐字相同**。PvP 服务器下父节点是 MatchHost(继承 MatchState)⇒ 判据可用。
+	# - 宿主的队伍判据:与 `:234` 的 `notify_direct_hit` 同一条形状 —— 单机下
+	#   `player.get_parent()` 是 WorldViewport、`has_method("is_friendly")` 为假  ->  team_aware 为假
+	#    ->  行为与改动前**逐字相同**。PvP 服务器下父节点是 MatchHost(继承 MatchState) ->  判据可用。
 	var host := player.get_parent() if player != null else null
 	var team_aware := host != null and host.has_method("is_friendly")
 	for p in get_tree().get_nodes_in_group("player"):
@@ -145,7 +145,7 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 		if p.has_method("is_downed") and p.is_downed():
 			continue
 		if team_aware and host.is_friendly(player, p):
-			continue     # ★ 队友穿透:与子弹/榴弹直击同口径(不伤害、也不挡光束)
+			continue     # - 队友穿透:与子弹/榴弹直击同口径(不伤害、也不挡光束)
 		targets.append([p, false])
 
 	var w := GameParameters.MAP_WIDTH
@@ -171,9 +171,9 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 				_apply_to_player(t, c, near)
 
 # 目标身体在世界系的**方框**(px),中心已锚到 near_to 最近的环面副本。几何取自
-# CollisionAabb(只并启用中的碰撞体,兼容玩家/飞鸟的多姿态碰撞箱);无碰撞体时兜底
+# CollisionAabb(只并启用中的碰撞体,兼容玩家/飞鸟的多姿态碰撞箱);无碰撞体时保底处理
 # 18px 半身、以节点原点为中心。
-# ★ 必须用带 position 的整框 —— 身体框中心**不在节点原点**(跳鸟偏低 ≈8px、黑影偏低 ≈5px),
+# - 必须用带 position 的整框 —— 身体框中心**不在节点原点**(跳鸟偏低 ≈8px、黑影偏低 ≈5px),
 #   只取 size 再以原点为中心会让判定框整体错位(2026-09-15 前的实现就是这个错法,
 #   叠加当时 CollisionAabb 读不到多边形,判定框实际是原点周围 36×36)。
 func _body_rect(n: Node2D, near_to: Vector2, w: float, h: float) -> Rect2:
@@ -216,7 +216,7 @@ static func _segment_rect_hit(a: Vector2, b: Vector2, rect: Rect2) -> Vector2:
 func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 	if not t.has_method("hurt"):
 		return
-	# 命中标记(X)。★ 敌人侧**不写**归因 —— 见 core/sim/explosion.gd 的同款说明
+	# 命中标记(X)。-  敌人侧**不写**归因 —— 见 core/sim/explosion.gd 的相同机制说明
 	# (那个 meta 的唯一读者是单机击杀播报,已随播报删除)。
 	# 本函数只在权威侧被调(见 _authoritative),headless 服务器无 CombatFeedback 实例时为空操作。
 	CombatFeedback.hit_marker()
@@ -228,7 +228,7 @@ func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 	if not p.has_method("take_hit"):
 		return
 	# 归因 + 命中标记的一体入口(同爆炸 apply_aoe 的玩家分支):PvP 大乱斗读 last_damager 判击杀分;
-	# ★必须写在 take_hit 之前 —— 本方受伤方倒地/死亡当帧的归因读取者才看得到。
+	# - 必须写在 take_hit 之前 —— 本方受伤方倒地/死亡当帧的归因读取者才看得到。
 	# 只在权威侧跑到,故 PvP 不会与服务器的 hit_confirm 双标。
 	CombatFeedback.attribute_hit(p, player)
 	# 与爆炸 apply_aoe 一致:take_hit(source_pos, damage, ignore_iframes, knockback)。
@@ -243,7 +243,7 @@ func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 		host.notify_direct_hit(player, p)
 
 # 碰墙触点里「值得处理」的可破坏砖:去重 + 越界过滤 + 可破坏判定。**纯查询,不改任何状态**。
-# 扣血(权威侧)与播粒子(**所有端**)共用同一份扫描 —— 两端表现因此同源。
+# 扣除生命值(权威侧)与播粒子(**所有端**)共用同一份扫描 —— 两端表现因此同源。
 func _tile_contacts(contacts: Array, hit_points: PackedVector2Array) -> Array:
 	var out: Array = []
 	var grid := MazeGenerator.current_grid
@@ -265,7 +265,7 @@ func _tile_contacts(contacts: Array, hit_points: PackedVector2Array) -> Array:
 	return out
 
 # 触点的受击碎片。**所有端都播** —— 与子弹同口径(bullet_base 的 TileHitFx 在 apply_damage 之前)。
-# ★ PvP 客户端本地激光不裁决伤害(见 _spawn_projectiles 的权威门),但粒子是纯反馈,照播:
+# - PvP 客户端本地激光不裁决伤害(见 _spawn_projectiles 的权威门),但粒子是纯反馈,照播:
 #   此前那段 `if not _authoritative(): return` 把它一起吞掉了,于是同一局里
 #   「子弹打砖有碎片、激光打砖零反馈」(2026-09-15 用户报)。
 func _spawn_tile_fx(contacts: Array, hit_points: PackedVector2Array) -> void:
@@ -273,9 +273,9 @@ func _spawn_tile_fx(contacts: Array, hit_points: PackedVector2Array) -> void:
 		var pos: Vector2 = t["pos"]
 		TileHitFx.spawn(get_viewport(), pos, int(t["tex"]))
 
-# 对碰墙触点里的可破坏砖扣血(树叶/树干,"explosion" 语义不穿墙)。只磨不破:砖血扣到 0
+# 对碰墙触点里的可破坏砖扣除生命值(树叶/树干,"explosion" 语义不穿墙)。只磨不破:砖血扣到 0
 # 变空气由 damage_tile 回调 Level0 处理,下一发射击自然穿过。同一格单发只扣一次。
-# (扫描跑两遍:一遍播粒子一遍扣血。触点只有几个,单发一次,代价可忽略 —— 换来两条路径零重复。)
+# (扫描跑两遍:一遍播粒子一遍扣除生命值。触点只有几个,单发一次,代价可忽略 —— 换来两条路径零重复。)
 func _damage_tiles(contacts: Array, hit_points: PackedVector2Array) -> void:
 	_spawn_tile_fx(contacts, hit_points)
 	for t in _tile_contacts(contacts, hit_points):

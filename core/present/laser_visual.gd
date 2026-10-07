@@ -1,12 +1,12 @@
 extends RefCounted
 
-# 激光光束/枪口光球的视觉构建(纯静态、preload 引用、不引 autoload)。把"已算好的光束几何 →
-# 画成视觉节点"从激光武器实例里解耦出来:本地武器开火、PvP 远端收到 beam_fired 事件都调同一套。
-# 无 class_name(仓库同款:BeamTrace / TileHitFx 都是 preload-only 静态,省去新类名刷缓存)。
+# 激光光束与枪口发光球体的视觉构建工具（纯静态函数，无 Autoload 依赖）。
+# 将“已计算好的光束几何轨迹生成为视觉表现节点”的逻辑与武器业务解耦：
+# 本地武器开火与多人联机远端同步接收 beam_fired 事件均复用该实现。
 #
-# 坐标约定(与 laser_beam.tscn 现约定一致):折线点传"所在 parent 系的世界坐标";
-# parent 是能 add_child 的 viewport/节点(本地=武器 get_viewport(),PvP 远端=_world SubViewport),
-# 光束节点挂 parent 后 global_position 置 0 → points 直接是世界系。光束淡出自毁,无需外部清理。
+# 坐标规范：折线点序列传入 parent 所在坐标系的世界坐标；
+# parent 为对应的 Viewport 或场景节点（本地开火为武器所在 Viewport，多人模式远端为权威世界节点）；
+# 光束节点挂载后其 global_position 置为 (0,0)，光束表现完成后自动淡出并释放。
 
 const BEAM_SCENE := preload("res://scenes/weapons/laser_beam.tscn")
 
@@ -22,7 +22,7 @@ static func spawn_beam(parent: Node, points: PackedVector2Array, half_width: flo
 	if beam.has_method("setup"):
 		beam.setup(points, half_width, color)
 
-# 开火时枪口"发射光源"圆球:配色/存续与激光光束同款 —— 外层光晕用 color(仿激光 Glow,
+# 开火时枪口"发射光源"圆球:配色/存续与激光光束相同机制 —— 外层光晕用 color(仿激光 Glow,
 # alpha=0.30)、内芯近白(仿激光 Core),挂满 lifetime、末尾与光束同步淡出。
 # 尺寸随光束粗细缩放(细光束时也给个下限保证可见)。挂 parent(世界系,不随枪 2.5x 缩放)。
 static func spawn_muzzle_orb(parent: Node, at: Vector2, color: Color, half_width: float, lifetime: float) -> void:

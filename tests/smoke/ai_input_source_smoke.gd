@@ -1,12 +1,12 @@
 extends SceneTree
 
 # AiInputSource 契约冒烟:①是 PlayerInput 子类 ②is_network_driven() 必须为 true
-# ③基类所有读口都真被覆写(不会被基类默认实现悄悄接管)
-# 为什么钉死第 ② 条(**理由是瞄准,2026-09-15 起不再是换弹**):weapon_base._aim_world_dir()
-# 对 input_is_network()==true 的玩家永不读宿主 OS 鼠标、改用朝向兜底 —— AI 跑在 headless
+# ③基类所有输入读取接口均已正确重写(不会被基类默认实现悄悄接管)
+# 为什么严格约束第 ② 条(**理由是瞄准,2026-09-15 起不再是换弹**):weapon_base._aim_world_dir()
+# 对 input_is_network()==true 的玩家永不读宿主 OS 鼠标、回退使用角色朝向作为默认方向 —— AI 跑在 headless
 # 服务器上,不覆写就会去读宿主机的真实鼠标,瞄准变成随桌面而变的随机值。
 # (旧版本这条是为了让 AI 绕开换弹:当年 WeaponBase.reload_active() 的第二判据正是
-#  input_is_network()。闸门已删,AI 现在照常换弹 —— 与真人同规则。)
+#  input_is_network()。门控限制已移除,AI 现在照常换弹 —— 与真人同规则。)
 
 var _fail := 0
 
@@ -14,7 +14,7 @@ var _fail := 0
 # ── AiNavigator._pick_target 的桩(只为断言方向符号,不模拟任何真实玩法)──
 # 为什么必须真调 `_pick_target`:它返回的 `"dir"` 有两个分支(黏滞锁定 / 重选最近),
 # 两处都要是「我→对手」。只断言成员存在或方法可调**照不出符号错** —— 2026-09-14 那个
-# 「锁死后瞄反」的 bug 正是这么漏过去的(冒烟只查了 host/role/src 三个成员名)。
+# 「锁定约束后瞄反」的 bug 正是这么漏过去的(冒烟只查了 host/role/src 三个成员名)。
 # 注:`-s` 脚本自身不能引用 autoload(编译期 Identifier not found),但**运行期 load** 进来的
 # 脚本可以 —— `_pick_target` 里的 `GameParameters.MAP_WIDTH` 在下面这条路径上是可用的(实测)。
 class StubHost extends Node:
@@ -28,7 +28,7 @@ class StubBody extends Node2D:
 func _initialize() -> void:
 	# -s 阶段 autoload 未实例化 → 这里只 load 不静态引用任何 autoload 标识符
 	var ai_script: GDScript = load("res://core/net/ai_input_source.gd")
-	# ★ 路径 2026-09-15 修正:接口在阶段 5.9 已从 `input_source.gd` 改名为 `player_input.gd`。
+	# - 路径 2026-09-15 修正:接口在阶段 5.9 已从 `input_source.gd` 改名为 `player_input.gd`。
 	#   旧路径在这里 load 到 null 但**从没被断言过** —— 于是它默默地每跑一次刷一条
 	#   "Failed loading resource",而所有人以为那只是噪音。顺带把它接进断言。
 	var base_script: GDScript = load("res://core/net/player_input.gd")
@@ -43,12 +43,12 @@ func _initialize() -> void:
 	_check(src is PlayerInput, "AiInputSource 是 PlayerInput 的子类")
 	_check(src.is_network_driven(), "★ is_network_driven() 必须为 true(否则 AI 会静默进换弹)")
 
-	# 覆写的行为断言(逐条对基类可区分):基类会把读口委托给真实 Input,headless 下恒为
-	# 中性值 → 下面每条"写进去再读出来"都能把"未覆写"照出来。
+	# 覆写的行为断言(逐条对基类可区分):基类会把读取接口委托给真实 Input,headless 下恒为
+	# 中性值 → 下面每条"写进去再读出来"都能把"未覆写"检测暴露。
 	# ⚠ 不要改回 "GDScript.has_method(m)" 那种写法:对 **脚本资源** 调用 has_method 只报
 	#   GDScript 类自身的 ClassDB 方法与 static func,不报脚本的实例方法 → 该写法恒为 false,
 	#   任何断言都过不了(已实测)。也不能改用 get_script_method_list():子类会列出**继承来的**
-	#   全部基类方法 → 有无覆写都通过,属空转(已实测)。
+	#   全部基类方法 → 有无覆写都通过,属无效操作(已实测)。
 	src.aim = Vector2.UP
 	_check(src.get_aim_dir_override() == Vector2.UP,
 			"get_aim_dir_override() 回放写入的 aim(基类返回 ZERO)")
@@ -62,15 +62,15 @@ func _initialize() -> void:
 	_check(src.is_action_just_pressed("up"), "press_jump() 后 just_pressed('up') 为真")
 	_check(not src.is_action_just_pressed("up"), "跳跃是**边沿**不是电平(第二次读为假)")
 
-	# ★ frozen 契约回归(2026-09-14):基类承诺「置 true 后一切输入读口返回中性值」,
-	#   而本类此前覆写了**全部**公开读口 → 基类的 if frozen 整个被绕过,
+	# - frozen 契约回归(2026-09-14):基类承诺「置 true 后一切输入接口返回中性值」,
+	#   而本类此前覆写了**全部**公开输入读取接口 → 基类的 if frozen 整个被绕过,
 	#   player.set_controls_locked(true) 对 AI/网络输入源是**静默空操作**。
-	#   此断言必须打在**子类实例**上:基类自己的实现无法证明子类听话。
+	#   此断言必须打在**子类实例**上:仅验证基类实现无法保证子类是否正确重写并遵循接口规范。
 	#   口径来自 core/input_source.gd 的类头注释与 player.set_controls_locked 的调用点。
 	#   注:本类把 is_action_pressed / is_action_just_released / is_attack_just_released /
-	#   get_switch_index_pressed 实现成**常量**(与 frozen 无关),故那 4 条不具鉴别力 —— 但
-	#   它们仍要断言(修完必须全绿),具鉴别力的是 get_axis / just_pressed / attack_pressed /
-	#   attack_just_pressed 这 4 条(它们会回放写入的值,能照出"未短路")。
+	#   get_switch_index_pressed 实现成**常量**(与 frozen 无关),故那 4 条不具判定有效性 —— 但
+	#   它们仍要断言(修完必须测试全部通过),具有判定有效性的是 get_axis / just_pressed / attack_pressed /
+	#   attack_just_pressed 这 4 条(它们会回放写入的值,能照出"未被短路拦截")。
 	src.aim = Vector2.UP
 	src.axis = -1.0
 	src.fire = true
@@ -89,11 +89,11 @@ func _initialize() -> void:
 	# 瞄准是**刻意**不冻的:冻结期武器仍要按注入方向摆枪
 	_check(src.get_aim_dir_override() == Vector2.UP, "frozen:瞄准刻意不冻(武器仍按注入方向摆枪)")
 	src.frozen = false
-	# 不逐条断言那些"在基类与覆写里都是同一个常量"的读口(is_action_pressed 恒 false、
+	# 不逐条断言那些"在基类与覆写里都是同一个常量"的读取接口(is_action_pressed 恒 false、
 	# is_action_just_released 恒 false、is_attack_just_released 恒 false、
-	# get_switch_index_pressed 恒 0)—— 那种断言无论覆写与否都通过,是空转。
+	# get_switch_index_pressed 恒 0)—— 那种断言无论覆写与否都通过,为无效操作。
 
-	# AiNavigator:只建实例断言成员与接口(不入树 → _physics_process/_ready 都不会跑,
+	# AiNavigator:只建实例断言成员与接口(不加入场景树 → _physics_process/_ready 都不会跑,
 	# 故读 host 的那行不会被触发;T2 的 AI 生成块按这几个成员名赋值,名错即静默失效)
 	var nav_script: GDScript = load("res://server/ai/ai_navigator.gd")
 	_check(nav_script != null, "server/ai/ai_navigator.gd 可加载")
@@ -106,7 +106,7 @@ func _initialize() -> void:
 			_check(props.has(m), "AiNavigator 有成员 %s" % m)
 		_check(nav.has_method("_physics_process"), "AiNavigator 有 _physics_process")
 
-		# ── ★ AI 目标方向(2026-09-14 修 H1)──
+		# ── -  AI 目标方向(2026-09-14 修 H1)──
 		# `_pick_target` 的 "dir" 约定是 **我→对手**(消费者:`_aim_and_fire` 拿它当开火方向、
 		# `_move` 的 `signf(dir.x)` 追人/后拉)。而 `toroidal_delta_px(a,b)` 返回 a→b,传
 		# `(对手, 我)` 得到的是「对手→我」**必须取负**。黏滞分支曾漏掉取负 → 锁定后整局

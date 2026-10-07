@@ -2,12 +2,12 @@ extends Node
 
 # 回溯引信探针(B17):引信/射程状态必须进快照,并在重建时还原。
 #
-# ★ 用户 2026-09-27 报"回溯之后被之前击发的榴弹炮炸死":根因是快照**没记引信**,重建出来的
+# - 用户 2026-09-27 报"回溯之后被之前击发的榴弹炮炸死":根因是快照**没记引信**,重建出来的
 #   榴弹退回"未点燃" → ① 它会在错误的时刻爆炸(不再是它所属那个世界状态的那颗引信);
 #   ② 松手那一帧 `_check_player_contact()` 重新生效,只要它跟你重叠就走 0.1s 触碰引信
 #   **贴脸起爆** —— 于是"回溯救不了命"。
 #
-# 覆盖:①读写口往返 ②回溯中的重建弹带着 fa/fe/fd/traveled ③引信随回溯**倒退**(不是冻结在
+# 覆盖:①读写入接口往返 ②回溯中的重建弹带着 fa/fe/fd/traveled ③引信随回溯**倒退**(不是冻结在
 #       按下那一刻)④松手后仍是"已点燃"并从还原值继续计时(不再走触碰引信那条路)。
 # 用法:godot --headless --path . res://tests/probe/rewind_fuse_probe.tscn
 
@@ -47,7 +47,7 @@ func _run() -> void:
 		return
 	var world: Node = lvl.get_node("WorldViewport")
 
-	# ── ① 读写口往返(纯数据;不入树的实例只当数据容器)──
+	# ── ① 读写入接口往返(纯数据;不加入场景树的实例只当数据容器)──
 	var dummy: Node = (load(GRENADE) as PackedScene).instantiate()
 	dummy.call("_start_fuse", 0.4)
 	dummy.set("_fuse_elapsed", 0.25)
@@ -72,7 +72,7 @@ func _run() -> void:
 
 	# ── 部署一颗真榴弹:就放在玩家身边(= 用户踩到的那个位置),水平慢飘,长引信已点燃 ──
 	var g: Node2D = (load(GRENADE) as PackedScene).instantiate()
-	# ★ 必须补 scene_path:它是**武器出弹时**(weapon_base.fire)打的标记,回溯重建靠它
+	# - 必须补 scene_path:它是**武器出弹时**(weapon_base.fire)打的标记,回溯重建靠它
 	#   instantiate 出节点。手工放的弹少了这条 meta 就建不出来(表现为"回溯里没有重放弹")。
 	g.set_meta("scene_path", GRENADE)
 	world.add_child(g)
@@ -112,8 +112,8 @@ func _run() -> void:
 		var tr_re := float(rb.get("traveled"))
 		if tr_re >= tr_live - 1.0:
 			_fail("射程累计没有随回溯倒退(回溯中 %.1f 应 < 按下时 %.1f)" % [tr_re, tr_live])
-		# ★ 第二条真凶:max_range 也是"开火时注入"的,不还原 ⇒ 重建弹 max_range=场景默认 0
-		#   ⇒ 一松手就 `traveled >= max_range` 当场爆炸(正好炸在回溯落点)。
+		# - 第二条真凶:max_range 也是"开火时注入"的,不还原  ->  重建弹 max_range=场景默认 0
+		#    ->  一松手就 `traveled >= max_range` 当场爆炸(正好炸在回溯落点)。
 		if absf(float(rb.get("max_range")) - 100000.0) > 1.0:
 			_fail("重建弹的 max_range 没还原(%.1f,应为 100000)= 一松手就会超射程爆炸" % float(rb.get("max_range")))
 		if absf(float(rb.get("gravity_factor")) - 0.0) > 1e-4:

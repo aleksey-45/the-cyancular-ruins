@@ -4,13 +4,13 @@ extends Node
 #
 # 背景(2026-10-03 用户报「时间回溯还是会导致有些时候有虚空碰撞箱」):录制期为回溯保留的
 # 尸体(`hold_corpses` → 死亡白闪结束后 `visible=false` + 停物理)**只藏了画、没摘碰撞** ——
-# 玩家 `collision_mask = 5` 里含敌人层(值 4)⇒ 一具看不见却仍在层 4 的实体就是"虚空碰撞箱"。
+# 玩家 `collision_mask = 5` 里含敌人层(值 4) ->  一具看不见却仍在层 4 的实体就是"虚空碰撞箱"。
 #
-# 相①:隐藏尸体仍在玩家 mask 上可被命中吗(物理空间查询,用**玩家自己的 mask**)。
-# 相②:可破坏砖 —— 破坏后不得留碰撞(幽灵墙),回溯复原后碰撞必须回来
+# 阶段 1:隐藏尸体仍在玩家 mask 上可被命中吗(物理空间查询,用**玩家自己的 mask**)。
+# 阶段 2:可破坏砖 —— 破坏后不得留碰撞(幽灵墙),回溯复原后碰撞必须回来
 #      (现有 tile_rewind_probe 只验网格+渲染,**碰撞那一维此前无守卫**)。
-# 相③:反向 —— 回溯复活后尸体必须**看得见且碰撞层还原**(不能变成"看不见地穿人")。
-# 相④:全场扫描:任何"不可见却仍带碰撞层"的节点(= 虚空碰撞箱的完整定义)一律点出来。
+# 阶段 3:反向 —— 回溯复活后尸体必须**看得见且碰撞层还原**(不能变成"看不见地穿人")。
+# 阶段 4:全场扫描:任何"不可见却仍带碰撞层"的节点(= 虚空碰撞箱的完整定义)一律点出来。
 #
 # 用法:godot --headless --path . res://tests/probe/rewind_phantom_probe.tscn
 
@@ -49,7 +49,7 @@ func _bodies_at(world: World2D, pos: Vector2, mask: int) -> Array:
 
 
 ## 全场扫描「不可见却仍带碰撞层」的 CollisionObject2D(= 虚空碰撞箱的完整定义)。
-## 返回 [[节点名, 类名, layer], …]。
+## 返回 [[节明确提示, 类名, layer], …]。
 func _invisible_collidables(root: Node) -> Array:
 	var out: Array = []
 	if root is CollisionObject2D:
@@ -117,7 +117,7 @@ func _run() -> void:
 	var player_mask := int((player as CollisionObject2D).collision_mask)
 	await _wait_ms(1500)   # 先录一段"死前历史",后面那次回溯才跨得过死亡时刻
 
-	# ── 相① 隐藏尸体是否仍在玩家 mask 上可被命中 ──────────────────
+	# ── 阶段 1 隐藏尸体是否仍在玩家 mask 上可被命中 ──────────────────
 	var target: Node = null
 	for e in tree.get_nodes_in_group("enemies"):
 		if not (e is Node2D) or bool(e.get("is_dead")) or e.has_meta("elite"):
@@ -151,10 +151,10 @@ func _run() -> void:
 			if self_hit:
 				_fail("物理空间查询证实:隐藏尸体仍挡在玩家 mask 上")
 
-	# ── 相④ 全场扫描(尸体处于隐藏态时)──────────────────────────
+	# ── 阶段 4 全场扫描(尸体处于隐藏态时)──────────────────────────
 	_scan("相④·尸体隐藏期", lvl, world, MazeGenerator.current_grid, Level0.wall_layer)
 
-	# ── 相② 可破坏砖:破坏 → 回溯复原后的**碰撞**状态 ────────────
+	# ── 阶段 2 可破坏砖:破坏 → 回溯复原后的**碰撞**状态 ────────────
 	var grid: Array = MazeGenerator.current_grid
 	var cell := Vector2i(-1, -1)
 	for y in grid.size():
@@ -185,7 +185,7 @@ func _run() -> void:
 		# 回溯跨过破坏时刻(2.5s 也跨过尸体死亡时刻)→ 砖块与尸体都应复原
 		Input.action_press("rewind")
 		await _wait_ms(1200)
-		# 相⑤:回溯**进行中**再扫一遍 —— 回溯期位置由回放器每帧摆,是"虚空碰撞箱"最可能的窗口
+		# 阶段 5:回溯**进行中**再扫一遍 —— 回溯期位置由回放器每帧摆,是"虚空碰撞箱"最可能的窗口
 		_scan("相⑤·回溯进行中", lvl, world, MazeGenerator.current_grid, Level0.wall_layer)
 		await _wait_ms(1300)
 		Input.action_release("rewind")
@@ -205,7 +205,7 @@ func _run() -> void:
 		if painted == 0 and not after_rewind.is_empty():
 			_fail("砖块渲染为空但**碰撞还在**:看不见的墙(虚空碰撞箱)")
 
-	# ── 相③ 复活方向:尸体必须看得见 + 碰撞层还原 ─────────────────
+	# ── 阶段 3 复活方向:尸体必须看得见 + 碰撞层还原 ─────────────────
 	if is_instance_valid(target):
 		var t2 := target as CollisionObject2D
 		var vis2 := (target as Node2D).visible

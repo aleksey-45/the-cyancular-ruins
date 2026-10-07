@@ -1,9 +1,9 @@
 class_name Water
 extends RefCounted
 
-# 水判定/水面线/没顶判定。静态、不引 autoload(-s 可直接测)。
-# 依赖 MazeGenerator.current_grid(level_0 赋值)与本地 TILE_TS。
-# 约定:脚底(中心+半身)在水格 = 在水中;浮力弹簧把「身体中心」拉回水面线(半没入)。
+# 水体判定模块：提供水中状态检测、水面高度计算与完全浸水判定。纯静态工具类，不依赖 Autoload（支持命令行独立测试 -s）。
+# 依赖 MazeGenerator.current_grid（由 Level0 初始化赋值）与网格规格 TILE_TS。
+# 判定约定：角色脚底进入水体网格即判定处于水中；浮力机制将身体中心拉至水面高度（呈半没入浮动状态）。
 
 const TILE_TS: int = 64
 
@@ -21,7 +21,7 @@ static func is_in_water(pos: Vector2) -> bool:
 	return v != 0 and is_liquid(MazeGenerator.texture_of(v))
 
 
-# 所在列向上扫到最顶 liquid 格,返回其顶边 y(px);点不在水里时返回 pos.y(不硬拉)。
+# 沿所在列向上扫描连续水体网格，返回水面顶边的 Y 坐标（像素单位）；若目标点不在水中则返回原始坐标 pos.y。
 static func surface_y_at(pos: Vector2) -> float:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
@@ -44,12 +44,12 @@ static func surface_y_at(pos: Vector2) -> float:
 	return float(top * TILE_TS)
 
 
-# 没顶判定:中心低于水面线(浮着中心≈水面线,不算)。
+# 完全浸水（完全没入水中）判定：当身体中心低于水面高度时判定为完全浸水（正常漂浮时中心接近水面线，不计为完全没入水中）。
 static func submerged(center: Vector2, surface_y: float) -> bool:
 	return center.y > surface_y
 
 
-# 目标所在格是水 → 爆炸伤害/击退按该水格 explosion_decay(0.25)保留,否则 1.0。
+# 计算水体环境下的爆炸衰减：若目标处于水体中，爆炸伤害与击退按水格的 explosion_decay（0.25）保留，否则为 1.0。
 static func water_mult(pos: Vector2, grid: Array[Array]) -> float:
 	if grid.is_empty():
 		return 1.0

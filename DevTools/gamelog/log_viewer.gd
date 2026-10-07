@@ -1,8 +1,8 @@
 extends Control
 
-# 日志监看器(DevTools/gamelog):浏览 gamelogs/ 下的每次运行会话。
-# 左=会话列表(新→旧,绿=正常 黄=异常 红=崩溃);右=选中会话的 report.txt 全文。
-# 数据由 tools/gamelog/capture_session.ps1 产生(启动器 bat 调用),本工具只读。
+# 运行会话日志查看器（DevTools/gamelog）：浏览并查看 gamelogs/ 目录下记录的各次游戏运行会话日志。
+# 左侧为会话列表（按时间由近至远排列，绿色表示正常，黄色表示异常，红色表示崩溃退出）；右侧展示选中会话 report.txt 的完整报告内容。
+# 日志数据由 tools/gamelog/capture_session.ps1 生成记录，本界面提供只读展示与过滤功能。
 
 const FONT := "res://assets/fonts/less_perfect_dos_vga.ttf"
 const GREEN := Color(0.6, 1.0, 0.7)

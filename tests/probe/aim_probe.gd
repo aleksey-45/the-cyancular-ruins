@@ -1,9 +1,8 @@
 extends SceneTree
 
-# 复刻 _aim_world_dir + _clamped_aim_dir + _sample_arc_points + _disk_overlaps_solid,
-# 用真实常数(窗口1920×1440 / SubViewport2496×1872 / crop=0.769 / cam_zoom=0.75 /
-# cam_y_bias=-100 / 榴弹 speed1100 g=0.45×1600 pitch_clamp=60°)在纯开阔带(只有地板)里,
-# 扫不同鼠标位置,看弧线在哪截断。
+# 抛物线瞄准轨迹与截断算法验证探针：
+# 模拟 _aim_world_dir、_clamped_aim_dir、_sample_arc_points 与 _disk_overlaps_solid 逻辑，
+# 采用游戏内真实物理常数在开阔地形中遍历不同准星坐标，验证抛物线采样与障碍物碰撞截断算法的准确性。
 
 const WIN := Vector2(1920, 1440)
 const VP := Vector2(2496, 1872)

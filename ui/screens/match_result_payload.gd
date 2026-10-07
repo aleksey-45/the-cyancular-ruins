@@ -3,24 +3,24 @@ extends RefCounted
 
 # 结算页的**适配器**:把三个模式各自的 round_state 形状,折成 MatchResult 认的那一个载荷。
 #
-# ★★ 为什么单独一个文件、而不是写在三个客户端里:
-#   ① 它们是**纯函数**(入参全是字典/常量,不碰节点、不读 autoload)⇒ `-s` 冒烟直接钉;
+# 注意： 为什么单独一个文件、而不是写在三个客户端里:
+#   ① 它们是**纯函数**(入参全是字典/常量,不碰节点、不读 autoload) ->  `-s` 冒烟直接钉;
 #      写在 pvp_game / royale_game / team_game 里就得把整个游戏场景实例化才测得到;
 #   ② 三个模式**共用**「列标题 / 没有的列不列 / 平局文案」这些口径 —— 抄三份必然漂。
-# ★ 反过来,`ui/match_result.gd` **不知道任何模式规则**;模式差异全部收在本文件。
+# - 反过来,`ui/match_result.gd` **不知道任何模式规则**;模式差异全部收在本文件。
 #
-# ★★ 三条不改会静默出错的口径:
+# 注意： 三条不改会静默出错的口径:
 #   ① `columns` **由数据决定** —— 某模式没有的数不进 columns,而不是补一列恒 0
 #      (恒 0 的列读起来像"这人打了但什么都没干",而事实是他根本没这项统计);
 #   ② 排序必须**确定性** —— 同样的局两次跑要给出同一个榜(主键降序 → 阵亡升序 → 昵称升序);
-#   ③ `match_winner == 0` 是**平局**。1v1 那条别照抄 `ui/pvp_hud.gd` 的兜底
+#   ③ `match_winner == 0` 是**平局**。1v1 那条别照抄 `ui/pvp_hud.gd` 的保底处理
 #      (`"P%d 获胜!" % (1 if w1 > w2 else 2)`)—— 那会把平局念成「P1 获胜」。
 
 # 各模式的列 —— **顺序就是显示顺序**,由 spec §3.6 定;"模式没有的列不进"是既有口径:
-#   · 大乱斗无 ACS(单局死斗 ⇒ `acs ≡ kscore`,恒等列零信息)、无助攻(自由混战无归属);
-#   · 1v1 无助攻(`same_team` 恒 false ⇒ 那模式拿不到助攻,见 spec §3.4)。
-# ★ 新增列必须同时在 `ui/match_result.gd` 的 `COLUMN_TITLES` 里有标题,否则表头退化成
-#   裸英文键名(`.get(col, col)` 兜底、不报错)—— `match_result_payload_smoke` 的 ⑧ 守着。
+#   - 大乱斗无 ACS(单局死斗  ->  `acs ≡ kscore`,恒等列零信息)、无助攻(自由混战无归属);
+#   - 1v1 无助攻(`same_team` 恒 false  ->  那模式拿不到助攻,见 spec §3.4)。
+# - 新增列必须同时在 `ui/match_result.gd` 的 `COLUMN_TITLES` 里有标题,否则表头退化成
+#   裸英文键名(`.get(col, col)` 保底处理、不报错)—— `match_result_payload_smoke` 的 ⑧ 守着。
 const C_DUEL := ["kills", "deaths", "dealt", "taken", "acs"]
 const C_ROYALE := ["kills", "deaths", "dealt", "taken"]
 const C_TEAM := ["kills", "deaths", "assists", "dealt", "taken", "acs"]
@@ -28,11 +28,11 @@ const C_TEAM := ["kills", "deaths", "assists", "dealt", "taken", "acs"]
 
 # 1v1。行数据一律读 `stats`(服务端算好的七字段),**不再读 `scores`** ——
 # `scores` 是"本局击杀"(每局清零),它不是结算页要的整场口径。
-# ★ 遍历仍写死 `[1, 2]`:1v1 只有这两个 role,**缺条目 = 0**(不是"没有这个人的数据")——
+# - 遍历仍写死 `[1, 2]`:1v1 只有这两个 role,**缺条目 = 0**(不是"没有这个人的数据")——
 #   写成 `if not stats.has(role): continue` 会在一局 5-0 时画出**只有一行**的榜,
 #   输的那位从**自己的**结算页上消失(他正是要看到自己那一行的人)。
 # 列 = K/D/造成/承受/ACS(spec §3.6)。
-# ★ MVP 的落点与 `for_team` 同一形状:`_row` 的第 8 个实参就是"这一行是不是 MVP",
+# - MVP 的落点与 `for_team` 同一形状:`_row` 的第 8 个实参就是"这一行是不是 MVP",
 #   排序之后再去找那个 `mvp == true` 的行 —— **别**想着"按 role 反查行"
 #   (`_row` 只承载展示字段,没有 role 键;要靠 role 找行就得另开一个临时结构)。
 static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary:
@@ -45,7 +45,7 @@ static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dict
 				int(s.get("assists", 0)), int(s.get("dealt", 0)), int(s.get("taken", 0)),
 				int(s.get("acs", 0)), int(role) == mvp_role))
 	_finish(rows, "kills")
-	# mvp 的行号必须在**排完序之后**数,否则高亮会落在错的那一行(与 `for_team` 同款)
+	# mvp 的行号必须在**排完序之后**数,否则高亮会落在错的那一行(与 `for_team` 相同机制)
 	var mvp_pos := {}
 	for ri in rows.size():
 		if bool(rows[ri]["mvp"]):
@@ -62,10 +62,10 @@ static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dict
 
 # 大乱斗。自由混战:行数据读 `stats`(`scores`/`deaths` 那两条键**留给局内 HUD** ——
 # `ui/royale_hud.gd` 的排行榜按它们显示实时比分,与本页是两回事)。
-# 列 = K/D/造成/承受(spec §3.6):**无 ACS**(单局死斗 ⇒ `acs ≡ kscore`)、**无助攻**。
-# ★★ 标题恒为「游戏结束」,**与 `match_winner` 无关**(用户 2026-09-21 裁定:
+# 列 = K/D/造成/承受(spec §3.6):**无 ACS**(单局死斗  ->  `acs ≡ kscore`)、**无助攻**。
+# 注意： 标题恒为「游戏结束」,**与 `match_winner` 无关**(用户 2026-09-21 裁定:
 #    「大乱斗结算榜单不应该有任何胜利/失败,而是游戏结束」)。故**刻意不调 `_verdict`**。
-# ★ `my_role` 仍是第 3 个形参(调用方 `royale_game._build_result_payload` 传 `PvpSession.role`,
+# - `my_role` 仍是第 3 个形参(调用方 `royale_game._build_result_payload` 传 `PvpSession.role`,
 #   签名不动 —— `kh_l6_probe` ⑯ 按位置钉着那个实参);本函数用不到它,但**不要**删。
 static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary:
 	var stats: Dictionary = round.get("stats", {})
@@ -86,8 +86,8 @@ static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Di
 
 
 # 3v3。两节(A/B 队),栏内按 ACS 排;`mvp` 指向 ACS 最高者。
-# ★ `stats` 按 role、`names` 也按 role ⇒ 直接可拼。
-# ★ 某 role 没有 stats 条目(掉线 / 中途加入)⇒ **跳过该行,不硬造 0**。
+# - `stats` 按 role、`names` 也按 role  ->  直接可拼。
+# - 某 role 没有 stats 条目(掉线 / 中途加入) ->  **跳过该行,不伪造 0 数据**。
 static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my_team: int) -> Dictionary:
 	var stats: Dictionary = round.get("stats", {})
 	var mvp_role: int = int(round.get("mvp", 0))
@@ -148,7 +148,7 @@ static func _name_of(names: Dictionary, role: int) -> String:
 
 
 # 1v1 的 `match_winner` 是 **role 号**。0 = 平局(两人局胜相同)。
-# ★ 本函数**只服务 1v1**(`for_duel`):大乱斗的标题走 `for_royale` 里那句恒定的
+# - 本函数**只服务 1v1**(`for_duel`):大乱斗的标题走 `for_royale` 里那句恒定的
 #   「游戏结束」(自由混战没有"你输了"这个说法,见那处注释)。
 static func _verdict(match_winner: int, my_role: int) -> String:
 	if match_winner == 0:

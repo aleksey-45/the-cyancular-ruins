@@ -1,15 +1,15 @@
 extends ProbeBase
 
 # KH 合并 L3 验收探针(场景模式:autoload 必须已实例化,不能用 -s 跑)。
-#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#   - 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
 #     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
-#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
+#     就被意外中断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/kh_l3_probe.tscn
 # 期望:打印 "KH L3 PROBE: ALL-OK" 且退出码 0。
 #
-# 存在理由:L3(换弹玩法 + 五把枪弹夹数值 + 武器槽位闸门 + 滚轮切枪 + 残弹记忆)落地后,
-# 上述新行为在 enemy_logic_smoke 里只覆盖到 equip_type/切枪/继承冷却,**实际装填、闸门拒绝、
+# 存在理由:L3(换弹玩法 + 五把枪弹夹数值 + 武器槽位门控前置校验 + 滚轮切枪 + 残弹记忆)落地后,
+# 上述新行为在 enemy_logic_smoke 里只覆盖到 equip_type/切枪/继承冷却,**实际装填、门控前置校验拒绝、
 # 滚轮跳过禁用槽、_mag_state 语义一条断言都没有**。本探针就是来补这个洞的。
 #
 # --quit-after 是安全网:本脚本引用 Settings/Level0/Sfx 等 autoload 标识符;若某个 autoload
@@ -17,8 +17,8 @@ extends ProbeBase
 #
 # ⚠️ CI 判据必须是 **grep 文本 `KH L3 PROBE: ALL-OK`**,不能只看退出码:
 #    探针中途脚本报错时 --quit-after 仍以 **exit 0** 退出,退出码与"跑通了"不可分。
-#    ★★ 2026-09-28 订正(取代旧版"这时**不会**打印 ALL-OK",实测已推翻):运行期脚本错误
-#    **只让出错的那个函数当场结束、调用方继续** ⇒ verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
+#    注意： 2026-09-28 订正(取代旧版"这时**不会**打印 ALL-OK",实测已推翻):运行期脚本错误
+#    **只让出错的那个函数当场结束、调用方继续**  ->  verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
 #    故该行只证明"**没有任何断言失败**",**不证明"该跑的断言都跑过"**(权威:`tests/lib/probe_base.gd`)。
 
 const PLAYER_SCENE := "res://scenes/player/player.tscn"
@@ -50,8 +50,8 @@ class StubPlayer extends Node2D:
 
 # 只回「按住 R」的输入源桩(4b 换弹链路用):验**编码端**把换弹位真的写进输入包。
 # 用桩而不是模拟真实按键:探针不该依赖 Input 全局状态(headless 下也一样),而且要确定性。
-# 其余读口**必须**逐个覆写 —— pack_record 会把轴/四个动作/切枪挨个问一遍,漏一个就会撞上
-# 基类的 push_error 兜底,刷一屏假报错把真断言淹掉。
+# 其余读取接口**必须**逐个覆写 —— pack_record 会把轴/四个动作/切枪挨个问一遍,漏一个就会撞上
+# 基类的 push_error 保底处理,刷一屏假报错把真断言淹掉。
 class ReloadSrc extends PlayerInput:
 	func source_kind() -> int: return Kind.LOCAL
 	func _axis_raw(_neg: String, _pos: String) -> float: return 0.0
@@ -74,7 +74,7 @@ func _ready() -> void:
 
 	await _check_weapon_numbers()
 
-	# 真实 player.tscn(闸门/滚轮/残弹记忆都用它)
+	# 真实 player.tscn(门控前置校验/滚轮/残弹记忆都用它)
 	var player_scene: PackedScene = load(PLAYER_SCENE)
 	if player_scene == null:
 		_failures.append("player.tscn 载入失败,闸门/滚轮/残弹记忆无法验证")
@@ -103,7 +103,7 @@ func _ready() -> void:
 
 
 # ── 7) 输入映射在位 ──────────────────────────────────────────────────
-# ★ 为什么需要:拾取/丢弃的 `F` / `Q` 是**手写进 project.godot 的 [input] 段**的,
+# - 为什么需要:拾取/丢弃的 `F` / `Q` 是**手写进 project.godot 的 [input] 段**的,
 #   而那一大串 `Object(InputEventKey,...)` 是引擎序列化格式 —— 格式写错时 Godot
 #   **静默丢弃该动作**(不报错、不警告),表现是"按 F 没反应",排查起来毫无线索。
 #   这里直接问 InputMap,把"动作真的在"变成断言。
@@ -113,7 +113,7 @@ func _check_input_map() -> void:
 		if not InputMap.has_action(a):
 			continue
 		_check(InputMap.action_get_events(a).size() > 0, "动作 %s 没有任何按键绑定" % a)
-	# ★ 5~0 的动作**已整体删除**(用户 2026-09-16:删掉一切原先的切换武器数字键设定,
+	# - 5~0 的动作**已整体删除**(用户 2026-09-16:删掉一切原先的切换武器数字键设定,
 	#   现在数字键**只**表示"背包第 N 把")。反向钉住:它们不该再出现。
 	for a in ["5", "6", "7", "8", "9", "0"]:
 		_check(not InputMap.has_action(a),
@@ -129,7 +129,7 @@ func _check_weapon_numbers() -> void:
 			_failures.append("%s: 场景载入失败 %s" % [tag, spec["path"]])
 			continue
 		# as WeaponBase 而非 `var w: WeaponBase = ...`:**根节点类型不对时**静态赋值会中断
-		# 本函数(后面的断言一条都不跑 = 静默假绿);`as` 转换失败只返回 null,能被断言抓到。
+		# 本函数(后面的断言一条都不跑 = 静默虚假通过（未有效测试）);`as` 转换失败只返回 null,能被断言抓到。
 		var w := scene.instantiate() as WeaponBase
 		_check(w != null, "%s: 场景根节点不是 WeaponBase(instantiate/as 转换失败,%s)" % [tag, spec["path"]])
 		if w != null:
@@ -143,15 +143,15 @@ func _check_weapon_numbers() -> void:
 					"%s: reload_time=%.2f(期望 %.2f)" % [tag, w.reload_time, spec["reload"]])
 			_check(w.max_live_projectiles == spec["live"],
 					"%s: max_live_projectiles=%d(期望 %d)" % [tag, w.max_live_projectiles, spec["live"]])
-			# 入树(_ready)即上满弹夹 —— 否则开局第一枪是空枪
+			# 加入场景树(_ready)即上满弹夹 —— 否则开局第一枪是空枪
 			_check(w.mag_ammo == spec["mag"],
 					"%s: 入树后 mag_ammo=%d(应 = mag_size %d)" % [tag, w.mag_ammo, spec["mag"]])
 			w.queue_free()
 		await get_tree().process_frame
 
 
-# ── 2) 槽位闸门(真实 Player 上的 WeaponComponent)────────────────────
-# ★ 2026-09-15 起是背包模型:闸门(set_enabled_types)仍按**类型 id**,但"当前枪被禁后
+# ── 2) 槽位门控前置校验(真实 Player 上的 WeaponComponent)────────────────────
+# - 2026-09-15 起是背包模型:门控前置校验(set_enabled_types)仍按**类型 id**,但"当前枪被禁后
 #   切到哪"改由"背包里有、且没被禁的第一把"决定,不再是"最小的启用槽号"。
 #   所以本节必须先用 set_initial_inventory 摆一个**已知背包**,否则断言的是随机内容。
 func _check_gate(wep: WeaponComponent) -> void:
@@ -166,11 +166,11 @@ func _check_gate(wep: WeaponComponent) -> void:
 	_check(not wep.is_type_enabled(1), "set_enabled_types([1,2]) 后槽1 仍启用(过滤器失效)")
 	_check(not wep.is_type_enabled(2), "set_enabled_types([1,2]) 后槽2 仍启用(过滤器失效)")
 	_check(wep.is_type_enabled(3), "set_enabled_types([1,2]) 后槽3 应仍启用")
-	# ★ 剩余条数按**注册表**算(全 id 数 − 被禁的 2 个),不写死 4 —— 写死的话它其实是
+	# - 剩余条数按**注册表**算(全 id 数 − 被禁的 2 个),不写死 4 —— 写死的话它其实是
 	#   "本仓有 6 把枪"的**第二份拷贝**(与散落探针原来那个 `== 12` 同源):加第 7 把枪时
 	#   它**会红**,而那条红的成因与"过滤器坏了"毫无关系。本仓库的承诺是"加第 7 把枪
-	#   只改一个 json",任何"这件事本身就把测试打红"的断言都是这条承诺的反例。
-	#   ★ 判据不减弱:"恰好剩这么多"仍然拦得住"一个都没过滤掉"与"过滤多了"。
+	#   只改一个 json",任何"这件事本身就把测试测试失败"的断言都是这条承诺的反例。
+	#   - 判据不减弱:"恰好剩这么多"仍然拦得住"一个都没过滤掉"与"过滤多了"。
 	var all_count := WeaponRegistry.all_ids().size()
 	_check(wep.enabled_types.size() == all_count - 2,
 			"set_enabled_types([1,2]) 后启用表应剩 %d 项(实际 %s)" % [all_count - 2, str(wep.enabled_types)])
@@ -182,7 +182,7 @@ func _check_gate(wep: WeaponComponent) -> void:
 	_check(type_after_gate == 3,
 			"当前枪被禁后未自动切到背包里第一把启用的(实际类型 %d,期望 3)" % type_after_gate)
 
-	# equip_type 被闸门拒绝:槽位不变
+	# equip_type 被门控前置校验拒绝:槽位不变
 	wep.equip_type(1)
 	await _frames(2)
 	_check(wep.current_type_id() == type_after_gate,
@@ -192,10 +192,10 @@ func _check_gate(wep: WeaponComponent) -> void:
 	await _frames(3)
 	_check(wep.current_type_id() == 4, "equip_type(4) 应正常切换到槽4(实际 %d)" % wep.current_type_id())
 
-	# 全禁 → 兜底非空(KH 的兜底是 [1]),否则出生即空手
-	# ★ 入参是"被禁用的**类型 id** 列表" —— 必须取注册表,不能写死 [1, 2, 3, 4, 5, 6]:
-	#   漏掉第 7 把枪时,"全禁"其实没禁上它 ⇒ 下面的 `is_type_enabled(<第一把>)` 会红
-	#   (而那条红的成因看起来像"兜底坏了",查半天)。
+	# 全禁 → 保底处理非空(KH 的保底处理是 [1]),否则出生即空手
+	# - 入参是"被禁用的**类型 id** 列表" —— 必须取注册表,不能写死 [1, 2, 3, 4, 5, 6]:
+	#   漏掉第 7 把枪时,"全禁"其实没禁上它  ->  下面的 `is_type_enabled(<第一把>)` 会红
+	#   (而那条红的成因看起来像"保底处理坏了",查半天)。
 	wep.set_enabled_types(WeaponRegistry.all_ids())
 	await _frames(3)
 	_check(not wep.enabled_types.is_empty(), "全禁后 enabled_types 为空(兜底缺失)")
@@ -206,11 +206,11 @@ func _check_gate(wep: WeaponComponent) -> void:
 	await _frames(3)
 
 	# ⑤ 背包里没有的类型:equip_type 不得**凭空加一把**(§4.5,2026-09-25)
-	# ★ 这条在改动前是**红**的:旧实现有一条"没有就加"的分支(注释写着"这不是便利,是必需")——
+	# - 这条在改动前是**红**的:旧实现有一条"没有就加"的分支(注释写着"这不是便利,是必需")——
 	#   它会让 held **悄悄变长**,而那正是"两端背包不同序"的另一条产生源(§4.1 要消灭的东西)。
-	# ★ 类型选 5(榴弹发射器):此刻它**是启用的**、且**不在**背包 [1,3,4] 里 ——
-	#   两个条件缺一不可(选一个被禁的类型会被闸门先挡掉,那条分支根本走不到 ⇒ 假绿)。
-	# ★ 旧实现还会**静默超容**:1+3+4 = 8 格已经占满,再加一把重的 = 12 格,而 add() 不代替闸门。
+	# - 类型选 5(榴弹发射器):此刻它**是启用的**、且**不在**背包 [1,3,4] 里 ——
+	#   两个条件缺一不可(选一个被禁的类型会被门控前置校验先挡掉,那条分支根本走不到  ->  虚假通过（未有效测试）)。
+	# - 旧实现还会**静默超容**:1+3+4 = 8 格已经占满,再加一把重的 = 12 格,而 add() 不代替门控前置校验。
 	var n_before := wep.inventory.held.size()
 	var t_before := wep.current_type_id()
 	wep.equip_type(5)
@@ -222,7 +222,7 @@ func _check_gate(wep: WeaponComponent) -> void:
 
 
 # ── 3) 滚轮切枪:在**背包位置**之间循环,跳过被禁的类型 ──────────────
-# ★ 2026-09-15:循环范围从"启用槽位表(1-6)"改成"背包里没被禁的位置序列"。
+# - 2026-09-15:循环范围从"启用槽位表(1-6)"改成"背包里没被禁的位置序列"。
 #   背包最多 4 把,所以两个端点(位置 0 与最后一个位置)的环绕也要走到。
 func _check_cycle(wep: WeaponComponent) -> void:
 	wep.set_enabled_types([])
@@ -265,7 +265,7 @@ func _check_cycle(wep: WeaponComponent) -> void:
 	await _frames(3)
 
 
-# ── 4) 换弹状态机(真实武器实例 + 桩玩家;手动 tick 推进,帧率无关)+ 网络输入源闸门 ──
+# ── 4) 换弹状态机(真实武器实例 + 桩玩家;手动 tick 推进,帧率无关)+ 网络输入源门控前置校验 ──
 # player/wep 两个参数仅供「网络输入源 → 不换弹」这条真实链路断言用(必修 1 回归钉)。
 
 # hoisted from locals when __check_reload_state_machine was split (first assignment kept in place).
@@ -282,7 +282,7 @@ func _check_reload_state_machine(player: Node, wep: WeaponComponent) -> void:
 		return
 
 # ── 5) 残弹语义(切走记住、切回恢复,**不回满**;且按**具体那把**记)──
-# ★ 2026-09-15:残弹从"按槽位号记的 _mag_state"改成"存在背包条目里"(每条一个 inst)。
+# - 2026-09-15:残弹从"按槽位号记的 _mag_state"改成"存在背包条目里"(每条一个 inst)。
 #   第 5b 段那条断言(两把**同类型**各有各的残弹)正是这次改动的唯一鉴别点:
 #   按类型记账时它必然失败,按 inst 记账时才过。
 func _check_mag_memory(wep: WeaponComponent) -> void:
@@ -313,7 +313,7 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 	_check(back.mag_ammo == 5,
 			"切回后残弹未恢复为切走时的值(实际 %d,期望 5;=12 即「切枪回满弹」漏洞)" % back.mag_ammo)
 
-	# ★ per-inst 鉴别点:两把**同类型**武器必须各有各的残弹
+	# - per-inst 鉴别点:两把**同类型**武器必须各有各的残弹
 	#   (背包允许重复武器;按类型记账会让第二把继承第一把的残弹 = 免费换弹)
 	wep.set_initial_inventory([1, 1, 4])   # 手枪 + 手枪 + 霰弹 = 2+2+2 = 6 格
 	await _frames(3)
@@ -322,7 +322,7 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 		_failures.append("同类型两把前置:位置0 未拿到手枪(weapon=%s)" % str(first))
 		return
 	first.mag_ammo = 3
-	wep.equip_index(1)          # 第二把同类型:入树应是**满弹**,不该继承第一把的 3
+	wep.equip_index(1)          # 第二把同类型:加入场景树应是**满弹**,不该继承第一把的 3
 	await _frames(3)
 	var second: WeaponBase = wep.current_weapon()
 	if second == null:
@@ -337,10 +337,10 @@ func _check_mag_memory(wep: WeaponComponent) -> void:
 			"第一把的残弹应原样保留 3(实际 %s)" % str(first_back.mag_ammo if first_back != null else "<无>"))
 
 
-# ── 5b) ★ 同帧两次 equip_type:未入树的枪不得被记账(残弹被抹成 0)────────────
-# 竞态(修前为真 bug):equip_type() 用 call_deferred("add_child", 新枪) 入树,**_ready 要到帧末才跑**,
-# 而 mag_ammo 满弹是在 _ready 里设的 → 新枪在入树前 mag_ammo 恒为 0。若同帧再 equip_type 一次,
-# 第二次的「旧武器」正是这把未入树的枪,照记 `_mag_state[old_slot] = _weapon.mag_ammo`(该表已于 2026-09-15 背包化时整体删除,见 :283;现在残弹存在**背包条目**里)
+# ── 5b) -  同帧两次 equip_type:未加入场景树的枪不得被记账(残弹被抹成 0)────────────
+# 竞态(修前为真 bug):equip_type() 用 call_deferred("add_child", 新枪) 加入场景树,**_ready 要到帧末才跑**,
+# 而 mag_ammo 满弹是在 _ready 里设的 → 新枪在加入场景树前 mag_ammo 恒为 0。若同帧再 equip_type 一次,
+# 第二次的「旧武器」正是这把未加入场景树的枪,照记 `_mag_state[old_slot] = _weapon.mag_ammo`(该表已于 2026-09-15 背包化时整体删除,见 :283;现在残弹存在**背包条目**里)
 # 就把**被略过的那个中间槽**记成 0;之后切回该槽 → 只拿到 0 残弹(不是回满),fire() 靠
 # start_reload() 自愈 = 交火中白交一次 1.0~2.8s 装填。它坏掉的正是 L3 要交付的「残弹记忆」。
 # 真机可达路径:滚轮走 player.gd 的 _unhandled_input(事件驱动,每个 InputEventMouseButton
@@ -369,8 +369,8 @@ func _check_same_frame_cycle(wep: WeaponComponent) -> void:
 	await _frames(3)
 	_check(wep.current_type_id() == 1, "同帧切枪前置:未回到槽1(实际 %d)" % wep.current_type_id())
 
-	# ★ 同帧两次 cycle_index(1):位置 0 → 1 → 2,位置1(步枪)是被"略过"的中间那把。
-	# 两次调用之间**没有 await** → 第二次 equip_type 看到的旧武器(那把新步枪)还没入树。
+	# - 同帧两次 cycle_index(1):位置 0 → 1 → 2,位置1(步枪)是被"略过"的中间那把。
+	# 两次调用之间**没有 await** → 第二次 equip_type 看到的旧武器(那把新步枪)还没加入场景树。
 	wep.cycle_index(1)
 	wep.cycle_index(1)
 	await _frames(3)
@@ -378,7 +378,7 @@ func _check_same_frame_cycle(wep: WeaponComponent) -> void:
 			"同帧两次滚轮应从手枪经步枪落到霰弹(实际 %d)" % wep.current_type_id())
 
 	# 切回步枪:残弹必须仍是切走时的 17
-	# (=0 即未入树的枪被记账抹掉了,=30 即残弹记忆整体失效)
+	# (=0 即未加入场景树的枪被记账抹掉了,=30 即残弹记忆整体失效)
 	wep.equip_index(1)
 	await _frames(3)
 	var back: WeaponBase = wep.current_weapon()
@@ -389,7 +389,7 @@ func _check_same_frame_cycle(wep: WeaponComponent) -> void:
 			"同帧两次滚轮把被略过的步枪残弹抹掉了(实际 %d,期望 17;=0 即未入树的枪被记进背包条目,=30 即残弹记忆失效)" % back.mag_ammo)
 
 
-# ── 6) ★ 守卫点:帧逻辑必须走 tick(),不许回到 _process ──────────────
+# ── 6) -  守卫点:帧逻辑必须走 tick(),不许回到 _process ──────────────
 # 源码读进来先剥纯注释行(_code_only):下面全是纯文本 contains(),不过滤的话
 # 「注释里写出来的字面量」既会误绿(`# weapons.tick(delta)` 被注释掉照样命中),
 # 也会误红(weapon_base.gd 的注释里出现过裸 `_process` 字样)。
@@ -407,23 +407,23 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 	_check(not wb_src.contains("func _process"), "weapon_base.gd 又长出 _process(帧逻辑必须走 tick,rollback 需要确定性)")
 	_check(not wc_src.contains("func _process"), "weapon_component.gd 又长出 _process")
 
-	# ★ 反向断言:_mag_state 一族不许复活(2026-09-15 背包化时删掉)。
+	# - 反向断言:_mag_state 一族不许复活(2026-09-15 背包化时删掉)。
 	#   残弹现在按**背包条目**(每条一个 inst)记 —— 复活旧的"按槽位号记账"表 = 两套残弹
 	#   记账并存 = 同类型两把必然串弹,而且完全不报错。
-	#   ★ 不能直接 contains("_mag_state") —— **保留**的 `func reset_mag_state()` 里就含这个
+	#   - 不能直接 contains("_mag_state") —— **保留**的 `func reset_mag_state()` 里就含这个
 	#     子串,裸 contains 会恒红。改成钉三种**使用形式**:声明、下标读写、方法调用。
 	#     (`reset_mag_state` 是刻意保留的:它已改成"把当前残弹同步进背包条目",不再有独立的表;
-	#      残弹写入口是 `apply_mag` —— 同步写,未入树的实例走 `pending_mag` 由 `_ready` 消费,
+	#      残弹写入口是 `apply_mag` —— 同步写,未加入场景树的实例走 `pending_mag` 由 `_ready` 消费,
 	#      原先帧末回填的 `_restore_mag` 已随 pending_mag 一起删除。)
 	_check(not wc_src.contains("var _mag_state"), "weapon_component.gd 又声明了 _mag_state 残弹表")
 	_check(not wc_src.contains("_mag_state["), "weapon_component.gd 又在下标读写 _mag_state")
 	_check(not wc_src.contains("_mag_state."), "weapon_component.gd 又在调 _mag_state 的方法")
-	# ★ 2026-10-02 合并订正:原断言钉的是 `weapons.tick(delta)` **逐字**。KH 的时间玩法把这一行
+	# - 2026-10-02 合并订正:原断言钉的是 `weapons.tick(delta)` **逐字**。KH 的时间玩法把这一行
 	#   改成 `weapons.tick(delta * tm)`(加速时开火/换弹节拍 ×tm)—— **意图一字未变**
 	#   (每物理帧由 delta 驱动武器 tick),只是实参带上了时间倍率。
 	#   故放宽到前缀 `weapons.tick(delta`:仍然钉住"由 delta 驱动、且是本文件在驱动"
 	#   (写死常数、换别的变量、或干脆不驱动,照样红)。
-	#   ★ 纪律:重构撞红源码级守卫时**改探针认新入口**,别回退生产代码(见 docs/eng/tests.md 的
+	#   - 纪律:重构撞红源码级守卫时**改探针认新入口**,别回退生产代码(见 docs/eng/tests.md 的
 	#     「源码级探针」纪律)。
 	_check(pl_src.contains("weapons.tick(delta"), "player.gd 不再每物理帧驱动 weapons.tick(delta…)(带时间倍率的实参也算)")
 
@@ -437,10 +437,10 @@ func _check_tick_guards(player: Node, wep: WeaponComponent) -> void:
 			"player.gd 的注入输入钩子 get_aim_dir_override() 丢了(守卫点 = L3 头号不变量表 #4–10 的 player.gd 行;丢了服务器瞄准会去读宿主鼠标)")
 
 	# L3 接线:开局选项禁用的武器必须真的落到武器组件上(否则选项形同虚设)
-	# ★ 2026-10-02 降精度:原钉**整行逐字** `set_enabled_types(RunOptions.disabled_weapons)`
-	#   —— 先取局部量 / 加 `.duplicate()` / 换行都会假红。改判"`_ready`体内同时出现
+	# - 2026-10-02 降精度:原钉**整行逐字** `set_enabled_types(RunOptions.disabled_weapons)`
+	#   —— 先取局部量 / 加 `.duplicate()` / 换行都会虚假失败（测试用例误报）。改判"`_ready`体内同时出现
 	#   `set_enabled_types(` 与 `RunOptions.disabled_weapons`",问的是同一个问题(接线在不在)。
-	# ★ 用 `_top_func_body` + `_code_view`,**不能**用 `_func_body(_code_only(...))`:
+	# - 用 `_top_func_body` + `_code_view`,**不能**用 `_func_body(_code_only(...))`:
 	#   level_0.gd 有个内部类 `_Reaper` 也有 `func _ready()`,而 `code_only` 剥缩进后
 	#   它会先命中、取回那个 3 行体(实测踩到)。
 	var _lv_ready := _top_func_body(_code_view(_read(LEVEL0_SRC)), "_ready")
@@ -470,7 +470,7 @@ func _check_reload_core(player: Node, wep: WeaponComponent) -> void:
 	await get_tree().process_frame
 	w.equip(stub)
 
-	# (原先这里断言 `w.reload_active()` —— 那道闸门 2026-09-15 已删,换弹恒开。改成断言
+	# (原先这里断言 `w.reload_active()` —— 那道门控前置校验 2026-09-15 已删,换弹恒开。改成断言
 	#  "开局是满弹":它才是下面"装填中不出弹/不扣弹"那条对照的前提。)
 	_check(w.mag_ammo == w.mag_size,
 			"换弹玩法前置:入树后应是满弹(mag_ammo=%d / %d)" % [w.mag_ammo, w.mag_size])
@@ -523,12 +523,12 @@ func _check_reload_core(player: Node, wep: WeaponComponent) -> void:
 func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 
 	# ── 4b) PvP 换弹链路(2026-09-15 契约反转)────────────────────────────
-	# ★ 本函数原先钉的是**相反**的契约:「PvP/网络输入源一律不许换弹」(reload_active() 恒 false)。
-	#   那道闸门 2026-09-15 已整个删除,换弹对全模式开放 —— 于是这里的断言必须整段重写,
+	# - 本函数原先钉的是**相反**的契约:「PvP/网络输入源一律不许换弹」(reload_active() 恒 false)。
+	#   那道门控前置校验 2026-09-15 已整个删除,换弹对全模式开放 —— 于是这里的断言必须整段重写,
 	#   改钉**新链路的每一环**。为什么每一环都要钉:"哪一环忘了接"的表现全是静默的
 	#   (R 没反应 / 服务器不换弹 / 回滚重放飘),没有断言就只能等玩家报"PvP 换弹坏了"。
-	# 链路:① 编码端写位 → ② 解码端读位 → ③ 权威玩家真的进装填 → ④ 弹药进整态
-	#       → ⑤ 反向:闸门不得复活。
+	# 链路:① 编码端写位 → ② 解码端读位 → ③ 权威玩家真的进装填 → ④ 弹药进完整状态
+	#       → ⑤ 反向:门控前置校验不得复活。
 	_check(Level0.pvp_mode == false, "前置:本钉要求 pvp_mode 为 false(实际 %s)" % str(Level0.pvp_mode))
 
 	# ① 编码端:按住 R 必须写进 held/pressed 两个掩码(服务器只认边沿,但 held 供日后长按语义)
@@ -563,14 +563,14 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 		player._physics_process(1.0 / 60.0)
 		_check(real_w.is_reloading(),
 				"权威链路断了:带 R 边沿的输入包 + 一个物理帧没能让武器进装填(服务器永不换弹)")
-		# ④ 整态:弹药/装填必须在 capture_state 里,否则 rollback 重放不是复现而是新历史
+		# ④ 完整状态:弹药/装填必须在 capture_state 里,否则 rollback 重放不是复现而是新历史
 		var cap: Dictionary = player.capture_state()
 		_check(cap.has("mag") and cap.has("rld") and cap.has("rld_t"),
 				"整态漏了换弹字段:capture_state 里没有 mag/rld/rld_t(rollback 重放不确定)")
 		# ⑤ (负向对照)非边沿不触发:没有 R 边沿的包不得让武器进装填。
-		# ★ 必须先 clear_edges():PacketInputSource 的边沿是**累积**的(|=),靠 MatchHost
+		# - 必须先 clear_edges():PacketInputSource 的边沿是**累积**的(|=),靠 MatchHost
 		#   每 tick 末 clear_edges() 清空 —— 生产里"上一包的边沿"活不过一个 tick,探针
-		#   不照做就会拿上一包的 R 去打自己的负向对照(本探针第一版就是这么假红的)。
+		#   不照做就会拿上一包的 R 去自身伤害的负向对照(本探针第一版就是这么虚假失败（测试用例误报）的)。
 		real_w._reloading = false
 		real_w.mag_ammo = 3
 		net_src.clear_edges()
@@ -582,7 +582,7 @@ func _check_network_gate(player: Node, wep: WeaponComponent) -> void:
 		_check(not player.input_is_network(), "复原本地输入源后 input_is_network() 应为假")
 		real_w._reloading = false   # 别把装填态留给后面的段
 
-	# ⑤ 反向:闸门若复活(源码里又出现 reload_active),上面整条链路的语义就不再是本意 ——
+	# ⑤ 反向:门控前置校验若复活(源码里又出现 reload_active),上面整条链路的语义就不再是本意 ——
 	#    红在这一条比红在任何一条行为断言都更早、更指向原因。(注释行已被 _code_only 剥掉。)
 	var wb_src := _code_only(_read(WEAPON_BASE_SRC))
 	_check(not wb_src.contains("reload_active"),

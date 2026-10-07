@@ -28,7 +28,7 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(TOOLS)
 
 # 不参与检查的目录(引擎缓存 / 工具产物 / 归档)
-# ★ 这张表必须与 .gitignore 对齐:表里没有、而 .gitignore 有的目录(如 releases/ 的归档名
+# - 这张表必须与 .gitignore 对齐:表里没有、而 .gitignore 有的目录(如 releases/ 的归档名
 #   形如 `The Cyancular Ruins v.1.1.4 …`、_crashtest/ 的一次性现场)会让本检查在**干净工作树**
 #   上也恒 FAIL —— 2026-10-03 实测 5 条 A 类违规全来自这两个目录,与代码无关。
 SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
@@ -107,9 +107,9 @@ def check_class_names() -> None:
 
 
 def check_doc_paths() -> None:
-    # ★ 2026-10-03:`CLAUDE.md` 拆成索引之后,正文住 `docs/eng/*.md`。**分域文档必须继续被本检查覆盖**
-    #   —— 否则"文档引用的路径必须存在"这条会在拆分那一刻**静默失效**(最常见的那种假绿)。
-    seen: dict[str, str] = {}          # tok → 引用它的文档(报错要点名)
+    # - 2026-10-03:`CLAUDE.md` 拆成索引之后,正文住 `docs/eng/*.md`。**分域文档必须继续被本检查覆盖**
+    #   —— 否则"文档引用的路径必须存在"这条会在拆分那一刻**静默失效**(最常见的那种虚假通过（未有效测试）)。
+    seen: dict[str, str] = {}          # tok → 引用它的文档(报错要明确提示)
     for doc in DOC_FILES:
         full = os.path.join(PROJECT, doc)
         if not os.path.exists(full):
@@ -117,7 +117,7 @@ def check_doc_paths() -> None:
             continue
         text = open(full, encoding="utf-8", errors="replace").read()
         # ① 反引号里的带扩展名文件路径。
-        #    ★ 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 docs/eng/tests.md 的
+        #    - 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 docs/eng/tests.md 的
         #      `kh_l1/l3/l4/l5_probe.tscn`(指 kh_l1_probe / kh_l3_probe / …),那不是路径。
         #      代价:整段目录名都写错的那种(首段也不存在)① 会漏,由 ② 的裸目录检查兜。
         for tok in re.findall(r"`([A-Za-z0-9_./-]+)`", text):

@@ -1,6 +1,6 @@
 extends Node
 
-# 瓦片回溯探针(场景级):拆砖入账 → 回溯 → 砖块(网格+渲染)复原。
+# 瓦片回溯探针(场景级):破坏瓦片入账 → 回溯 → 砖块(网格+渲染)复原。
 # 用法:godot --headless --path . res://tests/probe/tile_rewind_probe.tscn
 
 var _fails: Array[String] = []

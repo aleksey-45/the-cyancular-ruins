@@ -2,9 +2,9 @@ class_name MapFormat
 extends RefCounted
 
 # `.cyrm` 地图**格式**层:格子值编解码(packed)+ 文件解析/序列化 + spawn 元数据。
-# ★ 本类**无会话状态** —— 读哪份文件、当前网格是什么,一律由调用方给(路径参数 / grid 参数)。
+# - 本类**无会话状态** —— 读哪份文件、当前网格是什么,一律由调用方给(路径参数 / grid 参数)。
 #   会话级状态(选中的地图文件、current_grid)留在 MazeGenerator,那里也是生产代码的统一入口。
-# ★ 改这里 = 改磁盘格式;改 GridPathfinder = 改环面数学/寻路。两者不搭界。
+# - 改这里 = 改磁盘格式;改 GridPathfinder = 改环面数学/寻路。两者不搭界。
 
 # 地图格子值:packed = 纹理*16 + 形状掩码(0-335)。0 = 空气。
 # 形状掩码 4bit = 2×2 子格(1<<(sy*2+sx):bit0 左上/bit1 右上/bit2 左下/bit3 右下),15=全砖。

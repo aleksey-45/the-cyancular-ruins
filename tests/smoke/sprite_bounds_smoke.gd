@@ -4,9 +4,9 @@ extends SceneTree
 # 跑法: "$GODOT" --headless --path . -s res://tests/smoke/sprite_bounds_smoke.gd
 # 通过 = `SPRITE_BOUNDS OK` 退出 0。
 #
-# ★ 用运行时生成的贴图当输入,不依赖任何美术资产 —— 断言的是"算得对不对",
+# - 用运行时生成的贴图当输入,不依赖任何美术资产 —— 断言的是"算得对不对",
 #   而不是"某张图长什么样"(后者一改素材就红)。
-# ★ 参考系是坑点:Sprite2D 默认 centered,局部原点是**贴图/region 的中心**,
+# - 参考系是易错隐患点:Sprite2D 默认 centered,局部原点是**贴图/region 的中心**,
 #   不是左上角。三组用例分别压"无 region / 全透明 / 有 region"。
 
 var _fail := 0
@@ -30,7 +30,7 @@ func _make_tex(w: int, h: int, filled: Rect2i) -> ImageTexture:
 
 func _initialize() -> void:
 	var SB: GDScript = load("res://core/present/sprite_bounds.gd")
-	# ★ 空载守卫:load() 失败还往下走会在 null 上抛错,而 -s 抛错走不到 quit() → 永久挂起
+	# - 空载守卫:load() 失败还往下走会在 null 上抛错,而 -s 抛错走不到 quit() → 永久挂起
 	if SB == null:
 		print("SPRITE_BOUNDS FAILED: 找不到 core/present/sprite_bounds.gd")
 		quit(1)

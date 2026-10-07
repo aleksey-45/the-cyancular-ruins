@@ -18,7 +18,7 @@ func source_kind() -> int:
 func press_jump() -> void:
 	_jump_edge = true
 
-# ── 覆写钩子(公开读口由基类持有并对 frozen 短路;本类不再各自处理冻结)──
+# ── 覆写钩子(公开输入读取接口由基类持有并对 frozen 短路;本类不再各自处理冻结)──
 
 func _axis_raw(neg: String, _pos: String) -> float:
 	return axis if neg == "left" else 0.0   # 垂直轴走跳跃边沿,不爬梯
@@ -48,7 +48,7 @@ func _attack_just_released_raw() -> bool:
 func _switch_index_raw() -> int:
 	return 0   # 不切枪
 
-# ★ AI **不捡也不丢枪**:大乱斗补位 AI 只用开局随机发的那把,死后也只留随机一把
+# - AI **不捡也不丢枪**:大乱斗补位 AI 只用开局随机发的那把,死后也只留随机一把
 #   (复活规则见 MatchHost/_respawn_player)。要让它会捡枪就得先有"想捡哪把"的决策,
 #   那是另一件事,别在这里偷偷返回 true(会变成 AI 沿路把所有枪都吸走)。
 func _pickup_pressed_raw() -> bool:
@@ -62,13 +62,13 @@ func get_aim_dir_override() -> Vector2:
 
 # 本类**必须**为 true,理由是**瞄准**而不是换弹:
 # weapon_base._aim_world_dir() 对 input_is_network()==true 的玩家**永不读宿主 OS 鼠标**,
-# 注入方向为 ZERO 时改用朝向兜底。AI 没有鼠标(服务器 headless),不覆写就会让它去读
+# 注入方向为 ZERO 时回退使用角色朝向作为默认方向。AI 没有鼠标(服务器 headless),不覆写就会让它去读
 # 宿主机的真实鼠标位置 —— 瞄准变成随服务器桌面而变的随机值。
 # (AI 的 aim 恒非零,两个分支其实都安全,但语义上必须是"网络驱动的玩家"。)
 #
-# ★ 2026-09-15 起**不再是**为了绕开换弹:原先 WeaponBase.reload_active() 的第二判据正是
+# - 2026-09-15 起**不再是**为了绕开换弹:原先 WeaponBase.reload_active() 的第二判据正是
 #   input_is_network(),本类靠返回 true 让 AI 不换弹(免得打空后静默停火 reload_time 秒)。
-#   换弹对全模式开放后那道闸门已整个删除,AI 现在**照常换弹** —— 与真人同规则
+#   换弹对全模式开放后那道门控前置校验已整个删除,AI 现在**照常换弹** —— 与真人同规则
 #   (打空 → 装填 → 继续打),这是有意为之,不是 AI 手感退化。
 #   AiInputSource 不产 R 边沿(_action_just_pressed_raw 只认 "up"),故 AI 只会走
 #   "打空自动装填"这一条,不会手动换弹。

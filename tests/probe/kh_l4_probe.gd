@@ -8,11 +8,11 @@ extends ProbeBase
 # 存在理由:L4(菜单/暂停层换装 + 演示世界退役 + 退役 esc_menu + 「倒地按 R 原地重启」)
 # 的验收项大多是**"某样东西从此不存在"**或**"某样东西只剩一处"**——这类断言没有运行时
 # 入口,只能在源码层机械扫描。本探针就是那台扫描仪:
-#   1) ★ 零演示残留(生产目录 .gd/.tscn 不含 menu demo / revive demo / demo level0 /
+#   1) -  零演示残留(生产目录 .gd/.tscn 不含 menu demo / revive demo / demo level0 /
 #      demo spawn / build_permanent_region / enter_game_staged / leave_menu / MenuDemoAi /
 #      --demo-noai / DemoCollision —— 共 10 条针,见 _demo_needles)
-#   2) ★ 打击反馈层挂载点全仓生产路径恰好 1 处,且必须是 scenes/level_0.gd
-#   3) ★ 字号规范:全仓所有字号载体都是 16 的倍数(见下方四类载体)
+#   2) -  打击反馈层挂载点全仓生产路径恰好 1 处,且必须是 scenes/level_0.gd
+#   3) -  字号规范:全仓所有字号载体都是 16 的倍数(见下方四类载体)
 #   4) 退役的 ESC 菜单零引用(类不存在、文件不存在、无代码引用)
 #   5) L4 新接口在位(Level0.safe_change_scene 必须 static / restart_single /
 #      Player.restart_at / WeaponComponent.reset_mag_state)
@@ -24,14 +24,14 @@ extends ProbeBase
 #
 # ⚠ CI 判据必须是 **grep 文本 `KH L4 PROBE: ALL-OK`**,不能只看退出码:
 #    探针中途脚本报错时 --quit-after 仍以 exit 0 退出,退出码与"跑通了"不可分。
-#    ★★ 2026-09-28 订正(取代旧版"这时**不会**打印 ALL-OK",实测已推翻):运行期脚本错误
-#    **只让出错的那个函数当场结束、调用方继续** ⇒ verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
+#    注意： 2026-09-28 订正(取代旧版"这时**不会**打印 ALL-OK",实测已推翻):运行期脚本错误
+#    **只让出错的那个函数当场结束、调用方继续**  ->  verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
 #    故该行只证明"**没有任何断言失败**",**不证明"该跑的断言都跑过"**(权威:`tests/lib/probe_base.gd`)。
 #
 # ⚠⚠ 自伤防护(本文件被自己扫描,务必守住):凡是本探针**要找的字面量**,一律用
 #    `"前" + "后"` 碎片拼出来,绝不整段写在源码里 —— 否则:
-#      · 演示残留/esc 这类"零命中"断言会被本文件自己命中(假红);
-#      · 字号那类"扫字面量"的断言也会把本文件里的示例当数据。
+#      - 演示残留/esc 这类"零命中"断言会被本文件自己命中(虚假失败（测试用例误报）);
+#      - 字号那类"扫字面量"的断言也会把本文件里的示例当数据。
 #    `tests/` 只在第 1 条里被排除(那条扫描根就不含它),3/4 两条是**全仓**扫描,含本文件。
 
 # 生产目录(第 1/2 条只扫这些;排除 tests/ 以免探针自身的负断言文本自伤)
@@ -40,7 +40,7 @@ const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
 const ALL_DIRS := ["res://core", "res://scenes", "res://server", "res://ui",
 		"res://tests"]
 
-# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 假绿"
+# 扫描到的源文件数下限:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 虚假通过（未有效测试）"
 const MIN_PROD_FILES := 40
 const MIN_ALL_FILES := 60
 
@@ -65,11 +65,11 @@ func _ready() -> void:
 # 2026-10-03 起,主菜单背景 = **真实地形图**(与 Level0 同一份 `TerrainAtlas` 图集),
 # 而不是选图面板那套"每格一个平色"的示意缩略图(`MapCatalog.build_image`)。
 #
-# ★ 为什么这条必须是**源码级**的:两套实现在画面上都能出一张"铺满屏的地图" ——
+# - 为什么这条必须是**源码级**的:两套实现在画面上都能出一张"铺满屏的地图" ——
 #   退化回 `MapCatalog.build_image` 时**没有任何行为断言会红**(它照样出图、照样被
 #   shader 漂移),只有"像素是不是那个世界的砖"要靠人眼;而人眼只在取图时才看。
 #   这条钉的是**接线**:菜单必须走 `TerrainAtlas.terrain_texture()`,且不许再碰缩略图入口。
-# ★ 它能给的最强保证 = "那两行调用在/不在";它**测不到** TerrainAtlas 内部烘出来的像素对不对
+# - 它能给的最强保证 = "那两行调用在/不在";它**测不到** TerrainAtlas 内部烘出来的像素对不对
 #   (那由 `TerrainAtlas` 自己与 `-s` 探针管)。
 func _check_menu_terrain() -> void:
 	var menu := _code_only(_read("res://scenes/main_menu.gd"))
@@ -94,7 +94,7 @@ func _check_menu_terrain() -> void:
 	print("[L4] 菜单背景:真实地形接线在位(%s),缩略图入口 %d 处" % [want, menu.count(banned)])
 
 
-# ── 1) ★ 零演示残留(只扫生产目录)────────────────────────────────────
+# ── 1) -  零演示残留(只扫生产目录)────────────────────────────────────
 # L4 把"主菜单背后挂一个真 Level0 演示世界"整条链退役了。留下来就是**成本与风险**:
 # 演示世界要建全量碰撞、要吃 MenuDemoAi 的注入式手柄、还要在进出菜单时反复建/拆大世界
 # (实测偶发原生段错误)。这条断言保证它不会被"为了好看"再搬回来。
@@ -112,16 +112,16 @@ func _check_no_demo_residue() -> void:
 	print("[L4] 零演示残留:扫 %d 个生产源文件,命中 %d" % [files.size(), hits.size()])
 
 
-# ── 2) ★ 打击反馈层唯一挂载点(生产路径恰好 1 处)─────────────────────
+# ── 2) -  打击反馈层唯一挂载点(生产路径恰好 1 处)─────────────────────
 # L2 修过的洞:CombatFeedback.current 必须由**对局世界**创建一次。多一处(比如菜单又建
 # 一个)→ 两份反馈层抢 current;少一处 → 击杀播报/命中标记全哑。另:调用点必须留在
-# _ready 顶部、建图之前(carry-forward 1:世界构建可能早退,反馈层不该被它带着一起跳过)。
+# _ready 顶部、建图之前(carry-forward 1:世界构建可能提前返回,反馈层不该被它带着一起跳过)。
 func _check_feedback_mount_point() -> void:
 	var files := _collect(PROD_DIRS)
 	var needle := "Combat" + "Feedback.spawn("
 	var hits: Array[String] = []
 	for f in files:
-		# ★ 2026-10-02 降精度:先剥注释再计数 —— 注释里提一句该调用会把计数顶到 2 而**假红**。
+		# - 2026-10-02 降精度:先剥注释再计数 —— 注释里提一句该调用会把计数顶到 2 而**虚假失败（测试用例误报）**。
 		var n := _code_only(_read(f)).count(needle)
 		for _i in range(n):
 			hits.append(f)
@@ -130,10 +130,10 @@ func _check_feedback_mount_point() -> void:
 	if hits.size() == 1:
 		_check(hits[0] == "res://scenes/level_0.gd",
 				"唯一挂载点应是 res://scenes/level_0.gd(实际 %s)" % hits[0])
-	# 位置:必须在 WorldBuilder.load_grid() 之前(_ready 顶部;建图失败会 push_error 早退)
-	# ★ 2026-10-02 降精度:改成在 **_ready 函数体内**比较(原本是文件级下标)——
+	# 位置:必须在 WorldBuilder.load_grid() 之前(_ready 顶部;建图失败会 push_error 提前返回)
+	# - 2026-10-02 降精度:改成在 **_ready 函数体内**比较(原本是文件级下标)——
 	#   把两行一起搬去别的函数、或前面无关行数变动,都不该改变这条判据的真值。
-	# ★ 用 `_top_func_body` + `_code_view`(不是 `_func_body(_code_only(...))`):
+	# - 用 `_top_func_body` + `_code_view`(不是 `_func_body(_code_only(...))`):
 	#   level_0.gd 的内部类 `_Reaper` 也有 `func _ready()`,剥缩进后会先命中它。
 	var lv := _top_func_body(_code_view(_read("res://scenes/level_0.gd")), "_ready")
 	var i_spawn := lv.find(needle)
@@ -146,16 +146,16 @@ func _check_feedback_mount_point() -> void:
 	print("[L4] 打击反馈挂载点:命中 %d 处" % hits.size())
 
 
-# ── 3) ★ 字号规范:全仓所有字号载体都是 16 的倍数 ─────────────────────
+# ── 3) -  字号规范:全仓所有字号载体都是 16 的倍数 ─────────────────────
 # 本项目的像素字体(less_perfect_dos_vga)只在 16 的整数倍下与渲染缩放整数对齐,
 # 非 16 倍数会糊 —— 这是 ui/ui_factory.gd 文件头写下的硬约定,必须**机械可查**。
-# 四类载体(前三类是 brief 点名的,第四类是被 KH 菜单大量使用的实际载体,漏了它等于没扫):
+# 四类载体(前三类是 brief 明确提示的,第四类是被 KH 菜单大量使用的实际载体,漏了它等于没扫):
 #   A) add_theme_font_size_override("…", N) 的最后一个实参(含 normal_/bold_font_size 键)
 #   B) 字面赋值 `...font_size = N`(.tscn 的 theme_override_font_sizes/font_size = N 走这条)
 #   C) `const …FONT_SIZE… := N` 这类常量(世界空间文本/ HUD 走这条,没有 A/B 可查)
 #   D) UiFactory 的 label/button/style_control 的字号实参 + WeaponComponent.make_weapon_check
 #      —— 全仓菜单控件的字号**都是**从这几个口进去的,是最大的一类载体。
-# ★ 2026-10-02 降精度:四类载体的**扫描输入一律先过 `_code_only`(剥注释)** —— 注释 / 日志行
+# - 2026-10-02 降精度:四类载体的**扫描输入一律先过 `_code_only`(剥注释)** —— 注释 / 日志行
 #   里提到一个非 16 倍数的数字(如「字号曾用 20,太糊」)不该把这条判成违例:那是**说明**不是字号。
 #   只换扫描输入,扫描逻辑一字未动(要拦的变异:把某个真实字号写成非 16 倍数)。
 func _check_font_size_law() -> void:
@@ -189,7 +189,7 @@ func _scan_literal_assign(files: Array[String], bad: Array[String]) -> void:
 	var re := RegEx.new()
 	re.compile("font" + "_size\\s*=\\s*([0-9]+)")
 	for f in files:
-		# ★ 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释),注释里的字号字面量不算违例。
+		# - 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释),注释里的字号字面量不算违例。
 		for m in re.search_all(_code_only(_read(f))):
 			var v := int(m.get_string(1))
 			if v % 16 != 0:
@@ -202,7 +202,7 @@ func _scan_const_decl(files: Array[String], bad: Array[String]) -> void:
 	var re := RegEx.new()
 	re.compile("^\\s*const\\s+\\w*" + needle + "\\w*\\s*:?=\\s*([0-9]+)")
 	for f in files:
-		# ★ 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释)。
+		# - 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释)。
 		var src := _code_only(_read(f))
 		for line in src.split("\n"):
 			var l: String = line
@@ -219,11 +219,11 @@ func _scan_const_decl(files: Array[String], bad: Array[String]) -> void:
 
 # 通用:扫 needle 调用,取第 arg_index 个实参(0 基;arg_index < 0 = 检查全部实参)。
 # 是纯整数字面量就查 16 的倍数;变量实参(如 style_control(x, WEAPON_FONT_SIZE))一律
-# 跳过 —— 它们的值由 C) 那条常量表兜住。
+# 跳过 —— 它们的值由 C) 那条常量表提供容错保障。
 func _scan_call_arg(files: Array[String], needle: String, arg_index: int,
 		bad: Array[String], label: String) -> void:
 	for f in files:
-		# ★ 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释)—— 注释/日志里提到一个
+		# - 2026-10-02 降精度:扫描输入过 `_code_only`(剥注释)—— 注释/日志里提到一个
 		#   非 16 倍数的数字不再被当成字号实参。
 		var src := _code_only(_read(f))
 		var from := 0
@@ -273,7 +273,7 @@ func _check_old_escape_menu_retired() -> void:
 	_check(ResourceLoader.exists(pm), "替身 %s 不存在" % pm)
 	var pm_src := _read(pm)
 	_check(pm_src.contains("class_name " + "Pause" + "Menu"), "%s 缺 class_name PauseMenu" % pm)
-	# ★ 2026-10-02 降精度:原钉 `contains("func open(")` 等**逐字文本**(写成 `func open (` 或改成从基类继承都会假红)。
+	# - 2026-10-02 降精度:原钉 `contains("func open(")` 等**逐字文本**(写成 `func open (` 或改成从基类继承都会虚假失败（测试用例误报）)。
 	#   改走**方法表**(含继承)—— 问的是同一个问题。
 	var pm_gs := load(pm) as GDScript
 	_check(pm_gs != null, "%s 载入失败(下面三个口无从判)" % pm)
@@ -289,7 +289,7 @@ func _check_old_escape_menu_retired() -> void:
 #     场上是游戏世界退役后的新场景/甚至无 Level0 实例),实例方法在那儿根本调不到。
 #   Level0.restart_single(单人倒地按 R 的原地复位)、Player.restart_at(回出生点+满血满氧+
 #     武器回默认槽)、WeaponComponent.reset_mag_state(把当前残弹同步进背包条目)。
-#   ★ 2026-09-25:原先还有 `refill_current_weapon`(复活满弹)。它随 `_restore_mag` 那条帧末写回
+#   - 2026-09-25:原先还有 `refill_current_weapon`(复活满弹)。它随 `_restore_mag` 那条帧末写回
 #     一起删除 —— 它存在的唯一理由是"deferred 要排在 `_restore_mag` 之后",那条机制没了,
 #     而它也从没有过生产调用点。下面 specs 名单里那项与 `_refill_mag.call_deferred(` 那条断言
 #     一并删掉(**改探针认新形状,不是把函数加回来**)。
@@ -325,7 +325,7 @@ func _check_new_api() -> void:
 # 还不存在**,菜单先加按钮就是悬空引用(点了没反应的按钮 = 假入口),所以约定
 # 「L4 加了就是悬空引用,L5 连场景一起加」。L5 把场景与按钮一起落地后,断言反转为
 # 「必须恰好有 1 处、且指向大乱斗大厅场景」。
-# ★ 2026-10-03:三个联机入口收成主菜单上唯一一颗「多 人 模 式」⇒ 指向的场景由
+# - 2026-10-03:三个联机入口收成主菜单上唯一一颗「多 人 模 式」 ->  指向的场景由
 #   大乱斗大厅换成**统一大厅 `mp_lobby.tscn`**。**断言强度不变**:入口漏加/被删
 #   (0 处)或指向别处/已退役场景都算红 —— 反向约束与正向约束一样是约束,删掉这条就等于
 #   把入口的存在性放空。
@@ -335,7 +335,7 @@ func _check_multi_entry() -> void:
 	var src := _read("res://scenes/main_menu.gd")
 	_check(not src.is_empty(), "读不到 scenes/main_menu.gd")
 	var needle := "res://scenes/" + "mp_" + "lobby.tscn"
-	# ★ 2026-10-02 降精度:先剥注释再计数(注释里提一次该路径会被读成第 2 个入口)。
+	# - 2026-10-02 降精度:先剥注释再计数(注释里提一次该路径会被读成第 2 个入口)。
 	var n := _code_only(src).count(needle)
 	_check(n == 1, "主菜单联机入口应恰好 1 处指向 %s(实际 %d 处)" % [needle, n])
 	# 悬空引用守卫:这条的动机正是**不让菜单指向不存在的场景**(按钮点了没反应 = 假入口)。

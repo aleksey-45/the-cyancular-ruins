@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打墙命中反馈——源码级结构检查。通过 = SMOKE_BULLET_TILE_FX OK 退出 0。用户自跑。
+# 子弹击中瓦片受击反馈冒烟测试：源码级结构校验。判定标准：输出 SMOKE_BULLET_TILE_FX OK 且退出码为 0。
 set -u
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"

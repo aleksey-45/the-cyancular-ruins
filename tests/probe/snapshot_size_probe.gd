@@ -7,7 +7,7 @@ extends Node
 #
 # 存在理由:`docs/royale-soak-2026-09-12.md` §2.2 实测「每人每快照 ≈0.96 KB、服务器上行 ∝ N²」,
 # 但那是**整包**读数 —— 设计「本人包 / 世界包」拆分时需要知道这 0.96 KB 里
-# 多少是 c2 权威整态、多少是渲染散字段。本探针就量这个拆分,并给出 N=2..8 的折算表。
+# 多少是 c2 权威完整状态、多少是渲染散字段。本探针就量这个拆分,并给出 N=2..8 的折算表。
 #
 # 做法:真实例化一具 player.tscn(autoload 在场景模式下就绪),取它的 capture_state() 当 c2;
 # 按 `server/match_host.gd:_broadcast_snapshot` 的**逐字**字段表拼两种 dict,
@@ -107,18 +107,18 @@ func _entry_render_only() -> Dictionary:
 
 # 世界包瘦身版:①短键(协议两端同改,值不变)②去掉 `vel` —— ⚠ ② 是**不可实现**的那一条,见下。
 #
-# ★★ **`vel` 不是"可以去掉"的字段 —— 它现在是承重的,别照下面那个尺寸去削包。**
+# 注意： **`vel` 不是"可以去掉"的字段 —— 它现在为核心关键约束,别照下面那个尺寸去削包。**
 #   `player_replica` 的补间形变(squash & stretch)整条链都读它:空中连续项直接取 `vel.y`,
 #   落地推导还要"上一帧 `vel.y` 大 + 这一帧 `vel.y` ≈ 0"这一**对**值(见 `player_replica.gd`
-#   的 `_prev_vel_y` / `LAND_VEL_EPS`)。**把 vel 从载荷里去掉 ⇒ 对手的形变与落地效果
+#   的 `_prev_vel_y` / `LAND_VEL_EPS`)。**把 vel 从载荷里去掉  ->  对手的形变与落地效果
 #   一起静默失效**(空中项恒 0、落地项永不触发),不报错、也不会让本探针变红 ——
 #   本探针**只打印,不断言** vel 的去留(这一点是刻意的:它量的是体积,不是行为)。
 #   ⚠ 那条"唯一消费 vel 的是 `player.apply_server_snapshot`,该路径已随 C2 迁移删除"的旧理由
 #     在 Task 4 之后**已反转** —— 想削包先读 `player_replica.gd`,不要只读本文件。
-#   ⇒ `_entry_world_thin()` 仍按"去掉 vel"算,所以它给出的是**下界**(真实瘦身必须把 vel 带回来),
+#    ->  `_entry_world_thin()` 仍按"去掉 vel"算,所以它给出的是**下界**(真实瘦身必须把 vel 带回来),
 #     两者之差就是 vel 自己的字节数。
 #
-# pose/facing/weapon/aim/hp/downed/previewing 全部保留(副本 + 头顶血条在用);previewing 仍按
+# pose/facing/weapon/aim/hp/downed/previewing 全部保留(副本 + 头顶生命条在用);previewing 仍按
 # "只发不用"保留(它是日后换成音效/轮廓提示的接点,见 player_replica 的注释)。
 #
 # ※ 打印标签的措辞(2026-09-20 订正):下面那行原先写「去掉副本不消费的 vel/waterproof」——

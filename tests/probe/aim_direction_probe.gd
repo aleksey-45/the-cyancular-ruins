@@ -1,11 +1,10 @@
 extends SceneTree
 
-# 复现/验证 "开火时向反方向行走弹道出问题":
-# 玩家走路会把 facing_direction 覆盖为移动方向,而直接开火路径(_unhandled_input 在
-# input 阶段派发,先于 _process 的 _auto_aim)读到的是被覆盖的 facing。
-# _clamped_aim_dir 用 get_facing() 折叠 clamp_pitch,若 facing 与鼠标反侧 → 子弹翻折到另一侧。
-# 本探针:停掉武器 _process(模拟 input 阶段直接开火),用相机位置控制瞄准方向(headless
-# 下 Input.warp_mouse 不可靠),让 facing 与瞄准反侧,fire() 后断言子弹必须朝瞄准侧。
+# 瞄准朝向与开火方向一致性验证探针：
+# 验证在反向移动时立即开火弹道方向是否正确。
+# 背景说明：玩家移动时会将 facing_direction 设置为移动方向，若在 _unhandled_input 中立即开火，
+# 需确保开火方向以准星瞄准方向为准，避免因移动朝向反转导致弹道被翻转至相反方向。
+# 探针通过禁用武器 _process 模拟输入帧即时开火，验证开火朝向始终与瞄准点所在侧保持一致。
 
 var fails := 0
 func _check(cond: bool, msg: String) -> void:
@@ -27,7 +26,7 @@ class StubPlayer extends Node2D:
 func _initialize() -> void:
 	var cam := Camera2D.new()
 	root.add_child(cam)
-	await physics_frame   # 让相机入树后 make_current 才生效(root 在 _initialize 早期未入树)
+	await physics_frame   # 让相机加入场景树后 make_current 才生效(root 在 _initialize 早期未加入场景树)
 	cam.make_current()
 	cam.global_position = Vector2.ZERO
 	await physics_frame

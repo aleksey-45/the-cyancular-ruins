@@ -19,27 +19,27 @@ LOG="tests/probe/rejoin_probe.log"
 PROBE_LOBBY_PORT=29300
 PROBE_WORKER_PORT=29350
 
-# ★ 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列 ⇒ 带它是**结构性恒假**
+# - 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列  ->  带它是**结构性恒假**
 #   (2026-09-27 实测),原先这句提示**从未打印过**。理由见 env.sh 的 lobby_alive。
 if lobby_alive; then
   echo "[rejoin] 注意:7777 已被占用(大概是用户自己的服务端)。本探针不占 7777,**照跑不误、不会动它**。"
 fi
 
-# ★ 起跑前清**本探针自己那一段**的孤儿 worker(`OS.create_process` 起的孙进程,不属于本脚本
-#   记下的 PID)。★ 区间只到 [29350, 29400):**绝不能**扫 [7800, 8300) —— 那是大厅的 worker 池,
+# - 起跑前清**本探针自己那一段**的孤儿 worker(`OS.create_process` 起的孙进程,不属于本脚本
+#   记下的 PID)。-  区间只到 [29350, 29400):**绝不能**扫 [7800, 8300) —— 那是大厅的 worker 池,
 #   而本探针的既有承诺是"不碰 7800~8299"(那会端掉用户正在跑的对局),见文件头。
 kill_port_range "$PROBE_WORKER_PORT" 29400
 
 echo "[rejoin] 起探针(大厅 $PROBE_LOBBY_PORT,worker 起投 $PROBE_WORKER_PORT;整跑约 60~110 秒)"
 echo "[rejoin] 若长时间无输出:看 user://rejoin_probe_client_c{1,2,3}.godotlog(子进程 stdout 父进程看不到)"
 "$GODOT" --headless --path . --quit-after 36000 res://tests/probe/rejoin_probe.tscn 2>&1 | tee "$LOG"
-# ★ 取**探针进程自己**的退出码,不是 tee 的(管道最后一环恒 0,照它写会打印一个结构性恒真的数)
+# - 取**探针进程自己**的退出码,不是 tee 的(管道最后一环恒 0,照它写会打印一个结构性恒真的数)
 RC=${PIPESTATUS[0]}
 
 echo "[rejoin] 清理本探针自己的端口(兜底;正常路径探针已按 PID + 端口杀干净)"
 kill_port "$PROBE_LOBBY_PORT"
 kill_port "$PROBE_WORKER_PORT"
-# ★ 只杀单个端口不够:worker 的端口是 `pick_port()` 发出来的那一个(同一跑里通常等于起投点,
+# - 只杀单个端口不够:worker 的端口是 `pick_port()` 发出来的那一个(同一跑里通常等于起投点,
 #   但不是同一个概念 —— 见 tests/probe/rejoin_probe.gd 文件头)。区间仍**不含** 7800~8299。
 kill_port_range "$PROBE_WORKER_PORT" 29400
 

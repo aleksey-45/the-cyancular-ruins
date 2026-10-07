@@ -1,16 +1,16 @@
 extends Node
-# C2 孪生冒烟(scene 模式 headless,autoload 在):证明「整态捕获/恢复」完整——
+# C2 孪生冒烟(scene 模式 headless,autoload 在):证明「完整状态捕获/恢复」完整——
 # B 每 K tick 被强行搞乱后再 restore_state(A 快照)+ 同输入继续,必须与从不被打断的 A 逐 tick 收敛。
 # 漏一个 capture_state 字段 → B 重放与 A 发散 → 冒烟失败(capture/restore 见 player.gd)。
 # 跑法:见 Tests/pvp_twin_smoke.sh(测试怎么跑先问用户,见 CLAUDE.md 的约定)。
 # 注意:本冒烟驱动「移动/攀爬/游泳 + 周期开火」输入(开火让孪生覆盖到「回滚恢复期间开火」
 # 这个面,见 _build_plan),场景模式= autoload 已实例化(GameParameters 等)。
-# ★ 它**不**覆盖 C1(「restore 之后同帧打出的那一发会不会被帧末写回抹掉」)—— 那条判据
+# - 它**不**覆盖 C1(「restore 之后同帧打出的那一发会不会被帧末写回抹掉」)—— 那条判据
 #   靠"开火 tick 与 restore tick 交错"碰不到,必须把那个序列**构造**出来,见
 #   `tests/probe/ammo_rollback_probe.tscn`。
 #
 # 根因背景(docs/pvp-c2-retrospective.md):v1 回拉的根因之一是两端模拟不孪生 + 校正拉拢。
-# 新 C2 把「整态 PlayerState」作为权威格式:本冒烟先钉死 capture_state 无漏,才谈网络协议。
+# 新 C2 把「完整状态 PlayerState」作为权威格式:本冒烟先严格约束 capture_state 无漏,才谈网络协议。
 
 const BIT_UP := PacketInputSource.BIT_UP
 const BIT_DOWN := PacketInputSource.BIT_DOWN
@@ -50,19 +50,19 @@ func _ready() -> void:
 	var spawn := Vector2(2 * ts + ts * 0.5, 3 * ts + ts * 0.5)
 	A = _make_player(host, "TwinA", spawn)
 	B = _make_player(host, "TwinB", spawn)
-	# ★ 给两人一个**非空且残弹非满**的背包:否则 capture/restore 里的 `inv` 一节
-	#   在两个空背包之间比,恒等,等于没测。下方 _compare 的 `inv` 指纹才真正有鉴别力
+	# - 给两人一个**非空且残弹非满**的背包:否则 capture/restore 里的 `inv` 一节
+	#   在两个空背包之间比,恒等,等于没测。下方 _compare 的 `inv` 指纹才真正有测试有效性
 	#   (sabotage 会把 B 的背包清空,restore 必须把它从快照里重建回来)。
 	for p in [A, B]:
 		p.weapons.set_initial_inventory([1, 2, 4])
 	await get_tree().physics_frame
-	# ★ 必须等武器**入树**再写残弹:`_equip_index` 用 `call_deferred("add_child")` 入树,
-	#   而 `_ready` 会把 `mag_ammo` 重置为满 ⇒ **入树前写会被静默冲掉**(实测 `in=false mag=4`
+	# - 必须等武器**加入场景树**再写残弹:`_equip_index` 用 `call_deferred("add_child")` 加入场景树,
+	#   而 `_ready` 会把 `mag_ammo` 重置为满  ->  **加入场景树前写会被静默冲掉**(实测 `in=false mag=4`
 	#   → 下一帧 `in=true mag=12`),"残弹非满"这个前提就没了。写完同步进背包条目 ——
 	#   `_inv_key` 比的是**条目**,不是实例(条目默认 `MAG_FULL`,不同步则指纹恒不动)。
 	for p in [A, B]:
 		var w = p.weapons.current_weapon()
-		# ★ 等待必须有上界:没有它,fixture 漂移(武器始终没装上)会让本冒烟耗尽 `--quit-after`
+		# - 等待必须有上界:没有它,fixture 漂移(武器始终没装上)会让本冒烟耗尽 `--quit-after`
 		#   且**一行裁决都不打印** —— 与真失败在输出上不可分(2026-09-25 评审指出,与
 		#   `ammo_rollback_probe` 那条超时守卫同一类)。
 		var waited := 0
@@ -70,13 +70,13 @@ func _ready() -> void:
 			await get_tree().physics_frame
 			waited += 1
 		if w != null and not w.is_inside_tree():
-			# ★ 判据是"**仍然**不在树里",不是 `waited >= 120`:循环可能在那一帧刚好等到它入树,
-			#   而 `waited` 照样等于 120 ⇒ 边界帧假红(2026-09-25 复核指出)。
+			# - 判据是"**仍然**不在树里",不是 `waited >= 120`:循环可能在那一帧刚好等到它加入场景树,
+			#   而 `waited` 照样等于 120  ->  边界帧虚假失败（测试用例误报）(2026-09-25 复核指出)。
 			_violation = "等待武器入树超时(120 帧,current_weapon=%s)" % str(w)
 			_fail()
 			return
-		# ★ `w == null` 必须**报错**而不是跳过:下面那句"残弹非满"是本冒烟 `inv` 指纹的**唯一**
-		#   鉴别力来源 —— 静默跳过等于冒烟退化成永远绿(与上面那条守卫同一类)。
+		# - `w == null` 必须**报错**而不是跳过:下面那句"残弹非满"是本冒烟 `inv` 指纹的**唯一**
+		#   测试有效性来源 —— 静默跳过等于冒烟退化成永远绿(与上面那条守卫同一类)。
 		if w == null:
 			_violation = "玩家 %s 没有武器(set_initial_inventory 没装上?)—— '残弹非满'前提不成立" % p.name
 			_fail()
@@ -123,12 +123,12 @@ func _build_plan() -> void:
 		var up := false
 		var down := false
 		var charge := false
-		# ★ 开火:半自动手枪每 7 tick 一发,只为与 RESTORE_EVERY(12) 交错,让"回滚恢复
+		# - 开火:半自动手枪每 7 tick 一发,只为与 RESTORE_EVERY(12) 交错,让"回滚恢复
 		#   期间开火"这个面被覆盖到。
-		# ★ `7 与 12 互质 ⇒ 每 84 tick 必被走到一次` 这类推论**不成立**(别照它推):手枪
+		# - `7 与 12 互质  ->  每 84 tick 必被走到一次` 这类推论**不成立**(别照它推):手枪
 		#   `fire_cooldown` = 0.3s 量化到 7-tick 输入网格上,有效开火周期 = **21 tick**
-		#   (冷却中不重置冷却)⇒ 开火 tick ≡ 1 (mod 3),而 restore tick ≡ 0 (mod 3)
-		#   ⇒ **永不同帧**。C1 需要专门构造序列,见 `tests/probe/ammo_rollback_probe.tscn`。
+		#   (冷却中不重置冷却) ->  开火 tick ≡ 1 (mod 3),而 restore tick ≡ 0 (mod 3)
+		#    ->  **永不同帧**。C1 需要专门构造序列,见 `tests/probe/ammo_rollback_probe.tscn`。
 		var atk := (i % 7 == 3)
 		# 长距离左右横扫:保证经过梯列(x5)与水池(x16..24),触发攀爬/游泳路径
 		var sw := i % 240
@@ -200,12 +200,12 @@ func _physics_process(_delta: float) -> void:
 		return
 	_apply_input(srcA, i)
 	_apply_input(srcB, i)
-	# 每 RESTORE_EVERY tick:B 被搞乱 → 用 A 此刻(上一 tick 结果)的整态恢复 → 与 A 重跑对齐
+	# 每 RESTORE_EVERY tick:B 被搞乱 → 用 A 此刻(上一 tick 结果)的完整状态恢复 → 与 A 重跑对齐
 	if i > 0 and i % RESTORE_EVERY == 0:
 		var snap: Dictionary = A.capture_state()
 		B.global_position = Vector2(-9999, -9999)   # 主动造成严重分歧
 		B.velocity = Vector2.ZERO
-		# ★ 连**背包一起搞乱**:若 `inv` 没进 capture/restore,restore 后 B 会是空手,
+		# - 连**背包一起搞乱**:若 `inv` 没进 capture/restore,restore 后 B 会是空手,
 		#   下面 _compare 的 `inv` 指纹立刻发散。这条是本轮新增字段的**唯一鉴别点**。
 		B.weapons.set_initial_inventory([])
 		B.restore_state(snap)
@@ -230,7 +230,7 @@ func _compare(a, b, _snap: Dictionary, restored: bool) -> void:
 	if a.velocity.distance_to(b.velocity) > 0.5:
 		_violation = "vel dev %.3f tick=%d" % [a.velocity.distance_to(b.velocity), _tick]
 		_fail(); return
-	# 决定下一 tick 的标量/位:漏 capture 字段会在这里现形
+	# 决定下一 tick 的标量/位:漏 capture 字段会在这里暴露异常
 	var checks := {
 		"coyote": absf(a.coyote_timer - b.coyote_timer) <= 0.001,
 		"jbuf": absf(a.jump_buffer_timer - b.jump_buffer_timer) <= 0.001,
@@ -244,7 +244,7 @@ func _compare(a, b, _snap: Dictionary, restored: bool) -> void:
 		"downed": a.combat.downed == b.combat.downed,
 		"hp": a.combat.hp == b.combat.hp,
 		# 武器:当前手持类型 + 背包指纹(类型序列 + 各把残弹)。
-		# ★ 比的是**背包条目里的** mag(每条一个 inst),不是 `_weapon.mag_ammo`:前者是
+		# - 比的是**背包条目里的** mag(每条一个 inst),不是 `_weapon.mag_ammo`:前者是
 		#   "这个背包记着的"、进 `capture_state` 的 `inv`,两边同源可逐 tick 比;后者是
 		#   "手上这一把的",而且**本冒烟抓不到它** —— 「restore 之后同帧打出的那一发会不会
 		#   被帧末的延迟写回抹掉」(C1)需要把那个序列构造出来才走得进去,靠"开火 tick 与

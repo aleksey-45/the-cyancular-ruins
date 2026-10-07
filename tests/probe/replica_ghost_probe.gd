@@ -19,14 +19,14 @@ extends Node
 #   ③ 源码守卫:两个场景侧**任一入口**把本地玩家的 mask 加上玩家层位(位 2)即可(幽灵体做好了
 #      但本地玩家不认它,等于没做,而且不会有任何报错)。判据不钉具体写法/入口,只拦"接线全没了"。
 #
-# 反证(必须成立,否则本探针没有鉴别力):把幽灵体的 collision_layer 置 0(即摘掉它),
+# 反证(必须成立,否则本探针无法有效检出错误):把幽灵体的 collision_layer 置 0(即摘掉它),
 # ① 必须变成"穿过去了"、② 必须变成"分歧 + 回滚"。本探针把这一趟**当作正式断言跑**
 # (负向对照组),不是靠人记得手动试。
 #
 # ⚠ 判据必须是 grep 文本 "REPLICA GHOST PROBE: ALL-OK",不能只看退出码:探针中途脚本报错时
 #    仍以 exit 0 退出,退出码与"跑通了"不可分。
-#    ★★ 2026-09-28 订正(取代旧版"这时不打印 ALL-OK",实测已推翻):运行期脚本错误只让
-#    **出错的那个函数**当场结束、调用方继续 ⇒ verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
+#    注意： 2026-09-28 订正(取代旧版"这时不打印 ALL-OK",实测已推翻):运行期脚本错误只让
+#    **出错的那个函数**当场结束、调用方继续  ->  verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
 #    故该行只证明"没有任何断言失败",**不证明"该跑的断言都跑过"**(权威:`tests/lib/probe_base.gd`)。
 
 const COLS := 48
@@ -34,13 +34,13 @@ const ROWS := 12
 const TILE := 64
 const DT := 1.0 / 60.0
 
-const DELAY := 8        # 权威整态投递给控制器的延迟(tick);与 pvp_reconcile_smoke 同款
+const DELAY := 8        # 权威完整状态投递给控制器的延迟(tick);与 pvp_reconcile_smoke 相同机制
 const RUN := 300        # 每趟的 tick 数(≈5s:够走到障碍前并持续顶住)
 const REACH := 200.0    # 障碍/副本距出生点的 x 距离(玩家 700px/s,约 30 tick 走到)
 
 # 备用层(层5 = 位值 16):只让权威 A 撞到。预测 P 的 mask 不含它。
 # 为什么要备用层而不是直接复用"另一具玩家身体":真机上挡 A 的确实是另一具真 Player(层2),
-# 但那样 P 也会被同一具挡住 → 摘掉幽灵体后 P 依然被挡 → 对照组失去鉴别力。
+# 但那样 P 也会被同一具挡住 → 摘掉幽灵体后 P 依然被挡 → 对照组失去测试有效性。
 # 故给 A 一具**等几何的替身**(与幽灵体同抄 player.tscn 的 stand 多边形、同坐标),
 # 让两条链路的几何逐点一致,唯一变量就是「P 的世界里有没有这具身体」。
 const LAYER_A_OBSTACLE := 16
@@ -53,7 +53,7 @@ var _results: Array[String] = []
 # 单趟状态
 var _running := false
 var _ghost_on := true
-var _touched_any := false   # 本趟里 P.touching_player() 命中过没有(判据不是空转的证据)
+var _touched_any := false   # 本趟里 P.touching_player() 命中过没有(判据不为无效操作的证据)
 var _tick := 0
 var _max_dev := 0.0
 var _max_px := -INF      # P 整趟走到过的最右位置(终帧位置受回滚相位影响,不作判据)
@@ -62,7 +62,7 @@ var A = null                                    # 权威(服务器侧模拟,手�
 var P = null                                    # 被预测(客户端侧模拟,控制器驱动)
 var ctrl := PredictionRollback.new()
 var srcA: PacketInputSource = PacketInputSource.new()
-var _a_hist: Array[Dictionary] = []             # tick -> A 步进后整态(投递用)
+var _a_hist: Array[Dictionary] = []             # tick -> A 步进后完整状态(投递用)
 var _replica: Node2D = null
 var _ghost: StaticBody2D = null
 
@@ -158,10 +158,10 @@ func _run_pass(ghost_on: bool) -> void:
 		_check(_max_px < obstacle_x, "① 幽灵体挡住了预测端玩家(最远只到 %.2f,未越过副本 %.2f)" % [
 				_max_px, obstacle_x])
 		_check(rb == 0 and dx < 0.5, "② 权威与预测轨迹一致、零回滚(rb=%d, Δx=%.3f)" % [rb, dx])
-		# ⑤ 判据确实命中过(本趟 P 全程顶在幽灵体上)⇒ 证明它不是在空转
+		# ⑤ 判据确实命中过(本趟 P 全程顶在幽灵体上) ->  证明它不是在无效操作
 		_check(_touched_any, "⑤ 幽灵体在位时 touching_player() 命中过")
 	else:
-		# 负向对照:两条都必须反过来,否则说明①/② 是"无论有没有幽灵体都成立"的空转断言。
+		# 负向对照:两条都必须反过来,否则说明①/② 是"无论有没有幽灵体都成立"的无效操作断言。
 		# ③ 与**正向那趟的读数**比,不跟障碍坐标比 —— 回滚会把 P 反复拉回 A 的权威位置,
 		#    终帧落在哪取决于回滚相位(实测同一场景两次跑出 383 / 356 两个终值)。
 		_check(_max_px > _ghost_on_max_px + 20.0,
@@ -169,8 +169,8 @@ func _run_pass(ghost_on: bool) -> void:
 		_check(rb > 0 and _max_dev > 1.0, "④ 摘掉幽灵体后出现分歧与回滚(rb=%d, 分歧=%.2f px)" % [
 				rb, _max_dev])
 		# ⑥ 负向对照:幽灵体被摘除(层置 0)后**全程不得命中**。
-		#    ★ 这条同时钉住"地形不算接触":P 全程踩在地板上(层 1),判据若写成
-		#      `collision_layer != 0`(忘了 `& ~1`)会**恒真**,这里当场红。
+		#    - 这条同时钉住"地形不算接触":P 全程踩在地板上(层 1),判据若写成
+		#      `collision_layer != 0`(忘了 `& ~1`)会**恒真**,这里直接断言失败。
 		_check(not _touched_any, "⑥ 摘掉幽灵体后 touching_player() 全程为假(地形层不算接触)")
 
 	# 清场等下一趟(deferred 队列在 process_frame 后清空,WaterFx 那种 _ready 里 call_deferred
@@ -179,7 +179,7 @@ func _run_pass(ghost_on: bool) -> void:
 	P.queue_free()
 	_replica.queue_free()
 	await get_tree().process_frame
-	_ran[("pass_on" if ghost_on else "pass_off")] = true   # ★ 完成戳:必须在最后一行
+	_ran[("pass_on" if ghost_on else "pass_off")] = true   # - 完成戳:必须在最后一行
 
 
 func _physics_process(_delta: float) -> void:
@@ -195,7 +195,7 @@ func _physics_process(_delta: float) -> void:
 	srcA.apply_packet(rec)
 	A._physics_process(DT)
 	_a_hist.append(A.capture_state())
-	# 2) 到期投递整态 → 控制器(reconcile 在 advance 内先处理)
+	# 2) 到期投递完整状态 → 控制器(reconcile 在 advance 内先处理)
 	var ack_t := _tick - DELAY
 	if ack_t >= 0 and ack_t < _a_hist.size():
 		ctrl.on_authoritative(ack_t + 1, _a_hist[ack_t])
@@ -212,7 +212,7 @@ func _physics_process(_delta: float) -> void:
 
 
 # 全程按住"右":双方各自一路走到障碍前顶住。seq 从 1 起(on_authoritative 丢弃 ack <= _acked,
-# 而 _acked 初值 0 → seq 从 0 起的话第一包 ack 会被吃掉)。
+# 而 _acked 初值 0 → seq 从 0 起的话首个 ACK 数据包会被遗漏丢弃)。
 func _record(t: int) -> Dictionary:
 	return {"seq": t + 1, "ax": 1.0, "held": 0, "pressed": 0, "released": 0,
 			"winst": 0, "aim": Vector2(1.0, 0.0)}
@@ -229,7 +229,7 @@ func _make_player(nm: String, pos: Vector2):
 
 # 等几何替身:多边形从 player.tscn 的 stand 姿态现抄 —— 与 PlayerReplica 幽灵体的来源同一份,
 # 故两侧碰撞箱逐点一致。
-# ★ scale 也必须一起抄(player.tscn 根节点是 2.5):节点缩放会作用到碰撞多边形上,
+# - scale 也必须一起抄(player.tscn 根节点是 2.5):节点缩放会作用到碰撞多边形上,
 #   漏掉它替身就只有幽灵体的 1/2.5 大 —— A 会被挡在更靠右的位置,P 与 A 停不到同一点,
 #   ② 那条"轨迹一致"就永远红(实测踩过:Δx=27px,A 比 P 多走了一段)。
 func _make_stand_in(layer: int, pos: Vector2) -> StaticBody2D:
@@ -251,7 +251,7 @@ func _make_stand_in(layer: int, pos: Vector2) -> StaticBody2D:
 
 
 func _build_grid() -> Array[Array]:
-	var wall := 31   # 纹理1 全砖(与 pvp_reconcile_smoke 同款)
+	var wall := 31   # 纹理1 全砖(与 pvp_reconcile_smoke 相同机制)
 	var grid: Array[Array] = []
 	for y in range(ROWS):
 		var row: Array[int] = []
@@ -263,10 +263,10 @@ func _build_grid() -> Array[Array]:
 
 # ── 源码守卫 ──
 # 这条不是实现细节:幽灵体做好了但本地玩家 mask 不含玩家层(位 2),等于没做 —— 而且静默无报错。
-# ★ 判据刻意**宽松**:不钉接收者名、不钉空格写法、不钉它挂在哪个入口 —— 两个对局场景各自的
+# - 判据刻意**宽松**:不钉接收者名、不钉空格写法、不钉它挂在哪个入口 —— 两个对局场景各自的
 #   接线可以落在自己文件里、也可以落在共享基类(pvp_match_client)或 player.gd(按 pvp_mode 设)。
-#   要拦下的变异只有一个:**整条接线被删/改成别的层** ⇒ 两个场景的可达入口都取不到 → 红。
-#   ★ 它**测不到**:接线具体挂在哪个入口(任一入口都算数),以及 3v3 那种"按队改层"的形态。
+#   要拦下的变异只有一个:**整条接线被删/改成别的层**  ->  两个场景的可达入口都取不到 → 红。
+#   - 它**测不到**:接线具体挂在哪个入口(任一入口都算数),以及 3v3 那种"按队改层"的形态。
 func _check_source_guard() -> void:
 	var shared := ["res://scenes/pvp_match_client.gd", "res://scenes/player/player.gd"]
 	for f in ["res://scenes/pvp_game.gd", "res://scenes/royale_game.gd"]:
@@ -281,7 +281,7 @@ func _check_source_guard() -> void:
 
 # 该文件里有没有"把玩家层(位 2)按位**或**进某个 collision_mask"的代码行。
 # 接受等价写法:`x.collision_mask |= 2` / `= … | 2` / `set_collision_mask_value(2, true)` —
-# 不钉局部量名(local / _local / p 都行)、不钉空格。★ `& ~2`(摘掉玩家层)不算接线,故只看或算符之后。
+# 不钉局部量名(local / _local / p 都行)、不钉空格。-  `& ~2`(摘掉玩家层)不算接线,故只看或算符之后。
 func _adds_player_layer(path: String) -> bool:
 	var txt := FileAccess.get_file_as_string(path)
 	if txt.is_empty():
@@ -305,7 +305,7 @@ func _adds_player_layer(path: String) -> bool:
 	return false
 
 
-# ★ 假绿防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的
+# - 虚假通过（未有效测试）防线(本仓被抓过四次的那一类):Godot 的运行时错误只**中断当前函数**,调用它的
 #   `_ready()` 照常往下走 —— 测试函数中途报错 → 一条 _check 都没跑到 → _results 仍空
 #   → 照样打印 ALL-OK。故每个测试函数在**最后一行**盖完成戳,`_ready` 逐条核。
 var _ran: Dictionary = {}
@@ -333,7 +333,7 @@ func _test_downed_ghost_rotation() -> void:
 	_check(deg < 1.0, "倒地时幽灵体不旋转(实测 %.1f°;>1° = 碰撞箱跟着副本转了)" % deg)
 	rep.queue_free()
 	await get_tree().process_frame
-	_ran["downed"] = true   # ★ 完成戳必须在最后一行(见顶部说明)
+	_ran["downed"] = true   # - 完成戳必须在最后一行(见顶部说明)
 
 
 func _check(ok: bool, msg: String) -> void:

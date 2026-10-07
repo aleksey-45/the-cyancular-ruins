@@ -32,7 +32,7 @@ func _ready() -> void:
 
 	# 全屏压暗罩(0.55):暂停比中央广播更需要挡住背景 —— 底下是**实时**的游戏世界。
 	# 颜色是本文件唯一的字面量(压暗罩是"职责",不属于调色板语义)。
-	# ★ 不设 mouse_filter:保持原状的 STOP —— 整屏吃掉鼠标事件(与改版前逐字一致)。
+	# - 不设 mouse_filter:保持原状的 STOP —— 整屏全屏拦截鼠标事件(与改版前逐字一致)。
 	var dim := ColorRect.new()
 	dim.color = Color(0.0, 0.0, 0.0, 0.55)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -51,9 +51,9 @@ func _ready() -> void:
 	(panel.get_node("Body") as Container).add_child(vb)
 
 	# 标题带:琥珀标题 + C_HEADER 底 + 只有下边一条线。
-	# ★ 文案**逐字未改** —— 单机「—— 已暂停 ——」/ PvP「—— 菜单 ——」,字号仍取 64
+	# - 文案**逐字未改** —— 单机「—— 已暂停 ——」/ PvP「—— 菜单 ——」,字号仍取 64
 	#   (L4 视觉守卫按这两条钉着:`tests/probe/kh_l4_visual_probe.gd` 找得到该文本、
-	#   且断言它的 font_size == 64)。改文案/字号会当场红。
+	#   且断言它的 font_size == 64)。改文案/字号将导致测试直接失败。
 	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64))
 
 	# 两颗按钮:继续 = 主行动(gold)、回主菜单 = 弱化(quiet)。VBox 会把它们拉齐到面板宽。

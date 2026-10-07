@@ -1,6 +1,6 @@
 extends Node2D
 
-# 可破坏方块受击粒子:一次性碎片爆散,播完自毁。静态辅助,挂到世界 viewport 渲染。
+# 可破坏瓦片受击粒子特效：播放一次性碎屑飞散动画并自动销毁。挂载于世界 Viewport 下渲染。
 
 static var _tex: Texture2D = null
 
@@ -13,7 +13,8 @@ static func _texture() -> Texture2D:
 	return _tex
 
 
-# 在 parent(世界 viewport)下于 at 处播一次碎片。texture_id 用于挑颜色(树叶绿/树干棕)。
+# 在 parent 节点（通常为世界 Viewport）的指定全局坐标 at 播放受击碎屑特效。
+# 根据 texture_id 映射碎屑色相（如树叶绿色、树干棕色等）。
 static func spawn(parent: Node, at: Vector2, texture_id: int) -> void:
 	if parent == null:
 		return

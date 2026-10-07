@@ -9,11 +9,11 @@ extends Control
 #   _l3_3_low.png      残弹低位「1/12」
 # PNG 落 res://.superpowers/sdd/(该目录 .gitignore 为 *,不入库)。
 #
-# 两条 L2 踩过的坑,这里刻意避开:
+# 两条 L2 历史已知问题,这里刻意避开:
 #  1) 截瞬态一律用**帧驱动**(await process_frame),不用真实时间等待 —— 冷机/慢机不抖。
 #     本探针更进一步:玩家 set_physics_process(false),换弹进度只由探针显式 tick 推进,
 #     进度条停在哪由代码决定,与帧率完全无关。
-#  2) --quit-after 的单位是**帧**不是秒(故用 600 帧 ≈ 20s@30fps,用 60 会被 ~2s 掐断)。
+#  2) --quit-after 的单位是**帧**不是秒(故用 600 帧 ≈ 20s@30fps,用 60 会被 ~2s 强制中断)。
 #
 # 数值腿与视觉腿缺一不可:断言判「文本/尺寸/显隐对不对」,PNG 判「肉眼看着对不对」。
 
@@ -24,15 +24,15 @@ const RELOAD_SAMPLE_DT := 0.5          # 手动推进的换弹时长(秒):手枪
 var _failures: Array[String] = []
 
 # 断言计数闸(2026-10-03,R19)。
-# ★ 为什么必须有:本文件此前**没有任何条数下限**,而 `_capture_low_ammo` 里那两行曾直接解引用
-#   `_hud._reload_bar`(一个 `_capture_full_ammo` 刚断言**不存在**的节点)⇒ 运行到那里必抛
+# - 为什么必须有:本文件此前**没有任何条数下限**,而 `_capture_low_ammo` 里那两行曾直接解引用
+#   `_hud._reload_bar`(一个 `_capture_full_ammo` 刚断言**不存在**的节点) ->  运行到那里必抛
 #   `Invalid access to property or key '_reload_bar'`,**只中断当前函数**、其后断言(含三态对照
-#   那两条)静默跳过,而 verdict 照打 `ALL-OK` ⇒ **假绿**(权威表述见 `tests/lib/probe_base.gd` 文件头)。
-# ★ 32 是**逐个数出来的**,不是估的:`_check_slot_colors` 10 + `_capture_full_ammo` 8 +
+#   那两条)静默跳过,而 verdict 照打 `ALL-OK`  ->  **虚假通过（未有效测试）**(权威表述见 `tests/lib/probe_base.gd` 文件头)。
+# - 32 是**逐个数出来的**,不是估的:`_check_slot_colors` 10 + `_capture_full_ammo` 8 +
 #   `_capture_reloading` 6 + `_capture_low_ammo` 6 + `_assert_states_differ` 2 = 32;且 32 处
-#   `_check(` 的缩进都是**函数体顶层**(没有一条在 if 分支里)⇒ 跑全了恰好 32 条。
-#   (`_capture_low_ammo` 从 7 降到 6:`:382` 那条恒真/不具鉴别力的像素断言已删,见该函数里的注。)
-# ★ 用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`tests/probe/late_match_probe.gd` 同款)。
+#   `_check(` 的缩进都是**函数体顶层**(没有一条在 if 分支里) ->  跑全了恰好 32 条。
+#   (`_capture_low_ammo` 从 7 降到 6:`:382` 那条恒真/不具判定有效性的像素断言已删,见该函数里的注。)
+# - 用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`tests/probe/late_match_probe.gd` 相同机制)。
 const EXPECTED_CHECKS := 32
 var _checks := 0
 var _hud: Hud = null
@@ -53,7 +53,7 @@ func _ready() -> void:
 	await _setup_scene()
 	if _aborted:
 		return
-	# ★ 必须 await:本段内部有 await _shot(),漏了 await 它会挂起后**立刻**往下走进态2
+	# - 必须 await:本段内部有 await _shot(),漏了 await 它会挂起后**立刻**往下走进态2
 	#   (那里 mag_ammo=3 + start_reload),本段恢复时 HUD 已在"装填中" —— 表现为
 	#   态1 全部断言红 + 态1/态2 截图像素完全相同(2026-09-15 实测;是 _ready 拆段重构
 	#   漏加的那一个 await,另两段(_capture_reloading / _capture_low_ammo)都在 await)。
@@ -108,7 +108,7 @@ func _px_rect(img: Image, ctrl: Control) -> Rect2i:
 
 
 # 矩形内"金色像素"(UiFactory.C_WARN = 0.95,0.85,0.55)计数。背景深灰,不误判。
-# ★ 2026-09-13 语义收窄:金色**只**表示「弹夹见底」,不再兼任满弹常态色与装填进度色
+# - 2026-09-13 语义收窄:金色**只**表示「弹夹见底」,不再兼任满弹常态色与装填进度色
 #   (原先三者同色 = 没有警告)。故本探针同时断言「该金的要金」与「不该金的一个都不能有」。
 func _gold_in(img: Image, ctrl: Control) -> int:
 	return _color_in(img, ctrl, func(c: Color) -> bool:
@@ -122,7 +122,7 @@ func _bright_in(img: Image, ctrl: Control) -> int:
 		return c.r > 0.6 and c.g > 0.6 and c.b > 0.6 and absf(c.r - c.b) < 0.12)
 
 
-# 探针底色(深色)。★ 槽位格子是**半透明**的,画面上看到的颜色 = 格子色按 alpha 混到这层
+# 探针底色(深色)。-  槽位格子是**半透明**的,画面上看到的颜色 = 格子色按 alpha 混到这层
 # 再压上 HUD 底板之后的结果,不等于常量本身 —— 取色断言必须先做这个合成,否则恒红。
 const PROBE_BG := Color(0.09, 0.10, 0.13)
 
@@ -166,7 +166,7 @@ func _count_near(img: Image, rc: Rect2i, want: Color, tol: float = 0.06) -> int:
 
 
 # ── 槽位格子三态 ─────────────────────────────────────────────────────
-# ★ 这里**只断言"每格是不是它该有的颜色"+"三态两两可区分"**,**不**断言"哪个更醒目":
+# - 这里**只断言"每格是不是它该有的颜色"+"三态两两可区分"**,**不**断言"哪个更醒目":
 #   本探针的底是**深色**(见 _setup_scene 的 bg),而实机 HUD 的底板是压在地图浅灰蓝上的
 #   `黑 0.1`(≈#6C8790,**浅底**)—— 同一个色在这两种底上的醒目程度是**相反**的,
 #   在深底上比"谁更醒目"会把实机上正确的配色判成错的。
@@ -183,7 +183,7 @@ func _check_slot_colors() -> void:
 	_check(filled_n > full / 2, "已占据的格应为淡青(命中 %d/%d)" % [filled_n, full])
 	_check(empty_n > full / 2, "未占据的格应为淡灰(命中 %d/%d)" % [empty_n, full])
 
-	# ★ 双向:不该是**别的态**的颜色。只判"有青色像素"会把"三态画成同一个色"放过去。
+	# - 双向:不该是**别的态**的颜色。只判"有青色像素"会把"三态画成同一个色"放过去。
 	_check(_count_near(img, _slot_cell_rect(slots, 0), _slot_screen_color(UiFactory.C_SLOT_FILLED)) < full / 10,
 		"手持格不得等于已占格颜色(两者必须区分得开)")
 	_check(_count_near(img, _slot_cell_rect(slots, 3), _slot_screen_color(UiFactory.C_SLOT_ACTIVE)) < full / 10,
@@ -204,9 +204,9 @@ func _check_slot_colors() -> void:
 		"第 7 格应是空的(1只手枪2格 + 1把重狙4格 = 6 格,后两格空)")
 
 	# ── 再取一张**浅底**的图 ──
-	# ★ 实机 HUD 垫的是 `黑 0.1` 压在地图开阔区(≈#78969F,浅灰蓝)上 —— 底板是**浅**的。
+	# - 实机 HUD 垫的是 `黑 0.1` 压在地图开阔区(≈#78969F,浅灰蓝)上 —— 底板是**浅**的。
 	#   本探针默认的深色底会把"浅底上读不出来"这类问题**遮掉**(正是 docs/eng/ui.md 里
-	#   combat_hud_visual_probe 记过的坑:单机 HUD 的 1.9:1 血条就是这么漏掉的)。
+	#   combat_hud_visual_probe 记过的坑:单机 HUD 的 1.9:1 生命条就是这么漏掉的)。
 	#   这一张不参与断言(两种底上"谁更醒目"的答案是相反的,拿它判会把对的配色判错),
 	#   只落盘供**人眼**验收 —— 配色是审美值,以实图为准。
 	if _bg != null:
@@ -264,7 +264,7 @@ func _check(ok: bool, msg: String) -> void:
 
 func _finish() -> void:
 	_aborted = true   # 见 _ready 顶部:置位后各段之间就不再往下跑
-	# ★ 计数闸**先于** verdict:跑少了 = 有断言被静默跳过(见文件头那条说明)⇒ 必须红,
+	# - 计数闸**先于** verdict:跑少了 = 有断言被静默跳过(见文件头那条说明) ->  必须红,
 	#   而不是照打 ALL-OK —— 那正是本文件此前那一族的形状。
 	if _checks != EXPECTED_CHECKS:
 		_failures.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上"
@@ -290,7 +290,7 @@ func _setup_scene() -> void:
 
 	# 深色底:金色残弹/进度条在暗底上才读得出(也便于统计"金色像素数")
 	var bg := ColorRect.new()
-	bg.color = PROBE_BG   # ★ 注意:这是**深**底,与实机 HUD 的浅灰蓝底不同,
+	bg.color = PROBE_BG   # - 注意:这是**深**底,与实机 HUD 的浅灰蓝底不同,
 	#   所以槽位格子的"哪个更醒目"不能在这个背景下断言(实机上判据是反的)。见 _check_slot_colors。
 	bg.position = Vector2.ZERO
 	bg.size = win
@@ -312,10 +312,10 @@ func _setup_scene() -> void:
 	# 用 手枪(2格)+ 重狙(4格)= 6 格 / 2 把,手持的是手枪:
 	#   格 0-1 = 手持(深青) · 格 2-5 = 已占(淡青) · 格 6-7 = 空(淡灰)
 	# 三段**各占多个格且不重叠**,取色时不会互相串。
-	# ★ 单机开局空手之后,player.tscn 直接实例化出来是**没有武器**的(_ready 给空背包),
+	# - 单机开局空手之后,player.tscn 直接实例化出来是**没有武器**的(_ready 给空背包),
 	#   而下面几段都要 current_weapon() 非空 —— 所以这一段必须排在任何 `_w = ...` 之前。
 	p.weapons.set_initial_inventory([1, 3])
-	await _frames(4)   # 武器是 call_deferred 入树的,等它 _ready(mag_ammo = mag_size)
+	await _frames(4)   # 武器是 call_deferred 加入场景树的,等它 _ready(mag_ammo = mag_size)
 
 	_hud = Hud.new()
 	add_child(_hud)    # HUD._ready 从 "player" 组找玩家并接管剪影/名称/残弹显示
@@ -341,7 +341,7 @@ func _capture_full_ammo() -> void:
 	_check(_hud._ammo_label.text == "12/12", "态1:文本应为「12/12」(实际「%s」)" % _hud._ammo_label.text)
 	_check(_hud._weapon_icon.texture != null, "态1:武器剪影贴图为空")
 	_check(_hud._weapon_name.text == "手枪", "态1:武器名应为「手枪」(实际「%s」)" % _hud._weapon_name.text)
-	# ★ 换弹进度条与"装填中…"文案已取消(用户 2026-09-16:改用角色旁的圆环倒计时)。
+	# - 换弹进度条与"装填中…"文案已取消(用户 2026-09-16:改用角色旁的圆环倒计时)。
 	#   这两条改成钉"它们真的不在了",免得日后有人又加回一条 HUD 换弹条。
 	_check(_hud.get("_reload_bar") == null, "态1:HUD 上不该再有换弹进度条节点(已改角色旁圆环)")
 	var bright1 := _bright_in(img1, _hud._ammo_label)
@@ -361,20 +361,20 @@ func _capture_reloading() -> void:
 	_check(_w.is_reloading(), "态2:start_reload()+tick(0.5) 后未处于装填中")
 	var prog := _w.reload_progress()
 	_check(prog > 0.0 and prog < 1.0, "态2:换弹进度 %.3f 不在 (0,1) 中段" % prog)
-	# ★ 探针冻了玩家物理 → `_update_reload_ring` 不跑,得自己推一拍;
+	# - 探针冻了玩家物理 → `_update_reload_ring` 不跑,得自己推一拍;
 	#   **必须在取图之前**(第一版加在断言里,结果断言绿了、PNG 里却没环)。
 	p._update_reload_ring()
 	img2 = await _shot("_l3_2_reloading.png")
-	# ★ 换弹中**不再**改文案(用户 2026-09-16 取消"装填中…"),恒显示残弹/满弹。
+	# - 换弹中**不再**改文案(用户 2026-09-16 取消"装填中…"),恒显示残弹/满弹。
 	_check(_hud._ammo_label.text == "%d/%d" % [_w.mag_ammo, _w.mag_size],
 			"态2:换弹中文本应仍是残弹/满弹(实际「%s」)" % _hud._ammo_label.text)
 	# 进度改由**角色旁的圆环**表达(ui/reload_ring.gd,挂玩家身上)——这里验它在、且亮着
 	var ring = p.get("_reload_ring")
 	_check(ring != null and is_instance_valid(ring), "态2:玩家身上应有换弹圆环节点")
-	p._update_reload_ring()   # ★ 探针冻了玩家物理,_update_reload_ring 不跑,得自己推一拍
+	p._update_reload_ring()   # - 探针冻了玩家物理,_update_reload_ring 不跑,得自己推一拍
 	_check(ring != null and bool(ring.visible), "态2:换弹中圆环应可见")
 	var gold2 := _gold_in(img2, _hud._ammo_label)
-	# ★ 进度条已删(改角色旁圆环),原先那两条"进度条区不许有金/青像素"的断言随之作废 ——
+	# - 进度条已删(改角色旁圆环),原先那两条"进度条区不许有金/青像素"的断言随之作废 ——
 	#   留下的只有"残弹见底要转金"这一条 HUD 语义。
 	_check(gold2 > 0, "态2:残弹已见底(3/12)却没转金 —— 「低弹量」警告没画出来")
 	print("[L3-VISUAL] 态2 像素:残弹区金色=%d 进度=%.2f(圆环) 圆环可见=%s" % [
@@ -390,26 +390,26 @@ func _capture_low_ammo() -> void:
 	img3 = await _shot("_l3_3_low.png")
 	_check(_hud._ammo_label.text == "1/12", "态3:文本应为「1/12」(实际「%s」)" % _hud._ammo_label.text)
 	_check(_hud._ammo_label.visible, "态3:残弹标签不可见")
-	# ★★ 「非换弹态不该有换弹提示」这条语义**还有活目标**,但载体换了人:HUD 上那条进度条已删
+	# 注意： 「非换弹态不该有换弹提示」这条语义**还有活目标**,但载体换了人:HUD 上那条进度条已删
 	#    (用户 2026-09-16「取消右下角的装填中…和进度条」),现在是**角色旁的圆环**
 	#    (`ui/hud/reload_ring.gd`,挂在玩家身上)。改前这两行直接解引用 `_hud._reload_bar`
-	#    (一个 :331 刚断言不存在的节点)⇒ 必抛、其后断言静默跳过、verdict 照打 ALL-OK(R19 的假绿)。
+	#    (一个 :331 刚断言不存在的节点) ->  必抛、其后断言静默跳过、verdict 照打 ALL-OK(R19 的虚假通过（未有效测试）)。
 	#    现改指**环形那条链**。
-	# ★ 探针冻了玩家物理(`set_physics_process(false)`)⇒ 可见性不会自己刷新,得与态2 同款
-	#   **显式推一拍**;不推就是拿"态2 留下的旧状态"下断言 —— 那是另一种假绿。实测:不推这一拍,
-	#   环停在可见态,下面那条当场红(变异原文见 T3b 报告 §3)。
+	# - 探针冻了玩家物理(`set_physics_process(false)`) ->  可见性不会自己刷新,得与态2 相同机制
+	#   **显式推一拍**;不推就是拿"态2 留下的旧状态"下断言 —— 那是另一种虚假通过（未有效测试）。实测:不推这一拍,
+	#   环停在可见态,下面那条直接断言失败(变异原文见 T3b 报告 §3)。
 	p._update_reload_ring()
 	var ring3 = p.get("_reload_ring")
 	_check(ring3 != null and is_instance_valid(ring3) and not bool(ring3.visible),
 			"态3:非换弹态圆环不应可见(进度条已删;此处钉的是角色旁那个环)")
 	var gold3 := _gold_in(img3, _hud._ammo_label)
 	_check(gold3 > 0, "态3:残弹见底(1/12)却没转金 —— 「低弹量」警告没画出来")
-	# ★ 紧邻原来的那条 `_accent_in(img3, _hud._reload_bar) == 0` **删掉**(不是改指):它量的
-	#   "强调青"是**进度条的填充色**,而环的弧色是 `ReloadRing.C_ARC`(浅灰)⇒ 换成
+	# - 紧邻原来的那条 `_accent_in(img3, _hud._reload_bar) == 0` **删掉**(不是改指):它量的
+	#   "强调青"是**进度条的填充色**,而环的弧色是 `ReloadRing.C_ARC`(浅灰) ->  换成
 	#   `_accent_in(img3, ring3)` 会**恒为 0**(恒真断言,正是本文件正在修的那一族)。
-	# ★ 试过拿"环形区域在态2/态3 之间的像素差 > 0"顶替它 —— **实测不成立,已删**(2026-10-03):
+	# - 试过拿"环形区域在态2/态3 之间的像素差 > 0"替代它 —— **实测不成立,已删**(2026-10-03):
 	#   把上面那一拍去掉(环停在可见态、本该红)时,那个差值**照样是 76**,与绿的那一轮逐位相同
-	#   ⇒ 它量到的其实是**玩家自身的帧动画**,不是环。留着就是一条"名字说环、实际量人"的假保证。
+	#    ->  它量到的其实是**玩家自身的帧动画**,不是环。留着就是一条"名字说环、实际量人"的假保证。
 	#   "环真的画出来了"的活证据现在只在态2(`ring.visible == true`)与 `_l3_2_reloading.png`
 	#   的人眼验收里。
 	print("[L3-VISUAL] 态3 像素:残弹区金色=%d 环可见=%s"
