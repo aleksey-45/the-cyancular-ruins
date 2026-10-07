@@ -44,7 +44,7 @@ func update(delta: float, want_rewind: bool, want_haste: bool) -> void:
 		rewind_time = 0.0
 		if want == Mode.HASTE:
 			account.spend(delta, TimeParams.COST_HASTE)
-	# 粒子余额当帧耗尽时立即终止效果，防止出现无余额仍继续回溯的异常帧
+	# 颗粒余额当帧耗尽时立即终止效果，防止出现无余额仍继续回溯的异常帧
 	if want != Mode.NONE and account.balance <= 0.0:
 		want = Mode.NONE
 		rewind_time = 0.0

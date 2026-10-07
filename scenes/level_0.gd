@@ -266,7 +266,7 @@ func _ready() -> void:
 	TimeField.current = time_field
 	_rewind = WorldRewind.new($WorldViewport)
 	_tile_ledger = TileLedger.new()
-	# 透支锁定:怀表红闪提示(表针锁定期间两键都取不出粒子)
+	# 透支锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
 	grain_account.loan_locked.connect(func() -> void:
 		var w = get_tree().get_first_node_in_group("watch_hud")
 		if w != null and w.has_method("flash_locked"):

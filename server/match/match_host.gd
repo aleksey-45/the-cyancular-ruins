@@ -7,7 +7,7 @@ extends MatchRound
 #   match_snapshot / match_combat / match_round / match_state 里,见基类注释。
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
-const TIME_SYNC_INTERVAL := 0.1   # Beta:粒子状态下发节律(10Hz;怀表数字平滑够了)
+const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
 
 var _time_sync := 0.0
 # ── Beta 回溯(每 role 自身;他人不受影响)──
@@ -27,7 +27,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	for v in raw_disabled:
 		_disabled_weapons.append(int(v))
 	_ai_roles = ai_roles
-	# Beta 时间玩法(B21):房主 options 带 time 规则(建房页 9 项)  ->  建服务器权威粒子经济系统。
+	# Beta 时间玩法(B21):房主 options 带 time 规则(建房页 9 项)  ->  建服务器权威颗粒经济系统。
 	# 普通局 options["time"] 为空 → time_economy 恒 null,一切结算/广播短路,行为零变化。
 	var time_dict: Dictionary = options.get("time", {})
 	if not time_dict.is_empty():
@@ -316,7 +316,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		if not on:
 			_record_rw_frame(r, p, now)
 			continue
-		# 回溯中:烧粒子(rewind_burn/s);游标 3×→1× ramp;驱动自身与自己的子弹
+		# 回溯中:烧颗粒(rewind_burn/s);游标 3×→1× ramp;驱动自身与自己的子弹
 		acc.spend(delta, time_economy.rules.rewind_burn)
 		if acc.balance <= 0.0:
 			_finish_rw(r, p, src)
@@ -336,7 +336,7 @@ func _tick_beta_rewind(delta: float) -> void:
 			_rw_trail[r] = trail
 
 
-## 退出回溯(**两条退出路径共用**:主动松开 / 粒子耗尽)。
+## 退出回溯(**两条退出路径共用**:主动松开 / 颗粒耗尽)。
 ##
 ## 注意： 2026-10-03 修 —— **录像带模型**:把"被复写的未来"从环缓上**裁掉**。
 ##   原实现只做 `frozen=false` / 摘 meta / 清 trail,**不碰 `_rw_buf`**  ->  那些"已经被回溯抹掉"

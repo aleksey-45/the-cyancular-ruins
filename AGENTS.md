@@ -79,9 +79,9 @@ python tools/check_naming.py
 
 ### 2. 时间控制系统（Time Mechanics）
 时间控制系统仅在单人游戏关卡 `Level0` 中启用（在多人对战普通模式中保持禁用，`TimeField.current` 为 `null`，环境倍率恒定为 1.0）。
-- **粒子账户逻辑 (`GrainAccount`)**：
-  - 维护时间粒子的总额与短期使用额度。加速或回溯时持续扣除粒子；当短期额度耗尽后进入透支状态，并计算透支深度；透支达到上限后触发锁定。
-  - 粒子以固定速率自动回复，优先偿还透支额度，透支还清后解除锁定。击败精英敌人（如乌鸫）掉落时间结晶，吸收后增加总额。
+- **颗粒账户逻辑 (`GrainAccount`)**：
+  - 维护时间颗粒的总额与短期使用额度。加速或回溯时持续扣除颗粒；当短期额度耗尽后进入透支状态，并计算透支深度；透支达到上限后触发锁定。
+  - 颗粒以固定速率自动回复，优先偿还透支额度，透支还清后解除锁定。击败精英敌人（如乌鸫）掉落时间颗粒结晶，吸收后增加总额。
 - **全局时间场 (`TimeField`)**：
   - 静态单例 `current`，管理不同实体的相对时间倍率。
   - 时间加速激活时：玩家水平速度与冷却按加速倍率执行，普通敌人与敌方子弹时间步进（Delta）大幅衰减。
@@ -96,7 +96,7 @@ python tools/check_naming.py
   - `WatchHud`：怀表 HUD 界面，双指针指示总额与短期透支状态，配备平滑插值数字动画与透支报警反馈。
   - `TimeGlow`：采用 Additive（叠加）混合模式的高亮贴图图层，提供冷白蓝与金黄色高亮，避免与常规受击闪白发生冲突。
   - `Afterimage`：时间加速时定期生成的红蓝半透明残影。
-  - `GrainCrystal`：精英掉落的结晶粒子，采用连续碰撞检测（CCD）与指数衰减速度控制平滑飞向怀表。
+  - `GrainCrystal`：精英掉落的颗粒结晶，采用连续碰撞检测（CCD）与指数衰减速度控制平滑飞向怀表。
 
 ### 3. 地图系统与 16px 子格碰撞破坏
 - **格式体系**：
@@ -143,7 +143,7 @@ python tools/check_naming.py
 
 | 测试领域 | 关键测试用例 | 验证重点 |
 |---|---|---|
-| **时间机制** | `tests/smoke/grain_account_smoke.gd`<br>`tests/smoke/time_field_smoke.gd`<br>`tests/probe/haste_probe.tscn`<br>`tests/probe/rewind_probe.tscn`<br>`tests/probe/elite_drop_probe.tscn` | 粒子账户状态流转、时间场倍率计算、时间加速移速与残影、时空回溯位置与敌人复活、精英掉落吸收。 |
+| **时间机制** | `tests/smoke/grain_account_smoke.gd`<br>`tests/smoke/time_field_smoke.gd`<br>`tests/probe/haste_probe.tscn`<br>`tests/probe/rewind_probe.tscn`<br>`tests/probe/elite_drop_probe.tscn` | 颗粒账户状态流转、时间场倍率计算、时间加速移速与残影、时空回溯位置与敌人复活、精英掉落吸收。 |
 | **地图与子格** | `tests/probe/subcell_probe.gd`<br>`tests/probe/map_catalog_probe.gd`<br>`tests/probe/map_format_v4_probe.gd` | 16px 子格破坏判定、宏观大格状态转换、cyrm v4 编解码与校验、地图目录扫描与缩略图生成。 |
 | **武器与战斗** | `tests/smoke/weapon_inventory_smoke.gd`<br>`tests/smoke/enemy_logic_smoke.gd`<br>`tests/probe/weapon_pickup_probe.gd`<br>`tests/probe/ammo_rollback_probe.gd` | 背包容量双重限制、武器注册表数据校验、地面武器拾取丢弃、弹药回滚校正。 |
 | **网络与同步** | `tests/smoke/pvp_match_smoke.gd`<br>`tests/smoke/pvp_room_smoke.sh`<br>`tests/probe/reconnect_probe.gd`<br>`tests/probe/netplay_probe.gd` | 服务端房间管理、C2 预测回滚收敛性、断线重连握手与世界同步、网络隧道联通。 |

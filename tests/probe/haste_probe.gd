@@ -14,7 +14,7 @@ extends Node
 # 覆盖:倍率表(玩家/普通敌/精英 × NONE/HASTE/REWIND) · 普通敌速度 ×HASTE_WORLD ·
 #       主角水平移速 ×HASTE_PLAYER(关碰撞,纯速度域) · 跳跃高度不变(重力没被带跑) ·
 #       敌方子弹位移 ×HASTE_WORLD · 红蓝残影生成并自行淡出 ·
-#       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣粒子。
+#       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣颗粒。
 # 用法:godot --headless --path . res://tests/probe/haste_probe.tscn
 #
 # - 输入走**可注入桩**(tests/probe/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
@@ -302,7 +302,7 @@ func _run() -> void:
 	if re_normal:
 		_fail("回溯时普通敌不该有高亮(它们的位移由回放器摆)")
 
-	# ── ⑦ 松开回 NONE + 粒子真被扣 ──
+	# ── ⑦ 松开回 NONE + 颗粒真被扣 ──
 	if tf.is_hasting() or tf.is_rewinding():
 		_fail("松开后时间场未回 NONE(mode=%d)" % tf.mode)
 	var bal := float(Level0.grain_account.balance)

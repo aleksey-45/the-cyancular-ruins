@@ -30,7 +30,7 @@ var _appear_timer: float = 0.0         # 传送后显现动画播放剩余时长
 
 
 func _ready() -> void:
-	# 精英实体标记（阶段一）：免疫时空回溯（不计入快照）、时间加速倍率与玩家同步、被击杀后掉落 300 单位时间粒子
+	# 精英实体标记（阶段一）：免疫时空回溯（不计入快照）、时间加速倍率与玩家同步、被击杀后掉落 300 单位时间颗粒
 	set_meta("elite", true)
 	super._ready()
 	_anim = $AnimatedSprite2D
@@ -399,7 +399,7 @@ func _on_state_entered(s: int) -> void:
 		State.CHARGE:
 			squash.impulse(SquashStretch.Impulse.CHARGE)
 
-## 死亡:掉 300 粒子结晶(碎裂→飞向怀表→吸收时入账+表体颤抖)。基类虚钩覆写。
+## 死亡:掉 300 颗粒结晶(碎裂→飞向怀表→吸收时入账+表体颤抖)。基类虚钩覆写。
 func _on_death() -> void:
 	super()
 	GrainCrystalFx.spawn(get_parent(), global_position, TimeParams.ELITE_GRAIN_DROP)

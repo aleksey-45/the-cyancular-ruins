@@ -18,7 +18,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 
 # 16px 子格被摧毁(cyrm v4):清持久子格 + 标记分块重建 + 广播 sub_destroyed 给客户端
 # (客户端清 16px 渲染格与本地预测碰撞)。owner = 射手节点 → 映射 role,Beta 时间玩法
-# 在这里结算"破坏瓦片得粒子"(B21;普通局 time_economy 为空,只广播)。
+# 在这里结算"破坏瓦片得颗粒"(B21;普通局 time_economy 为空,只广播)。
 func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
 		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY

@@ -31,7 +31,7 @@ var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复�
 # - 空表 = 无队伍(1v1 / 大乱斗 / 单机):`team_of` 恒 0、`same_team` 恒 false,行为与今天一致。
 var _team_of: Dictionary = {}
 
-# Beta 时间玩法(B21):服务器权威粒子经济系统。普通局恒 null(一切结算/广播短路)。
+# Beta 时间玩法(B21):服务器权威颗粒经济系统。普通局恒 null(一切结算/广播短路)。
 # 宿主 _init 时若房主 options 带 time 规则则建(见 MatchHost._init)。
 var time_economy = null
 
@@ -413,7 +413,7 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 		tm["team_kills"] = int(tm["team_kills"]) + 1
 		return
 	# Beta 时间玩法(B21):击杀得"被击杀者余额 × 比例"(被击杀者不减)。
-	# - 位置跟着 KH 那份走:两道提前返回(无归因 / 同队)之后 —— 那两个档位谁都不给粒子。
+	# - 位置跟着 KH 那份走:两道提前返回(无归因 / 同队)之后 —— 那两个档位谁都不给颗粒。
 	# - 本行从 `TeamHost._record_down` 搬来:合并时逐人统计面已上提到本文件,原处那份**已删**。
 	if time_economy != null:
 		time_economy.award_kill(killer_role, victim_role)

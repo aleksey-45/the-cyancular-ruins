@@ -178,7 +178,7 @@ var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成
 
 # Beta 时间玩法(PvP):**服务器/本地预测**写入的加速倍率(1 = 常速)。
 # 单机不走这里(走 TimeField.player_speed_mult);PvP 的 TimeField.current 为 null,
-# 由 worker(权威)与本端(预测)按输入位 + 粒子余额各自写入同一个字段。
+# 由 worker(权威)与本端(预测)按输入位 + 颗粒余额各自写入同一个字段。
 var pvp_haste_mult := 1.0
 var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替

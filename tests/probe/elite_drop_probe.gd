@@ -6,7 +6,7 @@ extends Node
 # - 为什么必须另有一条:B5 的 `tests/probe/grain_crystal_probe.tscn` 是**直接 spawn FX**
 #   (只验 FX 自己:散开/飞行/入账/颤抖),证明不了"击杀 → `enemy_base._begin_death` →
 #   `EnemyBlackBird._on_death` → `GrainCrystalFx.spawn`"这条**真路径**没被后来的改动碰断。
-#   用户报"击杀精英不掉粒子"时,可疑的正是中间这段而不是 FX 本体。
+#   用户报"击杀精英不掉颗粒"时,可疑的正是中间这段而不是 FX 本体。
 #
 # 判定:入账判据用**余额增量**而不是"有没有 FX 节点" —— 余额会自动回补(50/s),故取
 # "增量 ≥ 290" 这一档:真的入了 300 时增量必 ≥300(还叠回补),没入账则只有回补(~3s→150)。
@@ -98,7 +98,7 @@ func _run() -> void:
 			GrainCrystalFx.last_absorb_kind, GrainCrystalFx.last_absorb_t,
 			bal_events[0], float(Level0.grain_account.balance), str(not is_instance_valid(fx_node))])
 	# 这条是**可视**承诺:碎片要真的飞进怀表,而不是半路消失、只靠保底处理把钱写入来
-	# (2026-09-26 的 bug 正是"永远飞不进 → 保底处理也没写 → 击杀精英粒子根本不涨")。
+	# (2026-09-26 的 bug 正是"永远飞不进 → 保底处理也没写 → 击杀精英颗粒根本不涨")。
 	# - 只对**屏幕附近的击杀**断言 fly:精英死在离玩家很远的地方时(150×100 大图上完全可能),
 	#   碎片要飞的距离本来就可能超过保底处理时限 —— 那时"入账"由保底处理保证,fly 无从谈起。
 	if kill_dist <= 1500.0 and GrainCrystalFx.last_absorb_kind != "fly":

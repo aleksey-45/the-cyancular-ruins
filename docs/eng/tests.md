@@ -65,4 +65,4 @@ Godot 在部分脚本执行异常时可能默认退出码为 0。因此：
 | **预测与回滚** | `tests/probe/replica_ghost_probe.tscn`<br/>`tests/probe/rollback_fidelity_probe.tscn` | 远端对手幽灵阻挡体、贴身容差与回滚收敛 |
 | **网络与对战** | `tests/smoke/pvp_room_smoke.sh`<br/>`tests/probe/reconnect_probe.tscn` | 房间流转、全链路断线重连与断线补态 |
 | **团队与结算** | `tests/probe/team_table_probe.tscn`<br/>`tests/probe/stats_delivery_probe.tscn` | 3v3 队伍映射、友军免伤与全模式结算数据下发 |
-| **时间机制** | `tests/smoke/grain_account_smoke.gd`<br/>`tests/probe/rewind_probe.tscn`<br/>`tests/probe/haste_probe.tscn` | 怀表时间粒子账户、快照回溯与时间加速效果 |
+| **时间机制** | `tests/smoke/grain_account_smoke.gd`<br/>`tests/probe/rewind_probe.tscn`<br/>`tests/probe/haste_probe.tscn` | 怀表时间颗粒账户、快照回溯与时间加速效果 |

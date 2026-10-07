@@ -13,13 +13,13 @@ extends RefCounted
 # ── 默认值(用户 2026-09-28 裁定原文)──
 const DEF_INITIAL := 1000.0
 const DEF_CAP := 1800.0
-const DEF_REWIND_BURN := 150.0     # 回溯:粒子/秒
-const DEF_HASTE_BURN := 70.0       # 加速:粒子/秒
+const DEF_REWIND_BURN := 150.0     # 回溯:颗粒/秒
+const DEF_HASTE_BURN := 70.0       # 加速:颗粒/秒
 const DEF_WINDOW := 250.0          # 短期额度
-const DEF_REGEN := 50.0            # 短时回复:粒子/秒
+const DEF_REGEN := 50.0            # 短时回复:颗粒/秒
 const DEF_KILL_RATIO := 0.5        # 击杀获取 = 被击杀者账户总额度 × 此比例(被击杀者不减少)
 const DEF_BLOCK_GAIN := 10         # 每摧毁一个 16px 子格
-const DEF_DAMAGE_GAIN := 4         # 每造成 1 点伤害(仅对敌方;自杀/自伤不产粒子)
+const DEF_DAMAGE_GAIN := 4         # 每造成 1 点伤害(仅对敌方;自杀/自伤不产颗粒)
 const DEF_HASTE_MULT := 3.0        # 加速倍率(设计约定固定 ×3,不进建房页)
 
 # ── 钳制范围(服务器侧防越界;建房页滑条也用同一套)──
@@ -95,7 +95,7 @@ func to_dict() -> Dictionary:
 	}
 
 
-## 本规则下的粒子账户(初始/上限/短期时间窗口/回复/透支额全部按规则走)。
+## 本规则下的颗粒账户(初始/上限/短期时间窗口/回复/透支额全部按规则走)。
 func make_account() -> GrainAccount:
 	return GrainAccount.new(initial, cap, window, regen, loan_limit())
 

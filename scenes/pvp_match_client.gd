@@ -206,7 +206,7 @@ func _on_time_state(payload: Dictionary) -> void:
 
 
 # Beta 时间玩法:本地预测加速(与服务器同一判据 —— 按住 + 镜像账户可耗)。
-# 倍率写进 pvp_haste_mult,player 的速度域/武器 tick 会吃它;烧粒子只由服务器做
+# 倍率写进 pvp_haste_mult,player 的速度域/武器 tick 会吃它;烧颗粒只由服务器做
 # (镜像 10Hz 校正,本地不扣,避免双份漂移)。
 func _tick_beta_time(delta: float) -> void:
 	if not PvpSession.beta_mode or _local == null:

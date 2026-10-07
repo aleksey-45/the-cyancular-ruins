@@ -14,7 +14,7 @@ const SCATTER_TIME := 0.28          # 炸开+散落阶段时长(秒)
 const ARRIVE_RATE := 16.0           # 收敛速率(1/s):时间常数 ≈ 1/16 ≈ 0.06s
 const MAX_FLY_SPEED := 4200.0       # 限速(px/s):跨一整屏 ~0.46s;远距击杀也大概率赶在保底处理线前到
 const ABSORB_RADIUS := 16.0         # 吸收半径(按线段判近,见 _segment_hits)
-const ABSORB_TIMEOUT := 1.6         # 阶段二超时即强制吸收(粒子是数值承诺,不许因特效丢掉)
+const ABSORB_TIMEOUT := 1.6         # 阶段二超时即强制吸收(颗粒是数值承诺,不许因特效丢掉)
 const ABSORB_TAIL := 0.8            # 吸收后再留一点尾巴让其余碎片飞完,然后自毁
 const SHARD_COLOR := Color8(18, 18, 22)        # 黑结晶(用户指定;衬亮背景更醒目)
 const CORE_COLOR := Color8(70, 70, 78)         # 黑结晶上的冷灰亮芯(保留体积感)
@@ -53,11 +53,11 @@ func _process(delta: float) -> void:
 			s["v"] = (s["v"] as Vector2) * exp(-4.5 * delta)
 			s["p"] = (s["p"] as Vector2) + (s["v"] as Vector2) * delta
 	else:
-		# 阶段二:全体飞向怀表。三条纪律,缺一条都会"看着飞到了、粒子没入账":
+		# 阶段二:全体飞向怀表。三条纪律,缺一条都会"看着飞到了、颗粒没入账":
 		#  ① **指数收敛而不是纯加速** —— 纯加速追踪会绕着目标来回冲(过冲后速度越来越大),
 		#  ② **按线段判近** —— 高速下一帧能跨过目标几十像素,只判"当前点是否在半径内"会**穿过去**
 		#     (FLY_ACCEL 提到 5200 之后实测就是这样:FX 一直飞、_absorbed 永远 false、余额零变化);
-		#  ③ **保底处理入账** —— 粒子是**数值承诺**,特效再怎么飞丢也必须入账。超时即吸收。
+		#  ③ **保底处理入账** —— 颗粒是**数值承诺**,特效再怎么飞丢也必须入账。超时即吸收。
 		var target := _watch_world_target()
 		var all_done := true
 		for s in _shards:
@@ -78,7 +78,7 @@ func _process(delta: float) -> void:
 				or (_absorbed and _t >= SCATTER_TIME + ABSORB_TAIL):
 			if not _absorbed:
 				last_absorb_kind = "fly" if all_done else "timeout"
-				_absorb()   # 保底处理:特效没飞到也入账(上面那条"绝不丢粒子")
+				_absorb()   # 保底处理:特效没飞到也入账(上面那条"绝不丢颗粒")
 			queue_free()
 	queue_redraw()
 

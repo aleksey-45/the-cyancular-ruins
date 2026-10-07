@@ -1,7 +1,7 @@
 extends SceneTree
 
 # Beta 时间经济核心规则冒烟测试：
-# 验证击杀粒子奖励、伤害粒子折算、瓦片破坏奖励及时间自动恢复等各途径结算数值。
+# 验证击杀颗粒奖励、伤害颗粒折算、瓦片破坏奖励及时间自动恢复等各途径结算数值。
 # 运行方式：
 #   "$GODOT" --headless --path . -s res://tests/smoke/time_economy_smoke.gd
 

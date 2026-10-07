@@ -115,7 +115,7 @@ log/                                # 运行期日志输出目录
   - 子弹穿透队友，爆炸武器 AOE 伤害无差别结算。
   - 队伍颜色自适应着色：依据基准主色计算比例，防止纹理发灰发暗。
 - **Beta 时间玩法**：
-  - **服务端权威粒子经济 ([TimeEconomy](file:///d:/Codes/Antigravity/cyr/server/time_economy.gd))**：每个角色独立维护 `GrainAccount`，通过击杀敌方、造成伤害、破坏 16px 子格与自然恢复累积粒子，10Hz 下发镜像数据。
+  - **服务端权威颗粒经济 ([TimeEconomy](file:///d:/Codes/Antigravity/cyr/server/time_economy.gd))**：每个角色独立维护 `GrainAccount`，通过击杀敌方、造成伤害、破坏 16px 子格与自然恢复累积时间颗粒，10Hz 下发镜像数据。
   - **个人专属加速与回溯**：加速仅对发动者生效（初速与射速提升），其他玩家视角呈现「▶▶ 3x」标识；回溯者进入无敌状态，沿 12s 快照历史轨迹倒退，倒流子弹穿过敌人照常结算二次伤害。
 
 ---
@@ -145,7 +145,7 @@ log/                                # 运行期日志输出目录
 | `tests/probe/netplay_probe.gd` | 验证房间号生成、网络凭据映射、房主端口解析与对等节点过滤。 |
 | `tests/smoke/grace_window_smoke.gd` | 验证 60 秒宽限期进入、刷新、到期判定及各模式超时动作分派。 |
 | `tests/smoke/rejoin_registry_smoke.gd` | 验证回局凭据注册、Token 查验、局号作废及 TTL 垃圾回收。 |
-| `tests/smoke/time_economy_smoke.gd` | 验证服务端粒子经济账户、击杀/伤害/拆砖奖励与状态广播载荷。 |
+| `tests/smoke/time_economy_smoke.gd` | 验证服务端颗粒经济账户、击杀/伤害/拆砖奖励与状态广播载荷。 |
 | `tests/smoke/time_rules_smoke.gd` | 验证 PvP 自定义规则默认值、数值钳制与账户参数映射。 |
 | `tests/smoke/room_sweep_smoke.gd` | 验证房间管理器的定时清理、超龄超时回收与状态完整性。 |
 | `tests/smoke/pvp_room_smoke.sh` | 全链路脚本：拉起服务端、执行建房与加入流程。 |
