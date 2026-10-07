@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# B2 loopback 冒烟:起服务器 + 建房/加入客户端,断言输入→模拟→快照→子弹广播链路。
+# B2 loopback 冒烟:起服务器 + 建房/加入客户端,断言输入 -> 模拟 -> 快照 -> 子弹广播链路。
 set -e
 # 引擎路径($GODOT,可用环境变量覆盖)+ cd 到仓库根 + kill_procs/kill_port
 # shellcheck source=../env.sh

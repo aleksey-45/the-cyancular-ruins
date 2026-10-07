@@ -8,7 +8,7 @@
 
 **Architecture:** 三块，缺一块用户就看不到数字：
 ① **两个宿主**（`server/match_round.gd` = 1v1、`server/royale_host.gd` = 大乱斗）各自在**倒地边沿**
-调底座已有的 `_record_down`（计划 1 上提的那一个），并在 `_broadcast_round_state` 里挂 `stats` / `mvp`
+调基础层已有的 `_record_down`（计划 1 上提的那一个），并在 `_broadcast_round_state` 里挂 `stats` / `mvp`
 —— 3v3 那一半**早就挂着**（`server/team_host.gd:523-527`），照它的形状抄；
 ② **适配器** `ui/match_result_payload.gd` 三个分支改读 `stats`、列按 spec §3.6 排列；
 ③ **结算页** `ui/match_result.gd` 的 `COLUMN_TITLES` 补三个标题、`dmg` 改名 `dealt`。
@@ -19,7 +19,7 @@
 
 **来源 spec:** `docs/superpowers/specs/2026-09-25-stats-and-results-design.md` §3.6 + §4（计划 3/3）。
 **依赖**：计划 1（字段集 / `stats_payload` / `mvp_role` / 计分口径）与计划 2（助攻与惩罚的记账）。
-**★ 这是一份"碰协议"的计划**：`stats` 对 1v1 / 大乱斗是**新增键（加法式）**，`mvp` 对 1v1 是新增键 ——
+**★ 这是一份"碰协议"的计划**：`stats` 对 1v1 / 大乱斗是**新增键（向后兼容增量扩展）**，`mvp` 对 1v1 是新增键 ——
 spec §7 的表格把本计划标为"碰协议? **是**"。加法的性质是**老接收端忽略未知键**，
 所以不协商版本、不设开关；但**同一个 exe/同一份仓库的两端一起更新**是前提
 （不做"老服务端 + 新客户端"的回退读——那会引入第二份真相）。
@@ -43,7 +43,7 @@ spec §7 的表格把本计划标为"碰协议? **是**"。加法的性质是**�
 - ★ `columns` 的**顺序**就是显示顺序；"模式没有的列不进"（spec §3.6 + 既有口径）：
   大乱斗**不列 ACS**（单局死斗 ⇒ `acs ≡ kscore`，恒等列零信息；spec §3.3）、**不列助攻**
   （自由混战无归属）。**也不给大乱斗 `mvp`** —— spec §3.6 的大乱斗那一行没有它、§4 也只说
-  "3v3 已有；1v1 也可给"；`mvp_role()` 在底座上现成，将来要加是另一件事。
+  "3v3 已有；1v1 也可给"；`mvp_role()` 在基础层上现成，将来要加是另一件事。
 - 改 GDScript 只需重导出，别重编裁剪模板。
 
 ---
@@ -367,11 +367,11 @@ Expected（改宿主**之前**）—— 表里左列是**会红的那一条**，
 | ④ `大乱斗 round_state 挂上 stats` | 有 → **没有** | `royale_host.gd:321-331` 的 payload 里没有 |
 
 **改宿主之前就该是绿的**（计划 1 的成果，对本计划是**正向对照** —— 少了它们，
-"什么都没接"的坏实现也能让上面的红全绿）：
+"什么都没接"的坏实现也能让上面的红全部通过）：
 - ① 的 `dealt` / `taken` 两条、① 的字段集那条（`_on_player_hit` 与 `stats_payload` 是**三模式共用**的，
   计划 1 已接通）；
 - ③ 的 `dealt`/`taken` 两条与字段集那条（同一钩子）；
-- ④ 的 `大乱斗**不该**带 mvp`（反向断言，与本次改动无关）。
+- ④ 的 `大乱斗**不该**带 mvp`（否定断言，与本次改动无关）。
 
 ★ 红是**值不匹配**（或"函数体里没有那一行"），不是"跑不起来"：本探针读的都是计划 1 已经
 提供的口（`stats_payload` / `_stats` / `stats_payload()[r]["kscore"]`），故 Step 1 的探针能在
@@ -418,10 +418,10 @@ Run:
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://tests/stats_delivery_probe.tscn 2>&1 | grep -E "STATS DELIVERY|FAIL"
 ```
-Expected: ① 与 ② 全绿；④ 里与 **1v1** 有关的三条（`data["stats"]` / `data["mvp"]` /
+Expected: ① 与 ② 全部通过；④ 里与 **1v1** 有关的三条（`data["stats"]` / `data["mvp"]` /
 `_record_down(`）**新变绿**；**仍红的只剩 ③ 那三条 + ④ 的「大乱斗的 round_state 挂上 `stats`」**。
 ★ ④ 的第六条（「大乱斗**不该**带 `mvp`」）与本次改动无关、**本来就绿、改完也仍绿**
-（大乱斗至今没有任何 `mvp`）—— 它是一条**反向断言**，不是红灯，别等它变。
+（大乱斗至今没有任何 `mvp`）—— 它是一条**否定断言**，不是红灯，别等它变。
 
 - [ ] **Step 6: 提交（与 Task 2 合并为一次提交亦可；本计划按 Task 分开提交）**
 
@@ -486,7 +486,7 @@ Expected —— **四条，全在大乱斗那一侧**：
 
 并删除文件顶部 `var _deaths: Dictionary = {}`（`:25`）那一行。
 
-- [ ] **Step 3: 载荷改从逐人表来 + 加 `stats`**
+- [ ] **Step 3: 数据包改从逐人表来 + 加 `stats`**
 
 `server/royale_host.gd` 的 `_broadcast_round_state`（`:304-336`）：
 
@@ -510,7 +510,7 @@ Expected —— **四条，全在大乱斗那一侧**：
 		data["stats"] = table
 ```
 
-- [ ] **Step 4: 跑 —— 确认全绿**
+- [ ] **Step 4: 跑 —— 确认全部通过**
 
 Run:
 ```bash
@@ -538,7 +538,7 @@ Expected（★ 2026-09-26 实测订正：**六条**红、不是五条 —— 本
 
 而 **③ 那三条与 ⑤ 的「大乱斗确实带 `stats`」保持绿** —— 大乱斗走的是它自己那个宿主的
 `_record_down` 调用点（Task 2 加的），与这一行无关 ⇒ 证明这六条红的成因就是那一行，不是环境。
-★ 相号（2026-09-26 评审修复波之后）：**载荷真的带没带键**全部归相 **⑤ `delivery_payload`**
+★ 相号（2026-09-26 评审修复波之后）：**数据包真的带没带键**全部归相 **⑤ `delivery_payload`**
 （子类覆写 `_rpc_all`、调用时刻深拷贝）；④ 只剩**来源/路径**两条源码级守卫。
 ★ 顺带：① 的 dealt/taken 两条与字段集那条**也仍绿**（`_on_player_hit` 是共用钩子，没动）。
 确认后**改回来**。
@@ -651,7 +651,7 @@ EOF
 **(e)** 新增一段 ⑦（**缺 `stats` 键 ⇒ 空榜、不崩**；本页的硬契约是"缺键一律取默认"）：
 
 ```gdscript
-	# ⑦ ★ 载荷里**没有 `stats` 键**(老服务端 / 极端路径)⇒ 空榜、不崩。
+	# ⑦ ★ 数据包里**没有 `stats` 键**(老服务端 / 极端路径)⇒ 空榜、不崩。
 	#   ★ 本适配器**不做**回退读 `scores`/`deaths`:那会让同一件事有两个来源(两份真相),
 	#     而两端由同一份仓库/同一个 exe 一起更新 —— 加法的性质是"老**接收端**忽略未知键",
 	#     不是"新接收端兼容老服务端"。
@@ -819,7 +819,7 @@ static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Di
 
 ```gdscript
 # ★ 键名 = 适配器给的列名(`MatchResultPayload.C_*`),标题才是给人看的。
-#   `dmg` 已改名 `dealt`(与载荷字段同步);新增的三个与 §3.6 的列一一对应。
+#   `dmg` 已改名 `dealt`(与数据字段同步);新增的三个与 §3.6 的列一一对应。
 const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "assists": "助攻",
 		"dealt": "造成", "taken": "承受", "acs": "ACS"}
 ```
@@ -918,7 +918,7 @@ Expected: 全绿。**四条必须复跑的常驻守卫**，各自守的东西不
   投递点各自在 `_broadcast_round_state`：1v1 `server/match_round.gd`、大乱斗
   `server/royale_host.gd`、3v3 `server/team_host.gd`（后者本来就挂着）—— 三个函数**互不叠加**
   （另两个都整体覆写它）。★ 两处"改错了不报错"的落点：**1v1 的击杀记给对手且不看归因**
-  （口径与它的记分条一致，见 `_match_round_tick` 里那段）、**大乱斗载荷的 `deaths` 从逐人表构造**
+  （口径与它的记分条一致，见 `_match_round_tick` 里那段）、**大乱斗数据包的 `deaths` 从逐人表构造**
   （原先的 `_deaths` 是同一件事的第二份计数）。结算页列 = spec §3.6：
   1v1 `[kills,deaths,dealt,taken,acs]` / 大乱斗 `[kills,deaths,dealt,taken]` /
   3v3 `[kills,deaths,assists,dealt,taken,acs]`，标题在 `ui/match_result.gd::COLUMN_TITLES`

@@ -4,7 +4,7 @@
 
 **Goal:** 消除 8 处「本应抽象而未抽象」的重复与 3 处文档漂移，全程不触碰联机协议、不改变任何运行时行为。
 
-**Architecture:** 只做两类动作——(a) 删除死代码/修正文档；(b) 把逐字重复的**纯函数**提到静态助手类，调用点改为转发。不涉及任何类层次重构、不改文件职责边界、不动 `MatchHost`/`RoyaleHost` 覆写关系、不动 C2 rollback 契约。
+**Architecture:** 只做两类动作——(a) 删除死代码/修正文档；(b) 把逐字重复的**纯函数**提到静态助手类，调用点改为转发。不涉及任何类层次重构、不改文件职责边界、不动 `MatchHost`/`RoyaleHost` 覆写关系、不动 C2 rollback 接口规范。
 
 **Tech Stack:** Godot 4.7.1 标准版（非 mono），GDScript，无单测框架（冒烟 = `extends SceneTree` 的 `-s` 脚本 + 场景模式探针）。
 
@@ -17,7 +17,7 @@
 - **探针判据必须是 grep 文本 `ALL-OK`**，不能只看退出码（中途报错时 `--quit-after` 仍 exit 0 且不打印 ALL-OK）。
 - **字号实参必须是 16 的倍数**（`kh_l5_probe` 全仓扫描，含 `res://core`、`res://scenes`、`res://tests`）。
 - **测试由用户自己跑。** 本计划里的验证命令是给实施者自查用的；每个 Task 末尾不要自动代跑整套冒烟，把「待用户验收」的命令列出来即可。
-- **不要动**（本计划范围外，已有裁定）：`NetBus`/`NetBusExt` 的 RPC 样板、`core/net_bus_ext.gd` 里同名的 `beam_fired`、`RoyaleHost._init` 顺序与 `_spawned_once` 闩锁、开局三载荷的两条投递路径、`weapon_base.gd` 的 `@export` 参数表、`kh_l*_probe` 的断言体。
+- **不要动**（本计划范围外，已有裁定）：`NetBus`/`NetBusExt` 的 RPC 样板、`core/net_bus_ext.gd` 里同名的 `beam_fired`、`RoyaleHost._init` 顺序与 `_spawned_once` 闩锁、开局三数据包的两条投递路径、`weapon_base.gd` 的 `@export` 参数表、`kh_l*_probe` 的断言体。
 - 每个 Task 独立提交。提交信息用中文，与仓库既有风格一致。
 
 ---
@@ -103,7 +103,7 @@ git commit -m "chore(settings): 删除死代码 _apply_binding——已被 set_b
 
 `font_size` 形参保持原名与位置不变（调用方 `matchmaking.gd:171` / `royale_lobby.gd:213` 按位置传参）。
 
-- [ ] **Step 2: 确认没有探针钉住旧写法**
+- [ ] **Step 2: 确认没有探针断言约束旧写法**
 
 ```bash
 grep -rn "add_theme_font_size_override" tests/ | head
@@ -505,7 +505,7 @@ git commit -m "refactor(feedback): 抽 CombatFeedback.attribute_hit 收「归因
 
 ---
 
-### Task 7: 敌人死亡流程收口（`_on_death()` 虚钩 + `_apply_charge_impact` 上提）
+### Task 7: 敌人死亡流程统一收拢（`_on_death()` 虚钩 + `_apply_charge_impact` 上提）
 
 **Files:**
 - Modify: `scenes/enemies/enemy_base.gd:223-231`（`_begin_death` 加虚钩调用）、新增 `_on_death()` 与 `_apply_charge_impact()`
@@ -894,13 +894,13 @@ Expected: 五条各打印一行 `ALL-OK`。任何一条没有输出即失败（*
 
 以下来自同一份审查，但**不属本批次**，各自需要独立的计划与决策：
 
-1. **批次 2（最高价值，被探针卡住）**：`pvp_client.gd` ↔ `royale_game.gd` 的事件消费层合并（约 200 行）、`matchmaking.gd` ↔ `royale_lobby.gd` 的连接状态机合并（约 180 行）。**前置**：先决定 `kh_l6_probe` 这类「钉源码文本」的探针怎么办 —— 它们会因合并变红（如 `NetBus.local_beam_fired` 必须恰好在 `pvp_client.gd` 出现 1 次、C2 组包字典必须留在 `_physics_process` 内）。
+1. **批次 2（最高价值，被探针卡住）**：`pvp_client.gd` ↔ `royale_game.gd` 的事件消费层合并（约 200 行）、`matchmaking.gd` ↔ `royale_lobby.gd` 的连接状态机合并（约 180 行）。**前置**：先决定 `kh_l6_probe` 这类「钉源码文本」的探针怎么办 —— 它们会因合并报错失败（如 `NetBus.local_beam_fired` 必须恰好在 `pvp_client.gd` 出现 1 次、C2 组包字典必须留在 `_physics_process` 内）。
 2. **批次 3**：四个玩家组件各加 `capture_state/restore_state`（键名一字不改）→ 再抽 `PlayerNetSync`；`enemy_logic_smoke.gd` 那个 861 行的 `_initialize()` 按章节切分。
 3. **批次 4**：`core/maze_generator.gd`（696 行）委托式拆 `grid_pathfinder.gd` + `map_format.gd`；`weapon_base.gd`（545 行）拆 `weapon_preview.gd` + `weapon_reload.gd`；`match_host.gd` 的 `ENABLE_BIRDS=false` 鸟链（84 行）搬到 `server/bird_roster.gd`。
 4. **测试脚手架**：`tests/lib/scan_util.gd` + `probe_base.gd`（`kh_l*_probe` 的扫描工具函数已复制 5 遍）。注意 `kh_l5_probe.gd:44` 的 `ALL_DIRS` **含 `res://tests`**，新增的 lib 源码不得含被扫的字面量（如非 16 倍数字号）。
 5. **生成物守卫**：给 `level_editor/sync-tiles.js` 加 `--check` 模式（改了 `data/tile_defs.json` 忘跑脚本会静默漂移）。
 6. **`UiFactory` 补齐（决策：本批次故意不做）**：缺 `check` / `line_edit` / `slider_row` / `apply_font_recursive`，导致 `settings_menu.gd:157-183`、`matchmaking.gd:207-235`、`royale_lobby.gd:152-155,258-273` 各自造包装、同一段注释抄三遍。**不放进批次 1 的原因**：三个调用点里有两个（`matchmaking` / `royale_lobby`）正是批次 2 要整体重构的文件 —— 现在改会在合并时产生无谓冲突。**等批次 2 落地后再做**，届时调用点只剩 `settings_menu` 与新抽出的面板类。
-7. **睡眠/唤醒状态机上提（决策：本批次故意不做）**：`enemy_fly_bird.gd:75-91`、`enemy_black_bird.gd:78-104`、`enemy_jump_bird.gd:47-58` 三处同构。**不放进批次 1 的原因**：它会一并触及 `enemy_base.gd:175` 那个隐式契约 —— `_is_far_sleeping()` 硬编码 `state != 0`，隐含「所有子类 `State.SLEEP == 0`」，抽睡眠逻辑时**必须同时把这个契约显式化**（否则新敌人一旦 SLEEP≠0 会静默失去睡眠优化）。这已超出「纯函数搬运、行为零变化」的批次 1 边界。建议单独立项。
+7. **睡眠/唤醒状态机上提（决策：本批次故意不做）**：`enemy_fly_bird.gd:75-91`、`enemy_black_bird.gd:78-104`、`enemy_jump_bird.gd:47-58` 三处同构。**不放进批次 1 的原因**：它会一并触及 `enemy_base.gd:175` 那个隐式接口规范 —— `_is_far_sleeping()` 硬编码 `state != 0`，隐含「所有子类 `State.SLEEP == 0`」，抽睡眠逻辑时**必须同时把这个接口规范显式化**（否则新敌人一旦 SLEEP≠0 会静默失去睡眠优化）。这已超出「纯函数搬运、行为零变化」的批次 1 边界。建议单独立项。
 8. **未纳入本计划的既有小项**（各自独立、可随时做）：`world_label.gd` 绕过 `PixelFont.shared()` 自建字体；`combat_feedback` 的 `_streak_label` 未走 `UiFactory`；`enemies/_water_swim_dir` 与 `_align_contact_area` 的跨子类同构；`player.gd` 的氧气计量与 `EnemyBase._apply_water` 是同一逻辑两份实现；`_disk_overlaps_solid` 的 1 生产 + 3 探针副本。
 
 ## 已排除的伪发现（勿重复排查）

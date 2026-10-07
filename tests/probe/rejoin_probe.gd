@@ -1,41 +1,35 @@
 extends Node
 
-# 「回大厅后回局」(阶段 2-B)的**真实网络链路端到端探针**。场景模式(autoload 必须已实例化)。
+# 「回大厅后重连返回对局」(阶段 2-B)的真实网络链路端到端探针。场景模式(autoload 必须已实例化)。
 #
-# 跑法(用户侧):
+# 运行方式(用户侧):
 #   timeout 900 bash tests/probe/rejoin_probe.sh
 # 或直接:
 #   "$GODOT" --headless --path . --quit-after 36000 res://tests/probe/rejoin_probe.tscn
-# 判据:**文本 `REJOIN PROBE: ALL-OK`**(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0
-#       且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
-# - `--quit-after 36000`(=600s @60fps)的**推导**:本跑的量级 = 进局 ~8s + PLAYING 静置 ~3s
-#   + 离场/主菜单/回局各 ~2s + c2 的观察窗 40s + c3 的 40s 窗口 + 收尾 ~5s ≈ **60~100s**;
-#   取 600s = 6~10 倍余量。-  本仓教训:安全网给薄了会把"跑得慢"读成"功能坏了"
-#   (`tests/probe/brawl_rollback_probe.tscn` 就是被 3600 误判过的那一个,实测要 30000),故这里按量级
-#   给足而不是照抄别处的数。
+# 验收标准：控制台输出包含 `REJOIN PROBE: ALL-OK`（不得仅依据进程退出码判定：若测试发生阻塞挂起，
+#       --quit-after 到期退出仍可能返回 0 导致测试假阳性）。
+# - 超时帧数配置 `--quit-after 36000`（对应 60fps 下 600 秒）：完整运行耗时预估包含加载建房（约 8 秒）、
+#   对局静置（约 3 秒）、客户端离场/返回主菜单/重连（各约 2 秒）、各客户端观察窗口（各 40 秒）及清理收尾（约 5 秒），
+#   实际执行约需 60~100 秒；配置 600 秒提供 6~10 倍冗余量，防止偶发性能波动导致测试误报。
 #
-# ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 `OS.create_process` 直接启动)═══
-#   本进程 = **实际大厅**(`NetBus.start_server(LOBBY_PORT)` + `RoomManager`),不进 7777
-#   c1/c2/c3 = 3 个 headless 客户端,各自跑**真** `mp_lobby` → **真** `pvp_game`
-#   worker = 由**真** `RoomManager._start_match` 经 `WorkerLauncher.spawn_worker` 启动
-#            (与生产逐字同一条路径;探针只把起投端口拨到池外)
+# ── 网络拓扑架构（由探针主进程作为大厅与裁判服务端；子进程通过 OS.create_process 启动）──
+#   主进程：运行真实大厅服务（NetBus.start_server(LOBBY_PORT) 与 RoomManager），使用专用测试端口 29300。
+#   c1/c2/c3：3 个无头客户端，分别加载真实 mp_lobby 场景并进入 pvp_game 对局。
+#   对局会话：由 RoomManager._start_match 驱动，与生产环境调用链路完全一致。
 #
-# ═══ 前提 ═══
-#   **请确认没有别的 Godot 占着 7777**(本探针不占 7777,也别终止用户自己的服务端)。
-#   客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 每个子进程都带
-#   `--log-file`;失败时把每份引擎日志的尾部一起打印。收尾**按 PID 杀**全部子进程 + 按端口保底处理。
+# ── 前提条件 ──
+#   请确认默认端口 7777 未被外部占用（本探针使用专用端口 29300，避免干扰外部独立服务）。
+#   Windows 下子进程标准输出不被父进程直接继承，因此各子进程均显式配置 `--log-file`；
+#   若断言失败将输出各端日志尾部用于问题定位。测试收尾阶段按 PID 回收全部子进程并清理端口。
 #
-# ═══ -  与 task-8-brief.md 的偏离(逐条;理由都在实现处再写一遍)═══
-#   ① `_clean()` 的返回值**必须看**(brief 的 `_run_orchestrator` 忽略了它):删不掉上一跑的产物
-#      只可能因为"上一跑的客户端还活着",而残留的 `.result` 会被 `_results_ready()` 当成**这一跑**
-#      的结果下判决(而且是绿的)。照 team_match_probe 的先例:清不掉就整段收工。
-#      另:brief 的 `_clean` 漏删**引擎日志**(`_godot_log_path` 是 `..._client_c1.godotlog`,
-#      而它删的是 `..._c1.godotlog`)→ 陈旧日志会被 `_dump()` 当本跑的现场打印输出。
-#   ② (2026-10-07 作废)原先收尾要按**对局 worker 的端口**杀那个子进程。单进程单端口之后
-#      对局是大厅进程里的一个 `MatchSession` 节点 —— 没有子进程,而"对局那个端口"**就是大厅
-#      自己那个端口**,按它杀等于把本探针自己杀掉。故收尾只按 PID 杀客户端子进程。
-#   ③ **断言计数**(`MIN_CHECKS`):本探针是这条路唯一的观测者,一段被截断的跑不许打印 ALL-OK。
-#   ④ 每条判词都带断言条数(`ALL-OK(N 条断言)`),与仓内既有探针相同机制。
+# ── 架构设计与实现说明 ──
+#   ① 显式校验 _clean() 返回值：若无法清理上一次测试的残留文件，通常是因上一次运行的客户端进程未正常退出，
+#      残留的 .result 文件会导致当前测试误判并产生假阳性。因此清理失败时直接终止测试。
+#      同时确保清理对应的引擎日志文件，避免历史残留日志被误当成本次运行的现场日志输出。
+#   ② 单进程单端口架构说明：对局会话直接挂载为大厅进程内的 MatchSession 节点，无需单独启动子进程，
+#      因此收尾阶段仅需根据 PID 清理客户端子进程。
+#   ③ 断言计数校验（MIN_CHECKS）：确保测试完整执行至终点，未达到预期断言数严禁输出 ALL-OK。
+#   ④ 测试结论格式统一包含断言条数（ALL-OK(N 条断言)）。
 
 const PREFIX := "rejoin_probe_"
 const LOBBY_PORT := 29300
@@ -43,9 +37,8 @@ const CHILD_QUIT_AFTER := "36000"
 const BOOT_TIMEOUT := 40.0
 const FINAL_TIMEOUT := 180.0
 const RESULT_WAIT := 90.0
-# 一条**绿**的跑至少要跑到的断言数:阶段 1 端口 1 条 + 阶段 2 4 条(行在不在 / in_match / 名单 / pid)
-# + 三端结果 0 条(结果不合格时走的是 `_check(false, …)`,那本来就已经是红的)。
-# 判据只对"否则会打印 ALL-OK"的那一跑生效(见 `_finish`)。
+# 正常通过测试必须执行的最小断言数量：阶段 1 端口校验 1 项 + 阶段 2 房间状态与玩家列表 4 项。
+# 该判定条件用于防止未完整执行即输出 ALL-OK（参见 _finish）。
 const MIN_CHECKS := 5
 
 var _role := "lobby"
@@ -81,14 +74,13 @@ func _run_orchestrator() -> void:
 		return
 	_rm = RoomManager.new()
 	add_child(_rm)
-	# - 2026-10-07:原先这里要把 worker 端口起投拨到池外 7800~8299(免得与用户自己大厅发的端口
-	#   撞上、收尾误杀别人的对局)。没有端口池了 —— 对局就跑在本探针自己这个大端口上。
-	# 注意： 清理失败**必须整段收工**(brief 忽略了返回值):残留的 `.result` 会被当成本跑的读数下判决。
+	# 单进程单端口架构：移除旧版独立端口池分配，对局会话直接复用当前大厅监听端口。
+	# 注意事项：清理失败必须直接终止测试退出，防止上一次运行的残留文件导致测试误判。
 	if not _clean():
-		print("PROBE: 清理失败(多半是上一跑的进程还活着)—— 不拉起客户端,直接退出")
+		print("PROBE: 清理失败（上一次测试运行的进程可能尚未退出），终止执行")
 		get_tree().quit(1)
 		return
-	print("PROBE: 大厅就绪(port %d,池外;对局与它**同进程同端口**)" % LOBBY_PORT)
+	print("PROBE: 大厅就绪(port %d, 对局与大厅同进程同端口)" % LOBBY_PORT)
 	_spawn_client("c1")
 	_spawn_client("c2")
 	_spawn_client("c3")
@@ -192,10 +184,10 @@ func _finish(why: String) -> void:
 		_check(false, why)
 	# 计数断言保护：确保所有测试阶段均已执行，防止因提前退出导致假阳性通过。
 	if _failures.is_empty() and _checks < MIN_CHECKS:
-		_check(false, "只跑了 %d 条断言(期望 ≥ %d)—— 有阶段没跑到,这个 ALL-OK 不算数"
+		_check(false, "断言执行数不足（实跑 %d 条，期望 ≥ %d 条）—— 存在未覆盖阶段，测试判定失败"
 				% [_checks, MIN_CHECKS])
 	_kill_children()
-	print("═══ 探针明细 ═══")
+	print("── 探针执行明细 ──")
 	for n in _notes:
 		print("  · " + n)
 	for f in _failures:
@@ -294,7 +286,7 @@ func _clean() -> bool:
 				continue
 			if DirAccess.remove_absolute(p) != OK:
 				ok = false
-				push_warning("PROBE: 删不掉上一跑的 %s —— 多半是上一跑的进程还活着" % p)
+				push_warning("PROBE: 无法删除上一次测试产生的文件 %s —— 可能是上一次运行的进程尚未退出" % p)
 	return ok
 
 

@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修掉用户 2026-09-28 清单里 B 档的六条「登记不修」边界(`#2 / #6a / #6b / #7 / #8 / #10 / #11`),
-每条都配一条**先看着它变红**的判据。
+每条都配一条**先看着它报错失败**的判据。
 
 **Architecture:** 全部是**单点行为修复**,不新增协议字段、不改任何 RPC 签名、不动 `NetBus` 方法表。
 两个新增判据文件(`late_match_probe` 场景探针 + `duel_spawn_timeout_smoke` 的 `-s` 冒烟),
@@ -27,7 +27,7 @@
   反向:`-s` 冒烟必须写空载守卫(`load()` 后立刻判 null → `quit(1); return`),否则抛错后
   走不到 `quit()`,进程**永久挂起**而不是干净失败。
 * **场景探针的 `--quit-after` 统一给 3600**(安全网;探针跑完自己 `quit()`)。
-* **协议零改动**:不动 `NetBus` / `NetBusExt` 的 RPC 方法表,不动任何载荷字段名。
+* **协议无需修改**:不动 `NetBus` / `NetBusExt` 的 RPC 方法表,不动任何数据字段名。
 * **分层(用户 2026-09-28 裁定)**:`server/**` 归本会话;`scenes/ ui/ tests/ docs/` 归 peer。
   本计划被**具名让渡**的只有 `scenes/player/weapon_component.gd` 与 `scenes/weapons/weapon_base.gd`
   (实际只用后者)+ 四个 `tests/` 文件。**别的 `scenes/` 文件一个都不许碰。**
@@ -38,10 +38,10 @@
   大厅分支末尾收一句 `set_process(false)`;**2026-09-28 重审订正** —— 此前这条写的是"只动
   `_process`",在加固补丁落地后**已经不成立**)。★ 该约束的**用意**(不碰 `_expire_graces`、
   不改 `quit(0)` 的任何一处位置)仍然**逐字成立**,变的只是它的字面。
-* ★★ **`_process` 那一段现在被源码级钉住了**(`tests/duel_spawn_timeout_smoke.gd` 的判据①②):
+* ★★ **`_process` 那一段现在被在源码层面通过断言约束了**(`tests/duel_spawn_timeout_smoke.gd` 的判据①②):
   任何人在 1v1 报到梯的门控里写出 `not _royale` / `not _team_mode` / `not _worker`
   (含 `not (_royale or _team_mode)` 这类拼写),或在 `_ready` 里把 `set_process(false)`
-  挪走/在其上插一条早退,都会**当场让那条冒烟变红**。**peer 改这一段之前先读那份冒烟的注释**,
+  挪走/在其上插一条早退,都会**当场让那条冒烟报错失败**。**peer 改这一段之前先读那份冒烟的注释**,
   别把"冒烟红了"读成"功能坏了"。
 * **跨会话次序**:本计划的 **Task 2(#10)** 必须在 peer 的阶段 3 Task 3 之前落地
   (两者都动 `server_main.gd` 的 `_process` 同段)。Task 2 完成后**立刻通知 peer**。
@@ -56,7 +56,7 @@
 **Files:** 无改动。
 
 **Interfaces:**
-- Produces: 一份「修前是红的 / 修前是绿的」的基线读数,后面每个 Task 的"变红/变绿"都相对它。
+- Produces: 一份「修前是红的 / 修前是绿的」的基线读数,后面每个 Task 的"报错失败/变绿"都相对它。
 
 - [ ] **Step 0.1: 确认工作树里没有别人的半成品**
 
@@ -149,7 +149,7 @@ func _run_pre_tree_tick_phase() -> void:
 	(P.input_source as PacketInputSource).reset_state()
 ```
 
-- [ ] **Step 1.2: 跑它,确认变红**
+- [ ] **Step 1.2: 跑它,确认报错失败**
 
 ```bash
 source tests/env.sh
@@ -354,7 +354,7 @@ func _finish(fails: Array[String]) -> void:
 		quit(1)
 ```
 
-- [ ] **Step 2.2: 跑它,确认变红**
+- [ ] **Step 2.2: 跑它,确认报错失败**
 
 ```bash
 source tests/env.sh
@@ -613,7 +613,7 @@ func _phase_down_accounting(tag: String, roles: Array) -> void:
 				% str(h2._scores))
 ```
 
-- [ ] **Step 3.2: 刷新导入并跑它,确认变红**
+- [ ] **Step 3.2: 刷新导入并跑它,确认报错失败**
 
 ```bash
 source tests/env.sh
@@ -748,7 +748,7 @@ func _phase_disconnect_round() -> void:
 			% host._rounds_for(1))
 ```
 
-- [ ] **Step 4.2: 跑它,确认变红**
+- [ ] **Step 4.2: 跑它,确认报错失败**
 
 ```bash
 source tests/env.sh
@@ -920,7 +920,7 @@ func _phase_royale_winner() -> void:
 			"★ 离开者**有分**时仍按分判胜(期望 3,实得 %d)" % h3._match_winner())
 ```
 
-- [ ] **Step 5.2: 跑它,确认变红**
+- [ ] **Step 5.2: 跑它,确认报错失败**
 
 ```bash
 source tests/env.sh
@@ -960,7 +960,7 @@ source tests/env.sh
 timeout 180 "$GODOT" --headless --path . --quit-after 3600 res://tests/late_match_probe.tscn 2>&1 | tail -10
 ```
 
-Expected: `LATE MATCH PROBE: ALL-OK`(①②③④⑤⑤b 全绿)。
+Expected: `LATE MATCH PROBE: ALL-OK`(①②③④⑤⑤b 全部通过)。
 
 - [ ] **Step 5.5: 提交**
 
@@ -1141,7 +1141,7 @@ EOF
 * `:14` 那句不动(它讲的是 3v3 的 `TEAM_MATCH_ESTIMATE`)
 * `:664` 的 OK 串里 `大乱斗 RoyaleHost.MATCH_TIME` → `大乱斗 ROYALE_MATCH_TIME_CEILING(可证上界)`
 
-- [ ] **Step 7.2: 跑它,确认变红**
+- [ ] **Step 7.2: 跑它,确认报错失败**
 
 ```bash
 source tests/env.sh

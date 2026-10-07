@@ -27,7 +27,7 @@ PvP 客户端视觉副本撞可破坏砖 → **本地即时播一次 TileHitFx �
 1. `_damage_tile_at(pos, normal)` 内部改为:
    - 探格找到非 0 格 + `bullet_destroyable`(原逻辑);
    - **无条件 `TileHitFx.spawn(get_viewport(), pos, tex)`**(纯反馈);
-   - **`damage_tile` 仅在 `apply_damage` 时调用**(damage 是权威侧职责)。
+   - **`damage_tile` 仅在 `apply_damage` 时调用**(damage 是服务端职责)。
 2. 撞墙 else 分支去掉 `if apply_damage:` 包裹,直接调 `_damage_tile_at(...)`,使视觉副本也走探格+播碎片。
 
 行为矩阵(改动后):

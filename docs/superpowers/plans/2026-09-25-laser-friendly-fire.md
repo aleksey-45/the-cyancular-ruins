@@ -5,10 +5,10 @@
 **Goal:** 3v3 里激光枪不再对队友造成伤害，且与子弹/榴弹直击的"穿透"口径一致 —— 队友既不掉血、也不挡住光束。
 
 **Architecture:** 激光是**即时命中**、不走 `_adjudicate_bullets`，所以 `same_team` 的既有调用点
-（全在 `server/`）一处都覆盖不到它 —— 它在权威侧**直接**结算伤害。修法有两条：
+（全在 `server/`）一处都覆盖不到它 —— 它在服务端**直接**结算伤害。修法有两条：
 ① 在 `MatchState` 上加一个给**武器**用的公开判据 `is_friendly(a, b)`（武器只拿得到节点、拿不到 role）；
 ② 在 `LaserWeaponBase._damage_path_targets` 的玩家循环里加一条 `continue`。
-只改权威侧即可 —— 客户端的视觉副本由 `_authoritative()` 门控先行 return，**根本不结算伤害** ⇒
+只改服务端即可 —— 客户端的视觉副本由 `_authoritative()` 门控先行 return，**根本不结算伤害** ⇒
 不碰协议、两端无需同版本。
 
 **Tech Stack:** Godot 4.7.1（标准版）、GDScript、场景探针（`--headless --quit-after`）。
@@ -27,7 +27,7 @@
   （双引号会**静默吞掉**反引号与 `$`）。
 - 字号必须是 **16 的倍数**（`kh_l4`/`kh_l5` 扫 `res://ui` 与 `res://tests`；本计划不引入新字号）。
 - 改 GDScript **只需重导出**，不要重编裁剪模板。
-- **只改权威侧**：本计划不碰 `NetBus` / `NetBusExt` 的任何 RPC，不动协议。
+- **只改服务端**：本计划不碰 `NetBus` / `NetBusExt` 的任何 RPC，不动协议。
 
 ---
 
@@ -35,7 +35,7 @@
 
 | 文件 | 责任 | 本计划怎么动 |
 |---|---|---|
-| `server/match_state.gd` | 对局底座：队伍表 / 逐人状态 / 出生点原语 | **加** `is_friendly(a: Node, b: Node) -> bool`（`_role_of` + `same_team` 的公开包装） |
+| `server/match_state.gd` | 对局基础层：队伍表 / 逐人状态 / 出生点原语 | **加** `is_friendly(a: Node, b: Node) -> bool`（`_role_of` + `same_team` 的公开包装） |
 | `scenes/weapons/laser_weapon_base.gd` | 即时光束武器基类（几何/结算/视觉三缝） | `_damage_path_targets` 的玩家循环**加一条 `continue`** |
 | `tests/laser_team_probe.gd` / `.tscn` | **新探针**：3v3 队友穿透 | 全新建 |
 
@@ -304,7 +304,7 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 ```
 
 ★ **是 `continue` 不是 `break`** —— 队友**不挡弹道**，后面的敌人照打。这一点由 Task 1 探针的
-后半条断言钉住（与子弹路径 `if same_team(...): continue` 同语义）。
+后半条断言断言约束（与子弹路径 `if same_team(...): continue` 同语义）。
 ★ 客户端那份视觉副本**到不了这里**：`_spawn_projectiles` 开头的 `if not _authoritative(): return`
 （`:61`）已经把非权威端挡在结算之前 ⇒ 本修法不碰协议、两端无需同版本。
 
@@ -357,12 +357,12 @@ for t in team_room_smoke laser_weapon_smoke enemy_logic_smoke; do
   "$GODOT" --headless --path . -s res://tests/$t.gd 2>&1 | grep -E "OK|FAIL|SCRIPT ERROR"
 done
 ```
-Expected: 全绿（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT: ALL-OK` /
+Expected: 全部通过（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT: ALL-OK` /
 `TEAM ROOM SMOKE: ALL-OK` / `SMOKE OK`）。
 
 ★ 特别注意 `team_table_probe` 的 ③④：**它们断的是子弹与爆炸，激光不在其中** —— 这正是这条 bug
-能存活至今的原因（spec §1.2 ①）。本批**没有**改它们的判据（那是另一条路径），它们应当原样全绿；
-若其中任何一条变红，说明改动越界，停下来报告。
+能存活至今的原因（spec §1.2 ①）。本批**没有**改它们的判据（那是另一条路径），它们应当原样全部通过；
+若其中任何一条报错失败，说明改动越界，停下来报告。
 
 - [ ] **Step 2: 登记进 CLAUDE.md**
 
@@ -397,8 +397,8 @@ git commit -m "docs(claude): 3v3 激光穿透队友 —— 登记 is_friendly �
 ## Self-Review
 
 **1. 覆盖面**（对照 spec §3.1）：新接口 ✅ Task 2 Step 1；调用点 ✅ Task 2 Step 2；
-"只改权威侧、不碰协议" ✅（`_authoritative()` 门控，Task 2 Step 2 的注释）；
-验收判据 1（新探针 + 反证）✅ Task 1/Task 2 Step 4；判据 3（既有探针全绿）✅ Task 3 Step 1；
+"只改服务端、不碰协议" ✅（`_authoritative()` 门控，Task 2 Step 2 的注释）；
+验收判据 1（新探针 + 反证）✅ Task 1/Task 2 Step 4；判据 3（既有探针全部通过）✅ Task 3 Step 1；
 判据 4（实机）—— **归用户**，已在 Global Constraints 声明。
 
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"；每个改动都给了完整代码块与确切路径。

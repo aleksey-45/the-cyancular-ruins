@@ -1,24 +1,24 @@
 extends Node
 
-# tests/probe/replica_smoothness_probe.gd —— 「对手看起来卡/掉帧」的诊断 + 常驻守卫。
+# tests/probe/replica_smoothness_probe.gd —— 「对手看起来卡/掉帧」的诊断 + 自动化测试探针。
 #
 # 症状(用户 2026-09-21 原话):「位置一跳一跳,看起来敌方掉帧」。
 #
-# 机制:若副本位置**直接跟随快照到达**(渲染的就是最新包原值),对手的平滑度就等于网络的
+# 机制:若副本位置直接跟随快照到达(渲染的就是最新包原值),对手的平滑度就等于网络的
 #   到达平滑度 —— 抖动下会出现"这一帧没包(零位移)/ 下一帧来两个(走两步)"。
 #
-# - 本探针只量**结果**(渲染位置每帧有没有动),不关心走的是哪套实现 ——
+# - 本探针只量结果(渲染位置每帧有没有动),不关心走的是哪套实现 ——
 #   故改前改后都能跑,且不会随实现被删而失效。
 #
-# 注意： 为什么跑三档抖动而不是一档:零位移占比**只取决于到达抖动**,不取决于实现。
+# 注意事项：为什么跑三档抖动而不是一档:零位移占比只取决于到达抖动,不取决于实现。
 #   跑三档能把"灵敏度"一起打印输出,而不是拿一个调出来的数当结论。
 #   JITTER_MS = 0 是下界(规律到达,任何实现都平滑);越大越像跨网络。
 #
-# 跑法:"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/replica_smoothness_probe.tscn
-# 判据:输出文本里的 `REPLICA SMOOTHNESS PROBE: ALL-OK`(不看退出码)。
+# 运行方式："$GODOT" --headless --path . --quit-after 3600 res://tests/probe/replica_smoothness_probe.tscn
+# 验收标准：输出文本里的 `REPLICA SMOOTHNESS PROBE: ALL-OK`(不看退出码)。
 #
 # 相 A:三档到达抖动下的零位移占比 / 单帧最大位移
-# 相 B:跨接缝不卡远副本(旧方案那条致命缺陷的守卫)
+# 相 B:跨接缝不卡远副本(旧方案那条致命缺陷的防御性校验)
 
 const REPLICA_SCENE := preload("res://scenes/player/player_replica.tscn")
 
@@ -38,7 +38,7 @@ const MAX_STEP_PX := 8.0                # 单帧最大位移上限(理想 5.0;�
 
 const CANON_X := 1000.0                 # 相 A 采样点:开阔处,只由快照驱动,与地形/物理无关
 const CANON_Y0 := 1000.0
-const SEAM_NEAR_PX := 200.0             # 相 B:渲染位置到锚点的**未回绕** |Δx| 上限
+const SEAM_NEAR_PX := 200.0             # 相 B:渲染位置到锚点的未回绕 |Δx| 上限
 # 相 C:幽灵体到"未经平滑的权威位置"的偏差上限。幽灵体吃的是原始值,故必须 ≈ 0;
 # 2.0 只是给浮点与"同帧刚体移动要等下一个物理步"留的余量,不是容许它滞后。
 const GHOST_ERR_MAX := 2.0
@@ -58,8 +58,8 @@ var _results: Array = []                # [{jitter, ratio, max_step}]
 var _phase := "A"
 var _seam_f := 0
 var _anchor := Vector2(CANON_X, CANON_Y0)
-# 相 C 的解耦守卫(每档抖动都采):幽灵体距"未经平滑的权威位置"的最大偏差。
-# 它必须 ≈ 0 —— 幽灵体要的是**最小陈旧**,跟平滑后的渲染位置是错的(理由见 player_replica)。
+# 相 C 的解耦防御性校验(每档抖动都采):幽灵体距"未经平滑的权威位置"的最大偏差。
+# 它必须 ≈ 0 —— 幽灵体要的是最小陈旧,跟平滑后的渲染位置是错的(理由见 player_replica)。
 var _ghost_err_max := 0.0
 var _render_err_max := 0.0              # 对照读数:渲染位置距同一目标的偏差(平滑 = 这个有值)
 
@@ -75,8 +75,8 @@ func _begin_case(jitter_ms: float) -> void:
 	if _rep != null and is_instance_valid(_rep):
 		_rep.queue_free()      # 它已 set_process(false),本探针不再驱动它
 	_rep = REPLICA_SCENE.instantiate()
-	# - 空载守卫(与 squash_replica_probe 相同机制):`player_replica.gd` 一旦解析不过,
-	#   tscn 的根会退化成裸 Node2D —— 场景照样加载、一行判据都不打印、退出码还是 0,
+	# - 空载防御性校验(与 squash_replica_probe 相同处理逻辑):`player_replica.gd` 一旦解析不过,
+	#   tscn 的根会退化成裸 Node2D —— 场景照样加载、一行判定条件都不打印、退出码还是 0,
 	#   那正是 docs/eng/tests.md 记的"看着像功能坏了"的形态。这里把它变成一条响亮的 FAIL。
 	if not _rep.has_method("apply_snapshot"):
 		_fail("PlayerReplica 脚本没加载起来(解析错?根节点是 %s)" % _rep.get_class())
@@ -84,7 +84,7 @@ func _begin_case(jitter_ms: float) -> void:
 	add_child(_rep)
 	_canon = Vector2(CANON_X, CANON_Y0)
 	_rep.global_position = _canon
-	# 逐帧显式调 `_process(DT)`,不交给引擎(与 squash_replica_probe 相同机制)
+	# 逐帧显式调 `_process(DT)`,不交给引擎(与 squash_replica_probe 相同处理逻辑)
 	_rep.set_process(false)
 	_anchor = _canon
 	_rep.apply_snapshot(_snapshot_dict(_canon), _anchor, _tick)
@@ -152,7 +152,7 @@ func _phase_a() -> void:
 		_still += 1
 	_max_step = maxf(_max_step, d)
 	_prev = p
-	# 相 C 采样:同一帧里比较"幽灵体"与"渲染位置"各自距**未经平滑的权威位置**多远。
+	# 相 C 采样:同一帧里比较"幽灵体"与"渲染位置"各自距未经平滑的权威位置多远。
 	var tgt := MazeGenerator.anchor_to_nearest(_canon, _anchor,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var ghost := _rep.get_node_or_null("GhostBody") as Node2D
@@ -185,10 +185,10 @@ func _finish_a() -> void:
 		_fail("相A 抖动 ±%.0f ms 下零位移占比 %.4f / 最大位移 %.3f px(对手会看起来一跳一跳)"
 				% [float(r["jitter"]), float(r["ratio"]), float(r["max_step"])])
 		return
-	# 进相 B —— 复现旧方案那条**致命缺陷**:把副本**强行摆到一个"远副本"**上(与锚点相隔
+	# 进相 B —— 复现旧方案那条致命缺陷:把副本强行摆到一个"远副本"上(与锚点相隔
 	# 整幅地图宽、但环面坐标相同),再看它能不能自己回到锚点所在的那一份。
-	# - 为什么必须"强行摆"而不是"把锚点放到地图另一头":环面距离是**对称**的 —— 锚到最近副本
-	#   与留在原地量出来**相同**,那种写法两边都会通过,是条空断言。缺陷只在"渲染位置与目标
+	# - 为什么必须"强行摆"而不是"把锚点放到地图另一头":环面距离是对称的 —— 锚到最近副本
+	#   与留在原地量出来相同,那种写法两边都会通过,是条空断言。缺陷只在"渲染位置与目标
 	#   相隔整幅地图"时暴露异常。
 	var w := float(GameParameters.MAP_WIDTH)
 	_begin_case(0.0)
@@ -207,8 +207,8 @@ func _phase_b() -> void:
 	_seam_f += 1
 	if _seam_f < 10:
 		return
-	# 判据用**未回绕**的绝对坐标:正确实现下渲染位置必须落回锚点那一份(CANON_X 附近);
-	# 若"卡在远副本"它会是 CANON_X + w,差整整一幅地图。这里刻意**不做环面包裹**。
+	# 判定条件用未回绕的绝对坐标:正确实现下渲染位置必须落回锚点那一份(CANON_X 附近);
+	# 若"卡在远副本"它会是 CANON_X + w,差整整一幅地图。这里刻意不做环面包裹。
 	var dx := absf(_rep.global_position.x - CANON_X)
 	var tor := GridPathfinder.toroidal_delta_px(_canon, _rep.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()

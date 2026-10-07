@@ -1,19 +1,11 @@
 class_name TimeGlow
 extends Node2D
 
-# 时间状态高亮(B13):在实体身上叠一层**加色混合**的贴图副本。
-#
-# - 为什么不用 modulate>1(B9/B12 的第一版做法 —— 用户实测"完全看不出高亮,只看到一切被调暗"):
-#   ① 2D 非 HDR 管线里 modulate 在写帧缓冲时被夹到 1.0,1.65 提不亮多少;
-#   ② 更要命的是**敌人基类的受击/死亡白闪 `_flash_update()` 每帧都把 modulate 写回
-#      WHITE / 3.0** —— 外部写进去的高亮当帧就被覆盖,敌人那边等于完全没生效。
-#   加色副本不依赖 HDR、不与白闪抢 modulate,而且色相可控(精英的黄能真"亮眼")。
-#
-# 挂法:副本挂成**视觉节点(AnimatedSprite2D/Sprite2D)的子节点** —— 父的 position/rotation/
-# scale(挤压拉伸)/可见性全部自动继承,只需同步 offset/flip/当前帧。`passes=2` 叠两层
-# (精英用"极为亮眼"的黄)。
+# 时间状态高亮特效：在实体精灵节点上叠加叠加混合模式的贴图图层。
+# 叠加混合不依赖 HDR 管线，且能与常规受击白闪着色解耦共存。
+# 作为视觉节点的子节点挂载，自动继承父节点的坐标变换、旋转、形变与可见性。
 
-static var total_created := 0   # 累计创建数(探针用:检测"每帧 free+attach"的抖动)
+static var total_created := 0   # 累计创建计数，供测试探针检测避免每帧频繁销毁与重建的抖动
 
 var color := Color.WHITE
 var src: Node2D = null

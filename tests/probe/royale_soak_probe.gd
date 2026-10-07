@@ -1,32 +1,28 @@
 extends Node
 
-# 大乱斗压力探针(场景模式):一个进程当大厅/裁判,再启动 N 个 headless 客户端子进程,
-# 每个客户端**跑真 `royale_game` 场景**(不是只连上数快照的轻量客户端 —— 卡顿就发生在
-# 建图/副本/HUD/后处理那个世界里),并用脚本机器人把局内行为踩一遍。
+# 大乱斗压力探针（场景模式）：当前主进程作为大厅与裁判服务端，并发启动 N 个无头客户端子进程。
+# 各客户端均完整加载并运行 `royale_game` 真实场景（包含地图瓦片、实体副本、HUD 界面更新等逻辑），
+# 并通过内置机器人模拟玩家战斗操作，验证系统在长时间压力下的稳定性与网络同步表现。
 #
-# 用法:
+# 运行方式：
 #   "$GODOT" --headless --path . res://tests/probe/royale_soak_probe.tscn [--clients=4 --match=60 --run=90]
-# 无参 = 大厅/裁判。**跑前先确认 7777 空闲**(有僵尸 Godot 占着会直接 FAIL)。
-# 收尾建议用 tests/probe/royale_soak_probe.sh(Windows 下 bash kill 杀不死 headless Godot)。
+# 运行前请确认端口 7777 空闲。建议通过 tests/probe/royale_soak_probe.sh 执行测试以便可靠回收子进程。
 #
-# 埋点(每客户端写一份 user://soak_cN.result):
-#   - 主循环帧间隔 avg/p95/max、>33ms 帧数、>100ms 卡顿次数与最坏发生时刻
-#   - 收到快照的 次数/字节每秒、**到达间隔 max/p95**(这条从客户端视角量 worker 侧有没有停)
-#   - round_state / kill_event / hit_event 计数、本地玩家倒地(复活)次数
-#   - 是否等到 MATCH_OVER
+# 性能与诊断指标（各客户端独立写入 user://soak_cN.result）：
+#   - 主循环帧耗时统计：avg / p95 / max、>33ms 掉帧数、>100ms 严重卡顿次数与发生时刻
+#   - 快照接收统计：接收频率、每秒吞吐字节数、快照到达间隔 max / p95（用于评估服务端广播稳定性）
+#   - 局内状态事件：round_state / kill_event / hit_event 计数及玩家阵亡与复活次数
+#   - 对局生命周期：是否完整等待至 MATCH_OVER 阶段
 #
-# - 边界(报告里必须照抄,别把数字说过头):
-#   1. headless 客户端**没有渲染** → 量到的是网络 + 模拟 + 场景树成本,**不含画面**。
-#      "渲染卡不卡" 本探针答不了,得开真实客户端实例看。
-#   2. 大乱斗客户端上报的输入包**不带 seq**(royale_game.gd 的 pkt 无该字段),
-#      故快照里的 ack_seq 恒为 0 → 客户端无从推算 _pending_input 积压。
-#      输入积压是本机压测量不到的**代码级风险**,只在报告里给机制与触发条件。
-#   3. 崩溃判据 = 结果文件缺失 / 客户端进程消失,**不是** "没看见报错"。
-#   4. MATCH_OVER 之后 royale_game **结算页**那条出场路径(玩家自己点「返回主菜单」)不在本探针
-#      覆盖内 —— 客户端在 MATCH_OVER 当场写结果并退出,**本探针的观测窗就到这里**。
+# 评测范围与指标局限性说明：
+#   1. 无头模式未执行实际画面渲染，统计开销主要涵盖网络同步、物理模拟与场景树节点计算，不包含 GPU 渲染耗时。
+#   2. 大乱斗客户端输入包当前未包含自增序号 seq 字段，因此快照中的 ack_seq 恒为 0，客户端无法直接推算输入积压指标。
+#   3. 崩溃判定依据为：结果文件缺失或客户端子进程异常退出，而非仅检测控制台错误。
+#   4. MATCH_OVER 之后 royale_game 结算页那条出场路径(玩家自己点「返回主菜单」)不在本探针
+#      覆盖内 —— 客户端在 MATCH_OVER 当场写结果并退出,本探针的观测窗就到这里。
 #      - 2026-09-21 修订说明:原先这里写的是"否则那条 6s 自动回主菜单的换场会把探针自己摘掉" ——
-#        **自动退场已随结算页批次删除**(改成玩家自己退),headless 探针不会去点那个按钮  -> 
-#        到 MATCH_OVER 收尾是**探针自己的选择**,不是被换场摘掉。
+#        自动退场已随结算页批次删除(改成玩家自己退),headless 探针不会去点那个按钮  -> 
+#        到 MATCH_OVER 收尾是探针自己的选择,不是被换场摘掉。
 
 const BotInput := preload("res://tests/harness/soak_bot_input.gd")
 
@@ -69,7 +65,7 @@ var _deaths := 0
 var _was_downed := false
 var _done := false
 var _others: Dictionary = {}      # role(int) -> canonical 位置(快照来,给机器人指路)
-var _suicide_at: Array = []       # 计划自杀的时刻(距进对局秒数):压 K 自杀 → 复活链路
+var _suicide_at: Array = []       # 计划自杀的时刻(距进对局秒数):压 K 自杀 -> 复活链路
 var _saw_left := 0                # 收到过几份「left 非空」的 round_state(别人离场了)
 var _esc_done := false            # 本端是否已执行「按 ESC 离场」
 # 卡顿/事件的时间轴(只记 >33ms 的帧与关键事件,上限各 40 条):报告里要对"哪一帧卡了、
@@ -157,7 +153,7 @@ func _read_result(i: int) -> String:
 func _run_client() -> void:
 	Engine.max_fps = 60     # 与真实客户端实例同节奏;不设就变成"跑多快算多快",帧间隔读数失去意义
 	_flow_us = Time.get_ticks_msec()
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)   # 快照拆两条后:世界包(数条数够用)
+	NetBus.local_snapshot_world.connect(_on_snapshot_world)   # 快照拆两条后:全局世界快照包(数条数够用)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_kill_event.connect(func(_k: int, _v: int) -> void:
 		_kills += 1
@@ -168,13 +164,13 @@ func _run_client() -> void:
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_go_match.connect(_on_go_match)
 	# - 2026-09-12(批次 5 顺带修复):这里原先接住 worker 推来的三条开局载荷、缓存进
-	#   `PvpSession.pending_*`。批次 3 把那条**推**路径整体换成了**进场拉取**(对局场景 `_ready`
+	#   `PvpSession.pending_*`。批次 3 把那条推路径整体换成了进场拉取(对局场景 `_ready`
 	#   末尾自己 `match_sync`),`pending_*` 四个字段连 `clear_pending_payloads()` 一起删了 ——
-	#   而本探针是漏改的那一个(`royale_probe` / `royale_bound_probe` 都改了),于是它**从批次 3
+	#   而本探针是遗漏修改的那一个(`royale_probe` / `royale_bound_probe` 都改了),于是它**从批次 3
 	#   起就解析不过、根本跑不起来**(批次 3 的设计里还写着"用 royale_soak_probe 实测对照",
 	#   那句话从来没成立过)。本探针不需要自己拉:真 `royale_game` 场景会自己发 `match_sync`。
-	#   守卫:`tests/probe/match_sync_probe` 的反向断言(全仓不得再出现那些标识符)会拦住复活。
-	# 全流程保底处理:连大厅→建房/加入→转连→claim→match_start 走不完就 FAIL 退出(否则挂死)
+	#   防御性校验:`tests/probe/match_sync_probe` 的反向断言(全仓不得再出现那些标识符)会拦住复活。
+	# 全流程兜底保护:连大厅 -> 建房/加入 -> 转连 -> claim -> match_start 走不完就 FAIL 退出(否则挂死)
 	get_tree().create_timer(60.0).timeout.connect(func() -> void:
 		if is_inside_tree() and not _match_running:
 			_finish(false, "60s 内没进对局(流程卡住)"))
@@ -190,7 +186,7 @@ func _run_client() -> void:
 
 func _after_lobby_connected() -> void:
 	if _idx == 1:
-		# 房主:建房(私密 + 邀请码,房号写中间文件给其余人读)→ 满员后 royale_start
+		# 房主:建房(私密 + 邀请码,房号写中间文件给其余人读) -> 满员后 royale_start
 		NetBusExt.local_royale_room_state.connect(func(state: Dictionary) -> void:
 			var code := str(state.get("code", ""))
 			if code != "" and not FileAccess.file_exists(ROOM_FILE):
@@ -252,7 +248,7 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	if spawn.x < 0:
 		_finish(false, "match_start 出生点无效")
 		return
-	# RPC 在 poll 调用栈内到达,栈内建大物理世界会偶发原生段错误(与 mp_lobby 相同机制)
+	# RPC 在 poll 调用栈内到达,栈内建大物理世界会偶发原生段错误(与 mp_lobby 相同处理逻辑)
 	_enter_match.call_deferred()
 
 
@@ -266,7 +262,7 @@ func _enter_match() -> void:
 		return
 	_bot = BotInput.new()
 	_local.set_input_source(_bot)
-	# 各客户端错开时刻按 K(自杀→复活链路);只压在观测窗的前 2/3,别撞 MATCH_OVER
+	# 各客户端错开时刻按 K(自杀 -> 复活链路);只压在观测窗的前 2/3,别撞 MATCH_OVER
 	_suicide_at = [15.0 + 7.0 * float(_idx), 45.0 + 5.0 * float(_idx)]
 	_match_running = true
 	_start_us = Time.get_ticks_msec()
@@ -292,7 +288,7 @@ func _process(_delta: float) -> void:
 		if ms > _worst_ms:
 			_worst_ms = ms
 			_worst_at = float(now - _start_us) / 1e6
-	# 本地玩家倒地 → 复活次数(把复活路径也数进去)
+	# 本地玩家倒地 -> 复活次数(把复活路径也数进去)
 	if _local != null and is_instance_valid(_local) and _local.has_method("is_downed"):
 		var d: bool = _local.is_downed()
 		if d and not _was_downed:
@@ -315,7 +311,7 @@ func _physics_process(_delta: float) -> void:
 	if _bot == null or not _match_running or _done:
 		return
 	_bot.step()
-	# - 让机器人**追着最近的对手打**:只按固定脚本走的话,开局散点相隔 15 格以上,
+	# - 让机器人追着最近的对手打:只按固定脚本走的话,开局散点相隔 15 格以上,
 	#   整局根本不会交战 —— kill/hit/倒地/复活这些路径一次都踩不到(首压实测四项全 0)。
 	#   故本帧步进后覆盖 axis/aim:相位脚本仍管跳/冲刺/蹲/切枪/开火,方向交给"找人"。
 	var tgt: Vector2 = _nearest_other()
@@ -325,7 +321,7 @@ func _physics_process(_delta: float) -> void:
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		_bot.axis = signf(d.x)
 		_bot.aim = d.normalized() if not d.is_zero_approx() else Vector2.RIGHT
-	# K 自杀:压 server_main._on_suicide_request → RoyaleHost.request_suicide_role → 2s 复活
+	# K 自杀:压 server_main._on_suicide_request -> RoyaleHost.request_suicide_role -> 2s 复活
 	var el := float(Time.get_ticks_msec() - _start_us) / 1000.0
 	while not _suicide_at.is_empty() and el >= float(_suicide_at[0]):
 		_suicide_at.pop_front()
@@ -335,9 +331,9 @@ func _physics_process(_delta: float) -> void:
 		_esc_leave()
 
 
-# 局内按 ESC 回主菜单 —— 唯一走过 `Level0.safe_change_scene` 的**局内**退出路径
+# 局内按 ESC 回主菜单 —— 唯一走过 `Level0.safe_change_scene` 的局内退出路径
 # (本仓历史上那条路径偶发原生段错误,`_switching` 防重入就是为它加的)。
-# 一次压到四件事:①该换场本身不崩;②服务器侧 `_on_peer_left` → `RoyaleHost.mark_disconnected`
+# 一次压到四件事:①该换场本身不崩;②服务器侧 `_on_peer_left` -> `RoyaleHost.mark_disconnected`
 # 把该 role 移出对局而其余人继续;③其余端收到 `round_state.left` 非空;④其余端把离场者的
 # 副本/头顶 ID/生命条一起拆掉(`royale_game._remove_replica` 那条路径)。
 func _esc_leave() -> void:
@@ -352,8 +348,8 @@ func _esc_leave() -> void:
 		_write_only("FAIL c%d 对局场景里没找到 PauseMenu" % _idx)
 		get_tree().quit(1)
 		return
-	# - 先把读数落盘再离场:离场会把**本探针自己**(== current_scene 根)退役掉,之后写不了文件。
-	#   若换场把进程搞崩(历史 bug 的形态),这份文件就**不会存在** → 裁判按「无结果文件」判 FAIL。
+	# - 先把读数落盘再离场:离场会把本探针自己(== current_scene 根)退役掉,之后写不了文件。
+	#   若换场把进程搞崩(历史 bug 的形态),这份文件就不会存在 -> 裁判按「无结果文件」判 FAIL。
 	_write_only("OK c%d 按 ESC 离场(t=%.1fs;只验不崩 + 其余端继续)" % [_idx, _elapsed()])
 	print("SOAK[c%d]: t=%.1fs 按 ESC 回主菜单(换场前已落盘读数)" % [_idx, _elapsed()])
 	# - 先捕获 SceneTree:退役后本节点不在树上,`get_tree()` 会返回 null(与主仓两处定时器相同的历史已知问题)
@@ -417,8 +413,8 @@ func _on_round_state(data: Dictionary) -> void:
 	if not (data.get("left", []) as Array).is_empty():
 		_saw_left += 1
 	# MATCH_OVER(=3)当场收尾:-  2026-09-21 订正 —— 当年写的是"晚一步那条 6s 自动换场会把本探针
-	# 一起摘掉、读数全丢";自动退场**已删除**(改成玩家自己在结算页上退),而 headless 探针不会去点
-	# 那个按钮  ->  观测窗**必须**自己在这里收(不收就永远等不到下一步,没有别的力量会推动它)。
+	# 一起摘掉、读数全丢";自动退场已删除(改成玩家自己在结算页上退),而 headless 探针不会去点
+	# 那个按钮  ->  观测窗必须自己在这里收(不收就永远等不到下一步,没有别的力量会推动它)。
 	if int(data.get("state", -1)) == 3 and _match_running:
 		_match_over = true
 		_finish(true, "跑到 MATCH_OVER")

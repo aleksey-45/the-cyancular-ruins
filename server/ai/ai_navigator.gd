@@ -1,20 +1,22 @@
 class_name AiNavigator
 extends Node
 
-# AI 玩家控制器(实验性 AI 补位):服务端权威视角,知道全场位置。
-# 每物理帧写 AiInputSource 字段驱动对应 player(与真人输入包同一条消费路径)。
-# 行为:黏滞锁定目标(不逐帧换目标);瞄准加抖动;有视线且距离合适就节奏点射;
-#       状态机移动(远追/近拉/中距横移,带决策间隔防抖);卡墙累计 0.4s 才跳一下。
-# 随机相位:每个 AI 的内部时钟/开火节奏在 ready 时错开,避免多个 AI 同频高频抖动。
+# AI 角色控制器：服务端权威决策，根据全局视野控制补位角色。
+# 每物理帧向 AiInputSource 写入操作输入，与真人客户端输入包共用底层消费与执行流程。
+# 核心行为：
+# - 目标锁定：保持锁定当前目标，避免频繁切换目标造成抖动；
+# - 射击机制：瞄准带有适度抖动散布，具备视线判定与节奏点射控制；
+# - 移动决策：按距离分级执行追击、拉扯与横向移动，并具备防卡墙跳跃检测；
+# - 随机相位：初始化时错开各 AI 实例的内部计时器与开火节奏，避免群体同频抖动。
 
-const FIRE_RANGE := 620.0        # 开火距离上限(px)
+const FIRE_RANGE := 620.0        # 最大开火距离（像素）
 const APPROACH_DIST := 300.0     # 追击距离阈值
-const BACKOFF_DIST := 140.0      # 过近拉扯阈值
-const AIM_JITTER := 0.10         # 瞄准抖动弧度(给玩家留活路)
-const TARGET_STICKY := 0.6       # 换目标条件:新目标距离 < 当前目标 × 0.6(防来回切)
-const STUCK_JUMP_TIME := 0.4     # 卡墙持续此时长才跳(防原地连跳颤抖)
+const BACKOFF_DIST := 140.0      # 后撤拉扯距离阈值
+const AIM_JITTER := 0.10         # 瞄准抖动角度（弧度）
+const TARGET_STICKY := 0.6       # 目标黏滞系数：新目标距离小于当前目标的一定比例时才切换
+const STUCK_JUMP_TIME := 0.4     # 卡墙累计判定时间（秒），超时后触发跳跃
 
-var host: Node            # MatchHost / RoyaleHost(读 players/_round_state)
+var host: Node            # MatchHost / RoyaleHost
 var role := 0
 var src: AiInputSource
 
@@ -23,12 +25,12 @@ var _next_fire := 0.0
 var _fire_left := 0.0
 var _next_decide := 0.0
 var _strafe := 1.0
-var _target_role := 0     # 黏滞目标(0=未锁定)
+var _target_role := 0     # 锁定目标角色编号（0 表示未锁定）
 var _stuck_t := 0.0       # 卡墙累计时长
 
 
 func _ready() -> void:
-	# 随机相位:错开所有 AI 的决策/开火节奏(原同频高频抖动问题)
+	# 错开各 AI 实例的初始决策与开火计时
 	_t = randf_range(0.0, 10.0)
 	_next_fire = _t + randf_range(0.3, 1.2)
 	_next_decide = _t + randf_range(0.5, 1.5)
@@ -37,7 +39,7 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if src == null or host == null or not is_instance_valid(host):
 		return
-	# COUNTDOWN / MATCH_OVER:待机(服务器权威冻结,与真人相同机制)
+	# 倒计时或对局结束阶段保持待机
 	if int(host._round_state) != int(host.RoundState.PLAYING):
 		src.fire = false
 		src.axis = 0.0
@@ -58,16 +60,11 @@ func _physics_process(delta: float) -> void:
 	_move(p, dist, dir, delta)
 
 
-# 黏滞目标:保持当前目标,除非它失效,或新目标明显更近(TARGET_STICKY 倍以内)
-#
-# - 返回的 "dir" 恒为 **我 → 对手**(不含 dist 的方向向量,未归一化)。两个消费者都按这个口径用:
-#   `_aim_and_fire` 的 `src.aim = dir_to.normalized()` 就是开火方向;
-#   `_move` 的 `dist > APPROACH_DIST → signf(dir_to.x)` 是追人、`dist < BACKOFF_DIST → -signf(...)`
-#   是后拉。而 `MazeGenerator.toroidal_delta_px(a, b)` 返回的是 **a → b** ——
-#   传 `(对手, 我)` 得到的是「对手→我」,**必须取负**才是本函数约定的方向。
-#   2026-09-14 修:黏滞分支漏了取负 → 锁定之后每一帧都瞄反、远则逃近则贴(只有换目标那一帧是对的)。
-#   回归守卫:`tests/smoke/ai_input_source_smoke.gd` 的「AI 目标方向」两条断言 —— 它们**真调本函数**、
-#   断言 `dir.x` 的符号(光断言成员存在照不出符号错,这条 bug 就是这么漏掉的)。
+# 目标选取与锁定：优先维持当前目标，直至其失效或存在显著更近的有效目标。
+# 返回字典包含：
+# - node: 目标角色节点
+# - dist: 环面距离
+# - dir: 由自身指向目标的环面向量（未归一化）
 func _pick_target(p: Node2D) -> Dictionary:
 	var cur: Node2D = null
 	var cur_dist := INF
@@ -80,8 +77,8 @@ func _pick_target(p: Node2D) -> Dictionary:
 	if cur != null:
 		var d := MazeGenerator.toroidal_delta_px(cur.global_position, p.global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		return {"node": cur, "dist": cur_dist, "dir": -d}   # -d:对手→我 取负 = 我→对手
-	# 当前目标失效 → 找最近的
+		return {"node": cur, "dist": cur_dist, "dir": -d}   # 反向计算得到从自身指向目标的向量
+	# 当前目标失效时寻找最近目标
 	var best_role := 0
 	var best_node: Node2D = null
 	var best_dist := INF
@@ -98,16 +95,16 @@ func _pick_target(p: Node2D) -> Dictionary:
 			best_role = int(r)
 			best_node = o
 			best_dist = dd.length()
-			best_dir = dd   # 对手 → 我
+			best_dir = dd
 	if best_node != null:
 		_target_role = best_role
-	return {"node": best_node, "dist": best_dist, "dir": -best_dir}   # -dir:我 → 对手
+	return {"node": best_node, "dist": best_dist, "dir": -best_dir}
 
 
 func _aim_and_fire(p: Node2D, target: Node2D, dist: float, dir_to: Vector2, delta: float) -> void:
-	# 瞄准:指向对手 + 轻微抖动
+	# 瞄准计算：计算朝向目标的向量并叠加微小随机旋转抖动
 	src.aim = dir_to.normalized().rotated(randf_range(-AIM_JITTER, AIM_JITTER) * 0.4)
-	# 开火:有视线且在射程内 → 节奏点射(打 0.4s 停 0.5~0.9s)
+	# 开火判定：目标在射程内且具备无遮挡视线时触发点射
 	var in_range := dist < FIRE_RANGE
 	var los := false
 	if in_range:
@@ -124,7 +121,7 @@ func _aim_and_fire(p: Node2D, target: Node2D, dist: float, dir_to: Vector2, delt
 
 
 func _move(p: Node2D, dist: float, dir_to: Vector2, delta: float) -> void:
-	# 决策间隔内保持横移方向(不逐帧翻转)
+	# 移动决策：在决策周期内保持横移方向，避免逐帧转向抖动
 	if _t >= _next_decide:
 		_next_decide = _t + randf_range(1.0, 2.0)
 		_strafe = 1.0 if randf() < 0.5 else -1.0
@@ -135,7 +132,7 @@ func _move(p: Node2D, dist: float, dir_to: Vector2, delta: float) -> void:
 		move = -signf(dir_to.x) if absf(dir_to.x) > 0.15 else _strafe
 	else:
 		move = _strafe
-	# 卡墙检测:想动但水平速度≈0 → 累计 0.4s 才跳一次(原每帧 25% 概率跳=原地颤抖)
+	# 卡墙判定：具有移动意图但水平实际速度过低时，累计达阈值触发跳跃脱困
 	if move != 0.0 and absf(p.velocity.x) < 12.0:
 		_stuck_t += delta
 	else:

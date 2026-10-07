@@ -1,20 +1,20 @@
 extends Node
 
 # 快照体积探针(场景模式):把「一份快照到底多少字节、随人数怎么长」从估算变成实测。
-# 跑法:
+# 运行方式：
 #   "$GODOT" --headless --path . res://tests/probe/snapshot_size_probe.tscn
 # 期望:末行 "SNAPSHOT SIZE PROBE: ALL-OK"。
 #
 # 存在理由:`docs/royale-soak-2026-09-12.md` §2.2 实测「每人每快照 ≈0.96 KB、服务器上行 ∝ N²」,
-# 但那是**整包**读数 —— 设计「本人包 / 世界包」拆分时需要知道这 0.96 KB 里
-# 多少是 c2 权威完整状态、多少是渲染散字段。本探针就量这个拆分,并给出 N=2..8 的折算表。
+# 但那是整包读数 —— 设计「本端专属状态包 / 全局世界快照包」拆分时需要知道这 0.96 KB 里
+# 多少是 c2 权威完整状态、多少是渲染独立状态字段。本探针就量这个拆分,并给出 N=2..8 的折算表。
 #
 # 做法:真实例化一具 player.tscn(autoload 在场景模式下就绪),取它的 capture_state() 当 c2;
-# 按 `server/match_host.gd:_broadcast_snapshot` 的**逐字**字段表拼两种 dict,
+# 按 `server/match_host.gd:_broadcast_snapshot` 的逐字字段表拼两种 dict,
 # 再用 var_to_bytes() 量序列化体积(与 RPC 实际打包同一套变体编码)。
 #
-# ⚠ 判据 grep 文本 "SNAPSHOT SIZE PROBE: ALL-OK"(不只看退出码)。
-# ⚠ 本探针只量「载荷」,不含 ENet 分片头/RPC 方法名等固定开销(见末尾打印的备注)。
+# - 判定条件 grep 文本 "SNAPSHOT SIZE PROBE: ALL-OK"(不只看退出码)。
+# - 本探针只量「载荷」,不含 ENet 分片头/RPC 方法名等固定开销(见末尾打印的备注)。
 
 const MTU := 1400          # ENet 默认 MTU
 const FRAG_HEADER := 8     # 分片包每片大致头部开销(粗估,用于折算片数)
@@ -71,7 +71,7 @@ func _ready() -> void:
 	print("[size]      分片折算按 MTU=%d / 每片头 %d B 粗估。" % [MTU, FRAG_HEADER])
 
 	# 注:退出时 Godot 会报少量 "leaked at exit"(在 _ready 里 quit 的探针都这样,与其它探针一致)。
-	# **不要**在这里显式 free 那具临时玩家 —— 实测反而从 2 条涨到 18 条(释放时机在树内不对)。
+	# 不要在这里显式 free 那具临时玩家 —— 实测反而从 2 条涨到 18 条(释放时机在树内不对)。
 	if _failures.is_empty():
 		print("SNAPSHOT SIZE PROBE: ALL-OK")
 		get_tree().quit(0)
@@ -83,7 +83,7 @@ func _ready() -> void:
 # ── 三种 dict:逐字对照 match_host._broadcast_snapshot 的字段表 ──
 
 func _render_fields() -> Dictionary:
-	# 渲染/副本消费所需的散字段(不含 c2):见 _broadcast_snapshot 的 snap["players"][role]
+	# 渲染/副本消费所需的独立状态字段(不含 c2):见 _broadcast_snapshot 的 snap["players"][role]
 	var p := _player
 	return {
 		"pos": p.global_position,
@@ -105,26 +105,26 @@ func _entry_render_only() -> Dictionary:
 	return d
 
 
-# 世界包瘦身版:①短键(协议两端同改,值不变)②去掉 `vel` —— ⚠ ② 是**不可实现**的那一条,见下。
+# 世界状态快照精简方案评估：① 压缩键名（协议双端同步调整，数值保持不变）；② 移除 vel 速度字段（注意：该方案在现有架构下不可行，详见下文说明）。
 #
-# 注意： **`vel` 不是"可以去掉"的字段 —— 它现在为核心关键约束,别照下面那个尺寸去削包。**
+# 注意事项：`vel` 不是"可以去掉"的字段 —— 它现在为核心关键约束,别照下面那个尺寸去削包。
 #   `player_replica` 的补间形变(squash & stretch)整条链都读它:空中连续项直接取 `vel.y`,
-#   落地推导还要"上一帧 `vel.y` 大 + 这一帧 `vel.y` ≈ 0"这一**对**值(见 `player_replica.gd`
+#   落地推导还要"上一帧 `vel.y` 大 + 这一帧 `vel.y` ≈ 0"这一对值(见 `player_replica.gd`
 #   的 `_prev_vel_y` / `LAND_VEL_EPS`)。**把 vel 从载荷里去掉  ->  对手的形变与落地效果
 #   一起静默失效**(空中项恒 0、落地项永不触发),不报错、也不会让本探针变红 ——
-#   本探针**只打印,不断言** vel 的去留(这一点是刻意的:它量的是体积,不是行为)。
-#   ⚠ 那条"唯一消费 vel 的是 `player.apply_server_snapshot`,该路径已随 C2 迁移删除"的旧理由
-#     在 Task 4 之后**已反转** —— 想削包先读 `player_replica.gd`,不要只读本文件。
-#    ->  `_entry_world_thin()` 仍按"去掉 vel"算,所以它给出的是**下界**(真实瘦身必须把 vel 带回来),
+#   本探针只打印,不断言 vel 的去留(这一点是刻意的:它量的是体积,不是行为)。
+#   - 那条"唯一消费 vel 的是 `player.apply_server_snapshot`,该路径已随 C2 迁移删除"的旧理由
+#     在 Task 4 之后已反转 —— 想削包先读 `player_replica.gd`,不要只读本文件。
+#    ->  `_entry_world_thin()` 仍按"去掉 vel"算,所以它给出的是下界(真实瘦身必须把 vel 带回来),
 #     两者之差就是 vel 自己的字节数。
 #
 # pose/facing/weapon/aim/hp/downed/previewing 全部保留(副本 + 头顶生命条在用);previewing 仍按
 # "只发不用"保留(它是日后换成音效/轮廓提示的接点,见 player_replica 的注释)。
 #
-# ※ 打印标签的措辞(2026-09-20 订正):下面那行原先写「去掉副本不消费的 vel/waterproof」——
-#   ① `vel` **不再**是"副本不消费的"(见上);② "去掉"对本字典也不准确:vel 的键整个不在,
-#   而尾部 `"v": false` 是一个**键在、值不实**的占位键。故标签改写成「不带 vel/waterproof 的
-#   **值**」,这才是本字典真正做的事(它给出的仍是**下界**,见上)。
+# - 打印标签的措辞(2026-09-20 订正):下面那行原先写「去掉副本不消费的 vel/waterproof」——
+#   ① `vel` 不再是"副本不消费的"(见上);② "去掉"对本字典也不准确:vel 的键整个不在,
+#   而尾部 `"v": false` 是一个键在、值不实的占位键。故标签改写成「不带 vel/waterproof 的
+#   值」,这才是本字典真正做的事(它给出的仍是下界,见上)。
 func _entry_world_thin() -> Dictionary:
 	var p := _player
 	return {
@@ -157,14 +157,14 @@ func _kb(b: int) -> String:
 
 
 func _report(n: int, sz_entry: int, sz_render: int, sz_c2: int) -> void:
-	# 现方案:一份含全部 N 人(c2)的 dict,逐 peer 各 rpc_id 一次 → 服务器序列化 N 次
+	# 现方案:一份含全部 N 人(c2)的 dict,逐 peer 各 rpc_id 一次 -> 服务器序列化 N 次
 	var cur_frame := n * sz_entry
 	var cur_server_up := float(cur_frame * SNAP_HZ * n)      # 逐 peer 各发一份
 	var cur_client_down := float(cur_frame * SNAP_HZ)
 
-	# 新方案:①本人包 = 自己的 c2 + ack(定向 rpc_id,每人一份,大小 = sz_c2 + ack)
-	#         ②世界包 = 全部 N 人的渲染散字段(构造一次,广播一次)
-	# 服务器上行 ≈ N × (c2 包) + 1 × (世界包)
+	# 新方案:①本端专属状态包 = 自己的 c2 + ack(定向 rpc_id,每人一份,大小 = sz_c2 + ack)
+	#         ②全局世界快照包 = 全部 N 人的渲染独立状态字段(构造一次,广播一次)
+	# 服务器上行 ≈ N × (c2 包) + 1 × (全局世界快照包)
 	var own_pkt := sz_c2 + 16                                 # +ack/seq/方法开销余量
 	var world_pkt := n * sz_render
 	var new_server_up := float((n * own_pkt + world_pkt) * SNAP_HZ)

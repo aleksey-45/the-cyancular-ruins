@@ -1,33 +1,32 @@
 extends Node
 
-# 设置页「联机显示」一节的常驻守卫。
-# 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/settings_display_section_probe.tscn
-# 判据: 文本 `SETTINGS DISPLAY SECTION PROBE: ALL-OK`(不看退出码)。
+# 设置页「联机显示」一节的自动化测试探针。
+# 运行方式： "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/settings_display_section_probe.tscn
+# 验收标准： 文本 `SETTINGS DISPLAY SECTION PROBE: ALL-OK`(不看退出码)。
 #
 # - 为什么需要它:四个开关原先只长在 1v1 大厅页上,那页在计划①里被删了  ->  键还在、
-#   读者还在,但**界面上再也改不了它们**。本探针严格校验"这一节真的建出来了、且每个开关
+#   读者还在,但界面上再也改不了它们。本探针严格校验"这一节真的建出来了、且每个开关
 #   真的跟随/写回对应的 Settings 键"。
-# - 断言计数:ALL-OK 只证明"没有一条失败",不证明"该跑的都跑过"(见 tests/lib/probe_base.gd
-#   文件头)。少跑一条就红 —— 改本探针必须同步改这个数。
-#   注意： 注意 `EXPECTED_CHECKS` 是**运行时**条数,不是 `grep -c` 的**调用点行数**(10):
+# - 断言计数校验：验证预期的断言全部执行完毕（详见 tests/lib/probe_base.gd 说明）。存在未执行项即判定失败。
+# 注意事项：注意 `EXPECTED_CHECKS` 是运行时条数,不是 `grep -c` 的调用点行数(10):
 #      两条逐行循环(相 A 的 4 行 × 2 条、相 B 的 4 行 × 2 条)在计数字面上各只占 1 行。
 #
-# 注意： 两处**有意偏离实施简报**(2026-10-03,评审后订正):
+# 注意事项：两处有意偏离实施简报(2026-10-03,评审后订正):
 #   1. 简报的 `ROWS[0][0]` 写的是 "显示子弹尾迹",而设计文档 §3.6 与旧 1v1 大厅页
-#      (`matchmaking.gd`)的**权威文案**是 "显示子弹尾迹(所有子弹)"。本探针的
-#      `_find_check_by_label` 是**逐字相等**,照简报写会**恒红**。按设计文档取值。
+#      (`matchmaking.gd`)的权威文案是 "显示子弹尾迹(所有子弹)"。本探针的
+#      `_find_check_by_label` 是逐字相等,照简报写会始终断言失败。按设计文档取值。
 #   2. `EXPECTED_CHECKS` 由简报的 10 上调(见上)。
 #
-# 注意： 为什么要**两相基线**(这是本探针最反直觉的一处):
-#   四个键的出厂默认**全是 `true`**(settings.gd:36,38,42,43)。若拿默认当基线,
-#   `cb.button_pressed == Settings.<key>` 就是 `true == true` —— **恒真**,
-#   把 `Settings.<key>` 换成 `true` 字面量、或接到另一个也是 `true` 的键,**照样测试全部通过**。
+# 注意事项：为什么要两相基线(这是本探针最反直觉的一处):
+#   四个键的出厂默认全是 `true`(settings.gd:36,38,42,43)。若拿默认当基线,
+#   `cb.button_pressed == Settings.<key>` 就是 `true == true` —— 始终为 true,
+#   把 `Settings.<key>` 换成 `true` 字面量、或接到另一个也是 `true` 的键,照样全部断言通过。
 #   故:
-#     相 A:四个键全设 **false**(非默认) ->  严格校验"写死 `true` 会红"。
+#     相 A:四个键全设 false(非默认) ->  严格校验"写死 `true` 会红"。
 #     相 B:交错基线 [false,true,false,true]  ->  相邻两键取值不同,严格校验"接错键会红"。
-#   - **覆盖上限(照实登记)**:布尔只有两个值,相 B 里**同值的那两行**(0/2 为 false、
-#     1/3 为 true)互接是**结构性分辨不出**的 —— 那是 booleans 的界限,不是本探针的疏漏。
-#   - 另一处未覆盖:相 A 的"全 false 基线"只在**默认仍为 true** 时才是非默认;若哪天把
+#   - 覆盖上限(照实登记):布尔只有两个值,相 B 里同值的那两行(0/2 为 false、
+#     1/3 为 true)互接是结构性分辨不出的 —— 那是 booleans 的界限,不是本探针的疏漏。
+#   - 另一处未覆盖:相 A 的"全 false 基线"只在默认仍为 true 时才是非默认;若哪天把
 #     这四个键的默认改成 false,相 A 就退化成默认基线、不再能严格校验"写死 true"。
 
 const EXPECTED_CHECKS := 20
@@ -65,13 +64,13 @@ func _ready() -> void:
 		get_tree().quit(1)
 		return
 	# 探针会真的拨开关,而 `settings_menu.gd` 的 `_check()` 挂的 lambda 会 `Settings.save()`
-	#  ->  **会写用户的 cfg**。记下原值,收尾还原后再 save() 一次(见 _restore)。
+	#  ->  会写用户的 cfg。记下原值,收尾还原后再 save() 一次(见 _restore)。
 	var orig := {}
 	for row in ROWS:
 		orig[str(row[1])] = bool(Settings.get(str(row[1])))
 
 	# ── 相 A:非默认基线(四个键全 false;出厂默认全是 true)──
-	# 见文件头:默认基线会让"初值跟随 Settings"这条断言恒真,mutation 咬不住。
+	# 见文件头:默认基线会让"初值跟随 Settings"这条断言始终为 true,mutation 咬不住。
 	_set_all_keys(false)
 	var a := _build(ps)
 	var labels_a := _collect_labels(a["page"])
@@ -113,11 +112,11 @@ func _ready() -> void:
 			continue
 		_check(cb.button_pressed == bool(Settings.get(key)),
 				"「%s」的初值来自 `Settings.%s`(基线交错,接错键会红)" % [want, key])
-	# - 行为面:逐行拨动,断言**只写它自己那个键**(写错键 / 随意将别的键也写了都会红)。
+	# - 行为面:逐行拨动,断言只写它自己那个键(写错键 / 随意将别的键也写了都会红)。
 	for i in ROWS.size():
 		var want := str(ROWS[i][0])
 		var key := str(ROWS[i][1])
-		_set_all_keys(false)   # 每行从同一基线出发:其余三键必须**保持 false**
+		_set_all_keys(false)   # 每行从同一基线出发:其余三键必须保持 false
 		var cb := _find_check_by_label(checks_b, want)
 		if cb == null:
 			_check(false, "行为面:开关「%s」找不到" % want)
@@ -136,7 +135,7 @@ func _ready() -> void:
 	_finish()
 
 
-# 造一页:加入场景树 → `_ready` 跑完(控件齐全)→ 返回 {"host","page"};free 由调用方做。
+# 造一页:加入场景树 -> `_ready` 跑完(控件齐全) -> 返回 {"host","page"};free 由调用方做。
 # - 设置页 `_ready` 里没有 deferred 的网络动作(它不连大厅) ->  同一同步栈内 free 安全。
 func _build(ps: PackedScene) -> Dictionary:
 	var host := Node.new()
@@ -146,7 +145,7 @@ func _build(ps: PackedScene) -> Dictionary:
 	return {"host": host, "page": p}
 
 
-# 直接写内存里的四个 Settings 键(**不 save()** —— 落盘只发生在 lambda 与 _restore 里)。
+# 直接写内存里的四个 Settings 键(不 save() —— 落盘只发生在 lambda 与 _restore 里)。
 func _set_all_keys(v: bool) -> void:
 	for row in ROWS:
 		Settings.set(str(row[1]), v)
@@ -197,7 +196,7 @@ func _find_check_by_label(checks: Array, label_text: String) -> CheckButton:
 
 
 # 「联机显示」那节必须排在「按键映射」之前(与设计 §3.6 的次序一致)。
-# - 判据是**两个节标题在遍历序里的先后**,不是它们在屏幕上的 y —— 后者会随版式变。
+# - 判定依据为两个节标题在遍历序里的先后,不是它们在屏幕上的 y —— 后者会随版式变。
 func _section_precedes_keymap(root: Node) -> bool:
 	var labels := _collect_labels(root)
 	var i_net := labels.find("联机显示")
@@ -209,9 +208,9 @@ func _section_precedes_keymap(root: Node) -> bool:
 	return i_net >= 0 and i_key >= 0 and i_net < i_key
 
 
-# 「联机显示」还必须排在「通用开关」**之后** —— 只钉"早于按键映射"的话,把它插到
-# 整页最前面(音量之前)也测试全部通过。
-# - 锚点取「通用开关」那一块里唯一那一行的标签 —— 那一块(鼠标滚轮切枪)**没有节标题**,
+# 「联机显示」还必须排在「通用开关」之后 —— 只钉"早于按键映射"的话,把它插到
+# 整页最前面(音量之前)也全部断言通过。
+# - 锚点取「通用开关」那一块里唯一那一行的标签 —— 那一块(鼠标滚轮切枪)没有节标题,
 #   故只能用行标签当锚。
 func _section_after_general(root: Node) -> bool:
 	var labels := _collect_labels(root)

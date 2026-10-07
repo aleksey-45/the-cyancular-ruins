@@ -7,7 +7,7 @@
 
 `Scenes/Player/player.gd` 现为 448 行,混合了 6 块职责:物理移动(约 170 行)、攀爬(~60)、战斗(生命/无敌/击退/倒地)、武器管理、姿态动画状态机、输入分发。
 
-目标:把最自包含的 3 块(攀爬 / 战斗 / 武器)抽成 Player.tscn 子节点脚本,根脚本降到约 250 行。**保持行为与公开接口完全不变**。
+目标:把最自包含的 3 块(攀爬 / 战斗 / 武器)提取为 Player.tscn 子节点脚本,根脚本降到约 250 行。**保持行为与公开接口完全不变**。
 
 ## 方案:轻量拆分(用户已选定,不用完整组件化)
 
@@ -65,7 +65,7 @@ Player (CharacterBody2D, player.gd 根 → ~250 行:移动+姿态+编排)
   - `apply_recoil` 需要根/攀爬的 squat/latched → 根取来传给 weapons。
 - `take_hit` 里的"取消冲刺"→ combat 需把 `is_charge` 清掉:由根在转发时先清 `is_charge`/`charge_timer`,再调 `combat.take_hit`(保持 is_charge 所有权在根)。
 
-## 公开 API 契约(必须一字不改,外部调用方零改动)
+## 公开 API 接口规范(必须一字不改,外部调用方无需修改)
 
 - `take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0)`
 - `get_facing() -> int` / `set_facing(v: int)`

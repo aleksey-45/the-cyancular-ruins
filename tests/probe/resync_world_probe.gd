@@ -1,35 +1,35 @@
 extends Node
 
-# 「重连状态补充同步:先还原基线、再应用 destroyed」的**真行为**守卫。
-# 跑法: timeout 300 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/resync_world_probe.tscn
-# 通过 = 文本 `RESYNC WORLD PROBE: ALL-OK` 退出 0(判据是**文本**,不是退出码 —— 场景探针在脚本
-#   报错时 `--quit-after` 到点照样 exit 0,只看退出码会把"根本没跑完"读成"通过")。
+# 「重连状态补充同步:先还原基线、再应用 destroyed」的真行为防御性校验。
+# 运行方式： timeout 300 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/resync_world_probe.tscn
+# 通过 = 文本 `RESYNC WORLD PROBE: ALL-OK` 退出 0(判定依据为文本,不是退出码 —— 场景探针在脚本
+#   报错时 `--quit-after` 到点照样 exit 0,只看退出码会把"根本未完整执行"读成"通过")。
 #
-# ═══ 守的是什么 ═══
-# `match_sync` 的 `destroyed` 表达的是「与**建局基线**不同的格」。客户端在宽限期内**错过一次换局**时,
+# ── 守的是什么 ──
+# `match_sync` 的 `destroyed` 表达的是「与建局基线不同的格」。客户端在宽限期内错过一次换局时,
 # 服务器那次 `_reset_world_and_clear_dynamics()` 已经把可破坏砖还原成基线  ->  那些格等于基线、
-# **永不进载荷**  ->  客户端本地留着上一局拆出来的破洞 = **幻影空洞**(服务器上那里是实心墙)。
+# 永不进载荷  ->  客户端本地留着上一局拆出来的破洞 = 幻影空洞(服务器上那里是实心墙)。
 # 客户端唯一的还原路径是新回合 COUNTDOWN 里的 `Level0.reset_destructibles()`(见
-# `pvp_game._on_round_state`),而重连回来时那一局可能**已经打到 PLAYING** → 那条分支不触发。
-# 修法 = 状态补充同步那一路**先** `reset_destructibles()` **再**应用 `destroyed`(因为 destroyed 相对基线,
+# `pvp_game._on_round_state`),而重连回来时那一局可能已经打到 PLAYING -> 那条分支不触发。
+# 修法 = 状态补充同步那一路先 `reset_destructibles()` 再应用 `destroyed`(因为 destroyed 相对基线,
 # 两者合起来恰好等于服务器的 grid,不上线任何新字节)。
 #
-# - 判据覆盖**三维**,缺一维就有一种退化实现能测试全部通过:
+# - 判定条件覆盖三维,缺一维就有一种退化实现能全部断言通过:
 #   - `MazeGenerator.current_grid`(逻辑)
-#   - 墙体瓦片层(用户**看得见**的那一维)
+#   - 墙体瓦片层(用户看得见的那一维)
 #   - `Level0._destructible_sub` 子格(物理摸得着的那一维)
-#   只断 grid → `reset_destructibles()` 哪天退化成"只改 grid、不重铺瓦片也不重建碰撞"照样测试全部通过,
+#   只断 grid -> `reset_destructibles()` 哪天退化成"只改 grid、不重铺瓦片也不重建碰撞"照样全部断言通过,
 #   而画面上仍是个洞、物理上仍能穿过去(客户端以为修好了、用户看见的没修)。
 #
-# ═══ 为什么不是真实网络链路断言,也不是源码级断言 ═══
+# ── 为什么不是真实网络链路断言,也不是源码级断言 ──
 # - 真实网络链路要造出「换局正好落在宽限期内」:1v1 一局得先到 5 杀才结束,现成探针里没有便宜手段,
-#   而"不许为测试新造产品开关"是硬约束 → 真实网络链路不可得(见报告)。
-# - 源码级(如 tests/smoke/reconnect_smoke.gd 那种 grep)只能判"那行字在不在",判不了**行为**:
+#   而"不许为测试新造产品开关"是硬约束 -> 真实网络链路不可得(见报告)。
+# - 源码级(如 tests/smoke/reconnect_smoke.gd 那种 grep)只能判"那行字在不在",判不了行为:
 #   顺序写反(先应用、后还原)、或门控前置校验写错(读了两遍 `_resync_pull_pending`,第二遍必 false)
-#   这三种坏法里,后两种照样能通过任何"字符串在位"式的断言。
-# - 所以退到**真对象 + 真函数**:真 `Level0`(pvp_mode、真地图、真碰撞、真 `_pristine_grid`)
-#   + 真 `PvpMatchClient._on_match_sync`(直接调那**一个**函数 —— 它只读 `_level0`/`_world`/
-#   `PvpSession`,与"是否真的连在网上"无关)。相同机制手法见 `ground_action_probe`(真 MatchHost、
+#   这三种坏法里,后两种照样能通过任何"字符串接口已声明且生效"式的断言。
+# - 所以退到真对象 + 真函数:真 `Level0`(pvp_mode、真地图、真碰撞、真 `_pristine_grid`)
+#   + 真 `PvpMatchClient._on_match_sync`(直接调那一个函数 —— 它只读 `_level0`/`_world`/
+#   `PvpSession`,与"是否真的连在网上"无关)。相同处理逻辑手法见 `ground_action_probe`(真 MatchHost、
 #   role_peers 传空)与 `destroyed_cells_probe`。
 
 const MAP := "res://maps/newfactory.cyrm"
@@ -37,10 +37,10 @@ const MAP := "res://maps/newfactory.cyrm"
 var _fails: Array[String] = []
 var _client: PvpMatchClient = null
 var _level0: Node = null
-var _ran_to_end := false          # 防"脚本中途报错 → 无失败项的 ALL-OK"(测试漏检守卫)
+var _ran_to_end := false          # 防"脚本中途报错 -> 无失败项的 ALL-OK"(测试漏报防御性校验)
 
-var _a := Vector2i(-1, -1)        # 客户端上一局拆过、而服务器换局已还原的格(**不在**载荷里)
-var _b := Vector2i(-1, -1)        # 掉线窗口内被服务器拆的格(**在**载荷里)
+var _a := Vector2i(-1, -1)        # 客户端上一局拆过、而服务器换局已还原的格(不在载荷里)
+var _b := Vector2i(-1, -1)        # 掉线窗口内被服务器拆的格(在载荷里)
 var _a_pristine := 0
 var _b_pristine := 0
 
@@ -73,15 +73,15 @@ func _run() -> void:
 	_check(not grid.is_empty(), "世界已建(网格非空)")
 	if grid.is_empty():
 		return
-	# 真实客户端实例实例:两个子类都 extends PvpMatchClient 且**都没覆写 `_on_match_sync`**,
-	# 故直接实例化基类跑的就是生产那一份实现(空载荷不会碰到两个"必须覆写"的虚函数)。
+	# 实例化真实客户端基类：各对战模式子类均继承自 PvpMatchClient 且未覆写 `_on_match_sync`，
+	# 直接实例化基类即可验证实际生产环境中的世界同步逻辑。
 	_client = PvpMatchClient.new()
 	add_child(_client)
 	_client._level0 = _level0
 	_client._world = _level0.get_node("WorldViewport")
 	_client._local = _client._world.get_node("Player")
 
-	# ── ① 挑两格**可被爆炸破坏**的砖:载荷里放 B、不放 A ──
+	# ── ① 挑两格可被爆炸破坏的砖:载荷里放 B、不放 A ──
 	var rows := grid.size()
 	var cols: int = (grid[0] as Array).size()
 	var picked: Array[Vector2i] = []
@@ -91,8 +91,8 @@ func _run() -> void:
 			if v == 0:
 				continue
 			if TileDefs.explosion_destroyable(MazeGenerator.texture_of(v)):
-				# - 额外要求该格在**基线**里就有碰撞子格(形状非 0 的实体砖):③ 里要断言
-				#   "还原之后子格回来了",而形状 0 的格在基线里本来就是 0 → 那条断言会**恒假**
+				# - 额外要求该格在基线里就有碰撞子格(形状非 0 的实体砖):③ 里要断言
+				#   "还原之后子格回来了",而形状 0 的格在基线里本来就是 0 -> 那条断言会始终为 false
 				#   (与"还原没生效"长得一样)。要的是"能被清掉、也该被还原"的格。
 				if _sub_at(Vector2i(x, y)) == 0:
 					continue
@@ -108,25 +108,25 @@ func _run() -> void:
 	_b = picked[1]
 	_a_pristine = int(grid[_a.y][_a.x])
 	_b_pristine = int(grid[_b.y][_b.x])
-	# - 非无效操作前置:B 的基线必须是**实心** —— 否则"应用 destroyed"那一步的判据(下面 ④)
+	# - 非无效操作前置:B 的基线必须是实心 —— 否则"应用 destroyed"那一步的判定条件(下面 ④)
 	#   会与"什么都没做"长得一样(空气改空气 = 零差异),顺序写反也照样绿。
 	_check(_a_pristine != 0 and _b_pristine != 0,
 			"两格在基线里都是实心(A=%d,B=%d)—— 前置:证明下面几条判的是真的差异" % [_a_pristine, _b_pristine])
 
 	# ── ② 造出"客户端与基线不一致"的现场:A、B 都在本地被拆掉 ──
-	# 走**真实客户端实例的真路径**(`_on_remote_tile_destroyed` = 服务器拆墙事件/换局状态补充同步共用的那一个),
+	# 走真实客户端实例的真路径(`_on_remote_tile_destroyed` = 服务器拆墙事件/换局状态补充同步共用的那一个),
 	# 不是直接改网格。
 	_client._on_remote_tile_destroyed(_a, true)
 	_client._on_remote_tile_destroyed(_b, true)
 	_check(_grid_at(_a) == 0 and _grid_at(_b) == 0,
 			"前置:本地这两格都已拆掉(A=%d,B=%d)" % [_grid_at(_a), _grid_at(_b)])
-	# - 非无效操作前置(瓦片层/碰撞维度):A 的**瓦片**与**碰撞子格**也真的被清掉了 —— 否则 ③ 里
+	# - 非无效操作前置(瓦片层/碰撞维度):A 的瓦片与碰撞子格也真的被清掉了 —— 否则 ③ 里
 	#   那条"还原之后确实重铺回来了"与"这一格从来没被动过"长得一模一样,退化实现照样能绿。
 	_check(_tile_source_at(_a) == -1 and _sub_at(_a) == 0,
 			"前置:A 的瓦片(cell_source_id=%d)与碰撞子格(%d)都已清掉" %
 			[_tile_source_at(_a), _sub_at(_a)])
 
-	# ── ③ 状态补充同步那一路:先还原基线、再应用载荷(A **不在**载荷里 = 上一局拆的、服务器已还原)──
+	# ── ③ 状态补充同步那一路:先还原基线、再应用载荷(A 不在载荷里 = 上一局拆的、服务器已还原)──
 	_client._resync_pull_pending = true
 	_client._on_match_sync({"destroyed": [_b]})
 	_check(_grid_at(_a) == _a_pristine,
@@ -135,9 +135,9 @@ func _run() -> void:
 	_check(_grid_at(_b) == 0,
 			"★ 载荷里的 B (%s) 仍是被拆的(实得 %d)—— 顺序写反(先应用、后还原)会把它一并填回去" %
 			[str(_b), _grid_at(_b)])
-	# 注意： 同一条"还原真的发生了"的判据,**换到用户看得见/物理摸得着的那两维**上再过一遍:
+	# 注意事项：同一条"还原真的发生了"的判定条件,换到用户看得见/物理摸得着的那两维上再过一遍:
 	#   上面两条只读 `MazeGenerator.current_grid` —— 若 `reset_destructibles()` 哪天退化成
-	#   "只改 grid、不重铺瓦片也不重建碰撞",grid 那两条**照样测试全部通过**,而客户端画面上仍是个洞
+	#   "只改 grid、不重铺瓦片也不重建碰撞",grid 那两条照样全部断言通过,而客户端画面上仍是个洞
 	#   (瓦片层)、物理上仍能穿过去(碰撞层)。也就是"客户端以为修好了、用户看见的没修"。
 	#   这里同时钉两维:`_on_tile_destroyed` 清的是 9 份环面副本的瓦片 + 该格 2×2 子格,
 	#   而 `reset_destructibles()` 重铺瓦片(`_paint_maze`)+ 整层重建碰撞(`build_sim`)。
@@ -145,7 +145,7 @@ func _run() -> void:
 			"★ A 的瓦片(cell_source_id=%d)与碰撞子格(%d)真的重铺回来了(前置已证还原前这两样是空的)" %
 			[_tile_source_at(_a), _sub_at(_a)])
 
-	# ── ④ 进场那一路**不许**还原(门控前置校验必须是那个读一次即清的 `resync`)──
+	# ── ④ 进场那一路不许还原(门控前置校验必须是那个读一次即清的 `resync`)──
 	# 反过来:若有人把还原写成无条件的,这里红。
 	_client._on_remote_tile_destroyed(_a, true)
 	_client._resync_pull_pending = false
@@ -167,14 +167,14 @@ func _grid_at(cell: Vector2i) -> int:
 
 
 # 墙体瓦片层里该格的纹理源 id(-1 = 该格没有瓦片)。铺的是 9 份环面副本,中心那份就是原坐标。
-# - 读的是**渲染**那一维:`grid` 说"这格是墙"不等于**画出来了** —— `_paint_maze` 才是。
+# - 读的是渲染那一维:`grid` 说"这格是墙"不等于画出来了 —— `_paint_maze` 才是。
 func _tile_source_at(cell: Vector2i) -> int:
 	var wl: TileMapLayer = Level0.wall_layer
 	if wl == null:
 		return -1
-	# 注意： 2026-10-02 合并修订说明:`_paint_maze` 在 cyrm v4(B18)里改成铺 **16px 子格**了
-	#    ->  该层的坐标是**子格**坐标,不是 64px 格坐标。原实现直接拿格坐标去查  ->  恒 -1
-	#   (② 的前置那条 `== -1` 因此**恒真**、③ 那条恒假)。这里按同样推导出来的比例展开,
+	# 注意事项：2026-10-02 合并修订说明:`_paint_maze` 在 cyrm v4(B18)里改成铺 16px 子格了
+	#    ->  该层的坐标是子格坐标,不是 64px 格坐标。原实现直接拿格坐标去查  ->  恒 -1
+	#   (② 的前置那条 `== -1` 因此始终为 true、③ 那条始终为 false)。这里按同样推导出来的比例展开,
 	#   任一子格有砖就返回它的 source id。
 	var per: int = CollisionBuilder.TILE_TS / CollisionBuilder.SUB_TS
 	var sx := cell.x * per
@@ -187,16 +187,16 @@ func _tile_source_at(cell: Vector2i) -> int:
 	return -1
 
 
-# 持久可破坏层里该 64px 格覆盖的那一块子格:**任一**非零就返回它,全零返回 0
+# 持久可破坏层里该 64px 格覆盖的那一块子格:任一非零就返回它,全零返回 0
 # (-1 = 越界 / 该层还没建)。
-# - 读的是**物理**那一维:`_on_tile_destroyed` 把这些子格清零,`reset_destructibles` 靠
+# - 读的是物理那一维:`_on_tile_destroyed` 把这些子格清零,`reset_destructibles` 靠
 #   `WorldBuilder.build_sim` 整层重建 —— 只改 grid 的退化实现不会让这里恢复。
-# 注意： 2026-10-02 合并修订说明:子格边长**从 `CollisionBuilder` 推导**,不写死乘数。
+# 注意事项：2026-10-02 合并修订说明:子格边长从 `CollisionBuilder` 推导,不写死乘数。
 #   原实现写的是 `cell * 2`(32px 子格 / 每格 2×2),而 cyrm v4(B18)已把破坏下沉到
-#   **16px(每格 4×4)**  ->  它**一直在取错格**;换 PvP 地图后 ② 的前置断言才把它暴露异常
+#   16px(每格 4×4)  ->  它一直在取错格;换 PvP 地图后 ② 的前置断言才把它暴露异常
 #   (它读到的是别的子格,而 `_on_remote_tile_destroyed` 清的是本格那 16 个)。
 #   - 顺带把"只看左上那一个子格"改成"整格任一非零":4×4 下左上子格只代表 1/16,
-#   不足以支撑"这一格有碰撞"这个判据。
+#   不足以支撑"这一格有碰撞"这个判定条件。
 func _sub_at(cell: Vector2i) -> int:
 	var sub: Array[Array] = Level0._destructible_sub
 	if sub.is_empty():

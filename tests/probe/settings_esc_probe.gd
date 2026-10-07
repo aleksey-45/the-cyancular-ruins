@@ -1,14 +1,14 @@
 extends SceneTree
 # 设置界面按 ESC 的回归探针(2026-10-01)。
 #
-# - 存在的理由:`change_scene_to_file` 在 Godot 4 里**同步 memdelete** 当前场景
+# - 存在的理由:`change_scene_to_file` 在 Godot 4 里同步 memdelete 当前场景
 #   (仓内另一处佐证见 `scenes/level_0.gd` 的 `safe_change_scene` 注释)。于是
 #   "切场景之后还碰 self" 就是 use-after-free —— 表现是整个进程崩掉(不是脚本报错)。
-#   本探针把"主菜单 → 设置 → 按 ESC"这条真实输入路径走一遍,并断言场景确实换成了主菜单。
+#   本探针把"主菜单 -> 设置 -> 按 ESC"这条真实输入路径走一遍,并断言场景确实换成了主菜单。
 #
-# 跑法(必须真实视口渲染? 不需要,headless 即可):
+# 运行方式(必须真实视口渲染? 不需要,headless 即可):
 #   godot --headless --path . -s res://tests/probe/settings_esc_probe.gd
-# 判据:最后一行 `SETTINGS ESC PROBE: ALL-OK`;崩了就没有这一行(退出码非 0)。
+# 验收标准：最后一行 `SETTINGS ESC PROBE: ALL-OK`;崩了就没有这一行(退出码非 0)。
 
 const SETTINGS_SCENE := "res://scenes/settings_menu.tscn"
 const MENU_SCENE := "res://scenes/main_menu.tscn"

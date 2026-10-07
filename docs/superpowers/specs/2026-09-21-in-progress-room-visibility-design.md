@@ -12,7 +12,7 @@
 | 2 | 对局中的房能不能进 | **不能**。可见 ≠ 可加入（用户原话：「所有人都可以看到所有房间(包括游戏已经进行的房间)…无论在对战还是掉线 C 都不应该进去」） | 用户 |
 | 3 | 「记录」放哪 | **不新立表**：让既有的三个房类的**寿命从「最后一个人离开」延长到「这一局的 worker 进程退出」**。三个房类的记录**就是**那份记录 | 本设计（见 §2） |
 | 4 | 怎么退役 | **worker 进程活性**（`OS.is_process_running(pid)`，30s 梯轮询）+ 既有的 2h 超龄清扫兜底 | 本设计（见 §2.4，含**照实登记的 pid 复用风险**） |
-| 5 | 载荷怎么加 | 三个模式的列表载荷各加**同名同义**的一个键 `in_match: bool`（加法式扩展，老客户端忽略未知键） | 本设计（见 §3） |
+| 5 | 数据包怎么加 | 三个模式的房间列表数据各加**同名同义**的一个键 `in_match: bool`（向后兼容扩展，老客户端忽略未知键） | 本设计（见 §3） |
 | 6 | 拒绝怎么保证 | **两半**：服务端 join 守卫（保证）+ 界面 `disabled` 行（体验）。★ 只做列表不做拒绝 = 陷阱 | 本设计（见 §5） |
 
 **范围外（明确不做，见 §7）**：回局（token / `reclaim_role` / 场景重建 / 主菜单入口）、HUD 的「掉线中·重连中」、观战、补位加入、跨模式合并列表、worker 崩溃恢复。
@@ -34,7 +34,7 @@
 **这个拆除不是多余的**，它挡的是两个已经付过代价的失败模式（注释就在现场：`:250-254`、`:266-273`、`:284-290`）：
 
 - **幽灵房**：对局实际已死，房却常驻列表，可被反复加入 → 重复拉起 worker；
-- **僵尸 worker / 端口泄漏**：worker 还占着 UDP 端口，房却没人认领。本层为「端口泄漏」这**同一个**失败模式补过三次，最后收成单一收口 `teardown_room`（`:686`），并由 `tests/room_sweep_smoke.gd:83` 的 `_check_teardown_funnel` 钉住纪律：**端口归还与注册表删除只能出现在 `teardown_room` 与 `_release_port_later` 两个函数体内**（模式表在 `:120`：`_release_port_later(` / `launcher.release_now(` / `royale_rooms.erase(` / `team_rooms.erase(` / `rooms.erase(`）。
+- **僵尸 worker / 端口泄漏**：worker 还占着 UDP 端口，房却没人认领。本层为「端口泄漏」这**同一个**失败模式补过三次，最后收成单一统一收拢 `teardown_room`（`:686`），并由 `tests/room_sweep_smoke.gd:83` 的 `_check_teardown_funnel` 断言约束纪律：**端口归还与注册表删除只能出现在 `teardown_room` 与 `_release_port_later` 两个函数体内**（模式表在 `:120`：`_release_port_later(` / `launcher.release_now(` / `royale_rooms.erase(` / `team_rooms.erase(` / `rooms.erase(`）。
 
 ★ **所以本设计的第一条硬约束**：拆房这件事只是**换了触发时机**，不是取消 —— 任何"不拆"的改动都必须**同时**给出替代的回收路径，而那条路径必须仍然走 `teardown_room`。
 
@@ -108,22 +108,22 @@ _match_over(port, pid) := port > 0 and pid > 0 and not WorkerLauncher.pid_alive(
 5. `_sweep_stale_rooms` 的在局宽限仍是**估**的（大乱斗取 `RoyaleHost.MATCH_TIME` 默认值、3v3 取 `TEAM_MATCH_ESTIMATE`）——本批**不放宽**（真正的界只在 worker 里，两条既有边界照旧）。
 6. 1v1 现在会活进对局，所以 `_sweep_stale_rooms` 那条「1v1 不享受在局宽限」（裸 `MAX_ROOM_AGE`）从"够不着"变成"理论上够得着"。**实测够不着**：房龄 2h 而一局 1v1 只有几分钟，且清扫 10 分钟才跑一次。**照实登记，本批不改**。
 
-### 2.5 端口不变量：承重的那条换了一个
+### 2.5 端口不变量：核心关键的那条换了一个
 
-**今天**承重的是 `WorkerLauncher` 的三个 `*_PORT_REUSE_DELAY`（`server/worker_launcher.gd:31/38/42`）—— 因为房在转连那一刻就被拆了，端口从那一刻起倒计时，所以只能靠"延迟 > 宽限期"来保证重连的客户端手里那个端口还有效（`WORKER_PORT_REUSE_DELAY` 的注释就是这条教训：`30 == 30` 是**相等**而不是"短于"，相等同样不安全）。
+**今天**核心关键的是 `WorkerLauncher` 的三个 `*_PORT_REUSE_DELAY`（`server/worker_launcher.gd:31/38/42`）—— 因为房在转连那一刻就被拆了，端口从那一刻起倒计时，所以只能靠"延迟 > 宽限期"来保证重连的客户端手里那个端口还有效（`WORKER_PORT_REUSE_DELAY` 的注释就是这条教训：`30 == 30` 是**相等**而不是"短于"，相等同样不安全）。
 
-**本设计之后**承重的是**房的寿命**：房活到 worker 退出 ⇒ **端口一直被占着**（端口只在 `teardown_room` 里归还，而拆房现在发生在对局结束之后）。于是：
+**本设计之后**核心关键的是**房的寿命**：房活到 worker 退出 ⇒ **端口一直被占着**（端口只在 `teardown_room` 里归还，而拆房现在发生在对局结束之后）。于是：
 
 - 宽限期 ⊆ worker 的存活期（大乱斗/3v3 的 worker 判据里明确要求 `_grace.size() == 0` 才退，见 `server_main.gd` 的 `_expire_graces` 末条），所以**宽限期内的客户端手里那个端口一定还有效**，与延迟常量的取值无关；
 - 三个延迟常量的职责缩成一条：**"worker 刚退出，别立刻把它的端口发出去"**（给进程收尾与 UDP socket 释放留时间）。它们的取值**本批不动**。
 
-★ 这条换位要写进 `worker_launcher.gd` 的注释（旧的"必须严格大于宽限期"作为**次要 belt** 保留，但要说清它不再是承重的那条）。详见后继计划的 Task 2。
+★ 这条换位要写进 `worker_launcher.gd` 的注释（旧的"必须严格大于宽限期"作为**次要 belt** 保留，但要说清它不再是核心关键的那条）。详见后继计划的 Task 2。
 
 ---
 
-## 3. 列表载荷
+## 3. 房间列表数据
 
-三个页面的列表载荷各加**一个同名同义的键**：
+三个页面的房间列表数据各加**一个同名同义的键**：
 
 ```
 1v1   : {code, players, names, in_match}                  ← 新增 in_match
@@ -132,9 +132,9 @@ _match_over(port, pid) := port > 0 and pid > 0 and not WorkerLauncher.pid_alive(
 ```
 
 - 对局中那一行：`players` = **冻结名单的条数**（因为 `players` 已经空了），`names` 来自冻结名单；`max_players` 对 1v1 没有（房间恒 2 人，客户端本来就写死 `%d/2`）。
-- **加法式兼容**：三个页面的消费点一律是 `.get(键, 默认)`（如 `royale_lobby.gd:260-264`），未知键被忽略。老客户端因此会把这一行画成**可点**、点下去被服务端拒（§5），落到 `server_message` 显示一句文案。**新版客户端的"看得见"与服务端的"进不去"各自独立成立**，不需要两端同时升级。
+- **向后兼容增量扩展兼容**：三个页面的消费点一律是 `.get(键, 默认)`（如 `royale_lobby.gd:260-264`），未知键被忽略。老客户端因此会把这一行画成**可点**、点下去被服务端拒（§5），落到 `server_message` 显示一句文案。**新版客户端的"看得见"与服务端的"进不去"各自独立成立**，不需要两端同时升级。
 - **不加 `mode` 键**（理由见 §2.2）。
-- **抽成纯构造** `LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()`，发送点只留一行 `NetBus.reply(caller, "room_list", room_list_payload())` / `NetBusExt.rpc_id(caller, "royale_rooms", royale_list_payload())`。★ 理由不是"整洁"：**`NetBus.reply` 在无对端时会静默跳过**（见 `NetBus.reply` 的判活注释），所以探针里"列表内容"**根本观测不到** —— 只有把构造抽成可直调的纯函数，它才是可测的。发送那一半由真链路探针覆盖（后继计划的 `tests/rejoin_probe.tscn` 相 c3）。
+- **提取为纯构造** `LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()`，发送点只留一行 `NetBus.reply(caller, "room_list", room_list_payload())` / `NetBusExt.rpc_id(caller, "royale_rooms", royale_list_payload())`。★ 理由不是"整洁"：**`NetBus.reply` 在无对端时会静默跳过**（见 `NetBus.reply` 的判活注释），所以探针里"列表内容"**根本观测不到** —— 只有把构造提取为可直调的纯函数，它才是可测的。发送那一半由真链路探针覆盖（后继计划的 `tests/rejoin_probe.tscn` 相 c3）。
 
 ---
 
@@ -166,7 +166,7 @@ _match_over(port, pid) := port > 0 and pid > 0 and not WorkerLauncher.pid_alive(
 
 今天 1v1 说的是「房间已满」（`:222`）—— 对"房里只剩 1 人、对局正在进行"是**假话**，而且会踩 `matchmaking.gd:201-218` `_on_server_message` 的自动刷新分支（`_auto_refreshed` 只自动刷一次；第二次点就只剩一句「房间已满」，玩家会读成"满了"而不是"进不去"）。
 
-统一改成：**「该房间的对局已进行中,无法加入」**（三模式逐字同款）。同时 `matchmaking._on_server_message` 的自动刷新分支**保持只认旧文案**（`房间已满` / `房间不存在`）—— 新文案落到 `else`：**只显示、不刷新**（房本就该一直在列表里，刷新没有意义）。★ 这是"改一个字符串静默改了行为"的典型，故计划里有一条**源码级**断言钉住它。
+统一改成：**「该房间的对局已进行中,无法加入」**（三模式逐字同款）。同时 `matchmaking._on_server_message` 的自动刷新分支**保持只认旧文案**（`房间已满` / `房间不存在`）—— 新文案落到 `else`：**只显示、不刷新**（房本就该一直在列表里，刷新没有意义）。★ 这是"改一个字符串静默改了行为"的典型，故计划里有一条**源码级**断言断言约束它。
 
 ### 5.3 覆盖两档"进行中"
 
@@ -175,7 +175,7 @@ _match_over(port, pid) := port > 0 and pid > 0 and not WorkerLauncher.pid_alive(
 
 ### 5.4 断言的是**拒绝**，不是列表
 
-只断言"列表里有它"会让一个"能点进去"的实现全绿 —— 那正是把第三人放进了别人的对局里。所以拒绝那一半必须**单独断言**，且**用非满房构造**：
+只断言"列表里有它"会让一个"能点进去"的实现全部通过 —— 那正是把第三人放进了别人的对局里。所以拒绝那一半必须**单独断言**，且**用非满房构造**：
 
 - 1v1：房里只留 **1 人** → 唯一可能拒它的理由只剩 `started`（满房那条守卫要走 `players.size() >= 2`，够不着）；
 - 大乱斗：**2/8**；
@@ -196,8 +196,8 @@ _match_over(port, pid) := port > 0 and pid > 0 and not WorkerLauncher.pid_alive(
 | 测试 | 类型 | 覆盖 |
 |---|---|---|
 | `tests/lobby_visibility_probe.tscn` + `.gd` | 场景探针（agent 可跑） | 三个模式各：房活过转连 / 列表里有它且名单来自冻结那份 / 第三人**进不去**；回收梯：活 pid 不回收、死 pid 回收、**pid 未登记不回收** |
-| `tests/lobby_row_probe.tscn` + `.gd` | 场景探针（agent 可跑） | 三个大厅页各：对局中那一行存在、`disabled`、**没有任何 handler**、`FOCUS_NONE`、文案含「对局中」、名单来自载荷；普通行不是 disabled 且**接了一个 handler**（正向对照） |
-| `tests/room_sweep_smoke.gd`（既有，`-s`） | 源码级/结构级 | 新增：①`WorkerLauncher` 的 pid 登记与归还语义；②回收梯的**接线**（常量在、`_process` 调它、走 `teardown_room`、`_match_over` 对 `pid <= 0` 判否）；③三条 join 的守卫 + 统一文案在位。既有：拆除收口纪律（`_check_teardown_funnel`） |
+| `tests/lobby_row_probe.tscn` + `.gd` | 场景探针（agent 可跑） | 三个大厅页各：对局中那一行存在、`disabled`、**没有任何 handler**、`FOCUS_NONE`、文案含「对局中」、名单来自数据包；普通行不是 disabled 且**接了一个 handler**（正向对照） |
+| `tests/room_sweep_smoke.gd`（既有，`-s`） | 源码级/结构级 | 新增：①`WorkerLauncher` 的 pid 登记与归还语义；②回收梯的**接线**（常量在、`_process` 调它、走 `teardown_room`、`_match_over` 对 `pid <= 0` 判否）；③三条 join 的守卫 + 统一文案在位。既有：拆除统一收拢纪律（`_check_teardown_funnel`） |
 | `tests/team_room_smoke.gd`（既有，`-s`） | 源码级 | **回归**：三路互斥仍是**双向**判定 |
 
 ### 6.2 ★ 断言计数（本仓实测过的坑）
@@ -208,21 +208,21 @@ _match_over(port, pid) := port > 0 and pid > 0 and not WorkerLauncher.pid_alive(
 
 ### 6.3 反证（每个任务都要做，两段输出写进报告）
 
-| 注入的缺陷 | 必须变红的那条 |
+| 注入的缺陷 | 必须报错失败的那条 |
 |---|---|
 | `WorkerLauncher.release_now` 不清 pid | `room_sweep_smoke` 的"端口归还后未清 pid" |
 | `on_peer_left` 的 `if room.started: continue` 删掉 | 探针相①「房**仍在**」 |
 | `room_list_payload` 的名单来源换回 `_peer_names` | 探针相①「名单取自冻结那份」 |
 | `join_room` 的 `if room.started:` 删掉 | 探针相①「第三人 join 被拒」 |
 | 对局中的行改回 `btn.disabled = false` 并接上 `pressed` | `lobby_row_probe` 的 disabled / 连接数两条 |
-| `_reclaim_finished_matches` 里把 `teardown_room(...)` 换成直接 `royale_rooms.erase(...)` | `room_sweep_smoke` **新增的**接线断言「回收梯没走拆除单一收口」（★ 不是既有的 `_check_teardown_funnel` —— 那个只扫 `server/lobby_rooms.gd`，写在 `room_manager.gd` 里的绕道它照不到；两条断言各自守自己那个文件的收口纪律） |
+| `_reclaim_finished_matches` 里把 `teardown_room(...)` 换成直接 `royale_rooms.erase(...)` | `room_sweep_smoke` **新增的**接线断言「回收梯没走拆除单一统一收拢」（★ 不是既有的 `_check_teardown_funnel` —— 那个只扫 `server/lobby_rooms.gd`，写在 `room_manager.gd` 里的绕道它照不到；两条断言各自守自己那个文件的统一收拢纪律） |
 | `_match_over` 对 `pid <= 0` 返回 true | 探针相④「pid 还没登记不得判成结束」 |
-| `_process` 里不调 `_reclaim_finished_matches` | `room_sweep_smoke` 的接线断言（行为探针是**手工**调它的，接不上时它照样全绿） |
+| `_process` 里不调 `_reclaim_finished_matches` | `room_sweep_smoke` 的接线断言（行为探针是**手工**调它的，接不上时它照样全部通过） |
 
 ### 6.4 未覆盖（照实登记）
 
-- **线上投递**：探针断言的是载荷构造函数与页面渲染，不是"这份载荷真的过了 UDP"。发送点各只改一行（换成调 payload 构造器），RPC 名与载荷形状都没变。★ 真链路上的"第三人看得见 + 进不去"由**后继计划**的 `tests/rejoin_probe.tscn` 相 c3 覆盖（同一个机制，一条探针，不重复造一个）。
-- **视觉**：不取图。本批没有动任何版式常量，只用既有的 `disabled` 样式；按本仓「别折腾视觉」的取向，人眼验收留给用户跑真链路探针时顺带看一眼列表。
+- **线上投递**：探针断言的是数据包构造函数与页面渲染，不是"这份数据包真的过了 UDP"。发送点各只改一行（换成调 payload 构造器），RPC 名与数据包形状都没变。★ 真链路上的"第三人看得见 + 进不去"由**后继计划**的 `tests/rejoin_probe.tscn` 相 c3 覆盖（同一个机制，一条探针，不重复造一个）。
+- **视觉**：不取图。本批没有动任何版式常量，只用既有的 `disabled` 样式；按本仓「别折腾视觉」的取向，人工视觉核验留给用户跑真链路探针时顺带看一眼列表。
 
 ---
 

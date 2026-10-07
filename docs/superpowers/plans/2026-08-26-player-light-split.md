@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 player.gd(448 行)中最自包含的攀爬/战斗/武器三块抽成 Player.tscn 子节点组件,根脚本降到约 250 行,行为与公开接口完全不变。
+**Goal:** 把 player.gd(448 行)中最自包含的攀爬/战斗/武器三块提取为 Player.tscn 子节点组件,根脚本降到约 250 行,行为与公开接口完全不变。
 
 **Architecture:** 新增 3 个空 Node 子节点(`Climb`/`Combat`/`Weapons`)挂各自脚本,根 `player.gd` 保持 CharacterBody2D 并每物理帧显式按固定顺序驱动组件,杜绝节点调度乱序。跨组件状态经根显式传参,组件只通过 `body`(父节点)引用操作。
 
@@ -11,16 +11,16 @@
 ## Global Constraints
 
 - Godot 4.7.1 标准控制台:`"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"`。
-- **公开 API 契约一字不改**(外部调用方零改动):`take_hit(source_pos, damage, ignore_iframes=false, knockback=-1.0)`、`get_facing()`、`set_facing(v)`、`is_downed()`、`apply_recoil(push)`、信号 `hp_changed(current, max)`、`player` 组、`collision_layer=2`/`collision_mask=5`/scale 2.5。
+- **公开 API 接口规范一字不改**(外部调用方无需修改):`take_hit(source_pos, damage, ignore_iframes=false, knockback=-1.0)`、`get_facing()`、`set_facing(v)`、`is_downed()`、`apply_recoil(push)`、信号 `hp_changed(current, max)`、`player` 组、`collision_layer=2`/`collision_mask=5`/scale 2.5。
 - **组件不写自己的 `_physics_process`/`_process`** —— 根每帧显式调用,物理顺序与现状一致。
 - 跨组件状态经根传参;组件内部状态各自私有(`_latched`/`knock_velocity`/`_weapon`),组件间不互相引用。
-- **无 -s 可实例化的玩家单测**(player.gd 引用 autoload `GameParameters`,实测 `-s` 阶段连编译都失败)。本计划用「源码级契约 lint + 每任务 headless 启动验证」替代 test-first;手感由用户进游戏验证。
+- **无 -s 可实例化的玩家单测**(player.gd 引用 autoload `GameParameters`,实测 `-s` 阶段连编译都失败)。本计划用「源码级接口规范 lint + 每任务 headless 启动验证」替代 test-first;手感由用户进游戏验证。
 - 每任务结束跑验证后单独提交;提交时**只 add 本任务的文件**,不碰工作区其他并发改动。
 - 依赖:`MazeGenerator`/`TileDefs`/`PlayerParams` 均为 `class_name`(非 autoload),组件内可直接引用;`GameParameters`(autoload)仅在真实运行时可用。
 
 ---
 
-### Task 1: 契约守卫 + 基线验证
+### Task 1: 接口规范守卫 + 基线验证
 
 **Files:**
 - Create: `Tests/player_contract_smoke.gd`
@@ -28,7 +28,7 @@
 **Interfaces:**
 - Produces: `player_contract_smoke.gd` —— 源码级守卫:检查根公开接口存在、组件文件/类名存在、根每物理帧驱动三个组件、武器注册表 5 槽完整。所有 task 完成前组件检查 FAIL,完成后全 PASS。
 
-- [ ] **Step 1: 创建契约守卫测试**
+- [ ] **Step 1: 创建接口规范守卫测试**
 
 ```gdscript
 extends SceneTree
@@ -85,7 +85,7 @@ func _initialize() -> void:
 		quit(1)
 ```
 
-- [ ] **Step 2: 运行契约守卫,确认对组件部分 RED**
+- [ ] **Step 2: 运行接口规范守卫,确认对组件部分 RED**
 
 Run: `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根公开接口 7 项 ok;组件 3 项 FAIL(climb/combat/weapon_component.gd 还不存在);weapon 注册表 5 项 FAIL;根驱动 3 项 FAIL(尚未接入)。退出码 1。
@@ -278,7 +278,7 @@ func cancel_jump_state() -> void:
 
 - [ ] **Step 4: 验证**
 
-Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
+Run 1(接口规范): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根接口 7 项 ok;`climb_component.gd` 检查 ok、根驱动 `climb.update` ok;combat/weapon 组件 + 武器注册表 + 根驱动 combat/weapon 2 项仍 FAIL。退出码 1(预期,其余组件未抽)。
 
 Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600`
@@ -423,7 +423,7 @@ func apply_recoil(push: float) -> void:
 
 - [ ] **Step 4: 验证**
 
-Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
+Run 1(接口规范): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 根接口 ok、climb ok、weapon 组件 + 注册表 5 槽 ok、`weapons.movement_multiplier()` 驱动 ok;仅 combat 组件 + `combat.apply_knock` 驱动 2 项仍 FAIL。退出码 1。
 
 Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600`
@@ -568,7 +568,7 @@ script = ExtResource("5_cmb")
 	var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量(独立于移动速度,指数衰减)
 ```
 
-3c. 删掉 `signal hp_changed(current: int, max: int)`(58 行),在姿态状态机上方加回(公共契约保持在根):
+3c. 删掉 `signal hp_changed(current: int, max: int)`(58 行),在姿态状态机上方加回(公共接口规范保持在根):
 
 ```gdscript
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
@@ -658,7 +658,7 @@ func cancel_charge() -> void:
 
 - [ ] **Step 4: 验证**
 
-Run 1(契约): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
+Run 1(接口规范): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/player_contract_smoke.gd`
 Expected: 全部 ok,末尾打印 `CONTRACT OK`,退出码 0。
 
 Run 2(启动): `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 3600`
@@ -679,13 +679,13 @@ git commit -m "refactor: 战斗/生命/倒地抽到 CombatComponent(行为不变
 - Modify: `CLAUDE.md`(玩家一节补充组件结构)
 - Modify: `Tests/player_contract_smoke.gd`(无改动,仅复跑)
 
-- [ ] **Step 1: 跑共享依赖冒烟 + 契约 + 启动三连**
+- [ ] **Step 1: 跑共享依赖冒烟 + 接口规范 + 启动三连**
 
 Run 1(现有冒烟,确认共享依赖无回归):
 `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/enemy_logic_smoke.gd`
 Expected: 打印 `SMOKE OK` 退出码 0。
 
-Run 2(契约): 同 Task 4 Step 4 Run 1,Expected `CONTRACT OK`。
+Run 2(接口规范): 同 Task 4 Step 4 Run 1,Expected `CONTRACT OK`。
 
 Run 3(启动): 同 Task 4 Step 4 Run 2,Expected 无 `SCRIPT ERROR`。
 

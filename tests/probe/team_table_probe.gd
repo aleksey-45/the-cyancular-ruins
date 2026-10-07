@@ -1,16 +1,15 @@
 extends Node
 
 # 队伍表进权威底座 + 子弹穿透队友。场景模式(root 有 autoload/`multiplayer`)。
-# 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/team_table_probe.tscn
+# 运行方式： "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/team_table_probe.tscn
 # 通过 = `TEAM TABLE: ALL-OK` 退出 0。
 #
-# ═══ 为什么需要它 ═══
-# - 队伍表算错/传丢的表现**全是静默的**:子弹照样飞、伤害照样结算,只是队友挨了枪。
+# ── 为什么需要它 ──
+# - 队伍表算错/传丢的表现全是静默的:子弹照样飞、伤害照样结算,只是队友挨了枪。
 #   数值断言(距离/伤害)在"队友被误伤"这件事上一条都不会红。
-# - 反向那条(不传 teams → 全 0、`same_team` 恒 false)是"空参数 = 原行为"的**唯一证据**:
-#   1v1/大乱斗的探针跑的是别的路径,无法覆盖检测这里。
-# 做法同 match_host_hygiene_probe:实际创建宿主实例,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包;
-# 玩家由探针自己按 `MatchHost._init` 的建法手工摆进 `players`。
+# - 反向对照组（未提供 teams 时默认为空，same_team 恒为 false）：验证缺省参数时维持既有非组队模式行为
+#   （1v1 与大乱斗模式执行不同调用分支，无法覆盖此处分支逻辑）。
+# 测试夹具沿用规范：实例化权威宿主对象，role_peers 传空以避免真实发包，由探针手动注入测试玩家实体。
 
 const MAP := "res://maps/newfactory.cyrm"
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
@@ -30,10 +29,10 @@ func _check(ok: bool, what: String) -> void:
 
 func _ready() -> void:
 	# - `await` 不可省(实测踩到):`_run()` 里有 `await get_tree().physics_frame`,
-	#   它因此是协程 —— 不 await 的话 `_run()` 在第一个 await 处就返回,`_finish()` 会**立刻**跑,
-	#   此时 `_ran_to_end` 恒 false → 所有断言测试全部通过却打 `FAIL`,而第 ③ 段还排在 FAIL 之后打印。
+	#   它因此是协程 —— 不 await 的话 `_run()` 在第一个 await 处就返回,`_finish()` 会立刻跑,
+	#   此时 `_ran_to_end` 恒 false -> 所有断言全部断言通过却打 `FAIL`,而第 ③ 段还排在 FAIL 之后打印。
 	# - 跑完闩的语义不变:若 `_run()` 中途抛运行期错误(在 await 之前返回),`await` 一个非信号值
-	#   会当场继续 → `_finish()` 照旧看到 `_ran_to_end == false` → 报"没跑到末尾"。
+	#   会当场继续 -> `_finish()` 照旧看到 `_ran_to_end == false` -> 报"没跑到末尾"。
 	await _run()
 	_finish()
 
@@ -64,7 +63,7 @@ func _run() -> void:
 	_check(not _host.same_team(1, 4), "1 与 4 不同队")
 	_check(not _host.same_team(0, 0), "★ 0 与 0 不算同队(无队伍 = 不豁免)")
 
-	# ── ② 反向:不传 teams → 表空、same_team 恒 false(= 1v1/大乱斗的原行为)──
+	# ── ② 反向:不传 teams -> 表空、same_team 恒 false(= 1v1/大乱斗的原行为)──
 	var plain = MatchHost.new(MAP, {}, {}, [])
 	add_child(plain)
 	plain.set_physics_process(false)
@@ -76,26 +75,26 @@ func _run() -> void:
 	var a := _place(_host, 4, Vector2i(20, 20))
 	var mate := _place(_host, 5, Vector2i(21, 20))
 	var foe := _place(_host, 1, Vector2i(22, 20))
-	# 注意： [仪器] 严格校验 `players` 的**插入顺序** —— ③/④ 的 `continue` vs `break` 区分度**全靠它**。
-	#   裁决循环是 `for role in players`(即字典插入序),而射手是 role4:顺序 [4,5,1] 下,
-	#   "打敌人"那次必然先遍历到**队友** role5(= 同队)→ 用 `break` 的实现会在那里**停下**,
-	#   永远走不到 role1 → `hit_foe` 红。若有人重排了上面三行的摆放顺序(比如把敌人先摆进来),
-	#   区分度**当场消失**而两条真断言**照样测试全部通过** —— 正是本仓反复在删的那种形状。
+	# 注意事项：[仪器] 严格校验 `players` 的插入顺序 —— ③/④ 的 `continue` vs `break` 区分度全靠它。
+	#   判定结果循环是 `for role in players`(即字典插入序),而射手是 role4:顺序 [4,5,1] 下,
+	#   "打敌人"那次必然先遍历到队友 role5(= 同队) -> 用 `break` 的实现会在那里停下,
+	#   永远走不到 role1 -> `hit_foe` 红。若有人重排了上面三行的摆放顺序(比如把敌人先摆进来),
+	#   区分度当场消失而两条真断言照样全部断言通过 —— 正是本仓反复在删的那种形状。
 	#   - 所以这条不是"重申实现细节":它守的是"③ 那两条为什么能红"。
 	_check(_host.players.keys() == [4, 5, 1],
 			"[仪器] players 按摆放顺序插入(4 → 5 → 1)—— **队友先于敌人被遍历**,"
 			+ "③ 的 continue/break 区分度就靠它(实际 %s)" % str(_host.players.keys()))
 	await get_tree().physics_frame   # 玩家 _ready(@onready combat/weapons)要跑过一帧
-	# 子弹:由 4 号发射,位置压在 5 号身上(队友)→ 不该结算;再压到 1 号身上 → 该结算。
+	# 子弹:由 4 号发射,位置压在 5 号身上(队友) -> 不该结算;再压到 1 号身上 -> 该结算。
 	var hit_mate := _fire_probe_bullet(_host, a, mate.global_position, 5)
 	_check(not hit_mate, "★ 子弹穿过队友(4 号打 5 号不结算)")
 	var hit_foe := _fire_probe_bullet(_host, a, foe.global_position, 1)
 	_check(hit_foe, "子弹打敌人照常结算(1 号)")
 
-	# ── ④ 榴弹**直击**那一层同样穿透队友(与普通弹同口径)──
+	# ── ④ 榴弹直击那一层同样穿透队友(与普通弹同口径)──
 	# - 为什么单钉它:`_adjudicate_bullets` 与 `_adjudicate_grenade` 各写了一份 `same_team` 判断,
-	#   改一处忘一处时**子弹那条照样绿** —— 只有这一条能照出"榴弹直击还在打队友"。
-	# - 爆炸那一层**故意不在这里断言**:设计约定"子弹穿透队友、爆炸对队友**满效**",
+	#   改一处忘一处时子弹那条照样绿 —— 只有这一条能照出"榴弹直击还在打队友"。
+	# - 爆炸那一层故意不在这里断言:设计约定"子弹穿透队友、爆炸对队友满效",
 	#   满效是 `Explosion.apply_aoe` 玩家分支的现状默认行为(它不看任何队伍关系),
 	#   本任务一行未动 —— 给它加断言等于给"没改的代码"上锁,反而会绑住将来对爆炸的调参。
 	var g_mate := _fire_probe_grenade(_host, a, mate.global_position, 5)
@@ -106,8 +105,8 @@ func _run() -> void:
 	_ran_to_end = true
 
 
-# 造一颗探针子弹(由 shooter 发射),摆在目标身上,跑一次裁决,返回"目标是否被结算"。
-# - 判定用目标自身的**受伤证据**(hp 下降),不是读内部表 —— 与玩家实现解耦。
+# 造一颗探针子弹(由 shooter 发射),摆在目标身上,跑一次判定结果,返回"目标是否被结算"。
+# - 判定用目标自身的受伤证据(hp 下降),不是读内部表 —— 与玩家实现解耦。
 func _fire_probe_bullet(host, shooter: Node2D, at: Vector2, victim_role: int) -> bool:
 	var victim: Node2D = host.players[victim_role]
 	var before: int = victim.hp

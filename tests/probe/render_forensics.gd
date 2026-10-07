@@ -1,9 +1,9 @@
 extends Node
 
-# 渲染取证(窗口模式跑,非 headless —— 要真实画面):
+# 画面渲染与视觉比对探针（需以窗口化渲染模式运行，请勿添加 --headless 参数以保证视口正常渲染）：
 #   godot --path . res://tests/probe/render_forensics.tscn --map=newfactory.cyrm
-# 加载指定地图的 Level0,2s/5s/8s 各拍一张全屏截图到 user://,供逐帧比对
-# "前景时有时无 / 水面发白" 这类纯视觉问题。头less 模式无画面,勿加 --headless。
+# 加载指定地图的 Level0 场景，分别在 2 秒、5 秒与 8 秒节点捕获完整视口截图并输出至 user:// 目录，
+# 用于离线比对前景层图层遮挡、水面着色渲染等视觉表现。
 
 var _map := "demo.cyrm"
 var _shots := [120, 300, 480]
@@ -24,7 +24,7 @@ func _run() -> void:
 	get_tree().root.add_child(lvl)
 	for i in 30:
 		await get_tree().physics_frame
-	# 找一格水,把玩家传送过去(相机跟随),拍"泡在水里"的画面
+	# 检索水体瓦片坐标并将玩家传送至水域内部（相机自动跟随），采集浸入水体时的视觉渲染画面
 	var grid: Array[Array] = MazeGenerator.current_grid
 	var water_cells := 0
 	var ts := GameParameters.TILE_SIZE

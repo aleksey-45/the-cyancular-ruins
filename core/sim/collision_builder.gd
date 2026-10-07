@@ -13,14 +13,14 @@ extends RefCounted
 const SUB_TS: int = 16        # 16px 子格(cyrm v4:64px 格 → 4×4 子格;交接文档 §4.2)
 const TILE_TS: int = 64       # 64px 格边长(SUB_TS×4,不引 autoload GameParameters)
 const CHUNK_CELLS: int = 12   # 块边长(64px 格)≈ √地图边长(125);换算子格 = ×4
-const LEDGE_THICKNESS: int = 6  # 攀爬结构基座薄碰撞条厚度(px)
+const LEDGE_THICKNESS: int = 6  # 攀爬结构基座薄碰撞条厚度（像素）
 
 # 64px 格坐标 → 所在块(格坐标/块边长,整除)。
 static func chunk_of(cell: Vector2i) -> Vector2i:
 	return Vector2i(cell.x / CHUNK_CELLS, cell.y / CHUNK_CELLS)
 
 
-# 从 **16px 子格纹理表**(MazeGenerator.current_subgrid)提取碰撞子格。
+# 从 16px 子格纹理表（MazeGenerator.current_subgrid）提取碰撞子格。
 # only_destructible=false 只收永久墙;true 只收可破坏。通道/液体/气体无实体碰撞(可走/可爬)。
 # - 子格表为空时(测试合成网格/旧路径)回落:把格级 2×2 形状掩码 ×2 展开成 4×4 ——
 #   几何与旧 32px 子格完全等价(每个 32px 象限 = 2×2 个同纹理 16px 子格)。

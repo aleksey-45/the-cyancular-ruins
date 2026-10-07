@@ -21,7 +21,7 @@ func _initialize() -> void:
 	if not (b_k > a_k):
 		fails.append("★ 击杀更多 ⇒ ACS 更高 不成立(%f → %f)" % [a_k, b_k])
 
-	# ② 死亡更多  ->  ACS 更低(今天**不成立**;这条是新性质,也是"MVP 常在败方"的守卫)
+	# ② 死亡更多  ->  ACS 更低(今天不成立;这条是新性质,也是"MVP 常在败方"的防御性校验)
 	var a_d = SR.acs(SR.kscore(3, 0, 0, 0), 1)
 	var b_d = SR.acs(SR.kscore(3, 0, 0, 3), 1)
 	if not (b_d < a_d):
@@ -40,13 +40,13 @@ func _initialize() -> void:
 	if not (b_a > a_a):
 		fails.append("★ 助攻 ⇒ ACS 更高 不成立(%f → %f)" % [a_a, b_a])
 
-	# ⑤ 注意： **伤害只被计入一次**(spec §1.4 那条必须写死的口径)
-	#   构造"只把伤害 +100、其余全同"的两个 case,断言 ACS 的增量**恰好**等于
+	# ⑤ 注意： 伤害只被计入一次(spec §1.4 那条必须写死的口径)
+	#   构造"只把伤害 +100、其余全同"的两个 case,断言 ACS 的增量恰好等于
 	#   `100 ÷ DAMAGE_PER_POINT ÷ 局数` —— 而不是它再加上那 100 伤害本身。
 	#   - 两个数(2 局):`d0 = (0 + 100/5)/2 = 10`、`d1 = (0 + 200/5)/2 = 20`
-	#      ->  期望增量 = `100/5/2` = **10**。
+	#      ->  期望增量 = `100/5/2` = 10。
 	#   - 测试有效性:`acs = (kscore + dealt) / 局数` 那种双计实现给出 `d0 = (20+100)/2 = 60`、
-	#     `d1 = (40+200)/2 = 120`  ->  增量 **60**(不是 10) ->  直接断言失败。
+	#     `d1 = (40+200)/2 = 120`  ->  增量 60(不是 10) ->  直接断言失败。
 	var d0 = SR.acs(SR.kscore(0, 0, 100, 0), 2)     # 总伤害 100、2 局
 	var d1 = SR.acs(SR.kscore(0, 0, 200, 0), 2)     # 只多 100 伤害
 	var want_delta := 100.0 / float(SR.DAMAGE_PER_POINT) / 2.0
@@ -54,7 +54,7 @@ func _initialize() -> void:
 		fails.append("★ 伤害只被计入一次:期望 ACS 增量 %f,实得 %f(差值 %f)—— 差得更大就是双计"
 				% [want_delta, d1 - d0, (d1 - d0) - want_delta])
 
-	# ⑥ 惩罚的构成:队友/自己伤害按**同倍率**(与伤害 1:1 冲销),击杀队友另加一份重罚
+	# ⑥ 惩罚的构成:队友/自己伤害按同倍率(与伤害 1:1 冲销),击杀队友另加一份重罚
 	var p_dmg = SR.penalty(50, 50, 0)               # (50+50)/5 = 20
 	var p_kill = SR.penalty(0, 0, 1)                # 0 + 1×TEAM_KILL_PENALTY
 	if p_dmg != 50 / int(SR.DAMAGE_PER_POINT) * 2:

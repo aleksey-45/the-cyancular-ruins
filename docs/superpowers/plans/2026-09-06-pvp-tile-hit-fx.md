@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** PvP 客户端视觉副本子弹撞可破坏砖(树叶/树干)时本地播一次 TileHitFx 碎片(纯视觉),与单机一致的命中反馈;damage 仍只由权威裁决,客户端不拆本地 grid。
+**Goal:** PvP 客户端视觉副本子弹撞可破坏砖(树叶/树干)时本地播一次 TileHitFx 碎片(纯视觉),与单机一致的命中反馈;damage 仍只由服务端权威裁决,客户端不拆本地 grid。
 
 **Architecture:** 只改 `scenes/weapons/bullet_base.gd` 两个点:①撞墙 else 分支去掉 `if apply_damage:` 包裹;②`_damage_tile_at` 内把 `TileHitFx.spawn` 移出 `if apply_damage`(改成 damage_tile 加守卫)。单机/服务器 `apply_damage=true` 行为不变。
 
@@ -145,7 +145,7 @@ git commit -m "feat: 子弹撞可破坏砖播碎片解耦 apply_damage——PvP 
 - Consumes: Task 1 的行为。
 - Produces: `SMOKE_BULLET_TILE_FX OK`(退出 0)/ `FAIL`(退出 1)。
 
-> **为何选源码级而非物理造弹**:本改动是"结构正确性"——`TileHitFx.spawn` 无条件、`damage_tile` 只在权威侧。物理冒烟(造真实子弹飞行撞墙、统计 viewport 下 CPUParticles2D)在 headless 依赖碰撞/生命周期/渲染节点,脆弱且无法断言"这粒粒子是不是 TileHitFx 播的"。读源码断言结构更稳、直接锁住防回退点,参考 `tests/player_contract_smoke.gd`(已是读源码保接口风格)。
+> **为何选源码级而非物理造弹**:本改动是"结构正确性"——`TileHitFx.spawn` 无条件、`damage_tile` 只在服务端。物理冒烟(造真实子弹飞行撞墙、统计 viewport 下 CPUParticles2D)在 headless 依赖碰撞/生命周期/渲染节点,脆弱且无法断言"这粒粒子是不是 TileHitFx 播的"。读源码断言结构更稳、直接锁住防回退点,参考 `tests/player_contract_smoke.gd`(已是读源码保接口风格)。
 
 - [ ] **Step 1: 写 `tests/bullet_tile_fx_smoke.gd`**
 

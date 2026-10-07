@@ -26,7 +26,7 @@ func _make_tex(w: int, h: int, filled: Rect2i) -> ImageTexture:
 
 func _initialize() -> void:
 	var SB: GDScript = load("res://core/present/sprite_bounds.gd")
-	# - 空载守卫:load() 失败还往下走会在 null 上抛错,而 -s 抛错走不到 quit() → 永久挂起
+	# - 空载防御性校验:load() 失败还往下走会在 null 上抛错,而 -s 抛错走不到 quit() -> 永久挂起
 	if SB == null:
 		print("SPRITE_BOUNDS FAILED: 找不到 core/present/sprite_bounds.gd")
 		quit(1)
@@ -36,7 +36,7 @@ func _initialize() -> void:
 	var spr := Sprite2D.new()
 	spr.texture = _make_tex(32, 16, Rect2i(4, 2, 20, 10))
 	var r: Rect2 = SB.from_sprite(spr)
-	# 贴图中心 (16,8);实心区 x∈[4,23] y∈[2,11] → 局部 x∈[-12,7] y∈[-6,3]
+	# 贴图中心 (16,8);实心区 x∈[4,23] y∈[2,11] -> 局部 x∈[-12,7] y∈[-6,3]
 	_check(is_equal_approx(r.position.x, -12.0) and is_equal_approx(r.position.y, -6.0),
 		"包围盒左上角应为 (-12,-6),实际 %s" % str(r.position))
 	_check(is_equal_approx(r.size.x, 20.0) and is_equal_approx(r.size.y, 10.0),
@@ -56,14 +56,14 @@ func _initialize() -> void:
 	spr3.region_enabled = true
 	spr3.region_rect = Rect2(32, 0, 32, 16)
 	var r3: Rect2 = SB.from_sprite(spr3)
-	# region 中心 (16,8);实心区在 region 内的偏移 x∈[8,27] y∈[2,11] → 局部 x∈[-8,11] y∈[-6,3]
+	# region 中心 (16,8);实心区在 region 内的偏移 x∈[8,27] y∈[2,11] -> 局部 x∈[-8,11] y∈[-6,3]
 	_check(is_equal_approx(r3.position.x, -8.0) and is_equal_approx(r3.position.y, -6.0),
 		"region 包围盒左上角应为 (-8,-6),实际 %s" % str(r3.position))
 	_check(is_equal_approx(r3.size.x, 20.0) and is_equal_approx(r3.size.y, 10.0),
 		"region 包围盒尺寸应为 (20,10),实际 %s" % str(r3.size))
 	spr3.free()
 
-	# ── region 只覆盖贴图的一部分:必须**不**把 region 外的实心像素算进来 ──
+	# ── region 只覆盖贴图的一部分:必须不把 region 外的实心像素算进来 ──
 	# 贴图左侧 0..15 全实心,region 只取右半 (32,0,32,16) 里的实心块 —— 若实现漏了
 	# region 裁剪、扫了整张贴图,包围盒会向左溢出到 -32 附近。
 	var spr4 := Sprite2D.new()

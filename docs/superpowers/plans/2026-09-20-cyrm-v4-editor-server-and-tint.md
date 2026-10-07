@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 落地编辑器重写里**能被 node 自动验证**的那一半 —— `level_editor/editor_server.js`(本地 HTTP 服务器 + 地图读写 API + serve.bat)与 `level_editor/tint.js`(辅码像素数学 + tinted-tile LRU 缓存),外加一个能让这两样"真跑起来"的最小骨架页,全部由 node 冒烟断言。
+**Goal:** 落地编辑器重写里**能被 node 自动验证**的那一半 —— `level_editor/editor_server.js`(本地 HTTP 服务器 + 地图读写 API + serve.bat)与 `level_editor/tint.js`(辅码像素数学 + tinted-tile LRU 缓存),外加一个能让这两样"真跑起来"的最小基础原型页,全部由 node 冒烟断言。
 
-**Architecture:** 服务器是**哑文件服务器**(CommonJS,`http` 模块,只绑 `127.0.0.1:8777`)——它不认识 `.cyrm` 格式,格式的一切归 `core.js`;安全边界只有一条:地图名走裸文件名白名单 + 解析后包含性检查两道闸,写盘走同目录临时文件 + rename 的原子替换。`tint.js` 是**经典脚本**(`globalThis.Tint`,与 `core.js` 同款),但它的档位常量**全部从 `globalThis.Core` 派生**、不自己抄一份,于是"编辑器与游戏 shader 必须逐像素一致"这条不变量变成结构性的而不是靠约定。
+**Architecture:** 服务器是**哑文件服务器**(CommonJS,`http` 模块,只绑 `127.0.0.1:8777`)——它不认识 `.cyrm` 格式,格式的一切归 `core.js`;安全边界只有一条:地图名走裸文件名白名单 + 解析后包含性检查双重校验,写盘走同目录临时文件 + rename 的原子替换。`tint.js` 是**经典脚本**(`globalThis.Tint`,与 `core.js` 同款),但它的档位常量**全部从 `globalThis.Core` 派生**、不自己抄一份,于是"编辑器与游戏 shader 必须逐像素一致"这条不变量变成结构性的而不是靠约定。
 
 **Tech Stack:** 纯 JavaScript(经典脚本给浏览器,CommonJS 给 node)、node v24(内置 `http`/`fs`/`child_process`、原生 `CompressionStream`,**不引入任何 npm 依赖**)、`node:http` 做真实 HTTP 往返测试、注入式 canvas backend 让像素代码在 node 里可跑。
 
@@ -17,9 +17,9 @@
 - **写盘必须原子**(同目录临时文件 + `rename`),绝不允许"写一半断电把地图毁了"。
 - **`tint.js` 的像素数学必须与规格 §2.3 逐字一致**:是 **HSV**(不是 HSL)、色相 `fposmod(h + (H-4)*15, 360)`、亮度/饱和度**乘法** `(B-4)*0.1`、alpha `A/7`。中性描述符 = `(hue 4, bright 4, sat 4, alpha 7)` —— **三列的中性档不在同一行**(alpha 的中性在档 **7**)。
 - **`core.js` 是冻结的**:本计划**不修改** `level_editor/core.js` 与 `level_editor/smoke.js` 一行。所有新代码消费它的导出,不重实现、不动它的签名。
-- **`node smoke.js` 必须保持全绿**(343 通过 / 0 失败 / `SMOKE OK`)。
+- **`node smoke.js` 必须保持全部通过**(343 通过 / 0 失败 / `SMOKE OK`)。
 - **`structure-editor.html` 原样保留**:它内嵌的敌人注册表标记 `/*__ENEMY_REGISTRY_BEGIN__*/`…`/*__ENEMY_REGISTRY_END__*/` 是 `sync-enemies.js` 的锚点,本计划一次都不碰它。
-- **一切有硬上限**(规格 §4.3 闸 1):请求体 64MB(= `core.js` 的 `MAX_BODY_SIZE`)、tint 缓存 8192 张(= 8MB)。用户输入一律**钳制**,不报错回滚。
+- **一切有硬上限**(规格 §4.3 规则 1):请求体 64MB(= `core.js` 的 `MAX_BODY_SIZE`)、tint 缓存 8192 张(= 8MB)。用户输入一律**钳制**,不报错回滚。
 - **注释一律用中文**,与仓库其余部分一致。
 - **本计划的任何测试都不许写进真实 `maps/` 目录**:所有写路径都指向 `fs.mkdtempSync` 出来的临时目录。
 
@@ -30,7 +30,7 @@
 这两条是**计划 1 开工前已与用户确认**的裁决,计划 2a 继续沿用:
 
 - **裁决 ①**:`core.js` 里带着 `sanitizeName` / `brushOffsets` / `lineCells` / `normRegion` 四个**格式层一行都不调用**的纯函数。严格按 YAGNI 这算"多余代码",但这是刻意的 —— 它们是给编辑器层留的,现在搬过来了才能留住它们在旧 `smoke.js` 里的既有断言。
-- **裁决 ②**:计划 1 删掉了旧 `smoke.js` 里约 150 行 / 约 60 条当时正绿的断言(它们测的是 `structure-editor.html` **内嵌的旧 Core**;新 `smoke.js` 加载 `core.js`,换加载源后它们必然失效)。**`structure-editor.html` 自身的行为在计划 2b 重写它之前没有自动覆盖** —— 这是用户知悉并接受的代价。本计划**不**新增对旧编辑器行为的覆盖(不重写它、也不为它写测试),只钉住"它的注册表标记还在、`sync-enemies.js --check` 还绿"这一条集成约束。
+- **裁决 ②**:计划 1 删掉了旧 `smoke.js` 里约 150 行 / 约 60 条当时正绿的断言(它们测的是 `structure-editor.html` **内嵌的旧 Core**;新 `smoke.js` 加载 `core.js`,换加载源后它们必然失效)。**`structure-editor.html` 自身的行为在计划 2b 重写它之前没有自动覆盖** —— 这是用户知悉并接受的代价。本计划**不**新增对旧编辑器行为的覆盖(不重写它、也不为它写测试),只断言约束"它的注册表标记还在、`sync-enemies.js --check` 还绿"这一条集成约束。
 
 ---
 
@@ -47,12 +47,12 @@
 
 **② 库的"身份"就是文件名,不另铸 `map.id`。**
 
-计划 1 的账本里留了一条缺口:规格 §2.4 把地图建模成 `{ id, name, … }`,但 `createMap(name, cellsW, cellsH)` 不造 `id`,也没有任何地方赋值过。规格 §4.6 自己给了答案:**「真文件 `maps/*.cyrm` —— 作品的真身」**。真身是文件,文件的身份就是文件名 ⇒ **不需要 `map.id`**。于是:
+计划 1 的账本里留了一条缺口:规格 §2.4 把地图建模成 `{ id, name, … }`,但 `createMap(name, cellsW, cellsH)` 不造 `id`,也没有任何地方赋值过。规格 §4.6 自己给了答案:**「真文件 `maps/*.cyrm` —— 作品的真实实体」**。真实实体是文件,文件的身份就是文件名 ⇒ **不需要 `map.id`**。于是:
 
 - `core.js` 不造 `id` 是对的,**不改**。
 - 服务器的 API 全部以**文件名**为键(`/api/map?p=<name>`)。
 - 2b 的草稿盘(IndexedDB)若需要主键,用 `sanitizeName(文件名)`,**不许另铸一套 id**(两套身份必然漂)。
-- `decodeMap` 返回的 `name` 是空串(v4 body 里没有 name 字段,计划 1 账本 Task 7 Minor 4 已经点过),所以**导入方必须自己用文件名补 `map.name`** —— 否则 `sanitizeName` 会回落成 `'structure'`。这一条在 Task 7 里有断言钉住。
+- `decodeMap` 返回的 `name` 是空串(v4 body 里没有 name 字段,计划 1 账本 Task 7 Minor 4 已经点过),所以**导入方必须自己用文件名补 `map.name`** —— 否则 `sanitizeName` 会回落成 `'structure'`。这一条在 Task 7 里有断言断言约束。
 
 **③ `tint.js` 对 `core.js` 是**硬依赖**(结构性,不是装饰)。**
 
@@ -80,7 +80,7 @@
 
 ---
 
-## Task 1: 本地服务器骨架(静态服务 + 穿越防护 + 启动诊断)+ `serve.bat` + 占位骨架页
+## Task 1: 本地服务器骨架(静态服务 + 穿越防护 + 启动诊断)+ `serve.bat` + 占位基础原型页
 
 **Files:**
 - Create: `level_editor/editor_server.js`
@@ -577,7 +577,7 @@ echo [serve] 服务器已退出(退出码 %ERRORLEVEL%)。
 pause
 ```
 
-新建 `level_editor/editor.html`(占位骨架页 —— Task 6 会重写它):
+新建 `level_editor/editor.html`(占位基础原型页 —— Task 6 会重写它):
 
 ```html
 <!DOCTYPE html>
@@ -1749,7 +1749,7 @@ EOF
 
 ---
 
-## Task 6: `editor.html` 骨架页(库列表 / 辅码实验室 / 编解码往返)
+## Task 6: `editor.html` 基础原型页(库列表 / 辅码实验室 / 编解码往返)
 
 **Files:**
 - Modify: `level_editor/editor.html`(整体重写 —— 替换 Task 1 的占位页)
@@ -2017,7 +2017,7 @@ Run: `cd level_editor && node server_smoke.js`
 
 Expected: 全部 `ok -`,末行 `SERVER SMOKE OK`,退出码 0。
 
-- [ ] **Step 5: 人眼验收(浏览器里的那两件事,node 验不了)**
+- [ ] **Step 5: 人工视觉核验(浏览器里的那两件事,node 验不了)**
 
 **测试由用户自己跑。** 这一步 node 只能验结构,真正的渲染与 `CompressionStream` 要浏览器:
 
@@ -2136,7 +2136,7 @@ Run: `cd level_editor && node server_smoke.js`
 
 Expected: 全部 `ok -`,末行 `SERVER SMOKE OK`,退出码 0。
 
-相位 ⑨ 是**纯增量覆盖**:它消费的接口全在前面三个 Task 里实现完了,所以它应该**一上来就全绿**。若它报红,说明前面某个 Task 的实现有问题 —— 回到那个 Task 修,不要在这里绕过。
+相位 ⑨ 是**纯增量覆盖**:它消费的接口全在前面三个 Task 里实现完了,所以它应该**一上来就全部通过**。若它测试报错,说明前面某个 Task 的实现有问题 —— 回到那个 Task 修,不要在这里绕过。
 
 - [ ] **Step 3: 变异验证(证明相位 ⑨ 不是空转)**
 
@@ -2160,12 +2160,12 @@ Expected: 全部 `ok -`,末行 `SERVER SMOKE OK`,退出码 0。
   FAIL - ★ 端到端: 服务器上存着的就是 encodeMap 产出的那串字节 (长度 0 ≠ 期望 …)
 ```
 
-(以及随后的 GET 404 引起的连带失败),退出码 1。**确认之后把那一行改回来**,再跑一次确认恢复全绿。
+(以及随后的 GET 404 引起的连带失败),退出码 1。**确认之后把那一行改回来**,再跑一次确认恢复全部通过。
 
 ★ 这条变异的含义:它模拟的正是"**写成功了、但写到了别处**"这类最难发现的 bug ——
 只断言 `PUT → 200` 的话它完全抓不住(200 照常返回),要靠 `GET` 回来的**字节**比对才抓得住。
 
-- [ ] **Step 4: 跑齐三套,确认全绿**
+- [ ] **Step 4: 跑齐三套,确认全部通过**
 
 Run:
 ```bash
@@ -2196,7 +2196,7 @@ EOF
 
 ## 收尾
 
-- [ ] **跑齐三套冒烟确认全绿**
+- [ ] **跑齐三套冒烟确认全部通过**
 
 Run: `cd level_editor && node smoke.js && node tint_smoke.js && node server_smoke.js`
 
@@ -2212,7 +2212,7 @@ Expected: 输出为空(这两个文件在本计划里**未被修改**)。
 
 Run: `node level_editor/sync-enemies.js --check && node level_editor/sync-tiles.js --check`
 
-Expected: 两条都打印 `ok: …`,退出码 0。(server_smoke 相位 ①b 也跑前者,这里是给人眼看的双保险。)
+Expected: 两条都打印 `ok: …`,退出码 0。(server_smoke 相位 ①b 也跑前者,这里是给人工观察的双保险。)
 
 - [ ] **交接给计划 2b**
 
@@ -2234,9 +2234,9 @@ tint.js:   Tint.createTileCache({maxSize?, backend?}) → {setSource, get, has, 
 **★ 2b 必须遵守的七条**(按重要性排序):
 
 1. **入口页的 `<script src="core.js"></script>` 与 `<script src="tint.js"></script>` 两行不能动**(顺序也不能换 —— `tint.js` 对 `Core` 是硬依赖,反了当场抛错)。
-2. **不许在 UI 层写第二份 tint / HSV / 编解码数学**:一切都走 `Tint.*` 与 `Core.*`(server_smoke 相位 ⑧ 有结构断言钉住 `rgbToHsv` 不出现)。
-3. **`Core.lineCells` 的每个调用点都要先 `Math.floor`**(账本 Task 2 Minor 3:非整数或 NaN 坐标会让它的 `for(;;)` 死循环、直接挂住标签页 —— 不是返回错值,是挂住)。
-4. **导入面板必须用文件名设 `map.name`**(`decodeMap` 返回 `name: ''`,不补就会经 `sanitizeName` 回落成 `'structure'`)。相位 ⑨ 已把这条契约钉住。
+2. **不许在 UI 层写第二份 tint / HSV / 编解码数学**:一切都走 `Tint.*` 与 `Core.*`(server_smoke 相位 ⑧ 有结构断言断言约束 `rgbToHsv` 不出现)。
+3. **`Core.lineCells` 的每个调用点都要先 `Math.floor`**(账本 Task 2 Minor 3:非整数或 NaN 坐标会让它的 `for(;;)` 死循环、直接卡死标签页 —— 不是返回错值,是挂住)。
+4. **导入面板必须用文件名设 `map.name`**(`decodeMap` 返回 `name: ''`,不补就会经 `sanitizeName` 回落成 `'structure'`)。相位 ⑨ 已把这条接口规范断言约束。
 5. **库的身份就是文件名,不许另铸一套 id**(见本计划「决定 ②」);草稿盘要用主键就用 `sanitizeName(文件名)`。
 6. **搬敌人注册表标记 = 三件事同一个 commit**:标记块搬进 `editor.html` + 改 `sync-enemies.js` 的 `htmlPath` + 删 `structure-editor.html`。少一件都会留下一份会静默漂移的注册表。
 7. **纹理 22(水面)在编辑器里可选、在游戏里是自动派生**(审计 A7):调色板必须显式处理这个分歧(去掉 22,或标注"由游戏自动派生"),否则"编辑器里画的、游戏里看到的"不一样。
@@ -2248,12 +2248,12 @@ tint.js:   Tint.createTileCache({maxSize?, backend?}) → {setSource, get, has, 
 | 不做 | 归属 | 为什么不在 2a |
 |---|---|---|
 | `render.js`(四层缓存 + 脏区)、`ui.js`(工具栏/图层/面板/热键)、`io.js`、`worker.js` | **计划 2b** | 全是浏览器运行时行为,**只能手测**;而 2a 的划分标准就是"能不能被 node 自动验证" |
-| **闸 2**(一切长循环有单帧预算 ~8ms) | **计划 2b** | 它约束的是渲染/填充/IndexedDB 的长循环,2a 里没有这样的循环 |
-| **闸 3**(编解码进 Web Worker) | **计划 2b** | `worker.js` + `io.js` 的 async 门面是 UI 的调用方;签名按规格 §4.3 的 `encodeMap(map,{compress})` / `decodeMap(bytes)` |
-| **闸 4**(全局错误围栏 + 崩溃前快照) | **计划 2b** | 依赖 IndexedDB 草稿盘(§4.6)与 `ui.js` 的生命周期 |
+| **规则 2**(一切长循环有单帧预算 ~8ms) | **计划 2b** | 它约束的是渲染/填充/IndexedDB 的长循环,2a 里没有这样的循环 |
+| **规则 3**(编解码进 Web Worker) | **计划 2b** | `worker.js` + `io.js` 的 async 门面是 UI 的调用方;签名按规格 §4.3 的 `encodeMap(map,{compress})` / `decodeMap(bytes)` |
+| **规则 4**(全局错误围栏 + 崩溃前快照) | **计划 2b** | 依赖 IndexedDB 草稿盘(§4.6)与 `ui.js` 的生命周期 |
 | IndexedDB 持久化 / localStorage UI 小状态 / 「玩家参考图按格坐标存」(审计 A13) | **计划 2b** | 同上;`core.js` 与服务器都不参与 |
 | 工具集(画笔/矩形/油漆桶/直线/选框/吸管/渐变)、撤销、复制粘贴、库间粘贴 | **计划 2b** | §4.4 整节;`core.js` 的 `lineCells` / `normRegion` / `brushOffsets` 已经备好 |
-| 导出前校验的**界面**(把 `Core.validateMap` 的 warnings 弹出来) | **计划 2b** | 校验逻辑(§4.7)在计划 1 已落地;2a 的骨架页只是把它打印成文本 |
+| 导出前校验的**界面**(把 `Core.validateMap` 的 warnings 弹出来) | **计划 2b** | 校验逻辑(§4.7)在计划 1 已落地;2a 的基础原型页只是把它打印成文本 |
 | `maps/*.cyrm` 迁移为 v4 二进制 | **期 E** | 迁移是单向的,必须先把 v3 文本原样提交一次留档;而且迁移完游戏侧必须同步改(交接文档 §3 那个决策还没拍板) |
 | `CLAUDE.md` 的编辑器小节更新(形状面板已删、格式已换) | **计划 2b 收尾** | 现在改等于写"已实现"但实际没有的东西;等新编辑器成形后一次性更新 |
 | 服务器:认证 / TLS / 目录浏览 / 多用户 / range 请求 | **永久不做** | 规格 §4.9 明写:它是本机自用工具,不是服务 |
@@ -2267,13 +2267,13 @@ tint.js:   Tint.createTileCache({maxSize?, backend?}) → {setSource, get, has, 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
 | 端口 8777 被别的进程占 | 编辑器打不开 | `startServer` 对 `EADDRINUSE` 有专门分支:打印端口 + `netstat -ano` 里那一行 + `taskkill` 提示;`serve.bat` 结尾 `pause` 免得窗口一闪而过;这条分支有断言(`rejects(..., '已被占用')`) |
-| **服务器路径穿越**(静态路径或地图名) | 本机任意文件读写 | 两道闸:地图名走裸文件名白名单,静态路径走"解析后必须落在根里面"的结构性判据(不是"有没有 `..`");单元级(`staticFileFor`)+ HTTP 级(`/..%2f..`)两级测试,断言"正文里没有那个文件" |
+| **服务器路径穿越**(静态路径或地图名) | 本机任意文件读写 | 双重校验:地图名走裸文件名白名单,静态路径走"解析后必须落在根里面"的结构性判据(不是"有没有 `..`");单元级(`staticFileFor`)+ HTTP 级(`/..%2f..`)两级测试,断言"正文里没有那个文件" |
 | Windows 上 `rename` 覆盖失败(目标被别的进程占着) | 保存失败 | 临时文件与目标同目录;失败时清临时文件并回 500,**原文件保持原样**;用"目标是个非空目录"注入这个失败路径并断言清理与保全 |
 | tint 数学与游戏 shader 不一致 | 编辑器里调好的颜色进游戏变样,且**不报错** | 常量从 `Core` 派生(结构性,不是靠约定);手工 golden;中性描述符对 28561 组 8 位输入逐字节恒等;交接文档 §2.2 是同一份公式 |
 | 缓存不失效(审计 A2 复现) | 贴图一直是纯色块,而且"有时好有时坏" | `setSource` 一律清空整片缓存 + 专门断言;默认 backend 在无 `document` 时明确抛错(不静默画空白) |
 | node 测试挂住(server 没关 / promise 永不 settle) | **假绿**:静默退出、退出码 0、一行不打 | 120 秒看门狗(**刻意不 unref**);`closeAllConnections()` 后再 `close()`;结尾显式 `process.exit`;`main()` 的 reject 被捕获后打印"后面的断言一行都没跑" |
-| 反向断言"只要抛了就算过" | 假绿:拼错标识符抛的 `TypeError` 也算通过 | `rejects` / `throws` 一律带 `expectSub` 错因子串(相位 ⑤ 第一条绿、第二条红的现场就演示了这个坑) |
+| 否定断言"只要抛了就算过" | 假绿:拼错标识符抛的 `TypeError` 也算通过 | `rejects` / `throws` 一律带 `expectSub` 错因子串(相位 ⑤ 第一条绿、第二条红的现场就演示了这个坑) |
 | 服务器写坏用户的地图 | 作品丢失 | 原子写(同目录 tmp + rename);空请求体一律拒收;三种被拒的 PUT 之后原文件逐字节不变(有断言) |
-| 2b 搬走注册表标记后 `sync-enemies.js` 失联 | 敌人表静默漂移 | 本计划不碰 `structure-editor.html`;相位 ①b 跑 `--check` 钉住;删/搬/改三件事同一 commit 写进交接清单 |
+| 2b 搬走注册表标记后 `sync-enemies.js` 失联 | 敌人表静默漂移 | 本计划不碰 `structure-editor.html`;相位 ①b 跑 `--check` 断言约束;删/搬/改三件事同一 commit 写进交接清单 |
 | 大图上 `PUT` 的内存放大 | 服务器 OOM | `readBody` 有 64MB 上限且判在 push **之前**;上限值 = `MAX_BODY_SIZE`,对合法文件(最坏 ≈19.1MiB)不会误拒 |
 

@@ -25,21 +25,21 @@ func _initialize() -> void:
 	root.add_child(e)
 	await physics_frame
 
-	# 场景1: 鸟在接缝前(近右端),玩家跨到左端
+	# 测试用例 1：敌人位于世界右边界接缝附近，玩家已跨越接缝进入世界左边界
 	player.global_position = Vector2(50, 500)
-	e.global_position = Vector2(W - 100, 500)  # 鸟在右端
+	e.global_position = Vector2(W - 100, 500)  # 敌人初始位于地图右端
 	await physics_frame
 	e.call("_wrap")
 	await physics_frame
 	var dx1: float = e.global_position.x - player.global_position.x
 	print("场景1: 鸟 x=", e.global_position.x, " 玩家 x=", player.global_position.x,
 			" 相距=", dx1)
-	# 鸟应落在玩家附近(相距 < 半地图)
+	# 敌人回绕后应就近锚定在玩家附近（环面距离小于半地图宽度）
 	var ok1: bool = absf(dx1) < W * 0.5
 
-	# 场景2: 鸟在接缝后(近左端),玩家在右端
+	# 测试用例 2：敌人位于世界左边界接缝附近，玩家位于地图右边界
 	player.global_position = Vector2(W - 50, 500)
-	e.global_position = Vector2(100, 500)  # 鸟在左端
+	e.global_position = Vector2(100, 500)  # 敌人初始位于地图左端
 	await physics_frame
 	e.call("_wrap")
 	await physics_frame

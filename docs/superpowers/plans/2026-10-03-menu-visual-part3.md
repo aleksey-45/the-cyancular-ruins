@@ -4,7 +4,7 @@
 
 **Goal:** 把**菜单系**（主菜单 / 设置 / 信息 / 统一大厅 / Beta / 结算页 / 暂停菜单）换成设计 §3.9 定下的「**方向 B · 遗迹青铜**」：青主色保留、琥珀做强调、面板用「外深线 + 内亮线」的凿刻压边、区块用标题带。
 
-**Architecture:** 分两步——先把**新 token** 与**菜单专属的 stylebox 工厂**加进 `UiFactory`（HUD 一个像素都不动），再逐屏套用。每个屏一个任务，各自取图人眼验收。
+**Architecture:** 分两步——先把**新 token** 与**菜单专属的 stylebox 工厂**加进 `UiFactory`（HUD 一个像素都不动），再逐屏套用。每个屏一个任务，各自取图人工视觉核验。
 
 **Tech Stack:** Godot 4.7.1（标准版）、GDScript、`StyleBoxFlat`（无圆角、无渐变 —— 本项目用 DOS 位图字体，渐变/圆角/模糊都用不了）。
 
@@ -19,15 +19,15 @@
   `C_TEXT` / `C_TEXT_DIM`（`hud.gd:236`、`royale_hud.gd:18` 等）、
   `C_DANGER`（`hud.gd:176`、`status_banner.gd:100`）、`C_WARN`（`hud.gd:131`）、
   `C_PLATE` / `C_SLOT_EMPTY` / `C_SLOT_FILLED` / `C_SLOT_ACTIVE` / `C_GRACE` / `C_TEAM_A` / `C_TEAM_B` / `C_MODE_TEAM` / `C_MODE_ROYALE`。
-  ★ 设计 §3.9.1 的 token 表里 `C_ACCENT` 与 `C_TEXT_DIM` 写的是**另一个值** —— 那是设计文档的内部矛盾（它同时写着"HUD 一行不动"）。**以本约束为准，别照那张表改。** Task 1 会加一条守卫把这件事钉住。
+  ★ 设计 §3.9.1 的 token 表里 `C_ACCENT` 与 `C_TEXT_DIM` 写的是**另一个值** —— 那是设计文档的内部矛盾（它同时写着"HUD 一行不动"）。**以本约束为准，别照那张表改。** Task 1 会加一条守卫把这件事断言约束。
 - ★★ **`UiFactory.panel_box()` 的形状也不许改** —— `ui/hud/status_banner.gd:88`（**重连横幅**）在用 `panel_box(false)`。菜单要的凿刻压边走**新**的 `UiFactory.menu_panel()`。
 - **颜色只在 `ui/factory/ui_factory.gd` 定义**；各屏一律引用，不写 `Color(...)` 字面量。
 - 面板底必须**不透明**。
 - **判据一律是文本**（`ALL-OK`），**不看退出码**。场景探针 `--quit-after 3600`。
 - **不动 `ui/hud/**`**（除了"不许改它依赖的 token"这一条，本计划一行都不碰它）。
 - **不动 `CLAUDE.md`**（协调者统一处理）。
-- ★★ **与另一个 Claude 会话共用同一棵工作树**。**提交一律逐个文件点名 `git add`，绝不 `git add -A`**；提交前 `git status --short` 看一眼。
-- ★★ **每个"改了外观"的任务都必须取图并自己读图**（本仓纪律：数值全绿而画面是坏的，抓到的全是自己看图那一步）。**别把图推回给用户。**
+- ★★ **与另一个 Claude 会话共用同一棵工作树**。**提交一律逐个显式指定文件 `git add`，绝不 `git add -A`**；提交前 `git status --short` 看一眼。
+- ★★ **每个"改了外观"的任务都必须取图并自己读图**（本仓纪律：数值全部通过而画面是坏的，抓到的全是自己看图那一步）。**别把图推回给用户。**
 
 ---
 
@@ -566,7 +566,7 @@ git commit -m "style(ui): 结算页与暂停菜单换成方向 B"
 
 - [ ] ★★ **"HUD 没动"的正面证据**：`combat_hud_visual_probe` 与 `kh_l3_visual_probe` 都是 HUD 的取色探针 —— 两条绿 + `menu_style_probe` 的四条冻结守卫绿，合起来才是"改菜单没动 HUD"的证据链。**别只看菜单的图**。
 
-- [ ] **逐屏取图人眼验收**（六屏）：`--autotest-{ver,set,mp,royale,team,beta}` + `match_result_probe` + pause 的图。**自己读**。
+- [ ] **逐屏取图人工视觉核验**（六屏）：`--autotest-{ver,set,mp,royale,team,beta}` + `match_result_probe` + pause 的图。**自己读**。
 
 ---
 

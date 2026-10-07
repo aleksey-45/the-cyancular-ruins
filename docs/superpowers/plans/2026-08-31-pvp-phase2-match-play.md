@@ -4,7 +4,7 @@
 
 **Goal:** B1 已让双方进竞技场、本地能动。本计划把「对局互通」打通：客户端每 tick 上报输入 → 服务器权威模拟双方（含开火/子弹/命中）→ 快照广播 → 客户端插值渲染远端副本 + 自己校正。**能真正打起来**（含武器对射、服务器裁决命中、血量/倒地经快照权威）。
 
-**Architecture:** 沿用 NetBus(autoload, 唯一网络收口)。新增输入包(60Hz reliable)、快照包(30Hz unreliable)、事件包(reliable: hit/bullet_spawn)。服务器每房间一个 `MatchHost`(server/match_host.gd)，用 `WorldBuilder` 建世界(只碰撞不渲染)、注入 `NetworkInputSource` 驱动两个 `Player.tscn` 实例权威模拟；客户端 `pvp_game` 本地玩家照常 C2(读真实输入) + `PlayerReplica` 纯视觉副本(最短路径插值) + 快照自校正。子弹：本地玩家子弹本地生成(零延迟视觉)、对手子弹由服务器广播 `bullet_spawn` 生成确定性副本、命中由服务器裁决发 `hit` 事件。
+**Architecture:** 沿用 NetBus(autoload, 唯一网络统一收拢)。新增输入包(60Hz reliable)、快照包(30Hz unreliable)、事件包(reliable: hit/bullet_spawn)。服务器每房间一个 `MatchHost`(server/match_host.gd)，用 `WorldBuilder` 建世界(只碰撞不渲染)、注入 `NetworkInputSource` 驱动两个 `Player.tscn` 实例权威模拟；客户端 `pvp_game` 本地玩家照常 C2(读真实输入) + `PlayerReplica` 纯视觉副本(最短路径插值) + 快照自校正。子弹：本地玩家子弹本地生成(零延迟视觉)、对手子弹由服务器广播 `bullet_spawn` 生成确定性副本、命中由服务器裁决发 `hit` 事件。
 
 **Tech Stack:** Godot 4.7.1 标准版，ENet 高层多人(ENetMultiplayerPeer + MultiplayerAPI RPC)，无测试框架(冒烟 `-s` + 多进程 loopback)。
 

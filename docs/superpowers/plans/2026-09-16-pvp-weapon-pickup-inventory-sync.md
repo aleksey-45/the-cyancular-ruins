@@ -21,7 +21,7 @@
 
 | 文件 | 层 | 覆盖 | 现状 |
 |---|---|---|---|
-| `tests/ground_action_probe.tscn` | 服务器权威侧（无网络） | 捡 / 替换 / 丢 / 自身冷却 / 40 轮连打 / 复活掉枪 | **ALL-OK** |
+| `tests/ground_action_probe.tscn` | 服务器服务端（无网络） | 捡 / 替换 / 丢 / 自身冷却 / 40 轮连打 / 复活掉枪 | **ALL-OK** |
 | `tests/ground_client_probe.tscn` | 客户端侧（无网络） | `weapon_removed` 删节点、权威背包变化后 `restore_inventory`+`equip`、60 轮交替 | **ALL-OK** |
 | `tests/ground_net_probe.tscn` + `ground_net_watcher.gd` + `ground_bot_input.gd` | **L1**（真大厅 + 真 worker + 2 个真 `royale_game`） | 机器人走「长按 Q 丢 → 走过去 → 按 F 捡」循环，判据是**真事件**（`weapon_spawned`/`weapon_removed`）而不是"没报错" | 跑得通，**当前判 FAIL**（判据本身就是红灯，见 §2.2） |
 | `tests/menu_autotest.gd` 新增 `--autotest-ground/<场景名>` | 工具 | 让探针能跑在**导出 exe** 上 | 已就位 |
@@ -346,7 +346,7 @@ git commit -m "test(c2): 钉住"权威背包变化必须在零回滚下也落地
   `Player._apply_weapon_state(st: Dictionary) -> void`（私有共用）、
   `Player._inv_structure_equal(want: Array) -> bool`（私有守卫）。
 
-- [ ] **Step 1：先把武器回灌抽成共用函数（纯重构，不改行为）**
+- [ ] **Step 1：先把武器回灌提取为共用函数（纯重构，不改行为）**
 
 把 `scenes/player/player.gd::restore_state` 里从注释
 `# 武器:先重建**背包**,再按 wslot 切枪。` 到 `w._reload_t = ...` 的整段**原样剪出**，
@@ -431,7 +431,7 @@ func _inv_structure_equal(want: Array) -> bool:
 ```bash
 "$GODOT" --headless --path . res://tests/pvp_reconcile_smoke.tscn
 ```
-Expected: `SMOKE_RECONCILE OK: ...`（且回滚计数与改动前**同量级** —— 反向断言在 Task 1 Step 3 里钉着）。
+Expected: `SMOKE_RECONCILE OK: ...`（且回滚计数与改动前**同量级** —— 否定断言在 Task 1 Step 3 里钉着）。
 
 - [ ] **Step 5：跑既有回归，确认没打破别的**
 
@@ -540,7 +540,7 @@ git commit -m "fix(weapons): 权威空手时释放武器实例(只清索引会�
    恰好是 `restore_state` 里 `equip()` 那条易出事的路径），但**没有证据**，别把两件事
    混成一句结论。
 4. **那份 plan §2.1/§2.2 的场景矩阵仍然没跑完。** 本份只交付 L1（捡/丢/冷却）与
-   这条根因。替换、闸门拒绝、抢枪、接缝附近、冻结期/倒地中/换局那一帧……都还没覆盖。
+   这条根因。替换、限制条件拒绝、抢枪、接缝附近、冻结期/倒地中/换局那一帧……都还没覆盖。
 5. **`ground_net_probe` 现在能稳定绿，但靠的是 §1.2 那个测试开关，不是走位。**
    机器人的走位这条路**试过、放弃**了：只会"水平走 + 卡住跳"的机器人在随机地图的窄台上
    会永久卡死（实测两轮，`走到目标超时` 的距离越拉越大直到全场武器被拉黑）。

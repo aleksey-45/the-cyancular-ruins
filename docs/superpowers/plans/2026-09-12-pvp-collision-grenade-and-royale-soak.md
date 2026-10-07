@@ -3,7 +3,7 @@
 > 日期：2026-09-12 · 分支：`refactor/abstraction-batch01`
 > 设计：`docs/superpowers/specs/2026-09-12-pvp-collision-grenade-and-royale-soak-design.md`（本计划的判据全在那边）
 > 约定：Godot 不在 PATH，用 `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"`。
-> **测试由用户自跑为主**；本次 D 块是用户点名要我压的，故由我跑并出报告。
+> **测试由用户自跑为主**；本次 D 块是用户明确要求我压的，故由我跑并出报告。
 
 ---
 

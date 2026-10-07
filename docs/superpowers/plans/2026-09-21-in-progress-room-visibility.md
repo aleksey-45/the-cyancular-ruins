@@ -7,11 +7,11 @@
 **Architecture:**
 
 1. **房记录的寿命从「最后一个人离开」改到「这一局的 worker 进程退出」** —— 不新立表:记录就住在它原本那一张注册表(`rooms` / `royale_rooms` / `team_rooms`)里,于是三张表的房号空间重叠这件事**结构上无从发生**(不需要 `mode` 判别字段,也不需要跨表反查)。记录上多两个字段:`worker_pid`(spawn 成功后登记)与 `roster`(开局那一刻冻结的名单 —— 成员转连后 `players` 会空、`_peer_names` 会被擦)。
-2. **回收改判「worker 进程还在不在」**(`OS.is_process_running`),30s 一条梯,走**同一处拆除收口** `teardown_room`;既有的 2h 超龄清扫原样保留作兜底。★ 为什么不能按宽限期收:宽限期是 worker 侧的状态,大厅看不见;照字面收会把房在开打 60 秒后拆掉。
-3. **列表载荷各加一个同名同义的键 `in_match: bool`**(加法式扩展,老客户端忽略未知键),列表构造抽成**纯函数** `*_list_payload()` —— 因为 `NetBus.reply` 在无对端时静默跳过,不抽出来探针根本观测不到列表内容。
+2. **回收改判「worker 进程还在不在」**(`OS.is_process_running`),30s 一条梯,走**同一处拆除统一收拢** `teardown_room`;既有的 2h 超龄清扫原样保留作兜底。★ 为什么不能按宽限期收:宽限期是 worker 侧的状态,大厅看不见;照字面收会把房在开打 60 秒后拆掉。
+3. **房间列表数据各加一个同名同义的键 `in_match: bool`**(向后兼容扩展,老客户端忽略未知键),列表构造提取为**纯函数** `*_list_payload()` —— 因为 `NetBus.reply` 在无对端时静默跳过,不抽出来探针根本观测不到列表内容。
 4. **可见性与拒绝是同一件事的两半**:列表照列(服务端)+ 行 `disabled`(界面,只是体验)+ 服务端 `join` 守卫(保证)。三模式拒绝文案统一成「该房间的对局已进行中,无法加入」,并断言**拒绝本身**(用非满房构造,否则会被"房间已满"喂绿)。
 
-**Tech Stack:** Godot 4.7.1 GDScript;`worker_launcher.gd`(端口池 + 子进程)、`lobby_rooms.gd`(房间账本 + 拆除收口)、`room_manager.gd`(进程编排 + 定时梯);测试 = `-s` 冒烟 + 场景探针;判据一律 **grep 文本**,不看退出码。
+**Tech Stack:** Godot 4.7.1 GDScript;`worker_launcher.gd`(端口池 + 子进程)、`lobby_rooms.gd`(房间账本 + 拆除统一收拢)、`room_manager.gd`(进程编排 + 定时梯);测试 = `-s` 冒烟 + 场景探针;判据一律 **grep 文本**,不看退出码。
 
 **前置:** 无。这是独立的一批,**先于** `docs/superpowers/plans/2026-09-21-rejoin-after-leaving.md`(回大厅后回局)落地 —— 那份计划消费本计划交付的 `WorkerLauncher.pid_of/pid_alive`、房记录上的 `worker_pid`、以及「房活过转连」这条性质。
 
@@ -21,12 +21,12 @@
 - ★ **Bash 工具在本 worktree 里会被 git 守卫误伤** ⇒ **用 PowerShell 工具**跑 Godot。console 版路径:`D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64_console.exe`。
 - **测试分工**:agent 可跑 = `--import`、全部 `-s` 冒烟(`& $GODOT --headless --path . -s res://tests/<名>.gd`)、本批新增的两个场景探针、以及各页面的 `--quit-after 120 <场景>` 启动自检;**用户跑** = `tests/room_sweep_smoke.sh`(它自带的收尾会按端口杀,脚本化更稳)与**一切碰 7777 的既有脚本**(`tests/pvp_room_smoke.sh` / `tests/pvp_match_smoke.sh` / `tests/team_match_probe.sh` / `tests/royale_soak_probe.sh`)。**7777 属于用户**,agent 不得去连、去杀、去占。
 - **颜色只在 `ui/ui_factory.gd` 定义**(本批**不新增任何颜色字面量**,复用既有的 `disabled` 样式);**字号只用 16 的倍数**。
-- ★ **`NetBus` 的方法表一个字不动**。本批**不需要**任何新 RPC:列表载荷的形状与 RPC 名都不变,只是内容多一个键。
+- ★ **`NetBus` 的方法表一个字不动**。本批**不需要**任何新 RPC:房间列表数据的形状与 RPC 名都不变,只是内容多一个键。
 - ★ **定向发送前一律先判活**(`NetBus.reply` / `NetBus.is_peer_live`)—— 本批**不改**这些发送点,但列表发送点从"内联循环"变成"调纯构造函数",改的时候**别顺手把判活那层删掉**。
 - ★★ **判据一律是文本**(`ALL-OK` / 探针自己的串),**不看退出码**。而本仓**实测**过:`ALL-OK` 只证明"没有任何一条断言失败",**不证明"该跑的断言都跑过"**(出错在 helper / lambda 里时调用方照常继续、判词照打,完整表述在 `tests/lib/probe_base.gd` 文件头)。**因此两个新探针都维护 `_checks` 计数并在收尾断言 `_checks >= EXPECTED_CHECKS`**;凡"这条守卫真的能咬住吗"的地方,计划里都要求做一次**变异反证**(注入缺陷 ⇒ 该条断言必须红 ⇒ 还原 ⇒ 复绿),两段输出都写进报告。
 - ★ **场景探针的 `--quit-after` 逐个按预算给,不许照抄"统一 3600"**:本仓已经踩过 —— `tests/brawl_rollback_probe.tscn` 用 3600 **跑不完**(实测要 30000),安全网耗尽时进程 **exit 0、一行 `ALL-OK` 都没有**,在批量里被读成红。本批两个探针的取值都在各自任务里**写清推导**。
 - ★ **新建 `.gd` 文件后跑 `--import`**(刷全局类缓存),并把 `.uid` 一起 `git add`。
-- 提交信息用**单引号**或 `git commit -F 文件`,**不带任何 Claude/AI 署名行**;提交后回读一遍。每次 `git add` 只加本任务点名的文件。
+- 提交信息用**单引号**或 `git commit -F 文件`,**不带任何 Claude/AI 署名行**;提交后回读一遍。每次 `git add` 只加本任务明确指定的文件。
 - 工作区有未跟踪的 `_crashtest/` 与 `.superpowers/`(后者自带 `.gitignore`),**不要动**。
 - 本批**不改** worker 侧(`server/server_main.gd` / `MatchHost` / `TeamHost` / `RoyaleHost`),**不改** `NetBusExt`,`不改`宽限期与端口归还延迟的**数值**。
 
@@ -45,7 +45,7 @@
 | `tests/lobby_row_probe.tscn` + `.gd` + `.uid` | **新建** | 界面面:三个大厅页把对局中的那一行画成 `disabled` + 无 handler + `FOCUS_NONE` |
 | `CLAUDE.md` | 修改 | 记录房寿命/回收判据/列表可见性/拒绝两半这几条纪律 |
 
-## 契约(全计划共用)
+## 接口规范(全计划共用)
 
 ```
 # 端口 → worker 进程(WorkerLauncher)
@@ -166,7 +166,7 @@ static func pid_alive(pid: int) -> bool:
 
 `spawn_worker`(`:99` 一带)/ `spawn_royale_worker`(`:137` 一带)/ `spawn_team_worker`(`:184` 一带)各一处。★ `spawn_team_worker` 里要在 `create_process` 之后、`return pid > 0` 之前 —— 那个函数中间还夹着一个 `print`。
 
-- [ ] **Step 4: 跑冒烟确认全绿**
+- [ ] **Step 4: 跑冒烟确认全部通过**
 
 Run(PowerShell):`& $GODOT --headless --path . -s res://tests/room_sweep_smoke.gd`
 Expected: `SMOKE_ROOM_SWEEP OK: …`(末尾那行照实报三档的界)。
@@ -473,7 +473,7 @@ func on_list_rooms(caller: int) -> void:
 
 ★ **`matchmaking._on_server_message`(`:201-218`)一个字都不改**:它的自动刷新分支只认旧文案
 (`房间已满` / `房间不存在`),新文案落到 `else` —— **只显示、不刷新**(房本就该一直在列表里)。
-这是"改一个字符串静默改了行为"的典型,故 Step 10 有一条**源码级**断言钉住它。
+这是"改一个字符串静默改了行为"的典型,故 Step 10 有一条**源码级**断言断言约束它。
 
 - [ ] **Step 9: `room_manager._start_match` 冻结名单 + 登记 pid**
 
@@ -920,7 +920,7 @@ git commit -m 'feat(net): 大乱斗/3v3 对局中的房活过转连 + 列表纯�
   - `RoomManager._reclaim_finished_matches() -> void`
   - `static RoomManager._match_over(port: int, pid: int) -> bool`
 
-★ **为什么必须有这一步**(设计 §2.4):房不再在转连那一刻被拆,**就没有任何东西会拆它** → 端口与列表位永久占用。这是本层"端口泄漏"补过的第五次,故回收**必须走同一处拆除收口**。
+★ **为什么必须有这一步**(设计 §2.4):房不再在转连那一刻被拆,**就没有任何东西会拆它** → 端口与列表位永久占用。这是本层"端口泄漏"补过的第五次,故回收**必须走同一处拆除统一收拢**。
 
 - [ ] **Step 1: 探针追加相④(此时必红)**
 
@@ -1095,7 +1095,7 @@ Expected: `SMOKE_ROOM_SWEEP OK: …`。
 - [ ] **Step 6: 变异反证(三条,逐条还原)**
 
 1. 把 `_match_over` 的 `if port <= 0 or pid <= 0: return false` 删掉 ⇒ 相④ 的「pid 还没登记不得判成结束」应红。
-2. 把 `_reclaim_finished_matches` 里 `lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED)` 换成 `lobby.royale_rooms.erase(room.code)` ⇒ `room_sweep_smoke` 的「回收梯没走拆除单一收口」应红。
+2. 把 `_reclaim_finished_matches` 里 `lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED)` 换成 `lobby.royale_rooms.erase(room.code)` ⇒ `room_sweep_smoke` 的「回收梯没走拆除单一统一收拢」应红。
 3. 把 `_process` 里新加的三行删掉 ⇒ `room_sweep_smoke` 的「`_process` 没调 `_reclaim_finished_matches`」应红。
 
 三段输出写进报告。
@@ -1118,7 +1118,7 @@ git commit -m 'feat(net): 对局结束即回收房(判据 = worker 进程还在�
 - Create: `tests/lobby_row_probe.tscn` + `tests/lobby_row_probe.gd` + `.uid`
 
 **Interfaces:**
-- Consumes: Task 2/3 的列表载荷键 `in_match`
+- Consumes: Task 2/3 的房间列表数据键 `in_match`
 - Produces: 判据文本 `LOBBY ROW PROBE: ALL-OK`
 
 - [ ] **Step 1: 写 `tests/lobby_row_probe.tscn`**
@@ -1245,7 +1245,7 @@ func _find_button(box: Node, code: String) -> Button:
 - [ ] **Step 3: 跑一次确认它红**
 
 Run(PowerShell):`& $GODOT --headless --path . --quit-after 3600 res://tests/lobby_row_probe.tscn`
-Expected: 三页各红四条 —— 「对局中的行 disabled」「没接任何 handler」「不吃键盘焦点」「文案含对局中」(此时实现仍会把对局中的行画成可点、人数段写的是 `%d/2` / `%d/%d`),且末尾没有 `ALL-OK`。★ 另四条(名单来自载荷 / 普通行两条对照)此时**本就该绿** —— 它们是正向对照,不是本任务要改的东西。
+Expected: 三页各红四条 —— 「对局中的行 disabled」「没接任何 handler」「不吃键盘焦点」「文案含对局中」(此时实现仍会把对局中的行画成可点、人数段写的是 `%d/2` / `%d/%d`),且末尾没有 `ALL-OK`。★ 另四条(名单来自数据包 / 普通行两条对照)此时**本就该绿** —— 它们是正向对照,不是本任务要改的东西。
 
 - [ ] **Step 4: `matchmaking._on_room_list`**
 
@@ -1347,11 +1347,11 @@ Expected: `LOBBY ROW PROBE: ALL-OK(24 条断言)`。
 Run(PowerShell):`& $GODOT --headless --path . --quit-after 120 res://scenes/matchmaking.tscn` → 无 `SCRIPT ERROR`。
 Run(PowerShell):`& $GODOT --headless --path . --quit-after 120 res://scenes/royale_lobby.tscn` → 无 `SCRIPT ERROR`。
 Run(PowerShell):`& $GODOT --headless --path . --quit-after 120 res://scenes/team_lobby.tscn` → 无 `SCRIPT ERROR`。
-Run(PowerShell):`& $GODOT --headless --path . --quit-after 3600 res://tests/lobby_visibility_probe.tscn` → `LOBBY VISIBILITY PROBE: ALL-OK(27 条断言)`(回归:载荷改动不该影响服务端面)。
+Run(PowerShell):`& $GODOT --headless --path . --quit-after 3600 res://tests/lobby_visibility_probe.tscn` → `LOBBY VISIBILITY PROBE: ALL-OK(27 条断言)`(回归:数据包改动不该影响服务端面)。
 
 ★ 三页启动自检会各自连一次大厅(默认地址),失败只打状态栏文案、不报 `SCRIPT ERROR`,这是**预期的**。
 
-★ **版式不取图**:本批只把一行的文案与可点状态改掉,没有动任何版式常量(`disabled` 样式早就有了)。按本仓「不折腾视觉」的取向,人眼验收留给用户跑真链路时顺带看一眼列表。
+★ **版式不取图**:本批只把一行的文案与可点状态改掉,没有动任何版式常量(`disabled` 样式早就有了)。按本仓「不折腾视觉」的取向,人工视觉核验留给用户跑真链路时顺带看一眼列表。
 
 - [ ] **Step 7: 变异反证(两条,逐条还原)**
 
@@ -1394,11 +1394,11 @@ Expected: `SMOKE_ROOM_SWEEP OK: …`。
    - ★ **为什么不按宽限期收**:宽限期是 worker 侧状态,大厅看不见;照"开局后宽限期到点就收"做会把房在开打 60 秒后拆掉,而**一局打到中段掉线的玩家再也回不去**。
    - ★ **代价照实登记**:双方都在 `go_match` 后立刻消失时,那一个 worker 与那一个端口会白占到 2h 兜底为止(玩家侧有 12s 转连 / 25s claim 兜底,不会卡住)。
    - ★ **pid 复用风险**:worker 退出后若系统把同一个 pid 发给别的进程,回收梯会判"还在",一条记录(与一个端口)最多挂到 2h。误判方向是"多留"而非"错杀"。
-2. **列表可见性与拒绝入房是同一件事的两半**:列表载荷各加 `in_match` 键(三模式同名同义、加法式扩展,老客户端忽略未知键),列表构造抽成 **`LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()` 纯函数** —— ★ 因为 `NetBus.reply` 在无对端时静默跳过,不抽出来探针观测不到列表内容。三模式拒绝文案统一成「该房间的对局已进行中,无法加入」;★ **`matchmaking._on_server_message` 的自动刷新分支只认旧文案**(`房间已满` / `房间不存在`),新文案落到 `else` 只显示不刷新 —— 改文案 = 静默改行为,`room_sweep_smoke` 有源码级断言钉住。
+2. **列表可见性与拒绝入房是同一件事的两半**:房间列表数据各加 `in_match` 键(三模式同名同义、向后兼容扩展,老客户端忽略未知键),列表构造提取为 **`LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()` 纯函数** —— ★ 因为 `NetBus.reply` 在无对端时静默跳过,不抽出来探针观测不到列表内容。三模式拒绝文案统一成「该房间的对局已进行中,无法加入」;★ **`matchmaking._on_server_message` 的自动刷新分支只认旧文案**(`房间已满` / `房间不存在`),新文案落到 `else` 只显示不刷新 —— 改文案 = 静默改行为,`room_sweep_smoke` 有源码级断言断言约束。
 3. **房记录上多了两个字段**:`worker_pid`(spawn 成功后由 `RoomManager` 登记;**0 = 拉起中,一律判"没结束"**)与 `roster`(开局那一刻由 `freeze_roster` 冻结的 `[{role, name}]`)。★ **名单必须冻结**:成员转连后 `players` 会空、`_peer_names` 会被擦掉,读它们只会渲染出"玩家, 玩家"。
 4. **`WorkerLauncher` 多了端口→pid 表**:`pid_of(port)`(未登记/已归还 ⇒ 0)与 `static pid_alive(pid)`(`pid <= 0` ⇒ false)。★ `release_now` **必须同时清 pid**:只清一半会让一个已经结束的对局被判成"还在"。
 5. **三张注册表仍然各管各的**(房号空间重叠是既有事实),记录**只住在自己那张表里** —— ★ 别为"看得见"去合并三张表,那正是"按 code 撞库会拆错房"那个老坑(见 `teardown_room` 的 `is` 判据)。
-6. **守缺口照实登记**:本批**没有**真链路探针覆盖"线上投递的 `in_match` 行 + 真的拒绝"(探针只覆盖载荷构造与页面渲染)。那一半由**后继的回局计划**的 `tests/rejoin_probe.tscn` 相 c3 覆盖(同一个机制,一条探针)。
+6. **守缺口照实登记**:本批**没有**真链路探针覆盖"线上投递的 `in_match` 行 + 真的拒绝"(探针只覆盖数据包构造与页面渲染)。那一半由**后继的回局计划**的 `tests/rejoin_probe.tscn` 相 c3 覆盖(同一个机制,一条探针)。
 
 - [ ] **Step 3: 提交**
 
@@ -1411,7 +1411,7 @@ git commit -m 'docs: CLAUDE.md 记录对局中房间的寿命/回收判据/列�
 
 ## 自检记录
 
-**设计覆盖**:设计 §1(今天为什么看不见)对应本计划的**全部**任务(拆房那三处是它们各自模式的任务改的);§2.2 记录形状 → Task 2(1v1)+ Task 3(另两模式);§2.4 退役 → Task 1(判据的原料)+ Task 4(梯与接线);§2.5 端口不变量换位 → 本批**只改注释归属**,数值不动(留档在本文件 Task 4 的注释与设计 §2.5);§3 载荷 → Task 2 + Task 3;§4 渲染 → Task 5;§5 拒绝 → Task 2(文案与守卫)+ Task 3(另两模式)+ Task 5(界面那道);§6 测试 → 两个新探针 + `room_sweep_smoke` 三条 + `team_room_smoke` 回归。
+**设计覆盖**:设计 §1(今天为什么看不见)对应本计划的**全部**任务(拆房那三处是它们各自模式的任务改的);§2.2 记录形状 → Task 2(1v1)+ Task 3(另两模式);§2.4 退役 → Task 1(判据的原料)+ Task 4(梯与接线);§2.5 端口不变量换位 → 本批**只改注释归属**,数值不动(留档在本文件 Task 4 的注释与设计 §2.5);§3 数据包 → Task 2 + Task 3;§4 渲染 → Task 5;§5 拒绝 → Task 2(文案与守卫)+ Task 3(另两模式)+ Task 5(界面那道);§6 测试 → 两个新探针 + `room_sweep_smoke` 三条 + `team_room_smoke` 回归。
 
 **与设计的刻意偏离**:无。
 

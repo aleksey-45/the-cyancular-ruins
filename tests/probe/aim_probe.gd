@@ -57,7 +57,7 @@ func _aim_dir(mx: float, my: float) -> Vector2:
 	if dir.length_squared() < 0.0001:
 		return Vector2.RIGHT
 	dir = dir.normalized()
-	# _auto_aim:鼠标明显偏一侧 → 朝向翻转
+	# _auto_aim:鼠标明显偏一侧 -> 朝向翻转
 	var facing := 1
 	if absf(dir.x) > 0.1:
 		facing = 1 if dir.x > 0.0 else -1

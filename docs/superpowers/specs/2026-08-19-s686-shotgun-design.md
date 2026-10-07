@@ -46,7 +46,7 @@ for i in range(pellet_count):
 | bullet_size | 0.5 | 小弹丸 |
 | pellet_count | 8 | 每发 8 丸 |
 | spread_deg | 8.0 | ±8° 散布 |
-| damage | 4 | 单丸 4 伤(贴脸 8 丸=32,一发带走 25hp FlyBird) |
+| damage | 4 | 单丸 4 伤(贴脸 8 丸=32,一击击倒 25hp FlyBird) |
 | impact | 180.0 | 单丸小击退 |
 | recoil_push | 450.0 | 中上后坐(玩家被推) |
 | recoil_kick | 11.0 | 枪口上跳(视觉) |

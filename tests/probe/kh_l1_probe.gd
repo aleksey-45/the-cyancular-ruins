@@ -1,23 +1,23 @@
 extends ProbeBase
 
 # KH 合并 L1 探针(场景模式:autoload 需已实例化,不能用 -s 跑)。
-# 跑法: Godot_console --headless --path . --quit-after 300 res://tests/probe/kh_l1_probe.tscn
-# (--quit-after 是安全网:本脚本引用 Settings/NetBusExt 等 autoload 标识符,若某个 autoload
-#  被从 project.godot 删掉,脚本会编译失败 → 场景加载成无脚本根节点 → 命令无输出挂死。
+# 运行方式： Godot_console --headless --path . --quit-after 300 res://tests/probe/kh_l1_probe.tscn
+# (--quit-after 是超时保护上限:本脚本引用 Settings/NetBusExt 等 autoload 标识符,若某个 autoload
+#  被从 project.godot 删掉,脚本会编译失败 -> 场景加载成无脚本根节点 -> 命令无输出挂死。
 #  有了它最坏只是超时退出。)
 
 const REQUIRED_AUTOLOADS := ["GameParameters", "NetBus", "NetBusExt", "Settings"]
 const NETBUS_EXT_RPCS := [
-	# 客户端→服务器请求
+	# 客户端 -> 服务器请求
 	"player_options", "suicide_request",
 	"royale_create", "royale_join", "royale_leave", "royale_list", "royale_start",
 	"ai_duel", "royale_start_ai",
-	# 服务器→客户端
+	# 服务器 -> 客户端
 	"match_options", "peer_hues", "hit_confirm", "beam_fired",
 	"royale_rooms", "royale_room_state",
 ]
 
-# 注意:下面这些是**信号**不是方法(对应 RPC 见 NETBUS_EXT_RPCS)。
+# 注意事项：下面这些是信号不是方法(对应 RPC 见 NETBUS_EXT_RPCS)。
 # 用 has_method 断言它们会假失败,必须用 has_signal。
 const NETBUS_EXT_SIGNALS := [
 	"local_match_options", "local_peer_hues", "local_hit_confirm", "player_options_received",
@@ -55,8 +55,8 @@ func _ready() -> void:
 	Settings.load_settings()    # 读回不崩
 
 	# 3) 源码级:难度/老版 UI 不得残留
-	# - 2026-10-02 降精度:原先直接在**原始文本**上判(未剥注释)——
-	#   负向那几条会被墓碑注释**测试误报**,正向那条会被注释里提一句**误判通过**。改成先过 `_code_only`。
+	# - 2026-10-02 降精度:原先直接在原始文本上判(未剥注释)——
+	#   负向那几条会被墓碑注释测试误报,正向那条会被注释里提一句误判通过。改成先过 `_code_only`。
 	var ro_src := _code_only(_read("res://core/config/run_options.gd"))
 	if ro_src == "":
 		_failures.append("core/run_options.gd 读不到")
@@ -89,7 +89,7 @@ func _ready() -> void:
 	_check(Sfx._stream("kill") != null and Sfx._stream("hit") != null, "Sfx 音效流生成失败")
 
 	# 7) LocalServer 是 class_name(非 autoload):查全局类缓存,验它真的注册成功了
-	# (原先写 `if LocalServer == null` 是编译期恒假的死断言,永远不触发)
+	# (原先写 `if LocalServer == null` 是编译期始终为 false的死断言,永远不触发)
 	var found_local_server := false
 	for entry in ProjectSettings.get_global_class_list():
 		if str(entry.get("class", "")) == "LocalServer":
@@ -105,4 +105,3 @@ func _has_prop(o: Object, prop: String) -> bool:
 		if str(p["name"]) == prop:
 			return true
 	return false
-

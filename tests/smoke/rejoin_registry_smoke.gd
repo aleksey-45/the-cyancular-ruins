@@ -24,7 +24,7 @@ func _initialize() -> void:
 	var fails: Array[String] = []
 	var r = S.new()
 
-	# ── ① 登记 → 查得到,字段逐一对上 ──
+	# ── ① 登记 -> 查得到,字段逐一对上 ──
 	_ran += 1
 	r.grant("tk_a", "1234", 1, 29001, 0)
 	var e: Dictionary = r.lookup("tk_a", 0)
@@ -43,7 +43,7 @@ func _initialize() -> void:
 	if r.size() != 1:
 		fails.append("登记一条后 size 应为 1,实得 %d" % r.size())
 
-	# ── ② TTL 边界(与 GraceWindow 同口径:**含边界**)──
+	# ── ② TTL 边界(与 GraceWindow 同口径:含边界)──
 	_ran += 1
 	var ttl := int(float(S.TOKEN_TTL_SECONDS) * 1000.0)
 	if r.lookup("tk_a", ttl - 1).is_empty():
@@ -53,9 +53,9 @@ func _initialize() -> void:
 	if r.size() != 1:
 		fails.append("★ lookup 不得改变表(GC 只走 prune),实得 size=%d" % r.size())
 
-	# ── ②b 跨文件不变量:凭据的 TTL 必须**不短于**宽限期 ──
+	# ── ②b 跨文件不变量:凭据的 TTL 必须不短于宽限期 ──
 	# - 为什么这条要在这里钉:宽限期内玩家手里那份凭据必须是有效的。TTL 短于宽限期会让一个
-	#   **还在宽限期里**的玩家被大厅以「凭据已失效」拒掉,而那条拒绝与"对局真的结束了"
+	#   还在宽限期里的玩家被大厅以「凭据已失效」拒掉,而那条拒绝与"对局真的结束了"
 	#   在日志与提示上一模一样(玩家与排查者都会读成"这局没了")。
 	_ran += 1
 	if float(S.TOKEN_TTL_SECONDS) < float(G.DEFAULT_SECONDS):
@@ -64,12 +64,12 @@ func _initialize() -> void:
 
 	# ── ③ prune:清过期的、不动没过期的、返回清掉的条数 ──
 	_ran += 1
-	# 注意： brief 原文这里写的是 `..., 4243, 0)`(与 tk_a 同一时刻登记)—— 那样 tk_b 的到期时刻
-	#   与 tk_a 相同(都 = ttl),`prune(ttl)` 会把**两条一起**清掉,而本段下面三条断言
+	# 注意事项：brief 原文这里写的是 `..., 4243, 0)`(与 tk_a 同一时刻登记)—— 那样 tk_b 的到期时刻
+	#   与 tk_a 相同(都 = ttl),`prune(ttl)` 会把两条一起清掉,而本段下面三条断言
 	#   ("清掉 1 条" / "剩 1 条(tk_b)" / "不得动没过期的")与 ⑤("tk_b 必须是 end_match 的目标")、⑥
-	#   都要求 tk_b 活过 `ttl`。故把登记时刻改成 `ttl`(tk_b 是**后来**登记的),本段意图不变。
+	#   都要求 tk_b 活过 `ttl`。故把登记时刻改成 `ttl`(tk_b 是后来登记的),本段意图不变。
 	r.grant("tk_b", "5678", 2, 29002, ttl)
-	# - `r` 是 `S.new()` 的结果(无静态类型) ->  这里**不能用 `:=`**:返回值是 Variant,
+	# - `r` 是 `S.new()` 的结果(无静态类型) ->  这里不能用 `:=`:返回值是 Variant,
 	#   Godot 会直接 Parse Error("Cannot infer the type of n variable"),整个冒烟一行都跑不到。
 	var n: int = r.prune(ttl)
 	if n != 1:
@@ -79,16 +79,16 @@ func _initialize() -> void:
 	if r.lookup("tk_b", ttl).is_empty():
 		fails.append("★ prune 不得动没过期的凭据")
 
-	# ── ④ 判据:三种拒绝 + 放行,且**优先级**是对的 ──
+	# ── ④ 验收标准：三种拒绝 + 放行,且优先级是对的 ──
 	_ran += 1
 	var live: Dictionary = r.lookup("tk_b", 0)
 	if r.decision({}, "5678", true) == "":
 		fails.append("★ 凭据不存在必须拒绝(不能放行)")
-	# 注意： brief 原文这条是 `.contains("凭据")` —— 它**拦不住**它自己写明的那个错:两条拒绝理由
-	#   ("凭据已失效(对局可能已结束)" 与 "房间号与凭据不符")**都含「凭据」二字**,
-	#   顺序写反照样测试全部通过(2026-09-21 实测:按 brief 的变异②对调两条分支  ->  冒烟仍 ALL-OK,
-	#   即这条守卫等于不存在)。故拆成两条:
-	#   ① **措辞无关**的结构判据 —— 两种拒绝必须给**不同**的理由;
+	# 注意事项：brief 原文这条是 `.contains("凭据")` —— 它拦不住它自己写明的那个错:两条拒绝理由
+	#   ("凭据已失效(对局可能已结束)" 与 "房间号与凭据不符")都含「凭据」二字,
+	#   顺序写反照样全部断言通过(2026-09-21 实测:按 brief 的变异②对调两条分支  ->  冒烟仍 ALL-OK,
+	#   即这条防御性校验等于不存在)。故拆成两条:
+	#   ① 措辞无关的结构判定条件 —— 两种拒绝必须给不同的理由;
 	#   ② 这个理由必须讲"失效"(即凭据那一支的语义)。
 	var why_empty: String = r.decision({}, "5678", true)
 	var why_code: String = r.decision(live, "9999", true)
@@ -107,7 +107,7 @@ func _initialize() -> void:
 	# 凭证索引使用 match_id，隔离不同房间类型的房间号命名冲突。
 	# end_match 仅将 alive 字段标记为 false，不直接删除条目，以便区分“凭证失效”与“对局已结束”。
 	_ran += 1
-	r.grant("tk_c", "5678", 1, 29003, 0)   # 与 tk_b **同号**、不同局号
+	r.grant("tk_c", "5678", 1, 29003, 0)   # 与 tk_b 同号、不同局号
 	r.grant("tk_d", "7777", 1, 29004, 0)
 	var ended: int = r.end_match(29002)   # 同上:不能 `:=`
 	if ended != 1:
@@ -136,11 +136,11 @@ func _initialize() -> void:
 	if r.lookup("tk_d", 0).is_empty():
 		fails.append("★ drop_token 不得误伤别的凭据")
 
-	# ── ⑦ owns:「这份凭据是不是**这一间房**的」(B1 甲案:私密房只对本人列出)──
-	# - 它和 `decision()` 是**两个不同的问法**,别合并:`decision` 问"能不能放他进去"
-	#   (还要 worker 活着),`owns` 只问"这份凭据属不属于这间房" —— 列表**只该问后者**
+	# ── ⑦ owns:「这份凭据是不是这一间房的」(B1 甲案:私密房只对本人列出)──
+	# - 它和 `decision()` 是两个不同的问法,别合并:`decision` 问"能不能放他进去"
+	#   (还要 worker 活着),`owns` 只问"这份凭据属不属于这间房" —— 列表只该问后者
 	#   (见 owns 的注释:多判一次 worker 活性只会让那一行提前消失)。
-	# - 三种测试漏检都是静默的:恒 true(私密房对所有人列出 = "私密"没了)、恒 false
+	# - 三种测试漏报都是静默的:恒 true(私密房对所有人列出 = "私密"没了)、恒 false
 	#   (私密房永远不列 = B1 没做)、只看 token 非空(同号房的凭据也放行)。三条各断一次。
 	_ran += 1
 	r.grant("tk_own", "1234", 1, 29005, 0)
@@ -148,9 +148,9 @@ func _initialize() -> void:
 		fails.append("★ owns:属于自己的那一间房必须 true(否 = 私密房永远不列 = B1 没做)")
 	if r.owns("tk_own", "9999", 0):
 		fails.append("★ owns:房号不符必须 false(否则同号的另一间房的凭据也放行)")
-	# - 下面这一条**今天是一根保险带**:删掉 `owns` 里那个 `token.is_empty()` 提前返回,
+	# - 下面这一条今天是一根保险带:删掉 `owns` 里那个 `token.is_empty()` 提前返回,
 	#   它还照样是 false(表里根本不会有空键);它挡的是"缺省值取 code"那类将来写法。
-	#   留着是因为它便宜且描述的是契约,但**别把它读成"提前返回为核心关键约束"**。
+	#   留着是因为它便宜且描述的是契约,但别把它读成"提前返回为核心关键约束"。
 	if r.owns("", "1234", 0):
 		fails.append("★ owns:空 token 必须 false(`PvpSession.token` 的默认值就是空串)")
 	if r.owns("tk_nonexistent", "1234", 0):

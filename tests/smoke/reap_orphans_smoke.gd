@@ -29,7 +29,7 @@ func _initialize() -> void:
 		return
 	var log_root := AppPaths.log_dir()
 	DirAccess.make_dir_recursive_absolute(log_root)
-	# ── ① 造假目录 ──
+	# ── ① 构造测试临时目录 ──
 	var fake_pids: Array[int] = []
 	var p := 3900000
 	while fake_pids.size() < 31:
@@ -45,9 +45,9 @@ func _initialize() -> void:
 	if old_fmt_mine:
 		_touch_fake_dir(log_root, old_fmt)
 	OS.delay_msec(1200)
-	for i in range(7, 31):                 # 后 24 份重写 → mtime 变新;前 7 份保持最老
+	for i in range(7, 31):                 # 后 24 份重写 -> mtime 变新;前 7 份保持最老
 		_touch_fake_dir(log_root, "easytier-guest-%d" % fake_pids[i])
-	# ── ② 孤儿进程残留:真内核 + 指向死 pid 的日志目录 ──
+	# ── ② 孤儿进程残留:实际核心服务进程 + 指向已失效 PID 的日志目录 ──
 	var orphan_owner := _dead_pid(3910000)
 	var orphan_name := "easytier-host-%d" % orphan_owner
 	var orphan_dir := log_root.path_join(orphan_name)

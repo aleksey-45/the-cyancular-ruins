@@ -115,7 +115,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 
 纯视觉节点,播完自毁,不含伤害逻辑:
 - `Node2D` + `Sprite2D`(程序生成软圆白贴图,`Image.create` 径向渐变)+ `Tween`:scale 0.4→1.6、modulate.a 1→0,~0.35s → `queue_free`。
-- 用户后补 `FX_Explosion.png`(200×200 画布、64×64 帧区、6 帧 3×2 排列)后,将 `Sprite2D` 换成 `AnimatedSprite2D + SpriteFrames`(一次性不循环),判定代码零改动。
+- 用户后补 `FX_Explosion.png`(200×200 画布、64×64 帧区、6 帧 3×2 排列)后,将 `Sprite2D` 换成 `AnimatedSprite2D + SpriteFrames`(一次性不循环),判定代码无需修改。
 
 ## 8. 不改的文件
 

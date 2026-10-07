@@ -18,7 +18,7 @@ const MAX_WAIT_MS := 30000              # 启动超时阈值
 
 
 func _initialize() -> void:
-	# 加载守卫：加载失败立即退出
+	# 加载防御性校验：加载失败立即退出
 	var S: GDScript = load("res://server/match_session.gd")
 	if S == null:
 		print("TEAM SPAWN SMOKE: FAIL(读不到 match_session.gd —— 共用判据的宿主)")

@@ -59,7 +59,7 @@ func _trace(muzzle: Vector2, dir: Vector2, grid: Array, cols: int, rows: int) ->
 	var t := 0.0
 	var steps := 0
 	var reason := "preview_time"
-	# 复刻新逻辑:起点判墙 → 跳过 TILE_SIZE 段
+	# 复刻新逻辑:起点判墙 -> 跳过 TILE_SIZE 段
 	var escape := _disk(muzzle, grid, cols, rows)
 	var skipped := 0
 	while t < 3.0:

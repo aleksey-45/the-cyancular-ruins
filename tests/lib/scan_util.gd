@@ -1,13 +1,12 @@
 class_name ScanUtil
 extends RefCounted
 
-# 源码级探针的**扫描算法**:读文件、走目录、剥注释视图、括号/实参切分、取函数体。
-# - 纯静态、纯函数(入参进、结果出),不碰 Node / autoload —— 所以它在 `-s` 阶段也能用,
-#   也便于单独验。**断言账本**在 ProbeBase(那个必须 extends Node,因为要 get_tree())。
-# - 这些函数此前在 `tests/kh_l{1,3,4,5,6}_probe.gd` 里各抄一份(阶段 6.1 抽出)。
+# 源码级测试探针静态分析工具类：
+# 提供源文件读取、目录递归遍历、去除注释、参数与括号匹配分析及函数体提取等静态扫描能力。
+# 纯函数设计，不依赖 Node 或 Autoload 单例，适用于无头脚本（-s）与场景模式。
 
-# 读 res:// 下的源文本;不存在(或打不开)返回 ""。调用方**必须**自己判空并报红 ——
-# 静默返回 "" 是这类探针最典型的失明方式(读不到源文件 → 所有 contains 断言恒假/恒真)。
+# 读取 res:// 路径下的文本文件，文件不存在或打开失败时返回空字符串。
+# 调用方应校验返回值非空，防止因文件缺失导致后续静态断言失效。
 static func read(path: String) -> String:
 	if not ResourceLoader.exists(path):
 		return ""
@@ -15,7 +14,7 @@ static func read(path: String) -> String:
 	return f.get_as_text() if f != null else ""
 
 
-# 递归收集 roots 下所有 .gd / .tscn(跳过点目录;.git/.godot/.superpowers 都在其中)
+# 递归收集指定根目录下所有的 .gd 与 .tscn 文件路径（自动忽略点开头的隐藏目录）
 static func collect(roots: Array) -> Array[String]:
 	var out: Array[String] = []
 	for r in roots:
@@ -41,10 +40,8 @@ static func walk(dir_path: String, out: Array[String]) -> void:
 	d.list_dir_end()
 
 
-# 删掉一行里字符串字面量之外的 `#` 起、到行尾的注释(引号/反斜杠转义的处理与 match_paren 同法)。
-# 行尾注释不是代码,却能把被删掉的调用名重新"喂"给按源码文本判在位的断言。
-# ⚠ 已知边界:`"""…"""` 多行字符串**不跨行带状态**(本函数逐行调用)—— 它第 2 行起若出现 `#`,
-#    会被当成注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 `#`,暂无影响。
+# 剔除单行中字符串字面量以外的行尾注释（从 '#' 至行尾）。
+# 正确处理转义引号，避免将字符串内容误截断为注释。
 static func strip_line_comment(line: String) -> String:
 	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
 	var j := 0
@@ -52,7 +49,7 @@ static func strip_line_comment(line: String) -> String:
 		var ch := line[j]
 		if quote != "":
 			if ch == "\\":
-				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
+				j += 1        # 转义字符：跳过后续字符，防止将 \" 识别为字符串结束
 			elif ch == quote:
 				quote = ""
 		elif ch == "\"" or ch == "'":
@@ -63,13 +60,8 @@ static func strip_line_comment(line: String) -> String:
 	return line
 
 
-# 剥注释视图(整行注释与**行尾注释**都删,再 strip_edges、丢空行)。供"在位/唯一挂载点/顺序"
-# 类断言用:注释讲的是动机,不是代码。
-# ⚠ 只删**整行**注释是不够的(旧做法,实测):一句提到退役名的行尾注释能让「零引用」断言测试误报
-#    (代码一行没改)。kh_l3 的旧版只剥整行,阶段 6.1 统一集中处理前**核过**它仅有的 2 条「零引用」断言
-#    都盯代码串(`func _process`),两种视图在它那儿等价 —— 故连它一起统一到这里。
-# ⚠ 两个方向**不单调**,别以为"剥得越干净越严":剥掉行尾注释会让「在位」类断言**更严**、
-#    让「零引用」类断言**更松**。新写断言时想清楚它属于哪一类。
+# 生成纯代码文本：剥离整行注释与行尾注释，去除首尾空白并移除空行。
+# 适用于校验函数调用是否存在、特定废弃逻辑是否已被清理等断言。
 static func code_only(src: String) -> String:
 	var out: Array[String] = []
 	for line in src.split("\n"):
@@ -80,10 +72,8 @@ static func code_only(src: String) -> String:
 	return "\n".join(out)
 
 
-# 同上,但**保留行首缩进**(只 rstrip 行尾空白;丢掉只剩空白的行)。给需要按缩进做位置
-# 分析的探针用(kh_l6 的"块在哪一层"类断言靠缩进定块)。
-# 为什么不能只看裸文本:一句提到被删调用的**注释**能把"在位"类断言误判通过,反过来也能把
-# "零引用"类断言弄红 —— 注释不是代码。
+# 生成保留缩进的代码视图：剥离注释并去除行尾空白，保留行首缩进层级。
+# 适用于需要依据缩进判断代码嵌套块范围的测试断言。
 static func code_view(src: String) -> String:
 	var out: Array[String] = []
 	for raw in src.split("\n"):
@@ -94,8 +84,7 @@ static func code_view(src: String) -> String:
 	return "\n".join(out)
 
 
-# 取某函数的函数体(从头到下一个 func 之前;找不到返回空串)。判据必须落在**体内**,
-# 否则一条同名的调用/注释就能满足断言。
+# 提取指定函数名的函数体代码（从函数定义开始到下一个 func 出现前；未找到返回空串）。
 static func func_body(code: String, name: String) -> String:
 	var i := code.find("func " + name + "(")
 	if i < 0:
@@ -104,12 +93,9 @@ static func func_body(code: String, name: String) -> String:
 	return code.substr(i, (j - i) if j > 0 else code.length() - i)
 
 
-## 同上,但**只认行首(列 0)**的函数定义。
-## 注意： 为什么必须有它:`func_body` 是**裸子串**搜索,而 `code_only` 会剥掉缩进  -> 
-##   文件里若有**内部类**且它也有同名方法,那个缩进的方法会被当成顶层那个先命中 ——
-##   取到的是**错的那个体,而且不报错**(实测:`scenes/level_0.gd` 的内部类 `_Reaper`
-##   也有 `func _ready()`,`func_body(…, "_ready")` 拿回的是 `_Reaper` 的 3 行体)。
-##   - 配套要求:`code` 必须是**保留缩进**的 `code_view`,不是 `code_only`。
+## 提取指定函数名的顶层函数体（仅匹配行首列 0 的函数定义）。
+## 用于避免在文件包含内部类时，误将内部类中的同名方法匹配为顶层函数。
+## 注意事项：输入参数 code 必须是保留缩进的 code_view 文本。
 static func top_func_body(code: String, name: String) -> String:
 	var i := code.find("\nfunc " + name + "(")
 	if i < 0:
@@ -119,7 +105,7 @@ static func top_func_body(code: String, name: String) -> String:
 	return code.substr(i, (j - i) if j > 0 else code.length() - i)
 
 
-# 与 open 处 '(' 配对的 ')' 下标(跳过字符串内的括号;找不到返回 -1)
+# 查找与指定左括号 open 位置匹配的右括号索引（忽略字符串内部字符；未找到返回 -1）。
 static func match_paren(src: String, open: int) -> int:
 	var depth := 0
 	var in_str := false
@@ -142,7 +128,7 @@ static func match_paren(src: String, open: int) -> int:
 	return -1
 
 
-# 顶层逗号切分实参(括号/方括号/花括号内、字符串内的逗号不算分隔符)
+# 按顶层逗号切分函数实参列表（忽略嵌套括号及字符串内部的逗号）
 static func split_args(s: String) -> Array[String]:
 	var out: Array[String] = []
 	var depth := 0
@@ -178,9 +164,8 @@ static func split_args(s: String) -> Array[String]:
 	return out
 
 
-# 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
-# 函数名出现在注释/字符串里时文本法会测试漏检;而 `has_method()` 对**脚本资源**看不见它自己的
-# 实例方法(L4 撞过这个坑),故一律走 get_script_method_list()。
+# 从脚本方法列表中查询指定方法元数据（未找到返回 null）。
+# 相比字符串包含匹配，通过方法列表校验能避免注释或同名字段引起的误判。
 static func method_info(gs: GDScript, name: String) -> Variant:
 	for m in gs.get_script_method_list():
 		if str(m.get("name", "")) == name:

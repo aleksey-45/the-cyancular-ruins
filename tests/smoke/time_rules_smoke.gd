@@ -51,7 +51,7 @@ func _test_roundtrip() -> void:
 	var r2 := TimeRules.from_dict(d)
 	_chk(is_equal_approx(r2.initial, 1200.0) and is_equal_approx(r2.window, 300.0)
 			and r2.block_gain == 25 and is_equal_approx(r2.kill_ratio, 0.75), "往返丢字段")
-	# 缺字段 → 用默认值(老客户端/老包安全)
+	# 缺字段 -> 用默认值(老客户端/老包安全)
 	var r3 := TimeRules.from_dict({})
 	_chk(is_equal_approx(r3.initial, 1000.0) and r3.block_gain == 10, "空字典应回落默认值")
 

@@ -6,7 +6,7 @@ extends SceneTree
 #   source tests/env.sh && timeout 120 "$GODOT" --headless --path . -s res://tests/smoke/ui_palette_single_source_smoke.gd
 
 const PALETTE := "res://ui/factory/ui_factory.gd"
-# 底板色字面量的**归一化后**形态(空白在 `_norm` 里被去掉)。
+# 底板色字面量的归一化后形态(空白在 `_norm` 里被去掉)。
 const PLATE_LITERAL := "Color(0,0,0,0.1)"
 # 队 1 token 的重复字面量(改前 `BODY_BASE_COLOR` 就是这个) —— 归一化后。
 const TEAM_A_LITERAL := "Color(99.0/255.0,155.0/255.0,1.0)"
@@ -18,7 +18,7 @@ const GD_SITES := [
 	"res://ui/factory/world_label.gd",
 	"res://ui/hud/royale_hud.gd",
 ]
-# 两个**结构上无法派生**的落点:`.tscn` 里 StyleBoxFlat 的 bg_color。
+# 两个结构上无法派生的落点:`.tscn` 里 StyleBoxFlat 的 bg_color。
 const TSCN_SITES := [
 	"res://ui/hud/pvp_hud.tscn",
 	"res://ui/hud/team_hud.tscn",
@@ -28,30 +28,30 @@ const BODY_BASE_SITE := "res://scenes/pvp_match_client.gd"
 
 # ⑥ Theme 资源:里面每个 `Color(...)` 必须等于调色板某个 `const C_*`。
 const THEME_SITE := "res://ui/theme/menu_theme.tres"
-# ⑥ 抽到的 `Color(...)` 个数**下限**(防无效操作):.tres 形状变了 / 读坏了  ->  零命中 = 测试漏检。
-#   今日实测 2026-10-03:menu_theme.tres 共 **34** 个 Color(...)(11 个 StyleBoxFlat 21 个 +
+# ⑥ 抽到的 `Color(...)` 个数下限(防无效操作):.tres 形状变了 / 读坏了  ->  零命中 = 测试漏报。
+#   今日实测 2026-10-03:menu_theme.tres 共 34 个 Color(...)(11 个 StyleBoxFlat 21 个 +
 #   [resource] 13 个),取 20 留健康余量。
 const THEME_COLOR_MIN := 20
 # 颜色值比较的容差(逐位相等,但容忍 .tres 的浮点序列化位数):
 #   ResourceSaver 把 float32 写成十进制再解析回来,噪声只有 ~1e-8 量级(float32 的十进制
-#   表示相对误差 ~6e-8)。取 1/65536 ≈ 1.5e-5:比噪声大好几个数量级,又**远小于**
-#   改一个十进制数字的最小差(如 0.902→0.903 = 0.001) ->  任何"改一位"都能被逮住。
-#   - 起初取 1/512(≈0.00195)在变异实测里**放过**了 0.902→0.903(差 0.001)—— 那正是
-#     本守卫要抓的东西,故收紧到这个值(实测:改一位即红)。
+#   表示相对误差 ~6e-8)。取 1/65536 ≈ 1.5e-5:比噪声大好几个数量级,又远小于
+#   改一个十进制数字的最小差(如 0.902 -> 0.903 = 0.001) ->  任何"改一位"都能被逮住。
+#   - 起初取 1/512(≈0.00195)在变异实测里放过了 0.902 -> 0.903(差 0.001)—— 那正是
+#     本防御性校验要抓的东西,故收紧到这个值(实测:改一位即红)。
 const COLOR_TOL := 1.0 / 65536.0
-# ⑤ 反向断言的白名单 = 允许出现底板色**字面量**的文件:
-#   调色板自己(它就是源)+ 两个 `.tscn`(结构上派生不了)+ **本文件自己**
+# ⑤ 反向断言的白名单 = 允许出现底板色字面量的文件:
+#   调色板自己(它就是源)+ 两个 `.tscn`(结构上派生不了)+ 本文件自己
 #   (`PLATE_LITERAL` 这个常量本身就把那串字写在了源码里 —— 不白名单它,⑤ 会自己判自己红)。
 const LITERAL_ALLOWED := [PALETTE, "res://ui/hud/pvp_hud.tscn", "res://ui/hud/team_hud.tscn",
 		"res://tests/smoke/ui_palette_single_source_smoke.gd"]
 # ⑤ 扫的目录(生产 + 测试)。
 #   - `render/` 这个根曾必须在列(`camera_2d.gd` / `post_process.gd` 原住那里);Task 2 把
-#     `render/` 并入 `core/present/` 后那两份文件由 `res://core` **递归**覆盖(`ScanUtil.walk`
+#     `render/` 并入 `core/present/` 后那两份文件由 `res://core` 递归覆盖(`ScanUtil.walk`
 #     是递归的) ->  该根已删 —— 留着它只会让下面那条"逐根 ≥1 文件"的检查报"根被搬走"。
 const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests"]
-# `_rhs_of` 的词界判据用的标识符字符集(needle 后面紧跟其中任一个 = 命中的是兄弟常量)。
+# `_rhs_of` 的词界判定条件用的标识符字符集(needle 后面紧跟其中任一个 = 命中的是兄弟常量)。
 const IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
-# ⑤ 扫描到的源文件数**下限**:防止"扫描根本坏了 → 一个文件都没扫到 → 零命中 = 测试漏检"
+# ⑤ 扫描到的源文件数下限:防止"扫描根本坏了 -> 一个文件都没扫到 -> 零命中 = 测试漏报"
 #   (照 `tests/probe/kh_l4_probe.gd:41-43` 的 `MIN_PROD_FILES` / `MIN_ALL_FILES` 先例)。
 #   今日实测(Task 2 搬完 render/ 后)SCAN_DIRS 共 334 个(ui 26 / scenes 62 / core 41 /
 #   server 16 / tests 189),取 250 留健康余量,只拦"整档坏掉"那一类。
@@ -61,10 +61,10 @@ const MIN_SCANNED := 250
 func _initialize() -> void:
 	var fails: Array[String] = []
 
-	# ── ① 唯一源在位,并取出它的值(原文) ──
+	# ── ① 唯一源接口已声明且生效,并取出它的值(原文) ──
 	var pal_code := ScanUtil.code_only(ScanUtil.read(PALETTE))
 	if pal_code.is_empty():
-		# 读不到 = 本守卫失明  ->  直接红,不静默跳过。
+		# 读不到 = 本防御性校验扫描失效（未读取到源文件）  ->  直接红,不静默跳过。
 		print("  FAIL ① 读不到 %s(读不到就是红,不是静默跳过)" % PALETTE)
 		print("UI PALETTE: FAIL(1 条)")
 		quit(1)
@@ -75,7 +75,7 @@ func _initialize() -> void:
 	elif _norm(plate_rhs) != PLATE_LITERAL:
 		fails.append("① `C_PLATE` 的值不是底板色(实得「%s」)" % plate_rhs)
 
-	# ── ② 四个 `.gd` 落点:必须引用源,**且不许留字面量** ──
+	# ── ② 四个 `.gd` 落点:必须引用源,且不许留字面量 ──
 	for path in GD_SITES:
 		var code := ScanUtil.code_only(ScanUtil.read(path))
 		if code.is_empty():
@@ -96,8 +96,8 @@ func _initialize() -> void:
 		if _norm(body).contains(TEAM_A_LITERAL):
 			fails.append("③ `BODY_BASE_COLOR` 那份**重复字面量**还在(应改成别名)")
 
-	# ── ④ 两个 `.tscn`:读原文,断言 bg_color 与 `C_PLATE` **逐位相等** ──
-	#    - 比的是**调色板里那个值**(不是本文件里那串字) —— 这样"改了 C_PLATE 却没改 .tscn"
+	# ── ④ 两个 `.tscn`:读原文,断言 bg_color 与 `C_PLATE` 逐位相等 ──
+	#    - 比的是调色板里那个值(不是本文件里那串字) —— 这样"改了 C_PLATE 却没改 .tscn"
 	#      才会红。① 已经失败时这里必然也红(没有可比的值),那是正确的连带。
 	for path in TSCN_SITES:
 		var raw := ScanUtil.read(path)
@@ -113,31 +113,30 @@ func _initialize() -> void:
 					% [path, found.size()])
 			continue
 		var got := found[0]
-		# - ① 没读出 `C_PLATE` 时**没有可比的值**,但本条仍要红(门控前置校验照旧) —— 只是判词改成
-		#   "无法比对",别打 `期望「」`:那读起来像"期望是空串",把人往错方向引。
+		# - 若未解析出 `C_PLATE`，由于缺少基准值仍应断言失败，提示信息明确说明无法比对而非显示空期望值。
 		if plate_rhs == "":
 			fails.append("④ %s 无法比对:① 没读出 `C_PLATE`(见 ①)" % path)
 		elif _norm(got) != _norm(plate_rhs):
 			fails.append("④ %s 的 `bg_color` 与 `C_PLATE` 不等(实得「%s」,期望「%s」)"
 					% [path, got, plate_rhs])
-		# - 这一条**独立且无条件**(不并进上面的 if/elif):它比的是**字面量**,不依赖 ① 读到什么。
+		# - 这一条独立且无条件(不并进上面的 if/elif):它比的是字面量,不依赖 ① 读到什么。
 		if _norm(got) != PLATE_LITERAL:
 			fails.append("④ %s 的 `bg_color` 不是底板色(实得「%s」)" % [path, got])
 
-	# ── ⑤ 反向:全仓再无**游离**的底板色字面量(白名单见 LITERAL_ALLOWED) ──
-	# 注意： 覆盖下限(两条,都是"扫描坏掉  ->  零命中 = 测试漏检"的解药):`ScanUtil.walk` 在**根打不开时
+	# ── ⑤ 反向:全仓再无游离的底板色字面量(白名单见 LITERAL_ALLOWED) ──
+	# 注意事项：覆盖下限(两条,都是"扫描坏掉  ->  零命中 = 测试漏报"的解药):`ScanUtil.walk` 在**根打不开时
 	#    静默返回**(`DirAccess.open` 给 null 就直接 return,一个字都不打) ->  根被改名/搬走会让本条
-	#    **无声收窄**:扫到的文件少了、命中自然少了,而 verdict 照打 `ALL-OK`。
-	#      ① **逐根**:每个根都必须扫到 ≥1 个文件,明确提示是哪个根 —— 这才是"某个根打不开"的
-	#         **精确**判据(全局下限单独一条抓不住"一个小根整个消失")。
-	#      ② **全局下限** `MIN_SCANNED`:防"扫描整体坏掉"。
-	#    - 两条都在**迭代之前**跑:先证明扫到了东西,再拿扫到的东西下结论。
-	#    - 文件表**只收一次**并复用(不重复 walk —— 那也是两个判据看到不同世界的窗口)。
+	#    无声收窄:扫到的文件少了、命中自然少了,而 verdict 照打 `ALL-OK`。
+	#      ① 逐根:每个根都必须扫到 ≥1 个文件,明确提示是哪个根 —— 这才是"某个根打不开"的
+	#         精确判定条件(全局下限单独一条抓不住"一个小根整个消失")。
+	#      ② 全局下限 `MIN_SCANNED`:防"扫描整体坏掉"。
+	#    - 两条都在迭代之前跑:先证明扫到了东西,再拿扫到的东西下结论。
+	#    - 文件表只收一次并复用(不重复 walk —— 那也是两个判定条件看到不同世界的窗口)。
 	var scanned := ScanUtil.collect(SCAN_DIRS)
 	for root in SCAN_DIRS:
 		var n := 0
 		for p in scanned:
-			# 带 "/" 才是**目录**前缀(res://ui 不得匹配到 res://ui_foo)
+			# 带 "/" 才是目录前缀(res://ui 不得匹配到 res://ui_foo)
 			if p.begins_with(root + "/"):
 				n += 1
 		if n == 0:
@@ -168,20 +167,20 @@ func _initialize() -> void:
 		quit(1)
 
 
-# 取 `code` 里含 `needle` 的那一行的**右值**(`:=` 之后的原文);找不到/没有 `:=` 给 ""。
-# - 匹配是**整词**的(needle 后面必须紧跟非标识符字符),不是子串 —— 否则日后若出现
-#   `const C_PLATE_DIM := ...` 这类**兄弟常量**并排在真身之前,①(以及拿 `plate_rhs` 当期望值的
-#   ④)会**静默取到兄弟的右值**:守卫照样打 ALL-OK,而它钉的那个值已经不是源的值了。
+# 取 `code` 里含 `needle` 的那一行的右值(`:=` 之后的原文);找不到/没有 `:=` 给 ""。
+# - 匹配是整词的(needle 后面必须紧跟非标识符字符),不是子串 —— 否则日后若出现
+#   `const C_PLATE_DIM := ...` 这类兄弟常量并排在真实实例之前,①(以及拿 `plate_rhs` 当期望值的
+#   ④)会静默取到兄弟的右值:防御性校验照样打 ALL-OK,而它钉的那个值已经不是源的值了。
 func _rhs_of(code: String, needle: String) -> String:
 	for l in code.split("\n"):
 		var i := l.find(needle)
 		if i < 0:
 			continue
 		var end := i + needle.length()
-		# 词界:紧跟其后若是标识符字符(字母/数字/下划线),说明命中的是**兄弟常量**
+		# 词界:紧跟其后若是标识符字符(字母/数字/下划线),说明命中的是兄弟常量
 		# (如 `const C_PLATE_DIM`),不是我们要的那个 —— 跳过,别把它的右值当成源的值。
-		# - 边界:needle 恰好落在**行尾**时 end == 行长度,取不到字符;越界取字符会打引擎错误
-		#    ->  本脚本一行裁决都不打印(只能靠 timeout 看出来) ->  必须显式判长度。
+		# - 边界:needle 恰好落在行尾时 end == 行长度,取不到字符;越界取字符会打引擎错误
+		#    ->  本脚本一行判定结果都不打印(只能靠 timeout 看出来) ->  必须显式判长度。
 		#   那种行没有值可取,落到下面的 `:=` 查找  ->  返回 ""(与原语义一致)。
 		if end < l.length() and l[end] in IDENT_CHARS:
 			continue
@@ -190,15 +189,15 @@ func _rhs_of(code: String, needle: String) -> String:
 	return ""
 
 
-# 取 `.tscn` 原文里**所有** `bg_color = <Color(...)>` 的右值(按出现顺序),并**剔掉 `;` 注释行**。
+# 取 `.tscn` 原文里所有 `bg_color = <Color(...)>` 的右值(按出现顺序),并剔掉 `;` 注释行。
 # - 用正则而不是 `split("=")` —— 要容忍空格差异,且 `StyleBoxFlat` 段里还有别的 `=` 行。
-# 注意： 为什么这**两件事都不可省**:
-#    ① **剔注释** —— 属性行**正上方**就是一条说明注释(`; ... 改底板色必须同步这一行 ...`),
+# 注意事项：为什么这两项关键逻辑都不可省:
+#    ① 剔注释 —— 属性行正上方就是一条说明注释(`; ... 改底板色必须同步这一行 ...`),
 #       而注释不是代码、不受任何约束:它里面一旦出现 `bg_color = ...`,只取首个匹配的实现会读
-#       **注释**、真属性漂了也报绿。那种静默漏报正是本守卫存在的理由。
-#    ② **全取** —— 两个 `.tscn` 在 ⑤ 里是**整文件白名单**  ->  同文件里多出来的第二处 `bg_color`
-#       ④(原先只看首个)与 ⑤ 都看不见。全取之后由调用方断言"**恰好一条**":0 条 = 形状变了、
-#       多条 = 本守卫看不懂 —— 两种都要红,而不是静默钉住其中一条。
+#       注释、真属性漂了也报绿。那种静默漏报正是本防御性校验存在的理由。
+#    ② 全取 —— 两个 `.tscn` 在 ⑤ 里是整文件白名单  ->  同文件里多出来的第二处 `bg_color`
+#       ④(原先只看首个)与 ⑤ 都看不见。全取之后由调用方断言"恰好一条":0 条 = 形状变了、
+#       多条 = 本防御性校验看不懂 —— 两种都要红,而不是静默固定绑定其中一条。
 func _tscn_bg_colors(raw: String) -> Array[String]:
 	var out: Array[String] = []
 	var re := RegEx.create_from_string("bg_color\\s*=\\s*(Color\\([^)]*\\))")
@@ -216,9 +215,9 @@ func _norm(s: String) -> String:
 
 
 # ── ⑥ Theme 颜色对账 ──
-# 读 THEME_SITE 原文,抽出每个 `Color(...)`,断言它**按值**等于调色板里某个 `const C_*`。
-# - 判据是值、不是文本:.tres 里写的是 `Color(0.105882354, 0.14117648, 0.17254902, 1)`,
-#   而调色板源里是 `Color("#1B242C")` —— 逐字比较**恒不相等**,只有解析成 Color 再比才对。
+# 读 THEME_SITE 原文,抽出每个 `Color(...)`,断言它按值等于调色板里某个 `const C_*`。
+# - 判定依据为值、不是文本:.tres 里写的是 `Color(0.105882354, 0.14117648, 0.17254902, 1)`,
+#   而调色板源里是 `Color("#1B242C")` —— 逐字比较恒不相等,只有解析成 Color 再比才对。
 # - 两条防无效操作(缺了它们,读不到/形状变了都会静默 ALL-OK):读不到  ->  红;抽到的数量 < 下限  ->  红。
 func _check_theme_colors(pal_code: String, fails: Array[String]) -> void:
 	var raw := ScanUtil.read(THEME_SITE)
@@ -256,7 +255,7 @@ func _palette_colors(code: String) -> Array[Color]:
 	return out
 
 
-# 把一处 `Color(...)` 字面量解析成 Color;解析不了返回 **null**。
+# 把一处 `Color(...)` 字面量解析成 Color;解析不了返回 null。
 # 认两种形状(与调色板/`.tres` 实际用到的写法一致):
 #   - `Color("#RRGGBB")` / `Color("#RRGGBBAA")` —— 单实参、十六进制串;
 #   - `Color(a, b, c)` / `Color(a, b, c, d)` —— 数值实参,每个允许 `x / y` 算式。

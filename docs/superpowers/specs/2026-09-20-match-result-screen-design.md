@@ -37,7 +37,7 @@
 
 新文件 `ui/match_result.tscn` + `ui/match_result.gd`（`class_name MatchResult extends CanvasLayer`）。
 
-**单一职责**：吃一份**模式无关的载荷**（§4）、画出来、发一个 `leave_requested` 信号。
+**单一职责**：吃一份**模式无关的数据包**（§4）、画出来、发一个 `leave_requested` 信号。
 它**不知道任何模式的规则**：不读 `NetBus`、不读 `Settings`、不 import 任何 `*Host`。谁能被 `grep` 到跨过这条线，谁就是缺陷。
 
 - **层位 150** —— 三个 HUD 都是 `layer=130`、小地图 131、暂停菜单 145 ⇒ 盖住一切。
@@ -49,7 +49,7 @@
 
 `scenes/pvp_game.gd` / `scenes/royale_game.gd` / `scenes/team_game.gd` 各一个 `_build_result_payload() -> Dictionary`。
 
-- 它们**只读**已有状态（`_names` / `round_state` 的载荷 / `_teams`），**不碰节点树**。
+- 它们**只读**已有状态（`_names` / `round_state` 的数据包 / `_teams`），**不碰节点树**。
 - ★ 这样切分后：**模式规则留在模式里，版式只有一份**。
 
 ### 3.3 挂载与离场（三个客户端同款）
@@ -63,7 +63,7 @@ MATCH_OVER 分支：
 
 ★ `royale_game` 的 `_match_ended`（"锁住结算画面"）语义**保留** —— 结算页不是能跑动的画面。
 
-## 4. 载荷契约（三个模式共用的那一个形状）
+## 4. 数据包接口规范（三个模式共用的那一个形状）
 
 ```
 {
@@ -111,9 +111,9 @@ row = { "rank": int, "name": String, "kills": int, "deaths": int,
 
 ## 6. 边界与错误处理
 
-1. **载荷缺键或为空**：每个键都取默认（空 `sections` ⇒ 只画 `title`）。**绝不因缺一个键就崩** —— 结算页崩了，玩家就卡在对局里出不去。
+1. **数据包缺键或为空**：每个键都取默认（空 `sections` ⇒ 只画 `title`）。**绝不因缺一个键就崩** —— 结算页崩了，玩家就卡在对局里出不去。
 2. **`leave_requested` 要防重入**：按钮连点、按钮与 ESC 同时 —— `safe_change_scene` 自己有 `_switching` 守卫，但**结算页这一侧也要置位**，否则会连发两次信号。
-3. ★ **ESC 是双重语义**：对局中 ESC = 暂停菜单；结算页上 ESC = 返回主菜单。今天**天然不冲突**，因为 MATCH_OVER 时暂停菜单**已被销毁**。**要在注释里钉住这个依赖** —— 谁将来删了"销毁暂停菜单"那两行，ESC 就会同时触发两件事。
+3. ★ **ESC 是双重语义**：对局中 ESC = 暂停菜单；结算页上 ESC = 返回主菜单。今天**天然不冲突**，因为 MATCH_OVER 时暂停菜单**已被销毁**。**要在注释里断言约束这个依赖** —— 谁将来删了"销毁暂停菜单"那两行，ESC 就会同时触发两件事。
 4. ★ **"起定时器前先捕获 tree/netbus"那条纪律随定时器一起消失**，但 `is_inside_tree()` 早退**要保留**。删旧代码时别把这条一并当垃圾清掉。
 5. **网络**：MATCH_OVER 之后 `NetBus` 已停，结算页不依赖网络 ⇒ 这期间断网无影响。
 6. `_match_ended` 的输入锁**保留**。
@@ -121,10 +121,10 @@ row = { "rank": int, "name": String, "kills": int, "deaths": int,
 ## 7. 测试
 
 1. **新场景探针 `tests/match_result_probe.tscn`（不占端口）**
-   - 喂**三份**构造载荷（1v1 单行 / 大乱斗 N 行 / 3v3 两节含 `mvp`），各取一张 PNG。
-   - 断言：列数随 `columns` 变；两节时画两栏；`mvp` 高亮**只出现一次**；**空载荷不崩**；**`leave_requested` 连点两次只发一次**。
-   - ★ 取图由**实施者自己读一遍**再给用户（本仓纪律：视觉探针的图要自己读，那一步抓到过两个数值全绿的 bug）。
-2. **适配器当纯函数测**：三个 `_build_result_payload()` 只读状态、不碰节点 ⇒ 可在既有探针里喂**假 `round_state`** 直接断言载荷形状（照 `tests/combat_hud_visual_probe.gd` 喂假 state 的先例）。
+   - 喂**三份**构造数据包（1v1 单行 / 大乱斗 N 行 / 3v3 两节含 `mvp`），各取一张 PNG。
+   - 断言：列数随 `columns` 变；两节时画两栏；`mvp` 高亮**只出现一次**；**空数据包不崩**；**`leave_requested` 连点两次只发一次**。
+   - ★ 取图由**实施者自己读一遍**再给用户（本仓纪律：视觉探针的图要自己读，那一步抓到过两个数值全部通过的 bug）。
+2. **适配器当纯函数测**：三个 `_build_result_payload()` 只读状态、不碰节点 ⇒ 可在既有探针里喂**假 `round_state`** 直接断言数据包形状（照 `tests/combat_hud_visual_probe.gd` 喂假 state 的先例）。
 3. **离场路径**：三个客户端的 MATCH_OVER 分支改动是典型的「改了不报错」（定时器没了、改成信号）。源码级断言只能钉"形状"，**更硬的是真链路跑一次看它到底回不回主菜单** —— 现成的 `royale_soak_probe` / `team_match_probe` 本来就会跑到 MATCH_OVER，顺带就验了。
 4. ★ **已知会被本改动带红的既有断言**：`tests/kh_l6_probe.gd` 的第 9 / 9b 条守的是"MATCH_OVER 退场块（菜单失效 + `is_inside_tree()` 早退）"。动那两块必须**同步改它**，**不许放宽**。
 5. **三个模式零回归**：结算页只在 MATCH_OVER 那一拍介入，PLAYING / COUNTDOWN 一条路径都不该被碰到。

@@ -1,15 +1,15 @@
 extends SceneTree
 
-# 一次性/可复用工具:把旧格式 .cyrm 转换成 v3(每格 4 字符 [纹理 3 位 0xx][形状hex],# cyrm-v3 标记)
-# 写回原文件。支持两种旧格式:
-#   - 旧 v2 字母版(带 # cyrm-v2 标记):每格 2 字符 [纹理字符][形状hex],纹理字符 0-9/A-K/L/M(0-22);
-#     格子坐标已是游戏网格坐标,spawn 坐标不改。
-#   - 旧 v1 单字符(无标记):250×150,自动 2×2 转换(convert_old_grid),spawn 坐标 ÷2。
-# 已是 v3(带 # cyrm-v3 标记)则跳过。
-# 用法:godot --headless --path . -s res://tests/scripts/convert_map.gd [路径;默认 res://maps/demo.cyrm]
+# 地图格式转换工具：将旧版本 .cyrm 文本地图转换为 v3 格式（每格 4 字符：3 位纹理编号 + 1 位十六进制形状掩码，包含 # cyrm-v3 版本头）。
+# 支持格式兼容与转换：
+#   - 旧版 v2（包含 # cyrm-v2 标记）：每格 2 字符 [纹理字符][形状十六进制]，坐标已对齐游戏逻辑网格，保留出生点坐标；
+#   - 旧版 v1（无版本标记）：250×150 原始网格，执行 2×2 合并转换，出生点坐标除以 2。
+#   - 若已是 v3 格式则自动跳过。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/scripts/convert_map.gd [地图路径; 默认 res://maps/demo.cyrm]
 
 const OLD_V2_MARKER := "# cyrm-v2"
-const TEX_CHARS := "0123456789ABCDEFGHIJKLM"   # 索引=纹理值(0-22),兼容字母版
+const TEX_CHARS := "0123456789ABCDEFGHIJKLM"   # 字符索引映射对应纹理 ID（0-22），兼容旧版字母表示法
 
 func _initialize() -> void:
 	var path := "res://maps/demo.cyrm"
@@ -75,7 +75,7 @@ func _has_marker(lines: Array, marker: String) -> bool:
 	return false
 
 
-# 旧 v2 字母版网格:每格 2 字符 [纹理字符][形状hex],纹理字符 0-9/A-K/L/M(0-22)。
+# 解析旧版 v2 网格数据：每格包含 2 个字符（[纹理字符][形状十六进制]，纹理字符范围 0-9/A-M 映射为 0-22）。
 func _parse_old_v2_grid(lines: Array) -> Array[Array]:
 	var grid: Array[Array] = []
 	var row_len := -1

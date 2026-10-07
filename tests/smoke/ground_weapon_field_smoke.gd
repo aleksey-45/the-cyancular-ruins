@@ -17,7 +17,7 @@ func _check(ok: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	var GW: GDScript = load("res://core/sim/ground_weapon_field.gd")
-	# - 空载守卫:load() 失败还往下走会抛错,而 -s 抛错走不到 quit() → 永久挂起
+	# - 空载防御性校验:load() 失败还往下走会抛错,而 -s 抛错走不到 quit() -> 永久挂起
 	if GW == null:
 		print("GROUND_WEAPON_FIELD FAILED: 找不到 core/sim/ground_weapon_field.gd")
 		quit(1)

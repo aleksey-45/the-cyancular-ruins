@@ -1,14 +1,13 @@
 class_name EnemyBullet
 extends BulletBase
 
-# 敌方投弹:由发射者给定初速向量与重力倍率,重力抛物线飞行,命中玩家造成 damage。
-# 场景 collision_mask=3(层1地形+层2玩家),不含层3 → 不撞自己/其他敌人。
+# 敌方投弹实体：受重力影响沿抛物线飞行，命中玩家后结算伤害。
+# 场景 collision_mask=3（层 1 地形 + 层 2 玩家），不含层 3 敌人，避免碰撞自身或其他敌人。
 var damage: int = 2
-var water_mult: float = 1.0  # FlyBird 子弹独有:攻击水里的玩家伤害 ×1.5
+var water_mult: float = 1.0  # 针对水下玩家的额外伤害倍率
 
 
-# 抛物线初速版 setup:直接设初速向量(平抛/投掷用)。不染色,子弹用贴图本底色。
-# siz 是放大倍数(默认 1.0 不动),与 BulletBase.setup() 一样作用于整颗子弹。
+# 初始化投掷初速度向量与相关物理参数
 func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -> void:
 	velocity_vec = vel
 	speed = vel.length()
@@ -20,7 +19,7 @@ func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -
 	scale = Vector2(size, size)
 
 
-# 时间回溯状态:除基类那些,再带上 launch() 给的本类字段(重建后伤害/水中加成不能丢)。
+# 时间回溯状态保存
 func rewind_state() -> Dictionary:
 	var d := super()
 	d["emd"] = damage
@@ -37,10 +36,7 @@ func apply_rewind_state(d: Dictionary) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	# 时间场(B13):加速 = 主角时间被加快  ->  **除主角外一切实体变慢**,敌方弹也不例外
-	# (其位移 = velocity_vec × delta,故缩放 delta 就能真的变慢);回溯整帧冻结(位置由回放器摆)。
-	# - 本类**整个覆写了基类的 _physics_process**,基类首行那句 TimeField.bullet_delta
-	#   在这条路径上永远不会跑 —— 这正是"加速时子弹没变慢"的原因。
+	# 物理步进受时间场倍率调节（加速状态下敌方子弹相对减速，回溯状态下冻结）
 	delta = TimeField.bullet_delta(delta, self)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
@@ -52,7 +48,7 @@ func _physics_process(delta: float) -> void:
 	var col := move_and_collide(step)
 	if col:
 		var hit := col.get_collider()
-		# 视觉副本(apply_damage=false):只飞,碰到目标直接消失,不裁决伤害(伤害服务器裁决)。
+		# 客户端视觉副本仅做飞行与消失表现，伤害由服务端权威判定
 		if apply_damage and hit != null and hit.is_in_group("player") and hit.has_method("take_hit"):
 			var dmg: int = damage
 			if water_mult > 1.0 and Water.is_in_water((hit as Node2D).global_position):
@@ -65,8 +61,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_wrap()
 
-# 服务器权威世界有 2 玩家且敌方子弹无射手 → 位置存 canonical(别锚到某个玩家副本漂走);
-# 单机/客户端(=1 玩家)回落 BulletBase:锚本地玩家副本渲染,接缝不消失。
+# 多人对战权威端约束在规范坐标区间内，单人模式与客户端锚定至就近副本
 func _wrap() -> void:
 	if get_tree().get_nodes_in_group("player").size() >= 2:
 		global_position = MazeGenerator.wrap_to_range(global_position,

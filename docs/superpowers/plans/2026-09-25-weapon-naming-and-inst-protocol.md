@@ -26,11 +26,11 @@
   `ground_client_probe` ④b 已在两条路径上做了行为断言。spec 提议的判据
   `winst != weapons.current_inst()` 跑在 `restore_inventory` **之后**、解析成功时**恒假**，
   照它写会**绕过**现有的重建落点。**本计划不碰 `_apply_weapon_state` 的那段分流。**
-- **§7.4 里两条"应保持全绿"的守卫是假的**：`tests/net_ground_probe.gd:137-145`（源码级，断言
+- **§7.4 里两条"应保持全部通过"的守卫是假的**：`tests/net_ground_probe.gd:137-145`（源码级，断言
   `equip_index(wslot - 1)` **必须**在 `player.gd` 里）与 `tests/ground_client_probe.gd:247-274`（行为级，
   断言上行值 = 背包位置、并**明确规定不得是 type id**）被 §4.1 **直接反证**。本计划 Task 2 **改写**它们，
   不是"保持绿"。
-- **§4.1 的键被大量探针手搓**：上行键 **14 个文件**、下行快照夹具 **6 个文件** —— 逐个点名在 Task 2/3 里。
+- **§4.1 的键被大量探针手动编写**：上行键 **14 个文件**、下行快照夹具 **6 个文件** —— 逐个显式指定在 Task 2/3 里。
 
 ---
 
@@ -82,10 +82,10 @@
 | `server/match_snapshot.gd` | 下行世界包生产端 | **改名** `"weapon"` → `"type_id"` |
 | `scenes/player/player_replica.gd` | 对手副本 | **改名** 读 `"type_id"`；`_weapon_slot_int`→`_weapon_type_int`；`_swap_weapon(slot)`→`(type_id)` |
 | `scenes/level_0.gd` / `scenes/lobby_page.gd` / `scenes/main_menu.gd` / `scenes/royale_lobby.gd` / `ui/weapon_icons.gd` / `ui/hud.gd` / `ui/weapon_slots.gd` / `server/match_host.gd` / `server/match_ground.gd` | 调用方与菜单 | 重命名 + **菜单编号去掉** |
-| `tests/weapon_switch_inst_probe.gd` / `.tscn` | **新探针**：命名纪律 + 上行 inst 端到端 + 下行键两端同源 | 全新建 |
+| `tests/weapon_switch_inst_probe.gd` / `.tscn` | **新探针**：命名纪律 + 上行 inst 端到端 + 下行键双端保持一致 | 全新建 |
 | `tests/net_ground_probe.gd` / `tests/ground_client_probe.gd` | 被 §4.1 **反证**的两条守卫 | **改写**判据（不是保持绿） |
-| `tests/kh_l3_probe.gd` | 闸门/滚轮/残弹记忆 | 重命名 + **加** §4.5 的红断言 |
-| 其余 ~20 个探针 / watcher | 手搓上下行键的夹具 | 逐处改名（上行清单 = Task 2 Step 8；下行清单 = Task 3 Step 4） |
+| `tests/kh_l3_probe.gd` | 限制条件/滚轮/残弹记忆 | 重命名 + **加** §4.5 的红断言 |
+| 其余 ~20 个探针 / watcher | 手动编写上下行键的夹具 | 逐处改名（上行清单 = Task 2 Step 8；下行清单 = Task 3 Step 4） |
 
 ---
 
@@ -96,7 +96,7 @@
 > ① `weapon_component.gd` 净 **−1 行**（删了 `equip()` 里的 `var type_id := int(slot)`）⇒ 它 **:176 之后**的
 > 行号整体上移一格；② `main_menu.gd` / `ui/weapon_icons.gd` 各净 **+1 行**（实现者各加了一行注释）
 > ⇒ `ui/weapon_icons.gd` 的 `UiFactory.label` 那一行从 **:68** 挪到 **:69**。
-> ★ **Task 1 的验收判据仍然有效、也是 Task 2–5 的前置**：Step 6 的 13 符号闸门与 Step 3 的
+> ★ **Task 1 的验收判据仍然有效、也是 Task 2–5 的前置**：Step 6 的 13 符号限制条件与 Step 3 的
 > `.equip(` 自查都跑过了；`server/match_snapshot.gd` 是**手工补进 commit** 的（首版 Files 清单漏了它，
 > 见下面的收尾交叉核对）。
 
@@ -129,7 +129,7 @@
   `cell_start()` / `used_cell_count()` / `CELL_COST` / `equip_type()`，以及 `weapon_changed(type_id)`。
 
 ★ **本 Task 的行为必须逐字不变**（`equip_type` 的签名从 `String` 变 `int`，但**语义与今天完全一致**，
-包括那条"没有就加"的分支 —— 它归 Task 4）。判据 = 既有探针全绿 + Step 6 的 grep 闸门为空。
+包括那条"没有就加"的分支 —— 它归 Task 4）。判据 = 既有探针全部通过 + Step 6 的 grep 限制条件为空。
 
 ★ **本 Task 刻意不碰 `push_net_slot` / `consume_net_slot` / `_net_slot`**：那三个名字的**值**会从
 "背包位置"变成"inst"，改名与改语义必须同时发生（否则会出现"参数名叫 `inst` 而里面装的是位置"这种
@@ -146,7 +146,7 @@ done
 "$GODOT" --headless --path . -s res://tests/weapon_inventory_smoke.gd 2>&1 | grep -E "OK|FAIL"
 "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | grep -E "SMOKE OK|FAIL"
 ```
-Expected: 全绿 —— `KH L3 PROBE: ALL-OK` / **`LEVEL0 SCATTER: ALL-OK`** /
+Expected: 全部通过 —— `KH L3 PROBE: ALL-OK` / **`LEVEL0 SCATTER: ALL-OK`** /
 **`WEAPON PICKUP: ALL-OK`**（★ 这两个串**不带 `PROBE` 一词**，别按名字猜）/
 `WEAPON_INVENTORY OK` / `SMOKE OK`。
 ★ **把这一趟的原文留着** —— Task 1 的验收是"与它逐条相同"，不是"看起来绿"。
@@ -257,15 +257,15 @@ perl -pi -e 's/\bSLOT_COST\b/CELL_COST/g' \
 （`:49`）⇒ 这是 `WeaponComponent.equip(String)`。改成 `equip_type(int)` 之后，
 **照旧传 String 是运行时类型错**（`Cannot convert argument 1 from String to int`）⇒
 `current_weapon()` 为 null ⇒ `PREVIEW VISIBILITY: FAIL(1 条)`（那行 `槽 %s 是 heavy_aim 武器`）。
-★ 它**不在** Task 1 Step 6 的 13 符号闸门里（闸门查的是那 13 个名字，`equip` **不在列**
-—— 正因为 `WeaponBase.equip` 同名，见下面那句），所以闸门**结构性地看不见它**。
+★ 它**不在** Task 1 Step 6 的 13 符号限制条件里（限制条件查的是那 13 个名字，`equip` **不在列**
+—— 正因为 `WeaponBase.equip` 同名，见下面那句），所以限制条件**结构性地看不见它**。
 **判据只有 Step 7 的回归跑得到它** —— 所以 `tests/preview_visibility_probe.gd` **必须**进
 Step 7 的回归组（已列）。
 
 ★★ **绝对不许动**（这些是 `WeaponBase.equip`，接收者类型不同、签名是 `(Node2D, float)`）：
 `tests/aim_direction_probe.gd:43`、`tests/enemy_logic_smoke.gd:294,376,428`、
 `tests/kh_l3_probe.gd:430`、`tests/laser_team_probe.gd:162`。
-**自查办法**（改完跑）。★ 这里是 `equip` **唯一的可行闸门** —— 13 符号闸门（Step 6）**看不见 `equip`**
+**自查办法**（改完跑）。★ 这里是 `equip` **唯一的可行限制条件** —— 13 符号限制条件（Step 6）**看不见 `equip`**
 （`WeaponBase.equip` 同名，不在那 13 个名字里）。**排除名单的写法有讲究**（两条，都踩过）：
 ① **不能整文件排除** —— 那会把 `enemy_logic_smoke.gd` 里那 **2 个真调用点**（`:454`/`:460`）
    一起藏起来，而它们正是要改的；
@@ -311,7 +311,7 @@ grep -rn "\.equip(" --include=*.gd --exclude-dir=.claude --exclude-dir=_crashtes
 | `ui/weapon_icons.gd:18-22,42` | `silhouette(slot: int)` + 4 处 `slot` | `silhouette(type_id: int)` + `type_id` |
 | `ui/weapon_icons.gd:48` | `make_weapon_check(slot: int, checked: bool, font_size: int, on_toggle: Callable)` | `make_weapon_check(type_id: int, …)`（**后三个参数名与顺序不动**） |
 | `ui/weapon_icons.gd:60` | `icon.texture = silhouette(slot)` | `icon.texture = silhouette(type_id)` |
-| `scenes/player/player_replica.gd:198-202`（**三处注释**） | `slot == 0` / `slot > 0 and slot != ...` / `slot 变了` | `type_id == 0` / `type_id > 0 and type_id != ...` / `type_id 变了`（★ 它们描述的就是 `:203` 那个局部量 —— **改代码不改注释**等于把读者引向不存在的名字，而 Step 6 的 13 符号闸门**查不到**这里的 `slot`，只有这条清单管得住） |
+| `scenes/player/player_replica.gd:198-202`（**三处注释**） | `slot == 0` / `slot > 0 and slot != ...` / `slot 变了` | `type_id == 0` / `type_id > 0 and type_id != ...` / `type_id 变了`（★ 它们描述的就是 `:203` 那个局部量 —— **改代码不改注释**等于把读者引向不存在的名字，而 Step 6 的 13 符号限制条件**查不到**这里的 `slot`，只有这条清单管得住） |
 | `scenes/player/player_replica.gd:203-205` | `var slot := int(data.get("weapon", 0))` / `if slot != _weapon_type_int:` / `_swap_weapon(slot)` | `var type_id := int(data.get("weapon", 0))` / `if type_id != _weapon_type_int:` / `_swap_weapon(type_id)`（`"weapon"` 这个**键**归 Task 3） |
 | `scenes/player/player_replica.gd:233-238` | `func _swap_weapon(slot: int)` + 2 处 `slot` | `func _swap_weapon(type_id: int)` + `type_id` |
 | `tests/team_bot_input.gd:148`（注释） | `get_weapon_slot_pressed()` | `get_switch_index_pressed()` |
@@ -325,7 +325,7 @@ grep -rn "\.equip(" --include=*.gd --exclude-dir=.claude --exclude-dir=_crashtes
   `_place_weapon_slots` / `WEAPON_SLOTS_GAP` + `ui/ui_factory.gd` 的 `C_SLOT_EMPTY/FILLED/ACTIVE` +
   `ui/ui_factory.gd:158` 注释里的 `l3_slots_on_map` —— **容量格 UI 控件与它的配色**，与"哪把枪"无关。
 - ★★ **`wslot`（`capture_state()` 的 c2 键 + 它的局部变量与注释）明确不改**：
-  它是**第三条协议面**（本人包 `c2`），与 §4.1 改的两条（上行 / 下行世界包）不是同一条载荷；
+  它是**第三条协议面**（本人包 `c2`），与 §4.1 改的两条（上行 / 下行世界包）不是同一条数据包；
   spec §3 自己那句"capture_state 的 `wslot` … 全按类型 id 走"把它排除在外。
   **登记为后续可选清查项**，本计划不碰。
   ★ **以 grep 为准，别抄下面这种行号清单**（CLAUDE.md 对同类"会漂的数"立过同样的规矩）：
@@ -370,7 +370,7 @@ grep -rn "\.equip(" --include=*.gd --exclude-dir=.claude --exclude-dir=_crashtes
 
 ★ 注意 Step 5 里那句注释 —— 「`UiFactory.label` 的**实参位置不动**」是**为了不弄坏字号扫描**
 （`kh_l4_probe._scan_factory_arg` 按下标 1 取它的字号实参），**不是**说那一条被扫到了：
-本改动**没有任何自动化覆盖**，详见 Task 5 的「已知缺口」那一段。**改完请人眼看一下菜单**。
+本改动**没有任何自动化覆盖**，详见 Task 5 的「已知缺口」那一段。**改完请人工观察一下菜单**。
 
 ★ **唯一合法的"数字 = 键位"仍是 HUD 左下角武器框的行首数字**（`ui/hud.gd` 的
 `key_lbl.text = str(held_index + 1)`）—— 它指的就是背包位置，而背包位置就是键位。**不动它。**
@@ -390,7 +390,7 @@ cat /tmp/cmd_files.txt
 Expected: 两个清单**逐文件相同**（`server/match_snapshot.gd` 必须在两处**都**出现）。
 ★ 判据是"两处相同"，不是"够不够多" —— 少一个就是一次手工补 commit。
 
-- [ ] **Step 6: grep 闸门（本 Task 的主要判据）**
+- [ ] **Step 6: grep 限制条件（本 Task 的主要判据）**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -408,7 +408,7 @@ Expected: **逐符号零输出**（连注释里都不许残留 —— 注释引�
 
 ★ **本 Task 刻意留活**：`push_net_slot` / `consume_net_slot` / `_net_slot` 三个名字**仍在**
 （Task 2 连同语义一起改）。**别把它们加进上面的名单** —— 加了会红，而那是预期的。
-Task 2 的 Step 6 会把这三个补进闸门。
+Task 2 的 Step 6 会把这三个补进限制条件。
 
 - [ ] **Step 7: 回归 —— 与 Step 1 的基线逐条相同**
 
@@ -431,10 +431,10 @@ Expected: 与 Step 1 基线**逐条相同**（外加 `GROUND CLIENT PROBE: ALL-O
 ★ `preview_visibility_probe` 是本 Task **最可能红**的一条：它是 `equip` → `equip_type` 的
 **第 9 个调用点**（`:50` 传的是 `String`），改错了**不报解析错、只在这条探针上红**。
 ★ 特别注意 `enemy_logic_smoke`（它读 `WeaponComponent` 的三张 const 表与 `WeaponInventory`
-的类常量，**本 Task 一个都没动**，它必须原样全绿）。
+的类常量，**本 Task 一个都没动**，它必须原样全部通过）。
 
 ★ 若某条探针**一行都不打印**：那是**解析/加载失败**（重命名漏了该文件里的某个符号），不是超时。
-先按真失败查 —— 本仓踩过"批量里红、单跑绿"就断定超时的坑。
+先按真失败查 —— 本仓踩过"批量里红、单测试通过"就断定超时的坑。
 
 - [ ] **Step 8: 提交**
 
@@ -481,10 +481,10 @@ git commit -m "refactor(weapon): 词汇重命名 —— 三套 slot 收敛为 ty
   - `PlayerInput.consume_switch_inst() -> int`（公开读口，frozen 短路）+ `_switch_inst_raw() -> int`（可选钩子，默认 0）
   - 上行包键 `"winst"`（`"weapon"` **删除**）
 
-★ **红绿分界 = 相① 的源码级断言**（九条里**八条今天红**，逐条点名见 Step 3）
+★ **红绿分界 = 相① 的源码级断言**（九条里**八条今天红**，逐条明确列出见 Step 3）
 \+ **相② 的单行变异反证**（Step 5）。
 相① 负责把"新 API 还不存在"变成**具名红**；相② 负责证明它**确实在修那个分歧**
-（只靠相① 的话，把新 API 全都加上但**接错了**——比如上行仍推位置——它会全绿）。
+（只靠相① 的话，把新 API 全都加上但**接错了**——比如上行仍推位置——它会全部通过）。
 
 - [ ] **Step 1: 写新探针**
 
@@ -1099,13 +1099,13 @@ Expected: **四条** **✗** ——
 新形状。Step 5 **不要**跑它，免得把"还没来得及改的旧守卫"读成回归。）
 
 ★ 为什么这一行就够、且夹具**确实到得了**那个状态：客户端 `held = [重狙(inst 2), 手枪(inst 1)]`、
-服务器 `held = [手枪(inst 1), 重狙(inst 2)]`（探针里显式摆的反序，前置断言钉住"起手就是不同的枪"）。
+服务器 `held = [手枪(inst 1), 重狙(inst 2)]`（探针里显式摆的反序，前置断言断言约束"起手就是不同的枪"）。
 `request_net_cycle(1)` 本地切到**客户端的位置 1 = 手枪 inst 1**；变异的推送值 `next + 1 = 2` 是
 **服务器背包的位置号**，服务器 `index_of_inst(2)` 落回**它自己的位置 1 = 重狙 inst 2** ——
 正是"同一个下标在两端解出不同的枪"本身。
 确认后**改回来**。
 
-- [ ] **Step 6: 跑 —— 确认全绿**
+- [ ] **Step 6: 跑 —— 确认全部通过**
 
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 \
@@ -1120,7 +1120,7 @@ Expected: 每条 `✓`，末行 `KH weapon-inst PROBE: ALL-OK`。
 `"消费端不再是按背包位置切(equip_index(wslot - 1))—— 两条路径的量纲必须一致")` 止；
 **参考行号 :133-145**（Task 1 没动本文件的行数 —— 它只改了 `request_net_cycle` 里的符号，
 本条守的字符串本身在 Task 1 之前就长这样）。**整段替换**（注意：本段自己引用的
-`push_net_slot` / `equip_index(wslot - 1)` 是**旧契约的字符串**，替换后不再出现）：
+`push_net_slot` / `equip_index(wslot - 1)` 是**旧接口规范的字符串**，替换后不再出现）：
 
 ```gdscript
 	# ④c 切枪：上行传**目标那一把的 inst**（§4.1，2026-09-25 换）。
@@ -1190,8 +1190,8 @@ func _phase_switch_field_contract() -> void:
 - [ ] **Step 8: 把上行夹具的 `"weapon": 0` 改成 `"winst": 0`（**20 处 / 14 个文件，按行号逐处**）**
 
 ★ **先看清楚这 20 处的共同点**：它们**全部**传 `0`（= "本包没有切枪请求"）。
-所以这次改名 **不会** 让任何一条断言变红 —— 也就是说，**这 20 处一条都拦不住"漏改"**。
-（认了这件事，才不会把"改完全绿"误读成"改对了"。真正的拦阻是 Step 7 那两条 + Step 1 的相①。）
+所以这次改名 **不会** 让任何一条断言报错失败 —— 也就是说，**这 20 处一条都拦不住"漏改"**。
+（认了这件事，才不会把"改完全部通过"误读成"改对了"。真正的拦阻是 Step 7 那两条 + Step 1 的相①。）
 
 ★★ **绝不做全仓替换**：同一个文件里可能**同时**有上行夹具与下行夹具 ——
 `tests/replica_ghost_probe.gd` 就是（它的 `:127`/`:292` 是**下行快照**、`:215` 才是上行记录）。
@@ -1280,7 +1280,7 @@ Expected: 恰好剩 **14 处 / 8 个文件**，与"下行"清单**逐条**对上
 ★ `"winst": 0` 与生产端的语义要对齐：`apply_packet` 只在 `> 0` 时覆盖，`clear_edges()` 清 ——
 与旧 `"weapon": 0` 的语义**逐字相同**（0 = 无请求）。
 
-- [ ] **Step 9: grep 闸门（补上 Task 1 三个刻意留活的名字）**
+- [ ] **Step 9: grep 限制条件（补上 Task 1 三个刻意留活的名字）**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -1330,7 +1330,7 @@ done
 "`_pass_finished` 永不发射 → 干脆挂死(所以跑它必须带 --quit-after 当安全网)" ——
 **这个数只能从本计划拿**，别照抄别的探针的 3600。
 
-Expected: 全绿 —— `KH weapon-inst PROBE: ALL-OK` / `KH net-ground PROBE: ALL-OK` /
+Expected: 全部通过 —— `KH weapon-inst PROBE: ALL-OK` / `KH net-ground PROBE: ALL-OK` /
 `GROUND CLIENT PROBE: ALL-OK` / `GROUND ACTION PROBE: ALL-OK` / `ROLLBACK FIDELITY PROBE: ALL-OK` /
 `REPLICA GHOST PROBE: ALL-OK` / `LASER TEAM PROBE: ALL-OK` / `KH L3 PROBE: ALL-OK` /
 `BRAWL ROLLBACK PROBE: ALL-OK`（★ 它还会打一串 `[brawl]` 读数行 —— **那是正常的**，
@@ -1510,7 +1510,7 @@ grep -rn '"weapon"' --include=*.gd --exclude-dir=.claude --exclude-dir=.godot \
   scenes core server ui tests | grep -v 'weapon_name'
 ```
 
-- [ ] **Step 5: 跑 —— 确认相⑤ 转绿 + 副本类探针全绿**
+- [ ] **Step 5: 跑 —— 确认相⑤ 转绿 + 副本类探针全部通过**
 
 ```bash
 source tests/env.sh
@@ -1569,7 +1569,7 @@ EOF
 - Produces: `equip_type` 对"背包里没有这个类型"**不再 `add()`**，只 `push_error`。
 
 ★ **为什么现在可以降级**：那条注释写的是**联机兜底**（"服务器说'你现在有重狙'而客户端背包里
-可能还没有它"）。§4.1 落地后客户端背包**只从权威态 `inv` 重建**，而 `restore_inventory` 先跑、
+可能还没有它"）。§4.1 落地后客户端背包**只从服务端权威状态 `inv` 重建**，而 `restore_inventory` 先跑、
 `_apply_weapon_state` 的 `by_inst` 再判重建落点 ⇒ "权威说的那把不在本地表里"**只可能是真异常**。
 ★ 而且它会**静默改变背包长度** —— 那正是"两端 `held` 不同序"的又一条产生源。
 ★ **单机不受影响**：`pick_up` 走 `WeaponInventory.add`，不经过 `equip_type`。
@@ -1612,7 +1612,7 @@ source tests/env.sh && "$GODOT" --headless --path . --quit-after 3600 res://test
   | grep -E "KH L3|凭空加|仍切了枪"
 ```
 Expected: 两条都 **✗**（`3 → 4 把` / `类型 1 → 5`），末行 `KH L3 PROBE: FAIL`。
-★ 若第一条**绿**：说明 `equip_type(5)` 被别的闸门挡掉了（多半是 `is_type_enabled(5)` 为假）——
+★ 若第一条**绿**：说明 `equip_type(5)` 被别的限制条件挡掉了（多半是 `is_type_enabled(5)` 为假）——
 回去查"全禁"那一段有没有真的把 `enabled_types` 恢复全开，**别**往下走。
 ★ 若第二条**绿**（`类型 1 → 1`）：说明 `_current_type` 本来就已不是 1 —— 那你插入的位置错了
 （多半落到 `_check_cycle` 之后去了），回去核一遍。
@@ -1622,7 +1622,7 @@ Expected: 两条都 **✗**（`3 → 4 把` / `类型 1 → 5`），末行 `KH L
 `scenes/player/weapon_component.gd` 的 `equip_type`。
 **锚**：`func equip_type(type_id: int) -> void:`（Task 1 之后占 **:176-185**；其上是
 `# 按**类型 id**切枪(网络包 / rollback 走这条)。` 那段旧注释 —— **它整段要被下面这块替换**，
-因为它描述的正是"没有就加"那条旧契约）。
+因为它描述的正是"没有就加"那条旧接口规范）。
 ★ 要改的那条分支是 `if idx < 0:` 那一支，**Task 1 之后在 :181-184**（本步把它从 4 行缩成 2 行
 ⇒ `equip_type` 之后的行号会**再上移 2 格**；本 Task 后面不再引 `weapon_component.gd` 的行号，
 所以无影响）：
@@ -1705,15 +1705,15 @@ Task 1 把它从 `wep.equip(HEAVY_SLOT)` 改成 `wep.equip_type(int(HEAVY_SLOT))
 	wep.pick_up(int(HEAVY_SLOT), WeaponInventory.MAG_FULL)
 ```
 
-★ 两处 `pick_up` 的闸门都成立：手枪(轻 2 格) + 重狙/榴弹(重 4 格) = 6 ≤ `CAPACITY`(8)，
+★ 两处 `pick_up` 的限制条件都成立：手枪(轻 2 格) + 重狙/榴弹(重 4 格) = 6 ≤ `CAPACITY`(8)，
 2 把 ≤ `MAX_WEAPONS`(4)。
 
 - [ ] **Step 5: 清 `equip` / `slot` 的注释债（Step 4 的连带）**
 
-★★ **为什么这一条必须在 Task 4 里做**：Task 1 的 13 符号闸门只管那 13 个名字，而 **`equip`
+★★ **为什么这一条必须在 Task 4 里做**：Task 1 的 13 符号限制条件只管那 13 个名字，而 **`equip`
 不在其中**（`WeaponBase.equip` 同名）—— 于是**注释里**的 `equip(` 一处都没被清，共 ~25 处；
-另外还有一批**裸 `slot`**（局部量 / 夹具键 / 边沿名）同样在闸门的射程之外。
-其中**承重的那几处**恰好压在 Task 4 改的那几行上 —— 不改就等于把读者引向一个**已经删掉的兜底**。
+另外还有一批**裸 `slot`**（局部量 / 夹具键 / 边沿名）同样在限制条件的射程之外。
+其中**核心关键的那几处**恰好压在 Task 4 改的那几行上 —— 不改就等于把读者引向一个**已经删掉的兜底**。
 
 **(A) 必须**改写**（不是改名）：4 处，它们**断言的行为**自 §4.5 起不再成立**
 
@@ -1887,7 +1887,7 @@ for t in enemy_logic_smoke weapon_inventory_smoke ground_weapon_field_smoke spri
   "$GODOT" --headless --path . -s res://tests/$t.gd 2>&1 | grep -E "OK|FAIL"
 done
 ```
-Expected: 全绿。各条判据文本**逐个核过**（别只 grep 一个笼统的 `OK`，也别把 `FAIL` 漏掉）：
+Expected: 全部通过。各条判据文本**逐个核过**（别只 grep 一个笼统的 `OK`，也别把 `FAIL` 漏掉）：
 `KH weapon-inst PROBE: ALL-OK` / `KH net-ground PROBE: ALL-OK`（★ 该探针**文件头写的**
 `NET GROUND PROBE: ALL-OK` 是**陈旧说法** —— 实际由 `ProbeBase._finish()` 拼成
 `KH <probe_id()> PROBE: ALL-OK`，故 grep `ALL-OK` 即可，别去 grep 那个不存在的串）/
@@ -1911,7 +1911,7 @@ grep `OK` 即可）/ `SMOKE OK`（`enemy_logic_smoke`）/ `WEAPON_INVENTORY OK` 
 
 ★★ **已知缺口（登记，别当已覆盖）—— 菜单标签那一改动没有自动化判据。**
 Task 1 去掉了菜单上的"`%d. ` / `%d `"编号（`scenes/main_menu.gd` 的 `cb.text` 与
-`ui/weapon_icons.gd` 的 `UiFactory.label`），**两处都只有人眼验收**。逐条澄清（首版把理由写错了，
+`ui/weapon_icons.gd` 的 `UiFactory.label`），**两处都只有人工视觉核验**。逐条澄清（首版把理由写错了，
 照它执行会得出"已经有覆盖"的相反结论）：
 
 - **`kh_l4_probe` / `kh_l5_probe` 的字号扫描**（`kh_l4_probe.gd:117` 的 `_check_font_size_law`）
@@ -1999,7 +1999,7 @@ git commit -m "docs(claude): 武器词汇纪律(type_id/inst/index)+ 上行 wins
 | §3 rename 表 9 项 | ✅ | Task 1 Step 2 |
 | §3 "`slot` 整体退休"（表外的 `cycle_slot` / `_weapon_slot_int` / 输入源读口 / 参数名 / meta 键） | ✅ | Task 1 Step 2-4（保留白名单写在 Step 4） |
 | §3 菜单编号去掉 | ✅ | Task 1 Step 5（两处格式串**不同**，逐处给出） |
-| §3 表遗漏的**外部调用方**（`set_enabled_slots` ×3 生产 + 探针、`default_slot()`、`push/consume_net_slot`） | ✅ | Task 1 Step 2 的文件清单逐文件点名 |
+| §3 表遗漏的**外部调用方**（`set_enabled_slots` ×3 生产 + 探针、`default_slot()`、`push/consume_net_slot`） | ✅ | Task 1 Step 2 的文件清单逐文件明确指出 |
 | §4.1 上行键 `winst` / 旧键删除 | ✅ | Task 2 Step 4(a)(c)(d)(e) |
 | §4.1 客户端本地解析、服务器 `index_of_inst` 找不到就不动 | ✅ | Task 2 Step 4(a) 的 `take_uplink_switch` / `inst_at_index` / `equip_inst` |
 | §4.1 下行 `"weapon"` → `"type_id"` | ✅ | Task 3 |
@@ -2046,17 +2046,17 @@ git commit -m "docs(claude): 武器词汇纪律(type_id/inst/index)+ 上行 wins
   **9 个调用点**全部在 Task 1 Step 3 的表里（`equip_type(2)` 而非 `equip_type("2")`）——
   ★ 其中 `preview_visibility_probe.gd:50` 与 `snapshot_size_probe.gd:38` 是本计划初稿**漏掉的**，
   由评审照出；前者还连带暴露了 Task 4 的**第二个**真实破坏点。
-  ★ `equip` **不在** Step 6 的 13 符号闸门里（`WeaponBase.equip` 同名），
-  它的闸门是 Step 3 末尾那条**精确到行**的 `.equip(` grep。
+  ★ `equip` **不在** Step 6 的 13 符号限制条件里（`WeaponBase.equip` 同名），
+  它的限制条件是 Step 3 末尾那条**精确到行**的 `.equip(` grep。
 - `current_type_id()` / `current_inst()` 两个名字**存活的语义分工**（类型 vs 哪一把）在 Task 1/2 后仍然成立。
 
 **4. 红绿分界的**具体性**（每条都点了"哪一条断言红、为什么夹具到得了那个状态"）
 
 | Task | 红载体 | 哪一条红 | 为什么到得了 |
 |---|---|---|---|
-| 1 | grep 闸门 + 基线逐条相同 | 闸门出现 `STALE: <sym>` | 逐符号查过改动前有命中（21/59/14/40/29/5/12/7/11/7/7/18/5 行） |
+| 1 | grep 限制条件 + 基线逐条相同 | 限制条件出现 `STALE: <sym>` | 逐符号查过改动前有命中（21/59/14/40/29/5/12/7/11/7/7/18/5 行） |
 | 2 | 探针相①（源码级，九条断言） | **八条**具名 ✗（`滚轮待发值不是**目标那把的 inst**…` / `pack_record 没产出 winst 键…` / `pack_record 还在产出旧键 "weapon"…` / `客户端组包没走 take_uplink_switch…` / `客户端组包没把 winst 塞进输入包` / `player.gd 没读 input_source.consume_switch_inst()…` / `player.gd 没按 inst 切枪` / `player.gd 还在按**背包位置**解上行值…`）；第九条"`request_net_cycle` 找得到"今天就是绿的 | 逐条核过 **Task 1 落地后**的源码（`weapon_component.gd:157` 仍是 `push_net_slot(next + 1)`——Task 1 只改名字、这一族留给本 Task；`packet_input_source.gd:85`；`pvp_match_client.gd:200-204`；`player.gd:192-198`） |
-| 2 | 探针相②（行为级） | 单行变异（`request_net_cycle` 的 `push_switch_inst(inst_at_index(next))` → `push_switch_inst(next + 1)`）后**四条** ✗：**相①** 的 `滚轮待发值不是**目标那把的 inst**…`（★ 相① 逐字盯着被变异的那一行 ⇒ 必然一起红）+ 相② 的三条 `上行必须是**目标那把的 inst**(=1)`（实得 **2**）、`服务器从包里取出的 winst 应为 1`（实得 **2**）、`★ 两端…必须切到**同一把**`（客户端 **1** / 服务器 **2**）；**相③/④ 仍绿** | 两端背包**在探针里被显式摆成反序**（client `[inst2, inst1]` / server `[inst1, inst2]`），起手 `equip_index(0)` ⇒ 起手就是不同的枪（前置断言钉住）；客户端滚轮一次 → **客户端的位置 1 = 手枪 inst 1**，而变异的推送值 `next+1 = 2` 是**服务器**的位置号 → 服务器 `index_of_inst(2)` 落回它自己的位置 1 = **重狙 inst 2**。★ 变异点**必须在 `request_net_cycle`**：相② 走滚轮，`take_uplink_switch(0)` 的 `key_index` 是 0，改它那个 `if key_index > 0:` 分支是**空操作** |
+| 2 | 探针相②（行为级） | 单行变异（`request_net_cycle` 的 `push_switch_inst(inst_at_index(next))` → `push_switch_inst(next + 1)`）后**四条** ✗：**相①** 的 `滚轮待发值不是**目标那把的 inst**…`（★ 相① 逐字盯着被变异的那一行 ⇒ 必然一起红）+ 相② 的三条 `上行必须是**目标那把的 inst**(=1)`（实得 **2**）、`服务器从包里取出的 winst 应为 1`（实得 **2**）、`★ 两端…必须切到**同一把**`（客户端 **1** / 服务器 **2**）；**相③/④ 仍绿** | 两端背包**在探针里被显式摆成反序**（client `[inst2, inst1]` / server `[inst1, inst2]`），起手 `equip_index(0)` ⇒ 起手就是不同的枪（前置断言断言约束）；客户端滚轮一次 → **客户端的位置 1 = 手枪 inst 1**，而变异的推送值 `next+1 = 2` 是**服务器**的位置号 → 服务器 `index_of_inst(2)` 落回它自己的位置 1 = **重狙 inst 2**。★ 变异点**必须在 `request_net_cycle`**：相② 走滚轮，`take_uplink_switch(0)` 的 `key_index` 是 0，改它那个 `if key_index > 0:` 分支是**空操作** |
 | 3 | 探针相⑤（源码级，两端一起） | 三条具名 ✗ | Task 1 落地后仍是：生产端 `match_snapshot.gd:23` 的 `"weapon": p.weapons.current_type_id()`、消费端 `player_replica.gd:203` 的 `data.get("weapon", 0)` |
 | 3 | `ground_client_probe` ⑦（行为级） | 反证时 `先握上一把(实际 <null>)` + `槽位记成 2(实际 0)` | 夹具 `{"type_id": 2}` 而消费端读 `"weapon"` ⇒ 拿到默认 0 ⇒ 副本不换武器 |
 | 4 | `kh_l3_probe` ⑤（新加） | `凭空加了一把(3 → 4 把)` + `仍切了枪(类型 1 → 5)` | 那一刻 `enabled_types` 全开、背包 `[1,3,4]`、当前类型 **1**（`_check_gate` 里那次"全禁"把当前枪从类型 4 落到 `_first_enabled_index()` = 类型 1）；选**类型 5**（启用且不在背包里）保证那条分支真的走得到 |
@@ -2067,14 +2067,14 @@ git commit -m "docs(claude): 武器词汇纪律(type_id/inst/index)+ 上行 wins
 `ground_client_probe` ⑥ 新版的"上行值 ≠ 1 / ≠ 3"（它们是**鉴别**：inst 与位置、与类型 id 三者互相可分；
 另配了一条"inst1 必须与 1 和 3 都不同"的**前置断言**，撞上了会让探针如实红而不是空转）；
 以及 Task 2 Step 8 里那句"这 **20** 处夹具全传 0 ⇒ **一条都拦不住漏改**"——**如实登记**，避免把
-"改完全绿"误读成"改对了"。
+"改完全部通过"误读成"改对了"。
 
 **4b. 本计划在评审后修掉的三处**（留档，因为都是"会静默"的那一类）：
 ① 相② 原先用 `cycle_index(1)` —— 那是**单机**那条路、**从不 push**，于是 `take_uplink_switch`
 恒读 0、这一相**永远绿不了**（且 Step 5 的变异断言也跟着错）。改用 `request_net_cycle(1)`，
 并把反证点从 `take_uplink_switch` 挪到 `request_net_cycle`（在 `key_index == 0` 时前者是空操作）。
 ② `equip` → `equip_type` 漏了第 9 个调用点 `preview_visibility_probe.gd:50`（传 `String`）。
-它**不在** 13 符号闸门里（`WeaponBase.equip` 同名）⇒ 结构性地看不见；补进表 + 回归组，
+它**不在** 13 符号限制条件里（`WeaponBase.equip` 同名）⇒ 结构性地看不见；补进表 + 回归组，
 并把 `.equip(` 那条自查 grep 的排除名单改成**精确到行**（原先的 `kh_l3_probe:430` 这种写法
 匹配不上 `kh_l3_probe.gd:430`，整条排除**静默失效**；而整文件排除又会藏起
 `enemy_logic_smoke` 的 2 个真调用点）。
@@ -2083,16 +2083,16 @@ git commit -m "docs(claude): 武器词汇纪律(type_id/inst/index)+ 上行 wins
 补了行尾锚定的第二条 sed + **逐文件零输出**的核对循环。
 
 **4c. 本版新加 / 改写的两处（评审第二轮）**：
-① **Task 4 加了 Step 5「清 `equip` / `slot` 的注释债」** —— `equip` **不在** 13 符号闸门里
+① **Task 4 加了 Step 5「清 `equip` / `slot` 的注释债」** —— `equip` **不在** 13 符号限制条件里
 （`WeaponBase.equip` 同名），于是 ~25 处注释里的 `equip(` 与一批**裸 `slot`**（局部量 / 夹具键 /
-边沿名）全都没被清。该步分四类：(A) **承重、必须改写**（2 处，`player.gd` 的 `restore_state` 注释
+边沿名）全都没被清。该步分四类：(A) **核心关键、必须改写**（2 处，`player.gd` 的 `restore_state` 注释
 与 `weapon_component.gd` 的 `restore_inventory` 注释 —— 它们**断言**"没有就加会凭空造枪"，
 自 §4.5 起不再成立）；(B) **改名**（注释里的 `equip(` → `equip_type(`，含 `kh_l3_probe` 的
 **判据串**）；(C) **改名**（`team_bot_input.gd` 的 `_slot` / `press_slot` / `"slot"` 边沿名 ——
 它装的是**背包位置**，按 §3 就是 `index`；跨文件面只有 `team_match_watcher` 两处）；
 (D) **登记不改**（`kh_l3_probe` 的 `EXPECTED` 表键与 `enemy_logic_smoke` 的 `slot` 循环量 ——
 那两处是 **§4.2 那份计划**的落点，本计划改它会撞行）。
-② **Task 5 加了「已知缺口」：菜单标签那一改动只有人眼验收**（详见该段 —— 并**订正了首版写错的理由**：
+② **Task 5 加了「已知缺口」：菜单标签那一改动只有人工视觉核验**（详见该段 —— 并**订正了首版写错的理由**：
 `kh_l4`/`kh_l5` **确实**解析 `UiFactory.label(` 的实参，`kh_l5_probe:464-468` 那条**反例自检**
 就是证据；真正让它们拦不住的是 `is_valid_int()` 只查**整数字面量**，而那里的字号实参是**变量**）。
 
@@ -2114,13 +2114,13 @@ git commit -m "docs(claude): 武器词汇纪律(type_id/inst/index)+ 上行 wins
 ⑤ **Step 5 对反证的预期写错**：变异改的正是相① 逐字盯着的那一行 ⇒ **相① 也会红**，
 不是"相①/③/④ 仍绿"。已改成**四条 ✗**，并说明这是"同一处事实被两处盯着"。
 
-**4e. 同批顺手做的三形排查（评审点名要的）**：
+**4e. 同批顺手做的三形排查（评审明确要求的）**：
 - **无类型数组 → 带类型形参**：逐个过了一遍本计划所有代码块里的调用点
   （`set_enabled_types` **是唯一的带类型形参**；`restore_inventory(Array)` /
   `set_initial_inventory(Array)` / `apply_packet(Dictionary)` 都是无类型 ⇒ 字面量合法）。
   ⇒ 只有 4d① 那两处，已修。
 - **两步不可能同时成立**：逐一核对 Step 1↔4(c)（4d②）、Step 8 的"剩 14 处"↔Task 3 的两步、
-  Step 9 的闸门↔4(a) 的替换、Task 3 Step 1/5、Task 4 Step 3↔4↔6↔7 —— 除 4d② 外无冲突。
+  Step 9 的限制条件↔4(a) 的替换、Task 3 Step 1/5、Task 4 Step 3↔4↔6↔7 —— 除 4d② 外无冲突。
 - **`sed` 会静默失效**：把**全部 23 条** `sed` 抽出来做了两次机检 ——
   ① **语法**：`sed <scripts> /dev/null` 逐条 exit 0（0 处错）；
   ② **命中**：把 16 条**待执行**的（Task 3 Step 4 的 8 条 + Task 4 Step 5(C) 的 8 条）在**副本**上
@@ -2151,7 +2151,7 @@ git commit -m "docs(claude): 武器词汇纪律(type_id/inst/index)+ 上行 wins
 - **`--ai-roles` 的 AI 走 `AiInputSource`**：它的 `_switch_index_raw()` 恒 0、也不覆写
   `_switch_inst_raw()` ⇒ 新协议下 AI **仍然不切枪**（与今天逐字相同，不是回归）。
 - **`MAX_WEAPONS > 4` 时第 5 把没有数字键**（spec §6.1，且 spec 引的"5/6 号键动作还在"**是假的**：
-  `project.godot` 的 input 段只有 `1`–`4`，`kh_l3_probe.gd:116-118` 还**反向断言** 5–0 不得有动作）。
+  `project.godot` 的 input 段只有 `1`–`4`，`kh_l3_probe.gd:116-118` 还**否定断言** 5–0 不得有动作）。
   本计划不动键位。
 - **`tests/kh_l3_probe.gd:30-37` 的 `EXPECTED` 六行表**（spec §附的 ❌ 之一）本计划不碰 ——
   它归"加第 7 把枪"那份计划（§4.2）。

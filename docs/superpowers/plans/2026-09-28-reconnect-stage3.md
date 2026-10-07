@@ -5,9 +5,9 @@
 **Goal:** 把「掉线中 / 重连中」变成玩家**看得见**的东西(spec §4 的 3.1 / 3.2 / 3.4),并修掉 `NetBus.opponent_left` 那条**全仓零调用点**的死路(3.3)。
 
 **Architecture:** 三件事、三条互不重叠的链路:
-1. **服务器 → 客户端的状态**(3.1):`GraceWindow` 长出三个**纯助手**(`remaining` 是实例方法,`merge_into` / `tick_display` 是 static;都不读时钟、不碰节点),`server_main` 把读数推进宿主的 `grace_snapshot` 字段,三个 `round_state` 生产者在**唯一的出口** `_send_round_state()` 里把它并进载荷 —— 空表**不带键**,老客户端忽略未知键。
+1. **服务器 → 客户端的状态**(3.1):`GraceWindow` 长出三个**纯助手**(`remaining` 是实例方法,`merge_into` / `tick_display` 是 static;都不读时钟、不碰节点),`server_main` 把读数推进宿主的 `grace_snapshot` 字段,三个 `round_state` 生产者在**唯一的出口** `_send_round_state()` 里把它并进数据包 —— 空表**不带键**,老客户端忽略未知键。
 2. **客户端本地的状态**(3.2/3.4):新增 `ui/status_banner.tscn/.gd`(CanvasLayer layer=140),由**基类** `PvpMatchClient` 在已有的 `_subscribe_reconnect()` 里实例化,重连状态机的四个转折点驱动它。阶段 1 之所以只 `print`,是因为当时"没有一个能挂上去的节点" —— 本计划补上那个节点。
-3. **一条到达不了的通知**(3.3):`server_main._expire_graces` 的 1v1 收场分支里补上 `opponent_left` 的发送点,客户端侧补一条**与到达顺序无关**的收口(`_match_ended` 闸 + `_cancel_reconnect()`)。
+3. **一条到达不了的通知**(3.3):`server_main._expire_graces` 的 1v1 收场分支里补上 `opponent_left` 的发送点,客户端侧补一条**与到达顺序无关**的统一收拢(`_match_ended` 闸 + `_cancel_reconnect()`)。
 
 **Tech Stack:** Godot 4.7.1(标准版)、GDScript、`GraceWindow`(纯逻辑、无 autoload、`-s` 可测)、`ProbeBase`/`ScanUtil`(源码级探针脚手架)。
 
@@ -27,7 +27,7 @@
 - **字号必须是 16 的倍数**(`kh_l4`/`kh_l5` 扫 `res://ui` 与 `res://tests`)。本计划**不引入任何新字号**:新增的两处载体(`ui/status_banner.gd` 的 `const FONT_SIZE := 32`、`ui/pvp_hud.tscn` 里 `GraceLabel` 的 `theme_override_font_sizes/font_size = 32`)都沿用既有的 **32**。
 - **颜色只准在 `ui/ui_factory.gd` 定义**;新增语义色必须**同时**写清它的对比度实测值(达不到 3:1 就**如实写达不到**,见 `C_TEAM_A` 那段注释的样板)。**不要在 `.gd` 或 `.tscn` 里写 `Color(...)` 字面量**。
 - **定向发送前一律先判活**:`server_main` 里那一处新发送点必须是 `NetBus.reply(...)`(它体内首行判活),否则 `tests/rpc_liveness_probe.tscn` 会红。
-- **`round_state` 的 `grace` 键必须是加法式的**:三个客户端 + `ui/match_result_payload.gd` 都消费这条载荷;**缺键 = 此刻没人掉线**(不是"未知"),任何消费者都不得因缺键改变原有行为。
+- **`round_state` 的 `grace` 键必须是向后兼容增量扩展的**:三个客户端 + `ui/match_result_payload.gd` 都消费这条数据包;**缺键 = 此刻没人掉线**(不是"未知"),任何消费者都不得因缺键改变原有行为。
 - ★★ **`server/**` 目前有另一个 Claude 会话在并发编辑**(另一批任务)。本计划所有 `server/` 下的改动都必须先与那个会话**对齐后再落**,口径见下面「跨会话协调」一节。Task 2 与 Task 3 **在派发给实现者之前必须先确认这一点**。
 - 改 GDScript **只需重导出**,不要重编裁剪模板。
 
@@ -88,7 +88,7 @@ Task 4 再抬到 **27**…)。⇒ **这四个 Task 必须串行,不能并行派�
 | 文件 | 责任 | 本计划怎么动 |
 |---|---|---|
 | `core/net/grace_window.gd` | 掉线宽限期表(纯逻辑、`-s` 可测) | +3 个成员:`remaining()` / `merge_into()` / `tick_display()`(后两个是 static) |
-| `server/match_state.gd` | 对局权威的共享状态底座 | +`grace_snapshot` 字段、+`_send_round_state()`(**`round_state` 的唯一出口**) |
+| `server/match_state.gd` | 对局权威的共享状态基础层 | +`grace_snapshot` 字段、+`_send_round_state()`(**`round_state` 的唯一出口**) |
 | `server/match_round.gd` | 1v1 回合状态机 + `round_state` 广播 | 1 行:改走 `_send_round_state()` |
 | `server/royale_host.gd` | 大乱斗权威 | 1 行:同上 |
 | `server/team_host.gd` | 3v3 权威 | 1 行:同上 |
@@ -102,16 +102,16 @@ Task 4 再抬到 **27**…)。⇒ **这四个 Task 必须串行,不能并行派�
 | `scenes/pvp_match_client.gd` | PvP 客户端基类 | +`_banner`/`_setup_status_banner`/`_set_status`/`_cancel_reconnect`;4 处状态机转折点接上去 |
 | `scenes/pvp_game.gd` | 1v1 客户端 | `_on_opponent_left` 里调 `_cancel_reconnect()` + 一行 print(3.3 客户端半) |
 | `tests/grace_window_smoke.gd` | 宽限期纯逻辑冒烟 | +⑩⑪⑫三相 |
-| `tests/grace_feed_probe.tscn` / `.gd` | **新建**:`round_state` 载荷漏斗的行为面守卫 | 全新建 |
+| `tests/grace_feed_probe.tscn` / `.gd` | **新建**:`round_state` 数据包漏斗的行为面守卫 | 全新建 |
 | `tests/reconnect_status_probe.tscn` / `.gd` | **新建**:横幅行为 + 三批接线(本地状态/3.3/HUD 消费) | 全新建 ★★ **由 Task 2/3/4/5 依次改同一个文件**,见下方「⚠ 本计划的串行约束」 |
-| `tests/hud_declarative_probe.gd` | 声明式 HUD 契约守卫 | ④ 抽成参数化助手 + 新增 ⑧ + PAIRS 加一行 |
+| `tests/hud_declarative_probe.gd` | 声明式 HUD 接口规范守卫 | ④ 提取为参数化助手 + 新增 ⑧ + PAIRS 加一行 |
 | `tests/reconnect_probe.gd` | 真链路探针(用户跑) | 相④ 里 +1 条 worker 日志断言 |
-| `tests/combat_hud_visual_probe.gd` | 对局内 HUD 视觉验收(用户跑、真渲染) | +两组带 `grace` 的载荷与取图 |
+| `tests/combat_hud_visual_probe.gd` | 对局内 HUD 视觉验收(用户跑、真渲染) | +两组带 `grace` 的数据包与取图 |
 | `CLAUDE.md` | 项目说明 | §网络与 PvP 的「阶段 3 未做」清单改写 + 新纪律登记 |
 
 ---
 
-### Task 1: `GraceWindow` 长出阶段 3 的三个纯助手(先把"算法"钉住)
+### Task 1: `GraceWindow` 长出阶段 3 的三个纯助手(先把"算法"断言约束)
 
 **Files:**
 - Modify: `core/net/grace_window.gd`
@@ -237,7 +237,7 @@ Expected: 末行 `GRACE_WINDOW OK`;**没有**任何 `[FAIL] ` 行。
 
 - [ ] **Step 4: 反向验证 —— 证明 ⑩⑪⑫ 三条新断言**真能红**(不是空转)**
 
-逐条做**一处**变异,跑 Step 3 的命令,**看着它变红**,然后还原:
+逐条做**一处**变异,跑 Step 3 的命令,**看着它报错失败**,然后还原:
 
 | 变异(改哪个文件) | 期望红在哪条 |
 |---|---|
@@ -273,7 +273,7 @@ EOF
 
 ---
 
-### Task 2: 3.3 —— 让 `opponent_left` **到达**幸存者(服务端发送点 + 客户端收口)
+### Task 2: 3.3 —— 让 `opponent_left` **到达**幸存者(服务端发送点 + 客户端统一收拢)
 
 **Files:**
 - Modify: `server/server_main.gd`(★ **跨会话**:落之前先读「跨会话协调」那一段)
@@ -343,7 +343,7 @@ func _notify_opponent_left() -> void:
 			get_tree().quit(0)
 ```
 
-- [ ] **Step 3: 客户端:`_cancel_reconnect()` + 在 `_on_opponent_left` 里收口**
+- [ ] **Step 3: 客户端:`_cancel_reconnect()` + 在 `_on_opponent_left` 里统一收拢**
 
 在 `scenes/pvp_match_client.gd` 的 `func _abort_reconnect(reason: String) -> void:` **之前**插入:
 
@@ -654,7 +654,7 @@ EOF
 ★ 若某处的**内容**也对不上(不只是行号),**停下来报 BLOCKED**,不要凭"大致在那儿"下手 —— 本 Task 要改的是
 `_enter_grace` / `_expire_graces` / `_process` 三个**都被跨会话那批动过**的函数。
 - Create: `tests/grace_feed_probe.tscn`、`tests/grace_feed_probe.gd`
-- Modify: `tests/reconnect_status_probe.gd`(把相②b 从"前瞻"变成"承重")
+- Modify: `tests/reconnect_status_probe.gd`(把相②b 从"前瞻"变成"核心关键")
 
 **Interfaces:**
 - Consumes: `GraceWindow.remaining(now_ms)` / `GraceWindow.merge_into(data, map)`(Task 1)。
@@ -663,7 +663,7 @@ EOF
   - `MatchState._send_round_state(data: Dictionary) -> void`(**`round_state` 的唯一出口**)。
   - `server_main._sync_grace_snapshot() -> void`。
 
-- [ ] **Step 1: 底座:`grace_snapshot` + 唯一出口**
+- [ ] **Step 1: 基础层:`grace_snapshot` + 唯一出口**
 
 在 `server/match_state.gd` 的 `var _left: Dictionary = {}` 那一行(第 129 行)**之后**插入:
 
@@ -768,7 +768,7 @@ func _sync_grace_snapshot() -> void:
 		_sync_grace_snapshot()
 ```
 
-★★ **跨会话约束(2026-09-28 对方通知,落这一步之前必读)**:对方的冒烟现在**源码级钉住 `_process` 的形状**——
+★★ **跨会话约束(2026-09-28 对方通知,落这一步之前必读)**:对方的冒烟现在**在源码层面通过断言约束 `_process` 的形状**——
 1. 那段 1v1 报到梯的门控**不得**是对 worker-only 标志取反:即 `_process` 里**不得出现 `not _royale` / `not _team_mode` / `not _worker`**(`not _match_started` **允许**,那是模式无关的状态位);
 2. 大厅分支必须有 `set_process(false)`,且**不得**出现在 `_run_worker` 里。
 ⇒ 本步插入的代码**不得**在条件里写 worker-only 标志的否定(上面给的代码本来就没有,照抄即可)。
@@ -783,7 +783,7 @@ func _sync_grace_snapshot() -> void:
 这个问题 —— **两侧的必要性不同,不是不一致**)。客户端本地走秒(`GraceWindow.tick_display`)
 是零副作用的等价方案。
 
-- [ ] **Step 4: 建载荷漏斗的行为面守卫**
+- [ ] **Step 4: 建数据包漏斗的行为面守卫**
 
 创建 `tests/grace_feed_probe.gd`:
 
@@ -934,7 +934,7 @@ Expected: `GRACE FEED PROBE: ALL-OK(5 条断言)`。
 | `_send_round_state` 里把 `grace_snapshot` 改成 `{}` | ② |
 | `server/match_state.gd` 的 `_send_round_state` 改名为 `_send_rs`(不改调用点) | 编译期就会红 —— 这条**不是**断言红的,记下来别当成断言有效性 |
 
-- [ ] **Step 7: 把相②b 提升为承重断言**
+- [ ] **Step 7: 把相②b 提升为核心关键断言**
 
 `tests/reconnect_status_probe.gd` 的 `_check_cancel_wiring()` 里,把对 `PRODUCERS` 的那一圈
 "只读文件"改成真断言,并把 `EXPECTED_CHECKS` 从 **11** 抬到 **17**
@@ -1192,7 +1192,7 @@ func _cancel_reconnect() -> void:
 	_set_status("")   # 「对手已离开」是终局:横幅一并收起,让位给 HUD 的中央播报
 ```
 
-- [ ] **Step 4: `hud_declarative_probe`:④ 抽成参数化助手 + 新增 ⑧ + PAIRS 加一行**
+- [ ] **Step 4: `hud_declarative_probe`:④ 提取为参数化助手 + 新增 ⑧ + PAIRS 加一行**
 
 把 `tests/hud_declarative_probe.gd` 的 `PAIRS` 常量(第 51-56 行)整段替换为:
 
@@ -1362,7 +1362,7 @@ func _check_status_call_sites() -> void:
 之间是合法的(`tests/hud_declarative_probe.gd` 的 `class ResultPayloadStub` 就是写在文件中间的,
 照那个先例)。
 
-★ **报红时先数条数再改常量**:`KH RECON-UI PROBE: FAIL` 里那条「只跑了 N 条断言(期望 ≥ M)」
+★ **测试报错时先数条数再改常量**:`KH RECON-UI PROBE: FAIL` 里那条「只跑了 N 条断言(期望 ≥ M)」
 就是本探针防"整组被跳过"的手段。若 M 与实跑的 N 不符,**先把输出里的 `ok`/`FAIL` 行数一遍**,
 确认是自己写漏了一条断言(而不是实现少跑了一组),再改 `EXPECTED_CHECKS`。
 
@@ -1784,7 +1784,7 @@ Expected: 逐个 `SMOKE OK` / `CONTRACT OK` / `WEAPON_INVENTORY OK` / `GRACE_WIN
 
 ★ `kh_l4` / `kh_l5` / `hud_declarative_probe` / `rpc_liveness_probe` 是**必须**的:
 前两个扫 `res://ui` 与 `res://tests`(本计划在这两个目录里都改了文件),
-第三个管新场景的声明式契约,第四个管新发送点的判活。
+第三个管新场景的声明式接口规范,第四个管新发送点的判活。
 ★ `kh_l6_probe` 必须绿:它第 9 条钉 `pvp_game` 的 MATCH_OVER 块 —— 本计划**没动**那块;
 它绿着说明没有越界。
 
@@ -1904,8 +1904,8 @@ EOF
 | 3.2 "把 HUD 那层设计好"(阶段 1 无处可挂) | Task 4:`ui/status_banner.tscn`(独立 CanvasLayer,**与 3.1 一起设计**,而不是塞进某个模式) |
 | 3.3 补上服务端调用点(用户已裁定,不删客户端) | Task 2 Step 2 + 相①② + `reconnect_probe` 相④b |
 | 3.4 重连失败**之前**的可见反馈 | Task 4:`_begin_reconnect` 就亮横幅 + 每次重试报剩余预算 |
-| §5 另立评估(不在范围) | **全计划零改动** `RoyaleHost.start_on` / `plan_spawns` |
-| §6 改 `NetBus` 方法表? | **零改动**(`opponent_left` 是既有 RPC,只是补调用点) |
+| §5 另立评估(不在范围) | **全计划无需修改** `RoyaleHost.start_on` / `plan_spawns` |
+| §6 改 `NetBus` 方法表? | **无需修改**(`opponent_left` 是既有 RPC,只是补调用点) |
 
 **2. 占位符扫描**:无 TBD / "类似 Task N" / "适当处理"。每个改动都给了**完整代码块**与确切锚点
 (`file:line` 已按当前树核过;**若实现时行号漂了,按内容定位** —— 代码块里的原文就是锚)。
@@ -1954,7 +1954,7 @@ EOF
    再退进程"—— 那是**新的设计**,本计划**不做**,如实登记为开放问题。
 3. **3v3 不做「掉线中」是否有遗漏**:spec §4 的 3.1 明说只点大乱斗与 1v1,而 3v3 是**六人两队**
    —— 「对手掉线」在 3v3 里其实是个**有信息量**的状态(哪一队少了人)。本计划按 spec 不做,
-   并用反向断言把这个"有意的不对称"钉住。**若用户希望 3v3 也有**,那该做在记分条上
+   并用否定断言把这个"有意的不对称"断言约束。**若用户希望 3v3 也有**,那该做在记分条上
    (「A 队 2/3 人」)而不是单行状态 —— 属**另行评估**。
 4. **`_on_reconnect_retry_tick` 里那句 `int(...)` 的取整方向**:横幅上的"剩余 Ns"用的是
    **截断**(`int((now - start)/1000)`),与收场判据 `Time.get_ticks_msec() - _reconnect_started_ms > int(DEFAULT_SECONDS*1000)`

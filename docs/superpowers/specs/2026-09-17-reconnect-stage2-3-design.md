@@ -39,7 +39,7 @@
 
 ### 2.1 机制：复用现成的 `match_sync`，不新造通道
 
-`match_sync` 本来就是**客户端主动拉取**的进场载荷（原 spec §3.5、`server_main._on_match_sync`），现在已经带 `names` / `hues` / `options` / `roles` / `spawns` / **`ground_weapons`**。
+`match_sync` 本来就是**客户端主动拉取**的进场数据包（原 spec §3.5、`server_main._on_match_sync`），现在已经带 `names` / `hues` / `options` / `roles` / `spawns` / **`ground_weapons`**。
 
 **做法**：给它加一个 `destroyed` 字段，并让**重连成功后（路径甲）也拉一次**。一箭双雕——`destroyed` 与 `ground_weapons` 一起回来，正好覆盖 §1 表格里那两类丢失。
 
@@ -86,7 +86,7 @@ func destroyed_cells() -> Array[Vector2i]:
 
 ★ **顺序要紧**：`_on_resumed()` 里**先重置 C2**（现有行为），**再**拉 `match_sync`。反了的话，`match_sync` 的应答会与重置竞争。
 
-★ **地面武器要"先清后灌"**：`match_sync` 的 `ground_weapons` 是**全量**，而客户端 `GroundWeaponField` 里可能还留着掉线前的条目 → 必须**先 clear + 拆掉 `_pickup_nodes` 的全部节点**，再按载荷重建。否则幽灵枪会**永久留下**（这正是 §1 那半个缺口）。这条要有断言。
+★ **地面武器要"先清后灌"**：`match_sync` 的 `ground_weapons` 是**全量**，而客户端 `GroundWeaponField` 里可能还留着掉线前的条目 → 必须**先 clear + 拆掉 `_pickup_nodes` 的全部节点**，再按数据包重建。否则幽灵枪会**永久留下**（这正是 §1 那半个缺口）。这条要有断言。
 
 ---
 
@@ -104,7 +104,7 @@ func destroyed_cells() -> Array[Vector2i]:
 
 | 项 | 内容 | 备注 |
 |---|---|---|
-| 3.1 | **HUD「掉线中」**：`round_state` 载荷加 `grace` 字段（`{role: 剩余秒}`），大乱斗排行榜的行状态加一档、1v1 记分条旁显示对手状态 | 阶段 1 的 `_enter_grace` 里那次 `_broadcast_round_state()` 目前**什么都没表达**（载荷逐字段不变）—— 加了这个字段它才有意义 |
+| 3.1 | **HUD「掉线中」**：`round_state` 数据包加 `grace` 字段（`{role: 剩余秒}`），大乱斗排行榜的行状态加一档、1v1 记分条旁显示对手状态 | 阶段 1 的 `_enter_grace` 里那次 `_broadcast_round_state()` 目前**什么都没表达**（数据包逐字段不变）—— 加了这个字段它才有意义 |
 | 3.2 | **HUD「重连中」**：本地状态驱动，不需要服务器广播 | 阶段 1 刻意降级成 `print`（见阶段 1 计划 Task 6 Step 4：`pvp_game`/`royale_game` 是 Node2D、`_ui_.panel_box()` 返回 StyleBoxFlat 不是节点 → 没有现成能挂的地方）。要在这一阶段连同 3.1 一起把 HUD 那层设计好 |
 | 3.3 | ★ **`NetBus.opponent_left` 不可达**：该 RPC 在服务端**全仓没有调用点**，而 `pvp_game.gd:228-242` 的「对手已离开 → 2.5s 回主菜单」挂着它 → CLAUDE.md 把它列为"三条离开对局世界的路径"之一，实际不是 | 要么补上服务端的调用点，要么删掉那段死代码并改文档 |
 | 3.4 | **对局中服务器断线无提示** | 阶段 1 已给「服务器断开」加了订阅者（`local_server_message`），但那只是触发重连；**没有重连失败前的可见反馈** —— 与 3.2 是同一块 UI |
@@ -140,7 +140,7 @@ func destroyed_cells() -> Array[Vector2i]:
 
 ## 6. 明确不做
 
-- worker 进程**崩溃**后的恢复（要状态落盘/回传，另一量级 —— 原 spec §2 已排除）。
+- worker 进程**崩溃**后的恢复（要状态写入磁盘/回传，另一量级 —— 原 spec §2 已排除）。
 - 观战、语音。
 - 反作弊级身份验证。
 - `ai_duel` 的 token（§0 第 4 条）。
@@ -148,6 +148,6 @@ func destroyed_cells() -> Array[Vector2i]:
 
 ## 7. 已知风险
 
-1. **`match_sync` 载荷变大**：`destroyed` 最坏 9k 条 `Vector2i`（≈72KB 未压缩）。虽然只在有差异时带，但一局打到一半可能接近上限。**缓解**：真需要时改增量（带一个 `since_tick`）—— 本阶段先做全量，并在探针里量一次实际大小。
+1. **`match_sync` 数据包变大**：`destroyed` 最坏 9k 条 `Vector2i`（≈72KB 未压缩）。虽然只在有差异时带，但一局打到一半可能接近上限。**缓解**：真需要时改增量（带一个 `since_tick`）—— 本阶段先做全量，并在探针里量一次实际大小。
 2. **先清后灌地面武器**会有一帧"场上没有枪"的空窗（清完到 `match_sync` 应答回来之间）。若体感明显，改成"应答到达后一次性替换"（构建新的 `GroundWeaponField` 再整体换掉引用）。
 3. **大厅房间保留**会拉长端口占用（§3 第 1 条的代价）—— 需与 §0 第 2 条的 360s 一起评估端口池（`WORKER_PORT_SPAN = 500`）的压力。

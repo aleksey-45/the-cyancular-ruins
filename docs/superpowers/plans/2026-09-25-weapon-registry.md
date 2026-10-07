@@ -1,4 +1,4 @@
-# 武器注册表单一来源（`data/weapons.json`）实现计划
+# 武器统一注册表数据源（`data/weapons.json`）实现计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -70,7 +70,7 @@
   **不是**这条功能的机制。别在文档里把它写成"不加就导出没有枪"。
 - ★ **`WeaponRegistry` 不得 `load()` 任何武器场景**；`tier_of()` 返回**裸 `int`**。
   理由见 Task 2 的文件头注释（`weapon_base.gd:7` 的 export 默认值 preload 了 `bullet.tscn`）。
-- ★★ **词汇与行号口径（本批的核验报告点名过这条，代价最高）**：
+- ★★ **词汇与行号口径（本批的核验报告明确指出过这条，代价最高）**：
   本计划的所有代码都写在**计划 1 之后**的世界里。计划 1 是**唯一**做改名的那一份，它的改名表
   比 spec §3 的 9 项更长，本计划会碰到的有：`WeaponInventory.slot_start`→**`cell_start`**、
   `used_slots`→**`used_cell_count()`**、`SLOT_COST`→**`CELL_COST`**、
@@ -719,9 +719,9 @@ Expected: FAIL 列表**恰好 8 条** = ⑤ 一条（命中的 6 个字面量）
 ★ ⑦ 那条能绿的**前提**是 `all_ids()` 返回的是**真 int**（不是 JSON 来的 float）——
 `Array[int] [1,2,3] == Array [1,2,3]` 为真、`== [1,2,3.0]` 为**假**。
 真红了先看 `all_ids()` **出口**有没有漏掉 `int(...)`，别急着怀疑接线
-（★ 出口那一处才是承重的，理由见 Task 2 Step 2 的注释）。
+（★ 出口那一处才是核心关键的，理由见 Task 2 Step 2 的注释）。
 
-- [ ] **Step 6: 反证（三处，逐个点名）**
+- [ ] **Step 6: 反证（三处，逐个显式指定）**
 
 1. **② 真的在读盘上的 json**：临时把 `data/weapons.json` 里 id 1 的 `"tier": "light"`
    改成 `"tier": "medium"`，跑：
@@ -731,7 +731,7 @@ source tests/env.sh && "$GODOT" --headless --path . -s res://tests/enemy_logic_s
 ```
 Expected: `FAIL - id 1:tscn 的 tier(0)必须等于 json 的 "medium"(1)`。
 ★ 这一条证明 ② **真的在读盘上的 json**，而不是在读某个缓存/常量。
-2. **注册表的出口转换承重**：把 `all_ids()` 里 `out.append(int(e["id"]))` 临时改成
+2. **注册表的出口转换核心关键**：把 `all_ids()` 里 `out.append(int(e["id"]))` 临时改成
    `out.append(e["id"])`，跑同一条命令。
 Expected: ⑦ 红 —— `默认启用表必须等于注册表全部 id(实际 [… 1.0, 2.0 …]、注册表 […])`；
 成因是 `Array[int] [1,2,3] == Array [1,2,3.0]` 为**假**（元素是 float，不是 int）。
@@ -900,7 +900,7 @@ func _server_weapon_types() -> Array:
 推断不出类型会整文件解析失败`）
 **必须一并改写**：`all_ids()` 返回 `Array[int]`，不再是"字面量数组"这个理由了。
 改成：`# 显式 int:入库的是 Array[int],循环变量跟着同类型,别让它退化成 Variant。`
-（核验报告 §2.8 点名了这条注释：理由不成立而注释留着就是误导。）
+（核验报告 §2.8 明确指出了这条注释：理由不成立而注释留着就是误导。）
 ★ 这里改完，`_add_weapon_grid` 的函数体就让 Task 1 的 ⑥ 满足了。
 
 `scenes/main_menu.gd:343` 起的那一段（`for` 用计划 1 的 `type_id`；`cb.text` **不带编号**
@@ -942,7 +942,7 @@ lambda**，不是新引入的写法。
 
 ★ 下面两处的形参名是 **`type_id`** —— 计划 1 的 Task 1 Step 4 已经把
 `player_replica._swap_weapon(slot)` 与 `weapon_icons.silhouette(slot)` 的形参改成了 `type_id`。
-**照抄写成 `slot` 就是 Parse Error**（那是本批核验报告点名的两处硬错）。
+**照抄写成 `slot` 就是 Parse Error**（那是本批核验报告明确指定的两处硬错）。
 
 `scenes/player/player_replica.gd`（`_swap_weapon` 体内，原 `:238`）：
 
@@ -1006,7 +1006,7 @@ func _build_visual() -> void:
 ```
 （`:322` 那处，原来是 `load(WeaponComponent.WEAPONS[str(pk.type_id)])`。）
 
-- [ ] **Step 5: 跑 —— 应该全绿**
+- [ ] **Step 5: 跑 —— 应该全部通过**
 
 Run:
 ```bash
@@ -1026,13 +1026,13 @@ Expected: `SMOKE OK`（且无 FAIL）、`WEAPON PICKUP PROBE: ALL-OK`、`KH L3 P
    **计划 1 之后的那句字面量**：`for type_id in [1, 2, 3, 4, 5, 6]:`，跑 Step 5 的第一条命令。
    Expected: `FAIL - 生产代码里不得再有硬编码的武器 id 列表(命中:[res://scenes/level_0.gd])`
    **且** `FAIL - res://scenes/level_0.gd 的 _default_weapon_types() 应改用 …
-   WeaponRegistry.all_ids()` —— ⑤⑥ 两条**一起**红，且**点名**到那个文件。
+   WeaponRegistry.all_ids()` —— ⑤⑥ 两条**一起**红，且**明确指出**到那个文件。
 2. 把 `weapon_component.gd` 的 `_init` 里 `enabled_types = WeaponRegistry.all_ids()`
    临时改成 `enabled_types = [1, 2, 3, 4, 5, 6]`，跑同一条命令。
    Expected: `FAIL - res://scenes/player/weapon_component.gd 的 _init() 应改用 …`
    （注意：⑦ 的"默认启用表"**不会**红 —— json 仍是 `[1..6]`，两者碰巧相等。
    ⑦ 的牙齿由 Task 5 的第 7 把枪实验证明，见那里）。
-3. 两处都**改回来**，再跑一次确认全绿。
+3. 两处都**改回来**，再跑一次确认全部通过。
 
 - [ ] **Step 7: 提交（Task 1 + 2 + 3 合并为一次）**
 
@@ -1124,7 +1124,7 @@ Expected: `FAIL - 每种注册武器都应铺到(缺 [5];场上实际 {1: 2, 2: 
 `FAIL - 开局应铺 12 件地面武器(6 种 × 2,实际 10)` —— 两条一起红。
 ★ 第二条的文案必须与 Task 4 Step 1 里写的那个格式串**逐字对上**
 （`"开局应铺 %d 件地面武器(%d 种 × 2,实际 %d)"`）；对不上说明 Step 1 被改动过，先核它。
-★ 这一条正是"加了新枪但散落表漏了它"的可复现形态。确认后**删掉那两行**，再跑一次确认全绿。
+★ 这一条正是"加了新枪但散落表漏了它"的可复现形态。确认后**删掉那两行**，再跑一次确认全部通过。
 
 - [ ] **Step 4: 跑 `kh_l3`**
 
@@ -1186,7 +1186,7 @@ source tests/env.sh
 out=$("$GODOT" --headless --path . --quit-after 120 res://scenes/main_menu.tscn 2>&1)
 echo "错误行数=$(echo "$out" | grep -cE 'SCRIPT ERROR|Parse Error')  总行数=$(echo "$out" | wc -l)"
 ```
-Expected: **全绿** —— `SMOKE OK`（无 FAIL，含 ⑦ 的"默认启用表 == 注册表全部 id"，
+Expected: **全部通过** —— `SMOKE OK`（无 FAIL，含 ⑦ 的"默认启用表 == 注册表全部 id"，
 它现在比的是 `[1..7]`）、`LEVEL0 SCATTER: ALL-OK`（14 件）、`WEAPON PICKUP PROBE: ALL-OK`、
 `KH L3 PROBE: ALL-OK`（★ 这一条是本批**唯一**能验 Task 4 Step 2 那条改动的地方，
 见那里的说明）、最后一行形如 `错误行数=0  总行数=<几十以上>`。
@@ -1272,7 +1272,7 @@ Expected: 导出成功、脚本自带的产物冒烟通过，**且实机起发�
 - [ ] **Step 6: 登记进 CLAUDE.md**
 
 在 **§砖块属性与破坏（`data/tile_defs.json`）** 那一节之后，紧挨着补一条新条目
-（与 `data/enemies.json` / `data/tile_defs.json` 的"单一来源 + 同步脚本"体例并列）：
+（与 `data/enemies.json` / `data/tile_defs.json` 的"统一数据源 + 同步脚本"体例并列）：
 
 ```markdown
 ### 武器注册表(data/weapons.json)
@@ -1340,9 +1340,9 @@ EOF
 "守卫改判据 json ↔ tscn ↔ 枚举 + 新增覆盖性" ✅ Task 1（③/⑤b/⑥/⑦）+ Task 4（散落覆盖性）；
 "加第 7 把枪 = 零 GDScript" ✅ Task 5 Step 1（**实际走一遍**，不是读代码）。
 
-**1b. 守卫真的钉住了"加第 7 把枪只改一个 json"吗（2026-09-26 逐条核过）**：
+**1b. 守卫真的通过断言约束了"加第 7 把枪只改一个 json"吗（2026-09-26 逐条核过）**：
 - **补的那个洞**：⑤ 的判据是 `contains("[1,2,3,4,5,6]")`，而三张表的键/值是 `"1".."6"` 与 `1..6:`
-  —— **一个那样的字面量都不含** ⇒ 表原样留着 ⑤ 也全绿；而 ⑥ 只覆盖**六处循环/初始化宿主**，
+  —— **一个那样的字面量都不含** ⇒ 表原样留着 ⑤ 也全部通过；而 ⑥ 只覆盖**六处循环/初始化宿主**，
   三张表另外还有 **5 个真读点**（`player_replica.gd:238` / `weapon_pickup.gd:101` /
   `weapon_icons.gd:22,69` / `hud.gd:265`）不在 ⑥ 里。⇒ 只改 ⑥ 六处、留表的**半迁移**
   会让承诺**静默失效**。**已补 ⑤b**：`\b(WEAPONS|DISPLAY_NAMES|TIERS)\b` 扫生产目录、
@@ -1372,7 +1372,7 @@ Task 4 的 `var want_types: Array[int] = …` 都按 int 用）；`tier_of() -> 
 `tiers_map() -> Dictionary` 喂 `WeaponInventory.new(tiers: Dictionary)`
 （`core/sim/weapon_inventory.gd:38`）；`name_of` 对未知 id 返回 `""`（`ui/hud.gd` 的兜底据此写）。
 ★ **两个 `int()` 的分工说准了**（2026-09-26，按实现者的变异实测）：`all_ids()` **出口**那个
-`out.append(int(e["id"]))` 是承重的（拆了它 ⇒ ⑦ 与任何"id 数组比字面量"的断言**假红**，
+`out.append(int(e["id"]))` 是核心关键的（拆了它 ⇒ ⑦ 与任何"id 数组比字面量"的断言**假红**，
 因为 `Array[int] [1,2,3] == Array [1,2,3.0]` 为**假**）；**装载期**那个
 （`var id := int(e.get("id", 0))`）拆了**不会**让 ⑦ 红 —— 它是"`_entries` 里不存 float"的防线，
 今天被各读点的 `int(...)` 逐处补住。**两处都留，但别把"⑦ 绿"当成装载那个多余的证据。**

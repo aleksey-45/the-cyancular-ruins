@@ -1,19 +1,16 @@
 class_name MazeGenerator
 extends RefCounted
 
-# 地图会话的入口:**选哪份地图 + 当前网格**这两件会话级状态住在这里,其余一律委托出去。
-#   - `.cyrm` 格式(格子值编解码 / 解析 / 序列化 / spawn 元数据)→ **MapFormat**(core/sim/map_format.gd)
-#   - 环面网格几何与寻路(环面距离 / 副本锚定 / 地板格 / A* / LOS)→ **GridPathfinder**(core/sim/grid_pathfinder.gd)
-# - 本文件保留全仓既有的 `MazeGenerator.xxx` 调用面(生产代码 ~57 个文件、上百处引用),
-#   所以下面是**逐条一行**的转发。别在这里再写实现 —— 新逻辑进上面两个类;
-#   新代码若明确只碰格式或只碰寻路,直接引 MapFormat / GridPathfinder,不必绕这里。
+# 地图与网格管理：负责选定地图路径与维护当前网格全局状态，具体格式与几何寻路分别委托给：
+#   - MapFormat (core/sim/map_format.gd)：.cyrm 格式解析、序列化与出生点元数据；
+#   - GridPathfinder (core/sim/grid_pathfinder.gd)：环面距离计算、地面检测与寻路。
+# 本类保留既有兼容接口供外部调用，具体实现委托至对应专门类。
 
 const MAP_DIR: String = "res://maps"
 
 # ── 地图文件(.cyrm)──
-# 先随机取 exe 旁的 .cyrm(玩家/开发者外置自定义地图),否则随机取 res://maps/*.cyrm;
-# 同目录多份 .cyrm 随机读一份。选中的地图整个会话固定(缓存在 _picked_map),
-# 保证 map_size / load_map_file / parse_spawn_metadata 读的是同一份。
+# 优先读取可执行文件同级目录的 .cyrm 自定义地图，若无则从 res://maps/ 随机选取。
+# 选中的地图在会话内保持，保证各处查询一致。
 static var _picked_map: String = ""
 static func map_file_path() -> String:
 	if _picked_map != "":
@@ -22,7 +19,7 @@ static func map_file_path() -> String:
 	_picked_map = ext if ext != "" else _random_cyrm(MAP_DIR)
 	return _picked_map
 
-# 钉住地图文件(PvP:服务器定图,客户端加载同名文件;覆盖会话随机读的缓存)。
+# 显式指定地图文件路径（PvP 联机由服务端指定地图，客户端同步加载同名文件）。
 static func set_map_file(path: String) -> void:
 	_picked_map = path
 
@@ -46,13 +43,12 @@ static func _random_cyrm(dir: String) -> String:
 # 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
 static var current_grid: Array[Array] = []
 
-# 当前关卡的 **16px 子格纹理表**(cyrm v4,选项 A:逻辑读格级 current_grid,
-# 碰撞/破坏/渲染读这张子格表 —— 见 docs/2026-09-20-cyrm-v4-handover.md §3 选项 A)。
+# 当前关卡的 16px 子格纹理表（cyrm v4 格式：逻辑层读取 64px current_grid，物理与渲染层读取此子格表）。
 # 由 WorldBuilder.load_grid 与 current_grid 一起装填;空 = 调用方自行从格级展开。
 static var current_subgrid: Array[Array] = []
 
 
-# ── 转发:格子值编解码(MapFormat)──
+# 转发至 MapFormat：瓦片网格编解码
 const EMPTY: int = MapFormat.EMPTY
 const SOLID: int = MapFormat.SOLID  # pack(1, 15) = 纹理1 全砖
 
@@ -66,7 +62,7 @@ static func shape_of(v: int) -> int:
 	return MapFormat.shape_of(v)
 
 
-# ── 转发:文件读取(MapFormat)──
+# 转发至 MapFormat：地图文件读取与出生点解析
 static func map_size() -> Vector2i:
 	return MapFormat.map_size(map_file_path())
 
@@ -80,7 +76,7 @@ static func load_spawns() -> Dictionary:
 	return MapFormat.load_spawns(map_file_path())
 
 
-# ── 转发:环面几何(GridPathfinder)──
+# 转发至 GridPathfinder：环面几何距离计算
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
 	return GridPathfinder.toroidal_dist(a, b, cols, rows)
 

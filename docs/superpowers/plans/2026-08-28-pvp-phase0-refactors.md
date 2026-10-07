@@ -4,7 +4,7 @@
 
 **Goal:** 把 PvP 需要的 6 项共享改动做成**行为不变的重构**落到主线，单机玩起来和今天一模一样，两个冒烟测试保持绿。
 
-**Architecture:** 每项重构都是对现有单人代码的等价改写（输入改走可注入 InputSource、瞄准加覆盖钩子、子弹带射手引用、spawn 解析支持双出生点、世界构建抽成 WorldBuilder、Level0 加 pvp_mode 标志）。不做任何新功能，不写网络代码。
+**Architecture:** 每项重构都是对现有单人代码的等价改写（输入改走可注入 InputSource、瞄准加覆盖钩子、子弹带射手引用、spawn 解析支持双出生点、世界构建提取为 WorldBuilder、Level0 加 pvp_mode 标志）。不做任何新功能，不写网络代码。
 
 **Tech Stack:** Godot 4.7.1 标准版（非 mono），GDScript，无测试框架（`-s` SceneTree 冒烟脚本）。
 
@@ -13,7 +13,7 @@
 - Godot 可执行：`"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"`
 - **测试由用户自己跑**，本计划不代跑。每个任务以"跑冒烟 + 手动试玩确认"为验证。
 - 唯一 autoload 是 `GameParameters`；`PlayerParams`/`EnemyParams`/`MazeGenerator` 是静态 `RefCounted`。
-- `-s` 阶段 autoload 尚未实例化：冒烟脚本避免实例化引用 autoload 的脚本（player.gd 引用 GameParameters，故不可在 `-s` 实例化——契约测试走源码级检查）。
+- `-s` 阶段 autoload 尚未实例化：冒烟脚本避免实例化引用 autoload 的脚本（player.gd 引用 GameParameters，故不可在 `-s` 实例化——接口规范测试走源码级检查）。
 - 现有冒烟：`enemy_logic_smoke.gd` 成功打印 `SMOKE OK` 退出 0；`player_contract_smoke.gd` 成功打印 `CONTRACT OK` 退出 0。
 - 提交直接到 `main`（仓库惯例，近期提交全在 main）。
 - **行为不变铁律**：每项重构后，单机输入/瞄准/伤害/地图/碰撞与重构前完全一致。
@@ -25,7 +25,7 @@
 **Files:**
 - Create: `Globals/input_source.gd`
 - Modify: `Scenes/Player/player.gd`（7 处 `Input.*` 轮询读取 + 2 个新方法）
-- Modify: `Tests/player_contract_smoke.gd`（加 2 条契约守卫）
+- Modify: `Tests/player_contract_smoke.gd`（加 2 条接口规范守卫）
 
 **Interfaces:**
 - Produces: `class_name InputSource extends RefCounted`，方法 `get_axis(neg,pos)->float` / `is_action_pressed(action)->bool` / `is_action_just_pressed(action)->bool` / `is_action_just_released(action)->bool` / `get_aim_dir_override()->Vector2`（默认返回 `Vector2.ZERO`）。
@@ -88,7 +88,7 @@ func get_aim_dir_override() -> Vector2:
 
 > 注意：`_unhandled_input` 里 `event.is_action_pressed("R")` 和 `event.is_action_pressed(slot)` 是事件驱动的，**保持原样**（Phase 0 本地路径不变；网络切枪由 Plan B 的输入包直接调 `weapons.equip`，不走事件）。
 
-- [ ] **Step 4: 加契约守卫到 `Tests/player_contract_smoke.gd`**
+- [ ] **Step 4: 加接口规范守卫到 `Tests/player_contract_smoke.gd`**
 
 在 `# 根公开方法` 循环之后加：
 

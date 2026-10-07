@@ -177,7 +177,7 @@ func _find_escape_column() -> Vector2:
 				_fly_straight_to(fallback_target, delta)
 ```
 
-- [ ] **Step 4: 跑冒烟,确认全绿**
+- [ ] **Step 4: 跑冒烟,确认全部通过**
 
 Run(用户执行): 同 Task 1 Step 2 的命令。
 

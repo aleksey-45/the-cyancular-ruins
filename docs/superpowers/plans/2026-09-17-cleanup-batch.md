@@ -280,7 +280,7 @@ git commit -m 'feat(sim): Unstick 向上解卡(纯逻辑)+ TileQuery.topmost_sol
 
 - [ ] **Step 1: 抽出 `_recompute_canonical()`**
 
-`_physics_process` 里那段"物理走出来的是世界坐标，取模回 canonical"要被解卡复用，先抽成函数。把现有 :154-162 整段替换为 `_recompute_canonical()`，并新增：
+`_physics_process` 里那段"物理走出来的是世界坐标，取模回 canonical"要被解卡复用，先提取为函数。把现有 :154-162 整段替换为 `_recompute_canonical()`，并新增：
 
 ```gdscript
 # 物理/解卡动过位置之后,把世界坐标取模回 canonical。渲染位置再由它锚到玩家最近副本
@@ -393,7 +393,7 @@ timeout 120 "$GODOT" --headless --path . -s res://tests/enemy_logic_smoke.gd
 "$GODOT" --headless --path . --quit-after 3600 res://tests/muzzle_probe.tscn
 "$GODOT" --headless --path . --quit-after 3600 res://tests/aim_probe.tscn
 ```
-Expected: 三个都打印各自的 `ALL-OK` / `SMOKE OK`。（它们钉的是榴弹发射器的枪口 `(31,8)`，本次不动 m82a1 以外的枪，所以**预期全绿**。若 m82a1 出现在某个硬编码里，按新值 `(54,5)` 更新那条断言 —— 那是探针跟不上重构，不是回退重构。）
+Expected: 三个都打印各自的 `ALL-OK` / `SMOKE OK`。（它们钉的是榴弹发射器的枪口 `(31,8)`，本次不动 m82a1 以外的枪，所以**预期全部通过**。若 m82a1 出现在某个硬编码里，按新值 `(54,5)` 更新那条断言 —— 那是探针跟不上重构，不是回退重构。）
 
 - [ ] **Step 4: 提交**
 
@@ -476,7 +476,7 @@ func _build_collision() -> void:
 
 - [ ] **Step 4: 改四个探针**
 
-`tests/ground_action_probe.gd` 的 ⓪ 相：`bad_center` 那条的判据改成"载荷 pos == 服务器判定表里的 pos"：
+`tests/ground_action_probe.gd` 的 ⓪ 相：`bad_center` 那条的判据改成"数据包 pos == 服务器判定表里的 pos"：
 
 ```gdscript
 		if (e["pos"] as Vector2).distance_to(entry["pos"] as Vector2) > 0.5:
@@ -537,7 +537,7 @@ git commit -m 'refactor(weapon): 地面武器视觉中心=节点原点,删掉 vi
 - [ ] **Step 1: 摘掉 `ui/combat_feedback.gd` 的单机触发链**
 
 - 删 `notify_enemy_killed()`（现 :80-95）与 `enemy_display_name()`（现 :98-104）两个函数，连同它们的 doc 注释块。
-- `kill()` 的 doc 注释里"w 单机由 notify_enemy_killed 算出来"之类的话删掉，改成"who = 被击杀者显示名（PvP 由 `kill_event` 载荷给出）"。
+- `kill()` 的 doc 注释里"w 单机由 notify_enemy_killed 算出来"之类的话删掉，改成"who = 被击杀者显示名（PvP 由 `kill_event` 数据包给出）"。
 - `reset_streak()` 的注释里"单机仅按时间窗清零"删掉（单机不再有连杀）。
 - `attribute()` 的注释里"供 `notify_enemy_killed` 读"→"供 `RoyaleHost._attributed_killer` 读（大乱斗计分）"；"必须写在**伤害调用之前**"那条纪律保留但把理由改成归因读取者（`royale_host` 的倒地边沿）而不是播报。
 - `attribute_hit()` 的注释同理改写。
@@ -593,7 +593,7 @@ Expected: 打印 `ok: structure-editor.html 的敌人注册表与 data/enemies.j
 
 `scenes/weapons/bullet_base.gd`：
 - 删 `_register_player_hit()` 整个函数（现 :186-192）。
-- :104 的 `_register_player_hit(hit)` → `CombatFeedback.hit_marker()`，并把上面那句"★归因 meta 必须在 apply_hit 之前落盘…"的注释整段删掉。
+- :104 的 `_register_player_hit(hit)` → `CombatFeedback.hit_marker()`，并把上面那句"★归因 meta 必须在 apply_hit 之前写入磁盘…"的注释整段删掉。
 - :109 的 `_register_player_hit(hit)   # ★同上:先写归因再结算伤害` → `CombatFeedback.hit_marker()`。
 - :181 的 `_register_player_hit(hit)   # ★先写归因(Task 15):hurt 可能同帧判死并当场播报` → `CombatFeedback.hit_marker()`，`_direct_hit` 的 doc 注释里"归因"字样改掉。
 
@@ -635,7 +635,7 @@ Run（**让用户跑**）：
 "$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn
 "$GODOT" --headless --path . --quit-after 3600 res://tests/hud_declarative_probe.tscn
 ```
-Expected: 全部 `ALL-OK`。**若某个探针因本次重构变红，改探针认新实现，别回退重构**（既有纪律）；只有探针确实在断言"播放了单机播报"时才把那段断言删掉。
+Expected: 全部 `ALL-OK`。**若某个探针因本次重构报错失败，改探针认新实现，别回退重构**（既有纪律）；只有探针确实在断言"播放了单机播报"时才把那段断言删掉。
 
 - [ ] **Step 8: 提交**
 
@@ -995,7 +995,7 @@ func _place_enemy_dot(dot: ColorRect, enemy: Vector2, player: Vector2, w: float,
 Run（**让用户跑**）：`"$GODOT" --path . --quit-after 3600 res://tests/minimap_circle_probe.tscn`
 Expected: `MINIMAP CIRCLE PROBE: ALL-OK`，并存下 `res://.superpowers/sdd/minimap_circle.png`。
 
-★ **存下的 PNG 由实施者自己读一遍**（这个项目里出过两次"数值全绿、画面错"）：确认圆是圆的、地形在图里、右下角位置合理。
+★ **存下的 PNG 由实施者自己读一遍**（这个项目里出过两次"数值全部通过、画面错"）：确认圆是圆的、地形在图里、右下角位置合理。
 
 - [ ] **Step 7: 真机进 1v1 / 大乱斗各看一眼**
 
@@ -1020,7 +1020,7 @@ git commit -m 'feat(ui): 小地图改为以玩家为中心的圆形,敌人点按
 
 1. **§UI** 新增一小节「小地图」：圆形、以玩家为中心、`RANGE_CELLS`（`ui/minimap.gd`）是"圆形范围"的唯一入口；地形靠 `ui/minimap_circle.gdshader` 的 `repeat_enable` 免费回绕；敌人距离走 `GridPathfinder.toroidal_delta_px(玩家, 敌人, W, H)`（**参数顺序 = a→b**）；两个开关 `Settings.pvp_show_minimap` / `pvp_minimap_show_enemy` 语义不变；`_ready` 空 grid 早退的脆弱性仍在。
 2. **§武器背包与地面拾取**：把 `★ 下发出去的 pos 一律是 canonical，不是判定圆心` 那整段（原 :84）改写为「**只有一个中心**」——视觉中心已在 `_build_collision` 里被挪到节点原点，`canonical_pos` 就是画出来的枪的位置；`visual_offset` / `visual_center()` 已删；`_canonical_of` 仍保留（拿活节点的权威值 + 对陈旧条目留痕）。同时把 §1 里 `WeaponPickup` 那条 `visual_offset = cs.position * WORLD_SCALE` 的描述改成新写法。
-3. **§敌人**：删掉「中文显示名走同一条记录的 `display_name` 字段（2026-09-14 起收口…）经 `EnemySpawner.display_name_of` 按场景路径查；漏填会静默回落英文原名」那一段（**显示名链已整体移除**），改成「`data/enemies.json` 只有 `id`/`name`/`scene`/`color` 四个字段；单机击杀播报已删（2026-09-17），PvP 的 `kill_event → CombatFeedback.kill` 仍保留」。`node level_editor/sync-enemies.js --check` 的说法保留（`NOT_IN_EDITOR` 守卫仍在）。
+3. **§敌人**：删掉「中文显示名走同一条记录的 `display_name` 字段（2026-09-14 起统一收拢…）经 `EnemySpawner.display_name_of` 按场景路径查；漏填会静默回落英文原名」那一段（**显示名链已整体移除**），改成「`data/enemies.json` 只有 `id`/`name`/`scene`/`color` 四个字段；单机击杀播报已删（2026-09-17），PvP 的 `kill_event → CombatFeedback.kill` 仍保留」。`node level_editor/sync-enemies.js --check` 的说法保留（`NOT_IN_EDITOR` 守卫仍在）。
 4. **§碰撞** / §常用命令附近**新增** `core/sim/unstick.gd` 的位置与用途：地面武器嵌进实心格时向上挤出（含"停稳后被盖住"），几何走 `CollisionAabb.world_rect` + `TileQuery.topmost_solid_row`；`tests/unstick_smoke.gd` 钉语义（含"对齐贴墙不算卡"）。
 
 - [ ] **Step 2: 提交**

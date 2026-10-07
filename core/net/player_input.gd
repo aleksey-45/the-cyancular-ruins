@@ -1,48 +1,26 @@
 class_name PlayerInput
 extends RefCounted
 
-# 玩家输入统一接口定义（解耦自原 InputSource）：
-#
-# - 为什么改名 + 拆:此前本类叫 `InputSource`,却**同时**是"接口"和"本地实现" ——
-#   它的 `_*_raw()` 默认实现直接读真实 `Input`。于是"给玩家注入一个输入源"这句话,
-#   在这个类上到底是"用本地输入"还是"某种输入"是含混的;而真要用本地输入时,
-#   又只能 `LocalInputSource.new()` 拿这个"接口"的实例。
-#   现在:`PlayerInput` 只声明契约(三个实现见下),本地那份独立成 `LocalInputSource`。
-#
-# 三个实现:
-#   - `LocalInputSource`  —— 读真实 `Input`(单机与 PvP 本地玩家;C2 下由引擎自步进读)
-#   - `PacketInputSource` —— 消费网络输入包(权威服务器唯一消费方)
-#   - `AiInputSource`     —— AI 补位(AINavigator 每帧写字段)
-#   - 另有 `tests/harness/soak_bot_input.gd`(压力探针的脚本手柄,不在生产路径)
-#
-# - `frozen` 的归属(2026-09-14 修,本类保留):
-#   此前 frozen 短路写在公开输入读取接口里、而三个子类各自覆写了全部公开输入读取接口 →
-#   短路被子类整个绕过,`player.set_controls_locked(true)` 对它们是**静默空操作**。
-#   现在冻结收在本类的公开输入读取接口,子类只覆写不碰 frozen 的 `_*_raw()` 钩子 —— 契约无法绕过。
-#   历史代价(记下来别再犯):客户端 COUNTDOWN 冻结曾靠"客户端恰好用默认 InputSource"侥幸成立;
-#   服务器靠 MatchHost 另调 PacketInputSource.reset_state()、AI 靠自己查 RoundState 提供容错保障。
-#   回归守卫:`tests/smoke/ai_input_source_smoke.gd` 的 9 条 `frozen:` 断言
-#   (打在**子类实例**上 —— 仅验证基类实现无法保证子类是否正确重写并遵循接口规范)。
-#
-# frozen:PvP COUNTDOWN/局间冻结。置 true 后一切输入接口返回中性值(轴 0、无按键/边沿/切枪),
-# 玩家像服务器不注入输入那样静止 —— C2 本地预测下倒计时里不自走(服务器权威冻结,客户端预测
-# 必须相同机制冻结,否则预测移动、服务器不消费 → PLAYING 起 ack 跳变 → 大 rollback)。
-# - 冻结期**不调用**子类的 _*_raw():冻结不该改子类状态(边沿不被消费、切枪槽位不被取走)。
-# - 瞄准读取接口 get_aim_dir_override() 刻意**不**参与冻结:武器仍要按注入方向摆枪。
+# 为 LocalInputSource、PacketInputSource 与 AiInputSource 提供通用输入契约。
+# 输入冻结管理：
+# 基类的公开查询接口负责统一处理 frozen 冻结状态。
+# 冻结期间（如对局开始倒计时或结算停顿），所有公开移动、攻击、切枪及交互查询直接返回中性默认值。
+# 子类仅需实现底层的 _*_raw() 内部钩子方法，避免各子类重复实现冻结分支或产生分歧。
+# 瞄准方向查询 get_aim_dir_override() 独立于冻结状态，保证武器朝向视觉正常显示。
+
 var frozen := false
 
-# 输入源种类。-  用枚举而不是 `is_network_driven() == true/false` 那种二值判断:
-# 二值判断每加一种来源就要重新想"它算不算网络",而这里加一个枚举值即可。
+# 输入源类别枚举
 enum Kind { LOCAL, PACKET, AI }
 
 
-# 本实现的种类。子类**必须覆写**(基类给会报错的保底处理,同仓内其它"必须覆写"桩)。
+# 返回当前输入源具体类别，子类必须覆写此方法。
 func source_kind() -> int:
 	push_error("PlayerInput: 子类必须覆写 source_kind()")
 	return -1
 
 
-# ── 公开输入读取接口:frozen 一律在此短路,子类**不得覆写这些**(覆写了就等于绕开冻结)──
+# 公开输入查询接口：处于冻结状态时直接返回中性默认值，子类不应覆写此类接口。
 
 func get_axis(neg: String, pos: String) -> float:
 	if frozen:
@@ -72,8 +50,7 @@ func get_switch_index_pressed() -> int:
 		return 0
 	return _switch_index_raw()
 
-# 拾取(F 按下边沿) / 丢弃(Q 长按满阈值后的那一次边沿)。
-# - 与其它读取接口相同机制:冻结一律在此短路,子类**不得覆写这两个**(覆写即绕开冻结)。
+# 拾取与丢弃动作查询接口：
 func is_pickup_pressed() -> bool:
 	return not frozen and _pickup_pressed_raw()
 
@@ -81,19 +58,15 @@ func is_drop_pressed() -> bool:
 	return not frozen and _drop_pressed_raw()
 
 
-# 本帧上行包里的**权威切枪目标**(inst)。只有 `PacketInputSource` 覆写 `_switch_inst_raw()`
-# (它读包里的 winst);本地 / AI / 机器人输入源**一律不覆写** —— 它们那次切枪由
-# `get_switch_index_pressed()` 那条**本地路径**直接成交,不经网络。
-# - 与 `get_aim_dir_override()` 相同机制:**默认空操作**的可选钩子(不是"必须覆写"那族)。
-# - `frozen` 短路照旧收在公开输入读取接口 —— 冻结期一切输入接口返回中性值,这条不能例外
-#   (子类覆写的是 `_*_raw()`,绕不过冻结)。
+# 消费网络输入包中的目标武器实例 ID（winst）。
+# 仅网络输入源解析其实例 ID；本地与 AI 玩家则通过本地槽位直接切换。
 func consume_switch_inst() -> int:
 	if frozen:
 		return 0
 	return _switch_inst_raw()
 
 
-# ── 覆写钩子:子类只改这里;本基类给会报错的保底处理(纯接口,不再自带"本地"实现)──
+# 底层虚方法钩子：子类覆写具体输入采集逻辑。
 
 func _axis_raw(_neg: String, _pos: String) -> float:
 	push_error("PlayerInput: 子类必须覆写 _axis_raw();本地输入请用 LocalInputSource")
@@ -128,7 +101,7 @@ func _switch_index_raw() -> int:
 	return 0
 
 
-# 可选钩子:默认 0 = "本次上行没有切枪目标"。见 `consume_switch_inst()`。
+# 可选切枪实例 ID 钩子：默认为 0（无切枪请求）。
 func _switch_inst_raw() -> int:
 	return 0
 
@@ -136,10 +109,8 @@ func _pickup_pressed_raw() -> bool:
 	push_error("PlayerInput: 子类必须覆写 _pickup_pressed_raw()")
 	return false
 
-# ── 可选钩子(与上面那族"必须覆写"的不同:默认是空操作)──
-# 「长按 Q 满阈值」这一次边沿由**本地实现**提供:计时在 player.gd 的物理帧里做
-# (只有那里有确定的 delta),做完了由 player 调 mark_drop_edge() 打标,
-# pack_record 下一次组包时取走。网络源直接读包里的位、AI 源不丢枪,故默认空操作即可。
+# 丢弃武器蓄力边沿标记：
+# 本地角色在长按蓄力达标后调用 mark_drop_edge() 写入触发边沿。
 var _drop_edge := false
 
 func mark_drop_edge() -> void:
@@ -151,15 +122,13 @@ func _drop_pressed_raw() -> bool:
 	return false
 
 
-# 瞄准覆盖:本地返回 ZERO → 武器落回鼠标计算;网络驱动的玩家返回注入的瞄准方向。
-# - 不参与 frozen(见类头)。
+# 瞄准方向覆盖向量。
+# 本地输入返回零向量时，武器将根据鼠标光标位置推导朝向；
+# 网络驱动输入则返回数据包中携带的世界坐标瞄准向量。
 func get_aim_dir_override() -> Vector2:
 	return Vector2.ZERO
 
-# 该输入源是否网络注入。网络驱动玩家的武器瞄准**永不读 OS 鼠标**:
-# 注入方向为 ZERO 时用玩家回退使用角色朝向(见 weapon_base._aim_world_dir)。
-# - 不参与 frozen。
-# - 保留本方法(而不是让调用方都改去比 source_kind):它是**语义**问句("要按网络玩家对待吗"),
-#   调用点有三处且都是这个语义;种类问句留给需要区分 LOCAL/PACKET/AI 的新调用方。
+# 判定当前输入源是否由网络数据驱动。
+# 网络驱动角色的武器瞄准不会读取本机鼠标，若未提供覆盖向量则默认朝向角色面朝方向。
 func is_network_driven() -> bool:
 	return source_kind() == Kind.PACKET

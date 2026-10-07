@@ -7,8 +7,8 @@ extends SceneTree
 
 const THEME_PATH := "res://ui/theme/menu_theme.tres"
 const FACTORY_PATH := "res://ui/factory/ui_factory.gd"
-# 抽到的检查条数下限:防止"读坏了 / 变体名写错了  ->  一条都没比到  ->  零失败 = 测试漏检"。
-# 今日实测(2026-10-03 建此守卫时):**92** 条。取 60 留健康余量。
+# 抽到的检查条数下限:防止"读坏了 / 变体名写错了  ->  一条都没比到  ->  零失败 = 测试漏报"。
+# 今日实测(2026-10-03 建此防御性校验时):92 条。取 60 留健康余量。
 const MIN_CHECKS := 60
 
 var _fails: Array[String] = []
@@ -47,23 +47,21 @@ func _initialize() -> void:
 		quit(1)
 
 
-# ── 类链泄漏:挂上本 Theme **不许改变** CheckButton 的最小尺寸 ──
+# ── 类链泄漏:挂上本 Theme 不许改变 CheckButton 的最小尺寸 ──
 #
-# 注意： 为什么必须有这一条(2026-10-03 补;Task 1/2 建的 Theme 在这上面**已经错过一次**,
-#   而当时的三条守卫**一条都不红**):
-#   Godot 的主题查找是**沿类链回退**的 —— 某类型在本 Theme 里查不到条目时会落到它的**父类**。
+# 注意事项：为什么必须有这一条(2026-10-03 补;Task 1/2 建的 Theme 在这上面已经错过一次,
+#   而当时的三条防御性校验一条都不红):
+#   Godot 的主题查找是沿类链回退的 —— 某类型在本 Theme 里查不到条目时会落到它的父类。
 #   而 `CheckButton : public Button`(`CheckBox` / `OptionButton` 同)。本 Theme 原先设的是
-#   **基础类型** `Button/styles/*`  ->  任何挂上本 Theme 的场景里,每个 CheckButton 都**静默**
-#   穿上了按钮的皮:实测一个空 CheckButton 的最小尺寸从 `(40,22)` 涨到 **`(120,62)`**
+#   基础类型 `Button/styles/*`  ->  任何挂上本 Theme 的场景里,每个 CheckButton 都静默
+#   穿上了按钮的皮:实测一个空 CheckButton 的最小尺寸从 `(40,22)` 涨到 `(120,62)`
 #   (= `_btn_box` 的 40/20 内边距 + 40 宽的图标),画面上开关外面多一圈描边,
-#   并把它**下面的行整体推走**(设置页左栏实测差 **3.5% 像素**)。
+#   并把它下面的行整体推走(设置页左栏实测差 3.5% 像素)。
 #
-# **判据是行为不是源码**:同一个 CheckButton,挂 Theme 与不挂 Theme 的最小尺寸必须**逐位相同**。
-# **去掉什么它才会红**:把 `gen_menu_theme.gd` 的 `_button_variants()` 里 `BtnPrimary` 改回
-#   `"Button"`(即重新设基础类型)并重跑生成器  ->  两条 `_cmp_size` 直接断言失败。
-#   - 实测过这条变异(2026-10-03),红的是 `(40,22) vs (120,62)`。
+# 判定依据为行为表现验证而非源码文本匹配：同一个 CheckButton 挂载主题前后，其最小尺寸必须保持一致。
+# 验证原理：若基础类型 Button 配置了样式盒，CheckButton 作为子类会继承该样式导致控件尺寸发生异常膨胀。
 func _no_class_chain_leak(t: Theme) -> void:
-	# ① 数据级:本 Theme 的**基础类型** `Button` 上不许有条目(名字直接点出成因)。
+	# ① 数据级:本 Theme 的基础类型 `Button` 上不许有条目(名字直接点出成因)。
 	for s in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
 		if t.has_stylebox(s, "Button"):
 			_fails.append("本 Theme 设了基础类型 Button 的 styles/%s —— `CheckButton : public Button` 会沿类链吃到它(见 gen_menu_theme.gd 的 `_button_variants()`)" % s)
@@ -79,14 +77,14 @@ func _no_class_chain_leak(t: Theme) -> void:
 	var b := CheckButton.new()
 	plain.add_child(a)
 	themed.add_child(b)
-	# 注意： **必须等一帧**:`-s` 模式下主题沿树传播是**帧末**的事,不等就只会读到引擎默认值 ——
-	#   那样的守卫会**一动不动地绿**(实测:变异成"设基础 Button"之后它一声没吭)。
+	# 注意事项：必须等一帧:`-s` 模式下主题沿树传播是帧末的事,不等就只会读到引擎默认值 ——
+	#   那样的防御性校验会一动不动地绿(实测:变异成"设基础 Button"之后它一声没吭)。
 	await process_frame
-	# 注意： 判据读的是**解析后的样式盒**,不是 `get_combined_minimum_size()`:`-s` 模式下没有帧推进,
-	#   最小尺寸是**陈旧值**  ->  拿它做判据的守卫会**一动不动地绿**(规避历史已知问题：变异成"设基础
+	# 注意事项：判定条件读的是解析后的样式盒,不是 `get_combined_minimum_size()`:`-s` 模式下没有帧推进,
+	#   最小尺寸是陈旧值  ->  拿它做判定条件的防御性校验会一动不动地绿(注意事项：变异成"设基础
 	#   Button"之后,最小尺寸那条断言一声没吭)。
 	# - 不能复用 `_cmp_sb`:它只认 `StyleBoxFlat`,而引擎默认给 CheckButton 的是
-	#   `StyleBoxEmpty` —— 那会**两个方向都红**(测试误报)。故本处只比**类型 + 四边内边距**:
+	#   `StyleBoxEmpty` —— 那会两个方向都红(测试误报)。故本处只比类型 + 四边内边距:
 	#   泄漏的形态正是"类型由 Empty 变成 Flat、内边距由 0 变成 40/20"。
 	_leak_cmp(a, b, "normal")
 	_leak_cmp(a, b, "focus")
@@ -94,7 +92,7 @@ func _no_class_chain_leak(t: Theme) -> void:
 	themed.free()
 
 
-# 挂 Theme 前后,同一槽位的样式盒必须**同类同内边距**。
+# 挂 Theme 前后,同一槽位的样式盒必须同类同内边距。
 func _leak_cmp(a: CheckButton, b: CheckButton, slot: String) -> void:
 	var sa := a.get_theme_stylebox(slot)
 	var sb := b.get_theme_stylebox(slot)
@@ -113,7 +111,7 @@ func _leak_cmp(a: CheckButton, b: CheckButton, slot: String) -> void:
 func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 	# (Theme 变体名, 生产入口, 生产入口的实参)
 	var cases := [
-		# - 主按钮自 2026-10-03 起挂**变体** `BtnPrimary`,不再是基础类型 `Button` ——
+		# - 主按钮自 2026-10-03 起挂变体 `BtnPrimary`,不再是基础类型 `Button` ——
 		#   理由见 `tools/gen_menu_theme.gd` 的 `_button_variants()` 顶上那段
 		#   (设基础 `Button` 会让 `CheckButton : public Button` 沿类链静默穿上按钮的皮)。
 		["BtnPrimary", "menu_button", ["m", 32, Vector2(640, 88), "primary"]],
@@ -144,14 +142,14 @@ func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 		_cmp_sb(t.get_stylebox(s, "RowButton"), rb.get_theme_stylebox(s), "RowButton/%s" % s)
 	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		_cmp_col(t.get_color(k, "RowButton"), rb.get_theme_color(k), "RowButton/%s" % k)
-	# - **刻意不比 `RowButton` 的字号**:`style_row_button()` 只覆写样式与字色,**不设字号**
+	# - 刻意不比 `RowButton` 的字号:`style_row_button()` 只覆写样式与字色,不设字号
 	#   (字号由调用方的 `style_control(b, size)` 给)。拿裸 `Button` 的 `get_theme_font_size()`
-	#   去比,量到的是**引擎默认主题**的 16,与 Theme 无关 —— 那是一条"比错了对象"的断言。
-	#   Theme 侧的字号来自变体的基类型(`RowButton` base = `Button` = 32),下面钉的是这一点。
+	#   去比,量到的是引擎默认主题的 16,与 Theme 无关 —— 那是一条"比错了对象"的断言。
+	#   Theme 侧的字号来自变体的基类型(`RowButton` base = `Button` = 32),下面约束的是这一点。
 	if t.get_type_variation_base("RowButton") != "Button":
 		_fails.append("RowButton 的 base_type 不是 Button(实得「%s」)—— 字号不会从 Button 继承"
 				% t.get_type_variation_base("RowButton"))
-	# `Button` 变体还要比一个"常被顺手忽略"的量:它必须是 `menu_button` 那一档的**字号**。
+	# `Button` 变体还要比一个"常被顺手忽略"的量:它必须是 `menu_button` 那一档的字号。
 	_cmp_size(t.get_font_size("font_size", "BtnPrimary"), 32, "BtnPrimary/font_size == 32")
 
 
@@ -159,7 +157,7 @@ func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 func _panels(F: GDScript, t: Theme, C: Dictionary) -> void:
 	_cmp_sb(t.get_stylebox("panel", "PanelContainer"), F.call("panel_box", true),
 			"PanelContainer/panel")
-	# 凿刻外层 / 内层:`skin_menu_panel()` 就是 `menu_panel()` 的实现,用**就地套皮**那条入口取产出。
+	# 凿刻外层 / 内层:`skin_menu_panel()` 就是 `menu_panel()` 的实现,用就地套皮那条入口取产出。
 	var outer := PanelContainer.new()
 	F.call("skin_menu_panel", outer, Vector2(64, 46))
 	_cmp_sb(t.get_stylebox("panel", "PanelCarved"), outer.get_theme_stylebox("panel"),
@@ -212,7 +210,7 @@ func _fonts(t: Theme) -> void:
 		_checks += 1
 		if got % 16 != 0:
 			_fails.append("%s 的字号 %d 不是 16 的倍数" % [name, got])
-		# 变体必须真的挂在一个基类型上,否则 `.tscn` 里指过去是**空变体**(不报错、样式全丢)。
+		# 变体必须真的挂在一个基类型上,否则 `.tscn` 里指过去是空变体(不报错、样式全丢)。
 		if t.get_type_variation_base(name) != "Label":
 			_fails.append("%s 的 base_type 不是 Label(实得「%s」)—— .tscn 指过去会静默无样式"
 					% [name, t.get_type_variation_base(name)])
@@ -221,9 +219,9 @@ func _fonts(t: Theme) -> void:
 				% t.get_type_variation_base("BtnQuiet"))
 
 
-# ── 开关图标:PNG 必须与 `_make_switch()` **逐像素**相同 ──
-# - 这一条防的是"改了胶囊尺寸/配色,重跑了生成器但**忘了 `--import`**":那时 `.tres` 里引用
-#   的还是**上一版**导入的贴图,而 Theme 本身看不出任何异常。
+# ── 开关图标:PNG 必须与 `_make_switch()` 逐像素相同 ──
+# - 这一条防的是"改了胶囊尺寸/配色,重跑了生成器但忘了 `--import`":那时 `.tres` 里引用
+#   的还是上一版导入的贴图,而 Theme 本身看不出任何异常。
 func _icons(F: GDScript, t: Theme) -> void:
 	var live: Array = F.call("switch_icons")
 	var names := ["unchecked", "checked"]
@@ -277,7 +275,7 @@ func _cmp_sb(a: StyleBox, b: StyleBox, tag: String) -> void:
 		_cmp_num(x.get("content_margin_" + side), y.get("content_margin_" + side),
 				"%s.content_margin_%s" % [tag, side])
 	# - 圆角四角的属性名是 `corner_radius_<纵>_<横>`(`corner_radius_top_left`),
-	#   **不是** `corner_radius_left` —— 写错时 `get()` 返回 null(本守卫会把 null 判红,
+	#   并非 `corner_radius_left` —— 属性名错误时 `get()` 返回 null（防御性校验将判定失败，
 	#   故这条笔误立即暴露异常并报错,而不是静默遗漏四个角的比对校验)。
 	for corner in ["top_left", "top_right", "bottom_right", "bottom_left"]:
 		_cmp_num(x.get("corner_radius_" + corner), y.get("corner_radius_" + corner),
@@ -292,8 +290,8 @@ func _cmp_col(a: Color, b: Color, tag: String, count: bool = true) -> void:
 
 
 # - 两个参数是 Variant(`StyleBoxFlat` 的 border_width_* 是 int、content_margin_* 是 float),
-#   故**先赋给 float 变量**再比 —— 直接在 `float(a)` 里转 Variant 会在 `-s` 下报
-#   "Nonexistent 'float' constructor"。非数值(null / 形状变了)一律判红,不静默当 0。
+#   故先赋给 float 变量再比 —— 直接在 `float(a)` 里转 Variant 会在 `-s` 下报
+#   "Nonexistent 'float' constructor"。非数值类型（如 null 或结构异常）一律判定为断言失败，严禁静默回退为 0。
 func _cmp_num(a, b, tag: String) -> void:
 	_checks += 1
 	if not (a is float or a is int) or not (b is float or b is int):

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# loopback 冒烟:起服务器 + 建房客户端 + 加入客户端,断言开局流程。
+# 本地回环联机对局完整流程冒烟测试：启动服务端，创建房间并加入客户端，验证对局就绪与匹配开局流程。
 set -e
-# 引擎路径($GODOT,可用环境变量覆盖)+ cd 到仓库根 + kill_procs/kill_port
+# 导入通用测试环境变量（$GODOT 引擎路径、工作目录切换及进程与端口清理函数）
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 
@@ -12,11 +12,11 @@ echo "== 启动服务器 =="
 SERVER_PID=$!
 sleep 3
 
-echo "== 客户端 A 建房(后台,等 match_start 才退出) =="
+echo "== 启动建房客户端 A（后台运行，接收 match_start 信号后退出）=="
 "$GODOT" --headless --path . res://tests/harness/pvp_smoke_client.tscn -- --role create > /tmp/pvp_a.log 2>&1 &
 A_PID=$!
 
-# 轮询 A 打印的房间号(最长 15s)
+# 轮询建房客户端 A 输出的房间号（超时保护 15 秒）
 CODE=""
 for i in $(seq 1 30); do
   CODE=$(grep -oP 'ROOM_CODE=\K[0-9]+' /tmp/pvp_a.log | head -1)
@@ -32,7 +32,7 @@ echo "== 客户端 B 加入 =="
 "$GODOT" --headless --path . res://tests/harness/pvp_smoke_client.tscn -- --role join --code "$CODE" > /tmp/pvp_b.log 2>&1 &
 B_PID=$!
 
-# 轮询 B 收到 match_start(最长 15s)
+# 轮询加入客户端 B 是否收到 match_start 对局开始信号（超时保护 15 秒）
 OK=""
 for i in $(seq 1 30); do
   grep -q "match_start" /tmp/pvp_b.log && { OK=1; break; }

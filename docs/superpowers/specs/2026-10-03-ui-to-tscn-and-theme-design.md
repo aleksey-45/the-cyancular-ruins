@@ -116,7 +116,7 @@ MpLobby (Control, theme = menu_theme.tres)
 ### 3.3 `UiFactory` 的去向
 
 **保留**：
-- **调色板常量**（单一来源不变，Theme 的值由守卫钉着 —— §4.2）
+- **调色板常量**（统一数据源不变，Theme 的值由守卫钉着 —— §4.2）
 - **动态构造用的助手**：`check_row` / `slider_row` / `line_edit` / `make_weapon_check` 一族的调用方
   - ★ 墓碑：`check_row` / `slider_row` 已于 2026-10-03 删除（T3a 清扫零调用死构造器），相关版式改由 `.tscn` 显式节点承担。
 - `apply_font_recursive`（**仅**给 `.tscn` 里没挂 Theme 的子树兜底；迁移完成后可评估删除）
@@ -144,7 +144,7 @@ MpLobby (Control, theme = menu_theme.tres)
 
 `CheckButton` 的开/关胶囊图标是 `UiFactory._make_switch()` **程序化画的**（`Image.create` + 逐像素画胶囊）。Theme 引用不到运行时生成的 `ImageTexture`。
 
-**做法**：把它**导出成两个 PNG**（`ui/theme/switch_off.png` / `switch_on.png`，由现有 `_make_switch` 逻辑一次性生成后落盘），Theme 引用这两个文件。
+**做法**：把它**导出成两个 PNG**（`ui/theme/switch_off.png` / `switch_on.png`，由现有 `_make_switch` 逻辑一次性生成后写入磁盘），Theme 引用这两个文件。
 ★ 生成脚本**留下**（`tools/` 下一个一次性脚本），并注明"改了胶囊尺寸要重跑"。
 ★ 若评估后觉得不值，退路是**这两个图标继续由代码挂**，Theme 只管其余 —— 登记为已知不一致。
 
@@ -165,7 +165,7 @@ MpLobby (Control, theme = menu_theme.tres)
 
 ★ 这条是**本设计里最危险的一处**：不扩它就等于**主动制造一个"守卫比它读起来弱"的实例** —— 而本仓已经出过十次。
 
-### 4.2 调色板单一来源
+### 4.2 统一调色板配置
 
 `.tres` 里的 `StyleBoxFlat` 颜色是**字面量**，引用不到 GDScript 的 `const`。
 ⇒ 由 `tests/smoke/ui_palette_single_source_smoke.gd` **读 `.tres` 原文**，断言每个颜色与调色板常量**逐位相等**。
@@ -178,7 +178,7 @@ MpLobby (Control, theme = menu_theme.tres)
 - `tests/probe/combat_hud_visual_probe.tscn`（HUD 取色，**真实渲染**）
 - `tests/probe/kh_l3_visual_probe.tscn`（武器槽三态）
 - `tests/probe/minimap_circle_probe.tscn`
-- **迁移前后各取一次图，逐张人眼比对**（数值全绿而画面坏了，本仓抓到过）
+- **迁移前后各取一次图，逐张人眼比对**（数值全部通过而画面坏了，本仓抓到过）
 
 ### 4.4 其余可能受影响的守卫
 

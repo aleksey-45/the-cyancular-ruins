@@ -60,7 +60,7 @@
 `_local.collision_mask |= 2`（与 `match_host.gd:81` 同款）。
 
 **不改 `Player.tscn`**：`tests/enemy_logic_smoke.gd:324` 有 `_check(pc2.collision_mask == 5, ...)` 断言，
-改场景常量会让它变红；运行期改也与服务器侧的做法对称。
+改场景常量会让它报错失败；运行期改也与服务器侧的做法对称。
 
 ### A3 为什么这样能治"贴身回滚"
 
@@ -84,14 +84,14 @@ C2 下客户端只预测**自己的**玩家（`PredictionRollback._step()` 只�
 | 子弹 mask = 5（地形+敌人） | 不含层2 → 子弹不会打在幽灵体上，**无需处理**。写下来避免后人误加。 |
 | `Explosion.apply_aoe` 遍历 `player` 组 | 副本**不入** `player` 组（只入 `player_replica`）→ 不会被 AoE 当作玩家结算。 |
 | `BulletBase._wrap()` 取 `player` 组第一个节点当锚点 | 同上，副本不入该组 → 锚点不受影响。 |
-| 「纯视觉副本」这一既有契约 | **不再成立**（副本现在有一个只碰撞的体）→ 必须同步改 `player_replica.gd` 头注释与 `CLAUDE.md`，否则后人会把幽灵体当 bug 删掉。 |
+| 「纯视觉副本」这一既有接口规范 | **不再成立**（副本现在有一个只碰撞的体）→ 必须同步改 `player_replica.gd` 头注释与 `CLAUDE.md`，否则后人会把幽灵体当 bug 删掉。 |
 | 副本的姿态碰撞箱管理 | **不**把 `Player` 那套姿态启停逻辑整套复制过来；只按快照 pose 切 5 份中的一个，`downed` 不动。 |
 
 ---
 
 ## B. 榴弹命中玩家 → 直接伤 5 + 短引信 0.15s
 
-### B1 权威侧（`MatchHost._adjudicate_bullets`）
+### B1 服务端（`MatchHost._adjudicate_bullets`）
 
 把 `if bullet.explodes: continue` 换成 `if bullet.explodes: _adjudicate_grenade(bullet); continue`。
 
@@ -128,7 +128,7 @@ C2 下客户端只预测**自己的**玩家（`PredictionRollback._step()` 只�
 （`_start_fuse` 只在未启动时定时长），伤害侧由 B1 的 meta 闩独管。**1 帧的顺序差可忽略**
 （子弹在树里是 `get_viewport()` 的子节点，与 `MatchHost` 的步进顺序不固定；0.15s 引信对 16ms 不敏感）。
 
-### B4 半径单一来源
+### B4 半径统一数据源
 
 新增 `BulletBase.PLAYER_HIT_RADIUS := 40.0`（原 `MatchHost.HIT_RADIUS` 的值与语义），
 `MatchHost.HIT_RADIUS` 改为引用它。现在两处各写一遍 `40.0`，将来只改一处。
@@ -160,10 +160,10 @@ C2 下客户端只预测**自己的**玩家（`PredictionRollback._step()` 只�
 - 已起 0.4s 长引信时再碰玩家**不缩短**，但直接伤照结算；
 - 视觉副本（`apply_damage = false`）同样会起短引信。
 
-### C3 回归硬门
+### C3 回归硬性条件
 
 `enemy_logic_smoke`（`player mask == 5` 仍成立）、`player_contract_smoke`、
-`pvp_match_smoke` / `pvp_reconcile_smoke` / `pvp_twin_smoke` 任何一条绿变红即停。
+`pvp_match_smoke` / `pvp_reconcile_smoke` / `pvp_twin_smoke` 任何一条绿报错失败即停。
 
 ---
 
@@ -191,7 +191,7 @@ C2 下客户端只预测**自己的**玩家（`PredictionRollback._step()` 只�
 
 逐条走查并给出**行号级定位**：快照体积与分片、输入队列无上限、`_seen_bullets` 不清理、
 开局 N-1 个副本集中实例化（每个都全量实例化 `Player.tscn` 再 `free`）、minimap/HUD 每帧成本、
-`round_state` 广播频率与载荷、回合/拆除/换场路径、客户端 `_local` 的失效引用检查。
+`round_state` 广播频率与数据包、回合/拆除/换场路径、客户端 `_local` 的失效引用检查。
 
 ### D3 产出
 

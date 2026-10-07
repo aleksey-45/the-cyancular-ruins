@@ -40,7 +40,7 @@
 | `server/match_state.gd` | 链尾插入点（`match_snapshot.gd` 的 `extends` 改指 `MatchGround`） |
 | `server/match_host.gd` | `_physics_process` 消费输入后调地面武器裁决 |
 | `server/match_round.gd` | `_respawn_player` 改"除随机一把外全丢"；`_reset_world_and_clear_dynamics` 加地面武器重置 |
-| `server/server_main.gd` | `match_sync_data` 载荷加 `ground_weapons` |
+| `server/server_main.gd` | `match_sync_data` 数据包加 `ground_weapons` |
 | `scenes/pvp_match_client.gd` | 持只读表 + 渲染节点；消费 `match_sync` 与两条事件 |
 | `scenes/weapons/weapon_pickup.gd` | 渲染位置改为"锚到最近副本"（canonical 与渲染分离） |
 | `scenes/level_0.gd` | 单机侧也提供锚点（同一个 bug 在单机也存在） |
@@ -366,10 +366,10 @@ git commit -m "feat(net): 服务器地面武器域 —— 权威表 + 拾取/丢
 **Files:**
 - Modify: `server/match_ground.gd`（`_setup_ground_weapons` / `_scatter_ground_weapons`）
 - Modify: `server/match_host.gd:75`（`_ready` 调 `_setup_ground_weapons`）
-- Modify: `server/server_main.gd:229-235`（载荷加字段）
+- Modify: `server/server_main.gd:229-235`（数据包加字段）
 
 **Interfaces:**
-- Produces: `match_sync_data` 载荷多一个 `"ground_weapons": Array`
+- Produces: `match_sync_data` 数据包多一个 `"ground_weapons": Array`
 
 - [ ] **Step 1: 写分布函数**
 
@@ -445,7 +445,7 @@ func _reset_ground_weapons() -> void:
 
 - [ ] **Step 3: `match_sync_data` 加字段**
 
-`server/server_main.gd` 的 `_on_match_sync` 里，载荷那处加一行：
+`server/server_main.gd` 的 `_on_match_sync` 里，数据包那处加一行：
 
 ```gdscript
 	NetBus.rpc_id(caller, "match_sync_data", {
@@ -714,7 +714,7 @@ git commit -m "feat(net): 客户端地面武器渲染 —— 事件建删 + 环�
 
 - [ ] **Step 2: 没有才补（并且只补一次）**
 
-两个 HUD 都**拿不到玩家**（它们只读静态 `PvpSession`，运行时数据全来自 `round_state` 载荷），所以要加一个 setup 口：
+两个 HUD 都**拿不到玩家**（它们只读静态 `PvpSession`，运行时数据全来自 `round_state` 数据包），所以要加一个 setup 口：
 
 ```gdscript
 # ui/pvp_hud.gd 与 ui/royale_hud.gd 各加
@@ -765,15 +765,15 @@ git commit -m "feat(ui): 对局内 HUD 的武器槽位格子(PvP 若已由单机
 新 `tests/net_ground_source_probe.gd`（`extends ProbeBase`，照 `kh_l5_probe` 的写法），钉：
 
 - `NetBus` 有 `weapon_spawned` / `weapon_removed` 两条 `@rpc` 且带 `authority`+`reliable`
-- ★ **`NetBusExt` 里不得有同名函数** —— 反向断言（重名 = 接收端挂错 = 静默 no-op）
+- ★ **`NetBusExt` 里不得有同名函数** —— 否定断言（重名 = 接收端挂错 = 静默 no-op）
 - 客户端订阅的是 `NetBus.local_weapon_spawned` / `local_weapon_removed`（**不是** `NetBusExt`）
-- `player.gd` 的 `capture_state` 里有 `"inv"`；`prediction_rollback.gd` 的 `_close_enough` **不含** `inv`（反向断言）
+- `player.gd` 的 `capture_state` 里有 `"inv"`；`prediction_rollback.gd` 的 `_close_enough` **不含** `inv`（否定断言）
 - `match_ground.gd` 是 `extends MatchState` 且**不含** `_init`/`_ready`/`_physics_process`（链规矩）
 
 - [ ] **Step 2: `match_sync_probe` 扩**
 
-加断言：`match_sync_data` 载荷带 `ground_weapons`，且数组元素含 `inst`/`type_id`/`mag`/`pos`/`vel` 五个键。
-★ 并加**反向断言**：那些"跨场景交接"的旧标识符（`PvpSession.pending_*` 一族）一个都不许复活。
+加断言：`match_sync_data` 数据包带 `ground_weapons`，且数组元素含 `inst`/`type_id`/`mag`/`pos`/`vel` 五个键。
+★ 并加**否定断言**：那些"跨场景交接"的旧标识符（`PvpSession.pending_*` 一族）一个都不许复活。
 
 - [ ] **Step 3: `pvp_match_smoke.sh` 扩**
 

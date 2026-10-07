@@ -31,7 +31,7 @@ func _initialize() -> void:
 		return
 
 	var player_pos := Vector2(spawn.x * TS + TS / 2.0, spawn.y * TS + TS / 2.0)
-	# 武器挂在 WeaponSlot(玩家原点),枪口本地 (31,8),玩家 scale 2.5 → 世界偏移
+	# 武器挂在 WeaponSlot(玩家原点),枪口本地 (31,8),玩家 scale 2.5 -> 世界偏移
 	var muzzle := player_pos + Vector2(2.5 * 31.0, 2.5 * 8.0)
 	var muzzle_cell := MazeGenerator.cell_of(muzzle, TS, cols, rows)
 	var mc_v: int = grid[muzzle_cell.y][muzzle_cell.x]
@@ -141,7 +141,7 @@ func _find_spawn(grid: Array) -> Vector2i:
 	var meta := MazeGenerator.parse_spawn_metadata(lines)
 	if meta.has("player"):
 		return meta["player"]
-	# 保底处理:第一个空格
+	# 兜底保护:第一个空格
 	for y in range(grid.size()):
 		for x in range(grid[y].size()):
 			if grid[y][x] == MazeGenerator.EMPTY:

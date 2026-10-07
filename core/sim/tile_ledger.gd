@@ -1,15 +1,13 @@
 class_name TileLedger
 extends RefCounted
 
-# 玩家破坏瓦片账本(第一阶段·瓦片回溯):记录每次破坏的格与其**改前值**,递减恢复时按时间倒序还原。
-# 与 WorldRewind 共用同一时间轴(Level0 传 WorldRewind.recorded_seconds() 作为 t)。
-# 纯数据(-s 可测);世界写入由 Level0 的 _restore_cell 执行。
+# 场景瓦片破坏历史账本：记录场景瓦片被破坏前的原始图层数据，时空回溯时按逆序还原网格与碰撞。
+# 与 WorldRewind 共用同一时间轴（由关卡传入 recorded_seconds() 作为时间戳 t）。
+# 纯逻辑数据结构，不依赖场景树，便于单元测试。
 #
-# 语义要点:
-#   - 只记**玩家造成**的破坏(Level0 在 _on_tile_destroyed 捕获;系统/事件造成的走别的口)。
-#   - 同一格可能被多次破坏(先炸掉原砖 → 又被 gen 类事件补上 → 再拆):还原必须 **t 降序**
-#     (最新一次破坏先还原=写回最近的改前值,再往前推,最早的值最后落地) → 与 LIFO 一致。
-#   - 超出缓冲窗口(TimeParams.SNAP_SECONDS)的条目裁掉:那些格已经"回不去"了。
+# 核心规则：
+#   - 记录瓦片被破坏前的原始值，同一瓦片多次变动时按时间戳倒序还原（后进先出）。
+#   - 超出时间窗口（TimeParams.SNAP_SECONDS）的历史条目自动裁剪释放。
 
 var _entries: Array = []   # [{t: float, cells: [{cell: Vector2i, v: int}]}],按 t 升序
 

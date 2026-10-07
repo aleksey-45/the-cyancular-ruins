@@ -1,18 +1,67 @@
-# 玩家
+# 玩家角色系统
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
-> 本文件覆盖:玩家(scenes/player/player.gd)。
-> ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
+本文档说明玩家角色的运动学控制、姿态碰撞管理、组件化拆分架构、输入源抽象及弹药预测同步机制。
 
-### 玩家(scenes/player/player.gd)
+---
 
-CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高度、冲刺(沿用最近移动方向;0.4s,空中冲刺重力×`charge_air_gravity_mult`=0.35)、下蹲(**逐帧推导**:在地面且按住 S 才蹲,非边沿触发——空中松开不卡蹲;蹲态可蹲走;空中按 S=下冲)、姿态碰撞箱(Pose→CollisionPolygon2D,运行时只启用当前姿态的箱子)、iframes/击退(爆炸=独立 `knock_velocity` 向量)/倒地(倒地**不取消物理**,仍受重力/击退,只是不吃输入;**单机**按 R 调 `Level0.restart_single()`——**原地复位,不是场景重载**:可破坏砖/瓦片/碰撞整层还原为建图基线 + 清子弹/敌人后重刷 + 玩家满血满氧回出生点;旧实现走场景重载,在引擎原生层偶发段错误。PvP/大乱斗**不走这条**)。移动/跳跃/冲刺/镜头/战斗数值全在 `PlayerParams`。**加新武器 = 改 1 个 `data/weapons.json` + 加 1 个 `.tscn`,零 GDScript**(唯一来源/查询口/守卫见 §武器注册表)。★ 它当年记的**失效模式**仍值得留:`scene` 路径错 → 切枪 `load("")`(响);`name` 错 → 菜单/HUD 显示错(看得见);**`tier` 与 tscn 的 `tier` export 不一致 → 容量算错** —— 前两条有守卫,**第三条只在"json 与 tscn 各写各的"时才红**,两者**一致地**填错没有守卫拦得住。★ 数字键**只剩 `1`-`4`**,但**键位 ≠ `type_id`**(1-4 是**背包位置**)。
+## 一、 角色运动与操作手感 (`CharacterBody2D`)
 
-- **★ 残弹的写入口只有一个:`WeaponComponent.apply_mag(w, mag)`** —— 按 `is_inside_tree()` 分两路:已入树 ⇒ 同步写 `w.mag_ammo`;未入树 ⇒ 写 `w.pending_mag`,由 `WeaponBase._ready()` **一次性**消费(消费后复位哨兵 `MAG_UNSET = -2`。★ 0 是合法弹数、哨兵不能用 0,而 `WeaponInventory.MAG_FULL` 是 -1)。**删掉的是帧末延迟写回 `_restore_mag.call_deferred`**:它在 C2 回滚里**按值捕获** restore 那一刻的旧弹数、到帧末才执行 ⇒ 覆盖掉重放期间打出的每一发,客户端弹数**只增不减**(用户报的"子弹剩余量不对")。守卫:`tests/probe/ammo_rollback_probe.tscn`(同一物理帧内 restore → 开火;修复前红「期望 3、实得 4」)。★ **`pvp_twin_smoke` 照不出这条**(它的 sabotage 每轮清空背包 ⇒ 每次 restore 都重建实例,而开火周期与 `RESTORE_EVERY` 有公因子 ⇒ 开火与 restore **永不同帧**)。故孪生里那条 mag 断言已**撤掉**(用户裁定),别因为"少了条断言"再加回去。
-- **弹数仍没有常规纠正路径**(登记,不修):`_close_enough` 不比 `mag`,`sync_soft_state` 的指纹只比 `wslot`/`winst`/背包结构。本次删掉的是**误差的产生源**,**没有**新增纠正路径 ⇒ 非回滚来源的弹数分歧仍会静默保留(已知候选:榴弹的 `max_live_projectiles`)。诊断入口:给 `pvp_match_client` 加一条 `-- --wepdiag`,每 30 帧打本端/上一条权威的 `mag`。
-- **两条登记不修的边界**:① `player._apply_weapon_state` 里 `int(st.get("mag", w.mag_ammo))` 的兜底在**实例刚重建**那一帧读到的是未 `_ready` 的 0 ⇒ `apply_mag` 会记下 `pending_mag = 0`;今天**不可达**。② `apply_mag` 的 else 分支**没有直接断言**。③ **`_equip_index` 重建那一帧 `get_viewport()` 为 null 的推断仍未被复现**(孪生的开火与 restore 永不同帧,"重建 + 同帧开火"那个组合照不到)。
-- **★ 未入树时 `_update_reload_pose` 空引用 `sprite`(已修)**:该函数原先无条件写 `sprite.rotation`/`sprite.position`,而 `@onready var sprite` 在**未入树**时仍是 `null`(武器实例经 `weapon_slot.call_deferred("add_child", …)` 入树,deferred 到**帧末**才跑)⇒ 每条打一行 `SCRIPT ERROR`。**修法 = 首行** `if sprite == null: return`(姿势下一帧补算)。★ **与 `mag_ammo` 走 `pending_mag` 不是一回事**:`mag_ammo` 是**权威态**、入树时会被 `_ready()` 重置,故必须提前落盘;姿势是**纯表现**。★ 该错误**只在 debug 构建可见**:release 里那条赋值 opcode 是**静默 no-op**,从来不是"玩家看得见的故障"。
-- **★ 同窗口的残留 → 已修(`_mag_ready`)**:未入树的 `tick()` 会把权威的 `_reloading = false` 冲成 true —— 重建 → `_apply_weapon_state` 写 `w._reloading = st["rld"]` → **同一帧** `WeaponComponent.tick()` 在**未入树**的实例上跑 → `fire()` 的 `if mag_ammo <= 0`(`_ready` 没跑 ⇒ `mag_ammo` **恒 0**)→ `start_reload()` 见 `_reloading == false` ⇒ **置 true**。★ 后果:`fire()` 直接 return(**打不出枪**)、并播一次没按键的 `Sfx.play("reload")`。★ **修法 = `WeaponBase._mag_ready`**(声明初值 false,**只在 `_ready()` 末尾置真一次**),`fire()` 的空弹夹那一支改成 `if _mag_ready: start_reload()` —— 只让**依赖弹数的那个判断**在弹数未落定前失效,`tick()` 其余部分照跑。★ **为什么不是 `is_inside_tree()` 守卫**:那条守卫会**丢帧**,并会把 `_auto_aim()` 的朝向一起冻住 ⇒ 那本身造成**真分歧**,比它修掉的问题更坏。★ 这条**否决状态本身有守卫**:`ammo_rollback_probe` 相② 的第三个鉴别点(步进前 `fire_cd_timer = 0.5`、步进后断言它被递减)在**被否决的那版**会红;同一相的**正向对照**钉住另一半:入树之后空弹夹**仍然**会自动换弹。★ 别把 `_mag_ready` 用到别的判断上。
-- **结构(轻量拆分)**:根 `player.gd` 只留移动/姿态/物理帧编排;攀爬、战斗、武器分别抽成 `ClimbComponent`/`CombatComponent`/`WeaponComponent`(Player.tscn 子节点)。组件**不写自己的 `_physics_process`**,由根每帧显式按顺序调用(`climb.update → 移动 → combat.apply_knock → move_and_slide`)。根公开接口 `take_hit/get_facing/set_facing/is_downed/apply_recoil`、信号 `hp_changed`、只读 `hp/max_hp` 原样保留。契约守卫 `tests/smoke/player_contract_smoke.gd`(源码级)。
-- **输入可注入**:根读输入走 `core/net/player_input.gd` 的 `PlayerInput`(**纯接口**;本地那份是 `local_input_source.gd` 的 `LocalInputSource`,网络包那份是 `packet_input_source.gd` 的 `PacketInputSource`)。三种实现以 `source_kind()` 的枚举(`LOCAL`/`PACKET`/`AI`)自报家门。PvP 服务器注入包驱动远端玩家;瞄准有 `get_aim_dir_override()` 覆盖钩子。
+### 1. 移动与跳跃机制
+- **水平移动**：采用平滑插值加速与减速，提供敏捷的急停和启步操控感。
+- **跳跃系统**：集成土狼时间（离开平台边缘后短暂窗口内仍允许起跳）、跳跃输入缓冲（落地前预输入起跳）以及可变跳跃高度机制（松开跳跃键可提前截断上升速度）。
+- **冲刺技能**：持续 0.4 秒，沿移动朝向快速位移；空中冲刺期间垂直重力大幅降低（乘以系数 `charge_air_gravity_mult = 0.35`）。
 
+### 2. 下蹲与下冲
+- **下蹲判定**：在地面且按住下蹲键（默认 S）时进入下蹲姿态，支持蹲伏移动；空中松开按键落地后不会误锁下蹲。
+- **空中下冲**：在空中按住下蹲键可触发下冲，加速向下俯冲砸向地面。
+
+### 3. 姿态碰撞多边形
+- 角色维护站立、移动、下蹲、空中冲刺与倒地等多套碰撞多边形（`CollisionPolygon2D`）。
+- 运行时根据当前状态仅启用对应的碰撞形状，保证不同姿态下的碰撞盒轮廓准确。
+
+### 4. 受击、无敌帧与倒地
+- **受击与击退**：受到非爆炸伤害时进入短暂无敌帧；受到爆炸伤害时计算独立的冲击速度（`knock_velocity`），在后续帧中指数衰减。
+- **倒地状态**：生命值归零时进入倒地状态。此时物理引擎依然正常模拟（继续受重力与击退影响），仅屏蔽玩家的操作输入。
+- **单人模式原地重置**：单人模式中按 R 键调用 `Level0.restart_single()` 执行就地重置（还原破坏瓦片、重置敌人与弹药、玩家满状态回出生点），代替重新加载场景，避免频繁重载场景造成的资源清理问题。
+
+---
+
+## 二、 组件化架构拆分
+
+为了降低玩家主脚本（[`scenes/player/player.gd`](../../scenes/player/player.gd)）的复杂度，将具体业务拆分为子组件节点，各组件不自行运行 `_physics_process`，完全由玩家根节点统一调度：
+
+```text
+Player (scenes/player/player.gd)
+ ├─ ClimbComponent (梯子与铁链攀爬逻辑)
+ ├─ CombatComponent (受击伤害结算、击退、无敌帧与复活)
+ ├─ WeaponComponent (背包武器管理、开火与弹药状态)
+ └─ SwimComponent (水体浮力、游泳与氧气消耗)
+```
+
+- **执行顺序**：根节点每物理帧按固定流程推进：`ClimbComponent.update()` → 水平/垂直速度计算 → `CombatComponent.apply_knock()` → `move_and_slide()`。
+- **接口契约**：对外统一提供 `take_hit()`、`is_downed()`、`apply_recoil()` 等方法及 `hp_changed` 信号，契约由 `tests/smoke/player_contract_smoke.gd` 保证。
+
+---
+
+## 三、 输入抽象接口与网络注入
+
+### 1. 输入源统一抽象 (`core/net/player_input.gd`)
+- 抽象基类 `PlayerInput` 定义了 `get_axis()`、`is_held()`、`is_just_pressed()`、`is_just_released()` 等标准输入方法。
+- 具体实现类通过 `source_kind()` 区分：
+  - `LocalInputSource`：本地玩家输入，直接采集键盘与鼠标操作。
+  - `PacketInputSource`：服务端使用，解析客户端上传的网络输入包。
+  - `AIInputSource`：人机 AI 行为驱动源。
+
+### 2. 输入冻结与瞄准覆盖
+- 开局倒计时（`COUNTDOWN`）阶段将 `frozen` 设为 `true`，所有移动与开火输入返回中性零值，锁定角色行动。
+- 通过 `get_aim_dir_override()` 钩子支持网络同步瞄准方向。
+
+---
+
+## 四、 弹药权威状态与预测回滚同步
+
+1. **弹药赋值通道 (`WeaponComponent.apply_mag`)**：
+   - 武器节点已在场景树中时，直接写入 `mag_ammo`；未进入场景树时暂存至 `pending_mag`，待武器节点的 `_ready()` 触发时消费。
+   - 不采用 `call_deferred` 延迟写回，直接同步更新，防止客户端在回滚重放输入时旧弹药覆盖了新消耗。
+2. **武器就绪标记 (`WeaponBase._mag_ready`)**：
+   - 武器节点初始化完成时将 `_mag_ready` 置为 `true`。开火逻辑中的空弹判定依赖该标记，确保弹药数据初始化完成前不会误触发换弹动作与音效。

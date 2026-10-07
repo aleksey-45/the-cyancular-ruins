@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把开局三载荷（昵称/色相/生效选项）的投递从「服务器**推** → 大厅缓存 → 新场景取用」换成「新场景进场**主动拉**一次」；删掉整条交接机制。
+**Goal:** 把开局三数据包（昵称/色相/生效选项）的投递从「服务器**推** → 大厅缓存 → 新场景取用」换成「新场景进场**主动拉**一次」；删掉整条交接机制。
 
 **Architecture:** 加一个 `match_sync` 请求/应答（走 `NetBus`，与 `match_start` 同层），worker 按 role 回一份完整快照。客户端在对局场景 `_ready` 里拉。**先做加法（拉通了再删推）**，避免中间态两端都不通。
 
@@ -22,7 +22,7 @@
 ## 依据
 
 - 设计：`docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md` §4.2、§3C、§3G（§3G 已于 `b2b8eea` 落地）
-- `CLAUDE.md` §网络与 PvP 的「开局三条一次性载荷有两条投递路径」整段 —— **改完要重写**
+- `CLAUDE.md` §网络与 PvP 的「开局三条一次性数据包有两条投递路径」整段 —— **改完要重写**
 
 ---
 
@@ -32,7 +32,7 @@
 |---|---|---|
 | 走哪个节点 | **`NetBus`**（不是 `NetBusExt`） | 它是**核心对局协议**（1v1 与大乱斗都要），与 `match_start`/`snapshot` 同层。`NetBusExt` 是"原版服务端不认识就静默丢弃"的旁路扩展层 |
 | 谁应答 | **worker 的 `server_main.gd`**（`_on_match_sync(caller)`） | 它手里有 `_claims`/`_claim_names`/`_claim_opts`，并且是它建的对局宿主 |
-| 载荷形状 | `{names: {role:int->String}, hues: {role:int->float}, options: Dictionary, roles: Array[int], spawns: {role:int->Vector2i}}` | 一次拉全；`roles`/`spawns` 顺带把「这局有哪些 role、各自出生点」也变成**进场可得** |
+| 数据包形状 | `{names: {role:int->String}, hues: {role:int->float}, options: Dictionary, roles: Array[int], spawns: {role:int->Vector2i}}` | 一次拉全；`roles`/`spawns` 顺带把「这局有哪些 role、各自出生点」也变成**进场可得** |
 | 可靠性 | `@rpc("any_peer", "call_remote", "reliable")` 请求；应答 `"authority", "call_remote", "reliable"` | 一次性、必须到；不能像快照那样用 unreliable |
 | 与 `match_start` 的关系 | **`match_start` 保留**（客户端要先知道 `map_path` 才能建世界），但它带的 `spawn` 不再是权威 —— 以 `match_sync` 的 `spawns` 为准，到达后**校正一次** | 建世界必须先有地图；而出生点在拉取到之前只是"先摆着" |
 | 拉取时机 | 对局场景 `_ready` **末尾**（订阅完之后） | 订阅在前，晚到的应答也收得到（拉取本身是请求-应答，不存在"早于订阅"） |
@@ -150,7 +150,7 @@ func _on_match_sync(payload: Dictionary) -> void:
 - Modify: `scenes/pvp_client.gd`、`scenes/royale_game.gd`（删 `_consume_pending_payloads` 及其调用）
 - Modify: `server/server_main.gd`（`_begin_match` 里删 `peer_info`/`peer_hues` 两行推送）
 - Modify: `server/match_host.gd`（`_broadcast_match_options` 删或改为 no-op —— 见 Step 3 的判据）
-- Modify: `CLAUDE.md`（重写「开局三条一次性载荷有两条投递路径」整段）
+- Modify: `CLAUDE.md`（重写「开局三条一次性数据包有两条投递路径」整段）
 
 - [ ] **Step 1: 加反向源码守卫（红）**
 
@@ -183,7 +183,7 @@ Run: `grep -rn "peer_info\|peer_hues\|match_options" --include=*.gd server/ core
 **Files:**
 - Modify: `tests/royale_bound_probe.gd` + `tests/royale_bound_watcher.gd`
 
-**为什么必须改**：那条变体的**全部鉴别力**来自"载荷在触发换场**之前**注入 → 只能靠 `PvpSession`
+**为什么必须改**：那条变体的**全部鉴别力**来自"数据包在触发换场**之前**注入 → 只能靠 `PvpSession`
 交接才能活到新场景"。交接一删，它测的东西就不存在了。
 
 **改成什么**：让探针**自任服务器**应答 `match_sync`（在 `NetBus` 上真注册 `match_sync_received`，
@@ -203,7 +203,7 @@ Run: `grep -rn "peer_info\|peer_hues\|match_options" --include=*.gd server/ core
 ## 收官
 
 - [ ] 用户跑：`royale_probe`、`royale_bound_probe`（无参 + `--payload`）、`pvp_room_smoke`、`pvp_match_smoke`
-- [ ] 真机联调（用户）：建房→开局，确认**对手颜色/昵称/本人头顶 ID/禁武器闸门**四项在前 30 秒内正确
+- [ ] 真机联调（用户）：建房→开局，确认**对手颜色/昵称/本人头顶 ID/禁武器限制条件**四项在前 30 秒内正确
       （这四项正是 B2 当年静默失效的那四样 —— 拉取改完后它们必须有可见的验收）
 - [ ] 更新 spec §3C/§4.2 标为已落地；更新 ledger
 

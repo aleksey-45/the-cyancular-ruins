@@ -14,7 +14,7 @@
 
 以下每一条都是本仓已写进 `CLAUDE.md` 或探针里的硬约定，**每个任务的要求都隐含包含这一节**：
 
-1. **字号必须是 16 的倍数**（16/32/48/64/144…）。`kh_l4_probe` 第 3 条与 `kh_l5_probe` 第 8 条会**机械扫描全仓 `.gd` 与 `.tscn`**（`ScanUtil.collect` 收 `.tscn`；载体 C 类即 `.tscn` 的 `…font_size = N`）——搬进场景**不会**逃逸这条闸门，别指望。
+1. **字号必须是 16 的倍数**（16/32/48/64/144…）。`kh_l4_probe` 第 3 条与 `kh_l5_probe` 第 8 条会**机械扫描全仓 `.gd` 与 `.tscn`**（`ScanUtil.collect` 收 `.tscn`；载体 C 类即 `.tscn` 的 `…font_size = N`）——搬进场景**不会**逃逸这条限制条件，别指望。
 2. **调色板唯一来源是 `ui/ui_factory.gd`** 的 `C_*` 常量。→ 本次搬迁**一律把 `StyleBox` 留在代码里**（`UiFactory.panel_box()` / 常量 / 局部函数），场景只搬节点树与几何。**例外**：`ColorRect.color` 这类节点自带属性可以写进场景（`pvp_hud.tscn` 的 `Mask` 已有先例）。
 3. **纯搬运，不改任何数值。**`PLATE_COLOR` 的 0.1、排行榜底板那 +34、槽位 22px、所有 `offset`/`separation` **一律照抄**。这些是用户看实图定的审美值。
 4. **节点名 = 现有成员名。** 探针按**成员名**读（`pvp._score_label` / `royale._rows` / `_fx._marker`）；改名 = 探针**静默失明**或直接报错。
@@ -75,7 +75,7 @@ G="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.
 | `ui/version_panel.tscn` | 主菜单「版本信息」弹层的骨架 |
 | `ui/sp_launch_panel.tscn` | 主菜单「单人开局」弹层的骨架 |
 | `ui/kill_counter.tscn` | 单机 HUD 右上角击杀计数器的骨架（无脚本） |
-| `tests/hud_declarative_probe.gd` + `.tscn` | **声明式契约守卫**：脚本 ↔ 场景配对、零 `.new()`、`@onready` 路径在场景里全声明 |
+| `tests/hud_declarative_probe.gd` + `.tscn` | **声明式接口规范守卫**：脚本 ↔ 场景配对、零 `.new()`、`@onready` 路径在场景里全声明 |
 
 **修改：**
 
@@ -91,9 +91,9 @@ G="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.
 
 ---
 
-## Task 0：建立声明式契约守卫（先写、先红）
+## Task 0：建立声明式接口规范守卫（先写、先红）
 
-> 这个任务**不产生任何搬迁**，只立闸门。它先红（`royale_hud.tscn` 还不存在），Task 1 做完转绿。
+> 这个任务**不产生任何搬迁**，只立限制条件。它先红（`royale_hud.tscn` 还不存在），Task 1 做完转绿。
 > 没有它，后面三个任务都会以「节点路径打错 → 运行期 null 解引用」的方式静默失败——`kh_l6` 第 10 条记录的 B11 就是这个。
 
 **Files:**
@@ -474,7 +474,7 @@ func _ready() -> void:
 
 期望：① 零命中；② `ROYALE HUD COST PROBE: ALL-OK`；③ `COMBAT HUD VISUAL PROBE: ALL-OK`，并打印「态3 底板 = …」那行。
 
-- [ ] **Step 8: 人眼验收取图**（这一步**必须自己看图**，别把图推给别人）
+- [ ] **Step 8: 人工视觉核验取图**（这一步**必须自己看图**，别把图推给别人）
 
 打开 ③ 存下的 `_hud_3_royale_board.png`（以及终局态的 `_hud_4_*.png`），逐条核对：
 
@@ -628,7 +628,7 @@ theme_override_font_sizes/font_size = 48
 > **★ 四处必须是 `normal_font` / `normal_font_size`**（`RichTextLabel` 的键），不是 `font` / `font_size`。写错了不报错、只是字体不生效 —— 这正是 `ui_factory.gd:33` 记的那个坑。
 > `horizontal_alignment = 1` 是 `HORIZONTAL_ALIGNMENT_CENTER`，`vertical_alignment = 1` 是 `VERTICAL_ALIGNMENT_CENTER`（原子节点两个都设了）。
 > `modulate = Color(1, 1, 1, 0)` 对应原代码的 `modulate.a = 0.0`（两个标签初始不可见，靠 `_process` 里的 tween/直接赋值浮现）。
-> `outline_size` 不在字号闸门里（`kh_l4` 的 C 类正则要求含 `font_size`），但 16 / 10 照抄原值。
+> `outline_size` 不在字号限制条件里（`kh_l4` 的 C 类正则要求含 `font_size`），但 16 / 10 照抄原值。
 
 - [ ] **Step 4: 改 `ui/combat_feedback.gd`**
 
@@ -953,7 +953,7 @@ theme_override_constants/separation = 14
 
 期望：两条都走到 `AUTOTEST[sp]: DONE` / `AUTOTEST[ver]: DONE`（`menu_autotest.gd` 按**按钮文本**递归找按钮，`_press_by_text` 不依赖容器层级）。
 
-- [ ] **Step 6: 人眼验收两张截图**
+- [ ] **Step 6: 人工视觉核验两张截图**
 
 打开 `user://autotest_sp.png` 与 `user://autotest_ver.png`（`--autotest-*` 会存到 `user://`），逐条核对：
 
@@ -1075,7 +1075,7 @@ func _build_kill_label() -> void:
 
 期望：① `KH L3 VISUAL: ALL-OK`（注意这行**不带 `PROBE`**，是 KH 视觉探针自己的收尾串）；② 零命中。
 
-- [ ] **Step 4: 人眼验收击杀计数器**
+- [ ] **Step 4: 人工视觉核验击杀计数器**
 
 跑一次带真实渲染的单机截图（`"$GODOT" --path . --quit-after 3600 -- --autotest-level`，或直接起游戏），确认右上角的「000」：
 
@@ -1113,7 +1113,7 @@ Hud.new() 建单机 HUD,塞进 level_0.tscn 会让它立刻红。"
 
 ---
 
-## 验证清单（全部四项做完后的收口）
+## 验证清单（全部四项做完后的统一收拢）
 
 按顺序跑完，**每条都 grep `ALL-OK` 文本**而不是看退出码：
 
@@ -1126,9 +1126,9 @@ Hud.new() 建单机 HUD,塞进 level_0.tscn 会让它立刻红。"
 | 5 | `"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l4_probe.tscn` | `KH L4 PROBE: ALL-OK`（字号规范 + 零演示残留） |
 | 6 | `"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l5_probe.tscn` | `KH L5 PROBE: ALL-OK`（`royale_hud.gd` 仍在字号载体清单里） |
 | 7 | `"$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn` | `KH L6 PROBE: ALL-OK`（pvp_hud 那条未被动到） |
-| 8 | `"$GODOT" --path . --quit-after 3600 res://tests/combat_hud_visual_probe.tscn` | `ALL-OK` + **人眼看图** |
+| 8 | `"$GODOT" --path . --quit-after 3600 res://tests/combat_hud_visual_probe.tscn` | `ALL-OK` + **人工观察图** |
 | 9 | `"$GODOT" --path . --quit-after 3600 res://tests/kh_l3_visual_probe.tscn` | `KH L3 VISUAL: ALL-OK`（该行不带 `PROBE`） |
-| 10 | `"$GODOT" --path . --quit-after 3600 -- --autotest-sp` / `--autotest-ver` | `DONE` + **人眼看图** |
+| 10 | `"$GODOT" --path . --quit-after 3600 -- --autotest-sp` / `--autotest-ver` | `DONE` + **人工观察图** |
 
 **判据**：与 `enemy_logic_smoke` 同级 —— 逐条 grep `ALL-OK`。
 
@@ -1138,7 +1138,7 @@ Hud.new() 建单机 HUD,塞进 level_0.tscn 会让它立刻红。"
 
 ## Self-Review（写完后自查，已执行）
 
-1. **规格覆盖**：用户点名的 1/2/3/4 各对应 Task 1/2/3/4 ✓；四项共同需要的「契约守卫」独立成 Task 0（先写先红）✓；调查中发现的三条硬约束（`PixelFont.shared()`、`preload` 自引用环、`kh_l5` 字号载体清单）分别写进 Task 1 / Task 2 / Task 1 的警告框 ✓。
+1. **规格覆盖**：用户明确指定的 1/2/3/4 各对应 Task 1/2/3/4 ✓；四项共同需要的「接口规范守卫」独立成 Task 0（先写先红）✓；调查中发现的三条硬约束（`PixelFont.shared()`、`preload` 自引用环、`kh_l5` 字号载体清单）分别写进 Task 1 / Task 2 / Task 1 的警告框 ✓。
 2. **占位符扫描**：无 TBD / TODO / 「类似上文」；每个改代码的步骤都给了完整代码块 ✓。
 3. **类型与命名一致性**：`_marker` / `_kill_label` / `_skull` / `_streak_label`（Task 2）与 `_board_bg` / `_board_vbox` / `_timer_label` / `_mask` / `_center` / `_big` / `_sub` / `_ping_label` / `_rows`（Task 1）与 `_kill_label` / `_kills`（Task 4）与 `_sp_panel` / `_ver_panel`（Task 3）全部沿用**现状名**，与各探针的读取点逐一核对过 ✓。`_build_ver_panel` → `_fill_version_panel`、`_build_sp_panel` → `_fill_sp_panel` 两个新名字在 Task 3 内前后一致 ✓。
 

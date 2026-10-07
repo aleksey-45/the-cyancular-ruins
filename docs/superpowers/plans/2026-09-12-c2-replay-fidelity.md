@@ -241,7 +241,7 @@ git commit -m "fix(c2): 分歧判定走环面最短向量,跨接缝不再误判�
 **Interfaces:**
 - Consumes: Task 1 的 `map_px`
 - Produces:
-  - `PredictionRollback.bind(p, world = null) -> void` —— `world` 是**鸭子类型**对象，需实现 `capture_world() -> Dictionary` 与 `restore_world(d: Dictionary) -> void`。不传 = 行为与今天完全一致（既有 `bind(p)` 调用点零改动）。
+  - `PredictionRollback.bind(p, world = null) -> void` —— `world` 是**鸭子类型**对象，需实现 `capture_world() -> Dictionary` 与 `restore_world(d: Dictionary) -> void`。不传 = 行为与今天完全一致（既有 `bind(p)` 调用点无需修改）。
   - 世界快照的约定形状：`{ role:int -> 幽灵体 global_position: Vector2 }`。
 
 - [ ] **Step 1: 写失败的探针（B 组）**
@@ -782,7 +782,7 @@ Expected: `WORLD` 回到 `PROD` 水平 → `_check` 报 `✗ N=… 回放保真�
 - [ ] **Step 6: 跑 1v1 全链冒烟**
 
 Run: `bash tests/pvp_room_smoke.sh`、`bash tests/pvp_match_smoke.sh`、`bash tests/pvp_reconcile_smoke.sh`、`bash tests/pvp_twin_smoke.sh`
-Expected: 四个都 OK（`pvp_match_smoke` 是硬门：`ack_seq >= 30` 与 `c2` 全态一致）
+Expected: 四个都 OK（`pvp_match_smoke` 是硬性条件：`ack_seq >= 30` 与 `c2` 全态一致）
 
 - [ ] **Step 7: 提交**
 

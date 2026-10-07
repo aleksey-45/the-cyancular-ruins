@@ -46,8 +46,8 @@ func _ready() -> void:
 
 	# 1) 受击红闪:flash_hit(1.0) 后中心像素应明显偏红
 	# 帧驱动截瞬态:只等 _shot 内部那 2 帧(≈33ms@60fps),不再额外 await。
-	# _hit_red 以 4.0/s 衰减(core/present/post_process.gd)→ 0.15 的红色阈值约在 170ms 后撑不住;
-	# 预算 = 170ms - 2 帧(60fps≈33ms),首跑/慢机余量 ~137ms(旧版 1+2 帧≈100ms,首跑实测
+	# _hit_red 以 4.0/s 衰减(core/present/post_process.gd) -> 0.15 的红色阈值约在 170ms 后撑不住;
+	# 预算 = 170ms - 2 帧(60fps≈33ms)，首次冷启动/低性能机器运行留有 ~137ms 冗余（旧版 1+2 帧≈100ms，首次冷启动实测
 	# 151ms 时余量只剩 ~19ms)。注意:单帧 > ~70ms(≈14fps 以下)时首帧就消耗大半时间预算,
 	# 仍可能失败——所以下面把 hit_red 与像素同行打印,失败时日志自解释。
 	_pp.flash_hit(1.0)
@@ -65,10 +65,9 @@ func _ready() -> void:
 	var t_hit := Time.get_ticks_msec()
 	CombatFeedback.hit_marker()
 	# 帧驱动(关键):X 只活 HIT_LIFE=0.22s,用真实时间等(create_timer)去截瞬态
-	# 在低帧率下(首跑编译 shader / 机器负载)会越过存活期 → 截到空场。
-	# 实际路径 = 下面 1 帧 + _shot 内部 2 帧 = 3 帧(60fps≈50ms、首跑实测 ~100ms),不是
-	# "只等一帧";"与帧率无关地稳"只在单帧 ≲ 40ms(>~25fps)时成立,帧率再低仍会逼近
-	# HIT_LIFE —— 故下面加显式前置断言,把"截太晚"变成一条自解释的红,而不是空场假象。
+	# 在低帧率下（首次运行着色器编译 / 高负载机器）可能超出存活期导致捕获空画面。
+	# 实际执行路径 = 随后 1 帧 + _shot 内部 2 帧 = 3 帧（60fps≈50ms、冷启动实测 ~100ms），
+	# 帧率过低时耗时会逼近 HIT_LIFE 阈值 —— 故补充显式前置断言，避免因截图超时产生诊断混淆。
 	await get_tree().process_frame
 	var t_frame := Time.get_ticks_msec()
 	_check(_hit_age() < CombatFeedback.HIT_LIFE,
@@ -92,10 +91,10 @@ func _ready() -> void:
 	await _shot("_visual_3_kill.png")
 	var txt := _kill_text()
 	_check("测试鸟" in txt, "击杀播报文本里没有受害者名(实际:%s)" % txt)
-	# 文本对了但整条从未淡入(modulate.a 恒 0)也画不出东西 → 数值腿必须带上"真的可见"
+	# 文本对了但整条从未淡入(modulate.a 恒 0)也画不出东西 -> 数值腿必须带上"真的可见"
 	_check(_kill_alpha() > 0.0, "击杀播报透明度为 0,从未淡入(a=%.3f)" % _kill_alpha())
 
-	# 4) 连杀:窗口内再杀一只 → x2
+	# 4) 连杀:窗口内再杀一只 -> x2
 	CombatFeedback.kill("第二只")
 	await get_tree().process_frame
 	await get_tree().create_timer(0.12).timeout

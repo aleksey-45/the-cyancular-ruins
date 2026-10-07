@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把计划 2a 的骨架页换成真正的编辑器 —— `render.js`(四层缓存 + 脏区 + 闸 2 分帧)、`ui.js`(工具集 + 撤销 + 面板 + 持久化 + 热键)、`io.js` / `worker.js`(闸 3:编解码进 Web Worker)、`editor.html`(真页面 + 敌人注册表迁入),并退休 `structure-editor.html`。
+**Goal:** 把计划 2a 的基础原型页换成真正的编辑器 —— `render.js`(四层缓存 + 脏区 + 规则 2 分帧)、`ui.js`(工具集 + 撤销 + 面板 + 持久化 + 热键)、`io.js` / `worker.js`(规则 3:编解码进 Web Worker)、`editor.html`(真页面 + 敌人注册表迁入),并退休 `structure-editor.html`。
 
-**Architecture:** 四个新模块**全部是经典脚本**(`globalThis.X`,不用 ES module),而且**顶层一行都不碰 DOM** —— DOM 只出现在 `mount()` / `boot()` 一族里。于是 node 能把"错了也不报错、只在屏幕上看出来"的那几层(`③ 格位图缓存的失效`、空层、空气短路、环面命中、画笔几何、单帧预算、撤销差量)逐条断言;真正只能人眼看的只剩"画布上画对了没有"。渲染按规格 §4.2 分两条路:`<8 px/子格`走缩略图(①),`≥8` 走视口离屏层(②,绝不建全图离屏)+ 格位图缓存(③)+ tinted-tile(④),编辑只重画脏格、切层只重新合成、平移靠 canvas 自拷贝 + 补边条。
+**Architecture:** 四个新模块**全部是经典脚本**(`globalThis.X`,不用 ES module),而且**顶层一行都不碰 DOM** —— DOM 只出现在 `mount()` / `boot()` 一族里。于是 node 能把"错了也不报错、只在屏幕上看出来"的那几层(`③ 格位图缓存的失效`、空层、空气短路、环面命中、画笔几何、单帧预算、撤销差量)逐条断言;真正只能人工观察的只剩"画布上画对了没有"。渲染按规格 §4.2 分两条路:`<8 px/子格`走缩略图(①),`≥8` 走视口离屏层(②,绝不建全图离屏)+ 格位图缓存(③)+ tinted-tile(④),编辑只重画脏格、切层只重新合成、平移靠 canvas 自拷贝 + 补边条。
 
 **Tech Stack:** 纯 JavaScript(经典脚本给浏览器、CommonJS 给 node 冒烟)、node v24(内置 `http`/`fs`/`zlib`,无 npm 依赖)、Canvas 2D + `Worker` + `CompressionStream` + IndexedDB + localStorage、node 侧用**打桩的 `self` / `importScripts`** 把真的 `worker.js` 加载进来跑真消息协议。
 
@@ -13,16 +13,16 @@
 - **规格是唯一事实来源**:`docs/superpowers/specs/2026-09-19-cyrm-v4-editor-design.md`。任何与本计划冲突之处,以规格为准,并在提交信息里说明。
 - **编辑器只通过 HTTP 打开**(规格 §1.2、§4.9):`file://` 支持被刻意放弃。**页面上不许出现 `file://`**,也不许出现任何外部 URL 的 `<script src>`。
 - **服务器、`core.js`、`tint.js`、`smoke.js` 是冻结的**:本计划**不修改**这四个文件一个字节。`editor_server.js` 的 API(`/api/maps`、`GET /api/map?p=`、`PUT /api/map?p=`,**PUT 只收 `Content-Type: application/json`**)按现状消费,不改。
-- **`node smoke.js` 必须保持 343 通过 / 0 失败 / `SMOKE OK`;`tint_smoke.js` 必须保持 96 通过。**`server_smoke.js` **只许增不许减**,唯一例外是**相位 ①b 与 ⑧**:它们描述的是"2a 不碰旧页"与"骨架页长什么样",而 2b 正是在改这两件事 —— 两条相位被**改写**成新真值(不是删掉),逐条理由与做法写在 Task 3 里;其中纪律类断言(不许第二份 HSV / `lineCells` 必须 floor / PUT 必须带 Content-Type)搬进 `editor_smoke.js` 并**加严**(扫源码而不是扫页面文本)。
+- **`node smoke.js` 必须保持 343 通过 / 0 失败 / `SMOKE OK`;`tint_smoke.js` 必须保持 96 通过。**`server_smoke.js` **只许增不许减**,唯一例外是**相位 ①b 与 ⑧**:它们描述的是"2a 不碰旧页"与"基础原型页长什么样",而 2b 正是在改这两件事 —— 两条相位被**改写**成新真值(不是删掉),逐条理由与做法写在 Task 3 里;其中纪律类断言(不许第二份 HSV / `lineCells` 必须 floor / PUT 必须带 Content-Type)搬进 `editor_smoke.js` 并**加严**(扫源码而不是扫页面文本)。
 - **无 npm 依赖、无构建步骤、不用 ES module**:一切新代码是经典脚本(`globalThis.*`),`<script src>` 顺序即依赖顺序。
-- **一切有硬上限**(规格 §4.3 闸 1):地图 400×300 格、库条目 60、撤销 200 步(差量)、tint 缓存 8192 张、缩略图 2px/子格(超大图降到 1)、离屏画布 ≤ 视口。用户输入一律**钳制**,**不报错回滚**。
-- **闸 2**:任何跨"一屏"的长循环都有单帧预算(~8ms),超了就 `await` 一帧继续 —— 全屏重建 / 缩略图更新 / 油漆桶 / IndexedDB 序列化。
-- **闸 3**:二进制编解码走 Web Worker,**没有主线程降级路径**(静默降级 = 悄悄取消"一帧都不阻塞")。
-- **闸 4**:`window.onerror` / `window.onunhandledrejection` → 立刻把当前图写进 IndexedDB 的独立 crash 槽位;下次打开时 crash 槽位比主槽位新就提示恢复。
+- **一切有硬上限**(规格 §4.3 规则 1):地图 400×300 格、库条目 60、撤销 200 步(差量)、tint 缓存 8192 张、缩略图 2px/子格(超大图降到 1)、离屏画布 ≤ 视口。用户输入一律**钳制**,**不报错回滚**。
+- **规则 2**:任何跨"一屏"的长循环都有单帧预算(~8ms),超了就 `await` 一帧继续 —— 全屏重建 / 缩略图更新 / 油漆桶 / IndexedDB 序列化。
+- **规则 3**:二进制编解码走 Web Worker,**没有主线程降级路径**(静默降级 = 悄悄取消"一帧都不阻塞")。
+- **规则 4**:`window.onerror` / `window.onunhandledrejection` → 立刻把当前图写进 IndexedDB 的独立 crash 槽位;下次打开时 crash 槽位比主槽位新就提示恢复。
 - **注释一律中文、UI 文案一律中文**,与仓库其余部分一致。
 - **本计划的任何测试都不许写进真实 `maps/` 目录**:需要写盘时一律 `fs.mkdtempSync`。
 - **不许在页面/`ui.js` 里写第二份数学**:像素走 `Tint.*`,编解码/迁移/校验走 `Core.*`,几何走 `Render.*`。
-- **`Core.lineCells` 的每个调用点都必须先 `Math.floor`**(计划 1 账本 Task 2 Minor 3:非整数或 NaN 坐标会让它的 `for(;;)` 死循环,**挂住标签页**)。
+- **`Core.lineCells` 的每个调用点都必须先 `Math.floor`**(计划 1 账本 Task 2 Minor 3:非整数或 NaN 坐标会让它的 `for(;;)` 死循环,**卡死标签页**)。
 
 ---
 
@@ -30,8 +30,8 @@
 
 计划 1 / 2a 已与用户确认的裁决,2b 继续沿用:
 
-- **裁决 ①(YAGNI)**:`core.js` 里带着 `sanitizeName` / `brushOffsets` / `lineCells` / `normRegion` 四个格式层不调用的纯函数 —— 它们就是给本计划用的。**同理**:`Render.createCellCache`(③)在 Task 2 落地时**还没有生产调用方**(接线在 Task 4),这是刻意的:规格 §4.2 明列 ③ 是一层,而"它的作废"正是账本点名必须带进 2b 的那条不变量 —— 断言必须落在它能被断言的地方。**不要把这两处报成 YAGNI**。
-- **裁决 ②(覆盖)**:`structure-editor.html` 的行为在被本计划删掉之前**没有任何自动覆盖** —— 这是用户知悉并接受的代价(计划 1 的账本预检里已当面更正并重新确认)。本计划**不为旧编辑器补测试**,只在退休那一步钉住"三件事同一 commit"。
+- **裁决 ①(YAGNI)**:`core.js` 里带着 `sanitizeName` / `brushOffsets` / `lineCells` / `normRegion` 四个格式层不调用的纯函数 —— 它们就是给本计划用的。**同理**:`Render.createCellCache`(③)在 Task 2 落地时**还没有生产调用方**(接线在 Task 4),这是刻意的:规格 §4.2 明列 ③ 是一层,而"它的作废"正是账本明确指出必须带进 2b 的那条不变量 —— 断言必须落在它能被断言的地方。**不要把这两处报成 YAGNI**。
+- **裁决 ②(覆盖)**:`structure-editor.html` 的行为在被本计划删掉之前**没有任何自动覆盖** —— 这是用户知悉并接受的代价(计划 1 的账本预检里已当面更正并重新确认)。本计划**不为旧编辑器补测试**,只在退休那一步断言约束"三件事同一 commit"。
 
 ---
 
@@ -39,7 +39,7 @@
 
 **① 新模块的顶层不碰 DOM,是"能被 node 断言"的唯一手段。**
 
-`render.js` / `ui.js` / `io.js` 全部写成 `globalThis.X = (function () { … })()`,DOM 只在 `mount()` / `boot()` 一族里取。这不是风格洁癖:账本点名必须带进 2b 的那条不变量(**换图必须同时作废 ③ 与 ④ 两层缓存,且 ③ 的作废要有断言**)如果 ③ 只住在"挂到 canvas 上的那一半",就**无法被任何断言触及** —— 而它复发的症状是"整张图是色块,而且有时好有时坏,不报错"(审计 A2)。
+`render.js` / `ui.js` / `io.js` 全部写成 `globalThis.X = (function () { … })()`,DOM 只在 `mount()` / `boot()` 一族里取。这不是风格洁癖:账本明确指出必须带进 2b 的那条不变量(**换图必须同时作废 ③ 与 ④ 两层缓存,且 ③ 的作废要有断言**)如果 ③ 只住在"挂到 canvas 上的那一半",就**无法被任何断言触及** —— 而它复发的症状是"整张图是色块,而且有时好有时坏,不报错"(审计 A2)。
 
 **② 图层 ③(格位图缓存)里缓存的是"16 个 tile 引用",不是"一张 64×64 的 canvas"。**
 
@@ -87,10 +87,10 @@
 
 | 文件 | 职责 | 本计划中的动作 |
 |---|---|---|
-| `level_editor/worker.js` | Web Worker 入口:消息壳 + 调 `core.js` 的编解码(闸 3) | **新建**(Task 1) |
+| `level_editor/worker.js` | Web Worker 入口:消息壳 + 调 `core.js` 的编解码(规则 3) | **新建**(Task 1) |
 | `level_editor/io.js` | 编解码 async 门面(Worker 调用方,可注入 factory) | **新建**(Task 1) |
 | `level_editor/worker_io_smoke.js` | `worker.js` + `io.js` 的 node 冒烟(打桩 `self`/`importScripts` 跑真协议) | **新建**(Task 1) |
-| `level_editor/render.js` | 四层缓存 ①②③④ + 脏区 + 环面 + 分帧(闸 2)+ 画布挂载 | **新建**(Task 2 纯半边 → Task 3 画布首帧 → Task 4 逐格路径) |
+| `level_editor/render.js` | 四层缓存 ①②③④ + 脏区 + 环面 + 分帧(规则 2)+ 画布挂载 | **新建**(Task 2 纯半边 → Task 3 画布首帧 → Task 4 逐格路径) |
 | `level_editor/render_smoke.js` | `render.js` 纯半边的 node 冒烟(含 ③ 的作废断言) | **新建**(Task 2) |
 | `level_editor/ui.js` | 工具内核 + 历史 + 剪贴板 + 面板 + 持久化 + 热键 + `boot()` | **新建**(Task 3 启动最小版 → Task 5/6 内核 → Task 7 交互 → Task 8 面板 → Task 9 持久化) |
 | `level_editor/editor_smoke.js` | `ui.js` 内核的 node 冒烟 + 源码级纪律扫描 | **新建**(Task 5)→ 追加(Task 6、8、9) |
@@ -107,7 +107,7 @@
 
 ---
 
-## Task 1: `worker.js` + `io.js`(闸 3:编解码进 Web Worker)
+## Task 1: `worker.js` + `io.js`(规则 3:编解码进 Web Worker)
 
 **Files:**
 - Create: `level_editor/worker.js`
@@ -128,7 +128,7 @@
       - `opts = {workerFactory?: () => WorkerLike}`(默认 `() => new Worker('worker.js')`)
     - `workerAvailable() -> Boolean`(`typeof Worker !== 'undefined'`)
     - `encodeMap(map, opts) -> Promise<Uint8Array>` / `decodeMap(bytes) -> Promise<Object>` / `ping() -> Promise<Object>` —— 共用同一个惰性创建的单例 codec
-  - `WorkerLike` 的形状(注入契约):`{postMessage(msg):void, onmessage:(ev)=>void, onerror?:(ev)=>void, terminate?():void}`
+  - `WorkerLike` 的形状(注入接口规范):`{postMessage(msg):void, onmessage:(ev)=>void, onerror?:(ev)=>void, terminate?():void}`
 
 > ★★ **本节下面的代码块是「落地前的初版」,不是最终交付。** Task 1 实现后经历了两轮评审修复
 > (`98b2319`、`54a6d22` —— 分别是"评审发现的 8 条"与"守卫加固的 4 条",逐条见账本),交付的两份源码
@@ -138,7 +138,7 @@
 > `level_editor/io.js` 与 `level_editor/worker_io_smoke.js`,或看账本 `.superpowers/sdd/progress.md`
 > 里 Task 1 的各条(含每处改动的理由与变异证据)。
 >
-> **`io.js` 与下面那块的差异(六组,每处都在源码里用中文注释点名了理由)**:
+> **`io.js` 与下面那块的差异(六组,每处都在源码里用中文注释明确指出了理由)**:
 > ① 删掉**零调用点**的 `errText` 死副本(错误文本在 `worker.js` 里就格式化好、随 `{ok:false,error}` 回来了),文件头补了模块说明;
 > ② 删掉死 API `workerStarts()` 与它的计数器 `started`;
 > ③ `onerror` 由 `if (typeof worker.onerror !== 'function') { … }` 改成**无条件**覆盖 ——
@@ -146,14 +146,14 @@
 >    而代码看上去"已经处理了 onerror"(崩溃后所有在飞请求永久悬挂);
 > ④ `postMessage` 包 try/catch:抛时删掉表里自己那一条再抛(否则 resolver 被永久攥着、
 >    `pendingCount()` 再也回不到 0,而调用方只看到一次失败);
-> ⑤ 新增 `reapWorker()`,`failAll` 与 `terminate()` **共用同一个死亡收口** —— 原先
+> ⑤ 新增 `reapWorker()`,`failAll` 与 `terminate()` **共用同一个死亡统一收拢** —— 原先
 >    `onerror` 那条只标死、**不收走** worker,线程一直被引着直到页面关掉;
 > ⑥ `terminate()` 改为"先真回收、再在 `dead === null` 时 `failAll(…)`":在飞请求不再永不 settle,
 >    下一次调用也不再**静默**新建一个 worker,且先前死因不被后一次覆盖。
 >
 > **`worker_io_smoke.js` 从 196 行长到 345 行**:桩改为按应答**自己的 id** 派生交付次序
 > (既非恒等也**非倒序** —— 精确倒序会让"取最新待决条目"的实现恰好全对,那是个假绿洞),
-> 并新增尾部相位(未知 `op`、`onerror → failAll`、`terminate` 的收口)与"测试自己的 factory
+> 并新增尾部相位(未知 `op`、`onerror → failAll`、`terminate` 的统一收拢)与"测试自己的 factory
 > 计数"断言(用来真正观测"有没有静默又起一个 worker")。
 
 - [ ] **Step 1: 写测试 `level_editor/worker_io_smoke.js`(此时必然红)**
@@ -619,7 +619,7 @@ EOF
 > ④ `createCellCache` 的 `get` 未命中路径缺 `entries.delete(k)` ⇒ 重建的条目**停在最冷端**,
 >    与相邻那句"Map 的插入序 = LRU 序"矛盾(只是多重建几次,不改输出)。
 > ⑤ `createSlicer` 不校验 `budgetMs`(`now()-s0 >= NaN` 恒假)⇒ NaN/负预算**一帧干完**,
->    正是闸 2 要防的那种"页面像死了"。
+>    正是规则 2 要防的那种"页面像死了"。
 > ⑥ `run()` 里 `nextFrame().then(step)` **没有拒绝处理** ⇒ `nextFrame` 若返回被拒的 promise,
 >    `run()` **永不 settle** 且成为未处理拒绝。交付是 `.then(step, reject)`。
 > ⑦ `atlasCapacity()` 的 `h` 没被钳(`Tint.setSource` 只校验 `w`)⇒ 传错 `h` 会得到**负容量**,
@@ -628,7 +628,7 @@ EOF
 >
 > **测试块**:交付的 `render_smoke.js` 比本节多 **20** 条断言(92 → 112),并把 `snapHit` 那条
 > 从"只读 `.kind`"**收紧成整对象相等** —— 旧写法在"不吸附"的变异下**照样通过**(这正是它当初
-> 没能拦住 ② 的原因)。本节的测试块**可以照抄**(它仍然全绿),但它是**更弱**的一份。
+> 没能拦住 ② 的原因)。本节的测试块**可以照抄**(它仍然全部通过),但它是**更弱**的一份。
 
 - [ ] **Step 1: 写测试 `level_editor/render_smoke.js`(此时必然红)**
 
@@ -1293,16 +1293,16 @@ Expected: 全部 `ok -`,末行 `RENDER SMOKE OK`,退出码 0。
 
 Run: `cd level_editor && node render_smoke.js`
 
-Expected: 相位 ③b **两条**报红 ——
+Expected: 相位 ③b **两条**测试报错 ——
 
 ```
   FAIL - ★★ 换图之后同一个格键**是新对象**(漏了 = A2 在上一层复发)
   FAIL - ★★ 换图之后同一个格键**必须重新构建**(只判内容版本号的话这里会是命中)
 ```
 
-退出码 1。**确认之后把那一行改回来**,再跑一次确认恢复全绿。这条变异的含义:它模拟的正是审计 A2 在老编辑器里的形态("贴图换了,缓存却还新鲜")—— 把它原样搬到第三层缓存上,只有专门为"代际"写的那几条断言抓得住。
+退出码 1。**确认之后把那一行改回来**,再跑一次确认恢复全部通过。这条变异的含义:它模拟的正是审计 A2 在老编辑器里的形态("贴图换了,缓存却还新鲜")—— 把它原样搬到第三层缓存上,只有专门为"代际"写的那几条断言抓得住。
 
-★ **为什么是两条而不是三条**:`size` 与 `generation` 那两条在变异下**照样通过**(不清表 ⇒ 条目数不变;gen 也确实 +1)—— 真正承重的只有"新对象"与"必须重新构建"这两条,它们分别从**返回值的身份**与**命中计数**两个角度看同一件事。
+★ **为什么是两条而不是三条**:`size` 与 `generation` 那两条在变异下**照样通过**(不清表 ⇒ 条目数不变;gen 也确实 +1)—— 真正核心关键的只有"新对象"与"必须重新构建"这两条,它们分别从**返回值的身份**与**命中计数**两个角度看同一件事。
 
 ★★ **由此 `setSource` 不许再改回 `entries.clear()`**:一旦清表,这句变异变成**零红**,本层唯一那条守卫就废了(而那正是审计 A2 复发时无人报警的形态)。`eq(c3.stats().size, 1, …)` 那一条就是钉这件事的 —— 它断言的是"陈旧条目不得被静默清空",不是审美。
 
@@ -1398,11 +1398,11 @@ EOF
 >
 > ★ 另外交付的 `server_smoke` 相位 ⑧ 比本节**少约 20 条**(23 → 12,净 −11):评审逐条分类过
 > —— 多数被更强的"六脚本顺序 + 页面结构"断言取代,其余**搬进 Task 5 的 `editor_smoke.js`**
-> (计划 Global Constraints 里点名的三条纪律断言就在这里),**但有两处当时没有任何后继**,
+> (计划 Global Constraints 里明确指定的三条纪律断言就在这里),**但有两处当时没有任何后继**,
 > 现已分别就地补掉(见 ②)与挂号到 Task 5("错误必须可见、不许沉默空面板"的源码级形态)。
 >
 > **测试块**:交付与本节相比,`render_smoke` 多了约 52 条(112 → 164),含相位 ⑩k
-> (**同宽不同高**换图,专钉 ①)。本节测试块仍全绿,但**更弱**。
+> (**同宽不同高**换图,专钉 ①)。本节测试块仍全部通过,但**更弱**。
 
 - [ ] **Step 1: 在 `render.js` 末尾(`return { … }` 之前)加 `mount()` 一族**
 
@@ -2219,7 +2219,7 @@ Expected: 两条都打印 `ok: …`,退出码 0。
   })();
 ```
 
-**相位 ⑧ 整体替换**(原文断言的 id(`maps`/`tintlab`/`roundtrip`/`btn-maps`/`btn-rt`)、"不调 `lineCells`"、"纹理上界从图集派生"、"PUT 的 Content-Type"、"注册表标记不在本页"**全部**是在描述 2a 的骨架页)。新的相位 ⑧ 只留"页面结构"这一类判据,纪律类断言搬去 Task 5 的 `editor_smoke.js`(它能扫到 `ui.js`/`render.js` 的**源码**,而本相位只能看到页面文本):
+**相位 ⑧ 整体替换**(原文断言的 id(`maps`/`tintlab`/`roundtrip`/`btn-maps`/`btn-rt`)、"不调 `lineCells`"、"纹理上界从图集派生"、"PUT 的 Content-Type"、"注册表标记不在本页"**全部**是在描述 2a 的基础原型页)。新的相位 ⑧ 只留"页面结构"这一类判据,纪律类断言搬去 Task 5 的 `editor_smoke.js`(它能扫到 `ui.js`/`render.js` 的**源码**,而本相位只能看到页面文本):
 
 ```js
   // ==== 相位 ⑧ 入口页结构(真的从服务器取,不是读盘)====
@@ -2292,7 +2292,7 @@ Run: `node --check level_editor/ui.js && node --check level_editor/render.js && 
 
 Expected: 前两条**无输出**(语法通过)。★ 顺带说明:`node --check` 对 `.html` 一律报错,故第三条只用来打印 id 数量 —— **它证明不了页面在浏览器里跑得起来**,那是下一步的事。
 
-- [ ] **Step 8: 人眼验收(★ 浏览器半边 node 验不了 —— 这半边至今无人跑过,本 Task 就是来关掉这个缺口的)**
+- [ ] **Step 8: 人工视觉核验(★ 浏览器半边 node 验不了 —— 这半边至今无人跑过,本 Task 就是来关掉这个缺口的)**
 
 **测试由用户自己跑**(仓库惯例)。实现者要把下面的清单**逐条**抄进报告,并在这里如实标注"浏览器半边:已由人验证 / 未验证"。
 
@@ -2332,7 +2332,7 @@ EOF
 
 ---
 
-## Task 4: 视口离屏层 + 三条路径 + 环面 3×3 + 闸 2 分帧
+## Task 4: 视口离屏层 + 三条路径 + 环面 3×3 + 规则 2 分帧
 
 **Files:**
 - Modify: `level_editor/render.js`(把 `drawLayerPath` 换成 ② + ③ + 脏区;加 `invalidateCells` 的 ③ 侧)
@@ -2374,7 +2374,7 @@ EOF
 >
 > **测试块**:交付比本节多约 53 条(164 → 217),含相位 ⑩k(**同宽不同高**换图)、相位 ⑪
 > (环面/脏区/颜色层在 ≥8 路径上的独立覆盖)、⑪g(用 `clearRect` 计数钉"过期那一轮一项都不画")。
-> 本节测试块仍全绿,但**更弱**,且**钉不住上面三处硬伤**。
+> 本节测试块仍全部通过,但**更弱**,且**钉不住上面三处硬伤**。
 >
 > **★ 本 Task 引入的跨 Task 事项(Task 5~9 必读)**
 > - `setView` / `fit` / `resize` / `setZoomAt` / `panBy` **可能返回 promise**(视图一变即分帧重建)
@@ -2656,7 +2656,7 @@ Expected: 相位 ⑩ 头一条报 `FAIL - 新脏区集是空的`,随后整块报
     }
 ```
 
-★ **`setAtlas` 与 ③ 的耦合**:`Render.setAtlas` 会 `cells.setSource()`,而 `cells` 是模块级变量(由 `attachCells` 装上)—— `setMap` 里刚 `attachCells` 的那个就是它,所以"换图"与"换贴图"两条路都会作废 ③。**这条依赖是有意的**:换贴图时 `renderer` 里的 `cellCache` 变量与模块级的 `cells` 指向**同一个对象**,不存在"作废了另一个"的可能。若将来有人让 `mount` 不 `attachCells`,这条就断了 —— 所以 Task 3 的 `setMap` 里那一行 `attachCells(cellCache)` 不许删(render_smoke 相位 ③b 从模块侧钉住了"attach 之后 setAtlas 会让 ③ 的代际 +1、从而把陈旧条目全判成未命中")。
+★ **`setAtlas` 与 ③ 的耦合**:`Render.setAtlas` 会 `cells.setSource()`,而 `cells` 是模块级变量(由 `attachCells` 装上)—— `setMap` 里刚 `attachCells` 的那个就是它,所以"换图"与"换贴图"两条路都会作废 ③。**这条依赖是有意的**:换贴图时 `renderer` 里的 `cellCache` 变量与模块级的 `cells` 指向**同一个对象**,不存在"作废了另一个"的可能。若将来有人让 `mount` 不 `attachCells`,这条就断了 —— 所以 Task 3 的 `setMap` 里那一行 `attachCells(cellCache)` 不许删(render_smoke 相位 ③b 从模块侧通过断言约束了"attach 之后 setAtlas 会让 ③ 的代际 +1、从而把陈旧条目全判成未命中")。
 
 追加编辑入口与视图操作:
 
@@ -2752,7 +2752,7 @@ Run: `cd level_editor && node render_smoke.js`
 
 Expected: 全部 `ok -`,末行 `RENDER SMOKE OK`,退出码 0。
 
-- [ ] **Step 6: 人眼验收:三条路径各自"看起来对",且放大后**帧时间**有数**
+- [ ] **Step 6: 人工视觉核验:三条路径各自"看起来对",且放大后**帧时间**有数**
 
 **测试由用户自己跑**。实现者把清单抄进报告,请人照做并把数字贴回:
 
@@ -2825,7 +2825,7 @@ EOF
   - `addSpawn(map, kind, cellX, cellY, enemyType) -> diff|null`、`removeSpawn(map, kind, index) -> diff|null`、`clearSpawns(map) -> diff|null`
   - `spawnDiff(map, before) -> diff`(spawn 差量的公共构造:整表前后快照)
   - `commandFor(ev) -> String|null`(规格 §4.8 的热键表)
-  - `validateLines(report) -> Array<String>`(§4.7 的点名清单)
+  - `validateLines(report) -> Array<String>`(§4.7 的指定清单)
   - `hasSelection(st) -> Boolean`
 
 > ★★ **本节下面的代码块是「落地前的初版」;交付的 `ui.js` 与 `editor_smoke.js` 才是事实。**
@@ -2835,10 +2835,10 @@ EOF
 > 其余(含 `constrainLine` / `constrainSquare` / `applyTool` / 两个作业工厂 / `commandFor` /
 > `resizeMap`)**逐字节相同**,导出键表也相同。
 >
-> **★ ① `clampTexture` 的回落方向改过 —— 以本节自己那五条断言(契约)为准,不以本节给码为准。**
+> **★ ① `clampTexture` 的回落方向改过 —— 以本节自己那五条断言(接口规范)为准,不以本节给码为准。**
 > 给码在 `cap < 1` 时回落 `TEXTURE_MAX`(⇒ 保留输入,`clampTexture(5, 0)` 得 **5**),而本节第 ⑤ 条
 > 断言要的是 **1**。那五条(`0→1` / `999→100` / `3→3` / `NaN→1` / `cap 0→1`)构成一条自洽的
-> `[1, cap]` 契约,给码在第五条上是**唯一的异类**。交付:容量 `<1` ⇒ **1**;`atlasCap` 缺省时
+> `[1, cap]` 接口规范,给码在第五条上是**唯一的异类**。交付:容量 `<1` ⇒ **1**;`atlasCap` 缺省时
 > **自问图集**(`Render.atlasCapacity()`)。
 >
 > **★ 三处期望字面量订正(改的是期望值,`constrainLine` 一字未动)**:本节两条 45° 用例期望
@@ -2849,9 +2849,9 @@ EOF
 > (`|dx|=4, |dy|=3 ⇒ m=4 ⇒ (0,0)`)。⇒ 三处**期望值**订正为锁后的值,**实现未被拗**。
 >
 > **★ 有两条断言的守护者不是本节代码**:`valueFor` 里的空气守卫
-> (`if (oldV === 0 || Core.texOf(oldV) === 0) return oldV;`)**删掉也不会让任何断言变红** ——
+> (`if (oldV === 0 || Core.texOf(oldV) === 0) return oldV;`)**删掉也不会让任何断言报错失败** ——
 > 因为 `Core.packDesc`(`core.js:913-921`)把纹理 ≤0 **塌成 `DESC_AIR`**,空气子格无论如何都映射到 0、
-> 永不进 diff。所以"空气不长纹理"那两条其实由 `core.js` 钉住(子条件
+> 永不进 diff。所以"空气不长纹理"那两条其实由 `core.js` 断言约束(子条件
 > `oldV !== 0 && texOf(oldV) === 0` 只能来自手写/损坏的解码描述符,今天**无覆盖**)。
 >
 > **★ 本 Task 交付的接口实况(与本节上方的接口行不一致,一律以 `ui.js` 为准)**:
@@ -3700,9 +3700,9 @@ Expected: 全部 `ok -`,末行 `EDITOR SMOKE OK`,退出码 0。
 
 Run: `cd level_editor && node editor_smoke.js`
 
-Expected: 至少两条报红 —— `FAIL - ★ 只改辅码:纹理仍是 5(没被画笔的描述符里的 9 顶掉)`。**确认之后改回来**,再跑一次确认恢复全绿。这条变异的含义:"只改辅码"若退化成"改成画笔的纹理",屏幕上是"整片墙变成另一种砖",而**没有任何报错**。
+Expected: 至少两条测试报错 —— `FAIL - ★ 只改辅码:纹理仍是 5(没被画笔的描述符里的 9 顶掉)`。**确认之后改回来**,再跑一次确认恢复全部通过。这条变异的含义:"只改辅码"若退化成"改成画笔的纹理",屏幕上是"整片墙变成另一种砖",而**没有任何报错**。
 
-- [ ] **Step 6: 跑齐所有冒烟,确认全绿**
+- [ ] **Step 6: 跑齐所有冒烟,确认全部通过**
 
 Run:
 
@@ -3764,7 +3764,7 @@ EOF
 > ① **`applyEntry` 的 `whole` 分支必须拷贝快照数组(已就地订正,见上文)** —— 别名会让
 >    「撤销改尺寸 → 落笔 → 再撤销」恢复**被污染的** before(静默"撤销没撤干净")。漏的是**还原**
 >    那一侧;`snapshotMap` 那侧本来就是拷贝的。
-> ② **`bytesOfEntry` 的 whole 分支写成 `return 64 + (e.bytes || 0)` 是"退化也能全绿"的形态** ——
+> ② **`bytesOfEntry` 的 whole 分支写成 `return 64 + (e.bytes || 0)` 是"退化也能全部通过"的形态** ——
 >    把它改成 `return 64` 也照样通过,而它是"**字节预算管得住整图级操作**"的唯一依据。
 >    交付:数值面(`bytesOfEntry(whole) >= bytesOfSnapshot(before)`)+ **行为面**
 >    (预算 1000 装不下 1088 字节的 whole 条目 ⇒ 推第二条必须把第一条挤掉)。改这行变异 ⇒ **4 红**。
@@ -3784,7 +3784,7 @@ EOF
 > 选区移动 / 镜像的可交互验收归 Task 7**(指针与热键是它接的)。
 >
 > **★ 变异手法的坑(实践得来的)**:把变异写成**空函数体的 `while`** 会让测试进程**死循环挂住** ——
-> 那不是"变红",是把冒烟挂死。变异要表达成一条**会失败的断言**,不是一次挂起。
+> 那不是"报错失败",是把冒烟挂死。变异要表达成一条**会失败的断言**,不是一次挂起。
 
 - [ ] **Step 1: 在 `editor_smoke.js` 的 `// ==== 相位 ⑪` 之后追加相位 ⑫**
 
@@ -4281,12 +4281,12 @@ EOF
 >    (否则取消后仍会提交那次 `moveRegion`,而清掉记录又会让 `sd.dx` 抛)。
 >
 > **接口表待补**:`Editor.doUndo() / doRedo()` 与 `panBy / setZoomAt / resize / fit` 现在**返回
-> promise**(被"视图入口必须收口"这条推出来的良性加宽),本节/brief 写的是 `-> void`。
+> promise**(被"视图入口必须统一收拢"这条推出来的良性加宽),本节/brief 写的是 `-> void`。
 > **人眼清单第 4 条应读作**:「**框与内容都跟手**,**数据**松手才提交一次」—— 规格 §4.2 要的是
 > 渲染期的偏移查询(纯读),像素跟手正是它。
 > **已知限制(与"跨接缝框选"一并裁定,勿单独改)**:跨接缝框选产出**整行**选区;且小数画笔框出的
 > 选区**每轴被放大 3 个子格**(`subRectOf` 的 `+ k` 恒为 `SUB_PER_CELL`)。两条都**不属静默类**:
-> 框会被画出来、用户看得见,而且三处口径合一后三者**同错**。⑬b4 已照实钉住今天的语义。
+> 框会被画出来、用户看得见,而且三处口径合一后三者**同错**。⑬b4 已照实断言约束今天的语义。
 > **测试块**:交付比本节多得多(`render_smoke` 253、`editor_smoke` 244,含相位 ⑬ 的拖动/D6/接缝覆盖)。
 
 - [ ] **Step 1: `render.js`:预览框、拖动中的选区框、拖动时的偏移绘制**
@@ -4732,9 +4732,9 @@ Run:
 cd level_editor && node editor_smoke.js && node render_smoke.js && node server_smoke.js
 ```
 
-Expected: `EDITOR SMOKE OK` / `RENDER SMOKE OK` / `SERVER SMOKE OK`,退出码 0。(本 Task 没有新增 node 断言 —— 它的产物是**浏览器行为**,由下一步的人眼验收覆盖。)
+Expected: `EDITOR SMOKE OK` / `RENDER SMOKE OK` / `SERVER SMOKE OK`,退出码 0。(本 Task 没有新增 node 断言 —— 它的产物是**浏览器行为**,由下一步的人工视觉核验覆盖。)
 
-- [ ] **Step 4: 人眼验收(逐条点,把结果贴回报告)**
+- [ ] **Step 4: 人工视觉核验(逐条点,把结果贴回报告)**
 
 **测试由用户自己跑**。清单:
 
@@ -5142,7 +5142,7 @@ cd level_editor && node editor_smoke.js && node server_smoke.js
 
 Expected: `EDITOR SMOKE OK` / `SERVER SMOKE OK`,退出码 0。
 
-- [ ] **Step 6: 人眼验收(★ 这一步会**真的写盘** —— 2026-09-22 订正:原写的「先用一份副本试」**不安全**,副本只能落在 `maps/` 里、会被 `_random_cyrm` 抽进随机池。安全做法是把服务器指到仓外(`editor_server.js --maps <dir>`),或先确认 `maps/` 已被 git 完整提交(可回滚)。★ 另自 2026-09-22 起:首次把 v3 图存成 v4 之前会**自动落一份 `<名>.v3.bak` 原文备份**,确认框也已写明「游戏现在读不了这张图」)**
+- [ ] **Step 6: 人工视觉核验(★ 这一步会**真的写盘** —— 2026-09-22 订正:原写的「先用一份副本试」**不安全**,副本只能落在 `maps/` 里、会被 `_random_cyrm` 抽进随机池。安全做法是把服务器指到仓外(`editor_server.js --maps <dir>`),或先确认 `maps/` 已被 git 完整提交(可回滚)。★ 另自 2026-09-22 起:首次把 v3 图存成 v4 之前会**自动落一份 `<名>.v3.bak` 原文备份**,确认框也已写明「游戏现在读不了这张图」)**
 
 **测试由用户自己跑**。实现者把清单抄进报告。清单:
 
@@ -5177,7 +5177,7 @@ EOF
 
 ---
 
-## Task 9: 持久化三层 + 闸 4(IndexedDB 草稿盘 / localStorage 小状态 / 崩溃围栏)
+## Task 9: 持久化三层 + 规则 4(IndexedDB 草稿盘 / localStorage 小状态 / 崩溃围栏)
 
 **Files:**
 - Modify: `level_editor/ui.js`(草稿盘、UI 小状态、崩溃围栏、配额告知)
@@ -5522,7 +5522,7 @@ Expected: `FAIL - draftKey 由 sanitizeName 派生(不另铸一套 id)`,随后 `
   }
 ```
 
-`boot()` 里补上启动顺序(★ 顺序是契约:草稿盘要在打开地图**之前**就绪,崩溃检查要在之后):
+`boot()` 里补上启动顺序(★ 顺序是接口规范:草稿盘要在打开地图**之前**就绪,崩溃检查要在之后):
 
 ```js
     installCrashFence();
@@ -5551,7 +5551,7 @@ Expected: `FAIL - draftKey 由 sanitizeName 派生(不另铸一套 id)`,随后 `
 
 把 `boot()` 原来的 `loadAtlas().then(openFromUrl)...` 那一段**整体换成上面这一串**(图片集与地图的加载次序不变,只是前面插入了草稿盘与崩溃检查)。
 
-`selfTest()` 里补三条(人眼验收要能一行看到它们):
+`selfTest()` 里补三条(人工视觉核验要能一行看到它们):
 
 ```js
       check('localStorage 可用', (function () {
@@ -5586,7 +5586,7 @@ cd level_editor && node editor_smoke.js && node server_smoke.js
 
 Expected: `EDITOR SMOKE OK` / `SERVER SMOKE OK`,退出码 0。
 
-- [ ] **Step 5: 人眼验收(草稿盘与崩溃恢复 —— ★ 必须用 DevTools)**
+- [ ] **Step 5: 人工视觉核验(草稿盘与崩溃恢复 —— ★ 必须用 DevTools)**
 
 **测试由用户自己跑**。清单(全部在浏览器里做):
 
@@ -5596,10 +5596,10 @@ Expected: `EDITOR SMOKE OK` / `SERVER SMOKE OK`,退出码 0。
 3. **崩溃恢复**:在控制台里执行 `setTimeout(function(){ throw new Error('手工制造一次崩溃') }, 0)` → 状态栏出现「页面异常…」,`crash` 槽位里**多出一条**记录;
    再刷新页面 → 应弹出「上次异常退出,已恢复到崩溃前」→ 点确定 → 画布上是崩溃前那张图;
 4. **配额失败要说话**:DevTools → Application → Storage 里把 IndexedDB 设为被阻止(或用一个隐私窗口试)→ 状态栏应出现「草稿盘不可用…」或「草稿盘写入失败…」,**不是静默**;
-5. **UI 小状态**:切到「背景层」、关掉「子格」、把缩放滚到某一个值 → **等 1 秒**(落盘是 500ms 节流)→ 刷新页面 → 图层/开关/缩放**都还在**(从 localStorage 恢复;`applyUiState()` 在 `setMap` 之后才恢复缩放,所以不会被 fit 覆盖);
+5. **UI 小状态**:切到「背景层」、关掉「子格」、把缩放滚到某一个值 → **等 1 秒**(写入磁盘是 500ms 节流)→ 刷新页面 → 图层/开关/缩放**都还在**(从 localStorage 恢复;`applyUiState()` 在 `setMap` 之后才恢复缩放,所以不会被 fit 覆盖);
 6. 把 `Editor.uiStateDefaults()` 与 `Editor.readUiState(window.localStorage)` 的结果贴回报告(后者应体现第 5 步的选择)。
 
-Expected:6 条全部符合。★ 第 3 条是闸 4 的**唯一**端到端验证 —— 它在 node 里验不了(没有 IndexedDB),所以要人贴回结果。
+Expected:6 条全部符合。★ 第 3 条是规则 4 的**唯一**端到端验证 —— 它在 node 里验不了(没有 IndexedDB),所以要人贴回结果。
 
 - [ ] **Step 6: 提交**
 
@@ -5629,7 +5629,7 @@ EOF
 
 **Interfaces:**
 - Consumes:Task 1–9 的全部产物
-- Produces:无新代码 —— 本 Task 的交付物是"文档与实际一致"与"六套冒烟全绿"的证据
+- Produces:无新代码 —— 本 Task 的交付物是"文档与实际一致"与"六套冒烟全部通过"的证据
 
 - [ ] **Step 1: 更新 `CLAUDE.md` 的编辑器小节**
 
@@ -5705,7 +5705,7 @@ Expected:
 - `Math.floor` 在 `ui.js` 里 **> 1**(其中至少一处在 `Core.lineCells(` 的同一行);
 - 第三条输出 **0**(这三个文件里没有第二份 HSV 数学)。
 
-★ 这三条在 Task 5 的 `editor_smoke.js` 相位 ⑪ 里有更强的版本;这里是**给收尾的人眼看的双保险** —— 尤其第一条:它在 Task 3 从 `server_smoke` 的相位 ⑧ 被**搬走**(因为 PUT 的落点从页面挪到了 `ui.js`),搬家过程中漏掉就会变成"页面里没有断言、ui.js 里也没有"的空洞。
+★ 这三条在 Task 5 的 `editor_smoke.js` 相位 ⑪ 里有更强的版本;这里是**给收尾的人工观察的双保险** —— 尤其第一条:它在 Task 3 从 `server_smoke` 的相位 ⑧ 被**搬走**(因为 PUT 的落点从页面挪到了 `ui.js`),搬家过程中漏掉就会变成"页面里没有断言、ui.js 里也没有"的空洞。
 
 - [ ] **Step 6: 提交**
 
@@ -5725,7 +5725,7 @@ EOF
 
 ## ★ 每个 Task 的浏览器半边:人怎么验、要交什么证据
 
-node 到不了浏览器,**这不是可以省略的步骤**:计划 2a 的终审点名过"这条缺陷住在一个 node 只能 grep、没有人真机跑过的页面里,它之所以活过七轮评审正是因为这个"。所以本计划把浏览器侧拆成**每个 Task 一条清单**,证据统一是这四样:
+node 到不了浏览器,**这不是可以省略的步骤**:计划 2a 的终审明确指出过"这条缺陷住在一个 node 只能 grep、没有人真机跑过的页面里,它之所以活过七轮评审正是因为这个"。所以本计划把浏览器侧拆成**每个 Task 一条清单**,证据统一是这四样:
 
 | 证据 | 怎么给 | 用在哪 |
 |---|---|---|
@@ -5734,7 +5734,7 @@ node 到不了浏览器,**这不是可以省略的步骤**:计划 2a 的终审�
 | 画布截图 | 整窗截图 | Task 3 / 4 / 7 / 8 |
 | 数字 | `copy(JSON.stringify(Editor.app.r.stats()))` 的结果 | Task 4(帧时间与三档路径) |
 
-★ **实现者必须在报告里如实写"浏览器半边:已由人验证 / 未验证"** —— 没验就说没验,不要用"node 全绿"暗示浏览器也绿。
+★ **实现者必须在报告里如实写"浏览器半边:已由人验证 / 未验证"** —— 没验就说没验,不要用"node 全部通过"暗示浏览器也绿。
 
 ---
 
@@ -5762,13 +5762,13 @@ node 到不了浏览器,**这不是可以省略的步骤**:计划 2a 的终审�
 | **浏览器半边从未运行**(计划 2a 的唯一验收缺口) | 整页打不开、渲染全错、Worker 起不来 —— 而 node 一条断言都拦不住 | Task 3 就把真页面跑起来(计划里第 3 个 Task),并且每个浏览器 Task 都带**人眼清单 + `SELFTEST` 一行**;`SELFTEST` 里覆盖 Worker ping/往返、图集加载、画布尺寸、IndexedDB、localStorage —— 「能在浏览器里跑」由它给出**可粘贴**的判据 |
 | **③ 与 ④ 的作废耦合断掉**(审计 A2 的上一层复发) | 换贴图后整张图是色块,"有时好有时坏",不报错 | `setAtlas` 是**唯一**换图入口,同时作废两层;`attachCells` 让 `setMap` 与 ③ 绑定;`render_smoke` 相位 ③b 走**生产路径**断言两条轴(变异:去掉 `gen` 比较 → **两条红**;`setSource` 不清表是这条守卫成立的前提) |
 | ③ 的 `build` 回调只存 tile 引用 ⇒ 有人"优化"成存像素 | 一屏 15MB、缓存比工作集还小、换图后仍交出旧像素 | 计划「决定 ②」写明了理由;相位 ③b 的"换图后是新对象"断言在两种实现下都成立,**但**`DEFAULT_CELL_MAX = 8192` 与注释点明了口径 |
-| 长作业(油漆桶 / 渐变 / 全屏重建)漏了分帧 | 大图上一操作就卡几秒,"页面像死了" | 闸 2 由 `Render.createSlicer` 统一提供,并有**确定性**断言(预算 8ms、每项 1ms → 每帧 8 项、单帧 ≤ 8ms);油漆桶/渐变/建层/缩略图四条长路径都走它 |
-| `Core.lineCells` 拿到非整数坐标 | **死循环挂住整个标签页**(不是返回错值) | 所有调用点收在 `strokePoints` 与 `lineTargets` 两处,都在同一行 `Math.floor`;`editor_smoke` 相位 ⑪ 扫源码钉住"没有第二个没 floor 的调用点" |
+| 长作业(油漆桶 / 渐变 / 全屏重建)漏了分帧 | 大图上一操作就卡几秒,"页面像死了" | 规则 2 由 `Render.createSlicer` 统一提供,并有**确定性**断言(预算 8ms、每项 1ms → 每帧 8 项、单帧 ≤ 8ms);油漆桶/渐变/建层/缩略图四条长路径都走它 |
+| `Core.lineCells` 拿到非整数坐标 | **死循环挂住整个标签页**(不是返回错值) | 所有调用点收在 `strokePoints` 与 `lineTargets` 两处,都在同一行 `Math.floor`;`editor_smoke` 相位 ⑪ 扫源码断言约束"没有第二个没 floor 的调用点" |
 | 尺寸/纹理输入没有上限 | 输 99999 分配巨图卡死(A8 原样复发) | `createEmptyMap` 是唯一的造图入口(内部 `Core.clampMapSize`);`clampTexture` 同时躲开 0 与越界;相位 ⑪ 断言 `Core.createMap(` 在 `ui.js` 里**只出现一次** |
 | v3 文本被一次 Ctrl+S **转成 v4**(不可逆) | 仓库里两张真图被改格式,而 v3 原文只在 git 里;**且游戏侧今天读不了 v4**(实测 v4 → `map_size (3,0)`、0 行)⇒ **等于把好地图换成游戏打不开的** | 决定 ⑤:源是 v3/旧字母格式时首次保存弹一次确认(★ 文案里**没有**"游戏读不了"这句)。★★ **本行原写的缓解「人眼清单里明确'用副本试'」经 2026-09-22 实测判定**不安全** —— 副本只能落在 `maps/` 里,而 `_random_cyrm` 会随机抽 `maps/` 下任意 `*.cyrm` ⇒ 进随机池。**真正的安全做法**:把服务器指到仓外目录(`editor_server.js --maps <dir>`),或先确认 `maps/` 已被 git 完整提交(可回滚)。★ **用户已于 2026-09-22 裁定并落地**:首次把 v3 图存成 v4 前**自动落一份 `<名>.v3.bak`**(原文逐字节相同);为让**冻结的** `editor_server.js` 接受这个名字,其名字校验被**授权解冻一处**(只多接受 `.v3.bak` 后缀);实测该名字**不被 `_random_cyrm` 抽到**(真引擎 50 次抽取 `bak_hits=0`,对照确实抽到 `demo.cyrm`)。确认框文案已写明「游戏现在读不了这张图」;备份**逐文件**(不再只盖会话里第一张) |
-| PUT 少了 `Content-Type` | 保存回 415,用户看到"存不进去",服务器日志只有一行 415 | `ui.js` 里显式设头(唯一一处 PUT);`editor_smoke` 相位 ⑪ 用正则钉死;人眼清单里点名"控制台不能有 415" |
+| PUT 少了 `Content-Type` | 保存回 415,用户看到"存不进去",服务器日志只有一行 415 | `ui.js` 里显式设头(唯一一处 PUT);`editor_smoke` 相位 ⑪ 用正则钉死;人眼清单里明确指出"控制台不能有 415" |
 | 撤销栈吃掉内存 | 大图上连续操作后浏览器内存爆掉 | 差量条目(不是整图快照)+ **字节预算** 64MB(不只是 200 步):整图级操作也按字节记账,超了从最老的丢 |
-| IndexedDB 配额失败 | 草稿丢失,用户以为"编辑器帮我存着呢" | 落盘失败的 catch 里**明确报状态栏**(不静默);启动时草稿盘不可用也报一次;人眼清单第 4 条专门验它 |
+| IndexedDB 配额失败 | 草稿丢失,用户以为"编辑器帮我存着呢" | 写入磁盘失败的 catch 里**明确报状态栏**(不静默);启动时草稿盘不可用也报一次;人眼清单第 4 条专门验它 |
 | 探针在搬家(2b 的重构)中失明 | 断言对着不存在的代码恒绿 | 相位 ①b / ⑧ 是**被教会**新真值(方向反转 + 只判页面结构)而不是删掉;纪律断言搬进 `editor_smoke` 相位 ⑪ 并**加严**(扫源码而不是扫页面文本);Task 10 Step 5 再给人眼一遍 grep 双保险 |
 | 缩略图构建在大图上慢 | 打开大图时"页面像卡了一下" | 缩略图**总是**经分帧器建(每 8 行一个任务);400×300 格时自动降到 1px/子格(30MB → 7.7MB);`thumbScale` 有断言 |
-| 双模块同心:`Render.mount` 里 `attachCells` 被后人删掉 | `setAtlas` 不再作废 `mount` 的 ③ ⇒ A2 复发 | 相位 ③b 从**模块侧**钉住"attach 之后 setAtlas 会让 ③ 的代际 +1、陈旧条目全判未命中";`setMap` 里那一行有注释点名不许删 |
+| 双模块同心:`Render.mount` 里 `attachCells` 被后人删掉 | `setAtlas` 不再作废 `mount` 的 ③ ⇒ A2 复发 | 相位 ③b 从**模块侧**断言约束"attach 之后 setAtlas 会让 ③ 的代际 +1、陈旧条目全判未命中";`setMap` 里那一行有注释明确指出不许删 |

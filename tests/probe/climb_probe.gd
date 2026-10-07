@@ -1,14 +1,15 @@
 extends SceneTree
 
-# 攀爬诊断:把真实玩家放到 demo 地图的梯子上,模拟按上,追踪它停在哪、能否到顶。
-# 用法:godot --headless --path . -s res://tests/probe/climb_probe.gd
+# 角色梯子攀爬逻辑探针：
+# 在实际地图梯子处生成玩家实体并模拟向上移动输入，验证角色移动轨迹、卡墙检测及是否能正常登顶。
+# 运行方式："$GODOT" --headless --path . -s res://tests/probe/climb_probe.gd
 
 func _initialize() -> void:
 	TileDefs.load_defs()
 	var grid: Array[Array] = MazeGenerator.load_map_file()
 	MazeGenerator.current_grid = grid
 
-	# 真实墙体碰撞(验证 78px 宽碰撞箱爬 64px 梯子会不会卡墙)
+	# 构建真实墙体碰撞（验证 78px 宽角色碰撞盒攀爬 64px 梯子时是否存在阻挡或卡顿）
 	var host := Node2D.new()
 	host.name = "PerfHost"
 	root.add_child(host)
@@ -20,7 +21,7 @@ func _initialize() -> void:
 	var p = player_scene.instantiate()
 	root.add_child(p)
 
-	# 场景:r5-r8 的梯子在 c80(贴墙 c76-79)。玩家放 r8 c80(梯子底部)。
+	# 测试场景：第 5 至 8 行梯子位于第 80 列（相邻第 76 至 79 列为墙体）。将玩家置于梯子底部（第 8 行第 80 列）。
 	p.global_position = Vector2(80 * 64 + 32, 8 * 64 + 32)
 	await physics_frame
 	print("[climb] 起点 y=", p.global_position.y, " cell=",
@@ -31,7 +32,7 @@ func _initialize() -> void:
 		await physics_frame
 		var y: float = p.global_position.y
 		if absf(y - prev_y) < 0.01 and i > 3:
-			# 卡住:连续几帧不动
+			# 检测角色停滞：若连续多帧坐标无位移则判定为停滞
 			var stuck_frames := 0
 			for j in range(10):
 				await physics_frame

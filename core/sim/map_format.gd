@@ -1,10 +1,8 @@
 class_name MapFormat
 extends RefCounted
 
-# `.cyrm` 地图**格式**层:格子值编解码(packed)+ 文件解析/序列化 + spawn 元数据。
-# - 本类**无会话状态** —— 读哪份文件、当前网格是什么,一律由调用方给(路径参数 / grid 参数)。
-#   会话级状态(选中的地图文件、current_grid)留在 MazeGenerator,那里也是生产代码的统一入口。
-# - 改这里 = 改磁盘格式;改 GridPathfinder = 改环面数学/寻路。两者不搭界。
+# .cyrm 地图文件格式解析与序列化：格子值编解码、文本地图解析及出生点元数据提取。
+# 纯静态工具类，无内部会话状态。
 
 # 地图格子值:packed = 纹理*16 + 形状掩码(0-335)。0 = 空气。
 # 形状掩码 4bit = 2×2 子格(1<<(sy*2+sx):bit0 左上/bit1 右上/bit2 左下/bit3 右下),15=全砖。
@@ -141,9 +139,9 @@ static func load_meta_lines(path: String) -> Array:
 		return v["meta_lines"]
 	return read_lines(path)
 
-# ── 地图格式(.cyrm v3/v1)──
-# v3:首行带 `# cyrm-v3` 标记,每格 4 字符 [纹理 3 位 0xx][形状hex](纹理 000=空气,001/002/...;形状 0-F)。
-# v1(旧):单字符 0-9/A(250×150),无标记 → 加载时自动 2×2 转换并 ÷2 spawn 坐标。
+# ── 地图格式定义 ──
+# v3 文本格式：首行包含 # cyrm-v3 标识，每格 4 字符 [3 位纹理编号][1 位 16 进制形状掩码]。
+# v1 早期格式：单字符网格，加载时自动降采样转换。
 const V3_MARKER: String = "# cyrm-v3"
 
 # 任一非空行以标记开头 → v3 格式;否则按旧格式(自动转换)。
@@ -204,8 +202,8 @@ static func parse_old_grid(lines: Array) -> Array[Array]:
 		row_len = row.size()
 	return grid
 
-# 旧 2×2 → 新 1 格 packed。宽高需偶数;奇数丢弃多余行列。
-# 参数用未类型化 Array(调用方可能传 `:=` 推断的类型数组,Array[Array] 会拒收 Array[int] 元素)。
+# 旧 2×2 网格转换为新 1 格压缩数据。
+# 参数使用通用 Array，避免类型推断数组在传递嵌套数组时产生类型不匹配。
 static func convert_old_grid(old: Array) -> Array[Array]:
 	var rows := old.size()
 	var cols := (old[0] as Array).size()

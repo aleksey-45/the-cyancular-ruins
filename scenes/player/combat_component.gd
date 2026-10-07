@@ -61,44 +61,41 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	if away == Vector2.ZERO:
 		away = Vector2(-float(body.get_facing()), 0.0)
 	if knockback < 0.0:
-		# 常规命中:固定击退直接覆盖(原行为)
+		# 常规受击：施加固定击退初速度
 		body.velocity.x = away.x * PlayerParams.player_hit_knockback
 		body.velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
 	else:
-		# 爆炸:设独立击退向量(叠加,不覆盖移动),随帧指数衰减
+		# 爆炸受击：设置独立击退向量，按指数衰减结算
 		knock_velocity = away * knockback
-	# 受击反馈(每次命中):画面微红一瞬间 + 小幅屏幕震动。
-	# 大伤害(>25% 最大血)原有的强震保持不变(下面 hit_ratio 分支)。
+	# 受击屏幕反馈：微红闪烁与相机震动
 	var tree := body.get_tree()
 	if tree != null:
 		var pp := tree.get_first_node_in_group("post_process")
 		if pp != null and pp.has_method("flash_hit"):
 			pp.flash_hit(clampf(float(damage) / float(max_hp) * 2.0, 0.5, 1.0))
-	# 大伤害反馈:一次扣除生命值 >25% 最大血 → 相机震动(幅度随伤害比例增强)
+	# 大伤害反馈：扣血超过 25% 时强化相机震动幅度
 	var hit_ratio := float(damage) / float(max_hp)
 	var cam: Camera2D = body.get_viewport().get_camera_2d()
 	if cam != null and cam.has_method("shake"):
 		if hit_ratio > 0.25:
 			cam.shake(PlayerParams.hit_cam_shake * (hit_ratio / 0.25), PlayerParams.hit_cam_shake_time)
 		else:
-			cam.shake(6.0, 0.15)   # 小伤害也给一点震感
+			cam.shake(6.0, 0.15)
 	hp_changed.emit(hp, max_hp)
 	if hp <= 0:
 		_downed()
 
-# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity。
-# (地面吸收向下击退冲量后再减回去会把玩家弹起,改用独立位移结算)
+# 爆炸击退位移结算：通过独立的碰撞移动结算，避免击退速度污染角色常规移动速度
 func apply_knock(delta: float) -> void:
 	body.move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 
-# 服务器权威倒地/复活(PvP 用;单人按 R 重载场景不涉及)。
+# 服务端权威倒地设置（多人模式使用）
 func force_down() -> void:
 	if not downed:
 		_downed()
 
-## 回溯专用:把倒地态置为 v(不扣除生命值/不发 went_down 的常规副作用,仅状态与动画)。
-## 供 Player.rewind_restore 使用——"倒回到倒地那一刻"要精确复原,而不是再触发一次死亡流程。
+# 时空回溯状态设置：将倒地状态恢复至快照记录，不重复触发死亡事件
 func set_downed_by_rewind(v: bool) -> void:
 	if downed == v:
 		return
@@ -119,7 +116,7 @@ func revive() -> void:
 	var animator: AnimatedSprite2D = body.animator
 	if animator != null:
 		animator.play("idle")
-	# 复位倒地变灰:_downed() 只 set_downed(true),不复位则复活后屏幕一直灰(PvP 回合复活)。
+	# 复位后处理屏幕变灰特效
 	var tree := body.get_tree()
 	if tree != null:
 		var pp := tree.get_first_node_in_group("post_process")
@@ -128,7 +125,7 @@ func revive() -> void:
 
 func _downed() -> void:
 	downed = true
-	# 不取消物理:保留当前速度/击退,尸体继续受重力/冲击(与敌人统一)
+	# 倒地状态下保持物理模拟，角色精灵倒地旋转
 	body.rotation = -PI / 2.0 * float(body.get_facing())
 	var animator: AnimatedSprite2D = body.animator
 	if animator != null:

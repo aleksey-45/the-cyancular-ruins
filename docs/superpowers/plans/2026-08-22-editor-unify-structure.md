@@ -12,7 +12,7 @@
 
 - **测试由用户跑**;本会话已授权自行测试(2026-08-22),可代跑 `node editor/smoke.js`。
 - 纯函数改动走 TDD(先红后绿);DOM/渲染改动无单测,以 smoke.js 保持绿 + 浏览器目测为准。
-- `data/enemies.json` 共享注册表 + `sync-enemies.js` 不动;Godot 侧零改动。
+- `data/enemies.json` 共享注册表 + `sync-enemies.js` 不动;Godot 侧无需修改。
 - 本计划只动 `editor/structure-editor.html`、`editor/smoke.js`。
 - 有并行会话在提交,改动及时提交、提交前 `git log` 留意外来提交(见记忆 cyr-concurrent-session)。
 
@@ -133,7 +133,7 @@ Expected: 新断言全部 `FAIL`(`serializeLibraryJSON is not a function` 或 `g
 
 并把 `return {` 块末尾加 `serializeLibraryJSON: serializeLibraryJSON, parseLibraryJSON: parseLibraryJSON, serializeMapStructure: serializeMapStructure, createEmptyStructure: createEmptyStructure`。
 
-- [ ] **Step 4: 跑 smoke.js,确认全绿**
+- [ ] **Step 4: 跑 smoke.js,确认全部通过**
 
 Run: `node editor/smoke.js`
 Expected: 新断言全 `ok`,旧断言仍 `ok`,`结果: N 通过, 0 失败`,EXIT 0。
@@ -339,7 +339,7 @@ spawn-panel 的 `hidden` 默认去掉:HTML `<section class="panel spawn-panel hi
 
 - [ ] **Step 11: 跑 smoke.js 保持绿 + 提交**
 
-Run: `node editor/smoke.js` → 全绿(本 Task 只动 UI,Core 未变,旧 `serializeLibrary` 测试仍在)。
+Run: `node editor/smoke.js` → 全部通过(本 Task 只动 UI,Core 未变,旧 `serializeLibrary` 测试仍在)。
 浏览器目测:新建结构可见边框网格;任意结构可开环面、可放 spawn;空结构不再一片虚空。
 
 ```bash
@@ -444,9 +444,9 @@ Core 删除 `parseLibrary`/`serializeLibrary`/`createEmptyMap`(return 表同步�
 
 `smoke.js`:删除引用 `serializeLibrary`/`parseLibrary` 的断言(约 74-97、139-141 行);`createEmptyMap` 断言(约 161-166 行)改为 `createEmptyStructure` 版(见 Task 1 Step 1 已加的新断言,删旧的 createEmptyMap 块)。
 
-- [ ] **Step 7: 跑 smoke.js 全绿 + 提交**
+- [ ] **Step 7: 跑 smoke.js 全部通过 + 提交**
 
-Run: `node editor/smoke.js` → 全绿(`parseLibrary`/`serializeLibrary` 相关旧断言已删,新 JSON/map 断言在)。
+Run: `node editor/smoke.js` → 全部通过(`parseLibrary`/`serializeLibrary` 相关旧断言已删,新 JSON/map 断言在)。
 浏览器目测:新建弹窗有宽高;选中结构可导出 map 格式;整库导出是 JSON;导入 JSON 或 map 文件都行。
 
 ```bash

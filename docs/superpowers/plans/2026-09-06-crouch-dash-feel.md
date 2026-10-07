@@ -15,7 +15,7 @@
 - `is_squat` 由"边沿 toggle"改为"逐帧推导"后,仍是 `capture_state` 的 `squat` 字段名,不改名。
 - 不新增网络/协议字段;`charge_duration`/`crouch_walk_speed`/`charge_air_gravity_mult` 都是实例启动时读 const,两端同参。
 - 测试约定:冒烟脚本用户自跑;实现过程用 `D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe`。
-- 完成后跑 4 个回归(enemy_logic/reconcile/twin/match)+ 新 move_feel 冒烟须全绿。
+- 完成后跑 4 个回归(enemy_logic/reconcile/twin/match)+ 新 move_feel 冒烟须全部通过。
 
 ---
 

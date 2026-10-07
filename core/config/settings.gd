@@ -1,15 +1,14 @@
 extends Node
 
-# 设置中枢(autoload):持久化 + 音频总线 + 键位重映射生效。
-# 存储走 ConfigFile(user://settings.cfg);首次运行用 InputMap 现值当默认键位。
-# 读写 API 全部带类型;改值后调 save() 落盘。实验分支 KikuchiHeinr 新增。
+# 设置中枢（Autoload 单例）：负责配置持久化、音频总线管理与键位重映射。
+# 存储基于 ConfigFile（user://settings.cfg）；首次运行使用 InputMap 当前配置作为默认键位。
 
 const SAVE_PATH := "user://settings.cfg"
 
-# 可重映射的动作(1-5 切枪槽固定,不开放重绑)。
+# 可重映射的动作（1-5 切枪槽固定，不开放重绑）
 const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q", "rewind", "haste"]
 
-# ── 音量(0-1 线性)──
+# ── 音量（0-1 线性）──
 var master_volume: float = 0.8:
 	set(v):
 		master_volume = clampf(v, 0.0, 1.0)
@@ -20,15 +19,13 @@ var sfx_volume: float = 1.0:
 		_apply_bus_volume("SFX", sfx_volume)
 
 # ── 通用 ──
-# 鼠标滚轮切枪。-  2026-09-15 改默认 true:滚轮切枪本就已实现,但默认关着 = 该功能形同虚设
-# (用户要求"添加滚轮切武器"时它其实早就在,只是没人开)。已有存档里显式存过 false 的仍读 false。
+# 鼠标滚轮切换武器（默认启用）
 var wheel_switch: bool = true
 
-# ── 单人开局选项存档(记住上次选择)──
-var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
+# ── 单人开局选项存档（记录上次选择）──
+var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位（1-6，第 6 槽为激光枪）
 
-# 选图(2026-09-26):"" = 随机(= 上游行为:进图时从 res://maps 里现挑一份,会话内固定)。
-# 单人/联机各记一条;联机的三个模式(1v1/大乱斗/3v3)共用一条"上次选的图",省得每页各存一份。
+# 地图选择路径（空字符串表示进入关卡时随机选取）
 var sp_map_path: String = ""
 var mp_map_path: String = ""
 
@@ -70,11 +67,8 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 	AudioServer.set_bus_mute(idx, linear <= 0.001)
 
 # ── 键位重映射 ──
-# 每动作支持**多个**键位(原作默认:up=W+空格、down=S+Shift),存取都保序完整往返。
-# ⚠ 与 set_binding 的组合语义:set_binding 是 erase 后只写一个事件的**单键写入** → 用户
-#   主动重绑某动作 = 把该动作改成单键(多键动作如 up = W + Space 会被静默压成单键)。
-#   这是本项目键位重绑的设计语义,不是缺陷。要显示一个动作的**全部**键位请用
-#   get_binding_names()(逐个遍历);save()/load_settings() 同样遍历全部事件,往返不丢键。
+# 单个动作支持绑定多个键位（例如 up 支持 W 与空格，down 支持 S 与下箭头）。
+# set_binding 会替换当前动作绑定的按键并保存；get_binding_names 用于展示所有已绑定键位。
 
 # 显示用:一个动作的全部键位名,如 "W / Space"
 func get_binding_names(action: String) -> String:
@@ -157,13 +151,8 @@ func load_settings() -> void:
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
-		# - 默认值必须是**真的值**而不是 null:Godot 的 ConfigFile.get_value 把 null 当作
-		#   "调用方没给默认值",键不存在时直接报错(Couldn't find ... and no default was given)。
-		#   对老存档(在某个动作被加进 REMAPPABLE_ACTIONS 之前写的)来说那个键必然不存在 ——
-		#   于是**每加一个新可重绑动作,老玩家启动就刷一屏报错**。空数组语义完全相同
-		#   (下面的 is_empty() 分支会跳过),但不会报错。
-		# 2026-09-26 用户改令:加速(haste)默认改用**鼠标右键**。旧存档若只存了键盘绑定
-		# (Ctrl 时代)一律丢弃并回落到右键;若存的是鼠标绑定则保留(玩家在设置页重绑不受影响)。
+		# 键不存在时默认返回空数组，避免旧配置因缺少字段产生警告
+		# 加速动作默认使用鼠标右键
 		var arr = cf.get_value("bindings", action, [])
 		if action == "haste":
 			var mouse_only: Array = []
@@ -175,7 +164,7 @@ func load_settings() -> void:
 				InputMap.action_erase_events(action)
 				InputMap.action_add_event(action, _make_mouse(MOUSE_BUTTON_RIGHT))
 			arr = mouse_only
-		# 迁移(2026-09-26):Shift 从 down 改拨给 rewind,老存档里 down 的 Shift 绑定必须摘掉
+		# 键位迁移：下蹲动作如果绑定了 Shift 则予以清除，避免与时空回溯操作产生冲突
 		if action == "down" and arr is Array:
 			var cleaned: Array = []
 			for item in arr:

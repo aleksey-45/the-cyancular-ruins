@@ -58,7 +58,7 @@ func _ai(delta: float) -> void:
 			_tick_back_hop()
 
 
-# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 78 行的单 match)。
+# 状态机帧逻辑更新，各状态逻辑分派至独立方法处理
 # 状态机各段的注释随各自函数走,改动某个状态时不必再在整段 match 里找它。
 
 func _tick_sleep(delta: float, dist: float) -> void:
@@ -155,8 +155,7 @@ func _is_asleep() -> bool:
 
 
 # 状态进入 → 形变事件。enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP }
-# - `_tick_chase` 里的小跳(enemy_jump_bird.gd:101-102)**刻意不挂钩** —— 它直接设 velocity、
-#   不经过 _set_state,状态虚钩接不到;不为它另加钩子(用户 2026-09-20 裁定)。那一下的
+# 追踪状态小跳直接调整速度，不经过 _set_state 状态流转。
 #   hop_jump_velocity = -750 会让空中连续项直接给出拉伸,只是没有事件那一下"脆感"。
 func _on_state_entered(s: int) -> void:
 	match s:

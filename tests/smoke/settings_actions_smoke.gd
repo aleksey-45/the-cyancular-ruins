@@ -20,7 +20,7 @@ func _const_map(path: String) -> Dictionary:
 func _initialize() -> void:
 	var st := _const_map("res://core/config/settings.gd")
 	var sm := _const_map("res://scenes/settings_menu.gd")
-	# - 空载守卫:读不到就 quit,免得在空表上把"零条"当成"全过"
+	# - 空载防御性校验:读不到就 quit,免得在空表上把"零条"当成"全部断言通过"
 	if st.is_empty() or sm.is_empty():
 		print("SETTINGS ACTIONS FAILED: 读不到 settings.gd / settings_menu.gd 的常量表")
 		quit(1)

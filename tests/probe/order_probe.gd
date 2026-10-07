@@ -31,7 +31,7 @@ func _initialize() -> void:
 	probe.tree = self
 	probe._f = 0
 	root.add_child(probe)
-	# 注入一个空格按下事件,等下一帧输入阶段派发
+	# 模拟注入空格键按下事件，供下一帧输入阶段进行事件派发
 	var ev := InputEventKey.new()
 	ev.keycode = KEY_SPACE
 	ev.pressed = true

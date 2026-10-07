@@ -162,7 +162,7 @@ def query_crash_events(start_dt, end_dt, names=None):
     names = names or EXE_PREFIXES
     tmp_ps = os.path.join(tempfile.gettempdir(), "clw_query.ps1")
     tmp_out = os.path.join(tempfile.gettempdir(), "clw_query.json")
-    # 必须 utf-8-sig:PowerShell 5.1 读无 BOM 的 .ps1 会按系统码页(GBK)解析,中文正则会失效
+    # 必须使用 utf-8-sig：PowerShell 5.1 读取无 BOM 的脚本文件时会按系统 GBK 码页解析，导致中文正则匹配失效
     Path(tmp_ps).write_text(_PS_QUERY, encoding="utf-8-sig")
     if os.path.exists(tmp_out):
         os.remove(tmp_out)

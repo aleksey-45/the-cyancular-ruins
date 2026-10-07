@@ -2,8 +2,8 @@ extends Node
 
 # 乌鸫精英结晶探针(场景级):
 #   ① 乌鸫实例带 elite 标(免疫回溯/加速与玩家同步的依据)
-#   ② 击杀 → 结晶 FX 生成(grain_crystal 组)
-#   ③ 吸收 → 账户 +300 + 怀表颤抖
+#   ② 击杀 -> 结晶 FX 生成(grain_crystal 组)
+#   ③ 吸收 -> 账户 +300 + 怀表颤抖
 # 用法:godot --headless --path . res://tests/probe/grain_crystal_probe.tscn
 
 var _fails: Array[String] = []
@@ -41,7 +41,7 @@ func _run() -> void:
 	if not bird.has_meta("elite"):
 		_fail("乌鸫实例缺 elite 标")
 
-	# ② 击杀 → 结晶 FX 应在数帧内出现
+	# ② 击杀 -> 结晶 FX 应在数帧内出现
 	var bal0: int = int(acc.balance)
 	bird.call("hurt", 9999, Vector2.RIGHT, 0.0)
 	await _wait_ms(120)

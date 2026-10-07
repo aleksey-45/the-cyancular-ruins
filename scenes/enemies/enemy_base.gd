@@ -51,7 +51,7 @@ var _state_timer: float = 0.0
 var _anim: AnimatedSprite2D
 # 补间形变(squash & stretch)。纯表现层,不进任何网络同步、不碰碰撞箱。
 var squash: SquashStretch = null
-# move_and_slide() **之前**的 velocity.y,与帧首 is_on_floor() 配对(见 spec §2.4)。
+# 执行 move_and_slide 前记录的垂直速度，用于落地形变判定
 var _pre_move_vy: float = 0.0
 
 # ── 行为钩子(子类覆写)──
@@ -69,14 +69,10 @@ func _ready() -> void:
 	add_to_group("enemies")
 	_setup_contact_area()
 	call_deferred("add_child", WaterFx.new())
-	# 补间形变。-  用 $AnimatedSprite2D 而不是 _anim:子类 `_ready` 是**先** super._ready()
-	#   后才 `_anim = $AnimatedSprite2D`(见 enemy_jump_bird.gd:15/18),此处 _anim 还是 null。
-	#   三个敌人的 .tscn 里该节点都叫 AnimatedSprite2D。
+	# 初始化挤压拉伸形变组件
 	squash = SquashStretch.new()
 	add_child(squash)
-	# - 查不到 animator 就**当场报错**,不让它静默降级:组件侧容忍 null animator(`_apply()` 直接
-	#   return),于是这条查表失败的表现是"这只鸟永远不变形",一个字都不打 —— 那种沉默正是
-	#   本特性最贵的失败形态。三个 .tscn 现在都叫 AnimatedSprite2D,改名/漏改名必须响。
+	# 校验动画节点有效性
 	var anim := get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
 	if anim == null:
 		push_error("EnemyBase: 找不到 AnimatedSprite2D 节点,补间形变将静默失效(节点名 = %s)"
@@ -113,27 +109,10 @@ func _physics_process(delta: float) -> void:
 	# 回溯中普通敌人整帧跳过(位置由回放器摆;接触伤害/白闪/AI 全不结算);精英照常
 	if TimeField.current != null and TimeField.current.is_rewinding() and not has_meta("elite"):
 		return
-	# squash 放在最首行(_is_far_sleeping 提前返回之前):睡眠时也走 tick → 回中性,
-	# 正是想要的行为;否则睡眠中的鸟会卡在最后一个形变值上。
-	# - 睡眠那一支**归零 `_pre_move_vy` 本身**(就在下面的 early return 里),不是"临时喂个 0":
-	#   ① 睡眠**期间**:那一支不跑 move_and_slide  ->  缓存永不刷新,是"上一次非睡眠帧"的陈旧值
-	#      (可达路径:垂直击退把鸟打飞、落地那一帧的落速被写进去;水平击退会被地面摩擦自愈,
-	#      垂直不会) ->  落地项每帧重触发,而指数恢复每帧只回 `1 - exp(-9/60) ≈ 14%`
-	#       ->  定点 ≈ -6.19k(任何 k ≳ 0.16 都被钳到 -1) ->  睡着的远鸟**永久**保持 (1.10, 0.90)。
-	#   ② -  **醒来首帧**(2026-09-20 审查补)才是那个真正的洞:`_is_far_sleeping()` 那时已是 false
-	#       ->  走的是下面**醒着**的那条路,拿到 "`is_on_floor()==true` + 把它**送进睡眠的那次落速**"
-	#      (落地帧把落速写进缓存,而它此后一直陈旧) ->  同一个满幅落地项在**醒来那一刻**重触发,
-	#      `_impulse` 压向 -1.0。后果:鸟按**几秒前**那次落地满幅挤压;更糟的是 TAKE_OFF 的
-	#      `+0.80` 加进已饱和的负值  ->  **起飞拉伸被抵消甚至反向成压扁**(本特性的招牌动作没了)。
-	#       ->  只把"传入 tick 的值"改 0 是**半个修法**(漏掉醒来首帧),必须**清零缓存本身**。
-	#   睡眠态 vel_y 本就该是 0(地面不施重力),这个 0 是事实不是特判。
-	# - 玩家侧倒地状态提前退出是同一契约的另一处落点,形态**相同**(那边也是 `_pre_move_vy = 0.0`,
-	#   见 player.gd / spec §2.4):两处的契约都不是"缓存里存的是什么",而是 **tick() 消费什么**
-	#   —— 它只认"地面真正吸收掉的那个下坠速度",缓存陈旧就必须清。故两个宿主读法一致。
+	# 睡眠状态重置垂直速度缓存，避免苏醒首帧因旧速度缓存触发意外挤压形变
 	var sleeping := _is_far_sleeping()
 	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
 	if sleeping:
-		# 醒来首帧那一半的解法(见上):清的是**缓存**,不是这一次调用的实参。
 		_pre_move_vy = 0.0
 		_ai(delta)
 		_wrap()
@@ -165,14 +144,7 @@ func _physics_process(delta: float) -> void:
 		_death_timer -= delta
 		if _death_timer <= 0.0:
 			if _rewind_hold:
-				# 保留尸体:隐藏 + 停物理,等回放复活;过期由 WorldRewind.expire_corpses 清理
-				# - 隐藏的同时**必须摘掉碰撞层**(2026-10-03 修):玩家 mask=5 里含敌人层(值 4),
-				#   故一具看不见却仍在层 4 的实体就是玩家眼里的**虚空碰撞箱** —— 撞在空气上。
-				#   改**碰撞层**而不是禁用碰撞多边形:飞鸟的 _apply_flight_collision 自己管
-				#   站/飞两个多边形的 disabled,基类插手会和它互相冲突;层是纯"谁能撞我"的量,
-				#   与多边形启停正交。还原走 _rw_held_layer(见 rewind_restore 的复活分支)。
-				# - 时机:白闪那 0.5s **不摘**(那时尸体还看得见,挡人是合理的);
-				#   摘只发生在这条"隐藏待复活"的分支里。
+				# 保留尸体供回溯复活；隐藏时移除碰撞层避免成为隐形空气墙
 				visible = false
 				set_physics_process(false)
 				_rw_held_layer = collision_layer
@@ -191,18 +163,7 @@ func _physics_process(delta: float) -> void:
 	# (地面吸收向下击退冲量后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
-	# - 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
-	# - 敌人侧**不做任何过滤**,就是裸值 —— 这是实测后的裁定(spec §2.4):
-	#   ⚠ **这些读数的出处**:下面那几个数(`239/1350` 帧、`13 次真实落水挤压`、`1.0861`)
-	#   是 2026-09-20 由一个**临时探针**量出来的,该探针**已删除、此后从未重测** ——
-	#   本注释是它们**唯一**的留存处,别把它们当"随时可以复跑出来的当前事实"引用。
-	#   裁定本身不依赖重测(方向不随几何变化:过滤净有害),故按原样保留。
-	#   `_in_water ∧ is_on_floor()` 在敌人身上**确实会重叠**(239/1350 帧;玩家侧是 0,
-	#   因为敌人的身体停在池底上方 0.02~0.18px,探针落进水格而玩家落在支撑格),
-	#   但过滤想防的幽灵**结构上不可达**(浮力钳在 -260/+160,下沉侧 160 < 阈值 220),
-	#   而过滤会**忽略 13 次有效落水挤压变形**(有过滤 max scale.x=1.0000,去掉后 1.0861;
-	#   挤压方向是 x>1  ->  看的是**最大** scale.x)。
-	#    ->  净有害。敌人不爬梯,没有玩家侧那条属于异常违规可类比。
+	# 记录移动前的垂直速度供落地形变计算
 	_pre_move_vy = velocity.y
 	# 时间场:水平运动走速度域(move_and_slide 用引擎 delta,缩放 delta 不改变位移);
 	# 计时器/动画/重力仍走上面的 delta 缩放。精英与玩家同步,普通敌放慢。
@@ -244,14 +205,7 @@ func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: 
 		velocity += knock_dir.normalized() * ks
 
 
-# 当前是否处于 SLEEP 态。
-#
-# - **子类必须覆写**(2026-09-15 阶段 5.8 显式化的契约):本方法原先在 `_is_far_sleeping()`
-#   里被硬编码成 `state != 0`,这**隐含**了「所有子类的 `State.SLEEP` 都是枚举第一个」。
-#   那是一条没人写下来、也没人守的约定 —— 新敌人只要把 SLEEP 排在第二位,它的"远处睡眠优化"
-#   就会**静默失效**(该睡的敌人一直在跑 AI,没有任何报错)。
-#   现在每个子类自己写 `state == State.SLEEP`,加新敌人时照抄一行即可;默认实现保留
-#   `state == 0` 只是保底处理,别依赖它。
+# 判断当前敌人是否处于休眠状态（由各子类根据自身枚举具体实现）
 func _is_asleep() -> bool:
 	return state == 0
 
@@ -309,8 +263,6 @@ func _begin_death() -> void:
 		return
 	is_dead = true
 	died.emit()
-	# (单机击杀播报已于 2026-09-17 删除 —— 这里原先调 CombatFeedback.notify_enemy_killed,
-	#  那是它唯一的触发点。PvP 的播报走 NetBus.kill_event,不经过本函数。)
 	_death_timer = EnemyParams.shared.death_flash_time
 	# 录制期保留尸体:不 queue_free,白闪结束后隐藏待复活(精英除外——杀了就是杀了)
 	if WorldRewind.hold_corpses and not has_meta("elite"):
@@ -330,9 +282,7 @@ func _on_death() -> void:
 # 冲锋冲击力:沿远离本体的方向猛推玩家(覆盖 take_hit 的普通击退,冲锋更狠)。
 # 原本 FlyBird / BlackBird 各抄一份(除常量外逐字相同),收为基类单一来源。
 # away 为 0(与玩家完全重合)时回退:朝玩家背向推,拿不到 get_facing 就用 LEFT。
-# - 名字刻意不叫 _apply_charge_impact:两个子类各自持有同名但**两参**的包装方法,而
-#   GDScript 不允许子类以不同签名覆写父类方法(会 Parse Error,且整个子类脚本加载失败
-#   → `-s` 冒烟里 _initialize 抛错、永不 quit = 挂死)。故基类另起名,子类包装转调这里。
+# 冲撞攻击判定基础实现
 func _smash_player(p: Node, impact: float, impact_up: float) -> void:
 	var p2 := p as Node2D
 	if p2 == null:
@@ -369,8 +319,7 @@ func _set_state(s: int) -> void:
 	_on_state_entered(s)
 
 
-# 状态进入虚钩:基类默认空实现。三个子类各有自己的 `enum State`(JumpBird 根本没有
-# TAKE_OFF),故基类**不能**硬编码状态名 —— 只能往下派发,由子类映射。
+# 状态进入虚方法，供子类覆写以处理特定状态进入时的表现与音效
 func _on_state_entered(_s: int) -> void:
 	pass
 
@@ -490,7 +439,7 @@ func _wrap() -> void:
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
-## 回溯还原(WorldRewind 调用):把本敌置回快照帧的状态(含**复活**)。
+# 回溯状态恢复（WorldRewind 调用）：将敌人重置为快照帧的状态（包含存活与复活处理）
 func rewind_restore(d: Dictionary) -> void:
 	var was_dead := is_dead
 	global_position = d["p"]
@@ -502,8 +451,7 @@ func rewind_restore(d: Dictionary) -> void:
 		# 复活:重新入世(可见 + 物理 + 取消保留;白闪与计时清零)
 		visible = true
 		set_physics_process(true)
-		# - 还原隐藏时摘掉的碰撞层(见 _physics_process 的保留尸体分支)。必须在**复活这一支**
-		#   还原:漏了的话复活的怪看不见地穿人 —— 与"虚空碰撞箱"是同一个量、反方向。
+		# 恢复隐藏时摘掉的碰撞层
 		if _rw_held_layer >= 0:
 			collision_layer = _rw_held_layer
 			_rw_held_layer = -1

@@ -33,7 +33,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 **四条 C2 不变量**（迁移的验收线，1v1 已有、大乱斗必须一并满足）：
 
 1. 服务器每物理 tick 每 role 恰好消费 1 个 FIFO 输入包（`q.pop_front()`）；
-2. 快照广播在**消费本帧输入之前**，载荷带 `ack_seq` **与**权威整态 `c2 = capture_state()`；
+2. 快照广播在**消费本帧输入之前**，数据包带 `ack_seq` **与**权威整态 `c2 = capture_state()`；
 3. COUNTDOWN 冻结 = 清空队列 **且** `reset_state()`（连 held/axis 一起清）；
 4. `weapon_base` 的帧逻辑由**物理 tick** 驱动（`tick(delta)`），不是 idle `_process`。
 
@@ -66,7 +66,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 
 **为什么量它**：设计初稿把「N 人 C2 的回滚频率」列为 ★★★ 风险，但那个判断**一直是定性的** —— `replica_ghost_probe` 的「0 回滚」是固定场景（预测端被一个**静止**幽灵体挡住），真实缠斗里两边都在动。「每具身体贡献多少回滚」这个单价从来没量过。
 
-**怎么量**：权威侧（A + N−1 具真身，层 AUTH 互相碰撞）与客户端侧（P + N−1 个副本幽灵体，P 认层 GHOST）活在同一个物理空间里，靠层分开；对手按相位错开的脚本持续贴身推挤；控制器按 `DELAY=8` tick 喂权威整态。地图宽 200 格（12800px），整趟不跨接缝。
+**怎么量**：服务端（A + N−1 具真实实体，层 AUTH 互相碰撞）与客户端侧（P + N−1 个副本幽灵体，P 认层 GHOST）活在同一个物理空间里，靠层分开；对手按相位错开的脚本持续贴身推挤；控制器按 `DELAY=8` tick 喂权威整态。地图宽 200 格（12800px），整趟不跨接缝。
 
 **健全性对照（决定性的那条）**：对手**站着不动**时回滚 **恰好 0**、分歧 0.23px（N=2 与 N=8 都是，两次跑一致）—— 与 `replica_ghost_probe` 的 0 回滚吻合，**证明探针量到的是真信号**。
 
@@ -139,7 +139,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 - ★ 三档的接触期偏差**完全一致**（中位 1.6、p95 25）说明：稳态偏差由接触几何决定，
   **不由容差决定**；容差只决定"要不要为这点偏差每帧回滚一次"。
 
-⇒ 反过来证明：**1px 容差下那每帧一次的回滚本来就没买到精度**（它从 8 tick 前的权威态重放，
+⇒ 反过来证明：**1px 容差下那每帧一次的回滚本来就没买到精度**（它从 8 tick 前的服务端权威状态重放，
 落点与不重放几乎一致）→ 放宽容差近似**纯赚**。
 
 **未测的量（不得当成已知）**：**每次回放每步的碰撞成本随 N 涨**（重放要 `move_and_slide()` 扫 N−1 个幽灵体）—— 结构上成立、本探针**没有测**。这是「N 相关」的真实所在，与上面「频率与 N 无关」并不矛盾。
@@ -152,9 +152,9 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 |---|---|---|
 | **A. 服务器渲染一族** | `server_rendered` / `set_server_rendered` / `_update_server_rendered` / `apply_server_snapshot` / `_server_target` / `_server_have_target` / `_server_pose` / `_server_facing` / `SERVER_INTERP_RATE` / `_physics_process` 顶部分支 | `scenes/player/player.gd:125-136, 149-163, 522+` |
 | **B. 1v1 双路开关** | `LOCAL_PREDICTION_ENABLED` 常量、`_apply_local_state`、`_ready` 与 `_on_snapshot` 的 if/else 分叉 | `scenes/pvp_client.gd:15, 68-76, 237-245, 261-266` |
-| **C. 开局三载荷跨场景交接** ✅**已落地**(`b0653f4`+本批) | `pending_peer_info/hues/options` + `clear_pending_payloads()` + 两个 `_consume_pending_payloads()` + 两处生产方缓存 | `core/pvp_session.gd:16-32`、`scenes/pvp_client.gd:144,150-157`、`scenes/royale_game.gd:91,96-103`、`scenes/matchmaking.gd:89-92,432,528-537`、`scenes/royale_lobby.gd:130-133,451-458,574` |
+| **C. 开局三数据包跨场景交接** ✅**已落地**(`b0653f4`+本批) | `pending_peer_info/hues/options` + `clear_pending_payloads()` + 两个 `_consume_pending_payloads()` + 两处生产方缓存 | `core/pvp_session.gd:16-32`、`scenes/pvp_client.gd:144,150-157`、`scenes/royale_game.gd:91,96-103`、`scenes/matchmaking.gd:89-92,432,528-537`、`scenes/royale_lobby.gd:130-133,451-458,574` |
 | **D. KH 遗留重复 RPC** | `NetBusExt.local_beam_fired` / `beam_fired`（全仓零消费者，只有 `kh_l1_probe` 提到） | `core/net_bus_ext.gd:39-43` |
-| **E. 房间拆除散在五处** ✅**已落地**(批次 2,`9834bef`) | 收口成单一 `_teardown_room(room, mode)`;三种形态 DELAYED/KILL/ABORT | `server/room_manager.gd:196-222, 338-349, 682-702, 393, 479, 559` |
+| **E. 房间拆除散在五处** ✅**已落地**(批次 2,`9834bef`) | 统一收拢成单一 `_teardown_room(room, mode)`;三种形态 DELAYED/KILL/ABORT | `server/room_manager.gd:196-222, 338-349, 682-702, 393, 479, 559` |
 | **F. role 用人数兼上界** ✅**已落地**(批次 2,`e07ecb7`) | 改 `--roles 1,3` 显式集合;`_royale_role_bound`/`_role_bound`/`_expected_players` 全删 | `server/server_main.gd:43-54, 209-214`、`server/room_manager.gd:493-516, 521-541` |
 | **G. 出生点算两遍** ✅**已落地**(`b2b8eea`) | `start_on` 算一份下发、`_init` 又 `plan_spawns` 一份（shuffle 随机 → 两份不同），广播那份从不生效 | 守卫 `tests/royale_spawn_plan_probe.tscn` |
 | **H. 只服务旧路径的断言与边界说明** | `kh_l6_probe` #1/#2/#5/#6（开关存在性）、`kh_l5_probe` check1（`_broadcast_snapshot` 内的 `"ack_seq"`/`"c2"`）、`royale_soak_probe.gd:21-23` 的「大乱斗输入包不带 seq」边界 | `tests/` |
@@ -183,7 +183,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 - 删 `set_server_rendered(true)`；加 `_rollback = PredictionRollback.new()` + `bind(_local)`。
 - `_physics_process` 在玩家步进前：`note_post_step(prev_seq, capture_state())` → `reconcile()`；包尾 `note_input(seq, pkt)`。
 - 输入包加单调 `"seq"`（现在没有 → `ack_seq` 恒 0 → 回滚锚点全失）。
-- **补上现在缺的输入锁收口**：`royale_game` 建了 `PauseMenu` 却没接 `toggled`，服务器渲染下被掩盖；接 C2 后不补 = 「开着菜单还能跑」。改成与 `pvp_client` 同款的 `_refresh_input_lock()` 单收口（`_round_locked or _menu_open`）。
+- **补上现在缺的输入锁统一收拢**：`royale_game` 建了 `PauseMenu` 却没接 `toggled`，服务器渲染下被掩盖；接 C2 后不补 = 「开着菜单还能跑」。改成与 `pvp_client` 同款的 `_refresh_input_lock()` 单统一收拢（`_round_locked or _menu_open`）。
 - 顺手核实（**结论：不是缺口，无需补**）：`mag_ammo` / `_reloading` 不入 `capture_state` —— 但 `reload_active()` 在 PvP 两端都返回 false（客户端靠 `level_0.pvp_mode`、服务器靠 `input_is_network()`，`weapon_base.gd:104-118`），故 PvP 下 `mag_ammo` 恒为 `mag_size`、`_reloading` 恒 false，**不构成分歧源**。此结论对大乱斗与 1v1 同款成立。
 
 ### 4.4 幽灵体（**按 §2.1 实测重定**）
@@ -207,7 +207,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 2. 它**随容差变** —— 1px → 2px 就把 ~37 次/秒 砍到 ~1.5~2 次/秒（−95%），
    而**接触期偏差中位/p95 一行不变**（1.6 / 25~30 px，与 1px 容差逐项相同）。
 
-⇒ 1px 容差下那每帧一次的回滚**本来就没买到精度**（它从 8 tick 前的权威态重放，落点与不重放
+⇒ 1px 容差下那每帧一次的回滚**本来就没买到精度**（它从 8 tick 前的服务端权威状态重放，落点与不重放
 几乎一致）→ 放宽容差是**近似纯赚**。
 
 **做法**：`PredictionRollback.pos_tol`（默认 1.0 = 与历史行为逐帧一致），由接入方设。
@@ -238,7 +238,7 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 - 注：`weapon_base` 的鼠标→世界换算走 `get_base_global_position()`，用的是相机**实际**位置 → 限速后准星与画面仍自洽。
 - **附带发现（文档漂移 + 死参数）**：`PlayerParams` 有 `cam_lookahead_x/y`、`cam_smooth_x/y`、`cam_deadzone`（`:44-49`），CLAUDE.md 也写着「相机带前瞻/死区」，但 `camera_2d.gd` **一个都没用**。本批只登记与修正文档，不顺手接线（那是手感改动，需另行裁定）。
 
-### 4.6 role 契约与房间拆除收口
+### 4.6 role 接口规范与房间拆除统一收拢
 
 - **role**：大厅↔worker 传**显式 role 集合**，不再用人数兼上界（§3F）。
 - **拆除**：抽 `_teardown_room(room)`（杀 worker + 延迟归还端口 + 通知/踢人 + 从注册表移除），五条路径全部调它（§3E）。
@@ -247,15 +247,15 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 
 ## 5. 批次、验收与反证
 
-**顺序：0 断言 → 1 契约与拆除 → 2 进场拉取 → 3 拆包 → 4 C2 + 删除旧方案 → 5 收尾**
+**顺序：0 断言 → 1 接口规范与拆除 → 2 进场拉取 → 3 拆包 → 4 C2 + 删除旧方案 → 5 收尾**
 
-把**拆包排在 C2 之前**的理由：拆出的世界包本来就要喂副本，且服务器渲染模式下本地玩家的渲染字段也在世界包里 → **不产生任何一次性接线**，批次 4 只需把 own 包从「忽略」改成「喂 rollback」。反过来先做 C2 则要等带宽墙拆掉才敢上 N=8。契约/拆除放最前，因为它独立、低风险，删掉的正是旧方案构件。
+把**拆包排在 C2 之前**的理由：拆出的世界包本来就要喂副本，且服务器渲染模式下本地玩家的渲染字段也在世界包里 → **不产生任何一次性接线**，批次 4 只需把 own 包从「忽略」改成「喂 rollback」。反过来先做 C2 则要等带宽墙拆掉才敢上 N=8。接口规范/拆除放最前，因为它独立、低风险，删掉的正是旧方案构件。
 
 | 批 | 内容 | 验收 | 反证（必须实跑） |
 |---|---|---|---|
 | **0** | 断言先行：C2 四不变量扩到大乱斗；`snapshot_size_probe`（带宽数字守卫）+ `brawl_rollback_probe`（缠斗斜率 + 两条对照） | 探针绿 | `q.pop_front()`→`pop_back()`、快照挪到消费之后 → 必须红 |
-| **1** | **§4.4b 容差 + 环面 `_close_enough`（+ 接线 + 源码守卫）** + **§4.4 倒地幽灵体旋转修复**。★ 不是在为大乱斗做：§2.1 证明这个缺陷**今天就在 1v1 的 C2 路径里**，先修它 = 让大乱斗接进来时继承一个已修好的核 | `brawl_rollback_probe` 容差档频率显著下降，且**两条对照必须保持**（对手不动 = 0、摘掉幽灵体仍爆炸）；`pvp_reconcile_smoke`/`pvp_twin_smoke`/`replica_ghost_probe` 全绿 | 把 `_close_enough` 改回裸 `distance_to` → 环面那条必须红；把 `map_px` 接线删掉 → 源码守卫必须红 |
-| **2** ✅ | §4.6 role 集合 + `_teardown_room` 收口 | 落地于 `e07ecb7` + `9834bef`；守卫见下 | 反证已实跑 |
+| **1** | **§4.4b 容差 + 环面 `_close_enough`（+ 接线 + 源码守卫）** + **§4.4 倒地幽灵体旋转修复**。★ 不是在为大乱斗做：§2.1 证明这个缺陷**今天就在 1v1 的 C2 路径里**，先修它 = 让大乱斗接进来时继承一个已修好的核 | `brawl_rollback_probe` 容差档频率显著下降，且**两条对照必须保持**（对手不动 = 0、摘掉幽灵体仍爆炸）；`pvp_reconcile_smoke`/`pvp_twin_smoke`/`replica_ghost_probe` 全部通过 | 把 `_close_enough` 改回裸 `distance_to` → 环面那条必须红；把 `map_px` 接线删掉 → 源码守卫必须红 |
+| **2** ✅ | §4.6 role 集合 + `_teardown_room` 统一收拢 | 落地于 `e07ecb7` + `9834bef`；守卫见下 | 反证已实跑 |
 | **3** ✅ | §4.2 进场拉取，删 §3C（新增 §3G 就地做了 `b2b8eea`） | 计划 `docs/superpowers/plans/2026-09-12-royale-match-sync.md` —— 守卫 `royale_bound_probe --payload` 需**重做**（原鉴别力来自被删的交接，改为探针自任服务器应答 sync） | sync 应答摘掉 → 必须红 |
 | **4** ✅ | §4.1 拆两条包（两端） | 三个 PvP 冒烟 + `royale_probe`/`royale_soak` 绿；带宽读数下降；`channel 0` 次数不更差 | 世界包仍逐 peer `rpc_id` → 带宽读数不降 |
 | **5** ✅ | §4.3 大乱斗接 C2 + **删 §3A/§3B**（§4.5 L4 **未做**，理由见 §8） | 落地于 `1d1cb05`（接 C2）+ `1095727`（删旧路径）+ `339a329`（kh_l6 判据重写）；守卫 = `tests/royale_c2_probe`（真链路） | 四条**全部实跑**：拿掉 `reconcile()` → `rollback=0` + 未收敛 **3623px**；去掉 `seq` → 同形（c2 仍 OK ⇒ 鉴别力是针对性）；加回 `set_server_rendered` → A① 红；消费 `alive` → A② 红。读数见 §10 |
@@ -270,9 +270,9 @@ main_menu → 大厅配对 → worker 子进程 → claim_role
 | 风险 | 等级 | 处置 |
 |---|---|---|
 | **贴身缠斗的回滚频率**（**已实测定案，非「N 人」风险**：N=2 就已存在，~37 次/秒、修正量中位 2px） | ★★ | 见 §2.1/§7：真杠杆 = **位置容差**（2px 砍 ~95%，零实测代价）。两条候选杠杆（回放倒回、外推）已证伪留档 |
-| 拆包后真实带宽/丢包与测算不符（探针量的是**载荷**，不含 ENet 分片头） | ★★ | 批次 3 后用 `royale_soak_probe` 实测对照 |
+| 拆包后真实带宽/丢包与测算不符（探针量的是**数据包**，不含 ENet 分片头） | ★★ | 批次 3 后用 `royale_soak_probe` 实测对照 |
 | **探针假绿**（本仓已被抓过四次） | ★★ | 每条新断言都要回答「什么错误改动仍会通过」并做反证 |
-| 1v1 被带坏 | ★★ | 三个 PvP 冒烟是硬门，绿变红即停 |
+| 1v1 被带坏 | ★★ | 三个 PvP 冒烟是硬性条件，绿报错失败即停 |
 | 删除面大 → 遗漏引用（如某处仍调 `set_server_rendered`） | ★ | 全仓 grep + headless boot 0 错误 + `--quit-after` 首跑 |
 
 ### §7 ★★★ 风险的展开与处置（**已由 §2.1 实测重写**）

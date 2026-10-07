@@ -1,19 +1,15 @@
 class_name PredictionRollback
 extends RefCounted
-# C2 rollback 控制器(与引擎解耦,纯逻辑)。被预测 Player 的驱动方式由接入方决定,两种皆可:
-#   A) 手动步进(冒烟/无引擎环境):每帧调 advance(record) —— 内部把玩家 input_source 换成
-#      scratch PacketInputSource,传入该记录后步进一次,再换回 → 确定性复现该输入。
-#   B) 引擎自步进(真机本地预测,读真实 Input):每帧由接入方在玩家被引擎步进后调
-#      note_post_step(seq, capture),把要发的记录 note_input(seq, record);reconcile() 在
-#      下一帧步进前处理到期权威。回滚重放内部走 A 的 swap+scratch 步进。
+# 客户端回滚与预测控制器。负责在客户端推演本地输入，并在收到服务端权威快照时进行校验与对齐回滚。
+# 支持两种驱动方式：
+#   A) 手动步进：测试或无场景树环境下调用 advance(record)，使用内部临时输入源驱动玩家步进。
+#   B) 引擎物理步进：本地真实玩家在 _physics_process 步进后记录 note_post_step()，
+#      并在下一帧物理步进前调用 reconcile() 处理到期的服务端权威快照。
 #
-# 收到权威(ack=C, 完整状态 S):
-#   - ring[C] ≈ S → 预测被证实:trim ≤ C(常态,几乎零成本)
-#   - ring[C] ≠ S → 真性分歧(服务器外部事件:命中/传送/换边/墙/漂移):
-#                   restore(S) 到权威态,按序重放 (C, last_applied] 的本地输入 → 重对齐。
-#                   「重放 = 错在哪补哪」,绝不做橡皮筋位置拉拢(复盘 P2)。
-# 前提:服务器每物理 tick 恰好消费 1 个输入包并回带 ack_seq + capture_state() 完整状态
-#       (server/match_host.gd;见 docs/pvp-c2-retrospective.md P1)。
+# 权威状态校验流程：
+#   - 本地预测状态与服务端快照一致：在容差范围内认为预测成功，清理对应输入缓存。
+#   - 本地预测状态与服务端快照分歧：恢复至服务端权威状态，并按序重放未确认的历史输入帧。
+# 前提：服务端每物理帧消费 1 个输入包，并返回包含 ack_seq 与完整状态 capture_state() 的快照。
 
 const KEEP := 256           # ring 保留窗口
 const PHYS_DT := 1.0 / 60.0 # 回滚重放一律按固定物理步(确定性)
@@ -29,54 +25,21 @@ var _acked := 0
 var _pending: Array = []       # [[ack, state], ...] 待 reconcile
 var _rollbacks := 0
 
-# 环面地图尺寸(像素)。ZERO = 不做环面处理(退回裸距离比较)。
-# 刻意不引 autoload(与 core/ 其它纯逻辑件同例):由接入方显式设,`-s` 下也能空跑。
+# 环面地图尺寸（像素）。若为零向量则不做环面处理，直接使用平面欧氏距离。
+# 不直接引用全局单例，由接入方显式配置，便于无场景树环境独立测试。
 var map_px: Vector2 = Vector2.ZERO
 
-# 「预测被证实」的位置容差(px)。**这是回滚频率的门控前置校验**:
-# 贴身缠斗时对手身体在客户端眼里恒有滞后(实测 8 tick ≈ 93px),只要这个误差超容差就每帧判
-# 分歧、每帧 restore+重放。实测(见 tests/probe/brawl_rollback_probe):把幽灵体做得再准也不改频率
-# ——摘除(修正 75px)/准确(2px)/推歪(77px) 三档都是 ~220 次;改容差才改频率。
-# 代价:容差内的位置误差不再纠正,即"服务器上你被挡住的地方"与"屏幕上看到的"可差一个容差。
-# `down`/`hp` 仍是精确比较(命中/倒地不受影响);被击退通常 ≫ 容差,照旧纠正。
-#
-# 取值 2.0(2026-09-12 设计约定),依据是同一场景的容差扫描:
-#   容差 1px  N=2 221 / N=4 195 / N=8 159 次   接触期偏差 中位 1.6 p95 25~29px
-#   容差 2px  N=2   9 / N=4  85 / N=8  13 次   接触期偏差 中位 1.6 p95 25~30px
-#  ->  砍掉 ~95% 频率,而接触期偏差**一行没动** —— 反过来说明 1px 容差下那每帧一次的回滚
-#   并未带来精度收益(它从 8 tick 前的权威态重放,落点与不重放几乎一致)。
-# 4px 在 N=4 更彻底(→0.5 次/秒),但换来的那点频率要用"约 4px 的软接触"去换,边际不划算。
-#
-# - 放**默认值**而不是让客户端各自接线:两端(1v1 / 大乱斗)各设一次就有漏接风险,而漏接是
-#   静默的(不报错、只是频率照旧)—— 那正是 map_px 历史已知问题。集中在这里则一处调、两端都得。
-#   探针要量别的档位时显式覆盖(见 brawl_rollback_probe 的 VARIANT_TOL)。
+# 预测一致性位置容差（像素）。超出容差将判定为状态分歧并触发回滚。
+# 取值 2.0 像素，在消除抖动与保持同步手感之间取得平衡。
 const DEFAULT_POS_TOL := 2.0
 var pos_tol: float = DEFAULT_POS_TOL
 
-# 接触期(与远端玩家**身体**贴身)的位置容差。-  凭什么能放宽:贴身时那点位置分歧由**接触几何**
-# 决定,而回滚纠正不动它 —— 实测(见 tests/probe/brawl_rollback_probe)1/2/4/8px 四档的接触期偏差
-# **逐项相同**(中位 1.6 / p95 25~30),即那每帧一次的回滚"并未带来精度收益"。
-#
-# - 取值 8.0(2026-09-22 控制器按 Task 4 的两次扫描裁定)。定值规则 = 「满足判据 2 的档里取最小」,
-#   裁定理由:**实测 8/16/32 在 N=2/4/8 读数同一批(N=2 全是 5 = 下限),16/32 买不到更多,
-#   只多付软接触。** 扫描读数区间(-  其中 16/32 两个档位**跨轮次不一致**,故只记大致范围):
-#     回滚次数        接触期 8px = N2 5 / N4 8 / N8 5;16px 与 32px 在 N=2 也是 5,在 N=4/N=8
-#                     上**跨轮次抖动**(N=4 约 8~21、N=8 约 4~15 —— 离散读数、只记大致范围)
-#                     且**没有系统性更低**  ->  往上买不到东西。
-#     接触期偏差      判据 2 的上界是 中位 ≤3 / p95 ≤35,8/16/32 **三档测试全部通过**,且中位 1.6、
-#                     p95 25.0~30.5 —— **与 2px 基线逐项相同**(§1.2 那条"白拿"在 32px 上仍成立)。
-#     对照基线        全局 2px 档 N=2 回滚 9;1px 历史基线 N=2 回滚 221。
-#    ->  8 与 16/32 频率同档,而软接触(本改动唯一的手感代价,spec §6)只有体宽 80px 的 1/10 ——
-#     往上多付的软接触换不来任何频率收益,**最小的那个就是获得的有效增益差额最大的那个**。
-# - 别只照数字读:这条是**扫描结论**,不是随手可调的旋钮。要动它得重跑 brawl_rollback_probe 的
-#   CONTACT 族并复核上面三条读数 —— 探针里那些判据(提示命中率 / 偏差不恶化 / 严格优于 2px 档)
-#   就是为此立的。设计依据见 docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md §3.4。
+# 接触状态下的位置容差（像素）。
+# 当实体与远端对手身体贴身近战时，将容差放宽至 8.0 像素，避免因碰撞几何微小抖动引发每帧高频回滚。
 const DEFAULT_CONTACT_POS_TOL := 8.0
 var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
 
-# 接入方每物理步写一次:本帧是否正在贴身(`Player.touching_player()`)。
-# - 默认 false = 改动前的行为。-  它**不进 capture_state()/restore_state()**、不上行 ——
-#   纯客户端本地量(它只是"这次的偏差要不要较真"的提示,不是模拟状态)。
+# 本帧是否处于近身接触状态（由 Player.touching_player() 更新，纯本地状态提示，不参与网络同步）
 var in_contact: bool = false
 
 func bind(p) -> void:
@@ -88,7 +51,7 @@ func last_applied() -> int:
 func rollback_count() -> int:
 	return _rollbacks
 
-# ── 驱动 A:手动步进(本控制器喂 scratch 步进一次,记 capture)──
+# 驱动方式 A：手动步进（通过临时输入源步进一次并记录预测状态）。
 func advance(record: Dictionary) -> void:
 	reconcile()
 	if _p == null:
@@ -104,7 +67,7 @@ func advance(record: Dictionary) -> void:
 		_inputs.erase(old)
 		_captures.erase(old)
 
-# ── 驱动 B:引擎自步进——接入方在玩家被引擎步进后记录,在下次步进前 reconcile ──
+# 驱动方式 B：引擎物理步进（接入方在实体完成物理步进后记录状态，下次步进前调谐）。
 func note_post_step(seq: int, capture: Dictionary) -> void:
 	_last_applied = maxi(_last_applied, seq)
 	_captures[seq] = capture
@@ -116,20 +79,19 @@ func note_post_step(seq: int, capture: Dictionary) -> void:
 func note_input(seq: int, record: Dictionary) -> void:
 	_inputs[seq] = record
 
-# 服务器权威快照到达(可跨帧缓存,reconcile 时处理)。
+# 服务端权威快照到达。
 func on_authoritative(ack: int, state: Dictionary) -> void:
 	if ack <= _acked:
 		return
 	_pending.append([ack, state])
 
-# 接入方每帧(玩家步进前)调用:处理所有到期权威快照。
+# 每帧处理已收到的服务端权威快照。
 func reconcile() -> void:
 	while not _pending.is_empty():
 		var pk: Array = _pending.pop_front()
 		_handle_ack(int(pk[0]), pk[1])
 
-# 用记录步进一次:临时把玩家输入源换成 scratch(传入该记录),步进后换回。
-# 这样被预测玩家平时可读真实 Input(真机手感不变),重放才切换历史输入,保证孪生一致。
+# 使用历史输入记录执行单步重放：临时将实体输入源替换为缓存输入源，步进后还原。
 func _step(record: Dictionary) -> void:
 	if _p == null:
 		return
@@ -149,17 +111,12 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 		return
 	var predicted: Dictionary = _captures[ack]
 	if _close_enough(predicted, S):
-		# - "预测被证实"只说明 down/hp/pos/vel 对得上。背包(inv/wslot)与残弹是**非预测字段**
-		#   —— 拾取/丢弃/复活/换局全由服务器裁决,客户端从不预测它们,两者之间没有蕴含关系。
-		#   不在这里补一次,客户端就只会在**碰巧发生回滚**时(被打/复活/瞬移)才看见自己捡了枪
-		#   —— 表现为"地上的枪没了、手上也没多、还开不了火",而且一条报错都没有。
-		#   实测:整局 90s `rollback_count()==0`、客户端背包恒空,而服务器那边丢弃/拾取全成功。
-		# - `has_method` 守卫:本类是纯逻辑件,冒烟里配的是桩对象。
+		# 预测一致时，同步背包（武器槽与弹药）等由服务端权威决定的非预测状态
 		if _p.has_method("sync_soft_state"):
 			_p.sync_soft_state(S)
-		_trim(ack)          # 预测被证实:确认丢弃 ≤ ack
+		_trim(ack)          # 预测成功：清理已确认的历史输入
 		return
-	# 真性分歧 → 权威锚定 + 重放未确认输入(错在哪补哪,非拉拢)
+	# 状态分歧：对齐至服务端权威状态，并按序重放未确认的本地输入帧
 	_rollbacks += 1
 	_p.restore_state(S)
 	for s in _seqs:
@@ -177,15 +134,13 @@ func _trim(below: int) -> void:
 		_inputs.erase(s)
 		_captures.erase(s)
 
-# 两完整状态是否"预测被证实"(同一模拟下应 ≈ 相等;浮点/进程差给个小容差)。
-# 超出 = 服务器外部事件或漂移 → 走 rollback。只比影响判定的关键量,避免过度回滚。
+# 比对本地预测状态与服务端权威状态是否在容差范围内一致。
 func _close_enough(a: Dictionary, b: Dictionary) -> bool:
 	if a.get("down", false) != b.get("down", false):
 		return false
 	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
 		return false
-	# 容差按**接触与否**二选一:非接触期的位置分歧是真的(要立刻纠正),
-	# 接触期的位置分歧是接触几何噪声(实测纠正不动,见 contact_pos_tol 的说明)。
+	# 根据当前是否近身接触选择对应容差
 	var tol: float = contact_pos_tol if in_contact else pos_tol
 	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > tol:
 		return false
@@ -194,8 +149,7 @@ func _close_enough(a: Dictionary, b: Dictionary) -> bool:
 	return va.distance_to(vb) < 20.0
 
 
-# 两个位置在**环面**上是否几乎同位。裸 distance_to 在跨接缝那一帧会给出「一整幅地图宽」的
-# 假分歧(客户端已取模、服务器还没,或反之)—— 那其实同一个物理点,却会白跑一次回滚。
+# 计算环面上的最短位置差，避免跨越地图边界时误判为位置分歧
 func _pos_dist(a: Vector2, b: Vector2) -> float:
 	if map_px.x <= 0.0 or map_px.y <= 0.0:
 		return a.distance_to(b)

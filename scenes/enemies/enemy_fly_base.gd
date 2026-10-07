@@ -124,14 +124,13 @@ func _find_escape_column() -> Vector2:
 func _bird_can_pass(cell: Vector2i) -> bool:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
-		return false   # - 空网格 = 不可走(**保守**方向)。注意方向与 TileQuery 的保底处理相反,
+		return false   # 空网格视为不可通行
 	                   #   故这条提前返回不能删(TileQuery 在空网格返回 false = "没压到东西")。
 	var ts := GameParameters.TILE_SIZE
 	# 鸟原心 = 格中心 − hover_altitude(悬停上移);箱体世界范围 = 原心 + AABB。
 	var ox := cell.x * ts + ts * 0.5
 	var oy := cell.y * ts + ts * 0.5 - EnemyParams.FlyBird.hover_altitude
-	# 逐格环面判定收在 core/tile_query.gd(实心**或水**都不可走:鸟不能游)。
-	# 这里刻意用**未锚定**的原心算矩形:跨接缝由逐格 posmod 提供边界容错保障,与旧实现一致。
+	# 环面瓦片通行检测（实心瓦片与水域均不可通行）
 	if TileQuery.rect_overlaps_solid_or_liquid(
 			Rect2(Vector2(ox, oy) + _fly_box_min, _fly_box_max - _fly_box_min), ts):
 		return false
@@ -159,11 +158,7 @@ func _collect_obstacles() -> void:
 	for e in get_tree().get_nodes_in_group("enemies"):
 		if e == self or not (e is Node2D):
 			continue
-		# - 已经**不挡路**的实体不当障碍(2026-10-03):录制期保留的隐藏尸体被摘掉了碰撞层
-		#   (见 enemy_base 的 _physics_process),物理上已经可以穿过 —— 若这里仍把它算作障碍,
-		#   飞鸟会在一个空位置上绕路,是同一个"虚空"缺陷的 AI 侧面。判据取**碰撞层**而不是
-		#   `visible`:它问的正是"这东西还挡不挡路",与物理世界同一口径;白闪期(仍可见、
-		#   仍实心)照旧算障碍。
+		# 已隐藏或失去碰撞的尸体实体不再作为避障障碍物
 		if int((e as CollisionObject2D).collision_layer) == 0:
 			continue
 		var epos := (e as Node2D).global_position
@@ -171,9 +166,7 @@ func _collect_obstacles() -> void:
 			_obstacle_boxes.append(_collision_rect_of(e))
 
 
-# 求一个节点的世界碰撞 AABB。几何取自 CollisionAabb(只并**激活**的碰撞体:disabled 跳过 ——
-# 飞行鸟的站立箱、玩家未用姿态的多边形运行时都被禁用,合并它们会把障碍箱撑得比实际碰撞体大一圈;
-# 旧实现全并,详见问题三)。
+# 获取目标节点在世界坐标系下的激活碰撞盒 AABB
 # 返回前把矩形中心锚到本鸟坐标的环面副本,与 BFS 候选格同帧(见 _bird_can_pass)。
 func _collision_rect_of(n: Node2D) -> Rect2:
 	var rect: Rect2

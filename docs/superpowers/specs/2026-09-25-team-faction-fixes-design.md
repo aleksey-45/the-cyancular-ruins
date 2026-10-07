@@ -42,7 +42,7 @@
 
 **只排除射手本人。** `same_team` 的全部 7 个调用点都在 `server/`（`match_combat.gd` ×2、
 `match_state.gd` ×1、`team_host.gd` ×4），**激光链上一处都没有** —— 因为激光是即时命中、
-不走 `_adjudicate_bullets`，它在权威侧**直接**结算伤害。
+不走 `_adjudicate_bullets`，它在服务端**直接**结算伤害。
 
 ⇒ 3v3 里拿激光枪烧队友，**且队友既挡不住光束也不被光束挡住**。这条只在场上有人拿激光枪时
 发生，与"某些时候"吻合。
@@ -68,7 +68,7 @@
 | 查了什么 | 怎么查的 | 结论 |
 |---|---|---|
 | 结算页的队伍分节与配色 | 读 `ui/match_result_payload.gd` 全文 | 干净 —— `for_duel` 根本不用队伍表；`for_team` 的 `C_TEAM_A/B` 用在分节标题上，正确 |
-| 3v3 平局文案 | 读 `ui/team_hud.gd:104-113` | **正确**（`mwinner == 0 → "平 局"`），且注释里亲手点名了 `pvp_hud` 那个 1v1 兜底的陷阱 |
+| 3v3 平局文案 | 读 `ui/team_hud.gd:104-113` | **正确**（`mwinner == 0 → "平 局"`），且注释里亲手明确指出了 `pvp_hud` 那个 1v1 兜底的陷阱 |
 | 从 role 推队号（禁止项） | `grep -rn "role % 2\|role/2\|% 2 =="` 全仓 | 无命中（仅两处无关联的无敌帧闪烁代码） |
 | 1v1 的 P2 染色 | 读 `scenes/pvp_game.gd::_apply_p2_tint` 与注释 | 结构性正确（P2 == `C_TEAM_B` == 3v3 队 2，同一 token 同一机制），**不是 bug** |
 
@@ -139,7 +139,7 @@ func is_friendly(a: Node, b: Node) -> bool:
 			continue     # 队友穿透:与子弹/榴弹直击同口径(不伤害、也不挡光束)
 ```
 
-**为什么只改权威侧就够**：`laser_weapon_base.gd:61` 的 `if not _authoritative(): return` 门控
+**为什么只改服务端就够**：`laser_weapon_base.gd:61` 的 `if not _authoritative(): return` 门控
 （`_authoritative()` 在 `:74`；判据是 `not Level0.pvp_mode`）—— 客户端那份视觉副本**根本不结算伤害**。
 所以这条修法**不碰协议、两端无需同版本**。
 
@@ -163,7 +163,7 @@ func is_friendly(a: Node, b: Node) -> bool:
 **接口**：`Minimap` 已经有第三个参数"颜色提供器"（`setup_multi` 的第三参，
 `Callable()` 默认）。自己那个点的颜色走**同一个提供器**，**入参就是 `PvpSession.role`**
 （与 `_minimap_colors()` 回填他人点时用的是同一套 role 键，不引入第二种标识）。
-判定"要不要走提供器"的闸门与 `ui/minimap.gd:43` 现有那句同源：**提供器是默认的
+判定"要不要走提供器"的限制条件与 `ui/minimap.gd:43` 现有那句同源：**提供器是默认的
 `Callable()` 就用 `SELF_COLOR`，否则问它**。
 
 **不新增参数** —— 新增参数要改三处调用点，而它们在两个不同场景里（`pvp_game` / `royale_game` /
@@ -207,7 +207,7 @@ func _ghost_layer_of(role: int) -> int:
 客户端的**幽灵体层**（落层 2）都表示"**不属于任何队**"；服务端仍是"什么都不配 = 保持默认层"
 （**没有**在服务端引入"未知"这个概念）。
 ★ 上面那张表与上文**按原样保留** —— 它记的是**修前**的三种口径，是这条设计的动机来源；
-**现在的权威口径**在 `CLAUDE.md` 的「3v3 团队模式」→「队友不互挡的分队碰撞层契约」那条与
+**现在的权威口径**在 `CLAUDE.md` 的「3v3 团队模式」→「队友不互挡的分队碰撞层接口规范」那条与
 `scenes/team_game.gd::_ghost_layer_of` 自身。
 ★ 守卫：`tests/team_room_smoke.gd` ⑨② 在既有的"按队两支"三条之后新增两条**结构**断言
 （`return 2` 出现**两次** + 函数体含 `match`）—— 既有那三条**区分不了**新旧两种写法
@@ -246,7 +246,7 @@ func _ghost_layer_of(role: int) -> int:
    ★ 反证：把 `continue` 去掉，探针必须红。
 2. **新探针（小地图）**：`Minimap` 喂一个颜色提供器，断言自己那个点的**底色 == 队色**
    （不是 `SELF_COLOR`），且**描边存在**。（必须真渲染 —— `minimap_circle_probe` 已有先例。）
-3. **既有探针全绿**，逐个点名：`team_host_probe`（③ 队伍表逐值 / ⑩ 分队碰撞层）、
+3. **既有探针全部通过**，逐个显式指定：`team_host_probe`（③ 队伍表逐值 / ⑩ 分队碰撞层）、
    `team_table_probe`（③④ 子弹穿队友 / 爆炸满效）、`team_disconnect_probe`、
    `team_room_smoke`（⑨②⑨③⑨⑤）、`hue_tint_probe`（守卫 C/D/E）、`minimap_circle_probe`、
    `laser_weapon_smoke`、`enemy_logic_smoke`。
@@ -260,7 +260,7 @@ func _ghost_layer_of(role: int) -> int:
 
 | # | 计划 | 覆盖 | 碰协议? |
 |---|---|---|---|
-| 1 | **激光不打队友** | §3.1 | 否（只改权威侧） |
+| 1 | **激光不打队友** | §3.1 | 否（只改服务端） |
 | 2 | **小地图自己那个点 + 未知队户口径** | §3.2 + §3.3 | 否 |
 
 计划 1 与 2 **完全独立**（不同文件、不同模式面），可并行；计划 2 内部两件事同属
@@ -270,7 +270,7 @@ func _ghost_layer_of(role: int) -> int:
 
 ## 7. 本设计明确不做的事（后续独立计划）
 
-- **队伍色与常量的单一来源**：`C_TEAM_A/B` / `SELF_COLOR` / `NAME_COLOR`，以及底板色 6 处
+- **队伍色与常量的唯一定义**：`C_TEAM_A/B` / `SELF_COLOR` / `NAME_COLOR`，以及底板色 6 处
   （3 个 const + 2 个 `.tscn` 字面量 + 1 处内联）。它们与本 spec 的"认不出谁是谁"是**两回事**
   （那些是维护性冗余，不是可读性缺陷），另立计划。
 - ~~**大乱斗小地图的对手点带上个人色相**（§4.2）。~~ ★ **2026-09-29 已做**（见 §4 第 2 条的落地注记）。
@@ -299,7 +299,7 @@ func _ghost_layer_of(role: int) -> int:
 |---|---|
 | 激光伤害路径无队伍判据 | 读 `laser_weapon_base.gd:130-164` |
 | `same_team` 的 7 个调用点全在 `server/` | `grep -rn "same_team" --include=*.gd scenes core server ui` |
-| 激光伤害只在权威侧结算 | `laser_weapon_base.gd:61` 的 `_authoritative()` 门控 + `:74` 定义 |
+| 激光伤害只在服务端结算 | `laser_weapon_base.gd:61` 的 `_authoritative()` 门控 + `:74` 定义 |
 | 武器够到宿主的既有形状 | `laser_weapon_base.gd:234`（`player.get_parent()` + `has_method("notify_direct_hit")`）|
 | `_role_of` 在服务端存在 | `server/match_state.gd:139` |
 | `SELF_COLOR` 与两个队色的数值关系 | `ui/minimap.gd:35`、`ui/ui_factory.gd:132-133`；Δ 为手算 |

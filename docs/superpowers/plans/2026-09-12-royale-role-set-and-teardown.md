@@ -1,4 +1,4 @@
-# 大乱斗 role 集合 + 房间拆除收口（实施计划 · 批次 2）
+# 大乱斗 role 集合 + 房间拆除统一收拢（实施计划 · 批次 2）
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -16,7 +16,7 @@
 - **判据必须是 grep 标记文本**，不能只看退出码。
 - 探针的 `_ready` 若有**独立测试函数**，必须有完成戳防线（Godot 运行时错误只中断当前函数，`_ready` 照常往下 → 假绿）。
 - 改完 GDScript 只需重导出，**不要重编模板**。
-- **两边改一处必须同步改另一处**：`room_manager._spawn_royale_worker` 生成的 argv 与 `server_main._ready` 的解析是逐字契约（`CLAUDE.md` 明文）。
+- **两边改一处必须同步改另一处**：`room_manager._spawn_royale_worker` 生成的 argv 与 `server_main._ready` 的解析是逐字接口规范（`CLAUDE.md` 明文）。
 
 ## 依据
 
@@ -62,7 +62,7 @@ B1 的即时修法是补一个 `_royale_role_bound`（取实际最高 role）。
 `tests/room_sweep_smoke.gd` 是源码级冒烟（`-s` 跑）。在它里面加一条**反向**断言：`server_main.gd`
 与 `room_manager.gd` 里**不得**再出现 `--players` / `--max-role` / `_role_bound` / `_expected_players`
 （用同样的逐行扫描法，跳过注释行）。这条红着写，实现完转绿 —— 它的价值是**防止旧协议半途复活**
-（两边只改一边是这套 argv 契约的历史故障模式）。
+（两边只改一边是这套 argv 接口规范的历史故障模式）。
 
 - [ ] **Step 2: 跑它确认红**
 
@@ -147,7 +147,7 @@ git commit -m "refactor(royale): 大厅↔worker 改传显式 role 集合,删掉
 
 ---
 
-### Task 2: 房间拆除收口成一个函数
+### Task 2: 房间拆除统一收拢成一个函数
 
 **Files:**
 - Modify: `server/room_manager.gd`（新增 `_teardown_room`；改 `on_peer_left` L188-198 / L206-212、`royale_leave` L338-349、`_sweep_stale_rooms` L682-707、`ai_duel` L449-450）
@@ -157,14 +157,14 @@ git commit -m "refactor(royale): 大厅↔worker 改传显式 role 集合,删掉
   —— `room` 是 `Room` 或 `RoyaleRoom`（鸭子类型，按 `room is RoyaleRoom` 分注册表与端口延迟）
 
 **为什么**：本层为「端口泄漏」这**同一个**失败模式补过三次（`on_peer_left` 空房分支、`royale_leave`
-空房分支、`ai_duel` 摘房前的手动释放）。散着写就还会漏第四次 —— 收口后「新加一条拆除路径」这件事
+空房分支、`ai_duel` 摘房前的手动释放）。散着写就还会漏第四次 —— 统一收拢后「新加一条拆除路径」这件事
 本身变得不可能漏（没有第二条路可走）。
 
 - [ ] **Step 1: 写源码守卫（红）**
 
 `tests/room_sweep_smoke.gd` 加一条：`room_manager.gd` 里 `_release_port_later(` 与 `rooms.erase(` /
 `royale_rooms.erase(` 的**非注释调用点**只能出现在 `_teardown_room` 与 `_release_port_later` 自身之内。
-（这条比"数调用点个数"稳：个数会随实现漂，而"只能出现在这一处"是契约本身。）
+（这条比"数调用点个数"稳：个数会随实现漂，而"只能出现在这一处"是接口规范本身。）
 
 > 若实现后发现确有正当的例外（如 `_pick_worker_port` 的占用登记），把例外**连同理由**写进断言里，
 > 别删断言。
@@ -244,7 +244,7 @@ git commit -m "refactor(lobby): 房间拆除收口成 _teardown_room(单一拆�
 
 - [ ] 用户跑：`bash tests/royale_probe.sh`（若存在）或 `res://tests/royale_probe.tscn` 全链路；
       `res://tests/royale_bound_probe.tscn`（**B1 的守卫** —— role 空洞 `{1,3}` 那条正是本次改动的
-      核心场景）；`bash tests/pvp_room_smoke.sh`、`bash tests/pvp_match_smoke.sh`（1v1 未被带坏的硬门）
+      核心场景）；`bash tests/pvp_room_smoke.sh`、`bash tests/pvp_match_smoke.sh`（1v1 未被带坏的硬性条件）
 - [ ] 更新 `docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md` §3E/§3F 标为已落地
 - [ ] 更新 ledger
 

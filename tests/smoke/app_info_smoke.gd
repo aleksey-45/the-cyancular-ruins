@@ -19,13 +19,13 @@ func _initialize() -> void:
 	var log: Array = script.commit_log()
 	if s.strip_edges() == "":
 		_fails.append("version_string() 返回空串")
-	# - 这一条钉的是"它真的**接**到了 git/build_info 之一",而不是恒返回占位串。
+	# - 这一条约束的是"它真的接到了 git/build_info 之一",而不是恒返回占位串。
 	#   把函数体改成 `return "abc"`(或 `return "placeholder"`) ->  它照样过 ——
-	#   这条断言**给不了**那个保证,如实登记。
+	#   这条断言给不了那个保证,如实登记。
 	#   - 会被它红住的反例:`return "x"` —— 长度 1、不含 `#`/`v`、且 ≠ "dev"。
-	# - 下面两条(条数上限 + 元素循环)有**同类空档**:`commit_log()` 改成 `return []`
-	#   会**同时**通过它们 —— `0 > 20` 为假,而空数组上的 `for` 一次都不跑。
-	#   即"返回空表"同样**没有任何断言能拦**,如实登记。
+	# - 下面两条(条数上限 + 元素循环)有同类空档:`commit_log()` 改成 `return []`
+	#   会同时通过它们 —— `0 > 20` 为假,而空数组上的 `for` 一次都不跑。
+	#   即"返回空表"同样没有任何断言能拦,如实登记。
 	if not (s == "dev" or s.contains("#") or s.contains("v") or s.length() >= 3):
 		_fails.append("version_string() 的形状可疑:「%s」" % s)
 	if log.size() > 20:

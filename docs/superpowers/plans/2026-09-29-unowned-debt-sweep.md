@@ -11,7 +11,7 @@
 - 已修掉根因、等用户整跑的:`tests/team_match_probe.sh`(**根因已修 `9003dae`**,但六客户端整跑未验)。
 
 **判据一律是 grep 文本,不看退出码。** 引擎走 `source tests/env.sh` + `"$GODOT"`。
-**本仓的守卫纪律**:每条新断言都要**先证明它会红**(变异反证),"加了断言之后全绿"不是证据。
+**本仓的守卫纪律**:每条新断言都要**先证明它会红**(变异反证),"加了断言之后全部通过"不是证据。
 
 ---
 
@@ -20,7 +20,7 @@
 ### A1 `tscn → json` 这个方向没有任何守卫
 - **登记**:`CLAUDE.md:271`。
 - **现状**:往 `scenes/weapons/` 放一个武器 `.tscn` 而不写 `data/weapons.json` 条目 ⇒
-  `enemy_logic_smoke` / `level0_weapon_scatter_probe` / `kh_l3_probe` **三条全绿、一条断言都不红**,
+  `enemy_logic_smoke` / `level0_weapon_scatter_probe` / `kh_l3_probe` **三条全部通过、一条断言都不红**,
   而那一把枪在**菜单 / 散落 / 图标 / HUD 名字**里全都不存在。反方向(json → tscn)是覆盖到的。
 - **要做**:加一条断言 —— 扫 `scenes/weapons/*.tscn`,每个都必须在 `data/weapons.json` 里有条目。
   `EnemySpawner` 那边同样只有半边(`data/enemies.json` → `scenes/enemies/`),一并考虑。
@@ -144,7 +144,7 @@
 | A5 菜单编号只有人眼判据 | **已做**(与 A2 同一个探针:两处载体各断一次) | `f3e3d58` |
 | A6 计划文件代码块残留 | **已做**(同步成落地版 + 注明权威落点) | `10dd3f7` |
 | A7 `_bright_in` 阈值 | **已做**(改成相对底板量,合成图变异实测) | `aa234cd` |
-| B1 私密房回局入口 | 用户裁定 **甲**,**已落地**(载荷带 token + `RejoinRegistry.owns` + 相⑨/段⑦) | `959d405` |
+| B1 私密房回局入口 | 用户裁定 **甲**,**已落地**(数据包带 token + `RejoinRegistry.owns` + 相⑨/段⑦) | `959d405` |
 | B2 弹数纠正路径 | 本轮不做(C 档,已登记) | (无) |
 | C1 `RoyaleHost.start_on` 网格预载 | 机制复现、生产路径实测未复现;**spec 那句归因已推翻**;**真因 = 当时的出生池缺陷,早已于 2026-09-19(`fc00db7`)修掉** ⇒ **不再是欠账**。见下 | (文档) |
 | D1 引擎 `max channels: 0` | 不做(从 GDScript 够不着) | (无) |

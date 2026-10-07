@@ -1,15 +1,13 @@
 class_name MapCatalog
 extends RefCounted
 
-# 地图目录(选图 UI + 联机定图的**单一来源**):
-#   - 列出可用 .cyrm(res://maps/ + exe 旁的开发者地图,与 MazeGenerator 的取图规则同源)
-#   - 判定"能不能打联机"(是否两个出生点都有)与地图尺寸
-#   - 生成**开局简略图**(每格 1 像素的色块图,由 UI 侧转成纹理)
-#   - 服务器侧校验客户端上报的地图路径(联机定图时**只能**用仓内 res://maps/*.cyrm)
+# 地图目录管理（关卡选择界面与联机选图服务）：
+#   - 扫描可用地图文件（res://maps/ 内部地图与外部开发者地图）
+#   - 校验地图尺寸与多人对战双出生点配置
+#   - 生成关卡预览缩略图数据（Image 纯数据，由 UI 转换为 Texture2D 渲染）
+#   - 服务端校验客户端上报的地图合法性（多人对战限定内部 maps 目录）
 #
-# - 本类**不引任何 autoload**(Settings/RunOptions 一律不碰),这样 `-s` 探针能直接用它;
-#   也只返回 `Image` 纯数据、不碰渲染 —— 缩略图"内容对不对"才机器可验(纹理由 UI 侧包)。
-# - 缓存是会话级的(静态);探针改完语料/想重扫时调 `clear_cache()`。
+# 纯静态工具类，无 Autoload 依赖。
 
 const CELL_PX: int = 2                     # 每格 2px:125×75 → 250×150;150×100 → 300×200
 const BG := Color(0.04, 0.07, 0.11, 1.0)   # 空气 = 背景
@@ -46,9 +44,9 @@ static func clear_cache() -> void:
 
 # ── 目录 ───────────────────────────────────────────────────────────
 
-## 全部可用地图。每项:
+## 全部可用地图列表。每项格式：
 ##   {path: String, name: String, size: Vector2i, pvp: bool, external: bool}
-## pvp = 同时有 `# player` 与 `# player2`(联机双出生点的契约)。
+## pvp 为 true 表示地图同时包含 player 与 player2 出生点
 static func list_maps(refresh := false) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if not refresh and not _list_cache.is_empty():
@@ -76,11 +74,10 @@ static func list_maps(refresh := false) -> Array[Dictionary]:
 	return out
 
 
-## 地图显示名:优先取文件头注释里的名字行(demo.cyrm 的 `# demo_2`),否则用文件名。
+## 获取地图展示名称：优先读取文件头注释中的自定义名称，缺省时使用文件名。
 static func display_name(path: String) -> String:
 	if FileAccess.file_exists(path):
-		# - 用 load_meta_lines 而不是 read_lines:v4 的注释在 body 的 meta 文本里,
-		#   直接按文本行读二进制只会读到乱码头,名字会退化成文件名。
+		# 从元数据注释文本解析自定义名称，避免直接按行读取二进制地图头出现乱码
 		for l in MapFormat.load_meta_lines(path):
 			var s := String(l).strip_edges()
 			if not s.begins_with("#"):
@@ -106,10 +103,8 @@ static func has_pvp_spawn(path: String) -> bool:
 	return sp.has("player") and sp.has("player2")
 
 
-## 服务器侧校验:客户端上报的联机定图路径。**只认仓内 `res://maps/*.cyrm`** ——
-## exe 旁的开发者地图在别的机器上不存在,联机用它会一端加载失败。
-## 拒绝:空 / 非 .cyrm / 越出 maps 目录(含 `..`)/ 不存在 / 无第二出生点。
-## 返回 "" = 用不了(调用方回落默认图)。
+## 服务端校验客户端上报的多人对战地图路径：仅允许加载 res://maps/*.cyrm 内部地图。
+## 若路径为空、非 .cyrm 文件、包含路径遍历字符、文件不存在或无第二出生点，返回空字符串回退至默认地图。
 static func resolve_pvp_map(requested: String) -> String:
 	var pref := MazeGenerator.MAP_DIR + "/"
 	if requested == "" or not requested.begins_with(pref):

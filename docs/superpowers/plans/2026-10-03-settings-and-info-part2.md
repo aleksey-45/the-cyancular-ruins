@@ -21,7 +21,7 @@
 - **不动 `NetBus` 的方法表**（本计划也不涉及网络）。
 - **不动 `CLAUDE.md`** —— 另一个 Claude 会话正在改它，由协调者在最后统一处理。
 - ★★ **与另一个 Claude 会话共用同一棵工作树**（它在改 `scenes/enemies/*`、`CLAUDE.md`、`AGENTS.md`）。
-  **提交一律逐个文件点名 `git add <具体文件>`，绝不 `git add -A`。** 提交前 `git status --short` 看一眼。
+  **提交一律逐个显式指定文件 `git add <具体文件>`，绝不 `git add -A`。** 提交前 `git status --short` 看一眼。
 - 新建 `.gd` 后、`git add` 前**必须**先跑 `"$GODOT" --headless --path . --import` 生成 `.uid`。
 - ★ **一条贯穿本仓的纪律**：**别写一条比它实际守护强的断言/注释**。这条链上同一个形态已经出过 8 次，
   失明方向**恒绿**。每条新断言请在注释里写清「**把什么去掉它才会红**」——写不出来就别写。
@@ -908,7 +908,7 @@ menu_autotest 的 --autotest-ver 语义反转:弹层不切场景 → 整页会�
 "$GODOT" --headless --path . --quit-after 200 -- --autotest-set
 ```
 
-- [ ] **取图人眼验收**（本仓纪律：视觉类改动要有图）
+- [ ] **取图人工视觉核验**（本仓纪律：视觉类改动要有图）
 
 ```bash
 # ★ 去掉 --headless(见下方说明);headless 下探针不会存图
@@ -917,7 +917,7 @@ menu_autotest 的 --autotest-ver 语义反转:弹层不切场景 → 整页会�
 "$GODOT" --path . --quit-after 200 -- --autotest-set
 ```
 
-图落在 `user://autotest_ver.png` / `autotest_set.png`。**自己读图**（本仓踩过"数值全绿但画面是坏的"）。
+图落在 `user://autotest_ver.png` / `autotest_set.png`。**自己读图**（本仓踩过"数值全部通过但画面是坏的"）。
 
 - [ ] **`CLAUDE.md`**：**本计划不要动它** —— 由协调者在收尾时统一处理（另一个会话正在改它）。
 

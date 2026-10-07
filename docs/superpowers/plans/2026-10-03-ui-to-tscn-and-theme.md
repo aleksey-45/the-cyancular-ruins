@@ -17,7 +17,7 @@
 - **`panel_box()` 的形状不变**（对局内**重连横幅** `ui/hud/status_banner.gd:88` 在用）。
 - **不动对局内 HUD 的视觉**。★ 唯一会全局生效的是**字体导入设置**（Task 2），它**必须逐屏取图验收**。
 - **判据一律是文本**（`ALL-OK` 等），**不看退出码**。
-- ★★ **共用工作树**：**提交一律逐个文件点名 `git add`，绝不 `git add -A`**；提交前 `git status --short` 看一眼。**`CLAUDE.md` 不要动**（协调者统一处理）。
+- ★★ **共用工作树**：**提交一律逐个显式指定文件 `git add`，绝不 `git add -A`**；提交前 `git status --short` 看一眼。**`CLAUDE.md` 不要动**（协调者统一处理）。
 - ★★ **取图命令一律不带 `--headless`** —— headless 下没有视口纹理，探针会打印「跳过截图」并**静默地什么都不存**。
 - ★★ **每屏迁移后必须"前后取图对比"**（迁移的定义是"外观不变"，只有图能证明）。
 - ★ **文案一个字都不许改**（多条探针按文案找控件）。
@@ -64,7 +64,7 @@
 `ui/theme/menu_theme.tres`：**先只放 StyleBox 与字号，不放字体**（字体是 Task 2 的事，它是唯一会全局生效的一步，单独做）。
 ★ 新建的 `.tres` 在编辑器里打开、把 `UiFactory` 现有的值**照搬进去**（`C_SURFACE` 面板底、`C_HEADER` 按钮填充、`C_EDGE` 描边、`C_ACCENT` 悬停、`C_GOLD` 主行动 …）。
 
-- [ ] **Step 4: 跑全套守卫，必须全绿**
+- [ ] **Step 4: 跑全套守卫，必须全部通过**
 
 ```bash
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/kh_l5_probe.tscn
@@ -254,7 +254,7 @@ primary/quiet/gold/accent 四档）。**拿旧档当迁移基准 = 一挂上去�
 
 **Files:** `ui/factory/ui_factory.gd`
 
-> ### ✅ 已收口(2026-10-03):本任务的前提**基本不成立**,实际可删面远小于计划设想
+> ### ✅ 已统一收拢(2026-10-03):本任务的前提**基本不成立**,实际可删面远小于计划设想
 >
 > 跑了一遍完整的 `UiFactory` 样式面清点(过程报告是 gitignored 的 scratch,结论已全部抄在本节),
 > 结论:
@@ -282,9 +282,9 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
 ```
 ★ **必须零命中**。有命中就说明那一屏还没迁完 —— **别删**。
 
-- [x] **Step 2: 删**(2026-10-03 按 R12/R26 收口 —— 实际只删**四个零调用死构造器**
+- [x] **Step 2: 删**(2026-10-03 按 R12/R26 统一收拢 —— 实际只删**四个零调用死构造器**
   `menu_separator` / `check_row` / `slider_row` / `menu_filter_button`(`ae5e0d1`);**`style_row_button` 刻意保留**
-  —— 它是 `menu_theme_mirror_smoke` 里 `RowButton` 那条臂的**供给**(删了等于零收益砍覆盖)。详见上方 ✅ 收口块
+  —— 它是 `menu_theme_mirror_smoke` 里 `RowButton` 那条臂的**供给**(删了等于零收益砍覆盖)。详见上方 ✅ 统一收拢块
   与本节的清点结论)
 
 ★ **`_btn_box` / `panel_box` / `style_button` 等可能仍被 `UiFactory` 自己的其它函数用**（如 `menu_button`）—— 删之前看清谁还在用。
@@ -298,11 +298,11 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
 
 ## 收尾检查
 
-- [ ] **六屏逐张取图人眼验收**（主菜单 / 设置 / 信息 / 大厅 / Beta / 结算）+ 倒计时 + 暂停菜单
+- [ ] **六屏逐张取图人工视觉核验**（主菜单 / 设置 / 信息 / 大厅 / Beta / 结算）+ 倒计时 + 暂停菜单
 - [ ] **HUD 现状的证据**(★ 2026-10-03 F1 订正:原句是「HUD **未动**的证据…**且与 Task 2 的基线图一致**」,
   那半句**已被 R18/R20 证伪**,改成一条**今天真能跑、真能 grep** 的判据):`combat_hud_visual_probe` +
   `kh_l3_visual_probe` + `minimap_circle_probe` 三条绿,**外加** `combat_hud_visual_probe` 里那条
-  **广播面板几何断言**(`6a4b39e` 钉住的值,量具是 `Control.size`:外框 **866×371**、标题带 **720×185**)
+  **广播面板几何断言**(`6a4b39e` 断言约束的值,量具是 `Control.size`:外框 **866×371**、标题带 **720×185**)
   —— 它才是"**被接受的 HUD 现状**"的判据。
   ★ 为什么"与 Task 2 的基线图一致"不成立(两条,缺一不可):① 那份基线图**只活在 gitignored 的 scratch 里**
   (没有 pair/md5 进版本控制)⇒ 今天**已经找不回来**、无从复跑;② 更要紧的是 **"未动"这句话本身为假** ——
@@ -324,7 +324,7 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
    而 **`header_strip()` / `menu_panel()` 这类共享构造器的 *尺度* 不是冻结面** —— `671e610` 把 `header_strip()` 的内边距
    28/14 → 40/20(左右各 +12),而 `ui/hud/broadcast.gd` 复用它 ⇒ 对局内广播面板**连带变宽 +24 像素**
    (外框 841→865/866,标题带 696→720;两个量具互印)。★ **`get_global_rect()` 含 `_apply_punch()` 脉冲缩放,
-   不能做判据** —— 判据量 `Control.size`。已由 `combat_hud_visual_probe` 的显式几何断言钉住"被接受的值"(`6a4b39e`)。
+   不能做判据** —— 判据量 `Control.size`。已由 `combat_hud_visual_probe` 的显式几何断言断言约束"被接受的值"(`6a4b39e`)。
 7. ★ **迁移产生了四个"孤儿页底色"**:`scenes/{beta_menu:22, info_menu:20, mp_lobby:639, settings_menu:21}.tscn`
    的 `ColorRect1` 上是 `Color(0.07, 0.09, 0.13, 1)` —— 它原本由 `lobby_page.gd` 的 `_add_lobby_background()` 画,
    而该 helper 被本次迁移当作"只服务被删 builder"退役(四个迁移提交各删一处 `.gd` 落点)⇒
@@ -332,7 +332,7 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
    修它要"加调色板常量 + 重生成那 4 个场景",属拥有 theme 生成器的那一批。
 8. ★ **一处覆盖缺口(登记)**:`kh_l3_visual_probe` 里那条"环画出来了"的像素断言被证明**无鉴别力**
    (环留着差值照样 76 —— 量到的是玩家帧动画)⇒ 删掉后该性质**只剩人眼图**;要有鉴别力得先有稳定参考帧,成本不成比例。
-9. ★ **登记收口说明(2026-10-03,最终整体评审 + F1 修复波)**:评审点的"六条登记项"全部落在这里 ——
+9. ★ **登记统一收拢说明(2026-10-03,最终整体评审 + F1 修复波)**:评审点的"六条登记项"全部落在这里 ——
    其中 **R40(四处孤儿坐标)= 上面第 7 条**、**R39(环像素覆盖缺口)= 上面第 8 条**;
    下面 10–13 是其余四条,14–15 是**本波(F1)新登记**的两条,16 是**四个验收态像素对**的持久记录。
    ★ 为什么不写进 `docs/eng/registered-debt.md`(`AGENTS.md` 把它称作"唯一清单"):那份文件属**另一个会话**,
@@ -356,7 +356,7 @@ grep -rn "style_control\|style_button\|style_check\|style_line_edit\|style_slide
     (把 id 掩掉之后两次输出一致)。⇒ T2 落地时用的是**外科式补丁 + 交叉验证**(而不是"重跑生成器覆盖"),
     下一批要重新生成的人必须先知道这一条,别把"两次输出不同"当成漂移。
 16. ★ **四个验收态的像素对(入库工具可复现;此前 `wait` 那一相只能靠 gitignored 的 scratch 驱动)**。
-    ★ 取图命令**一律不带 `--headless`**;`addr=` 钉住网络时序(状态栏文案是网络驱动的),`call=` / `args=<JSON>` 是带参调用:
+    ★ 取图命令**一律不带 `--headless`**;`addr=` 断言约束网络时序(状态栏文案是网络驱动的),`call=` / `args=<JSON>` 是带参调用:
     ```
     "$GODOT" --path . res://tools/_shot_scene.tscn -- res://scenes/mp_lobby.tscn <名>.png addr=127.0.0.1
     ...  <名>.png addr=127.0.0.1 _toggle_join_panel
