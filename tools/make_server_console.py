@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-# 把导出的 GUI 服务端 exe 打回 CONSOLE 子系统:双击它=弹控制台窗口并显示服务器日志。
-# 背景:自定义裁剪模板编译时禁用了路径覆盖,且引擎官方 console-wrapper 不适用,
-# 最稳的办法是改 PE OptionalHeader 的 Subsystem(2=GUI -> 3=CONSOLE)。
-# 用法:先导 "Dedicated Server" 预设产出 Cyancular Ruins Server.exe,再跑本脚本。
-# 用法: python make_server_console.py [文件名,默认 Cyancular Ruins Server.exe]
-# 安全护栏:入参只取 basename(剥掉一切目录成分)后对**白名单字面量**校验,
-# 目标只可能是仓库根下这两个已知 exe 之一 —— 路径构造上杜绝写到仓库外。
+# 将导出的 GUI 服务端可执行文件修改为 CONSOLE 子系统：便于双击运行时直接弹出控制台窗口并输出服务器日志。
+# 背景说明：自定义裁剪模板编译时禁用了路径覆盖，且引擎官方 console-wrapper 不适用，
+# 最佳方案为直接修改 PE OptionalHeader 中的 Subsystem 字段（2=GUI -> 3=CONSOLE）。
+# 使用方法：导出 "Dedicated Server" 产出 Cyancular Ruins Server.exe 后运行本脚本。
+# 用法：python make_server_console.py [文件名，默认 Cyancular Ruins Server.exe]
+# 安全防护：入参仅提取 basename（剥离路径目录）并基于白名单进行校验，
+# 确保目标仅为仓库根目录下已知的两个目标可执行文件之一，避免任意路径文件覆盖。
 import os
 from pathlib import Path
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根(双层 dirname,无 ../)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根目录
 os.chdir(ROOT)
 
 ALLOWED = ("Cyancular Ruins Server.exe", "The Cyancular Ruins.exe")

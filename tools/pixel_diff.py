@@ -35,9 +35,9 @@ def _parse_threshold(raw):
     except ValueError:
         print("用法错误:--threshold 要一个数字,实得「%s」" % raw)
         return None
-    # ★ NaN 必须**单独挡**:`v > nan` 恒为 False ⇒ `over = 0` ⇒ 打一行「DIFF 0」= 假绿。
-    #   (inf 不挡:它让每个像素都超阈值 ⇒ 红,是响亮的那一侧。)
-    #   ⚠ 这条判词只能写 GBK 编得的字符:控制台是 cp936,打 `⇒` 会 UnicodeEncodeError
+    # - NaN 必须**单独挡**:`v > nan` 恒为 False  ->  `over = 0`  ->  打一行「DIFF 0」= 虚假通过（未有效测试）。
+    #   (inf 不挡:它让每个像素都超阈值  ->  红,是响亮的那一侧。)
+    #   ⚠ 这条判词只能写 GBK 编得的字符:控制台是 cp936,打 ` -> ` 会 UnicodeEncodeError
     #     (那比原来的 traceback 还难看)。
     if v != v:
         print("用法错误:--threshold 不能是 nan(那会让每个像素都被判成没超阈值,即假绿)")

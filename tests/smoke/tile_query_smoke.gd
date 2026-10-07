@@ -23,7 +23,7 @@ func _initialize() -> void:
 	TileDefs.load_defs()   # 需要真实属性表才能区分"墙"与"水"
 
 	# 合成 6×6 图(边长 384px):**第 0 列**整列是墙,右下角一格水(纹理 21 → (5,5))。
-	# ★ 墙放**第 0 列**是刻意的:这样两条接缝断言(越过 x=W 落到第 6 格 / 越过 x=0 落到第 -1 格)
+	# - 墙放**第 0 列**是刻意的:这样两条接缝断言(越过 x=W 落到第 6 格 / 越过 x=0 落到第 -1 格)
 	#   绕回后**正好**都落在这一列墙上 —— 判定结果由"绕没绕"决定,而不是被别处的墙顺带满足。
 	var g := _blank(6, 6)
 	for y in range(6):
@@ -40,11 +40,11 @@ func _initialize() -> void:
 	# ② 正面压到第 0 列的墙
 	_check(TileQuery.rect_overlaps_solid(_rect(TS * 0.2, TS * 1.5, TS), TS),
 			"压到第 0 列的墙 → true")
-	# ③ ★ 跨右接缝:矩形横跨 x=W,覆盖第 5 格(空)与第 6 格 —— **绕回后是第 0 格(墙)**。
+	# ③ -  跨右接缝:矩形横跨 x=W,覆盖第 5 格(空)与第 6 格 —— **绕回后是第 0 格(墙)**。
 	#    不绕的实现会去读 grid[y][6](6 列表,越界)或读错行。
 	_check(TileQuery.rect_overlaps_solid(Rect2(W - 1.0, TS * 1.5, TS * 0.5, TS), TS),
 			"★ 跨右接缝:第 6 格绕回第 0 格(墙)→ true(不绕会越界)")
-	# ④ ★ 负坐标绕回:**往左整整一幅图**(x ≈ -W)。
+	# ④ -  负坐标绕回:**往左整整一幅图**(x ≈ -W)。
 	#    为什么非要"超过一整幅图"才够鉴别:GDScript 数组的负索引对 -1/-2 恰好与 posmod 同值,
 	#    只有偏移 ≥ 一个地图边长时,-8 这类下标才会在"不绕"的实现里越界。这里落点绕回后是
 	#    第 4/5 格(空)→ false,与 ③ 的"绕回撞墙 → true"成对,排除"永远 true"。
@@ -59,7 +59,7 @@ func _initialize() -> void:
 			"★ 但 solid_or_liquid 把水算进去 → true(飞鸟不能游过水)")
 
 	# ⑥ 空网格:一律 false(= 没压到东西)。调用方各自决定方向:
-	#    黑鸟 `not` 之后 = "全清"、预瞄直接 false = "无墙"、飞鸟**必须自己早退**成"不可走"。
+	#    黑鸟 `not` 之后 = "全清"、预瞄直接 false = "无墙"、飞鸟**必须自己提前返回**成"不可走"。
 	MazeGenerator.current_grid = []
 	_check(not TileQuery.rect_overlaps_solid(_rect(0, 0, TS * 3), TS),
 			"空网格 → false(调用方自备方向:飞鸟要的是不可走,故它必须保留自己的 is_empty 早退)")
@@ -74,10 +74,10 @@ func _initialize() -> void:
 		quit(1)
 
 
-# ★ 返回类型必须写 `Array[Array]`:`MazeGenerator.current_grid` 是**强类型** static var,
+# - 返回类型必须写 `Array[Array]`:`MazeGenerator.current_grid` 是**强类型** static var,
 #   赋普通 `Array` 会运行时报错("Invalid assignment … base object of type 'GDScript'"),
 #   且因为发生在 _initialize 里 → 走不到 quit() → `-s` 表现为**挂死**而不是报错退出。
-#   同一个坑仓库在 GridPathfinder.copy_grid 的注释里记过。
+#   同一个已知缺陷仓库在 GridPathfinder.copy_grid 的注释里记过。
 func _blank(cols: int, rows: int) -> Array[Array]:
 	var g: Array[Array] = []
 	for _y in range(rows):

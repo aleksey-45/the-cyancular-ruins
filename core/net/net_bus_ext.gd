@@ -79,12 +79,12 @@ func royale_leave() -> void:
 	royale_leave_requested.emit(multiplayer.get_remote_sender_id())
 
 # 客户端 → 大厅:请求大乱斗房间列表
-# ★ `token`(2026-09-29,B1 甲案)= 本端手里的**回局凭据**(没有就是 "")。大厅据此把
-#   "**本人自己那间私密房**"也列给他(B1 之前私密房一律不列 ⇒ 私密房里回主菜单的玩家
+# - `token`(2026-09-29,B1 甲案)= 本端手里的**回局凭据**(没有就是 "")。大厅据此把
+#   "**本人自己那间私密房**"也列给他(B1 之前私密房一律不列  ->  私密房里回主菜单的玩家
 #   没有回局入口)。它**不是**身份认证 —— 列表只是一个显示面,真正的准入由
 #   `rejoin_request` 的 `RejoinRegistry.decision` 判。
-# ★ 加参数 = 改 **NetBusExt** 的方法表,**可以**:本类是本仓自己的扩展协议(对原版 worker
-#   整个节点不存在 ⇒ 扩展 RPC 静默丢弃、优雅降级)。原版 `NetBus` 的方法表**一个字没动**。
+# - 加参数 = 改 **NetBusExt** 的方法表,**可以**:本类是本仓自己的扩展协议(对原版 worker
+#   整个节点不存在  ->  扩展 RPC 静默丢弃、优雅降级)。原版 `NetBus` 的方法表**一个字没动**。
 @rpc("any_peer", "reliable")
 func royale_list(token: String) -> void:
 	royale_list_requested.emit(multiplayer.get_remote_sender_id(), token)
@@ -121,7 +121,7 @@ func sub_destroyed(sub: Vector2i) -> void:
 	local_sub_destroyed.emit(sub)
 
 
-# 每 role 的颗粒状态(余额/短时窗/贷款/锁定),约 10Hz —— HUD 怀表的显示镜像。
+# 每 role 的粒子状态(余额/短期时间窗口/透支/锁定),约 10Hz —— HUD 怀表的显示镜像。
 signal local_time_state(payload: Dictionary)
 
 
@@ -136,9 +136,9 @@ func royale_room_state(state: Dictionary) -> void:
 	local_royale_room_state.emit(state)
 
 # ── 3v3 团队大厅(与 1v1 / 大乱斗三套协议并存;RPC 名不同互不干扰)──
-# ★ 命名纪律:一律带 `team_` 前缀。既避开 NetBus 的方法表(硬纪律),也避开 royale_*(同名 = 挂错节点
+# - 命名纪律:一律带 `team_` 前缀。既避开 NetBus 的方法表(硬纪律),也避开 royale_*(同名 = 挂错节点
 #    = 静默 no-op,beam_fired 那个先例)。
-# ★ 选边(`team_pick`)是 3v3 独有的上行:队伍**不由服务器推导**(role 号有空洞),玩家自己点。
+# - 选边(`team_pick`)是 3v3 独有的上行:队伍**不由服务器推导**(role 号有空洞),玩家自己点。
 
 signal team_create_requested(caller: int, opts: Dictionary)
 signal team_join_requested(caller: int, code: String, invite: String, beta: bool)
@@ -191,10 +191,10 @@ func team_room_state(state: Dictionary) -> void:
 	local_team_room_state.emit(state)
 
 # ── 统一大厅:房主上报本房地图(仅用于列表展示)──
-# ★ 为什么所有模式统一走它:1v1 的 `create_room` 是**原版 NetBus 的 RPC、签名冻结**,塞不进
+# - 为什么所有模式统一走它:1v1 的 `create_room` 是**原版 NetBus 的 RPC、签名冻结**,塞不进
 #   payload;而 royale/team 的 create 载荷虽是字典(加键免费),用两条机制会让"地图从哪来"
 #   这件事分叉 —— 同一概念只留一份实现。
-# ★ 它写的只是**列表上那张缩略图**;真正定图的仍是 `player_options.map`(报到那一刻读
+# - 它写的只是**列表上那张缩略图**;真正定图的仍是 `player_options.map`(报到那一刻读
 #   `Settings`、由 role1 那份生效)。两个真值,见设计 §6 第 3 条。
 signal room_map_requested(caller: int, code: String, path: String)
 
@@ -203,7 +203,7 @@ func room_map(code: String, path: String) -> void:
 	room_map_requested.emit(multiplayer.get_remote_sender_id(), code, path)
 
 # ── 断线重连(2026-09-17)──
-# ★ 全部进本节点,理由见文件头:原 NetBus 的方法表一律不动(改了会让与原版服务端的 RPC
+# - 全部进本节点,理由见文件头:原 NetBus 的方法表一律不动(改了会让与原版服务端的 RPC
 #   全部失联)。对原版 worker 本节点不存在 → 这三条静默丢弃,优雅降级成"不能重连"。
 #
 # 一次性会话令牌:大厅生成(它必须知道 token,否则"回大厅后回局"无法把客户端对回那一局),
@@ -233,10 +233,10 @@ func reclaim_role(role: int, token: String) -> void:
 # 玩家按 ESC 回主菜单 → 回**对应模式**的大厅页,在那里他**自己那间房照常列在列表里**
 # (显示方案:对局中的房看得见、对别人进不去)。凭(房间号, token)点它 → 大厅把 `go_match`
 # **原样再发一次**,客户端于是走与首次进场**逐字同一条**转连/认领路径。
-# ★ 入口**不是**一颗专门的「回到对局」按钮(设计已改,2026-09-21):大厅侧的判据是
+# - 入口**不是**一颗专门的「回到对局」按钮(设计已改,2026-09-21):大厅侧的判据是
 #   "**这个 caller 有没有资格重进这间房**",而不是"哪颗按钮被点了"。
-# ★ 成功那一路**不另开信号**:复用的是原 NetBus 的 `go_match`(方法表一个字不动)。
-# ★ 失败那一路必须显式告诉客户端 —— 否则它会一直等一个永不到来的 go_match,而凭据没清。
+# - 成功那一路**不另开信号**:复用的是原 NetBus 的 `go_match`(方法表一个字不动)。
+# - 失败那一路必须显式告诉客户端 —— 否则它会一直等一个永不到来的 go_match,而凭据没清。
 signal rejoin_requested(caller: int, code: String, token: String)
 
 @rpc("any_peer", "reliable")

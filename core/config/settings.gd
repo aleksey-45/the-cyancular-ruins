@@ -20,7 +20,7 @@ var sfx_volume: float = 1.0:
 		_apply_bus_volume("SFX", sfx_volume)
 
 # ── 通用 ──
-# 鼠标滚轮切枪。★ 2026-09-15 改默认 true:滚轮切枪本就已实现,但默认关着 = 该功能形同虚设
+# 鼠标滚轮切枪。-  2026-09-15 改默认 true:滚轮切枪本就已实现,但默认关着 = 该功能形同虚设
 # (用户要求"添加滚轮切武器"时它其实早就在,只是没人开)。已有存档里显式存过 false 的仍读 false。
 var wheel_switch: bool = true
 
@@ -35,7 +35,7 @@ var mp_map_path: String = ""
 # ── PvP 选项(本地偏好类直接生效;服务器权威类由房主下发,见 MatchHost)──
 var pvp_show_trajectories: bool = true  # 显示敌方武器(子弹)轨迹
 var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生效项,房主值优先)
-var pvp_show_enemy_hp: bool = true      # 显示敌方头顶血条
+var pvp_show_enemy_hp: bool = true      # 显示敌方头顶生命条
 var pvp_disabled_weapons: Array[int] = []  # 禁用武器(服务器生效项,房主值优先)
 var pvp_color_hue: float = 0.0          # 自己角色色相旋转(度;0=默认青色)
 var royale_match_min: float = 5.0       # 大乱斗一局限时(分钟,建房页可调,随房主报到生效)
@@ -157,7 +157,7 @@ func load_settings() -> void:
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
-		# ★ 默认值必须是**真的值**而不是 null:Godot 的 ConfigFile.get_value 把 null 当作
+		# - 默认值必须是**真的值**而不是 null:Godot 的 ConfigFile.get_value 把 null 当作
 		#   "调用方没给默认值",键不存在时直接报错(Couldn't find ... and no default was given)。
 		#   对老存档(在某个动作被加进 REMAPPABLE_ACTIONS 之前写的)来说那个键必然不存在 ——
 		#   于是**每加一个新可重绑动作,老玩家启动就刷一屏报错**。空数组语义完全相同

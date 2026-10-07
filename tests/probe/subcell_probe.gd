@@ -36,10 +36,10 @@ func _test_real_subgrid() -> void:
 	if sgrid.is_empty():
 		return
 	var cell_grid := MapFormat.load_map_file(DEMO)
-	# ★ 期望值 = **格级网格维度 × 每格子格数**,不写死 500×300("这张图恰好多大"换图就假红)。
-	#   每格子格数取 `CollisionBuilder` 的两个公开尺度常量(格 64px / 子格 16px ⇒ 4),
+	# - 期望值 = **格级网格维度 × 每格子格数**,不写死 500×300("这张图恰好多大"换图就虚假失败（测试用例误报）)。
+	#   每格子格数取 `CollisionBuilder` 的两个公开尺度常量(格 64px / 子格 16px  ->  4),
 	#   而不是魔数。期望值取自 `MapFormat.load_map_file`(整图解析)—— 与 `load_subgrid`
-	#   **是两条读法**(后者在 v4 下直接吃头部的 sub_cols/sub_rows)⇒ 头部与 body 对不上当场红。
+	#   **是两条读法**(后者在 v4 下直接吃头部的 sub_cols/sub_rows) ->  头部与 body 对不上直接断言失败。
 	var per_cell: int = CollisionBuilder.TILE_TS / CollisionBuilder.SUB_TS
 	var want := Vector2i.ZERO
 	if not cell_grid.is_empty():

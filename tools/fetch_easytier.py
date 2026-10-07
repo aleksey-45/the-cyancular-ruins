@@ -26,7 +26,7 @@ import sys
 import urllib.request
 import zipfile
 
-# ★ 版本号从 core/config/tunnel_meta.gd 读 —— 那是**唯一来源**,游戏侧的命令行参数与这里的
+# - 版本号从 core/config/tunnel_meta.gd 读 —— 那是**唯一来源**,游戏侧的命令行参数与这里的
 #   下载地址必须指同一版。手抄第二份的后果是"下载的版本与参数不匹配",而它**不报错**。
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(TOOLS)
@@ -81,7 +81,7 @@ def main() -> None:
     zip_path = os.path.join(dest, "easytier-%s.zip" % version)
     download(url, zip_path)
     print("== 解包到 %s" % dest)
-    # ★★ **整包解压**,不是只挑两个 exe:`easytier-core.exe` 静态导入 `Packet.dll`,
+    # 注意： **整包解压**,不是只挑两个 exe:`easytier-core.exe` 静态导入 `Packet.dll`,
     #   少了它的表现是**进程根本起不来**(Windows 报 0xC0000135、stdout/stderr 一个字节都没有)
     #   —— 那在客户端侧看起来与"打洞失败"一模一样。2026-09-29 实测踩到过一次。
     with zipfile.ZipFile(zip_path) as z:

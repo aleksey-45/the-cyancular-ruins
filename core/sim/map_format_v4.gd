@@ -3,16 +3,16 @@ extends RefCounted
 
 # `.cyrm` v4 二进制格式的编解码(2026-09-28 落地游戏侧;格式定义见
 # docs/superpowers/specs/2026-09-19-cyrm-v4-editor-design.md §3):
-#   · 明文头 20 字节:magic "CYRM" / version=4 / compression(0=裸,1=deflate=zlib RFC1950) /
+#   - 明文头 20 字节:magic "CYRM" / version=4 / compression(0=裸,1=deflate=zlib RFC1950) /
 #     body_size u32LE(解压后) / body_crc32 u32LE / sub_cols u16LE / sub_rows u16LE /
 #     layer_flags(bit0..3 = 前景/场景/后景/背景) / reserved
-#   · body = u16 meta_len + meta_utf8(就是原来那几行 "# player x y" 注释,坐标仍以 64px 格计)
+#   - body = u16 meta_len + meta_utf8(就是原来那几行 "# player x y" 注释,坐标仍以 64px 格计)
 #     + 按 layer_flags 顺序逐层块
-#   · 纹理层块:kind=1 + u16 调色板数 + 调色板 u32LE(描述符) + index_width(1/2) + 索引流(行主序)
-#   · 背景层块:kind=2 + sub_cols×sub_rows×4 字节 0xRRGGBBAA
-#   · 描述符 u32:bit0-2 hue / 3-5 brightness / 6-8 saturation / 9-11 alpha / 12-23 texture(0=空气)
+#   - 纹理层块:kind=1 + u16 调色板数 + 调色板 u32LE(描述符) + index_width(1/2) + 索引流(行主序)
+#   - 背景层块:kind=2 + sub_cols×sub_rows×4 字节 0xRRGGBBAA
+#   - 描述符 u32:bit0-2 hue / 3-5 brightness / 6-8 saturation / 9-11 alpha / 12-23 texture(0=空气)
 #
-# ★ 游戏侧只消费「场景」层(唯一碰撞层):`flatten_scene()` 把 4×4 子格扁平化回
+# - 游戏侧只消费「场景」层(唯一碰撞层):`flatten_scene()` 把 4×4 子格扁平化回
 #   "单纹理 + 2×2 形状掩码"的游戏网格。对由 v3 迁移来的图这是**无损**的(§3.6 展开规则的
 #   精确逆);对编辑器真画的 4×4 混排图是有损的(取出现最多的纹理)—— 游戏的单层渲染模型
 #   本来也表达不了格内混排,要完整四图层渲染是另一件事。
@@ -184,7 +184,7 @@ static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int)
 ## 单层游戏网格 → v4 二进制(只写「场景」层;子格辅码一律取中性 (4,4,4,7))。
 ## meta_lines = 原样保留的注释/出生点行(每行以 "#" 开头,与 v3 文本一致)。
 ##
-## ★ 本端固定写 **compression=0(裸 body)**:这是规格书 §3.5 明文认可的完整路径。
+## - 本端固定写 **compression=0(裸 body)**:这是规格书 §3.5 明文认可的完整路径。
 ##   Godot 4.7.1 的 PackedByteArray.compress() 参数语义存疑(实测传 -1/35/64/1024 全部
 ##   在 get_max_compressed_buffer_size 处报错返回 -1),而"读压缩"已实测可靠(用 Python
 ##   zlib 造的标准 deflate 流可正确解开 —— 与浏览器 CompressionStream('deflate') 同格式),
@@ -244,7 +244,7 @@ static func serialize(grid: Array, meta_lines: Array) -> PackedByteArray:
 	body.append(1)                       # index_width = 1(纹理 ≤ 22 + 空气,调色板恒 ≤ 256)
 	body.append_array(idx)
 
-	# ★ compress() 的参数是"原始大小"(用于预分配压缩缓冲),传 -1 会直接报错返回 -1;
+	# - `compress()` 的参数是"原始大小"(用于预分配压缩缓冲),传 -1 会直接报错返回 -1;
 	#   内部固定用 zlib/deflate —— 与 decompress 的 COMPRESSION_DEFLATE、浏览器
 	#   CompressionStream('deflate') 同为 RFC1950,三种实现互通。
 	var payload := body
@@ -252,7 +252,7 @@ static func serialize(grid: Array, meta_lines: Array) -> PackedByteArray:
 	out.append_array(MAGIC.to_ascii_buffer())
 	out.append(4)                        # version
 	out.append(0)                        # compression = 裸 body(见函数头注释)
-	write_u32(out, body.size())          # ★ body_size = **解压后**的大小(§3.1);解压方靠它分配
+	write_u32(out, body.size())          # - body_size = **解压后**的大小(§3.1);解压方靠它分配
 	write_u32(out, crc32(body))
 	write_u16(out, sub_cols)
 	write_u16(out, sub_rows)
@@ -288,7 +288,7 @@ static func write_u32(out: PackedByteArray, v: int) -> void:
 
 
 # CRC32(IEEE,多项式 0xEDB88320):表驱动,一次建表永久缓存。
-# ★ 表必须是 **64 位**:0xEDB88320 超过 int32 上限,存进 PackedInt32Array 会变负数,
+# - 表必须是 **64 位**:0xEDB88320 超过 int32 上限,存进 PackedInt32Array 会变负数,
 #   XOR 在 64 位域里做符号扩展 → 算出的 CRC 全错(且不报错,只能靠已知向量抓)。
 static var _crc_table: PackedInt64Array = PackedInt64Array()
 

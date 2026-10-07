@@ -1694,8 +1694,8 @@ EOF
       ensureThumbs(map);
       return buildThumbs().then(function () {
         s.view.zoom = fitZoom(map.subCols, map.subRows, canvas.width, canvas.height, 24);
-        s.view.x = -(canvas.width / s.view.zoom - map.subCols) / 2;
-        s.view.y = -(canvas.height / s.view.zoom - map.subRows) / 2;
+        s.view.x = -(canvas.width / s.view.zoom --map.subCols) / 2;
+        s.view.y = -(canvas.height / s.view.zoom --map.subRows) / 2;
         render();
       });
     }
@@ -2649,8 +2649,8 @@ Expected: 相位 ⑩ 头一条报 `FAIL - 新脏区集是空的`,随后整块报
       for (var L = 0; L < Core.LAYER_COUNT; L++) layerDirty[L] = null;   // 全屏重建走 buildLayers()
       return buildThumbs().then(function () {
         s.view.zoom = fitZoom(map.subCols, map.subRows, canvas.width, canvas.height, 24);
-        s.view.x = -(canvas.width / s.view.zoom - map.subCols) / 2;
-        s.view.y = -(canvas.height / s.view.zoom - map.subRows) / 2;
+        s.view.x = -(canvas.width / s.view.zoom --map.subCols) / 2;
+        s.view.y = -(canvas.height / s.view.zoom --map.subRows) / 2;
         return buildLayers();
       }).then(render);
     }

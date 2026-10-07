@@ -11,8 +11,8 @@ extends Node
 # 以及背包被权威改动后的 `restore_inventory` + `equip_type`(快照 c2 那条)。
 # 开局铺的那 12 把只走 `_spawn_pickup_node`,所以"开局看得见枪"不能证明拾取这条路没问题。
 #
-# 做法:真 Level0(pvp_mode → 只建世界)+ 真 Player + 一个**没入树**的 `PvpMatchClient` 实例
-# (基类,`_ready` 为空 —— 不入树就不会跑它的 `_physics_process`,那条会发网络包)。
+# 做法:真 Level0(pvp_mode → 只建世界)+ 真 Player + 一个**没加入场景树**的 `PvpMatchClient` 实例
+# (基类,`_ready` 为空 —— 不加入场景树就不会跑它的 `_physics_process`,那条会发网络包)。
 # 客户端的地面武器表/节点生命周期全走生产函数,不重写一份。
 #
 # ⚠ 判据 grep 文本 "GROUND CLIENT PROBE: ALL-OK"(不只看退出码)。
@@ -44,7 +44,7 @@ func _ready() -> void:
 	_world = _level0.get_node("WorldViewport")
 	_local = _world.get_node("Player")
 	_local.weapons.set_initial_inventory([1])   # PvP 里由服务器发枪;探针自己发一把
-	_client = PvpMatchClient.new()              # ★ 不入树:基类 _ready 为空,入了反而跑 _physics_process
+	_client = PvpMatchClient.new()              # - 不加入场景树:基类 _ready 为空,入了反而跑 _physics_process
 	_client._world = _world
 	_client._local = _local
 	print("[gc] 客户端探针就绪:地图 %s,本地玩家槽 %d" % [
@@ -107,15 +107,15 @@ func _phase_prompt_near_weapon() -> void:
 	print("[gc] ── ② 靠近显示 F 提示 ──")
 	var inst: int = int(_client._pickup_nodes.keys()[0])
 	var pk: WeaponPickup = _client._pickup_nodes[inst]
-	# ★ 每帧重新贴一次:玩家有重力,只设一次会被自己掉走 —— 那样这条断言会**间歇性**
+	# - 每帧重新贴一次:玩家有重力,只设一次会被自己掉走 —— 那样这条断言会**间歇性**
 	#   变红(实测:同一份代码连跑三遍,红绿绿),看着像功能坏了,其实是探针没站稳。
 	for i in 10:
 		_local.global_position = pk.canonical_pos
 		_local.velocity = Vector2.ZERO
 		await get_tree().physics_frame
 		_client._tick_ground_weapons()
-	# ★ 用成员而不是 `get_node_or_null("PickupPrompt")`:`PickupPrompt.new()` 建出来的节点
-	#   **不叫** "PickupPrompt"(脚本建的节点名要到入树才由引擎补),按名字找必然 null。
+	# - 用成员而不是 `get_node_or_null("PickupPrompt")`:`PickupPrompt.new()` 建出来的节点
+	#   **不叫** "PickupPrompt"(脚本建的节明确提示要到加入场景树才由引擎补),按名字找必然 null。
 	_check(pk.get("_prompt") != null, "提示节点已懒建")
 	_check(is_instance_valid(pk), "提示建好后武器节点仍有效")
 
@@ -131,7 +131,7 @@ func _phase_pickup_removal() -> void:
 	_check(_client.ground_weapons.size() == before - 1,
 			"本地地面表少一条(实际 %d)" % _client.ground_weapons.size())
 	_check(not _client._self_drop_until.has(inst), "自己刚丢下的冷却表清掉了该 inst")
-	# ★ 关键:被 queue_free 的节点在**本帧余下时间仍会被 tick 到**吗?让帧跑完再看。
+	# - 关键:被 queue_free 的节点在**本帧余下时间仍会被 tick 到**吗?让帧跑完再看。
 	for i in 10:
 		await get_tree().physics_frame
 		_client._tick_ground_weapons()
@@ -162,7 +162,7 @@ func _phase_authoritative_inventory_change() -> void:
 	for i in 10:
 		await get_tree().physics_frame
 	_check(w.inventory.held.is_empty(), "空背包按权威生效(实际 %d)" % w.inventory.held.size())
-	# ★ 权威说"空手"时不能只清索引:那把枪的实例还会活着,而 `tick()`/`fire()` 只判
+	# - 权威说"空手"时不能只清索引:那把枪的实例还会活着,而 `tick()`/`fire()` 只判
 	#   `_player_ok()`(player 非空且没倒地)、**不看索引** —— 于是手上留着一把索引 -1
 	#   却照常开火的**幽灵枪**。软回灌(`sync_soft_state`)之后这条路径是常路,不再是冷门。
 	_check(w.current_weapon() == null,
@@ -173,16 +173,16 @@ func _phase_authoritative_inventory_change() -> void:
 # ── ④b 同型号两把:权威态必须能表达"手持的是**哪一把**" ──
 # 用户 2026-09-23 报「捡起两把型号相同的枪,UI 显示错误」。左下角那一处按类型判选中(已单独修,
 # 见 `ui/hud.gd`);**这一相钉的是更底下那层**:权威态里 `wslot` 只有**类型 id**,而
-# `restore_inventory` 原先用 `first_index_of_type` 反查 ⇒ 同型号时永远落回**第 0 把**,
+# `restore_inventory` 原先用 `first_index_of_type` 反查  ->  同型号时永远落回**第 0 把**,
 # 于是 `_current_index` 与手上真正那把(`_weapon`)分家。
-# ★ 后果不止 UI:`_flush_current_mag` 会把残弹写进**错的那把**、**丢弃会丢掉错的那把**。
-# ★ 判据落在**背包条目**上(手持那一条的 `inst`),不落在 `current_type_id()` —— 后者是
-#   **类型 id**,同型号两把恒等 ⇒ 拿它断言**永远绿**(这正是旧冒烟漏掉它的原因)。
+# - 后果不止 UI:`_flush_current_mag` 会把残弹写进**错的那把**、**丢弃会丢掉错的那把**。
+# - 判据落在**背包条目**上(手持那一条的 `inst`),不落在 `current_type_id()` —— 后者是
+#   **类型 id**,同型号两把恒等  ->  拿它断言**永远绿**(这正是旧冒烟漏掉它的原因)。
 func _phase_same_type_equip() -> void:
 	print("[gc] ── ④b 同型号两把:手持哪一把 ──")
 	var w: WeaponComponent = _local.weapons
-	# ★ **三把**同型号,两条断言各指一把**不同**的枪(inst=3 / inst=2)。
-	#   只用两把的话第二条会**假绿**:前一条红时下标停在 inst=1,而第二条若也要 inst=1
+	# - **三把**同型号,两条断言各指一把**不同**的枪(inst=3 / inst=2)。
+	#   只用两把的话第二条会**虚假通过（未有效测试）**:前一条红时下标停在 inst=1,而第二条若也要 inst=1
 	#   就恰好"看起来对"(实测踩过 —— 一个断言必须能独立地红)。
 	var inv: Array = [
 		{"type": 1, "inst": 1, "mag": 5},
@@ -217,8 +217,8 @@ func _phase_same_type_equip() -> void:
 func _phase_cycle_stress() -> void:
 	print("[gc] ── ⑤ 拾取/丢出交替 60 轮 ──")
 	_local.weapons.set_initial_inventory([1])
-	# ★ 基线取**开始前**的件数,不假设"跑完必须为空":③ 还留着几件在地面表里,
-	#   而本相每轮是"+1 建 / -1 删"净零 —— 断言"清空"是把别相的残留算到这一相头上。
+	# - 基线取**开始前**的件数,不假设"跑完必须为空":③ 还留着几件在地面表里,
+	#   而本阶段每轮是"+1 建 / -1 删"净零 —— 断言"清空"是把别相的残留算到这一相头上。
 	var nodes0: int = _client._pickup_nodes.size()
 	var field0: int = _client.ground_weapons.size()
 	for i in 60:
@@ -245,18 +245,18 @@ func _phase_cycle_stress() -> void:
 
 
 # ── ⑥ 切枪包的上行值 = **目标那一把的 inst**（§4.1，2026-09-25 换）──
-# ★ 这一相**整段改写了**：原先断的是"上行值 = 背包位置，且**不得**是 type id"。
+# - 这一相**整段改写了**：原先断的是"上行值 = 背包位置，且**不得**是 type id"。
 #   那条契约已被 §4.1 反证 —— 新的契约是：上行的是**目标那把的 inst**，与两端 `held` 的**顺序无关**。
 # 为什么必须换：位置的含义由**本端**背包决定，而拾取/丢弃是服务器裁决、客户端不预测
 # ——那 ≈1 RTT 的窗口里同一个下标在两端解出不同的枪。历史症状是「滚轮切不动」（见 ④c 的注释）。
-# ★ 选 `[3, 1]`（重狙 / 手枪）：**类型 id 与背包位置不同**，能把两者区分开；`[1, 2]` 那种
+# - 选 `[3, 1]`（重狙 / 手枪）：**类型 id 与背包位置不同**，能把两者区分开；`[1, 2]` 那种
 #   恰好相等，测了也白测（红绿一样）。而 inst 与两者都不同，故三条量纲互相可分。
 func _phase_switch_field_contract() -> void:
 	print("[gc] ── ⑥ 切枪包上行值 = 目标那把的 inst ──")
 	var w: WeaponComponent = _local.weapons
 	w.set_initial_inventory([3, 1])   # 位置 0 = 重狙(类型 3)、位置 1 = 手枪(类型 1)
 	var inst1 := int(w.inventory.held[1]["inst"])
-	# ★ 前置:目标那把的 inst 必须与"位置"(1)和"类型 id"(3)**都不同**,否则下面两条
+	# - 前置:目标那把的 inst 必须与"位置"(1)和"类型 id"(3)**都不同**,否则下面两条
 	#   鉴别断言恒真。inst 由 WeaponInventory 的 `_next_inst` **单调分配、跨相累积**
 	#   (本文件前面的相已经把计数器顶到 ~160),不会小到撞上 1/3 —— 但**别靠"不会"**,
 	#   把前提变成一条断言,撞上了就让探针如实红。
@@ -316,7 +316,7 @@ func _phase_replica_empty_hands() -> void:
 		await get_tree().physics_frame
 	_check(rep._weapon != null and rep._weapon_type_int == 4,
 			"空手之后仍能重建武器(实际 %s / 槽 %d)" % [str(rep._weapon), rep._weapon_type_int])
-	# ★ 收尾要**等它真的没**:`queue_free` 只是标记,探针末尾同帧就 `quit()` 的话,副本连同
+	# - 收尾要**等它真的没**:`queue_free` 只是标记,探针末尾同帧就 `quit()` 的话,副本连同
 	#   它手上那把武器都还活着 → 退出时报 "N ObjectDB instances / 1 RID leaked"(上一版实测)。
 	rep.queue_free()
 	for i in 2:

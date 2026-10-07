@@ -14,8 +14,8 @@ class shared:
 	const bird_max_float: float = 260.0    # 上浮最大速度
 	const bird_max_sink: float = 160.0     # 下沉最大速度
 	const bird_water_damp: float = 5.0     # 水中垂直速度阻尼
-	const drown_interval: float = 1.5      # 防水值空后扣血间隔(秒)
-	const drown_damage: int = 5            # 每次扣血
+	const drown_interval: float = 1.5      # 防水值空后扣除生命值间隔(秒)
+	const drown_damage: int = 5            # 每次扣除生命值
 
 	# ── 补间形变(squash & stretch) ── 与 PlayerParams 同名同值,但刻意不共享常量:
 	# 两个参数类互不依赖(spec §3)。改一侧要问自己另一侧是否也该改。
@@ -95,7 +95,7 @@ class BlackBird:
 	const teleport_min_tiles: int = 2    # 传送落点距玩家的最短格数(环面距离,随机)
 	const teleport_max_tiles: int = 6    # 传送落点距玩家的最长格数(环面距离,随机)
 	const teleport_drop: float = 250.0    # 瞬移到落点上方高度(px),再下落
-	const landing_timeout: float = 0.3   # 落地兜底(秒)
+	const landing_timeout: float = 0.3   # 落地保底处理(秒)
 	const teleport_prep_time: float = 0.25  # 落地播 disappear 的最小停顿(传送前)
 	const charge_prep_time: float = 0.4     # appear 落地后停顿(冲锋前)
 	const teleport_cooldown: float = 3.0    # 冲锋结束后瞬移冷却(秒),期间不判定瞬移

@@ -29,13 +29,13 @@ func _check(src: String) -> void:
 		fn_end = src.length()
 	var body := src.substr(fn_body_start, fn_end - fn_body_start)
 	var spawn_idx := body.find("TileHitFx.spawn")
-	# ★ 2026-10-02 合并订正:KH 的 cyrm v4 把破坏下沉到 **16px 子格** ⇒ `_damage_tile_at` 长出
+	# - 2026-10-02 合并订正:KH 的 cyrm v4 把破坏下沉到 **16px 子格**  ->  `_damage_tile_at` 长出
 	#   **两条**路径(子格 / 网格回落),伤害调用从单一的 `damage_tile(cell` 变成
 	#   `damage_tile(cell` 与 `damage_sub(` 两种,且两条**不在**同一个 `if apply_damage:` 之下
 	#   (子格那条是独立 `if`,网格那条是 `and apply_damage` 复合条件)。
 	#   旧断言"在**首个** `if apply_damage:` 之后"因此失真 —— 它把回落路径那次调用当成了违规。
-	#   ★ **意图一字未变**:任何一条瓦片伤害调用都只能在权威侧发生。
-	#   ⇒ 改成**逐调用**检查(见下),而不是比两个位置。
+	#   - **意图一字未变**:任何一条瓦片伤害调用都只能在权威侧发生。
+	#    ->  改成**逐调用**检查(见下),而不是比两个位置。
 	var dmg_idx: Array[int] = []
 	for needle in ["damage_tile(cell", "damage_sub("]:
 		var from := 0
@@ -59,7 +59,7 @@ func _check(src: String) -> void:
 		_fail = "TileHitFx.spawn 出现在 `if apply_damage:` 之后(播碎片被权威开关挡住,应无条件)"
 		return
 	# 每一次伤害调用,往前 120 字符内必须看得到 `apply_damage`(覆盖 `if apply_damage:` 单独一行
-	# 与 `… and apply_damage:` 复合条件两种写法)。改无条件扣血、或换个名字绕过,照样红。
+	# 与 `… and apply_damage:` 复合条件两种写法)。改无条件扣除生命值、或换个名字绕过,照样红。
 	for di in dmg_idx:
 		var back := maxi(di - 120, 0)
 		var ctx := body.substr(back, di - back)

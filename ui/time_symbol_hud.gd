@@ -1,8 +1,8 @@
 class_name TimeSymbolHud
 extends Control
 
-# 时间模式中心标志(第一阶段):回溯=浅色倒放符号「◁◁」,加速=紫色「▶▶」。
-# 屏幕正中,轻微呼吸脉冲;两种模式各自显示,常态全隐。数据源 TimeField.current(单机)。
+# 屏幕中心时间状态指示图标（阶段一）：回溯模式下显示浅色闪烁「◁ ◁」图标，加速模式下显示紫色「▶ ▶」图标。
+# 挂载于 HUD 节点，根据 TimeField.current 的当前模式动态显示呼吸动画，常规状态下自动隐藏。数据源来自单人模式下的 TimeField.current。
 
 const SYMBOL_FONT := 64
 const COLOR_REWIND := Color(0.86, 0.90, 0.95, 0.55)   # 浅色(回溯:像倒带的半透明符号)

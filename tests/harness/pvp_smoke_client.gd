@@ -1,7 +1,7 @@
 extends Node
 # 冒烟用无头客户端:按命令行参数扮演建房/加入,断言关键流程后退出。
-# 用法: godot --headless --path . Tests/pvp_smoke_client.tscn -- --role create
-#       godot --headless --path . Tests/pvp_smoke_client.tscn -- --role join --code 0000
+# 用法: godot --headless --path . Tests/pvp_smoke_client.tscn --role create
+#       godot --headless --path . Tests/pvp_smoke_client.tscn --role join --code 0000
 # 流程:连大厅(7777)建房/加入 → 大厅配对后发 go_match → 转连该局 worker 并 claim_role → 等 match_start。
 
 var role: String = ""

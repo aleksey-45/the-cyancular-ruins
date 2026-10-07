@@ -1,16 +1,16 @@
 extends Node
 
 # tests/harness/net_lag_client.gd —— **直连 worker**(可经 UDP 延迟代理)跑**真 `pvp_game`**,
-# 用于在受控延迟下读 `[netstat]`。★ 测试用,不参与发布。
+# 用于在受控延迟下读 `[netstat]`。-  测试用,不参与发布。
 #
 # 为什么绕开大厅:worker 接受任何人的 `claim_role`(token 只归档不校验),所以把
 # `lobby_page` 的那三段照抄过来就够 —— `_do_go_match` / `_claim_role_worker` / `_on_match_start`。
-# 这样也顺手绕掉了「让大厅把 worker 端口报成代理端口」那个难题(worker 绑 0.0.0.0,
+# 这样也顺带规避了「让大厅把 worker 端口报成代理端口」那个难题(worker 绑 0.0.0.0,
 # 代理没法用"另一个环回 IP 占同一端口"的办法并存)。
 #
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 7200 --log-file c1.godotlog \
-#       res://tests/harness/net_lag_client.tscn -- "--role=1" "--port=7800" "--netstat"
+#       res://tests/harness/net_lag_client.tscn - "--role=1" "--port=7800" "--netstat"
 #
 # 参数(全在 `--` 之后):
 #   --role=N   本端 role(1 / 2)
@@ -51,11 +51,11 @@ func _ready() -> void:
 	PvpSession.token = ""      # 直连场景用不上重连,不发 token
 	print("[netlag] role=%d 连 %s:%d" % [_role, _addr, _port])
 	if _drive:
-		# ★ 驱动器挂 root(不是本场景):`change_scene_to_file` 会把本节点换掉,
+		# - 驱动器挂 root(不是本场景):`change_scene_to_file` 会把本节点换掉,
 		#   而按键要一路跟到对局里 —— 挂场景上会在切场景那一刻消失,玩家原地不动。
 		var d := InputDriver.new()
 		d.role = _role
-		# ★ 必须 **call_deferred**:本函数在 root 正在装配子节点的过程中跑,
+		# - 必须 **call_deferred**:本函数在 root 正在装配子节点的过程中跑,
 		#   直接 `add_child` 会失败(实测报 "Parent node is busy setting up children"),
 		#   而且**失败是静默的** —— 驱动器没挂上、bot 一步不走,整跑看起来却"正常完成"。
 		#   我第一版就是这么错的:所有跑次里的 bot 从头到尾没动过。
@@ -78,20 +78,20 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	PvpSession.role = role
 	PvpSession.spawn = spawn
 	PvpSession.map_path = map_path
-	# ★ 帧末切场景:本回调在 peer 的 poll() 调用栈里,栈内切会段错误(与 lobby_page 同款)。
+	# - 帧末切场景:本回调在 peer 的 poll() 调用栈里,栈内切会段错误(与 lobby_page 相同机制)。
 	get_tree().change_scene_to_file.call_deferred(_scene)
 
 
 # 自动按键:让两个客户端都**一直在动**,并且**朝对方走**。
 #
-# ★ 第一版是每 1.2s 换向 —— 那是错的:两个出生点相距约 7400px,各自原地振荡永远不相遇,
+# - 第一版是每 1.2s 换向 —— 那是错的:两个出生点相距约 7400px,各自原地振荡永远不相遇,
 #   于是预测从不产生分歧、回滚恒 0,得到一条毫无意义的"全 0"读数(实测踩到过)。
 #   现在 role 1 一路向右、role 2 一路向左,逼它们在中间撞上 —— 只有两具身体真的接触,
 #   才会走到「幽灵碰撞体 + 本地预测」那条 C2 分歧路径上。
 class InputDriver:
 	extends Node
 
-	const STUCK_S := 0.5          # 水平位移连续这么久为 0 ⇒ 判定卡住
+	const STUCK_S := 0.5          # 水平位移连续这么久为 0  ->  判定卡住
 	const FLIP_S := 1.5           # 卡太久就反向走这么久,绕开障碍
 	const FLIP_AFTER_S := 2.0
 
@@ -105,10 +105,10 @@ class InputDriver:
 		_jump_t += delta
 		var me: Node2D = get_tree().get_first_node_in_group("player")
 		var foe: Node2D = get_tree().get_first_node_in_group("player_replica")
-		# 兜底方向:还没进对局(两个组都空)时按奇偶各走一边
+		# 保底处理方向:还没进对局(两个组都空)时按奇偶各走一边
 		var dir := 1.0 if role % 2 == 1 else -1.0
 		if me != null and is_instance_valid(me):
-			# ★★ 追踪必须用**权威 canonical**,不能用副本的 `global_position`:
+			# 注意： 追踪必须用**权威 canonical**,不能用副本的 `global_position`:
 			#   副本的渲染位置是被**刻意锚到本地玩家附近**的(见 player_replica 的
 			#   anchor_to_nearest),所以它永远"就在我旁边",`dx` 指不出对手的真实方向 ——
 			#   实测后果:c1 一路乱走到绕了环面一圈、c2 原地卡死,两者从不碰面。

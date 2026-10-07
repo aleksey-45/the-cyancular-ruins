@@ -2,7 +2,7 @@ extends SceneTree
 
 # 3v3 房间的**纯逻辑**冒烟(满员判据 / 最小空闲号 / 队满拒绝 / 互斥判定)
 # + **源码级**断言 ⑥~⑨(⑥:team_join 里确实调了 team_next_role;⑦:统一大厅里那两个设置区块
-#   在 3v3 下被**按模式收起**(`<行键>.visible = not is_team`)/ 计数行不得写死容量 / 名单行两档
+#   在 3v3 下被**按模式收起**(`<行键>.visible = not is_team`)/ 计数行不得写死容量 / 名单行两个档位
 #   共用 `_roster_row`;⑧:大厅入口指向的对局场景真的存在且挂了
 #   脚本;⑨:set_my_team 接线 / 分队碰撞层契约 / 小地图两提供器同源 / 队色是比值 —— 见各节的
 #   盲区说明)+ **像素级**断言 ⑩(`BODY_BASE_COLOR` 仍等于 `player.png` 的不透明众数色)。
@@ -10,15 +10,15 @@ extends SceneTree
 # 通过 = `TEAM ROOM SMOKE: ALL-OK` 退出 0。
 #
 # ═══ 为什么需要它 ═══
-# ★ `-s` 阶段 autoload 不存在,故这里**只测不碰 autoload 的纯函数**:把判据收成
+# - `-s` 阶段 autoload 不存在,故这里**只测不碰 autoload 的纯函数**:把判据收成
 #   `LobbyRooms` 的静态函数,再由 RPC handler 调用(单一来源)。判据错了的表现是静默的:
 #   "两队人数不等也能开"会让 3v3 变成 4v2。
-# ★ 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() → 进程永久挂起。
-#   ★ 第二层:`-s` 下对 GDScript 对象调用**不存在**的函数是运行时报错 + 当前函数当场中止
-#     (同样走不到 quit() → 同样挂起)。故先按名字点名确认判据都在,缺哪个就一行 FAIL 退 1。
+# - 空载守卫:load 失败立刻 quit(1),否则抛错走不到 quit() → 进程永久挂起。
+#   - 第二层:`-s` 下对 GDScript 对象调用**不存在**的函数是运行时报错 + 当前函数当场中止
+#     (同样走不到 quit() → 同样挂起)。故先按名字明确提示确认判据都在,缺哪个就一行 FAIL 退 1。
 #     红线阶段靠它给出干净的红,而不是"卡住到 timeout"。
 #
-# ★★ 本文件**不得出现 `LobbyRooms` 这个全局类名**(只能用 `load()` 拿到的脚本对象):
+# 注意： 本文件**不得出现 `LobbyRooms` 这个全局类名**(只能用 `load()` 拿到的脚本对象):
 #   写全局类名 = 本脚本对它产生**静态依赖** → 编译本脚本时会连带编译 `lobby_rooms.gd`,
 #   而那个文件在 `_enter_tree` 里引用了 autoload `NetBus` —— `-s` 阶段 autoload 未注册,
 #   于是整条链编不过:`Identifier not found: NetBus` + `Failed to compile depended scripts`,
@@ -27,17 +27,17 @@ extends SceneTree
 
 func _initialize() -> void:
 	var script = load("res://server/lobby/lobby_rooms.gd")
-	# ★ load() **解析失败时不返回 null**(给回的是那个坏掉的脚本对象)→ 判据用 reload() 的错误码
+	# - load() **解析失败时不返回 null**(给回的是那个坏掉的脚本对象)→ 判据用 reload() 的错误码
 	#   (「源码文本全对、但 GDScript 编不过」这一档只有 reload 照得出来)。
 	if script == null or script.reload() != OK:
 		print("TEAM ROOM SMOKE: FAIL(加载/编译 lobby_rooms.gd 失败)")
 		quit(1)
 		return
-	# ★ 点名守卫的**能力边界**(别照抄到别处当通用手段):`Object.has_method()` 对**脚本资源**
+	# - 明确提示守卫的**能力边界**(别照抄到别处当通用手段):`Object.has_method()` 对**脚本资源**
 	#   只报 ClassDB 方法与 `static func` —— 非 static 的成员函数/内部类方法它**看不见**。
 	#   (仓内两处实测记载:`tests/smoke/ai_input_source_smoke.gd` 与 `tests/lib/scan_util.gd`。)
 	#   故下面这三个目标**当前必须全是 static** 才对;哪天把某个判据改成非 static,这里会给出
-	#   一条**误导性**的"未声明 X" FAIL(脚本其实声明了,只是 has_method 照不到)—— 那时改法
+	#   一条**误导性**的"未声明 X" FAIL(脚本其实声明了,只是 has_method 无法覆盖检测)—— 那时改法
 	#   是换判据(如文本断言),不是把判据删掉。
 	for fn_name in ["team_ready", "team_can_join", "team_next_role"]:
 		if not script.has_method(fn_name):
@@ -55,13 +55,13 @@ func _initialize() -> void:
 	var half := {1: [1, 2, 3]}
 	if script.team_ready(half):
 		fails.append("只有一队不得 ready")
-	# ② 选边闸门:该队满 3 人 → 拒绝
+	# ② 选边门控前置校验:该队满 3 人 → 拒绝
 	if script.team_can_join({1: [1, 2, 3], 2: []}, 1):
 		fails.append("★ 1 队满 3 人后不得再加入")
 	if not script.team_can_join({1: [1, 2, 3], 2: []}, 2):
 		fails.append("2 队有空位应当允许")
-	# ③ 最小空闲号:role 号**有空洞**时取最小未占用号(与 royale 同款:有人退不重排)。
-	#    ★ 判据不是"人数 + 1" —— 那是"编号恒连续"的假设,有人退出留空洞时会撞上仍在房里的高号。
+	# ③ 最小空闲号:role 号**有空洞**时取最小未占用号(与 royale 相同机制:有人退不重排)。
+	#    - 判据不是"人数 + 1" —— 那是"编号恒连续"的假设,有人退出留空洞时会撞上仍在房里的高号。
 	if script.team_next_role([1, 2, 4]) != 3:
 		fails.append("★ 最小空闲号错了:占用 [1,2,4] 应得 3(取 max+1 会得 5)")
 	if script.team_next_role([]) != 1:
@@ -103,34 +103,34 @@ func _initialize() -> void:
 		fails.append("★ 有 1 人未选边不得 ready(未选边的 role 不在 team_of 里,别把它算进任何一队)")
 	lrm.free()
 	# ⑥ team_join 里**那一行接线**本身 —— 判据函数测对了 ≠ 生产调的是它。
-	# ★ 这是本文件形态自带的盲区:①~⑤ 全在测静态判据本身,而 handler 要 autoload、`-s` 里跑不动;
-	#   于是把 `team_next_role(tr.player_role.values())` 换成内联的「人数 + 1」,上面五条**依旧全绿**,
+	# - 这是本文件形态自带的盲区:①~⑤ 全在测静态判据本身,而 handler 要 autoload、`-s` 里跑不动;
+	#   于是把 `team_next_role(tr.player_role.values())` 换成内联的「人数 + 1」,上面五条**依旧测试全部通过**,
 	#   而 role 分配已经在"有人退过"的房里出错(撞上仍在房里的高号,同一个 role 双份占用)。
 	#   故补一条便宜的**源码级**断言,用剥注释视图(注释里出现同形文本不算数)。
 	var room_src := ScanUtil.read("res://server/lobby/lobby_rooms.gd")
 	if room_src.is_empty():
 		fails.append("读不到 server/lobby_rooms.gd(接线断言无从成立)")
 	else:
-		# ★ 2026-10-02 降精度:原钉**整份文件**含逐字 `team_next_role(tr.player_role.values())`
-		#   —— 接收者/入参表达式换个等价写法就假红。改扫 **team_join 的函数体**、只要求它调了
+		# - 2026-10-02 降精度:原钉**整份文件**含逐字 `team_next_role(tr.player_role.values())`
+		#   —— 接收者/入参表达式换个等价写法就虚假失败（测试用例误报）。改扫 **team_join 的函数体**、只要求它调了
 		#   `team_next_role(`(问的是同一件事:那行接线还在)。要拦的变异:把接线换成内联的
 		#   「人数 + 1」—— 判据函数仍在,但"有人退过房"的 role 分配会撞上仍在房里的高号。
 		if not ScanUtil.func_body(ScanUtil.code_only(room_src), "team_join").contains("team_next_role("):
 			fails.append("★ team_join 未调 team_next_role(...)—— 判据函数仍在,生产那一行被换成内联写法了(有人退过房的 role 分配会撞号)")
 	# ⑦ 3v3 的形态源码断言(**统一大厅之后口径改判**:三页合一后不再是"3v3 页不摆那两块",
-	#    而是"那两块在 3v3 下被**按模式收起**")。与上面 ⑥ 同款:页面脚本要 autoload,`-s` 里跑不动,
+	#    而是"那两块在 3v3 下被**按模式收起**")。与上面 ⑥ 相同机制:页面脚本要 autoload,`-s` 里跑不动,
 	#    只能读源文本。三条都是"听着无所谓、坏了不报错"的那类:
 	#   ① 建房弹层的禁用武器行 / 等待室角色颜色行必须**按模式收起**:判据钉**赋值那一行的形状**
-	#      (`<行键>.visible = not is_team`)。★ 只看"函数体里出现过 `"weapons"`"是**不够**的 ——
+	#      (`<行键>.visible = not is_team`)。-  只看"函数体里出现过 `"weapons"`"是**不够**的 ——
 	#      **无条件**设置可见性(`.visible = true`)同样含那个子串,而那时这条就证明不了
 	#      "3v3 会隐藏它"(2026-10-03 评审核出:那是"守卫的声称比它实际强")。
-	#      行键的勾选框**写的是 `Settings.pvp_disabled_weapons`**(1v1/大乱斗的设置项)⇒
+	#      行键的勾选框**写的是 `Settings.pvp_disabled_weapons`**(1v1/大乱斗的设置项) -> 
 	#      3v3 下没收起的话,勾一下会**连带改掉另两个模式**。
-	#      ★ 上限照实登记:这是**源码形状**判据,不证明运行时真的收起;运行那一半由
+	#      - 上限照实登记:这是**源码形状**判据,不证明运行时真的收起;运行那一半由
 	#      `lobby_create_form_probe` ⑤/⑥/⑩ 与 `lobby_wait_room_probe` ⑭ 的**行为级**断言保证。
 	#   ② 等待室计数行的分母必须引 `LobbyRooms.TEAM_ROLES/TEAM_SIZE` —— 写死 6/3 时
 	#      "房间容量只有一个真值来源"这句自称就不成立,TEAM_SIZE 一改这行就撒谎且不报错。
-	#   ③ 名单行必须**两档共用**同一个行构造 `_roster_row(...)`(一处定义 + 两处调用)——
+	#   ③ 名单行必须**两个档位共用**同一个行构造 `_roster_row(...)`(一处定义 + 两处调用)——
 	#      未选边档原先一律 C_TEXT,自己还没选边时那行不亮(只有 `(我)` 标记)。
 	var lobby_src := ScanUtil.read("res://scenes/mp_lobby.gd")
 	if lobby_src.is_empty():
@@ -149,12 +149,12 @@ func _initialize() -> void:
 		if roster_hits < 3:
 			fails.append("★ 名单行没走公共的 _roster_row(一处定义 + 两处调用,实际命中 %d 次)—— 未选边档的自己那行会不亮" % roster_hits)
 	# ⑧ **悬空引用守卫**:`_enter_match_scene` 指向的对局场景必须真的存在(B 册 Task 6 创建)。
-	# ★ 为什么值一条:那个 `call_deferred("change_scene_to_file", …)` 是**字符串路径**,文件被删/
+	# - 为什么值一条:那个 `call_deferred("change_scene_to_file", …)` 是**字符串路径**,文件被删/
 	#   改名/写错时**什么都不报** —— 点了"开始"的六个客户端只会在换场那一刻静默停在原地(或更糟:
-	#   报一条 change_scene 失败后留在等待室)。而这条死路要**真凑齐 6 人开局**才现形,那时它长得
+	#   报一条 change_scene 失败后留在等待室)。而这条死路要**真凑齐 6 人开局**才暴露异常,那时它长得
 	#   像"功能坏了"而不是"路径写错了"。先例:`tests/probe/kh_l4_probe.gd` 对大乱斗入口那条
 	#   `ResourceLoader.exists` 断言(同一条理由:数字符串会把"场景被删"读成绿)。
-	# ★ 判据取**场景路径**而不是 `team_game` 字样(同 kh_l4 那条的说明):数"指向该场景的字符串"
+	# - 判据取**场景路径**而不是 `team_game` 字样(同 kh_l4 那条的说明):数"指向该场景的字符串"
 	#   才等于数"入口个数",数字样会把注释/变量名一起命中。
 	var entry := "res://scenes/" + "team" + "_game.tscn"
 	if lobby_src.is_empty():
@@ -165,7 +165,7 @@ func _initialize() -> void:
 			fails.append("★ 3v3 大厅入口应**恰好 1 处**指向 %s(实际 %d 处)—— 入口漏加/被删/指回别处" % [entry, hits])
 		if not ResourceLoader.exists(entry):
 			fails.append("★ 3v3 对局场景 %s 不存在(悬空引用:大厅那个 call_deferred 换场会静默失败)" % entry)
-		# ★ 顺带钉住"指向的那个场景**真的挂上了** team_game.gd"(反向:路径在但内容是空气 ——
+		# - 顺带钉住"指向的那个场景**真的挂上了** team_game.gd"(反向:路径在但内容是空气 ——
 		#   比如只建了个空 .tscn)。读它的 ext_resource 而不是 `load()`:`-s` 阶段不该为了断言
 		#   把整个对局场景(含 Level0 那一整棵)拖进内存。
 		var tscn := FileAccess.get_file_as_string(entry) if FileAccess.file_exists(entry) else ""
@@ -173,15 +173,15 @@ func _initialize() -> void:
 			fails.append("★ %s 没有挂 scenes/team_game.gd(空场景 = 换场成功但一行脚本都不跑)" % entry)
 	# ⑨ 3v3 客户端的**两条"漏了不报错"的接线**(B 册 Task 6;判据取源码,理由同 ⑥⑦ ——
 	#   对局场景要 autoload + 真链路,`-s` 里跑不动,真链路那份归 Task 8)。
-	#   ★ ① `_hud.set_my_team(...)`:**唯一**会把"我是哪一队"告诉 HUD 的地方。漏了不报错,
-	#     后果是 `_my_team` 恒 0 ⇒ 「本局胜利!」/「胜利!」**一次都不会出现**,赢的局报成输的
-	#     (平局那一支不受影响 —— 它走 else)。★ 行为面另由 `hud_declarative_probe` 的第二段钉住
+	#   - ① `_hud.set_my_team(...)`:**唯一**会把"我是哪一队"告诉 HUD 的地方。漏了不报错,
+	#     后果是 `_my_team` 恒 0  ->  「本局胜利!」/「胜利!」**一次都不会出现**,赢的局报成输的
+	#     (平局那一支不受影响 —— 它走 else)。-  行为面另由 `hud_declarative_probe` 的第二段钉住
 	#     (喂 `{winner: 我的队号}` 断言念「本局胜利!」+ 不写入时的反向对照);这里钉的是**生产
-	#     到底调没调**,两半缺一不可:只钉 HUD 那一半,`team_game` 永不调用照样全绿。
-	#   ★ ② 撞车队:本地玩家的 `collision_layer/mask` 与副本幽灵体的层必须按**队**设
+	#     到底调没调**,两半缺一不可:只钉 HUD 那一半,`team_game` 永不调用照样测试全部通过。
+	#   - ② 撞车队:本地玩家的 `collision_layer/mask` 与副本幽灵体的层必须按**队**设
 	#     (`TeamHost.TEAM_ENEMY_LAYER`)。全 1v1/大乱斗式的"全员互挡"在 3v3 是**错的**,
 	#     而错了的表现是 C2 每帧回滚(不像崩溃那样显眼)。
-	#   ★ ⑤ 结算页接线(B 册 Task 7 收的评审尾巴:Task 5/6 的两条调用此前**零常驻覆盖**)。
+	#   - ⑤ 结算页接线(B 册 Task 7 收的评审尾巴:Task 5/6 的两条调用此前**零常驻覆盖**)。
 	var tg_src := ScanUtil.read("res://scenes/team_game.gd")
 	if tg_src.is_empty():
 		fails.append("读不到 scenes/team_game.gd(Task 6 的两条接线断言无从成立)")
@@ -194,7 +194,7 @@ func _initialize() -> void:
 			fails.append("★ team_game._apply_teams 没调 _hud.set_my_team(队伍表到达后必须写入我队队号;漏了不报错,赢的局会被 HUD 报成输的)")
 		elif not apply_body.contains("_team_of_role("):
 			fails.append("★ team_game._apply_teams 的 set_my_team 入参没引 _team_of_role(...)(写死队号/拿 role 当队号都会在 role 与队号错开时报错胜负)")
-		# ★ 判据收在**函数体**上而不是全文件 `contains`:全文件里"常量出现过"太容易满足 ——
+		# - 判据收在**函数体**上而不是全文件 `contains`:全文件里"常量出现过"太容易满足 ——
 		#   把 1 队那一支换成"全员互挡"(`| 2`)、或把队 B 的层写死成 16,常量本体照旧在文件里,
 		#   全文件断言一条都不会红。契约的四个要点(见 TeamHost._apply_team_layers 那张表):
 		var coll_body := ScanUtil.func_body(tcode, "_apply_team_collision")
@@ -205,19 +205,19 @@ func _initialize() -> void:
 				fails.append("★ _apply_team_collision 没给 1 队设身体层 2(契约表:1 队 layer=2 / mask=21)")
 			if not coll_body.contains("& ~2"):
 				fails.append("★ _apply_team_collision 没给 1 队**抹掉**玩家层位(写成 `|= 2` 就是全员互挡 = 队友也挡我;服务器那边抹了 → 每帧回滚)")
-			# ★★ 判据必须是**那一行赋值本身**(`collision_layer = TeamHost.TEAM_ENEMY_LAYER`),
+			# 注意： 判据必须是**那一行赋值本身**(`collision_layer = TeamHost.TEAM_ENEMY_LAYER`),
 			#   不能是"常量在函数体里出现过" —— 生产里这个常量出现**两次**(2 队的身体层 + 1 队
 			#   掩码里的"挡住队 B"位),所以"把 2 队的层写死成 16"(1 队那处仍留常量)、
-			#   "删掉整个 2 队分支"、两种实现都能把"出现过"喂绿,而它们正是这句话点名的变异。
+			#   "删掉整个 2 队分支"、两种实现都能把"出现过"喂绿,而它们正是这句话明确提示的变异。
 			#   钉整行赋值后:写死 16 → 红;删掉 2 队分支 → 红。
 			if not coll_body.contains("collision_layer = TeamHost.TEAM_ENEMY_LAYER"):
 				fails.append("★ _apply_team_collision 没给 2 队设 `collision_layer = TeamHost.TEAM_ENEMY_LAYER`(写死 16 / 删掉 2 队分支都在这儿红;只数'常量在体内出现过'守不住 —— 它在 1 队那一行也出现)")
-			# ★ 两条一起要:`set_ghost_layer(` 单独一条**不够** —— 写成 `set_ghost_layer(2)`
+			# - 两条一起要:`set_ghost_layer(` 单独一条**不够** —— 写成 `set_ghost_layer(2)`
 			#   (副本幽灵体恒在玩家层 = 队友副本也挡我)时它照样在,而那一行正是"按**队**设层"
 			#   与"恒在玩家层"的全部差别(实测:只钉前一条时这条变异**照样绿**)。
 			if not (coll_body.contains("set_ghost_layer(") and coll_body.contains("_ghost_layer_of(")):
 				fails.append("★ _apply_team_collision 没给副本幽灵体按**队**配层(必须 set_ghost_layer(_ghost_layer_of(...));写成 set_ghost_layer(2) 就是队友副本也挡我 → C2 每帧回滚,不报错)")
-		# ★★ `_ghost_layer_of` 的两支**都要钉**:它体内这个常量只出现**一次**,故"按队"那个
+		# 注意： `_ghost_layer_of` 的两支**都要钉**:它体内这个常量只出现**一次**,故"按队"那个
 		#   分支被删(改成恒返 `TeamHost.TEAM_ENEMY_LAYER`)时"出现过"照样绿 —— 而那正是
 		#   "队友副本也挡我 → C2 每帧回滚"的实现。判据 = 按队判别 + 1 队那一支 + 常量,三样都要。
 		var ghost_body := ScanUtil.func_body(tcode, "_ghost_layer_of")
@@ -226,11 +226,11 @@ func _initialize() -> void:
 		elif not (ghost_body.contains("_team_of_role(") and ghost_body.contains("return 2")
 				and ghost_body.contains("TeamHost.TEAM_ENEMY_LAYER")):
 			fails.append("★ team_game 的 _ghost_layer_of 不是**按队两支**(必须:队号 1 → 层 2,否则 → TeamHost.TEAM_ENEMY_LAYER。恒返 TEAM_ENEMY_LAYER = 队友副本也挡我 → C2 每帧回滚,不报错)")
-		# ★★ 表外 / 队伍表未到时的**落层**必须与服务端"什么都不配"(保持 `_ready` 里那句层 2)
-		#   对齐。旧实现把"未知"当成了**队 2**:客户端幽灵体层 16、服务端层 2 ⇒ 队 2 的玩家
-		#   在服务端**会**被挡住、在客户端**不会** ⇒ C2 每帧分歧(不报错)。
-		#   ★ 上面那一组"按队两支"**区分不了**这两种写法(旧的一行三元三样全含)——
-		#     鉴别点在**结构**:新形状是 `match` + 两支 + **match 之外**的兜底 `return 2`,
+		# 注意： 表外 / 队伍表未到时的**落层**必须与服务端"什么都不配"(保持 `_ready` 里那句层 2)
+		#   对齐。旧实现把"未知"当成了**队 2**:客户端幽灵体层 16、服务端层 2  ->  队 2 的玩家
+		#   在服务端**会**被挡住、在客户端**不会**  ->  C2 每帧分歧(不报错)。
+		#   - 上面那一组"按队两支"**区分不了**这两种写法(旧的一行三元三样全含)——
+		#     鉴别点在**结构**:新形状是 `match` + 两支 + **match 之外**的保底处理 `return 2`,
 		#     故 `return 2` 出现**两次**,而旧写法只有一次。
 		if ghost_body.count("return 2") < 2:
 			fails.append("★ _ghost_layer_of 丢了表外兜底:未知队号必须落到层 2(与服务端'什么都不配'对齐);旧写法把未知当队 2 ⇒ 两端层不一致 ⇒ C2 每帧分歧,不报错")
@@ -246,11 +246,11 @@ func _initialize() -> void:
 		if not (others_body.contains("_minimap_entries()") and colors_body.contains("_minimap_entries()")):
 			fails.append("★ 小地图两个提供器没共用 _minimap_entries()(各写一份 for = 过滤条件两份;某副本已 free 未摘时两数组错位一格 → 队友点画成敌人色,不报错)")
 		# ④ 队色染到**身体**上必须是 modulate **比值**(队色 / 本体主色),不能直接乘队色。
-		#    ★ 直接乘是 brief 给的初版:蓝身体 `#639BFF` 乘上**那版队色**(橙,现已改口径为偏绿的青)
+		#    - 直接乘是 brief 给的初版:蓝身体 `#639BFF` 乘上**那版队色**(橙,现已改口径为偏绿的青)
 		#      实测是 `#636073` —— 一坨灰紫,"一眼看出谁是队友"直接落空
 		#      (实测图 `.superpowers/sdd/_t6_tint2.png` 第②列)。
 		#      比值则精确等于队色本身(实测逐字节相等),与头顶 ID / 小地图点位**同源同一个常量**。
-		#    ★ 本档只钉**机制**(公式是比值);比值的**分母**(`BODY_BASE_COLOR` 那个数值)归 ⑩。
+		#    - 本档只钉**机制**(公式是比值);比值的**分母**(`BODY_BASE_COLOR` 那个数值)归 ⑩。
 		var tint_code := ScanUtil.code_only(ScanUtil.read("res://scenes/pvp_match_client.gd"))
 		var tint_body := ScanUtil.func_body(tint_code, "_apply_tint")
 		if tint_body.is_empty():
@@ -263,11 +263,11 @@ func _initialize() -> void:
 		#   ① MATCH_OVER 块里必须调 `_show_result()` —— 删了不报错,只是**结算页永不出现**
 		#      (玩家停在对局里,既没有结算页也没有回主菜单的路)。判据取"**那个分支里**有调用",
 		#      不是"文件里出现过" —— 后者对"把调用挪出分支/挪成无条件"恒绿。
-		#   ② `_build_result_payload()` 折载荷时 `_names` 与 `_teams` 的**实参顺序**不得写反。
-		#      ★★ 这是本计划**最安静的错法**:`for_team(round, names, teams, my_team)` 的前三个
+		#   ② `_build_result_payload()` 组装解析载荷时 `_names` 与 `_teams` 的**实参顺序**不得写反。
+		#      注意： 这是本计划**最安静的错法**:`for_team(round, names, teams, my_team)` 的前三个
 		#      实参**都是 Dictionary**,写反**照样编译、所有常驻测试照样绿**,只有榜渲染成
-		#      乱码/空表。★ 判据取"**每个位置上是什么**"(「两个名字都出现过」对换位**恒绿**)。
-		#   ★ 这正是"只扫基类那两条常驻守卫"照不到的那一半(它们管挂载/离场,不管谁来调)。
+		#      乱码/空表。-  判据取"**每个位置上是什么**"(「两个名字都出现过」对换位**恒绿**)。
+		#   - 这正是"只扫基类那两条常驻守卫"无法覆盖检测的那一半(它们管挂载/离场,不管谁来调)。
 		var tcv := ScanUtil.code_view(tg_src)
 		var cv_lines := tcv.split("\n")
 		var i_mo := -1
@@ -301,14 +301,14 @@ func _initialize() -> void:
 						if not args[2].contains("_teams"):
 							fails.append("★ for_team 第 3 个实参不是 _teams(同上:names 与 teams 写反是**静默**的)")
 	# ⑩ `BODY_BASE_COLOR` 的**数值**时效性 —— 与 ⑨④ 的"机制"那一半互补(两半缺一不可)。
-	# ★ ⑨④ 钉"公式是**比值**";本档钉那个比值的**分母**仍等于 `player.png` 的主色。换素材忘了
+	# - ⑨④ 钉"公式是**比值**";本档钉那个比值的**分母**仍等于 `player.png` 的主色。换素材忘了
 	#   重测 `BODY_BASE_COLOR` 时:公式照旧对、⑨④ 照旧绿,只有身体**整体偏色** —— 而六个人
-	#   一起偏、仍然分得出谁是谁 ⇒ 这是本批最容易漏的一档(评审原话)。
-	# ★ 复测办法与 `pvp_match_client.gd` 该常量注释里的那条**逐字同源**:按 alpha > 200 过滤
+	#   一起偏、仍然分得出谁是谁  ->  这是本批最容易漏的一档(评审原话)。
+	# - 复测办法与 `pvp_match_client.gd` 该常量注释里的那条**逐字同源**:按 alpha > 200 过滤
 	#   `player.png` 的全部像素,取出现次数最多的那个 RGB。
-	# ★ 渲染侧另有一份等价断言(`hue_tint_probe` 守卫 D,那里顺带还钉了 `C_TEAM_A` 同色)。
-	#   那条**必须真渲染**(headless 下 `get_viewport().get_texture()` 返 null ⇒ 整条探针在
-	#   截图那一步早退,守卫 D 根本跑不到),故本档不是它的复制品,而是它的 **headless 半边**:
+	# - 渲染侧另有一份等价断言(`hue_tint_probe` 守卫 D,那里顺带还钉了 `C_TEAM_A` 同色)。
+	#   那条**必须真渲染**(headless 下 `get_viewport().get_texture()` 返 null  ->  整条探针在
+	#   截图那一步提前返回,守卫 D 根本跑不到),故本档不是它的复制品,而是它的 **headless 半边**:
 	#   两种跑法各自够不到对方能跑的场景。
 	var pmc_script = load("res://scenes/pvp_match_client.gd")
 	if pmc_script == null or pmc_script.reload() != OK:
@@ -320,7 +320,7 @@ func _initialize() -> void:
 			fails.append("★ scenes/pvp_match_client.gd 里没有常量 BODY_BASE_COLOR")
 		else:
 			var base_key := _rgb8(pmc_consts["BODY_BASE_COLOR"])
-			# ★ 读**原始 PNG 字节**再解码,不用 `Image.load_from_file`(那条会打一条
+			# - 读**原始 PNG 字节**再解码,不用 `Image.load_from_file`(那条会打一条
 			#   "Loaded resource as image file, this will not work on export" 的引擎 WARNING
 			#   —— 本档要在 `-s`/headless 下干净地跑,警告会淹掉它自己的 FAIL 行)。
 			var png_bytes := FileAccess.get_file_as_bytes("res://assets/textures/player.png")
@@ -366,7 +366,7 @@ func _rgb8(c: Color) -> Vector3i:
 
 
 # 某行的缩进宽度(制表符/空格都算一列)。
-# ⚠ 入参必须是**保留缩进**的视图(`ScanUtil.code_view`),`code_only` 会 strip_edges ⇒ 恒 0。
+# ⚠ 入参必须是**保留缩进**的视图(`ScanUtil.code_view`),`code_only` 会 strip_edges  ->  恒 0。
 func _indent_of(line: String) -> int:
 	var n := 0
 	while n < line.length() and (line[n] == "\t" or line[n] == " "):
@@ -374,10 +374,10 @@ func _indent_of(line: String) -> int:
 	return n
 
 
-# 某一行同时含「行键」与「`not is_team`」⇒ 那一行的可见性由模式守卫决定(而不是无条件 `= true`)。
-# ★★ 判据落在**同一行**上是有意的("函数体里出现过 `<key>`"那种写法对**无条件**设置可见性
+# 某一行同时含「行键」与「`not is_team`」 ->  那一行的可见性由模式守卫决定(而不是无条件 `= true`)。
+# 注意： 判据落在**同一行**上是有意的("函数体里出现过 `<key>`"那种写法对**无条件**设置可见性
 #    (`.visible = true`)照样为真 —— 那时这条就证明不了"3v3 会隐藏它",2026-10-03 评审核出)。
-# ★ 残余上限:这是**源码形状**判据,不证明运行时真的收起;运行那一半由
+# - 残余上限:这是**源码形状**判据,不证明运行时真的收起;运行那一半由
 #    `lobby_create_form_probe` ⑤/⑥/⑩ 与 `lobby_wait_room_probe` ⑭ 的**行为级**断言保证。
 func _hide_line_present(body: String, key: String) -> bool:
 	for line in body.split("\n"):

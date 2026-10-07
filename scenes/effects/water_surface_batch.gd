@@ -90,7 +90,7 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 
 
 func _process(_delta: float) -> void:
-	# TIME 参与 vertex 的 shader 本应自动逐帧刷新;queue_redraw 兜底保证动画一定更新。
+	# TIME 参与 vertex 的 shader 本应自动逐帧刷新;queue_redraw 保底处理保证动画一定更新。
 	# 开销恒定(单个 canvas item,静态网格,无 GDScript 几何循环)。
 	if _mesh != null:
 		_mesh.queue_redraw()

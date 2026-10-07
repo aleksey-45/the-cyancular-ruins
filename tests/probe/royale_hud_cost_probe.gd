@@ -43,7 +43,7 @@ func _ready() -> void:
 
 
 func _measure(n: int) -> void:
-	# ★ 声明式场景实例化,不能 RoyaleHud.new():.new() 建出来的节点没有子节点,
+	# - 声明式场景实例化,不能 RoyaleHud.new():.new() 建出来的节点没有子节点,
 	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11,同 royale_game.gd 的宿主)。
 	var hud := (load(ROYALE_HUD_SCENE) as PackedScene).instantiate() as RoyaleHud
 	add_child(hud)

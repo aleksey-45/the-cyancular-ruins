@@ -2,9 +2,9 @@ class_name GridPathfinder
 extends RefCounted
 
 # 环面网格的**几何与寻路**:格级/像素级环面距离、副本锚定、格子定位、地板格判定、A* 与 LOS。
-# ★ 本类**无会话状态** —— 网格一律由调用方传入(`grid` 参数),会话级的 `current_grid` 在 MazeGenerator。
+# - 本类**无会话状态** —— 网格一律由调用方传入(`grid` 参数),会话级的 `current_grid` 在 MazeGenerator。
 #   A* 的静态暂存缓冲是本文件自有的可复用 scratch,与地图内容无关。
-# ★ 改这里 = 改环面数学/寻路;改 MapFormat = 改磁盘格式。两者不搭界。
+# - 改这里 = 改环面数学/寻路;改 MapFormat = 改磁盘格式。两者不搭界。
 
 # 环面曼哈顿距离(格子级)。cols/rows 由调用方按实际地图传入,
 # 不依赖全局常量——地图文件变更后距离计算不会失真。
@@ -84,8 +84,8 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 # ── 地板格(可站立表面)──
 # 基本判据:本格 EMPTY 且**正下方**(y+1,环面)是实心 —— 敌人/玩家要有实心表面托底,否则
 # 落地时没有 is_on_floor() 的地面,会坠穿空洞(FlyBird 回家入睡 bug 的根因)。
-# ★ 格坐标由本函数统一 posmod 回环面,**调用方不必预先规整**(但仍可自备边界检查)。
-# ★ 只做基本判据;额外条件(如"头上要留净空")见下面那个以及调用方自己的包装。
+# - 格坐标由本函数统一 posmod 回环面,**调用方不必预先规整**(但仍可自备边界检查)。
+# - 只做基本判据;额外条件(如"头上要留净空")见下面那个以及调用方自己的包装。
 # 2026-09-14 收敛:原先 `enemy_black_bird` 有同名私有版,`royale_host` 里同一谓词抄了三份
 # (采集循环 / O(1) 版 / 宽松版),`match_host` 又一份 —— 共 5 处。
 static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
@@ -322,10 +322,10 @@ static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Ve
 # 洗牌后逐个取,要求与已选点两两环面距离 ≥ clearance;不足则 clearance 逐级 -5 放宽;
 # 放宽到头仍不够就直接补任意剩余的格(宁可挤,不可少 —— 调用方按 count 布点,少了会缺)。
 #
-# ★ 抽自 `RoyaleHost.plan_spawns`(原先那套长在 RoyaleHost 实例上,单机用不了)。
-# ★ **内部有 shuffle()**:同一组输入两次调用结果不同。RoyaleHost 原有纪律 ——
+# - 抽自 `RoyaleHost.plan_spawns`(原先那套长在 RoyaleHost 实例上,单机用不了)。
+# - **内部有 shuffle()**:同一组输入两次调用结果不同。RoyaleHost 原有纪律 ——
 #   **不得在广播之后再调一次**(每局的开局散点只能算一次)。
-# ★ 宽高传 cols/rows 两个 int 而不是 Vector2:与 toroidal_dist 同款,且不引 GameParameters
+# - 宽高传 cols/rows 两个 int 而不是 Vector2:与 toroidal_dist 相同机制,且不引 GameParameters
 #   (autoload),保持本文件可 -s 测。
 static func spread_cells(cells: Array, count: int, clearance: int, cols: int, rows: int) -> Array:
 	var picked: Array = []
@@ -348,7 +348,7 @@ static func spread_cells(cells: Array, count: int, clearance: int, cols: int, ro
 			if ok:
 				picked.append(c)
 		cl -= 5
-	# 兜底:放宽到头仍不够,补任意剩余的格
+	# 保底处理:放宽到头仍不够,补任意剩余的格
 	if picked.size() < count:
 		for c in pool:
 			if picked.size() >= count:

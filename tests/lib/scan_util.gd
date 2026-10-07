@@ -2,9 +2,9 @@ class_name ScanUtil
 extends RefCounted
 
 # 源码级探针的**扫描算法**:读文件、走目录、剥注释视图、括号/实参切分、取函数体。
-# ★ 纯静态、纯函数(入参进、结果出),不碰 Node / autoload —— 所以它在 `-s` 阶段也能用,
+# - 纯静态、纯函数(入参进、结果出),不碰 Node / autoload —— 所以它在 `-s` 阶段也能用,
 #   也便于单独验。**断言账本**在 ProbeBase(那个必须 extends Node,因为要 get_tree())。
-# ★ 这些函数此前在 `tests/kh_l{1,3,4,5,6}_probe.gd` 里各抄一份(阶段 6.1 抽出)。
+# - 这些函数此前在 `tests/kh_l{1,3,4,5,6}_probe.gd` 里各抄一份(阶段 6.1 抽出)。
 
 # 读 res:// 下的源文本;不存在(或打不开)返回 ""。调用方**必须**自己判空并报红 ——
 # 静默返回 "" 是这类探针最典型的失明方式(读不到源文件 → 所有 contains 断言恒假/恒真)。
@@ -65,8 +65,8 @@ static func strip_line_comment(line: String) -> String:
 
 # 剥注释视图(整行注释与**行尾注释**都删,再 strip_edges、丢空行)。供"在位/唯一挂载点/顺序"
 # 类断言用:注释讲的是动机,不是代码。
-# ⚠ 只删**整行**注释是不够的(旧做法,实测):一句提到退役名的行尾注释能让「零引用」断言假红
-#    (代码一行没改)。kh_l3 的旧版只剥整行,阶段 6.1 收口前**核过**它仅有的 2 条「零引用」断言
+# ⚠ 只删**整行**注释是不够的(旧做法,实测):一句提到退役名的行尾注释能让「零引用」断言虚假失败（测试用例误报）
+#    (代码一行没改)。kh_l3 的旧版只剥整行,阶段 6.1 统一集中处理前**核过**它仅有的 2 条「零引用」断言
 #    都盯代码串(`func _process`),两种视图在它那儿等价 —— 故连它一起统一到这里。
 # ⚠ 两个方向**不单调**,别以为"剥得越干净越严":剥掉行尾注释会让「在位」类断言**更严**、
 #    让「零引用」类断言**更松**。新写断言时想清楚它属于哪一类。
@@ -105,11 +105,11 @@ static func func_body(code: String, name: String) -> String:
 
 
 ## 同上,但**只认行首(列 0)**的函数定义。
-## ★★ 为什么必须有它:`func_body` 是**裸子串**搜索,而 `code_only` 会剥掉缩进 ⇒
+## 注意： 为什么必须有它:`func_body` 是**裸子串**搜索,而 `code_only` 会剥掉缩进  -> 
 ##   文件里若有**内部类**且它也有同名方法,那个缩进的方法会被当成顶层那个先命中 ——
 ##   取到的是**错的那个体,而且不报错**(实测:`scenes/level_0.gd` 的内部类 `_Reaper`
 ##   也有 `func _ready()`,`func_body(…, "_ready")` 拿回的是 `_Reaper` 的 3 行体)。
-##   ★ 配套要求:`code` 必须是**保留缩进**的 `code_view`,不是 `code_only`。
+##   - 配套要求:`code` 必须是**保留缩进**的 `code_view`,不是 `code_only`。
 static func top_func_body(code: String, name: String) -> String:
 	var i := code.find("\nfunc " + name + "(")
 	if i < 0:
@@ -179,7 +179,7 @@ static func split_args(s: String) -> Array[String]:
 
 
 # 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:
-# 函数名出现在注释/字符串里时文本法会假绿;而 `has_method()` 对**脚本资源**看不见它自己的
+# 函数名出现在注释/字符串里时文本法会虚假通过（未有效测试）;而 `has_method()` 对**脚本资源**看不见它自己的
 # 实例方法(L4 撞过这个坑),故一律走 get_script_method_list()。
 static func method_info(gs: GDScript, name: String) -> Variant:
 	for m in gs.get_script_method_list():

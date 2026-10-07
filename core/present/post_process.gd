@@ -1,19 +1,19 @@
 class_name PostProcess
 extends CanvasLayer
 
-const LAYER := 128  # 世界后处理层,低于 HUD(129),不遮 HUD
+const LAYER := 128  # 世界后处理图层，层级低于 HUD（129），避免遮挡界面
 
 @export var world_viewport: SubViewport = null
 @export var barrel_strength: float = 0.4
 
 var _mat: ShaderMaterial = null
-var _hit_red: float = 0.0   # 受击红闪当前强度(每帧衰减,见 flash_hit)
-var _film: float = 0.0             # 回溯底片化强度(Level0 每帧推)
-var _loan: float = 0.0
-var _haste: float = 0.0
+var _hit_red: float = 0.0   # 受击红闪当前强度（每帧衰减，参见 flash_hit）
+var _film: float = 0.0      # 回溯底片化效果强度（Level0 逐帧更新）
+var _loan: float = 0.0      # 透支状态视效强度
+var _haste: float = 0.0     # 加速状态视效强度
 
-# 窗口尺寸 / 世界视口尺寸:把窗口映射到世界视口的中心裁剪区。
-# 枪的瞄准换算(weapon_base)与 shader 采样都用它,收敛到单一来源,改一处不偏。
+# 窗口尺寸 / 世界视口尺寸换算：将窗口坐标映射至世界视口的中心裁剪区域。
+# 武器瞄准坐标转换与着色器采样均统一调用此方法。
 static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 	return Vector2(win_size.x / world_vp_size.x, win_size.y / world_vp_size.y)
 
@@ -21,8 +21,8 @@ static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 func _ready() -> void:
 	add_to_group("post_process")
 	layer = LAYER
-	# 暂停(pause_menu 暂停整棵树)时本层仍要跑:受击红闪在 _process 里逐帧衰减,
-	# 若跟着树一起暂停,红色会凝固在暂停那一刻直到恢复。
+	# 游戏暂停（暂停菜单暂停场景树）时本层仍持续更新：受击红闪在 _process 中逐帧衰减，
+	# 保持 PROCESS_MODE_ALWAYS 避免暂停时屏幕残留受击红色。
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	if world_viewport == null:

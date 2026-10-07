@@ -4,10 +4,10 @@ extends Node2D
 # 拾取提示:靠近武器时在**武器上方**浮现的"加粗小 F"(用户 2026-09-15 指定:
 # 「有两层方框围着,背景是深青色」)。各模式共用同一个节点类,由各自的持有方每帧贴位。
 #
-# ★ 它是**世界空间**节点(挂进 `WorldViewport`),与 `EnemyHpBar` / `world_label` 同款 ——
+# - 它是**世界空间**节点(挂进 `WorldViewport`),与 `EnemyHpBar` / `world_label` 相同机制 ——
 #   不随玩家旋转/翻转,位置每帧由持有方算。尺寸因此是**世界单位**。
-# ★ 字体走 `PixelFont.shared()`(与全项目同一套像素字体),字号 16 的倍数(项目硬约定)。
-# ★ 它是**纯视觉**:判定仍由持有方用 `GroundWeaponField.nearest_within` 做,
+# - 字体走 `PixelFont.shared()`(与全项目同一套像素字体),字号 16 的倍数(项目硬约定)。
+# - 它是**纯视觉**:判定仍由持有方用 `GroundWeaponField.nearest_within` 做,
 #   两边必须用同一个 `exclude`(自己刚丢的那把不提示),否则会出现"提示了却捡不到"。
 
 const BOX := Vector2(50.0, 50.0)   # 外框尺寸(世界单位)(用户 2026-09-16「放大一点」:34→50)
@@ -35,7 +35,7 @@ func _draw() -> void:
 	_stroke(Rect2(-half + ins, BOX - ins * 2.0), C_INNER)   # 内层框
 
 	# 加粗的 F:像素字体没有粗体,同一字符串按 (0,0)/(1,0)/(0,1)/(1,1) 画四遍凑出加粗。
-	# ★ draw_string 的 y 是**基线**,不是顶边 —— 用字体度量把它居中:
+	# - draw_string 的 y 是**基线**,不是顶边 —— 用字体度量把它居中:
 	#   字形纵向占 [基线-ascent, 基线+descent],要让它以 0 为中心 → 基线 = (ascent-descent)/2。
 	#   (先前写成 `half.y + 字号*0.35`,结果 F 有一半掉到框外 —— 实测取图才发现。)
 	var f := PixelFont.shared()

@@ -4,7 +4,7 @@ extends SceneTree
 # 单人图的 role2 出生点自动分配。
 # 用法:godot --headless --path . -s res://tests/probe/map_catalog_probe.gd
 #
-# ★ 本探针刻意只用**数据层**(MapCatalog/MapFormat/MatchBootstrap 的静态函数)—— 选图 UI 的版式
+# - 本探针刻意只用**数据层**(MapCatalog/MapFormat/MatchBootstrap 的静态函数)—— 选图 UI 的版式
 #   与"点了真的进对图"由场景级 `tests/menu_autotest.gd` 的 sp 分支负责(它点真按钮)。
 
 const DEMO := "res://maps/demo.cyrm"          # 单人图:只有 # player
@@ -41,7 +41,7 @@ func _entry(maps: Array, path: String) -> Dictionary:
 
 
 # 地图的格子级维度(列×行),**整图解析**那条读法(`load_map_file`)。
-# ★ 目录的 `size` 字段是 `MapCatalog` 用 `MapFormat.map_size`(v4 头部)算的 —— 拿它当期望
+# - 目录的 `size` 字段是 `MapCatalog` 用 `MapFormat.map_size`(v4 头部)算的 —— 拿它当期望
 #   是自证;这条独立读法才是"这个字段到底对不对"的判据。空网格 → ZERO(断言会响亮地红,
 #   而不是让 `[0]` 越界把整个函数打断)。
 func _grid_size(path: String) -> Vector2i:
@@ -62,14 +62,14 @@ func _test_list() -> void:
 	_chk(not pvp.is_empty(), "目录缺 newfactory.cyrm")
 	if demo.is_empty() or pvp.is_empty():
 		return
-	# ★ 期望值**从地图自己派生**,不再写死"demo 恰好 125×75 / newfactory 恰好是双出生点图" ——
-	#   写死的那两条**换一张图就假红**,而它们真要拦的变异(目录项读错文件 / 两个条目互相串了)
+	# - 期望值**从地图自己派生**,不再写死"demo 恰好 125×75 / newfactory 恰好是双出生点图" ——
+	#   写死的那两条**换一张图就虚假失败（测试用例误报）**,而它们真要拦的变异(目录项读错文件 / 两个条目互相串了)
 	#   与尺寸具体是多少无关。期望值取自哪,逐条写在这里:
-	#     · `pvp`  ← `MapFormat.load_spawns(path)`:地图 meta 里那两行 `# player` / `# player2`
+	#     - `pvp`  ← `MapFormat.load_spawns(path)`:地图 meta 里那两行 `# player` / `# player2`
 	#       是"双出生点"的**唯一**来源,`MapCatalog.list_maps` 也只是把同一份 meta 折成布尔。
-	#     · `size` ← `MapFormat.load_map_file(path)` 的**整图解析维度**,而**不是**
+	#     - `size` ← `MapFormat.load_map_file(path)` 的**整图解析维度**,而**不是**
 	#       `MapFormat.map_size` —— 后者正是 `MapCatalog.list_maps` 构造该字段时调的那一个,
-	#       拿它当期望就是"同一表达式比自己"(自证),断言会空转。
+	#       拿它当期望就是"同一表达式比自己"(自证),断言会无效操作。
 	# 单人图(无 player2)不能当联机图:resolve_pvp_map 会拒,列表也要标出来
 	_chk(demo["pvp"] == MapFormat.load_spawns(DEMO).has("player2"),
 			"demo.cyrm 的 pvp 标志应与地图自己的 meta 一致(实为 %s)" % str(demo["pvp"]))
@@ -137,9 +137,9 @@ func _test_far_spawn() -> void:
 	_chk(grid.size() > 0 and sp.has("player"), "demo 应有网格与 player 出生点")
 	if grid.is_empty() or not sp.has("player"):
 		return
-	# ★ 直连 `SpawnPicker` 而**不是** `load("res://server/match/match_bootstrap.gd")`:
-	#   后者静态引用 autoload(`GameParameters`/`NetBus`),在 `-s` 下**编译失败** ⇒ `load()`
-	#   拿到没有成员的 GDScript ⇒ 下面那几行**从来没跑过**,而 verdict 照打 OK。
+	# - 直连 `SpawnPicker` 而**不是** `load("res://server/match/match_bootstrap.gd")`:
+	#   后者静态引用 autoload(`GameParameters`/`NetBus`),在 `-s` 下**编译失败**  ->  `load()`
+	#   拿到没有成员的 GDScript  ->  下面那几行**从来没跑过**,而 verdict 照打 OK。
 	#   (2026-10-02 合并时发现;`far_spawn_from` 本体已一并搬进 `SpawnPicker`。)
 	var anchor: Vector2i = sp["player"]
 	var cell: Vector2i = SpawnPicker.far_spawn_from(anchor, grid)
@@ -153,7 +153,7 @@ func _test_far_spawn() -> void:
 	print("MAP CATALOG: demo 的 role2 自动出生格 = %s(离 P1 %d 格)" % [str(cell), d])
 
 
-# ★ 逐通道容差比较,不能用 is_equal_approx:图是 RGBA8,set_pixel 的浮点值会被量化到 8 位
+# - 逐通道容差比较,不能用 is_equal_approx:图是 RGBA8,set_pixel 的浮点值会被量化到 8 位
 #   (0.35 → 89/255 = 0.34902),相对 1e-6 的 approx 判定必然不成立。
 func _has_pixel(img: Image, col: Color) -> bool:
 	for y in img.get_height():

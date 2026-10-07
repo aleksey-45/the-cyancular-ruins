@@ -48,7 +48,7 @@ func _ready() -> void:
 	# 帧驱动截瞬态:只等 _shot 内部那 2 帧(≈33ms@60fps),不再额外 await。
 	# _hit_red 以 4.0/s 衰减(core/present/post_process.gd)→ 0.15 的红色阈值约在 170ms 后撑不住;
 	# 预算 = 170ms - 2 帧(60fps≈33ms),首跑/慢机余量 ~137ms(旧版 1+2 帧≈100ms,首跑实测
-	# 151ms 时余量只剩 ~19ms)。注意:单帧 > ~70ms(≈14fps 以下)时首帧就吃掉大半预算,
+	# 151ms 时余量只剩 ~19ms)。注意:单帧 > ~70ms(≈14fps 以下)时首帧就消耗大半时间预算,
 	# 仍可能失败——所以下面把 hit_red 与像素同行打印,失败时日志自解释。
 	_pp.flash_hit(1.0)
 	var flash: Image = await _shot("_visual_1_hitflash.png")

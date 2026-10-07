@@ -3,15 +3,15 @@ extends SceneTree
 # 主冒烟:敌人 AI / 环面数学 / 武器参数与命中 / 碰撞层 / 寻路与 LOS / 多弹丸……
 # 跑法:`"$GODOT" --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd`,成功打印 SMOKE OK。
 #
-# ★ 结构(2026-09-15 阶段 5.1 拆分):本文件原先是一个 **737 净行**的 `_initialize()`
+# - 结构(2026-09-15 阶段 5.1 拆分):本文件原先是一个 **737 净行**的 `_initialize()`
 #   —— 全仓最长函数,而本文件又是全仓改动最频繁的文件。现按原有的章节注释切成 27 个
 #   `_phase_*()`,`_initialize()` 只留**顺序**。
 #
-# ★ **顺序是契约,不是排版**:`_initialize` 里的调用次序 = 断言输出次序,也就是本文件的
+# - **顺序是契约,不是排版**:`_initialize` 里的调用次序 = 断言输出次序,也就是本文件的
 #   回归基线(`ok - <名字>` 147 条 + `SMOKE OK`)。改顺序会让读者以为断言没跑,
 #   而 `await` 的有无同样属于顺序契约 —— 漏一个 `await`,该节从 await 之后的断言就会
 #   与后面的节**交错执行**(拆分时实测踩到过一次,靠输出序列当场发现)。
-#   ★ 跨节的夹具/中间量提升为了脚本级字段(见下方声明),首次赋值位置原样没动。
+#   - 跨节的夹具/中间量提升为了脚本级字段(见下方声明),首次赋值位置原样没动。
 
 class StubPlayer:
 	extends Node2D
@@ -123,10 +123,10 @@ func _initialize() -> void:
 	await _phase_flybird_deadzone()
 	_phase_spawn_metadata_parse()
 	_phase_enemy_types_json()
-	await _phase_collision_aabb()   # ★ 追加在**末尾**:既有 27 节的顺序是回归基线,不插队
-	_phase_weapon_registry()        # ★ 同上,只追加在末尾
-	_phase_spread_cells()           # ★ 同上,只追加在末尾
-	_phase_weapon_capacity()        # ★ 同上,只追加在末尾
+	await _phase_collision_aabb()   # - 追加在**末尾**:既有 27 节的顺序是回归基线,不插队
+	_phase_weapon_registry()        # - 同上,只追加在末尾
+	_phase_spread_cells()           # - 同上,只追加在末尾
+	_phase_weapon_capacity()        # - 同上,只追加在末尾
 
 	if _failures.is_empty():
 		print("SMOKE OK")
@@ -259,9 +259,9 @@ func _phase_pin_map() -> void:
 
 # ── Task 9: 地图尺寸读取(map_size) ──
 func _phase_map_size() -> void:
-	# ★ 期望值**从地图自己派生**,不写死 125×75("这张图恰好多大"换图就假红)。
+	# - 期望值**从地图自己派生**,不写死 125×75("这张图恰好多大"换图就虚假失败（测试用例误报）)。
 	#   取自 `MazeGenerator.load_map_file()` 的**整图解析维度** —— 刻意**不用**
-	#   `MapFormat.map_size`:`MazeGenerator.map_size()` 就是它的一行转发(同一函数 ⇒ 自证)。
+	#   `MapFormat.map_size`:`MazeGenerator.map_size()` 就是它的一行转发(同一函数  ->  自证)。
 	#   两条读法各走一路(v4 头部 vs 整图解析),对不上才是真 bug。
 	#   顺带仍钉住"会话选中的是哪张图"这件事(`_phase_pin_map` 刚把它钉成 demo)。
 	var g := MazeGenerator.load_map_file()
@@ -352,7 +352,7 @@ func _phase_weapon_stats_and_hit() -> void:
 	_check(sg_scene != null, "霰弹枪场景加载")
 	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
 	# 2026-09-21 用户调参:散布 4.0 → 3.0、射程 700 → 1100(全中伤害仍是 5×8=40,见下一条)。
-	# ★ 霰弹射程仍是三把里最短的(1100 < 手枪 1400 < 步枪 1600)—— 近战性格靠这一档保住。
+	# - 霰弹射程仍是三把里最短的(1100 < 手枪 1400 < 步枪 1600)—— 近战性格靠这一档保住。
 	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 3.0), "霰弹枪 8 丸 ±3°")
 	_check(sg.damage == 5 and is_equal_approx(sg.bullet_range, 1100.0), "霰弹枪单丸5伤/射程1100")
 	# 全中伤害 = damage × pellet_count —— 用户 2026-09-20 选的就是"全中 40"那一档
@@ -398,7 +398,7 @@ func _phase_buffered_fire() -> void:
 			bf_mid += 1
 	_check(bf_mid == bf_before, "缓冲期不立即开火")
 	# 武器帧逻辑已从 idle _process 挪到所属 Player 的物理 tick(tick());stub 无 Player 驱动,
-	# 这里模拟每物理帧驱动 tick() 推进冷却,验证冷却结束自动开火。fire() 会把冷却重新拉满,
+	# 这里模拟每物理帧驱动 tick() 推进冷却,验证冷却结束自动开火。fire() 会把冷却重置为最大值,
 	# 故「tick 后冷却反而变大」= 已自动打出一次。
 	for i in range(60):
 		if not is_instance_valid(buf_w):
@@ -454,7 +454,7 @@ func _phase_equip_switch() -> void:
 	var p = player_scene.instantiate()
 	root.add_child(p)
 	await physics_frame
-	# ★ 2026-09-15(背包化):单机现在**开局空手**(武器散落在地图上,由 Level0 铺)。
+	# - 2026-09-15(背包化):单机现在**开局空手**(武器散落在地图上,由 Level0 铺)。
 	#   本节测的是"切枪/冷却继承"这件事,与开局带不带枪无关 —— 显式摆一个已知背包。
 	_check(p.weapons._weapon == null, "开局空手(单机初始背包为空)")
 	p.weapons.set_initial_inventory([1, 2])
@@ -465,7 +465,7 @@ func _phase_equip_switch() -> void:
 		p.weapons.equip_type(2)   # 步枪(WEAPONS 注册表槽 2;组件化后按槽键,不再传场景路径)
 		await physics_frame
 		_check(p.weapons._weapon.weapon_name == "Rifle", "切枪到步枪")
-		# 切枪冷却继承:旧武器剩余冷却不能被切枪刷掉。
+		# 切枪冷却继承:旧武器剩余冷却不能被切枪意外覆盖重置。
 		# equip_type() 同步执行,不 await(否则 _process 已扣掉一帧冷却)。
 		p.weapons._weapon.fire_cd_timer = 0.7
 		p.weapons.equip_type(1)
@@ -488,7 +488,7 @@ func _phase_collision_layers() -> void:
 	await physics_frame
 	_check(pc2.collision_mask == 5, "玩家 mask=5(地形+敌人)")
 	pc2.free()
-	# 玩家子弹穿过玩家身体(不再打自己)
+	# 玩家子弹穿过玩家身体(不再自身伤害)
 	combat = StubCombatPlayer.new()
 	combat.global_position = Vector2(600, 400)
 	root.add_child(combat)
@@ -1071,7 +1071,7 @@ func _phase_enemy_types_json() -> void:
 			"EnemySpawner.TYPES 从 enemies.json 加载(含 black_bird)")
 
 	# ── 反方向:scenes/enemies 下的**敌人** .tscn 必须都在 enemies.json 里(2026-09-29)──
-	# 与 §武器注册表 的 ⑧ 同款、同理由(`data/enemies.json` → `scenes/enemies/` 那一半
+	# 与 §武器注册表 的 ⑧ 相同机制、同理由(`data/enemies.json` → `scenes/enemies/` 那一半
 	# 一直有:`_load_registry` 逐条收 `scene`,而反向靠人眼)。判据同样是**根脚本链**,
 	# 不是目录清单 —— 该目录里另有 `enemy_bullet.tscn`(根脚本 `enemy_bullet.gd` extends
 	# `BulletBase`),它不是敌人、本来就不该进 enemies.json。
@@ -1096,14 +1096,14 @@ func _phase_enemy_types_json() -> void:
 # 2026-09-15:原先 `has_any`/`world_rect` 只认 `child is CollisionShape2D`,而 Godot 4 里
 # CollisionPolygon2D 与它是**并列类**(都直接继承 Node2D,不是子类关系;该文件里那句
 # "CollisionPolygon2D 继承自 CollisionShape2D" 的注释是错的,已一并改正)。
-# 后果不是"少算一点":敌人/玩家的身体几何**一律读不到**,三个调用方静默走兜底 ——
+# 后果不是"少算一点":敌人/玩家的身体几何**一律读不到**,三个调用方静默走保底处理 ——
 # 激光的判定框恒为「原点周围 36×36」(和身体大小/位置无关,实测扫偏移量 ±16 命中、
-# ±24 不中),water 的脚底偏移恒 24px,飞鸟避障恒 40×40。这一节把该语义钉死。
+# ±24 不中),water 的脚底偏移恒 24px,飞鸟避障恒 40×40。这一节把该语义严格约束。
 func _phase_collision_aabb() -> void:
 	var host := Node2D.new()
 	root.add_child(host)
 	var poly := CollisionPolygon2D.new()
-	# 故意不对称:上边 -10、下边 +30 —— 中心不在原点,与敌人场景同款
+	# 故意不对称:上边 -10、下边 +30 —— 中心不在原点,与敌人场景相同机制
 	poly.polygon = PackedVector2Array([
 			Vector2(-20, -10), Vector2(20, -10), Vector2(20, 30), Vector2(-20, 30)])
 	host.add_child(poly)
@@ -1117,11 +1117,11 @@ func _phase_collision_aabb() -> void:
 	_check(CollisionAabb.world_rect(host).size == Vector2(100, 100),
 			"多边形 AABB 跟随节点缩放(实际 %s)" % str(CollisionAabb.world_rect(host).size))
 	host.scale = Vector2.ONE
-	poly.disabled = true                # 姿态箱切换语义:禁用中的不算
+	poly.disabled = true                # 姿态碰撞盒切换语义:禁用中的不算
 	_check(not CollisionAabb.has_any(host), "禁用中的多边形不算碰撞体")
 	host.free()
 
-	# 真实敌人:身体 AABB 必须远大于激光的兜底 36×36,且中心不在原点
+	# 真实敌人:身体 AABB 必须远大于激光的保底处理 36×36,且中心不在原点
 	var e: Node2D = load("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
 	root.add_child(e)
 	await physics_frame
@@ -1135,10 +1135,10 @@ func _phase_collision_aabb() -> void:
 
 
 # ── 「注册表 json ↔ 场景目录」双向覆盖用的两个小工具(2026-09-29)──
-# ★★ 为什么必须有**反方向**那一条:json → tscn 是覆盖到的(逐条 load 每个 json 的 scene),
+# 注意： 为什么必须有**反方向**那一条:json → tscn 是覆盖到的(逐条 load 每个 json 的 scene),
 #   而 **tscn → json 零守卫** —— 往 `scenes/weapons/` 放一个新武器场景而不写 json 条目,
 #   那一把枪在菜单/散落/图标/HUD 名字里**全都不存在**,而当时三条相关测试(enemy_logic_smoke /
-#   level0_weapon_scatter_probe / kh_l3_probe)**全部全绿、一条断言都不红**。
+#   level0_weapon_scatter_probe / kh_l3_probe)**全部测试全部通过、一条断言都不红**。
 #
 # `scene_path` 的**根节点脚本**(读 `PackedScene.get_state()` 的节点属性,**不实例化**)。
 # 读不到(场景缺失/无根/根无 script)返回 null。
@@ -1162,7 +1162,7 @@ func _root_script_of(scene_path: String) -> Script:
 
 
 # 脚本 `scr` 是否**继承自** `base_scr`(沿 `get_base_script()` 链走,含自身)。
-# ★ 走脚本链而不是「读 .tscn 文本里有没有 `weapon_base.gd`」:后者认不出
+# - 走脚本链而不是「读 .tscn 文本里有没有 `weapon_base.gd`」:后者认不出
 #   `extends LaserWeaponBase` 这种**间接**继承(laser_gun 就是),而它恰恰是"加新武器"的常见形状;
 #   文本法还会被注释/别处的路径字符串喂绿。
 func _script_extends(scr: Script, base_scr: Script) -> bool:
@@ -1192,9 +1192,9 @@ func _body_reaches_registry_ids(whole: String, body: String, self_name: String) 
 
 const REGISTRY_SRC := "res://core/sim/weapon_registry.gd"
 const REGISTRY_JSON := "res://data/weapons.json"
-# json 的 tier 字符串 → 数值。★ 这是**探针自己**的一份口径,刻意不引注册表 ——
-#   本相要在"注册表文件还不存在"时也跑得出干净的断言(见下面 wr 的取法)。
-#   它与 WeaponBase.Tier 的对齐由本相 ③ 钉着。
+# json 的 tier 字符串 → 数值。-  这是**探针自己**的一份口径,刻意不引注册表 ——
+#   本阶段要在"注册表文件还不存在"时也跑得出干净的断言(见下面 wr 的取法)。
+#   它与 WeaponBase.Tier 的对齐由本阶段 ③ 钉着。
 const TIER_STRINGS := {"light": 0, "medium": 1, "heavy": 2}
 
 
@@ -1205,11 +1205,11 @@ const TIER_STRINGS := {"light": 0, "medium": 1, "heavy": 2}
 # 现在三样都在**同一份 json 的同一行**里,结构性地不可能漏一半;但"改了 json 忘了改
 # tscn 的 tier export"仍然可能(两份数据刻意重复,与 `data/enemies.json` 同构),故逐条比。
 #
-# ★★ 为什么用 `load()` 拿到 GDScript 再调它的**静态函数**,而不直接写 `WeaponRegistry.xxx()`:
-#   本文件是 `-s` 冒烟,而**全局类名在文件不存在时会让整个脚本 Parse Error** ⇒ 一条断言都
+# 注意： 为什么用 `load()` 拿到 GDScript 再调它的**静态函数**,而不直接写 `WeaponRegistry.xxx()`:
+#   本文件是 `-s` 冒烟,而**全局类名在文件不存在时会让整个脚本 Parse Error**  ->  一条断言都
 #   跑不到、进程挂死(`-s` 脚本抛错走不到 quit(),本仓踩过)。`load()` + 空守卫让"文件还没建"
 #   表现为**干净的红**,而不是超时。
-#   ★ 静态函数**可以**在 GDScript 对象上调:引擎 `modules/gdscript/gdscript.cpp:928-940` 的
+#   - 静态函数**可以**在 GDScript 对象上调:引擎 `modules/gdscript/gdscript.cpp:928-940` 的
 #   `GDScript::callp` 就是查 `member_functions` 并 `ERR_FAIL` 掉非 static 的那一个。
 func _phase_weapon_registry() -> void:
 	var wc: GDScript = load("res://scenes/player/weapon_component.gd")
@@ -1239,7 +1239,7 @@ func _phase_weapon_registry() -> void:
 					_check(false, "每条都应是对象(实际 %s)" % str(raw))
 					continue
 				var e: Dictionary = raw
-				# ★ 用 `int(...)` 归一化:JSON 的数字在 GDScript 里解析成 float,
+				# - 用 `int(...)` 归一化:JSON 的数字在 GDScript 里解析成 float,
 				#   不归一化的话 `rows.has(id)` 会永远假(1.0 != 1),而 `row.size()` 却是对的 ——
 				#   那种"一半对一半错"最难查。
 				var id := int(e.get("id", 0))
@@ -1260,7 +1260,7 @@ func _phase_weapon_registry() -> void:
 								id, int(inst.tier), tier_s, want_tier])
 					inst.free()
 				rows[id] = {"name": wname, "tier": tier_s, "scene": scene_path}
-	# ★ 这一条**放在 if 外面**:json 文件缺席时它也要红(否则"文件没建"这件事只有上面
+	# - 这一条**放在 if 外面**:json 文件缺席时它也要红(否则"文件没建"这件事只有上面
 	#   那一条在报,而"json 建了但一条都不合格"这条路径就没有守卫)。
 	_check(rows.size() > 0, "json 至少有 1 条合格条目(实际 %d)" % rows.size())
 
@@ -1291,15 +1291,15 @@ func _phase_weapon_registry() -> void:
 
 	# ── ④ WeaponInventory 的 tier 常量与 WeaponBase.Tier 数值对齐(旧版原有,一处没动)──
 	#    (wi 刻意不 import weapon_base,所以这条对齐是**约定**而不是编译器保证的。
-	#     WeaponRegistry.TIER_NAMES 直接复用 wi.TIER_*,故本相 ③ 的比对已覆盖它。)
+	#     WeaponRegistry.TIER_NAMES 直接复用 wi.TIER_*,故本阶段 ③ 的比对已覆盖它。)
 	_check(int(wi.TIER_LIGHT) == int(wb.Tier.LIGHT), "TIER_LIGHT 与 WeaponBase.Tier.LIGHT 对齐")
 	_check(int(wi.TIER_MEDIUM) == int(wb.Tier.MEDIUM), "TIER_MEDIUM 与 WeaponBase.Tier.MEDIUM 对齐")
 	_check(int(wi.TIER_HEAVY) == int(wb.Tier.HEAVY), "TIER_HEAVY 与 WeaponBase.Tier.HEAVY 对齐")
-	# ★ 下面两条**原样保留**(旧版 `:1158-1159`)。它们是"容量 8 / 把数上限 4 是游戏规则"
+	# - 下面两条**原样保留**(旧版 `:1158-1159`)。它们是"容量 8 / 把数上限 4 是游戏规则"
 	#   的钉子 —— 2026-09-25 按容量/把数可配那份计划改成读默认值常量(见下)。
-	# ★ 原先是 `int(wi.MAX_WEAPONS)` / `int(wi.CAPACITY)` 直取属性 —— 常量改名成字段之后
-	#   那是运行时错,而本文件是 -s 冒烟 ⇒ 错在 helper 里"该函数当场结束、调用方继续"
-	#   ⇒ 后面断言被静默跳过、一个字都不出现,而裁决行照打(**假绿**——
+	# - 原先是 `int(wi.MAX_WEAPONS)` / `int(wi.CAPACITY)` 直取属性 —— 常量改名成字段之后
+	#   那是运行时错,而本文件是 -s 冒烟  ->  错在 helper 里"该函数当场结束、调用方继续"
+	#    ->  后面断言被静默跳过、一个字都不出现,而裁决行照打(**虚假通过（未有效测试）**——
 	#   只有"逐条比名字/条数"才拦得住)。故走常量表 + 哨兵默认值。
 	var wconsts: Dictionary = wi.get_script_constant_map()
 	_check(int(wconsts.get("DEFAULT_MAX_WEAPONS", -1)) == 4,
@@ -1308,11 +1308,11 @@ func _phase_weapon_registry() -> void:
 			"WeaponInventory.DEFAULT_CAPACITY == 8(实际 %s)" % str(wconsts.get("DEFAULT_CAPACITY")))
 
 	# ── ⑤ 生产代码里不得再有硬编码的武器 id 列表 ──
-	# 6 个字面量 / 5 个文件(weapon_component.gd 里有两处)全部改问 all_ids() 之后,本相零命中。
-	# ★ 判据用**剥注释 + 去空格**的视图:`[1,2,3,4,5,6]`(无空格)也要挡住。
-	# ★ 只扫生产目录(scenes/core/server/ui):tests 里的 `[1, 2, 3, 4, 5, 6]` 有合法的
+	# 6 个字面量 / 5 个文件(weapon_component.gd 里有两处)全部改问 all_ids() 之后,本阶段零命中。
+	# - 判据用**剥注释 + 去空格**的视图:`[1,2,3,4,5,6]`(无空格)也要挡住。
+	# - 只扫生产目录(scenes/core/server/ui):tests 里的 `[1, 2, 3, 4, 5, 6]` 有合法的
 	#   **role 列表**用途(`team_host_probe.gd:373,421`、`team_spawn_smoke.gd:28,36`),扫进
-	#   tests 会恒红 —— 唯一例外(`kh_l3_probe.gd:187` 那处真是武器列表)由 Task 4 点名处理。
+	#   tests 会恒红 —— 唯一例外(`kh_l3_probe.gd:187` 那处真是武器列表)由 Task 4 明确提示处理。
 	var offenders: Array = []
 	for path in ScanUtil.collect(["res://scenes", "res://core", "res://server", "res://ui"]):
 		var src := ScanUtil.read(path)
@@ -1323,10 +1323,10 @@ func _phase_weapon_registry() -> void:
 	_check(offenders.is_empty(),
 			"生产代码里不得再有硬编码的武器 id 列表(命中:%s)" % str(offenders))
 
-	# ── ⑤b 那三张表必须**被删掉**,不是被绕过(2026-09-26 补:本相才是"本计划成败判据"的守卫)──
-	# ★★ 为什么单开一条、而且它比 ⑤/⑥ 都重要:
+	# ── ⑤b 那三张表必须**被删掉**,不是被绕过(2026-09-26 补:本阶段才是"本计划成败判据"的守卫)──
+	# 注意： 为什么单开一条、而且它比 ⑤/⑥ 都重要:
 	#   ⑤ 的判据是 `contains("[1,2,3,4,5,6]")`,而那三张表的键/值是 `"1".."6"` 与 `1..6:` ——
-	#   **一个 `[1, 2, 3, 4, 5, 6]` 字面量都不含** ⇒ 表就算原样留着,⑤ 也全绿。
+	#   **一个 `[1, 2, 3, 4, 5, 6]` 字面量都不含**  ->  表就算原样留着,⑤ 也测试全部通过。
 	#   ⑥ 只覆盖**六处循环/初始化的宿主**(`_default_weapon_types` / `_add_weapon_grid` /
 	#   `_fill_sp_panel` / `_server_weapon_types` / `_init` / `set_enabled_types`);
 	#   而三张表还有**五个真正的读点**不在⑥ 里 ——
@@ -1334,17 +1334,17 @@ func _phase_weapon_registry() -> void:
 	#     `scenes/weapons/weapon_pickup.gd`(地面武器的视觉)
 	#     `ui/weapon_icons.gd`(剪影 + 选择格上的名字)
 	#     `ui/hud.gd`(左下角武器名)
-	#   ⇒ **只把⑥ 的六处接上注册表、留下三张表**的"半迁移"会让本计划的承诺
+	#    ->  **只把⑥ 的六处接上注册表、留下三张表**的"半迁移"会让本计划的承诺
 	#   (「加第 7 把枪只改一个 json」)**静默失效**:菜单/散落里出现了 7 号枪,
 	#   而它在对手手里、在地上、在图标与 HUD 名字上**全都不存在**,且一条断言都不红。
-	# ★ 为什么"断言表被删"就**足够**、不必逐点断言读点改对了:
+	# - 为什么"断言表被删"就**足够**、不必逐点断言读点改对了:
 	#   表一删,任何**没**改到注册表的读点当场是 **Parse Error**(类常量不存在)——
-	#   响亮、定位精确、无法静默绕过。⇒ 这一条 + 编译器合起来就把"删干净"钉死了。
-	# ★ 判据必须用 `\b…\b`,**不能**用裸 `contains()` —— 裸的会踩 `MAX_WEAPONS`:
-	#   `const MAX_WEAPONS := 4` 含子串 `WEAPONS` ⇒ 恒红,而它是**该留**的常量名
+	#   响亮、定位精确、无法静默绕过。 ->  这一条 + 编译器合起来就把"删干净"严格约束了。
+	# - 判据必须用 `\b…\b`,**不能**用裸 `contains()` —— 裸的会踩 `MAX_WEAPONS`:
+	#   `const MAX_WEAPONS := 4` 含子串 `WEAPONS`  ->  恒红,而它是**该留**的常量名
 	#   (计划 4 之后叫 `DEFAULT_MAX_WEAPONS`,一样含)。
-	#   PCRE 的 `\w` 含下划线 ⇒ `\bWEAPONS\b` 不命中 `MAX_WEAPONS`。
-	# ★ `ScanUtil.read` 读不到时返回 `""` ⇒ 这里 `continue`(跳过)。目录扫描可以接受这个形状
+	#   PCRE 的 `\w` 含下划线  ->  `\bWEAPONS\b` 不命中 `MAX_WEAPONS`。
+	# - `ScanUtil.read` 读不到时返回 `""`  ->  这里 `continue`(跳过)。目录扫描可以接受这个形状
 	#   (文件是同一次 walk 列出来的,列得出就读得到);⑥ 那 6 个**具名**文件则另有显式的
 	#   "读不到就红"。
 	var re_tbl := RegEx.create_from_string("\\b(WEAPONS|DISPLAY_NAMES|TIERS)\\b")
@@ -1359,9 +1359,9 @@ func _phase_weapon_registry() -> void:
 			"那三张旧表必须**删掉**(不是绕过);命中(文件::表名)= %s" % str(stale_tables))
 
 	# ── ⑥ 六处字面量的**宿主**确实改问了注册表 ──
-	# ★ ⑤ 挡的是"还留着老写法",⑥ 挡的是"新写法没接上" —— 只有 ⑤ 时,把
-	#   `_default_weapon_types` 整个删掉(或改成 `return []`)照样全绿。
-	# ★ 按**函数体**判,不按整文件 contains:同一文件里别处出现 `all_ids()` 不能替这一处背书
+	# - ⑤ 挡的是"还留着老写法",⑥ 挡的是"新写法没接上" —— 只有 ⑤ 时,把
+	#   `_default_weapon_types` 整个删掉(或改成 `return []`)照样测试全部通过。
+	# - 按**函数体**判,不按整文件 contains:同一文件里别处出现 `all_ids()` 不能替这一处背书
 	#   (level_0.gd 有 600+ 行)。
 	var sites := [
 		{"path": "res://scenes/level_0.gd", "func": "_default_weapon_types"},
@@ -1381,18 +1381,18 @@ func _phase_weapon_registry() -> void:
 		if body.is_empty():
 			_check(false, "在 %s 里找到函数 %s()" % [s["path"], s["func"]])
 			continue
-		# ★ 2026-10-02 降精度:原钉 `body.contains("WeaponRegistry.all_ids()")` —— 把取 id
-		#   包成一层**本文件内的 helper**(如 `_weapon_ids()` 自己调 all_ids())就**假红**,
+		# - 2026-10-02 降精度:原钉 `body.contains("WeaponRegistry.all_ids()")` —— 把取 id
+		#   包成一层**本文件内的 helper**(如 `_weapon_ids()` 自己调 all_ids())就**虚假失败（测试用例误报）**,
 		#   而接线其实是通的。改判"函数体**引用了注册表派生的取 id 调用**":直接出现 `all_ids(`,
 		#   或调用了本文件里某个自己也含 `all_ids(` 的函数(只追一层)。
-		# 要拦的变异:宿主不接注册表(**硬编码 id 列表**)⇒ 加第 7 把枪时新枪在这一处静默消失。
+		# 要拦的变异:宿主不接注册表(**硬编码 id 列表**) ->  加第 7 把枪时新枪在这一处静默消失。
 		_check(_body_reaches_registry_ids(whole, body, s["func"]),
 				"%s 的 %s() 应改用注册表派生的取 id 调用(WeaponRegistry.all_ids() 或其一层 helper)"
 				% [s["path"], s["func"]])
 
 	# ── ⑦ 覆盖性:默认启用表必须**等于**注册表全部 id ──
-	# 这是 spec §4.2 点名要加、而今天**没有**的那条守卫。
-	# ★ 三处散落/菜单/禁用网格现在都从 all_ids() 取数 ⇒ "覆盖"是构造性的(由 ⑥ 保证);
+	# 这是 spec §4.2 明确提示要加、而今天**没有**的那条守卫。
+	# - 三处散落/菜单/禁用网格现在都从 all_ids() 取数  ->  "覆盖"是构造性的(由 ⑥ 保证);
 	#   真正会漂的是**默认启用表** —— 它今天是一条硬编码的 `[1, 2, 3, 4, 5, 6]`,
 	#   加第 7 把枪时漏改它,新枪**永远拿不到也开不了**,而**完全不报错**。
 	if wr != null:
@@ -1404,10 +1404,10 @@ func _phase_weapon_registry() -> void:
 		comp.free()
 
 	# ── ⑧ 反方向:scenes/weapons 下的**武器** .tscn 必须都有 json 条目(2026-09-29)──
-	# ★ ② 只覆盖 json → tscn 这一个方向;反方向此前**零守卫**(症状与量级见 `_root_script_of`
+	# - ② 只覆盖 json → tscn 这一个方向;反方向此前**零守卫**(症状与量级见 `_root_script_of`
 	#   上方那段)。"加第 7 把枪 = 改 1 个 json + 加 1 个 tscn"这句承诺,**先放 tscn、忘了接
 	#   json**这一半今天靠人眼 —— 本条就是那半步的安全带。
-	# ★ 判据是「根脚本链上有 `weapon_base.gd`」,**不是**「scenes/weapons/ 下所有 .tscn」:
+	# - 判据是「根脚本链上有 `weapon_base.gd`」,**不是**「scenes/weapons/ 下所有 .tscn」:
 	#   该目录同时住着 `bullet` / `grenade_bullet` / `laser_beam` / `weapon_pickup` 四个
 	#   **非武器**场景(它们本来就不该进 weapons.json),拿目录清单当判据会当场恒红。
 	var registered: Dictionary = {}
@@ -1429,7 +1429,7 @@ func _phase_weapon_registry() -> void:
 # ── 容量格子面板的派生(2026-09-25)──
 # 判据分两半:① 派生公式本身(纯静态,不需要实例化 Control);
 # ② **接线** —— 公式必须真的被 setup()/refresh() 用上。只有 ① 的话,把两个静态函数写出来
-#    却没人调,断言照样全绿(本仓反复在删那种"加了断言之后全绿"的假证据)。
+#    却没人调,断言照样测试全部通过(本仓反复在删那种"加了断言之后测试全部通过"的假证据)。
 func _phase_weapon_capacity() -> void:
 	var ws: GDScript = load("res://ui/hud/weapon_slots.gd")
 	_check(ws != null, "ui/hud/weapon_slots.gd 可加载")
@@ -1437,9 +1437,9 @@ func _phase_weapon_capacity() -> void:
 		return
 	var src := ScanUtil.read("res://ui/hud/weapon_slots.gd")
 	_check(not src.is_empty(), "读到 ui/weapon_slots.gd(读不到就是红,不是静默跳过)")
-	# ★★ 必须先看源码文本再敢调:`ws.rows_for(...)` 在函数不存在时会**抛错**,
-	#   而 -s 冒烟里 helper 抛错 ⇒ 本函数当场结束、调用方继续 ⇒ 下面那些断言
-	#   被静默跳过(裁决行照打 —— **假绿**)。本函数是 helper(不是 _initialize),
+	# 注意： 必须先看源码文本再敢调:`ws.rows_for(...)` 在函数不存在时会**抛错**,
+	#   而 -s 冒烟里 helper 抛错  ->  本函数当场结束、调用方继续  ->  下面那些断言
+	#   被静默跳过(裁决行照打 —— **虚假通过（未有效测试）**)。本函数是 helper(不是 _initialize),
 	#   所以这里 `return` 是安全的、不会挂进程。
 	var has_derivation := src.contains("static func rows_for") and src.contains("static func panel_h_for")
 	_check(has_derivation, "★ WeaponSlots 应导出 rows_for() / panel_h_for() 两个静态派生函数")
@@ -1471,10 +1471,10 @@ func _phase_weapon_capacity() -> void:
 	_check(body_derive.contains("inventory.capacity"),
 			"_derive_layout() 必须从**背包**读容量(不能是另一个写死的数)")
 	# ②b **画的格数必须跟着派生的 `capacity`**(2026-09-26 补:这是"半迁移"的最后一个洞)
-	# ★ 洞的形状:把 `_draw` 里的 `WeaponInventory.CAPACITY`(常量被删 ⇒ 必须改)偷懒换成
+	# - 洞的形状:把 `_draw` 里的 `WeaponInventory.CAPACITY`(常量被删  ->  必须改)偷懒换成
 	#   `DEFAULT_CAPACITY` —— 于是 `_derive_layout()` 照样被调、`panel_h` 照样对,
-	#   而**格阵恒画 8 格**,容量调到 12 也不长。上面三条**全绿**。
-	# ★ 判据不能只是 `contains("capacity")`:坏写法里的 `DEFAULT_CAPACITY` 也含这个词 ⇒
+	#   而**格阵恒画 8 格**,容量调到 12 也不长。上面三条**测试全部通过**。
+	# - 判据不能只是 `contains("capacity")`:坏写法里的 `DEFAULT_CAPACITY` 也含这个词  -> 
 	#   必须**反面一起判**(不得出现 `DEFAULT_CAPACITY`)。
 	var body_draw := ScanUtil.func_body(ScanUtil.code_only(src), "_draw")
 	_check(body_draw.contains("capacity") and not body_draw.contains("DEFAULT_CAPACITY"),

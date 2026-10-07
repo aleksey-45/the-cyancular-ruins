@@ -1,17 +1,17 @@
 class_name WorldRewind
 extends RefCounted
 
-# 世界回溯(第一阶段):定频快照环缓 + 反向应用器。纯数据/编排,不碰 UI 与 shader。
+# 世界时空回溯（阶段一）：定频快照环形缓冲区与状态回放器。负责纯数据记录与编排，不依赖 UI 与 Shader。
 #
-# 模型(与旧线"瓦片事件账本"互补:本阶段只倒实体,瓦片账本下一阶段接):
-#   · record():正常流逝时每 1/SNAP_HZ 秒采一帧 —— 玩家(位置/速度/HP/朝向/倒地)、
+# 架构设计：与 TileLedger 场景瓦片破坏账本协同工作，本阶段负责实体回溯。
+#   - record():正常流逝时每 1/SNAP_HZ 秒采一帧 —— 玩家(位置/速度/HP/朝向/倒地)、
 #     非精英敌人(位置/速度/HP/存亡)、子弹(场景路径/位置/速度/归属)。
-#   · step():回溯中按"已倒退秒数"游标从最新帧往回走,应用目标帧(位置/状态一次性置回);
+#   - step():回溯中按"已倒退秒数"游标从最新帧往回走,应用目标帧(位置/状态一次性置回);
 #     子弹按快照**重建/重定位**(回溯起点清空活弹,由快照帧接管)。
-#   · 精英不入快照、不回放(策划案:精英不受回溯影响,依旧保持原本行为)。
-#   · 尸体保留:录制期间被击杀的敌人不立即释放(hold_corpses),隐藏待复活;
+#   - 精英不入快照、不回放(策划案:精英不受回溯影响,依旧保持原本行为)。
+#   - 尸体保留:录制期间被击杀的敌人不立即释放(hold_corpses),隐藏待复活;
 #     超出缓冲窗口(TimeParams.SNAP_SECONDS)后才由 Level0 清理。
-#   · 回放期间不结算伤害:实体脚本靠 TimeField.is_rewinding() 早退,Level0 在回放帧不喂输入。
+#   - 回放期间不结算常规伤害：实体脚本通过 TimeField.is_rewinding() 提前返回，Level0 在回放帧不注入玩家输入。
 
 static var hold_corpses := false   # 由 Level0 每帧同步:录制中=true(击杀保留尸体待复活)
 
@@ -82,7 +82,7 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 
 ## 进入回溯:清空场上活弹(状态改由快照重建),游标归零。
 ## 玩家状态快照:位置/速度/HP/朝向/倒地 + **武器弹量**(当前武器类型与下标、背包各格残弹、
-## 手持那件的实弹数)——用户要求"除个人钟/精英/Boss 外一切状态都要回溯"。
+## 手持那件的实弹数)——用户要求"除怀表时间系统/精英/Boss 外一切状态都要回溯"。
 func _snapshot_player(player: Node) -> Dictionary:
 	var d := {
 		"p": (player as Node2D).global_position,
@@ -95,10 +95,10 @@ func _snapshot_player(player: Node) -> Dictionary:
 	var wc = player.get("weapons")
 	if wc == null:
 		return d
-	# ★ 合并订正(2026-10-02):原写的是 `_current_slot` —— 主线已把 `slot` 一词整体退休、
-	#   改名为 `_current_type`,于是 `get()` 返回 null ⇒ `int(null)` 每帧(20Hz)抛
+	# - 合并订正(2026-10-02):原写的是 `_current_slot` —— 主线已把 `slot` 一词整体退休、
+	#   改名为 `_current_type`,于是 `get()` 返回 null  ->  `int(null)` 每帧(20Hz)抛
 	#   "Nonexistent 'int' constructor",而**快照值照旧是 0、不报红、不中断**。
-	# ★ 另注:本键当前**只写不读**(`player.rewind_restore` 还原武器用的是 `widx` + `wmags` +
+	# - 另注:本键当前**只写不读**(`player.rewind_restore` 还原武器用的是 `widx` + `wmags` +
 	#   `wlive`,不看类型 id)。保留它是为了与 `capture_state` 的 `wslot` 同口径,免得下次
 	#   有人想按类型还原时以为这里没有。
 	d["wslot"] = int(wc.get("_current_type"))
@@ -125,9 +125,9 @@ func begin() -> void:
 				(b as Node).queue_free()
 
 
-## 退出回溯(录像带模型):把"过去的将来"从磁带上裁掉。
-## 磁带钟退回到回溯出口,之后 record() 从这里续录——被回溯抹掉的时间段不复存在,
-## 两次回溯互不串带(否则第二次回溯会先倒放被抹掉的未来,再掉进更早的真历史)。
+## 退出时空回溯：裁剪回溯出口之后的时间轴数据，保持时间线连续一致。
+## 时间轴游标重置至回溯出口，后续 record() 从该时刻继续追加录制。
+## 保证多次连续回溯历史状态互不冲突，避免重复回放已被覆写的时间段。
 ## 返回出口时刻(磁带新末尾),Level0 用它把瓦片账本裁到同一位置。
 func finish() -> float:
 	var exit_t := _t - _cursor
@@ -199,14 +199,14 @@ func _apply_bullets(list: Array, player: Node) -> void:
 			nb.set("hit_impact", float(meta.get("impact", 0.0)))
 			if nb.has_method("apply_rewind_state"):
 				nb.call("apply_rewind_state", meta.get("fuse", {}))
-			# ★★ 2026-10-03 修:重建出来的弹**必须补上 `scene_path`**,否则**第二次回溯它就没了**。
+			# 注意： 2026-10-03 修:重建的子弹必须补充写入 scene_path 元数据，否则后续再次回溯时将无法正确实例化。
 			#   环缓存的是 `b.get_meta("scene_path")`(见 `record()` 那行),而写这份 meta 的**唯一**
-			#   地方是 `WeaponBase._spawn_projectiles`(出膛那一刻)。重建的弹绕过了那条路 ⇒ 它身上
-			#   没有 meta ⇒ 退出回溯后它作为**活弹**继续飞,再被 `record()` 时 `sp` 记成**空串**
-			#   ⇒ 下一次 `_apply_bullets` 里 `sp == ""` ⇒ 不实例化、`append(null)` ⇒ **子弹凭空消失**。
-			#   ★ 这正是用户实测的"第一次回溯正常、第二次回溯子弹直接消失"。
-			#   ★ 为什么第一次没事:那一颗是**真**出膛的,meta 齐全;坏的是**重建**出来的那一代,
-			#     所以缺陷要**回溯两次**才现形 —— 单次回溯的探针照不到。
+			#   地方是 `WeaponBase._spawn_projectiles`(出膛那一刻)。重建的弹绕过了那条路  ->  它身上
+			#   没有 meta  ->  退出回溯后它作为**活弹**继续飞,再被 `record()` 时 `sp` 记成**空串**
+			#    ->  下一次 `_apply_bullets` 里 `sp == ""`  ->  不实例化、`append(null)`  ->  **子弹凭空消失**。
+			#   - 这正是用户实测的"第一次回溯正常、第二次回溯子弹直接消失"。
+			#   - 为什么第一次没事:那一颗是**真**出膛的,meta 齐全;坏的是**重建**出来的那一代,
+			#     所以该缺陷需要连续触发两次回溯才会被暴露，单次回溯测试无法覆盖此边界情况。
 			nb.set_meta("scene_path", sp)
 		_replay_bullets.append(nb)
 	for i in list.size():

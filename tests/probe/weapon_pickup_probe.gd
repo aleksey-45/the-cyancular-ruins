@@ -2,13 +2,13 @@ extends Node
 
 # 地面武器(WeaponPickup)探针。场景模式 —— 判据是 **grep 文本 `WEAPON PICKUP: ALL-OK`**,
 # 不能只看退出码(中途报错时 --quit-after 仍 exit 0,退出码与"跑通了"不可分)。
-#   ★★ 2026-09-28 订正(取代旧版"这时不打印 ALL-OK",实测已推翻):运行期脚本错误**只让
-#   出错的那个函数当场结束、调用方继续** ⇒ verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
+#   注意： 2026-09-28 订正(取代旧版"这时不打印 ALL-OK",实测已推翻):运行期脚本错误**只让
+#   出错的那个函数当场结束、调用方继续**  ->  verdict **照打 `ALL-OK`**、被跳过的组静默变绿;
 #   故该行只证明"没有任何断言失败",**不证明"该跑的断言都跑过"**(权威:`tests/lib/probe_base.gd`)。
 #
-#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#   - 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
 #     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
-#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
+#     就被意外中断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/weapon_pickup_probe.tscn
 #
@@ -88,7 +88,7 @@ func _phase_collision_shape() -> void:
 	if cs != null and cs.shape is RectangleShape2D:
 		var sz: Vector2 = (cs.shape as RectangleShape2D).size
 		_check(sz.x > 4.0 and sz.y > 2.0, "碰撞箱尺寸应来自真实像素(实际 %s)" % str(sz))
-		# ★ A4(2026-09-17):视觉中心已被挪到 body 原点 → 碰撞箱必须在 Vector2.ZERO。
+		# - A4(2026-09-17):视觉中心已被挪到 body 原点 → 碰撞箱必须在 Vector2.ZERO。
 		_check(cs.position == Vector2.ZERO, "碰撞箱须在节点原点(实际 %s)" % str(cs.position))
 	else:
 		_failures.append("碰撞箱不是矩形(或不存在)")
@@ -97,7 +97,7 @@ func _phase_collision_shape() -> void:
 
 
 # ── ①b 六把枪逐个:视觉中心都在节点原点(钉 A4 与 m82a1 那个历史 bug)──
-# ★ 为什么单开一相:2026-09-17 之前 `_build_collision` 只把 `spr.position` 算进判定圆心、
+# - 为什么单开一相:2026-09-17 之前 `_build_collision` 只把 `spr.position` 算进判定圆心、
 #   **漏了武器根节点自己的 position**,于是 m82a1 的判定圆心比画出来的枪偏
 #   (6,3)×WORLD_SCALE = (15, 7.5) 世界像素 —— 而拾取半径只有 64px,且**不报错**。
 #   只测手枪(上面那一相)是抓不到的:手枪的根节点本来就是零变换。
@@ -138,14 +138,14 @@ func _phase_landing_determinism() -> void:
 	add_child(a)
 	a.global_position = Vector2(0, 0)
 
-	# ★ 第二把同初速,但**延迟 20 个物理帧**才开始 —— 如实模拟"客户端晚一个 RTT 才收到事件"。
+	# - 第二把同初速,但**延迟 20 个物理帧**才开始 —— 如实模拟"客户端晚一个 RTT 才收到事件"。
 	#   两者最终横坐标必须一致:停止位置只取决于初速与摩擦,**与开始时刻无关**。
 	for i in 20:
 		await get_tree().physics_frame
-	# ★ 两把必须**同型号**(这里都是 type_id=1)。用不同型号会得到一个假红:不同武器的
+	# - 两把必须**同型号**(这里都是 type_id=1)。用不同型号会得到一个虚假失败（测试用例误报）:不同武器的
 	#   精灵碰撞箱高度不同 → 下落距离不同 → **空中时长不同** → 空气阻力的衰减量不同 →
 	#   落点天然不同。那不是"相位依赖",是"拿两种东西比"。
-	# ★ 两把还必须**拉开距离**:掉落物掩码含层 8(= 与其它掉落物碰),同 x 起滑会互相顶,
+	# - 两把还必须**拉开距离**:掉落物掩码含层 8(= 与其它掉落物碰),同 x 起滑会互相顶,
 	#   测出来的是"两把枪挤在一起",不是"相位依赖"。1000px 远超各自的滑行距离(~220px),
 	#   且落在地板范围内(地板 12000 宽,居中于 0)。
 	var b: WeaponPickup = load(PICKUP_SCENE).instantiate()
@@ -216,7 +216,7 @@ func _phase_inventory_roundtrip() -> void:
 	_check(wep.current_type_id() == 1, "捡起后手上是它(实际 %d)" % wep.current_type_id())
 	_check(wep.inventory.used_cell_count() == 2, "占用 2 格(实际 %d)" % wep.inventory.used_cell_count())
 
-	# ★ 视觉缩放:武器挂在 Player 下时继承根的 scale=2.5(player.tscn),
+	# - 视觉缩放:武器挂在 Player 下时继承根的 scale=2.5(player.tscn),
 	#   地面态得自己补上 —— 漏了就是"地上的枪小 2.5 倍",**而且不报错**。
 	#   直接比两者的 global_scale(比 y 轴:facing 翻转只改 x)。
 	await get_tree().physics_frame
@@ -241,7 +241,7 @@ func _phase_inventory_roundtrip() -> void:
 	await get_tree().physics_frame
 	_check(wep.inventory.used_cell_count() == 6, "占用 6 格(实际 %d)" % wep.inventory.used_cell_count())
 
-	# ★ 捡第二把重狙(4格) → 6+4=10 > 8,放不下 → **替换手上当前那把**(现在是重狙)
+	# - 捡第二把重狙(4格) → 6+4=10 > 8,放不下 → **替换手上当前那把**(现在是重狙)
 	#   返回被换下的类型 id,残弹经 take_last_dropped 交还
 	var r2: int = wep.pick_up(3, 99)
 	_check(r2 > 0, "放不下时应返回被替换掉的类型 id(实际 %d;=0 说明静默吞掉了)" % r2)
@@ -262,7 +262,7 @@ func _phase_inventory_roundtrip() -> void:
 			"丢弃后背包应少一条(实际 %d → %d)" % [before, wep.inventory.held.size()])
 	_check(int(dropped.get("type", 0)) > 0, "丢下的条目要带类型 id")
 
-	# ★ 被禁用闸门拒绝时必须返回 PICKUP_DENIED(-1) —— 与"捡成功、没替换"(0)分开。
+	# - 被禁用门控前置校验拒绝时必须返回 PICKUP_DENIED(-1) —— 与"捡成功、没替换"(0)分开。
 	#   混在一起的话 Level0.try_pickup_for 会把地面那把**直接删掉而玩家什么都没拿到**。
 	wep.set_enabled_types([5])
 	var denied: int = wep.pick_up(5, 3)
@@ -279,11 +279,11 @@ func _phase_inventory_roundtrip() -> void:
 
 
 # ── ⑤ 视觉真的建出来了(两条配置路径都要) ──
-# ★ 这条 bug 是**真的漏过一次**:`Level0.spawn_pickup` 原先先 `add_child` 再 `configure`,
-#   而 `_ready` 一入树就用 @export 默认值(type_id=1 手枪)建过一次视觉;`configure` 再建时
+# - 这条 bug 是**真的漏过一次**:`Level0.spawn_pickup` 原先先 `add_child` 再 `configure`,
+#   而 `_ready` 一加入场景树就用 @export 默认值(type_id=1 手枪)建过一次视觉;`configure` 再建时
 #   旧的 "Visual" 还占着名字(queue_free 要到帧末),新节点被**自动改名**,
 #   于是 `get_node_or_null("Visual")` 抓到旧的那份 → **地面武器没有视觉、碰撞箱按错的枪算**。
-#   探针当时只走"configure 在 add_child 之前"那条路,所以全绿 —— 补上另一条。
+#   探针当时只走"configure 在 add_child 之前"那条路,所以测试全部通过 —— 补上另一条。
 func _phase_visual_built() -> void:
 	# 路径 A:configure 在 add_child **之前**(生产路径,Level0.spawn_pickup)
 	var a: WeaponPickup = load(PICKUP_SCENE).instantiate()
@@ -299,7 +299,7 @@ func _phase_visual_built() -> void:
 	b.configure(5, 51, 4, Vector2.ZERO)
 	await get_tree().physics_frame
 	_check_pickup_visual(b, "B(add_child 先于 configure)")
-	# 两条路径都不能留下**两个** Visual(名字被顶掉的那份会变成孤儿,白画一份或多一份碰撞箱)
+	# 两条路径都不能留下**两个** Visual(名字被覆盖的那份会变成孤儿,白画一份或多一份碰撞箱)
 	var vis_count := 0
 	for c in b.get_children():
 		if str(c.name).begins_with("Visual") or str(c.name).begins_with("@"):

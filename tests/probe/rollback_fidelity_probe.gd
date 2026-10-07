@@ -15,7 +15,7 @@ const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
 
 var _failures: Array[String] = []
 
-# ★ 假绿防线(本仓被抓过四次的那一类,本探针初版就中过):
+# - 虚假通过（未有效测试）防线(本仓被抓过四次的那一类,本探针初版就中过):
 #   Godot 的运行时错误只**中断当前函数**,调用它的 `_ready()` 会照常往下走 —— 于是
 #   「测试函数中途报错 → 一条 _check 都没跑到 → _failures 仍空 → 照样打印 ALL-OK 并 exit 0」。
 #   实测:改之前把 map_px 从 `_close_enough` 里删掉(必报错),红跑却印了 ALL-OK。
@@ -85,7 +85,7 @@ func _test_torus_compare() -> void:
 	_check(c.rollback_count() == rb0,
 			"① 环面同一物理点(差一整幅地图宽)不判分歧(回滚 ×%d→×%d)" % [rb0, c.rollback_count()])
 
-	# ② 反证:map_px 归零 → 同一份形状的载荷必须判成分歧(证明 ① 不是空转断言)
+	# ② 反证:map_px 归零 → 同一份形状的载荷必须判成分歧(证明 ① 不为无效操作断言)
 	c.map_px = Vector2.ZERO
 	var rb1 := c.rollback_count()
 	c.on_authoritative(15, s15)
@@ -94,11 +94,11 @@ func _test_torus_compare() -> void:
 			"② 去掉环面处理后同一份载荷判为分歧(回滚 ×%d→×%d)" % [rb1, c.rollback_count()])
 
 	p.queue_free()
-	_ran["torus"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见顶部说明)
+	_ran["torus"] = true   # - 完成戳必须在最后一行:中途报错就到不了这里(见顶部说明)
 
 
 # ── C 组:接触期容差(贴身时用 contact_pos_tol,非接触期保持 pos_tol)──
-# 手法与 A 组同款:直接摆 _captures + on_authoritative + reconcile,不依赖真实物理世界。
+# 手法与 A 组相同机制:直接摆 _captures + on_authoritative + reconcile,不依赖真实物理世界。
 # 造一个已跑到 20 帧的控制器 + 它绑的玩家,并把 seq14 那份 capture 的 pos 挪 10px 当"权威"。
 func _make_contact_fixture() -> Dictionary:
 	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
@@ -119,7 +119,7 @@ func _make_contact_fixture() -> Dictionary:
 
 
 func _test_contact_tolerance() -> void:
-	# ① 非接触期:10px > pos_tol(2px)⇒ 真分歧 ⇒ 必须回滚
+	# ① 非接触期:10px > pos_tol(2px) ->  实际状态分歧  ->  必须回滚
 	var f1: Dictionary = _make_contact_fixture()
 	var c1: PredictionRollback = f1["ctrl"]
 	c1.in_contact = false
@@ -130,8 +130,8 @@ func _test_contact_tolerance() -> void:
 			"③ 非接触期 10px 偏差判为分歧(回滚 ×%d→×%d)" % [rb0, c1.rollback_count()])
 	(f1["player"] as Node).queue_free()
 
-	# ② 接触期:**同一份形状的载荷**、只把 in_contact 翻成 true ⇒ 必须**不**回滚
-	#    ★ 两份夹具各自独立(不复用控制器):①的回滚会重放并改写 capture,复用会让 ② 比到别的东西。
+	# ② 接触期:**同一份形状的载荷**、只把 in_contact 翻成 true  ->  必须**不**回滚
+	#    - 两份夹具各自独立(不复用控制器):①的回滚会重放并改写 capture,复用会让 ② 比到别的东西。
 	var f2: Dictionary = _make_contact_fixture()
 	var c2: PredictionRollback = f2["ctrl"]
 	c2.in_contact = true
@@ -142,11 +142,11 @@ func _test_contact_tolerance() -> void:
 			"④ 贴身时同一份载荷不再判分歧(回滚 ×%d→%d,容差 2→24px)" % [rb1, c2.rollback_count()])
 	(f2["player"] as Node).queue_free()
 
-	_ran["contact_tol"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见文件头说明)
+	_ran["contact_tol"] = true   # - 完成戳必须在最后一行:中途报错就到不了这里(见文件头说明)
 
 
 # ── 源码守卫 ──
-# `map_px` 不接线的话,环面修复在**真机上是惰性的** —— 而且**静默**:不报错、探针全绿、
+# `map_px` 不接线的话,环面修复在**真机上是惰性的** —— 而且**静默**:不报错、探针测试全部通过、
 # 生产行为与修复前逐帧一致(实测过)。所以把"接线了"这件事本身变成断言。
 # 若日后改法换了入口(例如搬进 player.gd),请把这里改成认新入口,**别删掉这条断言**。
 func _check_source_guard() -> void:
@@ -159,12 +159,12 @@ func _check_source_guard() -> void:
 	_check(found, "pvp_client 给控制器设了 map_px(不设 = 环面修复惰性且静默)")
 
 	# ② 接触提示的接线(`in_contact` 必须在 note_post_step 之前写 —— 它是那一步的消费方)。
-	#    漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
-	#    ★ 要拦下的变异:把 `_rollback.in_contact = …` 挪到 `note_post_step(...)` **之后** ——
+	#    漏了这一行 = 静默退回 2px 容差:不报错、探针测试全部通过、真机行为与改动前逐帧一致。
+	#    - 要拦下的变异:把 `_rollback.in_contact = …` 挪到 `note_post_step(...)` **之后** ——
 	#      接触提示永远用**上一帧**的碰撞信息(差一帧),静默且没有别的守卫看得见。
-	#    ★ 位置序**就是**契约,保留;但比较范围**收在同一帧块内**(包住该赋值的那一层顶层函数):
+	#    - 位置序**就是**契约,保留;但比较范围**收在同一帧块内**(包住该赋值的那一层顶层函数):
 	#      别处无关函数里新增/删掉一条 note_post_step 不该把这条带红(那是无关行数变动)。
-	#    ★ 日后若换了入口,请把这里改成认新入口,**别删掉这条断言**。
+	#    - 日后若换了入口,请把这里改成认新入口,**别删掉这条断言**。
 	var txt2 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd")
 	var lines := txt2.split("\n")
 	var hint_line := -1

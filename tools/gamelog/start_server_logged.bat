@@ -1,6 +1,5 @@
 @echo off
-rem Logged server launcher: wraps the newest server exe (or Godot server scene)
-rem and captures a full session report into gamelogs\. ASCII-only + CRLF.
+rem 带日志捕获的服务端启动脚本：包装最新服务端可执行文件（或服务端场景）运行，并将完整运行会话报告归档至 gamelogs/ 目录。
 cd /d "%~dp0..\.."
 powershell -NoProfile -ExecutionPolicy Bypass -File "tools\gamelog\capture_session.ps1" -Target server %*
 pause

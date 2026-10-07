@@ -1,7 +1,7 @@
 shader_type canvas_item;
 
 // 圆形小地图的地形:以玩家所在格为中心采样地图贴图,圆外直接 discard。
-// ★ 采样器开 repeat_enable:地图贴图正好是 cols×rows、四周无留白,于是 uv 越过 1.0
+// -  采样器开 repeat_enable:地图贴图正好是 cols×rows、四周无留白,于是 uv 越过 1.0
 //   就是"绕到地图另一头" —— 环面回绕不需要铺 3×3 副本。
 uniform sampler2D map_tex : filter_nearest, repeat_enable;
 uniform vec2  map_size    = vec2(1.0, 1.0);   // 格数 (cols, rows)

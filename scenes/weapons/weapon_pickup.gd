@@ -3,26 +3,26 @@ extends CharacterBody2D
 
 # 地上的武器(可被按 F 捡起)。
 #
-# ★ 为什么是**独立场景**而不是"给武器场景加个落地模式":手持武器与地面武器是两种
+# - 为什么是**独立场景**而不是"给武器场景加个落地模式":手持武器与地面武器是两种
 #   生命周期完全不同的东西 —— 前者挂在 Player 下、由玩家驱动 tick、开火;后者是世界实体、
 #   自己走物理、只被拾取查询。合成一个类就要在 WeaponBase 里塞满"我在地上吗"的分支。
 #   分开后有一条**不可能搞错**的不变量:手持武器永远没有碰撞体,地面武器永远有。
 #
-# ★ 视觉复用武器场景实例:WeaponBase **没有 _process/_physics_process**(tick 由玩家显式
+# - 视觉复用武器场景实例:WeaponBase **没有 _process/_physics_process**(tick 由玩家显式
 #   驱动,为 rollback 确定性),所以一个没人驱动的武器实例天然静止 —— 直接当哑视觉体挂进来
 #   即可,不必另做一套地面外观。
 
 const GROUP := "weapon_pickup"
 
 # 掉落物碰撞层 = 层 4(值 8)。掩码只含地形(1)与其它掉落物(8):
-#   · 玩家 mask=5、敌人 mask 不含 4 → 天然不碰(不会被地上的枪挡住)
-#   · 子弹 mask=5 也不含 4 → 天然穿过(地上的枪不挡子弹)
-# ★ 改这两个数之前先看 player.tscn / bullet_base 的掩码 —— 别顺手把 8 或进玩家掩码。
+#   - 玩家 mask=5、敌人 mask 不含 4 → 天然不碰(不会被地上的枪挡住)
+#   - 子弹 mask=5 也不含 4 → 天然穿过(地上的枪不挡子弹)
+# - 改这两个数之前先看 player.tscn / bullet_base 的掩码 —— 切勿随意把 8 或进玩家掩码。
 const LAYER_GROUND := 8
 const MASK_GROUND := 9
 
 # 世界缩放。武器挂在 Player 下时继承根的 scale=2.5(player.tscn),
-# 落到世界里就得自己补上,否则视觉小 2.5 倍。★ 这个数字全项目只此一处。
+# 落到世界里就得自己补上,否则视觉小 2.5 倍。-  这个数字全项目只此一处。
 const WORLD_SCALE := 2.5
 
 @export var type_id: int = 1
@@ -33,11 +33,11 @@ var _settled: bool = false
 var _age: float = 0.0
 
 # ── 权威位置 vs 渲染位置(2026-09-15)──
-# ★ 世界是环面的,协议只传 canonical 坐标。玩家在接缝附近时,一件"在地图另一头"的武器
+# - 世界是环面的,协议只传 canonical 坐标。玩家在接缝附近时,一件"在地图另一头"的武器
 #   **其实就在身边** —— 但节点画在 canonical 位置就是屏幕外(与敌人/子弹/副本同一个问题)。
 #   所以两者分开:canonical_pos 永远在 [0,MAP)(权威,服务器与拾取判定读它),
 #   global_position 是**渲染位置**,每帧由 set_anchor() 给的锚点锚到最近副本。
-# ★ 本值**就是**这把枪看起来所在的位置:视觉中心已在 _build_collision 里被挪到节点原点
+# - 本值**就是**这把枪看起来所在的位置:视觉中心已在 _build_collision 里被挪到节点原点
 #   (2026-09-17 之前有一个 visual_offset 把两者分开,靠各处补偿来对齐,已整体删除),
 #   渲染、碰撞箱、拾取判定圆心三者重合,不存在"第二个中心"。
 var canonical_pos: Vector2 = Vector2.ZERO
@@ -67,16 +67,16 @@ func _ready() -> void:
 	scale = Vector2(WORLD_SCALE, WORLD_SCALE)
 	rotation = 0.0            # 不旋转:矩形碰撞箱 + 横版简化
 	if canonical_pos == Vector2.ZERO:
-		canonical_pos = global_position   # 没经 configure 就入树的(探针手摆)以自身位置为准
+		canonical_pos = global_position   # 没经 configure 就加入场景树的(探针手摆)以自身位置为准
 	if get_child_count() == 0:
 		_build_visual()
 		_build_collision()
 	velocity = drop_velocity
 
 
-# 由生成方调用。★ **必须在 add_child 之前调** —— `_ready` 会按当时的 type_id 建视觉与碰撞箱,
-# 先入树再 configure 的话 `_ready` 已经用 @export 默认值(手枪)建过一次了。
-# 入树后仍可调(热改),但那时走的是重建路径,见下面的 remove_child。
+# 由生成方调用。-  **必须在 add_child 之前调** —— `_ready` 会按当时的 type_id 建视觉与碰撞箱,
+# 先加入场景树再 configure 的话 `_ready` 已经用 @export 默认值(手枪)建过一次了。
+# 加入场景树后仍可调(热改),但那时走的是重建路径,见下面的 remove_child。
 func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
 	type_id = p_type_id
 	inst = p_inst
@@ -86,7 +86,7 @@ func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
 	_settled = false
 	if not is_inside_tree():
 		return
-	# ★ 必须先 `remove_child` 再 `queue_free`:`queue_free` 只是**标记**,节点要到帧末才真的没了,
+	# - 必须先 `remove_child` 再 `queue_free`:`queue_free` 只是**标记**,节点要到帧末才真的没了,
 	#   于是新 Visual 加进来时旧的那个还占着 "Visual" 这个名字 → Godot 给新节点**自动改名**,
 	#   随后 `_build_collision()` 的 `get_node_or_null("Visual")` 抓到的是**旧的那份**
 	#   (按 @export 默认 type_id 建的)→ 碰撞箱来自另一把枪。remove_child 让名字当场释放。
@@ -105,7 +105,7 @@ func _build_visual() -> void:
 		return
 	var w: Node2D = scene.instantiate()
 	w.name = "Visual"
-	# ★ 不写 w.player = null —— WeaponBase.player 默认就是 null(没人调过 equip),
+	# - 不写 w.player = null —— WeaponBase.player 默认就是 null(没人调过 equip),
 	#   而按 Node2D 标注的变量动态写一个不存在的属性会在运行时炸。
 	w.scale = Vector2.ONE     # 朝向固定为右;WeaponBase 没有 _process,不 tick 就是静止的
 	w.rotation = 0.0
@@ -113,7 +113,7 @@ func _build_visual() -> void:
 
 
 func _build_collision() -> void:
-	# ★ 标成 Node2D 而不是 Node:下面要读写 vis.position,按 Node 推断的话它没有 position
+	# - 标成 Node2D 而不是 Node:下面要读写 vis.position,按 Node 推断的话它没有 position
 	#   (`var x := vis.position + …` 会因"值没有确定类型"直接**解析失败**)。
 	var vis := get_node_or_null("Visual") as Node2D
 	if vis == null:
@@ -124,7 +124,7 @@ func _build_collision() -> void:
 	var r: Rect2 = SpriteBounds.from_sprite(spr)
 	if r.size == Vector2.ZERO:
 		return
-	# ★ 把"画出来的枪中心"挪到 body 原点:渲染位置 / 碰撞箱 / 拾取判定圆心从此**天然重合**,
+	# - 把"画出来的枪中心"挪到 body 原点:渲染位置 / 碰撞箱 / 拾取判定圆心从此**天然重合**,
 	#   不需要任何补偿(原先靠 visual_offset 把判定圆心搬回视觉中心)。
 	#   gun_center 必须带上**武器根节点自己**的 position —— 漏它正是 m82a1 判定圆心
 	#   偏 (6,3)×WORLD_SCALE 世界像素的成因(拾取半径才 64px)。
@@ -142,14 +142,14 @@ func _build_collision() -> void:
 
 func _physics_process(delta: float) -> void:
 	# 时间场(B13):"除主角外一切变慢"——掉落的枪也是世界物件,加速时随世界 ×0.7、回溯冻结。
-	# ★ 只作用于**未停稳**的飞行/滚动阶段;停稳后的 `_settled` 早退路径不推进物理(只是解卡 + 锚副本)。
+	# - 只作用于**未停稳**的飞行/滚动阶段;停稳后的 `_settled` 提前返回路径不推进物理(只是解卡 + 锚副本)。
 	delta = TimeField.world_delta(delta)
 	_age += delta
 	if _settled:
 		# 停稳后**位置**不变,但**锚点**在变(玩家在动、可能绕过接缝)——
 		# 不在这儿补一次的话,跨接缝时停稳的枪会留在旧副本上"消失"。
-		# ★ 解卡也必须在早退**之前**:停稳后 move_and_slide 再也不跑,可破坏砖被重铺
-		#   盖在它身上时会**永久钉死**在墙里(连 Godot 内建的 penetration recovery
+		# - 解卡也必须在提前返回**之前**:停稳后 move_and_slide 再也不跑,可破坏砖被重铺
+		#   盖在它身上时会**永久严格约束**在墙里(连 Godot 内建的 penetration recovery
 		#   都不会触发),所以这条路径是解卡唯一能救回它的地方。
 		_unstick_up()
 		sync_render_from_canonical()
@@ -163,7 +163,7 @@ func _physics_process(delta: float) -> void:
 	_recompute_canonical()
 	_unstick_up()
 	sync_render_from_canonical()
-	# ★ 停止必须是"速度阈值置零"而不是"滑固定时长":前者让**落点与何时开始模拟无关** ——
+	# - 停止必须是"速度阈值置零"而不是"滑固定时长":前者让**落点与何时开始模拟无关** ——
 	#   这是联机端"客户端晚一个 RTT 才收到事件、却要落在同一位置"的前提。
 	#   改成按时间停 → 两端落点发散 → 出现"看着够不着/看着够得着"。
 	if is_on_floor() and absf(velocity.x) < PlayerParams.weapon_stop_eps:
@@ -212,7 +212,7 @@ var _prompt: PickupPrompt = null
 func set_prompt_visible(v: bool) -> void:
 	if v and _prompt == null:
 		_prompt = PickupPrompt.new()
-		# ★ 反向缩放:本节点 scale = WORLD_SCALE(2.5),而提示要按**世界单位**画
+		# - 反向缩放:本节点 scale = WORLD_SCALE(2.5),而提示要按**世界单位**画
 		#   (与 EnemyHpBar 那种挂在世界里的节点同尺寸),所以子节点乘 1/2.5 抵消掉。
 		_prompt.scale = Vector2.ONE / WORLD_SCALE
 		_prompt.position = Vector2(0.0, -PickupPrompt.GAP_ABOVE / WORLD_SCALE)

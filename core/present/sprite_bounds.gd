@@ -6,11 +6,11 @@ extends RefCounted
 # 用途:地面武器(WeaponPickup)的碰撞箱 —— 武器 .tscn 里**没有**碰撞体,手画 6 个矩形
 # 既烦又会在换贴图后失真,所以按 alpha 自动求一次。
 #
-# ★ 参考系(最容易写错的点):返回的 Rect2 以 **sprite 的局部原点**为参考,
+# - 参考系(最容易写错的点):返回的 Rect2 以 **sprite 的局部原点**为参考,
 #   而 Sprite2D 默认 `centered = true` → 原点在**贴图/region 的中心**,不是左上角。
 #   `region_enabled` 时原点在 region 中心(region 之外的像素根本不参与扫描)。
 #
-# ★ 与**手持态**的差异:weapon_base 的 sprite 有 _base_sprite_pos 偏移、换弹/后坐抖动
+# - 与**手持态**的差异:weapon_base 的 sprite 有 _base_sprite_pos 偏移、换弹/后坐抖动
 #   (weapon_base.gd 的 _update_reload_pose)与 facing 的 scale.x 翻转。地面态一律取
 #   **facing=1、无抖动**的基准,所以本工具只吃 sprite 本身,不吃那些运行时偏移。
 

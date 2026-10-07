@@ -5,7 +5,7 @@ extends SceneTree
 # 通过 = `UNSTICK OK` 退出 0。
 #
 # ═══ 为什么需要它 ═══
-# ★ 最容易错的一条是**"正贴着墙/地"不得判为卡住**:TileQuery 的格范围是
+# - 最容易错的一条是**"正贴着墙/地"不得判为卡住**:TileQuery 的格范围是
 #   floori(rect.end / ts) 且**含端点**,一个正好 64 宽、正好对齐格线的矩形会多算进
 #   右边那一列 —— 若那一列是墙,它每帧都会"解卡"往上弹一下(而且不报错)。
 #   `PROBE_INSET` 内缩就是为了这条。
@@ -23,9 +23,9 @@ func _check(ok: bool, msg: String) -> void:
 
 
 # rows×cols 的网格:默认全空,再把 solid_rows 里的行填成实心砖。
-# ★ 必须用**带类型**的 Array[Array] / Array[int]:MazeGenerator.current_grid 是
+# - 必须用**带类型**的 Array[Array] / Array[int]:MazeGenerator.current_grid 是
 #   `static var current_grid: Array[Array]`,把无类型的 Array 赋给它会在运行期报类型错。
-#   同款写法见 tests/smoke/beam_trace_smoke.gd 的 _make_grid。
+#   相同实现方式见 tests/smoke/beam_trace_smoke.gd 的 _make_grid。
 func _grid(rows: int, cols: int, solid_rows: Array) -> Array[Array]:
 	var g: Array[Array] = []
 	for y in range(rows):
@@ -38,7 +38,7 @@ func _grid(rows: int, cols: int, solid_rows: Array) -> Array[Array]:
 
 func _initialize() -> void:
 	var U: GDScript = load("res://core/sim/unstick.gd")
-	# ★ 空载守卫:load() 失败还往下走会抛错,而 -s 抛错走不到 quit() → 永久挂起
+	# - 空载守卫:load() 失败还往下走会抛错,而 -s 抛错走不到 quit() → 永久挂起
 	if U == null:
 		print("UNSTICK FAILED: 找不到 core/sim/unstick.gd")
 		quit(1)

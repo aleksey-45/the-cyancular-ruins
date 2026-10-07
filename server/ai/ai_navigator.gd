@@ -5,7 +5,7 @@ extends Node
 # 每物理帧写 AiInputSource 字段驱动对应 player(与真人输入包同一条消费路径)。
 # 行为:黏滞锁定目标(不逐帧换目标);瞄准加抖动;有视线且距离合适就节奏点射;
 #       状态机移动(远追/近拉/中距横移,带决策间隔防抖);卡墙累计 0.4s 才跳一下。
-# 随机相位:每个 AI 的内部时钟/开火节奏在 ready 时错开,避免多个 AI 同频抽搐。
+# 随机相位:每个 AI 的内部时钟/开火节奏在 ready 时错开,避免多个 AI 同频高频抖动。
 
 const FIRE_RANGE := 620.0        # 开火距离上限(px)
 const APPROACH_DIST := 300.0     # 追击距离阈值
@@ -28,7 +28,7 @@ var _stuck_t := 0.0       # 卡墙累计时长
 
 
 func _ready() -> void:
-	# 随机相位:错开所有 AI 的决策/开火节奏(原同频抽搐问题)
+	# 随机相位:错开所有 AI 的决策/开火节奏(原同频高频抖动问题)
 	_t = randf_range(0.0, 10.0)
 	_next_fire = _t + randf_range(0.3, 1.2)
 	_next_decide = _t + randf_range(0.5, 1.5)
@@ -37,7 +37,7 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if src == null or host == null or not is_instance_valid(host):
 		return
-	# COUNTDOWN / MATCH_OVER:待机(服务器权威冻结,与真人同款)
+	# COUNTDOWN / MATCH_OVER:待机(服务器权威冻结,与真人相同机制)
 	if int(host._round_state) != int(host.RoundState.PLAYING):
 		src.fire = false
 		src.axis = 0.0
@@ -60,7 +60,7 @@ func _physics_process(delta: float) -> void:
 
 # 黏滞目标:保持当前目标,除非它失效,或新目标明显更近(TARGET_STICKY 倍以内)
 #
-# ★ 返回的 "dir" 恒为 **我 → 对手**(不含 dist 的方向向量,未归一化)。两个消费者都按这个口径用:
+# - 返回的 "dir" 恒为 **我 → 对手**(不含 dist 的方向向量,未归一化)。两个消费者都按这个口径用:
 #   `_aim_and_fire` 的 `src.aim = dir_to.normalized()` 就是开火方向;
 #   `_move` 的 `dist > APPROACH_DIST → signf(dir_to.x)` 是追人、`dist < BACKOFF_DIST → -signf(...)`
 #   是后拉。而 `MazeGenerator.toroidal_delta_px(a, b)` 返回的是 **a → b** ——

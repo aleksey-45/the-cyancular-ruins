@@ -12,37 +12,37 @@ const BIT_UP := 1
 const BIT_DOWN := 2
 const BIT_CHARGE := 4
 const BIT_ATTACK := 8
-# ★ 2026-09-15 新增:换弹位(R)。此前 PvP 两端**一致地**不换弹(`WeaponBase.reload_active()`
+# - 2026-09-15 新增:换弹位(R)。此前 PvP 两端**一致地**不换弹(`WeaponBase.reload_active()`
 #   在 pvp_mode / 网络输入源下恒 false),所以输入包不需要它 —— 而 `_bit("R")` 原先恒返回 0,
 #   意味着**服务器没有任何别的通路**能知道客户端按了 R(换弹不走 is_attack_* 那族抽象)。
 #   现在换弹对全模式开放,按下的边沿必须上行,由服务器在权威模拟里同样触发一次装填。
 # ⚠ 加位 = **改协议**:与旧 build 的输入包互不认(位掩码里多一位,旧端读到的 held/pressed
 #   少一位、不影响其余四位)。两端必须同版本。
 const BIT_RELOAD := 16
-# ★ 2026-09-15 新增:拾取(F)与丢弃(Q)。两个都是**边沿**语义 ——
-#   · F:按下的那一帧一次
-#   · Q:客户端自己累计按住时长,满 2s 的那一刻发一次边沿(见 PlayerParams.weapon_drop_hold_time)。
+# - 2026-09-15 新增:拾取(F)与丢弃(Q)。两个都是**边沿**语义 ——
+#   - F:按下的那一帧一次
+#   - Q:客户端自己累计按住时长,满 2s 的那一刻发一次边沿(见 PlayerParams.weapon_drop_hold_time)。
 #     上行的是"完成信号"而不是"按住",所以 **held 段不加这两位**(加了反而会让服务器以为
 #     只要按着就该丢,而服务器没有本地计时器)。
 # ⚠ 加位 = **改协议**:两端必须同版本(同 BIT_RELOAD 的注释)。
 const BIT_PICKUP := 32
 const BIT_DROP := 64
-# ★ Beta 时间玩法(P2,2026-09-29):加速按住位。**held 段**(按住语义,非边沿)——
-# 服务器据此角色进入加速态(自己 ×3,不动别人);是否真加速由服务器按颗粒账户裁决。
+# - Beta 时间玩法(P2,2026-09-29):加速按住位。**held 段**(按住语义,非边沿)——
+# 服务器据此角色进入加速态(自己 ×3,不动别人);是否真加速由服务器按粒子账户裁决。
 # ⚠ 加位 = 改协议,两端必须同版本(同 BIT_RELOAD 注释)。
 const BIT_HASTE := 128
-# ★ Beta 时间玩法:回溯按住位(held 段)。服务器据此进入该 role 的自身回溯态。
+# - Beta 时间玩法:回溯按住位(held 段)。服务器据此进入该 role 的自身回溯态。
 const BIT_REWIND := 256
 
 
 # ── 编码端:组一个输入包(协议**发送侧**的唯一来源)──
-# ★ 为什么必须收在这里:这段 30 行的位打包原先在 `pvp_client` 与 `royale_game` 里**各手抄一份**,
+# - 为什么必须收在这里:这段 30 行的位打包原先在 `pvp_client` 与 `royale_game` 里**各手抄一份**,
 #   而**解码端**(本类的 apply_packet / _bit / get_axis)只有一份。编码端分叉不会有任何报错:
 #   加一个 held 位只改一个客户端 → 该键在一个模式里永远没反应;把 CHARGE 抄成 ATTACK 也拦不住。
-#   (`--` 两份此前确实只差一句注释,但在它们真分叉之前收口。)
-# ★ seq / aim 由调用方给:它们来自场景(`_input_seq` 单调自增、`player.get_current_aim_dir()`),
+#   (`--` 两份此前确实只差一句注释,但在它们真分叉之前统一集中处理。)
+# - `seq` / `aim` 由调用方给:它们来自场景(`_input_seq` 单调自增、`player.get_current_aim_dir()`),
 #   不属于"协议编码"这件事。
-# ★ 读 src 走公开读口 → 自动遵守 `frozen`(COUNTDOWN 冻结期组出来的是全中性包,与旧行为一致)。
+# - 读 src 走公开输入读取接口 → 自动遵守 `frozen`(COUNTDOWN 冻结期组出来的是全中性包,与旧行为一致)。
 static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 	var held := 0
 	var pressed := 0
@@ -92,14 +92,14 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		"held": held,
 		"pressed": pressed,
 		"released": released,
-		# ★ 上行键 = winst,值是**目标那一把的 inst**。旧的 `"weapon"` 键**已删除** ——
+		# - 上行键 = winst,值是**目标那一把的 inst**。旧的 `"weapon"` 键**已删除** ——
 		#   它带的是背包位置(1-based),而位置的含义由**本端背包**决定(见 weapon_component
 		#   的 request_net_cycle 注释)。本函数是**编码端唯一来源**,故 inst 在这里是**空的**:
 		#   `pack_record` 只拿得到 `PlayerInput`、拿不到背包 —— 解析由组包处补上
 		#   (`pvp_match_client` 的 `weapons.take_uplink_switch(src.get_switch_index_pressed())`)。
-		#   ★ 键**必须在这里声明**(带 0 占位):解码端(apply_packet)对 0 的语义是
+		#   - 键**必须在这里声明**(带 0 占位):解码端(apply_packet)对 0 的语义是
 		#     "本包没有切枪请求",与旧键的 0 语义逐字相同;组包处只在解析出 >0 时覆盖。
-		#     (探针 `weapon_switch_inst_probe` 相① 源码级钉着这个键在**本文件**里。)
+		#     (探针 `weapon_switch_inst_probe` 阶段 1 源码级钉着这个键在**本文件**里。)
 		"winst": 0,
 		"aim": aim,
 	}
@@ -121,7 +121,7 @@ func apply_packet(pkt: Dictionary) -> void:
 	_axis = pkt.get("ax", 0.0)
 	_held = pkt.get("held", 0)
 	_aim = pkt.get("aim", Vector2.ZERO)
-	# 与旧 `_weapon` 同款语义:>0 才覆盖(0 = 本包没有切枪请求),由 clear_edges() 清空。
+	# 与旧 `_weapon` 相同机制语义:>0 才覆盖(0 = 本包没有切枪请求),由 clear_edges() 清空。
 	var inst: int = pkt.get("winst", 0)
 	if inst > 0:
 		_switch_inst = inst
@@ -154,7 +154,7 @@ func reset_state() -> void:
 	_pressed = 0
 	_released = 0
 
-# ── 覆写钩子(公开读口由基类持有并对 frozen 短路;本类不再各自处理冻结)──
+# ── 覆写钩子(公开输入读取接口由基类持有并对 frozen 短路;本类不再各自处理冻结)──
 
 func _axis_raw(neg: String, pos: String) -> float:
 	# 垂直轴由 held 位推导:输入包只传水平 ax,up/down 已并入 held 位掩码。
@@ -192,7 +192,7 @@ func _attack_just_pressed_raw() -> bool:
 func _attack_just_released_raw() -> bool:
 	return _released & BIT_ATTACK != 0
 
-# ★ 网络输入源**没有"背包位置"这个量**(上行传的是 inst)⇒ 位置读口恒 0。
+# - 网络输入源**没有"背包位置"这个量**(上行传的是 inst) ->  位置读取接口恒 0。
 #   服务器取切枪目标走 `_switch_inst_raw()`(见 `PlayerInput.consume_switch_inst`)。
 func _switch_index_raw() -> int:
 	return 0
@@ -210,7 +210,7 @@ func _drop_pressed_raw() -> bool:
 func get_aim_dir_override() -> Vector2:
 	return _aim
 
-# 网络注入 → 服务器/远端模拟的玩家武器瞄准不读宿主机鼠标(注入 ZERO 用朝向兜底)。
+# 网络注入 → 服务器/远端模拟的玩家武器瞄准不读宿主机鼠标(注入 ZERO 用回退使用角色朝向)。
 func is_network_driven() -> bool:
 	return true
 

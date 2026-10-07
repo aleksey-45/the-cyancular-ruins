@@ -5,36 +5,36 @@ extends Node
 # 判据: 文本 `LOBBY VISIBILITY PROBE: ALL-OK`(不看退出码 —— 探针挂住时 --quit-after 到期仍
 #       exit 0 且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
 #
-# ★ `--quit-after 3600`(=60s @60fps)的取值依据:本探针**全部断言都在 `_ready` 里同步跑完**,
+# - `--quit-after 3600`(=60s @60fps)的取值依据:本探针**全部断言都在 `_ready` 里同步跑完**,
 #   跑完自己 `quit()` —— 安全网**只在探针挂住时**才用得上。本仓的教训是"安全网给薄了会把跑得
 #   慢读成功能坏了"(`tests/probe/brawl_rollback_probe.tscn` 用 3600 就跑不完,实测要 30000),
 #   而这里没有任何等待(不 await、不开 socket、不拉子进程),故 3600 是"绝不可能耗尽"的量级。
 #
 # ═══ 为什么需要它 ═══
-# ★ 本批改的是一组**闭环**:房在"客户端转连 worker"那一刻不再被拆(否则"看得见"无从谈起),
+# - 本批改的是一组**闭环**:房在"客户端转连 worker"那一刻不再被拆(否则"看得见"无从谈起),
 #   于是"房什么时候消失"从"有人断开"变成了"worker 退了"。三张注册表各一处判断,写错任何一处
 #   都是**静默**的(房不死 = 端口与列表位永久占用;房早死 = 谁也看不见)。
-# ★ 列表可见性与拒绝入房是**同一件事的两半**:房留着才会出现在列表里,而出现之后必须**进不去**。
-#   只断言"列表里有它"会让一个"能点进去"的实现全绿 —— 那正是把第三人放进了别人的对局里。
-#   ★★ 2026-09-21(回局入口批)把这句话**收窄**成「对局中的房**对无凭据者**一律拒绝」:
-#   相①②③ 的断言本体一字不改(它们用的 `P_C` 就是那个无凭据的第三人),变的只是**它表达的那句话**;
-#   而**补集那一半**(持凭据的本人那一行可点 ⇒ 点了回局)由相⑧咬住。
-#   ★★ 故拒绝那一半用**非满房**造:1v1 房里 1 人 / 大乱斗 2 人(上限 8)/ 3v3 房里 2 人时,
+# - 列表可见性与拒绝入房是**同一件事的两半**:房留着才会出现在列表里,而出现之后必须**进不去**。
+#   只断言"列表里有它"会让一个"能点进去"的实现测试全部通过 —— 那正是把第三人放进了别人的对局里。
+#   注意： 2026-09-21(回局入口批)把这句话**收窄**成「对局中的房**对无凭据者**一律拒绝」:
+#   阶段 1②③ 的断言本体一字不改(它们用的 `P_C` 就是那个无凭据的第三人),变的只是**它表达的那句话**;
+#   而**补集那一半**(持凭据的本人那一行可点  ->  点了回局)由阶段 8咬住。
+#   注意： 故拒绝那一半用**非满房**造:1v1 房里 1 人 / 大乱斗 2 人(上限 8)/ 3v3 房里 2 人时,
 #   唯一的拒绝理由只剩 `started` / `in_match` —— 用满房造会被「房间已满」喂绿(等于没验)。
-# ★ 本探针建的是**真 RoomManager + 真 LobbyRooms**(与生产同一条构造路径),房记录由探针手工摆:
+# - 本探针建的是**真 RoomManager + 真 LobbyRooms**(与生产同一条构造路径),房记录由探针手工摆:
 #   本批的逻辑全在大厅进程内,不需要 socket、也不需要真 worker。
-# ★ `NetBus.reply` 在"没有对端"时静默跳过 ⇒ 通过 RPC 应答观测的结果**读不到**;故列表抽成
+# - `NetBus.reply` 在"没有对端"时静默跳过  ->  通过 RPC 应答观测的结果**读不到**;故列表抽成
 #   `*_list_payload()` 纯构造(可直调)、拒绝看**副作用**(调用方没被 append 进 players)。
 #   发送那一半由真链路探针覆盖(见设计 §6.4)。
 
 const ROOM_1V1 := "9001"
 const ROOM_ROYALE := "9002"
 const ROOM_TEAM := "9003"
-# 私密房那两间(相⑨;B1 甲案)。★ 房号与上面三间**不重号**是有意的:三张注册表的房号空间
-# 本来就是重叠的(见 RejoinRegistry.drop_port 的注释),本相要判的是"谁的凭据",不是房号。
+# 私密房那两间(阶段 9;B1 甲案)。-  房号与上面三间**不重号**是有意的:三张注册表的房号空间
+# 本来就是重叠的(见 RejoinRegistry.drop_port 的注释),本阶段要判的是"谁的凭据",不是房号。
 const ROOM_PRIV_ROYALE := "9004"
 const ROOM_PRIV_TEAM := "9005"
-# 相⑨ 用的假凭据(房号 = 它自己那一间的 code;`owns` 判的就是这个)
+# 阶段 9 用的假凭据(房号 = 它自己那一间的 code;`owns` 判的就是这个)
 const TK_MINE := "tk-mine"       # → 大乱斗私密房
 const TK_MINE_T := "tk-mine-t"   # → 3v3 私密房
 const TK_OTHER := "tk-other"     # → **公开**房 9002(一份合法但不属于私密房的凭据)
@@ -43,23 +43,23 @@ const P_A := 101     # 假 peer id:本探针不开 socket,这些数字只用来�
 const P_B := 102
 const P_C := 103
 
-# ★★ 断言计数:ALL-OK 只证明"没有一条断言失败",**不证明"该跑的断言都跑过"** ——
+# 注意： 断言计数:ALL-OK 只证明"没有一条断言失败",**不证明"该跑的断言都跑过"** ——
 #   helper/lambda 里出错会让调用方照常继续、判词照打(见 tests/lib/probe_base.gd 文件头)。
 #   少跑一条就红 —— 这正是"ALL-OK 不等于全都跑过"那条纪律的落点。
-#   ★ 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
-# ★ 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27;
+#   - 改探针**必须**同步改这个数(每个任务的步骤里都写明当次的值)。
+# - 本值随相的增加而变(Task 3 加 ②③ 共 16 条 → 24;Task 4 加 ④ 共 3 条 → 27;
 #   阶段 2-B Task 5 加 ⑤⑥ 共 **4** 条 → **31**;阶段 2-B Task 6 加 ⑦ 共 **6** 条 → **37**;
 #   阶段 2-B Task 7 加 ⑧ 共 **1** 条 → **38**)。
-#   ★ 比 brief 的 30 多一条:第 ④ 条(走信号那条**接线**断言)—— brief 只列了三条直调 handler
-#     的断言,而"connect 那行被删"这一档**三条都照绿**(见 `_phase_rejoin` 的函数头)。
-#   ★ ⑧ 是**一条聚合**断言(内部三个模式逐一核对、失败时逐项点名),**不是三条** —— 相⑧要断的是
+#   - 比 brief 的 30 多一条:第 ④ 条(走信号那条**接线**断言)—— brief 只列了三条直调 handler
+#     的断言,而"connect 那行被删"这一档**三条都保持测试通过**(见 `_phase_rejoin` 的函数头)。
+#   - ⑧ 是**一条聚合**断言(内部三个模式逐一核对、失败时逐项明确提示),**不是三条** —— 阶段 8要断的是
 #     三个模式共用的**同一个**判据次序,而本探针的断言条数在本批约定为 38(见 Step 5)。
-#   ★ 相⑨(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
-#   ★ 相⑦c(大厅合一 Task 2:凭据自带模式,2026-10-03)加 **2** 条 → **47**。
-#   ★ 相⑦d(同批:`note_room()` 的**行为**断言)加 **5** 条 → **52**。
+#   - 阶段 9(B1 甲案:私密房只对本人列出,2026-09-29)加 **7** 条 → **45**。
+#   - 阶段 7c(大厅合一 Task 2:凭据自带模式,2026-10-03)加 **2** 条 → **47**。
+#   - 阶段 7d(同批:`note_room()` 的**行为**断言)加 **5** 条 → **52**。
 const EXPECTED_CHECKS := 52
 
-# 相⑧ 挂在**统一大厅**上(三个模式各渲染一次,同一份判据)。
+# 阶段 8 挂在**统一大厅**上(三个模式各渲染一次,同一份判据)。
 const MP_LOBBY_SCENE := "res://scenes/mp_lobby.tscn"
 
 var _rm: Node = null
@@ -79,8 +79,8 @@ func _check(ok: bool, what: String) -> void:
 func _ready() -> void:
 	_rm = RoomManager.new()
 	add_child(_rm)
-	# ★ 关掉大厅自己的两条梯:本探针手工驱动(与 `match_host_hygiene_probe` 关 `_physics_process`
-	#   同款)。不关的话跑到 30s 时回收梯会自动触发,把探针刚摆好的房收掉 —— 断言会在
+	# - 关掉大厅自己的两条梯:本探针手工驱动(与 `match_host_hygiene_probe` 关 `_physics_process`
+	#   相同机制)。不关的话跑到 30s 时回收梯会自动触发,把探针刚摆好的房收掉 —— 断言会在
 	#   "什么错都没有"的情况下变红。
 	_rm.set_process(false)
 	_phase_1v1()
@@ -94,7 +94,7 @@ func _ready() -> void:
 	_finish()
 
 
-# ★ 收尾两道:① 断言条数 `!= EXPECTED_CHECKS` 即红(少了 = 有断言没跑到;多了 = **多跑了一条
+# - 收尾两道:① 断言条数 `!= EXPECTED_CHECKS` 即红(少了 = 有断言没跑到;多了 = **多跑了一条
 #   没登记的断言**,两者都是账目对不上 —— 故用 `!=` 而不是 `<`,2026-10-03 最终整体评审 Minor①);
 #   ② 有失败即红。
 func _finish() -> void:
@@ -119,9 +119,9 @@ func _phase_1v1() -> void:
 	r.player_role = {P_A: 1, P_B: 2}
 	r.started = true
 	r.worker_port = 29901
-	r.worker_pid = 0        # 本相不涉及回收(相④才摆 pid)
+	r.worker_pid = 0        # 本阶段不涉及回收(阶段 4才摆 pid)
 	_rm.lobby.rooms[r.code] = r
-	# ★ 名单必须在**开局那一刻**冻结:成员转连 worker 后会陆续断开大厅,`players` 会空、
+	# - 名单必须在**开局那一刻**冻结:成员转连 worker 后会陆续断开大厅,`players` 会空、
 	#   `_peer_names` 会被擦掉 —— 靠它们渲染的列表会退化成"玩家/玩家"。
 	_rm.lobby._peer_names[P_A] = "阿甲"
 	_rm.lobby._peer_names[P_B] = "bob"
@@ -143,7 +143,7 @@ func _phase_1v1() -> void:
 	_check(not row.is_empty() and int(row.get("players", 0)) == 2,
 			"① 列表显示 2 人(取自 roster,不是取值 0 的空 players)")
 
-	# C 试图进房:必须被拒。★ 房里只放 1 人,让**唯一**可能的拒绝理由只剩 started
+	# C 试图进房:必须被拒。-  房里只放 1 人,让**唯一**可能的拒绝理由只剩 started
 	r.players = [P_A]
 	var before := r.players.size()
 	_rm.lobby.join_room(P_C, ROOM_1V1)
@@ -179,7 +179,7 @@ func _phase_royale() -> void:
 	_check(not row.is_empty() and row.get("names", []) == ["阿甲", "bob"], "② 名单取自冻结的那份")
 	_check(not row.is_empty() and int(row.get("players", 0)) == 2, "② 列表显示 2 人(取自 roster)")
 
-	# ★ 非满房:2/8 —— 唯一能拒的理由就是 in_match
+	# - 非满房:2/8 —— 唯一能拒的理由就是 in_match
 	rr.players = [P_A]
 	var before := rr.players.size()
 	_rm.lobby.royale_join(P_C, ROOM_ROYALE, "", false)
@@ -187,7 +187,7 @@ func _phase_royale() -> void:
 			"② ★ 第三人(**无凭据**)royale_join 被拒(2/8 非满房:唯一能拒它的是 in_match)")
 
 
-# ── ③ 3v3:同上(与大乱斗逐字同款,门控也是 in_match)──
+# ── ③ 3v3:同上(与大乱斗逐字相同机制,门控也是 in_match)──
 func _phase_team() -> void:
 	var tr := LobbyRooms.TeamRoom.new()
 	tr.code = ROOM_TEAM
@@ -215,7 +215,7 @@ func _phase_team() -> void:
 	_check(not row.is_empty() and row.get("names", []) == ["阿甲", "bob"], "③ 名单取自冻结的那份")
 	_check(not row.is_empty() and int(row.get("players", 0)) == 2, "③ 列表显示 2 人(取自 roster)")
 
-	# ★ 非满房:2/6 —— 唯一能拒的理由就是 in_match
+	# - 非满房:2/6 —— 唯一能拒的理由就是 in_match
 	tr.players = [P_A]
 	tr.team_of = {1: 1}
 	var before := tr.players.size()
@@ -225,14 +225,14 @@ func _phase_team() -> void:
 
 
 # ── ④ 对局结束即回收:worker 进程还在 → 房不许动;worker 退了 → 房必须被回收 ──
-# ★ 判据是"**worker 进程还在不在**":三种模式的 worker 都在对局结束时自己退,而任何按
+# - 判据是"**worker 进程还在不在**":三种模式的 worker 都在对局结束时自己退,而任何按
 #   "一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口与列表位)。
-# ★ 反向那一半(**活的 pid 不回收**)不能省:只断言"死的会收"会让一个"见谁收谁"的实现全绿,
+# - 反向那一半(**活的 pid 不回收**)不能省:只断言"死的会收"会让一个"见谁收谁"的实现测试全部通过,
 #   而那会把正在进行的对局连端口一起端掉。
-# ★ 第三条(pid 还没登记)**同样不能省**:`worker_pid` 的登记发生在 `create_process` 成功
+# - 第三条(pid 还没登记)**同样不能省**:`worker_pid` 的登记发生在 `create_process` 成功
 #   **之后**,把 0 判成"结束"会让开局那一瞬被自己的回收梯拆掉。
 func _phase_reclaim() -> void:
-	# 活的 pid:用**本进程自己** —— 它一定活着,不需要拉起任何子进程
+	# 活的 pid:用**本进程自己** —— 它一定活着,不需要启动任何子进程
 	var live := OS.get_process_id()
 	var r := LobbyRooms.Room.new()
 	r.code = "9011"
@@ -250,7 +250,7 @@ func _phase_reclaim() -> void:
 	tr.code = "9013"
 	tr.in_match = true
 	tr.worker_port = 29913
-	tr.worker_pid = 0             # ★ 还没登记 pid(拉起中)→ **不得**被判成结束
+	tr.worker_pid = 0             # - 还没登记 pid(启动中)→ **不得**被判成结束
 	_rm.lobby.team_rooms[tr.code] = tr
 
 	_rm._reclaim_finished_matches()
@@ -260,20 +260,20 @@ func _phase_reclaim() -> void:
 
 
 # ── ⑤⑥ 回局判据在**生产 handler** 上的行为(不是只测那个纯函数)──
-# ★ 为什么两半都要:纯函数测过了(`tests/smoke/rejoin_registry_smoke`),而 handler 里
+# - 为什么两半都要:纯函数测过了(`tests/smoke/rejoin_registry_smoke`),而 handler 里
 #   "查 → 判 → 发"这三步的**接线**没测 —— 把 `lookup` 写成 `lookup(token, now + 一个很大的数)`
-#   或把 `code` 传错,纯函数照样全绿。
-# ★ 本探针**观测不到 go_match**(没有对端 → `NetBus.reply` 静默跳过),故这里能断言的是
+#   或把 `code` 传错,纯函数照样测试全部通过。
+# - 本探针**观测不到 go_match**(没有对端 → `NetBus.reply` 静默跳过),故这里能断言的是
 #   拒绝路径的**副作用**(死 worker 时凭据被清)。**放行路径的真实发送**由真链路探针覆盖
 #   (`tests/probe/rejoin_probe`),这条边界照实登记。
-# ★★ ④ 那一条**不是**多余的:`NetBusExt.rejoin_requested → on_rejoin_request` 这一行**接线**
+# 注意： ④ 那一条**不是**多余的:`NetBusExt.rejoin_requested → on_rejoin_request` 这一行**接线**
 #   此前**零覆盖** —— 上面三条都是**直调 handler**,把 `_enter_tree` 里那行 connect 删掉,
-#   它们照样全绿(handler 本体没问题),而生产里回局**永远失败且一行报错都没有**
+#   它们照样测试全部通过(handler 本体没问题),而生产里回局**永远失败且一行报错都没有**
 #   (净的静默 no-op,与"RPC 挂错节点"同一类)。故第 ④ 条**走信号**(emit)而不直调:
-#   能观测到副作用(凭据被清)就说明那行 connect 在。同款纪律的先例:`team_room_smoke` ⑥
+#   能观测到副作用(凭据被清)就说明那行 connect 在。相同设计约束规范的先例:`team_room_smoke` ⑥
 #   「判据函数测对了 ≠ 生产调的是它」。
-# ★ 拆除那一侧的归键(端口而非房间号)另有一个专属守卫:`tests/probe/rejoin_keying_probe.tscn`
-#   ——「两间同号的房」那个病态输入在**真 teardown_room** 上跑,本相不重复造。
+# - 拆除那一侧的归键(端口而非房间号)另有一个专属守卫:`tests/probe/rejoin_keying_probe.tscn`
+#   ——「两间同号的房」那个病态输入在**真 teardown_room** 上跑,本阶段不重复造。
 func _phase_rejoin() -> void:
 	var now := Time.get_ticks_msec()
 	# ① 房间号不符:拒绝,且凭据**不被**清(worker 还活着,值得让玩家重试一次)
@@ -291,7 +291,7 @@ func _phase_rejoin() -> void:
 	_check(_rm.lobby.rejoin.lookup("tk_not_exist", now).is_empty(),
 			"⑥ 未知 token:拒绝且不登记任何东西")
 	# ④ 接线:同一件事**走信号**(emit)再验一次 —— 只直调 handler 时,`_enter_tree` 里那行
-	#    `NetBusExt.rejoin_requested.connect(on_rejoin_request)` 被删也全绿(见函数头)。
+	#    `NetBusExt.rejoin_requested.connect(on_rejoin_request)` 被删也测试全部通过(见函数头)。
 	#    用"死 worker"那一档造可观测的副作用(与②同一手法)。
 	_rm.lobby.rejoin.grant("tk_w", "9021", 1, 29923, 999999, now)
 	NetBusExt.rejoin_requested.emit(P_C, "9021", "tk_w")
@@ -300,12 +300,12 @@ func _phase_rejoin() -> void:
 
 
 # ── ⑦ 凭据判据的真值表(`PvpSession.can_rejoin_to()` / `clear_rejoin()`)──
-# ★ 放在这个**场景**探针里而不是 `-s` 冒烟:`-s` 阶段 autoload 尚未实例化,而本仓已有教训
+# - 放在这个**场景**探针里而不是 `-s` 冒烟:`-s` 阶段 autoload 尚未实例化,而本仓已有教训
 #   ——`-s` 脚本碰全局类要走 load()/get_script_constant_map() 那套绕法,为一个真值表不值得。
-# ★ 这一条防的是"那一行看着可点、点了没用":`can_rejoin_to()` 少判一个字段(比如漏了房号),
+# - 这一条防的是"那一行看着可点、点了没用":`can_rejoin_to()` 少判一个字段(比如漏了房号),
 #   列表里**别人那间对局中的房**也会变可点 —— 点下去发的是回局请求,而凭据里的房号对不上,
 #   玩家看到的是"回局被拒"(一句与眼前那间房无关的话)。房号那一条就是为它立的。
-# ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**自己摆过的值,
+# - `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**自己摆过的值,
 #   否则同一进程里后面的相会读到脏值(本探针是独立进程,但同仓的纪律如此)。
 func _phase_session_flags() -> void:
 	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.room_mode]
@@ -321,22 +321,22 @@ func _phase_session_flags() -> void:
 	PvpSession.worker_port = 29901; PvpSession.room_code = ""
 	_check(not PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP), "⑦ room_code 缺 → 不可点(回局请求带不上房号)")
 	PvpSession.room_code = "9021"
-	# ⑦c(本批新增):**模式不同 ⇒ 不可点**。三张注册表的房号空间共用(同号共存是允许的),
+	# ⑦c(本批新增):**模式不同  ->  不可点**。三张注册表的房号空间共用(同号共存是允许的),
 	#   只看房号会让"我在 1v1 攒的凭据"把**同号的 3v3 房**判成"我的房" —— 点下去是回局请求,
 	#   而大厅按凭据里的模式一查就知道不对,玩家收到一句与眼前那间房无关的拒绝。
-	#   ★ 反向对照就在上面两条:**模式相同**时它必须仍然是可点的。
+	#   - 反向对照就在上面两条:**模式相同**时它必须仍然是可点的。
 	_check(not PvpSession.can_rejoin_to("9021", PvpSession.MODE_TEAM),
 			"⑦c 模式不同 ⇒ 不可点(同号房分属两张注册表)")
 	_check(PvpSession.can_rejoin_to("9021", PvpSession.MODE_PVP),
 			"⑦c 正向对照:模式相同 ⇒ 仍可点")
-	# ⑦d `note_room()` —— ★ **行为级**，不是源码级。理由见下。
-	# ★★ 源码级的 `_check(nr.contains("clear_rejoin()"))` 只能证明**那个调用在函数里存在**,
+	# ⑦d `note_room()` —— -  **行为级**，不是源码级。理由见下。
+	# 注意： 源码级的 `_check(nr.contains("clear_rejoin()"))` 只能证明**那个调用在函数里存在**,
 	#    证明不了**它在正确的分支上**:把 `if a or b:` 改成 `if a and b:`(一个 token),
-	#    换房号但模式不变时就**不再清凭据** —— 四条 `contains` 全都还在,全绿。
-	#    ⇒ 这几格直接调函数验结果:静态字段可赋值,不需要开 socket。
-	# ★ 覆盖上限:它验的是"按值调用的结果",验不到"生产里谁在什么时候调它" —— 那一半靠
+	#    换房号但模式不变时就**不再清凭据** —— 四条 `contains` 全都还在,测试全部通过。
+	#     ->  这几格直接调函数验结果:静态字段可赋值,不需要开 socket。
+	# - 覆盖上限:它验的是"按值调用的结果",验不到"生产里谁在什么时候调它" —— 那一半靠
 	#   `reconnect_smoke` §⑤ 的源码级断言(三处都走 `note_room`)。两半缺一不可。
-	# ★ 另有一格**刻意不测**:`(房号变 ∧ 模式也变)` 同时发生 —— 所有自然实现都会在那清,
+	# - 另有一格**刻意不测**:`(房号变 ∧ 模式也变)` 同时发生 —— 所有自然实现都会在那清,
 	#   且 GDScript 没有 `xor`,构造不出自然的单 token 变异;登记为覆盖边界,不补。
 	PvpSession.clear_rejoin()
 	PvpSession.token = "tk-7d"
@@ -352,7 +352,7 @@ func _phase_session_flags() -> void:
 	PvpSession.room_mode = PvpSession.MODE_PVP
 	PvpSession.note_room("1111", PvpSession.MODE_TEAM)         # 同房号、换模式
 	_check(not PvpSession.can_rejoin(), "⑦d 换模式(同房号) ⇒ 凭据作废")
-	# ★★ 反向对照,**必需**:等待室每收到一次房间状态就会走一遍 `note_room`
+	# 注意： 反向对照,**必需**:等待室每收到一次房间状态就会走一遍 `note_room`
 	#    (见 `note_room` 顶部那段"同一间房的状态刷新不该把刚拿到的凭据抹掉"),
 	#    无条件清会把刚拿到的凭据抹掉。
 	PvpSession.clear_rejoin()
@@ -362,9 +362,9 @@ func _phase_session_flags() -> void:
 	PvpSession.room_mode = PvpSession.MODE_PVP
 	PvpSession.note_room("1111", PvpSession.MODE_PVP)          # 同房号、同模式
 	_check(PvpSession.can_rejoin(), "⑦d 同房号同模式 ⇒ 凭据**保留**(等待室刷新不能抹凭据)")
-	# ★★ 第 4 格:**记录**那一半。上面三格只验了"该清时清了",验不到"该记时记了" ——
+	# 注意： 第 4 格:**记录**那一半。上面三格只验了"该清时清了",验不到"该记时记了" ——
 	#    一个**只清不记**的 note_room(漏掉 `room_code = code` / `room_mode = mode`)
-	#    上面三格**全过**,而后果是 `can_rejoin_to()` 永远匹配不上 ⇒ 那一行恒灰
+	#    上面三格**全过**,而后果是 `can_rejoin_to()` 永远匹配不上  ->  那一行恒灰
 	#    (正是 C1 那类症状)。记录那一半原先只有 `reconnect_smoke` 的源码 `contains` 守着 ——
 	#    那正是本轮要替换掉的守卫风格,只是换了个属性。这一格把它也变成行为断言。
 	PvpSession.clear_rejoin()
@@ -373,9 +373,9 @@ func _phase_session_flags() -> void:
 	PvpSession.room_code = "1111"
 	PvpSession.room_mode = PvpSession.MODE_PVP
 	PvpSession.note_room("3333", PvpSession.MODE_ROYALE)       # 换到另一间、另一个模式
-	# ★★ 换了房 ⇒ `note_room` 先 **清掉凭据**(`token` 也清了),所以这里必须**再给一份 token**
+	# 注意： 换了房  ->  `note_room` 先 **清掉凭据**(`token` 也清了),所以这里必须**再给一份 token**
 	#    才能用 `can_rejoin_to()` 验"记下的那一对是不是新的" —— 否则它恒假(与"有没有记"无关)。
-	#    ★ 计划原稿少了这一步 ⇒ 那两条断言对**正确实现**也恒假(实测 FAIL:换房会先清 token)。
+	#    - 计划原稿少了这一步  ->  那两条断言对**正确实现**也恒假(实测 FAIL:换房会先清 token)。
 	#      补上之后:正确实现全过;**只清不记**的实现在第一条上红。
 	PvpSession.token = "tk-7d"
 	PvpSession.worker_port = 7
@@ -394,23 +394,23 @@ func _phase_session_flags() -> void:
 
 
 # ── ⑨ 私密房:**只对本人**列出(B1 甲案,2026-09-29)──
-# 守的是什么:私密房此前一律 `continue` ⇒ 在私密房里打到一半按 ESC 回主菜单的玩家
+# 守的是什么:私密房此前一律 `continue`  ->  在私密房里打到一半按 ESC 回主菜单的玩家
 # **列表里没有那一行**,回局入口整个不存在(而凭据其实还在他手里、大厅也会放行)。
-# 现在改成「不是公开房 ⇒ 再看这份 token 的凭据是不是**这一间房**的」。
+# 现在改成「不是公开房  ->  再看这份 token 的凭据是不是**这一间房**的」。
 #
-# ★★ 为什么必须有本相:这一条改动**只在「私密房 + 持凭据的本人」这个组合上**与从前不同,
-#   而**既有每一相用的都是公开房与无凭据的第三人** ⇒ 判据写错时它们**全都照绿**。
-#   四种真实错法各有各的假绿:
-#     · 把门槛写成 `not is_public or not owns`(私密房永远不列)—— 相①②③ 照绿;
-#     · 干脆去掉 `is_public` 那一句(私密房对**所有人**列出 = "私密"没了)—— 相①②③ 照绿;
-#     · `owns` 恒真(谁的凭据都放行)—— 相①②③ 照绿;
-#     · 只改了大乱斗、漏了 3v3 —— 相②③ 照绿(它们各测各的)。
-#   ⇒ 下面 7 条把这几档逐个分开:无凭据 / 别人的凭据 / 本人的凭据 / 过期凭据 /
-#     **正向对照**(公开房对无凭据者照列)/ 3v3 同款。
-# ★ 正向对照那一条不是客套:没有它,一个"把两份载荷都改成 return []"的实现能过前五条。
+# 注意： 为什么必须有本阶段:这一条改动**只在「私密房 + 持凭据的本人」这个组合上**与从前不同,
+#   而**既有每一相用的都是公开房与无凭据的第三人**  ->  判据写错时它们**全都保持测试通过**。
+#   四种真实错法各有各的虚假通过（未有效测试）:
+#     - 把门槛写成 `not is_public or not owns`(私密房永远不列)—— 阶段 1②③ 保持测试通过;
+#     - 干脆去掉 `is_public` 那一句(私密房对**所有人**列出 = "私密"没了)—— 阶段 1②③ 保持测试通过;
+#     - `owns` 恒真(谁的凭据都放行)—— 阶段 1②③ 保持测试通过;
+#     - 只改了大乱斗、漏了 3v3 —— 阶段 2③ 保持测试通过(它们各测各的)。
+#    ->  下面 7 条把这几档逐个分开:无凭据 / 别人的凭据 / 本人的凭据 / 过期凭据 /
+#     **正向对照**(公开房对无凭据者照列)/ 3v3 相同机制。
+# - 正向对照那一条不是客套:没有它,一个"把两份载荷都改成 return []"的实现能过前五条。
 func _phase_private_own_room() -> void:
 	var now := Time.get_ticks_msec()
-	# 两间私密房都设成**对局中**:凭据只在开局(worker 拉起成功)那一刻才发得出来,
+	# 两间私密房都设成**对局中**:凭据只在开局(worker 启动成功)那一刻才发得出来,
 	# 而"私密房 + 回局"这个组合本身就意味着这一局已经开打了。
 	var rr := LobbyRooms.RoyaleRoom.new()
 	rr.code = ROOM_PRIV_ROYALE
@@ -457,7 +457,7 @@ func _phase_private_own_room() -> void:
 			and _find_row(_rm.lobby.team_list_payload(), ROOM_PRIV_TEAM).is_empty(),
 			"⑨ ★ 3v3 同款:私密房只对本人列出(只改大乱斗、漏改 3v3 = 静默半边)")
 
-	# 收尾:本相往凭据表里塞了四份,后面的相/别的探针不该看见它们(表是共享的)
+	# 收尾:本阶段往凭据表里塞了四份,后面的相/别的探针不该看见它们(表是共享的)
 	for tk in [TK_MINE, TK_MINE_T, TK_OTHER, TK_STALE]:
 		_rm.lobby.rejoin.drop_token(tk)
 
@@ -470,23 +470,23 @@ func _find_row(arr: Array, code: String) -> Dictionary:
 
 
 # ── ⑧ 「对局中的房对**无凭据者**一律拒绝」的**补集**:持凭据者那一行**可点** ──
-# ★ 相①②③ 断的是**服务端**那一半(无凭据的第三人 `join_room`/`*_join` 进不去),相⑧ 断的是
-#   **客户端**那一半(持凭据的本人那一行可点 ⇒ 点它走回局)。两半合起来才是本任务那句
+# - 阶段 1②③ 断的是**服务端**那一半(无凭据的第三人 `join_room`/`*_join` 进不去),阶段 8 断的是
+#   **客户端**那一半(持凭据的本人那一行可点  ->  点它走回局)。两半合起来才是本任务那句
 #   「对局中的房照列:自己的房可点(回局),别人的点不动」。
-# ★★ 它守的是本任务**唯一的硬约束** —— 两个问句的**次序**:
+# 注意： 它守的是本任务**唯一的硬约束** —— 两个问句的**次序**:
 #     ① 先问 `PvpSession.can_rejoin_to(code, mode)`(这是我的房吗 + 凭据还在吗)→ 可点;
-#     ② 不是我的房,才轮到「`in_match` ⇒ disabled」那一档。
+#     ② 不是我的房,才轮到「`in_match`  ->  disabled」那一档。
 #   把次序写反(`btn.disabled = in_match` / `if in_match:` 先问对局中)时,自己那间房那一行被
-#   `disabled` + `FOCUS_NONE` 收拾掉 ⇒ 回局这一档**连点都点不到**,而**一行报错都没有**
+#   `disabled` + `FOCUS_NONE` 收拾掉  ->  回局这一档**连点都点不到**,而**一行报错都没有**
 #   (症状只是"回到大厅后自己那间房是灰的,回不去")。
-#   ★ 实测(2026-09-21):次序写反时,本探针**原有 37 条**断言、`lobby_row_probe` 的 24 条、
-#     `room_sweep_smoke`、`team_room_smoke`、以及四个场景加载**全部照绿** —— 这一条是唯一咬得住的。
-# ★ 页面**不入树**(与 `lobby_row_probe` 同一手法):`_ready` 一跑就会 `_request_list(...)` 去连大厅
-#   (1v1 页默认云地址)⇒ 本探针不开任何 socket、也不碰用户的 7777。故手工摆好渲染函数要读的
+#   - 实测(2026-09-21):次序写反时,本探针**原有 37 条**断言、`lobby_row_probe` 的 24 条、
+#     `room_sweep_smoke`、`team_room_smoke`、以及四个场景加载**全部保持测试通过** —— 这一条是唯一咬得住的。
+# - 页面**不加入场景树**(与 `lobby_row_probe` 同一手法):`_ready` 一跑就会 `_request_list(...)` 去连大厅
+#   (1v1 页默认云地址) ->  本探针不开任何 socket、也不碰用户的 7777。故手工摆好渲染函数要读的
 #   两个成员(`_grid` / `_status`),再直调渲染函数(见 `_own_row_reason`)。
-# ★ 判"点不动"用的是 `Button.pressed` 上的**连接数**:`disabled` 只是观感,真正的"点了没有反应"
-#   是**没有连任何 handler**(与 `lobby_row_probe` 同款)。
-# ★ `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**(同相⑦)。
+# - 判"点不动"用的是 `Button.pressed` 上的**连接数**:`disabled` 只是观感,真正的"点了没有反应"
+#   是**没有连任何 handler**(与 `lobby_row_probe` 相同机制)。
+# - `PvpSession` 的静态字段是**全局**的:本函数结束时必须**还原**(同阶段 7)。
 func _phase_own_row_clickable() -> void:
 	var keep := [PvpSession.token, PvpSession.worker_port, PvpSession.room_code, PvpSession.rejoin,
 			PvpSession.room_mode]
@@ -514,24 +514,24 @@ func _phase_own_row_clickable() -> void:
 	PvpSession.token = keep[0]; PvpSession.worker_port = keep[1]
 	PvpSession.room_code = keep[2]; PvpSession.rejoin = keep[3]
 	PvpSession.room_mode = keep[4]
-	# ★ 一条聚合断言(三个模式逐次核对,失败时逐项点名)—— 条数约定见 EXPECTED_CHECKS 的注释
+	# - 一条聚合断言(三个模式逐次核对,失败时逐项明确提示)—— 条数约定见 EXPECTED_CHECKS 的注释
 	_check(bad.is_empty(),
 			"⑧ ★ 三个模式:持凭据者自己那间房那一行**可点**(点它走回局)、别人的对局中的房仍点不动 —— 实得:%s"
 			% ("三种模式全对" if bad.is_empty() else " / ".join(bad)))
 
 
 # 渲染一个模式的房间网格,只判那一行;返回 "" = 全对,否则返回"模式:哪个条件不成立"
-# ★ `mode` = 本格的模式(凭据判据 `can_rejoin_to(code, mode)` 要按它过;
+# - `mode` = 本格的模式(凭据判据 `can_rejoin_to(code, mode)` 要按它过;
 #   三张注册表的房号空间共用,不逐次设模式的话"我的房"在三个模式里都判不出来)。
 func _own_row_reason(tag: String, rows: Array, mode: String) -> String:
 	var p: Node = (load(MP_LOBBY_SCENE) as PackedScene).instantiate()
 	var grid := GridContainer.new()
 	var st := Label.new()
-	p.set("_grid", grid)        # 不入树 ⇒ `_ready` 不跑 ⇒ 这两个成员还是 null,得手工摆
+	p.set("_grid", grid)        # 不加入场景树  ->  `_ready` 不跑  ->  这两个成员还是 null,得手工摆
 	p.set("_status", st)
 	PvpSession.room_mode = mode
-	# ★ mp_lobby 把三条列房应答都汇进 `_ingest_rooms` → 三格到齐才自动 `_redraw_cards`;
-	#   本探针只喂一份 ⇒ ingest 之后**显式**重绘一次,否则网格是空的(断言会读成"行没画出来")。
+	# - mp_lobby 把三条列房应答都汇进 `_ingest_rooms` → 三格到齐才自动 `_redraw_cards`;
+	#   本探针只喂一份  ->  ingest 之后**显式**重绘一次,否则网格是空的(断言会读成"行没画出来")。
 	p.call("_ingest_rooms", mode, rows)
 	p.call("_redraw_cards")
 	var mine := _row_button(grid, "9001")     # 我的房(房号与凭据一致)

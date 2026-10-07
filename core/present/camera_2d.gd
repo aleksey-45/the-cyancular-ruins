@@ -8,8 +8,8 @@ var _shake_dur: float = 0.0
 var _base_pos: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
-	# 视野大小由 zoom 决定:窗口固定 1920×1440,zoom<1 时看到的世界范围 = 窗口/zoom
-	# (如 0.75 → 2560×1920)。数值在 PlayerParams,统一调这里。
+	# 视野大小由 zoom 决定：窗口固定为 1920×1440，当 zoom < 1 时可视范围为窗口分辨率 / zoom
+	# （如 0.75 对应 2560×1920 视野）。参数由 PlayerParams 统一管理。
 	zoom = Vector2(PlayerParams.cam_zoom, PlayerParams.cam_zoom)
 
 func shake(amount: float, duration: float) -> void:
@@ -17,7 +17,7 @@ func shake(amount: float, duration: float) -> void:
 	_shake_time = duration
 	_shake_dur = duration
 
-# 无抖动时的基准位置。瞄准换算(weapon_base)用它,避免镜头抖动影响准星。
+# 获取无抖动时的基准位置（weapon_base 瞄准换算使用，避免镜头抖动干扰准星）。
 func get_base_global_position() -> Vector2:
 	return _base_pos
 
@@ -26,8 +26,8 @@ func _process(delta: float) -> void:
 	if target == null:
 		return
 
-	# 直接跟随玩家。玩家跨接缝时位置取模,相机跟随即可;
-	# 视野跳变由环形世界的渲染层处理(见 level_0 的 3x3 铺贴)。
+	# 相机实时跟随目标玩家：玩家跨越地图边界时坐标取模回绕，相机直接同步跟随；
+	# 视野连续性由环形世界的渲染图层统一处理（参见 level_0 的 3×3 铺贴逻辑）。
 	_base_pos.x = target.global_position.x
 	_base_pos.y = target.global_position.y + PlayerParams.cam_y_bias
 	global_position = _base_pos

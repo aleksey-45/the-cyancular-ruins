@@ -60,7 +60,7 @@ def godot_log_dir():
     return base
 
 
-# ---------------------------------------------------------------- 进程枚举(ctypes,零外部依赖)
+# ──  ── - - - - - - - - - 进程枚举(ctypes,零外部依赖)
 def list_processes():
     """{pid: image_name} —— Windows 走 ctypes,tasklist 兜底;其它平台用 pgrep。"""
     out = {}
@@ -124,7 +124,7 @@ def matching_processes():
             if any(n.lower().startswith(p.lower()) for p in EXE_PREFIXES)}
 
 
-# ---------------------------------------------------------------- 事件日志查询
+# ──  ── - - - - - - - - - 事件日志查询
 _PS_QUERY = r'''
 $ErrorActionPreference = 'Continue'
 $rows = @()
@@ -271,7 +271,7 @@ def watcher_pids():
     return sorted(pids)
 
 
-# ---------------------------------------------------------------- 归档
+# ──  ── - - - - - - - - - 归档
 def log_snapshot():
     d = godot_log_dir()
     snap = {}
@@ -392,7 +392,7 @@ def prune_runs():
             log("清理旧归档 %s" % os.path.basename(p))
 
 
-# ---------------------------------------------------------------- watch
+# ──  ── - - - - - - - - - watch
 def watch(interval, duration):
     os.makedirs(ARCHIVE, exist_ok=True)
     Path(PIDFILE).write_text(str(os.getpid()), encoding="utf-8")
@@ -548,7 +548,7 @@ def cmd_report(args):
     return 0
 
 
-# ---------------------------------------------------------------- 计划任务
+# ──  ── - - - - - - - - - 计划任务
 def _pythonw():
     c = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     return c if os.path.isfile(c) else sys.executable

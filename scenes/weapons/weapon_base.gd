@@ -45,7 +45,7 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 # 命中击退力度(>0 会覆盖敌人自身 knockback_strength)
 @export var impact: float = 60.0
 
-# 同屏同时在飞弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/拆砖/
+# 同屏同时在飞弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/破坏瓦片/
 # 碰撞重建连锁会让自建房机器卡死/闪退。弹数满时开火不发射(冷却照走,等场上的爆完再打)。
 @export var max_live_projectiles: int = 0
 
@@ -86,44 +86,44 @@ const PREVIEW_COLLISION_RADIUS: float = 4.0
 @export var preview_time: float = 0.5
 
 # ── 换弹(装填;固定玩法,无开关可关;**全模式开放**)──
-# ★ 2026-09-15:PvP(1v1/大乱斗)一并开放。此前这里有一道 `reload_active()` 闸门,在
+# - 2026-09-15:PvP(1v1/大乱斗)一并开放。此前这里有一道 `reload_active()` 门控前置校验,在
 #   `Level0.pvp_mode` 与网络输入源下恒 false —— 于是 PvP 两端**一致地**不换弹(无限弹)。
 #   开放后两端跑同一套:按下的边沿经输入包上行(`PacketInputSource.BIT_RELOAD`),弹药与
-#   装填进度进 `Player.capture_state()`。闸门整个删掉而不是改成恒 true —— 项目约定是
+#   装填进度进 `Player.capture_state()`。门控前置校验整个删掉而不是改成恒 true —— 项目约定是
 #   「换弹恒开」(Settings 里的 reload_enabled 开关当年就是为此删的),留个恒真的函数
 #   只会让人以为还有开关。
 #
 # ⚠ 曾经的风险与现在的边界(别再照旧说法解释):
-#   旧注释说"服务器单方面停火"——那是闸门**只判 pvp_mode** 时的后果(服务器不实例化
-#   Level0,pvp_mode 恒 false,会被判成单机)。闸门删掉后不存在"一端换弹一端不换":
+#   旧注释说"服务器单方面停火"——那是门控前置校验**只判 pvp_mode** 时的后果(服务器不实例化
+#   Level0,pvp_mode 恒 false,会被判成单机)。门控前置校验删掉后不存在"一端换弹一端不换":
 #   服务器按输入包里的 R 边沿进装填,客户端本地预测同样进,分歧由 capture_state 收敛。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
-# 入树前的"待生效残弹"。0 是合法弹数,故哨兵不能用 0;`WeaponInventory.MAG_FULL` 是 -1,
+# 加入场景树前的"待生效残弹"。0 是合法弹数,故哨兵不能用 0;`WeaponInventory.MAG_FULL` 是 -1,
 # 故哨兵用 -2。
-# ★ 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
-#   `call_deferred("add_child")` 入树,而 `_ready()` 会把 `mag_ammo` 重置为 `mag_size`
-#   ⇒ 入树前同步写残弹会被冲掉。原先的对策是"排一个帧末 deferred 写回",但那个写回会
-#   覆盖它之后发生的一切(含回滚重放期间打出的每一发)。改成入树前设好、`_ready` 一次消费,
+# - 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
+#   `call_deferred("add_child")` 加入场景树,而 `_ready()` 会把 `mag_ammo` 重置为 `mag_size`
+#    ->  加入场景树前同步写残弹会被冲掉。原先的对策是"排一个帧末 deferred 写回",但那个写回会
+#   覆盖它之后发生的一切(含回滚重放期间打出的每一发)。改成加入场景树前设好、`_ready` 一次消费,
 #   写入就同步且顺序确定。
 const MAG_UNSET := -2
 var pending_mag: int = MAG_UNSET
-# 弹数是否已落定。★ 语义**只有一个**:`_ready()` 已跑过、`mag_ammo` 不再等于声明初值 0。
-# ★ 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
-#   `call_deferred("add_child")` 入树,而那里的 `equip(body, cd)` 是**同步**的 ⇒ 入树前的
-#   那个窗口里 `player` 已非空、`tick()` 会照跑,而 `mag_ammo` 仍是 0 ⇒ `fire()` 的
+# 弹数是否已落定。-  语义**只有一个**:`_ready()` 已跑过、`mag_ammo` 不再等于声明初值 0。
+# - 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
+#   `call_deferred("add_child")` 加入场景树,而那里的 `equip(body, cd)` 是**同步**的  ->  加入场景树前的
+#   那个窗口里 `player` 已非空、`tick()` 会照跑,而 `mag_ammo` 仍是 0  ->  `fire()` 的
 #   "空弹夹自动换弹"被一个假前提触发,把权威的 `_reloading = false` 冲成 true。
-# ★ 为什么**不是** `is_inside_tree()` 守卫(那条已被明文否决):它会丢帧,并会把
-#   `_auto_aim()` 的朝向一起冻住 ⇒ 那本身造成**真分歧**,比它修掉的问题更坏。
+# - 为什么**不是** `is_inside_tree()` 守卫(那条已被明文否决):它会丢帧,并会把
+#   `_auto_aim()` 的朝向一起冻住  ->  那本身造成**实际状态分歧**,比它修掉的问题更坏。
 #   这里只让**依赖弹数的那个判断**在弹数未落定前失效,`tick()` 其余部分照跑。
-# ★ 它的**读点只有两个**(都是"弹数没落定时别动作"):`fire()` 的空弹夹自动换弹分支,
-#   与 `start_reload()` 的首行。★ 为什么 `start_reload()` 也要判:按 R 那条路**绕过**
+# - 它的**读点只有两个**(都是"弹数没落定时别动作"):`fire()` 的空弹夹自动换弹分支,
+#   与 `start_reload()` 的首行。-  为什么 `start_reload()` 也要判:按 R 那条路**绕过**
 #   `fire()` —— `player.gd::_physics_process` 的语句序是「武器 `tick()` → 切枪(同步换掉
 #   `_weapon`、`add_child` 是 deferred)→ R 轮询」,而 PvP 下切枪由服务器的 `winst` 应答驱动、
-#   R 是本地边沿 ⇒ 两者**互不相干**,同帧相撞是概率问题。撞上时 `start_reload()` 读到的
+#   R 是本地边沿  ->  两者**互不相干**,同帧相撞是概率问题。撞上时 `start_reload()` 读到的
 #   `mag_ammo == 0` 同样是**声明初值**,会把权威刚写下的 `_reloading = false` 冲成 true,
-#   而 `_ready()` **不复位** `_reloading` ⇒ 那把枪白吃一个 `reload_time`。
+#   而 `_ready()` **不复位** `_reloading`  ->  那把枪白吃一个 `reload_time`。
 var _mag_ready := false
 var _reloading := false
 var _reload_t := 0.0
@@ -142,7 +142,7 @@ func reload_progress() -> float:
 	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
 
 func start_reload() -> void:
-	# ★ 弹数未落定(未入树窗口)时 `mag_ammo` 仍是**声明初值 0**,不是"空弹夹" ——
+	# - 弹数未落定(未加入场景树窗口)时 `mag_ammo` 仍是**声明初值 0**,不是"空弹夹" ——
 	#   按 R 那条路不经过 `fire()`,同一窗口里会在这里起一次没必要的换弹(见 `_mag_ready`)。
 	if not _mag_ready:
 		return
@@ -154,12 +154,12 @@ func start_reload() -> void:
 
 # 换弹姿态:每帧在 _recoil_recover 之后调用(换弹压枪优先级高于后坐复位)。
 func _update_reload_pose() -> void:
-	# 重建窗口:`WeaponComponent._equip_index` 用 `call_deferred("add_child")` 入树,在那之前
-	# `@onready sprite` 仍是 null。★ 这里"跳过"是安全的,与上面 `mag_ammo` 走 `pending_mag`
+	# 重建窗口:`WeaponComponent._equip_index` 用 `call_deferred("add_child")` 加入场景树,在那之前
+	# `@onready sprite` 仍是 null。-  这里"跳过"是安全的,与上面 `mag_ammo` 走 `pending_mag`
 	# 提前落盘不同 —— 那是权威态、会被 `_ready()` 重置;姿势只是纯表现,下一帧随 `_reloading`
 	# 再算一遍即可(该窗口跨整个回滚重放,提前算也无处可画)。
 	if sprite == null:
-		return   # 未入树(重建窗口):`@onready` 尚未解析,姿势下一帧补算
+		return   # 未加入场景树(重建窗口):`@onready` 尚未解析,姿势下一帧补算
 	if _reloading:
 		_reload_pose = true
 		var p := clampf(1.0 - _reload_t / maxf(reload_time, 0.01), 0.0, 1.0)
@@ -195,7 +195,7 @@ static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> f
 
 func _ready() -> void:
 	mag_ammo = mag_size
-	# ★ 入树前若有人塞了残弹,在这里一次消费掉 —— 这是"入树前写入"唯一生效的地方。
+	# - 加入场景树前若有人塞了残弹,在这里一次消费掉 —— 这是"加入场景树前写入"唯一生效的地方。
 	#   消费后复位哨兵,免得后续 `_ready`(理论上不会跑第二次)或探针误读。
 	if pending_mag != MAG_UNSET:
 		mag_ammo = clampi(pending_mag, 0, mag_size)
@@ -234,7 +234,7 @@ func _attack_just_released() -> bool:
 
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
-	# 切枪继承旧武器剩余冷却:后摇不能被切枪刷掉(否则可切枪连射)
+	# 切枪继承旧武器剩余冷却:后摇不能被切枪意外覆盖重置(否则可切枪连射)
 	fire_cd_timer = maxf(inherit_cooldown, 0.0)
 	# 缓冲开火不随切枪继承:旧武器 freed 标记随之消失,新武器从无缓冲开始
 	_fire_buffered = false
@@ -296,7 +296,7 @@ func fire() -> void:
 	if _reloading:
 		return
 	if mag_ammo <= 0:
-		# ★ 弹数未落定(未入树窗口)时这里的 0 是**声明初值**,不是"空弹夹" ——
+		# - 弹数未落定(未加入场景树窗口)时这里的 0 是**声明初值**,不是"空弹夹" ——
 		#   照常起换弹会把权威刚写下的 `_reloading = false` 冲成 true(见 `_mag_ready`)。
 		if _mag_ready:
 			start_reload()
@@ -338,13 +338,13 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 	var spread := deg_to_rad(spread_deg)
 	for i in range(pellet_count):
 		var b: BulletBase = bullet_scene.instantiate()
-		# Beta 时间玩法(PvP):射手加速 ⇒ 出膛弹速 ×同倍率(用户裁定"子弹也要加速")。
-		# ★ 只读 pvp_haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);
+		# Beta 时间玩法(PvP):射手加速  ->  出膛弹速 ×同倍率(设计约定"子弹也要加速")。
+		# - 只读 pvp_haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);
 		#   max_range 不动:加速时弹飞得更快但射程不变(与单机语义一致 —— SP 的位移缩放同样
 		#   不放大 traveled 的距离上限)。
 		var hm := float(player.get("pvp_haste_mult")) if player != null and player is Node 				and "pvp_haste_mult" in player else 1.0
 		var ang := base_dir.angle() + randf_range(-spread, spread)
-		# ★ 局部变量,不动 bullet_speed 成员:多弹丸武器(霰弹)逐弹 ×会累积,跨发更会永久变快
+		# - 局部变量,不动 bullet_speed 成员:多弹丸武器(霰弹)逐弹 ×会累积,跨发更会永久变快
 		b.setup(Vector2.from_angle(ang), bullet_speed * hm, bullet_range, bullet_size, bullet_color, self)
 		b.shooter = player
 		b.gravity_factor = bullet_gravity
@@ -378,10 +378,10 @@ func is_previewing() -> bool:
 	return _aiming
 
 # PvP:服务器权威方向驱动"副本武器外观"(远端对手枪):只画朝向 + 枪口旋转,不读鼠标、不开火。
-# 副本武器不 equip(player==null),_process 早退,由 player_replica 每帧调用本方法替代:
+# 副本武器不 equip(player==null),_process 提前返回,由 player_replica 每帧调用本方法替代:
 # 复刻 _auto_aim 的镜像/旋转(俯仰随枪 clamp)。
 #
-# ★ 预瞄线**不对副本画**(用户裁定 2026-09-11):预瞄红线只有使用者本人可见 ——
+# - 预瞄线**不对副本画**(设计约定 2026-09-11):预瞄红线只有使用者本人可见 ——
 #   对手看不到你在蓄力重狙/榴弹。故本方法不再收 show_preview 参数,并显式把 _aiming
 #   压回 false(而不是"因为没人置位所以恰好为假"),让"副本永不预瞄"成为写下来的意图:
 #   _aiming 为假 → 下面 _update_laser() 会隐藏 _laser 与爆点标记。
@@ -463,7 +463,7 @@ func _update_laser() -> void:
 
 # 预瞄抛物线:与 fire 同源(v0=钳制瞄准方向*speed, g=bullet_gravity*gravity0),
 # 1/60s 采样到 preview_time,途中遇墙(非 EMPTY)格截断(榴弹撞墙停驻处 = 爆炸点),
-# 并封顶 bullet_range(榴弹超射程兜底爆炸,不会再飞)。
+# 并封顶 bullet_range(榴弹超射程保底处理爆炸,不会再飞)。
 func _sample_arc_points() -> PackedVector2Array:
 	var pts := PackedVector2Array()
 	var p := muzzle.global_position
@@ -494,7 +494,7 @@ func _sample_arc_points() -> PackedVector2Array:
 # 预瞄判墙:以 center 为圆心、半径 r(=6px)的小球是否压到任一墙(非 EMPTY)格(环面)。
 # 小球按格子 AABB 粗查:球很小,最多跨 2 格,不会漏;比精确圆简单且略保守(宁多判墙不少判)。
 # 逐格环面判定收在 core/tile_query.gd(与黑鸟落点/飞鸟避障同源);空网格 → false(= 无墙),
-# 与旧实现的显式 is_empty 早退同义。
+# 与旧实现的显式 is_empty 提前返回同义。
 func _disk_overlaps_solid(center: Vector2) -> bool:
 	var r := PREVIEW_COLLISION_RADIUS * bullet_size
 	return TileQuery.rect_overlaps_solid(
@@ -527,7 +527,7 @@ func _aim_world_dir() -> Vector2:
 		if override != Vector2.ZERO:
 			return override
 		# override 存在但为 ZERO(网络玩家还没收到瞄准/瞄准为零):
-		# 网络驱动 → 永不读宿主机 OS 鼠标(服务器 headless 上没有鼠标,读了是垃圾方向),用朝向兜底。
+		# 网络驱动 → 永不读宿主机 OS 鼠标(服务器 headless 上没有鼠标,读了是垃圾方向),用回退使用角色朝向。
 		# 本地 PlayerInput 的 override 恒为 ZERO → is_network_driven()==false → 走下面鼠标路径。
 		if player.has_method("input_is_network") and player.input_is_network():
 			return Vector2(float(get_facing()), 0.0)

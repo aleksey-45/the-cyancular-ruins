@@ -1,11 +1,10 @@
-/* make_launchers.c — 所有双击启动器的 C 实现(取代全部 .bat)。
- * 同一份源码按 MODE 宏编译出多个 exe;运行时从自身位置向上找 project.godot 推导仓库根;
- * Godot 解析:环境变量 GODOT_EXE → 常见安装路径 → PATH。零机器专属路径。
- * 文件名全英文(win/mac 合法);报告/控制台文案为中文(源码 UTF-8,/utf-8 编译)。
+/* make_launchers.c — 便捷可执行启动器的通用 C 语言实现（替代原批处理脚本）。
+ * 同一份源码通过不同的 MODE 宏条件编译为独立的可执行文件；运行时自动向上遍历目录查找 project.godot 推导工程根目录；
+ * Godot 路径解析：优先读取环境变量 GODOT_EXE，随后探测常见安装目录，最后从系统 PATH 查找。不依赖任何特定机器的硬编码绝对路径。
  *
- * 编译(在 vcvarsall x64 环境):
+ * 编译说明（MSVC x64 环境）：
  *   cl /nologo /O2 /utf-8 /DMODE=1 /Fe:build_exe.exe tools\make_launchers.c
- * DevTools 三个 GUI 启动器再加 /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup
+ * DevTools 系列 GUI 启动器附加链接参数：/link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup
  */
 
 #include <windows.h>

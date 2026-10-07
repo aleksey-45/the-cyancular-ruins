@@ -1,11 +1,11 @@
 extends Node
 
 # 怀表 HUD + 时间视效探针(场景级):
-#   ① 怀表挂载与读数(大数字=余额、表心=短时余额/贷款负数)
+#   ① 怀表挂载与读数(大数字=余额、表心=短期余额/透支负数)
 #   ② 扣减滚动动画(1 点 1 点,≤0.2s 收敛)
 #   ③ 回溯底片化 uniform ramp(≤200ms 到顶)/松开回落
 #   ④ 加速压暗 uniform ramp(100ms 到顶)/松开回落
-#   ⑤ 贷款深度直传(表心深红负数)
+#   ⑤ 透支深度直传(表心深红负数)
 # 用法:godot --headless --path . res://tests/probe/watch_hud_probe.tscn
 
 var _fails: Array[String] = []
@@ -100,7 +100,7 @@ func _run() -> void:
 	if _mat_param(lvl, "haste_dim") > 0.2:
 		_fail("松开后压暗未回落(%.2f)" % _mat_param(lvl, "haste_dim"))
 
-	# ⑤ 贷款深度与表心负数
+	# ⑤ 透支深度与表心负数
 	acc.spend(4.0, 100.0)   # 窗满
 	acc.spend(0.5, 100.0)   # 借 50
 	await _wait_ms(100)
@@ -110,7 +110,7 @@ func _run() -> void:
 	if not center.text.begins_with("-"):
 		_fail("贷款中表心应显示负数(现 %s)" % center.text)
 
-	# ⑥ Sfx 全局音调随贷款深度上抬;贷满锁定 → 怀表红闪
+	# ⑥ Sfx 全局音调随透支深度上抬;透支达到上限锁定 → 怀表红闪
 	acc.spend(0.5, 100.0)   # 借满 100 → 锁定
 	await _wait_ms(150)
 	if Sfx.pitch_mult <= 1.0:

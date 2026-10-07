@@ -2,20 +2,20 @@ extends Node
 
 # 建筑(可破坏砖)碰撞守卫:碰撞必须**逐 16px 子格**与"游戏自己的规则"一致。
 # 存在理由:破坏/回溯这条链上**碰撞那一维此前完全没有守卫** —— `tile_rewind_probe` 只验
-# 「网格 + 渲染层 atlas」,照不到"砖没了碰撞还在"(看不见的墙 = 虚空碰撞箱)与"砖画着却撞不着"。
+# 「网格 + 渲染层 atlas」,无法覆盖检测"砖没了碰撞还在"(看不见的墙 = 虚空碰撞箱)与"砖画着却撞不着"。
 #
 # 判据取**游戏自己的两条规则**(不是另写一套):
 #   渲染  = `_paint_maze` 的规则:tex != 0 且 非液体 且 子格存活
 #   碰撞  = `CollisionBuilder.build_sub` 的规则:tex 是 wall 且 子格存活
-#   ★ 例外:锁链顶/底有 **64px 全宽 6px 薄碰撞条**(`build_climb_ledges`),它不来自子格 →
+#   - 例外:锁链顶/底有 **64px 全宽 6px 薄碰撞条**(`build_climb_ledges`),它不来自子格 →
 #     凡 3×3 子格邻域里出现链纹理(12/13/14)的采样点**整点跳过**(保守,宁可少验)。
 #
-# 相① 选中一个"可破坏且存活"的子格:它必须同时有渲染与碰撞
-# 相② 只拆它 → 两侧同时消失,同格其它子格**不受牵连**
-# 相③ 拆光该 64px 格里所有存活的可破坏子格 → 全无;并验 **9 环面副本**(±MAP 偏移)
-# 相④ 回溯复原 → 逐子格回到基线(渲染与碰撞都对上),环面副本一并回来
-# 相⑤ 节流窗口:一帧内拆跨 **多块**(> MAX_REBUILD_PER_FRAME=2)的砖 → 数出碰撞追上渲染要几帧;断言有界
-# 相⓪/相⑥ 全场抽样(每 8 个子格一点):**渲染与碰撞各自与规则逐点相等** —— 这一相就是
+# 阶段 1 选中一个"可破坏且存活"的子格:它必须同时有渲染与碰撞
+# 阶段 2 只拆它 → 两侧同时消失,同格其它子格**不受牵连**
+# 阶段 3 拆光该 64px 格里所有存活的可破坏子格 → 全无;并验 **9 环面副本**(±MAP 偏移)
+# 阶段 4 回溯复原 → 逐子格回到基线(渲染与碰撞都对上),环面副本一并回来
+# 阶段 5 节流窗口:一帧内拆跨 **多块**(> MAX_REBUILD_PER_FRAME=2)的砖 → 数出碰撞追上渲染要几帧;断言有界
+# 相⓪/阶段 6 全场抽样(每 8 个子格一点):**渲染与碰撞各自与规则逐点相等** —— 这一相就是
 #      「建筑有没有虚空碰撞箱」的直接回答,破坏+回溯之后再扫一遍
 #
 # 用法:godot --headless --path . res://tests/probe/tile_collision_probe.tscn
@@ -124,7 +124,7 @@ func _all_subs() -> Array:
 	return out
 
 
-## 找一个"可破坏、存活"的子格(优先整格都活的,便于相③)。
+## 找一个"可破坏、存活"的子格(优先整格都活的,便于阶段 3)。
 func _find_target() -> Vector2i:
 	var sg: Array = MazeGenerator.current_subgrid
 	for y in sg.size():
@@ -166,7 +166,7 @@ func _run() -> void:
 	# 相⓪ 全场抽样
 	_scan(world, _all_subs(), "相⓪·初始全场")
 
-	# 相① 目标子格
+	# 阶段 1 目标子格
 	var target := _find_target()
 	if target.x < 0:
 		print("TILE COLLISION PROBE: FAIL(图上没有可破坏的子格,用例前置不成立)")
@@ -183,7 +183,7 @@ func _run() -> void:
 	if not _painted(target) or not _terrain_at(world, _sub_center(target)):
 		_fail("相① 选中的存活可破坏子格本身就缺渲染或缺碰撞")
 
-	# 相② 只拆它
+	# 阶段 2 只拆它
 	TileDefs.damage_sub(target, 9999, "explosion")
 	await _wait_ms(300)
 	if _painted(target) or _terrain_at(world, _sub_center(target)):
@@ -200,7 +200,7 @@ func _run() -> void:
 	if collateral > 0:
 		_fail("相② 拆 1 个子格牵连了同格其它子格(%d 个)" % collateral)
 
-	# 相③ 拆光该格所有存活的可破坏子格
+	# 阶段 3 拆光该格所有存活的可破坏子格
 	for s in subs:
 		var t := _tex(s)
 		if t != 0 and TileDefs.sub_alive(s) and TileDefs.type_id_of(t) == TileDefs.TYPE_WALL \
@@ -218,7 +218,7 @@ func _run() -> void:
 	if _terrain_at(world, center + Vector2(mx, 0.0)) or _terrain_at(world, center - Vector2(mx, 0.0)):
 		_fail("相③ 环面副本(±MAP_WIDTH)处仍有地形碰撞:接缝另一侧的幽灵墙")
 
-	# 相④ 回溯复原
+	# 阶段 4 回溯复原
 	Input.action_press("rewind")
 	await _wait_ms(2500)
 	Input.action_release("rewind")
@@ -237,7 +237,7 @@ func _run() -> void:
 			_fail("相④ 回溯后子格 %s 与规则不符(画=%s 碰=%s 规则=%s)"
 					% [str(s), str(_painted(s)), str(_terrain_at(world, _sub_center(s))), str(e)])
 
-	# 相⑤ 节流窗口:跨多块一帧拆光
+	# 阶段 5 节流窗口:跨多块一帧拆光
 	var victims: Array[Vector2i] = []
 	var used_chunks: Array = []
 	var sg: Array = MazeGenerator.current_subgrid
@@ -276,7 +276,7 @@ func _run() -> void:
 		if frames < 0:
 			_fail("相⑤ 跨 3 块的破坏 12 帧后碰撞仍未清:永久的虚空碰撞箱")
 
-	# 相⑥ 再扫一遍全场
+	# 阶段 6 再扫一遍全场
 	_scan(world, _all_subs(), "相⑥·破坏+回溯后全场")
 
 	if _fails.is_empty():

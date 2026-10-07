@@ -2,9 +2,9 @@ extends Node
 # B2 loopback 冒烟客户端:建房后发送固定输入(移动 + 开火),断言:
 #  create: 收到快照且自己位置发生变化(输入→服务器权威模拟→快照→客户端)
 #  join:   收到快照 + 收到对手子弹 spawn 广播(开火→服务器→broadcast→对手)
-# 命中/掉血不在此冒烟覆盖(出生点相距远,无法确定性命中);留用户手动端到端。
-# 用法: godot --headless --path . Tests/pvp_match_smoke.tscn -- --role create
-#       godot --headless --path . Tests/pvp_match_smoke.tscn -- --role join --code 0000
+# 命中/受到伤害不在此冒烟覆盖(出生点相距远,无法确定性命中);留用户手动端到端。
+# 用法: godot --headless --path . Tests/pvp_match_smoke.tscn --role create
+#       godot --headless --path . Tests/pvp_match_smoke.tscn --role join --code 0000
 
 var role: String = ""
 var code: String = ""
@@ -18,11 +18,11 @@ var _world_pos := Vector2.INF   # 世界包里的本端 pos(与本人包的 c2.p
 var _got_bullet_spawn := false
 var _got_round_state := false   # 回合制:收到 round_state(初始 COUNTDOWN 广播)
 # C2 rollback(阶段3):create 端发带 seq 的输入包,断言服务器 1/tick 消费、ack 随 tick 前进、
-# 快照带权威整态(c2)且其 pos 与散字段 pos 一致(证明全态快照在链路上可用)。
+# 快照带权威完整状态(c2)且其 pos 与散字段 pos 一致(证明全态快照在链路上可用)。
 var _sent_seq := 0
 var _max_ack := -1
 var _ack_sane := false     # create:ack 已推进到 ≥30
-var _full_state_ok := false  # create:快照 c2 整态携带且 pos 与散字段一致
+var _full_state_ok := false  # create:快照 c2 完整状态携带且 pos 与散字段一致
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -75,8 +75,8 @@ func _on_snapshot_world(world: Dictionary) -> void:
 		_world_pos = pos_now
 
 
-# 本人包:只有自己需要的 ack_seq + 权威整态 c2。
-# ★ 拆包后这条断言反而**更强**了:原先 c2 与散字段 pos 在同一个字典里,比的是"同一份数据的两个副本";
+# 本人包:只有自己需要的 ack_seq + 权威完整状态（c2）。
+# - 拆包后这条断言反而**更强**了:原先 c2 与散字段 pos 在同一个字典里,比的是"同一份数据的两个副本";
 #   现在 c2 走本人包、pos 走世界包 —— 比的是**两条独立报文是否一致**,那才是真正要保证的事。
 func _on_snapshot_own(own: Dictionary) -> void:
 	var ack: int = int(own.get("ack_seq", -1))
@@ -115,7 +115,7 @@ func _physics_process(_delta: float) -> void:
 		var released := 0
 		var ax := 1.0
 		if _frames > 240:
-			# ★ 开火必须能覆盖**任何**武器。服务器发给这个角色的是**随机**一把,而
+			# - 开火必须能覆盖**任何**武器。服务器发给这个角色的是**随机**一把,而
 			#   `m82a1` 与榴弹发射器是 **heavy_aim**(按住预瞄、**松开**才发射)——
 			#   只发 held/pressed、从不发 released 的话,拿到这两把就**一枪都不开**,
 			#   join 端永远等不到 bullet_spawn。实测:强制发 m82a1 → 必红,发手枪 → 必绿。

@@ -141,7 +141,7 @@ func _find_spawn(grid: Array) -> Vector2i:
 	var meta := MazeGenerator.parse_spawn_metadata(lines)
 	if meta.has("player"):
 		return meta["player"]
-	# 兜底:第一个空格
+	# 保底处理:第一个空格
 	for y in range(grid.size()):
 		for x in range(grid[y].size()):
 			if grid[y][x] == MazeGenerator.EMPTY:

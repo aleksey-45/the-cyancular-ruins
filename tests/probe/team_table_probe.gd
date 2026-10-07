@@ -5,10 +5,10 @@ extends Node
 # 通过 = `TEAM TABLE: ALL-OK` 退出 0。
 #
 # ═══ 为什么需要它 ═══
-# ★ 队伍表算错/传丢的表现**全是静默的**:子弹照样飞、伤害照样结算,只是队友挨了枪。
+# - 队伍表算错/传丢的表现**全是静默的**:子弹照样飞、伤害照样结算,只是队友挨了枪。
 #   数值断言(距离/伤害)在"队友被误伤"这件事上一条都不会红。
-# ★ 反向那条(不传 teams → 全 0、`same_team` 恒 false)是"空参数 = 原行为"的**唯一证据**:
-#   1v1/大乱斗的探针跑的是别的路径,照不到这里。
+# - 反向那条(不传 teams → 全 0、`same_team` 恒 false)是"空参数 = 原行为"的**唯一证据**:
+#   1v1/大乱斗的探针跑的是别的路径,无法覆盖检测这里。
 # 做法同 match_host_hygiene_probe:真建宿主,但 **role_peers 传空** —— 不建玩家、不排 peer、不发包;
 # 玩家由探针自己按 `MatchHost._init` 的建法手工摆进 `players`。
 
@@ -29,10 +29,10 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _ready() -> void:
-	# ★ `await` 不可省(实测踩到):`_run()` 里有 `await get_tree().physics_frame`,
+	# - `await` 不可省(实测踩到):`_run()` 里有 `await get_tree().physics_frame`,
 	#   它因此是协程 —— 不 await 的话 `_run()` 在第一个 await 处就返回,`_finish()` 会**立刻**跑,
-	#   此时 `_ran_to_end` 恒 false → 所有断言全绿却打 `FAIL`,而第 ③ 段还排在 FAIL 之后打印。
-	# ★ 跑完闩的语义不变:若 `_run()` 中途抛运行期错误(在 await 之前返回),`await` 一个非信号值
+	#   此时 `_ran_to_end` 恒 false → 所有断言测试全部通过却打 `FAIL`,而第 ③ 段还排在 FAIL 之后打印。
+	# - 跑完闩的语义不变:若 `_run()` 中途抛运行期错误(在 await 之前返回),`await` 一个非信号值
 	#   会当场继续 → `_finish()` 照旧看到 `_ran_to_end == false` → 报"没跑到末尾"。
 	await _run()
 	_finish()
@@ -76,12 +76,12 @@ func _run() -> void:
 	var a := _place(_host, 4, Vector2i(20, 20))
 	var mate := _place(_host, 5, Vector2i(21, 20))
 	var foe := _place(_host, 1, Vector2i(22, 20))
-	# ★★ [仪器] 钉住 `players` 的**插入顺序** —— ③/④ 的 `continue` vs `break` 区分度**全靠它**。
+	# 注意： [仪器] 钉住 `players` 的**插入顺序** —— ③/④ 的 `continue` vs `break` 区分度**全靠它**。
 	#   裁决循环是 `for role in players`(即字典插入序),而射手是 role4:顺序 [4,5,1] 下,
 	#   "打敌人"那次必然先遍历到**队友** role5(= 同队)→ 用 `break` 的实现会在那里**停下**,
 	#   永远走不到 role1 → `hit_foe` 红。若有人重排了上面三行的摆放顺序(比如把敌人先摆进来),
-	#   区分度**当场消失**而两条真断言**照样全绿** —— 正是本仓反复在删的那种形状。
-	#   ★ 所以这条不是"重申实现细节":它守的是"③ 那两条为什么能红"。
+	#   区分度**当场消失**而两条真断言**照样测试全部通过** —— 正是本仓反复在删的那种形状。
+	#   - 所以这条不是"重申实现细节":它守的是"③ 那两条为什么能红"。
 	_check(_host.players.keys() == [4, 5, 1],
 			"[仪器] players 按摆放顺序插入(4 → 5 → 1)—— **队友先于敌人被遍历**,"
 			+ "③ 的 continue/break 区分度就靠它(实际 %s)" % str(_host.players.keys()))
@@ -93,9 +93,9 @@ func _run() -> void:
 	_check(hit_foe, "子弹打敌人照常结算(1 号)")
 
 	# ── ④ 榴弹**直击**那一层同样穿透队友(与普通弹同口径)──
-	# ★ 为什么单钉它:`_adjudicate_bullets` 与 `_adjudicate_grenade` 各写了一份 `same_team` 判断,
+	# - 为什么单钉它:`_adjudicate_bullets` 与 `_adjudicate_grenade` 各写了一份 `same_team` 判断,
 	#   改一处忘一处时**子弹那条照样绿** —— 只有这一条能照出"榴弹直击还在打队友"。
-	# ★ 爆炸那一层**故意不在这里断言**:用户裁定"子弹穿透队友、爆炸对队友**满效**",
+	# - 爆炸那一层**故意不在这里断言**:设计约定"子弹穿透队友、爆炸对队友**满效**",
 	#   满效是 `Explosion.apply_aoe` 玩家分支的现状默认行为(它不看任何队伍关系),
 	#   本任务一行未动 —— 给它加断言等于给"没改的代码"上锁,反而会绑住将来对爆炸的调参。
 	var g_mate := _fire_probe_grenade(_host, a, mate.global_position, 5)
@@ -107,7 +107,7 @@ func _run() -> void:
 
 
 # 造一颗探针子弹(由 shooter 发射),摆在目标身上,跑一次裁决,返回"目标是否被结算"。
-# ★ 判定用目标自身的**受伤证据**(hp 下降),不是读内部表 —— 与玩家实现解耦。
+# - 判定用目标自身的**受伤证据**(hp 下降),不是读内部表 —— 与玩家实现解耦。
 func _fire_probe_bullet(host, shooter: Node2D, at: Vector2, victim_role: int) -> bool:
 	var victim: Node2D = host.players[victim_role]
 	var before: int = victim.hp
@@ -124,7 +124,7 @@ func _fire_probe_bullet(host, shooter: Node2D, at: Vector2, victim_role: int) ->
 
 
 # 同上的榴弹版(真 grenade_bullet.tscn,直击伤 5)。手法的来历见 grenade_player_hit_probe:
-# `_adjudicate_grenade` 需整局服务器环境(-s 冒烟照不到权威那半)。
+# `_adjudicate_grenade` 需整局服务器环境(-s 冒烟无法覆盖检测权威那半)。
 func _fire_probe_grenade(host, shooter: Node2D, at: Vector2, victim_role: int) -> bool:
 	var victim: Node2D = host.players[victim_role]
 	var before: int = victim.hp

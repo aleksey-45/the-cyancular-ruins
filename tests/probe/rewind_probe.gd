@@ -60,7 +60,7 @@ func _run() -> void:
 	if frames0 < 15:
 		_fail("录制帧数不足(%d)" % frames0)
 
-	# ② 改变世界:玩家瞬移 200px + 掉血;普通怪击杀;精英击杀
+	# ② 改变世界:玩家瞬移 200px + 受到伤害;普通怪击杀;精英击杀
 	(player as Node2D).global_position += Vector2(200, 0)
 	player.call("take_hit", Vector2.ZERO, 20, true, 0.0)
 	target.call("hurt", 9999, Vector2.RIGHT, 0.0)
@@ -79,7 +79,7 @@ func _run() -> void:
 	var t_before_rewind: float = rewind.recorded_seconds()
 	var frames_before_rewind: int = rewind.frame_count()
 
-	# ④ 按住 Shift 回溯 ~3s(真实按键路径);顺带监听 hp_changed(HUD 血条的唯一刷新通道)
+	# ④ 按住 Shift 回溯 ~3s(真实按键路径);顺带监听 hp_changed(HUD 生命条的唯一刷新通道)
 	var hp_events := [0]
 	player.hp_changed.connect(func(_cur: int, _mx: int) -> void: hp_events[0] += 1)
 	Input.action_press("rewind")

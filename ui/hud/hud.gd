@@ -21,32 +21,32 @@ const WEAPON_FONT_SIZE := 32    # 武器名/残弹数;同上(32 = 2×16)
 # 本文件不再自己 load 字体、不自己设字号,字号规范才守得住(见 ui_factory.gd 文件头)。
 # (原先还有 `const KILL_MARGIN := Vector2(32, 16)` —— 右上角内边距。它已随计数器的锚点
 #  迁进 ui/kill_counter.tscn 的 offset_left/offset_top,本文件不再引用,故删除不留死声明。)
-# HUD 底板:武器区 / 血条 / 氧条 / 右上角击杀数,**四处共用这一个值**。
-# ★ 唯一源在 `ui/ui_factory.gd` 的 `C_PLATE` —— 那里有各档 alpha 的 WCAG 对比度实测,
+# HUD 底板:武器区 / 生命条 / 氧气条 / 右上角击杀数,**四处共用这一个值**。
+# - 唯一源在 `ui/ui_factory.gd` 的 `C_PLATE` —— 那里有各档 alpha 的 WCAG 对比度实测,
 #   以及两条**例外**(排行榜 `_board_bg` 单独 0.25 / 全屏压暗罩不是底板);**细节只写在那里**,
 #   本处不重复(免得两处措辞各自漂)。
 #   本处是**别名**,不存字面量(改色只动调色板那一处)。
 const PLATE_COLOR := UiFactory.C_PLATE
-# 血条/氧条底板比条本身每边外扩多少(右上角计数器的留白走 PanelContainer 的 content margin)
+# 生命条/氧气条底板比条本身每边外扩多少(右上角计数器的留白走 PanelContainer 的 content margin)
 const BAR_PLATE_PAD := Vector2(6, 5)
 const WATERPROOF_H := 10            # 防水值条高(细长)
-const WATERPROOF_GAP := 18         # 防水值条与血条间距(下移)
+const WATERPROOF_GAP := 18         # 防水值条与生命条间距(下移)
 const WATERPROOF_W := 18            # 每点防水值宽度(px)
 # 亮蓝:当年为「深色底板」选的颜色 —— 底板换成深色后,原来的深蓝
 # (Color(0.161,0.26,0.8,0.702))会在深底上糊成一片(≈1.0:1),提亮到浅蓝后 ≈3.8:1。
-# (2026-09-15 底板去掉过半天,这两个值当时失去了前提;同日氧条底板垫回来后,浅蓝 3.8:1
+# (2026-09-15 底板去掉过半天,这两个值当时失去了前提;同日氧气条底板垫回来后,浅蓝 3.8:1
 #  与「白 0.16 空槽压在深底上」的前提重新成立。)
 const WATERPROOF_COLOR := Color(0.45, 0.72, 1.0)
 const WATERPROOF_BACK := Color(1, 1, 1, 0.16)     # 空槽(底板上的浅色浅槽)
 
 var _segments: Array[ColorRect] = []
-var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 tween
+var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:受损生命值片段的淡出 tween
 var _last_cur := 0
 var _kill_label: Label
 var _kills := 0
 var _wp_bar: ColorRect = null
 var _wp_back: ColorRect = null
-var _wp_plate: ColorRect = null      # 氧条底板:与条/空槽一同淡入淡出(用户 2026-09-15)
+var _wp_plate: ColorRect = null      # 氧气条底板:与条/空槽一同淡入淡出(用户 2026-09-15)
 var _wp_w := 0.0
 var _wp_tween: Tween = null
 var _weapon_icon: TextureRect = null
@@ -60,8 +60,8 @@ var _ammo_low := false              # 残弹是否已进入「低弹量」金态
 
 const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
 
-# 右上角击杀计数器的**骨架**在场景里(右上锚点/生长方向看得见);字体与底色仍由本文件给 ——
-# 写进 .tscn 就绕开 UiFactory 的字号纪律(16 的倍数那条闸门扫的是 .gd 与 .tscn,但
+# 右上角击杀计数器的**基础结构框架**在场景里(右上锚点/生长方向看得见);字体与底色仍由本文件给 ——
+# 写进 .tscn 就绕开 UiFactory 的字号纪律(16 的倍数那条门控前置校验扫的是 .gd 与 .tscn,但
 # style_control 才是带 PixelFont.shared() 锐化+CJK 回退的那条路),且 PLATE_COLOR 会在
 # 场景里变成又一份调色板字面量。**本场景无脚本**,故 hud.gd preload 它不构成循环引用。
 const KILL_COUNTER_SCENE := preload("res://ui/hud/kill_counter.tscn")
@@ -69,7 +69,7 @@ const KILL_COUNTER_SCENE := preload("res://ui/hud/kill_counter.tscn")
 func _ready() -> void:
 	layer = LAYER
 	_build_kill_label()
-	# 个人钟怀表(第一阶段;数据源 Level0.grain_account,为空自隐)——摆血条/氧条下方
+	# 怀表 HUD 界面组件（阶段一；数据源为 Level0.grain_account，无数据时自动隐藏）—— 布局于生命条与氧气条下方
 	var watch := WatchHud.new()
 	watch.position = Vector2(MARGIN.x, MARGIN.y + 100.0)
 	add_child(watch)
@@ -102,15 +102,15 @@ func _process(_delta: float) -> void:
 	if _player != null and is_instance_valid(_player) and "weapons" in _player:
 		w = _player.weapons.current_weapon()
 	# 换弹全模式开放后弹量条恒显示 —— 原先那句 `and w.reload_active()` 正是 PvP 里
-	# 弹量条整条消失的原因(闸门已删,见 weapon_base.gd 的换弹段注释)。
+	# 弹量条整条消失的原因(门控限制已移除,见 weapon_base.gd 的换弹段注释)。
 	var show := w != null
 	_ammo_label.visible = show
-	# ★ 换弹进度条**已取消**(用户 2026-09-16:改由角色旁的圆环倒计时提示,见 ui/reload_ring.gd)。
+	# - 换弹进度条**已取消**(用户 2026-09-16:改由角色旁的圆环倒计时提示,见 ui/reload_ring.gd)。
 	#   那条细条与"装填中…"文案一并去掉;丢弃进度条仍用这条槽位。
 	var prog := w.reload_progress() if (show and w != null) else -1.0
 
 	# 丢弃进度:长按 Q 时占用同一条槽位(换弹优先级更高 —— 换弹中不可能是丢弃)。
-	# ★ 没有反馈的两秒长按是不可用的:玩家会以为按键没生效,于是一直按着或放弃。
+	# - 没有反馈的两秒长按是不可用的:玩家会以为按键没生效,于是一直按着或放弃。
 	if _drop_bar != null:
 		var dp := 0.0
 		if prog < 0.0 and show and _player != null and _player.has_method("drop_hold_progress"):
@@ -129,7 +129,7 @@ func _process(_delta: float) -> void:
 		_ammo_low = low
 		_ammo_label.add_theme_color_override("font_color",
 				UiFactory.C_WARN if low else UiFactory.C_TEXT)
-	# ★ 换弹中**不再**改成"装填中…"(用户 2026-09-16:改用角色旁的圆环倒计时提示),
+	# - 换弹中**不再**改成"装填中…"(用户 2026-09-16:改用角色旁的圆环倒计时提示),
 	#   这里恒显示残弹/满弹。
 	_ammo_label.text = "%d/%d" % [w.mag_ammo, w.mag_size]
 
@@ -155,7 +155,7 @@ func _build_weapon_display(p: Node) -> void:
 	wrap.offset_left = MARGIN.x
 	wrap.offset_right = MARGIN.x + 344
 	wrap.offset_bottom = -MARGIN.y
-	# ★ 高度**收缩到内容**:offset_top 与底边齐平(零高),再由控件的"最小尺寸"
+	# - 高度**收缩到内容**:offset_top 与底边齐平(零高),再由控件的"最小尺寸"
 	#   把它撑到正好装下那几个方框,配合 GROW_DIRECTION_BEGIN 向上长。
 	#   原先写死 -260 → 只有一把枪时也顶着一个巨大的空框(用户 2026-09-16 指出)。
 	wrap.offset_top = wrap.offset_bottom
@@ -185,7 +185,7 @@ func _build_weapon_display(p: Node) -> void:
 
 
 # 重建左下角那一列:每把持有武器一个方框,顺序 = 背包顺序。
-# ★ 每次都整体重建(数量少,最多 4 个)——比逐项 diff 简单,也不会漏同步。
+# - 每次都整体重建(数量少,最多 4 个)——比逐项 diff 简单,也不会漏同步。
 #   选中那个的残弹 Label 存进 `_ammo_label`,供 _process 每帧刷新。
 func _refresh_weapon_boxes() -> void:
 	if _weapon_box == null or _player == null or _player.weapons == null:
@@ -202,11 +202,11 @@ func _refresh_weapon_boxes() -> void:
 	var cur_index: int = _player.weapons._current_index
 	for e in _player.weapons.inventory.held:
 		var t := int(e["type"])
-		# ★★ 判选中必须按**背包下标**,不能按**类型**(用户 2026-09-23:「捡起两把型号相同的枪,
+		# 注意： 判选中必须按**背包下标**,不能按**类型**(用户 2026-09-23:「捡起两把型号相同的枪,
 		#   左下角 UI 显示错误」)。`current_type_id()` 返回的是**类型 id**(见 weapon_component.gd
 		#   的 `_current_type`),拿它去比 `e["type"]` 在**同型号两把**时对两行**同时成立**
-		#   ⇒ 两个框一起变成深底 + 大图标 + 名称/残弹。而单机开局**每种散 2 把**,出厂即可达。
-		#   ★ 与 `ui/weapon_slots.gd` 的格子高亮**同源**(那条一直是按下标比 `_current_index`)。
+		#    ->  两个框一起变成深底 + 大图标 + 名称/残弹。而单机开局**每种散 2 把**,出厂即可达。
+		#   - 与 `ui/weapon_slots.gd` 的格子高亮**同源**(那条一直是按下标比 `_current_index`)。
 		#   `_current_index == -1`(空手)时一个都不选中 —— 与改动前同观感。
 		var sel := held_index == cur_index
 		var box := PanelContainer.new()
@@ -259,7 +259,7 @@ func _refresh_weapon_boxes() -> void:
 			_weapon_name = Label.new()
 			UiFactory.style_control(_weapon_name, WEAPON_FONT_SIZE)
 			_weapon_name.add_theme_color_override("font_color", UiFactory.C_TEXT)
-			# ★ 兜底留着的理由:`t` 来自**背包条目**(上面那行),不是来自注册表 ——
+			# - 保底处理留着的理由:`t` 来自**背包条目**(上面那行),不是来自注册表 ——
 			#   老存档/异常背包里可能有注册表已删掉的 id,那种时候显示"空手"而不是空串。
 			var nm := WeaponRegistry.name_of(t)
 			_weapon_name.text = nm if not nm.is_empty() else "空手"
@@ -285,9 +285,9 @@ func _build_weapon_slots(p: Node) -> void:
 
 
 # 把容量格子贴到武器面板的**实际顶边**上(底边 = 面板顶边 - 空隙)。
-# ★ 为什么不能写死一个 y:面板高度是**随内容收缩**的(见 _build_weapon_display)——
+# - 为什么不能写死一个 y:面板高度是**随内容收缩**的(见 _build_weapon_display)——
 #   写死的话"只带一把枪"时格子会飘在半空、"带满 4 把"时又会压到面板上。
-# ★ 坐标系:锚点用 **0/0(相对父级顶边)**而不是 1/1 —— 面板是底锚的,但它的
+# - 坐标系:锚点用 **0/0(相对父级顶边)**而不是 1/1 —— 面板是底锚的,但它的
 #   `position.y` 是**从顶边量**的;用底锚就得再换算一次视口高度,反而容易写错。
 #   两者同为 HUD(CanvasLayer)的直接子节点,参考系一致。
 func _place_weapon_slots() -> void:
@@ -300,12 +300,12 @@ func _place_weapon_slots() -> void:
 	_slots.offset_left = MARGIN.x
 	_slots.offset_right = MARGIN.x + WeaponSlots.PANEL_W
 	_slots.offset_bottom = _weapon_wrap.position.y - WEAPON_SLOTS_GAP
-	# ★ `panel_h` 是**实例**字段(由容量派生,见 WeaponSlots._derive_layout);`PANEL_W` 仍是常量。
+	# - `panel_h` 是**实例**字段(由容量派生,见 WeaponSlots._derive_layout);`PANEL_W` 仍是常量。
 	_slots.offset_top = _slots.offset_bottom - _slots.panel_h
 
 
 func _on_weapon_changed(_type_id: int) -> void:
-	# ★ 直接重建整个列表,别去改"某个缓存下来的 Label/Icon" —— 那两样在每次重建时都会被
+	# - 直接重建整个列表,别去改"某个缓存下来的 Label/Icon" —— 那两样在每次重建时都会被
 	#   queue_free,而**释放后的对象不是 null**,`!= null` 挡不住它,表现为
 	#   "Trying to cast a freed object"(实测踩到:weapon_changed 先于 inventory_changed 发射,
 	#   回调先摸到了上一轮的旧节点)。
@@ -316,7 +316,7 @@ func _on_weapon_changed(_type_id: int) -> void:
 # 底板(PLATE_COLOR)铺在整排下面 —— 竖条之间那 1px 缝于是透出底板而不是地图,
 # 整排读成一条「压在薄板上的条」(0.1 很淡,缝里与缝外的差别是刻意做小的)。
 func _build_segments(count: int) -> void:
-	# ★ 底板**先**入队:入树顺序即绘制顺序,后加的条才画在它上面
+	# - 底板**先**入队:加入场景树顺序即绘制顺序,后加的条才画在它上面
 	var bar_w := count * (SEG_W + SEG_GAP) - SEG_GAP
 	var plate := ColorRect.new()
 	plate.color = PLATE_COLOR
@@ -345,12 +345,12 @@ func _on_hp(cur: int, max_hp: int) -> void:
 			seg.visible = true
 		else:
 			seg.visible = false
-	# 新掉血的段(旧血量→新血量之间):白闪后淡出,提示伤害
+	# 新受到伤害的段(旧血量→新血量之间):白闪后淡出,提示伤害
 	for i in range(max(cur, 0), _last_cur):
 		_start_ghost(i)
 	_last_cur = cur
 
-# 防水值(氧气)条:血条下方深蓝细长条,长度按防水值/上限。
+# 防水值(氧气)条:生命条下方深蓝细长条,长度按防水值/上限。
 # 底板 + 空槽 + 实条三件套,初始 alpha 全是 0 —— 满氧时整组不该出现(见 _on_waterproof)。
 func _build_waterproof(wp_max: int) -> void:
 	_wp_w = WATERPROOF_W * wp_max
@@ -380,13 +380,13 @@ func _on_waterproof(cur: int, max: int) -> void:
 		# 满值(陆地恢复满)→ 淡出;非满(开始消耗)→ 淡入
 		_fade_waterproof(0.0 if cur >= max else 1.0)
 
-# 掉血段效果:闪烁两下(闪白回到底色),最后淡出消失。
+# 受损生命值片段效果:闪烁两下(闪白回到底色),最后淡出消失。
 
 func _fade_waterproof(a: float) -> void:
 	if _wp_tween != null and _wp_tween.is_valid():
 		_wp_tween.kill()
 	_wp_tween = create_tween()
-	# 底板与条/空槽**同一 tween、同一时长** —— 氧条消失时底板必须跟着走,
+	# 底板与条/空槽**同一 tween、同一时长** —— 氧气条消失时底板必须跟着走,
 	# 否则浅色地形上会留下一块没人认领的暗矩形(用户明确要求「一同出现消失」)。
 	_wp_tween.set_parallel(true)
 	for c in [_wp_bar, _wp_back, _wp_plate]:
@@ -417,22 +417,22 @@ func _kill_ghost(i: int) -> void:
 
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
-	# 底板:**2026-09-17 按用户要求去掉**(「删除所有模式的右上角计数器底下的灰色框」)。
-	#   这是第 3 次动它了(09-15 去掉 → 同日垫回 → 09-17 再去掉),所以把踩过的坑写死在这:
-	# ⚠ **去掉底色只能靠 `draw_center = false`,不能只删 `bg_color` 那一行**:
+	# 底板背景样式说明：移除右上角计数器底板背景框。
+	#   这是第 3 次动它了(09-15 去掉 → 同日垫回 → 09-17 再去掉),所以把历史已知问题写死在这:
+	# ⚠ **移除底色必须设置 draw_center = false，不能仅删除 bg_color**:
 	#   StyleBoxFlat 的默认底色是**不透明灰 (0.6,0.6,0.6,1.0)**、`draw_center` 默认 true ——
 	#   只删 bg_color 等于把半透明黑板换成一块**实心灰板**(比原来还显眼;09-15 实测发过一版,
 	#   用户当场看出「右上角怎么还有框」)。`draw_center = false` 保留 content_margin,
 	#   所以文字位置不受影响。
 	#   本条**三个模式一起生效**(PvP / 大乱斗都实例化 level_0.tscn,共用这个 Hud)。
 	# 锚点/生长方向已迁进 ui/kill_counter.tscn(右上角、宽高留 0 由文本撑开、向左下生长)。
-	# ★ 刻意做成**无脚本的独立场景**而不是塞进 level_0.tscn:tests/probe/kh_l3_visual_probe.gd
+	# - 刻意做成**无脚本的独立场景**而不是塞进 level_0.tscn:tests/probe/kh_l3_visual_probe.gd
 	#   用 Hud.new() 建单机 HUD 做取色断言,把节点声明进 level_0.tscn 会让 Hud.new()
 	#   建出的 HUD 没有它 → 那条探针立刻红。独立场景由本文件 load,创建方式无关。
 	var wrap := KILL_COUNTER_SCENE.instantiate() as PanelContainer
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR
-	sb.draw_center = false      # ★ 不画底色(见上面那段的坑:只删 bg_color 会变成实心灰板)
+	sb.draw_center = false      # - 不画底色(见上面那段的坑:只删 bg_color 会变成实心灰板)
 	sb.set_corner_radius_all(0)
 	sb.content_margin_left = 16.0
 	sb.content_margin_right = 16.0

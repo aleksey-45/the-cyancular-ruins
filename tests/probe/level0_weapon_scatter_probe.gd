@@ -2,9 +2,9 @@ extends Node
 
 # 单机开局地面武器探针(场景模式;判据 grep `LEVEL0 SCATTER: ALL-OK`)。
 #
-#   ★ 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
+#   - 安全网给足(3600 帧):探针正常跑完会自己 quit(),这个值**只在探针挂住时**才用得上 ——
 #     放宽不花任何代价。原先的 600/900 在机器负载重时可能**先耗尽**、探针来不及跑完
-#     就被掐断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
+#     就被意外中断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
 # 跑法:
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/level0_weapon_scatter_probe.tscn
 #
@@ -44,15 +44,15 @@ func _ready() -> void:
 				"开局背包里应只有那一把(实际 %d)" % player.weapons.inventory.held.size())
 
 	var all_pickups := get_tree().get_nodes_in_group("weapon_pickup")
-	# ★ 数量 = 注册表条数 × 2(每种 2 把),**不再写死 12** —— 写死的话加第 7 把枪
-	#   (每种 2 把 ⇒ 14 件)会把这条探针打红,而那正是本特性要支持的场景。
+	# - 数量 = 注册表条数 × 2(每种 2 把),**不再写死 12** —— 写死的话加第 7 把枪
+	#   (每种 2 把  ->  14 件)会把这条探针测试失败,而那正是本特性要支持的场景。
 	var want_types: Array[int] = WeaponRegistry.all_ids()
 	var expect_total := want_types.size() * 2
 	_check(all_pickups.size() == expect_total,
 			"开局应铺 %d 件地面武器(%d 种 × 2,实际 %d)" % [
 				expect_total, want_types.size(), all_pickups.size()])
 
-	# ★ 核心断言:每一件都必须挂在 WorldViewport 下(而不是 Level0 自己身上)
+	# - 核心断言:每一件都必须挂在 WorldViewport 下(而不是 Level0 自己身上)
 	var wrong_parent := 0
 	var no_visual := 0
 	var no_shape := 0
@@ -76,7 +76,7 @@ func _ready() -> void:
 			bad += 1
 	_check(bad == 0, "每种武器应恰好 2 把(有 %d 种数量不对:%s)" % [bad, str(types)])
 
-	# ★ 覆盖性:注册表里的每一种都必须**真的铺到了**。
+	# - 覆盖性:注册表里的每一种都必须**真的铺到了**。
 	#   这条是"加了第 7 把枪但散落表漏了它"的守卫 —— 上面那条按注册表算的**总数**
 	#   拦不住那种情况(总数 14 对得上,但其中一种 0 件、另一种 2 件)。
 	var missing: Array = []
@@ -91,10 +91,10 @@ func _ready() -> void:
 	await _phase_slot_placement(player, lvl)
 	await _phase_same_type_selection(player, lvl)
 
-	# ── 有真实渲染时顺手取一张图,供**人眼**确认地上的枪真的画出来了 ──
+	# ── 有真实渲染时顺便截取一张图,供**人眼**确认地上的枪真的画出来了 ──
 	# (headless 下 get_image() 返回 null,跳过;断言部分两条腿都能跑。)
-	# ★ 把玩家瞬移到最近的一件武器旁并冻住物理,否则他原地开始掉、枪早出画面了。
-	# ★ **现查组**,别用 _ready 开头抓的 `all_pickups` —— 中间的丢弃/再捡阶段会
+	# - 把玩家瞬移到最近的一件武器旁并冻住物理,否则他原地开始掉、枪早出画面了。
+	# - **现查组**,别用 _ready 开头抓的 `all_pickups` —— 中间的丢弃/再捡阶段会
 	#   queue_free 掉其中一些,拿旧数组去 `as Node2D` 就是 "Trying to cast a freed object"
 	#   (只在带渲染这条路径上炸:headless 不走这段,所以那边一直是绿的)。
 	var live_pickups: Array = []
@@ -109,7 +109,7 @@ func _ready() -> void:
 			if d < best_d:
 				best_d = d
 				best = p
-		# ★ 偏移必须**落在拾取半径内**(PlayerParams.weapon_pickup_radius = 64):
+		# - 偏移必须**落在拾取半径内**(PlayerParams.weapon_pickup_radius = 64):
 		#   站在范围外时提示本来就不该出现。(-50,-12) 的环面距离 ≈ 51px。
 		if best != null:
 			(player as Node2D).global_position = best.global_position + Vector2(-50.0, -12.0)
@@ -117,7 +117,7 @@ func _ready() -> void:
 		# 取图前摆一个已知背包,好让左下角的"持有武器剪影行"出现在图里
 		# (丢弃那段结束时把背包清空了)。手持第一把 → 它应当是白的、其余灰的。
 		player.weapons.set_initial_inventory([1, 3, 4])
-		# ★ 冻掉物理后 `_poll_pickup_drop` 不再跑,丢弃闩锁会一直挂着 → 进度条常红(探针残留)。
+		# - 冻掉物理后 `_poll_pickup_drop` 不再跑,丢弃闩锁会一直挂着 → 进度条常红(探针残留)。
 		#   补一拍空 delta 让它复位(真机松手自然就复位)。
 		player._poll_pickup_drop(0.0)
 		for i in 90:
@@ -136,17 +136,17 @@ func _ready() -> void:
 
 
 # ── 容量格子贴武器面板的**实际**顶边(用户 2026-09-16:「应该根据武器的框的高度自适应 bottom」)──
-# ★ 为什么值得钉:武器面板是**随内容收缩**的(有几把枪就多高),而格子原先贴在一个写死的
-#   y 上 —— 那种"顺手改一个数"不会报任何错,只会在实机上表现为"只带一把枪时格子飘在半空"。
+# - 为什么值得钉:武器面板是**随内容收缩**的(有几把枪就多高),而格子原先贴在一个写死的
+#   y 上 —— 那种"随意修改一个数"不会报任何错,只会在实机上表现为"只带一把枪时格子飘在半空"。
 #   判据取**两边的实际边**而不是"offset 等于某个数"(后者与实现同源,等于同义反复)。
 func _phase_slot_placement(player: Node, lvl: Node) -> void:
 	var hud: Node = lvl.get_node_or_null("HUD")
 	if hud == null:
 		_check(false, "Level0 里有 HUD 节点")
 		return
-	# ★ 取常量走 `get_script_constant_map()`,不要 `hud.get("WEAPON_SLOTS_GAP")` ——
+	# - 取常量走 `get_script_constant_map()`,不要 `hud.get("WEAPON_SLOTS_GAP")` ——
 	#   后者在这个引擎版本上**碰巧**能取到,但本仓踩过"直接取不存在的属性抛错 → 探针挂起"
-	#   的坑,查常量一律用这个口(与 kh_l3/kh_l5 同款)。
+	#   的坑,查常量一律用这个口(与 kh_l3/kh_l5 相同机制)。
 	var consts: Dictionary = (hud.get_script() as Script).get_script_constant_map()
 	if not consts.has("WEAPON_SLOTS_GAP"):
 		_check(false, "hud.gd 里没有 WEAPON_SLOTS_GAP 常量")
@@ -170,7 +170,7 @@ func _phase_slot_placement(player: Node, lvl: Node) -> void:
 				"%d 把枪时间隙恒为 %.0fpx(实测 %.1f)" % [plan.size(), gap_expect, gap])
 		_check(slots_bottom > 0.0 and slots.position.y > 0.0,
 				"%d 把枪时容量格子留在画面内(y=%.0f)" % [plan.size(), slots.position.y])
-		# ★ 默认容量(8)下格子面板的高**必须仍是 59** —— 这是"把 ROWS/PANEL_H 改成派生时
+		# - 默认容量(8)下格子面板的高**必须仍是 59** —— 这是"把 ROWS/PANEL_H 改成派生时
 		#   没有改动默认观感"的钉子。判据取**实测的 size.y**(= offset_bottom - offset_top),
 		#   不是去读常量:与上面那条间隙断言同一个口径(取"实际边",不取同源常量)。
 		_check(is_equal_approx(slots.size.y, 59.0),
@@ -184,10 +184,10 @@ func _phase_slot_placement(player: Node, lvl: Node) -> void:
 # ── 同型号两把:左下角**只许高亮一把**(用户 2026-09-23 报:「捡起两把型号相同的枪,UI 显示错误」)──
 # 根因:`_refresh_weapon_boxes` 原先按**类型**判选中(`sel := t == cur`),而 `current_type_id()`
 # 返回的正是**类型 id**(见 `weapon_component.gd` 的 `_current_type`)—— 同型号两把类型相同
-# ⇒ **两行同时**被判选中(深底 + 大图标 + 名称/残弹),而实际手持的只有一把。
-# ★ 判据必须落在**渲染结果**上(数出几个"选中外观"),不能只查某一行的属性:
+#  ->  **两行同时**被判选中(深底 + 大图标 + 名称/残弹),而实际手持的只有一把。
+# - 判据必须落在**渲染结果**上(数出几个"选中外观"),不能只查某一行的属性:
 #   `_weapon_name` / `_ammo_label` 是**单例**(后被赋值的覆盖前者),只查它们永远"正常"。
-# ★ 单机开局本来就**每种散 2 把**,故这条路径出厂即可达,不是边角。
+# - 单机开局本来就**每种散 2 把**,故这条路径出厂即可达,不是边角。
 func _phase_same_type_selection(player: Node, lvl: Node) -> void:
 	var hud: Node = lvl.get_node_or_null("HUD")
 	if hud == null:
@@ -236,7 +236,7 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 		return
 	var target: Node2D = pickups[0]
 	# ① 站到它身上(距离 0 必然在半径内)
-	# ★ 2026-09-17 起节点原点**就是**视觉中心(视觉中心已被挪到原点,visual_offset 已删),
+	# - 2026-09-17 起节点原点**就是**视觉中心(视觉中心已被挪到原点,visual_offset 已删),
 	#   所以直接站节点位置即可。
 	(player as Node2D).global_position = target.global_position
 	for i in 5:
@@ -266,12 +266,12 @@ func _phase_pickup_prompt(player: Node, lvl: Node) -> void:
 
 
 # ── 丢弃(长按 Q 满 2s)──
-# ★ 双向钉:短按**不该**丢、长按满**必须**丢。只判"能丢"会把"碰一下 Q 就丢"放过去 ——
-#   那正是联机侧真实出现过的 bug(LocalInputSource 的 drop 读口报的是"Q 按着"而不是
+# - 双向钉:短按**不该**丢、长按满**必须**丢。只判"能丢"会把"碰一下 Q 就丢"放过去 ——
+#   那正是联机侧真实出现过的 bug(LocalInputSource 的 drop 读取接口报的是"Q 按着"而不是
 #   "满了的边沿",于是碰一下就丢、按住不放每 tick 丢一把)。
 func _phase_drop_hold(player: Node, lvl: Node) -> void:
 	var wep = player.weapons
-	# ★ 先把玩家摆到**一件已落地的武器**旁边并冻住物理:地面武器都是落到地板上的,
+	# - 先把玩家摆到**一件已落地的武器**旁边并冻住物理:地面武器都是落到地板上的,
 	#   所以那个位置就是地面。不这么做的话玩家在半空、丢弃那段里会自己掉一千多像素,
 	#   而枪落在上面 —— 测出来是"玩家离所有枪都很远",看着像"捡不回来"(实测踩到)。
 	var picks0 := get_tree().get_nodes_in_group("weapon_pickup")
@@ -293,7 +293,7 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 	var ground_before: int = get_tree().get_nodes_in_group("weapon_pickup").size()
 	print("[drop] current_scene=%s is_Level0=%s pvp_mode=%s" % [str(get_tree().current_scene), str(get_tree().current_scene is Level0), str(Level0.pvp_mode)])
 
-	# ★ 阈值按**参数**算,别写死秒数 —— 它改过两次(2.0 → 1.0 → 0.6),
+	# - 阈值按**参数**算,别写死秒数 —— 它改过两次(2.0 → 1.0 → 0.6),
 	#   写死会让断言在改参数后静默变成"测别的东西"(实测:改成 0.6 后"短按 1.0s"
 	#   反而**会**丢,三条断言一起红)。
 	var hold: float = PlayerParams.weapon_drop_hold_time
@@ -307,7 +307,7 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 			"按住不足 2s 不该丢(实际 %d → %d)" % [before, wep.inventory.held.size()])
 
 	# ② 一次长按累计 2×阈值(**中途不松手**)→ 只该丢**一把**,地上多一件。
-	#    ★ "中途不松手"是关键:松手再按是新的一次长按,再丢一把是**正确行为**
+	#    - "中途不松手"是关键:松手再按是新的一次长按,再丢一把是**正确行为**
 	#      (第一版这里松了手,断言写成"只应丢一把",是测试自己错)。
 	Input.action_press("Q")
 	for i in int(hold * 10.0 * 2.0) + 2:
@@ -329,12 +329,12 @@ func _phase_drop_hold(player: Node, lvl: Node) -> void:
 	for i in int(hold * 10.0 * 2.0) + 2:
 		player._poll_pickup_drop(0.1)
 	Input.action_release("Q")
-	# ★ 松手后必须补一拍:闩锁(_drop_latched)只在"没按 Q"的那一拍复位 ——
+	# - 松手后必须补一拍:闩锁(_drop_latched)只在"没按 Q"的那一拍复位 ——
 	#   漏了它,下一段的长按会被上一段的闩锁整个吞掉(实测:表现为"按了 Q 却丢不出去")。
 	player._poll_pickup_drop(0.0)
 	_check(true, "空手长按 Q 不崩")
 
-	# ④ ★ 丢下的那把**必须能再捡回来**(用户 2026-09-16 报"丢弃的武器无法再次装备")。
+	# ④ -  丢下的那把**必须能再捡回来**(用户 2026-09-16 报"丢弃的武器无法再次装备")。
 	#    冷却期(weapon_pickup_self_delay)过后重新按 F —— 走向 try_pickup_for 的真实链路。
 	wep.set_initial_inventory([1])
 	for i in 3:

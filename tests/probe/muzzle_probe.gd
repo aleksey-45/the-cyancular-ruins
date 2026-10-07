@@ -1,6 +1,7 @@
 extends SceneTree
 
-# 实例化真实 Player+武器,读真实 muzzle.global_position,核对网格对齐与 0° 弧线截断。
+# 枪口坐标与抛物线截断验证探针：
+# 实例化真实玩家实体与手持武器，读取枪口全局坐标（muzzle.global_position），校验网格对齐精度与水平弧线障碍物截断判定。
 
 const TS: int = 64
 const SPEED: float = 1100.0

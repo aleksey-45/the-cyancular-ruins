@@ -1,7 +1,7 @@
 class_name EnemyFlyBase
 extends EnemyBase
 
-# 飞行敌人基类:网格寻路 + 避障 + 直线兜底 + 站/飞碰撞箱切换。
+# 飞行敌人基类:网格寻路 + 避障 + 直线保底处理 + 站/飞碰撞箱切换。
 # 这些能力原本都混在 EnemyFlyBird 里,与 FlyBird 的具体行为(射击/冲撞/返程)
 # 无关,抽出来供"能飞的敌人"复用。
 #
@@ -58,7 +58,7 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 	if _path.is_empty():
 		if fallback_target != Vector2.INF:
 			# 死区逃逸:寻路空路径时朝逃逸目标巡航(先下潜到可走格,窄檐则水平挪出悬挑),
-			# 别直线撞墙。目标带 y,鸟真正下飞,不再锁死当前高度。
+			# 别直线撞墙。目标带 y,鸟真正下飞,不再锁定约束当前高度。
 			if _escape_target != Vector2.INF:
 				_fly_straight_to(_escape_target, delta)
 			else:
@@ -77,7 +77,7 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 	_path = []
 
 
-# BFS 无路/预算超限时的直线兜底:向目标点直线飞行(鸟飞越低墙,直线基本可行)。
+# BFS 无路/预算超限时的直线保底处理:向目标点直线飞行(鸟飞越低墙,直线基本可行)。
 func _fly_straight_to(target: Vector2, delta: float) -> void:
 	var spd := EnemyParams.FlyBird.fly_speed
 	var to_target := MazeGenerator.toroidal_delta_px(global_position, target,
@@ -124,14 +124,14 @@ func _find_escape_column() -> Vector2:
 func _bird_can_pass(cell: Vector2i) -> bool:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
-		return false   # ★ 空网格 = 不可走(**保守**方向)。注意方向与 TileQuery 的兜底相反,
-	                   #   故这条早退不能删(TileQuery 在空网格返回 false = "没压到东西")。
+		return false   # - 空网格 = 不可走(**保守**方向)。注意方向与 TileQuery 的保底处理相反,
+	                   #   故这条提前返回不能删(TileQuery 在空网格返回 false = "没压到东西")。
 	var ts := GameParameters.TILE_SIZE
 	# 鸟原心 = 格中心 − hover_altitude(悬停上移);箱体世界范围 = 原心 + AABB。
 	var ox := cell.x * ts + ts * 0.5
 	var oy := cell.y * ts + ts * 0.5 - EnemyParams.FlyBird.hover_altitude
 	# 逐格环面判定收在 core/tile_query.gd(实心**或水**都不可走:鸟不能游)。
-	# 这里刻意用**未锚定**的原心算矩形:跨接缝由逐格 posmod 兜住,与旧实现一致。
+	# 这里刻意用**未锚定**的原心算矩形:跨接缝由逐格 posmod 提供边界容错保障,与旧实现一致。
 	if TileQuery.rect_overlaps_solid_or_liquid(
 			Rect2(Vector2(ox, oy) + _fly_box_min, _fly_box_max - _fly_box_min), ts):
 		return false
@@ -159,7 +159,7 @@ func _collect_obstacles() -> void:
 	for e in get_tree().get_nodes_in_group("enemies"):
 		if e == self or not (e is Node2D):
 			continue
-		# ★ 已经**不挡路**的实体不当障碍(2026-10-03):录制期保留的隐藏尸体被摘掉了碰撞层
+		# - 已经**不挡路**的实体不当障碍(2026-10-03):录制期保留的隐藏尸体被摘掉了碰撞层
 		#   (见 enemy_base 的 _physics_process),物理上已经可以穿过 —— 若这里仍把它算作障碍,
 		#   飞鸟会在一个空位置上绕路,是同一个"虚空"缺陷的 AI 侧面。判据取**碰撞层**而不是
 		#   `visible`:它问的正是"这东西还挡不挡路",与物理世界同一口径;白闪期(仍可见、
@@ -197,7 +197,7 @@ func _repath_to(cell: Vector2i) -> void:
 	# 避免空路径后直线硬冲卡墙。A* 启发式直扑目标,空旷区展开节点远少于 BFS。
 	# 缓存:目标格没变、上次路径还没走完 → 跳过昂贵的 A*。玩家静止时射击位/回家路
 	# 不变,鸟群不再每 0.5s 反复搜索;路径走完或目标格变化才重寻(障碍碰撞由
-	# move_and_slide 兜底,不会穿墙)。
+	# move_and_slide 保底处理,不会穿墙)。
 	if cell == _path_target and not _path.is_empty():
 		return
 	_path_target = cell

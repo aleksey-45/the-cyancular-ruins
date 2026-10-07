@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# C2 rollback 控制器 in-process 冒烟:权威+预测双 sim + 人工 ack 延迟 + 外部事件注入。
-# 通过 = SMOKE_RECONCILE OK 退出 0。用户自跑。
+# C2 回滚协调器进程内冒烟测试：双端模拟（权威端与预测端）+ 人工注入 ACK 延迟与外部事件。
+# 判定标准：输出 SMOKE_RECONCILE OK 且退出码为 0。
 set -u
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"

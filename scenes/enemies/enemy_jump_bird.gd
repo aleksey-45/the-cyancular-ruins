@@ -139,7 +139,7 @@ func _tick_back_hop() -> void:
 
 # 死亡:基类 _begin_death → 本虚钩;播一次性死亡动画。
 # 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
-# is_dead 后基类 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
+# is_dead 后基类 hurt 直接返回,尸体虽可被子弹命中但不重复扣除生命值。
 func _on_death() -> void:
 	_anim.play("dead")
 
@@ -148,14 +148,14 @@ func _water_swim_dir() -> Vector2:
 	return toroidal_dir_to_player()
 
 
-# 睡眠态判定(基类 _is_far_sleeping 用)。★ 显式写出来而不是靠"SLEEP 恰好是枚举第一个":
+# 睡眠态判定(基类 _is_far_sleeping 用)。-  显式写出来而不是靠"SLEEP 恰好是枚举第一个":
 # 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
 func _is_asleep() -> bool:
 	return state == State.SLEEP
 
 
 # 状态进入 → 形变事件。enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP }
-# ★ `_tick_chase` 里的小跳(enemy_jump_bird.gd:101-102)**刻意不挂钩** —— 它直接设 velocity、
+# - `_tick_chase` 里的小跳(enemy_jump_bird.gd:101-102)**刻意不挂钩** —— 它直接设 velocity、
 #   不经过 _set_state,状态虚钩接不到;不为它另加钩子(用户 2026-09-20 裁定)。那一下的
 #   hop_jump_velocity = -750 会让空中连续项直接给出拉伸,只是没有事件那一下"脆感"。
 func _on_state_entered(s: int) -> void:

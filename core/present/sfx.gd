@@ -13,7 +13,7 @@ static var _cache: Dictionary = {}
 # 轻微随机音高的音效(开枪类,避免每次一模一样的机械感)
 const PITCH_VARIATION := ["shoot", "shoot_heavy", "shotgun", "hit"]
 
-## 全局音调系数(时间玩法驱动:贷款深度→升高、加速→略升、回溯→略降;1.0=无效果)。
+## 全局音调系数(时间玩法驱动:透支深度→升高、加速→略升、回溯→略降;1.0=无效果)。
 ## 只影响播放瞬间的 pitch_scale,不改资源/总线;BGM 接入后同源使用。
 static var pitch_mult: float = 1.0
 
@@ -33,7 +33,7 @@ static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> vo
 	p.volume_db = volume_db
 	p.pitch_scale = pitch * pitch_mult * (randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
 	# 游戏启动链(_ready 里 equip→switch 音)树正在建子节点,直接 add_child 会被拒:
-	# 延迟到帧末入树,再依序延迟播放(保证此时已进树)。
+	# 延迟到帧末加入场景树,再依序延迟播放(保证此时已进树)。
 	tree.root.add_child.call_deferred(p)
 	p.call_deferred("play")
 	p.finished.connect(p.queue_free)
@@ -100,7 +100,7 @@ static func _sweep_square(freq0: float, freq1: float, dur: float, duty: float,
 #   lp = 该插值的**原始**系数(不是「0-1 的低通系数」,不做过归一化):越大过渡越快、
 #   越接近白噪声。系数在爆发内由 lp 线性降到 0.3*lp,再被 clampf 截到 [0.05, 1.0]:
 #     lp > 1.0        → 开头 lp 已超上界被截到 1.0(开头即纯白噪声);
-#     lp >= 1/0.3≈3.34 → 全部采样点恒为 1.0(完全饱和,该参数彻底空转)。
+#     lp >= 1/0.3≈3.34 → 全部采样点恒为 1.0(完全饱和,该参数完全失去调节作用)。
 #   现存两处调用 1400.0(shotgun)/900.0(explosion)都远超 3.34 → 两段都是纯白噪声,
 #   两个不同实参实际等价(要它们真的不同 = 一次听感改动,须先试听再定)。
 #   amp_decay = 指数衰减率。

@@ -1,7 +1,7 @@
 extends SceneTree
 # 设置界面按 ESC 的回归探针(2026-10-01)。
 #
-# ★ 存在的理由:`change_scene_to_file` 在 Godot 4 里**同步 memdelete** 当前场景
+# - 存在的理由:`change_scene_to_file` 在 Godot 4 里**同步 memdelete** 当前场景
 #   (仓内另一处佐证见 `scenes/level_0.gd` 的 `safe_change_scene` 注释)。于是
 #   "切场景之后还碰 self" 就是 use-after-free —— 表现是整个进程崩掉(不是脚本报错)。
 #   本探针把"主菜单 → 设置 → 按 ESC"这条真实输入路径走一遍,并断言场景确实换成了主菜单。
@@ -82,7 +82,7 @@ func _first_bind_button() -> Button:
 
 
 func _send_escape() -> void:
-	# ★ 两个都要设:真实按键事件 `keycode` 与 `physical_keycode` 都有值 ——
+	# - 两个都要设:真实按键事件 `keycode` 与 `physical_keycode` 都有值 ——
 	#   `ui_cancel` 的动作匹配读 `keycode`,而设置页的键位捕获读 `physical_keycode`。
 	var down := InputEventKey.new()
 	down.keycode = KEY_ESCAPE

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 # 把导出成品打成**唯一一份**可分发目录,放进 builds/。
 #
-# ★★ 2026-09-29 起语义变了(用户裁定):builds/ **只留最新一份**,不再堆历史版本 ——
+# 注意： 2026-09-29 起语义变了(设计约定):builds/ **只留最新一份**,不再堆历史版本 ——
 #    每次归档先**整个清空** builds/,再建 `builds/The Cyancular Ruins <版本号> <时间戳>/`。
 #
 # 里面是一个**完整的发布目录**(六个文件平铺在同一层,这是硬要求):
 #   The Cyancular Ruins.exe        客户端
-#   Cyancular Ruins Server.exe     服务端 —— 客户端点「建房」会拉起同目录的它,两者必须挨着
+#   Cyancular Ruins Server.exe     服务端 —— 客户端点「建房」会启动同目录的它,两者必须挨着
 #   easytier-core.exe              隧道本体
 #   easytier-cli.exe               隧道查询/下发转发
-#   Packet.dll                     ★ core **静态导入**它,少了它进程根本起不来
+#   Packet.dll                     -  core **静态导入**它,少了它进程根本起不来
 #   wintun.dll
 #
-# ★ 为什么"一份"必须是一个**目录**而不是几个 exe:客户端找服务端与 EasyTier 都是**按自己的
+# - 为什么"一份"必须是一个**目录**而不是几个 exe:客户端找服务端与 EasyTier 都是**按自己的
 #   目录**找的(`LocalServer.find_server_exe()` / `Tunnel.available()` 的第一顺位),散着放等于没有。
-# ★ EasyTier 四件套是**可选**的第三方组件,但 2026-09-29 起**手填服务器地址那条路已删除**
-#   ⇒ 少了它这个游戏**没有任何联机方式**。缺哪个这里会点名(不静默)。
+# - EasyTier 四件套是**可选**的第三方组件,但 2026-09-29 起**手填服务器地址那条路已删除**
+#    ->  少了它这个游戏**没有任何联机方式**。缺哪个这里会明确提示(不静默)。
 #
 # 用法:
 #   python archive_build.py                        # 归档根目录两个固定名 exe + EasyTier
@@ -36,10 +36,10 @@ BUILDS = os.path.join(PROJECT, "builds")
 RELEASES = os.path.join(PROJECT, "releases")   # 累积式程序包档案(每次发布沉淀一份,不清理)
 PROJECT_GODOT = os.path.join(PROJECT, "project.godot")
 PKG_NAME = "The Cyancular Ruins"      # 包名(与 project.godot 的 config/name 一致)
-# ★★ 发布标识前缀(2026-10-04 用户裁定):本线是 **RoF**(RoFtaCD);另一条线是 `KH_`
+# 注意： 发布标识前缀(2026-10-04 设计约定):本线是 **RoF**(RoFtaCD);另一条线是 `KH_`
 #   (远程分支 `KH_v0.5.0_B17` / `_P2_D1` / `_P3*`)、还有 `siri_v0.5.0` —— 前缀标的就是"谁那条线"。
 #   **真相源在 `project.godot` 的 `application/config/release_prefix`**(字母只能住那儿:
-#   `config/version` 要写进 Windows 版本资源,必须是数字+点)。这里的常量只是兜底。
+#   `config/version` 要写进 Windows 版本资源,必须是数字+点)。这里的常量只是保底处理。
 RELEASE_PREFIX_FALLBACK = "RoF"
 
 
@@ -53,7 +53,7 @@ def release_prefix() -> str:
     return (m.group(1).strip() if m else "") or RELEASE_PREFIX_FALLBACK
 
 GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe"]
-# ★ 必须与 `core/config/tunnel_meta.gd` 的 CORE_EXE / CLI_EXE / CORE_DLLS 保持一致 ——
+# - 必须与 `core/config/tunnel_meta.gd` 的 CORE_EXE / CLI_EXE / CORE_DLLS 保持一致 ——
 #   那一侧是运行时判据,这里漏一个就会打出"客户端认为不齐"的包。
 EASYTIER_FILES = ["easytier-core.exe", "easytier-cli.exe", "Packet.dll", "wintun.dll"]
 # EasyTier 的来源与包内落点:仓库根的 `easytier/` → 包内的 `easytier/`。
@@ -63,7 +63,7 @@ EASYTIER_PKG_DIR = "easytier"
 LICENSE_FILE = "easytier-LICENSE.txt"
 # 初始节点列表:**必须随包分发**(2026-10-02 起代码里没有内置节点表,这份文件是玩家
 # 开箱即联机的唯一节点来源)。它与四件套同住 `easytier/`、同样不在 git 里 —— 是部署事实。
-# 缺了不拦发布(游戏会在首次建房时生成一份纯注释模板),但要**点名**:静默缺 = 玩家包里
+# 缺了不拦发布(游戏会在首次建房时生成一份纯注释模板),但要**明确提示**:静默缺 = 玩家包里
 # 谁也连不上谁,而看起来一切正常。
 RELAY_FILE = "relay.txt"
 
@@ -142,7 +142,7 @@ def main() -> None:
         if not os.path.isfile(os.path.join(PROJECT, f)):
             sys.exit("找不到 %s —— 先导出(见 RELEASE.md §1.2)" % f)
 
-    # ★ 归档目录名 = **发布标识本身**(`RoF_v.0.5.0_202610040204`)—— 不再拼 PKG_NAME:
+    # - 归档目录名 = **发布标识本身**(`RoF_v.0.5.0_202610040204`)—— 不再拼 PKG_NAME:
     #   用户要的就是这个标识,而 builds/ 与 releases/ 本来就只装这一款游戏。
     tag = release_label(version, stamp) if version else stamp
     out = os.path.join(BUILDS, tag)
@@ -155,7 +155,7 @@ def main() -> None:
         shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, f))
         print("  ✓ %s" % f)
 
-    # ② EasyTier:可选,但缺了就没法联机 —— 点名,不静默。
+    # ② EasyTier:可选,但缺了就没法联机 —— 明确提示,不静默。
     #    包内落点是 `easytier/` 子目录(不是平铺),游戏正是按那里找的。
     et_out = os.path.join(out, EASYTIER_PKG_DIR)
     missing = []
@@ -179,7 +179,7 @@ def main() -> None:
         print("  ✓ %s/%s" % (EASYTIER_PKG_DIR, LICENSE_FILE))
 
     # ③ 初始节点列表:随包分发(2026-10-02 起代码里没有内置节点表,见 core/config/tunnel_meta.gd)。
-    #    只在四件套齐时才有意义(没有内核,列表无处可挂);缺四件套时上面已经点名过了。
+    #    只在四件套齐时才有意义(没有内核,列表无处可挂);缺四件套时上面已经明确提示过了。
     if not missing:
         relay_src = find_easytier(RELAY_FILE)
         if relay_src:

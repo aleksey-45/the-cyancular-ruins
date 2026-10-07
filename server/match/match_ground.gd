@@ -3,11 +3,11 @@ extends MatchState
 
 # 地面武器域(服务器权威):表 + 拾取/丢弃裁决 + 事件广播 + 初始分布/换局重置。
 #
-# ★ 本文件是继承链的**中间层**(…→ MatchSnapshot → MatchGround → MatchState)。
+# - 本文件是继承链的**中间层**(…→ MatchSnapshot → MatchGround → MatchState)。
 #   按 match_state.gd 的规矩**不得定义** _init/_ready/_enter_tree/_exit_tree/_physics_process ——
 #   编排仍由 MatchHost._physics_process 每帧显式调用下面的函数。
 #
-# ★ 为什么服务器要**真的实例化 WeaponPickup**:落体决定最终落点,而落点直接决定
+# - 为什么服务器要**真的实例化 WeaponPickup**:落体决定最终落点,而落点直接决定
 #   "够不够得着"。纯逻辑表只存位置、不会算落体;复用 WeaponPickup 的物理就两端同源
 #   (这也是单机侧那条"落点与何时开始模拟无关"的不变量在联机端成立的前提)。
 #   代价是 headless 服务器上多 12 个(带哑视觉的)节点 —— 可忽略,真要省再说。
@@ -17,7 +17,7 @@ extends MatchState
 # 按 64px 半径走的。让机器人自己走过去需要寻路(实测两轮都栽在这上面:地图是每进程
 # 随机选的一份 `.cyrm`,只会"水平走 + 卡住跳"的机器人在窄台上会永久卡死)。
 # 打开后服务器每帧保证**每个站着的玩家脚下 64px 内至少有一把枪** —— 探针就完全不用走位。
-# ★ 默认关,且只由 worker 的 `--test-ground-teleport` 打开(见 server_main.gd 的 argv 解析
+# - 默认关,且只由 worker 的 `--test-ground-teleport` 打开(见 server_main.gd 的 argv 解析
 #   与 worker_launcher 的转发):生产路径上这个开关**不可达**,不进任何真实对局。
 static var test_ground_teleport := false
 
@@ -28,7 +28,7 @@ var _self_drop_until: Dictionary = {}  # role -> {inst: 解禁时刻(ms)},防"�
 
 
 # 本局投放的武器类型清单:每种 2 把,跳过被禁的类型。
-# ★ 与单机 `Level0._default_weapon_types` **同源**(都取注册表),差别只在禁用表是哪个。
+# - 与单机 `Level0._default_weapon_types` **同源**(都取注册表),差别只在禁用表是哪个。
 func _server_weapon_types() -> Array:
 	var out: Array = []
 	for type_id in WeaponRegistry.all_ids():
@@ -54,7 +54,7 @@ func _spawn_ground_weapon(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 	else:
 		_next_ground_inst = maxi(_next_ground_inst, inst + 1)
 	var node: WeaponPickup = preload("res://scenes/weapons/weapon_pickup.tscn").instantiate()
-	node.configure(type_id, inst, mag, vel)   # ★ 必须在 add_child 之前(见 WeaponPickup 的注释)
+	node.configure(type_id, inst, mag, vel)   # - 必须在 add_child 之前(见 WeaponPickup 的注释)
 	add_child(node)   # 与 WorldBuilder.build_sim 的碰撞体同级 → 落体才撞得到地形
 	node.global_position = pos
 	node.canonical_pos = pos
@@ -91,7 +91,7 @@ func _sync_ground_positions() -> void:
 
 
 # 仅测试用(见 `test_ground_teleport`):给每个站着、且脚下 64px 内没有可捡武器的玩家,
-# 把场上最近的一把挪到他脚下。★ 每次挪的判据是 `weapon_pickup_radius` 本身 ——
+# 把场上最近的一把挪到他脚下。-  每次挪的判据是 `weapon_pickup_radius` 本身 ——
 # 与 `_try_server_pickup` 同一个数,所以"服务器认为够得着"和"实际捡得到"不会漂。
 func _debug_keep_weapon_within_reach() -> void:
 	if not test_ground_teleport or ground_weapons.entries.is_empty():
@@ -100,8 +100,8 @@ func _debug_keep_weapon_within_reach() -> void:
 		var p: Node2D = players[role]
 		if p == null or p.is_downed():
 			continue
-		# ★ 排除**他自己刚丢下的那些**:那些在冷却期内本来就不参与他的拾取判定
-		#   (`_live_self_drops`)。不排除的话,喂到脚下的可能正好是被排除的那把 ——
+		# - 排除**他自己刚丢下的那些**:那些在冷却期内本来就不参与他的拾取判定
+		#   (`_live_self_drops`)。不排除的话,传入脚下的可能正好是被排除的那把 ——
 		#   探针看着"枪就在脚边却捡不起来",而服务器其实完全正确。
 		var blocked: Array = _live_self_drops(role)
 		if not ground_weapons.nearest_within(
@@ -124,7 +124,7 @@ func _debug_keep_weapon_within_reach() -> void:
 
 
 # 一件地面武器的**权威节点位置**(canonical,恒在 [0,MAP))。凡是下发给客户端的 `pos` 一律用它。
-# ★ 关于 `entries[].pos`:它每帧被 `_sync_ground_positions` 刷成同一个 canonical_pos,
+# - 关于 `entries[].pos`:它每帧被 `_sync_ground_positions` 重置为同一个 canonical_pos,
 #   客户端把载荷里的 `pos` 直接当 `WeaponPickup.canonical_pos`(见 pvp_match_client
 #   ._spawn_pickup_node 的注释:契约就是 canonical)。**本函数保留"读活节点"而不是读表**,
 #   理由只剩一条:拿到的是节点自己的权威值,并对陈旧条目留痕。
@@ -136,22 +136,22 @@ func _canonical_of(inst: int) -> Vector2:
 	if n != null and is_instance_valid(n):
 		return (n as WeaponPickup).canonical_pos
 	# 节点与条目是一起增删的(`_spawn_ground_weapon`/`_remove_ground_weapon`),走不到这里才是常态;
-	# 真走到了说明有陈旧条目 —— **别静默**:兜底只能回表里那份,可能与实际落点不符,所以留一条痕。
+	# 真走到了说明有陈旧条目 —— **别静默**:保底处理只能回表里那份,可能与实际落点不符,所以留一条痕。
 	var e: Dictionary = ground_weapons.get_entry(inst)
 	push_warning("MatchGround._canonical_of: inst %d 没有活节点,退回表里的 pos(可能与实际落点不符)" % inst)
 	return e.get("pos", Vector2.ZERO)
 
 
 # 给 match_sync_data 的载荷(客户端进场拉取时一并拿到开局那批)。
-# ★ `pos` 必须是 **canonical**(与 `_broadcast_weapon_spawned` 同一条契约)。开局这批是唯一
+# - `pos` 必须是 **canonical**(与 `_broadcast_weapon_spawned` 同一条契约)。开局这批是唯一
 #   "读表"而不是"读刚生成的节点"的投递路径,故显式走 `_canonical_of` 而不是直接 `e["pos"]` ——
 #   今天两者等价(视觉中心已合并到节点原点),但契约要写死在这里,别依赖"表恰好是对的"。
 #
-# ★★ 本函数与 `_broadcast_weapon_spawned` 共用**条目形状**,但语义**不同** —— 别把两者对齐:
-#   · `_broadcast_weapon_spawned` = **生成事件**:`pos`/`vel` 都是"这件刚被生成"那一刻的值,
+# 注意： 本函数与 `_broadcast_weapon_spawned` 共用**条目形状**,但语义**不同** —— 别把两者对齐:
+#   - `_broadcast_weapon_spawned` = **生成事件**:`pos`/`vel` 都是"这件刚被生成"那一刻的值,
 #     客户端拿这份 vel 从 canonical 重放落体,落点才与服务器一致。
-#   · 本函数 = **当前状态**:`pos` 与 `vel` **都取活节点此刻的值**(`_canonical_of` + 活速度)。
-#   ★ 本函数有两个调用时机(见 server_main._on_match_sync,同一口):**进场一次** + **每次重连一次**。
+#   - 本函数 = **当前状态**:`pos` 与 `vel` **都取活节点此刻的值**(`_canonical_of` + 活速度)。
+#   - 本函数有两个调用时机(见 server_main._on_match_sync,同一口):**进场一次** + **每次重连一次**。
 #     重连那次是关键:那些枪在掉线窗口里早就落定了,若 `vel` 沿用条目里那份"生成时刻的值"
 #     (那是 `_broadcast_weapon_spawned` 的纪律,对本函数不适用),客户端会把它**重扔一次** ——
 #     `WeaponPickup.configure` 会置 `velocity = p_vel` **且** `_settled = false`,于是新节点
@@ -159,10 +159,10 @@ func _canonical_of(inst: int) -> Vector2:
 #     方向正是当初扔出去的方向。它只在客户端(地面武器不进 `capture_state`、玩家不与层 8 碰撞
 #     → 不会滚回滚循环),但 **F 拾取提示读的正是客户端那份表** → 提示会指着服务器上根本没有枪的
 #     位置,违反"提示了 A、服务器却捡了 B"那条契约,且只有那把枪下次被捡走/被扔掉才自愈。
-#   ★ 为什么取**活**速度而不是"强行落定"(置 `velocity = ZERO` / `_settled = true`):后者会把
+#   - 为什么取**活**速度而不是"强行落定"(置 `velocity = ZERO` / `_settled = true`):后者会把
 #     一把真在半空中的枪**冻住**。取活速度则两端从**同一个 (pos, vel)** 继续模拟 —— 落体是纯
 #     确定性的(见 WeaponPickup 的"落点与何时开始模拟无关"),于是两端落点逐字一致。
-#   ★ 进场那批的语义**没有被这条改动动到**:开局散点的 `vel` 本来就是 `Vector2.ZERO`,而那时
+#   - 进场那批的语义**没有被这条改动动到**:开局散点的 `vel` 本来就是 `Vector2.ZERO`,而那时
 #     它们要么已停稳(活速度 = 0)、要么还在落那 32px(活速度是它真实的下落速度 —— 比 0 更准,
 #     落点不变,因为水平速度恒 0)。载荷 `pos` == 拾取判定圆心那条契约由 `_canonical_of` 保证,
 #     有探针钉着(`ground_action_probe` 的 ⓪ 与 ⑦)。
@@ -178,7 +178,7 @@ func ground_weapons_payload() -> Array:
 
 
 # 一件地面武器**此刻**的速度(已停稳的是零;半空中的是它真实的速度)。
-# ★ 兜底纪律与 `_canonical_of` 同款(没有活节点 → 退回条目里那份)。这里**不重复**留痕:
+# - 保底处理纪律与 `_canonical_of` 相同机制(没有活节点 → 退回条目里那份)。这里**不重复**留痕:
 #   同一个 inst 上 `ground_weapons_payload` 会先调 `_canonical_of`,那条痕已经留过了。
 func _live_velocity_of(inst: int) -> Vector2:
 	var n = _ground_nodes.get(inst, null)
@@ -195,11 +195,11 @@ func _broadcast_weapon_spawned(inst: int, by_role: int = -1) -> void:
 	var e: Dictionary = ground_weapons.get_entry(inst)
 	if e.is_empty():
 		return
-	# ★ `pos` 显式取 canonical,不读 `e["pos"]`:今天两者等价,但"读刚生成的节点"是
+	# - `pos` 显式取 canonical,不读 `e["pos"]`:今天两者等价,但"读刚生成的节点"是
 	#   与 `ground_weapons_payload` 同一条契约,别改回读表(那曾是个真实的静默坑 —— 见 `_canonical_of`)。
-	# ★ `vel` 同理且**必须保持是"生成时那一份"**:表里的 `vel` 从不被 `_sync_ground_positions`
+	# - `vel` 同理且**必须保持是"生成时那一份"**:表里的 `vel` 从不被 `_sync_ground_positions`
 	#   刷新,客户端拿它 + canonical 重放落体才有"落点与何时开始模拟无关"这条不变量。
-	#   哪天有人顺手把 vel 也做成逐帧刷新,两端落点会立刻发散(而且不报错)。
+	#   哪天有人随意将 vel 也做成逐帧刷新,两端落点会立刻发散(而且不报错)。
 	_rpc_all("weapon_spawned", [{"inst": inst, "type_id": int(e["type_id"]),
 			"mag": int(e["mag"]), "pos": _canonical_of(inst), "vel": e["vel"], "by_role": by_role}])
 
@@ -246,7 +246,7 @@ func _try_server_pickup(p: Node2D, role: int) -> void:
 	var inst := int(e["inst"])
 	var dropped: int = p.weapons.pick_up(int(e["type_id"]), int(e["mag"]))
 	if dropped < 0:
-		return   # 被禁用闸门拒绝:地面那件留着(与单机同款哨兵,见 WeaponComponent.PICKUP_DENIED)
+		return   # 被禁用门控前置校验拒绝:地面那件留着(与单机相同机制哨兵,见 WeaponComponent.PICKUP_DENIED)
 	_remove_ground_weapon(inst)
 	_broadcast_weapon_removed(inst, role)
 	if dropped > 0:
@@ -276,12 +276,12 @@ func _try_server_drop(p: Node2D, role: int) -> void:
 # 唯一调用时机 = **倒地边沿**(用户 2026-09-21 裁定「掉落的武器应该在死亡后直接原地掉落」),
 # 调用点有三处,各对应一个模式的倒地边沿: `MatchRound._match_round_tick`(1v1)、
 # `RoyaleHost._match_round_tick`(大乱斗)、`TeamHost._match_round_tick`(3v3)。
-# ★ 为什么不挂在复活流程里(旧实现的写法):`_respawn_player` **先把人瞬移到出生点**,
+# - 为什么不挂在复活流程里(旧实现的写法):`_respawn_player` **先把人瞬移到出生点**,
 #   再调本函数 —— 于是"死亡点"掉落实为"出生点掉落";而且尸体在 2s 倒地窗里继续走物理
 #   (重力/击退衰减/滑行),到复活那一刻它早已不在死亡的那一格。
-# ★ 保留哪一把由 `random_keep_one()` 决定(内部已 equip)—— 倒地时选定的那把会一路跟着
+# - 保留哪一把由 `random_keep_one()` 决定(内部已 equip)—— 倒地时选定的那把会一路跟着
 #   玩家复活,所以 `_respawn_player` 里**不再**需要(也**不许**)再调一次本函数。
-# ★ 不补满弹:与"残弹跟着枪走"一致,也与改动前(服务器复活只 equip)一致。
+# - 不补满弹:与"残弹跟着枪走"一致,也与改动前(服务器复活只 equip)一致。
 func _drop_all_but_one(p: Node2D, role: int) -> void:
 	if p.weapons == null:
 		return
@@ -302,12 +302,12 @@ func _drop_all_but_one(p: Node2D, role: int) -> void:
 
 # ── 初始分布 / 换局重置 ──
 
-# 开阔地板格(1v1 的判据)。★ 联机侧用的是 `SpawnPicker.spawn_candidates()`
+# 开阔地板格(1v1 的判据)。-  联机侧用的是 `SpawnPicker.spawn_candidates()`
 # (2026-09-18 从 RoyaleHost 抽出;它要求同层连通区 ≥ **`SpawnPicker.area_threshold()`** ——
 # 2026-09-19 起该门槛是**自适应**的:正常图 = `OPEN_AREA_MIN`(20),本图最大连通区 < 20 时按
 # `ADAPTIVE_RATIO` 缩放,见 `core/sim/spawn_picker.gd`)。判据本体仍是
 # `MazeGenerator.is_floor_cell_with_headroom`,别在这儿抄第二份。
-# ★ 本函数**没走** `SpawnPicker`(自己扫全量地板格)⇒ **1v1 的地面武器分布不受那一波改动影响**;
+# - 本函数**没走** `SpawnPicker`(自己扫全量地板格) ->  **1v1 的地面武器分布不受那一波改动影响**;
 #   这里只是把注释的指向订正到现行判据(2026-09-19 评审 Minor)。
 func _ground_spawn_cells() -> Array:
 	var out: Array = []
@@ -340,7 +340,7 @@ func _scatter_ground_weapons(types: Array) -> void:
 
 # 开局:铺 12 把(每种 2 把、跳过禁用),再让每个玩家(含 AI 补位)从池子里随机拿 1 把
 # → 地上剩 12 - N 把。
-# ★ 这同时是"服务器玩家**必须有枪**"的唯一来源:player.tscn 自身的 _ready 给的是空背包,
+# - 这同时是"服务器玩家**必须有枪**"的唯一来源:player.tscn 自身的 _ready 给的是空背包,
 #   不发的话服务器上的玩家开不了火(PvP 直接哑火)。
 func _setup_ground_weapons() -> void:
 	_scatter_ground_weapons(_server_weapon_types())
@@ -348,7 +348,7 @@ func _setup_ground_weapons() -> void:
 		var p: Node = players[role]
 		if p.weapons == null:
 			continue
-		var t := 1   # 兜底:池子空(全禁/无地板格)时至少给手枪
+		var t := 1   # 保底处理:池子空(全禁/无地板格)时至少给手枪
 		if not ground_weapons.entries.is_empty():
 			var idx := randi() % ground_weapons.entries.size()
 			var e: Dictionary = ground_weapons.remove(int(ground_weapons.entries[idx]["inst"]))
@@ -360,11 +360,11 @@ func _setup_ground_weapons() -> void:
 # 换局:清空重铺 + 每人背包重置为随机一把。
 # 与"还原可破坏砖 + 清子弹"同一纪律 —— 两端每局从同一基线出发,装备也是本局的进度。
 #
-# ★ 清的与铺的**都必须广播**:换局是客户端唯一"既不会重进场景、也不会再拉一次 match_sync"的
+# - 清的与铺的**都必须广播**:换局是客户端唯一"既不会重进场景、也不会再拉一次 match_sync"的
 #   时刻(它只是收到新一轮 COUNTDOWN)。不广播的话客户端留着一整批**上一局的幽灵枪**(位置早已
 #   不对,按 F 也捡不起来 —— 服务器那边早没了),而新一轮那批在它那儿一件都不存在 →
 #   表现就是"地上的枪捡不起来,只能捡后来丢弃的"(丢弃走事件,是新 inst,档建得出来)。
-# ★ `_next_ground_inst` **不重置**:inst 必须全生命周期单调 —— 客户端的 `_spawn_pickup_node`
+# - `_next_ground_inst` **不重置**:inst 必须全生命周期单调 —— 客户端的 `_spawn_pickup_node`
 #   对"已有 inst"是**静默 return**,撞号 = 新一轮那批在客户端一件都建不出来(而且不会报错)。
 func _reset_ground_weapons() -> void:
 	var cleared: Array = _ground_nodes.keys().duplicate()
@@ -376,7 +376,7 @@ func _reset_ground_weapons() -> void:
 	_self_drop_until.clear()
 	ground_weapons.clear()
 	_setup_ground_weapons()
-	# 先清后铺(可靠通道保序)。★ 铺完只广播**留在场上**的那些 —— `_setup_ground_weapons`
+	# 先清后铺(可靠通道保序)。-  铺完只广播**留在场上**的那些 —— `_setup_ground_weapons`
 	# 给每个玩家随机发的那把已经从表里摘走了,广播出去客户端会凭空多出一件(件数与服务器不符)。
 	for inst in cleared:
 		_broadcast_weapon_removed(int(inst), -1)

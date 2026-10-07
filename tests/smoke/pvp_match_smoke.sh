@@ -5,7 +5,7 @@ set -e
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 
-# ★ 起跑前清孤儿 worker(判据与理由见 env.sh 的 kill_port_range / lobby_alive):本支**实测**
+# - 起跑前清孤儿 worker(判据与理由见 env.sh 的 kill_port_range / lobby_alive):本支**实测**
 #   被上一支遗留的 worker 毒过 —— 症状是客户端永远收不到 match_start、内建超时永不触发、
 #   整支静默挂住、**一行裁决都不打**。有大厅在 7777 上就不动它(那时本脚本本来也 bind 不上)。
 if ! lobby_alive; then
@@ -37,7 +37,7 @@ wait $A_PID 2>/dev/null || true
 wait $B_PID 2>/dev/null || true
 kill_procs $SERVER_PID $A_PID $B_PID
 kill_port
-# ★ 大厅已杀 ⇒ 它的 worker 现在是孤儿(`OS.create_process` 起的**孙进程**,不在上面那串 PID 里)。
+# - 大厅已杀  ->  它的 worker 现在是孤儿(`OS.create_process` 起的**孙进程**,不在上面那串 PID 里)。
 kill_port_range 7800 8300
 
 if grep -q "SMOKE_MATCH OK create" /tmp/pvp2_a.log && grep -q "SMOKE_MATCH OK join" /tmp/pvp2_b.log; then

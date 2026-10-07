@@ -2,9 +2,9 @@ class_name MazeGenerator
 extends RefCounted
 
 # 地图会话的入口:**选哪份地图 + 当前网格**这两件会话级状态住在这里,其余一律委托出去。
-#   · `.cyrm` 格式(格子值编解码 / 解析 / 序列化 / spawn 元数据)→ **MapFormat**(core/sim/map_format.gd)
-#   · 环面网格几何与寻路(环面距离 / 副本锚定 / 地板格 / A* / LOS)→ **GridPathfinder**(core/sim/grid_pathfinder.gd)
-# ★ 本文件保留全仓既有的 `MazeGenerator.xxx` 调用面(生产代码 ~57 个文件、上百处引用),
+#   - `.cyrm` 格式(格子值编解码 / 解析 / 序列化 / spawn 元数据)→ **MapFormat**(core/sim/map_format.gd)
+#   - 环面网格几何与寻路(环面距离 / 副本锚定 / 地板格 / A* / LOS)→ **GridPathfinder**(core/sim/grid_pathfinder.gd)
+# - 本文件保留全仓既有的 `MazeGenerator.xxx` 调用面(生产代码 ~57 个文件、上百处引用),
 #   所以下面是**逐条一行**的转发。别在这里再写实现 —— 新逻辑进上面两个类;
 #   新代码若明确只碰格式或只碰寻路,直接引 MapFormat / GridPathfinder,不必绕这里。
 

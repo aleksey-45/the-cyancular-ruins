@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""UDP 延迟中继(测试用,不参与发布)。
+"""UDP 网络延迟与抖动模拟代理工具（测试专用）：
 
-把客户端发到 `--listen` 端口的包,延迟 `--delay-ms` ± `--jitter-ms` 后转发给
-`--to-host:--to-port`;反向同样延迟。ENet 跑在 UDP 上,故只需原样搬运载荷。
+将客户端发送至 `--listen` 端口的数据包，延迟 `--delay-ms` ± `--jitter-ms` 后转发至
+`--to-host:--to-port`；双向数据流均进行同等延迟模拟。底层基于 UDP 协议直接转发载荷。
 
-★ **一个客户端一个代理实例。** ENet 按四元组认 peer,若两个客户端共用同一个代理的
-回程 socket,服务器看到的是**同一个源地址** ⇒ 两个 peer 会被并成一个。
-故:client1 → --listen 7800,client2 → --listen 7801,两者都 --to-port 到同一个 worker。
+注意：每个客户端需独立运行一个代理实例。
+ENet 依赖网络四元组（源 IP、源端口、目的 IP、目的端口）识别 Peer 节点。
+若多个客户端共用同一个代理实例的回程 Socket，服务端识别到的源地址将完全相同，导致节点状态混淆。
+正确用法：客户端 1 监听 7800，客户端 2 监听 7801，两者分别代理转发至目标服务端 Worker 端口。
 
-用法:
+用法示例：
     python tests/harness/net_lag_proxy.py --listen 7800 --to-port 8811 --delay-ms 70 --jitter-ms 15
 """
 import argparse

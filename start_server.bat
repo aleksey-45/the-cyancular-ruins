@@ -1,15 +1,7 @@
 @echo off
-rem PvP server launcher (headless, listens on 7777). ★ 单进程、单端口:大厅与对局同进程
-rem (配合完成后直接建 MatchSession 节点),不拉任何子进程、也不转连。
-rem This bat is pure ASCII + CRLF so Windows cmd parses it in any locale.
-rem It cd's to its own directory so --path . always resolves to the project,
-rem regardless of how this window was opened.
-rem Keep this window open = server running. Close it = stop it.
-rem ★ 不传 --port 时回落 NetBus.DEFAULT_PORT(7777)。正常玩法里端口由**客户端**挑
-rem   (core/net/local_server.gd,20000~59999 随机 + 探活重试),这个 bat 只服务"手跑一台
-rem   固定端口的大厅"那种开发/联调场景。
-rem 启动前先杀掉旧残留:占 7777 的旧服务端。★ 只杀这一个端口 —— 客户端自建的那些服务端
-rem   在别的端口上跑着,按端口区间扫会把它们一起端掉。
+rem PvP 独立服务端启动脚本（Headless 模式，默认监听端口 7777）。
+rem 单进程、单端口架构：大厅与对局在同一进程内运行，无需创建额外 Worker 子进程。
+rem 启动前自动检测并终止占用 7777 端口的残留旧进程，避免端口冲突。
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ============================================
