@@ -59,3 +59,9 @@ _crashtest/
 # EasyTier 第三方二进制(由 tools/fetch_easytier.py 下载,发布构建打包时随行分发,不入库)
 easytier/
 
+
+# 隧道手感测量的运行产物（两份日志由 .sh 每次重写，不进仓）
+tests/probe/feel_out/
+
+# 多实例联机手感测试的实例副本与产物（每次跑重铺，不进仓）
+tests/multiplayer/
