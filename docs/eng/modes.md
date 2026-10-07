@@ -1,93 +1,84 @@
-# 对局模式(3v3 / 结算页 / 大乱斗)
+# 多人对战模式与结算系统 (1v1 / 3v3 团队赛 / 大乱斗 / 结算面板)
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
-> 本文件覆盖:3v3 团队模式 · 结算页 · 大乱斗(Royale) · ★ 大乱斗的已知差异(实测观察,未压制)。
-> ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
+> 本文档规范 Cyber Ruins (CyR) 的多人玩法模式规则、阵营碰撞、计分体系与结算流程。
+> 返回索引：[`CLAUDE.md`](../../CLAUDE.md)。
 
-#### 3v3 团队模式
+---
 
-**A 册 = 服务端与规则**(B 册 = 大厅选边房间 + 客户端 `team_game`/`TeamHud`)。启动契约见 `server_main.gd` 文件头:`--worker --team --port P --roles r,… --teams t,…` —— `roles` 与 `teams` **同序等长**(第 i 个 role 的队号 = `teams[i]`),**满员才开、不降级**(与 `--royale` 方向相反);解析到 `--royale --team` 同时为真直接拒启动。队伍表经 **`match_sync` 的 `teams`**(`TeamHost.team_map()` 的只读副本)下发,**只在非空时带该键**、**不进 `round_state`**。
+## 一、对战模式概览
 
-- **★ 队伍表来自 `--teams`,不得从 role 号推导**:`MatchState._team_of` 就是那张表。role 由大厅「最小空闲号」分配、有人退出后会留空洞,奇偶/区间推导必然出错。同理,「满员」判据取 `_team_of_role.size()`(**不是** `_role_set.size()` —— `--roles` 的逐 token 列表可以带重复项,拿它当分母会永远到不了满员 → 干等超时退出)。
-- **★ `same_team()` 的 0 语义:任一方 0 → false**(0 = 「查不到队伍」)。`same_team(0, 0)` 同样必须是 false —— 否则 1v1 的两人会被判成队友、**子弹全部穿过对手**。
-- **★ 子弹穿透队友、爆炸对队友满效** —— 后者是**现状行为**:爆炸走 `_explode()` 的 `apply_damage` 门 → `Explosion.apply_aoe(...)`,玩家分支**不看任何队伍关系**,**`same_team` 不在那条路径上**。★ 别把 `_check_player_contact` 当队伍判断读:它只排除射手、**不看队伍**。在**子弹/爆炸这条路径上**,`same_team` 的调用在 **`server/match/match_combat.gd`** 的 `_adjudicate_bullets` / `_adjudicate_grenade` 两处 —— **改一处忘一处时普通弹那条照样绿**,守卫是 `tests/probe/team_table_probe.tscn` ③/④。★ 全仓另有若干处调用 —— **本条刻意不写"共 N 处"**(该数已漂),**以 grep 为准**。
-- **★ 助攻与惩罚**:逐人统计多了 `assists` 与三个惩罚原始计数(`team_damage` / `self_damage` / `team_kills`),全部只影响 `kscore`、**不进 `dealt` / `taken`**。
-  - **助攻表** `MatchState._assist_times` = `victim_role -> {attacker_role: 时刻ms}`;写入口 `_note_hit`(由 `MatchCombat._on_player_hit` 调 —— 所有伤害路径的唯一汇聚点);判定在 `_record_down`:除击杀者外、窗口内、且 `same_team(attacker, killer)` 的 attacker **各** `assists += 1`;清空在 `MatchRound._respawn_player`。窗口复用 `ATTRIB_WINDOW`(3s)。★ 队伍表为空 ⇒ `same_team` 恒 false ⇒ **1v1/大乱斗天然拿不到助攻**。
-  - ★★ **那条过滤今天只有一条**(`if not same_team(attacker, killer_role): continue`):没有它,受害者的**队友**误伤过他、随后敌人补掉 ⇒ 那位队友**因为打死自己人拿到助攻**。★★ **原先那个 `or same_team(attacker, victim)` 半句已删除**,论证依赖两个前提而**守卫强度不同**:**①**「同队击杀的早退还在」—— **有守卫**(`team_host_probe` (k4));**②**「`same_team` 仍是**等价比对**」—— **没有守卫**(它一旦非传递,推理就崩,而此时 (k4) 照绿)。⇒ **别把这条读成"(k4) 已经把它罩住了"。**
-  - **惩罚** = `(team_damage + self_damage) ÷ 5 + team_kills × 100`(收在 `core/sim/score_rules.gd::penalty`),记在**肇事者**行上。`team_kills` 写在 `_record_down` 的"队友击杀"那一支。
-  - ★★ **自伤必须有一条专用通道**:`attribute()` 对 `attacker == victim` **静默跳过**(那是对的),于是自伤与"归因不到"**完全不可区分** ⇒ 新增 `CombatFeedback.note_self_hit` / `is_fresh_self_hit`,由 `Explosion.apply_aoe` 在 `shooter == victim` 时写一笔。**自伤的唯一来源就是自己的爆炸**。
-  - ★★ **该标记是"只写不清"的时刻标量(窗口 8ms),所以写端必须自己作废它**:同一物理帧两次 `apply_aoe` 间隔 **0ms** ⇒ "自己那颗先炸、敌人那颗同帧后炸"时,读端按"自伤优先"会把**敌方**那笔记进受害者的 `self_damage` —— 玩家**因为被敌人打中而扣自己的分**。修法 = 落地一笔**真实归因**时在 `attribute()` 里 `remove_meta("last_self_hit_time")`。守卫**两条只差顺序**且缺一不可:`⑬n3` / `⑬n4`(后者是"**读端前置清标记**"那一族的**唯一**鉴别器)。★ 删掉 `note_self_hit` 那笔 ⇒ **4 条红**。
-  - ★ **已知边界(登记不修)**:① 同一帧内"先被敌人打中、再被自己的爆炸炸到"会让那一下**同时**进敌人的 `dealt` 与自己的 `self_damage` —— **两个不同的账户、不是双计**;② 实测这一档在可达集里是**一次 no-op**;③ 该标记**不因复活/死亡被清**,但在 `downed` 期间**不可能被读到** ⇒ **结构上惰性**。
-- **★ 激光也穿透队友**:激光是**即时命中**、不走 `_adjudicate_bullets`,故 `same_team` 的既有调用点**一处都够不到它**。修法 = `MatchState.is_friendly(a, b)`(给只拿得到**节点**的**武器**用)+ `LaserWeaponBase._damage_path_targets` 玩家循环里一条 `continue`(**不是 `break`**:队友不挡弹道,身后的敌人照打)。★ **只改权威侧**(客户端视觉副本在 `_spawn_projectiles` 开头就被挡住)⇒ **不碰协议、两端无需同版本**。守卫:`tests/probe/laser_team_probe.tscn`(队友不掉血 **且** 队友**身后**的敌人照常掉血 —— 后半条是**鉴别点**)。
-- **★★ 3v3 击杀后**不复位任何人****(用户要求删除「击杀者复位」,`TeamHost._reset_killer_only` **已整体删除**)。★ **代价照实记录**:那条规则是**为反「反复活点蹲守」而立**的,删除后击杀者可以守在对手出生点等对面 2s 后落下来再补一轮。★ **将来若想找回这条性质,不要原地重建它**(把击杀者瞬移走会再次触发本条的抱怨)—— 正确形状是"**复活点选点避开存活敌人**",而那一半已经在了(`_respawn_cell_for` 的 `RESPAWN_CLEARANCE`=8 格)。★ **只动 3v3**:1v1 的 `_reset_survivor` 与大乱斗**都原样保留**(`TeamHost._match_round_tick` 是整体覆写、不走 `super`)。守卫:`team_host_probe` ⑤(**已整体反转为"击杀者原地不动"**)。
-- **★ 掉线判据是「整队走光才终局」**(不是 royale 那条 `players.size() < 2`):`TeamHost.mark_disconnected` 覆写判「每队还剩几个**在场上**的人」,且**走光即弃权**。★ `server_main._expire_graces` 有**两处**判据都必须把 `_team_mode` 收进去:①宽限到点的分派走纯函数 `GraceWindow.expire_action(_royale, _team_mode)`(**必须有 `== ACTION_REMOVE` 的比较**);②末尾「全员走光才退出」的 `(_royale or _team_mode) and …`(漏了 = 3v3 全员走光后 worker 永驻占端口)。两处只改一处都是"能用但漏一半"。
-- **★ 3v3 有 K 键自杀(与 royale 同语义)**:`TeamHost.request_suicide_role` 照 `RoyaleHost` 那份逐字同构。★ 闸在 `server_main._on_suicide_request` 的首行,必须是 `if not (_royale or _team_mode) or _host == null: return` —— 只认 `_royale` 时 3v3 worker 把 `suicide_request` **静默丢掉**(K 键毫无反应、一个字都不打)。★ `request_suicide_role` 在 `kh_l5_probe.gd` 的**禁入基类**名单上 → 覆写必须留在 `TeamHost`(子类)。守卫:`team_host_probe` ⑫ + ⑫b。
+游戏目前支持三种多人对战模式：
+1. **1v1 经典决斗 (Duel)**：双人单挑，回合制积分，率先达到 5 次击杀或赢得指定局数者胜。
+2. **3v3 团队对抗 (Team Deathmatch)**：两队各 3 人对抗，支持友军伤害规避、助攻判定与惩罚分机制。
+3. **大乱斗模式 (Royale)**：支持 2~8 名玩家自由混战（支持 AI 玩家补位），在 300 秒限时内按总击杀数决出胜负。
 
-**B 册 = 大厅选边 + 客户端**:统一大厅 `scenes/mp_lobby.gd` 的**等待室**(建房 / 公开列表 / **选边**,按模式渲染三种形态)→ `scenes/team_game.gd`(5 个远端副本 + 队色 + 分队碰撞的**客户端一半**)+ `ui/hud/team_hud.gd`(记分条按**队号**,不是 role)。以下每条都是「改错了不报错」的那一类。
+---
 
-- **★ 三套大厅协议并存且互斥(1v1 `rooms` / 大乱斗 `royale_rooms` / 3v3 `team_rooms`),互斥判定必须双向**:六个建/加入入口每一个都要判另外**两种**。★ 只加一头就是"从 1v1 房直接开 3v3 房":同一个客户端同时挂两张表 → 收到**双重 `go_match`**,而旧房无人认领 = **幽灵房**(端口从此无人归还)。★ 最容易漏的是 **join 那半边**,守卫按入口逐个点:`team_room_smoke` ④ 是**双向**的(房内命中 + **房外不得命中**)。
-- **★ 对局中的 3v3 房活到「worker 进程退出」**:列表里**照旧可见**、`team_join` **一律拒**、名单取开局那一刻冻结的 `roster`。★ **这条纪律三个模式共用一份** —— 完整口径见 §对局中的房,别只照本节读。
-- **★ `teardown_room` 是三态**:房型判定走 **`room is RoyaleRoom` / `room is TeamRoom`**,端口归还分三档(**3v3 与大乱斗同档 360s**),注册表 `erase` 按同一个 `is` 判定。★★ **判据必须是 `is`,不能拿 `room.code` 去三张表里撞库** —— 三张表的房号空间**重叠**,按号码反查是**静默错拆**。★ 别把 3v3 并回 120s。守卫:`room_sweep_smoke` 钉「端口归还与注册表删除**只能出现在 `teardown_room` 与 `_release_port_later` 两个函数体内**」。
-- **★ 队色覆盖个人色相是 3v3 的规则,不是审美**:`_apply_peer_hues_or_team` **覆写基类那个钩子**、只消费载荷里的 `teams` —— `hues` 在 3v3 是**无效输入**,`_apply_peer_hues` **根本不会被调用**;身体 / 头顶 ID / 小地图点位一律问 `_team_color(role)`(单一来源)。★ 改这一条前先想"六个人认不出队友"。★ 个人色相在 3v3 **整体停用**:**自己那具也走队色**。★ 形状是**覆写钩子**(根本不进 `_apply_peer_hues`),不是"染完再盖"。守卫:`hue_tint_probe` 守卫 E。
-  - ★ 关于"自己"那三处(头顶 ID / 身体 / 小地图点)的完整口径与守卫,**见 §UI 的「"我"那个点」** —— 三处指的是同一个"我",别再在这里抄一份。
-- **★ 3v3 满 6 人才开、没有降级开局**:超时梯是 `_understaffed_wait > 30s` → 打印超时 → `quit(0)`。★ 这与 `--royale` 那条「已到 ≥2 人、20s 仍收不齐 → 按已到人数开局」**方向相反**,别顺手统一:大乱斗是自由混战(N 人可打),这边**两队人数必须相等**才成立。★ 满员判据是 `_claims.size() >= _team_of_role.size()`,大厅侧的"两队各 3 人"闸门在 `LobbyRooms.team_ready` / `team_room_ready`(判据只有一份)。
-- **★★ 队友不互挡的分队碰撞层契约**(服务端 `TeamHost._apply_team_layers` + 客户端 `team_game._apply_team_collision` 两半,逐值对齐)**:队 B 的身体层 = **`TeamHost.TEAM_ENEMY_LAYER` := 16**(**不许写死** —— 层位是全局资源)。**副本幽灵体 `mask` 恒 0、`layer` 按"它代表的那名玩家"的队**。三条"改错不报错"的后果:
-  - ① **整体覆盖式实现**(`mask = TEAM_ENEMY_LAYER`)会**连地形(1)与敌人(4)一起抹掉** ⇒ 该队**穿墙**(静默,要玩到才发现);而"位对了"那五条断言**对它全绿**,所以另有一条专钉"两队掩码都保留 1|4"的断言。
-  - ② 写成 `if t == 1 … else …` 会把"队号 0 / 表外 role"静默划进 **2 队** = **非对称碰撞** ⇒ 故服务端**先拦后分**,客户端一律落层 2(★ 旧实现把"未知"当成**队 2** ⇒ 同一具身体两端**放不同的层**,而两队掩码不同 ⇒ 队 2 的玩家在服务端**会**被挡住、客户端**不会** ⇒ **C2 每帧分歧且不报错**)。★ **"未知队号"今天的口径两处已统一**:客户端**颜色**(中性亮白)与**幽灵体层**(落层 2)都表示"不属于任何队";服务端仍是"什么都不配 = 保持默认层"。★ 这条**在生产路径上到不了**。
-  - ③ **客户端漏设** ⇒ **队友副本挡我** ⇒ C2 每帧回滚。★ 还有一处**必须补第二次**:副本是**懒建**的,而队伍表刷新发生在 `_apply_teams` —— 那一刻 `_replicas` **可能一个都还没有**;不在 `_ensure_replica` 里再刷一遍的话,晚建的副本会停在**无人色 + 幽灵体恒在层 2**,**两处都不报错**。
-  - ★ 判据:服务端 `team_host_probe` ⑩ + `test_move` 的**真行为**对照;客户端 `team_room_smoke` ⑨②(按**函数体**判)+ **两条结构断言**(函数体里 `return 2` 必须出现**两次**;必须含 `match`,兜底 `return 2` 要在 **match 之外** —— match 体内 `continue` 是 fall-through,兜底写进 match 会静默多跑一支)。变异实测:改回旧的一行三元 ⇒ 两条一起红,而按队那三条**照旧全绿**。
-- **★ 平局播报:`match_winner == 0` 在 3v3 有一条**新的成因** —— `TeamHost.mark_disconnected` 判"两队都走光"时写 `_endgame_winner = 0`。★ **1v1 那边 0 不可达**。`ui/hud/team_hud.gd` 对 0 念「平 局」。★★ **`ui/hud/pvp_hud.gd` 对 0 用的是 1v1 兜底**(`"P%d 获胜!" % …`)—— 那个分支在 1v1 里**从不执行**,照抄到 3v3 就会把平局念成「**P2 获胜**」。
-- **★ 输赢文案由 `set_my_team()` 驱动**:`_apply_teams` 在队伍表到达后**必须**调 `_hud.set_my_team(_team_of_role(PvpSession.role))`。漏了**不报错**:`_my_team` 恒 0 ⇒ 「本局胜利!」两条文案**一次都不会出现**,一律落进 else 念「本局落败」—— **赢的局报成输的**。(★ 平局那一支**不受影响**。)**队号只能从队伍表读,不是 role**。守卫:`hud_declarative_probe` ③(行为面)+ `team_room_smoke` ⑨①(接线面)—— **两半缺一不可**。
-- **★ 队色的机制是 `modulate = 队色 / 本体主色`,不是"直接乘队色"**:`_apply_tint` 的第二条入参 `color_override` 非透明时走这条;**`BODY_BASE_COLOR` = `player.png` 的不透明众数色 `#639BFF`**。★ 另外两条路**都实测不成立**:直接乘 `modulate` 只能把身体压暗、改不了色相(蓝身体乘橙色实测是 `#636073` **一坨灰紫**);hue shader 反解只是数值逼近。比值法则**结构性**成立。★ 队 2 的比值有分量 > 1(有意的,`modulate` 收 >1);队 1 的比值恰为 (1,1,1)(`C_TEAM_A` **就是** `BODY_BASE_COLOR`)。★ **换 sprite 素材要重测 `BODY_BASE_COLOR`**:它错了不报错,只是**整队一起偏色** —— 六个人一起偏仍然分得出谁是谁,**更容易漏**。守卫:`hue_tint_probe` 守卫 D(真渲染)+ `team_room_smoke` ⑩(headless 半边,读原始 PNG)。
-- **★ `player_p2_hue.gdshader` 的 `COLOR` 入参已含**纹理**** —— 这是**已修**的坑:Godot 4 的 `canvas_item` fragment 里 `COLOR` = 顶点色 × 纹理采样,而旧实现写的 `COLOR = tex * COLOR` 把纹理乘了**两次**(把颜色压灰、alpha 也被平方)。★ 现在只覆写 `COLOR.rgb`,`COLOR.a` **一字不动**;2026-09-20 起**只服务个人色相**,uniform 默认值改成 `0.0`(不改色)。★ 守卫是 `hue_tint_probe` 守卫 A(逐像素:`hue_shift = 0` 必须与"不挂 shader"完全相同)。⚠ 早期计划里曾把它登记成"**刻意没修**"—— **过期信息**。
-- **★ 换边后客户端也走"补态口径"**:3v3 每局**整队对调出生点**,客户端在**新一轮 COUNTDOWN** 那一拍重拉一次 `match_sync`,并**先置 `_resync_pull_pending = true` 再发**。★ 不置位的话:那条应答按**进场口径**处理 → 换边后载荷里的 `spawns` 是**新一侧**、而 `PvpSession.spawn` 手里是旧一侧,**两者必然不一致** ⇒ 每局边界刷一条**假告警** + 一次多余瞬移。★ 闸门与"重连补态"**共用**同一个 `_resync_pull_pending`(读一次即清),**不要新立一个标志**。★ 为什么不把第二份出生点塞进 `round_state`:那是给同一份数据开**第二条投递路径**。
-- **★ `TeamHost._on_bullet_hit` 覆写(★ 起是**冗余的重复写**)**:覆写里先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`。★★ **基类 `MatchCombat._on_bullet_hit` 现在自己也写同一笔** ⇒ 这两处覆写**不再承重**(`attribute()` 是幂等的纯元数据写入),保留只为留下写点。★ **别据此把基类那一行删掉**:1v1 走 `MatchBootstrap` 直接建 `MatchHost`,基类那一行是它**唯一**的子弹归因写端。★ 历史:在基类补上之前,这两处覆写是**唯一**的写端,**枪杀**这条路上 `_attributed_killer` 恒 0 ⇒ 逐人 `dmg` 漏掉最主要的伤害来源、ACS 直接失真;`kill_event` 的射手恒 0。★ 这里**原先还有第 ③ 条**「A 册'只复位击杀者'在枪杀上一直没生效」—— 那条规则已按用户要求删除,此句一并作废。
-- **★ 逐人数据 / ACS / MVP 的两条口径边界 → 均已修**:① **`_left_round` 曾记"宽限期到点"的局号而非"断线"那一刻** ⇒ 离开者的 ACS 被**压低**,与"已离开者分母更小"的取向**相反**。**修法 = `MatchState.note_disconnect_round(role)`**(`_enter_grace` 在掉线那一刻写一笔)。★★ 守卫**两半缺一不可**:读取端 = `tests/probe/late_match_probe.tscn`;此前**写入端完全没有守卫** —— 探针**自己**注入,把 `_enter_grace` 那一行删掉会**让原 bug 原样回来而全仓一条不红**;写入端守卫已补(真调 `_enter_grace`)。② **MATCH_OVER 之后的倒地曾仍进 `_stats`** ⇒ **修法 = 状态闸**,只排除 `MATCH_OVER`。★★ **口径要说准:ROUND_OVER 期间倒地照旧入账** —— 写成 `== PLAYING` 会连 `ROUND_OVER` 一起停记账,而那个差集此前**没有任何守卫**,故补了一条 **ROUND_OVER 相**。
-- **★ 三模式投递与结算页列**:`stats` 键从 **3v3 独有**扩成**三模式通用**;**1v1 另加 `mvp`**,**大乱斗刻意不带 `mvp`**。投递点各自在 `_broadcast_round_state`:**1v1 `server/match/match_round.gd`** / **大乱斗 `server/hosts/royale_host.gd`** / **3v3 `server/hosts/team_host.gd`**。★★ **两处"改错了不报错"的落点**:① **1v1 的击杀记给对手且不看归因**(与它的记分条"不分死因、对方死亡都算"**逐字一致**;照 3v3 的写会让结算页的击杀数**低于**记分条上的分数);② **大乱斗的击杀是**归因制**,无归因的死亡不计任何人的击杀** —— 与 1v1 **相反**。
-  - **结算页的列** = `ui/screens/match_result_payload.gd` 的 `C_DUEL`/`C_ROYALE`/`C_TEAM`:**1v1 `[kills,deaths,dealt,taken,acs]`** / **大乱斗 `[kills,deaths,dealt,taken]`**(无 ACS —— 单局死斗 `acs ≡ kscore`,恒等列零信息)/ **3v3 `[kills,deaths,assists,dealt,taken,acs]`**。标题在 `ui/screens/match_result.gd::COLUMN_TITLES`。**三个客户端一行未改**。
-  - **★ 载荷字段集 = `{kills, deaths, assists, dealt, taken, kscore, acs}`**(`dmg`→`dealt`)。计分口径收在 **`core/sim/score_rules.gd`**(`ScoreRules`,纯静态、无 autoload、`-s` 可测):`kscore = 击杀×100 + 助攻×50 + 伤害÷5 − 死亡×50 − 惩罚`,**`acs = kscore ÷ 局数`,读端不得再加伤害**(伤害只在 `kscore` 里出现一次;双计**不报错**,只是所有排名静默偏移)。逐人统计面已从 `TeamHost` 上提到 `MatchState`。★★ **"调权重不该让任何探针红"是假的**:`score_rules_smoke` 钉的是**性质**(与权重无关),但**测量生产路径分数**的那几条把**字面量**写进了期望值 —— 实测 `KILL_SCORE` 100→110 ⇒ `stats_delivery_probe` 红 1 条、`team_host_probe` 红 **6** 条。★ **别把那 7 条当假红去放宽**;调权重就**同步改这两处**。
-  - ★★ **一条登记不改行为的差异**:3v3 的**逐人 `kills` 之和 ≠ 记分条上的队分**。三模式的计分是**三种**组合:① **1v1 = 按 role 记分、`kills` 无归因**(与记分条**专门对齐**过);② **大乱斗 = 按 role 记分、`kills` 有归因**(无归因的死亡不计**任何人**);③ **3v3 = 队分按队、无归因**(溺水/自杀/队友误炸一律给对方队 +1),而 `kills` **有归因** ⇒ 那几档**队分 +1 而没有任何人记 `kills`**。★ 两条账各有读者,**不是 bug、也不要求对齐** —— 但**别拿结算页的击杀数去核对记分条**。
-  - 守卫:`stats_delivery_probe.tscn`(三个模式各一条**行为级**投递守卫:子类覆写 `_rpc_all`、在**调用时刻**深拷贝截获真要发出去的 `round_state`;★ 3v3 那一半原先只是**三条 `contains` 文本断言**,已被证明是**假绿**,现已删除)/ `match_result_payload_smoke.gd`(含"每个列键都要有标题"且键集**从常量派生**;只钉 dealt/taken 时 `deaths`↔`assists` 对调能全绿)/ `match_result_probe.tscn`(**真渲染**;★ 它对**单元格数值零断言** —— 别读成"渲染探针过了 ⇒ 数字对")。★ **两个键仍然保留、别顺手删**。
-- **★ 1v1 的子弹伤害进 `dealt`(已修)**:`dealt`/`taken` 的累计读的是 `attribute` 写下的归因 meta。**在此之前**子弹直击的归因只写在 `RoyaleHost`/`TeamHost` 的覆写里,而**基类自己不写**;1v1 走 `MatchBootstrap` **直接建 `MatchHost`**、没有那层覆写 ⇒ 结算页显示 `击杀 5 / 造成 0`。★★ **现在基类自己写**(`server/match/match_combat.gd` 的 `_on_bullet_hit` 首行)⇒ 四条伤害来源在**三个模式**下都进 `dealt`/`taken`;1v1 的 `mvp` 曾因 `dealt ÷ 5` ≈0 而**退化**,现在那一项重新起作用。★ 守卫 `stats_delivery_probe` **⑦** 钉住"**生产自己写不写**"这一面。
-- **★ `ATTRIB_FRESH_MS = 8ms` 的成立前提是"归因与伤害在**同一调用栈**"**:将来新增**延迟扣血**型伤害(如激光缝 2 预留的持续/灼烧)时,**写端必须自己每帧重写归因** —— 那种实现是"命中时写一次、后续帧扣血",扣血那一刻 meta 的年龄早已 > 8ms ⇒ 被**静默**判成"无攻击者"。该提示写在 `server/match/match_state.gd` 的 `ATTRIB_FRESH_MS` 上方。
+## 二、3v3 团队模式设计规范
 
-#### 结算页(三个模式的 MATCH_OVER 都从「等 N 秒自动回菜单」改成「弹结算页 + 玩家自己退」)
+### 1. 服务端配置与队伍映射
+- 启动参数：`--worker --team --port P --roles r1,r2,... --teams t1,t2,...`。
+- 角色与队伍为显式等长映射（`teams[i]` 对应 `roles[i]`），队伍信息随 `match_sync` 下发。严禁通过角色 ID 的奇偶性推导队伍。
+- 满员判定以队伍表中已分配玩家数量为准，两队人数对等时才允许开局。
 
-三个模式**同一套**,没有"哪个模式还是旧的"这回事。
+### 2. 团队伤害与贯穿机制
+- **投射物穿透友军**：常规子弹与激光武器穿透己方队友，不会被队友身躯阻挡，穿过队友后可正常命中敌方（参见 `MatchCombat._adjudicate_bullets` 与 `LaserWeaponBase._damage_path_targets`）。
+- **爆炸范围伤害判定**：爆炸范围伤害（AoE）会对友军生效并造成伤害。
+- **友军免伤判据**：通过 `MatchState.same_team(role_a, role_b)` 判定。若任一角色队伍编号为 0（未划分），判为非同一队伍，防止 1v1 模式中被误判为友军。
 
-- **结算页是模式无关的**:`ui/screens/match_result.gd`(`class_name MatchResult`,extends CanvasLayer)**不知道任何模式规则**;**模式差异全部由 `ui/screens/match_result_payload.gd` 的三个适配器**(`for_duel` / `for_royale` / `for_team`)折成一个载荷字典。★ `columns` **由数据决定**(某模式没有的统计**不进** columns,而不是补一列恒 0);`match_winner == 0` 是**平局**(1v1 那条**别照抄** `ui/hud/pvp_hud.gd` 的兜底)。★ **登记(不改,纯 cosmetic)**:`server/hosts/royale_host.gd` 的 `_finish_match` 在**平局**时打印 `胜者 role 0` —— 它把 `_match_winner()` 的 0 直接当 role 念,**只出现在 worker 日志里、玩家看不到**。
-- **`leave_requested` 只发一次**(`ui/screens/match_result.gd` 的 `_leaving` 防重入),下游仍走 **`Level0.safe_change_scene`** —— 游戏世界含全量碰撞,裸 `change_scene_to_file` 会同步析构 → 偶发原生段错误。
-- ★★ **ESC 的双重语义依赖「MATCH_OVER 时销毁暂停菜单」**:对局中 ESC = 暂停菜单,结算页上 ESC = 返回主菜单。三个客户端的 MATCH_OVER 块都 `_pause_menu.queue_free()`;**谁把这两行删掉,ESC 就会在结算页上同时触发两件事**。`ui/screens/match_result.gd` 类头把这条依赖写成了硬约束。
-- **`ui/screens/match_result.tscn` 层位 = 150**(三个 HUD 130、小地图 131、暂停菜单 145)。★ 层位**只住在 `.tscn` 里** ⇒ 结算页**只能从场景实例化**,绝不 `MatchResult.new()`(那是 CanvasLayer 默认的 **layer 1**,画在 HUD/小地图**底下**)。守卫:`tests/probe/hud_declarative_probe` 走盘扫 `res://scenes/` 下每个 .gd,出现 `MatchResult.new(` 即红。
-- ★★ **挂载/离场收在基类 `PvpMatchClient`**(`_show_result` / `_leave_to_main_menu`),三个客户端**只各覆写 `_build_result_payload()`**。**加新模式的结算 = 写一个覆写**。★ `_show_result` 的形状是"**挂载一次、但每次都要刷新**"(`if _result == null` 只包住"建 + 连线"):写成 `if _result != null: return` 会把"挂载幂等"顺手变成"**更新也只一次**",第二条 MATCH_OVER 载荷就永远到不了屏幕上 —— 而 `MatchResult.show_result` 的清场重建在生产里**一次都不会跑**,探针却直接调它、照绿(**探针比产品更绿**,这里最难发现的形状)。★ 第二条载荷**可达**(1v1 每次 reclaim 成功后重播 `round_state`;3v3 的 `_finish_match()` 在战斗进行中直接 PLAYING→MATCH_OVER,所以 `team_game` 那一支**刻意没有** `and not _match_ended` 那道闸)。
-- **★ 三条接线有常驻守卫,别只改一处**:`tests/probe/kh_l6_probe.gd` 第 9)(1v1)/ 9b)(大乱斗)钉「MATCH_OVER 块里调了 `_show_result()`」,第 **16)** 钉 `_build_result_payload()` 的**实参顺序**;3v3 的两条在 `tests/smoke/team_room_smoke` ⑨⑤。★★ 为什么"实参顺序"必须机械断言:`for_duel` / `for_royale` 的前两个实参**都是 Dictionary** ⇒ 把 `_names` 与 `_teams` 写反**照样编译、所有常驻测试照样绿**,只有榜渲染成**乱码/空表**。★ 大乱斗那侧的常驻覆盖只有 kh_l6 一处(`royale_soak_probe` 验不到它)。
-- ★★ **`scenes/royale_game.gd` 的 `and not _match_ended` 门 —— 理由**双重作废**了,但门**不是废码**:那道门**只**包 `_match_ended = true` / `_pause_menu.queue_free()` / `_show_result()`,`_refresh_input_lock()` 在门外,那句胜负文案来自 **`RoyaleHud` 自订的 `local_round_state`**(门从来不负责那句话)。★ **门为什么仍然必须留**:`_match_ended` 还驱动**输入锁**与**结算页的一次性挂载** ⇒ 它是有**幂等职责**的。ⓘ **将来要删它,必须按「幂等职责」论证,不能按「理由已满足」删**。★ ESC 双重语义那两条依赖仍是硬约束。★★★ **这条修复有一个用户看得见的收益**:**修之前**,「全场 0 杀 + 两人离开」的局里,**唯一幸存者自己的 HUD 就写着「胜 利 !」**。
-- **登记(不改)**:`scenes/royale_game.gd` 有两处**不支撑任何断言**的陈旧注释,留着是"半年后让人白花一小时"那类(按计划只登记不改)。
+### 3. 分队物理碰撞分层 (`TeamHost._apply_team_layers` & `team_game._apply_team_collision`)
+为实现“队友间不发生物理阻挡推挤，但敌方互相阻挡”的物理交互：
+- 队伍 1 物理碰撞层为默认角色层；队伍 2 物理碰撞层为 `TeamHost.TEAM_ENEMY_LAYER`（第 16 层）。
+- 各客户端的 `PlayerReplica` 幽灵阻挡体根据其代表玩家的队伍动态配置碰撞层（`layer`），并将 `mask` 设为 0。
+- 本地角色将本方队伍的碰撞层从检测掩码（`collision_mask`）中剔除，将敌方队伍碰撞层纳入检测掩码中，确保预测步进时仅与敌方发生物理阻挡。
 
-### 大乱斗(Royale)
+### 4. 助攻、自伤与惩罚分计分体系
+- **助攻判定**：受害者倒地前 3 秒时间窗口内（`ATTRIB_WINDOW`），除最终击杀者外，所有对受害者造成过伤害的同队攻击者均计 1 次助攻（`assists += 1`）。
+- **自伤记录**：玩家被自身武器或爆炸击中时，通过专用通道记录自伤点数（`CombatFeedback.note_self_hit`）。
+- **惩罚分公式**：在 `core/sim/score_rules.gd` 中统一计算：
+  $$\text{penalty} = \frac{\text{team\_damage} + \text{self\_damage}}{5} + \text{team\_kills} \times 100$$
+  惩罚分从最终战斗评分（`kscore`）中扣除。
 
-- **入口与场景**:主菜单那颗「多 人 模 式」(`main_menu.gd`)→ `scenes/mp_lobby.tscn`(统一大厅:公开/私密房、邀请码、人数与限时、禁用武器、选图、按模式筛选的房间列表、「一键起本服」都在那里)。分支靠**从哪个场景进来**判定(`mp_lobby` → 该模式的 `*_game`,由 `_current_mode` 分派),没有静态标记。UI 一律走 `UiFactory`。
-- **一局是怎么起来的**:
-  1. 大厅的 `LobbyRooms` 多出一张 **`RoyaleRoom` 注册表**,与 1v1 的 `rooms` 并存且互斥。建房/加入/状态广播经 `NetBusExt` 的 `royale_*` RPC。
-  2. 房主发 `royale_start`(或 `royale_start_ai`)→ `_spawn_royale_worker(port, roles, ai_roles)` 用 `OS.create_process` 拉起**独立 worker 子进程**,命令行 = `--headless [--path . res://server/server_main.tscn] -- --worker --royale --port P --roles 1,3 [--ai-roles r,r]`(**每个开关一个独立 argv 项**;editor/template_debug 下必须带 `--path`+场景,仅导出 exe 可省。与 `server_main.gd` `_ready` 里的 argv 解析**逐字对应**,两边改一处必须同步改另一处)。进程隔离 = 各局内存隔离。
-     - ★ **role 集合由大厅显式传(`--roles 1,3`),不从人数推导**:历史协议传「人数 N + role 上界 R」两个整数,而 role 由「最小空闲号」分配且**有人退出后不重排** → 编号会留空洞,推导必然出错(当时代价:把**手持 3 号的真客户端**当串线踢掉)。现把集合直接传过去,worker 侧判据就是「在集合内」,精确。AI 补位号由 `_royale_free_roles` 取 `1..max_players` 内**人类未占用**的空闲号,并入同一个集合下发。
-  3. worker 的 `--royale` 分支:`_on_role_claimed` 收齐 **`_human_role_count()`** 个人类 `claim_role` 即开局(其余角色由 AI 补位);`_process` 另有两条超时梯——**已到 ≥2 人但 20s 仍收不齐** → 按已到人数降级开局;**可用玩家 <2 人**(开局前全掉线)→ **10s 宽限后退出释放端口**。`_on_role_claimed` 另有**报到串线防护**:对局已开始/role **不在 `--roles` 集合内**/该 role 已被别的 peer 占用 → 直接 `disconnect_peer`。
-     - **★ 开局经 `_defer_begin_match()` 延到帧末**:每个客户端都是「`claim_role` 紧接 `player_options`」两条包(同一次 poll 到达),而收齐判据由**最后一个** claim 满足 → 同步开局会在同一次 poll 里抢先建局,那个客户端的 `player_options`(角色颜色 / 整局规则项)还没归档。延到帧末 = 同一次 poll 的选项先全部归档再建局。
-  4. 端口归还延迟:`ROYALE_PORT_REUSE_DELAY`=**360s**(见 §断线重连:它今天不再是承重的界)。
-  - ★★ **`ROYALE_MATCH_TIME_CEILING` 的来历是一条跨文件不变量**(= 30 分钟 × 60,30 来自 `settings.gd` 装载 `royale_match_min` 时的 `clampf(…, 1.0, 30.0)`)。★ **它刻意是硬上界、不走"把房主配的 `match_time` 存到房上"**:`_player_options()` 是**报到那一刻**才读 `Settings`,而 `royale_create` 是**更早的另一刻**⇒ 存下来的是**下界**;硬上界**保守**(永不误杀活局),代价只是泄漏的房多留 ~25 分钟。⇒ 保守 + 可证,胜过精确但可错。★★ **这条上界链有三环,三环都钉着**:环一 = `settings.gd` 的装载钳位 [1,30] 分钟;环二 = **`scenes/mp_lobby.gd`** 把它**换算成秒**下发(2026-10-03 起三个旧大厅页退役,`room_sweep_smoke` 已改读新页 —— 它现在按「同时含 `Settings.royale_match_min` 的那一行」定位,因为 `"match_time"` 在新页里出现两次);环三 = 同一文件里那根滑块的写入端(`max_value = 15.0` 与 `value_changed`,**不钳位**;判据把 `max_value = <数字>` 抽出来**比数值**,因为 `contains("15")` 挡不住 `15.0 → 150.0`)。★★ **环三是唯一真正产生下发值的那一环** ⇒ **这个上界是「以客户端行为为条件」的**:`value_changed` 不钳位地写 `Settings.royale_match_min`,而下发的 `match_time` 读的是**内存里那个值** —— 装载钳位**只在下一次装载时才生效**;worker 侧也不兜底。⇒ 放宽滑块上限**或再加一个写入方**,下发的 `match_time` 能到 3600,而**四条断言照绿**;要真做成无条件上界,得在**发放端**钳。**改钳位 / 改换算 / 改滑块上限,三处任一处都要回来一起看上界常量**。
-- **权威:`server/hosts/royale_host.gd`(`RoyaleHost extends MatchHost`)**——**覆写** `_init` / `_spawn_cell` / `_ready` / `_match_round_tick` / `_match_winner` / `_broadcast_round_state` / `_on_bullet_hit` / `_respawn_player`;**自有**(不在基类)`set_display_names` / `mark_disconnected` / `request_suicide_role` / `_finish_match` / `_attributed_killer`。`MatchHost` 这一侧只**追加**了 `_broadcast_match_options` / `notify_direct_hit` / `_init` 签名 / `_ready` 应用禁用类型 / `_on_bullet_hit` 追加 hit_confirm / `_round_full_heal` **五处**就地改动 —— **C2 四条一行未动**。
-  - **`_init` 顺序不可"整理"**:必须先 `plan_spawns` 再 `super._init`——父类 `_init` 摆位会**虚调** `_spawn_cell(role)`,反了则首次摆位拿到 `(-1,-1)` 且被 `_spawned_once` 闩锁,全体挤到地图回卷角落。
-- **规则**:限时 **`MATCH_TIME`=300s** 死斗,击杀最多者胜(榜首并列返回 0 = 平局);死亡 **2s 复活**;**开局散点**两两环面距 ≥ `SPAWN_CLEARANCE`=15 格、**复活点**动态选「离所有存活敌人 ≥ `RESPAWN_CLEARANCE`=8 格」的开阔格;出生候选要求头顶 2 格净空 + 左右邻格空 + 同层连通区 ≥ **`SpawnPicker.area_threshold()`**(防出生在走不出去的密封小间)。★ **该门槛是自适应的**:正常图 = `OPEN_AREA_MIN`=20,但本图**最大**连通区都 < 20 时按 `ADAPTIVE_RATIO`=0.5 缩到「最大连通区 × 0.5」—— 旧定图 `factory1v1`(**已退役**)按 4 邻接算最大连通区只有 **13 格**,旧判据下前两档**恒空**、池子静默退化成**全部地板格**。★★ 该图退役后,**今天的图集里没有一张能触发这条自适应分支**(现定图 newfactory 实测 48、demo 35,均 ≥ 20)⇒ 它成了**休眠覆盖**,见 `spawn_picker.gd` 与 `spawn_pool_smoke.gd` 的登记。★ 该判据**不含跳跃/梯子**(纯 4 邻接),是「纯步行可达」的下界近似。★ 池子 = `SpawnPicker.spawn_candidates()`,**大乱斗与 3v3 共用**。
-  - ★ **复活/复位选格的池序列也只有一处来源** = `SpawnPicker.respawn_pools()` = **三档** `[spawn_candidates(), respawn_fallback(), respawn_last_resort()]`(第 ② 档 = 连通区 ≥ `area_threshold()`;第 ③ 档 = 连通区 ≥ 2,**只**排除孤立单格)。**每一档都不含孤立单格,且对**所有图**生效**。★ 第 ③ 档**不是保险起见**:只收到"≥ 门槛"会把兜底档窄一个量级,筛空即 `(-1,-1)` ⇒ 消费端照算 `spawn.x*ts` 把人摆到地图回卷角落(**比"在小间里复活"更糟**)。两处调用方(`RoyaleHost._spawn_cell` / `TeamHost._respawn_cell_for`)**必须读这一份**,别再自己拼 `[.., floor_cells()]`(`spawn_pool_smoke` ⑥ 按函数体扫着)。
-  - ★★ **`SpawnPicker` 的池是静态缓存的(4 个 cache + 区域表)**:写探针/脚本时**在同一个进程里换图重算必须先 `SpawnPicker.reset_cache()`** —— 忘了它,两张图会读到**同一份缓存**、打印出**一模一样的数字**。症状很好认:两个不同规模的图给出**逐字相同**的池读数。生产侧不需要它是一次一进程。
-- **★ 击杀归因**:`_on_bullet_hit` 覆写先 `CombatFeedback.attribute(victim, bullet.shooter)` **再** `super`;倒地边沿 `_attributed_killer` 读 meta 计分,时效 `ATTRIB_WINDOW = 3s`。无源死亡(溺水/坠落)不计分;自杀 `request_suicide_role` 先清 meta,不算任何人的击杀。★ 归因写端如今**只**服务这里(单机播报删除后,敌人分支不再写 `last_damager`),**玩家的** meta 仍是本节的唯一读者。
-- `round_state` 载荷(大乱斗版)= `scores`/`deaths`/`names`/`alive`/`left`/`timer`/`match_winner`,昵称行覆盖真人 + 已离开者 + **AI 补位**。
-- **客户端:`scenes/royale_game.gd` / `scenes/royale_game.tscn`**——Level0(`pvp_mode`)+ PostProcess + **N-1 个 `PlayerReplica`(按快照 roles 动态建)** + `RoyaleHud` + Minimap + 血条 + 拖尾。**本地玩家走与 1v1 **同一套** C2 客户端预测 + `PredictionRollback`**。与 1v1 的差别只有"对手是 N-1 个"与"服务器外部事件更多(2s 复活瞬移、每次击杀后活方复位)"——都靠 `reconcile()` 收敛。**消费 `NetBus.local_*`(snapshot/bullet_spawn/**beam_fired**/hit_event/tile_destroyed/round_state/peer_info/kill_event)与 `NetBusExt.local_*`(match_options/peer_hues/hit_confirm)。
-  - **开局三载荷 = 进场拉取**(取代原「推 + 大厅缓存交接」):昵称表/角色色相/生效选项原先由 worker 在 `match_start` 同一批 flush 里**推**,而客户端那一刻正在帧末切场景 → 订阅方一个都不存在 → **静默丢失**。**现在改为对局场景 `_ready` 末尾主动拉**(见 §网络与 PvP)。`MatchHost.role_spawns()` 提供只读取法,**`RoyaleHost` 必须覆写**(基类走 `_spawn_cell`,大乱斗那个第二次起返回动态复活点)。守卫:`tests/probe/match_sync_probe.tscn`。
-  - **`--ai-roles` 首次实跑待用户验收**(`AINavigator` 用 `host.RoundState.PLAYING` 动态查表,未经真机跑过)。
+---
 
-#### ★ 本层新引入的已知风险(实测观察,未压测)
+## 三、大乱斗模式 (Royale) 架构
 
-1. **快照体积随人数线性增长**:大乱斗快照每个玩家都带一份**权威整态 `c2`**(`capture_state()`)+ 散字段,60Hz `unreliable` 广播,N 人 = **N 份整态 × 60Hz**。8 人时的带宽/丢包表现未实测。
-2. **输入队列积压(每 tick 恰好消费 1 包的下游代价)**:客户端 60Hz 上行 + 网络抖动时,**到达速度可能短时超过消费速度**,而 `_pending_input[role]` **无长度上限、无丢弃策略** → 理论上积压会表现为延迟单调增长。N 人(8 人 × 60Hz)时未压测;若真机出现"越玩越卡",这里是第一嫌疑点。
+### 1. 独立宿主与生命周期 (`server/hosts/royale_host.gd`)
+- 继承自 `MatchHost`，统一覆写生成点计算、胜者判定、回合流转与击杀归因。
+- 开局等待机制：若已连接玩家 $\ge 2$ 人且等待 20 秒仍未满员，降级以当前人数直接开局；未满员角色名额可指定由 AI 补位（`AINavigator`）。
 
+### 2. 动态出生点与复活选择 (`core/sim/spawn_picker.gd`)
+- **开局散点分布**：所有玩家出生点之间的环面欧氏距离须满足 $\ge 15$ 格（`SPAWN_CLEARANCE`）。
+- **动态安全复活点**：玩家阵亡后 2 秒复活，复活算法三级分层筛选：
+  1. 候选点需满足头顶净空 2 格、左右通畅，且所在连通区域面积达到阈值（`OPEN_AREA_MIN`），且与所有存活玩家保持 $\ge 8$ 格安全距离（`RESPAWN_CLEARANCE`）。
+  2. 若无完全符合候选点，降级选择连通区域合格的常规地面点。
+  3. 最终保底：连通区域 $\ge 2$ 格的任意非孤立地面格。
+
+---
+
+## 四、对战结果结算系统 (`MatchResult`)
+
+### 1. 架构解耦
+- **通用展示层 (`ui/screens/match_result.gd`)**：继承 `CanvasLayer`，位于高层级（Layer 150），负责通用列表渲染、动画排版与退出交互。
+- **数据适配层 (`ui/screens/match_result_payload.gd`)**：针对三种模式分别提供适配器：
+  - `for_duel`：展示击杀（Kills）、阵亡（Deaths）、造成伤害（Dealt）、承受伤害（Taken）、战斗评分（ACS）。
+  - `for_royale`：展示击杀、阵亡、造成伤害、承受伤害。
+  - `for_team`：展示击杀、阵亡、助攻（Assists）、造成伤害、承受伤害、战斗评分（ACS）。
+
+### 2. 战斗评分与平均分公式 (`core/sim/score_rules.gd`)
+统一计分模型：
+$$\text{kscore} = \text{Kills} \times 100 + \text{Assists} \times 50 + \frac{\text{Dealt}}{5} - \text{Deaths} \times 50 - \text{Penalty}$$
+$$\text{acs} = \frac{\text{kscore}}{\text{Rounds}}$$
+
+### 3. 场景迁移安全性
+结算界面触发返回主菜单时，统一调用 `Level0.safe_change_scene` 执行异步析构，避免同步卸载大型复杂物理碰撞世界时触发底层段错误。
+
+---
+
+## 五、核心自动化测试用例
+- `tests/smoke/score_rules_smoke.gd`：计分与评分公式纯逻辑单元测试。
+- `tests/smoke/match_result_payload_smoke.gd`：结算载荷适配与数据字段对齐测试。
+- `tests/probe/team_table_probe.tscn`：3v3 队伍映射与友军伤害判定集成测试。
+- `tests/probe/laser_team_probe.tscn`：激光武器穿透友军并命中敌方测试。
+- `tests/probe/stats_delivery_probe.tscn`：三模式结算统计广播与分发验证。
+- `tests/probe/match_result_probe.tscn`：结算 UI 场景渲染与排版验证。

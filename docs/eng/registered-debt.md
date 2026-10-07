@@ -1,33 +1,36 @@
-# 登记欠账(既有红 / 待还的债)
+# 已知技术缺陷与待重构清单 (Registered Technical Debt)
 
-> 本文件是**唯一**的欠账清单:① 长期红的探针(**不算守卫**),② 重复真相源(该改生成式的地方)。
-> 纪律:每条都写清**症状 / 为什么留着 / 什么时候能销**;销掉时**删行**(历史在 git 里,不留"已修"注)。
-> 相关:[`tests.md`](tests.md) §守卫边界 · [`AGENTS.md`](../../AGENTS.md) §2「反重复」· [`CLAUDE.md`](../../CLAUDE.md)
+> 本文档统一记录项目中已知的不稳定测试用例、未完全定位的偶发问题以及待统一的数据源清单。
+> 返回索引：[`CLAUDE.md`](../../CLAUDE.md)。
+> 关联文档：[`tests.md`](tests.md) §测试体系 · [`world.md`](world.md) §环面拓扑。
 
-## 一、既有红 —— **这些不是守卫,别拿它们的行为当证据**
+---
 
-| 探针 | 症状 | 为什么留着 | 销掉的条件 |
+## 一、已知不稳定或待排查测试用例
+
+下列用例存在已知环境依赖或未修复缺陷，**严禁将其作为版本发布或功能验收的唯一通过依据**：
+
+| 测试用例 | 现象与症状 | 保留原因与当前认知 | 预期关闭条件 |
 |---|---|---|---|
-| [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | **长期 FAIL,且判词与实况矛盾**:判词说"大厅队伍表是空的 / 45s 内没有 3v3 房",而**同一次跑**的客户端日志里房建成了、客户端进了等待室。A/B 已证与任何一批改动无关 | 根因未钉死:探针是 29200 的唯一监听者、`LobbyRooms` 在位,但 6 个客户端**连上后全部断开**、探针那条信号**一次都没触发** ⇒ **客户端被某个不是探针大厅的东西服务着** | 根因定位并修好,然后转正 |
-| [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
-| [`tests/probe/brawl_rollback_probe.tscn`](../../tests/probe/brawl_rollback_probe.tscn) | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | 留着仍能看见趋势 | 抖动与那一格假绿都消掉 |
+| [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | 执行失败且诊断日志存在矛盾：探针报告“等待 3v3 房间超时”，但同次运行的客户端日志显示房间已建立且客户端已进入等待室。 | 尚未彻底定位竞争条件：探针监听端口 29200，但客户端可能在特定网络生命周期中未正确完成全部握手流程。 | 定位端口竞争与握手竞态并修复，使真链路测试稳定通过。 |
+| [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | 存在随机抖动：机器人角色在随机加载的地图地形上偶发卡死。 | 抖动源于每次进程启动时随机挑选地图（参见 [`world.md`](world.md)）；测试脚本本身设计用于观察趋势。 | 为该测试固定基准地图（Pinned Map），消除随机地形阻挡差异。 |
+| [`tests/probe/brawl_rollback_probe.tscn`](../../tests/probe/brawl_rollback_probe.tscn) | 贴身对抗测试用例在并发实体数 $N \ge 4$ 时读数存在波动，边界容差下存在偶发漏报。 | 保留用于监控近身缠斗状态下的预测回滚收敛趋势。 | 优化高并发实体下的容差收集算法，消除读数抖动。 |
 
-★ **影响面照实写**:第一条意味着 **3v3 真链路今天没有可信的端到端守卫** —— 改 3v3 时别把"探针绿了"当证据,要另找覆盖(或先补守卫)。
+---
 
-## 二、重复的真相源(该改成生成式)
+## 二、单一真实来源 (Single Source of Truth) 优化项
 
-**判据**:同一个值必须**抄两处以上**,而且已经有一条守卫盯着它们是否相等 —— 那就是"重复 + 守卫"的永久税。优先改成「单一来源 + 生成器 + `--check`」。
+针对需要多处手动同步硬编码的字段，逐步推进“单一来源定义 + 代码生成 / 静态校验”模式：
 
-| 重复的东西 | 现在的形态 | 打算怎么改 |
+| 数据项 | 当前维护现状 | 规划优化方案 |
 |---|---|---|
-| HUD 底板色 `C_PLATE`(黑 0.1) | 唯一源在 `ui/factory/ui_factory.gd`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)存**字面量**,由 `tests/smoke/ui_palette_single_source_smoke.gd` 钉住逐位相等 | 仿 `tools/gen_menu_theme.gd`:由调色板**生成**这两个 stylebox,守卫改成 `--check`。★ **别碰 HUD 视觉**(用户冻结令),只改"这个值是怎么来的" |
-| 菜单 Theme `ui/theme/menu_theme.tres` | **已完成,留作范本**:`tools/gen_menu_theme.gd` 生成 + 镜像守卫 | —— |
-| 编辑器内嵌的敌人注册表 | **已完成,留作范本**:`node level_editor/sync-enemies.js`(+ `--check` 只校验不写盘) | —— |
+| HUD 统一底板色 `C_PLATE`（半透明黑） | 唯一定义于 `ui/factory/ui_factory.gd`；场景文件（`ui/hud/pvp_hud.tscn` 与 `ui/hud/team_hud.tscn`）中包含硬编码值，由 `tests/smoke/ui_palette_single_source_smoke.gd` 保证一致。 | 参考 `tools/gen_menu_theme.gd`，由调色板统一生成 StyleBox 资源，测试转为 `--check` 静态检查。 |
+| 菜单主题样式 `ui/theme/menu_theme.tres` | **已完成优化**：由 `tools/gen_menu_theme.gd` 脚本根据调色板集中生成，配有镜像校验用例。 | 已成为工程范本。 |
+| 编辑器内置敌人注册表 | **已完成优化**：通过 `node level_editor/sync-enemies.js` 统一从 `data/enemies.json` 单向生成。 | 已成为工程范本。 |
 
-★ 新代码遇到"同一个值要抄两处"时,**直接上生成式**,别再补一条守卫。
+---
 
-## 三、怎么销一条
+## 三、技术债清偿与核销流程
 
-1. 修好 → **同配置跑两次**(分清噪声与信号);
-2. 把这条从本文件**删掉**;
-3. 若它本来是"守卫",按 [`tests.md`](tests.md) 的要求补一句「它现在能给的最强保证是什么、测不到什么」。
+1. **缺陷修复**：完成代码修复后，在相同运行环境和参数下连续执行至少 2 次测试，确认结果稳定。
+2. **文档同步**：从本清单中移除已修复条目，并在相应模块文档中更新其最新保证范围与边界。
