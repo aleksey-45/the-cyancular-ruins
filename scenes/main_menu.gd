@@ -6,6 +6,7 @@ extends Control
 
 # 自动探针节明确提示:挂在树根上跨场景存活,靠这个名字做「已挂过就别再挂」的幂等判据
 const PROBE_NODE_NAME := "MenuAutotestProbe"
+const TUNNEL_FEEL_NODE_NAME := "TunnelFeelProbe"   # P2P 隧道网络性能基准测试探针节点名
 
 var _sp_panel: PanelContainer = null    # 单人开局面板(弹出式)
 
@@ -171,6 +172,28 @@ func _ready() -> void:
 		probe.set("mode", arg.trim_prefix("--autotest-"))
 		get_tree().root.add_child.call_deferred(probe)
 		break
+
+	# P2P 隧道多实例网络性能基准测试探针（tests/probe/tunnel_feel_probe.tscn，由 tunnel_feel_probe.sh 编排调度）。
+	# 在二进制导出包中，命令行无法动态覆盖启动场景路径，因此由主菜单检查命令行参数后挂载测试探针。
+	# 仅在显式指定测试参数时生效，常规游戏启动不受影响。
+	if _tunnel_feel_requested():
+		if not get_tree().root.has_node(NodePath(TUNNEL_FEEL_NODE_NAME)) \
+				and ResourceLoader.exists("res://tests/probe/tunnel_feel_probe.tscn"):
+			var tf: Node = (load("res://tests/probe/tunnel_feel_probe.tscn") as PackedScene).instantiate()
+			tf.name = TUNNEL_FEEL_NODE_NAME
+			get_tree().root.add_child.call_deferred(tf)
+
+
+# 检查命令行是否显式请求运行网络性能基准测试（要求同时包含 --side 与 --seconds 参数）
+func _tunnel_feel_requested() -> bool:
+	var side := false
+	var secs := false
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--side="):
+			side = true
+		elif arg.begins_with("--seconds="):
+			secs = true
+	return side and secs
 
 
 # 单机进关卡(Level0 = 全量物理世界)。菜单是纯 UI(无世界、无大物理),普通切场景即可:

@@ -64,7 +64,14 @@ static func launch_and_connect() -> int:
 			push_error("LocalServer: 操作系统分配空闲端口失败")
 			restarting = false
 			return -1
-		var pid := OS.create_process(exe, PackedStringArray(["--", "--port", str(port)]))
+		var sargs := PackedStringArray(["--", "--port", str(port)])
+		# 将网络诊断参数（--netstat / --netstat-trace）透传给本地服务端子进程。
+		# 服务端据此输出待消费输入队列等性能指标，用于定位延迟瓶颈来源于网络传输还是服务端处理积压。
+		# 仅在调试/基准测试时显式启用，默认关闭。
+		for a in OS.get_cmdline_user_args():
+			if a == "--netstat" or a == "--netstat-trace":
+				sargs.append(a)
+		var pid := OS.create_process(exe, sargs)
 		if pid <= 0:
 			# - 立即返回,**不能 `break`**:break 会掉到循环后面那句"N 次随机端口全被占用",
 			#   于是日志里同时出现"创建进程失败"和"端口全被占用"两条,**后者是错的** ——
@@ -95,12 +102,12 @@ static func launch_and_connect() -> int:
 		if OS.is_process_running(pid):
 			OS.kill(pid)
 			restarting = false
-			push_error("LocalServer: 服务端起来了却在 %.0f 秒内没监听端口 %d —— 多半是安全软件/"
-					% [PROBE_TIMEOUT, port] + "防火墙拦了它,或这台机器负载过高;换端口重试没有意义。")
+			push_error("LocalServer: 服务端进程已启动，但在 %.0f 秒内未能成功监听端口 %d（可能被安全软件或防火墙拦截，或系统资源过载，更换端口重试无效）。"
+					% [PROBE_TIMEOUT, port])
 			return -1
-		print("[LocalServer] 端口 %d 不可用(第 %d 次),换一个重试" % [port, i + 1])
+		print("[LocalServer] 端口 %d 不可用(第 %d 次尝试)，正在更换端口重试..." % [port, i + 1])
 	restarting = false
-	push_error("LocalServer: %d 次随机端口全被占用(极罕见)—— 换台机器或稍后再试" % PICK_TRIES)
+	push_error("LocalServer: 连续 %d 次分配随机端口均被占用，请检查系统端口占用情况或稍后重试" % PICK_TRIES)
 	return -1
 
 
