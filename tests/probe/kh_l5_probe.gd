@@ -190,9 +190,19 @@ func _check_c2_contract() -> void:
 		var queue_init := "_pending" + "_input["
 		_check(on_in.contains(queue_init),
 				"%s 里没有按 role 建 FIFO 队列(%s)→ 到达的包进不了缓冲" % ["_on" + "_input", queue_init])
-		# ★ 降精度:原钉 `.append(pkt)` 的形参名(`pkt`);`_on_input` 体里 `.append(` 唯一 ⇒ 只留方法名。
-		_check(on_in.contains(".append("),
-				"%s 里没有把到达的包 append 进队列(每 tick 消费一个的前提没了)" % ("_on" + "_input"))
+		# ★ **2026-10-08 订正(closeout 批 Task 4)**:入队那一步已收口到
+		#   `PacketInputSource.push_pending(队列, 包)` —— 它做三件事:append、**按上限丢最旧**、
+		#   并把丢掉的包的**边沿合并进新队首**。所以本处判据从"体内含 `.append(`"改成
+		#   "体内含 `push_pending(`":**append 搬进了那个纯函数**。
+		#   ★ 而"它真的 append 了"由纯函数侧覆盖:`tests/smoke/server_input_sanitize_smoke.gd`
+		#     直接断言"灌 200 包后长度 ≤ 上限"且"未触发上限时队首仍是第 0 包"。
+		_check(on_in.contains("push_pending("),
+				"%s 里没有把到达的包交给 PacketInputSource.push_pending(每 tick 消费一个的前提没了)"
+				% ("_on" + "_input"))
+		# ★ 反向:入队**不许绕过**那个有界口(直接 append 到队列 = 上限失效)。
+		_check(not on_in.contains(".append("),
+				"%s 里直接对队列 append 了:绕过了 PacketInputSource.push_pending 的有界化"
+				% ("_on" + "_input"))
 		_check(not on_in.contains("apply_" + "packet"),
 				"%s 里出现就地 apply_packet:包不再由 _physics_process 每 tick 消费一个 → C2 1:1 同序锚点失效"
 				% ("_on" + "_input"))
