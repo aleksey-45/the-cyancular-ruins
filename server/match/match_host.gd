@@ -189,7 +189,7 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 			# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个(见 _physics_process):
 			# 1 包/ tick → 服务器权威模拟与客户端"重放未确认输入"1:1 同序(C2 rollback 需要,
 			# 见 docs/pvp-c2-retrospective.md P1)。held/axis 由被消费的那包决定,边沿不丢。
-			# ★ 2026-10-05(Task 4):入队走 `push_pending()` —— **有界**,且丢包时**保住边沿**
+			# ★ 2026-10-08(Task 4):入队走 `push_pending()` —— **有界**,且丢包时**保住边沿**
 			#   (见该函数;`MAX_PENDING_INPUT`)。
 			if not _pending_input.has(role):
 				_pending_input[role] = []
