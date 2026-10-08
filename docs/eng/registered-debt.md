@@ -358,7 +358,7 @@
    - **什么时候能销**:按该探针自己的口径跑一次(池外 29200/29250、**不动 7777**、收尾只扫它自己那段、前后 `tasklist` 无 Godot),
      加一条"机器人宿主在真对局里确实出了弹"的断言 —— 顺带把 §一 第一条那笔"修复后无整跑判决"一起结掉。
 
-7. **「回溯退出必须读未被冻结的输入」这条不变量:已落纸 + 已有形状守卫；★ 行为侧仍无 headless 守卫**
+7. **「回溯退出必须读未被冻结的输入」这条不变量:已落纸；★ 形状与行为两侧都**没有守卫（2026-10-05 测试经济删掉形状半之后）**
    (2026-10-04 由 Plan B Task 6 复核发现；**2026-10-05 closeout 批 Task 3 补注释与守卫并改口**，提交 `fa5d32d`)。
    - **不变量**：`_tick_beta_rewind` 进出两条路读的必须是**宿主自己那一个** `input_source`
      （`_local.input_source`；实测改后在 `scenes/pvp_match_client.gd:248` 与 `:254`）—— 同一函数会把
@@ -368,10 +368,11 @@
      一律按内容 `grep` 复核（`grep -n "input_source" scenes/pvp_match_client.gd`），别再抄行号。
    - **已做**：① 不变量写进 `_tick_beta_rewind` 的代码注释（该函数第一段，点名"冻结与解冻必须是同一个对象"
      与 `player.set_controls_locked()` 那条写路）；
-     ② **形状守卫** = `tests/probe/rewind_weapon_probe.gd` 的 **S11**：`_local.input_source` 在
-     `_tick_beta_time`/`_tick_beta_rewind`/`_tick_time_fx` 三段里必须**恰好出现 2 次**（★ 2026-10-05 修复轮 1
-     起用 `_count_member_tokens` **两侧边界**判，裸子串计数对 `_local.input_source_x` 无牙 —— 评审 I-1），
-     且 `src.frozen = true` / `src2.frozen = false` 两个**类型化**写法在位。
+     ② **形状守卫：已删除**（原 `tests/probe/rewind_weapon_probe.gd` 的 **S11**，10 条，**全是**读源码判形态）。
+     删因 = [`test-economy.md`](test-economy.md) 的 **D6**：那类断言测的是"**某人有没有写这段字**"、不是行为；
+     本批实测它**可被字符串诱饵喂绿**（塞一行 `var _decoy := "_local.input_source"` 即 ALL-OK），
+     且三支照抄的副本**同一轮内就漂移**。⇒ **本节今天零守卫**（形状与行为都没有）；
+     下面那些变异证据只能说明"当年那条形状守卫有牙"，**不再代表现在的覆盖**。
      **实测证据（本包变异 M12 + M42）**：
      · M12 = 把出冻结那一路改成读 `null` ⇒ **同后果、不同机制**（解冻整段不发生）；
      · **M42 = 把那一路原样退回旧写法 `(_local as Node).get("input_source")`** ⇒
@@ -413,10 +414,9 @@
      更准的说法是"**把倍率注进来，别伸手读宿主**"；参数与成员只是两种载体。
      （★ 注意：这不等于"`climb.update` 不能被加参数" —— 它本身也是每帧被根调用的；
      差别只在**宿主引用何时给入**。原条目那句理由要按这个说法读。）
-   - **形状守卫**：`tests/probe/rewind_weapon_probe.gd` 的 **S10** —— 全仓（`res://scenes|core|server`）
-     那 4 种反射形态为 0 + 四个类型化站点（属主自读 / PvP 客户端写 / **服务端权威写** / 快照读）逐条在位
-     + 三处注入弧逐条在位。**行为守卫**：S10 的游泳/攀爬/出膛弹速三条比值 + 权威侧一条
-     （用**与 `match_host.gd:223` 逐字同款**的写法改字段，看消费点是否跟着变）。
+   - **形状守卫：已删除**（原 `rewind_weapon_probe` 的 **S10 形状 12 条**，按 [`test-economy.md`](test-economy.md)
+     的 **D6** 删 —— 读源码判形态）。**行为守卫保留**：S10 的游泳/攀爬/出膛弹速三条比值 + 权威侧一条
+     （用**与 `match_host.gd:223` 逐字同款**的写法改字段，看消费点是否跟着变）—— **共 9 条**。
    - **改口的那一半**（原第二处残留，原文写 `core/sim/world_rewind.gd:95`）：
      `player.get("weapons") as WeaponComponent` —— **保留**。理由（与 S7 同款）：玩家根**没有** `class_name`，
      这一层是**唯一允许**按名取组件的地方；而且它已经**不是静默**的（R1 的 `as` + `push_error` 点名 +
@@ -618,8 +618,9 @@
      ④ 服务端那一写同理：[`server/match/match_host.gd`](../../server/match/match_host.gd) 的那三段全在
      `if time_economy != null:` 内，而 `time_economy` 只在 `options["time"]` 非空时建 ⇒ **普通真链路里
      `match_host.gd:223` 那一行连"写 1.0"都不发生**。
-   - **覆盖上限（照实）**：T10/T11 的**形状**有守卫（`rewind_weapon_probe` 的 S10/S11，含全仓反射形态扫描），
-     **行为**没有任何自动化路径；服务端那一写"被执行到"的证明也**没有**（只有"静态链完整 + 该字段是活真相源"：
+   - **覆盖上限（照实；2026-10-05 按 [`test-economy.md`](test-economy.md) 的 D6 收紧）**：
+     **T11 零守卫**（原 S11 那 10 条**全是形状**，已删）；**T10 只剩行为 9 条**（形状 12 条已删）。
+     **行为**（真 PvP 局里按住加速键）没有任何自动化路径；服务端那一写"被执行到"的证明也**没有**（只有"静态链完整 + 该字段是活真相源"：
      S10 ④ 用与 `match_host.gd:223` **逐字同款**的写法改字段，三个消费点与根速度域都跟着变）。
    - **翻案条件（具体可验，二选一）**：① 立一个 **`beta_mode` + `options["time"]` 的 headless twin harness**
      （在探针里直接置这两个开关、喂 `PacketInputSource` 的 haste 位、观察三个消费点与 `match_snapshot` 的
