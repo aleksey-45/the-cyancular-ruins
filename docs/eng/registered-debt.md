@@ -773,7 +773,8 @@
     - **验证**：正常两遍 **`ALL-OK`**；★ **变异**：强制 `_c3_row_read = false` ⇒ **恰好红在新分支**
       （`WATCHER[c3] FAIL c3 ★ 没读到那一行的 disabled…`），而修前同一条件会**静默打过**。
 
-28. **快照的编码方式：60Hz × 全量绝对态 × Godot 通用 `Variant` 序列化（字符串键每包重复）**（owner 未认领；2026-10-08 复核源码 + 复读 2026-09-12 的实测）
+28. **快照的编码方式：60Hz × 全量绝对态 × Godot 通用 `Variant` 序列化（字符串键每包重复）**
+    > ★★ **分析全文、全部实测数字与来源**见 [`netcode-snapshots.md`](netcode-snapshots.md)（**那份是单一来源**；本行是登记与翻案条件）。（owner 未认领；2026-10-08 复核源码 + 复读 2026-09-12 的实测）
     - **架构侧不蠢**（先说清，免得读成"整套联机都是错的"）：服务器权威 + **unreliable 快照与 reliable 事件/输入分道** +
       本地玩家**预测/回滚对账(C2)** + 乱序丢弃(`tick` 比较) + canonical 坐标 —— 与业界同族
       ([Gaffer《Snapshot Interpolation》](https://www.gafferongames.com/post/snapshot_interpolation/)、Source/Quake 系增量快照)。
@@ -810,7 +811,8 @@
     - ★ **结论照实写**：**不是"愚蠢的模式"，是"最省事的编码 + 优化没做"** —— 而且**仓库自己 2026-09-12 就量出来并写了成因**，
       `snapshot_size_probe` 连"瘦身版 176 B/人"都算好了。**量了、登记了、没做**，这才是这条债的真相。
 
-29. **输入队列："每 tick 恰好消费一个"是**无回复力**的 ⇒ 积压会**永久**留在那里（延迟加上去就不下来）**（owner 未认领；2026-10-08 读码 + 对照 Valve/Gaffer）
+29. **输入队列："每 tick 恰好消费一个"是**无回复力**的 ⇒ 积压会**永久**留在那里（延迟加上去就不下来）**
+    > ★★ **分析全文与来源**见 [`netcode-snapshots.md`](netcode-snapshots.md) §4.2；本行是登记与翻案条件。（owner 未认领；2026-10-08 读码 + 对照 Valve/Gaffer）
     - **是不是"丢弃"的问题？不是。** 两条丢弃规则都对：
       · 世界包 `tick < _last_snap_tick` 丢掉旧包 —— Godot 的 `"unreliable"` = `TRANSFER_MODE_UNRELIABLE` = ENet **UNSEQUENCED**（**不保证顺序**），所以"新的赢"是正确做法 ✓
         （[`pvp_game.gd`](../../scenes/pvp_game.gd) `_on_snapshot_world`）。

@@ -50,6 +50,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 | Level0 渲染管线、图集、后处理、补间形变 | [`docs/eng/render.md`](docs/eng/render.md) |
 | 调色板与 UiFactory、菜单语汇、HUD、小地图、大厅版式 | [`docs/eng/ui.md`](docs/eng/ui.md) |
 | 大厅/worker、匹配进图、房间与回合、回到大厅、重连、RPC 归属 | [`docs/eng/netplay.md`](docs/eng/netplay.md) |
+| 快照管线(60Hz 全量编码、丢弃规则、输入队列的延迟累加、带宽实测与主流对照) | [`docs/eng/netcode-snapshots.md`](docs/eng/netcode-snapshots.md) |
 | 3v3、结算页、大乱斗及其已知差异 | [`docs/eng/modes.md`](docs/eng/modes.md) |
 | 探针怎么跑/怎么判、真链路纪律、守卫边界 | [`docs/eng/tests.md`](docs/eng/tests.md) |
 | 浏览器地图编辑器、sync-*.js、导入/导出工具 | [`docs/eng/tools.md`](docs/eng/tools.md) |
