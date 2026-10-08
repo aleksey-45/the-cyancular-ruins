@@ -1,28 +1,28 @@
 class_name TimeRules
 extends RefCounted
 
-# PvP 时间玩法参数总表(2026-09-28,P2 线):**建房页可自定义**的全部数值 + 服务器侧钳制。
+# 多人对战时间玩法参数配置：支持建房时自定义设置并在服务端校验钳制。
 #
-# - 与单机 `TimeParams` 的分工:
-#   - `TimeParams` 是**单机**用的 const 表 —— 单机行为完全保持一致,本类不碰它;
-#   - `TimeRules` 是**每局可调**的实例数据:房主在 Beta 建房页改 → `player_options` 上报 →
-#     服务器 `clamp_self()` 后写进对局状态 → 随 `match_start` / `match_sync` 下发,全员同一份规则。
-# - 本类零 autoload / 零场景依赖:服务器与客户端共用,-s 探针可直接测。
-# - 客户端上报的数值**不可信** —— 一切以服务器 clamp 后的那份为准。
+# - 与单人模式 TimeParams 的分工：
+#   - TimeParams：单人模式常量表，保持单人玩法行为稳定；
+#   - TimeRules：每局动态配置的实例数据。房主在建房页配置 -> 随选项上报 ->
+#     服务端 clamp_self() 校验后写入对局状态 -> 广播给所有客户端生效。
+# - 本类无外部场景与 Autoload 依赖，客户端与服务端通用。
+# - 客户端上报的数值不可信，统一以服务端校验后的数值为准。
 
-# ── 默认值(用户 2026-09-28 裁定原文)──
+# ── 默认数值 ──
 const DEF_INITIAL := 1000.0
 const DEF_CAP := 1800.0
-const DEF_REWIND_BURN := 150.0     # 回溯:颗粒/秒
-const DEF_HASTE_BURN := 70.0       # 加速:颗粒/秒
+const DEF_REWIND_BURN := 150.0     # 回溯消耗速率：颗粒/秒
+const DEF_HASTE_BURN := 70.0       # 加速消耗速率：颗粒/秒
 const DEF_WINDOW := 250.0          # 短期额度
-const DEF_REGEN := 50.0            # 短时回复:颗粒/秒
-const DEF_KILL_RATIO := 0.5        # 击杀获取 = 被击杀者账户总额度 × 此比例(被击杀者不减少)
-const DEF_BLOCK_GAIN := 10         # 每摧毁一个 16px 子格
-const DEF_DAMAGE_GAIN := 4         # 每造成 1 点伤害(仅对敌方;自杀/自伤不产颗粒)
-const DEF_HASTE_MULT := 3.0        # 加速倍率(设计约定固定 ×3,不进建房页)
+const DEF_REGEN := 50.0            # 短期自动回复速率：颗粒/秒
+const DEF_KILL_RATIO := 0.5        # 击杀获取比例（被击杀者账户总额度 × 此比例）
+const DEF_BLOCK_GAIN := 10         # 每摧毁一个 16px 子格获取颗粒数
+const DEF_DAMAGE_GAIN := 4         # 每造成 1 点伤害获取颗粒数（仅对敌方有效）
+const DEF_HASTE_MULT := 3.0        # 加速倍率（固定 3.0 倍）
 
-# ── 钳制范围(服务器侧防越界;建房页滑条也用同一套)──
+# ── 钳制范围（服务端防越界与建房滑条共用）──
 const R_INITIAL := Vector2(0.0, 5000.0)
 const R_CAP := Vector2(100.0, 9999.0)
 const R_BURN := Vector2(10.0, 500.0)
@@ -45,12 +45,12 @@ var damage_gain := DEF_DAMAGE_GAIN
 var haste_mult := DEF_HASTE_MULT
 
 
-## 透支上限:**= 短期额度**(用户 2026-09-28 裁定:启用透支,但仅限短期额度,账户本身不透支)。
+## 透支上限：等于短期额度。允许短期额度透支，但账户总额本身不透支。
 func loan_limit() -> float:
 	return window
 
 
-## 服务器/建房页共用的钳制。-  顺序有讲究:先钳 window(透支上限由它推出),再钳 cap ≥ initial。
+## 规则数值范围限制：先约束短期额度，再保证容量上限不低于初始总额。
 func clamp_self() -> void:
 	window = clampf(window, R_WINDOW.x, R_WINDOW.y)
 	initial = clampf(initial, R_INITIAL.x, R_INITIAL.y)
@@ -95,12 +95,12 @@ func to_dict() -> Dictionary:
 	}
 
 
-## 本规则下的颗粒账户(初始/上限/短期时间窗口/回复/透支额全部按规则走)。
+## 根据本规则创建颗粒账户实例（初始额度、上限、短期窗口、回复速率及透支上限均按规则配置）。
 func make_account() -> GrainAccount:
 	return GrainAccount.new(initial, cap, window, regen, loan_limit())
 
 
-## 回溯环缓需要覆盖的秒数 = 从满额烧到空(上限 / 回溯速率),上限 15s。
+## 回溯缓冲区覆盖时长：满额持续回溯至耗尽所需时间（上限 / 回溯速率），最大上限 15 秒。
 func rewind_buffer_seconds() -> float:
 	if rewind_burn <= 0.0:
 		return 0.0

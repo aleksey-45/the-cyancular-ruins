@@ -4,10 +4,9 @@ extends RefCounted
 # 砖块属性表(data/tile_defs.json 单一来源)。level_0._ready 调用 load_defs() 后使用。
 # 未加载时默认"非 0 即墙"(旧行为),保证早期调用/冒烟测试兼容。
 #
-# 性能:热点判定(is_blocked/type/elastic/liquid/destroyable 等)每帧被寻路/LOS/水判定
-# 反复调用。旧实现每次 `tile(tex)` → `str(tex)` 字符串分配 + 2 次字典查询;这里在
-# load_defs 后把全部纹理属性压进「按纹理索引」的定长数组,查询 O(1) 零分配。
-# 数组在 load_defs 时重建;若从未 load,也用与旧「空字典缺省」一致的默认值填一次。
+# 性能优化：热点判定（is_blocked、type、elastic、liquid、destroyable 等）在物理寻路中频繁调用，
+# 在 load_defs 后将属性预压缩至按纹理索引的定长数组，实现 O(1) 零内存分配查询。
+# 数组在 load_defs 时重建；若未显式加载，亦填充默认初始值以保证安全。
 
 const PATH: String = "res://data/tile_defs.json"
 const MAX_TEXTURE: int = 22
@@ -33,8 +32,8 @@ static var _climb_descent: PackedFloat32Array = PackedFloat32Array()
 static var _decay: PackedFloat32Array = PackedFloat32Array()   # 逐格爆炸衰减(缺省回落全局)
 static var _tables_built := false
 
-# 未加载 defs 时的缺省,须与旧 `tile(tex).get(..., 缺省)` 完全一致:
-# 任意纹理 type 缺省 wall、hp 1、各开关 false、climb 0、衰减回落全局 0.75。
+# 未加载配置时的默认兜底逻辑：
+# 任意纹理类型默认为 wall、生命值为 1、各类开关为 false、爬行速度为 0、衰减回退至全局 0.75。
 static func _ensure_tables() -> void:
 	if _tables_built:
 		return

@@ -22,7 +22,7 @@ const DISABLED_SLOT := 3
 #   文件头的断言对象是「换场后那四样到底有没有进新场景」。
 #
 #   实测(2026-10-03,纯生产路径、无任何插桩,2/2 客户端):
-#     换场 -> 收到 `match_sync_data` 的实际物理耗时（Wall-clock time）间隔 = c1 5906ms / c2 3900ms。
+#     换场 -> 收到 `match_sync_data` 的实际真实耗时间隔 = c1 5906ms / c2 3900ms。
 #   成因(已定位,见 probe 文件头 §B2 结论):客户端换场那一刻要把整个
 #   `royale_game`(Level0 世界 + 碰撞 + HUD)建起来,主循环卡住 ~8 秒
 #   (探针环境里同时有大厅 + worker + 两个客户端共 4 个 Godot 抢 CPU,实测值被放大);

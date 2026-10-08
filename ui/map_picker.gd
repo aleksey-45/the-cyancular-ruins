@@ -1,33 +1,27 @@
 class_name MapPicker
 extends VBoxContainer
 
-# 选图控件(单机开局面板 / 三个联机建房面板**共用**):每个地图一张卡 —— 开局地形简略图 +
-# 地图名 + 尺寸 + 联机可用性角标;首项是"随机"(=保留上游行为:进图时从目录里现挑一份)。
-#
-# - 为什么做成控件而不是各页各写一遍:三处 UI(单机/1v1/大乱斗/3v3)要的是同一件事,
-#   差在"选中的值往哪存" —— 那由调用方接 `picked` 信号决定,本控件只管选。
-# - 缩略图来自 `MapCatalog.build_image`(纯 Image,可 `-s` 验内容),这里只负责包纹理与版式。
+# 地图选择器控件：为单人开局与联机建房面板提供统一的地图选择卡片列表。
+# 展示地图名称、尺寸规格、出生点属性与地形缩略图；首项支持随机选图。
+# 选中后发出 picked 信号通知调用方。
 
 signal picked(path: String)
 
 const CARD_W := 244.0
 const THUMB_H := 132.0
 
-var selected: String = ""      # "" = 随机
+var selected: String = ""      # 空串表示随机
 
 var _grid: GridContainer
-var _cards: Dictionary = {}    # path → PanelContainer
+var _cards: Dictionary = {}    # 路径到卡片容器节点的映射
 var _box_off: StyleBoxFlat
 var _box_on: StyleBoxFlat
 
 
-## 建 UI 并做初始选中。columns/max_h 是版式参(联机页比单机页窄)。
+# 初始化地图选择卡片网格
 func setup(initial: String = "", columns := 2, max_h := 320.0,
 		title := "地　图(点选;缩略图 = 开局地形简略图)") -> void:
 	add_theme_constant_override("separation", 8)
-	# 标题 = 相同标题栏(与各页面 / 面板里的区块标题保持统一视觉风格)。
-	# - 原先是一条裸的 `C_ACCENT` Label  ->  三处用到它的面板(单人开局/1v1/大乱斗/3v3 建房)
-	#   里,别的区块标题都是金色标题带、只有它是青色裸字,一屏里两套标题风格。
 	add_child(UiFactory.header_strip(title, 32))
 
 	var scroll := ScrollContainer.new()
@@ -62,7 +56,7 @@ func setup(initial: String = "", columns := 2, max_h := 320.0,
 		select_path("", false)
 
 
-## 选中某条(重复点自己不再发信号)。from_click 只影响音效/信号(初始化时静默)。
+# 选中指定地图路径
 func select_path(path: String, from_click := true) -> void:
 	if not _cards.has(path) or path == selected:
 		return
@@ -77,7 +71,7 @@ func select_path(path: String, from_click := true) -> void:
 		picked.emit(path)
 
 
-# ── 内部 ───────────────────────────────────────────────────────────
+# ── 内部方法 ──
 
 func _add_card(path: String, title: String, sub: String, tex: Texture2D) -> void:
 	var card := PanelContainer.new()
@@ -100,7 +94,7 @@ func _add_card(path: String, title: String, sub: String, tex: Texture2D) -> void
 	tr.custom_minimum_size = Vector2(CARD_W - 16.0, THUMB_H)
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # 像素风:禁止线性糊图
+	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	vb.add_child(tr)
 
 	vb.add_child(UiFactory.label(title, 32))

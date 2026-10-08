@@ -213,20 +213,15 @@ func _initialize() -> void:
 # ──
 # §④ 重连返回对局凭据的生死线(2026-09-22,按 C1 重写)
 # ──
-# 注意事项：本节的立场与原第 ④ 条相反:原断言要求 `reset()` 清凭据,而 `reset()` 正是主菜单那颗
-#    联机入口(2026-10-03 三合一后只剩一颗)调的函数  ->  玩家从对局回主菜单、再从这个入口进来时
-#    凭据正好在那一拍被抹掉  ->  重连返回对局入口在生产里不可达(C1)。现在约束的是:
-#      - `reset()` 不许碰凭据(进页复位 ≠ 下车清理);
-#      - 凭据只在换了房号或模式(`note_room` 的 `room_code` / `room_mode` 判别)、以及
-#        大厅拒绝/超时(`clear_rejoin` 另外两个调用点)时作废。
-# - 全部按函数体判(全文件 `contains` 会被别处同名调用误判通过 —— 本仓老毛病)。
+# 注意事项：reset() 不得清除对局重连凭据：
+#    玩家从对局返回主菜单并重新进入大厅时，凭据必须保持有效，确保对战房间仍可点击重连；
+#    凭据仅在明确切换房间号或游戏模式（note_room）、或服务端拒绝重连/超时（clear_rejoin）时清理。
 func _check_rejoin_lifecycle(ses: String) -> void:
 	var reset_body := _func_body(ses, "reset")
 	_check(not reset_body.is_empty(), "PvpSession 里找不到 func reset()")
 	_check(not (reset_body.contains("token = \"\"") or reset_body.contains("worker_port = 0")
 			or reset_body.contains("room_code = \"\"") or reset_body.contains("rejoin = false")),
-			"★★ PvpSession.reset() 又清起回局凭据了 —— 主菜单那颗联机入口每按一次就调它一次,"
-			+ "清了就是「回到对局后自己那间房是灰的、回不去」(C1:整条路径乙在生产里不可达)")
+			"★★ PvpSession.reset() 不得清空回局凭据 —— 必须保留凭据以支持断线重连")
 	_check(not reset_body.contains("clear_rejoin()"),
 			"★ PvpSession.reset() 调了 clear_rejoin()(同上一款:进页复位 ≠ 下车清理)")
 	_check(reset_body.contains("map_path = \"\""),

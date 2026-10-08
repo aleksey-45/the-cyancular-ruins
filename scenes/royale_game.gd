@@ -6,12 +6,11 @@ extends PvpMatchClient
 
 var _last_snap_tick := 0
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
-# - `_level0`(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明;重连状态补充同步那一路
-#   要在基类 `_on_match_sync` 里用它还原可破坏砖)。
+# _level0 由基类统一管理，用于场景瓦片重建与同步
 var _hud: RoyaleHud = null
 var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
 
-# ── C2 客户端预测(与 pvp_client 同一套;见 docs/superpowers/specs/2026-09-12-royale-c2-migration-design.md)──
+# ── 客户端预测与回滚管线 ──
 # 本地玩家由引擎自步进(读真实 Input,aim/手感=单机);本场景每物理帧在它步进前
 # note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
 
@@ -40,26 +39,23 @@ func _ready() -> void:
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	# 与对手(层2)物理碰撞:服务器侧 match_host 已给每个玩家 mask |= 2,客户端本地玩家也必须,
 	# 否则本地预测直接穿过对手副本、服务器却挡住 → 每帧分歧回滚(C2 的无限回滚循环)。
-	# 对手那一侧由 player_replica 的幽灵碰撞体提供(层2)。**不改 player.tscn**:那会让
+	# 对手碰撞体由 player_replica 提供
 	# enemy_logic_smoke 的「player mask == 5」断言变红,且单机不需要这一位。
 	local.collision_mask |= 2
 	_local = local
 	# C2:本地玩家跑预测(engine 自步进),控制器绑定;权威从本人包的 ack_seq/c2 传入。
-	# - 这里**不再 set_server_rendered** —— 服务器渲染那条路径已整体删除(设计 §0「彻底删干净」),
+	# 本地角色采用客户端预测运行
 	#   全项目只剩一条联机链路。
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)
-	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽
-	# 会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。**不设 = 静默惰性**:
-	# 不报错,只是那修复不生效 —— 故 tests/probe/rollback_fidelity_probe 有源码守卫钉这一行。
+	# 环面世界尺寸：分歧判定取最短环面向量
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
 	# 生命条(他人,设置开启时;具体 role 的实例随副本在快照里懒建)
 	# 快照/事件消费
-	# 快照**拆两条**(2026-09-12):①世界包=全部玩家的渲染字段(副本/HUD 取它);
-	# ②本人包=自己的 ack_seq + c2(**只有本人需要**,C2 rollback 拿它锚定/重放)。
+	# 快照拆分为世界状态广播包与个人预测确认包
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
@@ -76,9 +72,7 @@ func _ready() -> void:
 	# 小地图(多目标版)
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
-		# 四个提供器**全部**显式传(2026-09-29 起 `setup_multi` 不再有默认值)。
-		# - 最后那个空 `Callable()` 是**故意的**:大乱斗没有"队色可与自己撞"的问题,
-		#   自己那个点保持 `SELF_COLOR`、白描边不出现(与 1v1 一致)—— 别把它当漏传。
+		# 初始化小地图提供器参数
 		minimap.setup_multi(
 			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
 			Callable(self, "_minimap_others"),
@@ -102,9 +96,7 @@ func _ready() -> void:
 	add_child(_pause_menu)
 	# 自己的染色(设置色相)
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
-	# - 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已建好并订阅齐了才开口要,
-	#   故不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
-	# - 存活检测再发(全仓纪律,与 `pvp_game` 那处逐字相同机制):定向可靠包,连接可能已经不可用。
+	# 进场主动请求玩家信息与房间状态
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "match_sync")
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
@@ -139,17 +131,13 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 				if _hp_bars.has(role):
 					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
 							/ float(PlayerParams.player_max_hp)
-		# - 自己那一份**刻意不消费**:C2 下本地玩家由引擎自步进,权威完整状态走**本人包**
-		#   (见 _on_snapshot_own)。把世界包里自己那份写进玩家 = "每帧把权威位置强写进正在预测的
-		#   玩家" = 橡皮筋 —— 那正是被删掉的那条旧路径的写法。切勿随意补回来。
-		#   (顺带:"你死了/你活了"这件事服务器经 round_state 的 alive 广播过,但那**不是**给
-		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 tests/harness/royale_c2_watcher.gd 的 A②。)
+		# 本地玩家状态由引擎预测模拟，权威完整状态由个人包校正
 	# 清理已离开玩家(掉线者从快照消失):副本/头顶ID/生命条一并移除(自检 M3 幽灵残留)
 	for role_str in _replicas.keys():
 		if not players_snap.has(str(role_str)):
 			_remove_replica(int(role_str))
 # 本人包:只有自己需要的 ack_seq + 权威完整状态（c2）。C2 下喂 rollback 控制器。
-# 拆包的一个附带好处:它与世界包**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补上),
+# 预测数据包与世界状态广播解耦
 # 世界包丢只让副本插值冻结一帧。
 
 
@@ -191,7 +179,7 @@ func _remove_replica(role: int) -> void:
 	_refresh_names()
 
 
-# 服务器权威开火(激光):逐点锚到**射手副本**当前渲染位置再整条画。
+# 服务端权威激光开火：逐点锚定至射手副本当前渲染位置
 # 与 pvp_client._on_beam_fired 的唯一差别:大乱斗有 N 个副本,锚点按 shooter_role 取。
 # - 必须走 NetBus(不是 NetBusExt):发送端 server/match_host.gd 用的是 NetBus.rpc_id(...);
 #   收在 NetBusExt 上会静默 no-op(main 的 core/net_bus_ext.gd 那个同名 RPC 是 KH 遗留重复)。
@@ -211,7 +199,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
 		return
 	# - 存活检测再发(全仓纪律):按 K 的那一刻连接可能已经不可用(服务端中途终止 / 被踢),
-	#   而这是**定向可靠包**  ->  不判就是那条 channel 0 错误。
+	# 校验网络连接状态
 	if not NetBus.can_send_to_server():
 		return
 	if event is InputEventKey and event.pressed and not event.echo \
@@ -229,10 +217,7 @@ func _on_round_state(data: Dictionary) -> void:
 		# 自检 L6:这片画面原还能跑动开枪。
 		# - ESC 菜单随即失效、退出只走结算页这一条路(与 pvp_client / team_game 相同机制):
 		#   不销毁菜单的话,玩家能在结算页上再弹一次暂停菜单 —— 本页的 ESC(返回主菜单)与
-		#   菜单的 ESC 会**同时**触发(见 ui/match_result.gd 类头那条硬依赖)。
-		#   - 上一版这里还兼职"别让 6s 退场定时器在玩家已从别的路径离开后再切一次场景";
-		#     定时器已换成结算页(那条风险改由 MatchResult 的 `leave_requested` 只发一次 +
-		#     `safe_change_scene` 的 `_switching` 提供容错保障),但**这两行仍然必须留** ——
+		# 处理对局结束与退出逻辑
 		#     上面的 ESC 双重语义依赖它。
 		if _pause_menu != null and is_instance_valid(_pause_menu):
 			_pause_menu.queue_free()
@@ -243,14 +228,14 @@ func _on_round_state(data: Dictionary) -> void:
 
 
 # 结算页载荷的唯一来源。-  本函数只读状态、不碰节点树(适配器是纯函数)。
-# `_last_round_state` 是**基类**成员(记录在同名函数开头),本文件不再声明。
+# 基类状态成员维护
 func _build_result_payload() -> Dictionary:
 	return MatchResultPayload.for_royale(_last_round_state, _names, PvpSession.role)
 
 
 # ── 名字 / 颜色 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
-# - 不要连回 NetBus.local_peer_info —— 那条**推送**路径在本项目已不存在(服务端不再广播),
+# 监听本地玩家信息更新
 #   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
@@ -309,13 +294,8 @@ func _replica_for(role: int) -> Node2D:
 	return r if r is Node2D else null
 
 
-# ── 小地图的点位与配色(大乱斗,2026-09-29 补)────────────────────────
-# 注意： 位置与颜色**必须共用同一份 entries**(纪律来自 3v3 那批,见
-#   `team_game._minimap_entries` 的注释):`Minimap` 是**按下标**取色
-#   (`_other_dots[i].color = cols[i]`),而副本是**懒建**的(`_ensure_replica`)、
-#   又会 `erase`(`_remove_replica`)—— 各写一份 `for r in _replicas` + 各自过滤时,
-#   "某个副本已 `queue_free`、尚未从 `_replicas` 摘掉"那个窗口会让两个数组**错位一格**
-#   = 某人的点画成**别人**的颜色,**不报错、只误导人**。唯一落点就是下面这一个函数。
+# ── 小地图点位与颜色映射 ──
+# 统一遍历副本列表，避免索引与颜色错位
 func _minimap_entries() -> Array:
 	var arr: Array = []
 	for role in _replicas:
@@ -332,12 +312,7 @@ func _minimap_others() -> Array:
 	return arr
 
 
-# 他人点的颜色:**与头顶 ID 同源** —— 都问 `ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]`
-# (头顶那处见 `_refresh_names`)。
-# - 为什么跟**头顶 ID** 而不是跟**身体**:身体的颜色是各人自设的色相(`_hues`,
-#   由 `peer_hues` 下发),**可能撞色**、且**到达比小地图建立晚**;色板是固定 8 色、
-#   建点即可用。而小地图上"认得出谁是谁"靠的是能**对回头顶那个名字**,不是对回身体。
-# - 惰性求值(Minimap 每帧调一次),不是建点时算一次:与 3v3 的 `_minimap_colors` 相同机制理由。
+# 他人标记点颜色与角色头顶标识颜色统一映射
 func _minimap_colors() -> Array:
 	var arr: Array = []
 	for e in _minimap_entries():

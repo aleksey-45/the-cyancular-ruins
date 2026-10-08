@@ -10,9 +10,9 @@ extends RefCounted
 # 坐标保持在「射手所在副本」的连续系 → 跨接缝也连续。
 # 不声明 class_name:新 class 名需 --import 刷新全局缓存;此文件用 preload 引用即可。
 
-const SUB_TS: float = 32.0  # 子格边长(px)
+const SUB_TS: float = 32.0  # 子格边长（像素）
 
-# origin: 枪口世界坐标;dir: 单位方向;max_len: 总射程(px);max_bounces: 反射次数上限。
+# origin: 枪口世界坐标；dir: 单位方向；max_len: 最大射程（像素）；max_bounces: 最大反射次数。
 # 返回 {"points": PackedVector2Array 世界坐标折线(含起点/拐点/终点),
 #       "contacts": Array[Vector2i] 每次碰墙的 64px 格(规范坐标,可破坏砖扣除生命值用),
 #       "hit_points": PackedVector2Array 与 contacts 平行的碰墙表面世界坐标(播粒子落点)}。

@@ -1,19 +1,18 @@
 class_name PlayerParams
 extends RefCounted
 
-# 玩家专属参数集中地(从 gameParameters 拆出)。gameParameters 只留共享参数
-# (gravity0/TILE_SIZE/地图尺寸/敌人生成)。访问方式: PlayerParams.move_speed。
-# 与 EnemyParams 同风格: RefCounted + const,不做 autoload。
+# 玩家专属参数配置（从 GameParameters 拆分）。GameParameters 仅保留全局物理与地图配置。
+# 访问方式：PlayerParams.move_speed。
+# 采用 RefCounted + const 形式组织，不作为 Autoload。
 
-# ── 行走手感(方案 A)──
+# ── 行走手感 ──
 const move_speed: float = 700.0
-const accel_ground: float = 30.0    # 地面加速缓动系数(越大起步越跟手)
-const accel_air: float = 9.0        # 空中加速
-const brake_ground: float = 16.0    # 地面松键减速(带一点滑行)
+const accel_ground: float = 30.0    # 地面加速缓动系数（越大起步越敏捷）
+const accel_air: float = 9.0        # 空中加速系数
+const brake_ground: float = 16.0    # 地面松键减速（带轻微滑行）
 const brake_air: float = 6.0        # 空中松键减速
-# 水平速度低于此值直接归零(避免贴地滑行 / 极慢速抖动)。
-# 原先是 scenes/player/player.gd 里的 const STOP_SNAP,climb_component 里还抄过一份废弃冗余定义 ——
-# 归到这里,免得再被抄第二遍(移动手感数值的唯一去处就是本文件)。
+# 水平速度低于此值直接归零（避免贴地滑行与极慢速微小抖动）。
+# 统一收拢至此处作为移动手感数值的唯一定义。
 const stop_snap: float = 1.0
 
 # ── 跳跃手感(方案 A)──
@@ -73,15 +72,14 @@ const hit_cam_shake_time: float = 0.25  # 大伤害相机震动时长(秒)
 const explosion_cam_shake: float = 30.0      # 爆炸相机震动基准幅度(爆炸贴近玩家时,px)
 const explosion_cam_shake_time: float = 0.5  # 爆炸相机震动时长(秒)
 
-# ── 武器拾取 / 丢弃(2026-09-15,武器槽位计划)──
-const weapon_pickup_radius: float = 64.0      # 可拾取半径(1 格)
-const weapon_drop_hold_time: float = 0.6      # 长按 Q 多久算丢弃(用户 2026-09-16:2s → 1s → 0.6s)
-const weapon_drop_speed: float = 400.0        # 丢弃初速(水平,朝朝向)
-const weapon_drop_up: float = 220.0           # 丢弃初速(向上)
+# ── 武器拾取与丢弃 ──
+const weapon_pickup_radius: float = 64.0      # 可拾取半径（1格）
+const weapon_drop_hold_time: float = 0.6      # 长按丢弃按键判定触发时长（秒）
+const weapon_drop_speed: float = 400.0        # 丢弃水平初速度（朝向前方）
+const weapon_drop_up: float = 220.0           # 丢弃向上初速度
 const weapon_drop_offset := Vector2(24.0, -8.0)   # 掉落物生成点相对玩家的偏移
-# 落地摩擦(指数衰减率)。"较大"= 很快停住。-  与 weapon_stop_eps 一起构成
-# 「落点与何时开始模拟无关」这条不变量(联机端客户端晚一个 RTT 才开始模拟,落点必须一致):
-# 靠**速度衰减 + 阈值置零**,而不是"滑固定时长"。
+# 落地地面摩擦指数衰减率。与 weapon_stop_eps 配合确保不同网络延迟下实体停稳位置一致：
+# 采用速度指数衰减结合零阈值截断，使落点确定性收敛。
 const weapon_ground_friction: float = 12.0
 const weapon_air_drag: float = 0.4            # 空中阻力(小)
 const weapon_fall_gravity: float = 1600.0     # 落体重力
@@ -89,16 +87,11 @@ const weapon_stop_eps: float = 6.0            # 水平速度低于此值即置�
 # 自己刚丢下的枪在这么久内不参与自己的拾取判定(防"丢-捡"抖动)
 const weapon_pickup_self_delay: float = 0.5
 
-# ── 补间形变(squash & stretch,见 scenes/effects/squash_stretch.gd) ──
-# 上限 0.06 = 满冲击时最少 0.94 / 最多 1.06。
-# - 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」),同时把
-#   `squash_recover` 9→16、`squash_air` 0.30→0.10 —— **三项一起收**。事件强度不动。
-#   这次改的是**两侧共有的三项**,故 `EnemyParams.shared` 必须同改(那份断言逐名钉同值)。
-# 任何一项都是**在 [-1,1] 的合成量上相乘**,叠加多少事件都不会超过这个上限。
-# - 下面这组常量在 `EnemyParams.shared` 里**有一套同名同值的副本**(其中 8 个名字相同:
-#   amount / recover / land_min_vy / land_ref_vy / land / hurt / air / air_ref_vy)——
-#   两侧刻意不共享常量(两个参数类互不依赖,spec §3),故**改一侧要问另一侧是否也该改**。
-#   两份的漂移是真隐患,`tests/smoke/squash_stretch_smoke.gd` 逐名钉住这 8 个同值。
+# ── 补间形变（参见 scenes/effects/squash_stretch.gd）──
+# 上限 0.06，即满冲击时缩放为 0.94 ~ 1.06。
+# 任何一项均在 [-1, 1] 的合成量上相乘，叠加多个事件也不会超出该上限。
+# 下方常量与 EnemyParams.shared 中的同名配置对应，
+# tests/smoke/squash_stretch_smoke.gd 会校验两处常量保持一致。
 const squash_amount: float = 0.06          # 满冲击形变量
 const squash_recover: float = 16.0         # 冲击回归速率(指数,越大回正越快)
 const squash_jump: float = 0.75            # 起跳拉伸

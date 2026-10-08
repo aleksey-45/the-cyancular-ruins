@@ -86,8 +86,7 @@ func _ai(delta: float) -> void:
 			_tick_return(delta, dist)
 
 
-# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 124 行的单 match)。
-# - 各段里的 `return` **语义不变**:match 是 `_ai` 的最后一条语句,所以在 _tick_* 里 return
+# 状态机帧逻辑更新，各状态逻辑分派至独立方法处理
 #   等于原来在 _ai 里 return(都是"本帧到此为止")。
 
 func _tick_sleep(delta: float, dist: float) -> void:
@@ -366,7 +365,7 @@ func _fire_parabolic() -> void:
 			EnemyParams.FlyBird.bullet_size)
 	b.water_mult = WATER_DAMAGE_MULT
 	# 时间回溯重建用的场景路径(与 weapon_base 出弹处相同机制):不写这条 meta,回溯里
-	# `WorldRewind._apply_bullets` 建不出节点 → 敌方子弹在回溯期间**直接消失**(位置也不倒)。
+	# 记录生成子弹的场景资源路径，确保时空回溯重建时能正确实例化
 	b.set_meta("scene_path", ENEMY_BULLET_SCENE.resource_path)
 	b.global_position = global_position
 	get_viewport().add_child(b)

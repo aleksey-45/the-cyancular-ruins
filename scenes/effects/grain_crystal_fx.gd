@@ -1,22 +1,18 @@
 class_name GrainCrystalFx
 extends Node2D
 
-# 乌鸫精英击杀结晶(第一阶段):身体碎裂 → 结晶炸开散落 → 飞向怀表 → 被吸收。
-# 世界空间节点(挂 WorldViewport 侧),但目标点每帧按**相机会算**到屏幕上的怀表中心
-# ——怀表是 HUD 控件(屏幕空间),这样不需要跨 canvas 层搬节点。
-# 吸收完成:入账(Level0.grain_account.deposit)+ 怀表颤抖(WatchHud.tremble)。
+# 乌鸫精英击杀掉落结晶特效：身体碎裂 -> 结晶散落 -> 飞向怀表 -> 吸收结算。
+# 吸收完成后触发怀表增加时间颗粒并播放震动反馈。
 
 const SHARD_COUNT := 10
 const SCATTER_TIME := 0.28          # 炸开+散落阶段时长(秒)
-# 阶段二改成**指数收敛**(v = 到目标的位移 × ARRIVE_RATE,再限速):任意距离都在 ~0.3s 内到位,
-# 且近目标时每帧步长只有几像素 —— 既不会绕着目标转圈,也不会一帧跨过去(隧穿)。
-# 上一版是"纯加速度 + 阻尼",实测在真实世界里 1.9s 都到不了(只能靠保底处理入账,碎片会半路消失)。
+# 结晶飞向怀表采用指数收敛平滑插值，避免超调或穿透
 const ARRIVE_RATE := 16.0           # 收敛速率(1/s):时间常数 ≈ 1/16 ≈ 0.06s
 const MAX_FLY_SPEED := 4200.0       # 限速(px/s):跨一整屏 ~0.46s;远距击杀也大概率赶在保底处理线前到
 const ABSORB_RADIUS := 16.0         # 吸收半径(按线段判近,见 _segment_hits)
 const ABSORB_TIMEOUT := 1.6         # 阶段二超时即强制吸收(颗粒是数值承诺,不许因特效丢掉)
 const ABSORB_TAIL := 0.8            # 吸收后再留一点尾巴让其余碎片飞完,然后自毁
-const SHARD_COLOR := Color8(18, 18, 22)        # 黑结晶(用户指定;衬亮背景更醒目)
+const SHARD_COLOR := Color8(18, 18, 22)        # 结晶外观颜色
 const CORE_COLOR := Color8(70, 70, 78)         # 黑结晶上的冷灰亮芯(保留体积感)
 
 static var last_absorb_kind: String = ""   # 诊断:"fly"=真飞到怀表 | "timeout"=保底处理路径(不应成为常态)
@@ -53,11 +49,7 @@ func _process(delta: float) -> void:
 			s["v"] = (s["v"] as Vector2) * exp(-4.5 * delta)
 			s["p"] = (s["p"] as Vector2) + (s["v"] as Vector2) * delta
 	else:
-		# 阶段二:全体飞向怀表。三条纪律,缺一条都会"看着飞到了、颗粒没入账":
-		#  ① **指数收敛而不是纯加速** —— 纯加速追踪会绕着目标来回冲(过冲后速度越来越大),
-		#  ② **按线段判近** —— 高速下一帧能跨过目标几十像素,只判"当前点是否在半径内"会**穿过去**
-		#     (FLY_ACCEL 提到 5200 之后实测就是这样:FX 一直飞、_absorbed 永远 false、余额零变化);
-		#  ③ **保底处理入账** —— 颗粒是**数值承诺**,特效再怎么飞丢也必须入账。超时即吸收。
+		# 阶段二：结晶碎片飞向怀表并判定吸收结算
 		var target := _watch_world_target()
 		var all_done := true
 		for s in _shards:
@@ -78,12 +70,12 @@ func _process(delta: float) -> void:
 				or (_absorbed and _t >= SCATTER_TIME + ABSORB_TAIL):
 			if not _absorbed:
 				last_absorb_kind = "fly" if all_done else "timeout"
-				_absorb()   # 保底处理:特效没飞到也入账(上面那条"绝不丢颗粒")
+				_absorb()   # 超时保底吸收结算
 			queue_free()
 	queue_redraw()
 
 
-## 线段 a→b 上离 p 最近的点是否落在 r 内(防"一帧跨过目标"的隧穿)。
+## 检测线段是否进入目标吸收半径，避免高速下穿透漏判
 static func _segment_hits(a: Vector2, b: Vector2, p: Vector2, r: float) -> bool:
 	var ab := b - a
 	var len2 := ab.length_squared()
@@ -93,7 +85,7 @@ static func _segment_hits(a: Vector2, b: Vector2, p: Vector2, r: float) -> bool:
 	return (a + ab * t).distance_to(p) <= r
 
 
-## 怀表中心的世界坐标:取 WatchHud 的屏幕矩形中心,经相机逆换算(表心随镜头移动也准)。
+## 计算怀表中心在世界空间中的目标位置
 func _watch_world_target() -> Vector2:
 	var tree := get_tree()
 	if tree == null:

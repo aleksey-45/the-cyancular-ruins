@@ -20,7 +20,7 @@ extends Node
 #
 # ── 阶段 7(仅 1v1):掉线窗口里服务器侧世界变过 ──
 #   动机(阶段 2-A 的主缺口):actor 掉线的那 30 秒里服务器侧拆了墙、地面上的枪被捡走;
-#   重连后靠 `pvp_match_client._on_resumed` 那一拉(match_sync)补回 —— 不补的话客户端留着
+#   重连后靠 `pvp_match_client._on_resumed` 触发 match_sync 全量拉取补回 —— 不补的话客户端留着
 #   未同步残留瓦片(撞上去 -> 本地预测与服务端分歧 -> 可能回滚循环)与残留幽灵武器(看着在、按 F 无效)。
 #   两处变化都必须由服务器侧制造(探针进程拿不到 worker 的 `_host`:它是独立 OS 进程,
 #   见 reconnect_probe.gd 的「拓扑」),所以走两个测试开关 + witness 的动作:
@@ -88,10 +88,10 @@ const T_ACTOR_END_MAX := 13.0
 # ── 阶段 1 的 C2 断言(2026-09-17 整支审查的 C 项)──
 # - 为什么要量它:重连时服务器把 `_ack_seq[role]` 归 0 重协商锚点,而客户端在 `_on_resumed` 之前
 #   仍用断线前那个 seq 空间发包(`_input_seq` 从 N 继续涨) -> 服务器下一 tick 消费到的就是那个
-#   大 seq、`_ack_seq` 当场被写回 N+1;那条快照(unreliable)又恰好落在刚重建的 rollback 上 -> 
+#   大 seq、`_ack_seq` 当场被写回 N+1;不可靠快照又恰好落在刚重建的 rollback 上 -> 
 #   `_acked` 被抬到新纪元追不上的高度,`on_authoritative` 的 `ack <= _acked` 把之后所有真实 ack
 #   全丢,直到客户端自己的 seq 爬过它(断线前活了多久就哑多久;一局中段可上万帧)。
-#   症状就是 `prediction_rollback.gd` 记过的那个静默退化:不报错、回滚恒为 0、背包(soft state)
+#   症状就是 `prediction_rollback.gd` 记过的那个静默退化:不报错、回滚恒为 0、背包轻量状态
 #   不再同步。判定条件取那条"合法 ack 永不超过本端已发 seq"(服务器只可能 ack 它消费过的包):
 #   每个采样点都必须 `_acked <= _input_seq` —— 被毒死时 `_acked` 是个大数而 `_input_seq` 刚从 0 起爬。
 #   - `_acked` 没有公开输入读取接口(`PredictionRollback` 只暴露 `rollback_count()`/`last_applied()`,而被
@@ -477,7 +477,7 @@ func _actor_assert() -> void:
 	# 阶段 1:重连循环真的跑起来了、且已收尾
 	_check(_saw_reconnecting, "相①:闪断后 `_reconnecting` 真的置起(重连循环在跑)")
 	_check(_game.get("_reconnecting") == false, "相①:重连已收尾(_reconnecting 归假 = _on_resumed 跑过)")
-	_check(NetBus.can_send_to_server(), "相①:连接真的接回来了(can_send_to_server)")
+	_check(NetBus.can_send_to_server(), "相①:连接已成功恢复并可向服务端发送数据")
 	# 阶段 1的核心:玩家实体保持保留 —— 场景与玩家节点都是同一个实例
 	_check((_game.get("_local") as Object).get_instance_id() == _before_local_id,
 			"相①:玩家节点还是同一个 instance_id(身体没被销毁 = 状态一条都不用恢复)")

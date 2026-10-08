@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ## 测试脚本公共运行环境配置。
-# 使用方法（置于脚本开头，放在 `set -u` 之后引入）：
+# 使用方法（置于脚本开头，放在 set -u 之后引入）：
 #   source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # 适用于 tests/{smoke,probe,harness,scripts}/ 各子目录脚本
 #
 # 主要功能：
@@ -9,8 +9,8 @@
 #   3. 提供进程与端口清理辅助函数（kill_procs / kill_port / kill_port_range）。
 #
 # 注意事项：
-# - 本文件会被声明了 `set -u` 的调用方脚本引入，所有变量引用必须提供默认值 `${VAR:-默认}`。
-# - 本文件内部禁止执行 `set -e` 或 `set -u`，避免破坏调用方原有的错误处理逻辑。
+# - 本文件会被声明了 set -u 的调用方脚本引入，所有变量引用必须提供默认值 ${VAR:-默认}。
+# - 本文件内部禁止执行 set -e 或 set -u，避免破坏调用方原有的错误处理逻辑。
 
 # ── 引擎可执行文件解析：优先读取环境变量，未设置时回退至本地默认路径 ──
 GODOT="${GODOT:-D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe}"
@@ -46,7 +46,7 @@ kill_port() {
 	done
 }
 
-# ── 按端口范围批量清理残留的子进程（Worker）──
+# ── 按端口范围批量清理残留的 Worker 子进程 ──
 # 作用说明：
 # 对局 Worker 进程通常由大厅服务派生。若前序测试异常中断，残留的孤儿进程仍会占用 UDP 端口，
 # 导致后续测试重新分配到相同端口时绑定失败（如 ENet 报监听失败），从而引起网络测试阻塞挂起。

@@ -18,7 +18,7 @@ class StubPlayer:
 	func apply_recoil(_push: float) -> void:
 		pass
 
-# 带碰撞体的战斗桩玩家:入 player 组、占层2,记录 take_hit 伤害。
+# 受击测试桩玩家：加入 player 分组，碰撞层设为 Layer 2，用于记录 take_hit 伤害。
 class StubCombatPlayer:
 	extends CharacterBody2D
 	var hit_log: Array = []
@@ -38,8 +38,7 @@ class StubCombatPlayer:
 
 var _failures: Array[String] = []
 
-# 跨节复用的夹具/中间量:拆 _initialize 时由局部提升为字段(阶段 5.1)。
-# 每个的首次赋值位置原样不动 —— 顺序不变,故断言顺序也不变。
+# 跨阶段复用的测试上下文变量
 var bscene: PackedScene = null
 var player_scene: PackedScene = null
 var jump2: PackedScene = null
@@ -57,7 +56,7 @@ func _check(cond: bool, name: String) -> void:
 		printerr("  FAIL - " + name)
 
 
-# ── 从 EnemySpawner 搬来的测试夹具(2026-09-14,无引用冗余代码清理)──
+# ── 地板生成点采样算法参考实现 ──
 # 原先它是 `EnemySpawner.sample_spawn_cells`(生产侧):但单机敌人早已改从地图元数据布点
 # (`MazeGenerator.load_spawns()` -> `spawner.spawn_all(spawns)`,地图里没有 `# enemy` 就是 0 只),
 # 它成了无引用的冗余函数 —— 而它留在生产侧会让人误以为「敌人是运行时随机的」。
@@ -87,8 +86,7 @@ func _sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 
 
 func _initialize() -> void:
-	# 本函数只留顺序:每节一个 _phase_*,按原有先后调用 —— 调用顺序属于执行时序约定
-	# (断言顺序 = 输出顺序 = 基准预期行为（Test Oracle）)。
+	# 按阶段顺序依次执行各部分测试断言
 	_phase_pure_helpers()
 	_phase_spawn_metadata_player2()
 	_phase_enemy_base_load()

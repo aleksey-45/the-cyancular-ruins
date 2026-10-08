@@ -1,48 +1,28 @@
 extends Node
 
-# 日志落盘(autoload)。客户端与服务端各写一份,放在**游戏目录**的 `log/` 下:
+# 日志持久化管理器（Autoload 单例）。
+# 客户端与服务端日志分别写入游戏目录的 log/ 路径下：
+#   log/client.log        客户端运行日志
+#   log/server.log        服务端运行日志
+#   log/<角色>.old.log    上一轮的历史日志（单文件超过 MAX_BYTES 时自动轮转）
 #
-#   log/client.log        客户端(玩家双击的那个 exe)
-#   log/server.log        服务端
-#   log/<角色>.old.log    上一轮的(单份超过 MAX_BYTES 时轮转,只留一份旧档)
-#
-# EasyTier 内核自己的日志同在这个目录下(`log/easytier-host-<pid>/`、`log/easytier-guest-<pid>/`,
-# 由 `core/net/tunnel.gd` 传给内核,见那里的 `_append_file_logging`);内核是独立进程、
-# 日志名固定,所以按角色分目录,同机跑两条隧道时两边不会互相覆盖。目录名尾部带启动者的
-# 游戏进程 pid —— 同机多局各写各的目录,也是孤儿清扫(`Tunnel._reap_orphans`)认领所有权的标记。
-#
-# ── 为什么不用 Godot 自带的文件日志 ──
-# 它的落点由 project.godot 的 `debug/file_logging/log_path` 在**引擎启动时**定,而那个设置:
-#   - 只认 `user://` 与绝对路径 —— 写相对路径会让引擎**启动就崩**(signal 11;2026-10-02 实测
-#     `log/client.log` 与 `D:/.../log/client.log` 两种写法,前者崩、后者正常);
-#   - `res://` 在发布版里是只读的(资源打包进 PCK),写不进去;
-#   - 于是它只剩 `%APPDATA%\Godot\app_userdata\...` 一个落点,而且**客户端与服务端同名**
-#     (两个进程会互相覆盖同一份 `godot.log`),玩家要看日志还得先离开游戏目录去找。
-# 所以 project.godot 里把自带的那份关掉(`debug/file_logging/enable_file_logging=false`),
-# 改用 `OS.add_logger()` 接住引擎的全部输出(print / push_warning / push_error / 脚本报错),
-# 落点、命名、轮转都由本文件说了算。
-#
-# - 探针那套 `--log-file <路径>`(引擎自己认的开关)与本记录器**并存**:那个开关在引擎启动时
-#   就被吸收清除了,`OS.get_cmdline_args()` 里看不到它(2026-10-02 实测:带与不带,脚本读到的参数
-#   一模一样),所以本文件无法据此让路。开发态跑探针时两边各写一份,内容一致、互不影响。
-#   发布版不走 `--log-file`,只有本记录器这一份。
+# 通过 OS.add_logger() 挂载自定义日志接收器，接管引擎的所有输出（print / push_warning / push_error），
+# 支持统一的日志落盘路径、进程隔离与文件大小轮转控制。
 
 const ROLE_CLIENT := "client"
 const ROLE_SERVER := "server"
-## 单份日志的上限。超了就轮转成 `<角色>.old.log`(旧的 `.old` 直接删)。
+## 单份日志大小上限（字节）。超过阈值时轮转为 <角色>.old.log 并清理更早的历史文件。
 const MAX_BYTES := 2 * 1024 * 1024
 
 static var _sink: Logger = null
 static var _file: FileAccess = null
-static var _path := ""            # 当前写盘的文件(展示、排错用)
+static var _path := ""            # 当前写盘文件路径
 static var _role := ROLE_CLIENT
-static var _broken := false       # 写盘失败后停手,免得每条日志再失败一次
+static var _broken := false       # 写盘失败后停止重试
 static var _installed := false
 
 
-# `Logger` 是引擎给的接日志的口子(`OS.add_logger`);它有两个虚方法,引擎把每条消息交给它们。
-# - 参数表是**引擎定的**,少一个参数这个方法就静默不生效(warning 只在编辑器里看得见),
-#   改动前先对着 `Logger` 的类文档核一遍(4.7.1 的签名见下)。
+# 自定义日志接收器，实现 Engine 的 Logger 虚接口供 OS.add_logger 注册。
 class Sink extends Logger:
 	var on_line: Callable
 
@@ -75,7 +55,7 @@ func _exit_tree() -> void:
 
 # ── 装配 ──
 
-## 装上记录器并把落点定下来。**幂等**。
+## 初始化并注册日志接收器（支持幂等调用）。
 static func install() -> void:
 	if _installed:
 		return
@@ -83,30 +63,27 @@ static func install() -> void:
 	_sink = Sink.new()
 	_sink.on_line = _write
 	OS.add_logger(_sink)
-	# 服务端是同一个工程的第二个导出预设(export_presets 的 `dedicated_server=true`),
-	# 它在运行时带 `dedicated_server` 特性 —— 拿它分角色,客户端与服务端才不会抢同一个文件。
-	# - 开发态跑 `res://server/server_main.tscn` 时没有这个特性,那时由 `server_main.gd`
-	#   显式调 `use_role("server")` 补上。
+	# 专用服务端具有 dedicated_server 运行特性，据此区分输出到 server.log 还是 client.log
 	use_role(ROLE_SERVER if OS.has_feature("dedicated_server") else ROLE_CLIENT)
 
 
-## 换写哪个角色的日志(同一条命令里只会换一次:服务端在开发态自报家门)。
+## 切换当前进程日志角色（客户端或服务端）。
 static func use_role(role: String) -> void:
 	if role == _role and _file != null:
 		return
 	_role = role
 	if _sink == null:
-		return                      # 还没装(或本进程带 --log-file):只记住角色
+		return
 	close()
 	_open()
 
 
-## 当前日志文件的绝对路径("" = 没在写盘)。界面与崩溃排查都用它。
+## 获取当前实际写入的日志文件绝对路径（为空表示未落盘）。
 static func log_file() -> String:
 	return _path
 
 
-## 日志目录(绝对路径)。即使本次没写盘也返回应有的位置,供提示文案用。
+## 获取标准日志输出目录绝对路径。
 static func log_dir() -> String:
 	return AppPaths.log_dir()
 
@@ -126,7 +103,7 @@ static func _write(message: String, error: bool) -> void:
 		return
 	_file.store_line("[%s]%s %s" % [Time.get_time_string_from_system(),
 			" ERROR" if error else "", message])
-	# - 每条都 flush:日志是给"进程没能正常退出"那种场面用的,攒在缓冲里等于没写。
+	# 立即冲刷写入缓冲区，确保异常崩溃时日志及时落盘
 	_file.flush()
 
 
@@ -157,9 +134,7 @@ static func _open() -> void:
 	_session_header()
 
 
-# 超上限就把当前这份挪成 `<角色>.old.log`(旧的旧档直接删)。
-# - 判据用**上一轮留下的文件大小**,不是"本进程写了多少":本进程写到一半就崩的话,
-#   下一次启动正好按这一份的大小决定要不要留档。
+# 文件大小超限时将旧日志轮转重命名为 <角色>.old.log，覆盖更早的历史文件
 static func _rotate(dir: String, path: String) -> void:
 	if not FileAccess.file_exists(path):
 		return
@@ -176,8 +151,7 @@ static func _rotate(dir: String, path: String) -> void:
 	DirAccess.rename_absolute(path, old)
 
 
-# 游戏目录写不进去(比如装在 Program Files 下)时的退路:仍按角色分开写进 `user://logs/`。
-# - 必须把输出目标路径 —— "日志到底在哪"是排错的第一句话,不能靠人猜。
+# 默认目录不可写时（如无管理员写权限目录）回退写入 user://logs/
 static func _fallback() -> void:
 	_path = ""
 	var u := "user://logs"

@@ -6,9 +6,7 @@ signal enemy_spawned(enemy: Node)
 
 # 敌人注册表。唯一来源 data/enemies.json(与 HTML 编辑器共享)。
 static var TYPES: Dictionary = {}           # id → scene 路径
-# - `DISPLAY_NAMES`(场景路径 → 中文显示名)与 `display_name_of()` 已于 2026-09-17 删除:
-#   它们是**单机击杀播报**专用(「击杀 飞鸟」那行字),播报删除后无人调用。
-#   随之 `data/enemies.json` 也去掉了 `display_name` 字段 —— 加新敌人只需 id/name/scene/color。
+# 敌人生成器：负责关卡敌人按需实例化与生成点管理
 
 # 从 res://data/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
 static func load_types() -> void:
@@ -55,11 +53,7 @@ func spawn_all(spawns: Dictionary = {}) -> void:
 	print("[EnemySpawner] spawned %d enemies from map" % enemies_meta.size())
 
 
-# 全图"头顶 2 格净空"的开阔地板格,供地面武器布点用(2026-09-15)。
-# - 判据本体在 `MazeGenerator.is_floor_cell_with_headroom` —— 本函数**只做扫描**,
-#   别再抄一份判定条件(抄一份 = 改一处漏一处,而且两处都不报错)。
-# - 联机侧相同机制扫描的**真身**已搬到 `core/sim/spawn_picker.gd`(`SpawnPicker.floor_cells()`,
-#   2026-09-18 从 RoyaleHost 抽出;RoyaleHost 里只剩同名转发)(那边还要连通区规模,故没合并)。
+# 扫描全图上方具有 2 格净空的平整地面瓦片，供武器散落布点使用
 func open_floor_cells(grid: Array) -> Array:
 	var out: Array = []
 	if grid.is_empty():

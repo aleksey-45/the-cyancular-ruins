@@ -1,16 +1,15 @@
 class_name TimeField
 extends RefCounted
 
-# 世界时间场（阶段一）：将“时空回溯/时间加速/透支状态”转换为各实体每帧的 delta 时间缩放倍率。
+# 世界时间场控制器：将“时空回溯/时间加速/透支状态”转换为各实体每帧的 delta 时间缩放倍率。
 # 统一封装集中查询接口，实体脚本仅需调用 delta = TimeField.xxx_delta(delta, self)。
 #
-# 设计要点:
-#   - current 仅在单人关卡 Level0 中实例化；PvP 对局、菜单及测试探针中为 null，所有时间倍率恒为 1.0（完全不受影响）。
-#   - HASTE(加速):玩家与精英 ×HASTE_PLAYER(2),普通敌人与敌方子弹 ×HASTE_WORLD(1)
-#     ——"玩家相对普通敌人两倍"由**相对差**达成,不动 Engine.time_scale(物理/tween/网络不受扰)。
-#   - REWIND(回溯):普通敌人/子弹/玩家 ×0(冻结,由回放器接管位置);**精英与玩家无关照常行动**
-#     (策划案:精英怪不受回溯影响,依旧保持原本行为)。
-#   - 透支状态：根据透支深度使普通敌人加速 × (1 + LOAN_ENEMY_SPEED_BONUS * depth)。
+# 设计要点：
+#   - current 仅在单人关卡 Level0 中实例化；多人对战、菜单及测试探针中为 null，所有时间倍率恒为 1.0。
+#   - HASTE（时间加速）：玩家与精英按 HASTE_PLAYER 倍率步进，普通敌人与敌方子弹按 HASTE_WORLD 倍率步进，
+#     通过分层缩放形成相对流速差，不修改全局 Engine.time_scale，确保底层物理手感稳定。
+#   - REWIND（时空回溯）：普通敌人、子弹与玩家步进倍率为 0（进入冻结，由回放器接管位置）；精英敌人不受回溯影响，照常行动。
+#   - 透支状态：根据透支深度使普通敌人加速步进（1 + LOAN_ENEMY_SPEED_BONUS * depth）。
 
 enum Mode { NONE, REWIND, HASTE }
 

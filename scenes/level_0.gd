@@ -18,21 +18,9 @@ static var _dirty_chunks: Dictionary = {}
 # PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
 static var pvp_mode: bool = false
 
-# ── 安全场景切换:游戏世界(全量碰撞)从场景树中移除后**分帧拆除** ──
-# change_scene_to_file 会在切换时同步 memdelete 当前场景;单机/PvP 游戏世界含几千节点 +
-# 庞大的 SubViewport,一次性同步析构偶发原生段错误(实测死亡后回菜单/按 R 重载都会触发)。
-# 做法:新场景手动实例化并接管 current_scene,旧世界从场景树中移除,再交给**分帧拆除器**(见 start_reap)
-# 在后续几秒里一小批一小批拆掉 —— 既躲开"一帧里同步 memdelete 整具世界",又不像以前那样
-# **永不释放**(那会让退出时渲染器析构段错误,见 safe_change_scene 里那段注释)。
-# 注意:从场景树中移除必须回到帧末进行,故本函数先 await 一帧(见函数内注释)。
-
+# ── 安全场景切换：将游戏世界移出场景树并分帧销毁 ──
+# 避免一次性同步销毁大量物理与渲染节点引发卡顿或崩溃。
 # 场景切换过渡中标志：防止同帧或相近帧重复进入切换逻辑。
-# 本函数首行 await 一帧,故两次调用可以同时在飞。第二次 resume 时 `old = tree.current_scene`
-# 拿到的已是**第一次刚建出来的新场景** → 于是再实例化一份、把第一份也挂进拆除队列
-# (建出两份场景、菜单叠菜单)。触发很现实:PvP 的「对手离开」2.5s 定时器与玩家点「回到主菜单」
-# 可以先后落在同一帧附近。
-# - 守卫放在**这个统一集中处理点**而非各调用点:调用点每新增一条退出路径就要记得补一次守卫,漏一条
-# 就复现 —— 与「拆除逻辑散在多处」同病。此处一处覆盖全部现有与将来的调用方。
 static var _switching: bool = false
 
 ## 怀表时间系统账户与时间场(单机;PvP 不建 → 时间系统整体旁路)
@@ -67,8 +55,7 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	tree.current_scene = next      # 接管 current_scene 指针,旧场景不再被 change 流程释放
 	if old != null and old != next:
 		if OS.get_cmdline_user_args().has("--perf-teardown-detail"):
-			# 诊断模式:不退役,改成逐子树拆开计时。-  破坏性 —— 整具世界就此拆光,故走完
-			# 这条路就**没有旧世界可退役**了(只给单跑一次的诊断用)。
+			# 诊断模式：逐子树拆解计时
 			_teardown_detail(tree, old)
 			_perf_log("总计", t0)
 			_switching = false
@@ -76,17 +63,7 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 		tree.root.remove_child(old)
 		t = _perf_log("remove_child(old)", t)
 		old.visible = false
-		# 注意： 2026-09-15(导出 exe 实测):**不再把旧世界挂起**。
-		#   原先从场景树中移除后存进 `_retired`、挂到"下一次换场"才释放,于是:
-		#     - **退出时那具挂起的世界从不释放** → SubViewport 的 RID 全泄漏(实测 6264 个
-		#       CanvasItem + 3 个 shader 未释放)→ 渲染器析构**段错误**(exit 139),
-		#       进程要拖 ~1.5s 才死。用户报的"玩好一局后点退出/叉号要等 1s"就是这条。
-		#     - 第 2 次及以后换场还要同步 free 一整具世界(实测 79.5ms,见下)。
-		#   现在:从场景树中移除后**立刻**交给分帧拆除器,几秒内拆干净 —— 用户真去点退出时它早没了。
-		#   对照实测(导出 exe):不进游戏的流程退出码 0、零泄漏;进过游戏的是 139。
-		#
-		# `--perf-reap-sync` 保留旧行为(同步 free),只给 A/B 对照用:本机负载漂移能让
-		# 同一段代码的 remove_child 在 20~100ms 之间跳,跨轮比较不可信,只有同进程交替才量得准。
+		# 移出场景树后立即交给分帧拆除器分批回收，避免内存与句柄泄漏
 		if OS.get_cmdline_user_args().has("--perf-reap-sync"):
 			old.free()
 			t = _perf_log("free() 同步(对照)", t)
@@ -97,17 +74,9 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	_switching = false   # 换场完成:放行后续换场(回菜单→再进游戏→再回菜单是一串合法调用)
 
 # ── 退役世界的分帧拆除器 ──
-# 背景(实测,`--autotest-switch` 两趟单机往返):
-#   第 1 次退出: load 2.21 / add_child 13.06 / remove_child 31.86 / 总计  53.90 ms
-#   第 2 次退出: load 3.21 / add_child 14.68 / remove_child 21.72 / free 79.54 / 总计 133.28 ms
-# 第 2 次是第 1 次的 2.5 倍 —— 「有些时候才卡」就是这一笔(第 1 次 _retired 还是空)。
-# 做法:那笔同步 free 改为**摊到后续帧**。菜单已上屏、旧世界已从场景树中移除,分帧拆它谁也看不见。
-#
-# 拆除顺序 = **逆前序**:一次性收集整棵子树的前序列表,然后**从尾往前** free。
-# 前序保证「祖先先于后代被访问」 ->  逆序即「后代先于祖先被释放」 ->  每个父节点轮到时子节点
-# 早已拆光。这很重要:大容器本来是一锤子买卖(4000 个 CollisionShape2D 挂在同一个
-# StaticBody2D 下),逆前序把它变成一个个拆,单帧峰值才压得下来。
-# 预算按**时间**而非个数:节点大小差三个数量级,按个数会一会儿无效操作一会儿爆帧。
+# 将同步释放拆分为跨多帧的平摊释放，并在菜单显示期间后台运行。
+# 拆除顺序采用逆前序遍历，保证子节点先于父节点被释放。
+# 每帧执行受时间预算限制，避免单帧卡顿。
 const REAP_BUDGET_US := 3000      # 每帧拆除预算(≈0.18 帧 @60fps)
 static var _reap_queue: Array[Node] = []
 static var _reaper_driver: Node = null
@@ -123,9 +92,7 @@ class _Reaper extends Node:
 	func _ready() -> void:
 		# 换场可能发生在暂停中(暂停菜单点「回到主菜单」),拆除不该被暂停卡住
 		process_mode = Node.PROCESS_MODE_ALWAYS
-		# - 显式开 _process:别指望"脚本定义了 _process 就自动启用" —— 本节点是**内部类**
-		#   实例,自动启用走的是脚本方法探测那条路,不显式开就可能一帧都不进
-		#   (实测:不开时拆除器全程零调用,残余只能靠下次换场的 finish_reap 同步保底处理)。
+		# 内部类需显式启用 process 循环
 		set_process(true)
 
 	func _process(_delta: float) -> void:
@@ -140,8 +107,7 @@ class _Reaper extends Node:
 static func start_reap(tree: SceneTree, world: Node) -> void:
 	if world == null or not is_instance_valid(world):
 		return
-	# - 追加而不是"清空重来":上一具可能还没拆完(用户在菜单里只待了一小会儿就又进游戏)。
-	#   两棵树混在一个队列里也拆不错 —— 队列按逆前序消费,每个节点只属于一棵树。
+	# 队列追加未完成的拆除任务
 	var t0 := Time.get_ticks_usec()
 	_collect_preorder(world, _reap_queue)
 	_reap_nodes = _reap_queue.size()
@@ -177,15 +143,13 @@ static func finish_reap() -> void:
 			n.free()
 	_reap_queue.clear()
 
-# 诊断(只给 `--perf-teardown-detail` 用):把旧世界**逐个子树**拆下来计时,
-# 回答"remove_child 那几十毫秒到底花在谁身上"。-  这个模式是**破坏性**的 —— 子树当场 free、
-# 世界不再退役,故只能单次诊断用,别在日常流程里开。
+# 诊断模式：按子树统计卸载耗时
 static func _teardown_detail(tree: SceneTree, old: Node) -> void:
 	var total := Time.get_ticks_usec()
 	var kids := old.get_children()
 	print("[perf-switch] 旧世界 %d 个顶层子节点(逐个 free 计时):" % kids.size())
 	for c in kids:
-		# - 名字/类名必须在 free **之前**取:c.free() 之后 c 已失效,再读 c.name 是
+		# 提前读取节点名称与类型
 		#   use-after-free(实测:整行 print 直接不出现,只留下表头)。
 		var nm := str(c.name)
 		var cls := c.get_class()
@@ -207,10 +171,7 @@ static func _collect_preorder(n: Node, out: Array[Node]) -> void:
 	for c in n.get_children():
 		_collect_preorder(c, out)
 
-# ── 换场耗时打点(**诊断用,默认静默**)──
-# 打开方式:`--perf-switch`(与 `--worker` 同规,开关必须落在 `- ` 之后,
-# 见 OS.get_cmdline_user_args())。打一次换场就在 stdout 打四行。
-# 配套 `tests/smoke/menu_autotest.gd` 的 `--autotest-switch`(两趟往返,把第 2 次退出也走到)。
+# ── 场景切换耗时打点（诊断模式）──
 static func _perf_log(label: String, t0: int) -> int:
 	var now := Time.get_ticks_usec()
 	if OS.get_cmdline_user_args().has("--perf-switch"):
@@ -224,8 +185,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
-	# 清屏色 = 世界的"空气"色。-  单一来源放在 TerrainAtlas:主菜单背景的底色也读同一个
-	# 常量(用户 2026-10-03:"菜单背景颜色要和局内一致"),两处不许各写一份。
+	# 清屏背景色与地形图集统一保持一致
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
 
@@ -273,8 +233,7 @@ func _ready() -> void:
 			w.flash_locked())
 	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
-	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局**空手**(见 player.gd)。
-	# - `deferred`:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
+	# 单人模式初始武器随机散落于全图，玩家初始空手
 	scatter_weapons.call_deferred(_default_weapon_types())
 
 	var pp := PostProcess.new()
@@ -284,8 +243,7 @@ func _ready() -> void:
 	_build_pause_menu()
 
 
-# 墙体/所有非空气砖的图集(16px 象限制)。构造已上提到 TerrainAtlas —— 主菜单背景
-# 要"真实的那个世界",必须与这里用**同一份**映射(见 terrain_atlas.gd 文件头)。
+# 瓦片图集由 TerrainAtlas 统一构建
 func _create_wall_tileset() -> TileSet:
 	return TerrainAtlas.make_wall_tileset()
 
@@ -302,8 +260,7 @@ func _create_water_tileset() -> TileSet:
 
 
 func _paint_maze(layer: TileMapLayer) -> void:
-	# cyrm v4:铺 **16px 子格**(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,
-	# 液体由 _paint_water 分层铺)。瓦片坐标 = (象限 qy*4+qx, 纹理-1)。
+	# cyrm v4：绘制 16px 子格图层（跳过空气与液体瓦片）
 	var source_id = 0
 	var sc = MazeGenerator.current_subgrid[0].size()
 	var sr = MazeGenerator.current_subgrid.size()
@@ -446,8 +403,7 @@ func _restore_sub(e: Dictionary) -> void:
 
 
 func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
-	# cyrm v4 子格破坏:清一个 16px 渲染格(9 环面副本)+ 记回溯账本 + 重建所在碰撞块。
-	# 回溯捕获(**摧毁前**的 hp 由 TileDefs 传进来;仅单机时间系统激活且非回放期)
+	# cyrm v4 子格破坏：清理 16px 渲染瓦片、记录回溯账本并重建局部碰撞体
 	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
 		_tile_pending.append({"sub": sub, "hp": pre_hp})
 	if wall_layer != null:
@@ -515,10 +471,7 @@ func restart_single() -> void:
 	# 敌人重刷(与 _ready 相同机制;deferred 等旧敌 queue_free 先生效,避免同名冲突)
 	EnemySpawner.load_types()
 	$EnemySpawner.spawn_all.call_deferred(spawns)
-	# - 单机按 R = **完全重开**:背包清空、地面武器重新散落。
-	#   与"还原可破坏砖 + 清子弹/敌人重刷 + 玩家满血回出生点"是同一语义 ——
-	#   装备也是本局的进度,重开就该从头攒。
-	#   (联机不走这条路:服务器权威另有复活规则,武器只保留随机一把。)
+	# 单人模式重置：清空背包与地面武器，全量重新散落
 	clear_pickups()
 	_give_starting_weapon(player)
 	scatter_weapons.call_deferred(_default_weapon_types())
@@ -552,24 +505,16 @@ func _build_pause_menu() -> void:
 	add_child(PauseMenu.new(false))   # 隐藏待命,自行处理 ui_cancel
 
 
-# ── 地面武器(2026-09-15,武器槽位计划)──
-# 单机的权威就是本场景;联机的权威在 MatchHost(见联机计划),那边另存一份。
+# ── 地面武器系统 ──
 var ground_weapons := GroundWeaponField.new()
 var _next_pickup_inst: int = 1
 var _pickup_nodes: Dictionary = {}      # inst -> WeaponPickup
-var _self_drop_until: Dictionary = {}   # inst -> 解禁时刻(ms),防"丢完立刻捡回"的抖动
+var _self_drop_until: Dictionary = {}   # inst -> 允许重新拾取的时间戳（毫秒），防止丢弃后立即误拾取的抖动
 
 const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 
 
-# 单机开局武器:玩家**手里带一把**(用户 2026-09-15 要求「单机模式初始携带手枪」),
-# 其余散落在地图上。
-#
-# - 必须排在 `set_enabled_types` **之后** —— 如果先给再禁,手上一旦是被禁的那把,
-#   `set_enabled_types` 会判成"没有可用的"→ 空手;过滤顺序反了就直接白给。
-# - 用 `default_type()`(最小**启用**槽位)而不是写死 "1":玩家禁用手枪时应当发下一把,
-#   而不是发一把本局根本不让用的枪。发出来的仍是手枪,除非手枪被禁。
-# - 本函数只服务单机;PvP/大乱斗的初始武器由服务器 MatchHost 自己决定(见联机计划)。
+# 单人模式开局默认装备第一把可用武器
 func _give_starting_weapon(p: Node) -> void:
 	if p == null or p.weapons == null:
 		return
@@ -588,8 +533,7 @@ func _default_weapon_types() -> Array:
 	return out
 
 
-# 生成一件地面武器。self_drop=true 表示"这是玩家刚自己丢下的",
-# 会在 weapon_pickup_self_delay 内不参与**该玩家**的拾取判定。
+# 生成地面武器实体，self_drop=true 表示刚被玩家丢弃
 func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 		inst: int = 0, self_drop: bool = false) -> WeaponPickup:
 	if inst <= 0:
@@ -598,13 +542,9 @@ func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 	else:
 		_next_pickup_inst = maxi(_next_pickup_inst, inst + 1)
 	var node: WeaponPickup = PICKUP_SCENE.instantiate()
-	# - 顺序不能反:configure **必须在 add_child 之前** —— _ready 一加入场景树就按当时的 type_id
-	#   建视觉与碰撞箱,先加入场景树的话它已经用 @export 默认值(手枪)建过一次了。
+	# 先配置属性再加入场景树
 	node.configure(type_id, inst, mag, vel)
-	# 注意： 必须挂进 **WorldViewport**(SubViewport),不能 add_child(self):
-	#   世界(瓦片/玩家/敌人)全渲染在那个 SubViewport 里,由相机 + PostProcess 呈现。
-	#   挂到 Level0 自己身上 = 在渲染树之外 —— 节点存在、有视觉、有碰撞,**但屏幕上什么都看不到**。
-	#   (EnemySpawner.spawn_all 走的是同一件事:get_parent().get_node("WorldViewport"))。
+	# 挂载至 WorldViewport 保证正确进入世界视口渲染
 	$WorldViewport.add_child(node)
 	node.global_position = pos
 	node.canonical_pos = pos   # 权威位置(渲染位置由锚点推出,见 WeaponPickup)
@@ -654,9 +594,7 @@ func scatter_weapons(types: Array) -> void:
 		spawn_pickup(int(types[i]), WeaponInventory.MAG_FULL, pos, Vector2.ZERO)
 
 
-# 玩家按 F 的落点:一次只捡**最近的一把**(不是"范围里能捡的全捡")——
-# 这是"多把武器叠在一起捡不起来某些枪"的解法:连着按 F 就能逐把捡走。
-# 见 GroundWeaponField 的类头注释。
+# 拾取判定：优先拾取距离角色最近的地面武器
 func try_pickup_for(p: Node2D) -> void:
 	if p == null or p.weapons == null:
 		return
@@ -689,11 +627,8 @@ func _live_self_drops() -> Array:
 	return out
 
 
-# ── 拾取提示(每把**能捡的**武器各自一个"F")──
-# 用户 2026-09-16:「只要能捡起就会显示 F」。所以判据 = **能不能捡**,不是"是不是最近那把":
-#   在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
-# - 与 `try_pickup_for` 的选法**仍然是同一套** —— 按 F 捡的仍是最近那把,只是"能捡"的
-#   每一把都会提示(踩到其中任何一把都能捡起来)。
+# ── 地面武器拾取提示 ──
+# 凡满足拾取条件的武器均显示按键交互提示
 ## 时间玩法视效驱动:底片化 ramp ≤200ms、加速压暗 ramp 100ms、透支深度直传
 func _tick_time_visuals(delta: float) -> void:
 	if _post_process == null or time_field == null:
@@ -714,10 +649,7 @@ func _tick_time_visuals(delta: float) -> void:
 	_sync_time_glows()
 
 
-# 时间状态高亮(B13):加速 → 主角 + 场上敌人;回溯 → **只有精英**。
-# - 配色是**规则**不是装饰:精英在加速与回溯两种状态下都必须是"极为亮眼的黄"(用户指定),
-#   其余实体的高亮只是"时间场生效中"的可读提示。用加色副本(TimeGlow)而不是 modulate ——
-#   后者在非 HDR 2D 里被夹到 1.0,且会被敌人每帧的受击白闪覆盖(实测完全看不出高亮)。
+# 时间状态高亮：时间加速时高亮玩家与附近敌人，时空回溯时仅高亮不受回溯影响的精英敌人
 const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角:冷白蓝
 const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌:暖白
 const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英:亮黄(两层叠加 → "极为亮眼")
@@ -802,8 +734,7 @@ func _tick_rewind(delta: float) -> void:
 	if rewinding:
 		WorldRewind.hold_corpses = false
 		_rewind.step(delta, pl)
-		# 二次伤害:倒飞的子弹穿过**精英**(精英不受回溯,照常在场)时再结算一次伤害。
-		# 每颗回放弹对同一精英只结算一次(meta 记 id),避免逐帧反复扣除生命值。
+		# 倒飞子弹穿过不受回溯影响的精英敌人时正常结算二次伤害
 		_rewind_elite_hits()
 		# 瓦片还原:跨过 target 的破坏按 t 降序写回(最新破坏先还,最早的值最后落地)
 		if _tile_ledger != null and _tile_cursor >= 0.0:
@@ -827,11 +758,7 @@ func _tick_rewind(delta: float) -> void:
 
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
-	# - 先把表里的 pos 重置为**视觉中心**(可见的枪在哪),判定与提示才与玩家看到的一致。
-	# 注意： 并且必须**先设锚点**:WeaponPickup 的 canonical_pos(权威,恒在 [0,MAP))与渲染位置
-	#   是两回事,渲染位置每帧由锚点锚到玩家的最近副本 —— 不设锚点的话跨接缝的枪会画在
-	#   地图另一头(屏幕外),表现就是"接缝附近的枪看不见/取模不对"。
-	#   (联机侧由 PvpMatchClient._tick_ground_weapons 做同一件事;这里原先漏了。)
+	# 拾取判定与渲染位置统一以就近副本对齐锚点为准
 	var anchor: Vector2 = pl.global_position if pl != null else Vector2.ZERO
 	for inst in _pickup_nodes:
 		var n0 = _pickup_nodes.get(inst, null)

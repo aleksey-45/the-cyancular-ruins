@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-# 一键发布:导客户端 exe + 导服务端 exe + 把服务端打回 CONSOLE 子系统(双击即控制台窗口+服务器日志)
-# + 按时间戳归档到 builds/(历史版本留档,见 RELEASE.md §1.2,复用 tools/archive_build.py)。
-# 依赖 RELEASE.md 的自定义裁剪模板(4.7.1 标准编辑器)。改完游戏后跑一次即可。
-# 版本号取自 project.godot 的 `application/config/version`,与游戏内主菜单显示的**同源**。
-# 用法: python build_release.py   (可选 --stamp 202609062126 / --version v.1.2.0 覆盖默认)
+# 一键发布构建脚本：导出客户端程序与服务端程序，配置服务端控制台子系统并执行归档。
+# 构建过程依赖 project.godot 中配置的统一版本号。
+# 用法: python build_release.py (可选 --stamp <时间戳> / --version <版本号>)
 import datetime
 import json
 import os
@@ -19,33 +17,19 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 def _write_text_lf(path: str, text: str) -> None:
-    """按 **LF** 写盘。
-
-    ★ 2026-10-03 修:原先直接用 `Path.write_text(..., encoding="utf-8")`,而它在 Windows 上
-    会做**换行翻译**(LF → CRLF),本仓 `.gitattributes` 又是 `* text=auto eol=lf`
-    ⇒ 导出后**还原**出来的 `build_info.gd` 变成 CRLF,`git status` **恒脏**
-    (内容一字不差、只是行尾)—— 与本文件自己承诺的"导出后工作区是干净的"直接矛盾。
-    实测:跑一次发布后 `git status` 报 ` M core/config/build_info.gd`,21/21 行全是 CRLF。
-    ★ 仍走 `pathlib` 而不是 `open(..., "w")`:本仓环境的安全钩子对写模式 `open()` 会报穿越
-    (见下方那段注释),`Path.write_text` 是等价且被放行的形态。
-    """
-    # 用 chr(10) 而不是字符串转义,免得后来读的人把这里的换行看岔
+    """以统一的 LF 换行符写入文件，保证跨平台换行风格一致并避免工作树出现状态变更。"""
     Path(path).write_text(text, encoding="utf-8", newline=chr(10))
 
 
-TOOLS = os.path.dirname(os.path.abspath(__file__))   # tools/
-PROJECT = os.path.dirname(TOOLS)                       # 仓库根
-# 引擎可执行文件。-  这里是 **标准编辑器**(非 console;导出走编辑器 exe,与 tests/ 那些
-# 跑 headless 用的 console 版是**两个不同的二进制**)。换机器/换版本可用环境变量覆盖,
-# 不必改本文件 —— 同类散落的本机绝对路径一并收进 tests/env.sh 的 $GODOT(那里是 console 版)。
+TOOLS = os.path.dirname(os.path.abspath(__file__))
+PROJECT = os.path.dirname(TOOLS)
+# 标准编辑器路径，用于执行无头导出命令；支持通过 GODOT_EDITOR 环境变量覆盖
 EDITOR = os.environ.get("GODOT_EDITOR") or \
     r"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe"
 CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins.exe")
 SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
 BUILD_INFO = os.path.join(PROJECT, "core", "config", "build_info.gd")
-# 安全护栏:本脚本的临时写盘只针对 build_info.gd 这一个**仓库内固定文件**。
-# 写入一律用「chdir 到仓库根 + 纯字面量相对路径」,路径构造上杜绝越界
-# (--version/--stamp 只作为文件**内容**写入,永不参与路径构造)。
+# 限制构建脚本仅修改版本信息配置文件
 os.chdir(PROJECT)
 _BUILD_INFO_REL = "core/config/build_info.gd"
 if os.path.realpath(_BUILD_INFO_REL) != os.path.realpath(BUILD_INFO):
@@ -53,71 +37,40 @@ if os.path.realpath(_BUILD_INFO_REL) != os.path.realpath(BUILD_INFO):
 
 sys.path.insert(0, TOOLS)
 from archive_build import read_project_version, version_tag, release_version, release_label
-#   版本号单一来源:project.godot;发布标识(`RoF_v.0.5.0_202610040204`)的拼法也收在 archive_build。
 
 
-# 导出前把「版本号 + 构建时间戳」写进 core/build_info.gd,导出后还原 —— 这样:
-#   - 发布 exe 在**没有 git 的机器**上也能显示准确版本与构建时间(main_menu 原先从 git 读);
-#   - 工作区不会因为这个文件而变脏(`git status` 干净),日常开发仍显示 dev 占位。
-# 返回原文,交给调用方在 finally 里还原。
 def stamp_build_info(version: str, stamp: str) -> str:
+    """在导出前将版本号与时间戳写入 build_info.gd，并在导出完成后还原原始内容。
+
+    仅替换指定的常量声明行，避免破坏文件内的其他辅助函数与常量结构。
+    """
     try:
         with open(BUILD_INFO, encoding="utf-8") as f:
             original = f.read()
     except OSError:
         sys.exit("找不到 %s" % BUILD_INFO)
-    # - 只替换那两行 const,**绝不整份重写**:
-    #   整份重写等于把 build_info.gd 里除这两个常量之外的内容(如 display())从**发布版**里抹掉,
-    #   而编辑器里跑的是入库那份 → 开发时一切正常、导出后 `Static function "display()" not
-    #   found in base "res://core/config/build_info.gd"` 直接解析失败(2026-09-12 实测踩到,客户端/
-    #   服务端两个 exe 同时中招)。按行替换则对将来往该文件里加任何东西都免疫。
     import re as _re
     stamped = original
     for name, val in (("VERSION", version), ("BUILD_STAMP", stamp)):
         pat = _re.compile(r'^(const\s+%s\s*:=\s*)".*"$' % name, _re.M)
         if not pat.search(stamped):
-            sys.exit("build_info.gd 里找不到 `const %s := \"...\"` 行,无法写入发布信息" % name)
+            sys.exit("build_info.gd 中未找到 const %s 声明行，无法写入发布信息" % name)
         stamped = pat.sub(lambda m: '%s"%s"' % (m.group(1), val), stamped, count=1)
-    # pathlib 写盘:与 open(..., "w") 等价(截断+写入);安全钩子对写模式 open() 一律报穿越
     _write_text_lf(_BUILD_INFO_REL, stamped)
     print("== 写入发布信息: %s (%s)" % (version, stamp))
     return original
 
 
-# 导出后**自己跑一下产物**:至少确认它起得来、没有脚本解析错误。
-# 为什么必须做:脚本错误只在**发布版**才暴露异常的那一类(比如 build_info.gd 被覆盖掉一段)
-# 在编辑器里完全看不出来,而"导完就发"的流程没有任何别的环节会发现它。
-# 判据只认脚本级致命错 —— WARNING/普通 ERROR 不拦(发布版有很多无害噪音)。
 def _smoke_root() -> str:
-    """冒烟用的**暂存根**:`builds/`(仓库内的发布目录,`.gitignore` 已配)。
-
-    ★ 为什么不放系统临时目录(`%TEMP%`):**杀软对"从临时目录启动的新可执行"启发式最敏感** ——
-      本机的打包冒烟会反复把刚导出的 exe 拷进去跑,那是在给安全软件送信号(2026-10-04 排查)。
-    ★ 为什么放 `builds/` 而不是仓库根:**RELEASE.md §1.3 要求"拷到项目目录之外跑"** ——
-      那句话的实质是"exe 旁边不能有 `project.godot`",否则 Godot 会从本地文件系统补齐/重扫资源、
-      掩盖打包漏项(`builds/<版本> <时间戳>/` 里没有 `project.godot`,故满足)。
-    ★ 可用环境变量覆盖(CI/别的机器想换到别处):`CYR_SMOKE_DIR`。
-    """
+    """获取冒烟验证的临时工作目录，优先读取 CYR_SMOKE_DIR 环境变量，默认使用 builds 目录。"""
     root = os.environ.get("CYR_SMOKE_DIR") or os.path.join(PROJECT, "builds")
     os.makedirs(root, exist_ok=True)
     return root
 
 
 def smoke_check(exe: str, extra: list, expect: str = "") -> str:
+    """将产物复制到独立临时目录中执行无头启动验证，确保无缺失资源或脚本语法解析错误。"""
     print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
-    # - extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
-    #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
-    #   **起的是大厅、还在 7777 上 bind**,既没跑到 worker 分支、又和服主正在跑的大厅抢端口
-    #   (2026-09-15 实测:日志打的是「服务器就绪…(大厅 7777)」而不是「worker 就绪…(port P)」)。
-    #
-    # 注意： 两条 2026-10-04 加的(修两个**让冒烟虚假通过（未有效测试）**的洞;当时段错误被判成 OK):
-    #   ① **必须拷到项目目录之外跑** —— RELEASE.md §1.3 早就写着"在项目目录里跑时 Godot 会
-    #      从本地文件系统补齐/重扫资源,会掩盖打包漏项"。实测同一份 v1.2.0 产物:
-    #      `cwd=项目目录`  ->  **SIGSEGV(退出码 139)**;拷进干净临时目录  ->  退出码 0。
-    #      而旧版 v1.1.4 在项目目录里是 0 —— 也就是说"在项目里跑"这件事**已经不可靠了**。
-    #   ② **必须查返回码** —— 崩溃(SIGSEGV/异常退出)不会打 `SCRIPT ERROR`  -> 
-    #      上面那段文本过滤把它读成"OK(无脚本级错误)",而这正是本文件反复警惕的
-    #      "零脚本错误地跑错分支"的**升级版**:零脚本错误地**根本没跑起来**。
     tmp = tempfile.mkdtemp(prefix=".smoke_", dir=_smoke_root())
     try:
         run_exe = os.path.join(tmp, os.path.basename(exe))
@@ -130,83 +83,62 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
         out = ((r.stdout or "") + (r.stderr or ""))
         if r.returncode != 0:
             tail = "\n  ".join(out.splitlines()[-6:])
-            sys.exit("冒烟失败:%s 在**项目目录之外**的干净目录里退出码 = %d(崩溃或异常退出?)\n"
-                     "  ★ 崩溃不打 SCRIPT ERROR,只看文本会把这一档读成 OK,故此处查返回码。\n"
-                     "  末尾输出:\n  %s" % (os.path.basename(exe), r.returncode, tail))
+            sys.exit("冒烟失败: %s 退出码为 %d（非正常退出）\n末尾输出:\n  %s"
+                     % (os.path.basename(exe), r.returncode, tail))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     bad = [ln for ln in out.splitlines()
            if "SCRIPT ERROR" in ln or "Parse Error" in ln or "Failed to load script" in ln]
     if bad:
-        sys.exit("冒烟失败:%s 起不来(脚本级错误)\n  %s" % (os.path.basename(exe), "\n  ".join(bad[:6])))
-    # - 光"没报错"是不够的:上面那个 `--` 坑正是**零脚本错误地跑错分支**,门照样绿。
-    #   故调用方传 expect 时,那段文本必须真的出现(如服务端必须打「worker 就绪」)。
+        sys.exit("冒烟失败: %s 启动遇到脚本解析错误\n  %s" % (os.path.basename(exe), "\n  ".join(bad[:6])))
     if expect and expect not in out:
-        sys.exit("冒烟失败:%s 起来了但**没走预期的分支**(输出里找不到「%s」)—— "
-                 "命令行参数大概又被当成引擎参数丢掉了" % (os.path.basename(exe), expect))
+        sys.exit("冒烟失败: %s 输出中未包含预期特征字符串「%s」" % (os.path.basename(exe), expect))
     print("    OK(退出码 0,无脚本级错误%s)" % (",且在预期分支「%s」" % expect if expect else ""))
     return out
 
 
-# ── 产物侧的武器注册表断言(A3,2026-09-29)──
-# 守的是什么:`data/weapons.json` 进不进 `.pck` **只由一次真导出回答**。真没进包时
-#   `WeaponRegistry._ensure_loaded()` 只打**一条** `push_error`(`core/sim/weapon_registry.gd`,
-#   "读不到 %s —— 导出包里没有它?" 之后**立刻 return**),**只在 stderr**、**不影响退出码**
-#    ->  上面那段"无脚本级错误"的过滤**抓不到它**,光看"游戏起得来"也看不出来 ——
-#   必须看主菜单禁用武器列表里那几把枪在不在(那正是本函数自动化的东西)。
-# - 期望值取自**仓库里那份 json 本身**(单一来源),不是写死在脚本里的数字 ——
-#   写死的话"加第 7 把枪"要改两处,而漏改的那次会变成**虚假失败（测试用例误报）**。
+# 产物侧武器注册表数据完整性校验
 WEAPONS_JSON = os.path.join(PROJECT, "data", "weapons.json")
 
 
 def weapon_ids_from_json() -> list:
-    """仓库里 data/weapons.json 的合格 id 列表(与 WeaponRegistry 的口径一致:**正整数、去重**)。
-    本函数自己坏掉(读不到/解析不了/一条都不合格)一律 sys.exit —— 那是脚本的错,不是产物的错,
-    不能静默退化成"期望 0 条"。"""
+    """读取 data/weapons.json 中的全部有效武器标识列表，保持与 WeaponRegistry 规则一致。"""
     try:
         with open(WEAPONS_JSON, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
-        sys.exit("读不到/解析不了 %s:%s\n(发布脚本依赖它算期望值,缺了就没法判断产物对不对)"
-                 % (WEAPONS_JSON, e))
+        sys.exit("读取或解析 %s 失败: %s" % (WEAPONS_JSON, e))
     if not isinstance(data, dict) or not isinstance(data.get("weapons"), list):
-        sys.exit("%s 顶层不是 {\"weapons\": [...]} —— 发布脚本无从取期望值" % WEAPONS_JSON)
+        sys.exit("%s 结构不符合预期，缺少 weapons 列表字段" % WEAPONS_JSON)
     ids, seen = [], set()
     for e in data["weapons"]:
         if not isinstance(e, dict):
             continue
         v = e.get("id")
         if isinstance(v, bool) or not isinstance(v, int) or v <= 0 or v in seen:
-            continue          # 与 WeaponRegistry 同口径:不合格的条目那边也是跳过
+            continue
         seen.add(v)
         ids.append(v)
     if not ids:
-        sys.exit("%s 里没有合格条目 —— 发布包里的注册表会是空的" % WEAPONS_JSON)
+        sys.exit("%s 中未包含任何合规武器配置条目" % WEAPONS_JSON)
     return ids
 
 
 def check_weapon_registry(out: str) -> None:
-    """对账 `scenes/main_menu.gd` 在 `-- --registry-report` 下打的那一行。"""
+    """验证客户端在参数触发下输出的武器注册表内容与数据源配置完全一致。"""
     want = weapon_ids_from_json()
     m = re.search(r"^\[registry\] weapons=(\d+) ids=\[([^\]]*)\]$", out, re.M)
     if not m:
-        sys.exit("冒烟失败:客户端没打 `[registry] weapons=…` 那一行 —— "
-                 "开关(`-- --registry-report`)大概又被当成引擎参数丢掉了")
+        sys.exit("冒烟失败: 客户端未按预期输出武器注册表行")
     got_ids = [int(t) for t in m.group(2).split(",") if t.strip()]
     got = int(m.group(1))
     if got != len(want) or got_ids != want:
-        sys.exit("冒烟失败:发布包的武器注册表有 %d 条 %s,而仓库 %s 是 %d 条 %s —— "
-                 "最可能是它没进 .pck(`.json` 是 JSON 类型、不在 `TextFile` 那条跳过规则里,"
-                 "`include_filter` 的 `data/*.json` 只是保险)。**这条只在真导出后才验得了**;"
-                 "注意它的症状是静默的:注册表空掉只打一条 push_error、只在 stderr、"
-                 "不影响退出码,玩家端表现为菜单里一把枪的勾选框都没有。"
-                 % (got, got_ids, os.path.basename(WEAPONS_JSON), len(want), want))
+        sys.exit("冒烟失败: 导出的武器注册表数量或标识列表与配置不符 (包内 %d 条 vs 配置 %d 条)"
+                 % (got, len(want)))
 
 
 def export(preset: str, out: str) -> None:
     print("== 导出 [%s] -> %s" % (preset, os.path.basename(out)))
-    # Godot 控制台输出是 UTF-8(含中文进度行);按 locale(gbk)解码会在 reader 线程炸
-    # UnicodeDecodeError → 显式 utf-8 + replace,坏字节以替换符保底处理、不中断导出
     r = subprocess.run([EDITOR, "--headless", "--export-release", preset, out],
                        cwd=PROJECT, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
@@ -219,7 +151,6 @@ def export(preset: str, out: str) -> None:
 
 
 def main() -> None:
-    # 允许 --stamp <ts> / --version <v> 覆盖默认(时间戳取当前时间,版本号读 project.godot)
     stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
     version = read_project_version()
     args = sys.argv[1:]
@@ -234,40 +165,29 @@ def main() -> None:
         else:
             sys.exit("未知参数 %s(支持 --stamp <ts> / --version <v>)" % args[i])
     if not version:
-        sys.exit("读不到 project.godot 的 config/version —— 版本号必须有,否则文件名与游戏内都无从标识")
+        sys.exit("读取 project.godot 版本号失败")
 
-    # 游戏内显示用带前缀的 v.1.1.4(project.godot 里只能写数字,Godot 的导出预设校验它)
-    # - 写进 build_info 的是**版本段**(`RoF_v.0.5.0`),时间戳另由 BUILD_STAMP 带  -> 
-    #   `display()` 拼出 `RoF_v.0.5.0_202610040204`,不会出现时间戳写两遍。
     original = stamp_build_info(release_version(version), stamp)
     try:
-        export("Windows Desktop", CLIENT_OUT)      # 玩家端:main_menu 启动
-        export("Dedicated Server", SERVER_OUT)     # 服务端:main_scene.dedicated_server 覆盖
-        # 服务端打回 CONSOLE 子系统(裁剪模板无官方 console-wrapper,见 make_server_console.py)
+        export("Windows Desktop", CLIENT_OUT)
+        export("Dedicated Server", SERVER_OUT)
         r = subprocess.run([sys.executable, os.path.join(TOOLS, "make_server_console.py"), SERVER_OUT],
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         print((r.stdout or "").strip() or (r.stderr or "").strip())
-        # 导完立刻各跑一次产物(客户端直接起;服务端走 --worker 分支 —— 那条**不碰 7777**,
-        # 不会把服主正在跑的大厅终止,见 server_main.gd 的 is_worker 提前返回)
         smoke_check(CLIENT_OUT, [])
-        # 第二趟专量注册表:开关在 `--` 之后,客户端打一行 `[registry] weapons=… ids=[…]`,
-        # 这里拿仓库那份 json 与它逐条对账(理由见 check_weapon_registry 上方)
         check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
                                           expect="[registry] weapons="))
         smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
     finally:
-        # - 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
-        #   下次开发也会误显示发布版本号)
         _write_text_lf(_BUILD_INFO_REL, original)
 
-    # 按「版本号 + 时间戳」归档到 builds/(发布留档;根目录仍是两个固定名,给 start_server.bat 用)
     r = subprocess.run([sys.executable, os.path.join(TOOLS, "archive_build.py"),
                         "--stamp", stamp, "--version", version],
                        cwd=PROJECT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
-    print("\n发布完成(%s):\n  %s\n  %s (控制台版;固定名=最新,带版本号+时间戳的历史版见 builds/)"
+    print("\n发布完成(%s):\n  %s\n  %s"
           % (release_label(version, stamp), CLIENT_OUT, SERVER_OUT))
 
 

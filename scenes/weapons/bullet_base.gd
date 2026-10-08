@@ -4,43 +4,40 @@ extends CharacterBody2D
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 
-# 子弹/爆炸弹对玩家的命中判定半径(px,玩家缩放 2.5 的碰撞箱量级)。
-# - 单一来源:服务器权威侧(server/match_host.gd 的 HIT_RADIUS 直接引用本常量)与客户端
-#   视觉副本的「榴弹碰到玩家 → 短引信」判定共用它,两处各写一个数迟早会漂。
+# 玩家命中判定半径（像素）
 const PLAYER_HIT_RADIUS: float = 40.0
-# 判定候选所在的组:player = 玩家实体(服务器上全部玩家;客户端上只有本地玩家);
-# player_replica = 客户端上的对手视觉副本(它**不入** player 组,理由见 player_replica.GROUP)。
+# 碰撞判定候选目标分组
 const CONTACT_GROUPS: Array[String] = ["player", "player_replica"]
 
-# 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
+# 子弹物理属性（由武器发射时注入）
 var velocity_vec: Vector2 = Vector2.ZERO
 var speed: float = 0.0
-var size: float = 1.0  # 子弹放大倍数(setup 时应用为节点缩放)
-var gravity_factor: float = 0.0   # 重力下坠倍率(枪械=0,以后敌方弹药可>0)
+var size: float = 1.0  # 子弹放大倍数
+var gravity_factor: float = 0.0   # 重力下坠倍率
 var breaks_terrain: bool = false
 var has_aoe: bool = false
-var bullet_color: Color = Color.WHITE  # 纹理本底;武器如需染色再设
+var bullet_color: Color = Color.WHITE  # 纹理材质着色
 var max_range: float = 0.0
 var traveled: float = 0.0
 var source: Node = null
-var shooter: Node = null  # 射手玩家(击杀归因用):本地=武器持有者;服务器=权威模拟里的玩家
-var hit_damage: int = 0    # 命中伤害(武器 fire 注入;切枪后 source 失效时保底处理直接结算)
-var hit_impact: float = 0.0  # 命中击退(同上)
-var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨迹,不裁决伤害(伤害由服务器裁决)
+var shooter: Node = null  # 射手实体（用于击杀归因）
+var hit_damage: int = 0    # 命中伤害值
+var hit_impact: float = 0.0  # 命中击退力度
+var apply_damage: bool = true  # 是否结算伤害（客户端视觉副本为 false）
 
-# ── 爆炸弹(榴弹等) ──
-@export var explodes: bool = false        # 是否爆炸弹
-@export var direct_hit_damage: int = 10   # 命中敌人的直接伤害(立即结算)
-@export var fuse_time: float = 0.5        # 撞墙反弹后延时(秒)
-@export var hit_fuse_time: float = 0.1    # 命中敌人反弹后延时(秒);直接伤立即,反弹后短引信
+# ── 爆炸弹（榴弹等）──
+@export var explodes: bool = false        # 是否为爆炸弹
+@export var direct_hit_damage: int = 10   # 命中直接伤害
+@export var fuse_time: float = 0.5        # 撞墙反弹后延时引信（秒）
+@export var hit_fuse_time: float = 0.1    # 命中敌人后短延时引信（秒）
 @export var explosion_radius: float = 128.0
 @export var explosion_damage: int = 35
 @export var explosion_knockback: float = 900.0
 @export var explosion_visual: PackedScene = null
 
-var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
+var _fuse_active: bool = false   # 引信是否已激活
 var _fuse_elapsed: float = 0.0
-var _fuse_duration: float = 0.0  # 本次引信时长(撞墙=fuse_time,命中敌人=hit_fuse_time)
+var _fuse_duration: float = 0.0  # 本次引信时长
 
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
@@ -53,28 +50,21 @@ func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: No
 	scale = Vector2(size, size)  # 放大倍数作用于整颗子弹(贴图+碰撞体)
 
 func _ready() -> void:
-	# 子弹贴图与碰撞体由场景(bullet.tscn)配置:贴图是 Bullets.png 的 Sprite2D,
-	# 碰撞体已是 RectangleShape2D。这里不再动态生成方块,只把武器 bullet_color 作 tint。
 	var sp := get_node_or_null("Sprite2D") as Sprite2D
 	if sp != null:
 		sp.modulate = bullet_color
-	# 服务器裁决用:所有子弹进 bullet 组,MatchHost 遍历做命中判定/广播
 	add_to_group("bullet")
-	# 子弹尾迹(D5):设置开启时所有子弹都挂——单人/自己的弹/AI 弹/对手副本弹同一处接线
-	# (副本路径原先单独挂射手色,现统一用武器弹色)
 	if Settings.pvp_show_trajectories:
 		BulletTrail.attach(self, bullet_color)
 
 func _physics_process(delta: float) -> void:
-	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)
+	delta = TimeField.bullet_delta(delta, self)
 	if TimeField.current != null and TimeField.current.is_rewinding():
-		return   # 回溯中子弹不自步进(位置由回放器摆;引信/水阻/射程都不结算)
+		return
 	if gravity_factor > 0.0:
 		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 		if not velocity_vec.is_zero_approx():
 			rotation = velocity_vec.angle()
-	# 爆炸弹的「碰到玩家 → 短引信」:两端同源(权威结算在 MatchHost._adjudicate_grenade,
-	# 这里只管引信时机,让客户端那份视觉副本与服务器同刻起爆)。引信一旦启动就不再改时长。
 	if explodes and not _fuse_active:
 		_check_player_contact()
 	if explodes and _fuse_active:
@@ -90,12 +80,10 @@ func _physics_process(delta: float) -> void:
 	if col:
 		var hit := col.get_collider()
 		if explodes:
-			# 命中敌人:直接伤立即结算;与撞墙一样反弹(带衰减),引信用短时长 hit_fuse_time(0.1s)
 			if hit != null and hit.is_in_group("enemies"):
 				_direct_hit(hit)
 				_start_fuse(hit_fuse_time)
 			else:
-				# 撞墙:反弹(带衰减),首次碰撞后开始引信(fuse_time);不直接清零速度
 				_start_fuse(fuse_time)
 			var normal := col.get_normal()
 			var reflected := velocity_vec.bounce(normal)
@@ -103,11 +91,7 @@ func _physics_process(delta: float) -> void:
 			if not velocity_vec.is_zero_approx():
 				rotation = velocity_vec.angle()
 			return
-		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时,用子弹自带 damage/impact 保底处理直接结算。
-		# 视觉副本(apply_damage=false)不裁决伤害,直接消失。
 		if apply_damage and hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
-			# 命中标记(屏幕中心 X)。敌人侧不写归因 —— 那个 meta 的唯一读者是单机击杀播报,
-			# 已随播报删除(2026-09-17);玩家侧的归因在 MatchHost/RoyaleHost 那条路上。
 			CombatFeedback.hit_marker()
 			source.apply_hit(hit, velocity_vec)
 			Sfx.play("hit")
@@ -118,11 +102,6 @@ func _physics_process(delta: float) -> void:
 			Sfx.play("hit")
 			queue_free()
 		else:
-			# 撞墙:可破坏(树叶/树干)→ 播受击碎片 + (权威侧)扣除生命值;不可破坏墙 → 子弹消失。
-			# 延迟销毁确保破坏回调跑完。
-			# PvP 视觉子弹副本(apply_damage=false)也走这里——只播碎片(即时命中反馈),
-			# 但 damage_tile 只在 apply_damage(权威侧)执行,客户端绝不自拆本地瓦片(幽灵墙纪律,
-			# 拆墙渲染只由服务器 tile_destroyed 事件驱动刷新)。
 			_damage_tile_at(col.get_position(), col.get_normal())
 			set_physics_process(false)
 			velocity_vec = Vector2.ZERO
@@ -135,7 +114,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_wrap()
 
-# 子弹在水里受速度方向阻力:velocity_vec *= exp(-drag·Δt)(纯系数在 Water.bullet_drag_factor)。
+# 子弹在水中受阻力减速
 func _apply_water_drag(delta: float) -> void:
 	var factor := Water.bullet_drag_factor(Water.is_in_water(global_position), GameParameters.water_bullet_drag, delta)
 	if factor < 1.0:
@@ -143,9 +122,7 @@ func _apply_water_drag(delta: float) -> void:
 
 
 func _wrap() -> void:
-	# 与敌人一致:锚定到离玩家最近的副本(跟着主角取模),接缝附近不消失。
-	# PvP 服务器上有两个玩家在 player 组:优先锚到射手(否则 role2 子弹会锚到 role1 副本)。
-	# 客户端视觉副本 shooter 为 null → 回落第一个玩家(即本地玩家)。
+	# 环面世界坐标对齐：锚定至距射手或本地玩家最近的副本位置
 	var p := get_tree().get_first_node_in_group("player") as Node2D
 	if shooter != null and is_instance_valid(shooter) and shooter is Node2D and shooter.is_in_group("player"):
 		p = shooter as Node2D
@@ -156,12 +133,8 @@ func _wrap() -> void:
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
-# 撞墙处理:命中可子弹破坏的格(树叶/树干)→ 播受击碎片(无条件,单机/PvP 视觉副本阶段同机制即时反馈);
-# damage_tile 扣除生命值只在权威侧(apply_damage=true)执行,破坏后变空气(Level0 刷新渲染/碰撞)。
-# 视觉副本(apply_damage=false)只播碎片、绝不拆本地 grid——拆墙渲染由服务器 tile_destroyed 事件驱动。
+# 撞击地形处理：对可破坏瓦片扣除耐久并生成受击碎屑
 func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
-	# cyrm v4(选项 A):破坏按 **16px 子格**算 —— 命中点落在哪个子格就打哪个子格。
-	# 子格表为空时(测试合成网格)回落旧格级路径。
 	if MazeGenerator.current_subgrid.is_empty():
 		var grid0 := MazeGenerator.current_grid
 		if grid0.is_empty():
@@ -174,13 +147,12 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 		return
 	var cols: int = MazeGenerator.current_subgrid[0].size()
 	var rows: int = MazeGenerator.current_subgrid.size()
-	# 候选子格:碰撞点、沿法线推入墙内 0.5/1 个子格 —— 处理贴边命中/边界浮点。
 	var probes := [pos, pos - normal * 8.0, pos - normal * 16.0]
 	for p in probes:
 		var sub := Vector2i(posmod(int(p.x) / 16, cols), posmod(int(p.y) / 16, rows))
 		var tex: int = MazeGenerator.current_subgrid[sub.y][sub.x]
 		if tex != 0 and TileDefs.bullet_destroyable(tex):
-			TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
+			TileHitFx.spawn(get_viewport(), pos, tex)
 			if apply_damage:
 				TileDefs.damage_sub(sub, hit_damage, "bullet", shooter)
 		return
@@ -195,19 +167,7 @@ func _direct_hit(hit: Node) -> void:
 		hit.hurt(direct_hit_damage, dir)
 
 
-# - 2026-09-17 删除了 `_register_player_hit()`:它是"击杀归因 meta + 命中标记"的一体入口,
-#   而其中**归因那一半**的唯一读者是单机击杀播报(EnemyBase._begin_death → notify_enemy_killed)。
-#   播报删除后敌人身上写 last_damager 即死数据,故三处调用点(:104/:109/:181,目标全是
-#   `enemies` 分组)一律降级为纯 `CombatFeedback.hit_marker()`。
-#   玩家侧的归因不在这里 —— PvP 走 MatchHost/RoyaleHost 的权威裁决。
-#   headless 服务器进程无 CombatFeedback 实例 → hit_marker 空操作,无副作用。
-
-# 爆炸弹「碰到玩家」判定(引信时机的单一来源):候选 = CONTACT_GROUPS 里的玩家实体与对手副本,
-# **排除 shooter**(否则自己的榴弹一出膛就在自己身上起短引信)。
-# 命中只起短引信、**不改轨迹**(不反弹):轨迹两端一致 → 视觉副本不会因"反弹法线取自各端
-# 不同位置"而发散(服务器取权威位置、客户端取预测/插值位置)。
-# 直接伤不在这里结算 —— 那是权威侧 MatchHost._adjudicate_grenade 的事(它按同一半径、同一
-# 候选集判一次,并用自己的 meta 闩住;两边结论不会不同)。
+# 检测爆炸弹与玩家的接触，触发短延时引信
 func _check_player_contact() -> void:
 	var tree := get_tree()
 	if tree == null:
@@ -222,29 +182,18 @@ func _check_player_contact() -> void:
 				start_player_fuse()
 				return
 
-# 起「命中玩家」的短引信(hit_fuse_time,grenade_bullet.tscn 现为 0.15s;撞墙走 fuse_time 0.4s)。
-# 权威侧由 MatchHost._adjudicate_grenade 调;客户端视觉副本由 _check_player_contact 自行调。
-# 纪律与 _start_fuse 一致:**首次碰撞决定时长,之后不刷新** —— 已撞墙起了长引信的榴弹再碰到人
-# 不会缩短(直接伤照常结算,那与引信是两个独立的闩)。
+# 启动命中玩家的短延时引信
 func start_player_fuse() -> void:
 	if explodes:
 		_start_fuse(hit_fuse_time)
 
-# ── 时间回溯:引信/射程状态的读写入接口(WorldRewind 快照用)──
-# - 引信是"这颗弹还剩多久炸"的**全部状态**。不把它并进快照的后果(2026-09-27 用户报的
-#   "回溯之后被之前击发的榴弹炮炸死"):重建出来的榴弹退回**未点燃** —— ① 它会在错误的
-#   时刻爆炸(不再是它所属那个世界状态的引信);② 松手那一帧 `_check_player_contact()`
-#   重新生效,只要它跟你重叠就走 0.1s 触碰引信**贴脸起爆**。traveled 同理(射程累计清零
-#   会让子弹飞过头)。
+# ── 时间回溯：保存与恢复引信及弹道状态 ──
 func rewind_state() -> Dictionary:
 	return {
 		"fa": _fuse_active,
 		"fe": _fuse_elapsed,
 		"fd": _fuse_duration,
 		"tr": traveled,
-		# - max_range / gravity_factor / speed / size 都是**开火时由武器注入**的(scene 上不是这些值),
-		#   不进快照 → 重建出来的弹带着场景默认值:max_range 默认 0  ->  `traveled >= max_range`
-		#   当场成立  ->  榴弹**一松手就在回溯落点爆炸**(2026-09-27 与引信并列的第二个真凶)。
 		"mr": max_range,
 		"gf": gravity_factor,
 		"sp": speed,
@@ -253,7 +202,7 @@ func rewind_state() -> Dictionary:
 	}
 
 
-# 由快照写回(空字典 = 该帧没这份状态,保持原样 —— 老快照/无引信弹都安全)。
+# 应用时间回溯状态快照
 func apply_rewind_state(d: Dictionary) -> void:
 	if d.is_empty():
 		return
@@ -272,24 +221,17 @@ func apply_rewind_state(d: Dictionary) -> void:
 		sp2.modulate = bullet_color
 
 
-# 开始引信:首次碰撞(撞墙/命中敌人)起算,撞墙用 fuse_time,命中敌人用 hit_fuse_time。
-# 后续反弹不重置时长(首次碰撞决定引信时长,不因再撞墙/再撞敌人刷新)。
+# 启动引信倒计时
 func _start_fuse(duration: float) -> void:
 	if not _fuse_active:
 		_fuse_duration = duration
 	_fuse_active = true
 
 func _explode() -> void:
-	# (原 `Sfx.play("explosion")` 已删 —— 用户 2026-09-16 要求去掉榴弹的爆炸音效。
-	#  本函数只服务爆炸弹(榴弹),所以这一行就是"榴弹爆炸音"的全部。)
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
-	# 被炸到的可破坏砖 → 逐格播受击碎片。**所有端都播**,与 _damage_tile_at 同口径
-	# (2026-09-15 用户要求补上;此前这条路径在 2026-09-06 的 tile-hit-fx 设计里被明文排除,
-	#  后果是炸掉一排树叶时炸点除了那张 explosion 动画什么都没有)。
-	# - 扫的是与权威结算**同一个** Explosion.destructible_subs —— 两端粒子落在同一批格上。
 	for e in Explosion.destructible_subs(global_position, explosion_radius):
 		var tile_pos: Vector2 = e["pos"]
 		TileHitFx.spawn(get_viewport(), tile_pos, int(e["tex"]))

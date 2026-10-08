@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-# 命名与目录规范检查(防复发)。规范见 docs/naming-cleanup-plan.md §"采用的规范"。
-#
-# 为什么需要它:命名整改最典型的失败模式是「整完就漂回去」—— `.tscn` 的 PascalCase 约定
-# 就是这么失效的(约定写着 Pascal,现实 51/56 是 snake,而没有任何东西会报错)。
-# 2026-09-14 补上 `docs/naming-cleanup-plan.md` 结尾提过、但一直没落地的这一条。
+# 命名与目录规范自动化检查工具。
+# 检验项目内的目录名、GDScript 类名映射、文档路径有效性以及场景文件名规范。
 #
 # 用法:
-#   python tools/check_naming.py            # 检查,有违规 → exit 1(CI/本地都能用)
-#   python tools/check_naming.py -v         # 连"已接受的偏差"也列出来
-#   python tools/check_naming.py --report   # 只报告不失败(摸底用)
+#   python tools/check_naming.py            # 执行检查，发现违规时退出码为 1
+#   python tools/check_naming.py -v         # 详细模式，输出已登记的兼容项
+#   python tools/check_naming.py --report   # 仅输出报告，不阻断退出码
 #
-# 检查四条:
-#   A 目录名一律小写
-#   B `class_name` 转 snake 必须等于文件名(规范原文:「名字 = 类名转 snake」)
-#   C 文档里引用的文件/目录路径必须存在
-#   D `.tscn` 文件名一律 snake_case(阶段 4.3 反转的约定:旧写法 PascalCase 在 51/56 已是
-#     snake 的现实下从未生效过)。「有没有同名 .gd 兄弟」仍只作 -v 备注。
+# 检查项说明:
+#   A 目录名一律使用小写
+#   B class_name 声明转 snake_case 后需与当前文件名一致
+#   C 文档中引用的工程内相对文件与目录路径必须真实存在
+#   D .tscn 场景文件名统一使用 snake_case
 import os
 import re
 import sys
@@ -27,14 +23,11 @@ if hasattr(sys.stdout, "reconfigure"):
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(TOOLS)
 
-# 不参与检查的目录(引擎缓存 / 工具产物 / 归档)
-# - 这张表必须与 .gitignore 对齐:表里没有、而 .gitignore 有的目录(如 releases/ 的归档名
-#   形如 `The Cyancular Ruins v.1.1.4 …`、_crashtest/ 的一次性现场)会让本检查在**干净工作树**
-#   上也恒 FAIL —— 2026-10-03 实测 5 条 A 类违规全来自这两个目录,与代码无关。
+# 排除检查的目录（引擎构建缓存、版本控制、构建产物与临时目录）
+# 与版本忽略规则保持一致，避免构建和运行临时文件引发偶发误报
 SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
-# 文档路径检查的对象(仓库根的三份文档)
-# 文档路径检查的对象(仓库根的三份文档 + `CLAUDE.md` 拆出来的分域文档)
+# 文档路径检查的对象（项目根文档与核心分域技术文档）
 DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"] + [
     "docs/eng/%s.md" % n
     for n in ("world", "enemies", "weapons", "player", "render", "ui",
@@ -44,12 +37,11 @@ DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"] + [
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
 
-# ── 已接受的偏差:每条都必须写明**为什么**与**何时销**。
-#    这张表只许变短。新增条目 = 承认又欠了一笔技术债,不是"让检查变绿"的手段。
+# 已确认的特殊命名豁免项，记录文件路径与保留现有名称的技术原因
 ACCEPTED_CLASS_FILES = {
     "scenes/level_0.gd":
-        "类名 Level0 转 snake 是 level0,文件名是 level_0(.tscn 侧已按 4.3 统一为 level_0.tscn;"
-        "类名不改 —— 全仓引用 Level0 的点很多,收益不抵改动面)",
+        "类名 Level0 转为 snake_case 对应 level0，当前文件名为 level_0；"
+        "由于全仓多处核心模块引用 Level0 类名，为保持稳定性暂不调整类名",
 }
 
 _fail: list[str] = []
@@ -57,7 +49,7 @@ _notes: list[str] = []
 
 
 def to_snake(name: str) -> str:
-    """PascalCase → snake_case,含缩略语:`HUD`→`hud`、`AIInputSource`→`ai_input_source`。"""
+    """将 PascalCase 转换为 snake_case，支持常见缩写命名。"""
     s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
     return s.lower()
@@ -89,7 +81,7 @@ def check_class_names() -> None:
             full = os.path.join(root, f)
             rel = os.path.relpath(full, PROJECT).replace("\\", "/")
             if rel.startswith("tests/"):
-                continue   # 测试夹具不受类名命名规范约束(多数无 class_name)
+                continue   # 测试脚本不受类名命名规范约束（多数无 class_name）
             try:
                 text = open(full, encoding="utf-8", errors="replace").read()
             except OSError:
@@ -107,19 +99,16 @@ def check_class_names() -> None:
 
 
 def check_doc_paths() -> None:
-    # - 2026-10-03:`CLAUDE.md` 拆成索引之后,正文住 `docs/eng/*.md`。**分域文档必须继续被本检查覆盖**
-    #   —— 否则"文档引用的路径必须存在"这条会在拆分那一刻**静默失效**(最常见的那种虚假通过（未有效测试）)。
-    seen: dict[str, str] = {}          # tok → 引用它的文档(报错要明确提示)
+    # 覆盖根文档以及各分域文档中引用的本地工程路径，防止出现无效死链
+    seen: dict[str, str] = {}          # 路径标识与来源文档映射
     for doc in DOC_FILES:
         full = os.path.join(PROJECT, doc)
         if not os.path.exists(full):
-            _fail.append("C 文档不存在: %s(检查表写错了?)" % doc)
+            _fail.append("C 文档不存在: %s(检查表配置路径有误)" % doc)
             continue
         text = open(full, encoding="utf-8", errors="replace").read()
-        # ① 反引号里的带扩展名文件路径。
-        #    - 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 docs/eng/tests.md 的
-        #      `kh_l1/l3/l4/l5_probe.tscn`(指 kh_l1_probe / kh_l3_probe / …),那不是路径。
-        #      代价:整段目录名都写错的那种(首段也不存在)① 会漏,由 ② 的裸目录检查兜。
+        # 反引号包裹的带扩展名相对路径
+        # 验证路径首级目录存在，避免误伤文档中的复合简写
         for tok in re.findall(r"`([A-Za-z0-9_./-]+)`", text):
             if "/" not in tok or not tok.endswith(DOC_EXTS):
                 continue
@@ -128,7 +117,7 @@ def check_doc_paths() -> None:
             head = tok.split("/", 1)[0]
             if os.path.isdir(os.path.join(PROJECT, head)):
                 seen.setdefault(tok, doc)
-        # ② 代码块里以 `dir/` 开头的裸目录名(README 的「目录」段就是这种写法)
+        # 代码块中行首以目录格式命名的路径
         for tok in re.findall(r"^\s*([a-z_]+/)\s", text, re.M):
             seen.setdefault(tok, doc)
     for tok in sorted(seen):
@@ -137,19 +126,13 @@ def check_doc_paths() -> None:
 
 
 def check_tscn() -> None:
-    """`.tscn` 文件名一律 snake_case(阶段 4.3 反转的约定)。
-
-    旧约定写的是 PascalCase,而现实里 51/56 是 snake —— 一条**没人守、也没人报错**的规则,
-    于是在文件数翻倍的过程中悄悄失效。现在按现实反转成 snake,并由本检查守住。
-    「有没有同名 .gd 兄弟」仍只作备注:武器那 6 个场景是 `weapon_base.gd` 的调参实例,
-    本来就不该同名。
-    """
+    """检查场景文件名是否统一遵循 snake_case 命名规范。"""
     bad, snake, unpaired = [], [], []
     for root, dirs, files in os.walk(PROJECT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        listing = set(files)          # 用**目录实读列表**判同名,不用 os.path.exists ——
-        for f in files:               # 后者在 NTFS 上大小写不敏感,会把 Player.tscn ↔
-            if not f.endswith(".tscn"):   # player.gd 误判成"有兄弟"(实测踩过)。
+        listing = set(files)          # 读取当前目录真实文件列表判定同名脚本
+        for f in files:               # 避免不区分大小写的文件系统引起判定偏差
+            if not f.endswith(".tscn"):
                 continue
             rel = os.path.relpath(os.path.join(root, f), PROJECT).replace("\\", "/")
             stem = f[:-5]
@@ -161,7 +144,7 @@ def check_tscn() -> None:
             if stem + ".gd" not in listing:
                 unpaired.append(rel)
     _fail.extend(bad)
-    _notes.append("D .tscn 命名: snake %d 个%s" % (len(snake), "" if not bad else " / **违规 %d 个**" % len(bad)))
+    _notes.append("D .tscn 命名: snake %d 个%s" % (len(snake), "" if not bad else " / 违规 %d 个" % len(bad)))
     for rel in sorted(unpaired):
         _notes.append("D   无同名 .gd 兄弟(仅备注): %s" % rel)
 

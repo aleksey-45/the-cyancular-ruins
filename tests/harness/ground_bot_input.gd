@@ -1,17 +1,8 @@
 extends PlayerInput
 
-# 局内「捡枪/丢枪」探针的脚本手柄:一根哑手柄 —— 它自己不做任何决策,只把
-# `axis` / `aim` / `jump` / `hold_q` 这几个字段和"按一次 F"的边沿报给输入接口;
-# 每一步走哪儿、什么时候按 F 由观察者(ground_net_watcher.gd)每物理帧写进来。
-#
-# - 为什么决策不放这儿:决策要读真 royale_game 的运行时状态(地面武器表在哪、自己
-#   背包里有没有枪),而观察者本来就挂在 root 上、跨换场存活、能直接读那些生产对象。
-#   手柄自持状态的话,那份"该不该按 F"的知识就要在两个文件之间对不上。
-#
-# - 为什么是"哑手柄"而不是 `soak_bot_input.gd` 那种自带相位脚本的:这份探针要的是
-#   确定性 —— 时序由观察者按客户端真实状态推进,而不是按固定 tick 数盲走。
-#
-# 无 class_name(新建全局类要刷 --import 全局类缓存,本仓曾遇到过该兼容隐患),由观察者 preload 引用。
+# 地面武器拾取与丢弃网络同步测试手柄：
+# 纯被动输入源，本身不维护决策状态，各控制字段由测试观察者（ground_net_watcher.gd）按帧写入；
+# 测试观察者根据场景中地面武器与背包状态精确驱动角色的移动与拾取行为。
 
 var axis := 0.0
 var aim := Vector2.RIGHT
@@ -63,16 +54,14 @@ func _pickup_pressed_raw() -> bool:
 	_f_edge = false
 	return v
 
-# Q 的"长按满阈值"那次边沿由 player.gd 判(它有确定的物理 delta),判满了它调
-# `mark_drop_edge()` 设置标记 —— 本手柄必须像 `LocalInputSource` 那样把标记读走并清掉。
-# - 恒返回 false 是个静默失效:客户端看起来一切正常(长按进度条会走),但丢弃
-#   永远上不了行,探针就退化成"只捡不丢"的无效操作、还一条报错都不给。
+# 长按丢弃边沿触发由角色物理逻辑判定，触发后调用 mark_drop_edge 设置标记；
+# 本钩子读取并清空丢弃标记，上报丢弃输入
 func _drop_pressed_raw() -> bool:
 	var v := _drop_edge
 	_drop_edge = false
 	return v
 
 
-# 不读宿主 OS 鼠标(headless 下是垃圾值),用观察者写的方向。
+# 无头模式下避免读取宿主鼠标坐标，返回观察者指定的瞄准向量
 func get_aim_dir_override() -> Vector2:
 	return aim

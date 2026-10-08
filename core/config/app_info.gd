@@ -1,21 +1,15 @@
 class_name AppInfo
 extends RefCounted
 
-# 版本号与提交历史(**两个页面都要读**:主菜单左下角的版本号行 + 「信 息」整页)。
-#
-# - 为什么单独一个文件而不是留在 `main_menu.gd`:信息页也要用,而让信息页去依赖主菜单
-#   是反的。-  **也不能放进 `core/config/build_info.gd`** —— 那个文件由
-#   `tools/build_release.py` 在导出前**覆盖写入**、导出后还原,扔进去会被构建流程盖掉。
-#
-# - 纯静态、零 autoload 依赖(与 `WeaponRegistry` 同形) ->  可 `-s` 测。
+# 版本号与提交历史提供类。
+# 供主菜单版本号标识及信息展示界面读取。
+# 无外部 Autoload 单例依赖，支持独立静态调用。
 
 
-# 版本号:**发布版读 `core/config/build_info.gd`**(由 `tools/build_release.py` 在导出前写入
-# 真实版本号与构建时间戳),开发版回落到 git(分支名 + 提交数)。
-# - 发布版本必须读取 build_info.gd：构建打包环境通常无 Git 仓库，执行 Git 命令将无法获取有效版本与构建时间。
-# 传 `--nover` 时恒为 "dev"(菜单自动探针要确定性文本)。
-#
-# - `--nover` 参数判定在当前函数内部统一集中处理，调用方无需额外分支。
+# 获取版本号字符串：
+# 1. 导出发布版读取 build_info.gd 中的构建元数据；
+# 2. 本地开发版回退读取 Git 分支与提交序号；
+# 3. 传入 --nover 启动参数时固定返回 "dev" 以满足自动化测试断言。
 static var _version_cache := ""
 static var _log_cache: Array = []
 
@@ -51,10 +45,8 @@ static func commit_log() -> Array:
 	return _log_cache
 
 
-# 读 git 输出为 UTF-8 文本。OS.execute 在中文 Windows 上按系统码页解码 → 中文乱码;
-# execute_with_pipe 拿原始流,再用 get_buffer 累积字节 + get_string_from_utf8() 显式按 UTF-8 解。
-# (本函数**不走** FileAccess.get_as_text —— 那条链读的是原始字节。)
-# - 保留通过流式读取并显式按 UTF-8 解码的逻辑，以彻底避免 Windows 平台下因默认系统代码页导致的中文乱码。
+# 执行 Git 命令并读取输出。
+# 使用管道流式读取原始字节流并按 UTF-8 解码，避免 Windows 平台因默认代码页导致中文乱码。
 static func _git_text(args: Array) -> String:
 	var res: Variant = OS.execute_with_pipe("git", args, true)
 	if res is Dictionary and res.has("stdio"):

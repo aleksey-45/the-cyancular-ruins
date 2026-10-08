@@ -1,15 +1,11 @@
 extends PlayerInput
-# 大乱斗压力探针的脚本"手柄"(extends PlayerInput,与 AiInputSource 同一套注入机制)。
-# 目的:让 headless 客户端在真 `royale_game` 场景里把局内行为真的踩一遍 ——
-# 走动 / 跳 / 冲刺 / 下蹲 / 上下爬 / 各武器开火 / 切枪 / 静默,而不是只连上收快照。
-# 探针每物理帧调 step();探针直接把本对象塞进本地玩家的 input_source。
+# 大乱斗压力测试机器人的模拟输入驱动脚本（继承 PlayerInput，采用与 AiInputSource 相同的注入机制）。
+# 用于在无头客户端对局中周期性模拟走动、跳跃、冲刺、下蹲、攀爬、开火与切枪等角色操作。
+# 测试探针每物理帧调用 step() 更新状态，并将本实例配置到本地玩家的 input_source 中。
 #
-# 无 class_name(新建全局类要刷 --import 全局类缓存,本仓曾遇到过该兼容隐患),由探针 preload 引用。
-#
-# frozen:PvP 的 COUNTDOWN/结算冻结会置它(set_controls_locked)。基类把公开输入读取接口对 frozen 短路,
-# 本类只覆写不碰 frozen 的 _*_raw() 钩子 -> 无需自己认(2026-09-14 前本类覆写了全部公开输入读取接口,
-# 基类短路被绕过、只能自己硬编码复制 frozen 判断)。下方 step() 里那个 `if frozen` 是本类自己的
-# 「冻结期不推进脚本」逻辑(清 held/边沿),与基类短路是两项关键逻辑,勿删。
+# 控制冻结说明：
+# 倒计时与结算阶段会触发 set_controls_locked 锁定输入。基类已对底层接口短路，
+# 本类仅覆写基础查询钩子并在 step() 中处理冻结时的按键释放。
 
 const PHASE_TICKS := 75      # 每段行为持续 tick(≈1.25s)
 const ACTIONS: Array[String] = [
@@ -117,8 +113,7 @@ func _switch_index_raw() -> int:
 	_slot = 0        # 读一次即清,与真实 Input 的"本轮刚按下"语义一致
 	return s
 
-# 压力机器人不捡也不丢枪(与 AiInputSource 同口径)。基类对这两个钩子有 push_error 兜底保护,
-# 不覆写的话脚本机器人的每个 tick 都会刷一屏假报错,把真断言淹掉。
+# 机器人不执行拾取与丢弃武器操作，返回 false 避免未实现报错
 func _pickup_pressed_raw() -> bool:
 	return false
 
@@ -128,7 +123,6 @@ func _drop_pressed_raw() -> bool:
 func get_aim_dir_override() -> Vector2:
 	return aim
 
-# 必须 true:否则 WeaponBase 的瞄准会回落到读宿主 OS 鼠标(headless 下是 0,0 之类的垃圾值),
-# 开火方向会乱。与 AiInputSource 覆写它的理由相同处理逻辑(那条注释里还记着 reload_active 的第二个判定条件)。
+# 标记为网络/模拟驱动，避免 WeaponBase 在无头模式下回退读取宿主鼠标坐标
 func is_network_driven() -> bool:
 	return true

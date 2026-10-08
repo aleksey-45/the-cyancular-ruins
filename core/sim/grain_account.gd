@@ -1,19 +1,19 @@
 class_name GrainAccount
 extends RefCounted
 
-# 时间颗粒账户（怀表系统核心状态机）:总量余额 + 短期额度 + 透支状态机。纯逻辑零场景依赖(-s 可测)。
+# 时间颗粒账户（怀表系统核心状态机）：总量余额 + 短期额度 + 透支状态机。纯逻辑零场景依赖。
 #
-# 模型(主策划案·怀表设计):
-#   - balance     总余额(0..GRAIN_CAP,白短针一圈;结晶入账只进这里)
-#   - short_used  短期窗口已消耗额度(0..SHORT_WINDOW,红长针主圈;消耗顺时针推进,恢复逆时针拨回)
-#   - loan_used   已透支额度(0..LOAN_LIMIT,红长针额外 1/4 圈;短期时间窗口满后继续消耗即计入透支)
-#   - loan_depth  = loan_used / LOAN_LIMIT ∈ [0,1] —— 世界反馈(变亮/色差/敌加速/变调)的驱动量
-#   - locked      透支达到上限后的强制锁定:透支达到上限 LOAN_LIMIT 触发,长针(透支部分)被 50/s 递减恢复
-#                 还清为止;期间任何技能都取不出颗粒(按了也无效操作)。
+# 模型结构：
+#   - balance     总余额（0..GRAIN_CAP，白短针一圈；结晶入账仅增加此处）
+#   - short_used  短期窗口已消耗额度（0..SHORT_WINDOW，红长针主圈；消耗顺时针推进，恢复逆时针回拨）
+#   - loan_used   已透支额度（0..LOAN_LIMIT，红长针额外 1/4 圈；短期时间窗口满后继续消耗即计入透支）
+#   - loan_depth  = loan_used / LOAN_LIMIT ∈ [0, 1]，作为视觉特效与敌人时间流速倍率的驱动变量
+#   - locked      透支达到上限后的强制锁定：透支达到上限 LOAN_LIMIT 触发，透支额度逐步偿还完毕前锁定技能
 #
-# 消耗(spend):一笔同时扣「总余额」与「短期时间窗口」;窗满后溢出部分进透支;透支达到上限后立即锁定。
-# 恢复(regen):50/s,优先偿还透支，还清后恢复短期额度(偿还透支期间不解锁,还清瞬间解锁)。
-# 入账(deposit):结晶吸收,只加总余额(夹上限),不动指针。
+# 操作接口：
+#   - 消耗：同时扣除总余额与短期额度；超出短期额度后计入透支；透支达上限时锁定。
+#   - 恢复：以固定速率恢复，优先偿还透支额度，还清透支后解除锁定并恢复短期额度。
+#   - 吸收结晶：结晶吸收增加总余额（不超过上限）。
 
 signal balance_changed(balance: float)
 signal window_changed(short_used: float, loan_used: float)
@@ -21,8 +21,7 @@ signal loan_depth_changed(depth: float)
 signal loan_locked
 signal loan_unlocked
 
-# ── 参数(2026-09-28 参数化:单机用 TimeParams 默认值 → 行为保持逐位一致;
-#    PvP 走 TimeRules.make_account(),透支上限 = 短期额度、每局可调)──
+# ── 参数配置（单人模式使用 TimeParams 默认值；多人对战可通过参数自定义）──
 var initial := TimeParams.GRAIN_INITIAL
 var cap := TimeParams.GRAIN_CAP
 var window := TimeParams.SHORT_WINDOW

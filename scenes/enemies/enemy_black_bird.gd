@@ -90,10 +90,7 @@ func _ai(delta: float) -> void:
 			_tick_back_hop()
 
 
-# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 146 行的单 match)。
-# 绕背瞬移那条链(TAKE_OFF → CHARGE 的 appear 滞留 → 落地 → 停顿 → 冲锋)原本横跨两个
-# match 分支、靠 _wait_land/_left_ground/_prep_timer 一串标志位串起来,现在各自归位。
-# - 各段里的 `return` 语义不变:match 是 `_ai` 的最后一条语句。
+# 状态机帧逻辑更新，各状态逻辑分派至独立方法处理
 
 func _tick_sleep(delta: float, dist: float) -> void:
 	if _wake_timer > 0.0:
@@ -301,13 +298,13 @@ func _find_flank_cell() -> bool:
 
 
 # (原私有 _is_floor_cell 已收进 MazeGenerator.is_floor_cell —— 本判据全仓曾有 5 份。
-#  黑鸟用的是**基本版**(只要求脚下实心,不要头上净空),故走那个而不是 with_headroom。)
+#  乌鸫检测只要求脚下实心，无需头部净空。)
 
 
 # 黑鸟碰撞箱(按 scale 换算)在 pos 处覆盖的格子是否全是 EMPTY。
 # 用于瞬移落点清空判定:落点/下落路径不能穿墙。
 # 逐格环面判定收在 core/tile_query.gd(与飞鸟避障/预瞄判墙同源)。
-# 空网格视为"全清":TileQuery 在空网格返回 false(= 没压到东西),`not` 之后正是 true ——
+# 空网格视为通行无阻
 # 与旧实现的显式 is_empty 提前返回同义(探针会清空 current_grid,真实地图不会)。
 func _body_clear_at(pos: Vector2) -> bool:
 	var ts := GameParameters.TILE_SIZE

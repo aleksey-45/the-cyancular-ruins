@@ -30,7 +30,7 @@ static func spawn_muzzle_orb(parent: Node, at: Vector2, color: Color, half_width
 		return
 	var holder := Node2D.new()
 	holder.global_position = at
-	# 内芯半径(px)≈ 光束 core 半径;下限 5 保证光束调到很细时枪口球仍可辨
+	# 内芯半径（像素）约等于光束核心半径；下限 5 保证光束较细时枪口光球依然清晰可辨
 	var core_r := maxf(half_width * 0.7, 5.0)
 	var glow_r := core_r * 2.6
 	# Explosion.make_circle_texture(size):size px 贴图、圆心在中央,scale=半径/半贴图宽。

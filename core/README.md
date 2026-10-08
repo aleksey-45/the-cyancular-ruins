@@ -1,51 +1,44 @@
-# core/ — 跨场景共享逻辑
+# core/ — 核心通用逻辑与系统模块
 
-2026-09-15 按**关注点**分成四个子目录(阶段 4.6)。此前 29 个 `.gd` 平铺在一层,
-"协议 / 几何 / 配置 / 表现"混在一起 —— 找东西只能靠字母序,而新文件该放哪没有任何依据。
+本目录包含游戏跨场景共享的核心算法、模拟逻辑、网络系统、配置与表现层模块。目录按功能职责划分为四个子系统：
 
 ```
-sim/      几何与模拟:与"世界怎么算"有关,不碰网络也不碰界面
-net/      网络与联机:协议、输入源、会话、进程与端口
-config/   配置与参数:常量表、可持久化设置、开局选项
-present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听"那层)
+sim/      世界模拟与几何：环面物理计算、地图格式编解码、碰撞判定与时间控制
+net/      网络同步与联机：网络通信总线、输入源抽象、会话编排、预测回滚与网络隧道
+config/   系统配置与参数：游戏玩法常量、玩家/敌人属性参数、持久化设置与运行元数据
+present/  视听表现与特效：像素字体排版、音效合成与激光/粒子视觉呈现
 ```
 
-**分类是按"这个东西因为什么而改变"划的**,不是按名字像什么:
+## 子目录职责说明
 
-- `sim/`(12)`beam_trace` `collision_aabb` `collision_builder` `explosion` `grid_pathfinder`
-  `map_format` `math_util` `maze_generator` `tile_defs` `tile_query` `water` `world_builder`
-  —— 改地图格式/碰撞语义/环面数学时动这里。★ `maze_generator` 只留**会话状态**
-  (选中的地图文件 + `current_grid`)并转发;`.cyrm` 格式进 `map_format`、环面几何与寻路进
-  `grid_pathfinder`(阶段 5.7)。
-- `net/`(10)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
-  `net_bus` `net_bus_ext` `prediction_rollback` `pvp_session` `proc_util`
-  `local_server`
-  —— 改协议/联机手感/会话编排时动这里。★ 原第 11 个是 `snapshot_interp`(副本位置的双快照
-  tick 域插值),2026-09-21 随副本改回**指数平滑滤波 (Exponential Smoothing)**整体删除(实测那套插值在
-  60fps 渲染 + 60Hz 快照下是空操作,平滑度等于包的到达平滑度)。★ **输入源放这里**(`player_input` 纯接口 +
-  `local_input_source` / `packet_input_source` / `ai_input_source` 三个实现):
-  它们的价值就体现在"本地输入 / 网络包 / AI 脚本"三种来源可换,与联机是同一条轴。
-- `config/`(6)`build_info` `enemy_params` `game_parameters` `player_params` `run_options`
-  `settings` —— 改数值/选项时动这里(都是"读出来就是个数"的东西)。
-- `present/`(3)`laser_visual` `pixel_font` `sfx` —— 改观感/听感时动这里。
+- `sim/`（模拟与世界几何）
+  - 维护地形破坏、射线检测、环面几何寻路与碰撞判定。
+  - 包含地图格式编解码（`map_format`、`map_format_v4`）、时间控制（`time_field`、`grain_account`、`world_rewind`）等核心玩法算法。
+- `net/`（网络同步与联机）
+  - 维护客户端与服务端网络协议、RPC 通信总线（`net_bus`、`net_bus_ext`）与 EasyTier 网络隧道（`tunnel`）。
+  - 提供统一的输入源抽象接口（`player_input`），支持本地输入（`local_input_source`）、网络数据包（`packet_input_source`）及 AI 机器人（`ai_input_source`）无缝替换。
+  - 包含客户端预测与回滚机制（`prediction_rollback`）及断线重连宽限期保护。
+- `config/`（配置与参数）
+  - 集中维护全局常量、平衡性数值及配置文件持久化。
+  - 包含游戏运行参数（`game_parameters`）、玩家/敌人属性（`player_params`、`enemy_params`）、设置持久化（`settings`）及版本构建元数据（`app_info`、`build_info`）。
+- `present/`（视觉与音频表现）
+  - 负责纯表现层的视听效果实现，与游戏玩法逻辑解耦。
+  - 包含像素字体抗锯齿优化（`pixel_font`）、程序化白噪声与音效合成（`sfx`）、贴图非透明边界测量（`sprite_bounds`）以及激光光束渲染（`laser_visual`）。
 
-## autoload(注册在 `project.godot` 的 `[autoload]`)
+## 全局 Autoload 单例
 
-**四个**(此前的 README 写"项目唯一两个"是过期说法:`NetBusExt` 与 `Settings` 漏登记了):
+项目在 `project.godot` 中注册的 Autoload 单例：
 
-- `config/game_parameters.gd`(`GameParameters`)—— 共享常量 + 世界尺寸等少量可变全局状态,
-  `_ready` 按地图回写 `MAP_WIDTH/HEIGHT`。
-- `net/net_bus.gd`(`NetBus`)—— PvP 网络 RPC 唯一收口,客户端/服务器共用。**方法表与原版服务端
-  逐字节兼容**,别动。
-- `net/net_bus_ext.gd`(`NetBusExt`)—— 旁路扩展协议,与旧版服务端优雅降级(未实现该节点时自动忽略)。
-- `config/settings.gd`(`Settings`)—— 持久化设置,落盘 `user://settings.cfg`。
+- `GameParameters` (`core/config/game_parameters.gd`)：全局共享常量与世界尺寸状态，关卡加载时初始化地图宽高。
+- `NetBus` (`core/net/net_bus.gd`)：专用服务端与客户端核心 RPC 通信总线。
+- `NetBusExt` (`core/net/net_bus_ext.gd`)：联机扩展协议总线，提供旁路消息与向后兼容支持。
+- `Settings` (`core/config/settings.gd`)：客户端本地设置管理，持久化存储于 `user://settings.cfg`。
 
-★ **移动 autoload 文件时,`project.godot` 的 `[autoload]` 路径必须同步改** —— 改漏的表现是
-"整个游戏起不来"而不是某个功能坏掉,别靠试。
+> 注意：调整 Autoload 脚本路径时，必须同步更新 `project.godot` 中的配置。
 
-数据文件不在此目录:砖块属性在 `data/tile_defs.json`(`tile_defs.gd` 读它),敌人注册在
-`data/enemies.json`(`EnemySpawner` 读它);`level_editor/` 里的 `tile_defs.js` 是给浏览器编辑器
-用的生成副本。
+## 数据驱动文件关联
 
-约定:文件用 snake_case(类名 Pascal,名字=类名转 snake);新增"跨场景但要常驻的东西"先想清楚
-它属于哪个子目录、以及它是 autoload、静态助手还是数据。
+核心运行时配置数据独立维护于 `data/` 目录：
+- 瓦片属性定义：`data/tile_defs.json`（由 `tile_defs.gd` 加载解析）
+- 武器配置数据：`data/weapons.json`（由 `WeaponRegistry` 加载解析）
+- 敌人属性配置：`data/enemies.json`（由 `EnemySpawner` 加载解析）

@@ -1,16 +1,9 @@
 class_name LocalInputSource
 extends PlayerInput
 
-# 本地输入源:直接读真实 `Input`(阶段 5.9 从旧 `InputSource` 的默认实现拆出)。
-#
-# 谁在用:
-#   - 单机 `player.gd` 的默认输入源(也是它 `_ready` 里构造的那种);
-#   - PvP 的**本地玩家** —— C2 下引擎自步进、读真实鼠标键盘(aim/手感=单机);
-#   - 远端玩家/权威模拟**不用它**,用 `PacketInputSource`。
-#
-# - 之前的语义错位:这份实现原先长在"接口"里当默认值,于是"本地玩家"和"抽象输入源"
-#   是同一个类;要注入别的来源得先继承一个名字像接口的类。拆开后本地这份有了名字,
-#   注入方(PacketInputSource / AiInputSource)也不再继承"本地行为"。
+# 本地输入源：直接读取操作系统真实输入事件。
+# 适用于单人模式本地角色以及多人对战中由本机操控的预测角色。
+# 远端实体与服务端模拟则使用数据包输入源。
 
 func source_kind() -> int:
 	return Kind.LOCAL
@@ -38,9 +31,7 @@ func _attack_just_released_raw() -> bool:
 	return Input.is_action_just_released("attack")
 
 func _switch_index_raw() -> int:
-	# - 只认 1-4:持有位上限的**默认值**是 4(WeaponInventory.DEFAULT_MAX_WEAPONS)。
-	#   5/6 的 InputMap 动作**保留不删**(以后想开第 5 个位时不必再动 project.godot),
-	#   但这里不读它们 —— 读了就会切到一个不存在的背包位置。
+	# 仅响应 1-4 数字键切枪，对应默认武器槽位上限
 	for i in range(1, 5):
 		if Input.is_action_just_pressed(str(i)):
 			return i
@@ -50,10 +41,7 @@ func _pickup_pressed_raw() -> bool:
 	return Input.is_action_just_pressed("F")
 
 func _drop_pressed_raw() -> bool:
-	# - 报的是"长按满了一次"的**边沿**,不是"Q 现在按着" ——
-	#   后者会让联机端**一碰 Q 就丢枪**(长按 2s 的规则形同虚设),而且按住不放会每 tick
-	#   都发一次,把背包一把把丢光。计时在 player.gd 里(那里有确定的物理 delta),
-	#   满了由 player 调 mark_drop_edge() 打标;这里读一次即清。
+	# 返回长按蓄力完成后的单次触发边沿，由角色逻辑在完成蓄力计时后通过 mark_drop_edge() 写入
 	var v := _drop_edge
 	_drop_edge = false
 	return v

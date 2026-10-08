@@ -57,8 +57,8 @@ class FlyBird:
 	const shoot_reacquire_margin: float = 160.0  # 出射程余量(重接近阈值)
 	const shoot_position_radius: float = 120.0  # 距斜上射击位多远算"就位"可进 SHOOT
 	const shoot_cooldown: float = 1.6     # 抛弹间隔(秒)
-	const strafe_range: float = 180.0    # 开火后短距随机移动最大偏移(px)
-	const strafe_duration: float = 0.3   # 短距移动最长时长(秒,到点或超时结束)
+	const strafe_range: float = 180.0    # 开火后短距随机移动最大偏移（像素）
+	const strafe_duration: float = 0.3   # 短距移动最长时长（秒，到点或超时结束）
 	const bullet_damage: int = 2          # 投弹伤害
 	const bullet_range: float = 2000.0    # 投弹射程
 	const bullet_gravity: float = 0.85     # 投弹重力倍率
@@ -94,7 +94,7 @@ class BlackBird:
 	const flank_check_interval: float = 1.0  # 游走中瞬移判定周期(秒)
 	const teleport_min_tiles: int = 2    # 传送落点距玩家的最短格数(环面距离,随机)
 	const teleport_max_tiles: int = 6    # 传送落点距玩家的最长格数(环面距离,随机)
-	const teleport_drop: float = 250.0    # 瞬移到落点上方高度(px),再下落
+	const teleport_drop: float = 250.0    # 瞬移到落点上方高度（像素），再下落
 	const landing_timeout: float = 0.3   # 落地保底处理(秒)
 	const teleport_prep_time: float = 0.25  # 落地播 disappear 的最小停顿(传送前)
 	const charge_prep_time: float = 0.4     # appear 落地后停顿(冲锋前)

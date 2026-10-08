@@ -5,145 +5,110 @@ enum Tier { LIGHT, MEDIUM, HEAVY }
 enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 
 @export var bullet_scene: PackedScene = preload("res://scenes/weapons/bullet.tscn")
-const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
-# 预瞄判墙小球半径(px): PREVIEW_COLLISION_RADIUS×bullet_size 
+const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长（秒）
+# 预瞄射线检测碰撞半径（像素）
 const PREVIEW_COLLISION_RADIUS: float = 4.0
 
-# ── 武器参数(说明见各参数上方注释)──
-# 模板分类(轻/中/重),仅作信息/分组用
+# ── 武器参数 ──
+# 武器重量级别（轻型/中型/重型），用于背包占用与分类
 @export var tier: Tier = Tier.LIGHT
-# 显示名,切枪/识别用
+# 武器显示名称
 @export var weapon_name: String = "weapon"
 
-# ── 开火 ──
-# true=全自动(按住连发);false=半自动(按一下打一发)
+# ── 开火机制 ──
+# 是否为全自动（按住持续射击；false 为半自动，单次点击单发射击）
 @export var full_auto: bool = false
-# 两次射击最小间隔(秒),越小射速越快
+# 射击间隔冷却时间（秒）
 @export var fire_cooldown: float = 0.2
-# true=重武器:按住左键进入激光预瞄,松开才发射
+# 是否为蓄力/预瞄重武器（按住显示瞄准轨迹，松开时发射）
 @export var heavy_aim: bool = false
 
-# ── 子弹 ──
-# 子弹速度(px/s),越大弹道越直、越难闪避
+# ── 子弹参数 ──
+# 子弹飞行初速度（像素/秒）
 @export var bullet_speed: float = 900.0
-# 子弹射程(px),超过即消失
+# 子弹最大飞行射程（像素）
 @export var bullet_range: float = 600.0
-# 子弹放大倍数(1.0=场景原始大小;缩放贴图与碰撞体)
+# 子弹缩放倍率（缩放精灵与碰撞体）
 @export var bullet_size: float = 1.0
-# 子弹贴图染色(白色=原样显示 Bullets.png 贴图;想改子弹颜色就设这里)
+# 子弹着色调色（Color.WHITE 为默认材质原色）
 @export var bullet_color: Color = Color.WHITE
 
-# ── 霰弹/多弹丸 ──
-# 每次开火弹丸数(1=单发,与旧版一致;>1 为霰弹)
+# ── 霰弹与散射 ──
+# 单次射击发射的弹丸数量
 @export var pellet_count: int = 1
-# 弹丸散布半角(度):每颗弹丸在瞄准方向 ±spread_deg 内随机角度
+# 散射半角（度）：每颗弹丸在瞄准方向两侧的随机偏移角度
 @export var spread_deg: float = 0.0
 
-# ── 伤害 ──
-# 命中敌人扣除的 HP
+# ── 伤害与击退 ──
+# 命中造成的生命值伤害
 @export var damage: int = 1
-# 命中击退力度(>0 会覆盖敌人自身 knockback_strength)
+# 命中造成的击退力度
 @export var impact: float = 60.0
 
-# 同屏同时在飞弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/破坏瓦片/
-# 碰撞重建连锁会让自建房机器卡死/闪退。弹数满时开火不发射(冷却照走,等场上的爆完再打)。
+# 同屏存活弹丸数量上限（0 为不限制）
 @export var max_live_projectiles: int = 0
 
-# ── 后坐/镜头 ──
-# 开火把玩家向后推的力度(蹲下时不推)
+# ── 后坐力与镜头 ──
+# 开火时推退角色的后坐力度（下蹲时不触发）
 @export var recoil_push: float = 0.0
-# 枪口上跳幅度(枪精灵位移,纯视觉)
+# 枪口上跳位移幅度（像素）
 @export var recoil_kick: float = 4.0
-# 开火镜头抖动幅度
+# 开火触发镜头抖动幅度
 @export var cam_shake: float = 2.0
-# 镜头抖动时长(秒)
+# 镜头抖动持续时长（秒）
 @export var cam_shake_time: float = 0.1
 
-# ── 移动惩罚 ──
-# 惩罚生效期间的水平移速倍率(1.0=不减,0.55=只剩 55%)
+# ── 移速惩罚 ──
+# 惩罚生效期间的水平移速倍率（1.0 为不惩罚）
 @export var move_penalty: float = 1.0
-# 惩罚生效期间的跳跃初速倍率(1.0=不减)
+# 惩罚生效期间的跳跃初速度倍率（1.0 为不惩罚）
 @export var jump_penalty: float = 1.0
-# 惩罚生效时机:NONE 永不 / WHILE_FIRING 开火后冷却中 / WHILE_AIM_OR_COOLDOWN 预瞄或冷却中
+# 惩罚生效模式：NONE 不生效 / WHILE_FIRING 开火冷却期间 / WHILE_AIM_OR_COOLDOWN 瞄准或冷却期间
 @export var penalty_mode: PenaltyMode = PenaltyMode.NONE
 
-# ── 激光(heavy_aim 用)──
-# 预瞄激光线长度(px)
+# ── 激光瞄准 ──
+# 预瞄激光射线长度（像素）
 @export var laser_length: float = 600.0
-# 激光颜色
+# 激光射线颜色
 @export var laser_color: Color = Color(1.0, 0.2, 0.2, 0.6)
 
-# ── 瞄准 ──
-# 本枪仰角钳制角(枪口/激光/出弹方向共用)
+# ── 瞄准限制 ──
+# 武器最大仰角与俯角限制（度）
 @export var pitch_clamp_deg: float = 45.0
 
-# ── 弹道/预览(榴弹等抛体用)──
-# 重力下坠倍率,发射时注入子弹(0=直线)
+# ── 弹道与抛物线 ──
+# 重力加速度影响倍率（0 为直线弹道）
 @export var bullet_gravity: float = 0.0
-# true=重武器预瞄画抛物线弧线(取代直线激光);false=原直线激光
+# 是否显示抛物线弹道预瞄（true 为抛物线弧线，false 为直线激光）
 @export var preview_arc: bool = false
-# 预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定,预瞄只是参考
+# 预瞄抛物线采样时长（秒）
 @export var preview_time: float = 0.5
 
-# ── 换弹(装填;固定玩法,无开关可关;**全模式开放**)──
-# - 2026-09-15:PvP(1v1/大乱斗)一并开放。此前这里有一道 `reload_active()` 门控前置校验,在
-#   `Level0.pvp_mode` 与网络输入源下恒 false —— 于是 PvP 两端**一致地**不换弹(无限弹)。
-#   开放后两端跑同一套:按下的边沿经输入包上行(`PacketInputSource.BIT_RELOAD`),弹药与
-#   装填进度进 `Player.capture_state()`。门控前置校验整个删掉而不是改成恒 true —— 项目约定是
-#   「换弹恒开」(Settings 里的 reload_enabled 开关当年就是为此删的),留个恒真的函数
-#   只会让人以为还有开关。
-#
-# ⚠ 曾经的风险与现在的边界(别再照旧说法解释):
-#   旧注释说"服务器单方面停火"——那是门控前置校验**只判 pvp_mode** 时的后果(服务器不实例化
-#   Level0,pvp_mode 恒 false,会被判成单机)。门控前置校验删掉后不存在"一端换弹一端不换":
-#   服务器按输入包里的 R 边沿进装填,客户端本地预测同样进,分歧由 capture_state 收敛。
+# ── 换弹与弹夹 ──
 @export var mag_size: int = 12        # 弹夹容量
-@export var reload_time: float = 1.2  # 换弹全程耗时(秒)
+@export var reload_time: float = 1.2  # 换弹全程耗时（秒）
 var mag_ammo: int = 0                 # 弹夹内残弹
-# 加入场景树前的"待生效残弹"。0 是合法弹数,故哨兵不能用 0;`WeaponInventory.MAG_FULL` 是 -1,
-# 故哨兵用 -2。
-# - 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
-#   `call_deferred("add_child")` 加入场景树,而 `_ready()` 会把 `mag_ammo` 重置为 `mag_size`
-#    ->  加入场景树前同步写残弹会被冲掉。原先的对策是"排一个帧末 deferred 写回",但那个写回会
-#   覆盖它之后发生的一切(含回滚重放期间打出的每一发)。改成加入场景树前设好、`_ready` 一次消费,
-#   写入就同步且顺序确定。
+# 待生效残弹哨兵值（-2 表示尚未设置）
 const MAG_UNSET := -2
 var pending_mag: int = MAG_UNSET
-# 弹数是否已落定。-  语义**只有一个**:`_ready()` 已跑过、`mag_ammo` 不再等于声明初值 0。
-# - 为什么需要它:新武器实例由 `WeaponComponent._equip_index` 用
-#   `call_deferred("add_child")` 加入场景树,而那里的 `equip(body, cd)` 是**同步**的  ->  加入场景树前的
-#   那个窗口里 `player` 已非空、`tick()` 会照跑,而 `mag_ammo` 仍是 0  ->  `fire()` 的
-#   "空弹夹自动换弹"被一个假前提触发,把权威的 `_reloading = false` 冲成 true。
-# - 为什么**不是** `is_inside_tree()` 守卫(那条已被明文否决):它会丢帧,并会把
-#   `_auto_aim()` 的朝向一起冻住  ->  那本身造成**实际状态分歧**,比它修掉的问题更坏。
-#   这里只让**依赖弹数的那个判断**在弹数未落定前失效,`tick()` 其余部分照跑。
-# - 它的**读点只有两个**(都是"弹数没落定时别动作"):`fire()` 的空弹夹自动换弹分支,
-#   与 `start_reload()` 的首行。-  为什么 `start_reload()` 也要判:按 R 那条路**绕过**
-#   `fire()` —— `player.gd::_physics_process` 的语句序是「武器 `tick()` → 切枪(同步换掉
-#   `_weapon`、`add_child` 是 deferred)→ R 轮询」,而 PvP 下切枪由服务器的 `winst` 应答驱动、
-#   R 是本地边沿  ->  两者**互不相干**,同帧相撞是概率问题。撞上时 `start_reload()` 读到的
-#   `mag_ammo == 0` 同样是**声明初值**,会把权威刚写下的 `_reloading = false` 冲成 true,
-#   而 `_ready()` **不复位** `_reloading`  ->  那把枪白吃一个 `reload_time`。
+# 弹药状态是否已初始化完成
 var _mag_ready := false
 var _reloading := false
 var _reload_t := 0.0
-var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
+var _reload_pose := false             # 换弹下压姿势生效中
 
-# 换弹动画:进度 0→1 期间枪口下压再回位(sin 包络),中段带机械微抖。
-# 作用于精灵局部坐标(换弹下压),与根节点的瞄准旋转/镜像互不干扰。
-const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
-const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步回拉/下沉
+# 换弹动画参数
+const RELOAD_TILT := 0.9                    # 枪口下压最大弧度
+const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步下沉偏移量
 
 func is_reloading() -> bool:
 	return _reloading
 
-# 换弹进度 0→1(未在换弹时返回 -1;HUD 进度条用)
+# 换弹进度 0 到 1（未换弹时返回 -1.0，供 HUD 进度条使用）
 func reload_progress() -> float:
 	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
 
 func start_reload() -> void:
-	# - 弹数未落定(未加入场景树窗口)时 `mag_ammo` 仍是**声明初值 0**,不是"空弹夹" ——
-	#   按 R 那条路不经过 `fire()`,同一窗口里会在这里起一次没必要的换弹(见 `_mag_ready`)。
 	if not _mag_ready:
 		return
 	if _reloading or mag_ammo >= mag_size:
@@ -152,19 +117,15 @@ func start_reload() -> void:
 	_reload_t = reload_time
 	Sfx.play("reload")
 
-# 换弹姿态:每帧在 _recoil_recover 之后调用(换弹压枪优先级高于后坐复位)。
+# 换弹姿态：每帧在 _recoil_recover 之后调用（换弹压枪优先级高于后坐复位）
 func _update_reload_pose() -> void:
-	# 重建窗口:`WeaponComponent._equip_index` 用 `call_deferred("add_child")` 加入场景树,在那之前
-	# `@onready sprite` 仍是 null。-  这里"跳过"是安全的,与上面 `mag_ammo` 走 `pending_mag`
-	# 提前落盘不同 —— 那是权威态、会被 `_ready()` 重置;姿势只是纯表现,下一帧随 `_reloading`
-	# 再算一遍即可(该窗口跨整个回滚重放,提前算也无处可画)。
 	if sprite == null:
-		return   # 未加入场景树(重建窗口):`@onready` 尚未解析,姿势下一帧补算
+		return
 	if _reloading:
 		_reload_pose = true
 		var p := clampf(1.0 - _reload_t / maxf(reload_time, 0.01), 0.0, 1.0)
-		var k := sin(p * PI)          # 0→1→0:前段压下,末段回位
-		var jiggle := sin(p * 34.0) * 1.2 * k   # 中段机械微抖(频率固定,幅度随包络)
+		var k := sin(p * PI)
+		var jiggle := sin(p * 34.0) * 1.2 * k
 		sprite.rotation = RELOAD_TILT * k
 		sprite.position = _base_sprite_pos + RELOAD_OFFSET * k + Vector2(jiggle, 0.0)
 	elif _reload_pose:
@@ -182,12 +143,12 @@ var _recoil_timer: float = 0.0
 var _base_sprite_pos: Vector2 = Vector2.ZERO
 var _aiming: bool = false
 var _fire_buffered: bool = false
-var _aim_facing: int = 1          # 最近一次明确的瞄准侧(近垂直瞄时用,不随走路翻侧)
-var _current_aim_facing: int = 1  # 本帧实际生效的朝向(含冲刺锁定回落),弹道与枪口共用
+var _aim_facing: int = 1          # 上次记录的有效水平瞄准朝向
+var _current_aim_facing: int = 1  # 本帧实际生效的水平瞄准朝向
 var _laser: Line2D = null
 var _explosion_marker: Sprite2D = null
 
-# 俯仰角:把面向折进 dir.x,相对水平线求角并钳制到 ±45°。
+# 俯仰角限制：根据角色水平朝向折叠计算，并限制在指定角度范围内
 static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> float:
 	var local := Vector2(dir.x * float(facing), dir.y)
 	var limit := deg_to_rad(limit_deg)
@@ -195,15 +156,13 @@ static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> f
 
 func _ready() -> void:
 	mag_ammo = mag_size
-	# - 加入场景树前若有人塞了残弹,在这里一次消费掉 —— 这是"加入场景树前写入"唯一生效的地方。
-	#   消费后复位哨兵,免得后续 `_ready`(理论上不会跑第二次)或探针误读。
 	if pending_mag != MAG_UNSET:
 		mag_ammo = clampi(pending_mag, 0, mag_size)
 		pending_mag = MAG_UNSET
 	_mag_ready = true
 	_base_sprite_pos = sprite.position
 	_laser = Line2D.new()
-	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
+	_laser.width = 1.0
 	_laser.default_color = laser_color
 	_laser.visible = false
 	call_deferred("add_child", _laser)
@@ -216,7 +175,7 @@ func _ready() -> void:
 func _player_ok() -> bool:
 	return player != null and (not player.has_method("is_downed") or not player.is_downed())
 
-# 攻击输入查询:优先走 player 的注入输入(PacketInputSource);本地/冒烟无该方法时回退真实 Input。
+# 攻击输入查询：优先读取角色节点的注入输入，若不存在则回退至原生 Input
 func _attack_pressed() -> bool:
 	if player != null and player.has_method("is_attack_pressed"):
 		return player.is_attack_pressed()
@@ -234,36 +193,27 @@ func _attack_just_released() -> bool:
 
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
-	# 切枪继承旧武器剩余冷却:后摇不能被切枪意外覆盖重置(否则可切枪连射)
+	# 继承前一把武器的剩余冷却时间，防止通过快速切枪跳过后摇
 	fire_cd_timer = maxf(inherit_cooldown, 0.0)
-	# 缓冲开火不随切枪继承:旧武器 freed 标记随之消失,新武器从无缓冲开始
 	_fire_buffered = false
 	cancel_aim()
 
-# 武器帧逻辑由所属 Player 的物理 tick 显式驱动(tick(),player.gd 每物理帧调用),
-# 不再跑 idle _process:冷却/缓冲开火/重武器松开/预瞄/后坐必须落在固定的物理 tick 上,
-# 否则同一输入在客户端预测重放/服务器权威模拟下会落在不同 tick(rollback 需要确定性)。
-# delta 恒为物理帧 1/60,不随渲染帧率抖动。未被 Player 驱动的实例(如对手副本武器,
-# player==null)由 drive_remote_visual 外部驱动,不进 tick。
+# 武器物理逻辑由所属角色的物理帧循环显式驱动，确保回滚模拟的确定性
 func tick(delta: float) -> void:
 	if not _player_ok():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
-	# 换弹计时:完成后上满弹夹(上膛轻音提示)
+	# 换弹倒计时
 	if _reloading:
 		_reload_t -= delta
 		if _reload_t <= 0.0:
 			_reloading = false
 			mag_ammo = mag_size
 			Sfx.play("switch")
-	# 每帧同步朝向/枪口旋转(瞄准与预览弧线);fire() 内部还会再同步一次,
-	# 覆盖直接开火等不经本帧 tick 的路径,避免读到走路覆盖的旧朝向。
 	_auto_aim()
-	# 缓冲开火:冷却结束且末尾按过开火 → 自动打出(土狼时间式;切枪即弃)
 	if _fire_buffered and fire_cd_timer == 0.0:
 		_fire_buffered = false
 		fire()
-	# 攻击输入轮询:heavy_aim 预瞄/松开发射,全自动按住连发,半自动按下单发。
 	if heavy_aim:
 		if _attack_just_pressed():
 			_aiming = true
@@ -279,11 +229,10 @@ func tick(delta: float) -> void:
 		if _attack_just_pressed():
 			try_fire()
 	_recoil_recover(delta)
-	_update_reload_pose()   # 换弹压枪优先级高于后坐复位:必须排在 _recoil_recover 之后
+	_update_reload_pose()
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:
-		# 冷却>0.5 的武器:最后 20% 内按开火不丢弃,改为缓冲,冷却结束自动打
 		if fire_cooldown > 0.5 and fire_cd_timer <= fire_cooldown * 0.2:
 			_fire_buffered = true
 		return
@@ -292,29 +241,19 @@ func try_fire() -> void:
 func fire() -> void:
 	if not _player_ok():
 		return
-	# 装填中不可开火;空弹夹自动换弹
 	if _reloading:
 		return
 	if mag_ammo <= 0:
-		# - 弹数未落定(未加入场景树窗口)时这里的 0 是**声明初值**,不是"空弹夹" ——
-		#   照常起换弹会把权威刚写下的 `_reloading = false` 冲成 true(见 `_mag_ready`)。
 		if _mag_ready:
 			start_reload()
 		return
 	fire_cd_timer = fire_cooldown
-	# 同屏弹数上限:满员时这发不发(不耗弹、不烧冷却动作——冷却已计,等于"点空枪"),
-	# 等场上旧弹爆掉/消失再打。只对配置了 max_live_projectiles 的武器生效(默认 0=不限)。
 	if max_live_projectiles > 0 and _live_projectiles() >= max_live_projectiles:
 		return
-	# 开火瞬间同步朝向/枪口到鼠标:直接开火(_unhandled_input, input 阶段)先于 _process,
-	# 读到的是上一物理帧被走路覆盖的 get_facing(),clamp_pitch 会折到走路侧、子弹打偏。
-	# 统一先 _auto_aim:所有开火路径(直接/缓冲/连发/重武器)都取本帧最新瞄准方向。
 	_auto_aim()
 	var base_dir := _clamped_aim_dir()
 	_spawn_projectiles(base_dir)
-	# 8bit 音效:重武器(预瞄)/霰弹/普通枪三种音色
 	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
-	# 每次开火消耗一发,打空自动换弹
 	mag_ammo = maxi(mag_ammo - 1, 0)
 	if mag_ammo == 0:
 		start_reload()
@@ -326,38 +265,29 @@ func fire() -> void:
 	if cam != null and cam.has_method("shake"):
 		cam.shake(cam_shake, cam_shake_time)
 
-# 命中回调:伤害/冲击由枪械管理(BulletBase 不含伤害)。
+# 命中目标伤害结算
 func apply_hit(target: Node, dir: Vector2) -> void:
 	if target != null and target.has_method("hurt"):
 		target.hurt(damage, dir, impact)
 
-# 出弹钩子:fire() 同步朝向/冷却后调用。基类默认按 pellet 出物理子弹;
-# 即时光束类武器(激光)覆写本方法,用一次性几何追踪替代逐帧飞行的弹丸。
-# base_dir 是已钳制仰角的瞄准方向(世界系),与默认出弹同一来源。
+# 发射弹丸
 func _spawn_projectiles(base_dir: Vector2) -> void:
 	var spread := deg_to_rad(spread_deg)
 	for i in range(pellet_count):
 		var b: BulletBase = bullet_scene.instantiate()
-		# Beta 时间玩法(PvP):射手加速  ->  出膛弹速 ×同倍率(设计约定"子弹也要加速")。
-		# - 只读 pvp_haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);
-		#   max_range 不动:加速时弹飞得更快但射程不变(与单机语义一致 —— SP 的位移缩放同样
-		#   不放大 traveled 的距离上限)。
 		var hm := float(player.get("pvp_haste_mult")) if player != null and player is Node 				and "pvp_haste_mult" in player else 1.0
 		var ang := base_dir.angle() + randf_range(-spread, spread)
-		# - 局部变量,不动 bullet_speed 成员:多弹丸武器(霰弹)逐弹 ×会累积,跨发更会永久变快
 		b.setup(Vector2.from_angle(ang), bullet_speed * hm, bullet_range, bullet_size, bullet_color, self)
 		b.shooter = player
 		b.gravity_factor = bullet_gravity
 		b.hit_damage = damage
 		b.hit_impact = impact
 		b.global_position = muzzle.global_position
-		# PvP:本地生成的子弹只做视觉(不裁决伤害);服务器权威子弹(Level0.pvp_mode=false)照常裁决。
 		b.apply_damage = not Level0.pvp_mode
-		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)
 		b.set_meta("scene_path", bullet_scene.resource_path)
 		get_viewport().add_child(b)
 
-# 统计本武器当前还在场上的弹数(子弹 _ready 已入 bullet 组;source==self 判定归属)。
+# 统计本武器当前存活的弹丸数
 func _live_projectiles() -> int:
 	if not is_inside_tree():
 		return 0
@@ -372,24 +302,14 @@ func cancel_aim() -> void:
 	if _laser != null:
 		_laser.visible = false
 
-# 是否正在预瞄(heavy_aim 蓄力中):只有 heavy_aim 武器会置 _aiming。PvP 服务器快照读它,
-# 让对手副本能看到"这人在蓄力瞄准"。非重武器恒 false(无预瞄)。
+# 当前是否处于蓄力/预瞄状态
 func is_previewing() -> bool:
 	return _aiming
 
-# PvP:服务器权威方向驱动"副本武器外观"(远端对手枪):只画朝向 + 枪口旋转,不读鼠标、不开火。
-# 副本武器不 equip(player==null),_process 提前返回,由 player_replica 每帧调用本方法替代:
-# 复刻 _auto_aim 的镜像/旋转(俯仰随枪 clamp)。
-#
-# - 预瞄线**不对副本画**(设计约定 2026-09-11):预瞄红线只有使用者本人可见 ——
-#   对手看不到你在蓄力重狙/榴弹。故本方法不再收 show_preview 参数,并显式把 _aiming
-#   压回 false(而不是"因为没人置位所以恰好为假"),让"副本永不预瞄"成为写下来的意图:
-#   _aiming 为假 → 下面 _update_laser() 会隐藏 _laser 与爆点标记。
-#   服务端快照仍带 previewing 字段(见 match_host._broadcast_snapshot),此处刻意不消费它 ——
-#   若日后要改回"看得见"(或改成别的提示形式,如音效/轮廓),从这里接。
+# 多人模式下根据权威数据驱动远端副本武器外观（仅显示朝向与枪口角度）
 func drive_remote_visual(aim_dir: Vector2, facing: int) -> void:
 	if _laser == null or muzzle == null:
-		return   # _ready 的 call_deferred 尚未建好(换枪当帧),下帧再驱动
+		return
 	if aim_dir == Vector2.ZERO:
 		aim_dir = Vector2(float(facing), 0.0)
 	_aim_facing = facing
@@ -412,10 +332,7 @@ func get_movement_multiplier() -> Vector2:
 		return Vector2.ONE
 	return Vector2(move_penalty, jump_penalty)
 
-# 与枪口相同的出弹方向:经过 ±45° 仰角钳制后的世界单位向量(fire 出弹用)。
-# local.x 按 facing 折叠,还原到世界坐标时再乘回 facing,与 _auto_aim 的旋转一致。
-# 折叠用 _current_aim_facing(_auto_aim 算出的瞄准侧,含冲刺锁定回落),不用 get_facing():
-# 后者会被走路输入覆盖,朝向与鼠标反侧时子弹翻折到走路侧。
+# 获取钳制后的出弹单位方向向量
 func _clamped_aim_dir() -> Vector2:
 	var facing := _current_aim_facing
 	var pitch := clamp_pitch(_aim_world_dir(), facing, pitch_clamp_deg)
@@ -424,25 +341,18 @@ func _clamped_aim_dir() -> Vector2:
 
 func _auto_aim() -> void:
 	var dir := _aim_world_dir()
-	# 瞄准朝向:鼠标有明确水平分量则跟随鼠标并记住(近垂直瞄时用上次明确侧,不随走路翻侧)。
 	var facing := _aim_facing
 	if absf(dir.x) > 0.1:
 		facing = 1 if dir.x > 0.0 else -1
 		_aim_facing = facing
-	# 玩家精灵朝向:只在明确瞄向一侧时翻转(冲刺锁定/无玩家时回落 get_facing)。
 	if player != null and player.has_method("set_facing") and absf(dir.x) > 0.1:
 		player.set_facing(facing)
-		# 冲刺时 player.set_facing 被锁(身体保持冲刺方向,位移需要);此时枪口**不跟随身体翻转**,
-		# 保持鼠标瞄准侧(_aim_facing/本帧 facing)。非冲刺:set_facing 成功、身体已翻到瞄准侧,
-		# get_facing() 读回一致,无差异。
 		var charging := false
 		if player.has_method("is_charging"):
 			charging = bool(player.is_charging())
 		if not charging:
 			facing = get_facing()
 	_current_aim_facing = facing
-	# 朝向镜像(scale.x=-1)会翻转旋转方向。clamp_pitch 已按 facing 折叠 dir.x,
-	# 返回值乘 facing 取反:朝左时镜像后的枪口才指向正确的俯仰象限。
 	rotation = clamp_pitch(dir, facing, pitch_clamp_deg) * float(facing)
 	scale.x = float(facing)
 
@@ -457,13 +367,10 @@ func _update_laser() -> void:
 		_laser.points = _sample_arc_points()
 		_update_explosion_marker(true)
 	else:
-		# 激光继承枪口的钳制旋转:仰角限制与枪口一致,且与出弹方向(同样钳制)对齐。
 		_laser.points = PackedVector2Array([muzzle.position, muzzle.position + Vector2(laser_length, 0.0)])
 		_update_explosion_marker(false)
 
-# 预瞄抛物线:与 fire 同源(v0=钳制瞄准方向*speed, g=bullet_gravity*gravity0),
-# 1/60s 采样到 preview_time,途中遇墙(非 EMPTY)格截断(榴弹撞墙停驻处 = 爆炸点),
-# 并封顶 bullet_range(榴弹超射程保底处理爆炸,不会再飞)。
+# 预瞄抛物线采样计算
 func _sample_arc_points() -> PackedVector2Array:
 	var pts := PackedVector2Array()
 	var p := muzzle.global_position
@@ -472,18 +379,16 @@ func _sample_arc_points() -> PackedVector2Array:
 	var g := bullet_gravity * GameParameters.gravity0
 	var dt := 1.0 / 60.0
 	var t := 0.0
-	# 枪口起点判墙 → 真实榴弹会挣脱墙继续飞;跳过起点段判墙,避免弧线退化成贴脸短弧
 	var escape := _disk_overlaps_solid(start)
 	pts.append(to_local(p))
 	while t < preview_time:
 		v.y += g * dt
-		# 水中阻力:与真实子弹一致(water_bullet_drag),入水后减速 → 弧线在水里更垂/更短
 		if Water.is_in_water(p):
 			v *= Water.bullet_drag_factor(true, GameParameters.water_bullet_drag, dt)
 		p += v * dt
 		t += dt
 		if escape and p.distance_to(start) < GameParameters.TILE_SIZE:
-			continue  # 起点挣脱段:不判墙、不截断,榴弹正从枪口墙体里飞出
+			continue
 		if _disk_overlaps_solid(p):
 			break
 		if p.distance_to(start) >= bullet_range:
@@ -491,10 +396,7 @@ func _sample_arc_points() -> PackedVector2Array:
 		pts.append(to_local(p))
 	return pts
 
-# 预瞄判墙:以 center 为圆心、半径 r(=6px)的小球是否压到任一墙(非 EMPTY)格(环面)。
-# 小球按格子 AABB 粗查:球很小,最多跨 2 格,不会漏;比精确圆简单且略保守(宁多判墙不少判)。
-# 逐格环面判定收在 core/tile_query.gd(与黑鸟落点/飞鸟避障同源);空网格 → false(= 无墙),
-# 与旧实现的显式 is_empty 提前返回同义。
+# 检测指定坐标圆形区域是否与实体地形碰撞
 func _disk_overlaps_solid(center: Vector2) -> bool:
 	var r := PREVIEW_COLLISION_RADIUS * bullet_size
 	return TileQuery.rect_overlaps_solid(
@@ -514,25 +416,18 @@ func _recoil_recover(delta: float) -> void:
 		if _recoil_timer == 0.0:
 			sprite.position = _base_sprite_pos
 
-# 当前瞄准方向(世界坐标系):本地=鼠标计算,网络=注入方向。PvP 输入包上报用。
+# 获取当前瞄准方向（世界坐标系）
 func get_current_aim_dir() -> Vector2:
 	return _aim_world_dir()
 
-# 世界坐标系下从玩家指向鼠标的单位向量(未钳制俯仰)。
+# 计算世界坐标系下从武器指向鼠标的单位向量
 func _aim_world_dir() -> Vector2:
-	# 网络驱动的玩家(服务器上的远端模拟)用注入的瞄准;本地玩家返回 ZERO → 落回鼠标。
-	# has_method 守卫:冒烟里的 StubPlayer 没有该方法时跳过,不破坏测试。
 	if player != null and player.has_method("get_aim_dir_override"):
 		var override: Vector2 = player.get_aim_dir_override()
 		if override != Vector2.ZERO:
 			return override
-		# override 存在但为 ZERO(网络玩家还没收到瞄准/瞄准为零):
-		# 网络驱动 → 永不读宿主机 OS 鼠标(服务器 headless 上没有鼠标,读了是垃圾方向),用回退使用角色朝向。
-		# 本地 PlayerInput 的 override 恒为 ZERO → is_network_driven()==false → 走下面鼠标路径。
 		if player.has_method("input_is_network") and player.input_is_network():
 			return Vector2(float(get_facing()), 0.0)
-	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),
-	# 若标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
 	var sub: Viewport = get_viewport()
 	if sub == null:
 		return Vector2(float(get_facing()), 0.0)
@@ -542,19 +437,11 @@ func _aim_world_dir() -> Vector2:
 	var win: Viewport = sub.get_window()
 	if win == null:
 		return Vector2(float(get_facing()), 0.0)
-	# 窗口鼠标 -> 世界坐标。鼠标用根 Window 的真实坐标(SubViewport 的
-	# get_mouse_position 是被 push 进去的窗口坐标,不能直接用)。
-	# 相机把屏幕中心映射到 cam.global_position,world_mouse = 相机基准 + 鼠标偏移。
 	var win_size := win.get_visible_rect().size
 	var mouse := win.get_mouse_position()
-	# 用相机无抖动的基准位置,避免镜头抖动让准星跟着跳
 	var cam_center: Vector2 = cam.global_position
 	if cam.has_method("get_base_global_position"):
 		cam_center = cam.get_base_global_position()
-	# PostProcess 是中心裁剪(显示世界视口中心窗口大小区域);相机 zoom(<1 视野更大)
-	# 让 窗口 1px = 世界 1/zoom px,鼠标偏移按 zoom 放大回世界坐标(如 zoom=0.75 → ÷0.75)。
-	# 不能 ÷crop_scale:crop 只定裁剪比例、不改像素换算,÷ 它(×1.3)会放大偏移,
-	# 瞄准"水平"实际偏下,而榴弹枪口离地极近,弧线几步内就撞地板 → 预瞄贴在玩家身上。
 	var world_mouse := cam_center + (mouse - win_size * 0.5) / cam.zoom
 	var origin := player.global_position if player != null else global_position
 	var dir := world_mouse - origin
