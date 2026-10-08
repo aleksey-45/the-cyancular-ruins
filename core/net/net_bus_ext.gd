@@ -13,17 +13,17 @@ signal local_hit_confirm(shooter_role: int, victim_role: int)  # worker → 射�
 signal player_options_received(caller: int, opts: Dictionary)  # worker:某客户端上报的本端选项
 
 # 客户端 → worker:本端选项(角色颜色/规则偏好)。服务器权威项以房主(role1)为准。
-@rpc("any_peer", "call_remote", "reliable", 3)
+@rpc("any_peer", "call_remote", "reliable", 0)
 func player_options(opts: Dictionary) -> void:
 	player_options_received.emit(multiplayer.get_remote_sender_id(), opts)
 
 # worker → 客户端:本局生效选项(禁武器/回合回血),进局广播一次
-@rpc("authority", "call_remote", "reliable", 3)
+@rpc("authority", "call_remote", "reliable", 0)
 func match_options(opts: Dictionary) -> void:
 	local_match_options.emit(opts)
 
 # worker → 客户端:双方角色颜色 {role(int) -> 色相度数},开局广播一次
-@rpc("authority", "call_remote", "reliable", 3)
+@rpc("authority", "call_remote", "reliable", 0)
 func peer_hues(hues: Dictionary) -> void:
 	local_peer_hues.emit(hues)
 
@@ -198,7 +198,7 @@ func team_room_state(state: Dictionary) -> void:
 #   `Settings`、由 role1 那份生效)。两个真值,见设计 §6 第 3 条。
 signal room_map_requested(caller: int, code: String, path: String)
 
-@rpc("any_peer", "call_remote", "reliable", 3)
+@rpc("any_peer", "call_remote", "reliable", 0)
 func room_map(code: String, path: String) -> void:
 	room_map_requested.emit(multiplayer.get_remote_sender_id(), code, path)
 

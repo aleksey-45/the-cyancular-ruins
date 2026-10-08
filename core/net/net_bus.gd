@@ -270,7 +270,7 @@ func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 func tile_destroyed(cell: Vector2i) -> void:
 	local_tile_destroyed.emit(cell)
 
-@rpc("authority", "call_remote", "reliable", 3)
+@rpc("authority", "call_remote", "reliable", 0)
 func round_state(data: Dictionary) -> void:
 	local_round_state.emit(data)
 
