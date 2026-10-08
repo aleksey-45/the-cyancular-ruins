@@ -696,3 +696,30 @@
      ★ 更便宜的替代(只要"菜单能起来"这一档):在 [`tools/build_release.py`](../../tools/build_release.py) 的产物冒烟里加一步
      `-- --autotest-mp` + grep 一条文本(它已有同款做法:`check_weapon_registry` 拿 `-- --registry-report` 那行文本对账)。
      但那**不是**端到端守卫,只证明"主菜单 → 大厅"这一步没崩。
+
+24. **服务端输入收口只钳了 `ax`；`aim` / `winst` 仍未钳位**（owner: closeout 批 Task 4；最后复核 2026-10-08）
+    - **事实**：`PacketInputSource.apply_packet()` 从客户端包里取六个字段(`ax` / `held` / `aim` / `winst` / `pressed` / `released`)。
+      本批按范围纪律**只钳 `ax`**(非有限 → 0；`|ax| ≤ 1`，见 `PacketInputSource.sanitize_axis`)；`held` / `pressed` / `released`
+      是**位图**，未知位被 `& BIT_X` 掩掉 ⇒ 天然安全。
+    - **未钳**：`aim`(`Vector2`，`get_aim_dir_override()` **原样返回**，未归一化)与 `winst`(int，只判 `> 0`)。
+    - **最强保证**：本批**只**保证 `ax` 与"队列长度有界且丢包保住边沿"。**不是**"客户端包已完全可信"。
+    - **翻案条件**：先核 `aim` 在下游(玩家瞄准消费处)是否已归一化；若没有，按 `sanitize_axis` 同一手法补一个纯函数 + 一条能红的断言。
+
+25. **RPC 通道分流"是否生效"没有运行期判据**（owner: closeout 批 Task 5；最后复核 2026-10-08）
+    - **事实**：`GDScript.get_script_method_list()` 的元素键只有 `["name","args","default_args","flags","id","return"]`，
+      **没有** `rpc_config`(实测) ⇒ **通道号无法在运行期回读**。而 `@rpc` 注解只吃字面量(不能引用 const)⇒ 声明与表天然是两份文本。
+    - **现有判据** = [`netplay.md`](netplay.md) 通道表 ↔ 声明的**文本对账**([`tests/smoke/rpc_channel_contract_smoke.gd`](../../tests/smoke/rpc_channel_contract_smoke.gd))，
+      **已在文件头标注为"代理判据"**(按本文档所属批次的 D6b 纪律)。
+    - **最强保证**：只证明"**声明按表写**"，**不**证明"`bullet_spawn` 的重传真的不再堵住 `send_input`"。
+    - **翻案条件**：写一个两 peer 分占不同 ENet 道的对打脚本，读 `MultiplayerPeer.get_packet_channel()` 确认落点(引擎源码
+      `modules/enet/enet_multiplayer_peer.cpp::put_packet` 给出的映射是 `transfer_channel > 0 ⇒ SYSCH_MAX + tr - 1 = tr + 1`)。
+
+26. **`beam_fired` 在 `NetBus` 与 `NetBusExt` 各声明一次**(重名)(owner 未认领；最后复核 2026-10-08)
+    - **事实**：两处各一份 `@rpc`、函数体逐字相同([`net_bus.gd`](../../core/net/net_bus.gd) 与 [`net_bus_ext.gd`](../../core/net/net_bus_ext.gd))。
+      `net_bus_ext.gd` 那份**自己的注释**写着"原版 NetBus 逐字节不动，新 RPC 进 NetBusExt" ⇒ ext 那份是**遗留**。
+    - **为什么危险**：重名 = 接收端挂错节点 = **静默 no-op**。裁定与判据三处已存在：[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd)
+      (**必须走 NetBus**，不是 NetBusExt)、[`scenes/pvp_game.gd`](../../scenes/pvp_game.gd)(发送端走 NetBus)、
+      [`tests/probe/kh_l6_probe.gd`](../../tests/probe/kh_l6_probe.gd)(判据是**同行**必须含 `NetBus.rpc_id(`)。
+    - **本批处置**：**两份给同一通道**(Task 5 的 `transfer_channel` 都是 3)，并把"重名集合恰好 = `{beam_fired}`"**钉成一条断言**
+      (`rpc_channel_contract_smoke` 的 ③：新出现一个重名、或 beam_fired 被删掉一份，都会红)。
+    - **翻案条件**：确认真无调用点后**删掉 ext 那份** —— 那是协议面改动，单独走档 3(别顺手删)。
