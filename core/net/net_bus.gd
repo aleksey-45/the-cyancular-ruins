@@ -182,31 +182,31 @@ func reply(id: int, method: String, a = null, b = null, c = null, d = null) -> b
 	return true
 
 # ── 客户端 → 服务器 ──
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func create_room() -> void:
 	room_create_requested.emit(multiplayer.get_remote_sender_id())
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func join_room(code: String) -> void:
 	room_join_requested.emit(multiplayer.get_remote_sender_id(), code)
 
 # 客户端:请求当前全部房间(刷新房间列表)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func list_rooms() -> void:
 	room_list_requested.emit(multiplayer.get_remote_sender_id())
 
 # 客户端→大厅:上报昵称(房间列表展示在房玩家)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func lobby_name(name: String) -> void:
 	lobby_name_set.emit(multiplayer.get_remote_sender_id(), name)
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 2)
 func send_input(pkt: Dictionary) -> void:
 	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
 
 # 客户端→worker:报到自己在对局里的角色+昵称(role 大厅已发;player_name 用于对方头上显示)。
 # worker 据此建 role→peer 映射,并在两人到齐后把双方昵称回传给各端(peer_info)。
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func claim_role(role: int, player_name: String) -> void:
 	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name)
 
@@ -215,7 +215,7 @@ func claim_role(role: int, player_name: String) -> void:
 #   服务器在**同一次 poll** 里推 4 条,而那一刻新场景的订阅方一个都不存在 → 静默丢失(自检 B2,
 #   后果是对手颜色不生效、昵称表空、禁武器闸门没上)。拉的方向反过来:客户端建好之后才开口,
 #   晚到也无所谓 —— 应答按 role 回,不依赖任何时序。
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func match_sync() -> void:
 	match_sync_received.emit(multiplayer.get_remote_sender_id())
 
@@ -231,28 +231,28 @@ func match_sync() -> void:
 #   ② 本人包 = 自己的 ack_seq + c2,定向发给本人
 # 顺带好处:两者**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补),世界包丢只冻结一帧副本插值。
 # 实测(拆包后估算):8 人局服务器上行 3555KB/s → 446KB/s(≈29Mbps → 3.6Mbps)。
-@rpc("authority", "unreliable")
+@rpc("authority", "call_remote", "unreliable", 1)
 func snapshot_world(world: Dictionary) -> void:
 	local_snapshot_world.emit(world)
 
-@rpc("authority", "unreliable")
+@rpc("authority", "call_remote", "unreliable", 1)
 func snapshot_own(own: Dictionary) -> void:
 	local_snapshot_own.emit(own)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func bullet_spawn(data: Dictionary) -> void:
 	local_bullet_spawn.emit(data)
 
 # 即时光束武器(激光)权威开火:服务器把本发光束几何广播给非射手客户端画视觉副本
 # (物理子弹走 bullet_spawn;即时光束无移动实体,只能事件里带整条折线)。
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func beam_fired(data: Dictionary) -> void:
 	local_beam_fired.emit(data)
 
 # worker→客户端:match_sync 的应答(一次性完整快照)。
 # 载荷 = {names:{role->昵称}, hues:{role->色相}, options:生效选项, roles:[int], spawns:{role->Vector2i}}。
 # 可靠通道:一次性、必须到(不像快照那样可以丢一帧)。
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func match_sync_data(payload: Dictionary) -> void:
 	# 诊断开关(默认关):客户端侧确认这条应答**到底有没有到达**。
 	# ★ 纯诊断:开关关着时一行都不打 ⇒ 生产行为逐字不变(与 `--pickup-diag` / `--registry-report` 同款,
@@ -262,15 +262,15 @@ func match_sync_data(payload: Dictionary) -> void:
 		print("[matchsync-diag] 客户端收到 match_sync_data: 键=%s" % str(payload.keys()))
 	local_match_sync.emit(payload)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
 	local_hit_event.emit(victim_role, damage, source_pos)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func tile_destroyed(cell: Vector2i) -> void:
 	local_tile_destroyed.emit(cell)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func round_state(data: Dictionary) -> void:
 	local_round_state.emit(data)
 
@@ -279,15 +279,15 @@ func round_state(data: Dictionary) -> void:
 # 所以走事件而不是塞进 60Hz 快照(大乱斗的快照体积随人数线性增长,再加 12 把会雪上加霜)。
 # ★ 只进 NetBus,**不要**在 NetBusExt 里也加一份:那两者已有 beam_fired 重名
 #   (net_bus.gd / net_bus_ext.gd),接收端挂错节点会**静默 no-op**(对手的枪凭空消失且不报错)。
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func weapon_spawned(data: Dictionary) -> void:
 	local_weapon_spawned.emit(data)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func weapon_removed(data: Dictionary) -> void:
 	local_weapon_removed.emit(data)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func kill_event(killer: int, victim: int) -> void:
 	local_kill_event.emit(killer, victim)
 
@@ -295,34 +295,34 @@ func kill_event(killer: int, victim: int) -> void:
 #  ★ 它们**不是**原版服务端的协议面:由本项目提交 aa1d8f0「feat: PvPvE 中立鸟入竞技场」加入,
 #    故删除不影响「原 NetBus 逐字节一致」那条不变量。)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func room_created(code: String) -> void:
 	local_room_created.emit(code)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func room_joined(role: int) -> void:
 	local_room_joined.emit(role)
 
 # 大厅 → 客户端:房间列表 [{code:String, players:int}]
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func room_list(rooms: Array) -> void:
 	local_room_list.emit(rooms)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	local_match_start.emit(role, spawn, map_path)
 
 # 大厅→客户端:配对完成,去连对局 worker(role 由大厅定;端口是 worker 独占的 UDP 端口)。
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func go_match(role: int, port: int) -> void:
 	local_go_match.emit(role, port)
 
 # worker→客户端:开局广播双方昵称(role -> name),两端据此在头上显示各自 ID。
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func peer_info(names: Dictionary) -> void:
 	local_peer_info.emit(names)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func server_message(text: String) -> void:
 	local_server_message.emit(text)
 
@@ -336,7 +336,7 @@ func send_ping() -> void:
 	_ping_sent_ms = Time.get_ticks_msec()
 	rpc_id(1, "ping")
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func ping() -> void:
 	var from := multiplayer.get_remote_sender_id()
 	# ★ 判活再回:发 ping 的客户端可能**在同一帧里断开**(它最后那次 ping 与它自己的 `stop()`
@@ -347,7 +347,7 @@ func ping() -> void:
 		return
 	rpc_id(from, "pong")
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func pong() -> void:
 	var ms := Time.get_ticks_msec() - _ping_sent_ms
 	if ms < 0:
@@ -356,6 +356,6 @@ func pong() -> void:
 	ping_updated.emit(ping_ms)
 
 # 对局中途对手断线(1v1 无法继续 → 存活方播报后回菜单)
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func opponent_left() -> void:
 	local_opponent_left.emit()

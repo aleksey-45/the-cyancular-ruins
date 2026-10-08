@@ -13,23 +13,23 @@ signal local_hit_confirm(shooter_role: int, victim_role: int)  # worker → 射�
 signal player_options_received(caller: int, opts: Dictionary)  # worker:某客户端上报的本端选项
 
 # 客户端 → worker:本端选项(角色颜色/规则偏好)。服务器权威项以房主(role1)为准。
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 3)
 func player_options(opts: Dictionary) -> void:
 	player_options_received.emit(multiplayer.get_remote_sender_id(), opts)
 
 # worker → 客户端:本局生效选项(禁武器/回合回血),进局广播一次
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func match_options(opts: Dictionary) -> void:
 	local_match_options.emit(opts)
 
 # worker → 客户端:双方角色颜色 {role(int) -> 色相度数},开局广播一次
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func peer_hues(hues: Dictionary) -> void:
 	local_peer_hues.emit(hues)
 
 # worker → 射手客户端:你的子弹命中了一名玩家(FPS 式命中反馈,只发给射手本人)。
 # 仅弹直击(服务器裁决 _on_bullet_hit)发;爆炸 AoE 不发(伤害方不明确,击杀仍有 kill_event)。
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func hit_confirm(shooter_role: int, victim_role: int) -> void:
 	local_hit_confirm.emit(shooter_role, victim_role)
 
@@ -38,14 +38,14 @@ func hit_confirm(shooter_role: int, victim_role: int) -> void:
 # 事件里带整条折线)。原版 NetBus 逐字节不动,新 RPC 进 NetBusExt(与 hit_confirm 同区)。
 signal local_beam_fired(data: Dictionary)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func beam_fired(data: Dictionary) -> void:
 	local_beam_fired.emit(data)
 
 # 客户端 → worker:自杀脱困(大乱斗卡死自救;服务器校验存活/对局中,转发给 RoyaleHost)
 signal suicide_requested(caller: int)
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func suicide_request() -> void:
 	suicide_requested.emit(multiplayer.get_remote_sender_id())
 
@@ -64,17 +64,17 @@ signal local_royale_room_state(state: Dictionary)  # 大厅 → 客户端:所在
 
 # 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String, max_players:int,
 #   round_full_heal:bool, disabled_weapons:Array}(规则项随房存,开局随房主生效)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func royale_create(opts: Dictionary) -> void:
 	royale_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
 
 # 客户端 → 大厅:加入(私密房须带邀请码)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func royale_join(code: String, invite: String, beta: bool) -> void:
 	royale_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:退出所在大乱斗房间(开局前)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func royale_leave() -> void:
 	royale_leave_requested.emit(multiplayer.get_remote_sender_id())
 
@@ -85,27 +85,27 @@ func royale_leave() -> void:
 #   `rejoin_request` 的 `RejoinRegistry.decision` 判。
 # ★ 加参数 = 改 **NetBusExt** 的方法表,**可以**:本类是本仓自己的扩展协议(对原版 worker
 #   整个节点不存在 ⇒ 扩展 RPC 静默丢弃、优雅降级)。原版 `NetBus` 的方法表**一个字没动**。
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func royale_list(token: String) -> void:
 	royale_list_requested.emit(multiplayer.get_remote_sender_id(), token)
 
 # 客户端 → 大厅:房主请求开局(仅房主有效;人数 ≥2 才开)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func royale_start() -> void:
 	royale_start_requested.emit(multiplayer.get_remote_sender_id())
 
 # 客户端 → 大厅:1v1 房主请求与 AI 对战(实验性;仅自建服务端支持)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func ai_duel() -> void:
 	ai_duel_requested.emit(multiplayer.get_remote_sender_id())
 
 # 客户端 → 大厅:大乱斗房主请求 AI 补位开局(实验性;仅自建服务端支持)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func royale_start_ai() -> void:
 	royale_start_ai_requested.emit(multiplayer.get_remote_sender_id())
 
 # 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func royale_rooms(rooms: Array) -> void:
 	local_royale_rooms.emit(rooms)
 
@@ -116,7 +116,7 @@ func royale_rooms(rooms: Array) -> void:
 signal local_sub_destroyed(sub: Vector2i)
 
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 3)
 func sub_destroyed(sub: Vector2i) -> void:
 	local_sub_destroyed.emit(sub)
 
@@ -125,13 +125,13 @@ func sub_destroyed(sub: Vector2i) -> void:
 signal local_time_state(payload: Dictionary)
 
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 2)
 func time_state(payload: Dictionary) -> void:
 	local_time_state.emit(payload)
 
 # 大厅 → 客户端:所在房间实时状态 {code, is_public, invite_code, max_players, host_role,
 #   players: [{role, name}], in_match}(等待室 UI 靠它刷新;仅发给房内成员)
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 2)
 func royale_room_state(state: Dictionary) -> void:
 	local_royale_room_state.emit(state)
 
@@ -150,43 +150,43 @@ signal local_team_rooms(rooms: Array)             # 大厅 → 客户端:公开 
 signal local_team_room_state(state: Dictionary)   # 大厅 → 客户端:房间实时状态(等待室/选边)
 
 # 客户端 → 大厅:建房。opts = {is_public:bool, invite_code:String}
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func team_create(opts: Dictionary) -> void:
 	team_create_requested.emit(multiplayer.get_remote_sender_id(), opts)
 
 # 客户端 → 大厅:加入(私密房须带邀请码)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func team_join(code: String, invite: String, beta: bool) -> void:
 	team_join_requested.emit(multiplayer.get_remote_sender_id(), code, invite, beta)
 
 # 客户端 → 大厅:选边(team = 1 或 2)。该队已满 → 大厅回 server_message 拒绝
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func team_pick(team: int) -> void:
 	team_pick_requested.emit(multiplayer.get_remote_sender_id(), team)
 
 # 客户端 → 大厅:退出所在 3v3 房间(开局前)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func team_leave() -> void:
 	team_leave_requested.emit(multiplayer.get_remote_sender_id())
 
 # 客户端 → 大厅:房主请求开局(**两队各 3 人**才允许;服务端再判一次)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func team_start() -> void:
 	team_start_requested.emit(multiplayer.get_remote_sender_id())
 
 # 客户端 → 大厅:请求 3v3 房间列表(大厅回 team_rooms;`token` 的来历见 royale_list)
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func team_list(token: String) -> void:
 	team_list_requested.emit(multiplayer.get_remote_sender_id(), token)
 
 # 大厅 → 客户端:公开房间列表 [{code, players, max_players, names}]
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func team_rooms(rooms: Array) -> void:
 	local_team_rooms.emit(rooms)
 
 # 大厅 → 客户端:房间实时状态 {code, is_public, invite_code, host_role, team_size,
 #   players: [{role, name, team}], in_match, your_role}(等待室靠它渲染两队名单)
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 2)
 func team_room_state(state: Dictionary) -> void:
 	local_team_room_state.emit(state)
 
@@ -198,7 +198,7 @@ func team_room_state(state: Dictionary) -> void:
 #   `Settings`、由 role1 那份生效)。两个真值,见设计 §6 第 3 条。
 signal room_map_requested(caller: int, code: String, path: String)
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 3)
 func room_map(code: String, path: String) -> void:
 	room_map_requested.emit(multiplayer.get_remote_sender_id(), code, path)
 
@@ -211,21 +211,21 @@ func room_map(code: String, path: String) -> void:
 # 断大厅,之后再发就丢了)。两者都是 reliable 同通道,保序到达。
 signal local_session_token(token: String)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func session_token(token: String) -> void:
 	local_session_token.emit(token)
 
 # 客户端 → worker:把 token 报到本局(claim 之后立刻发)。worker 存 role→token 供日后核验。
 signal token_reported(caller: int, token: String)
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func report_token(token: String) -> void:
 	token_reported.emit(multiplayer.get_remote_sender_id(), token)
 
 # 客户端 → worker:宽限期内重新认领自己那个 role。token 不对一律拒(并踢连接)。
 signal reclaim_requested(caller: int, role: int, token: String)
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func reclaim_role(role: int, token: String) -> void:
 	reclaim_requested.emit(multiplayer.get_remote_sender_id(), role, token)
 
@@ -239,13 +239,13 @@ func reclaim_role(role: int, token: String) -> void:
 # ★ 失败那一路必须显式告诉客户端 —— 否则它会一直等一个永不到来的 go_match,而凭据没清。
 signal rejoin_requested(caller: int, code: String, token: String)
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_remote", "reliable", 0)
 func rejoin_request(code: String, token: String) -> void:
 	rejoin_requested.emit(multiplayer.get_remote_sender_id(), code, token)
 
 # 大厅 → 客户端:这一局回不去了(凭据失效 / 房间号不符 / 对局已结束)。
 signal local_rejoin_denied(reason: String)
 
-@rpc("authority", "reliable")
+@rpc("authority", "call_remote", "reliable", 0)
 func rejoin_denied(reason: String) -> void:
 	local_rejoin_denied.emit(reason)

@@ -142,6 +142,7 @@
 
 **实测结果**:枚举 **140 → 119**(smoke 40→39、probe `.tscn` 82→71、probe `.gd` 无同名 tscn 18→9);排除规则 **30 → 9**(剩下 9 条全是真链路/多进程那一类,**每条都真的匹配到文件** —— 入口自己那条"规则匹配不到文件 ⇒ 直接红"的闸因此保持有牙);**跑批仍是 110 支** —— 被移走的本来就不跑,所以这一批省的是**维护面**,不是**时间面**。
 
+★ **后续连锁(照实记,免得读者拿旧数对账)**:cut 3 把 `room_sweep` 移出 ⇒ 枚举 **118**;**同一批的 Task 4 / Task 5 各新增 1 支 `-s` 冒烟**(服务端输入收口、RPC 通道契约)⇒ **现行 枚举 120 / 排除 9 / 跑批 111**,`EXPECTED_SCRIPTS` = **288**。
 ★ `allscript_probe` 的 `EXPECTED_SCRIPTS` **287 → 286**(只减 1,因为移动不算):它数的是**编译面**(`_collect("res://")` 直走 `DirAccess`,**不看入口 glob**)⇒ 这条闸管"有没有静默增删 `.gd`",**不管"测试有多少"**;要减测试面只能**删文件**。
 
 ★★ **一次我自己抓到的处置错误(照实记)**:我执行时先把 `brawl_rollback_probe` **直接 `git rm`** 了。随后在 `core/net/prediction_rollback.gd` 的注释里读到:"实测(见 `tests/probe/brawl_rollback_probe`)…""要动它得重跑 `brawl_rollback_probe`" —— 它虽然**作为守卫不可靠**(登记:读 `N≥4` 自身在抖、变异下仍有一格假绿),但它是 `PredictionRollback._close_enough` **容差常数的测量台**;删掉它等于让那批常数**不可复测**。⇒ 已 `git checkout` 恢复并改判为**移入 `tests/manual/`**。
@@ -191,6 +192,7 @@
 | 7 | `tests/harness/*.gd`（11 文件 / 5185 行） | 大 | ~~D7~~ → **留** | ★ **已核：全部在用** —— `ground_net_watcher`←`ground_net_probe`；`reconnect_watcher`←`reconnect_probe`；`rejoin_watcher`←`rejoin_probe`+`royale_c2_probe`；`royale_bound_watcher`←`royale_bound_probe`；`royale_c2_watcher`←`royale_c2_probe`+`royale_game.gd`；`team_match_watcher`/`team_bot_input`←`team_match_probe`；`soak_bot_input`←`royale_soak_probe`；`ground_bot_input`←两个 watcher；`pvp_smoke_client`←`pvp_room_smoke.sh`；`haste_probe_input`←`haste_probe`；`menu_autotest`←`main_menu` 的 `--autotest-*` 钩子。唯一"没人用"的 `net_lag_client`（154 行 + 一个只用来挂脚本的 `.tscn`）**本来就在所有 glob 之外、零运行成本**，且头注写明它是**人工**直连 worker 的 UDP 延迟测量台 ⇒ **留**。 |
 | 8 | 在批内、无 `_check`、但**能红**的 7 支 | `match_result_payload` / `rejoin_registry` / `score_rules` / `team_room` / `explosion_falloff`(356/184/82/400/64 行) + `path_integrity` / `wrap_probe` | ~~D2b~~ → **留 + 登记一处族级上限** | ★ **已核：7 支全部"能红"**（5 支用 `fails.is_empty()`、`explosion_falloff` 用 `failures == 0`、`path_integrity` 用 `bad` 列表、`wrap_probe` 用 `ok1 and ok2`）⇒ **K1 通过，不是零值守卫**。共同缺陷是**没有计数闸**：断言被静默跳过时判词照绿（`pid_of` 那次事故的形状，见 [`tests.md`](tests.md) 末节）。⇒ **裁决：不逐支补闸**（那是 7 份新增，与"减少测试"相反），而是把这条记为**族级上限**：*这 7 支的 `ALL-OK` 只证明"没有断言失败"，不证明"每条断言都跑过"* —— 抽查时按 `tests.md` 的"看 stderr 有没有 `SCRIPT ERROR`"来兜。★ 将来若真要为它们补闸，**唯一**要抄的形态是被移走的 `room_sweep_lint` 那个 `_done.size()` vs `CHECK_NAMES.size()`（"每个 `_check_*` 都必须跑到尾"）—— 那条是那份文件里**唯一值得留下**的想法。 |
 | 9 | `lobby_parse_smoke.gd` | 22 行 | ~~D2b~~ → **留 + 并入第 8 条的上限** | 判词依赖 `fails == 0` ⇒ **能红**（它逐项打 `PARSE[OK]:`/`PARSE[FAIL]`），同样**无计数闸** ⇒ 与第 8 条同一族、同一处置（不补闸；`ALL-OK` 只证明"没有失败"）。★ 附带价值：它是 `run_all.sh` 判据回归语料里那条 `PARSE[OK]:` 反例的来源（"判词前后缀"那条 C2 修复）。 |
+| 10 | `tests/smoke/reconnect_smoke.gd` 里**手抄的 13 条 `@rpc` 声明文本** | 13 行 | **反重复(AGENTS.md §2)** | ★★ **本批被它咬了一次**(2026-10-08):Task 5 把 59 条声明改成四参形态后,这 13 行**全部过期**,该支**多出 13 条失败**(已按磁盘上的声明订正回基线)。⇒ 这就是 `AGENTS.md` §2 那条「**重复的真相源 + 一条盯着它的守卫 = 永久税**」的活样本:声明改一次,抄本必须跟着改。**建议后续**:让该支**从声明里读回来**再比对(而不是手抄字面量),或干脆把"注解形态"交给 `rpc_channel_contract_smoke`(它已经逐条解析声明)—— 那就**少一处抄本**。★ 它本身还是 `known_red.txt` 里的**基线红**(原因与注解无关),所以这次差点被"反正是红的"盖过去。 |
 
 ★ **处置纪律**:每一条都要在 §5 里留下"判据 + 依据 + 处置"三栏;**"我删了因为它看着多余"不算记录**。
 

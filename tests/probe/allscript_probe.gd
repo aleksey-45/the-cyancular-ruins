@@ -53,6 +53,9 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #     · 净变化 = **−1**,是**删除**:`tests/probe/perf_probe.gd`(它的读数是"服务器清格子格"算法的
 #       **第二份口径**、且仍是 v3 的 `*2`/`x/2` ⇒ **读数本身不可信**,留在 `tests/` 只会误导)。
 #       `git ls-files '*.gd' | wc -l` = **286** 独立对上。
+#   ★★ **2026-10-08 同日再加两条(同一批 Task 4 / Task 5 各新增 1 支 `-s` 冒烟)⇒ 现行 288**:
+#       `tests/smoke/server_input_sanitize_smoke.gd`(服务端输入收口)与
+#       `tests/smoke/rpc_channel_contract_smoke.gd`(RPC 通道契约)。
 #     · ★★ **一个必须写下来的反直觉点**:同日把 **22 个文件"移动"**出去(18 支人工仪器 +
 #       `brawl_rollback_probe` → `tests/manual/`、2 支 helper → `tests/harness/`)**没有**改变这个数 ——
 #       因为 `_collect("res://")` 数的是**编译面**,它**不看入口的 glob**。⇒ 本闸管的是
@@ -63,7 +66,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #       `core/net/prediction_rollback.gd` 的注释指着它说"要重测得重跑它" ⇒ **移**到 `tests/manual/`;
 #       `perf_probe` 是**读数本身错** ⇒ **删**。
 #   ⇒ 上面 283/287 那几段是**历史值**(数法留着供复核),现行值以本常量为准。
-const EXPECTED_SCRIPTS := 287
+const EXPECTED_SCRIPTS := 288
 
 var _fails: Array[String] = []
 var _total := 0

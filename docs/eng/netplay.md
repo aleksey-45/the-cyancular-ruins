@@ -112,3 +112,44 @@
   - 既有探针被本批**加相**:`lobby_visibility_probe`(相⑤⑥⑦⑧⑨)/ `grace_window_smoke`(⑧ 钉 `DEFAULT_SECONDS` + 三档延迟的 belt;⑨ **按宽限期算出来的跑批预算逐条钉住**。★ 落伍的症状不是"红一条断言",而是**探针自己先到点:一行裁决都不打印**,与真失败**长得一模一样**;这个坑**已烂过两次**)。
   - ★ **跑法分工**:agent 可跑 = `--import`、全部 `-s` 冒烟、`tests/probe/lobby_visibility_probe.tscn`、各页面 `--quit-after 120` 启动自检;**用户跑** = `rejoin_probe.sh`、`reconnect_probe.tscn`(池外端口,但耗时长且按 PID 杀子进程)、以及一切占 **7777** 的既有脚本。★ **加新断言时留意 `EXPECTED_CHECKS` 那类计数**。
 
+
+### RPC 通道划分表(★ 单一来源)
+
+> **为什么**:全仓 60 条 `@rpc` 原先**无一例指定通道** ⇒ 全部挤在通道 0 上按序传输:一次 `bullet_spawn`
+> 的**重传**会顶住它后面**所有**权威事件(含 60Hz 输入与 10Hz 状态)。按**流量类别**分流后,
+> "一次性可靠载荷"的重传**不再堵住**"高频快照/输入"。
+>
+> **`@rpc` 的写法(2026-10-08 控制器实测,别凭记忆)**:签名是 `@rpc(peer_mode, sync, transfer_mode, channel)`,
+> 四参**全写**:`@rpc("authority", "call_remote", "reliable", 1)`。★ 实测两条:① 只写三参并把 int 放第 3 位
+> 会被引擎拒绝 —— `Parse Error: Invalid argument for annotation "@rpc": argument 3 should be "String" but is "int"`;
+> ② 四参形态解析通过。`sync` 写 `"call_remote"` 即**默认值**,语义不变(本表**只加通道**,不动 mode/transfer_mode)。
+>
+> **★ 可观测性上限(照实)**:通道号**无法在运行期回读** —— `GDScript.get_script_method_list()` 的元素键只有
+> `["name","args","default_args","flags","id","return"]`,**没有** `rpc_config`。⇒ 唯一能自动化的判据是
+> **本表 ↔ 声明的文本对账**(代理判据,见 `tests/smoke/rpc_channel_contract_smoke.gd`);要**行为级**证明
+> "分流真的生效",需要两个 peer 分别占不同通道对打(今天**没有**这条路径,登记为覆盖上限)。
+>
+> **作用域**:产品**声明 59 条**(`net_bus.gd` 28 + `net_bus_ext.gd` 31)。`tests/smoke/reconnect_smoke.gd` 的
+> **13** 条是测试桩自己的 RPC ⇒ **不在作用域内**(要不要给通道另议)。★ 裸 `grep -rn "@rpc("` 会多出
+> `server/match/match_state.gd:219` 那条**注释**与 `.superpowers/` 备份目录 ⇒ **别拿裸 grep 的行数当作用域**。
+
+| 通道 | 语义 | 为什么这样分 | 该通道上的 RPC(逐条点名) |
+|---|---|---|---|
+| **0** | 关键握手 / 会话序列 | 少而关键、**可以等**；且它们是**成序列**的(建房→入房→开局→进图),拆开就会重排 | `ai_duel` / `claim_role` / `create_room` / `go_match` / `join_room` / `list_rooms` / `lobby_name` / `match_start` / `match_sync` / `match_sync_data` / `opponent_left` / `peer_info` / `ping` / `pong` / `reclaim_role` / `rejoin_denied` / `rejoin_request` / `report_token` / `room_created` / `room_joined` / `room_list` / `royale_create` / `royale_join` / `royale_leave` / `royale_list` / `royale_rooms` / `royale_start` / `royale_start_ai` / `server_message` / `session_token` / `suicide_request` / `team_create` / `team_join` / `team_leave` / `team_list` / `team_pick` / `team_rooms` / `team_start` |
+| **1** | 状态快照(`unreliable`) | **丢了就丢** —— 与可靠载荷挤在同一条道上时,一个重传会顶住所有快照 | `snapshot_own` / `snapshot_world` |
+| **2** | 高频输入 / 时钟 | 60Hz 的输入与 10Hz 的状态镜像；它们**后面的东西等不起** | `royale_room_state` / `send_input` / `team_room_state` / `time_state` |
+| **3** | 一次性可靠载荷 | 允许重传,但**别堵住别人** —— 这就是本表存在的理由 | `beam_fired` / `beam_fired` / `bullet_spawn` / `hit_confirm` / `hit_event` / `kill_event` / `match_options` / `peer_hues` / `player_options` / `room_map` / `round_state` / `sub_destroyed` / `tile_destroyed` / `weapon_removed` / `weapon_spawned` |
+
+**合计 59 条**:通道 0 = 38 / 通道 1 = 2 / 通道 2 = 4 / 通道 3 = 15。
+
+★ **表里 58 个方法名、声明 59 条** —— 差的那一条是**刻意的重名**:`beam_fired` 在 `net_bus.gd`(248)
+与 `net_bus_ext.gd`(41) **各声明一次**(`net_bus_ext.gd` 那份自己的注释写着"原版 NetBus 逐字节不动,
+新 RPC 进 NetBusExt" ⇒ ext 那份是**遗留**)。这件事**本仓栽过**:重名 = 接收端挂错节点 = **静默 no-op**,
+裁定见 [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd)(**必须走 NetBus**,不是 NetBusExt)、
+[`scenes/pvp_game.gd`](../../scenes/pvp_game.gd)(发送端走 NetBus)、判据见
+[`tests/probe/kh_l6_probe.gd`](../../tests/probe/kh_l6_probe.gd)(**同行**必须含 `NetBus.rpc_id(`)。
+⇒ **两份必须给同一通道**(今天都是 3),`rpc_channel_contract_smoke` 把"重名集合恰好 = {beam_fired}"
+**钉成一条断言** —— 新出现一个重名、或 beam_fired 被删掉一份,都会红。★ 后续若要删 ext 那份,
+**先确认真无调用点**(它现在是纯遗留),并当作协议面改动(档 3)单独走。
+★ 通道容量:`core/net/net_bus.gd:53` 的 `const ENet_CHANNELS := 4`,并在 `create_server`/`create_client`
+两处都用它 ⇒ **今天就有 0~3 四个通道**,不需要改建 peer 那一处。

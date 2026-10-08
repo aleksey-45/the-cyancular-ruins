@@ -49,9 +49,9 @@ const N_EXT_RPCS := ["session_token", "report_token", "reclaim_role"]
 #   症状是"重连时 token 永远报不上去"且一行错都不打 —— 正是本文件要拦的那类静默 no-op。
 #   session_token 反向同理:写成 any_peer = 任何人都能伪造 token 下发。
 const N_EXT_RPC_ANN := {
-	"session_token": "@rpc(\"authority\", \"reliable\")",
-	"report_token": "@rpc(\"any_peer\", \"reliable\")",
-	"reclaim_role": "@rpc(\"any_peer\", \"reliable\")",
+	"session_token": "@rpc(\"authority\", \"call_remote\", \"reliable\", 0)",
+	"report_token": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"reclaim_role": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
 }
 
 # ── 3v3 团队协议(2026-09-19,B 册 Task 2)──
@@ -63,14 +63,14 @@ const N_TEAM_RPCS := ["team_create", "team_join", "team_pick", "team_leave", "te
 # 注解同样逐字钉住 —— ★ 方向写反是**静默**的:`team_rooms` 若写成 any_peer = 任何客户端都能
 # 伪造房间列表;`team_start` 若写成 authority = 客户端的上行被直接拒("房主点了开始没反应")。
 const N_TEAM_RPC_ANN := {
-	"team_create": "@rpc(\"any_peer\", \"reliable\")",
-	"team_join": "@rpc(\"any_peer\", \"reliable\")",
-	"team_pick": "@rpc(\"any_peer\", \"reliable\")",
-	"team_leave": "@rpc(\"any_peer\", \"reliable\")",
-	"team_start": "@rpc(\"any_peer\", \"reliable\")",
-	"team_list": "@rpc(\"any_peer\", \"reliable\")",
-	"team_rooms": "@rpc(\"authority\", \"reliable\")",
-	"team_room_state": "@rpc(\"authority\", \"reliable\")",
+	"team_create": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"team_join": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"team_pick": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"team_leave": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"team_start": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"team_list": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"team_rooms": "@rpc(\"authority\", \"call_remote\", \"reliable\", 0)",
+	"team_room_state": "@rpc(\"authority\", \"call_remote\", \"reliable\", 2)",
 }
 
 const N_TEAM_SIGNALS := ["team_create_requested", "team_join_requested", "team_pick_requested",
@@ -83,8 +83,8 @@ const N_TEAM_SIGNALS := ["team_create_requested", "team_join_requested", "team_p
 const N_REJOIN_RPCS := ["rejoin_request", "rejoin_denied"]
 
 const N_REJOIN_RPC_ANN := {
-	"rejoin_request": "@rpc(\"any_peer\", \"reliable\")",
-	"rejoin_denied": "@rpc(\"authority\", \"reliable\")",
+	"rejoin_request": "@rpc(\"any_peer\", \"call_remote\", \"reliable\", 0)",
+	"rejoin_denied": "@rpc(\"authority\", \"call_remote\", \"reliable\", 0)",
 }
 
 const N_REJOIN_SIGNALS := ["rejoin_requested", "local_rejoin_denied"]
