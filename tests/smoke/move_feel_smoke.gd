@@ -173,8 +173,16 @@ func _test_dash_jump_cancel() -> void:
 		_fail = "按跳后仍 is_charge(未打断)"; return
 	if p.velocity.y >= 0.0:
 		_fail = "按跳后未起跳 vy=%.1f" % p.velocity.y; return
-	if absf(p.velocity.x) < 900.0:
-		_fail = "打断后水平动量丢失 vx=%.1f(<900)" % p.velocity.x; return
+	# ★★ 2026-10-08(测试经济 **D3**):**把绝对阈值 900 换成关系式**。
+	#   原判据 `absf(vx) < 900` 抓的其实是**方向被冲反**(该文件 75-81 行记的那次事故:`vx=-877.0`
+	#   —— 冲刺被冲成向左,与 900 只差 2.5%),而那个注释**明确禁止**"把 900 调低"来消它。
+	#   绝对数既表达不出"方向对不对",又会随调参过期 ⇒ 拆成两问,两条都**跟着产品常量走**:
+	#     ① 方向 = 本场景的意图方向(喂的是 `ax=+1`、`_reset_ground` 又把 `facing_direction` 置 +1);
+	#     ② 幅度仍在**冲刺区间**(比走路速度 `p.move_speed` 大)。
+	if p.velocity.x <= 0.0:
+		_fail = "打断后冲刺被冲反了(vx=%.1f;本场景意图方向是 +1)" % p.velocity.x; return
+	if absf(p.velocity.x) < p.move_speed:
+		_fail = "打断后水平动量掉到走路速度以下(vx=%.1f < move_speed %.0f)" % [p.velocity.x, p.move_speed]; return
 
 # 4) 冲刺撞水平墙停:出生在墙左侧,向右冲,~13 tick 撞墙,应提前停(0.4s=24 tick)。
 func _test_dash_wall_stop() -> void:
@@ -191,8 +199,18 @@ func _test_dash_wall_stop() -> void:
 			break
 	if stopped_at < 0:
 		_fail = "30 tick 内冲刺未停(撞墙停未生效)"; return
-	if stopped_at > 22:
-		_fail = "冲刺停得太晚(tick %d,疑似冲满 0.4s 而非撞墙停)" % stopped_at; return
+	# ★★ 2026-10-08(测试经济 **D3**):**魔数 22 → 从产品常量推出来的上限**。
+	#   原来的 22 是从"满时长 0.4s = 24 tick、留 2 tick 余量"**手抄**来的 ⇒ `charge_duration`
+	#   一改它就过期,而且过期方式是**静默变松或变紧**(不报错)。现在直接算:
+	#   满时长 tick 数 = `charge_duration / DT`,要求**明显早于**它(留 2 tick 余量)。
+	var full_ticks := int(ceil(p.charge_duration / DT))
+	# ★ 阈值取**满时长的 0.8**(比值,不是手抄的 tick 数):撞墙停必须**显著早于**满时长。
+	#   ★★ 照实记本条的边界:它的形态是"停得**太晚**",所以 —— 与下面那两条(`vx` 清没清、
+	#   位置越没越墙)**冗余**:若"墙没停住",冲刺会在**自然满时长**停(≈full−3),而默认满时长下
+	#   full−3 ≤ 用旧魔数 22 那条 ⇒ **旧判据抓不到它**;改成 0.8 比值后 full−3(≈21) > 0.8·full(≈19)
+	#   ⇒ 能抓到。**但真正的墙判据仍是下面那两条**(位置越过墙 / vx 未清),别把这条当墙守卫。
+	if stopped_at > int(full_ticks * 0.8):
+		_fail = "冲刺停得太晚(tick %d;满时长 %d tick 的 0.8 = %d ⇒ 疑似冲满而非撞墙停)" % [stopped_at, full_ticks, int(full_ticks * 0.8)]; return
 	if absf(p.velocity.x) > 50.0:
 		_fail = "撞墙停后 vx 未清: %.1f" % p.velocity.x; return
 	if p.global_position.x > (WALL_X * TILE) + TILE:

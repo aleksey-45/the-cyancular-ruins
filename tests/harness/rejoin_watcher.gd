@@ -111,6 +111,7 @@ var _room_code := ""
 var _row_seen := false            # c1:自己那间房那一行已经出现在列表里
 var _row_disabled := true         # c1:那一行的 `disabled`(新入口的断言:必须是 false)
 var _c3_row_disabled := true      # c3:同一行的 `disabled`(反向对照:必须是 true)
+var _c3_row_read := false        # ★ 2026-10-08(§六.27):**到底读没读到**那一行 —— 没读到不许空过
 var _refresh_t := 0.0
 # c2 的观察读数(PLAYING 那一刻清零,窗口结束时统一判定)
 var _obs_started := false
@@ -432,6 +433,7 @@ func _on_room_list(rooms: Array) -> void:
 		var row := _find_row_button(_room_code)
 		if row != null:
 			_c3_row_disabled = row.disabled
+			_c3_row_read = true
 		if _phase == 0:
 			# 看见了 → 立刻试图进去(必须被拒)
 			_phase = 1
@@ -753,7 +755,21 @@ func _tick_c3(delta: float) -> void:
 			_ok("c3 ★ 第三人能看到对局中的房(1 行,code=%s)" % _room_code)
 		# ★ 反向对照(c1 那条断言的另一半):同一行、同一份载荷,手里**没有凭据**的人看到的
 		#   必须是"点不动"。两条合起来才说明可点性是**按人**判的,而不是"那一刻所有人都能进"。
-		if not _c3_row_disabled:
+		# ★★ 2026-10-08(closeout 批 §六.27)两处修正:
+		#   ① **结论时刻重读一次**:原实现只在"第一次看到那一行"的那个 tick 读 `row.disabled`,
+		#      而结论在 RESULT_WAIT(40s)之后 —— 那一 tick 里 `mp_lobby` 可能**还没按新载荷重建
+		#      按钮**(watcher 与它各收一次 `room_list`,先后不定)⇒ 读到的是**上一版构建**的
+		#      (`in_match=false` 时代)状态 ⇒ **假红**。实测:两遍同配置一红一绿。
+		#   ② **没读到就不许空过**:`_c3_row_disabled` 默认 `true`(恰好等于期望值)⇒ 一次都没
+		#      读到那一行时,下面那句 `_ok` 照样会打「同一行对第三人仍是 disabled」——
+		#      **断言读起来比它给的多**。现在用 `_c3_row_read` 把它顶住。
+		var fresh := _find_row_button(_room_code)
+		if fresh != null:
+			_c3_row_disabled = fresh.disabled
+			_c3_row_read = true
+		if not _c3_row_read:
+			_fail("c3 ★ 没读到那一行的 `disabled`(按钮没找到)⇒ 这条反向对照**没成立**,不许按默认值空过")
+		elif not _c3_row_disabled:
 			_fail("c3 ★ 那一行对**没有凭据的第三人**也是可点的 —— 可点性不是按人判的")
 		else:
 			_ok("c3 ★ 同一行对第三人仍是 disabled(按人判:凭据在他的手里,不在我手里)")
